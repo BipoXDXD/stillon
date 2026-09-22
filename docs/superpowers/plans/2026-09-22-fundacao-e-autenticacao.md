@@ -961,7 +961,7 @@ teste, porque RLS e SKIP LOCKED são invisíveis contra mock."
 
 **Interfaces:**
 - Consumes: nada (pacote puro, sem I/O).
-- Produces: `crypto.Secret` (tipo `[]byte` com `Reveal() []byte`); `crypto.NewBox(key []byte) (*Box, error)`; `(*Box).Seal(plaintext, aad []byte) ([]byte, error)`; `(*Box).Open(sealed, aad []byte) (Secret, error)`; `crypto.AAD(table string, id uuid.UUID) []byte`; `crypto.HashToken(token string) []byte`; `crypto.HashIP(key []byte, ip string) []byte`; erros `crypto.ErrMalformed` e `crypto.ErrAuthFailed`.
+- Produces: `crypto.Secret` (tipo `[]byte` com `Reveal() []byte`); `crypto.NewBox(key []byte) (*Box, error)`; `(*Box).Seal(plaintext, aad []byte) ([]byte, error)`; `(*Box).Open(sealed, aad []byte) (Secret, error)`; `crypto.AAD(table, column string, id uuid.UUID) []byte`; `crypto.HashToken(token string) []byte`; `crypto.HashIP(key []byte, ip string) []byte`; erros `crypto.ErrMalformed` e `crypto.ErrAuthFailed`.
 
 - [ ] **Step 1: Escrever o teste do tipo `Secret`**
 
@@ -1126,7 +1126,7 @@ func TestSealOpenRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	aad := crypto.AAD("targets", uuid.New())
+	aad := crypto.AAD("targets", "headers_enc", uuid.New())
 	msg := []byte("Authorization: Bearer abc123")
 
 	sealed, err := box.Seal(msg, aad)
@@ -1151,8 +1151,8 @@ func TestSealOpenRoundTrip(t *testing.T) {
 // sistema usar credenciais de terceiros.
 func TestOpenRejectsCiphertextMovedToAnotherRow(t *testing.T) {
 	box, _ := crypto.NewBox(testKey(t))
-	original := crypto.AAD("targets", uuid.New())
-	outra := crypto.AAD("targets", uuid.New())
+	original := crypto.AAD("targets", "headers_enc", uuid.New())
+	outra := crypto.AAD("targets", "headers_enc", uuid.New())
 
 	sealed, err := box.Seal([]byte("segredo"), original)
 	if err != nil {
@@ -1166,7 +1166,7 @@ func TestOpenRejectsCiphertextMovedToAnotherRow(t *testing.T) {
 
 func TestOpenRejectsTamperedCiphertext(t *testing.T) {
 	box, _ := crypto.NewBox(testKey(t))
-	aad := crypto.AAD("targets", uuid.New())
+	aad := crypto.AAD("targets", "headers_enc", uuid.New())
 
 	sealed, _ := box.Seal([]byte("segredo"), aad)
 	sealed[len(sealed)-1] ^= 0xFF // vira um bit do tag de autenticação
@@ -1187,7 +1187,7 @@ func TestOpenRejectsTruncatedInput(t *testing.T) {
 func TestOpenRejectsWrongKey(t *testing.T) {
 	box, _ := crypto.NewBox(testKey(t))
 	outra, _ := crypto.NewBox(bytes.Repeat([]byte{9}, 32))
-	aad := crypto.AAD("targets", uuid.New())
+	aad := crypto.AAD("targets", "headers_enc", uuid.New())
 
 	sealed, _ := box.Seal([]byte("segredo"), aad)
 
@@ -1201,7 +1201,7 @@ func TestOpenRejectsWrongKey(t *testing.T) {
 // contra alguém "otimizar" o nonce para um valor fixo.
 func TestSealUsesFreshNonceEveryTime(t *testing.T) {
 	box, _ := crypto.NewBox(testKey(t))
-	aad := crypto.AAD("targets", uuid.New())
+	aad := crypto.AAD("targets", "headers_enc", uuid.New())
 	msg := []byte("mesma mensagem")
 
 	vistos := make(map[string]bool, 100)
@@ -1310,15 +1310,21 @@ func (b *Box) Open(sealed, aad []byte) (Secret, error) {
 	return Secret(pt), nil
 }
 
-// AAD amarra um ciphertext à linha exata que o armazena. Com isso, mover o
-// valor da coluna de um registro para outro invalida a autenticação, mesmo
-// que o atacante tenha acesso de escrita ao banco.
-func AAD(table string, id uuid.UUID) []byte {
-	b := make([]byte, 0, len(table)+1+16)
+// AAD amarra um ciphertext à coluna e à linha exatas que o armazenam. Com
+// isso, mover o valor de um registro para outro — ou de uma coluna cifrada
+// para outra da mesma linha — invalida a autenticação, mesmo que o atacante
+// tenha acesso de escrita ao banco.
+//
+// A coluna entra no AAD desde já por assimetria de custo: hoje é um
+// parâmetro; depois de existir ciphertext gravado, mudar o AAD exigiria
+// re-cifrar tudo.
+func AAD(table, column string, id uuid.UUID) []byte {
+	b := make([]byte, 0, len(table)+len(column)+2+16)
 	b = append(b, table...)
 	b = append(b, ':')
-	idBytes := id
-	return append(b, idBytes[:]...)
+	b = append(b, column...)
+	b = append(b, ':')
+	return append(b, id[:]...)
 }
 ```
 
@@ -1424,6 +1430,16 @@ O AAD do envelope amarra o ciphertext ao UUID da linha, impedindo que um
 segredo seja movido entre registros. IP usa HMAC porque 2^32 é enumerável;
 token usa SHA-256 puro porque tem 256 bits de entropia."
 ```
+
+
+> **Correções aplicadas durante a execução** (ver rulings R6–R11 no ledger em
+> `.superpowers/sdd/.../progress.md`): `HashIP` ganhou guarda de tamanho de
+> chave com `panic`, porque `hmac.New` aceita chave vazia em silêncio e
+> devolveria o hash enumerável que a §4.2 quer evitar; `Secret` implementa
+> `fmt.Formatter`, porque `String`/`GoString` não cobrem `%d`, `%c` nem `%08b`;
+> `AAD` passou a incluir a coluna; e quatro testes ganharam força de detecção
+> que não tinham (fronteira de truncamento, propriedades do `AAD`, nonce entre
+> instâncias distintas, e known-answer tests que travam o algoritmo dos hashes).
 
 ---
 
@@ -4620,7 +4636,7 @@ func (s *TOTP) Enroll(ctx context.Context, userID uuid.UUID, email string) (stri
 		return "", fmt.Errorf("gerar chave TOTP: %w", err)
 	}
 
-	sealed, err := s.box.Seal([]byte(key.Secret()), crypto.AAD("users", userID))
+	sealed, err := s.box.Seal([]byte(key.Secret()), crypto.AAD("users", "totp_secret_enc", userID))
 	if err != nil {
 		return "", fmt.Errorf("cifrar segredo TOTP: %w", err)
 	}
@@ -4749,7 +4765,7 @@ func (s *TOTP) load(ctx context.Context, userID uuid.UUID) (secret string, confi
 		return "", false, ErrTOTPNotEnrolled
 	}
 
-	plain, err := s.box.Open(sealed, crypto.AAD("users", userID))
+	plain, err := s.box.Open(sealed, crypto.AAD("users", "totp_secret_enc", userID))
 	if err != nil {
 		return "", false, fmt.Errorf("decifrar segredo TOTP: %w", err)
 	}
