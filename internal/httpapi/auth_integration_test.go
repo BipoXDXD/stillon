@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
+	"net/netip"
 	"testing"
 	"time"
 
@@ -744,4 +745,51 @@ func TestEveryErrorEnvelopeCarriesTheTraceID(t *testing.T) {
 		t.Fatal("o rate limit global não disparou em 200 requisições")
 	}
 	conferir("429 do RateLimit", limitado)
+}
+
+// TestSessionsBehindATrustedProxyRecordDistinctOrigins trava a metade do
+// item 21 que não é rate limit e é a que não tem volta.
+//
+// A §4.2 criou ip_hash para "correlacionar tentativas da mesma origem". Com
+// RemoteAddr cru atrás do proxy da plataforma, toda sessão do sistema grava
+// o MESMO hash — e linha já gravada com o hash do proxy não é recuperável.
+// É a única correção desta leva que fica mais cara a cada dia em produção.
+func TestSessionsBehindATrustedProxyRecordDistinctOrigins(t *testing.T) {
+	a := newAPIWith(t, func(cfg *config.Config) {
+		cfg.TrustedProxies = []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")}
+	})
+
+	entrarComOrigem := func(origem string) {
+		t.Helper()
+		req, err := http.NewRequest(http.MethodPost, a.srv.URL+"/api/v1/auth/login",
+			jsonBody(t, map[string]string{"email": testEmail, "password": testPass}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Requested-With", "sentinela")
+		req.Header.Set("X-Forwarded-For", origem)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("login devolveu %d", resp.StatusCode)
+		}
+	}
+
+	entrarComOrigem("198.51.100.1")
+	entrarComOrigem("203.0.113.42")
+
+	var distintos int
+	if err := a.pool.QueryRow(context.Background(),
+		`SELECT count(DISTINCT ip_hash) FROM sessions WHERE user_id = $1`, a.userID).
+		Scan(&distintos); err != nil {
+		t.Fatal(err)
+	}
+	if distintos != 2 {
+		t.Errorf("%d origens distintas gravadas em sessions.ip_hash, queria 2: "+
+			"a coluna não correlaciona nada se todo mundo é o proxy", distintos)
+	}
 }

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/netip"
 	"strings"
 	"time"
 )
@@ -30,16 +31,17 @@ func (r Role) RunsProber() bool { return r == RoleAll || r == RoleProber }
 const keyLen = 32
 
 type Config struct {
-	Role          Role
-	HTTPAddr      string
-	DatabaseURL   string
-	PublicBaseURL string
-	CORSOrigin    string
-	MasterKey     []byte
-	JWTSecret     []byte
-	IPHashKey     []byte
-	LogLevel      slog.Level
-	ShutdownGrace time.Duration
+	Role           Role
+	HTTPAddr       string
+	DatabaseURL    string
+	PublicBaseURL  string
+	CORSOrigin     string
+	MasterKey      []byte
+	JWTSecret      []byte
+	IPHashKey      []byte
+	TrustedProxies []netip.Prefix
+	LogLevel       slog.Level
+	ShutdownGrace  time.Duration
 }
 
 // Load recebe getenv como parâmetro em vez de chamar os.Getenv diretamente.
@@ -80,15 +82,54 @@ func Load(getenv func(string) string) (*Config, error) {
 		return b
 	}
 
+	// TRUSTED_PROXIES é a lista de origens cujo X-Forwarded-For vale. Vazia
+	// por padrão, e isso é deliberado: sem lista, o cabeçalho é ignorado e a
+	// falha é FECHADA (todos dividem um balde de rate limit). Acreditar no
+	// XFF de qualquer origem seria falha ABERTA — o atacante escolheria o
+	// próprio balde e a origem gravada na auditoria. Em produção atrás de um
+	// proxy, preencher esta lista é obrigatório; o aviso no boot cobra isso.
+	proxies := func(name string) []netip.Prefix {
+		raw := strings.TrimSpace(getenv(name))
+		if raw == "" {
+			return nil
+		}
+		var out []netip.Prefix
+		for _, parte := range strings.Split(raw, ",") {
+			parte = strings.TrimSpace(parte)
+			if parte == "" {
+				continue
+			}
+			p, err := netip.ParsePrefix(parte)
+			if err != nil {
+				errs = append(errs, fmt.Errorf("%s: %q não é um CIDR válido", name, parte))
+				continue
+			}
+			out = append(out, p)
+		}
+		return out
+	}
+
 	cfg := &Config{
-		HTTPAddr:      opt("HTTP_ADDR", ":8080"),
-		DatabaseURL:   req("DATABASE_URL"),
-		PublicBaseURL: req("PUBLIC_BASE_URL"),
-		CORSOrigin:    req("CORS_ORIGIN"),
-		MasterKey:     key("MASTER_KEY"),
-		JWTSecret:     key("JWT_SECRET"),
-		IPHashKey:     key("IP_HASH_KEY"),
-		ShutdownGrace: 15 * time.Second,
+		HTTPAddr:       opt("HTTP_ADDR", ":8080"),
+		DatabaseURL:    req("DATABASE_URL"),
+		PublicBaseURL:  req("PUBLIC_BASE_URL"),
+		CORSOrigin:     req("CORS_ORIGIN"),
+		MasterKey:      key("MASTER_KEY"),
+		JWTSecret:      key("JWT_SECRET"),
+		IPHashKey:      key("IP_HASH_KEY"),
+		TrustedProxies: proxies("TRUSTED_PROXIES"),
+		ShutdownGrace:  15 * time.Second,
+	}
+
+	// Https sem lista de proxies quase sempre significa "esqueci de
+	// configurar": o deploy é atrás de um proxy, e sem a lista todo o rate
+	// limit por IP e todo o ip_hash da auditoria colapsam num valor só. É
+	// aviso e não erro porque um TLS terminado no próprio processo é
+	// legítimo, só é raro.
+	if strings.HasPrefix(cfg.PublicBaseURL, "https://") && len(cfg.TrustedProxies) == 0 {
+		slog.Warn("TRUSTED_PROXIES vazio com PUBLIC_BASE_URL https: " +
+			"se houver proxy na frente, o rate limit por IP e o ip_hash da auditoria " +
+			"colapsam num valor único para todos os clientes")
 	}
 
 	switch role := Role(opt("ROLE", string(RoleAll))); role {

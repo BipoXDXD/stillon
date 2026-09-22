@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
-	"net"
 	"net/http"
+	"net/netip"
 	"time"
 
 	"github.com/google/uuid"
@@ -26,10 +26,14 @@ type AuthHandlers struct {
 	clk          clock.Clock
 	jwtSecret    []byte
 	secureCookie bool
+	// trustedProxies decide se o X-Forwarded-For desta requisição vale. Ver
+	// middleware.ClientIP: sem a lista, acreditar no cabeçalho seria pior que
+	// ignorá-lo.
+	trustedProxies []netip.Prefix
 }
 
-func NewAuthHandlers(users auth.UserStore, sessions *auth.Manager, totp *auth.TOTP, clk clock.Clock, jwtSecret []byte, secureCookie bool) *AuthHandlers {
-	return &AuthHandlers{users: users, sessions: sessions, totp: totp, clk: clk, jwtSecret: jwtSecret, secureCookie: secureCookie}
+func NewAuthHandlers(users auth.UserStore, sessions *auth.Manager, totp *auth.TOTP, clk clock.Clock, jwtSecret []byte, secureCookie bool, trustedProxies []netip.Prefix) *AuthHandlers {
+	return &AuthHandlers{users: users, sessions: sessions, totp: totp, clk: clk, jwtSecret: jwtSecret, secureCookie: secureCookie, trustedProxies: trustedProxies}
 }
 
 type loginRequest struct {
@@ -241,12 +245,13 @@ func (h *AuthHandlers) clearCookie(w http.ResponseWriter) {
 	})
 }
 
+// meta usa o MESMO endereço que o limitador, e não o RemoteAddr cru. A §4.2
+// criou ip_hash para correlacionar tentativas da mesma origem; atrás de um
+// proxy, o RemoteAddr é o proxy e a coluna passa a correlacionar nada. Ao
+// contrário do rate limit, esse dano não tem volta: linha já gravada com o
+// hash errado não se recupera.
 func (h *AuthHandlers) meta(r *http.Request) auth.Meta {
-	ip, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		ip = r.RemoteAddr
-	}
-	return auth.Meta{IP: ip, UserAgent: r.UserAgent()}
+	return auth.Meta{IP: middleware.ClientIP(r, h.trustedProxies), UserAgent: r.UserAgent()}
 }
 
 // internal registra o erro real e devolve ao cliente apenas o envelope

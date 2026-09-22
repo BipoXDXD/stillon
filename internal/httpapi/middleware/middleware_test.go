@@ -95,7 +95,7 @@ func TestBodyLimitRejectsOversizedPayload(t *testing.T) {
 func TestRateLimitBlocksAfterBurst(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	h := middleware.RateLimit(ctx, 60, 3)(http.HandlerFunc(ok))
+	h := middleware.RateLimit(ctx, 60, 3, nil)(http.HandlerFunc(ok))
 
 	var last int
 	for i := 0; i < 10; i++ {
@@ -113,7 +113,7 @@ func TestRateLimitBlocksAfterBurst(t *testing.T) {
 func TestRateLimitIsPerClient(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	h := middleware.RateLimit(ctx, 60, 3)(http.HandlerFunc(ok))
+	h := middleware.RateLimit(ctx, 60, 3, nil)(http.HandlerFunc(ok))
 
 	for i := 0; i < 10; i++ {
 		req := httptest.NewRequest(http.MethodGet, "/", nil)

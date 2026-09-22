@@ -116,3 +116,44 @@ func TestLogValueRedactsSecrets(t *testing.T) {
 		t.Errorf("esperava marcador de redação no log, veio: %s", out)
 	}
 }
+
+func TestLoadParsesTrustedProxies(t *testing.T) {
+	env := validEnv()
+	env["TRUSTED_PROXIES"] = "10.0.0.0/8, 2001:db8::/32"
+
+	cfg, err := Load(getenvFrom(env))
+	if err != nil {
+		t.Fatalf("esperava sucesso, veio: %v", err)
+	}
+	if len(cfg.TrustedProxies) != 2 {
+		t.Fatalf("%d prefixos confiáveis, queria 2", len(cfg.TrustedProxies))
+	}
+	if got := cfg.TrustedProxies[0].String(); got != "10.0.0.0/8" {
+		t.Errorf("primeiro prefixo = %q, queria 10.0.0.0/8", got)
+	}
+}
+
+// Vazio é o padrão e significa "não confie em X-Forwarded-For de ninguém" —
+// a falha fechada. Ver middleware.ClientIP.
+func TestTrustedProxiesDefaultsToEmpty(t *testing.T) {
+	cfg, err := Load(getenvFrom(validEnv()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.TrustedProxies) != 0 {
+		t.Errorf("sem TRUSTED_PROXIES vieram %d prefixos, queria nenhum", len(cfg.TrustedProxies))
+	}
+}
+
+// Um CIDR errado não pode virar silêncio: uma lista que o operador achou que
+// tinha preenchido, e que na verdade ficou vazia, é a pior das duas falhas.
+func TestLoadRejectsAMalformedTrustedProxy(t *testing.T) {
+	env := validEnv()
+	env["TRUSTED_PROXIES"] = "10.0.0.0/8, isto-nao-e-um-cidr"
+
+	if _, err := Load(getenvFrom(env)); err == nil {
+		t.Fatal("esperava erro para CIDR inválido em TRUSTED_PROXIES")
+	} else if !strings.Contains(err.Error(), "TRUSTED_PROXIES") {
+		t.Errorf("o erro não menciona TRUSTED_PROXIES: %v", err)
+	}
+}

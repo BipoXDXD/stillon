@@ -23,7 +23,7 @@ func Routes(ctx context.Context, cfg *config.Config, store *auth.PGStore, sessio
 	// simplesmente não o guardaria, e o desenvolvimento local pararia. Em
 	// produção PUBLIC_BASE_URL é https, e o refresh nunca trafega em claro.
 	secureCookie := strings.HasPrefix(cfg.PublicBaseURL, "https://")
-	h := NewAuthHandlers(store, sessions, totp, clk, cfg.JWTSecret, secureCookie)
+	h := NewAuthHandlers(store, sessions, totp, clk, cfg.JWTSecret, secureCookie, cfg.TrustedProxies)
 	authn := middleware.Authn(cfg.JWTSecret, clk)
 
 	mux := http.NewServeMux()
@@ -44,7 +44,7 @@ func Routes(ctx context.Context, cfg *config.Config, store *auth.PGStore, sessio
 	// bloqueio de conta alheia, que é um problema real em sistemas com
 	// lockout. Não afrouxe este limitador sem pensar nisso.
 	mux.Handle("POST /api/v1/auth/login",
-		middleware.RateLimit(ctx, 10, 5)(http.HandlerFunc(h.Login)))
+		middleware.RateLimit(ctx, 10, 5, cfg.TrustedProxies)(http.HandlerFunc(h.Login)))
 	mux.Handle("POST /api/v1/auth/refresh", http.HandlerFunc(h.Refresh))
 	mux.Handle("POST /api/v1/auth/logout", http.HandlerFunc(h.Logout))
 
@@ -58,7 +58,7 @@ func Routes(ctx context.Context, cfg *config.Config, store *auth.PGStore, sessio
 	// se aplica — a senha já foi acertada, o que resta é adivinhar seis
 	// dígitos.
 	mux.Handle("POST /api/v1/auth/totp/verify",
-		middleware.RateLimit(ctx, 20, 5)(http.HandlerFunc(h.TOTPVerify)))
+		middleware.RateLimit(ctx, 20, 5, cfg.TrustedProxies)(http.HandlerFunc(h.TOTPVerify)))
 
 	mux.Handle("GET /api/v1/me", authn(http.HandlerFunc(h.Me)))
 
@@ -77,7 +77,7 @@ func Routes(ctx context.Context, cfg *config.Config, store *auth.PGStore, sessio
 	var handler http.Handler = mux
 	handler = middleware.RequireCustomHeader(handler)
 	handler = middleware.BodyLimit(maxBodyBytes)(handler)
-	handler = middleware.RateLimit(ctx, 120, 30)(handler)
+	handler = middleware.RateLimit(ctx, 120, 30, cfg.TrustedProxies)(handler)
 	handler = middleware.CORS(cfg.CORSOrigin)(handler)
 	handler = middleware.SecurityHeaders(handler)
 	handler = middleware.Recover(handler)
