@@ -1649,6 +1649,14 @@ func AllowIP(ip netip.Addr) error {
 	// guarda inteira. É o bypass mais comum contra listas de bloqueio.
 	ip = ip.Unmap()
 
+	// netip.Prefix.Contains devolve false para QUALQUER endereço com zona
+	// IPv6 ("Prefixes strip zones"), e Unmap() não remove a zona. Sem esta
+	// recusa, ::1%lo atravessa as vinte faixas sem casar nenhuma. Alvo
+	// legítimo nunca carrega zona, então recusar é a resposta fail-closed.
+	if ip.Zone() != "" {
+		return fmt.Errorf("%w: zona IPv6 não é permitida (%s)", ErrBlocked, ip)
+	}
+
 	for _, p := range blockedPrefixes {
 		if p.Contains(ip) {
 			return fmt.Errorf("%w: %s pertence a %s", ErrBlocked, ip, p)
@@ -1779,28 +1787,47 @@ func TestAlvoQueRedirecionaParaInternoMorreNoPrimeiroSalto(t *testing.T) {
 // redirecionador já é destino bloqueado e a cadeia morre no salto zero.
 func TestCheckRedirectRevalidaEsquemaELimitaSaltos(t *testing.T) {
 	client := safedial.NewClient(5 * time.Second)
+	if client.CheckRedirect == nil {
+		t.Fatal("CheckRedirect é nil: nenhum salto seria revalidado")
+	}
 
 	req := func(raw string) *http.Request {
+		t.Helper()
 		r, err := http.NewRequest(http.MethodGet, raw, nil)
 		if err != nil {
-			t.Fatal(err)
+			t.Fatalf("requisição de teste inválida: %v", err)
 		}
 		return r
 	}
 
-	// Esquema não permitido no destino do salto.
-	if err := client.CheckRedirect(req("file:///etc/passwd"), nil); err == nil {
-		t.Error("redirecionamento para file:// deveria ser recusado")
+	// Um salto legítimo passa.
+	if err := client.CheckRedirect(req("https://exemplo.com/x"), nil); err != nil {
+		t.Errorf("salto legítimo recusado: %v", err)
 	}
 
-	// Salto legítimo, cadeia curta.
-	if err := client.CheckRedirect(req("https://exemplo.com/b"), make([]*http.Request, 1)); err != nil {
-		t.Errorf("salto legítimo foi recusado: %v", err)
+	// Um salto para esquema não permitido é recusado antes de discar.
+	err := client.CheckRedirect(req("file:///etc/passwd"), nil)
+	if !errors.Is(err, safedial.ErrInvalidURL) {
+		t.Errorf("salto para file:// deu erro = %v, queria envolver ErrInvalidURL", err)
 	}
 
-	// Cadeia longa demais.
-	if err := client.CheckRedirect(req("https://exemplo.com/b"), make([]*http.Request, maxRedirectsNoTeste)); err == nil {
-		t.Error("cadeia acima do limite deveria ser recusada")
+	// A cadeia é limitada. net/http já inclui a requisição original em via,
+	// então via com 3 elementos é o terceiro salto — ainda permitido — e via
+	// com 4 é o quarto, que para. Isso faz maxRedirects significar o número
+	// de saltos seguidos, como o nome promete.
+	via := []*http.Request{
+		req("https://exemplo.com/0"),
+		req("https://exemplo.com/1"),
+		req("https://exemplo.com/2"),
+	}
+	if err := client.CheckRedirect(req("https://exemplo.com/3"), via); err != nil {
+		t.Errorf("terceiro salto recusado: %v", err)
+	}
+
+	via = append(via, req("https://exemplo.com/3"))
+	err = client.CheckRedirect(req("https://exemplo.com/4"), via)
+	if !errors.Is(err, safedial.ErrBlocked) {
+		t.Errorf("cadeia longa deu erro = %v, queria envolver ErrBlocked", err)
 	}
 }
 
@@ -1894,7 +1921,11 @@ func NewClient(timeout time.Duration) *http.Client {
 		Transport: NewTransport(),
 		Timeout:   timeout,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if len(via) >= maxRedirects {
+			// net/http inclui a requisição original em via, então a
+			// comparação é estrita: com maxRedirects = 3 o cliente segue
+			// três saltos e recusa o quarto — a constante significa o que
+			// o nome dela diz.
+			if len(via) > maxRedirects {
 				return fmt.Errorf("%w: mais de %d redirecionamentos", ErrBlocked, maxRedirects)
 			}
 			// O IP do destino já será revalidado no dial, porque não há
