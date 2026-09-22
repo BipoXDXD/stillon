@@ -3258,7 +3258,6 @@ const (
 	CodeInvalidCredentials ErrorCode = "invalid_credentials"
 	CodeInvalidSession     ErrorCode = "invalid_session"
 	CodeUnauthorized       ErrorCode = "unauthorized"
-	CodeAccountLocked      ErrorCode = "account_locked"
 	CodeNotFound           ErrorCode = "not_found"
 	CodeValidation         ErrorCode = "validation_failed"
 	CodeRateLimited        ErrorCode = "rate_limited"
@@ -3279,7 +3278,6 @@ var errorTable = map[ErrorCode]struct {
 	CodeInvalidCredentials: {http.StatusUnauthorized, "E-mail ou senha incorretos."},
 	CodeInvalidSession:     {http.StatusUnauthorized, "Sessão inválida ou expirada."},
 	CodeUnauthorized:       {http.StatusUnauthorized, "Autenticação necessária."},
-	CodeAccountLocked:      {http.StatusTooManyRequests, "Conta temporariamente bloqueada."},
 	CodeNotFound:           {http.StatusNotFound, "Recurso não encontrado."},
 	CodeValidation:         {http.StatusBadRequest, "Dados inválidos."},
 	CodeRateLimited:        {http.StatusTooManyRequests, "Muitas requisições."},
@@ -4067,7 +4065,11 @@ func (h *AuthHandlers) Login(w http.ResponseWriter, r *http.Request) {
 
 	if user.IsLocked(now) {
 		auth.VerifyDummy()
-		WriteError(w, r, CodeAccountLocked)
+		// O bloqueio NÃO se anuncia (R34): mesmo 401 genérico de senha
+		// errada e de e-mail inexistente. Um código distinto enumeraria as
+		// contas por um canal muito mais barato que o tempo de CPU, o que
+		// anularia o VerifyDummy da linha de cima.
+		WriteError(w, r, CodeInvalidCredentials)
 		return
 	}
 

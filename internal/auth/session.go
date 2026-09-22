@@ -145,7 +145,19 @@ func (m *Manager) Rotate(ctx context.Context, token string, meta Meta) (string, 
 	return newToken, s, nil
 }
 
-// Revoke encerra uma sessão específica. É o caminho do logout.
+// Revoke encerra a FAMÍLIA da sessão apresentada. É o caminho do logout.
+//
+// Matar só a linha do token entregue não serve para o que o logout existe.
+// Quando o refresh foi copiado e o ladrão já rotacionou, a cadeia viva é a
+// dele; revogar apenas o cookie da vítima deixava o ladrão dentro. A detecção
+// de reúso não cobre esse caso: ela exige uma ROTAÇÃO, e a vítima que faz
+// logout está fazendo o oposto. Como não existe "encerrar todas as sessões"
+// nem troca de senha que revogue, o logout era a única alavanca do usuário
+// contra uma sessão suspeita — e não mexia nela.
+//
+// Cada login abre família nova, então isto não desloga os outros
+// dispositivos: derruba a cadeia deste login, que é o que o usuário quer
+// dizer com "sair".
 //
 // Revogar um token que não existe, ou já revogado, devolve nil (ruling R28):
 // logout é idempotente. Um cliente que reenvia o logout, ou que manda um
@@ -155,7 +167,17 @@ func (m *Manager) Revoke(ctx context.Context, token string) error {
 	hash := crypto.HashToken(token)
 	now := m.clk.Now()
 	return m.store.InTx(ctx, func(ctx context.Context, tx Tx) error {
-		return tx.RevokeByHash(ctx, hash, now)
+		// LockSessionByHash trava a linha com FOR UPDATE, o que fecha a
+		// corrida com uma rotação simultânea: o logout não pode ler a família
+		// e revogá-la enquanto uma rotação insere um sucessor nela.
+		cur, err := tx.LockSessionByHash(ctx, hash)
+		if errors.Is(err, ErrNotFound) {
+			return nil // R28
+		}
+		if err != nil {
+			return err
+		}
+		return tx.RevokeFamily(ctx, cur.FamilyID, now)
 	})
 }
 

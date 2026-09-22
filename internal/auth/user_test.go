@@ -157,3 +157,61 @@ var (
 	_ auth.Store     = (*auth.PGStore)(nil)
 	_ auth.UserStore = (*auth.PGStore)(nil)
 )
+
+// TestExpiredLockRestartsTheFailureCount fecha um DoS de conta permanente.
+//
+// O contador só era zerado por ResetFailures, que só roda num login BEM
+// SUCEDIDO — e o login bem sucedido é recusado enquanto a conta está travada.
+// Então, vencido o bloqueio, failed_attempts continuava no limiar e UMA senha
+// errada re-travava por mais quinze minutos. Um atacante com uma requisição a
+// cada quinze minutos (96 por dia, três ordens de grandeza abaixo do
+// limitador) mantinha a vítima fora da própria conta para sempre, sem nunca
+// ganhar acesso e sem que ela descobrisse o motivo: o bloqueio é silencioso
+// por design (R34).
+func TestExpiredLockRestartsTheFailureCount(t *testing.T) {
+	_, pool, clk, userID := setup(t)
+	store := auth.NewPGStore(pool)
+	ctx := context.Background()
+	agora := clk.Now()
+
+	for range auth.LockThreshold {
+		if err := store.RecordFailure(ctx, userID, agora); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, ate := lerTravas(t, pool, userID); ate == nil {
+		t.Fatal("a conta não travou no limiar; o resto do teste seria vácuo")
+	}
+
+	// Depois do vencimento, uma única falha não pode re-travar.
+	depois := agora.Add(auth.LockDuration).Add(time.Minute)
+	if err := store.RecordFailure(ctx, userID, depois); err != nil {
+		t.Fatal(err)
+	}
+
+	tentativas, ate := lerTravas(t, pool, userID)
+	if tentativas != 1 {
+		t.Errorf("failed_attempts = %d depois da primeira falha pós-vencimento, queria 1", tentativas)
+	}
+	if ate != nil && depois.Before(*ate) {
+		t.Errorf("uma única falha re-travou a conta até %v: DoS permanente a 96 requisições por dia", ate)
+	}
+}
+
+// A contagem dentro de uma janela ainda válida continua somando: corrigir o
+// vencimento não pode virar um reset que apaga a força bruta em curso.
+func TestFailuresStillAccumulateWhileTheLockIsLive(t *testing.T) {
+	_, pool, clk, userID := setup(t)
+	store := auth.NewPGStore(pool)
+	ctx := context.Background()
+	agora := clk.Now()
+
+	for i := range 3 {
+		if err := store.RecordFailure(ctx, userID, agora.Add(time.Duration(i)*time.Second)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if tentativas, _ := lerTravas(t, pool, userID); tentativas != 3 {
+		t.Errorf("failed_attempts = %d, queria 3: a contagem parou de somar", tentativas)
+	}
+}

@@ -355,7 +355,6 @@ func (txFalsa) MarkSessionUsed(context.Context, uuid.UUID, time.Time) error {
 	return nil
 }
 func (txFalsa) RevokeFamily(context.Context, uuid.UUID, time.Time) error { return nil }
-func (txFalsa) RevokeByHash(context.Context, []byte, time.Time) error    { return nil }
 func (txFalsa) InsertAudit(context.Context, uuid.UUID, string, []byte, time.Time) error {
 	return nil
 }
@@ -417,5 +416,65 @@ func TestTokenIsStoredHashed(t *testing.T) {
 	}
 	if bytes.Contains(tokenHash, []byte(tok)) {
 		t.Error("o token foi gravado em claro: quem ler a tabela assume qualquer sessão")
+	}
+}
+
+// TestLogoutKillsTheWholeFamily dá ao logout o efeito que o usuário supõe
+// que ele tem.
+//
+// Cenário: o refresh da vítima foi copiado e o ladrão já rotacionou, então a
+// cadeia viva é a dele. A vítima desconfia e faz logout — que marcava apenas
+// a linha do cookie dela. A detecção de reúso não salva: ela exige uma
+// ROTAÇÃO, e a vítima acabou de fazer o oposto. Logout é a única alavanca que
+// o usuário tem contra uma sessão suspeita, e não havia outra: não existe
+// "encerrar todas as sessões" nem troca de senha que revogue.
+func TestLogoutKillsTheWholeFamily(t *testing.T) {
+	mgr, pool, _, userID := setup(t)
+	ctx := context.Background()
+
+	daVitima, _, err := mgr.Issue(ctx, userID, meta)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// O ladrão rotaciona com o token copiado e passa a ter a cadeia viva.
+	doLadrao, _, err := mgr.Rotate(ctx, daVitima, meta)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	vivas := func() int {
+		t.Helper()
+		var n int
+		if err := pool.QueryRow(ctx,
+			`SELECT count(*) FROM sessions WHERE user_id = $1 AND revoked_at IS NULL`,
+			userID).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	if vivas() == 0 {
+		t.Fatal("nenhuma sessão viva antes do logout; o resto do teste seria vácuo")
+	}
+
+	if err := mgr.Revoke(ctx, daVitima); err != nil {
+		t.Fatal(err)
+	}
+
+	if n := vivas(); n != 0 {
+		t.Errorf("%d sessões vivas depois do logout: a cadeia do ladrão sobreviveu", n)
+	}
+	// A prova direta: o token do ladrão não rotaciona mais.
+	if _, _, err := mgr.Rotate(ctx, doLadrao, meta); err == nil {
+		t.Error("o ladrão rotacionou depois do logout da vítima")
+	}
+}
+
+// R28 preservado: logout continua idempotente e não diz nada sobre a
+// existência do token.
+func TestRevokingAnUnknownTokenStaysSilent(t *testing.T) {
+	mgr, _, _, _ := setup(t)
+	if err := mgr.Revoke(context.Background(), "token-que-nunca-existiu"); err != nil {
+		t.Errorf("revogar token desconhecido devolveu %v, queria nil", err)
 	}
 }

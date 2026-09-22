@@ -36,7 +36,6 @@ type Tx interface {
 	InsertSession(ctx context.Context, r SessionRow) error
 	MarkSessionUsed(ctx context.Context, id uuid.UUID, at time.Time) error
 	RevokeFamily(ctx context.Context, familyID uuid.UUID, at time.Time) error
-	RevokeByHash(ctx context.Context, hash []byte, at time.Time) error
 	InsertAudit(ctx context.Context, userID uuid.UUID, action string, ipHash []byte, at time.Time) error
 }
 
@@ -112,16 +111,6 @@ func (t *pgTx) RevokeFamily(ctx context.Context, familyID uuid.UUID, at time.Tim
 		familyID, at)
 	if err != nil {
 		return fmt.Errorf("revogar família: %w", err)
-	}
-	return nil
-}
-
-func (t *pgTx) RevokeByHash(ctx context.Context, hash []byte, at time.Time) error {
-	_, err := t.tx.Exec(ctx,
-		`UPDATE sessions SET revoked_at = $2 WHERE token_hash = $1 AND revoked_at IS NULL`,
-		hash, at)
-	if err != nil {
-		return fmt.Errorf("revogar sessão: %w", err)
 	}
 	return nil
 }

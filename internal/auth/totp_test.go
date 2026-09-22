@@ -451,3 +451,45 @@ func TestRecoveryCodeUseIsAudited(t *testing.T) {
 		t.Errorf("%d eventos totp.recovery_used depois do uso, queria 1", n)
 	}
 }
+
+// TestConfirmRejectsAWrongCode trava a propriedade central do cadastro do
+// segundo fator, que estava sem teste nenhum.
+//
+// Verify com código errado era testado em três lugares, o que fazia a
+// propriedade PARECER coberta; Confirm com código errado, em nenhum, e a
+// linha que devolve ErrTOTPInvalid nunca havia executado. Sem esta trava,
+// derrubar o `!` da guarda deixava a suíte inteira verde — e a confirmação
+// deixava de provar posse do autenticador, que é a única coisa que ela faz.
+func TestConfirmRejectsAWrongCode(t *testing.T) {
+	svc, pool, userID := setupTOTP(t)
+	ctx := context.Background()
+	now := time.Date(2026, 9, 22, 12, 0, 15, 0, time.UTC)
+
+	if _, err := svc.Enroll(ctx, userID, "totp@exemplo.com"); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := svc.Confirm(ctx, userID, "000000", now); !errors.Is(err, auth.ErrTOTPInvalid) {
+		t.Errorf("Confirm com código errado devolveu %v, queria ErrTOTPInvalid", err)
+	}
+
+	// A asserção que distingue "recusou" de "recusou e ativou mesmo assim" —
+	// a mesma distinção que escondeu o bug do Rotate na Task 6.
+	var confirmado *time.Time
+	if err := pool.QueryRow(ctx,
+		`SELECT totp_confirmed_at FROM users WHERE id = $1`, userID).Scan(&confirmado); err != nil {
+		t.Fatal(err)
+	}
+	if confirmado != nil {
+		t.Error("o Confirm recusado ativou o segundo fator mesmo assim")
+	}
+
+	var codigos int
+	if err := pool.QueryRow(ctx,
+		`SELECT count(*) FROM totp_recovery_codes WHERE user_id = $1`, userID).Scan(&codigos); err != nil {
+		t.Fatal(err)
+	}
+	if codigos != 0 {
+		t.Errorf("o Confirm recusado gerou %d códigos de recuperação", codigos)
+	}
+}

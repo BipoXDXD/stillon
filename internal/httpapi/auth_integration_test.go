@@ -9,6 +9,7 @@ import (
 	"net/http/cookiejar"
 	"net/http/httptest"
 	"net/netip"
+	"strings"
 	"testing"
 	"time"
 
@@ -792,4 +793,87 @@ func TestSessionsBehindATrustedProxyRecordDistinctOrigins(t *testing.T) {
 		t.Errorf("%d origens distintas gravadas em sessions.ip_hash, queria 2: "+
 			"a coluna não correlaciona nada se todo mundo é o proxy", distintos)
 	}
+}
+
+// TestTheMiddlewareChainIsActuallyWired trava o wiring, e não os middlewares.
+//
+// Os testes de middleware montam cadeias À MÃO, então provam cada peça e
+// nunca a montagem em routes.go. RequestID, Recover, RateLimit,
+// RequireCustomHeader e Authn estavam travados pelos testes de integração;
+// SecurityHeaders, CORS e BodyLimit não estavam por nada — apagar as três
+// linhas de routes.go deixava a suíte inteira verde e tirava CSP, HSTS e o
+// MaxBytesReader do servidor real.
+func TestTheMiddlewareChainIsActuallyWired(t *testing.T) {
+	a := newAPI(t)
+
+	t.Run("SecurityHeaders", func(t *testing.T) {
+		resp, err := http.Get(a.srv.URL + "/api/v1/me")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+
+		for cabecalho, querido := range map[string]string{
+			"X-Content-Type-Options":    "nosniff",
+			"Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+			"Referrer-Policy":           "no-referrer",
+			"X-Frame-Options":           "DENY",
+		} {
+			if got := resp.Header.Get(cabecalho); got != querido {
+				t.Errorf("%s = %q, queria %q", cabecalho, got, querido)
+			}
+		}
+		if csp := resp.Header.Get("Content-Security-Policy"); !strings.Contains(csp, "frame-ancestors 'none'") {
+			t.Errorf("CSP = %q, queria conter frame-ancestors 'none'", csp)
+		}
+	})
+
+	t.Run("CORS", func(t *testing.T) {
+		pedir := func(origem string) *http.Response {
+			t.Helper()
+			req, err := http.NewRequest(http.MethodGet, a.srv.URL+"/api/v1/me", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			req.Header.Set("Origin", origem)
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return resp
+		}
+
+		legitima := pedir("https://app.exemplo.com")
+		defer legitima.Body.Close()
+		if got := legitima.Header.Get("Access-Control-Allow-Origin"); got != "https://app.exemplo.com" {
+			t.Errorf("origem configurada recebeu ACAO %q, queria o eco da origem", got)
+		}
+
+		// A perna que importa: sem ela, um CORS que ecoasse QUALQUER origem
+		// passaria no teste acima.
+		hostil := pedir("https://atacante.exemplo")
+		defer hostil.Body.Close()
+		if got := hostil.Header.Get("Access-Control-Allow-Origin"); got != "" {
+			t.Errorf("origem hostil recebeu ACAO %q, queria vazio", got)
+		}
+	})
+
+	t.Run("BodyLimit", func(t *testing.T) {
+		gigante := bytes.NewReader(bytes.Repeat([]byte("a"), (1<<20)+1))
+		req, err := http.NewRequest(http.MethodPost, a.srv.URL+"/api/v1/auth/login", gigante)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Requested-With", "sentinela")
+
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode < 400 || resp.StatusCode >= 500 {
+			t.Errorf("corpo acima do limite devolveu %d, queria recusa 4xx", resp.StatusCode)
+		}
+	})
 }

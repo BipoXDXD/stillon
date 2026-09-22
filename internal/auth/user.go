@@ -57,16 +57,37 @@ func (s *PGStore) ByEmail(ctx context.Context, email string) (User, error) {
 // RecordFailure incrementa o contador e aplica o bloqueio no mesmo UPDATE.
 // Fazer as duas coisas em uma instrução evita corrida entre tentativas
 // simultâneas de força bruta.
+//
+// Um bloqueio VENCIDO reinicia a contagem, e isso não é detalhe. O contador
+// só zerava em ResetFailures, que roda apenas num login bem sucedido — e o
+// login bem sucedido é recusado enquanto a conta está travada. O resultado
+// era uma armadilha fechada: passado o bloqueio, failed_attempts continuava
+// no limiar e UMA senha errada re-travava por mais quinze minutos. Uma
+// requisição a cada quinze minutos, 96 por dia, muito abaixo do limitador,
+// mantinha a vítima fora da conta para sempre. O atacante não ganhava acesso
+// nenhum: era negação de serviço pura sobre conta alheia, e silenciosa,
+// porque o bloqueio não se anuncia (R34).
+//
+// A comparação usa $4, o instante recebido, e nunca now(): o relógio é
+// injetado, e um now() do banco divergiria do clock.Fake nos testes.
+//
+// Ambos os CASE enxergam a linha ANTES do UPDATE, que é o que permite decidir
+// as duas colunas a partir do mesmo estado. (Pressupõe LockThreshold >= 2: com
+// limiar 1, a contagem reiniciada nunca voltaria a travar no mesmo UPDATE.)
 func (s *PGStore) RecordFailure(ctx context.Context, userID uuid.UUID, at time.Time) error {
 	_, err := s.pool.Exec(ctx, `
 		UPDATE users
-		   SET failed_attempts = failed_attempts + 1,
+		   SET failed_attempts = CASE
+		           WHEN locked_until IS NOT NULL AND locked_until <= $4 THEN 1
+		           ELSE failed_attempts + 1
+		       END,
 		       locked_until = CASE
+		           WHEN locked_until IS NOT NULL AND locked_until <= $4 THEN NULL
 		           WHEN failed_attempts + 1 >= $2 THEN $3
 		           ELSE locked_until
 		       END
 		 WHERE id = $1`,
-		userID, LockThreshold, at.Add(LockDuration))
+		userID, LockThreshold, at.Add(LockDuration), at)
 	if err != nil {
 		return fmt.Errorf("registrar falha de login: %w", err)
 	}
