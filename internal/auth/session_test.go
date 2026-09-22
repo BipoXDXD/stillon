@@ -309,3 +309,86 @@ func TestConcurrentRotationLetsOnlyOneWin(t *testing.T) {
 		t.Errorf("%d sessões continuaram vivas; queria 0", vivas)
 	}
 }
+
+// A chave do HMAC de IP é validada na construção (ruling R27). Sem isso, a
+// chave curta só apareceria como panic de crypto.HashIP dentro do handler,
+// no primeiro login em produção, em vez de na partida do processo.
+func TestNewManagerRejectsShortIPKey(t *testing.T) {
+	casos := map[string][]byte{
+		"nil":            nil,
+		"vazia":          {},
+		"31 bytes":       []byte("chave-de-teste-com-31-bytes-ok!"),
+		"32 bytes serve": ipKey, // não pode entrar em panic
+	}
+	for nome, chave := range casos {
+		t.Run(nome, func(t *testing.T) {
+			deveEntrarEmPanic := len(chave) < 32
+
+			defer func() {
+				r := recover()
+				if deveEntrarEmPanic && r == nil {
+					t.Errorf("chave de %d bytes foi aceita; queria panic", len(chave))
+				}
+				if !deveEntrarEmPanic && r != nil {
+					t.Errorf("chave de 32 bytes entrou em panic: %v", r)
+				}
+			}()
+
+			_ = auth.NewManager(nil, clock.Real{}, chave)
+		})
+	}
+}
+
+// Fakes para exercitar a falha de commit sem banco: só o InTx precisa mentir.
+type txFalsa struct{ usadaEm time.Time }
+
+func (t txFalsa) LockSessionByHash(context.Context, []byte) (auth.SessionRow, error) {
+	// Sessão já consumida: leva Rotate ao ramo de detecção de reúso.
+	return auth.SessionRow{
+		ID: uuid.New(), UserID: uuid.New(), FamilyID: uuid.New(),
+		ExpiresAt: t.usadaEm.Add(time.Hour), UsedAt: &t.usadaEm,
+	}, nil
+}
+
+func (txFalsa) InsertSession(context.Context, auth.SessionRow) error { return nil }
+func (txFalsa) MarkSessionUsed(context.Context, uuid.UUID, time.Time) error {
+	return nil
+}
+func (txFalsa) RevokeFamily(context.Context, uuid.UUID, time.Time) error { return nil }
+func (txFalsa) RevokeByHash(context.Context, []byte, time.Time) error    { return nil }
+func (txFalsa) InsertAudit(context.Context, uuid.UUID, string, []byte, time.Time) error {
+	return nil
+}
+
+type storeQueFalhaNoCommit struct {
+	agora time.Time
+	err   error
+}
+
+func (s storeQueFalhaNoCommit) InTx(ctx context.Context, fn func(context.Context, auth.Tx) error) error {
+	if err := fn(ctx, txFalsa{usadaEm: s.agora}); err != nil {
+		return err
+	}
+	return s.err // o callback devolveu nil; é o commit que falha
+}
+
+// Detectado o reúso, a revogação da família e a auditoria só valem se a
+// transação commitar. Se o commit falha, nada disso persistiu, e devolver
+// ErrTokenReuse afirmaria uma defesa que não aconteceu — quem chama tem de
+// receber o erro da transação.
+func TestRotateReturnsCommitErrorInsteadOfReuse(t *testing.T) {
+	agora := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
+	falhaNoCommit := errors.New("commit falhou")
+
+	mgr := auth.NewManager(
+		storeQueFalhaNoCommit{agora: agora, err: falhaNoCommit},
+		clock.NewFake(agora), ipKey)
+
+	_, _, err := mgr.Rotate(context.Background(), "qualquer-token", meta)
+	if !errors.Is(err, falhaNoCommit) {
+		t.Errorf("erro = %v, queria o erro do commit", err)
+	}
+	if errors.Is(err, auth.ErrTokenReuse) {
+		t.Error("devolveu ErrTokenReuse por cima de um commit falho: afirma uma revogação que não persistiu")
+	}
+}

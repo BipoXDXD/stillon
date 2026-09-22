@@ -49,7 +49,16 @@ type Manager struct {
 	ipKey []byte
 }
 
+// NewManager entra em panic com ipKey curta em vez de devolver erro (ruling
+// R27, mesma decisão do R7 em crypto.HashIP). A validação fica aqui, na
+// partida do processo, e não no primeiro Issue/Rotate: sem ela o panic de
+// HashIP só estouraria dentro do handler HTTP, no primeiro login em produção.
+// config.Load já garante 32 bytes para IPHashKey, então chave curta chegando
+// aqui é erro de programação, não de configuração.
 func NewManager(store Store, clk clock.Clock, ipKey []byte) *Manager {
+	if len(ipKey) < crypto.KeySize {
+		panic("auth: NewManager exige ipKey de ao menos 32 bytes")
+	}
 	return &Manager{store: store, clk: clk, ipKey: ipKey}
 }
 
@@ -124,6 +133,9 @@ func (m *Manager) Rotate(ctx context.Context, token string, meta Meta) (string, 
 		newToken, s, err = m.insert(ctx, tx, cur.UserID, cur.FamilyID, meta)
 		return err
 	})
+	// O erro da transação vem antes do reúso de propósito: se o commit falhar,
+	// a revogação da família e a auditoria não persistiram, e devolver
+	// ErrTokenReuse afirmaria uma defesa que não aconteceu.
 	if err != nil {
 		return "", Session{}, err
 	}
@@ -134,6 +146,11 @@ func (m *Manager) Rotate(ctx context.Context, token string, meta Meta) (string, 
 }
 
 // Revoke encerra uma sessão específica. É o caminho do logout.
+//
+// Revogar um token que não existe, ou já revogado, devolve nil (ruling R28):
+// logout é idempotente. Um cliente que reenvia o logout, ou que manda um
+// cookie já morto, não deve receber erro — e o retorno não diz nada sobre a
+// existência do token, então quem chama não pode inferir nada dele.
 func (m *Manager) Revoke(ctx context.Context, token string) error {
 	hash := crypto.HashToken(token)
 	now := m.clk.Now()
