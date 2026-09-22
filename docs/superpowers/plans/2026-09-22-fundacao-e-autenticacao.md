@@ -1022,6 +1022,12 @@ func TestSecretNeverSerializesToJSON(t *testing.T) {
 	if bytes.Contains(b, []byte(plaintext)) {
 		t.Errorf("json.Marshal vazou o segredo: %s", b)
 	}
+	// Sem esta segunda asserção o teste é vacuamente verde: encoding/json
+	// serializa []byte como base64, então a ausência do plaintext não prova
+	// que MarshalJSON foi chamado.
+	if !bytes.Contains(b, []byte("[REDACTED]")) {
+		t.Errorf("json.Marshal não trouxe o marcador de redação: %s", b)
+	}
 }
 
 func TestSecretNeverReachesTheLog(t *testing.T) {
@@ -1032,6 +1038,12 @@ func TestSecretNeverReachesTheLog(t *testing.T) {
 
 	if strings.Contains(buf.String(), plaintext) {
 		t.Errorf("slog vazou o segredo: %s", buf.String())
+	}
+	// Mesma armadilha do teste de JSON: o slog também codifica []byte em
+	// base64, então só a ausência do plaintext não detectaria a remoção de
+	// LogValue.
+	if !strings.Contains(buf.String(), "[REDACTED]") {
+		t.Errorf("slog não trouxe o marcador de redação: %s", buf.String())
 	}
 }
 
