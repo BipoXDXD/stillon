@@ -213,6 +213,76 @@ func (s *TOTP) Verify(ctx context.Context, userID uuid.UUID, code string, now ti
 	return nil
 }
 
+// Disable desliga o segundo fator e apaga tudo que o sustentava.
+//
+// Existe porque o R38 fechou o único caminho de volta: recusar o recadastro
+// impediu o bypass, mas deixou sem saída quem perdeu o telefone — e, pior,
+// quem teve o fator LIGADO por um atacante com sessão roubada. A diferença
+// entre esta rota e o bypass que o R38 fechou é a prova exigida: aqui é
+// preciso posse do fator, e o chamador ainda exige a senha antes.
+//
+// Um código de recuperação serve no lugar do código do app, que é o caso que
+// motiva a rota existir.
+func (s *TOTP) Disable(ctx context.Context, userID uuid.UUID, code string, now time.Time) error {
+	secret, confirmed, err := s.load(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if !confirmed {
+		return ErrTOTPNotEnrolled
+	}
+
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("abrir transação: %w", err)
+	}
+	defer tx.Rollback(ctx) // no-op depois de Commit
+
+	if !validateTOTP(code, secret, now) {
+		// O DELETE ... RETURNING é a própria verificação do código de
+		// recuperação: não há janela entre conferir e consumir.
+		var id uuid.UUID
+		err := tx.QueryRow(ctx,
+			`DELETE FROM totp_recovery_codes WHERE user_id = $1 AND code_hash = $2 RETURNING id`,
+			userID, crypto.HashToken(code)).Scan(&id)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrTOTPInvalid
+		}
+		if err != nil {
+			return fmt.Errorf("consumir código de recuperação: %w", err)
+		}
+	}
+
+	// A guarda vai na cláusula WHERE, e não num SELECT anterior, pelo mesmo
+	// motivo do R38: entre ler e escrever cabe uma desativação concorrente.
+	tag, err := tx.Exec(ctx,
+		`UPDATE users SET totp_secret_enc = NULL, totp_confirmed_at = NULL
+		   WHERE id = $1 AND totp_confirmed_at IS NOT NULL`, userID)
+	if err != nil {
+		return fmt.Errorf("desativar TOTP: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrTOTPNotEnrolled
+	}
+
+	// Os códigos restantes morrem com o fator: deixá-los vivos seria manter
+	// credencial de segundo fator para um fator que não existe mais.
+	if _, err := tx.Exec(ctx,
+		`DELETE FROM totp_recovery_codes WHERE user_id = $1`, userID); err != nil {
+		return fmt.Errorf("limpar códigos de recuperação: %w", err)
+	}
+
+	// Desligar o segundo fator é exatamente o que um sequestro tentaria: o
+	// evento é a pista que o dono da conta teria (mesma razão do R39).
+	if err := insertAudit(ctx, tx, userID, "totp.disabled", nil, now); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("desativar TOTP: %w", err)
+	}
+	return nil
+}
+
 func (s *TOTP) IsEnabled(ctx context.Context, userID uuid.UUID) (bool, error) {
 	var confirmed *time.Time
 	err := s.pool.QueryRow(ctx,

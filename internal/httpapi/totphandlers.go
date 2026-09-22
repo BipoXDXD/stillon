@@ -15,8 +15,15 @@ type codeRequest struct {
 	Code string `json:"code"`
 }
 
-// TOTPEnroll exige sessão ativa: cadastrar segundo fator é operação de conta
-// já autenticada.
+// TOTPEnroll exige sessão ativa E prova de posse da senha.
+//
+// A sessão sozinha não basta, e o motivo é o espelho exato do R38. Aquela
+// ruling fechou "token roubado DESLIGA o segundo fator"; faltava fechar
+// "token roubado LIGA o segundo fator com o autenticador do ladrão", que é
+// pior por três razões: o R38 removeu o caminho de volta, então o sequestro
+// não se desfaz por dentro; os códigos de recuperação saem no mesmo passo,
+// para o atacante; e ele persiste depois que a sessão roubada expira,
+// enquanto o dono perde o acesso. A senha é o que o ladrão de sessão não tem.
 func (h *AuthHandlers) TOTPEnroll(w http.ResponseWriter, r *http.Request) {
 	userID, ok := middleware.UserID(r.Context())
 	if !ok {
@@ -24,9 +31,19 @@ func (h *AuthHandlers) TOTPEnroll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var req passwordRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		apierr.WriteError(w, r, apierr.CodeValidation)
+		return
+	}
+
 	user, err := h.users.ByID(r.Context(), userID)
 	if err != nil {
 		h.internal(w, r, "buscar usuário", err)
+		return
+	}
+
+	if !h.senhaConfere(w, r, user, req.Password) {
 		return
 	}
 
@@ -130,4 +147,82 @@ func (h *AuthHandlers) TOTPVerify(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.issue(w, r, userID)
+}
+
+type passwordRequest struct {
+	Password string `json:"password"`
+}
+
+// senhaConfere escreve o 401 e devolve false quando a senha não bate. O erro
+// é o mesmo CodeInvalidCredentials do login, pelo motivo do R34: um código
+// distinto aqui contaria ao atacante que a sessão que ele roubou é válida e
+// que só falta a senha.
+func (h *AuthHandlers) senhaConfere(w http.ResponseWriter, r *http.Request, user auth.User, senha string) bool {
+	ok, _, err := auth.VerifyPassword(user.PasswordHash, senha)
+	if err != nil {
+		h.internal(w, r, "verificar senha", err)
+		return false
+	}
+	if !ok {
+		apierr.WriteError(w, r, apierr.CodeInvalidCredentials)
+		return false
+	}
+	return true
+}
+
+// TOTPDisable exige DUAS provas: a senha e a posse do fator.
+//
+// Só a senha rebaixaria o 2FA a nada — quem descobrisse a senha desligaria o
+// segundo fator sozinho. Só o código reabriria o bypass que o R38 fechou, em
+// que uma sessão roubada bastava. O código de recuperação vale no lugar do
+// código do app, senão quem perde o telefone fica sem saída, que foi
+// justamente a lacuna que o R38 deixou.
+func (h *AuthHandlers) TOTPDisable(w http.ResponseWriter, r *http.Request) {
+	userID, ok := middleware.UserID(r.Context())
+	if !ok {
+		apierr.WriteError(w, r, apierr.CodeUnauthorized)
+		return
+	}
+
+	var req struct {
+		Password     string `json:"password"`
+		Code         string `json:"code"`
+		RecoveryCode string `json:"recovery_code"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		apierr.WriteError(w, r, apierr.CodeValidation)
+		return
+	}
+
+	user, err := h.users.ByID(r.Context(), userID)
+	if err != nil {
+		h.internal(w, r, "buscar usuário", err)
+		return
+	}
+	if !h.senhaConfere(w, r, user, req.Password) {
+		return
+	}
+
+	prova := req.Code
+	if prova == "" {
+		prova = req.RecoveryCode
+	}
+	if prova == "" {
+		// Sem a segunda prova o pedido não chega ao serviço: a senha sozinha
+		// nunca desliga o fator.
+		apierr.WriteError(w, r, apierr.CodeUnauthorized)
+		return
+	}
+
+	err = h.totp.Disable(r.Context(), userID, prova, h.clk.Now())
+	if errors.Is(err, auth.ErrTOTPInvalid) || errors.Is(err, auth.ErrTOTPNotEnrolled) {
+		apierr.WriteError(w, r, apierr.CodeUnauthorized)
+		return
+	}
+	if err != nil {
+		h.internal(w, r, "desativar TOTP", err)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }

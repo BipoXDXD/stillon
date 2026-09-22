@@ -50,6 +50,9 @@ func Routes(ctx context.Context, cfg *config.Config, store *auth.PGStore, sessio
 
 	mux.Handle("POST /api/v1/auth/totp/enroll", authn(http.HandlerFunc(h.TOTPEnroll)))
 	mux.Handle("POST /api/v1/auth/totp/confirm", authn(http.HandlerFunc(h.TOTPConfirm)))
+	// Desativar é a saída que o R38 tirou. Exige senha E posse do fator, no
+	// handler — a sessão sozinha aqui seria o bypass de volta.
+	mux.Handle("POST /api/v1/auth/totp/disable", authn(http.HandlerFunc(h.TOTPDisable)))
 	// Verify não passa por authn: o usuário ainda não tem sessão, só o
 	// desafio. O limitador cobre o lugar do bloqueio por conta, que aqui não
 	// se aplica — a senha já foi acertada, o que resta é adivinhar seis

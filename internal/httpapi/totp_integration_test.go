@@ -61,7 +61,7 @@ func cadastrarTOTP(t *testing.T, a *api, c *http.Client) string {
 		t.Fatal("login sem TOTP não devolveu access token")
 	}
 
-	er := postComToken(t, c, a.srv.URL+"/api/v1/auth/totp/enroll", primeiro.AccessToken, nil)
+	er := postComToken(t, c, a.srv.URL+"/api/v1/auth/totp/enroll", primeiro.AccessToken, map[string]string{"password": testPass})
 	defer er.Body.Close()
 	if er.StatusCode != http.StatusOK {
 		t.Fatalf("enroll devolveu %d", er.StatusCode)
@@ -105,7 +105,17 @@ func cadastrarTOTP(t *testing.T, a *api, c *http.Client) string {
 		t.Fatalf("/me com access token legítimo devolveu %d, queria 200", got)
 	}
 
+	a.recuperacao = confirmado.RecoveryCodes
 	return key.Secret()
+}
+
+// codigosDeRecuperacao devolve os códigos guardados pelo cadastro.
+func codigosDeRecuperacao(t *testing.T, a *api, _ *http.Client) []string {
+	t.Helper()
+	if len(a.recuperacao) != 10 {
+		t.Fatalf("%d códigos guardados, queria 10", len(a.recuperacao))
+	}
+	return a.recuperacao
 }
 
 // Prova a propriedade que importa: com TOTP ativo, senha correta sozinha não
@@ -260,7 +270,7 @@ func TestRecoveryCodeClosesLoginOnlyOnce(t *testing.T) {
 	}
 	entrada.Body.Close()
 
-	er := postComToken(t, c, a.srv.URL+"/api/v1/auth/totp/enroll", primeiro.AccessToken, nil)
+	er := postComToken(t, c, a.srv.URL+"/api/v1/auth/totp/enroll", primeiro.AccessToken, map[string]string{"password": testPass})
 	var enroll struct {
 		URI string `json:"otpauth_uri"`
 	}
@@ -360,7 +370,7 @@ func TestEnrollIsForbiddenAfterTOTPIsConfirmed(t *testing.T) {
 
 	// O token de quem já está dentro — exatamente o que um roubo entregaria.
 	token := accessTokenValido(t, a)
-	resp := postComToken(t, c, a.srv.URL+"/api/v1/auth/totp/enroll", token, nil)
+	resp := postComToken(t, c, a.srv.URL+"/api/v1/auth/totp/enroll", token, map[string]string{"password": testPass})
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusForbidden {
 		t.Errorf("enroll com fator ativo devolveu %d, queria 403", resp.StatusCode)
@@ -552,5 +562,197 @@ func TestSecondFactorIsRefusedWhileTheAccountIsLocked(t *testing.T) {
 	defer liberado.Body.Close()
 	if liberado.StatusCode != http.StatusOK {
 		t.Errorf("depois de o bloqueio expirar o segundo fator devolveu %d, queria 200", liberado.StatusCode)
+	}
+}
+
+// segredoGravado responde se o enroll chegou a gravar um segredo para o
+// usuário. É a asserção que distingue "recusou" de "recusou e gravou mesmo
+// assim" — sem ela, um handler que devolvesse 401 depois de gravar passaria.
+func segredoGravado(t *testing.T, a *api) bool {
+	t.Helper()
+	var sealed []byte
+	if err := a.pool.QueryRow(context.Background(),
+		`SELECT totp_secret_enc FROM users WHERE id = $1`, a.userID).Scan(&sealed); err != nil {
+		t.Fatal(err)
+	}
+	return len(sealed) > 0
+}
+
+// TestEnrollRequiresThePassword fecha o espelho do R38.
+//
+// O R38 fechou "token roubado DESLIGA o fator". Ninguém havia fechado "token
+// roubado LIGA o fator com o autenticador do ladrão", que é pior: como o R38
+// removeu o caminho de volta, o sequestro é permanente e os códigos de
+// recuperação saem no mesmo passo, para o atacante.
+func TestEnrollRequiresThePassword(t *testing.T) {
+	a := newAPI(t)
+	token := accessTokenValido(t, a)
+
+	resp := postComToken(t, http.DefaultClient, a.srv.URL+"/api/v1/auth/totp/enroll", token,
+		map[string]string{"password": "senha-que-nao-e-a-dele"})
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("enroll com senha errada devolveu %d, queria 401", resp.StatusCode)
+	}
+	if segredoGravado(t, a) {
+		t.Error("o enroll recusado gravou o segredo mesmo assim")
+	}
+}
+
+// TestStolenAccessTokenCannotEnableTheSecondFactor percorre o sequestro
+// inteiro: tudo que o atacante tem é um access token válido da vítima.
+func TestStolenAccessTokenCannotEnableTheSecondFactor(t *testing.T) {
+	a := newAPI(t)
+	roubado := accessTokenValido(t, a)
+
+	resp := postComToken(t, http.DefaultClient, a.srv.URL+"/api/v1/auth/totp/enroll", roubado, nil)
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusOK {
+		t.Fatal("enroll só com access token devolveu 200: a conta pode ser sequestrada")
+	}
+
+	// A prova que importa não é o status: é a vítima continuar entrando na
+	// própria conta com a senha, sem segundo fator nenhum no caminho.
+	c := clientWithJar(t)
+	entrada := login(t, a, c, testEmail, testPass)
+	defer entrada.Body.Close()
+	var corpo struct {
+		AccessToken  string `json:"access_token"`
+		TOTPRequired bool   `json:"totp_required"`
+	}
+	if err := json.NewDecoder(entrada.Body).Decode(&corpo); err != nil {
+		t.Fatal(err)
+	}
+	if corpo.TOTPRequired {
+		t.Error("a vítima passou a precisar de um segundo fator que ela não cadastrou")
+	}
+	if corpo.AccessToken == "" {
+		t.Error("a vítima perdeu o acesso à própria conta com a senha correta")
+	}
+}
+
+// estadoDoSegundoFator lê direto do banco: confirmado, segredo ainda gravado,
+// quantos códigos de recuperação sobraram e quantos eventos totp.disabled a
+// auditoria registrou.
+func estadoDoSegundoFator(t *testing.T, a *api) (confirmado, temSegredo bool, codigos, desativacoes int) {
+	t.Helper()
+	ctx := context.Background()
+	var at *time.Time
+	var sealed []byte
+	if err := a.pool.QueryRow(ctx,
+		`SELECT totp_confirmed_at, totp_secret_enc FROM users WHERE id = $1`, a.userID).
+		Scan(&at, &sealed); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.pool.QueryRow(ctx,
+		`SELECT count(*) FROM totp_recovery_codes WHERE user_id = $1`, a.userID).Scan(&codigos); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.pool.QueryRow(ctx,
+		`SELECT count(*) FROM audit_log WHERE user_id = $1 AND action = 'totp.disabled'`,
+		a.userID).Scan(&desativacoes); err != nil {
+		t.Fatal(err)
+	}
+	return at != nil, len(sealed) > 0, codigos, desativacoes
+}
+
+func desativar(t *testing.T, a *api, token string, corpo map[string]string) int {
+	t.Helper()
+	resp := postComToken(t, http.DefaultClient, a.srv.URL+"/api/v1/auth/totp/disable", token, corpo)
+	defer resp.Body.Close()
+	return resp.StatusCode
+}
+
+// TestDisableRequiresPasswordAndPossession dá a saída que o R38 tirou.
+//
+// Sem rota de desativação, quem foi sequestrado pelo caminho do item 20 não
+// tinha remédio dentro do sistema. A rota precisa de DUAS provas: a senha e a
+// posse do fator. Só a senha rebaixaria o 2FA a nada; só o código deixaria a
+// sessão roubada desligá-lo, que é exatamente o bypass do R38.
+func TestDisableRequiresPasswordAndPossession(t *testing.T) {
+	a := newAPI(t)
+	c := clientWithJar(t)
+	segredo := cadastrarTOTP(t, a, c)
+	token := accessTokenValido(t, a)
+
+	codigo := func() string {
+		t.Helper()
+		code, err := totp.GenerateCode(segredo, a.clk.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		return code
+	}
+
+	if got := desativar(t, a, token, map[string]string{"password": testPass}); got != http.StatusUnauthorized {
+		t.Errorf("desativar só com a senha devolveu %d, queria 401", got)
+	}
+	if got := desativar(t, a, token, map[string]string{"code": codigo()}); got != http.StatusUnauthorized {
+		t.Errorf("desativar só com o código devolveu %d, queria 401", got)
+	}
+	if got := desativar(t, a, token, map[string]string{
+		"password": "senha-que-nao-e-a-dele", "code": codigo()}); got != http.StatusUnauthorized {
+		t.Errorf("desativar com senha errada devolveu %d, queria 401", got)
+	}
+
+	// Nenhuma das três recusas pode ter desligado nada.
+	if confirmado, temSegredo, codigos, _ := estadoDoSegundoFator(t, a); !confirmado || !temSegredo || codigos != 10 {
+		t.Fatalf("uma recusa mexeu no estado: confirmado=%v segredo=%v códigos=%d",
+			confirmado, temSegredo, codigos)
+	}
+
+	if got := desativar(t, a, token, map[string]string{
+		"password": testPass, "code": codigo()}); got != http.StatusNoContent {
+		t.Fatalf("desativar com senha e código devolveu %d, queria 204", got)
+	}
+
+	confirmado, temSegredo, codigos, desativacoes := estadoDoSegundoFator(t, a)
+	if confirmado {
+		t.Error("o segundo fator continuou confirmado depois da desativação")
+	}
+	if temSegredo {
+		t.Error("o segredo continuou gravado depois da desativação")
+	}
+	if codigos != 0 {
+		t.Errorf("sobraram %d códigos de recuperação depois da desativação", codigos)
+	}
+	if desativacoes != 1 {
+		t.Errorf("auditoria registrou %d eventos totp.disabled, queria 1", desativacoes)
+	}
+
+	// A prova final: a conta volta a entrar só com a senha.
+	c2 := clientWithJar(t)
+	entrada := login(t, a, c2, testEmail, testPass)
+	defer entrada.Body.Close()
+	var corpo struct {
+		AccessToken  string `json:"access_token"`
+		TOTPRequired bool   `json:"totp_required"`
+	}
+	if err := json.NewDecoder(entrada.Body).Decode(&corpo); err != nil {
+		t.Fatal(err)
+	}
+	if corpo.TOTPRequired || corpo.AccessToken == "" {
+		t.Error("depois de desativar, o login ainda exige segundo fator")
+	}
+}
+
+// TestDisableAcceptsARecoveryCode é o caso que motiva a rota existir: quem
+// perdeu o telefone não tem código do app, e sem isto ficaria trancado.
+func TestDisableAcceptsARecoveryCode(t *testing.T) {
+	a := newAPI(t)
+	c := clientWithJar(t)
+	cadastrarTOTP(t, a, c)
+	token := accessTokenValido(t, a)
+
+	recuperacao := codigosDeRecuperacao(t, a, c)
+
+	if got := desativar(t, a, token, map[string]string{
+		"password": testPass, "recovery_code": recuperacao[0]}); got != http.StatusNoContent {
+		t.Fatalf("desativar com código de recuperação devolveu %d, queria 204", got)
+	}
+	if confirmado, temSegredo, codigos, _ := estadoDoSegundoFator(t, a); confirmado || temSegredo || codigos != 0 {
+		t.Errorf("desativação incompleta: confirmado=%v segredo=%v códigos=%d",
+			confirmado, temSegredo, codigos)
 	}
 }

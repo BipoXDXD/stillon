@@ -41,6 +41,9 @@ type api struct {
 	pool   *pgxpool.Pool
 	clk    *clock.Fake
 	userID uuid.UUID
+	// recuperacao guarda os códigos que o último cadastrarTOTP devolveu; eles
+	// só aparecem em claro uma vez, e mais de um teste precisa deles.
+	recuperacao []string
 }
 
 func newAPI(t *testing.T) *api {
