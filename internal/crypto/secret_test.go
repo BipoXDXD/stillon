@@ -52,6 +52,9 @@ func TestSecretNeverSerializesToJSON(t *testing.T) {
 	if bytes.Contains(b, []byte(plaintext)) {
 		t.Errorf("json.Marshal vazou o segredo: %s", b)
 	}
+	if !bytes.Contains(b, []byte("[REDACTED]")) {
+		t.Errorf("json.Marshal não trouxe o marcador de redação: %s", b)
+	}
 }
 
 func TestSecretNeverReachesTheLog(t *testing.T) {
@@ -62,6 +65,9 @@ func TestSecretNeverReachesTheLog(t *testing.T) {
 
 	if strings.Contains(buf.String(), plaintext) {
 		t.Errorf("slog vazou o segredo: %s", buf.String())
+	}
+	if !strings.Contains(buf.String(), "[REDACTED]") {
+		t.Errorf("slog não trouxe o marcador de redação: %s", buf.String())
 	}
 }
 
