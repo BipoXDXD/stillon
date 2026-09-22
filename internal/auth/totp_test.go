@@ -307,3 +307,147 @@ func TestVerifyFailsWhenEnrolledButNotConfirmed(t *testing.T) {
 		t.Errorf("erro = %v, queria ErrTOTPNotEnrolled", err)
 	}
 }
+
+// R38: com um fator já confirmado, Enroll recusa — e, o que mais importa,
+// recusa SEM estragar nada.
+//
+// A versão anterior zerava o totp_confirmed_at, e isso era um bypass completo:
+// quem tivesse um access token roubado desligava o segundo fator numa
+// requisição. A asserção que separa "recusou" de "recusou sem estragar" é a do
+// banco, logo abaixo — devolver erro é fácil, o difícil é não ter apagado o
+// fator no caminho.
+func TestEnrollIsRefusedWhenTOTPAlreadyConfirmed(t *testing.T) {
+	svc, pool, userID := setupTOTP(t)
+	ctx := context.Background()
+	now := time.Now()
+
+	if _, err := svc.Enroll(ctx, userID, "totp@exemplo.com"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Antes de confirmar, recadastrar é permitido: é o cadastro interrompido
+	// que recomeça. Esta é a perna oposta, sem a qual a recusa mais abaixo
+	// poderia vir de um Enroll que recusasse sempre. O segredo que vale é o
+	// deste segundo cadastro.
+	uri, err := svc.Enroll(ctx, userID, "totp@exemplo.com")
+	if err != nil {
+		t.Fatalf("recadastro antes da confirmação deveria ser permitido: %v", err)
+	}
+	secret := secretFromURI(t, uri)
+
+	code, err := totp.GenerateCode(secret, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Confirm(ctx, userID, code, now); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := svc.Enroll(ctx, userID, "totp@exemplo.com"); !errors.Is(err, auth.ErrTOTPAlreadyEnabled) {
+		t.Errorf("erro = %v, queria ErrTOTPAlreadyEnabled", err)
+	}
+
+	// O fator continua ativo no banco.
+	var confirmadoEm *time.Time
+	if err := pool.QueryRow(ctx,
+		`SELECT totp_confirmed_at FROM users WHERE id = $1`, userID).Scan(&confirmadoEm); err != nil {
+		t.Fatal(err)
+	}
+	if confirmadoEm == nil {
+		t.Error("o enroll recusado ainda assim desligou o segundo fator: bypass de 2FA")
+	}
+	if enabled, err := svc.IsEnabled(ctx, userID); err != nil || !enabled {
+		t.Errorf("IsEnabled = %v (erro %v) depois do enroll recusado, queria true", enabled, err)
+	}
+	// E o segredo original continua valendo: o enroll recusado não pode ter
+	// trocado a chave do usuário por outra que ele não tem no telefone.
+	if err := svc.Verify(ctx, userID, code, now); err != nil {
+		t.Errorf("o segredo confirmado deixou de valer depois do enroll recusado: %v", err)
+	}
+}
+
+// eventosDeAuditoria conta as entradas de audit_log de uma ação.
+func eventosDeAuditoria(t *testing.T, pool *pgxpool.Pool, userID uuid.UUID, action string) int {
+	t.Helper()
+	var n int
+	if err := pool.QueryRow(context.Background(),
+		`SELECT count(*) FROM audit_log WHERE user_id = $1 AND action = $2`,
+		userID, action).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
+// R39: ativar o segundo fator deixa rastro.
+func TestConfirmIsAudited(t *testing.T) {
+	svc, pool, userID := setupTOTP(t)
+	ctx := context.Background()
+	now := time.Now()
+
+	uri, err := svc.Enroll(ctx, userID, "totp@exemplo.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// O cadastro sozinho não é o evento: quem ativa é a confirmação.
+	if n := eventosDeAuditoria(t, pool, userID, "totp.enabled"); n != 0 {
+		t.Errorf("%d eventos totp.enabled antes de confirmar, queria 0", n)
+	}
+
+	code, err := totp.GenerateCode(secretFromURI(t, uri), now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Confirm(ctx, userID, code, now); err != nil {
+		t.Fatal(err)
+	}
+
+	if n := eventosDeAuditoria(t, pool, userID, "totp.enabled"); n != 1 {
+		t.Errorf("%d eventos totp.enabled depois de confirmar, queria 1", n)
+	}
+}
+
+// R39: uso de código de recuperação é sinal de perda de dispositivo OU de
+// comprometimento, e é a única pista que o dono da conta teria.
+func TestRecoveryCodeUseIsAudited(t *testing.T) {
+	svc, pool, userID := setupTOTP(t)
+	ctx := context.Background()
+	now := time.Now()
+
+	uri, err := svc.Enroll(ctx, userID, "totp@exemplo.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	secret := secretFromURI(t, uri)
+	code, err := totp.GenerateCode(secret, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recovery, err := svc.Confirm(ctx, userID, code, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Um código normal do app não é evento de recuperação. Sem esta perna,
+	// um insertAudit incondicional passaria no teste.
+	if err := svc.Verify(ctx, userID, code, now); err != nil {
+		t.Fatal(err)
+	}
+	if n := eventosDeAuditoria(t, pool, userID, "totp.recovery_used"); n != 0 {
+		t.Errorf("%d eventos totp.recovery_used depois de um código normal, queria 0", n)
+	}
+
+	// Um código errado também não.
+	if err := svc.Verify(ctx, userID, "000000", now); !errors.Is(err, auth.ErrTOTPInvalid) {
+		t.Fatal(err)
+	}
+	if n := eventosDeAuditoria(t, pool, userID, "totp.recovery_used"); n != 0 {
+		t.Errorf("%d eventos totp.recovery_used depois de um código errado, queria 0", n)
+	}
+
+	if err := svc.Verify(ctx, userID, recovery[0], now); err != nil {
+		t.Fatal(err)
+	}
+	if n := eventosDeAuditoria(t, pool, userID, "totp.recovery_used"); n != 1 {
+		t.Errorf("%d eventos totp.recovery_used depois do uso, queria 1", n)
+	}
+}

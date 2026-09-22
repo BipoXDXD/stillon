@@ -1,9 +1,11 @@
 package httpapi_test
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/pquerna/otp"
 	"github.com/pquerna/otp/totp"
@@ -315,5 +317,240 @@ func TestRecoveryCodeClosesLoginOnlyOnce(t *testing.T) {
 	}
 	if got := usar(confirmado.RecoveryCodes[1]); got != http.StatusOK {
 		t.Errorf("outro código de recuperação devolveu %d, queria 200", got)
+	}
+}
+
+// estadoDoBloqueio devolve o contador de falhas e se há bloqueio ativo.
+func estadoDoBloqueio(t *testing.T, a *api) (falhas int, bloqueado bool) {
+	t.Helper()
+	var ate *time.Time
+	if err := a.pool.QueryRow(context.Background(),
+		`SELECT failed_attempts, locked_until FROM users WHERE id = $1`, a.userID).
+		Scan(&falhas, &ate); err != nil {
+		t.Fatal(err)
+	}
+	return falhas, ate != nil && a.clk.Now().Before(*ate)
+}
+
+// desafioAtual faz login e devolve o token de desafio.
+func desafioAtual(t *testing.T, a *api, c *http.Client) string {
+	t.Helper()
+	resp := login(t, a, c, testEmail, testPass)
+	defer resp.Body.Close()
+	var d struct {
+		Challenge string `json:"challenge"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&d); err != nil {
+		t.Fatal(err)
+	}
+	if d.Challenge == "" {
+		t.Fatalf("login não entregou desafio (status %d)", resp.StatusCode)
+	}
+	return d.Challenge
+}
+
+// R38, pelo HTTP: com o fator ativo, enroll devolve 403 e não desliga nada.
+//
+// É o bypass que importa: o atacante com um access token ROUBADO chamaria
+// enroll, o segundo fator cairia, e a senha voltaria a bastar sozinha.
+func TestEnrollIsForbiddenAfterTOTPIsConfirmed(t *testing.T) {
+	a := newAPI(t)
+	c := clientWithJar(t)
+	cadastrarTOTP(t, a, c)
+
+	// O token de quem já está dentro — exatamente o que um roubo entregaria.
+	token := accessTokenValido(t, a)
+	resp := postComToken(t, c, a.srv.URL+"/api/v1/auth/totp/enroll", token, nil)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Errorf("enroll com fator ativo devolveu %d, queria 403", resp.StatusCode)
+	}
+	if code := decodeEnvelope(t, resp).Error.Code; code != "forbidden" {
+		t.Errorf("code = %q, queria forbidden", code)
+	}
+
+	// A asserção que separa "recusou" de "recusou sem estragar nada".
+	var confirmadoEm *time.Time
+	if err := a.pool.QueryRow(context.Background(),
+		`SELECT totp_confirmed_at FROM users WHERE id = $1`, a.userID).Scan(&confirmadoEm); err != nil {
+		t.Fatal(err)
+	}
+	if confirmadoEm == nil {
+		t.Fatal("o enroll recusado desligou o segundo fator no banco: bypass de 2FA")
+	}
+
+	// E a consequência prática: o login continua exigindo o segundo fator.
+	depois := login(t, a, c, testEmail, testPass)
+	defer depois.Body.Close()
+	var d struct {
+		TOTPRequired bool   `json:"totp_required"`
+		AccessToken  string `json:"access_token"`
+	}
+	if err := json.NewDecoder(depois.Body).Decode(&d); err != nil {
+		t.Fatal(err)
+	}
+	if !d.TOTPRequired || d.AccessToken != "" {
+		t.Error("depois do enroll recusado o login voltou a passar só com a senha")
+	}
+}
+
+// R40: errar o segundo fator conta para o bloqueio progressivo da conta.
+//
+// Sem isso, quem já tem a senha chuta os seis dígitos indefinidamente: o
+// limite de /totp/verify é por IP, e várias origens passam por cima dele.
+func TestFailedSecondFactorLocksTheAccount(t *testing.T) {
+	a := newAPI(t)
+	c := clientWithJar(t)
+	cadastrarTOTP(t, a, c)
+
+	if falhas, bloqueado := estadoDoBloqueio(t, a); falhas != 0 || bloqueado {
+		t.Fatalf("a conta já começou com %d falhas (bloqueada=%v)", falhas, bloqueado)
+	}
+
+	// Um único desafio serve para todas as tentativas: ele não é consumido no
+	// erro, e é assim que o atacante faria.
+	desafio := desafioAtual(t, a, c)
+	for i := 0; i < auth.LockThreshold; i++ {
+		resp := post(t, c, a.srv.URL+"/api/v1/auth/totp/verify",
+			map[string]string{"challenge": desafio, "code": "000000"})
+		status := resp.StatusCode
+		resp.Body.Close()
+		if status != http.StatusUnauthorized {
+			t.Fatalf("tentativa %d devolveu %d, queria 401", i+1, status)
+		}
+	}
+
+	falhas, bloqueado := estadoDoBloqueio(t, a)
+	if falhas < auth.LockThreshold {
+		t.Errorf("failed_attempts = %d depois de %d erros de segundo fator, queria >= %d: "+
+			"as falhas do segundo fator não contam para o bloqueio",
+			falhas, auth.LockThreshold, auth.LockThreshold)
+	}
+	if !bloqueado {
+		t.Error("a conta não trancou depois de errar o segundo fator LockThreshold vezes")
+	}
+
+	// (O segundo fator correto também para de passar enquanto durar o
+	// bloqueio — provado em TestSecondFactorIsRefusedWhileTheAccountIsLocked,
+	// em teste separado porque aqui o limite por IP de /totp/verify já foi
+	// gasto pelas cinco tentativas acima.)
+
+	// Consequência prática: nem a senha correta passa mais.
+	resp := login(t, a, c, testEmail, testPass)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("login em conta trancada pelo segundo fator devolveu %d, queria 401", resp.StatusCode)
+	}
+	if code := decodeEnvelope(t, resp).Error.Code; code != "invalid_credentials" {
+		t.Errorf("code = %q, queria invalid_credentials", code)
+	}
+}
+
+// A perna oposta do R40: o segundo fator correto zera o contador. Sem ela,
+// "as falhas contam" passaria numa implementação que nunca zera e trancaria a
+// conta de quem acerta.
+func TestSuccessfulSecondFactorClearsTheFailureCount(t *testing.T) {
+	a := newAPI(t)
+	c := clientWithJar(t)
+	secret := cadastrarTOTP(t, a, c)
+
+	desafio := desafioAtual(t, a, c)
+	for i := 0; i < 2; i++ {
+		resp := post(t, c, a.srv.URL+"/api/v1/auth/totp/verify",
+			map[string]string{"challenge": desafio, "code": "000000"})
+		resp.Body.Close()
+	}
+	if falhas, _ := estadoDoBloqueio(t, a); falhas != 2 {
+		t.Fatalf("failed_attempts = %d, queria 2", falhas)
+	}
+
+	code, err := totp.GenerateCode(secret, a.clk.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ok := post(t, c, a.srv.URL+"/api/v1/auth/totp/verify",
+		map[string]string{"challenge": desafio, "code": code})
+	defer ok.Body.Close()
+	if ok.StatusCode != http.StatusOK {
+		t.Fatalf("o código correto devolveu %d, queria 200", ok.StatusCode)
+	}
+
+	if falhas, bloqueado := estadoDoBloqueio(t, a); falhas != 0 || bloqueado {
+		t.Errorf("failed_attempts = %d (bloqueada=%v) depois do segundo fator correto, queria 0",
+			falhas, bloqueado)
+	}
+}
+
+// O login com a senha certa NÃO pode zerar o contador quando há segundo fator
+// ativo: seria um botão de destravar entre um chute de seis dígitos e o
+// próximo, e o bloqueio do R40 nunca chegaria ao limiar.
+func TestLoggingInAgainDoesNotClearSecondFactorFailures(t *testing.T) {
+	a := newAPI(t)
+	c := clientWithJar(t)
+	cadastrarTOTP(t, a, c)
+
+	desafio := desafioAtual(t, a, c)
+	for i := 0; i < 2; i++ {
+		resp := post(t, c, a.srv.URL+"/api/v1/auth/totp/verify",
+			map[string]string{"challenge": desafio, "code": "000000"})
+		resp.Body.Close()
+	}
+	if falhas, _ := estadoDoBloqueio(t, a); falhas != 2 {
+		t.Fatalf("failed_attempts = %d, queria 2", falhas)
+	}
+
+	// O atacante, que tem a senha, tenta usar o próprio login como reset.
+	desafioAtual(t, a, c)
+
+	if falhas, _ := estadoDoBloqueio(t, a); falhas != 2 {
+		t.Errorf("failed_attempts = %d depois de novo login, queria 2: "+
+			"refazer o login zera o contador e o bloqueio do segundo fator nunca dispara", falhas)
+	}
+}
+
+// Enquanto a conta está trancada, nem o segundo fator correto fecha o login.
+//
+// Sem esta guarda, o bloqueio do R40 não seguraria nada: o atacante que
+// chegasse ao código certo depois de trancar a conta entraria assim mesmo, e o
+// ResetFailures do sucesso ainda destravaria a conta para ele.
+func TestSecondFactorIsRefusedWhileTheAccountIsLocked(t *testing.T) {
+	a := newAPI(t)
+	c := clientWithJar(t)
+	secret := cadastrarTOTP(t, a, c)
+
+	// O desafio é obtido ANTES do bloqueio: com a conta trancada o login nem
+	// chega a emitir um.
+	desafio := desafioAtual(t, a, c)
+	bloquearConta(t, a)
+
+	code, err := totp.GenerateCode(secret, a.clk.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp := post(t, c, a.srv.URL+"/api/v1/auth/totp/verify",
+		map[string]string{"challenge": desafio, "code": code})
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("segundo fator correto em conta trancada devolveu %d, queria 401", resp.StatusCode)
+	}
+	if code := decodeEnvelope(t, resp).Error.Code; code != "invalid_credentials" {
+		t.Errorf("code = %q, queria invalid_credentials", code)
+	}
+
+	// A perna oposta: destravada, a mesma verificação passa. Sem ela, o 401
+	// acima poderia vir do código, do desafio ou de qualquer outra coisa.
+	// O desafio e o código são refeitos porque o relógio andou duas horas:
+	// ambos têm vida curta de propósito.
+	a.clk.Advance(2 * time.Hour)
+	novoDesafio := desafioAtual(t, a, c)
+	novoCode, err := totp.GenerateCode(secret, a.clk.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	liberado := post(t, c, a.srv.URL+"/api/v1/auth/totp/verify",
+		map[string]string{"challenge": novoDesafio, "code": novoCode})
+	defer liberado.Body.Close()
+	if liberado.StatusCode != http.StatusOK {
+		t.Errorf("depois de o bloqueio expirar o segundo fator devolveu %d, queria 200", liberado.StatusCode)
 	}
 }

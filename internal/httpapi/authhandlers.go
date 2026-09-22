@@ -108,9 +108,6 @@ func (h *AuthHandlers) Login(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	if err := h.users.ResetFailures(r.Context(), user.ID); err != nil {
-		slog.Error("zerar falhas de login", "erro", err)
-	}
 
 	// Com segundo fator ativo, a senha correta sozinha não abre sessão
 	// nenhuma: o que sai daqui é um desafio de vida curta, com audience
@@ -133,6 +130,15 @@ func (h *AuthHandlers) Login(w http.ResponseWriter, r *http.Request) {
 			"challenge":     challenge,
 		})
 		return
+	}
+
+	// O contador de falhas só zera quando o login de fato termina. Com
+	// segundo fator ativo ele termina em /totp/verify, e é lá que o reset
+	// acontece: zerar aqui daria ao atacante que já tem a senha um botão de
+	// destravar entre um chute de seis dígitos e o próximo, e o bloqueio do
+	// R40 nunca chegaria ao limiar.
+	if err := h.users.ResetFailures(r.Context(), user.ID); err != nil {
+		slog.Error("zerar falhas de login", "erro", err)
 	}
 
 	h.issue(w, r, user.ID)

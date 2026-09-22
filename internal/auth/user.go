@@ -33,7 +33,7 @@ func (u User) IsLocked(now time.Time) bool {
 
 type UserStore interface {
 	ByEmail(ctx context.Context, email string) (User, error)
-	EmailByID(ctx context.Context, userID uuid.UUID) (string, error)
+	ByID(ctx context.Context, userID uuid.UUID) (User, error)
 	RecordFailure(ctx context.Context, userID uuid.UUID, at time.Time) error
 	ResetFailures(ctx context.Context, userID uuid.UUID) error
 	UpdatePasswordHash(ctx context.Context, userID uuid.UUID, hash string) error
@@ -91,16 +91,23 @@ func (s *PGStore) UpdatePasswordHash(ctx context.Context, userID uuid.UUID, hash
 	return nil
 }
 
-// EmailByID existe para o cadastro de TOTP: a URI otpauth:// leva o e-mail
-// como nome da conta, e o handler só tem o id vindo do access token.
-func (s *PGStore) EmailByID(ctx context.Context, userID uuid.UUID) (string, error) {
-	var email string
-	err := s.pool.QueryRow(ctx, `SELECT email FROM users WHERE id = $1`, userID).Scan(&email)
+// ByID atende os dois caminhos de TOTP que só têm o id vindo do token: o
+// cadastro, que precisa do e-mail para o nome da conta na URI otpauth://, e a
+// verificação do segundo fator, que precisa do estado de bloqueio (R40).
+//
+// Uma consulta só, em vez de um EmailByID ao lado de um ByID lendo a mesma
+// linha da mesma tabela.
+func (s *PGStore) ByID(ctx context.Context, userID uuid.UUID) (User, error) {
+	var u User
+	err := s.pool.QueryRow(ctx, `
+		SELECT id, email, password_hash, failed_attempts, locked_until
+		  FROM users WHERE id = $1`, userID).
+		Scan(&u.ID, &u.Email, &u.PasswordHash, &u.FailedAttempts, &u.LockedUntil)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "", ErrNotFound
+		return User{}, ErrNotFound
 	}
 	if err != nil {
-		return "", fmt.Errorf("buscar e-mail: %w", err)
+		return User{}, fmt.Errorf("buscar usuário: %w", err)
 	}
-	return email, nil
+	return u, nil
 }

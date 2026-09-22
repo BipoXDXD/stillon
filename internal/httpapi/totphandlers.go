@@ -3,6 +3,7 @@ package httpapi
 import (
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 
 	"github.com/BipoXDXD/sentinela/internal/apierr"
@@ -23,13 +24,19 @@ func (h *AuthHandlers) TOTPEnroll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	email, err := h.users.EmailByID(r.Context(), userID)
+	user, err := h.users.ByID(r.Context(), userID)
 	if err != nil {
-		h.internal(w, r, "buscar e-mail", err)
+		h.internal(w, r, "buscar usuário", err)
 		return
 	}
 
-	uri, err := h.totp.Enroll(r.Context(), userID, email)
+	uri, err := h.totp.Enroll(r.Context(), userID, user.Email)
+	if errors.Is(err, auth.ErrTOTPAlreadyEnabled) {
+		// R38: recadastrar não pode ser a porta dos fundos para desligar o
+		// segundo fator de quem já o tem ativo.
+		apierr.WriteError(w, r, apierr.CodeForbidden)
+		return
+	}
 	if err != nil {
 		h.internal(w, r, "cadastrar TOTP", err)
 		return
@@ -84,16 +91,42 @@ func (h *AuthHandlers) TOTPVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// O segundo fator entra no MESMO bloqueio progressivo do login (R40).
+	// Sem isto, quem já tem a senha chuta seis dígitos indefinidamente: o
+	// limite de /totp/verify é por IP, e um atacante com várias origens passa
+	// por cima dele sem que a conta jamais tranque.
+	user, err := h.users.ByID(r.Context(), userID)
+	if errors.Is(err, auth.ErrNotFound) {
+		apierr.WriteError(w, r, apierr.CodeInvalidCredentials)
+		return
+	}
+	if err != nil {
+		h.internal(w, r, "buscar usuário", err)
+		return
+	}
+	if user.IsLocked(now) {
+		// Mesmo 401 genérico do login, pelo mesmo motivo do R34.
+		apierr.WriteError(w, r, apierr.CodeInvalidCredentials)
+		return
+	}
+
 	if err := h.totp.Verify(r.Context(), userID, req.Code, now); err != nil {
 		// O mesmo 401 genérico do login errado (R34): um código distinto para
 		// "segundo fator falhou" contaria ao atacante que a senha estava
 		// certa, e a senha é justamente o que ele está testando.
 		if errors.Is(err, auth.ErrTOTPInvalid) || errors.Is(err, auth.ErrTOTPNotEnrolled) {
+			if err := h.users.RecordFailure(r.Context(), userID, now); err != nil {
+				slog.Error("registrar falha de segundo fator", "erro", err)
+			}
 			apierr.WriteError(w, r, apierr.CodeInvalidCredentials)
 			return
 		}
 		h.internal(w, r, "verificar TOTP", err)
 		return
+	}
+
+	if err := h.users.ResetFailures(r.Context(), userID); err != nil {
+		slog.Error("zerar falhas de segundo fator", "erro", err)
 	}
 
 	h.issue(w, r, userID)

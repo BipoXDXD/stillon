@@ -20,6 +20,8 @@ import (
 var (
 	ErrTOTPInvalid     = errors.New("código de segundo fator inválido")
 	ErrTOTPNotEnrolled = errors.New("segundo fator não cadastrado")
+	// ErrTOTPAlreadyEnabled fecha o bypass do R38: ver Enroll.
+	ErrTOTPAlreadyEnabled = errors.New("segundo fator já está ativo")
 )
 
 const (
@@ -50,6 +52,17 @@ func NewTOTP(pool *pgxpool.Pool, box *crypto.Box, issuer string) *TOTP {
 //
 // Gravar sem ativar é deliberado: se o usuário fechar a tela no meio do
 // cadastro, a conta continua acessível com senha apenas.
+//
+// Com um fator JÁ confirmado, Enroll recusa (R38). A versão anterior zerava o
+// totp_confirmed_at, e isso era um bypass completo do segundo fator: quem
+// tivesse um access token — o caso que importa é o token ROUBADO — desligava o
+// 2FA numa requisição, sem provar posse de nada, e o login seguinte voltava a
+// passar só com a senha. Comprometer a sessão passava a bastar, que é
+// exatamente o que o segundo fator existe para impedir.
+//
+// O preço aceito e registrado: não há caminho para trocar de autenticador
+// depois de ativado. É lacuna de funcionalidade, não de segurança, e sai do
+// Plano 5 com prova de posse adequada. Não "conserte" isso zerando a coluna.
 func (s *TOTP) Enroll(ctx context.Context, userID uuid.UUID, email string) (string, error) {
 	key, err := totp.Generate(totp.GenerateOpts{
 		Issuer:      s.issuer,
@@ -67,11 +80,26 @@ func (s *TOTP) Enroll(ctx context.Context, userID uuid.UUID, email string) (stri
 		return "", fmt.Errorf("cifrar segredo TOTP: %w", err)
 	}
 
-	_, err = s.pool.Exec(ctx,
-		`UPDATE users SET totp_secret_enc = $2, totp_confirmed_at = NULL WHERE id = $1`,
+	// A guarda vai na cláusula WHERE, e não numa consulta anterior: entre um
+	// SELECT e o UPDATE cabe uma confirmação concorrente, e o segredo novo
+	// sobrescreveria um fator recém-ativado.
+	tag, err := s.pool.Exec(ctx,
+		`UPDATE users SET totp_secret_enc = $2 WHERE id = $1 AND totp_confirmed_at IS NULL`,
 		userID, sealed)
 	if err != nil {
 		return "", fmt.Errorf("gravar segredo TOTP: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		// Ou a conta sumiu, ou já tem fator ativo. A consulta extra só roda
+		// neste caminho de falha.
+		enabled, err := s.IsEnabled(ctx, userID)
+		if err != nil {
+			return "", err
+		}
+		if enabled {
+			return "", ErrTOTPAlreadyEnabled
+		}
+		return "", ErrNotFound
 	}
 
 	return key.URL(), nil
@@ -124,6 +152,12 @@ func (s *TOTP) Confirm(ctx context.Context, userID uuid.UUID, code string, now t
 		}
 	}
 
+	// Ativar um segundo fator é evento de segurança, e vai na mesma transação
+	// para que não exista ativação sem rastro (R39).
+	if err := insertAudit(ctx, tx, userID, "totp.enabled", nil, now); err != nil {
+		return nil, err
+	}
+
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("confirmar TOTP: %w", err)
 	}
@@ -145,17 +179,35 @@ func (s *TOTP) Verify(ctx context.Context, userID uuid.UUID, code string, now ti
 		return nil
 	}
 
+	// O consumo e o registro de auditoria vão na mesma transação: uso de
+	// código de recuperação é sinal forte de perda de dispositivo OU de
+	// comprometimento, e é a única pista que o dono da conta teria (R39). A
+	// transação impede as duas metades soltas — código consumido sem rastro,
+	// ou rastro de um consumo que não aconteceu.
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("abrir transação: %w", err)
+	}
+	defer tx.Rollback(ctx) // no-op depois de Commit
+
 	// DELETE ... RETURNING resolve o consumo do código em uma única
 	// instrução: dois usos simultâneos do mesmo código não podem ambos
 	// encontrar a linha.
 	var id uuid.UUID
-	err = s.pool.QueryRow(ctx,
+	err = tx.QueryRow(ctx,
 		`DELETE FROM totp_recovery_codes WHERE user_id = $1 AND code_hash = $2 RETURNING id`,
 		userID, crypto.HashToken(code)).Scan(&id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrTOTPInvalid
 	}
 	if err != nil {
+		return fmt.Errorf("consumir código de recuperação: %w", err)
+	}
+
+	if err := insertAudit(ctx, tx, userID, "totp.recovery_used", nil, now); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("consumir código de recuperação: %w", err)
 	}
 	return nil

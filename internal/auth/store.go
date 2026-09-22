@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -126,11 +127,23 @@ func (t *pgTx) RevokeByHash(ctx context.Context, hash []byte, at time.Time) erro
 }
 
 func (t *pgTx) InsertAudit(ctx context.Context, userID uuid.UUID, action string, ipHash []byte, at time.Time) error {
+	return insertAudit(ctx, t.tx, userID, action, ipHash, at)
+}
+
+// execer é o mínimo de pgx que insertAudit precisa. Existe para que o registro
+// de auditoria seja o MESMO código dentro do Tx do Store e dentro das
+// transações que o TOTP abre por conta própria (R39): duas cópias da mesma
+// instrução acabariam divergindo.
+type execer interface {
+	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
+}
+
+func insertAudit(ctx context.Context, q execer, userID uuid.UUID, action string, ipHash []byte, at time.Time) error {
 	id, err := uuid.NewV7()
 	if err != nil {
 		return fmt.Errorf("gerar id de auditoria: %w", err)
 	}
-	_, err = t.tx.Exec(ctx,
+	_, err = q.Exec(ctx,
 		`INSERT INTO audit_log (id, user_id, action, ip_hash, at) VALUES ($1, $2, $3, $4, $5)`,
 		id, userID, action, ipHash, at)
 	if err != nil {
