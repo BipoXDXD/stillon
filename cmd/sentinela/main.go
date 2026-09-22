@@ -2,13 +2,18 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 
+	"github.com/BipoXDXD/sentinela/internal/auth"
+	"github.com/BipoXDXD/sentinela/internal/clock"
 	"github.com/BipoXDXD/sentinela/internal/config"
+	"github.com/BipoXDXD/sentinela/internal/httpapi"
 	"github.com/BipoXDXD/sentinela/internal/storage"
 )
 
@@ -61,6 +66,36 @@ func run(ctx context.Context, cfg *config.Config) error {
 	}
 	defer pool.Close()
 
-	<-ctx.Done()
-	return nil
+	if !cfg.Role.RunsAPI() {
+		// O papel prober ganha seu loop no Plano 2. Por ora só mantém o
+		// processo vivo até o sinal de encerramento.
+		<-ctx.Done()
+		return nil
+	}
+
+	clk := clock.Real{}
+	store := auth.NewPGStore(pool)
+	sessions := auth.NewManager(store, clk, cfg.IPHashKey)
+
+	srv := httpapi.NewServer(cfg, httpapi.Routes(ctx, cfg, store, sessions, clk))
+
+	errCh := make(chan error, 1)
+	go func() {
+		slog.Info("servindo HTTP", "addr", cfg.HTTPAddr)
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			errCh <- err
+		}
+	}()
+
+	select {
+	case err := <-errCh:
+		return err
+	case <-ctx.Done():
+	}
+
+	// Shutdown gracioso com prazo (spec §6.2): conexões em voo terminam, e o
+	// processo não fica preso caso alguma não termine.
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownGrace)
+	defer cancel()
+	return srv.Shutdown(shutdownCtx)
 }
