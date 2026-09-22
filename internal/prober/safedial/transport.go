@@ -64,7 +64,10 @@ func NewClient(timeout time.Duration) *http.Client {
 		Transport: NewTransport(),
 		Timeout:   timeout,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if len(via) >= maxRedirects {
+			// net/http já inclui a requisição original em via, então a
+			// comparação é estrita: com maxRedirects = 3 o cliente segue
+			// três saltos e para no quarto, que é o que a constante diz.
+			if len(via) > maxRedirects {
 				return fmt.Errorf("%w: mais de %d redirecionamentos", ErrBlocked, maxRedirects)
 			}
 			// O IP do destino já será revalidado no dial, porque não há

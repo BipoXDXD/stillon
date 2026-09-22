@@ -30,6 +30,13 @@ func TestAllowIP(t *testing.T) {
 		{"::ffff:127.0.0.1", true, "loopback disfarçado de IPv6"},
 		{"::ffff:169.254.169.254", true, "metadata da nuvem disfarçado de IPv6"},
 
+		// Zona IPv6: netip.Prefix.Contains devolve false para qualquer
+		// endereço com zona, e Unmap() não a remove. Sem recusa explícita,
+		// estes dois atravessam as vinte faixas sem casar nenhuma, e
+		// http://[::1%25lo]:8080/ alcança qualquer serviço em localhost.
+		{"::1%lo", true, "loopback com zona IPv6"},
+		{"fe80::1%eth0", true, "link-local com zona IPv6"},
+
 		// Metadata de provedor de nuvem: o alvo número um de SSRF.
 		{"169.254.169.254", true, "endpoint de metadata da AWS/GCP"},
 		{"169.254.0.1", true, "link-local"},
@@ -49,6 +56,21 @@ func TestAllowIP(t *testing.T) {
 		{"100.64.0.1", true, "CGNAT"},
 		{"224.0.0.1", true, "multicast"},
 		{"255.255.255.255", true, "broadcast"},
+
+		// Uma mordida por faixa que antes não tinha nenhuma. Sem estes
+		// casos, apagar a linha correspondente de blockedPrefixes não
+		// quebraria teste algum — e uma lista de bloqueio sem trava contra
+		// regressão é a que silenciosamente encolhe.
+		{"192.0.0.1", true, "atribuições IETF, 192.0.0.0/24"},
+		{"192.0.2.1", true, "TEST-NET-1"},
+		{"198.18.0.1", true, "benchmarking, 198.18.0.0/15"},
+		{"198.51.100.1", true, "TEST-NET-2"},
+		{"::", true, "não especificado"},
+		{"ff02::1", true, "multicast IPv6"},
+		// 255.255.255.255 não serve de trava para 240.0.0.0/4, porque a
+		// 255.255.255.255/32 também o cobre e as duas se mascaram. Este
+		// endereço está só na /4.
+		{"240.0.0.1", true, "reservado, 240.0.0.0/4"},
 	}
 
 	for _, c := range cases {
@@ -96,6 +118,12 @@ func TestValidateURL(t *testing.T) {
 			if (err == nil) != c.ok {
 				t.Errorf("ValidateURL(%q) erro=%v, queria ok=%v (%s)", c.raw, err, c.ok, c.porque)
 			}
+			// A spec exige erro verificável por errors.Is. Sem esta
+			// asserção, trocar fmt.Errorf("%w: ...") por errors.New
+			// deixaria o teste verde e quebraria o contrato.
+			if err != nil && !errors.Is(err, safedial.ErrInvalidURL) {
+				t.Errorf("ValidateURL(%q) erro = %v, queria envolver ErrInvalidURL", c.raw, err)
+			}
 		})
 	}
 }
@@ -104,10 +132,24 @@ func TestAllowAddrRejectsNonLiteralHost(t *testing.T) {
 	// ControlContext sempre recebe IP literal. Qualquer outra coisa indica
 	// que a função está sendo chamada fora do lugar previsto — negar é a
 	// resposta segura.
-	if err := safedial.AllowAddr("exemplo.com:443"); err == nil {
-		t.Error("esperava bloqueio para host não literal")
+	cases := []struct {
+		addr   string
+		porque string
+	}{
+		{"exemplo.com:443", "host não literal"},
+		{"sem-porta", "endereço sem porta"},
+		{"1.2.3.4:", "porta vazia"},
 	}
-	if err := safedial.AllowAddr("sem-porta"); err == nil {
-		t.Error("esperava bloqueio para endereço sem porta")
+
+	for _, c := range cases {
+		t.Run(c.addr, func(t *testing.T) {
+			err := safedial.AllowAddr(c.addr)
+			if err == nil {
+				t.Fatalf("esperava bloqueio para %s", c.porque)
+			}
+			if !errors.Is(err, safedial.ErrBlocked) {
+				t.Errorf("erro = %v, queria envolver ErrBlocked", err)
+			}
+		})
 	}
 }

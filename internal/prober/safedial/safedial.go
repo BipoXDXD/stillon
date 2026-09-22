@@ -26,20 +26,24 @@ var (
 // blockedPrefixes cobre tudo que não deve ser alcançável a partir do
 // sondador. Cada faixa tem um motivo concreto de estar aqui.
 var blockedPrefixes = []netip.Prefix{
-	netip.MustParsePrefix("0.0.0.0/8"),          // "este host"
-	netip.MustParsePrefix("10.0.0.0/8"),         // RFC1918
-	netip.MustParsePrefix("100.64.0.0/10"),      // CGNAT
-	netip.MustParsePrefix("127.0.0.0/8"),        // loopback
-	netip.MustParsePrefix("169.254.0.0/16"),     // link-local, inclui metadata de nuvem
-	netip.MustParsePrefix("172.16.0.0/12"),      // RFC1918
-	netip.MustParsePrefix("192.0.0.0/24"),       // atribuições IETF
-	netip.MustParsePrefix("192.0.2.0/24"),       // TEST-NET-1
-	netip.MustParsePrefix("192.168.0.0/16"),     // RFC1918
-	netip.MustParsePrefix("198.18.0.0/15"),      // benchmarking
-	netip.MustParsePrefix("198.51.100.0/24"),    // TEST-NET-2
-	netip.MustParsePrefix("203.0.113.0/24"),     // TEST-NET-3
-	netip.MustParsePrefix("224.0.0.0/4"),        // multicast
-	netip.MustParsePrefix("240.0.0.0/4"),        // reservado
+	netip.MustParsePrefix("0.0.0.0/8"),       // "este host"
+	netip.MustParsePrefix("10.0.0.0/8"),      // RFC1918
+	netip.MustParsePrefix("100.64.0.0/10"),   // CGNAT
+	netip.MustParsePrefix("127.0.0.0/8"),     // loopback
+	netip.MustParsePrefix("169.254.0.0/16"),  // link-local, inclui metadata de nuvem
+	netip.MustParsePrefix("172.16.0.0/12"),   // RFC1918
+	netip.MustParsePrefix("192.0.0.0/24"),    // atribuições IETF
+	netip.MustParsePrefix("192.0.2.0/24"),    // TEST-NET-1
+	netip.MustParsePrefix("192.168.0.0/16"),  // RFC1918
+	netip.MustParsePrefix("198.18.0.0/15"),   // benchmarking
+	netip.MustParsePrefix("198.51.100.0/24"), // TEST-NET-2
+	netip.MustParsePrefix("203.0.113.0/24"),  // TEST-NET-3
+	netip.MustParsePrefix("224.0.0.0/4"),     // multicast
+	netip.MustParsePrefix("240.0.0.0/4"),     // reservado
+	// Inalcançável na prática: 240.0.0.0/4 vem antes e já contém este
+	// endereço, então a mensagem de erro para o broadcast citará a /4.
+	// Mantida pelo valor documental — a intenção de bloquear o broadcast
+	// deve continuar explícita mesmo que outra faixa a cumpra.
 	netip.MustParsePrefix("255.255.255.255/32"), // broadcast
 	netip.MustParsePrefix("::/128"),             // não especificado
 	netip.MustParsePrefix("::1/128"),            // loopback IPv6
@@ -58,6 +62,14 @@ func AllowIP(ip netip.Addr) error {
 	// sem desfazer o mapeamento, ele não casa com 127.0.0.0/8 e atravessa a
 	// guarda inteira. É o bypass mais comum contra listas de bloqueio.
 	ip = ip.Unmap()
+
+	// netip.Prefix.Contains devolve false para qualquer endereço com zona, e
+	// Unmap() não a remove — sem esta recusa, ::1%lo atravessaria as vinte
+	// faixas sem casar nenhuma. Alvo legítimo de monitoramento nunca carrega
+	// zona, então recusar é a resposta fail-closed.
+	if ip.Zone() != "" {
+		return fmt.Errorf("%w: zona IPv6 não é permitida (%s)", ErrBlocked, ip)
+	}
 
 	for _, p := range blockedPrefixes {
 		if p.Contains(ip) {

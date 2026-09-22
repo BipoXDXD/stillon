@@ -66,6 +66,9 @@ func TestAlvoQueRedirecionaParaInternoMorreNoPrimeiroSalto(t *testing.T) {
 		resp.Body.Close()
 		t.Fatal("o redirecionamento para loopback não foi bloqueado")
 	}
+	if !errors.Is(err, safedial.ErrBlocked) {
+		t.Errorf("erro = %v, queria envolver ErrBlocked", err)
+	}
 }
 
 func TestTransportDoesNotReuseConnections(t *testing.T) {
@@ -111,12 +114,20 @@ func TestCheckRedirectRevalidaEsquemaELimitaSaltos(t *testing.T) {
 		t.Errorf("salto para file:// deu erro = %v, queria envolver ErrInvalidURL", err)
 	}
 
-	// A cadeia é limitada: no quarto salto a requisição para.
+	// A cadeia é limitada. net/http já inclui a requisição original em via,
+	// então via com 3 elementos é o terceiro salto — ainda permitido — e via
+	// com 4 é o quarto, que para. Isso faz maxRedirects significar o número
+	// de saltos seguidos, como o nome promete.
 	via := []*http.Request{
+		req("https://exemplo.com/0"),
 		req("https://exemplo.com/1"),
 		req("https://exemplo.com/2"),
-		req("https://exemplo.com/3"),
 	}
+	if err := client.CheckRedirect(req("https://exemplo.com/3"), via); err != nil {
+		t.Errorf("terceiro salto recusado: %v", err)
+	}
+
+	via = append(via, req("https://exemplo.com/3"))
 	err = client.CheckRedirect(req("https://exemplo.com/4"), via)
 	if !errors.Is(err, safedial.ErrBlocked) {
 		t.Errorf("cadeia longa deu erro = %v, queria envolver ErrBlocked", err)
