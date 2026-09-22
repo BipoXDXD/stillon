@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"context"
 	"net"
 	"net/http"
 	"sync"
@@ -16,7 +17,13 @@ import (
 // Os buckets ficam em memória e são varridos periodicamente. Um mapa que só
 // cresce seria vazamento de memória e vetor de exaustão: basta o atacante
 // variar o IP de origem.
-func RateLimit(perMinute, burst int) func(http.Handler) http.Handler {
+//
+// A varredura recebe ctx para poder parar. time.Tick nunca é coletado pelo
+// GC — não há como cancelá-lo — então a goroutine de limpeza precisaria de
+// um jeito explícito de terminar; amarrar isso ao contexto do servidor faz
+// a goroutine morrer no shutdown gracioso junto com o resto, em vez de
+// vazar para sempre (R32).
+func RateLimit(ctx context.Context, perMinute, burst int) func(http.Handler) http.Handler {
 	type bucket struct {
 		lim  *rate.Limiter
 		seen time.Time
@@ -28,14 +35,21 @@ func RateLimit(perMinute, burst int) func(http.Handler) http.Handler {
 	)
 
 	go func() {
-		for range time.Tick(time.Minute) {
-			mu.Lock()
-			for k, b := range buckets {
-				if time.Since(b.seen) > 10*time.Minute {
-					delete(buckets, k)
+		ticker := time.NewTicker(time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				mu.Lock()
+				for k, b := range buckets {
+					if time.Since(b.seen) > 10*time.Minute {
+						delete(buckets, k)
+					}
 				}
+				mu.Unlock()
 			}
-			mu.Unlock()
 		}
 	}()
 

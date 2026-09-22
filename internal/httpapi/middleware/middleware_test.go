@@ -1,6 +1,7 @@
 package middleware_test
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -92,7 +93,9 @@ func TestBodyLimitRejectsOversizedPayload(t *testing.T) {
 }
 
 func TestRateLimitBlocksAfterBurst(t *testing.T) {
-	h := middleware.RateLimit(60, 3)(http.HandlerFunc(ok))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	h := middleware.RateLimit(ctx, 60, 3)(http.HandlerFunc(ok))
 
 	var last int
 	for i := 0; i < 10; i++ {
@@ -108,7 +111,9 @@ func TestRateLimitBlocksAfterBurst(t *testing.T) {
 }
 
 func TestRateLimitIsPerClient(t *testing.T) {
-	h := middleware.RateLimit(60, 3)(http.HandlerFunc(ok))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	h := middleware.RateLimit(ctx, 60, 3)(http.HandlerFunc(ok))
 
 	for i := 0; i < 10; i++ {
 		req := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -136,6 +141,9 @@ func TestCORSOnlyEchoesTheConfiguredOrigin(t *testing.T) {
 	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "https://app.exemplo.com" {
 		t.Errorf("origem permitida devolveu %q", got)
 	}
+	if got := rec.Header().Get("Vary"); got != "Origin" {
+		t.Errorf("Vary = %q, queria Origin (origem permitida)", got)
+	}
 
 	hostil := httptest.NewRequest(http.MethodGet, "/", nil)
 	hostil.Header.Set("Origin", "https://atacante.com")
@@ -143,6 +151,12 @@ func TestCORSOnlyEchoesTheConfiguredOrigin(t *testing.T) {
 	h.ServeHTTP(rec, hostil)
 	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "" {
 		t.Errorf("origem não permitida recebeu %q; deveria receber vazio", got)
+	}
+	// A resposta também depende do header Origin nesse ramo: sem Vary aqui,
+	// um cache poderia servir a resposta desta requisição hostil (sem
+	// headers de CORS) para um cliente legítimo depois (R33).
+	if got := rec.Header().Get("Vary"); got != "Origin" {
+		t.Errorf("Vary = %q, queria Origin (origem hostil)", got)
 	}
 }
 
