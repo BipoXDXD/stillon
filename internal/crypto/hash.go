@@ -20,7 +20,16 @@ func HashToken(token string) []byte {
 // Aqui a chave é obrigatória. O espaço de endereços IPv4 tem 2^32 elementos:
 // um hash sem chave seria revertido por enumeração exaustiva em minutos, e a
 // coluna deixaria de proteger qualquer coisa.
+//
+// Entra em panic com chave fraca em vez de devolver erro: hmac.New aceita
+// chave nil sem reclamar e devolve um HMAC com chave de zeros, que parece um
+// hash legítimo e é justamente o hash enumerável que a §4.2 quis evitar. A
+// chave vem da configuração, então chave curta é erro de programação — falhar
+// alto na partida é melhor que gravar no banco uma coluna que não protege nada.
 func HashIP(key []byte, ip string) []byte {
+	if len(key) < KeySize {
+		panic("crypto: HashIP exige chave de ao menos 32 bytes")
+	}
 	mac := hmac.New(sha256.New, key)
 	mac.Write([]byte(ip))
 	return mac.Sum(nil)

@@ -71,13 +71,23 @@ func (b *Box) Open(sealed, aad []byte) (Secret, error) {
 	return Secret(pt), nil
 }
 
-// AAD amarra um ciphertext à linha exata que o armazena. Com isso, mover o
-// valor da coluna de um registro para outro invalida a autenticação, mesmo
-// que o atacante tenha acesso de escrita ao banco.
-func AAD(table string, id uuid.UUID) []byte {
-	b := make([]byte, 0, len(table)+1+16)
+// AAD amarra um ciphertext à célula exata que o armazena: tabela, coluna e id
+// da linha, no formato table || ':' || column || ':' || id. Com isso, mover o
+// valor de um registro para outro — ou de uma coluna cifrada para outra da
+// mesma linha — invalida a autenticação, mesmo que o atacante tenha acesso de
+// escrita ao banco.
+//
+// A coluna entra desde já porque este é um caminho de mão única: acrescentar
+// um componente ao AAD depois que houver ciphertext gravado exigiria re-cifrar
+// tudo. Hoje custa um parâmetro.
+//
+// O id tem 16 bytes fixos no fim, então não há ambiguidade de fronteira mesmo
+// que um nome de tabela ou de coluna contenha ':'.
+func AAD(table, column string, id uuid.UUID) []byte {
+	b := make([]byte, 0, len(table)+1+len(column)+1+len(id))
 	b = append(b, table...)
 	b = append(b, ':')
-	idBytes := id
-	return append(b, idBytes[:]...)
+	b = append(b, column...)
+	b = append(b, ':')
+	return append(b, id[:]...)
 }

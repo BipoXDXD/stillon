@@ -23,6 +23,13 @@ func TestSecretNeverPrints(t *testing.T) {
 		"%v direto":  fmt.Sprintf("%v", s),
 		"%s direto":  fmt.Sprintf("%s", s),
 		"%#v direto": fmt.Sprintf("%#v", s),
+		// Os verbos numéricos são o furo menos óbvio: String() e GoString() não
+		// são consultados por %d, %c, %x nem %q, então sem um Format() o
+		// conteúdo sai em claro (%q) ou trivialmente reversível (%d, %c, %x).
+		"%d direto": fmt.Sprintf("%d", s),
+		"%c direto": fmt.Sprintf("%c", s),
+		"%x direto": fmt.Sprintf("%x", s),
+		"%q direto": fmt.Sprintf("%q", s),
 		"dentro de struct com %v": fmt.Sprintf("%v", struct {
 			Nome  string
 			Token crypto.Secret

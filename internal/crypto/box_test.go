@@ -10,6 +10,9 @@ import (
 	"github.com/BipoXDXD/sentinela/internal/crypto"
 )
 
+// nonceSize é o tamanho do nonce do GCM, prefixado pelo Seal.
+const nonceSize = 12
+
 func testKey(t *testing.T) []byte {
 	t.Helper()
 	return bytes.Repeat([]byte{7}, 32)
@@ -20,7 +23,7 @@ func TestSealOpenRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	aad := crypto.AAD("targets", uuid.New())
+	aad := crypto.AAD("targets", "secret_enc", uuid.New())
 	msg := []byte("Authorization: Bearer abc123")
 
 	sealed, err := box.Seal(msg, aad)
@@ -45,8 +48,8 @@ func TestSealOpenRoundTrip(t *testing.T) {
 // sistema usar credenciais de terceiros.
 func TestOpenRejectsCiphertextMovedToAnotherRow(t *testing.T) {
 	box, _ := crypto.NewBox(testKey(t))
-	original := crypto.AAD("targets", uuid.New())
-	outra := crypto.AAD("targets", uuid.New())
+	original := crypto.AAD("targets", "secret_enc", uuid.New())
+	outra := crypto.AAD("targets", "secret_enc", uuid.New())
 
 	sealed, err := box.Seal([]byte("segredo"), original)
 	if err != nil {
@@ -60,7 +63,7 @@ func TestOpenRejectsCiphertextMovedToAnotherRow(t *testing.T) {
 
 func TestOpenRejectsTamperedCiphertext(t *testing.T) {
 	box, _ := crypto.NewBox(testKey(t))
-	aad := crypto.AAD("targets", uuid.New())
+	aad := crypto.AAD("targets", "secret_enc", uuid.New())
 
 	sealed, _ := box.Seal([]byte("segredo"), aad)
 	sealed[len(sealed)-1] ^= 0xFF // vira um bit do tag de autenticação
@@ -73,15 +76,46 @@ func TestOpenRejectsTamperedCiphertext(t *testing.T) {
 func TestOpenRejectsTruncatedInput(t *testing.T) {
 	box, _ := crypto.NewBox(testKey(t))
 
-	if _, err := box.Open([]byte{1, 2, 3}, nil); !errors.Is(err, crypto.ErrMalformed) {
-		t.Errorf("erro = %v, queria ErrMalformed", err)
+	// O caso de 20 bytes é o que tem força: passa do nonce de 12 bytes mas não
+	// chega ao mínimo de 12+16. Uma checagem que esquecesse o Overhead() ainda
+	// rejeitaria 3 bytes, mas mandaria 20 para o GCM e devolveria ErrAuthFailed.
+	casos := map[string][]byte{
+		"3 bytes, nem o nonce cabe":         {1, 2, 3},
+		"20 bytes, nonce sim, tag não":      bytes.Repeat([]byte{1}, 20),
+		"27 bytes, um a menos que o mínimo": bytes.Repeat([]byte{1}, 27),
+	}
+
+	for nome, sealed := range casos {
+		if _, err := box.Open(sealed, nil); !errors.Is(err, crypto.ErrMalformed) {
+			t.Errorf("%s: erro = %v, queria ErrMalformed", nome, err)
+		}
+	}
+}
+
+// O AAD só protege se cada componente entrar de fato no valor. Estas asserções
+// falham se alguém deixar de concatenar a tabela, a coluna ou o id.
+func TestAADIsDeterministicAndBindsEveryComponent(t *testing.T) {
+	id := uuid.New()
+	outraID := uuid.New()
+
+	if !bytes.Equal(crypto.AAD("users", "totp_secret_enc", id), crypto.AAD("users", "totp_secret_enc", id)) {
+		t.Error("AAD não é determinístico para a mesma tabela, coluna e id")
+	}
+	if bytes.Equal(crypto.AAD("users", "totp_secret_enc", id), crypto.AAD("users", "totp_secret_enc", outraID)) {
+		t.Error("ids diferentes produziram o mesmo AAD: o id não está entrando no valor")
+	}
+	if bytes.Equal(crypto.AAD("users", "totp_secret_enc", id), crypto.AAD("targets", "totp_secret_enc", id)) {
+		t.Error("tabelas diferentes produziram o mesmo AAD: a tabela não está entrando no valor")
+	}
+	if bytes.Equal(crypto.AAD("users", "totp_secret_enc", id), crypto.AAD("users", "secret_enc", id)) {
+		t.Error("colunas diferentes produziram o mesmo AAD: a coluna não está entrando no valor")
 	}
 }
 
 func TestOpenRejectsWrongKey(t *testing.T) {
 	box, _ := crypto.NewBox(testKey(t))
 	outra, _ := crypto.NewBox(bytes.Repeat([]byte{9}, 32))
-	aad := crypto.AAD("targets", uuid.New())
+	aad := crypto.AAD("targets", "secret_enc", uuid.New())
 
 	sealed, _ := box.Seal([]byte("segredo"), aad)
 
@@ -95,7 +129,7 @@ func TestOpenRejectsWrongKey(t *testing.T) {
 // contra alguém "otimizar" o nonce para um valor fixo.
 func TestSealUsesFreshNonceEveryTime(t *testing.T) {
 	box, _ := crypto.NewBox(testKey(t))
-	aad := crypto.AAD("targets", uuid.New())
+	aad := crypto.AAD("targets", "secret_enc", uuid.New())
 	msg := []byte("mesma mensagem")
 
 	vistos := make(map[string]bool, 100)
@@ -104,11 +138,29 @@ func TestSealUsesFreshNonceEveryTime(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		nonce := string(sealed[:12])
+		nonce := string(sealed[:nonceSize])
 		if vistos[nonce] {
 			t.Fatal("nonce repetido em 100 selagens")
 		}
 		vistos[nonce] = true
+	}
+
+	// Um contador por instância de Box passaria no laço acima e mesmo assim
+	// reutilizaria nonces a cada reinício do processo — que é justamente
+	// quando a mesma chave volta do zero. Dois Box com a mesma chave têm de
+	// produzir nonces distintos.
+	a, _ := crypto.NewBox(testKey(t))
+	b, _ := crypto.NewBox(testKey(t))
+	selaA, err := a.Seal(msg, aad)
+	if err != nil {
+		t.Fatal(err)
+	}
+	selaB, err := b.Seal(msg, aad)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Equal(selaA[:nonceSize], selaB[:nonceSize]) {
+		t.Error("dois Box com a mesma chave começaram pelo mesmo nonce")
 	}
 }
 
