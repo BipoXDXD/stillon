@@ -961,7 +961,7 @@ teste, porque RLS e SKIP LOCKED são invisíveis contra mock."
 
 **Interfaces:**
 - Consumes: nada (pacote puro, sem I/O).
-- Produces: `crypto.Secret` (tipo `[]byte` com `Reveal() []byte`); `crypto.NewBox(key []byte) (*Box, error)`; `(*Box).Seal(plaintext, aad []byte) ([]byte, error)`; `(*Box).Open(sealed, aad []byte) (Secret, error)`; `crypto.AAD(table string, id uuid.UUID) []byte`; `crypto.HashToken(token string) []byte`; `crypto.HashIP(key []byte, ip string) []byte`; erros `crypto.ErrMalformed` e `crypto.ErrAuthFailed`.
+- Produces: `crypto.Secret` (tipo `[]byte` com `Reveal() []byte`); `crypto.NewBox(key []byte) (*Box, error)`; `(*Box).Seal(plaintext, aad []byte) ([]byte, error)`; `(*Box).Open(sealed, aad []byte) (Secret, error)`; `crypto.AAD(table, column string, id uuid.UUID) []byte`; `crypto.HashToken(token string) []byte`; `crypto.HashIP(key []byte, ip string) []byte`; erros `crypto.ErrMalformed` e `crypto.ErrAuthFailed`.
 
 - [ ] **Step 1: Escrever o teste do tipo `Secret`**
 
@@ -1022,6 +1022,12 @@ func TestSecretNeverSerializesToJSON(t *testing.T) {
 	if bytes.Contains(b, []byte(plaintext)) {
 		t.Errorf("json.Marshal vazou o segredo: %s", b)
 	}
+	// Sem esta segunda asserção o teste é vacuamente verde: encoding/json
+	// serializa []byte como base64, então a ausência do plaintext não prova
+	// que MarshalJSON foi chamado.
+	if !bytes.Contains(b, []byte("[REDACTED]")) {
+		t.Errorf("json.Marshal não trouxe o marcador de redação: %s", b)
+	}
 }
 
 func TestSecretNeverReachesTheLog(t *testing.T) {
@@ -1032,6 +1038,12 @@ func TestSecretNeverReachesTheLog(t *testing.T) {
 
 	if strings.Contains(buf.String(), plaintext) {
 		t.Errorf("slog vazou o segredo: %s", buf.String())
+	}
+	// Mesma armadilha do teste de JSON: o slog também codifica []byte em
+	// base64, então só a ausência do plaintext não detectaria a remoção de
+	// LogValue.
+	if !strings.Contains(buf.String(), "[REDACTED]") {
+		t.Errorf("slog não trouxe o marcador de redação: %s", buf.String())
 	}
 }
 
@@ -1114,7 +1126,7 @@ func TestSealOpenRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	aad := crypto.AAD("targets", uuid.New())
+	aad := crypto.AAD("targets", "headers_enc", uuid.New())
 	msg := []byte("Authorization: Bearer abc123")
 
 	sealed, err := box.Seal(msg, aad)
@@ -1139,8 +1151,8 @@ func TestSealOpenRoundTrip(t *testing.T) {
 // sistema usar credenciais de terceiros.
 func TestOpenRejectsCiphertextMovedToAnotherRow(t *testing.T) {
 	box, _ := crypto.NewBox(testKey(t))
-	original := crypto.AAD("targets", uuid.New())
-	outra := crypto.AAD("targets", uuid.New())
+	original := crypto.AAD("targets", "headers_enc", uuid.New())
+	outra := crypto.AAD("targets", "headers_enc", uuid.New())
 
 	sealed, err := box.Seal([]byte("segredo"), original)
 	if err != nil {
@@ -1154,7 +1166,7 @@ func TestOpenRejectsCiphertextMovedToAnotherRow(t *testing.T) {
 
 func TestOpenRejectsTamperedCiphertext(t *testing.T) {
 	box, _ := crypto.NewBox(testKey(t))
-	aad := crypto.AAD("targets", uuid.New())
+	aad := crypto.AAD("targets", "headers_enc", uuid.New())
 
 	sealed, _ := box.Seal([]byte("segredo"), aad)
 	sealed[len(sealed)-1] ^= 0xFF // vira um bit do tag de autenticação
@@ -1175,7 +1187,7 @@ func TestOpenRejectsTruncatedInput(t *testing.T) {
 func TestOpenRejectsWrongKey(t *testing.T) {
 	box, _ := crypto.NewBox(testKey(t))
 	outra, _ := crypto.NewBox(bytes.Repeat([]byte{9}, 32))
-	aad := crypto.AAD("targets", uuid.New())
+	aad := crypto.AAD("targets", "headers_enc", uuid.New())
 
 	sealed, _ := box.Seal([]byte("segredo"), aad)
 
@@ -1189,7 +1201,7 @@ func TestOpenRejectsWrongKey(t *testing.T) {
 // contra alguém "otimizar" o nonce para um valor fixo.
 func TestSealUsesFreshNonceEveryTime(t *testing.T) {
 	box, _ := crypto.NewBox(testKey(t))
-	aad := crypto.AAD("targets", uuid.New())
+	aad := crypto.AAD("targets", "headers_enc", uuid.New())
 	msg := []byte("mesma mensagem")
 
 	vistos := make(map[string]bool, 100)
@@ -1298,15 +1310,21 @@ func (b *Box) Open(sealed, aad []byte) (Secret, error) {
 	return Secret(pt), nil
 }
 
-// AAD amarra um ciphertext à linha exata que o armazena. Com isso, mover o
-// valor da coluna de um registro para outro invalida a autenticação, mesmo
-// que o atacante tenha acesso de escrita ao banco.
-func AAD(table string, id uuid.UUID) []byte {
-	b := make([]byte, 0, len(table)+1+16)
+// AAD amarra um ciphertext à coluna e à linha exatas que o armazenam. Com
+// isso, mover o valor de um registro para outro — ou de uma coluna cifrada
+// para outra da mesma linha — invalida a autenticação, mesmo que o atacante
+// tenha acesso de escrita ao banco.
+//
+// A coluna entra no AAD desde já por assimetria de custo: hoje é um
+// parâmetro; depois de existir ciphertext gravado, mudar o AAD exigiria
+// re-cifrar tudo.
+func AAD(table, column string, id uuid.UUID) []byte {
+	b := make([]byte, 0, len(table)+len(column)+2+16)
 	b = append(b, table...)
 	b = append(b, ':')
-	idBytes := id
-	return append(b, idBytes[:]...)
+	b = append(b, column...)
+	b = append(b, ':')
+	return append(b, id[:]...)
 }
 ```
 
@@ -1412,6 +1430,16 @@ O AAD do envelope amarra o ciphertext ao UUID da linha, impedindo que um
 segredo seja movido entre registros. IP usa HMAC porque 2^32 é enumerável;
 token usa SHA-256 puro porque tem 256 bits de entropia."
 ```
+
+
+> **Correções aplicadas durante a execução** (ver rulings R6–R11 no ledger em
+> `.superpowers/sdd/.../progress.md`): `HashIP` ganhou guarda de tamanho de
+> chave com `panic`, porque `hmac.New` aceita chave vazia em silêncio e
+> devolveria o hash enumerável que a §4.2 quer evitar; `Secret` implementa
+> `fmt.Formatter`, porque `String`/`GoString` não cobrem `%d`, `%c` nem `%08b`;
+> `AAD` passou a incluir a coluna; e quatro testes ganharam força de detecção
+> que não tinham (fronteira de truncamento, propriedades do `AAD`, nonce entre
+> instâncias distintas, e known-answer tests que travam o algoritmo dos hashes).
 
 ---
 
@@ -1621,6 +1649,14 @@ func AllowIP(ip netip.Addr) error {
 	// guarda inteira. É o bypass mais comum contra listas de bloqueio.
 	ip = ip.Unmap()
 
+	// netip.Prefix.Contains devolve false para QUALQUER endereço com zona
+	// IPv6 ("Prefixes strip zones"), e Unmap() não remove a zona. Sem esta
+	// recusa, ::1%lo atravessa as vinte faixas sem casar nenhuma. Alvo
+	// legítimo nunca carrega zona, então recusar é a resposta fail-closed.
+	if ip.Zone() != "" {
+		return fmt.Errorf("%w: zona IPv6 não é permitida (%s)", ErrBlocked, ip)
+	}
+
 	for _, p := range blockedPrefixes {
 		if p.Contains(ip) {
 			return fmt.Errorf("%w: %s pertence a %s", ErrBlocked, ip, p)
@@ -1718,10 +1754,14 @@ func TestClientCannotReachLoopbackServer(t *testing.T) {
 	}
 }
 
-// Um alvo público que redireciona para IP interno é a forma mais simples de
-// contornar validação feita só na URL de entrada. Como o cliente não reusa
-// conexão, cada salto disca de novo e revalida o IP.
-func TestRedirectToLoopbackIsBlocked(t *testing.T) {
+// Atenção ao que este teste NÃO cobre. Ele verifica que um alvo cujo primeiro
+// salto já é interno morre imediatamente — e só isso. Não há redirecionamento
+// exercido aqui: httptest.NewServer sempre escuta em loopback, então o próprio
+// redirecionador é destino bloqueado e a requisição termina no salto zero.
+//
+// A cobertura real do CheckRedirect está em
+// TestCheckRedirectRevalidaEsquemaELimitaSaltos, que o chama diretamente.
+func TestAlvoQueRedirecionaParaInternoMorreNoPrimeiroSalto(t *testing.T) {
 	interno := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("segredo interno"))
 	}))
@@ -1741,16 +1781,53 @@ func TestRedirectToLoopbackIsBlocked(t *testing.T) {
 	}
 }
 
-func TestRedirectToDisallowedSchemeIsBlocked(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, "file:///etc/passwd", http.StatusFound)
-	}))
-	defer srv.Close()
-
+// TestCheckRedirectRevalidaEsquemaELimitaSaltos exercita CheckRedirect
+// diretamente, porque não há como exercitá-lo por dentro de um teste com
+// httptest: todo httptest.Server escuta em loopback, então o próprio
+// redirecionador já é destino bloqueado e a cadeia morre no salto zero.
+func TestCheckRedirectRevalidaEsquemaELimitaSaltos(t *testing.T) {
 	client := safedial.NewClient(5 * time.Second)
-	if resp, err := client.Get(srv.URL); err == nil {
-		resp.Body.Close()
-		t.Fatal("redirecionamento para file:// não foi bloqueado")
+	if client.CheckRedirect == nil {
+		t.Fatal("CheckRedirect é nil: nenhum salto seria revalidado")
+	}
+
+	req := func(raw string) *http.Request {
+		t.Helper()
+		r, err := http.NewRequest(http.MethodGet, raw, nil)
+		if err != nil {
+			t.Fatalf("requisição de teste inválida: %v", err)
+		}
+		return r
+	}
+
+	// Um salto legítimo passa.
+	if err := client.CheckRedirect(req("https://exemplo.com/x"), nil); err != nil {
+		t.Errorf("salto legítimo recusado: %v", err)
+	}
+
+	// Um salto para esquema não permitido é recusado antes de discar.
+	err := client.CheckRedirect(req("file:///etc/passwd"), nil)
+	if !errors.Is(err, safedial.ErrInvalidURL) {
+		t.Errorf("salto para file:// deu erro = %v, queria envolver ErrInvalidURL", err)
+	}
+
+	// A cadeia é limitada. net/http já inclui a requisição original em via,
+	// então via com 3 elementos é o terceiro salto — ainda permitido — e via
+	// com 4 é o quarto, que para. Isso faz maxRedirects significar o número
+	// de saltos seguidos, como o nome promete.
+	via := []*http.Request{
+		req("https://exemplo.com/0"),
+		req("https://exemplo.com/1"),
+		req("https://exemplo.com/2"),
+	}
+	if err := client.CheckRedirect(req("https://exemplo.com/3"), via); err != nil {
+		t.Errorf("terceiro salto recusado: %v", err)
+	}
+
+	via = append(via, req("https://exemplo.com/3"))
+	err = client.CheckRedirect(req("https://exemplo.com/4"), via)
+	if !errors.Is(err, safedial.ErrBlocked) {
+		t.Errorf("cadeia longa deu erro = %v, queria envolver ErrBlocked", err)
 	}
 }
 
@@ -1844,7 +1921,11 @@ func NewClient(timeout time.Duration) *http.Client {
 		Transport: NewTransport(),
 		Timeout:   timeout,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if len(via) >= maxRedirects {
+			// net/http inclui a requisição original em via, então a
+			// comparação é estrita: com maxRedirects = 3 o cliente segue
+			// três saltos e recusa o quarto — a constante significa o que
+			// o nome dela diz.
+			if len(via) > maxRedirects {
 				return fmt.Errorf("%w: mais de %d redirecionamentos", ErrBlocked, maxRedirects)
 			}
 			// O IP do destino já será revalidado no dial, porque não há
@@ -2623,6 +2704,11 @@ type Manager struct {
 }
 
 func NewManager(store Store, clk clock.Clock, ipKey []byte) *Manager {
+	// crypto.HashIP entra em panic com chave curta; validar aqui faz a falha
+	// aparecer na partida do processo, e não no primeiro login em produção.
+	if len(ipKey) < crypto.KeySize {
+		panic("auth: NewManager exige ipKey de ao menos 32 bytes")
+	}
 	return &Manager{store: store, clk: clk, ipKey: ipKey}
 }
 
@@ -2656,6 +2742,12 @@ func (m *Manager) Rotate(ctx context.Context, token string, meta Meta) (string, 
 
 	var newToken string
 	var s Session
+	// reuso é sinalizado por fora da transação de propósito: a revogação da
+	// família e o registro de auditoria precisam ser COMMITADOS. Se o callback
+	// devolvesse ErrTokenReuse, o InTx daria rollback e apagaria exatamente a
+	// defesa que acabou de ser acionada — a detecção viraria uma mensagem de
+	// erro sem efeito nenhum no banco.
+	var reuso bool
 
 	err := m.store.InTx(ctx, func(ctx context.Context, tx Tx) error {
 		cur, err := tx.LockSessionByHash(ctx, hash)
@@ -2667,9 +2759,6 @@ func (m *Manager) Rotate(ctx context.Context, token string, meta Meta) (string, 
 		}
 
 		if cur.UsedAt != nil {
-			// Um token consumido reapareceu. A única explicação é cópia.
-			// Não há como saber se quem chegou agora é o ladrão ou o dono,
-			// então a família inteira cai e ambos fazem login de novo.
 			if err := tx.RevokeFamily(ctx, cur.FamilyID, now); err != nil {
 				return err
 			}
@@ -2677,7 +2766,8 @@ func (m *Manager) Rotate(ctx context.Context, token string, meta Meta) (string, 
 				crypto.HashIP(m.ipKey, meta.IP), now); err != nil {
 				return err
 			}
-			return ErrTokenReuse
+			reuso = true
+			return nil
 		}
 		if cur.RevokedAt != nil || now.After(cur.ExpiresAt) {
 			return ErrInvalidSession
@@ -2690,8 +2780,14 @@ func (m *Manager) Rotate(ctx context.Context, token string, meta Meta) (string, 
 		newToken, s, err = m.insert(ctx, tx, cur.UserID, cur.FamilyID, meta)
 		return err
 	})
+	// O erro da transação vem antes do reúso de propósito: se o commit falhar,
+	// a revogação e a auditoria não persistiram, e devolver ErrTokenReuse
+	// afirmaria uma defesa que não aconteceu.
 	if err != nil {
 		return "", Session{}, err
+	}
+	if reuso {
+		return "", Session{}, ErrTokenReuse
 	}
 	return newToken, s, nil
 }
@@ -2917,6 +3013,19 @@ O token de acesso recusa explicitamente alg=none."
   - `httpapi.ErrorCode` (string) com as constantes listadas abaixo; `httpapi.WriteError(w http.ResponseWriter, r *http.Request, code ErrorCode)`; `httpapi.WriteJSON(w http.ResponseWriter, status int, v any)`.
   - `middleware.RequestID(next http.Handler) http.Handler`; `middleware.Recover(next http.Handler) http.Handler`; `middleware.SecurityHeaders(next http.Handler) http.Handler`; `middleware.CORS(origin string) func(http.Handler) http.Handler`; `middleware.RateLimit(perMinute int, burst int) func(http.Handler) http.Handler`; `middleware.BodyLimit(maxBytes int64) func(http.Handler) http.Handler`; `middleware.RequireCustomHeader(next http.Handler) http.Handler`.
   - `httpapi.NewServer(cfg *config.Config, h http.Handler) *http.Server`.
+
+> **Correções aplicadas durante a execução** (rulings R1, R32, R33 no ledger):
+> o envelope de erro **não** mora em `internal/httpapi/errors.go` como escrito
+> abaixo — isso criaria ciclo de importação, porque `routes.go` (Task 8) importa
+> `internal/httpapi/middleware` e os middlewares precisariam importar
+> `internal/httpapi` de volta. `ErrorCode`, `errorTable`, `WriteError` e
+> `WriteJSON` vivem em **`internal/apierr`**, um pacote folha que ambos os lados
+> importam; onde os trechos abaixo escrevem `httpapi.WriteError`, o código real
+> diz `apierr.WriteError`. Além disso, `RateLimit` recebe um `context.Context`
+> como primeiro parâmetro (a varredura de buckets usa `time.NewTicker` com
+> cancelamento, porque `time.Tick` nunca é coletado), e `Vary: Origin` é
+> incondicional no CORS.
+
 
 - [ ] **Step 1: Escrever os testes que falham**
 
@@ -3149,7 +3258,6 @@ const (
 	CodeInvalidCredentials ErrorCode = "invalid_credentials"
 	CodeInvalidSession     ErrorCode = "invalid_session"
 	CodeUnauthorized       ErrorCode = "unauthorized"
-	CodeAccountLocked      ErrorCode = "account_locked"
 	CodeNotFound           ErrorCode = "not_found"
 	CodeValidation         ErrorCode = "validation_failed"
 	CodeRateLimited        ErrorCode = "rate_limited"
@@ -3170,7 +3278,6 @@ var errorTable = map[ErrorCode]struct {
 	CodeInvalidCredentials: {http.StatusUnauthorized, "E-mail ou senha incorretos."},
 	CodeInvalidSession:     {http.StatusUnauthorized, "Sessão inválida ou expirada."},
 	CodeUnauthorized:       {http.StatusUnauthorized, "Autenticação necessária."},
-	CodeAccountLocked:      {http.StatusTooManyRequests, "Conta temporariamente bloqueada."},
 	CodeNotFound:           {http.StatusNotFound, "Recurso não encontrado."},
 	CodeValidation:         {http.StatusBadRequest, "Dados inválidos."},
 	CodeRateLimited:        {http.StatusTooManyRequests, "Muitas requisições."},
@@ -3544,6 +3651,17 @@ verificável de ponta a ponta contra Postgres real.
   - `httpapi.NewAuthHandlers(users auth.UserStore, sessions *auth.Manager, clk clock.Clock, jwtSecret []byte, secureCookie bool) *httpapi.AuthHandlers`.
   - `middleware.Authn(jwtSecret []byte, clk clock.Clock) func(http.Handler) http.Handler`; `middleware.UserID(ctx context.Context) (uuid.UUID, bool)`.
   - `httpapi.Routes(...) http.Handler`.
+
+> **Contratos alterados durante a execução** (ver ledger): use
+> `apierr.WriteError` / `apierr.WriteJSON` no lugar de `WriteError` / `WriteJSON`
+> (ruling R1 — pacote `internal/apierr`); `middleware.RateLimit` recebe
+> `context.Context` como primeiro parâmetro (R32), então `Routes` precisa
+> receber e repassar o contexto de vida do servidor; e `crypto.AAD` recebe
+> `(table, column string, id uuid.UUID)` (R8). **`RequestID` tem de ser o
+> middleware mais externo da cadeia** — se não for, `trace_id` sai vazio em todo
+> envelope de erro, e nenhum teste da Task 7 pega isso, porque eles montam as
+> cadeias à mão.
+
 
 - [ ] **Step 1: Escrever o teste de integração que falha**
 
@@ -3947,7 +4065,11 @@ func (h *AuthHandlers) Login(w http.ResponseWriter, r *http.Request) {
 
 	if user.IsLocked(now) {
 		auth.VerifyDummy()
-		WriteError(w, r, CodeAccountLocked)
+		// O bloqueio NÃO se anuncia (R34): mesmo 401 genérico de senha
+		// errada e de e-mail inexistente. Um código distinto enumeraria as
+		// contas por um canal muito mais barato que o tempo de CPU, o que
+		// anularia o VerifyDummy da linha de cima.
+		WriteError(w, r, CodeInvalidCredentials)
 		return
 	}
 
@@ -4608,7 +4730,7 @@ func (s *TOTP) Enroll(ctx context.Context, userID uuid.UUID, email string) (stri
 		return "", fmt.Errorf("gerar chave TOTP: %w", err)
 	}
 
-	sealed, err := s.box.Seal([]byte(key.Secret()), crypto.AAD("users", userID))
+	sealed, err := s.box.Seal([]byte(key.Secret()), crypto.AAD("users", "totp_secret_enc", userID))
 	if err != nil {
 		return "", fmt.Errorf("cifrar segredo TOTP: %w", err)
 	}
@@ -4737,7 +4859,7 @@ func (s *TOTP) load(ctx context.Context, userID uuid.UUID) (secret string, confi
 		return "", false, ErrTOTPNotEnrolled
 	}
 
-	plain, err := s.box.Open(sealed, crypto.AAD("users", userID))
+	plain, err := s.box.Open(sealed, crypto.AAD("users", "totp_secret_enc", userID))
 	if err != nil {
 		return "", false, fmt.Errorf("decifrar segredo TOTP: %w", err)
 	}
