@@ -67,9 +67,23 @@ func (h *AuthHandlers) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// O bloqueio não se anuncia (R34, spec §5.2): a resposta é o mesmo 401
+	// genérico de senha errada e de e-mail inexistente.
+	//
+	// Uma mensagem distinta aqui reintroduziria exatamente a enumeração que o
+	// VerifyDummy existe para impedir, e por um canal muito mais barato que o
+	// tempo de CPU: bastaria mandar seis senhas erradas por e-mail e olhar se
+	// a resposta muda. Onde mudasse, a conta existe. Todo o cuidado com o
+	// custo de Argon2 seria em vão.
+	//
+	// O preço é de usabilidade — quem está bloqueado não recebe explicação.
+	// A spec escolheu esse lado: o bloqueio dura 15 minutos e o evento fica no
+	// audit log, que é onde essa informação pertence. Não "melhore a UX" aqui
+	// sem reabrir o buraco.
 	if user.IsLocked(now) {
+		// O custo de CPU continua igualado: esta também é uma falha de login.
 		auth.VerifyDummy()
-		apierr.WriteError(w, r, apierr.CodeAccountLocked)
+		apierr.WriteError(w, r, apierr.CodeInvalidCredentials)
 		return
 	}
 

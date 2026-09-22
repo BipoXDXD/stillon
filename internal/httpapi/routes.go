@@ -30,6 +30,19 @@ func Routes(ctx context.Context, cfg *config.Config, store *auth.PGStore, sessio
 
 	// Rotas de autenticação: limite mais apertado, porque é onde a força
 	// bruta bate.
+	//
+	// Este limitador e o bloqueio progressivo de auth.LockThreshold operam em
+	// camadas diferentes e de propósito: o limite é por IP, o bloqueio é por
+	// conta. Depois de esgotado o burst ainda passam 10 tentativas por minuto,
+	// então cinco falhas na mesma conta chegam em poucos segundos — o
+	// bloqueio não fica inalcançável (R35).
+	//
+	// A ordem tem uma propriedade que vale preservar: o rate limit responde
+	// ANTES de o handler rodar, então um atacante remoto é barrado por IP
+	// antes de acumular falhas suficientes para trancar a conta de uma vítima.
+	// Sem isso, o próprio lockout viraria o ataque — negação de serviço por
+	// bloqueio de conta alheia, que é um problema real em sistemas com
+	// lockout. Não afrouxe este limitador sem pensar nisso.
 	mux.Handle("POST /api/v1/auth/login",
 		middleware.RateLimit(ctx, 10, 5)(http.HandlerFunc(h.Login)))
 	mux.Handle("POST /api/v1/auth/refresh", http.HandlerFunc(h.Refresh))

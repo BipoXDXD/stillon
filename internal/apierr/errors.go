@@ -24,7 +24,6 @@ const (
 	CodeInvalidCredentials ErrorCode = "invalid_credentials"
 	CodeInvalidSession     ErrorCode = "invalid_session"
 	CodeUnauthorized       ErrorCode = "unauthorized"
-	CodeAccountLocked      ErrorCode = "account_locked"
 	CodeNotFound           ErrorCode = "not_found"
 	CodeValidation         ErrorCode = "validation_failed"
 	CodeRateLimited        ErrorCode = "rate_limited"
@@ -45,7 +44,6 @@ var errorTable = map[ErrorCode]struct {
 	CodeInvalidCredentials: {http.StatusUnauthorized, "E-mail ou senha incorretos."},
 	CodeInvalidSession:     {http.StatusUnauthorized, "Sessão inválida ou expirada."},
 	CodeUnauthorized:       {http.StatusUnauthorized, "Autenticação necessária."},
-	CodeAccountLocked:      {http.StatusTooManyRequests, "Conta temporariamente bloqueada."},
 	CodeNotFound:           {http.StatusNotFound, "Recurso não encontrado."},
 	CodeValidation:         {http.StatusBadRequest, "Dados inválidos."},
 	CodeRateLimited:        {http.StatusTooManyRequests, "Muitas requisições."},

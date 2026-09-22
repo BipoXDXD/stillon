@@ -326,11 +326,11 @@ func TestLockedAccountIsRejectedUntilTheLockExpires(t *testing.T) {
 
 	bloqueado := login(t, a, c, testEmail, testPass)
 	defer bloqueado.Body.Close()
-	if bloqueado.StatusCode != http.StatusTooManyRequests {
-		t.Fatalf("login em conta bloqueada devolveu %d, queria 429", bloqueado.StatusCode)
+	if bloqueado.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("login em conta bloqueada devolveu %d, queria 401", bloqueado.StatusCode)
 	}
-	if code := decodeEnvelope(t, bloqueado).Error.Code; code != "account_locked" {
-		t.Errorf("code = %q, queria account_locked", code)
+	if code := decodeEnvelope(t, bloqueado).Error.Code; code != "invalid_credentials" {
+		t.Errorf("code = %q, queria invalid_credentials", code)
 	}
 
 	// Passado o bloqueio, a mesma credencial entra.
@@ -339,6 +339,40 @@ func TestLockedAccountIsRejectedUntilTheLockExpires(t *testing.T) {
 	defer liberado.Body.Close()
 	if liberado.StatusCode != http.StatusOK {
 		t.Errorf("login depois do bloqueio expirar devolveu %d, queria 200", liberado.StatusCode)
+	}
+}
+
+// O bloqueio não pode se anunciar (R34, spec §5.2).
+//
+// Se a conta bloqueada tivesse resposta própria, o VerifyDummy inteiro seria
+// anulado: bastaria ao atacante mandar seis senhas erradas por e-mail. Onde
+// viesse a resposta distinta, a conta existe; onde viesse sempre 401, não
+// existe. As contas ficariam enumeradas apesar de todo o custo de CPU
+// igualado — por isso o caminho de bloqueio devolve exatamente o mesmo
+// status e o mesmo corpo de um e-mail que nunca existiu.
+func TestLockedAccountIsIndistinguishableFromUnknownAccount(t *testing.T) {
+	a := newAPI(t)
+	c := clientWithJar(t)
+	bloquearConta(t, a)
+
+	bloqueada := login(t, a, c, testEmail, testPass)
+	defer bloqueada.Body.Close()
+	inexistente := login(t, a, c, "ninguem@exemplo.com", testPass)
+	defer inexistente.Body.Close()
+
+	if bloqueada.StatusCode != inexistente.StatusCode {
+		t.Errorf("status diferentes: conta bloqueada %d, e-mail inexistente %d — "+
+			"seis senhas erradas por e-mail enumeram as contas",
+			bloqueada.StatusCode, inexistente.StatusCode)
+	}
+
+	ea := decodeEnvelope(t, bloqueada).Error
+	eb := decodeEnvelope(t, inexistente).Error
+	if ea != eb {
+		t.Errorf("corpos distinguíveis: conta bloqueada %+v, e-mail inexistente %+v", ea, eb)
+	}
+	if ea.Code != "invalid_credentials" {
+		t.Errorf("code = %q, queria invalid_credentials", ea.Code)
 	}
 }
 
