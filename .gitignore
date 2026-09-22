@@ -1,0 +1,7 @@
+/sentinela
+/bin/
+/web/node_modules/
+/web/dist/
+.env
+*.test
+coverage.out
