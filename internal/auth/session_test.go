@@ -392,3 +392,30 @@ func TestRotateReturnsCommitErrorInsteadOfReuse(t *testing.T) {
 		t.Error("devolveu ErrTokenReuse por cima de um commit falho: afirma uma revogação que não persistiu")
 	}
 }
+
+// O refresh token nunca pode chegar em claro ao banco (spec §5.2). Hoje a
+// propriedade sobreviveria por acidente — gravar em claro e buscar em claro
+// continua funcionando —, então ela precisa de trava própria (ruling R31), do
+// mesmo jeito que o ip_hash.
+func TestTokenIsStoredHashed(t *testing.T) {
+	mgr, pool, _, userID := setup(t)
+	ctx := context.Background()
+
+	tok, s, err := mgr.Issue(ctx, userID, meta)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var tokenHash []byte
+	if err := pool.QueryRow(ctx,
+		`SELECT token_hash FROM sessions WHERE id = $1`, s.ID).Scan(&tokenHash); err != nil {
+		t.Fatal(err)
+	}
+
+	if !bytes.Equal(tokenHash, crypto.HashToken(tok)) {
+		t.Error("token_hash não é o SHA-256 do token devolvido")
+	}
+	if bytes.Contains(tokenHash, []byte(tok)) {
+		t.Error("o token foi gravado em claro: quem ler a tabela assume qualquer sessão")
+	}
+}

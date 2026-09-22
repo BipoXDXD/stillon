@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 
 	"github.com/BipoXDXD/sentinela/internal/auth"
@@ -51,13 +52,41 @@ func TestAccessTokenRejectsWrongSecret(t *testing.T) {
 }
 
 // "alg: none" é o ataque clássico contra JWT: o atacante troca o algoritmo e
-// remove a assinatura. A biblioteca precisa recusar qualquer método que não
-// seja o esperado.
+// remove a assinatura.
+//
+// Este teste NÃO trava o jwt.WithValidMethods (ruling R30): na golang-jwt v5 o
+// alg=none já morre dentro do Verify, que devolve
+// NoneSignatureTypeDisallowedError para qualquer chave que não seja a
+// constante UnsafeAllowNoneSignatureType — e a nossa keyfunc devolve []byte.
+// Ele fica como trava contra uma versão futura que afrouxe isso. Quem trava a
+// opção é o TestAccessTokenRejectsAlgorithmConfusion, abaixo.
 func TestAccessTokenRejectsNoneAlgorithm(t *testing.T) {
 	forjado := "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0." +
 		"eyJzdWIiOiIwMTkyYzNkNC1hYmNkLTdlZmYtODAwMC0wMDAwMDAwMDAwMDAifQ."
 
 	if _, err := auth.ParseAccessToken(jwtSecret, forjado, time.Now()); err == nil {
 		t.Error("token com alg=none foi aceito")
+	}
+}
+
+// Confusão de algoritmo: o atacante mantém o mesmo segredo e só troca o alg do
+// cabeçalho. É isto que o jwt.WithValidMethods impede — sem ele, a biblioteca
+// verifica com o método que o cabeçalho pedir, ou seja, com o método que o
+// atacante escolheu.
+func TestAccessTokenRejectsAlgorithmConfusion(t *testing.T) {
+	now := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
+	claims := jwt.RegisteredClaims{
+		Subject:   uuid.New().String(),
+		IssuedAt:  jwt.NewNumericDate(now),
+		ExpiresAt: jwt.NewNumericDate(now.Add(15 * time.Minute)),
+	}
+
+	forjado, err := jwt.NewWithClaims(jwt.SigningMethodHS512, claims).SignedString(jwtSecret)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := auth.ParseAccessToken(jwtSecret, forjado, now); err == nil {
+		t.Error("token forjado com alg=HS512 foi aceito; só HS256 é esperado")
 	}
 }

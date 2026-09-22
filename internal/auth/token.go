@@ -33,7 +33,12 @@ func ParseAccessToken(secret []byte, raw string, now time.Time) (uuid.UUID, erro
 
 	_, err := jwt.ParseWithClaims(raw, &claims,
 		func(t *jwt.Token) (any, error) { return secret, nil },
-		// Sem esta opção, um token forjado com alg=none seria aceito.
+		// Trava contra confusão de algoritmo (ruling R30). Sem esta opção,
+		// um token forjado com alg=HS512 e assinado com o MESMO segredo é
+		// aceito: a biblioteca usa o alg do cabeçalho, que é escolha do
+		// atacante. Não é o alg=none que esta opção impede — esse já morre
+		// no Verify da própria biblioteca, porque o keyfunc devolve []byte
+		// em vez da constante UnsafeAllowNoneSignatureType.
 		jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Alg()}),
 		// Relógio injetado para que o teste de expiração não dependa do
 		// tempo real da máquina.
