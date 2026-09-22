@@ -1746,10 +1746,14 @@ func TestClientCannotReachLoopbackServer(t *testing.T) {
 	}
 }
 
-// Um alvo público que redireciona para IP interno é a forma mais simples de
-// contornar validação feita só na URL de entrada. Como o cliente não reusa
-// conexão, cada salto disca de novo e revalida o IP.
-func TestRedirectToLoopbackIsBlocked(t *testing.T) {
+// Atenção ao que este teste NÃO cobre. Ele verifica que um alvo cujo primeiro
+// salto já é interno morre imediatamente — e só isso. Não há redirecionamento
+// exercido aqui: httptest.NewServer sempre escuta em loopback, então o próprio
+// redirecionador é destino bloqueado e a requisição termina no salto zero.
+//
+// A cobertura real do CheckRedirect está em
+// TestCheckRedirectRevalidaEsquemaELimitaSaltos, que o chama diretamente.
+func TestAlvoQueRedirecionaParaInternoMorreNoPrimeiroSalto(t *testing.T) {
 	interno := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("segredo interno"))
 	}))
@@ -1769,16 +1773,34 @@ func TestRedirectToLoopbackIsBlocked(t *testing.T) {
 	}
 }
 
-func TestRedirectToDisallowedSchemeIsBlocked(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, "file:///etc/passwd", http.StatusFound)
-	}))
-	defer srv.Close()
-
+// TestCheckRedirectRevalidaEsquemaELimitaSaltos exercita CheckRedirect
+// diretamente, porque não há como exercitá-lo por dentro de um teste com
+// httptest: todo httptest.Server escuta em loopback, então o próprio
+// redirecionador já é destino bloqueado e a cadeia morre no salto zero.
+func TestCheckRedirectRevalidaEsquemaELimitaSaltos(t *testing.T) {
 	client := safedial.NewClient(5 * time.Second)
-	if resp, err := client.Get(srv.URL); err == nil {
-		resp.Body.Close()
-		t.Fatal("redirecionamento para file:// não foi bloqueado")
+
+	req := func(raw string) *http.Request {
+		r, err := http.NewRequest(http.MethodGet, raw, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return r
+	}
+
+	// Esquema não permitido no destino do salto.
+	if err := client.CheckRedirect(req("file:///etc/passwd"), nil); err == nil {
+		t.Error("redirecionamento para file:// deveria ser recusado")
+	}
+
+	// Salto legítimo, cadeia curta.
+	if err := client.CheckRedirect(req("https://exemplo.com/b"), make([]*http.Request, 1)); err != nil {
+		t.Errorf("salto legítimo foi recusado: %v", err)
+	}
+
+	// Cadeia longa demais.
+	if err := client.CheckRedirect(req("https://exemplo.com/b"), make([]*http.Request, maxRedirectsNoTeste)); err == nil {
+		t.Error("cadeia acima do limite deveria ser recusada")
 	}
 }
 
