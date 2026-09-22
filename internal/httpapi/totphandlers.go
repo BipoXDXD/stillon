@@ -77,6 +77,12 @@ func (h *AuthHandlers) TOTPConfirm(w http.ResponseWriter, r *http.Request) {
 	}
 
 	codes, err := h.totp.Confirm(r.Context(), userID, req.Code, h.clk.Now())
+	if errors.Is(err, auth.ErrTOTPAlreadyEnabled) {
+		// Mesmo 403 do enroll: reconfirmar rotacionaria os códigos de
+		// recuperação e apagaria a data de ativação original.
+		apierr.WriteError(w, r, apierr.CodeForbidden)
+		return
+	}
 	if errors.Is(err, auth.ErrTOTPInvalid) || errors.Is(err, auth.ErrTOTPNotEnrolled) {
 		apierr.WriteError(w, r, apierr.CodeValidation)
 		return
@@ -90,7 +96,17 @@ func (h *AuthHandlers) TOTPConfirm(w http.ResponseWriter, r *http.Request) {
 	apierr.WriteJSON(w, http.StatusOK, map[string]any{"recovery_codes": codes})
 }
 
-// TOTPVerify fecha o login em dois passos: consome o desafio e emite a sessão.
+// TOTPVerify fecha o login em dois passos: valida o desafio e emite a sessão.
+//
+// O desafio NÃO é consumido — é um JWT sem jti, e revogá-lo exigiria estado
+// que este plano não tem. O comentário anterior dizia que ele era consumido,
+// e isso era falso. O que sobra depois do item 11 (consumo do timestep,
+// RFC 6238 §5.2) é estreito: com o desafio de cinco minutos em mãos, cada
+// sessão adicional exige um código NOVO do autenticador, porque o já usado
+// não entra duas vezes. O R40 limita as tentativas erradas a LockThreshold.
+// O resíduo é sessão paralela para quem já provou senha e segundo fator —
+// higiene, não escalada. Fechar de vez pede jti em denylist ou um
+// challenge_id consumido no verify; fica nomeado para o Plano 5.
 func (h *AuthHandlers) TOTPVerify(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Challenge string `json:"challenge"`

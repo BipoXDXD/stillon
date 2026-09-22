@@ -112,7 +112,8 @@ func (s *TOTP) Confirm(ctx context.Context, userID uuid.UUID, code string, now t
 	if err != nil {
 		return nil, err
 	}
-	if !validateTOTP(code, secret, now) {
+	step, ok := validateTOTP(code, secret, now)
+	if !ok {
 		return nil, ErrTOTPInvalid
 	}
 
@@ -131,9 +132,25 @@ func (s *TOTP) Confirm(ctx context.Context, userID uuid.UUID, code string, now t
 	}
 	defer tx.Rollback(ctx) // no-op depois de Commit
 
-	if _, err := tx.Exec(ctx,
-		`UPDATE users SET totp_confirmed_at = $2 WHERE id = $1`, userID, now); err != nil {
+	// A guarda `totp_confirmed_at IS NULL` é a simetria que faltava ao R38,
+	// que a pôs no Enroll e esqueceu do Confirm. Sem ela, um segundo Confirm
+	// rotacionava os dez códigos de recuperação em silêncio, gravava outro
+	// totp.enabled e REESCREVIA a data de ativação — apagando a evidência que
+	// uma investigação de sequestro precisaria. Na WHERE, e não num SELECT
+	// anterior, pelo motivo de sempre: entre ler e escrever cabe outra
+	// confirmação.
+	//
+	// O timestep da confirmação já entra consumido: o código usado para
+	// ativar não pode servir de novo para entrar.
+	tag, err := tx.Exec(ctx,
+		`UPDATE users SET totp_confirmed_at = $2, totp_last_timestep = $3
+		   WHERE id = $1 AND totp_confirmed_at IS NULL`,
+		userID, now, step)
+	if err != nil {
 		return nil, fmt.Errorf("ativar TOTP: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return nil, ErrTOTPAlreadyEnabled
 	}
 	// Recadastro invalida os códigos anteriores.
 	if _, err := tx.Exec(ctx,
@@ -175,8 +192,8 @@ func (s *TOTP) Verify(ctx context.Context, userID uuid.UUID, code string, now ti
 		return ErrTOTPNotEnrolled
 	}
 
-	if validateTOTP(code, secret, now) {
-		return nil
+	if step, ok := validateTOTP(code, secret, now); ok {
+		return s.consumirTimestep(ctx, userID, step)
 	}
 
 	// O consumo e o registro de auditoria vão na mesma transação: uso de
@@ -238,7 +255,7 @@ func (s *TOTP) Disable(ctx context.Context, userID uuid.UUID, code string, now t
 	}
 	defer tx.Rollback(ctx) // no-op depois de Commit
 
-	if !validateTOTP(code, secret, now) {
+	if _, ok := validateTOTP(code, secret, now); !ok {
 		// O DELETE ... RETURNING é a própria verificação do código de
 		// recuperação: não há janela entre conferir e consumir.
 		var id uuid.UUID
@@ -283,6 +300,27 @@ func (s *TOTP) Disable(ctx context.Context, userID uuid.UUID, code string, now t
 	return nil
 }
 
+// consumirTimestep marca o período como usado e recusa se ele já foi.
+//
+// A condição vai na cláusula WHERE, e não num SELECT anterior, pelo mesmo
+// motivo do R38: entre ler e escrever cabe outra verificação com o mesmo
+// código, e é exatamente essa corrida que o reúso explora. Recusar `<=` e não
+// só `=` fecha também o código do período ANTERIOR depois que um posterior
+// entrou.
+func (s *TOTP) consumirTimestep(ctx context.Context, userID uuid.UUID, step int64) error {
+	tag, err := s.pool.Exec(ctx,
+		`UPDATE users SET totp_last_timestep = $2
+		   WHERE id = $1 AND (totp_last_timestep IS NULL OR totp_last_timestep < $2)`,
+		userID, step)
+	if err != nil {
+		return fmt.Errorf("consumir timestep TOTP: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrTOTPInvalid
+	}
+	return nil
+}
+
 func (s *TOTP) IsEnabled(ctx context.Context, userID uuid.UUID) (bool, error) {
 	var confirmed *time.Time
 	err := s.pool.QueryRow(ctx,
@@ -320,12 +358,25 @@ func (s *TOTP) load(ctx context.Context, userID uuid.UUID) (secret string, confi
 	return string(plain.Reveal()), at != nil, nil
 }
 
-func validateTOTP(code, secret string, now time.Time) bool {
-	ok, err := totp.ValidateCustom(code, secret, now, totp.ValidateOpts{
-		Period:    totpPeriod,
-		Skew:      totpSkew,
-		Digits:    otp.DigitsSix,
-		Algorithm: otp.AlgorithmSHA1,
-	})
-	return err == nil && ok
+// validateTOTP devolve o timestep que casou, e não só um booleano. Saber QUAL
+// período foi aceito é o que permite consumi-lo: com skew, o código pode ser
+// do período anterior, do atual ou do seguinte, e marcar o período "de agora"
+// deixaria o do anterior livre para outra rodada.
+//
+// Cada candidato é testado com skew ZERO, justamente para que o casamento
+// identifique um período só.
+func validateTOTP(code, secret string, now time.Time) (int64, bool) {
+	for _, delta := range []int{-totpSkew, 0, totpSkew} {
+		instante := now.Add(time.Duration(delta) * totpPeriod * time.Second)
+		ok, err := totp.ValidateCustom(code, secret, instante, totp.ValidateOpts{
+			Period:    totpPeriod,
+			Skew:      0,
+			Digits:    otp.DigitsSix,
+			Algorithm: otp.AlgorithmSHA1,
+		})
+		if err == nil && ok {
+			return instante.Unix() / totpPeriod, true
+		}
+	}
+	return 0, false
 }

@@ -159,7 +159,15 @@ func TestVerifyRejectsWrongCode(t *testing.T) {
 	}
 	// A perna oposta: o código certo passa. Sem ela, um Verify que recusasse
 	// tudo passaria na asserção acima.
-	if err := svc.Verify(ctx, userID, code, now); err != nil {
+	//
+	// É o código do período SEGUINTE, e não o mesmo do Confirm: o timestep da
+	// confirmação já entra consumido (RFC 6238 §5.2), então reusá-lo aqui
+	// testaria o reúso, não a aceitação.
+	seguinte, err := totp.GenerateCode(secretFromURI(t, uri), now.Add(30*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Verify(ctx, userID, seguinte, now.Add(30*time.Second)); err != nil {
 		t.Errorf("o código correto deveria ser aceito: %v", err)
 	}
 }
@@ -390,8 +398,14 @@ func TestEnrollIsRefusedWhenTOTPAlreadyConfirmed(t *testing.T) {
 		t.Errorf("IsEnabled = %v (erro %v) depois do enroll recusado, queria true", enabled, err)
 	}
 	// E o segredo original continua valendo: o enroll recusado não pode ter
-	// trocado a chave do usuário por outra que ele não tem no telefone.
-	if err := svc.Verify(ctx, userID, code, now); err != nil {
+	// trocado a chave do usuário por outra que ele não tem no telefone. Usa o
+	// período seguinte porque o da confirmação já foi consumido.
+	depois := now.Add(30 * time.Second)
+	novo, err := totp.GenerateCode(secretFromURI(t, uri), depois)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Verify(ctx, userID, novo, depois); err != nil {
 		t.Errorf("o segredo confirmado deixou de valer depois do enroll recusado: %v", err)
 	}
 }
@@ -458,8 +472,14 @@ func TestRecoveryCodeUseIsAudited(t *testing.T) {
 	}
 
 	// Um código normal do app não é evento de recuperação. Sem esta perna,
-	// um insertAudit incondicional passaria no teste.
-	if err := svc.Verify(ctx, userID, code, now); err != nil {
+	// um insertAudit incondicional passaria no teste. Período seguinte, pelo
+	// mesmo motivo de sempre: o da confirmação já foi consumido.
+	depois := now.Add(30 * time.Second)
+	normal, err := totp.GenerateCode(secretFromURI(t, uri), depois)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Verify(ctx, userID, normal, depois); err != nil {
 		t.Fatal(err)
 	}
 	if n := eventosDeAuditoria(t, pool, userID, "totp.recovery_used"); n != 0 {
@@ -521,5 +541,141 @@ func TestConfirmRejectsAWrongCode(t *testing.T) {
 	}
 	if codigos != 0 {
 		t.Errorf("o Confirm recusado gerou %d códigos de recuperação", codigos)
+	}
+}
+
+// TestCodeCannotBeReusedWithinTheWindow implementa a RFC 6238 §5.2: o
+// verificador deve recusar um segundo OTP para o mesmo timestep.
+//
+// Sem isso, um código observado valia pela janela inteira — o período mais o
+// skew, cerca de noventa segundos. Exige observar o código (ombro, phishing
+// ao vivo, malware de tela), mas dentro dessa janela o mesmo código servia
+// quantas vezes o atacante quisesse.
+func TestCodeCannotBeReusedWithinTheWindow(t *testing.T) {
+	svc, pool, userID := setupTOTP(t)
+	ctx := context.Background()
+	now := time.Date(2026, 9, 22, 12, 0, 15, 0, time.UTC)
+
+	const secret = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"
+	gravarSegredoTOTP(t, pool, userID, secret)
+
+	code, err := totp.GenerateCode(secret, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := svc.Verify(ctx, userID, code, now); err != nil {
+		t.Fatalf("o primeiro uso deveria passar: %v", err)
+	}
+	if err := svc.Verify(ctx, userID, code, now); !errors.Is(err, auth.ErrTOTPInvalid) {
+		t.Errorf("o segundo uso do MESMO código devolveu %v, queria ErrTOTPInvalid", err)
+	}
+
+	// A perna oposta, sem a qual um Verify que recusasse tudo depois do
+	// primeiro uso passaria: o código do período SEGUINTE continua entrando.
+	seguinte, err := totp.GenerateCode(secret, now.Add(30*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if seguinte == code {
+		t.Fatal("os dois períodos colidiram; a asserção seguinte não distinguiria nada")
+	}
+	if err := svc.Verify(ctx, userID, seguinte, now); err != nil {
+		t.Errorf("o código do período seguinte deveria entrar: %v", err)
+	}
+}
+
+// Um código ANTERIOR ao último aceito também não volta: sem isso, o atacante
+// que observou o código das 12:00:15 o usaria depois de o dono ter entrado
+// com o das 12:00:45.
+func TestAnEarlierCodeIsRefusedAfterALaterOne(t *testing.T) {
+	svc, pool, userID := setupTOTP(t)
+	ctx := context.Background()
+	now := time.Date(2026, 9, 22, 12, 0, 15, 0, time.UTC)
+
+	const secret = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"
+	gravarSegredoTOTP(t, pool, userID, secret)
+
+	anterior, err := totp.GenerateCode(secret, now.Add(-30*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	atual, err := totp.GenerateCode(secret, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if anterior == atual {
+		t.Fatal("os dois períodos colidiram; o teste seria vácuo")
+	}
+
+	if err := svc.Verify(ctx, userID, atual, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Verify(ctx, userID, anterior, now); !errors.Is(err, auth.ErrTOTPInvalid) {
+		t.Errorf("o código do período anterior devolveu %v depois do atual, queria ErrTOTPInvalid", err)
+	}
+}
+
+// TestConfirmIsRefusedOnAnAlreadyConfirmedAccount fecha a simetria que
+// faltava ao R38.
+//
+// Confirm não tinha guarda nenhuma: o UPDATE era `WHERE id = $1` seco,
+// enquanto o do Enroll já trazia `AND totp_confirmed_at IS NULL`. Um segundo
+// Confirm rotacionava os dez códigos de recuperação em silêncio, gravava
+// outro totp.enabled e — o pior, que não estava no relato — REESCREVIA
+// totp_confirmed_at com o instante atual, apagando a data de ativação
+// original, que é justamente a evidência de que uma investigação de sequestro
+// precisaria.
+func TestConfirmIsRefusedOnAnAlreadyConfirmedAccount(t *testing.T) {
+	svc, pool, userID := setupTOTP(t)
+	ctx := context.Background()
+	now := time.Date(2026, 9, 22, 12, 0, 15, 0, time.UTC)
+
+	uri, err := svc.Enroll(ctx, userID, "totp@exemplo.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	secret := secretFromURI(t, uri)
+	code, err := totp.GenerateCode(secret, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	primeiros, err := svc.Confirm(ctx, userID, code, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var ativadoEm *time.Time
+	if err := pool.QueryRow(ctx,
+		`SELECT totp_confirmed_at FROM users WHERE id = $1`, userID).Scan(&ativadoEm); err != nil {
+		t.Fatal(err)
+	}
+
+	// Segundo Confirm, com um código válido de um período posterior.
+	depois := now.Add(90 * time.Second)
+	outro, err := totp.GenerateCode(secret, depois)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Confirm(ctx, userID, outro, depois); !errors.Is(err, auth.ErrTOTPAlreadyEnabled) {
+		t.Errorf("segundo Confirm devolveu %v, queria ErrTOTPAlreadyEnabled", err)
+	}
+
+	var agora *time.Time
+	if err := pool.QueryRow(ctx,
+		`SELECT totp_confirmed_at FROM users WHERE id = $1`, userID).Scan(&agora); err != nil {
+		t.Fatal(err)
+	}
+	if agora == nil || !agora.Equal(*ativadoEm) {
+		t.Errorf("a data de ativação virou %v, queria continuar %v", agora, ativadoEm)
+	}
+
+	// Os códigos originais continuam valendo: não podem ser invalidados sem o
+	// usuário pedir.
+	if err := svc.Verify(ctx, userID, primeiros[0], depois); err != nil {
+		t.Errorf("o código de recuperação original deixou de valer: %v", err)
+	}
+	if n := eventosDeAuditoria(t, pool, userID, "totp.enabled"); n != 1 {
+		t.Errorf("%d eventos totp.enabled, queria 1", n)
 	}
 }

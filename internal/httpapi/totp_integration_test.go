@@ -106,6 +106,13 @@ func cadastrarTOTP(t *testing.T, a *api, c *http.Client) string {
 	}
 
 	a.recuperacao = confirmado.RecoveryCodes
+
+	// Avança um período. O timestep usado na confirmação já entra consumido
+	// (RFC 6238 §5.2), então sem isto todo teste que confirmasse e em seguida
+	// verificasse com o código "de agora" estaria exercitando o reúso, e não
+	// a verificação.
+	a.clk.Advance(30 * time.Second)
+
 	return key.Secret()
 }
 
