@@ -679,3 +679,68 @@ func TestConfirmIsRefusedOnAnAlreadyConfirmedAccount(t *testing.T) {
 		t.Errorf("%d eventos totp.enabled, queria 1", n)
 	}
 }
+
+// TestDisableRejectsAWrongCode fecha um buraco que eu mesmo abri ao escrever
+// o Disable, e que tem a assinatura EXATA do item 16.
+//
+// O teste de integração cobria "sem senha" e "senha errada", que param no
+// handler, e o caminho feliz. Faltava a combinação que chega ao serviço:
+// senha CERTA com código ERRADO. Medido: com a recusa removida, a suíte
+// inteira ficava verde, e qualquer sequência de seis dígitos desligava o
+// segundo fator de quem já tivesse a senha — que é precisamente o bypass que
+// a rota existe para não ser.
+func TestDisableRejectsAWrongCode(t *testing.T) {
+	svc, pool, userID := setupTOTP(t)
+	ctx := context.Background()
+	now := time.Date(2026, 9, 22, 12, 0, 15, 0, time.UTC)
+
+	const secret = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"
+	gravarSegredoTOTP(t, pool, userID, secret)
+
+	if err := svc.Disable(ctx, userID, "000000", now); !errors.Is(err, auth.ErrTOTPInvalid) {
+		t.Errorf("Disable com código errado devolveu %v, queria ErrTOTPInvalid", err)
+	}
+
+	// A asserção que separa "recusou" de "recusou e desligou assim mesmo".
+	var confirmado *time.Time
+	var sealed []byte
+	if err := pool.QueryRow(ctx,
+		`SELECT totp_confirmed_at, totp_secret_enc FROM users WHERE id = $1`, userID).
+		Scan(&confirmado, &sealed); err != nil {
+		t.Fatal(err)
+	}
+	if confirmado == nil {
+		t.Error("o Disable recusado desligou o segundo fator mesmo assim")
+	}
+	if len(sealed) == 0 {
+		t.Error("o Disable recusado apagou o segredo mesmo assim")
+	}
+
+	// A perna oposta: o código certo desliga. Sem ela, um Disable que
+	// recusasse tudo passaria nas asserções acima.
+	certo, err := totp.GenerateCode(secret, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Disable(ctx, userID, certo, now); err != nil {
+		t.Fatalf("Disable com o código certo devolveu %v", err)
+	}
+}
+
+// Desativar o que nunca foi ativado não pode virar caminho de escrita.
+//
+// HONESTIDADE SOBRE O QUE ESTE TESTE PRENDE: a propriedade tem DOIS guardas
+// independentes — a checagem precoce de `confirmed` e o
+// `AND totp_confirmed_at IS NOT NULL` na WHERE do UPDATE. Medido: removendo
+// a checagem precoce, este teste continua VERDE, porque a WHERE segura
+// sozinha. Ele prova a propriedade, não a primeira guarda. Mantive as duas
+// assim mesmo: a precoce evita abrir transação à toa, e defesa em
+// profundidade aqui custa três linhas.
+func TestDisableOnAnAccountWithoutTOTP(t *testing.T) {
+	svc, _, userID := setupTOTP(t)
+	now := time.Date(2026, 9, 22, 12, 0, 15, 0, time.UTC)
+
+	if err := svc.Disable(context.Background(), userID, "000000", now); !errors.Is(err, auth.ErrTOTPNotEnrolled) {
+		t.Errorf("Disable sem segundo fator devolveu %v, queria ErrTOTPNotEnrolled", err)
+	}
+}
