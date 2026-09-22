@@ -376,6 +376,108 @@ func TestLockedAccountIsIndistinguishableFromUnknownAccount(t *testing.T) {
 	}
 }
 
+// sessoesDoUsuario devolve quantas sessões existem e quantas estão revogadas.
+func sessoesDoUsuario(t *testing.T, a *api) (total, revogadas int) {
+	t.Helper()
+	err := a.pool.QueryRow(context.Background(),
+		`SELECT count(*), count(revoked_at) FROM sessions WHERE user_id = $1`, a.userID).
+		Scan(&total, &revogadas)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return total, revogadas
+}
+
+// Detecção de reúso percorrida pelo caminho que um atacante percorre: HTTP
+// inteiro, do cookie ao banco (R36, spec §5.2).
+//
+// Um refresh já rotacionado que reaparece só tem uma explicação: cópia. Não
+// há como saber se quem chegou agora é o ladrão ou o dono, então a família
+// inteira cai e ambos fazem login de novo.
+//
+// A asserção que importa é a do banco. Devolver 401 é fácil — o ramo de
+// ErrInvalidSession devolve o mesmo 401 e o mesmo cookie limpo, então a
+// resposta sozinha não distingue "recusou" de "revogou de verdade". Foi
+// exatamente essa distinção que escondeu o bug do Rotate na Task 6.
+func TestReusedRefreshCookieRevokesTheWholeFamily(t *testing.T) {
+	a := newAPI(t)
+	c := clientWithJar(t)
+
+	entrada := login(t, a, c, testEmail, testPass)
+	entrada.Body.Close()
+	if entrada.StatusCode != http.StatusOK {
+		t.Fatalf("login devolveu %d", entrada.StatusCode)
+	}
+	antigo := refreshCookie(entrada)
+	if antigo == nil {
+		t.Fatal("login não devolveu cookie de refresh")
+	}
+
+	// Rotaciona: o cookie capturado acima passa a ser um token já consumido.
+	rotacao := post(t, c, a.srv.URL+"/api/v1/auth/refresh", nil)
+	rotacao.Body.Close()
+	if rotacao.StatusCode != http.StatusOK {
+		t.Fatalf("refresh devolveu %d", rotacao.StatusCode)
+	}
+	if novo := refreshCookie(rotacao); novo == nil || novo.Value == antigo.Value {
+		t.Fatal("o refresh não rotacionou o cookie; não há reúso a testar")
+	}
+
+	// A asserção do banco só tem força se a família ainda estiver viva aqui.
+	total, revogadas := sessoesDoUsuario(t, a)
+	if total < 2 {
+		t.Fatalf("esperava ao menos 2 sessões na família, achei %d", total)
+	}
+	if revogadas != 0 {
+		t.Fatalf("a família já estava revogada antes do reúso (%d de %d): "+
+			"a asserção final seria verdadeira por acidente", revogadas, total)
+	}
+
+	// O ladrão reenvia o token velho, fora do jar.
+	req, err := http.NewRequest(http.MethodPost, a.srv.URL+"/api/v1/auth/refresh", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("X-Requested-With", "sentinela")
+	req.AddCookie(&http.Cookie{Name: "sentinela_refresh", Value: antigo.Value})
+
+	reuso, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reuso.Body.Close()
+
+	if reuso.StatusCode != http.StatusUnauthorized {
+		t.Errorf("reúso devolveu %d, queria 401", reuso.StatusCode)
+	}
+	if code := decodeEnvelope(t, reuso).Error.Code; code != "invalid_session" {
+		t.Errorf("code = %q, queria invalid_session", code)
+	}
+
+	// O cookie morto precisa ser limpo, senão o navegador continua reenviando.
+	limpo := refreshCookie(reuso)
+	if limpo == nil {
+		t.Error("o reúso não limpou o cookie")
+	} else if limpo.Value != "" || limpo.MaxAge >= 0 {
+		t.Errorf("cookie não foi limpo: valor %q, MaxAge %d", limpo.Value, limpo.MaxAge)
+	}
+
+	// E a família inteira cai — é isto que separa "recusou" de "revogou".
+	total, revogadas = sessoesDoUsuario(t, a)
+	if revogadas != total {
+		t.Errorf("%d de %d sessões revogadas: a família sobreviveu ao reúso, "+
+			"o token roubado continua valendo", revogadas, total)
+	}
+
+	// Consequência prática: o cookie legítimo, que ainda está no jar, também
+	// morreu. O dono tem de fazer login de novo.
+	depois := post(t, c, a.srv.URL+"/api/v1/auth/refresh", nil)
+	defer depois.Body.Close()
+	if depois.StatusCode != http.StatusUnauthorized {
+		t.Errorf("o cookie legítimo continuou valendo depois do reúso: %d", depois.StatusCode)
+	}
+}
+
 // O 401 tem de vir da ausência do cookie, não de o cookie não alcançar a
 // rota: o Path é /api/v1/auth e a rota é /api/v1/auth/refresh, então o cookie
 // de uma sessão real chega — é o que a segunda metade deste teste prova.
