@@ -91,6 +91,8 @@ func TestVerifyRejectsMalformedHash(t *testing.T) {
 		"parâmetros ilegíveis": "$argon2id$v=19$m=abc,t=3,p=2$c2FsdA$aGFzaA",
 		"salt não é base64":    "$argon2id$v=19$m=65536,t=3,p=2$!!!$aGFzaA",
 		"hash não é base64":    "$argon2id$v=19$m=65536,t=3,p=2$c2FsdA$!!!",
+		"salt vazio":           "$argon2id$v=19$m=65536,t=3,p=2$$aGFzaA",
+		"hash vazio":           "$argon2id$v=19$m=65536,t=3,p=2$c2FsdA$",
 		"campos a menos":       "$argon2id$v=19$m=65536,t=3,p=2$c2FsdA",
 	}
 
