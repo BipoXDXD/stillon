@@ -21,6 +21,7 @@ import (
 type ErrorCode string
 
 const (
+	// #nosec G101 -- o regex do gosec bate no NOME da constante ("Credentials"); o valor é um código de erro da API, não um segredo.
 	CodeInvalidCredentials ErrorCode = "invalid_credentials"
 	CodeInvalidSession     ErrorCode = "invalid_session"
 	CodeUnauthorized       ErrorCode = "unauthorized"

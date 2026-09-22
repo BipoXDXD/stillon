@@ -119,3 +119,28 @@ func mustHashWith(t *testing.T, plain string, m, tt uint32, p uint8) string {
 	parts := strings.Split(h, "$")
 	return parts[len(parts)-1]
 }
+
+// TestVerifyPasswordRejectsOutOfRangeParams cobre hashes cujos parâmetros são
+// sintaticamente válidos mas fora da faixa que o argon2 aceita. A biblioteca
+// entra em panic nesses casos; decodeHash tem de recusar antes.
+func TestVerifyPasswordRejectsOutOfRangeParams(t *testing.T) {
+	cases := map[string]string{
+		"tudo zero":            "$argon2id$v=19$m=0,t=0,p=0$c2FsdA$aGFzaA",
+		"t=0":                  "$argon2id$v=19$m=65536,t=0,p=2$c2FsdA$aGFzaA",
+		"p=0":                  "$argon2id$v=19$m=65536,t=3,p=0$c2FsdA$aGFzaA",
+		"memória abaixo de 8p": "$argon2id$v=19$m=8,t=3,p=2$c2FsdA$aGFzaA",
+	}
+
+	for nome, h := range cases {
+		t.Run(nome, func(t *testing.T) {
+			defer func() {
+				if r := recover(); r != nil {
+					t.Fatalf("VerifyPassword entrou em panic: %v", r)
+				}
+			}()
+			if _, _, err := auth.VerifyPassword(h, senha); !errors.Is(err, auth.ErrInvalidHash) {
+				t.Errorf("erro = %v, queria ErrInvalidHash", err)
+			}
+		})
+	}
+}

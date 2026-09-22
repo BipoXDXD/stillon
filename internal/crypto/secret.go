@@ -33,6 +33,7 @@ func (Secret) LogValue() slog.Value         { return slog.StringValue(redacted) 
 // Format cobre a classe inteira de verbos do fmt, e não só os que consultam
 // String e GoString. Sem ele, %d, %c e %08b imprimem os bytes do segredo um a
 // um — redação por verbo seria uma lista que alguém esqueceria de completar.
+// #nosec G104 -- Format(fmt.State, rune) é a assinatura fixa de fmt.Formatter: não há como devolver erro.
 func (Secret) Format(f fmt.State, verb rune) { io.WriteString(f, redacted) }
 
 // Reveal devolve os bytes em claro. O nome é deliberadamente chamativo: uma

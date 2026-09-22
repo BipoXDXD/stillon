@@ -56,6 +56,9 @@ func VerifyPassword(encoded, plain string) (ok bool, needsRehash bool, err error
 		return false, false, err
 	}
 
+	// #nosec G115 -- want vem do decodeHash sobre um hash no formato PHC; o
+	// comprimento é sempre argonKeyLen (32), e estourar uint32 exigiria um
+	// hash de gigabytes, impedido pelo formato e pelo body limit.
 	got := argon2.IDKey([]byte(plain), salt, time, memory, threads, uint32(len(want)))
 
 	// Comparação em tempo constante: bytes.Equal sai cedo na primeira
@@ -80,6 +83,16 @@ func decodeHash(encoded string) (memory, time uint32, threads uint8, salt, sum [
 		return 0, 0, 0, nil, nil, ErrInvalidHash
 	}
 	if _, e := fmt.Sscanf(parts[3], "m=%d,t=%d,p=%d", &memory, &time, &threads); e != nil {
+		return 0, 0, 0, nil, nil, ErrInvalidHash
+	}
+	// argon2.IDKey entra em panic com t=0, p=0 ou memória abaixo de 8*p, e o
+	// Sscanf aceita esses valores de bom grado. Isto é robustez, não fechar
+	// buraco: chegar aqui exige escrita arbitrária em users.password_hash, e
+	// quem tem isso grava o hash de uma senha que conhece e entra como quem
+	// quiser — o panic seria um downgrade do ataque, e o middleware.Recover
+	// já o converteria em 500. Recusar o hash é simplesmente a resposta
+	// certa para um valor que não é um hash válido.
+	if time < 1 || threads < 1 || memory < 8*uint32(threads) {
 		return 0, 0, 0, nil, nil, ErrInvalidHash
 	}
 	if salt, err = base64.RawStdEncoding.DecodeString(parts[4]); err != nil || len(salt) == 0 {
