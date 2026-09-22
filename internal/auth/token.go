@@ -47,6 +47,57 @@ func ParseAccessToken(secret []byte, raw string, now time.Time) (uuid.UUID, erro
 	if err != nil {
 		return uuid.Nil, fmt.Errorf("%w: %v", ErrInvalidToken, err)
 	}
+	// Access token não carrega audience; se veio uma, é um token de outro
+	// propósito — em especial o desafio de TOTP, que é entregue depois da
+	// senha e ANTES do segundo fator. Sem esta checagem ele valeria como
+	// credencial completa e o segundo fator viraria decoração.
+	if len(claims.Audience) > 0 {
+		return uuid.Nil, fmt.Errorf("%w: audience inesperada", ErrInvalidToken)
+	}
+
+	id, err := uuid.Parse(claims.Subject)
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("%w: subject não é UUID", ErrInvalidToken)
+	}
+	return id, nil
+}
+
+// challengeAudience separa o token de desafio do access token. Sem essa
+// separação, o token entregue após a senha — antes do segundo fator — valeria
+// como credencial completa, e o TOTP viraria decoração.
+const challengeAudience = "totp-challenge"
+
+// ChallengeTTL é curto: é só o tempo de digitar seis dígitos.
+const ChallengeTTL = 5 * time.Minute
+
+func NewChallengeToken(secret []byte, userID uuid.UUID, now time.Time) (string, error) {
+	claims := jwt.RegisteredClaims{
+		Subject:   userID.String(),
+		Audience:  jwt.ClaimStrings{challengeAudience},
+		IssuedAt:  jwt.NewNumericDate(now),
+		ExpiresAt: jwt.NewNumericDate(now.Add(ChallengeTTL)),
+	}
+	tok, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(secret)
+	if err != nil {
+		return "", fmt.Errorf("assinar desafio: %w", err)
+	}
+	return tok, nil
+}
+
+func ParseChallengeToken(secret []byte, raw string, now time.Time) (uuid.UUID, error) {
+	var claims jwt.RegisteredClaims
+
+	_, err := jwt.ParseWithClaims(raw, &claims,
+		func(t *jwt.Token) (any, error) { return secret, nil },
+		jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Alg()}),
+		jwt.WithTimeFunc(func() time.Time { return now }),
+		// Sem esta checagem, um access token comum seria aceito como desafio
+		// e vice-versa.
+		jwt.WithAudience(challengeAudience),
+	)
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("%w: %v", ErrInvalidToken, err)
+	}
 
 	id, err := uuid.Parse(claims.Subject)
 	if err != nil {

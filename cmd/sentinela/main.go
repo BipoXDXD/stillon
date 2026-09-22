@@ -13,9 +13,13 @@ import (
 	"github.com/BipoXDXD/sentinela/internal/auth"
 	"github.com/BipoXDXD/sentinela/internal/clock"
 	"github.com/BipoXDXD/sentinela/internal/config"
+	"github.com/BipoXDXD/sentinela/internal/crypto"
 	"github.com/BipoXDXD/sentinela/internal/httpapi"
 	"github.com/BipoXDXD/sentinela/internal/storage"
 )
+
+// totpIssuer é o nome que aparece no app autenticador do usuário.
+const totpIssuer = "Sentinela"
 
 func main() {
 	role := flag.String("role", "", "all | api | prober (sobrepõe a env ROLE)")
@@ -77,7 +81,13 @@ func run(ctx context.Context, cfg *config.Config) error {
 	store := auth.NewPGStore(pool)
 	sessions := auth.NewManager(store, clk, cfg.IPHashKey)
 
-	srv := httpapi.NewServer(cfg, httpapi.Routes(ctx, cfg, store, sessions, clk))
+	box, err := crypto.NewBox(cfg.MasterKey)
+	if err != nil {
+		return err
+	}
+	totp := auth.NewTOTP(pool, box, totpIssuer)
+
+	srv := httpapi.NewServer(cfg, httpapi.Routes(ctx, cfg, store, sessions, totp, clk))
 
 	errCh := make(chan error, 1)
 	go func() {

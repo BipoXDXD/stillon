@@ -22,13 +22,14 @@ const refreshCookieName = "sentinela_refresh"
 type AuthHandlers struct {
 	users        auth.UserStore
 	sessions     *auth.Manager
+	totp         *auth.TOTP
 	clk          clock.Clock
 	jwtSecret    []byte
 	secureCookie bool
 }
 
-func NewAuthHandlers(users auth.UserStore, sessions *auth.Manager, clk clock.Clock, jwtSecret []byte, secureCookie bool) *AuthHandlers {
-	return &AuthHandlers{users: users, sessions: sessions, clk: clk, jwtSecret: jwtSecret, secureCookie: secureCookie}
+func NewAuthHandlers(users auth.UserStore, sessions *auth.Manager, totp *auth.TOTP, clk clock.Clock, jwtSecret []byte, secureCookie bool) *AuthHandlers {
+	return &AuthHandlers{users: users, sessions: sessions, totp: totp, clk: clk, jwtSecret: jwtSecret, secureCookie: secureCookie}
 }
 
 type loginRequest struct {
@@ -109,6 +110,29 @@ func (h *AuthHandlers) Login(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := h.users.ResetFailures(r.Context(), user.ID); err != nil {
 		slog.Error("zerar falhas de login", "erro", err)
+	}
+
+	// Com segundo fator ativo, a senha correta sozinha não abre sessão
+	// nenhuma: o que sai daqui é um desafio de vida curta, com audience
+	// própria, que ParseAccessToken recusa como credencial.
+	enabled, err := h.totp.IsEnabled(r.Context(), user.ID)
+	if err != nil {
+		h.internal(w, r, "consultar segundo fator", err)
+		return
+	}
+	if enabled {
+		challenge, err := auth.NewChallengeToken(h.jwtSecret, user.ID, now)
+		if err != nil {
+			h.internal(w, r, "assinar desafio", err)
+			return
+		}
+		// Nenhum cookie de refresh é emitido aqui: a sessão só nasce depois
+		// do segundo fator.
+		apierr.WriteJSON(w, http.StatusOK, map[string]any{
+			"totp_required": true,
+			"challenge":     challenge,
+		})
+		return
 	}
 
 	h.issue(w, r, user.ID)

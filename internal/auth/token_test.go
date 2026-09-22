@@ -90,3 +90,68 @@ func TestAccessTokenRejectsAlgorithmConfusion(t *testing.T) {
 		t.Error("token forjado com alg=HS512 foi aceito; só HS256 é esperado")
 	}
 }
+
+func TestChallengeTokenRoundTrip(t *testing.T) {
+	now := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
+	userID := uuid.New()
+
+	raw, err := auth.NewChallengeToken(jwtSecret, userID, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := auth.ParseChallengeToken(jwtSecret, raw, now.Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != userID {
+		t.Errorf("userID = %s, queria %s", got, userID)
+	}
+}
+
+// O desafio dura só o tempo de digitar seis dígitos.
+func TestChallengeTokenExpiresQuickly(t *testing.T) {
+	now := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
+	raw, err := auth.NewChallengeToken(jwtSecret, uuid.New(), now)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := auth.ParseChallengeToken(jwtSecret, raw, now.Add(auth.ChallengeTTL-time.Minute)); err != nil {
+		t.Errorf("dentro do prazo o desafio deveria valer: %v", err)
+	}
+	if _, err := auth.ParseChallengeToken(jwtSecret, raw, now.Add(auth.ChallengeTTL+time.Minute)); err == nil {
+		t.Error("o desafio deveria ter expirado")
+	}
+}
+
+// Os dois sentidos da separação por audience.
+//
+// Este é o ponto de segurança do segundo fator: o desafio é entregue DEPOIS da
+// senha e ANTES do código. Se ele valesse como access token, quem descobriu a
+// senha entraria direto e o TOTP seria decoração. E se um access token comum
+// valesse como desafio, qualquer sessão viva fecharia o segundo fator sem
+// nunca ter digitado um código.
+//
+// Cada perna tem seu contraponto positivo nos round-trips acima, então a
+// recusa aqui não pode vir de "recusa tudo".
+func TestChallengeAndAccessTokensAreNotInterchangeable(t *testing.T) {
+	now := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
+	userID := uuid.New()
+
+	desafio, err := auth.NewChallengeToken(jwtSecret, userID, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	acesso, err := auth.NewAccessToken(jwtSecret, userID, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := auth.ParseAccessToken(jwtSecret, desafio, now); err == nil {
+		t.Error("o token de desafio foi aceito como access token: o segundo fator seria decorativo")
+	}
+	if _, err := auth.ParseChallengeToken(jwtSecret, acesso, now); err == nil {
+		t.Error("um access token comum foi aceito como desafio: o segundo fator seria dispensável")
+	}
+}

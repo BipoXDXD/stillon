@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
@@ -16,6 +17,7 @@ import (
 	"github.com/BipoXDXD/sentinela/internal/auth"
 	"github.com/BipoXDXD/sentinela/internal/clock"
 	"github.com/BipoXDXD/sentinela/internal/config"
+	"github.com/BipoXDXD/sentinela/internal/crypto"
 	"github.com/BipoXDXD/sentinela/internal/httpapi"
 	"github.com/BipoXDXD/sentinela/internal/storage/testdb"
 )
@@ -31,6 +33,7 @@ const (
 var (
 	testJWTSecret = []byte("segredo-de-teste-com-32-bytes!!!")
 	testIPHashKey = []byte("chave-de-teste-com-32-bytes-ok!!")
+	testMasterKey = []byte("chave-mestra-de-teste-32-bytes!!")
 )
 
 type api struct {
@@ -68,6 +71,7 @@ func newAPIWith(t *testing.T, ajustar func(*config.Config)) *api {
 		CORSOrigin: "https://app.exemplo.com",
 		JWTSecret:  testJWTSecret,
 		IPHashKey:  testIPHashKey,
+		MasterKey:  testMasterKey,
 	}
 	if ajustar != nil {
 		ajustar(cfg)
@@ -81,7 +85,13 @@ func newAPIWith(t *testing.T, ajustar func(*config.Config)) *api {
 	store := auth.NewPGStore(pool)
 	mgr := auth.NewManager(store, clk, cfg.IPHashKey)
 
-	srv := httptest.NewServer(httpapi.Routes(ctx, cfg, store, mgr, clk))
+	box, err := crypto.NewBox(cfg.MasterKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	segundoFator := auth.NewTOTP(pool, box, "Sentinela")
+
+	srv := httptest.NewServer(httpapi.Routes(ctx, cfg, store, mgr, segundoFator, clk))
 	t.Cleanup(srv.Close)
 	return &api{srv: srv, pool: pool, clk: clk, userID: userID}
 }
@@ -145,6 +155,40 @@ func login(t *testing.T, a *api, c *http.Client, email, senha string) *http.Resp
 	t.Helper()
 	return post(t, c, a.srv.URL+"/api/v1/auth/login",
 		map[string]string{"email": email, "password": senha})
+}
+
+// jsonBody serializa o corpo para as requisições montadas à mão, que precisam
+// de headers que o post() não conhece.
+func jsonBody(t *testing.T, v any) io.Reader {
+	t.Helper()
+	b, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return bytes.NewReader(b)
+}
+
+// postComToken faz um POST autenticado por access token, com os headers que a
+// cadeia de middlewares exige.
+func postComToken(t *testing.T, c *http.Client, url, token string, body any) *http.Response {
+	t.Helper()
+	var corpo io.Reader
+	if body != nil {
+		corpo = jsonBody(t, body)
+	}
+	req, err := http.NewRequest(http.MethodPost, url, corpo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Requested-With", "sentinela")
+	req.Header.Set("Authorization", "Bearer "+token)
+
+	resp, err := c.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resp
 }
 
 func TestFullAuthFlow(t *testing.T) {

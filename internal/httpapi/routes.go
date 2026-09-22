@@ -18,12 +18,12 @@ const maxBodyBytes = 1 << 20 // 1 MiB
 //
 // ctx é o contexto de vida do servidor: ele encerra as goroutines de
 // varredura dos rate limiters no shutdown, em vez de deixá-las vazar (R32).
-func Routes(ctx context.Context, cfg *config.Config, store *auth.PGStore, sessions *auth.Manager, clk clock.Clock) http.Handler {
+func Routes(ctx context.Context, cfg *config.Config, store *auth.PGStore, sessions *auth.Manager, totp *auth.TOTP, clk clock.Clock) http.Handler {
 	// Sem https não há como marcar o cookie como Secure: o navegador
 	// simplesmente não o guardaria, e o desenvolvimento local pararia. Em
 	// produção PUBLIC_BASE_URL é https, e o refresh nunca trafega em claro.
 	secureCookie := strings.HasPrefix(cfg.PublicBaseURL, "https://")
-	h := NewAuthHandlers(store, sessions, clk, cfg.JWTSecret, secureCookie)
+	h := NewAuthHandlers(store, sessions, totp, clk, cfg.JWTSecret, secureCookie)
 	authn := middleware.Authn(cfg.JWTSecret, clk)
 
 	mux := http.NewServeMux()
@@ -47,6 +47,15 @@ func Routes(ctx context.Context, cfg *config.Config, store *auth.PGStore, sessio
 		middleware.RateLimit(ctx, 10, 5)(http.HandlerFunc(h.Login)))
 	mux.Handle("POST /api/v1/auth/refresh", http.HandlerFunc(h.Refresh))
 	mux.Handle("POST /api/v1/auth/logout", http.HandlerFunc(h.Logout))
+
+	mux.Handle("POST /api/v1/auth/totp/enroll", authn(http.HandlerFunc(h.TOTPEnroll)))
+	mux.Handle("POST /api/v1/auth/totp/confirm", authn(http.HandlerFunc(h.TOTPConfirm)))
+	// Verify não passa por authn: o usuário ainda não tem sessão, só o
+	// desafio. O limitador cobre o lugar do bloqueio por conta, que aqui não
+	// se aplica — a senha já foi acertada, o que resta é adivinhar seis
+	// dígitos.
+	mux.Handle("POST /api/v1/auth/totp/verify",
+		middleware.RateLimit(ctx, 20, 5)(http.HandlerFunc(h.TOTPVerify)))
 
 	mux.Handle("GET /api/v1/me", authn(http.HandlerFunc(h.Me)))
 

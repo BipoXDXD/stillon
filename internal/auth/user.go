@@ -33,6 +33,7 @@ func (u User) IsLocked(now time.Time) bool {
 
 type UserStore interface {
 	ByEmail(ctx context.Context, email string) (User, error)
+	EmailByID(ctx context.Context, userID uuid.UUID) (string, error)
 	RecordFailure(ctx context.Context, userID uuid.UUID, at time.Time) error
 	ResetFailures(ctx context.Context, userID uuid.UUID) error
 	UpdatePasswordHash(ctx context.Context, userID uuid.UUID, hash string) error
@@ -88,4 +89,18 @@ func (s *PGStore) UpdatePasswordHash(ctx context.Context, userID uuid.UUID, hash
 		return fmt.Errorf("atualizar hash de senha: %w", err)
 	}
 	return nil
+}
+
+// EmailByID existe para o cadastro de TOTP: a URI otpauth:// leva o e-mail
+// como nome da conta, e o handler só tem o id vindo do access token.
+func (s *PGStore) EmailByID(ctx context.Context, userID uuid.UUID) (string, error) {
+	var email string
+	err := s.pool.QueryRow(ctx, `SELECT email FROM users WHERE id = $1`, userID).Scan(&email)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	if err != nil {
+		return "", fmt.Errorf("buscar e-mail: %w", err)
+	}
+	return email, nil
 }
