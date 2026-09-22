@@ -9,6 +9,7 @@ import (
 	"syscall"
 
 	"github.com/BipoXDXD/sentinela/internal/config"
+	"github.com/BipoXDXD/sentinela/internal/storage"
 )
 
 func main() {
@@ -49,6 +50,17 @@ func main() {
 // run é onde o wiring acontece. Mantido separado de main para que main tenha
 // apenas responsabilidade de processo (flags, sinais, código de saída).
 func run(ctx context.Context, cfg *config.Config) error {
+	if err := storage.Migrate(ctx, cfg.DatabaseURL); err != nil {
+		return err
+	}
+	slog.Info("migrations aplicadas")
+
+	pool, err := storage.NewPool(ctx, cfg.DatabaseURL)
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+
 	<-ctx.Done()
 	return nil
 }
