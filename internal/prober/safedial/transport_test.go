@@ -32,9 +32,23 @@ func TestClientCannotReachLoopbackServer(t *testing.T) {
 }
 
 // Um alvo público que redireciona para IP interno é a forma mais simples de
-// contornar validação feita só na URL de entrada. Como o cliente não reusa
-// conexão, cada salto disca de novo e revalida o IP.
-func TestRedirectToLoopbackIsBlocked(t *testing.T) {
+// contornar validação feita só na URL de entrada. Este teste NÃO cobre esse
+// caso, e o nome diz isso de propósito.
+//
+// Motivo: httptest.NewServer sempre escuta em 127.0.0.1. Logo o próprio
+// redirecionador já é um destino bloqueado, a requisição morre no salto zero
+// e o 302 nunca chega ao cliente — CheckRedirect não chega a rodar. Montar a
+// versão ponta a ponta exigiria um primeiro salto com IP público, que não
+// existe em teste local, ou uma lista de bloqueio injetável, que só o
+// sondador do Plano 2 vai justificar.
+//
+// O que este teste prova de verdade é o mesmo que
+// TestClientCannotReachLoopbackServer: o dialer recusa loopback. A cobertura
+// real da revalidação por salto está em
+// TestCheckRedirectRevalidaEsquemaELimitaSaltos, que chama CheckRedirect
+// diretamente. Não tente "consertar" este teste aqui: ele não está quebrado,
+// o httptest é que não permite o cenário.
+func TestAlvoQueRedirecionaParaInternoMorreNoPrimeiroSalto(t *testing.T) {
 	interno := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("segredo interno"))
 	}))
@@ -54,19 +68,6 @@ func TestRedirectToLoopbackIsBlocked(t *testing.T) {
 	}
 }
 
-func TestRedirectToDisallowedSchemeIsBlocked(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, "file:///etc/passwd", http.StatusFound)
-	}))
-	defer srv.Close()
-
-	client := safedial.NewClient(5 * time.Second)
-	if resp, err := client.Get(srv.URL); err == nil {
-		resp.Body.Close()
-		t.Fatal("redirecionamento para file:// não foi bloqueado")
-	}
-}
-
 func TestTransportDoesNotReuseConnections(t *testing.T) {
 	// Reuso de conexão pula o dialer e, com ele, a revalidação do IP. Este
 	// teste trava a configuração para que ninguém "otimize" o keep-alive de
@@ -80,11 +81,10 @@ func TestTransportDoesNotReuseConnections(t *testing.T) {
 	}
 }
 
-// Os dois testes de redirecionamento acima nunca chegam a seguir um salto: o
-// próprio httptest.Server escuta em loopback, então o bloqueio acontece já no
-// primeiro dial. Eles provam a guarda de IP, não a revalidação por salto.
-// Este teste exercita CheckRedirect diretamente, que é onde o esquema é
-// revalidado e a cadeia é limitada.
+// Nenhum teste com httptest chega a seguir um redirecionamento, porque o
+// bloqueio acontece já no primeiro dial (ver o comentário acima). Este teste
+// exercita CheckRedirect diretamente, que é onde o esquema é revalidado e a
+// cadeia é limitada — é a cobertura real dessas duas propriedades.
 func TestCheckRedirectRevalidaEsquemaELimitaSaltos(t *testing.T) {
 	client := safedial.NewClient(5 * time.Second)
 	if client.CheckRedirect == nil {
