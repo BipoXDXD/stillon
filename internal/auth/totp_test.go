@@ -168,26 +168,31 @@ func TestVerifyRejectsWrongCode(t *testing.T) {
 // relógio de celular alguns segundos fora já reprova o usuário; com tolerância
 // alta demais, a janela de reúso do código cresce.
 func TestVerifyToleratesOnePeriodOfClockSkew(t *testing.T) {
-	svc, _, userID := setupTOTP(t)
+	svc, pool, userID := setupTOTP(t)
 	ctx := context.Background()
 	// Instante fixo no meio de um período, para que "anterior" e "seguinte"
 	// sejam mesmo os períodos vizinhos e não dependam de onde o relógio da
 	// máquina caiu dentro da janela de 30 segundos.
 	now := time.Date(2026, 9, 22, 12, 0, 15, 0, time.UTC)
 
-	uri, err := svc.Enroll(ctx, userID, "totp@exemplo.com")
-	if err != nil {
-		t.Fatal(err)
-	}
-	secret := secretFromURI(t, uri)
+	// Segredo FIXO, gravado direto no banco. O Enroll gera o segredo
+	// internamente e não aceita um de fora, e um segredo aleatório a cada
+	// execução era o que obrigava as asserções abaixo a serem condicionais:
+	// dois períodos podem render os mesmos seis dígitos (~2e-6), e o teste
+	// então PULAVA — apagando justamente as pernas negativas, que são as
+	// únicas que provam que a janela de skew não é larga demais. Medido: com
+	// o skew arrebentado e uma colisão simulada, a suíte ficava VERDE.
+	//
+	// Trocar o offset não resolveria: o segredo continuaria sorteado e a
+	// colisão voltaria a ser possível. Só o segredo determinístico fecha.
+	// O caminho do Enroll continua coberto por TestEnrollThenConfirm.
+	const secret = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"
+	gravarSegredoTOTP(t, pool, userID, secret)
+
 	code, err := totp.GenerateCode(secret, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.Confirm(ctx, userID, code, now); err != nil {
-		t.Fatal(err)
-	}
-
 	gerar := func(d time.Duration) string {
 		t.Helper()
 		c, err := totp.GenerateCode(secret, now.Add(d))
@@ -198,35 +203,60 @@ func TestVerifyToleratesOnePeriodOfClockSkew(t *testing.T) {
 	}
 
 	anterior := gerar(-30 * time.Second)
-	if anterior == code {
-		t.Fatal("o código do período anterior saiu igual ao atual: a asserção não distinguiria nada")
+	seguinte := gerar(30 * time.Second)
+	distante := gerar(-5 * time.Minute)
+	adiante := gerar(5 * time.Minute)
+
+	// Com segredo fixo os cinco códigos são conhecidos e distintos. A
+	// verificação é uma trava contra regressão do próprio teste: se um dia
+	// colidirem, o teste FALHA em vez de pular calado.
+	vistos := map[string]string{}
+	for nome, c := range map[string]string{
+		"atual": code, "anterior": anterior, "seguinte": seguinte,
+		"distante": distante, "adiante": adiante,
+	} {
+		if outro, jaVisto := vistos[c]; jaVisto {
+			t.Fatalf("os códigos %q e %q colidiram (%s): as asserções abaixo não distinguiriam nada",
+				nome, outro, c)
+		}
+		vistos[c] = nome
 	}
+
 	if err := svc.Verify(ctx, userID, anterior, now); err != nil {
 		t.Errorf("código do período anterior deveria ser aceito: %v", err)
 	}
-
-	seguinte := gerar(30 * time.Second)
-	if seguinte != code && seguinte != anterior {
-		if err := svc.Verify(ctx, userID, seguinte, now); err != nil {
-			t.Errorf("código do período seguinte deveria ser aceito: %v", err)
-		}
+	if err := svc.Verify(ctx, userID, seguinte, now); err != nil {
+		t.Errorf("código do período seguinte deveria ser aceito: %v", err)
 	}
 
 	// A outra ponta: um código distante não pode entrar, senão a janela de
 	// reúso de um código capturado vira minutos. Como o Verify aceitaria o
 	// código atual (provado acima), a recusa aqui só pode vir do skew.
-	distante := gerar(-5 * time.Minute)
-	if distante == code || distante == anterior {
-		t.Skip("colisão de seis dígitos entre períodos distantes; nada a distinguir nesta execução")
-	}
 	if err := svc.Verify(ctx, userID, distante, now); err == nil {
 		t.Error("código de 5 minutos atrás não deveria ser aceito")
 	}
-	adiante := gerar(5 * time.Minute)
-	if adiante != code && adiante != anterior && adiante != distante {
-		if err := svc.Verify(ctx, userID, adiante, now); err == nil {
-			t.Error("código de 5 minutos à frente não deveria ser aceito")
-		}
+	if err := svc.Verify(ctx, userID, adiante, now); err == nil {
+		t.Error("código de 5 minutos à frente não deveria ser aceito")
+	}
+}
+
+// gravarSegredoTOTP põe um segredo conhecido na linha do usuário, já
+// confirmado, selando-o com a mesma AAD que o serviço usa. É o que permite um
+// teste determinístico sem passar pelo Enroll, que sorteia o segredo.
+func gravarSegredoTOTP(t *testing.T, pool *pgxpool.Pool, userID uuid.UUID, secret string) {
+	t.Helper()
+	box, err := crypto.NewBox(totpMasterKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sealed, err := box.Seal([]byte(secret), crypto.AAD("users", "totp_secret_enc", userID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(context.Background(),
+		`UPDATE users SET totp_secret_enc = $2, totp_confirmed_at = $3 WHERE id = $1`,
+		userID, sealed, time.Date(2026, 9, 22, 11, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatal(err)
 	}
 }
 

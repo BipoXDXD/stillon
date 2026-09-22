@@ -86,3 +86,29 @@ func TestRevealReturnsTheBytes(t *testing.T) {
 		t.Errorf("Reveal() = %q, queria %q", got, plaintext)
 	}
 }
+
+// TestSecretStringAndGoStringRedactOnTheirOwn fecha as duas últimas linhas
+// descobertas do pacote.
+//
+// MarshalJSON, LogValue e Format estavam em 100% e travados por teste;
+// String e GoString, em 0% — trocar String por `return string(s)`, um
+// vazamento direto do plaintext, deixava a suíte inteira verde. Na prática o
+// Format intercepta a classe inteira de verbos do fmt, então %s e %v não
+// chegam aqui; o vazamento exigiria chamada explícita ou um consumidor fora
+// do fmt, como um text/template. É contrato documentado do tipo, e travá-lo
+// custa duas asserções.
+func TestSecretStringAndGoStringRedactOnTheirOwn(t *testing.T) {
+	s := crypto.Secret(plaintext)
+
+	for nome, got := range map[string]string{
+		"String":   s.String(),
+		"GoString": s.GoString(),
+	} {
+		if strings.Contains(got, plaintext) {
+			t.Errorf("%s() devolveu o segredo em claro: %q", nome, got)
+		}
+		if got != "[REDACTED]" {
+			t.Errorf("%s() = %q, queria [REDACTED]", nome, got)
+		}
+	}
+}

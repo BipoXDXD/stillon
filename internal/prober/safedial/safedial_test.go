@@ -153,3 +153,27 @@ func TestAllowAddrRejectsNonLiteralHost(t *testing.T) {
 		})
 	}
 }
+
+// TestAllowIPRejectsTheZeroAddress trava a única linha descoberta que é uma
+// guarda de segurança, e não um fmt.Errorf de infraestrutura.
+//
+// Sem ela, um netip.Addr zerado não casa com prefixo nenhum da tabela e
+// AllowIP devolve nil — ou seja, PERMITE. A guarda é o que separa "endereço
+// que não parseou" de "liberado". Hoje nenhum consumidor chega aqui com Addr
+// inválido (o safedial ainda não tem consumidor, R5), mas o prober do Plano 2
+// vai passar endereços vindos de resolução de DNS, e aí a guarda é a única
+// coisa entre um erro de resolução e uma requisição para onde não devia.
+//
+// O caso não cabe na tabela acima porque ela parte de strings, e não existe
+// string que produza um Addr inválido: o zero value só se obtém direto.
+func TestAllowIPRejectsTheZeroAddress(t *testing.T) {
+	var zerado netip.Addr
+
+	err := safedial.AllowIP(zerado)
+	if err == nil {
+		t.Fatal("AllowIP liberou o endereço zerado")
+	}
+	if !errors.Is(err, safedial.ErrBlocked) {
+		t.Errorf("erro = %v, queria ErrBlocked", err)
+	}
+}

@@ -231,11 +231,18 @@ func TestReuseIsReportedEvenAfterFamilyRevocation(t *testing.T) {
 // exatamente uma ganha, a outra é reúso. Sem o lock, as duas leem
 // used_at = NULL e as duas emitem token novo — a detecção deixa de existir.
 //
-// A barreira não é decoração: sem ela as duas goroutines se serializam
-// sozinhas (a segunda só abre a transação depois que a primeira commitou) e o
-// teste passa até com o FOR UPDATE removido. A barreira garante que as duas
-// transações estão abertas antes de qualquer uma ler a linha, que é o único
-// momento em que a ausência do lock aparece.
+// A barreira garante que as duas transações estão abertas antes de qualquer
+// uma ler a linha, que é o momento em que a ausência do lock aparece.
+//
+// Uma versão anterior deste comentário afirmava que sem a barreira o teste
+// passaria até com o FOR UPDATE removido. Isso foi medido e é FALSO: com o
+// lock removido, o teste falha na primeira rodada com ou sem barreira, três
+// execuções de três. A barreira torna a detecção imediata e determinística,
+// não possível — as dez rodadas existem porque, mesmo com ela, nada impede
+// que a primeira goroutine commite antes de a segunda ler, e aí a rodada
+// acusa reúso sem ter exercitado o lock. Comentário errado sobre propriedade
+// de segurança é passivo: quem lesse o anterior teria tirado a conclusão
+// oposta sobre o que o teste prova.
 type storeComBarreira struct {
 	inner   auth.Store
 	entrada *sync.WaitGroup
