@@ -2704,6 +2704,11 @@ type Manager struct {
 }
 
 func NewManager(store Store, clk clock.Clock, ipKey []byte) *Manager {
+	// crypto.HashIP entra em panic com chave curta; validar aqui faz a falha
+	// aparecer na partida do processo, e não no primeiro login em produção.
+	if len(ipKey) < crypto.KeySize {
+		panic("auth: NewManager exige ipKey de ao menos 32 bytes")
+	}
 	return &Manager{store: store, clk: clk, ipKey: ipKey}
 }
 
@@ -2737,6 +2742,12 @@ func (m *Manager) Rotate(ctx context.Context, token string, meta Meta) (string, 
 
 	var newToken string
 	var s Session
+	// reuso é sinalizado por fora da transação de propósito: a revogação da
+	// família e o registro de auditoria precisam ser COMMITADOS. Se o callback
+	// devolvesse ErrTokenReuse, o InTx daria rollback e apagaria exatamente a
+	// defesa que acabou de ser acionada — a detecção viraria uma mensagem de
+	// erro sem efeito nenhum no banco.
+	var reuso bool
 
 	err := m.store.InTx(ctx, func(ctx context.Context, tx Tx) error {
 		cur, err := tx.LockSessionByHash(ctx, hash)
@@ -2748,9 +2759,6 @@ func (m *Manager) Rotate(ctx context.Context, token string, meta Meta) (string, 
 		}
 
 		if cur.UsedAt != nil {
-			// Um token consumido reapareceu. A única explicação é cópia.
-			// Não há como saber se quem chegou agora é o ladrão ou o dono,
-			// então a família inteira cai e ambos fazem login de novo.
 			if err := tx.RevokeFamily(ctx, cur.FamilyID, now); err != nil {
 				return err
 			}
@@ -2758,7 +2766,8 @@ func (m *Manager) Rotate(ctx context.Context, token string, meta Meta) (string, 
 				crypto.HashIP(m.ipKey, meta.IP), now); err != nil {
 				return err
 			}
-			return ErrTokenReuse
+			reuso = true
+			return nil
 		}
 		if cur.RevokedAt != nil || now.After(cur.ExpiresAt) {
 			return ErrInvalidSession
@@ -2771,8 +2780,14 @@ func (m *Manager) Rotate(ctx context.Context, token string, meta Meta) (string, 
 		newToken, s, err = m.insert(ctx, tx, cur.UserID, cur.FamilyID, meta)
 		return err
 	})
+	// O erro da transação vem antes do reúso de propósito: se o commit falhar,
+	// a revogação e a auditoria não persistiram, e devolver ErrTokenReuse
+	// afirmaria uma defesa que não aconteceu.
 	if err != nil {
 		return "", Session{}, err
+	}
+	if reuso {
+		return "", Session{}, ErrTokenReuse
 	}
 	return newToken, s, nil
 }
@@ -2998,6 +3013,19 @@ O token de acesso recusa explicitamente alg=none."
   - `httpapi.ErrorCode` (string) com as constantes listadas abaixo; `httpapi.WriteError(w http.ResponseWriter, r *http.Request, code ErrorCode)`; `httpapi.WriteJSON(w http.ResponseWriter, status int, v any)`.
   - `middleware.RequestID(next http.Handler) http.Handler`; `middleware.Recover(next http.Handler) http.Handler`; `middleware.SecurityHeaders(next http.Handler) http.Handler`; `middleware.CORS(origin string) func(http.Handler) http.Handler`; `middleware.RateLimit(perMinute int, burst int) func(http.Handler) http.Handler`; `middleware.BodyLimit(maxBytes int64) func(http.Handler) http.Handler`; `middleware.RequireCustomHeader(next http.Handler) http.Handler`.
   - `httpapi.NewServer(cfg *config.Config, h http.Handler) *http.Server`.
+
+> **Correções aplicadas durante a execução** (rulings R1, R32, R33 no ledger):
+> o envelope de erro **não** mora em `internal/httpapi/errors.go` como escrito
+> abaixo — isso criaria ciclo de importação, porque `routes.go` (Task 8) importa
+> `internal/httpapi/middleware` e os middlewares precisariam importar
+> `internal/httpapi` de volta. `ErrorCode`, `errorTable`, `WriteError` e
+> `WriteJSON` vivem em **`internal/apierr`**, um pacote folha que ambos os lados
+> importam; onde os trechos abaixo escrevem `httpapi.WriteError`, o código real
+> diz `apierr.WriteError`. Além disso, `RateLimit` recebe um `context.Context`
+> como primeiro parâmetro (a varredura de buckets usa `time.NewTicker` com
+> cancelamento, porque `time.Tick` nunca é coletado), e `Vary: Origin` é
+> incondicional no CORS.
+
 
 - [ ] **Step 1: Escrever os testes que falham**
 
@@ -3625,6 +3653,17 @@ verificável de ponta a ponta contra Postgres real.
   - `httpapi.NewAuthHandlers(users auth.UserStore, sessions *auth.Manager, clk clock.Clock, jwtSecret []byte, secureCookie bool) *httpapi.AuthHandlers`.
   - `middleware.Authn(jwtSecret []byte, clk clock.Clock) func(http.Handler) http.Handler`; `middleware.UserID(ctx context.Context) (uuid.UUID, bool)`.
   - `httpapi.Routes(...) http.Handler`.
+
+> **Contratos alterados durante a execução** (ver ledger): use
+> `apierr.WriteError` / `apierr.WriteJSON` no lugar de `WriteError` / `WriteJSON`
+> (ruling R1 — pacote `internal/apierr`); `middleware.RateLimit` recebe
+> `context.Context` como primeiro parâmetro (R32), então `Routes` precisa
+> receber e repassar o contexto de vida do servidor; e `crypto.AAD` recebe
+> `(table, column string, id uuid.UUID)` (R8). **`RequestID` tem de ser o
+> middleware mais externo da cadeia** — se não for, `trace_id` sai vazio em todo
+> envelope de erro, e nenhum teste da Task 7 pega isso, porque eles montam as
+> cadeias à mão.
+
 
 - [ ] **Step 1: Escrever o teste de integração que falha**
 
