@@ -339,7 +339,15 @@ func TestLoginSpendsTheSameCPUWhetherOrNotTheAccountExists(t *testing.T) {
 
 	// Referência: a conta existe e a senha está errada, então o Argon2id roda
 	// de verdade.
-	real := medir(testEmail, "errada")
+	//
+	// Medida DUAS vezes, ficando com a MENOR. A primeira requisição HTTP do
+	// teste paga o aquecimento a frio (conexão, pool do Postgres, primeiro
+	// toque nas páginas do Argon2), o que inflava a referência e, com ela, o
+	// limiar real/2 — vermelho falso sem defeito nenhum no código. Pegar a
+	// menor das duas remove esse modo de falha sem afrouxar a trava: o limiar
+	// só desce em direção ao custo verdadeiro de um Argon2id, que é
+	// exatamente o que os caminhos sem VerifyDummy não pagam.
+	real := min(medir(testEmail, "errada"), medir(testEmail, "errada"))
 
 	inexistente := medir("ninguem@exemplo.com", testPass)
 	if inexistente < real/2 {
@@ -876,4 +884,111 @@ func TestTheMiddlewareChainIsActuallyWired(t *testing.T) {
 			t.Errorf("corpo acima do limite devolveu %d, queria recusa 4xx", resp.StatusCode)
 		}
 	})
+}
+
+// TestPreflightIsRateLimitedButKeepsItsCORSHeaders cobre o item 24 e a
+// armadilha da correção óbvia.
+//
+// O CORS envolvia o limitador e respondia 204 ao OPTIONS antes de ele rodar,
+// então preflights eram ilimitados. Mas simplesmente trocar as duas linhas
+// quebraria algo pior: com o RateLimit por fora, TODA resposta 429 — e não
+// só preflight — perderia Access-Control-Allow-Origin e Vary: Origin. O SPA
+// legítimo que batesse no limite veria um erro opaco de CORS e não
+// conseguiria nem LER o 429 para dizer "tente de novo"; e perder Vary: Origin
+// reabriria o buraco de cache que o R33 fechou.
+//
+// Por isso o CORS ficou dividido: cabeçalhos por fora, atalho do OPTIONS por
+// dentro do limitador.
+func TestPreflightIsRateLimitedButKeepsItsCORSHeaders(t *testing.T) {
+	a := newAPI(t)
+
+	preflight := func() *http.Response {
+		t.Helper()
+		req, err := http.NewRequest(http.MethodOptions, a.srv.URL+"/api/v1/auth/login", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Origin", "https://app.exemplo.com")
+		req.Header.Set("Access-Control-Request-Method", "POST")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return resp
+	}
+
+	var limitado *http.Response
+	for range 200 {
+		resp := preflight()
+		if resp.StatusCode == http.StatusTooManyRequests {
+			limitado = resp
+			break
+		}
+		resp.Body.Close()
+	}
+	if limitado == nil {
+		t.Fatal("200 preflights seguidos e nenhum 429: o OPTIONS atravessa o limitador")
+	}
+	defer limitado.Body.Close()
+
+	// A perna que a troca ingênua de linhas quebraria.
+	if got := limitado.Header.Get("Access-Control-Allow-Origin"); got != "https://app.exemplo.com" {
+		t.Errorf("o 429 veio com ACAO %q: o SPA não consegue ler a própria recusa", got)
+	}
+	if got := limitado.Header.Get("Vary"); !strings.Contains(got, "Origin") {
+		t.Errorf("o 429 veio com Vary %q, queria conter Origin (R33)", got)
+	}
+}
+
+// Item 26: a resposta que carrega credencial não deve ser guardada.
+func TestResponsesAreNotCacheable(t *testing.T) {
+	a := newAPI(t)
+	c := clientWithJar(t)
+
+	resp := login(t, a, c, testEmail, testPass)
+	defer resp.Body.Close()
+	if got := resp.Header.Get("Cache-Control"); got != "no-store" {
+		t.Errorf("a resposta com access token veio com Cache-Control %q, queria no-store", got)
+	}
+}
+
+// Item 27: corpo acima do limite é 413, e não 400. A requisição já era
+// barrada pelo MaxBytesReader; o que faltava era o cliente conseguir
+// distinguir "seus dados são inválidos" de "seu corpo é grande demais".
+func TestOversizedBodyIsAPayloadTooLarge(t *testing.T) {
+	a := newAPI(t)
+
+	gigante := bytes.NewReader(bytes.Repeat([]byte("a"), (1<<20)+1))
+	req, err := http.NewRequest(http.MethodPost, a.srv.URL+"/api/v1/auth/login", gigante)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Requested-With", "sentinela")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Errorf("status = %d, queria 413", resp.StatusCode)
+	}
+	if env := decodeEnvelope(t, resp); env.Error.Code != "payload_too_large" {
+		t.Errorf("code = %q, queria payload_too_large", env.Error.Code)
+	}
+}
+
+// Item 28: o autocompletar do celular costuma acrescentar um espaço à
+// direita do e-mail. citext cobre a caixa, não o espaço.
+func TestLoginToleratesSurroundingWhitespaceInTheEmail(t *testing.T) {
+	a := newAPI(t)
+	c := clientWithJar(t)
+
+	resp := login(t, a, c, "  "+testEmail+"  ", testPass)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("login com espaços em volta do e-mail devolveu %d, queria 200", resp.StatusCode)
+	}
 }

@@ -1,7 +1,6 @@
 package httpapi
 
 import (
-	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -32,8 +31,7 @@ func (h *AuthHandlers) TOTPEnroll(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req passwordRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		apierr.WriteError(w, r, apierr.CodeValidation)
+	if !decodeJSON(w, r, &req) {
 		return
 	}
 
@@ -71,8 +69,7 @@ func (h *AuthHandlers) TOTPConfirm(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req codeRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		apierr.WriteError(w, r, apierr.CodeValidation)
+	if !decodeJSON(w, r, &req) {
 		return
 	}
 
@@ -112,8 +109,7 @@ func (h *AuthHandlers) TOTPVerify(w http.ResponseWriter, r *http.Request) {
 		Challenge string `json:"challenge"`
 		Code      string `json:"code"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		apierr.WriteError(w, r, apierr.CodeValidation)
+	if !decodeJSON(w, r, &req) {
 		return
 	}
 	now := h.clk.Now()
@@ -205,8 +201,7 @@ func (h *AuthHandlers) TOTPDisable(w http.ResponseWriter, r *http.Request) {
 		Code         string `json:"code"`
 		RecoveryCode string `json:"recovery_code"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		apierr.WriteError(w, r, apierr.CodeValidation)
+	if !decodeJSON(w, r, &req) {
 		return
 	}
 

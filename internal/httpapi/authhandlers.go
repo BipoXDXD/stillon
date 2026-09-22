@@ -3,9 +3,11 @@ package httpapi
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/netip"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -55,13 +57,12 @@ type tokenResponse struct {
 // pela mesma razão.
 func (h *AuthHandlers) Login(w http.ResponseWriter, r *http.Request) {
 	var req loginRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		apierr.WriteError(w, r, apierr.CodeValidation)
+	if !decodeJSON(w, r, &req) {
 		return
 	}
 	now := h.clk.Now()
 
-	user, err := h.users.ByEmail(r.Context(), req.Email)
+	user, err := h.users.ByEmail(r.Context(), normalizarEmail(req.Email))
 	if errors.Is(err, auth.ErrNotFound) {
 		auth.VerifyDummy()
 		apierr.WriteError(w, r, apierr.CodeInvalidCredentials)
@@ -174,8 +175,7 @@ func (h *AuthHandlers) Refresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.setCookie(w, token, s.ExpiresAt)
-	h.writeAccess(w, r, s.UserID)
+	h.grantSession(w, r, token, s.ExpiresAt, s.UserID)
 }
 
 func (h *AuthHandlers) Logout(w http.ResponseWriter, r *http.Request) {
@@ -203,16 +203,28 @@ func (h *AuthHandlers) issue(w http.ResponseWriter, r *http.Request, userID uuid
 		h.internal(w, r, "emitir sessão", err)
 		return
 	}
-	h.setCookie(w, token, s.ExpiresAt)
-	h.writeAccess(w, r, userID)
+	h.grantSession(w, r, token, s.ExpiresAt, userID)
 }
 
-func (h *AuthHandlers) writeAccess(w http.ResponseWriter, r *http.Request, userID uuid.UUID) {
+// grantSession entrega a sessão ao cliente, e a ORDEM aqui é o ponto (item
+// 6): o access token é assinado ANTES de o cookie de refresh ir para a
+// resposta. Antes era o contrário, e como apierr.WriteJSON não limpa os
+// cabeçalhos já escritos, uma falha ao assinar saía como 500 COM o
+// Set-Cookie de uma sessão válida — o navegador ficava com um refresh vivo
+// enquanto o usuário via "o login falhou".
+//
+// O que a reordenação NÃO cobre: a linha em sessions já foi gravada por
+// Issue/Rotate antes desta função ser chamada, então um 500 aqui ainda deixa
+// a sessão no banco. O que ela tira é o cookie do lado do cliente, que é a
+// metade explorável: sessão órfã no banco expira sozinha e ninguém a
+// apresenta; cookie vivo no navegador é credencial em uso.
+func (h *AuthHandlers) grantSession(w http.ResponseWriter, r *http.Request, refresh string, expires time.Time, userID uuid.UUID) {
 	access, err := auth.NewAccessToken(h.jwtSecret, userID, h.clk.Now())
 	if err != nil {
 		h.internal(w, r, "assinar access token", err)
 		return
 	}
+	h.setCookie(w, refresh, expires)
 	apierr.WriteJSON(w, http.StatusOK, tokenResponse{
 		AccessToken: access,
 		ExpiresIn:   int(auth.AccessTTL.Seconds()),
@@ -220,6 +232,7 @@ func (h *AuthHandlers) writeAccess(w http.ResponseWriter, r *http.Request, userI
 }
 
 func (h *AuthHandlers) setCookie(w http.ResponseWriter, token string, expires time.Time) {
+	// #nosec G124 -- falso positivo: a regra exige o literal true em Secure, mas aqui ele é derivado de PUBLIC_BASE_URL (routes.go) para permitir desenvolvimento local sem TLS; em produção a URL é https e o cookie sai Secure, e HttpOnly/SameSite=Strict já estão fixos.
 	http.SetCookie(w, &http.Cookie{
 		Name:  refreshCookieName,
 		Value: token,
@@ -234,6 +247,7 @@ func (h *AuthHandlers) setCookie(w http.ResponseWriter, token string, expires ti
 }
 
 func (h *AuthHandlers) clearCookie(w http.ResponseWriter) {
+	// #nosec G124 -- falso positivo: mesmo caso do setCookie; Secure vem de PUBLIC_BASE_URL (routes.go) para não quebrar o desenvolvimento local sem TLS, com HttpOnly e SameSite=Strict fixos.
 	http.SetCookie(w, &http.Cookie{
 		Name:     refreshCookieName,
 		Value:    "",
@@ -259,4 +273,54 @@ func (h *AuthHandlers) meta(r *http.Request) auth.Meta {
 func (h *AuthHandlers) internal(w http.ResponseWriter, r *http.Request, op string, err error) {
 	slog.Error(op, "erro", err, "trace_id", observability.TraceID(r.Context()))
 	apierr.WriteError(w, r, apierr.CodeInternal)
+}
+
+// decodeJSON lê o corpo JSON e já distingue os dois modos de falha que o
+// cliente precisa separar: "seus dados são inválidos" (400) e "seu corpo é
+// grande demais" (413). O segundo chega tipado como *http.MaxBytesError,
+// posto ali pelo middleware.BodyLimit; tratá-lo como validação, como antes,
+// mandava 400 para quem não tinha erro de validação nenhum.
+//
+// Devolve false quando já escreveu o erro — o chamador só precisa retornar.
+func decodeJSON(w http.ResponseWriter, r *http.Request, dst any) bool {
+	if err := json.NewDecoder(r.Body).Decode(dst); err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			apierr.WriteError(w, r, apierr.CodePayloadTooLarge)
+			return false
+		}
+		// O erro de sintaxe chega ANTES do limite quando o corpo gigante nem
+		// é JSON: o decoder para no primeiro byte inválido, muito longe do
+		// 1 MiB, e nunca vê o MaxBytesError. Drenar o resto (que o próprio
+		// MaxBytesReader mantém limitado) revela se o corpo também estourava
+		// o limite; quando estoura, o tamanho é a causa mais útil de relatar
+		// — mandar 400 faria o cliente procurar um defeito nos dados que o
+		// servidor sequer chegou a ler.
+		if _, drenar := io.Copy(io.Discard, r.Body); errors.As(drenar, &tooLarge) {
+			apierr.WriteError(w, r, apierr.CodePayloadTooLarge)
+			return false
+		}
+		apierr.WriteError(w, r, apierr.CodeValidation)
+		return false
+	}
+	return true
+}
+
+// normalizarEmail tira apenas o espaço em volta. O caso real é o
+// autocompletar do celular, que costuma acrescentar um espaço à direita:
+// sem isto, " pessoa@exemplo.com " devolve 401 para a credencial certa.
+//
+// NÃO aplica ToLower de propósito. A coluna é citext, então a caixa já é
+// comparada sem distinção no banco; baixar a caixa aqui seria redundante e,
+// por rodar só no login, mascararia a ausência do citext caso uma migration
+// futura trocasse o tipo da coluna — o login continuaria funcionando e o
+// cadastro passaria a gravar caixa mista sem que nenhum teste reclamasse.
+//
+// PENDENTE: esta função precisa migrar para o pacote auth assim que a rota
+// de cadastro existir, e o cadastro tem de usar EXATAMENTE a mesma
+// normalização. Duas normalizações diferentes entre cadastro e login criam
+// uma discrepância pior que o problema original: o usuário cadastra um
+// e-mail que nunca mais consegue usar para entrar.
+func normalizarEmail(email string) string {
+	return strings.TrimSpace(email)
 }

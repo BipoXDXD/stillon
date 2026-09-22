@@ -77,6 +77,12 @@ func Routes(ctx context.Context, cfg *config.Config, store *auth.PGStore, sessio
 	var handler http.Handler = mux
 	handler = middleware.RequireCustomHeader(handler)
 	handler = middleware.BodyLimit(maxBodyBytes)(handler)
+	// Preflight fica DENTRO do rate limit e FORA do RequireCustomHeader: o
+	// OPTIONS passa a ser contado pelo limitador (item 24) sem precisar do
+	// cabeçalho customizado, que nenhum preflight carrega. Os cabeçalhos de
+	// CORS continuam por fora do limitador, em middleware.CORS, para que o
+	// 429 também os leve (R33).
+	handler = middleware.Preflight()(handler)
 	handler = middleware.RateLimit(ctx, 120, 30, cfg.TrustedProxies)(handler)
 	handler = middleware.CORS(cfg.CORSOrigin)(handler)
 	handler = middleware.SecurityHeaders(handler)
