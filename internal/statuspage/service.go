@@ -30,6 +30,9 @@ type Service struct {
 	// que N visitantes com o cache vencido façam uma consulta só.
 	cache cachePublico
 	voo   singleflightGroup
+	// depoisDeProjetar é um gancho de teste: roda entre a projeção e a
+	// gravação no cache. Nil em produção.
+	depoisDeProjetar func(slug string)
 }
 
 func NewService(pool *pgxpool.Pool, clk clock.Clock) *Service {

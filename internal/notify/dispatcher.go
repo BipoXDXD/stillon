@@ -194,17 +194,28 @@ func (d *Dispatcher) perdoa429(n db.ClaimDueNotificationsRow) bool {
 // como contaria se ela tivesse sido enviada e falhado igual, e quem já está
 // no teto falha de vez, sem esperar outro sendTimeout.
 func (d *Dispatcher) adiar(n db.ClaimDueNotificationsRow, parou desfecho) {
-	d.total.WithLabelValues(n.Kind, "deferred").Inc()
-	proxima := parou.proxima
-	if proxima.IsZero() { // quem parou o canal já tinha falhado de vez
-		proxima = d.clk.Now().Add(backoff(n.Attempts))
+	f, decidido := semEnvio(n)
+	if !decidido {
+		proxima := parou.proxima
+		if proxima.IsZero() { // quem parou o canal já tinha falhado de vez
+			proxima = d.clk.Now().Add(backoff(n.Attempts))
+		}
+		f = desfecho{status: "pending", reason: parou.reason, proxima: proxima}
+		switch {
+		case parou.reason == ReasonRateLimited && d.perdoa429(n):
+			f.devolver = true
+		case n.Attempts >= MaxAttempts:
+			f = desfecho{status: "failed", reason: parou.reason}
+		}
 	}
-	f := desfecho{status: "pending", reason: parou.reason, proxima: proxima}
-	switch {
-	case parou.reason == ReasonRateLimited && d.perdoa429(n):
-		f.devolver = true
-	case n.Attempts >= MaxAttempts:
-		f = desfecho{status: "failed", reason: parou.reason}
+	// "deferred" é só o que volta à fila; o resto conta pelo desfecho.
+	rotulo := "deferred"
+	if f.status != "pending" {
+		rotulo = resultado(f.status)
+	}
+	d.total.WithLabelValues(n.Kind, rotulo).Inc()
+	if f.status == "failed" && !f.doSistema {
+		slog.Warn("notificação falhou de vez", "notification_id", n.ID, "channel_id", n.ChannelID, "motivo", f.reason)
 	}
 	if err := d.persistir(n, f); err != nil {
 		slog.Error("gravar desfecho de notificação", "notification_id", n.ID, "erro", err)
@@ -241,23 +252,34 @@ func (d *Dispatcher) entregar(n db.ClaimDueNotificationsRow) desfecho {
 	return f
 }
 
-func (d *Dispatcher) tentar(n db.ClaimDueNotificationsRow) desfecho {
+// semEnvio decide o que não depende de enviar: canal desabilitado ou não
+// verificado, abertura velha, linha que voltou do lease além do teto. Vale
+// para quem vai ser enviado (tentar) e para quem vai ser adiado (adiar):
+// uma abertura velha é cancelada mesmo quando o canal parou no lote.
+func semEnvio(n db.ClaimDueNotificationsRow) (desfecho, bool) {
 	// Spec §5.8: a verificação vale no ENVIO, não só no fan-out. Um canal
 	// desabilitado depois de enfileirado não recebe mais nada.
 	if !n.Enabled || n.VerifiedAt == nil {
-		return desfecho{status: "cancelled"}
+		return desfecho{status: "cancelled"}, true
 	}
 	// Uma abertura que ainda não saiu quando o incidente já fechou fica
 	// velha: o fechamento diz quando caiu e quando voltou.
 	if n.Event == incident.EventOpened && n.ResolvedAt != nil {
-		return desfecho{status: "cancelled"}
+		return desfecho{status: "cancelled"}, true
 	}
 	// A reivindicação já contou esta tentativa. Passar do teto só acontece
 	// quando o desfecho da última não chegou a ser gravado (processo morto,
 	// commit que falhou) e a linha voltou quando o lease venceu: ela falha
 	// de vez sem enviar, porque o teto é de envios.
 	if n.Attempts > MaxAttempts {
-		return desfecho{status: "failed", reason: ReasonUnknown, doSistema: true}
+		return desfecho{status: "failed", reason: ReasonUnknown, doSistema: true}, true
+	}
+	return desfecho{}, false
+}
+
+func (d *Dispatcher) tentar(n db.ClaimDueNotificationsRow) desfecho {
+	if f, ok := semEnvio(n); ok {
+		return f
 	}
 	canal, ok := d.notifiers[Kind(n.Kind)]
 	if !ok {

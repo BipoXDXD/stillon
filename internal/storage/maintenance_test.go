@@ -355,12 +355,14 @@ func TestPartitionDropGivesUpWhenChecksIsBusy(t *testing.T) {
 	prazo, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 	inicio := time.Now()
-	r, err := storage.ApplyRetention(prazo, pool, hoje)
+	// Pelo caminho do job (Maintain): o relatório do que os DELETEs fizeram
+	// sobe junto com o erro, para ir ao log (achado da segunda revisão).
+	r, err := storage.Maintain(prazo, pool, hoje)
 	if codigoPG(err) != "55P03" || time.Since(inicio) > 10*time.Second {
-		t.Errorf("com checks ocupada, ApplyRetention deu %v em %v; queria 55P03 (lock_timeout) em segundos", err, time.Since(inicio))
+		t.Errorf("com checks ocupada, Maintain deu %v em %v; queria 55P03 (lock_timeout) em segundos", err, time.Since(inicio))
 	}
 	if r.DeletedAudit != 1 || contarComoSondador(t, pool, `SELECT count(*) FROM audit_log`) != 0 {
-		t.Errorf("os DELETEs não valeram com o DROP travado: %+v", r)
+		t.Errorf("relatório %+v: os DELETEs não valeram, ou não subiram com o erro", r)
 	}
 	if err := ocupada.Rollback(ctx); err != nil {
 		t.Fatal(err)

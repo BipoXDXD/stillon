@@ -6460,3 +6460,14 @@ git commit -m "fix: correções da revisão final do Plano 4"
 ## Depois da última tarefa
 
 Revisão do branch inteiro (`superpowers:requesting-code-review`), com atenção especial à tabela da §5.6 contra tudo o que `/p/{slug}` renderiza, e às políticas de RLS da migration 00006 contra os quatro escopos. Depois, `superpowers:finishing-a-development-branch`.
+
+## Depois do merge: segunda passada da revisão
+
+A mesma revisão independente releu o commit da Task 11 e confirmou as correções. Na medição dela, a consulta de uptime com 5.020 alvos caiu de 538 ms para 139 ms, com a função chamada uma vez. Ela concordou com a recusa da D33. Achou quatro defeitos menores, corrigidos num PR de acompanhamento, cada um com teste e sabotagem:
+
+| # | Defeito | Correção | Teste |
+|---|---|---|---|
+| D34 | Uma projeção em andamento regravava a versão velha no cache depois do `forget`; quem esperava no voo também a recebia. Despublicar com a página muito acessada deixava a página no ar por até 30 s | **Geração por slug:** o `forget` avança a geração, a projeção só entra no cache na geração em que começou, e quem esperou um voo em que a geração mudou refaz a consulta | `TestUnpublishDuringAProjectionIsNotUndoneByTheCache` (interno, com o gancho `depoisDeProjetar`) |
+| D35 | `adiar` não repetia os cancelamentos de `tentar`: abertura velha adiada podia virar `failed` e marcar o canal `failing`; linha além do teto adiada culpava o canal | `semEnvio`, as decisões que não dependem de enviar, compartilhado por `tentar` e `adiar` | `TestDeferralKeepsThePreSendDecisions` |
+| D36 | Com o DROP desistindo, o relatório dos DELETEs sumia do log | `Maintain` devolve o relatório parcial com o erro; o log mostra os dois | `TestPartitionDropGivesUpWhenChecksIsBusy`, agora por `Maintain` |
+| D37 | Adiadas que terminavam `failed` contavam como `deferred` em `notify_total` | `deferred` é só o que volta à fila | `TestDeferredAtTheLastAttemptFailWithoutSending` |
