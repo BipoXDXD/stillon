@@ -65,10 +65,10 @@ func main() {
 	log.Info("encerrado")
 }
 
-// manutencaoDeParticoes é o intervalo do job que garante a partição do mês
-// seguinte. A do mês seguinte já existe desde o boot, então um dia de
-// intervalo deixa um mês inteiro de folga.
-const manutencaoDeParticoes = 24 * time.Hour
+// manutencaoACada é o intervalo do job de manutenção (spec §12): partições,
+// rollups horários e retenção. Cada rodada é idempotente, e 15 minutos deixam
+// o rollup da última hora cheia disponível logo depois de ela fechar.
+const manutencaoACada = 15 * time.Minute
 
 // run é onde o wiring acontece. Mantido separado de main para que main tenha
 // apenas responsabilidade de processo (flags, sinais, código de saída).
@@ -125,7 +125,7 @@ func run(ctx context.Context, cfg *config.Config) error {
 		grace := graceDoSondador(cfg.ShutdownGrace)
 		g.Go(func() error { return sched.Run(gctx, grace) })
 		g.Go(func() error {
-			return storage.MaintainChecksPartitions(gctx, pool, clk, manutencaoDeParticoes)
+			return storage.RunMaintenance(gctx, pool, clk, manutencaoACada)
 		})
 		// O dispatcher roda com o sondador (spec §8: fora do caminho
 		// crítico da sonda, em worker próprio). A outbox no banco é o que
