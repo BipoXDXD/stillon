@@ -251,6 +251,12 @@ func TestTickNeverClaimsMoreThanFreeSlots(t *testing.T) {
 	if v := testutil.ToFloat64(b.m.queueDepth); v != 3 {
 		t.Errorf("scheduler_queue_depth = %v, queria 3", v)
 	}
+	// Inc é feito em Tick, antes de a goroutine nascer; as duas sondas estão
+	// presas no servidor. Sem esta leitura, o "0 depois do Stop" de
+	// TestTickProbesDueTargetAndRecordsCheck passaria sem Inc nem Dec.
+	if v := testutil.ToFloat64(b.m.inflight); v != 2 {
+		t.Errorf("scheduler_inflight = %v com duas sondas em voo, queria 2", v)
+	}
 
 	close(liberar)
 	b.s.Stop(esperaMaxima)
@@ -557,8 +563,13 @@ func TestProbeUsesDecryptedHeaders(t *testing.T) {
 		t.Fatal(err)
 	}
 	b.s.Stop(esperaMaxima)
-	if got := <-recebido; got != "abc" {
-		t.Errorf("X-Token = %q", got)
+	select {
+	case got := <-recebido:
+		if got != "abc" {
+			t.Errorf("X-Token = %q", got)
+		}
+	case <-time.After(esperaMaxima):
+		t.Fatal("a sonda não chegou ao servidor")
 	}
 }
 
