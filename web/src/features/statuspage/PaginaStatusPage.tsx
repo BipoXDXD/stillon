@@ -160,12 +160,20 @@ function Formulario({ pagina, alvos }: { pagina: PaginaDeStatus | null; alvos: A
             </Campo>
             {/* Ordem por botões, não arrastar: teclado e leitor de tela. */}
             <div className="flex gap-1">
-              <Botao tipo="fantasma" tamanho="pequeno" disabled={i === 0} onClick={() => itens.move(i, i - 1)}
+              {/* aria-disabled, e não disabled, nas pontas: o botão que leva o
+                  item à ponta está com o foco, e desabilitado o perderia para o
+                  <body> (como o Reconhecer). A guarda fica no clique. */}
+              <Botao tipo="fantasma" tamanho="pequeno" aria-disabled={i === 0 || undefined}
+                onClick={() => {
+                  if (i > 0) itens.move(i, i - 1)
+                }}
                 aria-label={`Subir ${nomeDoAlvo.get(it.target_id) ?? 'item'}`}>
                 Subir
               </Botao>
-              <Botao tipo="fantasma" tamanho="pequeno" disabled={i === itens.fields.length - 1}
-                onClick={() => itens.move(i, i + 1)} aria-label={`Descer ${nomeDoAlvo.get(it.target_id) ?? 'item'}`}>
+              <Botao tipo="fantasma" tamanho="pequeno" aria-disabled={i === itens.fields.length - 1 || undefined}
+                onClick={() => {
+                  if (i < itens.fields.length - 1) itens.move(i, i + 1)
+                }} aria-label={`Descer ${nomeDoAlvo.get(it.target_id) ?? 'item'}`}>
                 Descer
               </Botao>
               <Botao tipo="fantasma" tamanho="pequeno" data-tirar=""

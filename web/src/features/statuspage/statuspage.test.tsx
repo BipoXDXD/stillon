@@ -148,6 +148,35 @@ describe('status page', () => {
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 
+  // Como o I1: "Descer" (ou "Subir") que leva o item à ponta ficava
+  // disabled, e o botão desabilitado com o foco o perde para o <body> no
+  // navegador. Agora é aria-disabled, com a guarda no clique. Sabotagem:
+  // voltar a "disabled={i === itens.fields.length - 1}" no Descer → o botão
+  // não tem aria-disabled (e, no navegador, o foco cai).
+  it('Descer até a ponta mantém o foco no botão, que fica aria-disabled e não mexe mais', async () => {
+    const r = await renderizarPainel('/status-pages')
+    r.falsa.estado.alvos = [alvo(), alvo({ id: 'alvo-2', name: 'Site' })]
+    r.falsa.estado.paginas = [
+      salva({
+        items: [
+          { target_id: 'alvo-1', display_name: 'API' },
+          { target_id: 'alvo-2', display_name: 'Site' },
+        ],
+      }),
+    ]
+    await r.cliente.refetchQueries()
+    const descer = await screen.findByRole('button', { name: 'Descer API' })
+    await r.usuario.click(descer)
+    await waitFor(() => expect(descer).toHaveAttribute('aria-disabled', 'true'))
+    expect(descer).toHaveFocus()
+    expect(descer).toBeEnabled()
+    // Na ponta, o clique não faz nada: a ordem continua Site, API.
+    await r.usuario.click(descer)
+    const nomes = screen.getAllByLabelText(/^Nome de exibição de/).map((e) => (e as HTMLInputElement).value)
+    expect(nomes).toEqual(['Site', 'API'])
+    expect(screen.getByRole('button', { name: 'Subir Site' })).toHaveAttribute('aria-disabled', 'true')
+  })
+
   it('o erro do servidor num item vai para o campo do item, sem o caminho cru no topo', async () => {
     const r = await renderizarPainel('/status-pages')
     r.falsa.estado.alvos = [alvo(), alvo({ id: 'alvo-2', name: 'Site' })]
