@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/BipoXDXD/sentinela/internal/auth"
+	"github.com/BipoXDXD/vigilume/internal/auth"
 )
 
 const senha = "uma-senha-bem-comprida-e-boa"

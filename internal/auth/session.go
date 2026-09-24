@@ -10,8 +10,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/BipoXDXD/sentinela/internal/clock"
-	"github.com/BipoXDXD/sentinela/internal/crypto"
+	"github.com/BipoXDXD/vigilume/internal/clock"
+	"github.com/BipoXDXD/vigilume/internal/crypto"
 )
 
 // RefreshTTL vem da spec §5.2.

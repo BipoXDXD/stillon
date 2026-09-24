@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/BipoXDXD/sentinela/internal/prober/safedial"
+	"github.com/BipoXDXD/vigilume/internal/prober/safedial"
 )
 
 // Este é o teste que importa. httptest.NewServer escuta em 127.0.0.1, então

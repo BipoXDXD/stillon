@@ -1,11 +1,11 @@
-// Package httpapi expõe a API HTTP do Sentinela.
+// Package httpapi expõe a API HTTP do Vigilume.
 package httpapi
 
 import (
 	"net/http"
 	"time"
 
-	"github.com/BipoXDXD/sentinela/internal/config"
+	"github.com/BipoXDXD/vigilume/internal/config"
 )
 
 // NewServer configura o http.Server com todos os timeouts.

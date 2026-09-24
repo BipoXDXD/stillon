@@ -5,7 +5,7 @@ import (
 	"net/netip"
 	"testing"
 
-	"github.com/BipoXDXD/sentinela/internal/prober/safedial"
+	"github.com/BipoXDXD/vigilume/internal/prober/safedial"
 )
 
 func TestAllowIP(t *testing.T) {

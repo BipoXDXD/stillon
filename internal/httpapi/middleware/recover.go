@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"runtime/debug"
 
-	"github.com/BipoXDXD/sentinela/internal/apierr"
-	"github.com/BipoXDXD/sentinela/internal/observability"
+	"github.com/BipoXDXD/vigilume/internal/apierr"
+	"github.com/BipoXDXD/vigilume/internal/observability"
 )
 
 // Recover impede que um panic derrube o processo e, principalmente, que o

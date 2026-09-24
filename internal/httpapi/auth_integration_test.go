@@ -16,12 +16,12 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/BipoXDXD/sentinela/internal/auth"
-	"github.com/BipoXDXD/sentinela/internal/clock"
-	"github.com/BipoXDXD/sentinela/internal/config"
-	"github.com/BipoXDXD/sentinela/internal/crypto"
-	"github.com/BipoXDXD/sentinela/internal/httpapi"
-	"github.com/BipoXDXD/sentinela/internal/storage/testdb"
+	"github.com/BipoXDXD/vigilume/internal/auth"
+	"github.com/BipoXDXD/vigilume/internal/clock"
+	"github.com/BipoXDXD/vigilume/internal/config"
+	"github.com/BipoXDXD/vigilume/internal/crypto"
+	"github.com/BipoXDXD/vigilume/internal/httpapi"
+	"github.com/BipoXDXD/vigilume/internal/storage/testdb"
 )
 
 const (
@@ -94,7 +94,7 @@ func newAPIWith(t *testing.T, ajustar func(*config.Config)) *api {
 	if err != nil {
 		t.Fatal(err)
 	}
-	segundoFator := auth.NewTOTP(pool, box, "Sentinela")
+	segundoFator := auth.NewTOTP(pool, box, "Vigilume")
 
 	srv := httptest.NewServer(httpapi.Routes(ctx, cfg, store, mgr, segundoFator, clk))
 	t.Cleanup(srv.Close)
@@ -112,7 +112,7 @@ func post(t *testing.T, c *http.Client, url string, body any) *http.Response {
 		t.Fatal(err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Requested-With", "sentinela")
+	req.Header.Set("X-Requested-With", "vigilume")
 
 	resp, err := c.Do(req)
 	if err != nil {
@@ -149,7 +149,7 @@ func decodeEnvelope(t *testing.T, resp *http.Response) envelope {
 
 func refreshCookie(resp *http.Response) *http.Cookie {
 	for _, ck := range resp.Cookies() {
-		if ck.Name == "sentinela_refresh" {
+		if ck.Name == "vigilume_refresh" {
 			return ck
 		}
 	}
@@ -186,7 +186,7 @@ func postComToken(t *testing.T, c *http.Client, url, token string, body any) *ht
 		t.Fatal(err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Requested-With", "sentinela")
+	req.Header.Set("X-Requested-With", "vigilume")
 	req.Header.Set("Authorization", "Bearer "+token)
 
 	resp, err := c.Do(req)
@@ -495,8 +495,8 @@ func TestReusedRefreshCookieRevokesTheWholeFamily(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	req.Header.Set("X-Requested-With", "sentinela")
-	req.AddCookie(&http.Cookie{Name: "sentinela_refresh", Value: antigo.Value})
+	req.Header.Set("X-Requested-With", "vigilume")
+	req.AddCookie(&http.Cookie{Name: "vigilume_refresh", Value: antigo.Value})
 
 	reuso, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -572,8 +572,8 @@ func TestRefreshWithUnknownCookieIsRejected(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	req.Header.Set("X-Requested-With", "sentinela")
-	req.AddCookie(&http.Cookie{Name: "sentinela_refresh", Value: "token-inventado"})
+	req.Header.Set("X-Requested-With", "vigilume")
+	req.AddCookie(&http.Cookie{Name: "vigilume_refresh", Value: "token-inventado"})
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -675,7 +675,7 @@ func TestMutationWithoutCustomHeaderIsRejected(t *testing.T) {
 // ser Secure, senão o refresh trafega em claro num downgrade de protocolo.
 func TestRefreshCookieIsSecureWhenPublicBaseURLIsHTTPS(t *testing.T) {
 	a := newAPIWith(t, func(cfg *config.Config) {
-		cfg.PublicBaseURL = "https://sentinela.exemplo.com"
+		cfg.PublicBaseURL = "https://vigilume.exemplo.com"
 	})
 
 	resp := login(t, a, http.DefaultClient, testEmail, testPass)
@@ -776,7 +776,7 @@ func TestSessionsBehindATrustedProxyRecordDistinctOrigins(t *testing.T) {
 			t.Fatal(err)
 		}
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("X-Requested-With", "sentinela")
+		req.Header.Set("X-Requested-With", "vigilume")
 		req.Header.Set("X-Forwarded-For", origem)
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
@@ -873,7 +873,7 @@ func TestTheMiddlewareChainIsActuallyWired(t *testing.T) {
 			t.Fatal(err)
 		}
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("X-Requested-With", "sentinela")
+		req.Header.Set("X-Requested-With", "vigilume")
 
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
@@ -964,7 +964,7 @@ func TestOversizedBodyIsAPayloadTooLarge(t *testing.T) {
 		t.Fatal(err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Requested-With", "sentinela")
+	req.Header.Set("X-Requested-With", "vigilume")
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {

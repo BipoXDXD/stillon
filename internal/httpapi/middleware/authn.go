@@ -7,9 +7,9 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/BipoXDXD/sentinela/internal/apierr"
-	"github.com/BipoXDXD/sentinela/internal/auth"
-	"github.com/BipoXDXD/sentinela/internal/clock"
+	"github.com/BipoXDXD/vigilume/internal/apierr"
+	"github.com/BipoXDXD/vigilume/internal/auth"
+	"github.com/BipoXDXD/vigilume/internal/clock"
 )
 
 type userKey struct{}

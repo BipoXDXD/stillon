@@ -5,10 +5,10 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/BipoXDXD/sentinela/internal/auth"
-	"github.com/BipoXDXD/sentinela/internal/clock"
-	"github.com/BipoXDXD/sentinela/internal/config"
-	"github.com/BipoXDXD/sentinela/internal/httpapi/middleware"
+	"github.com/BipoXDXD/vigilume/internal/auth"
+	"github.com/BipoXDXD/vigilume/internal/clock"
+	"github.com/BipoXDXD/vigilume/internal/config"
+	"github.com/BipoXDXD/vigilume/internal/httpapi/middleware"
 )
 
 // maxBodyBytes cobre com folga qualquer payload legítimo desta API.

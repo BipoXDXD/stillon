@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/BipoXDXD/sentinela/internal/storage/testdb"
+	"github.com/BipoXDXD/vigilume/internal/storage/testdb"
 )
 
 // TestMigrationsApplyAndSchemaIsUsable prova três coisas de uma vez: o

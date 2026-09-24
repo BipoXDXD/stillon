@@ -3,7 +3,7 @@ package middleware
 import (
 	"net/http"
 
-	"github.com/BipoXDXD/sentinela/internal/apierr"
+	"github.com/BipoXDXD/vigilume/internal/apierr"
 )
 
 // CustomHeaderName é o header que toda mutação precisa enviar.
