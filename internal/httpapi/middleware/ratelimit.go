@@ -31,7 +31,7 @@ type chaveFn func(*http.Request) (string, bool)
 // a goroutine morrer no shutdown gracioso junto com o resto, em vez de
 // vazar para sempre (R32).
 func RateLimit(ctx context.Context, perMinute, burst int, trusted []netip.Prefix) func(http.Handler) http.Handler {
-	return rateLimit(ctx, perMinute, burst, porIP(trusted), maxBuckets)
+	return rateLimit(ctx, porMinuto(perMinute), burst, porIP(trusted), maxBuckets)
 }
 
 // RateLimitUser limita por usuário autenticado, a segunda camada da spec
@@ -39,8 +39,18 @@ func RateLimit(ctx context.Context, perMinute, burst int, trusted []netip.Prefix
 // contexto. O limite por IP continua valendo por fora; este existe porque
 // um usuário com token válido, atrás de muitos IPs, escaparia do outro.
 func RateLimitUser(ctx context.Context, perMinute, burst int) func(http.Handler) http.Handler {
-	return rateLimit(ctx, perMinute, burst, porUsuario, maxBuckets)
+	return rateLimit(ctx, porMinuto(perMinute), burst, porUsuario, maxBuckets)
 }
+
+// RateLimitUserEvery limita por usuário com um token a cada every. É a
+// camada das rotas que mandam mensagem para fora (spec §5.8): criar canal e
+// reenviar verificação custam um e-mail ou um POST de webhook, e o limite
+// por minuto das rotas comuns faria do serviço um relay.
+func RateLimitUserEvery(ctx context.Context, every time.Duration, burst int) func(http.Handler) http.Handler {
+	return rateLimit(ctx, rate.Every(every), burst, porUsuario, maxBuckets)
+}
+
+func porMinuto(n int) rate.Limit { return rate.Limit(float64(n) / 60.0) }
 
 func porIP(trusted []netip.Prefix) chaveFn {
 	return func(r *http.Request) (string, bool) {
@@ -71,6 +81,8 @@ type limiterState struct {
 	burst   int
 	chave   chaveFn
 	max     int
+	// ocioso é quanto um balde parado sobrevive à varredura.
+	ocioso time.Duration
 }
 
 type limiterHandler struct {
@@ -78,15 +90,23 @@ type limiterHandler struct {
 	next http.Handler
 }
 
+// ociosoMinimo é o tempo mínimo que um balde parado sobrevive à varredura.
+const ociosoMinimo = 10 * time.Minute
+
 // rateLimit recebe o teto como parâmetro para que o teste possa exercitá-lo
 // sem criar cem mil buckets.
-func rateLimit(ctx context.Context, perMinute, burst int, chave chaveFn, max int) func(http.Handler) http.Handler {
+func rateLimit(ctx context.Context, limite rate.Limit, burst int, chave chaveFn, teto int) func(http.Handler) http.Handler {
 	st := &limiterState{
 		buckets: map[string]*bucket{},
-		limit:   rate.Limit(float64(perMinute) / 60.0),
+		limit:   limite,
 		burst:   burst,
 		chave:   chave,
-		max:     max,
+		max:     teto,
+		// Apagar um balde é devolvê-lo cheio. Isso só é inofensivo depois
+		// de ele ter tido tempo de encher sozinho: com um token a cada 6
+		// minutos e burst 5, são 30 minutos. Varrer aos 10 daria 5 envios
+		// novos a cada 10 minutos, o triplo do limite.
+		ocioso: max(ociosoMinimo, tempoParaEncher(limite, burst)),
 	}
 
 	go func() {
@@ -137,10 +157,18 @@ func (h *limiterHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // varrer remove o que está parado há tempo demais. Chamar com mu travado.
 func (s *limiterState) varrer() {
 	for k, b := range s.buckets {
-		if time.Since(b.seen) > 10*time.Minute {
+		if time.Since(b.seen) > s.ocioso {
 			delete(s.buckets, k)
 		}
 	}
+}
+
+// tempoParaEncher é quanto um balde vazio leva para voltar ao burst.
+func tempoParaEncher(limite rate.Limit, burst int) time.Duration {
+	if limite <= 0 || limite == rate.Inf {
+		return 0
+	}
+	return time.Duration(float64(burst) / float64(limite) * float64(time.Second))
 }
 
 // abrirEspaco garante que cabe mais uma entrada. Chamar com mu travado.

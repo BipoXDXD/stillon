@@ -32,6 +32,9 @@ const (
 	CodeForbidden          ErrorCode = "forbidden"
 	CodeInternal           ErrorCode = "internal_error"
 	CodeUnavailable        ErrorCode = "unavailable"
+	CodeChannelLimit       ErrorCode = "channel_limit_reached"
+	CodeChannelNotPending  ErrorCode = "channel_not_pending"
+	CodeDeliveryFailed     ErrorCode = "delivery_failed"
 )
 
 // A mensagem vem sempre desta tabela, nunca do erro subjacente.
@@ -53,6 +56,11 @@ var errorTable = map[ErrorCode]struct {
 	CodeForbidden:          {http.StatusForbidden, "Operação não permitida."},
 	CodeInternal:           {http.StatusInternalServerError, "Erro interno."},
 	CodeUnavailable:        {http.StatusServiceUnavailable, "Serviço indisponível."},
+	CodeChannelLimit:       {http.StatusConflict, "Limite de canais atingido."},
+	CodeChannelNotPending:  {http.StatusConflict, "O canal não está pendente de verificação."},
+	// 502: a falha foi do destino (Discord ou provedor de e-mail), não do
+	// pedido nem deste servidor.
+	CodeDeliveryFailed: {http.StatusBadGateway, "Não foi possível entregar a mensagem de verificação."},
 }
 
 // FieldError aponta o campo culpado de um 400 (D14). Field e Reason vêm de

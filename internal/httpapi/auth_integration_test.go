@@ -22,6 +22,7 @@ import (
 	"github.com/BipoXDXD/vigilume/internal/crypto"
 	"github.com/BipoXDXD/vigilume/internal/httpapi"
 	"github.com/BipoXDXD/vigilume/internal/incident/history"
+	"github.com/BipoXDXD/vigilume/internal/notify"
 	"github.com/BipoXDXD/vigilume/internal/storage/testdb"
 	"github.com/BipoXDXD/vigilume/internal/targets"
 )
@@ -48,6 +49,9 @@ type api struct {
 	// recuperacao guarda os códigos que o último cadastrarTOTP devolveu; eles
 	// só aparecem em claro uma vez, e mais de um teste precisa deles.
 	recuperacao []string
+	// discord e email substituem os envios de verificação dos canais.
+	discord *discordFalso
+	email   *carteiroFalso
 }
 
 func newAPI(t *testing.T) *api {
@@ -105,10 +109,12 @@ func newAPICom(t *testing.T, ajustar func(*config.Config), ajustarDeps func(*htt
 	}
 	segundoFator := auth.NewTOTP(pool, box, "Vigilume")
 
+	discord, email := &discordFalso{}, &carteiroFalso{}
 	deps := httpapi.Deps{
 		Store: store, Sessions: mgr, TOTP: segundoFator,
 		Targets:   targets.NewService(pool, box, clk),
 		Incidents: history.NewService(pool, clk),
+		Channels:  notify.NewChannelService(pool, box, clk, discord, email, cfg.PublicBaseURL),
 		Clock:     clk, Ready: pool.Ping,
 	}
 	if ajustarDeps != nil {
@@ -116,7 +122,7 @@ func newAPICom(t *testing.T, ajustar func(*config.Config), ajustarDeps func(*htt
 	}
 	srv := httptest.NewServer(httpapi.Routes(ctx, cfg, deps))
 	t.Cleanup(srv.Close)
-	return &api{srv: srv, pool: pool, clk: clk, userID: userID}
+	return &api{srv: srv, pool: pool, clk: clk, userID: userID, discord: discord, email: email}
 }
 
 func post(t *testing.T, c *http.Client, url string, body any) *http.Response {
