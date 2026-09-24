@@ -223,4 +223,19 @@ describe('canais', () => {
     expect(await screen.findByText(/Nenhum canal/)).toBeInTheDocument()
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
+
+  // I1 da revisão final: o "Apagar" que abriu o diálogo sumiu com a linha;
+  // o foco vai ao título da tela, e não ao <body>. Sabotagem: a de
+  // dialogo.test.tsx (a lista só com o gatilho) → o foco cai no body.
+  it('depois de apagar, o foco não cai no <body>', async () => {
+    const r = await renderizarPainel('/channels')
+    r.falsa.estado.canais = [canal(), canal({ id: 'canal-2', hint: 'discord.com/…/efgh' })]
+    await r.cliente.refetchQueries()
+    await r.usuario.click(await screen.findByRole('button', { name: 'Apagar o canal discord.com/…/abcd' }))
+    await r.usuario.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Apagar canal' }))
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument())
+    await waitFor(() => expect(document.activeElement).not.toBe(document.body))
+    expect(screen.getByRole('heading', { name: 'Canais de notificação', level: 1 })).toHaveFocus()
+  })
 })
+

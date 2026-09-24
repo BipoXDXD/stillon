@@ -1,5 +1,5 @@
 import { useQueryClient } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router'
 import { useApi } from '@/app/contexto'
 import { EstadoDaConsulta } from '@/components/EstadoDaConsulta'
@@ -47,14 +47,23 @@ function Linha({
             ? `durou ${duracao(new Date(i.resolved_at).getTime() - inicio)}`
             : `em andamento há ${duracao(agora - inicio)}`}
         </p>
-        {i.acknowledged_at && <p className="text-sm text-suave">Reconhecido em {dataHora(i.acknowledged_at)}</p>}
+        {i.acknowledged_at && (
+          // tabIndex -1: o foco vem para cá quando o Reconhecer some (I1).
+          <p id={`ack-${i.id}`} tabIndex={-1} className="text-sm text-suave outline-none">
+            Reconhecido em {dataHora(i.acknowledged_at)}
+          </p>
+        )}
       </div>
       {!i.resolved_at && !i.acknowledged_at && (
         <Botao
           tipo="secundario"
           tamanho="pequeno"
-          disabled={reconhecendo}
-          onClick={() => aoReconhecer(i.id)}
+          // aria-disabled, e não disabled: o botão desabilitado perderia o
+          // foco para o <body> enquanto o POST voa.
+          aria-disabled={reconhecendo || undefined}
+          onClick={() => {
+            if (!reconhecendo) aoReconhecer(i.id)
+          }}
           aria-label={`Reconhecer o incidente de ${i.target_name}`}
           aria-describedby={ID_AJUDA_ACK}
         >
@@ -74,6 +83,20 @@ export function PaginaIncidentes() {
   const qc = useQueryClient()
   const [erro, setErro] = useState<string | null>(null)
   const [reconhecendo, setReconhecendo] = useState<ReadonlySet<string>>(new Set())
+  // O incidente cujo Reconhecer acabou de ser usado. Se o botão sumiu (o ack
+  // valeu), o foco iria ao <body>: vai ao "Reconhecido em" da linha, ou ao
+  // título da tela se a linha também saiu da lista.
+  // Um ref, e um efeito a cada render: o render que o pede é o de tirar o
+  // incidente de "reconhecendo", já com a lista relida.
+  const focarDepois = useRef<string | null>(null)
+  useEffect(() => {
+    const id = focarDepois.current
+    if (!id) return
+    focarDepois.current = null
+    if (document.activeElement && document.activeElement !== document.body) return
+    const destino = document.getElementById(`ack-${id}`) ?? document.querySelector<HTMLElement>('main h1')
+    destino?.focus()
+  })
 
   async function reconhecer(id: string) {
     setErro(null)
@@ -85,6 +108,7 @@ export function PaginaIncidentes() {
     } finally {
       // Mesmo depois de uma falha: o ack pode ter chegado ao servidor.
       await qc.invalidateQueries({ queryKey: ['incidents'] })
+      focarDepois.current = id
       setReconhecendo((s) => {
         const n = new Set(s)
         n.delete(id)

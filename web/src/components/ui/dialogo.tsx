@@ -1,5 +1,5 @@
 import { AlertDialog, Dialog } from 'radix-ui'
-import { useLayoutEffect, useRef, type ReactNode } from 'react'
+import { useLayoutEffect, useRef, type ReactNode, type RefObject } from 'react'
 import { Botao } from './botao'
 
 // Dialog e AlertDialog do Radix. Os dois travam a rolagem da página com o
@@ -15,7 +15,13 @@ const caixa =
 // ao fechar (Cancelar, Esc, erro). O elemento focado é guardado quando
 // `aberto` vira true, num efeito de layout: roda antes do FocusScope do
 // Radix (um useEffect do conteúdo) tirar o foco de lá.
-function useFocoDeVolta(aberto: boolean) {
+//
+// Quem abriu pode ter sumido com a ação (o "Apagar" da linha apagada): aí o
+// foco vai à reserva do chamador, ou ao <h1> da tela (o Titulo, com
+// tabIndex -1), e não ao <body>, onde o leitor de tela se perde.
+export type Reserva = RefObject<HTMLElement | null>
+
+function useFocoDeVolta(aberto: boolean, reserva?: Reserva) {
   const gatilho = useRef<HTMLElement | null>(null)
   useLayoutEffect(() => {
     if (aberto && document.activeElement instanceof HTMLElement && document.activeElement !== document.body) {
@@ -23,10 +29,12 @@ function useFocoDeVolta(aberto: boolean) {
     }
   }, [aberto])
   return (e: Event) => {
-    const alvo = gatilho.current
-    if (!alvo?.isConnected) return
+    const destino = [gatilho.current, reserva?.current, document.querySelector<HTMLElement>('main h1')].find(
+      (el) => el?.isConnected,
+    )
+    if (!destino) return
     e.preventDefault()
-    alvo.focus()
+    destino.focus()
   }
 }
 
@@ -39,6 +47,7 @@ export function Dialogo({
   titulo,
   descricao,
   travado = false,
+  reserva,
   children,
 }: {
   aberto: boolean
@@ -46,12 +55,13 @@ export function Dialogo({
   titulo: string
   descricao?: string
   travado?: boolean
+  reserva?: Reserva
   children: ReactNode
 }) {
   const segurar = (e: Event) => {
     if (travado) e.preventDefault()
   }
-  const devolverFoco = useFocoDeVolta(aberto)
+  const devolverFoco = useFocoDeVolta(aberto, reserva)
   return (
     <Dialog.Root open={aberto} onOpenChange={aoMudar}>
       <Dialog.Portal>
@@ -86,6 +96,7 @@ export function Confirmar({
   acao,
   aoConfirmar,
   ocupado,
+  reserva,
 }: {
   aberto: boolean
   aoMudar: (v: boolean) => void
@@ -94,8 +105,9 @@ export function Confirmar({
   acao: string
   aoConfirmar: () => void
   ocupado?: boolean
+  reserva?: Reserva
 }) {
-  const devolverFoco = useFocoDeVolta(aberto)
+  const devolverFoco = useFocoDeVolta(aberto, reserva)
   return (
     <AlertDialog.Root
       open={aberto}

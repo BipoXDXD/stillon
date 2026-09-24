@@ -1,5 +1,6 @@
-import { act, fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { useRef, useState } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import { Dialogo } from './dialogo'
 
@@ -43,5 +44,70 @@ describe('Dialogo', () => {
     await userEvent.keyboard('{Escape}')
     expect(aoMudar).not.toHaveBeenCalled()
     expect(screen.getByRole('dialog')).toBeInTheDocument()
+  })
+})
+
+// Revisão final (I1): o foco volta a quem abriu; se quem abriu sumiu com a
+// ação, vai à reserva do chamador ou ao <h1> da tela — nunca ao <body>.
+// Sabotagens: em useFocoDeVolta, trocar a lista por
+// "[gatilho.current, reserva ? null : null]" → os dois últimos ficam
+// vermelhos (foco no body); tirar o gatilho da lista → o primeiro.
+describe('Dialogo: foco ao fechar', () => {
+  function Tela({ sumir, comReserva }: { sumir: boolean; comReserva: boolean }) {
+    const [aberto, setAberto] = useState(false)
+    const [gatilho, setGatilho] = useState(true)
+    const reserva = useRef<HTMLButtonElement>(null)
+    return (
+      <main>
+        <h1 tabIndex={-1}>Tela</h1>
+        {gatilho && (
+          <button type="button" onClick={() => setAberto(true)}>
+            Abrir
+          </button>
+        )}
+        <button type="button" ref={reserva}>
+          Reserva
+        </button>
+        <Dialogo
+          aberto={aberto}
+          aoMudar={setAberto}
+          titulo="Diálogo"
+          reserva={comReserva ? reserva : undefined}
+        >
+          <button
+            type="button"
+            onClick={() => {
+              if (sumir) setGatilho(false)
+              setAberto(false)
+            }}
+          >
+            Fazer
+          </button>
+        </Dialogo>
+      </main>
+    )
+  }
+
+  it('volta a quem abriu', async () => {
+    render(<Tela sumir={false} comReserva />)
+    await userEvent.click(screen.getByRole('button', { name: 'Abrir' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Fazer' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Abrir' })).toHaveFocus())
+  })
+
+  it('quem abriu sumiu: vai à reserva', async () => {
+    render(<Tela sumir comReserva />)
+    await userEvent.click(screen.getByRole('button', { name: 'Abrir' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Fazer' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Reserva' })).toHaveFocus())
+  })
+
+  it('quem abriu sumiu, sem reserva: vai ao <h1> da tela', async () => {
+    render(<Tela sumir comReserva={false} />)
+    await userEvent.click(screen.getByRole('button', { name: 'Abrir' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Fazer' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Tela' })).toHaveFocus())
   })
 })

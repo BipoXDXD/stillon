@@ -1,6 +1,6 @@
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useQueryClient } from '@tanstack/react-query'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useFieldArray, useForm, useWatch } from 'react-hook-form'
 import { z } from 'zod'
 import { useApi } from '@/app/contexto'
@@ -64,6 +64,23 @@ function Formulario({ pagina, alvos }: { pagina: PaginaDeStatus | null; alvos: A
   const escolhidos = useWatch({ control: f.control, name: 'items' })
   const usados = new Set(escolhidos.map((i) => i.target_id))
   const livres = alvos.filter((a) => !usados.has(a.id))
+  // I1: o "Tirar" some com a linha, e o foco iria ao <body>. Vai ao "Tirar"
+  // que ocupou o lugar (o da linha de baixo), ou ao da última linha, ou ao
+  // seletor de acrescentar, ou ao título da tela. Um efeito a cada render:
+  // o que o pede é o render da remoção.
+  const lista = useRef<HTMLFieldSetElement>(null)
+  const focarDepoisDeTirar = useRef<number | null>(null)
+  useEffect(() => {
+    const i = focarDepoisDeTirar.current
+    if (i === null) return
+    focarDepoisDeTirar.current = null
+    const tirar = [...(lista.current?.querySelectorAll<HTMLElement>('[data-tirar]') ?? [])]
+    const destino =
+      tirar[Math.min(i, tirar.length - 1)] ??
+      lista.current?.querySelector<HTMLElement>('select') ??
+      document.querySelector<HTMLElement>('main h1')
+    destino?.focus()
+  })
 
   async function enviar(v: Valores) {
     setErro(null)
@@ -125,7 +142,7 @@ function Formulario({ pagina, alvos }: { pagina: PaginaDeStatus | null; alvos: A
         Publicada (visível para qualquer pessoa com o link)
       </label>
 
-      <fieldset className="space-y-3">
+      <fieldset ref={lista} className="space-y-3">
         <legend className="text-sm font-medium">Alvos na página ({itens.fields.length} de {MAX_ITENS})</legend>
         {itens.fields.map((it, i) => (
           <div key={it.id} className="grid grid-cols-[1fr_auto] items-end gap-2 rounded-md border border-borda p-3">
@@ -145,7 +162,11 @@ function Formulario({ pagina, alvos }: { pagina: PaginaDeStatus | null; alvos: A
                 onClick={() => itens.move(i, i + 1)} aria-label={`Descer ${nomeDoAlvo.get(it.target_id) ?? 'item'}`}>
                 Descer
               </Botao>
-              <Botao tipo="fantasma" tamanho="pequeno" onClick={() => itens.remove(i)}
+              <Botao tipo="fantasma" tamanho="pequeno" data-tirar=""
+                onClick={() => {
+                  focarDepoisDeTirar.current = i
+                  itens.remove(i)
+                }}
                 aria-label={`Tirar ${nomeDoAlvo.get(it.target_id) ?? 'item'} da página`}>
                 Tirar
               </Botao>

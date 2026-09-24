@@ -340,11 +340,15 @@ function Sessoes() {
   const { sessao } = useSessao()
   const [alvo, setAlvo] = useState<Sessao | null>(null)
   const [erro, setErro] = useState<string | null>(null)
+  // Um DELETE por vez: um segundo DELETE da sessão atual voltaria 401 (a
+  // família já morreu) e trocaria o motivo do fim da sessão para "expirou".
+  const [ocupado, setOcupado] = useState(false)
 
   async function encerrar() {
-    if (!alvo) return
+    if (!alvo || ocupado) return
     const atual = alvo.current
     setErro(null)
+    setOcupado(true)
     try {
       await api.encerrarSessao(alvo.id)
       if (atual) {
@@ -359,8 +363,12 @@ function Sessoes() {
       if (e instanceof ApiError && e.code === 'not_found') avisar('Esta sessão já tinha terminado.')
       else setErro(mensagemDe(e))
     }
-    setAlvo(null)
+    // A lista muda ANTES de o diálogo fechar: fechando antes, o foco voltaria
+    // ao "Encerrar" da linha, que sumiria em seguida (e o foco, ao <body>).
+    // Com a linha já fora, o diálogo manda o foco ao título da tela.
     await qc.invalidateQueries({ queryKey: chaves.sessoes })
+    setAlvo(null)
+    setOcupado(false)
   }
 
   return (
@@ -404,6 +412,7 @@ function Sessoes() {
             : 'O outro aparelho não consegue mais renovar o acesso.'
         }
         acao="Encerrar"
+        ocupado={ocupado}
         aoConfirmar={() => void encerrar()}
       />
     </>

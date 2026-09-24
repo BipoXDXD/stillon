@@ -98,10 +98,25 @@ describe('incidentes', () => {
     )
     const botao = await screen.findByRole('button', { name: 'Reconhecer o incidente de API' })
     await r.usuario.click(botao)
-    await waitFor(() => expect(botao).toBeDisabled())
+    // aria-disabled, e não disabled: o foco fica no botão enquanto o POST voa.
+    await waitFor(() => expect(botao).toHaveAttribute('aria-disabled', 'true'))
+    expect(botao).toHaveFocus()
     await r.usuario.click(botao)
     soltar()
     expect(await screen.findByText(/Reconhecido em/)).toBeInTheDocument()
     expect(r.falsa.chamadas('POST /incidents/:id/ack')).toBe(1)
   })
+
+  // I1 da revisão final: o Reconhecer some com o ack; o foco vai ao
+  // "Reconhecido em" da linha, e não ao <body>. Sabotagem: tirar o
+  // "focarDepois.current = id" de reconhecer() → o foco cai no body.
+  it('depois de reconhecer, o foco vai ao "Reconhecido em", e não ao <body>', async () => {
+    const r = await renderizarPainel('/incidents')
+    r.falsa.estado.incidentes = [incidente()]
+    await r.cliente.refetchQueries()
+    await r.usuario.click(await screen.findByRole('button', { name: 'Reconhecer o incidente de API' }))
+    const feito = await screen.findByText(/Reconhecido em/)
+    await waitFor(() => expect(feito).toHaveFocus())
+  })
 })
+

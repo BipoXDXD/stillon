@@ -106,6 +106,31 @@ describe('status page', () => {
     })
   })
 
+  // I1 da revisão final: o "Tirar" some com a linha. O foco vai ao "Tirar"
+  // que ocupou o lugar, ao da última linha, ou ao seletor de acrescentar —
+  // nunca ao <body>. Sabotagem: tirar o "focarDepoisDeTirar.current = i" →
+  // o foco cai no body já no primeiro passo.
+  it('tirar um alvo leva o foco ao próximo "Tirar", e não ao <body>', async () => {
+    const r = await renderizarPainel('/status-pages')
+    r.falsa.estado.alvos = [alvo(), alvo({ id: 'alvo-2', name: 'Site' }), alvo({ id: 'alvo-3', name: 'Banco' })]
+    r.falsa.estado.paginas = [
+      salva({
+        items: [
+          { target_id: 'alvo-1', display_name: 'API' },
+          { target_id: 'alvo-2', display_name: 'Site' },
+          { target_id: 'alvo-3', display_name: 'Banco' },
+        ],
+      }),
+    ]
+    await r.cliente.refetchQueries()
+    await r.usuario.click(await screen.findByRole('button', { name: 'Tirar API da página' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Tirar Site da página' })).toHaveFocus())
+    await r.usuario.click(screen.getByRole('button', { name: 'Tirar Banco da página' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Tirar Site da página' })).toHaveFocus())
+    await r.usuario.click(screen.getByRole('button', { name: 'Tirar Site da página' }))
+    await waitFor(() => expect(screen.getByLabelText('Acrescentar alvo')).toHaveFocus())
+  })
+
   it('o erro do servidor num item vai para o campo do item, sem o caminho cru no topo', async () => {
     const r = await renderizarPainel('/status-pages')
     r.falsa.estado.alvos = [alvo(), alvo({ id: 'alvo-2', name: 'Site' })]

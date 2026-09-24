@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from '@testing-library/react'
+import { fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { http, HttpResponse } from 'msw'
 import { describe, expect, it } from 'vitest'
 import { RECUPERACAO_OK, TOTP_OK } from '@/test/api-falsa'
@@ -179,6 +179,63 @@ describe('sessões', () => {
     await r.usuario.click(await screen.findByRole('button', { name: 'Encerrar' }))
     await r.usuario.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Encerrar' }))
     expect(await screen.findByText('Esta sessão já tinha terminado.')).toBeInTheDocument()
+  })
+
+  // Revisão final: o Confirmar das sessões não tinha "ocupado"; um clique
+  // duplo na sessão atual mandava dois DELETE, e o segundo (401, a família
+  // já morta) trocava o motivo para "expirou". Sabotagens: tirar o
+  // ocupado={ocupado} do Confirmar das sessões (Cancelar não desabilita);
+  // somado a isso, a guarda "|| ocupado" de encerrar() → 2 DELETE.
+  it('clique duplo em Encerrar a sessão atual manda um DELETE só, e o motivo fica', async () => {
+    const r = await renderizarPainel('/settings')
+    r.falsa.estado.sessoes = [familia()]
+    await r.cliente.refetchQueries()
+    await r.usuario.click(await screen.findByRole('button', { name: 'Encerrar' }))
+    const dialogo = await screen.findByRole('alertdialog')
+    const acao = within(dialogo).getByRole('button', { name: 'Encerrar' })
+    // O DELETE demora: o diálogo fica ocupado (Cancelar desabilitado) enquanto isso.
+    const p = portao()
+    servidor.use(
+      http.delete('*/api/v1/sessions/:id', async () => {
+        await p.aberto
+      }),
+    )
+    fireEvent.click(acao)
+    fireEvent.click(acao)
+    await waitFor(() => expect(within(dialogo).getByRole('button', { name: 'Cancelar' })).toBeDisabled())
+    fireEvent.click(acao)
+    p.soltar()
+    expect(await screen.findByText('Você encerrou esta sessão.')).toBeInTheDocument()
+    expect(r.falsa.chamadas('DELETE /sessions/:id')).toBe(1)
+  })
+
+  // I1: o "Encerrar" que abriu o diálogo some com a linha; o foco vai ao
+  // título da tela. Antes, o diálogo fechava ANTES de a lista mudar: o foco
+  // voltava ao botão, que sumia em seguida. Sabotagem: em encerrar(), pôr o
+  // setAlvo(null) antes do await da lista → o foco cai no body.
+  it('encerrar outra sessão não deixa o foco no <body>', async () => {
+    const r = await renderizarPainel('/settings')
+    r.falsa.estado.sessoes = [familia(), familia({ id: 'fam-2', current: false })]
+    await r.cliente.refetchQueries()
+    const botoes = await screen.findAllByRole('button', { name: 'Encerrar' })
+    await r.usuario.click(botoes[1]!)
+    // A lista relida depois do DELETE demora (a rede de verdade): é o que
+    // separa "fechar e depois a linha sumir" de "a linha sumir e depois fechar".
+    const p = portao()
+    servidor.use(
+      http.get('*/api/v1/sessions', async () => {
+        await p.aberto
+        return HttpResponse.json({ items: [familia()] })
+      }),
+    )
+    await r.usuario.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Encerrar' }))
+    await waitFor(() => expect(r.falsa.chamadas('DELETE /sessions/:id')).toBe(1))
+    await new Promise((res) => setTimeout(res, 50))
+    p.soltar()
+    await waitFor(() => expect(screen.getAllByRole('button', { name: 'Encerrar' })).toHaveLength(1))
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument())
+    await waitFor(() => expect(document.activeElement).not.toBe(document.body))
+    expect(screen.getByRole('heading', { name: 'Configurações', level: 1 })).toHaveFocus()
   })
 
   it('o user agent é texto, nunca HTML', async () => {
