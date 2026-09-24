@@ -204,6 +204,51 @@ func TestUpdateCanClearThresholdAndHeaders(t *testing.T) {
 	if got.DegradedThresholdMS != nil || len(got.HeaderNames) != 0 {
 		t.Errorf("limiar = %v, headers = %v; queria os dois limpos", got.DegradedThresholdMS, got.HeaderNames)
 	}
+
+	// O valor devolvido é montado em memória; o que vale é o que ficou
+	// gravado.
+	var semHeaders, semLimiar bool
+	if err := a.admin.QueryRow(ctx,
+		`SELECT headers_enc IS NULL, degraded_threshold_ms IS NULL FROM targets WHERE id = $1`,
+		alvo.ID).Scan(&semHeaders, &semLimiar); err != nil {
+		t.Fatal(err)
+	}
+	if !semHeaders || !semLimiar {
+		t.Errorf("no banco: headers_enc nulo = %v, limiar nulo = %v; queria os dois nulos", semHeaders, semLimiar)
+	}
+}
+
+// Um PATCH que não menciona headers não pode apagá-los: o Update decifra os
+// atuais e os cifra de novo, e perder isso no caminho seria silencioso.
+func TestUpdateKeepsStoredHeaders(t *testing.T) {
+	a := novoAmbiente(t)
+	ctx := context.Background()
+	dono := a.usuario(t)
+	alvo, err := a.svc.Create(ctx, dono, entrada())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	nome := "Outro nome"
+	got, err := a.svc.Update(ctx, dono, alvo.ID, targets.Patch{Name: &nome})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.HeaderNames) != 1 || got.HeaderNames[0] != "Authorization" {
+		t.Errorf("HeaderNames = %v, queria [Authorization]", got.HeaderNames)
+	}
+
+	var enc []byte
+	if err := a.admin.QueryRow(ctx, `SELECT headers_enc FROM targets WHERE id = $1`, alvo.ID).Scan(&enc); err != nil {
+		t.Fatal(err)
+	}
+	h, err := targets.OpenHeaders(caixa(t), alvo.ID, enc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h["Authorization"] != "Bearer segredo-do-cliente" {
+		t.Errorf("headers gravados = %v, queria o Authorization original", h)
+	}
 }
 
 func TestListPaginatesByCursorNewestFirst(t *testing.T) {

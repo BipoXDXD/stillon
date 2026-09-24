@@ -1,6 +1,7 @@
 package targets
 
 import (
+	"maps"
 	"net/http"
 	"net/netip"
 	"slices"
@@ -154,6 +155,10 @@ func checkURL(raw string) string {
 		return ReasonInvalid
 	}
 	host := strings.TrimSuffix(strings.ToLower(u.Hostname()), ".")
+	// "http://:8080/" passa pelo parser com Hostname() vazio: não há destino.
+	if host == "" {
+		return ReasonInvalid
+	}
 	if ip, err := netip.ParseAddr(host); err == nil {
 		if safedial.AllowIP(ip) != nil {
 			return ReasonForbidden
@@ -176,7 +181,10 @@ func normalizeHeaders(in map[string]string) (map[string]string, string) {
 	}
 	out := make(map[string]string, len(in))
 	total := 0
-	for nome, valor := range in {
+	// Em ordem de nome, não na ordem aleatória do mapa: com dois headers
+	// ruins, o motivo devolvido tem de ser sempre o mesmo.
+	for _, nome := range slices.Sorted(maps.Keys(in)) {
+		valor := in[nome]
 		if !validHeaderName(nome) {
 			return nil, ReasonInvalid
 		}

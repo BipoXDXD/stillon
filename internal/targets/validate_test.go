@@ -41,6 +41,7 @@ func TestValidate(t *testing.T) {
 		{"url LOCALHOST. com ponto", func(f *fields) { f.URL = "http://LOCALHOST./" }, "url", ReasonForbidden},
 		{"url sub.localhost", func(f *fields) { f.URL = "http://app.localhost/" }, "url", ReasonForbidden},
 		{"url IP público literal", func(f *fields) { f.URL = "http://8.8.8.8/" }, "", ""},
+		{"url sem host", func(f *fields) { f.URL = "http://:8080/" }, "url", ReasonInvalid},
 
 		{"método DELETE", func(f *fields) { f.Method = "DELETE" }, "method", ReasonInvalid},
 
@@ -65,6 +66,9 @@ func TestValidate(t *testing.T) {
 		{"header com espaço no nome", func(f *fields) { f.Headers = map[string]string{"X Bad": "1"} }, "headers", ReasonInvalid},
 		{"header com CRLF no valor", func(f *fields) { f.Headers = map[string]string{"X-A": "1\r\nX-Injetado: 2"} }, "headers", ReasonInvalid},
 		{"header duplicado por caixa", func(f *fields) { f.Headers = map[string]string{"x-a": "1", "X-A": "2"} }, "headers", ReasonInvalid},
+		// Dois problemas em headers diferentes: o motivo precisa sair do
+		// primeiro nome em ordem, não da ordem aleatória do mapa.
+		{"headers com dois problemas", func(f *fields) { f.Headers = map[string]string{"Host": "x", "X-A": "1\r\n2"} }, "headers", ReasonForbidden},
 		{"header valor longo", func(f *fields) { f.Headers = map[string]string{"X-A": strings.Repeat("a", 1025)} }, "headers", ReasonTooLong},
 		{"21 headers", func(f *fields) {
 			f.Headers = map[string]string{}
