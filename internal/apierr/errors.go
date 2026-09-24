@@ -53,15 +53,35 @@ var errorTable = map[ErrorCode]struct {
 	CodeInternal:           {http.StatusInternalServerError, "Erro interno."},
 }
 
+// FieldError aponta o campo culpado de um 400 (D14). Field e Reason vêm de
+// vocabulário fechado, definido no código e nunca no corpo recebido: é o que
+// mantém a garantia de WriteError de que nada do cliente nem do banco ecoa
+// na resposta.
+type FieldError struct {
+	Field  string `json:"field"`
+	Reason string `json:"reason"`
+}
+
 type errorBody struct {
 	Error struct {
-		Code    ErrorCode `json:"code"`
-		Message string    `json:"message"`
+		Code    ErrorCode    `json:"code"`
+		Message string       `json:"message"`
+		Fields  []FieldError `json:"fields,omitempty"`
 	} `json:"error"`
 	TraceID string `json:"trace_id"`
 }
 
 func WriteError(w http.ResponseWriter, r *http.Request, code ErrorCode) {
+	writeError(w, r, code, nil)
+}
+
+// WriteValidation é o 400 com os campos culpados. Extensão compatível da
+// spec §9.1: quem ignora "fields" continua lendo code e message.
+func WriteValidation(w http.ResponseWriter, r *http.Request, fields []FieldError) {
+	writeError(w, r, CodeValidation, fields)
+}
+
+func writeError(w http.ResponseWriter, r *http.Request, code ErrorCode, fields []FieldError) {
 	entry, known := errorTable[code]
 	if !known {
 		entry = errorTable[CodeInternal]
@@ -71,6 +91,7 @@ func WriteError(w http.ResponseWriter, r *http.Request, code ErrorCode) {
 	var body errorBody
 	body.Error.Code = code
 	body.Error.Message = entry.message
+	body.Error.Fields = fields
 	body.TraceID = observability.TraceID(r.Context())
 
 	WriteJSON(w, entry.status, body)

@@ -16,6 +16,7 @@ import (
 	"github.com/BipoXDXD/vigilume/internal/crypto"
 	"github.com/BipoXDXD/vigilume/internal/httpapi"
 	"github.com/BipoXDXD/vigilume/internal/storage"
+	"github.com/BipoXDXD/vigilume/internal/targets"
 )
 
 // totpIssuer é o nome que aparece no app autenticador do usuário.
@@ -87,7 +88,11 @@ func run(ctx context.Context, cfg *config.Config) error {
 	}
 	totp := auth.NewTOTP(pool, box, totpIssuer)
 
-	srv := httpapi.NewServer(cfg, httpapi.Routes(ctx, cfg, store, sessions, totp, clk))
+	deps := httpapi.Deps{
+		Store: store, Sessions: sessions, TOTP: totp,
+		Targets: targets.NewService(pool, box, clk), Clock: clk,
+	}
+	srv := httpapi.NewServer(cfg, httpapi.Routes(ctx, cfg, deps))
 
 	errCh := make(chan error, 1)
 	go func() {

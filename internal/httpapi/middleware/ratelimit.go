@@ -19,6 +19,10 @@ import (
 // agrupamento por /64 é a metade barata dessa defesa.
 const maxBuckets = 100_000
 
+// chaveFn devolve a chave do balde. O segundo retorno é false quando a
+// requisição não traz a identidade que o limitador espera.
+type chaveFn func(*http.Request) (string, bool)
+
 // RateLimit aplica token bucket por cliente (spec §5.7).
 //
 // A varredura recebe ctx para poder parar. time.Tick nunca é coletado pelo
@@ -27,7 +31,32 @@ const maxBuckets = 100_000
 // a goroutine morrer no shutdown gracioso junto com o resto, em vez de
 // vazar para sempre (R32).
 func RateLimit(ctx context.Context, perMinute, burst int, trusted []netip.Prefix) func(http.Handler) http.Handler {
-	return rateLimit(ctx, perMinute, burst, trusted, maxBuckets)
+	return rateLimit(ctx, perMinute, burst, porIP(trusted), maxBuckets)
+}
+
+// RateLimitUser limita por usuário autenticado, a segunda camada da spec
+// §5.7. Tem de ficar DEPOIS de Authn na cadeia: é Authn que põe o usuário no
+// contexto. O limite por IP continua valendo por fora; este existe porque
+// um usuário com token válido, atrás de muitos IPs, escaparia do outro.
+func RateLimitUser(ctx context.Context, perMinute, burst int) func(http.Handler) http.Handler {
+	return rateLimit(ctx, perMinute, burst, porUsuario, maxBuckets)
+}
+
+func porIP(trusted []netip.Prefix) chaveFn {
+	return func(r *http.Request) (string, bool) {
+		return chaveDe(ClientIP(r, trusted)), true
+	}
+}
+
+// porUsuario falha FECHADO: sem usuário no contexto, a requisição é
+// recusada, em vez de cair num balde anônimo que todos dividiriam. O
+// prefixo "u:" impede que uma chave de usuário colida com uma de IP.
+func porUsuario(r *http.Request) (string, bool) {
+	id, ok := UserID(r.Context())
+	if !ok {
+		return "", false
+	}
+	return "u:" + id.String(), true
 }
 
 type bucket struct {
@@ -40,7 +69,7 @@ type limiterState struct {
 	buckets map[string]*bucket
 	limit   rate.Limit
 	burst   int
-	trusted []netip.Prefix
+	chave   chaveFn
 	max     int
 }
 
@@ -51,12 +80,12 @@ type limiterHandler struct {
 
 // rateLimit recebe o teto como parâmetro para que o teste possa exercitá-lo
 // sem criar cem mil buckets.
-func rateLimit(ctx context.Context, perMinute, burst int, trusted []netip.Prefix, max int) func(http.Handler) http.Handler {
+func rateLimit(ctx context.Context, perMinute, burst int, chave chaveFn, max int) func(http.Handler) http.Handler {
 	st := &limiterState{
 		buckets: map[string]*bucket{},
 		limit:   rate.Limit(float64(perMinute) / 60.0),
 		burst:   burst,
-		trusted: trusted,
+		chave:   chave,
 		max:     max,
 	}
 
@@ -81,7 +110,11 @@ func rateLimit(ctx context.Context, perMinute, burst int, trusted []netip.Prefix
 }
 
 func (h *limiterHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	chave := chaveDe(ClientIP(r, h.st.trusted))
+	chave, ok := h.st.chave(r)
+	if !ok {
+		apierr.WriteError(w, r, apierr.CodeUnauthorized)
+		return
+	}
 
 	h.st.mu.Lock()
 	b, ok := h.st.buckets[chave]

@@ -15,7 +15,7 @@ import (
 // Por isso os dois saem juntos.
 func TestRateLimitCapsTheNumberOfBuckets(t *testing.T) {
 	const teto = 8
-	h := rateLimit(t.Context(), 60, 5, nil, teto)(http.HandlerFunc(
+	h := rateLimit(t.Context(), 60, 5, porIP(nil), teto)(http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) }))
 
 	for i := range 500 {
@@ -33,7 +33,7 @@ func TestRateLimitCapsTheNumberOfBuckets(t *testing.T) {
 // bloco que um único assinante recebe, então dar um balde por endereço
 // entrega ao atacante bilhões de baldes de graça.
 func TestIPv6ClientsShareABucketPerSlash64(t *testing.T) {
-	h := rateLimit(t.Context(), 60, 1, nil, 1000)(http.HandlerFunc(
+	h := rateLimit(t.Context(), 60, 1, porIP(nil), 1000)(http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) }))
 
 	var negados int
@@ -51,5 +51,19 @@ func TestIPv6ClientsShareABucketPerSlash64(t *testing.T) {
 	}
 	if n := quantosBuckets(h); n != 1 {
 		t.Errorf("%d buckets para um único /64, queria 1", n)
+	}
+}
+
+// O limitador por usuário precisa falhar FECHADO. Montado por engano sem
+// Authn na frente, ele não encontra usuário no contexto; cair num balde
+// anônimo compartilhado seria silencioso. A requisição tem de ser recusada.
+func TestRateLimitUserRefusesRequestsWithoutUser(t *testing.T) {
+	h := rateLimit(t.Context(), 60, 5, porUsuario, 1000)(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) }))
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/targets", nil))
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("sem usuário no contexto deu %d, queria 401", rec.Code)
 	}
 }
