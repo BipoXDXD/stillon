@@ -1,7 +1,7 @@
 import { execFileSync, spawn } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import { createServer } from 'node:net'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 
 // A pilha do E2E: Postgres num container e o binário real, compilado com o
@@ -29,17 +29,35 @@ function portaLivre(): Promise<number> {
   })
 }
 
-async function esperar(o: { oque: string; ms: number; tentar: () => Promise<boolean> | boolean }) {
+// desistir: uma falha que não adianta esperar (o binário que já saiu); a
+// espera termina com ela, em vez de gastar o prazo inteiro.
+async function esperar(o: {
+  oque: string
+  ms: number
+  tentar: () => Promise<boolean> | boolean
+  desistir?: () => Error | null
+}) {
   const fim = Date.now() + o.ms
   while (Date.now() < fim) {
+    const motivo = o.desistir?.()
+    if (motivo) throw motivo
     if (await o.tentar()) return
     await new Promise((r) => setTimeout(r, 250))
   }
   throw new Error(`E2E: ${o.oque} não ficou pronto em ${o.ms} ms`)
 }
 
+// Uma rodada morta no meio (Ctrl+C, kill) não roda o globalTeardown, e o
+// container e o binário dela ficam de pé. A próxima rodada os derruba antes
+// de subir os seus — só pelos ids que a rodada velha gravou em pilha.json.
+export function limparPilhaVelha() {
+  if (!existsSync(ESTADO)) return
+  derrubar({ soSeForONosso: true })
+}
+
 export async function subir(): Promise<{ baseURL: string }> {
   mkdirSync(TMP, { recursive: true })
+  limparPilhaVelha()
   const dist = path.join(RAIZ, 'internal/webui/dist/index.html')
   if (!existsSync(dist)) throw new Error('E2E: rode "npm run build" antes: o binário embute internal/webui/dist')
 
@@ -53,7 +71,9 @@ export async function subir(): Promise<{ baseURL: string }> {
   const container = execFileSync(
     'docker',
     [
-      'run', '-d', '--rm', '-P',
+      // A porta do banco só no loopback, numa porta livre que o Docker escolhe
+      // ("-P" publicaria em 0.0.0.0, para a rede toda).
+      'run', '-d', '--rm', '-p', '127.0.0.1::5432',
       '-e', 'POSTGRES_PASSWORD=postgres',
       '-v', `${path.join(import.meta.dirname, 'init.sql')}:/docker-entrypoint-initdb.d/init.sql:ro`,
       'postgres:18-alpine',
@@ -115,12 +135,19 @@ async function terminarDeSubir(container: string, binario: string, estado: Estad
   const proc = spawn(binario, [], { env, stdio: ['ignore', 'inherit', 'inherit'], detached: true })
   estado.pid = proc.pid ?? 0
   writeFileSync(ESTADO, JSON.stringify(estado))
+  // O binário que sai antes do /readyz (configuração recusada, porta ocupada)
+  // falha a subida na hora, com o código de saída, e não depois de 60 s.
+  let saida: Error | null = null
+  proc.on('exit', (codigo, sinal) => {
+    saida = new Error(`E2E: o binário saiu antes do /readyz (código ${codigo}, sinal ${sinal})`)
+  })
   proc.unref()
 
   await esperar({
     oque: 'o binário (/readyz)',
     ms: 60_000,
     tentar: async () => (await fetch(`${baseURL}/readyz`).catch(() => null))?.ok ?? false,
+    desistir: () => saida,
   })
 
   // O usuário pelo subcomando do contrato, com a senha pelo stdin (nunca em
@@ -149,15 +176,34 @@ export function contarAuditoria(acao: string): number | null {
   return Number(saida.trim())
 }
 
-export function derrubar() {
+// É o nosso binário: o pid de uma rodada velha pode ter sido reusado por
+// outro processo. Sem /proc (macOS), não se sabe, e não se mata.
+function ehONossoBinario(pid: number): boolean {
+  try {
+    return readFileSync(`/proc/${pid}/cmdline`, 'utf8').split('\0')[0] === path.join(TMP, 'vigilume')
+  } catch {
+    return false
+  }
+}
+
+// Derruba só o que pilha.json registrou, e apaga o registro: uma rodada
+// seguinte não tenta derrubar de novo ids que já não são nossos.
+export function derrubar(o: { soSeForONosso?: boolean } = {}) {
   if (!existsSync(ESTADO)) return
   const e = JSON.parse(readFileSync(ESTADO, 'utf8')) as Estado
-  if (e.pid) {
+  if (e.pid && (!o.soSeForONosso || ehONossoBinario(e.pid))) {
     try {
       process.kill(e.pid, 'SIGTERM')
     } catch {
       // já tinha saído
     }
   }
-  if (e.container) execFileSync('docker', ['rm', '-f', e.container], { stdio: 'ignore' })
+  if (e.container) {
+    try {
+      execFileSync('docker', ['rm', '-f', e.container], { stdio: 'ignore' })
+    } catch {
+      // já tinha saído (o --rm o apaga quando para)
+    }
+  }
+  rmSync(ESTADO, { force: true })
 }
