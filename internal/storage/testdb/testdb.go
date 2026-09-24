@@ -10,6 +10,7 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"os"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -147,11 +148,23 @@ func iniciar(t *testing.T) {
 	}
 }
 
+// imagemPadrao é a versão de desenvolvimento e testes. Produção no Fly.io
+// roda o 17, o maior que o Postgres gerenciado deles oferece; a CI escolhe
+// a versão por TEST_POSTGRES_IMAGE.
+const imagemPadrao = "postgres:18-alpine"
+
+func imagem() string {
+	if v := os.Getenv("TEST_POSTGRES_IMAGE"); v != "" {
+		return v
+	}
+	return imagemPadrao
+}
+
 func start() {
 	ctx := context.Background()
 
 	container, startErr = tcpostgres.Run(ctx,
-		"postgres:16-alpine",
+		imagem(),
 		tcpostgres.WithDatabase(dbName),
 		tcpostgres.WithUsername(adminUser),
 		tcpostgres.WithPassword(adminPass),
