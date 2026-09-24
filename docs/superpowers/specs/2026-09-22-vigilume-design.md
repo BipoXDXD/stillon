@@ -102,7 +102,7 @@ importa e por isso são os mais fáceis e os mais testados.
 |---|---|
 | Linguagem | Go 1.26 |
 | HTTP | `net/http` stdlib (`ServeMux` com padrões de método, desde 1.22) |
-| Banco | PostgreSQL 16+ |
+| Banco | PostgreSQL 18 em desenvolvimento e testes; produção no 17 (o maior do Postgres gerenciado do Fly.io) |
 | Driver | `jackc/pgx` v5 + `pgxpool` |
 | Queries | `sqlc` (SQL puro → Go tipado; sem ORM) |
 | Migrations | `goose`, embutidas via `embed.FS`, aplicadas no boot |
