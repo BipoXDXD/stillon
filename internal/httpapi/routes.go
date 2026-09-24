@@ -2,13 +2,17 @@ package httpapi
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
+	"github.com/BipoXDXD/vigilume/internal/apierr"
 	"github.com/BipoXDXD/vigilume/internal/auth"
 	"github.com/BipoXDXD/vigilume/internal/clock"
 	"github.com/BipoXDXD/vigilume/internal/config"
 	"github.com/BipoXDXD/vigilume/internal/httpapi/middleware"
+	"github.com/BipoXDXD/vigilume/internal/incident/history"
 	"github.com/BipoXDXD/vigilume/internal/targets"
 )
 
@@ -18,11 +22,14 @@ const maxBodyBytes = 1 << 20 // 1 MiB
 // Deps reúne o que as rotas consomem. Virou struct quando o sétimo
 // parâmetro chegou: a lista posicional já não se lia.
 type Deps struct {
-	Store    *auth.PGStore
-	Sessions *auth.Manager
-	TOTP     *auth.TOTP
-	Targets  *targets.Service
-	Clock    clock.Clock
+	Store     *auth.PGStore
+	Sessions  *auth.Manager
+	TOTP      *auth.TOTP
+	Targets   *targets.Service
+	Incidents *history.Service
+	Clock     clock.Clock
+	// Ready é o teste de prontidão de /readyz: o ping no banco em produção.
+	Ready func(context.Context) error
 }
 
 // Routes monta a árvore de rotas e a cadeia de middlewares.
@@ -36,6 +43,7 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	secureCookie := strings.HasPrefix(cfg.PublicBaseURL, "https://")
 	h := NewAuthHandlers(d.Store, d.Sessions, d.TOTP, d.Clock, cfg.JWTSecret, secureCookie, cfg.TrustedProxies)
 	th := NewTargetHandlers(d.Targets, d.Clock)
+	ih := NewIncidentHandlers(d.Incidents)
 	authn := middleware.Authn(cfg.JWTSecret, d.Clock)
 
 	mux := http.NewServeMux()
@@ -91,9 +99,15 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	mux.Handle("DELETE /api/v1/targets/{id}", protegida(th.Delete))
 	mux.Handle("GET /api/v1/targets/{id}/checks", protegida(th.Checks))
 
+	mux.Handle("GET /api/v1/incidents", protegida(ih.List))
+	mux.Handle("POST /api/v1/incidents/{id}/ack", protegida(ih.Ack))
+
+	// Spec §13: /healthz é raso (o processo responde); /readyz verifica o
+	// banco.
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
+	mux.HandleFunc("GET /readyz", readyz(d.Ready))
 
 	// A ordem importa, e se escreve de dentro para fora: a ÚLTIMA linha é o
 	// middleware mais externo.
@@ -119,4 +133,27 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	handler = middleware.RequestID(handler)
 
 	return handler
+}
+
+// readyzTimeout limita o ping: um banco que não responde tem de virar 503
+// rápido, e não segurar o health check do orquestrador.
+const readyzTimeout = 2 * time.Second
+
+// readyz responde 200 só com o banco alcançável. Sem ping no Deps também é
+// 503: um wiring esquecido não pode parecer pronto.
+func readyz(ping func(context.Context) error) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithTimeout(r.Context(), readyzTimeout)
+		defer cancel()
+		if ping == nil {
+			apierr.WriteError(w, r, apierr.CodeUnavailable)
+			return
+		}
+		if err := ping(ctx); err != nil {
+			slog.Warn("readyz: banco indisponível", "erro", err)
+			apierr.WriteError(w, r, apierr.CodeUnavailable)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}
 }

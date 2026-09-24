@@ -21,6 +21,7 @@ import (
 	"github.com/BipoXDXD/vigilume/internal/config"
 	"github.com/BipoXDXD/vigilume/internal/crypto"
 	"github.com/BipoXDXD/vigilume/internal/httpapi"
+	"github.com/BipoXDXD/vigilume/internal/incident/history"
 	"github.com/BipoXDXD/vigilume/internal/storage/testdb"
 	"github.com/BipoXDXD/vigilume/internal/targets"
 )
@@ -58,6 +59,13 @@ func newAPI(t *testing.T) *api {
 // já cadastrado. O ajuste opcional permite que um teste mexa na configuração
 // antes de as rotas serem montadas.
 func newAPIWith(t *testing.T, ajustar func(*config.Config)) *api {
+	t.Helper()
+	return newAPICom(t, ajustar, nil)
+}
+
+// newAPICom é newAPIWith com um segundo ajuste, nas dependências, para o
+// teste que precisa trocar uma delas (o ping de /readyz, por exemplo).
+func newAPICom(t *testing.T, ajustar func(*config.Config), ajustarDeps func(*httpapi.Deps)) *api {
 	t.Helper()
 	pool := testdb.New(t)
 	clk := clock.NewFake(time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC))
@@ -97,10 +105,16 @@ func newAPIWith(t *testing.T, ajustar func(*config.Config)) *api {
 	}
 	segundoFator := auth.NewTOTP(pool, box, "Vigilume")
 
-	srv := httptest.NewServer(httpapi.Routes(ctx, cfg, httpapi.Deps{
+	deps := httpapi.Deps{
 		Store: store, Sessions: mgr, TOTP: segundoFator,
-		Targets: targets.NewService(pool, box, clk), Clock: clk,
-	}))
+		Targets:   targets.NewService(pool, box, clk),
+		Incidents: history.NewService(pool, clk),
+		Clock:     clk, Ready: pool.Ping,
+	}
+	if ajustarDeps != nil {
+		ajustarDeps(&deps)
+	}
+	srv := httptest.NewServer(httpapi.Routes(ctx, cfg, deps))
 	t.Cleanup(srv.Close)
 	return &api{srv: srv, pool: pool, clk: clk, userID: userID}
 }

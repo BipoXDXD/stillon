@@ -31,6 +31,7 @@ const (
 	CodePayloadTooLarge    ErrorCode = "payload_too_large"
 	CodeForbidden          ErrorCode = "forbidden"
 	CodeInternal           ErrorCode = "internal_error"
+	CodeUnavailable        ErrorCode = "unavailable"
 )
 
 // A mensagem vem sempre desta tabela, nunca do erro subjacente.
@@ -51,6 +52,7 @@ var errorTable = map[ErrorCode]struct {
 	CodePayloadTooLarge:    {http.StatusRequestEntityTooLarge, "Corpo da requisição grande demais."},
 	CodeForbidden:          {http.StatusForbidden, "Operação não permitida."},
 	CodeInternal:           {http.StatusInternalServerError, "Erro interno."},
+	CodeUnavailable:        {http.StatusServiceUnavailable, "Serviço indisponível."},
 }
 
 // FieldError aponta o campo culpado de um 400 (D14). Field e Reason vêm de
