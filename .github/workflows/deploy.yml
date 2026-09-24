@@ -47,10 +47,13 @@ jobs:
     timeout-minutes: 15
     env:
       SHA: ${{ inputs.sha }}
-      # Nomes repetidos à mão: o pacote do GHCR (igual ao IMAGEM do ci.yml) e
-      # o app do Fly (o `app` do fly.toml; também no `-a` do último passo).
-      # Renomear o pacote ou o app mexe no ci.yml, no deploy.yml e no
-      # fly.toml, todos juntos.
+      # Nomes repetidos à mão. Renomear é mexer em todos juntos, num PR só
+      # (lista completa no runbook, "Se o nome do app estiver tomado"):
+      # - pacote do GHCR: ORIGEM aqui, IMAGEM do ci.yml, image do compose.yaml;
+      # - app vigilume: DESTINO e o `-a` do último passo aqui; `app`,
+      #   PUBLIC_BASE_URL e CORS_ORIGIN (https://vigilume.fly.dev) do fly.toml;
+      # - app vigilume-db: `app` de deploy/fly/db/fly.toml, `-a` do backup.yml
+      #   e o host vigilume-db.internal do secret DATABASE_URL.
       ORIGEM: ghcr.io/bipoxdxd/vigilume
       DESTINO: registry.fly.io/vigilume
     steps:
@@ -75,7 +78,23 @@ jobs:
           fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          # O histórico inteiro, com origin/main: o passo seguinte precisa dele.
+          fetch-depth: 0
           persist-credentials: false
+      - name: o commit está na main
+        # Uma tag v* num commit fora da main também publica :<sha> (ci.yml),
+        # sem que ele tenha passado por PR. Só vai para produção o que a main
+        # contém. O SHA existe? (mensagem própria, e não o "fatal" do
+        # merge-base) E é ancestral de origin/main?
+        run: |
+          if ! git cat-file -e "$SHA^{commit}" 2>/dev/null; then
+            echo "o commit $SHA não existe neste repositório" >&2
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "$SHA" origin/main; then
+            echo "o commit $SHA não está na main: só se faz deploy do que passou por ela" >&2
+            exit 1
+          fi
 
       - name: conferir o TRUSTED_PROXIES
         # Vazio, todo cliente divide um balde de rate limit e o mesmo ip_hash
@@ -83,10 +102,16 @@ jobs:
         # passo 9), e entra no fly.toml por PR antes de o workflow ser usado.
         # Aceita uma lista separada por vírgula, com espaço opcional depois
         # dela ("172.16.0.0/12, fdaa::/16"); recusa vazio, só espaço e vírgula
-        # sobrando.
+        # sobrando. Recusa também um prefixo /0 (0.0.0.0/0, ::/0): confiar na
+        # internet inteira deixaria qualquer cliente forjar o Fly-Client-IP.
+        # O boot recusa o /0 do mesmo jeito; aqui o deploy nem começa.
         run: |
           if ! grep -Eq '^[[:space:]]*TRUSTED_PROXIES[[:space:]]*=[[:space:]]*"[^",[:space:]]+(,[[:space:]]*[^",[:space:]]+)*"' fly.toml; then
             echo "TRUSTED_PROXIES vazio no fly.toml: meça o proxy do Fly (docs/deploy/fly.md, passo 9) e faça o PR antes" >&2
+            exit 1
+          fi
+          if grep -Eq '^[[:space:]]*TRUSTED_PROXIES[[:space:]]*=.*/0([",[:space:]]|$)' fly.toml; then
+            echo "TRUSTED_PROXIES com prefixo /0 no fly.toml: use o endereço medido do proxy (docs/deploy/fly.md, passo 9)" >&2
             exit 1
           fi
 
