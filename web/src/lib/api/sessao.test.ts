@@ -195,6 +195,74 @@ describe('várias abas', () => {
     expect(aba2.sessao.motivo()).toBe('outra-aba')
   })
 
+  // M5 da revisão final: uma aba ainda no boot ('verificando') ignorava o
+  // "encerrada" da outra. Se o refresh do boot já tinha sido aceito pelo
+  // servidor antes do logout, a aba entrava numa sessão que o dono acabou
+  // de encerrar. O buscar segura a RESPOSTA do refresh (o servidor já
+  // rotacionou) até o aviso chegar. Sabotagem: no ouvinte do canal, voltar a
+  // "estado === 'autenticado'" só → a aba termina autenticada.
+  it('"encerrada" durante o boot: o boot termina anônimo, mesmo com o refresh aceito', async () => {
+    const falsa = usarApiFalsa()
+    const [a, b] = canais()
+    const recebidos: unknown[] = []
+    b.addEventListener('message', (e) => recebidos.push(e.data))
+    const aba1 = novaSessao({ canal: a })
+    await aba1.sessao.entrar(EMAIL, SENHA)
+    let soltar!: () => void
+    const portao = new Promise<void>((r) => (soltar = r))
+    let refreshVoltou = false
+    const buscar = async (entrada: string, init: RequestInit) => {
+      const r = await buscarDoTeste(entrada, init)
+      if (entrada.endsWith('/auth/refresh')) {
+        refreshVoltou = true
+        await portao
+      }
+      return r
+    }
+    const aba2 = novaSessao({ canal: b, buscar })
+    const boot = aba2.sessao.iniciar()
+    await vi.waitFor(() => expect(refreshVoltou).toBe(true))
+    await aba1.sessao.sair()
+    await ateASentinela(a, recebidos)
+    soltar()
+    await boot
+    expect(falsa.chamadas('POST /auth/refresh')).toBe(1)
+    expect(aba2.sessao.token()).toBeNull()
+    expect(aba2.sessao.estado()).toBe('anonimo')
+    expect(aba2.sessao.motivo()).toBe('outra-aba')
+  })
+
+  // O mesmo, com a rede caindo no refresh do boot: a sessão acabou na outra
+  // aba, e isto é "anônimo" (vai ao login com o motivo), não "offline".
+  // Sabotagem: em iniciar(), trocar "if (minha === epoca) estado = novo"
+  // por "estado = novo" → offline.
+  it('"encerrada" durante o boot com o refresh sem rede: anônimo, e não offline', async () => {
+    usarApiFalsa()
+    const [a, b] = canais()
+    const recebidos: unknown[] = []
+    b.addEventListener('message', (e) => recebidos.push(e.data))
+    const aba1 = novaSessao({ canal: a })
+    await aba1.sessao.entrar(EMAIL, SENHA)
+    let soltar!: () => void
+    const portao = new Promise<void>((r) => (soltar = r))
+    let refreshSaiu = false
+    const buscar = async (entrada: string, init: RequestInit) => {
+      if (!entrada.endsWith('/auth/refresh')) return buscarDoTeste(entrada, init)
+      refreshSaiu = true
+      await portao
+      throw new TypeError('Failed to fetch')
+    }
+    const aba2 = novaSessao({ canal: b, buscar })
+    const boot = aba2.sessao.iniciar()
+    await vi.waitFor(() => expect(refreshSaiu).toBe(true))
+    await aba1.sessao.sair()
+    await ateASentinela(a, recebidos)
+    soltar()
+    await boot
+    expect(aba2.sessao.estado()).toBe('anonimo')
+    expect(aba2.sessao.motivo()).toBe('outra-aba')
+  })
+
   it('o canal nunca leva o token', async () => {
     const falsa = usarApiFalsa()
     falsa.logado()

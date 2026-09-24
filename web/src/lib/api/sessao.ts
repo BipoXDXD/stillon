@@ -150,12 +150,17 @@ export function criarSessao(o: Opcoes) {
   // cookie seriam reúso (spec do Plano 6, D9).
   function iniciar(): Promise<void> {
     boot ??= (async () => {
+      const minha = epoca
+      let novo: Estado
       try {
         const t = await renovar(null)
-        estado = t ? 'autenticado' : 'anonimo'
+        novo = t ? 'autenticado' : 'anonimo'
       } catch {
-        estado = 'offline'
+        novo = 'offline'
       }
+      // Outra época: a sessão mudou durante o boot (encerrada em outra aba,
+      // ou um login nesta), e vale o estado que essa mudança deixou.
+      if (minha === epoca) estado = novo
       mudou()
     })()
     return boot
@@ -170,7 +175,10 @@ export function criarSessao(o: Opcoes) {
 
   canal?.addEventListener('message', (e) => {
     const a = e.data as Aviso
-    if (a?.tipo === 'encerrada' && estado === 'autenticado') encerrar('outra-aba')
+    // Também no boot: um refresh que o servidor aceitou antes do logout da
+    // outra aba entraria numa sessão que o dono acabou de encerrar. A época
+    // nova descarta a resposta dele, e o boot termina anônimo.
+    if (a?.tipo === 'encerrada' && (estado === 'autenticado' || estado === 'verificando')) encerrar('outra-aba')
     // Outra aba entrou: uma aba parada no /login entra junto, pelo cookie.
     if (a?.tipo === 'iniciada' && estado === 'anonimo') void tentarDeNovo()
   })
