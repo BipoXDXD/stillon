@@ -285,13 +285,49 @@ func TestLoadRejectsABadClientIPHeader(t *testing.T) {
 // As chaves de demonstração do compose.yaml são públicas no repositório. Com
 // elas em produção, qualquer um forja JWT e decifra os segredos.
 func TestLoadRejectsDemoKeysOverHTTPS(t *testing.T) {
-	for i, nome := range []string{"MASTER_KEY", "JWT_SECRET", "IP_HASH_KEY"} {
-		env := validEnv()
-		// Cada variável com a chave de demo de OUTRA: embaralhar não escapa.
-		env[nome] = base64.StdEncoding.EncodeToString(chavesDeDemo[(i+1)%len(chavesDeDemo)])
-		_, err := Load(getenvFrom(env))
-		if err == nil || !strings.Contains(err.Error(), nome) || !strings.Contains(err.Error(), "demonstração") {
-			t.Errorf("%s com chave de demo e https: erro = %v, queria recusa", nome, err)
+	// O esquema não diferencia maiúsculas (RFC 3986): "HTTPS://" também é
+	// produção, e não pode passar pelo portão como se fosse http.
+	for _, base := range []string{"https://vigilume.example", "HTTPS://vigilume.example"} {
+		for i, nome := range []string{"MASTER_KEY", "JWT_SECRET", "IP_HASH_KEY"} {
+			env := validEnv()
+			env["PUBLIC_BASE_URL"] = base
+			// Cada variável com a chave de demo de OUTRA: embaralhar não escapa.
+			env[nome] = base64.StdEncoding.EncodeToString(chavesDeDemo[(i+1)%len(chavesDeDemo)])
+			_, err := Load(getenvFrom(env))
+			if err == nil || !strings.Contains(err.Error(), nome) || !strings.Contains(err.Error(), "demonstração") {
+				t.Errorf("%s com chave de demo e %s: erro = %v, queria recusa", nome, base, err)
+				continue
+			}
+			// A mensagem vai para o log do boot: não pode repetir a chave,
+			// nem em texto nem em base64.
+			vazamentos := []string{"naouse"}
+			for _, d := range chavesDeDemo {
+				vazamentos = append(vazamentos, string(d), base64.StdEncoding.EncodeToString(d))
+			}
+			for _, vazado := range vazamentos {
+				if strings.Contains(err.Error(), vazado) {
+					t.Errorf("%s com %s: a mensagem de erro repete a chave (%q): %v", nome, base, vazado, err)
+				}
+			}
+		}
+	}
+}
+
+func TestEhHTTPS(t *testing.T) {
+	casos := map[string]bool{
+		"https://vigilume.example":   true,
+		"HTTPS://vigilume.example":   true,
+		"Https://vigilume.example":   true,
+		" https://vigilume.example ": true,
+		"http://localhost:8080":      false,
+		"HTTP://localhost:8080":      false,
+		"httpsx://vigilume.example":  false,
+		"vigilume.example":           false,
+		"":                           false,
+	}
+	for s, want := range casos {
+		if got := EhHTTPS(s); got != want {
+			t.Errorf("EhHTTPS(%q) = %v, queria %v", s, got, want)
 		}
 	}
 }

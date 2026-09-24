@@ -771,6 +771,28 @@ func TestRefreshCookieIsSecureWhenPublicBaseURLIsHTTPS(t *testing.T) {
 	}
 }
 
+// O esquema de uma URL não diferencia maiúsculas: PUBLIC_BASE_URL com
+// "HTTPS://" é produção, e o cookie tem de sair Secure do mesmo jeito.
+func TestRefreshCookieIsSecureWhenPublicBaseURLIsUppercaseHTTPS(t *testing.T) {
+	a := newAPIWith(t, func(cfg *config.Config) {
+		cfg.PublicBaseURL = "HTTPS://vigilume.exemplo.com"
+	})
+
+	resp := login(t, a, http.DefaultClient, testEmail, testPass)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("login devolveu %d", resp.StatusCode)
+	}
+
+	ck := refreshCookie(resp)
+	if ck == nil {
+		t.Fatal("login não devolveu cookie de refresh")
+	}
+	if !ck.Secure {
+		t.Error("cookie sem Secure com PUBLIC_BASE_URL HTTPS: o refresh trafegaria em claro")
+	}
+}
+
 // RequestID precisa ser o middleware MAIS EXTERNO da cadeia montada por
 // Routes. Se não for, apierr.WriteError lê um contexto sem trace e todo
 // envelope de erro sai com trace_id vazio — o erro visto pelo cliente deixa

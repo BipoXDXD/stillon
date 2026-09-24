@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/mail"
 	"net/netip"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -213,13 +214,13 @@ func Load(getenv func(string) string) (*Config, error) {
 	// limit por IP e todo o ip_hash da auditoria colapsam num valor só. É
 	// aviso e não erro porque um TLS terminado no próprio processo é
 	// legítimo, só é raro.
-	if strings.HasPrefix(cfg.PublicBaseURL, "https://") && len(cfg.TrustedProxies) == 0 {
+	if EhHTTPS(cfg.PublicBaseURL) && len(cfg.TrustedProxies) == 0 {
 		slog.Warn("TRUSTED_PROXIES vazio com PUBLIC_BASE_URL https: " +
 			"se houver proxy na frente, o rate limit por IP e o ip_hash da auditoria " +
 			"colapsam num valor único para todos os clientes")
 	}
 
-	if strings.HasPrefix(cfg.PublicBaseURL, "https://") {
+	if EhHTTPS(cfg.PublicBaseURL) {
 		for _, k := range []struct {
 			nome  string
 			valor []byte
@@ -255,6 +256,15 @@ func Load(getenv func(string) string) (*Config, error) {
 		return nil, errors.Join(errs...)
 	}
 	return cfg, nil
+}
+
+// EhHTTPS diz se PUBLIC_BASE_URL (ou outra URL) usa o esquema https. O esquema
+// de uma URL não diferencia maiúsculas (RFC 3986, 3.1): "HTTPS://…" é https, e
+// um prefixo literal "https://" deixaria esse valor passar como http pelo
+// portão das chaves de demo e tiraria o Secure do cookie de refresh.
+func EhHTTPS(s string) bool {
+	u, err := url.Parse(strings.TrimSpace(s))
+	return err == nil && strings.EqualFold(u.Scheme, "https")
 }
 
 func chaveDeDemo(k []byte) bool {

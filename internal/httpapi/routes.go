@@ -5,7 +5,6 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
-	"strings"
 	"sync"
 	"time"
 
@@ -65,7 +64,7 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	// Sem https não há como marcar o cookie como Secure: o navegador
 	// simplesmente não o guardaria, e o desenvolvimento local pararia. Em
 	// produção PUBLIC_BASE_URL é https, e o refresh nunca trafega em claro.
-	secureCookie := strings.HasPrefix(cfg.PublicBaseURL, "https://")
+	secureCookie := config.EhHTTPS(cfg.PublicBaseURL)
 	h := NewAuthHandlers(d.Store, d.Sessions, d.TOTP, d.Clock, cfg.JWTSecret, secureCookie, proxiesDe(cfg))
 	th := NewTargetHandlers(d.Targets, d.Clock)
 	ih := NewIncidentHandlers(d.Incidents)
