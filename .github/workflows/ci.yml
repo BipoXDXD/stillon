@@ -369,8 +369,10 @@ jobs:
       # código, com as mesmas bases fixadas por digest e o cache do job image,
       # mas não é byte a byte a imagem que o e2e viu (o binário é
       # reprodutível; a imagem não, D9 da spec). Por isso ela é reescaneada
-      # ANTES de ganhar qualquer tag: primeiro sobe só pelo digest, depois o
-      # Trivy, e só então :sha e :latest apontam para ela.
+      # ANTES de ganhar qualquer tag: as duas variantes sobem só pelo digest,
+      # depois o Trivy, e só então um passo único dá todas as tags. Um publish
+      # que falha ou é cancelado antes desse passo não move tag nenhuma (nem
+      # :latest-tools adiantado em relação a :latest).
       - id: runtime
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
@@ -385,11 +387,29 @@ jobs:
           # no índice, que o Fly e o Trivy teriam de pular.
           provenance: false
 
+      # O tools (só o seed do compose; nunca vai para o Fly) não passa pelo
+      # reescaneamento daqui: o Trivy do job image já o varreu na amd64 (mesmo
+      # código e bases); a arm64 dele não passa por Trivy.
+      - id: tools
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          target: tools
+          platforms: linux/amd64,linux/arm64
+          outputs: type=image,name=${{ env.IMAGEM }},push-by-digest=true,name-canonical=true,push=true
+          labels: ${{ steps.meta-tools.outputs.labels }}
+          build-args: VERSION=${{ env.VERSION }}
+          cache-from: type=gha,scope=imagem
+          provenance: false
+
       - name: trivy do digest publicado
         env:
           DIGEST: ${{ steps.runtime.outputs.digest }}
         # O pacote é privado: o Trivy lê a credencial que o login-action
         # gravou em ~/.docker/config.json (só leitura, e só neste contêiner).
+        # É o GITHUB_TOKEN deste job, com packages:write; o contêiner do
+        # Trivy é fixado por digest (deploy/ci/trivy/Dockerfile), e o token
+        # expira com o job.
         run: |
           trivy=$(sed -n 's/^FROM //p' deploy/ci/trivy/Dockerfile)
           for plataforma in linux/amd64 linux/arm64; do
@@ -399,29 +419,22 @@ jobs:
               --platform "$plataforma" "$IMAGEM@$DIGEST"
           done
 
-      - name: tags da imagem conferida
+      - name: tags das imagens conferidas
+        # Tudo o que dá tag, num passo só e depois de todas as checagens. O
+        # tools primeiro: quando :<sha> (a entrada do deploy) e :latest
+        # existem, o -tools do mesmo commit já existe também.
         env:
           DIGEST: ${{ steps.runtime.outputs.digest }}
+          DIGEST_TOOLS: ${{ steps.tools.outputs.digest }}
           TAGS: ${{ steps.meta.outputs.tags }}
+          TAGS_TOOLS: ${{ steps.meta-tools.outputs.tags }}
         run: |
+          args_tools=()
+          while read -r tag; do [ -n "$tag" ] && args_tools+=(-t "$tag"); done <<< "$TAGS_TOOLS"
           args=()
           while read -r tag; do [ -n "$tag" ] && args+=(-t "$tag"); done <<< "$TAGS"
+          docker buildx imagetools create "${args_tools[@]}" "$IMAGEM@$DIGEST_TOOLS"
           docker buildx imagetools create "${args[@]}" "$IMAGEM@$DIGEST"
-
-      # O tools (só o seed do compose; nunca vai para o Fly) ganha as tags
-      # direto, sem o reescaneamento daqui: o Trivy do job image já o varreu
-      # na amd64 (mesmo código e bases); a arm64 dele não passa por Trivy.
-      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
-        with:
-          context: .
-          target: tools
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.meta-tools.outputs.tags }}
-          labels: ${{ steps.meta-tools.outputs.labels }}
-          build-args: VERSION=${{ env.VERSION }}
-          cache-from: type=gha,scope=imagem
-          provenance: false
 
       - name: resumo
         env:
