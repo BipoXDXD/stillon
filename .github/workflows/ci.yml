@@ -49,6 +49,7 @@ env:
 jobs:
   lint:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -106,6 +107,7 @@ jobs:
             image: postgres:18-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
     name: test (${{ matrix.label }})
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     env:
       TEST_POSTGRES_IMAGE: ${{ matrix.image }}
     steps:
@@ -129,6 +131,7 @@ jobs:
     # conferidos à mão ficam no .gitleaksignore, pela fingerprint (D37); as
     # chaves de demo públicas do compose, no allowlist do .gitleaks.toml.
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -146,6 +149,7 @@ jobs:
 
   web:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     defaults:
       run:
         shell: bash
@@ -190,6 +194,7 @@ jobs:
     # A imagem de produção que o e2e vai usar, só amd64 (a do runner). O
     # publish constrói as duas arquiteturas do mesmo código, com o cache daqui.
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -254,10 +259,15 @@ jobs:
     # quebrarem, o PR fica vermelho.
     needs: image
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     env:
       VIGILUME_TAG: ci
-      # Nem pull nem build: a imagem é a do artifact, ou nada.
-      UP_ARGS: --no-build --pull never
+      # Nem pull nem build: a imagem do Vigilume é a do artifact, ou nada. O
+      # --pull never vale para TODOS os serviços, e por isso o Postgres é
+      # puxado antes, num passo próprio. --wait-timeout: um healthcheck que
+      # nunca fica verde derruba o passo em 2 min, em vez de ficar até o
+      # timeout-minutes do job.
+      UP_ARGS: --no-build --pull never --wait-timeout 120
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -267,6 +277,11 @@ jobs:
           name: imagens
           path: ${{ runner.temp }}
       - run: gunzip -c "$RUNNER_TEMP/imagens.tar.gz" | docker load
+      - name: Postgres do compose
+        # O artifact só traz as imagens do Vigilume. Sem este pull, num runner
+        # novo o db não existe, e o `up --pull never` falha antes de começar.
+        # Só o serviço db, pelo digest do compose.yaml.
+        run: docker compose pull db
 
       - name: compose (tempo, login, papel, seed, idempotência, persistência)
         run: sh deploy/ci/checar-compose.sh
@@ -311,6 +326,7 @@ jobs:
     if: github.event_name == 'push' && github.repository == 'BipoXDXD/vigilume'
     needs: [lint, test, secrets, web, image, e2e]
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: read
       packages: write
