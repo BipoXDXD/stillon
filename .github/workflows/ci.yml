@@ -2,6 +2,10 @@ name: ci
 on:
   push:
     branches: [main]
+    # Uma tag v* no commit que já saiu pela main publica DE NOVO: outro
+    # build, outro Trivy, e a tag :<sha> passa para o digest novo (o mesmo
+    # código, reescaneado); :latest fica onde estava, e ganha-se :<versão>.
+    # Um deploy pelo SHA depois disso leva o digest do build da tag.
     tags: ['v*']
   pull_request:
 
@@ -226,6 +230,11 @@ jobs:
           docker run --rm -v /var/run/docker.sock:/var/run/docker.sock "$trivy" \
             image --quiet --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 \
             --db-repository public.ecr.aws/aquasecurity/trivy-db,ghcr.io/aquasecurity/trivy-db "$IMAGEM:ci"
+          # O tools também: é o que o seed do compose roda na máquina de quem
+          # avalia, e é publicado sem o reescaneamento do publish.
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock "$trivy" \
+            image --quiet --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 \
+            --db-repository public.ecr.aws/aquasecurity/trivy-db,ghcr.io/aquasecurity/trivy-db "$IMAGEM:ci-tools"
 
       - name: checagens da imagem
         run: sh deploy/ci/checar-imagem.sh "$IMAGEM:ci" "$GITHUB_SHA"
@@ -285,6 +294,9 @@ jobs:
       - name: logs do compose
         if: failure()
         run: docker compose logs
+      - name: derrubar o compose
+        if: always()
+        run: docker compose down -v
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: failure()
         with:
@@ -400,7 +412,7 @@ jobs:
           DIGEST: ${{ steps.runtime.outputs.digest }}
         run: |
           {
-            echo "Imagem publicada: \`$IMAGEM@$DIGEST\`"
+            echo "Imagem publicada: \`$IMAGEM:$GITHUB_SHA\` = \`$IMAGEM@$DIGEST\`"
             echo
-            echo "Deploy: Actions → deploy → Run workflow com este digest."
+            echo "Deploy: Actions → deploy → Run workflow com o SHA \`$GITHUB_SHA\`."
           } >> "$GITHUB_STEP_SUMMARY"

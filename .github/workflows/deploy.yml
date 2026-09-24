@@ -1,6 +1,7 @@
 name: deploy
 # Deploy no Fly.io, SÓ à mão (contrato, decisão 6): Actions → deploy → Run
-# workflow, com o digest que o job publish do ci imprimiu, a partir da main.
+# workflow, com o SHA completo do commit (40 hex) cuja imagem o job publish
+# do ci publicou, a partir da main.
 #
 # Quem pode disparar: só quem tem acesso de escrita ao repositório (hoje, só
 # o dono). No GitHub Free com repositório privado não há environment com
@@ -12,11 +13,17 @@ name: deploy
 # privado, e dar ao Fly uma credencial do GitHub seria guardar um token
 # pessoal fora do GitHub. O job copia pelo digest a imagem que o publish
 # empurrou e reescaneou, sem rebuild.
+#
+# O input é o SHA, não um digest: o publish só dá a tag :<sha> DEPOIS do
+# Trivy. Um digest qualquer do pacote podia ser um que subiu e reprovou no
+# Trivy, o de um publish cancelado no meio, ou o da variante tools; a tag
+# :<sha> da imagem runtime só existe para o que passou. O job resolve a tag
+# no digest uma vez e daí em diante só usa o digest.
 on:
   workflow_dispatch:
     inputs:
-      digest:
-        description: 'digest da imagem publicada (sha256:…), do resumo do job publish'
+      sha:
+        description: 'SHA completo (40 hex) do commit publicado, do resumo do job publish'
         required: true
         type: string
 
@@ -39,7 +46,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
-      DIGEST: ${{ inputs.digest }}
+      SHA: ${{ inputs.sha }}
       # Nomes repetidos à mão: o pacote do GHCR (igual ao IMAGEM do ci.yml) e
       # o app do Fly (o `app` do fly.toml; também no `-a` do último passo).
       # Renomear o pacote ou o app mexe no ci.yml, no deploy.yml e no
@@ -56,12 +63,14 @@ jobs:
             echo "deploy só da main (disparado de $GITHUB_REF)" >&2
             exit 1
           fi
-      - name: conferir o digest
+      - name: conferir o SHA
         # O input vai para o shell só por variável de ambiente, e só no
-        # formato de um digest: nada de texto livre na linha de comando.
+        # formato de um SHA completo: nada de texto livre na linha de comando.
+        # Exatamente 40 hex também exclui as tags da variante tools
+        # (<sha>-tools), que nunca vai para o Fly.
         run: |
-          if ! printf '%s' "$DIGEST" | grep -Eqx 'sha256:[0-9a-f]{64}'; then
-            echo "digest inválido: use sha256:<64 hex>" >&2
+          if ! printf '%s' "$SHA" | grep -Eqx '[0-9a-f]{40}'; then
+            echo "SHA inválido: use o SHA completo do commit (40 hex minúsculos)" >&2
             exit 1
           fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -91,6 +100,18 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: resolver o digest da tag :<sha>
+        # Sem a tag (commit não publicado, publish reprovado no Trivy ou
+        # cancelado antes das tags), o inspect falha e o job para aqui.
+        run: |
+          if ! digest=$(docker buildx imagetools inspect "$ORIGEM:$SHA" --format '{{json .Manifest}}' | jq -r .digest) \
+            || ! printf '%s' "$digest" | grep -Eqx 'sha256:[0-9a-f]{64}'; then
+            echo "não achei a imagem $ORIGEM:$SHA (o publish desse commit terminou?)" >&2
+            exit 1
+          fi
+          echo "imagem: $ORIGEM:$SHA = $digest"
+          echo "DIGEST=$digest" >> "$GITHUB_ENV"
+
       # Secret de repositório: FLY_DEPLOY_TOKEN = `fly tokens create deploy -a
       # vigilume`, que só alcança este app.
       - name: copiar para o registry do Fly, pelo digest
@@ -107,8 +128,14 @@ jobs:
         # rolling: com uma máquina, alguns segundos fora (D26). --ha=false:
         # sem ele, o primeiro deploy de um app cria DUAS máquinas, e dois
         # processos --role=all mandariam cada notificação em dobro.
+        #
+        # A conferência conta só as máquinas de pé (started/running): uma
+        # parada ou destruída não manda notificação. Se o flyctl ou o jq
+        # falharem, o `lista=$(…)` sai com erro e o bash -e para o passo:
+        # sem lista, não há "1" por acaso.
         run: |
           flyctl deploy --image "$DESTINO@$DIGEST" --strategy rolling --ha=false
-          maquinas=$(flyctl machines list -a vigilume -q | grep -c . || true)
-          echo "máquinas do app: $maquinas"
-          [ "$maquinas" = 1 ] || { echo "queria exatamente 1 máquina" >&2; exit 1; }
+          lista=$(flyctl machines list -a vigilume --json)
+          maquinas=$(printf '%s' "$lista" | jq '[.[] | select(.state == "started" or .state == "running")] | length')
+          echo "máquinas de pé no app: $maquinas"
+          [ "$maquinas" = 1 ] || { echo "queria exatamente 1 máquina de pé" >&2; exit 1; }
