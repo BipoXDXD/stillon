@@ -214,28 +214,51 @@ func (s *Service) Delete(ctx context.Context, userID, id uuid.UUID) error {
 	})
 }
 
-// Checks devolve os resultados de um alvo no intervalo [from, to). Busca o
-// alvo antes, e não só os checks, porque uma lista vazia não distinguiria
-// "alvo de outro usuário" de "alvo sem sondas": o primeiro precisa ser 404.
-func (s *Service) Checks(ctx context.Context, userID, id uuid.UUID, from, to time.Time) ([]Check, error) {
+// Checks devolve a série de um alvo no intervalo [from, to). Até
+// MaxChecksWindow, os checks brutos; acima, as horas de check_rollup_1h, com
+// from arredondado para baixo até a hora cheia, para que a hora que o contém
+// entre. Os buckets saem em UTC: são horas cheias em UTC por definição, e o
+// pgx devolveria o fuso local do processo. Busca o alvo antes, e não só a série, porque uma lista vazia não
+// distinguiria "alvo de outro usuário" de "alvo sem sondas": o primeiro
+// precisa ser 404.
+func (s *Service) Checks(ctx context.Context, userID, id uuid.UUID, from, to time.Time) (Series, error) {
 	if !from.Before(to) {
-		return nil, &ValidationError{Fields: []FieldError{{Field: "from", Reason: ReasonInvalid}}}
+		return Series{}, &ValidationError{Fields: []FieldError{{Field: "from", Reason: ReasonInvalid}}}
 	}
+	if to.Sub(from) > MaxRollupWindow {
+		return Series{}, &ValidationError{Fields: []FieldError{{Field: "from", Reason: ReasonOutOfRange}}}
+	}
+	out := Series{Resolution: ResolutionRaw}
 	if to.Sub(from) > MaxChecksWindow {
-		return nil, &ValidationError{Fields: []FieldError{{Field: "from", Reason: ReasonOutOfRange}}}
+		out.Resolution = Resolution1h
 	}
-	var out []Check
 	err := storage.InUserTx(ctx, s.pool, userID, func(q *db.Queries) error {
 		if _, err := q.GetTarget(ctx, db.GetTargetParams{UserID: userID, ID: id}); err != nil {
 			return naoAchado(err)
+		}
+		if out.Resolution == Resolution1h {
+			rows, err := q.ListRollups(ctx, db.ListRollupsParams{
+				UserID: userID, TargetID: id, FromAt: from.Truncate(time.Hour), ToAt: to,
+			})
+			if err != nil {
+				return fmt.Errorf("listar rollups: %w", err)
+			}
+			out.Rollups = make([]Rollup, 0, len(rows))
+			for _, r := range rows {
+				out.Rollups = append(out.Rollups, Rollup{
+					Bucket: r.Bucket.UTC(), Total: r.Total, OK: r.Ok,
+					P50: r.P50, P95: r.P95, P99: r.P99, Max: r.Max,
+				})
+			}
+			return nil
 		}
 		rows, err := q.ListChecks(ctx, db.ListChecksParams{UserID: userID, TargetID: id, FromAt: from, ToAt: to})
 		if err != nil {
 			return fmt.Errorf("listar checks: %w", err)
 		}
-		out = make([]Check, 0, len(rows))
+		out.Checks = make([]Check, 0, len(rows))
 		for _, r := range rows {
-			out = append(out, Check{
+			out.Checks = append(out.Checks, Check{
 				CheckedAt: r.CheckedAt, Status: r.Status, LatencyMS: r.LatencyMS,
 				StatusCode: r.StatusCode, ErrorKind: r.ErrorKind,
 			})

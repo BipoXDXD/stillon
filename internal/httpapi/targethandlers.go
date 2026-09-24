@@ -79,6 +79,17 @@ type checkResponse struct {
 	ErrorKind  *string   `json:"error_kind"`
 }
 
+// rollupResponse é uma hora da série quando resolution é "1h" (D6).
+type rollupResponse struct {
+	Bucket time.Time `json:"bucket"`
+	Total  int32     `json:"total"`
+	OK     int32     `json:"ok"`
+	P50    *int32    `json:"p50_ms"`
+	P95    *int32    `json:"p95_ms"`
+	P99    *int32    `json:"p99_ms"`
+	Max    *int32    `json:"max_ms"`
+}
+
 func toTargetResponse(t targets.Target) targetResponse {
 	return targetResponse{
 		ID: t.ID.String(), Name: t.Name, URL: t.URL, Method: t.Method,
@@ -267,18 +278,30 @@ func (h *TargetHandlers) Checks(w http.ResponseWriter, r *http.Request) {
 		from = v
 	}
 
-	checks, err := h.svc.Checks(r.Context(), userID, id, from, to)
+	serie, err := h.svc.Checks(r.Context(), userID, id, from, to)
 	if h.falhou(w, r, "listar checks", err) {
 		return
 	}
-	items := make([]checkResponse, 0, len(checks))
-	for _, c := range checks {
+	// resolution discrimina o formato dos itens: o cliente não adivinha pela
+	// forma do JSON.
+	if serie.Resolution == targets.Resolution1h {
+		items := make([]rollupResponse, 0, len(serie.Rollups))
+		for _, b := range serie.Rollups {
+			items = append(items, rollupResponse{
+				Bucket: b.Bucket, Total: b.Total, OK: b.OK, P50: b.P50, P95: b.P95, P99: b.P99, Max: b.Max,
+			})
+		}
+		apierr.WriteJSON(w, http.StatusOK, map[string]any{"resolution": serie.Resolution, "items": items})
+		return
+	}
+	items := make([]checkResponse, 0, len(serie.Checks))
+	for _, c := range serie.Checks {
 		items = append(items, checkResponse{
 			CheckedAt: c.CheckedAt, Status: c.Status, LatencyMS: c.LatencyMS,
 			StatusCode: c.StatusCode, ErrorKind: c.ErrorKind,
 		})
 	}
-	apierr.WriteJSON(w, http.StatusOK, map[string]any{"items": items})
+	apierr.WriteJSON(w, http.StatusOK, map[string]any{"resolution": serie.Resolution, "items": items})
 }
 
 // falhou traduz o erro do domínio para o envelope e devolve true se havia

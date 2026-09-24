@@ -291,7 +291,9 @@ func TestListPaginatesByCursorNewestFirst(t *testing.T) {
 	}
 }
 
-func TestChecksWindowIsLimited(t *testing.T) {
+// D6: até 48h a série é bruta; acima, horária (rollups); acima de
+// MaxRollupWindow, 400. As bordas são exatas dos dois lados.
+func TestChecksWindowPicksTheResolution(t *testing.T) {
 	a := novoAmbiente(t)
 	ctx := context.Background()
 	dono := a.usuario(t)
@@ -301,12 +303,77 @@ func TestChecksWindowIsLimited(t *testing.T) {
 	}
 	fim := a.clk.Now()
 
-	_, err = a.svc.Checks(ctx, dono, alvo.ID, fim.Add(-targets.MaxChecksWindow-time.Second), fim)
-	var verr *targets.ValidationError
-	if !errors.As(err, &verr) {
-		t.Errorf("janela de 48h+1s deu %v, queria ValidationError", err)
+	for _, c := range []struct {
+		janela time.Duration
+		quer   targets.Resolution
+	}{
+		{targets.MaxChecksWindow, targets.ResolutionRaw},
+		{targets.MaxChecksWindow + time.Second, targets.Resolution1h},
+		{targets.MaxRollupWindow, targets.Resolution1h},
+	} {
+		s, err := a.svc.Checks(ctx, dono, alvo.ID, fim.Add(-c.janela), fim)
+		if err != nil || s.Resolution != c.quer {
+			t.Errorf("janela %v deu %q/%v, queria %q", c.janela, s.Resolution, err, c.quer)
+		}
 	}
-	if _, err := a.svc.Checks(ctx, dono, alvo.ID, fim.Add(-targets.MaxChecksWindow), fim); err != nil {
-		t.Errorf("janela de 48h exatas deu %v", err)
+	_, err = a.svc.Checks(ctx, dono, alvo.ID, fim.Add(-targets.MaxRollupWindow-time.Second), fim)
+	var verr *targets.ValidationError
+	if !errors.As(err, &verr) || verr.Fields[0] != (targets.FieldError{Field: "from", Reason: targets.ReasonOutOfRange}) {
+		t.Errorf("janela acima do teto deu %v, queria from/out_of_range", err)
+	}
+}
+
+// D6: a série horária vem de check_rollup_1h, só do alvo pedido, e inclui a
+// hora que contém from (arredondado para baixo) e exclui a que começa em to.
+func TestChecksReadsHourlyRollupsAboveTheRawWindow(t *testing.T) {
+	a := novoAmbiente(t)
+	ctx := context.Background()
+	dono := a.usuario(t)
+	alvo, err := a.svc.Create(ctx, dono, entrada())
+	if err != nil {
+		t.Fatal(err)
+	}
+	outro, err := a.svc.Create(ctx, dono, entrada())
+	if err != nil {
+		t.Fatal(err)
+	}
+	fim := a.clk.Now().Truncate(time.Hour) // 12:00 UTC
+	inicio := fim.Add(-72 * time.Hour)
+	p50 := int32(80)
+	for _, r := range []struct {
+		alvo   uuid.UUID
+		bucket time.Time
+	}{
+		{alvo.ID, inicio.Add(-time.Hour)}, // antes da janela
+		{alvo.ID, inicio},                 // contém from (from = inicio+30min)
+		{alvo.ID, fim.Add(-time.Hour)},    // última hora dentro
+		{alvo.ID, fim},                    // começa em to: fora
+		{outro.ID, inicio},                // outro alvo: fora
+	} {
+		if _, err := a.admin.Exec(ctx, `INSERT INTO check_rollup_1h (target_id, bucket, total, ok, p50, p95, p99, max)
+			VALUES ($1, $2, 60, 59, $3, 120, 200, 300)`, r.alvo, r.bucket, p50); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	s, err := a.svc.Checks(ctx, dono, alvo.ID, inicio.Add(30*time.Minute), fim)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Resolution != targets.Resolution1h || len(s.Checks) != 0 || len(s.Rollups) != 2 {
+		t.Fatalf("série = %q, %d checks, %d rollups; queria 1h com 2 rollups", s.Resolution, len(s.Checks), len(s.Rollups))
+	}
+	primeiro, ultimo := s.Rollups[0], s.Rollups[1]
+	if !primeiro.Bucket.Equal(inicio) || !ultimo.Bucket.Equal(fim.Add(-time.Hour)) || primeiro.Bucket.Location() != time.UTC {
+		t.Errorf("buckets = %v, %v; queria %v, %v", primeiro.Bucket, ultimo.Bucket, inicio, fim.Add(-time.Hour))
+	}
+	if primeiro.Total != 60 || primeiro.OK != 59 || primeiro.P50 == nil || *primeiro.P50 != 80 || *primeiro.Max != 300 {
+		t.Errorf("rollup = %+v", primeiro)
+	}
+
+	// Outro usuário não enxerga a série, nem vazia: é 404.
+	intruso := a.usuario(t)
+	if _, err := a.svc.Checks(ctx, intruso, alvo.ID, inicio, fim); !errors.Is(err, targets.ErrNotFound) {
+		t.Errorf("série horária do intruso = %v, queria ErrNotFound", err)
 	}
 }
