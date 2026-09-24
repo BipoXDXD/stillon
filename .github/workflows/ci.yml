@@ -38,9 +38,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
+          # Chave própria, diferente da do test: o setup-go não tem sufixo de
+          # chave, só o hash destes arquivos. O ci.yml entra porque as versões
+          # das ferramentas instaladas aqui moram no env dele.
+          cache-dependency-path: |
+            go.sum
+            .github/workflows/ci.yml
 
       - name: sqlc diff
         # Código gerado desatualizado em relação ao SQL é o erro que o sqlc
@@ -74,16 +82,30 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        postgres: ['postgres:17-alpine', 'postgres:18-alpine']
-    name: test (${{ matrix.postgres }})
+        # Por digest, com a tag na string. O Dependabot não atualiza estas
+        # strings: a mão, junto com o digest de deploy/fly/db/Dockerfile (o
+        # 18 é o de produção, igual ao do Dockerfile, do compose.yaml e do
+        # testdb) e com o imagemPadrao de internal/storage/testdb.
+        include:
+          - label: postgres:17-alpine
+            image: postgres:17-alpine@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24
+          - label: postgres:18-alpine
+            image: postgres:18-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
+    name: test (${{ matrix.label }})
     runs-on: ubuntu-latest
     env:
-      TEST_POSTGRES_IMAGE: ${{ matrix.postgres }}
+      TEST_POSTGRES_IMAGE: ${{ matrix.image }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
+          # Só o go.sum: a chave difere da do lint (que também hashia o
+          # ci.yml). As duas pernas compilam o mesmo código com as mesmas
+          # flags, então dividem a chave; o cache delas é equivalente.
+          cache-dependency-path: go.sum
 
       - name: test
         run: go test -race -count=1 -coverprofile=coverage.out ./...
@@ -98,6 +120,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod

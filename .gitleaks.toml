@@ -3,7 +3,7 @@
 [extend]
 useDefault = true
 
-[allowlist]
+[[allowlists]]
 description = "Chaves de demonstração públicas do compose"
 # As três chaves de demonstração do compose.yaml (MASTER_KEY, JWT_SECRET e
 # IP_HASH_KEY), em base64 de "demo-vigilume-…-naouse". Estão no repositório de
@@ -12,6 +12,8 @@ description = "Chaves de demonstração públicas do compose"
 # docs/superpowers/specs/2026-09-24-plano-7-empacotamento-e-deploy-design.md).
 # Só estes três valores exatos, ancorados; nada de padrão largo. Se uma chave
 # de demo mudar, a linha daqui muda junto, e o gitleaks roda de novo.
+# Só a regra que as pega; as outras continuam vendo estes valores.
+targetRules = ["generic-api-key"]
 regexTarget = "secret"
 regexes = [
   '''^ZGVtby12aWdpbHVtZS1NQVNURVJfS0VZLW5hb3VzZSE=$''',
