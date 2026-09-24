@@ -215,3 +215,61 @@ func TestFailuresStillAccumulateWhileTheLockIsLive(t *testing.T) {
 		t.Errorf("failed_attempts = %d, queria 3: a contagem parou de somar", tentativas)
 	}
 }
+
+// Só o espaço em volta sai; a caixa fica (o citext compara sem ela).
+func TestNormalizeEmail(t *testing.T) {
+	if got := auth.NormalizeEmail("  Pessoa@Exemplo.com \t"); got != "Pessoa@Exemplo.com" {
+		t.Errorf("NormalizeEmail = %q", got)
+	}
+}
+
+// CheckPassword é a verificação do login para toda rota que pede a senha. Os
+// três caminhos: senha certa não mexe no contador (quem chama decide quando
+// zerar); senha errada conta uma falha; conta bloqueada recusa até a senha
+// certa, sem contar falha nova.
+func TestCheckPassword(t *testing.T) {
+	_, pool, clk, userID := setup(t)
+	store := auth.NewPGStore(pool)
+	ctx := context.Background()
+
+	hash, err := auth.HashPassword(senha)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpdatePasswordHash(ctx, userID, hash); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RecordFailure(ctx, userID, clk.Now()); err != nil {
+		t.Fatal(err)
+	}
+	u, err := store.ByID(ctx, userID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ok, _, err := auth.CheckPassword(ctx, store, u, senha, clk.Now())
+	if err != nil || !ok {
+		t.Fatalf("senha certa: ok = %v, erro = %v", ok, err)
+	}
+	if n, _ := lerTravas(t, pool, userID); n != 1 {
+		t.Errorf("senha certa mexeu no contador: %d falhas, queria 1", n)
+	}
+
+	ok, _, err = auth.CheckPassword(ctx, store, u, "senha-errada-com-mais-de-15", clk.Now())
+	if err != nil || ok {
+		t.Fatalf("senha errada: ok = %v, erro = %v", ok, err)
+	}
+	if n, _ := lerTravas(t, pool, userID); n != 2 {
+		t.Errorf("senha errada não contou: %d falhas, queria 2", n)
+	}
+
+	ate := clk.Now().Add(time.Minute)
+	u.LockedUntil = &ate
+	ok, _, err = auth.CheckPassword(ctx, store, u, senha, clk.Now())
+	if err != nil || ok {
+		t.Fatalf("conta bloqueada aceitou a senha certa: ok = %v, erro = %v", ok, err)
+	}
+	if n, _ := lerTravas(t, pool, userID); n != 2 {
+		t.Errorf("conta bloqueada contou falha: %d, queria 2", n)
+	}
+}

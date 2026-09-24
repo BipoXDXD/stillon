@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/netip"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -62,7 +61,7 @@ func (h *AuthHandlers) Login(w http.ResponseWriter, r *http.Request) {
 	}
 	now := h.clk.Now()
 
-	user, err := h.users.ByEmail(r.Context(), normalizarEmail(req.Email))
+	user, err := h.users.ByEmail(r.Context(), auth.NormalizeEmail(req.Email))
 	if errors.Is(err, auth.ErrNotFound) {
 		auth.VerifyDummy()
 		apierr.WriteError(w, r, apierr.CodeInvalidCredentials)
@@ -73,8 +72,9 @@ func (h *AuthHandlers) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// O bloqueio não se anuncia (R34, spec §5.2): a resposta é o mesmo 401
-	// genérico de senha errada e de e-mail inexistente.
+	// CheckPassword recusa a conta bloqueada sem olhar a senha. O bloqueio
+	// não se anuncia (R34, spec §5.2): a resposta é o mesmo 401 genérico de
+	// senha errada e de e-mail inexistente.
 	//
 	// Uma mensagem distinta aqui reintroduziria exatamente a enumeração que o
 	// VerifyDummy existe para impedir, e por um canal muito mais barato que o
@@ -86,22 +86,12 @@ func (h *AuthHandlers) Login(w http.ResponseWriter, r *http.Request) {
 	// A spec escolheu esse lado: o bloqueio dura 15 minutos e o evento fica no
 	// audit log, que é onde essa informação pertence. Não "melhore a UX" aqui
 	// sem reabrir o buraco.
-	if user.IsLocked(now) {
-		// O custo de CPU continua igualado: esta também é uma falha de login.
-		auth.VerifyDummy()
-		apierr.WriteError(w, r, apierr.CodeInvalidCredentials)
-		return
-	}
-
-	ok, needsRehash, err := auth.VerifyPassword(user.PasswordHash, req.Password)
+	ok, needsRehash, err := auth.CheckPassword(r.Context(), h.users, user, req.Password, now)
 	if err != nil {
 		h.internal(w, r, "verificar senha", err)
 		return
 	}
 	if !ok {
-		if err := h.users.RecordFailure(r.Context(), user.ID, now); err != nil {
-			slog.Error("registrar falha de login", "erro", err)
-		}
 		apierr.WriteError(w, r, apierr.CodeInvalidCredentials)
 		return
 	}
@@ -322,23 +312,4 @@ func decodeJSONWith(w http.ResponseWriter, r *http.Request, dst any, strict bool
 		return false
 	}
 	return true
-}
-
-// normalizarEmail tira apenas o espaço em volta. O caso real é o
-// autocompletar do celular, que costuma acrescentar um espaço à direita:
-// sem isto, " pessoa@exemplo.com " devolve 401 para a credencial certa.
-//
-// NÃO aplica ToLower de propósito. A coluna é citext, então a caixa já é
-// comparada sem distinção no banco; baixar a caixa aqui seria redundante e,
-// por rodar só no login, mascararia a ausência do citext caso uma migration
-// futura trocasse o tipo da coluna — o login continuaria funcionando e o
-// cadastro passaria a gravar caixa mista sem que nenhum teste reclamasse.
-//
-// PENDENTE: esta função precisa migrar para o pacote auth assim que a rota
-// de cadastro existir, e o cadastro tem de usar EXATAMENTE a mesma
-// normalização. Duas normalizações diferentes entre cadastro e login criam
-// uma discrepância pior que o problema original: o usuário cadastra um
-// e-mail que nunca mais consegue usar para entrar.
-func normalizarEmail(email string) string {
-	return strings.TrimSpace(email)
 }

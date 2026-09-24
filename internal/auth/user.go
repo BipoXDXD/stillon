@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -29,6 +31,51 @@ type User struct {
 // seja testável com o relógio injetado.
 func (u User) IsLocked(now time.Time) bool {
 	return u.LockedUntil != nil && now.Before(*u.LockedUntil)
+}
+
+// NormalizeEmail tira apenas o espaço em volta. O caso real é o autocompletar
+// do celular, que costuma acrescentar um espaço à direita: sem isto,
+// " pessoa@exemplo.com " devolve 401 para a credencial certa.
+//
+// É a MESMA função no login e no cadastro pelo CLI, de propósito: duas
+// normalizações diferentes criam o e-mail que cadastra e nunca mais entra.
+//
+// NÃO aplica ToLower. A coluna é citext, então a caixa já é comparada sem
+// distinção no banco; baixar a caixa aqui mascararia a ausência do citext caso
+// uma migration futura trocasse o tipo da coluna.
+func NormalizeEmail(email string) string {
+	return strings.TrimSpace(email)
+}
+
+// CheckPassword é a verificação de senha do login, e de toda rota que pede a
+// senha de novo (troca de senha, cadastro e desativação do segundo fator; D4
+// do Plano 5). Custa um Argon2id em todo caminho.
+//
+// Conta bloqueada é recusada sem olhar a senha, pagando VerifyDummy: o
+// bloqueio não se anuncia (R34), nem pela resposta nem pelo tempo. Senha
+// errada conta no bloqueio progressivo: sem isto, uma rota que pede a senha
+// vira oráculo de senha limitado só por IP para quem tem um access token
+// roubado. O sucesso NÃO zera o contador; quem chama decide quando o
+// processo de autenticação terminou (com segundo fator, é depois dele).
+//
+// needsRehash só vale quando ok.
+func CheckPassword(ctx context.Context, users UserStore, u User, plain string, now time.Time) (ok, needsRehash bool, err error) {
+	if u.IsLocked(now) {
+		VerifyDummy()
+		return false, false, nil
+	}
+	ok, needsRehash, err = VerifyPassword(u.PasswordHash, plain)
+	if err != nil {
+		return false, false, err
+	}
+	if !ok {
+		// Falhar ao registrar não muda a resposta: a senha estava errada.
+		if err := users.RecordFailure(ctx, u.ID, now); err != nil {
+			slog.Error("registrar falha de senha", "erro", err)
+		}
+		return false, false, nil
+	}
+	return true, needsRehash, nil
 }
 
 type UserStore interface {

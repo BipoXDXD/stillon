@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"testing"
 	"time"
 
@@ -605,6 +606,113 @@ func TestEnrollRequiresThePassword(t *testing.T) {
 	}
 	if segredoGravado(t, a) {
 		t.Error("o enroll recusado gravou o segredo mesmo assim")
+	}
+}
+
+// falhasDeLogin lê o contador do bloqueio progressivo.
+func falhasDeLogin(t *testing.T, a *api) int {
+	t.Helper()
+	var n int
+	if err := a.pool.QueryRow(context.Background(),
+		`SELECT failed_attempts FROM users WHERE id = $1`, a.userID).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
+// Um access token roubado não pode virar oráculo de senha pelo cadastro do
+// segundo fator: cada senha errada ali conta no mesmo bloqueio do login (D4 do
+// Plano 5), e a conta trava no limiar.
+func TestEnrollWrongPasswordCountsTowardTheLock(t *testing.T) {
+	a := newAPI(t)
+	roubado := accessTokenValido(t, a)
+
+	for i := range auth.LockThreshold {
+		resp := postComToken(t, http.DefaultClient, a.srv.URL+"/api/v1/auth/totp/enroll", roubado,
+			map[string]string{"password": "chute-numero-" + strconv.Itoa(i)})
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("chute %d devolveu %d, queria 401", i, resp.StatusCode)
+		}
+	}
+	if n := falhasDeLogin(t, a); n != auth.LockThreshold {
+		t.Errorf("%d falhas contadas, queria %d", n, auth.LockThreshold)
+	}
+
+	// A prova que importa: travada, a conta recusa até a senha certa no login.
+	entrada := login(t, a, clientWithJar(t), testEmail, testPass)
+	defer entrada.Body.Close()
+	if entrada.StatusCode != http.StatusUnauthorized {
+		t.Errorf("login com a senha certa depois dos chutes devolveu %d, queria 401", entrada.StatusCode)
+	}
+}
+
+// Conta bloqueada não cadastra nem desliga o segundo fator, nem com a senha
+// certa: é o mesmo bloqueio do login.
+func TestSecondFactorRoutesRefuseALockedAccount(t *testing.T) {
+	a := newAPI(t)
+	c := clientWithJar(t)
+	segredo := cadastrarTOTP(t, a, c)
+	token := accessTokenValido(t, a)
+	bloquearConta(t, a)
+
+	code, err := totp.GenerateCode(segredo, a.clk.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := desativar(t, a, token, map[string]string{"password": testPass, "code": code}); got != http.StatusUnauthorized {
+		t.Errorf("desativar com a conta bloqueada devolveu %d, queria 401", got)
+	}
+	if confirmado, _, _, _ := estadoDoSegundoFator(t, a); !confirmado {
+		t.Error("a conta bloqueada desligou o segundo fator")
+	}
+}
+
+// Senha errada, código ausente e código errado nas rotas do segundo fator são
+// 401 invalid_credentials, e nunca unauthorized (D24 do Plano 5, apontado pelo
+// Plano 6): o painel renova a sessão em unauthorized, e um código digitado
+// errado viraria renovação e logout. O token recusado continua unauthorized:
+// é essa perna que prova que o código não é o mesmo para tudo.
+func TestSecondFactorRoutesAnswerInvalidCredentials(t *testing.T) {
+	a := newAPI(t)
+	c := clientWithJar(t)
+	segredo := cadastrarTOTP(t, a, c)
+	token := accessTokenValido(t, a)
+	code, err := totp.GenerateCode(segredo, a.clk.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	errado := "000000"
+	if errado == code {
+		errado = "111111"
+	}
+
+	casos := []struct {
+		nome, rota, token string
+		corpo             map[string]string
+		codigo            string
+	}{
+		{"enroll com senha errada", "enroll", token, map[string]string{"password": "senha-que-nao-e-a-dele"}, "invalid_credentials"},
+		{"disable com senha errada", "disable", token, map[string]string{"password": "senha-que-nao-e-a-dele", "code": code}, "invalid_credentials"},
+		{"disable sem código", "disable", token, map[string]string{"password": testPass}, "invalid_credentials"},
+		{"disable com código errado", "disable", token, map[string]string{"password": testPass, "code": errado}, "invalid_credentials"},
+		{"disable com token inválido", "disable", "token-que-nao-vale", map[string]string{"password": testPass, "code": code}, "unauthorized"},
+	}
+	for _, caso := range casos {
+		resp := postComToken(t, http.DefaultClient, a.srv.URL+"/api/v1/auth/totp/"+caso.rota, caso.token, caso.corpo)
+		got := decodeEnvelope(t, resp).Error.Code
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusUnauthorized || got != caso.codigo {
+			t.Errorf("%s: %d %s, queria 401 %s", caso.nome, resp.StatusCode, got, caso.codigo)
+		}
+	}
+	// Senha errada duas vezes, código ausente e código errado: quatro falhas no
+	// mesmo bloqueio do login.
+	if n := falhasDeLogin(t, a); n != 4 {
+		t.Errorf("%d falhas contadas, queria 4", n)
+	}
+	if confirmado, _, _, _ := estadoDoSegundoFator(t, a); !confirmado {
+		t.Error("uma recusa desligou o segundo fator")
 	}
 }
 
