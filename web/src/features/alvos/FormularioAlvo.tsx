@@ -5,7 +5,7 @@ import { Botao } from '@/components/ui/botao'
 import { Campo, Entrada, ErroDoFormulario, Selecao } from '@/components/ui/campo'
 import { ApiError } from '@/lib/api/http'
 import { mensagemDe, mensagemDoCampo } from '@/lib/api/mensagens'
-import { campoDoServidor, esquemaAlvo, INTERVALOS, OUTRO, type ValoresDoAlvo } from './esquema'
+import { campoDoServidor, esquemaDoAlvo, INTERVALOS, OUTRO, type ValoresDoAlvo } from './esquema'
 
 export function FormularioAlvo({
   iniciais,
@@ -19,14 +19,19 @@ export function FormularioAlvo({
   aoEnviar: (v: ValoresDoAlvo) => Promise<void>
   rotuloDoBotao: string
 }) {
-  const f = useForm<ValoresDoAlvo>({ resolver: zodResolver(esquemaAlvo), defaultValues: iniciais })
+  const editando = nomesDeHeaders !== undefined
+  // Na edição, o esquema conhece a base (a URL guardada, headers vazios).
+  const [esquema] = useState(() => esquemaDoAlvo(editando ? iniciais : undefined))
+  const f = useForm<ValoresDoAlvo>({ resolver: zodResolver(esquema), defaultValues: iniciais })
   const headers = useFieldArray({ control: f.control, name: 'headers' })
   const [erroGeral, setErroGeral] = useState<string | null>(null)
   const e = f.formState.errors
   const lentidao = useWatch({ control: f.control, name: 'lentidao' })
   const modoHeaders = useWatch({ control: f.control, name: 'modoHeaders' })
   const intervaloEscolhido = useWatch({ control: f.control, name: 'intervaloEscolhido' })
-  const editando = nomesDeHeaders !== undefined
+  // Um erro da lista de headers inteira: com linhas registradas, o resolver o
+  // põe em headers.root; sem nenhuma, em headers.
+  const erroDosHeaders = e.headers?.message ?? e.headers?.root?.message
 
   async function enviar(v: ValoresDoAlvo) {
     setErroGeral(null)
@@ -39,7 +44,11 @@ export function FormularioAlvo({
         for (const fe of err.fields) {
           const campo = campoDoServidor[fe.field.replace(/\[.*$/, '')]
           if (campo) {
-            f.setError(campo, { message: mensagemDoCampo(fe.field, fe.reason) }, { shouldFocus: !algum })
+            // Com um intervalo da lista, o campo em segundos não está na
+            // tela: o erro aparece (e o foco vai) no seletor.
+            const noSeletor = campo === 'interval_sec' && f.getValues('intervaloEscolhido') !== OUTRO
+            f.setError(campo, { message: mensagemDoCampo(fe.field, fe.reason) }, { shouldFocus: !algum && !noSeletor })
+            if (noSeletor && !algum) f.setFocus('intervaloEscolhido')
             algum = true
           }
         }
@@ -176,7 +185,7 @@ export function FormularioAlvo({
                 </Botao>
               </div>
             ))}
-            {e.headers?.message && <p className="text-sm text-perigo">{e.headers.message}</p>}
+            {erroDosHeaders && <p className="text-sm text-perigo">{erroDosHeaders}</p>}
             <Botao tipo="secundario" tamanho="pequeno" onClick={() => headers.append({ nome: '', valor: '' })}>
               Adicionar header
             </Botao>

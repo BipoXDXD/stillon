@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { alvo } from '@/test/fixtures'
 import { renderizarPainel } from '@/test/renderizar'
 import { Alvo } from '@/lib/api/schemas'
-import { esquemaAlvo, paraAlteracao, paraCriacao, valoresDe, valoresPadrao } from './esquema'
+import { esquemaAlvo, esquemaDoAlvo, paraAlteracao, paraCriacao, valoresDe, valoresPadrao } from './esquema'
 
 function erroDe(v: Partial<typeof valoresPadrao>, campo: string) {
   const r = esquemaAlvo.safeParse({ ...valoresPadrao, name: 'API', url: 'https://exemplo.com', ...v })
@@ -157,5 +157,100 @@ describe('intervalo "Outro…"', () => {
     expect(screen.queryByLabelText('Intervalo em segundos')).not.toBeInTheDocument()
     await r.usuario.click(screen.getByRole('button', { name: 'Cadastrar' }))
     await waitFor(() => expect(r.falsa.corpos('POST /targets')[0]).toMatchObject({ interval_sec: 300 }))
+  })
+})
+
+describe('ajustes da revisão (rodada 1)', () => {
+  // Sabotagem: devolver ao esquema a faixa incondicional do limiar.
+  it('limiar inválido escondido não conta; só vale no personalizado', () => {
+    for (const n of [0, 70000, NaN]) {
+      expect(erroDe({ lentidao: 'padrao', degraded_threshold_ms: n }, 'degraded_threshold_ms')).toBeUndefined()
+      expect(erroDe({ lentidao: 'desativado', degraded_threshold_ms: n }, 'degraded_threshold_ms')).toBeUndefined()
+    }
+    expect(erroDe({ lentidao: 'personalizado', degraded_threshold_ms: 0 }, 'degraded_threshold_ms')).toBe(
+      'Entre 1 e 60000 ms.',
+    )
+    expect(erroDe({ lentidao: 'personalizado', degraded_threshold_ms: NaN }, 'degraded_threshold_ms')).toBe(
+      'Informe um número.',
+    )
+  })
+
+  it('limiar 0 no personalizado, depois Padrão: o POST sai, sem a chave', async () => {
+    const r = await renderizarPainel('/targets/new')
+    await r.usuario.type(await screen.findByLabelText('Nome'), 'Site')
+    await r.usuario.type(screen.getByLabelText('URL'), 'https://exemplo.com')
+    await r.usuario.click(screen.getByLabelText('Personalizado'))
+    const limiar = screen.getByLabelText('Limiar (ms)')
+    await r.usuario.clear(limiar)
+    await r.usuario.type(limiar, '0')
+    await r.usuario.click(screen.getByLabelText('Padrão (2000 ms)'))
+    await r.usuario.click(screen.getByRole('button', { name: 'Cadastrar' }))
+    await waitFor(() => expect(r.falsa.chamadas('POST /targets')).toBe(1))
+    expect(r.falsa.corpos('POST /targets')[0]).not.toHaveProperty('degraded_threshold_ms')
+  })
+
+  // Sabotagem: voltar a "const iniciais = valoresDe(alvo)" a cada render.
+  it('a base do PATCH não anda com a nova busca: só o nome vai', async () => {
+    const r = await renderizarPainel('/targets/alvo-1/edit')
+    r.falsa.estado.alvos = [alvo()]
+    await r.cliente.refetchQueries()
+    const nome = await screen.findByLabelText('Nome')
+    await waitFor(() => expect(nome).toHaveValue('API'))
+    // Outra pessoa muda a URL; a consulta volta a buscar (foco, 60 s).
+    r.falsa.estado.alvos = [alvo({ url: 'https://mudou.exemplo.com/' })]
+    await r.cliente.refetchQueries()
+    await r.usuario.clear(nome)
+    await r.usuario.type(nome, 'API nova')
+    await r.usuario.click(screen.getByRole('button', { name: 'Salvar' }))
+    await waitFor(() => expect(r.falsa.corpos('PATCH /targets/:id')).toHaveLength(1))
+    expect(r.falsa.corpos('PATCH /targets/:id')[0]).toEqual({ name: 'API nova' })
+  })
+
+  it('IPv6 só pelos hextetos inteiros: [fc::1] e [fe8::1] são públicos para o safedial', () => {
+    expect(erroDe({ url: 'http://[fc::1]/' }, 'url')).toBeUndefined()
+    expect(erroDe({ url: 'http://[fe8::1]/' }, 'url')).toBeUndefined()
+    expect(erroDe({ url: 'http://[fc00::1]/' }, 'url')).toMatch(/internos/)
+    expect(erroDe({ url: 'http://[fe80::1]/' }, 'url')).toMatch(/internos/)
+  })
+
+  it('na edição, a URL já guardada não passa de novo pelo espelho; uma nova, sim', () => {
+    const base = { url: 'http://0x7f.1/' }
+    const v = { ...valoresPadrao, name: 'API', modoHeaders: 'manter' as const }
+    expect(esquemaDoAlvo(base).safeParse({ ...v, url: 'http://0x7f.1/' }).success).toBe(true)
+    expect(esquemaDoAlvo(base).safeParse({ ...v, url: 'http://127.0.0.1/' }).success).toBe(false)
+    expect(esquemaAlvo.safeParse({ ...v, url: 'http://0x7f.1/' }).success).toBe(false)
+  })
+
+  it('timeout contra intervalo só com o intervalo na faixa, como validate.go', () => {
+    expect(erroDe({ interval_sec: 20, timeout_ms: 27000 }, 'timeout_ms')).toBeUndefined()
+    expect(erroDe({ interval_sec: 20, timeout_ms: 27000 }, 'interval_sec')).toBe('Mínimo de 30 s.')
+  })
+
+  it('erro de interval_sec do servidor com um intervalo da lista: o seletor recebe o erro e o foco', async () => {
+    const r = await renderizarPainel('/targets/new')
+    r.falsa.estado.forcar.set('POST /targets', {
+      status: 400,
+      code: 'validation_failed',
+      fields: [{ field: 'interval_sec', reason: 'out_of_range' }],
+    })
+    await r.usuario.type(await screen.findByLabelText('Nome'), 'Site')
+    await r.usuario.type(screen.getByLabelText('URL'), 'https://exemplo.com')
+    await r.usuario.click(screen.getByRole('button', { name: 'Cadastrar' }))
+    const seletor = screen.getByLabelText('Intervalo')
+    await waitFor(() => expect(seletor).toHaveAttribute('aria-invalid', 'true'))
+    expect(seletor).toHaveFocus()
+  })
+
+  it('"Substituir todos" sem nenhuma linha não salva, e aponta "Remover todos"', async () => {
+    const r = await renderizarPainel('/targets/alvo-1/edit')
+    r.falsa.estado.alvos = [alvo({ header_names: ['Authorization'] })]
+    await r.cliente.refetchQueries()
+    await r.usuario.click(await screen.findByLabelText('Substituir todos'))
+    await r.usuario.click(screen.getByRole('button', { name: 'Salvar' }))
+    expect(await screen.findByText('Adicione ao menos um header, ou escolha “Remover todos”.')).toBeInTheDocument()
+    expect(r.falsa.chamadas('PATCH /targets/:id')).toBe(0)
+    await r.usuario.click(screen.getByLabelText('Remover todos'))
+    await r.usuario.click(screen.getByRole('button', { name: 'Salvar' }))
+    await waitFor(() => expect(r.falsa.corpos('PATCH /targets/:id')).toEqual([{ headers: null }]))
   })
 })

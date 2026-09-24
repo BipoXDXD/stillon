@@ -56,92 +56,121 @@ function urlPermitida(raw: string): string | null {
   }
   if (host.startsWith('[')) {
     const h = host.slice(1, -1)
-    if (h === '::1' || h === '::' || /^f[cd]/.test(h) || /^fe[89ab]/.test(h)) {
+    // Hextetos inteiros: fc00::/7 e fe80::/10. "fc::1" é 00fc::1, público
+    // para o safedial, e não pode ser recusado aqui.
+    if (h === '::1' || h === '::' || /^f[cd][0-9a-f]{2}:/.test(h) || /^fe[89ab][0-9a-f]:/.test(h)) {
       return 'Endereços internos (localhost, redes privadas) não podem ser monitorados.'
     }
   }
   return null
 }
 
-export const esquemaAlvo = z
-  .object({
-    name: z
-      .string()
-      .trim()
-      .min(1, 'Obrigatório.')
-      .refine((s) => [...s].length <= 100, 'Até 100 caracteres.')
-      .refine((s) => !/\p{Cc}/u.test(s), 'Sem caracteres de controle.'),
-    url: z
-      .string()
-      .trim()
-      .min(1, 'Obrigatório.')
-      .refine((s) => bytes(s) <= 2048, 'Até 2048 caracteres.')
-      .superRefine((s, ctx) => {
-        const m = urlPermitida(s)
-        if (m) ctx.addIssue({ code: 'custom', message: m })
-      }),
-    method: z.enum(['GET', 'HEAD', 'POST']),
-    // Um dos intervalos da lista ou "outro" (spec §4.3): com "outro", o
-    // número vem do campo em segundos; a regra é a mesma, 30 a 86400.
-    intervaloEscolhido: z.string(),
-    interval_sec: z
-      .number({ error: 'Informe um número.' })
-      .int()
-      .min(30, 'Mínimo de 30 s.')
-      .max(86400, 'Máximo de 1 dia.'),
-    timeout_ms: z
-      .number({ error: 'Informe um número.' })
-      .int()
-      .min(1000, 'Mínimo de 1000 ms.')
-      .max(30000, 'Máximo de 30000 ms.'),
-    expected_status: z
-      .number({ error: 'Informe um número.' })
-      .int()
-      .min(100, 'Entre 100 e 599.')
-      .max(599, 'Entre 100 e 599.'),
-    lentidao: z.enum(['padrao', 'personalizado', 'desativado']),
-    degraded_threshold_ms: z
-      .number({ error: 'Informe um número.' })
-      .int()
-      .min(1, 'Entre 1 e 60000 ms.')
-      .max(60000, 'Entre 1 e 60000 ms.'),
-    enabled: z.boolean(),
-    // manter: a edição não mexe nos headers (os valores nunca voltam do
-    // servidor); substituir: a lista abaixo troca todos; remover: apaga.
-    modoHeaders: z.enum(['manter', 'substituir', 'remover']),
-    headers: z.array(z.object({ nome: z.string().trim(), valor: z.string() })),
-  })
-  .superRefine((v, ctx) => {
-    // D3 do Plano 2: o jitter de −10% antecipa a próxima sonda para 90% do
-    // intervalo; um timeout maior deixaria duas sondas do alvo em voo.
-    if (v.timeout_ms * 10 >= v.interval_sec * 9000) {
-      ctx.addIssue({ code: 'custom', path: ['timeout_ms'], message: 'Tem de ser menor que 90% do intervalo.' })
-    }
-    if (v.modoHeaders !== 'substituir') return
-    const vistos = new Set<string>()
-    let total = 0
-    if (v.headers.length > 20) ctx.addIssue({ code: 'custom', path: ['headers'], message: 'Até 20 headers.' })
-    v.headers.forEach((h, i) => {
-      const nome = h.nome.toLowerCase()
-      if (!NOME_DE_HEADER.test(h.nome)) {
-        ctx.addIssue({ code: 'custom', path: ['headers', i, 'nome'], message: 'Nome de header inválido.' })
-      } else if (PROIBIDOS.has(nome)) {
+// Na edição, a base é o alvo como veio do servidor: a URL que ele já guardou
+// não passa de novo pelo espelho (um host não canônico que o servidor aceitou,
+// como http://0x7f.1/, não pode travar a edição nem a pausa do alvo), e
+// "Substituir todos" sem nenhuma linha não vira headers: {} (que apagaria
+// todos em silêncio; para isso existe "Remover todos").
+export function esquemaDoAlvo(base?: { url: string }) {
+  return z
+    .object({
+      name: z
+        .string()
+        .trim()
+        .min(1, 'Obrigatório.')
+        .refine((s) => [...s].length <= 100, 'Até 100 caracteres.')
+        .refine((s) => !/\p{Cc}/u.test(s), 'Sem caracteres de controle.'),
+      url: z
+        .string()
+        .trim()
+        .min(1, 'Obrigatório.')
+        .refine((s) => bytes(s) <= 2048, 'Até 2048 caracteres.')
+        .superRefine((s, ctx) => {
+          if (base && s === base.url.trim()) return
+          const m = urlPermitida(s)
+          if (m) ctx.addIssue({ code: 'custom', message: m })
+        }),
+      method: z.enum(['GET', 'HEAD', 'POST']),
+      // Um dos intervalos da lista ou "outro" (spec §4.3): com "outro", o
+      // número vem do campo em segundos; a regra é a mesma, 30 a 86400.
+      intervaloEscolhido: z.string(),
+      interval_sec: z
+        .number({ error: 'Informe um número.' })
+        .int()
+        .min(30, 'Mínimo de 30 s.')
+        .max(86400, 'Máximo de 1 dia.'),
+      timeout_ms: z
+        .number({ error: 'Informe um número.' })
+        .int()
+        .min(1000, 'Mínimo de 1000 ms.')
+        .max(30000, 'Máximo de 30000 ms.'),
+      expected_status: z
+        .number({ error: 'Informe um número.' })
+        .int()
+        .min(100, 'Entre 100 e 599.')
+        .max(599, 'Entre 100 e 599.'),
+      lentidao: z.enum(['padrao', 'personalizado', 'desativado']),
+      // Só vale com o limiar personalizado (conferido abaixo): escondido, um
+      // valor inválido (ou o campo vazio, NaN) não pode travar o envio.
+      degraded_threshold_ms: z.number().or(z.nan()),
+      enabled: z.boolean(),
+      // manter: a edição não mexe nos headers (os valores nunca voltam do
+      // servidor); substituir: a lista abaixo troca todos; remover: apaga.
+      modoHeaders: z.enum(['manter', 'substituir', 'remover']),
+      headers: z.array(z.object({ nome: z.string().trim(), valor: z.string() })),
+    })
+    .superRefine((v, ctx) => {
+      // D3 do Plano 2: o jitter de −10% antecipa a próxima sonda para 90% do
+      // intervalo; um timeout maior deixaria duas sondas do alvo em voo.
+      // Como em validate.go, só com intervalo e timeout nas faixas: senão o
+      // erro é do próprio campo, não desta regra.
+      const intervaloOK = v.interval_sec >= 30 && v.interval_sec <= 86400
+      const timeoutOK = v.timeout_ms >= 1000 && v.timeout_ms <= 30000
+      if (intervaloOK && timeoutOK && v.timeout_ms * 10 >= v.interval_sec * 9000) {
+        ctx.addIssue({ code: 'custom', path: ['timeout_ms'], message: 'Tem de ser menor que 90% do intervalo.' })
+      }
+      if (v.lentidao === 'personalizado') {
+        const n = v.degraded_threshold_ms
+        if (Number.isNaN(n)) {
+          ctx.addIssue({ code: 'custom', path: ['degraded_threshold_ms'], message: 'Informe um número.' })
+        } else if (!Number.isInteger(n) || n < 1 || n > 60000) {
+          ctx.addIssue({ code: 'custom', path: ['degraded_threshold_ms'], message: 'Entre 1 e 60000 ms.' })
+        }
+      }
+      if (v.modoHeaders !== 'substituir') return
+      if (base && v.headers.length === 0) {
         ctx.addIssue({
           code: 'custom',
-          path: ['headers', i, 'nome'],
-          message: 'Este header é controlado pelo monitor.',
+          path: ['headers'],
+          message: 'Adicione ao menos um header, ou escolha “Remover todos”.',
         })
-      } else if (vistos.has(nome)) {
-        ctx.addIssue({ code: 'custom', path: ['headers', i, 'nome'], message: 'Header repetido.' })
       }
-      vistos.add(nome)
-      if (bytes(h.valor) > 1024) {
-        ctx.addIssue({ code: 'custom', path: ['headers', i, 'valor'], message: 'Até 1 KiB.' })
-      }
-      total += bytes(h.nome) + bytes(h.valor)
+      const vistos = new Set<string>()
+      let total = 0
+      if (v.headers.length > 20) ctx.addIssue({ code: 'custom', path: ['headers'], message: 'Até 20 headers.' })
+      v.headers.forEach((h, i) => {
+        const nome = h.nome.toLowerCase()
+        if (!NOME_DE_HEADER.test(h.nome)) {
+          ctx.addIssue({ code: 'custom', path: ['headers', i, 'nome'], message: 'Nome de header inválido.' })
+        } else if (PROIBIDOS.has(nome)) {
+          ctx.addIssue({
+            code: 'custom',
+            path: ['headers', i, 'nome'],
+            message: 'Este header é controlado pelo monitor.',
+          })
+        } else if (vistos.has(nome)) {
+          ctx.addIssue({ code: 'custom', path: ['headers', i, 'nome'], message: 'Header repetido.' })
+        }
+        vistos.add(nome)
+        if (bytes(h.valor) > 1024) {
+          ctx.addIssue({ code: 'custom', path: ['headers', i, 'valor'], message: 'Até 1 KiB.' })
+        }
+        total += bytes(h.nome) + bytes(h.valor)
+      })
+      if (total > 8192) ctx.addIssue({ code: 'custom', path: ['headers'], message: 'Os headers somam mais de 8 KiB.' })
     })
-    if (total > 8192) ctx.addIssue({ code: 'custom', path: ['headers'], message: 'Os headers somam mais de 8 KiB.' })
-  })
+}
+
+export const esquemaAlvo = esquemaDoAlvo()
 
 export type ValoresDoAlvo = z.infer<typeof esquemaAlvo>
 
