@@ -342,6 +342,19 @@ func (q *Queries) ListStatusPageItems(ctx context.Context, arg ListStatusPageIte
 	return items, nil
 }
 
+const lockStatusPage = `-- name: LockStatusPage :one
+SELECT id FROM status_pages WHERE user_id = $1 FOR UPDATE
+`
+
+// A trava do PATCH: sem ela, dois PATCH simultâneos leem a mesma versão, e
+// o segundo regrava os campos que o primeiro mudou (achado da revisão).
+func (q *Queries) LockStatusPage(ctx context.Context, userID uuid.UUID) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, lockStatusPage, userID)
+	var id uuid.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const ownTargetIDs = `-- name: OwnTargetIDs :many
 SELECT id FROM targets WHERE user_id = $1 AND id = ANY($2::uuid[])
 `

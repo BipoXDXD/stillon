@@ -221,7 +221,9 @@ func TestDeletedTargetLeavesThePublicPage(t *testing.T) {
 }
 
 // A projeção fica 30s em cache: mil visitantes não viram mil agregações. A
-// página que acabou de ser publicada aparece na hora (o 404 não é guardado).
+// mudança aqui não passa pelo serviço (é outro processo, ou o sondador), e
+// por isso só aparece quando o cache vence. A página recém-publicada aparece
+// na hora: o 404 não é guardado.
 func TestPublicViewIsCachedForThirtySeconds(t *testing.T) {
 	a := novoAmbiente(t)
 	ctx := context.Background()
@@ -239,8 +241,12 @@ func TestPublicViewIsCachedForThirtySeconds(t *testing.T) {
 		t.Fatalf("recém-publicada = %+v, %v; queria visível na hora", v, err)
 	}
 
-	novo := "Título novo"
-	if _, err := a.svc.Update(ctx, dono, p.ID, statuspage.Patch{Title: &novo}); err != nil {
+	// Outro processo muda o título, sem passar por este serviço.
+	err = storage.InUserTx(ctx, a.pool, dono, func(q *db.Queries) error {
+		_, err := q.UpdateStatusPage(ctx, db.UpdateStatusPageParams{UserID: dono, ID: p.ID, Slug: "empresa", Title: "Título novo", Published: true})
+		return err
+	})
+	if err != nil {
 		t.Fatal(err)
 	}
 	a.clk.Advance(29 * time.Second)
@@ -250,6 +256,103 @@ func TestPublicViewIsCachedForThirtySeconds(t *testing.T) {
 	a.clk.Advance(time.Second)
 	if v, _ := a.svc.Public(ctx, "empresa"); v.Title != "Título novo" {
 		t.Errorf("depois de 30s veio %q, queria a versão nova", v.Title)
+	}
+}
+
+// Mudança feita por este serviço tira o slug do cache na hora (achado da
+// revisão): A renomeia "acme" e B toma o slug logo em seguida; /p/acme
+// mostra B, e não a página de A em cache. Despublicar também vale na hora.
+func TestOwnerChangesInvalidateTheCache(t *testing.T) {
+	a := novoAmbiente(t)
+	ctx := context.Background()
+	donoA, donoB := a.usuario(t), a.usuario(t)
+	pa, err := a.svc.Create(ctx, donoA, statuspage.Input{Slug: "acme", Title: "Página de A", Published: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v, err := a.svc.Public(ctx, "acme"); err != nil || v.Title != "Página de A" {
+		t.Fatalf("antes: %+v, %v", v, err)
+	}
+
+	novo := "acme2"
+	if _, err := a.svc.Update(ctx, donoA, pa.ID, statuspage.Patch{Slug: &novo}); err != nil {
+		t.Fatal(err)
+	}
+	// O endereço abandonado deixa de mostrar A na hora.
+	if _, err := a.svc.Public(ctx, "acme"); !errors.Is(err, statuspage.ErrNotFound) {
+		t.Errorf("/p/acme depois do rename = %v; queria ErrNotFound na hora", err)
+	}
+	if _, err := a.svc.Create(ctx, donoB, statuspage.Input{Slug: "acme", Title: "Página de B", Published: true}); err != nil {
+		t.Fatal(err)
+	}
+	if v, err := a.svc.Public(ctx, "acme"); err != nil || v.Title != "Página de B" {
+		t.Errorf("/p/acme depois da troca = %q, %v; queria a página de B na hora", v.Title, err)
+	}
+
+	// Com acme2 em cache, despublicar tem de tirá-la na hora.
+	if v, err := a.svc.Public(ctx, "acme2"); err != nil || v.Title != "Página de A" {
+		t.Fatalf("/p/acme2 = %q, %v", v.Title, err)
+	}
+	nao := false
+	if _, err := a.svc.Update(ctx, donoA, pa.ID, statuspage.Patch{Published: &nao}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.svc.Public(ctx, "acme2"); !errors.Is(err, statuspage.ErrNotFound) {
+		t.Errorf("despublicada = %v; queria ErrNotFound na hora", err)
+	}
+}
+
+// Com várias instâncias da API, o slug pode ser liberado em OUTRA instância,
+// e esta ainda guarda a página velha nele. Quem toma o slug por esta
+// instância, por Create ou por Update, tira do cache daqui a versão velha.
+func TestTakingASlugFreedElsewhereInvalidatesTheCache(t *testing.T) {
+	a := novoAmbiente(t)
+	ctx := context.Background()
+	donoA, donoB, donoC := a.usuario(t), a.usuario(t), a.usuario(t)
+	liberarEmOutraInstancia := func(dono uuid.UUID, p statuspage.Page, novoSlug string) {
+		t.Helper()
+		err := storage.InUserTx(ctx, a.pool, dono, func(q *db.Queries) error {
+			_, err := q.UpdateStatusPage(ctx, db.UpdateStatusPageParams{UserID: dono, ID: p.ID, Slug: novoSlug, Title: p.Title, Published: true})
+			return err
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	pa, err := a.svc.Create(ctx, donoA, statuspage.Input{Slug: "acme", Title: "Página de A", Published: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.svc.Public(ctx, "acme"); err != nil {
+		t.Fatal(err)
+	}
+	liberarEmOutraInstancia(donoA, pa, "acme-velha")
+	if _, err := a.svc.Create(ctx, donoB, statuspage.Input{Slug: "acme", Title: "Página de B", Published: true}); err != nil {
+		t.Fatal(err)
+	}
+	if v, err := a.svc.Public(ctx, "acme"); err != nil || v.Title != "Página de B" {
+		t.Errorf("Create no slug liberado: /p/acme = %q, %v; queria B na hora", v.Title, err)
+	}
+
+	pb, err := a.svc.Get(ctx, donoB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	liberarEmOutraInstancia(donoB, pb, "acme-b")
+	pc, err := a.svc.Create(ctx, donoC, statuspage.Input{Slug: "zeta", Title: "Página de C", Published: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.svc.Public(ctx, "acme"); err != nil {
+		t.Fatal(err) // ainda B, no cache desta instância
+	}
+	tomado := "acme"
+	if _, err := a.svc.Update(ctx, donoC, pc.ID, statuspage.Patch{Slug: &tomado}); err != nil {
+		t.Fatal(err)
+	}
+	if v, err := a.svc.Public(ctx, "acme"); err != nil || v.Title != "Página de C" {
+		t.Errorf("Update para o slug liberado: /p/acme = %q, %v; queria C na hora", v.Title, err)
 	}
 }
 

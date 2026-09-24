@@ -79,14 +79,35 @@ func TestPublicScopeSeesOnlyThePublishedPageTargets(t *testing.T) {
 	if err := storage.EnsureChecksPartitions(ctx, pool, agora); err != nil {
 		t.Fatal(err)
 	}
+	// Uma linha de cada tabela por alvo, dentro e fora da página: sem elas, o
+	// 0 das tabelas que o público não pode ver seria verdade por acidente.
+	canal := novoCanal(t, pool, a, nil, time.Time{})
 	for _, alvo := range []uuid.UUID{naPagina, foraDaPagina, alvoB} {
 		novoCheck(t, pool, alvo, agora)
-		novoIncidente(t, pool, alvo)
+		novaNotificacao(t, pool, novoIncidente(t, pool, alvo), canal)
+		if err := storage.InProberTx(ctx, pool, func(q *db.Queries) error { return q.EnsureTargetHealth(ctx, alvo) }); err != nil {
+			t.Fatal(err)
+		}
 	}
-	novoCanal(t, pool, a, nil, time.Time{})
+	motivo := "rejected"
+	err := storage.InProberTx(ctx, pool, func(q *db.Queries) error {
+		return q.MarkChannelFailure(ctx, db.MarkChannelFailureParams{ChannelID: canal, Now: agora, LastError: &motivo})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := storage.ConsolidateRollups(ctx, pool, agora.Add(2*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	for tabela, quer := range map[string]int{"notifications": 3, "channel_health": 1, "check_rollup_1h": 3, "target_health": 3} {
+		if n := contarComoSondador(t, pool, `SELECT count(*) FROM `+tabela); n != quer {
+			t.Fatalf("a preparação gravou %d linhas em %s, queria %d", n, tabela, quer)
+		}
+	}
 
 	for tabela, quer := range map[string]int{
 		"status_pages": 1, "status_page_items": 1, "targets": 1, "checks": 1, "incidents": 1,
+		"check_rollup_1h": 1, "target_health": 1,
 		"notif_channels": 0, "notifications": 0, "channel_health": 0,
 	} {
 		if n := contarPublico(t, pool, "pagina-a", tabela); n != quer {
@@ -94,7 +115,7 @@ func TestPublicScopeSeesOnlyThePublishedPageTargets(t *testing.T) {
 		}
 	}
 
-	err := storage.InPublicTx(ctx, pool, "pagina-a", func(q *db.Queries) error {
+	err = storage.InPublicTx(ctx, pool, "pagina-a", func(q *db.Queries) error {
 		if _, err := q.GetPublicPage(ctx, "pagina-b"); !errors.Is(err, pgx.ErrNoRows) {
 			t.Errorf("com o slug de A, a página de B deu %v, queria ErrNoRows", err)
 		}
@@ -186,8 +207,11 @@ func TestStatusPageConstraints(t *testing.T) {
 	}
 }
 
-// A política pública não muda o que o dono vê: fora do escopo público, ela
-// não casa com nada.
+// A política pública não muda o que o dono vê. Prova a propriedade, e não a
+// guarda "app.public_slug IS NOT NULL" da política: sem ela, a função
+// devolveria os itens que o dono enxerga, que são só os das páginas dele, e
+// o resultado seria o mesmo (achado da revisão, provado por sabotagem). A
+// guarda é atalho: fora do escopo público, a função nem precisa rodar.
 func TestPublicPolicyDoesNotWidenOwnerScope(t *testing.T) {
 	pool := testdb.New(t)
 	a, b := novoUsuario(t, pool), novoUsuario(t, pool)
@@ -235,5 +259,65 @@ func TestChannelHealthFollowsOwnerOrProber(t *testing.T) {
 	}
 	if n != 0 {
 		t.Errorf("o escopo verify viu %d linhas de channel_health", n)
+	}
+}
+
+// A política pública de targets resolve os alvos da página UMA vez por
+// consulta, e não uma vez por alvo da instância (achado da revisão: com uma
+// função por linha, a página pública custava ~0,5 s com 5 mil alvos de
+// outros donos). A contagem de chamadas vem do próprio Postgres
+// (track_functions), sem cronômetro.
+func TestPublicPolicyResolvesThePageTargetsOnce(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+	a, outro := novoUsuario(t, pool), novoUsuario(t, pool)
+	novaPagina(t, pool, a, "pagina-a", true, novoAlvo(t, pool, a, agora))
+	for range 50 {
+		novoAlvo(t, pool, outro, agora)
+	}
+
+	var papel string
+	if err := pool.QueryRow(ctx, `SELECT current_user`).Scan(&papel); err != nil {
+		t.Fatal(err)
+	}
+	admin, err := storage.NewPool(ctx, testdb.AdminDSN(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer admin.Close()
+	conn, err := admin.Acquire(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Release()
+	// track_functions só o superusuário liga; SET ROLE devolve a conexão ao
+	// papel da aplicação, e a RLS volta a valer.
+	for _, sql := range []string{`SET track_functions = 'pl'`, `SET ROLE ` + pgx.Identifier{papel}.Sanitize()} {
+		if _, err := conn.Exec(ctx, sql); err != nil {
+			t.Fatal(err)
+		}
+	}
+	defer conn.Exec(ctx, `RESET ROLE`)
+	tx, err := conn.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `SET TRANSACTION READ ONLY`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, `SELECT set_config('app.public_slug', 'pagina-a', true)`); err != nil {
+		t.Fatal(err)
+	}
+	var vistos int
+	if err := tx.QueryRow(ctx, `SELECT count(*) FROM targets`).Scan(&vistos); err != nil {
+		t.Fatal(err)
+	}
+	var chamadas int64
+	if err := tx.QueryRow(ctx, `SELECT coalesce(pg_stat_get_xact_function_calls('public_page_target_ids'::regproc), 0)`).Scan(&chamadas); err != nil {
+		t.Fatal(err)
+	}
+	if vistos != 1 || chamadas < 1 || chamadas > 2 {
+		t.Errorf("o escopo público viu %d alvos com %d chamadas da função; queria 1 alvo e 1 ou 2 chamadas, e não uma por alvo (51)", vistos, chamadas)
 	}
 }

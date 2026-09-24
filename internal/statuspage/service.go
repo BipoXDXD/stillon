@@ -71,6 +71,9 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, in Input) (Page,
 		p, err = ler(ctx, q, userID)
 		return err
 	})
+	if err == nil {
+		s.cache.forget(in.Slug)
+	}
 	return p, err
 }
 
@@ -78,11 +81,19 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, in Input) (Page,
 // resultado, como se fosse um cadastro novo.
 func (s *Service) Update(ctx context.Context, userID, id uuid.UUID, patch Patch) (Page, error) {
 	var p Page
+	var slugAntigo string
 	err := storage.InUserTx(ctx, s.pool, userID, func(q *db.Queries) error {
+		if _, err := q.LockStatusPage(ctx, userID); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return ErrNotFound
+			}
+			return fmt.Errorf("travar status page: %w", err)
+		}
 		atual, err := ler(ctx, q, userID)
 		if err != nil {
 			return err
 		}
+		slugAntigo = atual.Slug
 		if atual.ID != id {
 			return ErrNotFound
 		}
@@ -118,6 +129,13 @@ func (s *Service) Update(ctx context.Context, userID, id uuid.UUID, patch Patch)
 		p, err = ler(ctx, q, userID)
 		return err
 	})
+	if err == nil {
+		// O slug antigo pode ser tomado por outro dono logo em seguida, e a
+		// página despublicada tem de sair na hora: o cache deste processo
+		// não pode servir a versão velha por mais 30s (achado da revisão).
+		s.cache.forget(slugAntigo)
+		s.cache.forget(p.Slug)
+	}
 	return p, err
 }
 

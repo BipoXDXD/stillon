@@ -280,3 +280,64 @@ func TestDeletedTargetLeavesThePage(t *testing.T) {
 		t.Errorf("depois de apagar o alvo: %+v, %v; queria só o Site", p.Items, err)
 	}
 }
+
+// Dois PATCH ao mesmo tempo não perdem campo (achado da revisão): o Update
+// trava a linha antes de ler. Aqui, outra transação trava a página e muda o
+// título; o PATCH de published espera por ela e lê o título novo. Sem a
+// trava, ele leria o título velho e o regravaria por cima.
+func TestConcurrentPatchesDoNotLoseFields(t *testing.T) {
+	a := novoAmbiente(t)
+	ctx := context.Background()
+	dono := a.usuario(t)
+	p, err := a.svc.Create(ctx, dono, statuspage.Input{Slug: "empresa", Title: "Velho"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	outra, err := a.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer outra.Rollback(ctx)
+	for _, sql := range []string{
+		`SELECT set_config('app.user_id', '` + dono.String() + `', true)`,
+		`SELECT id FROM status_pages FOR UPDATE`,
+		`UPDATE status_pages SET title = 'Novo'`,
+	} {
+		if _, err := outra.Exec(ctx, sql); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	fim := make(chan error, 1)
+	sim := true
+	go func() {
+		_, err := a.svc.Update(ctx, dono, p.ID, statuspage.Patch{Published: &sim})
+		fim <- err
+	}()
+	// O PATCH está esperando pela trava da outra transação.
+	prazo := time.Now().Add(5 * time.Second)
+	for {
+		var esperando int
+		if err := a.pool.QueryRow(ctx, `SELECT count(*) FROM pg_stat_activity
+			WHERE wait_event_type = 'Lock' AND datname = current_database()`).Scan(&esperando); err != nil {
+			t.Fatal(err)
+		}
+		if esperando > 0 {
+			break
+		}
+		if time.Now().After(prazo) {
+			t.Fatal("o PATCH não esperou pela trava da outra transação")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if err := outra.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-fim; err != nil {
+		t.Fatal(err)
+	}
+	if got, err := a.svc.Get(ctx, dono); err != nil || got.Title != "Novo" || !got.Published {
+		t.Errorf("página = %+v, %v; queria o título da outra transação E published", got, err)
+	}
+}

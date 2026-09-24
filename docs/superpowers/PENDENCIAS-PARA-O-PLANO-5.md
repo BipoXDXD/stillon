@@ -17,8 +17,9 @@ versão. O que está aqui é o subconjunto que não pode se perder.
 5. **`PUBLIC_BASE_URL` é o host da API.** Agora vale também para a status page: o
    `public_url` de `GET /status-pages` é `PUBLIC_BASE_URL/p/{slug}`, servido pela API.
 6. **Primeira manutenção depois do deploy.** Sem rollup nenhum, a primeira rodada consolida
-   os últimos 31 dias de checks de uma vez (uma consulta só). Com muitos alvos, é a rodada
-   mais pesada que o job faz; as seguintes voltam só 2 horas.
+   os últimos 62 dias de checks de uma vez (uma consulta só): tudo o que as partições ainda
+   guardam. Com muitos alvos, é a rodada mais pesada que o job faz; as seguintes voltam só
+   2 horas.
 
 ## Resolvidas no Plano 4
 
@@ -47,19 +48,28 @@ versão. O que está aqui é o subconjunto que não pode se perder.
 - **Dias da barra em UTC.** Sem JavaScript, não há fuso do visitante; os horários dos
   incidentes também saem em UTC, e a página diz isso.
 - **Cache de 30s em dois lugares.** O navegador (e qualquer proxy) guarda a resposta 30s, e o
-  processo guarda a projeção 30s por slug. Mudar a página no painel leva até ~60s para
-  aparecer para quem já a abriu. A página recém-publicada aparece na hora: o 404 não é
-  guardado.
-- **Cache por processo.** Com várias instâncias da API, cada uma tem o seu; o teto é de 1.000
-  slugs por instância.
+  processo guarda a projeção 30s por slug. Uma mudança feita pelo painel tira o slug do cache
+  da instância que a recebeu; quem já abriu a página vê a mudança em até 30s (cache HTTP).
+  Checks, rollups e incidentes novos aparecem quando o cache vence. A página recém-publicada
+  aparece na hora: o 404 não é guardado.
+- **Cache por processo.** Com várias instâncias da API, cada uma tem o seu, e a mudança feita
+  numa leva até 30s para valer nas outras; o teto é de 1.000 slugs por instância.
 - **Um 429 dentro do perdão ainda conta como `retry` em `notify_total`.** Os adiados sem envio
   contam como `deferred`.
 - **Um webhook que responde 429 para sempre** segura cada notificação por até 1h antes de ela
   começar a gastar tentativas. Depois disso, as 6 tentativas seguem o backoff normal.
+- **Uma falha transitória para o canal no lote.** Depois de um 429, timeout, erro de rede ou
+  5xx, o resto das notificações daquele canal no lote é adiado sem envio. Fora do 429 dentro
+  de 1h, a tentativa conta, e quem está no teto falha de vez com o mesmo motivo. Um canal
+  fora do ar esgota as 6 tentativas das notificações dele em ~15 min, como antes.
+- **Lease de 3 min** (8 × (10 s + 5 s) + 1 min): um processo que morre no meio de um lote
+  devolve as notificações à fila 3 min depois.
 - **Canal `failing` é derivado de "última falha depois do último sucesso".** Um canal que
   alterna falha e sucesso fica `failing` só até a próxima entrega que der certo.
 - **Retenção de checks por partição inteira:** os checks duram entre 30 e 61 dias.
 - **429 e 413 da cadeia `/p/` saem como envelope JSON**, como os de `/verify/`.
+- **O DROP da partição vencida desiste em 2 s** se `checks` estiver ocupada (`lock_timeout`),
+  e tenta de novo na rodada seguinte. Os DELETEs da retenção rodam antes, noutra transação.
 
 ## Para o Plano 5
 

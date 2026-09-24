@@ -38,7 +38,7 @@ func rollupsDe(t *testing.T, pool *pgxpool.Pool, dono, alvo uuid.UUID) []db.List
 	err := storage.InUserTx(ctx, pool, dono, func(q *db.Queries) error {
 		var err error
 		rows, err = q.ListRollups(ctx, db.ListRollupsParams{
-			UserID: dono, TargetID: alvo, FromAt: hora(0, 0).AddDate(0, 0, -40), ToAt: hora(0, 0).AddDate(0, 0, 40),
+			UserID: dono, TargetID: alvo, FromAt: hora(0, 0).AddDate(0, 0, -90), ToAt: hora(0, 0).AddDate(0, 0, 90),
 		})
 		return err
 	})
@@ -305,5 +305,69 @@ func TestRunMaintenanceRejectsANonPositiveInterval(t *testing.T) {
 	err := storage.RunMaintenance(context.Background(), nil, clock.NewFake(agora), 0)
 	if !errors.Is(err, storage.ErrMaintenanceInterval) {
 		t.Errorf("intervalo 0 deu %v, queria ErrMaintenanceInterval", err)
+	}
+}
+
+// Sem rollup nenhum (o primeiro deploy), a consolidação volta até o check
+// bruto mais velho que as partições ainda podem guardar (61 dias), e não só
+// 31: senão a metade mais velha some no DROP sem nunca virar rollup.
+func TestFirstConsolidationReachesTheOldestRawChecks(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+	dono := novoUsuario(t, pool)
+	alvo := novoAlvo(t, pool, dono, agora)
+	velho := hora(10, 0).AddDate(0, 0, -60)
+	if err := storage.EnsureChecksPartitions(ctx, pool, velho); err != nil {
+		t.Fatal(err)
+	}
+	checkEm(t, pool, alvo, velho.Add(5*time.Minute), "up", 100)
+	consolidar(t, pool, hora(12, 0))
+	if rs := rollupsDe(t, pool, dono, alvo); len(rs) != 1 || !rs[0].Bucket.Equal(velho) {
+		t.Errorf("rollups = %+v, queria a hora de 60 dias atrás", rs)
+	}
+}
+
+// O DROP da partição vencida pega ACCESS EXCLUSIVE em checks. Com checks
+// ocupada, ele desiste em dropLockTimeout (55P03), em vez de enfileirar o
+// sondador atrás dele; os DELETEs, numa transação à parte, já valeram. A
+// rodada seguinte, com checks livre, apaga a partição.
+func TestPartitionDropGivesUpWhenChecksIsBusy(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+	hoje := hora(12, 0)
+	for _, mes := range []time.Time{hoje.AddDate(0, -2, 0), hoje} {
+		if err := storage.EnsureChecksPartitions(ctx, pool, mes); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO audit_log (id, action, at) VALUES ($1, 'teste', $2)`,
+		novoID(), hoje.AddDate(-1, -1, 0)); err != nil {
+		t.Fatal(err)
+	}
+
+	ocupada, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ocupada.Exec(ctx, `SELECT count(*) FROM checks`); err != nil {
+		t.Fatal(err)
+	}
+	prazo, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	inicio := time.Now()
+	r, err := storage.ApplyRetention(prazo, pool, hoje)
+	if codigoPG(err) != "55P03" || time.Since(inicio) > 10*time.Second {
+		t.Errorf("com checks ocupada, ApplyRetention deu %v em %v; queria 55P03 (lock_timeout) em segundos", err, time.Since(inicio))
+	}
+	if r.DeletedAudit != 1 || contarComoSondador(t, pool, `SELECT count(*) FROM audit_log`) != 0 {
+		t.Errorf("os DELETEs não valeram com o DROP travado: %+v", r)
+	}
+	if err := ocupada.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	r, err = storage.ApplyRetention(ctx, pool, hoje)
+	if err != nil || r.DroppedPartitions != 1 {
+		t.Errorf("com checks livre: %+v, %v; queria 1 partição apagada", r, err)
 	}
 }

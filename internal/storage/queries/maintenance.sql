@@ -26,6 +26,10 @@ ON CONFLICT (target_id, bucket) DO UPDATE
 -- name: LatestRollupBucket :one
 SELECT coalesce(max(bucket), 'epoch'::timestamptz)::timestamptz FROM check_rollup_1h;
 
+-- Vale só até o fim da transação (o terceiro argumento de set_config).
+-- name: SetLocalLockTimeout :exec
+SELECT set_config('lock_timeout', sqlc.arg(timeout)::text, true);
+
 -- name: DropChecksPartitionsBefore :one
 SELECT drop_checks_partitions_before(sqlc.arg(cutoff)::timestamptz)::int;
 

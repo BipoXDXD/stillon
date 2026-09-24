@@ -4,6 +4,11 @@
 -- name: GetStatusPage :one
 SELECT * FROM status_pages WHERE user_id = $1;
 
+-- A trava do PATCH: sem ela, dois PATCH simultâneos leem a mesma versão, e
+-- o segundo regrava os campos que o primeiro mudou (achado da revisão).
+-- name: LockStatusPage :one
+SELECT id FROM status_pages WHERE user_id = $1 FOR UPDATE;
+
 -- name: InsertStatusPage :exec
 INSERT INTO status_pages (id, user_id, slug, title, published, created_at)
 VALUES ($1, $2, $3, $4, $5, $6);

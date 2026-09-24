@@ -83,18 +83,29 @@ CREATE POLICY status_page_items_via_page ON status_page_items
 -- policy" (42P17, provado em spike) ao expandir as políticas. Uma função
 -- plpgsql não é expandida na reescrita; ela roda com o papel de quem chama,
 -- e a RLS dos itens vale dentro dela.
+--
+-- A função devolve o CONJUNTO de alvos da página, e a política pergunta
+-- "id IN (conjunto)": o Postgres a roda uma vez por consulta (hashed
+-- SubPlan). Uma função booleana por alvo rodaria uma vez para cada alvo da
+-- instância, de qualquer usuário, e o custo da página pública cresceria com
+-- o total de alvos (achado da revisão: ~0,5 s com 5 mil alvos).
+--
+-- SECURITY INVOKER sem search_path fixo, de propósito: a função roda com os
+-- privilégios de quem chama, e sombrear status_page_items com uma tabela
+-- temporária exige executar SQL na própria sessão. Não há fronteira de
+-- privilégio a cruzar; isso só importaria numa SECURITY DEFINER.
 -- +goose StatementBegin
-CREATE FUNCTION target_on_public_page(p_target uuid) RETURNS bool
+CREATE FUNCTION public_page_target_ids() RETURNS SETOF uuid
 LANGUAGE plpgsql STABLE AS $$
 BEGIN
-    RETURN EXISTS (SELECT 1 FROM status_page_items i WHERE i.target_id = p_target);
+    RETURN QUERY SELECT i.target_id FROM status_page_items i;
 END
 $$;
 -- +goose StatementEnd
 
 CREATE POLICY targets_public_select ON targets FOR SELECT
     USING (NULLIF(current_setting('app.public_slug', true), '') IS NOT NULL
-           AND target_on_public_page(targets.id));
+           AND targets.id IN (SELECT public_page_target_ids()));
 
 -- Saúde do canal (pendência do Plano 3): o dispatcher grava o último sucesso
 -- e a última falha definitiva, e a API mostra "failing". Tabela à parte, como
@@ -159,7 +170,7 @@ DROP INDEX audit_log_at_idx;
 DROP INDEX notifications_created_idx;
 DROP TABLE channel_health;
 DROP POLICY targets_public_select ON targets;
-DROP FUNCTION target_on_public_page(uuid);
+DROP FUNCTION public_page_target_ids();
 DROP TABLE status_page_items;
 DROP TABLE status_pages;
 DROP TABLE check_rollup_1h;

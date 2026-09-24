@@ -315,6 +315,11 @@ func TestNoSendPastTheLastAttempt(t *testing.T) {
 	if n := b.auditorias(t); n != 1 {
 		t.Errorf("%d entradas de auditoria, queria 1", n)
 	}
+	// A falha foi do Vigilume (o desfecho não chegou a ser gravado), não do
+	// canal: ele não vira failing (achado da revisão).
+	if c := b.canalVisto(t); c.Status != StatusVerified {
+		t.Errorf("canal = %+v; queria verified, sem culpa pela falha do próprio Vigilume", c)
+	}
 }
 
 func TestPermanentFailureIsFinalAtOnce(t *testing.T) {
@@ -709,5 +714,71 @@ func TestDifferentChannelsSendInParallel(t *testing.T) {
 	// Em série, dois envios travados levariam pelo menos 2 × 1s.
 	if d := time.Since(inicio); d >= 2*time.Second {
 		t.Errorf("dois canais travados levaram %v; em paralelo, ~1s", d)
+	}
+}
+
+// tentativas põe attempts em todas as notificações do dono.
+func (b *bancada) tentativas(t *testing.T, n int32) {
+	t.Helper()
+	ctx := context.Background()
+	tx, err := b.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, `SELECT set_config('app.user_id', $1, true)`, b.dono.String()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, `UPDATE notifications SET attempts = $1`, n); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Um webhook que trava não segura o lote por k × sendTimeout (achado da
+// revisão): depois de uma falha transitória, o resto da fila do canal é
+// adiado sem envio. Fora do 429, a tentativa conta, como contaria se cada
+// uma tivesse sido enviada e falhado igual.
+func TestTransientFailureHoldsTheRestOfTheChannel(t *testing.T) {
+	b := novaBancada(t, nil)
+	ids := b.apagao(t, 4)
+	b.canal.respostas = []error{&SendError{Reason: ReasonTimeout}}
+
+	b.despachar(t, 4)
+	if n := b.canal.quantos(); n != 1 {
+		t.Fatalf("%d envios, queria 1 (o resto do canal espera)", n)
+	}
+	for i, id := range ids {
+		l := b.estado(t, id)
+		if l.Status != "pending" || l.Attempts != 1 || l.Erro == nil || *l.Erro != "timeout" ||
+			!l.Proxima.Equal(b.clk.Now().Add(30*time.Second)) {
+			t.Errorf("notificação %d: %+v; queria pendente, 1 tentativa, timeout, próxima em 30s", i, l)
+		}
+	}
+	if v := testutil.ToFloat64(b.d.total.WithLabelValues("discord", "deferred")); v != 3 {
+		t.Errorf("notify_total{discord,deferred} = %v, queria 3", v)
+	}
+}
+
+// As adiadas que já estão no teto falham de vez, com o motivo de quem parou
+// o canal, sem esperar outro sendTimeout cada uma.
+func TestDeferredAtTheLastAttemptFailWithoutSending(t *testing.T) {
+	b := novaBancada(t, nil)
+	ids := b.apagao(t, 3)
+	b.tentativas(t, MaxAttempts-1)
+	b.canal.respostas = []error{&SendError{Reason: ReasonNetwork}}
+
+	b.despachar(t, 3)
+	if n := b.canal.quantos(); n != 1 {
+		t.Fatalf("%d envios, queria 1", n)
+	}
+	for i, id := range ids {
+		if l := b.estado(t, id); l.Status != "failed" || l.Erro == nil || *l.Erro != "network" {
+			t.Errorf("notificação %d: %+v; queria failed por network", i, l)
+		}
+	}
+	if c := b.canalVisto(t); c.Status != StatusFailing {
+		t.Errorf("canal = %+v; queria failing", c)
 	}
 }

@@ -30,8 +30,15 @@ const (
 	// um check que chegou atrasado ainda entra na hora dele.
 	rollupReconsolidate = 2 * time.Hour
 	// rollupBackfill é até onde a primeira rodada volta, sem rollup nenhum:
-	// o que ainda existe de checks brutos.
-	rollupBackfill = 31 * 24 * time.Hour
+	// o que ainda pode existir de checks brutos. A partição sai inteira, então
+	// um check vive até 61 dias; 31 perderia a metade mais velha no primeiro
+	// deploy (achado da revisão).
+	rollupBackfill = 62 * 24 * time.Hour
+	// dropLockTimeout limita a espera do DROP da partição vencida. O DROP
+	// pega ACCESS EXCLUSIVE em checks, e enquanto espera, enfileira atrás
+	// dele o INSERT do sondador e as leituras da página pública. Melhor
+	// desistir e tentar na próxima rodada.
+	dropLockTimeout = 2 * time.Second
 )
 
 var ErrMaintenanceInterval = errors.New("intervalo de manutenção precisa ser positivo")
@@ -99,13 +106,16 @@ func ConsolidateRollups(ctx context.Context, pool *pgxpool.Pool, now time.Time) 
 
 // ApplyRetention apaga o que venceu (spec §12). Pendência nunca sai por idade:
 // uma notificação pendente ainda vai ser tentada.
+//
+// São duas transações. Os DELETEs vêm primeiro; o DROP das partições vem
+// sozinho, com lock_timeout, porque pega ACCESS EXCLUSIVE em checks e não
+// pode segurá-la durante o resto da retenção (achado da revisão). Se o DROP
+// não conseguir a trava, o erro sobe, os DELETEs já valeram, e a próxima
+// rodada tenta de novo.
 func ApplyRetention(ctx context.Context, pool *pgxpool.Pool, now time.Time) (MaintenanceReport, error) {
 	var r MaintenanceReport
 	err := InProberTx(ctx, pool, func(q *db.Queries) error {
 		var err error
-		if r.DroppedPartitions, err = q.DropChecksPartitionsBefore(ctx, now.Add(-ChecksRetention)); err != nil {
-			return fmt.Errorf("apagar partições vencidas: %w", err)
-		}
 		if r.DeletedRollups, err = q.DeleteOldRollups(ctx, now.AddDate(0, -RollupRetentionMonths, 0)); err != nil {
 			return fmt.Errorf("apagar rollups vencidos: %w", err)
 		}
@@ -117,6 +127,19 @@ func ApplyRetention(ctx context.Context, pool *pgxpool.Pool, now time.Time) (Mai
 		}
 		if r.DeletedSessions, err = q.DeleteExpiredSessions(ctx, now.Add(-SessionGrace)); err != nil {
 			return fmt.Errorf("apagar sessões vencidas: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return r, err
+	}
+	err = InProberTx(ctx, pool, func(q *db.Queries) error {
+		if err := q.SetLocalLockTimeout(ctx, fmt.Sprintf("%dms", dropLockTimeout.Milliseconds())); err != nil {
+			return fmt.Errorf("limitar a espera do DROP: %w", err)
+		}
+		var err error
+		if r.DroppedPartitions, err = q.DropChecksPartitionsBefore(ctx, now.Add(-ChecksRetention)); err != nil {
+			return fmt.Errorf("apagar partições vencidas: %w", err)
 		}
 		return nil
 	})

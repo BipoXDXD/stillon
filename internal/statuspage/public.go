@@ -229,6 +229,13 @@ func (c *cachePublico) get(slug string, agora time.Time) (View, bool) {
 	return e.v, true
 }
 
+// forget tira o slug do cache: a página mudou neste processo.
+func (c *cachePublico) forget(slug string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.entradas, slug)
+}
+
 func (c *cachePublico) put(slug string, v View, agora time.Time) {
 	c.mu.Lock()
 	defer c.mu.Unlock()

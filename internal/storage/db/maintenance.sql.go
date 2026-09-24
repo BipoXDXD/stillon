@@ -185,3 +185,13 @@ func (q *Queries) ListRollups(ctx context.Context, arg ListRollupsParams) ([]Lis
 	}
 	return items, nil
 }
+
+const setLocalLockTimeout = `-- name: SetLocalLockTimeout :exec
+SELECT set_config('lock_timeout', $1::text, true)
+`
+
+// Vale só até o fim da transação (o terceiro argumento de set_config).
+func (q *Queries) SetLocalLockTimeout(ctx context.Context, timeout string) error {
+	_, err := q.db.Exec(ctx, setLocalLockTimeout, timeout)
+	return err
+}
