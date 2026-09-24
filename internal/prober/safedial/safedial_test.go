@@ -49,6 +49,8 @@ func TestAllowIP(t *testing.T) {
 		{"172.31.255.255", true, "RFC1918, borda da faixa"},
 		{"192.168.1.1", true, "RFC1918"},
 		{"fc00::1", true, "unique local IPv6"},
+		{"fec0::1", true, "site-local IPv6, obsoleto (RFC 3879)"},
+		{"feff:ffff::1", true, "site-local IPv6, fim da faixa"},
 		{"fd00::1", true, "unique local IPv6"},
 
 		// Bordas que costumam escapar.

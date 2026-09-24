@@ -50,6 +50,7 @@ var blockedPrefixes = []netip.Prefix{
 	netip.MustParsePrefix("::1/128"),            // loopback IPv6
 	netip.MustParsePrefix("fc00::/7"),           // unique local
 	netip.MustParsePrefix("fe80::/10"),          // link-local IPv6
+	netip.MustParsePrefix("fec0::/10"),          // site-local IPv6, obsoleto (RFC 3879)
 	netip.MustParsePrefix("ff00::/8"),           // multicast IPv6
 
 	// IPv4-compatível (RFC 4291 §2.5.5.1, obsoleto): ::a.b.c.d. Unmap() NÃO
