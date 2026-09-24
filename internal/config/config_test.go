@@ -248,3 +248,36 @@ func TestLogValueRedactsTheResendKey(t *testing.T) {
 		t.Errorf("log = %s", buf.String())
 	}
 }
+
+func TestLoadParsesTheClientIPHeader(t *testing.T) {
+	env := validEnv()
+	env["CLIENT_IP_HEADER"] = "fly-client-ip"
+	cfg, err := Load(getenvFrom(env))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ClientIPHeader != "Fly-Client-Ip" {
+		t.Errorf("ClientIPHeader = %q, queria a forma canônica Fly-Client-Ip", cfg.ClientIPHeader)
+	}
+}
+
+func TestClientIPHeaderDefaultsToEmpty(t *testing.T) {
+	cfg, err := Load(getenvFrom(validEnv()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ClientIPHeader != "" {
+		t.Errorf("sem CLIENT_IP_HEADER veio %q, queria vazio (último salto do XFF)", cfg.ClientIPHeader)
+	}
+}
+
+func TestLoadRejectsABadClientIPHeader(t *testing.T) {
+	for _, v := range []string{"Fly Client IP", "Fly-Client-IP:", "X-Forwarded-For", "x-forwarded-for"} {
+		env := validEnv()
+		env["CLIENT_IP_HEADER"] = v
+		_, err := Load(getenvFrom(env))
+		if err == nil || !strings.Contains(err.Error(), "CLIENT_IP_HEADER") {
+			t.Errorf("CLIENT_IP_HEADER=%q: erro = %v, queria recusa citando a variável", v, err)
+		}
+	}
+}

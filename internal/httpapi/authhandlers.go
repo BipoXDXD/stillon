@@ -6,7 +6,6 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"net/netip"
 	"time"
 
 	"github.com/google/uuid"
@@ -27,14 +26,14 @@ type AuthHandlers struct {
 	clk          clock.Clock
 	jwtSecret    []byte
 	secureCookie bool
-	// trustedProxies decide se o X-Forwarded-For desta requisição vale. Ver
+	// proxies decide se os cabeçalhos de proxy desta requisição valem. Ver
 	// middleware.ClientIP: sem a lista, acreditar no cabeçalho seria pior que
 	// ignorá-lo.
-	trustedProxies []netip.Prefix
+	proxies middleware.Proxies
 }
 
-func NewAuthHandlers(users auth.UserStore, sessions *auth.Manager, totp *auth.TOTP, clk clock.Clock, jwtSecret []byte, secureCookie bool, trustedProxies []netip.Prefix) *AuthHandlers {
-	return &AuthHandlers{users: users, sessions: sessions, totp: totp, clk: clk, jwtSecret: jwtSecret, secureCookie: secureCookie, trustedProxies: trustedProxies}
+func NewAuthHandlers(users auth.UserStore, sessions *auth.Manager, totp *auth.TOTP, clk clock.Clock, jwtSecret []byte, secureCookie bool, proxies middleware.Proxies) *AuthHandlers {
+	return &AuthHandlers{users: users, sessions: sessions, totp: totp, clk: clk, jwtSecret: jwtSecret, secureCookie: secureCookie, proxies: proxies}
 }
 
 type loginRequest struct {
@@ -275,7 +274,7 @@ func apagarCookieDeRefresh(w http.ResponseWriter, secure bool) {
 // contrário do rate limit, esse dano não tem volta: linha já gravada com o
 // hash errado não se recupera.
 func (h *AuthHandlers) meta(r *http.Request) auth.Meta {
-	return auth.Meta{IP: middleware.ClientIP(r, h.trustedProxies), UserAgent: r.UserAgent()}
+	return auth.Meta{IP: middleware.ClientIP(r, h.proxies), UserAgent: r.UserAgent()}
 }
 
 // internal registra o erro real e devolve ao cliente apenas o envelope

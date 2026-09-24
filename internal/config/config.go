@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/http"
 	"net/mail"
 	"net/netip"
 	"strings"
@@ -43,6 +44,10 @@ type Config struct {
 	JWTSecret      []byte
 	IPHashKey      []byte
 	TrustedProxies []netip.Prefix
+	// ClientIPHeader é o cabeçalho de um valor só em que o proxy da
+	// plataforma escreve o IP do cliente (no Fly, "Fly-Client-IP"). Vazio,
+	// vale o último salto do X-Forwarded-For. Só é lido de TRUSTED_PROXIES.
+	ClientIPHeader string
 	LogLevel       slog.Level
 	ShutdownGrace  time.Duration
 
@@ -142,6 +147,25 @@ func Load(getenv func(string) string) (*Config, error) {
 		return ""
 	}
 
+	// CLIENT_IP_HEADER é um nome de cabeçalho HTTP, e de um valor só. O
+	// X-Forwarded-For é recusado aqui porque tem vários valores e já é o
+	// comportamento padrão (variável vazia).
+	clientIPHeader := func(name string) string {
+		raw := strings.TrimSpace(getenv(name))
+		if raw == "" {
+			return ""
+		}
+		if !nomeDeCabecalho(raw) {
+			errs = append(errs, fmt.Errorf("%s %q não é um nome de cabeçalho HTTP", name, raw))
+			return ""
+		}
+		if strings.EqualFold(raw, "X-Forwarded-For") {
+			errs = append(errs, fmt.Errorf("%s: deixe vazio para usar o X-Forwarded-For; a variável é para um cabeçalho de um valor só, como Fly-Client-IP", name))
+			return ""
+		}
+		return http.CanonicalHeaderKey(raw)
+	}
+
 	cfg := &Config{
 		HTTPAddr:       opt("HTTP_ADDR", ":8080"),
 		MetricsAddr:    metricsAddr("METRICS_ADDR"),
@@ -152,6 +176,7 @@ func Load(getenv func(string) string) (*Config, error) {
 		JWTSecret:      key("JWT_SECRET"),
 		IPHashKey:      key("IP_HASH_KEY"),
 		TrustedProxies: proxies("TRUSTED_PROXIES"),
+		ClientIPHeader: clientIPHeader("CLIENT_IP_HEADER"),
 		ShutdownGrace:  15 * time.Second,
 		ResendAPIKey:   strings.TrimSpace(getenv("RESEND_API_KEY")),
 		EmailFrom:      strings.TrimSpace(getenv("EMAIL_FROM")),
@@ -206,6 +231,18 @@ func Load(getenv func(string) string) (*Config, error) {
 	return cfg, nil
 }
 
+// nomeDeCabecalho aceita só os caracteres de "token" da RFC 9110 que fazem
+// sentido num nome de cabeçalho: letras, dígitos e hífen.
+func nomeDeCabecalho(s string) bool {
+	for _, c := range s {
+		ok := c == '-' || (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+		if !ok {
+			return false
+		}
+	}
+	return true
+}
+
 // LogValue garante que registrar a configuração nunca imprime material de
 // chave nem a string de conexão (que embute a senha do banco). É a mesma
 // estratégia do tipo crypto.Secret: a proteção é do tipo, não da disciplina.
@@ -216,6 +253,7 @@ func (c *Config) LogValue() slog.Value {
 		slog.String("metrics_addr", c.MetricsAddr),
 		slog.String("public_base_url", c.PublicBaseURL),
 		slog.String("cors_origin", c.CORSOrigin),
+		slog.String("client_ip_header", c.ClientIPHeader),
 		slog.String("log_level", c.LogLevel.String()),
 		slog.String("database_url", "[REDACTED]"),
 		slog.String("master_key", "[REDACTED]"),
