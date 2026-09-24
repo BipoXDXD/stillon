@@ -163,6 +163,7 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 
 	raiz := http.NewServeMux()
 	raiz.Handle("/verify/", verificacao(ctx, cfg, d.Channels))
+	raiz.Handle("/p/", paginaPublica(ctx, cfg, d.StatusPages))
 	raiz.Handle("/", handler)
 	return raiz
 }
