@@ -20,6 +20,10 @@ export const rotas: RouteObject[] = [
         children: [
           { index: true, Component: PaginaPainel },
           { path: 'targets/new', Component: PaginaNovoAlvo },
+          {
+            path: 'targets/:id',
+            lazy: async () => ({ Component: (await import('@/features/alvos/PaginaDetalhe')).PaginaDetalhe }),
+          },
           { path: 'targets/:id/edit', Component: PaginaEditarAlvo },
           { path: '*', Component: NaoEncontrada },
         ],
