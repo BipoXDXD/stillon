@@ -7,6 +7,7 @@ package db
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -22,6 +23,26 @@ SELECT pg_advisory_xact_lock(hashtextextended('vigilume.sessions:' || $1::uuid::
 func (q *Queries) LockUserSessions(ctx context.Context, userID uuid.UUID) error {
 	_, err := q.db.Exec(ctx, lockUserSessions, userID)
 	return err
+}
+
+const revokeAllFamilies = `-- name: RevokeAllFamilies :execrows
+UPDATE sessions SET revoked_at = $1::timestamptz
+ WHERE user_id = $2 AND revoked_at IS NULL
+`
+
+type RevokeAllFamiliesParams struct {
+	Now    time.Time
+	UserID uuid.UUID
+}
+
+// Todas as famílias do usuário: é o set-password do CLI. Marca também as
+// linhas já rotacionadas, como o RevokeFamily do auth.
+func (q *Queries) RevokeAllFamilies(ctx context.Context, arg RevokeAllFamiliesParams) (int64, error) {
+	result, err := q.db.Exec(ctx, revokeAllFamilies, arg.Now, arg.UserID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const sessionUserByHash = `-- name: SessionUserByHash :one
