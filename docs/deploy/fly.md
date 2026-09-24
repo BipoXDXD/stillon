@@ -426,7 +426,8 @@ passo 4.
    o `FLY_BACKUP_TOKEN` só alcança o app antigo. Troque os dois (PR com `-a vigilume-db19` no
    `backup.yml` e no `app` de `deploy/fly/db/fly.toml`; secret novo de
    `fly tokens create deploy -a vigilume-db19`) e rode o `backup` à mão. Até isso, o backup
-   diário continua copiando o banco **antigo**, e fica verde.
+   diário continua copiando o banco **antigo**: fica verde enquanto o antigo estiver de pé, e
+   vermelho depois que ele parar (passo 6), sem nunca ter copiado o novo.
 6. Mantenha o `vigilume-db` antigo parado por 7 dias antes de destruí-lo.
 
 ## Tornar o repositório público (passo futuro)
