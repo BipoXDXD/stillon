@@ -270,6 +270,9 @@ func TestSkipLockedDoesNotWaitForAnotherProber(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if len(primeiros) != 5 {
+		t.Fatalf("o primeiro sondador reivindicou %d, queria 5: sem linhas travadas o teste não prova SKIP LOCKED", len(primeiros))
+	}
 
 	ctx2, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
