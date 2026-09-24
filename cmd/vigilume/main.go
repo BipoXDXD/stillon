@@ -75,22 +75,24 @@ const manutencaoDeParticoes = 24 * time.Hour
 // exemplo —, o contexto do grupo cancela, os outros encerram, e o processo
 // sai com erro, em vez de seguir meio vivo.
 func run(ctx context.Context, cfg *config.Config) error {
-	if err := storage.Migrate(ctx, cfg.DatabaseURL); err != nil {
-		return err
-	}
-	slog.Info("migrations aplicadas")
-
 	pool, err := storage.NewPool(ctx, cfg.DatabaseURL)
 	if err != nil {
 		return err
 	}
 	defer pool.Close()
 
-	// Antes de qualquer consulta de negócio. Com um papel que ignora RLS, a
-	// segunda barreira de isolamento estaria desligada em silêncio (D8).
+	// Com um papel que ignora RLS, a segunda barreira de isolamento estaria
+	// desligada em silêncio (D8). A checagem vem ANTES da migration: CheckRole
+	// só lê pg_roles, e migrar primeiro faria o boot recusado criar todas as
+	// tabelas com o dono errado, que o papel comum depois não conseguiria usar.
 	if err := storage.CheckRole(ctx, pool); err != nil {
 		return err
 	}
+
+	if err := storage.Migrate(ctx, cfg.DatabaseURL); err != nil {
+		return err
+	}
+	slog.Info("migrations aplicadas")
 
 	box, err := crypto.NewBox(cfg.MasterKey)
 	if err != nil {

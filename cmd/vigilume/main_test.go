@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"net"
+	"net/url"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/BipoXDXD/vigilume/internal/config"
 	"github.com/BipoXDXD/vigilume/internal/prober"
@@ -108,6 +110,52 @@ func TestRunRefusesARoleThatBypassesRLS(t *testing.T) {
 	err := run(ctx, cfg)
 	if !errors.Is(err, storage.ErrRoleBypassesRLS) {
 		t.Errorf("run com superusuário = %v, queria ErrRoleBypassesRLS", err)
+	}
+}
+
+// O boot recusa o papel ANTES de migrar. Na ordem inversa, o primeiro boot
+// como superusuário num banco vazio criaria todas as tabelas com o dono
+// errado e só depois recusaria; trocar para o papel comum encontraria
+// tabelas alheias e migrations já marcadas como aplicadas. Só o erro não
+// basta: ele sai igual nas duas ordens. O que trava a ordem é o banco
+// continuar vazio.
+func TestRunRefusesTheRoleBeforeMigrating(t *testing.T) {
+	// Banco vazio e não migrado, acessado como superusuário.
+	vazio, err := url.Parse(testdb.EmptyDatabase(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	admin, err := url.Parse(testdb.AdminDSN(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	vazio.User = admin.User
+
+	cfg := &config.Config{
+		Role: config.RoleProber, DatabaseURL: vazio.String(),
+		MasterKey: chave, ShutdownGrace: time.Second,
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := run(ctx, cfg); !errors.Is(err, storage.ErrRoleBypassesRLS) {
+		t.Errorf("run com superusuário = %v, queria ErrRoleBypassesRLS", err)
+	}
+
+	conn, err := pgx.Connect(ctx, vazio.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close(ctx)
+	rows, err := conn.Query(ctx, `SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' ORDER BY 1`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tabelas, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tabelas) != 0 {
+		t.Errorf("o boot recusado criou tabelas no banco vazio: %v", tabelas)
 	}
 }
 
