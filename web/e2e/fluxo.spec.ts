@@ -1,10 +1,47 @@
+import type { APIRequestContext } from '@playwright/test'
 import { controlePositivo, expect, test, violacoes } from './fixtures'
+
+// O alvo que o teste cadastra. Um passo que falha no meio deixaria o alvo
+// para trás, e contra uma pilha externa eles se acumulariam até o teto de
+// 100 alvos (reconciliação, item 4). O afterEach o procura pelo nome, pela
+// API, e o apaga; no caminho feliz o próprio teste já o apagou (passo 7), e
+// a busca não acha nada.
+let nomeDoAlvo = ''
+
+async function apagarPeloNome(request: APIRequestContext, email: string, senha: string, nome: string) {
+  const mutacao = { 'X-Requested-With': 'vigilume' }
+  const login = await request.post('/api/v1/auth/login', { headers: mutacao, data: { email, password: senha } })
+  expect(login.ok(), 'login da limpeza').toBe(true)
+  const { access_token: token } = (await login.json()) as { access_token: string }
+  const autorizado = { Authorization: `Bearer ${token}` }
+  try {
+    const lista = await request.get('/api/v1/targets?limit=100', { headers: autorizado })
+    const { items } = (await lista.json()) as { items: { id: string; name: string }[] }
+    const sobras = items.filter((a) => a.name === nome)
+    for (const a of sobras) {
+      const r = await request.delete(`/api/v1/targets/${a.id}`, { headers: { ...autorizado, ...mutacao } })
+      expect([204, 404], `apagar ${a.id}`).toContain(r.status())
+    }
+    console.log(`limpeza do E2E: ${sobras.length} alvo(s) "${nome}" apagado(s)`)
+  } finally {
+    // O cookie de refresh do login da limpeza ficou no contexto do request:
+    // o logout encerra essa sessão também.
+    await request.post('/api/v1/auth/logout', { headers: mutacao })
+  }
+}
+
+test.afterEach(async ({ request, credenciais }) => {
+  if (!nomeDoAlvo) return
+  const nome = nomeDoAlvo
+  nomeDoAlvo = ''
+  await apagarPeloNome(request, credenciais.email, credenciais.senha, nome)
+})
 
 // O fluxo crítico da spec §14: login → cadastrar alvo → ver status. Mais o
 // que só o navegador de verdade prova: F5 com o cookie, a CSP de produção, o
 // chunk do Recharts desenhando a linha, e o token fora do storage.
 test('login, cadastro de alvo, status, F5, detalhe, apagar, encerrar a sessão e sair', async ({ page, credenciais }) => {
-  const nomeDoAlvo = `E2E ${Date.now()}`
+  nomeDoAlvo = `E2E ${Date.now()}`
 
   // 1. Sem sessão: o splash e depois o login; nunca o painel piscando.
   await page.goto('/')
@@ -92,5 +129,5 @@ test('login, cadastro de alvo, status, F5, detalhe, apagar, encerrar a sessão e
   await expect(page.getByRole('heading', { name: 'Entrar no Vigilume' })).toBeVisible()
   await page.reload()
   await expect(page.getByRole('heading', { name: 'Entrar no Vigilume' })).toBeVisible()
-  expect(violacoes(page)).toEqual([])
+  await expect.poll(() => violacoes(page)).toEqual([])
 })
