@@ -335,6 +335,8 @@ export function criarApiFalsa() {
       return HttpResponse.json({ otpauth_uri: 'otpauth://totp/Vigilume:dono%40exemplo.com?secret=JBSWY3DPEHPK3PXP&issuer=Vigilume' })
     }),
     rota('post', '/auth/totp/confirm', ({ corpo }) => {
+      // totphandlers.go: com o 2FA já ligado, 403 forbidden, como o enroll.
+      if (st.totpLigado) return erro(403, 'forbidden')
       if (!st.totpPendente || corpo.code !== TOTP_OK) return erro(400, 'validation_failed')
       st.totpLigado = true
       st.totpPendente = false

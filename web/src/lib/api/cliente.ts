@@ -88,7 +88,9 @@ export function criarApi(sessao: Sessao, buscar: Buscar) {
       r = await enviar(buscar, { ...p, token: novo })
       if (r.status === 401) {
         const outro = await lerErro(r)
-        if (podeRenovar(p.caminho, outro.code)) sessao.encerrar('expirou')
+        // Como acima: se a sessão acabou enquanto a repetição voava, o
+        // motivo que vale é o primeiro.
+        if (sessao.estado() === 'autenticado' && podeRenovar(p.caminho, outro.code)) sessao.encerrar('expirou')
         throw outro
       }
     }

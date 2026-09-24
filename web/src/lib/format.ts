@@ -2,8 +2,11 @@
 
 // Porcentagem TRUNCADA em duas casas, nunca arredondada: "100,00%" num dia
 // com falha é pior que "99,99%" (D16 do Plano 4; nota do Plano 5 §12).
+// O + 1e-9 absorve o erro de ponto flutuante de valores exatos (0.0029 *
+// 10000 é 28,999…96, e um floor seco daria "0,28%"); é pequeno demais para
+// levar 0,99995 a "100,00%".
 export function porcento(fracao: number): string {
-  const v = Math.floor(fracao * 10000) / 100
+  const v = Math.floor(fracao * 10000 + 1e-9) / 100
   return `${v.toFixed(2).replace('.', ',')}%`
 }
 

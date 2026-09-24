@@ -83,8 +83,12 @@ export function criarSessao(o: Opcoes) {
 
   // Um refresh de verdade. null = o servidor recusou a sessão (401); erro de
   // rede ou 5xx sobe como ApiError, porque a sessão pode estar boa.
-  async function renovarAgora(): Promise<string | null> {
-    const minha = epoca
+  //
+  // minha é a época em que o refresh foi PEDIDO, antes da trava: capturada
+  // aqui dentro, depois de a trava soltar, ela já seria a época nova, e um
+  // refresh que esperou a outra aba enquanto a sessão acabava gravaria o
+  // token (D15).
+  async function renovarAgora(minha: number): Promise<string | null> {
     const r = await enviar(o.buscar, {
       metodo: 'POST',
       caminho: '/auth/refresh',
@@ -105,9 +109,16 @@ export function criarSessao(o: Opcoes) {
   // renovar é o que o cliente chama num 401. usado é o token com que a
   // requisição saiu: se outra requisição já renovou enquanto esta voava, não
   // há por que renovar de novo — basta repetir com o token atual.
+  //
+  // Se a requisição saiu com um token e agora não há token nenhum, a sessão
+  // acabou depois de ela sair (sair, encerrar, outra aba): renovar aqui
+  // ressuscitaria a sessão se o logout não chegou ao servidor. Só o boot
+  // (usado === null) renova sem token.
   function renovar(usado: string | null): Promise<string | null> {
     if (token !== null && token !== usado) return Promise.resolve(token)
-    emVoo ??= travar(TRAVA, renovarAgora).finally(() => {
+    if (usado !== null && token === null) return Promise.resolve(null)
+    const minha = epoca
+    emVoo ??= travar(TRAVA, () => renovarAgora(minha)).finally(() => {
       emVoo = null
     })
     return emVoo

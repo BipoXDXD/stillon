@@ -1,7 +1,7 @@
 import { http, HttpResponse } from 'msw'
 import { describe, expect, it, vi } from 'vitest'
-import { EMAIL, SENHA } from '@/test/api-falsa'
-import { novaSessao, usarApiFalsa } from '@/test/ambiente'
+import { EMAIL, SENHA, TOTP_OK } from '@/test/api-falsa'
+import { buscarDoTeste, novaSessao, usarApiFalsa } from '@/test/ambiente'
 import { servidor } from '@/test/setup'
 import { ApiError } from './http'
 
@@ -61,8 +61,9 @@ describe('a regra do 401', () => {
   })
 
   // Reconciliação, item 3: nada em /auth/* renova, nem com "unauthorized".
-  // A sessão continua (o refresh nem foi tentado); a tela pede para
-  // recarregar. Sabotagem prevista: trocar o "!caminho.startsWith('/auth/')"
+  // A sessão continua (o refresh nem foi tentado); a tela guarda o
+  // formulário e oferece "Renovar acesso e tentar de novo" (D2, Task 10).
+  // Sabotagem prevista: trocar o "!caminho.startsWith('/auth/')"
   // por "caminho !== ''".
   it('token vencido na troca de senha não renova: /auth/* nunca renova', async () => {
     const { falsa, sessao, api } = await logado()
@@ -123,12 +124,32 @@ describe('a regra do 401', () => {
     expect(sessao.motivo()).toBe('encerrada-aqui')
   })
 
+  // O segundo 401 (depois de renovar) só encerra uma sessão que ainda está
+  // aberta: se ela acabou enquanto a repetição voava, o motivo que vale é o
+  // primeiro. Sabotagem prevista: tirar o "sessao.estado() === 'autenticado' &&"
+  // do segundo 401 em pedir() → o motivo vira "expirou".
+  it('401 de novo depois de renovar não troca o motivo de uma sessão que já acabou', async () => {
+    const falsa = usarApiFalsa()
+    let s: ReturnType<typeof novaSessao> | null = null
+    let chamadasMe = 0
+    const buscar = (entrada: string, init: RequestInit) => {
+      // A repetição sai; a sessão acaba aqui antes de a resposta chegar.
+      if (entrada.endsWith('/me') && ++chamadasMe === 2) s?.sessao.encerrar('encerrada-aqui')
+      return buscarDoTeste(entrada, init)
+    }
+    s = novaSessao({ buscar })
+    await s.sessao.entrar(EMAIL, SENHA)
+    falsa.estado.forcar.set('GET /me', { status: 401, code: 'unauthorized' })
+    await expect(s.api.me()).rejects.toMatchObject({ code: 'unauthorized' })
+    expect(chamadasMe).toBe(2)
+    expect(s.sessao.motivo()).toBe('encerrada-aqui')
+  })
+
   // Sabotagem prevista: tirar o X-Requested-With de enviar() → 403 da API
   // falsa, como o RequireCustomHeader do servidor.
   it('mutações levam X-Requested-With', async () => {
-    const { falsa, api } = await logado()
-    await api.reconhecer('nao-existe').catch(() => undefined)
-    expect(falsa.chamadas('POST /incidents/:id/ack')).toBe(1)
+    const { api } = await logado()
+    // not_found, e não forbidden: a guarda do cabeçalho deixou passar.
     await expect(api.reconhecer('nao-existe')).rejects.toMatchObject({ code: 'not_found' })
   })
 })
@@ -188,5 +209,17 @@ describe('o envelope de erro', () => {
     const { falsa, api } = await logado()
     falsa.estado.resumo = [{ id: 'x', name: 'API' } as never]
     await expect(api.resumo()).rejects.toThrow(/enabled|state/)
+  })
+})
+
+describe('a API falsa imita o servidor', () => {
+  // totphandlers.go (TOTPConfirm): com o 2FA já ligado, confirmar de novo é
+  // 403 forbidden, como o enroll; reconfirmar rotacionaria os códigos de
+  // recuperação.
+  it('confirmar o 2FA já ligado é 403 forbidden', async () => {
+    const { falsa, api } = await logado()
+    falsa.estado.totpLigado = true
+    await expect(api.totpConfirmar(TOTP_OK)).rejects.toMatchObject({ status: 403, code: 'forbidden' })
+    expect(falsa.estado.totpLigado).toBe(true)
   })
 })

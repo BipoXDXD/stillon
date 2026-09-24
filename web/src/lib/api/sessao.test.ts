@@ -2,14 +2,37 @@ import { describe, expect, it, vi } from 'vitest'
 import { EMAIL, RECUPERACAO_OK, SENHA, TOTP_OK } from '@/test/api-falsa'
 import { buscarDoTeste, novaSessao, travaFalsa, usarApiFalsa } from '@/test/ambiente'
 import { ApiError } from './http'
-import type { Canal } from './sessao'
+import type { Canal, Travar } from './sessao'
 
-// Dois BroadcastChannel do mesmo nome, como duas abas.
+// Dois BroadcastChannel do mesmo nome, como duas abas. O nome é novo a cada
+// chamada: as sessões de um teste continuam vivas depois dele, e num nome
+// compartilhado reagiriam aos avisos do teste seguinte (tentarDeNovo contra
+// a API falsa dele: refreshes a mais, avisos a mais).
 function canais(): [Canal, Canal] {
-  const a = new BroadcastChannel('teste-sessao')
-  const b = new BroadcastChannel('teste-sessao')
+  const nome = `teste-sessao-${crypto.randomUUID()}`
+  const a = new BroadcastChannel(nome)
+  const b = new BroadcastChannel(nome)
   return [a, b]
 }
+
+// Uma trava segura de fora: quem pede espera até soltar(). Imita a outra aba
+// segurando a Web Lock (o jsdom não tem navigator.locks).
+function travaSegura() {
+  let soltar!: () => void
+  const portao = new Promise<void>((r) => (soltar = r))
+  let esperando = 0
+  const travar: Travar = async <T,>(_nome: string, fn: () => Promise<T>): Promise<T> => {
+    esperando++
+    await portao
+    return fn()
+  }
+  return { travar, soltar: () => soltar(), esperando: () => esperando }
+}
+
+// O logout que não chega ao servidor (sem rede): o cookie de refresh continua
+// valendo lá, e só a época da sessão impede um refresh de ressuscitá-la.
+const logoutSemRede = (entrada: string, init: RequestInit) =>
+  entrada.endsWith('/auth/logout') ? Promise.reject(new TypeError('Failed to fetch')) : buscarDoTeste(entrada, init)
 
 // Prova de ausência sem relógio: a e b são o mesmo canal visto de duas
 // abas, e mensagens do mesmo emissor chegam em ordem. Depois do que o teste
@@ -212,5 +235,71 @@ describe('erros de rede', () => {
     falsa.estado.forcar.set('POST /auth/refresh', { status: 500, code: 'internal_error' })
     await expect(sessao.renovar(sessao.token())).rejects.toBeInstanceOf(ApiError)
     expect(sessao.estado()).toBe('autenticado')
+  })
+})
+
+describe('a época da sessão', () => {
+  // Caminho (a): o refresh espera a trava (outra aba a segura), e a sessão
+  // acaba nesse meio-tempo com um logout sem rede. Quando a trava solta, o
+  // refresh ainda é aceito pelo servidor (o cookie ficou), mas a resposta é
+  // de outra época e não mexe no token. Sabotagem prevista: capturar a época
+  // dentro de renovarAgora(), depois da trava ("minha = epoca" na primeira
+  // linha de renovarAgora) → o pedido resolve e o token volta.
+  it('refresh na fila da trava quando a sessão acaba não ressuscita o token', async () => {
+    const falsa = usarApiFalsa()
+    const trava = travaSegura()
+    const { sessao, api } = novaSessao({ travar: trava.travar, buscar: logoutSemRede })
+    await sessao.entrar(EMAIL, SENHA)
+    falsa.expirarAcessos()
+    const pedido = api.me().then(
+      () => 'resolveu',
+      (e: unknown) => e,
+    )
+    await vi.waitFor(() => expect(trava.esperando()).toBe(1))
+    await sessao.sair()
+    expect(sessao.estado()).toBe('anonimo')
+    trava.soltar()
+    expect(await pedido).toMatchObject({ code: 'unauthorized' })
+    // O refresh saiu e o servidor o aceitou: a corrida é real, e só a época
+    // segurou o token.
+    expect(falsa.chamadas('POST /auth/refresh')).toBe(1)
+    expect(sessao.token()).toBeNull()
+    expect(sessao.estado()).toBe('anonimo')
+    expect(sessao.motivo()).toBe('saiu')
+  })
+
+  // Caminho (b), sem trava: a requisição saiu com o token T, a sessão acabou
+  // (logout sem rede), e o 401 de T chega depois. T é de uma sessão que já
+  // acabou: renovar(T) não renova. Sabotagem prevista: em renovar(), trocar
+  // "if (usado !== null && token === null)" por
+  // "if (usado !== null && token === null && Math.random() > 2)" → um
+  // refresh sai, e o pedido resolve com o token novo.
+  it('401 de uma requisição que saiu antes de a sessão acabar não renova', async () => {
+    const falsa = usarApiFalsa()
+    let soltarMe!: () => void
+    const portaoMe = new Promise<void>((r) => (soltarMe = r))
+    let meSaiu = false
+    const buscar = (entrada: string, init: RequestInit) => {
+      if (entrada.endsWith('/me')) {
+        meSaiu = true
+        return portaoMe.then(() => logoutSemRede(entrada, init))
+      }
+      return logoutSemRede(entrada, init)
+    }
+    const { sessao, api } = novaSessao({ buscar, travar: travaFalsa() })
+    await sessao.entrar(EMAIL, SENHA)
+    falsa.expirarAcessos()
+    const pedido = api.me().then(
+      () => 'resolveu',
+      (e: unknown) => e,
+    )
+    await vi.waitFor(() => expect(meSaiu).toBe(true))
+    await sessao.sair()
+    soltarMe()
+    expect(await pedido).toMatchObject({ code: 'unauthorized' })
+    expect(falsa.chamadas('POST /auth/refresh')).toBe(0)
+    expect(sessao.token()).toBeNull()
+    expect(sessao.estado()).toBe('anonimo')
+    expect(sessao.motivo()).toBe('saiu')
   })
 })

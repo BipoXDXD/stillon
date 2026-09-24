@@ -8,6 +8,14 @@ describe('porcento', () => {
     expect(porcento(1)).toBe('100,00%')
     expect(porcento(0)).toBe('0,00%')
   })
+
+  // 0.0029 * 10000 é 28,999…96 em ponto flutuante: um floor seco mostraria
+  // "0,28%". Sabotagem prevista: tirar o "+ 1e-9" de porcento().
+  it('valores exatos não perdem a última casa', () => {
+    expect(porcento(0.0029)).toBe('0,29%')
+    expect(porcento(0.5799)).toBe('57,99%')
+    expect(porcento(0.9999)).toBe('99,99%')
+  })
 })
 
 describe('milissegundos', () => {
