@@ -3,7 +3,6 @@ package httpapi
 import (
 	"bytes"
 	"fmt"
-	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -127,20 +126,6 @@ func TestPresentationRules(t *testing.T) {
 		}
 		if got := resumo(items); got != c.quer {
 			t.Errorf("resumo(%v) = %q, queria %q", c.estados, got, c.quer)
-		}
-	}
-}
-
-// O nonce vai para o atributo do <style> e para o cabeçalho da CSP, e os
-// dois têm de ser o mesmo texto. Um caractere que o html/template escapa
-// ("+" vira "&#43;") quebraria isso só às vezes, conforme o sorteio: por
-// isso o teste sorteia mil.
-func TestNonceNeedsNoEscaping(t *testing.T) {
-	seguro := regexp.MustCompile(`^[A-Za-z0-9_-]{22}$`)
-	for range 1000 {
-		n, err := novoNonce()
-		if err != nil || !seguro.MatchString(n) {
-			t.Fatalf("nonce %q (%v): queria 22 caracteres de base64 de URL", n, err)
 		}
 	}
 }

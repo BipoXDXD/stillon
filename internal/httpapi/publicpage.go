@@ -3,9 +3,7 @@ package httpapi
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
 	"embed"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"html/template"
@@ -17,6 +15,7 @@ import (
 	"time"
 
 	"github.com/BipoXDXD/vigilume/internal/config"
+	"github.com/BipoXDXD/vigilume/internal/crypto"
 	"github.com/BipoXDXD/vigilume/internal/httpapi/middleware"
 	"github.com/BipoXDXD/vigilume/internal/observability"
 	"github.com/BipoXDXD/vigilume/internal/statuspage"
@@ -75,7 +74,7 @@ func (h *PublicPageHandlers) Page(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	nonce, err := novoNonce()
+	nonce, err := crypto.NewCSPNonce()
 	if err != nil {
 		slog.Error("nonce da status page", "erro", err)
 		pagina(w, http.StatusServiceUnavailable, paginaIndisponivel)
@@ -107,19 +106,6 @@ const (
 		`<meta name="viewport" content="width=device-width"><title>Indisponível</title>` +
 		`<h1>Status indisponível</h1><p>Tente de novo em instantes.</p></html>`
 )
-
-// novoNonce usa base64 de URL, sem padding: a gramática de nonce da CSP
-// aceita "-" e "_", e o html/template não escapa nenhum dos dois. Com a
-// base64 padrão, o "+" sairia como "&#43;" no atributo, e o HTML deixaria de
-// trazer o nonce literal da CSP (defeito achado na execução: o teste falhava
-// sempre que o nonce sorteado tinha um "+").
-func novoNonce() (string, error) {
-	b := make([]byte, 16)
-	if _, err := rand.Read(b); err != nil {
-		return "", err
-	}
-	return base64.RawURLEncoding.EncodeToString(b), nil
-}
 
 // O modelo de apresentação: só strings prontas. O template não formata,
 // não decide e não tem acesso a nada além disto.
