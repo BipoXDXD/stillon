@@ -4,6 +4,7 @@ import { PaginaIncidentes } from '@/features/incidentes/PaginaIncidentes'
 import { PaginaLogin } from '@/features/login/PaginaLogin'
 import { PaginaPainel } from '@/features/painel/PaginaPainel'
 import { PaginaEditarAlvo, PaginaNovoAlvo } from '@/features/alvos/PaginasDoFormulario'
+import { PaginaStatusPage } from '@/features/statuspage/PaginaStatusPage'
 import { ErroDeRota } from './ErroDeRota'
 import { ExigirSessao } from './ExigirSessao'
 import { Layout } from './Layout'
@@ -29,6 +30,7 @@ export const rotas: RouteObject[] = [
           { path: 'targets/:id/edit', Component: PaginaEditarAlvo },
           { path: 'incidents', Component: PaginaIncidentes },
           { path: 'channels', Component: PaginaCanais },
+          { path: 'status-pages', Component: PaginaStatusPage },
           { path: '*', Component: NaoEncontrada },
         ],
       },
