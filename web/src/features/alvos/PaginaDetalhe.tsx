@@ -123,8 +123,15 @@ function Incidentes({ id }: { id: string }) {
   )
 }
 
+// De um detalhe a outro a rota é a mesma, e o React reaproveitaria a tela:
+// o erro, o diálogo de apagar e o "ocupado" de um alvo seguiriam no outro, e
+// o título (com o alvo no cache) não receberia o foco. A key recomeça tudo.
 export function PaginaDetalhe() {
   const { id = '' } = useParams()
+  return <DetalheDoAlvo key={id} id={id} />
+}
+
+function DetalheDoAlvo({ id }: { id: string }) {
   const [params, setParams] = useSearchParams()
   const janela: Janela = ehJanela(params.get('janela')) ? (params.get('janela') as Janela) : '24h'
   const api = useApi()

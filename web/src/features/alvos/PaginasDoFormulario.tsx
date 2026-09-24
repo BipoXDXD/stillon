@@ -38,7 +38,9 @@ export function PaginaEditarAlvo() {
   return (
     <>
       <Titulo aba="Editar alvo">Editar alvo</Titulo>
-      <EstadoDaConsulta consulta={consulta}>{(alvo) => <EdicaoDoAlvo alvo={alvo} />}</EstadoDaConsulta>
+      {/* key: voltar pelo histórico de /targets/B/edit a /targets/A/edit, com A
+          no cache, reaproveitaria o formulário (e a base do PATCH) de B. */}
+      <EstadoDaConsulta consulta={consulta}>{(alvo) => <EdicaoDoAlvo key={alvo.id} alvo={alvo} />}</EstadoDaConsulta>
     </>
   )
 }

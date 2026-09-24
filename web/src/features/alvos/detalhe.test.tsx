@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from '@testing-library/react'
+import { act, screen, waitFor, within } from '@testing-library/react'
 import { http, HttpResponse } from 'msw'
 import { describe, expect, it } from 'vitest'
 import { alvo, incidente, itemDoResumo } from '@/test/fixtures'
@@ -209,6 +209,27 @@ describe('detalhe', () => {
     await waitFor(() => expect(grafico).toHaveAccessibleDescription(/Mediana 100 ms, p95 100 ms/))
     expect(screen.getByRole('table', { name: /200 checks mais recentes/ })).toBeInTheDocument()
     expect(screen.getByText(/Ver dados em tabela \(até os 200 mais recentes\)/)).toBeInTheDocument()
+  })
+
+  // Revisão final: de um detalhe a outro, a tela é a mesma rota, e sem
+  // key={id} o erro, o diálogo e o "ocupado" de A seguiam em B, e o título
+  // de A (no cache) não recebia o foco ao voltar. Sabotagem: devolver a
+  // rota a <DetalheDoAlvo /> sem key → o erro de A aparece em B.
+  it('de um alvo a outro, a tela recomeça: sem o erro do anterior, com o foco no título', async () => {
+    const r = await renderizarPainel('/targets/alvo-1')
+    r.falsa.estado.alvos = [alvo({ id: 'alvo-1', name: 'Site A' }), alvo({ id: 'alvo-2', name: 'Site B' })]
+    await r.cliente.refetchQueries()
+    r.falsa.estado.forcar.set('PATCH /targets/:id', { status: 500, code: 'internal' })
+    await r.usuario.click(await screen.findByRole('button', { name: 'Pausar' }))
+    expect(await screen.findByRole('alert')).toBeInTheDocument()
+    await r.router.navigate('/targets/alvo-2')
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Site B', level: 1 })).toHaveFocus())
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    // O foco sai do <h1> (que, reaproveitado, o manteria à toa).
+    act(() => screen.getByRole('button', { name: 'Pausar' }).focus())
+    await r.router.navigate(-1)
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Site A', level: 1 })).toHaveFocus())
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 
   it('janela desconhecida na URL cai nas 24 h, sem quebrar', async () => {

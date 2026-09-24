@@ -141,6 +141,35 @@ describe('editar', () => {
   })
 })
 
+// Revisão final: voltar pelo histórico de /targets/B/edit a /targets/A/edit
+// (A no cache) reaproveitava o formulário de B: a tela mostrava B e o PATCH
+// ia para A com a diferença contra B. Sabotagem: tirar o key={alvo.id} de
+// <EdicaoDoAlvo> → o Nome continua "Site B".
+describe('editar dois alvos seguidos', () => {
+  it('voltar pelo histórico a outro alvo mostra e salva o alvo da URL', async () => {
+    const r = await renderizarPainel('/targets/alvo-1/edit')
+    r.falsa.estado.alvos = [
+      alvo({ id: 'alvo-1', name: 'Site A', url: 'https://a.exemplo.com/' }),
+      alvo({ id: 'alvo-2', name: 'Site B', url: 'https://b.exemplo.com/', interval_sec: 300 }),
+    ]
+    await r.cliente.refetchQueries()
+    await waitFor(() => expect(screen.getByLabelText('Nome')).toHaveValue('Site A'))
+    await r.router.navigate('/targets/alvo-2/edit')
+    await waitFor(() => expect(screen.getByLabelText('Nome')).toHaveValue('Site B'))
+    await r.router.navigate(-1)
+    await waitFor(() => expect(r.router.state.location.pathname).toBe('/targets/alvo-1/edit'))
+    await waitFor(() => expect(screen.getByLabelText('Nome')).toHaveValue('Site A'))
+    expect(screen.getByLabelText('URL')).toHaveValue('https://a.exemplo.com/')
+    await r.usuario.selectOptions(screen.getByLabelText('Intervalo'), '5 minutos')
+    await r.usuario.click(screen.getByRole('button', { name: 'Salvar' }))
+    await waitFor(() => expect(r.falsa.corpos('PATCH /targets/:id')).toEqual([{ interval_sec: 300 }]))
+    expect(r.falsa.estado.alvos.map((a) => [a.id, a.name, a.interval_sec])).toEqual([
+      ['alvo-1', 'Site A', 300],
+      ['alvo-2', 'Site B', 300],
+    ])
+  })
+})
+
 describe('intervalo "Outro…"', () => {
   it('fora de 30 a 86400 é recusado no campo; um da lista esconde o campo', async () => {
     const r = await renderizarPainel('/targets/new')
