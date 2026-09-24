@@ -197,7 +197,9 @@ describe('detalhe', () => {
     )
   })
 
-  it('o gráfico tem nome e é descrito pelo resumo em texto; a tabela diz que são os 200 mais recentes', async () => {
+  // O nome e a descrição do <svg> do gráfico estão em grafico.test.tsx: aqui
+  // o jsdom não mede o ResponsiveContainer, e o svg nem é desenhado.
+  it('o gráfico e o resumo que o descreve estão na tela; a tabela diz que são os 200 mais recentes', async () => {
     const r = await renderizarPainel('/targets/alvo-1')
     r.falsa.estado.alvos = [alvo()]
     r.falsa.estado.serie = {
@@ -205,8 +207,8 @@ describe('detalhe', () => {
       items: [{ checked_at: '2026-09-24T11:00:00Z', status: 'up', latency_ms: 100, status_code: 200, error_kind: null }],
     }
     await r.cliente.refetchQueries()
-    const grafico = await screen.findByRole('figure', { name: 'Gráfico de latência' })
-    await waitFor(() => expect(grafico).toHaveAccessibleDescription(/Mediana 100 ms, p95 100 ms/))
+    expect(await screen.findByTestId('grafico-latencia')).toBeInTheDocument()
+    expect(screen.getByText(/Mediana 100 ms, p95 100 ms/)).toHaveAttribute('id')
     expect(screen.getByRole('table', { name: /200 checks mais recentes/ })).toBeInTheDocument()
     expect(screen.getByText(/Ver dados em tabela \(até os 200 mais recentes\)/)).toBeInTheDocument()
   })

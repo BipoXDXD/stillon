@@ -28,17 +28,16 @@ export function GraficoDeLatencia({ serie, descritoPor }: { serie: Serie; descri
     serie.resolution === '1h' ? pontosHorarios(serie.items) : pontosBrutos(serie.items)
   const fmt = (t: number) => (horaria ? dia.format(t) : hora.format(t))
   return (
-    <figure
-      className="h-64 w-full"
-      data-testid="grafico-latencia"
-      aria-label="Gráfico de latência"
-      aria-describedby={descritoPor}
-    >
+    // O nome e a descrição ficam no <svg> do Recharts, que é o que recebe o
+    // foco (a accessibilityLayer: role="application", tabIndex 0). No
+    // <figure> eles davam o nome em dobro e sumiam no foco do teclado.
+    <figure className="h-64 w-full" data-testid="grafico-latencia">
       <ResponsiveContainer width="100%" height="100%">
         <ComposedChart
           data={dados}
           margin={{ top: 8, right: 8, bottom: 0, left: 0 }}
-          title="Gráfico de latência"
+          aria-label="Gráfico de latência"
+          aria-describedby={descritoPor}
         >
           <CartesianGrid stroke="var(--borda)" vertical={false} />
           <XAxis
