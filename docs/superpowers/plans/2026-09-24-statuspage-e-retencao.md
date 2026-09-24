@@ -14,7 +14,7 @@
 
 **Pendências absorvidas:** `docs/superpowers/PENDENCIAS-PARA-O-PLANO-4.md`. Entram: a D6 do Plano 2 (rollups em `/checks`), a retenção, a status page, o canal `failing` e o apagão em massa. A **R2** (auth → sqlc) sai por decisão do usuário e vira plano próprio. O resto segue para o `PENDENCIAS-PARA-O-PLANO-5.md` que a Task 10 escreve.
 
-**Validação prévia.** Todo o código deste plano rodou numa cópia do repositório antes de o plano ser entregue: PostgreSQL 16 real, `sqlc generate`, `go test -race ./...` verde, `sqlc diff`, `vet`, `staticcheck`, `gosec` e `govulncheck` limpos. Além disso, **o estado da árvore depois de cada tarefa** foi reconstruído a partir deste plano e conferido (compila, `vet`, `sqlc diff`, testes da tarefa com `-race`); o estado depois da Task 10 é idêntico, byte a byte, à cópia validada. Os diffs abaixo são exatos: aplicam sobre o estado da tarefa anterior. Cada sabotagem pedida nos passos foi feita, e o teste ficou vermelho. Se um passo não se comportar como o plano diz, isso é informação: pare e reporte, não force.
+**Validação prévia.** Todo o código deste plano rodou numa cópia do repositório antes de o plano ser entregue: PostgreSQL 16 real, `sqlc generate`, `go test -race ./...` verde, `sqlc diff`, `vet`, `staticcheck`, `gosec` e `govulncheck` limpos. Além disso, **o estado da árvore depois de cada tarefa** foi reconstruído a partir deste plano e conferido (compila, `vet`, `sqlc diff`, testes da tarefa com `-race`); o estado depois da Task 11 é idêntico, byte a byte, à cópia validada. Os diffs abaixo são exatos: aplicam sobre o estado da tarefa anterior. Cada sabotagem pedida nos passos foi feita, e o teste ficou vermelho. Se um passo não se comportar como o plano diz, isso é informação: pare e reporte, não force.
 
 **Como ler os diffs.** Arquivo novo aparece inteiro. Arquivo modificado aparece como diff unificado contra o estado da tarefa anterior; o contexto é suficiente para aplicar à mão, ou com `git apply` depois de salvar o bloco num arquivo. `internal/storage/db/*.go` é gerado: quando a tarefa muda SQL, o passo diz `sqlc generate`, e o diff não aparece.
 
@@ -55,10 +55,10 @@ O usuário delegou todas as decisões de desenho deste plano. Cada uma tem o cus
 |---|---|---|---|
 | D1 | Uma página por usuário: `UNIQUE (user_id)`; a segunda é **409 `status_page_exists`**; slug de outro é **409 `slug_taken`**. Os dois vêm da violação de UNIQUE, não de consulta prévia | Várias páginas | Migrar para várias é tirar o UNIQUE e mudar o `GET`; a API já é plural |
 | D2 | Escopo público via `app.public_slug`, **sempre `READ ONLY`**. As políticas de `incidents`, `checks` e `target_health` são `FOR ALL` e delegam a `targets`: sem `READ ONLY`, o escopo público seria porta de escrita nelas | Políticas `FOR SELECT` novas em cada tabela | Nenhum enquanto só `InPublicTx` ligar o escopo |
-| D3 | `targets_public_select` consulta os itens por uma **função plpgsql** (`target_on_public_page`) | `EXISTS` direto na política | O `EXISTS` direto fecha um ciclo com o `WITH CHECK` dos itens: `42P17 infinite recursion` (provado em spike). A função roda com o papel de quem chama, e a RLS dos itens vale dentro dela |
+| D3 | `targets_public_select` consulta os itens por uma **função plpgsql** (`public_page_target_ids`, desde a Task 11) | `EXISTS` direto na política | O `EXISTS` direto fecha um ciclo com o `WITH CHECK` dos itens: `42P17 infinite recursion` (provado em spike). A função roda com o papel de quem chama, e a RLS dos itens vale dentro dela |
 | D4 | O `WITH CHECK` dos itens exige o alvo **visível ao dono**; o serviço também confere (`OwnTargetIDs`) para dizer **qual** item está errado | Só a FK | A FK ignora RLS: sem o `WITH CHECK`, o dono poria o alvo de outro usuário na página e publicaria o estado dele |
 | D5 | Rollup: bucket = hora cheia **UTC** (`epoch % 3600 = 0`); `ok` conta os **não-down** (degraded é sucesso, como no Plano 3); latências só dos sucessos, `NULL` numa hora sem sucesso | `date_trunc` | `date_trunc` em `timestamptz` usa o fuso da sessão; num fuso de meia hora, a "hora cheia" seria outra |
-| D6 | Consolidação idempotente (`ON CONFLICT DO UPDATE`) de `[marca d'água − 2h, hora cheia atual)`; sem rollup nenhum, volta **31 dias**. `RunMaintenance` a cada **15 min** | Diária | Um check que chega mais de 2h atrasado não entra no rollup |
+| D6 | Consolidação idempotente (`ON CONFLICT DO UPDATE`) de `[marca d'água − 2h, hora cheia atual)`; sem rollup nenhum, volta **62 dias** (31 até a Task 11, D30). `RunMaintenance` a cada **15 min** | Diária | Um check que chega mais de 2h atrasado não entra no rollup |
 | D7 | Retenção de `checks` por **partição inteira**: sai a partição que termina antes do corte (os checks duram 30–61 dias), com a **mesma advisory lock** de `ensure_checks_partition` | `DELETE` por linha | Um `DROP` concorrente com o `CREATE` da partição seria corrida no catálogo |
 | D8 | Notificações `sent`/`failed`/`cancelled` saem com **30 dias**; `pending` **nunca** sai por idade | Guardar para sempre | A outbox cresceria sem teto |
 | D9 | `/checks` acima de 48h: `items` horários (`bucket`, `total`, `ok`, `p50_ms`, `p95_ms`, `p99_ms`, `max_ms`), `from` arredondado para baixo até a hora, buckets em **UTC**, teto de **400 dias** (cobre os 13 meses dos rollups). A resposta ganha `resolution: "raw" \| "1h"` | Teto de 90 dias | Guardar 13 meses sem poder consultar seria só custo; 400 dias são até 9.600 itens |
@@ -71,7 +71,7 @@ O usuário delegou todas as decisões de desenho deste plano. Cada uma tem o cus
 | D16 | Barra: 90 dias **UTC**; verde ≥ **99,9%**, amarelo ≥ **99%**, vermelho abaixo, cinza sem check. Porcentagem **truncada** em duas casas | Arredondar | "100,00%" num dia com falha; com checks de 1 min, 99,9% de um dia é 1,4 check |
 | D17 | Latência pública = média das medianas horárias das últimas 24h, ponderada pelos sucessos | Mediana exata | Aproximação; a exata exigiria ler `checks` no escopo público a cada visita |
 | D18 | Incidentes públicos: **resolvidos**, dos últimos 90 dias, até **20**, só dos alvos na página, com nome de exibição, início e fim (**sem causa**) | Mostrar o aberto | O estado atual já diz que está fora; a causa é `error_kind`, que a §5.6 não lista |
-| D19 | Cache da projeção **30 s por slug** em processo, com `singleflight`; só sucesso é guardado; teto de 1.000 slugs; a consulta roda **desligada do contexto do visitante** com prazo de 5 s | Só o `Cache-Control` | A página é aberta quando algo quebrou: mil visitantes de IPs diferentes seriam mil agregações de 90 dias |
+| D19 | Cache da projeção **30 s por slug** em processo, com `singleflight`; só sucesso é guardado; teto de 1.000 slugs; a consulta roda **desligada do contexto do visitante** com prazo de 5 s; mudança do dono invalida o slug (D31) | Só o `Cache-Control` | A página é aberta quando algo quebrou: mil visitantes de IPs diferentes seriam mil agregações de 90 dias |
 | D20 | **10 KB para 5 serviços.** A barra é codificada pela **maioria**: a `<ol>` leva a classe mais comum e só os outros dias levam atributo. Pior caso com 5 serviços ~9,3 KB; caso comum < 7 KB | Cortar o máximo para 5 | Tirar capacidade legítima para cumprir um número; com 20 serviços a página passa de 10 KB |
 | D21 | 404 **idêntico** para inexistente, rascunho e slug malformado (este nem vai ao banco), com `no-store`; banco fora é **503 em HTML** | Cachear o 404 | Página recém-publicada presa num 404 em cache |
 | D22 | Cadeia `/p/` separada (como `/verify/`): sem CORS e sem `RequireCustomHeader`, CSP própria, limite por IP **120/min, burst 60** | Dentro da cadeia da API | Com `TRUSTED_PROXIES` vazio no Fly, todos os visitantes dividem um balde (ver pendências) |
@@ -79,6 +79,13 @@ O usuário delegou todas as decisões de desenho deste plano. Cada uma tem o cus
 | D24 | `RunMaintenance` **substitui** `MaintainChecksPartitions` (sem teste, panic com `every <= 0`) e roda também ao subir | Manter os dois | Dois jobs disputando a mesma advisory lock |
 | D25 | Três testes que nasceram vacuamente verdes na validação foram corrigidos e ficam registrados: `count(*)` de `channel_health` sem escopo (a RLS escondia tudo); rota sem `authn` que ainda dava 401 (o handler também recusa, comentado no teste); nome proibido que casava "id" dentro de "Incidents" | — | — |
 | D26 | Nonce da CSP em **base64 de URL sem padding** | base64 padrão | Com a padrão, o `+` sai como `&#43;` no atributo do `<style>` e o HTML deixa de trazer o nonce literal da CSP. Achado na **execução** deste plano: o teste de vazamento passou na validação porque o nonce sorteado não tinha `+`, e falhou no branch. `TestNonceNeedsNoEscaping` sorteia mil |
+| D27 | A política pública pergunta `id IN (SELECT public_page_target_ids())`: um conjunto por consulta (revisão final) | Função booleana por alvo (o desenho até a Task 10) | A função por alvo rodava uma vez para cada alvo da instância: ~0,5 s com 5 mil alvos, e 503 no pior momento |
+| D28 | Qualquer falha **transitória** (429, timeout, rede, 5xx), inclusive a que esgota as tentativas, para o canal no lote; o resto é adiado sem envio; só o 429 dentro de 1h devolve a tentativa, e quem está no teto falha de vez com o mesmo motivo. Lease = 8 × (10 s + 5 s) + 1 min | Parar só no 429 (Task 5) | Um webhook que trava seguraria o lote por k × 10 s, e os outros canais esperariam junto |
+| D29 | Retenção em duas transações: DELETEs primeiro; `DROP` sozinho, com `lock_timeout` de **2 s** | Uma transação | O `DROP` pega `ACCESS EXCLUSIVE` em `checks`: segurá-la durante os DELETEs, ou esperar por ela sem limite, enfileira o sondador e a página pública |
+| D30 | Backfill da primeira consolidação: **62 dias** | 31 | Os checks de 31 a 61 dias, que ainda existem no primeiro deploy, sumiriam no `DROP` sem nunca virar rollup |
+| D31 | `Create` e `Update` tiram do cache da instância o slug antigo e o novo | Esperar os 30 s | Um slug abandonado mostraria a página velha, e um slug tomado por outro dono mostraria a página do dono anterior |
+| D32 | `Update` trava a página (`FOR UPDATE`) antes de ler | Sem trava | Dois PATCH simultâneos: o segundo regravaria o campo que o primeiro mudou |
+| D33 | `public_page_target_ids` fica `SECURITY INVOKER` **sem** `search_path` fixo (achado recusado) | `SET search_path` | Sombrear `status_page_items` com tabela temporária exige executar SQL na própria sessão, com os próprios privilégios: não há fronteira de privilégio. Só importaria numa `SECURITY DEFINER` |
 
 ---
 
@@ -130,6 +137,7 @@ As cinco entradas que a spec implica e que mais provavelmente morderiam quem usa
 6. **Cadastro da página** e 7. **API do dono:** o domínio antes da borda HTTP.
 8. **Projeção pública** e 9. **HTML:** a projeção é testável sem HTTP; o HTML só apresenta.
 10. **Ponta a ponta e documentação.**
+11. **Correções da revisão final:** uma revisão independente do branch inteiro, depois da Task 10, achou sete defeitos e dois testes fracos (D27–D32).
 
 **Ambiente de teste.** Os testes com banco sobem PostgreSQL 16 por `testcontainers-go` (Docker precisa estar rodando). O `sqlc` é o v1.31.1 (`sqlc version`).
 
@@ -5429,6 +5437,1022 @@ Expected: tudo limpo e verde. O `govulncheck` pode citar uma vulnerabilidade num
 ```bash
 git add cmd/vigilume/statuspage_e2e_test.go docs/superpowers/
 git commit -m "test: ponta a ponta da status page e da manutenção; pendências do Plano 5"
+```
+
+---
+
+### Task 11: Correções da revisão final
+
+Uma revisão independente do branch inteiro, feita depois da Task 10, não achou vazamento nem acesso indevido no escopo público. Ela achou sete defeitos e dois testes fracos, e cada um tem aqui o teste que o prova. O oitavo achado (search_path da função plpgsql) foi recusado, com o motivo registrado na migration e na D33.
+
+**Files:**
+- Modify: `internal/storage/migrations/00006_statuspage_rollups.sql` (função `public_page_target_ids`, D27)
+- Modify: `internal/storage/queries/maintenance.sql` (`SetLocalLockTimeout`), `internal/storage/queries/statuspages.sql` (`LockStatusPage`)
+- Modify: `internal/storage/maintenance.go` (backfill de 62 dias; retenção em duas transações, D29 e D30)
+- Modify: `internal/notify/dispatcher.go` (falha transitória para o canal no lote; `doSistema`; lease calculado, D28)
+- Modify: `internal/statuspage/service.go` (`FOR UPDATE`; invalidação do cache, D31 e D32), `internal/statuspage/public.go` (`forget`)
+- Modify: `docs/superpowers/PENDENCIAS-PARA-O-PLANO-5.md`
+- Generated: `internal/storage/db/*.go`
+- Test: `internal/storage/{statuspage_rls,maintenance}_test.go`, `internal/notify/dispatcher_test.go`, `internal/statuspage/{service,public}_test.go`
+
+**Interfaces:**
+- Produces: `public_page_target_ids() RETURNS SETOF uuid` no lugar de `target_on_public_page(uuid)`; queries `SetLocalLockTimeout`, `LockStatusPage`; `(*cachePublico).forget(slug)`; `desfecho.transitoria`, `desfecho.doSistema`.
+
+**Contexto para quem implementa.** A migration 00006 muda **no próprio arquivo**, e não num 00007, porque ela nunca foi aplicada em ambiente nenhum: só existe neste branch. Os achados, na ordem da revisão:
+
+1. **A política pública chamava a função uma vez por alvo da instância**, de qualquer dono. Medido na revisão: ~0,5 s com 5 mil alvos. A política passa a perguntar `id IN (SELECT public_page_target_ids())`, e o Postgres roda a função uma vez por consulta. O teste conta as chamadas com `track_functions` e `pg_stat_get_xact_function_calls`, sem cronômetro.
+2. **Um canal lento segurava o lote por k × `sendTimeout`**, e os outros canais esperavam junto. Regressão da Task 5. Agora qualquer falha **transitória** para o canal no lote (D28). O lease passa a cobrir o pior lote.
+3. **O `DROP` da partição segurava `ACCESS EXCLUSIVE` em `checks`** durante a retenção inteira. Passa a rodar numa transação própria, com `lock_timeout` de 2 s (D29).
+4. **O backfill de 31 dias perdia os checks de 31 a 61 dias** no primeiro deploy. Passa a 62 (D30).
+5. **Slug renomeado continuava no cache**, inclusive quando outro dono o tomava. Invalidação no `Create` e no `Update` (D31).
+6. **Dois PATCH simultâneos perdiam campo.** `FOR UPDATE` (D32).
+7. **O canal virava `failing` por uma falha do próprio Vigilume** (lease vencido). Deixa de marcar.
+8. **Dois testes fracos.** O comentário de `TestPublicPolicyDoesNotWidenOwnerScope` prometia provar a guarda, e a guarda é redundante na semântica: agora diz que prova a propriedade. `TestPublicScopeSeesOnlyThePublishedPageTargets` contava zero em tabelas vazias; agora grava as linhas antes, confere que gravou, e cobre também `check_rollup_1h` e `target_health`.
+
+- [ ] **Step 1: Escrever os testes (falham)**
+
+Aplique em `internal/storage/statuspage_rls_test.go`:
+
+```diff
+--- a/internal/storage/statuspage_rls_test.go
++++ b/internal/storage/statuspage_rls_test.go
+@@ -79,14 +79,35 @@
+ 	if err := storage.EnsureChecksPartitions(ctx, pool, agora); err != nil {
+ 		t.Fatal(err)
+ 	}
++	// Uma linha de cada tabela por alvo, dentro e fora da página: sem elas, o
++	// 0 das tabelas que o público não pode ver seria verdade por acidente.
++	canal := novoCanal(t, pool, a, nil, time.Time{})
+ 	for _, alvo := range []uuid.UUID{naPagina, foraDaPagina, alvoB} {
+ 		novoCheck(t, pool, alvo, agora)
+-		novoIncidente(t, pool, alvo)
++		novaNotificacao(t, pool, novoIncidente(t, pool, alvo), canal)
++		if err := storage.InProberTx(ctx, pool, func(q *db.Queries) error { return q.EnsureTargetHealth(ctx, alvo) }); err != nil {
++			t.Fatal(err)
++		}
++	}
++	motivo := "rejected"
++	err := storage.InProberTx(ctx, pool, func(q *db.Queries) error {
++		return q.MarkChannelFailure(ctx, db.MarkChannelFailureParams{ChannelID: canal, Now: agora, LastError: &motivo})
++	})
++	if err != nil {
++		t.Fatal(err)
++	}
++	if _, err := storage.ConsolidateRollups(ctx, pool, agora.Add(2*time.Hour)); err != nil {
++		t.Fatal(err)
++	}
++	for tabela, quer := range map[string]int{"notifications": 3, "channel_health": 1, "check_rollup_1h": 3, "target_health": 3} {
++		if n := contarComoSondador(t, pool, `SELECT count(*) FROM `+tabela); n != quer {
++			t.Fatalf("a preparação gravou %d linhas em %s, queria %d", n, tabela, quer)
++		}
+ 	}
+-	novoCanal(t, pool, a, nil, time.Time{})
+ 
+ 	for tabela, quer := range map[string]int{
+ 		"status_pages": 1, "status_page_items": 1, "targets": 1, "checks": 1, "incidents": 1,
++		"check_rollup_1h": 1, "target_health": 1,
+ 		"notif_channels": 0, "notifications": 0, "channel_health": 0,
+ 	} {
+ 		if n := contarPublico(t, pool, "pagina-a", tabela); n != quer {
+@@ -94,7 +115,7 @@
+ 		}
+ 	}
+ 
+-	err := storage.InPublicTx(ctx, pool, "pagina-a", func(q *db.Queries) error {
++	err = storage.InPublicTx(ctx, pool, "pagina-a", func(q *db.Queries) error {
+ 		if _, err := q.GetPublicPage(ctx, "pagina-b"); !errors.Is(err, pgx.ErrNoRows) {
+ 			t.Errorf("com o slug de A, a página de B deu %v, queria ErrNoRows", err)
+ 		}
+@@ -186,8 +207,11 @@
+ 	}
+ }
+ 
+-// A política pública não muda o que o dono vê: fora do escopo público, ela
+-// não casa com nada.
++// A política pública não muda o que o dono vê. Prova a propriedade, e não a
++// guarda "app.public_slug IS NOT NULL" da política: sem ela, a função
++// devolveria os itens que o dono enxerga, que são só os das páginas dele, e
++// o resultado seria o mesmo (achado da revisão, provado por sabotagem). A
++// guarda é atalho: fora do escopo público, a função nem precisa rodar.
+ func TestPublicPolicyDoesNotWidenOwnerScope(t *testing.T) {
+ 	pool := testdb.New(t)
+ 	a, b := novoUsuario(t, pool), novoUsuario(t, pool)
+@@ -237,3 +261,63 @@
+ 		t.Errorf("o escopo verify viu %d linhas de channel_health", n)
+ 	}
+ }
++
++// A política pública de targets resolve os alvos da página UMA vez por
++// consulta, e não uma vez por alvo da instância (achado da revisão: com uma
++// função por linha, a página pública custava ~0,5 s com 5 mil alvos de
++// outros donos). A contagem de chamadas vem do próprio Postgres
++// (track_functions), sem cronômetro.
++func TestPublicPolicyResolvesThePageTargetsOnce(t *testing.T) {
++	pool := testdb.New(t)
++	ctx := context.Background()
++	a, outro := novoUsuario(t, pool), novoUsuario(t, pool)
++	novaPagina(t, pool, a, "pagina-a", true, novoAlvo(t, pool, a, agora))
++	for range 50 {
++		novoAlvo(t, pool, outro, agora)
++	}
++
++	var papel string
++	if err := pool.QueryRow(ctx, `SELECT current_user`).Scan(&papel); err != nil {
++		t.Fatal(err)
++	}
++	admin, err := storage.NewPool(ctx, testdb.AdminDSN(t))
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer admin.Close()
++	conn, err := admin.Acquire(ctx)
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer conn.Release()
++	// track_functions só o superusuário liga; SET ROLE devolve a conexão ao
++	// papel da aplicação, e a RLS volta a valer.
++	for _, sql := range []string{`SET track_functions = 'pl'`, `SET ROLE ` + pgx.Identifier{papel}.Sanitize()} {
++		if _, err := conn.Exec(ctx, sql); err != nil {
++			t.Fatal(err)
++		}
++	}
++	defer conn.Exec(ctx, `RESET ROLE`)
++	tx, err := conn.Begin(ctx)
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer tx.Rollback(ctx)
++	if _, err := tx.Exec(ctx, `SET TRANSACTION READ ONLY`); err != nil {
++		t.Fatal(err)
++	}
++	if _, err := tx.Exec(ctx, `SELECT set_config('app.public_slug', 'pagina-a', true)`); err != nil {
++		t.Fatal(err)
++	}
++	var vistos int
++	if err := tx.QueryRow(ctx, `SELECT count(*) FROM targets`).Scan(&vistos); err != nil {
++		t.Fatal(err)
++	}
++	var chamadas int64
++	if err := tx.QueryRow(ctx, `SELECT coalesce(pg_stat_get_xact_function_calls('public_page_target_ids'::regproc), 0)`).Scan(&chamadas); err != nil {
++		t.Fatal(err)
++	}
++	if vistos != 1 || chamadas < 1 || chamadas > 2 {
++		t.Errorf("o escopo público viu %d alvos com %d chamadas da função; queria 1 alvo e 1 ou 2 chamadas, e não uma por alvo (51)", vistos, chamadas)
++	}
++}
+```
+
+Aplique em `internal/storage/maintenance_test.go`:
+
+```diff
+--- a/internal/storage/maintenance_test.go
++++ b/internal/storage/maintenance_test.go
+@@ -38,7 +38,7 @@
+ 	err := storage.InUserTx(ctx, pool, dono, func(q *db.Queries) error {
+ 		var err error
+ 		rows, err = q.ListRollups(ctx, db.ListRollupsParams{
+-			UserID: dono, TargetID: alvo, FromAt: hora(0, 0).AddDate(0, 0, -40), ToAt: hora(0, 0).AddDate(0, 0, 40),
++			UserID: dono, TargetID: alvo, FromAt: hora(0, 0).AddDate(0, 0, -90), ToAt: hora(0, 0).AddDate(0, 0, 90),
+ 		})
+ 		return err
+ 	})
+@@ -307,3 +307,67 @@
+ 		t.Errorf("intervalo 0 deu %v, queria ErrMaintenanceInterval", err)
+ 	}
+ }
++
++// Sem rollup nenhum (o primeiro deploy), a consolidação volta até o check
++// bruto mais velho que as partições ainda podem guardar (61 dias), e não só
++// 31: senão a metade mais velha some no DROP sem nunca virar rollup.
++func TestFirstConsolidationReachesTheOldestRawChecks(t *testing.T) {
++	pool := testdb.New(t)
++	ctx := context.Background()
++	dono := novoUsuario(t, pool)
++	alvo := novoAlvo(t, pool, dono, agora)
++	velho := hora(10, 0).AddDate(0, 0, -60)
++	if err := storage.EnsureChecksPartitions(ctx, pool, velho); err != nil {
++		t.Fatal(err)
++	}
++	checkEm(t, pool, alvo, velho.Add(5*time.Minute), "up", 100)
++	consolidar(t, pool, hora(12, 0))
++	if rs := rollupsDe(t, pool, dono, alvo); len(rs) != 1 || !rs[0].Bucket.Equal(velho) {
++		t.Errorf("rollups = %+v, queria a hora de 60 dias atrás", rs)
++	}
++}
++
++// O DROP da partição vencida pega ACCESS EXCLUSIVE em checks. Com checks
++// ocupada, ele desiste em dropLockTimeout (55P03), em vez de enfileirar o
++// sondador atrás dele; os DELETEs, numa transação à parte, já valeram. A
++// rodada seguinte, com checks livre, apaga a partição.
++func TestPartitionDropGivesUpWhenChecksIsBusy(t *testing.T) {
++	pool := testdb.New(t)
++	ctx := context.Background()
++	hoje := hora(12, 0)
++	for _, mes := range []time.Time{hoje.AddDate(0, -2, 0), hoje} {
++		if err := storage.EnsureChecksPartitions(ctx, pool, mes); err != nil {
++			t.Fatal(err)
++		}
++	}
++	if _, err := pool.Exec(ctx, `INSERT INTO audit_log (id, action, at) VALUES ($1, 'teste', $2)`,
++		novoID(), hoje.AddDate(-1, -1, 0)); err != nil {
++		t.Fatal(err)
++	}
++
++	ocupada, err := pool.Begin(ctx)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if _, err := ocupada.Exec(ctx, `SELECT count(*) FROM checks`); err != nil {
++		t.Fatal(err)
++	}
++	prazo, cancel := context.WithTimeout(ctx, 20*time.Second)
++	defer cancel()
++	inicio := time.Now()
++	r, err := storage.ApplyRetention(prazo, pool, hoje)
++	if codigoPG(err) != "55P03" || time.Since(inicio) > 10*time.Second {
++		t.Errorf("com checks ocupada, ApplyRetention deu %v em %v; queria 55P03 (lock_timeout) em segundos", err, time.Since(inicio))
++	}
++	if r.DeletedAudit != 1 || contarComoSondador(t, pool, `SELECT count(*) FROM audit_log`) != 0 {
++		t.Errorf("os DELETEs não valeram com o DROP travado: %+v", r)
++	}
++	if err := ocupada.Rollback(ctx); err != nil {
++		t.Fatal(err)
++	}
++
++	r, err = storage.ApplyRetention(ctx, pool, hoje)
++	if err != nil || r.DroppedPartitions != 1 {
++		t.Errorf("com checks livre: %+v, %v; queria 1 partição apagada", r, err)
++	}
++}
+```
+
+Aplique em `internal/notify/dispatcher_test.go`:
+
+```diff
+--- a/internal/notify/dispatcher_test.go
++++ b/internal/notify/dispatcher_test.go
+@@ -315,6 +315,11 @@
+ 	if n := b.auditorias(t); n != 1 {
+ 		t.Errorf("%d entradas de auditoria, queria 1", n)
+ 	}
++	// A falha foi do Vigilume (o desfecho não chegou a ser gravado), não do
++	// canal: ele não vira failing (achado da revisão).
++	if c := b.canalVisto(t); c.Status != StatusVerified {
++		t.Errorf("canal = %+v; queria verified, sem culpa pela falha do próprio Vigilume", c)
++	}
+ }
+ 
+ func TestPermanentFailureIsFinalAtOnce(t *testing.T) {
+@@ -711,3 +716,69 @@
+ 		t.Errorf("dois canais travados levaram %v; em paralelo, ~1s", d)
+ 	}
+ }
++
++// tentativas põe attempts em todas as notificações do dono.
++func (b *bancada) tentativas(t *testing.T, n int32) {
++	t.Helper()
++	ctx := context.Background()
++	tx, err := b.pool.Begin(ctx)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if _, err := tx.Exec(ctx, `SELECT set_config('app.user_id', $1, true)`, b.dono.String()); err != nil {
++		t.Fatal(err)
++	}
++	if _, err := tx.Exec(ctx, `UPDATE notifications SET attempts = $1`, n); err != nil {
++		t.Fatal(err)
++	}
++	if err := tx.Commit(ctx); err != nil {
++		t.Fatal(err)
++	}
++}
++
++// Um webhook que trava não segura o lote por k × sendTimeout (achado da
++// revisão): depois de uma falha transitória, o resto da fila do canal é
++// adiado sem envio. Fora do 429, a tentativa conta, como contaria se cada
++// uma tivesse sido enviada e falhado igual.
++func TestTransientFailureHoldsTheRestOfTheChannel(t *testing.T) {
++	b := novaBancada(t, nil)
++	ids := b.apagao(t, 4)
++	b.canal.respostas = []error{&SendError{Reason: ReasonTimeout}}
++
++	b.despachar(t, 4)
++	if n := b.canal.quantos(); n != 1 {
++		t.Fatalf("%d envios, queria 1 (o resto do canal espera)", n)
++	}
++	for i, id := range ids {
++		l := b.estado(t, id)
++		if l.Status != "pending" || l.Attempts != 1 || l.Erro == nil || *l.Erro != "timeout" ||
++			!l.Proxima.Equal(b.clk.Now().Add(30*time.Second)) {
++			t.Errorf("notificação %d: %+v; queria pendente, 1 tentativa, timeout, próxima em 30s", i, l)
++		}
++	}
++	if v := testutil.ToFloat64(b.d.total.WithLabelValues("discord", "deferred")); v != 3 {
++		t.Errorf("notify_total{discord,deferred} = %v, queria 3", v)
++	}
++}
++
++// As adiadas que já estão no teto falham de vez, com o motivo de quem parou
++// o canal, sem esperar outro sendTimeout cada uma.
++func TestDeferredAtTheLastAttemptFailWithoutSending(t *testing.T) {
++	b := novaBancada(t, nil)
++	ids := b.apagao(t, 3)
++	b.tentativas(t, MaxAttempts-1)
++	b.canal.respostas = []error{&SendError{Reason: ReasonNetwork}}
++
++	b.despachar(t, 3)
++	if n := b.canal.quantos(); n != 1 {
++		t.Fatalf("%d envios, queria 1", n)
++	}
++	for i, id := range ids {
++		if l := b.estado(t, id); l.Status != "failed" || l.Erro == nil || *l.Erro != "network" {
++			t.Errorf("notificação %d: %+v; queria failed por network", i, l)
++		}
++	}
++	if c := b.canalVisto(t); c.Status != StatusFailing {
++		t.Errorf("canal = %+v; queria failing", c)
++	}
++}
+```
+
+Aplique em `internal/statuspage/service_test.go`:
+
+```diff
+--- a/internal/statuspage/service_test.go
++++ b/internal/statuspage/service_test.go
+@@ -280,3 +280,64 @@
+ 		t.Errorf("depois de apagar o alvo: %+v, %v; queria só o Site", p.Items, err)
+ 	}
+ }
++
++// Dois PATCH ao mesmo tempo não perdem campo (achado da revisão): o Update
++// trava a linha antes de ler. Aqui, outra transação trava a página e muda o
++// título; o PATCH de published espera por ela e lê o título novo. Sem a
++// trava, ele leria o título velho e o regravaria por cima.
++func TestConcurrentPatchesDoNotLoseFields(t *testing.T) {
++	a := novoAmbiente(t)
++	ctx := context.Background()
++	dono := a.usuario(t)
++	p, err := a.svc.Create(ctx, dono, statuspage.Input{Slug: "empresa", Title: "Velho"})
++	if err != nil {
++		t.Fatal(err)
++	}
++
++	outra, err := a.pool.Begin(ctx)
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer outra.Rollback(ctx)
++	for _, sql := range []string{
++		`SELECT set_config('app.user_id', '` + dono.String() + `', true)`,
++		`SELECT id FROM status_pages FOR UPDATE`,
++		`UPDATE status_pages SET title = 'Novo'`,
++	} {
++		if _, err := outra.Exec(ctx, sql); err != nil {
++			t.Fatal(err)
++		}
++	}
++
++	fim := make(chan error, 1)
++	sim := true
++	go func() {
++		_, err := a.svc.Update(ctx, dono, p.ID, statuspage.Patch{Published: &sim})
++		fim <- err
++	}()
++	// O PATCH está esperando pela trava da outra transação.
++	prazo := time.Now().Add(5 * time.Second)
++	for {
++		var esperando int
++		if err := a.pool.QueryRow(ctx, `SELECT count(*) FROM pg_stat_activity
++			WHERE wait_event_type = 'Lock' AND datname = current_database()`).Scan(&esperando); err != nil {
++			t.Fatal(err)
++		}
++		if esperando > 0 {
++			break
++		}
++		if time.Now().After(prazo) {
++			t.Fatal("o PATCH não esperou pela trava da outra transação")
++		}
++		time.Sleep(20 * time.Millisecond)
++	}
++	if err := outra.Commit(ctx); err != nil {
++		t.Fatal(err)
++	}
++	if err := <-fim; err != nil {
++		t.Fatal(err)
++	}
++	if got, err := a.svc.Get(ctx, dono); err != nil || got.Title != "Novo" || !got.Published {
++		t.Errorf("página = %+v, %v; queria o título da outra transação E published", got, err)
++	}
++}
+```
+
+Aplique em `internal/statuspage/public_test.go`:
+
+```diff
+--- a/internal/statuspage/public_test.go
++++ b/internal/statuspage/public_test.go
+@@ -221,7 +221,9 @@
+ }
+ 
+ // A projeção fica 30s em cache: mil visitantes não viram mil agregações. A
+-// página que acabou de ser publicada aparece na hora (o 404 não é guardado).
++// mudança aqui não passa pelo serviço (é outro processo, ou o sondador), e
++// por isso só aparece quando o cache vence. A página recém-publicada aparece
++// na hora: o 404 não é guardado.
+ func TestPublicViewIsCachedForThirtySeconds(t *testing.T) {
+ 	a := novoAmbiente(t)
+ 	ctx := context.Background()
+@@ -239,8 +241,12 @@
+ 		t.Fatalf("recém-publicada = %+v, %v; queria visível na hora", v, err)
+ 	}
+ 
+-	novo := "Título novo"
+-	if _, err := a.svc.Update(ctx, dono, p.ID, statuspage.Patch{Title: &novo}); err != nil {
++	// Outro processo muda o título, sem passar por este serviço.
++	err = storage.InUserTx(ctx, a.pool, dono, func(q *db.Queries) error {
++		_, err := q.UpdateStatusPage(ctx, db.UpdateStatusPageParams{UserID: dono, ID: p.ID, Slug: "empresa", Title: "Título novo", Published: true})
++		return err
++	})
++	if err != nil {
+ 		t.Fatal(err)
+ 	}
+ 	a.clk.Advance(29 * time.Second)
+@@ -253,6 +259,103 @@
+ 	}
+ }
+ 
++// Mudança feita por este serviço tira o slug do cache na hora (achado da
++// revisão): A renomeia "acme" e B toma o slug logo em seguida; /p/acme
++// mostra B, e não a página de A em cache. Despublicar também vale na hora.
++func TestOwnerChangesInvalidateTheCache(t *testing.T) {
++	a := novoAmbiente(t)
++	ctx := context.Background()
++	donoA, donoB := a.usuario(t), a.usuario(t)
++	pa, err := a.svc.Create(ctx, donoA, statuspage.Input{Slug: "acme", Title: "Página de A", Published: true})
++	if err != nil {
++		t.Fatal(err)
++	}
++	if v, err := a.svc.Public(ctx, "acme"); err != nil || v.Title != "Página de A" {
++		t.Fatalf("antes: %+v, %v", v, err)
++	}
++
++	novo := "acme2"
++	if _, err := a.svc.Update(ctx, donoA, pa.ID, statuspage.Patch{Slug: &novo}); err != nil {
++		t.Fatal(err)
++	}
++	// O endereço abandonado deixa de mostrar A na hora.
++	if _, err := a.svc.Public(ctx, "acme"); !errors.Is(err, statuspage.ErrNotFound) {
++		t.Errorf("/p/acme depois do rename = %v; queria ErrNotFound na hora", err)
++	}
++	if _, err := a.svc.Create(ctx, donoB, statuspage.Input{Slug: "acme", Title: "Página de B", Published: true}); err != nil {
++		t.Fatal(err)
++	}
++	if v, err := a.svc.Public(ctx, "acme"); err != nil || v.Title != "Página de B" {
++		t.Errorf("/p/acme depois da troca = %q, %v; queria a página de B na hora", v.Title, err)
++	}
++
++	// Com acme2 em cache, despublicar tem de tirá-la na hora.
++	if v, err := a.svc.Public(ctx, "acme2"); err != nil || v.Title != "Página de A" {
++		t.Fatalf("/p/acme2 = %q, %v", v.Title, err)
++	}
++	nao := false
++	if _, err := a.svc.Update(ctx, donoA, pa.ID, statuspage.Patch{Published: &nao}); err != nil {
++		t.Fatal(err)
++	}
++	if _, err := a.svc.Public(ctx, "acme2"); !errors.Is(err, statuspage.ErrNotFound) {
++		t.Errorf("despublicada = %v; queria ErrNotFound na hora", err)
++	}
++}
++
++// Com várias instâncias da API, o slug pode ser liberado em OUTRA instância,
++// e esta ainda guarda a página velha nele. Quem toma o slug por esta
++// instância, por Create ou por Update, tira do cache daqui a versão velha.
++func TestTakingASlugFreedElsewhereInvalidatesTheCache(t *testing.T) {
++	a := novoAmbiente(t)
++	ctx := context.Background()
++	donoA, donoB, donoC := a.usuario(t), a.usuario(t), a.usuario(t)
++	liberarEmOutraInstancia := func(dono uuid.UUID, p statuspage.Page, novoSlug string) {
++		t.Helper()
++		err := storage.InUserTx(ctx, a.pool, dono, func(q *db.Queries) error {
++			_, err := q.UpdateStatusPage(ctx, db.UpdateStatusPageParams{UserID: dono, ID: p.ID, Slug: novoSlug, Title: p.Title, Published: true})
++			return err
++		})
++		if err != nil {
++			t.Fatal(err)
++		}
++	}
++
++	pa, err := a.svc.Create(ctx, donoA, statuspage.Input{Slug: "acme", Title: "Página de A", Published: true})
++	if err != nil {
++		t.Fatal(err)
++	}
++	if _, err := a.svc.Public(ctx, "acme"); err != nil {
++		t.Fatal(err)
++	}
++	liberarEmOutraInstancia(donoA, pa, "acme-velha")
++	if _, err := a.svc.Create(ctx, donoB, statuspage.Input{Slug: "acme", Title: "Página de B", Published: true}); err != nil {
++		t.Fatal(err)
++	}
++	if v, err := a.svc.Public(ctx, "acme"); err != nil || v.Title != "Página de B" {
++		t.Errorf("Create no slug liberado: /p/acme = %q, %v; queria B na hora", v.Title, err)
++	}
++
++	pb, err := a.svc.Get(ctx, donoB)
++	if err != nil {
++		t.Fatal(err)
++	}
++	liberarEmOutraInstancia(donoB, pb, "acme-b")
++	pc, err := a.svc.Create(ctx, donoC, statuspage.Input{Slug: "zeta", Title: "Página de C", Published: true})
++	if err != nil {
++		t.Fatal(err)
++	}
++	if _, err := a.svc.Public(ctx, "acme"); err != nil {
++		t.Fatal(err) // ainda B, no cache desta instância
++	}
++	tomado := "acme"
++	if _, err := a.svc.Update(ctx, donoC, pc.ID, statuspage.Patch{Slug: &tomado}); err != nil {
++		t.Fatal(err)
++	}
++	if v, err := a.svc.Public(ctx, "acme"); err != nil || v.Title != "Página de C" {
++		t.Errorf("Update para o slug liberado: /p/acme = %q, %v; queria C na hora", v.Title, err)
++	}
++}
++
+ // Spec §5.6: a projeção pública não tem onde guardar id, URL, código de
+ // status ou causa. O teste percorre os tipos; um campo novo com um desses
+ // tipos ou nomes quebra aqui antes de chegar ao template.
+```
+
+- [ ] **Step 2: Rodar e ver falhar**
+
+Run: `go test -count=1 ./internal/storage/ ./internal/notify/ ./internal/statuspage/`
+Expected: FAIL em
+- `TestPublicPolicyResolvesThePageTargetsOnce`: a função `public_page_target_ids` não existe;
+- `TestFirstConsolidationReachesTheOldestRawChecks`: nenhum rollup;
+- `TestPartitionDropGivesUpWhenChecksIsBusy`: estoura o prazo de 20 s, e os DELETEs não valeram;
+- `TestNoSendPastTheLastAttempt`: o canal fica `failing`;
+- `TestTransientFailureHoldsTheRestOfTheChannel`: 4 envios, e não 1;
+- `TestDeferredAtTheLastAttemptFailWithoutSending`: 3 envios;
+- `TestOwnerChangesInvalidateTheCache`, `TestTakingASlugFreedElsewhereInvalidatesTheCache` e `TestConcurrentPatchesDoNotLoseFields`.
+
+`TestPublicScopeSeesOnlyThePublishedPageTargets` **passa**: ele ficou mais forte, e a prova dele é a sabotagem do Step 5.
+
+- [ ] **Step 3: Implementar**
+
+Aplique em `internal/storage/migrations/00006_statuspage_rollups.sql`:
+
+```diff
+--- a/internal/storage/migrations/00006_statuspage_rollups.sql
++++ b/internal/storage/migrations/00006_statuspage_rollups.sql
+@@ -83,18 +83,29 @@
+ -- policy" (42P17, provado em spike) ao expandir as políticas. Uma função
+ -- plpgsql não é expandida na reescrita; ela roda com o papel de quem chama,
+ -- e a RLS dos itens vale dentro dela.
++--
++-- A função devolve o CONJUNTO de alvos da página, e a política pergunta
++-- "id IN (conjunto)": o Postgres a roda uma vez por consulta (hashed
++-- SubPlan). Uma função booleana por alvo rodaria uma vez para cada alvo da
++-- instância, de qualquer usuário, e o custo da página pública cresceria com
++-- o total de alvos (achado da revisão: ~0,5 s com 5 mil alvos).
++--
++-- SECURITY INVOKER sem search_path fixo, de propósito: a função roda com os
++-- privilégios de quem chama, e sombrear status_page_items com uma tabela
++-- temporária exige executar SQL na própria sessão. Não há fronteira de
++-- privilégio a cruzar; isso só importaria numa SECURITY DEFINER.
+ -- +goose StatementBegin
+-CREATE FUNCTION target_on_public_page(p_target uuid) RETURNS bool
++CREATE FUNCTION public_page_target_ids() RETURNS SETOF uuid
+ LANGUAGE plpgsql STABLE AS $$
+ BEGIN
+-    RETURN EXISTS (SELECT 1 FROM status_page_items i WHERE i.target_id = p_target);
++    RETURN QUERY SELECT i.target_id FROM status_page_items i;
+ END
+ $$;
+ -- +goose StatementEnd
+ 
+ CREATE POLICY targets_public_select ON targets FOR SELECT
+     USING (NULLIF(current_setting('app.public_slug', true), '') IS NOT NULL
+-           AND target_on_public_page(targets.id));
++           AND targets.id IN (SELECT public_page_target_ids()));
+ 
+ -- Saúde do canal (pendência do Plano 3): o dispatcher grava o último sucesso
+ -- e a última falha definitiva, e a API mostra "failing". Tabela à parte, como
+@@ -159,7 +170,7 @@
+ DROP INDEX notifications_created_idx;
+ DROP TABLE channel_health;
+ DROP POLICY targets_public_select ON targets;
+-DROP FUNCTION target_on_public_page(uuid);
++DROP FUNCTION public_page_target_ids();
+ DROP TABLE status_page_items;
+ DROP TABLE status_pages;
+ DROP TABLE check_rollup_1h;
+```
+
+Aplique em `internal/storage/queries/maintenance.sql`:
+
+```diff
+--- a/internal/storage/queries/maintenance.sql
++++ b/internal/storage/queries/maintenance.sql
+@@ -26,6 +26,10 @@
+ -- name: LatestRollupBucket :one
+ SELECT coalesce(max(bucket), 'epoch'::timestamptz)::timestamptz FROM check_rollup_1h;
+ 
++-- Vale só até o fim da transação (o terceiro argumento de set_config).
++-- name: SetLocalLockTimeout :exec
++SELECT set_config('lock_timeout', sqlc.arg(timeout)::text, true);
++
+ -- name: DropChecksPartitionsBefore :one
+ SELECT drop_checks_partitions_before(sqlc.arg(cutoff)::timestamptz)::int;
+ 
+```
+
+Aplique em `internal/storage/queries/statuspages.sql`:
+
+```diff
+--- a/internal/storage/queries/statuspages.sql
++++ b/internal/storage/queries/statuspages.sql
+@@ -4,6 +4,11 @@
+ -- name: GetStatusPage :one
+ SELECT * FROM status_pages WHERE user_id = $1;
+ 
++-- A trava do PATCH: sem ela, dois PATCH simultâneos leem a mesma versão, e
++-- o segundo regrava os campos que o primeiro mudou (achado da revisão).
++-- name: LockStatusPage :one
++SELECT id FROM status_pages WHERE user_id = $1 FOR UPDATE;
++
+ -- name: InsertStatusPage :exec
+ INSERT INTO status_pages (id, user_id, slug, title, published, created_at)
+ VALUES ($1, $2, $3, $4, $5, $6);
+```
+
+Run: `sqlc generate && sqlc diff`
+
+Aplique em `internal/storage/maintenance.go`:
+
+```diff
+--- a/internal/storage/maintenance.go
++++ b/internal/storage/maintenance.go
+@@ -30,8 +30,15 @@
+ 	// um check que chegou atrasado ainda entra na hora dele.
+ 	rollupReconsolidate = 2 * time.Hour
+ 	// rollupBackfill é até onde a primeira rodada volta, sem rollup nenhum:
+-	// o que ainda existe de checks brutos.
+-	rollupBackfill = 31 * 24 * time.Hour
++	// o que ainda pode existir de checks brutos. A partição sai inteira, então
++	// um check vive até 61 dias; 31 perderia a metade mais velha no primeiro
++	// deploy (achado da revisão).
++	rollupBackfill = 62 * 24 * time.Hour
++	// dropLockTimeout limita a espera do DROP da partição vencida. O DROP
++	// pega ACCESS EXCLUSIVE em checks, e enquanto espera, enfileira atrás
++	// dele o INSERT do sondador e as leituras da página pública. Melhor
++	// desistir e tentar na próxima rodada.
++	dropLockTimeout = 2 * time.Second
+ )
+ 
+ var ErrMaintenanceInterval = errors.New("intervalo de manutenção precisa ser positivo")
+@@ -99,13 +106,16 @@
+ 
+ // ApplyRetention apaga o que venceu (spec §12). Pendência nunca sai por idade:
+ // uma notificação pendente ainda vai ser tentada.
++//
++// São duas transações. Os DELETEs vêm primeiro; o DROP das partições vem
++// sozinho, com lock_timeout, porque pega ACCESS EXCLUSIVE em checks e não
++// pode segurá-la durante o resto da retenção (achado da revisão). Se o DROP
++// não conseguir a trava, o erro sobe, os DELETEs já valeram, e a próxima
++// rodada tenta de novo.
+ func ApplyRetention(ctx context.Context, pool *pgxpool.Pool, now time.Time) (MaintenanceReport, error) {
+ 	var r MaintenanceReport
+ 	err := InProberTx(ctx, pool, func(q *db.Queries) error {
+ 		var err error
+-		if r.DroppedPartitions, err = q.DropChecksPartitionsBefore(ctx, now.Add(-ChecksRetention)); err != nil {
+-			return fmt.Errorf("apagar partições vencidas: %w", err)
+-		}
+ 		if r.DeletedRollups, err = q.DeleteOldRollups(ctx, now.AddDate(0, -RollupRetentionMonths, 0)); err != nil {
+ 			return fmt.Errorf("apagar rollups vencidos: %w", err)
+ 		}
+@@ -120,6 +130,19 @@
+ 		}
+ 		return nil
+ 	})
++	if err != nil {
++		return r, err
++	}
++	err = InProberTx(ctx, pool, func(q *db.Queries) error {
++		if err := q.SetLocalLockTimeout(ctx, fmt.Sprintf("%dms", dropLockTimeout.Milliseconds())); err != nil {
++			return fmt.Errorf("limitar a espera do DROP: %w", err)
++		}
++		var err error
++		if r.DroppedPartitions, err = q.DropChecksPartitionsBefore(ctx, now.Add(-ChecksRetention)); err != nil {
++			return fmt.Errorf("apagar partições vencidas: %w", err)
++		}
++		return nil
++	})
+ 	return r, err
+ }
+ 
+```
+
+Aplique em `internal/notify/dispatcher.go`:
+
+```diff
+--- a/internal/notify/dispatcher.go
++++ b/internal/notify/dispatcher.go
+@@ -28,13 +28,15 @@
+ 	maxConcurrentSends = 8
+ 	// sendTimeout é o prazo de um envio (spec §8): um webhook lento não
+ 	// segura o lote além disso.
+-	sendTimeout = 10 * time.Second
+-	// lease é quanto uma notificação reivindicada fica invisível para os
+-	// outros dispatchers. Tem de passar com folga de sendTimeout +
+-	// persistTimeout; um processo que morre no meio devolve a notificação à
+-	// fila quando o lease vence.
+-	lease          = 2 * time.Minute
++	sendTimeout    = 10 * time.Second
+ 	persistTimeout = 5 * time.Second
++	// lease é quanto uma notificação reivindicada fica invisível para os
++	// outros dispatchers; um processo que morre no meio devolve a notificação
++	// à fila quando ele vence. O mesmo canal recebe em série, então o pior
++	// lote é o lote inteiro num canal só, com cada envio lento mas bem
++	// sucedido: maxConcurrentSends × (sendTimeout + persistTimeout), mais
++	// folga. Menos que isso, um segundo dispatcher reenviaria.
++	lease = maxConcurrentSends*(sendTimeout+persistTimeout) + time.Minute
+ 
+ 	// MaxAttempts é o teto de tentativas (spec §8). Com o backoff abaixo, a
+ 	// sexta tentativa acontece cerca de 15 minutos depois da primeira.
+@@ -149,18 +151,21 @@
+ 	return filas
+ }
+ 
+-// entregarEmSerie entrega a fila de um canal. Depois de um 429, o resto da
+-// fila não é enviado: fica para quando o provedor pediu, sem gastar
+-// tentativa, porque não houve envio.
++// entregarEmSerie entrega a fila de um canal. Depois de uma falha
++// transitória (429, timeout, rede, 5xx), o resto da fila não é enviado: o
++// canal está pedindo espera ou está fora, e mandar mais só gastaria até
++// sendTimeout por notificação. Sem isso, um webhook que trava seguraria o
++// lote inteiro por k × sendTimeout, e os outros canais esperariam junto
++// (achado da revisão).
+ func (d *Dispatcher) entregarEmSerie(fila []db.ClaimDueNotificationsRow) {
+-	var espera time.Time
++	var parou *desfecho
+ 	for _, n := range fila {
+-		if !espera.IsZero() && d.perdoa429(n) {
+-			d.adiar(n, espera)
++		if parou != nil {
++			d.adiar(n, *parou)
+ 			continue
+ 		}
+-		if f := d.entregarProtegido(n); f.reason == ReasonRateLimited && f.status == "pending" {
+-			espera = f.proxima
++		if f := d.entregarProtegido(n); f.transitoria {
++			parou = &f
+ 		}
+ 	}
+ }
+@@ -184,10 +189,23 @@
+ }
+ 
+ // adiar devolve à fila, sem enviar, uma notificação cujo canal acabou de
+-// pedir espera.
+-func (d *Dispatcher) adiar(n db.ClaimDueNotificationsRow, ate time.Time) {
++// falhar de forma transitória. Só o 429 dentro de rateLimitGrace devolve a
++// tentativa: é o provedor pedindo espera. Nos outros casos a tentativa conta,
++// como contaria se ela tivesse sido enviada e falhado igual, e quem já está
++// no teto falha de vez, sem esperar outro sendTimeout.
++func (d *Dispatcher) adiar(n db.ClaimDueNotificationsRow, parou desfecho) {
+ 	d.total.WithLabelValues(n.Kind, "deferred").Inc()
+-	f := desfecho{status: "pending", reason: ReasonRateLimited, proxima: ate, devolver: true}
++	proxima := parou.proxima
++	if proxima.IsZero() { // quem parou o canal já tinha falhado de vez
++		proxima = d.clk.Now().Add(backoff(n.Attempts))
++	}
++	f := desfecho{status: "pending", reason: parou.reason, proxima: proxima}
++	switch {
++	case parou.reason == ReasonRateLimited && d.perdoa429(n):
++		f.devolver = true
++	case n.Attempts >= MaxAttempts:
++		f = desfecho{status: "failed", reason: parou.reason}
++	}
+ 	if err := d.persistir(n, f); err != nil {
+ 		slog.Error("gravar desfecho de notificação", "notification_id", n.ID, "erro", err)
+ 	}
+@@ -199,8 +217,15 @@
+ 	reason  Reason
+ 	proxima time.Time
+ 	// devolver desconta a tentativa que a reivindicação contou (429 dentro
+-	// de rateLimitGrace, ou adiamento sem envio).
++	// de rateLimitGrace).
+ 	devolver bool
++	// transitoria: o envio falhou por um motivo que passa (429, timeout,
++	// rede, 5xx), mesmo que a notificação tenha esgotado as tentativas. O
++	// resto da fila do canal no lote é adiado.
++	transitoria bool
++	// doSistema: a falha foi do Vigilume, e não do canal (o desfecho da
++	// última tentativa não chegou a ser gravado). Não marca o canal failing.
++	doSistema bool
+ }
+ 
+ func (d *Dispatcher) entregar(n db.ClaimDueNotificationsRow) desfecho {
+@@ -232,7 +257,7 @@
+ 	// commit que falhou) e a linha voltou quando o lease venceu: ela falha
+ 	// de vez sem enviar, porque o teto é de envios.
+ 	if n.Attempts > MaxAttempts {
+-		return desfecho{status: "failed", reason: ReasonUnknown}
++		return desfecho{status: "failed", reason: ReasonUnknown, doSistema: true}
+ 	}
+ 	canal, ok := d.notifiers[Kind(n.Kind)]
+ 	if !ok {
+@@ -260,14 +285,17 @@
+ 			se.Reason = ReasonTimeout
+ 		}
+ 	}
++	if se.Permanent {
++		return desfecho{status: "failed", reason: se.Reason}
++	}
+ 	espera := max(backoff(n.Attempts), se.RetryAfter)
+-	if se.Reason == ReasonRateLimited && !se.Permanent && d.perdoa429(n) {
+-		return desfecho{status: "pending", reason: se.Reason, proxima: d.clk.Now().Add(espera), devolver: true}
++	if se.Reason == ReasonRateLimited && d.perdoa429(n) {
++		return desfecho{status: "pending", reason: se.Reason, proxima: d.clk.Now().Add(espera), devolver: true, transitoria: true}
+ 	}
+-	if se.Permanent || n.Attempts >= MaxAttempts {
+-		return desfecho{status: "failed", reason: se.Reason}
++	if n.Attempts >= MaxAttempts {
++		return desfecho{status: "failed", reason: se.Reason, transitoria: true}
+ 	}
+-	return desfecho{status: "pending", reason: se.Reason, proxima: d.clk.Now().Add(espera)}
++	return desfecho{status: "pending", reason: se.Reason, proxima: d.clk.Now().Add(espera), transitoria: true}
+ }
+ 
+ // backoff dobra a cada tentativa a partir de firstBackoff: 30s, 1min,
+@@ -306,9 +334,12 @@
+ 			return err
+ 		}
+ 		// O canal passa a "failing" até a próxima entrega que der certo
+-		// (pendência do Plano 3: antes, a falha só ia para a auditoria).
+-		if err := q.MarkChannelFailure(ctx, db.MarkChannelFailureParams{ChannelID: n.ChannelID, Now: d.clk.Now(), LastError: motivo}); err != nil {
+-			return err
++		// (pendência do Plano 3: antes, a falha só ia para a auditoria). A
++		// falha do próprio Vigilume não é culpa do canal.
++		if !f.doSistema {
++			if err := q.MarkChannelFailure(ctx, db.MarkChannelFailureParams{ChannelID: n.ChannelID, Now: d.clk.Now(), LastError: motivo}); err != nil {
++				return err
++			}
+ 		}
+ 		// Falha definitiva vai para a trilha de auditoria (spec §8).
+ 		id, err := uuid.NewV7()
+```
+
+Aplique em `internal/statuspage/service.go`:
+
+```diff
+--- a/internal/statuspage/service.go
++++ b/internal/statuspage/service.go
+@@ -71,6 +71,9 @@
+ 		p, err = ler(ctx, q, userID)
+ 		return err
+ 	})
++	if err == nil {
++		s.cache.forget(in.Slug)
++	}
+ 	return p, err
+ }
+ 
+@@ -78,11 +81,19 @@
+ // resultado, como se fosse um cadastro novo.
+ func (s *Service) Update(ctx context.Context, userID, id uuid.UUID, patch Patch) (Page, error) {
+ 	var p Page
++	var slugAntigo string
+ 	err := storage.InUserTx(ctx, s.pool, userID, func(q *db.Queries) error {
++		if _, err := q.LockStatusPage(ctx, userID); err != nil {
++			if errors.Is(err, pgx.ErrNoRows) {
++				return ErrNotFound
++			}
++			return fmt.Errorf("travar status page: %w", err)
++		}
+ 		atual, err := ler(ctx, q, userID)
+ 		if err != nil {
+ 			return err
+ 		}
++		slugAntigo = atual.Slug
+ 		if atual.ID != id {
+ 			return ErrNotFound
+ 		}
+@@ -118,6 +129,13 @@
+ 		p, err = ler(ctx, q, userID)
+ 		return err
+ 	})
++	if err == nil {
++		// O slug antigo pode ser tomado por outro dono logo em seguida, e a
++		// página despublicada tem de sair na hora: o cache deste processo
++		// não pode servir a versão velha por mais 30s (achado da revisão).
++		s.cache.forget(slugAntigo)
++		s.cache.forget(p.Slug)
++	}
+ 	return p, err
+ }
+ 
+```
+
+Aplique em `internal/statuspage/public.go`:
+
+```diff
+--- a/internal/statuspage/public.go
++++ b/internal/statuspage/public.go
+@@ -229,6 +229,13 @@
+ 	return e.v, true
+ }
+ 
++// forget tira o slug do cache: a página mudou neste processo.
++func (c *cachePublico) forget(slug string) {
++	c.mu.Lock()
++	defer c.mu.Unlock()
++	delete(c.entradas, slug)
++}
++
+ func (c *cachePublico) put(slug string, v View, agora time.Time) {
+ 	c.mu.Lock()
+ 	defer c.mu.Unlock()
+```
+
+Aplique em `docs/superpowers/PENDENCIAS-PARA-O-PLANO-5.md`:
+
+```diff
+--- a/docs/superpowers/PENDENCIAS-PARA-O-PLANO-5.md
++++ b/docs/superpowers/PENDENCIAS-PARA-O-PLANO-5.md
+@@ -17,8 +17,9 @@
+ 5. **`PUBLIC_BASE_URL` é o host da API.** Agora vale também para a status page: o
+    `public_url` de `GET /status-pages` é `PUBLIC_BASE_URL/p/{slug}`, servido pela API.
+ 6. **Primeira manutenção depois do deploy.** Sem rollup nenhum, a primeira rodada consolida
+-   os últimos 31 dias de checks de uma vez (uma consulta só). Com muitos alvos, é a rodada
+-   mais pesada que o job faz; as seguintes voltam só 2 horas.
++   os últimos 62 dias de checks de uma vez (uma consulta só): tudo o que as partições ainda
++   guardam. Com muitos alvos, é a rodada mais pesada que o job faz; as seguintes voltam só
++   2 horas.
+ 
+ ## Resolvidas no Plano 4
+ 
+@@ -47,19 +48,28 @@
+ - **Dias da barra em UTC.** Sem JavaScript, não há fuso do visitante; os horários dos
+   incidentes também saem em UTC, e a página diz isso.
+ - **Cache de 30s em dois lugares.** O navegador (e qualquer proxy) guarda a resposta 30s, e o
+-  processo guarda a projeção 30s por slug. Mudar a página no painel leva até ~60s para
+-  aparecer para quem já a abriu. A página recém-publicada aparece na hora: o 404 não é
+-  guardado.
+-- **Cache por processo.** Com várias instâncias da API, cada uma tem o seu; o teto é de 1.000
+-  slugs por instância.
++  processo guarda a projeção 30s por slug. Uma mudança feita pelo painel tira o slug do cache
++  da instância que a recebeu; quem já abriu a página vê a mudança em até 30s (cache HTTP).
++  Checks, rollups e incidentes novos aparecem quando o cache vence. A página recém-publicada
++  aparece na hora: o 404 não é guardado.
++- **Cache por processo.** Com várias instâncias da API, cada uma tem o seu, e a mudança feita
++  numa leva até 30s para valer nas outras; o teto é de 1.000 slugs por instância.
+ - **Um 429 dentro do perdão ainda conta como `retry` em `notify_total`.** Os adiados sem envio
+   contam como `deferred`.
+ - **Um webhook que responde 429 para sempre** segura cada notificação por até 1h antes de ela
+   começar a gastar tentativas. Depois disso, as 6 tentativas seguem o backoff normal.
++- **Uma falha transitória para o canal no lote.** Depois de um 429, timeout, erro de rede ou
++  5xx, o resto das notificações daquele canal no lote é adiado sem envio. Fora do 429 dentro
++  de 1h, a tentativa conta, e quem está no teto falha de vez com o mesmo motivo. Um canal
++  fora do ar esgota as 6 tentativas das notificações dele em ~15 min, como antes.
++- **Lease de 3 min** (8 × (10 s + 5 s) + 1 min): um processo que morre no meio de um lote
++  devolve as notificações à fila 3 min depois.
+ - **Canal `failing` é derivado de "última falha depois do último sucesso".** Um canal que
+   alterna falha e sucesso fica `failing` só até a próxima entrega que der certo.
+ - **Retenção de checks por partição inteira:** os checks duram entre 30 e 61 dias.
+ - **429 e 413 da cadeia `/p/` saem como envelope JSON**, como os de `/verify/`.
++- **O DROP da partição vencida desiste em 2 s** se `checks` estiver ocupada (`lock_timeout`),
++  e tenta de novo na rodada seguinte. Os DELETEs da retenção rodam antes, noutra transação.
+ 
+ ## Para o Plano 5
+ 
+```
+
+- [ ] **Step 4: Rodar e ver passar**
+
+Run: `sqlc diff && gofmt -l . && go vet ./... && go test -race -count=1 ./...`
+Expected: PASS.
+
+- [ ] **Step 5: Sabotagem**
+
+Uma de cada vez; restaure depois de cada uma (e `sqlc generate` quando mexer em SQL):
+1. Na migration, volte ao desenho antigo: uma função `target_on_public_page(p_target uuid) RETURNS bool`, que consulta `public_page_target_ids()`, e a política com `AND target_on_public_page(targets.id)`. Expected: FAIL em `TestPublicPolicyResolvesThePageTargetsOnce`, com 51 chamadas. **Atenção:** trocar a política por uma subconsulta correlacionada (`SELECT bool_or(x = targets.id) FROM public_page_target_ids() x`) **não** é sabotagem válida. O `Function Scan` sem parâmetro externo materializa o resultado, e a função continua rodando uma vez só (visto na validação).
+2. Acrescente à migration `CREATE POLICY vaza ON notifications FOR SELECT USING (current_setting('app.public_slug', true) <> '')`. Expected: FAIL em `TestPublicScopeSeesOnlyThePublishedPageTargets` ("notifications mostrou 3 linhas").
+3. `rollupBackfill` de volta a 31 dias. Expected: FAIL em `TestFirstConsolidationReachesTheOldestRawChecks`.
+4. `SetLocalLockTimeout(ctx, "0")` (sem limite). Expected: FAIL em `TestPartitionDropGivesUpWhenChecksIsBusy` (prazo de 20 s estourado).
+5. Em `entregarEmSerie`, pare o canal só em 429 (`f.transitoria && f.reason == ReasonRateLimited`). Expected: FAIL em `TestTransientFailureHoldsTheRestOfTheChannel` e `TestDeferredAtTheLastAttemptFailWithoutSending`.
+6. Em `adiar`, tire o caso `n.Attempts >= MaxAttempts`. Expected: FAIL em `TestDeferredAtTheLastAttemptFailWithoutSending`.
+7. `if !f.doSistema` → `if true`. Expected: FAIL em `TestNoSendPastTheLastAttempt`.
+8. Tire a chamada a `LockStatusPage` do `Update`. Expected: FAIL em `TestConcurrentPatchesDoNotLoseFields`.
+9. Tire, um de cada vez, os três `forget`: o do slug antigo no `Update`, o do slug novo no `Update` e o do `Create`. Expected: FAIL em `TestOwnerChangesInvalidateTheCache` (slug abandonado) ou em `TestTakingASlugFreedElsewhereInvalidatesTheCache` (slug liberado em outra instância).
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add internal/storage/ internal/notify/ internal/statuspage/ docs/superpowers/PENDENCIAS-PARA-O-PLANO-5.md
+git commit -m "fix: correções da revisão final do Plano 4"
 ```
 
 ---
