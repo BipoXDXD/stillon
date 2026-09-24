@@ -258,6 +258,16 @@ func TestTickNeverClaimsMoreThanFreeSlots(t *testing.T) {
 
 // Spec §6.2 e §14: dois sondadores sobre o mesmo banco nunca sondam o mesmo
 // alvo duas vezes.
+//
+// As duas reivindicações precisam se SOBREPOR no banco, e isso não acontece
+// por acaso: cada Tick é uma transação de menos de um milissegundo, e dois
+// Ticks largados juntos quase sempre rodam em série (a versão anterior deste
+// teste, sem SKIP LOCKED na query, ficou vermelha 0 vezes em 100 com -race).
+// Por isso uma transação do teste trava UM alvo. Sem SKIP LOCKED, as duas
+// reivindicações bloqueiam, uma na trava do teste e a outra na da primeira,
+// e o teste as vê paradas em pg_stat_activity antes de soltar; a segunda,
+// com o snapshot de antes do commit da primeira, reivindica tudo de novo.
+// Com SKIP LOCKED, nenhuma bloqueia: pulam o alvo travado e dividem o resto.
 func TestTwoSchedulersNeverProbeTheSameTarget(t *testing.T) {
 	var batidas sync.Map // caminho → *atomic.Int32
 	srv, client := servidorLiberado(t, func(w http.ResponseWriter, r *http.Request) {
@@ -275,36 +285,138 @@ func TestTwoSchedulersNeverProbeTheSameTarget(t *testing.T) {
 		b.alvo(t, fmt.Sprintf("%s/alvo-%d", srv.URL, i), nil)
 	}
 
-	var largada sync.WaitGroup
-	largada.Add(1)
+	ctx := context.Background()
+	trava, err := b.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := trava.Exec(ctx, `SELECT set_config('app.scope', 'prober', true)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := trava.Exec(ctx, `SELECT id FROM targets ORDER BY id LIMIT 1 FOR UPDATE`); err != nil {
+		t.Fatal(err)
+	}
+
 	var soma atomic.Int32
 	var fim sync.WaitGroup
+	acabaram := make(chan struct{})
 	for _, s := range []*Scheduler{b.s, outro} {
 		fim.Add(1)
 		go func() {
 			defer fim.Done()
-			largada.Wait()
-			n, err := s.Tick(context.Background())
+			n, err := s.Tick(ctx)
 			if err != nil {
 				t.Error(err)
 			}
 			soma.Add(int32(n))
 		}()
 	}
-	largada.Done()
-	fim.Wait()
+	go func() {
+		fim.Wait()
+		close(acabaram)
+	}()
+	// Num Fatal abaixo, a trava ainda estaria de pé e os Ticks, presos nela.
+	// Este cleanup roda antes dos Stop e do fechamento do pool.
+	t.Cleanup(func() {
+		_ = trava.Rollback(ctx)
+		<-acabaram
+	})
+
+	// Espera um de dois desfechos: os dois Ticks terminaram (nenhum bloqueou)
+	// ou as duas reivindicações estão paradas em lock.
+	prazo := time.After(esperaMaxima)
+	passo := time.NewTicker(5 * time.Millisecond)
+	defer passo.Stop()
+esperando:
+	for {
+		var bloqueadas int
+		err := b.pool.QueryRow(ctx, `
+			SELECT count(*) FROM pg_stat_activity
+			 WHERE datname = current_database() AND pid <> pg_backend_pid()
+			   AND wait_event_type = 'Lock' AND query LIKE '%name: ClaimDueTargets%'`).Scan(&bloqueadas)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if bloqueadas == 2 {
+			break
+		}
+		select {
+		case <-acabaram:
+			break esperando
+		case <-prazo:
+			t.Fatalf("nem os Ticks terminaram nem as reivindicações bloquearam (%d bloqueadas)", bloqueadas)
+		case <-passo.C:
+		}
+	}
+	if err := trava.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	esperar(t, acabaram, "os dois Ticks terminarem")
+
+	if soma.Load() != total-1 {
+		t.Errorf("os dois dispararam %d, queria %d: todos menos o travado", soma.Load(), total-1)
+	}
+	// O alvo travado continua vencido, e o Tick seguinte o pega: SKIP LOCKED
+	// adia, não perde.
+	if n, err := b.s.Tick(ctx); err != nil || n != 1 {
+		t.Errorf("Tick depois da trava = %d, %v; queria 1, o alvo que estava travado", n, err)
+	}
 	b.s.Stop(esperaMaxima)
 	outro.Stop(esperaMaxima)
 
-	if soma.Load() != total {
-		t.Errorf("os dois dispararam %d, queria %d", soma.Load(), total)
-	}
+	caminhos := 0
 	batidas.Range(func(caminho, c any) bool {
+		caminhos++
 		if n := c.(*atomic.Int32).Load(); n != 1 {
 			t.Errorf("%s sondado %d vezes", caminho, n)
 		}
 		return true
 	})
+	if caminhos != total {
+		t.Errorf("%d alvos sondados, queria %d", caminhos, total)
+	}
+}
+
+// Um COMMIT que falha chega a Tick com os alvos já lidos pelo UPDATE, e
+// nenhum deles é disparado. Se só as vagas que sobraram voltassem, as outras
+// ficariam presas para sempre, e o agendador morreria de fome aos poucos.
+//
+// A falha vem de uma constraint trigger adiada, que só dispara no COMMIT: o
+// UPDATE da reivindicação devolve as linhas normalmente. O papel da
+// aplicação é dono das tabelas, e o snapshot restaurado no fim do teste leva
+// a trigger embora.
+func TestFailedClaimReturnsAllSlots(t *testing.T) {
+	srv, client := servidorLiberado(t, func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
+	b := novaBancada(t, client, 1)
+	alvo := b.alvo(t, srv.URL, nil)
+
+	ctx := context.Background()
+	if _, err := b.pool.Exec(ctx, `
+		CREATE FUNCTION falhar_no_commit() RETURNS trigger LANGUAGE plpgsql AS $$
+		BEGIN
+			RAISE EXCEPTION 'commit sabotado pelo teste';
+		END $$;
+		CREATE CONSTRAINT TRIGGER falhar_no_commit AFTER UPDATE ON targets
+			DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION falhar_no_commit();`); err != nil {
+		t.Fatal(err)
+	}
+
+	n, err := b.s.Tick(ctx)
+	if err == nil || !strings.Contains(err.Error(), "commit sabotado pelo teste") || n != 0 {
+		t.Fatalf("Tick = %d, %v; queria 0 e a falha do COMMIT", n, err)
+	}
+
+	if _, err := b.pool.Exec(ctx, `DROP TRIGGER falhar_no_commit ON targets`); err != nil {
+		t.Fatal(err)
+	}
+	// Com uma vaga só, este Tick só dispara se a vaga do Tick que falhou voltou.
+	if n, err := b.s.Tick(ctx); err != nil || n != 1 {
+		t.Fatalf("Tick depois da falha = %d, %v; queria 1: a vaga não voltou", n, err)
+	}
+	b.s.Stop(esperaMaxima)
+	if rows := b.checks(t, alvo); len(rows) != 1 || rows[0].Status != "up" {
+		t.Errorf("checks = %+v, queria um up", rows)
+	}
 }
 
 // logSeguro é um buffer que aceita escrita concorrente: o agendador loga de
