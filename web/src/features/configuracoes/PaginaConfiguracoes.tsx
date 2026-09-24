@@ -193,7 +193,19 @@ function segredoDe(uri: string): string {
 const esquemaSenha = z.object({ senha: z.string().min(1, 'Informe a senha.') })
 const esquemaCodigo = z.object({ codigo: z.string().trim().min(1, 'Informe o código.') })
 
-function AtivarTotp({ aoTerminar, aoTravar }: { aoTerminar: () => void; aoTravar: () => void }) {
+// 403 no enroll ou no confirm: o 2FA já está ligado (outra aba o ligou com
+// este diálogo aberto; totphandlers.go).
+const jaAtivada = (e: unknown) => e instanceof ApiError && e.status === 403
+
+function AtivarTotp({
+  aoTerminar,
+  aoTravar,
+  aoJaAtivada,
+}: {
+  aoTerminar: () => void
+  aoTravar: () => void
+  aoJaAtivada: () => void
+}) {
   const api = useApi()
   const [passo, setPasso] = useState<'senha' | 'codigo' | 'codigos'>('senha')
   const [uri, setUri] = useState('')
@@ -218,7 +230,10 @@ function AtivarTotp({ aoTerminar, aoTravar }: { aoTerminar: () => void; aoTravar
             setUri((await api.totpCadastrar(v.senha)).otpauth_uri)
             setPasso('codigo')
           } catch (e) {
-            setErro(erroDeCredencial(e, 'Senha incorreta.'))
+            if (jaAtivada(e)) {
+              setErro({ texto: JA_ATIVADA, renovavel: false })
+              aoJaAtivada()
+            } else setErro(erroDeCredencial(e, 'Senha incorreta.'))
           }
         })}
       >
@@ -244,6 +259,11 @@ function AtivarTotp({ aoTerminar, aoTravar }: { aoTerminar: () => void; aoTravar
             aoTravar()
             setPasso('codigos')
           } catch (e) {
+            if (jaAtivada(e)) {
+              setErro({ texto: JA_ATIVADA, renovavel: false })
+              aoJaAtivada()
+              return
+            }
             setErro(
               e instanceof ApiError && e.code === 'validation_failed'
                 ? { texto: CODIGO_NAO_ACEITO, renovavel: false }
@@ -527,6 +547,12 @@ export function PaginaConfiguracoes() {
         <AtivarTotp
           aoTravar={() => setTravado(true)}
           aoTerminar={() => terminar('Verificação em duas etapas ativada.')}
+          // O /me relido fecha o diálogo (o portão); o aviso fica no toast,
+          // que sobrevive a ele.
+          aoJaAtivada={() => {
+            avisar(JA_ATIVADA)
+            reler()
+          }}
         />
       </Dialogo>
       {/* Desativar só com o 2FA ligado segundo o /me relido: sem 2FA, o

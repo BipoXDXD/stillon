@@ -325,6 +325,34 @@ describe('2FA', () => {
     falha.mockRestore()
   })
 
+  // Revisão final: o 2FA ligado em outra aba com o diálogo de ativar já
+  // aberto. O enroll (e o confirm) respondem 403, que aparecia como
+  // "Operação não permitida.". Agora: o texto certo e o /me relido (que
+  // fecha o diálogo). Sabotagem: em aoJaAtivada, tirar o reler() → o
+  // diálogo fica aberto com o botão "Ativar" na tela.
+  for (const passo of ['enroll', 'confirm'] as const) {
+    it(`403 no ${passo}: "já está ativada", e o /me relido`, async () => {
+      const r = await renderizarPainel('/settings')
+      await r.usuario.click(await screen.findByRole('button', { name: 'Ativar' }))
+      const dialogo = await screen.findByRole('dialog')
+      if (passo === 'confirm') {
+        await r.usuario.type(within(dialogo).getByLabelText('Sua senha'), SENHA)
+        await r.usuario.click(within(dialogo).getByRole('button', { name: 'Continuar' }))
+        await r.usuario.type(await within(dialogo).findByLabelText('Código de 6 dígitos'), TOTP_OK)
+        r.falsa.estado.totpLigado = true
+        await r.usuario.click(within(dialogo).getByRole('button', { name: 'Ativar' }))
+      } else {
+        await r.usuario.type(within(dialogo).getByLabelText('Sua senha'), SENHA)
+        r.falsa.estado.totpLigado = true
+        await r.usuario.click(within(dialogo).getByRole('button', { name: 'Continuar' }))
+      }
+      expect((await screen.findAllByText('A verificação em duas etapas já está ativada.'))[0]).toBeInTheDocument()
+      await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+      expect(await screen.findByRole('button', { name: 'Desativar' })).toBeInTheDocument()
+      expect(screen.queryByText('Operação não permitida.')).not.toBeInTheDocument()
+    })
+  }
+
   // PENDENCIAS do Plano 6: trocar a senha apaga o cadastro pendente, e o
   // confirm responde o mesmo 400 de um código errado.
   it('código não aceito na ativação sugere recomeçar, se a senha foi trocada', async () => {
