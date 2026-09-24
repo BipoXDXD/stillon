@@ -34,7 +34,7 @@ Valores copiados da spec e das decisões do usuário. Valem para todas as tarefa
 - **Retenção (spec §12):** `checks` 30 dias por `DROP` da partição mensal; `check_rollup_1h` **13 meses**; `incidents` indefinida; `audit_log` **12 meses**; `sessions` **7 dias após expirar**. O job roda nos papéis `all` e `prober`, cria a partição do mês seguinte e consolida os rollups.
 - **Envelope de erro estável** (spec §9.1); os `fields` são vocabulário fechado, nunca eco da entrada.
 - **`go test -race -count=1 ./...` verde ao fim de toda tarefa**, e `sqlc diff` limpo quando a tarefa mexe em SQL.
-- **Prova por sabotagem é obrigatória** para toda asserção de ausência ("não vaza", "não vê", "não conta"). O implementador quebra a propriedade de propósito, vê o teste ficar vermelho, restaura, e **registra no relatório** o que quebrou e o que viu. O teste vacuamente verde apareceu 14 vezes no Plano 1, 5 no Plano 2, e **três vezes na validação deste plano** (ver D25).
+- **Prova por sabotagem é obrigatória** para toda asserção de ausência ("não vaza", "não vê", "não conta"). O implementador quebra a propriedade de propósito, vê o teste ficar vermelho, restaura, e **registra no relatório** o que quebrou e o que viu. O teste vacuamente verde apareceu 14 vezes no Plano 1, 5 no Plano 2, e **três vezes na validação deste plano** (ver D25); um quarto defeito, que dependia de sorteio, só apareceu na execução (D26).
 
 ### Desvios registrados em relação à spec
 
@@ -78,6 +78,7 @@ O usuário delegou todas as decisões de desenho deste plano. Cada uma tem o cus
 | D23 | `public_url` no DTO do dono (`PUBLIC_BASE_URL/p/{slug}`), também em rascunho | O painel monta | Duas fontes da mesma URL |
 | D24 | `RunMaintenance` **substitui** `MaintainChecksPartitions` (sem teste, panic com `every <= 0`) e roda também ao subir | Manter os dois | Dois jobs disputando a mesma advisory lock |
 | D25 | Três testes que nasceram vacuamente verdes na validação foram corrigidos e ficam registrados: `count(*)` de `channel_health` sem escopo (a RLS escondia tudo); rota sem `authn` que ainda dava 401 (o handler também recusa, comentado no teste); nome proibido que casava "id" dentro de "Incidents" | — | — |
+| D26 | Nonce da CSP em **base64 de URL sem padding** | base64 padrão | Com a padrão, o `+` sai como `&#43;` no atributo do `<style>` e o HTML deixa de trazer o nonce literal da CSP. Achado na **execução** deste plano: o teste de vazamento passou na validação porque o nonce sorteado não tinha `+`, e falhou no branch. `TestNonceNeedsNoEscaping` sorteia mil |
 
 ---
 
@@ -4526,7 +4527,7 @@ HTML renderizado no servidor, sem JavaScript, numa cadeia HTTP separada.
 - Consumes: `statuspage.Service.Public` (Task 8); `pagina()` e as constantes de `verifyhandlers.go` (Plano 3); `paginaJSON` (Task 7).
 - Produces: `GET /p/{slug}` → `200 text/html` com `Cache-Control: public, max-age=30` e CSP `default-src 'none'; style-src 'nonce-…'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'`; `404` idêntico e `no-store`; `503` em HTML.
 
-**Contexto para quem implementa.** O template recebe um modelo **só de strings prontas** (`paginaModelo`): ele não formata, não decide, e não tem acesso a nada da `View` que não tenha sido copiado de propósito. O `html/template` escapa tudo; o atributo `class` fica entre aspas porque, sem elas, os dois ramos de `{{if}}` terminam em contextos diferentes e o template não compila. A barra é codificada pela maioria (D20): cada dia sem atributo custa 4 bytes, com atributo, 14. Os dias saem em `<li>` sem fechamento, que é opcional em HTML.
+**Contexto para quem implementa.** O template recebe um modelo **só de strings prontas** (`paginaModelo`): ele não formata, não decide, e não tem acesso a nada da `View` que não tenha sido copiado de propósito. O `html/template` escapa tudo; o atributo `class` fica entre aspas porque, sem elas, os dois ramos de `{{if}}` terminam em contextos diferentes e o template não compila. A barra é codificada pela maioria (D20): cada dia sem atributo custa 4 bytes, com atributo, 14. Os dias saem em `<li>` sem fechamento, que é opcional em HTML. O nonce é base64 **de URL** (D26).
 
 - [ ] **Step 1: Escrever os testes (falham)**
 
@@ -4538,6 +4539,7 @@ package httpapi
 import (
 	"bytes"
 	"fmt"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -4661,6 +4663,20 @@ func TestPresentationRules(t *testing.T) {
 		}
 		if got := resumo(items); got != c.quer {
 			t.Errorf("resumo(%v) = %q, queria %q", c.estados, got, c.quer)
+		}
+	}
+}
+
+// O nonce vai para o atributo do <style> e para o cabeçalho da CSP, e os
+// dois têm de ser o mesmo texto. Um caractere que o html/template escapa
+// ("+" vira "&#43;") quebraria isso só às vezes, conforme o sorteio: por
+// isso o teste sorteia mil.
+func TestNonceNeedsNoEscaping(t *testing.T) {
+	seguro := regexp.MustCompile(`^[A-Za-z0-9_-]{22}$`)
+	for range 1000 {
+		n, err := novoNonce()
+		if err != nil || !seguro.MatchString(n) {
+			t.Fatalf("nonce %q (%v): queria 22 caracteres de base64 de URL", n, err)
 		}
 	}
 }
@@ -4940,12 +4956,17 @@ const (
 		`<h1>Status indisponível</h1><p>Tente de novo em instantes.</p></html>`
 )
 
+// novoNonce usa base64 de URL, sem padding: a gramática de nonce da CSP
+// aceita "-" e "_", e o html/template não escapa nenhum dos dois. Com a
+// base64 padrão, o "+" sairia como "&#43;" no atributo, e o HTML deixaria de
+// trazer o nonce literal da CSP (defeito achado na execução: o teste falhava
+// sempre que o nonce sorteado tinha um "+").
 func novoNonce() (string, error) {
 	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {
 		return "", err
 	}
-	return base64.StdEncoding.EncodeToString(b), nil
+	return base64.RawURLEncoding.EncodeToString(b), nil
 }
 
 // O modelo de apresentação: só strings prontas. O template não formata,
@@ -5118,6 +5139,7 @@ Uma de cada vez; rode `go test -count=1 -run 'TestPublicPage|TestBar|TestPresent
 2. Troque o `style-src 'nonce-…'` por `style-src 'unsafe-inline'`. Expected: FAIL no mesmo teste.
 3. Passe um nonce fixo para `apresentar`. Expected: FAIL (o nonce se repete entre respostas).
 4. Em `barra`, não marque o dia verde com `"g"` quando a maioria é outra. Expected: FAIL em `TestBarEncodesByMajority`.
+5. Em `novoNonce`, troque `base64.RawURLEncoding` por `base64.StdEncoding`. Rode `-run TestNonce`. Expected: FAIL (o `=` do padding, e em ~29% dos sorteios um `+`, que o template escaparia como `&#43;`).
 
 A cadeia `/p/` separada da API não tem teste próprio: dentro da cadeia da API, um `GET` se comportaria igual (o handler sobrescreve CSP e cache, e `RequireCustomHeader` só olha mutações). A separação dá o balde próprio de rate limit e deixa a CSP da API intocada; é organização, não uma propriedade observável.
 
