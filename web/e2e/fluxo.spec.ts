@@ -1,4 +1,4 @@
-import type { APIRequestContext } from '@playwright/test'
+import type { APIRequestContext, APIResponse } from '@playwright/test'
 import { controlePositivo, expect, test, violacoes } from './fixtures'
 
 // O alvo que o teste cadastra. Um passo que falha no meio deixaria o alvo
@@ -8,25 +8,63 @@ import { controlePositivo, expect, test, violacoes } from './fixtures'
 // a busca não acha nada.
 let nomeDoAlvo = ''
 
+// Os limitadores (ver abaixo) respondem 429 sem Retry-After. A limpeza roda
+// depois do fluxo, que gastou os baldes: um 429 aqui é o limite, não o
+// produto. Espera com recuo limitado (2+4+8+16 s = 30 s, o bastante para o
+// balde do login, 1 ficha a cada 6 s, e o por usuário, 1 por segundo) e tenta
+// de novo; o afterEach tem prazo próprio de 60 s. Qualquer outro status volta
+// na hora e cai na asserção de quem chamou: um 500 não vira nova tentativa.
+const RECUOS_DO_429_MS = [2_000, 4_000, 8_000, 16_000]
+
+async function comRecuo(oque: string, fazer: () => Promise<APIResponse>): Promise<APIResponse> {
+  for (let i = 0; ; i++) {
+    const r = await fazer()
+    if (r.status() !== 429) return r
+    const espera = RECUOS_DO_429_MS[i]
+    if (espera === undefined) {
+      // Esgotado: falha com o motivo claro, sem se passar por outro erro.
+      throw new Error(
+        `limpeza do E2E: ${oque} ainda em 429 depois de ${RECUOS_DO_429_MS.length} novas tentativas ` +
+          `(${RECUOS_DO_429_MS.reduce((a, b) => a + b, 0) / 1000} s de recuo); o alvo "${nomeDoAlvoEmLimpeza}" pode ter ficado para trás`,
+      )
+    }
+    console.log(`limpeza do E2E: ${oque} deu 429; nova tentativa em ${espera / 1000} s`)
+    await new Promise((ok) => setTimeout(ok, espera))
+  }
+}
+
+let nomeDoAlvoEmLimpeza = ''
+
+// Um login só: o token dele serve à lista e a todos os DELETE (o balde do
+// login é o mais apertado, 5 de burst por IP).
 async function apagarPeloNome(request: APIRequestContext, email: string, senha: string, nome: string) {
+  nomeDoAlvoEmLimpeza = nome
   const mutacao = { 'X-Requested-With': 'vigilume' }
-  const login = await request.post('/api/v1/auth/login', { headers: mutacao, data: { email, password: senha } })
-  expect(login.ok(), 'login da limpeza').toBe(true)
+  const login = await comRecuo('o login', () =>
+    request.post('/api/v1/auth/login', { headers: mutacao, data: { email, password: senha } }),
+  )
+  expect(login.status(), 'login da limpeza').toBe(200)
   const { access_token: token } = (await login.json()) as { access_token: string }
   const autorizado = { Authorization: `Bearer ${token}` }
   try {
-    const lista = await request.get('/api/v1/targets?limit=100', { headers: autorizado })
+    const lista = await comRecuo('a lista de alvos', () => request.get('/api/v1/targets?limit=100', { headers: autorizado }))
+    expect(lista.status(), 'lista da limpeza').toBe(200)
     const { items } = (await lista.json()) as { items: { id: string; name: string }[] }
     const sobras = items.filter((a) => a.name === nome)
     for (const a of sobras) {
-      const r = await request.delete(`/api/v1/targets/${a.id}`, { headers: { ...autorizado, ...mutacao } })
+      const r = await comRecuo(`o DELETE de ${a.id}`, () =>
+        request.delete(`/api/v1/targets/${a.id}`, { headers: { ...autorizado, ...mutacao } }),
+      )
       expect([204, 404], `apagar ${a.id}`).toContain(r.status())
     }
     console.log(`limpeza do E2E: ${sobras.length} alvo(s) "${nome}" apagado(s)`)
   } finally {
     // O cookie de refresh do login da limpeza ficou no contexto do request:
-    // o logout encerra essa sessão também.
-    await request.post('/api/v1/auth/logout', { headers: mutacao })
+    // o logout encerra essa sessão também. Com recuo: um 429 aqui deixaria a
+    // sessão viva até expirar.
+    await comRecuo('o logout', () => request.post('/api/v1/auth/logout', { headers: mutacao })).catch((e: unknown) =>
+      console.log(String(e)),
+    )
   }
 }
 

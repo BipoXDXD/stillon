@@ -137,12 +137,25 @@ for (const tema of ['claro', 'escuro'] as const) {
 // Tab seguinte para dentro do conteúdo; depois, Tab por todas as paradas até
 // o foco sair da página — nenhuma armadilha — com o foco visível (outline do
 // :focus-visible) em cada uma. As paradas vão para o relatório do teste.
+// O <h1> aparece antes dos dados: enquanto a consulta voa, o <main> tem só
+// o título (tabIndex -1, fora da ordem do Tab) e o esqueleto, sem nada
+// focável, e o Tab depois do salto sai da página. Isso é a tela carregando,
+// não o salto quebrado; esperar o esqueleto sumir (o "Carregando…" do
+// EstadoDaConsulta, aria-busy) tira a corrida sem afrouxar o teste: com o
+// conteúdo de pé, um salto que não move o foco ainda leva o Tab ao cabeçalho.
+// Sem o --trace do config, a corrida perdia em ~6 de 10 execuções.
+async function esperarOConteudo(page: Page, rota: string) {
+  await expect(page.locator('#conteudo [aria-busy="true"]'), `${rota}: carregando`).toHaveCount(0)
+  await expect(page.getByText('Carregando…', { exact: true }), `${rota}: carregando`).toHaveCount(0)
+}
+
 test('passada de teclado em todas as rotas', async ({ page }, info) => {
   await imitarApi(page)
   const relatorio: string[] = []
   for (const [rota, titulo] of ROTAS) {
     await page.goto(rota)
     await expect(page.getByRole('heading', { name: titulo, level: 1 })).toBeVisible()
+    await esperarOConteudo(page, rota)
     await page.keyboard.press('Tab')
     await expect(page.getByRole('link', { name: 'Pular para o conteúdo' }), rota).toBeFocused()
     await page.keyboard.press('Enter')
@@ -151,6 +164,9 @@ test('passada de teclado em todas as rotas', async ({ page }, info) => {
 
     await page.goto(rota)
     await expect(page.getByRole('heading', { name: titulo, level: 1 })).toBeVisible()
+    // Aqui também: sem isto a passada podia percorrer só o cabeçalho (8
+    // paradas, o mínimo abaixo) e nunca o conteúdo da tela.
+    await esperarOConteudo(page, rota)
     const paradas: string[] = []
     for (let i = 0; ; i++) {
       expect(i, `${rota}: o foco não sai da página em 150 Tabs (armadilha?)`).toBeLessThan(150)
