@@ -5,6 +5,7 @@
 package config
 
 import (
+	"bytes"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -28,6 +29,19 @@ const (
 
 func (r Role) RunsAPI() bool    { return r == RoleAll || r == RoleAPI }
 func (r Role) RunsProber() bool { return r == RoleAll || r == RoleProber }
+
+// chavesDeDemo são as chaves que o compose.yaml publica, de propósito, no
+// repositório. Com elas, qualquer um forja JWT e decifra os segredos. O boot
+// as recusa quando PUBLIC_BASE_URL é https, que é o sinal de produção.
+//
+// Não mude estes valores sozinhos: o .gitleaks.toml libera exatamente o base64
+// destas três strings, e o compose.yaml as usa (TestComposeUsesTheDemoKeys).
+// Mudar uma chave aqui exige mudar as duas pontas junto.
+var chavesDeDemo = [][]byte{
+	[]byte("demo-vigilume-MASTER_KEY-naouse!"),
+	[]byte("demo-vigilume-JWT_SECRET-naouse!"),
+	[]byte("demo-vigilume-IP_HASH_KEY-naouse"),
+}
 
 // keyLen é o tamanho exigido para toda chave simétrica: 32 bytes (AES-256,
 // HMAC-SHA256).
@@ -205,6 +219,18 @@ func Load(getenv func(string) string) (*Config, error) {
 			"colapsam num valor único para todos os clientes")
 	}
 
+	if strings.HasPrefix(cfg.PublicBaseURL, "https://") {
+		for _, k := range []struct {
+			nome  string
+			valor []byte
+		}{{"MASTER_KEY", cfg.MasterKey}, {"JWT_SECRET", cfg.JWTSecret}, {"IP_HASH_KEY", cfg.IPHashKey}} {
+			if chaveDeDemo(k.valor) {
+				errs = append(errs, fmt.Errorf("%s é uma chave de demonstração do compose.yaml, pública no repositório; "+
+					"gere uma com `openssl rand -base64 32`", k.nome))
+			}
+		}
+	}
+
 	switch role := Role(opt("ROLE", string(RoleAll))); role {
 	case RoleAll, RoleAPI, RoleProber:
 		cfg.Role = role
@@ -229,6 +255,15 @@ func Load(getenv func(string) string) (*Config, error) {
 		return nil, errors.Join(errs...)
 	}
 	return cfg, nil
+}
+
+func chaveDeDemo(k []byte) bool {
+	for _, d := range chavesDeDemo {
+		if bytes.Equal(k, d) {
+			return true
+		}
+	}
+	return false
 }
 
 // nomeDeCabecalho aceita só os caracteres de "token" da RFC 9110 que fazem

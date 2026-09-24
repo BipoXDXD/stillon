@@ -281,3 +281,38 @@ func TestLoadRejectsABadClientIPHeader(t *testing.T) {
 		}
 	}
 }
+
+// As chaves de demonstração do compose.yaml são públicas no repositório. Com
+// elas em produção, qualquer um forja JWT e decifra os segredos.
+func TestLoadRejectsDemoKeysOverHTTPS(t *testing.T) {
+	for i, nome := range []string{"MASTER_KEY", "JWT_SECRET", "IP_HASH_KEY"} {
+		env := validEnv()
+		// Cada variável com a chave de demo de OUTRA: embaralhar não escapa.
+		env[nome] = base64.StdEncoding.EncodeToString(chavesDeDemo[(i+1)%len(chavesDeDemo)])
+		_, err := Load(getenvFrom(env))
+		if err == nil || !strings.Contains(err.Error(), nome) || !strings.Contains(err.Error(), "demonstração") {
+			t.Errorf("%s com chave de demo e https: erro = %v, queria recusa", nome, err)
+		}
+	}
+}
+
+func TestLoadAcceptsDemoKeysOverHTTP(t *testing.T) {
+	env := validEnv()
+	env["PUBLIC_BASE_URL"] = "http://localhost:8080"
+	env["MASTER_KEY"] = base64.StdEncoding.EncodeToString(chavesDeDemo[0])
+	env["JWT_SECRET"] = base64.StdEncoding.EncodeToString(chavesDeDemo[1])
+	env["IP_HASH_KEY"] = base64.StdEncoding.EncodeToString(chavesDeDemo[2])
+	if _, err := Load(getenvFrom(env)); err != nil {
+		t.Errorf("chaves de demo com http (o compose) deveriam subir: %v", err)
+	}
+}
+
+// As chaves de demo têm de ter o tamanho certo: senão o compose nem sobe, e
+// a recusa acima nunca seria exercida por quem copiou o arquivo.
+func TestDemoKeysHaveTheRequiredLength(t *testing.T) {
+	for i, k := range chavesDeDemo {
+		if len(k) != keyLen {
+			t.Errorf("chave de demo %d tem %d bytes, queria %d", i, len(k), keyLen)
+		}
+	}
+}
