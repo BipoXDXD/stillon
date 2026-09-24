@@ -1,9 +1,11 @@
 package middleware_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -71,6 +73,39 @@ func TestRecoverHidesTheStackTrace(t *testing.T) {
 	}
 	if env.TraceID == "" {
 		t.Error("sem trace_id: o erro fica impossível de correlacionar no log")
+	}
+}
+
+// O log do panic leva o padrão da rota, nunca o caminho: em
+// /verify/{token}, o caminho é um token de verificação ainda válido.
+func TestRecoverDoesNotLogThePath(t *testing.T) {
+	var log bytes.Buffer
+	antigo := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&log, nil)))
+	t.Cleanup(func() { slog.SetDefault(antigo) })
+
+	const token = "tok-9f8e7d6c5b4a39281706f5e4d3c2b1a0"
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /verify/{token}", func(w http.ResponseWriter, r *http.Request) {
+		panic("boom")
+	})
+	h := middleware.RequestID(middleware.Recover(mux))
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/verify/"+token, nil))
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, queria 500", rec.Code)
+	}
+	saida := log.String()
+	if !strings.Contains(saida, "panic no handler") {
+		t.Fatalf("o panic não foi logado: %q", saida)
+	}
+	if strings.Contains(saida, token) {
+		t.Errorf("o log vazou o token do caminho: %q", saida)
+	}
+	if !strings.Contains(saida, "/verify/{token}") || !strings.Contains(saida, "metodo=POST") {
+		t.Errorf("o log perdeu o padrão da rota ou o método: %q", saida)
 	}
 }
 

@@ -140,6 +140,11 @@ func TestVerifyScopeSeesOnlyTheTokenRow(t *testing.T) {
 	// política de notifications delegasse só "o canal existe", esta
 	// notificação vazaria para quem tem o token.
 	novaNotificacao(t, pool, novoIncidente(t, pool, alvoA), canalA)
+	// A histerese e o incidente do alvo de A também existem, e também não
+	// podem aparecer para quem só tem o token.
+	if err := storage.InProberTx(ctx, pool, func(q *db.Queries) error { return q.EnsureTargetHealth(ctx, alvoA) }); err != nil {
+		t.Fatal(err)
+	}
 
 	err := storage.InVerifyTx(ctx, pool, hA, func(q *db.Queries) error {
 		row, err := q.FindChannelByVerification(ctx, hA)
@@ -164,7 +169,9 @@ func TestVerifyScopeSeesOnlyTheTokenRow(t *testing.T) {
 	if _, err := tx.Exec(ctx, `SELECT set_config('app.verify_token_hash', encode($1::bytea, 'hex'), true)`, hA); err != nil {
 		t.Fatal(err)
 	}
-	for tabela, quer := range map[string]int{"notif_channels": 1, "targets": 0, "notifications": 0} {
+	for tabela, quer := range map[string]int{
+		"notif_channels": 1, "targets": 0, "notifications": 0, "incidents": 0, "target_health": 0,
+	} {
 		var n int
 		if err := tx.QueryRow(ctx, `SELECT count(*) FROM `+tabela).Scan(&n); err != nil {
 			t.Fatal(err)

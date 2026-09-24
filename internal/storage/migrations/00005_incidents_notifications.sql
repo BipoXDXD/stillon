@@ -119,6 +119,8 @@ CREATE TABLE notifications (
 );
 
 CREATE INDEX notifications_due_idx ON notifications (next_attempt_at) WHERE status = 'pending';
+-- O ON DELETE CASCADE de apagar um canal varreria a outbox inteira sem este índice.
+CREATE INDEX notifications_channel_idx ON notifications (channel_id);
 
 ALTER TABLE notifications ENABLE ROW LEVEL SECURITY;
 ALTER TABLE notifications FORCE ROW LEVEL SECURITY;

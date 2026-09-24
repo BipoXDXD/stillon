@@ -154,6 +154,13 @@ func (d *Dispatcher) tentar(n db.ClaimDueNotificationsRow) desfecho {
 	if n.Event == incident.EventOpened && n.ResolvedAt != nil {
 		return desfecho{status: "cancelled"}
 	}
+	// A reivindicação já contou esta tentativa. Passar do teto só acontece
+	// quando o desfecho da última não chegou a ser gravado (processo morto,
+	// commit que falhou) e a linha voltou quando o lease venceu: ela falha
+	// de vez sem enviar, porque o teto é de envios.
+	if n.Attempts > MaxAttempts {
+		return desfecho{status: "failed", reason: ReasonUnknown}
+	}
 	canal, ok := d.notifiers[Kind(n.Kind)]
 	if !ok {
 		return desfecho{status: "failed", reason: ReasonInvalidChannel}

@@ -282,6 +282,40 @@ func TestLastAttemptFailsForGoodAndIsAudited(t *testing.T) {
 	b.despachar(t, 0)
 }
 
+// A sexta tentativa cujo desfecho não chegou a ser gravado (processo morto,
+// commit que falhou) volta à fila quando o lease vence, já com attempts no
+// teto. A reivindicação a leva além de MaxAttempts, e ela falha de vez sem
+// enviar: o teto de tentativas é teto de ENVIOS.
+func TestNoSendPastTheLastAttempt(t *testing.T) {
+	b := novaBancada(t, nil)
+	id := b.enfileirar(t, incident.EventOpened)
+	ctx := context.Background()
+	tx, err := b.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, `SELECT set_config('app.user_id', $1, true)`, b.dono.String()); err != nil {
+		t.Fatal(err)
+	}
+	if tag, err := tx.Exec(ctx, `UPDATE notifications SET attempts = $2 WHERE id = $1`, id, MaxAttempts); err != nil || tag.RowsAffected() != 1 {
+		t.Fatalf("UPDATE attempts: %v, %d linhas", err, tag.RowsAffected())
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	b.despachar(t, 1)
+	if n := b.canal.quantos(); n != 0 {
+		t.Errorf("enviou %d vezes além da última tentativa", n)
+	}
+	if l := b.estado(t, id); l.Status != "failed" || l.Erro == nil || *l.Erro != "unknown" {
+		t.Errorf("linha = %+v; queria failed com unknown", l)
+	}
+	if n := b.auditorias(t); n != 1 {
+		t.Errorf("%d entradas de auditoria, queria 1", n)
+	}
+}
+
 func TestPermanentFailureIsFinalAtOnce(t *testing.T) {
 	b := novaBancada(t, nil)
 	b.canal.respostas = []error{&SendError{Reason: ReasonRejected, Permanent: true}}

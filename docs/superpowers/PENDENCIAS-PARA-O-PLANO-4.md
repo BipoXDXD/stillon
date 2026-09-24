@@ -31,6 +31,7 @@ versão. O que está aqui é o subconjunto que não pode se perder.
 | `METRICS_ADDR=OFF` | `strings.EqualFold` |
 | Tabela das 6 rotas; bordas de `/targets` e `/checks` via HTTP | `TestTargetRoutesRequireAuthentication`, `TestTargetQueriesRejectMalformedValues`, `TestChecksWindowIsHalfOpen` |
 | `limit` não numérico reportava `out_of_range` | Agora `invalid` (D22) |
+| Histerese somava falhas através de lacunas (alvo pausado, sondador fora) | `recomecarAposLacuna`: lacuna > 3 intervalos zera os contadores (`TestLongGapRestartsTheHysteresis`) |
 
 ## Limites conhecidos do Plano 3
 
@@ -51,6 +52,14 @@ versão. O que está aqui é o subconjunto que não pode se perder.
 - **`TestIncidentFlowsFromProbeToAuditedNotification` passa por duas guardas.** A revalidação
   da allowlist e o `safedial` recusam a URL interna; o teste prova o fluxo, não qual das duas
   agiu. A revalidação sozinha é travada por `TestDiscordRevalidatesTheURLBeforeSending`.
+- **Histerese recomeça depois de lacuna > 3 intervalos.** Consequência: um sondador parado por
+  mais de 3 intervalos atrasa a detecção de uma queda já em curso em até 3 checks.
+- **Criar canal com entrada inválida** (400/409/502) gasta token do balde de envio (5 de burst,
+  1 a cada 6 min).
+- **Abertura em retentativa e fechamento no mesmo lote do dispatcher** saem em paralelo e podem
+  chegar fora de ordem no Discord. A D9 cobre o caso comum (abertura velha é cancelada).
+- **Cadeia HTML de `/verify`:** 429 e 413 saem como envelope JSON. Com `TRUSTED_PROXIES` vazio
+  no Fly, todos os visitantes dividem um balde de 20/min.
 
 ## Para o Plano 4
 
@@ -62,6 +71,13 @@ versão. O que está aqui é o subconjunto que não pode se perder.
   30 dias, no mesmo job de manutenção).
 - **Status page:** o histórico de incidentes resolvidos (spec §10.2) lê `incidents` por alvo;
   `incidents_target_idx (target_id, id DESC)` já atende.
+- **Canal que quebra depois de verificado falha em silêncio** (webhook apagado → 404, domínio
+  Resend desverificado → 403): só vai para `audit_log`, e `GET /channels` segue `verified`.
+  Desenho proposto: `last_failure_at` e `last_error` em `notif_channels`, gravados na falha
+  definitiva, e status `failing` na API. As telas ficam no Plano 5.
+- **Apagão em massa:** muitos alvos de um dono caindo juntos disparam dezenas de envios ao mesmo
+  webhook, e os 429 do Discord podem esgotar as 6 tentativas. Opções: não contar
+  `rate_limited` em `MaxAttempts` (teto por tempo) ou agrupar alertas do mesmo dono.
 
 ## Para o Plano 5
 
@@ -69,6 +85,9 @@ versão. O que está aqui é o subconjunto que não pode se perder.
   reenvio), consumindo os contratos das Tasks 8 e 9 do Plano 3.
 - Documentar no cadastro de alvos que headers **não** seguem redirect para outro host:porta
   nem rebaixamento https→http (I3 do Plano 2).
+- Documentar no cadastro de canais que webhook de canal de **fórum** do Discord (precisa de
+  `thread_id`) é recusado como URL inválida.
+- Estado `failing` do canal (ver "Para o Plano 4") na tela de canais.
 - `Spec.Headers` decifrado com `LogValue` que redija os valores (M6 do Plano 2).
 - Porta de métricas em desenvolvimento com `--role=api` e `--role=prober` no mesmo host (M7).
 - `jti` em denylist, ou `challenge_id` consumido, para o desafio de 2FA; troca de autenticador;
