@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 	"sync"
@@ -555,5 +556,156 @@ func TestRetryAndCancelLeaveTheChannelHealthAlone(t *testing.T) {
 	var n int
 	if err := tx.QueryRow(ctx, `SELECT count(*) FROM channel_health`).Scan(&n); err != nil || n != 0 {
 		t.Errorf("channel_health tem %d linhas depois de uma retentativa (%v), queria 0", n, err)
+	}
+}
+
+// apagao simula muitos alvos do mesmo dono caindo juntos: n alvos, cada um
+// com um incidente aberto e a abertura enfileirada para o mesmo canal.
+// Devolve os ids na ordem de enfileiramento.
+func (b *bancada) apagao(t *testing.T, n int) []uuid.UUID {
+	t.Helper()
+	ctx := context.Background()
+	ids := make([]uuid.UUID, 0, n)
+	for i := range n {
+		alvo, incidente, id := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+		agora := b.clk.Now()
+		err := storage.InUserTx(ctx, b.pool, b.dono, func(q *db.Queries) error {
+			return q.InsertTarget(ctx, db.InsertTargetParams{
+				ID: alvo, UserID: b.dono, Name: fmt.Sprintf("alvo-%d", i), URL: "https://exemplo.com", Method: "GET",
+				IntervalSec: 60, TimeoutMS: 5000, ExpectedStatus: 200, Enabled: true, NextRunAt: agora, CreatedAt: agora,
+			})
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = storage.InProberTx(ctx, b.pool, func(q *db.Queries) error {
+			if err := q.OpenIncident(ctx, db.OpenIncidentParams{ID: incidente, TargetID: alvo, StartedAt: agora, Cause: "timeout"}); err != nil {
+				return err
+			}
+			return q.EnqueueNotification(ctx, db.EnqueueNotificationParams{
+				ID: id, IncidentID: incidente, ChannelID: b.canalID, Event: incident.EventOpened, Now: agora,
+			})
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, id)
+	}
+	return ids
+}
+
+// Apagão em massa (pendência do Plano 3): um 429 é o provedor pedindo
+// espera, e não gasta tentativa. Dez 429 seguidos, mais que MaxAttempts,
+// e a notificação ainda sai.
+func TestRateLimitDoesNotSpendAttempts(t *testing.T) {
+	b := novaBancada(t, nil)
+	id := b.enfileirar(t, incident.EventOpened)
+	for i := range 10 {
+		b.canal.respostas = []error{&SendError{Reason: ReasonRateLimited, RetryAfter: 2 * time.Second}}
+		b.despachar(t, 1)
+		l := b.estado(t, id)
+		if l.Status != "pending" || l.Attempts != 0 || !l.Proxima.Equal(b.clk.Now().Add(30*time.Second)) {
+			t.Fatalf("depois do 429 nº %d: %+v; queria pendente, 0 tentativas, próxima pelo backoff", i+1, l)
+		}
+		b.clk.Advance(30 * time.Second)
+	}
+	b.despachar(t, 1)
+	if l := b.estado(t, id); l.Status != "sent" || l.Attempts != 1 {
+		t.Errorf("linha = %+v; queria sent na 11ª tentativa, com 1 tentativa contada", l)
+	}
+}
+
+// O perdão tem teto: uma notificação com mais de rateLimitGrace de idade já
+// perdeu a maior parte do valor, e um webhook que responde 429 para sempre
+// não pode segurá-la na fila para sempre.
+func TestRateLimitCountsOnceTheNotificationIsOld(t *testing.T) {
+	b := novaBancada(t, nil)
+	id := b.enfileirar(t, incident.EventOpened)
+	b.clk.Advance(rateLimitGrace)
+	b.canal.respostas = []error{&SendError{Reason: ReasonRateLimited}}
+	b.despachar(t, 1)
+	if l := b.estado(t, id); l.Status != "pending" || l.Attempts != 1 {
+		t.Errorf("429 depois do teto: %+v; queria a tentativa contada", l)
+	}
+}
+
+// Dentro do lote, o mesmo canal recebe em série, na ordem em que as
+// notificações foram enfileiradas. Um 429 adia o resto do canal no lote,
+// sem enviar, para quando o provedor pediu; nada gasta tentativa.
+func TestSameChannelSendsInOrderAndHoldsAfterA429(t *testing.T) {
+	b := novaBancada(t, nil)
+	ids := b.apagao(t, 5)
+	b.canal.respostas = []error{nil, nil, &SendError{Reason: ReasonRateLimited, RetryAfter: 3 * time.Minute}}
+
+	b.despachar(t, 5)
+	if n := b.canal.quantos(); n != 3 {
+		t.Fatalf("%d envios, queria 3 (dois entregues e o do 429; o resto espera)", n)
+	}
+	for i, ev := range b.canal.envios {
+		if ev.NotificationID != ids[i] {
+			t.Errorf("envio %d foi %s, queria %s (ordem de enfileiramento)", i, ev.NotificationID, ids[i])
+		}
+	}
+	for i, id := range ids {
+		l := b.estado(t, id)
+		switch {
+		case i < 2 && l.Status != "sent":
+			t.Errorf("notificação %d: %+v, queria sent", i, l)
+		case i >= 2 && (l.Status != "pending" || l.Attempts != 0 || !l.Proxima.Equal(b.clk.Now().Add(3*time.Minute)) ||
+			l.Erro == nil || *l.Erro != "rate_limited"):
+			t.Errorf("notificação %d: %+v; queria pendente para daqui a 3min, sem tentativa gasta", i, l)
+		}
+	}
+	if v := testutil.ToFloat64(b.d.total.WithLabelValues("discord", "deferred")); v != 2 {
+		t.Errorf("notify_total{discord,deferred} = %v, queria 2", v)
+	}
+
+	b.clk.Advance(3 * time.Minute)
+	b.despachar(t, 3)
+	for i, id := range ids {
+		if l := b.estado(t, id); l.Status != "sent" {
+			t.Errorf("depois da espera, notificação %d: %+v", i, l)
+		}
+	}
+}
+
+// Canais diferentes não esperam um pelo outro: um webhook travado não
+// atrasa o canal vizinho além do prazo de envio.
+func TestDifferentChannelsSendInParallel(t *testing.T) {
+	b := novaBancada(t, nil)
+	b.d.sendTimeout = 300 * time.Millisecond
+	b.canal.bloquear = true
+	b.apagao(t, 1)
+	// Um segundo canal, verificado, do mesmo dono, com a abertura do
+	// incidente da bancada.
+	ctx := context.Background()
+	outro := uuid.Must(uuid.NewV7())
+	sealed, err := sealConfig(b.box, outro, webhookDeTeste)
+	if err != nil {
+		t.Fatal(err)
+	}
+	agora := b.clk.Now()
+	err = storage.InUserTx(ctx, b.pool, b.dono, func(q *db.Queries) error {
+		return q.InsertChannel(ctx, db.InsertChannelParams{
+			ID: outro, UserID: b.dono, Kind: string(KindDiscord), ConfigEnc: sealed, VerifiedAt: &agora, CreatedAt: agora,
+		})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = storage.InProberTx(ctx, b.pool, func(q *db.Queries) error {
+		return q.EnqueueNotification(ctx, db.EnqueueNotificationParams{
+			ID: uuid.Must(uuid.NewV7()), IncidentID: b.incidente, ChannelID: outro, Event: incident.EventOpened, Now: agora,
+		})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	inicio := time.Now()
+	b.despachar(t, 2)
+	// Em série, dois envios travados levariam 2 × 300ms.
+	if d := time.Since(inicio); d >= 600*time.Millisecond {
+		t.Errorf("dois canais travados levaram %v; em paralelo, ~300ms", d)
 	}
 }

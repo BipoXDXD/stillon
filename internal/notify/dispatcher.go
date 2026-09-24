@@ -1,10 +1,12 @@
 package notify
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sync"
 	"time"
 
@@ -39,6 +41,14 @@ const (
 	MaxAttempts  = 6
 	firstBackoff = 30 * time.Second
 	maxBackoff   = time.Hour
+
+	// rateLimitGrace é por quanto tempo, contado do enfileiramento, um 429
+	// não gasta tentativa. Num apagão em massa, dezenas de alertas vão ao
+	// mesmo webhook, e os 429 esgotariam as 6 tentativas justamente quando
+	// o alerta mais importa. Depois disso, o 429 conta: um alerta com uma
+	// hora de atraso já perdeu quase todo o valor, e um webhook que responde
+	// 429 para sempre não segura a fila para sempre.
+	rateLimitGrace = time.Hour
 )
 
 // Dispatcher consome a outbox de notificações (spec §8). Roda no papel do
@@ -106,22 +116,81 @@ func (d *Dispatcher) Dispatch(ctx context.Context) (int, error) {
 	}
 
 	var wg sync.WaitGroup
-	for _, n := range lote {
+	for _, fila := range porCanal(lote) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			// Um panic num canal não derruba o processo. A notificação fica
-			// como está e volta quando o lease vencer.
-			defer func() {
-				if r := recover(); r != nil {
-					slog.Error("panic no envio de notificação", "notification_id", n.ID, "panic", fmt.Sprint(r))
-				}
-			}()
-			d.entregar(n)
+			d.entregarEmSerie(fila)
 		}()
 	}
 	wg.Wait()
 	return len(lote), nil
+}
+
+// porCanal separa o lote por canal, cada fila na ordem de enfileiramento
+// (os ids são UUID v7). Canais diferentes saem em paralelo; o mesmo canal,
+// em série: dezenas de pedidos simultâneos ao mesmo webhook só compram 429,
+// e em série a abertura sai antes do fechamento.
+func porCanal(lote []db.ClaimDueNotificationsRow) [][]db.ClaimDueNotificationsRow {
+	indice := map[uuid.UUID]int{}
+	var filas [][]db.ClaimDueNotificationsRow
+	for _, n := range lote {
+		i, ok := indice[n.ChannelID]
+		if !ok {
+			i = len(filas)
+			indice[n.ChannelID] = i
+			filas = append(filas, nil)
+		}
+		filas[i] = append(filas[i], n)
+	}
+	for _, f := range filas {
+		slices.SortFunc(f, func(a, b db.ClaimDueNotificationsRow) int { return bytes.Compare(a.ID[:], b.ID[:]) })
+	}
+	return filas
+}
+
+// entregarEmSerie entrega a fila de um canal. Depois de um 429, o resto da
+// fila não é enviado: fica para quando o provedor pediu, sem gastar
+// tentativa, porque não houve envio.
+func (d *Dispatcher) entregarEmSerie(fila []db.ClaimDueNotificationsRow) {
+	var espera time.Time
+	for _, n := range fila {
+		if !espera.IsZero() && d.perdoa429(n) {
+			d.adiar(n, espera)
+			continue
+		}
+		if f := d.entregarProtegido(n); f.reason == ReasonRateLimited && f.status == "pending" {
+			espera = f.proxima
+		}
+	}
+}
+
+// entregarProtegido isola o panic de um envio: a notificação fica como a
+// reivindicação a deixou e volta quando o lease vencer, e o resto da fila
+// do canal segue.
+func (d *Dispatcher) entregarProtegido(n db.ClaimDueNotificationsRow) (f desfecho) {
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("panic no envio de notificação", "notification_id", n.ID, "panic", fmt.Sprint(r))
+			f = desfecho{}
+		}
+	}()
+	return d.entregar(n)
+}
+
+// perdoa429 diz se um 429 para esta notificação ainda não gasta tentativa.
+func (d *Dispatcher) perdoa429(n db.ClaimDueNotificationsRow) bool {
+	return d.clk.Now().Sub(n.CreatedAt) < rateLimitGrace
+}
+
+// adiar devolve à fila, sem enviar, uma notificação cujo canal acabou de
+// pedir espera.
+func (d *Dispatcher) adiar(n db.ClaimDueNotificationsRow, ate time.Time) {
+	d.total.WithLabelValues(n.Kind, "deferred").Inc()
+	f := desfecho{status: "pending", reason: ReasonRateLimited, proxima: ate, devolver: true}
+	if err := d.persistir(n, f); err != nil {
+		slog.Error("gravar desfecho de notificação", "notification_id", n.ID, "erro", err)
+	}
 }
 
 // desfecho é o que fazer com a notificação depois da tentativa.
@@ -129,9 +198,12 @@ type desfecho struct {
 	status  string // sent, pending (retentativa), failed ou cancelled
 	reason  Reason
 	proxima time.Time
+	// devolver desconta a tentativa que a reivindicação contou (429 dentro
+	// de rateLimitGrace, ou adiamento sem envio).
+	devolver bool
 }
 
-func (d *Dispatcher) entregar(n db.ClaimDueNotificationsRow) {
+func (d *Dispatcher) entregar(n db.ClaimDueNotificationsRow) desfecho {
 	f := d.tentar(n)
 	d.total.WithLabelValues(n.Kind, resultado(f.status)).Inc()
 	if f.status == "failed" {
@@ -141,6 +213,7 @@ func (d *Dispatcher) entregar(n db.ClaimDueNotificationsRow) {
 	if err := d.persistir(n, f); err != nil {
 		slog.Error("gravar desfecho de notificação", "notification_id", n.ID, "erro", err)
 	}
+	return f
 }
 
 func (d *Dispatcher) tentar(n db.ClaimDueNotificationsRow) desfecho {
@@ -187,10 +260,13 @@ func (d *Dispatcher) tentar(n db.ClaimDueNotificationsRow) desfecho {
 			se.Reason = ReasonTimeout
 		}
 	}
+	espera := max(backoff(n.Attempts), se.RetryAfter)
+	if se.Reason == ReasonRateLimited && !se.Permanent && d.perdoa429(n) {
+		return desfecho{status: "pending", reason: se.Reason, proxima: d.clk.Now().Add(espera), devolver: true}
+	}
 	if se.Permanent || n.Attempts >= MaxAttempts {
 		return desfecho{status: "failed", reason: se.Reason}
 	}
-	espera := max(backoff(n.Attempts), se.RetryAfter)
 	return desfecho{status: "pending", reason: se.Reason, proxima: d.clk.Now().Add(espera)}
 }
 
@@ -220,7 +296,9 @@ func (d *Dispatcher) persistir(n db.ClaimDueNotificationsRow, f desfecho) error 
 			}
 			return q.MarkChannelSuccess(ctx, db.MarkChannelSuccessParams{ChannelID: n.ChannelID, Now: d.clk.Now()})
 		case "pending":
-			return q.RetryNotification(ctx, db.RetryNotificationParams{ID: n.ID, NextAttemptAt: f.proxima, LastError: motivo})
+			return q.RetryNotification(ctx, db.RetryNotificationParams{
+				ID: n.ID, NextAttemptAt: f.proxima, LastError: motivo, Refund: f.devolver,
+			})
 		case "cancelled":
 			return q.CloseNotification(ctx, db.CloseNotificationParams{ID: n.ID, Status: "cancelled", LastError: motivo})
 		}
