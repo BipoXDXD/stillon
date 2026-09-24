@@ -26,6 +26,10 @@ const (
 type Service struct {
 	pool *pgxpool.Pool
 	clk  clock.Clock
+	// A página pública (public.go): cache da projeção por slug, e voo para
+	// que N visitantes com o cache vencido façam uma consulta só.
+	cache cachePublico
+	voo   singleflightGroup
 }
 
 func NewService(pool *pgxpool.Pool, clk clock.Clock) *Service {
