@@ -220,3 +220,104 @@ func TestProbeWithProductionClientIsBlocked(t *testing.T) {
 		t.Errorf("res = %+v, queria down/blocked", res)
 	}
 }
+
+// segredos são headers de alvo que o net/http trata de jeitos diferentes:
+// Authorization ele mesmo tira ao trocar de domínio, X-Token não.
+func segredos() map[string]string {
+	return map[string]string{"X-Token": "segredo", "Authorization": "Bearer segredo"}
+}
+
+// Spec §5.4: headers de alvo são segredo, e um redirect para outro
+// host:porta não os leva. Duas portas do mesmo 127.0.0.1 contam como hosts
+// diferentes.
+func TestProbeRedirectToAnotherHostDropsTargetHeaders(t *testing.T) {
+	naOrigem, noDestino := make(chan http.Header, 1), make(chan http.Header, 1)
+	destino := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		noDestino <- r.Header.Clone()
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(destino.Close)
+	origem := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		naOrigem <- r.Header.Clone()
+		http.Redirect(w, r, destino.URL, http.StatusMovedPermanently)
+	}))
+	t.Cleanup(origem.Close)
+	client := safedial.NewClientAllowing(0, enderecoDe(t, origem), enderecoDe(t, destino))
+
+	s := especificacao(origem.URL)
+	s.Headers = segredos()
+	if res := Probe(t.Context(), client, s); res.Status != StatusUp {
+		t.Fatalf("res = %+v, queria up depois do redirect", res)
+	}
+
+	// A origem recebeu os segredos: sem isto, o teste passaria com uma sonda
+	// que nunca os mandou.
+	if h := <-naOrigem; h.Get("X-Token") != "segredo" || h.Get("Authorization") == "" {
+		t.Fatalf("a origem não recebeu os headers do alvo: %v", h)
+	}
+	h := <-noDestino
+	if v := h.Get("X-Token"); v != "" {
+		t.Errorf("X-Token = %q chegou ao outro host", v)
+	}
+	if v := h.Get("Authorization"); v != "" {
+		t.Errorf("Authorization = %q chegou ao outro host", v)
+	}
+	if !strings.HasPrefix(h.Get("User-Agent"), "Vigilume/") {
+		t.Errorf("User-Agent = %q no outro host, queria o do monitor", h.Get("User-Agent"))
+	}
+}
+
+// O outro lado: redirect para o MESMO host:porta mantém os headers. Sem
+// este teste, uma remoção incondicional passaria no de cima.
+func TestProbeRedirectWithinSameHostKeepsTargetHeaders(t *testing.T) {
+	noDestino := make(chan http.Header, 1)
+	srv, client := servidor(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/destino" {
+			noDestino <- r.Header.Clone()
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		http.Redirect(w, r, "/destino", http.StatusMovedPermanently)
+	})
+
+	s := especificacao(srv.URL)
+	s.Headers = segredos()
+	if res := Probe(t.Context(), client, s); res.Status != StatusUp {
+		t.Fatalf("res = %+v, queria up depois do redirect", res)
+	}
+	h := <-noDestino
+	if h.Get("X-Token") != "segredo" || h.Get("Authorization") != "Bearer segredo" {
+		t.Errorf("headers no mesmo host = %v, queria X-Token e Authorization", h)
+	}
+}
+
+// O net/http copia os headers da requisição ORIGINAL a cada salto. Uma
+// cadeia origem → outro host → origem precisa continuar limpa na volta: o
+// outro host é quem escolheu o destino.
+func TestProbeRedirectBackToTheOriginStaysClean(t *testing.T) {
+	naVolta := make(chan http.Header, 1)
+	desvio := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, r.URL.Query().Get("volta"), http.StatusFound)
+	}))
+	t.Cleanup(desvio.Close)
+	origem := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/volta" {
+			naVolta <- r.Header.Clone()
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		// r.Host, e não origem.URL: ler a variável daqui seria corrida.
+		http.Redirect(w, r, desvio.URL+"/?volta=http://"+r.Host+"/volta", http.StatusFound)
+	}))
+	t.Cleanup(origem.Close)
+	client := safedial.NewClientAllowing(0, enderecoDe(t, origem), enderecoDe(t, desvio))
+
+	s := especificacao(origem.URL)
+	s.Headers = segredos()
+	if res := Probe(t.Context(), client, s); res.Status != StatusUp {
+		t.Fatalf("res = %+v, queria up depois de dois redirects", res)
+	}
+	if h := <-naVolta; h.Get("X-Token") != "" || h.Get("Authorization") != "" {
+		t.Errorf("headers na volta à origem = %v, queria sem os do alvo", h)
+	}
+}

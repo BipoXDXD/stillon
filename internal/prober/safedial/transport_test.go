@@ -85,6 +85,65 @@ func TestCheckRedirectRevalidaEsquemaELimitaSaltos(t *testing.T) {
 	}
 }
 
+// A decisão de levar ou não os headers do alvo para o próximo salto, caso a
+// caso, pelo próprio CheckRedirect. O rebaixamento https→http no mesmo host
+// não se monta com httptest (TLS e texto claro não dividem uma porta), e é
+// aqui que ele fica coberto. via é a cadeia até agora, a começar pela
+// original; req é o próximo salto, com os headers que o net/http copiou.
+func TestCheckRedirectDropsTargetHeadersWhenTheHopLeavesTheOrigin(t *testing.T) {
+	client := safedial.NewClient(0)
+	cases := []struct {
+		nome   string
+		cadeia []string // da original ao próximo salto
+		limpa  bool
+	}{
+		{"mesmo host, outro caminho", []string{"http://exemplo.com/", "http://exemplo.com/x"}, false},
+		{"mesmo host em maiúsculas", []string{"http://exemplo.com/", "http://EXEMPLO.com/x"}, false},
+		{"outro host", []string{"http://exemplo.com/", "http://outro.com/"}, true},
+		{"subdomínio é outro host", []string{"http://exemplo.com/", "http://api.exemplo.com/"}, true},
+		{"mesmo host, outra porta", []string{"http://exemplo.com:8080/", "http://exemplo.com:9090/"}, true},
+		{"rebaixamento https→http no mesmo host", []string{"https://exemplo.com/", "http://exemplo.com/"}, true},
+		{"promoção http→https no mesmo host", []string{"http://exemplo.com/", "https://exemplo.com/"}, false},
+		{"rebaixamento no fim da cadeia", []string{"http://exemplo.com/", "https://exemplo.com/", "http://exemplo.com/"}, true},
+		{"rebaixamento lá atrás continua valendo", []string{"https://exemplo.com/", "http://exemplo.com/", "http://exemplo.com/y"}, true},
+		{"volta à origem depois de outro host", []string{"https://exemplo.com/", "https://outro.com/", "https://exemplo.com/"}, true},
+	}
+	for _, c := range cases {
+		t.Run(c.nome, func(t *testing.T) {
+			var via []*http.Request
+			for _, u := range c.cadeia[:len(c.cadeia)-1] {
+				r, err := http.NewRequest(http.MethodGet, u, nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				via = append(via, r)
+			}
+			req, err := http.NewRequest(http.MethodGet, c.cadeia[len(c.cadeia)-1], nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			req.Header.Set("User-Agent", "Vigilume/teste")
+			req.Header.Set("X-Api-Key", "segredo")
+			req.Header.Set("Authorization", "Bearer segredo")
+
+			if err := client.CheckRedirect(req, via); err != nil {
+				t.Fatalf("CheckRedirect = %v", err)
+			}
+			limpou := req.Header.Get("X-Api-Key") == "" && req.Header.Get("Authorization") == ""
+			manteve := req.Header.Get("X-Api-Key") == "segredo" && req.Header.Get("Authorization") == "Bearer segredo"
+			switch {
+			case c.limpa && !limpou:
+				t.Errorf("headers = %v, queria sem os do alvo", req.Header)
+			case !c.limpa && !manteve:
+				t.Errorf("headers = %v, queria os do alvo intactos", req.Header)
+			}
+			if req.Header.Get("User-Agent") != "Vigilume/teste" {
+				t.Errorf("User-Agent = %q, queria mantido", req.Header.Get("User-Agent"))
+			}
+		})
+	}
+}
+
 // enderecoDe devolve o IP:porta exato em que o servidor de teste escuta.
 func enderecoDe(t *testing.T, srv *httptest.Server) netip.AddrPort {
 	t.Helper()
