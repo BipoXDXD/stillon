@@ -2,7 +2,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { Link, useSearchParams } from 'react-router'
 import { useApi } from '@/app/contexto'
-import { Esqueleto } from '@/components/EstadoDaConsulta'
+import { EstadoDaConsulta } from '@/components/EstadoDaConsulta'
 import { Titulo } from '@/components/Titulo'
 import { Botao } from '@/components/ui/botao'
 import { ErroDoFormulario } from '@/components/ui/campo'
@@ -19,7 +19,21 @@ const FILTROS: [Filtro, string][] = [
   ['all', 'Todos'],
 ]
 
-function Linha({ i, agora, aoReconhecer }: { i: Incidente; agora: number; aoReconhecer: (id: string) => void }) {
+// O texto visível que descreve o botão Reconhecer (aria-describedby): o ack
+// é idempotente no servidor e não resolve nada, só marca que você viu.
+const ID_AJUDA_ACK = 'ajuda-reconhecer'
+
+function Linha({
+  i,
+  agora,
+  reconhecendo,
+  aoReconhecer,
+}: {
+  i: Incidente
+  agora: number
+  reconhecendo: boolean
+  aoReconhecer: (id: string) => void
+}) {
   const inicio = new Date(i.started_at).getTime()
   return (
     <li className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-borda p-4">
@@ -39,9 +53,10 @@ function Linha({ i, agora, aoReconhecer }: { i: Incidente; agora: number; aoReco
         <Botao
           tipo="secundario"
           tamanho="pequeno"
+          disabled={reconhecendo}
           onClick={() => aoReconhecer(i.id)}
           aria-label={`Reconhecer o incidente de ${i.target_name}`}
-          title="Marca que você está ciente"
+          aria-describedby={ID_AJUDA_ACK}
         >
           Reconhecer
         </Botao>
@@ -58,15 +73,23 @@ export function PaginaIncidentes() {
   const api = useApi()
   const qc = useQueryClient()
   const [erro, setErro] = useState<string | null>(null)
-  const itens = consulta.data?.pages.flatMap((pg) => pg.items) ?? []
+  const [reconhecendo, setReconhecendo] = useState<ReadonlySet<string>>(new Set())
 
   async function reconhecer(id: string) {
     setErro(null)
+    setReconhecendo((s) => new Set(s).add(id))
     try {
       await api.reconhecer(id)
-      await qc.invalidateQueries({ queryKey: ['incidents'] })
     } catch (e) {
       setErro(mensagemDe(e))
+    } finally {
+      // Mesmo depois de uma falha: o ack pode ter chegado ao servidor.
+      await qc.invalidateQueries({ queryKey: ['incidents'] })
+      setReconhecendo((s) => {
+        const n = new Set(s)
+        n.delete(id)
+        return n
+      })
     }
   }
 
@@ -80,7 +103,10 @@ export function PaginaIncidentes() {
             key={f}
             type="button"
             aria-pressed={f === filtro}
-            onClick={() => setParams({ status: f }, { replace: true })}
+            onClick={() => {
+              setErro(null)
+              setParams({ status: f }, { replace: true })
+            }}
             className={cn('rounded-md border border-borda px-3 py-1 text-sm', f === filtro && 'bg-painel font-semibold')}
           >
             {t}
@@ -88,32 +114,50 @@ export function PaginaIncidentes() {
         ))}
       </fieldset>
       <ErroDoFormulario>{erro}</ErroDoFormulario>
-      {consulta.isPending ? (
-        <Esqueleto linhas={2} />
-      ) : consulta.error ? (
-        <div role="alert" className="space-y-2">
-          <p>{mensagemDe(consulta.error)}</p>
-          <Botao tipo="secundario" tamanho="pequeno" onClick={() => void consulta.refetch()}>
-            Tentar de novo
-          </Botao>
-        </div>
-      ) : itens.length === 0 ? (
-        <p className="text-suave">Nenhum incidente {filtro === 'open' ? 'aberto' : filtro === 'resolved' ? 'resolvido' : ''}.</p>
-      ) : (
-        <>
-          <ul className="space-y-3">
-            {itens.map((i) => (
-              <Linha key={i.id} i={i} agora={consulta.dataUpdatedAt} aoReconhecer={(id) => void reconhecer(id)} />
-            ))}
-          </ul>
-          {/* Botão, e não rolagem infinita: previsível no teclado e no leitor de tela. */}
-          {consulta.hasNextPage && (
-            <Botao tipo="secundario" disabled={consulta.isFetchingNextPage} onClick={() => void consulta.fetchNextPage()}>
-              Carregar mais
-            </Botao>
-          )}
-        </>
-      )}
+      {/* D17: um poll ou um "Carregar mais" que falha mantém a lista, com o
+          aviso de dados velhos; só sem dados nenhuns o erro toma a tela. */}
+      <EstadoDaConsulta consulta={consulta}>
+        {(d) => {
+          const itens = d.pages.flatMap((pg) => pg.items)
+          if (itens.length === 0) {
+            return (
+              <p className="text-suave">
+                Nenhum incidente{filtro === 'open' ? ' aberto' : filtro === 'resolved' ? ' resolvido' : ''}.
+              </p>
+            )
+          }
+          return (
+            <>
+              {itens.some((i) => !i.resolved_at && !i.acknowledged_at) && (
+                <p id={ID_AJUDA_ACK} className="text-sm text-suave">
+                  Reconhecer marca que você está ciente; não resolve o incidente.
+                </p>
+              )}
+              <ul className="space-y-3">
+                {itens.map((i) => (
+                  <Linha
+                    key={i.id}
+                    i={i}
+                    agora={consulta.dataUpdatedAt}
+                    reconhecendo={reconhecendo.has(i.id)}
+                    aoReconhecer={(id) => void reconhecer(id)}
+                  />
+                ))}
+              </ul>
+              {/* Botão, e não rolagem infinita: previsível no teclado e no leitor de tela. */}
+              {consulta.hasNextPage && (
+                <Botao
+                  tipo="secundario"
+                  disabled={consulta.isFetchingNextPage}
+                  onClick={() => void consulta.fetchNextPage()}
+                >
+                  Carregar mais
+                </Botao>
+              )}
+            </>
+          )
+        }}
+      </EstadoDaConsulta>
     </>
   )
 }
