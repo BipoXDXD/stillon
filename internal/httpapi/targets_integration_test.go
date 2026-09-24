@@ -13,6 +13,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/BipoXDXD/vigilume/internal/apierr"
 	"github.com/BipoXDXD/vigilume/internal/auth"
 	"github.com/BipoXDXD/vigilume/internal/storage"
 	"github.com/BipoXDXD/vigilume/internal/storage/db"
@@ -177,12 +178,82 @@ func TestAnotherUsersTargetIs404OnEveryRoute(t *testing.T) {
 	}
 }
 
+// Todas as seis rotas, e não só a lista: uma rota nova montada com
+// mux.Handle direto, sem protegida(), ficaria aberta sem teste nenhum ver.
 func TestTargetRoutesRequireAuthentication(t *testing.T) {
 	a := newAPI(t)
-	resp := chamar(t, a, http.MethodGet, "/api/v1/targets", "", nil)
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusUnauthorized {
-		t.Errorf("GET /targets sem token deu %d, queria 401", resp.StatusCode)
+	id := uuid.NewString()
+	for _, r := range []struct{ metodo, caminho string }{
+		{http.MethodGet, "/api/v1/targets"},
+		{http.MethodPost, "/api/v1/targets"},
+		{http.MethodGet, "/api/v1/targets/" + id},
+		{http.MethodPatch, "/api/v1/targets/" + id},
+		{http.MethodDelete, "/api/v1/targets/" + id},
+		{http.MethodGet, "/api/v1/targets/" + id + "/checks"},
+	} {
+		resp := chamar(t, a, r.metodo, r.caminho, "", nil)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusUnauthorized {
+			t.Errorf("%s %s sem token deu %d, queria 401", r.metodo, r.caminho, resp.StatusCode)
+		}
+	}
+}
+
+// Dívida do Plano 2: as bordas das consultas via HTTP. Cada valor
+// malformado aponta o campo e o motivo certos.
+func TestTargetQueriesRejectMalformedValues(t *testing.T) {
+	a := newAPI(t)
+	tok := tokenDe(t, a, a.userID)
+	var criado alvoJSON
+	lerCorpo(t, chamar(t, a, http.MethodPost, "/api/v1/targets", tok, alvoValido), &criado)
+	checks := "/api/v1/targets/" + criado.ID + "/checks?"
+	agora := a.clk.Now().UTC().Format(time.RFC3339)
+
+	for caminho, quer := range map[string]apierr.FieldError{
+		"/api/v1/targets?limit=0":                 {Field: "limit", Reason: "out_of_range"},
+		"/api/v1/targets?limit=abc":               {Field: "limit", Reason: "invalid"},
+		"/api/v1/targets?cursor=nao-e-uuid":       {Field: "cursor", Reason: "invalid"},
+		checks + "from=ontem":                     {Field: "from", Reason: "invalid"},
+		checks + "to=2026-13-01T00:00:00Z":        {Field: "to", Reason: "invalid"},
+		checks + "from=" + agora + "&to=" + agora: {Field: "from", Reason: "invalid"}, // janela vazia
+	} {
+		var env envelopeComCampos
+		resp := chamar(t, a, http.MethodGet, caminho, tok, nil)
+		lerCorpo(t, resp, &env)
+		if resp.StatusCode != http.StatusBadRequest || len(env.Error.Fields) != 1 || env.Error.Fields[0] != quer {
+			t.Errorf("%s deu %d/%+v, queria 400 %+v", caminho, resp.StatusCode, env.Error.Fields, quer)
+		}
+	}
+}
+
+// A janela é [from, to): o check em from entra, o check em to não.
+func TestChecksWindowIsHalfOpen(t *testing.T) {
+	a := newAPI(t)
+	ctx := context.Background()
+	tok := tokenDe(t, a, a.userID)
+	if err := storage.EnsureChecksPartitions(ctx, a.pool, a.clk.Now()); err != nil {
+		t.Fatal(err)
+	}
+	var criado alvoJSON
+	lerCorpo(t, chamar(t, a, http.MethodPost, "/api/v1/targets", tok, alvoValido), &criado)
+	fim := a.clk.Now().UTC().Truncate(time.Minute)
+	for _, em := range []time.Time{fim.Add(-2 * time.Minute), fim.Add(-time.Minute), fim} {
+		p := db.InsertCheckParams{ID: uuid.Must(uuid.NewV7()), TargetID: uuid.MustParse(criado.ID), CheckedAt: em, Status: "up", LatencyMS: 5}
+		if err := storage.InProberTx(ctx, a.pool, func(q *db.Queries) error { return q.InsertCheck(ctx, p) }); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	var got struct {
+		Items []struct {
+			CheckedAt time.Time `json:"checked_at"`
+		} `json:"items"`
+	}
+	caminho := fmt.Sprintf("/api/v1/targets/%s/checks?from=%s&to=%s", criado.ID,
+		fim.Add(-2*time.Minute).Format(time.RFC3339), fim.Format(time.RFC3339))
+	lerCorpo(t, chamar(t, a, http.MethodGet, caminho, tok, nil), &got)
+	if len(got.Items) != 2 || !got.Items[0].CheckedAt.Equal(fim.Add(-2*time.Minute)) || !got.Items[1].CheckedAt.Equal(fim.Add(-time.Minute)) {
+		t.Errorf("janela [from, to) devolveu %+v", got.Items)
 	}
 }
 

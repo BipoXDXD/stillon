@@ -112,12 +112,12 @@ func Load(getenv func(string) string) (*Config, error) {
 	}
 
 	// /metrics entrega o mapa operacional (spec §5.7): quantos alvos, que
-	// latências, quanta conexão. Só escuta em loopback; "off" desliga. Um
-	// host vazio (":9090") escutaria em todas as interfaces, e por isso é
-	// erro, não padrão (D10).
+	// latências, quanta conexão. Só escuta em loopback; "off", em qualquer
+	// caixa, desliga. Um host vazio (":9090") escutaria em todas as
+	// interfaces, e por isso é erro, não padrão (D10).
 	metricsAddr := func(name string) string {
 		raw := opt(name, "127.0.0.1:9090")
-		if raw == "off" {
+		if strings.EqualFold(raw, "off") {
 			return ""
 		}
 		host, _, err := net.SplitHostPort(raw)

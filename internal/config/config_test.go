@@ -168,6 +168,8 @@ func TestMetricsAddrMustBeLoopback(t *testing.T) {
 	}{
 		{"", "127.0.0.1:9090", true}, // padrão
 		{"off", "", true},
+		{"OFF", "", true},
+		{"Off", "", true},
 		{"127.0.0.1:9100", "127.0.0.1:9100", true},
 		{"[::1]:9090", "[::1]:9090", true},
 		{"localhost:9090", "localhost:9090", true},
