@@ -2,8 +2,12 @@ package safedial_test
 
 import (
 	"errors"
+	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -28,59 +32,6 @@ func TestClientCannotReachLoopbackServer(t *testing.T) {
 	}
 	if !errors.Is(err, safedial.ErrBlocked) {
 		t.Errorf("erro = %v, queria envolver ErrBlocked", err)
-	}
-}
-
-// Um alvo público que redireciona para IP interno é a forma mais simples de
-// contornar validação feita só na URL de entrada. Este teste NÃO cobre esse
-// caso, e o nome diz isso de propósito.
-//
-// Motivo: httptest.NewServer sempre escuta em 127.0.0.1. Logo o próprio
-// redirecionador já é um destino bloqueado, a requisição morre no salto zero
-// e o 302 nunca chega ao cliente — CheckRedirect não chega a rodar. Montar a
-// versão ponta a ponta exigiria um primeiro salto com IP público, que não
-// existe em teste local, ou uma lista de bloqueio injetável, que só o
-// sondador do Plano 2 vai justificar.
-//
-// O que este teste prova de verdade é o mesmo que
-// TestClientCannotReachLoopbackServer: o dialer recusa loopback. A cobertura
-// real da revalidação por salto está em
-// TestCheckRedirectRevalidaEsquemaELimitaSaltos, que chama CheckRedirect
-// diretamente. Não tente "consertar" este teste aqui: ele não está quebrado,
-// o httptest é que não permite o cenário.
-func TestAlvoQueRedirecionaParaInternoMorreNoPrimeiroSalto(t *testing.T) {
-	interno := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("segredo interno"))
-	}))
-	defer interno.Close()
-
-	redirecionador := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, interno.URL, http.StatusFound)
-	}))
-	defer redirecionador.Close()
-
-	client := safedial.NewClient(5 * time.Second)
-
-	resp, err := client.Get(redirecionador.URL)
-	if err == nil {
-		resp.Body.Close()
-		t.Fatal("o redirecionamento para loopback não foi bloqueado")
-	}
-	if !errors.Is(err, safedial.ErrBlocked) {
-		t.Errorf("erro = %v, queria envolver ErrBlocked", err)
-	}
-}
-
-func TestTransportDoesNotReuseConnections(t *testing.T) {
-	// Reuso de conexão pula o dialer e, com ele, a revalidação do IP. Este
-	// teste trava a configuração para que ninguém "otimize" o keep-alive de
-	// volta sem perceber a consequência.
-	tr := safedial.NewTransport()
-	if !tr.DisableKeepAlives {
-		t.Error("keep-alive ligado: uma conexão reusada não passa pelo ControlContext")
-	}
-	if tr.Proxy != nil {
-		t.Error("Proxy não é nil: o sondador herdaria HTTP_PROXY do ambiente")
 	}
 }
 
@@ -131,5 +82,128 @@ func TestCheckRedirectRevalidaEsquemaELimitaSaltos(t *testing.T) {
 	err = client.CheckRedirect(req("https://exemplo.com/4"), via)
 	if !errors.Is(err, safedial.ErrBlocked) {
 		t.Errorf("cadeia longa deu erro = %v, queria envolver ErrBlocked", err)
+	}
+}
+
+// enderecoDe devolve o IP:porta exato em que o servidor de teste escuta.
+func enderecoDe(t *testing.T, srv *httptest.Server) netip.AddrPort {
+	t.Helper()
+	ap, err := netip.ParseAddrPort(srv.Listener.Addr().String())
+	if err != nil {
+		t.Fatalf("endereço do servidor de teste: %v", err)
+	}
+	return ap
+}
+
+// Controle positivo: sem ele, todo teste abaixo que espera bloqueio passaria
+// também se NewClientAllowing não liberasse nada. É o mesmo buraco do R15.
+func TestAllowedAddressIsReachable(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+
+	client := safedial.NewClientAllowing(5*time.Second, enderecoDe(t, srv))
+	resp, err := client.Get(srv.URL)
+	if err != nil {
+		t.Fatalf("endereço liberado foi recusado: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Errorf("status = %d, queria 204", resp.StatusCode)
+	}
+}
+
+// R15, agora como comportamento. Reuso de conexão pula o dialer e, com ele,
+// a revalidação do IP no ControlContext: se o keep-alive voltar, uma conexão
+// aberta para um IP público serviria requisições depois de o DNS apontar
+// para um interno. O servidor conta quantas conexões NOVAS viu.
+func TestEachRequestOpensANewConnection(t *testing.T) {
+	var novas atomic.Int32
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	srv.Config.ConnState = func(_ net.Conn, s http.ConnState) {
+		if s == http.StateNew {
+			novas.Add(1)
+		}
+	}
+	srv.Start()
+	defer srv.Close()
+
+	client := safedial.NewClientAllowing(5*time.Second, enderecoDe(t, srv))
+	const pedidos = 3
+	for range pedidos {
+		resp, err := client.Get(srv.URL)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Ler o corpo até o fim é o que devolveria a conexão ao pool se o
+		// keep-alive estivesse ligado. Sem isso, o teste passaria por acaso.
+		io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+	}
+
+	if n := novas.Load(); n != pedidos {
+		t.Errorf("%d conexões novas para %d requisições: houve reuso, e conexão reusada não passa pelo ControlContext", n, pedidos)
+	}
+}
+
+// Um alvo liberado que redireciona para outro endereço interno. Os dois
+// servidores escutam em 127.0.0.1, em portas diferentes; só o primeiro está
+// liberado. O segundo salto tem de morrer no dial, e o segundo servidor não
+// pode ter recebido nada.
+func TestRedirectToAnotherInternalAddressIsBlockedAtTheHop(t *testing.T) {
+	var atingido atomic.Int32
+	interno := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atingido.Add(1)
+		w.Write([]byte("segredo interno"))
+	}))
+	defer interno.Close()
+
+	var redirecionou atomic.Int32
+	redirecionador := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		redirecionou.Add(1)
+		http.Redirect(w, r, interno.URL, http.StatusFound)
+	}))
+	defer redirecionador.Close()
+
+	client := safedial.NewClientAllowing(5*time.Second, enderecoDe(t, redirecionador))
+
+	resp, err := client.Get(redirecionador.URL)
+	if err == nil {
+		resp.Body.Close()
+		t.Fatal("o redirecionamento para outro endereço interno foi seguido")
+	}
+	if !errors.Is(err, safedial.ErrBlocked) {
+		t.Errorf("erro = %v, queria envolver ErrBlocked", err)
+	}
+	// Sem esta asserção o teste seria o do Plano 1 de novo: o bloqueio
+	// poderia ter acontecido no salto zero, e o redirect nunca teria rodado.
+	if redirecionou.Load() != 1 {
+		t.Fatalf("o redirecionador recebeu %d requisições, queria 1: o bloqueio não aconteceu no salto", redirecionou.Load())
+	}
+	if n := atingido.Load(); n != 0 {
+		t.Errorf("o servidor interno recebeu %d requisições", n)
+	}
+}
+
+func TestAllowingPanicsForNonLoopback(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Error("NewClientAllowing aceitou 10.0.0.5: a porta de teste virou liberação de rede interna")
+		}
+	}()
+	safedial.NewClientAllowing(time.Second, netip.MustParseAddrPort("10.0.0.5:80"))
+}
+
+// O Proxy continua verificado por configuração, e não por comportamento, e
+// o motivo é concreto: http.ProxyFromEnvironment NUNCA manda ao proxy
+// requisições para localhost ou 127.0.0.1. Um teste com HTTP_PROXY e
+// httptest passaria com o Proxy ligado — seria o padrão vacuamente verde
+// de novo. Fica a trava de configuração, com o motivo escrito.
+func TestTransportIgnoresEnvironmentProxy(t *testing.T) {
+	if safedial.NewTransport().Proxy != nil {
+		t.Error("Proxy não é nil: o sondador herdaria HTTP_PROXY do ambiente, e o ControlContext validaria o IP do proxy em vez do IP do alvo")
 	}
 }
