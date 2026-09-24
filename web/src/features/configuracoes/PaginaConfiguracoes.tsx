@@ -174,6 +174,9 @@ function TrocaDeSenha({ comTotp }: { comTotp: boolean }) {
 
 const JA_ATIVADA = 'A verificação em duas etapas já está ativada.'
 
+// Quanto a URL do .txt dos códigos vive depois do clique (o do FileSaver.js).
+export const ATRASO_DA_REVOGACAO = 40_000
+
 // O confirm responde o mesmo 400 para código errado e para cadastro que
 // sumiu (trocar a senha apaga o cadastro pendente: PENDENCIAS do Plano 6).
 const CODIGO_NAO_ACEITO =
@@ -310,7 +313,9 @@ function AtivarTotp({
             a.href = url
             a.download = 'vigilume-codigos-de-recuperacao.txt'
             a.click()
-            URL.revokeObjectURL(url)
+            // O Firefox cancela o download se a URL é revogada logo depois
+            // do click(); este é o único arquivo dos códigos.
+            window.setTimeout(() => URL.revokeObjectURL(url), ATRASO_DA_REVOGACAO)
           }}
         >
           Baixar .txt

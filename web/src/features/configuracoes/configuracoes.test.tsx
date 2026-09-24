@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { RECUPERACAO_OK, TOTP_OK } from '@/test/api-falsa'
 import { sessao as familia, me } from '@/test/fixtures'
 import { renderizarPainel, SENHA } from '@/test/renderizar'
+import { ATRASO_DA_REVOGACAO } from './PaginaConfiguracoes'
 import { servidor } from '@/test/setup'
 
 // Uma resposta segurada até o teste soltar.
@@ -352,6 +353,42 @@ describe('2FA', () => {
       expect(screen.queryByText('Operação não permitida.')).not.toBeInTheDocument()
     })
   }
+
+  // Revisão final: o Firefox cancela o download se a URL do blob é revogada
+  // logo depois do click(), e o único arquivo dos códigos não chegava. A
+  // revogação vai para um setTimeout longo. Sabotagem: revogar logo depois
+  // do a.click() → o revoke já foi chamado na volta do clique.
+  it('Baixar .txt revoga a URL do arquivo só depois, e não logo após o clique', async () => {
+    const criar = vi.fn<(o: Blob | MediaSource) => string>(() => 'blob:codigos')
+    const revogar = vi.fn<(url: string) => void>()
+    const antes = { criar: URL.createObjectURL, revogar: URL.revokeObjectURL }
+    URL.createObjectURL = criar
+    URL.revokeObjectURL = revogar
+    const clique = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+    try {
+      const r = await renderizarPainel('/settings')
+      await r.usuario.click(await screen.findByRole('button', { name: 'Ativar' }))
+      const dialogo = await screen.findByRole('dialog')
+      await r.usuario.type(within(dialogo).getByLabelText('Sua senha'), SENHA)
+      await r.usuario.click(within(dialogo).getByRole('button', { name: 'Continuar' }))
+      await r.usuario.type(await within(dialogo).findByLabelText('Código de 6 dígitos'), TOTP_OK)
+      await r.usuario.click(within(dialogo).getByRole('button', { name: 'Ativar' }))
+      const baixar = await within(dialogo).findByRole('button', { name: 'Baixar .txt' })
+      const agendar = vi.spyOn(window, 'setTimeout')
+      await r.usuario.click(baixar)
+      expect(clique).toHaveBeenCalledTimes(1)
+      expect(revogar).not.toHaveBeenCalled()
+      const agendado = agendar.mock.calls.find(([, ms]) => ms === ATRASO_DA_REVOGACAO)
+      agendar.mockRestore()
+      expect(agendado).toBeDefined()
+      ;(agendado![0] as () => void)()
+      expect(revogar).toHaveBeenCalledWith('blob:codigos')
+    } finally {
+      clique.mockRestore()
+      URL.createObjectURL = antes.criar
+      URL.revokeObjectURL = antes.revogar
+    }
+  })
 
   // PENDENCIAS do Plano 6: trocar a senha apaga o cadastro pendente, e o
   // confirm responde o mesmo 400 de um código errado.
