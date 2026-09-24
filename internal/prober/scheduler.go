@@ -27,10 +27,13 @@ import (
 // 500 alvos lentos seriam 500 goroutines presas em I/O de rede.
 const MaxInFlight int32 = 64
 
-const (
-	tickEvery      = time.Second
-	persistTimeout = 5 * time.Second
-)
+const tickEvery = time.Second
+
+// PersistTimeout é o prazo próprio de cada gravação de check. Uma sonda que
+// termina no limite do grace de Stop ainda grava com este prazo, então Stop
+// pode levar até grace + PersistTimeout. Exportado para que o wiring
+// desconte esse tempo do orçamento de shutdown.
+const PersistTimeout = 5 * time.Second
 
 var errShutdown = errors.New("encerramento do sondador")
 
@@ -195,7 +198,7 @@ func (s *Scheduler) especificar(a db.ClaimDueTargetsRow) (Spec, error) {
 func (s *Scheduler) gravar(alvo uuid.UUID, em time.Time, res Result) {
 	// Contexto próprio: a sonda terminou, e o resultado vale mesmo com o
 	// processo encerrando.
-	ctx, cancel := context.WithTimeout(context.Background(), persistTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), PersistTimeout)
 	defer cancel()
 
 	id, err := uuid.NewV7()

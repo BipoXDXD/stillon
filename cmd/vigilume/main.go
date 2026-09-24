@@ -4,17 +4,23 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
+
+	"golang.org/x/sync/errgroup"
 
 	"github.com/BipoXDXD/vigilume/internal/auth"
 	"github.com/BipoXDXD/vigilume/internal/clock"
 	"github.com/BipoXDXD/vigilume/internal/config"
 	"github.com/BipoXDXD/vigilume/internal/crypto"
 	"github.com/BipoXDXD/vigilume/internal/httpapi"
+	"github.com/BipoXDXD/vigilume/internal/observability"
+	"github.com/BipoXDXD/vigilume/internal/prober"
 	"github.com/BipoXDXD/vigilume/internal/storage"
 	"github.com/BipoXDXD/vigilume/internal/targets"
 )
@@ -57,8 +63,17 @@ func main() {
 	log.Info("encerrado")
 }
 
+// manutencaoDeParticoes é o intervalo do job que garante a partição do mês
+// seguinte. A do mês seguinte já existe desde o boot, então um dia de
+// intervalo deixa um mês inteiro de folga.
+const manutencaoDeParticoes = 24 * time.Hour
+
 // run é onde o wiring acontece. Mantido separado de main para que main tenha
 // apenas responsabilidade de processo (flags, sinais, código de saída).
+//
+// Cada subsistema roda no mesmo errgroup. Se um falha — a porta ocupada, por
+// exemplo —, o contexto do grupo cancela, os outros encerram, e o processo
+// sai com erro, em vez de seguir meio vivo.
 func run(ctx context.Context, cfg *config.Config) error {
 	if err := storage.Migrate(ctx, cfg.DatabaseURL); err != nil {
 		return err
@@ -71,46 +86,93 @@ func run(ctx context.Context, cfg *config.Config) error {
 	}
 	defer pool.Close()
 
-	if !cfg.Role.RunsAPI() {
-		// O papel prober ganha seu loop no Plano 2. Por ora só mantém o
-		// processo vivo até o sinal de encerramento.
-		<-ctx.Done()
-		return nil
+	// Antes de qualquer consulta de negócio. Com um papel que ignora RLS, a
+	// segunda barreira de isolamento estaria desligada em silêncio (D8).
+	if err := storage.CheckRole(ctx, pool); err != nil {
+		return err
 	}
-
-	clk := clock.Real{}
-	store := auth.NewPGStore(pool)
-	sessions := auth.NewManager(store, clk, cfg.IPHashKey)
 
 	box, err := crypto.NewBox(cfg.MasterKey)
 	if err != nil {
 		return err
 	}
-	totp := auth.NewTOTP(pool, box, totpIssuer)
+	clk := clock.Real{}
 
-	deps := httpapi.Deps{
-		Store: store, Sessions: sessions, TOTP: totp,
-		Targets: targets.NewService(pool, box, clk), Clock: clk,
-	}
-	srv := httpapi.NewServer(cfg, httpapi.Routes(ctx, cfg, deps))
-
-	errCh := make(chan error, 1)
-	go func() {
-		slog.Info("servindo HTTP", "addr", cfg.HTTPAddr)
-		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			errCh <- err
+	// A partição do mês corrente tem de existir antes da primeira sonda.
+	// Fica antes do errgroup: um retorno daqui não deixa servidor nenhum
+	// rodando sem ninguém para desligá-lo.
+	if cfg.Role.RunsProber() {
+		if err := storage.EnsureChecksPartitions(ctx, pool, clk.Now()); err != nil {
+			return err
 		}
-	}()
-
-	select {
-	case err := <-errCh:
-		return err
-	case <-ctx.Done():
 	}
 
-	// Shutdown gracioso com prazo (spec §6.2): conexões em voo terminam, e o
-	// processo não fica preso caso alguma não termine.
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownGrace)
-	defer cancel()
-	return srv.Shutdown(shutdownCtx)
+	reg := observability.NewRegistry()
+	reg.MustRegister(storage.NewPoolCollector(pool))
+
+	g, gctx := errgroup.WithContext(ctx)
+
+	if cfg.MetricsAddr != "" {
+		servir(gctx, g, observability.NewMetricsServer(cfg.MetricsAddr, reg), "métricas", cfg.ShutdownGrace)
+	}
+
+	if cfg.Role.RunsProber() {
+		sched := prober.New(pool, box, clk, prober.NewMetrics(reg))
+		grace := graceDoSondador(cfg.ShutdownGrace)
+		g.Go(func() error { return sched.Run(gctx, grace) })
+		g.Go(func() error {
+			return storage.MaintainChecksPartitions(gctx, pool, clk, manutencaoDeParticoes)
+		})
+		slog.Info("sondador ativo", "max_em_voo", prober.MaxInFlight)
+	}
+
+	if cfg.Role.RunsAPI() {
+		store := auth.NewPGStore(pool)
+		deps := httpapi.Deps{
+			Store:    store,
+			Sessions: auth.NewManager(store, clk, cfg.IPHashKey),
+			TOTP:     auth.NewTOTP(pool, box, totpIssuer),
+			Targets:  targets.NewService(pool, box, clk),
+			Clock:    clk,
+		}
+		servir(gctx, g, httpapi.NewServer(cfg, httpapi.Routes(gctx, cfg, deps)), "api", cfg.ShutdownGrace)
+	}
+
+	return g.Wait()
+}
+
+// graceDoSondador é o prazo que o sondador dá às sondas em voo no shutdown.
+//
+// Stop pode levar até grace + PersistTimeout: uma sonda que termina no limite
+// ainda grava o check com prazo próprio. Descontar PersistTimeout faz o
+// sondador inteiro caber no ShutdownGrace (15s, spec §6.2). Quando não cabe
+// (grace ≤ PersistTimeout, só em teste), vai o grace inteiro: um prazo zero
+// ou negativo abortaria as sondas na hora.
+func graceDoSondador(total time.Duration) time.Duration {
+	if g := total - prober.PersistTimeout; g > 0 {
+		return g
+	}
+	return total
+}
+
+// servir roda srv até ctx acabar e então o desliga com prazo (spec §6.2).
+// Uma falha ao subir volta como erro do grupo e derruba o resto.
+func servir(ctx context.Context, g *errgroup.Group, srv *http.Server, nome string, grace time.Duration) {
+	g.Go(func() error {
+		falhou := make(chan error, 1)
+		go func() {
+			slog.Info("servindo", "servidor", nome, "addr", srv.Addr)
+			if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				falhou <- fmt.Errorf("servidor %s: %w", nome, err)
+			}
+		}()
+		select {
+		case err := <-falhou:
+			return err
+		case <-ctx.Done():
+		}
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), grace)
+		defer cancel()
+		return srv.Shutdown(shutdownCtx)
+	})
 }
