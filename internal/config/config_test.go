@@ -11,9 +11,9 @@ import (
 func validEnv() map[string]string {
 	k := base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{1}, 32))
 	return map[string]string{
-		"DATABASE_URL":    "postgres://localhost/sentinela",
-		"PUBLIC_BASE_URL": "https://sentinela.example",
-		"CORS_ORIGIN":     "https://app.sentinela.example",
+		"DATABASE_URL":    "postgres://localhost/vigilume",
+		"PUBLIC_BASE_URL": "https://vigilume.example",
+		"CORS_ORIGIN":     "https://app.vigilume.example",
 		"MASTER_KEY":      k,
 		"JWT_SECRET":      k,
 		"IP_HASH_KEY":     k,

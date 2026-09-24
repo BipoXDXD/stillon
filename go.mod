@@ -1,4 +1,4 @@
-module github.com/BipoXDXD/sentinela
+module github.com/BipoXDXD/vigilume
 
 go 1.26.8
 

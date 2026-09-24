@@ -15,7 +15,7 @@ sec:
 	govulncheck ./...
 
 build:
-	go build -o bin/sentinela ./cmd/sentinela
+	go build -o bin/vigilume ./cmd/vigilume
 
 run: build
-	./bin/sentinela --role=all
+	./bin/vigilume --role=all

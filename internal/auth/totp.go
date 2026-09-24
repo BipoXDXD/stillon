@@ -14,7 +14,7 @@ import (
 	"github.com/pquerna/otp"
 	"github.com/pquerna/otp/totp"
 
-	"github.com/BipoXDXD/sentinela/internal/crypto"
+	"github.com/BipoXDXD/vigilume/internal/crypto"
 )
 
 var (

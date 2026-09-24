@@ -5,9 +5,9 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/BipoXDXD/sentinela/internal/apierr"
-	"github.com/BipoXDXD/sentinela/internal/auth"
-	"github.com/BipoXDXD/sentinela/internal/httpapi/middleware"
+	"github.com/BipoXDXD/vigilume/internal/apierr"
+	"github.com/BipoXDXD/vigilume/internal/auth"
+	"github.com/BipoXDXD/vigilume/internal/httpapi/middleware"
 )
 
 type codeRequest struct {

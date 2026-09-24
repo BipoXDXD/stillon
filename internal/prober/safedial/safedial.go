@@ -1,6 +1,6 @@
 // Package safedial protege o sondador contra SSRF (spec §5.1).
 //
-// O Sentinela aceita uma URL arbitrária do usuário e faz uma requisição a
+// O Vigilume aceita uma URL arbitrária do usuário e faz uma requisição a
 // partir do servidor — ou seja, é um proxy por construção. Sem esta guarda,
 // um alvo cadastrado como http://169.254.169.254/ transforma o monitor em
 // ferramenta de varredura da rede interna e de roubo de credenciais de nuvem.

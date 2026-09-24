@@ -7,7 +7,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 
-	"github.com/BipoXDXD/sentinela/internal/auth"
+	"github.com/BipoXDXD/vigilume/internal/auth"
 )
 
 var jwtSecret = []byte("segredo-de-teste-com-32-bytes!!!")

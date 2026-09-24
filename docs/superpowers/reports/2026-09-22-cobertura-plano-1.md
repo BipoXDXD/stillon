@@ -51,7 +51,7 @@ Medidos sob a suíte inteira:
 | `clock.Fake.{Now,Advance}` / `NewFake` | 100% |
 | `clock.Real.Now` | 0.0% (só produção usa; o `Fake` é o caminho testado) |
 
-`internal/storage/testdb` e `cmd/sentinela` em 0.0% são esperados: infraestrutura de teste e
+`internal/storage/testdb` e `cmd/vigilume` em 0.0% são esperados: infraestrutura de teste e
 wiring de processo.
 
 ## (b) Análise dos três pacotes nomeados

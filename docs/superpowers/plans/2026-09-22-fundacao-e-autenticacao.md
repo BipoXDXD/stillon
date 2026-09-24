@@ -1,4 +1,4 @@
-# Sentinela — Plano 1: Fundação e Segurança de Base
+# Vigilume — Plano 1: Fundação e Segurança de Base
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -8,7 +8,7 @@
 
 **Tech Stack:** Go 1.26, PostgreSQL 16, `pgx/v5`, `goose`, `golang.org/x/crypto/argon2`, `golang-jwt/jwt/v5`, `golang.org/x/time/rate`, `google/uuid`, `testcontainers-go`.
 
-**Spec:** `docs/superpowers/specs/2026-09-22-sentinela-design.md`
+**Spec:** `docs/superpowers/specs/2026-09-22-vigilume-design.md`
 
 **Roteiro:** `docs/superpowers/plans/2026-09-22-roadmap.md` (este é o plano 1 de 5)
 
@@ -18,7 +18,7 @@
 
 Valores copiados literalmente da spec. Valem para todas as tarefas.
 
-- **Go 1.26.** Módulo: `github.com/BipoXDXD/sentinela`.
+- **Go 1.26.** Módulo: `github.com/BipoXDXD/vigilume`.
 - **PostgreSQL 16+.**
 - **Sem framework HTTP.** Apenas `net/http` da stdlib, com padrões de método no `ServeMux` (spec §3.3).
 - **Sem ORM.** SQL escrito à mão (spec §3.3).
@@ -49,7 +49,7 @@ linguagem.
 
 | Arquivo | Responsabilidade |
 |---|---|
-| `cmd/sentinela/main.go` | Parse de flags, wiring, shutdown gracioso. Sem lógica. |
+| `cmd/vigilume/main.go` | Parse de flags, wiring, shutdown gracioso. Sem lógica. |
 | `internal/config/config.go` | Env → struct validada. Falha rápido no boot, acumulando todos os erros. |
 | `internal/storage/migrate.go` | Migrations embutidas, aplicadas no boot. |
 | `internal/storage/migrations/*.sql` | Schema versionado. |
@@ -98,7 +98,7 @@ Tarefas 3, 4 e 5 são pacotes puros: rodam em milissegundos, sem Docker.
 **Files:**
 - Create: `go.mod`, `.gitignore`, `Makefile`, `.github/workflows/ci.yml`
 - Create: `internal/config/config.go`
-- Create: `cmd/sentinela/main.go`
+- Create: `cmd/vigilume/main.go`
 - Test: `internal/config/config_test.go`
 
 **Interfaces:**
@@ -108,8 +108,8 @@ Tarefas 3, 4 e 5 são pacotes puros: rodam em milissegundos, sem Docker.
 - [ ] **Step 1: Inicializar o módulo e as dependências**
 
 ```bash
-cd ~/GolandProjects/sentinela
-go mod init github.com/BipoXDXD/sentinela
+cd ~/Projetos/Go/vigilume
+go mod init github.com/BipoXDXD/vigilume
 go get github.com/jackc/pgx/v5@latest
 go get github.com/pressly/goose/v3@latest
 go get github.com/google/uuid@latest
@@ -126,7 +126,7 @@ go get github.com/testcontainers/testcontainers-go/modules/postgres@latest
 `.gitignore`:
 
 ```
-/sentinela
+/vigilume
 /bin/
 /web/node_modules/
 /web/dist/
@@ -155,10 +155,10 @@ sec:
 	govulncheck ./...
 
 build:
-	go build -o bin/sentinela ./cmd/sentinela
+	go build -o bin/vigilume ./cmd/vigilume
 
 run: build
-	./bin/sentinela --role=all
+	./bin/vigilume --role=all
 ```
 
 `test-short` pula os testes que precisam de Docker — é o alvo para rodar a cada
@@ -182,9 +182,9 @@ import (
 func validEnv() map[string]string {
 	k := base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{1}, 32))
 	return map[string]string{
-		"DATABASE_URL":    "postgres://localhost/sentinela",
-		"PUBLIC_BASE_URL": "https://sentinela.example",
-		"CORS_ORIGIN":     "https://app.sentinela.example",
+		"DATABASE_URL":    "postgres://localhost/vigilume",
+		"PUBLIC_BASE_URL": "https://vigilume.example",
+		"CORS_ORIGIN":     "https://app.vigilume.example",
 		"MASTER_KEY":      k,
 		"JWT_SECRET":      k,
 		"IP_HASH_KEY":     k,
@@ -443,7 +443,7 @@ Expected: PASS nos 6 testes.
 
 - [ ] **Step 7: Escrever o `main.go` mínimo**
 
-`cmd/sentinela/main.go`:
+`cmd/vigilume/main.go`:
 
 ```go
 package main
@@ -456,7 +456,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/BipoXDXD/sentinela/internal/config"
+	"github.com/BipoXDXD/vigilume/internal/config"
 )
 
 func main() {
@@ -551,7 +551,7 @@ rodam no CI sem configuração extra.
 - [ ] **Step 9: Verificar tudo e commitar**
 
 Run: `make lint && make test && make build`
-Expected: sem saída de erro; binário em `bin/sentinela`.
+Expected: sem saída de erro; binário em `bin/vigilume`.
 
 ```bash
 git add go.mod go.sum .gitignore Makefile .github cmd internal/config
@@ -644,7 +644,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/BipoXDXD/sentinela/internal/storage/testdb"
+	"github.com/BipoXDXD/vigilume/internal/storage/testdb"
 )
 
 // TestMigrationsApplyAndSchemaIsUsable prova três coisas de uma vez: o
@@ -818,7 +818,7 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 
-	"github.com/BipoXDXD/sentinela/internal/storage"
+	"github.com/BipoXDXD/vigilume/internal/storage"
 )
 
 var (
@@ -829,9 +829,9 @@ var (
 )
 
 const (
-	dbName = "sentinela_test"
-	dbUser = "sentinela"
-	dbPass = "sentinela"
+	dbName = "vigilume_test"
+	dbUser = "vigilume"
+	dbPass = "vigilume"
 )
 
 // New devolve um pool ligado a um Postgres limpo e migrado.
@@ -914,7 +914,7 @@ depende disso. Verificar com `docker info`.
 
 - [ ] **Step 7: Ligar a migration ao boot**
 
-Em `cmd/sentinela/main.go`, substituir o corpo de `run`:
+Em `cmd/vigilume/main.go`, substituir o corpo de `run`:
 
 ```go
 func run(ctx context.Context, cfg *config.Config) error {
@@ -934,12 +934,12 @@ func run(ctx context.Context, cfg *config.Config) error {
 }
 ```
 
-Adicionar `"github.com/BipoXDXD/sentinela/internal/storage"` aos imports.
+Adicionar `"github.com/BipoXDXD/vigilume/internal/storage"` aos imports.
 
 - [ ] **Step 8: Commitar**
 
 ```bash
-git add internal/storage cmd/sentinela/main.go
+git add internal/storage cmd/vigilume/main.go
 git commit -m "feat(storage): schema inicial, migrations embutidas e harness de teste
 
 Migrations aplicadas no boot via embed.FS. O harness de teste sobe Postgres
@@ -978,7 +978,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/BipoXDXD/sentinela/internal/crypto"
+	"github.com/BipoXDXD/vigilume/internal/crypto"
 )
 
 const plaintext = "senha-do-webhook-super-secreta"
@@ -1067,7 +1067,7 @@ Expected: FAIL — `undefined: crypto.Secret`.
 `internal/crypto/secret.go`:
 
 ```go
-// Package crypto reúne as primitivas criptográficas do Sentinela: o tipo
+// Package crypto reúne as primitivas criptográficas do Vigilume: o tipo
 // Secret, o envelope AES-GCM e os hashes de token e de IP.
 package crypto
 
@@ -1113,7 +1113,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/BipoXDXD/sentinela/internal/crypto"
+	"github.com/BipoXDXD/vigilume/internal/crypto"
 )
 
 func testKey(t *testing.T) []byte {
@@ -1344,7 +1344,7 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/BipoXDXD/sentinela/internal/crypto"
+	"github.com/BipoXDXD/vigilume/internal/crypto"
 )
 
 func TestHashTokenIsDeterministicAndFixedLength(t *testing.T) {
@@ -1470,7 +1470,7 @@ import (
 	"net/netip"
 	"testing"
 
-	"github.com/BipoXDXD/sentinela/internal/prober/safedial"
+	"github.com/BipoXDXD/vigilume/internal/prober/safedial"
 )
 
 func TestAllowIP(t *testing.T) {
@@ -1590,7 +1590,7 @@ Expected: FAIL — pacote não existe.
 ```go
 // Package safedial protege o sondador contra SSRF (spec §5.1).
 //
-// O Sentinela aceita uma URL arbitrária do usuário e faz uma requisição a
+// O Vigilume aceita uma URL arbitrária do usuário e faz uma requisição a
 // partir do servidor — ou seja, é um proxy por construção. Sem esta guarda,
 // um alvo cadastrado como http://169.254.169.254/ transforma o monitor em
 // ferramenta de varredura da rede interna e de roubo de credenciais de nuvem.
@@ -1730,7 +1730,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/BipoXDXD/sentinela/internal/prober/safedial"
+	"github.com/BipoXDXD/vigilume/internal/prober/safedial"
 )
 
 // Este é o teste que importa. httptest.NewServer escuta em 127.0.0.1, então
@@ -1984,7 +1984,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/BipoXDXD/sentinela/internal/auth"
+	"github.com/BipoXDXD/vigilume/internal/auth"
 )
 
 const senha = "uma-senha-bem-comprida-e-boa"
@@ -2330,9 +2330,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/BipoXDXD/sentinela/internal/auth"
-	"github.com/BipoXDXD/sentinela/internal/clock"
-	"github.com/BipoXDXD/sentinela/internal/storage/testdb"
+	"github.com/BipoXDXD/vigilume/internal/auth"
+	"github.com/BipoXDXD/vigilume/internal/clock"
+	"github.com/BipoXDXD/vigilume/internal/storage/testdb"
 )
 
 var ipKey = []byte("chave-de-teste-com-32-bytes-ok!!")
@@ -2664,8 +2664,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/BipoXDXD/sentinela/internal/clock"
-	"github.com/BipoXDXD/sentinela/internal/crypto"
+	"github.com/BipoXDXD/vigilume/internal/clock"
+	"github.com/BipoXDXD/vigilume/internal/crypto"
 )
 
 // RefreshTTL vem da spec §5.2.
@@ -2856,7 +2856,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/BipoXDXD/sentinela/internal/auth"
+	"github.com/BipoXDXD/vigilume/internal/auth"
 )
 
 var jwtSecret = []byte("segredo-de-teste-com-32-bytes!!!")
@@ -3041,7 +3041,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/BipoXDXD/sentinela/internal/httpapi/middleware"
+	"github.com/BipoXDXD/vigilume/internal/httpapi/middleware"
 )
 
 func ok(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) }
@@ -3192,7 +3192,7 @@ func TestRequireCustomHeaderOnMutations(t *testing.T) {
 	}
 
 	com := httptest.NewRequest(http.MethodPost, "/", nil)
-	com.Header.Set("X-Requested-With", "sentinela")
+	com.Header.Set("X-Requested-With", "vigilume")
 	rec = httptest.NewRecorder()
 	h.ServeHTTP(rec, com)
 	if rec.Code != http.StatusOK {
@@ -3241,7 +3241,7 @@ func TraceID(ctx context.Context) string {
 `internal/httpapi/errors.go`:
 
 ```go
-// Package httpapi expõe a API HTTP do Sentinela.
+// Package httpapi expõe a API HTTP do Vigilume.
 package httpapi
 
 import (
@@ -3249,7 +3249,7 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/BipoXDXD/sentinela/internal/observability"
+	"github.com/BipoXDXD/vigilume/internal/observability"
 )
 
 type ErrorCode string
@@ -3323,7 +3323,7 @@ func WriteJSON(w http.ResponseWriter, status int, v any) {
 `internal/httpapi/middleware/requestid.go`:
 
 ```go
-// Package middleware reúne os middlewares HTTP do Sentinela, um por arquivo
+// Package middleware reúne os middlewares HTTP do Vigilume, um por arquivo
 // para que cada um seja testado e revisado isoladamente.
 package middleware
 
@@ -3332,7 +3332,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/BipoXDXD/sentinela/internal/observability"
+	"github.com/BipoXDXD/vigilume/internal/observability"
 )
 
 const TraceHeader = "X-Trace-Id"
@@ -3363,8 +3363,8 @@ import (
 	"net/http"
 	"runtime/debug"
 
-	"github.com/BipoXDXD/sentinela/internal/httpapi"
-	"github.com/BipoXDXD/sentinela/internal/observability"
+	"github.com/BipoXDXD/vigilume/internal/httpapi"
+	"github.com/BipoXDXD/vigilume/internal/observability"
 )
 
 // Recover impede que um panic derrube o processo e, principalmente, que o
@@ -3461,7 +3461,7 @@ import (
 
 	"golang.org/x/time/rate"
 
-	"github.com/BipoXDXD/sentinela/internal/httpapi"
+	"github.com/BipoXDXD/vigilume/internal/httpapi"
 )
 
 // RateLimit aplica token bucket por cliente (spec §5.7).
@@ -3548,7 +3548,7 @@ package middleware
 import (
 	"net/http"
 
-	"github.com/BipoXDXD/sentinela/internal/httpapi"
+	"github.com/BipoXDXD/vigilume/internal/httpapi"
 )
 
 // CustomHeaderName é o header que toda mutação precisa enviar.
@@ -3591,7 +3591,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/BipoXDXD/sentinela/internal/config"
+	"github.com/BipoXDXD/vigilume/internal/config"
 )
 
 // NewServer configura o http.Server com todos os timeouts.
@@ -3639,7 +3639,7 @@ verificável de ponta a ponta contra Postgres real.
 - Create: `internal/httpapi/authhandlers.go`
 - Create: `internal/httpapi/middleware/authn.go`
 - Create: `internal/httpapi/routes.go`
-- Modify: `cmd/sentinela/main.go`
+- Modify: `cmd/vigilume/main.go`
 - Test: `internal/httpapi/auth_integration_test.go`
 
 **Interfaces:**
@@ -3681,11 +3681,11 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/BipoXDXD/sentinela/internal/auth"
-	"github.com/BipoXDXD/sentinela/internal/clock"
-	"github.com/BipoXDXD/sentinela/internal/config"
-	"github.com/BipoXDXD/sentinela/internal/httpapi"
-	"github.com/BipoXDXD/sentinela/internal/storage/testdb"
+	"github.com/BipoXDXD/vigilume/internal/auth"
+	"github.com/BipoXDXD/vigilume/internal/clock"
+	"github.com/BipoXDXD/vigilume/internal/config"
+	"github.com/BipoXDXD/vigilume/internal/httpapi"
+	"github.com/BipoXDXD/vigilume/internal/storage/testdb"
 )
 
 const (
@@ -3729,7 +3729,7 @@ func post(t *testing.T, c *http.Client, url string, body any) *http.Response {
 		t.Fatal(err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Requested-With", "sentinela")
+	req.Header.Set("X-Requested-With", "vigilume")
 
 	resp, err := c.Do(req)
 	if err != nil {
@@ -3772,7 +3772,7 @@ func TestFullAuthFlow(t *testing.T) {
 	// O cookie de refresh precisa estar blindado (spec §5.3).
 	var refresh *http.Cookie
 	for _, ck := range resp.Cookies() {
-		if ck.Name == "sentinela_refresh" {
+		if ck.Name == "vigilume_refresh" {
 			refresh = ck
 		}
 	}
@@ -4008,13 +4008,13 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/BipoXDXD/sentinela/internal/auth"
-	"github.com/BipoXDXD/sentinela/internal/clock"
-	"github.com/BipoXDXD/sentinela/internal/httpapi/middleware"
-	"github.com/BipoXDXD/sentinela/internal/observability"
+	"github.com/BipoXDXD/vigilume/internal/auth"
+	"github.com/BipoXDXD/vigilume/internal/clock"
+	"github.com/BipoXDXD/vigilume/internal/httpapi/middleware"
+	"github.com/BipoXDXD/vigilume/internal/observability"
 )
 
-const refreshCookieName = "sentinela_refresh"
+const refreshCookieName = "vigilume_refresh"
 
 type AuthHandlers struct {
 	users        auth.UserStore
@@ -4229,9 +4229,9 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/BipoXDXD/sentinela/internal/auth"
-	"github.com/BipoXDXD/sentinela/internal/clock"
-	"github.com/BipoXDXD/sentinela/internal/httpapi"
+	"github.com/BipoXDXD/vigilume/internal/auth"
+	"github.com/BipoXDXD/vigilume/internal/clock"
+	"github.com/BipoXDXD/vigilume/internal/httpapi"
 )
 
 type userKey struct{}
@@ -4277,10 +4277,10 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/BipoXDXD/sentinela/internal/auth"
-	"github.com/BipoXDXD/sentinela/internal/clock"
-	"github.com/BipoXDXD/sentinela/internal/config"
-	"github.com/BipoXDXD/sentinela/internal/httpapi/middleware"
+	"github.com/BipoXDXD/vigilume/internal/auth"
+	"github.com/BipoXDXD/vigilume/internal/clock"
+	"github.com/BipoXDXD/vigilume/internal/config"
+	"github.com/BipoXDXD/vigilume/internal/httpapi/middleware"
 )
 
 // maxBodyBytes cobre com folga qualquer payload legítimo desta API.
@@ -4329,7 +4329,7 @@ Expected: PASS nos 5 testes de integração.
 
 - [ ] **Step 8: Ligar tudo no `main.go`**
 
-Substituir o corpo de `run` em `cmd/sentinela/main.go`:
+Substituir o corpo de `run` em `cmd/vigilume/main.go`:
 
 ```go
 func run(ctx context.Context, cfg *config.Config) error {
@@ -4383,7 +4383,7 @@ Adicionar aos imports: `"errors"`, `"net/http"`, e os pacotes `auth`, `clock`,
 - [ ] **Step 9: Verificar o binário de ponta a ponta**
 
 ```bash
-docker run -d --name sentinela-pg -e POSTGRES_PASSWORD=dev -p 5432:5432 postgres:16-alpine
+docker run -d --name vigilume-pg -e POSTGRES_PASSWORD=dev -p 5432:5432 postgres:16-alpine
 
 export DATABASE_URL="postgres://postgres:dev@localhost:5432/postgres?sslmode=disable"
 export PUBLIC_BASE_URL="http://localhost:8080"
@@ -4411,7 +4411,7 @@ curl -i -X POST http://localhost:8080/api/v1/auth/login \
 ```
 
 Expected: `403` — a mutação não enviou `X-Requested-With`. Repetir com
-`-H 'X-Requested-With: sentinela'` e esperar `401 invalid_credentials`.
+`-H 'X-Requested-With: vigilume'` e esperar `401 invalid_credentials`.
 
 - [ ] **Step 10: Rodar a suíte completa e commitar**
 
@@ -4504,9 +4504,9 @@ import (
 	"github.com/pquerna/otp"
 	"github.com/pquerna/otp/totp"
 
-	"github.com/BipoXDXD/sentinela/internal/auth"
-	"github.com/BipoXDXD/sentinela/internal/crypto"
-	"github.com/BipoXDXD/sentinela/internal/storage/testdb"
+	"github.com/BipoXDXD/vigilume/internal/auth"
+	"github.com/BipoXDXD/vigilume/internal/crypto"
+	"github.com/BipoXDXD/vigilume/internal/storage/testdb"
 )
 
 func setupTOTP(t *testing.T) (*auth.TOTP, *pgxpool.Pool, uuid.UUID) {
@@ -4524,7 +4524,7 @@ func setupTOTP(t *testing.T) (*auth.TOTP, *pgxpool.Pool, uuid.UUID) {
 		userID, "totp@exemplo.com"); err != nil {
 		t.Fatal(err)
 	}
-	return auth.NewTOTP(pool, box, "Sentinela"), pool, userID
+	return auth.NewTOTP(pool, box, "Vigilume"), pool, userID
 }
 
 // secretFromURI extrai o segredo base32 da URI otpauth:// para que o teste
@@ -4686,7 +4686,7 @@ import (
 	"github.com/pquerna/otp"
 	"github.com/pquerna/otp/totp"
 
-	"github.com/BipoXDXD/sentinela/internal/crypto"
+	"github.com/BipoXDXD/vigilume/internal/crypto"
 )
 
 var (
@@ -4985,8 +4985,8 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/BipoXDXD/sentinela/internal/auth"
-	"github.com/BipoXDXD/sentinela/internal/httpapi/middleware"
+	"github.com/BipoXDXD/vigilume/internal/auth"
+	"github.com/BipoXDXD/vigilume/internal/httpapi/middleware"
 )
 
 type codeRequest struct {
@@ -5141,7 +5141,7 @@ func TestLoginWithTOTPRequiresSecondFactor(t *testing.T) {
 
 	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/api/v1/auth/totp/enroll", nil)
 	req.Header.Set("Authorization", "Bearer "+first.AccessToken)
-	req.Header.Set("X-Requested-With", "sentinela")
+	req.Header.Set("X-Requested-With", "vigilume")
 	er, err := c.Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -5161,7 +5161,7 @@ func TestLoginWithTOTPRequiresSecondFactor(t *testing.T) {
 	cr, _ := http.NewRequest(http.MethodPost, srv.URL+"/api/v1/auth/totp/confirm",
 		jsonBody(t, map[string]string{"code": code}))
 	cr.Header.Set("Authorization", "Bearer "+first.AccessToken)
-	cr.Header.Set("X-Requested-With", "sentinela")
+	cr.Header.Set("X-Requested-With", "vigilume")
 	cr.Header.Set("Content-Type", "application/json")
 	confirm, err := c.Do(cr)
 	if err != nil {

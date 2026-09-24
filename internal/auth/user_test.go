@@ -9,7 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/BipoXDXD/sentinela/internal/auth"
+	"github.com/BipoXDXD/vigilume/internal/auth"
 )
 
 func lerTravas(t *testing.T, pool *pgxpool.Pool, id uuid.UUID) (int, *time.Time) {

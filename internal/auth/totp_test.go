@@ -13,9 +13,9 @@ import (
 	"github.com/pquerna/otp"
 	"github.com/pquerna/otp/totp"
 
-	"github.com/BipoXDXD/sentinela/internal/auth"
-	"github.com/BipoXDXD/sentinela/internal/crypto"
-	"github.com/BipoXDXD/sentinela/internal/storage/testdb"
+	"github.com/BipoXDXD/vigilume/internal/auth"
+	"github.com/BipoXDXD/vigilume/internal/crypto"
+	"github.com/BipoXDXD/vigilume/internal/storage/testdb"
 )
 
 var totpMasterKey = bytes.Repeat([]byte{3}, crypto.KeySize)
@@ -35,7 +35,7 @@ func setupTOTP(t *testing.T) (*auth.TOTP, *pgxpool.Pool, uuid.UUID) {
 		userID, "totp@exemplo.com"); err != nil {
 		t.Fatal(err)
 	}
-	return auth.NewTOTP(pool, box, "Sentinela"), pool, userID
+	return auth.NewTOTP(pool, box, "Vigilume"), pool, userID
 }
 
 // secretFromURI extrai o segredo base32 da URI otpauth:// para que o teste

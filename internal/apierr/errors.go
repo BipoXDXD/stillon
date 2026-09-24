@@ -1,4 +1,4 @@
-// Package apierr define o envelope de erro HTTP do Sentinela.
+// Package apierr define o envelope de erro HTTP do Vigilume.
 //
 // É um pacote folha de propósito: tanto internal/httpapi quanto
 // internal/httpapi/middleware precisam de WriteError, e internal/httpapi
@@ -15,7 +15,7 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/BipoXDXD/sentinela/internal/observability"
+	"github.com/BipoXDXD/vigilume/internal/observability"
 )
 
 type ErrorCode string

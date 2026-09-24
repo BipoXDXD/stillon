@@ -12,14 +12,14 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/BipoXDXD/sentinela/internal/apierr"
-	"github.com/BipoXDXD/sentinela/internal/auth"
-	"github.com/BipoXDXD/sentinela/internal/clock"
-	"github.com/BipoXDXD/sentinela/internal/httpapi/middleware"
-	"github.com/BipoXDXD/sentinela/internal/observability"
+	"github.com/BipoXDXD/vigilume/internal/apierr"
+	"github.com/BipoXDXD/vigilume/internal/auth"
+	"github.com/BipoXDXD/vigilume/internal/clock"
+	"github.com/BipoXDXD/vigilume/internal/httpapi/middleware"
+	"github.com/BipoXDXD/vigilume/internal/observability"
 )
 
-const refreshCookieName = "sentinela_refresh"
+const refreshCookieName = "vigilume_refresh"
 
 type AuthHandlers struct {
 	users        auth.UserStore

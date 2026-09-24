@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/BipoXDXD/sentinela/internal/crypto"
+	"github.com/BipoXDXD/vigilume/internal/crypto"
 )
 
 const plaintext = "senha-do-webhook-super-secreta"

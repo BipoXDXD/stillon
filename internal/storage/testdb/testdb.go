@@ -15,7 +15,7 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 
-	"github.com/BipoXDXD/sentinela/internal/storage"
+	"github.com/BipoXDXD/vigilume/internal/storage"
 )
 
 var (
@@ -26,9 +26,9 @@ var (
 )
 
 const (
-	dbName = "sentinela_test"
-	dbUser = "sentinela"
-	dbPass = "sentinela"
+	dbName = "vigilume_test"
+	dbUser = "vigilume"
+	dbPass = "vigilume"
 )
 
 // New devolve um pool ligado a um Postgres limpo e migrado.
