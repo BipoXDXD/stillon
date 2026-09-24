@@ -5,6 +5,8 @@ import (
 	"errors"
 	"net"
 	"net/url"
+	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -180,8 +182,11 @@ func TestRunFailsWhenAServerCannotStart(t *testing.T) {
 
 	select {
 	case err := <-fim:
-		if err == nil {
-			t.Error("run voltou sem erro com a porta ocupada")
+		// Qualquer erro de boot (banco fora, papel recusado) também faria
+		// run voltar com erro. O teste exige o erro CERTO: a porta ocupada,
+		// e na API.
+		if !errors.Is(err, syscall.EADDRINUSE) || !strings.Contains(err.Error(), "servidor api") {
+			t.Errorf("run = %v, queria o EADDRINUSE do servidor api", err)
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("run seguiu vivo com a API morta")
