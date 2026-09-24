@@ -36,6 +36,10 @@ jobs:
     # só alcança esse app), BACKUP_DATABASE_PASSWORD (papel vigilume_backup),
     # AGE_RECIPIENT (chave PÚBLICA do age; a privada fica com o dono, fora do
     # GitHub e do Fly). Variáveis: BACKUP_ENABLED, PG_VOLUME_GB.
+    #
+    # O app do banco (vigilume-db) está escrito à mão no `-a` do túnel, abaixo,
+    # e no `app` de deploy/fly/db/fly.toml. Renomear um app mexe em vários
+    # arquivos juntos: runbook, "Se o nome do app estiver tomado".
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

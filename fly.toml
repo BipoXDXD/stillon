@@ -6,6 +6,8 @@
 #
 # Escrito à mão, sem `fly launch`: ele geraria auto_stop_machines, e um
 # monitor desligado por falta de tráfego para de sondar em silêncio (D23).
+# Renomear o app mexe também em PUBLIC_BASE_URL e CORS_ORIGIN (abaixo), no
+# deploy.yml (DESTINO e -a) e no runbook ("Se o nome do app estiver tomado").
 app = "vigilume"
 primary_region = "gru"
 
