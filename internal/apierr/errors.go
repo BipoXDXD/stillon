@@ -35,6 +35,8 @@ const (
 	CodeChannelLimit       ErrorCode = "channel_limit_reached"
 	CodeChannelNotPending  ErrorCode = "channel_not_pending"
 	CodeDeliveryFailed     ErrorCode = "delivery_failed"
+	CodeStatusPageExists   ErrorCode = "status_page_exists"
+	CodeSlugTaken          ErrorCode = "slug_taken"
 )
 
 // A mensagem vem sempre desta tabela, nunca do erro subjacente.
@@ -61,6 +63,9 @@ var errorTable = map[ErrorCode]struct {
 	// 502: a falha foi do destino (Discord ou provedor de e-mail), não do
 	// pedido nem deste servidor.
 	CodeDeliveryFailed: {http.StatusBadGateway, "Não foi possível entregar a mensagem de verificação."},
+	// Uma status page por usuário (spec §2.1); a segunda é conflito.
+	CodeStatusPageExists: {http.StatusConflict, "Você já tem uma status page."},
+	CodeSlugTaken:        {http.StatusConflict, "Este endereço já está em uso."},
 }
 
 // FieldError aponta o campo culpado de um 400 (D14). Field e Reason vêm de

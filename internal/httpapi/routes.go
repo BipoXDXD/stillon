@@ -14,6 +14,7 @@ import (
 	"github.com/BipoXDXD/vigilume/internal/httpapi/middleware"
 	"github.com/BipoXDXD/vigilume/internal/incident/history"
 	"github.com/BipoXDXD/vigilume/internal/notify"
+	"github.com/BipoXDXD/vigilume/internal/statuspage"
 	"github.com/BipoXDXD/vigilume/internal/targets"
 )
 
@@ -40,7 +41,9 @@ type Deps struct {
 	Targets   *targets.Service
 	Incidents *history.Service
 	Channels  *notify.ChannelService
-	Clock     clock.Clock
+	// StatusPages serve o cadastro do dono e a página pública /p/{slug}.
+	StatusPages *statuspage.Service
+	Clock       clock.Clock
 	// Ready é o teste de prontidão de /readyz: o ping no banco em produção.
 	Ready func(context.Context) error
 }
@@ -58,6 +61,7 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	th := NewTargetHandlers(d.Targets, d.Clock)
 	ih := NewIncidentHandlers(d.Incidents)
 	ch := NewChannelHandlers(d.Channels)
+	sp := NewStatusPageHandlers(d.StatusPages, cfg.PublicBaseURL)
 	authn := middleware.Authn(cfg.JWTSecret, d.Clock)
 
 	mux := http.NewServeMux()
@@ -122,6 +126,10 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	mux.Handle("POST /api/v1/channels", comEnvio(ch.Create))
 	mux.Handle("DELETE /api/v1/channels/{id}", protegida(ch.Delete))
 	mux.Handle("POST /api/v1/channels/{id}/verify/resend", comEnvio(ch.Resend))
+
+	mux.Handle("GET /api/v1/status-pages", protegida(sp.List))
+	mux.Handle("POST /api/v1/status-pages", protegida(sp.Create))
+	mux.Handle("PATCH /api/v1/status-pages/{id}", protegida(sp.Update))
 
 	// Spec §13: /healthz é raso (o processo responde); /readyz verifica o
 	// banco.

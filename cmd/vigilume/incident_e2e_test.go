@@ -202,8 +202,8 @@ func escopoDoDono(t *testing.T, pool *pgxpool.Pool, dono uuid.UUID, sql string, 
 	}
 }
 
-// O papel api com as dependências do Plano 3 ligadas: sem Channels ou
-// Incidents no Deps, as rotas cairiam em panic (nil) na primeira chamada
+// O papel api com as dependências dos Planos 3 e 4 ligadas: sem Channels,
+// Incidents ou StatusPages no Deps, as rotas cairiam em panic (nil) na primeira chamada
 // autenticada; sem Ready, /readyz responderia 503.
 func TestAPIRoleWiresIncidentsChannelsAndReadyz(t *testing.T) {
 	pool := testdb.New(t)
@@ -248,7 +248,7 @@ func TestAPIRoleWiresIncidentsChannelsAndReadyz(t *testing.T) {
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	for _, caminho := range []string{"/api/v1/channels", "/api/v1/incidents"} {
+	for _, caminho := range []string{"/api/v1/channels", "/api/v1/incidents", "/api/v1/status-pages"} {
 		if s := pedir(caminho); s != http.StatusOK {
 			t.Errorf("GET %s deu %d, queria 200", caminho, s)
 		}
