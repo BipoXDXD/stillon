@@ -196,7 +196,7 @@ func TestFiveSuccessesResolveTheIncident(t *testing.T) {
 	}
 }
 
-// Só down conta como falha: degraded é estado de exibição (spec §7.2).
+// Só down conta como falha; degraded conta como sucesso (spec §7.2).
 func TestOnlyDownCountsAsFailure(t *testing.T) {
 	em := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
 	for status, down := range map[Status]bool{StatusUp: false, StatusDegraded: false, StatusDown: true} {
@@ -226,5 +226,56 @@ func TestOutOfOrderCheckDoesNotResetTheFailureStreak(t *testing.T) {
 	}
 	if inc := b.incidentes(t); len(inc) != 1 || !inc[0].StartedAt.Equal(t0) {
 		t.Errorf("incidentes = %+v; queria um, aberto em %v", inc, t0)
+	}
+}
+
+// Uma lacuna maior que três intervalos (alvo pausado, sondador fora do ar)
+// recomeça a histerese: as duas falhas de antes não se somam à primeira de
+// depois, e o incidente, quando abre, começa na falha pós-lacuna, não uma
+// semana atrás.
+func TestLongGapRestartsTheHysteresis(t *testing.T) {
+	b := novaBancada(t, nil, MaxInFlight)
+	alvo := b.alvo(t, "https://exemplo.com", nil)
+	a := db.ClaimDueTargetsRow{ID: alvo, UserID: b.dono, IntervalSec: 60}
+	falha := Result{Status: StatusDown, ErrorKind: KindTimeout}
+	t0 := b.clk.Now()
+
+	b.s.gravar(a, t0, falha)
+	b.s.gravar(a, t0.Add(time.Minute), falha)
+	depois := t0.Add(time.Hour)
+	b.s.gravar(a, depois, falha)
+	if inc := b.incidentes(t); len(inc) != 0 {
+		t.Fatalf("a falha depois de uma lacuna de 1h abriu %d incidentes: somou as falhas de antes", len(inc))
+	}
+
+	b.s.gravar(a, depois.Add(time.Minute), falha)
+	b.s.gravar(a, depois.Add(2*time.Minute), falha)
+	inc := b.incidentes(t)
+	if len(inc) != 1 || !inc[0].StartedAt.Equal(depois) {
+		t.Fatalf("incidentes = %+v; queria um, aberto em %v (a primeira falha depois da lacuna)", inc, depois)
+	}
+}
+
+// degraded conta como SUCESSO para a histerese: zera a sequência de falhas
+// e fecha o incidente. Só down é falha.
+func TestDegradedChecksResolveTheIncident(t *testing.T) {
+	b := novaBancada(t, nil, MaxInFlight)
+	alvo := b.alvo(t, "https://exemplo.com", nil)
+	a := db.ClaimDueTargetsRow{ID: alvo, UserID: b.dono, IntervalSec: 60}
+	t0 := b.clk.Now()
+
+	for i := range 3 {
+		b.s.gravar(a, t0.Add(time.Duration(i)*time.Minute), Result{Status: StatusDown, ErrorKind: KindTimeout})
+	}
+	if inc := b.incidentes(t); len(inc) != 1 || inc[0].ResolvedAt != nil {
+		t.Fatalf("três down: incidentes = %+v, queria um aberto", inc)
+	}
+	voltou := t0.Add(3 * time.Minute)
+	for i := range 5 {
+		b.s.gravar(a, voltou.Add(time.Duration(i)*time.Minute), Result{Status: StatusDegraded, StatusCode: 200})
+	}
+	inc := b.incidentes(t)
+	if len(inc) != 1 || inc[0].ResolvedAt == nil || !inc[0].ResolvedAt.Equal(voltou) {
+		t.Fatalf("cinco degraded: incidentes = %+v; queria resolvido em %v", inc, voltou)
 	}
 }

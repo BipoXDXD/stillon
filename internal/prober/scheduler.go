@@ -359,13 +359,14 @@ func (s *Scheduler) avaliar(ctx context.Context, q *db.Queries, a db.ClaimDueTar
 		return incident.ActionNone, fmt.Errorf("buscar incidente aberto: %w", err)
 	}
 
-	estado, acao := s.detector.Evaluate(incident.State{
+	anterior := recomecarAposLacuna(incident.State{
 		ConsecutiveFailures:  h.ConsecutiveFailures,
 		ConsecutiveSuccesses: h.ConsecutiveSuccesses,
 		StreakSince:          valorOuZero(h.StreakSince),
 		LastCheckedAt:        valorOuZero(h.LastCheckedAt),
 		Open:                 temAberto,
-	}, paraDetector(em, res))
+	}, em, a.IntervalSec)
+	estado, acao := s.detector.Evaluate(anterior, paraDetector(em, res))
 
 	// Depois de qualquer Evaluate os dois instantes estão preenchidos: um
 	// check fora de ordem só é ignorado quando já houve um antes dele.
@@ -414,9 +415,37 @@ func (s *Scheduler) avaliar(ctx context.Context, q *db.Queries, a db.ClaimDueTar
 	return acao, nil
 }
 
+// fatorLacuna é quantos intervalos sem check bastam para a histerese
+// recomeçar (ver recomecarAposLacuna).
+const fatorLacuna = 3
+
+// lacunaMaxima é o maior intervalo entre dois checks em que as sequências
+// ainda se somam.
+func lacunaMaxima(intervalSec int32) time.Duration {
+	return fatorLacuna * time.Duration(intervalSec) * time.Second
+}
+
+// recomecarAposLacuna zera os dois contadores quando o check chega mais de
+// fatorLacuna intervalos depois do último. Sem isso, um alvo com duas falhas
+// que ficou pausado (ou cujo sondador ficou fora do ar) uma semana abriria
+// incidente na primeira falha de volta, com started_at de uma semana atrás.
+// Open fica como veio do banco (é a linha em incidents que manda), e
+// LastCheckedAt também, para que a guarda de check fora de ordem do detector
+// continue valendo. O detector segue puro: a regra depende do intervalo do
+// alvo, que ele não conhece. Intervalo não positivo (a CHECK do banco não
+// deixa) desliga a regra, em vez de zerar a cada check.
+func recomecarAposLacuna(s incident.State, em time.Time, intervalSec int32) incident.State {
+	if intervalSec <= 0 || s.LastCheckedAt.IsZero() || em.Sub(s.LastCheckedAt) <= lacunaMaxima(intervalSec) {
+		return s
+	}
+	s.ConsecutiveFailures = 0
+	s.ConsecutiveSuccesses = 0
+	return s
+}
+
 // paraDetector traduz o resultado da sonda para o detector. Só down conta
-// como falha: degraded é estado de exibição e não mexe em incidente
-// (spec §7.2).
+// como falha; degraded conta como SUCESSO: zera a sequência de falhas e,
+// somado a outros sucessos, fecha o incidente (spec §7.2).
 func paraDetector(em time.Time, r Result) incident.ProbeResult {
 	return incident.ProbeResult{Down: r.Status == StatusDown, At: em}
 }

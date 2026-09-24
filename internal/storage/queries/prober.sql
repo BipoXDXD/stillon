@@ -9,7 +9,8 @@
 -- pelos que o primeiro travou (TestSkipLockedDoesNotWaitForAnotherProber).
 --
 -- user_id volta porque a avaliação de incidente enfileira as notificações
--- nos canais do dono (Plano 3).
+-- nos canais do dono (Plano 3); interval_sec, porque a histerese recomeça
+-- depois de uma lacuna longa entre checks.
 -- name: ClaimDueTargets :many
 UPDATE targets t
    SET next_run_at = sqlc.arg(now)::timestamptz
@@ -21,7 +22,7 @@ UPDATE targets t
         LIMIT sqlc.arg(max_rows)::int
           FOR UPDATE SKIP LOCKED)
 RETURNING t.id, t.user_id, t.url, t.method, t.timeout_ms, t.expected_status,
-          t.headers_enc, t.degraded_threshold_ms;
+          t.headers_enc, t.degraded_threshold_ms, t.interval_sec;
 
 -- name: CountDueTargets :one
 SELECT count(*) FROM targets

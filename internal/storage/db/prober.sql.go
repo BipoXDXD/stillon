@@ -24,7 +24,7 @@ UPDATE targets t
         LIMIT $2::int
           FOR UPDATE SKIP LOCKED)
 RETURNING t.id, t.user_id, t.url, t.method, t.timeout_ms, t.expected_status,
-          t.headers_enc, t.degraded_threshold_ms
+          t.headers_enc, t.degraded_threshold_ms, t.interval_sec
 `
 
 type ClaimDueTargetsParams struct {
@@ -41,6 +41,7 @@ type ClaimDueTargetsRow struct {
 	ExpectedStatus      int32
 	HeadersEnc          []byte
 	DegradedThresholdMS *int32
+	IntervalSec         int32
 }
 
 // Estas queries rodam só sob InProberTx (app.scope = 'prober').
@@ -53,7 +54,8 @@ type ClaimDueTargetsRow struct {
 // pelos que o primeiro travou (TestSkipLockedDoesNotWaitForAnotherProber).
 //
 // user_id volta porque a avaliação de incidente enfileira as notificações
-// nos canais do dono (Plano 3).
+// nos canais do dono (Plano 3); interval_sec, porque a histerese recomeça
+// depois de uma lacuna longa entre checks.
 func (q *Queries) ClaimDueTargets(ctx context.Context, arg ClaimDueTargetsParams) ([]ClaimDueTargetsRow, error) {
 	rows, err := q.db.Query(ctx, claimDueTargets, arg.Now, arg.MaxRows)
 	if err != nil {
@@ -72,6 +74,7 @@ func (q *Queries) ClaimDueTargets(ctx context.Context, arg ClaimDueTargetsParams
 			&i.ExpectedStatus,
 			&i.HeadersEnc,
 			&i.DegradedThresholdMS,
+			&i.IntervalSec,
 		); err != nil {
 			return nil, err
 		}
