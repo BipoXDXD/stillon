@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -249,17 +250,70 @@ func TestDegradedThresholdAbsentNullAndValue(t *testing.T) {
 	}
 
 	// PATCH com null desativa; PATCH sem o campo não mexe.
+	//
+	// O status vem ANTES de olhar o limiar: um envelope de erro decodificado
+	// em alvoJSON deixa DegradedThresholdMS nil sem reclamar, e "null
+	// desativa" passaria com o PATCH falhando.
 	resp := chamar(t, a, http.MethodPatch, "/api/v1/targets/"+comValor.ID, tok, map[string]any{"name": "y"})
 	var semMexer alvoJSON
-	lerCorpo(t, resp, &semMexer)
+	cru := lerCorpo(t, resp, &semMexer)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("PATCH sem o campo deu %d: %s", resp.StatusCode, cru)
+	}
 	if semMexer.DegradedThresholdMS == nil || *semMexer.DegradedThresholdMS != 500 {
 		t.Errorf("PATCH sem o campo mexeu no limiar: %v", semMexer.DegradedThresholdMS)
 	}
 	resp = chamar(t, a, http.MethodPatch, "/api/v1/targets/"+comValor.ID, tok, map[string]any{"degraded_threshold_ms": nil})
 	var desativado alvoJSON
-	lerCorpo(t, resp, &desativado)
+	cru = lerCorpo(t, resp, &desativado)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("PATCH null deu %d: %s", resp.StatusCode, cru)
+	}
 	if desativado.DegradedThresholdMS != nil {
 		t.Errorf("PATCH null deu %v, queria null", *desativado.DegradedThresholdMS)
+	}
+}
+
+// PATCH de headers: {...} substitui o conjunto inteiro, null limpa. Nas duas
+// respostas só podem aparecer nomes, nunca valores (D5).
+func TestPatchHeadersReplacesAndClears(t *testing.T) {
+	a := newAPI(t)
+	tok := tokenDe(t, a, a.userID)
+	valores := []string{"segredo-do-cliente", "outro-segredo", "valor-do-tenant"}
+
+	resp := chamar(t, a, http.MethodPost, "/api/v1/targets", tok, alvoValido)
+	var criado alvoJSON
+	lerCorpo(t, resp, &criado)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("POST deu %d", resp.StatusCode)
+	}
+
+	patch := func(corpo map[string]any) (alvoJSON, string) {
+		t.Helper()
+		resp := chamar(t, a, http.MethodPatch, "/api/v1/targets/"+criado.ID, tok, corpo)
+		var got alvoJSON
+		cru := string(lerCorpo(t, resp, &got))
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("PATCH %v deu %d: %s", corpo, resp.StatusCode, cru)
+		}
+		for _, v := range valores {
+			if strings.Contains(cru, v) {
+				t.Errorf("a resposta do PATCH contém o valor de header %q (D5): %s", v, cru)
+			}
+		}
+		return got, cru
+	}
+
+	substituido, cru := patch(map[string]any{"headers": map[string]string{
+		"X-Api-Key": "outro-segredo", "X-Tenant": "valor-do-tenant",
+	}})
+	if !slices.Equal(substituido.HeaderNames, []string{"X-Api-Key", "X-Tenant"}) {
+		t.Errorf("headers {...} deu header_names %v, queria exatamente [X-Api-Key X-Tenant]: %s", substituido.HeaderNames, cru)
+	}
+
+	limpo, cru := patch(map[string]any{"headers": nil})
+	if len(limpo.HeaderNames) != 0 {
+		t.Errorf("headers null deu header_names %v, queria vazio: %s", limpo.HeaderNames, cru)
 	}
 }
 
@@ -356,9 +410,28 @@ func TestChecksEndpoint(t *testing.T) {
 	caminho := fmt.Sprintf("/api/v1/targets/%s/checks?from=%s&to=%s", criado.ID,
 		fim.Add(-49*time.Hour).Format(time.RFC3339), fim.Format(time.RFC3339))
 	resp = chamar(t, a, http.MethodGet, caminho, tok, nil)
-	resp.Body.Close()
+	var env struct {
+		Error struct {
+			Code   string `json:"code"`
+			Fields []struct {
+				Field  string `json:"field"`
+				Reason string `json:"reason"`
+			} `json:"fields"`
+		} `json:"error"`
+	}
+	cru := lerCorpo(t, resp, &env)
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Errorf("janela de 49h deu %d, queria 400 (D6)", resp.StatusCode)
+	}
+	// O 400 tem de apontar o culpado: é "from" que está longe demais de "to".
+	culpado := false
+	for _, f := range env.Error.Fields {
+		if f.Field == "from" && f.Reason == "out_of_range" {
+			culpado = true
+		}
+	}
+	if !culpado {
+		t.Errorf("janela de 49h não apontou from/out_of_range: %s", cru)
 	}
 }
 
