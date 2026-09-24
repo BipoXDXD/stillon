@@ -171,6 +171,8 @@ function TrocaDeSenha({ comTotp }: { comTotp: boolean }) {
   )
 }
 
+const JA_ATIVADA = 'A verificação em duas etapas já está ativada.'
+
 // O confirm responde o mesmo 400 para código errado e para cadastro que
 // sumiu (trocar a senha apaga o cadastro pendente: PENDENCIAS do Plano 6).
 const CODIGO_NAO_ACEITO =
@@ -410,16 +412,32 @@ function Sessoes() {
 
 export function PaginaConfiguracoes() {
   const me = useMe()
+  const api = useApi()
   const qc = useQueryClient()
   const avisar = useAvisar()
   const [dialogo, setDialogo] = useState<'ativar' | 'desativar' | null>(null)
   const [travado, setTravado] = useState(false)
+  const [abrindo, setAbrindo] = useState(false)
   // ['me'] não vence sozinho (staleTime Infinity): outra aba pode ter
   // ligado ou desligado o 2FA. Abrir e fechar um diálogo do 2FA relê /me.
   const reler = () => void qc.invalidateQueries({ queryKey: chaves.me })
-  const abrir = (d: 'ativar' | 'desativar') => {
-    reler()
-    setDialogo(d)
+  // Abrir ESPERA o /me relido: decidir pelo cache abriria "Desativar" com o
+  // 2FA já desligado em outra aba, e o disable contaria tentativa falha (R34).
+  const abrir = async (d: 'ativar' | 'desativar') => {
+    if (abrindo) return
+    setAbrindo(true)
+    let ligado: boolean
+    try {
+      ligado = (await qc.fetchQuery({ queryKey: chaves.me, queryFn: api.me, staleTime: 0 })).totp_enabled
+    } catch (e) {
+      avisar(mensagemDe(e), 'erro')
+      return
+    } finally {
+      setAbrindo(false)
+    }
+    if (d === 'ativar' && ligado) avisar(JA_ATIVADA)
+    else if (d === 'desativar' && !ligado) avisar('A verificação em duas etapas já está desativada.')
+    else setDialogo(d)
   }
   const fechar = () => {
     setDialogo(null)
@@ -431,6 +449,12 @@ export function PaginaConfiguracoes() {
     avisar(texto)
   }
   const totp = me.data?.totp_enabled
+  // O portão de cada diálogo: Ativar só com o 2FA desligado (ou no passo
+  // dos códigos, travado); Desativar só com ele ligado. Se o /me relido o
+  // fecha com o diálogo aberto, o diálogo fecha de vez: sem isto, ele
+  // reapareceria sozinho quando o /me mudasse de novo.
+  const portao = dialogo === 'ativar' ? totp === false || travado : dialogo === 'desativar' && totp === true
+  if (dialogo !== null && !portao) setDialogo(null)
   return (
     <>
       <Titulo aba="Configurações">Configurações</Titulo>
@@ -457,7 +481,10 @@ export function PaginaConfiguracoes() {
               <p className="text-sm">{eu.totp_enabled ? 'Ativada.' : 'Desativada.'}</p>
               <Botao
                 tipo={eu.totp_enabled ? 'perigo' : 'primario'}
-                onClick={() => abrir(eu.totp_enabled ? 'desativar' : 'ativar')}
+                // aria-disabled, e não disabled: o botão desabilitado perde o
+                // foco, que cairia no <body>.
+                aria-disabled={abrindo || undefined}
+                onClick={() => void abrir(eu.totp_enabled ? 'desativar' : 'ativar')}
               >
                 {eu.totp_enabled ? 'Desativar' : 'Ativar'}
               </Botao>
@@ -476,7 +503,7 @@ export function PaginaConfiguracoes() {
           diz "ligado", e o diálogo continua aberto pelo travado: os códigos
           de recuperação só existem nele. */}
       <Dialogo
-        aberto={dialogo === 'ativar' && (totp === false || travado)}
+        aberto={dialogo === 'ativar' && portao}
         aoMudar={(v) => !v && fechar()}
         travado={travado}
         titulo="Ativar a verificação em duas etapas"
@@ -489,7 +516,7 @@ export function PaginaConfiguracoes() {
       {/* Desativar só com o 2FA ligado segundo o /me relido: sem 2FA, o
           POST /auth/totp/disable conta tentativa falha na conta (R34). */}
       <Dialogo
-        aberto={dialogo === 'desativar' && totp === true}
+        aberto={dialogo === 'desativar' && portao}
         aoMudar={(v) => !v && fechar()}
         titulo="Desativar a verificação em duas etapas"
       >

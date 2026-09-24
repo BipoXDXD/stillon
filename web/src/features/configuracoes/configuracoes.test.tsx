@@ -2,9 +2,16 @@ import { screen, waitFor, within } from '@testing-library/react'
 import { http, HttpResponse } from 'msw'
 import { describe, expect, it } from 'vitest'
 import { RECUPERACAO_OK, TOTP_OK } from '@/test/api-falsa'
-import { sessao as familia } from '@/test/fixtures'
+import { sessao as familia, me } from '@/test/fixtures'
 import { renderizarPainel, SENHA } from '@/test/renderizar'
 import { servidor } from '@/test/setup'
+
+// Uma resposta segurada até o teste soltar.
+function portao() {
+  let soltar!: () => void
+  const aberto = new Promise<void>((r) => (soltar = r))
+  return { aberto, soltar }
+}
 
 describe('senha', () => {
   it('a política conta code points: 14 emojis não bastam, mesmo sendo 28 unidades UTF-16', async () => {
@@ -235,8 +242,8 @@ describe('2FA', () => {
     expect(screen.getByRole('dialog')).toBe(dialogo)
     expect(within(dialogo).getByText('AAAABBBBCCCCDDDD')).toBeInTheDocument()
     // O /me relido (foco da janela, outro poll) já diz "ligado": o diálogo
-    // continua, pelo travado. Sabotagem prevista: trocar
-    // "(totp === false || travado)" por "totp === false && (travado || !travado)".
+    // continua, pelo travado. Sabotagem prevista: no portão, trocar
+    // "totp === false || travado" por "totp === false && (travado || !travado)".
     await r.cliente.refetchQueries({ queryKey: ['me'] })
     await waitFor(() => expect(r.falsa.chamadas('GET /me')).toBeGreaterThanOrEqual(3))
     expect(screen.getByRole('dialog')).toBe(dialogo)
@@ -244,8 +251,10 @@ describe('2FA', () => {
   })
 
   // I2/M11: ['me'] não vence sozinho; abrir e fechar os diálogos do 2FA o
-  // releem. Sabotagem prevista: trocar o reler por "const reler = () => void qc"
-  // (nada invalida; o teste de ativar também fica vermelho: o "Ativada." vem do /me relido).
+  // releem. Sabotagens previstas: em abrir(), "staleTime: 0" por
+  // "staleTime: Infinity" (não relê ao abrir); e o reler por
+  // "const reler = () => void qc" (não relê ao fechar; o teste de ativar
+  // também fica vermelho: o "Ativada." vem do /me relido).
   it('abrir e fechar um diálogo do 2FA relê o /me', async () => {
     const r = await renderizarPainel('/settings')
     await r.usuario.click(await screen.findByRole('button', { name: 'Ativar' }))
@@ -257,15 +266,16 @@ describe('2FA', () => {
   })
 
   // Simétrico: com o 2FA ligado em outra aba, "Ativar" não abre (o enroll
-  // responderia 403). Sabotagem prevista: trocar
-  // "dialogo === 'ativar' && (totp === false || travado)" por
-  // "dialogo === 'ativar' && (totp === false || travado || true)".
+  // responderia 403). Sabotagem prevista: em abrir(), trocar
+  // "if (d === 'ativar' && ligado)" por "if (d === 'ativar' && ligado && Math.random() > 2)"
+  // (sem o aviso; o portão ainda fecha o diálogo, e é a outra camada).
   it('com o 2FA ligado em outra aba, "Ativar" não abre o formulário', async () => {
     const r = await renderizarPainel('/settings')
     const ativar = await screen.findByRole('button', { name: 'Ativar' })
     r.falsa.estado.totpLigado = true
     await r.usuario.click(ativar)
     expect(await screen.findByRole('button', { name: 'Desativar' })).toBeInTheDocument()
+    expect(await screen.findByText('A verificação em duas etapas já está ativada.')).toBeInTheDocument()
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     expect(r.falsa.chamadas('POST /auth/totp/enroll')).toBe(0)
   })
@@ -273,8 +283,8 @@ describe('2FA', () => {
   // PENDENCIAS do Plano 6: sem 2FA ligado, "desativar" não se oferece (o
   // POST /auth/totp/disable contaria tentativa falha, R34). Outra aba o
   // desligou: o /me relido ao abrir não deixa o diálogo aparecer.
-  // Sabotagem prevista: trocar "dialogo === 'desativar' && totp === true"
-  // por "dialogo === 'desativar' && (totp === true || true)".
+  // Sabotagem prevista: em abrir(), trocar "d === 'desativar' && !ligado"
+  // por "d === 'desativar' && !ligado && Math.random() > 2".
   it('com o 2FA desligado em outra aba, "Desativar" não abre o formulário', async () => {
     const r = await renderizarPainel('/settings')
     r.falsa.estado.totpLigado = true
@@ -283,7 +293,63 @@ describe('2FA', () => {
     r.falsa.estado.totpLigado = false
     await r.usuario.click(desativar)
     expect(await screen.findByRole('button', { name: 'Ativar' })).toBeInTheDocument()
+    expect(await screen.findByText('A verificação em duas etapas já está desativada.')).toBeInTheDocument()
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     expect(r.falsa.chamadas('POST /auth/totp/disable')).toBe(0)
+  })
+
+  // Revisão final: o portão do 2FA decidia pelo /me do cache, antes de o
+  // /me relido chegar; com o /me lento, "Desativar" abria com o dado velho.
+  // Sabotagem: em abrir(), não esperar o refetch ("void qc.refetchQueries")
+  // → o diálogo aparece enquanto o /me está segurado.
+  it('"Desativar" espera o /me relido: com ele lento, não abre com o cache velho', async () => {
+    const r = await renderizarPainel('/settings')
+    r.falsa.estado.totpLigado = true
+    await r.cliente.refetchQueries()
+    const desativar = await screen.findByRole('button', { name: 'Desativar' })
+    const p = portao()
+    servidor.use(
+      http.get('*/api/v1/me', async () => {
+        await p.aberto
+        return HttpResponse.json(me({ totp_enabled: false }))
+      }),
+    )
+    await r.usuario.click(desativar)
+    // Um tique do Radix e do React: um diálogo que fosse abrir já estaria lá.
+    await new Promise((res) => setTimeout(res, 50))
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    p.soltar()
+    expect(await screen.findByRole('button', { name: 'Ativar' })).toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  // Sem o /me relido não há como decidir: nada abre, e o erro aparece.
+  // Sabotagem: no catch de abrir(), trocar o "return" por "ligado = false".
+  it('se o /me relido falha, o diálogo não abre e o erro é avisado', async () => {
+    const r = await renderizarPainel('/settings')
+    const ativar = await screen.findByRole('button', { name: 'Ativar' })
+    r.falsa.estado.forcar.set('GET /me', { status: 429, code: 'rate_limited' })
+    await r.usuario.click(ativar)
+    expect(await screen.findByText('Muitas requisições. Aguarde um minuto e tente de novo.')).toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  // O portão cai com o diálogo aberto (o /me relido diz que outra aba
+  // desligou o 2FA): o diálogo fecha de vez, e não reaparece sozinho se o
+  // /me voltar a dizer "ligado". Sabotagem: tirar o setDialogo(null) do
+  // portão caído → o diálogo reabre no último refetch.
+  it('se o 2FA muda com o diálogo aberto, ele fecha e não reabre sozinho', async () => {
+    const r = await renderizarPainel('/settings')
+    r.falsa.estado.totpLigado = true
+    await r.cliente.refetchQueries()
+    await r.usuario.click(await screen.findByRole('button', { name: 'Desativar' }))
+    await screen.findByRole('dialog')
+    r.falsa.estado.totpLigado = false
+    await r.cliente.refetchQueries({ queryKey: ['me'] })
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    r.falsa.estado.totpLigado = true
+    await r.cliente.refetchQueries({ queryKey: ['me'] })
+    expect(await screen.findByRole('button', { name: 'Desativar' })).toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 })
