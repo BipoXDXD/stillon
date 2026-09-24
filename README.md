@@ -22,8 +22,9 @@ no primeiro `up`: `DEMO_TARGETS_EXTRA="https://seu.site/ https://outro.site/" do
 
 - **Enquanto o repositório for privado**, a imagem publicada também é privada, e o compose
   **constrói do código** quando o pull é negado. Medido numa máquina de 16 núcleos: o build frio
-  da imagem levou ~34 s (sem contar o download das imagens-base e do Postgres); com as imagens já
-  na máquina, o `up --wait` levou de 4,5 a 8,2 s. Num notebook comum, o build demora mais. Depois
+  da imagem, num builder novo, levou ~34 s (provavelmente já contando o download das
+  imagens-base); o `up --wait` levou ~4,5–5 s com as imagens prontas e ~8 s quando também
+  construiu. Num notebook comum, o build demora mais. Depois
   que o job `publish` da `main` tiver rodado, quem tem acesso ao repositório pode puxar a imagem
   pronta (`docker login ghcr.io` com um token `read:packages`, depois `docker compose pull`).
 - Use **`localhost`**, não o IP da máquina: o painel exige contexto seguro (HTTPS ou
@@ -32,8 +33,9 @@ no primeiro `up`: `DEMO_TARGETS_EXTRA="https://seu.site/ https://outro.site/" do
 - Os alvos de exemplo precisam de internet. Um serviço rodando na sua máquina ou no próprio
   compose **não** pode ser alvo: o sondador recusa endereço privado, de propósito (SSRF, abaixo).
 - As chaves do `compose.yaml` são de demonstração e estão no repositório. O boot valida a
-  `PUBLIC_BASE_URL` (esquema `http` ou `https`, com host) e recusa essas chaves quando ela é
-  `https://`, com qualquer caixa (`HTTPS://` também).
+  `PUBLIC_BASE_URL` (esquema `http` ou `https`, com host, sem usuário e senha) e só aceita essas
+  chaves quando o host dela é de loopback (`localhost`, `127.0.0.1`, `::1`). Com qualquer outro
+  host, em `http` ou `https`, ele recusa: o compose copiado para um servidor não sobe com elas.
 
 `docker compose down` para; `docker compose down -v` apaga o banco também.
 
@@ -82,10 +84,10 @@ Kafka, porque o volume de um monitor destes cabe com folga no banco que já exis
 | Isolamento por usuário com **RLS e `FORCE`**; o boot recusa um papel com superusuário ou `BYPASSRLS` | [`00004_targets_checks.sql`](internal/storage/migrations/00004_targets_checks.sql), [`role.go`](internal/storage/role.go) | [`rls_test.go`](internal/storage/rls_test.go) (`TestRLSIsolatesTargetsEvenWithTheWrongFilter`), [`role_test.go`](internal/storage/role_test.go) |
 | Access token só em memória; refresh em cookie `HttpOnly`, `SameSite=Strict`, com rotação e detecção de reúso que derruba a família | [`authhandlers.go`](internal/httpapi/authhandlers.go), [`sessao.ts`](web/src/lib/api/sessao.ts) | [`auth_integration_test.go`](internal/httpapi/auth_integration_test.go) (`TestReusedRefreshCookieRevokesTheWholeFamily`) |
 | Segredos com AES-256-GCM e o id da linha como AAD (um texto cifrado não muda de linha); tipo `Secret` que não sai em log nem em JSON | [`box.go`](internal/crypto/box.go), [`secret.go`](internal/crypto/secret.go) | [`box_test.go`](internal/crypto/box_test.go) (`TestOpenRejectsCiphertextMovedToAnotherRow`), [`secret_test.go`](internal/crypto/secret_test.go) |
-| Chaves de demonstração do compose recusadas no boot com `PUBLIC_BASE_URL` https (qualquer caixa); URL malformada recusada | [`config.go`](internal/config/config.go) | [`config_test.go`](internal/config/config_test.go) (`TestLoadRejectsDemoKeysOverHTTPS`, `TestLoadRejectsMalformedPublicBaseURL`), [`compose_test.go`](internal/config/compose_test.go) (`TestComposeUsesTheDemoKeys`) |
+| Chaves de demonstração do compose aceitas no boot só com host de loopback na `PUBLIC_BASE_URL`, em qualquer esquema; URL malformada ou com usuário e senha recusada | [`config.go`](internal/config/config.go) | [`config_test.go`](internal/config/config_test.go) (`TestLoadRejectsDemoKeysOnANonLoopbackHost`, `TestLoadAcceptsDemoKeysOnLoopback`, `TestLoadRejectsMalformedPublicBaseURL`), [`compose_test.go`](internal/config/compose_test.go) (`TestComposeUsesTheDemoKeys`) |
 | Status page com DTO próprio: nada interno chega à página pública | [`public.go`](internal/statuspage/public.go) | [`public_test.go`](internal/statuspage/public_test.go) (`TestPublicViewHasNoInternalFields`) |
-| IP real do cliente atrás do proxy, com falha **fechada**: o cabeçalho (`Fly-Client-IP` no Fly) só vale vindo de `TRUSTED_PROXIES` | [`clientip.go`](internal/httpapi/middleware/clientip.go) | [`clientip_test.go`](internal/httpapi/middleware/clientip_test.go) (`TestRateLimitSeparatesClientsBehindFly`), `TestSessionsBehindFlyRecordDistinctOrigins` |
-| CSP com nonce por resposta, no painel e na status page | [`webui.go`](internal/webui/webui.go), [`publicpage.go`](internal/httpapi/publicpage.go) | E2E: [`fluxo.spec.ts`](web/e2e/fluxo.spec.ts) (zero violações, com controle positivo) |
+| IP real do cliente atrás do proxy, com falha **fechada**: o cabeçalho (`Fly-Client-IP` no Fly) só vale vindo de `TRUSTED_PROXIES`, e um prefixo `/0` ali é recusado no boot | [`clientip.go`](internal/httpapi/middleware/clientip.go) | [`clientip_test.go`](internal/httpapi/middleware/clientip_test.go) (`TestRateLimitSeparatesClientsBehindFly`), `TestSessionsBehindFlyRecordDistinctOrigins`, [`config_test.go`](internal/config/config_test.go) (`TestLoadRejectsAZeroBitTrustedProxy`) |
+| CSP com nonce por resposta, no painel e na status page | [`webui.go`](internal/webui/webui.go), [`publicpage.go`](internal/httpapi/publicpage.go) | [`publicpage_integration_test.go`](internal/httpapi/publicpage_integration_test.go) (`TestPublicPageRendersWithoutLeaking`); E2E: [`fluxo.spec.ts`](web/e2e/fluxo.spec.ts) (zero violações, com controle positivo) |
 | Imagem distroless **nonroot, sem shell**, Trivy sem achado HIGH/CRITICAL corrigível, varredura de segredos (gitleaks) no histórico inteiro em todo PR | [`Dockerfile`](Dockerfile), [`ci.yml`](.github/workflows/ci.yml), [`.gitleaks.toml`](.gitleaks.toml) | [`checar-imagem.sh`](deploy/ci/checar-imagem.sh) |
 
 ## Concorrência
@@ -112,8 +114,9 @@ make e2e           # APAGA o banco do compose, sobe com --build, confere e roda 
   Postgres de verdade. O CI roda a suíte no **17 e no 18**, cada um fixado por digest.
 - O **E2E** (Playwright, Chromium) roda no CI contra o **mesmo `compose.yaml`** deste README, com a
   imagem que acabou de passar no Trivy: o "sobe com um comando" é teste de regressão. As specs
-  rodam em série, e o fluxo principal espera ~21 s antes de começar, para os limitadores de
-  requisição (login e por usuário) encherem de novo depois das specs anteriores.
+  rodam em série. O fluxo principal espera ~21 s antes de começar, para os limitadores de
+  requisição (login e por usuário) encherem de novo depois das specs anteriores, e a limpeza do
+  fim, que roda com os baldes gastos, repete com recuo (até ~30 s) quando leva um 429.
 - O **backup** de produção tem workflow próprio que restaura o dump num banco descartável e o
   confere; ele roda todo dia depois de ligado (`BACKUP_ENABLED=1`), o que só acontece depois do
   primeiro deploy.
@@ -158,11 +161,12 @@ primeiro deploy é decisão do dono do projeto.
 - **Imagem:** ~7,6 MB comprimida. A de produção sai do mesmo código e das mesmas bases fixadas
   por digest que o E2E testou, mas é construída de novo no `publish` (amd64 e arm64) e
   **reescaneada** pelo Trivy antes de ganhar as tags `:<sha do commit>` e `:latest`.
-- **Deploy:** sempre manual (Actions → deploy → Run workflow), só da `main`, com o **SHA do
-  commit** como entrada. O job resolve a tag `:<sha>`, que só existe depois do reescaneamento,
-  no digest dela, copia a imagem por esse digest para o registry do Fly e faz o deploy. No GitHub
-  Free com repositório privado não há revisor obrigatório: quem pode disparar é quem tem acesso
-  de escrita ao repositório (hoje, só o dono), e os tokens do Fly são secrets de repositório.
+- **Deploy:** sempre manual (Actions → deploy → Run workflow), só da `main` e só de um commit
+  que está nela, com o **SHA do commit** como entrada. O job resolve a tag `:<sha>`, que só
+  existe depois do reescaneamento, no digest dela, copia a imagem por esse digest para o
+  registry do Fly e faz o deploy. No GitHub Free com repositório privado não há revisor
+  obrigatório: quem pode disparar é quem tem acesso de escrita ao repositório (hoje, só o dono),
+  e os tokens do Fly são secrets de repositório.
 - **Backup:** dump lógico diário, cifrado com `age`, restaurado num banco descartável e
   conferido (dono das tabelas, RLS com `FORCE`, contagens, partições). Uma checagem que falha
   sai com código 3. Disco acima de 85% sai com código 4: o dump já conferido é cifrado e guardado
