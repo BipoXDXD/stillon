@@ -28,6 +28,12 @@ export class ApiError extends Error {
   }
 }
 
+// O objeto não existe (mais): apagado em outra aba, ou nunca existiu. As
+// telas tratam igual: explicam, tiram do cache e voltam à lista.
+export function naoEncontrado(e: unknown): boolean {
+  return e instanceof ApiError && e.status === 404
+}
+
 type Envelope = {
   error?: { code?: unknown; message?: unknown; fields?: unknown }
   trace_id?: unknown

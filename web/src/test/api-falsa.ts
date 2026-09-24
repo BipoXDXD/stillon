@@ -229,6 +229,8 @@ export function criarApiFalsa() {
       return HttpResponse.json(a)
     }),
     rota('delete', '/targets/:id', ({ params }) => {
+      // Como o servidor (TargetHandlers.Delete): alvo que não existe é 404.
+      if (!st.alvos.some((x) => x.id === params.id)) return erro(404, 'not_found')
       st.alvos = st.alvos.filter((x) => x.id !== params.id)
       st.resumo = st.resumo.filter((x) => x.id !== params.id)
       return new HttpResponse(null, { status: 204 })

@@ -131,6 +131,23 @@ describe('status page', () => {
     await waitFor(() => expect(screen.getByLabelText('Acrescentar alvo')).toHaveFocus())
   })
 
+  // M3: a página sumiu entre carregar e salvar: um aviso que explica, e a
+  // lista relida (o formulário volta a ser o de criar). Sabotagem: em
+  // enviar(), tirar o ramo do naoEncontrado → "Não encontrado." no topo.
+  it('salvar com 404 explica e recarrega', async () => {
+    const r = await renderizarPainel('/status-pages')
+    r.falsa.estado.paginas = [salva()]
+    await r.cliente.refetchQueries()
+    await screen.findByRole('button', { name: 'Salvar' })
+    r.falsa.estado.paginas = []
+    await r.usuario.click(screen.getByRole('button', { name: 'Salvar' }))
+    expect(
+      (await screen.findAllByText('A status page já tinha sido apagada, talvez em outra aba.'))[0],
+    ).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: 'Criar status page' })).toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
   it('o erro do servidor num item vai para o campo do item, sem o caminho cru no topo', async () => {
     const r = await renderizarPainel('/status-pages')
     r.falsa.estado.alvos = [alvo(), alvo({ id: 'alvo-2', name: 'Site' })]

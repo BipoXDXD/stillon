@@ -4,9 +4,11 @@ import { Link, useSearchParams } from 'react-router'
 import { useApi } from '@/app/contexto'
 import { EstadoDaConsulta } from '@/components/EstadoDaConsulta'
 import { Titulo } from '@/components/Titulo'
+import { useAvisar } from '@/components/ui/avisos'
 import { Botao } from '@/components/ui/botao'
 import { ErroDoFormulario } from '@/components/ui/campo'
 import { useIncidentes } from '@/lib/api/consultas'
+import { naoEncontrado } from '@/lib/api/http'
 import { mensagemDe, textoDoErroDeCheck } from '@/lib/api/mensagens'
 import type { Incidente } from '@/lib/api/schemas'
 import { dataHora, duracao } from '@/lib/format'
@@ -81,6 +83,7 @@ export function PaginaIncidentes() {
   const consulta = useIncidentes(filtro)
   const api = useApi()
   const qc = useQueryClient()
+  const avisar = useAvisar()
   const [erro, setErro] = useState<string | null>(null)
   const [reconhecendo, setReconhecendo] = useState<ReadonlySet<string>>(new Set())
   // O incidente cujo Reconhecer acabou de ser usado. Se o botão sumiu (o ack
@@ -104,7 +107,10 @@ export function PaginaIncidentes() {
     try {
       await api.reconhecer(id)
     } catch (e) {
-      setErro(mensagemDe(e))
+      // M3: o incidente sumiu com o alvo, apagado em outra aba. A lista é
+      // relida logo abaixo.
+      if (naoEncontrado(e)) avisar('O incidente não existe mais: o alvo foi apagado, talvez em outra aba.')
+      else setErro(mensagemDe(e))
     } finally {
       // Mesmo depois de uma falha: o ack pode ter chegado ao servidor.
       await qc.invalidateQueries({ queryKey: ['incidents'] })

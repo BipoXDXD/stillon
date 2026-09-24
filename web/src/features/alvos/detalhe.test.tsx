@@ -238,4 +238,58 @@ describe('detalhe', () => {
     await r.cliente.refetchQueries()
     expect(await screen.findByRole('button', { name: '24 h' })).toHaveAttribute('aria-pressed', 'true')
   })
+
 })
+
+// M3 da revisão final: 404 tratado como em Canais. O alvo sumiu (apagado em
+// outra aba): o painel explica, tira o alvo do cache e volta à lista.
+// Sabotagens: em DetalheDoAlvo, trocar o "if (naoEncontrado(e))" de
+// alternar() e de apagar() por "if (naoEncontrado(e) && Math.random() > 2)"
+// (o erro cru fica na tela); e no efeito do poll, tirar a chamada a sumiu().
+describe('o alvo sumiu', () => {
+  const TEXTO = 'O alvo já tinha sido apagado, talvez em outra aba.'
+
+  async function aberto() {
+    const r = await renderizarPainel('/targets/alvo-1')
+    r.falsa.estado.alvos = [alvo()]
+    await r.cliente.refetchQueries()
+    await screen.findByRole('heading', { name: 'API', level: 1 })
+    return r
+  }
+
+  it('Pausar com 404 explica e volta à lista', async () => {
+    const r = await aberto()
+    r.falsa.estado.alvos = []
+    await r.usuario.click(screen.getByRole('button', { name: 'Pausar' }))
+    expect((await screen.findAllByText(TEXTO))[0]).toBeInTheDocument()
+    await waitFor(() => expect(r.router.state.location.pathname).toBe('/'))
+    expect(r.cliente.getQueryCache().findAll({ queryKey: ['targets', 'alvo-1'] })).toHaveLength(0)
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('Apagar com 404 explica e volta à lista', async () => {
+    const r = await aberto()
+    r.falsa.estado.alvos = []
+    await r.usuario.click(screen.getByRole('button', { name: 'Apagar' }))
+    await r.usuario.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Apagar alvo' }))
+    expect((await screen.findAllByText(TEXTO))[0]).toBeInTheDocument()
+    await waitFor(() => expect(r.router.state.location.pathname).toBe('/'))
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('o poll que volta 404 explica e volta à lista, sem "dados velhos"', async () => {
+    const r = await aberto()
+    r.falsa.estado.alvos = []
+    await r.cliente.refetchQueries({ queryKey: ['targets', 'alvo-1'], exact: true })
+    expect((await screen.findAllByText(TEXTO))[0]).toBeInTheDocument()
+    await waitFor(() => expect(r.router.state.location.pathname).toBe('/'))
+    expect(screen.queryByText(/Não foi possível atualizar agora/)).not.toBeInTheDocument()
+  })
+
+  it('um endereço de alvo que nunca existiu mostra "Não encontrado", sem sair da tela', async () => {
+    const r = await renderizarPainel('/targets/nao-existe')
+    expect(await screen.findByRole('alert')).toHaveTextContent('Não encontrado.')
+    expect(r.router.state.location.pathname).toBe('/targets/nao-existe')
+  })
+})
+

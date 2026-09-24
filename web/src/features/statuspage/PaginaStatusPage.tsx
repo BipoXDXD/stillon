@@ -11,7 +11,7 @@ import { useAvisar } from '@/components/ui/avisos'
 import { Botao } from '@/components/ui/botao'
 import { Campo, Entrada, ErroDoFormulario, Selecao } from '@/components/ui/campo'
 import { useAlvos, usePaginas, useResumo } from '@/lib/api/consultas'
-import { ApiError } from '@/lib/api/http'
+import { ApiError, naoEncontrado } from '@/lib/api/http'
 import { mensagemDe, mensagemDoCampo } from '@/lib/api/mensagens'
 import type { Alvo, PaginaDeStatus } from '@/lib/api/schemas'
 
@@ -92,6 +92,11 @@ function Formulario({ pagina, alvos }: { pagina: PaginaDeStatus | null; alvos: A
     } catch (err) {
       if (err instanceof ApiError && err.code === 'slug_taken') {
         f.setError('slug', { message: 'Este endereço já está em uso.' }, { shouldFocus: true })
+      } else if (naoEncontrado(err)) {
+        // M3: a página sumiu entre carregar e salvar. Como no 409 abaixo, o
+        // aviso vai pelo toast: a recarga remonta o formulário.
+        avisar('A status page já tinha sido apagada, talvez em outra aba.', 'erro')
+        await qc.invalidateQueries({ queryKey: ['status-pages'] })
       } else if (err instanceof ApiError && err.code === 'status_page_exists') {
         // Corrida entre abas: a recarga troca a `key` do formulário e o
         // remonta, então o aviso sai pelo toast, que sobrevive à troca.

@@ -1,5 +1,5 @@
 import { useQueryClient } from '@tanstack/react-query'
-import { useId, useState } from 'react'
+import { useEffect, useEffectEvent, useId, useRef, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router'
 import { useApi } from '@/app/contexto'
 import { EstadoDaConsulta } from '@/components/EstadoDaConsulta'
@@ -10,6 +10,7 @@ import { Botao } from '@/components/ui/botao'
 import { ErroDoFormulario } from '@/components/ui/campo'
 import { Confirmar } from '@/components/ui/dialogo'
 import { useAlvo, useIncidentes, useResumo, useSerie } from '@/lib/api/consultas'
+import { naoEncontrado } from '@/lib/api/http'
 import { mensagemDe, textoDoErroDeCheck } from '@/lib/api/mensagens'
 import type { Serie } from '@/lib/api/schemas'
 import { dataHora, duracao, fuso, milissegundos, porcento } from '@/lib/format'
@@ -147,13 +148,46 @@ function DetalheDoAlvo({ id }: { id: string }) {
   const noResumo = resumo.data?.items.find((x) => x.id === id)
   const idDoResumo = useId()
 
+  // Sai primeiro, e só então tira do cache o que era do alvo: com a tela
+  // ainda montada, invalidar (ou remover) refaria o GET /targets/:id, e o 404
+  // piscaria. O flushSync faz a saída valer já no fim do await (sem ele, o
+  // Router a aplica numa transição, e a tela ainda estaria lá). Depois, o
+  // resumo e os incidentes (o contador da navegação) se atualizam.
+  async function sairDoAlvo(aviso: string) {
+    avisar(aviso)
+    await navegar('/', { flushSync: true })
+    qc.removeQueries({ queryKey: ['targets', id] })
+    void qc.invalidateQueries({ queryKey: ['targets'] })
+    void qc.invalidateQueries({ queryKey: ['incidents'] })
+  }
+
+  // O alvo foi apagado em outra aba (M3, o padrão de Canais).
+  const sumiu = () => sairDoAlvo('O alvo já tinha sido apagado, talvez em outra aba.')
+
+  // O poll (60 s, foco da janela) que volta 404 depois de o alvo estar na
+  // tela: ele sumiu. Um 404 já na primeira carga (um endereço que nunca
+  // existiu) fica na tela como "Não encontrado.". A chave é o instante do
+  // 404, e o ref faz cada 404 contar uma vez (o StrictMode roda o efeito de
+  // montagem duas vezes).
+  const sumiuNoPoll = naoEncontrado(alvo.error) && alvo.data !== undefined ? alvo.errorUpdatedAt : 0
+  const tratado = useRef(0)
+  const aoSumirNoPoll = useEffectEvent((quando: number) => {
+    if (quando === tratado.current) return
+    tratado.current = quando
+    void sumiu()
+  })
+  useEffect(() => {
+    if (sumiuNoPoll) aoSumirNoPoll(sumiuNoPoll)
+  }, [sumiuNoPoll])
+
   async function alternar(ativo: boolean) {
     setErro(null)
     try {
       await api.alterarAlvo(id, { enabled: ativo })
       await qc.invalidateQueries({ queryKey: ['targets'] })
     } catch (e) {
-      setErro(mensagemDe(e))
+      if (naoEncontrado(e)) await sumiu()
+      else setErro(mensagemDe(e))
     }
   }
 
@@ -161,18 +195,12 @@ function DetalheDoAlvo({ id }: { id: string }) {
     setOcupado(true)
     try {
       await api.apagarAlvo(id)
-      avisar('Alvo apagado.')
-      // Sai primeiro, e só então tira do cache o que era do alvo: com a tela
-      // ainda montada, invalidar (ou remover) refaria o GET /targets/:id, e o
-      // 404 piscaria. O flushSync faz a saída valer já no fim do await (sem
-      // ele, o Router a aplica numa transição, e a tela ainda estaria lá).
-      // Depois, o resumo e os incidentes (o contador da navegação) se
-      // atualizam.
-      await navegar('/', { flushSync: true })
-      qc.removeQueries({ queryKey: ['targets', id] })
-      void qc.invalidateQueries({ queryKey: ['targets'] })
-      void qc.invalidateQueries({ queryKey: ['incidents'] })
+      await sairDoAlvo('Alvo apagado.')
     } catch (e) {
+      if (naoEncontrado(e)) {
+        await sumiu()
+        return
+      }
       setErro(mensagemDe(e))
       setApagando(false)
     } finally {

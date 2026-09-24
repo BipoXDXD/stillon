@@ -118,5 +118,22 @@ describe('incidentes', () => {
     const feito = await screen.findByText(/Reconhecido em/)
     await waitFor(() => expect(feito).toHaveFocus())
   })
+
+  // M3: o incidente sumiu (o alvo foi apagado em outra aba): um aviso que
+  // explica, e a lista relida — sem o "Não encontrado." cru. Sabotagem: em
+  // reconhecer(), tirar o ramo do naoEncontrado → o alert aparece.
+  it('ack com 404 explica e relê a lista', async () => {
+    const r = await renderizarPainel('/incidents')
+    r.falsa.estado.incidentes = [incidente()]
+    await r.cliente.refetchQueries()
+    const botao = await screen.findByRole('button', { name: 'Reconhecer o incidente de API' })
+    r.falsa.estado.incidentes = []
+    await r.usuario.click(botao)
+    expect(
+      (await screen.findAllByText('O incidente não existe mais: o alvo foi apagado, talvez em outra aba.'))[0],
+    ).toBeInTheDocument()
+    expect(await screen.findByText('Nenhum incidente aberto.')).toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
 })
 

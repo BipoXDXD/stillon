@@ -1,5 +1,6 @@
 import type { UseQueryResult } from '@tanstack/react-query'
 import type { ReactNode } from 'react'
+import { naoEncontrado } from '@/lib/api/http'
 import { mensagemDe } from '@/lib/api/mensagens'
 import { dataHora } from '@/lib/format'
 import { Botao } from './ui/botao'
@@ -25,7 +26,8 @@ export function Esqueleto({ linhas = 3 }: { linhas?: number }) {
 // Carregando / erro / conteúdo, igual em toda tela. Uma consulta que já tem
 // dados e falha num poll de fundo continua mostrando os dados, com o aviso
 // de que estão velhos: esconder o painel inteiro por um 502 de passagem
-// seria pior do que mostrar o que se sabia há 15 segundos.
+// seria pior do que mostrar o que se sabia há 15 segundos. O 404 não: ele é
+// a resposta certa, e não uma falha de passagem.
 export function EstadoDaConsulta<T>({
   consulta,
   children,
@@ -39,7 +41,9 @@ export function EstadoDaConsulta<T>({
       Tentar de novo
     </Botao>
   )
-  if (consulta.data === undefined) {
+  // 404 é terminal: o que estava na tela não existe mais, e mostrá-lo como
+  // "dados velhos" diria que ele ainda existe.
+  if (consulta.data === undefined || naoEncontrado(consulta.error)) {
     return (
       <div role="alert" className="space-y-2 rounded-md border border-perigo p-4">
         <p>{mensagemDe(consulta.error)}</p>
