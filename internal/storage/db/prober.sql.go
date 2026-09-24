@@ -23,7 +23,7 @@ UPDATE targets t
         ORDER BY next_run_at
         LIMIT $2::int
           FOR UPDATE SKIP LOCKED)
-RETURNING t.id, t.url, t.method, t.timeout_ms, t.expected_status,
+RETURNING t.id, t.user_id, t.url, t.method, t.timeout_ms, t.expected_status,
           t.headers_enc, t.degraded_threshold_ms
 `
 
@@ -34,6 +34,7 @@ type ClaimDueTargetsParams struct {
 
 type ClaimDueTargetsRow struct {
 	ID                  uuid.UUID
+	UserID              uuid.UUID
 	URL                 string
 	Method              string
 	TimeoutMS           int32
@@ -50,6 +51,9 @@ type ClaimDueTargetsRow struct {
 //
 // SKIP LOCKED faz um segundo sondador pegar OUTROS alvos em vez de esperar
 // pelos que o primeiro travou (TestSkipLockedDoesNotWaitForAnotherProber).
+//
+// user_id volta porque a avaliação de incidente enfileira as notificações
+// nos canais do dono (Plano 3).
 func (q *Queries) ClaimDueTargets(ctx context.Context, arg ClaimDueTargetsParams) ([]ClaimDueTargetsRow, error) {
 	rows, err := q.db.Query(ctx, claimDueTargets, arg.Now, arg.MaxRows)
 	if err != nil {
@@ -61,6 +65,7 @@ func (q *Queries) ClaimDueTargets(ctx context.Context, arg ClaimDueTargetsParams
 		var i ClaimDueTargetsRow
 		if err := rows.Scan(
 			&i.ID,
+			&i.UserID,
 			&i.URL,
 			&i.Method,
 			&i.TimeoutMS,

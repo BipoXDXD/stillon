@@ -2,6 +2,8 @@ package storage
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 
@@ -18,7 +20,10 @@ type Beginner interface {
 	Begin(ctx context.Context) (pgx.Tx, error)
 }
 
-var ErrNoUser = errors.New("transação de usuário sem usuário")
+var (
+	ErrNoUser  = errors.New("transação de usuário sem usuário")
+	ErrNoToken = errors.New("transação de verificação sem hash de token")
+)
 
 // InUserTx roda fn numa transação em que a RLS só enxerga as linhas de userID.
 //
@@ -40,6 +45,21 @@ func InUserTx(ctx context.Context, b Beginner, userID uuid.UUID, fn func(*db.Que
 // targets_prober_*). É o ÚNICO lugar do código que liga esse escopo.
 func InProberTx(ctx context.Context, b Beginner, fn func(*db.Queries) error) error {
 	return inTx(ctx, b, `SELECT set_config('app.scope', $1, true)`, "prober", fn)
+}
+
+// InVerifyTx roda fn no escopo de verificação de canal (GET/POST
+// /verify/{token}): a RLS enxerga só a linha de notif_channels cujo
+// verify_token_hash é tokenHash, e nada de outra tabela. É o único lugar do
+// código que liga esse escopo.
+//
+// O hash vai em hexadecimal porque GUC é texto; a política o decodifica.
+func InVerifyTx(ctx context.Context, b Beginner, tokenHash []byte, fn func(*db.Queries) error) error {
+	if len(tokenHash) != sha256.Size {
+		// Um hash vazio casaria com nada, e o erro apareceria longe daqui
+		// como "link inválido". Um tamanho errado é defeito de quem chama.
+		return ErrNoToken
+	}
+	return inTx(ctx, b, `SELECT set_config('app.verify_token_hash', $1, true)`, hex.EncodeToString(tokenHash), fn)
 }
 
 func inTx(ctx context.Context, b Beginner, setSQL, valor string, fn func(*db.Queries) error) error {

@@ -30,6 +30,42 @@ type Check struct {
 	ErrorKind  *string
 }
 
+type Incident struct {
+	ID              uuid.UUID
+	TargetID        uuid.UUID
+	StartedAt       time.Time
+	ResolvedAt      *time.Time
+	Cause           string
+	AckAt           *time.Time
+	OpenNotifiedAt  *time.Time
+	CloseNotifiedAt *time.Time
+}
+
+type NotifChannel struct {
+	ID              uuid.UUID
+	UserID          uuid.UUID
+	Kind            string
+	ConfigEnc       []byte
+	VerifiedAt      *time.Time
+	VerifyTokenHash []byte
+	VerifyExpiresAt *time.Time
+	Enabled         bool
+	CreatedAt       time.Time
+}
+
+type Notification struct {
+	ID            uuid.UUID
+	IncidentID    uuid.UUID
+	ChannelID     uuid.UUID
+	Event         string
+	Status        string
+	Attempts      int32
+	NextAttemptAt time.Time
+	LastError     *string
+	CreatedAt     time.Time
+	SentAt        *time.Time
+}
+
 type Session struct {
 	ID        uuid.UUID
 	UserID    uuid.UUID
@@ -57,6 +93,14 @@ type Target struct {
 	Enabled             bool
 	NextRunAt           time.Time
 	CreatedAt           time.Time
+}
+
+type TargetHealth struct {
+	TargetID             uuid.UUID
+	ConsecutiveFailures  int32
+	ConsecutiveSuccesses int32
+	StreakSince          *time.Time
+	LastCheckedAt        *time.Time
 }
 
 type TotpRecoveryCode struct {

@@ -7,6 +7,9 @@
 --
 -- SKIP LOCKED faz um segundo sondador pegar OUTROS alvos em vez de esperar
 -- pelos que o primeiro travou (TestSkipLockedDoesNotWaitForAnotherProber).
+--
+-- user_id volta porque a avaliação de incidente enfileira as notificações
+-- nos canais do dono (Plano 3).
 -- name: ClaimDueTargets :many
 UPDATE targets t
    SET next_run_at = sqlc.arg(now)::timestamptz
@@ -17,7 +20,7 @@ UPDATE targets t
         ORDER BY next_run_at
         LIMIT sqlc.arg(max_rows)::int
           FOR UPDATE SKIP LOCKED)
-RETURNING t.id, t.url, t.method, t.timeout_ms, t.expected_status,
+RETURNING t.id, t.user_id, t.url, t.method, t.timeout_ms, t.expected_status,
           t.headers_enc, t.degraded_threshold_ms;
 
 -- name: CountDueTargets :one
