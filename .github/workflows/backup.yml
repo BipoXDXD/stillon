@@ -71,25 +71,40 @@ jobs:
           exit 1
 
       - name: dump, restauração e checagens
+        id: backup
         env:
           BACKUP_DATABASE_PASSWORD: ${{ secrets.BACKUP_DATABASE_PASSWORD }}
           PG_VOLUME_GB: ${{ vars.PG_VOLUME_GB }}
         run: |
           # O Postgres descartável da restauração, só no localhost do runner.
           docker run -d --name restauro -p 127.0.0.1:5433:5432 -e POSTGRES_PASSWORD=restauro "$POSTGRES_IMAGE"
-          until docker exec restauro pg_isready -h 127.0.0.1 -U postgres >/dev/null 2>&1; do sleep 1; done
+          for _ in $(seq 1 60); do
+            if docker exec restauro pg_isready -h 127.0.0.1 -U postgres >/dev/null 2>&1; then break; fi
+            sleep 1
+          done
+          docker exec restauro pg_isready -h 127.0.0.1 -U postgres
+          # A senha vai ao contêiner pelo ambiente (-e NOME, sem valor), e não
+          # na linha de comando do docker, que qualquer processo do runner lê.
+          export ORIGEM_URL="postgres://vigilume_backup:${BACKUP_DATABASE_PASSWORD}@127.0.0.1:15432/vigilume?sslmode=disable"
           # --network host: o contêiner enxerga o túnel (15432) e o descartável
           # (5433) no localhost do runner, como o próprio runner.
           # --user: o dump sai com o dono do runner, e o passo seguinte o lê
           # e apaga sem sudo.
+          # Com pipefail, o código do pipe é o do backup.sh, e não o do tee.
+          codigo=0
           docker run --rm --network host --user "$(id -u):$(id -g)" \
             -v "$PWD/deploy:/deploy:ro" -v "$RUNNER_TEMP:/saida" \
-            -e ORIGEM_URL="postgres://vigilume_backup:${BACKUP_DATABASE_PASSWORD}@127.0.0.1:15432/vigilume?sslmode=disable" \
+            -e ORIGEM_URL \
             -e SAIDA=/saida/vigilume.dump \
             -e PGHOST=127.0.0.1 -e PGPORT=5433 -e PGUSER=postgres -e PGPASSWORD=restauro \
             -e VOLUME_BYTES="$(( ${PG_VOLUME_GB:-3} * 1024 * 1024 * 1024 ))" \
-            "$POSTGRES_IMAGE" sh /deploy/backup/backup.sh | tee "$RUNNER_TEMP/backup.log"
+            "$POSTGRES_IMAGE" sh /deploy/backup/backup.sh | tee "$RUNNER_TEMP/backup.log" || codigo=$?
+          echo "codigo=$codigo" >> "$GITHUB_OUTPUT"
           grep '^Postgres: ' "$RUNNER_TEMP/backup.log" >> "$GITHUB_STEP_SUMMARY" || true
+          # 0: conferido. 4: conferido, mas o disco passou de 85%: o dump é bom,
+          # segue para cifrar e guardar, e o último passo derruba o job. Outro
+          # código: não há backup que sirva, e o job para aqui.
+          if [ "$codigo" -ne 0 ] && [ "$codigo" -ne 4 ]; then exit "$codigo"; fi
 
       - name: cifrar
         env:
@@ -105,3 +120,11 @@ jobs:
           path: ${{ runner.temp }}/vigilume-*.dump.age
           retention-days: 30
           if-no-files-found: error
+
+      # Depois do artifact: o backup do dia fica guardado, e o job ainda fica
+      # vermelho (o GitHub manda o e-mail).
+      - name: disco acima de 85%
+        if: steps.backup.outputs.codigo == '4'
+        run: |
+          echo "::error::Postgres de produção acima de 85% do volume: aumente o volume (fly volumes extend) e atualize PG_VOLUME_GB. O backup de hoje foi conferido e guardado."
+          exit 1

@@ -13,6 +13,11 @@
 #   SAIDA        caminho do dump (formato custom).
 #   VOLUME_BYTES opcional: tamanho do volume de produção, para o aviso de disco.
 #
+# Códigos: 0 = dump restaurado e conferido; 3 = uma checagem da cópia falhou
+# (o dump não serve); 4 = dump restaurado e conferido, MAS o disco de produção
+# passou de 85%: o dump é bom e deve ser guardado, e quem chama falha depois.
+# Qualquer outro código (1 do pg_dump, por exemplo) = não houve backup.
+#
 # O dump só é dado como bom depois de restaurado e conferido. Texto claro
 # nunca sai daqui: quem chama cifra o arquivo antes de guardá-lo.
 set -eu
@@ -43,8 +48,10 @@ psql --no-psqlrc -X -q -v ON_ERROR_STOP=1 -d postgres -f "$AQUI/../compose/initd
 pg_restore --exit-on-error --no-password -d vigilume "$SAIDA"
 
 echo "== checagens"
+# Uma checagem que falha sai com 3 (o código do psql com ON_ERROR_STOP).
 psql --no-psqlrc -X -q -d vigilume -v versao="$versao" -v usuarios="$usuarios" -v alvos="$alvos" \
     -f "$AQUI/verificar.sql"
+echo "backup conferido"
 
 echo "== disco"
 ocupado=$(origem "SELECT sum(pg_database_size(datname)) FROM pg_database")
@@ -54,10 +61,11 @@ if [ -n "${VOLUME_BYTES:-}" ]; then
     resumo="Postgres: ${pct}% do volume (${ocupado} de ${VOLUME_BYTES} bytes, sem contar o WAL)"
     echo "$resumo"
     if [ "$pct" -ge 85 ]; then
+        # O backup acima já está conferido; 4 (e não 3) diz a quem chama que
+        # ele deve ser cifrado e guardado mesmo assim.
         echo "ERRO: acima de 85%: aumente o volume (fly volumes extend)" >&2
-        exit 3
+        exit 4
     elif [ "$pct" -ge 70 ]; then
         echo "AVISO: acima de 70% do volume"
     fi
 fi
-echo "backup conferido"

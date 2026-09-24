@@ -42,9 +42,14 @@ Troque `gru` pela região escolhida em `fly platform regions`, nos dois `fly.tom
    ```sh
    fly volumes create pgdata -a vigilume-db --region gru --size 3 --snapshot-retention 14
    ```
-3. **Banco no ar:**
+3. **Banco no ar.** Primeiro a senha do superusuário, **à vista**:
    ```sh
-   fly secrets set -a vigilume-db --stage POSTGRES_PASSWORD="$(openssl rand -base64 32)"
+   PG_SENHA=$(openssl rand -hex 32); echo "$PG_SENHA"
+   ```
+   Guarde-a no gerenciador de senhas **agora**, antes de seguir: `fly secrets` não devolve o
+   valor depois, e ela é o único acesso de superusuário ao banco. Só então:
+   ```sh
+   fly secrets set -a vigilume-db --stage POSTGRES_PASSWORD="$PG_SENHA"
    fly deploy -c deploy/fly/db/fly.toml --ha=false --image "$(sed -n 's/^FROM //p' deploy/fly/db/Dockerfile)"
    fly machines list -a vigilume-db   # exatamente UMA máquina, com o volume pgdata
    fly logs -a vigilume-db    # esperado: "database system is ready to accept connections"
@@ -53,12 +58,22 @@ Troque `gru` pela região escolhida em `fly platform regions`, nos dois `fly.tom
    (que o Dependabot atualiza), sem build remoto. `--ha=false`: sem ele, o primeiro deploy cria
    duas máquinas, e uma segunda máquina de Postgres não teria volume. (Não ensaiado: a
    validação não tem conta no Fly. As flags foram conferidas no `flyctl` 0.4.108.)
-   Guarde a `POSTGRES_PASSWORD` no gerenciador (`fly secrets` não mostra o valor depois).
+
+   Toda senha de papel do Postgres aqui é gerada com `openssl rand -hex 32`, e não com
+   `-base64`: elas entram em URLs `postgres://usuário:senha@…` (o `DATABASE_URL`, o `ORIGEM_URL`
+   do backup), e o `/`, o `+` e o `=` do base64 quebram a leitura da URL ou exigem escape.
 4. **Papéis e banco.** A imagem oficial tem shell:
    ```sh
    fly ssh console --pty -a vigilume-db -C "psql -U postgres"
    ```
-   Rode o mesmo SQL de `deploy/compose/initdb.sql`, com **senhas novas**, e o papel de backup:
+   Gere as duas senhas numa máquina sua (hexadecimais, pelo motivo do passo 3) e guarde as duas
+   no gerenciador **antes** de usá-las:
+   ```sh
+   openssl rand -hex 32   # senha de vigilume_app
+   openssl rand -hex 32   # senha de vigilume_backup
+   ```
+   Rode o mesmo SQL de `deploy/compose/initdb.sql`, com essas **senhas novas**, e o papel de
+   backup:
    ```sql
    CREATE ROLE vigilume_app LOGIN PASSWORD '<senha nova>'
        NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE;
@@ -79,17 +94,25 @@ Troque `gru` pela região escolhida em `fly platform regions`, nos dois `fly.tom
    \c vigilume
    SELECT has_schema_privilege('vigilume_app', 'public', 'CREATE');   -- t
    ```
-6. **Segredos do app**, sem reiniciar nada:
+6. **Segredos do app**, sem reiniciar nada. Primeiro a `MASTER_KEY`, **à vista**:
+   ```sh
+   MK=$(openssl rand -base64 32); echo "$MK"
+   ```
+   Guarde-a no gerenciador de senhas **agora**, antes do comando seguinte. **Perder a
+   `MASTER_KEY` torna ilegíveis os headers de alvo e as configurações de canal, e nenhum backup
+   devolve isso**: o dump guarda o texto cifrado, não a chave. Depois de passada ao Fly, ela não
+   volta: `fly secrets` não mostra valores, e a imagem do app não tem shell para lê-la do
+   ambiente. Só então:
    ```sh
    fly secrets set -a vigilume --stage \
-     DATABASE_URL='postgres://vigilume_app:<senha>@vigilume-db.internal:5432/vigilume?sslmode=disable' \
-     MASTER_KEY="$(openssl rand -base64 32)" \
+     DATABASE_URL='postgres://vigilume_app:<senha do passo 4>@vigilume-db.internal:5432/vigilume?sslmode=disable' \
+     MASTER_KEY="$MK" \
      JWT_SECRET="$(openssl rand -base64 32)" \
      IP_HASH_KEY="$(openssl rand -base64 32)"
    ```
-   Gere a `MASTER_KEY` antes, guarde-a no gerenciador e só então a passe ao Fly. **Perder a
-   `MASTER_KEY` torna ilegíveis os headers de alvo e as configurações de canal, e nenhum backup
-   devolve isso**: o dump guarda o texto cifrado, não a chave.
+   `JWT_SECRET` e `IP_HASH_KEY` podem nascer sem ser vistos: perder a primeira só derruba as
+   sessões abertas, e perder a segunda só separa os hashes de IP antigos dos novos (troque as
+   duas pelo mesmo comando, com valores novos).
 
    `sslmode=disable` é deliberado (D31): a rede privada do Fly é uma malha WireGuard, e o banco
    não tem porta pública.
@@ -190,12 +213,26 @@ Troque `gru` pela região escolhida em `fly platform regions`, nos dois `fly.tom
     - Variáveis: `PG_VOLUME_GB` = `3`; `BACKUP_ENABLED` = `1` (sem ela, o `backup` agendado
       termina em "skipped" todo dia, sem gastar minutos).
 
+    **Depois de ligado, um `backup` agendado "skipped" (cinza) é uma falha**, tanto quanto um
+    vermelho: não houve backup naquele dia, e o GitHub **não** manda e-mail por isso. A causa
+    usual é a variável `BACKUP_ENABLED` apagada ou mudada; confira-a e rode o workflow à mão.
+
     Rode o workflow `backup` à mão (Actions → backup → Run workflow) e confira que ficou verde.
     Se o `flyctl proxy` falhar por permissão, o token de app não basta para o túnel: troque o
     `FLY_BACKUP_TOKEN` por um token de organização, sabendo que ele alcança todos os seus apps.
-14. **Voltar uma versão.** `fly releases -a vigilume` e
-    `fly deploy --image registry.fly.io/vigilume@sha256:<digest anterior> --ha=false`. Só é seguro se as
-    migrations da versão nova forem aditivas: o `goose` não roda `Down` sozinho.
+14. **Voltar uma versão.** Só é seguro se as migrations da versão nova forem aditivas: o
+    `goose` não roda `Down` sozinho. Os digests das versões anteriores:
+    ```sh
+    fly releases -a vigilume --image   # cada release com a imagem (registry.fly.io/vigilume@sha256:…)
+    ```
+    O caminho preferido é o mesmo de todo deploy: Actions → deploy → Run workflow **na `main`**
+    com o digest anterior (é o mesmo digest do GHCR: a cópia preserva o índice). Se precisar
+    fazer à mão, faça-o **de uma `main` atualizada** (`git switch main && git pull`): o
+    `fly deploy` usa o `fly.toml` local, e um `fly.toml` velho apagaria o `TRUSTED_PROXIES` medido
+    no passo 9.
+    ```sh
+    fly deploy --image registry.fly.io/vigilume@sha256:<digest anterior> --ha=false
+    ```
 
 ## Deploys seguintes
 
@@ -227,10 +264,10 @@ A imagem do app não tem shell (spec §5.9): `fly ssh console -a vigilume` não 
 
 | Responsabilidade | Mecanismo | Frequência |
 |---|---|---|
-| Backup | Snapshots diários do volume (14 dias) + workflow `backup` diário: dump, restauração conferida, cifra `age`, artifact de 30 dias | Automático: conferir que o `backup` segue verde |
+| Backup | Snapshots diários do volume (14 dias) + workflow `backup` diário: dump, restauração conferida, cifra `age`, artifact de 30 dias | Automático: conferir que o `backup` segue verde. Vermelho **ou** "skipped" (cinza) é falha |
 | Teste de restauração | Automático em cada `backup`; manual a cada trimestre (abaixo) | Diário e trimestral |
-| Disco | O `backup` compara o tamanho dos bancos com `PG_VOLUME_GB`: aviso acima de 70%, **falha** acima de 85% (o GitHub manda e-mail). Depois de `fly volumes extend <id> -s <GB>`, **atualize a variável `PG_VOLUME_GB`**, senão o aviso continua contando o tamanho velho | Quando avisar |
-| Upgrade menor (18.x) | PR do Dependabot em `deploy/fly/db/Dockerfile` (e o do `compose.yaml`, juntos) → merge → `fly deploy -c deploy/fly/db/fly.toml --ha=false --image "$(sed -n 's/^FROM //p' deploy/fly/db/Dockerfile)"` (10–30 s fora). O `backup` passa a usar a imagem nova sozinho | Quando o Dependabot abrir |
+| Disco | O `backup` compara o tamanho dos bancos com `PG_VOLUME_GB`: aviso acima de 70%, **falha** acima de 85% (o GitHub manda e-mail). Acima de 85% o backup do dia ainda é conferido, cifrado e guardado: o job fica vermelho no último passo. Depois de `fly volumes extend <id> -s <GB>`, **atualize a variável `PG_VOLUME_GB`**, senão o aviso continua contando o tamanho velho | Quando avisar |
+| Upgrade menor (18.x) | PR do Dependabot em `deploy/fly/db/Dockerfile`. O mesmo digest está em **quatro** lugares, que sobem juntos (no mesmo PR, ou em PRs mergeados juntos): `deploy/fly/db/Dockerfile`, `compose.yaml`, `.github/workflows/ci.yml` e `internal/storage/testdb` → merge → `fly deploy -c deploy/fly/db/fly.toml --ha=false --image "$(sed -n 's/^FROM //p' deploy/fly/db/Dockerfile)"` (10–30 s fora). O `backup` passa a usar a imagem nova sozinho | Quando o Dependabot abrir |
 | Upgrade maior (18 → 19) | **Não** vem por PR: o `dependabot.yml` ignora versão maior de `postgres` (e de `node`). Dump e restauração num app novo (abaixo, D36) | ~1 vez por ano |
 
 ### Restauração manual (trimestral)
@@ -245,37 +282,82 @@ A imagem do app não tem shell (spec §5.9): `fly ssh console -a vigilume` não 
    docker exec -i restauro psql -U postgres < deploy/compose/initdb.sql
    docker exec -i restauro pg_restore -U postgres --exit-on-error -d vigilume < vigilume.dump
    ```
-4. Suba o `vigilume` contra ele **com `--role=api`** (`DATABASE_URL=postgres://vigilume_app:vigilume_app@127.0.0.1:25433/vigilume?sslmode=disable`,
-   **a mesma `MASTER_KEY` de produção**, `PUBLIC_BASE_URL=http://localhost:8080`) e faça login.
-   Só a API: com `--role=all`, a cópia sondaria os alvos de produção e mandaria alertas aos
-   canais **reais** (Discord, e-mail), como se fosse a produção. Abra um alvo com header: se a
-   `MASTER_KEY` estiver errada, é aqui que aparece.
+   Opcional, as mesmas checagens do workflow: os números estão na linha `schema N, U usuário(s),
+   A alvo(s)` do log daquela execução do `backup`:
+   ```sh
+   docker exec -i restauro psql -U postgres -d vigilume -v versao=N -v usuarios=U -v alvos=A \
+     < deploy/backup/verificar.sql   # esperado: NOTICE: cópia conferida
+   ```
+4. Suba o `vigilume` contra ele **com `--role=api`**, na versão que está em produção (o digest de
+   `fly releases -a vigilume --image`; uma versão mais nova migraria a cópia e o teste deixaria de
+   ser o da produção). Só a API: com `--role=all`, a cópia sondaria os alvos de produção e
+   mandaria alertas aos canais **reais** (Discord, e-mail), como se fosse a produção.
+   ```sh
+   fly auth docker
+   docker run --rm --network host \
+     -e DATABASE_URL='postgres://vigilume_app:vigilume_app@127.0.0.1:25433/vigilume?sslmode=disable' \
+     -e MASTER_KEY='<a MASTER_KEY de produção, do gerenciador>' \
+     -e JWT_SECRET="$(openssl rand -base64 32)" -e IP_HASH_KEY="$(openssl rand -base64 32)" \
+     -e PUBLIC_BASE_URL=http://localhost:8080 -e CORS_ORIGIN=http://localhost:8080 \
+     -e HTTP_ADDR=127.0.0.1:8080 -e METRICS_ADDR=off \
+     registry.fly.io/vigilume@sha256:<digest em produção> --role=api
+   ```
+   A senha `vigilume_app` vale aqui porque o `initdb.sql` é o do compose (a de demonstração).
+   `JWT_SECRET` e `IP_HASH_KEY` são **novos**, nunca os de produção: a cópia não deve aceitar
+   tokens de produção. A `MASTER_KEY` é a **de produção**, a única coisa que o treino confere
+   além dos dados: faça login em `http://localhost:8080` e abra um alvo com header. Se a
+   `MASTER_KEY` estiver errada, é aqui que aparece. (Sem Docker, compile o mesmo commit e rode
+   `./bin/vigilume --role=api` com as mesmas variáveis. No Docker Desktop, troque `--network host`
+   por `-p 127.0.0.1:8080:8080`, `HTTP_ADDR` por `:8080` e o host do `DATABASE_URL` por
+   `host.docker.internal`.)
 5. `docker rm -f restauro` e apague o `vigilume.dump`.
 
 ### Queda do host do banco
 
-Máquina única, sem réplica. A máquina velha está presa ao volume velho: destrua-a primeiro, ou o
-deploy tentaria reusá-la.
+Máquina única, sem réplica. A máquina velha está presa ao volume velho, e o volume velho ao host
+que caiu. O volume restaurado é ligado **pelo ID**, para não depender de qual volume `pgdata` o
+`flyctl` escolheria (o velho continua na lista, com o mesmo nome). (Não ensaiado: a validação
+não tem conta no Fly.)
 ```sh
-fly machines list -a vigilume-db
-fly machine destroy <id da máquina> -a vigilume-db --force
-fly volumes list -a vigilume-db
-fly volumes snapshots list <id do volume>
-fly volumes create pgdata -a vigilume-db --snapshot-id <snapshot> -s 3 --region gru
-fly deploy -c deploy/fly/db/fly.toml --ha=false --image "$(sed -n 's/^FROM //p' deploy/fly/db/Dockerfile)"
+fly machines list -a vigilume-db                   # anote <máquina velha>
+fly volumes list -a vigilume-db                    # anote <volume velho>
+fly volumes snapshots list <volume velho>
+fly volumes create pgdata -a vigilume-db --snapshot-id <snapshot> -s 3 --region gru   # anote <volume novo>
+# Uma máquina nova com a configuração da velha, ligada ao volume novo:
+fly machine clone <máquina velha> -a vigilume-db --region gru \
+  --attach-volume <volume novo>:/var/lib/postgresql
+fly machine destroy <máquina velha> -a vigilume-db --force
+fly machines list -a vigilume-db                   # exatamente UMA máquina, com <volume novo>
 ```
-O Postgres faz a recuperação de crash sozinho. Se o snapshot não servir, restaure o último dump
-(seção anterior) num banco novo, com os papéis do passo 4.
+O Postgres faz a recuperação de crash sozinho. Confira o banco (passo 8 e o `backup` à mão, que
+deve ficar verde). Os deploys seguintes do banco atualizam essa máquina e mantêm o volume dela.
+
+O **volume velho**: não o destrua enquanto a volta não estiver conferida (se o host voltar, ele
+ainda tem os dados até o instante da queda, mais novos que o snapshot). Depois de conferida,
+`fly volumes destroy <volume velho> -a vigilume-db`: um volume `pgdata` sobrando seria escolhido
+pelo próximo `fly deploy` ou `fly scale` que criasse uma máquina, com dados velhos.
+
+Se o snapshot não servir, restaure o último dump (seção anterior) num banco novo, com os papéis do
+passo 4.
 
 ### Upgrade maior
 
-1. `fly apps create vigilume-db19`, volume novo, `deploy/fly/db/Dockerfile` com a imagem nova.
-2. Papéis do passo 4 no banco novo.
+1. `fly apps create vigilume-db19`; volume e segredo com `-a vigilume-db19`
+   (`fly volumes create pgdata -a vigilume-db19 …`, `fly secrets set -a vigilume-db19 …`, passo 3);
+   `deploy/fly/db/Dockerfile` com a imagem nova, e o deploy **com `-a`**, senão ele cai no app
+   do `fly.toml` (o antigo):
+   `fly deploy -c deploy/fly/db/fly.toml -a vigilume-db19 --ha=false --image "$(sed -n 's/^FROM //p' deploy/fly/db/Dockerfile)"`.
+2. Papéis do passo 4 no banco novo (`fly ssh console --pty -a vigilume-db19 -C "psql -U postgres"`).
 3. Janela curta: pare o app (`fly scale count 0 -a vigilume`), faça o dump do antigo como
-   `vigilume_backup` (`fly proxy` + `pg_dump -Fc`) e restaure no novo como superusuário,
-   preservando os donos.
+   `vigilume_backup` (`fly proxy … -a vigilume-db` + `pg_dump -Fc`) e restaure no novo como
+   superusuário, preservando os donos.
 4. `fly secrets set -a vigilume DATABASE_URL=…vigilume-db19.internal…`, `fly scale count 1`.
-5. Mantenha o `vigilume-db` antigo parado por 7 dias antes de destruí-lo.
+5. Na mesma virada, o backup: o `backup.yml` aponta para `-a vigilume-db` (no `flyctl proxy`) e
+   o `FLY_BACKUP_TOKEN` só alcança o app antigo. Troque os dois (PR com `-a vigilume-db19` no
+   `backup.yml` e no `app` de `deploy/fly/db/fly.toml`; secret novo de
+   `fly tokens create deploy -a vigilume-db19`) e rode o `backup` à mão. Até isso, o backup
+   diário continua copiando o banco **antigo**, e fica verde.
+6. Mantenha o `vigilume-db` antigo parado por 7 dias antes de destruí-lo.
 
 ## Tornar o repositório público (passo futuro)
 
@@ -297,6 +379,15 @@ O repositório é **privado por decisão do dono**. No dia de abrir:
    obrigatório. Crie o `production`, mova o `FLY_DEPLOY_TOKEN` para ele e ponha
    `environment: production` no job do `deploy.yml`. (O GitHub Pro, ~US$ 4/mês, dá secrets por
    environment num repositório privado, mas **não** o revisor obrigatório; nada aqui depende dele.)
-7. **Agendamentos:** num repositório público, o GitHub **desliga** os workflows agendados depois
+7. **Backups e logs do Actions ficam públicos.** Num repositório público, qualquer pessoa baixa
+   os artifacts e lê os logs das execuções. Os artifacts são 30 dias de dumps **cifrados** com o
+   `age` (ilegíveis sem a chave privada, mas passam a depender só dela; um vazamento da chave, ou
+   uma falha futura do algoritmo, abriria o histórico inteiro). Os logs do `backup` mostram a
+   versão do schema, o número de usuários e de alvos, o tamanho do dump e a ocupação do disco de
+   produção; os do `deploy`, os digests em produção. **Antes de mudar a visibilidade**, mova os
+   backups para um lugar privado (um repositório privado separado só para o workflow de backup,
+   ou um bucket R2/S3 com o upload no lugar do `upload-artifact`) e apague os artifacts antigos,
+   **ou** aceite esse risco explicitamente, por escrito.
+8. **Agendamentos:** num repositório público, o GitHub **desliga** os workflows agendados depois
    de 60 dias sem atividade no repositório, e avisa por e-mail. O `backup` para junto: reative-o
    em Actions quando o aviso chegar.
