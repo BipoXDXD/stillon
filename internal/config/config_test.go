@@ -201,3 +201,50 @@ func TestMetricsAddrMustBeLoopback(t *testing.T) {
 		})
 	}
 }
+
+func TestEmailSettingsGoTogether(t *testing.T) {
+	cases := []struct {
+		nome        string
+		chave, from string
+		ligado, ok  bool
+	}{
+		{"nenhuma", "", "", false, true},
+		{"as duas", "re_123", "Vigilume <alertas@vigilume.dev>", true, true},
+		{"só a chave", "re_123", "", false, false},
+		{"só o remetente", "", "alertas@vigilume.dev", false, false},
+		{"remetente inválido", "re_123", "não é e-mail", false, false},
+	}
+	for _, c := range cases {
+		t.Run(c.nome, func(t *testing.T) {
+			env := validEnv()
+			env["RESEND_API_KEY"], env["EMAIL_FROM"] = c.chave, c.from
+			cfg, err := Load(getenvFrom(env))
+			if !c.ok {
+				if err == nil || !strings.Contains(err.Error(), "EMAIL_FROM") {
+					t.Fatalf("aceito (err = %v)", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.EmailEnabled() != c.ligado {
+				t.Errorf("EmailEnabled = %v, queria %v", cfg.EmailEnabled(), c.ligado)
+			}
+		})
+	}
+}
+
+func TestLogValueRedactsTheResendKey(t *testing.T) {
+	env := validEnv()
+	env["RESEND_API_KEY"], env["EMAIL_FROM"] = "re_chave_secreta", "a@b.dev"
+	cfg, err := Load(getenvFrom(env))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	slog.New(slog.NewJSONHandler(&buf, nil)).Info("cfg", "cfg", cfg)
+	if strings.Contains(buf.String(), "re_chave_secreta") || !strings.Contains(buf.String(), `"email_enabled":true`) {
+		t.Errorf("log = %s", buf.String())
+	}
+}
