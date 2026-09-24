@@ -1,0 +1,20 @@
+# O contexto do build é só o que a imagem usa (D7 do Plano 7). Sem isto, um
+# dist velho da máquina entraria no binário no lugar do que o estágio web
+# gerou, e o .git e os testes engordariam o contexto.
+.git
+.github
+.idea
+.superpowers
+bin
+.env
+coverage.out
+**/*_test.go
+docs
+deploy
+# A mesma regra do .gitignore (Plano 6): do dist, só o .gitkeep.
+internal/webui/dist/*
+!internal/webui/dist/.gitkeep
+web/node_modules
+web/test-results
+web/playwright-report
+web/e2e/.tmp
