@@ -1,0 +1,36 @@
+# Postgres de produção, SEM gerência do Fly (decisão do usuário, D28 do Plano
+# 7). Backup, disco e upgrade ficam com o operador: docs/deploy/fly.md.
+#
+#   fly deploy -c deploy/fly/db/fly.toml --ha=false \
+#     --image "$(sed -n 's/^FROM //p' deploy/fly/db/Dockerfile)"
+#
+# A imagem vai por --image, direto do Docker Hub e pelo digest do Dockerfile
+# (que o Dependabot atualiza): nada de build remoto, e nada de depender de
+# como o flyctl resolve um caminho de Dockerfile relativo a um -c.
+app = "vigilume-db"
+primary_region = "gru"
+
+# "Fast shutdown" do Postgres: é o STOPSIGNAL da imagem oficial. Um SIGKILL no
+# meio do checkpoint força recuperação por WAL no boot seguinte.
+kill_signal = "SIGINT"
+kill_timeout = "60s"
+
+# Layout do 18: PGDATA=/var/lib/postgresql/18/docker, e o volume é o diretório
+# de cima. Montar em .../data grava num volume anônimo que some.
+[mounts]
+  source = "pgdata"
+  destination = "/var/lib/postgresql"
+
+# Sem [http_service] e sem [[services]]: o banco não passa pelo proxy público.
+# A aplicação chega em vigilume-db.internal:5432, pela rede privada (6PN).
+[checks]
+  [checks.postgres]
+    type = "tcp"
+    port = 5432
+    interval = "15s"
+    timeout = "2s"
+    grace_period = "30s"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
