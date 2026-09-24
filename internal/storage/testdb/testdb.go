@@ -8,9 +8,13 @@ package testdb
 
 import (
 	"context"
+	"fmt"
+	"net/url"
 	"sync"
+	"sync/atomic"
 	"testing"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/testcontainers/testcontainers-go"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
@@ -18,36 +22,42 @@ import (
 	"github.com/BipoXDXD/vigilume/internal/storage"
 )
 
+const (
+	dbName    = "vigilume_test"
+	adminUser = "vigilume"
+	adminPass = "vigilume"
+
+	// appUser é o papel com que a aplicação roda nos testes, e existe por
+	// causa da RLS. O usuário do contêiner é superusuário, e superusuário
+	// atravessa toda política de RLS, mesmo com FORCE. Com ele, um teste de
+	// isolamento passaria pelo WHERE da query e nunca pela política, e
+	// apagar a política deixaria a suíte verde. As migrations rodam como
+	// appUser para que ele seja o DONO das tabelas, exatamente como em
+	// produção (D8).
+	appUser = "vigilume_app"
+	appPass = "vigilume_app"
+)
+
 var (
 	once      sync.Once
 	container *tcpostgres.PostgresContainer
-	dsn       string
+	adminDSN  string
+	appDSN    string
 	startErr  error
+	vazios    atomic.Int64
 )
 
-const (
-	dbName = "vigilume_test"
-	dbUser = "vigilume"
-	dbPass = "vigilume"
-)
-
-// New devolve um pool ligado a um Postgres limpo e migrado.
+// New devolve um pool ligado a um Postgres limpo e migrado, como o papel
+// da aplicação.
 //
 // Pula com -short: quem não tem Docker disponível ainda consegue rodar os
 // testes dos pacotes puros (crypto, safedial, password) com `make test-short`.
 func New(t *testing.T) *pgxpool.Pool {
 	t.Helper()
-	if testing.Short() {
-		t.Skip("precisa de Docker; pulado em -short")
-	}
-
-	once.Do(start)
-	if startErr != nil {
-		t.Fatalf("subir Postgres de teste: %v", startErr)
-	}
+	iniciar(t)
 
 	ctx := context.Background()
-	pool, err := storage.NewPool(ctx, dsn)
+	pool, err := storage.NewPool(ctx, appDSN)
 	if err != nil {
 		t.Fatalf("conectar ao Postgres de teste: %v", err)
 	}
@@ -63,14 +73,88 @@ func New(t *testing.T) *pgxpool.Pool {
 	return pool
 }
 
+// DSN é a string de conexão do papel da aplicação, para quem precisa passar
+// pelo caminho de boot (storage.Migrate, run) em vez de receber um pool
+// pronto. Chame New antes no mesmo teste: é o cleanup de New que restaura o
+// snapshot quando o teste termina.
+func DSN(t *testing.T) string {
+	t.Helper()
+	iniciar(t)
+	return appDSN
+}
+
+// AdminDSN é a conexão como superusuário. Serve para provar que o boot
+// RECUSA esse papel e para ler o banco "por fora" da RLS, como faria quem
+// tivesse um dump.
+func AdminDSN(t *testing.T) string {
+	t.Helper()
+	iniciar(t)
+	return adminDSN
+}
+
+// EmptyDatabase cria um banco novo, vazio e NÃO migrado, cujo dono é o
+// papel da aplicação, e o apaga no fim do teste. O teste de migrations
+// concorrentes precisa dele, porque o banco de New já nasce migrado.
+func EmptyDatabase(t *testing.T) string {
+	t.Helper()
+	iniciar(t)
+	ctx := context.Background()
+
+	// O nome cru vai na URL; o sanitizado, entre aspas, no SQL. Os dois saem
+	// da MESMA leitura do contador: relê-lo com testes em paralelo devolveria
+	// o número de outro teste.
+	cru := fmt.Sprintf("vigilume_vazio_%d", vazios.Add(1))
+	nome := pgx.Identifier{cru}.Sanitize()
+	admin, err := pgx.Connect(ctx, adminDSN)
+	if err != nil {
+		t.Fatalf("conectar como admin: %v", err)
+	}
+	defer admin.Close(ctx)
+
+	// #nosec G201 -- nome vem de pgx.Identifier.Sanitize sobre um contador; nada vem de fora.
+	if _, err := admin.Exec(ctx, fmt.Sprintf(`CREATE DATABASE %s OWNER %s`, nome, appUser)); err != nil {
+		t.Fatalf("criar banco vazio: %v", err)
+	}
+	t.Cleanup(func() {
+		c, err := pgx.Connect(context.Background(), adminDSN)
+		if err != nil {
+			t.Errorf("conectar para apagar banco vazio: %v", err)
+			return
+		}
+		defer c.Close(context.Background())
+		// #nosec G201 -- mesmo identificador sanitizado acima.
+		if _, err := c.Exec(context.Background(), fmt.Sprintf(`DROP DATABASE IF EXISTS %s WITH (FORCE)`, nome)); err != nil {
+			t.Errorf("apagar banco vazio: %v", err)
+		}
+	})
+
+	u, err := url.Parse(appDSN)
+	if err != nil {
+		t.Fatal(err)
+	}
+	u.Path = "/" + cru
+	return u.String()
+}
+
+func iniciar(t *testing.T) {
+	t.Helper()
+	if testing.Short() {
+		t.Skip("precisa de Docker; pulado em -short")
+	}
+	once.Do(start)
+	if startErr != nil {
+		t.Fatalf("subir Postgres de teste: %v", startErr)
+	}
+}
+
 func start() {
 	ctx := context.Background()
 
 	container, startErr = tcpostgres.Run(ctx,
 		"postgres:16-alpine",
 		tcpostgres.WithDatabase(dbName),
-		tcpostgres.WithUsername(dbUser),
-		tcpostgres.WithPassword(dbPass),
+		tcpostgres.WithUsername(adminUser),
+		tcpostgres.WithPassword(adminPass),
 		tcpostgres.WithSQLDriver("pgx"), // exigido por Snapshot/Restore
 		tcpostgres.BasicWaitStrategies(),
 	)
@@ -78,17 +162,50 @@ func start() {
 		return
 	}
 
-	dsn, startErr = container.ConnectionString(ctx, "sslmode=disable")
+	adminDSN, startErr = container.ConnectionString(ctx, "sslmode=disable")
 	if startErr != nil {
 		return
 	}
+	if startErr = criarPapelDaAplicacao(ctx); startErr != nil {
+		return
+	}
+
+	u, err := url.Parse(adminDSN)
+	if err != nil {
+		startErr = err
+		return
+	}
+	u.User = url.UserPassword(appUser, appPass)
+	appDSN = u.String()
 
 	// O snapshot é tirado com o schema já migrado e sem dados, então cada
 	// teste começa exatamente daqui.
-	if startErr = storage.Migrate(ctx, dsn); startErr != nil {
+	if startErr = storage.Migrate(ctx, appDSN); startErr != nil {
 		return
 	}
 	startErr = container.Snapshot(ctx)
+}
+
+func criarPapelDaAplicacao(ctx context.Context) error {
+	conn, err := pgx.Connect(ctx, adminDSN)
+	if err != nil {
+		return fmt.Errorf("conectar como admin: %w", err)
+	}
+	defer conn.Close(ctx)
+
+	for _, q := range []string{
+		`CREATE ROLE ` + appUser + ` LOGIN PASSWORD '` + appPass + `' NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE`,
+		// CREATE no banco: a migration 00001 instala citext, que é trusted
+		// desde o PG13 e por isso só exige este privilégio.
+		`GRANT CREATE ON DATABASE ` + dbName + ` TO ` + appUser,
+		// Desde o PG15 o schema public não dá CREATE a PUBLIC.
+		`GRANT CREATE ON SCHEMA public TO ` + appUser,
+	} {
+		if _, err := conn.Exec(ctx, q); err != nil {
+			return fmt.Errorf("preparar papel da aplicação: %w", err)
+		}
+	}
+	return nil
 }
 
 // Terminate derruba o contêiner. Chame de um TestMain quando quiser

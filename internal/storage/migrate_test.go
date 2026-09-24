@@ -2,8 +2,10 @@ package storage_test
 
 import (
 	"context"
+	"sync"
 	"testing"
 
+	"github.com/BipoXDXD/vigilume/internal/storage"
 	"github.com/BipoXDXD/vigilume/internal/storage/testdb"
 )
 
@@ -76,5 +78,32 @@ func TestSnapshotIsolatesTests(t *testing.T) {
 	}
 	if count != 0 {
 		t.Errorf("banco começou com %d usuários, queria 0 — o isolamento quebrou", count)
+	}
+}
+
+// Item 9b do Plano 1: com --role=api e --role=prober subindo ao mesmo tempo,
+// os dois processos migram o mesmo banco. Sem o advisory lock, o segundo
+// tenta aplicar a mesma migration e cai no boot. O banco é novo e vazio
+// porque o de testdb.New já nasce migrado, e aí não haveria corrida.
+func TestConcurrentMigrationsSerialize(t *testing.T) {
+	dsn := testdb.EmptyDatabase(t)
+	ctx := context.Background()
+
+	const processos = 4
+	var largada sync.WaitGroup
+	largada.Add(1)
+	erros := make(chan error, processos)
+	for range processos {
+		go func() {
+			largada.Wait()
+			erros <- storage.Migrate(ctx, dsn)
+		}()
+	}
+	largada.Done()
+
+	for range processos {
+		if err := <-erros; err != nil {
+			t.Errorf("migração concorrente falhou: %v", err)
+		}
 	}
 }
