@@ -1,0 +1,94 @@
+@import 'tailwindcss';
+
+/* O tema escuro é a classe .dark no <html>, posta por /tema.js e por
+   src/lib/theme.tsx. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* Tokens do painel. As cores de estado foram escolhidas para contraste AA
+   (4,5:1) como texto sobre o fundo de cada tema; o projeto a11y do
+   Playwright confere com o axe nos dois temas. */
+:root {
+  --fundo: #ffffff;
+  --texto: #0f172a;
+  --suave: #475569;
+  --borda: #cbd5e1;
+  --painel: #f8fafc;
+  --primaria: #1d4ed8;
+  --primaria-texto: #ffffff;
+  --realce: #1d4ed8;
+  --perigo: #b91c1c;
+  --foco: #1d4ed8;
+  --estado-no-ar: #15803d;
+  --estado-degradado: #a16207;
+  --estado-fora: #b91c1c;
+  --estado-sem-dados: #475569;
+  --grafico-linha: #1d4ed8;
+  --grafico-faixa: #93c5fd;
+  --grafico-uptime: #bbf7d0;
+}
+
+.dark {
+  --fundo: #0b1120;
+  --texto: #e2e8f0;
+  --suave: #94a3b8;
+  --borda: #334155;
+  --painel: #111827;
+  --primaria: #1d4ed8;
+  --primaria-texto: #ffffff;
+  /* Links: o azul do botão não tem contraste como texto no fundo escuro. */
+  --realce: #93c5fd;
+  --perigo: #f87171;
+  --foco: #93c5fd;
+  --estado-no-ar: #4ade80;
+  --estado-degradado: #facc15;
+  --estado-fora: #f87171;
+  --estado-sem-dados: #94a3b8;
+  --grafico-linha: #60a5fa;
+  --grafico-faixa: #1e3a8a;
+  --grafico-uptime: #14532d;
+}
+
+@theme inline {
+  --color-fundo: var(--fundo);
+  --color-texto: var(--texto);
+  --color-suave: var(--suave);
+  --color-borda: var(--borda);
+  --color-painel: var(--painel);
+  --color-primaria: var(--primaria);
+  --color-primaria-texto: var(--primaria-texto);
+  --color-realce: var(--realce);
+  --color-perigo: var(--perigo);
+  --color-foco: var(--foco);
+  --color-no-ar: var(--estado-no-ar);
+  --color-degradado: var(--estado-degradado);
+  --color-fora: var(--estado-fora);
+  --color-sem-dados: var(--estado-sem-dados);
+  --font-sans: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+}
+
+html {
+  color-scheme: light;
+}
+html.dark {
+  color-scheme: dark;
+}
+
+body {
+  background: var(--fundo);
+  color: var(--texto);
+  font-family: var(--font-sans);
+}
+
+:focus-visible {
+  outline: 3px solid var(--foco);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
