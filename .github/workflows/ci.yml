@@ -67,7 +67,7 @@ jobs:
         # Código gerado desatualizado em relação ao SQL é o erro que o sqlc
         # existe para impedir; o CI o transforma em falha de build.
         run: |
-          go install github.com/sqlc-dev/sqlc/cmd/sqlc@${SQLC_VERSION}
+          go install "github.com/sqlc-dev/sqlc/cmd/sqlc@${SQLC_VERSION}"
           sqlc diff
 
       - name: vet
@@ -75,17 +75,17 @@ jobs:
 
       - name: staticcheck
         run: |
-          go install honnef.co/go/tools/cmd/staticcheck@${STATICCHECK_VERSION}
+          go install "honnef.co/go/tools/cmd/staticcheck@${STATICCHECK_VERSION}"
           staticcheck ./...
 
       - name: gosec
         run: |
-          go install github.com/securego/gosec/v2/cmd/gosec@${GOSEC_VERSION}
+          go install "github.com/securego/gosec/v2/cmd/gosec@${GOSEC_VERSION}"
           gosec -quiet ./...
 
       - name: govulncheck
         run: |
-          go install golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}
+          go install "golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}"
           govulncheck ./...
 
   test:
@@ -141,7 +141,7 @@ jobs:
 
       - name: gitleaks
         run: |
-          go install github.com/zricethezav/gitleaks/v8@${GITLEAKS_VERSION}
+          go install "github.com/zricethezav/gitleaks/v8@${GITLEAKS_VERSION}"
           gitleaks git . --config .gitleaks.toml --redact --no-banner --verbose
 
   web:
@@ -393,8 +393,8 @@ jobs:
           docker buildx imagetools create "${args[@]}" "$IMAGEM@$DIGEST"
 
       # O tools (só o seed do compose; nunca vai para o Fly) ganha as tags
-      # direto, sem o reescaneamento: é a variante debug da mesma base, e o
-      # Trivy do job image não o varre.
+      # direto, sem o reescaneamento daqui: o Trivy do job image já o varreu
+      # na amd64 (mesmo código e bases); a arm64 dele não passa por Trivy.
       - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
