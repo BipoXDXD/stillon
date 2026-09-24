@@ -1,0 +1,114 @@
+name: deploy
+# Deploy no Fly.io, SÓ à mão (contrato, decisão 6): Actions → deploy → Run
+# workflow, com o digest que o job publish do ci imprimiu, a partir da main.
+#
+# Quem pode disparar: só quem tem acesso de escrita ao repositório (hoje, só
+# o dono). No GitHub Free com repositório privado não há environment com
+# revisor obrigatório; essa é a trava que existe. Quando o repositório abrir,
+# um environment "production" com revisor pode ser acrescentado (runbook,
+# "Tornar o repositório público").
+#
+# O Fly puxa de registry.fly.io, não do GHCR (D34): o pacote do GHCR é
+# privado, e dar ao Fly uma credencial do GitHub seria guardar um token
+# pessoal fora do GitHub. O job copia pelo digest a imagem que o publish
+# empurrou e reescaneou, sem rebuild.
+on:
+  workflow_dispatch:
+    inputs:
+      digest:
+        description: 'digest da imagem publicada (sha256:…), do resumo do job publish'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  packages: read
+
+# Um deploy nunca é cancelado no meio por outro.
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+# shell: bash dá `bash -eo pipefail` a todo run (o padrão é só `bash -e`).
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DIGEST: ${{ inputs.digest }}
+      # Nomes repetidos à mão: o pacote do GHCR (igual ao IMAGEM do ci.yml) e
+      # o app do Fly (o `app` do fly.toml; também no `-a` do último passo).
+      # Renomear o pacote ou o app mexe no ci.yml, no deploy.yml e no
+      # fly.toml, todos juntos.
+      ORIGEM: ghcr.io/bipoxdxd/vigilume
+      DESTINO: registry.fly.io/vigilume
+    steps:
+      - name: só da main
+        # Só da main: o fly.toml do deploy é o que passou por PR. Um passo que
+        # falha, e não um `if:` no job: disparado de outro branch, o deploy
+        # fica vermelho (recusado), e não "skipped" (parecendo que deu certo).
+        run: |
+          if [ "$GITHUB_REF" != refs/heads/main ]; then
+            echo "deploy só da main (disparado de $GITHUB_REF)" >&2
+            exit 1
+          fi
+      - name: conferir o digest
+        # O input vai para o shell só por variável de ambiente, e só no
+        # formato de um digest: nada de texto livre na linha de comando.
+        run: |
+          if ! printf '%s' "$DIGEST" | grep -Eqx 'sha256:[0-9a-f]{64}'; then
+            echo "digest inválido: use sha256:<64 hex>" >&2
+            exit 1
+          fi
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: conferir o TRUSTED_PROXIES
+        # Vazio, todo cliente divide um balde de rate limit e o mesmo ip_hash
+        # (D22). O valor é medido no primeiro deploy, feito à mão (runbook,
+        # passo 9), e entra no fly.toml por PR antes de o workflow ser usado.
+        # Aceita uma lista separada por vírgula, com espaço opcional depois
+        # dela ("172.16.0.0/12, fdaa::/16"); recusa vazio, só espaço e vírgula
+        # sobrando.
+        run: |
+          if ! grep -Eq '^[[:space:]]*TRUSTED_PROXIES[[:space:]]*=[[:space:]]*"[^",[:space:]]+(,[[:space:]]*[^",[:space:]]+)*"' fly.toml; then
+            echo "TRUSTED_PROXIES vazio no fly.toml: meça o proxy do Fly (docs/deploy/fly.md, passo 9) e faça o PR antes" >&2
+            exit 1
+          fi
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1 # 1.6
+        with:
+          version: 0.4.108
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Secret de repositório: FLY_DEPLOY_TOKEN = `fly tokens create deploy -a
+      # vigilume`, que só alcança este app.
+      - name: copiar para o registry do Fly, pelo digest
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_DEPLOY_TOKEN }}
+        run: |
+          flyctl auth docker
+          # Copia o índice multi-arch inteiro; o digest continua o mesmo.
+          docker buildx imagetools create -t "$DESTINO:run-$GITHUB_RUN_ID" "$ORIGEM@$DIGEST"
+
+      - name: flyctl deploy
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_DEPLOY_TOKEN }}
+        # rolling: com uma máquina, alguns segundos fora (D26). --ha=false:
+        # sem ele, o primeiro deploy de um app cria DUAS máquinas, e dois
+        # processos --role=all mandariam cada notificação em dobro.
+        run: |
+          flyctl deploy --image "$DESTINO@$DIGEST" --strategy rolling --ha=false
+          maquinas=$(flyctl machines list -a vigilume -q | grep -c . || true)
+          echo "máquinas do app: $maquinas"
+          [ "$maquinas" = 1 ] || { echo "queria exatamente 1 máquina" >&2; exit 1; }
