@@ -121,6 +121,34 @@ describe('entrar', () => {
     expect(router.state.location.search).toBe('?x=1')
   })
 
+  // O cliente nunca é mais estrito que o servidor: o login do servidor só
+  // apara os espaços (auth.NormalizeEmail) e o cadastro aceita IDN e parte
+  // local com acento (mail.ParseAddress). Um z.email() recusava estes na
+  // tela, e a conta cadastrada nunca entrava. Sabotagem: voltar ao
+  // z.email() → o POST não sai e aparece "Informe um e-mail válido.".
+  it('e-mail com acento ou domínio internacional chega ao servidor', async () => {
+    for (const email of ['josé@exemplo.com', 'dono@exemplo.com.br', 'ana@exémplo.com']) {
+      const { usuario, falsa, tela } = await renderizarPainel('/login', { logado: false })
+      await usuario.type(await screen.findByLabelText('E-mail'), `  ${email} `)
+      await usuario.type(screen.getByLabelText('Senha'), SENHA)
+      await usuario.click(screen.getByRole('button', { name: 'Entrar' }))
+      await screen.findByRole('alert')
+      expect(falsa.corpos('POST /auth/login')).toEqual([{ email, password: SENHA }])
+      tela.unmount()
+    }
+  })
+
+  it('e-mail vazio ou sem @ não chama o servidor', async () => {
+    const { usuario, falsa } = await renderizarPainel('/login', { logado: false })
+    await usuario.type(await screen.findByLabelText('Senha'), SENHA)
+    await usuario.click(screen.getByRole('button', { name: 'Entrar' }))
+    expect(await screen.findByText('Informe o e-mail.')).toBeInTheDocument()
+    await usuario.type(screen.getByLabelText('E-mail'), 'dono')
+    await usuario.click(screen.getByRole('button', { name: 'Entrar' }))
+    expect(await screen.findByText('Informe um e-mail válido.')).toBeInTheDocument()
+    expect(falsa.chamadas('POST /auth/login')).toBe(0)
+  })
+
   // R34 do Plano 1: o bloqueio não se anuncia. A tela mostra sempre o mesmo
   // texto, e o campo de senha é limpo.
   it('senha errada mostra o texto genérico', async () => {

@@ -36,7 +36,12 @@ const avisosDeMotivo: Partial<Record<Motivo, string>> = {
 }
 
 const esquemaSenha = z.object({
-  email: z.string().trim().pipe(z.email('Informe um e-mail válido.')),
+  // O cliente nunca é mais estrito que o servidor. O login do servidor só
+  // apara os espaços (auth.NormalizeEmail), e o cadastro aceita o que o
+  // mail.ParseAddress aceita: domínio internacional e parte local com
+  // acento. Um z.email() recusava esses na tela, e a conta nunca entrava.
+  // O "@" não recusa ninguém: todo e-mail cadastrado tem um.
+  email: z.string().trim().min(1, 'Informe o e-mail.').includes('@', { message: 'Informe um e-mail válido.' }),
   // Sem a política de tamanho: ela vale só para senha nova, e o login aceita
   // a senha antiga mais curta (R5 do Plano 5).
   senha: z.string().min(1, 'Informe a senha.'),
@@ -132,8 +137,21 @@ export function PaginaLogin() {
           // key nos dois formulários: trocar de passo monta campos novos, em vez
           // de o React reaproveitar o <input> do e-mail para o código.
           <form key="senha" noValidate className="space-y-4" onSubmit={senha.handleSubmit(entrar)}>
+            {/* type="text" com inputMode="email": o <input type="email"> do
+                Chromium entrega o domínio internacional em punycode no value,
+                e o texto que chegaria ao servidor não seria o cadastrado. */}
             <Campo rotulo="E-mail" erro={senha.formState.errors.email?.message}>
-              {(a) => <Entrada {...a} type="email" autoComplete="username" {...senha.register('email')} />}
+              {(a) => (
+                <Entrada
+                  {...a}
+                  type="text"
+                  inputMode="email"
+                  autoCapitalize="none"
+                  spellCheck={false}
+                  autoComplete="username"
+                  {...senha.register('email')}
+                />
+              )}
             </Campo>
             <Campo rotulo="Senha" erro={senha.formState.errors.senha?.message}>
               {(a) => (
