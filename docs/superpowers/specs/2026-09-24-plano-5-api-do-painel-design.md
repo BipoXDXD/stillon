@@ -660,7 +660,7 @@ ganhar a trava. Nenhum deles é reescrito para acomodar a mudança.
 
 Nenhum shape JSON do contrato muda. O que segue são acréscimos ou lacunas para a reconciliação.
 
-**Div. 1 — Blocklist de senhas.** A NIST 800-63B-4 §3.1.1.2 diz que o verificador **SHALL**
+**Div. 1 — Blocklist de senhas. (Resolvida: o usuário decidiu não implementar; só o mínimo de 15.)** A NIST 800-63B-4 §3.1.1.2 diz que o verificador **SHALL**
 comparar a senha nova com uma lista de senhas comuns ou vazadas. O contrato fecha os motivos em
 `too_short | too_long`. Esta spec não implementa blocklist. Motivo para aceitar: com mínimo de 15,
 as listas comuns quase não têm entradas, e o sistema tem um usuário, que é o operador. Alternativa,

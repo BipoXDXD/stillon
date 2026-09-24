@@ -121,10 +121,16 @@ e prevalecem sobre o texto das specs onde houver diferença.
    mudou", e não muda de sentido; o seed o trata como sucesso.
 6. **Despacho de subcomandos** nasce no Plano 5 (`user create`, `user set-password`); o Plano 7
    acrescenta `healthcheck` e `version` no mesmo despacho.
-7. **Postgres:** 18 em desenvolvimento e testes (já integrado, PR #6), 17 em produção. A matriz
-   17/18 do CI é do Plano 7.
+7. **Postgres:** 18 em desenvolvimento e testes (já integrado, PR #6) e, com o Postgres sem gerência
+   decidido pelo usuário, também em produção (Plano 7, D28–D29: imagem oficial num app próprio no
+   Fly). A matriz 17/18 do CI é do Plano 7.
 8. **`.gitignore`:** o Plano 6 troca `/web/dist/` por `internal/webui/dist/*` com exceção do
    `.gitkeep`; o Plano 7 espelha a regra no `.dockerignore`.
-9. **Pendentes do usuário** (vão para a revisão): blocklist de senhas comuns (`too_common`, Plano 5
-   Div. 1); custo e forma do Postgres de produção (Plano 7 D28); visibilidade do repositório e do
-   GHCR; idioma do README; os itens de "Decisões para o usuário revisar" de cada spec.
+9. **Decididas pelo usuário (2026-09-24):**
+   - **Sem blocklist de senhas comuns:** só o mínimo de 15 code points. O motivo `too_common` não
+     existe (Plano 5, Div. 1, resolvida).
+   - **Postgres de produção sem gerência no Fly** (não o Managed Postgres). A spec do Plano 7 é
+     revisada para isso: topologia, backups, upgrades e runbook ficam com o operador.
+   - **Repositório e imagem GHCR públicos.** Antes de tornar o repositório público, o histórico é
+     varrido por segredos. A troca de visibilidade é ação manual do usuário.
+   - **README em português.**
