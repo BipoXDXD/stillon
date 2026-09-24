@@ -266,6 +266,43 @@ describe('2FA', () => {
     expect(await screen.findByText('Ativada.')).toBeInTheDocument()
   })
 
+  // M2 da revisão final: um envio vazio nos diálogos do 2FA ia ao servidor
+  // e contava como tentativa falha no bloqueio progressivo (R34). Agora o
+  // formulário o segura. Sabotagens: trocar o esquema de um dos formulários
+  // (a senha do Ativar, o código do Ativar, o código do Desativar) por um
+  // sem min(1) → o teste fica vermelho no passo correspondente.
+  it('Enter vazio nos diálogos do 2FA não chama o servidor', async () => {
+    const r = await renderizarPainel('/settings')
+    await r.usuario.click(await screen.findByRole('button', { name: 'Ativar' }))
+    let dialogo = await screen.findByRole('dialog')
+    await r.usuario.click(within(dialogo).getByLabelText('Sua senha'))
+    await r.usuario.keyboard('{Enter}')
+    expect(await within(dialogo).findByText('Informe a senha.')).toBeInTheDocument()
+    expect(r.falsa.chamadas('POST /auth/totp/enroll')).toBe(0)
+    await r.usuario.type(within(dialogo).getByLabelText('Sua senha'), SENHA)
+    await r.usuario.keyboard('{Enter}')
+    await r.usuario.click(await within(dialogo).findByLabelText('Código de 6 dígitos'))
+    await r.usuario.keyboard('{Enter}')
+    expect(await within(dialogo).findByText('Informe o código.')).toBeInTheDocument()
+    expect(r.falsa.chamadas('POST /auth/totp/confirm')).toBe(0)
+    await r.usuario.keyboard('{Escape}')
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+
+    r.falsa.estado.totpLigado = true
+    await r.cliente.refetchQueries()
+    await r.usuario.click(await screen.findByRole('button', { name: 'Desativar' }))
+    dialogo = await screen.findByRole('dialog')
+    await r.usuario.click(within(dialogo).getByLabelText('Sua senha'))
+    await r.usuario.keyboard('{Enter}')
+    expect(await within(dialogo).findByText('Informe a senha.')).toBeInTheDocument()
+    expect(within(dialogo).getByText('Informe o código.')).toBeInTheDocument()
+    await r.usuario.type(within(dialogo).getByLabelText('Sua senha'), SENHA)
+    await r.usuario.keyboard('{Enter}')
+    await waitFor(() => expect(within(dialogo).queryByText('Informe a senha.')).not.toBeInTheDocument())
+    expect(within(dialogo).getByText('Informe o código.')).toBeInTheDocument()
+    expect(r.falsa.chamadas('POST /auth/totp/disable')).toBe(0)
+  })
+
   // PENDENCIAS do Plano 6: trocar a senha apaga o cadastro pendente, e o
   // confirm responde o mesmo 400 de um código errado.
   it('código não aceito na ativação sugere recomeçar, se a senha foi trocada', async () => {

@@ -186,6 +186,12 @@ function segredoDe(uri: string): string {
   }
 }
 
+// Um envio vazio iria ao servidor e contaria como tentativa falha no
+// bloqueio progressivo (R34). Só "não vazio": o formato do código (6
+// dígitos ou os 16 de recuperação) quem decide é o servidor.
+const esquemaSenha = z.object({ senha: z.string().min(1, 'Informe a senha.') })
+const esquemaCodigo = z.object({ codigo: z.string().trim().min(1, 'Informe o código.') })
+
 function AtivarTotp({ aoTerminar, aoTravar }: { aoTerminar: () => void; aoTravar: () => void }) {
   const api = useApi()
   const [passo, setPasso] = useState<'senha' | 'codigo' | 'codigos'>('senha')
@@ -193,8 +199,8 @@ function AtivarTotp({ aoTerminar, aoTravar }: { aoTerminar: () => void; aoTravar
   const [codigos, setCodigos] = useState<string[]>([])
   const [guardei, setGuardei] = useState(false)
   const [erro, setErro] = useState<ErroDeCredencial | null>(null)
-  const senha = useForm({ defaultValues: { senha: '' } })
-  const codigo = useForm({ defaultValues: { codigo: '' } })
+  const senha = useForm({ resolver: zodResolver(esquemaSenha), defaultValues: { senha: '' } })
+  const codigo = useForm({ resolver: zodResolver(esquemaCodigo), defaultValues: { codigo: '' } })
 
   if (passo === 'senha') {
     return (
@@ -212,7 +218,7 @@ function AtivarTotp({ aoTerminar, aoTravar }: { aoTerminar: () => void; aoTravar
         })}
       >
         <AvisoDeCredencial erro={erro} aoMudar={setErro} />
-        <Campo rotulo="Sua senha">
+        <Campo rotulo="Sua senha" erro={senha.formState.errors.senha?.message}>
           {(a) => <Entrada {...a} type="password" autoComplete="current-password" {...senha.register('senha')} />}
         </Campo>
         <Botao type="submit">Continuar</Botao>
@@ -249,7 +255,7 @@ function AtivarTotp({ aoTerminar, aoTravar }: { aoTerminar: () => void; aoTravar
         <p className="text-sm">
           Chave: <code className="break-all">{segredoDe(uri)}</code>
         </p>
-        <Campo rotulo="Código de 6 dígitos">
+        <Campo rotulo="Código de 6 dígitos" erro={codigo.formState.errors.codigo?.message}>
           {(a) => <Entrada {...a} inputMode="numeric" autoComplete="one-time-code" {...codigo.register('codigo')} />}
         </Campo>
         <Botao type="submit">Ativar</Botao>
@@ -302,7 +308,7 @@ function AtivarTotp({ aoTerminar, aoTravar }: { aoTerminar: () => void; aoTravar
 
 function DesativarTotp({ aoTerminar }: { aoTerminar: () => void }) {
   const api = useApi()
-  const f = useForm({ defaultValues: { senha: '', codigo: '' } })
+  const f = useForm({ resolver: zodResolver(esquemaSenha.and(esquemaCodigo)), defaultValues: { senha: '', codigo: '' } })
   const [erro, setErro] = useState<ErroDeCredencial | null>(null)
   return (
     <form
@@ -319,10 +325,10 @@ function DesativarTotp({ aoTerminar }: { aoTerminar: () => void }) {
       })}
     >
       <AvisoDeCredencial erro={erro} aoMudar={setErro} />
-      <Campo rotulo="Sua senha">
+      <Campo rotulo="Sua senha" erro={f.formState.errors.senha?.message}>
         {(a) => <Entrada {...a} type="password" autoComplete="current-password" {...f.register('senha')} />}
       </Campo>
-      <Campo rotulo="Código do autenticador" ajuda="Ou um código de recuperação.">
+      <Campo rotulo="Código do autenticador" ajuda="Ou um código de recuperação." erro={f.formState.errors.codigo?.message}>
         {(a) => <Entrada {...a} autoComplete="one-time-code" {...f.register('codigo')} />}
       </Campo>
       <Botao type="submit" tipo="perigo">
