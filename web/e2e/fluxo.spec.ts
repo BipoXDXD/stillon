@@ -30,6 +30,22 @@ async function apagarPeloNome(request: APIRequestContext, email: string, senha: 
   }
 }
 
+// Os limitadores de internal/httpapi/routes.go são baldes que se enchem com
+// o tempo, e as specs anteriores (abas, a11y) gastam a mesma conta e o mesmo
+// IP: sem pausa, o fluxo às vezes pegava 429 no detalhe (visto na onda final).
+// - por usuário (RateLimitUser 60/min, burst 20): 20 s para encher de novo;
+// - por IP em /api (RateLimit 120/min, burst 30): 15 s;
+// - login (RateLimit 10/min, burst 5 por IP): 5 logins em 30 s; o fluxo faz
+//   dois, mais um na limpeza.
+// A pausa é do próprio fluxo (beforeAll), e não depende da ordem das specs.
+// 21 s cobre o balde mais lento com folga.
+const RECARGA_DOS_BALDES_MS = 21_000
+
+test.beforeAll(async () => {
+  test.setTimeout(RECARGA_DOS_BALDES_MS + 10_000)
+  await new Promise((ok) => setTimeout(ok, RECARGA_DOS_BALDES_MS))
+})
+
 test.afterEach(async ({ request, credenciais }) => {
   if (!nomeDoAlvo) return
   const nome = nomeDoAlvo
