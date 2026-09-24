@@ -357,6 +357,10 @@ func (t txFalsa) LockSessionByHash(context.Context, []byte) (auth.SessionRow, er
 	}, nil
 }
 
+func (txFalsa) SessionUserByHash(context.Context, []byte) (uuid.UUID, error) {
+	return uuid.New(), nil
+}
+func (txFalsa) LockUserSessions(context.Context, uuid.UUID) error    { return nil }
 func (txFalsa) InsertSession(context.Context, auth.SessionRow) error { return nil }
 func (txFalsa) MarkSessionUsed(context.Context, uuid.UUID, time.Time) error {
 	return nil

@@ -100,7 +100,7 @@ func (m *Manager) Rotate(ctx context.Context, token string, meta Meta) (string, 
 	var reuso bool
 
 	err := m.store.InTx(ctx, func(ctx context.Context, tx Tx) error {
-		cur, err := tx.LockSessionByHash(ctx, hash)
+		cur, err := travarSessao(ctx, tx, hash)
 		if errors.Is(err, ErrNotFound) {
 			return ErrInvalidSession
 		}
@@ -167,10 +167,10 @@ func (m *Manager) Revoke(ctx context.Context, token string) error {
 	hash := crypto.HashToken(token)
 	now := m.clk.Now()
 	return m.store.InTx(ctx, func(ctx context.Context, tx Tx) error {
-		// LockSessionByHash trava a linha com FOR UPDATE, o que fecha a
-		// corrida com uma rotação simultânea: o logout não pode ler a família
-		// e revogá-la enquanto uma rotação insere um sucessor nela.
-		cur, err := tx.LockSessionByHash(ctx, hash)
+		// A trava do usuário, e não a da linha, é o que fecha a corrida com
+		// uma rotação simultânea: o cookie apresentado pode ser um refresh
+		// antigo, e a linha viva que a rotação trava é outra (D1 do Plano 5).
+		cur, err := travarSessao(ctx, tx, hash)
 		if errors.Is(err, ErrNotFound) {
 			return nil // R28
 		}
@@ -179,6 +179,31 @@ func (m *Manager) Revoke(ctx context.Context, token string) error {
 		}
 		return tx.RevokeFamily(ctx, cur.FamilyID, now)
 	})
+}
+
+// travarSessao pega a trava do usuário ANTES da trava da linha (D1 do Plano
+// 5), e toda transação que muda sessões segue essa ordem: é o que impede o
+// ciclo entre duas delas.
+//
+// A trava da linha sozinha não basta. Em READ COMMITTED, o UPDATE que revoga
+// uma família espera a linha viva que uma rotação travou; a rotação insere o
+// sucessor e comita; o UPDATE revoga a linha que esperou e não enxerga o
+// sucessor, que entrou depois do snapshot dele. A família "revogada" seguia
+// viva pelo sucessor (TestRevokingDuringRotationLeavesNothingAlive). Com a
+// trava do usuário, a rotação termina antes de a revogação começar, e o
+// snapshot da revogação já inclui o sucessor.
+//
+// A primeira leitura é sem trava e serve só para descobrir o usuário; a linha
+// é relida, travada, logo depois, e é essa segunda leitura que vale.
+func travarSessao(ctx context.Context, tx Tx, hash []byte) (SessionRow, error) {
+	userID, err := tx.SessionUserByHash(ctx, hash)
+	if err != nil {
+		return SessionRow{}, err
+	}
+	if err := tx.LockUserSessions(ctx, userID); err != nil {
+		return SessionRow{}, err
+	}
+	return tx.LockSessionByHash(ctx, hash)
 }
 
 func (m *Manager) insert(ctx context.Context, tx Tx, userID, familyID uuid.UUID, meta Meta) (string, Session, error) {
