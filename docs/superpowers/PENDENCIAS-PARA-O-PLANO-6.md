@@ -72,8 +72,9 @@ e `EMAIL_FROM`), `PUBLIC_BASE_URL` e a primeira manutenção depois do deploy. D
   `401` depois de enviar um código de recuperação, avisar que aquele código **pode** ter sido
   gasto e sugerir o próximo.
 - `/auth/totp/enroll`, `/confirm` e `/disable` com token de família encerrada respondem
-  `401 unauthorized` (antes de olhar senha ou código). Pela regra de renovação acima, o painel
-  renova; a renovação falha e manda ao login, o que é o certo para uma sessão morta.
+  `401 unauthorized` (antes de olhar senha ou código). Em `/auth/*` o painel não renova
+  sozinho (item 3 da Reconciliação): mostra "Renovar acesso e tentar de novo"; com a família
+  morta a renovação é recusada e o usuário vai ao login, o que é o certo para uma sessão morta.
 - `POST /auth/login` e `POST /auth/totp/verify` respondem `401 invalid_credentials` quando a senha
   mudou entre a verificação e a abertura da sessão (inclusive um desafio de 2FA obtido antes de
   uma troca ou de um `set-password`, dentro dos 5 minutos dele). Para o painel é "senha errada":

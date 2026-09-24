@@ -2,9 +2,11 @@ package httpapi
 
 import (
 	"context"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/BipoXDXD/vigilume/internal/account"
@@ -17,6 +19,7 @@ import (
 	"github.com/BipoXDXD/vigilume/internal/notify"
 	"github.com/BipoXDXD/vigilume/internal/statuspage"
 	"github.com/BipoXDXD/vigilume/internal/targets"
+	"github.com/BipoXDXD/vigilume/internal/webui"
 )
 
 // maxBodyBytes cobre com folga qualquer payload legítimo desta API.
@@ -49,6 +52,9 @@ type Deps struct {
 	Clock       clock.Clock
 	// Ready é o teste de prontidão de /readyz: o ping no banco em produção.
 	Ready func(context.Context) error
+	// Painel são os arquivos do painel React. Nil é o embutido no binário
+	// (webui.Dist); os testes injetam um fstest.MapFS.
+	Painel fs.FS
 }
 
 // Routes monta a árvore de rotas e a cadeia de middlewares.
@@ -178,12 +184,43 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	handler = middleware.Recover(handler)
 	handler = middleware.RequestID(handler)
 
+	// A raiz separa as cadeias pelo prefixo, e o ServeMux escolhe sempre o
+	// padrão mais específico: o painel, montado em "/", nunca vê /api/, /p/
+	// nem /verify/. Antes do painel, "/" era a API; agora a API tem de ser
+	// nomeada, inclusive os dois health checks, que ficam fora de /api/.
 	raiz := http.NewServeMux()
+	raiz.Handle("/api/", handler)
+	raiz.Handle("/healthz", handler)
+	raiz.Handle("/readyz", handler)
 	raiz.Handle("/verify/", verificacao(ctx, cfg, d.Channels))
 	raiz.Handle("/p/", paginaPublica(ctx, cfg, d.StatusPages))
-	raiz.Handle("/", handler)
+	raiz.Handle("/", painel(d.Painel))
 	return raiz
 }
+
+// painel é a cadeia do painel React. Só serve GET e HEAD de arquivos que já
+// estão em memória: sem CORS, sem RequireCustomHeader, sem BodyLimit e sem
+// rate limit — dividir o balde da API com o carregamento do painel geraria
+// 429 falso. SecurityHeaders põe HSTS, nosniff e companhia; o handler troca a
+// CSP e o Cache-Control pelos dele, como a página pública.
+func painel(arquivos fs.FS) http.Handler {
+	var h http.Handler
+	if arquivos == nil {
+		h = painelEmbutido()
+	} else {
+		h = webui.New(arquivos)
+	}
+	h = middleware.SecurityHeaders(h)
+	h = middleware.Recover(h)
+	h = middleware.RequestID(h)
+	return h
+}
+
+// painelEmbutido lê e comprime o dist embutido uma vez por processo. O New
+// lê tudo e comprime no boot (D8 do plano); refazer isso a cada Routes()
+// custava ~70 s na suíte de integração com -race e um dist real, que monta
+// Routes() em quase todo teste.
+var painelEmbutido = sync.OnceValue(func() *webui.Painel { return webui.New(webui.Dist()) })
 
 // readyzTimeout limita o ping: um banco que não responde tem de virar 503
 // rápido, e não segurar o health check do orquestrador.
