@@ -20,9 +20,11 @@ snapshots dentro da faixa grátis de 10 GB). Conferir a página de preços antes
 
 - `flyctl` instalado e autenticado (`fly auth login`).
 - A imagem publicada no GHCR pelo job `publish` do CI (pacote **privado**, como o repositório).
-  Anote o digest (`sha256:…`) do resumo do job.
+  Anote o SHA do commit (40 hex) do resumo do job: a tag `:<sha>` só existe depois que o Trivy
+  aprovou o digest.
 - `docker` com `buildx`, logado no GHCR com um token `read:packages`
   (`docker login ghcr.io -u <usuário>`).
+- `jq`, para tirar o digest e a revisão da saída do `docker buildx imagetools inspect`.
 - `age` (<https://age-encryption.org>) para a chave do backup.
 - Um gerenciador de senhas. Quatro coisas vão para ele e **não** podem ficar só no Fly: a senha
   do superusuário do Postgres, as senhas de `vigilume_app` e `vigilume_backup`, a `MASTER_KEY` e
@@ -122,14 +124,18 @@ Troque `gru` pela região escolhida em `fly platform regions`, nos dois `fly.tom
    de canal de e-mail responde que ele está indisponível.
 7. **Primeiro deploy do app.** O Fly puxa de `registry.fly.io` (D34): o pacote do GHCR é privado,
    e dar ao Fly uma credencial do GitHub seria guardar um token pessoal fora do GitHub. Copie a
-   imagem **testada**, pelo digest, sem rebuild:
+   imagem **testada**, pelo digest, sem rebuild (o digest para o qual a tag `:<sha>` aponta, que
+   só existe depois do Trivy):
    ```sh
    fly auth docker
+   DIGEST=$(docker buildx imagetools inspect ghcr.io/bipoxdxd/vigilume:<sha do commit> \
+     --format '{{json .Manifest}}' | jq -r .digest)
+   echo "$DIGEST"   # sha256:… (vazio ou erro: esse commit não foi publicado)
    docker buildx imagetools create \
      -t registry.fly.io/vigilume:<sha do commit> \
-     ghcr.io/bipoxdxd/vigilume@sha256:<digest do publish>
-   fly deploy --image registry.fly.io/vigilume@sha256:<o mesmo digest> --ha=false
-   fly machines list -a vigilume   # exatamente UMA máquina
+     "ghcr.io/bipoxdxd/vigilume@$DIGEST"
+   fly deploy --image "registry.fly.io/vigilume@$DIGEST" --ha=false
+   fly machines list -a vigilume   # exatamente UMA máquina de pé (started)
    fly logs -a vigilume
    ```
    `--ha=false` importa: sem ele, o primeiro deploy cria **duas** máquinas, e dois processos
@@ -149,12 +155,21 @@ Troque `gru` pela região escolhida em `fly platform regions`, nos dois `fly.tom
    ```sh
    fly logs -a vigilume | grep "cabeçalho de IP do cliente ignorado"
    ```
-   O aviso (no máximo um por minuto) traz o `remote_addr` do proxy. Ponha o menor CIDR que o
-   cobre em `TRUSTED_PROXIES` no `fly.toml` (candidatos esperados: `172.16.0.0/12` ou
-   `fdaa::/16`) e faça o deploy de novo pelo mesmo digest (o comando do passo 7). **Leve o valor,
-   e a região, para o `fly.toml` do repositório por PR** antes de usar o workflow `deploy`: ele faz
-   o deploy com o `fly.toml` da `main`, e **recusa** um `TRUSTED_PROXIES` vazio. Então o **teste
-   de dois pontos de rede**, com um e-mail qualquer e senha errada:
+   O aviso (no máximo um por minuto) traz o `remote_addr` do proxy. Ponha em `TRUSTED_PROXIES`, no
+   `fly.toml`, o **menor** prefixo que cobre o que você mediu: de preferência o endereço exato
+   (`/32` para IPv4, `/128` para IPv6). Olhe o aviso por alguns minutos e de mais de uma rede: se
+   o proxy aparecer com endereços diferentes, liste cada um (separados por vírgula) em vez de
+   alargar a faixa. Uma faixa larga da rede privada (`fdaa::/16`, `172.16.0.0/12`) funciona, mas
+   **confia em toda a organização do Fly**: qualquer outra máquina sua na 6PN poderia mandar um
+   `Fly-Client-IP` forjado e escolher o balde de rate limit e o `ip_hash` de quem quisesse. Use-a
+   só se o endereço do proxy mudar sem padrão, e sabendo disso. Um prefixo `/0` (`0.0.0.0/0`,
+   `::/0`) é recusado duas vezes: o boot não sobe com ele, e o workflow `deploy` para antes de
+   começar.
+
+   Faça o deploy de novo pelo mesmo digest (o comando do passo 7). **Leve o valor, e a região,
+   para o `fly.toml` do repositório por PR** antes de usar o workflow `deploy`: ele faz o deploy
+   com o `fly.toml` da `main`, e **recusa** um `TRUSTED_PROXIES` vazio ou com `/0`. Então o
+   **teste de dois pontos de rede**, com um e-mail qualquer e senha errada:
    ```sh
    for i in 1 2 3 4 5 6; do
      curl -s -o /dev/null -w '%{http_code}\n' -X POST https://vigilume.fly.dev/api/v1/auth/login \
@@ -168,7 +183,9 @@ Troque `gru` pela região escolhida em `fly platform regions`, nos dois `fly.tom
      continua `429`. O cabeçalho forjado não vale.
    - O aviso some do log.
 
-   Se a rede B levar `429`, o `TRUSTED_PROXIES` não cobre o proxy: volte ao aviso.
+   Se a rede B levar `429`, o `TRUSTED_PROXIES` não cobre o proxy: volte ao aviso. Se o aviso
+   voltar a aparecer depois, com outro `remote_addr`, o proxy mudou de endereço: acrescente-o à
+   lista pelo mesmo caminho (PR e deploy).
 10. **Seu usuário**, com o binário **da versão que está no ar** (o `user create` aplica as
     migrations antes: uma versão mais nova migraria o banco de produção por fora do deploy).
     `fly releases -a vigilume --image` mostra o digest em produção; `vigilume version` numa imagem
@@ -225,21 +242,56 @@ Troque `gru` pela região escolhida em `fly platform regions`, nos dois `fly.tom
     ```sh
     fly releases -a vigilume --image   # cada release com a imagem (registry.fly.io/vigilume@sha256:…)
     ```
+    O workflow `deploy` pede o **SHA do commit**, não o digest. Para achar o commit de um digest,
+    leia a revisão gravada na imagem pelo `publish` (o label `org.opencontainers.image.revision`):
+    ```sh
+    fly auth docker
+    docker buildx imagetools inspect registry.fly.io/vigilume@sha256:<digest anterior> \
+      --format '{{json .Image}}' | jq -r '.["linux/amd64"].config.Labels["org.opencontainers.image.revision"]'
+    ```
+    (ou `docker run --rm registry.fly.io/vigilume@sha256:<digest anterior> version`, que mostra
+    o SHA de um build da `main` e o nome da tag de um build de tag `v*`).
+
     O caminho preferido é o mesmo de todo deploy: Actions → deploy → Run workflow **na `main`**
-    com o digest anterior (é o mesmo digest do GHCR: a cópia preserva o índice). Se precisar
-    fazer à mão, faça-o **de uma `main` atualizada** (`git switch main && git pull`): o
-    `fly deploy` usa o `fly.toml` local, e um `fly.toml` velho apagaria o `TRUSTED_PROXIES` medido
-    no passo 9.
+    com esse SHA. Atenção: uma tag `v*` publicada depois **move** a tag `:<sha>` daquele commit
+    para o digest do build da tag (mesmo código, outro build, reescaneado); o workflow leva então
+    esse digest, e não o que estava no ar. Para voltar exatamente ao digest antigo, use o caminho
+    à mão.
+
+    O workflow faz o deploy com o `fly.toml` **atual** da `main`: a imagem volta, a configuração
+    não. Uma variável de ambiente nova no `fly.toml` continua lá (a versão antiga a ignora), e uma
+    que a versão antiga exige e que tenha saído do `fly.toml` precisa voltar por PR antes.
+
+    Se precisar fazer à mão, faça-o **de uma `main` atualizada** (`git switch main && git pull`),
+    pelo mesmo motivo: o `fly deploy` usa o `fly.toml` local, e um `fly.toml` velho apagaria o
+    `TRUSTED_PROXIES` medido no passo 9.
     ```sh
     fly deploy --image registry.fly.io/vigilume@sha256:<digest anterior> --ha=false
     ```
 
 ## Deploys seguintes
 
-Actions → ci → o `publish` da `main` gera o digest; Actions → deploy → Run workflow **na `main`**
-com esse digest (o job recusa outro branch e um `TRUSTED_PROXIES` vazio). O job copia a imagem do
-GHCR para o `registry.fly.io` pelo digest e faz o deploy com `--strategy rolling` e `--ha=false`
-(alguns segundos fora com uma máquina só, D26), e confere que ficou uma máquina.
+Actions → ci → o `publish` da `main` publica a imagem e só dá a tag `:<sha>` depois do Trivy;
+Actions → deploy → Run workflow **na `main`** com o **SHA completo do commit** (40 hex; o resumo
+do `publish` o mostra). O job recusa, em vermelho: outro branch; um SHA fora do formato; um
+commit que não está na `main` (por exemplo, o de uma tag `v*` feita num branch); um SHA sem a tag
+`:<sha>` no GHCR (commit não publicado, reprovado no Trivy ou com o `publish` cancelado); e um
+`TRUSTED_PROXIES` vazio ou com `/0`. Ele resolve `:<sha>` no digest, copia a imagem do GHCR para
+o `registry.fly.io` por esse digest e faz o deploy com `--strategy rolling` e `--ha=false`
+(alguns segundos fora com uma máquina só, D26), e confere que ficou exatamente uma máquina de
+pé.
+
+**Limite da trava "só da `main`"** (desvio da D21): um `workflow_dispatch` disparado num branch
+roda o `deploy.yml` **daquele branch**. Quem tem acesso de escrita pode empurrar um branch com o
+passo "só da main" apagado e disparar dele; o `FLY_DEPLOY_TOKEN` é secret de repositório e chega
+a qualquer branch. Hoje só o dono tem escrita, então a trava vale contra engano, não contra quem
+tem acesso. Quando o repositório abrir, o environment `production` com revisor (última seção)
+fecha isso, junto com uma regra de proteção da `main` (PR obrigatório, sem push direto).
+
+O Trivy do `publish` lê a credencial do GHCR do `~/.docker/config.json` que o `docker/login-action`
+gravou: é o `GITHUB_TOKEN` daquele job, com `packages:write`, montado só-leitura no contêiner do
+Trivy. Risco aceito: o contêiner é fixado por digest (`deploy/ci/trivy/Dockerfile`, atualizado
+pelo Dependabot) e o token expira com o job.
 
 A imagem publicada é construída de novo no `publish`, do **mesmo código e com as mesmas bases
 fixadas por digest** da imagem que o E2E testou, e é **reescaneada** pelo Trivy antes de ganhar
@@ -254,11 +306,29 @@ então só a última conta inteira. Se a cota apertar, o primeiro corte é o `e2
 (`if: github.event_name == 'push'` no job), trocando a garantia do PR por um aviso depois do merge
 (D19 da spec).
 
+## Se o nome do app estiver tomado
+
+Os nomes `vigilume` e `vigilume-db` são globais no Fly. Se `fly apps create` disser que o nome
+existe, escolha outros e troque **todos** os lugares abaixo num PR só, antes do primeiro deploy
+pelo workflow. Nenhum deles é lido de outro: cada um está escrito à mão.
+
+| Nome | Onde |
+|---|---|
+| App do binário (`vigilume`) | `fly.toml`: `app`, e o host de `PUBLIC_BASE_URL` e `CORS_ORIGIN` (`https://vigilume.fly.dev`); `.github/workflows/deploy.yml`: `DESTINO` (`registry.fly.io/vigilume`) e o `-a` do `flyctl machines list`; o secret `FLY_DEPLOY_TOKEN` (`fly tokens create deploy -a <app>`) |
+| App do banco (`vigilume-db`) | `deploy/fly/db/fly.toml`: `app`; `.github/workflows/backup.yml`: o `-a` do `flyctl proxy`; o host do secret `DATABASE_URL` do app (`<app do banco>.internal`); o secret `FLY_BACKUP_TOKEN` |
+| Pacote do GHCR (`ghcr.io/bipoxdxd/vigilume`) | `.github/workflows/ci.yml`: `IMAGEM`; `.github/workflows/deploy.yml`: `ORIGEM`; `compose.yaml`: o `image` do `seed` e do `app` |
+| Este runbook | Os comandos com `-a vigilume`, `-a vigilume-db`, `registry.fly.io/vigilume`, e as URLs `https://vigilume.fly.dev` (passos 9 e 11) |
+
+Depois do PR, `grep -rn 'vigilume\.fly\.dev\|vigilume-db\|registry.fly.io/vigilume' .github fly.toml deploy docs/deploy`
+não deve achar o nome antigo.
+
 ## Depuração
 
 A imagem do app não tem shell (spec §5.9): `fly ssh console -a vigilume` não serve. O que serve:
 `fly logs`, os subcomandos do binário (`vigilume version`, `vigilume healthcheck`,
-`vigilume user …`) e o console do **banco**, que tem shell.
+`vigilume user …`) e o console do **banco**, que tem shell. O `vigilume healthcheck` consulta o
+`/readyz` com prazo de 3 s (acima dos 2 s que o próprio `/readyz` dá ao banco, para que um 503
+apareça como 503, e não como tempo esgotado).
 
 ## Operação do Postgres
 
