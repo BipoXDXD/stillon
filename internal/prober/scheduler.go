@@ -143,6 +143,16 @@ func (s *Scheduler) Tick(ctx context.Context) (int, error) {
 			defer s.emVoo.Done()
 			defer s.sem.Release(1)
 			defer s.metrics.inflight.Dec()
+			// Registrado por último, roda primeiro: segura o panic de uma
+			// sonda, e os três defers acima rodam depois dele como numa
+			// saída normal, devolvendo a vaga e o inflight. Sem isto, um
+			// panic numa sonda derruba o processo inteiro. O log leva só o
+			// valor do panic e o alvo, nunca a requisição.
+			defer func() {
+				if r := recover(); r != nil {
+					slog.Error("panic na sonda", "target_id", a.ID, "panic", fmt.Sprint(r))
+				}
+			}()
 			s.sondar(a, now)
 		}()
 	}

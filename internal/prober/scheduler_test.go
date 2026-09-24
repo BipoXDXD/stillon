@@ -591,3 +591,42 @@ func TestNewUsesTheSSRFGuardedClient(t *testing.T) {
 		t.Errorf("checks = %+v, queria um down/blocked", rows)
 	}
 }
+
+// transportePanicante entra em panic dentro do client.Do, que é o ponto em
+// que uma sonda real chama código que não é nosso.
+type transportePanicante struct{}
+
+func (transportePanicante) RoundTrip(*http.Request) (*http.Response, error) {
+	panic("transporte sabotado pelo teste")
+}
+
+// Um panic numa sonda não derruba o processo: vira log, e a vaga e o
+// scheduler_inflight voltam como numa saída normal. Sem o recover, o panic
+// na goroutine mata o binário de teste inteiro.
+func TestProbePanicIsLoggedAndReturnsTheSlot(t *testing.T) {
+	log := capturarLog(t)
+	b := novaBancada(t, &http.Client{Transport: transportePanicante{}}, 1)
+	alvo := b.alvo(t, "http://alvo.exemplo/", nil)
+
+	if n, err := b.s.Tick(context.Background()); err != nil || n != 1 {
+		t.Fatalf("Tick = %d, %v; queria 1 disparo", n, err)
+	}
+	b.s.Stop(esperaMaxima)
+
+	saida := log.String()
+	if !strings.Contains(saida, "panic na sonda") || !strings.Contains(saida, alvo.String()) ||
+		!strings.Contains(saida, "transporte sabotado pelo teste") {
+		t.Errorf("log sem o panic da sonda e o alvo:\n%s", saida)
+	}
+	if v := testutil.ToFloat64(b.m.inflight); v != 0 {
+		t.Errorf("scheduler_inflight = %v depois do panic, queria 0", v)
+	}
+	if rows := b.checks(t, alvo); len(rows) != 0 {
+		t.Errorf("a sonda que entrou em panic foi gravada: %+v", rows)
+	}
+	// Com uma vaga só, este Tick só dispara se a vaga voltou.
+	b.clk.Advance(2 * time.Minute)
+	if n, err := b.s.Tick(context.Background()); err != nil || n != 1 {
+		t.Fatalf("Tick depois do panic = %d, %v; queria 1: a vaga não voltou", n, err)
+	}
+}
