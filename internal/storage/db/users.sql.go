@@ -53,6 +53,21 @@ func (q *Queries) GetAccount(ctx context.Context, id uuid.UUID) (GetAccountRow, 
 	return i, err
 }
 
+const getUserHash = `-- name: GetUserHash :one
+SELECT password_hash FROM users WHERE id = $1
+`
+
+// O hash atual, lido por auth.Manager.Issue SOB a trava do usuário (D1): a
+// sessão só nasce se a senha verificada no login ainda é a do usuário. Sem
+// isto, um login que conferiu a senha ANTIGA abria sessão depois de um
+// set-password ou de uma troca de senha, e ela sobrevivia (Task 11).
+func (q *Queries) GetUserHash(ctx context.Context, id uuid.UUID) (string, error) {
+	row := q.db.QueryRow(ctx, getUserHash, id)
+	var password_hash string
+	err := row.Scan(&password_hash)
+	return password_hash, err
+}
+
 const getUserIDByEmail = `-- name: GetUserIDByEmail :one
 SELECT id FROM users WHERE email = $1
 `
@@ -126,8 +141,33 @@ func (q *Queries) LockUserCreation(ctx context.Context) error {
 	return err
 }
 
+const rehashUser = `-- name: RehashUser :execrows
+UPDATE users SET password_hash = $1
+ WHERE id = $2 AND password_hash = $3
+`
+
+type RehashUserParams struct {
+	NewHash string
+	ID      uuid.UUID
+	OldHash string
+}
+
+// O rehash do login (parâmetros do Argon2id subiram) é um compare-and-swap:
+// sem ele, o login que verificou a senha ANTIGA regravava o hash dela por cima
+// de um set-password concorrente, e desfazia a redefinição. Não mexe no
+// bloqueio: com segundo fator, quem zera é o /totp/verify (R40).
+func (q *Queries) RehashUser(ctx context.Context, arg RehashUserParams) (int64, error) {
+	result, err := q.db.Exec(ctx, rehashUser, arg.NewHash, arg.ID, arg.OldHash)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const replaceUserHash = `-- name: ReplaceUserHash :execrows
-UPDATE users SET password_hash = $2, failed_attempts = 0, locked_until = NULL WHERE id = $1
+UPDATE users SET password_hash = $2, failed_attempts = 0, locked_until = NULL,
+       totp_secret_enc = CASE WHEN totp_confirmed_at IS NULL THEN NULL ELSE totp_secret_enc END
+ WHERE id = $1
 `
 
 type ReplaceUserHashParams struct {
@@ -138,6 +178,10 @@ type ReplaceUserHashParams struct {
 // A senha redefinida pelo operador também tira o bloqueio: é o caminho de
 // recuperação de quem ficou trancado para fora. (O nome evita "password": o
 // gosec lê a constante gerada como credencial embutida, G101.)
+//
+// Um cadastro de 2FA pendente (segredo sem confirmação) cai junto: quem o
+// iniciou pode ser o invasor que a redefinição está expulsando, e ele o
+// confirmaria com o autenticador dele. O 2FA confirmado fica (D10). Task 11.
 func (q *Queries) ReplaceUserHash(ctx context.Context, arg ReplaceUserHashParams) (int64, error) {
 	result, err := q.db.Exec(ctx, replaceUserHash, arg.ID, arg.PasswordHash)
 	if err != nil {
@@ -147,7 +191,8 @@ func (q *Queries) ReplaceUserHash(ctx context.Context, arg ReplaceUserHashParams
 }
 
 const swapUserHash = `-- name: SwapUserHash :execrows
-UPDATE users SET password_hash = $1, failed_attempts = 0, locked_until = NULL
+UPDATE users SET password_hash = $1, failed_attempts = 0, locked_until = NULL,
+       totp_secret_enc = CASE WHEN totp_confirmed_at IS NULL THEN NULL ELSE totp_secret_enc END
  WHERE id = $2 AND password_hash = $3
 `
 
@@ -160,7 +205,8 @@ type SwapUserHashParams struct {
 // A troca de senha pela API é um compare-and-swap: só grava se o hash ainda
 // é o que foi verificado. Duas trocas simultâneas com a mesma senha atual não
 // se atropelam, e a verificação (Argon2id) não precisa segurar trava. Zera o
-// bloqueio: a senha e o segundo fator acabaram de ser provados.
+// bloqueio: a senha e o segundo fator acabaram de ser provados. Apaga o
+// cadastro de 2FA pendente, pelo motivo do ReplaceUserHash.
 func (q *Queries) SwapUserHash(ctx context.Context, arg SwapUserHashParams) (int64, error) {
 	result, err := q.db.Exec(ctx, swapUserHash, arg.NewHash, arg.ID, arg.OldHash)
 	if err != nil {

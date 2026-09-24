@@ -101,12 +101,30 @@ const challengeAudience = "totp-challenge"
 // ChallengeTTL é curto: é só o tempo de digitar seis dígitos.
 const ChallengeTTL = 5 * time.Minute
 
-func NewChallengeToken(secret []byte, userID uuid.UUID, now time.Time) (string, error) {
-	claims := jwt.RegisteredClaims{
-		Subject:   userID.String(),
-		Audience:  jwt.ClaimStrings{challengeAudience},
-		IssuedAt:  jwt.NewNumericDate(now),
-		ExpiresAt: jwt.NewNumericDate(now.Add(ChallengeTTL)),
+type challengeJWT struct {
+	jwt.RegisteredClaims
+	// PWS é o PasswordStamp do hash que conferiu com a senha do login. O
+	// /totp/verify o entrega a Issue, que recusa a sessão se a senha mudou
+	// depois do desafio: sem isto, um desafio obtido com a senha antiga abria
+	// sessão até cinco minutos depois de um set-password (Task 11 do Plano 5).
+	PWS string `json:"pws"`
+}
+
+// NewChallengeToken recusa carimbo vazio: o desafio só sai depois de uma
+// senha verificada, e sem o carimbo o /totp/verify não teria como conferir
+// que ela ainda vale.
+func NewChallengeToken(secret []byte, userID uuid.UUID, stamp string, now time.Time) (string, error) {
+	if stamp == "" {
+		return "", errors.New("assinar desafio: sem o carimbo da senha verificada")
+	}
+	claims := challengeJWT{
+		RegisteredClaims: jwt.RegisteredClaims{
+			Subject:   userID.String(),
+			Audience:  jwt.ClaimStrings{challengeAudience},
+			IssuedAt:  jwt.NewNumericDate(now),
+			ExpiresAt: jwt.NewNumericDate(now.Add(ChallengeTTL)),
+		},
+		PWS: stamp,
 	}
 	tok, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(secret)
 	if err != nil {
@@ -115,8 +133,10 @@ func NewChallengeToken(secret []byte, userID uuid.UUID, now time.Time) (string, 
 	return tok, nil
 }
 
-func ParseChallengeToken(secret []byte, raw string, now time.Time) (uuid.UUID, error) {
-	var claims jwt.RegisteredClaims
+// ParseChallengeToken devolve o usuário e o carimbo da senha verificada no
+// login. Desafio sem carimbo é inválido.
+func ParseChallengeToken(secret []byte, raw string, now time.Time) (uuid.UUID, string, error) {
+	var claims challengeJWT
 
 	_, err := jwt.ParseWithClaims(raw, &claims,
 		func(t *jwt.Token) (any, error) { return secret, nil },
@@ -127,12 +147,15 @@ func ParseChallengeToken(secret []byte, raw string, now time.Time) (uuid.UUID, e
 		jwt.WithAudience(challengeAudience),
 	)
 	if err != nil {
-		return uuid.Nil, fmt.Errorf("%w: %v", ErrInvalidToken, err)
+		return uuid.Nil, "", fmt.Errorf("%w: %v", ErrInvalidToken, err)
 	}
 
 	id, err := uuid.Parse(claims.Subject)
 	if err != nil {
-		return uuid.Nil, fmt.Errorf("%w: subject não é UUID", ErrInvalidToken)
+		return uuid.Nil, "", fmt.Errorf("%w: subject não é UUID", ErrInvalidToken)
 	}
-	return id, nil
+	if claims.PWS == "" {
+		return uuid.Nil, "", fmt.Errorf("%w: desafio sem carimbo de senha", ErrInvalidToken)
+	}
+	return id, claims.PWS, nil
 }

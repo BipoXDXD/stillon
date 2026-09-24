@@ -96,10 +96,21 @@ func (h *AuthHandlers) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// verificado é o hash que conferiu com a senha: é ele que a sessão (ou o
+	// desafio do segundo fator) leva como prova, e Issue recusa se ele já não
+	// for o hash do usuário (Task 11 do Plano 5).
+	verificado := user.PasswordHash
 	if needsRehash {
+		// O rehash é um compare-and-swap: se um set-password comitou depois da
+		// verificação, ele não grava, a prova continua sendo o hash antigo, e
+		// Issue recusa a sessão. Sem o CAS, o rehash desfazia a redefinição.
 		if novo, err := auth.HashPassword(req.Password); err == nil {
-			if err := h.users.UpdatePasswordHash(r.Context(), user.ID, novo); err != nil {
+			trocou, err := h.users.RehashPassword(r.Context(), user.ID, user.PasswordHash, novo)
+			if err != nil {
 				slog.Error("regravar hash de senha", "erro", err)
+			}
+			if trocou {
+				verificado = novo
 			}
 		}
 	}
@@ -113,7 +124,7 @@ func (h *AuthHandlers) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if enabled {
-		challenge, err := auth.NewChallengeToken(h.jwtSecret, user.ID, now)
+		challenge, err := auth.NewChallengeToken(h.jwtSecret, user.ID, auth.PasswordStamp(verificado), now)
 		if err != nil {
 			h.internal(w, r, "assinar desafio", err)
 			return
@@ -136,7 +147,7 @@ func (h *AuthHandlers) Login(w http.ResponseWriter, r *http.Request) {
 		slog.Error("zerar falhas de login", "erro", err)
 	}
 
-	h.issue(w, r, user.ID)
+	h.issue(w, r, user.ID, auth.PasswordStamp(verificado))
 }
 
 func (h *AuthHandlers) Refresh(w http.ResponseWriter, r *http.Request) {
@@ -178,8 +189,16 @@ func (h *AuthHandlers) Logout(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (h *AuthHandlers) issue(w http.ResponseWriter, r *http.Request, userID uuid.UUID) {
-	token, s, err := h.sessions.Issue(r.Context(), userID, h.meta(r))
+// issue abre a sessão de um login cuja senha conferiu; stamp é o carimbo do
+// hash verificado. Se a senha mudou no meio (set-password, troca de senha), a
+// resposta é o mesmo 401 da senha errada: a senha que o cliente mandou já não
+// é a da conta (R34).
+func (h *AuthHandlers) issue(w http.ResponseWriter, r *http.Request, userID uuid.UUID, stamp string) {
+	token, s, err := h.sessions.Issue(r.Context(), userID, stamp, h.meta(r))
+	if errors.Is(err, auth.ErrStalePassword) {
+		apierr.WriteError(w, r, apierr.CodeInvalidCredentials)
+		return
+	}
 	if err != nil {
 		h.internal(w, r, "emitir sessão", err)
 		return

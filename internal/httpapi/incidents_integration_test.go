@@ -125,6 +125,12 @@ func TestIncidentListRejectsBadQueries(t *testing.T) {
 
 // ?target_id= é aditivo (Plano 5): combina com status, e o alvo de outro
 // usuário dá 200 com a lista vazia, não 404.
+//
+// Guarda dupla (D23) na lista vazia do alvo alheio: o t.user_id = $1 de
+// ListIncidents e a RLS de targets e incidents (history.List roda em
+// storage.InUserTx). Sabotar só uma deixa este teste verde; a sabotagem
+// registrada (Task 11) tira o filtro E troca o InUserTx pelo InProberTx, e
+// os incidentes do outro usuário aparecem.
 func TestIncidentListFiltersByTarget(t *testing.T) {
 	a := newAPI(t)
 	tok := tokenDe(t, a, a.userID)
@@ -163,6 +169,28 @@ func TestIncidentListPaginates(t *testing.T) {
 	lerCorpo(t, chamar(t, a, http.MethodGet, "/api/v1/incidents?limit=2&cursor="+p1.NextCursor, tok, nil), &p2)
 	if len(p2.Items) != 1 || p2.Items[0].ID != ids[0] || p2.NextCursor != "" {
 		t.Errorf("segunda página: %+v, cursor %q", p2.Items, p2.NextCursor)
+	}
+}
+
+// O cursor pagina dentro do filtro: a segunda página de ?target_id=X traz só
+// o que sobrou de X. O outro alvo do mesmo dono tem incidentes mais antigos
+// que o cursor, e uma segunda página que esquecesse o target_id os traria.
+func TestIncidentListPaginatesWithinTheTarget(t *testing.T) {
+	a := newAPI(t)
+	tok := tokenDe(t, a, a.userID)
+	incidentesDe(t, a, tok, 2) // o outro alvo, antes: ids menores que os de X
+	alvo, ids := incidentesDe(t, a, tok, 3)
+
+	var p1 listaIncidentesJSON
+	lerCorpo(t, chamar(t, a, http.MethodGet, "/api/v1/incidents?target_id="+alvo+"&limit=2", tok, nil), &p1)
+	if len(p1.Items) != 2 || p1.Items[0].ID != ids[2] || p1.Items[1].ID != ids[1] || p1.NextCursor != ids[1] {
+		t.Fatalf("primeira página: %+v, cursor %q", p1.Items, p1.NextCursor)
+	}
+	var p2 listaIncidentesJSON
+	lerCorpo(t, chamar(t, a, http.MethodGet,
+		"/api/v1/incidents?target_id="+alvo+"&limit=2&cursor="+p1.NextCursor, tok, nil), &p2)
+	if len(p2.Items) != 1 || p2.Items[0].ID != ids[0] || p2.NextCursor != "" {
+		t.Errorf("segunda página: %+v, cursor %q; queria só %s e sem cursor", p2.Items, p2.NextCursor, ids[0])
 	}
 }
 

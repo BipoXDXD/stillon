@@ -253,6 +253,13 @@ func TestSummaryOrderIsTheListOrder(t *testing.T) {
 // Duas barreiras dão esta propriedade: o WHERE user_id das consultas e a RLS
 // da InUserTx. Sabotar só uma deixa o teste verde; o plano registra a
 // sabotagem das duas juntas.
+//
+// O que este teste prova é a barreira da consulta 1 (ListTargetSummaries):
+// a montagem do resumo só percorre os alvos que ela devolve. O filtro de
+// usuário das consultas 2 a 4 (rollups, brutos, hora corrente) — e o da marca
+// d'água — é defesa em profundidade que a saída não observa: uma linha alheia
+// que passasse por elas ficaria num mapa por alvo que ninguém lê. Tirá-lo
+// deixa este teste verde, e não é vácuo do teste: não há o que observar.
 func TestSummaryIsolation(t *testing.T) {
 	a := novoAmbiente(t)
 	a.clk.Advance(time.Date(2026, 9, 22, 12, 20, 0, 0, time.UTC).Sub(a.clk.Now()))

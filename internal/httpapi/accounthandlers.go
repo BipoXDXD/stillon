@@ -138,6 +138,20 @@ func (h *AccountHandlers) sessaoViva(w http.ResponseWriter, r *http.Request) (us
 	return userID, familyID, true
 }
 
+// exigirSessaoViva é o sessaoViva como middleware, para as rotas do segundo
+// fator, que moram no AuthHandlers: /auth/totp/enroll, /confirm e /disable
+// (Task 11 do Plano 5). Sem ele, o access token de uma sessão que a troca de
+// senha ou o set-password acabou de encerrar confirmava, nos 15 minutos que
+// lhe restam, o 2FA que o invasor tinha cadastrado com o autenticador dele.
+func (h *AccountHandlers) exigirSessaoViva(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, _, ok := h.sessaoViva(w, r); !ok {
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 // ListSessions é GET /sessions. O DTO é construído campo a campo: nada de IP,
 // hash, vencimento nem id de linha.
 func (h *AccountHandlers) ListSessions(w http.ResponseWriter, r *http.Request) {

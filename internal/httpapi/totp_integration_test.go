@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/pquerna/otp"
 	"github.com/pquerna/otp/totp"
 
@@ -16,10 +15,16 @@ import (
 )
 
 // accessTokenValido assina um access token legítimo do usuário do teste, com
-// o mesmo segredo que a API usa.
+// o mesmo segredo que a API usa, de uma sessão viva aberta aqui: as rotas do
+// segundo fator exigem a família do token viva (Task 11), e um sid inventado
+// seria recusado antes de chegar ao que o teste quer medir.
 func accessTokenValido(t *testing.T, a *api) string {
 	t.Helper()
-	tok, err := auth.NewAccessToken(testJWTSecret, a.userID, uuid.New(), a.clk.Now())
+	_, s, err := gerente(a).Issue(context.Background(), a.userID, carimboDe(t, a, a.userID), auth.Meta{IP: "203.0.113.9"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tok, err := auth.NewAccessToken(testJWTSecret, a.userID, s.FamilyID, a.clk.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -648,7 +653,9 @@ func TestEnrollWrongPasswordCountsTowardTheLock(t *testing.T) {
 }
 
 // Conta bloqueada não cadastra nem desliga o segundo fator, nem com a senha
-// certa: é o mesmo bloqueio do login.
+// certa: é o mesmo bloqueio do login, e a mesma resposta, 401
+// invalid_credentials (R34, D24). O cadastro com o fator já ativo daria 403
+// depois da senha; o 401 prova que o bloqueio vem antes.
 func TestSecondFactorRoutesRefuseALockedAccount(t *testing.T) {
 	a := newAPI(t)
 	c := clientWithJar(t)
@@ -660,11 +667,19 @@ func TestSecondFactorRoutesRefuseALockedAccount(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := desativar(t, a, token, map[string]string{"password": testPass, "code": code}); got != http.StatusUnauthorized {
-		t.Errorf("desativar com a conta bloqueada devolveu %d, queria 401", got)
+	for rota, corpo := range map[string]map[string]string{
+		"enroll":  {"password": testPass},
+		"disable": {"password": testPass, "code": code},
+	} {
+		resp := postComToken(t, http.DefaultClient, a.srv.URL+"/api/v1/auth/totp/"+rota, token, corpo)
+		codigo := codigoDoErro(t, resp)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusUnauthorized || codigo != "invalid_credentials" {
+			t.Errorf("%s com a conta bloqueada: %d %s, queria 401 invalid_credentials", rota, resp.StatusCode, codigo)
+		}
 	}
-	if confirmado, _, _, _ := estadoDoSegundoFator(t, a); !confirmado {
-		t.Error("a conta bloqueada desligou o segundo fator")
+	if confirmado, temSegredo, codigos, _ := estadoDoSegundoFator(t, a); !confirmado || !temSegredo || codigos != 10 {
+		t.Errorf("a conta bloqueada mexeu no segundo fator: confirmado=%v segredo=%v códigos=%d", confirmado, temSegredo, codigos)
 	}
 }
 

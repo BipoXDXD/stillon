@@ -61,9 +61,21 @@ func senhaGravadaE(t *testing.T, a *api, senha string) bool {
 	return ok
 }
 
+// codigoDoErro devolve o code do envelope de erro. O status vem antes do
+// corpo: uma resposta de sucesso (um 204, por exemplo) não tem envelope, e
+// decodificá-la dava "EOF" no lugar da mensagem do teste, que mostra o status.
+// Corpo que não é envelope (o 404 em texto do ServeMux, sem rota) volta como
+// "(sem envelope)", e não casa com code nenhum.
 func codigoDoErro(t *testing.T, resp *http.Response) string {
 	t.Helper()
-	return decodeEnvelope(t, resp).Error.Code
+	if resp.StatusCode < 400 {
+		return ""
+	}
+	var env envelope
+	if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
+		return "(sem envelope)"
+	}
+	return env.Error.Code
 }
 
 func getComToken(t *testing.T, url, token string) *http.Response {
@@ -141,7 +153,7 @@ func TestChangePasswordKeepsCurrentRevokesOthers(t *testing.T) {
 
 	outro := outroUsuario(t, a)
 	mgr := auth.NewManager(auth.NewPGStore(a.pool), a.clk, testIPHashKey)
-	doOutro, _, err := mgr.Issue(context.Background(), outro, auth.Meta{IP: "203.0.113.7"})
+	doOutro, _, err := mgr.Issue(context.Background(), outro, auth.PasswordStamp("x"), auth.Meta{IP: "203.0.113.7"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -214,26 +226,28 @@ func TestChangePasswordLockedAccount(t *testing.T) {
 }
 
 // Conta bloqueada paga o mesmo Argon2id que a senha errada: sem VerifyDummy, a
-// resposta rápida anunciaria o bloqueio (R34). Relativo à verificação real,
-// menor de duas medidas, como no login.
+// resposta rápida anunciaria o bloqueio (R34). Conta verificações, e não
+// relógio, como no login (Task 11).
 func TestChangePasswordSpendsTheSameCPU(t *testing.T) {
 	a := newAPI(t)
 	_, token := entrar(t, a)
-	medir := func(atual string) time.Duration {
+	argon2 := func(atual string) uint64 {
 		t.Helper()
-		inicio := time.Now()
+		antes := auth.Argon2Verifications()
 		resp := trocarSenha(t, a, token, map[string]string{"current_password": atual, "new_password": senhaNova})
 		resp.Body.Close()
 		if resp.StatusCode != http.StatusUnauthorized {
 			t.Fatalf("status %d, queria 401", resp.StatusCode)
 		}
-		return time.Since(inicio)
+		return auth.Argon2Verifications() - antes
 	}
-	real := min(medir("errada-numero-um-longa"), medir("errada-numero-dois-longa"))
+	if n := argon2("errada-numero-um-longa"); n != 1 {
+		t.Fatalf("senha errada: %d verificações Argon2id, queria 1", n)
+	}
 
 	bloquearConta(t, a)
-	if bloqueada := medir(testPass); bloqueada < real/2 {
-		t.Errorf("conta bloqueada custou %v contra %v da verificação real: falta VerifyDummy", bloqueada, real)
+	if n := argon2(testPass); n != 1 {
+		t.Errorf("conta bloqueada: %d verificações Argon2id, queria 1: falta VerifyDummy", n)
 	}
 }
 
@@ -366,11 +380,20 @@ func TestChangePasswordDeadFamily(t *testing.T) {
 // A troca divide o balde do login (contrato: "mesmo limite por IP"). Os cinco
 // logins usam e-mail inexistente para não travar a conta: o que se mede é o
 // limitador.
+//
+// É a trava do wiring, pelo Routes de verdade: registrar /auth/password sem o
+// limiteLogin, ou com uma instância própria do limitador, dá 401 no lugar do
+// 429 (sabotagens registradas na Task 11). Os cinco logins recusados com 401,
+// e não 429, são o contraponto: o balde tem 5 fichas, e a sexta requisição,
+// que é a troca, é a que o esgota.
 func TestChangePasswordSharesTheLoginLimiter(t *testing.T) {
 	a := newAPI(t)
-	for range 5 {
+	for i := range 5 {
 		resp := login(t, a, clientWithJar(t), "ninguem@exemplo.com", testPass)
 		resp.Body.Close()
+		if resp.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("login %d devolveu %d, queria 401: o balde esgotou antes da troca", i+1, resp.StatusCode)
+		}
 	}
 	resp := trocarSenha(t, a, "token-qualquer", map[string]string{"current_password": testPass, "new_password": senhaNova})
 	defer resp.Body.Close()

@@ -63,6 +63,18 @@ func gerente(a *api) *auth.Manager {
 	return auth.NewManager(auth.NewPGStore(a.pool), a.clk, testIPHashKey)
 }
 
+// carimboDe é a prova de senha verificada que Issue exige: o carimbo do hash
+// gravado do usuário.
+func carimboDe(t *testing.T, a *api, userID uuid.UUID) string {
+	t.Helper()
+	var hash string
+	if err := a.pool.QueryRow(context.Background(),
+		`SELECT password_hash FROM users WHERE id = $1`, userID).Scan(&hash); err != nil {
+		t.Fatal(err)
+	}
+	return auth.PasswordStamp(hash)
+}
+
 func familiaDe(t *testing.T, token string, a *api) uuid.UUID {
 	t.Helper()
 	c, err := auth.ParseAccessToken(testJWTSecret, token, a.clk.Now())
@@ -90,18 +102,18 @@ func TestListSessionsShowsOnlyLiveFamilies(t *testing.T) {
 	ctx := context.Background()
 	meta := auth.Meta{IP: "203.0.113.9", UserAgent: "outro aparelho"}
 
-	_, viva, err := mgr.Issue(ctx, a.userID, meta)
+	_, viva, err := mgr.Issue(ctx, a.userID, carimboDe(t, a, a.userID), meta)
 	if err != nil {
 		t.Fatal(err)
 	}
-	revogada, _, err := mgr.Issue(ctx, a.userID, meta)
+	revogada, _, err := mgr.Issue(ctx, a.userID, carimboDe(t, a, a.userID), meta)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := mgr.Revoke(ctx, revogada); err != nil {
 		t.Fatal(err)
 	}
-	_, vencida, err := mgr.Issue(ctx, a.userID, meta)
+	_, vencida, err := mgr.Issue(ctx, a.userID, carimboDe(t, a, a.userID), meta)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,7 +121,7 @@ func TestListSessionsShowsOnlyLiveFamilies(t *testing.T) {
 		vencida.FamilyID, a.clk.Now().Add(-time.Second)); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := mgr.Issue(ctx, outroUsuario(t, a), meta); err != nil {
+	if _, _, err := mgr.Issue(ctx, outroUsuario(t, a), auth.PasswordStamp("x"), meta); err != nil {
 		t.Fatal(err)
 	}
 
@@ -178,6 +190,13 @@ func TestListSessionsNeverExposesIPOrHash(t *testing.T) {
 // A ordem é a do login (created_at, o UUIDv7 da família), e não a do último
 // uso: renovar a sessão mais antiga não a traz para o topo. last_used_at é o
 // instante do último refresh.
+//
+// Guarda dupla (D23): a primeira família foi renovada, então tem uma linha
+// usada e uma viva, e duas coisas fazem a lista mostrar a viva, uma vez só: o
+// filtro used_at IS NULL de ListLiveFamilies e a dedupe de ListSessions, que
+// fica com a linha mais nova de cada família. Sabotar só uma deixa este teste
+// verde; a sabotagem registrada (Task 11) tira o filtro E faz a dedupe ficar
+// com a linha mais velha, e o last_used_at da renovada sai errado.
 func TestListSessionsOrderAndTimes(t *testing.T) {
 	a := newAPI(t)
 	c, token := entrar(t, a)
@@ -189,7 +208,7 @@ func TestListSessionsOrderAndTimes(t *testing.T) {
 	for range 2 {
 		time.Sleep(5 * time.Millisecond) // o UUIDv7 tem resolução de milissegundo
 		antes := time.Now()
-		_, s, err := mgr.Issue(ctx, a.userID, auth.Meta{IP: "203.0.113.9"})
+		_, s, err := mgr.Issue(ctx, a.userID, carimboDe(t, a, a.userID), auth.Meta{IP: "203.0.113.9"})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -224,7 +243,7 @@ func TestListSessionsOrderAndTimes(t *testing.T) {
 func TestListSessionsTruncatesUserAgent(t *testing.T) {
 	a := newAPI(t)
 	_, token := entrar(t, a)
-	if _, _, err := gerente(a).Issue(context.Background(), a.userID,
+	if _, _, err := gerente(a).Issue(context.Background(), a.userID, carimboDe(t, a, a.userID),
 		auth.Meta{IP: "203.0.113.9", UserAgent: strings.Repeat("é", 300)}); err != nil {
 		t.Fatal(err)
 	}
@@ -244,15 +263,19 @@ func TestRevokeSessionOfAnotherUserIs404(t *testing.T) {
 	_, token := entrar(t, a)
 	mgr := gerente(a)
 	meta := auth.Meta{IP: "203.0.113.9"}
-	doOutro, s, err := mgr.Issue(context.Background(), outroUsuario(t, a), meta)
+	doOutro, s, err := mgr.Issue(context.Background(), outroUsuario(t, a), auth.PasswordStamp("x"), meta)
 	if err != nil {
 		t.Fatal(err)
 	}
 
+	// O code distingue o 404 do handler (envelope not_found) do 404 do
+	// ServeMux sem a rota, que é texto: só o status deixava este teste verde
+	// com a rota inexistente.
 	resp := deleteComToken(t, a.srv.URL+"/api/v1/sessions/"+s.FamilyID.String(), token)
+	codigo := codigoDoErro(t, resp)
 	resp.Body.Close()
-	if resp.StatusCode != http.StatusNotFound {
-		t.Errorf("DELETE da sessão alheia devolveu %d, queria 404", resp.StatusCode)
+	if resp.StatusCode != http.StatusNotFound || codigo != "not_found" {
+		t.Errorf("DELETE da sessão alheia devolveu %d %s, queria 404 not_found", resp.StatusCode, codigo)
 	}
 	if _, _, err := mgr.Rotate(context.Background(), doOutro, meta); err != nil {
 		t.Errorf("a sessão do outro usuário caiu: %v", err)
@@ -262,7 +285,7 @@ func TestRevokeSessionOfAnotherUserIs404(t *testing.T) {
 func TestRevokeSessionTwiceIs404(t *testing.T) {
 	a := newAPI(t)
 	_, token := entrar(t, a)
-	doOutroAparelho, s, err := gerente(a).Issue(context.Background(), a.userID, auth.Meta{IP: "203.0.113.9"})
+	doOutroAparelho, s, err := gerente(a).Issue(context.Background(), a.userID, carimboDe(t, a, a.userID), auth.Meta{IP: "203.0.113.9"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -271,9 +294,10 @@ func TestRevokeSessionTwiceIs404(t *testing.T) {
 	primeiro := deleteComToken(t, url, token)
 	primeiro.Body.Close()
 	segundo := deleteComToken(t, url, token)
+	codigo := codigoDoErro(t, segundo)
 	segundo.Body.Close()
-	if primeiro.StatusCode != http.StatusNoContent || segundo.StatusCode != http.StatusNotFound {
-		t.Fatalf("primeiro %d, segundo %d; queria 204 e 404", primeiro.StatusCode, segundo.StatusCode)
+	if primeiro.StatusCode != http.StatusNoContent || segundo.StatusCode != http.StatusNotFound || codigo != "not_found" {
+		t.Fatalf("primeiro %d, segundo %d %s; queria 204 e 404 not_found", primeiro.StatusCode, segundo.StatusCode, codigo)
 	}
 	if _, _, err := gerente(a).Rotate(context.Background(), doOutroAparelho, auth.Meta{IP: "203.0.113.9"}); err == nil {
 		t.Error("a sessão encerrada ainda renova")
@@ -289,9 +313,10 @@ func TestRevokeSessionTwiceIs404(t *testing.T) {
 	}
 
 	lixo := deleteComToken(t, a.srv.URL+"/api/v1/sessions/nao-e-uuid", token)
+	codigo = codigoDoErro(t, lixo)
 	lixo.Body.Close()
-	if lixo.StatusCode != http.StatusNotFound {
-		t.Errorf("id malformado devolveu %d, queria 404", lixo.StatusCode)
+	if lixo.StatusCode != http.StatusNotFound || codigo != "not_found" {
+		t.Errorf("id malformado devolveu %d %s, queria 404 not_found", lixo.StatusCode, codigo)
 	}
 }
 
@@ -318,7 +343,7 @@ func TestRevokeCurrentSessionClearsCookie(t *testing.T) {
 func TestRevokeOtherSessionKeepsCookie(t *testing.T) {
 	a := newAPI(t)
 	_, token := entrar(t, a)
-	_, s, err := gerente(a).Issue(context.Background(), a.userID, auth.Meta{IP: "203.0.113.9"})
+	_, s, err := gerente(a).Issue(context.Background(), a.userID, carimboDe(t, a, a.userID), auth.Meta{IP: "203.0.113.9"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -334,12 +359,20 @@ func TestRevokeOtherSessionKeepsCookie(t *testing.T) {
 
 // Um token de sessão já encerrada não lista nem derruba sessões (D11): sem
 // isso, o invasor encerrado continuaria 15 minutos derrubando o dono.
+//
+// Guarda dupla (D23) nas duas rotas: o Authn da cadeia recusa o token
+// ausente ou inválido, e o sessaoViva do handler recusa de novo (sem usuário
+// ou família no contexto) antes de conferir a família. Este teste trava a
+// família viva, que só o sessaoViva confere; o token ausente é o
+// TestPlano5RoutesRequireAuthentication, que fica verde sem o Authn OU sem o
+// sessaoViva. A sabotagem registrada (Task 11) tira os dois de GET /sessions,
+// e ele fica vermelho (200).
 func TestSessionRoutesRejectDeadFamily(t *testing.T) {
 	a := newAPI(t)
 	c, token := entrar(t, a)
 	mgr := gerente(a)
 	meta := auth.Meta{IP: "203.0.113.9"}
-	doDono, s, err := mgr.Issue(context.Background(), a.userID, meta)
+	doDono, s, err := mgr.Issue(context.Background(), a.userID, carimboDe(t, a, a.userID), meta)
 	if err != nil {
 		t.Fatal(err)
 	}

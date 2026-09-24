@@ -129,7 +129,10 @@ func TestIsLockedRespectsTheDeadline(t *testing.T) {
 	}
 }
 
-func TestUpdatePasswordHashPersistsTheNewHash(t *testing.T) {
+// O rehash do login é um compare-and-swap (Task 11 do Plano 5): com o hash
+// antigo certo, grava; com outro (um set-password comitou depois da
+// verificação), não grava nada.
+func TestRehashPasswordIsACompareAndSwap(t *testing.T) {
 	_, pool, _, userID := setup(t)
 	store := auth.NewPGStore(pool)
 	ctx := context.Background()
@@ -138,11 +141,23 @@ func TestUpdatePasswordHashPersistsTheNewHash(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.UpdatePasswordHash(ctx, userID, novo); err != nil {
+	trocou, err := store.RehashPassword(ctx, userID, "hash-que-ja-nao-e-o-gravado", novo)
+	if err != nil || trocou {
+		t.Fatalf("hash antigo errado: trocou = %v, erro = %v; queria false", trocou, err)
+	}
+	u, err := store.ByEmail(ctx, "pessoa@exemplo.com")
+	if err != nil {
 		t.Fatal(err)
 	}
+	if u.PasswordHash != "x" {
+		t.Fatalf("o rehash com o hash antigo errado gravou %q", u.PasswordHash)
+	}
 
-	u, err := store.ByEmail(ctx, "pessoa@exemplo.com")
+	trocou, err = store.RehashPassword(ctx, userID, "x", novo)
+	if err != nil || !trocou {
+		t.Fatalf("hash antigo certo: trocou = %v, erro = %v; queria true", trocou, err)
+	}
+	u, err = store.ByEmail(ctx, "pessoa@exemplo.com")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -236,7 +251,7 @@ func TestCheckPassword(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.UpdatePasswordHash(ctx, userID, hash); err != nil {
+	if _, err := pool.Exec(ctx, `UPDATE users SET password_hash = $2 WHERE id = $1`, userID, hash); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.RecordFailure(ctx, userID, clk.Now()); err != nil {

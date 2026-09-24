@@ -114,7 +114,7 @@ func (h *AuthHandlers) TOTPVerify(w http.ResponseWriter, r *http.Request) {
 	}
 	now := h.clk.Now()
 
-	userID, err := auth.ParseChallengeToken(h.jwtSecret, req.Challenge, now)
+	userID, stamp, err := auth.ParseChallengeToken(h.jwtSecret, req.Challenge, now)
 	if err != nil {
 		apierr.WriteError(w, r, apierr.CodeUnauthorized)
 		return
@@ -158,7 +158,10 @@ func (h *AuthHandlers) TOTPVerify(w http.ResponseWriter, r *http.Request) {
 		slog.Error("zerar falhas de segundo fator", "erro", err)
 	}
 
-	h.issue(w, r, userID)
+	// O carimbo é o da senha verificada no login, antes do desafio: se ela
+	// mudou desde então (set-password, troca de senha), Issue recusa, e o
+	// desafio obtido com a senha antiga morre com ela.
+	h.issue(w, r, userID, stamp)
 }
 
 type passwordRequest struct {

@@ -90,8 +90,10 @@ func (q *Queries) LockUserSessions(ctx context.Context, userID uuid.UUID) error 
 }
 
 const revokeAllFamilies = `-- name: RevokeAllFamilies :execrows
+
 UPDATE sessions SET revoked_at = $1::timestamptz
- WHERE user_id = $2 AND revoked_at IS NULL
+ WHERE user_id = $2 AND used_at IS NULL AND revoked_at IS NULL
+   AND expires_at > $1::timestamptz
 `
 
 type RevokeAllFamiliesParams struct {
@@ -99,8 +101,16 @@ type RevokeAllFamiliesParams struct {
 	UserID uuid.UUID
 }
 
-// Todas as famílias do usuário: é o set-password do CLI. Marca também as
-// linhas já rotacionadas, como o RevokeFamily do auth.
+// As revogações por usuário (set-password, troca de senha, DELETE
+// /sessions/{id}) marcam só a linha VIVA de cada família: não usada e não
+// vencida (Task 11 do Plano 5). É ela que Rotate aceita; uma linha já
+// rotacionada apresentada de novo é reúso, que Rotate confere ANTES da
+// revogação, com ou sem revoked_at. Marcar também as linhas mortas não
+// protegia nada e disputava as mesmas linhas, em outra ordem, com a
+// retenção (DeleteExpiredSessions, numa transação longa): risco de deadlock.
+// Todas as famílias do usuário: é o set-password do CLI. Uma linha viva por
+// família (invariante do Rotate), então as linhas afetadas são as sessões
+// encerradas, e não as linhas de cada refresh.
 func (q *Queries) RevokeAllFamilies(ctx context.Context, arg RevokeAllFamiliesParams) (int64, error) {
 	result, err := q.db.Exec(ctx, revokeAllFamilies, arg.Now, arg.UserID)
 	if err != nil {
@@ -112,7 +122,7 @@ func (q *Queries) RevokeAllFamilies(ctx context.Context, arg RevokeAllFamiliesPa
 const revokeFamilyOfUser = `-- name: RevokeFamilyOfUser :execrows
 UPDATE sessions SET revoked_at = $1::timestamptz
  WHERE user_id = $2 AND family_id = $3
-   AND revoked_at IS NULL
+   AND used_at IS NULL AND revoked_at IS NULL AND expires_at > $1::timestamptz
 `
 
 type RevokeFamilyOfUserParams struct {
@@ -121,8 +131,8 @@ type RevokeFamilyOfUserParams struct {
 	FamilyID uuid.UUID
 }
 
-// DELETE /sessions/{id}: todas as linhas não revogadas da família, como o
-// RevokeFamily do auth, e só se ela for deste usuário.
+// DELETE /sessions/{id}: a linha viva da família, e só se ela for deste
+// usuário.
 func (q *Queries) RevokeFamilyOfUser(ctx context.Context, arg RevokeFamilyOfUserParams) (int64, error) {
 	result, err := q.db.Exec(ctx, revokeFamilyOfUser, arg.Now, arg.UserID, arg.FamilyID)
 	if err != nil {
@@ -134,7 +144,7 @@ func (q *Queries) RevokeFamilyOfUser(ctx context.Context, arg RevokeFamilyOfUser
 const revokeOtherFamilies = `-- name: RevokeOtherFamilies :execrows
 UPDATE sessions SET revoked_at = $1::timestamptz
  WHERE user_id = $2 AND family_id <> $3
-   AND revoked_at IS NULL
+   AND used_at IS NULL AND revoked_at IS NULL AND expires_at > $1::timestamptz
 `
 
 type RevokeOtherFamiliesParams struct {

@@ -13,6 +13,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/mail"
 	"slices"
 	"time"
@@ -173,8 +174,11 @@ func (s *Service) ChangePassword(ctx context.Context, userID, familyID uuid.UUID
 		// próximo código de 30 s.
 		err := s.totp.Verify(ctx, userID, in.TOTPCode, now)
 		if errors.Is(err, auth.ErrTOTPInvalid) || errors.Is(err, auth.ErrTOTPNotEnrolled) {
+			// Falhar ao registrar não muda a resposta, como em
+			// auth.CheckPassword: o código estava errado. Um 500 aqui, depois
+			// da senha e antes do código, contaria que a senha estava certa.
 			if err := s.users.RecordFailure(ctx, userID, now); err != nil {
-				return err
+				slog.Error("registrar falha de segundo fator", "erro", err)
 			}
 			return ErrInvalidCredentials
 		}
@@ -318,7 +322,8 @@ func (s *Service) CreateUser(ctx context.Context, email, password string) (uuid.
 // TODAS as sessões. Recuperação quase sempre é "perdi" ou "vazou", e manter as
 // sessões deixaria o invasor dentro. Não mexe no segundo fator.
 //
-// Devolve quantas linhas de sessão foram revogadas.
+// Devolve quantas sessões (famílias vivas, as que GET /sessions mostraria)
+// foram encerradas; as linhas já rotacionadas de uma família não contam.
 func (s *Service) ResetPassword(ctx context.Context, email, password string) (int64, error) {
 	if motivo := auth.ValidateNewPassword(password); motivo != "" {
 		return 0, PolicyError{Reason: motivo}

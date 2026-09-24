@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -319,12 +321,37 @@ func TestSetPasswordRevokesEverySessionAndClearsTheLock(t *testing.T) {
 
 	mgr := auth.NewManager(auth.NewPGStore(pool), clock.Real{}, []byte("chave-de-teste-com-32-bytes-ok!!"))
 	meta := auth.Meta{IP: "203.0.113.9", UserAgent: "teste"}
-	for range 2 {
-		if _, _, err := mgr.Issue(ctx, dono, meta); err != nil {
+	var hashDoDono string
+	if err := pool.QueryRow(ctx, `SELECT password_hash FROM users WHERE id = $1`, dono).Scan(&hashDoDono); err != nil {
+		t.Fatal(err)
+	}
+	carimbo := auth.PasswordStamp(hashDoDono)
+	// Duas sessões vivas do dono, e a primeira renovada três vezes: quatro
+	// linhas numa família só. A mensagem conta sessões (famílias), não linhas:
+	// RevokeAllFamilies só marca a linha viva de cada família (Task 11).
+	primeiro, _, err := mgr.Issue(ctx, dono, carimbo, meta)
+	if err != nil {
+		t.Fatal(err)
+	}
+	renovada := primeiro
+	for range 3 {
+		if renovada, _, err = mgr.Rotate(ctx, renovada, meta); err != nil {
 			t.Fatal(err)
 		}
 	}
-	doOutro, _, err := mgr.Issue(ctx, outro, meta)
+	if _, _, err := mgr.Issue(ctx, dono, carimbo, meta); err != nil {
+		t.Fatal(err)
+	}
+	// Uma família vencida, que ninguém revogou: já não é sessão, e não conta.
+	_, vencida, err := mgr.Issue(ctx, dono, carimbo, meta)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE sessions SET expires_at = now() - interval '1 minute' WHERE family_id = $1`,
+		vencida.FamilyID); err != nil {
+		t.Fatal(err)
+	}
+	doOutro, _, err := mgr.Issue(ctx, outro, auth.PasswordStamp("x"), meta)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -338,15 +365,23 @@ func TestSetPasswordRevokesEverySessionAndClearsTheLock(t *testing.T) {
 	if r.codigo != saidaOK {
 		t.Fatalf("set-password: código %d; %s", r.codigo, r.stderr)
 	}
-	if !strings.Contains(r.stdout, "2 sessões encerradas") {
-		t.Errorf("stdout = %q, queria a contagem de sessões", r.stdout)
+	if !strings.Contains(r.stdout, "; 2 sessões encerradas") {
+		t.Errorf("stdout = %q, queria 2 sessões encerradas (as famílias vivas, não as linhas)", r.stdout)
 	}
 
-	var vivas, falhas int
+	var vivas, revogadas, falhas int
 	var travada, totp bool
 	if err := pool.QueryRow(ctx,
-		`SELECT count(*) FROM sessions WHERE user_id = $1 AND revoked_at IS NULL`, dono).Scan(&vivas); err != nil {
+		`SELECT count(*) FILTER (WHERE used_at IS NULL AND revoked_at IS NULL AND expires_at > now()),
+		        count(*) FILTER (WHERE revoked_at IS NOT NULL)
+		   FROM sessions WHERE user_id = $1`, dono).Scan(&vivas, &revogadas); err != nil {
 		t.Fatal(err)
+	}
+	// Só as duas linhas vivas foram marcadas: as rotacionadas e a vencida não
+	// são sessão, e ficam para a retenção, que as apaga sem disputar a linha
+	// com a revogação (o deadlock que marcar tudo arriscava).
+	if revogadas != 2 {
+		t.Errorf("%d linhas marcadas como revogadas, queria 2 (só as vivas)", revogadas)
 	}
 	if err := pool.QueryRow(ctx,
 		`SELECT failed_attempts, locked_until IS NOT NULL, totp_confirmed_at IS NOT NULL FROM users WHERE id = $1`,
@@ -372,6 +407,15 @@ func TestSetPasswordRevokesEverySessionAndClearsTheLock(t *testing.T) {
 	if _, _, err := mgr.Rotate(ctx, doOutro, meta); err != nil {
 		t.Errorf("a sessão de outro usuário caiu junto: %v", err)
 	}
+	// O refresh vivo morreu; o já rotacionado, que continua sem revoked_at,
+	// ainda é reconhecido como reúso: Rotate olha o used_at antes do
+	// revoked_at, e marcar só as linhas vivas não muda a detecção.
+	if _, _, err := mgr.Rotate(ctx, renovada, meta); !errors.Is(err, auth.ErrInvalidSession) {
+		t.Errorf("refresh vivo depois do set-password: %v, queria ErrInvalidSession", err)
+	}
+	if _, _, err := mgr.Rotate(ctx, primeiro, meta); !errors.Is(err, auth.ErrTokenReuse) {
+		t.Errorf("refresh rotacionado depois do set-password: %v, queria ErrTokenReuse", err)
+	}
 }
 
 func TestSetPasswordUnknownEmail(t *testing.T) {
@@ -394,5 +438,137 @@ func TestUserPolicyBoundaries(t *testing.T) {
 	}
 	if r := rodarUser(t, dsn, strings.Repeat("é", auth.MinPasswordLen), "create", "--email", "dono@exemplo.com"); r.codigo != saidaOK {
 		t.Errorf("15 caracteres de dois bytes: código %d, queria 0; %s", r.codigo, r.stderr)
+	}
+}
+
+// leitorParado é o stdin de um operador que ainda não digitou nada: a leitura
+// bloqueia e não olha contexto nenhum, como term.ReadPassword e io.ReadAll no
+// stdin de verdade. lendo fecha quando a leitura começa; o t.Cleanup a solta
+// no fim do teste, para a goroutine não vazar.
+type leitorParado struct {
+	lendo  chan struct{}
+	soltar chan struct{}
+	once   *sync.Once
+}
+
+func novoLeitorParado(t *testing.T) leitorParado {
+	l := leitorParado{lendo: make(chan struct{}), soltar: make(chan struct{}), once: &sync.Once{}}
+	t.Cleanup(func() { close(l.soltar) })
+	return l
+}
+
+func (l leitorParado) ler() ([]byte, error) {
+	l.once.Do(func() { close(l.lendo) })
+	<-l.soltar
+	return nil, errors.New("leitura solta pelo fim do teste")
+}
+
+func (l leitorParado) Read([]byte) (int, error) {
+	_, err := l.ler()
+	return 0, err
+}
+
+// Ctrl-C (ou SIGTERM) durante a leitura da senha encerra o comando com 130, e
+// não fica esperando a senha para sempre: o signal.NotifyContext do main tira
+// do SIGINT o efeito padrão, e a leitura não olha o contexto. No terminal, o
+// estado de antes da leitura (com eco) é restaurado.
+func TestUserPasswordReadStopsOnSignal(t *testing.T) {
+	pool := testdb.New(t)
+	dsn := testdb.DSN(t)
+
+	for _, modo := range []string{"pipe", "terminal"} {
+		t.Run(modo, func(t *testing.T) {
+			l := novoLeitorParado(t)
+			restaurou := false
+			in := entradaDaSenha{pipe: l}
+			if modo == "terminal" {
+				in = entradaDaSenha{terminal: true, lerSemEco: l.ler, salvarTerminal: func() (func(), error) {
+					return func() { restaurou = true }, nil
+				}}
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			var errb bytes.Buffer
+			fim := make(chan int, 1)
+			go func() {
+				fim <- runUser(ctx, []string{"create", "--email", "dono@exemplo.com"}, in, io.Discard, &errb,
+					func(k string) string {
+						if k == "DATABASE_URL" {
+							return dsn
+						}
+						return ""
+					})
+			}()
+
+			select {
+			case <-l.lendo:
+			case c := <-fim:
+				t.Fatalf("o comando terminou (%d) sem ler a senha; stderr: %s", c, errb.String())
+			case <-time.After(30 * time.Second):
+				t.Fatal("o comando nunca chegou à leitura da senha")
+			}
+			cancel() // o que o NotifyContext faz no Ctrl-C
+
+			select {
+			case c := <-fim:
+				if c != saidaInterrompida {
+					t.Errorf("código %d, queria %d (interrompido)", c, saidaInterrompida)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("Ctrl-C durante a leitura da senha foi engolido: o comando continuou esperando")
+			}
+			if modo == "terminal" && !restaurou {
+				t.Error("o terminal não foi restaurado: o eco ficaria desligado")
+			}
+			if n := usuarios(t, pool); n != 0 {
+				t.Errorf("%d usuários criados por um comando interrompido", n)
+			}
+		})
+	}
+}
+
+// Interrompido antes da senha (aqui, antes até do banco), o código é o mesmo
+// 130, e não o 1 de "ambiente": o pgx devolve o erro do contexto, que não é
+// culpa do ambiente.
+func TestUserInterruptedBeforeThePasswordIs130(t *testing.T) {
+	pool := testdb.New(t)
+	dsn := testdb.DSN(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	c := runUser(ctx, []string{"create", "--email", "dono@exemplo.com"},
+		entradaDaSenha{pipe: strings.NewReader(senhaMarcada)}, io.Discard, io.Discard,
+		func(k string) string {
+			if k == "DATABASE_URL" {
+				return dsn
+			}
+			return ""
+		})
+	if c != saidaInterrompida {
+		t.Errorf("código %d, queria %d", c, saidaInterrompida)
+	}
+	if n := usuarios(t, pool); n != 0 {
+		t.Errorf("%d usuários criados por um comando interrompido", n)
+	}
+}
+
+// Com o stdin fora de um terminal e o stderr num (docker exec -i sem -t), o
+// comando diz que está esperando a senha no stdin, em vez de parecer travado.
+// Num pipe de verdade (stderr também redirecionado), não diz nada. Os dois
+// casos leem a senha (create, depois set-password): o aviso só sai na leitura.
+func TestUserPipeWithATerminalOnStderrExplainsTheWait(t *testing.T) {
+	testdb.New(t)
+	dsn := testdb.DSN(t)
+	for _, c := range []struct {
+		avisar bool
+		sub    string
+	}{{false, "create"}, {true, "set-password"}} {
+		r := rodarUserCom(t, dsn, entradaDaSenha{pipe: strings.NewReader(senhaMarcada), avisarPipe: c.avisar}, nil,
+			c.sub, "--email", "dono@exemplo.com")
+		if r.codigo != saidaOK {
+			t.Fatalf("%s: código %d; %s", c.sub, r.codigo, r.stderr)
+		}
+		if got := strings.Contains(r.stderr, "lendo a senha do stdin"); got != c.avisar {
+			t.Errorf("avisarPipe = %v, mas o aviso apareceu = %v; stderr: %q", c.avisar, got, r.stderr)
+		}
 	}
 }

@@ -27,6 +27,12 @@ const (
 	saidaUso           = 2 // flag, e-mail, DATABASE_URL, senha fora da política
 	saidaJaExiste      = 3 // create: já existe usuário; nada mudou
 	saidaNaoCadastrado = 4 // set-password: e-mail não cadastrado; nada mudou
+	// saidaInterrompida é Ctrl-C ou SIGTERM, em qualquer fase: 128 + SIGINT,
+	// o que o shell mostra para um programa interrompido por Ctrl-C. Separado
+	// do 1 para um script distinguir "o operador desistiu" de "o ambiente está
+	// quebrado". Na leitura da senha nada foi escrito ainda; mais adiante, a
+	// transação interrompida volta atrás.
+	saidaInterrompida = 130
 )
 
 // maxLeitura limita o que se lê de um pipe. A política corta em 128 code
@@ -41,17 +47,65 @@ type entradaDaSenha struct {
 	// terminal: pede a senha duas vezes, sem eco, por lerSemEco.
 	terminal  bool
 	lerSemEco func() ([]byte, error)
+	// salvarTerminal guarda o estado do terminal (com eco) antes da leitura e
+	// devolve a função que o restaura. Nil nos testes.
+	salvarTerminal func() (restaurar func(), err error)
 	// pipe: uma linha só, lida daqui.
 	pipe io.Reader
+	// avisarPipe: o stdin não é terminal, mas o stderr é — uma pessoa digitando
+	// num `docker exec -i` sem -t, ou num `fly ssh console -C`. Sem o aviso, o
+	// comando parece travado: espera a linha em silêncio, e com eco.
+	avisarPipe bool
 }
+
+// avisoDoPipe é a linha que avisarPipe escreve no stderr.
+const avisoDoPipe = "vigilume user: lendo a senha do stdin (uma linha; termine com Ctrl-D). Para digitar sem eco, use um terminal (-t)."
 
 // stdinDoProcesso decide entre terminal e pipe olhando o stdin de verdade.
 func stdinDoProcesso() entradaDaSenha {
 	fd := int(os.Stdin.Fd()) // #nosec G115 -- descritor de arquivo do stdin (0); cabe em int em toda plataforma suportada.
 	if term.IsTerminal(fd) {
-		return entradaDaSenha{terminal: true, lerSemEco: func() ([]byte, error) { return term.ReadPassword(fd) }}
+		return entradaDaSenha{
+			terminal:  true,
+			lerSemEco: func() ([]byte, error) { return term.ReadPassword(fd) },
+			salvarTerminal: func() (func(), error) {
+				estado, err := term.GetState(fd)
+				if err != nil {
+					return nil, err
+				}
+				return func() { _ = term.Restore(fd, estado) }, nil
+			},
+		}
 	}
-	return entradaDaSenha{pipe: os.Stdin}
+	stderr := int(os.Stderr.Fd()) // #nosec G115 -- descritor de arquivo do stderr (2); cabe em int em toda plataforma suportada.
+	return entradaDaSenha{pipe: os.Stdin, avisarPipe: term.IsTerminal(stderr)}
+}
+
+// errInterrompida: chegou Ctrl-C ou SIGTERM durante a leitura da senha.
+var errInterrompida = errors.New("interrompido")
+
+// lerOuDesistir devolve o que ler ler, ou errInterrompida se ctx acabar antes.
+//
+// Nem term.ReadPassword nem a leitura do stdin olham o contexto, e o
+// signal.NotifyContext do main tira do SIGINT o efeito padrão (sair): sem isto,
+// Ctrl-C durante a senha era engolido, e só um SIGKILL tirava o processo dali.
+// A goroutine que lê fica bloqueada até o processo sair, logo em seguida.
+func lerOuDesistir(ctx context.Context, ler func() ([]byte, error)) ([]byte, error) {
+	type lido struct {
+		b   []byte
+		err error
+	}
+	fim := make(chan lido, 1)
+	go func() {
+		b, err := ler()
+		fim <- lido{b, err}
+	}()
+	select {
+	case r := <-fim:
+		return r.b, r.err
+	case <-ctx.Done():
+		return nil, errInterrompida
+	}
 }
 
 const usoUser = `uso:
@@ -65,6 +119,13 @@ A senha vem do stdin: num terminal, é pedida duas vezes, sem eco; num pipe,
 // processo com ele.
 func runUser(ctx context.Context, args []string, in entradaDaSenha, stdout, stderr io.Writer, getenv func(string) string) int {
 	falhar := func(codigo int, formato string, a ...any) int {
+		// Com o contexto encerrado (Ctrl-C, SIGTERM), a falha é a interrupção,
+		// em qualquer fase: o pgx devolve o erro do contexto, e sair com 1
+		// diria "ambiente quebrado" a quem só desistiu.
+		if ctx.Err() != nil {
+			fmt.Fprintln(stderr, "vigilume user: interrompido")
+			return saidaInterrompida
+		}
 		fmt.Fprintf(stderr, "vigilume user: "+formato+"\n", a...)
 		return codigo
 	}
@@ -126,22 +187,21 @@ func runUser(ctx context.Context, args []string, in entradaDaSenha, stdout, stde
 		}
 	}
 
-	senha, err := lerSenha(in, stderr)
+	senha, err := lerSenha(ctx, in, stderr)
 	if err != nil {
 		return falhar(saidaUso, "%v", err)
 	}
-	switch auth.ValidateNewPassword(senha) {
-	case auth.ReasonTooShort:
-		return falhar(saidaUso, "senha muito curta (mínimo de %d caracteres)", auth.MinPasswordLen)
-	case auth.ReasonTooLong:
-		return falhar(saidaUso, "senha muito longa (máximo de %d caracteres)", auth.MaxPasswordLen)
-	}
 
+	// A política da senha é a do serviço, e só dele: uma segunda checagem aqui
+	// poderia divergir, e o PolicyError sairia como erro de ambiente (1).
 	switch sub {
 	case "create":
 		id, err := svc.CreateUser(ctx, e, senha)
 		if errors.Is(err, account.ErrUserExists) {
 			return falhar(saidaJaExiste, "já existe um usuário; nada foi alterado")
+		}
+		if msg, ok := foraDaPolitica(err); ok {
+			return falhar(saidaUso, "%s", msg)
 		}
 		if err != nil {
 			return falhar(saidaAmbiente, "%v", err)
@@ -152,6 +212,9 @@ func runUser(ctx context.Context, args []string, in entradaDaSenha, stdout, stde
 		if errors.Is(err, account.ErrUserNotFound) {
 			return falhar(saidaNaoCadastrado, "nenhum usuário com o e-mail %s; nada foi alterado", e)
 		}
+		if msg, ok := foraDaPolitica(err); ok {
+			return falhar(saidaUso, "%s", msg)
+		}
 		if err != nil {
 			return falhar(saidaAmbiente, "%v", err)
 		}
@@ -160,22 +223,54 @@ func runUser(ctx context.Context, args []string, in entradaDaSenha, stdout, stde
 	return saidaOK
 }
 
+// foraDaPolitica devolve a mensagem do PolicyError do serviço, que é erro de
+// uso (2), e nunca de ambiente. A mensagem diz o limite, nunca a senha.
+func foraDaPolitica(err error) (string, bool) {
+	var pe account.PolicyError
+	if !errors.As(err, &pe) {
+		return "", false
+	}
+	switch pe.Reason {
+	case auth.ReasonTooShort:
+		return fmt.Sprintf("senha muito curta (mínimo de %d caracteres)", auth.MinPasswordLen), true
+	case auth.ReasonTooLong:
+		return fmt.Sprintf("senha muito longa (máximo de %d caracteres)", auth.MaxPasswordLen), true
+	}
+	return "senha fora da política", true
+}
+
 // lerSenha nunca escreve a senha em lugar nenhum; o erro diz o que houve, não
 // o que foi lido.
 //
 // A senha vive como string depois disto: Go não tem como zerar uma string, e
 // este código não finge que tem.
-func lerSenha(in entradaDaSenha, stderr io.Writer) (string, error) {
+func lerSenha(ctx context.Context, in entradaDaSenha, stderr io.Writer) (string, error) {
 	if in.terminal {
-		fmt.Fprint(stderr, "Senha: ")
-		a, err := in.lerSemEco()
-		fmt.Fprintln(stderr) // o terminal não ecoa o Enter
+		// O term.ReadPassword desliga o eco e só o religa quando a leitura
+		// termina; interrompida, ela não termina. O estado de antes é o que
+		// devolve o eco ao terminal do operador.
+		restaurar := func() {}
+		if in.salvarTerminal != nil {
+			r, err := in.salvarTerminal()
+			if err != nil {
+				return "", fmt.Errorf("ler o estado do terminal: %w", err)
+			}
+			restaurar = r
+		}
+		ler := func(rotulo string) ([]byte, error) {
+			fmt.Fprint(stderr, rotulo)
+			b, err := lerOuDesistir(ctx, in.lerSemEco)
+			if errors.Is(err, errInterrompida) {
+				restaurar()
+			}
+			fmt.Fprintln(stderr) // o terminal não ecoa o Enter
+			return b, err
+		}
+		a, err := ler("Senha: ")
 		if err != nil {
 			return "", fmt.Errorf("ler a senha: %w", err)
 		}
-		fmt.Fprint(stderr, "Confirme a senha: ")
-		b, err := in.lerSemEco()
-		fmt.Fprintln(stderr)
+		b, err := ler("Confirme a senha: ")
 		if err != nil {
 			return "", fmt.Errorf("ler a confirmação: %w", err)
 		}
@@ -185,7 +280,12 @@ func lerSenha(in entradaDaSenha, stderr io.Writer) (string, error) {
 		return validarTexto(a)
 	}
 
-	b, err := io.ReadAll(io.LimitReader(in.pipe, maxLeitura+1))
+	if in.avisarPipe {
+		fmt.Fprintln(stderr, avisoDoPipe)
+	}
+	b, err := lerOuDesistir(ctx, func() ([]byte, error) {
+		return io.ReadAll(io.LimitReader(in.pipe, maxLeitura+1))
+	})
 	if err != nil {
 		return "", fmt.Errorf("ler a senha do stdin: %w", err)
 	}

@@ -3,6 +3,7 @@ package auth_test
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -91,7 +92,7 @@ func TestRevokingDuringRotationLeavesNothingAlive(t *testing.T) {
 			mgr, pool, clk, userID := setup(t)
 			ctx := context.Background()
 
-			antigo, _, err := mgr.Issue(ctx, userID, meta)
+			antigo, _, err := mgr.Issue(ctx, userID, carimbo, meta)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -101,6 +102,13 @@ func TestRevokingDuringRotationLeavesNothingAlive(t *testing.T) {
 			}
 
 			travou, solta := make(chan struct{}), make(chan struct{})
+			// soltar fecha solta uma vez só, e o t.Cleanup a chama se o teste
+			// morrer antes (o t.Fatal de esperarAlguemBloqueado): sem isso, a
+			// rotação ficaria parada com as travas na mão, e o fechamento do
+			// pool esperaria por ela até o timeout do go test.
+			var umaVez sync.Once
+			soltar := func() { umaVez.Do(func() { close(solta) }) }
+			t.Cleanup(soltar)
 			lento := auth.NewManager(
 				storeQuePausa{inner: auth.NewPGStore(pool), travou: travou, solta: solta}, clk, ipKey)
 
@@ -114,7 +122,7 @@ func TestRevokingDuringRotationLeavesNothingAlive(t *testing.T) {
 			revogacao := make(chan error, 1)
 			go func() { revogacao <- caso.revogar(ctx, mgr, antigo) }()
 			esperarAlguemBloqueado(t, pool)
-			close(solta)
+			soltar()
 
 			if err := <-rotacao; err != nil {
 				t.Fatalf("a rotação concorrente falhou: %v", err)

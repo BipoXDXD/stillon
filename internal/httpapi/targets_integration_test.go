@@ -593,4 +593,18 @@ func TestTargetLimitIs409(t *testing.T) {
 	if resp.StatusCode != http.StatusConflict || decodeEnvelope(t, resp).Error.Code != "target_limit_reached" {
 		t.Errorf("status %d, queria 409 target_limit_reached", resp.StatusCode)
 	}
+	// O 409 não basta: a recusa não pode ter gravado o 101º. A contagem roda
+	// no escopo do dono, como a inserção acima: targets tem RLS.
+	var n int64
+	err = storage.InUserTx(ctx, a.pool, a.userID, func(q *db.Queries) error {
+		var err error
+		n, err = q.CountTargets(ctx, a.userID)
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != targets.MaxTargetsPerUser {
+		t.Errorf("%d alvos depois da recusa, queria %d", n, targets.MaxTargetsPerUser)
+	}
 }

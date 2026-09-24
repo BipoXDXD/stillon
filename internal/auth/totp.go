@@ -108,7 +108,7 @@ func (s *TOTP) Enroll(ctx context.Context, userID uuid.UUID, email string) (stri
 // Confirm ativa o segundo fator e devolve os códigos de recuperação. Eles são
 // mostrados uma única vez: o banco guarda apenas o hash.
 func (s *TOTP) Confirm(ctx context.Context, userID uuid.UUID, code string, now time.Time) ([]string, error) {
-	secret, _, err := s.load(ctx, userID)
+	secret, _, sealed, err := s.loadSealed(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -142,15 +142,27 @@ func (s *TOTP) Confirm(ctx context.Context, userID uuid.UUID, code string, now t
 	//
 	// O timestep da confirmação já entra consumido: o código usado para
 	// ativar não pode servir de novo para entrar.
+	//
+	// E o segredo tem de ser o mesmo que validou o código (Task 11 do Plano
+	// 5): a troca de senha e o set-password apagam o segredo pendente, e uma
+	// confirmação que o leu antes ligaria o 2FA sem segredo nenhum — o dono
+	// nunca mais entraria.
 	tag, err := tx.Exec(ctx,
 		`UPDATE users SET totp_confirmed_at = $2, totp_last_timestep = $3
-		   WHERE id = $1 AND totp_confirmed_at IS NULL`,
-		userID, now, step)
+		   WHERE id = $1 AND totp_confirmed_at IS NULL AND totp_secret_enc = $4`,
+		userID, now, step, sealed)
 	if err != nil {
 		return nil, fmt.Errorf("ativar TOTP: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
-		return nil, ErrTOTPAlreadyEnabled
+		enabled, err := s.IsEnabled(ctx, userID)
+		if err != nil {
+			return nil, err
+		}
+		if enabled {
+			return nil, ErrTOTPAlreadyEnabled
+		}
+		return nil, ErrTOTPNotEnrolled
 	}
 	// Recadastro invalida os códigos anteriores.
 	if _, err := tx.Exec(ctx,
@@ -335,27 +347,33 @@ func (s *TOTP) IsEnabled(ctx context.Context, userID uuid.UUID) (bool, error) {
 }
 
 func (s *TOTP) load(ctx context.Context, userID uuid.UUID) (secret string, confirmed bool, err error) {
-	var sealed []byte
+	secret, confirmed, _, err = s.loadSealed(ctx, userID)
+	return secret, confirmed, err
+}
+
+// loadSealed é load devolvendo também o segredo cifrado como está no banco,
+// para quem precisa gravar só se ele não mudou (Confirm).
+func (s *TOTP) loadSealed(ctx context.Context, userID uuid.UUID) (secret string, confirmed bool, sealed []byte, err error) {
 	var at *time.Time
 
 	err = s.pool.QueryRow(ctx,
 		`SELECT totp_secret_enc, totp_confirmed_at FROM users WHERE id = $1`, userID).
 		Scan(&sealed, &at)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "", false, ErrNotFound
+		return "", false, nil, ErrNotFound
 	}
 	if err != nil {
-		return "", false, fmt.Errorf("carregar TOTP: %w", err)
+		return "", false, nil, fmt.Errorf("carregar TOTP: %w", err)
 	}
 	if len(sealed) == 0 {
-		return "", false, ErrTOTPNotEnrolled
+		return "", false, nil, ErrTOTPNotEnrolled
 	}
 
 	plain, err := s.box.Open(sealed, crypto.AAD("users", "totp_secret_enc", userID))
 	if err != nil {
-		return "", false, fmt.Errorf("decifrar segredo TOTP: %w", err)
+		return "", false, nil, fmt.Errorf("decifrar segredo TOTP: %w", err)
 	}
-	return string(plain.Reveal()), at != nil, nil
+	return string(plain.Reveal()), at != nil, sealed, nil
 }
 
 // validateTOTP devolve o timestep que casou, e não só um booleano. Saber QUAL

@@ -1,6 +1,7 @@
 package auth_test
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -136,32 +137,71 @@ func TestChallengeTokenRoundTrip(t *testing.T) {
 	now := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
 	userID := uuid.New()
 
-	raw, err := auth.NewChallengeToken(jwtSecret, userID, now)
+	carimbo := auth.PasswordStamp("$argon2id$hash-de-teste")
+
+	raw, err := auth.NewChallengeToken(jwtSecret, userID, carimbo, now)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	got, err := auth.ParseChallengeToken(jwtSecret, raw, now.Add(time.Minute))
+	got, gotCarimbo, err := auth.ParseChallengeToken(jwtSecret, raw, now.Add(time.Minute))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got != userID {
 		t.Errorf("userID = %s, queria %s", got, userID)
 	}
+	if gotCarimbo != carimbo {
+		t.Errorf("carimbo = %q, queria %q", gotCarimbo, carimbo)
+	}
+}
+
+// O desafio leva o carimbo da senha verificada, e sem ele não existe: é o que
+// o /totp/verify entrega a Issue para recusar a sessão depois de um
+// set-password (Task 11 do Plano 5).
+func TestChallengeTokenRequiresThePasswordStamp(t *testing.T) {
+	now := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
+	if _, err := auth.NewChallengeToken(jwtSecret, uuid.New(), "", now); err == nil {
+		t.Error("desafio sem carimbo foi assinado")
+	}
+	semCarimbo, err := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.RegisteredClaims{
+		Subject:   uuid.NewString(),
+		Audience:  jwt.ClaimStrings{"totp-challenge"},
+		ExpiresAt: jwt.NewNumericDate(now.Add(time.Minute)),
+	}).SignedString(jwtSecret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := auth.ParseChallengeToken(jwtSecret, semCarimbo, now); err == nil {
+		t.Error("desafio sem carimbo foi aceito")
+	}
+}
+
+// O carimbo é o SHA-256 do hash, e não o hash: o desafio viaja pelo cliente, e
+// o hash de senha nunca sai do servidor.
+func TestPasswordStampIsNotTheHash(t *testing.T) {
+	hash := "$argon2id$v=19$m=65536,t=3,p=2$c2FsdA$c29tYQ"
+	c := auth.PasswordStamp(hash)
+	if c == "" || strings.Contains(c, "argon2id") || strings.Contains(c, "c2FsdA") {
+		t.Errorf("carimbo = %q: carrega o hash", c)
+	}
+	if c != auth.PasswordStamp(hash) || c == auth.PasswordStamp(hash+"x") {
+		t.Error("o carimbo não é função só do hash")
+	}
 }
 
 // O desafio dura só o tempo de digitar seis dígitos.
 func TestChallengeTokenExpiresQuickly(t *testing.T) {
 	now := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
-	raw, err := auth.NewChallengeToken(jwtSecret, uuid.New(), now)
+	raw, err := auth.NewChallengeToken(jwtSecret, uuid.New(), auth.PasswordStamp("x"), now)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if _, err := auth.ParseChallengeToken(jwtSecret, raw, now.Add(auth.ChallengeTTL-time.Minute)); err != nil {
+	if _, _, err := auth.ParseChallengeToken(jwtSecret, raw, now.Add(auth.ChallengeTTL-time.Minute)); err != nil {
 		t.Errorf("dentro do prazo o desafio deveria valer: %v", err)
 	}
-	if _, err := auth.ParseChallengeToken(jwtSecret, raw, now.Add(auth.ChallengeTTL+time.Minute)); err == nil {
+	if _, _, err := auth.ParseChallengeToken(jwtSecret, raw, now.Add(auth.ChallengeTTL+time.Minute)); err == nil {
 		t.Error("o desafio deveria ter expirado")
 	}
 }
@@ -180,7 +220,7 @@ func TestChallengeAndAccessTokensAreNotInterchangeable(t *testing.T) {
 	now := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
 	userID := uuid.New()
 
-	desafio, err := auth.NewChallengeToken(jwtSecret, userID, now)
+	desafio, err := auth.NewChallengeToken(jwtSecret, userID, auth.PasswordStamp("x"), now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,7 +232,7 @@ func TestChallengeAndAccessTokensAreNotInterchangeable(t *testing.T) {
 	if _, err := auth.ParseAccessToken(jwtSecret, desafio, now); err == nil {
 		t.Error("o token de desafio foi aceito como access token: o segundo fator seria decorativo")
 	}
-	if _, err := auth.ParseChallengeToken(jwtSecret, acesso, now); err == nil {
+	if _, _, err := auth.ParseChallengeToken(jwtSecret, acesso, now); err == nil {
 		t.Error("um access token comum foi aceito como desafio: o segundo fator seria dispensável")
 	}
 }

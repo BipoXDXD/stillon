@@ -407,44 +407,38 @@ func TestLoginDoesNotRevealWhetherAccountExists(t *testing.T) {
 // e-mail inexistente volta em microssegundos e o de senha errada em ~100 ms
 // de Argon2id, e essa diferença enumera as contas (spec §5.2).
 //
-// A comparação é relativa ao custo medido de uma verificação real, em vez de
-// um limiar absoluto, para não depender da velocidade da máquina.
+// A trava conta verificações Argon2id (auth.Argon2Verifications), e não mede
+// relógio: a versão com tempo oscilava sob carga no CI (Task 11). A
+// propriedade é a mesma — cada caminho de falha paga exatamente um Argon2id.
 func TestLoginSpendsTheSameCPUWhetherOrNotTheAccountExists(t *testing.T) {
 	a := newAPI(t)
 	c := clientWithJar(t)
 
-	medir := func(email, senha string) time.Duration {
+	argon2 := func(email, senha string) uint64 {
 		t.Helper()
-		inicio := time.Now()
+		antes := auth.Argon2Verifications()
 		resp := login(t, a, c, email, senha)
 		resp.Body.Close()
-		return time.Since(inicio)
+		if resp.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("login de %s devolveu %d, queria 401", email, resp.StatusCode)
+		}
+		return auth.Argon2Verifications() - antes
 	}
 
-	// Referência: a conta existe e a senha está errada, então o Argon2id roda
-	// de verdade.
-	//
-	// Medida DUAS vezes, ficando com a MENOR. A primeira requisição HTTP do
-	// teste paga o aquecimento a frio (conexão, pool do Postgres, primeiro
-	// toque nas páginas do Argon2), o que inflava a referência e, com ela, o
-	// limiar real/2 — vermelho falso sem defeito nenhum no código. Pegar a
-	// menor das duas remove esse modo de falha sem afrouxar a trava: o limiar
-	// só desce em direção ao custo verdadeiro de um Argon2id, que é
-	// exatamente o que os caminhos sem VerifyDummy não pagam.
-	real := min(medir(testEmail, "errada"), medir(testEmail, "errada"))
-
-	inexistente := medir("ninguem@exemplo.com", testPass)
-	if inexistente < real/2 {
-		t.Errorf("e-mail inexistente custou %v contra %v da verificação real: "+
-			"o tempo de resposta enumera as contas (falta VerifyDummy)", inexistente, real)
+	// Referência: a conta existe e a senha está errada; o Argon2id roda de
+	// verdade.
+	if n := argon2(testEmail, "errada"); n != 1 {
+		t.Fatalf("senha errada: %d verificações Argon2id, queria 1", n)
+	}
+	if n := argon2("ninguem@exemplo.com", testPass); n != 1 {
+		t.Errorf("e-mail inexistente: %d verificações Argon2id, queria 1: "+
+			"o tempo de resposta enumera as contas (falta VerifyDummy)", n)
 	}
 
 	// Conta bloqueada é o terceiro caminho de falha, e também precisa pagar.
 	bloquearConta(t, a)
-	bloqueada := medir(testEmail, testPass)
-	if bloqueada < real/2 {
-		t.Errorf("conta bloqueada custou %v contra %v da verificação real: "+
-			"falta VerifyDummy no caminho de bloqueio", bloqueada, real)
+	if n := argon2(testEmail, testPass); n != 1 {
+		t.Errorf("conta bloqueada: %d verificações Argon2id, queria 1: falta VerifyDummy no caminho de bloqueio", n)
 	}
 }
 

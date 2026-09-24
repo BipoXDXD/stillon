@@ -38,11 +38,50 @@ func setup(t *testing.T) (*auth.Manager, *pgxpool.Pool, *clock.Fake, uuid.UUID) 
 
 var meta = auth.Meta{IP: "203.0.113.9", UserAgent: "teste"}
 
+// carimbo é a prova de senha verificada do usuário de setup, cujo hash é 'x'.
+var carimbo = auth.PasswordStamp("x")
+
+// Issue só abre sessão se o hash do usuário ainda é o que foi verificado: um
+// carimbo de outro hash (a senha mudou depois do login) é recusado, e nada é
+// gravado. Carimbo vazio nem chega ao banco.
+func TestIssueRefusesAStalePassword(t *testing.T) {
+	mgr, pool, _, userID := setup(t)
+	ctx := context.Background()
+
+	for nome, c := range map[string]string{
+		"hash antigo":         auth.PasswordStamp("hash-de-antes-do-set-password"),
+		"o próprio hash":      "x",
+		"usuário inexistente": carimbo,
+	} {
+		id := userID
+		if nome == "usuário inexistente" {
+			id = uuid.New()
+		}
+		if _, _, err := mgr.Issue(ctx, id, c, meta); !errors.Is(err, auth.ErrStalePassword) {
+			t.Errorf("%s: erro = %v, queria ErrStalePassword", nome, err)
+		}
+	}
+	if _, _, err := mgr.Issue(ctx, userID, "", meta); err == nil || errors.Is(err, auth.ErrStalePassword) {
+		t.Errorf("carimbo vazio: erro = %v, queria recusa antes do banco", err)
+	}
+	var n int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM sessions`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Errorf("%d sessões gravadas com carimbo recusado", n)
+	}
+	// O contraponto positivo: com o carimbo certo, abre.
+	if _, _, err := mgr.Issue(ctx, userID, carimbo, meta); err != nil {
+		t.Errorf("carimbo certo: %v", err)
+	}
+}
+
 func TestIssueThenRotate(t *testing.T) {
 	mgr, _, _, userID := setup(t)
 	ctx := context.Background()
 
-	tok1, s1, err := mgr.Issue(ctx, userID, meta)
+	tok1, s1, err := mgr.Issue(ctx, userID, carimbo, meta)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,7 +111,7 @@ func TestReusedTokenRevokesEntireFamily(t *testing.T) {
 	mgr, pool, _, userID := setup(t)
 	ctx := context.Background()
 
-	tok1, _, _ := mgr.Issue(ctx, userID, meta)
+	tok1, _, _ := mgr.Issue(ctx, userID, carimbo, meta)
 	tok2, _, err := mgr.Rotate(ctx, tok1, meta)
 	if err != nil {
 		t.Fatal(err)
@@ -104,7 +143,7 @@ func TestReuseIsRecordedInAuditLog(t *testing.T) {
 	mgr, pool, _, userID := setup(t)
 	ctx := context.Background()
 
-	tok1, _, _ := mgr.Issue(ctx, userID, meta)
+	tok1, _, _ := mgr.Issue(ctx, userID, carimbo, meta)
 	_, _, _ = mgr.Rotate(ctx, tok1, meta)
 	_, _, _ = mgr.Rotate(ctx, tok1, meta)
 
@@ -124,7 +163,7 @@ func TestExpiredTokenIsRejected(t *testing.T) {
 	mgr, _, clk, userID := setup(t)
 	ctx := context.Background()
 
-	tok, _, _ := mgr.Issue(ctx, userID, meta)
+	tok, _, _ := mgr.Issue(ctx, userID, carimbo, meta)
 
 	clk.Advance(31 * 24 * time.Hour) // TTL de refresh é 30 dias (spec §5.2)
 
@@ -145,7 +184,7 @@ func TestRevokedTokenIsRejected(t *testing.T) {
 	mgr, _, _, userID := setup(t)
 	ctx := context.Background()
 
-	tok, _, _ := mgr.Issue(ctx, userID, meta)
+	tok, _, _ := mgr.Issue(ctx, userID, carimbo, meta)
 	if err := mgr.Revoke(ctx, tok); err != nil {
 		t.Fatal(err)
 	}
@@ -160,7 +199,7 @@ func TestIPIsStoredHashed(t *testing.T) {
 	mgr, pool, _, userID := setup(t)
 	ctx := context.Background()
 
-	if _, _, err := mgr.Issue(ctx, userID, auth.Meta{IP: "203.0.113.9", UserAgent: "teste"}); err != nil {
+	if _, _, err := mgr.Issue(ctx, userID, carimbo, auth.Meta{IP: "203.0.113.9", UserAgent: "teste"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -185,7 +224,7 @@ func TestIPHashIsKeyedHMAC(t *testing.T) {
 	ctx := context.Background()
 
 	const ip = "203.0.113.9"
-	if _, _, err := mgr.Issue(ctx, userID, auth.Meta{IP: ip, UserAgent: "teste"}); err != nil {
+	if _, _, err := mgr.Issue(ctx, userID, carimbo, auth.Meta{IP: ip, UserAgent: "teste"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -212,7 +251,7 @@ func TestReuseIsReportedEvenAfterFamilyRevocation(t *testing.T) {
 	mgr, _, _, userID := setup(t)
 	ctx := context.Background()
 
-	tok1, _, _ := mgr.Issue(ctx, userID, meta)
+	tok1, _, _ := mgr.Issue(ctx, userID, carimbo, meta)
 	if _, _, err := mgr.Rotate(ctx, tok1, meta); err != nil {
 		t.Fatal(err)
 	}
@@ -267,7 +306,7 @@ func TestConcurrentRotationLetsOnlyOneWin(t *testing.T) {
 	// toda rodada termina em 1 vitória e 1 reúso.
 	const rodadas = 10
 	for rodada := range rodadas {
-		tok, _, err := mgr.Issue(ctx, userID, meta)
+		tok, _, err := mgr.Issue(ctx, userID, carimbo, meta)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -360,7 +399,10 @@ func (t txFalsa) LockSessionByHash(context.Context, []byte) (auth.SessionRow, er
 func (txFalsa) SessionUserByHash(context.Context, []byte) (uuid.UUID, error) {
 	return uuid.New(), nil
 }
-func (txFalsa) LockUserSessions(context.Context, uuid.UUID) error    { return nil }
+func (txFalsa) LockUserSessions(context.Context, uuid.UUID) error { return nil }
+func (txFalsa) UserPasswordHash(context.Context, uuid.UUID) (string, error) {
+	return "x", nil
+}
 func (txFalsa) InsertSession(context.Context, auth.SessionRow) error { return nil }
 func (txFalsa) MarkSessionUsed(context.Context, uuid.UUID, time.Time) error {
 	return nil
@@ -411,7 +453,7 @@ func TestTokenIsStoredHashed(t *testing.T) {
 	mgr, pool, _, userID := setup(t)
 	ctx := context.Background()
 
-	tok, s, err := mgr.Issue(ctx, userID, meta)
+	tok, s, err := mgr.Issue(ctx, userID, carimbo, meta)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -443,7 +485,7 @@ func TestLogoutKillsTheWholeFamily(t *testing.T) {
 	mgr, pool, _, userID := setup(t)
 	ctx := context.Background()
 
-	daVitima, _, err := mgr.Issue(ctx, userID, meta)
+	daVitima, _, err := mgr.Issue(ctx, userID, carimbo, meta)
 	if err != nil {
 		t.Fatal(err)
 	}

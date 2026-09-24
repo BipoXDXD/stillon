@@ -10,6 +10,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+
+	"github.com/BipoXDXD/vigilume/internal/storage/db"
 )
 
 // LockThreshold e LockDuration implementam o bloqueio progressivo da
@@ -83,7 +85,9 @@ type UserStore interface {
 	ByID(ctx context.Context, userID uuid.UUID) (User, error)
 	RecordFailure(ctx context.Context, userID uuid.UUID, at time.Time) error
 	ResetFailures(ctx context.Context, userID uuid.UUID) error
-	UpdatePasswordHash(ctx context.Context, userID uuid.UUID, hash string) error
+	// RehashPassword troca oldHash por newHash só se oldHash ainda for o hash
+	// gravado; swapped diz se trocou.
+	RehashPassword(ctx context.Context, userID uuid.UUID, oldHash, newHash string) (swapped bool, err error)
 }
 
 func (s *PGStore) ByEmail(ctx context.Context, email string) (User, error) {
@@ -150,13 +154,16 @@ func (s *PGStore) ResetFailures(ctx context.Context, userID uuid.UUID) error {
 	return nil
 }
 
-func (s *PGStore) UpdatePasswordHash(ctx context.Context, userID uuid.UUID, hash string) error {
-	_, err := s.pool.Exec(ctx,
-		`UPDATE users SET password_hash = $2 WHERE id = $1`, userID, hash)
+// RehashPassword é o rehash do login, e é um compare-and-swap (Task 11 do
+// Plano 5). A versão anterior gravava sem condição: um login que verificou a
+// senha ANTIGA e regravou o hash dela depois de um set-password concorrente
+// desfazia a redefinição, e a senha antiga voltava a valer.
+func (s *PGStore) RehashPassword(ctx context.Context, userID uuid.UUID, oldHash, newHash string) (bool, error) {
+	n, err := db.New(s.pool).RehashUser(ctx, db.RehashUserParams{ID: userID, OldHash: oldHash, NewHash: newHash})
 	if err != nil {
-		return fmt.Errorf("atualizar hash de senha: %w", err)
+		return false, fmt.Errorf("atualizar hash de senha: %w", err)
 	}
-	return nil
+	return n == 1, nil
 }
 
 // ByID atende os dois caminhos de TOTP que só têm o id vindo do token: o
