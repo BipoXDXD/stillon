@@ -492,3 +492,68 @@ func TestPlainErrorIsRetried(t *testing.T) {
 		t.Errorf("linha = %+v", l)
 	}
 }
+
+// canalVisto é o canal como o dono o vê em GET /channels.
+func (b *bancada) canalVisto(t *testing.T) Channel {
+	t.Helper()
+	svc := NewChannelService(b.pool, b.box, b.clk, nil, nil, "https://vigilume.dev")
+	cs, err := svc.List(context.Background(), b.dono)
+	if err != nil || len(cs) != 1 {
+		t.Fatalf("List = %v, %v", cs, err)
+	}
+	return cs[0]
+}
+
+// Pendência do Plano 3: o canal que quebra depois de verificado não falha
+// mais em silêncio. A falha definitiva o põe em failing, com o motivo; a
+// próxima entrega que dá certo o tira, sem ação do dono.
+func TestDefinitiveFailureMarksTheChannelFailingUntilASuccess(t *testing.T) {
+	b := novaBancada(t, nil)
+	if c := b.canalVisto(t); c.Status != StatusVerified || !c.LastFailureAt.IsZero() {
+		t.Fatalf("antes de qualquer envio: %+v", c)
+	}
+
+	b.canal.respostas = []error{&SendError{Reason: ReasonRejected, Permanent: true}}
+	b.enfileirar(t, incident.EventOpened)
+	b.despachar(t, 1)
+	falhou := b.clk.Now()
+	c := b.canalVisto(t)
+	if c.Status != StatusFailing || c.LastError != ReasonRejected || !c.LastFailureAt.Equal(falhou) {
+		t.Fatalf("depois da falha definitiva: %+v; queria failing, rejected, %v", c, falhou)
+	}
+
+	b.clk.Advance(time.Minute)
+	b.enfileirar(t, incident.EventResolved)
+	b.despachar(t, 1)
+	c = b.canalVisto(t)
+	if c.Status != StatusVerified || c.LastError != ReasonRejected || !c.LastFailureAt.Equal(falhou) {
+		t.Errorf("depois de uma entrega: %+v; queria verified, com a última falha ainda visível", c)
+	}
+}
+
+// Retentativa e cancelamento não mexem na saúde do canal: a primeira ainda
+// pode dar certo, e o segundo nem tentou enviar.
+func TestRetryAndCancelLeaveTheChannelHealthAlone(t *testing.T) {
+	b := novaBancada(t, nil)
+	b.canal.respostas = []error{&SendError{Reason: ReasonServerError}}
+	b.enfileirar(t, incident.EventOpened)
+	b.despachar(t, 1)
+	if c := b.canalVisto(t); c.Status != StatusVerified || !c.LastFailureAt.IsZero() {
+		t.Errorf("retentativa mexeu no canal: %+v", c)
+	}
+	// Conta sob o escopo prober: sem escopo, a RLS esconderia qualquer
+	// linha e o 0 seria verdade por acidente.
+	ctx := context.Background()
+	tx, err := b.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `SELECT set_config('app.scope', 'prober', true)`); err != nil {
+		t.Fatal(err)
+	}
+	var n int
+	if err := tx.QueryRow(ctx, `SELECT count(*) FROM channel_health`).Scan(&n); err != nil || n != 0 {
+		t.Errorf("channel_health tem %d linhas depois de uma retentativa (%v), queria 0", n, err)
+	}
+}

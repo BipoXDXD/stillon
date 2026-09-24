@@ -215,13 +215,21 @@ func (d *Dispatcher) persistir(n db.ClaimDueNotificationsRow, f desfecho) error 
 	return storage.InProberTx(ctx, d.pool, func(q *db.Queries) error {
 		switch f.status {
 		case "sent":
-			return q.MarkNotificationSent(ctx, db.MarkNotificationSentParams{ID: n.ID, Now: d.clk.Now()})
+			if err := q.MarkNotificationSent(ctx, db.MarkNotificationSentParams{ID: n.ID, Now: d.clk.Now()}); err != nil {
+				return err
+			}
+			return q.MarkChannelSuccess(ctx, db.MarkChannelSuccessParams{ChannelID: n.ChannelID, Now: d.clk.Now()})
 		case "pending":
 			return q.RetryNotification(ctx, db.RetryNotificationParams{ID: n.ID, NextAttemptAt: f.proxima, LastError: motivo})
 		case "cancelled":
 			return q.CloseNotification(ctx, db.CloseNotificationParams{ID: n.ID, Status: "cancelled", LastError: motivo})
 		}
 		if err := q.CloseNotification(ctx, db.CloseNotificationParams{ID: n.ID, Status: "failed", LastError: motivo}); err != nil {
+			return err
+		}
+		// O canal passa a "failing" até a próxima entrega que der certo
+		// (pendência do Plano 3: antes, a falha só ia para a auditoria).
+		if err := q.MarkChannelFailure(ctx, db.MarkChannelFailureParams{ChannelID: n.ChannelID, Now: d.clk.Now(), LastError: motivo}); err != nil {
 			return err
 		}
 		// Falha definitiva vai para a trilha de auditoria (spec §8).

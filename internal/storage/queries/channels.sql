@@ -17,7 +17,12 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, true, $8);
 
 -- Sem paginação: o limite por usuário é pequeno (notify.MaxChannels).
 -- name: ListChannels :many
-SELECT * FROM notif_channels WHERE user_id = $1 ORDER BY id DESC;
+SELECT c.id, c.kind, c.config_enc, c.verified_at, c.verify_expires_at, c.enabled, c.created_at,
+       h.last_success_at, h.last_failure_at, h.last_error
+  FROM notif_channels c
+  LEFT JOIN channel_health h ON h.channel_id = c.id
+ WHERE c.user_id = $1
+ ORDER BY c.id DESC;
 
 -- name: GetChannel :one
 SELECT * FROM notif_channels WHERE user_id = $1 AND id = $2;

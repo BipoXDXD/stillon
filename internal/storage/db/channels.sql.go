@@ -139,29 +139,48 @@ func (q *Queries) InsertChannel(ctx context.Context, arg InsertChannelParams) er
 }
 
 const listChannels = `-- name: ListChannels :many
-SELECT id, user_id, kind, config_enc, verified_at, verify_token_hash, verify_expires_at, enabled, created_at FROM notif_channels WHERE user_id = $1 ORDER BY id DESC
+SELECT c.id, c.kind, c.config_enc, c.verified_at, c.verify_expires_at, c.enabled, c.created_at,
+       h.last_success_at, h.last_failure_at, h.last_error
+  FROM notif_channels c
+  LEFT JOIN channel_health h ON h.channel_id = c.id
+ WHERE c.user_id = $1
+ ORDER BY c.id DESC
 `
 
+type ListChannelsRow struct {
+	ID              uuid.UUID
+	Kind            string
+	ConfigEnc       []byte
+	VerifiedAt      *time.Time
+	VerifyExpiresAt *time.Time
+	Enabled         bool
+	CreatedAt       time.Time
+	LastSuccessAt   *time.Time
+	LastFailureAt   *time.Time
+	LastError       *string
+}
+
 // Sem paginação: o limite por usuário é pequeno (notify.MaxChannels).
-func (q *Queries) ListChannels(ctx context.Context, userID uuid.UUID) ([]NotifChannel, error) {
+func (q *Queries) ListChannels(ctx context.Context, userID uuid.UUID) ([]ListChannelsRow, error) {
 	rows, err := q.db.Query(ctx, listChannels, userID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []NotifChannel
+	var items []ListChannelsRow
 	for rows.Next() {
-		var i NotifChannel
+		var i ListChannelsRow
 		if err := rows.Scan(
 			&i.ID,
-			&i.UserID,
 			&i.Kind,
 			&i.ConfigEnc,
 			&i.VerifiedAt,
-			&i.VerifyTokenHash,
 			&i.VerifyExpiresAt,
 			&i.Enabled,
 			&i.CreatedAt,
+			&i.LastSuccessAt,
+			&i.LastFailureAt,
+			&i.LastError,
 		); err != nil {
 			return nil, err
 		}

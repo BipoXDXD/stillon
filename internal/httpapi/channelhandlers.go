@@ -34,13 +34,23 @@ type channelResponse struct {
 	Status    string    `json:"status"`
 	Enabled   bool      `json:"enabled"`
 	CreatedAt time.Time `json:"created_at"`
+	// A última falha definitiva de envio, null se nunca houve. Continua
+	// aqui depois que o canal volta a entregar: o status diz o presente, e
+	// estes dois, o que aconteceu.
+	LastError     *string    `json:"last_error"`
+	LastFailureAt *time.Time `json:"last_failure_at"`
 }
 
 func toChannelResponse(c notify.Channel) channelResponse {
-	return channelResponse{
+	r := channelResponse{
 		ID: c.ID.String(), Kind: string(c.Kind), Hint: c.Hint, Status: string(c.Status),
 		Enabled: c.Enabled, CreatedAt: c.CreatedAt,
 	}
+	if !c.LastFailureAt.IsZero() {
+		motivo, em := string(c.LastError), c.LastFailureAt
+		r.LastError, r.LastFailureAt = &motivo, &em
+	}
+	return r
 }
 
 func (h *ChannelHandlers) List(w http.ResponseWriter, r *http.Request) {

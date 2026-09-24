@@ -73,6 +73,10 @@ type Channel struct {
 	Status    ChannelStatus
 	Enabled   bool
 	CreatedAt time.Time
+	// LastFailureAt e LastError vêm da última falha definitiva de envio
+	// (channel_health). Zero e "" quando nunca falhou de vez.
+	LastFailureAt time.Time
+	LastError     Reason
 }
 
 type ChannelStatus string
@@ -81,6 +85,11 @@ const (
 	StatusVerified ChannelStatus = "verified"
 	StatusPending  ChannelStatus = "pending"
 	StatusExpired  ChannelStatus = "expired"
+	// StatusFailing é o canal verificado cuja última entrega falhou de vez,
+	// sem sucesso depois dela: o webhook foi apagado, o domínio do e-mail
+	// perdeu a verificação. O canal continua recebendo tentativas; o status
+	// existe para que o dono saiba (pendência do Plano 3).
+	StatusFailing ChannelStatus = "failing"
 )
 
 type ChannelInput struct {
@@ -246,14 +255,22 @@ func (s *ChannelService) List(ctx context.Context, userID uuid.UUID) ([]Channel,
 	return out, err
 }
 
-func (s *ChannelService) toChannel(r db.NotifChannel) Channel {
+func (s *ChannelService) toChannel(r db.ListChannelsRow) Channel {
 	c := Channel{ID: r.ID, Kind: Kind(r.Kind), Enabled: r.Enabled, CreatedAt: r.CreatedAt}
 	if dest, err := openConfig(s.box, r.ID, r.ConfigEnc); err == nil {
 		c.Hint = hint(c.Kind, dest)
 	} else {
 		slog.Error("canal com destino ilegível", "channel_id", r.ID)
 	}
+	if r.LastFailureAt != nil {
+		c.LastFailureAt = *r.LastFailureAt
+		if r.LastError != nil {
+			c.LastError = Reason(*r.LastError)
+		}
+	}
 	switch {
+	case r.VerifiedAt != nil && falhandoDepoisDoSucesso(r.LastFailureAt, r.LastSuccessAt):
+		c.Status = StatusFailing
 	case r.VerifiedAt != nil:
 		c.Status = StatusVerified
 	case r.VerifyExpiresAt != nil && !s.clk.Now().Before(*r.VerifyExpiresAt):
@@ -262,6 +279,13 @@ func (s *ChannelService) toChannel(r db.NotifChannel) Channel {
 		c.Status = StatusPending
 	}
 	return c
+}
+
+// falhandoDepoisDoSucesso: houve falha definitiva, e nenhuma entrega deu
+// certo depois dela. Uma entrega que volta a dar certo tira o canal de
+// "failing" sem ação do dono.
+func falhandoDepoisDoSucesso(falha, sucesso *time.Time) bool {
+	return falha != nil && (sucesso == nil || falha.After(*sucesso))
 }
 
 func (s *ChannelService) Delete(ctx context.Context, userID, id uuid.UUID) error {
