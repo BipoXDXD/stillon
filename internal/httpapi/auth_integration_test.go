@@ -16,6 +16,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/BipoXDXD/vigilume/internal/account"
 	"github.com/BipoXDXD/vigilume/internal/auth"
 	"github.com/BipoXDXD/vigilume/internal/clock"
 	"github.com/BipoXDXD/vigilume/internal/config"
@@ -113,6 +114,7 @@ func newAPICom(t *testing.T, ajustar func(*config.Config), ajustarDeps func(*htt
 	discord, email := &discordFalso{}, &carteiroFalso{}
 	deps := httpapi.Deps{
 		Store: store, Sessions: mgr, TOTP: segundoFator,
+		Accounts:    account.NewService(pool, segundoFator, clk, cfg.IPHashKey),
 		Targets:     targets.NewService(pool, box, clk),
 		Incidents:   history.NewService(pool, clk),
 		Channels:    notify.NewChannelService(pool, box, clk, discord, email, cfg.PublicBaseURL),
@@ -311,6 +313,62 @@ func TestFullAuthFlow(t *testing.T) {
 	}
 }
 
+// accessDe lê o access token de uma resposta de login ou de refresh.
+func accessDe(t *testing.T, resp *http.Response) string {
+	t.Helper()
+	var body struct {
+		AccessToken string `json:"access_token"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if body.AccessToken == "" {
+		t.Fatal("a resposta não trouxe access token")
+	}
+	return body.AccessToken
+}
+
+// O access token leva a família do refresh que saiu junto com ele (claim sid,
+// D2 do Plano 5), no login e em cada refresh. É o que GET /sessions usa para
+// marcar a sessão atual.
+func TestAccessTokenCarriesTheSessionFamily(t *testing.T) {
+	a := newAPI(t)
+	c := clientWithJar(t)
+	ctx := context.Background()
+
+	resp := login(t, a, c, testEmail, testPass)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("login devolveu %d", resp.StatusCode)
+	}
+	doLogin, err := auth.ParseAccessToken(testJWTSecret, accessDe(t, resp), a.clk.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var familia uuid.UUID
+	if err := a.pool.QueryRow(ctx,
+		`SELECT family_id FROM sessions WHERE user_id = $1`, a.userID).Scan(&familia); err != nil {
+		t.Fatal(err)
+	}
+	if doLogin.FamilyID != familia {
+		t.Errorf("sid do login = %s, queria a família gravada %s", doLogin.FamilyID, familia)
+	}
+
+	r2 := post(t, c, a.srv.URL+"/api/v1/auth/refresh", nil)
+	defer r2.Body.Close()
+	if r2.StatusCode != http.StatusOK {
+		t.Fatalf("refresh devolveu %d", r2.StatusCode)
+	}
+	doRefresh, err := auth.ParseAccessToken(testJWTSecret, accessDe(t, r2), a.clk.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if doRefresh.FamilyID != familia {
+		t.Errorf("sid do refresh = %s, queria a mesma família %s", doRefresh.FamilyID, familia)
+	}
+}
+
 // E-mail inexistente e senha errada precisam ser indistinguíveis na resposta,
 // senão o endpoint vira oráculo de quais contas existem (spec §5.2).
 //
@@ -349,44 +407,38 @@ func TestLoginDoesNotRevealWhetherAccountExists(t *testing.T) {
 // e-mail inexistente volta em microssegundos e o de senha errada em ~100 ms
 // de Argon2id, e essa diferença enumera as contas (spec §5.2).
 //
-// A comparação é relativa ao custo medido de uma verificação real, em vez de
-// um limiar absoluto, para não depender da velocidade da máquina.
+// A trava conta verificações Argon2id (auth.Argon2Verifications), e não mede
+// relógio: a versão com tempo oscilava sob carga no CI (Task 11). A
+// propriedade é a mesma — cada caminho de falha paga exatamente um Argon2id.
 func TestLoginSpendsTheSameCPUWhetherOrNotTheAccountExists(t *testing.T) {
 	a := newAPI(t)
 	c := clientWithJar(t)
 
-	medir := func(email, senha string) time.Duration {
+	argon2 := func(email, senha string) uint64 {
 		t.Helper()
-		inicio := time.Now()
+		antes := auth.Argon2Verifications()
 		resp := login(t, a, c, email, senha)
 		resp.Body.Close()
-		return time.Since(inicio)
+		if resp.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("login de %s devolveu %d, queria 401", email, resp.StatusCode)
+		}
+		return auth.Argon2Verifications() - antes
 	}
 
-	// Referência: a conta existe e a senha está errada, então o Argon2id roda
-	// de verdade.
-	//
-	// Medida DUAS vezes, ficando com a MENOR. A primeira requisição HTTP do
-	// teste paga o aquecimento a frio (conexão, pool do Postgres, primeiro
-	// toque nas páginas do Argon2), o que inflava a referência e, com ela, o
-	// limiar real/2 — vermelho falso sem defeito nenhum no código. Pegar a
-	// menor das duas remove esse modo de falha sem afrouxar a trava: o limiar
-	// só desce em direção ao custo verdadeiro de um Argon2id, que é
-	// exatamente o que os caminhos sem VerifyDummy não pagam.
-	real := min(medir(testEmail, "errada"), medir(testEmail, "errada"))
-
-	inexistente := medir("ninguem@exemplo.com", testPass)
-	if inexistente < real/2 {
-		t.Errorf("e-mail inexistente custou %v contra %v da verificação real: "+
-			"o tempo de resposta enumera as contas (falta VerifyDummy)", inexistente, real)
+	// Referência: a conta existe e a senha está errada; o Argon2id roda de
+	// verdade.
+	if n := argon2(testEmail, "errada"); n != 1 {
+		t.Fatalf("senha errada: %d verificações Argon2id, queria 1", n)
+	}
+	if n := argon2("ninguem@exemplo.com", testPass); n != 1 {
+		t.Errorf("e-mail inexistente: %d verificações Argon2id, queria 1: "+
+			"o tempo de resposta enumera as contas (falta VerifyDummy)", n)
 	}
 
 	// Conta bloqueada é o terceiro caminho de falha, e também precisa pagar.
 	bloquearConta(t, a)
-	bloqueada := medir(testEmail, testPass)
-	if bloqueada < real/2 {
-		t.Errorf("conta bloqueada custou %v contra %v da verificação real: "+
-			"falta VerifyDummy no caminho de bloqueio", bloqueada, real)
+	if n := argon2(testEmail, testPass); n != 1 {
+		t.Errorf("conta bloqueada: %d verificações Argon2id, queria 1: falta VerifyDummy no caminho de bloqueio", n)
 	}
 }
 
@@ -633,7 +685,7 @@ func TestProtectedRouteRequiresToken(t *testing.T) {
 	}
 
 	// Token com assinatura de outro segredo também não entra.
-	outro, err := auth.NewAccessToken([]byte("outro-segredo-com-32-bytes!!!!!!"), a.userID, a.clk.Now())
+	outro, err := auth.NewAccessToken([]byte("outro-segredo-com-32-bytes!!!!!!"), a.userID, uuid.New(), a.clk.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -643,7 +695,7 @@ func TestProtectedRouteRequiresToken(t *testing.T) {
 
 	// E o token legítimo passa, o que descarta que o 401 venha de qualquer
 	// outra camada da cadeia.
-	bom, err := auth.NewAccessToken(testJWTSecret, a.userID, a.clk.Now())
+	bom, err := auth.NewAccessToken(testJWTSecret, a.userID, uuid.New(), a.clk.Now())
 	if err != nil {
 		t.Fatal(err)
 	}

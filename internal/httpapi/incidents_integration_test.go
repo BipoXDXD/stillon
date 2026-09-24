@@ -112,6 +112,7 @@ func TestIncidentListRejectsBadQueries(t *testing.T) {
 		"limit=101":         {Field: "limit", Reason: "out_of_range"},
 		"limit=x":           {Field: "limit", Reason: "invalid"},
 		"cursor=nao-e-uuid": {Field: "cursor", Reason: "invalid"},
+		"target_id=x":       {Field: "target_id", Reason: "invalid"},
 	} {
 		var env envelopeComCampos
 		resp := chamar(t, a, http.MethodGet, "/api/v1/incidents?"+consulta, tok, nil)
@@ -119,6 +120,38 @@ func TestIncidentListRejectsBadQueries(t *testing.T) {
 		if resp.StatusCode != http.StatusBadRequest || len(env.Error.Fields) != 1 || env.Error.Fields[0] != quer {
 			t.Errorf("%s deu %d/%+v, queria 400 %+v", consulta, resp.StatusCode, env.Error.Fields, quer)
 		}
+	}
+}
+
+// ?target_id= é aditivo (Plano 5): combina com status, e o alvo de outro
+// usuário dá 200 com a lista vazia, não 404.
+//
+// Guarda dupla (D23) na lista vazia do alvo alheio: o t.user_id = $1 de
+// ListIncidents e a RLS de targets e incidents (history.List roda em
+// storage.InUserTx). Sabotar só uma deixa este teste verde; a sabotagem
+// registrada (Task 11) tira o filtro E troca o InUserTx pelo InProberTx, e
+// os incidentes do outro usuário aparecem.
+func TestIncidentListFiltersByTarget(t *testing.T) {
+	a := newAPI(t)
+	tok := tokenDe(t, a, a.userID)
+	alvo, ids := incidentesDe(t, a, tok, 2)
+	// Outro alvo do mesmo dono, também com um incidente resolvido: sem o
+	// filtro, a consulta abaixo traria dois.
+	incidentesDe(t, a, tok, 2)
+
+	var l listaIncidentesJSON
+	lerCorpo(t, chamar(t, a, http.MethodGet, "/api/v1/incidents?target_id="+alvo+"&status=resolved", tok, nil), &l)
+	if len(l.Items) != 1 || l.Items[0].ID != ids[0] {
+		t.Errorf("target_id + status: %+v, queria só %s", l.Items, ids[0])
+	}
+
+	intruso := outroUsuario(t, a)
+	alheio, _ := incidentesDe(t, a, tokenDe(t, a, intruso), 1)
+	resp := chamar(t, a, http.MethodGet, "/api/v1/incidents?target_id="+alheio, tok, nil)
+	var vazia listaIncidentesJSON
+	lerCorpo(t, resp, &vazia)
+	if resp.StatusCode != http.StatusOK || len(vazia.Items) != 0 {
+		t.Errorf("alvo alheio deu %d com %d itens, queria 200 e lista vazia", resp.StatusCode, len(vazia.Items))
 	}
 }
 
@@ -136,6 +169,28 @@ func TestIncidentListPaginates(t *testing.T) {
 	lerCorpo(t, chamar(t, a, http.MethodGet, "/api/v1/incidents?limit=2&cursor="+p1.NextCursor, tok, nil), &p2)
 	if len(p2.Items) != 1 || p2.Items[0].ID != ids[0] || p2.NextCursor != "" {
 		t.Errorf("segunda página: %+v, cursor %q", p2.Items, p2.NextCursor)
+	}
+}
+
+// O cursor pagina dentro do filtro: a segunda página de ?target_id=X traz só
+// o que sobrou de X. O outro alvo do mesmo dono tem incidentes mais antigos
+// que o cursor, e uma segunda página que esquecesse o target_id os traria.
+func TestIncidentListPaginatesWithinTheTarget(t *testing.T) {
+	a := newAPI(t)
+	tok := tokenDe(t, a, a.userID)
+	incidentesDe(t, a, tok, 2) // o outro alvo, antes: ids menores que os de X
+	alvo, ids := incidentesDe(t, a, tok, 3)
+
+	var p1 listaIncidentesJSON
+	lerCorpo(t, chamar(t, a, http.MethodGet, "/api/v1/incidents?target_id="+alvo+"&limit=2", tok, nil), &p1)
+	if len(p1.Items) != 2 || p1.Items[0].ID != ids[2] || p1.Items[1].ID != ids[1] || p1.NextCursor != ids[1] {
+		t.Fatalf("primeira página: %+v, cursor %q", p1.Items, p1.NextCursor)
+	}
+	var p2 listaIncidentesJSON
+	lerCorpo(t, chamar(t, a, http.MethodGet,
+		"/api/v1/incidents?target_id="+alvo+"&limit=2&cursor="+p1.NextCursor, tok, nil), &p2)
+	if len(p2.Items) != 1 || p2.Items[0].ID != ids[0] || p2.NextCursor != "" {
+		t.Errorf("segunda página: %+v, cursor %q; queria só %s e sem cursor", p2.Items, p2.NextCursor, ids[0])
 	}
 }
 

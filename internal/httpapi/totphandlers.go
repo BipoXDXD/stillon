@@ -114,7 +114,7 @@ func (h *AuthHandlers) TOTPVerify(w http.ResponseWriter, r *http.Request) {
 	}
 	now := h.clk.Now()
 
-	userID, err := auth.ParseChallengeToken(h.jwtSecret, req.Challenge, now)
+	userID, stamp, err := auth.ParseChallengeToken(h.jwtSecret, req.Challenge, now)
 	if err != nil {
 		apierr.WriteError(w, r, apierr.CodeUnauthorized)
 		return
@@ -158,7 +158,10 @@ func (h *AuthHandlers) TOTPVerify(w http.ResponseWriter, r *http.Request) {
 		slog.Error("zerar falhas de segundo fator", "erro", err)
 	}
 
-	h.issue(w, r, userID)
+	// O carimbo é o da senha verificada no login, antes do desafio: se ela
+	// mudou desde então (set-password, troca de senha), Issue recusa, e o
+	// desafio obtido com a senha antiga morre com ela.
+	h.issue(w, r, userID, stamp)
 }
 
 type passwordRequest struct {
@@ -169,8 +172,13 @@ type passwordRequest struct {
 // é o mesmo CodeInvalidCredentials do login, pelo motivo do R34: um código
 // distinto aqui contaria ao atacante que a sessão que ele roubou é válida e
 // que só falta a senha.
+//
+// É a verificação do login (auth.CheckPassword, D4 do Plano 5): conta
+// bloqueada é recusada e senha errada conta no bloqueio progressivo. Antes,
+// esta função só comparava a senha, e um access token roubado testava senhas
+// aqui sem nunca travar a conta.
 func (h *AuthHandlers) senhaConfere(w http.ResponseWriter, r *http.Request, user auth.User, senha string) bool {
-	ok, _, err := auth.VerifyPassword(user.PasswordHash, senha)
+	ok, _, err := auth.CheckPassword(r.Context(), h.users, user, senha, h.clk.Now())
 	if err != nil {
 		h.internal(w, r, "verificar senha", err)
 		return false
@@ -189,6 +197,12 @@ func (h *AuthHandlers) senhaConfere(w http.ResponseWriter, r *http.Request, user
 // que uma sessão roubada bastava. O código de recuperação vale no lugar do
 // código do app, senão quem perde o telefone fica sem saída, que foi
 // justamente a lacuna que o R38 deixou.
+//
+// Prova errada ou ausente é 401 invalid_credentials, e NUNCA unauthorized
+// (D24 do Plano 5, apontado pelo Plano 6): unauthorized quer dizer "token
+// recusado", e o painel responde a ele renovando a sessão; um código digitado
+// errado viraria renovação, e depois logout. O código errado conta no mesmo
+// bloqueio do login, como no /totp/verify (R40).
 func (h *AuthHandlers) TOTPDisable(w http.ResponseWriter, r *http.Request) {
 	userID, ok := middleware.UserID(r.Context())
 	if !ok {
@@ -218,16 +232,23 @@ func (h *AuthHandlers) TOTPDisable(w http.ResponseWriter, r *http.Request) {
 	if prova == "" {
 		prova = req.RecoveryCode
 	}
+	now := h.clk.Now()
 	if prova == "" {
 		// Sem a segunda prova o pedido não chega ao serviço: a senha sozinha
-		// nunca desliga o fator.
-		apierr.WriteError(w, r, apierr.CodeUnauthorized)
+		// nunca desliga o fator. Ausente conta como errada.
+		if err := h.users.RecordFailure(r.Context(), userID, now); err != nil {
+			slog.Error("registrar falha de segundo fator", "erro", err)
+		}
+		apierr.WriteError(w, r, apierr.CodeInvalidCredentials)
 		return
 	}
 
-	err = h.totp.Disable(r.Context(), userID, prova, h.clk.Now())
+	err = h.totp.Disable(r.Context(), userID, prova, now)
 	if errors.Is(err, auth.ErrTOTPInvalid) || errors.Is(err, auth.ErrTOTPNotEnrolled) {
-		apierr.WriteError(w, r, apierr.CodeUnauthorized)
+		if err := h.users.RecordFailure(r.Context(), userID, now); err != nil {
+			slog.Error("registrar falha de segundo fator", "erro", err)
+		}
+		apierr.WriteError(w, r, apierr.CodeInvalidCredentials)
 		return
 	}
 	if err != nil {

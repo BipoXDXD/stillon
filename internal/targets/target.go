@@ -12,6 +12,9 @@ import (
 
 var ErrNotFound = errors.New("alvo não encontrado")
 
+// ErrLimitReached: o usuário já tem MaxTargetsPerUser alvos (D17 do Plano 5).
+var ErrLimitReached = errors.New("limite de alvos atingido")
+
 // Target é o que sai do domínio. Os VALORES dos headers não saem nunca (D5):
 // o dono os escreve, o sondador os usa, e ninguém os lê de volta.
 type Target struct {
@@ -100,6 +103,12 @@ const (
 
 	DefaultPageSize int32 = 50
 	MaxPageSize     int32 = 100
+
+	// MaxTargetsPerUser é o teto de alvos por usuário (D17 do Plano 5): o
+	// mesmo número de MaxPageSize, então uma página de GET /targets sempre
+	// cabe todos, e o custo de GET /targets/summary, que não pagina, tem teto
+	// (~33 ms e ~180 KB com 100 alvos, medidos na spec).
+	MaxTargetsPerUser = int64(MaxPageSize)
 
 	// MaxChecksWindow é a janela que a tabela bruta atende (spec §9.1).
 	// Acima disso, a série vem de check_rollup_1h (D6 do Plano 2).

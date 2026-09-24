@@ -14,11 +14,20 @@ import (
 
 type userKey struct{}
 
+type familyKey struct{}
+
 // UserID recupera o usuário autenticado. O segundo retorno é false quando a
 // rota não passou por Authn — um handler protegido deve tratar isso como 401,
 // nunca assumir presença.
 func UserID(ctx context.Context) (uuid.UUID, bool) {
 	id, ok := ctx.Value(userKey{}).(uuid.UUID)
+	return id, ok
+}
+
+// FamilyID recupera a família de sessão do access token (o claim sid). Mesmo
+// contrato de UserID: false quando a rota não passou por Authn.
+func FamilyID(ctx context.Context) (uuid.UUID, bool) {
+	id, ok := ctx.Value(familyKey{}).(uuid.UUID)
 	return id, ok
 }
 
@@ -35,13 +44,14 @@ func Authn(jwtSecret []byte, clk clock.Clock) func(http.Handler) http.Handler {
 				return
 			}
 
-			userID, err := auth.ParseAccessToken(jwtSecret, raw, clk.Now())
+			claims, err := auth.ParseAccessToken(jwtSecret, raw, clk.Now())
 			if err != nil {
 				apierr.WriteError(w, r, apierr.CodeUnauthorized)
 				return
 			}
 
-			ctx := context.WithValue(r.Context(), userKey{}, userID)
+			ctx := context.WithValue(r.Context(), userKey{}, claims.UserID)
+			ctx = context.WithValue(ctx, familyKey{}, claims.FamilyID)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}

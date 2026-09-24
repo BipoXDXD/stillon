@@ -13,6 +13,7 @@ import (
 
 	"github.com/BipoXDXD/vigilume/internal/storage"
 	"github.com/BipoXDXD/vigilume/internal/storage/db"
+	"github.com/BipoXDXD/vigilume/internal/targetstate"
 )
 
 // A projeção pública (spec §10.2). Os tipos daqui são o que a página
@@ -36,12 +37,8 @@ const (
 	// Days é a largura da barra de uptime (spec §10.2).
 	Days = 90
 	// MaxIncidents limita o histórico da página: os mais recentes.
-	MaxIncidents = 20
-	// staleIntervals: o último check mais velho que isto, em intervalos do
-	// alvo, não diz mais nada sobre o presente. É o mesmo 3 da lacuna da
-	// histerese (Plano 3).
-	staleIntervals = 3
-	latencyWindow  = 24 * time.Hour
+	MaxIncidents  = 20
+	latencyWindow = 24 * time.Hour
 	// cacheTTL é o mesmo max-age da resposta: a página é lida quando algo
 	// quebrou, e mil visitantes de IPs diferentes não podem virar mil
 	// agregações de 90 dias no banco.
@@ -189,17 +186,11 @@ func (s *Service) projetar(ctx context.Context, slug string, agora time.Time) (V
 	return v, err
 }
 
-// estado é o do último check, se ele ainda é recente.
+// estado é o do último check, se ele ainda é recente. A regra mora em
+// targetstate, a mesma do dashboard (D15 do Plano 5).
 func estado(it db.ListPublicItemsRow, agora time.Time) State {
-	recente := agora.Sub(it.LastCheckedAt) <= staleIntervals*time.Duration(it.IntervalSec)*time.Second
-	if !it.Enabled || it.LastStatus == "" || !recente {
-		return StateUnknown
-	}
-	switch State(it.LastStatus) {
-	case StateUp, StateDegraded, StateDown:
-		return State(it.LastStatus)
-	}
-	return StateUnknown
+	return State(targetstate.Current(it.Enabled, time.Duration(it.IntervalSec)*time.Second,
+		it.LastStatus, it.LastCheckedAt, agora))
 }
 
 func preencherDias(pi *PublicItem, desde time.Time, linhas []db.ListPublicDailyUptimeRow) {

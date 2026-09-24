@@ -12,6 +12,17 @@ import (
 	"github.com/google/uuid"
 )
 
+const countTargets = `-- name: CountTargets :one
+SELECT count(*) FROM targets WHERE user_id = $1
+`
+
+func (q *Queries) CountTargets(ctx context.Context, userID uuid.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countTargets, userID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const deleteTarget = `-- name: DeleteTarget :execrows
 DELETE FROM targets WHERE user_id = $1 AND id = $2
 `
@@ -135,6 +146,27 @@ func (q *Queries) InsertTarget(ctx context.Context, arg InsertTargetParams) erro
 	return err
 }
 
+const latestUserRollupBucket = `-- name: LatestUserRollupBucket :one
+SELECT coalesce(max(r.bucket), 'epoch'::timestamptz)::timestamptz
+  FROM targets t
+  CROSS JOIN LATERAL (
+       SELECT bucket FROM check_rollup_1h
+        WHERE target_id = t.id
+        ORDER BY bucket DESC LIMIT 1) r
+ WHERE t.user_id = $1
+`
+
+// A marca d'água DO DONO: a hora mais recente já consolidada entre os alvos
+// dele. max(bucket) da tabela inteira não serve: sob a RLS, um dono sem
+// rollups recentes faria o Postgres varrer o índice de bucket da instância
+// inteira, testando a política linha a linha. Sem rollup, a época Unix.
+func (q *Queries) LatestUserRollupBucket(ctx context.Context, userID uuid.UUID) (time.Time, error) {
+	row := q.db.QueryRow(ctx, latestUserRollupBucket, userID)
+	var column_1 time.Time
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const listChecks = `-- name: ListChecks :many
 SELECT c.checked_at, c.status, c.latency_ms, c.status_code, c.error_kind
   FROM checks c
@@ -181,6 +213,221 @@ func (q *Queries) ListChecks(ctx context.Context, arg ListChecksParams) ([]ListC
 			&i.LatencyMS,
 			&i.StatusCode,
 			&i.ErrorKind,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSummaryCurrentHour = `-- name: ListSummaryCurrentHour :many
+SELECT c.target_id, count(*)::int AS total, (count(*) FILTER (WHERE c.status <> 'down'))::int AS ok
+  FROM checks c
+  JOIN targets t ON t.id = c.target_id
+ WHERE t.user_id = $1
+   AND c.checked_at >= $2::timestamptz
+   AND c.checked_at < $3::timestamptz
+ GROUP BY 1
+`
+
+type ListSummaryCurrentHourParams struct {
+	UserID uuid.UUID
+	FromAt time.Time
+	ToAt   time.Time
+}
+
+type ListSummaryCurrentHourRow struct {
+	TargetID uuid.UUID
+	Total    int32
+	Ok       int32
+}
+
+// A hora corrente entra só no uptime, não no spark: só contagens, sem
+// percentil.
+func (q *Queries) ListSummaryCurrentHour(ctx context.Context, arg ListSummaryCurrentHourParams) ([]ListSummaryCurrentHourRow, error) {
+	rows, err := q.db.Query(ctx, listSummaryCurrentHour, arg.UserID, arg.FromAt, arg.ToAt)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListSummaryCurrentHourRow
+	for rows.Next() {
+		var i ListSummaryCurrentHourRow
+		if err := rows.Scan(&i.TargetID, &i.Total, &i.Ok); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSummaryRawHours = `-- name: ListSummaryRawHours :many
+SELECT c.target_id,
+       to_timestamp(floor(extract(epoch FROM c.checked_at) / 3600) * 3600)::timestamptz AS bucket,
+       count(*)::int AS total,
+       (count(*) FILTER (WHERE c.status <> 'down'))::int AS ok,
+       coalesce(percentile_disc(0.50) WITHIN GROUP (ORDER BY c.latency_ms)
+                FILTER (WHERE c.status <> 'down'), 0)::int AS p50
+  FROM checks c
+  JOIN targets t ON t.id = c.target_id
+ WHERE t.user_id = $1
+   AND c.checked_at >= $2::timestamptz
+   AND c.checked_at < $3::timestamptz
+ GROUP BY 1, 2
+`
+
+type ListSummaryRawHoursParams struct {
+	UserID uuid.UUID
+	FromAt time.Time
+	ToAt   time.Time
+}
+
+type ListSummaryRawHoursRow struct {
+	TargetID uuid.UUID
+	Bucket   time.Time
+	Total    int32
+	Ok       int32
+	P50      int32
+}
+
+// As horas cheias ainda não consolidadas, com a MESMA fórmula de
+// ConsolidateRollups. p50 sai 0 numa hora sem sucesso (o sqlc não enxerga a
+// nulidade do percentil); quem lê usa ok = 0 para saber que não há mediana,
+// a mesma regra do CHECK de check_rollup_1h.
+func (q *Queries) ListSummaryRawHours(ctx context.Context, arg ListSummaryRawHoursParams) ([]ListSummaryRawHoursRow, error) {
+	rows, err := q.db.Query(ctx, listSummaryRawHours, arg.UserID, arg.FromAt, arg.ToAt)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListSummaryRawHoursRow
+	for rows.Next() {
+		var i ListSummaryRawHoursRow
+		if err := rows.Scan(
+			&i.TargetID,
+			&i.Bucket,
+			&i.Total,
+			&i.Ok,
+			&i.P50,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSummaryRollups = `-- name: ListSummaryRollups :many
+SELECT r.target_id, r.bucket, r.total, r.ok, r.p50
+  FROM check_rollup_1h r
+  JOIN targets t ON t.id = r.target_id
+ WHERE t.user_id = $1
+   AND r.bucket >= $2::timestamptz
+   AND r.bucket < $3::timestamptz
+`
+
+type ListSummaryRollupsParams struct {
+	UserID uuid.UUID
+	FromAt time.Time
+	ToAt   time.Time
+}
+
+type ListSummaryRollupsRow struct {
+	TargetID uuid.UUID
+	Bucket   time.Time
+	Total    int32
+	Ok       int32
+	P50      *int32
+}
+
+func (q *Queries) ListSummaryRollups(ctx context.Context, arg ListSummaryRollupsParams) ([]ListSummaryRollupsRow, error) {
+	rows, err := q.db.Query(ctx, listSummaryRollups, arg.UserID, arg.FromAt, arg.ToAt)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListSummaryRollupsRow
+	for rows.Next() {
+		var i ListSummaryRollupsRow
+		if err := rows.Scan(
+			&i.TargetID,
+			&i.Bucket,
+			&i.Total,
+			&i.Ok,
+			&i.P50,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listTargetSummaries = `-- name: ListTargetSummaries :many
+
+SELECT t.id, t.name, t.enabled, t.interval_sec,
+       coalesce(lc.status, '')::text AS last_status,
+       coalesce(lc.checked_at, 'epoch'::timestamptz)::timestamptz AS last_checked_at,
+       coalesce(lc.latency_ms, 0)::int AS last_latency_ms,
+       x.id AS open_incident_id
+  FROM targets t
+  LEFT JOIN LATERAL (
+       SELECT c.status, c.checked_at, c.latency_ms FROM checks c
+        WHERE c.target_id = t.id
+        ORDER BY c.checked_at DESC LIMIT 1) lc ON true
+  LEFT JOIN incidents x ON x.target_id = t.id AND x.resolved_at IS NULL
+ WHERE t.user_id = $1
+ ORDER BY t.id DESC
+`
+
+type ListTargetSummariesRow struct {
+	ID             uuid.UUID
+	Name           string
+	Enabled        bool
+	IntervalSec    int32
+	LastStatus     string
+	LastCheckedAt  time.Time
+	LastLatencyMS  int32
+	OpenIncidentID *uuid.UUID
+}
+
+// GET /targets/summary (Plano 5). Todas rodam sob InUserTx E filtram por
+// user_id, como as de cima.
+// Os alvos do dono na ordem de GET /targets, com o último check e o incidente
+// aberto (o índice único parcial garante no máximo um). Alvo sem check volta
+// com last_status ” e last_checked_at na época Unix, como ListPublicItems: o
+// sqlc não enxerga a nulidade de um LEFT JOIN LATERAL.
+func (q *Queries) ListTargetSummaries(ctx context.Context, userID uuid.UUID) ([]ListTargetSummariesRow, error) {
+	rows, err := q.db.Query(ctx, listTargetSummaries, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListTargetSummariesRow
+	for rows.Next() {
+		var i ListTargetSummariesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Enabled,
+			&i.IntervalSec,
+			&i.LastStatus,
+			&i.LastCheckedAt,
+			&i.LastLatencyMS,
+			&i.OpenIncidentID,
 		); err != nil {
 			return nil, err
 		}
@@ -240,6 +487,17 @@ func (q *Queries) ListTargets(ctx context.Context, arg ListTargetsParams) ([]Tar
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockUserTargets = `-- name: LockUserTargets :exec
+SELECT pg_advisory_xact_lock(hashtextextended('vigilume.targets:' || $1::uuid::text, 0))
+`
+
+// O teto de alvos por usuário (Plano 5): contar e inserir sob esta trava.
+// Sem ela, dois POST simultâneos passariam os dois pela contagem.
+func (q *Queries) LockUserTargets(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, lockUserTargets, userID)
+	return err
 }
 
 const updateTarget = `-- name: UpdateTarget :exec

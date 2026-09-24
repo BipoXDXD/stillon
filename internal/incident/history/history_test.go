@@ -165,3 +165,36 @@ func TestAckIsIdempotentAndScopedToTheOwner(t *testing.T) {
 		t.Errorf("ack de id inexistente deu %v", err)
 	}
 }
+
+// target_id restringe a um alvo; o de outro usuário dá lista vazia, e não os
+// incidentes dele.
+//
+// Guarda dupla (D23) na lista vazia do alvo alheio: o t.user_id = $1 de
+// ListIncidents e a RLS de targets e incidents (List roda em InUserTx).
+// Sabotar só uma deixa este teste verde; a sabotagem registrada (Task 11)
+// quebra as duas.
+func TestListFiltersByTarget(t *testing.T) {
+	b := novaBancada(t)
+	ctx := context.Background()
+	dono, intruso := b.usuario(t), b.usuario(t)
+	api, site := b.alvo(t, dono, "API"), b.alvo(t, dono, "Site")
+	alheio := b.alvo(t, intruso, "Alheio")
+	daAPI := b.incidente(t, api, true)
+	b.incidente(t, site, true)
+	b.incidente(t, alheio, true)
+
+	got, err := b.svc.List(ctx, dono, history.Filter{TargetID: &api})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if g := ids(got); len(g) != 1 || g[0] != daAPI {
+		t.Errorf("filtro por alvo = %v, queria só %v", g, daAPI)
+	}
+	got, err = b.svc.List(ctx, dono, history.Filter{TargetID: &alheio})
+	if err != nil || len(got) != 0 {
+		t.Errorf("alvo alheio = %v, %v; queria lista vazia", ids(got), err)
+	}
+	if todos, err := b.svc.List(ctx, dono, history.Filter{}); err != nil || len(todos) != 2 {
+		t.Errorf("sem filtro: %d incidentes, %v; queria 2", len(todos), err)
+	}
+}

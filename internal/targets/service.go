@@ -24,6 +24,9 @@ type Service struct {
 	pool *pgxpool.Pool
 	box  *crypto.Box
 	clk  clock.Clock
+	// depoisDeContar existe para o teste de criação concorrente: roda entre a
+	// contagem de alvos e a inserção.
+	depoisDeContar func()
 }
 
 func NewService(pool *pgxpool.Pool, box *crypto.Box, clk clock.Clock) *Service {
@@ -58,6 +61,21 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, in Input) (Targe
 	// cadastrou vê o estado em segundos, não depois de um intervalo inteiro.
 	now := s.clk.Now()
 	err = storage.InUserTx(ctx, s.pool, userID, func(q *db.Queries) error {
+		// O teto conta e insere sob a trava do usuário: sem ela, dois POST
+		// simultâneos passariam os dois pela contagem.
+		if err := q.LockUserTargets(ctx, userID); err != nil {
+			return fmt.Errorf("travar alvos do usuário: %w", err)
+		}
+		n, err := q.CountTargets(ctx, userID)
+		if err != nil {
+			return fmt.Errorf("contar alvos: %w", err)
+		}
+		if s.depoisDeContar != nil {
+			s.depoisDeContar()
+		}
+		if n >= MaxTargetsPerUser {
+			return ErrLimitReached
+		}
 		return q.InsertTarget(ctx, db.InsertTargetParams{
 			ID: id, UserID: userID, Name: f.Name, URL: f.URL, Method: f.Method,
 			IntervalSec: f.IntervalSec, TimeoutMS: f.TimeoutMS, ExpectedStatus: f.ExpectedStatus,
@@ -65,6 +83,9 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, in Input) (Targe
 			Enabled: in.Enabled, NextRunAt: now, CreatedAt: now,
 		})
 	})
+	if errors.Is(err, ErrLimitReached) {
+		return Target{}, err
+	}
 	if err != nil {
 		return Target{}, fmt.Errorf("gravar alvo: %w", err)
 	}

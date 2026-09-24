@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/netip"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -62,7 +61,7 @@ func (h *AuthHandlers) Login(w http.ResponseWriter, r *http.Request) {
 	}
 	now := h.clk.Now()
 
-	user, err := h.users.ByEmail(r.Context(), normalizarEmail(req.Email))
+	user, err := h.users.ByEmail(r.Context(), auth.NormalizeEmail(req.Email))
 	if errors.Is(err, auth.ErrNotFound) {
 		auth.VerifyDummy()
 		apierr.WriteError(w, r, apierr.CodeInvalidCredentials)
@@ -73,8 +72,9 @@ func (h *AuthHandlers) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// O bloqueio não se anuncia (R34, spec §5.2): a resposta é o mesmo 401
-	// genérico de senha errada e de e-mail inexistente.
+	// CheckPassword recusa a conta bloqueada sem olhar a senha. O bloqueio
+	// não se anuncia (R34, spec §5.2): a resposta é o mesmo 401 genérico de
+	// senha errada e de e-mail inexistente.
 	//
 	// Uma mensagem distinta aqui reintroduziria exatamente a enumeração que o
 	// VerifyDummy existe para impedir, e por um canal muito mais barato que o
@@ -86,30 +86,31 @@ func (h *AuthHandlers) Login(w http.ResponseWriter, r *http.Request) {
 	// A spec escolheu esse lado: o bloqueio dura 15 minutos e o evento fica no
 	// audit log, que é onde essa informação pertence. Não "melhore a UX" aqui
 	// sem reabrir o buraco.
-	if user.IsLocked(now) {
-		// O custo de CPU continua igualado: esta também é uma falha de login.
-		auth.VerifyDummy()
-		apierr.WriteError(w, r, apierr.CodeInvalidCredentials)
-		return
-	}
-
-	ok, needsRehash, err := auth.VerifyPassword(user.PasswordHash, req.Password)
+	ok, needsRehash, err := auth.CheckPassword(r.Context(), h.users, user, req.Password, now)
 	if err != nil {
 		h.internal(w, r, "verificar senha", err)
 		return
 	}
 	if !ok {
-		if err := h.users.RecordFailure(r.Context(), user.ID, now); err != nil {
-			slog.Error("registrar falha de login", "erro", err)
-		}
 		apierr.WriteError(w, r, apierr.CodeInvalidCredentials)
 		return
 	}
 
+	// verificado é o hash que conferiu com a senha: é ele que a sessão (ou o
+	// desafio do segundo fator) leva como prova, e Issue recusa se ele já não
+	// for o hash do usuário (Task 11 do Plano 5).
+	verificado := user.PasswordHash
 	if needsRehash {
+		// O rehash é um compare-and-swap: se um set-password comitou depois da
+		// verificação, ele não grava, a prova continua sendo o hash antigo, e
+		// Issue recusa a sessão. Sem o CAS, o rehash desfazia a redefinição.
 		if novo, err := auth.HashPassword(req.Password); err == nil {
-			if err := h.users.UpdatePasswordHash(r.Context(), user.ID, novo); err != nil {
+			trocou, err := h.users.RehashPassword(r.Context(), user.ID, user.PasswordHash, novo)
+			if err != nil {
 				slog.Error("regravar hash de senha", "erro", err)
+			}
+			if trocou {
+				verificado = novo
 			}
 		}
 	}
@@ -123,7 +124,7 @@ func (h *AuthHandlers) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if enabled {
-		challenge, err := auth.NewChallengeToken(h.jwtSecret, user.ID, now)
+		challenge, err := auth.NewChallengeToken(h.jwtSecret, user.ID, auth.PasswordStamp(verificado), now)
 		if err != nil {
 			h.internal(w, r, "assinar desafio", err)
 			return
@@ -146,7 +147,7 @@ func (h *AuthHandlers) Login(w http.ResponseWriter, r *http.Request) {
 		slog.Error("zerar falhas de login", "erro", err)
 	}
 
-	h.issue(w, r, user.ID)
+	h.issue(w, r, user.ID, auth.PasswordStamp(verificado))
 }
 
 func (h *AuthHandlers) Refresh(w http.ResponseWriter, r *http.Request) {
@@ -175,7 +176,7 @@ func (h *AuthHandlers) Refresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.grantSession(w, r, token, s.ExpiresAt, s.UserID)
+	h.grantSession(w, r, token, s)
 }
 
 func (h *AuthHandlers) Logout(w http.ResponseWriter, r *http.Request) {
@@ -188,22 +189,21 @@ func (h *AuthHandlers) Logout(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (h *AuthHandlers) Me(w http.ResponseWriter, r *http.Request) {
-	userID, ok := middleware.UserID(r.Context())
-	if !ok {
-		apierr.WriteError(w, r, apierr.CodeUnauthorized)
+// issue abre a sessão de um login cuja senha conferiu; stamp é o carimbo do
+// hash verificado. Se a senha mudou no meio (set-password, troca de senha), a
+// resposta é o mesmo 401 da senha errada: a senha que o cliente mandou já não
+// é a da conta (R34).
+func (h *AuthHandlers) issue(w http.ResponseWriter, r *http.Request, userID uuid.UUID, stamp string) {
+	token, s, err := h.sessions.Issue(r.Context(), userID, stamp, h.meta(r))
+	if errors.Is(err, auth.ErrStalePassword) {
+		apierr.WriteError(w, r, apierr.CodeInvalidCredentials)
 		return
 	}
-	apierr.WriteJSON(w, http.StatusOK, map[string]string{"id": userID.String()})
-}
-
-func (h *AuthHandlers) issue(w http.ResponseWriter, r *http.Request, userID uuid.UUID) {
-	token, s, err := h.sessions.Issue(r.Context(), userID, h.meta(r))
 	if err != nil {
 		h.internal(w, r, "emitir sessão", err)
 		return
 	}
-	h.grantSession(w, r, token, s.ExpiresAt, userID)
+	h.grantSession(w, r, token, s)
 }
 
 // grantSession entrega a sessão ao cliente, e a ORDEM aqui é o ponto (item
@@ -218,13 +218,16 @@ func (h *AuthHandlers) issue(w http.ResponseWriter, r *http.Request, userID uuid
 // a sessão no banco. O que ela tira é o cookie do lado do cliente, que é a
 // metade explorável: sessão órfã no banco expira sozinha e ninguém a
 // apresenta; cookie vivo no navegador é credencial em uso.
-func (h *AuthHandlers) grantSession(w http.ResponseWriter, r *http.Request, refresh string, expires time.Time, userID uuid.UUID) {
-	access, err := auth.NewAccessToken(h.jwtSecret, userID, h.clk.Now())
+//
+// O access token leva a família da sessão (claim sid): é a mesma família do
+// refresh que vai no cookie.
+func (h *AuthHandlers) grantSession(w http.ResponseWriter, r *http.Request, refresh string, s auth.Session) {
+	access, err := auth.NewAccessToken(h.jwtSecret, s.UserID, s.FamilyID, h.clk.Now())
 	if err != nil {
 		h.internal(w, r, "assinar access token", err)
 		return
 	}
-	h.setCookie(w, refresh, expires)
+	h.setCookie(w, refresh, s.ExpiresAt)
 	apierr.WriteJSON(w, http.StatusOK, tokenResponse{
 		AccessToken: access,
 		ExpiresIn:   int(auth.AccessTTL.Seconds()),
@@ -247,6 +250,13 @@ func (h *AuthHandlers) setCookie(w http.ResponseWriter, token string, expires ti
 }
 
 func (h *AuthHandlers) clearCookie(w http.ResponseWriter) {
+	apagarCookieDeRefresh(w, h.secureCookie)
+}
+
+// apagarCookieDeRefresh é o logout do lado do navegador. Mora fora do
+// AuthHandlers porque DELETE /sessions/{id} da própria sessão também apaga o
+// cookie, e os atributos têm de ser os mesmos do setCookie.
+func apagarCookieDeRefresh(w http.ResponseWriter, secure bool) {
 	// #nosec G124 -- falso positivo: mesmo caso do setCookie; Secure vem de PUBLIC_BASE_URL (routes.go) para não quebrar o desenvolvimento local sem TLS, com HttpOnly e SameSite=Strict fixos.
 	http.SetCookie(w, &http.Cookie{
 		Name:     refreshCookieName,
@@ -254,7 +264,7 @@ func (h *AuthHandlers) clearCookie(w http.ResponseWriter) {
 		Path:     "/api/v1/auth",
 		MaxAge:   -1,
 		HttpOnly: true,
-		Secure:   h.secureCookie,
+		Secure:   secure,
 		SameSite: http.SameSiteStrictMode,
 	})
 }
@@ -319,23 +329,4 @@ func decodeJSONWith(w http.ResponseWriter, r *http.Request, dst any, strict bool
 		return false
 	}
 	return true
-}
-
-// normalizarEmail tira apenas o espaço em volta. O caso real é o
-// autocompletar do celular, que costuma acrescentar um espaço à direita:
-// sem isto, " pessoa@exemplo.com " devolve 401 para a credencial certa.
-//
-// NÃO aplica ToLower de propósito. A coluna é citext, então a caixa já é
-// comparada sem distinção no banco; baixar a caixa aqui seria redundante e,
-// por rodar só no login, mascararia a ausência do citext caso uma migration
-// futura trocasse o tipo da coluna — o login continuaria funcionando e o
-// cadastro passaria a gravar caixa mista sem que nenhum teste reclamasse.
-//
-// PENDENTE: esta função precisa migrar para o pacote auth assim que a rota
-// de cadastro existir, e o cadastro tem de usar EXATAMENTE a mesma
-// normalização. Duas normalizações diferentes entre cadastro e login criam
-// uma discrepância pior que o problema original: o usuário cadastra um
-// e-mail que nunca mais consegue usar para entrar.
-func normalizarEmail(email string) string {
-	return strings.TrimSpace(email)
 }

@@ -180,15 +180,17 @@ SELECT i.id, i.target_id, t.name AS target_name, i.started_at, i.resolved_at, i.
  WHERE t.user_id = $1
    AND ($2::bool IS NULL OR (i.resolved_at IS NULL) = $2::bool)
    AND ($3::uuid IS NULL OR i.id < $3::uuid)
+   AND ($4::uuid IS NULL OR i.target_id = $4::uuid)
  ORDER BY i.id DESC
- LIMIT $4::int
+ LIMIT $5::int
 `
 
 type ListIncidentsParams struct {
-	UserID  uuid.UUID
-	Open    *bool
-	Before  *uuid.UUID
-	MaxRows int32
+	UserID   uuid.UUID
+	Open     *bool
+	Before   *uuid.UUID
+	TargetID *uuid.UUID
+	MaxRows  int32
 }
 
 type ListIncidentsRow struct {
@@ -203,6 +205,8 @@ type ListIncidentsRow struct {
 
 // Histórico (API): rodam sob InUserTx e filtram por user_id, como as de
 // targets.sql. open NULL lista tudo; true só abertos; false só resolvidos.
+// target_id NULL lista todos os alvos; um id de alvo alheio não casa com
+// nada e devolve a lista vazia (reconciliação dos Planos 5–7).
 // O id é UUIDv7, gerado quando o incidente abre: ordenar por ele é ordenar
 // pela abertura, e o cursor é o último id da página anterior.
 func (q *Queries) ListIncidents(ctx context.Context, arg ListIncidentsParams) ([]ListIncidentsRow, error) {
@@ -210,6 +214,7 @@ func (q *Queries) ListIncidents(ctx context.Context, arg ListIncidentsParams) ([
 		arg.UserID,
 		arg.Open,
 		arg.Before,
+		arg.TargetID,
 		arg.MaxRows,
 	)
 	if err != nil {

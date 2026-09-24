@@ -3,6 +3,8 @@ package auth
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -27,6 +29,10 @@ var (
 	// ErrTokenReuse indica que um refresh já consumido reapareceu — evidência
 	// de roubo. Quem chama deve tratar como incidente de segurança.
 	ErrTokenReuse = errors.New("reúso de refresh token detectado")
+	// ErrStalePassword: a senha verificada para abrir a sessão já não é a do
+	// usuário (um set-password ou uma troca de senha comitou no meio do
+	// login). Quem chama responde como a senha errada: invalid_credentials.
+	ErrStalePassword = errors.New("a senha mudou depois de verificada")
 )
 
 type Session struct {
@@ -62,8 +68,35 @@ func NewManager(store Store, clk clock.Clock, ipKey []byte) *Manager {
 	return &Manager{store: store, clk: clk, ipKey: ipKey}
 }
 
-// Issue cria uma família nova. É o caminho do login.
-func (m *Manager) Issue(ctx context.Context, userID uuid.UUID, meta Meta) (string, Session, error) {
+// PasswordStamp é o carimbo de um hash de senha: o SHA-256 dele, em base64url.
+// É o que Issue recebe como prova de que a senha foi verificada, e o que o
+// desafio do segundo fator carrega entre a senha e o código. O hash em si não
+// sai do servidor; o carimbo só serve para comparar com o hash atual.
+func PasswordStamp(hash string) string {
+	sum := sha256.Sum256([]byte(hash))
+	return base64.RawURLEncoding.EncodeToString(sum[:])
+}
+
+// Issue cria uma família nova. É o caminho do login, e só depois de uma senha
+// verificada: stamp é o PasswordStamp do hash que conferiu com ela.
+//
+// Sob a trava do usuário (D1 do Plano 5), Issue confere que o hash atual ainda
+// é o verificado, e recusa com ErrStalePassword se não for. As duas metades
+// são necessárias. Sem a reconferência, um login que verificou a senha ANTIGA
+// e chegou aqui depois de um set-password (ou de uma troca de senha) abria uma
+// sessão que sobrevivia à redefinição. Sem a trava, a reconferência passaria,
+// o set-password comitaria enquanto a sessão nova ainda não existia para ele,
+// e ela sobreviveria do mesmo jeito. Com as duas, ou a redefinição comita
+// antes (e a reconferência recusa), ou a sessão comita antes (e a redefinição,
+// que pega a mesma trava, a revoga). TestLoginRacingAPasswordReset
+// (internal/httpapi) prova as duas ordens.
+//
+// A trava do usuário vem antes de qualquer outra coisa, como em toda
+// transação que muda sessions; Issue não trava linha nenhuma de sessions.
+func (m *Manager) Issue(ctx context.Context, userID uuid.UUID, stamp string, meta Meta) (string, Session, error) {
+	if stamp == "" {
+		return "", Session{}, errors.New("emitir sessão: sem o carimbo da senha verificada")
+	}
 	familyID, err := uuid.NewV7()
 	if err != nil {
 		return "", Session{}, fmt.Errorf("gerar família: %w", err)
@@ -72,6 +105,19 @@ func (m *Manager) Issue(ctx context.Context, userID uuid.UUID, meta Meta) (strin
 	var token string
 	var s Session
 	err = m.store.InTx(ctx, func(ctx context.Context, tx Tx) error {
+		if err := tx.LockUserSessions(ctx, userID); err != nil {
+			return err
+		}
+		hash, err := tx.UserPasswordHash(ctx, userID)
+		if errors.Is(err, ErrNotFound) {
+			return ErrStalePassword
+		}
+		if err != nil {
+			return err
+		}
+		if subtle.ConstantTimeCompare([]byte(PasswordStamp(hash)), []byte(stamp)) != 1 {
+			return ErrStalePassword
+		}
 		token, s, err = m.insert(ctx, tx, userID, familyID, meta)
 		return err
 	})
@@ -100,7 +146,7 @@ func (m *Manager) Rotate(ctx context.Context, token string, meta Meta) (string, 
 	var reuso bool
 
 	err := m.store.InTx(ctx, func(ctx context.Context, tx Tx) error {
-		cur, err := tx.LockSessionByHash(ctx, hash)
+		cur, err := travarSessao(ctx, tx, hash)
 		if errors.Is(err, ErrNotFound) {
 			return ErrInvalidSession
 		}
@@ -167,10 +213,10 @@ func (m *Manager) Revoke(ctx context.Context, token string) error {
 	hash := crypto.HashToken(token)
 	now := m.clk.Now()
 	return m.store.InTx(ctx, func(ctx context.Context, tx Tx) error {
-		// LockSessionByHash trava a linha com FOR UPDATE, o que fecha a
-		// corrida com uma rotação simultânea: o logout não pode ler a família
-		// e revogá-la enquanto uma rotação insere um sucessor nela.
-		cur, err := tx.LockSessionByHash(ctx, hash)
+		// A trava do usuário, e não a da linha, é o que fecha a corrida com
+		// uma rotação simultânea: o cookie apresentado pode ser um refresh
+		// antigo, e a linha viva que a rotação trava é outra (D1 do Plano 5).
+		cur, err := travarSessao(ctx, tx, hash)
 		if errors.Is(err, ErrNotFound) {
 			return nil // R28
 		}
@@ -179,6 +225,31 @@ func (m *Manager) Revoke(ctx context.Context, token string) error {
 		}
 		return tx.RevokeFamily(ctx, cur.FamilyID, now)
 	})
+}
+
+// travarSessao pega a trava do usuário ANTES da trava da linha (D1 do Plano
+// 5), e toda transação que muda sessões segue essa ordem: é o que impede o
+// ciclo entre duas delas.
+//
+// A trava da linha sozinha não basta. Em READ COMMITTED, o UPDATE que revoga
+// uma família espera a linha viva que uma rotação travou; a rotação insere o
+// sucessor e comita; o UPDATE revoga a linha que esperou e não enxerga o
+// sucessor, que entrou depois do snapshot dele. A família "revogada" seguia
+// viva pelo sucessor (TestRevokingDuringRotationLeavesNothingAlive). Com a
+// trava do usuário, a rotação termina antes de a revogação começar, e o
+// snapshot da revogação já inclui o sucessor.
+//
+// A primeira leitura é sem trava e serve só para descobrir o usuário; a linha
+// é relida, travada, logo depois, e é essa segunda leitura que vale.
+func travarSessao(ctx context.Context, tx Tx, hash []byte) (SessionRow, error) {
+	userID, err := tx.SessionUserByHash(ctx, hash)
+	if err != nil {
+		return SessionRow{}, err
+	}
+	if err := tx.LockUserSessions(ctx, userID); err != nil {
+		return SessionRow{}, err
+	}
+	return tx.LockSessionByHash(ctx, hash)
 }
 
 func (m *Manager) insert(ctx context.Context, tx Tx, userID, familyID uuid.UUID, meta Meta) (string, Session, error) {

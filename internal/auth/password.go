@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"unicode/utf8"
 
 	"golang.org/x/crypto/argon2"
 )
@@ -23,6 +25,39 @@ const (
 )
 
 var ErrInvalidHash = errors.New("hash de senha malformado")
+
+// Política de senha NOVA (D3 do Plano 5), da NIST 800-63B-4 §3.1.1.2: 15
+// caracteres no mínimo, porque o segundo fator é opcional e a senha pode ser o
+// único fator; aceitar ao menos 64; nenhuma regra de composição. O máximo de
+// 128 dá folga a gerenciadores de senha e mantém o pior caso em 512 bytes.
+//
+// Vale para senha nova (vigilume user create, set-password, POST
+// /auth/password). O login continua aceitando uma senha antiga mais curta.
+const (
+	MinPasswordLen = 15
+	MaxPasswordLen = 128
+)
+
+// Motivos de recusa, no vocabulário fechado dos fields de erro da API.
+const (
+	ReasonTooShort = "too_short"
+	ReasonTooLong  = "too_long"
+)
+
+// ValidateNewPassword devolve "" quando a senha serve, ou o motivo da recusa.
+//
+// Conta code points, e não bytes (NIST: cada code point é um caractere): "é"
+// tem dois bytes e é um caractere. Não normaliza nem apara: espaço é caractere
+// como outro qualquer, e a senha é verificada inteira, como foi digitada.
+func ValidateNewPassword(plain string) string {
+	switch n := utf8.RuneCountInString(plain); {
+	case n < MinPasswordLen:
+		return ReasonTooShort
+	case n > MaxPasswordLen:
+		return ReasonTooLong
+	}
+	return ""
+}
 
 // HashPassword gera um hash no formato PHC, com salt aleatório.
 func HashPassword(plain string) (string, error) {
@@ -45,6 +80,17 @@ func HashPasswordWith(plain string, salt []byte, memory, time uint32, threads ui
 	)
 }
 
+// verificacoes conta os Argon2id de verificação (VerifyPassword, e por ela
+// VerifyDummy). Ver Argon2Verifications.
+var verificacoes atomic.Uint64
+
+// Argon2Verifications devolve quantas verificações de senha com Argon2id o
+// processo já fez. Existe para os testes que travam "todo caminho de falha
+// paga um Argon2id" (e-mail inexistente, conta bloqueada, senha errada)
+// contando verificações, e não medindo relógio: a medida de tempo oscilava
+// sob carga no CI (Task 11 do Plano 5). É só leitura; não muda nada.
+func Argon2Verifications() uint64 { return verificacoes.Load() }
+
 // VerifyPassword confere a senha e informa se o hash precisa ser refeito.
 //
 // needsRehash permite subir o custo do Argon2 no futuro sem invalidar senha
@@ -60,6 +106,7 @@ func VerifyPassword(encoded, plain string) (ok bool, needsRehash bool, err error
 	// comprimento é sempre argonKeyLen (32), e estourar uint32 exigiria um
 	// hash de gigabytes, impedido pelo formato e pelo body limit.
 	got := argon2.IDKey([]byte(plain), salt, time, memory, threads, uint32(len(want)))
+	verificacoes.Add(1)
 
 	// Comparação em tempo constante: bytes.Equal sai cedo na primeira
 	// diferença e vazaria informação por tempo.

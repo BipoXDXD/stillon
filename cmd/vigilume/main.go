@@ -14,6 +14,7 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
+	"github.com/BipoXDXD/vigilume/internal/account"
 	"github.com/BipoXDXD/vigilume/internal/auth"
 	"github.com/BipoXDXD/vigilume/internal/clock"
 	"github.com/BipoXDXD/vigilume/internal/config"
@@ -31,7 +32,25 @@ import (
 // totpIssuer é o nome que aparece no app autenticador do usuário.
 const totpIssuer = "Vigilume"
 
+// subcomandos são os modos do binário que não sobem o servidor. O primeiro
+// argumento escolhe um deles; sem subcomando, o processo sobe o servidor
+// (--role). O Plano 7 acrescenta healthcheck e version neste mesmo mapa.
+var subcomandos = map[string]func(ctx context.Context, args []string) int{
+	"user": func(ctx context.Context, args []string) int {
+		return runUser(ctx, args, stdinDoProcesso(), os.Stdout, os.Stderr, os.Getenv)
+	},
+}
+
 func main() {
+	if len(os.Args) > 1 {
+		if sub, ok := subcomandos[os.Args[1]]; ok {
+			ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+			codigo := sub(ctx, os.Args[2:])
+			stop()
+			os.Exit(codigo)
+		}
+	}
+
 	role := flag.String("role", "", "all | api | prober (sobrepõe a env ROLE)")
 	flag.Parse()
 
@@ -138,10 +157,12 @@ func run(ctx context.Context, cfg *config.Config) error {
 
 	if cfg.Role.RunsAPI() {
 		store := auth.NewPGStore(pool)
+		segundoFator := auth.NewTOTP(pool, box, totpIssuer)
 		deps := httpapi.Deps{
 			Store:       store,
 			Sessions:    auth.NewManager(store, clk, cfg.IPHashKey),
-			TOTP:        auth.NewTOTP(pool, box, totpIssuer),
+			TOTP:        segundoFator,
+			Accounts:    account.NewService(pool, segundoFator, clk, cfg.IPHashKey),
 			Targets:     targets.NewService(pool, box, clk),
 			Incidents:   history.NewService(pool, clk),
 			Channels:    notify.NewChannelService(pool, box, clk, notify.NewDiscord(), verificador(cfg), cfg.PublicBaseURL),

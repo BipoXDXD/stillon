@@ -315,6 +315,8 @@ func (h *TargetHandlers) falhou(w http.ResponseWriter, r *http.Request, op strin
 	switch {
 	case errors.Is(err, targets.ErrNotFound):
 		apierr.WriteError(w, r, apierr.CodeNotFound)
+	case errors.Is(err, targets.ErrLimitReached):
+		apierr.WriteError(w, r, apierr.CodeTargetLimit)
 	case errors.As(err, &verr):
 		campos := make([]apierr.FieldError, 0, len(verr.Fields))
 		for _, f := range verr.Fields {
@@ -334,6 +336,58 @@ func usuario(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {
 		apierr.WriteError(w, r, apierr.CodeUnauthorized)
 	}
 	return id, ok
+}
+
+type sparkResponse struct {
+	Bucket time.Time `json:"bucket"`
+	Total  int32     `json:"total"`
+	OK     int32     `json:"ok"`
+	P50MS  *int32    `json:"p50_ms"`
+}
+
+// targetSummaryResponse é o item de GET /targets/summary, no shape do
+// contrato dos Planos 5–7. Campo a campo, como targetResponse: nada de URL
+// nem de headers.
+type targetSummaryResponse struct {
+	ID             string          `json:"id"`
+	Name           string          `json:"name"`
+	Enabled        bool            `json:"enabled"`
+	State          string          `json:"state"`
+	LastCheckedAt  *time.Time      `json:"last_checked_at"`
+	LastLatencyMS  *int32          `json:"last_latency_ms"`
+	Uptime24h      *float64        `json:"uptime_24h"`
+	OpenIncidentID *string         `json:"open_incident_id"`
+	Spark          []sparkResponse `json:"spark"`
+}
+
+// Summary é GET /targets/summary: o dashboard numa chamada só (spec §11.3),
+// sem paginação (o teto de alvos por usuário é o limite).
+func (h *TargetHandlers) Summary(w http.ResponseWriter, r *http.Request) {
+	userID, ok := usuario(w, r)
+	if !ok {
+		return
+	}
+	resumo, err := h.svc.Summary(r.Context(), userID)
+	if h.falhou(w, r, "resumir alvos", err) {
+		return
+	}
+	itens := make([]targetSummaryResponse, 0, len(resumo))
+	for _, s := range resumo {
+		item := targetSummaryResponse{
+			ID: s.ID.String(), Name: s.Name, Enabled: s.Enabled, State: string(s.State),
+			LastCheckedAt: s.LastCheckedAt, LastLatencyMS: s.LastLatencyMS, Uptime24h: s.Uptime24h,
+			Spark: make([]sparkResponse, 0, len(s.Spark)),
+		}
+		if s.OpenIncidentID != nil {
+			id := s.OpenIncidentID.String()
+			item.OpenIncidentID = &id
+		}
+		for _, hr := range s.Spark {
+			item.Spark = append(item.Spark, sparkResponse{Bucket: hr.Bucket, Total: hr.Total, OK: hr.OK, P50MS: hr.P50})
+		}
+		itens = append(itens, item)
+	}
+	apierr.WriteJSON(w, http.StatusOK, map[string]any{"items": itens})
 }
 
 // pathID lê o {id} da rota. Malformado é 404 (D16): o recurso não existe de

@@ -223,7 +223,7 @@ func TestAPIRoleWiresIncidentsChannelsAndReadyz(t *testing.T) {
 	fim := make(chan error, 1)
 	go func() { fim <- run(runCtx, cfg) }()
 
-	tok, err := auth.NewAccessToken(chave, dono, time.Now())
+	tok, err := auth.NewAccessToken(chave, dono, uuid.New(), time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}

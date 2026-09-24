@@ -144,3 +144,32 @@ func TestVerifyPasswordRejectsOutOfRangeParams(t *testing.T) {
 		})
 	}
 }
+
+// A política conta code points, não bytes (NIST 800-63B-4: cada code point é
+// um caractere). As bordas multibyte são as que uma contagem por len() erra:
+// 128 claves de sol têm 512 bytes e ainda cabem.
+func TestValidateNewPasswordCountsCodePoints(t *testing.T) {
+	casos := []struct {
+		nome   string
+		senha  string
+		motivo string
+	}{
+		{"vazia", "", auth.ReasonTooShort},
+		{"14 caracteres", strings.Repeat("a", 14), auth.ReasonTooShort},
+		{"15 caracteres", strings.Repeat("a", 15), ""},
+		{"15 espaços", strings.Repeat(" ", 15), ""},
+		{"128 caracteres", strings.Repeat("a", 128), ""},
+		{"129 caracteres", strings.Repeat("a", 129), auth.ReasonTooLong},
+		{"14 de dois bytes", strings.Repeat("é", 14), auth.ReasonTooShort},
+		{"15 de quatro bytes", strings.Repeat("𝄞", 15), ""},
+		{"128 de quatro bytes", strings.Repeat("𝄞", 128), ""},
+		{"129 de quatro bytes", strings.Repeat("𝄞", 129), auth.ReasonTooLong},
+	}
+	for _, c := range casos {
+		t.Run(c.nome, func(t *testing.T) {
+			if got := auth.ValidateNewPassword(c.senha); got != c.motivo {
+				t.Errorf("ValidateNewPassword = %q, queria %q", got, c.motivo)
+			}
+		})
+	}
+}

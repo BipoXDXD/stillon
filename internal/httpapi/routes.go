@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/BipoXDXD/vigilume/internal/account"
 	"github.com/BipoXDXD/vigilume/internal/apierr"
 	"github.com/BipoXDXD/vigilume/internal/auth"
 	"github.com/BipoXDXD/vigilume/internal/clock"
@@ -35,9 +36,11 @@ const verifyBodyBytes = 1 << 10
 // Deps reúne o que as rotas consomem. Virou struct quando o sétimo
 // parâmetro chegou: a lista posicional já não se lia.
 type Deps struct {
-	Store     *auth.PGStore
-	Sessions  *auth.Manager
-	TOTP      *auth.TOTP
+	Store    *auth.PGStore
+	Sessions *auth.Manager
+	TOTP     *auth.TOTP
+	// Accounts é a conta do dono: GET /me e POST /auth/password (Plano 5).
+	Accounts  *account.Service
 	Targets   *targets.Service
 	Incidents *history.Service
 	Channels  *notify.ChannelService
@@ -62,6 +65,7 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	ih := NewIncidentHandlers(d.Incidents)
 	ch := NewChannelHandlers(d.Channels)
 	sp := NewStatusPageHandlers(d.StatusPages, cfg.PublicBaseURL)
+	ah := NewAccountHandlers(d.Accounts, cfg.TrustedProxies, secureCookie)
 	authn := middleware.Authn(cfg.JWTSecret, d.Clock)
 
 	mux := http.NewServeMux()
@@ -81,24 +85,31 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	// Sem isso, o próprio lockout viraria o ataque — negação de serviço por
 	// bloqueio de conta alheia, que é um problema real em sistemas com
 	// lockout. Não afrouxe este limitador sem pensar nisso.
-	mux.Handle("POST /api/v1/auth/login",
-		middleware.RateLimit(ctx, 10, 5, cfg.TrustedProxies)(http.HandlerFunc(h.Login)))
+	//
+	// Uma instância só, e não uma por rota: a troca de senha divide o balde do
+	// login (D5 do Plano 5; contrato dos Planos 5–7, "mesmo limite por IP da
+	// rota de login"). Com instâncias separadas, quem adivinha senha dobraria
+	// o orçamento alternando as duas rotas.
+	limiteLogin := middleware.RateLimit(ctx, 10, 5, cfg.TrustedProxies)
+	mux.Handle("POST /api/v1/auth/login", limiteLogin(http.HandlerFunc(h.Login)))
+	mux.Handle("POST /api/v1/auth/password", limiteLogin(authn(http.HandlerFunc(ah.ChangePassword))))
 	mux.Handle("POST /api/v1/auth/refresh", http.HandlerFunc(h.Refresh))
 	mux.Handle("POST /api/v1/auth/logout", http.HandlerFunc(h.Logout))
 
-	mux.Handle("POST /api/v1/auth/totp/enroll", authn(http.HandlerFunc(h.TOTPEnroll)))
-	mux.Handle("POST /api/v1/auth/totp/confirm", authn(http.HandlerFunc(h.TOTPConfirm)))
+	// As três exigem a família do token viva (D11, Task 11): um token de
+	// sessão encerrada não mexe no 2FA.
+	viva := ah.exigirSessaoViva
+	mux.Handle("POST /api/v1/auth/totp/enroll", authn(viva(http.HandlerFunc(h.TOTPEnroll))))
+	mux.Handle("POST /api/v1/auth/totp/confirm", authn(viva(http.HandlerFunc(h.TOTPConfirm))))
 	// Desativar é a saída que o R38 tirou. Exige senha E posse do fator, no
 	// handler — a sessão sozinha aqui seria o bypass de volta.
-	mux.Handle("POST /api/v1/auth/totp/disable", authn(http.HandlerFunc(h.TOTPDisable)))
+	mux.Handle("POST /api/v1/auth/totp/disable", authn(viva(http.HandlerFunc(h.TOTPDisable))))
 	// Verify não passa por authn: o usuário ainda não tem sessão, só o
 	// desafio. O limitador cobre o lugar do bloqueio por conta, que aqui não
 	// se aplica — a senha já foi acertada, o que resta é adivinhar seis
 	// dígitos.
 	mux.Handle("POST /api/v1/auth/totp/verify",
 		middleware.RateLimit(ctx, 20, 5, cfg.TrustedProxies)(http.HandlerFunc(h.TOTPVerify)))
-
-	mux.Handle("GET /api/v1/me", authn(http.HandlerFunc(h.Me)))
 
 	// Rotas de recurso: Authn primeiro, depois o limite por USUÁRIO (spec
 	// §5.7), que precisa do usuário que Authn põe no contexto. Uma instância
@@ -110,8 +121,14 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	porUsuario := middleware.RateLimitUser(ctx, 60, 20)
 	protegida := func(fn http.HandlerFunc) http.Handler { return authn(porUsuario(fn)) }
 
+	mux.Handle("GET /api/v1/me", protegida(ah.Me))
+	mux.Handle("GET /api/v1/sessions", protegida(ah.ListSessions))
+	mux.Handle("DELETE /api/v1/sessions/{id}", protegida(ah.RevokeSession))
+
 	mux.Handle("GET /api/v1/targets", protegida(th.List))
 	mux.Handle("POST /api/v1/targets", protegida(th.Create))
+	// O literal é mais específico que {id} e ganha no ServeMux, sem conflito.
+	mux.Handle("GET /api/v1/targets/summary", protegida(th.Summary))
 	mux.Handle("GET /api/v1/targets/{id}", protegida(th.Get))
 	mux.Handle("PATCH /api/v1/targets/{id}", protegida(th.Update))
 	mux.Handle("DELETE /api/v1/targets/{id}", protegida(th.Delete))

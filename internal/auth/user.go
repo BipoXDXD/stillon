@@ -4,10 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+
+	"github.com/BipoXDXD/vigilume/internal/storage/db"
 )
 
 // LockThreshold e LockDuration implementam o bloqueio progressivo da
@@ -31,12 +35,59 @@ func (u User) IsLocked(now time.Time) bool {
 	return u.LockedUntil != nil && now.Before(*u.LockedUntil)
 }
 
+// NormalizeEmail tira apenas o espaço em volta. O caso real é o autocompletar
+// do celular, que costuma acrescentar um espaço à direita: sem isto,
+// " pessoa@exemplo.com " devolve 401 para a credencial certa.
+//
+// É a MESMA função no login e no cadastro pelo CLI, de propósito: duas
+// normalizações diferentes criam o e-mail que cadastra e nunca mais entra.
+//
+// NÃO aplica ToLower. A coluna é citext, então a caixa já é comparada sem
+// distinção no banco; baixar a caixa aqui mascararia a ausência do citext caso
+// uma migration futura trocasse o tipo da coluna.
+func NormalizeEmail(email string) string {
+	return strings.TrimSpace(email)
+}
+
+// CheckPassword é a verificação de senha do login, e de toda rota que pede a
+// senha de novo (troca de senha, cadastro e desativação do segundo fator; D4
+// do Plano 5). Custa um Argon2id em todo caminho.
+//
+// Conta bloqueada é recusada sem olhar a senha, pagando VerifyDummy: o
+// bloqueio não se anuncia (R34), nem pela resposta nem pelo tempo. Senha
+// errada conta no bloqueio progressivo: sem isto, uma rota que pede a senha
+// vira oráculo de senha limitado só por IP para quem tem um access token
+// roubado. O sucesso NÃO zera o contador; quem chama decide quando o
+// processo de autenticação terminou (com segundo fator, é depois dele).
+//
+// needsRehash só vale quando ok.
+func CheckPassword(ctx context.Context, users UserStore, u User, plain string, now time.Time) (ok, needsRehash bool, err error) {
+	if u.IsLocked(now) {
+		VerifyDummy()
+		return false, false, nil
+	}
+	ok, needsRehash, err = VerifyPassword(u.PasswordHash, plain)
+	if err != nil {
+		return false, false, err
+	}
+	if !ok {
+		// Falhar ao registrar não muda a resposta: a senha estava errada.
+		if err := users.RecordFailure(ctx, u.ID, now); err != nil {
+			slog.Error("registrar falha de senha", "erro", err)
+		}
+		return false, false, nil
+	}
+	return true, needsRehash, nil
+}
+
 type UserStore interface {
 	ByEmail(ctx context.Context, email string) (User, error)
 	ByID(ctx context.Context, userID uuid.UUID) (User, error)
 	RecordFailure(ctx context.Context, userID uuid.UUID, at time.Time) error
 	ResetFailures(ctx context.Context, userID uuid.UUID) error
-	UpdatePasswordHash(ctx context.Context, userID uuid.UUID, hash string) error
+	// RehashPassword troca oldHash por newHash só se oldHash ainda for o hash
+	// gravado; swapped diz se trocou.
+	RehashPassword(ctx context.Context, userID uuid.UUID, oldHash, newHash string) (swapped bool, err error)
 }
 
 func (s *PGStore) ByEmail(ctx context.Context, email string) (User, error) {
@@ -103,13 +154,16 @@ func (s *PGStore) ResetFailures(ctx context.Context, userID uuid.UUID) error {
 	return nil
 }
 
-func (s *PGStore) UpdatePasswordHash(ctx context.Context, userID uuid.UUID, hash string) error {
-	_, err := s.pool.Exec(ctx,
-		`UPDATE users SET password_hash = $2 WHERE id = $1`, userID, hash)
+// RehashPassword é o rehash do login, e é um compare-and-swap (Task 11 do
+// Plano 5). A versão anterior gravava sem condição: um login que verificou a
+// senha ANTIGA e regravou o hash dela depois de um set-password concorrente
+// desfazia a redefinição, e a senha antiga voltava a valer.
+func (s *PGStore) RehashPassword(ctx context.Context, userID uuid.UUID, oldHash, newHash string) (bool, error) {
+	n, err := db.New(s.pool).RehashUser(ctx, db.RehashUserParams{ID: userID, OldHash: oldHash, NewHash: newHash})
 	if err != nil {
-		return fmt.Errorf("atualizar hash de senha: %w", err)
+		return false, fmt.Errorf("atualizar hash de senha: %w", err)
 	}
-	return nil
+	return n == 1, nil
 }
 
 // ByID atende os dois caminhos de TOTP que só têm o id vindo do token: o

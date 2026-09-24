@@ -10,6 +10,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/BipoXDXD/vigilume/internal/storage/db"
 )
 
 var ErrNotFound = errors.New("registro não encontrado")
@@ -32,7 +34,15 @@ type SessionRow struct {
 // poderiam ambas passar pela checagem de reúso antes de qualquer uma marcar
 // used_at.
 type Tx interface {
+	// SessionUserByHash e LockUserSessions vêm antes de LockSessionByHash em
+	// toda transação que muda sessões (D1 do Plano 5): a trava do usuário
+	// primeiro, a da linha depois.
+	SessionUserByHash(ctx context.Context, hash []byte) (uuid.UUID, error)
+	LockUserSessions(ctx context.Context, userID uuid.UUID) error
 	LockSessionByHash(ctx context.Context, hash []byte) (SessionRow, error)
+	// UserPasswordHash é o hash atual do usuário, lido por Issue depois de
+	// LockUserSessions; ErrNotFound se o usuário não existe.
+	UserPasswordHash(ctx context.Context, userID uuid.UUID) (string, error)
 	InsertSession(ctx context.Context, r SessionRow) error
 	MarkSessionUsed(ctx context.Context, id uuid.UUID, at time.Time) error
 	RevokeFamily(ctx context.Context, familyID uuid.UUID, at time.Time) error
@@ -84,6 +94,37 @@ func (t *pgTx) LockSessionByHash(ctx context.Context, hash []byte) (SessionRow, 
 		return SessionRow{}, fmt.Errorf("buscar sessão: %w", err)
 	}
 	return r, nil
+}
+
+// SessionUserByHash, LockUserSessions e UserPasswordHash são sqlc (contrato
+// dos Planos 5–7, item 5); o resto deste arquivo migra no R2.
+func (t *pgTx) SessionUserByHash(ctx context.Context, hash []byte) (uuid.UUID, error) {
+	id, err := db.New(t.tx).SessionUserByHash(ctx, hash)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return uuid.Nil, ErrNotFound
+	}
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("buscar dono da sessão: %w", err)
+	}
+	return id, nil
+}
+
+func (t *pgTx) LockUserSessions(ctx context.Context, userID uuid.UUID) error {
+	if err := db.New(t.tx).LockUserSessions(ctx, userID); err != nil {
+		return fmt.Errorf("travar sessões do usuário: %w", err)
+	}
+	return nil
+}
+
+func (t *pgTx) UserPasswordHash(ctx context.Context, userID uuid.UUID) (string, error) {
+	hash, err := db.New(t.tx).GetUserHash(ctx, userID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	if err != nil {
+		return "", fmt.Errorf("ler hash de senha: %w", err)
+	}
+	return hash, nil
 }
 
 func (t *pgTx) InsertSession(ctx context.Context, r SessionRow) error {
