@@ -33,7 +33,8 @@ func (r Role) RunsProber() bool { return r == RoleAll || r == RoleProber }
 
 // chavesDeDemo são as chaves que o compose.yaml publica, de propósito, no
 // repositório. Com elas, qualquer um forja JWT e decifra os segredos. O boot
-// as recusa quando PUBLIC_BASE_URL é https, que é o sinal de produção.
+// só as aceita numa máquina local: PUBLIC_BASE_URL http com host localhost ou
+// IP de loopback (hostLocal). Https, ou qualquer outro host, é produção.
 //
 // Não mude estes valores sozinhos: o .gitleaks.toml libera exatamente o base64
 // destas três strings, e o compose.yaml as usa (TestComposeUsesTheDemoKeys).
@@ -135,6 +136,12 @@ func Load(getenv func(string) string) (*Config, error) {
 				errs = append(errs, fmt.Errorf("%s: %q não é um CIDR válido", name, parte))
 				continue
 			}
+			// Um /0 confia em qualquer origem: a falha aberta que a lista
+			// existe para evitar. Para medir o proxy, use o /32 ou o /128.
+			if p.Bits() == 0 {
+				errs = append(errs, fmt.Errorf("%s: %q é um prefixo /0, que confiaria no cabeçalho de qualquer origem; liste só os proxies", name, parte))
+				continue
+			}
 			out = append(out, p)
 		}
 		return out
@@ -165,8 +172,9 @@ func Load(getenv func(string) string) (*Config, error) {
 	// PUBLIC_BASE_URL decide se o processo está em produção (https): recusa
 	// das chaves de demo, cookie Secure, aviso de TRUSTED_PROXIES. Um valor
 	// malformado que começa com https:// não pode passar como http (falha
-	// aberta), então ele precisa ser uma URL http(s) absoluta, com host. A
-	// mensagem não repete o valor: ele poderia trazer credenciais (userinfo).
+	// aberta), então ele precisa ser uma URL http(s) absoluta, com host, e
+	// sem credenciais (userinfo), que iriam parar nos links dos e-mails. A
+	// mensagem não repete o valor: ele poderia trazer essas credenciais.
 	publicBaseURL := func(name string) string {
 		raw := req(name)
 		if raw == "" {
@@ -176,6 +184,10 @@ func Load(getenv func(string) string) (*Config, error) {
 		if err != nil || u.Hostname() == "" ||
 			!(strings.EqualFold(u.Scheme, "http") || strings.EqualFold(u.Scheme, "https")) {
 			errs = append(errs, fmt.Errorf("%s precisa ser uma URL http(s) absoluta com host, como https://status.exemplo.com", name))
+			return ""
+		}
+		if u.User != nil {
+			errs = append(errs, fmt.Errorf("%s não pode trazer credenciais na URL (a parte com @ antes do host)", name))
 			return ""
 		}
 		return raw
@@ -239,13 +251,17 @@ func Load(getenv func(string) string) (*Config, error) {
 			"colapsam num valor único para todos os clientes")
 	}
 
-	if EhHTTPS(cfg.PublicBaseURL) {
+	// As chaves de demo só valem numa máquina local (http e host de
+	// loopback). Um compose copiado para um servidor com http e um host de
+	// verdade, ou 0.0.0.0, também é produção.
+	if cfg.PublicBaseURL != "" && (EhHTTPS(cfg.PublicBaseURL) || !hostLocal(cfg.PublicBaseURL)) {
 		for _, k := range []struct {
 			nome  string
 			valor []byte
 		}{{"MASTER_KEY", cfg.MasterKey}, {"JWT_SECRET", cfg.JWTSecret}, {"IP_HASH_KEY", cfg.IPHashKey}} {
 			if chaveDeDemo(k.valor) {
 				errs = append(errs, fmt.Errorf("%s é uma chave de demonstração do compose.yaml, pública no repositório; "+
+					"ela só é aceita com PUBLIC_BASE_URL http em localhost ou num IP de loopback; "+
 					"gere uma com `openssl rand -base64 32`", k.nome))
 			}
 		}
@@ -284,6 +300,23 @@ func Load(getenv func(string) string) (*Config, error) {
 func EhHTTPS(s string) bool {
 	u, err := url.Parse(strings.TrimSpace(s))
 	return err == nil && strings.EqualFold(u.Scheme, "https")
+}
+
+// hostLocal diz se o host da URL é localhost ou um IP de loopback
+// (127.0.0.0/8, ::1). Um nome que só começa com "localhost" ou "127." (como
+// localhost.exemplo.com ou 127.0.0.1.nip.io) resolve para onde o dono do
+// domínio quiser, e não conta.
+func hostLocal(s string) bool {
+	u, err := url.Parse(strings.TrimSpace(s))
+	if err != nil {
+		return false
+	}
+	h := u.Hostname()
+	if strings.EqualFold(h, "localhost") {
+		return true
+	}
+	ip, err := netip.ParseAddr(h)
+	return err == nil && ip.Unmap().IsLoopback()
 }
 
 func chaveDeDemo(k []byte) bool {

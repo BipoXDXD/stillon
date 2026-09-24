@@ -19,7 +19,8 @@ name: vigilume
 
 # !!! CHAVES DE DEMONSTRAÇÃO, PÚBLICAS NO REPOSITÓRIO. NÃO USE EM PRODUÇÃO. !!!
 # Com elas, qualquer um forja um JWT e decifra os segredos gravados. O boot
-# as recusa quando PUBLIC_BASE_URL é https (D14). Produção: docs/deploy/fly.md.
+# só as aceita com PUBLIC_BASE_URL http em localhost ou num IP de loopback
+# (D14); https, ou outro host, é recusado. Produção: docs/deploy/fly.md.
 x-ambiente: &ambiente
   DATABASE_URL: postgres://vigilume_app:vigilume_app@db:5432/vigilume?sslmode=disable
   PUBLIC_BASE_URL: http://localhost:8080

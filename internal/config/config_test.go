@@ -403,3 +403,84 @@ func TestLoadAcceptsValidPublicBaseURL(t *testing.T) {
 		}
 	}
 }
+
+// As chaves de demo só servem numa máquina local. Um compose copiado para um
+// servidor com http e um host de verdade (ou 0.0.0.0) também é produção, e o
+// esquema sozinho não pega isso (I3 da revisão do Plano 7).
+func TestLoadRejectsDemoKeysOnANonLoopbackHost(t *testing.T) {
+	for _, base := range []string{
+		"http://vigilume.example",
+		"http://vigilume.example:8080",
+		"http://10.0.0.5:8080",
+		"http://192.168.1.10",
+		"http://0.0.0.0:8080",
+		"http://[::]:8080",
+		"http://[2001:db8::1]:8080",
+		"http://localhost.vigilume.example",
+		"http://127.0.0.1.nip.io",
+	} {
+		env := validEnv()
+		env["PUBLIC_BASE_URL"] = base
+		env["JWT_SECRET"] = base64.StdEncoding.EncodeToString(chavesDeDemo[1])
+		_, err := Load(getenvFrom(env))
+		if err == nil || !strings.Contains(err.Error(), "JWT_SECRET") || !strings.Contains(err.Error(), "demonstração") {
+			t.Errorf("chave de demo com %s: erro = %v, queria recusa", base, err)
+		}
+	}
+}
+
+func TestLoadAcceptsDemoKeysOnLoopback(t *testing.T) {
+	for _, base := range []string{
+		"http://localhost:8080",
+		"http://LocalHost:8080",
+		"http://localhost",
+		"http://127.0.0.1:18080",
+		"http://127.8.9.1",
+		"http://[::1]:8080",
+	} {
+		env := validEnv()
+		env["PUBLIC_BASE_URL"] = base
+		env["MASTER_KEY"] = base64.StdEncoding.EncodeToString(chavesDeDemo[0])
+		env["JWT_SECRET"] = base64.StdEncoding.EncodeToString(chavesDeDemo[1])
+		env["IP_HASH_KEY"] = base64.StdEncoding.EncodeToString(chavesDeDemo[2])
+		if _, err := Load(getenvFrom(env)); err != nil {
+			t.Errorf("chaves de demo com %s (máquina local) deveriam subir: %v", base, err)
+		}
+	}
+}
+
+// Credencial na PUBLIC_BASE_URL vai parar em link de e-mail e no log do boot:
+// o boot recusa, e a mensagem não repete o valor.
+func TestLoadRejectsUserinfoInPublicBaseURL(t *testing.T) {
+	for _, v := range []string{
+		"https://usuario:segredo@vigilume.example",
+		"https://segredo@vigilume.example",
+		"http://usuario:segredo@localhost:8080",
+		"https://:segredo@vigilume.example",
+	} {
+		env := validEnv()
+		env["PUBLIC_BASE_URL"] = v
+		_, err := Load(getenvFrom(env))
+		if err == nil || !strings.Contains(err.Error(), "PUBLIC_BASE_URL") {
+			t.Errorf("PUBLIC_BASE_URL=%q: erro = %v, queria recusa", v, err)
+			continue
+		}
+		if strings.Contains(err.Error(), "segredo") || strings.Contains(err.Error(), "usuario") {
+			t.Errorf("PUBLIC_BASE_URL=%q: a mensagem repete a credencial: %v", v, err)
+		}
+	}
+}
+
+// Um prefixo /0 em TRUSTED_PROXIES confia no X-Forwarded-For (ou no
+// CLIENT_IP_HEADER) de qualquer origem: é a falha aberta que a lista existe
+// para evitar. Também dentro de uma lista com outros prefixos.
+func TestLoadRejectsAZeroBitTrustedProxy(t *testing.T) {
+	for _, v := range []string{"0.0.0.0/0", "::/0", "10.0.0.0/8, 0.0.0.0/0", "1.2.3.4/0"} {
+		env := validEnv()
+		env["TRUSTED_PROXIES"] = v
+		_, err := Load(getenvFrom(env))
+		if err == nil || !strings.Contains(err.Error(), "TRUSTED_PROXIES") || !strings.Contains(err.Error(), "/0") {
+			t.Errorf("TRUSTED_PROXIES=%q: erro = %v, queria recusa citando /0", v, err)
+		}
+	}
+}

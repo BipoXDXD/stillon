@@ -90,3 +90,21 @@ func TestFlyctlVersionIsTheSameInDeployAndBackup(t *testing.T) {
 		t.Errorf("flyctl %s no deploy.yml e %s no backup.yml", versoes[0], versoes[1])
 	}
 }
+
+// O compose tem de continuar subindo com as chaves de demo: o PUBLIC_BASE_URL
+// dele precisa ser http e de loopback, senão o boot as recusa (hostLocal).
+func TestComposePublicBaseURLIsLocal(t *testing.T) {
+	compose, err := os.ReadFile("../../compose.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := regexp.MustCompile(`(?m)^\s+PUBLIC_BASE_URL:\s+(\S+)`).FindSubmatch(compose)
+	if m == nil {
+		t.Fatal("PUBLIC_BASE_URL ausente do compose.yaml")
+	}
+	// A interpolação do compose com o padrão: ${VIGILUME_PORT:-8080} → 8080.
+	base := regexp.MustCompile(`\$\{[A-Z_]+:-([^}]*)\}`).ReplaceAllString(string(m[1]), "$1")
+	if EhHTTPS(base) || !hostLocal(base) {
+		t.Errorf("PUBLIC_BASE_URL do compose.yaml (%s) não é http de loopback: o boot recusaria as chaves de demo", base)
+	}
+}
