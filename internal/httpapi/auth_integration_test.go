@@ -22,6 +22,7 @@ import (
 	"github.com/BipoXDXD/vigilume/internal/crypto"
 	"github.com/BipoXDXD/vigilume/internal/httpapi"
 	"github.com/BipoXDXD/vigilume/internal/storage/testdb"
+	"github.com/BipoXDXD/vigilume/internal/targets"
 )
 
 const (
@@ -96,7 +97,10 @@ func newAPIWith(t *testing.T, ajustar func(*config.Config)) *api {
 	}
 	segundoFator := auth.NewTOTP(pool, box, "Vigilume")
 
-	srv := httptest.NewServer(httpapi.Routes(ctx, cfg, store, mgr, segundoFator, clk))
+	srv := httptest.NewServer(httpapi.Routes(ctx, cfg, httpapi.Deps{
+		Store: store, Sessions: mgr, TOTP: segundoFator,
+		Targets: targets.NewService(pool, box, clk), Clock: clk,
+	}))
 	t.Cleanup(srv.Close)
 	return &api{srv: srv, pool: pool, clk: clk, userID: userID}
 }

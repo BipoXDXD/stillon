@@ -5,6 +5,10 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/netip"
+	"net/url"
+	"slices"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -30,10 +34,14 @@ const MaxBodyBytes = 64 << 10
 // conexão devolve um privado. A janela entre as duas resoluções é o bug, e
 // validar no ControlContext a fecha, porque ali o endereço é exatamente o que
 // será conectado.
-func NewTransport() *http.Transport {
+func NewTransport() *http.Transport { return newTransport(nil) }
+
+func newTransport(allowed []netip.AddrPort) *http.Transport {
 	dialer := &net.Dialer{
-		Timeout: 5 * time.Second,
 		ControlContext: func(ctx context.Context, network, address string, _ syscall.RawConn) error {
+			if liberado(address, allowed) {
+				return nil
+			}
 			return AllowAddr(address)
 		},
 	}
@@ -49,19 +57,72 @@ func NewTransport() *http.Transport {
 		// Sem keep-alive: conexão reusada não passa pelo dialer e, portanto,
 		// não é revalidada. Cada sonda também deve medir uma conexão nova
 		// para que a latência seja comparável entre execuções.
+		// TestEachRequestOpensANewConnection trava isto por comportamento.
 		DisableKeepAlives: true,
 
-		ForceAttemptHTTP2:     true,
-		TLSHandshakeTimeout:   5 * time.Second,
-		ResponseHeaderTimeout: 10 * time.Second,
+		ForceAttemptHTTP2: true,
+
+		// Sem Timeout no Dialer, sem TLSHandshakeTimeout, sem
+		// ResponseHeaderTimeout: propositalmente nenhum limite por fase. O
+		// prazo é só o do context da requisição (Probe faz
+		// context.WithTimeout(ctx, s.Timeout); timeout_ms vai até 30000). Um
+		// limite de fase fixo cortaria ANTES do timeout_ms configurado — por
+		// exemplo, um alvo com timeout_ms=20000 cujo servidor manda o
+		// cabeçalho aos 12s seria marcado "down" aos 10s, um falso negativo.
+		// A ausência não é testável observando o dialer: NewTransport()
+		// devolve um *http.Transport comum, e o campo Timeout do
+		// net.Dialer embutido no DialContext não é inspecionável de fora do
+		// pacote net. TestTransportLeavesTheDeadlineToTheContext trava só os
+		// dois campos do próprio http.Transport.
 	}
 }
 
+// liberado diz se address está na lista de exceções exatas. O Unmap iguala
+// 127.0.0.1 e ::ffff:127.0.0.1, que o sistema pode entregar em qualquer das
+// duas formas.
+func liberado(address string, allowed []netip.AddrPort) bool {
+	if len(allowed) == 0 {
+		return false
+	}
+	ap, err := netip.ParseAddrPort(address)
+	if err != nil {
+		return false
+	}
+	return slices.Contains(allowed, netip.AddrPortFrom(ap.Addr().Unmap(), ap.Port()))
+}
+
 // NewClient monta o cliente completo, com limite de redirecionamentos e
-// revalidação de esquema a cada salto.
-func NewClient(timeout time.Duration) *http.Client {
+// revalidação de esquema a cada salto. timeout 0 deixa o prazo por conta do
+// context da requisição, que é como o sondador trabalha.
+func NewClient(timeout time.Duration) *http.Client { return newClient(timeout, nil) }
+
+// NewClientAllowing é NewClient com exceções EXATAS de IP:porta, que passam
+// pelo dial mesmo estando na lista de bloqueio.
+//
+// Existe para teste: todo httptest.Server escuta em 127.0.0.1, que o
+// safedial bloqueia, e sem esta porta nenhum teste do sondador conseguiria
+// sondar coisa alguma. A exceção é por porta, e não por faixa, de propósito:
+// um teste de redirecionamento precisa que OUTRA porta do mesmo 127.0.0.1
+// continue bloqueada.
+//
+// Entra em panic com endereço que não seja loopback (D15). Nenhum código de
+// produção chama esta função, e o panic garante que ela não vire, por
+// engano, liberação de rede interna.
+func NewClientAllowing(timeout time.Duration, allowed ...netip.AddrPort) *http.Client {
+	norm := make([]netip.AddrPort, 0, len(allowed))
+	for _, ap := range allowed {
+		a := ap.Addr().Unmap()
+		if !a.IsLoopback() {
+			panic(fmt.Sprintf("safedial: NewClientAllowing só aceita loopback, recebeu %s", ap))
+		}
+		norm = append(norm, netip.AddrPortFrom(a, ap.Port()))
+	}
+	return newClient(timeout, norm)
+}
+
+func newClient(timeout time.Duration, allowed []netip.AddrPort) *http.Client {
 	return &http.Client{
-		Transport: NewTransport(),
+		Transport: newTransport(allowed),
 		Timeout:   timeout,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			// net/http já inclui a requisição original em via, então a
@@ -73,8 +134,68 @@ func NewClient(timeout time.Duration) *http.Client {
 			// O IP do destino já será revalidado no dial, porque não há
 			// reuso de conexão. O que falta checar aqui é o esquema: um
 			// redirecionamento para file:// ou gopher:// nunca chega a discar.
-			_, err := ValidateURL(req.URL.String())
-			return err
+			if _, err := ValidateURL(req.URL.String()); err != nil {
+				return err
+			}
+			if deveLimparHeaders(cadeia(via, req)) {
+				limparHeaders(req.Header)
+			}
+			return nil
 		},
+	}
+}
+
+// Headers de alvo são segredo (spec §5.4), e o net/http só protege alguns
+// deles: Authorization, Cookie e companhia caem quando o redirect troca de
+// domínio, mas X-Api-Key, X-Auth-Token e qualquer outro seguem para onde o
+// Location mandar, e num rebaixamento https→http para o mesmo host até o
+// Authorization segue em claro. O net/http também compara só o nome, sem a
+// porta: de 127.0.0.1:A para 127.0.0.1:B, até o Authorization ia junto.
+//
+// O CheckRedirect recebe a requisição do PRÓXIMO salto, com os headers já
+// copiados, e o que ele mudar em req.Header é o que vai para a rede
+// (TestProbeRedirectToAnotherHostDropsTargetHeaders, no pacote prober). Mas o net/http copia os
+// headers da requisição ORIGINAL a cada salto, e não os do salto anterior:
+// limpar um salto não limpa o seguinte. Por isso a decisão olha a cadeia
+// inteira, e uma vez limpo, limpo até o fim.
+
+// cadeia devolve a URL de cada salto, da original ao próximo.
+func cadeia(via []*http.Request, prox *http.Request) []*url.URL {
+	urls := make([]*url.URL, 0, len(via)+1)
+	for _, r := range via {
+		urls = append(urls, r.URL)
+	}
+	return append(urls, prox.URL)
+}
+
+// deveLimparHeaders decide se os headers do alvo ficam para trás no último
+// salto da cadeia. Limpa se algum salto foi para host:porta diferente do
+// original (sem diferenciar maiúsculas) ou se algum salto rebaixou https
+// para http. O host é comparado como está na URL: http://a → https://a é o
+// mesmo host e mantém os headers, que passam a ir cifrados.
+func deveLimparHeaders(saltos []*url.URL) bool {
+	if len(saltos) < 2 {
+		return false
+	}
+	origem := saltos[0]
+	for i := 1; i < len(saltos); i++ {
+		if !strings.EqualFold(saltos[i].Host, origem.Host) {
+			return true
+		}
+		if saltos[i-1].Scheme == "https" && saltos[i].Scheme == "http" {
+			return true
+		}
+	}
+	return false
+}
+
+// limparHeaders remove tudo, menos o User-Agent, que identifica o monitor e
+// não é segredo de ninguém. Vai junto o Referer que o net/http acabou de pôr:
+// ele carrega a URL do salto anterior, que também é do alvo.
+func limparHeaders(h http.Header) {
+	for nome := range h {
+		if http.CanonicalHeaderKey(nome) != "User-Agent" {
+			delete(h, nome)
+		}
 	}
 }

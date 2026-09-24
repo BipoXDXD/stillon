@@ -283,7 +283,22 @@ func (h *AuthHandlers) internal(w http.ResponseWriter, r *http.Request, op strin
 //
 // Devolve false quando já escreveu o erro — o chamador só precisa retornar.
 func decodeJSON(w http.ResponseWriter, r *http.Request, dst any) bool {
-	if err := json.NewDecoder(r.Body).Decode(dst); err != nil {
+	return decodeJSONWith(w, r, dst, false)
+}
+
+// decodeJSONStrict recusa campo desconhecido. Nas rotas de recurso, um campo
+// com o nome errado ("intervalsec") seria ignorado em silêncio, e o cliente
+// acharia que salvou.
+func decodeJSONStrict(w http.ResponseWriter, r *http.Request, dst any) bool {
+	return decodeJSONWith(w, r, dst, true)
+}
+
+func decodeJSONWith(w http.ResponseWriter, r *http.Request, dst any, strict bool) bool {
+	dec := json.NewDecoder(r.Body)
+	if strict {
+		dec.DisallowUnknownFields()
+	}
+	if err := dec.Decode(dst); err != nil {
 		var tooLarge *http.MaxBytesError
 		if errors.As(err, &tooLarge) {
 			apierr.WriteError(w, r, apierr.CodePayloadTooLarge)

@@ -35,6 +35,7 @@ var blockedPrefixes = []netip.Prefix{
 	netip.MustParsePrefix("192.0.0.0/24"),    // atribuições IETF
 	netip.MustParsePrefix("192.0.2.0/24"),    // TEST-NET-1
 	netip.MustParsePrefix("192.168.0.0/16"),  // RFC1918
+	netip.MustParsePrefix("192.88.99.0/24"),  // relay anycast 6to4, obsoleto (RFC 7526)
 	netip.MustParsePrefix("198.18.0.0/15"),   // benchmarking
 	netip.MustParsePrefix("198.51.100.0/24"), // TEST-NET-2
 	netip.MustParsePrefix("203.0.113.0/24"),  // TEST-NET-3
@@ -49,7 +50,31 @@ var blockedPrefixes = []netip.Prefix{
 	netip.MustParsePrefix("::1/128"),            // loopback IPv6
 	netip.MustParsePrefix("fc00::/7"),           // unique local
 	netip.MustParsePrefix("fe80::/10"),          // link-local IPv6
+	netip.MustParsePrefix("fec0::/10"),          // site-local IPv6, obsoleto (RFC 3879)
 	netip.MustParsePrefix("ff00::/8"),           // multicast IPv6
+
+	// IPv4-compatível (RFC 4291 §2.5.5.1, obsoleto): ::a.b.c.d. Unmap() NÃO
+	// desfaz esta forma — só ::ffff:a.b.c.d —, então ::127.0.0.1 passaria.
+	// Esta /96 também contém ::/128 e ::1/128 acima, que ficam pelo valor
+	// documental, como o broadcast: cada um tem seu motivo explícito.
+	netip.MustParsePrefix("::/96"),
+	// IPv4-traduzido (RFC 2765, SIIT): ::ffff:0:a.b.c.d. Outra forma que
+	// Unmap() não reconhece.
+	netip.MustParsePrefix("::ffff:0:0:0/96"),
+	// NAT64 (RFC 6052, RFC 8215): o tradutor da rede entrega o IPv4 embutido
+	// nos 32 bits finais. 64:ff9b::7f00:1 é 127.0.0.1 visto através dele (R22).
+	netip.MustParsePrefix("64:ff9b::/96"),
+	netip.MustParsePrefix("64:ff9b:1::/48"),
+	// 6to4 (RFC 3056, obsoleto pela RFC 7526): 2002:AABB:CCDD::/48 embute o
+	// IPv4 AA.BB.CC.DD, e um relay o alcança — inclusive se for privado (R22).
+	// Bloquear a /16 inteira, em vez de decodificar o IPv4 embutido, é a
+	// escolha fail-closed: nenhum alvo legítimo de hoje vive em 6to4.
+	netip.MustParsePrefix("2002::/16"),
+	// Teredo (RFC 4380): 2001:0000::/32 embute servidor e cliente IPv4 (R22).
+	// É uma /32 só: 2001:4860::, do Google, é público e não pode cair aqui.
+	netip.MustParsePrefix("2001::/32"),
+	netip.MustParsePrefix("2001:db8::/32"), // documentação IPv6
+	netip.MustParsePrefix("100::/64"),      // descarte (RFC 6666)
 }
 
 // AllowIP decide se um endereço pode ser alcançado.
@@ -58,18 +83,22 @@ func AllowIP(ip netip.Addr) error {
 		return fmt.Errorf("%w: endereço inválido", ErrBlocked)
 	}
 
-	// Unmap é indispensável. ::ffff:127.0.0.1 é 127.0.0.1 vestido de IPv6:
-	// sem desfazer o mapeamento, ele não casa com 127.0.0.0/8 e atravessa a
-	// guarda inteira. É o bypass mais comum contra listas de bloqueio.
-	ip = ip.Unmap()
-
-	// netip.Prefix.Contains devolve false para qualquer endereço com zona, e
-	// Unmap() não a remove — sem esta recusa, ::1%lo atravessaria as vinte
-	// faixas sem casar nenhuma. Alvo legítimo de monitoramento nunca carrega
-	// zona, então recusar é a resposta fail-closed.
+	// A zona vem ANTES do Unmap, e a ordem importa (R23). netip.Prefix.Contains
+	// devolve false para qualquer endereço com zona, então sem esta recusa
+	// ::1%lo atravessaria a lista inteira. E Unmap() DESCARTA a zona de um
+	// endereço mapeado: ::ffff:8.8.8.8%eth0 viraria 8.8.8.8 limpo e passaria
+	// se a checagem viesse depois. Alvo legítimo de monitoramento nunca
+	// carrega zona, então recusar é a resposta fail-closed.
 	if ip.Zone() != "" {
 		return fmt.Errorf("%w: zona IPv6 não é permitida (%s)", ErrBlocked, ip)
 	}
+
+	// Unmap é indispensável. ::ffff:127.0.0.1 é 127.0.0.1 vestido de IPv6:
+	// sem desfazer o mapeamento, ele não casa com 127.0.0.0/8 e atravessa a
+	// guarda inteira. É o bypass mais comum contra listas de bloqueio. As
+	// outras formas de IPv4 dentro de IPv6, que Unmap não reconhece, estão
+	// na lista como faixas próprias.
+	ip = ip.Unmap()
 
 	for _, p := range blockedPrefixes {
 		if p.Contains(ip) {

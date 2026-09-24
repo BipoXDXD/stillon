@@ -2,8 +2,10 @@ package storage_test
 
 import (
 	"context"
+	"sync"
 	"testing"
 
+	"github.com/BipoXDXD/vigilume/internal/storage"
 	"github.com/BipoXDXD/vigilume/internal/storage/testdb"
 )
 
@@ -14,7 +16,7 @@ func TestMigrationsApplyAndSchemaIsUsable(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
 
-	for _, table := range []string{"users", "sessions", "audit_log", "totp_recovery_codes"} {
+	for _, table := range []string{"users", "sessions", "audit_log", "totp_recovery_codes", "targets", "checks"} {
 		var exists bool
 		err := pool.QueryRow(ctx,
 			`SELECT EXISTS (SELECT 1 FROM information_schema.tables
@@ -44,6 +46,21 @@ func TestMigrationsApplyAndSchemaIsUsable(t *testing.T) {
 		}
 		if !exists {
 			t.Errorf("coluna users.%s não existe depois das migrations", column)
+		}
+	}
+
+	// Sem FORCE, o dono da tabela — que é o papel da aplicação — ignora a
+	// RLS inteira. As políticas continuariam lá, e não valeriam nada.
+	for _, tabela := range []string{"targets", "checks"} {
+		var ligada, forcada bool
+		err := pool.QueryRow(ctx,
+			`SELECT relrowsecurity, relforcerowsecurity FROM pg_class WHERE relname = $1`, tabela).
+			Scan(&ligada, &forcada)
+		if err != nil {
+			t.Fatalf("consultar RLS de %s: %v", tabela, err)
+		}
+		if !ligada || !forcada {
+			t.Errorf("%s: row security ligada=%v forçada=%v, queria as duas", tabela, ligada, forcada)
 		}
 	}
 }
@@ -76,5 +93,32 @@ func TestSnapshotIsolatesTests(t *testing.T) {
 	}
 	if count != 0 {
 		t.Errorf("banco começou com %d usuários, queria 0 — o isolamento quebrou", count)
+	}
+}
+
+// Item 9b do Plano 1: com --role=api e --role=prober subindo ao mesmo tempo,
+// os dois processos migram o mesmo banco. Sem o advisory lock, o segundo
+// tenta aplicar a mesma migration e cai no boot. O banco é novo e vazio
+// porque o de testdb.New já nasce migrado, e aí não haveria corrida.
+func TestConcurrentMigrationsSerialize(t *testing.T) {
+	dsn := testdb.EmptyDatabase(t)
+	ctx := context.Background()
+
+	const processos = 4
+	var largada sync.WaitGroup
+	largada.Add(1)
+	erros := make(chan error, processos)
+	for range processos {
+		go func() {
+			largada.Wait()
+			erros <- storage.Migrate(ctx, dsn)
+		}()
+	}
+	largada.Done()
+
+	for range processos {
+		if err := <-erros; err != nil {
+			t.Errorf("migração concorrente falhou: %v", err)
+		}
 	}
 }

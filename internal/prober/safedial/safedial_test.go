@@ -31,7 +31,8 @@ func TestAllowIP(t *testing.T) {
 		{"::ffff:169.254.169.254", true, "metadata da nuvem disfarçado de IPv6"},
 
 		// Zona IPv6: netip.Prefix.Contains devolve false para qualquer
-		// endereço com zona, e Unmap() não a remove. Sem recusa explícita,
+		// endereço com zona, e Unmap() a descarta quando o endereço é
+		// mapeado — por isso a zona é checada antes. Sem recusa explícita,
 		// estes dois atravessam as vinte faixas sem casar nenhuma, e
 		// http://[::1%25lo]:8080/ alcança qualquer serviço em localhost.
 		{"::1%lo", true, "loopback com zona IPv6"},
@@ -48,6 +49,8 @@ func TestAllowIP(t *testing.T) {
 		{"172.31.255.255", true, "RFC1918, borda da faixa"},
 		{"192.168.1.1", true, "RFC1918"},
 		{"fc00::1", true, "unique local IPv6"},
+		{"fec0::1", true, "site-local IPv6, obsoleto (RFC 3879)"},
+		{"feff:ffff::1", true, "site-local IPv6, fim da faixa"},
 		{"fd00::1", true, "unique local IPv6"},
 
 		// Bordas que costumam escapar.
@@ -71,6 +74,31 @@ func TestAllowIP(t *testing.T) {
 		// 255.255.255.255/32 também o cobre e as duas se mascaram. Este
 		// endereço está só na /4.
 		{"240.0.0.1", true, "reservado, 240.0.0.0/4"},
+
+		// R23 — formas de IPv4 dentro de IPv6 que Unmap() NÃO desfaz. Ele só
+		// reconhece ::ffff:a.b.c.d; estas três atravessariam a lista.
+		{"::127.0.0.1", true, "IPv4-compatível (obsoleto), ::/96"},
+		{"::ffff:0:127.0.0.1", true, "IPv4-traduzido (SIIT), ::ffff:0:0:0/96"},
+
+		// R22 — faixas de transição: um tradutor ou relay no caminho entrega
+		// o IPv4 embutido, inclusive o privado.
+		{"64:ff9b::127.0.0.1", true, "NAT64 bem conhecido embutindo loopback"},
+		{"64:ff9b:1::a00:5", true, "NAT64 de uso local (RFC 8215)"},
+		{"2002:7f00:1::1", true, "6to4 embutindo 127.0.0.1"},
+		{"2001:0:4136:e378:8000:63bf:3fff:fdd2", true, "Teredo, 2001::/32"},
+		{"2001:db8::1", true, "documentação IPv6"},
+		{"100::1", true, "descarte IPv6 (RFC 6666)"},
+		{"192.88.99.1", true, "relay anycast 6to4 (obsoleto)"},
+
+		// Travas contra bloqueio largo demais. Teredo é 2001:0000::/32, uma
+		// /32 só. Quem "simplificar" para 2001::/16 derruba o Google.
+		{"2001:4860:4860::8888", false, "DNS público do Google, fora do Teredo"},
+		{"2003::1", false, "fora do 6to4"},
+
+		// R23 — Unmap() DESCARTA a zona de um endereço mapeado: ::ffff:8.8.8.8%eth0
+		// vira 8.8.8.8 limpo. Com a zona checada depois do Unmap, este passava,
+		// contrariando a regra "alvo legítimo nunca carrega zona".
+		{"::ffff:8.8.8.8%eth0", true, "IPv4 mapeado com zona"},
 	}
 
 	for _, c := range cases {

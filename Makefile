@@ -1,4 +1,4 @@
-.PHONY: test test-short lint sec build run
+.PHONY: test test-short lint sec build run generate
 
 test:
 	go test -race -count=1 ./...
@@ -19,3 +19,6 @@ build:
 
 run: build
 	./bin/vigilume --role=all
+
+generate:
+	sqlc generate
