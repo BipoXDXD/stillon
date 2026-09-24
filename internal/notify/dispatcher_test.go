@@ -673,7 +673,9 @@ func TestSameChannelSendsInOrderAndHoldsAfterA429(t *testing.T) {
 // atrasa o canal vizinho além do prazo de envio.
 func TestDifferentChannelsSendInParallel(t *testing.T) {
 	b := novaBancada(t, nil)
-	b.d.sendTimeout = 300 * time.Millisecond
+	// 1s por envio: a folga de 1s entre "em paralelo" (~1s) e "em série"
+	// (>= 2s) cobre o banco numa CI lenta com -race.
+	b.d.sendTimeout = time.Second
 	b.canal.bloquear = true
 	b.apagao(t, 1)
 	// Um segundo canal, verificado, do mesmo dono, com a abertura do
@@ -704,8 +706,8 @@ func TestDifferentChannelsSendInParallel(t *testing.T) {
 
 	inicio := time.Now()
 	b.despachar(t, 2)
-	// Em série, dois envios travados levariam 2 × 300ms.
-	if d := time.Since(inicio); d >= 600*time.Millisecond {
-		t.Errorf("dois canais travados levaram %v; em paralelo, ~300ms", d)
+	// Em série, dois envios travados levariam pelo menos 2 × 1s.
+	if d := time.Since(inicio); d >= 2*time.Second {
+		t.Errorf("dois canais travados levaram %v; em paralelo, ~1s", d)
 	}
 }

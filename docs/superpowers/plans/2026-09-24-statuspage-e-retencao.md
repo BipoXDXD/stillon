@@ -2286,7 +2286,7 @@ Aplique em `internal/notify/dispatcher_test.go`:
  	"log/slog"
  	"strings"
  	"sync"
-@@ -557,3 +558,154 @@
+@@ -557,3 +558,156 @@
  		t.Errorf("channel_health tem %d linhas depois de uma retentativa (%v), queria 0", n, err)
  	}
  }
@@ -2405,7 +2405,9 @@ Aplique em `internal/notify/dispatcher_test.go`:
 +// atrasa o canal vizinho além do prazo de envio.
 +func TestDifferentChannelsSendInParallel(t *testing.T) {
 +	b := novaBancada(t, nil)
-+	b.d.sendTimeout = 300 * time.Millisecond
++	// 1s por envio: a folga de 1s entre "em paralelo" (~1s) e "em série"
++	// (>= 2s) cobre o banco numa CI lenta com -race.
++	b.d.sendTimeout = time.Second
 +	b.canal.bloquear = true
 +	b.apagao(t, 1)
 +	// Um segundo canal, verificado, do mesmo dono, com a abertura do
@@ -2436,9 +2438,9 @@ Aplique em `internal/notify/dispatcher_test.go`:
 +
 +	inicio := time.Now()
 +	b.despachar(t, 2)
-+	// Em série, dois envios travados levariam 2 × 300ms.
-+	if d := time.Since(inicio); d >= 600*time.Millisecond {
-+		t.Errorf("dois canais travados levaram %v; em paralelo, ~300ms", d)
++	// Em série, dois envios travados levariam pelo menos 2 × 1s.
++	if d := time.Since(inicio); d >= 2*time.Second {
++		t.Errorf("dois canais travados levaram %v; em paralelo, ~1s", d)
 +	}
 +}
 ```
