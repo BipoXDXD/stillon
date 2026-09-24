@@ -16,7 +16,8 @@ export const JANELAS = {
 export type Janela = keyof typeof JANELAS
 
 export function ehJanela(v: string | null): v is Janela {
-  return v !== null && v in JANELAS
+  // hasOwn, e não `in`: "toString" está no protótipo de todo objeto.
+  return v !== null && Object.hasOwn(JANELAS, v)
 }
 
 // RFC 3339 sem milissegundos, no formato que o servidor lê.

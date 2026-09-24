@@ -21,15 +21,25 @@ const hora = new Intl.DateTimeFormat('pt-BR', { hour: '2-digit', minute: '2-digi
 const dia = new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: '2-digit' })
 const pct = (v: number) => `${Math.floor(v * 100)}%`
 
-export function GraficoDeLatencia({ serie }: { serie: Serie }) {
+// descritoPor: o id do resumo em texto, que descreve o gráfico.
+export function GraficoDeLatencia({ serie, descritoPor }: { serie: Serie; descritoPor?: string }) {
   const horaria = serie.resolution === '1h'
   const dados: (PontoBruto | PontoHorario)[] =
     serie.resolution === '1h' ? pontosHorarios(serie.items) : pontosBrutos(serie.items)
   const fmt = (t: number) => (horaria ? dia.format(t) : hora.format(t))
   return (
-    <div className="h-64 w-full" data-testid="grafico-latencia">
+    <figure
+      className="h-64 w-full"
+      data-testid="grafico-latencia"
+      aria-label="Gráfico de latência"
+      aria-describedby={descritoPor}
+    >
       <ResponsiveContainer width="100%" height="100%">
-        <ComposedChart data={dados} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
+        <ComposedChart
+          data={dados}
+          margin={{ top: 8, right: 8, bottom: 0, left: 0 }}
+          title="Gráfico de latência"
+        >
           <CartesianGrid stroke="var(--borda)" vertical={false} />
           <XAxis
             dataKey="t"
@@ -89,6 +99,6 @@ export function GraficoDeLatencia({ serie }: { serie: Serie }) {
           )}
         </ComposedChart>
       </ResponsiveContainer>
-    </div>
+    </figure>
   )
 }

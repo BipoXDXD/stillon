@@ -1,8 +1,8 @@
 import { useQueryClient } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useId, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router'
 import { useApi } from '@/app/contexto'
-import { EstadoDaConsulta, Esqueleto } from '@/components/EstadoDaConsulta'
+import { EstadoDaConsulta } from '@/components/EstadoDaConsulta'
 import { estadoExibido, SeloDeEstado } from '@/components/SeloDeEstado'
 import { Titulo } from '@/components/Titulo'
 import { useAvisar } from '@/components/ui/avisos'
@@ -19,11 +19,11 @@ import { desde, ehJanela, JANELAS, resumir, type Janela } from './serie'
 
 const NOMES: Record<Janela, string> = { '1h': '1 h', '6h': '6 h', '24h': '24 h', '7d': '7 dias', '30d': '30 dias', '90d': '90 dias' }
 
-function Resumo({ serie }: { serie: Serie }) {
+function Resumo({ id, serie }: { id: string; serie: Serie }) {
   const r = resumir(serie)
   const horaria = serie.resolution === '1h'
   return (
-    <p>
+    <p id={id}>
       {horaria ? 'Mediana das horas' : 'Mediana'} {milissegundos(r.mediana)}, {horaria ? 'pior p95 horário' : 'p95'}{' '}
       {milissegundos(r.p95)}, {r.uptime === null ? 'sem checks' : `${porcento(r.uptime)} no ar`} nesta janela.
     </p>
@@ -35,7 +35,7 @@ function Tabela({ serie }: { serie: Serie }) {
     const linhas = serie.items.slice(-200).reverse()
     return (
       <table className="w-full text-left text-sm">
-        <caption className="sr-only">Horas da janela</caption>
+        <caption className="sr-only">Até as 200 horas mais recentes da janela, da mais recente</caption>
         <thead>
           <tr>
             <th scope="col">Hora</th>
@@ -62,7 +62,7 @@ function Tabela({ serie }: { serie: Serie }) {
   const linhas = serie.items.slice(-200).reverse()
   return (
     <table className="w-full text-left text-sm">
-      <caption className="sr-only">Checks da janela, do mais recente</caption>
+      <caption className="sr-only">Até os 200 checks mais recentes da janela, do mais recente</caption>
       <thead>
         <tr>
           <th scope="col">Quando</th>
@@ -89,31 +89,33 @@ function Tabela({ serie }: { serie: Serie }) {
 
 function Incidentes({ id }: { id: string }) {
   const consulta = useIncidentes('all', id, 10)
-  const itens = consulta.data?.pages.flatMap((p) => p.items) ?? []
+  // Pela EstadoDaConsulta (D17): um poll de fundo que falha mantém a lista,
+  // com o aviso de que ela está velha.
   return (
     <section className="space-y-2" aria-labelledby="titulo-incidentes">
       <h2 id="titulo-incidentes" className="text-lg font-semibold">
         Incidentes recentes
       </h2>
-      {consulta.isPending ? (
-        <Esqueleto linhas={2} />
-      ) : consulta.error ? (
-        <p role="alert">{mensagemDe(consulta.error)}</p>
-      ) : itens.length === 0 ? (
-        <p className="text-suave">Nenhum incidente.</p>
-      ) : (
-        <ul className="space-y-1 text-sm">
-          {itens.map((i) => (
-            <li key={i.id}>
-              {dataHora(i.started_at)} —{' '}
-              {i.resolved_at
-                ? `durou ${duracao(new Date(i.resolved_at).getTime() - new Date(i.started_at).getTime())}`
-                : 'em andamento'}{' '}
-              ({textoDoErroDeCheck(i.cause, null)})
-            </li>
-          ))}
-        </ul>
-      )}
+      <EstadoDaConsulta consulta={consulta}>
+        {(dados) => {
+          const itens = dados.pages.flatMap((p) => p.items)
+          return itens.length === 0 ? (
+            <p className="text-suave">Nenhum incidente.</p>
+          ) : (
+            <ul className="space-y-1 text-sm">
+              {itens.map((i) => (
+                <li key={i.id}>
+                  {dataHora(i.started_at)} —{' '}
+                  {i.resolved_at
+                    ? `durou ${duracao(new Date(i.resolved_at).getTime() - new Date(i.started_at).getTime())}`
+                    : 'em andamento'}{' '}
+                  ({textoDoErroDeCheck(i.cause, null)})
+                </li>
+              ))}
+            </ul>
+          )
+        }}
+      </EstadoDaConsulta>
       <Link to="/incidents" className="text-sm text-realce underline">
         Todos os incidentes
       </Link>
@@ -136,6 +138,7 @@ export function PaginaDetalhe() {
   const [ocupado, setOcupado] = useState(false)
   const [erro, setErro] = useState<string | null>(null)
   const noResumo = resumo.data?.items.find((x) => x.id === id)
+  const idDoResumo = useId()
 
   async function alternar(ativo: boolean) {
     setErro(null)
@@ -151,9 +154,17 @@ export function PaginaDetalhe() {
     setOcupado(true)
     try {
       await api.apagarAlvo(id)
-      await qc.invalidateQueries({ queryKey: ['targets'] })
       avisar('Alvo apagado.')
-      navegar('/')
+      // Sai primeiro, e só então tira do cache o que era do alvo: com a tela
+      // ainda montada, invalidar (ou remover) refaria o GET /targets/:id, e o
+      // 404 piscaria. O flushSync faz a saída valer já no fim do await (sem
+      // ele, o Router a aplica numa transição, e a tela ainda estaria lá).
+      // Depois, o resumo e os incidentes (o contador da navegação) se
+      // atualizam.
+      await navegar('/', { flushSync: true })
+      qc.removeQueries({ queryKey: ['targets', id] })
+      void qc.invalidateQueries({ queryKey: ['targets'] })
+      void qc.invalidateQueries({ queryKey: ['incidents'] })
     } catch (e) {
       setErro(mensagemDe(e))
       setApagando(false)
@@ -208,17 +219,23 @@ export function PaginaDetalhe() {
             </fieldset>
             <EstadoDaConsulta consulta={serie}>
               {(s) => (
-                <div className="space-y-3">
-                  <Resumo serie={s} />
+                // Trocando de janela, os números da janela anterior ficam na tela
+                // (keepPreviousData) até a nova chegar: marcados como velhos.
+                <div
+                  className={cn('space-y-3', serie.isPlaceholderData && 'opacity-60')}
+                  aria-busy={serie.isPlaceholderData}
+                >
+                  {serie.isPlaceholderData && <p className="text-sm text-suave">Carregando…</p>}
+                  <Resumo id={idDoResumo} serie={s} />
                   <p className="text-sm text-suave">
                     {s.resolution === '1h'
                       ? 'Resolução por hora — os dados horários podem atrasar até cerca de 1h15.'
                       : 'Resolução por check.'}{' '}
                     Horários em {fuso()}.
                   </p>
-                  <GraficoDeLatencia serie={s} />
+                  <GraficoDeLatencia serie={s} descritoPor={idDoResumo} />
                   <details>
-                    <summary className="cursor-pointer text-sm">Ver dados em tabela</summary>
+                    <summary className="cursor-pointer text-sm">Ver dados em tabela (até os 200 mais recentes)</summary>
                     <Tabela serie={s} />
                   </details>
                 </div>

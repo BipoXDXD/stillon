@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Serie } from '@/lib/api/schemas'
-import { desde, pontosBrutos, pontosHorarios, resumir } from './serie'
+import { desde, ehJanela, pontosBrutos, pontosHorarios, resumir } from './serie'
 
 const check = (min: number, status: 'up' | 'degraded' | 'down', latency_ms: number) => ({
   checked_at: new Date(Date.UTC(2026, 8, 24, 12, min)).toISOString(),
@@ -45,4 +45,11 @@ describe('série horária', () => {
 
 it('desde() sai em RFC 3339 sem milissegundos', () => {
   expect(desde('24h', Date.UTC(2026, 8, 24, 12, 0, 0, 123))).toBe('2026-09-23T12:00:00Z')
+})
+
+it('ehJanela só aceita as janelas, não o que vem do protótipo', () => {
+  expect(ehJanela('7d')).toBe(true)
+  expect(ehJanela('toString')).toBe(false)
+  expect(ehJanela('__proto__')).toBe(false)
+  expect(ehJanela(null)).toBe(false)
 })
