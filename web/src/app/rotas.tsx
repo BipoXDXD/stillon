@@ -1,6 +1,7 @@
 import type { RouteObject } from 'react-router'
 import { PaginaLogin } from '@/features/login/PaginaLogin'
 import { PaginaPainel } from '@/features/painel/PaginaPainel'
+import { PaginaEditarAlvo, PaginaNovoAlvo } from '@/features/alvos/PaginasDoFormulario'
 import { ErroDeRota } from './ErroDeRota'
 import { ExigirSessao } from './ExigirSessao'
 import { Layout } from './Layout'
@@ -18,6 +19,8 @@ export const rotas: RouteObject[] = [
         Component: Layout,
         children: [
           { index: true, Component: PaginaPainel },
+          { path: 'targets/new', Component: PaginaNovoAlvo },
+          { path: 'targets/:id/edit', Component: PaginaEditarAlvo },
           { path: '*', Component: NaoEncontrada },
         ],
       },
