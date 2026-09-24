@@ -1,4 +1,5 @@
 import { Navigate, Outlet, useLocation } from 'react-router'
+import { AvisoDeContexto } from '@/components/AvisoDeContexto'
 import { Botao } from '@/components/ui/botao'
 import { useSessao } from './contexto'
 
@@ -10,18 +11,24 @@ export function ExigirSessao() {
 
   if (estado === 'verificando') {
     return (
-      <div className="grid min-h-screen place-items-center" aria-busy="true">
-        <p className="text-suave">Carregando o Vigilume…</p>
-      </div>
+      <>
+        <AvisoDeContexto />
+        <div className="grid min-h-screen place-items-center" aria-busy="true">
+          <p className="text-suave">Carregando o Vigilume…</p>
+        </div>
+      </>
     )
   }
   if (estado === 'offline') {
     return (
-      <div role="alert" className="mx-auto mt-24 max-w-md space-y-4 p-4 text-center">
-        <h1 className="text-xl font-semibold">Não foi possível falar com o servidor</h1>
-        <p className="text-suave">Sua sessão pode estar ativa; tente de novo em instantes.</p>
-        <Botao onClick={() => void sessao.tentarDeNovo()}>Tentar de novo</Botao>
-      </div>
+      <>
+        <AvisoDeContexto />
+        <div role="alert" className="mx-auto mt-24 max-w-md space-y-4 p-4 text-center">
+          <h1 className="text-xl font-semibold">Não foi possível falar com o servidor</h1>
+          <p className="text-suave">Sua sessão pode estar ativa; tente de novo em instantes.</p>
+          <Botao onClick={() => void sessao.tentarDeNovo()}>Tentar de novo</Botao>
+        </div>
+      </>
     )
   }
   if (estado === 'anonimo') {

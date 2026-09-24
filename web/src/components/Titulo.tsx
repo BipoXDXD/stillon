@@ -14,6 +14,8 @@ export function esquecerAPrimeiraTela() {
 // O <h1> de cada tela. Ao montar, muda o título da aba e, depois de uma
 // navegação, recebe o foco: o React Router troca a tela sem recarregar, e
 // sem isso o leitor de tela não percebe a navegação (spec do Plano 6 §3.7).
+// Dois efeitos: o título da aba acompanha `aba`; o foco é da montagem, e uma
+// `aba` que muda depois (a mesma tela com outro nome) não o rouba.
 export function Titulo({ children, aba }: { children: ReactNode; aba: string }) {
   const ref = useRef<HTMLHeadingElement>(null)
   // Decidido uma vez por montagem: o StrictMode roda o efeito duas vezes, e
@@ -21,12 +23,14 @@ export function Titulo({ children, aba }: { children: ReactNode; aba: string }) 
   const focar = useRef<boolean | null>(null)
   useEffect(() => {
     document.title = `${aba} — Vigilume`
+  }, [aba])
+  useEffect(() => {
     if (focar.current === null) {
       focar.current = !primeiraTela
       primeiraTela = false
     }
     if (focar.current) ref.current?.focus()
-  }, [aba])
+  }, [])
   return (
     <h1 ref={ref} tabIndex={-1} className="text-2xl font-semibold outline-none">
       {children}

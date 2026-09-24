@@ -1,7 +1,9 @@
-import { screen, waitFor } from '@testing-library/react'
+import { act, screen, waitFor } from '@testing-library/react'
+import { http, HttpResponse } from 'msw'
 import { afterEach, describe, expect, it } from 'vitest'
 import { RECUPERACAO_OK, TOTP_OK } from '@/test/api-falsa'
 import { novaSessao } from '@/test/ambiente'
+import { servidor } from '@/test/setup'
 import { EMAIL, renderizarPainel, SENHA } from '@/test/renderizar'
 import { destinoSeguro } from './PaginaLogin'
 
@@ -43,6 +45,30 @@ describe('contexto seguro', () => {
     await renderizarPainel('/')
     await screen.findByRole('heading', { name: 'Painel' })
     expect(screen.getByRole('alert')).toHaveTextContent('com mais de uma aba aberta, a sessão cai')
+  })
+
+  // O aviso também aparece antes de o painel abrir: no splash do boot e na
+  // tela de servidor fora do ar. Sabotagem prevista: tirar o
+  // <AvisoDeContexto /> de um dos dois ramos de ExigirSessao.
+  it('sem HTTPS, avisa também no splash do boot e na tela de servidor fora do ar', async () => {
+    Object.defineProperty(window, 'isSecureContext', { value: false, configurable: true })
+    const r = await renderizarPainel('/', { atrasoDoBoot: 200 })
+    expect(screen.getByText('Carregando o Vigilume…')).toBeInTheDocument()
+    expect(screen.getByRole('alert')).toHaveTextContent('Este painel precisa de HTTPS')
+    await screen.findByRole('heading', { name: 'Painel' })
+    r.tela.unmount()
+
+    // Offline: sem sessão, o cookie volta a ser tentado com a rede caída.
+    const { sessao, router } = await renderizarPainel('/login', { logado: false })
+    await screen.findByRole('heading', { name: 'Entrar no Vigilume' })
+    servidor.use(http.post('*/api/v1/auth/refresh', () => HttpResponse.error()))
+    await act(() => sessao.tentarDeNovo())
+    expect(sessao.estado()).toBe('offline')
+    await act(() => router.navigate('/'))
+    await screen.findByRole('heading', { name: 'Não foi possível falar com o servidor' })
+    const alertas = screen.getAllByRole('alert')
+    expect(alertas).toHaveLength(2)
+    expect(alertas[0]).toHaveTextContent('Este painel precisa de HTTPS')
   })
 
   it('com contexto seguro, nada de aviso', async () => {
@@ -159,6 +185,49 @@ describe('entrar', () => {
     await usuario.click(screen.getByRole('button', { name: 'Verificar' }))
     expect(await screen.findByRole('alert')).toHaveTextContent('Se a senha mudou há pouco, volte e entre de novo.')
     expect(falsa.chamadas('POST /auth/totp/verify')).toBe(1)
+
+    // A mensagem manda voltar, e o passo do código tem como. Sabotagem
+    // prevista: tirar o botão Voltar do formulário do código.
+    await usuario.click(screen.getByRole('button', { name: 'Voltar' }))
+    expect(screen.queryByLabelText('Código do aplicativo autenticador')).not.toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(screen.getByLabelText('E-mail')).toHaveValue(EMAIL)
+    expect(screen.getByLabelText('Senha')).toHaveValue('')
+    await waitFor(() => expect(screen.getByLabelText('Senha')).toHaveFocus())
+    // Entrar de novo abre um desafio novo, que o código aceita. (A API falsa
+    // não guarda a senha nova: o login continua com SENHA.)
+    await usuario.type(screen.getByLabelText('Senha'), SENHA)
+    await usuario.click(screen.getByRole('button', { name: 'Entrar' }))
+    await usuario.type(await screen.findByLabelText('Código do aplicativo autenticador'), TOTP_OK)
+    await usuario.click(screen.getByRole('button', { name: 'Verificar' }))
+    expect(await screen.findByRole('heading', { name: 'Painel' })).toBeInTheDocument()
+  })
+
+  // O desafio vence (5 minutos): a tela volta ao passo da senha com o foco no
+  // campo da senha (o botão que tinha o foco sumiu), e o próximo desafio
+  // começa no código do aplicativo. Sabotagens previstas: tirar o
+  // "autoFocus={voltou}" (o foco cai no body) e o "setRecuperacao(false)".
+  it('desafio vencido volta ao passo da senha, com o foco na senha', async () => {
+    const { usuario, falsa } = await renderizarPainel('/login', { logado: false })
+    falsa.estado.totpLigado = true
+    await usuario.type(await screen.findByLabelText('E-mail'), EMAIL)
+    await usuario.type(screen.getByLabelText('Senha'), SENHA)
+    await usuario.click(screen.getByRole('button', { name: 'Entrar' }))
+    await usuario.click(await screen.findByRole('button', { name: 'Usar um código de recuperação' }))
+    servidor.use(
+      http.post('*/api/v1/auth/totp/verify', () =>
+        HttpResponse.json({ error: { code: 'unauthorized', message: 'desafio vencido' } }, { status: 401 }),
+      ),
+    )
+    await usuario.type(screen.getByLabelText('Código de recuperação'), RECUPERACAO_OK)
+    await usuario.click(screen.getByRole('button', { name: 'Verificar' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('O tempo para digitar o código acabou. Entre de novo.')
+    expect(screen.getByLabelText('Senha')).toHaveValue('')
+    await waitFor(() => expect(screen.getByLabelText('Senha')).toHaveFocus())
+
+    await usuario.type(screen.getByLabelText('Senha'), SENHA)
+    await usuario.click(screen.getByRole('button', { name: 'Entrar' }))
+    expect(await screen.findByLabelText('Código do aplicativo autenticador')).toBeInTheDocument()
   })
 })
 

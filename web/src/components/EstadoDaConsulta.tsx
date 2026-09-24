@@ -50,13 +50,15 @@ export function EstadoDaConsulta<T>({
   return (
     <>
       {consulta.error && (
-        <div className="flex flex-wrap items-center gap-3 rounded-md border border-borda p-3 text-sm">
-          <p>
+        // <output>: a região de status (role implícito), anunciada sem o foco
+        // sair do lugar. Só conteúdo de frase dentro dela, daí o <span>.
+        <output className="flex flex-wrap items-center gap-3 rounded-md border border-borda p-3 text-sm">
+          <span>
             Não foi possível atualizar agora ({mensagemDe(consulta.error)}). Mostrando os dados de{' '}
             {dataHora(new Date(consulta.dataUpdatedAt).toISOString())}.
-          </p>
+          </span>
           {tentar}
-        </div>
+        </output>
       )}
       {children(consulta.data)}
     </>

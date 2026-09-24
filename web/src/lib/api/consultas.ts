@@ -8,7 +8,8 @@ export const chaves = {
   alvos: ['targets', 'list'] as const,
   alvo: (id: string) => ['targets', id] as const,
   serie: (id: string, janela: string) => ['targets', id, 'checks', janela] as const,
-  incidentes: (filtro: string, alvo?: string) => ['incidents', filtro, alvo ?? ''] as const,
+  // O limite entra na chave: páginas de tamanhos diferentes não dividem o cache.
+  incidentes: (filtro: string, alvo?: string, limite?: number) => ['incidents', filtro, alvo ?? '', limite ?? 0] as const,
   canais: ['channels'] as const,
   paginas: ['status-pages'] as const,
   sessoes: ['sessions'] as const,
@@ -47,7 +48,7 @@ export function useSerie(id: string, janela: string, desde: () => string) {
 export function useIncidentes(filtro: 'open' | 'resolved' | 'all', alvo?: string, limite?: number) {
   const api = useApi()
   return useInfiniteQuery({
-    queryKey: chaves.incidentes(filtro, alvo),
+    queryKey: chaves.incidentes(filtro, alvo, limite),
     queryFn: ({ pageParam }) =>
       api.incidentes({
         status: filtro === 'all' ? undefined : filtro,
@@ -67,7 +68,7 @@ export function useIncidentes(filtro: 'open' | 'resolved' | 'all', alvo?: string
 export function useAbertos() {
   const api = useApi()
   return useQuery({
-    queryKey: [...chaves.incidentes('open'), 'contagem'],
+    queryKey: [...chaves.incidentes('open', undefined, 100), 'contagem'],
     queryFn: () => api.incidentes({ status: 'open', limit: 100 }),
     refetchInterval: 30_000,
     select: (d) => (d.next_cursor ? '99+' : d.items.length > 99 ? '99+' : String(d.items.length)),

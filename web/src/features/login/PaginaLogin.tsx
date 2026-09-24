@@ -58,6 +58,24 @@ export function PaginaLogin() {
   const senha = useForm({ resolver: zodResolver(esquemaSenha), defaultValues: { email: '', senha: '' } })
   const codigo = useForm({ resolver: zodResolver(esquemaCodigo), defaultValues: { codigo: '' } })
 
+  // Ao voltar do passo do código ao da senha (Voltar, ou o desafio vencido),
+  // o botão que tinha o foco some com o formulário; sem isto o foco cairia no
+  // <body>. O formulário da senha remonta (key), e o autoFocus do campo da
+  // senha o leva para lá. Na carga da página, não: o primeiro Tab é o "Pular
+  // para o conteúdo" (D20).
+  const [voltou, setVoltou] = useState(false)
+
+  // De volta ao passo da senha: o desafio fica para trás, e a senha é
+  // digitada de novo.
+  function voltarASenha(mensagem: string | null) {
+    setDesafio(null)
+    setRecuperacao(false)
+    setErro(mensagem)
+    senha.setValue('senha', '')
+    codigo.setValue('codigo', '')
+    setVoltou(true)
+  }
+
   if (estado === 'autenticado') return <Navigate to={destino} replace />
 
   async function entrar(v: z.infer<typeof esquemaSenha>) {
@@ -86,9 +104,7 @@ export function PaginaLogin() {
     } catch (e) {
       if (e instanceof ApiError && e.code === 'unauthorized') {
         // O desafio vive 5 minutos (auth.ChallengeTTL).
-        setDesafio(null)
-        senha.setValue('senha', '')
-        setErro('O tempo para digitar o código acabou. Entre de novo.')
+        voltarASenha('O tempo para digitar o código acabou. Entre de novo.')
         return
       }
       // Task 11 do Plano 5: se a senha mudou depois deste desafio, o verify
@@ -120,7 +136,15 @@ export function PaginaLogin() {
               {(a) => <Entrada {...a} type="email" autoComplete="username" {...senha.register('email')} />}
             </Campo>
             <Campo rotulo="Senha" erro={senha.formState.errors.senha?.message}>
-              {(a) => <Entrada {...a} type="password" autoComplete="current-password" {...senha.register('senha')} />}
+              {(a) => (
+                <Entrada
+                  {...a}
+                  type="password"
+                  autoComplete="current-password"
+                  autoFocus={voltou}
+                  {...senha.register('senha')}
+                />
+              )}
             </Campo>
             <Botao type="submit" className="w-full" disabled={senha.formState.isSubmitting}>
               Entrar
@@ -150,6 +174,11 @@ export function PaginaLogin() {
             </Botao>
             <Botao tipo="fantasma" className="w-full" onClick={() => setRecuperacao((r) => !r)}>
               {recuperacao ? 'Usar o código do aplicativo' : 'Usar um código de recuperação'}
+            </Botao>
+            {/* A mensagem de invalid_credentials manda voltar; o Voltar do
+                navegador sairia do /login, porque o passo é estado da tela. */}
+            <Botao tipo="fantasma" className="w-full" onClick={() => voltarASenha(null)}>
+              Voltar
             </Botao>
           </form>
         )}
