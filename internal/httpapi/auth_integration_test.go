@@ -23,6 +23,7 @@ import (
 	"github.com/BipoXDXD/vigilume/internal/httpapi"
 	"github.com/BipoXDXD/vigilume/internal/incident/history"
 	"github.com/BipoXDXD/vigilume/internal/notify"
+	"github.com/BipoXDXD/vigilume/internal/statuspage"
 	"github.com/BipoXDXD/vigilume/internal/storage/testdb"
 	"github.com/BipoXDXD/vigilume/internal/targets"
 )
@@ -112,10 +113,11 @@ func newAPICom(t *testing.T, ajustar func(*config.Config), ajustarDeps func(*htt
 	discord, email := &discordFalso{}, &carteiroFalso{}
 	deps := httpapi.Deps{
 		Store: store, Sessions: mgr, TOTP: segundoFator,
-		Targets:   targets.NewService(pool, box, clk),
-		Incidents: history.NewService(pool, clk),
-		Channels:  notify.NewChannelService(pool, box, clk, discord, email, cfg.PublicBaseURL),
-		Clock:     clk, Ready: pool.Ping,
+		Targets:     targets.NewService(pool, box, clk),
+		Incidents:   history.NewService(pool, clk),
+		Channels:    notify.NewChannelService(pool, box, clk, discord, email, cfg.PublicBaseURL),
+		StatusPages: statuspage.NewService(pool, clk),
+		Clock:       clk, Ready: pool.Ping,
 	}
 	if ajustarDeps != nil {
 		ajustarDeps(&deps)

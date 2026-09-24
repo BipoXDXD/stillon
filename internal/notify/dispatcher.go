@@ -1,10 +1,12 @@
 package notify
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sync"
 	"time"
 
@@ -26,19 +28,29 @@ const (
 	maxConcurrentSends = 8
 	// sendTimeout é o prazo de um envio (spec §8): um webhook lento não
 	// segura o lote além disso.
-	sendTimeout = 10 * time.Second
-	// lease é quanto uma notificação reivindicada fica invisível para os
-	// outros dispatchers. Tem de passar com folga de sendTimeout +
-	// persistTimeout; um processo que morre no meio devolve a notificação à
-	// fila quando o lease vence.
-	lease          = 2 * time.Minute
+	sendTimeout    = 10 * time.Second
 	persistTimeout = 5 * time.Second
+	// lease é quanto uma notificação reivindicada fica invisível para os
+	// outros dispatchers; um processo que morre no meio devolve a notificação
+	// à fila quando ele vence. O mesmo canal recebe em série, então o pior
+	// lote é o lote inteiro num canal só, com cada envio lento mas bem
+	// sucedido: maxConcurrentSends × (sendTimeout + persistTimeout), mais
+	// folga. Menos que isso, um segundo dispatcher reenviaria.
+	lease = maxConcurrentSends*(sendTimeout+persistTimeout) + time.Minute
 
 	// MaxAttempts é o teto de tentativas (spec §8). Com o backoff abaixo, a
 	// sexta tentativa acontece cerca de 15 minutos depois da primeira.
 	MaxAttempts  = 6
 	firstBackoff = 30 * time.Second
 	maxBackoff   = time.Hour
+
+	// rateLimitGrace é por quanto tempo, contado do enfileiramento, um 429
+	// não gasta tentativa. Num apagão em massa, dezenas de alertas vão ao
+	// mesmo webhook, e os 429 esgotariam as 6 tentativas justamente quando
+	// o alerta mais importa. Depois disso, o 429 conta: um alerta com uma
+	// hora de atraso já perdeu quase todo o valor, e um webhook que responde
+	// 429 para sempre não segura a fila para sempre.
+	rateLimitGrace = time.Hour
 )
 
 // Dispatcher consome a outbox de notificações (spec §8). Roda no papel do
@@ -106,22 +118,97 @@ func (d *Dispatcher) Dispatch(ctx context.Context) (int, error) {
 	}
 
 	var wg sync.WaitGroup
-	for _, n := range lote {
+	for _, fila := range porCanal(lote) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			// Um panic num canal não derruba o processo. A notificação fica
-			// como está e volta quando o lease vencer.
-			defer func() {
-				if r := recover(); r != nil {
-					slog.Error("panic no envio de notificação", "notification_id", n.ID, "panic", fmt.Sprint(r))
-				}
-			}()
-			d.entregar(n)
+			d.entregarEmSerie(fila)
 		}()
 	}
 	wg.Wait()
 	return len(lote), nil
+}
+
+// porCanal separa o lote por canal, cada fila na ordem de enfileiramento
+// (os ids são UUID v7). Canais diferentes saem em paralelo; o mesmo canal,
+// em série: dezenas de pedidos simultâneos ao mesmo webhook só compram 429,
+// e em série a abertura sai antes do fechamento.
+func porCanal(lote []db.ClaimDueNotificationsRow) [][]db.ClaimDueNotificationsRow {
+	indice := map[uuid.UUID]int{}
+	var filas [][]db.ClaimDueNotificationsRow
+	for _, n := range lote {
+		i, ok := indice[n.ChannelID]
+		if !ok {
+			i = len(filas)
+			indice[n.ChannelID] = i
+			filas = append(filas, nil)
+		}
+		filas[i] = append(filas[i], n)
+	}
+	for _, f := range filas {
+		slices.SortFunc(f, func(a, b db.ClaimDueNotificationsRow) int { return bytes.Compare(a.ID[:], b.ID[:]) })
+	}
+	return filas
+}
+
+// entregarEmSerie entrega a fila de um canal. Depois de uma falha
+// transitória (429, timeout, rede, 5xx), o resto da fila não é enviado: o
+// canal está pedindo espera ou está fora, e mandar mais só gastaria até
+// sendTimeout por notificação. Sem isso, um webhook que trava seguraria o
+// lote inteiro por k × sendTimeout, e os outros canais esperariam junto
+// (achado da revisão).
+func (d *Dispatcher) entregarEmSerie(fila []db.ClaimDueNotificationsRow) {
+	var parou *desfecho
+	for _, n := range fila {
+		if parou != nil {
+			d.adiar(n, *parou)
+			continue
+		}
+		if f := d.entregarProtegido(n); f.transitoria {
+			parou = &f
+		}
+	}
+}
+
+// entregarProtegido isola o panic de um envio: a notificação fica como a
+// reivindicação a deixou e volta quando o lease vencer, e o resto da fila
+// do canal segue.
+func (d *Dispatcher) entregarProtegido(n db.ClaimDueNotificationsRow) (f desfecho) {
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("panic no envio de notificação", "notification_id", n.ID, "panic", fmt.Sprint(r))
+			f = desfecho{}
+		}
+	}()
+	return d.entregar(n)
+}
+
+// perdoa429 diz se um 429 para esta notificação ainda não gasta tentativa.
+func (d *Dispatcher) perdoa429(n db.ClaimDueNotificationsRow) bool {
+	return d.clk.Now().Sub(n.CreatedAt) < rateLimitGrace
+}
+
+// adiar devolve à fila, sem enviar, uma notificação cujo canal acabou de
+// falhar de forma transitória. Só o 429 dentro de rateLimitGrace devolve a
+// tentativa: é o provedor pedindo espera. Nos outros casos a tentativa conta,
+// como contaria se ela tivesse sido enviada e falhado igual, e quem já está
+// no teto falha de vez, sem esperar outro sendTimeout.
+func (d *Dispatcher) adiar(n db.ClaimDueNotificationsRow, parou desfecho) {
+	d.total.WithLabelValues(n.Kind, "deferred").Inc()
+	proxima := parou.proxima
+	if proxima.IsZero() { // quem parou o canal já tinha falhado de vez
+		proxima = d.clk.Now().Add(backoff(n.Attempts))
+	}
+	f := desfecho{status: "pending", reason: parou.reason, proxima: proxima}
+	switch {
+	case parou.reason == ReasonRateLimited && d.perdoa429(n):
+		f.devolver = true
+	case n.Attempts >= MaxAttempts:
+		f = desfecho{status: "failed", reason: parou.reason}
+	}
+	if err := d.persistir(n, f); err != nil {
+		slog.Error("gravar desfecho de notificação", "notification_id", n.ID, "erro", err)
+	}
 }
 
 // desfecho é o que fazer com a notificação depois da tentativa.
@@ -129,9 +216,19 @@ type desfecho struct {
 	status  string // sent, pending (retentativa), failed ou cancelled
 	reason  Reason
 	proxima time.Time
+	// devolver desconta a tentativa que a reivindicação contou (429 dentro
+	// de rateLimitGrace).
+	devolver bool
+	// transitoria: o envio falhou por um motivo que passa (429, timeout,
+	// rede, 5xx), mesmo que a notificação tenha esgotado as tentativas. O
+	// resto da fila do canal no lote é adiado.
+	transitoria bool
+	// doSistema: a falha foi do Vigilume, e não do canal (o desfecho da
+	// última tentativa não chegou a ser gravado). Não marca o canal failing.
+	doSistema bool
 }
 
-func (d *Dispatcher) entregar(n db.ClaimDueNotificationsRow) {
+func (d *Dispatcher) entregar(n db.ClaimDueNotificationsRow) desfecho {
 	f := d.tentar(n)
 	d.total.WithLabelValues(n.Kind, resultado(f.status)).Inc()
 	if f.status == "failed" {
@@ -141,6 +238,7 @@ func (d *Dispatcher) entregar(n db.ClaimDueNotificationsRow) {
 	if err := d.persistir(n, f); err != nil {
 		slog.Error("gravar desfecho de notificação", "notification_id", n.ID, "erro", err)
 	}
+	return f
 }
 
 func (d *Dispatcher) tentar(n db.ClaimDueNotificationsRow) desfecho {
@@ -159,7 +257,7 @@ func (d *Dispatcher) tentar(n db.ClaimDueNotificationsRow) desfecho {
 	// commit que falhou) e a linha voltou quando o lease venceu: ela falha
 	// de vez sem enviar, porque o teto é de envios.
 	if n.Attempts > MaxAttempts {
-		return desfecho{status: "failed", reason: ReasonUnknown}
+		return desfecho{status: "failed", reason: ReasonUnknown, doSistema: true}
 	}
 	canal, ok := d.notifiers[Kind(n.Kind)]
 	if !ok {
@@ -187,11 +285,17 @@ func (d *Dispatcher) tentar(n db.ClaimDueNotificationsRow) desfecho {
 			se.Reason = ReasonTimeout
 		}
 	}
-	if se.Permanent || n.Attempts >= MaxAttempts {
+	if se.Permanent {
 		return desfecho{status: "failed", reason: se.Reason}
 	}
 	espera := max(backoff(n.Attempts), se.RetryAfter)
-	return desfecho{status: "pending", reason: se.Reason, proxima: d.clk.Now().Add(espera)}
+	if se.Reason == ReasonRateLimited && d.perdoa429(n) {
+		return desfecho{status: "pending", reason: se.Reason, proxima: d.clk.Now().Add(espera), devolver: true, transitoria: true}
+	}
+	if n.Attempts >= MaxAttempts {
+		return desfecho{status: "failed", reason: se.Reason, transitoria: true}
+	}
+	return desfecho{status: "pending", reason: se.Reason, proxima: d.clk.Now().Add(espera), transitoria: true}
 }
 
 // backoff dobra a cada tentativa a partir de firstBackoff: 30s, 1min,
@@ -215,14 +319,27 @@ func (d *Dispatcher) persistir(n db.ClaimDueNotificationsRow, f desfecho) error 
 	return storage.InProberTx(ctx, d.pool, func(q *db.Queries) error {
 		switch f.status {
 		case "sent":
-			return q.MarkNotificationSent(ctx, db.MarkNotificationSentParams{ID: n.ID, Now: d.clk.Now()})
+			if err := q.MarkNotificationSent(ctx, db.MarkNotificationSentParams{ID: n.ID, Now: d.clk.Now()}); err != nil {
+				return err
+			}
+			return q.MarkChannelSuccess(ctx, db.MarkChannelSuccessParams{ChannelID: n.ChannelID, Now: d.clk.Now()})
 		case "pending":
-			return q.RetryNotification(ctx, db.RetryNotificationParams{ID: n.ID, NextAttemptAt: f.proxima, LastError: motivo})
+			return q.RetryNotification(ctx, db.RetryNotificationParams{
+				ID: n.ID, NextAttemptAt: f.proxima, LastError: motivo, Refund: f.devolver,
+			})
 		case "cancelled":
 			return q.CloseNotification(ctx, db.CloseNotificationParams{ID: n.ID, Status: "cancelled", LastError: motivo})
 		}
 		if err := q.CloseNotification(ctx, db.CloseNotificationParams{ID: n.ID, Status: "failed", LastError: motivo}); err != nil {
 			return err
+		}
+		// O canal passa a "failing" até a próxima entrega que der certo
+		// (pendência do Plano 3: antes, a falha só ia para a auditoria). A
+		// falha do próprio Vigilume não é culpa do canal.
+		if !f.doSistema {
+			if err := q.MarkChannelFailure(ctx, db.MarkChannelFailureParams{ChannelID: n.ChannelID, Now: d.clk.Now(), LastError: motivo}); err != nil {
+				return err
+			}
 		}
 		// Falha definitiva vai para a trilha de auditoria (spec §8).
 		id, err := uuid.NewV7()

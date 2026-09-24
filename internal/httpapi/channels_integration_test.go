@@ -105,6 +105,40 @@ func TestDiscordChannelFlow(t *testing.T) {
 	}
 }
 
+// Pendência do Plano 3: o canal que falhou de vez aparece como failing, com
+// o motivo e a hora; antes da falha, os dois campos são null.
+func TestFailingChannelShowsTheLastError(t *testing.T) {
+	a := newAPI(t)
+	ctx := context.Background()
+	tok := tokenDe(t, a, a.userID)
+	var criado canalJSON
+	cru := lerCorpo(t, chamar(t, a, http.MethodPost, "/api/v1/channels", tok, map[string]string{"kind": "discord", "url": webhookDeTeste}), &criado)
+	if !strings.Contains(string(cru), `"last_error":null`) || !strings.Contains(string(cru), `"last_failure_at":null`) {
+		t.Errorf("canal novo = %s; queria last_error e last_failure_at null", cru)
+	}
+
+	em := a.clk.Now().UTC()
+	err := storage.InProberTx(ctx, a.pool, func(q *db.Queries) error {
+		motivo := "rejected"
+		return q.MarkChannelFailure(ctx, db.MarkChannelFailureParams{ChannelID: uuid.MustParse(criado.ID), Now: em, LastError: &motivo})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var l struct {
+		Items []struct {
+			Status        string     `json:"status"`
+			LastError     *string    `json:"last_error"`
+			LastFailureAt *time.Time `json:"last_failure_at"`
+		} `json:"items"`
+	}
+	lerCorpo(t, chamar(t, a, http.MethodGet, "/api/v1/channels", tok, nil), &l)
+	if len(l.Items) != 1 || l.Items[0].Status != "failing" || l.Items[0].LastError == nil || *l.Items[0].LastError != "rejected" ||
+		l.Items[0].LastFailureAt == nil || !l.Items[0].LastFailureAt.Equal(em) {
+		t.Errorf("GET /channels = %+v; queria failing, rejected, %v", l.Items, em)
+	}
+}
+
 // O caminho do navegador: o GET mostra o botão e NÃO verifica; o POST do
 // formulário, sem X-Requested-With, verifica.
 func TestEmailVerificationThroughTheBrowser(t *testing.T) {

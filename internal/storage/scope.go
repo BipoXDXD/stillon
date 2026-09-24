@@ -23,6 +23,7 @@ type Beginner interface {
 var (
 	ErrNoUser  = errors.New("transação de usuário sem usuário")
 	ErrNoToken = errors.New("transação de verificação sem hash de token")
+	ErrNoSlug  = errors.New("transação pública sem slug")
 )
 
 // InUserTx roda fn numa transação em que a RLS só enxerga as linhas de userID.
@@ -60,6 +61,37 @@ func InVerifyTx(ctx context.Context, b Beginner, tokenHash []byte, fn func(*db.Q
 		return ErrNoToken
 	}
 	return inTx(ctx, b, `SELECT set_config('app.verify_token_hash', $1, true)`, hex.EncodeToString(tokenHash), fn)
+}
+
+// InPublicTx roda fn no escopo público da status page (GET /p/{slug}): a
+// RLS enxerga a página publicada daquele slug, os itens dela e, por
+// delegação, os alvos, checks, rollups e incidentes desses itens. Nada mais.
+//
+// A transação é READ ONLY. As políticas que delegam a targets são FOR ALL
+// (incidents, checks, target_health), e sem isto o escopo público seria
+// também porta de escrita nelas. O Postgres recusa qualquer escrita com
+// 25006, seja qual for a política.
+func InPublicTx(ctx context.Context, b Beginner, slug string, fn func(*db.Queries) error) error {
+	if slug == "" {
+		return ErrNoSlug
+	}
+	tx, err := b.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("abrir transação: %w", err)
+	}
+	defer tx.Rollback(ctx) // no-op depois de Commit
+
+	// Tem de ser o primeiro comando da transação.
+	if _, err := tx.Exec(ctx, `SET TRANSACTION READ ONLY`); err != nil {
+		return fmt.Errorf("transação somente leitura: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `SELECT set_config('app.public_slug', $1, true)`, slug); err != nil {
+		return fmt.Errorf("definir escopo da RLS: %w", err)
+	}
+	if err := fn(db.New(tx)); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func inTx(ctx context.Context, b Beginner, setSQL, valor string, fn func(*db.Queries) error) error {

@@ -23,9 +23,9 @@ WITH claimed AS (
             ORDER BY next_attempt_at
             LIMIT $3::int
               FOR UPDATE SKIP LOCKED)
-    RETURNING n.id, n.incident_id, n.channel_id, n.event, n.attempts
+    RETURNING n.id, n.incident_id, n.channel_id, n.event, n.attempts, n.created_at
 )
-SELECT cl.id, cl.event, cl.attempts,
+SELECT cl.id, cl.event, cl.attempts, cl.created_at,
        c.id AS channel_id, c.user_id, c.kind, c.config_enc, c.enabled, c.verified_at,
        i.id AS incident_id, i.started_at, i.resolved_at, i.cause,
        t.name AS target_name
@@ -45,6 +45,7 @@ type ClaimDueNotificationsRow struct {
 	ID         uuid.UUID
 	Event      string
 	Attempts   int32
+	CreatedAt  time.Time
 	ChannelID  uuid.UUID
 	UserID     uuid.UUID
 	Kind       string
@@ -76,6 +77,7 @@ func (q *Queries) ClaimDueNotifications(ctx context.Context, arg ClaimDueNotific
 			&i.ID,
 			&i.Event,
 			&i.Attempts,
+			&i.CreatedAt,
 			&i.ChannelID,
 			&i.UserID,
 			&i.Kind,
@@ -141,6 +143,40 @@ func (q *Queries) InsertAudit(ctx context.Context, arg InsertAuditParams) error 
 	return err
 }
 
+const markChannelFailure = `-- name: MarkChannelFailure :exec
+INSERT INTO channel_health (channel_id, last_failure_at, last_error)
+VALUES ($1, $2::timestamptz, $3)
+ON CONFLICT (channel_id) DO UPDATE
+   SET last_failure_at = EXCLUDED.last_failure_at, last_error = EXCLUDED.last_error
+`
+
+type MarkChannelFailureParams struct {
+	ChannelID uuid.UUID
+	Now       time.Time
+	LastError *string
+}
+
+func (q *Queries) MarkChannelFailure(ctx context.Context, arg MarkChannelFailureParams) error {
+	_, err := q.db.Exec(ctx, markChannelFailure, arg.ChannelID, arg.Now, arg.LastError)
+	return err
+}
+
+const markChannelSuccess = `-- name: MarkChannelSuccess :exec
+INSERT INTO channel_health (channel_id, last_success_at) VALUES ($1, $2::timestamptz)
+ON CONFLICT (channel_id) DO UPDATE SET last_success_at = EXCLUDED.last_success_at
+`
+
+type MarkChannelSuccessParams struct {
+	ChannelID uuid.UUID
+	Now       time.Time
+}
+
+// Saúde do canal (Plano 4): o último sucesso e a última falha definitiva.
+func (q *Queries) MarkChannelSuccess(ctx context.Context, arg MarkChannelSuccessParams) error {
+	_, err := q.db.Exec(ctx, markChannelSuccess, arg.ChannelID, arg.Now)
+	return err
+}
+
 const markNotificationSent = `-- name: MarkNotificationSent :exec
 UPDATE notifications SET status = 'sent', sent_at = $1::timestamptz, last_error = NULL
  WHERE id = $2
@@ -157,16 +193,27 @@ func (q *Queries) MarkNotificationSent(ctx context.Context, arg MarkNotification
 }
 
 const retryNotification = `-- name: RetryNotification :exec
-UPDATE notifications SET next_attempt_at = $2, last_error = $3 WHERE id = $1
+UPDATE notifications
+   SET next_attempt_at = $1, last_error = $2,
+       attempts = attempts - CASE WHEN $3::bool THEN 1 ELSE 0 END
+ WHERE id = $4
 `
 
 type RetryNotificationParams struct {
-	ID            uuid.UUID
 	NextAttemptAt time.Time
 	LastError     *string
+	Refund        bool
+	ID            uuid.UUID
 }
 
+// refund devolve a tentativa que a reivindicação contou: um 429 é o
+// provedor pedindo espera, não uma falha do envio (Plano 4, apagão em massa).
 func (q *Queries) RetryNotification(ctx context.Context, arg RetryNotificationParams) error {
-	_, err := q.db.Exec(ctx, retryNotification, arg.ID, arg.NextAttemptAt, arg.LastError)
+	_, err := q.db.Exec(ctx, retryNotification,
+		arg.NextAttemptAt,
+		arg.LastError,
+		arg.Refund,
+		arg.ID,
+	)
 	return err
 }

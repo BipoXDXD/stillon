@@ -66,6 +66,31 @@ type Check struct {
 	ErrorKind  *string
 }
 
+// Rollup é uma hora cheia (UTC) de checks de um alvo. OK conta os que não
+// foram down; as latências são só deles, e ficam nil numa hora sem sucesso.
+type Rollup struct {
+	Bucket             time.Time
+	Total, OK          int32
+	P50, P95, P99, Max *int32
+}
+
+// Resolution diz de onde veio a série. Quem escolhe é o servidor, pela
+// largura da janela (spec §9.1): o cliente pede tempo, não tabela.
+type Resolution string
+
+const (
+	ResolutionRaw Resolution = "raw"
+	Resolution1h  Resolution = "1h"
+)
+
+// Series é a resposta de Service.Checks: Checks quando a resolução é raw,
+// Rollups quando é 1h. A outra fica vazia.
+type Series struct {
+	Resolution Resolution
+	Checks     []Check
+	Rollups    []Rollup
+}
+
 const (
 	DefaultMethod                    = "GET"
 	DefaultIntervalSec         int32 = 60
@@ -77,6 +102,10 @@ const (
 	MaxPageSize     int32 = 100
 
 	// MaxChecksWindow é a janela que a tabela bruta atende (spec §9.1).
-	// Acima disso, rollups, que chegam no Plano 4 (D6).
+	// Acima disso, a série vem de check_rollup_1h (D6 do Plano 2).
 	MaxChecksWindow = 48 * time.Hour
+	// MaxRollupWindow cobre a retenção dos rollups (13 meses, spec §12):
+	// guardar o que não se pode consultar seria só custo. São até 9.600
+	// horas por resposta.
+	MaxRollupWindow = 400 * 24 * time.Hour
 )

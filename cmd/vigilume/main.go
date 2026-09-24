@@ -23,6 +23,7 @@ import (
 	"github.com/BipoXDXD/vigilume/internal/notify"
 	"github.com/BipoXDXD/vigilume/internal/observability"
 	"github.com/BipoXDXD/vigilume/internal/prober"
+	"github.com/BipoXDXD/vigilume/internal/statuspage"
 	"github.com/BipoXDXD/vigilume/internal/storage"
 	"github.com/BipoXDXD/vigilume/internal/targets"
 )
@@ -65,10 +66,10 @@ func main() {
 	log.Info("encerrado")
 }
 
-// manutencaoDeParticoes é o intervalo do job que garante a partição do mês
-// seguinte. A do mês seguinte já existe desde o boot, então um dia de
-// intervalo deixa um mês inteiro de folga.
-const manutencaoDeParticoes = 24 * time.Hour
+// manutencaoACada é o intervalo do job de manutenção (spec §12): partições,
+// rollups horários e retenção. Cada rodada é idempotente, e 15 minutos deixam
+// o rollup da última hora cheia disponível logo depois de ela fechar.
+const manutencaoACada = 15 * time.Minute
 
 // run é onde o wiring acontece. Mantido separado de main para que main tenha
 // apenas responsabilidade de processo (flags, sinais, código de saída).
@@ -125,7 +126,7 @@ func run(ctx context.Context, cfg *config.Config) error {
 		grace := graceDoSondador(cfg.ShutdownGrace)
 		g.Go(func() error { return sched.Run(gctx, grace) })
 		g.Go(func() error {
-			return storage.MaintainChecksPartitions(gctx, pool, clk, manutencaoDeParticoes)
+			return storage.RunMaintenance(gctx, pool, clk, manutencaoACada)
 		})
 		// O dispatcher roda com o sondador (spec §8: fora do caminho
 		// crítico da sonda, em worker próprio). A outbox no banco é o que
@@ -138,14 +139,15 @@ func run(ctx context.Context, cfg *config.Config) error {
 	if cfg.Role.RunsAPI() {
 		store := auth.NewPGStore(pool)
 		deps := httpapi.Deps{
-			Store:     store,
-			Sessions:  auth.NewManager(store, clk, cfg.IPHashKey),
-			TOTP:      auth.NewTOTP(pool, box, totpIssuer),
-			Targets:   targets.NewService(pool, box, clk),
-			Incidents: history.NewService(pool, clk),
-			Channels:  notify.NewChannelService(pool, box, clk, notify.NewDiscord(), verificador(cfg), cfg.PublicBaseURL),
-			Clock:     clk,
-			Ready:     pool.Ping,
+			Store:       store,
+			Sessions:    auth.NewManager(store, clk, cfg.IPHashKey),
+			TOTP:        auth.NewTOTP(pool, box, totpIssuer),
+			Targets:     targets.NewService(pool, box, clk),
+			Incidents:   history.NewService(pool, clk),
+			Channels:    notify.NewChannelService(pool, box, clk, notify.NewDiscord(), verificador(cfg), cfg.PublicBaseURL),
+			StatusPages: statuspage.NewService(pool, clk),
+			Clock:       clk,
+			Ready:       pool.Ping,
 		}
 		servir(gctx, g, httpapi.NewServer(cfg, httpapi.Routes(gctx, cfg, deps)), "api", cfg.ShutdownGrace)
 	}

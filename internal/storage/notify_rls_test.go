@@ -188,7 +188,7 @@ func TestConfirmChannelIsIdempotentAndRespectsExpiry(t *testing.T) {
 	ctx := context.Background()
 	dono := novoUsuario(t, pool)
 	h, hVencido := hashDe("token"), hashDe("vencido")
-	novoCanal(t, pool, dono, h, agora.Add(24*time.Hour))
+	canal := novoCanal(t, pool, dono, h, agora.Add(24*time.Hour))
 	novoCanal(t, pool, dono, hVencido, agora.Add(-time.Minute))
 
 	confirmar := func(hash []byte, em time.Time) int64 {
@@ -217,11 +217,9 @@ func TestConfirmChannelIsIdempotentAndRespectsExpiry(t *testing.T) {
 
 	var verificadoEm time.Time
 	err := storage.InUserTx(ctx, pool, dono, func(q *db.Queries) error {
-		cs, err := q.ListChannels(ctx, dono)
-		for _, c := range cs {
-			if string(c.VerifyTokenHash) == string(h) && c.VerifiedAt != nil {
-				verificadoEm = *c.VerifiedAt
-			}
+		c, err := q.GetChannel(ctx, db.GetChannelParams{UserID: dono, ID: canal})
+		if err == nil && c.VerifiedAt != nil {
+			verificadoEm = *c.VerifiedAt
 		}
 		return err
 	})

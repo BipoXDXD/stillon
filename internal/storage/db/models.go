@@ -20,6 +20,13 @@ type AuditLog struct {
 	At       time.Time
 }
 
+type ChannelHealth struct {
+	ChannelID     uuid.UUID
+	LastSuccessAt *time.Time
+	LastFailureAt *time.Time
+	LastError     *string
+}
+
 type Check struct {
 	ID         uuid.UUID
 	TargetID   uuid.UUID
@@ -28,6 +35,17 @@ type Check struct {
 	LatencyMS  int32
 	StatusCode *int32
 	ErrorKind  *string
+}
+
+type CheckRollup1h struct {
+	TargetID uuid.UUID
+	Bucket   time.Time
+	Total    int32
+	Ok       int32
+	P50      *int32
+	P95      *int32
+	P99      *int32
+	Max      *int32
 }
 
 type Incident struct {
@@ -77,6 +95,22 @@ type Session struct {
 	IpHash    []byte
 	UserAgent *string
 	CreatedAt time.Time
+}
+
+type StatusPage struct {
+	ID        uuid.UUID
+	UserID    uuid.UUID
+	Slug      string
+	Title     string
+	Published bool
+	CreatedAt time.Time
+}
+
+type StatusPageItem struct {
+	StatusPageID uuid.UUID
+	TargetID     uuid.UUID
+	DisplayName  string
+	Position     int32
 }
 
 type Target struct {

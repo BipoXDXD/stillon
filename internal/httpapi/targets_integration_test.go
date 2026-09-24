@@ -467,42 +467,63 @@ func TestChecksEndpoint(t *testing.T) {
 	}
 
 	var got struct {
-		Items []struct {
+		Resolution string `json:"resolution"`
+		Items      []struct {
 			Status    string  `json:"status"`
 			ErrorKind *string `json:"error_kind"`
 		} `json:"items"`
 	}
 	lerCorpo(t, chamar(t, a, http.MethodGet, "/api/v1/targets/"+criado.ID+"/checks", tok, nil), &got)
-	if len(got.Items) != 2 || got.Items[0].Status != "up" || got.Items[1].ErrorKind == nil || *got.Items[1].ErrorKind != "timeout" {
-		t.Errorf("checks = %+v", got.Items)
+	if got.Resolution != "raw" || len(got.Items) != 2 || got.Items[0].Status != "up" || got.Items[1].ErrorKind == nil || *got.Items[1].ErrorKind != "timeout" {
+		t.Errorf("checks = %q %+v", got.Resolution, got.Items)
 	}
 
-	fim := a.clk.Now().UTC()
+	// D6: acima de 48h a série é horária, lida de check_rollup_1h.
+	fim := a.clk.Now().UTC().Truncate(time.Hour)
+	velho := db.InsertCheckParams{
+		ID: uuid.Must(uuid.NewV7()), TargetID: alvoID, CheckedAt: fim.Add(-30*time.Hour + time.Minute),
+		Status: "down", LatencyMS: 10000, ErrorKind: &kind,
+	}
+	if err := storage.InProberTx(ctx, a.pool, func(q *db.Queries) error { return q.InsertCheck(ctx, velho) }); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := storage.ConsolidateRollups(ctx, a.pool, a.clk.Now()); err != nil {
+		t.Fatal(err)
+	}
+	var horaria struct {
+		Resolution string `json:"resolution"`
+		Items      []struct {
+			Bucket time.Time `json:"bucket"`
+			Total  int32     `json:"total"`
+			OK     *int32    `json:"ok"`
+			P50    *int32    `json:"p50_ms"`
+		} `json:"items"`
+	}
 	caminho := fmt.Sprintf("/api/v1/targets/%s/checks?from=%s&to=%s", criado.ID,
 		fim.Add(-49*time.Hour).Format(time.RFC3339), fim.Format(time.RFC3339))
+	cru := lerCorpo(t, chamar(t, a, http.MethodGet, caminho, tok, nil), &horaria)
+	// Duas horas: a do check velho e a dos dois checks recentes (11:00 UTC).
+	if horaria.Resolution != "1h" || len(horaria.Items) != 2 || !horaria.Items[0].Bucket.Equal(fim.Add(-30*time.Hour)) ||
+		horaria.Items[0].Bucket.Location() != time.UTC ||
+		horaria.Items[0].Total != 1 || horaria.Items[0].OK == nil || *horaria.Items[0].OK != 0 || horaria.Items[0].P50 != nil {
+		t.Errorf("janela de 49h = %s, queria 1h com a hora sem sucesso (ok 0, p50_ms null)", cru)
+	}
+
+	caminho = fmt.Sprintf("/api/v1/targets/%s/checks?from=%s&to=%s", criado.ID,
+		fim.Add(-401*24*time.Hour).Format(time.RFC3339), fim.Format(time.RFC3339))
 	resp = chamar(t, a, http.MethodGet, caminho, tok, nil)
 	var env struct {
 		Error struct {
-			Code   string `json:"code"`
 			Fields []struct {
 				Field  string `json:"field"`
 				Reason string `json:"reason"`
 			} `json:"fields"`
 		} `json:"error"`
 	}
-	cru := lerCorpo(t, resp, &env)
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Errorf("janela de 49h deu %d, queria 400 (D6)", resp.StatusCode)
-	}
-	// O 400 tem de apontar o culpado: é "from" que está longe demais de "to".
-	culpado := false
-	for _, f := range env.Error.Fields {
-		if f.Field == "from" && f.Reason == "out_of_range" {
-			culpado = true
-		}
-	}
-	if !culpado {
-		t.Errorf("janela de 49h não apontou from/out_of_range: %s", cru)
+	cru = lerCorpo(t, resp, &env)
+	if resp.StatusCode != http.StatusBadRequest || len(env.Error.Fields) != 1 ||
+		env.Error.Fields[0].Field != "from" || env.Error.Fields[0].Reason != "out_of_range" {
+		t.Errorf("janela de 401 dias deu %d %s, queria 400 from/out_of_range", resp.StatusCode, cru)
 	}
 }
 

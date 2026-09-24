@@ -3,12 +3,10 @@ package storage
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/BipoXDXD/vigilume/internal/clock"
 	"github.com/BipoXDXD/vigilume/internal/storage/db"
 )
 
@@ -29,23 +27,4 @@ func EnsureChecksPartitions(ctx context.Context, pool *pgxpool.Pool, now time.Ti
 		}
 	}
 	return nil
-}
-
-// MaintainChecksPartitions repete EnsureChecksPartitions até ctx acabar. A
-// partição do mês seguinte existe desde o boot, então um tick diário tem um
-// mês inteiro de folga. O Plano 4 acrescenta aqui o DROP das partições
-// vencidas (spec §12).
-func MaintainChecksPartitions(ctx context.Context, pool *pgxpool.Pool, clk clock.Clock, every time.Duration) error {
-	t := time.NewTicker(every)
-	defer t.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-t.C:
-			if err := EnsureChecksPartitions(ctx, pool, clk.Now()); err != nil && ctx.Err() == nil {
-				slog.Error("manter partições de checks", "erro", err)
-			}
-		}
-	}
 }
