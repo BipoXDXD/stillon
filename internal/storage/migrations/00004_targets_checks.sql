@@ -83,8 +83,8 @@ ALTER TABLE checks ENABLE ROW LEVEL SECURITY;
 ALTER TABLE checks FORCE ROW LEVEL SECURITY;
 
 CREATE POLICY checks_via_target ON checks
-    USING (EXISTS (SELECT 1 FROM targets t WHERE t.id = target_id))
-    WITH CHECK (EXISTS (SELECT 1 FROM targets t WHERE t.id = target_id));
+    USING (EXISTS (SELECT 1 FROM targets t WHERE t.id = checks.target_id))
+    WITH CHECK (EXISTS (SELECT 1 FROM targets t WHERE t.id = checks.target_id));
 
 -- Cria a partição do mês que contém p_month. As bordas são instantes em UTC,
 -- independentes do TimeZone da sessão: se dois boots discordassem sobre onde
