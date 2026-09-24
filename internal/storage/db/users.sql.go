@@ -27,6 +27,32 @@ func (q *Queries) CountUsers(ctx context.Context) (int64, error) {
 	return count, err
 }
 
+const getAccount = `-- name: GetAccount :one
+SELECT id, email, (totp_confirmed_at IS NOT NULL)::bool AS totp_enabled, created_at
+  FROM users WHERE id = $1
+`
+
+type GetAccountRow struct {
+	ID          uuid.UUID
+	Email       string
+	TotpEnabled bool
+	CreatedAt   time.Time
+}
+
+// GET /me. totp_enabled é o segundo fator CONFIRMADO: um cadastro iniciado e
+// abandonado não conta (o mesmo critério de auth.TOTP.IsEnabled).
+func (q *Queries) GetAccount(ctx context.Context, id uuid.UUID) (GetAccountRow, error) {
+	row := q.db.QueryRow(ctx, getAccount, id)
+	var i GetAccountRow
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.TotpEnabled,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const getUserIDByEmail = `-- name: GetUserIDByEmail :one
 SELECT id FROM users WHERE email = $1
 `
@@ -114,6 +140,29 @@ type ReplaceUserHashParams struct {
 // gosec lê a constante gerada como credencial embutida, G101.)
 func (q *Queries) ReplaceUserHash(ctx context.Context, arg ReplaceUserHashParams) (int64, error) {
 	result, err := q.db.Exec(ctx, replaceUserHash, arg.ID, arg.PasswordHash)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const swapUserHash = `-- name: SwapUserHash :execrows
+UPDATE users SET password_hash = $1, failed_attempts = 0, locked_until = NULL
+ WHERE id = $2 AND password_hash = $3
+`
+
+type SwapUserHashParams struct {
+	NewHash string
+	ID      uuid.UUID
+	OldHash string
+}
+
+// A troca de senha pela API é um compare-and-swap: só grava se o hash ainda
+// é o que foi verificado. Duas trocas simultâneas com a mesma senha atual não
+// se atropelam, e a verificação (Argon2id) não precisa segurar trava. Zera o
+// bloqueio: a senha e o segundo fator acabaram de ser provados.
+func (q *Queries) SwapUserHash(ctx context.Context, arg SwapUserHashParams) (int64, error) {
+	result, err := q.db.Exec(ctx, swapUserHash, arg.NewHash, arg.ID, arg.OldHash)
 	if err != nil {
 		return 0, err
 	}

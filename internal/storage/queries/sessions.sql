@@ -19,3 +19,19 @@ SELECT pg_advisory_xact_lock(hashtextextended('vigilume.sessions:' || sqlc.arg(u
 -- name: RevokeAllFamilies :execrows
 UPDATE sessions SET revoked_at = sqlc.arg(now)::timestamptz
  WHERE user_id = sqlc.arg(user_id) AND revoked_at IS NULL;
+
+-- A família está viva: tem a linha corrente (não usada, não revogada, não
+-- vencida). $now é o relógio injetado, o mesmo que Rotate usa, nunca now().
+-- name: FamilyIsLive :one
+SELECT EXISTS (
+    SELECT 1 FROM sessions
+     WHERE user_id = sqlc.arg(user_id) AND family_id = sqlc.arg(family_id)
+       AND used_at IS NULL AND revoked_at IS NULL
+       AND expires_at > sqlc.arg(now)::timestamptz
+);
+
+-- A troca de senha derruba as OUTRAS famílias do usuário e mantém a atual.
+-- name: RevokeOtherFamilies :execrows
+UPDATE sessions SET revoked_at = sqlc.arg(now)::timestamptz
+ WHERE user_id = sqlc.arg(user_id) AND family_id <> sqlc.arg(keep_family_id)
+   AND revoked_at IS NULL;

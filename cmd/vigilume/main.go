@@ -14,6 +14,7 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
+	"github.com/BipoXDXD/vigilume/internal/account"
 	"github.com/BipoXDXD/vigilume/internal/auth"
 	"github.com/BipoXDXD/vigilume/internal/clock"
 	"github.com/BipoXDXD/vigilume/internal/config"
@@ -156,10 +157,12 @@ func run(ctx context.Context, cfg *config.Config) error {
 
 	if cfg.Role.RunsAPI() {
 		store := auth.NewPGStore(pool)
+		segundoFator := auth.NewTOTP(pool, box, totpIssuer)
 		deps := httpapi.Deps{
 			Store:       store,
 			Sessions:    auth.NewManager(store, clk, cfg.IPHashKey),
-			TOTP:        auth.NewTOTP(pool, box, totpIssuer),
+			TOTP:        segundoFator,
+			Accounts:    account.NewService(pool, segundoFator, clk, cfg.IPHashKey),
 			Targets:     targets.NewService(pool, box, clk),
 			Incidents:   history.NewService(pool, clk),
 			Channels:    notify.NewChannelService(pool, box, clk, notify.NewDiscord(), verificador(cfg), cfg.PublicBaseURL),

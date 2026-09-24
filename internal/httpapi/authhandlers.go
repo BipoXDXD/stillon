@@ -178,15 +178,6 @@ func (h *AuthHandlers) Logout(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (h *AuthHandlers) Me(w http.ResponseWriter, r *http.Request) {
-	userID, ok := middleware.UserID(r.Context())
-	if !ok {
-		apierr.WriteError(w, r, apierr.CodeUnauthorized)
-		return
-	}
-	apierr.WriteJSON(w, http.StatusOK, map[string]string{"id": userID.String()})
-}
-
 func (h *AuthHandlers) issue(w http.ResponseWriter, r *http.Request, userID uuid.UUID) {
 	token, s, err := h.sessions.Issue(r.Context(), userID, h.meta(r))
 	if err != nil {

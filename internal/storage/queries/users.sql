@@ -27,3 +27,17 @@ SELECT pg_advisory_xact_lock(hashtextextended('vigilume.user_create', 0));
 -- name: InsertAuditEntry :exec
 INSERT INTO audit_log (id, user_id, action, entity, entity_id, ip_hash, at)
 VALUES ($1, $2, $3, $4, $5, $6, $7);
+
+-- GET /me. totp_enabled é o segundo fator CONFIRMADO: um cadastro iniciado e
+-- abandonado não conta (o mesmo critério de auth.TOTP.IsEnabled).
+-- name: GetAccount :one
+SELECT id, email, (totp_confirmed_at IS NOT NULL)::bool AS totp_enabled, created_at
+  FROM users WHERE id = $1;
+
+-- A troca de senha pela API é um compare-and-swap: só grava se o hash ainda
+-- é o que foi verificado. Duas trocas simultâneas com a mesma senha atual não
+-- se atropelam, e a verificação (Argon2id) não precisa segurar trava. Zera o
+-- bloqueio: a senha e o segundo fator acabaram de ser provados.
+-- name: SwapUserHash :execrows
+UPDATE users SET password_hash = sqlc.arg(new_hash), failed_attempts = 0, locked_until = NULL
+ WHERE id = sqlc.arg(id) AND password_hash = sqlc.arg(old_hash);

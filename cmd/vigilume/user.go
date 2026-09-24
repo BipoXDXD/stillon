@@ -105,7 +105,8 @@ func runUser(ctx context.Context, args []string, in entradaDaSenha, stdout, stde
 	if err := storage.Migrate(ctx, dsn); err != nil {
 		return falhar(saidaAmbiente, "%v", err)
 	}
-	svc := account.NewService(pool, clock.Real{})
+	// Sem segundo fator e sem chave de IP: o CLI não troca senha pela API.
+	svc := account.NewService(pool, nil, clock.Real{}, nil)
 
 	// A pré-condição vem ANTES da senha: ninguém digita duas vezes à toa.
 	switch sub {

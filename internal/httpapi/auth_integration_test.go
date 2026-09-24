@@ -16,6 +16,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/BipoXDXD/vigilume/internal/account"
 	"github.com/BipoXDXD/vigilume/internal/auth"
 	"github.com/BipoXDXD/vigilume/internal/clock"
 	"github.com/BipoXDXD/vigilume/internal/config"
@@ -113,6 +114,7 @@ func newAPICom(t *testing.T, ajustar func(*config.Config), ajustarDeps func(*htt
 	discord, email := &discordFalso{}, &carteiroFalso{}
 	deps := httpapi.Deps{
 		Store: store, Sessions: mgr, TOTP: segundoFator,
+		Accounts:    account.NewService(pool, segundoFator, clk, cfg.IPHashKey),
 		Targets:     targets.NewService(pool, box, clk),
 		Incidents:   history.NewService(pool, clk),
 		Channels:    notify.NewChannelService(pool, box, clk, discord, email, cfg.PublicBaseURL),

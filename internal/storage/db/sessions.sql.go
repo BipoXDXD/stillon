@@ -12,6 +12,30 @@ import (
 	"github.com/google/uuid"
 )
 
+const familyIsLive = `-- name: FamilyIsLive :one
+SELECT EXISTS (
+    SELECT 1 FROM sessions
+     WHERE user_id = $1 AND family_id = $2
+       AND used_at IS NULL AND revoked_at IS NULL
+       AND expires_at > $3::timestamptz
+)
+`
+
+type FamilyIsLiveParams struct {
+	UserID   uuid.UUID
+	FamilyID uuid.UUID
+	Now      time.Time
+}
+
+// A família está viva: tem a linha corrente (não usada, não revogada, não
+// vencida). $now é o relógio injetado, o mesmo que Rotate usa, nunca now().
+func (q *Queries) FamilyIsLive(ctx context.Context, arg FamilyIsLiveParams) (bool, error) {
+	row := q.db.QueryRow(ctx, familyIsLive, arg.UserID, arg.FamilyID, arg.Now)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
 const lockUserSessions = `-- name: LockUserSessions :exec
 SELECT pg_advisory_xact_lock(hashtextextended('vigilume.sessions:' || $1::uuid::text, 0))
 `
@@ -39,6 +63,27 @@ type RevokeAllFamiliesParams struct {
 // linhas já rotacionadas, como o RevokeFamily do auth.
 func (q *Queries) RevokeAllFamilies(ctx context.Context, arg RevokeAllFamiliesParams) (int64, error) {
 	result, err := q.db.Exec(ctx, revokeAllFamilies, arg.Now, arg.UserID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const revokeOtherFamilies = `-- name: RevokeOtherFamilies :execrows
+UPDATE sessions SET revoked_at = $1::timestamptz
+ WHERE user_id = $2 AND family_id <> $3
+   AND revoked_at IS NULL
+`
+
+type RevokeOtherFamiliesParams struct {
+	Now          time.Time
+	UserID       uuid.UUID
+	KeepFamilyID uuid.UUID
+}
+
+// A troca de senha derruba as OUTRAS famílias do usuário e mantém a atual.
+func (q *Queries) RevokeOtherFamilies(ctx context.Context, arg RevokeOtherFamiliesParams) (int64, error) {
+	result, err := q.db.Exec(ctx, revokeOtherFamilies, arg.Now, arg.UserID, arg.KeepFamilyID)
 	if err != nil {
 		return 0, err
 	}
