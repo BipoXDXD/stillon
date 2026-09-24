@@ -18,7 +18,7 @@ const porCodigo: Record<string, string> = {
   invalid_credentials: 'E-mail ou senha incorretos.',
   validation_failed: 'Confira os campos destacados.',
   target_limit_reached: 'Limite de 100 alvos atingido.',
-  channel_limit_reached: 'Limite de canais atingido.',
+  channel_limit_reached: 'Limite de 10 canais atingido.',
   channel_not_pending: 'O canal não está mais aguardando verificação.',
   delivery_failed: 'Não conseguimos entregar a mensagem de teste. Confira o endereço.',
   status_page_exists: 'Você já tem uma status page.',
@@ -57,6 +57,7 @@ const porCampo: Record<string, Record<string, string>> = {
   timeout_ms: { out_of_range: 'Entre 1000 e 30000 ms, e menor que 90% do intervalo.' },
   interval_sec: { out_of_range: 'Entre 30 segundos e 1 dia.' },
   kind: { unavailable: 'O envio de e-mail não está configurado neste servidor.' },
+  email: { invalid: 'E-mail inválido.' },
   slug: { invalid: 'De 3 a 40 caracteres: letras minúsculas, números e hífens, sem hífen nas pontas.' },
   new_password: { too_short: 'Mínimo de 15 caracteres.', too_long: 'Máximo de 128 caracteres.' },
 }

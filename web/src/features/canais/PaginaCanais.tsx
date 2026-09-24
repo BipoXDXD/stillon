@@ -19,15 +19,41 @@ import { dataHora } from '@/lib/format'
 const estados: Record<Canal['status'], { texto: string; cor: string }> = {
   verified: { texto: '✓ Verificado', cor: 'text-no-ar' },
   pending: { texto: '… Aguardando verificação', cor: 'text-degradado' },
-  expired: { texto: 'Verificação expirada', cor: 'text-sem-dados' },
+  expired: { texto: '⧖ Verificação expirada', cor: 'text-sem-dados' },
   failing: { texto: '✕ Falhando', cor: 'text-fora' },
 }
 
 const esquema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('discord'), url: z.string().trim().pipe(z.url('Cole a URL do webhook.')) }),
-  z.object({ kind: z.literal('email'), email: z.string().trim().pipe(z.email('Informe um e-mail válido.')) }),
+  // Só o mínimo: quem decide se o e-mail vale é o servidor (net/mail com um
+  // ponto no domínio), que aceita o que z.email() recusa: acentos, IDN,
+  // "a!b@…". Um 400 email/invalid volta como texto.
+  z.object({
+    kind: z.literal('email'),
+    email: z.string().trim().min(1, 'Informe o e-mail.').refine((s) => s.includes('@'), 'Informe um e-mail válido.'),
+  }),
 ])
 type Valores = z.input<typeof esquema>
+
+// Os erros de criar e de reenviar vêm do mesmo balde do servidor (1 envio a
+// cada 6 minutos) e do mesmo vocabulário; muda o que falhou ao entregar.
+function textoDoErro(e: unknown, acao: 'criar' | 'reenviar'): string {
+  if (e instanceof ApiError && e.code === 'validation_failed' && e.fields[0]) {
+    const { field, reason } = e.fields[0]
+    // Aqui a URL é a de um webhook, não a de um alvo.
+    if (field === 'url' && reason === 'invalid') {
+      return 'Use a URL do webhook do Discord (https://discord.com/api/webhooks/…).'
+    }
+    return mensagemDoCampo(field, reason)
+  }
+  if (e instanceof ApiError && e.code === 'rate_limited') {
+    return 'Limite de envios atingido (1 a cada 6 minutos): tente de novo em alguns minutos.'
+  }
+  if (e instanceof ApiError && e.code === 'delivery_failed' && acao === 'reenviar') {
+    return 'Não conseguimos entregar o e-mail de verificação. Tente de novo mais tarde.'
+  }
+  return mensagemDe(e)
+}
 
 function NovoCanal({ aoCriar }: { aoCriar: (c: Canal) => void }) {
   const api = useApi()
@@ -47,13 +73,7 @@ function NovoCanal({ aoCriar }: { aoCriar: (c: Canal) => void }) {
       )
       aoCriar(c)
     } catch (e) {
-      if (e instanceof ApiError && e.code === 'validation_failed' && e.fields[0]) {
-        setErro(mensagemDoCampo(e.fields[0].field, e.fields[0].reason))
-      } else if (e instanceof ApiError && e.code === 'rate_limited') {
-        setErro('Limite de envios atingido: tente de novo em alguns minutos.')
-      } else {
-        setErro(mensagemDe(e))
-      }
+      setErro(textoDoErro(e, 'criar'))
     }
   }
 
@@ -100,29 +120,53 @@ export function PaginaCanais() {
   const [criando, setCriando] = useState(false)
   const [apagar, setApagar] = useState<Canal | null>(null)
   const [erro, setErro] = useState<string | null>(null)
+  // Um POST ou DELETE por vez: sem e-mail em dobro, sem DELETE em dobro.
+  const [reenviando, setReenviando] = useState<string | null>(null)
+  const [apagando, setApagando] = useState(false)
 
   const recarregar = () => qc.invalidateQueries({ queryKey: ['channels'] })
 
+  // O canal mudou em outra aba: a lista na tela está velha.
+  async function listaVelha(e: unknown): Promise<boolean> {
+    if (!(e instanceof ApiError)) return false
+    if (e.code === 'channel_not_pending') {
+      await recarregar()
+      avisar('O canal não está mais aguardando verificação.')
+      return true
+    }
+    if (e.status === 404) {
+      await recarregar()
+      avisar('O canal já tinha sido apagado, talvez em outra aba.')
+      return true
+    }
+    return false
+  }
+
   async function reenviar(c: Canal) {
     setErro(null)
+    setReenviando(c.id)
     try {
       await api.reenviarVerificacao(c.id)
       avisar('Link de verificação reenviado.')
     } catch (e) {
-      if (e instanceof ApiError && e.code === 'channel_not_pending') await recarregar()
-      else setErro(mensagemDe(e))
+      if (!(await listaVelha(e))) setErro(textoDoErro(e, 'reenviar'))
+    } finally {
+      setReenviando(null)
     }
   }
 
   async function confirmarApagar() {
     if (!apagar) return
+    setErro(null)
+    setApagando(true)
     try {
       await api.apagarCanal(apagar.id)
       await recarregar()
       avisar('Canal apagado.')
     } catch (e) {
-      setErro(mensagemDe(e))
+      if (!(await listaVelha(e))) setErro(mensagemDe(e))
     } finally {
+      setApagando(false)
       setApagar(null)
     }
   }
@@ -156,7 +200,13 @@ export function PaginaCanais() {
                   </div>
                   <div className="flex gap-2">
                     {(c.status === 'pending' || c.status === 'expired') && (
-                      <Botao tipo="secundario" tamanho="pequeno" onClick={() => void reenviar(c)}>
+                      <Botao
+                        tipo="secundario"
+                        tamanho="pequeno"
+                        disabled={reenviando === c.id}
+                        onClick={() => void reenviar(c)}
+                        aria-label={`Reenviar verificação do canal ${c.hint}`}
+                      >
                         Reenviar verificação
                       </Botao>
                     )}
@@ -190,6 +240,7 @@ export function PaginaCanais() {
         titulo="Apagar o canal?"
         descricao={`O canal ${apagar?.hint ?? ''} deixa de receber os alertas.`}
         acao="Apagar canal"
+        ocupado={apagando}
         aoConfirmar={() => void confirmarApagar()}
       />
     </>
