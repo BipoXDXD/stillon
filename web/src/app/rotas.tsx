@@ -31,6 +31,12 @@ export const rotas: RouteObject[] = [
           { path: 'incidents', Component: PaginaIncidentes },
           { path: 'channels', Component: PaginaCanais },
           { path: 'status-pages', Component: PaginaStatusPage },
+          {
+            path: 'settings',
+            lazy: async () => ({
+              Component: (await import('@/features/configuracoes/PaginaConfiguracoes')).PaginaConfiguracoes,
+            }),
+          },
           { path: '*', Component: NaoEncontrada },
         ],
       },
