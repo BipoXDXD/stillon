@@ -1,6 +1,6 @@
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useQueryClient } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useFieldArray, useForm, useWatch } from 'react-hook-form'
 import { z } from 'zod'
 import { useApi } from '@/app/contexto'
@@ -76,13 +76,18 @@ function Formulario({ pagina, alvos }: { pagina: PaginaDeStatus | null; alvos: A
       if (err instanceof ApiError && err.code === 'slug_taken') {
         f.setError('slug', { message: 'Este endereço já está em uso.' }, { shouldFocus: true })
       } else if (err instanceof ApiError && err.code === 'status_page_exists') {
+        // Corrida entre abas: a recarga troca a `key` do formulário e o
+        // remonta, então o aviso sai pelo toast, que sobrevive à troca.
+        avisar('Já existe uma status page; recarregamos a que está salva.', 'erro')
         await qc.invalidateQueries({ queryKey: ['status-pages'] })
-        setErro('Já existe uma status page; recarregamos a que está salva.')
       } else if (err instanceof ApiError && err.fields.length) {
         for (const fe of err.fields) {
-          const raiz = fe.field.replace(/\[.*$/, '')
-          if (raiz === 'title' || raiz === 'slug') f.setError(raiz, { message: mensagemDoCampo(fe.field, fe.reason) })
-          else setErro(`${fe.field}: ${mensagemDoCampo(fe.field, fe.reason)}`)
+          const texto = mensagemDoCampo(fe.field, fe.reason)
+          const item = /^items\[(\d+)\]\.display_name$/.exec(fe.field)
+          if (fe.field === 'title' || fe.field === 'slug') f.setError(fe.field, { message: texto })
+          else if (item) f.setError(`items.${Number(item[1])}.display_name`, { message: texto })
+          else if (fe.field === 'items' || fe.field.startsWith('items[')) f.setError('items', { message: texto })
+          else setErro(texto)
         }
       } else {
         setErro(mensagemDe(err))
@@ -99,7 +104,10 @@ function Formulario({ pagina, alvos }: { pagina: PaginaDeStatus | null; alvos: A
             {...a}
             {...f.register('title', {
               onBlur: (ev: { target: { value: string } }) => {
-                if (!f.getValues('slug')) f.setValue('slug', sugerirSlug(ev.target.value), { shouldValidate: true })
+                if (f.getValues('slug')) return
+                const sugestao = sugerirSlug(ev.target.value)
+                // Sugestão vazia ou curta demais não acusa erro antes de a pessoa mexer no campo.
+                if (sugestao) f.setValue('slug', sugestao, { shouldValidate: sugestao.length >= 3 })
               },
             })}
           />
@@ -144,7 +152,9 @@ function Formulario({ pagina, alvos }: { pagina: PaginaDeStatus | null; alvos: A
             </div>
           </div>
         ))}
-        {e.items?.message && <p className="text-sm text-perigo">{e.items.message}</p>}
+        {(e.items?.message ?? e.items?.root?.message) && (
+          <p className="text-sm text-perigo">{e.items?.message ?? e.items?.root?.message}</p>
+        )}
         {livres.length > 0 && itens.fields.length < MAX_ITENS && (
           <div className="flex items-end gap-2">
             <Campo rotulo="Acrescentar alvo">
@@ -204,7 +214,20 @@ function Formulario({ pagina, alvos }: { pagina: PaginaDeStatus | null; alvos: A
 export function PaginaStatusPage() {
   const paginas = usePaginas()
   const alvos = useAlvos()
+  const avisar = useAvisar()
   const [copiado, setCopiado] = useState(false)
+  useEffect(() => {
+    if (!copiado) return
+    const t = window.setTimeout(() => setCopiado(false), 2000)
+    return () => window.clearTimeout(t)
+  }, [copiado])
+
+  function copiar(url: string) {
+    const falhou = () => avisar('Não foi possível copiar. Selecione o link e copie à mão.', 'erro')
+    // Fora de contexto seguro (ou num navegador antigo) não há clipboard.
+    if (!navigator.clipboard) return falhou()
+    navigator.clipboard.writeText(url).then(() => setCopiado(true), falhou)
+  }
   return (
     <>
       <Titulo aba="Status page">Status page</Titulo>
@@ -222,10 +245,7 @@ export function PaginaStatusPage() {
                       <Botao
                         tipo="secundario"
                         tamanho="pequeno"
-                        onClick={() => {
-                          void navigator.clipboard?.writeText(pagina.public_url)
-                          setCopiado(true)
-                        }}
+                        onClick={() => copiar(pagina.public_url)}
                       >
                         {copiado ? 'Copiado' : 'Copiar'}
                       </Botao>

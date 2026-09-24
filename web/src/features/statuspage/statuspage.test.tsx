@@ -1,5 +1,5 @@
 import { screen, waitFor, within } from '@testing-library/react'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { alvo } from '@/test/fixtures'
 import { renderizarPainel } from '@/test/renderizar'
 import { sugerirSlug } from './PaginaStatusPage'
@@ -63,4 +63,108 @@ describe('status page', () => {
     expect(within(previa).getByText('API pública')).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Abrir' })).toHaveAttribute('rel', 'noopener noreferrer')
   })
+  it('outra aba criou a página: o 409 status_page_exists recarrega, e o aviso sobrevive à troca do formulário', async () => {
+    const r = await renderizarPainel('/status-pages')
+    r.falsa.estado.alvos = [alvo()]
+    await r.cliente.refetchQueries()
+    await r.usuario.type(await screen.findByLabelText('Título'), 'Minha')
+    await r.usuario.tab()
+    // Enquanto isso, outra aba criou a página no servidor.
+    r.falsa.estado.paginas = [salva()]
+    r.falsa.estado.forcar.set('POST /status-pages', { status: 409, code: 'status_page_exists' })
+    await r.usuario.click(screen.getByRole('button', { name: 'Criar status page' }))
+    expect(await screen.findByRole('button', { name: 'Salvar' })).toBeInTheDocument()
+    expect(screen.getByLabelText('Título')).toHaveValue('Minha salva')
+    expect(screen.getAllByText('Já existe uma status page; recarregamos a que está salva.').length).toBeGreaterThan(0)
+  })
+
+  it('editar manda no PATCH a lista inteira, reordenada e sem o item tirado', async () => {
+    const r = await renderizarPainel('/status-pages')
+    r.falsa.estado.alvos = [alvo(), alvo({ id: 'alvo-2', name: 'Site' }), alvo({ id: 'alvo-3', name: 'Banco' })]
+    r.falsa.estado.paginas = [
+      salva({
+        items: [
+          { target_id: 'alvo-1', display_name: 'API' },
+          { target_id: 'alvo-2', display_name: 'Site' },
+          { target_id: 'alvo-3', display_name: 'Banco' },
+        ],
+      }),
+    ]
+    await r.cliente.refetchQueries()
+    await r.usuario.click(await screen.findByRole('button', { name: 'Subir Banco' }))
+    await r.usuario.click(screen.getByRole('button', { name: 'Tirar API da página' }))
+    await r.usuario.click(screen.getByRole('button', { name: 'Salvar' }))
+    await waitFor(() => expect(r.falsa.chamadas('PATCH /status-pages/:id')).toBe(1))
+    expect(r.falsa.corpos('PATCH /status-pages/:id')[0]).toEqual({
+      title: 'Minha salva',
+      slug: 'minha',
+      published: true,
+      items: [
+        { target_id: 'alvo-3', display_name: 'Banco' },
+        { target_id: 'alvo-2', display_name: 'Site' },
+      ],
+    })
+  })
+
+  it('o erro do servidor num item vai para o campo do item, sem o caminho cru no topo', async () => {
+    const r = await renderizarPainel('/status-pages')
+    r.falsa.estado.alvos = [alvo(), alvo({ id: 'alvo-2', name: 'Site' })]
+    r.falsa.estado.paginas = [
+      salva({
+        items: [
+          { target_id: 'alvo-1', display_name: 'API' },
+          { target_id: 'alvo-2', display_name: 'Site' },
+        ],
+      }),
+    ]
+    await r.cliente.refetchQueries()
+    r.falsa.estado.forcar.set('PATCH /status-pages/:id', {
+      status: 400,
+      code: 'validation_failed',
+      fields: [{ field: 'items[1].display_name', reason: 'required' }],
+    })
+    await r.usuario.click(await screen.findByRole('button', { name: 'Salvar' }))
+    await waitFor(() =>
+      expect(screen.getByLabelText('Nome de exibição de Site')).toHaveAttribute('aria-invalid', 'true'),
+    )
+    expect(screen.getByLabelText('Nome de exibição de API')).not.toHaveAttribute('aria-invalid')
+    expect(screen.queryByText(/items\[1\]/)).not.toBeInTheDocument()
+  })
+
+  it('a sugestão curta demais não acusa erro no slug antes de a pessoa mexer nele', async () => {
+    const r = await renderizarPainel('/status-pages')
+    await r.usuario.type(await screen.findByLabelText('Título'), 'A')
+    await r.usuario.tab()
+    expect(screen.getByLabelText('Endereço (slug)')).toHaveValue('a')
+    expect(screen.getByLabelText('Endereço (slug)')).not.toHaveAttribute('aria-invalid')
+  })
+
+  it('Copiar confirma só depois de copiar, e a falha vira aviso', async () => {
+    const r = await renderizarPainel('/status-pages')
+    r.falsa.estado.paginas = [salva()]
+    await r.cliente.refetchQueries()
+    await r.usuario.click(await screen.findByRole('button', { name: 'Copiar' }))
+    expect(await screen.findByRole('button', { name: 'Copiado' })).toBeInTheDocument()
+    expect(await navigator.clipboard.readText()).toBe('http://localhost:5173/p/minha')
+
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Copiar' })).toBeInTheDocument(), { timeout: 3000 })
+    const falha = vi.spyOn(navigator.clipboard, 'writeText').mockRejectedValueOnce(new Error('negado'))
+    await r.usuario.click(screen.getByRole('button', { name: 'Copiar' }))
+    expect((await screen.findAllByText('Não foi possível copiar. Selecione o link e copie à mão.')).length).toBeGreaterThan(0)
+    expect(screen.getByRole('button', { name: 'Copiar' })).toBeInTheDocument()
+    falha.mockRestore()
+  }, 10_000) // espera de verdade os 2 s do rótulo voltar
 })
+
+function salva(p: Partial<{ items: { target_id: string; display_name: string }[] }> = {}) {
+  return {
+    id: 'pagina-1',
+    slug: 'minha',
+    title: 'Minha salva',
+    published: true,
+    items: [{ target_id: 'alvo-1', display_name: 'API pública' }],
+    public_url: 'http://localhost:5173/p/minha',
+    created_at: '2026-09-20T10:00:00Z',
+    ...p,
+  }
+}
