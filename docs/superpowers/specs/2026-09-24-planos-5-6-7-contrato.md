@@ -131,6 +131,7 @@ e prevalecem sobre o texto das specs onde houver diferença.
      existe (Plano 5, Div. 1, resolvida).
    - **Postgres de produção sem gerência no Fly** (não o Managed Postgres). A spec do Plano 7 é
      revisada para isso: topologia, backups, upgrades e runbook ficam com o operador.
-   - **Repositório e imagem GHCR públicos.** Antes de tornar o repositório público, o histórico é
-     varrido por segredos. A troca de visibilidade é ação manual do usuário.
+   - **Repositório privado por enquanto** (revisto pelo usuário no mesmo dia; antes, "públicos").
+     Tornar público é passo futuro e manual do usuário, com a varredura de segredos antes. O e-mail
+     pessoal no histórico git fica como está (sem reescrever com `--mailmap`).
    - **README em português.**

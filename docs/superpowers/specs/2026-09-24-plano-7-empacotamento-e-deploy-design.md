@@ -8,9 +8,12 @@
   os detalhes do papel do Postgres em `PENDENCIAS-PARA-O-PLANO-3.md` (item 2)
 
 > **Decisões do usuário nesta revisão.** (1) Postgres de produção **sem gerência** no Fly, e não o
-> Managed Postgres; (2) repositório e imagem do GHCR **públicos**, com varredura de segredos no
-> histórico antes; (3) README **em português**; (4) **sem blocklist** de senhas, só o mínimo de 15.
-> O Postgres 18 em desenvolvimento e testes já está integrado (PR #6, `TEST_POSTGRES_IMAGE`).
+> Managed Postgres; (2) repositório **privado por enquanto**: a imagem do GHCR segue a
+> visibilidade do repositório (pacote privado), e tornar público é um passo **futuro e manual**
+> do usuário, com a varredura de segredos antes (e em todo PR desde já); (3) o e-mail pessoal no
+> histórico **fica como está**, sem reescrever a história; (4) README **em português**; (5) **sem
+> blocklist** de senhas, só o mínimo de 15. O Postgres 18 em desenvolvimento e testes já está
+> integrado (PR #6, `TEST_POSTGRES_IMAGE`).
 
 > **Achado que muda o escopo.** A pendência mais antiga do projeto diz que o `TRUSTED_PROXIES` é
 > "configuração, não código". **Não é.** A documentação atual do Fly diz que o elemento **mais à
@@ -68,7 +71,7 @@ Critérios de pronto, em ordem de prioridade:
 | CI estendido: web, imagem, Trivy, E2E, gitleaks, publicação no GHCR, deploy manual | `.github/workflows/` |
 | Workflow de backup diário com teste de restauração e checagem de disco (D32, D35) | `.github/workflows/backup.yml`, `deploy/backup/` |
 | `dependabot.yml` (spec §5.9 manda, e ainda não existe) | `.github/` |
-| `fly.toml` do app e `deploy/fly/db.toml` do Postgres | raiz, `deploy/fly/` |
+| `fly.toml` do app; `fly.toml` e `Dockerfile` (uma linha, `FROM` com digest) do Postgres | raiz, `deploy/fly/db/` |
 | Runbook de deploy, de papel do Postgres, de backup/restauração, de upgrade e de publicação | `docs/deploy/fly.md` |
 | `.gitleaksignore` com os falsos positivos conferidos (10.7) | raiz |
 | README em português | raiz |
@@ -79,7 +82,7 @@ Critérios de pronto, em ordem de prioridade:
 | Item | Motivo |
 |---|---|
 | Executar o deploy, criar app, volume, banco, papel ou segredo no Fly | Ação externa na conta do usuário (contrato, decisão 6). O plano entrega os artefatos e o runbook |
-| Tornar o repositório e o pacote do GHCR públicos | **Ação manual do usuário**, depois da varredura de segredos (6.7) |
+| Tornar o repositório e o pacote do GHCR públicos | Decisão do usuário: **privado por enquanto**. Abrir é passo futuro e manual, depois da varredura de segredos (6.7) |
 | Domínio próprio, TLS próprio | Fora do escopo da spec (§2.2); `*.fly.dev` basta |
 | Várias máquinas, `--role=api` e `--role=prober` separados em produção | O desenho aguenta (spec §3.1), mas custa o dobro e não soma sinal ao portfólio agora |
 | Postgres com réplica e failover | Um nó só; queda do host = restauração do snapshot (6.8). Aceito para o portfólio |
@@ -173,10 +176,10 @@ com o mesmo papel (D29).
 | D11 | **Postgres 18** no compose (`postgres:18-alpine`), com o volume em **`/var/lib/postgresql`**, não em `…/data` | `postgres:16-alpine` | Conferido na documentação da imagem oficial: a partir do 18, `PGDATA=/var/lib/postgresql/18/docker` e o `VOLUME` declarado é `/var/lib/postgresql`. Montar em `…/data` no 18 grava num volume anônimo, e os dados somem ao recriar o contêiner. Medido: com a montagem nova, os dados sobreviveram a um `down` + `up` (10.2) |
 | D12 | Papel da aplicação no compose igual ao de produção: `vigilume_app` com `NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE`, e **`CREATE DATABASE vigilume OWNER vigilume_app`** | `GRANT CREATE ON DATABASE` + `GRANT CREATE ON SCHEMA public`, como o testdb | Desde o PG15 o schema `public` pertence a `pg_database_owner`, então quem é dono do banco é dono do `public` e dispensa os dois GRANTs. Conferido: as 17 tabelas e o `citext` ficaram com `vigilume_app` como dono, e o boot aceitou o papel (`rolsuper=f`, `rolbypassrls=f`). O superusuário `postgres` só existe para o init |
 | D13 | **Chaves de demonstração fixas** no `compose.yaml` (`MASTER_KEY`, `JWT_SECRET`, `IP_HASH_KEY`), base64 de um texto que diz "demo, não use em produção", com um comentário gritando isso | Gerar chaves no primeiro `up` | Gerar exige mais um contêiner com shell e um volume compartilhado, e o segundo `up` precisa reler as mesmas chaves (senão os segredos cifrados ficam ilegíveis). O risco da fixa é alguém copiar o compose para produção: ver D14 |
-| D14 | O boot **recusa** as três chaves de demonstração quando `PUBLIC_BASE_URL` é `https://` | Só o comentário | Sem a recusa, um deploy copiado do compose sobe com chaves públicas, e qualquer um forja JWT e decifra os segredos. São ~10 linhas em `config.Load`, com teste. As chaves ficam públicas **de propósito** num repositório público: é por isso que a recusa importa. **Para o usuário revisar** (seção 12) |
+| D14 | O boot **recusa** as três chaves de demonstração quando `PUBLIC_BASE_URL` é `https://` | Só o comentário | Sem a recusa, um deploy copiado do compose sobe com chaves públicas, e qualquer um forja JWT e decifra os segredos. São ~10 linhas em `config.Load`, com teste. As chaves estão no repositório **de propósito**: hoje quem as vê é quem tem acesso a ele; no dia em que ele abrir, todo mundo. A recusa vale para os dois casos. **Para o usuário revisar** (seção 12) |
 | D15 | Seed cria o usuário `demo@vigilume.local` (senha de demo com **≥ 15 caracteres**, a política do Plano 5, sem blocklist) e, com `DEMO_TARGETS=1` (padrão no compose), **três alvos públicos** pela própria API (login + `POST /targets` com `wget` do busybox). Os alvos só são criados quando o `user create` devolveu **0**; com **3** (usuário já existe), o seed sai 0 sem tocar em nada, e é isso que torna o segundo `up` idempotente | Só o usuário; um subcomando `target create` | Um dashboard vazio na primeira tela vende mal o projeto. Os alvos **precisam** ser públicos: um serviço falso dentro do compose tem IP privado e o `safedial` o recusa, **por desenho** (spec §5.1). Vale uma linha no README. Sem internet, os alvos ficam `down`, e isso também é demonstração. O parser de JSON em `sed` é frágil; o E2E do CI o cobre |
 | D16 | `PUBLIC_BASE_URL=http://localhost:8080`, `CORS_ORIGIN=http://localhost:5173` (o `vite dev` do Plano 6), `METRICS_ADDR=off`, porta só em `127.0.0.1` | Porta em `0.0.0.0` | Com a porta aberta em todas as interfaces, uma rede de café veria o painel de demo com senha conhecida. Com http, o cookie sai sem `Secure` (lógica existente em `routes.go`), e é o que o desenvolvimento local precisa |
-| D17 | O avaliador tem **dois caminhos**: pull da imagem publicada (padrão, rápido) ou build do código (fallback automático) | Só build | O build frio levou 27 s nesta máquina de 16 núcleos. Num notebook comum passa de 30 s com folga. Só o caminho do pull cumpre a §15. **Decidido:** o pacote do GHCR é público |
+| D17 | O compose tem **dois caminhos**: pull da imagem publicada ou build do código (fallback automático, conferido em 10.3). **Com o repositório privado, o avaliador cai no build**: o pull anônimo do pacote privado é negado, e o compose constrói sozinho | Só build; publicar a imagem num registry público com o repositório privado | Medido: build frio de **27 s** + **4 s** de `up` = **~31 s** nesta máquina de 16 núcleos; num notebook comum, bem mais. **Enquanto o repositório for privado, a §15 (30 s) não é garantida**, e o README diz isso com o número. Quem tem acesso ao repositório pode puxar o pacote privado (`docker login ghcr.io` com um token `read:packages`) e cair no caminho rápido. Quando o repositório abrir (6.7), o pacote abre junto e o caminho do pull vira o padrão, sem mudar o compose |
 
 ### 4.3 Os 30 segundos
 
@@ -204,7 +207,7 @@ imprime o tempo (seção 9).
 PR e main ──────┼── secrets (gitleaks, histórico inteiro) ──┼──► ok
                 └── image (build amd64, Trivy) ──► e2e ─────┘
 push em main, tag v* (depois do verde) ──► publish (multi-arch, GHCR, digest)
-workflow_dispatch + environment "production" ──► deploy (flyctl deploy --image …@digest)
+workflow_dispatch + environment "production" ──► deploy (GHCR → registry.fly.io por digest, flyctl deploy)
 schedule diário + workflow_dispatch, environment "backup" ──► backup (dump, restauração, disco)
 ```
 
@@ -215,12 +218,15 @@ schedule diário + workflow_dispatch, environment "backup" ──► backup (dum
 | `secrets` | `gitleaks git` no **histórico inteiro** (`fetch-depth: 0`), binário ou contêiner fixado por versão/digest, com o `.gitleaksignore` | < 30 s (96 commits em 0,9 s localmente) |
 | `image` | `docker/build-push-action` com `load: true`, só amd64, cache `gha`; Trivy (`--severity HIGH,CRITICAL --ignore-unfixed --exit-code 1`); checagens da imagem (9.2) | ~1,5–2 min |
 | `e2e` | Recebe a imagem do `image` (artifact `docker save`), `docker compose up --wait` com `pull_policy: never`, imprime o tempo, `npx playwright install --with-deps chromium`, `npx playwright test` com `E2E_BASE_URL`, `E2E_EMAIL` e `E2E_PASSWORD` apontando para o compose (contrato, Reconciliação 4), relatório como artifact em falha | ~2–3 min |
-| `publish` | Em `push` para `main`: build multi-arch, push para `ghcr.io/bipoxdxd/vigilume:{sha,latest}` e `:{sha}-tools`. Em tag `v*`: também `:{versão}` e `:{versão}-tools`. O digest sai como saída do job | ~2 min |
-| `deploy` | Só `workflow_dispatch`, `environment: production` com revisor obrigatório: `flyctl deploy --image ghcr.io/…@sha256:… --strategy rolling` | ~1–2 min |
+| `publish` | Em `push` para `main`: build multi-arch, push para `ghcr.io/bipoxdxd/vigilume:{sha,latest}` e `:{sha}-tools` (pacote **privado**, como o repositório). Em tag `v*`: também `:{versão}` e `:{versão}-tools`. O digest sai como saída do job | ~2 min |
+| `deploy` | Só `workflow_dispatch`, `environment: production` com revisor obrigatório: copia a imagem do GHCR para `registry.fly.io/vigilume` **pelo digest** (`docker buildx imagetools create`, sem rebuild) e faz `flyctl deploy --image registry.fly.io/vigilume@sha256:… --strategy rolling` (D34) | ~1–2 min |
 | `backup` | Workflow próprio (`backup.yml`), diário: proxy para o banco, `pg_dump`, **restauração num Postgres descartável com checagens**, checagem de disco, cifra com `age`, artifact de 30 dias (D32, D35) | ~2 min |
 
 Relógio de um PR: **~5 min** (o caminho mais longo é `image` → `e2e`, rodando em paralelo com
-`go`). Hoje são ~3 min. Com o repositório público, os minutos de Actions deixam de ser cobrados.
+`go`). Hoje são ~3 min. **Com o repositório privado, os minutos contam** na cota gratuita
+(2.000 min/mês na conta pessoal): cada push custa ~15 minutos de runner somando os jobs, e o
+backup ~2 min/dia (~60 min/mês). Cabem ~120 pushes por mês na cota; o job `e2e` é o primeiro a
+mover para só-`main` se apertar (D19).
 
 ### 5.2 Decisões
 
@@ -228,9 +234,9 @@ Relógio de um PR: **~5 min** (o caminho mais longo é `image` → `e2e`, rodand
 |---|---|---|---|
 | D18 | O **E2E roda contra o `compose.yaml` do avaliador**, com a imagem que acabou de passar no Trivy | Servidor Go + Vite num `webServer` do Playwright | Um E2E feito por fora poderia ficar verde com o compose quebrado. Assim, **o requisito dos 30 s vira teste de regressão**: se o seed, o healthcheck, o init do Postgres ou o painel embutido quebrarem, o PR fica vermelho |
 | D19 | E2E **em todo PR**, só no Chromium | Só na `main`; os três navegadores | Na `main`, um E2E vermelho aparece depois do merge. Três navegadores triplicam o tempo, e o fluxo crítico (spec §14) não tem nada específico de navegador |
-| D20 | **Actions fixadas por SHA completo** (a tag vem no comentário) e **ferramentas Go com versão** (`staticcheck@<v>`, `gosec@<v>`, `govulncheck@<v>`), mais Dependabot para `github-actions`, `gomod`, `npm` (em `/web`) e `docker` (inclusive o digest do Postgres em `deploy/fly/db.toml` e no compose) | `@v5`, `@latest` | Com tag móvel, um push forçado na tag de uma action roda código alheio com o `GITHUB_TOKEN` (o caso `tj-actions/changed-files`, de 2025). `@latest` faz o CI de hoje mudar de resultado sem commit nenhum. A §5.9 já pede o Dependabot |
-| D21 | `permissions: contents: read` no workflow inteiro. `packages: write` só no `publish`. Tokens do Fly **por app** (`fly tokens create deploy -a <app>`), cada um no seu **environment** (`production` para o deploy, `backup` para o backup), não no repositório. `concurrency` cancela o PR anterior do mesmo branch; deploy e backup nunca são cancelados | Token pessoal do Fly nos secrets do repositório | Um token de organização vazado mexe em tudo o que o usuário tem no Fly; o de app só alcança aquele app. No environment, um PR de fork nem enxerga o token. Com o repositório público, isso deixa de ser zelo e vira necessidade |
-| D37 | **Varredura de segredos (gitleaks) em todo PR**, sobre o **histórico inteiro**, com falsos positivos conferidos à mão e listados por *fingerprint* no `.gitleaksignore` | Só antes de publicar; `gitleaks-action` | Um segredo commitado depois da publicação fica público na hora. A varredura só antes de abrir o repositório pega o passado, não o futuro. O binário fixado evita depender de uma action de terceiro com licença e permissões próprias. Custo: menos de 30 s por PR |
+| D20 | **Actions fixadas por SHA completo** (a tag vem no comentário) e **ferramentas Go com versão** (`staticcheck@<v>`, `gosec@<v>`, `govulncheck@<v>`), mais Dependabot para `github-actions`, `gomod`, `npm` (em `/web`) e `docker` (inclusive o digest do Postgres em `deploy/fly/db/Dockerfile` e no compose) | `@v5`, `@latest` | Com tag móvel, um push forçado na tag de uma action roda código alheio com o `GITHUB_TOKEN` (o caso `tj-actions/changed-files`, de 2025). `@latest` faz o CI de hoje mudar de resultado sem commit nenhum. A §5.9 já pede o Dependabot |
+| D21 | `permissions: contents: read` no workflow inteiro. `packages: write` só no `publish`; `packages: read` no `deploy`. Tokens do Fly **por app** (`fly tokens create deploy -a <app>`), cada um no seu **environment** (`production` para o deploy, `backup` para o backup), não no repositório. `concurrency` cancela o PR anterior do mesmo branch; deploy e backup nunca são cancelados | Token pessoal do Fly nos secrets do repositório | Um token de organização vazado mexe em tudo o que o usuário tem no Fly; o de app só alcança aquele app. No environment, um PR de fork nem enxerga o token. Quando o repositório abrir, isso deixa de ser zelo e vira necessidade, e já estará pronto |
+| D37 | **Varredura de segredos (gitleaks) em todo PR, desde já**, sobre o **histórico inteiro**, com falsos positivos conferidos à mão e listados por *fingerprint* no `.gitleaksignore` | Só no dia de abrir o repositório; `gitleaks-action` | Com o repositório privado, um segredo commitado hoje fica público no dia em que ele abrir. Varrer em todo PR mantém o histórico limpo até lá, e a abertura (6.7) vira um passo curto. O binário fixado (`go install …/gitleaks/v8@v8.30.1`) evita depender de uma action de terceiro com licença e permissões próprias. Custo: menos de 30 s por PR |
 
 ---
 
@@ -292,7 +298,9 @@ kill_timeout = "25s"
   memory = "512mb"
 ```
 
-`deploy/fly/db.toml` (Postgres):
+`deploy/fly/db/fly.toml` (Postgres), com um `deploy/fly/db/Dockerfile` de uma linha
+(`FROM postgres:18-alpine@sha256:…`), que existe para o Dependabot enxergar o digest: ele não lê
+o `fly.toml`:
 
 ```toml
 app = "vigilume-db"
@@ -301,7 +309,7 @@ kill_signal = "SIGINT"           # "fast shutdown" do Postgres; é o STOPSIGNAL 
 kill_timeout = "60s"
 
 [build]
-  image = "postgres:18-alpine@sha256:…"   # o Dependabot atualiza (D20)
+  dockerfile = "Dockerfile"      # FROM postgres:18-alpine@sha256:… (o Dependabot atualiza, D20)
 
 [mounts]
   source = "pgdata"
@@ -329,41 +337,39 @@ kill_timeout = "60s"
 | D29 | **Postgres 18 em produção também**, com a **mesma imagem** (tag e digest) de desenvolvimento e testes. A matriz 17/18 do CI (contrato, Reconciliação 7) continua | Produção no 17 | A imagem oficial do 18 existe e é a que o repositório já testa (PR #6). Com o MPG fora, o motivo para o 17 em produção sumiu. A perna do 17 na matriz vira seguro barato: mantém o código compatível com um 17, caso seja preciso restaurar num Postgres gerenciado que não tenha o 18. Ver a seção 12 sobre removê-la |
 | D30 | **Papel da aplicação criado à mão pelo superusuário**, com o **mesmo SQL** do compose: `CREATE ROLE vigilume_app LOGIN PASSWORD … NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE` e `CREATE DATABASE vigilume OWNER vigilume_app`. O `vigilume_app` é **dono das tabelas** e aplica as migrations no boot | Rodar o app como `postgres`; separar papel de migração e de runtime | Como `postgres`, o boot recusa (D8 do Plano 2), e com razão: superusuário atravessa a RLS. Papel de runtime não-dono não funciona: a manutenção faz DDL (`CREATE`/`DROP` de partição). Com a imagem oficial, o superusuário é nosso, e a incerteza do "Schema Admin" do MPG desaparece |
 | D31 | Conexão pela **rede privada**: `vigilume-db.internal:5432`, `sslmode=disable`. O banco **não** tem serviço público nem Flycast | TLS no Postgres com certificado próprio; expor por Flycast | A 6PN é a malha WireGuard do Fly: o tráfego entre hosts já vai cifrado. Pôr TLS no Postgres exige gerar e rodar certificado a mais para cifrar de novo o que já está cifrado. Sem serviço, não há porta do banco na internet. O custo, se um dia o banco sair do Fly, é voltar a `sslmode=require` |
-| D32 | **Backup em duas camadas.** (1) **Snapshots diários do volume** (padrão do Fly), retenção ajustada para **14 dias**: é a volta rápida de uma queda de host. (2) **Dump lógico diário** num workflow agendado do GitHub Actions: `fly proxy` para o banco, `pg_dump -Fc` com o papel **`vigilume_backup`** (`NOSUPERUSER BYPASSRLS` + `pg_read_all_data`), **restauração a cada execução** num `postgres:18-alpine` descartável com checagens, e cópia **cifrada com `age`** (chave pública no repositório, privada só com o usuário) guardada como artifact por 30 dias | Só snapshots; `pg_dump` numa máquina agendada do Fly para um bucket Tigris; WAL contínuo (PITR) | O snapshot é do mesmo provedor e é "consistente como depois de um crash": sozinho, um erro de conta ou do Fly leva tudo junto. O dump sai do Fly, prova que restaura **todo dia**, e custa zero num repositório público. O papel de backup precisa de `BYPASSRLS`: medido no spike, o `pg_dump` como dono **falha** por causa do `FORCE ROW LEVEL SECURITY`, e com `vigilume_backup` funciona (10.6). O boot recusa esse papel, e o `DATABASE_URL` nunca pode apontar para ele (falha fechada). Com o repositório público, o artifact é baixável por qualquer um, e por isso a cifra é obrigatória. PITR fica de fora (2.2): perde-se até um dia de checks no pior caso |
+| D32 | **Backup em duas camadas.** (1) **Snapshots diários do volume** (padrão do Fly), retenção ajustada para **14 dias**: é a volta rápida de uma queda de host. (2) **Dump lógico diário** num workflow agendado do GitHub Actions: `fly proxy` para o banco, `pg_dump -Fc` com o papel **`vigilume_backup`** (`NOSUPERUSER BYPASSRLS` + `pg_read_all_data`), **restauração a cada execução** num `postgres:18-alpine` descartável com checagens, e cópia **cifrada com `age`** (chave pública no repositório, privada só com o usuário) guardada como artifact por 30 dias | Só snapshots; `pg_dump` numa máquina agendada do Fly para um bucket Tigris; WAL contínuo (PITR) | O snapshot é do mesmo provedor e é "consistente como depois de um crash": sozinho, um erro de conta ou do Fly leva tudo junto. O dump sai do Fly, prova que restaura **todo dia**, e custa só minutos de Actions (~2 min/dia) e o espaço de artifact da cota do repositório privado (dumps de dezenas de KB a poucos MB). O papel de backup precisa de `BYPASSRLS`: medido no spike, o `pg_dump` como dono **falha** por causa do `FORCE ROW LEVEL SECURITY`, e com `vigilume_backup` funciona (10.6). O boot recusa esse papel, e o `DATABASE_URL` nunca pode apontar para ele (falha fechada). O artifact é baixável por qualquer colaborador do repositório hoje, e por qualquer um se ele abrir: por isso a cifra, que já nasce obrigatória. PITR fica de fora (2.2): perde-se até um dia de checks no pior caso |
 | D33 | `METRICS_ADDR=off` em produção | Liberar bind em `fly-local-6pn` e configurar `[metrics]` no `fly.toml` | O raspador do Fly entra pela rede privada, e a config de hoje só aceita loopback (D10 do Plano 2). Liberar a 6PN expõe o mapa operacional a toda máquina da organização. O custo de `off`: produção só tem logs. Fica registrado como passo seguinte |
-| D34 | Imagem vem do **GHCR por digest** (`--image ghcr.io/…@sha256:…`), a mesma que passou no Trivy e no E2E. O pacote é **público** (decisão do usuário), e o Fly puxa sem credencial | `fly deploy` com build remoto no Fly; `registry.fly.io` | O build remoto gera uma imagem que nenhum teste viu |
+| D34 | O Fly puxa a imagem de **`registry.fly.io/vigilume`**, por digest. O job `deploy` copia do GHCR a **mesma** imagem que passou no Trivy e no E2E (`docker buildx imagetools create`, que copia o índice multi-arch sem rebuild e mantém o digest) e faz `flyctl deploy --image registry.fly.io/vigilume@sha256:…` | GHCR com credencial no Fly; `fly deploy` com build remoto | Com o repositório privado, o pacote do GHCR é privado. O `registry.fly.io` é o registry do próprio Fly: o token de deploy do app já autentica o push (`flyctl auth docker`) e o Fly puxa de lá sem credencial nenhuma a mais. Dar ao Fly uma credencial do GHCR seria guardar um token pessoal do GitHub fora do GitHub. O build remoto geraria uma imagem que nenhum teste viu. Quando o repositório abrir, dá para trocar para o GHCR direto; nada obriga |
 | D35 | **Disco vigiado pelo workflow de backup**: a cada execução, `pg_database_size` e o uso do volume comparados com o tamanho dele. Acima de 70%, aviso no resumo do job; acima de 85%, o job **falha** (e o GitHub manda e-mail ao usuário). O volume cresce com `fly volumes extend`, com o banco no ar | Só o painel de métricas do Fly | Painel ninguém olha. Um e-mail de job vermelho chega. A estimativa: 10 alvos a cada 60 s dão ~430 mil checks em 30 dias, ~100 MB com índices; 3 GB sobram por muito tempo. É o descuido que derruba um banco sem gerência |
-| D36 | **Upgrades do Postgres:** versão menor (18.x) pelo Dependabot, que muda o digest em `deploy/fly/db.toml`; o usuário aplica com `fly deploy -c deploy/fly/db.toml` (10–30 s fora). Versão maior (18 → 19) por **dump e restauração num app novo** (`vigilume-db19`), trocando o `DATABASE_URL` e mantendo o antigo 7 dias | `pg_upgrade --link` no mesmo volume | O layout novo do 18 foi feito para facilitar o `pg_upgrade --link`, mas ele exige uma imagem com os dois binários e não tem volta depois de iniciar o banco novo. Com um banco de centenas de MB, dump e restauração levam segundos, reusam o caminho que o backup já testa todo dia e deixam o banco antigo intacto para voltar |
+| D36 | **Upgrades do Postgres:** versão menor (18.x) pelo Dependabot, que muda o digest em `deploy/fly/db/Dockerfile`; o usuário aplica com `fly deploy -c deploy/fly/db/fly.toml` (10–30 s fora). Versão maior (18 → 19) por **dump e restauração num app novo** (`vigilume-db19`), trocando o `DATABASE_URL` e mantendo o antigo 7 dias | `pg_upgrade --link` no mesmo volume | O layout novo do 18 foi feito para facilitar o `pg_upgrade --link`, mas ele exige uma imagem com os dois binários e não tem volta depois de iniciar o banco novo. Com um banco de centenas de MB, dump e restauração levam segundos, reusam o caminho que o backup já testa todo dia e deixam o banco antigo intacto para voltar |
 
 ### 6.4 O que exige confirmação do usuário
 
 Cada item abaixo é ação externa, na conta do usuário. Nenhum agente o executa sem um "sim"
 explícito naquele momento:
 
-1. Varredura de segredos do histórico e o que fazer com cada achado (6.7).
-2. **Tornar o repositório e o pacote do GHCR públicos** (6.7). Ação manual do usuário.
-3. Criar os apps `vigilume` e `vigilume-db` no Fly, o volume e o segredo do superusuário. **Tem
+1. Criar os apps `vigilume` e `vigilume-db` no Fly, o volume e o segredo do superusuário. **Tem
    custo recorrente** (6.1).
-4. Criar os papéis `vigilume_app` e `vigilume_backup` e o banco `vigilume`.
-5. Gravar os segredos do app (`fly secrets set`).
-6. O primeiro deploy do banco e o primeiro deploy do app.
-7. Criar os environments `production` e `backup` no GitHub, com os tokens de app e a chave
+2. Criar os papéis `vigilume_app` e `vigilume_backup` e o banco `vigilume`.
+3. Gravar os segredos do app (`fly secrets set`).
+4. O primeiro deploy do banco e o primeiro deploy do app.
+5. Criar os environments `production` e `backup` no GitHub, com os tokens de app e a chave
    pública do `age`.
-8. Cada deploy pelo CI (o revisor aprova no GitHub).
-9. Mudar `TRUSTED_PROXIES` depois do teste de dois pontos de rede (6.5, passo 9).
-10. Upgrades do Postgres e restaurações (6.8).
+6. Cada deploy pelo CI (o revisor aprova no GitHub).
+7. Mudar `TRUSTED_PROXIES` depois do teste de dois pontos de rede (6.5, passo 9).
+8. Upgrades do Postgres e restaurações (6.8).
+9. **No futuro:** tornar o repositório e o pacote do GHCR públicos, depois da varredura (6.7).
 
 ### 6.5 Runbook de deploy (vira `docs/deploy/fly.md`)
 
-Pré-requisitos: `flyctl` instalado e autenticado **pelo usuário**; repositório e pacote do GHCR
-já públicos (6.7); a imagem publicada pelo job `publish`; `age` instalado para gerar a chave de
-backup.
+Pré-requisitos: `flyctl` instalado e autenticado **pelo usuário**; a imagem publicada no GHCR
+pelo job `publish` (pacote privado); `age` instalado para gerar a chave de backup.
 
 1. **Apps.** `fly apps create vigilume` e `fly apps create vigilume-db` (sem `fly launch`: ele
    gera `auto_stop_machines`, D23).
 2. **Volume.** `fly volumes create pgdata -a vigilume-db --region <região> --size 3 --snapshot-retention 14`.
 3. **Banco no ar.** `fly secrets set -a vigilume-db --stage POSTGRES_PASSWORD="$(openssl rand -base64 32)"`
-   (guardar num gerenciador de senhas) e `fly deploy -c deploy/fly/db.toml`. Esperado no
+   (guardar num gerenciador de senhas) e `fly deploy -c deploy/fly/db/fly.toml`. Esperado no
    `fly logs -a vigilume-db`: `database system is ready to accept connections`.
 4. **Papéis e banco.** `fly ssh console -a vigilume-db` (a imagem oficial tem shell) e, em
    `psql -U postgres`, o **mesmo** SQL de `deploy/compose/initdb.sql`, com senhas novas:
@@ -392,7 +398,12 @@ backup.
    dump guarda o texto cifrado, não a chave.
    E-mail é opcional: `RESEND_API_KEY` e `EMAIL_FROM` juntas, com o domínio do remetente já
    verificado no Resend (senão todo envio volta 403). Sem elas, só o Discord funciona.
-7. **Primeiro deploy do app.** `fly deploy --image ghcr.io/bipoxdxd/vigilume@sha256:<digest do publish>`.
+7. **Primeiro deploy do app**, pelo mesmo caminho do job `deploy`: copiar a imagem testada do
+   GHCR para o registry do Fly e fazer o deploy por digest. Da máquina do usuário, logado nos
+   dois (`docker login ghcr.io` com um token `read:packages`; `fly auth docker`):
+   `docker buildx imagetools create -t registry.fly.io/vigilume:<sha> ghcr.io/bipoxdxd/vigilume@sha256:<digest do publish>`
+   e `fly deploy --image registry.fly.io/vigilume@sha256:<o mesmo digest>`. (Ou, com o passo 13
+   já feito, rodar o job `deploy` à mão.)
    Esperado no `fly logs`: `iniciando` com a versão, `migrations aplicadas`, `sondador ativo`,
    `servindo`. Com `TRUSTED_PROXIES` ainda vazio, o aviso de "TRUSTED_PROXIES vazio com
    PUBLIC_BASE_URL https" aparece, e é esperado nesta etapa.
@@ -426,7 +437,7 @@ backup.
     senha do `vigilume_backup` (`BACKUP_DATABASE_PASSWORD`) e a chave **pública** do `age`
     (`age-keygen -o vigilume-backup.key`; a privada fica **fora** do GitHub e do Fly).
     Rodar o `backup.yml` à mão uma vez e conferir que ficou verde (6.8).
-14. **Voltar uma versão.** `fly releases` → `fly deploy --image ghcr.io/…@sha256:<digest anterior>`.
+14. **Voltar uma versão.** `fly releases` → `fly deploy --image registry.fly.io/vigilume@sha256:<digest anterior>`.
     Só é seguro se as migrations aplicadas pela versão nova forem aditivas (D26). O `goose` não
     roda `Down` sozinho, e o plano não automatiza isso.
 
@@ -436,9 +447,11 @@ O contêiner do app não tem shell (§5.9), e `fly ssh console -a vigilume` não
 O que serve: `fly logs`, os subcomandos do próprio binário (`version`, `healthcheck`, `user`) e o
 console do **banco**, que tem shell por ser a imagem oficial.
 
-### 6.7 Publicação do repositório e da imagem
+### 6.7 Publicação do repositório e da imagem (passo futuro)
 
-Antes de tornar o repositório público (ação **manual** do usuário):
+**Decisão do usuário: o repositório fica privado por enquanto.** O que já vale desde hoje: a
+varredura de segredos em todo PR (D37) e a imagem publicada no GHCR como pacote **privado**.
+O dia de abrir é um passo **manual do usuário**, nesta ordem:
 
 1. **Varredura do histórico inteiro:** `gitleaks git . --redact -v` (ou pelo contêiner
    `zricethezav/gitleaks`, fixado por digest). Feita neste spike (10.7): **96 commits, 1 achado**,
@@ -452,17 +465,17 @@ Antes de tornar o repositório público (ação **manual** do usuário):
       suporte do GitHub a limpeza de caches e de PRs antigos, se houver.
    3. Rodar a varredura de novo até zerar, e só então publicar.
 3. **E-mail de autor.** O histórico tem commits com o e-mail pessoal do autor (97 dos 103), que
-   fica visível ao tornar o repositório público. Opções: aceitar, ou reescrever com
-   `git filter-repo --mailmap` para o endereço `noreply` do GitHub (muda todos os hashes; os
-   hashes citados nos documentos deixam de bater). Decisão do usuário (seção 12).
+   fica visível ao tornar o repositório público. **Decisão do usuário: fica como está**, sem
+   reescrever a história (os hashes citados nos documentos continuam valendo). Para os commits
+   novos, dá para configurar o endereço `noreply` do GitHub, se quiser.
 4. `.idea/` não está no `.gitignore` e aparece como não rastreado: entra no `.gitignore` antes de
    publicar, para não ser commitado por engano.
 5. Tornar o repositório público (Settings → General → Danger Zone). O pacote do GHCR tem
    visibilidade **própria**: tornar público em Package settings → Change visibility. Conferir de
-   uma máquina sem login: `docker pull ghcr.io/bipoxdxd/vigilume:latest`.
-
-A partir daí, o job `secrets` (D37) varre o histórico em todo PR, e o `publish` publica a imagem
-em `main` e nas tags `v*`.
+   uma máquina sem login: `docker pull ghcr.io/bipoxdxd/vigilume:latest`. A partir daí o
+   `docker compose up` do avaliador passa a puxar em vez de construir (D17), sem mudar o compose,
+   e o README troca o parágrafo "enquanto o repositório for privado" pelo dos 30 s.
+6. Opcional: apontar o Fly direto para o GHCR (D34). Não é necessário.
 
 ### 6.8 Operação do Postgres (responsabilidade do usuário)
 
@@ -474,7 +487,7 @@ operador precisa manter o hábito.
 | **Backup** | Snapshots diários do volume (14 dias) + `backup.yml` diário (dump, restauração, cifra, 30 dias) | Automático; conferir que o `backup.yml` segue verde |
 | **Teste de restauração** | Automático em cada `backup.yml` (restaura num Postgres descartável e confere). Manual, **trimestral**: baixar o artifact, decifrar com a chave privada do `age`, restaurar num `docker run postgres:18-alpine` local, subir o `vigilume` contra ele e fazer login | Diário (automático) e trimestral (manual) |
 | **Disco** | Checagem no `backup.yml` (D35). Crescer com `fly volumes extend <id> -s <GB>` | Quando o job avisar |
-| **Upgrade** | Menor: PR do Dependabot + `fly deploy -c deploy/fly/db.toml`. Maior: dump e restauração num app novo (D36) | Menor: quando o Dependabot abrir; maior: ~1 vez por ano |
+| **Upgrade** | Menor: PR do Dependabot + `fly deploy -c deploy/fly/db/fly.toml`. Maior: dump e restauração num app novo (D36) | Menor: quando o Dependabot abrir; maior: ~1 vez por ano |
 
 **O que o `backup.yml` faz, em ordem:**
 
@@ -495,7 +508,7 @@ operador precisa manter o hábito.
 
 **Recuperação de uma queda do host** (máquina única, sem réplica): `fly volumes snapshots list
 <volume>` → `fly volumes create pgdata --snapshot-id <id> -s 3 -a vigilume-db` → `fly deploy -c
-deploy/fly/db.toml`. O Postgres faz a recuperação de crash sozinho. Se o snapshot também falhar,
+deploy/fly/db/fly.toml`. O Postgres faz a recuperação de crash sozinho. Se o snapshot também falhar,
 restaurar o último dump do artifact num banco novo (passo trimestral acima, apontando para o Fly).
 
 ### 6.9 Apêndice: banco que já tem tabelas
@@ -531,7 +544,8 @@ sistema. Vai tabela a tabela.
 | `EMAIL_FROM` | secret ou `[env]` | opcional | vazio | idem |
 | `DEMO_PASSWORD`, `DEMO_TARGETS` | só o seed | — | senha de demo com ≥ 15 caracteres, `1` | Nunca em produção |
 | `POSTGRES_PASSWORD` | **secret do `vigilume-db`** | aleatória | `postgres` (só o compose) | Superusuário; só para o console administrativo |
-| `FLY_API_TOKEN`, `BACKUP_DATABASE_PASSWORD`, `AGE_RECIPIENT` | environment `backup` do GitHub | token do app `vigilume-db`, senha do `vigilume_backup`, chave pública | — | D21, D32 |
+| `FLY_API_TOKEN`, `BACKUP_DATABASE_PASSWORD`, `AGE_RECIPIENT`; variável `PG_VOLUME_GB` | environment `backup` do GitHub | token do app `vigilume-db`, senha do `vigilume_backup`, chave pública, tamanho do volume | — | D21, D32, D35 |
+| `FLY_API_TOKEN` | environment `production` do GitHub | token do app `vigilume` | — | D21, D34 |
 
 ---
 
@@ -543,10 +557,13 @@ aqui?", "o que tem de difícil?", "está testado?".
 
 1. **Título, uma frase e badges** (CI, Go 1.26, licença). Um GIF curto (painel → alvo cai →
    incidente → status page) e o link do deploy, se houver.
-2. **Rodar em 30 segundos.** Três linhas: `git clone`, `docker compose up --wait`, abrir
-   `http://localhost:8080` com `demo@vigilume.local` e a senha de demo. Uma nota: os alvos de
-   exemplo precisam de internet, e um serviço local não pode ser alvo porque o `safedial` recusa
-   IP privado, de propósito.
+2. **Rodar local.** Três linhas: `git clone`, `docker compose up --wait`, abrir
+   `http://localhost:8080` com `demo@vigilume.local` e a senha de demo. **Enquanto o repositório
+   for privado**, o compose constrói do código, e o README dá o número medido (~31 s numa máquina
+   de 16 núcleos, mais num notebook) e o atalho para quem tem acesso (`docker login ghcr.io` →
+   pull em vez de build, ~10 s). Quando o repositório abrir, o título vira "Rodar em 30
+   segundos". Uma nota: os alvos de exemplo precisam de internet, e um serviço local não pode ser
+   alvo porque o `safedial` recusa IP privado, de propósito.
 3. **O que faz**, em 5 tópicos (spec §1, §2.1).
 4. **Arquitetura** num diagrama Mermaid: binário único com `--role`, Postgres como fila
    (`SKIP LOCKED`), outbox de notificações, status page em Go e painel embutido. Uma linha de
@@ -639,8 +656,9 @@ no relatório da tarefa (o teste vacuamente verde apareceu 14 vezes no Plano 1).
   plano: (a) fazer o dump como `vigilume_app` → o `pg_dump` falha pela RLS (a razão certa);
   (b) restaurar com `--no-owner` → a checagem de dono fica vermelha; (c) apontar a checagem de
   versão para uma migration que não existe → vermelho.
-- Ensaiável sem o Fly: o mesmo script roda contra o compose local (`BACKUP_TARGET=compose`), e é
-  assim que o plano o valida.
+- Ensaiável sem o Fly: o plano roda o mesmo `deploy/backup/backup.sh`, na mesma imagem, contra
+  dois Postgres locais em contêiner (um "produção" migrado pelo binário real, um descartável),
+  repetindo os passos do `backup.yml` com o túnel trocado por uma porta publicada (10.8).
 
 ### 9.6 Deploy (manual, no runbook)
 
@@ -737,6 +755,35 @@ teste: **falso positivo**, vai para o `.gitleaksignore`. Nenhum arquivo com nome
 (`.env`, `.pem`, `.key`) está rastreado. O histórico tem o e-mail pessoal do autor em 97
 commits (6.7, item 3).
 
+### 10.8 Adiantamento do plano (2026-09-24, antes dos Planos 5 e 6)
+
+Feito numa cópia do repositório (`.superpowers/plano-7-spike/`, fora do controle de versão), com
+a suíte inteira verde com `-race` no 18 e no 17, `vet`, `staticcheck` v0.8.1, `gosec` v2.29.0 e
+`govulncheck` v1.8.0 limpos, e `actionlint` v1.7.12 limpo nos workflows:
+
+- **`CLIENT_IP_HEADER` (D22):** tipo `middleware.Proxies{Trusted, Header}` no lugar da lista
+  solta; sete testes unitários e um de integração (sessões com `ip_hash` distinto no formato do
+  Fly). Sabotagens, todas vermelhas pela razão certa: confiar no cabeçalho de qualquer origem;
+  ignorar o `Header`; aceitar o valor sem `ParseAddr`; tirar o limite do aviso; tirar o `Unmap`;
+  `proxiesDe` sem o `Header` (o de integração).
+- **Chaves de demo (D14):** recusa com https, aceita com http, as três com 32 bytes. Sabotagens:
+  sem a recusa; recusa também em http.
+- **`healthcheck` e `version` (D4, D5):** um teste de "servidor mudo" nasceu **travando a suíte**
+  na sabotagem "sem prazo", em vez de ficar vermelho: o teste esperava o servidor desistir, e o
+  servidor esperava o cliente. Corrigido com teto próprio no teste. Mais um caso da família do
+  teste que não pode falhar: aqui, um que não conseguia terminar.
+- **Matriz 17/18:** uma migration de sabotagem com `DEFAULT uuidv7()` fica vermelha no 17
+  (`function uuidv7() does not exist`) e verde no 18.
+- **gitleaks v8.30.1** com o `.gitleaksignore`: 0 achados; com um token do Fly commitado num
+  clone descartável, 1; sem a linha do ignore, 1.
+- **Backup:** os passos do `backup.yml` repetidos localmente (proxy trocado por porta publicada),
+  com `age` v1.3.2: dump de 57 KB, restauração conferida, cifra, decifra e `pg_restore -l`
+  listando as 16 tabelas com dados. Sabotagens: dump como dono (falha pela RLS), `--no-owner`
+  (dono), versão errada, contagem errada, `FORCE` perdido e volume pequeno (disco): todas
+  vermelhas pela razão certa. O arquivo sai com o dono do runner (`--user`), sem `sudo`.
+- **Porta 5433** está ocupada nesta máquina (um Postgres local); o ensaio usou outra. No runner
+  do GitHub ela está livre.
+
 ---
 
 ## 11. Riscos
@@ -754,7 +801,9 @@ commits (6.7, item 3).
 | Migration quebrada em produção vira crash em loop | Baixa | CI com a matriz e o E2E contra o compose, que migra do zero. O `backup.yml` restaura e confere a versão do schema. Voltar pelo digest anterior (6.5, passo 14) |
 | Alvos de exemplo do seed dependem da internet | Média | O E2E usa o alvo `.invalid` da Reconciliação 4 e não depende do estado. O seed tolera falha de rede nos alvos (usuário primeiro, alvos depois) |
 | Compose copiado para produção com as chaves de demo (públicas no repositório) | Baixa | D14 (recusa no boot) + comentário + README |
-| Segredo commitado depois de o repositório ficar público | Baixa | Job `secrets` em todo PR (D37). Se acontecer: rotacionar primeiro (6.7) |
+| Segredo commitado enquanto o repositório é privado e exposto no dia de abrir | Baixa | Job `secrets` em todo PR desde já (D37). Se acontecer: rotacionar primeiro (6.7) |
+| Repositório privado: o avaliador cai no build (~31 s aqui, mais num notebook) | Certa enquanto privado | Número honesto no README; atalho do `docker login ghcr.io` para quem tem acesso (D17) |
+| Minutos de Actions do repositório privado acabam (2.000/mês) | Baixa | ~15 min por push; mover o `e2e` para só-`main` é o primeiro corte (5.1) |
 | Action de terceiro comprometida | Baixa | D20 (SHA completo, Dependabot), D21 (permissões mínimas, tokens por app em environments) |
 | Domínio do Resend não verificado: todo e-mail volta 403 | Média | O runbook trata o e-mail como opcional e diz o pré-requisito |
 
@@ -762,9 +811,9 @@ commits (6.7, item 3).
 
 ## 12. Decisões para o usuário revisar
 
-Já decidido pelo usuário e fora desta lista: Postgres sem gerência, repositório e imagem públicos
-com varredura antes, README em português, sem blocklist de senhas, Postgres 18 em
-desenvolvimento e testes.
+Já decidido pelo usuário e fora desta lista: Postgres sem gerência; repositório **privado por
+enquanto** (abrir é passo futuro e manual, com a varredura antes); e-mail do histórico **fica como
+está**; README em português; sem blocklist de senhas; Postgres 18 em desenvolvimento e testes.
 
 O que ainda decidi sozinho e merece um segundo olhar, da mais cara para a mais barata:
 
@@ -774,22 +823,26 @@ O que ainda decidi sozinho e merece um segundo olhar, da mais cara para a mais b
 2. **Postgres 18 também em produção (D29).** Com o MPG fora, nada prende a produção no 17. A
    perna do 17 da matriz fica como seguro; dá para removê-la se você preferir um CI mais curto
    (a reconciliação a pôs, e eu a mantive).
-3. **Backup pelo GitHub Actions, cifrado com `age`, 30 dias (D32).** Custo zero, sai do Fly e
-   restaura todo dia. Exige guardar uma chave privada fora de tudo. A alternativa (bucket Tigris
-   com máquina agendada no Fly) custa centavos, mas fica no mesmo provedor.
-4. **E-mail pessoal no histórico (6.7, item 3).** Aceitar, ou reescrever com `--mailmap` antes
-   de publicar (muda todos os hashes, inclusive os citados nos documentos).
-5. **A correção do IP é código no Plano 7 (D22).** A pendência dizia "configuração". O spike
+3. **Fly puxa de `registry.fly.io` (D34)**, com o job `deploy` copiando por digest a imagem
+   testada do GHCR privado. A alternativa (dar ao Fly uma credencial do GHCR) guardaria um token
+   pessoal do GitHub fora do GitHub.
+4. **Backup pelo GitHub Actions, cifrado com `age`, 30 dias (D32).** Sai do Fly e restaura todo
+   dia; no repositório privado, custa ~60 min/mês da cota de Actions e pouco espaço de artifact.
+   Exige guardar uma chave privada fora de tudo. A alternativa (bucket Tigris com máquina
+   agendada no Fly) custa centavos, mas fica no mesmo provedor.
+5. **Os 30 s do compose ficam condicionados à abertura do repositório (D17).** Privado, o
+   avaliador constrói do código (~31 s aqui). O README diz o número.
+6. **E2E em todo PR (D19)**, levando o PR de ~3 para ~5 min e gastando cota de Actions do
+   repositório privado. É o primeiro corte se a cota apertar.
+7. **A correção do IP é código no Plano 7 (D22).** A pendência dizia "configuração". O spike
    mostrou que não basta.
-6. **Recusar as chaves de demo no boot com https (D14).** Com o repositório público, as chaves de
-   demo são públicas de fato.
-7. **Alvos de exemplo no seed (D15).** Melhoram a primeira impressão, mas dependem da internet e
+8. **Recusar as chaves de demo no boot com https (D14).**
+9. **Alvos de exemplo no seed (D15).** Melhoram a primeira impressão, mas dependem da internet e
    de um parser de JSON em `sed`.
-8. **E2E em todo PR (D19)**, levando o PR de ~3 para ~5 min.
-9. **Deploy só manual, com revisor (D21, 6.4).**
-10. **`METRICS_ADDR=off` em produção (D33).**
-11. **Estratégia `rolling`, alguns segundos fora por deploy (D26).**
-12. **Região `gru`**, a confirmar em `fly platform regions` no momento de criar.
+10. **Deploy só manual, com revisor (D21, 6.4).**
+11. **`METRICS_ADDR=off` em produção (D33).**
+12. **Estratégia `rolling`, alguns segundos fora por deploy (D26).**
+13. **Região `gru`**, a confirmar em `fly platform regions` no momento de criar.
 
 ---
 
