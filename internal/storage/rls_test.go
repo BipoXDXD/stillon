@@ -144,23 +144,56 @@ func TestProberCanRescheduleButNotCreate(t *testing.T) {
 	}
 }
 
+// Duas tentativas, cada uma na sua transação: um erro aborta a transação, e a
+// segunda instrução falharia por isso, não pela RLS.
+//
+// Com WHERE, o UPDATE precisa ler colunas, e o Postgres passa a exigir que a
+// linha NOVA satisfaça também o USING das políticas de SELECT — uma segunda
+// barreira, independente do WITH CHECK de targets_owner. Por isso a primeira
+// tentativa continua verde com WITH CHECK (true). Só a tentativa sem WHERE
+// depende do WITH CHECK de dono, e é ela que o prende.
 func TestOwnerCannotHandTargetToAnotherUser(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
 	a, b := novoUsuario(t, pool), novoUsuario(t, pool)
 	alvo := novoAlvo(t, pool, a, agora)
 
-	tx, err := pool.Begin(ctx)
-	if err != nil {
-		t.Fatal(err)
+	tentar := func(sql string, args ...any) error {
+		t.Helper()
+		tx, err := pool.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer tx.Rollback(ctx)
+		if _, err := tx.Exec(ctx, `SELECT set_config('app.user_id', $1, true)`, a.String()); err != nil {
+			t.Fatal(err)
+		}
+		_, err = tx.Exec(ctx, sql, args...)
+		return err
 	}
-	defer tx.Rollback(ctx)
-	if _, err := tx.Exec(ctx, `SELECT set_config('app.user_id', $1, true)`, a.String()); err != nil {
-		t.Fatal(err)
+
+	if err := tentar(`UPDATE targets SET user_id = $1 WHERE id = $2`, b, alvo); codigoPG(err) != "42501" {
+		t.Errorf("com WHERE, A entregou o alvo a B (erro = %v); queria violação de RLS 42501", err)
 	}
-	_, err = tx.Exec(ctx, `UPDATE targets SET user_id = $1 WHERE id = $2`, b, alvo)
-	if codigoPG(err) != "42501" {
-		t.Errorf("A entregou o alvo a B (erro = %v); queria violação de RLS 42501", err)
+	if err := tentar(`UPDATE targets SET user_id = $1`, b); codigoPG(err) != "42501" {
+		t.Errorf("sem WHERE, A entregou o alvo a B (erro = %v); queria violação de RLS 42501: "+
+			"o WITH CHECK de targets_owner não está barrando", err)
+	}
+}
+
+// uuid.Nil nunca é usuário; a transação nem começa.
+func TestInUserTxRefusesNilUser(t *testing.T) {
+	pool := testdb.New(t)
+	chamou := false
+	err := storage.InUserTx(context.Background(), pool, uuid.Nil, func(*db.Queries) error {
+		chamou = true
+		return nil
+	})
+	if !errors.Is(err, storage.ErrNoUser) {
+		t.Errorf("InUserTx com uuid.Nil deu %v, queria ErrNoUser", err)
+	}
+	if chamou {
+		t.Error("InUserTx com uuid.Nil chamou fn")
 	}
 }
 
