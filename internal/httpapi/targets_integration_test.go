@@ -21,7 +21,7 @@ import (
 
 func tokenDe(t *testing.T, a *api, userID uuid.UUID) string {
 	t.Helper()
-	tok, err := auth.NewAccessToken(testJWTSecret, userID, a.clk.Now())
+	tok, err := auth.NewAccessToken(testJWTSecret, userID, uuid.New(), a.clk.Now())
 	if err != nil {
 		t.Fatal(err)
 	}

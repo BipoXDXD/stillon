@@ -311,6 +311,62 @@ func TestFullAuthFlow(t *testing.T) {
 	}
 }
 
+// accessDe lê o access token de uma resposta de login ou de refresh.
+func accessDe(t *testing.T, resp *http.Response) string {
+	t.Helper()
+	var body struct {
+		AccessToken string `json:"access_token"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if body.AccessToken == "" {
+		t.Fatal("a resposta não trouxe access token")
+	}
+	return body.AccessToken
+}
+
+// O access token leva a família do refresh que saiu junto com ele (claim sid,
+// D2 do Plano 5), no login e em cada refresh. É o que GET /sessions usa para
+// marcar a sessão atual.
+func TestAccessTokenCarriesTheSessionFamily(t *testing.T) {
+	a := newAPI(t)
+	c := clientWithJar(t)
+	ctx := context.Background()
+
+	resp := login(t, a, c, testEmail, testPass)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("login devolveu %d", resp.StatusCode)
+	}
+	doLogin, err := auth.ParseAccessToken(testJWTSecret, accessDe(t, resp), a.clk.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var familia uuid.UUID
+	if err := a.pool.QueryRow(ctx,
+		`SELECT family_id FROM sessions WHERE user_id = $1`, a.userID).Scan(&familia); err != nil {
+		t.Fatal(err)
+	}
+	if doLogin.FamilyID != familia {
+		t.Errorf("sid do login = %s, queria a família gravada %s", doLogin.FamilyID, familia)
+	}
+
+	r2 := post(t, c, a.srv.URL+"/api/v1/auth/refresh", nil)
+	defer r2.Body.Close()
+	if r2.StatusCode != http.StatusOK {
+		t.Fatalf("refresh devolveu %d", r2.StatusCode)
+	}
+	doRefresh, err := auth.ParseAccessToken(testJWTSecret, accessDe(t, r2), a.clk.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if doRefresh.FamilyID != familia {
+		t.Errorf("sid do refresh = %s, queria a mesma família %s", doRefresh.FamilyID, familia)
+	}
+}
+
 // E-mail inexistente e senha errada precisam ser indistinguíveis na resposta,
 // senão o endpoint vira oráculo de quais contas existem (spec §5.2).
 //
@@ -633,7 +689,7 @@ func TestProtectedRouteRequiresToken(t *testing.T) {
 	}
 
 	// Token com assinatura de outro segredo também não entra.
-	outro, err := auth.NewAccessToken([]byte("outro-segredo-com-32-bytes!!!!!!"), a.userID, a.clk.Now())
+	outro, err := auth.NewAccessToken([]byte("outro-segredo-com-32-bytes!!!!!!"), a.userID, uuid.New(), a.clk.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -643,7 +699,7 @@ func TestProtectedRouteRequiresToken(t *testing.T) {
 
 	// E o token legítimo passa, o que descarta que o 401 venha de qualquer
 	// outra camada da cadeia.
-	bom, err := auth.NewAccessToken(testJWTSecret, a.userID, a.clk.Now())
+	bom, err := auth.NewAccessToken(testJWTSecret, a.userID, uuid.New(), a.clk.Now())
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -175,7 +175,7 @@ func (h *AuthHandlers) Refresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.grantSession(w, r, token, s.ExpiresAt, s.UserID)
+	h.grantSession(w, r, token, s)
 }
 
 func (h *AuthHandlers) Logout(w http.ResponseWriter, r *http.Request) {
@@ -203,7 +203,7 @@ func (h *AuthHandlers) issue(w http.ResponseWriter, r *http.Request, userID uuid
 		h.internal(w, r, "emitir sessão", err)
 		return
 	}
-	h.grantSession(w, r, token, s.ExpiresAt, userID)
+	h.grantSession(w, r, token, s)
 }
 
 // grantSession entrega a sessão ao cliente, e a ORDEM aqui é o ponto (item
@@ -218,13 +218,16 @@ func (h *AuthHandlers) issue(w http.ResponseWriter, r *http.Request, userID uuid
 // a sessão no banco. O que ela tira é o cookie do lado do cliente, que é a
 // metade explorável: sessão órfã no banco expira sozinha e ninguém a
 // apresenta; cookie vivo no navegador é credencial em uso.
-func (h *AuthHandlers) grantSession(w http.ResponseWriter, r *http.Request, refresh string, expires time.Time, userID uuid.UUID) {
-	access, err := auth.NewAccessToken(h.jwtSecret, userID, h.clk.Now())
+//
+// O access token leva a família da sessão (claim sid): é a mesma família do
+// refresh que vai no cookie.
+func (h *AuthHandlers) grantSession(w http.ResponseWriter, r *http.Request, refresh string, s auth.Session) {
+	access, err := auth.NewAccessToken(h.jwtSecret, s.UserID, s.FamilyID, h.clk.Now())
 	if err != nil {
 		h.internal(w, r, "assinar access token", err)
 		return
 	}
-	h.setCookie(w, refresh, expires)
+	h.setCookie(w, refresh, s.ExpiresAt)
 	apierr.WriteJSON(w, http.StatusOK, tokenResponse{
 		AccessToken: access,
 		ExpiresIn:   int(auth.AccessTTL.Seconds()),

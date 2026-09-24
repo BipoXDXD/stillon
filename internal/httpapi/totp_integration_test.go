@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/pquerna/otp"
 	"github.com/pquerna/otp/totp"
 
@@ -17,7 +18,7 @@ import (
 // o mesmo segredo que a API usa.
 func accessTokenValido(t *testing.T, a *api) string {
 	t.Helper()
-	tok, err := auth.NewAccessToken(testJWTSecret, a.userID, a.clk.Now())
+	tok, err := auth.NewAccessToken(testJWTSecret, a.userID, uuid.New(), a.clk.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
