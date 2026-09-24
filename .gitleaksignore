@@ -1,0 +1,8 @@
+# Falsos positivos do gitleaks, conferidos à mão (D37 do Plano 7).
+# Uma linha por achado, pela fingerprint que o próprio gitleaks imprime
+# (commit:arquivo:regra:linha). Nada entra aqui sem dizer por que não é segredo.
+
+# Constante de TestRecoverDoesNotLogThePath: um token de verificação inventado
+# para provar que o Recover não escreve o caminho no log. Nunca existiu fora
+# do teste.
+ae726caf892701f2b5111f59f01014d094a2cd0a:internal/httpapi/middleware/middleware_test.go:generic-api-key:87

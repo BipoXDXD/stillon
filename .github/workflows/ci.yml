@@ -4,21 +4,49 @@ on:
     branches: [main]
   pull_request:
 
+# Nenhum job escreve nada por padrão. Quem precisa de mais pede no job.
+permissions:
+  contents: read
+
+# shell: bash dá `bash -eo pipefail` a todo run. O padrão do GitHub é
+# `bash -e`, sem pipefail: um `comando | tee log` que falha deixaria o passo
+# verde, porque o código do pipe é o do tee.
+defaults:
+  run:
+    shell: bash
+
+# Um push novo no mesmo ref (PR, main ou tag) cancela a execução anterior:
+# com o repositório privado, os minutos de Actions contam na cota (2.000/mês),
+# e uma execução superada não prova nada. Na main, o publish da execução
+# nova substitui o da cancelada.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# Actions fixadas por SHA completo (a tag vem no comentário) e ferramentas com
+# versão: uma tag móvel roda código alheio com o GITHUB_TOKEN, e @latest muda
+# o resultado do CI sem commit nenhum (D20 do Plano 7). O Dependabot atualiza.
+env:
+  SQLC_VERSION: v1.31.1
+  STATICCHECK_VERSION: v0.8.1
+  GOSEC_VERSION: v2.29.0
+  GOVULNCHECK_VERSION: v1.8.0
+  GITLEAKS_VERSION: v8.30.1
+
 jobs:
-  go:
+  lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.26'
-          cache: true
+          go-version-file: go.mod
 
       - name: sqlc diff
         # Código gerado desatualizado em relação ao SQL é o erro que o sqlc
         # existe para impedir; o CI o transforma em falha de build.
         run: |
-          go install github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1
+          go install github.com/sqlc-dev/sqlc/cmd/sqlc@${SQLC_VERSION}
           sqlc diff
 
       - name: vet
@@ -26,18 +54,56 @@ jobs:
 
       - name: staticcheck
         run: |
-          go install honnef.co/go/tools/cmd/staticcheck@latest
+          go install honnef.co/go/tools/cmd/staticcheck@${STATICCHECK_VERSION}
           staticcheck ./...
 
       - name: gosec
         run: |
-          go install github.com/securego/gosec/v2/cmd/gosec@latest
+          go install github.com/securego/gosec/v2/cmd/gosec@${GOSEC_VERSION}
           gosec -quiet ./...
 
       - name: govulncheck
         run: |
-          go install golang.org/x/vuln/cmd/govulncheck@latest
+          go install golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}
           govulncheck ./...
+
+  test:
+    # Produção roda o 18; a perna do 17 mantém o código compatível com um
+    # Postgres que ainda não tenha o 18 (Reconciliação 7 do contrato). Uma
+    # migration com uuidv7() nativo, por exemplo, fica vermelha aqui.
+    strategy:
+      fail-fast: false
+      matrix:
+        postgres: ['postgres:17-alpine', 'postgres:18-alpine']
+    name: test (${{ matrix.postgres }})
+    runs-on: ubuntu-latest
+    env:
+      TEST_POSTGRES_IMAGE: ${{ matrix.postgres }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
 
       - name: test
         run: go test -race -count=1 -coverprofile=coverage.out ./...
+
+  secrets:
+    # O histórico INTEIRO, em todo PR: com o repositório privado, um segredo
+    # commitado hoje fica público no dia em que ele abrir. Os falsos positivos
+    # conferidos à mão ficam no .gitleaksignore, pela fingerprint (D37); as
+    # chaves de demo públicas do compose, no allowlist do .gitleaks.toml.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: gitleaks
+        run: |
+          go install github.com/zricethezav/gitleaks/v8@${GITLEAKS_VERSION}
+          gitleaks git . --config .gitleaks.toml --redact --no-banner --verbose
