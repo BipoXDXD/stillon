@@ -11,12 +11,14 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/sync/semaphore"
 
 	"github.com/BipoXDXD/vigilume/internal/clock"
 	"github.com/BipoXDXD/vigilume/internal/crypto"
+	"github.com/BipoXDXD/vigilume/internal/incident"
 	"github.com/BipoXDXD/vigilume/internal/prober/safedial"
 	"github.com/BipoXDXD/vigilume/internal/storage"
 	"github.com/BipoXDXD/vigilume/internal/storage/db"
@@ -38,13 +40,14 @@ const PersistTimeout = 5 * time.Second
 var errShutdown = errors.New("encerramento do sondador")
 
 type Scheduler struct {
-	pool    *pgxpool.Pool
-	box     *crypto.Box
-	clk     clock.Clock
-	metrics *Metrics
-	client  *http.Client
-	sem     *semaphore.Weighted
-	max     int32
+	pool     *pgxpool.Pool
+	box      *crypto.Box
+	clk      clock.Clock
+	metrics  *Metrics
+	client   *http.Client
+	sem      *semaphore.Weighted
+	max      int32
+	detector incident.Detector
 
 	emVoo sync.WaitGroup
 	// sondas é o contexto de TODAS as sondas, separado do ctx de Run. O
@@ -66,7 +69,8 @@ func newScheduler(pool *pgxpool.Pool, box *crypto.Box, clk clock.Clock, m *Metri
 	return &Scheduler{
 		pool: pool, box: box, clk: clk, metrics: m, client: client,
 		sem: semaphore.NewWeighted(int64(max)), max: max,
-		sondas: sondas, abortar: abortar,
+		detector: incident.Default,
+		sondas:   sondas, abortar: abortar,
 	}
 }
 
@@ -201,7 +205,7 @@ func (s *Scheduler) sondar(a db.ClaimDueTargetsRow, checkedAt time.Time) {
 		return
 	}
 	s.metrics.observe(a.ID, res)
-	s.gravar(a.ID, checkedAt, res)
+	s.gravar(a, checkedAt, res)
 }
 
 func (s *Scheduler) especificar(a db.ClaimDueTargetsRow) (Spec, error) {
@@ -221,7 +225,9 @@ func (s *Scheduler) especificar(a db.ClaimDueTargetsRow) (Spec, error) {
 	return spec, nil
 }
 
-func (s *Scheduler) gravar(alvo uuid.UUID, em time.Time, res Result) {
+// gravar persiste o check e avalia a histerese na MESMA transação: ou o
+// check e o estado do alvo ficam gravados juntos, ou nenhum dos dois.
+func (s *Scheduler) gravar(a db.ClaimDueTargetsRow, em time.Time, res Result) {
 	// Contexto próprio: a sonda terminou, e o resultado vale mesmo com o
 	// processo encerrando.
 	ctx, cancel := context.WithTimeout(context.Background(), PersistTimeout)
@@ -233,7 +239,7 @@ func (s *Scheduler) gravar(alvo uuid.UUID, em time.Time, res Result) {
 		return
 	}
 	p := db.InsertCheckParams{
-		ID: id, TargetID: alvo, CheckedAt: em,
+		ID: id, TargetID: a.ID, CheckedAt: em,
 		Status: string(res.Status), LatencyMS: int32Limitado(res.Latency.Milliseconds()),
 	}
 	if res.StatusCode != 0 {
@@ -245,16 +251,134 @@ func (s *Scheduler) gravar(alvo uuid.UUID, em time.Time, res Result) {
 		p.ErrorKind = &kind
 	}
 
-	err = storage.InProberTx(ctx, s.pool, func(q *db.Queries) error { return q.InsertCheck(ctx, p) })
+	err = storage.InProberTx(ctx, s.pool, func(q *db.Queries) error {
+		if err := q.InsertCheck(ctx, p); err != nil {
+			return err
+		}
+		_, err := s.avaliar(ctx, q, a, em, res)
+		return err
+	})
 	switch {
 	case err == nil:
 	case alvoSumiu(err):
-		// Review Focus 3: o dono apagou o alvo com a sonda em voo. Não é
-		// erro, é o dono tendo mudado de ideia.
-		s.metrics.forget(alvo)
+		// Review Focus 3 do Plano 2: o dono apagou o alvo com a sonda em
+		// voo. Não é erro, é o dono tendo mudado de ideia.
+		s.metrics.forget(a.ID)
 	default:
-		slog.Error("gravar check", "target_id", alvo, "erro", err)
+		slog.Error("gravar check", "target_id", a.ID, "erro", err)
 	}
+}
+
+// avaliar aplica o check à histerese do alvo (spec §7) e, numa transição,
+// abre ou fecha o incidente e enfileira as notificações (spec §8).
+//
+// A linha de target_health é travada antes de ler o incidente aberto: duas
+// sondas do mesmo alvo gravando ao mesmo tempo (M4 do Plano 2) passam aqui
+// uma de cada vez, e a segunda vê o estado que a primeira gravou.
+func (s *Scheduler) avaliar(ctx context.Context, q *db.Queries, a db.ClaimDueTargetsRow, em time.Time, res Result) (incident.Action, error) {
+	if err := q.EnsureTargetHealth(ctx, a.ID); err != nil {
+		return incident.ActionNone, fmt.Errorf("criar histerese do alvo: %w", err)
+	}
+	h, err := q.LockTargetHealth(ctx, a.ID)
+	if err != nil {
+		return incident.ActionNone, fmt.Errorf("travar histerese do alvo: %w", err)
+	}
+	aberto, err := q.GetOpenIncident(ctx, a.ID)
+	temAberto := err == nil
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return incident.ActionNone, fmt.Errorf("buscar incidente aberto: %w", err)
+	}
+
+	estado, acao := s.detector.Evaluate(incident.State{
+		ConsecutiveFailures:  h.ConsecutiveFailures,
+		ConsecutiveSuccesses: h.ConsecutiveSuccesses,
+		StreakSince:          valorOuZero(h.StreakSince),
+		LastCheckedAt:        valorOuZero(h.LastCheckedAt),
+		Open:                 temAberto,
+	}, paraDetector(em, res))
+
+	// Depois de qualquer Evaluate os dois instantes estão preenchidos: um
+	// check fora de ordem só é ignorado quando já houve um antes dele.
+	desde := estado.StreakSince
+	if err := q.SaveTargetHealth(ctx, db.SaveTargetHealthParams{
+		TargetID:             a.ID,
+		ConsecutiveFailures:  estado.ConsecutiveFailures,
+		ConsecutiveSuccesses: estado.ConsecutiveSuccesses,
+		StreakSince:          &desde,
+		LastCheckedAt:        estado.LastCheckedAt,
+	}); err != nil {
+		return incident.ActionNone, fmt.Errorf("gravar histerese do alvo: %w", err)
+	}
+
+	switch acao {
+	case incident.ActionOpen:
+		id, err := uuid.NewV7()
+		if err != nil {
+			return acao, fmt.Errorf("gerar id de incidente: %w", err)
+		}
+		// Abrir só acontece num check down, que sempre tem error_kind.
+		if err := q.OpenIncident(ctx, db.OpenIncidentParams{
+			ID: id, TargetID: a.ID, StartedAt: estado.StreakSince, Cause: string(res.ErrorKind),
+		}); err != nil {
+			return acao, fmt.Errorf("abrir incidente: %w", err)
+		}
+		n, err := q.MarkOpenNotified(ctx, db.MarkOpenNotifiedParams{ID: id, Now: em})
+		if err != nil {
+			return acao, fmt.Errorf("marcar abertura notificada: %w", err)
+		}
+		if n == 1 {
+			return acao, enfileirar(ctx, q, a.UserID, id, incident.EventOpened, em)
+		}
+	case incident.ActionClose:
+		if _, err := q.ResolveIncident(ctx, db.ResolveIncidentParams{ID: aberto.ID, ResolvedAt: estado.StreakSince}); err != nil {
+			return acao, fmt.Errorf("resolver incidente: %w", err)
+		}
+		n, err := q.MarkCloseNotified(ctx, db.MarkCloseNotifiedParams{ID: aberto.ID, Now: em})
+		if err != nil {
+			return acao, fmt.Errorf("marcar fechamento notificado: %w", err)
+		}
+		if n == 1 {
+			return acao, enfileirar(ctx, q, a.UserID, aberto.ID, incident.EventResolved, em)
+		}
+	}
+	return acao, nil
+}
+
+// paraDetector traduz o resultado da sonda para o detector. Só down conta
+// como falha: degraded é estado de exibição e não mexe em incidente
+// (spec §7.2).
+func paraDetector(em time.Time, r Result) incident.ProbeResult {
+	return incident.ProbeResult{Down: r.Status == StatusDown, At: em}
+}
+
+// enfileirar grava uma notificação por canal entregável do dono (spec §8).
+// Os ids são UUIDv7 gerados aqui, porque o Postgres 16 não tem uuidv7(); com
+// no máximo notify.MaxChannels canais, um INSERT por canal é barato. O
+// UNIQUE (incident, channel, event) torna a repetição inofensiva.
+func enfileirar(ctx context.Context, q *db.Queries, dono, incidente uuid.UUID, evento string, em time.Time) error {
+	canais, err := q.ListDeliverableChannels(ctx, dono)
+	if err != nil {
+		return fmt.Errorf("listar canais do dono: %w", err)
+	}
+	for _, canal := range canais {
+		id, err := uuid.NewV7()
+		if err != nil {
+			return fmt.Errorf("gerar id de notificação: %w", err)
+		}
+		if err := q.EnqueueNotification(ctx, db.EnqueueNotificationParams{
+			ID: id, IncidentID: incidente, ChannelID: canal, Event: evento, Now: em,
+		}); err != nil {
+			return fmt.Errorf("enfileirar notificação: %w", err)
+		}
+	}
+	return nil
+}
+
+func valorOuZero(t *time.Time) time.Time {
+	if t == nil {
+		return time.Time{}
+	}
+	return *t
 }
 
 func (s *Scheduler) medirFila(ctx context.Context, now time.Time) error {
