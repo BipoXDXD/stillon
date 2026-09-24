@@ -65,7 +65,7 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	ih := NewIncidentHandlers(d.Incidents)
 	ch := NewChannelHandlers(d.Channels)
 	sp := NewStatusPageHandlers(d.StatusPages, cfg.PublicBaseURL)
-	ah := NewAccountHandlers(d.Accounts, cfg.TrustedProxies)
+	ah := NewAccountHandlers(d.Accounts, cfg.TrustedProxies, secureCookie)
 	authn := middleware.Authn(cfg.JWTSecret, d.Clock)
 
 	mux := http.NewServeMux()
@@ -119,6 +119,8 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	protegida := func(fn http.HandlerFunc) http.Handler { return authn(porUsuario(fn)) }
 
 	mux.Handle("GET /api/v1/me", protegida(ah.Me))
+	mux.Handle("GET /api/v1/sessions", protegida(ah.ListSessions))
+	mux.Handle("DELETE /api/v1/sessions/{id}", protegida(ah.RevokeSession))
 
 	mux.Handle("GET /api/v1/targets", protegida(th.List))
 	mux.Handle("POST /api/v1/targets", protegida(th.Create))

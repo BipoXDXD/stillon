@@ -231,6 +231,13 @@ func (h *AuthHandlers) setCookie(w http.ResponseWriter, token string, expires ti
 }
 
 func (h *AuthHandlers) clearCookie(w http.ResponseWriter) {
+	apagarCookieDeRefresh(w, h.secureCookie)
+}
+
+// apagarCookieDeRefresh é o logout do lado do navegador. Mora fora do
+// AuthHandlers porque DELETE /sessions/{id} da própria sessão também apaga o
+// cookie, e os atributos têm de ser os mesmos do setCookie.
+func apagarCookieDeRefresh(w http.ResponseWriter, secure bool) {
 	// #nosec G124 -- falso positivo: mesmo caso do setCookie; Secure vem de PUBLIC_BASE_URL (routes.go) para não quebrar o desenvolvimento local sem TLS, com HttpOnly e SameSite=Strict fixos.
 	http.SetCookie(w, &http.Cookie{
 		Name:     refreshCookieName,
@@ -238,7 +245,7 @@ func (h *AuthHandlers) clearCookie(w http.ResponseWriter) {
 		Path:     "/api/v1/auth",
 		MaxAge:   -1,
 		HttpOnly: true,
-		Secure:   h.secureCookie,
+		Secure:   secure,
 		SameSite: http.SameSiteStrictMode,
 	})
 }

@@ -14,7 +14,9 @@ import (
 	"errors"
 	"fmt"
 	"net/mail"
+	"slices"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -41,6 +43,9 @@ var (
 	// ErrSessionGone: a família de sessão do token já não está viva (D11 do
 	// Plano 5), ou o usuário não existe mais.
 	ErrSessionGone = errors.New("sessão encerrada")
+	// ErrSessionNotFound: a família pedida não aparece em GET /sessions —
+	// inexistente, de outro usuário, já revogada ou vencida (D14).
+	ErrSessionNotFound = errors.New("sessão não encontrada")
 )
 
 // PolicyError é a senha nova fora da política; Reason é auth.ReasonTooShort
@@ -348,6 +353,107 @@ func (s *Service) ResetPassword(ctx context.Context, email, password string) (in
 		return audit(ctx, q, userID, "user.password_reset", nil, nil, nil, now)
 	})
 	return revogadas, err
+}
+
+// Session é uma família de refresh viva, como GET /sessions a mostra (D13 do
+// Plano 5). Não tem IP nem hash: não há campo onde eles caibam.
+type Session struct {
+	// ID é a família (family_id), o mesmo id do claim sid.
+	ID uuid.UUID
+	// CreatedAt é o login que abriu a família: o instante do UUIDv7 dela. O
+	// menor created_at das linhas não serve: a retenção apaga as linhas
+	// antigas de uma família que continua viva, e ele andaria para a frente.
+	CreatedAt time.Time
+	// LastUsedAt é o último refresh (granularidade de ~15 min num painel ativo).
+	LastUsedAt time.Time
+	// UserAgent é o do último refresh, cortado em maxUserAgent code points.
+	// É texto de quem fez o login, inclusive de um invasor.
+	UserAgent string
+	Current   bool
+}
+
+const maxUserAgent = 256
+
+// ListSessions devolve as famílias vivas do usuário, da mais nova para a mais
+// antiga pelo login (created_at), e não pelo último uso: uma ordem que muda a
+// cada refresh faria a linha trocar de lugar embaixo do clique de "encerrar".
+func (s *Service) ListSessions(ctx context.Context, userID, current uuid.UUID) ([]Session, error) {
+	rows, err := db.New(s.pool).ListLiveFamilies(ctx, db.ListLiveFamiliesParams{UserID: userID, Now: s.clk.Now()})
+	if err != nil {
+		return nil, fmt.Errorf("listar sessões: %w", err)
+	}
+	// Uma linha viva por família é invariante de Rotate (marca a antiga e
+	// insere a nova na mesma transação). Não depender dela custa pouco: fica a
+	// linha mais recente.
+	porFamilia := map[uuid.UUID]db.ListLiveFamiliesRow{}
+	for _, r := range rows {
+		if atual, ok := porFamilia[r.FamilyID]; !ok || r.CreatedAt.After(atual.CreatedAt) {
+			porFamilia[r.FamilyID] = r
+		}
+	}
+	out := make([]Session, 0, len(porFamilia))
+	for id, r := range porFamilia {
+		seg, nseg := id.Time().UnixTime()
+		out = append(out, Session{
+			ID: id, CreatedAt: time.Unix(seg, nseg).UTC(), LastUsedAt: r.CreatedAt.UTC(),
+			UserAgent: cortar(r.UserAgent, maxUserAgent), Current: id == current,
+		})
+	}
+	slices.SortFunc(out, func(a, b Session) int {
+		if c := b.CreatedAt.Compare(a.CreatedAt); c != 0 {
+			return c
+		}
+		return slices.Compare(b.ID[:], a.ID[:])
+	})
+	return out, nil
+}
+
+// cortar corta em n code points sem partir um caractere ao meio.
+func cortar(s string, n int) string {
+	if utf8.RuneCountInString(s) <= n {
+		return s
+	}
+	i := 0
+	for j := range s {
+		if i == n {
+			return s[:j]
+		}
+		i++
+	}
+	return s
+}
+
+// RevokeSession encerra a família pedida (DELETE /sessions/{id}). Só se ela
+// estiver viva E for do usuário; qualquer outra coisa é ErrSessionNotFound
+// (D14): a família "existe" para a API exatamente quando aparece em GET
+// /sessions.
+func (s *Service) RevokeSession(ctx context.Context, userID, familyID uuid.UUID, meta auth.Meta) error {
+	if len(s.ipKey) == 0 {
+		return errors.New("account: RevokeSession sem chave de IP")
+	}
+	now := s.clk.Now()
+	ipHash := crypto.HashIP(s.ipKey, meta.IP)
+	return s.inTx(ctx, func(q *db.Queries) error {
+		// A trava do usuário antes de tocar em sessions (D1): sem ela, uma
+		// rotação em curso da família deixaria o sucessor vivo.
+		if err := q.LockUserSessions(ctx, userID); err != nil {
+			return fmt.Errorf("travar sessões: %w", err)
+		}
+		vivo, err := familyIsLive(ctx, q, userID, familyID, now)
+		if err != nil {
+			return err
+		}
+		if !vivo {
+			return ErrSessionNotFound
+		}
+		if _, err := q.RevokeFamilyOfUser(ctx, db.RevokeFamilyOfUserParams{
+			UserID: userID, FamilyID: familyID, Now: now,
+		}); err != nil {
+			return fmt.Errorf("revogar sessão: %w", err)
+		}
+		entidade := "session_family"
+		return audit(ctx, q, userID, "session.revoked", &entidade, &familyID, ipHash, now)
+	})
 }
 
 func (s *Service) inTx(ctx context.Context, fn func(*db.Queries) error) error {

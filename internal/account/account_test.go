@@ -280,3 +280,23 @@ func TestChangePasswordLosesToAConcurrentChange(t *testing.T) {
 		t.Error("a troca que perdeu gravou por cima da que ganhou")
 	}
 }
+
+// Encerrar uma sessão também toma a trava do usuário (D1): é o que impede o
+// sucessor de uma rotação em curso de escapar da revogação.
+func TestRevokeSessionTakesTheUserLock(t *testing.T) {
+	c := montar(t)
+	soltar := segurarTrava(t, c.pool, c.user)
+	fim := make(chan error, 1)
+	go func() {
+		fim <- c.svc.RevokeSession(context.Background(), c.user, c.atual, auth.Meta{IP: "203.0.113.9"})
+	}()
+
+	if !esperarAlguemNaTrava(t, c.pool) {
+		soltar()
+		t.Fatalf("o encerramento não esperou a trava do usuário (terminou com %v)", <-fim)
+	}
+	soltar()
+	if err := <-fim; err != nil {
+		t.Fatalf("o encerramento falhou depois de soltar a trava: %v", err)
+	}
+}

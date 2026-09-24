@@ -35,3 +35,18 @@ SELECT EXISTS (
 UPDATE sessions SET revoked_at = sqlc.arg(now)::timestamptz
  WHERE user_id = sqlc.arg(user_id) AND family_id <> sqlc.arg(keep_family_id)
    AND revoked_at IS NULL;
+
+-- GET /sessions: a linha corrente de cada família viva do usuário. O
+-- created_at dela é o do último refresh (cada rotação insere uma linha).
+-- name: ListLiveFamilies :many
+SELECT family_id, created_at, coalesce(user_agent, '')::text AS user_agent
+  FROM sessions
+ WHERE user_id = sqlc.arg(user_id) AND used_at IS NULL AND revoked_at IS NULL
+   AND expires_at > sqlc.arg(now)::timestamptz;
+
+-- DELETE /sessions/{id}: todas as linhas não revogadas da família, como o
+-- RevokeFamily do auth, e só se ela for deste usuário.
+-- name: RevokeFamilyOfUser :execrows
+UPDATE sessions SET revoked_at = sqlc.arg(now)::timestamptz
+ WHERE user_id = sqlc.arg(user_id) AND family_id = sqlc.arg(family_id)
+   AND revoked_at IS NULL;

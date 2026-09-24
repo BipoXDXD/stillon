@@ -36,6 +36,46 @@ func (q *Queries) FamilyIsLive(ctx context.Context, arg FamilyIsLiveParams) (boo
 	return exists, err
 }
 
+const listLiveFamilies = `-- name: ListLiveFamilies :many
+SELECT family_id, created_at, coalesce(user_agent, '')::text AS user_agent
+  FROM sessions
+ WHERE user_id = $1 AND used_at IS NULL AND revoked_at IS NULL
+   AND expires_at > $2::timestamptz
+`
+
+type ListLiveFamiliesParams struct {
+	UserID uuid.UUID
+	Now    time.Time
+}
+
+type ListLiveFamiliesRow struct {
+	FamilyID  uuid.UUID
+	CreatedAt time.Time
+	UserAgent string
+}
+
+// GET /sessions: a linha corrente de cada família viva do usuário. O
+// created_at dela é o do último refresh (cada rotação insere uma linha).
+func (q *Queries) ListLiveFamilies(ctx context.Context, arg ListLiveFamiliesParams) ([]ListLiveFamiliesRow, error) {
+	rows, err := q.db.Query(ctx, listLiveFamilies, arg.UserID, arg.Now)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListLiveFamiliesRow
+	for rows.Next() {
+		var i ListLiveFamiliesRow
+		if err := rows.Scan(&i.FamilyID, &i.CreatedAt, &i.UserAgent); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const lockUserSessions = `-- name: LockUserSessions :exec
 SELECT pg_advisory_xact_lock(hashtextextended('vigilume.sessions:' || $1::uuid::text, 0))
 `
@@ -63,6 +103,28 @@ type RevokeAllFamiliesParams struct {
 // linhas já rotacionadas, como o RevokeFamily do auth.
 func (q *Queries) RevokeAllFamilies(ctx context.Context, arg RevokeAllFamiliesParams) (int64, error) {
 	result, err := q.db.Exec(ctx, revokeAllFamilies, arg.Now, arg.UserID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const revokeFamilyOfUser = `-- name: RevokeFamilyOfUser :execrows
+UPDATE sessions SET revoked_at = $1::timestamptz
+ WHERE user_id = $2 AND family_id = $3
+   AND revoked_at IS NULL
+`
+
+type RevokeFamilyOfUserParams struct {
+	Now      time.Time
+	UserID   uuid.UUID
+	FamilyID uuid.UUID
+}
+
+// DELETE /sessions/{id}: todas as linhas não revogadas da família, como o
+// RevokeFamily do auth, e só se ela for deste usuário.
+func (q *Queries) RevokeFamilyOfUser(ctx context.Context, arg RevokeFamilyOfUserParams) (int64, error) {
+	result, err := q.db.Exec(ctx, revokeFamilyOfUser, arg.Now, arg.UserID, arg.FamilyID)
 	if err != nil {
 		return 0, err
 	}
