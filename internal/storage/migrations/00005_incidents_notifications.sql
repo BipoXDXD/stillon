@@ -122,14 +122,23 @@ CREATE INDEX notifications_due_idx ON notifications (next_attempt_at) WHERE stat
 
 ALTER TABLE notifications ENABLE ROW LEVEL SECURITY;
 ALTER TABLE notifications FORCE ROW LEVEL SECURITY;
+-- A delegação não pode ser só "o canal existe": o canal também é visível no
+-- escopo de verificação (notif_channels_verify_select), e um e-mail já
+-- verificado mantém o hash para sempre (D3). Sem nomear o dono ou o
+-- sondador aqui, o escopo verify alcançaria as notificações daquele canal.
 CREATE POLICY notifications_via_channel ON notifications
-    USING (EXISTS (SELECT 1 FROM notif_channels c WHERE c.id = notifications.channel_id))
-    WITH CHECK (EXISTS (SELECT 1 FROM notif_channels c WHERE c.id = notifications.channel_id));
+    USING (EXISTS (SELECT 1 FROM notif_channels c WHERE c.id = notifications.channel_id
+                      AND (c.user_id = NULLIF(current_setting('app.user_id', true), '')::uuid
+                           OR current_setting('app.scope', true) = 'prober')))
+    WITH CHECK (EXISTS (SELECT 1 FROM notif_channels c WHERE c.id = notifications.channel_id
+                      AND (c.user_id = NULLIF(current_setting('app.user_id', true), '')::uuid
+                           OR current_setting('app.scope', true) = 'prober')));
 
 -- Dívida do Plano 2: CREATE TABLE IF NOT EXISTS ... PARTITION OF não é
 -- seguro com dois boots concorrentes (os dois veem "não existe" e o segundo
 -- cai com 42P07). A advisory lock de transação serializa as chamadas; ela
--- é solta no fim do comando que chamou a função.
+-- é solta no fim da TRANSAÇÃO que chamou a função (pg_advisory_xact_lock),
+-- não no fim do comando.
 -- +goose StatementBegin
 CREATE OR REPLACE FUNCTION ensure_checks_partition(p_month date) RETURNS void
 LANGUAGE plpgsql AS $$

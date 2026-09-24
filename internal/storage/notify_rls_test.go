@@ -134,7 +134,12 @@ func TestVerifyScopeSeesOnlyTheTokenRow(t *testing.T) {
 	canalA := novoCanal(t, pool, a, hA, agora.Add(24*time.Hour))
 	novoCanal(t, pool, b, hB, agora.Add(24*time.Hour))
 	novoCanal(t, pool, b, hVencido, agora.Add(-time.Minute))
-	novoAlvo(t, pool, a, agora)
+	alvoA := novoAlvo(t, pool, a, agora)
+	// D3: um e-mail já verificado mantém o hash para sempre, então canalA
+	// segue alcançável no escopo verify muito depois de confirmado. Se a
+	// política de notifications delegasse só "o canal existe", esta
+	// notificação vazaria para quem tem o token.
+	novaNotificacao(t, pool, novoIncidente(t, pool, alvoA), canalA)
 
 	err := storage.InVerifyTx(ctx, pool, hA, func(q *db.Queries) error {
 		row, err := q.FindChannelByVerification(ctx, hA)
@@ -159,7 +164,7 @@ func TestVerifyScopeSeesOnlyTheTokenRow(t *testing.T) {
 	if _, err := tx.Exec(ctx, `SELECT set_config('app.verify_token_hash', encode($1::bytea, 'hex'), true)`, hA); err != nil {
 		t.Fatal(err)
 	}
-	for tabela, quer := range map[string]int{"notif_channels": 1, "targets": 0} {
+	for tabela, quer := range map[string]int{"notif_channels": 1, "targets": 0, "notifications": 0} {
 		var n int
 		if err := tx.QueryRow(ctx, `SELECT count(*) FROM `+tabela).Scan(&n); err != nil {
 			t.Fatal(err)
