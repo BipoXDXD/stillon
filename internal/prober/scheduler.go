@@ -31,6 +31,10 @@ const MaxInFlight int32 = 64
 
 const tickEvery = time.Second
 
+// reconcileEvery é o intervalo da reconciliação das métricas. Uma
+// transição de incidente também dispara uma, sem esperar o intervalo.
+const reconcileEvery = 30 * time.Second
+
 // PersistTimeout é o prazo próprio de cada gravação de check. Uma sonda que
 // termina no limite do grace de Stop ainda grava com este prazo, então Stop
 // pode levar até grace + PersistTimeout. Exportado para que o wiring
@@ -48,6 +52,11 @@ type Scheduler struct {
 	sem      *semaphore.Weighted
 	max      int32
 	detector incident.Detector
+
+	// transicao avisa o laço de Run que um incidente abriu ou fechou, para
+	// que incidents_open não espere a próxima reconciliação periódica.
+	// Buffer de 1: avisos que chegam com um já pendente se fundem nele.
+	transicao chan struct{}
 
 	emVoo sync.WaitGroup
 	// sondas é o contexto de TODAS as sondas, separado do ctx de Run. O
@@ -69,15 +78,20 @@ func newScheduler(pool *pgxpool.Pool, box *crypto.Box, clk clock.Clock, m *Metri
 	return &Scheduler{
 		pool: pool, box: box, clk: clk, metrics: m, client: client,
 		sem: semaphore.NewWeighted(int64(max)), max: max,
-		detector: incident.Default,
-		sondas:   sondas, abortar: abortar,
+		detector: incident.Default, transicao: make(chan struct{}, 1),
+		sondas: sondas, abortar: abortar,
 	}
 }
 
 // Run despacha a cada segundo até ctx acabar, e então chama Stop(grace).
+// Reconcilia as métricas ao subir, a cada reconcileEvery e a cada
+// transição de incidente.
 func (s *Scheduler) Run(ctx context.Context, grace time.Duration) error {
 	t := time.NewTicker(tickEvery)
 	defer t.Stop()
+	r := time.NewTicker(reconcileEvery)
+	defer r.Stop()
+	s.reconciliar(ctx)
 	for {
 		select {
 		case <-ctx.Done():
@@ -87,8 +101,56 @@ func (s *Scheduler) Run(ctx context.Context, grace time.Duration) error {
 			if _, err := s.Tick(ctx); err != nil && ctx.Err() == nil {
 				slog.Error("despachar sondas", "erro", err)
 			}
+		case <-r.C:
+			s.reconciliar(ctx)
+		case <-s.transicao:
+			s.reconciliar(ctx)
 		}
 	}
+}
+
+func (s *Scheduler) reconciliar(ctx context.Context) {
+	if err := s.Reconcile(ctx); err != nil && ctx.Err() == nil {
+		slog.Error("reconciliar métricas", "erro", err)
+	}
+}
+
+// Reconcile apaga as séries de latência de alvos que não existem mais e
+// atualiza incidents_open (D9/M1 do Plano 2).
+//
+// forget só roda sozinho quando o alvo some com uma sonda em voo. Apagar um
+// alvo parado não passa pelo sondador, e com --role=api e --role=prober
+// separados nem poderia: sem esta reconciliação, a série do alvo apagado
+// vivia até o restart.
+func (s *Scheduler) Reconcile(ctx context.Context) error {
+	vistos := s.metrics.alvosVistos()
+	var existentes []uuid.UUID
+	var abertos int64
+	err := storage.InProberTx(ctx, s.pool, func(q *db.Queries) error {
+		var err error
+		if len(vistos) > 0 {
+			if existentes, err = q.ExistingTargetIDs(ctx, vistos); err != nil {
+				return err
+			}
+		}
+		abertos, err = q.CountOpenIncidents(ctx)
+		return err
+	})
+	if err != nil {
+		return fmt.Errorf("reconciliar métricas: %w", err)
+	}
+
+	vivos := make(map[uuid.UUID]struct{}, len(existentes))
+	for _, id := range existentes {
+		vivos[id] = struct{}{}
+	}
+	for _, id := range vistos {
+		if _, ok := vivos[id]; !ok {
+			s.metrics.forget(id)
+		}
+	}
+	s.metrics.incidentsOpen.Set(float64(abertos))
+	return nil
 }
 
 // Tick reivindica até "vagas livres" alvos vencidos e dispara uma goroutine
@@ -251,15 +313,23 @@ func (s *Scheduler) gravar(a db.ClaimDueTargetsRow, em time.Time, res Result) {
 		p.ErrorKind = &kind
 	}
 
+	var acao incident.Action
 	err = storage.InProberTx(ctx, s.pool, func(q *db.Queries) error {
 		if err := q.InsertCheck(ctx, p); err != nil {
 			return err
 		}
-		_, err := s.avaliar(ctx, q, a, em, res)
+		var err error
+		acao, err = s.avaliar(ctx, q, a, em, res)
 		return err
 	})
 	switch {
 	case err == nil:
+		if acao != incident.ActionNone {
+			select {
+			case s.transicao <- struct{}{}:
+			default:
+			}
+		}
 	case alvoSumiu(err):
 		// Review Focus 3 do Plano 2: o dono apagou o alvo com a sonda em
 		// voo. Não é erro, é o dono tendo mudado de ideia.
