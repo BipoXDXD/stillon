@@ -1,4 +1,5 @@
 import type { RouteObject } from 'react-router'
+import { PaginaCanais } from '@/features/canais/PaginaCanais'
 import { PaginaIncidentes } from '@/features/incidentes/PaginaIncidentes'
 import { PaginaLogin } from '@/features/login/PaginaLogin'
 import { PaginaPainel } from '@/features/painel/PaginaPainel'
@@ -27,6 +28,7 @@ export const rotas: RouteObject[] = [
           },
           { path: 'targets/:id/edit', Component: PaginaEditarAlvo },
           { path: 'incidents', Component: PaginaIncidentes },
+          { path: 'channels', Component: PaginaCanais },
           { path: '*', Component: NaoEncontrada },
         ],
       },
