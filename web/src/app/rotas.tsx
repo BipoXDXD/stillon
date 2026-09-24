@@ -1,4 +1,5 @@
 import type { RouteObject } from 'react-router'
+import { PaginaIncidentes } from '@/features/incidentes/PaginaIncidentes'
 import { PaginaLogin } from '@/features/login/PaginaLogin'
 import { PaginaPainel } from '@/features/painel/PaginaPainel'
 import { PaginaEditarAlvo, PaginaNovoAlvo } from '@/features/alvos/PaginasDoFormulario'
@@ -25,6 +26,7 @@ export const rotas: RouteObject[] = [
             lazy: async () => ({ Component: (await import('@/features/alvos/PaginaDetalhe')).PaginaDetalhe }),
           },
           { path: 'targets/:id/edit', Component: PaginaEditarAlvo },
+          { path: 'incidents', Component: PaginaIncidentes },
           { path: '*', Component: NaoEncontrada },
         ],
       },
