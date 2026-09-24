@@ -1,6 +1,6 @@
 import { fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { http, HttpResponse } from 'msw'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { RECUPERACAO_OK, TOTP_OK } from '@/test/api-falsa'
 import { sessao as familia, me } from '@/test/fixtures'
 import { renderizarPainel, SENHA } from '@/test/renderizar'
@@ -301,6 +301,28 @@ describe('2FA', () => {
     await waitFor(() => expect(within(dialogo).queryByText('Informe a senha.')).not.toBeInTheDocument())
     expect(within(dialogo).getByText('Informe o código.')).toBeInTheDocument()
     expect(r.falsa.chamadas('POST /auth/totp/disable')).toBe(0)
+  })
+
+  // M4 da revisão final: copiar os códigos de recuperação tinha zero
+  // feedback (nem no sucesso, nem na falha). Agora é o useCopiar, igual à
+  // status page. Sabotagem: voltar ao onClick antigo
+  // ("void navigator.clipboard?.writeText(...)") → nenhum aviso.
+  it('copiar os códigos de recuperação avisa o sucesso e a falha', async () => {
+    const r = await renderizarPainel('/settings')
+    await r.usuario.click(await screen.findByRole('button', { name: 'Ativar' }))
+    const dialogo = await screen.findByRole('dialog')
+    await r.usuario.type(within(dialogo).getByLabelText('Sua senha'), SENHA)
+    await r.usuario.click(within(dialogo).getByRole('button', { name: 'Continuar' }))
+    await r.usuario.type(await within(dialogo).findByLabelText('Código de 6 dígitos'), TOTP_OK)
+    await r.usuario.click(within(dialogo).getByRole('button', { name: 'Ativar' }))
+    await r.usuario.click(await within(dialogo).findByRole('button', { name: 'Copiar' }))
+    expect((await screen.findAllByText('Códigos copiados.'))[0]).toBeInTheDocument()
+    expect(await navigator.clipboard.readText()).toBe('AAAABBBBCCCCDDDD\nEEEEFFFFGGGGHHHH')
+    const falha = vi.spyOn(navigator.clipboard, 'writeText').mockRejectedValueOnce(new Error('negado'))
+    await r.usuario.click(within(dialogo).getByRole('button', { name: 'Copiado' }))
+    expect((await screen.findAllByText(/Não foi possível copiar/))[0]).toBeInTheDocument()
+    expect(within(dialogo).getByRole('button', { name: 'Copiar' })).toBeInTheDocument()
+    falha.mockRestore()
   })
 
   // PENDENCIAS do Plano 6: trocar a senha apaga o cadastro pendente, e o

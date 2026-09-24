@@ -196,6 +196,24 @@ describe('status page', () => {
     expect(screen.getByRole('button', { name: 'Copiar' })).toBeInTheDocument()
     falha.mockRestore()
   }, 10_000) // espera de verdade os 2 s do rótulo voltar
+
+  // M4 da revisão final: o feedback da cópia é um só (useCopiar): aviso no
+  // sucesso e na falha; e uma falha logo depois de um sucesso devolve o
+  // rótulo a "Copiar" na hora. Sabotagem: tirar o "setCopiado(false)" da
+  // falha em useCopiar → o botão continua "Copiado".
+  it('Copiar avisa o sucesso, e a falha logo depois volta o rótulo a "Copiar"', async () => {
+    const r = await renderizarPainel('/status-pages')
+    r.falsa.estado.paginas = [salva()]
+    await r.cliente.refetchQueries()
+    await r.usuario.click(await screen.findByRole('button', { name: 'Copiar' }))
+    expect((await screen.findAllByText('Link copiado.'))[0]).toBeInTheDocument()
+    const botao = screen.getByRole('button', { name: 'Copiado' })
+    const falha = vi.spyOn(navigator.clipboard, 'writeText').mockRejectedValueOnce(new Error('negado'))
+    await r.usuario.click(botao)
+    expect((await screen.findAllByText('Não foi possível copiar. Selecione o link e copie à mão.'))[0]).toBeInTheDocument()
+    expect(botao).toHaveTextContent(/^Copiar$/)
+    falha.mockRestore()
+  })
 })
 
 function salva(p: Partial<{ items: { target_id: string; display_name: string }[] }> = {}) {

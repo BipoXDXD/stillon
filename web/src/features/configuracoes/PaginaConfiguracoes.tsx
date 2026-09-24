@@ -9,6 +9,7 @@ import { EstadoDaConsulta } from '@/components/EstadoDaConsulta'
 import { Titulo } from '@/components/Titulo'
 import { useAvisar } from '@/components/ui/avisos'
 import { Botao } from '@/components/ui/botao'
+import { useCopiar } from '@/components/ui/copiar'
 import { Campo, Entrada, ErroDoFormulario } from '@/components/ui/campo'
 import { Confirmar, Dialogo } from '@/components/ui/dialogo'
 import { chaves, useMe, useSessoes } from '@/lib/api/consultas'
@@ -199,6 +200,10 @@ function AtivarTotp({ aoTerminar, aoTravar }: { aoTerminar: () => void; aoTravar
   const [codigos, setCodigos] = useState<string[]>([])
   const [guardei, setGuardei] = useState(false)
   const [erro, setErro] = useState<ErroDeCredencial | null>(null)
+  const { copiado, copiar } = useCopiar({
+    ok: 'Códigos copiados.',
+    falha: 'Não foi possível copiar. Selecione os códigos e copie à mão, ou baixe o .txt.',
+  })
   const senha = useForm({ resolver: zodResolver(esquemaSenha), defaultValues: { senha: '' } })
   const codigo = useForm({ resolver: zodResolver(esquemaCodigo), defaultValues: { codigo: '' } })
 
@@ -273,12 +278,8 @@ function AtivarTotp({ aoTerminar, aoTravar }: { aoTerminar: () => void; aoTravar
         ))}
       </ul>
       <div className="flex gap-2">
-        <Botao
-          tipo="secundario"
-          tamanho="pequeno"
-          onClick={() => void navigator.clipboard?.writeText(codigos.join('\n'))}
-        >
-          Copiar
+        <Botao tipo="secundario" tamanho="pequeno" onClick={() => copiar(codigos.join('\n'))}>
+          {copiado ? 'Copiado' : 'Copiar'}
         </Botao>
         <Botao
           tipo="secundario"

@@ -9,6 +9,7 @@ import { estadoExibido, SeloDeEstado } from '@/components/SeloDeEstado'
 import { Titulo } from '@/components/Titulo'
 import { useAvisar } from '@/components/ui/avisos'
 import { Botao } from '@/components/ui/botao'
+import { useCopiar } from '@/components/ui/copiar'
 import { Campo, Entrada, ErroDoFormulario, Selecao } from '@/components/ui/campo'
 import { useAlvos, usePaginas, useResumo } from '@/lib/api/consultas'
 import { ApiError, naoEncontrado } from '@/lib/api/http'
@@ -240,20 +241,10 @@ function Formulario({ pagina, alvos }: { pagina: PaginaDeStatus | null; alvos: A
 export function PaginaStatusPage() {
   const paginas = usePaginas()
   const alvos = useAlvos()
-  const avisar = useAvisar()
-  const [copiado, setCopiado] = useState(false)
-  useEffect(() => {
-    if (!copiado) return
-    const t = window.setTimeout(() => setCopiado(false), 2000)
-    return () => window.clearTimeout(t)
-  }, [copiado])
-
-  function copiar(url: string) {
-    const falhou = () => avisar('Não foi possível copiar. Selecione o link e copie à mão.', 'erro')
-    // Fora de contexto seguro (ou num navegador antigo) não há clipboard.
-    if (!navigator.clipboard) return falhou()
-    navigator.clipboard.writeText(url).then(() => setCopiado(true), falhou)
-  }
+  const { copiado, copiar } = useCopiar({
+    ok: 'Link copiado.',
+    falha: 'Não foi possível copiar. Selecione o link e copie à mão.',
+  })
   return (
     <>
       <Titulo aba="Status page">Status page</Titulo>
