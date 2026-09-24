@@ -7,6 +7,8 @@
 # A imagem vai por --image, direto do Docker Hub e pelo digest do Dockerfile
 # (que o Dependabot atualiza): nada de build remoto, e nada de depender de
 # como o flyctl resolve um caminho de Dockerfile relativo a um -c.
+# Renomear o app mexe também no `-a` do backup.yml, no host do DATABASE_URL
+# (vigilume-db.internal) e no runbook ("Se o nome do app estiver tomado").
 app = "vigilume-db"
 primary_region = "gru"
 
@@ -30,6 +32,12 @@ kill_timeout = "60s"
     interval = "15s"
     timeout = "2s"
     grace_period = "30s"
+
+# Um Postgres que sai (OOM, erro fatal) volta sempre, e não só com código
+# diferente de zero (o padrão on-failure): o app inteiro depende dele, e o
+# proxy não religa esta máquina (ela não tem [http_service]).
+[[restart]]
+  policy = "always"
 
 [[vm]]
   size = "shared-cpu-1x"
