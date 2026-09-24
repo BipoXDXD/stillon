@@ -124,6 +124,8 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 
 	mux.Handle("GET /api/v1/targets", protegida(th.List))
 	mux.Handle("POST /api/v1/targets", protegida(th.Create))
+	// O literal é mais específico que {id} e ganha no ServeMux, sem conflito.
+	mux.Handle("GET /api/v1/targets/summary", protegida(th.Summary))
 	mux.Handle("GET /api/v1/targets/{id}", protegida(th.Get))
 	mux.Handle("PATCH /api/v1/targets/{id}", protegida(th.Update))
 	mux.Handle("DELETE /api/v1/targets/{id}", protegida(th.Delete))
