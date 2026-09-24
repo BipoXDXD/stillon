@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { NavLink, Outlet } from 'react-router'
 import { ProvedorDeAnuncios } from '@/components/Anunciador'
 import { AvisoDeContexto } from '@/components/AvisoDeContexto'
@@ -46,6 +47,7 @@ function ContadorDeAbertos({ n }: { n: string }) {
 
 export function Layout() {
   const { sessao } = useSessao()
+  const [saindo, setSaindo] = useState(false)
   const me = useMe()
   const abertos = useAbertos().data
   const contador = abertos && abertos !== '0' ? abertos : null
@@ -84,7 +86,23 @@ export function Layout() {
           <div className="ml-auto flex items-center gap-3">
             <SeletorDeTema />
             {me.data && <span className="text-sm text-suave">{me.data.email}</span>}
-            <Botao tipo="secundario" tamanho="pequeno" onClick={() => void sessao.sair()}>
+            {/* Ocupado enquanto o logout voa (até o prazo da sessão): um
+                segundo clique não manda outro. aria-disabled, e não disabled,
+                para o foco não cair no <body>. */}
+            <Botao
+              tipo="secundario"
+              tamanho="pequeno"
+              aria-disabled={saindo || undefined}
+              onClick={async () => {
+                if (saindo) return
+                setSaindo(true)
+                try {
+                  await sessao.sair()
+                } finally {
+                  setSaindo(false)
+                }
+              }}
+            >
               Sair
             </Botao>
           </div>

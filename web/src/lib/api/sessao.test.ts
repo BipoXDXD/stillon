@@ -228,6 +228,30 @@ describe('erros de rede', () => {
     expect(sessao.estado()).toBe('anonimo')
   })
 
+  // M5 da revisão final: um logout que nunca responde (rede presa) travava
+  // o "Sair" para sempre. Com o prazo, a aba larga a sessão do mesmo jeito.
+  // O buscar imita o fetch: só rejeita quando o sinal aborta. Sabotagem:
+  // tirar o "sinal: AbortSignal.timeout(prazoMs)" do logout → "travou".
+  it('logout que nunca responde termina no prazo, e a sessão local acaba', async () => {
+    usarApiFalsa()
+    const logoutParado = (entrada: string, init: RequestInit) =>
+      entrada.endsWith('/auth/logout')
+        ? new Promise<Response>((_, rejeitar) => {
+            init.signal?.addEventListener('abort', () => rejeitar(init.signal?.reason))
+          })
+        : buscarDoTeste(entrada, init)
+    const { sessao } = novaSessao({ buscar: logoutParado, prazoMs: 50 })
+    await sessao.entrar(EMAIL, SENHA)
+    const r = await Promise.race([
+      sessao.sair().then(() => 'saiu'),
+      new Promise((ok) => setTimeout(() => ok('travou'), 1000)),
+    ])
+    expect(r).toBe('saiu')
+    expect(sessao.token()).toBeNull()
+    expect(sessao.estado()).toBe('anonimo')
+    expect(sessao.motivo()).toBe('saiu')
+  })
+
   it('refresh com erro 5xx sobe como ApiError, sem encerrar a sessão', async () => {
     const falsa = usarApiFalsa()
     const { sessao } = novaSessao()

@@ -32,8 +32,8 @@ export type Opcoes = {
   buscar: Buscar
   travar?: Travar
   canal?: Canal | null
-  // Quanto um refresh espera antes de desistir. Uma rede travada não pode
-  // segurar a trava de todas as abas.
+  // Quanto um refresh (ou o logout) espera antes de desistir. Uma rede
+  // travada não pode segurar a trava de todas as abas, nem o "Sair".
   prazoMs?: number
 }
 
@@ -196,7 +196,10 @@ export function criarSessao(o: Opcoes) {
 
   async function sair(): Promise<void> {
     try {
-      await enviar(o.buscar, { metodo: 'POST', caminho: '/auth/logout' })
+      // Com prazo: uma rede presa não pode deixar o "Sair" sem resposta. O
+      // prazo vencido chega como ApiError 'network' (enviar só repassa o
+      // AbortError, e o do prazo é um TimeoutError).
+      await enviar(o.buscar, { metodo: 'POST', caminho: '/auth/logout', sinal: AbortSignal.timeout(prazoMs) })
     } catch (e) {
       // Sem rede, o logout no servidor não acontece, mas a aba larga a
       // sessão do mesmo jeito: o refresh que ficou vence sozinho.

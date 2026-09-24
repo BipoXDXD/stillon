@@ -270,6 +270,28 @@ describe('sair', () => {
     await waitFor(() => expect(cliente.getQueryCache().getAll()).toEqual([]))
   })
 
+  // M5: com o logout em voo, Sair fica ocupado, e o segundo clique não
+  // manda outro. Sabotagem: tirar o "if (saindo) return" do Sair → 2 logouts.
+  it('Sair fica ocupado enquanto o logout voa: um clique a mais não manda outro', async () => {
+    const r = await renderizarPainel('/')
+    await screen.findByRole('heading', { name: 'Painel' })
+    let soltar!: () => void
+    const segurado = new Promise<void>((ok) => (soltar = ok))
+    // Segura o logout e depois cai no handler da API falsa.
+    servidor.use(
+      http.post('*/api/v1/auth/logout', async () => {
+        await segurado
+      }),
+    )
+    const sair = screen.getByRole('button', { name: 'Sair' })
+    await r.usuario.click(sair)
+    await waitFor(() => expect(sair).toHaveAttribute('aria-disabled', 'true'))
+    await r.usuario.click(sair)
+    soltar()
+    await screen.findByRole('heading', { name: 'Entrar no Vigilume' })
+    expect(r.falsa.chamadas('POST /auth/logout')).toBe(1)
+  })
+
   it('sessão encerrada em outra aba volta ao login com o aviso', async () => {
     const { sessao } = await renderizarPainel('/')
     await screen.findByRole('heading', { name: 'Painel' })
