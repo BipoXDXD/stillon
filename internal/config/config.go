@@ -162,6 +162,25 @@ func Load(getenv func(string) string) (*Config, error) {
 		return ""
 	}
 
+	// PUBLIC_BASE_URL decide se o processo está em produção (https): recusa
+	// das chaves de demo, cookie Secure, aviso de TRUSTED_PROXIES. Um valor
+	// malformado que começa com https:// não pode passar como http (falha
+	// aberta), então ele precisa ser uma URL http(s) absoluta, com host. A
+	// mensagem não repete o valor: ele poderia trazer credenciais (userinfo).
+	publicBaseURL := func(name string) string {
+		raw := req(name)
+		if raw == "" {
+			return ""
+		}
+		u, err := url.Parse(raw)
+		if err != nil || u.Hostname() == "" ||
+			!(strings.EqualFold(u.Scheme, "http") || strings.EqualFold(u.Scheme, "https")) {
+			errs = append(errs, fmt.Errorf("%s precisa ser uma URL http(s) absoluta com host, como https://status.exemplo.com", name))
+			return ""
+		}
+		return raw
+	}
+
 	// CLIENT_IP_HEADER é um nome de cabeçalho HTTP, e de um valor só. O
 	// X-Forwarded-For é recusado aqui porque tem vários valores e já é o
 	// comportamento padrão (variável vazia).
@@ -185,7 +204,7 @@ func Load(getenv func(string) string) (*Config, error) {
 		HTTPAddr:       opt("HTTP_ADDR", ":8080"),
 		MetricsAddr:    metricsAddr("METRICS_ADDR"),
 		DatabaseURL:    req("DATABASE_URL"),
-		PublicBaseURL:  req("PUBLIC_BASE_URL"),
+		PublicBaseURL:  publicBaseURL("PUBLIC_BASE_URL"),
 		CORSOrigin:     req("CORS_ORIGIN"),
 		MasterKey:      key("MASTER_KEY"),
 		JWTSecret:      key("JWT_SECRET"),

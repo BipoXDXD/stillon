@@ -352,3 +352,54 @@ func TestDemoKeysHaveTheRequiredLength(t *testing.T) {
 		}
 	}
 }
+
+// PUBLIC_BASE_URL decide se o processo está em produção. Um valor malformado
+// que começa com https:// não pode passar como http e ligar as chaves de demo,
+// tirar o Secure do cookie e calar o aviso de TRUSTED_PROXIES: o boot recusa.
+func TestLoadRejectsMalformedPublicBaseURL(t *testing.T) {
+	for _, v := range []string{
+		"https://exa mple.com",
+		`"https://x"`,
+		"ftp://x",
+		"https://",
+		"x",
+		"https://x%zz",
+		"https://[::1",
+		"https://:443",
+		"https://usuario:segredo@[::1",
+	} {
+		env := validEnv()
+		env["PUBLIC_BASE_URL"] = v
+		_, err := Load(getenvFrom(env))
+		if err == nil || !strings.Contains(err.Error(), "PUBLIC_BASE_URL") {
+			t.Errorf("PUBLIC_BASE_URL=%q: erro = %v, queria recusa", v, err)
+			continue
+		}
+		if strings.Contains(err.Error(), "segredo") {
+			t.Errorf("PUBLIC_BASE_URL=%q: a mensagem repete a credencial: %v", v, err)
+		}
+	}
+}
+
+func TestLoadAcceptsValidPublicBaseURL(t *testing.T) {
+	for _, v := range []string{
+		"https://vigilume.example",
+		"HTTPS://vigilume.example",
+		"https://vigilume.example/",
+		"https://vigilume.example/status",
+		"http://localhost:8080",
+		"http://127.0.0.1:8080",
+		"http://[::1]:8080",
+	} {
+		env := validEnv()
+		env["PUBLIC_BASE_URL"] = v
+		cfg, err := Load(getenvFrom(env))
+		if err != nil {
+			t.Errorf("PUBLIC_BASE_URL=%q: %v", v, err)
+			continue
+		}
+		if cfg.PublicBaseURL != v {
+			t.Errorf("PUBLIC_BASE_URL=%q guardado como %q", v, cfg.PublicBaseURL)
+		}
+	}
+}
