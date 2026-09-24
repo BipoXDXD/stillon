@@ -12,6 +12,17 @@ import (
 	"github.com/google/uuid"
 )
 
+const countTargets = `-- name: CountTargets :one
+SELECT count(*) FROM targets WHERE user_id = $1
+`
+
+func (q *Queries) CountTargets(ctx context.Context, userID uuid.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countTargets, userID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const deleteTarget = `-- name: DeleteTarget :execrows
 DELETE FROM targets WHERE user_id = $1 AND id = $2
 `
@@ -476,6 +487,17 @@ func (q *Queries) ListTargets(ctx context.Context, arg ListTargetsParams) ([]Tar
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockUserTargets = `-- name: LockUserTargets :exec
+SELECT pg_advisory_xact_lock(hashtextextended('vigilume.targets:' || $1::uuid::text, 0))
+`
+
+// O teto de alvos por usuário (Plano 5): contar e inserir sob esta trava.
+// Sem ela, dois POST simultâneos passariam os dois pela contagem.
+func (q *Queries) LockUserTargets(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, lockUserTargets, userID)
+	return err
 }
 
 const updateTarget = `-- name: UpdateTarget :exec

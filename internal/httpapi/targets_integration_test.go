@@ -17,6 +17,7 @@ import (
 	"github.com/BipoXDXD/vigilume/internal/auth"
 	"github.com/BipoXDXD/vigilume/internal/storage"
 	"github.com/BipoXDXD/vigilume/internal/storage/db"
+	"github.com/BipoXDXD/vigilume/internal/targets"
 )
 
 func tokenDe(t *testing.T, a *api, userID uuid.UUID) string {
@@ -561,5 +562,35 @@ func TestPerUserRateLimit(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("B, no mesmo IP, deu %d depois de A esgotar o balde: o limite não é por usuário", resp.StatusCode)
+	}
+}
+
+// O 101º alvo é 409 target_limit_reached (D17 do Plano 5, reconciliado no
+// contrato); o painel mapeia o código no formulário.
+func TestTargetLimitIs409(t *testing.T) {
+	a := newAPI(t)
+	tok := tokenDe(t, a, a.userID)
+	ctx := context.Background()
+	tx, err := a.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `SELECT set_config('app.user_id', $1, true)`, a.userID.String()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO targets (id, user_id, name, url, method, interval_sec, timeout_ms, expected_status, next_run_at)
+		SELECT gen_random_uuid(), $1, 'alvo ' || i, 'https://exemplo.com/' || i, 'GET', 60, 10000, 200, now()
+		  FROM generate_series(1, $2::int) i`, a.userID, targets.MaxTargetsPerUser); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	resp := chamar(t, a, http.MethodPost, "/api/v1/targets", tok, alvoValido)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusConflict || decodeEnvelope(t, resp).Error.Code != "target_limit_reached" {
+		t.Errorf("status %d, queria 409 target_limit_reached", resp.StatusCode)
 	}
 }

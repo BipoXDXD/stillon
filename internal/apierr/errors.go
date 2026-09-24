@@ -37,6 +37,7 @@ const (
 	CodeDeliveryFailed     ErrorCode = "delivery_failed"
 	CodeStatusPageExists   ErrorCode = "status_page_exists"
 	CodeSlugTaken          ErrorCode = "slug_taken"
+	CodeTargetLimit        ErrorCode = "target_limit_reached"
 )
 
 // A mensagem vem sempre desta tabela, nunca do erro subjacente.
@@ -66,6 +67,9 @@ var errorTable = map[ErrorCode]struct {
 	// Uma status page por usuário (spec §2.1); a segunda é conflito.
 	CodeStatusPageExists: {http.StatusConflict, "Você já tem uma status page."},
 	CodeSlugTaken:        {http.StatusConflict, "Este endereço já está em uso."},
+	// O teto de alvos por usuário (D17 do Plano 5); reconciliado no contrato
+	// dos Planos 5–7.
+	CodeTargetLimit: {http.StatusConflict, "Limite de alvos atingido."},
 }
 
 // FieldError aponta o campo culpado de um 400 (D14). Field e Reason vêm de
