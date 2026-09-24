@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/mail"
 	"net/netip"
 	"strings"
 	"time"
@@ -44,7 +45,15 @@ type Config struct {
 	TrustedProxies []netip.Prefix
 	LogLevel       slog.Level
 	ShutdownGrace  time.Duration
+
+	// E-mail pelo Resend (spec §8). A chave é do operador; vazia, o canal
+	// de e-mail fica indisponível.
+	ResendAPIKey string
+	EmailFrom    string
 }
+
+// EmailEnabled diz se o operador configurou o envio de e-mail.
+func (c *Config) EmailEnabled() bool { return c.ResendAPIKey != "" }
 
 // Load recebe getenv como parâmetro em vez de chamar os.Getenv diretamente.
 // Isso torna a função pura e testável sem mexer no ambiente do processo de
@@ -112,12 +121,12 @@ func Load(getenv func(string) string) (*Config, error) {
 	}
 
 	// /metrics entrega o mapa operacional (spec §5.7): quantos alvos, que
-	// latências, quanta conexão. Só escuta em loopback; "off" desliga. Um
-	// host vazio (":9090") escutaria em todas as interfaces, e por isso é
-	// erro, não padrão (D10).
+	// latências, quanta conexão. Só escuta em loopback; "off", em qualquer
+	// caixa, desliga. Um host vazio (":9090") escutaria em todas as
+	// interfaces, e por isso é erro, não padrão (D10).
 	metricsAddr := func(name string) string {
 		raw := opt(name, "127.0.0.1:9090")
-		if raw == "off" {
+		if strings.EqualFold(raw, "off") {
 			return ""
 		}
 		host, _, err := net.SplitHostPort(raw)
@@ -144,6 +153,20 @@ func Load(getenv func(string) string) (*Config, error) {
 		IPHashKey:      key("IP_HASH_KEY"),
 		TrustedProxies: proxies("TRUSTED_PROXIES"),
 		ShutdownGrace:  15 * time.Second,
+		ResendAPIKey:   strings.TrimSpace(getenv("RESEND_API_KEY")),
+		EmailFrom:      strings.TrimSpace(getenv("EMAIL_FROM")),
+	}
+
+	// As duas variáveis de e-mail andam juntas. Sem nenhuma, o e-mail fica
+	// desligado, e cadastrar um canal de e-mail responde que ele está
+	// indisponível. Com só uma, é quase sempre esquecimento, e o boot avisa.
+	switch {
+	case (cfg.ResendAPIKey == "") != (cfg.EmailFrom == ""):
+		errs = append(errs, errors.New("RESEND_API_KEY e EMAIL_FROM andam juntas: defina as duas, ou nenhuma"))
+	case cfg.EmailFrom != "":
+		if _, err := mail.ParseAddress(cfg.EmailFrom); err != nil {
+			errs = append(errs, errors.New("EMAIL_FROM não é um endereço válido (use \"Nome <a@b.com>\" ou a@b.com)"))
+		}
 	}
 
 	// Https sem lista de proxies quase sempre significa "esqueci de
@@ -198,5 +221,8 @@ func (c *Config) LogValue() slog.Value {
 		slog.String("master_key", "[REDACTED]"),
 		slog.String("jwt_secret", "[REDACTED]"),
 		slog.String("ip_hash_key", "[REDACTED]"),
+		slog.Bool("email_enabled", c.EmailEnabled()),
+		slog.String("email_from", c.EmailFrom),
+		slog.String("resend_api_key", "[REDACTED]"),
 	)
 }

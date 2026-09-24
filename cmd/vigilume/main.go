@@ -19,6 +19,8 @@ import (
 	"github.com/BipoXDXD/vigilume/internal/config"
 	"github.com/BipoXDXD/vigilume/internal/crypto"
 	"github.com/BipoXDXD/vigilume/internal/httpapi"
+	"github.com/BipoXDXD/vigilume/internal/incident/history"
+	"github.com/BipoXDXD/vigilume/internal/notify"
 	"github.com/BipoXDXD/vigilume/internal/observability"
 	"github.com/BipoXDXD/vigilume/internal/prober"
 	"github.com/BipoXDXD/vigilume/internal/storage"
@@ -125,22 +127,51 @@ func run(ctx context.Context, cfg *config.Config) error {
 		g.Go(func() error {
 			return storage.MaintainChecksPartitions(gctx, pool, clk, manutencaoDeParticoes)
 		})
-		slog.Info("sondador ativo", "max_em_voo", prober.MaxInFlight)
+		// O dispatcher roda com o sondador (spec §8: fora do caminho
+		// crítico da sonda, em worker próprio). A outbox no banco é o que
+		// deixa --role=api e --role=prober separados sem perder nada.
+		disp := notify.NewDispatcher(pool, box, clk, reg, notificadores(cfg)...)
+		g.Go(func() error { return disp.Run(gctx) })
+		slog.Info("sondador ativo", "max_em_voo", prober.MaxInFlight, "email", cfg.EmailEnabled())
 	}
 
 	if cfg.Role.RunsAPI() {
 		store := auth.NewPGStore(pool)
 		deps := httpapi.Deps{
-			Store:    store,
-			Sessions: auth.NewManager(store, clk, cfg.IPHashKey),
-			TOTP:     auth.NewTOTP(pool, box, totpIssuer),
-			Targets:  targets.NewService(pool, box, clk),
-			Clock:    clk,
+			Store:     store,
+			Sessions:  auth.NewManager(store, clk, cfg.IPHashKey),
+			TOTP:      auth.NewTOTP(pool, box, totpIssuer),
+			Targets:   targets.NewService(pool, box, clk),
+			Incidents: history.NewService(pool, clk),
+			Channels:  notify.NewChannelService(pool, box, clk, notify.NewDiscord(), verificador(cfg), cfg.PublicBaseURL),
+			Clock:     clk,
+			Ready:     pool.Ping,
 		}
 		servir(gctx, g, httpapi.NewServer(cfg, httpapi.Routes(gctx, cfg, deps)), "api", cfg.ShutdownGrace)
 	}
 
 	return g.Wait()
+}
+
+// notificadores são os canais que o dispatcher sabe usar. O e-mail só
+// entra com o Resend configurado; sem ele, uma notificação de e-mail falha
+// de vez e vai para a auditoria.
+func notificadores(cfg *config.Config) []notify.Notifier {
+	ns := []notify.Notifier{notify.NewDiscord()}
+	if cfg.EmailEnabled() {
+		ns = append(ns, notify.NewResend(crypto.Secret(cfg.ResendAPIKey), cfg.EmailFrom))
+	}
+	return ns
+}
+
+// verificador devolve a interface nil, e não um *Resend nil, quando o
+// e-mail está desligado: um *Resend nil numa interface não é nil, e o
+// cadastro acharia que o e-mail está disponível.
+func verificador(cfg *config.Config) notify.VerificationMailer {
+	if !cfg.EmailEnabled() {
+		return nil
+	}
+	return notify.NewResend(crypto.Secret(cfg.ResendAPIKey), cfg.EmailFrom)
 }
 
 // graceDoSondador é o prazo que o sondador dá às sondas em voo no shutdown.

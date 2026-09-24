@@ -149,7 +149,11 @@ func (h *TargetHandlers) List(w http.ResponseWriter, r *http.Request) {
 	limit := targets.DefaultPageSize
 	if s := q.Get("limit"); s != "" {
 		n, err := strconv.ParseInt(s, 10, 32)
-		if err != nil || n < 1 || n > int64(targets.MaxPageSize) {
+		if err != nil {
+			campoInvalido(w, r, "limit", targets.ReasonInvalid)
+			return
+		}
+		if n < 1 || n > int64(targets.MaxPageSize) {
 			campoInvalido(w, r, "limit", targets.ReasonOutOfRange)
 			return
 		}

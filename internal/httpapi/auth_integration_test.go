@@ -21,6 +21,8 @@ import (
 	"github.com/BipoXDXD/vigilume/internal/config"
 	"github.com/BipoXDXD/vigilume/internal/crypto"
 	"github.com/BipoXDXD/vigilume/internal/httpapi"
+	"github.com/BipoXDXD/vigilume/internal/incident/history"
+	"github.com/BipoXDXD/vigilume/internal/notify"
 	"github.com/BipoXDXD/vigilume/internal/storage/testdb"
 	"github.com/BipoXDXD/vigilume/internal/targets"
 )
@@ -47,6 +49,9 @@ type api struct {
 	// recuperacao guarda os códigos que o último cadastrarTOTP devolveu; eles
 	// só aparecem em claro uma vez, e mais de um teste precisa deles.
 	recuperacao []string
+	// discord e email substituem os envios de verificação dos canais.
+	discord *discordFalso
+	email   *carteiroFalso
 }
 
 func newAPI(t *testing.T) *api {
@@ -58,6 +63,13 @@ func newAPI(t *testing.T) *api {
 // já cadastrado. O ajuste opcional permite que um teste mexa na configuração
 // antes de as rotas serem montadas.
 func newAPIWith(t *testing.T, ajustar func(*config.Config)) *api {
+	t.Helper()
+	return newAPICom(t, ajustar, nil)
+}
+
+// newAPICom é newAPIWith com um segundo ajuste, nas dependências, para o
+// teste que precisa trocar uma delas (o ping de /readyz, por exemplo).
+func newAPICom(t *testing.T, ajustar func(*config.Config), ajustarDeps func(*httpapi.Deps)) *api {
 	t.Helper()
 	pool := testdb.New(t)
 	clk := clock.NewFake(time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC))
@@ -97,12 +109,20 @@ func newAPIWith(t *testing.T, ajustar func(*config.Config)) *api {
 	}
 	segundoFator := auth.NewTOTP(pool, box, "Vigilume")
 
-	srv := httptest.NewServer(httpapi.Routes(ctx, cfg, httpapi.Deps{
+	discord, email := &discordFalso{}, &carteiroFalso{}
+	deps := httpapi.Deps{
 		Store: store, Sessions: mgr, TOTP: segundoFator,
-		Targets: targets.NewService(pool, box, clk), Clock: clk,
-	}))
+		Targets:   targets.NewService(pool, box, clk),
+		Incidents: history.NewService(pool, clk),
+		Channels:  notify.NewChannelService(pool, box, clk, discord, email, cfg.PublicBaseURL),
+		Clock:     clk, Ready: pool.Ping,
+	}
+	if ajustarDeps != nil {
+		ajustarDeps(&deps)
+	}
+	srv := httptest.NewServer(httpapi.Routes(ctx, cfg, deps))
 	t.Cleanup(srv.Close)
-	return &api{srv: srv, pool: pool, clk: clk, userID: userID}
+	return &api{srv: srv, pool: pool, clk: clk, userID: userID, discord: discord, email: email}
 }
 
 func post(t *testing.T, c *http.Client, url string, body any) *http.Response {

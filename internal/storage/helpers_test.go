@@ -78,3 +78,51 @@ func contarComEscopo(t *testing.T, pool *pgxpool.Pool, userID uuid.UUID, tabela 
 	}
 	return n
 }
+
+// novoCanal cria um canal do dono. tokenHash nil cria um Discord já
+// verificado; com hash, um e-mail pendente que vence em expira.
+func novoCanal(t *testing.T, pool *pgxpool.Pool, dono uuid.UUID, tokenHash []byte, expira time.Time) uuid.UUID {
+	t.Helper()
+	ctx := context.Background()
+	id := uuid.Must(uuid.NewV7())
+	p := db.InsertChannelParams{ID: id, UserID: dono, Kind: "discord", ConfigEnc: []byte{1}, CreatedAt: agora}
+	if tokenHash == nil {
+		p.VerifiedAt = &agora
+	} else {
+		p.Kind, p.VerifyTokenHash, p.VerifyExpiresAt = "email", tokenHash, &expira
+	}
+	if err := storage.InUserTx(ctx, pool, dono, func(q *db.Queries) error { return q.InsertChannel(ctx, p) }); err != nil {
+		t.Fatalf("criar canal: %v", err)
+	}
+	return id
+}
+
+func novoIncidente(t *testing.T, pool *pgxpool.Pool, alvo uuid.UUID) uuid.UUID {
+	t.Helper()
+	ctx := context.Background()
+	id := uuid.Must(uuid.NewV7())
+	err := storage.InProberTx(ctx, pool, func(q *db.Queries) error {
+		return q.OpenIncident(ctx, db.OpenIncidentParams{ID: id, TargetID: alvo, StartedAt: agora, Cause: "timeout"})
+	})
+	if err != nil {
+		t.Fatalf("abrir incidente: %v", err)
+	}
+	return id
+}
+
+func novaNotificacao(t *testing.T, pool *pgxpool.Pool, incidente, canal uuid.UUID) uuid.UUID {
+	t.Helper()
+	ctx := context.Background()
+	id := uuid.Must(uuid.NewV7())
+	err := storage.InProberTx(ctx, pool, func(q *db.Queries) error {
+		return q.EnqueueNotification(ctx, db.EnqueueNotificationParams{
+			ID: id, IncidentID: incidente, ChannelID: canal, Event: "opened", Now: agora,
+		})
+	})
+	if err != nil {
+		t.Fatalf("enfileirar notificação: %v", err)
+	}
+	return id
+}
+
+func novoID() uuid.UUID { return uuid.Must(uuid.NewV7()) }

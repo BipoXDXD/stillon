@@ -1,10 +1,15 @@
 package middleware
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
+
+	"github.com/google/uuid"
+	"golang.org/x/time/rate"
 )
 
 // TestRateLimitCapsTheNumberOfBuckets trava o item 30, que hoje é inerte
@@ -15,7 +20,7 @@ import (
 // Por isso os dois saem juntos.
 func TestRateLimitCapsTheNumberOfBuckets(t *testing.T) {
 	const teto = 8
-	h := rateLimit(t.Context(), 60, 5, porIP(nil), teto)(http.HandlerFunc(
+	h := rateLimit(t.Context(), porMinuto(60), 5, porIP(nil), teto)(http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) }))
 
 	for i := range 500 {
@@ -33,7 +38,7 @@ func TestRateLimitCapsTheNumberOfBuckets(t *testing.T) {
 // bloco que um único assinante recebe, então dar um balde por endereço
 // entrega ao atacante bilhões de baldes de graça.
 func TestIPv6ClientsShareABucketPerSlash64(t *testing.T) {
-	h := rateLimit(t.Context(), 60, 1, porIP(nil), 1000)(http.HandlerFunc(
+	h := rateLimit(t.Context(), porMinuto(60), 1, porIP(nil), 1000)(http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) }))
 
 	var negados int
@@ -58,12 +63,45 @@ func TestIPv6ClientsShareABucketPerSlash64(t *testing.T) {
 // Authn na frente, ele não encontra usuário no contexto; cair num balde
 // anônimo compartilhado seria silencioso. A requisição tem de ser recusada.
 func TestRateLimitUserRefusesRequestsWithoutUser(t *testing.T) {
-	h := rateLimit(t.Context(), 60, 5, porUsuario, 1000)(http.HandlerFunc(
+	h := rateLimit(t.Context(), porMinuto(60), 5, porUsuario, 1000)(http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) }))
 
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/targets", nil))
 	if rec.Code != http.StatusUnauthorized {
 		t.Errorf("sem usuário no contexto deu %d, queria 401", rec.Code)
+	}
+}
+
+// Apagar um balde é devolvê-lo cheio. Um limite de um token a cada 6
+// minutos com burst 5 leva 30 minutos para encher; se a varredura o apagasse
+// aos 10 minutos parado, o usuário ganharia 5 envios novos a cada 10
+// minutos, o triplo do limite.
+func TestSweepKeepsABucketUntilItCouldHaveRefilled(t *testing.T) {
+	h := rateLimit(t.Context(), rate.Every(6*time.Minute), 5, porUsuario, 1000)(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) }))
+	lh := h.(*limiterHandler)
+
+	r := httptest.NewRequest(http.MethodPost, "/api/v1/channels", nil)
+	r = r.WithContext(context.WithValue(r.Context(), userKey{}, uuid.New()))
+	for range 5 {
+		h.ServeHTTP(httptest.NewRecorder(), r)
+	}
+
+	lh.st.mu.Lock()
+	for _, b := range lh.st.buckets {
+		b.seen = time.Now().Add(-11 * time.Minute)
+	}
+	lh.st.varrer()
+	n := len(lh.st.buckets)
+	lh.st.mu.Unlock()
+	if n != 1 {
+		t.Fatal("o balde vazio foi apagado aos 11 minutos, antes de poder encher: o limite por hora vazaria")
+	}
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, r)
+	if rec.Code != http.StatusTooManyRequests {
+		t.Errorf("depois da varredura, a sexta requisição deu %d, queria 429", rec.Code)
 	}
 }
