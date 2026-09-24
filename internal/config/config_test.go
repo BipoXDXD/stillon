@@ -157,3 +157,45 @@ func TestLoadRejectsAMalformedTrustedProxy(t *testing.T) {
 		t.Errorf("o erro não menciona TRUSTED_PROXIES: %v", err)
 	}
 }
+
+// Spec §5.7: /metrics entrega o mapa operacional, e só pode escutar em
+// loopback (D10). "off" desliga.
+func TestMetricsAddrMustBeLoopback(t *testing.T) {
+	cases := []struct {
+		valor string
+		quer  string // "" com ok=true significa desligado
+		ok    bool
+	}{
+		{"", "127.0.0.1:9090", true}, // padrão
+		{"off", "", true},
+		{"127.0.0.1:9100", "127.0.0.1:9100", true},
+		{"[::1]:9090", "[::1]:9090", true},
+		{"localhost:9090", "localhost:9090", true},
+		{":9090", "", false},
+		{"0.0.0.0:9090", "", false},
+		{"[::]:9090", "", false},
+		{"10.0.0.5:9090", "", false},
+		{"sem-porta", "", false},
+	}
+	for _, c := range cases {
+		t.Run(c.valor, func(t *testing.T) {
+			env := validEnv()
+			if c.valor != "" {
+				env["METRICS_ADDR"] = c.valor
+			}
+			cfg, err := Load(getenvFrom(env))
+			if !c.ok {
+				if err == nil || !strings.Contains(err.Error(), "METRICS_ADDR") {
+					t.Fatalf("METRICS_ADDR=%q aceito (err = %v)", c.valor, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("METRICS_ADDR=%q recusado: %v", c.valor, err)
+			}
+			if cfg.MetricsAddr != c.quer {
+				t.Errorf("MetricsAddr = %q, queria %q", cfg.MetricsAddr, c.quer)
+			}
+		})
+	}
+}

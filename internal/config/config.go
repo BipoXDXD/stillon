@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/netip"
 	"strings"
 	"time"
@@ -33,6 +34,7 @@ const keyLen = 32
 type Config struct {
 	Role           Role
 	HTTPAddr       string
+	MetricsAddr    string
 	DatabaseURL    string
 	PublicBaseURL  string
 	CORSOrigin     string
@@ -109,8 +111,31 @@ func Load(getenv func(string) string) (*Config, error) {
 		return out
 	}
 
+	// /metrics entrega o mapa operacional (spec §5.7): quantos alvos, que
+	// latências, quanta conexão. Só escuta em loopback; "off" desliga. Um
+	// host vazio (":9090") escutaria em todas as interfaces, e por isso é
+	// erro, não padrão (D10).
+	metricsAddr := func(name string) string {
+		raw := opt(name, "127.0.0.1:9090")
+		if raw == "off" {
+			return ""
+		}
+		host, _, err := net.SplitHostPort(raw)
+		if err == nil && host == "localhost" {
+			return raw
+		}
+		if err == nil {
+			if ip, perr := netip.ParseAddr(host); perr == nil && ip.IsLoopback() {
+				return raw
+			}
+		}
+		errs = append(errs, fmt.Errorf("%s %q precisa escutar em loopback (127.0.0.1, [::1] ou localhost) ou ser \"off\"", name, raw))
+		return ""
+	}
+
 	cfg := &Config{
 		HTTPAddr:       opt("HTTP_ADDR", ":8080"),
+		MetricsAddr:    metricsAddr("METRICS_ADDR"),
 		DatabaseURL:    req("DATABASE_URL"),
 		PublicBaseURL:  req("PUBLIC_BASE_URL"),
 		CORSOrigin:     req("CORS_ORIGIN"),
@@ -165,6 +190,7 @@ func (c *Config) LogValue() slog.Value {
 	return slog.GroupValue(
 		slog.String("role", string(c.Role)),
 		slog.String("http_addr", c.HTTPAddr),
+		slog.String("metrics_addr", c.MetricsAddr),
 		slog.String("public_base_url", c.PublicBaseURL),
 		slog.String("cors_origin", c.CORSOrigin),
 		slog.String("log_level", c.LogLevel.String()),
