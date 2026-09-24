@@ -1,0 +1,104 @@
+# Vigilume local, com um comando (spec §15):
+#
+#   docker compose up --wait        e abra http://localhost:8080
+#   login: demo@vigilume.local / demo-vigilume-2026
+#
+# Pelo localhost, e não pelo IP da máquina: o painel exige contexto seguro
+# (HTTPS ou localhost). Em HTTP por outro endereço ele mostra um aviso e
+# desliga a coordenação entre abas (Web Locks). A porta só escuta no
+# 127.0.0.1 de qualquer jeito (D16).
+#
+# Ordem: db → seed → app (D10 do Plano 7). O seed migra o banco e cria o
+# usuário de demonstração; o app só sobe depois de o seed sair com 0. Com o
+# seed depois do app, o `up --wait` devolve 1 mesmo com o seed saindo 0.
+#
+# Cada serviço do Vigilume tem `image` E `build`: com a imagem publicada e
+# acessível, o compose a puxa; se o pull é negado (pacote privado), ele
+# constrói do código (D17).
+name: vigilume
+
+# !!! CHAVES DE DEMONSTRAÇÃO, PÚBLICAS NO REPOSITÓRIO. NÃO USE EM PRODUÇÃO. !!!
+# Com elas, qualquer um forja um JWT e decifra os segredos gravados. O boot
+# as recusa quando PUBLIC_BASE_URL é https (D14). Produção: docs/deploy/fly.md.
+x-ambiente: &ambiente
+  DATABASE_URL: postgres://vigilume_app:vigilume_app@db:5432/vigilume?sslmode=disable
+  PUBLIC_BASE_URL: http://localhost:8080
+  # O `vite dev` do painel (Plano 6), para quem desenvolve contra este compose.
+  CORS_ORIGIN: http://localhost:5173
+  METRICS_ADDR: "off"
+  LOG_LEVEL: info
+  MASTER_KEY: ZGVtby12aWdpbHVtZS1NQVNURVJfS0VZLW5hb3VzZSE=  # "demo-vigilume-MASTER_KEY-naouse!"
+  JWT_SECRET: ZGVtby12aWdpbHVtZS1KV1RfU0VDUkVULW5hb3VzZSE=  # "demo-vigilume-JWT_SECRET-naouse!"
+  IP_HASH_KEY: ZGVtby12aWdpbHVtZS1JUF9IQVNIX0tFWS1uYW91c2U= # "demo-vigilume-IP_HASH_KEY-naouse"
+
+services:
+  db:
+    # A mesma imagem (tag e digest) de produção e dos testes (D29).
+    image: postgres:18-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
+    environment:
+      # Superusuário só para o init; a aplicação usa vigilume_app.
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      # Layout do 18: o volume é /var/lib/postgresql, não .../data (D11).
+      # Em .../data os dados iriam para um volume anônimo e sumiriam.
+      - pgdata:/var/lib/postgresql
+      - ./deploy/compose/initdb.sql:/docker-entrypoint-initdb.d/10-vigilume.sql:ro
+    healthcheck:
+      # Pelo TCP: durante o init o Postgres só escuta no socket, e o banco
+      # vigilume ainda não existe.
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "vigilume_app", "-d", "vigilume"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 30s
+      start_interval: 500ms
+
+  seed:
+    image: ghcr.io/bipoxdxd/vigilume:${VIGILUME_TAG:-latest}-tools
+    build:
+      context: .
+      target: tools
+    entrypoint: ["/busybox/sh", "/seed/seed.sh"]
+    environment:
+      <<: *ambiente
+      DEMO_EMAIL: demo@vigilume.local
+      # A política do Plano 5: de 15 a 128 code points.
+      DEMO_PASSWORD: demo-vigilume-2026
+      # 1 = o alvo https://example.com/ (domínio reservado para exemplos), para
+      # o painel não nascer vazio. Mais alvos: DEMO_TARGETS_EXTRA com URLs
+      # públicas separadas por espaço, no ambiente de quem roda o compose.
+      DEMO_TARGETS: "1"
+      DEMO_TARGETS_EXTRA: ${DEMO_TARGETS_EXTRA:-}
+    volumes:
+      - ./deploy/compose/seed.sh:/seed/seed.sh:ro
+    depends_on:
+      db:
+        condition: service_healthy
+
+  app:
+    image: ghcr.io/bipoxdxd/vigilume:${VIGILUME_TAG:-latest}
+    build:
+      context: .
+      target: runtime
+    environment: *ambiente
+    ports:
+      # Só no loopback: numa rede de café, o painel de demo com senha
+      # conhecida ficaria aberto a todos (D16).
+      - "127.0.0.1:${VIGILUME_PORT:-8080}:8080"
+    healthcheck:
+      # A imagem não tem curl nem shell: o próprio binário checa o /readyz (D5).
+      test: ["CMD", "/vigilume", "healthcheck"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 30s
+      start_interval: 500ms
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      seed:
+        condition: service_completed_successfully
+
+volumes:
+  pgdata:
