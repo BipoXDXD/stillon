@@ -49,6 +49,7 @@ Valores copiados da spec. Valem para todas as tarefas, inclusive as que não os 
 | §4.2 enum `error_kind` com 7 valores | 8 valores: acrescenta `unknown` | Todo enum de erro de rede precisa de um valor residual. Sem ele, um `connection reset` ou um `EOF` no meio da resposta teria de ser classificado como algo que não é (D1). |
 | §6.2 "timeout menor que o intervalo" | timeout **< 90%** do intervalo | O jitter de −10% pode antecipar a próxima execução para 90% do intervalo (D3). |
 | §5.5 RLS "em todas as tabelas com `user_id`" | `targets`, e `checks` por delegação | `users`, `sessions`, `audit_log` e `totp_recovery_codes` são lidas pela própria autenticação, antes de existir usuário na transação. As tabelas dos Planos 3 e 4 entram com RLS desde a migration que as cria (D7). |
+| §5.1 `Timeout: 5 * time.Second` no `net.Dialer` do exemplo | nenhum limite por fase no dialer nem no `Transport` (sem `TLSHandshakeTimeout`, sem `ResponseHeaderTimeout`); o prazo é só o `context` da sonda | Um corte de fase fixo cortaria antes do `timeout_ms` configurado, que vai até 30 s: um alvo com `timeout_ms = 20000` que manda o cabeçalho aos 12 s viraria down falso aos 10 s. O timeout rígido por sonda da spec continua valendo, via `context.WithTimeout` em `Probe`. O código de exemplo da Task 1, mais abaixo, ainda mostra os limites antigos; vale o `transport.go`. |
 
 ---
 

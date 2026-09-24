@@ -12,7 +12,13 @@ um `git clean -fdx` o apaga. O que está aqui é o subconjunto que não pode se 
    ou `BYPASSRLS` (D8). A `DATABASE_URL` de produção precisa apontar para um papel que seja dono
    das tabelas e não seja superusuário. Criar o papel e transferir a posse das tabelas já
    existentes (`ALTER TABLE ... OWNER TO`) **antes** do deploy do Plano 2; senão o processo não
-   sobe.
+   sobe. Três detalhes que fazem o primeiro deploy falhar no `Migrate` se esquecidos:
+   - `GRANT CREATE ON SCHEMA public TO <papel>`. Desde o PostgreSQL 15, o `public` não dá
+     `CREATE` a todo mundo, e a 00004 precisa criar `targets` e `checks`.
+   - `goose_db_version` entra na lista do `ALTER TABLE ... OWNER TO`, junto com as tabelas do
+     Plano 1. A sequência da tabela acompanha a mudança de dono.
+   - A ordem: o boot recusa o papel errado **antes** de migrar (D8), então o papel precisa estar
+     pronto antes do deploy, e não depois do primeiro boot.
 3. **`METRICS_ADDR` no Fly.io.** O padrão (`127.0.0.1:9090`) funciona, mas não é raspável pela
    rede privada do Fly. Decidir no Plano 5 entre `off` e um bind na interface privada, que
    hoje a config recusa (D10).
@@ -28,6 +34,11 @@ um `git clean -fdx` o apaga. O que está aqui é o subconjunto que não pode se 
 | §5.5 RLS | `targets` e `checks`, com `FORCE`, papel único e teste com papel não-super |
 | §3.3 sqlc | Código novo gerado; CI roda `sqlc diff` |
 | §13 métricas | Sondador, pool e runtime; `/metrics` só em loopback |
+| Revisão final, I1 | Guarda `len(alvos) > vagas` antes de devolver a sobra ao semáforo |
+| Revisão final, I3 | Headers do alvo não seguem redirect para outro host:porta nem rebaixamento https→http |
+| Revisão final, M3 | `fec0::/10` (site-local, obsoleto) na lista de bloqueio |
+| Revisão final, M5 | `recover` na goroutine de sonda, que devolve a vaga e o `inflight` |
+| Revisão final | `checks_via_target` com `checks.target_id` qualificado |
 
 ## Para o Plano 3 (incidentes e notificações)
 
@@ -35,9 +46,38 @@ um `git clean -fdx` o apaga. O que está aqui é o subconjunto que não pode se 
   `(*Scheduler).gravar`, depois do `INSERT` bem-sucedido. A avaliação precisa saber o
   `user_id` do alvo; `ClaimDueTargets` não o devolve hoje.
 - **Sonda abortada pelo shutdown não é gravada (D12)**, então não conta como falha para a
-  histerese. Um deploy não abre incidente.
+  histerese. Um deploy não abre incidente. Em compensação, o alvo só volta a ser sondado
+  depois de um intervalo inteiro: o `next_run_at` já foi empurrado na reivindicação, e o
+  shutdown não o devolve.
+- **Duas sondas do mesmo alvo em voo (M4).** Um `PATCH` que reagenda (D13) com uma sonda em voo
+  deixa o alvo vencido de novo, e o próximo tick dispara uma segunda sonda antes de a primeira
+  terminar, e os dois checks podem ser gravados fora de ordem. A histerese precisa tolerar isso.
+- **Headers em redirect (revisão final, I3).** Desde a correção, um redirect para outro
+  host:porta, ou de https para http, leva só o `User-Agent`. Um alvo cujo monitor dependa de
+  header autenticado DEPOIS de um redirect para outro host passa a ver 401 e vira down. É o
+  comportamento pretendido (spec §5.4), mas quem tinha esse arranjo vai ver um incidente que
+  não é do alvo. Vale uma linha na documentação do cadastro de alvos.
 - Toda tabela nova com `user_id` nasce com RLS `FORCE` e política com `NULLIF`, como a
   migration 00004.
+
+## Decisões e limites registrados na revisão final do Plano 2
+
+- **`Scheduler.Run` sempre devolve `nil`.** Erro de `Tick` (banco fora, por exemplo) só vai ao
+  log; o errgroup não cai, e o sondador segue tentando a cada segundo. É intencional: é assim
+  que ele se reconecta sozinho quando o banco volta. Mas não há alerta: com o banco fora, o
+  processo parece saudável. O Plano 3 ou o 5 decide se o health check ou o `/readyz` reflete
+  isso.
+- **D9 quase nunca dispara (M1).** `Metrics.forget` só roda quando o alvo some com uma sonda em
+  voo (o `INSERT` do check falha). No fluxo normal, apagar um alvo parado não passa pelo
+  sondador, e com `--role=api` e `--role=prober` em processos separados nem poderia: a série de
+  `probe_duration_seconds` do alvo apagado vive até o restart. Precisa de reconciliação
+  periódica (por exemplo, a cada N ticks, apagar as séries de alvos que não existem mais).
+- **`Spec.Headers` decifrado é um `map[string]string` comum (M6).** Nada o loga hoje, mas um
+  `slog.Any("spec", spec)` futuro vazaria os segredos. Dar a `Spec` (ou a um tipo próprio para
+  os headers) um `LogValue`/`String` que redija os valores.
+- **Porta de métricas em desenvolvimento (M7).** `--role=api` e `--role=prober` no mesmo host
+  disputam `127.0.0.1:9090`, e o segundo a subir cai. Localmente, dê a cada processo um
+  `METRICS_ADDR` diferente (ou `off` num deles).
 
 ## Para o Plano 4
 
@@ -60,9 +100,6 @@ git-ignored.
 
 **Para a revisão final do Plano 2**
 
-- Reivindicação que devolva mais linhas que vagas (subselect reexecutado num nested loop)
-  daria panic "released more than held" no semáforo. Saída: CTE `MATERIALIZED` ou guarda
-  `len(alvos) > vagas` (Task 7).
 - Nenhum teste trava que `POST /metrics` recebe 405: trocar `"GET /metrics"` por `"/metrics"`
   passaria (Task 8).
 - `METRICS_ADDR` só reconhece `off` minúsculo; `OFF` dá erro de boot (Task 8).
@@ -76,7 +113,6 @@ git-ignored.
   consulta partição, e está comentado no código (Task 3).
 - `MaintainChecksPartitions` sem teste; usa ticker real, dá panic com `every <= 0` e sempre
   devolve `nil`. O Plano 4 a estende (Task 3).
-- `checks_via_target` usa `target_id` não qualificado (Task 3).
 - O comentário de `targets.sql` diz que toda query filtra por `user_id`; o `INSERT` não filtra
   (Task 3).
 - `initialisms` sem `ip` gera `IpHash` nos modelos de auth gerados, ainda não usados (Task 3).
@@ -109,4 +145,8 @@ git-ignored.
 
 - `docs/superpowers/plans/2026-09-24-alvos-e-sondador.md`: decisões D1–D16, com o custo de
   cada uma estar errada.
+- `docs/superpowers/reports/2026-09-22-cobertura-plano-1.md`: o que o Plano 1 cobriu e o que
+  ficou de fora.
+- `docs/superpowers/reports/2026-09-22-revisao-das-rulings.md`: as rulings R1–R40 do Plano 1,
+  reavaliadas contra a revisão final.
 - Histórico de execução: `.superpowers/sdd/<data>-alvos-e-sondador/progress.md` (git-ignored).
