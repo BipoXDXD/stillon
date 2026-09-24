@@ -96,21 +96,38 @@ func (s *Service) Public(ctx context.Context, slug string) (View, error) {
 	if v, ok := s.cache.get(slug, agora); ok {
 		return v, nil
 	}
+	antes := s.cache.geracao(slug)
 	v, err, _ := s.voo.Do(slug, func() (any, error) {
-		// A consulta é de todos os que esperam neste voo, e não só de quem
-		// chegou primeiro: o visitante que fecha a aba não derruba os outros.
-		ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), publicQueryTimeout)
-		defer cancel()
-		v, err := s.projetar(ctx, slug, agora)
+		inicio := s.cache.geracao(slug)
+		v, err := s.projetarComPrazo(ctx, slug, agora)
+		if s.depoisDeProjetar != nil {
+			s.depoisDeProjetar(slug)
+		}
 		if err == nil {
-			s.cache.put(slug, v, agora)
+			s.cache.putSe(slug, v, agora, inicio)
 		}
 		return v, err
 	})
+	// A página mudou por este processo enquanto o voo estava no ar (o dono
+	// despublicou durante o acesso): o resultado pode ser o de antes, e
+	// quem esperou no voo refaz a consulta em vez de recebê-lo (achado da
+	// segunda revisão).
+	if s.cache.geracao(slug) != antes {
+		v, err = s.projetarComPrazo(ctx, slug, agora)
+	}
 	if err != nil {
 		return View{}, err
 	}
 	return v.(View), nil
+}
+
+// projetarComPrazo desliga a consulta do contexto do visitante: ela é de
+// todos os que esperam no voo, e o visitante que fecha a aba não derruba os
+// outros.
+func (s *Service) projetarComPrazo(ctx context.Context, slug string, agora time.Time) (View, error) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), publicQueryTimeout)
+	defer cancel()
+	return s.projetar(ctx, slug, agora)
 }
 
 func (s *Service) projetar(ctx context.Context, slug string, agora time.Time) (View, error) {
@@ -209,9 +226,16 @@ func preencherDias(pi *PublicItem, desde time.Time, linhas []db.ListPublicDailyU
 // cachePublico guarda a projeção por slug. Só guarda sucesso: a página que
 // acabou de ser publicada aparece na hora, e um erro de banco não fica
 // preso por 30 segundos.
+//
+// geracoes conta as mudanças de cada slug feitas por este processo. Uma
+// projeção só entra no cache se a geração não mudou desde que ela começou:
+// sem isso, a projeção que leu a página antes de o dono despublicar a
+// regravaria no cache depois do forget, por mais 30 s. Cresce um contador
+// por slug alterado na vida do processo.
 type cachePublico struct {
 	mu       sync.Mutex
 	entradas map[string]entradaCache
+	geracoes map[string]uint64
 }
 
 type entradaCache struct {
@@ -229,16 +253,32 @@ func (c *cachePublico) get(slug string, agora time.Time) (View, bool) {
 	return e.v, true
 }
 
-// forget tira o slug do cache: a página mudou neste processo.
+// forget tira o slug do cache e avança a geração dele: a página mudou
+// neste processo.
 func (c *cachePublico) forget(slug string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	delete(c.entradas, slug)
+	if c.geracoes == nil {
+		c.geracoes = map[string]uint64{}
+	}
+	c.geracoes[slug]++
 }
 
-func (c *cachePublico) put(slug string, v View, agora time.Time) {
+func (c *cachePublico) geracao(slug string) uint64 {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	return c.geracoes[slug]
+}
+
+// putSe guarda a projeção se o slug ainda está na geração em que ela
+// começou.
+func (c *cachePublico) putSe(slug string, v View, agora time.Time, geracao uint64) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.geracoes[slug] != geracao {
+		return
+	}
 	if c.entradas == nil {
 		c.entradas = map[string]entradaCache{}
 	}

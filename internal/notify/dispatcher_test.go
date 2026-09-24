@@ -781,4 +781,57 @@ func TestDeferredAtTheLastAttemptFailWithoutSending(t *testing.T) {
 	if c := b.canalVisto(t); c.Status != StatusFailing {
 		t.Errorf("canal = %+v; queria failing", c)
 	}
+	// As adiadas que falharam contam como failed, e não como deferred.
+	if f, df := testutil.ToFloat64(b.d.total.WithLabelValues("discord", "failed")),
+		testutil.ToFloat64(b.d.total.WithLabelValues("discord", "deferred")); f != 3 || df != 0 {
+		t.Errorf("notify_total failed=%v deferred=%v; queria 3 e 0", f, df)
+	}
+}
+
+// Adiar não pula os cancelamentos de tentar (achado da segunda revisão): a
+// abertura cujo incidente já fechou é cancelada, e não adiada; e a linha que
+// voltou do lease além do teto falha sem culpar o canal.
+func TestDeferralKeepsThePreSendDecisions(t *testing.T) {
+	b := novaBancada(t, nil)
+	ids := b.apagao(t, 3)
+	b.comoSondador(t, `UPDATE incidents SET resolved_at = $2
+		WHERE id = (SELECT incident_id FROM notifications WHERE id = $1)`, ids[1], b.clk.Now())
+	// A primeira falha transitória e para o canal; a terceira volta do lease
+	// além do teto (a reivindicação a leva a MaxAttempts+1).
+	b.comoSondador(t, `UPDATE notifications SET attempts = $2 WHERE id = $1`, ids[2], MaxAttempts)
+	b.canal.respostas = []error{&SendError{Reason: ReasonTimeout}}
+
+	b.despachar(t, 3)
+	if n := b.canal.quantos(); n != 1 {
+		t.Fatalf("%d envios, queria 1", n)
+	}
+	if l := b.estado(t, ids[1]); l.Status != "cancelled" {
+		t.Errorf("abertura velha adiada: %+v; queria cancelled", l)
+	}
+	if l := b.estado(t, ids[2]); l.Status != "failed" || l.Erro == nil || *l.Erro != "unknown" {
+		t.Errorf("linha além do teto: %+v; queria failed por unknown", l)
+	}
+	if c := b.canalVisto(t); c.Status != StatusVerified {
+		t.Errorf("canal = %+v; queria verified: a falha por lease vencido é do Vigilume", c)
+	}
+}
+
+// comoSondador roda um comando no escopo prober.
+func (b *bancada) comoSondador(t *testing.T, sql string, args ...any) {
+	t.Helper()
+	ctx := context.Background()
+	tx, err := b.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `SELECT set_config('app.scope', 'prober', true)`); err != nil {
+		t.Fatal(err)
+	}
+	if tag, err := tx.Exec(ctx, sql, args...); err != nil || tag.RowsAffected() != 1 {
+		t.Fatalf("%s: %v, %d linhas", sql, err, tag.RowsAffected())
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
 }

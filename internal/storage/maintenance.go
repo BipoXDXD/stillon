@@ -66,12 +66,11 @@ func Maintain(ctx context.Context, pool *pgxpool.Pool, now time.Time) (Maintenan
 		return r, err
 	}
 	r.RollupHours = n
+	// Com o DROP desistindo, os DELETEs já valeram: o relatório parcial
+	// sobe junto com o erro, para o log dizer o que foi feito.
 	ret, err := ApplyRetention(ctx, pool, now)
-	if err != nil {
-		return r, err
-	}
 	ret.RollupHours = r.RollupHours
-	return ret, nil
+	return ret, err
 }
 
 // ConsolidateRollups consolida as horas cheias ainda não consolidadas, até a
@@ -155,15 +154,18 @@ func RunMaintenance(ctx context.Context, pool *pgxpool.Pool, clk clock.Clock, ev
 	}
 	rodar := func() {
 		r, err := Maintain(ctx, pool, clk.Now())
-		if err != nil {
-			if ctx.Err() == nil {
-				slog.Error("manutenção", "erro", err)
-			}
+		if err != nil && ctx.Err() != nil {
 			return
 		}
-		slog.Info("manutenção", "rollups", r.RollupHours, "particoes_apagadas", r.DroppedPartitions,
+		nivel := slog.LevelInfo
+		atributos := []any{"rollups", r.RollupHours, "particoes_apagadas", r.DroppedPartitions,
 			"rollups_apagados", r.DeletedRollups, "notificacoes_apagadas", r.DeletedNotifications,
-			"auditoria_apagada", r.DeletedAudit, "sessoes_apagadas", r.DeletedSessions)
+			"auditoria_apagada", r.DeletedAudit, "sessoes_apagadas", r.DeletedSessions}
+		if err != nil {
+			nivel = slog.LevelError
+			atributos = append(atributos, "erro", err)
+		}
+		slog.Log(ctx, nivel, "manutenção", atributos...)
 	}
 	rodar()
 	t := time.NewTicker(every)
