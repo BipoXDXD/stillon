@@ -56,6 +56,8 @@ SELECT id FROM targets WHERE id = ANY(sqlc.arg(ids)::uuid[]);
 
 -- Histórico (API): rodam sob InUserTx e filtram por user_id, como as de
 -- targets.sql. open NULL lista tudo; true só abertos; false só resolvidos.
+-- target_id NULL lista todos os alvos; um id de alvo alheio não casa com
+-- nada e devolve a lista vazia (reconciliação dos Planos 5–7).
 -- O id é UUIDv7, gerado quando o incidente abre: ordenar por ele é ordenar
 -- pela abertura, e o cursor é o último id da página anterior.
 -- name: ListIncidents :many
@@ -65,6 +67,7 @@ SELECT i.id, i.target_id, t.name AS target_name, i.started_at, i.resolved_at, i.
  WHERE t.user_id = sqlc.arg(user_id)
    AND (sqlc.narg(open)::bool IS NULL OR (i.resolved_at IS NULL) = sqlc.narg(open)::bool)
    AND (sqlc.narg(before)::uuid IS NULL OR i.id < sqlc.narg(before)::uuid)
+   AND (sqlc.narg(target_id)::uuid IS NULL OR i.target_id = sqlc.narg(target_id)::uuid)
  ORDER BY i.id DESC
  LIMIT sqlc.arg(max_rows)::int;
 

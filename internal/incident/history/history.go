@@ -31,11 +31,14 @@ type Incident struct {
 }
 
 // Filter: Open nil lista tudo; true só abertos; false só resolvidos. Before
-// é o cursor, o último id da página anterior.
+// é o cursor, o último id da página anterior. TargetID restringe a um alvo
+// (Plano 5, a tela de detalhe do alvo); o de outro usuário dá lista vazia,
+// não erro: o filtro não confirma a existência de alvo alheio.
 type Filter struct {
-	Open   *bool
-	Before *uuid.UUID
-	Limit  int32
+	Open     *bool
+	Before   *uuid.UUID
+	TargetID *uuid.UUID
+	Limit    int32
 }
 
 const (
@@ -59,7 +62,7 @@ func (s *Service) List(ctx context.Context, userID uuid.UUID, f Filter) ([]Incid
 	var out []Incident
 	err := storage.InUserTx(ctx, s.pool, userID, func(q *db.Queries) error {
 		rows, err := q.ListIncidents(ctx, db.ListIncidentsParams{
-			UserID: userID, Open: f.Open, Before: f.Before, MaxRows: f.Limit,
+			UserID: userID, Open: f.Open, Before: f.Before, TargetID: f.TargetID, MaxRows: f.Limit,
 		})
 		if err != nil {
 			return fmt.Errorf("listar incidentes: %w", err)

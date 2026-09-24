@@ -112,6 +112,7 @@ func TestIncidentListRejectsBadQueries(t *testing.T) {
 		"limit=101":         {Field: "limit", Reason: "out_of_range"},
 		"limit=x":           {Field: "limit", Reason: "invalid"},
 		"cursor=nao-e-uuid": {Field: "cursor", Reason: "invalid"},
+		"target_id=x":       {Field: "target_id", Reason: "invalid"},
 	} {
 		var env envelopeComCampos
 		resp := chamar(t, a, http.MethodGet, "/api/v1/incidents?"+consulta, tok, nil)
@@ -119,6 +120,32 @@ func TestIncidentListRejectsBadQueries(t *testing.T) {
 		if resp.StatusCode != http.StatusBadRequest || len(env.Error.Fields) != 1 || env.Error.Fields[0] != quer {
 			t.Errorf("%s deu %d/%+v, queria 400 %+v", consulta, resp.StatusCode, env.Error.Fields, quer)
 		}
+	}
+}
+
+// ?target_id= é aditivo (Plano 5): combina com status, e o alvo de outro
+// usuário dá 200 com a lista vazia, não 404.
+func TestIncidentListFiltersByTarget(t *testing.T) {
+	a := newAPI(t)
+	tok := tokenDe(t, a, a.userID)
+	alvo, ids := incidentesDe(t, a, tok, 2)
+	// Outro alvo do mesmo dono, também com um incidente resolvido: sem o
+	// filtro, a consulta abaixo traria dois.
+	incidentesDe(t, a, tok, 2)
+
+	var l listaIncidentesJSON
+	lerCorpo(t, chamar(t, a, http.MethodGet, "/api/v1/incidents?target_id="+alvo+"&status=resolved", tok, nil), &l)
+	if len(l.Items) != 1 || l.Items[0].ID != ids[0] {
+		t.Errorf("target_id + status: %+v, queria só %s", l.Items, ids[0])
+	}
+
+	intruso := outroUsuario(t, a)
+	alheio, _ := incidentesDe(t, a, tokenDe(t, a, intruso), 1)
+	resp := chamar(t, a, http.MethodGet, "/api/v1/incidents?target_id="+alheio, tok, nil)
+	var vazia listaIncidentesJSON
+	lerCorpo(t, resp, &vazia)
+	if resp.StatusCode != http.StatusOK || len(vazia.Items) != 0 {
+		t.Errorf("alvo alheio deu %d com %d itens, queria 200 e lista vazia", resp.StatusCode, len(vazia.Items))
 	}
 }
 

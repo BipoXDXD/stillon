@@ -46,7 +46,8 @@ func toIncidentResponse(i history.Incident) incidentResponse {
 	}
 }
 
-// List é GET /incidents?status=open|resolved&cursor=&limit= (spec §9).
+// List é GET /incidents?status=open|resolved&target_id=&cursor=&limit=
+// (spec §9; target_id é do Plano 5).
 func (h *IncidentHandlers) List(w http.ResponseWriter, r *http.Request) {
 	userID, ok := usuario(w, r)
 	if !ok {
@@ -85,6 +86,16 @@ func (h *IncidentHandlers) List(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		f.Before = &c
+	}
+	// target_id malformado é 400, como o cursor: é parâmetro de consulta, e
+	// não o recurso do caminho (que seria 404).
+	if s := q.Get("target_id"); s != "" {
+		alvo, err := uuid.Parse(s)
+		if err != nil {
+			campoInvalido(w, r, "target_id", targets.ReasonInvalid)
+			return
+		}
+		f.TargetID = &alvo
 	}
 
 	items, err := h.svc.List(r.Context(), userID, f)
