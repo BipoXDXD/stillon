@@ -14,6 +14,13 @@ jobs:
           go-version: '1.26'
           cache: true
 
+      - name: sqlc diff
+        # Código gerado desatualizado em relação ao SQL é o erro que o sqlc
+        # existe para impedir; o CI o transforma em falha de build.
+        run: |
+          go install github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1
+          sqlc diff
+
       - name: vet
         run: go vet ./...
 

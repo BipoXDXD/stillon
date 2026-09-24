@@ -16,7 +16,7 @@ func TestMigrationsApplyAndSchemaIsUsable(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
 
-	for _, table := range []string{"users", "sessions", "audit_log", "totp_recovery_codes"} {
+	for _, table := range []string{"users", "sessions", "audit_log", "totp_recovery_codes", "targets", "checks"} {
 		var exists bool
 		err := pool.QueryRow(ctx,
 			`SELECT EXISTS (SELECT 1 FROM information_schema.tables
@@ -46,6 +46,21 @@ func TestMigrationsApplyAndSchemaIsUsable(t *testing.T) {
 		}
 		if !exists {
 			t.Errorf("coluna users.%s não existe depois das migrations", column)
+		}
+	}
+
+	// Sem FORCE, o dono da tabela — que é o papel da aplicação — ignora a
+	// RLS inteira. As políticas continuariam lá, e não valeriam nada.
+	for _, tabela := range []string{"targets", "checks"} {
+		var ligada, forcada bool
+		err := pool.QueryRow(ctx,
+			`SELECT relrowsecurity, relforcerowsecurity FROM pg_class WHERE relname = $1`, tabela).
+			Scan(&ligada, &forcada)
+		if err != nil {
+			t.Fatalf("consultar RLS de %s: %v", tabela, err)
+		}
+		if !ligada || !forcada {
+			t.Errorf("%s: row security ligada=%v forçada=%v, queria as duas", tabela, ligada, forcada)
 		}
 	}
 }

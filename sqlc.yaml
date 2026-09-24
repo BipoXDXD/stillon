@@ -1,0 +1,32 @@
+version: "2"
+sql:
+  - engine: postgresql
+    # O sqlc lê as migrations do goose e ignora as seções Down.
+    schema: internal/storage/migrations
+    queries: internal/storage/queries
+    gen:
+      go:
+        package: db
+        out: internal/storage/db
+        sql_package: pgx/v5
+        emit_pointers_for_null_types: true
+        # Gera URL, TimeoutMS e LatencyMS em vez de Url, TimeoutMs, LatencyMs.
+        initialisms: [id, url, ms]
+        overrides:
+          - db_type: uuid
+            go_type: github.com/google/uuid.UUID
+          - db_type: uuid
+            nullable: true
+            go_type:
+              import: github.com/google/uuid
+              type: UUID
+              pointer: true
+          - db_type: timestamptz
+            go_type: time.Time
+          - db_type: timestamptz
+            nullable: true
+            go_type:
+              type: time.Time
+              pointer: true
+          - db_type: date
+            go_type: time.Time
