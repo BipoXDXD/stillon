@@ -298,6 +298,19 @@ describe('sair', () => {
     sessao.encerrar('outra-aba')
     expect(await screen.findByText('Você saiu em outra aba.')).toBeInTheDocument()
   })
+
+  // M6 da revisão final: o motivo do fim da sessão ficava num parágrafo que
+  // o leitor de tela não lia: o foco vai ao <h1>, e só ele era anunciado.
+  // Agora o <h1> é descrito pelo motivo. Sabotagem: tirar o descritoPor do
+  // Titulo do login → o h1 fica sem descrição.
+  it('o motivo do fim da sessão é a descrição do título que recebe o foco', async () => {
+    const { sessao } = await renderizarPainel('/')
+    await screen.findByRole('heading', { name: 'Painel' })
+    sessao.encerrar('expirou')
+    const titulo = await screen.findByRole('heading', { name: 'Entrar no Vigilume' })
+    await waitFor(() => expect(titulo).toHaveFocus())
+    expect(titulo).toHaveAccessibleDescription('Sua sessão terminou. Entre de novo.')
+  })
 })
 
 // Spec §4.9 e §3.7 juntos: na carga da página, o primeiro Tab é o "Pular para

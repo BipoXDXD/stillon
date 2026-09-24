@@ -35,6 +35,8 @@ const avisosDeMotivo: Partial<Record<Motivo, string>> = {
   'encerrada-aqui': 'Você encerrou esta sessão.',
 }
 
+const ID_MOTIVO = 'motivo-do-fim-da-sessao'
+
 const esquemaSenha = z.object({
   // O cliente nunca é mais estrito que o servidor. O login do servidor só
   // apara os espaços (auth.NormalizeEmail), e o cadastro aceita o que o
@@ -59,6 +61,7 @@ export function PaginaLogin() {
   const [erro, setErro] = useState<string | null>(null)
   const destino = destinoSeguro(params.get('next'))
   const motivo = (local.state as { motivo?: Motivo } | null)?.motivo
+  const textoDoMotivo = motivo ? avisosDeMotivo[motivo] : undefined
 
   const senha = useForm({ resolver: zodResolver(esquemaSenha), defaultValues: { email: '', senha: '' } })
   const codigo = useForm({ resolver: zodResolver(esquemaCodigo), defaultValues: { codigo: '' } })
@@ -128,9 +131,15 @@ export function PaginaLogin() {
     <>
       <AvisoDeContexto />
       <main className="mx-auto mt-16 max-w-sm space-y-6 px-4">
-        <Titulo aba="Entrar">Entrar no Vigilume</Titulo>
-        {motivo && avisosDeMotivo[motivo] && (
-          <p className="rounded-md border border-borda p-3 text-sm">{avisosDeMotivo[motivo]}</p>
+        {/* O foco vai ao <h1> depois de a sessão acabar (é uma navegação), e
+            o leitor de tela lê o motivo junto, pela descrição. */}
+        <Titulo aba="Entrar" descritoPor={textoDoMotivo ? ID_MOTIVO : undefined}>
+          Entrar no Vigilume
+        </Titulo>
+        {textoDoMotivo && (
+          <p id={ID_MOTIVO} className="rounded-md border border-borda p-3 text-sm">
+            {textoDoMotivo}
+          </p>
         )}
         <ErroDoFormulario>{erro}</ErroDoFormulario>
         {desafio === null ? (

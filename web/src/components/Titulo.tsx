@@ -16,7 +16,9 @@ export function esquecerAPrimeiraTela() {
 // sem isso o leitor de tela não percebe a navegação (spec do Plano 6 §3.7).
 // Dois efeitos: o título da aba acompanha `aba`; o foco é da montagem, e uma
 // `aba` que muda depois (a mesma tela com outro nome) não o rouba.
-export function Titulo({ children, aba }: { children: ReactNode; aba: string }) {
+// descritoPor: o id de um texto que o leitor de tela lê junto com o título
+// quando ele recebe o foco (o motivo do fim da sessão, no login).
+export function Titulo({ children, aba, descritoPor }: { children: ReactNode; aba: string; descritoPor?: string }) {
   const ref = useRef<HTMLHeadingElement>(null)
   // Decidido uma vez por montagem: o StrictMode roda o efeito duas vezes, e
   // a segunda não pode achar que já não é a primeira tela.
@@ -32,7 +34,7 @@ export function Titulo({ children, aba }: { children: ReactNode; aba: string }) 
     if (focar.current) ref.current?.focus()
   }, [])
   return (
-    <h1 ref={ref} tabIndex={-1} className="text-2xl font-semibold outline-none">
+    <h1 ref={ref} tabIndex={-1} aria-describedby={descritoPor} className="text-2xl font-semibold outline-none">
       {children}
     </h1>
   )
