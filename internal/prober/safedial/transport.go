@@ -36,7 +36,6 @@ func NewTransport() *http.Transport { return newTransport(nil) }
 
 func newTransport(allowed []netip.AddrPort) *http.Transport {
 	dialer := &net.Dialer{
-		Timeout: 5 * time.Second,
 		ControlContext: func(ctx context.Context, network, address string, _ syscall.RawConn) error {
 			if liberado(address, allowed) {
 				return nil
@@ -59,9 +58,20 @@ func newTransport(allowed []netip.AddrPort) *http.Transport {
 		// TestEachRequestOpensANewConnection trava isto por comportamento.
 		DisableKeepAlives: true,
 
-		ForceAttemptHTTP2:     true,
-		TLSHandshakeTimeout:   5 * time.Second,
-		ResponseHeaderTimeout: 10 * time.Second,
+		ForceAttemptHTTP2: true,
+
+		// Sem Timeout no Dialer, sem TLSHandshakeTimeout, sem
+		// ResponseHeaderTimeout: propositalmente nenhum limite por fase. O
+		// prazo é só o do context da requisição (Probe faz
+		// context.WithTimeout(ctx, s.Timeout); timeout_ms vai até 30000). Um
+		// limite de fase fixo cortaria ANTES do timeout_ms configurado — por
+		// exemplo, um alvo com timeout_ms=20000 cujo servidor manda o
+		// cabeçalho aos 12s seria marcado "down" aos 10s, um falso negativo.
+		// A ausência não é testável observando o dialer: NewTransport()
+		// devolve um *http.Transport comum, e o campo Timeout do
+		// net.Dialer embutido no DialContext não é inspecionável de fora do
+		// pacote net. TestTransportLeavesTheDeadlineToTheContext trava só os
+		// dois campos do próprio http.Transport.
 	}
 }
 

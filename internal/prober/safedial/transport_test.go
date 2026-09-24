@@ -207,3 +207,17 @@ func TestTransportIgnoresEnvironmentProxy(t *testing.T) {
 		t.Error("Proxy não é nil: o sondador herdaria HTTP_PROXY do ambiente, e o ControlContext validaria o IP do proxy em vez do IP do alvo")
 	}
 }
+
+// O prazo de uma sonda é só o do context (Probe faz
+// context.WithTimeout(ctx, s.Timeout)); nenhum timeout de fase no Transport
+// pode cortar antes disso, ou um alvo com timeout_ms alto e resposta lenta
+// viraria "down" cedo demais. Ver o comentário em newTransport.
+func TestTransportLeavesTheDeadlineToTheContext(t *testing.T) {
+	tr := safedial.NewTransport()
+	if tr.ResponseHeaderTimeout != 0 {
+		t.Errorf("ResponseHeaderTimeout = %v, queria 0: o prazo fica só com o context", tr.ResponseHeaderTimeout)
+	}
+	if tr.TLSHandshakeTimeout != 0 {
+		t.Errorf("TLSHandshakeTimeout = %v, queria 0: o prazo fica só com o context", tr.TLSHandshakeTimeout)
+	}
+}
