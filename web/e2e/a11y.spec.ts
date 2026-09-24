@@ -106,7 +106,7 @@ for (const tema of ['claro', 'escuro'] as const) {
   test(`acessibilidade e CSP em todas as rotas, tema ${tema}`, async ({ page }) => {
     await page.emulateMedia({ colorScheme: tema === 'escuro' ? 'dark' : 'light' })
     await imitarApi(page)
-    // A tela de login também: sem sessão, antes de imitar o refresh.
+    // A tela de login, sem sessão, tem o teste próprio no fim do arquivo.
     for (const [rota, titulo] of ROTAS) {
       await page.goto(rota)
       await expect(page.getByRole('heading', { name: titulo, level: 1 })).toBeVisible()
@@ -119,7 +119,7 @@ for (const tema of ['claro', 'escuro'] as const) {
       }
       const r = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze()
       expect(r.violations.map((v) => `${rota}: ${v.id} (${v.nodes.map((n) => n.target.join(' ')).join(', ')})`)).toEqual([])
-      expect(violacoes(page), rota).toEqual([])
+      await expect.poll(() => violacoes(page), rota).toEqual([])
     }
     // Um diálogo aberto também passa pelo axe e pela CSP.
     await page.goto('/channels')
@@ -161,12 +161,26 @@ test('passada de teclado em todas as rotas', async ({ page }, info) => {
         const cs = getComputedStyle(e)
         const rotulo = (e as HTMLInputElement).labels?.[0]?.textContent
         const nome = (e.getAttribute('aria-label') ?? rotulo ?? e.textContent ?? '').trim().replace(/\s+/g, ' ').slice(0, 30)
-        return { nome: `${e.tagName.toLowerCase()} "${nome}"`, visivel: cs.outlineStyle !== 'none' && cs.outlineWidth !== '0px' }
+        // Visível: um contorno com largura E com cor que não é transparente
+        // ("outline: 2px solid transparent" tem estilo e largura, e não se vê).
+        // O alfa é o 4º número de rgba()/color(); rgb() e hex não têm alfa.
+        const numeros = cs.outlineColor.match(/[\d.]+/g) ?? []
+        const alfa = cs.outlineColor === 'transparent' ? 0 : numeros.length >= 4 ? Number(numeros[3]) : 1
+        return {
+          nome: `${e.tagName.toLowerCase()} "${nome}"`,
+          visivel: cs.outlineStyle !== 'none' && cs.outlineWidth !== '0px' && alfa > 0,
+          contorno: `${cs.outlineStyle} ${cs.outlineWidth} ${cs.outlineColor}`,
+        }
       })
       if (!p) break
-      expect(p.visivel, `${rota}: foco invisível em ${p.nome}`).toBe(true)
+      expect(p.visivel, `${rota}: foco invisível em ${p.nome} (${p.contorno})`).toBe(true)
       paradas.push(p.nome)
     }
+    // Sem isto, um laço que parasse no primeiro Tab (foco no <body>) passaria
+    // sem conferir parada nenhuma: a primeira é o salto, e há o cabeçalho
+    // inteiro (salto, cinco links, tema, Sair) antes do conteúdo.
+    expect(paradas[0], `${rota}: a primeira parada`).toBe('a "Pular para o conteúdo"')
+    expect(paradas.length, `${rota}: paradas`).toBeGreaterThanOrEqual(8)
     relatorio.push(`${rota}: ${paradas.length} paradas — ${paradas.join(' | ')}`)
   }
   await info.attach('passada-de-teclado.txt', { body: relatorio.join('\n'), contentType: 'text/plain' })

@@ -1,5 +1,5 @@
 import type { CDPSession, Page } from '@playwright/test'
-import { expect, test } from './fixtures'
+import { controlePositivo, expect, registrarCsp, test, violacoes } from './fixtures'
 import { contarAuditoria } from './pilha'
 
 // Duas abas do MESMO contexto (dividem cookies, não memória) recarregando
@@ -24,7 +24,9 @@ async function segurarRefreshes(sessoes: CDPSession[]) {
     prazo = null
     const lote = pausadas
     pausadas = []
-    for (const p of lote) void p.cdp.send('Fetch.continueResponse', { requestId: p.requestId })
+    // A aba pode ter navegado (ou fechado) com a resposta pausada: o CDP
+    // recusa o continue, e isso não é falha do teste.
+    for (const p of lote) p.cdp.send('Fetch.continueResponse', { requestId: p.requestId }).catch(() => {})
   }
   for (const cdp of sessoes) {
     await cdp.send('Fetch.enable', { patterns: [{ urlPattern: '*/api/v1/auth/refresh', requestStage: 'Response' }] })
@@ -50,8 +52,14 @@ async function entrar(page: Page, email: string, senha: string) {
 test('duas abas recarregando juntas continuam dentro', async ({ page, context, credenciais }) => {
   await entrar(page, credenciais.email, credenciais.senha)
   const outra = await context.newPage()
+  // A segunda aba também coleta as violações de CSP (a do fixture já coleta).
+  await registrarCsp(outra)
   await outra.goto('/')
   await expect(outra.getByRole('heading', { name: 'Painel' })).toBeVisible()
+  // Controle positivo nas duas abas (spec do Plano 6 §7.4): sem ele, "zero
+  // violações" seria verde também com o coletor quebrado.
+  await controlePositivo(page)
+  await controlePositivo(outra)
 
   await segurarRefreshes([await context.newCDPSession(page), await context.newCDPSession(outra)])
   const assentou = /^(Painel|Entrar no Vigilume)$/
@@ -67,4 +75,6 @@ test('duas abas recarregando juntas continuam dentro', async ({ page, context, c
     await expect(page.getByRole('heading', { name: 'Painel' })).toBeVisible()
     await expect(outra.getByRole('heading', { name: 'Painel' })).toBeVisible()
   }
+  await expect.poll(() => violacoes(page), 'CSP, primeira aba').toEqual([])
+  await expect.poll(() => violacoes(outra), 'CSP, segunda aba').toEqual([])
 })

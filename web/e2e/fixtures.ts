@@ -11,7 +11,9 @@ export function violacoes(page: Page): string[] {
   return registros.get(page) ?? []
 }
 
-async function registrarCsp(page: Page) {
+// Toda página que o teste abre precisa do coletor: a do fixture o recebe
+// sozinha; uma aba aberta pelo teste (context.newPage) chama esta função.
+export async function registrarCsp(page: Page) {
   const lista: string[] = []
   registros.set(page, lista)
   await page.exposeFunction('vigilumeViolacao', (v: string) => {
