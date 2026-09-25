@@ -1,7 +1,7 @@
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useQueryClient } from '@tanstack/react-query'
 import { QRCodeSVG } from 'qrcode.react'
-import { useRef, useState } from 'react'
+import { useLayoutEffect, useRef, useState, type ComponentProps, type RefObject } from 'react'
 import { useForm } from 'react-hook-form'
 import { z } from 'zod'
 import { useApi, useSessao } from '@/app/contexto'
@@ -704,6 +704,25 @@ function Sessoes() {
 
 type Dialogo2fa = 'ativar' | 'desativar' | 'trocar'
 
+// Um botão que some quando o /me muda (E6 do Plano 10): o "Trocar
+// autenticador" clicado com o 2FA já desligado em outra aba some no /me
+// relido, e o foco, que estava nele, ia para o <body>. Se ele tinha o foco,
+// o foco vai à reserva. O efeito de layout roda na desmontagem ANTES de o
+// React tirar o <button> do DOM, com a ref ainda presa a ele.
+function BotaoQueSome({ reserva, ...props }: ComponentProps<typeof Botao> & { reserva: RefObject<HTMLElement | null> }) {
+  const eu = useRef<HTMLButtonElement>(null)
+  useLayoutEffect(() => {
+    const botao = eu.current
+    return () => {
+      // A reserva é lida na desmontagem de propósito: é o botão que está na
+      // tela nesse instante (o mesmo nó, que passou de Desativar a Ativar).
+      // oxlint-disable-next-line react-hooks/exhaustive-deps
+      if (botao && document.activeElement === botao) reserva.current?.focus()
+    }
+  }, [reserva])
+  return <Botao ref={eu} {...props} />
+}
+
 export function PaginaConfiguracoes() {
   const me = useMe()
   const api = useApi()
@@ -723,6 +742,9 @@ export function PaginaConfiguracoes() {
   // este texto, e nunca com "Nada mudou".
   const [incerta, setIncerta] = useState<string | null>(null)
   const [abrindo, setAbrindo] = useState(false)
+  // O botão que fica na seção do 2FA (Ativar ou Desativar): a reserva do
+  // foco quando o "Trocar autenticador" some.
+  const botao2fa = useRef<HTMLButtonElement>(null)
   // ['me'] não vence sozinho (staleTime Infinity): outra aba pode ter
   // ligado ou desligado o 2FA. Abrir e fechar um diálogo do 2FA relê /me.
   const reler = () => void qc.invalidateQueries({ queryKey: chaves.me })
@@ -815,6 +837,7 @@ export function PaginaConfiguracoes() {
               <p className="text-sm">{eu.totp_enabled ? 'Ativada.' : 'Desativada.'}</p>
               <div className="flex flex-wrap gap-2">
                 <Botao
+                  ref={botao2fa}
                   tipo={eu.totp_enabled ? 'perigo' : 'primario'}
                   // aria-disabled, e não disabled: o botão desabilitado perde o
                   // foco, que cairia no <body>.
@@ -824,9 +847,14 @@ export function PaginaConfiguracoes() {
                   {eu.totp_enabled ? 'Desativar' : 'Ativar'}
                 </Botao>
                 {eu.totp_enabled && (
-                  <Botao tipo="secundario" aria-disabled={abrindo || undefined} onClick={() => void abrir('trocar')}>
+                  <BotaoQueSome
+                    reserva={botao2fa}
+                    tipo="secundario"
+                    aria-disabled={abrindo || undefined}
+                    onClick={() => void abrir('trocar')}
+                  >
                     Trocar autenticador
-                  </Botao>
+                  </BotaoQueSome>
                 )}
               </div>
             </section>

@@ -782,6 +782,20 @@ describe('troca de autenticador', () => {
     expect(r.falsa.chamadas(ROTATE)).toBe(0)
   })
 
+  // E6 do Plano 10: o "Trocar autenticador" clicado some quando o /me
+  // relido diz "desligado", e o foco ia junto para o <body>. Ele vai ao
+  // botão que fica (agora "Ativar"). Sabotagem: tirar o efeito do
+  // BotaoQueSome (usar o Botao direto) → o foco fica no <body>.
+  it('"Trocar autenticador" que some com o 2FA desligado em outra aba leva o foco ao "Ativar"', async () => {
+    const r = await comTotp()
+    const trocar = await screen.findByRole('button', { name: 'Trocar autenticador' })
+    r.falsa.estado.totpLigado = false
+    await r.usuario.click(trocar)
+    const ativar = await screen.findByRole('button', { name: 'Ativar' })
+    expect(trocar).not.toBeInTheDocument()
+    expect(ativar).toHaveFocus()
+  })
+
   // A trava espera o /me relido: com ele lento, nada abre pelo cache.
   // Sabotagem: no onClick do botão, "void abrir('trocar')" por
   // "setDialogo('trocar')" (abrir sem reler o /me) → o diálogo aparece
