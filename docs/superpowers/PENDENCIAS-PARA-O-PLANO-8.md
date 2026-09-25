@@ -11,11 +11,11 @@ A seção "Já valendo em produção" do `PENDENCIAS-PARA-O-PLANO-5.md` (itens 1
 
 | Pendência | Como fechou |
 |---|---|
-| 1. `TRUSTED_PROXIES` no Fly | Não era só configuração: o proxy do Fly põe o IP do **app** no fim do `X-Forwarded-For`. `CLIENT_IP_HEADER=Fly-Client-IP` (D22) nos três limitadores e no `ip_hash`, com aviso limitado no log que mostra o `remote_addr` do proxy; o CIDR é medido no passo 9 do runbook, e o workflow `deploy` recusa o `TRUSTED_PROXIES` vazio |
+| 1. `TRUSTED_PROXIES` no Fly | Não era só configuração: o proxy do Fly põe o IP do **app** no fim do `X-Forwarded-For`. `CLIENT_IP_HEADER=Fly-Client-IP` (D22) nos três limitadores e no `ip_hash`, com aviso limitado no log que mostra o `remote_addr` do proxy; o endereço é medido no passo 9 do runbook (de preferência `/32` ou `/128`), e o workflow `deploy` recusa o `TRUSTED_PROXIES` vazio; o boot e o `deploy` recusam um prefixo `/0` |
 | 2. Papel comum do Postgres | `deploy/compose/initdb.sql`: `vigilume_app` sem superusuário nem `BYPASSRLS`, dono do banco. O mesmo SQL no compose, na restauração do backup e em produção |
 | 3. `METRICS_ADDR` | `off` em produção (D33); raspar pelo Fly exigiria abrir a rede privada |
 | 4. E-mail | Opcional no runbook (passo 6): `RESEND_API_KEY` e `EMAIL_FROM` juntas, domínio verificado |
-| 5. `PUBLIC_BASE_URL` | `https://<app>.fly.dev` no `fly.toml`; é o host da API, do painel e da status page. O boot a valida (esquema `http`/`https`, host não vazio) e recusa as chaves de demonstração quando ela é https, sem diferença de maiúsculas |
+| 5. `PUBLIC_BASE_URL` | `https://<app>.fly.dev` no `fly.toml`; é o host da API, do painel e da status page. O boot a valida (esquema `http`/`https`, host não vazio, sem usuário e senha) e só aceita as chaves de demonstração com host de loopback (`localhost` ou IP de loopback), em qualquer esquema |
 | 6. Primeira manutenção | Num banco novo não há o que consolidar (runbook, passo 12) |
 | Usuário inicial | Seed do compose por pipe (código 3 = sucesso); em produção, `vigilume user create` pelo `fly proxy` (passo 10) |
 | Política de senha | A senha de demonstração tem 18 caracteres |
@@ -40,8 +40,9 @@ A seção "Já valendo em produção" do `PENDENCIAS-PARA-O-PLANO-5.md` (itens 1
 ## Limites conhecidos do Plano 7
 
 - **O caminho rápido do compose depende da imagem publicada.** Com o pacote privado, o compose
-  constrói do código: o build frio da imagem mediu ~34 s numa máquina de 16 núcleos, sem contar
-  o download das bases e do Postgres; com as imagens na máquina, o `up --wait` mediu 4,5–8,2 s.
+  constrói do código: o build frio da imagem mediu ~34 s num builder novo, numa máquina de 16
+  núcleos (provavelmente já com o download das bases); o `up --wait` mediu ~4,5–5 s com as
+  imagens prontas e ~8 s quando também construiu.
   O `docker compose pull` pela imagem publicada não foi ensaiado (o `publish` só roda depois do
   merge).
 - **O seed não refaz os alvos de exemplo.** Se o `user create` passou e o cadastro dos alvos
@@ -52,11 +53,19 @@ A seção "Já valendo em produção" do `PENDENCIAS-PARA-O-PLANO-5.md` (itens 1
   (runbook, "Tornar o repositório público").
 - **Deploy pelo SHA:** a entrada do `deploy` é o SHA completo do commit, resolvido pela tag
   `:<sha>`, que o `publish` só dá depois do reescaneamento do Trivy. Um digest solto não é aceito
-  (podia ser um que reprovou, o de um `publish` cancelado ou o da variante `tools`).
+  (podia ser um que reprovou, o de um `publish` cancelado ou o da variante `tools`), e o commit
+  precisa estar na `main` (`git merge-base --is-ancestor`): uma tag `v*` num branch publica, mas
+  não vai para produção. Uma tag `v*` publicada depois move `:<sha>` daquele commit para o build
+  da tag; um rollback pelo workflow leva esse digest (runbook, passo 14).
+- **A trava "só da `main`" vale contra engano, não contra quem tem escrita:** um dispatch num
+  branch roda o `deploy.yml` daquele branch, e o secret de repositório chega a ele (runbook,
+  "Deploys seguintes"). Fecha com environment com revisor e proteção da `main`, quando público.
 - **A imagem publicada não é, byte a byte, a do E2E:** o `publish` reconstrói do mesmo código e
   das mesmas bases, para as duas arquiteturas, e reescaneia com o Trivy antes de dar tag. O Trivy
   contra o GHCR privado não foi ensaiado (só num registry local); a variante `tools` ganha as tags
-  sem reescaneamento (o job `image` a varre na amd64).
+  sem reescaneamento (o job `image` a varre na amd64). As tags das duas variantes saem num passo
+  único, depois do Trivy. Esse Trivy lê o `GITHUB_TOKEN` do job (`packages:write`) do
+  `config.json`: risco aceito, com o contêiner fixado por digest.
 - **Máquina única do app:** cada deploy deixa o monitor alguns segundos fora (`rolling`, D26).
 - **Postgres num nó só**, sem PITR: perde-se até um dia de checks no pior caso.
 - **Backup:** código 3 = uma checagem falhou (não há backup que sirva); código 4 = disco acima de
@@ -66,40 +75,38 @@ A seção "Já valendo em produção" do `PENDENCIAS-PARA-O-PLANO-5.md` (itens 1
   matriz do `.github/workflows/ci.yml` e `internal/storage/testdb` (o 17 da matriz também). O
   Dependabot vê só os dois primeiros, em dois PRs separados (ecossistemas `docker` e
   `docker-compose`); a matriz e o `testdb` se atualizam à mão, no mesmo PR ou em PRs mergeados
-  juntos, para desenvolvimento, testes e produção seguirem na mesma imagem.
+  juntos. `TestPostgres18DigestIsTheSameEverywhere` fica vermelho enquanto os quatro diferirem,
+  então um PR do Dependabot sozinho não passa no CI.
 - **Versões das ferramentas Go do CI** (`staticcheck`, `gosec`, `govulncheck`, `sqlc`, `gitleaks`,
   no `env` do `ci.yml`) se atualizam à mão: o Dependabot não as vê.
 - **O painel exige contexto seguro** (HTTPS ou `localhost`). Em HTTP por um IP da rede, ele mostra
   um aviso e a coordenação do refresh entre abas (Web Locks) fica desligada.
 - **O E2E espera ~21 s** antes do fluxo principal, para os limitadores de requisição encherem de
-  novo depois das specs anteriores; roda em série.
+  novo depois das specs anteriores, e a limpeza do fim repete com recuo (até ~30 s) depois de um
+  429; roda em série.
+- **O pipeline nunca rodou no GitHub.** Tudo foi ensaiado localmente (actionlint com shellcheck,
+  os passos com o texto exato, o e2e num Docker novo, o `publish` contra um registry local). O
+  critério de merge é o PR com todos os jobs verdes; o `publish` só roda depois do merge, e a
+  primeira execução dele na `main` precisa ser acompanhada.
+- **O que continua não ensaiado no Fly** (não há conta na validação): os dois `fly deploy`
+  (inclusive `--ha=false` e o `[[restart]]`), o `flyctl proxy` do backup com token de app, a
+  medida do proxy e se ele sobrescreve um `Fly-Client-IP` mandado pelo cliente, a compressão do
+  proxy, `fly releases --image`, os comandos de queda do host (`machine clone
+  --attach-volume`, `volumes destroy`) e o upgrade maior. O Trivy contra o GHCR privado e o
+  `docker compose pull` da imagem publicada também não.
 
 ## Da revisão do Plano 7, ainda abertas
 
-Achados menores das revisões das tarefas, registrados no ledger para a rodada final do Plano 7.
-O que não entrar nela fica para o Plano 8.
+A onda final do Plano 7 fechou o resto dos achados das revisões (runbook no deploy pelo SHA,
+commit da `main` no `deploy`, `/0`, chaves de demo só em loopback, `userinfo` na
+`PUBLIC_BASE_URL`, `healthcheck`, avisos do IP do cliente, imagem, compose, o teste oscilante do
+`cmd/vigilume`, o `pull` do Postgres no e2e e o ensaio do backup no tree integrado). Ficam:
 
-- **Runbook × deploy pelo SHA:** a seção "Deploys seguintes" de `docs/deploy/fly.md` ainda
-  manda disparar o `deploy` com o digest; o workflow pede o SHA do commit.
-  Também: `jq` como pré-requisito, e a nota de que um dispatch em outro branch usa o próprio
-  arquivo do workflow.
-- `deploy.yml`: conferir que o SHA é ancestral da `main` (`git merge-base --is-ancestor`); uma tag
-  `v*` fora da `main` publicaria um `:<sha>` que nunca passou por ela.
-- `ci.yml`: comentário velho dizendo que o Trivy do job `image` não varre o `tools`.
-- `vigilume healthcheck`: `HTTP_ADDR` sem `TrimSpace`; prazo do cliente igual ao do `/readyz`
-  (esconde o 503); Ctrl-C sai 1 em vez de 130; argumentos extras ignorados.
-- `PUBLIC_BASE_URL` com usuário e senha (`https://u:s@host`) é aceita e sai no log de boot.
-- IP do cliente: teste de "sem aviso com par confiável"; aviso para par confiável sem o cabeçalho
-  (um nome de cabeçalho errado junta todos os clientes em silêncio); `Unmap` no caminho
-  `X-Forwarded-For`/`RemoteAddr` do `ip_hash`.
-- Imagem: `ARG VERSION` logo antes do `go build` (hoje invalida o cache do `go mod download`);
-  `checar-imagem.sh` com timeout no `version` e remoção do contêiner no `trap`; `.dockerignore`
-  com `**/.env*`, `vigilume` e `**/*.test`.
-- Compose: `seed.sh` conferir o logout; `PUBLIC_BASE_URL` seguir `VIGILUME_PORT`; comentário do
-  healthcheck do `db`.
-- Teste oscilante: `TestAllRoleConsolidatesAndServesThePublicPage` (`cmd/vigilume`) faz poll de
-  `/p/` a cada 100 ms e bate no próprio limitador sob carga (429).
-- Refazer o ensaio do backup no tree integrado, com o `initdb.sql` do compose.
+- **Nomes de cabeçalho perigosos em `CLIENT_IP_HEADER`:** nada impede `Forwarded`, `Host` ou
+  `Cookie` ali. Uma denylist curta no boot evitaria um erro de configuração que só aparece no
+  rate limit.
+- **`Unmap` no caminho `X-Forwarded-For`/`RemoteAddr` do `ip_hash`:** o caminho do cabeçalho
+  normaliza IPv4 mapeado em IPv6; esse outro não. O mesmo cliente pode gerar dois hashes.
 
 ## Herdadas, ainda abertas
 
