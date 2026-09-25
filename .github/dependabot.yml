@@ -46,12 +46,11 @@ updates:
       interval: weekly
 
   # O Dockerfile do app (node, golang, distroless); o do Postgres de
-  # produção (que o fly.toml e o backup.yml usam: o Dependabot não lê
-  # nenhum dos dois) e o do Trivy do CI.
+  # produção (deploy/vps/db, o ponto fixo do digest) e o do Trivy do CI.
   - package-ecosystem: docker
     directories:
       - /
-      - /deploy/fly/db
+      - /deploy/vps/db
       - /deploy/ci/trivy
     schedule:
       interval: weekly
@@ -64,9 +63,12 @@ updates:
       - dependency-name: node
         update-types: ['version-update:semver-major']
 
-  # O Postgres do compose.yaml, o mesmo digest do de produção.
+  # O Postgres do compose.yaml, o mesmo digest do de produção; e o
+  # compose.prod.yaml da VPS (Caddy e Postgres).
   - package-ecosystem: docker-compose
-    directory: /
+    directories:
+      - /
+      - /deploy/vps
     schedule:
       interval: weekly
     # Versão MAIOR de Postgres e Node não vem por PR: o Postgres maior é dump

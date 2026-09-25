@@ -99,9 +99,10 @@ jobs:
       fail-fast: false
       matrix:
         # Por digest, com a tag na string. O Dependabot não atualiza estas
-        # strings: a mão, junto com o digest de deploy/fly/db/Dockerfile (o
-        # 18 é o de produção, igual ao do Dockerfile, do compose.yaml e do
-        # testdb) e com o imagemPadrao de internal/storage/testdb.
+        # strings: a mão, junto com o digest de deploy/vps/db/Dockerfile (o
+        # 18 é o de produção, igual ao do Dockerfile, do compose.yaml, do
+        # deploy/vps/compose.prod.yaml e do testdb) e com o imagemPadrao de
+        # internal/storage/testdb.
         include:
           - label: postgres:17-alpine
             image: postgres:17-alpine@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24
@@ -327,12 +328,32 @@ jobs:
           path: web/test-results
           retention-days: 7
 
+  vps:
+    # A produção da VPS (Plano 11, spec §8) com a imagem que acabou de passar
+    # no Trivy: o deploy/vps/compose.prod.yaml com o Caddy em modo local, e o
+    # vigilume-entrada (deploy, rollback, backup) contra ele. Portas, Host,
+    # IP do cliente, banco fechado, recusas e backup só cifrado.
+    needs: image
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: imagens
+          path: ${{ runner.temp }}
+      - run: gunzip -c "$RUNNER_TEMP/imagens.tar.gz" | docker load
+      - name: checagens da VPS
+        run: bash deploy/ci/checar-vps.sh "$IMAGEM:ci"
+
   publish:
     # Só depois de tudo verde, e só em push para a main ou tag v* deste
     # repositório (nunca em PR, nem num fork). O pacote do GHCR segue a
     # visibilidade do repositório: privado, por enquanto.
     if: github.event_name == 'push' && github.repository == 'BipoXDXD/vigilume'
-    needs: [lint, test, secrets, web, image, e2e]
+    needs: [lint, test, secrets, web, image, e2e, vps]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
