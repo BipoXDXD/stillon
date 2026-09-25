@@ -153,6 +153,14 @@ for (const tema of ['claro', 'escuro'] as const) {
     const pausar = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze()
     expect(pausar.violations.map((v) => v.id)).toEqual([])
     expect(violacoes(page)).toEqual([])
+    // O aviso de trocar o destino de um alvo com headers (B1 do Plano 10).
+    await page.goto('/targets/a1/edit')
+    await page.getByLabel('URL').fill('https://outro.exemplo.com/health')
+    await page.getByRole('button', { name: 'Salvar' }).click()
+    await expect(page.getByRole('alertdialog', { name: 'Trocar o destino do alvo?' })).toBeVisible()
+    const destino = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze()
+    expect(destino.violations.map((v) => v.id)).toEqual([])
+    expect(violacoes(page)).toEqual([])
     await controlePositivo(page)
   })
 }

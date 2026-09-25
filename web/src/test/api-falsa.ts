@@ -239,8 +239,13 @@ export function criarApiFalsa() {
       const a = st.alvos.find((x) => x.id === params.id)
       if (!a) return erro(404, 'not_found')
       const { headers, ...resto } = corpo
+      // B1 do Plano 10: trocar a origem da URL (esquema, host ou porta) sem
+      // mandar headers apaga os headers; só o caminho, não.
+      const outraOrigem =
+        typeof resto.url === 'string' && new URL(resto.url.trim()).origin !== new URL(a.url.trim()).origin
       Object.assign(a, resto)
       if (headers !== undefined) a.header_names = Object.keys((headers as Json | null) ?? {}).sort()
+      else if (outraOrigem) a.header_names = []
       return HttpResponse.json(a)
     }),
     rota('delete', '/targets/:id', ({ params }) => {

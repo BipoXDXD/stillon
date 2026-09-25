@@ -269,6 +269,27 @@ export function paraAlteracao(original: ValoresDoAlvo, v: ValoresDoAlvo): Altera
   return a
 }
 
+function origemDe(url: string): string | null {
+  try {
+    return new URL(url.trim()).origin
+  } catch {
+    return null
+  }
+}
+
+// B1 do Plano 10: um PATCH que troca a origem da URL (esquema, host ou
+// porta) sem mandar headers faz o servidor apagar os headers guardados, que
+// podem ser segredos do destino antigo. Só o caminho mantém. A origem é a do
+// new URL(x.trim()).origin, a regra do navegador que o servidor também usa
+// (esquema e host sem maiúsculas, porta padrão como nenhuma); uma URL que
+// não se lê conta como outra origem (avisar a mais é o lado seguro). "Sem
+// headers no PATCH" é o modo "Manter como está".
+export function apagaOsHeaders(nomesDeHeaders: string[], urlGuardada: string, a: AlteracaoAlvo): boolean {
+  if (!nomesDeHeaders.length || a.url === undefined || a.headers !== undefined) return false
+  const antes = origemDe(urlGuardada)
+  return antes === null || antes !== origemDe(a.url)
+}
+
 // Onde cada campo do servidor aparece no formulário.
 export const campoDoServidor: Record<string, keyof ValoresDoAlvo> = {
   name: 'name',

@@ -1,9 +1,17 @@
-import { screen, waitFor } from '@testing-library/react'
+import { screen, waitFor, within } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 import { alvo } from '@/test/fixtures'
 import { renderizarPainel } from '@/test/renderizar'
 import { Alvo } from '@/lib/api/schemas'
-import { esquemaAlvo, esquemaDoAlvo, paraAlteracao, paraCriacao, valoresDe, valoresPadrao } from './esquema'
+import {
+  apagaOsHeaders,
+  esquemaAlvo,
+  esquemaDoAlvo,
+  paraAlteracao,
+  paraCriacao,
+  valoresDe,
+  valoresPadrao,
+} from './esquema'
 
 function erroDe(v: Partial<typeof valoresPadrao>, campo: string) {
   const r = esquemaAlvo.safeParse({ ...valoresPadrao, name: 'API', url: 'https://exemplo.com', ...v })
@@ -60,6 +68,33 @@ describe('os corpos enviados', () => {
     expect(
       paraAlteracao(original, { ...original, modoHeaders: 'substituir', headers: [{ nome: 'X-A', valor: '1' }] }),
     ).toEqual({ headers: { 'X-A': '1' } })
+  })
+})
+
+// B1 do Plano 10: um PATCH que troca a origem da URL (esquema, host ou
+// porta) sem mandar headers faz o servidor apagá-los. A comparação é a do
+// new URL(...).origin, com as portas padrão normalizadas.
+describe('troca de destino com headers', () => {
+  const url = 'https://api.exemplo.com/health'
+  it('só avisa com headers definidos, a origem mudada e sem headers no PATCH', () => {
+    const nomes = ['Authorization']
+    expect(apagaOsHeaders(nomes, url, { url: 'https://outro.exemplo.com/health' })).toBe(true)
+    expect(apagaOsHeaders(nomes, url, { url: 'http://api.exemplo.com/health' })).toBe(true)
+    expect(apagaOsHeaders(nomes, url, { url: 'https://api.exemplo.com:8443/health' })).toBe(true)
+    // Só o caminho, ou a porta padrão escrita por extenso: a mesma origem.
+    expect(apagaOsHeaders(nomes, url, { url: 'https://api.exemplo.com/outro?x=1' })).toBe(false)
+    expect(apagaOsHeaders(nomes, url, { url: 'https://API.exemplo.com:443/health' })).toBe(false)
+    // Os espaços das pontas saem antes, como no servidor (strings.TrimSpace,
+    // que também tira o espaço sem quebra que o parser de URL não tira).
+    expect(apagaOsHeaders(nomes, url, { url: '\u00a0https://api.exemplo.com/outro ' })).toBe(false)
+    // Uma URL que não se lê conta como outra origem: avisar a mais.
+    expect(apagaOsHeaders(nomes, url, { url: 'nada disso' })).toBe(true)
+    // Sem headers guardados, sem URL nova, ou com headers no PATCH
+    // (substituir ou remover): nada a avisar.
+    expect(apagaOsHeaders([], url, { url: 'https://outro.exemplo.com/' })).toBe(false)
+    expect(apagaOsHeaders(nomes, url, { name: 'Outro' })).toBe(false)
+    expect(apagaOsHeaders(nomes, url, { url: 'https://outro.exemplo.com/', headers: { 'X-A': '1' } })).toBe(false)
+    expect(apagaOsHeaders(nomes, url, { url: 'https://outro.exemplo.com/', headers: null })).toBe(false)
   })
 })
 
@@ -120,6 +155,50 @@ describe('editar', () => {
     await r.usuario.click(screen.getByRole('button', { name: 'Salvar' }))
     await waitFor(() => expect(r.falsa.corpos('PATCH /targets/:id')).toHaveLength(1))
     expect(r.falsa.corpos('PATCH /targets/:id')[0]).toEqual({ name: 'API nova' })
+  })
+
+  // B1 do Plano 10: trocar o host de um alvo com headers pede confirmação,
+  // porque o servidor os apaga. Cancelar não manda nada, e o foco não cai
+  // no <body>; confirmar manda o PATCH só com a URL, e os headers somem.
+  // Sabotagem: não perguntar (tirar o "await perguntar()" da edição) → o
+  // PATCH sai sem o alertdialog.
+  it('trocar o destino de um alvo com headers avisa que eles serão apagados', async () => {
+    const r = await renderizarPainel('/targets/alvo-1/edit')
+    r.falsa.estado.alvos = [alvo({ header_names: ['Authorization'] })]
+    await r.cliente.refetchQueries()
+    await screen.findByText('Headers definidos: Authorization (valores ocultos).')
+    const url = screen.getByLabelText('URL')
+    await r.usuario.clear(url)
+    await r.usuario.type(url, 'https://outro.exemplo.com/health')
+    await r.usuario.click(screen.getByRole('button', { name: 'Salvar' }))
+    const aviso = await screen.findByRole('alertdialog', { name: 'Trocar o destino do alvo?' })
+    expect(aviso).toHaveTextContent('Os headers deste alvo serão apagados, porque o destino mudou (o esquema, o host ou a porta da URL).')
+    expect(r.falsa.chamadas('PATCH /targets/:id')).toBe(0)
+    await r.usuario.click(within(aviso).getByRole('button', { name: 'Cancelar' }))
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument())
+    expect(r.falsa.chamadas('PATCH /targets/:id')).toBe(0)
+    expect(document.activeElement).not.toBe(document.body)
+    await r.usuario.click(screen.getByRole('button', { name: 'Salvar' }))
+    const deNovo = await screen.findByRole('alertdialog', { name: 'Trocar o destino do alvo?' })
+    await r.usuario.click(within(deNovo).getByRole('button', { name: 'Salvar e apagar os headers' }))
+    await waitFor(() => expect(r.falsa.corpos('PATCH /targets/:id')).toHaveLength(1))
+    expect(r.falsa.corpos('PATCH /targets/:id')[0]).toEqual({ url: 'https://outro.exemplo.com/health' })
+    expect(r.falsa.estado.alvos[0]!.header_names).toEqual([])
+  })
+
+  // Só o caminho muda: a origem é a mesma, e os headers ficam. Sem aviso.
+  it('trocar só o caminho de um alvo com headers salva sem aviso', async () => {
+    const r = await renderizarPainel('/targets/alvo-1/edit')
+    r.falsa.estado.alvos = [alvo({ header_names: ['Authorization'] })]
+    await r.cliente.refetchQueries()
+    await screen.findByText('Headers definidos: Authorization (valores ocultos).')
+    const url = screen.getByLabelText('URL')
+    await r.usuario.clear(url)
+    await r.usuario.type(url, 'https://api.exemplo.com/status')
+    await r.usuario.click(screen.getByRole('button', { name: 'Salvar' }))
+    await waitFor(() => expect(r.falsa.corpos('PATCH /targets/:id')).toHaveLength(1))
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    expect(r.falsa.estado.alvos[0]!.header_names).toEqual(['Authorization'])
   })
 
   // Spec §4.3: intervalo fora da lista ("Outro…", 30 a 86400 s). Um alvo com
