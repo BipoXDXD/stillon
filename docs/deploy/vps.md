@@ -1702,7 +1702,8 @@ timedatectl | grep synchronized
 **Deve aparecer:** os três serviços `running`/`healthy`; o timer do vigia agendado; `Status:
 active`; `Status for the jail: sshd`; `System clock synchronized: yes`. E, de fora,
 `curl -sS -o /dev/null -w '%{http_code}\n' "https://$DOMINIO/readyz"` dá `200`. O healthchecks
-pode ter visto um minuto fora: é o custo do reinício, dentro da carência de 5 min.
+pode ter mandado um par de e-mails, **down** e **up** no minuto seguinte: é o custo do reinício
+(passo 1.6, "Por quê"), e não uma queda.
 
 ### 9.7 Lista final
 

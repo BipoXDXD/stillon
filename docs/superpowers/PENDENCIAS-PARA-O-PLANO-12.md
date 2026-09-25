@@ -53,8 +53,11 @@ Tomadas com a autorização do dono ("tome as decisões por mim, exceto as cruci
 **[D]** na spec:
 
 1. **Reinício automático às 04:30** (horário de Brasília) quando uma atualização de segurança
-   pedir. Custo: ~1 min fora do ar de madrugada, e o vigia pode mandar um alarme falso curto (a
-   carência de 5 min do healthchecks o absorve na maioria das vezes).
+   pedir. Custo: ~1 min fora do ar de madrugada, e o vigia pode mandar um alarme falso curto: a
+   carência de 5 min do healthchecks só absorve o ping que **não chega** (a VPS desligada); se o
+   vigia rodar com o app ainda subindo, o `/fail` chega e vem um par de e-mails **down**/**up**
+   (runbook 1.6). Eliminar o par (o vigia só mandar `/fail` depois de duas falhas seguidas) é
+   código, para o Plano 12 se o par incomodar.
 2. **`fail2ban` + SSH só por chave, porta 22.** Custo: perder a chave do computador = acesso só
    pelo terminal do painel da Hostinger (o runbook ensina a recuperação, bloco 10).
 3. **healthchecks.io com timer na própria VPS**, em vez de um serviço que consulta de fora.
