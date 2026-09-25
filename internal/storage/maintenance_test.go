@@ -146,6 +146,35 @@ func TestConsolidationCatchesUpAfterAGap(t *testing.T) {
 	}
 }
 
+// D4 (Plano 10, §3.4; banco C2 da revisão): o host sobe com o relógio
+// adiantado (RTC errado antes do NTP), e a manutenção grava um rollup no
+// futuro. Quando o relógio volta ao certo, a marca d'água ficava à frente de
+// "agora" e a consolidação não fazia nada até o tempo real a alcançar. A
+// marca é limitada a "agora": as horas reais seguem sendo consolidadas.
+func TestConsolidationSurvivesAWatermarkInTheFuture(t *testing.T) {
+	pool := testdb.New(t)
+	dono := novoUsuario(t, pool)
+	alvo := novoAlvo(t, pool, dono, agora)
+	if err := storage.EnsureChecksPartitions(context.Background(), pool, agora); err != nil {
+		t.Fatal(err)
+	}
+	// Relógio 10 h adiantado: o check e o rollup ficam às 20h.
+	checkEm(t, pool, alvo, hora(20, 5), "up", 100)
+	consolidar(t, pool, hora(21, 0))
+
+	// O relógio volta ao certo: 11h.
+	checkEm(t, pool, alvo, hora(10, 5), "up", 100)
+	consolidar(t, pool, hora(11, 0))
+
+	var horas []time.Time
+	for _, r := range rollupsDe(t, pool, dono, alvo) {
+		horas = append(horas, r.Bucket.UTC())
+	}
+	if len(horas) != 2 || !horas[0].Equal(hora(10, 0)) {
+		t.Errorf("rollups = %v, queria as 10h (a hora real) e as 20h (a do relógio adiantado)", horas)
+	}
+}
+
 // Rollups não atravessam donos: a RLS delega ao alvo.
 func TestRollupsFollowTheTarget(t *testing.T) {
 	pool := testdb.New(t)
