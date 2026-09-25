@@ -265,15 +265,17 @@ e no histórico dos planos (abaixo).
 - Até 2026-09-25 o projeto tinha o nome antigo que o título registra; nessa data passou a se
   chamar StillOn.
 - Nessa data foram apagados do repositório os planos 1 a 11, as specs de cada plano, os
-  relatórios de revisão e as pendências antigas. Ficaram a [spec do sistema](docs/superpowers/specs/2026-09-22-stillon-design.md),
-  o [roteiro](docs/superpowers/plans/2026-09-22-roadmap.md), o
+  relatórios de revisão e as pendências antigas. Ficaram a
+  [spec do sistema](docs/superpowers/specs/2026-09-22-stillon-design.md), o
+  [roteiro](docs/superpowers/plans/2026-09-22-roadmap.md), o
   [contrato dos Planos 5, 6 e 7](docs/superpowers/specs/2026-09-24-planos-5-6-7-contrato.md) e as
   [pendências correntes](docs/superpowers/PENDENCIAS-PARA-O-PLANO-12.md).
 - Para ler um arquivo apagado, use o commit `2e1c3ce7d816a0ccdb144ab3057878a4c66255a9`, o último
   que os tem:
   ```bash
   git ls-tree -r --name-only 2e1c3ce7d816a0ccdb144ab3057878a4c66255a9 docs/superpowers   # a lista
-  git show 2e1c3ce7d816a0ccdb144ab3057878a4c66255a9:docs/superpowers/plans/<arquivo>      # um plano
+  ARQUIVO=docs/superpowers/plans/...   # troque os ... por um nome da lista
+  git show "2e1c3ce7d816a0ccdb144ab3057878a4c66255a9:$ARQUIVO"
   ```
 - Os comentários do código citam decisões por identificador ("D32 do Plano 7", "spec do Plano 10,
   §4", "banco S1 da revisão"), que se resolvem nesses arquivos. "spec §N" sem número de plano é a

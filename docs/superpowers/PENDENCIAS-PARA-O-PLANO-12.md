@@ -232,11 +232,22 @@ que a onda de correção não fechou. Os que ela fechou: auth M1 (a espera do Ar
 - revisão final, e2e: o `docker compose exec app /stillon user reset-2fa` do `troca.spec`
   (`E2E_COMPOSE_SERVICE: app` no job `e2e` do `ci.yml`) só foi validado localmente; conferir no
   primeiro CI que a troca roda e não é pulada.
+- revisão da renomeação, testes: a trava advisory de `drop_checks_partitions_before` (migration
+  00006) não tem teste que a compare com a de `ensure_checks_partition`; um teste que leia o
+  `prosrc` das duas funções em `pg_proc` e exija a mesma chave fecharia (lacuna anterior à
+  renomeação).
+- revisão da renomeação, testes: a chave do tema, `stillon.tema`, está em
+  `web/src/lib/tema.tsx` (`CHAVE`) e em `web/public/tema.js`, sem teste que compare as duas; um
+  teste Vitest que leia `public/tema.js` e compare com `CHAVE` fecharia.
+- revisão da renomeação, testes: o middleware de CSRF (`RequireCustomHeader`, em
+  `internal/httpapi/middleware/csrf.go`) só confere se o `X-Requested-With` existe, não o valor. O
+  valor `stillon` é provado só pela API falsa do painel, nem no e2e.
 
 
 ## Para o Plano 12 (limites do Plano 9, das pendências do Plano 10, ainda abertos)
 
-Os limites conhecidos do Plano 9 que o Plano 10 não fechou (as pendências do Plano 10, (apagado em 2026-09-25; ver README, Histórico)):
+Os limites conhecidos do Plano 9 que o Plano 10 não fechou (as pendências do Plano 10, apagadas
+em 2026-09-25; ver README, Histórico):
 
 - **Pausar descarta os avisos.** Retomar não reenvia o que passou; o diálogo de "Pausar" diz
   isso.
@@ -256,13 +267,14 @@ Os limites conhecidos do Plano 9 que o Plano 10 não fechou (as pendências do P
 - **`ROLE` inválido fica em `cfg.Role`** (`internal/config/config.go`), inofensivo porque o `Load`
   devolve `nil, err`.
 - **Os testes de trava procuram a espera pelo `pg_stat_activity` sem amarrar o backend** (a lista
-  completa dos testes está nas pendências do Plano 10, (apagado em 2026-09-25; ver README, Histórico)).
+  completa dos testes está nas pendências do Plano 10 (apagadas em 2026-09-25; ver README,
+  Histórico)).
 
 Os limites dos Planos 7 e 8 seguem como estão nas pendências dos Planos 8 e 9 (apagadas em
 2026-09-25; ver README, Histórico).
 
 **Dívidas menores** (grupo C): a seção "Dívidas menores herdadas, ainda abertas" das pendências
-do Plano 5 (apagado em 2026-09-25; ver README, Histórico), inteira.
+do Plano 5 (apagadas em 2026-09-25; ver README, Histórico), inteira.
 
 
 ## Limites conhecidos do Plano 10 (seguem valendo)

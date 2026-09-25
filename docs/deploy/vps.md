@@ -1148,12 +1148,12 @@ tail -n 30 /opt/stillon/entrada.log
 O `versao` é o SHA que está no ar; o `entrada.log` é o log de cada deploy e backup, o mesmo que o
 job mostra, gravado na VPS. Os dois são `0644`: leia-os **sem** `sudo`. O log tem um teto de
 ~1 MiB: passado dele, a entrada o renomeia para `entrada.log.1` (no lugar do `.1` que houver) e
-começa um novo, e o `entrada.log.1` guarda a rodada anterior do log. Cada deploy e backup começa com a linha
-`== <UTC> início: <pedido>` e, mesmo que o SSH tenha caído, a entrada grava **por último** a linha
-`== <UTC> fim: <pedido>: código N (<sentido>)`. **É essa linha `fim:` que diz como o deploy
-acabou** (código 0, `feito`; 4, `não ficou saudável; rollback feito, ou app parado no primeiro
-deploy`; os outros, na tabela de "Depuração do deploy"); as linhas logo acima dela dão o
-detalhe. Se a última `início:` ainda não tem a sua `fim:` (as linhas continuam chegando), ele
+começa um novo, e o `entrada.log.1` guarda a rodada anterior do log. Cada deploy e backup começa
+com a linha `== <UTC> início: <pedido>` e, mesmo que o SSH tenha caído, a entrada grava **por
+último** a linha `== <UTC> fim: <pedido>: código N (<sentido>)`. **É essa linha `fim:` que diz
+como o deploy acabou** (código 0, `feito`; 4, `não ficou saudável; rollback feito, ou app parado
+no primeiro deploy`; os outros, na tabela de "Depuração do deploy"); as linhas logo acima dela
+dão o detalhe. Se a última `início:` ainda não tem a sua `fim:` (as linhas continuam chegando), ele
 ainda está rodando: espere dois minutos e olhe de novo. Só rode o deploy outra vez depois de ver
 a `fim:` deste.
 
@@ -1538,7 +1538,8 @@ O check volta a **up**, e chega o e-mail de volta.
 ## Bloco 9: verificações finais
 
 Cada item abaixo é uma das obrigações do Plano 10 (a tabela "Fechadas no Plano 11" de
-`docs/superpowers/PENDENCIAS-PARA-O-PLANO-12.md`) ou um critério da spec. Só dê o StillOn por pronto com todos verdes.
+`docs/superpowers/PENDENCIAS-PARA-O-PLANO-12.md`) ou um critério da spec. Só dê o StillOn por
+pronto com todos verdes.
 
 ### 9.1 Só 22, 80 e 443 abertas, vistas de fora (obrigação 3)
 
@@ -1747,10 +1748,10 @@ vc logs -f --tail 50 app            # acompanhar ao vivo; Ctrl+C sai
 O vigia: `sudo journalctl -u stillon-vigia.service --since today`. O deploy e o backup: o log
 do próprio job no Actions (o script manda o log dele pela saída de erro, que o job mostra) e,
 na VPS, o mesmo log em `/opt/stillon/entrada.log`, de todos os deploys e backups (`0644`, lido
-sem `sudo`; acima de ~1 MiB ele vira `entrada.log.1`, que guarda a rodada anterior do log, e recomeça):
-`tail -n 50 /opt/stillon/entrada.log`. É pela última linha `== <UTC> fim: <pedido>: código N
-(<sentido>)`, que a entrada grava sempre por último, que você sabe como terminou um deploy cuja
-conexão caiu (passo 4.8).
+sem `sudo`; acima de ~1 MiB ele vira `entrada.log.1`, que guarda a rodada anterior do log, e
+recomeça): `tail -n 50 /opt/stillon/entrada.log`. É pela última linha
+`== <UTC> fim: <pedido>: código N (<sentido>)`, que a entrada grava sempre por último, que você
+sabe como terminou um deploy cuja conexão caiu (passo 4.8).
 
 ### Deploy seguinte
 
@@ -1818,8 +1819,8 @@ resumo do código (`deploy/ci/vps.sh`), mas a razão exata é a linha que começ
 `deploy de <sha> saudável`, sem o prefixo). Procure-a na coluna do meio. Na VPS, o
 `/opt/stillon/entrada.log` traz a mesma linha logo acima da última, a
 `== <UTC> fim: <pedido>: código N (<sentido>)`, que dá o código; os pedidos recusados antes da
-trava (a primeira linha de código 2 da tabela e o 1 da trava ocupada) não chegam ao `entrada.log`, só
-ao log do job.
+trava (a primeira linha de código 2 da tabela e o 1 da trava ocupada) não chegam ao
+`entrada.log`, só ao log do job.
 
 | Código | A linha diz (com o prefixo `stillon-entrada:`, menos no 0) | O que fazer |
 |---|---|---|
@@ -2169,7 +2170,8 @@ escolhe o ID. (O backup pela chave só entrega o dump **cifrado**: sem a sua cha
    ```
    O site fica fora (`502`) até o item 7. (O `entrada.log.1` só existe se o log já passou do teto
    de ~1 MiB; se não existir, o `cat` diz `No such file or directory`, e tudo bem.) Compare cada
-   `deploy de <sha>` do `entrada.log` e do `entrada.log.1`, e cada SHA do `historico` com as execuções do `deploy` na aba Actions
+   `deploy de <sha>` do `entrada.log` e do `entrada.log.1`, e cada SHA do `historico` com as
+   execuções do `deploy` na aba Actions
    (`gh run list --repo BipoXDXD/stillon --workflow deploy.yml --limit 20`): um deploy que não
    saiu de lá foi de outra pessoa. Anote a data do primeiro.
 3. **Apague todas as imagens `stillon` locais**, para nenhuma etiqueta apontar para uma imagem
