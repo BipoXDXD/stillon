@@ -1,6 +1,6 @@
 import { http, HttpResponse } from 'msw'
 import { describe, expect, it, vi } from 'vitest'
-import { EMAIL, SEGREDO_NOVO, SENHA, TOTP_NOVO, TOTP_OK } from '@/test/api-falsa'
+import { EMAIL, rotacao, SEGREDO_NOVO, SENHA, TOTP_NOVO, TOTP_OK } from '@/test/api-falsa'
 import { buscarDoTeste, novaSessao, usarApiFalsa } from '@/test/ambiente'
 import { servidor } from '@/test/setup'
 import { ApiError } from './http'
@@ -61,13 +61,39 @@ describe('a regra do 401', () => {
     falsa.estado.totpLigado = true
     await expect(api.totpTrocar(SENHA, '000000')).rejects.toMatchObject({ code: 'invalid_credentials' })
     expect(falsa.chamadas('POST /auth/totp/rotate')).toBe(1)
-    expect((await api.totpTrocar(SENHA, TOTP_OK)).otpauth_uri).toContain(`secret=${SEGREDO_NOVO}`)
+    const troca = await api.totpTrocar(SENHA, TOTP_OK)
+    expect(troca.otpauth_uri).toContain(`secret=${SEGREDO_NOVO}`)
+    expect(troca.rotation).toBe(rotacao(1))
     expect(falsa.corpos('POST /auth/totp/rotate')[1]).toEqual({ password: SENHA, code: TOTP_OK })
-    await expect(api.totpConfirmarTroca('000000')).rejects.toMatchObject({ code: 'invalid_credentials' })
+    await expect(api.totpConfirmarTroca('000000', troca.rotation)).rejects.toMatchObject({ code: 'invalid_credentials' })
     expect(falsa.chamadas('POST /auth/totp/rotate/confirm')).toBe(1)
-    expect((await api.totpConfirmarTroca(TOTP_NOVO)).recovery_codes).toHaveLength(10)
-    expect(falsa.corpos('POST /auth/totp/rotate/confirm')[1]).toEqual({ code: TOTP_NOVO })
+    expect((await api.totpConfirmarTroca(TOTP_NOVO, troca.rotation)).recovery_codes).toHaveLength(10)
+    expect(falsa.corpos('POST /auth/totp/rotate/confirm')[1]).toEqual({ code: TOTP_NOVO, rotation: rotacao(1) })
     expect(falsa.chamadas('POST /auth/refresh')).toBe(0)
+  })
+
+  // A7 do Plano 10: o confirm leva o rotation que o rotate devolveu, e um
+  // rotate sem ele está fora do contrato (o painel não teria o que mandar).
+  // O rotation de um pendente que outro rotate da mesma família substituiu
+  // é 403, como "sem troca". Sabotagem: tirar o rotation do corpo do
+  // totpConfirmarTroca → 403 no confirm certo.
+  it('a troca de autenticador leva o rotation do rotate ao confirm', async () => {
+    const { falsa, api } = await logado()
+    falsa.estado.totpLigado = true
+    const velha = await api.totpTrocar(SENHA, TOTP_OK)
+    const nova = await api.totpTrocar(SENHA, TOTP_OK)
+    expect(nova.rotation).not.toBe(velha.rotation)
+    await expect(api.totpConfirmarTroca(TOTP_NOVO, velha.rotation)).rejects.toMatchObject({
+      status: 403,
+      code: 'forbidden',
+    })
+    expect((await api.totpConfirmarTroca(TOTP_NOVO, nova.rotation)).recovery_codes).toHaveLength(10)
+    servidor.use(
+      http.post('*/api/v1/auth/totp/rotate', () =>
+        HttpResponse.json({ otpauth_uri: 'otpauth://totp/Vigilume:x?secret=AAAA' }),
+      ),
+    )
+    await expect(api.totpTrocar(SENHA, TOTP_OK)).rejects.toMatchObject({ code: 'unexpected' })
   })
 
   // Só "unauthorized" (o Authn recusando o token) renova. Sabotagem

@@ -1,7 +1,7 @@
 import { fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { http, HttpResponse } from 'msw'
 import { describe, expect, it, vi } from 'vitest'
-import { CODIGOS_NOVOS, RECUPERACAO_OK, SEGREDO_NOVO, TOTP_NOVO, TOTP_OK } from '@/test/api-falsa'
+import { CODIGOS_NOVOS, RECUPERACAO_OK, rotacao, SEGREDO_NOVO, TOTP_NOVO, TOTP_OK } from '@/test/api-falsa'
 import { sessao as familia, me } from '@/test/fixtures'
 import { renderizarPainel, SENHA } from '@/test/renderizar'
 import { ATRASO_DA_REVOGACAO } from './PaginaConfiguracoes'
@@ -587,7 +587,8 @@ describe('troca de autenticador', () => {
     // Passo 3: os 10 códigos novos.
     expect(await within(dialogo).findByText(CODIGOS_NOVOS[0]!)).toBeInTheDocument()
     expect(within(dialogo).getAllByRole('listitem')).toHaveLength(10)
-    expect(r.falsa.corpos(CONFIRM)).toEqual([{ code: TOTP_NOVO }])
+    // O confirm leva o rotation que o rotate devolveu (A7 do Plano 10).
+    expect(r.falsa.corpos(CONFIRM)).toEqual([{ code: TOTP_NOVO, rotation: rotacao(1) }])
     await r.usuario.keyboard('{Escape}')
     expect(screen.getByRole('dialog')).toBe(dialogo)
     const concluir = within(dialogo).getByRole('button', { name: 'Concluir' })
@@ -664,7 +665,7 @@ describe('troca de autenticador', () => {
     const dialogo = await iniciar(r)
     await r.usuario.type(await within(dialogo).findByLabelText('Código de 6 dígitos'), TOTP_NOVO)
     // Outra aba concluiu a troca: não há mais pendente.
-    r.falsa.estado.trocaPendente = false
+    r.falsa.estado.troca = null
     await r.usuario.click(within(dialogo).getByRole('button', { name: 'Confirmar a troca' }))
     expect(await within(dialogo).findByRole('alert')).toHaveTextContent(
       'A troca foi concluída ou cancelada em outra aba. Comece de novo.',
@@ -675,6 +676,25 @@ describe('troca de autenticador', () => {
     await r.usuario.click(within(dialogo).getByRole('button', { name: 'Continuar' }))
     expect(await within(dialogo).findByText(SEGREDO_NOVO)).toBeInTheDocument()
     expect(r.falsa.chamadas(ROTATE)).toBe(2)
+  })
+
+  // A7 do Plano 10: outra aba da MESMA sessão iniciou outra troca, e o
+  // pendente deste QR foi substituído. O confirm leva o rotation deste QR e
+  // recebe 403 (não 401 invalid_credentials, que contaria falha), e o
+  // diálogo volta ao passo 1. Sabotagem: mandar no confirm o rotation mais
+  // novo da API falsa, e não o do QR da tela → os códigos aparecem.
+  it('pendente substituído por outra aba: o confirm com o rotation deste QR recomeça a troca', async () => {
+    const r = await comTotp()
+    const dialogo = await iniciar(r)
+    await r.usuario.type(await within(dialogo).findByLabelText('Código de 6 dígitos'), TOTP_NOVO)
+    // A outra aba fez o próprio rotate: o rotation mudou.
+    r.falsa.estado.troca = { rotation: rotacao(2) }
+    await r.usuario.click(within(dialogo).getByRole('button', { name: 'Confirmar a troca' }))
+    expect(await within(dialogo).findByRole('alert')).toHaveTextContent(
+      'A troca foi concluída ou cancelada em outra aba. Comece de novo.',
+    )
+    expect(r.falsa.corpos(CONFIRM)).toEqual([{ code: TOTP_NOVO, rotation: rotacao(1) }])
+    expect(r.falsa.estado.troca).toEqual({ rotation: rotacao(2) })
   })
 
   // Fechar no passo 2 não muda nada: o aviso diz isso. Fechar no passo 1

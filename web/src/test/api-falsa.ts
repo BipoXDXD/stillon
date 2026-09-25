@@ -37,6 +37,9 @@ export const TOTP_NOVO = '654321'
 export const SEGREDO_NOVO = 'KRSXG5CTMVRXEZLU'
 // Os 10 códigos de recuperação que a confirmação da troca entrega.
 export const CODIGOS_NOVOS = Array.from({ length: 10 }, (_, i) => `NOVO${String(i).padStart(2, '0')}CODIGO000${i}`)
+// O rotation do n-ésimo rotate (A7 do Plano 10): 32 dígitos hex, como o
+// servidor (16 bytes derivados do segredo pendente).
+export const rotacao = (n: number) => n.toString(16).padStart(32, '0')
 
 const agora = () => new Date('2026-09-24T12:00:00Z')
 
@@ -54,8 +57,10 @@ export function criarApiFalsa() {
     totpLigado: false,
     totpPendente: false,
     // Troca de autenticador em andamento: o segredo pendente do rotate
-    // (spec do Plano 9 §3.2). Só o confirm, o disable e outro rotate o mexem.
-    trocaPendente: false,
+    // (spec do Plano 9 §3.2), com o rotation que o identifica (A7 do Plano
+    // 10). Só o confirm, o disable e outro rotate o mexem.
+    troca: null as { rotation: string } | null,
+    rotacoes: 0,
     // Códigos de recuperação já gastos. Com trocaFalhaDepoisDoCodigo, a
     // troca de senha gasta o código e DEPOIS falha com 401 unauthorized, como
     // o servidor quando a família morre no meio da troca (PENDENCIAS do
@@ -377,7 +382,7 @@ export function criarApiFalsa() {
       }
       st.totpLigado = false
       // O disable apaga a troca pendente (spec do Plano 9 §3.2).
-      st.trocaPendente = false
+      st.troca = null
       return new HttpResponse(null, { status: 204 })
     }),
     // Spec do Plano 9 §3.2: as provas do disable (senha e código do app ou
@@ -390,15 +395,21 @@ export function criarApiFalsa() {
       const recuperacao = codigo === RECUPERACAO_OK && !st.recuperacaoGasta.has(codigo)
       if (corpo.password !== SENHA || (codigo !== TOTP_OK && !recuperacao)) return erro(401, 'invalid_credentials')
       if (recuperacao) st.recuperacaoGasta.add(codigo)
-      st.trocaPendente = true
-      return HttpResponse.json({ otpauth_uri: `otpauth://totp/Vigilume:dono%40exemplo.com?secret=${SEGREDO_NOVO}&issuer=Vigilume` })
+      // Outro rotate substitui o pendente, e o rotation muda com ele.
+      st.troca = { rotation: rotacao(++st.rotacoes) }
+      return HttpResponse.json({
+        otpauth_uri: `otpauth://totp/Vigilume:dono%40exemplo.com?secret=${SEGREDO_NOVO}&issuer=Vigilume`,
+        rotation: st.troca.rotation,
+      })
     }),
-    // Sem troca pendente é 403; código errado é 401 e o pendente fica. O
-    // sucesso encerra as OUTRAS sessões e entrega 10 códigos novos.
+    // Sem troca pendente, ou com o rotation de um pendente que outro rotate
+    // já substituiu (A7 do Plano 10), é 403, sem contar falha; código errado
+    // é 401 e o pendente fica. O sucesso encerra as OUTRAS sessões e entrega
+    // 10 códigos novos.
     rota('post', '/auth/totp/rotate/confirm', ({ corpo }) => {
-      if (!st.trocaPendente) return erro(403, 'forbidden')
+      if (!st.troca || corpo.rotation !== st.troca.rotation) return erro(403, 'forbidden')
       if (corpo.code !== TOTP_NOVO) return erro(401, 'invalid_credentials')
-      st.trocaPendente = false
+      st.troca = null
       st.sessoes = st.sessoes.filter((s) => s.current)
       return HttpResponse.json({ recovery_codes: CODIGOS_NOVOS })
     }),

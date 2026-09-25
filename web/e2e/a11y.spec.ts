@@ -1,7 +1,7 @@
 import AxeBuilder from '@axe-core/playwright'
 import type { Page, Route } from '@playwright/test'
 import type { z } from 'zod'
-import type { CadastroTotp, ConfirmacaoTotp, Serie } from '../src/lib/api/schemas'
+import type { ConfirmacaoTotp, InicioDaTroca, Serie } from '../src/lib/api/schemas'
 import { alvo, canal, incidente, itemDoResumo, me, pagina, sessao } from '../src/test/fixtures'
 import { controlePositivo, expect, test, violacoes } from './fixtures'
 
@@ -76,10 +76,12 @@ const respostas: Record<string, unknown> = {
 }
 
 // A troca de autenticador (spec do Plano 9 §4.2): as respostas do rotate e
-// do rotate/confirm, no formato do enroll e do confirm.
+// do rotate/confirm, no formato do enroll (mais o rotation, A7 do Plano 10)
+// e do confirm.
 const SEGREDO_NOVO = 'KRSXG5CTMVRXEZLU'
-const troca: z.input<typeof CadastroTotp> = {
+const troca: z.input<typeof InicioDaTroca> = {
   otpauth_uri: `otpauth://totp/Vigilume:dono%40exemplo.com?secret=${SEGREDO_NOVO}&issuer=Vigilume`,
+  rotation: '0123456789abcdef0123456789abcdef',
 }
 const codigosNovos: z.input<typeof ConfirmacaoTotp> = {
   recovery_codes: Array.from({ length: 10 }, (_, i) => `NOVO${String(i).padStart(2, '0')}CODIGO000${i}`),

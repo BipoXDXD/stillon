@@ -156,4 +156,8 @@ export type Sessao = z.infer<typeof Sessao>
 export const ListaDeSessoes = z.object({ items: z.array(Sessao) })
 
 export const CadastroTotp = z.object({ otpauth_uri: z.string().startsWith('otpauth://') })
+// O rotate devolve também o rotation (A7 do Plano 10): 16 bytes em hex que
+// identificam o pendente. O confirm o devolve, e um pendente substituído por
+// outro rotate da mesma sessão responde 403, como "sem troca".
+export const InicioDaTroca = CadastroTotp.extend({ rotation: z.string().regex(/^[0-9a-f]{32}$/) })
 export const ConfirmacaoTotp = z.object({ recovery_codes: z.array(z.string()) })

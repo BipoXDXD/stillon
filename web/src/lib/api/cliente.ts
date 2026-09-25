@@ -5,6 +5,7 @@ import {
   CadastroTotp,
   Canal,
   ConfirmacaoTotp,
+  InicioDaTroca,
   ListaDeAlvos,
   ListaDeCanais,
   ListaDeIncidentes,
@@ -151,10 +152,14 @@ export function criarApi(sessao: Sessao, buscar: Buscar) {
       pedir({ metodo: 'POST', caminho: '/auth/totp/disable', corpo: { password: senha, code: codigo } }, null),
     // A troca de autenticador (spec do Plano 9 §3.2): as provas do disable
     // (o código do app atual ou um de recuperação) e, depois, o código do
-    // app NOVO. As respostas têm o formato do enroll e do confirm.
+    // app NOVO com o rotation que o rotate devolveu (A7 do Plano 10). As
+    // respostas têm o formato do enroll (mais o rotation) e do confirm.
     totpTrocar: (senha: string, codigo: string) =>
-      pedir({ metodo: 'POST', caminho: '/auth/totp/rotate', corpo: { password: senha, code: codigo } }, CadastroTotp),
-    totpConfirmarTroca: (codigo: string) =>
-      pedir({ metodo: 'POST', caminho: '/auth/totp/rotate/confirm', corpo: { code: codigo } }, ConfirmacaoTotp),
+      pedir({ metodo: 'POST', caminho: '/auth/totp/rotate', corpo: { password: senha, code: codigo } }, InicioDaTroca),
+    totpConfirmarTroca: (codigo: string, rotation: string) =>
+      pedir(
+        { metodo: 'POST', caminho: '/auth/totp/rotate/confirm', corpo: { code: codigo, rotation } },
+        ConfirmacaoTotp,
+      ),
   }
 }

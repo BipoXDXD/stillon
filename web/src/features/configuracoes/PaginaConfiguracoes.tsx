@@ -505,7 +505,10 @@ function TrocarTotp({
   const api = useApi()
   const qc = useQueryClient()
   const [passo, setPasso] = useState<'provas' | 'codigo' | 'codigos'>('provas')
-  const [uri, setUri] = useState('')
+  // O QR do app novo e o rotation do pendente dele (A7 do Plano 10): o
+  // confirm manda o rotation DESTE QR, e um pendente que outra aba
+  // substituiu responde 403.
+  const [troca, setTroca] = useState({ otpauth_uri: '', rotation: '' })
   const [codigos, setCodigos] = useState<string[]>([])
   const [erro, setErro] = useState<ErroDeCredencial | null>(null)
   // Os códigos novos já estão na tela: uma resposta atrasada de outro
@@ -522,7 +525,7 @@ function TrocarTotp({
         aoEnviar={async (senha, codigo) => {
           setErro(null)
           try {
-            setUri((await api.totpTrocar(senha, codigo)).otpauth_uri)
+            setTroca(await api.totpTrocar(senha, codigo))
             aoIniciar(ehDeRecuperacao(codigo))
             setPasso('codigo')
           } catch (e) {
@@ -537,7 +540,7 @@ function TrocarTotp({
   if (passo === 'codigo') {
     return (
       <PassoDoQr
-        uri={uri}
+        uri={troca.otpauth_uri}
         instrucao="Leia o QR code com o aplicativo autenticador novo, ou digite a chave. O app atual continua valendo até você confirmar."
         acao="Confirmar a troca"
         erro={erro}
@@ -547,7 +550,7 @@ function TrocarTotp({
           // Travado antes de aguardar, como na ativação.
           aoOcupar(true)
           try {
-            setCodigos((await api.totpConfirmarTroca(c)).recovery_codes)
+            setCodigos((await api.totpConfirmarTroca(c, troca.rotation)).recovery_codes)
             // Os códigos só existem nesta tela, como na ativação.
             concluida.current = true
             aoTravar()
