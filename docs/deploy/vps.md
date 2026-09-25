@@ -90,7 +90,9 @@ gh auth status
 ```
 
 **Por quê:** `ssh`/`scp` falam com a VPS; `age` decifra o backup; `nmap` confere de fora quais
-portas estão abertas; `gh` grava os secrets do GitHub sem você colar nada.
+portas estão abertas; `gh` grava os secrets do GitHub sem você colar nada. O Docker do seu
+computador (o mesmo do `docker compose up` do README) sobe a cópia do banco no ensaio de
+restauração (passo 7.2) e na reconstrução (bloco 10).
 
 **Deve aparecer:** a instalação termina sem `E:`; o `gh auth status` diz `Logged in to github.com`
 com a sua conta. Se o `gh` não estiver instalado ou logado: `sudo apt install gh` e
@@ -102,10 +104,15 @@ com a sua conta. Se o `gh` não estiver instalado ou logado: `sudo apt install g
 age --version
 nmap --version | head -1
 git -C ~/Projetos/Go/Vigilume remote -v
+docker run --rm hello-world
 ```
 
-Três respostas, a última com `BipoXDXD/vigilume`. (Se o seu clone estiver em outro lugar, use o
-caminho dele em todo este runbook.)
+Quatro respostas: as versões, a terceira com `BipoXDXD/vigilume` e a última com
+`Hello from Docker!`, **sem** `sudo`. (Se o seu clone estiver em outro lugar, use o caminho dele
+em todo este runbook.) Se o `docker` não existir, instale o Docker Engine pelo repositório da
+Docker ([fonte](https://docs.docker.com/engine/install/ubuntu/), os mesmos comandos do passo 3.1,
+no seu computador); se ele disser `permission denied` no `docker.sock`, é o seu usuário fora do
+grupo `docker`: `sudo usermod -aG docker "$USER"`, saia da sessão do computador e entre de novo.
 
 ### 0.3 O arquivo de variáveis do seu computador
 
@@ -1234,9 +1241,12 @@ houve backup naquele dia, e o GitHub não manda e-mail por isso. A causa usual �
    age -d -i ~/vigilume-backup.key -o ~/vigilume-restauro/vigilume.dump "$ARQ"
    ```
 3. Restaure num Postgres descartável, da mesma imagem de produção (o digest de
-   `deploy/vps/db/Dockerfile`), só no `127.0.0.1` do seu computador:
+   `deploy/vps/db/Dockerfile`), só no `127.0.0.1` do seu computador. O `docker compose stop`
+   para o compose de desenvolvimento, se estiver de pé: ele ocupa a `127.0.0.1:8080` que a cópia
+   usa no item 4 (sem ele de pé, o comando não faz nada):
    ```bash
    cd ~/Projetos/Go/Vigilume
+   docker compose stop
    docker run -d --name restauro -p 127.0.0.1:25433:5432 -e POSTGRES_PASSWORD=restauro \
      "$(sed -n 's/^FROM //p' deploy/vps/db/Dockerfile)"
    until docker exec restauro pg_isready -h 127.0.0.1 -U postgres; do sleep 1; done
@@ -1253,11 +1263,21 @@ houve backup naquele dia, e o GitHub não manda e-mail por isso. A causa usual �
 4. Suba o Vigilume **da versão que está no ar** contra a cópia, **só com a API** (`--role=api`):
    com `--role=all`, a cópia sondaria os seus alvos e mandaria alertas aos canais **reais**. A
    imagem é privada: entre no GHCR com o token do `gh`, depois de dar a ele a permissão
-   `read:packages` (o `refresh` abre o navegador uma vez):
+   `read:packages` (o `refresh` abre o navegador uma vez), baixe a imagem e **saia logo em
+   seguida**:
    ```bash
    gh auth refresh -s read:packages
-   gh auth token | docker login ghcr.io -u BipoXDXD --password-stdin
    SHA=$(ssh vigilume cat /opt/vigilume/versao)
+   echo "$SHA"
+   gh auth token | docker login ghcr.io -u BipoXDXD --password-stdin
+   docker pull "ghcr.io/bipoxdxd/vigilume:$SHA"
+   docker logout ghcr.io
+   ```
+   O `docker login` grava o token no `~/.docker/config.json` do seu computador, **em claro** (o
+   próprio Docker avisa: `stored unencrypted`). E esse token não é só de leitura de pacotes: é o
+   do `gh`, que escreve em todos os seus repositórios. O `docker logout` o apaga; a imagem já
+   baixada continua no seu Docker. Então suba a cópia:
+   ```bash
    read -rs -p 'MASTER_KEY de produção (do gerenciador): ' MASTER_KEY; echo
    export MASTER_KEY
    docker run --rm --network host \
@@ -1281,7 +1301,11 @@ houve backup naquele dia, e o GitHub não manda e-mail por isso. A causa usual �
    unset MASTER_KEY
    docker rm -f restauro
    shred -u ~/vigilume-restauro/vigilume.dump
+   docker logout ghcr.io
+   grep -q ghcr.io ~/.docker/config.json 2>/dev/null && echo "AINDA LOGADO" || echo "sem login do ghcr"
    ```
+   O `docker logout` de novo é por garantia (se o item 4 parou no meio); a última linha tem de
+   dizer `sem login do ghcr`.
 
 **Confira:** o passo 5 funcionou. Anote a data do ensaio no gerenciador: ele se repete a cada
 trimestre (bloco 10).
