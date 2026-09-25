@@ -64,10 +64,13 @@ func NormalizeEmail(email string) string {
 // roubado. O sucesso NÃO zera o contador; quem chama decide quando o
 // processo de autenticação terminou (com segundo fator, é depois dele).
 //
-// needsRehash só vale quando ok.
+// needsRehash só vale quando ok. Com o teto do Argon2id cheio, devolve
+// ErrArgon2Busy sem verificar nem contar nada (A1 do Plano 10).
 func CheckPassword(ctx context.Context, users UserStore, u User, plain string, now time.Time) (ok, needsRehash bool, err error) {
 	if u.IsLocked(now) {
-		VerifyDummy()
+		if err := VerifyDummy(); err != nil {
+			return false, false, err
+		}
 		return false, false, nil
 	}
 	ok, needsRehash, err = VerifyPassword(u.PasswordHash, plain)

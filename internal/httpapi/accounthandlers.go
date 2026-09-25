@@ -204,8 +204,12 @@ func (h *AccountHandlers) RevokeSession(w http.ResponseWriter, r *http.Request) 
 }
 
 // internal registra o erro real e devolve só o envelope genérico com o
-// trace_id (spec §9.1).
+// trace_id (spec §9.1). O teto do Argon2id cheio é o 429 de argon2Ocupado.
 func (h *AccountHandlers) internal(w http.ResponseWriter, r *http.Request, op string, err error) {
+	if errors.Is(err, auth.ErrArgon2Busy) {
+		argon2Ocupado(w, r, op)
+		return
+	}
 	slog.Error(op, "erro", err, "trace_id", observability.TraceID(r.Context()))
 	apierr.WriteError(w, r, apierr.CodeInternal)
 }

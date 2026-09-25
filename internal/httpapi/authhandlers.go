@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/google/uuid"
@@ -62,7 +63,10 @@ func (h *AuthHandlers) Login(w http.ResponseWriter, r *http.Request) {
 
 	user, err := h.users.ByEmail(r.Context(), auth.NormalizeEmail(req.Email))
 	if errors.Is(err, auth.ErrNotFound) {
-		auth.VerifyDummy()
+		if err := auth.VerifyDummy(); err != nil {
+			h.internal(w, r, "verificar senha", err)
+			return
+		}
 		apierr.WriteError(w, r, apierr.CodeInvalidCredentials)
 		return
 	}
@@ -278,10 +282,26 @@ func (h *AuthHandlers) meta(r *http.Request) auth.Meta {
 }
 
 // internal registra o erro real e devolve ao cliente apenas o envelope
-// genérico com o trace_id (spec §9.1).
+// genérico com o trace_id (spec §9.1). O teto do Argon2id cheio não é erro
+// interno: é o 429 de argon2Ocupado.
 func (h *AuthHandlers) internal(w http.ResponseWriter, r *http.Request, op string, err error) {
+	if errors.Is(err, auth.ErrArgon2Busy) {
+		argon2Ocupado(w, r, op)
+		return
+	}
 	slog.Error(op, "erro", err, "trace_id", observability.TraceID(r.Context()))
 	apierr.WriteError(w, r, apierr.CodeInternal)
+}
+
+// argon2Ocupado é a resposta de quando o teto de Argon2id simultâneos ficou
+// cheio pelo prazo inteiro (A1 do Plano 10): 429 rate_limited, com
+// Retry-After igual ao prazo. A senha não foi verificada, e nada contou no
+// bloqueio. Vale para a conta existente e para a inexistente (o VerifyDummy
+// passa pelo mesmo semáforo), então não enumera contas.
+func argon2Ocupado(w http.ResponseWriter, r *http.Request, op string) {
+	slog.Warn("teto de Argon2id simultâneos atingido", "op", op, "trace_id", observability.TraceID(r.Context()))
+	w.Header().Set("Retry-After", strconv.Itoa(int(auth.Argon2Wait/time.Second)))
+	apierr.WriteError(w, r, apierr.CodeRateLimited)
 }
 
 // decodeJSON lê o corpo JSON e já distingue os dois modos de falha que o

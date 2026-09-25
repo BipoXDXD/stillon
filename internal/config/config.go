@@ -15,6 +15,8 @@ import (
 	"net/mail"
 	"net/netip"
 	"net/url"
+	"runtime"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -73,6 +75,10 @@ type Config struct {
 	ClientIPHeader string
 	LogLevel       slog.Level
 	ShutdownGrace  time.Duration
+	// Argon2MaxConcurrent é o teto de Argon2id simultâneos (A1 do Plano 10):
+	// cada um custa 64 MiB. ARGON2_MAX_CONCURRENT, de 1 a 64; sem a variável,
+	// min(NumCPU, 4).
+	Argon2MaxConcurrent int
 
 	// E-mail pelo Resend (spec §8). A chave é do operador; vazia, o canal
 	// de e-mail fica indisponível.
@@ -241,21 +247,39 @@ func Load(getenv func(string) string) (*Config, error) {
 		return http.CanonicalHeaderKey(raw)
 	}
 
+	// ARGON2_MAX_CONCURRENT: o teto de Argon2id simultâneos (A1 do Plano 10).
+	// Zero trancaria todo login; acima de 64 (4 GiB) o teto deixa de proteger
+	// a memória. O padrão é o mesmo de auth.DefaultArgon2MaxConcurrent (o
+	// config não importa o auth).
+	argon2 := func(name string) int {
+		raw := strings.TrimSpace(getenv(name))
+		if raw == "" {
+			return min(runtime.NumCPU(), 4)
+		}
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 1 || n > 64 {
+			errs = append(errs, fmt.Errorf("%s %q precisa ser um inteiro de 1 a 64", name, raw))
+			return 0
+		}
+		return n
+	}
+
 	cfg := &Config{
-		Role:           role,
-		HTTPAddr:       opt("HTTP_ADDR", ":8080"),
-		MetricsAddr:    metricsAddr("METRICS_ADDR"),
-		DatabaseURL:    req("DATABASE_URL"),
-		PublicBaseURL:  publicBaseURL("PUBLIC_BASE_URL"),
-		CORSOrigin:     req("CORS_ORIGIN"),
-		MasterKey:      key("MASTER_KEY"),
-		JWTSecret:      key("JWT_SECRET"),
-		IPHashKey:      key("IP_HASH_KEY"),
-		TrustedProxies: proxies("TRUSTED_PROXIES"),
-		ClientIPHeader: clientIPHeader("CLIENT_IP_HEADER"),
-		ShutdownGrace:  15 * time.Second,
-		ResendAPIKey:   strings.TrimSpace(getenv("RESEND_API_KEY")),
-		EmailFrom:      strings.TrimSpace(getenv("EMAIL_FROM")),
+		Role:                role,
+		HTTPAddr:            opt("HTTP_ADDR", ":8080"),
+		MetricsAddr:         metricsAddr("METRICS_ADDR"),
+		DatabaseURL:         req("DATABASE_URL"),
+		PublicBaseURL:       publicBaseURL("PUBLIC_BASE_URL"),
+		CORSOrigin:          req("CORS_ORIGIN"),
+		MasterKey:           key("MASTER_KEY"),
+		JWTSecret:           key("JWT_SECRET"),
+		IPHashKey:           key("IP_HASH_KEY"),
+		TrustedProxies:      proxies("TRUSTED_PROXIES"),
+		ClientIPHeader:      clientIPHeader("CLIENT_IP_HEADER"),
+		ShutdownGrace:       15 * time.Second,
+		Argon2MaxConcurrent: argon2("ARGON2_MAX_CONCURRENT"),
+		ResendAPIKey:        strings.TrimSpace(getenv("RESEND_API_KEY")),
+		EmailFrom:           strings.TrimSpace(getenv("EMAIL_FROM")),
 	}
 
 	// As duas variáveis de e-mail andam juntas. Sem nenhuma, o e-mail fica

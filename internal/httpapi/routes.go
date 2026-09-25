@@ -65,6 +65,14 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	// simplesmente não o guardaria, e o desenvolvimento local pararia. Em
 	// produção PUBLIC_BASE_URL é https, e o refresh nunca trafega em claro.
 	secureCookie := config.EhHTTPS(cfg.PublicBaseURL)
+	// O teto de Argon2id simultâneos (A1 do Plano 10) é do processo, e quem o
+	// paga é a API: o config.Load sempre o preenche; um Config montado à mão
+	// (testes) sem ele fica com o padrão.
+	if cfg.Argon2MaxConcurrent > 0 {
+		auth.SetArgon2MaxConcurrent(cfg.Argon2MaxConcurrent)
+	} else {
+		auth.SetArgon2MaxConcurrent(auth.DefaultArgon2MaxConcurrent())
+	}
 	h := NewAuthHandlers(d.Store, d.Sessions, d.TOTP, d.Clock, cfg.JWTSecret, secureCookie, proxiesDe(cfg))
 	th := NewTargetHandlers(d.Targets, d.Clock)
 	ih := NewIncidentHandlers(d.Incidents)
