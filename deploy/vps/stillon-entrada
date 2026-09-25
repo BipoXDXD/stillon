@@ -13,8 +13,9 @@
 #       O tar (layout OCI, sem nome) chega pela entrada padrão. Códigos: 0
 #       deploy saudável; 2 pedido recusado (uso, argumento); 3 imagem
 #       divergente (o ID carregado não é o pedido, ou o tar traz nome, ou foge
-#       do layout OCI do crane); 4 não ficou saudável e o rollback foi feito; 1
-#       qualquer outro erro. Precisa do jq na VPS (docs/deploy/vps.md).
+#       do layout OCI do crane); 4 não ficou saudável e o rollback foi feito
+#       (ou, no primeiro deploy, sem anterior, o app foi parado e removido);
+#       1 qualquer outro erro. Precisa do jq na VPS (docs/deploy/vps.md).
 #
 #   ssh deploy@VPS backup > stillon-<data>.dump.age
 #       O dump do banco, restaurado e conferido pelo deploy/backup/backup.sh
@@ -86,7 +87,10 @@ PEDIDO=
 fim() {
     local codigo=$? sentido
     [ -z "$TMP_DEPLOY" ] || rm -rf "$TMP_DEPLOY"
-    [ -z "$RESTAURO" ] || docker rm -f "$RESTAURO" >/dev/null 2>&1 || true
+    # Com -v: um volume anônimo do descartável (o VOLUME da imagem do
+    # postgres, se um dia o --tmpfs não o cobrir) sai junto, e não sobra um
+    # por backup.
+    [ -z "$RESTAURO" ] || docker rm -f -v "$RESTAURO" >/dev/null 2>&1 || true
     if [ -n "$TMP_BACKUP" ]; then
         shred -u "$TMP_BACKUP"/* 2>/dev/null || true
         rm -rf "$TMP_BACKUP"
@@ -134,6 +138,66 @@ registrar() {
 }
 
 dc() { COMPOSE_FILE="$ARQUIVOS_COMPOSE" docker compose --project-directory "$DIR" "$@"; }
+
+# conteineres <servico>: os IDs dos contêineres do serviço, em qualquer
+# estado, pelos rótulos do compose e sem os one-off (um `compose run` que
+# sobrou não é o serviço). O `dc ps -a` os incluiria. PROJETO vem do deploy.
+PROJETO=
+conteineres() {
+    docker ps -aq --filter "label=com.docker.compose.project=$PROJETO" \
+        --filter "label=com.docker.compose.service=$1" --filter label=com.docker.compose.oneoff=False
+}
+
+# subir <sha> <id>: sobe a pilha com a versão <sha> e sai 0 só se ela ficou
+# saudável, conferida AQUI, e não pelo código do `up --wait`: o docker compose
+# até a v5.5.0 sai 0 quando o --wait-timeout vence com um contêiner ainda em
+# `starting` (o laço da espera volta sem erro quando o prazo acaba, numa
+# corrida com o tique de 500 ms; corrigido na v5.5.1). Saudável: cada serviço
+# com um contêiner só, `running` (nunca `restarting`), `healthy` onde há
+# healthcheck, e o do app com a etiqueta $IMAGEM:<sha> e o image-id <id> (o
+# contêiner criado para esta versão, e não um que sobrou). Um `starting`
+# segue esperando até ESPERA_S depois do início do `up`; depois disso, falha.
+subir() {
+    local sha=$1 id=$2 prazo servicos s ctr status saude imagem imagem_id pronto
+    prazo=$(($(date +%s) + ESPERA_S))
+    STILLON_SHA=$sha dc up -d --wait --wait-timeout "$ESPERA_S" || return 1
+    servicos=$(STILLON_SHA=$sha dc config --services) || return 1
+    while :; do
+        pronto=1
+        for s in $servicos; do
+            ctr=$(conteineres "$s") || return 1
+            if [ -z "$ctr" ] || [ "$(wc -l <<<"$ctr")" -ne 1 ]; then
+                echo "o serviço $s tem $(grep -c . <<<"$ctr") contêineres, e não 1"
+                return 1
+            fi
+            read -r status saude imagem imagem_id < <(docker inspect -f \
+                '{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{else}}-{{end}} {{.Config.Image}} {{.Image}}' "$ctr") ||
+                return 1
+            if [ "$s" = app ] && { [ "$imagem" != "$IMAGEM:$sha" ] || [ "$imagem_id" != "$id" ]; }; then
+                echo "o app roda $imagem ($imagem_id), e não $IMAGEM:$sha ($id)"
+                return 1
+            fi
+            if [ "$status" != running ]; then
+                echo "o $s está $status"
+                return 1
+            fi
+            case "$saude" in
+                healthy | -) ;;
+                starting) pronto=0 ;;
+                *)
+                    echo "o $s está $saude"
+                    return 1
+                    ;;
+            esac
+        done
+        [ "$pronto" = 0 ] || return 0
+        if [ "$(date +%s)" -ge "$prazo" ]; then
+            echo "o up saiu, mas a pilha segue em starting depois de ${ESPERA_S} s"
+            return 1
+        fi
+        sleep 1
+    done
+}
 
 # O ID que o deploy.yml manda é o digest do manifesto linux/amd64, e só o
 # image store containerd devolve esse valor no `docker load` e no `.Id` (no
@@ -217,7 +281,7 @@ conferir_tar() {
 }
 
 deploy() {
-    local sha=$1 id=$2 tmp tam saida carregados anterior existente
+    local sha=$1 id=$2 tmp tam saida carregados anterior existente id_anterior
     command -v jq >/dev/null || sair 1 "o jq não está instalado (a entrada confere o tar com ele): veja docs/deploy/vps.md"
     exigir_containerd
 
@@ -270,9 +334,12 @@ deploy() {
         docker rmi "$existente" >/dev/null 2>&1 || true
     fi
 
+    if ! PROJETO=$(dc config --format json | jq -r .name) || [ -z "$PROJETO" ]; then
+        sair 1 "o docker compose não leu o nome do projeto em $ARQUIVOS_COMPOSE"
+    fi
     anterior=$(cat "$DIR/versao" 2>/dev/null || true)
     echo "deploy de $sha (antes: ${anterior:-nenhuma})"
-    if STILLON_SHA=$sha dc up -d --wait --wait-timeout "$ESPERA_S"; then
+    if subir "$sha" "$id"; then
         # 0644: não são segredo, e o dono os lê sem sudo (o umask é 077).
         echo "$sha" > "$DIR/versao.novo" && chmod 644 "$DIR/versao.novo" && mv "$DIR/versao.novo" "$DIR/versao"
         if [ -n "$anterior" ] && [ "$anterior" != "$sha" ]; then
@@ -287,14 +354,36 @@ deploy() {
         exit 0
     fi
 
-    echo "o app não ficou saudável em ${ESPERA_S} s; o log dele:"
+    echo "a pilha não ficou saudável em ${ESPERA_S} s; o log do app:"
     dc logs --no-color --tail 100 app || true
     if [ -z "$anterior" ]; then
-        dc stop app || true
-        sair 4 "primeiro deploy e sem versão anterior: o app ficou parado"
+        # Parado E removido, e conferido: o app doente fica em laço de
+        # reinício (restart: unless-stopped), e o código de um `stop` nele
+        # não prova que ele parou. O `compose rm -s -f` para e remove só o
+        # que ficou parado: o -f dele só dispensa a confirmação, e um
+        # contêiner em `restarting` conta como rodando e é pulado. O que
+        # sobrar sai pelo `docker rm -f`, que mata e marca o contêiner para
+        # remoção (um contêiner marcado o Docker não reinicia). O log dele já
+        # ficou logo acima (e no entrada.log).
+        local _ restantes
+        for _ in 1 2 3; do
+            dc rm -s -f app || true
+            restantes=$(conteineres app) || true
+            # shellcheck disable=SC2086 # um ID por palavra
+            [ -z "$restantes" ] || docker rm -f $restantes >/dev/null || true
+            if restantes=$(conteineres app) && [ -z "$restantes" ]; then
+                sair 4 "primeiro deploy e sem versão anterior: o app ficou parado (e removido)"
+            fi
+            sleep 2
+        done
+        dc ps -a app || true
+        sair 1 "primeiro deploy e sem versão anterior, e o app não saiu do ar depois de 3 tentativas: veja docs/deploy/vps.md"
     fi
-    # A etiqueta atual só anda no sucesso: continua na anterior.
-    if STILLON_SHA=$anterior dc up -d --wait --wait-timeout "$ESPERA_S"; then
+    # A etiqueta atual só anda no sucesso: continua na anterior. O image-id
+    # dela é o que a etiqueta $IMAGEM:<anterior> tem aqui (a poda a guarda).
+    id_anterior=$(docker image inspect -f '{{.Id}}' "$IMAGEM:$anterior") ||
+        sair 1 "a imagem de $anterior ($IMAGEM:$anterior) sumiu: o rollback não foi tentado; veja docs/deploy/vps.md"
+    if subir "$anterior" "$id_anterior"; then
         sair 4 "rollback feito: $anterior de volta no ar; $sha não subiu"
     fi
     dc logs --no-color --tail 100 app || true
@@ -331,9 +420,10 @@ backup() {
     img=$(docker inspect -f '{{.Config.Image}}' "$db")
 
     # Sob a trava: o que sobrou de um backup morto por SIGKILL (o dump em
-    # claro na memória, o postgres descartável) sai agora.
+    # claro na memória, o postgres descartável com os volumes anônimos dele)
+    # sai agora.
     find "$SHM_BASE" -maxdepth 1 -name 'stillon-backup.*' -exec rm -rf {} + || true
-    docker ps -aq --filter name=stillon-restauro- | xargs -r docker rm -f >/dev/null 2>&1 || true
+    docker ps -aq --filter name=stillon-restauro- | xargs -r docker rm -f -v >/dev/null 2>&1 || true
     nome=stillon-restauro-$$
     RESTAURO=$nome
     tmp=$(mktemp -d "$SHM_BASE/stillon-backup.XXXXXX")

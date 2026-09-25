@@ -1190,14 +1190,22 @@ O próximo **deploy** apaga, antes de começar, os temporários que o morto deix
 
 **Se o primeiro deploy sair com 4**, o app **ficou parado**: no primeiro deploy não há versão
 anterior para onde voltar (a mensagem é
-`primeiro deploy e sem versão anterior: o app ficou parado`). O site responde `502`, e o Caddy e
-o banco ficam de pé. Quase sempre é o `.env` (uma variável mal preenchida no 3.4) ou o DNS. Veja
-por que o app não subiu:
+`primeiro deploy e sem versão anterior: o app ficou parado (e removido)`). O site responde `502`, e
+o Caddy e o banco ficam de pé. Quase sempre é o `.env` (uma variável mal preenchida no 3.4) ou o
+DNS. O contêiner do app é **removido**, e não só parado: um app que morre no boot fica em laço de
+reinício (`restart: unless-stopped`), e só a remoção garante que ele não volta. Por isso o
+`logs app` do compose fica vazio: as últimas 100 linhas do log do app estão no log do job e no
+`entrada.log`, logo depois de `a pilha não ficou saudável em 90 s; o log do app:`. Veja por que o app
+não subiu:
 
 ```bash
-sudo docker compose -f /opt/stillon/compose.prod.yaml logs app | tail -30
-sudo docker compose -f /opt/stillon/compose.prod.yaml ps -a
+tail -n 150 /opt/stillon/entrada.log
 ```
+
+(Se a entrada sair com **1** e `o app não saiu do ar depois de 3 tentativas`, o contêiner do app
+seguiu de pé: `sudo docker compose -f /opt/stillon/compose.prod.yaml ps -a` mostra o estado, e
+`sudo docker rm -f $(sudo docker compose -f /opt/stillon/compose.prod.yaml ps -aq app)` o mata e
+o remove. O `compose rm` não serve aqui: ele pula um contêiner em `restarting`.)
 
 O app diz no boot o que falta ou o que está errado (uma variável ausente, uma chave fora do
 formato, o banco recusando o papel). Corrija a causa (por exemplo, `sudo nano /opt/stillon/.env`)
@@ -1827,6 +1835,7 @@ resolve** (sai 3 outra vez), e não é adulteração. Dois caminhos:
    sudo ANT="$ANT" ATUAL="$ATUAL" flock -w 600 /opt/stillon/.entrada.trava sh -ec '
      docker tag "stillon:$ANT" stillon:atual
      docker compose -f /opt/stillon/compose.prod.yaml up -d --force-recreate --wait --wait-timeout 90 app
+     test "$(docker inspect -f "{{.State.Health.Status}}" "$(docker compose -f /opt/stillon/compose.prod.yaml ps -q app)")" = healthy
      echo "$ATUAL" > /opt/stillon/versao-anterior
      echo "$ANT" > /opt/stillon/versao
      echo "no ar: $ANT"
@@ -1835,7 +1844,8 @@ resolve** (sai 3 outra vez), e não é adulteração. Dois caminhos:
    **Deve aparecer:** o `app` `Healthy` e `no ar: <o SHA anterior>`; `cat /opt/stillon/versao`
    mostra o mesmo. Os dois arquivos de versão são atualizados à mão porque o próximo deploy os
    usa para saber para onde voltar se ele mesmo falhar. Se o `up` não ficar saudável, o comando
-   para antes de mexer neles; volte para a versão que estava no ar com
+   para antes de mexer neles (o `test` confere a saúde pelo próprio Docker: até a v5.5.0, o
+   `docker compose up --wait` pode sair 0 com o app ainda em `starting` quando o prazo vence); volte para a versão que estava no ar com
    `sudo docker tag "stillon:$ATUAL" stillon:atual` e `vc up -d --force-recreate app`, e siga
    pelo caminho 1.
 
@@ -1862,8 +1872,10 @@ trava (a primeira linha de código 2 da tabela e o 1 da trava ocupada) não cheg
 | 3 | `stillon:<sha> já existe com outra imagem (…)` | só com o SHA no ar ou o anterior, depois de um `v*`: **rodar de novo não resolve**; veja "Voltar uma versão" acima |
 | 3 | `a imagem carregada é …, e o deploy pediu …`, `o index.json do tar não é uma imagem só, sem nome, com o manifesto …`, `o tar não trouxe exatamente uma imagem sem nome`, `o que chegou não é um tar legível`, ou outra que começa com `o tar` (layout OCI, membro repetido ou estranho; as duas de disco cheio são código 1) | rodar de novo **uma vez**; se repetir, a imagem mudou no caminho (ou o formato do `crane` mudou): não force, investigue |
 | 4 | `rollback feito: <anterior> de volta no ar; <sha> não subiu` | a anterior já voltou: o log do job traz o log do app; corrija e publique outra versão |
-| 4 | `primeiro deploy e sem versão anterior: o app ficou parado` | **o site está fora** (não há anterior): passo 4.8, "Se o primeiro deploy sair com 4" |
+| 4 | `primeiro deploy e sem versão anterior: o app ficou parado (e removido)` | **o site está fora** (não há anterior): passo 4.8, "Se o primeiro deploy sair com 4" |
+| 1 | `primeiro deploy e sem versão anterior, e o app não saiu do ar depois de 3 tentativas: veja docs/deploy/vps.md` | **o site está fora**, e o app doente segue de pé: passo 4.8, "Se o primeiro deploy sair com 4" |
 | 1 | `o rollback para <anterior> também não ficou saudável: veja docs/deploy/vps.md` | **o site está fora**: "O rollback também não ficou saudável", logo depois desta seção |
+| 1 | `a imagem de <anterior> (stillon:<anterior>) sumiu: o rollback não foi tentado; veja docs/deploy/vps.md` | **o site está fora**, e a imagem da versão que estava no ar não está mais na VPS: rode o workflow com o SHA de `cat /opt/stillon/versao` (passo 4.8), que a manda de novo |
 | 1 | `o jq não está instalado (…): veja docs/deploy/vps.md` | `sudo apt install -y jq` (passo 3.3) e rode de novo |
 | 1 | `o Docker não usa o image store containerd; veja docs/deploy/vps.md (Docker)` | `sudo docker info -f '{{.DriverStatus}}'` e o `daemon.json` do passo 3.2 |
 | 1 | `outra operação da entrada não terminou em 10 min` | um backup (ou outro deploy) segurou a trava: veja o `entrada.log`, espere terminar e rode de novo |

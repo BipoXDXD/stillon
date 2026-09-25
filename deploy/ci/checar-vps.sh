@@ -51,7 +51,7 @@ limpar() {
         return
     fi
     # Um postgres descartável esquecido pela entrada seguraria a rede.
-    docker ps -aq --filter name=stillon-restauro- | xargs -r docker rm -f >/dev/null 2>&1 || true
+    docker ps -aq --filter name=stillon-restauro- | xargs -r docker rm -f -v >/dev/null 2>&1 || true
     dc down -v --remove-orphans >/dev/null 2>&1 || true
     for r in "$REPO_TESTE" "$REPO_TESTE-fonte"; do
         docker image ls --format '{{.Repository}}:{{.Tag}}' "$r" | xargs -r docker rmi >/dev/null 2>&1 || true
@@ -155,6 +155,19 @@ versao() { cat "$DIR/versao" 2>/dev/null || echo -; }
 imagem_do_app() { docker inspect -f '{{.Config.Image}}' "$(dc ps -q app)"; }
 # no_ar <sha>: a versão gravada e a imagem do app são as desse SHA.
 no_ar() { [ "$(versao)" = "$1" ] && [ "$(imagem_do_app)" = "$REPO_TESTE:$1" ]; }
+# Os contêineres do app em qualquer estado, pelo docker (e não pelo compose
+# que a entrada usa), e a evidência para a mensagem de uma falha: o estado de
+# cada um e o fim da saída de erro da entrada.
+apps() { docker ps -aq --filter "label=com.docker.compose.project=$PROJETO" --filter label=com.docker.compose.service=app; }
+estado() {
+    local c
+    echo
+    for c in $(apps); do
+        docker inspect -f '  app {{.Name}}: {{.State.Status}}, saúde {{if .State.Health}}{{.State.Health.Status}}{{else}}-{{end}}, {{.RestartCount}} reinícios, imagem {{.Config.Image}}' "$c"
+    done
+    echo "  fim da saída de erro da entrada:"
+    grep -v '^{' "$TARS/erro" | tail -n 12 | sed 's/^/    /'
+}
 
 # ---------------------------------------------------------------------------
 # 1. O compose.prod.yaml sozinho (o que vai para a VPS), pela config resolvida.
@@ -243,13 +256,14 @@ ID_DOENTE=$(fonte doente 'ENV ARGON2_MAX_CONCURRENT=999')
 SHA_A=$(sha_de a)
 SHA_DOENTE=$(sha_de doente)
 
-# 2a. Primeiro deploy que não fica saudável: sem versão anterior, o app para
-#     e o código é 4.
+# 2a. Primeiro deploy que não fica saudável: sem versão anterior, o app sai
+#     do ar (parado e removido: nenhum contêiner do app, em estado nenhum,
+#     nem reiniciando) e o código é 4.
 c=$(entrada "deploy $SHA_DOENTE $ID_DOENTE" < "$TARS/doente.tar")
-[ "$c" = 4 ] || falhar "primeiro deploy doente saiu $c, queria 4: $(tail -3 "$TARS/erro")"
+[ "$c" = 4 ] || falhar "primeiro deploy doente saiu $c, queria 4: $(estado)"
 grep -q 'sem versão anterior' "$TARS/erro" || falhar "primeiro deploy doente não disse que não havia versão anterior"
 [ "$(versao)" = - ] || falhar "primeiro deploy doente gravou a versão $(versao)"
-[ -z "$(dc ps -q app)" ] || falhar "primeiro deploy doente deixou o app de pé"
+[ -z "$(apps)" ] || falhar "primeiro deploy doente deixou contêiner do app: $(estado)"
 
 # 2b. O deploy saudável.
 c=$(entrada "deploy $SHA_A $ID_A" < "$TARS/a.tar")
@@ -555,21 +569,23 @@ ok "stillon-entrada: imagem divergente, tar com nome, os desvios de layout e o S
 
 # 8c. Rollback: um deploy que não fica saudável volta à versão anterior.
 c=$(entrada "deploy $SHA_DOENTE $ID_DOENTE" < "$TARS/doente.tar")
-[ "$c" = 4 ] || falhar "deploy doente saiu $c, queria 4: $(tail -3 "$TARS/erro")"
+[ "$c" = 4 ] || falhar "deploy doente saiu $c, queria 4: $(estado)"
 grep -q 'rollback feito' "$TARS/erro" || falhar "o deploy doente não disse que fez o rollback"
 grep -q 'ARGON2_MAX_CONCURRENT' "$TARS/erro" || falhar "o deploy doente não mostrou o log do app"
 [ "$(versao)" = "$SHA_A" ] || falhar "depois do rollback, versao = $(versao)"
 [ "$(imagem_do_app)" = "$REPO_TESTE:$SHA_A" ] || falhar "depois do rollback o app roda $(imagem_do_app)"
 [ "$(docker image inspect -f '{{.Id}}' "$REPO_TESTE:atual")" = "$ID_A" ] || falhar "depois do rollback, atual não é a versão no ar"
-[ "$(docker inspect -f '{{.State.Health.Status}}' "$(dc ps -q app)")" = healthy ] || falhar "depois do rollback o app não está saudável"
+[ "$(docker inspect -f '{{.State.Health.Status}}' "$(dc ps -q app)")" = healthy ] || falhar "depois do rollback o app não está saudável: $(estado)"
 [ "$(cu -o /dev/null -w '%{http_code}' "$BASE/healthz")" = 200 ] || falhar "depois do rollback, /healthz pelo Caddy não deu 200"
 ok "stillon-entrada: deploy doente volta à versão anterior (4)"
 
 # 8c'. Rollback por tempo esgotado: um app que fica de pé e nunca saudável
 #      (o processo não cai; o healthcheck sempre falha). A imagem doente de
 #      cima morre no boot e o --wait volta em segundos; esta prova a espera
-#      de ESPERA_S inteira. A base é a imagem do db (já na máquina, com sh).
-printf '%s\n' "FROM $pg" \
+#      de ESPERA_S inteira. A base é o ubuntu:24.04 (o mesmo do 8f, com sh):
+#      a do db declara VOLUME, e cada contêiner dela deixaria um volume
+#      anônimo para trás no rollback.
+printf '%s\n' "FROM ubuntu:24.04" \
     "RUN printf '#!/bin/sh\\nexit 1\\n' > /stillon && chmod 755 /stillon" \
     'ENTRYPOINT ["/bin/sh", "-c", "trap \"exit 0\" TERM; while :; do sleep 1; done", "--"]' |
     docker build -q -t "$REPO_TESTE-fonte:lento" - >/dev/null
@@ -578,12 +594,12 @@ SHA_LENTO=$(sha_de lento)
 inicio=$(date +%s)
 c=$(entrada "deploy $SHA_LENTO $ID_LENTO" < "$TARS/lento.tar")
 duracao=$(($(date +%s) - inicio))
-[ "$c" = 4 ] || falhar "deploy que nunca fica saudável saiu $c, queria 4: $(tail -3 "$TARS/erro")"
+[ "$c" = 4 ] || falhar "deploy que nunca fica saudável saiu $c (em $duracao s), queria 4: $(estado)"
 grep -q 'rollback feito' "$TARS/erro" || falhar "o deploy lento não disse que fez o rollback"
 [ "$duracao" -ge 45 ] || falhar "o deploy lento voltou em $duracao s, antes da espera de 45 s: não foi o tempo esgotado"
 [ "$(versao)" = "$SHA_A" ] || falhar "depois do rollback por tempo, versao = $(versao)"
 [ "$(imagem_do_app)" = "$REPO_TESTE:$SHA_A" ] || falhar "depois do rollback por tempo o app roda $(imagem_do_app)"
-[ "$(docker inspect -f '{{.State.Health.Status}}' "$(dc ps -q app)")" = healthy ] || falhar "depois do rollback por tempo o app não está saudável"
+[ "$(docker inspect -f '{{.State.Health.Status}}' "$(dc ps -q app)")" = healthy ] || falhar "depois do rollback por tempo o app não está saudável: $(estado)"
 ok "stillon-entrada: deploy que nunca fica saudável volta à anterior depois da espera (4)"
 
 # 8c''. A conexão cai no meio do deploy (I1): o runner cancelado ou perdido
@@ -595,7 +611,7 @@ head -c $((1024 * 1024 + 1)) /dev/zero > "$DIR/entrada.log"
 c=0
 env -i PATH="$PATH" HOME="$HOME" SSH_ORIGINAL_COMMAND="deploy $SHA_DOENTE $ID_DOENTE" \
     bash "$ENTRADA" < "$TARS/doente.tar" > "$TARS/saida" 2> >(head -n 1 > "$TARS/primeira") || c=$?
-[ "$c" = 4 ] || falhar "com a conexão caída no meio, o deploy doente saiu $c, queria 4 (rollback feito)"
+[ "$c" = 4 ] || falhar "com a conexão caída no meio, o deploy doente saiu $c, queria 4 (rollback feito): $(estado; tail -n 12 "$DIR/entrada.log")"
 no_ar "$SHA_A" || falhar "com a conexão caída no meio, o rollback não aconteceu: versao $(versao), app $(imagem_do_app)"
 [ "$(docker inspect -f '{{.State.Health.Status}}' "$(dc ps -q app)")" = healthy ] ||
     falhar "com a conexão caída no meio, o app não ficou saudável"
@@ -609,6 +625,57 @@ grep -q 'ARGON2_MAX_CONCURRENT' "$DIR/entrada.log" || falhar "o entrada.log não
 [ "$(stat -c %a "$DIR/entrada.log")" = 644 ] || falhar "o entrada.log com modo $(stat -c %a "$DIR/entrada.log"), queria 644"
 rm -f "$DIR/entrada.log.1"
 ok "stillon-entrada: a conexão cai no meio e o rollback acontece; entrada.log com teto"
+
+# 8c'''. O compose que diz "saudável" sem estar: até a v5.5.0, o `up --wait
+#        --wait-timeout` sai 0 quando o prazo vence com o app em `starting`
+#        (uma corrida; o 8c' a pega só às vezes). Aqui, sempre: um docker
+#        falso na frente do PATH tira o --wait do `compose up` e sai 0. A
+#        entrada não pode acreditar nele: confere ela mesma o contêiner novo,
+#        faz o rollback (que o compose falso também diz saudável) e sai 4.
+mkdir -p "$TARS/bin-compose"
+cat > "$TARS/bin-compose/docker" <<FIM
+#!/usr/bin/env bash
+if [[ " \$* " == *" compose "*" up "* ]]; then
+    a=()
+    pula=0
+    for x in "\$@"; do
+        if [ "\$pula" = 1 ]; then pula=0; continue; fi
+        case "\$x" in --wait) continue ;; --wait-timeout) pula=1; continue ;; esac
+        a+=("\$x")
+    done
+    "$(command -v docker)" "\${a[@]}" || true
+    exit 0
+fi
+exec "$(command -v docker)" "\$@"
+FIM
+chmod +x "$TARS/bin-compose/docker"
+sed 's|^export PATH=.*|export PATH="$PATH"|' "$ENTRADA" > "$TARS/entrada-compose"
+c=0
+env -i PATH="$TARS/bin-compose:$PATH" HOME="$HOME" SSH_ORIGINAL_COMMAND="deploy $SHA_DOENTE $ID_DOENTE" \
+    bash "$TARS/entrada-compose" < "$TARS/doente.tar" > "$TARS/saida" 2> "$TARS/erro" || c=$?
+[ "$c" = 4 ] || falhar "com o compose que diz saudável sem esperar, o deploy doente saiu $c, queria 4: $(estado)"
+grep -q 'rollback feito' "$TARS/erro" || falhar "com o compose que diz saudável sem esperar, não houve rollback: $(estado)"
+no_ar "$SHA_A" || falhar "com o compose que diz saudável sem esperar, versao $(versao), app $(imagem_do_app)"
+[ "$(docker inspect -f '{{.State.Health.Status}}' "$(dc ps -q app)")" = healthy ] ||
+    falhar "com o compose que diz saudável sem esperar, o app não ficou saudável: $(estado)"
+# O mesmo compose falso com a imagem lenta (de pé e sempre em `starting` na
+# espera): o caso da causa raiz, sempre. O `up` volta na hora; a entrada
+# espera ela mesma até ESPERA_S, sai pelo prazo (e não por um `unhealthy`,
+# que só viria depois dele) e faz o rollback.
+inicio=$(date +%s)
+c=0
+env -i PATH="$TARS/bin-compose:$PATH" HOME="$HOME" SSH_ORIGINAL_COMMAND="deploy $SHA_LENTO $ID_LENTO" \
+    bash "$TARS/entrada-compose" < "$TARS/lento.tar" > "$TARS/saida" 2> "$TARS/erro" || c=$?
+duracao=$(($(date +%s) - inicio))
+[ "$c" = 4 ] || falhar "com o compose falso, o deploy lento saiu $c (em $duracao s), queria 4: $(estado)"
+[ "$duracao" -ge 45 ] || falhar "com o compose falso, o deploy lento voltou em $duracao s, antes da espera de 45 s"
+grep -q 'segue em starting depois de 45 s' "$TARS/erro" ||
+    falhar "com o compose falso, o deploy lento não saiu pelo prazo da espera: $(estado)"
+grep -q 'rollback feito' "$TARS/erro" || falhar "com o compose falso, o deploy lento não fez o rollback: $(estado)"
+no_ar "$SHA_A" || falhar "com o compose falso e o deploy lento, versao $(versao), app $(imagem_do_app)"
+[ "$(docker inspect -f '{{.State.Health.Status}}' "$(dc ps -q app)")" = healthy ] ||
+    falhar "com o compose falso e o deploy lento, o app não ficou saudável: $(estado)"
+ok "stillon-entrada: não acredita no código do up --wait; confere ela mesma o contêiner novo e espera o prazo (4)"
 
 # 8d. Deploys seguidos: versao-anterior anda, e ficam as 3 últimas imagens
 #     (as 3 últimas que ficaram no ar; a doente sai), fora a etiqueta atual.
@@ -750,6 +817,12 @@ ok "sudoers: só a entrada, sem argumento, com o SSH_ORIGINAL_COMMAND"
 # ---------------------------------------------------------------------------
 # 9. stillon-entrada backup: só texto cifrado na saída padrão.
 # ---------------------------------------------------------------------------
+# Os volumes antes dos backups: no fim do bloco, nenhum volume novo fora os da
+# pilha (o descartável, inclusive o de um backup morto, sai com os dele).
+volumes() {
+    docker volume ls -q | sort | comm -23 - <(docker volume ls -q --filter "label=com.docker.compose.project=$PROJETO" | sort)
+}
+volumes_antes=$(volumes)
 # Os scripts do backup no layout que a entrada espera ($DIR/deploy), tais e
 # quais os do repositório; a chave do age gerada aqui (a privada fica em
 # $TARS, só para conferir).
@@ -766,7 +839,11 @@ c=$(entrada "backup extra" < /dev/null)
 # postgres descartável. O próximo backup apaga os dois, já sob a trava.
 mkdir -p "$TARS/stillon-backup.morto"
 echo 'PGDMP em claro' > "$TARS/stillon-backup.morto/stillon.dump"
+# Sem o --tmpfs da entrada: o VOLUME da imagem do postgres vira um volume
+# anônimo, que tem de sair junto com ele.
 docker run -d --name stillon-restauro-morto --entrypoint sleep "$pg" 600 >/dev/null
+[ -n "$(docker inspect -f '{{range .Mounts}}{{if eq .Type "volume"}}{{.Name}}{{end}}{{end}}' stillon-restauro-morto)" ] ||
+    falhar "controle: o descartável morto do teste não tem volume anônimo"
 c=$(entrada backup < /dev/null)
 [ -e "$TARS/stillon-backup.morto" ] && falhar "o dump em claro de um backup morto ficou para trás"
 docker inspect stillon-restauro-morto >/dev/null 2>&1 && falhar "o postgres descartável de um backup morto ficou para trás"
@@ -858,6 +935,9 @@ for caso in "DF_PCT=91 disco da VPS" "DF_TAMANHO=1000000 volume do banco"; do
     fi
 done
 ok "stillon-entrada backup: disco ou volume acima de 85% manda o cifrado e sai 4"
+sobras=$(comm -13 <(echo "$volumes_antes") <(volumes))
+[ -z "$sobras" ] || falhar "os backups deixaram volumes: $(tr "\n" " " <<<"$sobras")"
+ok "stillon-entrada backup: nenhum volume sobra dos descartáveis"
 
 if [ "$falhas" -gt 0 ]; then
     dc logs >&2
