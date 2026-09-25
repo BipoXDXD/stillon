@@ -125,24 +125,32 @@ conferir_tar() {
     [ -z "$(sed -E 's|^\./||; s|/$||' <<<"$membros" | grep -v '^$' | sort | uniq -d)" ] ||
         sair 3 "o tar traz o mesmo membro duas vezes"
     mkdir "$dir/x"
+    # O tar já foi conferido: se a extração falha, é a máquina (disco cheio).
     tar -xf "$dir/imagem.tar" -C "$dir/x" --no-same-owner --no-same-permissions ||
-        sair 3 "o tar não se extraiu"
+        sair 1 "o tar não se extraiu em $dir (disco cheio?)"
     rm -f "$dir/imagem.tar"
-    [ -f "$dir/x/oci-layout" ] && [ -f "$dir/x/index.json" ] ||
-        sair 3 "o tar não é um layout OCI (falta oci-layout ou index.json)"
-    jq -e --arg id "$id" '
+    [ -f "$dir/x/oci-layout" ] && [ -f "$dir/x/index.json" ] && [ -d "$dir/x/blobs" ] ||
+        sair 3 "o tar não é um layout OCI (falta oci-layout, index.json ou blobs)"
+    # -s: o arquivo inteiro, com um valor JSON só (sem ele, o -e julgaria só o
+    # último de vários, e o containerd lê o primeiro).
+    jq -e -s --arg id "$id" 'length == 1 and (.[0] |
+        type == "object" and
         (keys - ["schemaVersion", "mediaType", "manifests"]) == [] and
         (.manifests | type) == "array" and (.manifests | length) == 1 and
         (.manifests[0] | type) == "object" and
         (.manifests[0] | keys - ["mediaType", "digest", "size", "platform"]) == [] and
-        .manifests[0].digest == $id' "$dir/x/index.json" >/dev/null 2>&1 ||
+        .manifests[0].digest == $id)' "$dir/x/index.json" >/dev/null 2>&1 ||
         sair 3 "o index.json do tar não é uma imagem só, sem nome, com o manifesto $id"
 }
 
 deploy() {
-    local sha=$1 id=$2 tmp tam saida carregados anterior
+    local sha=$1 id=$2 tmp tam saida carregados anterior existente
+    command -v jq >/dev/null || sair 1 "o jq não está instalado (a entrada confere o tar com ele): veja docs/deploy/vps.md"
     exigir_containerd
 
+    # Sob a trava: nenhum outro deploy está de pé. O que sobrou aqui é de um
+    # deploy morto por SIGKILL (o trap não rodou).
+    find "$TMP_BASE" -maxdepth 1 -name '.vigilume-entrada.*' -exec rm -rf {} + || true
     tmp=$(mktemp -d "$TMP_BASE/.vigilume-entrada.XXXXXX")
     # shellcheck disable=SC2064 # o caminho é fixado agora, de propósito
     trap "rm -rf '$tmp'" EXIT
@@ -152,7 +160,15 @@ deploy() {
     [ "$tam" -le "$TETO_BYTES" ] || uso "a imagem passa de $TETO_BYTES bytes"
 
     conferir_tar "$tmp" "$id"
-    tar -cf "$tmp/refeito.tar" -C "$tmp/x" oci-layout index.json blobs
+    # A etiqueta $IMAGEM:<sha> é o que o rollback sobe: se ela já existe com
+    # OUTRA imagem, etiquetar por cima trocaria a versão boa (inclusive a no
+    # ar) pela nova, antes do healthcheck. Com a mesma, é o redeploy e segue.
+    existente=$(docker image inspect -f '{{.Id}}' "$IMAGEM:$sha" 2>/dev/null || true)
+    if [ -n "$existente" ] && [ "$existente" != "$id" ]; then
+        sair 3 "$IMAGEM:$sha já existe com outra imagem ($existente); o deploy pediu $id"
+    fi
+    tar -cf "$tmp/refeito.tar" -C "$tmp/x" oci-layout index.json blobs ||
+        sair 1 "o tar refeito não se gravou em $tmp (disco cheio?)"
     rm -rf "$tmp/x"
     saida=$(docker load -i "$tmp/refeito.tar") || sair 1 "docker load falhou"
     rm -f "$tmp/refeito.tar"
@@ -215,6 +231,10 @@ backup() {
     ip=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$db")
     img=$(docker inspect -f '{{.Config.Image}}' "$db")
 
+    # Sob a trava: o que sobrou de um backup morto por SIGKILL (o dump em
+    # claro na memória, o postgres descartável) sai agora.
+    find "$SHM_BASE" -maxdepth 1 -name 'vigilume-backup.*' -exec rm -rf {} + || true
+    docker ps -aq --filter name=vigilume-restauro- | xargs -r docker rm -f >/dev/null 2>&1 || true
     nome=vigilume-restauro-$$
     tmp=$(mktemp -d "$SHM_BASE/vigilume-backup.XXXXXX")
     # shellcheck disable=SC2064 # nome e caminho fixados agora, de propósito

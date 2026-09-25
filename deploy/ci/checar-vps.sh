@@ -464,20 +464,32 @@ jq -c --arg n "$REPO_TESTE:atual" '[{Config: ("blobs/" + (.config.digest | sub("
     sed 's/"RepoTags":\[/"RepoTags": [/' > "$TARS/manifest-v12.json"
 grep -q '"RepoTags": \[' "$TARS/manifest-v12.json" || falhar "controle: o manifest.json não tem o espaço"
 # montar <saida> <nome no tar>=<arquivo> ...: um tar com esses membros, na
-# ordem, com os nomes exatamente como dados (o GNU tar os normalizaria).
+# ordem, com os nomes exatamente como dados (o GNU tar os normalizaria). Em
+# vez de um arquivo: @symlink:<alvo>, @hard:<alvo>, @fifo ou @dir.
 montar() {
     python3 - "$@" <<'PY'
 import sys, tarfile
+tipos = {"@fifo": tarfile.FIFOTYPE, "@dir": tarfile.DIRTYPE}
 with tarfile.open(sys.argv[1], "w", format=tarfile.PAX_FORMAT) as t:
     for par in sys.argv[2:]:
         nome, arq = par.split("=", 1)
-        with open(arq, "rb") as f:
-            dados = f.read()
         info = tarfile.TarInfo(nome)
-        info.size = len(dados)
         info.mode = 0o644
-        with open(arq, "rb") as f:
-            t.addfile(info, f)
+        if arq.startswith("@symlink:") or arq.startswith("@hard:"):
+            tipo, alvo = arq[1:].split(":", 1)
+            info.type = tarfile.SYMTYPE if tipo == "symlink" else tarfile.LNKTYPE
+            info.linkname = alvo
+            t.addfile(info)
+        elif arq in tipos:
+            info.type = tipos[arq]
+            info.mode = 0o755 if arq == "@dir" else 0o644
+            t.addfile(info)
+        else:
+            with open(arq, "rb") as f:
+                dados = f.read()
+            info.size = len(dados)
+            with open(arq, "rb") as f:
+                t.addfile(info, f)
 PY
 }
 blobs=()
@@ -488,8 +500,23 @@ montar "$TARS/m-duplicado.tar" "oci-layout=$TARS/bx/oci-layout" "index.json=$TAR
 montar "$TARS/m-escape.tar" "oci-layout=$TARS/bx/oci-layout" "index.json=$TARS/index-escapado.json" "${blobs[@]}"
 montar "$TARS/m-repotags.tar" "manifest.json=$TARS/manifest-v12.json" "${blobs[@]}"
 montar "$TARS/m-grande.tar" "oci-layout=$TARS/bx/oci-layout" "index.json=$TARS/index-grande.json" "${blobs[@]}"
+# Dois valores JSON no index.json, o nomeado e depois o limpo: o jq sem -s
+# julgaria só o último, e o containerd lê o primeiro.
+cat "$TARS/index-nomeado.json" "$TARS/bx/index.json" > "$TARS/index-dois.json"
+montar "$TARS/m-dois-valores.tar" "oci-layout=$TARS/bx/oci-layout" "index.json=$TARS/index-dois.json" "${blobs[@]}"
+# Os tipos e caminhos que o GNU tar trataria de outro jeito: o index.json
+# nomeado escondido num "blob" e alcançado por link; nomes absoluto e com
+# ..; um FIFO; o index.json como diretório; e um layout sem blobs.
+FALSO=blobs/sha256/$(printf 'f%.0s' {1..64})
+montar "$TARS/m-symlink.tar" "oci-layout=$TARS/bx/oci-layout" "$FALSO=$TARS/index-nomeado.json" "index.json=@symlink:$FALSO" "${blobs[@]}"
+montar "$TARS/m-hardlink.tar" "oci-layout=$TARS/bx/oci-layout" "$FALSO=$TARS/index-nomeado.json" "index.json=@hard:$FALSO" "${blobs[@]}"
+montar "$TARS/m-absoluto.tar" "oci-layout=$TARS/bx/oci-layout" "/index.json=$TARS/index-nomeado.json" "${blobs[@]}"
+montar "$TARS/m-sobe.tar" "oci-layout=$TARS/bx/oci-layout" "../index.json=$TARS/index-nomeado.json" "${blobs[@]}"
+montar "$TARS/m-fifo.tar" "oci-layout=$TARS/bx/oci-layout" "index.json=$TARS/bx/index.json" "$FALSO=@fifo" "${blobs[@]}"
+montar "$TARS/m-index-dir.tar" "oci-layout=$TARS/bx/oci-layout" "index.json=@dir" "${blobs[@]}"
+montar "$TARS/m-sem-blobs.tar" "oci-layout=$TARS/bx/oci-layout" "index.json=$TARS/bx/index.json"
 antes=$(etiquetas)
-for m in ponto-barra ponto-ponto duplicado escape repotags grande; do
+for m in ponto-barra ponto-ponto duplicado escape repotags grande dois-valores symlink hardlink absoluto sobe fifo index-dir sem-blobs; do
     c=$(entrada "deploy $SHA_B $ID_B" < "$TARS/m-$m.tar")
     [ "$c" = 3 ] || falhar "tar malicioso '$m' saiu $c, queria 3: $(tail -1 "$TARS/erro")"
     [ "$(etiquetas)" = "$antes" ] || falhar "tar malicioso '$m' mexeu nas etiquetas: $(diff <(echo "$antes") <(etiquetas) | tr '\n' ' ')"
@@ -501,7 +528,16 @@ for m in ponto-barra ponto-ponto duplicado escape repotags grande; do
     antes=$(etiquetas)
 done
 [ "$(versao)" = "$SHA_A" ] && [ "$(imagem_do_app)" = "$REPO_TESTE:$SHA_A" ] || falhar "uma imagem divergente mexeu na versão"
-ok "vigilume-entrada: imagem divergente, tar com nome e os desvios de layout recusados com 3"
+# O SHA de uma versão que já existe com OUTRA imagem (aqui, o SHA no ar com a
+# imagem doente): etiquetar moveria $REPO_TESTE:<sha> para a doente, e o
+# rollback, que usa o mesmo SHA, subiria a doente. Recusado com 3 antes.
+c=$(entrada "deploy $SHA_A $ID_DOENTE" < "$TARS/doente.tar")
+[ "$c" = 3 ] || falhar "SHA existente com outra imagem saiu $c, queria 3: $(tail -1 "$TARS/erro")"
+grep -q 'já existe com outra imagem' "$TARS/erro" || falhar "SHA existente com outra imagem: não disse por quê"
+[ "$(docker image inspect -f '{{.Id}}' "$REPO_TESTE:$SHA_A")" = "$ID_A" ] || falhar "a etiqueta $REPO_TESTE:$SHA_A foi movida"
+[ "$(versao)" = "$SHA_A" ] && [ "$(imagem_do_app)" = "$REPO_TESTE:$SHA_A" ] || falhar "o SHA existente com outra imagem mexeu na versão"
+[ "$(docker inspect -f '{{.State.Health.Status}}' "$(dc ps -q app)")" = healthy ] || falhar "depois do SHA existente com outra imagem o app não está saudável"
+ok "vigilume-entrada: imagem divergente, tar com nome, os desvios de layout e o SHA já etiquetado recusados com 3"
 
 # 8c. Rollback: um deploy que não fica saudável volta à versão anterior.
 c=$(entrada "deploy $SHA_DOENTE $ID_DOENTE" < "$TARS/doente.tar")
@@ -551,6 +587,10 @@ tar -tf "$TARS/c.tar" | grep -q '^\./' && falhar "controle: o tar de c ainda tem
 # deploy. A poda não pode morrer de SIGPIPE, e o historico não cresce sem
 # limite.
 for i in $(seq 1 2000); do sha_de "antiga-$i"; done >> "$DIR/historico"
+# O temporário de um deploy morto por SIGKILL (o trap não roda): o próximo
+# deploy o apaga, já sob a trava.
+mkdir -p "$DIR/.vigilume-entrada.morto"
+head -c 4096 /dev/urandom > "$DIR/.vigilume-entrada.morto/imagem.tar"
 for par in "b $SHA_B $ID_B" "c $SHA_C $ID_C" "d $SHA_D $ID_D"; do
     read -r nome sha id <<<"$par"
     c=$(entrada "deploy $sha $id" < "$TARS/$nome.tar")
@@ -561,6 +601,7 @@ done
 restantes=$(docker image ls "$REPO_TESTE" --format '{{.Tag}}' | grep -vx atual | sort | tr '\n' ' ')
 esperadas=$(printf '%s\n' "$SHA_B" "$SHA_C" "$SHA_D" | sort | tr '\n' ' ')
 [ "$restantes" = "$esperadas" ] || falhar "imagens que sobraram: '$restantes', queria as de b, c e d"
+[ -e "$DIR/.vigilume-entrada.morto" ] && falhar "o temporário de um deploy morto ficou para trás"
 [ "$(wc -l < "$DIR/historico")" -le 50 ] || falhar "o historico ficou com $(wc -l < "$DIR/historico") linhas: cresce sem limite"
 [ "$(tail -n 3 "$DIR/historico" | tr '\n' ' ')" = "$SHA_B $SHA_C $SHA_D " ] || falhar "o historico perdeu as últimas versões"
 # O mesmo SHA de novo (redeploy) é aceito e não mexe na anterior. Com
@@ -573,7 +614,7 @@ env -i PATH="$PATH" HOME="$HOME" SSH_ORIGINAL_COMMAND="deploy $SHA_D $ID_D" LANG
 [ "$c" = 0 ] || falhar "redeploy de d (com DOCKER_* e COMPOSE_* no ambiente) saiu $c: $(tail -3 "$TARS/erro")"
 [ "$(cat "$DIR/versao-anterior")" = "$SHA_C" ] || falhar "o redeploy de d mudou a versao-anterior"
 [ "$(imagem_do_app)" = "$REPO_TESTE:$SHA_D" ] || falhar "depois do redeploy o app roda $(imagem_do_app)"
-ok "vigilume-entrada: versao-anterior, as 3 últimas imagens, historico longo e ambiente ignorado"
+ok "vigilume-entrada: versao-anterior, as 3 últimas imagens, historico longo, temporário velho e ambiente ignorado"
 
 # 8e. Docker sem o image store containerd: recusa com 1. Um docker falso na
 #     frente do PATH responde ao `docker info` como o store clássico.
@@ -588,6 +629,33 @@ env -i PATH="$TARS/bin:$PATH" HOME="$HOME" SSH_ORIGINAL_COMMAND="deploy $SHA_A $
 [ "$c" = 1 ] || falhar "sem o store containerd a entrada saiu $c, queria 1"
 grep -q 'containerd' "$TARS/erro" || falhar "sem o store containerd a entrada não disse por quê"
 ok "vigilume-entrada: recusa o Docker sem o image store containerd"
+
+# 8e'. Falhas da máquina, não do tar: 1, e nada etiquetado. (a) O tar não
+#      extrai ou não refaz (disco cheio): um tar falso na frente do PATH que
+#      falha no -x ou no -c. (b) Sem jq: um PATH com tudo de /usr/bin e /bin
+#      menos ele.
+mkdir -p "$TARS/bin-tar" "$TARS/semjq"
+printf '#!/bin/sh\nfor a; do case "$a" in -%s*) echo "tar: sem espaço" >&2; exit 2 ;; esac; done\nexec %s "$@"\n' \
+    "\${FALHAR_TAR:-nada}" "$(command -v tar)" > "$TARS/bin-tar/tar"
+chmod +x "$TARS/bin-tar/tar"
+for d in /usr/local/bin /usr/bin /bin /usr/sbin /sbin; do
+    for f in "$d"/*; do
+        [ "${f##*/}" = jq ] || [ -e "$TARS/semjq/${f##*/}" ] || ln -s "$f" "$TARS/semjq/${f##*/}"
+    done
+done
+ln -sf "$(command -v docker)" "$TARS/semjq/docker"
+antes=$(etiquetas)
+for caso in "x FALHAR_TAR=x $TARS/bin-tar:$PATH" "c FALHAR_TAR=c $TARS/bin-tar:$PATH" "jq NADA=1 $TARS/semjq"; do
+    read -r nome var caminho <<<"$caso"
+    c=0
+    env -i PATH="$caminho" HOME="$HOME" SSH_ORIGINAL_COMMAND="deploy $SHA_D $ID_D" "$var" \
+        bash "$TARS/entrada-path" < "$TARS/d.tar" > /dev/null 2> "$TARS/erro" || c=$?
+    [ "$c" = 1 ] || falhar "deploy com falha de máquina ($nome) saiu $c, queria 1: $(tail -1 "$TARS/erro")"
+    [ "$(etiquetas)" = "$antes" ] || falhar "deploy com falha de máquina ($nome) mexeu nas etiquetas"
+done
+grep -q 'docs/deploy/vps.md' "$TARS/erro" || falhar "sem jq, a entrada não apontou o runbook: $(tail -1 "$TARS/erro")"
+[ "$(versao)" = "$SHA_D" ] && [ "$(imagem_do_app)" = "$REPO_TESTE:$SHA_D" ] || falhar "uma falha de máquina mexeu na versão"
+ok "vigilume-entrada: tar que não extrai ou não refaz, e jq ausente, saem 1 sem etiquetar"
 
 # 8f. O sudoers: sintaxe (visudo) e efeito, num Ubuntu 24.04 descartável com
 #     o usuário deploy e uma entrada falsa que mostra o que recebeu.
@@ -633,7 +701,14 @@ age-keygen -y "$TARS/chave-age" > "$DIR/age-recipient"
 c=$(entrada "backup extra" < /dev/null)
 [ "$c" = 2 ] || falhar "backup com argumento saiu $c, queria 2"
 
+# O que um backup morto por SIGKILL deixaria: o dump em claro na memória e o
+# postgres descartável. O próximo backup apaga os dois, já sob a trava.
+mkdir -p "$TARS/vigilume-backup.morto"
+echo 'PGDMP em claro' > "$TARS/vigilume-backup.morto/vigilume.dump"
+docker run -d --name vigilume-restauro-morto --entrypoint sleep "$pg" 600 >/dev/null
 c=$(entrada backup < /dev/null)
+[ -e "$TARS/vigilume-backup.morto" ] && falhar "o dump em claro de um backup morto ficou para trás"
+docker inspect vigilume-restauro-morto >/dev/null 2>&1 && falhar "o postgres descartável de um backup morto ficou para trás"
 if [ "$c" != 0 ]; then
     cat "$TARS/erro" >&2
     falhar "backup saiu $c, queria 0"
