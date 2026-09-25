@@ -1202,9 +1202,10 @@ não subiu:
 tail -n 150 /opt/stillon/entrada.log
 ```
 
-(Se a entrada sair com **1** e `o app não saiu do ar (removido 3 vezes)`, o contêiner do app
+(Se a entrada sair com **1** e `o app não saiu do ar depois de 3 tentativas`, o contêiner do app
 seguiu de pé: `sudo docker compose -f /opt/stillon/compose.prod.yaml ps -a` mostra o estado, e
-`sudo docker compose -f /opt/stillon/compose.prod.yaml rm -s -f app` o tira.)
+`sudo docker rm -f $(sudo docker compose -f /opt/stillon/compose.prod.yaml ps -aq app)` o mata e
+o remove. O `compose rm` não serve aqui: ele pula um contêiner em `restarting`.)
 
 O app diz no boot o que falta ou o que está errado (uma variável ausente, uma chave fora do
 formato, o banco recusando o papel). Corrija a causa (por exemplo, `sudo nano /opt/stillon/.env`)
@@ -1872,7 +1873,7 @@ trava (a primeira linha de código 2 da tabela e o 1 da trava ocupada) não cheg
 | 3 | `a imagem carregada é …, e o deploy pediu …`, `o index.json do tar não é uma imagem só, sem nome, com o manifesto …`, `o tar não trouxe exatamente uma imagem sem nome`, `o que chegou não é um tar legível`, ou outra que começa com `o tar` (layout OCI, membro repetido ou estranho; as duas de disco cheio são código 1) | rodar de novo **uma vez**; se repetir, a imagem mudou no caminho (ou o formato do `crane` mudou): não force, investigue |
 | 4 | `rollback feito: <anterior> de volta no ar; <sha> não subiu` | a anterior já voltou: o log do job traz o log do app; corrija e publique outra versão |
 | 4 | `primeiro deploy e sem versão anterior: o app ficou parado (e removido)` | **o site está fora** (não há anterior): passo 4.8, "Se o primeiro deploy sair com 4" |
-| 1 | `primeiro deploy e sem versão anterior, e o app não saiu do ar (removido 3 vezes): veja docs/deploy/vps.md` | **o site está fora**, e o app doente segue de pé: passo 4.8, "Se o primeiro deploy sair com 4" |
+| 1 | `primeiro deploy e sem versão anterior, e o app não saiu do ar depois de 3 tentativas: veja docs/deploy/vps.md` | **o site está fora**, e o app doente segue de pé: passo 4.8, "Se o primeiro deploy sair com 4" |
 | 1 | `o rollback para <anterior> também não ficou saudável: veja docs/deploy/vps.md` | **o site está fora**: "O rollback também não ficou saudável", logo depois desta seção |
 | 1 | `o jq não está instalado (…): veja docs/deploy/vps.md` | `sudo apt install -y jq` (passo 3.3) e rode de novo |
 | 1 | `o Docker não usa o image store containerd; veja docs/deploy/vps.md (Docker)` | `sudo docker info -f '{{.DriverStatus}}'` e o `daemon.json` do passo 3.2 |

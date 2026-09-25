@@ -346,19 +346,25 @@ deploy() {
     if [ -z "$anterior" ]; then
         # Parado E removido, e conferido: o app doente fica em laço de
         # reinício (restart: unless-stopped), e o código de um `stop` nele
-        # não prova que ele parou. O rm -f mata e marca o contêiner para
-        # remoção, e um contêiner marcado o Docker não reinicia. O log dele
-        # já ficou logo acima (e no entrada.log).
+        # não prova que ele parou. O `compose rm -s -f` para e remove só o
+        # que ficou parado: o -f dele só dispensa a confirmação, e um
+        # contêiner em `restarting` conta como rodando e é pulado. O que
+        # sobrar sai pelo `docker rm -f`, que mata e marca o contêiner para
+        # remoção (um contêiner marcado o Docker não reinicia). O log dele já
+        # ficou logo acima (e no entrada.log).
         local _ restantes
         for _ in 1 2 3; do
             dc rm -s -f app || true
+            restantes=$(dc ps -aq app) || true
+            # shellcheck disable=SC2086 # um ID por palavra
+            [ -z "$restantes" ] || docker rm -f $restantes >/dev/null || true
             if restantes=$(dc ps -aq app) && [ -z "$restantes" ]; then
                 sair 4 "primeiro deploy e sem versão anterior: o app ficou parado (e removido)"
             fi
             sleep 2
         done
         dc ps -a app || true
-        sair 1 "primeiro deploy e sem versão anterior, e o app não saiu do ar (removido 3 vezes): veja docs/deploy/vps.md"
+        sair 1 "primeiro deploy e sem versão anterior, e o app não saiu do ar depois de 3 tentativas: veja docs/deploy/vps.md"
     fi
     # A etiqueta atual só anda no sucesso: continua na anterior. O image-id
     # dela é o que a etiqueta $IMAGEM:<anterior> tem aqui (a poda a guarda).
