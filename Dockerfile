@@ -22,7 +22,6 @@ RUN npm run build
 FROM --platform=$BUILDPLATFORM golang:1.26-alpine@sha256:8ac98ca534ac3f51e1f420a1dd2c15e74c75cfa0f23f3ad27eb5d7236c349a0c AS build
 ARG TARGETOS
 ARG TARGETARCH
-ARG VERSION=dev
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN --mount=type=cache,target=/go/pkg/mod go mod download
@@ -31,7 +30,10 @@ COPY internal/ internal/
 COPY --from=web /src/internal/webui/dist/ internal/webui/dist/
 # -buildvcs=false: o .git não entra no contexto (.dockerignore), e a versão
 # vem do -X (D3). -s -w tira DWARF e símbolos; o stack trace de um panic
-# continua legível.
+# continua legível. O ARG VERSION vem logo antes do único passo que o usa:
+# declarado lá em cima, uma versão nova (todo commit, no CI) invalidaria o
+# cache do `go mod download` também.
+ARG VERSION=dev
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \

@@ -6,7 +6,14 @@
 .idea
 .superpowers
 bin
-.env
+# Segredos locais em qualquer nível (.env, .env.local, web/.env.production…),
+# o binário que o `go build ./cmd/vigilume` deixa na raiz e binários de teste
+# (`go test -c`): nada disso pode entrar no contexto, nem num estágio
+# intermediário.
+**/.env
+**/.env.*
+vigilume
+**/*.test
 coverage.out
 **/*_test.go
 docs
