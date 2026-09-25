@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/BipoXDXD/vigilume/internal/account"
+	"github.com/BipoXDXD/stillon/internal/account"
 )
 
 // A troca de senha e o set-password matam uma troca de autenticador em

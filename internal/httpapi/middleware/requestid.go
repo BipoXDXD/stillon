@@ -1,4 +1,4 @@
-// Package middleware reúne os middlewares HTTP do Vigilume, um por arquivo
+// Package middleware reúne os middlewares HTTP do StillOn, um por arquivo
 // para que cada um seja testado e revisado isoladamente.
 package middleware
 
@@ -7,7 +7,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/BipoXDXD/vigilume/internal/observability"
+	"github.com/BipoXDXD/stillon/internal/observability"
 )
 
 const TraceHeader = "X-Trace-Id"

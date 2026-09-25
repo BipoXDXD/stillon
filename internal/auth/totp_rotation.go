@@ -12,7 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/BipoXDXD/vigilume/internal/storage/db"
+	"github.com/BipoXDXD/stillon/internal/storage/db"
 )
 
 // A troca de autenticador com segredo pendente (Plano 9, §3.2). Antes dela,
@@ -119,6 +119,9 @@ func (s *TOTP) StartRotation(ctx context.Context, userID, familyID uuid.UUID, em
 	return key.URL(), rotacaoDe(sealed), nil
 }
 
+// rotuloRotacao separa o hash do id de rotação de todo outro hash do selo.
+const rotuloRotacao = "stillon.rotacao.v1"
+
 // rotacaoDe é o identificador de uma troca (A7 do Plano 10): 16 bytes em hex
 // derivados do segredo pendente CIFRADO, como está no banco. Não revela nada
 // do segredo (é um hash do selo, que tem nonce aleatório), e muda a cada
@@ -127,7 +130,7 @@ func (s *TOTP) StartRotation(ctx context.Context, userID, familyID uuid.UUID, em
 // 401 de código errado que contaria como prova errada.
 func rotacaoDe(pendente []byte) string {
 	h := sha256.New()
-	h.Write([]byte("vigilume.rotacao.v1"))
+	h.Write([]byte(rotuloRotacao))
 	h.Write(pendente)
 	return hex.EncodeToString(h.Sum(nil)[:16])
 }

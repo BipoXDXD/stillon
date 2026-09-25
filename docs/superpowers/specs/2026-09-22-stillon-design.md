@@ -1,4 +1,4 @@
-# Vigilume — Documento de Design
+# StillOn — Documento de Design
 
 - **Data:** 2026-09-22
 - **Status:** aprovado para planejamento de implementação
@@ -9,7 +9,7 @@
 
 ## 1. Visão geral
 
-Vigilume é um monitor de disponibilidade com status page pública.
+StillOn é um monitor de disponibilidade com status page pública.
 
 O usuário cadastra alvos HTTP (sites, APIs, webhooks). O sistema sonda cada alvo
 em intervalo configurável, registra latência e resultado, detecta incidentes,
@@ -64,9 +64,9 @@ Recursos que não servem a esses objetivos foram cortados deliberadamente.
 Binário único com papel selecionado por flag:
 
 ```
-vigilume --role=all      # dev e deploy do portfólio: API + sondador no mesmo processo
-vigilume --role=api      # só serve HTTP
-vigilume --role=prober   # só executa sondas
+stillon --role=all      # dev e deploy do portfólio: API + sondador no mesmo processo
+stillon --role=api      # só serve HTTP
+stillon --role=prober   # só executa sondas
 ```
 
 O padrão segue o modo *single binary* do Grafana Loki/Mimir. A comunicação entre
@@ -126,7 +126,7 @@ compilação em vez de erro em runtime.
 ### 3.4 Estrutura de diretórios
 
 ```
-cmd/vigilume/main.go          flags, wiring, shutdown gracioso
+cmd/stillon/main.go           flags, wiring, shutdown gracioso
 internal/
   config/                      env → struct validada, falha rápido no boot
   httpapi/
@@ -622,7 +622,7 @@ O access token vive apenas em memória. Três consequências exigem código expl
    derrubaria a sessão. Uma promise compartilhada resolve — a primeira renova, as
    demais aguardam nela.
 
-4. **Todo request de mutação envia `X-Requested-With: vigilume`.** O backend
+4. **Todo request de mutação envia `X-Requested-With: stillon`.** O backend
    exige esse header como segunda camada anti-CSRF (5.3); um formulário HTML
    cross-site não consegue defini-lo. O wrapper de `fetch` o adiciona em
    `POST`/`PATCH`/`DELETE`, e o header está na lista de `Access-Control-Allow-Headers`

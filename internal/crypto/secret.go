@@ -1,4 +1,4 @@
-// Package crypto reúne as primitivas criptográficas do Vigilume: o tipo
+// Package crypto reúne as primitivas criptográficas do StillOn: o tipo
 // Secret, o envelope AES-GCM e os hashes de token e de IP.
 package crypto
 

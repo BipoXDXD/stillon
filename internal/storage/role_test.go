@@ -9,8 +9,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/BipoXDXD/vigilume/internal/storage"
-	"github.com/BipoXDXD/vigilume/internal/storage/testdb"
+	"github.com/BipoXDXD/stillon/internal/storage"
+	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 )
 
 // Se este teste falhar, qualquer teste de RLS do repositório é suspeito: um
@@ -51,7 +51,7 @@ func TestCheckRoleRefusesBypassRLSWithoutSuperuser(t *testing.T) {
 
 	// Papéis são globais ao cluster e o Restore do testdb não os desfaz:
 	// nome único e DROP ROLE no cleanup.
-	cru := "vigilume_bypass_" + uuid.Must(uuid.NewV7()).String()[:8]
+	cru := "stillon_bypass_" + uuid.Must(uuid.NewV7()).String()[:8]
 	nome := pgx.Identifier{cru}.Sanitize()
 	const senha = "bypass"
 	if _, err := admin.Exec(ctx, `CREATE ROLE `+nome+` LOGIN PASSWORD '`+senha+`' NOSUPERUSER BYPASSRLS`); err != nil {

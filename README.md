@@ -1,10 +1,10 @@
-# Vigilume
+# StillOn (até 2026-09-25, Vigilume)
 
 Monitor de disponibilidade de serviços HTTP: sonda cada alvo no intervalo que você define, abre e
 fecha incidentes sozinho, avisa pelo Discord e por e-mail, e publica uma página de status. Um
 binário Go com o painel React embutido e um Postgres.
 
-[![ci](https://github.com/BipoXDXD/vigilume/actions/workflows/ci.yml/badge.svg)](https://github.com/BipoXDXD/vigilume/actions/workflows/ci.yml)
+[![ci](https://github.com/BipoXDXD/stillon/actions/workflows/ci.yml/badge.svg)](https://github.com/BipoXDXD/stillon/actions/workflows/ci.yml)
 ![Go 1.26](https://img.shields.io/badge/Go-1.26-00ADD8)
 
 ## Rodar local
@@ -12,11 +12,11 @@ binário Go com o painel React embutido e um Postgres.
 Precisa de Docker 25+ com Compose v2.20+ (o healthcheck usa `start_interval`).
 
 ```sh
-git clone git@github.com:BipoXDXD/vigilume.git && cd vigilume
+git clone git@github.com:BipoXDXD/stillon.git && cd stillon
 docker compose up --wait
 ```
 
-Abra <http://localhost:8080> e entre com `demo@vigilume.local` / `demo-vigilume-2026`. O painel já
+Abra <http://localhost:8080> e entre com `demo@stillon.local` / `demo-stillon-2026`. O painel já
 tem um alvo de exemplo, `https://example.com/` (domínio reservado para isso). Para cadastrar mais
 no primeiro `up`: `DEMO_TARGETS_EXTRA="https://seu.site/ https://outro.site/" docker compose up --wait`.
 
@@ -65,7 +65,7 @@ no primeiro `up`: `DEMO_TARGETS_EXTRA="https://seu.site/ https://outro.site/" do
 
 ```mermaid
 flowchart LR
-  subgraph bin["binário vigilume (--role=all | api | prober)"]
+  subgraph bin["binário stillon (--role=all | api | prober)"]
     api["API HTTP + painel embutido<br/>+ status page"]
     sond["sondador<br/>(semáforo de sondas)"]
     det["detector de incidentes"]
@@ -84,7 +84,7 @@ flowchart LR
 Um processo só, que também roda partido (`--role=api` e `--role=prober`) sem mudar código: o
 Postgres é a fila (`SKIP LOCKED`), então dois sondadores nunca pegam o mesmo alvo. Sem Redis nem
 Kafka, porque o volume de um monitor destes cabe com folga no banco que já existe
-([spec §17](docs/superpowers/specs/2026-09-22-vigilume-design.md)).
+([spec §17](docs/superpowers/specs/2026-09-22-stillon-design.md)).
 
 ## Decisões de segurança
 
@@ -98,10 +98,10 @@ Kafka, porque o volume de um monitor destes cabe com folga no banco que já exis
 | Status page com DTO próprio: nada interno chega à página pública | [`public.go`](internal/statuspage/public.go) | [`public_test.go`](internal/statuspage/public_test.go) (`TestPublicViewHasNoInternalFields`) |
 | IP real do cliente atrás do proxy, com falha **fechada**: o `X-Forwarded-For` (ou o cabeçalho de `CLIENT_IP_HEADER`) só vale vindo de `TRUSTED_PROXIES`, e um prefixo `/0` ali é recusado no boot. `CLIENT_IP_HEADER` só serve atrás de proxy que **substitui** esse cabeçalho; atrás do Caddy da produção ele fica **vazio**, o `TRUSTED_PROXIES` é o IP fixo do Caddy na rede do compose, e vale o último salto do `X-Forwarded-For`, com todas as linhas lidas juntas. O Caddy remove `X-Real-IP`, `Fly-Client-IP` e `CF-Connecting-IP` vindos do cliente. Com `PUBLIC_BASE_URL` https, um `X-Forwarded-For` de fora de `TRUSTED_PROXIES` vira aviso no log (um por minuto, com o `remote_addr`) | [`clientip.go`](internal/httpapi/middleware/clientip.go) | [`clientip_test.go`](internal/httpapi/middleware/clientip_test.go) (`TestRateLimitSeparatesClientsBehindFly`, `TestClientIPJoinsEveryForwardedForLine`), `TestSessionsBehindFlyRecordDistinctOrigins`, `TestForwardedForFromOutsideTheListWarnsInProduction`, [`config_test.go`](internal/config/config_test.go) (`TestLoadRejectsAZeroBitTrustedProxy`) |
 | Argon2id com teto de concorrência: toda verificação e todo hash (inclusive o do e-mail inexistente) passam por um semáforo de `min(NumCPU, 4)` vagas (`ARGON2_MAX_CONCURRENT`, 1–64); sem vaga em 2 s, `429 rate_limited` com `Retry-After: 2`, em vez de o processo morrer sem memória | [`argon2.go`](internal/auth/argon2.go) | [`argon2_test.go`](internal/auth/argon2_test.go) (`TestEveryArgon2PathWaitsForASlot`), [`argon2_integration_test.go`](internal/httpapi/argon2_integration_test.go) (`TestSaturatedArgon2AnswersRateLimited`) |
-| Bloqueio de conta atômico (a tentativa é reservada **antes** do Argon2 ou do TOTP: N requisições paralelas gastam N tentativas) e sem negação de serviço ao dono: um login completo deixa o cookie de dispositivo `vigilume_dispositivo`, e quem o apresenta não é barrado pelo bloqueio que um anônimo provocou; nas rotas autenticadas, a 5ª prova errada revoga a família da sessão | [`user.go`](internal/auth/user.go), [`dispositivo.go`](internal/auth/dispositivo.go), [`provas.go`](internal/auth/provas.go), [`provas.go` (httpapi)](internal/httpapi/provas.go) | [`user_test.go`](internal/auth/user_test.go) (`TestConcurrentReservationsStopAtTheThreshold`), [`dispositivo_integration_test.go`](internal/httpapi/dispositivo_integration_test.go) (`TestParallelLoginGuessesStopAtTheLock`, `TestDeviceCookieLetsTheOwnerInPastTheAccountLock`), [`dispositivo_revogacao_integration_test.go`](internal/httpapi/dispositivo_revogacao_integration_test.go) (`TestDeviceCookieDiesWithTheCredentials`), [`provas_familia_integration_test.go`](internal/httpapi/provas_familia_integration_test.go) (`TestFifthWrongProofDropsTheFamily`) |
+| Bloqueio de conta atômico (a tentativa é reservada **antes** do Argon2 ou do TOTP: N requisições paralelas gastam N tentativas) e sem negação de serviço ao dono: um login completo deixa o cookie de dispositivo `stillon_dispositivo`, e quem o apresenta não é barrado pelo bloqueio que um anônimo provocou; nas rotas autenticadas, a 5ª prova errada revoga a família da sessão | [`user.go`](internal/auth/user.go), [`dispositivo.go`](internal/auth/dispositivo.go), [`provas.go`](internal/auth/provas.go), [`provas.go` (httpapi)](internal/httpapi/provas.go) | [`user_test.go`](internal/auth/user_test.go) (`TestConcurrentReservationsStopAtTheThreshold`), [`dispositivo_integration_test.go`](internal/httpapi/dispositivo_integration_test.go) (`TestParallelLoginGuessesStopAtTheLock`, `TestDeviceCookieLetsTheOwnerInPastTheAccountLock`), [`dispositivo_revogacao_integration_test.go`](internal/httpapi/dispositivo_revogacao_integration_test.go) (`TestDeviceCookieDiesWithTheCredentials`), [`provas_familia_integration_test.go`](internal/httpapi/provas_familia_integration_test.go) (`TestFifthWrongProofDropsTheFamily`) |
 | O `seed` do compose recusa `PUBLIC_BASE_URL` fora de `http` em loopback, antes de chamar o binário. Isso **não** protege um servidor: atrás de um proxy e com a URL ainda local, ele roda e o usuário de demonstração nasce. O `compose.yaml` é só para a máquina local; para hospedar, o compose de produção de `deploy/vps/`, sem o `seed` | [`seed.sh`](deploy/compose/seed.sh) | [`seed_test.go`](internal/config/seed_test.go) (`TestSeedRefusesOutsideLoopback`), [`compose_test.go`](internal/config/compose_test.go) (`TestComposeHeaderSaysItIsLocalOnly`) |
 | Produção: só o Caddy publica porta (80 e 443); uma requisição com outro `Host` não chega ao app; `X-Real-IP`, `Fly-Client-IP` e `CF-Connecting-IP` mandados pelo cliente são removidos; o banco não aceita conexão de fora da rede do compose; rede sem IPv6 | [`compose.prod.yaml`](deploy/vps/compose.prod.yaml), [`Caddyfile`](deploy/vps/Caddyfile) | [`checar-vps.sh`](deploy/ci/checar-vps.sh) (job `vps` do CI: sobe o compose de produção com o Caddy em modo local; blocos 1 a 7) |
-| Deploy por uma chave SSH que só roda um script: verbo desconhecido, SHA malformado, imagem divergente e o SHA no ar (ou o anterior) já etiquetado com outra imagem recusados; rollback automático se a versão nova não ficar saudável; o backup só devolve texto cifrado | [`vigilume-entrada`](deploy/vps/vigilume-entrada) | [`checar-vps.sh`](deploy/ci/checar-vps.sh), blocos 2, 8 (recusas, imagem divergente, rollback, store, `sudoers`) e 9 (backup) |
+| Deploy por uma chave SSH que só roda um script: verbo desconhecido, SHA malformado, imagem divergente e o SHA no ar (ou o anterior) já etiquetado com outra imagem recusados; rollback automático se a versão nova não ficar saudável; o backup só devolve texto cifrado | [`stillon-entrada`](deploy/vps/stillon-entrada) | [`checar-vps.sh`](deploy/ci/checar-vps.sh), blocos 2, 8 (recusas, imagem divergente, rollback, store, `sudoers`) e 9 (backup) |
 | CSP com nonce por resposta, no painel e na status page | [`webui.go`](internal/webui/webui.go), [`publicpage.go`](internal/httpapi/publicpage.go) | [`publicpage_integration_test.go`](internal/httpapi/publicpage_integration_test.go) (`TestPublicPageRendersWithoutLeaking`); E2E: [`fluxo.spec.ts`](web/e2e/fluxo.spec.ts) (zero violações, com controle positivo) |
 | Imagem distroless **nonroot, sem shell**, Trivy sem achado HIGH/CRITICAL corrigível, varredura de segredos (gitleaks) no histórico inteiro em todo PR | [`Dockerfile`](Dockerfile), [`ci.yml`](.github/workflows/ci.yml), [`.gitleaks.toml`](.gitleaks.toml) | [`checar-imagem.sh`](deploy/ci/checar-imagem.sh) |
 | Versão nova de dependência Go ou npm espera 7 dias antes de entrar no PR do Dependabot (as atualizações de segurança não esperam); a chave privada do `age` e os dumps do backup não entram no git | [`dependabot.yml`](.github/dependabot.yml), [`.gitignore`](.gitignore) | [`repositorio_test.go`](internal/config/repositorio_test.go) (`TestDependabotWaitsSevenDaysForGoAndNpm`, `TestGitignoreCoversTheBackupKeyAndDumps`) |
@@ -110,7 +110,7 @@ Kafka, porque o volume de um monitor destes cabe com folga no banco que já exis
 
 - O sondador reivindica só o que cabe no [semáforo](internal/prober/scheduler.go) e devolve a
   vaga até em panic (`TestProbePanicIsLoggedAndReturnsTheSlot`).
-- Cada subsistema roda num [`errgroup`](cmd/vigilume/main.go): se um cai, os outros encerram, e o
+- Cada subsistema roda num [`errgroup`](cmd/stillon/main.go): se um cai, os outros encerram, e o
   processo sai com erro em vez de ficar meio vivo. Shutdown gracioso com prazo de 15 s, e sondas
   interrompidas não viram falso "fora do ar".
 - No painel, o refresh do token é *single-flight* e coordenado entre abas por Web Locks
@@ -155,7 +155,7 @@ make e2e           # APAGA o banco do compose, sobe com --build, confere e roda 
 ## Desenvolvimento
 
 ```sh
-make build            # bin/vigilume, com a versão do git describe
+make build            # bin/stillon, com a versão do git describe
 make generate         # sqlc generate, depois de mudar internal/storage/queries
 make lint sec         # vet, staticcheck, gosec, govulncheck (instalados no PATH)
 make image            # a imagem de produção
@@ -165,9 +165,9 @@ cd web && npm run dev # o painel em http://localhost:5173, com proxy de /api par
 
 Depois de mudar o código, `docker compose up --build` (ou `make up`): sem o `--build`, o compose
 reusa a imagem que já tem. Para o `npm run dev`, suba a API pelo compose (o `CORS_ORIGIN` do
-compose já é o do Vite). Criar ou recuperar o usuário dono: `vigilume user create --email <e>` e
-`vigilume user set-password --email <e>`, com a senha pelo stdin. Quem perdeu o autenticador **e**
-os códigos de recuperação: `vigilume user reset-2fa --email <e>` desliga o 2FA, zera o bloqueio da
+compose já é o do Vite). Criar ou recuperar o usuário dono: `stillon user create --email <e>` e
+`stillon user set-password --email <e>`, com a senha pelo stdin. Quem perdeu o autenticador **e**
+os códigos de recuperação: `stillon user reset-2fa --email <e>` desliga o 2FA, zera o bloqueio da
 conta e encerra todas as sessões (não pede senha: só lê a `DATABASE_URL`); depois, entre com a senha e ative de novo pelo
 painel. Sem 2FA ligado, o comando diz "nada mudou" e não mexe em nada, **nem no bloqueio**: para
 destravar uma conta sem 2FA, use o `set-password`.
@@ -178,7 +178,7 @@ precisa configurar nada: sem `METRICS_ADDR`, a porta de métricas é `127.0.0.1:
 
 ## API
 
-REST sob `/api/v1`, usada pelo painel (a [spec, §9](docs/superpowers/specs/2026-09-22-vigilume-design.md)
+REST sob `/api/v1`, usada pelo painel (a [spec, §9](docs/superpowers/specs/2026-09-22-stillon-design.md)
 tem as convenções). Todo erro, inclusive rota ou método inexistente sob `/api/`, vem no envelope
 `{"error": {"code", "message"}, "trace_id"}`; o `code` é o contrato, a `message` é para gente.
 
@@ -186,7 +186,7 @@ tem as convenções). Todo erro, inclusive rota ou método inexistente sob `/api
   cliente renova a sessão. `401 invalid_credentials` é senha ou código errado: não renova.
 - `429 rate_limited` vem dos limitadores por IP e por usuário (sem `Retry-After`) e, desde o
   Plano 10, do teto de concorrência do Argon2id (com `Retry-After: 2`).
-- Mutação exige o cabeçalho `X-Requested-With: vigilume`.
+- Mutação exige o cabeçalho `X-Requested-With: stillon`.
 
 O que mudou no Plano 10 (spec do Plano 10, §4):
 
@@ -202,7 +202,7 @@ O que mudou no Plano 10 (spec do Plano 10, §4):
 | `POST` e `PATCH /targets` com `expected_status` 1xx ou 3xx | aceito (o alvo ficava `down` para sempre) | `400 validation_failed`, `out_of_range` |
 | 404 e 405 sob `/api/` | texto puro do `net/http` | envelope: `404 not_found` e `405 method_not_allowed` (código novo) |
 | `GET /targets/{id}/checks` | o painel mandava `from` calculado com o relógio do navegador | `?window=1h\|6h\|24h\|7d\|30d\|90d`: o servidor calcula `from = to − janela` com o relógio dele; `window` vazio, fora da lista ou junto com `from` → `400 validation_failed` (`window`/`invalid`); `from`/`to` sem `window` continuam valendo |
-| Login completo (senha e, se ligado, 2FA) | — | cookie `vigilume_dispositivo` (`HttpOnly`, `SameSite=Strict`, `Path=/api/v1/auth`, 180 dias; `Secure` com `PUBLIC_BASE_URL` https), que dispensa o bloqueio da conta no login e no `/totp/verify`; morre com a troca de senha, o `set-password`, o `reset-2fa` e a ativação ou o disable do 2FA (o MAC cobre o hash da senha e a data de ativação do 2FA) |
+| Login completo (senha e, se ligado, 2FA) | — | cookie `stillon_dispositivo` (`HttpOnly`, `SameSite=Strict`, `Path=/api/v1/auth`, 180 dias; `Secure` com `PUBLIC_BASE_URL` https), que dispensa o bloqueio da conta no login e no `/totp/verify`; morre com a troca de senha, o `set-password`, o `reset-2fa` e a ativação ou o disable do 2FA (o MAC cobre o hash da senha e a data de ativação do 2FA) |
 
 ## Deploy e operação
 
@@ -221,10 +221,10 @@ sistema e no painel da Hostinger, atualizações de segurança automáticas.
   que está nela, com o **SHA do commit** como entrada. O job resolve a tag `:<sha>` (que só existe
   depois do reescaneamento) no digest, baixa a imagem linux/amd64 por esse digest e a entrega por
   SSH a um usuário `deploy` cuja chave só roda
-  [`vigilume-entrada`](deploy/vps/vigilume-entrada): ele confere o ID da imagem, troca a versão,
+  [`stillon-entrada`](deploy/vps/stillon-entrada): ele confere o ID da imagem, troca a versão,
   espera o healthcheck e **volta sozinho à anterior** se a nova não ficar saudável; se a conexão
   cair no meio, o deploy (ou o rollback) termina na própria VPS, que guarda o log de cada deploy e
-  backup em `/opt/vigilume/entrada.log`. A chave do
+  backup em `/opt/stillon/entrada.log`. A chave do
   servidor é fixada num secret (nada de `StrictHostKeyChecking=no`). No GitHub Free com
   repositório privado não há revisor obrigatório: quem pode disparar é quem tem acesso de escrita
   ao repositório (hoje, só o dono).
@@ -234,7 +234,7 @@ sistema e no painel da Hostinger, atualizações de segurança automáticas.
   sai com código 3; disco acima de 85% sai com 4 (o dump é guardado mesmo assim, e o job fica
   vermelho). Por cima, o backup semanal da Hostinger.
 - **Vigia externo:** um timer na VPS consulta o `/healthz` público a cada minuto e pinga o
-  healthchecks.io, que avisa o dono por e-mail se o site cair ou a VPS sumir: o Vigilume não
+  healthchecks.io, que avisa o dono por e-mail se o site cair ou a VPS sumir: o StillOn não
   consegue avisar da própria queda.
 
 Runbook, do "VPS recém-criada" ao "no ar com 2FA, e-mail, backup e vigia", e a operação:
@@ -257,8 +257,31 @@ Runbook, do "VPS recém-criada" ao "no ar com 2FA, e-mail, backup e vigia", e a 
 - **Cotas por usuário no sondador e no despacho**: só o operador cria contas (pelo CLI), então
   quem as esgotaria é uma conta que o próprio dono criou. Volta à mesa se o cadastro abrir.
 
-Os motivos completos estão na [spec](docs/superpowers/specs/2026-09-22-vigilume-design.md) (§2.2)
-e nos [planos](docs/superpowers/plans/).
+Os motivos completos estão na [spec](docs/superpowers/specs/2026-09-22-stillon-design.md) (§2.2)
+e no histórico dos planos (abaixo).
+
+## Histórico
+
+- Até 2026-09-25 o projeto tinha o nome antigo que o título registra; nessa data passou a se
+  chamar StillOn.
+- Nessa data foram apagados do repositório os planos 1 a 11, as specs de cada plano, os
+  relatórios de revisão e as pendências antigas. Ficaram a
+  [spec do sistema](docs/superpowers/specs/2026-09-22-stillon-design.md), o
+  [roteiro](docs/superpowers/plans/2026-09-22-roadmap.md), o
+  [contrato dos Planos 5, 6 e 7](docs/superpowers/specs/2026-09-24-planos-5-6-7-contrato.md) e as
+  [pendências correntes](docs/superpowers/PENDENCIAS-PARA-O-PLANO-12.md).
+- Para ler um arquivo apagado, use o commit `2e1c3ce7d816a0ccdb144ab3057878a4c66255a9`, o último
+  que os tem:
+  ```bash
+  git ls-tree -r --name-only 2e1c3ce7d816a0ccdb144ab3057878a4c66255a9 docs/superpowers   # a lista
+  ARQUIVO=docs/superpowers/plans/...   # troque os ... por um nome da lista
+  git show "2e1c3ce7d816a0ccdb144ab3057878a4c66255a9:$ARQUIVO"
+  ```
+- O plano da própria renomeação não está nesse commit: foi apagado no PR que a fez (#20). Leia-o
+  com `git show 24dda3f:docs/superpowers/plans/2026-09-25-renomeacao-stillon.md`.
+- Os comentários do código citam decisões por identificador ("D32 do Plano 7", "spec do Plano 10,
+  §4", "banco S1 da revisão"), que se resolvem nesses arquivos. "spec §N" sem número de plano é a
+  spec do sistema, `docs/superpowers/specs/2026-09-22-stillon-design.md`, que continua aqui.
 
 ## Licença
 

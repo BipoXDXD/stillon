@@ -20,7 +20,7 @@ it('uma aba que muda depois da montagem não rouba o foco', () => {
   )
   // Uma tela depois de navegar: o título recebe o foco ao montar.
   expect(screen.getByRole('heading', { name: 'Alvo' })).toHaveFocus()
-  expect(document.title).toBe('Alvo — Vigilume')
+  expect(document.title).toBe('Alvo — StillOn')
 
   screen.getByRole('button', { name: 'Outro lugar' }).focus()
   tela.rerender(
@@ -29,6 +29,6 @@ it('uma aba que muda depois da montagem não rouba o foco', () => {
       <button type="button">Outro lugar</button>
     </StrictMode>,
   )
-  expect(document.title).toBe('Alvo renomeado — Vigilume')
+  expect(document.title).toBe('Alvo renomeado — StillOn')
   expect(screen.getByRole('button', { name: 'Outro lugar' })).toHaveFocus()
 })

@@ -1,19 +1,19 @@
-# /etc/systemd/system/vigilume-vigia.service (Plano 11, spec §6). Disparado
-# a cada minuto pelo vigilume-vigia.timer; roda o /usr/local/sbin/vigilume-vigia
+# /etc/systemd/system/stillon-vigia.service (Plano 11, spec §6). Disparado
+# a cada minuto pelo stillon-vigia.timer; roda o /usr/local/sbin/stillon-vigia
 # (deploy/vps/vigia.sh) uma vez.
 [Unit]
-Description=Vigilume: vigia externo do /healthz público (healthchecks.io)
+Description=StillOn: vigia externo do /healthz público (healthchecks.io)
 Wants=network-online.target
 After=network-online.target
 
 [Service]
 Type=oneshot
-ExecStart=/usr/local/sbin/vigilume-vigia
-# Um usuário criado só para esta execução, sem acesso ao /opt/vigilume: o
+ExecStart=/usr/local/sbin/stillon-vigia
+# Um usuário criado só para esta execução, sem acesso ao /opt/stillon: o
 # systemd (como root) lê o vigia.env (SÓ o domínio e a HC_URL, nenhum segredo
 # do .env) e entrega a cópia em $CREDENTIALS_DIRECTORY.
 DynamicUser=yes
-LoadCredential=vigilume-vigia:/opt/vigilume/vigia.env
+LoadCredential=stillon-vigia:/opt/stillon/vigia.env
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes

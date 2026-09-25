@@ -7,7 +7,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/BipoXDXD/vigilume/internal/crypto"
+	"github.com/BipoXDXD/stillon/internal/crypto"
 )
 
 // nonceSize é o tamanho do nonce do GCM, prefixado pelo Seal.

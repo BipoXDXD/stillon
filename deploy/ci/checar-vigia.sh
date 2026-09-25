@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Checagens do vigia externo (Plano 11, spec §6): deploy/vps/vigia.sh e as
-# unidades vigilume-vigia.service/.timer. O job "vps" do CI roda; localmente,
+# unidades stillon-vigia.service/.timer. O job "vps" do CI roda; localmente,
 # da raiz do repositório:
 #
 #   bash deploy/ci/checar-vigia.sh
@@ -34,33 +34,33 @@ HC=https://hc-ping.com/0000-teste
 # roda <cenário de saúde> <conteúdo do vigia.env>; devolve o código do vigia.
 roda() {
     local c=0
-    printf '%s\n' "$2" > "$T/cred/vigilume-vigia"
+    printf '%s\n' "$2" > "$T/cred/stillon-vigia"
     : > "$T/registro"
     env -i PATH="$T/bin:/usr/bin:/bin" CREDENTIALS_DIRECTORY="$T/cred" REGISTRO="$T/registro" SAUDE="$1" \
         sh "$VIGIA" 2> "$T/erro" || c=$?
     echo "$c"
 }
 urls() { awk '{ print $NF }' "$T/registro" | tr '\n' ' '; }
-ENV_OK="VIGILUME_DOMINIO=vigilume.exemplo.com
+ENV_OK="STILLON_DOMINIO=stillon.example
 HC_URL=$HC"
 
 # 1. Saudável: pede o /healthz público e pinga a HC_URL.
 c=$(roda ok "$ENV_OK")
 [ "$c" = 0 ] || falhar "saudável: o vigia saiu $c"
-[ "$(urls)" = "https://vigilume.exemplo.com/healthz $HC " ] || falhar "saudável: pediu '$(urls)'"
+[ "$(urls)" = "https://stillon.example/healthz $HC " ] || falhar "saudável: pediu '$(urls)'"
 
 # 2. Fora do ar: pinga HC_URL/fail e sai com erro (o systemd registra).
 c=$(roda falha "$ENV_OK")
 [ "$c" != 0 ] || falhar "fora do ar: o vigia saiu 0"
-[ "$(urls)" = "https://vigilume.exemplo.com/healthz $HC/fail " ] || falhar "fora do ar: pediu '$(urls)'"
+[ "$(urls)" = "https://stillon.example/healthz $HC/fail " ] || falhar "fora do ar: pediu '$(urls)'"
 
 # 3. HC_URL com barra no fim: sem barra dupla no /fail.
-c=$(roda falha "VIGILUME_DOMINIO=vigilume.exemplo.com
+c=$(roda falha "STILLON_DOMINIO=stillon.example
 HC_URL=$HC/")
-[ "$(urls)" = "https://vigilume.exemplo.com/healthz $HC/fail " ] || falhar "HC_URL com barra: pediu '$(urls)'"
+[ "$(urls)" = "https://stillon.example/healthz $HC/fail " ] || falhar "HC_URL com barra: pediu '$(urls)'"
 
 # 4. Sem HC_URL: erro, e nenhum pedido.
-c=$(roda ok "VIGILUME_DOMINIO=vigilume.exemplo.com
+c=$(roda ok "STILLON_DOMINIO=stillon.example
 HC_URL=")
 [ "$c" != 0 ] || falhar "sem HC_URL: o vigia saiu 0"
 [ -z "$(urls)" ] || falhar "sem HC_URL: pediu '$(urls)'"
@@ -80,25 +80,25 @@ grep -Eq -- '(^| )(-k|--insecure)( |$)' "$T/registro" && falhar "o vigia desliga
 # 7. As unidades: o timer dispara o serviço a cada minuto; o serviço lê SÓ o
 #    vigia.env (nunca o .env com os segredos) pelo LoadCredential, com
 #    usuário dinâmico, e roda o vigia instalado.
-S=$RAIZ/deploy/vps/vigilume-vigia.service
-TM=$RAIZ/deploy/vps/vigilume-vigia.timer
-grep -qx 'ExecStart=/usr/local/sbin/vigilume-vigia' "$S" || falhar "o serviço não roda /usr/local/sbin/vigilume-vigia"
-grep -qx 'LoadCredential=vigilume-vigia:/opt/vigilume/vigia.env' "$S" || falhar "o serviço não entrega o vigia.env como vigilume-vigia"
+S=$RAIZ/deploy/vps/stillon-vigia.service
+TM=$RAIZ/deploy/vps/stillon-vigia.timer
+grep -qx 'ExecStart=/usr/local/sbin/stillon-vigia' "$S" || falhar "o serviço não roda /usr/local/sbin/stillon-vigia"
+grep -qx 'LoadCredential=stillon-vigia:/opt/stillon/vigia.env' "$S" || falhar "o serviço não entrega o vigia.env como stillon-vigia"
 [ "$(grep -c '^LoadCredential' "$S")" = 1 ] || falhar "o serviço entrega mais de uma credencial"
 grep -v '^#' "$S" > "$T/servico-sem-comentario"
-grep -Eq '/opt/vigilume/\.env|EnvironmentFile' "$T/servico-sem-comentario" && falhar "o serviço lê o .env com os segredos"
+grep -Eq '/opt/stillon/\.env|EnvironmentFile' "$T/servico-sem-comentario" && falhar "o serviço lê o .env com os segredos"
 grep -qx 'DynamicUser=yes' "$S" || falhar "o serviço não usa usuário dinâmico"
 grep -qx 'Type=oneshot' "$S" || falhar "o serviço não é oneshot"
 grep -qx 'OnCalendar=\*-\*-\* \*:\*:00' "$TM" || falhar "o timer não dispara a cada minuto"
-grep -qx 'Unit=vigilume-vigia.service' "$TM" || falhar "o timer não aponta para o serviço"
+grep -qx 'Unit=stillon-vigia.service' "$TM" || falhar "o timer não aponta para o serviço"
 grep -qx 'WantedBy=timers.target' "$TM" || falhar "o timer não volta depois do reboot"
 if command -v systemd-analyze >/dev/null; then
     # O verify confere a sintaxe e que o ExecStart existe: aponta o serviço
     # para o vigia do repositório, com os mesmos nomes de arquivo.
     mkdir -p "$T/unidades"
-    sed "s|^ExecStart=.*|ExecStart=$VIGIA|" "$S" > "$T/unidades/vigilume-vigia.service"
+    sed "s|^ExecStart=.*|ExecStart=$VIGIA|" "$S" > "$T/unidades/stillon-vigia.service"
     cp "$TM" "$T/unidades/"
-    systemd-analyze verify "$T/unidades/vigilume-vigia.timer" "$T/unidades/vigilume-vigia.service" 2> "$T/verify" ||
+    systemd-analyze verify "$T/unidades/stillon-vigia.timer" "$T/unidades/stillon-vigia.service" 2> "$T/verify" ||
         falhar "systemd-analyze verify: $(cat "$T/verify")"
     [ ! -s "$T/verify" ] || falhar "systemd-analyze verify avisou: $(cat "$T/verify")"
 else
@@ -107,8 +107,8 @@ fi
 
 # 8. Os modelos: o vigia.env.exemplo tem só o domínio e a HC_URL, sem valor;
 #    a HC_URL não está mais no env.exemplo (o .env com os segredos).
-[ "$(grep -Ev '^(#|$)' "$RAIZ/deploy/vps/vigia.env.exemplo" | sort | tr '\n' ' ')" = "HC_URL= VIGILUME_DOMINIO= " ] ||
-    falhar "o vigia.env.exemplo não é só VIGILUME_DOMINIO= e HC_URL=: $(grep -Ev '^(#|$)' "$RAIZ/deploy/vps/vigia.env.exemplo" | tr '\n' ' ')"
+[ "$(grep -Ev '^(#|$)' "$RAIZ/deploy/vps/vigia.env.exemplo" | sort | tr '\n' ' ')" = "HC_URL= STILLON_DOMINIO= " ] ||
+    falhar "o vigia.env.exemplo não é só STILLON_DOMINIO= e HC_URL=: $(grep -Ev '^(#|$)' "$RAIZ/deploy/vps/vigia.env.exemplo" | tr '\n' ' ')"
 grep -q '^HC_URL=' "$RAIZ/deploy/vps/env.exemplo" && falhar "a HC_URL ainda está no env.exemplo (é do vigia.env)"
 
 # 9. O pior caso do vigia (tudo esgota o prazo) cabe no TimeoutStartSec, para

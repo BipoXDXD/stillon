@@ -36,7 +36,7 @@ function erroDeCredencial(e: unknown, errado: string, codigoEnviado?: string): E
   else if (e instanceof ApiError && e.code === 'unauthorized') {
     r = { texto: 'O acesso desta tela venceu.', renovavel: true }
   } else r = { texto: mensagemDe(e), renovavel: false }
-  // PENDENCIAS do Plano 6: o código de recuperação é consumido ANTES da
+  // pendência do Plano 6: o código de recuperação é consumido ANTES da
   // transação da troca de senha. Se ela falha depois (família revogada,
   // outra troca concorrente), o código já foi gasto.
   // Sem resposta (a rede, o prazo), o servidor pode ter gasto o código do
@@ -184,7 +184,7 @@ const NADA_MUDOU = 'Nada mudou: o app atual continua valendo.'
 export const ATRASO_DA_REVOGACAO = 40_000
 
 // O confirm responde o mesmo 400 para código errado e para cadastro que
-// sumiu (trocar a senha apaga o cadastro pendente: PENDENCIAS do Plano 6).
+// sumiu (trocar a senha apaga o cadastro pendente: pendência do Plano 6).
 const CODIGO_NAO_ACEITO =
   'Código incorreto. Se a senha foi trocada depois de o QR code aparecer, feche e comece de novo.'
 
@@ -316,7 +316,7 @@ function CodigosDeRecuperacao({ codigos, aoTerminar }: { codigos: string[]; aoTe
             const url = URL.createObjectURL(new Blob([codigos.join('\n') + '\n'], { type: 'text/plain' }))
             const a = document.createElement('a')
             a.href = url
-            a.download = 'vigilume-codigos-de-recuperacao.txt'
+            a.download = 'stillon-codigos-de-recuperacao.txt'
             a.click()
             // O Firefox cancela o download se a URL é revogada logo depois
             // do click(); este é o único arquivo dos códigos.

@@ -9,7 +9,7 @@ import (
 
 	"golang.org/x/time/rate"
 
-	"github.com/BipoXDXD/vigilume/internal/apierr"
+	"github.com/BipoXDXD/stillon/internal/apierr"
 )
 
 // maxBuckets limita quantas origens distintas o limitador acompanha ao mesmo

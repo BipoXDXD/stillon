@@ -54,7 +54,7 @@ describe('senha', () => {
     expect(alerta).not.toHaveTextContent('código de recuperação')
   })
 
-  // PENDENCIAS do Plano 6: o código de recuperação é gasto antes da
+  // pendência do Plano 6: o código de recuperação é gasto antes da
   // transação da troca; se ela falha depois, o usuário tem de saber que
   // aquele código não vale mais. Sabotagem prevista: em ehDeRecuperacao,
   // trocar "!/^\d{6}$/.test(codigo)" por "/^\d{6}$/.test(codigo)" (este fica
@@ -418,7 +418,7 @@ describe('2FA', () => {
     }
   })
 
-  // PENDENCIAS do Plano 6: trocar a senha apaga o cadastro pendente, e o
+  // pendência do Plano 6: trocar a senha apaga o cadastro pendente, e o
   // confirm responde o mesmo 400 de um código errado.
   it('código não aceito na ativação sugere recomeçar, se a senha foi trocada', async () => {
     const r = await renderizarPainel('/settings')
@@ -489,7 +489,7 @@ describe('2FA', () => {
     expect(r.falsa.chamadas('POST /auth/totp/enroll')).toBe(0)
   })
 
-  // PENDENCIAS do Plano 6: sem 2FA ligado, "desativar" não se oferece (o
+  // pendência do Plano 6: sem 2FA ligado, "desativar" não se oferece (o
   // POST /auth/totp/disable contaria tentativa falha, R34). Outra aba o
   // desligou: o /me relido ao abrir não deixa o diálogo aparecer.
   // Sabotagem prevista: em abrir(), trocar "d === 'desativar' && !ligado"
@@ -1117,7 +1117,7 @@ describe('envio em voo nos diálogos do 2FA', () => {
         const segredo = segredos[enrolls++]!
         await p.aberto
         return HttpResponse.json({
-          otpauth_uri: `otpauth://totp/Vigilume:dono%40exemplo.com?secret=${segredo}&issuer=Vigilume`,
+          otpauth_uri: `otpauth://totp/StillOn:dono%40exemplo.com?secret=${segredo}&issuer=StillOn`,
         })
       }),
     )

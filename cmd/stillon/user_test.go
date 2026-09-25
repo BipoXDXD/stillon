@@ -15,9 +15,9 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/BipoXDXD/vigilume/internal/auth"
-	"github.com/BipoXDXD/vigilume/internal/clock"
-	"github.com/BipoXDXD/vigilume/internal/storage/testdb"
+	"github.com/BipoXDXD/stillon/internal/auth"
+	"github.com/BipoXDXD/stillon/internal/clock"
+	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 )
 
 // senhaMarcada é distinta o bastante para ser procurada na saída: ela nunca
@@ -236,7 +236,7 @@ func TestUserHasNoPasswordFlagOrEnv(t *testing.T) {
 	if r := rodarUser(t, dsn, "", "create", "--email", "dono@exemplo.com", senhaMarcada); r.codigo != saidaUso {
 		t.Errorf("senha posicional: código %d, queria 2", r.codigo)
 	}
-	env := map[string]string{"VIGILUME_PASSWORD": senhaMarcada, "PASSWORD": senhaMarcada, "SENHA": senhaMarcada}
+	env := map[string]string{"STILLON_PASSWORD": senhaMarcada, "PASSWORD": senhaMarcada, "SENHA": senhaMarcada}
 	r := rodarUserCom(t, dsn, entradaDaSenha{pipe: strings.NewReader("")}, env, "create", "--email", "dono@exemplo.com")
 	if r.codigo != saidaUso || !strings.Contains(r.stderr, "muito curta") {
 		t.Errorf("senha no ambiente: código %d, stderr %q; queria 2 e \"muito curta\"", r.codigo, r.stderr)

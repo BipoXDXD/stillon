@@ -21,10 +21,10 @@
 # (hostLocal em internal/config): PUBLIC_BASE_URL http, com host localhost ou
 # um IPv4 de 127.0.0.0/8 ou [::1]. TestSeedRefusesOutsideLoopback a prende.
 #
-# VIGILUME_BIN existe só para o teste trocar o binário por um falso.
+# STILLON_BIN existe só para o teste trocar o binário por um falso.
 set -u
 
-VIGILUME=${VIGILUME_BIN:-/vigilume}
+STILLON=${STILLON_BIN:-/stillon}
 
 # local_ou_nao diz (código 0) se a URL é http num host de loopback. Um nome
 # que só começa com "localhost" ou "127." (localhost.exemplo.com,
@@ -51,7 +51,7 @@ if ! local_ou_nao "${PUBLIC_BASE_URL:-}"; then
     exit 1
 fi
 
-printf '%s\n' "$DEMO_PASSWORD" | "$VIGILUME" user create --email "$DEMO_EMAIL"
+printf '%s\n' "$DEMO_PASSWORD" | "$STILLON" user create --email "$DEMO_EMAIL"
 rc=$?
 if [ "$rc" -eq 3 ]; then
     echo "seed: já existe usuário; nada muda"
@@ -61,12 +61,12 @@ fi
 [ "${DEMO_TARGETS:-0}" = 1 ] || exit 0
 
 API=127.0.0.1:18080
-HTTP_ADDR=$API "$VIGILUME" --role=api >/tmp/seed-api.log 2>&1 &
+HTTP_ADDR=$API "$STILLON" --role=api >/tmp/seed-api.log 2>&1 &
 pid=$!
 trap 'kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null' EXIT
 
 tentativas=0
-until HTTP_ADDR=$API "$VIGILUME" healthcheck 2>/dev/null; do
+until HTTP_ADDR=$API "$STILLON" healthcheck 2>/dev/null; do
     tentativas=$((tentativas + 1))
     if [ "$tentativas" -ge 60 ]; then
         echo "seed: a API temporária não ficou pronta" >&2
@@ -79,14 +79,14 @@ done
 # O busybox não tem parser de JSON. O token é base64url com pontos, sem
 # aspas; o E2E do CI pega uma mudança no formato da resposta.
 postar() {
-    wget -q -O - --header 'Content-Type: application/json' --header 'X-Requested-With: vigilume' "$@"
+    wget -q -O - --header 'Content-Type: application/json' --header 'X-Requested-With: stillon' "$@"
 }
 # -S manda os cabeçalhos da resposta para o stderr: o cookie de refresh vem
 # de lá, para o logout do fim.
 resposta=$(postar -S --post-data "{\"email\":\"$DEMO_EMAIL\",\"password\":\"$DEMO_PASSWORD\"}" \
     "http://$API/api/v1/auth/login" 2>&1)
 token=$(printf '%s\n' "$resposta" | sed -n 's/.*"access_token":"\([^"]*\)".*/\1/p')
-refresh=$(printf '%s\n' "$resposta" | sed -n 's/.*[Ss]et-[Cc]ookie: *\(vigilume_refresh=[^;]*\).*/\1/p')
+refresh=$(printf '%s\n' "$resposta" | sed -n 's/.*[Ss]et-[Cc]ookie: *\(stillon_refresh=[^;]*\).*/\1/p')
 if [ -z "$token" ] || [ -z "$refresh" ]; then
     echo "seed: o login do usuário de demonstração falhou" >&2
     exit 1

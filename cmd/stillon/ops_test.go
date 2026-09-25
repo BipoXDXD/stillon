@@ -172,7 +172,7 @@ func TestHealthcheckInterruptedIs130(t *testing.T) {
 	}
 }
 
-// Argumento a mais é erro de uso (2), como no `user`: `vigilume healthcheck
+// Argumento a mais é erro de uso (2), como no `user`: `stillon healthcheck
 // --porta 9000` não pode checar a 8080 e dizer que está tudo bem.
 func TestOperationSubcommandsRejectExtraArgs(t *testing.T) {
 	addr := servidorDeProntidao(t, func(w http.ResponseWriter, r *http.Request) {
@@ -212,7 +212,7 @@ func TestHealthcheckDeadlinesNest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m = regexp.MustCompile(`"/vigilume", "healthcheck"\]\n(?:[ \t]+(?:#|\w+:)[^\n]*\n)*?[ \t]+timeout: (\S+)\n`).FindSubmatch(compose)
+	m = regexp.MustCompile(`"/stillon", "healthcheck"\]\n(?:[ \t]+(?:#|\w+:)[^\n]*\n)*?[ \t]+timeout: (\S+)\n`).FindSubmatch(compose)
 	if m == nil {
 		t.Fatal("timeout do healthcheck do app não encontrado no compose.yaml")
 	}

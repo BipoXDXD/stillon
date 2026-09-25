@@ -134,7 +134,7 @@ export function PaginaLogin() {
         {/* O foco vai ao <h1> depois de a sessão acabar (é uma navegação), e
             o leitor de tela lê o motivo junto, pela descrição. */}
         <Titulo aba="Entrar" descritoPor={textoDoMotivo ? ID_MOTIVO : undefined}>
-          Entrar no Vigilume
+          Entrar no StillOn
         </Titulo>
         {textoDoMotivo && (
           <p id={ID_MOTIVO} className="rounded-md border border-borda p-3 text-sm">

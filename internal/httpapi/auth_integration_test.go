@@ -16,17 +16,17 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/BipoXDXD/vigilume/internal/account"
-	"github.com/BipoXDXD/vigilume/internal/auth"
-	"github.com/BipoXDXD/vigilume/internal/clock"
-	"github.com/BipoXDXD/vigilume/internal/config"
-	"github.com/BipoXDXD/vigilume/internal/crypto"
-	"github.com/BipoXDXD/vigilume/internal/httpapi"
-	"github.com/BipoXDXD/vigilume/internal/incident/history"
-	"github.com/BipoXDXD/vigilume/internal/notify"
-	"github.com/BipoXDXD/vigilume/internal/statuspage"
-	"github.com/BipoXDXD/vigilume/internal/storage/testdb"
-	"github.com/BipoXDXD/vigilume/internal/targets"
+	"github.com/BipoXDXD/stillon/internal/account"
+	"github.com/BipoXDXD/stillon/internal/auth"
+	"github.com/BipoXDXD/stillon/internal/clock"
+	"github.com/BipoXDXD/stillon/internal/config"
+	"github.com/BipoXDXD/stillon/internal/crypto"
+	"github.com/BipoXDXD/stillon/internal/httpapi"
+	"github.com/BipoXDXD/stillon/internal/incident/history"
+	"github.com/BipoXDXD/stillon/internal/notify"
+	"github.com/BipoXDXD/stillon/internal/statuspage"
+	"github.com/BipoXDXD/stillon/internal/storage/testdb"
+	"github.com/BipoXDXD/stillon/internal/targets"
 )
 
 const (
@@ -113,7 +113,7 @@ func newAPICom(t *testing.T, ajustar func(*config.Config), ajustarDeps func(*htt
 	if err != nil {
 		t.Fatal(err)
 	}
-	segundoFator := auth.NewTOTP(pool, box, "Vigilume")
+	segundoFator := auth.NewTOTP(pool, box, "StillOn")
 
 	discord, email := &discordFalso{}, &carteiroFalso{}
 	deps := httpapi.Deps{
@@ -144,7 +144,7 @@ func post(t *testing.T, c *http.Client, url string, body any) *http.Response {
 		t.Fatal(err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Requested-With", "vigilume")
+	req.Header.Set("X-Requested-With", "stillon")
 
 	resp, err := c.Do(req)
 	if err != nil {
@@ -181,7 +181,7 @@ func decodeEnvelope(t *testing.T, resp *http.Response) envelope {
 
 func refreshCookie(resp *http.Response) *http.Cookie {
 	for _, ck := range resp.Cookies() {
-		if ck.Name == "vigilume_refresh" {
+		if ck.Name == "stillon_refresh" {
 			return ck
 		}
 	}
@@ -218,7 +218,7 @@ func postComToken(t *testing.T, c *http.Client, url, token string, body any) *ht
 		t.Fatal(err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Requested-With", "vigilume")
+	req.Header.Set("X-Requested-With", "stillon")
 	req.Header.Set("Authorization", "Bearer "+token)
 
 	resp, err := c.Do(req)
@@ -577,8 +577,8 @@ func TestReusedRefreshCookieRevokesTheWholeFamily(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	req.Header.Set("X-Requested-With", "vigilume")
-	req.AddCookie(&http.Cookie{Name: "vigilume_refresh", Value: antigo.Value})
+	req.Header.Set("X-Requested-With", "stillon")
+	req.AddCookie(&http.Cookie{Name: "stillon_refresh", Value: antigo.Value})
 
 	reuso, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -654,8 +654,8 @@ func TestRefreshWithUnknownCookieIsRejected(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	req.Header.Set("X-Requested-With", "vigilume")
-	req.AddCookie(&http.Cookie{Name: "vigilume_refresh", Value: "token-inventado"})
+	req.Header.Set("X-Requested-With", "stillon")
+	req.AddCookie(&http.Cookie{Name: "stillon_refresh", Value: "token-inventado"})
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -757,7 +757,7 @@ func TestMutationWithoutCustomHeaderIsRejected(t *testing.T) {
 // ser Secure, senão o refresh trafega em claro num downgrade de protocolo.
 func TestRefreshCookieIsSecureWhenPublicBaseURLIsHTTPS(t *testing.T) {
 	a := newAPIWith(t, func(cfg *config.Config) {
-		cfg.PublicBaseURL = "https://vigilume.exemplo.com"
+		cfg.PublicBaseURL = "https://stillon.example"
 	})
 
 	resp := login(t, a, http.DefaultClient, testEmail, testPass)
@@ -779,7 +779,7 @@ func TestRefreshCookieIsSecureWhenPublicBaseURLIsHTTPS(t *testing.T) {
 // "HTTPS://" é produção, e o cookie tem de sair Secure do mesmo jeito.
 func TestRefreshCookieIsSecureWhenPublicBaseURLIsUppercaseHTTPS(t *testing.T) {
 	a := newAPIWith(t, func(cfg *config.Config) {
-		cfg.PublicBaseURL = "HTTPS://vigilume.exemplo.com"
+		cfg.PublicBaseURL = "HTTPS://stillon.example"
 	})
 
 	resp := login(t, a, http.DefaultClient, testEmail, testPass)
@@ -880,7 +880,7 @@ func TestSessionsBehindATrustedProxyRecordDistinctOrigins(t *testing.T) {
 			t.Fatal(err)
 		}
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("X-Requested-With", "vigilume")
+		req.Header.Set("X-Requested-With", "stillon")
 		req.Header.Set("X-Forwarded-For", origem)
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
@@ -925,7 +925,7 @@ func TestSessionsBehindFlyRecordDistinctOrigins(t *testing.T) {
 			t.Fatal(err)
 		}
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("X-Requested-With", "vigilume")
+		req.Header.Set("X-Requested-With", "stillon")
 		req.Header.Set("X-Forwarded-For", origem+", 66.241.124.63")
 		req.Header.Set("Fly-Client-IP", origem)
 		resp, err := http.DefaultClient.Do(req)
@@ -969,7 +969,7 @@ func TestPasswordChangeBehindFlyAuditsTheClient(t *testing.T) {
 		t.Fatal(err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Requested-With", "vigilume")
+	req.Header.Set("X-Requested-With", "stillon")
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("X-Forwarded-For", "198.51.100.9, 66.241.124.63")
 	req.Header.Set("Fly-Client-IP", "198.51.100.9")
@@ -1063,7 +1063,7 @@ func TestTheMiddlewareChainIsActuallyWired(t *testing.T) {
 			t.Fatal(err)
 		}
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("X-Requested-With", "vigilume")
+		req.Header.Set("X-Requested-With", "stillon")
 
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
@@ -1154,7 +1154,7 @@ func TestOversizedBodyIsAPayloadTooLarge(t *testing.T) {
 		t.Fatal(err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Requested-With", "vigilume")
+	req.Header.Set("X-Requested-With", "stillon")
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {

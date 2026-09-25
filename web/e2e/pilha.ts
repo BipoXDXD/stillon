@@ -11,7 +11,7 @@ export const RAIZ = path.resolve(import.meta.dirname, '../..')
 const TMP = path.join(import.meta.dirname, '.tmp')
 const ESTADO = path.join(TMP, 'pilha.json')
 
-export const EMAIL = 'e2e@vigilume.test'
+export const EMAIL = 'e2e@stillon.example'
 // A política de senha nova do Plano 5: de 15 a 128 code points.
 export const SENHA = 'uma senha de teste bem comprida'
 
@@ -63,8 +63,8 @@ export async function subir(): Promise<{ baseURL: string }> {
   const dist = path.join(RAIZ, 'internal/webui/dist/index.html')
   if (!existsSync(dist)) throw new Error('E2E: rode "npm run build" antes: o binário embute internal/webui/dist')
 
-  const binario = path.join(TMP, 'vigilume')
-  execFileSync('go', ['build', '-o', binario, './cmd/vigilume'], {
+  const binario = path.join(TMP, 'stillon')
+  execFileSync('go', ['build', '-o', binario, './cmd/stillon'], {
     cwd: RAIZ,
     stdio: 'inherit',
     env: { ...process.env, GOFLAGS: '-buildvcs=false' },
@@ -104,7 +104,7 @@ async function terminarDeSubir(container: string, binario: string, estado: Estad
     ms: 60_000,
     tentar: () => {
       try {
-        execFileSync('docker', ['exec', container, 'pg_isready', '-h', '127.0.0.1', '-U', 'vigilume', '-d', 'vigilume'], {
+        execFileSync('docker', ['exec', container, 'pg_isready', '-h', '127.0.0.1', '-U', 'stillon', '-d', 'stillon'], {
           stdio: 'ignore',
         })
         return true
@@ -123,7 +123,7 @@ async function terminarDeSubir(container: string, binario: string, estado: Estad
   const baseURL = `http://127.0.0.1:${porta}`
   const env = {
     ...process.env,
-    DATABASE_URL: `postgres://vigilume:vigilume@127.0.0.1:${portaDoBanco}/vigilume?sslmode=disable`,
+    DATABASE_URL: `postgres://stillon:stillon@127.0.0.1:${portaDoBanco}/stillon?sslmode=disable`,
     HTTP_ADDR: `127.0.0.1:${porta}`,
     PUBLIC_BASE_URL: baseURL,
     CORS_ORIGIN: baseURL,
@@ -172,14 +172,14 @@ export function contarAuditoria(acao: string): number | null {
   const e = JSON.parse(readFileSync(ESTADO, 'utf8')) as Estado
   const saida = execFileSync(
     'docker',
-    ['exec', e.container, 'psql', '-U', 'postgres', '-d', 'vigilume', '-tAc',
+    ['exec', e.container, 'psql', '-U', 'postgres', '-d', 'stillon', '-tAc',
       `SELECT count(*) FROM audit_log WHERE action = '${acao}'`],
     { encoding: 'utf8' },
   )
   return Number(saida.trim())
 }
 
-// desligar2FA roda `vigilume user reset-2fa` para o e-mail: o 2FA desligado e
+// desligar2FA roda `stillon user reset-2fa` para o e-mail: o 2FA desligado e
 // as sessões encerradas, pelo CLI, sem passar pelo painel. É a rede de
 // segurança do troca.spec.ts (M2 da revisão do painel do Plano 10): o teste
 // liga o 2FA do único usuário, e uma falha no meio o deixaria ligado para as
@@ -199,7 +199,7 @@ export function desligar2FA(email: string) {
   if (process.env.E2E_PILHA_PROPRIA && existsSync(ESTADO)) {
     const e = JSON.parse(readFileSync(ESTADO, 'utf8')) as Estado
     if (!e.databaseURL) throw new Error('E2E: pilha.json sem a DATABASE_URL')
-    execFileSync(path.join(TMP, 'vigilume'), ['user', 'reset-2fa', '--email', email], {
+    execFileSync(path.join(TMP, 'stillon'), ['user', 'reset-2fa', '--email', email], {
       env: { ...process.env, DATABASE_URL: e.databaseURL },
       stdio: ['ignore', 'inherit', 'inherit'],
     })
@@ -207,7 +207,7 @@ export function desligar2FA(email: string) {
   }
   const servico = process.env.E2E_COMPOSE_SERVICE
   if (!servico) throw new Error('E2E: sem pilha própria nem E2E_COMPOSE_SERVICE, não há como desligar o 2FA')
-  execFileSync('docker', ['compose', 'exec', '-T', servico, '/vigilume', 'user', 'reset-2fa', '--email', email], {
+  execFileSync('docker', ['compose', 'exec', '-T', servico, '/stillon', 'user', 'reset-2fa', '--email', email], {
     cwd: RAIZ,
     stdio: ['ignore', 'inherit', 'inherit'],
   })
@@ -217,7 +217,7 @@ export function desligar2FA(email: string) {
 // outro processo. Sem /proc (macOS), não se sabe, e não se mata.
 function ehONossoBinario(pid: number): boolean {
   try {
-    return readFileSync(`/proc/${pid}/cmdline`, 'utf8').split('\0')[0] === path.join(TMP, 'vigilume')
+    return readFileSync(`/proc/${pid}/cmdline`, 'utf8').split('\0')[0] === path.join(TMP, 'stillon')
   } catch {
     return false
   }

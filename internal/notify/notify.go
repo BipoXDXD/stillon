@@ -21,8 +21,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/BipoXDXD/vigilume/internal/crypto"
-	"github.com/BipoXDXD/vigilume/internal/prober/safedial"
+	"github.com/BipoXDXD/stillon/internal/crypto"
+	"github.com/BipoXDXD/stillon/internal/prober/safedial"
 )
 
 type Kind string
@@ -137,4 +137,4 @@ func drenar(resp *http.Response) {
 	_ = resp.Body.Close()
 }
 
-const userAgent = "Vigilume/1.0 (+monitor de disponibilidade)"
+const userAgent = "StillOn/1.0 (+monitor de disponibilidade)"

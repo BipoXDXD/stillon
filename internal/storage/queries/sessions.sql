@@ -12,7 +12,7 @@ SELECT user_id FROM sessions WHERE token_hash = $1;
 -- linhas de sessions a pega ANTES de qualquer trava de linha, e é isso que
 -- impede o ciclo (deadlock) entre rotação e revogação.
 -- name: LockUserSessions :exec
-SELECT pg_advisory_xact_lock(hashtextextended('vigilume.sessions:' || sqlc.arg(user_id)::uuid::text, 0));
+SELECT pg_advisory_xact_lock(hashtextextended('stillon.sessions:' || sqlc.arg(user_id)::uuid::text, 0));
 
 -- As revogações por usuário (set-password, troca de senha, DELETE
 -- /sessions/{id}) marcam só a linha VIVA de cada família: não usada e não

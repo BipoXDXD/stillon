@@ -32,7 +32,7 @@ describe('o espelho de validate.go', () => {
     // O cliente nunca pode ser mais restritivo que o servidor: IPv4 mapeado
     // público passa pelo safedial (Unmap), então passa aqui também.
     expect(erroDe({ url: 'http://[::ffff:8.8.8.8]/' }, 'url')).toBeUndefined()
-    expect(erroDe({ url: 'https://vigilume-e2e.invalid/' }, 'url')).toBeUndefined()
+    expect(erroDe({ url: 'https://stillon-e2e.invalid/' }, 'url')).toBeUndefined()
   })
 
   it('headers: proibidos, repetidos e limites', () => {

@@ -55,8 +55,9 @@ jobs:
     timeout-minutes: 20
     env:
       SHA: ${{ inputs.sha }}
-      # Nome repetido à mão: IMAGEM do ci.yml e image do compose.yaml.
-      ORIGEM: ghcr.io/bipoxdxd/vigilume
+      # Nome repetido à mão em quatro lugares: aqui, no IMAGEM do ci.yml e
+      # nos dois image do compose.yaml (app e tools). Ver o ci.yml.
+      ORIGEM: ghcr.io/bipoxdxd/stillon
     steps:
       - name: só da main
         # Só da main: o vps.sh que conversa com a VPS é o que passou por PR.
@@ -139,7 +140,7 @@ jobs:
       - name: baixar a imagem (layout OCI)
         # O crane grava o manifesto e as camadas como estão no registry. O
         # index.json passa pela MESMA conferência da VPS (conferir_tar do
-        # deploy/vps/vigilume-entrada; o checar-workflows.sh confere que o
+        # deploy/vps/stillon-entrada; o checar-workflows.sh confere que o
         # programa do jq é igual): um valor JSON, um manifesto só, o do
         # IMAGE_ID, e só as chaves permitidas. Uma chave a mais (annotations,
         # se o publish passar a anotar os manifestos) faria a VPS recusar com

@@ -23,10 +23,10 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/BipoXDXD/vigilume/internal/auth"
-	"github.com/BipoXDXD/vigilume/internal/clock"
-	"github.com/BipoXDXD/vigilume/internal/crypto"
-	"github.com/BipoXDXD/vigilume/internal/storage/db"
+	"github.com/BipoXDXD/stillon/internal/auth"
+	"github.com/BipoXDXD/stillon/internal/clock"
+	"github.com/BipoXDXD/stillon/internal/crypto"
+	"github.com/BipoXDXD/stillon/internal/storage/db"
 )
 
 var (
@@ -314,7 +314,7 @@ func (s *Service) CreateUser(ctx context.Context, email, password string) (uuid.
 	return id, nil
 }
 
-// ResetPassword é o caminho de recuperação do operador (vigilume user
+// ResetPassword é o caminho de recuperação do operador (stillon user
 // set-password, D10 do Plano 5): grava a senha nova, tira o bloqueio e encerra
 // TODAS as sessões. Recuperação quase sempre é "perdi" ou "vazou", e manter as
 // sessões deixaria o invasor dentro. Não mexe no segundo fator.
@@ -357,7 +357,7 @@ func (s *Service) ResetPassword(ctx context.Context, email, password string) (in
 	return revogadas, err
 }
 
-// ResetTwoFactor é o `vigilume user reset-2fa` (Plano 9, §3.1): a saída de quem
+// ResetTwoFactor é o `stillon user reset-2fa` (Plano 9, §3.1): a saída de quem
 // perdeu o autenticador E os códigos de recuperação, sem SQL à mão. Não pede
 // senha: quem tem a DATABASE_URL já pode tudo no banco, e o comando existe
 // para que o SQL certo não precise ser escrito, não como fronteira de

@@ -14,7 +14,7 @@ import (
 	"github.com/pquerna/otp"
 	"github.com/pquerna/otp/totp"
 
-	"github.com/BipoXDXD/vigilume/internal/auth"
+	"github.com/BipoXDXD/stillon/internal/auth"
 )
 
 // A troca de autenticador com segredo pendente (Plano 9, §3.2), pelo HTTP:
@@ -466,7 +466,7 @@ func TestRotationBelongsToTheFamilyThatStartedIt(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				c.Jar.SetCookies(u, []*http.Cookie{{Name: "vigilume_refresh", Value: refreshA, Path: "/api/v1/auth"}})
+				c.Jar.SetCookies(u, []*http.Cookie{{Name: "stillon_refresh", Value: refreshA, Path: "/api/v1/auth"}})
 				resp := post(t, c, a.srv.URL+"/api/v1/auth/logout", nil)
 				resp.Body.Close()
 				if resp.StatusCode != http.StatusNoContent {
@@ -534,7 +534,7 @@ func TestRotateRechecksTheFamilyUnderTheLock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	chave := "hashtextextended('vigilume.sessions:' || '" + a.userID.String() + "', 0)"
+	chave := "hashtextextended('stillon.sessions:' || '" + a.userID.String() + "', 0)"
 	var umaVez sync.Once
 	soltar := func() {
 		umaVez.Do(func() {
@@ -564,7 +564,7 @@ func TestRotateRechecksTheFamilyUnderTheLock(t *testing.T) {
 		t.Fatal(err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Requested-With", "vigilume")
+	req.Header.Set("X-Requested-With", "stillon")
 	req.Header.Set("Authorization", "Bearer "+token)
 	fim := make(chan resposta, 1)
 	go func() {

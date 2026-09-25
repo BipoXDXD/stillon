@@ -9,9 +9,9 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"github.com/BipoXDXD/vigilume/internal/storage"
-	"github.com/BipoXDXD/vigilume/internal/storage/db"
-	"github.com/BipoXDXD/vigilume/internal/storage/testdb"
+	"github.com/BipoXDXD/stillon/internal/storage"
+	"github.com/BipoXDXD/stillon/internal/storage/db"
+	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 )
 
 // target_health e incidents não têm user_id: a RLS delega ao alvo, como em
@@ -338,7 +338,7 @@ func TestPartitionCreationWaitsForTheAdvisoryLock(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer trava.Release()
-	const chave = `hashtextextended('vigilume.ensure_checks_partition', 0)`
+	const chave = `hashtextextended('stillon.ensure_checks_partition', 0)`
 	if _, err := trava.Exec(ctx, `SELECT pg_advisory_lock(`+chave+`)`); err != nil {
 		t.Fatal(err)
 	}

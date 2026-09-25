@@ -59,9 +59,9 @@ done
 #    errada". O stderr segue direto para o log, e a mensagem de erro aponta
 #    para ele.
 if got=$(timeout -k 5 30 docker run --rm --name "$ctr_versao" "$IMAGEM" version); then
-    [ "$got" = "$VERSAO" ] || falhar "vigilume version = '$got', queria '$VERSAO'"
+    [ "$got" = "$VERSAO" ] || falhar "stillon version = '$got', queria '$VERSAO'"
 else
-    falhar "vigilume version não respondeu em 30 s ou saiu com erro (código $?; o stderr está logo acima): '$got'"
+    falhar "stillon version não respondeu em 30 s ou saiu com erro (código $?; o stderr está logo acima): '$got'"
 fi
 docker rm -f "$ctr_versao" >/dev/null 2>&1 || true
 
@@ -70,9 +70,9 @@ docker rm -f "$ctr_versao" >/dev/null 2>&1 || true
 #    checagem olha o conteúdo, não o build. O index.html do Vite referencia o
 #    bundle com hash; nenhum código Go tem essa string.
 docker create --name "$ctr_copia" "$IMAGEM" >/dev/null
-docker cp -q "$ctr_copia:/vigilume" "$tmp/vigilume"
+docker cp -q "$ctr_copia:/stillon" "$tmp/stillon"
 docker rm "$ctr_copia" >/dev/null
-grep -aq 'src="/assets/index-' "$tmp/vigilume" || falhar "o binário não embute o index.html do painel"
+grep -aq 'src="/assets/index-' "$tmp/stillon" || falhar "o binário não embute o index.html do painel"
 
 # 5. Teto de tamanho: pega uma base errada ou um node_modules que vazou.
 #    Em dois passos: num pipe `docker save | gzip | wc`, um save que falha

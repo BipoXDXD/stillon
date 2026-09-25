@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/BipoXDXD/vigilume/internal/auth"
+	"github.com/BipoXDXD/stillon/internal/auth"
 )
 
 // ocuparArgon2 enche o semáforo do Argon2id com capacidade n e devolve as n

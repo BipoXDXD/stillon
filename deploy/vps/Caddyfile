@@ -1,13 +1,13 @@
-# Caddy de produção do Vigilume (Plano 11, spec §2). Montado só-leitura em
+# Caddy de produção do StillOn (Plano 11, spec §2). Montado só-leitura em
 # /etc/caddy/Caddyfile pelo deploy/vps/compose.prod.yaml; na VPS, fica em
-# /opt/vigilume/Caddyfile.
+# /opt/stillon/Caddyfile.
 #
-# {$VIGILUME_DOMINIO} vem do /opt/vigilume/.env (pelo environment do serviço
-# caddy no compose). {$VIGILUME_CADDY_TESTE} é vazio em produção; o teste do
+# {$STILLON_DOMINIO} vem do /opt/stillon/.env (pelo environment do serviço
+# caddy no compose). {$STILLON_CADDY_TESTE} é vazio em produção; o teste do
 # CI (deploy/ci/checar-vps.sh) põe ali `local_certs`, e o certificado sai da
 # CA interna do Caddy em vez do Let's Encrypt.
 {
-	{$VIGILUME_CADDY_TESTE}
+	{$STILLON_CADDY_TESTE}
 
 	# SEM trusted_proxies, de propósito (obrigação 1 do Plano 11): não há CDN
 	# na frente, e sem a lista o Caddy SUBSTITUI o X-Forwarded-For que o
@@ -23,7 +23,7 @@
 
 # Um bloco de site só para o domínio. Uma requisição com outro Host (ou outro
 # SNI) não casa com nada e não chega ao app: é a checagem de Host da revisão.
-{$VIGILUME_DOMINIO} {
+{$STILLON_DOMINIO} {
 	reverse_proxy app:8080 {
 		# O Caddy repassa todo cabeçalho do cliente e só reescreve os
 		# X-Forwarded-*. Estes três carregam "o IP do cliente" em outras

@@ -9,7 +9,7 @@ import (
 	"github.com/pquerna/otp"
 	"github.com/pquerna/otp/totp"
 
-	"github.com/BipoXDXD/vigilume/internal/account"
+	"github.com/BipoXDXD/stillon/internal/account"
 )
 
 // As rotas do segundo fator exigem a família do token viva, como /sessions e

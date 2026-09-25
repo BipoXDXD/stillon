@@ -10,9 +10,9 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/BipoXDXD/vigilume/internal/clock"
-	"github.com/BipoXDXD/vigilume/internal/crypto"
-	"github.com/BipoXDXD/vigilume/internal/storage/testdb"
+	"github.com/BipoXDXD/stillon/internal/clock"
+	"github.com/BipoXDXD/stillon/internal/crypto"
+	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 )
 
 type testadorFalso struct {
@@ -58,7 +58,7 @@ func (f *carteiroFalso) ultimoToken(t *testing.T) string {
 		t.Fatal("nenhum link enviado")
 	}
 	link := f.links[len(f.links)-1]
-	token, ok := strings.CutPrefix(link, "https://vigilume.dev/verify/")
+	token, ok := strings.CutPrefix(link, "https://stillon.example/verify/")
 	if !ok {
 		t.Fatalf("link fora do formato: %s", link)
 	}
@@ -98,7 +98,7 @@ func novaBancadaCanais(t *testing.T, comEmail bool) *bancadaCanais {
 	if comEmail {
 		mailer = b.email
 	}
-	b.svc = NewChannelService(pool, box, b.clk, b.discord, mailer, "https://vigilume.dev/")
+	b.svc = NewChannelService(pool, box, b.clk, b.discord, mailer, "https://stillon.example/")
 	return b
 }
 

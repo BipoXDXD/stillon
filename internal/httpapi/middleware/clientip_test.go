@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/BipoXDXD/vigilume/internal/httpapi/middleware"
+	"github.com/BipoXDXD/stillon/internal/httpapi/middleware"
 )
 
 func prefixos(t *testing.T, cidrs ...string) []netip.Prefix {

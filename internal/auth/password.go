@@ -32,7 +32,7 @@ var ErrInvalidHash = errors.New("hash de senha malformado")
 // único fator; aceitar ao menos 64; nenhuma regra de composição. O máximo de
 // 128 dá folga a gerenciadores de senha e mantém o pior caso em 512 bytes.
 //
-// Vale para senha nova (vigilume user create, set-password, POST
+// Vale para senha nova (stillon user create, set-password, POST
 // /auth/password). O login continua aceitando uma senha antiga mais curta.
 const (
 	MinPasswordLen = 15

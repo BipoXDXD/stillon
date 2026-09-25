@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
 # Checagens da produção na VPS (Plano 11, spec §8), sem VPS: sobe o
 # deploy/vps/compose.prod.yaml com o Caddy em modo local (certificado da CA
-# interna, domínio vigilume.teste) e confere o que a revisão exigiu da
+# interna, domínio stillon.example) e confere o que a revisão exigiu da
 # hospedagem. O job "vps" do CI roda; localmente, da raiz do repositório:
 #
-#   bash deploy/ci/checar-vps.sh <imagem do app>     (ex.: vigilume:dev)
+#   bash deploy/ci/checar-vps.sh <imagem do app>     (ex.: stillon:dev)
 #
 # Precisa de docker (com o image store containerd, como a VPS), jq, curl,
 # openssl, python3 (monta os tars maliciosos) e do age/age-keygen no PATH.
-# O projeto do compose é "vigilume-teste-vps" e as portas do Caddy vão para o
+# O projeto do compose é "stillon-teste-vps" e as portas do Caddy vão para o
 # loopback (TESTE_VPS_HTTP, padrão 18580; TESTE_VPS_HTTPS, padrão 18543):
 # deploy/ci/vps/compose.teste.yaml. A rede é a de produção (172.30.0.0/24):
-# não rode numa máquina que já tenha o Vigilume de produção de pé.
+# não rode numa máquina que já tenha o StillOn de produção de pé.
 # Derruba tudo no fim (TESTE_VPS_MANTER=1 deixa de pé, para investigar).
 # O script escreve outros scripts e procura ${...} em arquivos: muita string
 # com $ literal entre aspas simples, de propósito.
@@ -28,10 +28,10 @@ docker compose version >/dev/null 2>&1 || { echo "checar-vps.sh: falta o plugin 
 RAIZ=$(cd "$(dirname "$0")/../.." && pwd)
 HTTP=${TESTE_VPS_HTTP:-18580}
 HTTPS=${TESTE_VPS_HTTPS:-18543}
-DOMINIO=vigilume.teste
-PROJETO=vigilume-teste-vps
-REPO_TESTE=vigilume-teste-vps
-EMAIL=dono@vigilume.teste
+DOMINIO=stillon.example
+PROJETO=stillon-teste-vps
+REPO_TESTE=stillon-teste-vps
+EMAIL=dono@stillon.example
 SENHA=senha-do-teste-da-vps-2026
 
 falhas=0
@@ -43,7 +43,7 @@ ok() {
     falhas_antes=$falhas
 }
 
-# O diretório que faz o papel de /opt/vigilume.
+# O diretório que faz o papel de /opt/stillon.
 DIR=$(mktemp -d)
 limpar() {
     if [ "${TESTE_VPS_MANTER:-}" = 1 ]; then
@@ -51,7 +51,7 @@ limpar() {
         return
     fi
     # Um postgres descartável esquecido pela entrada seguraria a rede.
-    docker ps -aq --filter name=vigilume-restauro- | xargs -r docker rm -f >/dev/null 2>&1 || true
+    docker ps -aq --filter name=stillon-restauro- | xargs -r docker rm -f >/dev/null 2>&1 || true
     dc down -v --remove-orphans >/dev/null 2>&1 || true
     for r in "$REPO_TESTE" "$REPO_TESTE-fonte"; do
         docker image ls --format '{{.Repository}}:{{.Tag}}' "$r" | xargs -r docker rmi >/dev/null 2>&1 || true
@@ -65,16 +65,16 @@ cp "$RAIZ/deploy/ci/vps/compose.teste.yaml" "$DIR/"
 b64() { openssl rand -base64 32; }
 IP_HASH_KEY=$(b64)
 cat > "$DIR/.env" <<EOF
-VIGILUME_DOMINIO=$DOMINIO
+STILLON_DOMINIO=$DOMINIO
 POSTGRES_PASSWORD=$(openssl rand -hex 32)
-VIGILUME_APP_PASSWORD=$(openssl rand -hex 32)
-VIGILUME_BACKUP_PASSWORD=$(openssl rand -hex 32)
+STILLON_APP_PASSWORD=$(openssl rand -hex 32)
+STILLON_BACKUP_PASSWORD=$(openssl rand -hex 32)
 MASTER_KEY=$(b64)
 JWT_SECRET=$(b64)
 IP_HASH_KEY=$IP_HASH_KEY
 RESEND_API_KEY=
 EMAIL_FROM=
-VIGILUME_CADDY_TESTE=local_certs
+STILLON_CADDY_TESTE=local_certs
 TESTE_VPS_HTTP=$HTTP
 TESTE_VPS_HTTPS=$HTTPS
 EOF
@@ -83,20 +83,20 @@ chmod 600 "$DIR/.env"
 # O compose como a entrada o chama: o .env do diretório do projeto para a
 # interpolação, mais o arquivo do teste por cima.
 dc() { COMPOSE_FILE="$DIR/compose.prod.yaml:$DIR/compose.teste.yaml" docker compose --project-directory "$DIR" "$@"; }
-sql() { dc exec -T db psql -U postgres -d vigilume -Atq -c "$1"; }
+sql() { dc exec -T db psql -U postgres -d stillon -Atq -c "$1"; }
 
 # A entrada do teste: a de produção com as constantes trocadas (o diretório,
 # o nome da imagem, o compose do teste por cima, uma espera menor). Cada troca
 # tem de casar exatamente uma linha, ou o teste rodaria outra coisa.
 TARS=$(mktemp -d)
-ENTRADA=$TARS/vigilume-entrada
+ENTRADA=$TARS/stillon-entrada
 trocar() {
-    [ "$(grep -cxF -- "$1" "$ENTRADA")" = 1 ] || { echo "FALHOU: a linha '$1' não está (uma vez) no vigilume-entrada" >&2; exit 1; }
+    [ "$(grep -cxF -- "$1" "$ENTRADA")" = 1 ] || { echo "FALHOU: a linha '$1' não está (uma vez) no stillon-entrada" >&2; exit 1; }
     awk -v de="$1" -v para="$2" '$0 == de { print para; next } { print }' "$ENTRADA" > "$ENTRADA.novo" && mv "$ENTRADA.novo" "$ENTRADA"
 }
-cp "$RAIZ/deploy/vps/vigilume-entrada" "$ENTRADA"
-trocar 'DIR=/opt/vigilume' "DIR=$DIR"
-trocar 'IMAGEM=vigilume' "IMAGEM=$REPO_TESTE"
+cp "$RAIZ/deploy/vps/stillon-entrada" "$ENTRADA"
+trocar 'DIR=/opt/stillon' "DIR=$DIR"
+trocar 'IMAGEM=stillon' "IMAGEM=$REPO_TESTE"
 trocar 'ARQUIVOS_COMPOSE="$DIR/compose.prod.yaml"' 'ARQUIVOS_COMPOSE="$DIR/compose.prod.yaml:$DIR/compose.teste.yaml"'
 trocar 'ESPERA_S=90' 'ESPERA_S=45'
 trocar 'SHM_BASE=/dev/shm' "SHM_BASE=$TARS"
@@ -184,42 +184,42 @@ if ! { [ "$gomem_b" -gt 0 ] && [ "$gomem_b" -lt "$limite" ]; }; then
     falhar "GOMEMLIMIT '$gomem' não está abaixo do mem_limit do app ($limite bytes)"
 fi
 # O IP do cliente (obrigação 2): TRUSTED_PROXIES é o IP fixo do Caddy.
-caddy_ip=$(q '.services.caddy.networks.vigilume.ipv4_address')
+caddy_ip=$(q '.services.caddy.networks.stillon.ipv4_address')
 [ "$caddy_ip" = 172.30.0.2 ] || falhar "IP do caddy é '$caddy_ip', queria 172.30.0.2"
 [ "$(q '.services.app.environment.TRUSTED_PROXIES')" = "$caddy_ip/32" ] ||
     falhar "TRUSTED_PROXIES do app não é $caddy_ip/32"
 [ "$(q '.services.app.environment.CLIENT_IP_HEADER')" = "" ] || falhar "CLIENT_IP_HEADER do app não é vazio"
 [ "$(q '.services.app.environment.PUBLIC_BASE_URL')" = "https://$DOMINIO" ] || falhar "PUBLIC_BASE_URL não é https://<domínio>"
 [ "$(q '.services.app.environment.METRICS_ADDR')" = off ] || falhar "METRICS_ADDR do app não é off"
-[ "$(q '.services.app.networks.vigilume.ipv4_address')/$(q '.services.db.networks.vigilume.ipv4_address')" = 172.30.0.3/172.30.0.4 ] ||
+[ "$(q '.services.app.networks.stillon.ipv4_address')/$(q '.services.db.networks.stillon.ipv4_address')" = 172.30.0.3/172.30.0.4 ] ||
     falhar "IPs fixos do app e do db não são 172.30.0.3 e 172.30.0.4"
-[ "$(q '.networks.vigilume.enable_ipv6')" = false ] || falhar "a rede vigilume não desliga o IPv6"
-[ "$(q '.networks.vigilume.ipam.config[0].subnet')" = 172.30.0.0/24 ] || falhar "sub-rede da rede vigilume não é 172.30.0.0/24"
+[ "$(q '.networks.stillon.enable_ipv6')" = false ] || falhar "a rede stillon não desliga o IPv6"
+[ "$(q '.networks.stillon.ipam.config[0].subnet')" = 172.30.0.0/24 ] || falhar "sub-rede da rede stillon não é 172.30.0.0/24"
 # O Caddy não recebe segredo nenhum; o app não recebe a senha do superusuário.
-[ "$(q '.services.caddy.environment | keys | sort | join(",")')" = VIGILUME_CADDY_TESTE,VIGILUME_DOMINIO ] ||
+[ "$(q '.services.caddy.environment | keys | sort | join(",")')" = STILLON_CADDY_TESTE,STILLON_DOMINIO ] ||
     falhar "o caddy recebe variáveis além do domínio e do modo de teste: $(q '.services.caddy.environment | keys | join(",")')"
-[ "$(q '.services.app.environment | has("POSTGRES_PASSWORD") or has("VIGILUME_BACKUP_PASSWORD")')" = false ] ||
+[ "$(q '.services.app.environment | has("POSTGRES_PASSWORD") or has("STILLON_BACKUP_PASSWORD")')" = false ] ||
     falhar "o app recebe a senha do superusuário ou a do backup"
 grep -q -- '-demo-\|ZGVtby12aWdpbHVtZS' "$RAIZ/deploy/vps/compose.prod.yaml" && falhar "o compose.prod.yaml tem chave de demonstração"
 # Nenhuma chave ou senha escrita no compose (obrigação 5): na config resolvida
 # com o .env do teste, cada segredo é o valor gerado acima. Um literal
 # qualquer (POSTGRES_PASSWORD: postgres, uma MASTER_KEY fixa) fica diferente.
 env_do_teste() { sed -n "s/^$1=//p" "$DIR/.env"; }
-for par in app:MASTER_KEY app:JWT_SECRET app:IP_HASH_KEY db:POSTGRES_PASSWORD db:VIGILUME_APP_PASSWORD db:VIGILUME_BACKUP_PASSWORD; do
+for par in app:MASTER_KEY app:JWT_SECRET app:IP_HASH_KEY db:POSTGRES_PASSWORD db:STILLON_APP_PASSWORD db:STILLON_BACKUP_PASSWORD; do
     s=${par%%:*} v=${par#*:}
     [ "$(q ".services.$s.environment.$v // empty")" = "$(env_do_teste "$v")" ] ||
         falhar "o $v do $s não é o do .env (valor escrito no compose.prod.yaml?)"
 done
-[ "$(q '.services.app.environment.DATABASE_URL')" = "postgres://vigilume_app:$(env_do_teste VIGILUME_APP_PASSWORD)@172.30.0.4:5432/vigilume?sslmode=disable" ] ||
+[ "$(q '.services.app.environment.DATABASE_URL')" = "postgres://stillon_app:$(env_do_teste STILLON_APP_PASSWORD)@172.30.0.4:5432/stillon?sslmode=disable" ] ||
     falhar "a DATABASE_URL do app não usa a senha do .env: $(q '.services.app.environment.DATABASE_URL' | sed 's/:[^:@]*@/:***@/')"
 # Sem trusted_proxies no Caddyfile (obrigação 1), fora dos comentários.
 [ "$(sed 's/#.*//' "$RAIZ/deploy/vps/Caddyfile" | grep -c trusted_proxies || true)" = 0 ] ||
     falhar "o Caddyfile tem trusted_proxies: um cliente escolheria o próprio IP"
 # O env.exemplo é o modelo do .env: sem valor nenhum, e com toda variável que
-# o compose.prod.yaml lê (menos VIGILUME_SHA, da entrada, e o modo de teste).
+# o compose.prod.yaml lê (menos STILLON_SHA, da entrada, e o modo de teste).
 grep -Ev '^(#|$)' "$RAIZ/deploy/vps/env.exemplo" | grep -v '=$' && falhar "o env.exemplo tem valor preenchido"
 while read -r v; do
-    case "$v" in VIGILUME_SHA | VIGILUME_CADDY_TESTE) continue ;; esac
+    case "$v" in STILLON_SHA | STILLON_CADDY_TESTE) continue ;; esac
     grep -q "^$v=$" "$RAIZ/deploy/vps/env.exemplo" || falhar "o env.exemplo não tem $v"
 done < <(grep -o '\${[A-Z_]*' "$RAIZ/deploy/vps/compose.prod.yaml" | sed 's/^\${//' | sort -u)
 # E o contrário: o env.exemplo só tem o que o compose lê (a HC_URL do vigia
@@ -230,15 +230,15 @@ done < <(grep -Eo '^[A-Z_]+=' "$RAIZ/deploy/vps/env.exemplo" | tr -d =)
 ok "compose.prod.yaml: portas, restart, mem_limit, GOMEMLIMIT, IPs fixos, IPv6, variáveis, segredos do .env; Caddyfile sem trusted_proxies"
 
 # A entrada e o compose falam da mesma imagem.
-if ! { grep -qx 'IMAGEM=vigilume' "$RAIZ/deploy/vps/vigilume-entrada" &&
-    [ "$(q '.services.app.image')" = "vigilume:atual" ]; }; then
-    falhar "o IMAGEM do vigilume-entrada e o image do app no compose.prod.yaml não casam"
+if ! { grep -qx 'IMAGEM=stillon' "$RAIZ/deploy/vps/stillon-entrada" &&
+    [ "$(q '.services.app.image')" = "stillon:atual" ]; }; then
+    falhar "o IMAGEM do stillon-entrada e o image do app no compose.prod.yaml não casam"
 fi
 
 # ---------------------------------------------------------------------------
-# 2. A pilha de pé pelo vigilume-entrada, com o Caddy em modo local.
+# 2. A pilha de pé pelo stillon-entrada, com o Caddy em modo local.
 # ---------------------------------------------------------------------------
-ID_A=$(fonte a 'LABEL vigilume.teste=a')
+ID_A=$(fonte a 'LABEL stillon.teste=a')
 ID_DOENTE=$(fonte doente 'ENV ARGON2_MAX_CONCURRENT=999')
 SHA_A=$(sha_de a)
 SHA_DOENTE=$(sha_de doente)
@@ -263,7 +263,7 @@ fi
 [ "$(imagem_do_app)" = "$REPO_TESTE:$SHA_A" ] || falhar "o app roda $(imagem_do_app), queria $REPO_TESTE:$SHA_A"
 [ "$(docker image inspect -f '{{.Id}}' "$REPO_TESTE:atual")" = "$ID_A" ] || falhar "$REPO_TESTE:atual não aponta para a versão no ar"
 [ ! -s "$TARS/saida" ] || falhar "o deploy escreveu na saída padrão"
-ok "vigilume-entrada: primeiro deploy doente para o app (4); deploy saudável (0)"
+ok "stillon-entrada: primeiro deploy doente para o app (4); deploy saudável (0)"
 
 # Só o caddy publica, e só 80 e 443 (de dentro do contêiner).
 publicadas=$(dc ps --format json | jq -rs '[.[] | .Service as $s | (.Publishers // [])[] | select(.PublishedPort > 0) | "\($s):\(.TargetPort)"] | sort | unique | join(" ")')
@@ -309,14 +309,14 @@ ok "Host estranho não chega ao app"
 #    o cliente mande. O observável é o ip_hash da sessão criada pelo login:
 #    HMAC-SHA256(IP_HASH_KEY, ip), o mesmo cálculo de crypto.HashIP.
 hmac() { printf %s "$1" | openssl dgst -sha256 -mac HMAC -macopt "hexkey:$(printf %s "$IP_HASH_KEY" | base64 -d | od -An -tx1 | tr -d ' \n')" | sed 's/^.*= //'; }
-printf '%s\n' "$SENHA" | dc exec -T app /vigilume user create --email "$EMAIL" >&2 ||
-    { falhar "vigilume user create falhou"; exit 1; }
-papeis=$(sql "SELECT string_agg(rolname || ':' || rolsuper::int || rolbypassrls::int || pg_has_role(oid, 'pg_read_all_data', 'MEMBER')::int, ' ' ORDER BY rolname) FROM pg_roles WHERE rolname IN ('vigilume_app', 'vigilume_backup')")
-[ "$papeis" = "vigilume_app:000 vigilume_backup:011" ] ||
-    falhar "papéis do initdb.sh: '$papeis', queria vigilume_app:000 vigilume_backup:011 (super, bypassrls, pg_read_all_data)"
+printf '%s\n' "$SENHA" | dc exec -T app /stillon user create --email "$EMAIL" >&2 ||
+    { falhar "stillon user create falhou"; exit 1; }
+papeis=$(sql "SELECT string_agg(rolname || ':' || rolsuper::int || rolbypassrls::int || pg_has_role(oid, 'pg_read_all_data', 'MEMBER')::int, ' ' ORDER BY rolname) FROM pg_roles WHERE rolname IN ('stillon_app', 'stillon_backup')")
+[ "$papeis" = "stillon_app:000 stillon_backup:011" ] ||
+    falhar "papéis do initdb.sh: '$papeis', queria stillon_app:000 stillon_backup:011 (super, bypassrls, pg_read_all_data)"
 entrar() {
     cu -o /dev/null -w '%{http_code}' -X POST "$BASE/api/v1/auth/login" \
-        -H 'Content-Type: application/json' -H 'X-Requested-With: vigilume' "$@" \
+        -H 'Content-Type: application/json' -H 'X-Requested-With: stillon' "$@" \
         -d "{\"email\":\"$EMAIL\",\"password\":\"$SENHA\"}"
 }
 ultimo_hash() { sql "SELECT encode(ip_hash, 'hex') FROM sessions ORDER BY created_at DESC, id DESC LIMIT 1"; }
@@ -326,7 +326,7 @@ real=$(ultimo_hash)
 [ -n "$real" ] || falhar "a sessão do login não tem ip_hash"
 [ "$real" = "$(hmac "$caddy_ip")" ] && falhar "o app viu o IP do Caddy: TRUSTED_PROXIES não casa, e todo cliente divide um balde"
 # O cliente do host chega à rede pelo gateway fixo: é esse o IP que o app vê.
-gateway=$(q '.networks.vigilume.ipam.config[0].gateway')
+gateway=$(q '.networks.stillon.ipam.config[0].gateway')
 [ "$real" = "$(hmac "$gateway")" ] || falhar "o app não viu o IP do cliente ($gateway, o gateway da rede)"
 [ "$(entrar -H 'X-Real-IP: 1.2.3.4' -H 'Fly-Client-IP: 1.2.3.5' -H 'CF-Connecting-IP: 1.2.3.6' -H 'X-Forwarded-For: 1.2.3.7')" = 200 ] ||
     falhar "login com cabeçalhos forjados não deu 200"
@@ -352,7 +352,7 @@ services:
     environment:
       CLIENT_IP_HEADER: $cab
 EOF
-    if ! COMPOSE_FILE="$DIR/compose.prod.yaml:$DIR/compose.teste.yaml:$DIR/compose.cabecalho.yaml" VIGILUME_SHA=$SHA_A \
+    if ! COMPOSE_FILE="$DIR/compose.prod.yaml:$DIR/compose.teste.yaml:$DIR/compose.cabecalho.yaml" STILLON_SHA=$SHA_A \
         docker compose --project-directory "$DIR" up -d --wait --wait-timeout 120 app >&2; then
         falhar "o app não subiu com CLIENT_IP_HEADER=$cab"
         continue
@@ -363,7 +363,7 @@ EOF
     [ "$h" = "$(hmac "$caddy_ip")" ] || falhar "com CLIENT_IP_HEADER=$cab o app não caiu no IP do Caddy"
 done
 rm -f "$DIR/compose.cabecalho.yaml"
-VIGILUME_SHA=$SHA_A dc up -d --wait --wait-timeout 120 app >&2 || falhar "o app não voltou à configuração de produção"
+STILLON_SHA=$SHA_A dc up -d --wait --wait-timeout 120 app >&2 || falhar "o app não voltou à configuração de produção"
 ok "o Caddy remove X-Real-IP, Fly-Client-IP e CF-Connecting-IP"
 
 # 7. O banco não aceita conexão de fora da rede do compose. O controle
@@ -377,7 +377,7 @@ fi
 ok "o banco só aceita conexão de dentro da rede"
 
 # ---------------------------------------------------------------------------
-# 8. vigilume-entrada: recusas, imagem divergente, rollback, as 3 últimas.
+# 8. stillon-entrada: recusas, imagem divergente, rollback, as 3 últimas.
 # ---------------------------------------------------------------------------
 # 8a. Pedidos recusados com 2, antes de ler a entrada padrão ou mexer em
 #     qualquer coisa. O tar da entrada padrão é o de a, válido: o que está
@@ -409,11 +409,11 @@ c=$(entrada "deploy $SHA_A $ID_A" backup < "$TARS/a.tar")
 no_ar "$SHA_A" || falhar "um pedido recusado mexeu na versão"
 c=$(entrada "deploy $SHA_A $ID_A" < /dev/null)
 [ "$c" = 2 ] || falhar "deploy sem nada na entrada padrão saiu $c, queria 2"
-ok "vigilume-entrada: pedidos malformados recusados com 2"
+ok "stillon-entrada: pedidos malformados recusados com 2"
 
 # 8b. Imagem divergente: o tar de uma imagem com o ID de outra. Nada é
 #     etiquetado e a versão no ar não muda.
-ID_B=$(fonte b 'LABEL vigilume.teste=b')
+ID_B=$(fonte b 'LABEL stillon.teste=b')
 SHA_B=$(sha_de b)
 c=$(entrada "deploy $SHA_B $ID_A" < "$TARS/b.tar")
 [ "$c" = 3 ] || falhar "tar de b com o ID de a saiu $c, queria 3"
@@ -551,7 +551,7 @@ grep -q 'já existe com outra imagem' "$TARS/erro" || falhar "SHA existente com 
 [ "$(docker image inspect -f '{{.Id}}' "$REPO_TESTE:$SHA_A")" = "$ID_A" ] || falhar "a etiqueta $REPO_TESTE:$SHA_A foi movida"
 no_ar "$SHA_A" || falhar "o SHA existente com outra imagem mexeu na versão"
 [ "$(docker inspect -f '{{.State.Health.Status}}' "$(dc ps -q app)")" = healthy ] || falhar "depois do SHA existente com outra imagem o app não está saudável"
-ok "vigilume-entrada: imagem divergente, tar com nome, os desvios de layout e o SHA já etiquetado recusados com 3"
+ok "stillon-entrada: imagem divergente, tar com nome, os desvios de layout e o SHA já etiquetado recusados com 3"
 
 # 8c. Rollback: um deploy que não fica saudável volta à versão anterior.
 c=$(entrada "deploy $SHA_DOENTE $ID_DOENTE" < "$TARS/doente.tar")
@@ -563,14 +563,14 @@ grep -q 'ARGON2_MAX_CONCURRENT' "$TARS/erro" || falhar "o deploy doente não mos
 [ "$(docker image inspect -f '{{.Id}}' "$REPO_TESTE:atual")" = "$ID_A" ] || falhar "depois do rollback, atual não é a versão no ar"
 [ "$(docker inspect -f '{{.State.Health.Status}}' "$(dc ps -q app)")" = healthy ] || falhar "depois do rollback o app não está saudável"
 [ "$(cu -o /dev/null -w '%{http_code}' "$BASE/healthz")" = 200 ] || falhar "depois do rollback, /healthz pelo Caddy não deu 200"
-ok "vigilume-entrada: deploy doente volta à versão anterior (4)"
+ok "stillon-entrada: deploy doente volta à versão anterior (4)"
 
 # 8c'. Rollback por tempo esgotado: um app que fica de pé e nunca saudável
 #      (o processo não cai; o healthcheck sempre falha). A imagem doente de
 #      cima morre no boot e o --wait volta em segundos; esta prova a espera
 #      de ESPERA_S inteira. A base é a imagem do db (já na máquina, com sh).
 printf '%s\n' "FROM $pg" \
-    "RUN printf '#!/bin/sh\\nexit 1\\n' > /vigilume && chmod 755 /vigilume" \
+    "RUN printf '#!/bin/sh\\nexit 1\\n' > /stillon && chmod 755 /stillon" \
     'ENTRYPOINT ["/bin/sh", "-c", "trap \"exit 0\" TERM; while :; do sleep 1; done", "--"]' |
     docker build -q -t "$REPO_TESTE-fonte:lento" - >/dev/null
 ID_LENTO=$(oci_tar "$REPO_TESTE-fonte:lento" "$TARS/lento.tar")
@@ -584,7 +584,7 @@ grep -q 'rollback feito' "$TARS/erro" || falhar "o deploy lento não disse que f
 [ "$(versao)" = "$SHA_A" ] || falhar "depois do rollback por tempo, versao = $(versao)"
 [ "$(imagem_do_app)" = "$REPO_TESTE:$SHA_A" ] || falhar "depois do rollback por tempo o app roda $(imagem_do_app)"
 [ "$(docker inspect -f '{{.State.Health.Status}}' "$(dc ps -q app)")" = healthy ] || falhar "depois do rollback por tempo o app não está saudável"
-ok "vigilume-entrada: deploy que nunca fica saudável volta à anterior depois da espera (4)"
+ok "stillon-entrada: deploy que nunca fica saudável volta à anterior depois da espera (4)"
 
 # 8c''. A conexão cai no meio do deploy (I1): o runner cancelado ou perdido
 #       fecha o canal do SSH, e a stderr da entrada vira um pipe sem leitor. A
@@ -608,13 +608,13 @@ grep -q 'ARGON2_MAX_CONCURRENT' "$DIR/entrada.log" || falhar "o entrada.log não
 [ "$(stat -c %s "$DIR/entrada.log.1" 2>/dev/null || echo 0)" -gt 1048576 ] || falhar "o entrada.log rodado não ficou em entrada.log.1"
 [ "$(stat -c %a "$DIR/entrada.log")" = 644 ] || falhar "o entrada.log com modo $(stat -c %a "$DIR/entrada.log"), queria 644"
 rm -f "$DIR/entrada.log.1"
-ok "vigilume-entrada: a conexão cai no meio e o rollback acontece; entrada.log com teto"
+ok "stillon-entrada: a conexão cai no meio e o rollback acontece; entrada.log com teto"
 
 # 8d. Deploys seguidos: versao-anterior anda, e ficam as 3 últimas imagens
 #     (as 3 últimas que ficaram no ar; a doente sai), fora a etiqueta atual.
-ID_C=$(fonte c 'LABEL vigilume.teste=c')
+ID_C=$(fonte c 'LABEL stillon.teste=c')
 SHA_C=$(sha_de c)
-ID_D=$(fonte d 'LABEL vigilume.teste=d')
+ID_D=$(fonte d 'LABEL stillon.teste=d')
 SHA_D=$(sha_de d)
 # O tar de c sem o "./" na frente dos nomes (tar -C dir oci-layout …): as
 # duas formas do layout OCI passam.
@@ -627,8 +627,8 @@ tar -tf "$TARS/c.tar" | grep -q '^\./' && falhar "controle: o tar de c ainda tem
 for i in $(seq 1 2000); do sha_de "antiga-$i"; done >> "$DIR/historico"
 # O temporário de um deploy morto por SIGKILL (o trap não roda): o próximo
 # deploy o apaga, já sob a trava.
-mkdir -p "$DIR/.vigilume-entrada.morto"
-head -c 4096 /dev/urandom > "$DIR/.vigilume-entrada.morto/imagem.tar"
+mkdir -p "$DIR/.stillon-entrada.morto"
+head -c 4096 /dev/urandom > "$DIR/.stillon-entrada.morto/imagem.tar"
 for par in "b $SHA_B $ID_B" "c $SHA_C $ID_C" "d $SHA_D $ID_D"; do
     read -r nome sha id <<<"$par"
     c=$(entrada "deploy $sha $id" < "$TARS/$nome.tar")
@@ -639,7 +639,7 @@ done
 restantes=$(docker image ls "$REPO_TESTE" --format '{{.Tag}}' | grep -vx atual | sort | tr '\n' ' ')
 esperadas=$(printf '%s\n' "$SHA_B" "$SHA_C" "$SHA_D" | sort | tr '\n' ' ')
 [ "$restantes" = "$esperadas" ] || falhar "imagens que sobraram: '$restantes', queria as de b, c e d"
-[ -e "$DIR/.vigilume-entrada.morto" ] && falhar "o temporário de um deploy morto ficou para trás"
+[ -e "$DIR/.stillon-entrada.morto" ] && falhar "o temporário de um deploy morto ficou para trás"
 [ "$(wc -l < "$DIR/historico")" -le 50 ] || falhar "o historico ficou com $(wc -l < "$DIR/historico") linhas: cresce sem limite"
 [ "$(tail -n 3 "$DIR/historico" | tr '\n' ' ')" = "$SHA_B $SHA_C $SHA_D " ] || falhar "o historico perdeu as últimas versões"
 # O mesmo SHA de novo (redeploy) é aceito e não mexe na anterior. Com
@@ -657,7 +657,7 @@ env -i PATH="$PATH" HOME="$HOME" SSH_ORIGINAL_COMMAND="deploy $SHA_D $ID_D" LANG
 for f in versao versao-anterior historico; do
     [ "$(stat -c %a "$DIR/$f")" = 644 ] || falhar "$f com modo $(stat -c %a "$DIR/$f"), queria 644"
 done
-ok "vigilume-entrada: versao-anterior, as 3 últimas imagens, historico longo, temporário velho, ambiente ignorado, modos 644"
+ok "stillon-entrada: versao-anterior, as 3 últimas imagens, historico longo, temporário velho, ambiente ignorado, modos 644"
 
 # 8d'. A etiqueta de um SHA que já existe com outra imagem: recusada (3) só se
 #      o SHA é um alvo do rollback (versao ou versao-anterior; o da versao é o
@@ -675,7 +675,7 @@ no_ar "$SHA_B" || falhar "depois de trocar a etiqueta de b, versao $(versao), ap
 # De volta a d (o 8e' parte dele).
 c=$(entrada "deploy $SHA_D $ID_D" < "$TARS/d.tar")
 if ! { [ "$c" = 0 ] && no_ar "$SHA_D"; }; then falhar "a volta para d saiu $c: $(tail -3 "$TARS/erro")"; fi
-ok "vigilume-entrada: SHA etiquetado com outra imagem, 3 se é a versao-anterior, trocado se não é alvo do rollback"
+ok "stillon-entrada: SHA etiquetado com outra imagem, 3 se é a versao-anterior, trocado se não é alvo do rollback"
 
 # 8e. Docker sem o image store containerd: recusa com 1. Um docker falso na
 #     frente do PATH responde ao `docker info` como o store clássico.
@@ -689,7 +689,7 @@ env -i PATH="$TARS/bin:$PATH" HOME="$HOME" SSH_ORIGINAL_COMMAND="deploy $SHA_A $
     bash "$TARS/entrada-path" < "$TARS/a.tar" > /dev/null 2> "$TARS/erro" || c=$?
 [ "$c" = 1 ] || falhar "sem o store containerd a entrada saiu $c, queria 1"
 grep -q 'containerd' "$TARS/erro" || falhar "sem o store containerd a entrada não disse por quê"
-ok "vigilume-entrada: recusa o Docker sem o image store containerd"
+ok "stillon-entrada: recusa o Docker sem o image store containerd"
 
 # 8e'. Falhas da máquina, não do tar: 1, e nada etiquetado. (a) O tar não
 #      extrai ou não refaz (disco cheio): um tar falso na frente do PATH que
@@ -716,7 +716,7 @@ for caso in "x FALHAR_TAR=x $TARS/bin-tar:$PATH" "c FALHAR_TAR=c $TARS/bin-tar:$
 done
 grep -q 'docs/deploy/vps.md' "$TARS/erro" || falhar "sem jq, a entrada não apontou o runbook: $(tail -1 "$TARS/erro")"
 no_ar "$SHA_D" || falhar "uma falha de máquina mexeu na versão"
-ok "vigilume-entrada: tar que não extrai ou não refaz, e jq ausente, saem 1 sem etiquetar"
+ok "stillon-entrada: tar que não extrai ou não refaz, e jq ausente, saem 1 sem etiquetar"
 
 # 8f. O sudoers: sintaxe (visudo) e efeito, num Ubuntu 24.04 descartável com
 #     o usuário deploy e uma entrada falsa que mostra o que recebeu.
@@ -725,17 +725,17 @@ cat > "$TARS/sudo.sh" <<'FIM'
 set -eu
 apt-get update -qq >/dev/null && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq sudo >/dev/null
 useradd -m -s /bin/bash deploy
-install -m 0755 /t/entrada-falsa /usr/local/sbin/vigilume-entrada
-install -m 0440 /t/sudoers /etc/sudoers.d/vigilume-entrada
-visudo -cf /etc/sudoers.d/vigilume-entrada
+install -m 0755 /t/entrada-falsa /usr/local/sbin/stillon-entrada
+install -m 0440 /t/sudoers /etc/sudoers.d/stillon-entrada
+visudo -cf /etc/sudoers.d/stillon-entrada
 visudo -c >/dev/null
 como_deploy() { su deploy -c "$1" 2>&1 || echo "negado"; }
-echo "A $(como_deploy 'SSH_ORIGINAL_COMMAND="deploy abc" OUTRA=x sudo -n /usr/local/sbin/vigilume-entrada')"
-echo "B $(como_deploy 'sudo -n /usr/local/sbin/vigilume-entrada backup' | tail -1)"
+echo "A $(como_deploy 'SSH_ORIGINAL_COMMAND="deploy abc" OUTRA=x sudo -n /usr/local/sbin/stillon-entrada')"
+echo "B $(como_deploy 'sudo -n /usr/local/sbin/stillon-entrada backup' | tail -1)"
 echo "C $(como_deploy 'sudo -n /bin/sh -c id' | tail -1)"
 echo "D $(como_deploy 'sudo -n /usr/bin/id' | tail -1)"
 FIM
-cp "$RAIZ/deploy/vps/sudoers-vigilume-entrada" "$TARS/sudoers"
+cp "$RAIZ/deploy/vps/sudoers-stillon-entrada" "$TARS/sudoers"
 chmod 644 "$TARS/entrada-falsa" "$TARS/sudo.sh" "$TARS/sudoers"
 chmod 755 "$TARS"
 docker run --rm -v "$TARS:/t:ro" ubuntu:24.04 bash /t/sudo.sh > "$TARS/sudo.log" 2>&1 ||
@@ -748,7 +748,7 @@ grep -qx 'D negado' "$TARS/sudo.log" || falhar "sudoers: o deploy rodou outro co
 ok "sudoers: só a entrada, sem argumento, com o SSH_ORIGINAL_COMMAND"
 
 # ---------------------------------------------------------------------------
-# 9. vigilume-entrada backup: só texto cifrado na saída padrão.
+# 9. stillon-entrada backup: só texto cifrado na saída padrão.
 # ---------------------------------------------------------------------------
 # Os scripts do backup no layout que a entrada espera ($DIR/deploy), tais e
 # quais os do repositório; a chave do age gerada aqui (a privada fica em
@@ -764,12 +764,12 @@ c=$(entrada "backup extra" < /dev/null)
 
 # O que um backup morto por SIGKILL deixaria: o dump em claro na memória e o
 # postgres descartável. O próximo backup apaga os dois, já sob a trava.
-mkdir -p "$TARS/vigilume-backup.morto"
-echo 'PGDMP em claro' > "$TARS/vigilume-backup.morto/vigilume.dump"
-docker run -d --name vigilume-restauro-morto --entrypoint sleep "$pg" 600 >/dev/null
+mkdir -p "$TARS/stillon-backup.morto"
+echo 'PGDMP em claro' > "$TARS/stillon-backup.morto/stillon.dump"
+docker run -d --name stillon-restauro-morto --entrypoint sleep "$pg" 600 >/dev/null
 c=$(entrada backup < /dev/null)
-[ -e "$TARS/vigilume-backup.morto" ] && falhar "o dump em claro de um backup morto ficou para trás"
-docker inspect vigilume-restauro-morto >/dev/null 2>&1 && falhar "o postgres descartável de um backup morto ficou para trás"
+[ -e "$TARS/stillon-backup.morto" ] && falhar "o dump em claro de um backup morto ficou para trás"
+docker inspect stillon-restauro-morto >/dev/null 2>&1 && falhar "o postgres descartável de um backup morto ficou para trás"
 if [ "$c" != 0 ]; then
     cat "$TARS/erro" >&2
     falhar "backup saiu $c, queria 0"
@@ -777,7 +777,7 @@ fi
 grep -q 'backup conferido' "$TARS/erro" || falhar "o log do backup não diz 'backup conferido'"
 [ "$(head -c 21 "$TARS/saida")" = "age-encryption.org/v1" ] || falhar "a saída padrão do backup não começa com o cabeçalho do age"
 grep -aq 'PGDMP' "$TARS/saida" && falhar "a saída padrão do backup tem o dump em claro (PGDMP)"
-grep -aqE 'vigilume_app|goose_db_version|CREATE TABLE|backup conferido' "$TARS/saida" && falhar "a saída padrão do backup tem texto em claro"
+grep -aqE 'stillon_app|goose_db_version|CREATE TABLE|backup conferido' "$TARS/saida" && falhar "a saída padrão do backup tem texto em claro"
 # Decifrado com a privada, é um dump do pg_dump que o pg_restore lê.
 if age -d -i "$TARS/chave-age" -o "$TARS/decifrado.dump" "$TARS/saida"; then
     [ "$(head -c 5 "$TARS/decifrado.dump")" = PGDMP ] || falhar "o backup decifrado não é um dump do pg_dump"
@@ -789,31 +789,31 @@ else
     falhar "o backup não decifra com a chave privada"
 fi
 # Nada sobra: nem o postgres descartável, nem o dump em claro.
-[ -z "$(docker ps -aq --filter name=vigilume-restauro-)" ] || falhar "o postgres descartável do backup ficou para trás"
-ls "$TARS"/vigilume-backup.* >/dev/null 2>&1 && falhar "o diretório do dump em claro ficou para trás"
-ok "vigilume-entrada backup: conferido, só o cifrado na saída padrão"
+[ -z "$(docker ps -aq --filter name=stillon-restauro-)" ] || falhar "o postgres descartável do backup ficou para trás"
+ls "$TARS"/stillon-backup.* >/dev/null 2>&1 && falhar "o diretório do dump em claro ficou para trás"
+ok "stillon-entrada backup: conferido, só o cifrado na saída padrão"
 
 # A senha do backup no .env com aspas em volta e CRLF (o compose tira as
 # aspas): o backup a lê igual. Com um caractere que o compose e a URL do
 # backup leriam diferente: recusa com 1, antes do dump.
 cp "$DIR/.env" "$TARS/env.original"
-senha_bk=$(env_do_teste VIGILUME_BACKUP_PASSWORD)
+senha_bk=$(env_do_teste STILLON_BACKUP_PASSWORD)
 for forma in "\"$senha_bk\"\r" "'$senha_bk'"; do
-    grep -v '^VIGILUME_BACKUP_PASSWORD=' "$TARS/env.original" > "$DIR/.env"
-    printf 'VIGILUME_BACKUP_PASSWORD=%b\n' "$forma" >> "$DIR/.env"
+    grep -v '^STILLON_BACKUP_PASSWORD=' "$TARS/env.original" > "$DIR/.env"
+    printf 'STILLON_BACKUP_PASSWORD=%b\n' "$forma" >> "$DIR/.env"
     c=$(entrada backup < /dev/null)
     [ "$c" = 0 ] || falhar "backup com a senha escrita como $(printf %q "$forma") no .env saiu $c, queria 0: $(tail -2 "$TARS/erro")"
     [ "$(head -c 21 "$TARS/saida")" = "age-encryption.org/v1" ] || falhar "backup com a senha entre aspas não mandou o cifrado"
 done
-grep -v '^VIGILUME_BACKUP_PASSWORD=' "$TARS/env.original" > "$DIR/.env"
-printf 'VIGILUME_BACKUP_PASSWORD=%s$x\n' "$senha_bk" >> "$DIR/.env"
+grep -v '^STILLON_BACKUP_PASSWORD=' "$TARS/env.original" > "$DIR/.env"
+printf 'STILLON_BACKUP_PASSWORD=%s$x\n' "$senha_bk" >> "$DIR/.env"
 c=$(entrada backup < /dev/null)
 [ "$c" = 1 ] || falhar "backup com \$ na senha saiu $c, queria 1"
-grep -q 'VIGILUME_BACKUP_PASSWORD' "$TARS/erro" || falhar "backup com \$ na senha não disse por quê: $(tail -1 "$TARS/erro")"
+grep -q 'STILLON_BACKUP_PASSWORD' "$TARS/erro" || falhar "backup com \$ na senha não disse por quê: $(tail -1 "$TARS/erro")"
 grep -q 'postgres descartável' "$TARS/erro" && falhar "backup com \$ na senha fez o dump antes de recusar"
 [ ! -s "$TARS/saida" ] || falhar "backup com \$ na senha escreveu na saída padrão"
 cp "$TARS/env.original" "$DIR/.env"
-ok "vigilume-entrada backup: senha com aspas e CRLF lida igual ao compose; caractere ambíguo recusado (1)"
+ok "stillon-entrada backup: senha com aspas e CRLF lida igual ao compose; caractere ambíguo recusado (1)"
 
 # Sem a chave pública: 1, e nada na saída padrão.
 mv "$DIR/age-recipient" "$DIR/age-recipient.fora"
@@ -831,8 +831,8 @@ c=$(entrada backup < /dev/null)
 [ "$c" = 3 ] || falhar "backup com a checagem falhando saiu $c, queria 3"
 [ ! -s "$TARS/saida" ] || falhar "backup com a checagem falhando escreveu na saída padrão"
 cp "$TARS/verificar.sql" "$DIR/deploy/backup/verificar.sql"
-[ -z "$(docker ps -aq --filter name=vigilume-restauro-)" ] || falhar "o postgres descartável ficou para trás depois da falha"
-ok "vigilume-entrada backup: sem chave (1) e cópia reprovada (3) não mandam nada"
+[ -z "$(docker ps -aq --filter name=stillon-restauro-)" ] || falhar "o postgres descartável ficou para trás depois da falha"
+ok "stillon-entrada backup: sem chave (1) e cópia reprovada (3) não mandam nada"
 
 # O código 4: o backup vai, cifrado, e o código avisa do disco. Um df falso na
 # frente do PATH: (a) o disco da VPS acima de 85% (o df da entrada); (b) o
@@ -857,7 +857,7 @@ for caso in "DF_PCT=91 disco da VPS" "DF_TAMANHO=1000000 volume do banco"; do
         falhar "backup com o $motivo cheio: a saída não decifra (o cifrado não saiu?)"
     fi
 done
-ok "vigilume-entrada backup: disco ou volume acima de 85% manda o cifrado e sai 4"
+ok "stillon-entrada backup: disco ou volume acima de 85% manda o cifrado e sai 4"
 
 if [ "$falhas" -gt 0 ]; then
     dc logs >&2

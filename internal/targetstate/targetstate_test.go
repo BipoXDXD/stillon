@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/BipoXDXD/vigilume/internal/targetstate"
+	"github.com/BipoXDXD/stillon/internal/targetstate"
 )
 
 func TestCurrent(t *testing.T) {

@@ -1,4 +1,4 @@
-module github.com/BipoXDXD/vigilume
+module github.com/BipoXDXD/stillon
 
 go 1.26.8
 

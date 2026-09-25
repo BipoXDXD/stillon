@@ -77,7 +77,7 @@ func (q *Queries) ListLiveFamilies(ctx context.Context, arg ListLiveFamiliesPara
 }
 
 const lockUserSessions = `-- name: LockUserSessions :exec
-SELECT pg_advisory_xact_lock(hashtextextended('vigilume.sessions:' || $1::uuid::text, 0))
+SELECT pg_advisory_xact_lock(hashtextextended('stillon.sessions:' || $1::uuid::text, 0))
 `
 
 // Serializa as mutações de sessão de um usuário (D1 do Plano 5). É de

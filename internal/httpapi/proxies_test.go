@@ -3,7 +3,7 @@ package httpapi
 import (
 	"testing"
 
-	"github.com/BipoXDXD/vigilume/internal/config"
+	"github.com/BipoXDXD/stillon/internal/config"
 )
 
 // B3 (Plano 10): o aviso de X-Forwarded-For fora de TRUSTED_PROXIES só liga

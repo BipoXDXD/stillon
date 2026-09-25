@@ -43,7 +43,7 @@ func TestDependabotWaitsSevenDaysForGoAndNpm(t *testing.T) {
 }
 
 // D3 (Plano 10, §3.4; banco S3 da revisão): o runbook (docs/deploy/vps.md)
-// gera a chave privada do age em ~ e decifra o backup em ~/vigilume-restauro,
+// gera a chave privada do age em ~ e decifra o backup em ~/stillon-restauro,
 // fora do repositório. A regra do .gitignore é a defesa para quando um desses
 // arquivos for parar num clone (copiado, baixado ali, ou gerado lá por
 // engano): um `git add -A` na raiz o levaria para o histórico, e o gitleaks
@@ -52,10 +52,10 @@ func TestDependabotWaitsSevenDaysForGoAndNpm(t *testing.T) {
 // padrão largo demais, como "*").
 func TestGitignoreCoversTheBackupKeyAndDumps(t *testing.T) {
 	ignorados := []string{
-		"vigilume-backup.key",
-		"deploy/backup/vigilume-backup.key",
-		"vigilume.dump",
-		"vigilume-20260925.dump.age",
+		"stillon-backup.key",
+		"deploy/backup/stillon-backup.key",
+		"stillon.dump",
+		"stillon-20260925.dump.age",
 		".env",
 		".env.production",
 		"web/.env.local",

@@ -7,7 +7,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/BipoXDXD/vigilume/internal/incident"
+	"github.com/BipoXDXD/stillon/internal/incident"
 )
 
 // Pausar e retomar canal (Plano 9, §3.3): SetEnabled muda só o enabled, e o

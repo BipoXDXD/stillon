@@ -21,9 +21,9 @@ BEGIN
     --    --no-owner deixaria tudo com o superusuário, e o boot seguinte
     --    falharia no Migrate ou na manutenção.
     SELECT string_agg(tablename, ', ' ORDER BY tablename) INTO alheias
-      FROM pg_tables WHERE schemaname = 'public' AND tableowner <> 'vigilume_app';
+      FROM pg_tables WHERE schemaname = 'public' AND tableowner <> 'stillon_app';
     IF alheias IS NOT NULL THEN
-        RAISE EXCEPTION 'tabelas sem o dono vigilume_app: %', alheias;
+        RAISE EXCEPTION 'tabelas sem o dono stillon_app: %', alheias;
     END IF;
 
     -- 2. RLS: toda tabela com política continua com FORCE depois da volta.

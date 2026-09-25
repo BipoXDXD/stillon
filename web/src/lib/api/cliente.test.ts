@@ -101,7 +101,7 @@ describe('a regra do 401', () => {
     expect((await api.totpConfirmarTroca(TOTP_NOVO, nova.rotation)).recovery_codes).toHaveLength(10)
     servidor.use(
       http.post('*/api/v1/auth/totp/rotate', () =>
-        HttpResponse.json({ otpauth_uri: 'otpauth://totp/Vigilume:x?secret=AAAA' }),
+        HttpResponse.json({ otpauth_uri: 'otpauth://totp/StillOn:x?secret=AAAA' }),
       ),
     )
     await expect(api.totpTrocar(SENHA, TOTP_OK)).rejects.toMatchObject({ code: 'unexpected' })
@@ -343,7 +343,7 @@ describe('a API falsa segue o servidor', () => {
       method: 'PATCH',
       headers: {
         Authorization: `Bearer ${token ?? ''}`,
-        'X-Requested-With': 'vigilume',
+        'X-Requested-With': 'stillon',
         'Content-Type': 'application/json',
       },
       body: corpo,

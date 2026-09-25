@@ -11,9 +11,9 @@ import (
 func validEnv() map[string]string {
 	k := base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{1}, 32))
 	return map[string]string{
-		"DATABASE_URL":    "postgres://localhost/vigilume",
-		"PUBLIC_BASE_URL": "https://vigilume.example",
-		"CORS_ORIGIN":     "https://app.vigilume.example",
+		"DATABASE_URL":    "postgres://localhost/stillon",
+		"PUBLIC_BASE_URL": "https://stillon.example",
+		"CORS_ORIGIN":     "https://app.stillon.example",
 		"MASTER_KEY":      k,
 		"JWT_SECRET":      k,
 		"IP_HASH_KEY":     k,
@@ -255,9 +255,9 @@ func TestEmailSettingsGoTogether(t *testing.T) {
 		ligado, ok  bool
 	}{
 		{"nenhuma", "", "", false, true},
-		{"as duas", "re_123", "Vigilume <alertas@vigilume.dev>", true, true},
+		{"as duas", "re_123", "StillOn <alertas@stillon.example>", true, true},
 		{"só a chave", "re_123", "", false, false},
-		{"só o remetente", "", "alertas@vigilume.dev", false, false},
+		{"só o remetente", "", "alertas@stillon.example", false, false},
 		{"remetente inválido", "re_123", "não é e-mail", false, false},
 	}
 	for _, c := range cases {
@@ -370,12 +370,15 @@ func TestLoadRejectsDemoKeysOverHTTPS(t *testing.T) {
 	// https em loopback também recusa (Plano 8): o portão é "http E
 	// loopback", e não "loopback"; sem estes dois casos, uma regressão para
 	// só !hostLocal passaria no CI.
-	for _, base := range []string{"https://vigilume.example", "HTTPS://vigilume.example", "https://localhost", "https://127.0.0.1"} {
+	for _, base := range []string{"https://stillon.example", "HTTPS://stillon.example", "https://localhost", "https://127.0.0.1"} {
 		for i, nome := range []string{"MASTER_KEY", "JWT_SECRET", "IP_HASH_KEY"} {
 			env := validEnv()
 			env["PUBLIC_BASE_URL"] = base
 			// Cada variável com a chave de demo de OUTRA: embaralhar não escapa.
-			env[nome] = base64.StdEncoding.EncodeToString(chavesDeDemo[(i+1)%len(chavesDeDemo)])
+			// O % 3 gira só entre as três chaves de hoje (as três primeiras de
+			// chavesDeDemo): MASTER_KEY recebe a do JWT_SECRET, e assim por
+			// diante. As antigas: TestLoadRejectsEveryDemoKeyOverHTTPS.
+			env[nome] = base64.StdEncoding.EncodeToString(chavesDeDemo[(i+1)%3])
 			_, err := Load(getenvFrom(env))
 			if err == nil || !strings.Contains(err.Error(), nome) || !strings.Contains(err.Error(), "demonstração") {
 				t.Errorf("%s com chave de demo e %s: erro = %v, queria recusa", nome, base, err)
@@ -396,17 +399,36 @@ func TestLoadRejectsDemoKeysOverHTTPS(t *testing.T) {
 	}
 }
 
+// Toda chave de demo é recusada em produção, inclusive as três do nome
+// anterior do projeto: um .env copiado de um compose antigo não pode subir
+// com uma chave pública. O teste acima só usa os índices 1 a 3; este passa
+// por todos.
+func TestLoadRejectsEveryDemoKeyOverHTTPS(t *testing.T) {
+	if len(chavesDeDemo) != 6 {
+		t.Fatalf("chavesDeDemo tem %d chaves, queria 6 (as três de hoje e as três do nome anterior)", len(chavesDeDemo))
+	}
+	for i, k := range chavesDeDemo {
+		env := validEnv()
+		env["PUBLIC_BASE_URL"] = "https://stillon.example"
+		env["MASTER_KEY"] = base64.StdEncoding.EncodeToString(k)
+		_, err := Load(getenvFrom(env))
+		if err == nil || !strings.Contains(err.Error(), "MASTER_KEY") || !strings.Contains(err.Error(), "demonstração") {
+			t.Errorf("chave de demo %d em MASTER_KEY com https: erro = %v, queria recusa", i, err)
+		}
+	}
+}
+
 func TestEhHTTPS(t *testing.T) {
 	casos := map[string]bool{
-		"https://vigilume.example":   true,
-		"HTTPS://vigilume.example":   true,
-		"Https://vigilume.example":   true,
-		" https://vigilume.example ": true,
-		"http://localhost:8080":      false,
-		"HTTP://localhost:8080":      false,
-		"httpsx://vigilume.example":  false,
-		"vigilume.example":           false,
-		"":                           false,
+		"https://stillon.example":   true,
+		"HTTPS://stillon.example":   true,
+		"Https://stillon.example":   true,
+		" https://stillon.example ": true,
+		"http://localhost:8080":     false,
+		"HTTP://localhost:8080":     false,
+		"httpsx://stillon.example":  false,
+		"stillon.example":           false,
+		"":                          false,
 	}
 	for s, want := range casos {
 		if got := EhHTTPS(s); got != want {
@@ -466,10 +488,10 @@ func TestLoadRejectsMalformedPublicBaseURL(t *testing.T) {
 
 func TestLoadAcceptsValidPublicBaseURL(t *testing.T) {
 	for _, v := range []string{
-		"https://vigilume.example",
-		"HTTPS://vigilume.example",
-		"https://vigilume.example/",
-		"https://vigilume.example/status",
+		"https://stillon.example",
+		"HTTPS://stillon.example",
+		"https://stillon.example/",
+		"https://stillon.example/status",
 		"http://localhost:8080",
 		"http://127.0.0.1:8080",
 		"http://[::1]:8080",
@@ -492,14 +514,14 @@ func TestLoadAcceptsValidPublicBaseURL(t *testing.T) {
 // esquema sozinho não pega isso (I3 da revisão do Plano 7).
 func TestLoadRejectsDemoKeysOnANonLoopbackHost(t *testing.T) {
 	for _, base := range []string{
-		"http://vigilume.example",
-		"http://vigilume.example:8080",
+		"http://stillon.example",
+		"http://stillon.example:8080",
 		"http://10.0.0.5:8080",
 		"http://192.168.1.10",
 		"http://0.0.0.0:8080",
 		"http://[::]:8080",
 		"http://[2001:db8::1]:8080",
-		"http://localhost.vigilume.example",
+		"http://localhost.stillon.example",
 		"http://127.0.0.1.nip.io",
 	} {
 		env := validEnv()
@@ -536,10 +558,10 @@ func TestLoadAcceptsDemoKeysOnLoopback(t *testing.T) {
 // o boot recusa, e a mensagem não repete o valor.
 func TestLoadRejectsUserinfoInPublicBaseURL(t *testing.T) {
 	for _, v := range []string{
-		"https://usuario:segredo@vigilume.example",
-		"https://segredo@vigilume.example",
+		"https://usuario:segredo@stillon.example",
+		"https://segredo@stillon.example",
 		"http://usuario:segredo@localhost:8080",
-		"https://:segredo@vigilume.example",
+		"https://:segredo@stillon.example",
 	} {
 		env := validEnv()
 		env["PUBLIC_BASE_URL"] = v

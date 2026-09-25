@@ -1,11 +1,11 @@
-// Package httpapi expõe a API HTTP do Vigilume.
+// Package httpapi expõe a API HTTP do StillOn.
 package httpapi
 
 import (
 	"net/http"
 	"time"
 
-	"github.com/BipoXDXD/vigilume/internal/config"
+	"github.com/BipoXDXD/stillon/internal/config"
 )
 
 // NewServer configura o http.Server com todos os timeouts.

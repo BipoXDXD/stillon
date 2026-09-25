@@ -30,10 +30,10 @@ UPDATE users SET password_hash = $2, failed_attempts = 0, locked_until = NULL,
        totp_pending_secret_enc = NULL, totp_pending_family_id = NULL
  WHERE id = $1;
 
--- Serializa dois `vigilume user create` simultâneos: sem ela, os dois contam
+-- Serializa dois `stillon user create` simultâneos: sem ela, os dois contam
 -- zero usuários e os dois criam (D9 do Plano 5).
 -- name: LockUserCreation :exec
-SELECT pg_advisory_xact_lock(hashtextextended('vigilume.user_create', 0));
+SELECT pg_advisory_xact_lock(hashtextextended('stillon.user_create', 0));
 
 -- O registro de auditoria com entidade. O insertAudit do auth (sem entidade)
 -- continua à mão até o R2.
@@ -74,7 +74,7 @@ SELECT password_hash FROM users WHERE id = $1;
 UPDATE users SET password_hash = sqlc.arg(new_hash)
  WHERE id = sqlc.arg(id) AND password_hash = sqlc.arg(old_hash);
 
--- vigilume user reset-2fa (Plano 9, §3.1): desliga o 2FA inteiro, inclusive a
+-- stillon user reset-2fa (Plano 9, §3.1): desliga o 2FA inteiro, inclusive a
 -- troca de autenticador pendente. A guarda na WHERE torna o comando
 -- idempotente: sem 2FA confirmado, nenhuma linha muda, e quem chama não
 -- encerra sessão nem audita. A marca do desafio (totp_challenge_mark) fica:

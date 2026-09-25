@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/BipoXDXD/vigilume/internal/auth"
+	"github.com/BipoXDXD/stillon/internal/auth"
 )
 
 // A marca d'água do desafio de 2FA (Plano 8): o primeiro desafio consome, o

@@ -53,14 +53,14 @@ describe('contexto seguro', () => {
   it('sem HTTPS, avisa também no splash do boot e na tela de servidor fora do ar', async () => {
     Object.defineProperty(window, 'isSecureContext', { value: false, configurable: true })
     const r = await renderizarPainel('/', { atrasoDoBoot: 200 })
-    expect(screen.getByText('Carregando o Vigilume…')).toBeInTheDocument()
+    expect(screen.getByText('Carregando o StillOn…')).toBeInTheDocument()
     expect(screen.getByRole('alert')).toHaveTextContent('Este painel precisa de HTTPS')
     await screen.findByRole('heading', { name: 'Painel' })
     r.tela.unmount()
 
     // Offline: sem sessão, o cookie volta a ser tentado com a rede caída.
     const { sessao, router } = await renderizarPainel('/login', { logado: false })
-    await screen.findByRole('heading', { name: 'Entrar no Vigilume' })
+    await screen.findByRole('heading', { name: 'Entrar no StillOn' })
     servidor.use(http.post('*/api/v1/auth/refresh', () => HttpResponse.error()))
     await act(() => sessao.tentarDeNovo())
     expect(sessao.estado()).toBe('offline')
@@ -81,7 +81,7 @@ describe('contexto seguro', () => {
 describe('entrar', () => {
   it('sem sessão, a rota protegida leva ao login guardando o destino', async () => {
     const { router } = await renderizarPainel('/incidents', { logado: false })
-    expect(await screen.findByRole('heading', { name: 'Entrar no Vigilume' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'Entrar no StillOn' })).toBeInTheDocument()
     expect(router.state.location.pathname).toBe('/login')
     expect(router.state.location.search).toBe('?next=%2Fincidents')
   })
@@ -91,8 +91,8 @@ describe('entrar', () => {
   // "verificando" de ExigirSessao.
   it('durante o boot, mostra o splash, e não o login nem o painel', async () => {
     await renderizarPainel('/', { atrasoDoBoot: 200 })
-    expect(screen.getByText('Carregando o Vigilume…')).toBeInTheDocument()
-    expect(screen.queryByRole('heading', { name: 'Entrar no Vigilume' })).not.toBeInTheDocument()
+    expect(screen.getByText('Carregando o StillOn…')).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Entrar no StillOn' })).not.toBeInTheDocument()
     expect(screen.queryByRole('navigation')).not.toBeInTheDocument()
     expect(await screen.findByRole('heading', { name: 'Painel' })).toBeInTheDocument()
   })
@@ -105,7 +105,7 @@ describe('entrar', () => {
   // mesmo cookie. Só o efeito, com as guardas, fica verde: elas existem para isso.
   it('com o cookie, o F5 entra direto, sem passar pelo login, com um refresh só', async () => {
     const { router, falsa } = await renderizarPainel('/')
-    await screen.findByRole('heading', { name: /^(Painel|Entrar no Vigilume)$/ })
+    await screen.findByRole('heading', { name: /^(Painel|Entrar no StillOn)$/ })
     expect(falsa.chamadas('POST /auth/refresh')).toBe(1)
     expect(screen.getByRole('heading', { name: 'Painel' })).toBeInTheDocument()
     expect(router.state.location.pathname).toBe('/')
@@ -296,7 +296,7 @@ describe('sair', () => {
     await screen.findByRole('heading', { name: 'Painel' })
     expect(cliente.getQueryCache().getAll().length).toBeGreaterThan(0)
     await usuario.click(screen.getByRole('button', { name: 'Sair' }))
-    await screen.findByRole('heading', { name: 'Entrar no Vigilume' })
+    await screen.findByRole('heading', { name: 'Entrar no StillOn' })
     expect(router.state.location.pathname).toBe('/login')
     await waitFor(() => expect(cliente.getQueryCache().getAll()).toEqual([]))
   })
@@ -319,7 +319,7 @@ describe('sair', () => {
     await waitFor(() => expect(sair).toHaveAttribute('aria-disabled', 'true'))
     await r.usuario.click(sair)
     soltar()
-    await screen.findByRole('heading', { name: 'Entrar no Vigilume' })
+    await screen.findByRole('heading', { name: 'Entrar no StillOn' })
     expect(r.falsa.chamadas('POST /auth/logout')).toBe(1)
   })
 
@@ -342,7 +342,7 @@ describe('sair', () => {
     // De novo, com o servidor bom: sai.
     r.falsa.estado.forcar.delete('POST /auth/logout')
     await r.usuario.click(sair)
-    await screen.findByRole('heading', { name: 'Entrar no Vigilume' })
+    await screen.findByRole('heading', { name: 'Entrar no StillOn' })
   })
 
   it('sessão encerrada em outra aba volta ao login com o aviso', async () => {
@@ -360,7 +360,7 @@ describe('sair', () => {
     const { sessao } = await renderizarPainel('/')
     await screen.findByRole('heading', { name: 'Painel' })
     sessao.encerrar('expirou')
-    const titulo = await screen.findByRole('heading', { name: 'Entrar no Vigilume' })
+    const titulo = await screen.findByRole('heading', { name: 'Entrar no StillOn' })
     await waitFor(() => expect(titulo).toHaveFocus())
     expect(titulo).toHaveAccessibleDescription('Sua sessão terminou. Entre de novo.')
   })

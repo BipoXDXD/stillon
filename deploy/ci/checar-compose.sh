@@ -4,17 +4,17 @@
 #
 #   sh deploy/ci/checar-compose.sh
 #
-# Respeita COMPOSE_PROJECT_NAME, VIGILUME_PORT e VIGILUME_TAG, e passa
+# Respeita COMPOSE_PROJECT_NAME, STILLON_PORT e STILLON_TAG, e passa
 # UP_ARGS ao `docker compose up` (no CI: --no-build --pull never, para usar a
 # imagem que acabou de passar no Trivy). Parte de volumes novos (as
 # contagens do seed só valem num banco vazio). Deixa a pilha de pé no fim: o
 # Playwright roda contra ela.
 set -eu
 
-PORTA=${VIGILUME_PORT:-8080}
+PORTA=${STILLON_PORT:-8080}
 BASE=http://127.0.0.1:$PORTA
-EMAIL=demo@vigilume.local
-SENHA=demo-vigilume-2026
+EMAIL=demo@stillon.local
+SENHA=demo-stillon-2026
 TETO_S=90
 falhas=0
 falhar() { echo "FALHOU: $*" >&2; falhas=$((falhas + 1)); }
@@ -34,10 +34,10 @@ subir() {
     docker compose up --wait ${UP_ARGS:-} >&2 || return 1
     echo $(($(agora_ms) - inicio))
 }
-sql() { docker compose exec -T db psql -U postgres -d vigilume -Atq -c "$1"; }
+sql() { docker compose exec -T db psql -U postgres -d stillon -Atq -c "$1"; }
 entrar() {
     curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/v1/auth/login" \
-        -H 'Content-Type: application/json' -H 'X-Requested-With: vigilume' \
+        -H 'Content-Type: application/json' -H 'X-Requested-With: stillon' \
         -d "{\"email\":\"$EMAIL\",\"password\":\"$SENHA\"}"
 }
 
@@ -57,10 +57,10 @@ echo "$pagina" | grep -q 'src="/assets/index-' || falhar "GET / não devolveu o 
 echo "$pagina" | grep -qi "^content-security-policy:.*'nonce-" || falhar "GET / sem CSP com nonce"
 
 # 4. O papel da aplicação é comum e é dono das tabelas (D12).
-papel=$(sql "SELECT rolsuper::text || ' ' || rolbypassrls::text FROM pg_roles WHERE rolname = 'vigilume_app'")
-[ "$papel" = "false false" ] || falhar "vigilume_app com rolsuper/rolbypassrls = '$papel'"
-alheias=$(sql "SELECT count(*) FROM pg_tables WHERE schemaname = 'public' AND tableowner <> 'vigilume_app'")
-[ "$alheias" = 0 ] || falhar "$alheias tabela(s) sem o dono vigilume_app"
+papel=$(sql "SELECT rolsuper::text || ' ' || rolbypassrls::text FROM pg_roles WHERE rolname = 'stillon_app'")
+[ "$papel" = "false false" ] || falhar "stillon_app com rolsuper/rolbypassrls = '$papel'"
+alheias=$(sql "SELECT count(*) FROM pg_tables WHERE schemaname = 'public' AND tableowner <> 'stillon_app'")
+[ "$alheias" = 0 ] || falhar "$alheias tabela(s) sem o dono stillon_app"
 
 # 5. Os alvos de exemplo (D15): o example.com, reservado para isso, e os de
 #    DEMO_TARGETS_EXTRA, se quem roda pediu. Nenhum outro site de terceiros.

@@ -146,7 +146,7 @@ DECLARE
     inicio date;
     apagadas int := 0;
 BEGIN
-    PERFORM pg_advisory_xact_lock(hashtextextended('vigilume.ensure_checks_partition', 0));
+    PERFORM pg_advisory_xact_lock(hashtextextended('stillon.ensure_checks_partition', 0));
     FOR parte IN
         SELECT c.relname FROM pg_inherits i
           JOIN pg_class c ON c.oid = i.inhrelid

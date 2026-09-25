@@ -14,7 +14,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/BipoXDXD/vigilume/internal/clock"
+	"github.com/BipoXDXD/stillon/internal/clock"
 )
 
 // O cookie de dispositivo (A3 do Plano 10; OWASP, "Slow down online guessing
@@ -43,7 +43,7 @@ import (
 const DeviceTTL = 180 * 24 * time.Hour
 
 // rotuloDispositivo separa a chave do MAC de todo outro uso da MASTER_KEY.
-const rotuloDispositivo = "vigilume.dispositivo.v1"
+const rotuloDispositivo = "stillon.dispositivo.v1"
 
 const (
 	tamIDDispositivo  = 16

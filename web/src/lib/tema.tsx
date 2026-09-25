@@ -6,7 +6,7 @@ import { createContext, useCallback, useContext, useEffect, useState, type React
 // pintura, com a mesma chave.
 export type Tema = 'sistema' | 'claro' | 'escuro'
 
-const CHAVE = 'vigilume.tema'
+const CHAVE = 'stillon.tema'
 const ESCURO = '(prefers-color-scheme: dark)'
 
 function lerTema(): Tema {

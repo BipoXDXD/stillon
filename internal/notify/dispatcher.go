@@ -14,11 +14,11 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/prometheus/client_golang/prometheus"
 
-	"github.com/BipoXDXD/vigilume/internal/clock"
-	"github.com/BipoXDXD/vigilume/internal/crypto"
-	"github.com/BipoXDXD/vigilume/internal/incident"
-	"github.com/BipoXDXD/vigilume/internal/storage"
-	"github.com/BipoXDXD/vigilume/internal/storage/db"
+	"github.com/BipoXDXD/stillon/internal/clock"
+	"github.com/BipoXDXD/stillon/internal/crypto"
+	"github.com/BipoXDXD/stillon/internal/incident"
+	"github.com/BipoXDXD/stillon/internal/storage"
+	"github.com/BipoXDXD/stillon/internal/storage/db"
 )
 
 const (
@@ -234,7 +234,7 @@ type desfecho struct {
 	// rede, 5xx), mesmo que a notificação tenha esgotado as tentativas. O
 	// resto da fila do canal no lote é adiado.
 	transitoria bool
-	// doSistema: a falha foi do Vigilume, e não do canal (o desfecho da
+	// doSistema: a falha foi do StillOn, e não do canal (o desfecho da
 	// última tentativa não chegou a ser gravado). Não marca o canal failing.
 	doSistema bool
 }
@@ -357,7 +357,7 @@ func (d *Dispatcher) persistir(n db.ClaimDueNotificationsRow, f desfecho) error 
 		}
 		// O canal passa a "failing" até a próxima entrega que der certo
 		// (pendência do Plano 3: antes, a falha só ia para a auditoria). A
-		// falha do próprio Vigilume não é culpa do canal.
+		// falha do próprio StillOn não é culpa do canal.
 		if !f.doSistema {
 			if err := q.MarkChannelFailure(ctx, db.MarkChannelFailureParams{ChannelID: n.ChannelID, Now: d.clk.Now(), LastError: motivo}); err != nil {
 				return err

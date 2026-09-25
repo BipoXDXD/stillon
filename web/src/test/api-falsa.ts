@@ -69,7 +69,7 @@ export function criarApiFalsa() {
     rotacoes: 0,
     // Códigos de recuperação já gastos. Com trocaFalhaDepoisDoCodigo, a
     // troca de senha gasta o código e DEPOIS falha com 401 unauthorized, como
-    // o servidor quando a família morre no meio da troca (PENDENCIAS do
+    // o servidor quando a família morre no meio da troca (pendência do
     // Plano 6: o código é consumido antes da transação).
     recuperacaoGasta: new Set<string>(),
     trocaFalhaDepoisDoCodigo: false,
@@ -190,7 +190,7 @@ export function criarApiFalsa() {
       const corpo = request.headers.get('Content-Type')?.includes('json') ? ((await request.json()) as Json) : {}
       const consulta = Object.fromEntries(new URL(request.url).searchParams)
       contar(chave, metodo === 'get' ? (Object.keys(consulta).length ? consulta : undefined) : corpo)
-      if (metodo !== 'get' && request.headers.get('X-Requested-With') !== 'vigilume') return erro(403, 'forbidden')
+      if (metodo !== 'get' && request.headers.get('X-Requested-With') !== 'stillon') return erro(403, 'forbidden')
       if (protegida) {
         const t = request.headers.get('Authorization')?.replace(/^Bearer /, '')
         if (!t || !st.acessos.has(t)) return erro(401, 'unauthorized')
@@ -446,7 +446,7 @@ export function criarApiFalsa() {
       if (st.totpLigado) return erro(403, 'forbidden')
       provaCerta(request)
       st.totpPendente = true
-      return HttpResponse.json({ otpauth_uri: 'otpauth://totp/Vigilume:dono%40exemplo.com?secret=JBSWY3DPEHPK3PXP&issuer=Vigilume' })
+      return HttpResponse.json({ otpauth_uri: 'otpauth://totp/StillOn:dono%40exemplo.com?secret=JBSWY3DPEHPK3PXP&issuer=StillOn' })
     }),
     // TOTP.Confirm com o 2FA já ligado é 403 forbidden ANTES de olhar o
     // código (C1 da revisão do Plano 10): o mesmo 403 para o certo e o
@@ -497,7 +497,7 @@ export function criarApiFalsa() {
       // pendente é da família do token (totp_pending_family_id).
       st.troca = { rotation: rotacao(++st.rotacoes), familia: familiaDe(request) }
       return HttpResponse.json({
-        otpauth_uri: `otpauth://totp/Vigilume:dono%40exemplo.com?secret=${SEGREDO_NOVO}&issuer=Vigilume`,
+        otpauth_uri: `otpauth://totp/StillOn:dono%40exemplo.com?secret=${SEGREDO_NOVO}&issuer=StillOn`,
         rotation: st.troca.rotation,
       })
     }),

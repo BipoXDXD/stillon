@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/BipoXDXD/vigilume/internal/apierr"
+	"github.com/BipoXDXD/stillon/internal/apierr"
 )
 
 type paginaJSON struct {

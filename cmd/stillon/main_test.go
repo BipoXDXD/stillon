@@ -13,11 +13,11 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/BipoXDXD/vigilume/internal/config"
-	"github.com/BipoXDXD/vigilume/internal/prober"
-	"github.com/BipoXDXD/vigilume/internal/storage"
-	"github.com/BipoXDXD/vigilume/internal/storage/db"
-	"github.com/BipoXDXD/vigilume/internal/storage/testdb"
+	"github.com/BipoXDXD/stillon/internal/config"
+	"github.com/BipoXDXD/stillon/internal/prober"
+	"github.com/BipoXDXD/stillon/internal/storage"
+	"github.com/BipoXDXD/stillon/internal/storage/db"
+	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 )
 
 var chave = []byte("chave-mestra-de-teste-32-bytes!!")
@@ -198,7 +198,7 @@ func TestRunFailsWhenAServerCannotStart(t *testing.T) {
 }
 
 // M7 (Plano 9, §3.4): com a porta de métricas ocupada (outro processo do
-// Vigilume no mesmo host, o caso de --role=api e --role=prober), o boot cai
+// StillOn no mesmo host, o caso de --role=api e --role=prober), o boot cai
 // com o EADDRINUSE do servidor de métricas, e a mensagem sugere o
 // METRICS_ADDR. A perna oposta (a porta da API ocupada não sugere) está em
 // TestRunFailsWhenAServerCannotStart.

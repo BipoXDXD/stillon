@@ -13,19 +13,19 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/BipoXDXD/vigilume/internal/webui"
+	"github.com/BipoXDXD/stillon/internal/webui"
 )
 
 // indexDeTeste imita o index.html que o Vite gera com html.cspNonce: o
 // marcador no <meta> e nos dois elementos que carregam o bundle.
 const indexDeTeste = `<!doctype html><html lang="pt-BR"><head>` +
-	`<meta property="csp-nonce" nonce="VIGILUME_CSP_NONCE">` +
-	`<script type="module" crossorigin src="/assets/index-abc123.js" nonce="VIGILUME_CSP_NONCE"></script>` +
-	`<link rel="stylesheet" crossorigin href="/assets/index-def456.css" nonce="VIGILUME_CSP_NONCE">` +
+	`<meta property="csp-nonce" nonce="STILLON_CSP_NONCE">` +
+	`<script type="module" crossorigin src="/assets/index-abc123.js" nonce="STILLON_CSP_NONCE"></script>` +
+	`<link rel="stylesheet" crossorigin href="/assets/index-def456.css" nonce="STILLON_CSP_NONCE">` +
 	`</head><body><div id="root"></div></body></html>`
 
 // bundleGrande passa do limite do gzip e comprime bem.
-var bundleGrande = strings.Repeat("console.log('vigilume');\n", 200)
+var bundleGrande = strings.Repeat("console.log('stillon');\n", 200)
 
 func distDeTeste() fstest.MapFS {
 	return fstest.MapFS{
@@ -241,11 +241,12 @@ func TestTodoArquivoDoDistTemTipo(t *testing.T) {
 		t.Fatal(err)
 	}
 	if n == 0 {
-		// Sem build, o teste não confere nada. O CI que roda depois do
-		// "npm run build" liga VIGILUME_EXIGIR_DIST=1 (Plano 7): lá, um dist
-		// vazio é erro, e não um verde vazio.
-		if os.Getenv("VIGILUME_EXIGIR_DIST") == "1" {
-			t.Fatal("VIGILUME_EXIGIR_DIST=1 e o dist embutido está vazio: rode npm run build em web/ antes")
+		// Sem build, o teste não confere nada. Quem liga
+		// STILLON_EXIGIR_DIST=1 é o CI (ci.yml, job web, no passo depois do
+		// "npm run build"; Plano 6), e não o build: lá, um dist vazio é
+		// erro, e não um verde vazio.
+		if os.Getenv("STILLON_EXIGIR_DIST") == "1" {
+			t.Fatal("STILLON_EXIGIR_DIST=1 e o dist embutido está vazio: rode npm run build em web/ antes")
 		}
 		t.Log("dist sem build (só o .gitkeep): nada a conferir")
 		return

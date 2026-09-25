@@ -12,9 +12,9 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pquerna/otp/totp"
 
-	"github.com/BipoXDXD/vigilume/internal/auth"
-	"github.com/BipoXDXD/vigilume/internal/clock"
-	"github.com/BipoXDXD/vigilume/internal/crypto"
+	"github.com/BipoXDXD/stillon/internal/auth"
+	"github.com/BipoXDXD/stillon/internal/clock"
+	"github.com/BipoXDXD/stillon/internal/crypto"
 )
 
 // segredoDeTroca é o segredo "antigo" dos testes da troca de autenticador
@@ -435,7 +435,7 @@ func TestConfirmRotationTakesTheUserLock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	chave := "hashtextextended('vigilume.sessions:' || '" + userID.String() + "', 0)"
+	chave := "hashtextextended('stillon.sessions:' || '" + userID.String() + "', 0)"
 	var umaVez sync.Once
 	soltar := func() {
 		umaVez.Do(func() {

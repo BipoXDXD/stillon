@@ -170,7 +170,7 @@ programa_jq() {
     sed -n "/jq -e -s --arg id /,/\$id)'/p" "$1" |
         sed "1s/^[^']*'//; \$s/'[^']*\$//" | tr -s ' \n' '  ' | sed 's/^ //; s/ $//'
 }
-ENTRADA=deploy/vps/vigilume-entrada
+ENTRADA=deploy/vps/stillon-entrada
 prog_vps=$(programa_jq "$ENTRADA")
 prog_wf=$(programa_jq "$DEPLOY")
 [ -n "$prog_vps" ] || falhar "$ENTRADA: sem o jq -e -s que confere o index.json"
@@ -212,11 +212,11 @@ contar_marcas
 
 # 6. Nada do Fly.io sobra no repositório (Plano 11, spec §1, critério 3): nem
 #    arquivo, nem comando, nem secret, nem link para o runbook antigo. Fica de
-#    fora a história (docs/superpowers/: specs, planos e pendências de
-#    planos já feitos) e este script. O nome do cabeçalho Fly-Client-IP
-#    continua valendo: o CLIENT_IP_HEADER o aceita, e o Caddy o apaga da
-#    requisição (Obrigação 1 do Plano 11); por isso a busca é pelo que só
-#    existe na plataforma, e não pela palavra "Fly".
+#    fora docs/superpowers/ (a spec do sistema, o contrato, o roadmap e as
+#    pendências correntes, que citam o Fly como história) e este script. O
+#    nome do cabeçalho Fly-Client-IP continua valendo: o CLIENT_IP_HEADER o
+#    aceita, e o Caddy o apaga da requisição (Obrigação 1 do Plano 11); por
+#    isso a busca é pelo que só existe na plataforma, e não pela palavra "Fly".
 FLY_ERE='flyctl|superfly|fly\.(io|dev|toml)|deploy/fly|registry\.fly|(^|[^a-z0-9_-])fly[[:space:]]+(deploy|ssh|volumes?|tokens?|proxy|launch|secrets?|machines?|apps|auth|scale|logs|pg|postgres|status|config|ips|certs|console|wireguard|regions)([^a-z0-9_-]|$)'
 for arq in fly.toml deploy/fly docs/deploy/fly.md; do
     [ ! -e "$arq" ] || falhar "$arq ainda existe: o Fly saiu do repositório (o runbook é docs/deploy/vps.md)"

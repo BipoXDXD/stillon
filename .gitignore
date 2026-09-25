@@ -1,4 +1,4 @@
-/vigilume
+/stillon
 /bin/
 /web/node_modules/
 /web/test-results/
@@ -17,8 +17,8 @@
 !.env.example
 !/web/.env.development
 # O backup (docs/deploy/vps.md, D3 do Plano 10): a chave privada do age
-# (vigilume-backup.key), o dump decifrado na restauração (vigilume.dump) e o
-# artifact baixado (vigilume-AAAAMMDD.dump.age). Nenhum deles vai para o git.
+# (stillon-backup.key), o dump decifrado na restauração (stillon.dump) e o
+# artifact baixado (stillon-AAAAMMDD.dump.age). Nenhum deles vai para o git.
 *.key
 *.dump
 *.age

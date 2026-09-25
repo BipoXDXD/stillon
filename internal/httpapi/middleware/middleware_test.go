@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/BipoXDXD/vigilume/internal/httpapi/middleware"
+	"github.com/BipoXDXD/stillon/internal/httpapi/middleware"
 )
 
 func ok(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) }
@@ -208,7 +208,7 @@ func TestRequireCustomHeaderOnMutations(t *testing.T) {
 	}
 
 	com := httptest.NewRequest(http.MethodPost, "/", nil)
-	com.Header.Set("X-Requested-With", "vigilume")
+	com.Header.Set("X-Requested-With", "stillon")
 	rec = httptest.NewRecorder()
 	h.ServeHTTP(rec, com)
 	if rec.Code != http.StatusOK {

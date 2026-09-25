@@ -1,11 +1,11 @@
 # Pendências depois do Plano 11
 
 Este arquivo existe porque o ledger de execução vive em `.superpowers/`, fora do controle de
-versão. O que está aqui é o subconjunto que não pode se perder. Ele substitui o
-`PENDENCIAS-PARA-O-PLANO-11.md` como estado corrente; os anteriores ficam como histórico.
+versão. O que está aqui é o subconjunto que não pode se perder. Ele substitui as pendências do
+Plano 11 como estado corrente; os anteriores foram apagados em 2026-09-25 (README, Histórico).
 
-O Plano 11 pôs o Vigilume numa VPS da Hostinger (spec
-`docs/superpowers/specs/2026-09-25-plano-11-hospedagem-design.md`): compose de produção com Caddy
+O Plano 11 pôs o StillOn numa VPS da Hostinger (a spec do Plano 11, apagada em 2026-09-25; ver
+README, Histórico): compose de produção com Caddy
 em `deploy/vps/`, deploy e backup do GitHub Actions por SSH com chave restrita, vigia externo, e o
 runbook `docs/deploy/vps.md`, escrito para um dono que nunca usou VPS. O Fly saiu do repositório
 inteiro; o que era genérico no runbook dele (reset-2fa, operação do Postgres, restauração, tornar o
@@ -17,30 +17,31 @@ C e o que os Planos 10 e 11 empurraram para cá), **13 = R2** (`auth` para sqlc)
 
 ## Fechadas no Plano 11: as 7 obrigações do Plano 10
 
-Todas eram critério de pronto (`PENDENCIAS-PARA-O-PLANO-11.md`, "Obrigações do Plano 11"). A
+Todas eram critério de pronto (as pendências do Plano 11, "Obrigações do Plano 11"; o arquivo foi
+apagado em 2026-09-25: ver README, Histórico). A
 coluna "Verificação" é o passo do runbook que a confere na VPS de verdade; a coluna "Prova no
 repositório" é o que o CI roda.
 
 | # | Obrigação | Como foi atendida | Prova no repositório | Verificação na VPS |
 |---|---|---|---|---|
 | 1 | O Caddy remove `Fly-Client-IP`, `X-Real-IP` e `CF-Connecting-IP` do cliente, e **não** configura `trusted_proxies` | `deploy/vps/Caddyfile`: um bloco de site só para o domínio, com a remoção dos três cabeçalhos na entrada, sem `trusted_proxies` (o Caddy substitui o `X-Forwarded-For` pelo IP real) | `deploy/ci/checar-vps.sh` (job `vps` do CI), bloco 5 (login com `X-Real-IP`, `Fly-Client-IP`, `CF-Connecting-IP` e `X-Forwarded-For` forjados: o `ip_hash` da sessão é o da conexão, não o forjado) e bloco 6 (com um `CLIENT_IP_HEADER` posto por engano, o app cai no IP do Caddy: o Caddy tirou o cabeçalho) | runbook 9.2 (o `429` continua com os cabeçalhos forjados) |
-| 2 | `TRUSTED_PROXIES` = o IP fixo do Caddy, `CLIENT_IP_HEADER` vazio | Rede `vigilume` 172.30.0.0/24 fixada por `ipam` no `compose.prod.yaml`, Caddy em 172.30.0.2; o app com `TRUSTED_PROXIES=172.30.0.2/32` e `CLIENT_IP_HEADER` vazio | `deploy/ci/checar-vps.sh`, bloco 1 (a config resolvida do `compose.prod.yaml`: Caddy em 172.30.0.2, `TRUSTED_PROXIES` = `172.30.0.2/32`, `CLIENT_IP_HEADER` vazio) e bloco 5 (o `ip_hash` do login não é o do Caddy, nem aparece o aviso da B3) | runbook 9.2 (sem o aviso da B3 no log; o teste de duas redes separa os baldes) |
+| 2 | `TRUSTED_PROXIES` = o IP fixo do Caddy, `CLIENT_IP_HEADER` vazio | Rede `stillon` 172.30.0.0/24 fixada por `ipam` no `compose.prod.yaml`, Caddy em 172.30.0.2; o app com `TRUSTED_PROXIES=172.30.0.2/32` e `CLIENT_IP_HEADER` vazio | `deploy/ci/checar-vps.sh`, bloco 1 (a config resolvida do `compose.prod.yaml`: Caddy em 172.30.0.2, `TRUSTED_PROXIES` = `172.30.0.2/32`, `CLIENT_IP_HEADER` vazio) e bloco 5 (o `ip_hash` do login não é o do Caddy, nem aparece o aviso da B3) | runbook 9.2 (sem o aviso da B3 no log; o teste de duas redes separa os baldes) |
 | 3 | Só 80 e 443, do Caddy, publicadas; sem `ports:` no `db` e no `app`; sem IPv6 global na rede do compose | `compose.prod.yaml` com `ports` só no `caddy` e a rede sem IPv6; na VPS, `ufw` e o firewall do painel com 22, 80 e 443 | `deploy/ci/checar-vps.sh`, bloco 1 (só o `caddy` publica, exatamente `0.0.0.0:80` e `0.0.0.0:443` TCP; `enable_ipv6: false`; sub-rede 172.30.0.0/24), bloco 2b (na pilha de pé, só `caddy:80` e `caddy:443` publicadas, `app` e `db` sem `PortBindings`, rede sem IPv6) e bloco 7 (de outra rede do Docker o banco não responde) | runbook 9.1 (`nmap` de fora, `ss -tlnp` de dentro) |
 | 4 | `GOMEMLIMIT` no app e `mem_limit` em cada serviço | `compose.prod.yaml` | `deploy/ci/checar-vps.sh`, bloco 1 (`mem_limit` e `restart: unless-stopped` em `caddy`, `app` e `db`; `GOMEMLIMIT` abaixo do `mem_limit` do app) | runbook 9.5 |
-| 5 | Compose de produção sem `seed`, sem `x-ambiente`, sem chave ou senha do repositório; segredos num `env_file` fora do git, gerados com `openssl rand`; `restart: unless-stopped` em tudo; o runbook diz que o `compose.yaml` não vai para o servidor e a `PUBLIC_BASE_URL` é `https://<domínio>` | `compose.prod.yaml` + `deploy/vps/env.exemplo` (modelo sem valores do `/opt/vigilume/.env`, que o compose lê pela interpolação, e não por `env_file`: cada serviço recebe só o que usa) + `deploy/vps/initdb.sh` (papéis a partir das senhas do ambiente); runbook "Como ler este runbook" (a frase literal) e 3.4 (segredos gerados na VPS, cópia no gerenciador) | `deploy/ci/checar-vps.sh`, bloco 1 (serviços exatamente `app`, `caddy` e `db`, sem `seed`; nenhuma chave de demonstração no arquivo; `PUBLIC_BASE_URL` = `https://<domínio>`; o `env.exemplo` sem valor e com toda variável que o compose lê; o Caddy sem segredo e o app sem a senha do superusuário nem a do backup) e bloco 4 (`Host` estranho não chega ao app) | runbook 3.4 e 9.5 (`config --services` sem `seed`) e 9.3 (`Host` estranho não chega ao app) |
-| 6 | Backup e deploy da VPS; a chave do `age` gerada fora do repositório | `deploy.yml` e `backup.yml` reescritos para `ssh deploy@VPS deploy …`/`backup`, com a chave presa a `deploy/vps/vigilume-entrada` por `restrict,command=` e `sudoers`; host key fixada em `VPS_HOST_KEY`; a chave do `age` nasce em `~/vigilume-backup.key`, fora do repositório (runbook 3.5) | `deploy/ci/checar-vps.sh`, blocos 2 (primeiro deploy doente e deploy saudável), 8a–8f (pedidos recusados com 2, imagem divergente, tar com nome e o SHA no ar ou o anterior já etiquetado com outra imagem com 3, rollback com 4, as 3 últimas imagens, store que não é o do containerd com 1, `sudoers` num Ubuntu 24.04) e 9 (backup: só o cifrado na saída padrão, 1 sem chave e 3 com a cópia reprovada); `deploy/ci/checar-workflows.sh` (job `workflows` do CI: nenhum `StrictHostKeyChecking=no`, nada do Fly) e `deploy/ci/vps.sh` (os códigos do deploy e do backup com mensagem, testados com ssh falso por `deploy/ci/testar-vps.sh`) | runbook 4.4 (a chave só faz o que deve), 4.8 (primeiro deploy), 7.1 e 7.2 (backup e ensaio de restauração) |
-| 7 | Um vigia externo do `/healthz` público | `deploy/vps/vigia.sh` + `vigilume-vigia.service` + `vigilume-vigia.timer`: a cada minuto, `curl` no `/healthz` público e ping no healthchecks.io (`HC_URL` no `/opt/vigilume/vigia.env`, o arquivo só do vigia; o `.env` não chega a ele), `/fail` quando falha | `deploy/ci/checar-vigia.sh` (job `vps` do CI), blocos 1 e 2 (saudável pinga a `HC_URL`; fora do ar pinga `HC_URL/fail` e sai com erro), 3 a 6 (barra no fim, sem `HC_URL`, sem domínio, certificado conferido e prazos) e 7 (as unidades: timer a cada minuto, `DynamicUser`, `LoadCredential`, `ExecStart=/usr/local/sbin/vigilume-vigia`) | runbook 8 (derrubar o app de propósito e receber o e-mail) |
+| 5 | Compose de produção sem `seed`, sem `x-ambiente`, sem chave ou senha do repositório; segredos num `env_file` fora do git, gerados com `openssl rand`; `restart: unless-stopped` em tudo; o runbook diz que o `compose.yaml` não vai para o servidor e a `PUBLIC_BASE_URL` é `https://<domínio>` | `compose.prod.yaml` + `deploy/vps/env.exemplo` (modelo sem valores do `/opt/stillon/.env`, que o compose lê pela interpolação, e não por `env_file`: cada serviço recebe só o que usa) + `deploy/vps/initdb.sh` (papéis a partir das senhas do ambiente); runbook "Como ler este runbook" (a frase literal) e 3.4 (segredos gerados na VPS, cópia no gerenciador) | `deploy/ci/checar-vps.sh`, bloco 1 (serviços exatamente `app`, `caddy` e `db`, sem `seed`; nenhuma chave de demonstração no arquivo; `PUBLIC_BASE_URL` = `https://<domínio>`; o `env.exemplo` sem valor e com toda variável que o compose lê; o Caddy sem segredo e o app sem a senha do superusuário nem a do backup) e bloco 4 (`Host` estranho não chega ao app) | runbook 3.4 e 9.5 (`config --services` sem `seed`) e 9.3 (`Host` estranho não chega ao app) |
+| 6 | Backup e deploy da VPS; a chave do `age` gerada fora do repositório | `deploy.yml` e `backup.yml` reescritos para `ssh deploy@VPS deploy …`/`backup`, com a chave presa a `deploy/vps/stillon-entrada` por `restrict,command=` e `sudoers`; host key fixada em `VPS_HOST_KEY`; a chave do `age` nasce em `~/stillon-backup.key`, fora do repositório (runbook 3.5) | `deploy/ci/checar-vps.sh`, blocos 2 (primeiro deploy doente e deploy saudável), 8a–8f (pedidos recusados com 2, imagem divergente, tar com nome e o SHA no ar ou o anterior já etiquetado com outra imagem com 3, rollback com 4, as 3 últimas imagens, store que não é o do containerd com 1, `sudoers` num Ubuntu 24.04) e 9 (backup: só o cifrado na saída padrão, 1 sem chave e 3 com a cópia reprovada); `deploy/ci/checar-workflows.sh` (job `workflows` do CI: nenhum `StrictHostKeyChecking=no`, nada do Fly) e `deploy/ci/vps.sh` (os códigos do deploy e do backup com mensagem, testados com ssh falso por `deploy/ci/testar-vps.sh`) | runbook 4.4 (a chave só faz o que deve), 4.8 (primeiro deploy), 7.1 e 7.2 (backup e ensaio de restauração) |
+| 7 | Um vigia externo do `/healthz` público | `deploy/vps/vigia.sh` + `stillon-vigia.service` + `stillon-vigia.timer`: a cada minuto, `curl` no `/healthz` público e ping no healthchecks.io (`HC_URL` no `/opt/stillon/vigia.env`, o arquivo só do vigia; o `.env` não chega a ele), `/fail` quando falha | `deploy/ci/checar-vigia.sh` (job `vps` do CI), blocos 1 e 2 (saudável pinga a `HC_URL`; fora do ar pinga `HC_URL/fail` e sai com erro), 3 a 6 (barra no fim, sem `HC_URL`, sem domínio, certificado conferido e prazos) e 7 (as unidades: timer a cada minuto, `DynamicUser`, `LoadCredential`, `ExecStart=/usr/local/sbin/stillon-vigia`) | runbook 8 (derrubar o app de propósito e receber o e-mail) |
 
 **Também fechado no Plano 11**, dos itens que o Plano 10 mandou para cá:
 
-- **`age-keygen -o ~/vigilume-backup.key`, fora do repositório, no runbook** (banco S3 da revisão):
+- **`age-keygen -o ~/stillon-backup.key`, fora do repositório, no runbook** (banco S3 da revisão):
   runbook 3.5.
 - **O Fly**: `docs/deploy/fly.md` apagado, com o genérico migrado para `docs/deploy/vps.md`
   (reset-2fa, operação do Postgres, restauração, "tornar o repositório público"); o `fly.toml` e o `deploy/fly/` (o `Dockerfile` e o `fly.toml` do Postgres) apagados, com o digest do Postgres de produção agora em `deploy/vps/db/Dockerfile`; os workflows não falam mais com o Fly
   (o `deploy/ci/checar-workflows.sh` do CI recusa qualquer menção fora de `docs/superpowers/`), e
   o Dependabot lê o digest do Postgres em `deploy/vps/db/Dockerfile`. Os secrets e variáveis de
   antes (`BACKUP_DATABASE_PASSWORD`, `AGE_RECIPIENT`, `PG_VOLUME_GB` e os tokens) saíram: o backup
-  usa só `BACKUP_ENABLED`, e a chave pública do `age` mora em `/opt/vigilume/age-recipient`.
+  usa só `BACKUP_ENABLED`, e a chave pública do `age` mora em `/opt/stillon/age-recipient`.
 - **A checagem de `Host`**: o Caddy só tem o bloco do domínio, e uma requisição com outro `Host`
   não chega ao app (runbook 9.3). A checagem **no app** fica para o Plano 12 só se o cadastro abrir
   ou se aparecer outra porta de entrada.
@@ -63,7 +64,7 @@ Tomadas com a autorização do dono ("tome as decisões por mim, exceto as cruci
 3. **healthchecks.io com timer na própria VPS**, em vez de um serviço que consulta de fora.
    Custo: se o DNS ou a rede entre a VPS e o mundo falhar de um jeito que o `curl` da própria VPS
    não veja, o alarme atrasa ou não vem.
-4. **Scripts da VPS em shell** (o `vigilume-entrada`, o `vigia.sh`), testados no CI.
+4. **Scripts da VPS em shell** (o `stillon-entrada`, o `vigia.sh`), testados no CI.
 5. **Fly removido por inteiro** (decisão do dono), com o conteúdo genérico migrado.
 
 E as do runbook (desta parte do Plano 11):
@@ -144,7 +145,7 @@ E as do runbook (desta parte do Plano 11):
   host (o pedido é filtrado, o tar só é extraído com os nomes da lista, o app roda com
   `cap_drop: ALL` e `no-new-privileges`, sem socket do Docker e sem porta publicada), mas dá o
   app **inteiro**: quem a tem sobe qualquer imagem como o app, com a `MASTER_KEY`, o
-  `JWT_SECRET`, o `IP_HASH_KEY`, a senha do `vigilume_app` e a `RESEND_API_KEY`. O `image-id` do
+  `JWT_SECRET`, o `IP_HASH_KEY`, a senha do `stillon_app` e a `RESEND_API_KEY`. O `image-id` do
   pedido não protege contra isso, porque quem ataca o escolhe. A defesa de verdade: o `publish`
   assinar a imagem (cosign, ou o atestado de proveniência do GitHub), o deploy mandar o bundle
   pelo mesmo SSH, e a entrada recusar (3) a imagem cuja assinatura não confere com a identidade
@@ -228,14 +229,26 @@ que a onda de correção não fechou. Os que ela fechou: auth M1 (a espera do Ar
   (versão do `go.mod`), e o `net/http` disca com a cópia embutida na biblioteca padrão (versão do
   Go). As tabelas Unicode das duas podem divergir num host novo, e a comparação deixa de ser "como
   o `net/http` disca" exatamente nesse host.
-- revisão final, e2e: o `docker compose exec app /vigilume user reset-2fa` do `troca.spec`
+- revisão final, e2e: o `docker compose exec app /stillon user reset-2fa` do `troca.spec`
   (`E2E_COMPOSE_SERVICE: app` no job `e2e` do `ci.yml`) só foi validado localmente; conferir no
   primeiro CI que a troca roda e não é pulada.
+- revisão da renomeação, testes: a trava advisory de `drop_checks_partitions_before` (migration
+  00006) não tem teste que a compare com a de `ensure_checks_partition`; um teste que leia o
+  `prosrc` das duas funções em `pg_proc` e exija a mesma chave fecharia (lacuna anterior à
+  renomeação).
+- revisão da renomeação, testes: a chave do tema, `stillon.tema`, está em
+  `web/src/lib/tema.tsx` (`CHAVE`) e em `web/public/tema.js`, sem teste que compare as duas; um
+  teste Vitest que leia `public/tema.js` e compare com `CHAVE` fecharia.
+- revisão da renomeação, testes: o middleware de CSRF (`RequireCustomHeader`, em
+  `internal/httpapi/middleware/csrf.go`) só confere se o `X-Requested-With` existe, não o valor. O
+  valor `stillon` só aparece na API falsa do painel, que o confere; nem o servidor nem o e2e o
+  conferem, e um valor trocado passaria sem aviso.
 
 
-## Para o Plano 12 (limites do Plano 9, de `PENDENCIAS-PARA-O-PLANO-10.md`, ainda abertos)
+## Para o Plano 12 (limites do Plano 9, das pendências do Plano 10, ainda abertos)
 
-Os limites conhecidos do Plano 9 que o Plano 10 não fechou:
+Os limites conhecidos do Plano 9 que o Plano 10 não fechou (as pendências do Plano 10, apagadas
+em 2026-09-25; ver README, Histórico):
 
 - **Pausar descarta os avisos.** Retomar não reenvia o que passou; o diálogo de "Pausar" diz
   isso.
@@ -255,13 +268,14 @@ Os limites conhecidos do Plano 9 que o Plano 10 não fechou:
 - **`ROLE` inválido fica em `cfg.Role`** (`internal/config/config.go`), inofensivo porque o `Load`
   devolve `nil, err`.
 - **Os testes de trava procuram a espera pelo `pg_stat_activity` sem amarrar o backend** (a lista
-  completa dos testes está no `PENDENCIAS-PARA-O-PLANO-10.md`).
+  completa dos testes está nas pendências do Plano 10 (apagadas em 2026-09-25; ver README,
+  Histórico)).
 
-Os limites dos Planos 7 e 8 seguem como estão no `PENDENCIAS-PARA-O-PLANO-8.md` e no
-`PENDENCIAS-PARA-O-PLANO-9.md`.
+Os limites dos Planos 7 e 8 seguem como estão nas pendências dos Planos 8 e 9 (apagadas em
+2026-09-25; ver README, Histórico).
 
-**Dívidas menores** (grupo C): a seção "Dívidas menores herdadas, ainda abertas" do
-`PENDENCIAS-PARA-O-PLANO-5.md`, inteira.
+**Dívidas menores** (grupo C): a seção "Dívidas menores herdadas, ainda abertas" das pendências
+do Plano 5 (apagadas em 2026-09-25; ver README, Histórico), inteira.
 
 
 ## Limites conhecidos do Plano 10 (seguem valendo)
@@ -296,7 +310,7 @@ Os limites dos Planos 7 e 8 seguem como estão no `PENDENCIAS-PARA-O-PLANO-8.md`
   (era do Plano 11, que ficou só na hospedagem): re-emitir o cookie na resposta das rotas em que o
   dono logado muda a própria credencial.
 - **O dono num navegador novo (ou com os cookies limpos) enquanto um anônimo mantém a conta
-  travada** não tem cookie de dispositivo: espera os 15 min ou usa `vigilume user set-password`
+  travada** não tem cookie de dispositivo: espera os 15 min ou usa `stillon user set-password`
   (A3, D6 do plano).
 - **Painel velho em cache depois do deploy**: o `rotate/confirm` sem `rotation` recebe `403`, e o
   painel antigo diz "concluída ou cancelada em outra aba" até o dono recarregar (A7).
@@ -326,6 +340,17 @@ Os limites dos Planos 7 e 8 seguem como estão no `PENDENCIAS-PARA-O-PLANO-8.md`
   binário fora (o caso mais provável atrás do Caddy do Plano 11): o painel diz "Resposta inesperada
   do servidor (502)" e a sessão local fica, enquanto sem rede ela é largada (P8; revisão, painel M3).
 
+
+## Renomeação para StillOn (2026-09-25)
+
+Em 2026-09-25, depois do Plano 11, o projeto trocou de nome (README, Histórico). Fica para o dono:
+
+- **Apagar o pacote antigo do GHCR**, órfão depois da renomeação (as imagens novas saem em
+  `ghcr.io/bipoxdxd/stillon`).
+- **Dar o nome `StillOn` ao check do healthchecks.io** ao criá-lo (runbook 1.6).
+- **O remetente do Resend, `StillOn <alertas@stillon.tech>`**: a variável é a `EMAIL_FROM` do
+  `.env` da VPS (runbook 1.5 e 3.4), com o domínio que estiver verificado no Resend (se for o
+  subdomínio `avisos.` que o runbook sugere, `alertas@avisos.stillon.tech`).
 
 ## Dependem do dono do projeto (nenhum agente faz)
 

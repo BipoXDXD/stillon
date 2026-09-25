@@ -7,12 +7,12 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/BipoXDXD/vigilume/internal/config"
-	"github.com/BipoXDXD/vigilume/internal/httpapi"
+	"github.com/BipoXDXD/stillon/internal/config"
+	"github.com/BipoXDXD/stillon/internal/httpapi"
 )
 
 // indexFalso é o bastante para reconhecer o painel numa resposta.
-const indexFalso = `<!doctype html><meta property="csp-nonce" nonce="VIGILUME_CSP_NONCE">` +
+const indexFalso = `<!doctype html><meta property="csp-nonce" nonce="STILLON_CSP_NONCE">` +
 	`<div id="root"></div>`
 
 func comPainel(d *httpapi.Deps) {
@@ -27,7 +27,7 @@ func comPainel(d *httpapi.Deps) {
 // o arquivo de rotas sem trava (lição de teste do projeto); este teste
 // existe para que tirar uma linha da raiz fique vermelho.
 func TestCadaPrefixoCaiNaCadeiaCerta(t *testing.T) {
-	a := newAPICom(t, func(c *config.Config) { c.PublicBaseURL = "https://vigilume.exemplo.com" }, comPainel)
+	a := newAPICom(t, func(c *config.Config) { c.PublicBaseURL = "https://stillon.example" }, comPainel)
 
 	casos := []struct {
 		caminho string

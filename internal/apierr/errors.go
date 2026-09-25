@@ -1,4 +1,4 @@
-// Package apierr define o envelope de erro HTTP do Vigilume.
+// Package apierr define o envelope de erro HTTP do StillOn.
 //
 // É um pacote folha de propósito: tanto internal/httpapi quanto
 // internal/httpapi/middleware precisam de WriteError, e internal/httpapi
@@ -15,7 +15,7 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/BipoXDXD/vigilume/internal/observability"
+	"github.com/BipoXDXD/stillon/internal/observability"
 )
 
 type ErrorCode string

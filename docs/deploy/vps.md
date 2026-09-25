@@ -1,13 +1,12 @@
-# Vigilume numa VPS da Hostinger: do zero ao ar, e a operação
+# StillOn numa VPS da Hostinger: do zero ao ar, e a operação
 
 Runbook **manual**, escrito para quem **nunca usou VPS nem SSH**. Nada aqui roda sozinho: cada
 passo é feito por você, na ordem, e só se passa ao seguinte depois da verificação do passo
 ("**Confira**"). Se uma verificação não der o que o texto diz, pare ali: seguir com um passo
 errado quase sempre complica o conserto.
 
-O porquê das escolhas está na spec do Plano 11
-(`docs/superpowers/specs/2026-09-25-plano-11-hospedagem-design.md`); as decisões que você ainda
-pode revisar estão na §9 dela.
+O porquê das escolhas está na spec do Plano 11 (apagada em 2026-09-25; ver README, Histórico);
+as decisões que você ainda podia revisar estavam na §9 dela.
 
 ## Como ler este runbook
 
@@ -21,7 +20,7 @@ pode revisar estão na §9 dela.
 - **`sudo` pede a sua senha** (a do seu usuário na VPS, criada no passo 2.5). Ao digitá-la, nada
   aparece na tela: é normal.
 - **Segredos só vão para o gerenciador de senhas e para dois arquivos do root na VPS:** o
-  `/opt/vigilume/.env` (os do app e do banco) e o `/opt/vigilume/vigia.env` (só a URL do vigia,
+  `/opt/stillon/.env` (os do app e do banco) e o `/opt/stillon/vigia.env` (só a URL do vigia,
   bloco 8). Nunca num chat, num e-mail, num print, num arquivo do repositório ou num campo do
   GitHub. Os três segredos que o GitHub precisa (bloco 4) vão por um comando que lê de arquivo,
   sem colar nada.
@@ -32,13 +31,13 @@ pode revisar estão na §9 dela.
 ## Topologia
 
 Uma VPS (Hostinger KVM 2: 2 vCPU, 8 GB, 100 GB NVMe, datacenter no Brasil) com Ubuntu 24.04 LTS e
-Docker. Em `/opt/vigilume`, um `compose.prod.yaml` com três serviços numa rede interna
-`vigilume` (172.30.0.0/24, sem IPv6):
+Docker. Em `/opt/stillon`, um `compose.prod.yaml` com três serviços numa rede interna
+`stillon` (172.30.0.0/24, sem IPv6):
 
 | Serviço | O que é | Endereço | Porta publicada |
 |---|---|---|---|
 | `caddy` | Proxy com HTTPS automático (Let's Encrypt), só para o seu domínio | 172.30.0.2 | **80 e 443, e só ele** |
-| `app` | O binário do Vigilume (`--role=all`): API, painel, sondador, avisos, manutenção | 172.30.0.3 | nenhuma |
+| `app` | O binário do StillOn (`--role=all`): API, painel, sondador, avisos, manutenção | 172.30.0.3 | nenhuma |
 | `db` | Postgres 18, a imagem oficial, fixada por digest | 172.30.0.4 | nenhuma |
 
 Por fora: o GitHub Actions entrega cada versão nova por SSH, com uma chave que só sabe fazer
@@ -52,9 +51,9 @@ healthchecks.io avisa por e-mail se o site parar de responder (bloco 8).
 | 0 | Gerenciador de senhas, o arquivo de variáveis, as ferramentas do seu computador | seu computador |
 | 1 | Chaves SSH, domínio, Resend, healthchecks.io | seu computador, painéis |
 | 2 | Primeiro acesso e endurecimento da VPS | VPS |
-| 3 | Docker, `/opt/vigilume`, segredos, chave do backup | VPS e seu computador |
+| 3 | Docker, `/opt/stillon`, segredos, chave do backup | VPS e seu computador |
 | 4 | Usuário `deploy`, secrets do GitHub, primeiro deploy | VPS, seu computador, GitHub |
-| 5 | Seu usuário no Vigilume e o 2FA | VPS, navegador |
+| 5 | Seu usuário no StillOn e o 2FA | VPS, navegador |
 | 6 | E-mail, canal e alvo de teste | navegador |
 | 7 | Backup ligado e ensaio de restauração | GitHub, seu computador |
 | 8 | Vigia externo | VPS, healthchecks.io |
@@ -71,7 +70,7 @@ algumas horas).
 ### 0.1 Gerenciador de senhas
 
 **Faça:** escolha um gerenciador de senhas (Bitwarden ou KeePassXC servem) e crie nele uma pasta
-"Vigilume". Tudo o que este runbook mandar "guardar no gerenciador" vai para lá, cada coisa numa
+"StillOn". Tudo o que este runbook mandar "guardar no gerenciador" vai para lá, cada coisa numa
 entrada com o nome indicado.
 
 **Por quê:** a VPS pode morrer, e com ela o `.env`; o que está no gerenciador é o que permite
@@ -104,11 +103,11 @@ com a sua conta. Se o `gh` não estiver instalado ou logado: `sudo apt install g
 ```bash
 age --version
 nmap --version | head -1
-git -C ~/Projetos/Go/Vigilume remote -v
+git -C ~/Projetos/Go/StillOn remote -v
 docker run --rm hello-world
 ```
 
-Quatro respostas: as versões, a terceira com `BipoXDXD/vigilume` e a última com
+Quatro respostas: as versões, a terceira com `BipoXDXD/stillon` e a última com
 `Hello from Docker!`, **sem** `sudo`. (Se o seu clone estiver em outro lugar, use o caminho dele
 em todo este runbook.) Se o `docker` não existir, instale o Docker Engine pelo repositório da
 Docker ([fonte](https://docs.docker.com/engine/install/ubuntu/), os mesmos comandos do passo 3.1,
@@ -125,21 +124,21 @@ Os comandos deste runbook usam três nomes, que você define uma vez num arquivo
   `lucas`).
 
 **Faça** (no seu computador), trocando os três valores de exemplo quando os tiver (pode criar o
-arquivo agora e corrigir depois, com `nano ~/.vigilume-vps`):
+arquivo agora e corrigir depois, com `nano ~/.stillon-vps`):
 
 ```bash
-cat > ~/.vigilume-vps <<'FIM'
+cat > ~/.stillon-vps <<'FIM'
 VPS=203.0.113.10
 DOMINIO=exemplo.com
 EU=lucas
 FIM
-. ~/.vigilume-vps
+. ~/.stillon-vps
 ```
 
 **Por quê:** nenhum dos três é segredo, e tê-los num arquivo evita digitar errado o IP no meio de
 um comando.
 
-**Toda vez que abrir um terminal novo no seu computador**, rode `. ~/.vigilume-vps` antes dos
+**Toda vez que abrir um terminal novo no seu computador**, rode `. ~/.stillon-vps` antes dos
 comandos deste runbook.
 
 **Confira:** `echo "$VPS $DOMINIO $EU"` mostra os três valores.
@@ -153,24 +152,24 @@ comandos deste runbook.
 **Faça** (no seu computador):
 
 ```bash
-ssh-keygen -t ed25519 -C "vigilume-admin" -f ~/.ssh/vigilume_admin
+ssh-keygen -t ed25519 -C "stillon-admin" -f ~/.ssh/stillon_admin
 ```
 
 Ele pede uma *passphrase* duas vezes: invente uma frase longa, guarde-a no gerenciador (entrada
-"Vigilume – passphrase da chave SSH") e digite-a. Nada aparece enquanto digita.
+"StillOn – passphrase da chave SSH") e digite-a. Nada aparece enquanto digita.
 
 **Por quê:** a VPS vai aceitar entrada **só** por chave, nunca por senha (passo 2.7). A chave
-privada (`~/.ssh/vigilume_admin`) nunca sai do seu computador; a pública (`.pub`) vai para a VPS.
+privada (`~/.ssh/stillon_admin`) nunca sai do seu computador; a pública (`.pub`) vai para a VPS.
 A passphrase protege a chave se alguém copiar o arquivo.
 
-**Deve aparecer:** `Your identification has been saved in /home/…/.ssh/vigilume_admin` e um
+**Deve aparecer:** `Your identification has been saved in /home/…/.ssh/stillon_admin` e um
 desenho de caracteres (o *randomart*).
 
-**Confira:** `ls -l ~/.ssh/vigilume_admin*` lista dois arquivos, o sem `.pub` com permissão
+**Confira:** `ls -l ~/.ssh/stillon_admin*` lista dois arquivos, o sem `.pub` com permissão
 `-rw-------`.
 
 **Cópia de segurança:** guarde também o **conteúdo** da chave privada no gerenciador (entrada
-"Vigilume – chave SSH do administrador", como anexo ou nota segura): `cat ~/.ssh/vigilume_admin`
+"StillOn – chave SSH do administrador", como anexo ou nota segura): `cat ~/.ssh/stillon_admin`
 mostra o texto. Sem ela e sem o computador, a volta é pelo terminal do painel (bloco 10, "Perdi a
 chave SSH").
 
@@ -187,20 +186,20 @@ que numa VPS nova não custa nada.
 de outra origem mudaria portas, firewall e atualizações.
 
 **Faça também:** em **Settings → Main settings**, defina uma senha de root longa (gere no
-gerenciador; entrada "Vigilume – senha de root da VPS"). Ela só serve para o terminal do painel
+gerenciador; entrada "StillOn – senha de root da VPS"). Ela só serve para o terminal do painel
 em emergência: o SSH de root vai ser desligado no passo 2.7.
 
 ### 1.3 O IP da VPS e a chave pública no painel
 
-**Faça:** na página **Overview** da VPS, copie o endereço **IPv4** e ponha-o no `~/.vigilume-vps`
+**Faça:** na página **Overview** da VPS, copie o endereço **IPv4** e ponha-o no `~/.stillon-vps`
 (`VPS=…`, passo 0.3). Depois, no seu computador:
 
 ```bash
-cat ~/.ssh/vigilume_admin.pub
+cat ~/.ssh/stillon_admin.pub
 ```
 
-Copie a linha inteira (começa com `ssh-ed25519`, termina com `vigilume-admin`). No painel, em
-**Settings → SSH keys**, clique em adicionar, dê o nome `vigilume-admin` e cole a linha. (A chave
+Copie a linha inteira (começa com `ssh-ed25519`, termina com `stillon-admin`). No painel, em
+**Settings → SSH keys**, clique em adicionar, dê o nome `stillon-admin` e cole a linha. (A chave
 **pública** não é segredo: é a única exceção à regra de "não colar", e ela é pública por desenho.)
 
 **Por quê:** a Hostinger instala essa chave para o root, e é com ela que você entra pela primeira
@@ -217,14 +216,14 @@ e [How to point a domain to your VPS](https://www.hostinger.com/support/1583227-
 
 1. Se ainda não pegou o domínio grátis do plano: na página inicial do painel, **Claim Domain** →
    registre um nome novo (planos VPS não têm transferência grátis, só registro). Ponha o nome no
-   `~/.vigilume-vps` (`DOMINIO=…`).
+   `~/.stillon-vps` (`DOMINIO=…`).
 2. Vá em **Domain portfolio** → **Manage** ao lado do domínio → **DNS / Nameservers**.
 3. **Apague** qualquer registro `A`, `AAAA` ou `CNAME` cujo nome seja `@` ou `www` (os que a
    Hostinger cria apontando para a hospedagem dela).
 4. Adicione um registro **A**: **Name** `@`, **Points to** o IPv4 da VPS, **TTL** o padrão.
 
 **Por quê:** o registro `A` diz ao mundo que `seu-domínio` é a sua VPS; o Caddy só consegue o
-certificado HTTPS quando isso já vale. Sem `AAAA`: o Vigilume é configurado e conferido só em
+certificado HTTPS quando isso já vale. Sem `AAAA`: o StillOn é configurado e conferido só em
 IPv4. Sem `www`: o Caddy atende um nome só (o `www` não teria certificado).
 
 **Deve aparecer:** na lista do DNS, uma linha `A  @  <o IP da VPS>`, e nenhum `AAAA`/`CNAME` para
@@ -258,11 +257,11 @@ Fonte: Resend, [Add and verify a domain](https://resend.com/docs/add-a-domain) e
    `send.avisos.seu-domínio`, digite `send.avisos`. O DKIM diferencia maiúsculas de minúsculas:
    copie com o botão de copiar do Resend.
 4. De volta ao Resend, clique no botão de verificar o domínio.
-5. **API Keys → Create API Key**: nome `vigilume-vps`, permissão **Sending access**, restrita ao
+5. **API Keys → Create API Key**: nome `stillon-vps`, permissão **Sending access**, restrita ao
    domínio `avisos.seu-domínio`. A chave aparece **uma vez**: guarde-a direto no gerenciador
-   (entrada "Vigilume – RESEND_API_KEY"). Ela só volta a ser usada no passo 3.3.
+   (entrada "StillOn – RESEND_API_KEY"). Ela só volta a ser usada no passo 3.3.
 
-**Por quê:** sem domínio verificado, todo envio do Vigilume volta com erro 403 do Resend; o SPF e
+**Por quê:** sem domínio verificado, todo envio do StillOn volta com erro 403 do Resend; o SPF e
 o DKIM são o que faz o e-mail de alerta não cair no spam. A chave só de envio e só daquele domínio
 limita o estrago se vazar.
 
@@ -272,7 +271,7 @@ pode levar até 72 h).
 **Confira:** status **Verified** na lista de domínios. Se ficar **Pending** por horas, compare
 registro a registro com o painel da Hostinger (o erro mais comum é o domínio repetido no **Name**).
 
-Anote o remetente que vai usar, no formato `Vigilume <alertas@avisos.seu-domínio>`: é o
+Anote o remetente que vai usar, no formato `StillOn <alertas@avisos.seu-domínio>`: é o
 `EMAIL_FROM` do passo 3.3 (não é segredo).
 
 ### 1.6 healthchecks.io
@@ -281,14 +280,14 @@ Anote o remetente que vai usar, no formato `Vigilume <alertas@avisos.seu-domíni
 
 1. Crie a conta em <https://healthchecks.io> (o plano grátis basta) com o e-mail em que quer
    receber o alarme.
-2. No projeto, **Add Check**: nome `vigilume-healthz`; **Period** `1 minute`; **Grace Time**
+2. No projeto, **Add Check**: nome `StillOn`; **Period** `1 minute`; **Grace Time**
    `5 minutes`.
 3. Copie a **ping URL** do check (o formato é `https://hc-ping.com/<uuid>`) para o gerenciador
-   (entrada "Vigilume – HC_URL"). Ela só volta a ser usada no bloco 8.
+   (entrada "StillOn – HC_URL"). Ela só volta a ser usada no bloco 8.
 
 **Por quê:** um timer na VPS vai pingar essa URL a cada minuto quando o site responder, e pingar
 `/fail` quando não responder (bloco 8). Se os pings pararem (VPS morta) ou falharem, o
-healthchecks manda e-mail: o Vigilume não consegue avisar da própria queda. A carência de 5 min
+healthchecks manda e-mail: o StillOn não consegue avisar da própria queda. A carência de 5 min
 só vale para ping que **não chega** (a VPS desligada por uns minutos no reinício automático das
 04:30, passo 2.11). Um `/fail` põe o check em **down** na hora e manda o e-mail, sem carência: se
 o vigia rodar enquanto o app ainda sobe (logo depois de um reinício, ou nos segundos de troca de
@@ -319,7 +318,7 @@ ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub
 **Faça, depois, no seu computador:**
 
 ```bash
-ssh -i ~/.ssh/vigilume_admin root@"$VPS"
+ssh -i ~/.ssh/stillon_admin root@"$VPS"
 ```
 
 Ele pergunta `Are you sure you want to continue connecting (yes/no/[fingerprint])?` e mostra um
@@ -331,7 +330,7 @@ do painel, você está falando com a sua VPS, e não com alguém no meio do cami
 **Confira:** o `SHA256:…` da pergunta é **idêntico** ao do terminal do painel. Só então digite
 `yes`, e a passphrase da chave. O prompt vira `root@…:~#`: você está **na VPS**.
 
-Se forem diferentes, digite `no` e pare: releia o IP no `~/.vigilume-vps`.
+Se forem diferentes, digite `no` e pare: releia o IP no `~/.stillon-vps`.
 
 ### 2.2 Atualizar o sistema
 
@@ -393,13 +392,13 @@ volta a VPS a este ponto. O snapshot da Hostinger expira em 24 h e só existe um
 
 ### 2.5 Seu usuário administrador
 
-**Faça** (na VPS, como root), trocando `lucas` pelo valor de `EU` do seu `~/.vigilume-vps`:
+**Faça** (na VPS, como root), trocando `lucas` pelo valor de `EU` do seu `~/.stillon-vps`:
 
 ```bash
 adduser lucas
 ```
 
-Ele pede uma senha duas vezes (gere uma longa no gerenciador, entrada "Vigilume – senha sudo do
+Ele pede uma senha duas vezes (gere uma longa no gerenciador, entrada "StillOn – senha sudo do
 administrador") e depois nome, telefone etc.: deixe em branco com Enter e confirme com `Y`.
 
 ```bash
@@ -415,8 +414,8 @@ vira root com `sudo` quando precisa, digitando a senha: quem roubar só a chave 
 segurança):
 
 ```bash
-. ~/.vigilume-vps
-ssh -i ~/.ssh/vigilume_admin "$EU@$VPS"
+. ~/.stillon-vps
+ssh -i ~/.ssh/stillon_admin "$EU@$VPS"
 ```
 
 e, já na VPS, como você:
@@ -432,29 +431,29 @@ Deve pedir a senha do `sudo` e responder `root`. Só siga se deu certo.
 **Faça** (no seu computador):
 
 ```bash
-. ~/.vigilume-vps
+. ~/.stillon-vps
 cat >> ~/.ssh/config <<FIM
 
-Host vigilume
+Host stillon
     HostName $VPS
     User $EU
-    IdentityFile ~/.ssh/vigilume_admin
+    IdentityFile ~/.ssh/stillon_admin
     IdentitiesOnly yes
 FIM
 chmod 600 ~/.ssh/config
 ```
 
-**Se já existe um `Host vigilume`** no seu `~/.ssh/config` (você está refazendo este passo numa
-reconstrução, "A VPS morreu" no bloco 10), **não rode o bloco acima**: um segundo `Host vigilume`
+**Se já existe um `Host stillon`** no seu `~/.ssh/config` (você está refazendo este passo numa
+reconstrução, "A VPS morreu" no bloco 10), **não rode o bloco acima**: um segundo `Host stillon`
 fica depois do primeiro, e o `ssh` usa o primeiro valor que lê, ou seja, o IP velho. Em vez disso,
-abra o arquivo com `nano ~/.ssh/config`, troque só o valor da linha `HostName` do `Host vigilume`
+abra o arquivo com `nano ~/.ssh/config`, troque só o valor da linha `HostName` do `Host stillon`
 pelo IP novo, salve (`Ctrl+O`, Enter, `Ctrl+X`) e rode o **Confira** abaixo. Confira quantos há com
-`grep -c '^Host vigilume$' ~/.ssh/config`: tem de dar `1`.
+`grep -c '^Host stillon$' ~/.ssh/config`: tem de dar `1`.
 
-**Por quê:** a partir daqui, `ssh vigilume` e `scp arquivo vigilume:` bastam; o `IdentitiesOnly`
+**Por quê:** a partir daqui, `ssh stillon` e `scp arquivo stillon:` bastam; o `IdentitiesOnly`
 evita que o SSH ofereça outras chaves suas e conte tentativas no `fail2ban` (passo 2.8).
 
-**Confira:** `ssh vigilume true && echo ok` imprime `ok` (depois da passphrase, se o seu
+**Confira:** `ssh stillon true && echo ok` imprime `ok` (depois da passphrase, se o seu
 chaveiro não a lembrar).
 
 ### 2.7 SSH sem senha e sem root
@@ -462,8 +461,8 @@ chaveiro não a lembrar).
 **Faça** (na VPS, como você):
 
 ```bash
-sudo tee /etc/ssh/sshd_config.d/00-vigilume.conf >/dev/null <<'FIM'
-# Endurecimento do Vigilume (spec do Plano 11, §5). O nome começa com 00 porque
+sudo tee /etc/ssh/sshd_config.d/00-stillon.conf >/dev/null <<'FIM'
+# Endurecimento do StillOn (spec do Plano 11, §5). O nome começa com 00 porque
 # o sshd usa o PRIMEIRO valor que lê, e os arquivos deste diretório são lidos em
 # ordem alfabética: um 50-cloud-init.conf com PasswordAuthentication yes não
 # vence este.
@@ -490,7 +489,7 @@ sudo grep -nE '^[[:space:]]*(Include|Match|PermitRootLogin|PasswordAuthenticatio
 ```
 
 - Uma linha `PermitRootLogin`, `PasswordAuthentication` ou `KbdInteractiveAuthentication`
-  **antes** da linha `Include /etc/ssh/sshd_config.d/*.conf` vence o `00-vigilume.conf` (o
+  **antes** da linha `Include /etc/ssh/sshd_config.d/*.conf` vence o `00-stillon.conf` (o
   primeiro valor lido vale). Ponha um `#` no começo dela (`sudo nano /etc/ssh/sshd_config`),
   rode `sudo sshd -t && sudo systemctl restart ssh` e o `sshd -T … | grep` de novo, até as três
   darem `no`.
@@ -501,15 +500,15 @@ sudo grep -nE '^[[:space:]]*(Include|Match|PermitRootLogin|PasswordAuthenticatio
 **Confira**, **sem fechar** o terminal em que você está (num terminal novo do seu computador):
 
 ```bash
-. ~/.vigilume-vps
-ssh vigilume true && echo "entrada por chave: ok"
+. ~/.stillon-vps
+ssh stillon true && echo "entrada por chave: ok"
 ssh -o PubkeyAuthentication=no -o PreferredAuthentications=password "$EU@$VPS" true
-ssh -i ~/.ssh/vigilume_admin root@"$VPS" true
+ssh -i ~/.ssh/stillon_admin root@"$VPS" true
 ```
 
 A primeira imprime `entrada por chave: ok`; a segunda e a terceira terminam em
 `Permission denied (publickey).` Se a primeira falhar, **não feche** o terminal aberto: desfaça
-com `sudo rm /etc/ssh/sshd_config.d/00-vigilume.conf && sudo systemctl restart ssh` e releia os
+com `sudo rm /etc/ssh/sshd_config.d/00-stillon.conf && sudo systemctl restart ssh` e releia os
 passos 2.5 e 2.6.
 
 **Confira também o terminal do painel:** feche a aba do **Web console** e abra de novo. Anote o
@@ -525,7 +524,7 @@ painel (**Settings**, [fonte](https://support.hostinger.com/en/articles/5726577-
 
 ```bash
 sudo apt install -y fail2ban python3-systemd
-sudo tee /etc/fail2ban/jail.d/vigilume.local >/dev/null <<'FIM'
+sudo tee /etc/fail2ban/jail.d/stillon.local >/dev/null <<'FIM'
 [sshd]
 enabled  = true
 backend  = systemd
@@ -581,14 +580,14 @@ sudo ufw status verbose
 
 `Status: active`, `Default: deny (incoming), allow (outgoing)`, e as três portas com `ALLOW IN`
 (em IPv4 e `(v6)`). E, num terminal novo do seu computador, **sem fechar** o terminal em que você
-está, `ssh vigilume true && echo ok` continua dando `ok`. Se não der, desfaça pelo terminal que
+está, `ssh stillon true && echo ok` continua dando `ok`. Se não der, desfaça pelo terminal que
 ficou aberto (`sudo ufw disable`) e releia o passo.
 
 ### 2.10 Firewall do painel da Hostinger
 
 Fonte: Hostinger, [How to use a managed VPS firewall](https://www.hostinger.com/support/8172641-how-to-use-a-managed-vps-firewall-at-hostinger/).
 
-**Faça** (no painel da VPS): **Security → Firewall** → **Add Firewall**, nome `vigilume`,
+**Faça** (no painel da VPS): **Security → Firewall** → **Add Firewall**, nome `stillon`,
 **Create**. No `⋯` ao lado dele, **Edit**, e em **Add firewall rule** crie três regras, cada uma
 com **Action** `accept`, **Protocol** `TCP`, **Traffic Source** `anywhere`, e **Port** `22`, `80`
 e `443` (uma por regra; **Add rule** a cada uma). Confira que o firewall está **ativo** para esta
@@ -603,7 +602,7 @@ rede de segurança: se a conexão nova falhar, a aberta costuma seguir de pé):
 
 ```bash
 # no seu computador, num terminal novo
-ssh vigilume true && echo "ssh ok"
+ssh stillon true && echo "ssh ok"
 ```
 
 ```bash
@@ -627,7 +626,7 @@ sudo tee /etc/apt/apt.conf.d/20auto-upgrades >/dev/null <<'FIM'
 APT::Periodic::Update-Package-Lists "1";
 APT::Periodic::Unattended-Upgrade "1";
 FIM
-sudo tee /etc/apt/apt.conf.d/52vigilume-reinicio >/dev/null <<'FIM'
+sudo tee /etc/apt/apt.conf.d/52stillon-reinicio >/dev/null <<'FIM'
 // Spec do Plano 11, §5 e §9 (decisão 1): reinicia sozinho, de madrugada, quando
 // uma atualização de segurança (o kernel, quase sempre) pedir. A hora é a do
 // fuso da VPS (America/Sao_Paulo, passo 2.3).
@@ -654,7 +653,7 @@ termina sem `Traceback` nem `error`.
 
 ---
 
-## Bloco 3: Docker, `/opt/vigilume`, segredos e a chave do backup
+## Bloco 3: Docker, `/opt/stillon`, segredos e a chave do backup
 
 ### 3.1 Docker pelo repositório oficial
 
@@ -716,7 +715,7 @@ Docker é atualizado ou reiniciado. E o deploy (bloco 4) confere que a imagem ca
 aprovada comparando o ID dela com o digest do GitHub, o que só funciona com o *image store* do
 containerd: ele é o padrão das instalações novas do Docker 29
 ([fonte](https://docs.docker.com/engine/storage/containerd/)), e a linha `features` o garante
-mesmo numa instalação que veio de uma versão anterior. O `vigilume-entrada` recusa o deploy (sai
+mesmo numa instalação que veio de uma versão anterior. O `stillon-entrada` recusa o deploy (sai
 com 1 e diz o motivo) se o store não for o do containerd.
 
 **Deve aparecer:** `json-file true` e, na última linha, algo com
@@ -727,18 +726,18 @@ foi lido: `sudo cat /etc/docker/daemon.json` (tem de ser exatamente o JSON acima
 `sudo journalctl -u docker -n 20` (um erro de JSON aparece ali). Não siga sem ela. (Trocar de store
 esconde as imagens do store antigo; numa VPS nova, só o `hello-world` some, e não faz falta.)
 
-### 3.3 Os arquivos do Vigilume em `/opt/vigilume`
+### 3.3 Os arquivos do StillOn em `/opt/stillon`
 
 **Faça, primeiro no seu computador**, com a `main` atualizada (os arquivos da VPS têm de ser os da
 versão que vai para o ar):
 
 ```bash
-cd ~/Projetos/Go/Vigilume
+cd ~/Projetos/Go/StillOn
 git switch main && git pull --ff-only
-ssh vigilume 'mkdir -p ~/vigilume-arquivos'
+ssh stillon 'mkdir -p ~/stillon-arquivos'
 scp deploy/vps/compose.prod.yaml deploy/vps/Caddyfile deploy/vps/initdb.sh deploy/vps/env.exemplo \
-    deploy/vps/vigilume-entrada deploy/vps/sudoers-vigilume-entrada \
-    vigilume:vigilume-arquivos/
+    deploy/vps/stillon-entrada deploy/vps/sudoers-stillon-entrada \
+    stillon:stillon-arquivos/
 ```
 
 **Deve aparecer:** uma linha de progresso por arquivo, seis no total. (Os arquivos do vigia vêm
@@ -747,51 +746,51 @@ só no bloco 8, quando são instalados.)
 **Depois, na VPS:**
 
 ```bash
-cd ~/vigilume-arquivos
-sudo install -d -m 0755 -o root -g root /opt/vigilume
-sudo install -m 0644 -o root -g root compose.prod.yaml Caddyfile /opt/vigilume/
-sudo install -m 0755 -o root -g root initdb.sh /opt/vigilume/
-sudo install -m 0600 -o root -g root env.exemplo /opt/vigilume/.env
-ls -la /opt/vigilume
+cd ~/stillon-arquivos
+sudo install -d -m 0755 -o root -g root /opt/stillon
+sudo install -m 0644 -o root -g root compose.prod.yaml Caddyfile /opt/stillon/
+sudo install -m 0755 -o root -g root initdb.sh /opt/stillon/
+sudo install -m 0600 -o root -g root env.exemplo /opt/stillon/.env
+ls -la /opt/stillon
 ```
 
-**Por quê:** `/opt/vigilume` é o lugar fixo que o script de deploy usa. Tudo é do root: o usuário
+**Por quê:** `/opt/stillon` é o lugar fixo que o script de deploy usa. Tudo é do root: o usuário
 `deploy` (bloco 4) não escreve ali, só o script que ele pode chamar. O `.env` nasce do modelo, sem
 valores, com permissão `600` (só o root lê).
 
 **Deve aparecer:** `compose.prod.yaml`, `Caddyfile`, `initdb.sh` e `.env`, todos com dono `root`;
 o `.env` com `-rw-------`.
 
-**Faça também** os scripts do backup e os pacotes de que o `vigilume-entrada` precisa. No seu
+**Faça também** os scripts do backup e os pacotes de que o `stillon-entrada` precisa. No seu
 computador:
 
 ```bash
-cd ~/Projetos/Go/Vigilume
+cd ~/Projetos/Go/StillOn
 scp deploy/backup/backup.sh deploy/backup/verificar.sql deploy/compose/initdb.sql \
-    vigilume:vigilume-arquivos/
+    stillon:stillon-arquivos/
 ```
 
 Depois, na VPS:
 
 ```bash
 sudo apt install -y age curl jq util-linux
-cd ~/vigilume-arquivos
-sudo install -d -m 0755 -o root -g root /opt/vigilume/deploy/backup /opt/vigilume/deploy/compose
-sudo install -m 0644 -o root -g root backup.sh verificar.sql /opt/vigilume/deploy/backup/
-sudo install -m 0644 -o root -g root initdb.sql /opt/vigilume/deploy/compose/
-ls -la /opt/vigilume/deploy/backup /opt/vigilume/deploy/compose
+cd ~/stillon-arquivos
+sudo install -d -m 0755 -o root -g root /opt/stillon/deploy/backup /opt/stillon/deploy/compose
+sudo install -m 0644 -o root -g root backup.sh verificar.sql /opt/stillon/deploy/backup/
+sudo install -m 0644 -o root -g root initdb.sql /opt/stillon/deploy/compose/
+ls -la /opt/stillon/deploy/backup /opt/stillon/deploy/compose
 command -v age curl flock jq
 ```
 
-**Por quê:** o verbo `backup` do `vigilume-entrada` roda o `deploy/backup/backup.sh` do
+**Por quê:** o verbo `backup` do `stillon-entrada` roda o `deploy/backup/backup.sh` do
 repositório, sem mudança, dentro de um Postgres descartável, e ele acha o `initdb.sql` por
-`../compose/`: por isso os três arquivos ficam em `/opt/vigilume/deploy/` com o mesmo layout do
+`../compose/`: por isso os três arquivos ficam em `/opt/stillon/deploy/` com o mesmo layout do
 repositório. O `age` cifra o dump com a chave pública (passo 3.5), o `flock` (do `util-linux`)
 impede que um deploy e um backup rodem ao mesmo tempo, o `jq` confere o índice da imagem que o
 deploy recebe antes de carregá-la, e o `curl` é o que o vigia (bloco 8) usa.
 
-**Deve aparecer:** `backup.sh` e `verificar.sql` em `/opt/vigilume/deploy/backup`, `initdb.sql`
-em `/opt/vigilume/deploy/compose`, todos do `root`, e os quatro caminhos do `command -v` (por
+**Deve aparecer:** `backup.sh` e `verificar.sql` em `/opt/stillon/deploy/backup`, `initdb.sql`
+em `/opt/stillon/deploy/compose`, todos do `root`, e os quatro caminhos do `command -v` (por
 exemplo `/usr/bin/age`, `/usr/bin/curl`, `/usr/bin/flock`, `/usr/bin/jq`).
 
 ### 3.4 Os segredos, gerados na VPS
@@ -804,7 +803,7 @@ Cole o bloco **inteiro de uma vez** (do `sudo sh -s` até o `FIM`):
 sudo sh -s <<'FIM'
 set -eu
 umask 077
-cd /opt/vigilume
+cd /opt/stillon
 gerar() {
   VALOR=$(openssl rand "-$2" 32) NOME=$1 awk '
     $0 == ENVIRON["NOME"] "=" { print ENVIRON["NOME"] "=" ENVIRON["VALOR"]; next }
@@ -813,7 +812,7 @@ gerar() {
   cat .env.novo > .env
   rm .env.novo
 }
-for v in POSTGRES_PASSWORD VIGILUME_APP_PASSWORD VIGILUME_BACKUP_PASSWORD; do gerar "$v" hex; done
+for v in POSTGRES_PASSWORD STILLON_APP_PASSWORD STILLON_BACKUP_PASSWORD; do gerar "$v" hex; done
 for v in MASTER_KEY JWT_SECRET IP_HASH_KEY; do gerar "$v" base64; done
 FIM
 ```
@@ -823,8 +822,8 @@ linha de comando de nenhum programa (que outro usuário da VPS veria no `ps`), n
 histórico. Só preenche variável **vazia**: rodar de novo por engano não troca um segredo que já
 existe.
 
-(`POSTGRES_PASSWORD` é a senha do superusuário do Postgres; `VIGILUME_APP_PASSWORD` e
-`VIGILUME_BACKUP_PASSWORD`, as dos papéis do app e do backup.)
+(`POSTGRES_PASSWORD` é a senha do superusuário do Postgres; `STILLON_APP_PASSWORD` e
+`STILLON_BACKUP_PASSWORD`, as dos papéis do app e do backup.)
 
 **Por quê:** segredo gerado na própria VPS nunca passou pela rede nem por outro computador. As
 senhas do Postgres são hexadecimais porque entram em URLs `postgres://usuário:senha@…`, e o `/`,
@@ -834,38 +833,38 @@ base64, o formato que o boot exige.
 **Agora preencha o que não é gerado**, no editor:
 
 ```bash
-sudo nano /opt/vigilume/.env
+sudo nano /opt/stillon/.env
 ```
 
-- `VIGILUME_DOMINIO`: o seu domínio, sem `https://` (o valor de `DOMINIO`).
+- `STILLON_DOMINIO`: o seu domínio, sem `https://` (o valor de `DOMINIO`).
 - `RESEND_API_KEY`: cole a chave do gerenciador (passo 1.5). Este `.env` é um dos lugares
   onde segredo pode ser colado.
-- `EMAIL_FROM`: `Vigilume <alertas@avisos.seu-domínio>` (passo 1.5).
+- `EMAIL_FROM`: `StillOn <alertas@avisos.seu-domínio>` (passo 1.5).
 
 Salve com `Ctrl+O` e Enter, saia com `Ctrl+X`.
 
 O `.env` tem só estas nove variáveis (a `HC_URL` do healthchecks não está nele: ela vai para
 o `vigia.env` do bloco 8, e o vigia nunca lê o `.env`). O resto o `compose.prod.yaml` monta sozinho: a
-`PUBLIC_BASE_URL` e a `CORS_ORIGIN` (`https://` + `VIGILUME_DOMINIO`), a `DATABASE_URL` (com a
-`VIGILUME_APP_PASSWORD` e o IP fixo do banco) e o `TRUSTED_PROXIES` (o IP fixo do Caddy). O
+`PUBLIC_BASE_URL` e a `CORS_ORIGIN` (`https://` + `STILLON_DOMINIO`), a `DATABASE_URL` (com a
+`STILLON_APP_PASSWORD` e o IP fixo do banco) e o `TRUSTED_PROXIES` (o IP fixo do Caddy). O
 compose lê o `.env` pela interpolação (`${…}`), e cada serviço recebe só as variáveis de que
 precisa: o Caddy não vê segredo nenhum, e o app não vê a senha do superusuário nem a do backup.
 
 **Confira:**
 
 ```bash
-sudo stat -c '%U %a' /opt/vigilume/.env
-sudo grep -cE '^[A-Z_]+=$' /opt/vigilume/.env
-sudo docker compose -f /opt/vigilume/compose.prod.yaml config -q && echo "compose ok"
+sudo stat -c '%U %a' /opt/stillon/.env
+sudo grep -cE '^[A-Z_]+=$' /opt/stillon/.env
+sudo docker compose -f /opt/stillon/compose.prod.yaml config -q && echo "compose ok"
 ```
 
 `root 600`; `0` (nenhuma variável vazia); `compose ok`.
 
-**Guarde no gerenciador**, agora, cada valor (uma entrada por nome, "Vigilume – MASTER_KEY" e
+**Guarde no gerenciador**, agora, cada valor (uma entrada por nome, "StillOn – MASTER_KEY" e
 assim por diante):
 
 ```bash
-sudo cat /opt/vigilume/.env
+sudo cat /opt/stillon/.env
 clear
 ```
 
@@ -876,7 +875,7 @@ configurações de canal ficam ilegíveis para sempre, e nenhum backup a devolve
 Postgres e a `MASTER_KEY`, não.
 
 **Confira:** o gerenciador tem uma entrada por variável do `.env`, e o valor de uma delas, tirado
-ao acaso, confere com o do terminal (ex.: `sudo grep '^JWT_SECRET=' /opt/vigilume/.env` e compare
+ao acaso, confere com o do terminal (ex.: `sudo grep '^JWT_SECRET=' /opt/stillon/.env` e compare
 com os olhos, depois `clear`).
 
 ### 3.5 A chave do backup (`age`): a privada fica só com você
@@ -884,10 +883,10 @@ com os olhos, depois `clear`).
 **Faça** (no seu computador, **fora** do diretório do repositório):
 
 ```bash
-age-keygen -o ~/vigilume-backup.key
-chmod 600 ~/vigilume-backup.key
-age-keygen -y ~/vigilume-backup.key > ~/vigilume-age-recipient.txt
-cat ~/vigilume-age-recipient.txt
+age-keygen -o ~/stillon-backup.key
+chmod 600 ~/stillon-backup.key
+age-keygen -y ~/stillon-backup.key > ~/stillon-age-recipient.txt
+cat ~/stillon-age-recipient.txt
 ```
 
 **Por quê:** o backup diário sai da VPS já cifrado com a chave **pública**; só a **privada**,
@@ -898,11 +897,11 @@ do GitHub vê só texto cifrado. Fora do repositório para um `git add -A` nunca
 **Deve aparecer:** o `age-keygen -o` imprime `Public key: age1…`, e o `cat` mostra a mesma linha
 `age1…`.
 
-**Guarde** o conteúdo de `~/vigilume-backup.key` no gerenciador (entrada "Vigilume – chave
+**Guarde** o conteúdo de `~/stillon-backup.key` no gerenciador (entrada "StillOn – chave
 privada do backup (age)"):
 
 ```bash
-cat ~/vigilume-backup.key
+cat ~/stillon-backup.key
 clear
 ```
 
@@ -913,15 +912,15 @@ não fica na tela. **Perder a chave privada = perder todos os backups.**
 **Leve a pública para a VPS:**
 
 ```bash
-scp ~/vigilume-age-recipient.txt vigilume:vigilume-arquivos/
-ssh -t vigilume 'sudo install -m 0644 -o root -g root ~/vigilume-arquivos/vigilume-age-recipient.txt /opt/vigilume/age-recipient'
+scp ~/stillon-age-recipient.txt stillon:stillon-arquivos/
+ssh -t stillon 'sudo install -m 0644 -o root -g root ~/stillon-arquivos/stillon-age-recipient.txt /opt/stillon/age-recipient'
 ```
 
 **Confira** (no seu computador): a pública da VPS abre com a sua privada.
 
 ```bash
-ssh vigilume cat /opt/vigilume/age-recipient | diff - ~/vigilume-age-recipient.txt && echo "iguais"
-echo "ida e volta" | age -R ~/vigilume-age-recipient.txt | age -d -i ~/vigilume-backup.key
+ssh stillon cat /opt/stillon/age-recipient | diff - ~/stillon-age-recipient.txt && echo "iguais"
+echo "ida e volta" | age -R ~/stillon-age-recipient.txt | age -d -i ~/stillon-backup.key
 ```
 
 `iguais` e `ida e volta`.
@@ -932,30 +931,30 @@ echo "ida e volta" | age -R ~/vigilume-age-recipient.txt | age -d -i ~/vigilume-
 
 O GitHub Actions entrega cada versão nova por SSH, como o usuário `deploy`. Esse usuário não tem
 shell, não tem `sudo` geral e não está no grupo `docker`: a chave dele só consegue rodar
-`/usr/local/sbin/vigilume-entrada`, e o script só aceita dois pedidos, `deploy` e `backup`.
+`/usr/local/sbin/stillon-entrada`, e o script só aceita dois pedidos, `deploy` e `backup`.
 
 ### 4.1 O script de entrada e a regra do `sudo`
 
 **Faça** (na VPS):
 
 ```bash
-cd ~/vigilume-arquivos
-sudo install -m 0755 -o root -g root vigilume-entrada /usr/local/sbin/vigilume-entrada
-sudo visudo -cf sudoers-vigilume-entrada
-sudo install -m 0440 -o root -g root sudoers-vigilume-entrada /etc/sudoers.d/vigilume-entrada
+cd ~/stillon-arquivos
+sudo install -m 0755 -o root -g root stillon-entrada /usr/local/sbin/stillon-entrada
+sudo visudo -cf sudoers-stillon-entrada
+sudo install -m 0440 -o root -g root sudoers-stillon-entrada /etc/sudoers.d/stillon-entrada
 sudo visudo -c
 ```
 
 **Por quê:** o `sudoers` deixa o `deploy` rodar como root **só** esse script. O `visudo -c` confere
 a sintaxe antes e depois: um `sudoers` quebrado pode travar o `sudo` de todo mundo. Se
 acontecer, o conserto não pode depender do `sudo`: pelo terminal do painel, entre como **root**
-com a senha de root do passo 1.2 e apague o arquivo (`rm /etc/sudoers.d/vigilume-entrada`). Se o
+com a senha de root do passo 1.2 e apague o arquivo (`rm /etc/sudoers.d/stillon-entrada`). Se o
 terminal do painel só entrar com o seu usuário (o `sudo` quebrado não serve), use o **Emergency
 mode** (bloco 10, "Perdi a chave SSH", item 3), que dá acesso ao disco.
 
 **Deve aparecer:** `parsed OK` nas duas conferências (a segunda lista todos os arquivos).
 
-**Confira:** `ls -l /usr/local/sbin/vigilume-entrada /etc/sudoers.d/vigilume-entrada` mostra
+**Confira:** `ls -l /usr/local/sbin/stillon-entrada /etc/sudoers.d/stillon-entrada` mostra
 `-rwxr-xr-x root root` e `-r--r----- root root`.
 
 ### 4.2 O usuário `deploy`
@@ -980,8 +979,8 @@ comando forçado; interativo ele nunca fica, por causa do `restrict,command=` do
 **Faça** (no seu computador):
 
 ```bash
-ssh-keygen -t ed25519 -N "" -C "vigilume-deploy-github" -f ~/.ssh/vigilume_deploy
-scp ~/.ssh/vigilume_deploy.pub vigilume:vigilume-arquivos/
+ssh-keygen -t ed25519 -N "" -C "stillon-deploy-github" -f ~/.ssh/stillon_deploy
+scp ~/.ssh/stillon_deploy.pub stillon:stillon-arquivos/
 ```
 
 **Por quê:** uma chave só para o GitHub, sem passphrase (o Actions não tem quem a digite). Ela
@@ -993,8 +992,8 @@ não precisa ser guardada: depois do passo 4.6 ela é apagada, e se um dia preci
 
 ```bash
 sudo install -d -m 0755 -o root -g root /home/deploy/.ssh
-printf 'restrict,command="sudo /usr/local/sbin/vigilume-entrada" %s\n' \
-  "$(cat ~/vigilume-arquivos/vigilume_deploy.pub)" \
+printf 'restrict,command="sudo /usr/local/sbin/stillon-entrada" %s\n' \
+  "$(cat ~/stillon-arquivos/stillon_deploy.pub)" \
   | sudo tee /home/deploy/.ssh/authorized_keys >/dev/null
 sudo chmod 0644 /home/deploy/.ssh/authorized_keys
 sudo cat /home/deploy/.ssh/authorized_keys
@@ -1006,19 +1005,19 @@ pedido (o pedido chega ao script como texto, e ele recusa o que não for `deploy
 nem o próprio `deploy` pode trocar a chave.
 
 **Deve aparecer:** uma linha só, começando com
-`restrict,command="sudo /usr/local/sbin/vigilume-entrada" ssh-ed25519 AAAA` e terminando em
-`vigilume-deploy-github`.
+`restrict,command="sudo /usr/local/sbin/stillon-entrada" ssh-ed25519 AAAA` e terminando em
+`stillon-deploy-github`.
 
 **Confira** (no seu computador), que a chave **só** faz o que deve:
 
 ```bash
-. ~/.vigilume-vps
-ssh -i ~/.ssh/vigilume_deploy -o IdentitiesOnly=yes deploy@"$VPS" ; echo "saiu com $?"
-ssh -i ~/.ssh/vigilume_deploy -o IdentitiesOnly=yes deploy@"$VPS" ls / ; echo "saiu com $?"
-ssh -i ~/.ssh/vigilume_deploy -o IdentitiesOnly=yes -W 172.30.0.4:5432 deploy@"$VPS" ; echo "saiu com $?"
+. ~/.stillon-vps
+ssh -i ~/.ssh/stillon_deploy -o IdentitiesOnly=yes deploy@"$VPS" ; echo "saiu com $?"
+ssh -i ~/.ssh/stillon_deploy -o IdentitiesOnly=yes deploy@"$VPS" ls / ; echo "saiu com $?"
+ssh -i ~/.ssh/stillon_deploy -o IdentitiesOnly=yes -W 172.30.0.4:5432 deploy@"$VPS" ; echo "saiu com $?"
 ```
 
-- As duas primeiras: `vigilume-entrada: pedido vazio (uso: "deploy <sha de 40 hex> sha256:<64 hex>" ou "backup")`
+- As duas primeiras: `stillon-entrada: pedido vazio (uso: "deploy <sha de 40 hex> sha256:<64 hex>" ou "backup")`
   (a segunda com `caractere não permitido no pedido` no lugar de `pedido vazio`) e `saiu com 2` (pedido
   recusado; nada de lista de arquivos, nada de terminal). A primeira pode mostrar antes
   `PTY allocation request failed on channel 0`: é o `restrict` negando o terminal, como deve.
@@ -1033,10 +1032,10 @@ na VPS.
 **Faça** (no seu computador):
 
 ```bash
-. ~/.vigilume-vps
-ssh vigilume cat /etc/ssh/ssh_host_ed25519_key.pub > ~/vigilume-host-key.txt
-cat ~/vigilume-host-key.txt
-ssh-keygen -lf ~/vigilume-host-key.txt
+. ~/.stillon-vps
+ssh stillon cat /etc/ssh/ssh_host_ed25519_key.pub > ~/stillon-host-key.txt
+cat ~/stillon-host-key.txt
+ssh-keygen -lf ~/stillon-host-key.txt
 ssh-keyscan -t ed25519 "$VPS" 2>/dev/null | awk '{print $2, $3}'
 ```
 
@@ -1057,11 +1056,11 @@ diferir, pare e não grave o secret.
 **Faça** (no seu computador):
 
 ```bash
-. ~/.vigilume-vps
-gh secret set VPS_HOST --repo BipoXDXD/vigilume --body "$VPS"
-gh secret set VPS_SSH_KEY --repo BipoXDXD/vigilume < ~/.ssh/vigilume_deploy
-gh secret set VPS_HOST_KEY --repo BipoXDXD/vigilume < ~/vigilume-host-key.txt
-gh secret list --repo BipoXDXD/vigilume
+. ~/.stillon-vps
+gh secret set VPS_HOST --repo BipoXDXD/stillon --body "$VPS"
+gh secret set VPS_SSH_KEY --repo BipoXDXD/stillon < ~/.ssh/stillon_deploy
+gh secret set VPS_HOST_KEY --repo BipoXDXD/stillon < ~/stillon-host-key.txt
+gh secret list --repo BipoXDXD/stillon
 ```
 
 **Por quê:** o `gh` lê o valor do arquivo e o cifra antes de mandar; nada passa pela área de
@@ -1071,25 +1070,25 @@ você). Secrets de repositório não chegam a PR de fork.
 
 **Deve aparecer:** a lista com `VPS_HOST`, `VPS_HOST_KEY` e `VPS_SSH_KEY` (com a data de hoje). São
 os únicos secrets que o deploy e o backup usam; se aparecer algum outro, de uma hospedagem
-anterior, apague-o com `gh secret delete <nome> --repo BipoXDXD/vigilume`. A única variável é a
-`BACKUP_ENABLED` (bloco 7): `gh variable list --repo BipoXDXD/vigilume` mostra as que existem, e
-outras antigas saem com `gh variable delete <nome> --repo BipoXDXD/vigilume`.
+anterior, apague-o com `gh secret delete <nome> --repo BipoXDXD/stillon`. A única variável é a
+`BACKUP_ENABLED` (bloco 7): `gh variable list --repo BipoXDXD/stillon` mostra as que existem, e
+outras antigas saem com `gh variable delete <nome> --repo BipoXDXD/stillon`.
 
 **Agora apague a chave do deploy do seu computador:**
 
 ```bash
-shred -u ~/.ssh/vigilume_deploy
-rm ~/.ssh/vigilume_deploy.pub
+shred -u ~/.ssh/stillon_deploy
+rm ~/.ssh/stillon_deploy.pub
 ```
 
-**Confira:** `ls ~/.ssh/vigilume_deploy*` diz que não existe.
+**Confira:** `ls ~/.ssh/stillon_deploy*` diz que não existe.
 
 ### 4.7 Limpar a pasta de trabalho da VPS
 
 **Faça** (na VPS):
 
 ```bash
-rm -r ~/vigilume-arquivos
+rm -r ~/stillon-arquivos
 ```
 
 **Por quê:** os arquivos já estão instalados nos lugares certos; cópias soltas envelhecem e
@@ -1107,23 +1106,23 @@ certificado).
    Trivy aprovou). O `gh` pergunta direto ao GitHub; o `git fetch` atualiza a sua cópia, para
    comparar:
    ```bash
-   SHA=$(gh run list --repo BipoXDXD/vigilume --workflow ci.yml --branch main --event push \
+   SHA=$(gh run list --repo BipoXDXD/stillon --workflow ci.yml --branch main --event push \
      --status success --limit 1 --json headSha -q '.[0].headSha')
    echo "$SHA"
-   git -C ~/Projetos/Go/Vigilume fetch origin
-   git -C ~/Projetos/Go/Vigilume rev-parse origin/main
+   git -C ~/Projetos/Go/StillOn fetch origin
+   git -C ~/Projetos/Go/StillOn rev-parse origin/main
    ```
    **Deve aparecer:** duas linhas de 40 caracteres, normalmente **iguais**. Se forem diferentes,
    o topo da `main` ainda não passou no `ci` (está rodando ou ficou vermelho: veja
-   `gh run list --repo BipoXDXD/vigilume --workflow ci.yml --branch main --limit 3`). Espere ele
+   `gh run list --repo BipoXDXD/stillon --workflow ci.yml --branch main --limit 3`). Espere ele
    ficar verde e repita, ou faça o deploy do `$SHA` da primeira linha, que é o último que passou.
    Se a primeira linha vier vazia, nenhum `ci` da `main` passou ainda: não há imagem para
    entregar.
 2. **Actions → deploy → Run workflow**, na `main`, com o SHA no campo `sha`. Ou, pelo
    terminal, no mesmo terminal do item 1 (ele usa o `$SHA`):
    ```bash
-   gh workflow run deploy.yml --repo BipoXDXD/vigilume --ref main -f sha="$SHA"
-   gh run watch --repo BipoXDXD/vigilume
+   gh workflow run deploy.yml --repo BipoXDXD/stillon --ref main -f sha="$SHA"
+   gh run watch --repo BipoXDXD/stillon
    ```
 
 **Por quê:** o deploy é sempre manual e sempre de uma imagem que passou no CI e no Trivy. O job
@@ -1142,15 +1141,52 @@ o deploy (e o rollback, se for o caso) **termina sozinho lá**, sem o GitHub. O 
 (`255`, ou cancelado), mas isso não diz como a VPS terminou. Confira na VPS antes de repetir:
 
 ```bash
-cat /opt/vigilume/versao
-sudo tail -n 30 /opt/vigilume/entrada.log
+cat /opt/stillon/versao
+tail -n 30 /opt/stillon/entrada.log
 ```
 
 O `versao` é o SHA que está no ar; o `entrada.log` é o log de cada deploy e backup, o mesmo que o
-job mostra, gravado na VPS (fica em até ~1 MiB; o mais velho sai sozinho). As últimas linhas
-mostram como o deploy acabou: saudável, com rollback para a anterior, ou o erro. Se ele ainda
-estiver rodando (as linhas continuam chegando), espere dois minutos e olhe de novo. Só rode o
-deploy outra vez depois de ver como este terminou.
+job mostra, gravado na VPS. Os dois são `0644`: leia-os **sem** `sudo`. O log tem um teto de
+~1 MiB: passado dele, a entrada o renomeia para `entrada.log.1` (no lugar do `.1` que houver) e
+começa um novo, e o `entrada.log.1` guarda a rodada anterior do log. Cada deploy e backup começa
+com a linha `== <UTC> início: <pedido>` e, mesmo que o SSH tenha caído, a entrada grava **por
+último** a linha `== <UTC> fim: <pedido>: código N (<sentido>)`. **É essa linha `fim:` que diz
+como o deploy acabou** (código 0, `feito`; 4, `não ficou saudável; rollback feito, ou app parado
+no primeiro deploy`; os outros, na tabela de "Depuração do deploy"); as linhas logo acima dela
+dão o detalhe. Se a última `início:` ainda não tem a sua `fim:` (as linhas continuam chegando), ele
+ainda está rodando: espere dois minutos e olhe de novo. Só rode o deploy outra vez depois de ver
+a `fim:` deste.
+
+**Se a `fim:` nunca chegar** (as linhas pararam, e passaram mais de 12 minutos da `início:`), a
+entrada morreu no meio, sem chance de gravar a última linha: um `SIGKILL`, a VPS sem memória
+(OOM) ou o reinício automático das 04:30 (passo 2.11) no meio do deploy. Confira se ela ainda
+roda; se o comando não mostrar nada, ela morreu:
+
+```bash
+pgrep -af stillon-entrada
+cat /opt/stillon/versao
+sudo docker compose -f /opt/stillon/compose.prod.yaml ps
+```
+
+O `versao` diz qual SHA ficou registrado no ar, e o `ps` diz se o `app` está de pé e `healthy`.
+Qualquer que seja o resultado, **repita o deploy do mesmo SHA** pelo Actions (passo 4.8, item 2),
+mesmo que o `versao` já seja o SHA novo e o `app` esteja `healthy`. O motivo: a entrada grava o
+`versao` antes de mover a etiqueta `stillon:atual`; se ela morreu entre as duas coisas, o `atual`
+ficou na versão velha, e o próximo `up -d app` sem SHA rebaixaria o app sem aviso. Repetir o mesmo
+SHA é seguro em qualquer ponto em que a entrada possa ter morrido (a imagem é a mesma) e termina o
+que ficou pela metade.
+
+A trava pode demorar a sair: um filho da entrada morta (o `docker load` ou o `docker compose up`)
+pode seguir rodando, órfão, e segurar a trava até terminar. O próximo deploy espera por ela até
+10 minutos. Se ainda assim ele falhar com `outra operação da entrada não terminou em 10 min`,
+veja se sobrou algum desses filhos, espere alguns minutos e repita:
+
+```bash
+pgrep -af 'docker (load|compose)'
+```
+
+O próximo **deploy** apaga, antes de começar, os temporários que o morto deixou em `/opt/stillon`
+(os `.stillon-entrada.*`, que podem ocupar alguns GB): não os apague à mão.
 
 **Se o primeiro deploy sair com 4**, o app **ficou parado**: no primeiro deploy não há versão
 anterior para onde voltar (a mensagem é
@@ -1159,26 +1195,26 @@ o banco ficam de pé. Quase sempre é o `.env` (uma variável mal preenchida no 
 por que o app não subiu:
 
 ```bash
-sudo docker compose -f /opt/vigilume/compose.prod.yaml logs app | tail -30
-sudo docker compose -f /opt/vigilume/compose.prod.yaml ps -a
+sudo docker compose -f /opt/stillon/compose.prod.yaml logs app | tail -30
+sudo docker compose -f /opt/stillon/compose.prod.yaml ps -a
 ```
 
 O app diz no boot o que falta ou o que está errado (uma variável ausente, uma chave fora do
-formato, o banco recusando o papel). Corrija a causa (por exemplo, `sudo nano /opt/vigilume/.env`)
+formato, o banco recusando o papel). Corrija a causa (por exemplo, `sudo nano /opt/stillon/.env`)
 e rode o deploy de novo com o mesmo SHA: não é preciso publicar outra versão.
 
 **Confira** (na VPS):
 
 ```bash
-sudo docker compose -f /opt/vigilume/compose.prod.yaml ps
-cat /opt/vigilume/versao
-sudo docker compose -f /opt/vigilume/compose.prod.yaml logs app | head -20
+sudo docker compose -f /opt/stillon/compose.prod.yaml ps
+cat /opt/stillon/versao
+sudo docker compose -f /opt/stillon/compose.prod.yaml logs app | head -20
 ```
 
 - `ps`: `caddy`, `app` e `db` com estado `running` (e `healthy` onde há healthcheck);
 - `versao`: o SHA que você mandou (o `cat` vai sem `sudo`: o `versao`, o `versao-anterior` e o
   `historico` são `0644`, legíveis pelo seu usuário, porque não são segredo; o `.env` e o
-  `vigia.env` continuam só do root). Se aparecer `Permission denied`, o `vigilume-entrada`
+  `vigia.env` continuam só do root). Se aparecer `Permission denied`, o `stillon-entrada`
   instalado é de antes dessa mudança: recopie-o (bloco 10, "Arquivos da VPS") e, até o próximo
   deploy, use `sudo cat`;
 - `logs`: `iniciando` com a versão, `migrations aplicadas`, `sondador ativo`, `servindo`, e
@@ -1187,20 +1223,20 @@ sudo docker compose -f /opt/vigilume/compose.prod.yaml logs app | head -20
 **E de fora** (no seu computador):
 
 ```bash
-. ~/.vigilume-vps
+. ~/.stillon-vps
 curl -sS "https://$DOMINIO/healthz"; echo
 curl -sS -o /dev/null -w '%{http_code}\n' "https://$DOMINIO/readyz"
 ```
 
 `/healthz` responde (o corpo do app) sem erro de certificado, e `/readyz` dá `200`. Se o `curl`
 reclamar do certificado, espere um minuto (o Caddy pode estar terminando de pegar o certificado)
-e veja `sudo docker compose -f /opt/vigilume/compose.prod.yaml logs caddy | tail -20`: um erro de
+e veja `sudo docker compose -f /opt/stillon/compose.prod.yaml logs caddy | tail -20`: um erro de
 "challenge" quase sempre é DNS ainda não propagado ou porta 80 fechada no firewall do painel.
 
 **Um atalho para os próximos comandos** (na VPS; opcional, mas o resto do runbook o usa):
 
 ```bash
-echo "alias vc='sudo docker compose -f /opt/vigilume/compose.prod.yaml'" >> ~/.bash_aliases
+echo "alias vc='sudo docker compose -f /opt/stillon/compose.prod.yaml'" >> ~/.bash_aliases
 . ~/.bash_aliases
 vc ps
 ```
@@ -1208,25 +1244,25 @@ vc ps
 **Confira no banco** quem é dono das tabelas (as migrations rodaram como o papel comum):
 
 ```bash
-vc exec db psql -U postgres -d vigilume -c "SELECT tableowner, count(*) FROM pg_tables WHERE schemaname = 'public' GROUP BY 1;"
-vc exec db psql -U postgres -c "SELECT rolname, rolsuper, rolbypassrls FROM pg_roles WHERE rolname LIKE 'vigilume%' ORDER BY 1;"
+vc exec db psql -U postgres -d stillon -c "SELECT tableowner, count(*) FROM pg_tables WHERE schemaname = 'public' GROUP BY 1;"
+vc exec db psql -U postgres -c "SELECT rolname, rolsuper, rolbypassrls FROM pg_roles WHERE rolname LIKE 'stillon%' ORDER BY 1;"
 ```
 
-Só `vigilume_app` na primeira; `vigilume_app | f | f` e `vigilume_backup | f | t` na segunda.
+Só `stillon_app` na primeira; `stillon_app | f | f` e `stillon_backup | f | t` na segunda.
 
 ---
 
-## Bloco 5: seu usuário no Vigilume e o 2FA
+## Bloco 5: seu usuário no StillOn e o 2FA
 
 ### 5.1 Criar o dono
 
 **Faça** (na VPS), com o seu e-mail no lugar do exemplo:
 
 ```bash
-vc exec app /vigilume user create --email voce@exemplo.com
+vc exec app /stillon user create --email voce@exemplo.com
 ```
 
-Ele pede `Senha:` e `Confirme a senha:`, sem eco. Gere a senha no gerenciador (entrada "Vigilume
+Ele pede `Senha:` e `Confirme a senha:`, sem eco. Gere a senha no gerenciador (entrada "StillOn
 – login do painel"; de 15 a 128 caracteres) e cole-a nas duas perguntas.
 
 **Por quê:** o sistema é de um dono só, e não há cadastro pela web: o primeiro usuário nasce pelo
@@ -1236,14 +1272,14 @@ não ecoa.
 
 **Deve aparecer:** `usuário criado: voce@exemplo.com (id …)`. Se disser
 `já existe um usuário; nada foi alterado` (código 3), alguém já criou: use
-`vc exec app /vigilume user set-password --email <e-mail>` para trocar a senha.
+`vc exec app /stillon user set-password --email <e-mail>` para trocar a senha.
 
 ### 5.2 Entrar e ligar o 2FA
 
 **Faça** (no navegador): abra `https://seu-domínio`, entre com o e-mail e a senha. Vá em
 **Configurações → Verificação em duas etapas → Ativar**, leia o QR code com o seu app
 autenticador (Aegis, 2FAS, Google Authenticator…), digite o código de 6 dígitos e guarde os
-**códigos de recuperação** no gerenciador (entrada "Vigilume – códigos de recuperação do 2FA").
+**códigos de recuperação** no gerenciador (entrada "StillOn – códigos de recuperação do 2FA").
 
 **Por quê:** com o painel na internet, a senha sozinha é pouco. Os códigos de recuperação são a
 volta se o celular sumir; sem eles e sem o app, só o `reset-2fa` pelo CLI (bloco 10).
@@ -1263,7 +1299,7 @@ volta se o celular sumir; sem eles e sem o app, só o `reset-2fa` pelo CLI (bloc
 usam a `PUBLIC_BASE_URL` de produção.
 
 **Deve aparecer:** `Enviamos o link de verificação.` e, em até alguns minutos, um e-mail do
-remetente `Vigilume <alertas@avisos.seu-domínio>` com um link para `https://seu-domínio/…`.
+remetente `StillOn <alertas@avisos.seu-domínio>` com um link para `https://seu-domínio/…`.
 Clique nele.
 
 **Confira:** o canal aparece como verificado. Se o e-mail não chegar: a caixa de spam; depois
@@ -1275,7 +1311,7 @@ outro domínio).
 ### 6.2 Alvo de teste e um incidente de verdade
 
 **Faça** (no painel): **Novo alvo** com a URL `https://example.com/`, intervalo de 30 s e
-**status esperado 500** (de propósito: o site responde 200, então o Vigilume o verá fora do
+**status esperado 500** (de propósito: o site responde 200, então o StillOn o verá fora do
 ar).
 
 **Por quê:** força um incidente sem depender de derrubar nada: confere sondador, detector,
@@ -1294,7 +1330,7 @@ como monitor de exemplo.
 
 O backup diário (06:17 UTC, 03:17 de Brasília) roda no GitHub: `ssh deploy@VPS backup` devolve o
 dump **já cifrado** com a sua chave pública, que vira um artifact de 30 dias. Na VPS, o script
-sobe um Postgres descartável, faz o dump como `vigilume_backup`, restaura a cópia e a confere
+sobe um Postgres descartável, faz o dump como `stillon_backup`, restaura a cópia e a confere
 (`deploy/backup/backup.sh` e `verificar.sql`) antes de cifrar. Um backup que não restaura não é
 backup.
 
@@ -1303,9 +1339,9 @@ backup.
 **Faça** (no seu computador):
 
 ```bash
-gh variable set BACKUP_ENABLED --repo BipoXDXD/vigilume --body 1
-gh workflow run backup.yml --repo BipoXDXD/vigilume --ref main
-gh run watch --repo BipoXDXD/vigilume
+gh variable set BACKUP_ENABLED --repo BipoXDXD/stillon --body 1
+gh workflow run backup.yml --repo BipoXDXD/stillon --ref main
+gh run watch --repo BipoXDXD/stillon
 ```
 
 (O `gh run watch` pergunta qual execução acompanhar: escolha a do `backup` que acabou de começar.)
@@ -1319,76 +1355,76 @@ Rodar à mão agora confere tudo (chave, script, `age`, artifact) antes de confi
 
 ```bash
 sudo ls -A /dev/shm
-sudo docker ps -a --filter name=vigilume-restauro-
+sudo docker ps -a --filter name=stillon-restauro-
 ```
 
-O `ls` não mostra nenhum `vigilume-backup.*`, e o `docker ps` mostra só a linha de títulos
+O `ls` não mostra nenhum `stillon-backup.*`, e o `docker ps` mostra só a linha de títulos
 (`CONTAINER ID   IMAGE …`), sem nenhum contêiner. O dump em claro só existe durante o backup, em
 `/dev/shm` (memória, não disco), e a restauração de conferência roda num Postgres descartável
-chamado `vigilume-restauro-…`; o script apaga os dois no fim, e só o cifrado sai da VPS. Se sobrar
+chamado `stillon-restauro-…`; o script apaga os dois no fim, e só o cifrado sai da VPS. Se sobrar
 algum (um backup morto no meio), o próximo backup os apaga antes de começar.
 
 **Depois de ligado, um `backup` agendado *skipped* (cinza) é falha**, tanto quanto um vermelho: não
 houve backup naquele dia, e o GitHub não manda e-mail por isso. A causa usual é a variável
 `BACKUP_ENABLED` apagada ou mudada.
 
-### 7.2 Ensaio de restauração (antes de dar o Vigilume por pronto)
+### 7.2 Ensaio de restauração (antes de dar o StillOn por pronto)
 
 **Faça** (no seu computador):
 
 1. Baixe o artifact da execução do passo 7.1:
    ```bash
-   mkdir -p ~/vigilume-restauro && cd ~/vigilume-restauro
-   RUN_ID=$(gh run list --repo BipoXDXD/vigilume --workflow backup.yml --status success --limit 1 \
+   mkdir -p ~/stillon-restauro && cd ~/stillon-restauro
+   RUN_ID=$(gh run list --repo BipoXDXD/stillon --workflow backup.yml --status success --limit 1 \
      --json databaseId -q '.[0].databaseId')
    echo "$RUN_ID"
-   gh run download "$RUN_ID" --repo BipoXDXD/vigilume
-   ARQ=$(find ~/vigilume-restauro -name 'vigilume-*.dump.age' | sort | tail -1)
+   gh run download "$RUN_ID" --repo BipoXDXD/stillon
+   ARQ=$(find ~/stillon-restauro -name 'stillon-*.dump.age' | sort | tail -1)
    echo "$ARQ"
    ```
-   Deve aparecer o caminho de um arquivo `vigilume-AAAAMMDD.dump.age` (o dump do Postgres, em
+   Deve aparecer o caminho de um arquivo `stillon-AAAAMMDD.dump.age` (o dump do Postgres, em
    formato custom, cifrado).
 2. Decifre, com a chave que só você tem:
    ```bash
-   age -d -i ~/vigilume-backup.key -o ~/vigilume-restauro/vigilume.dump "$ARQ"
+   age -d -i ~/stillon-backup.key -o ~/stillon-restauro/stillon.dump "$ARQ"
    ```
 3. Restaure num Postgres descartável, da mesma imagem de produção (o digest de
    `deploy/vps/db/Dockerfile`), só no `127.0.0.1` do seu computador. O `docker compose stop`
    para o compose de desenvolvimento, se estiver de pé: ele ocupa a `127.0.0.1:8080` que a cópia
    usa no item 4 (sem ele de pé, o comando não faz nada):
    ```bash
-   cd ~/Projetos/Go/Vigilume
+   cd ~/Projetos/Go/StillOn
    docker compose stop
    docker run -d --name restauro -p 127.0.0.1:25433:5432 -e POSTGRES_PASSWORD=restauro \
      "$(sed -n 's/^FROM //p' deploy/vps/db/Dockerfile)"
    until docker exec restauro pg_isready -h 127.0.0.1 -U postgres; do sleep 1; done
    docker exec -i restauro psql -U postgres < deploy/compose/initdb.sql
-   docker exec -i restauro pg_restore -U postgres --exit-on-error -d vigilume < ~/vigilume-restauro/vigilume.dump
+   docker exec -i restauro pg_restore -U postgres --exit-on-error -d stillon < ~/stillon-restauro/stillon.dump
    ```
    As mesmas checagens do backup, com os números da linha `schema N, U usuário(s), A alvo(s)` do
-   log daquela execução (`gh run view "$RUN_ID" --repo BipoXDXD/vigilume --log | grep 'schema '`):
+   log daquela execução (`gh run view "$RUN_ID" --repo BipoXDXD/stillon --log | grep 'schema '`):
    ```bash
-   docker exec -i restauro psql -U postgres -d vigilume -v versao=N -v usuarios=U -v alvos=A \
+   docker exec -i restauro psql -U postgres -d stillon -v versao=N -v usuarios=U -v alvos=A \
      < deploy/backup/verificar.sql
    ```
    Deve terminar em `NOTICE:  cópia conferida`.
-4. Suba o Vigilume **da versão que está no ar** contra a cópia, **só com a API** (`--role=api`):
+4. Suba o StillOn **da versão que está no ar** contra a cópia, **só com a API** (`--role=api`):
    com `--role=all`, a cópia sondaria os seus alvos e mandaria alertas aos canais **reais**. A
    imagem é privada: entre no GHCR com o token do `gh`, depois de dar a ele a permissão
    `read:packages` (o `refresh` abre o navegador uma vez), baixe a imagem e **saia logo em
    seguida**:
    ```bash
    gh auth refresh -s read:packages
-   SHA=$(ssh vigilume cat /opt/vigilume/versao)
+   SHA=$(ssh stillon cat /opt/stillon/versao)
    echo "$SHA"
    gh auth token | docker login ghcr.io -u BipoXDXD --password-stdin
-   docker pull "ghcr.io/bipoxdxd/vigilume:$SHA"
+   docker pull "ghcr.io/bipoxdxd/stillon:$SHA"
    docker logout ghcr.io
    ```
    O `echo` tem de mostrar os 40 caracteres do SHA no ar (o `versao` é legível sem `sudo`, passo
    4.8). Se mostrar uma linha em branco, com um `Permission denied` antes, e o `docker pull`
-   falhar com `invalid reference format`, o `vigilume-entrada` da VPS é de antes dessa mudança:
-   recopie-o (bloco 10, "Arquivos da VPS") ou, por ora, rode `sudo cat /opt/vigilume/versao` na
+   falhar com `invalid reference format`, o `stillon-entrada` da VPS é de antes dessa mudança:
+   recopie-o (bloco 10, "Arquivos da VPS") ou, por ora, rode `sudo cat /opt/stillon/versao` na
    VPS e, aqui, `SHA=` seguido do valor colado, e repita a partir do `docker login`.
    O `docker login` grava o token no `~/.docker/config.json` do seu computador, **em claro** (o
    próprio Docker avisa: `stored unencrypted`). E esse token não é só de leitura de pacotes: é o
@@ -1398,15 +1434,15 @@ houve backup naquele dia, e o GitHub não manda e-mail por isso. A causa usual �
    read -rs -p 'MASTER_KEY de produção (do gerenciador): ' MASTER_KEY; echo
    export MASTER_KEY
    docker run --rm --network host \
-     -e DATABASE_URL='postgres://vigilume_app:vigilume_app@127.0.0.1:25433/vigilume?sslmode=disable' \
+     -e DATABASE_URL='postgres://stillon_app:stillon_app@127.0.0.1:25433/stillon?sslmode=disable' \
      -e MASTER_KEY \
      -e JWT_SECRET="$(openssl rand -base64 32)" -e IP_HASH_KEY="$(openssl rand -base64 32)" \
      -e PUBLIC_BASE_URL=http://localhost:8080 -e CORS_ORIGIN=http://localhost:8080 \
      -e HTTP_ADDR=127.0.0.1:8080 -e METRICS_ADDR=off \
-     "ghcr.io/bipoxdxd/vigilume:$SHA" --role=api
+     "ghcr.io/bipoxdxd/stillon:$SHA" --role=api
    ```
    O `read -rs` lê a chave sem eco e sem gravá-la no histórico; o `-e MASTER_KEY` sem valor passa
-   a variável ao contêiner sem ela aparecer na linha de comando. A senha `vigilume_app` vale aqui
+   a variável ao contêiner sem ela aparecer na linha de comando. A senha `stillon_app` vale aqui
    porque o `initdb.sql` é o do compose local (a de demonstração, num banco que só existe no seu
    `127.0.0.1`). `JWT_SECRET` e `IP_HASH_KEY` são novos: a cópia não aceita sessões de produção.
 5. Num navegador, `http://localhost:8080`: entre com o seu usuário de produção (senha e 2FA) e
@@ -1417,7 +1453,7 @@ houve backup naquele dia, e o GitHub não manda e-mail por isso. A causa usual �
    # Ctrl+C no terminal do docker run, e então:
    unset MASTER_KEY
    docker rm -f restauro
-   shred -u ~/vigilume-restauro/vigilume.dump
+   shred -u ~/stillon-restauro/stillon.dump
    docker logout ghcr.io
    grep -q ghcr.io ~/.docker/config.json 2>/dev/null && echo "AINDA LOGADO" || echo "sem login do ghcr"
    ```
@@ -1441,33 +1477,33 @@ sobrescreve a VPS inteira.
 **Faça** (no seu computador, na `main` atualizada):
 
 ```bash
-cd ~/Projetos/Go/Vigilume
+cd ~/Projetos/Go/StillOn
 git switch main && git pull --ff-only
-ssh vigilume 'mkdir -p ~/vigilume-arquivos'
-scp deploy/vps/vigia.sh deploy/vps/vigilume-vigia.service deploy/vps/vigilume-vigia.timer \
-    deploy/vps/vigia.env.exemplo vigilume:vigilume-arquivos/
+ssh stillon 'mkdir -p ~/stillon-arquivos'
+scp deploy/vps/vigia.sh deploy/vps/stillon-vigia.service deploy/vps/stillon-vigia.timer \
+    deploy/vps/vigia.env.exemplo stillon:stillon-arquivos/
 ```
 
 **Depois, na VPS**, os arquivos nos lugares certos e o `vigia.env` nascendo do modelo, sem
 valores, só do root:
 
 ```bash
-cd ~/vigilume-arquivos
-sudo install -m 0755 -o root -g root vigia.sh /usr/local/sbin/vigilume-vigia
-sudo install -m 0644 -o root -g root vigilume-vigia.service vigilume-vigia.timer /etc/systemd/system/
-sudo install -m 0600 -o root -g root vigia.env.exemplo /opt/vigilume/vigia.env
+cd ~/stillon-arquivos
+sudo install -m 0755 -o root -g root vigia.sh /usr/local/sbin/stillon-vigia
+sudo install -m 0644 -o root -g root stillon-vigia.service stillon-vigia.timer /etc/systemd/system/
+sudo install -m 0600 -o root -g root vigia.env.exemplo /opt/stillon/vigia.env
 ```
 
-(`/usr/local/sbin/vigilume-vigia` é o caminho que o `ExecStart` do `vigilume-vigia.service` espera.)
+(`/usr/local/sbin/stillon-vigia` é o caminho que o `ExecStart` do `stillon-vigia.service` espera.)
 
 **Preencha o `vigia.env`.** O domínio vem do `.env` (não é segredo; o `echo` o mostra para você
 conferir):
 
 ```bash
-dom=$(sudo sed -n 's/^VIGILUME_DOMINIO=//p' /opt/vigilume/.env)
+dom=$(sudo sed -n 's/^STILLON_DOMINIO=//p' /opt/stillon/.env)
 echo "$dom"
-sudo sed -i "s|^VIGILUME_DOMINIO=\$|VIGILUME_DOMINIO=$dom|" /opt/vigilume/vigia.env
-sudo nano /opt/vigilume/vigia.env
+sudo sed -i "s|^STILLON_DOMINIO=\$|STILLON_DOMINIO=$dom|" /opt/stillon/vigia.env
+sudo nano /opt/stillon/vigia.env
 ```
 
 No editor, cole em `HC_URL=` a ping URL do gerenciador (passo 1.6), sem espaço em volta do `=`.
@@ -1475,28 +1511,28 @@ Salve com `Ctrl+O` e Enter, saia com `Ctrl+X`.
 
 **Por quê:** o vigia recebe **só** este arquivo, com as duas variáveis de que precisa: o domínio e
 a URL do healthchecks. O `.env`, com a `MASTER_KEY` e as senhas do banco, nunca chega a ele. O
-serviço roda com um usuário criado na hora, sem acesso ao `/opt/vigilume`; o systemd, como root,
+serviço roda com um usuário criado na hora, sem acesso ao `/opt/stillon`; o systemd, como root,
 lê o `vigia.env` e entrega uma cópia ao vigia (`LoadCredential`).
 
 **Confira** (o `HC_URL` não aparece na tela):
 
 ```bash
-sudo stat -c '%U %a' /opt/vigilume/vigia.env
-sudo grep -oE '^[A-Z_]+=' /opt/vigilume/vigia.env
-sudo grep -cE '^[A-Z_]+=$' /opt/vigilume/vigia.env
-sudo grep -c '^HC_URL=https://hc-ping.com/' /opt/vigilume/vigia.env
-sudo grep -c '^HC_URL=' /opt/vigilume/.env
+sudo stat -c '%U %a' /opt/stillon/vigia.env
+sudo grep -oE '^[A-Z_]+=' /opt/stillon/vigia.env
+sudo grep -cE '^[A-Z_]+=$' /opt/stillon/vigia.env
+sudo grep -c '^HC_URL=https://hc-ping.com/' /opt/stillon/vigia.env
+sudo grep -c '^HC_URL=' /opt/stillon/.env
 ```
 
-`root 600`; só `VIGILUME_DOMINIO=` e `HC_URL=`; `0` (nenhuma vazia); `1` (a URL do healthchecks
+`root 600`; só `STILLON_DOMINIO=` e `HC_URL=`; `0` (nenhuma vazia); `1` (a URL do healthchecks
 no formato certo); e `0` na última (a `HC_URL` não está no `.env`).
 
 **Ligue o timer e limpe a pasta de trabalho:**
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable --now vigilume-vigia.timer
-rm -r ~/vigilume-arquivos
+sudo systemctl enable --now stillon-vigia.timer
+rm -r ~/stillon-arquivos
 ```
 
 **Por quê:** a cada minuto o timer faz um `curl` em `https://seu-domínio/healthz`, passando por
@@ -1507,12 +1543,12 @@ param (VPS morta, rede fora).
 **Confira:**
 
 ```bash
-systemctl list-timers vigilume-vigia.timer
-sudo journalctl -u vigilume-vigia.service -n 5 --no-pager
+systemctl list-timers stillon-vigia.timer
+sudo journalctl -u stillon-vigia.service -n 5 --no-pager
 ```
 
 O timer com a próxima execução em menos de um minuto; o diário sem erro. No healthchecks.io, o
-check `vigilume-healthz` fica **up** (verde) em até dois minutos.
+check `StillOn` fica **up** (verde) em até dois minutos.
 
 **Confira que o alarme funciona**, derrubando o app de propósito (na VPS):
 
@@ -1532,8 +1568,9 @@ O check volta a **up**, e chega o e-mail de volta.
 
 ## Bloco 9: verificações finais
 
-Cada item abaixo é uma das obrigações do Plano 10 (`docs/superpowers/PENDENCIAS-PARA-O-PLANO-11.md`,
-"Obrigações do Plano 11") ou um critério da spec. Só dê o Vigilume por pronto com todos verdes.
+Cada item abaixo é uma das obrigações do Plano 10 (a tabela "Fechadas no Plano 11" de
+`docs/superpowers/PENDENCIAS-PARA-O-PLANO-12.md`) ou um critério da spec. Só dê o StillOn por
+pronto com todos verdes.
 
 ### 9.1 Só 22, 80 e 443 abertas, vistas de fora (obrigação 3)
 
@@ -1542,7 +1579,7 @@ do painel descarta em silêncio as 65 mil portas fechadas e o `nmap` espera cada
 interrompa):
 
 ```bash
-. ~/.vigilume-vps
+. ~/.stillon-vps
 sudo nmap -Pn -T4 -p- --open "$VPS"
 ```
 
@@ -1592,10 +1629,10 @@ isso as provas abaixo têm de ser rápidas: depois de 6 s parado, o balde já ga
 vez** (os sete pedidos saem em poucos segundos, dentro da janela de 6 s):
 
 ```bash
-. ~/.vigilume-vps
+. ~/.stillon-vps
 tentar() {
   curl -s -o /dev/null -w '%{http_code}\n' -X POST "https://$DOMINIO/api/v1/auth/login" \
-    -H 'Content-Type: application/json' -H 'X-Requested-With: vigilume' \
+    -H 'Content-Type: application/json' -H 'X-Requested-With: stillon' \
     -d '{"email":"ninguem@exemplo.com","password":"errada-errada-1234"}' "$@"
 }
 for i in 1 2 3 4 5 6; do printf '%s: ' "$i"; tentar; done
@@ -1637,7 +1674,7 @@ Caddy em todo pedido, e o `TRUSTED_PROXIES` do app não é o IP do Caddy. Pare e
 **Faça** (no seu computador):
 
 ```bash
-. ~/.vigilume-vps
+. ~/.stillon-vps
 curl -s -o /dev/null -w '%{http_code}\n' -H 'Host: outro.exemplo' "http://$VPS/healthz"
 curl -sk -o /dev/null -w '%{http_code}\n' -H 'Host: outro.exemplo' "https://$DOMINIO/healthz"
 curl -sk -o /dev/null -w '%{http_code}\n' "https://$VPS/healthz"; echo "curl saiu com $?"
@@ -1648,7 +1685,7 @@ app); `200` na segunda, mas **vazio e do próprio Caddy**: nenhum bloco casa com
 app não é chamado; e `000` com `curl saiu com 35` na terceira (sem certificado para o IP, o TLS
 nem fecha). Para ver que a segunda não veio do app, repita-a com `-D -` no lugar do
 `-o /dev/null -w …`: `content-length: 0` e nenhum `x-trace-id` (todo pedido que chega ao app
-volta com ele). Nunca `200` com o corpo do Vigilume.
+volta com ele). Nunca `200` com o corpo do StillOn.
 
 **Por quê:** o Caddy só tem o bloco do seu domínio; uma requisição com outro nome não chega ao app.
 
@@ -1657,7 +1694,7 @@ volta com ele). Nunca `200` com o corpo do Vigilume.
 **Faça** (no seu computador):
 
 ```bash
-. ~/.vigilume-vps
+. ~/.stillon-vps
 echo | openssl s_client -connect "$DOMINIO:443" -servername "$DOMINIO" 2>/dev/null \
   | openssl x509 -noout -subject -issuer -dates
 curl -sI "https://$DOMINIO/" | grep -iE '^(HTTP|strict-transport-security|content-security-policy|x-content-type-options)'
@@ -1676,12 +1713,12 @@ redirecionando (`308`) para `https://`.
 ```bash
 vc config --services
 vc config | grep -nE 'mem_limit|GOMEMLIMIT|restart:'
-vc exec app /vigilume version
+vc exec app /stillon version
 ```
 
 **Deve aparecer:** os serviços `caddy`, `app` e `db`, e **nenhum** `seed`; um `mem_limit` e um
 `restart: unless-stopped` por serviço, e o `GOMEMLIMIT` no app; a versão igual ao
-`/opt/vigilume/versao`.
+`/opt/stillon/versao`.
 
 Nenhuma senha de produção está no repositório: o `.env` só existe na VPS e no gerenciador, e o
 `gitleaks` do CI varre o histórico em todo PR.
@@ -1694,11 +1731,11 @@ Nenhuma senha de produção está no repositório: o `.env` só existe na VPS e 
 sudo reboot
 ```
 
-Espere dois minutos e entre de novo (`ssh vigilume`):
+Espere dois minutos e entre de novo (`ssh stillon`):
 
 ```bash
 vc ps
-systemctl list-timers vigilume-vigia.timer
+systemctl list-timers stillon-vigia.timer
 sudo ufw status | head -1
 sudo fail2ban-client status sshd | head -1
 timedatectl | grep synchronized
@@ -1739,30 +1776,32 @@ vc logs --since 1h app              # o log do app da última hora (troque app p
 vc logs -f --tail 50 app            # acompanhar ao vivo; Ctrl+C sai
 ```
 
-O vigia: `sudo journalctl -u vigilume-vigia.service --since today`. O deploy e o backup: o log
+O vigia: `sudo journalctl -u stillon-vigia.service --since today`. O deploy e o backup: o log
 do próprio job no Actions (o script manda o log dele pela saída de erro, que o job mostra) e,
-na VPS, o mesmo log em `/opt/vigilume/entrada.log`, de todos os deploys e backups (até ~1 MiB; o
-mais velho sai sozinho): `sudo tail -n 50 /opt/vigilume/entrada.log`. É por ele que você sabe
-como terminou um deploy cuja conexão caiu (passo 4.8).
+na VPS, o mesmo log em `/opt/stillon/entrada.log`, de todos os deploys e backups (`0644`, lido
+sem `sudo`; acima de ~1 MiB ele vira `entrada.log.1`, que guarda a rodada anterior do log, e
+recomeça): `tail -n 50 /opt/stillon/entrada.log`. É pela última linha
+`== <UTC> fim: <pedido>: código N (<sentido>)`, que a entrada grava sempre por último, que você
+sabe como terminou um deploy cuja conexão caiu (passo 4.8).
 
 ### Deploy seguinte
 
 Actions → `ci` na `main` → espere o `publish` verde → Actions → `deploy` →
 **Run workflow** na `main`, com o SHA completo do commit (passo 4.8). O script guarda a versão que
-estava no ar em `/opt/vigilume/versao-anterior` e mantém as 3 últimas imagens. Durante a troca há
+estava no ar em `/opt/stillon/versao-anterior` e mantém as 3 últimas imagens. Durante a troca há
 alguns segundos de `502` (o painel mostra "Resposta inesperada do servidor (502)"; recarregue).
 
 Os três arquivos de versão, na VPS, são legíveis sem `sudo` (`0644`: não são segredo):
-`/opt/vigilume/versao` (o SHA no ar), `/opt/vigilume/versao-anterior` (o que estava antes) e
-`/opt/vigilume/historico` (um SHA por deploy saudável).
+`/opt/stillon/versao` (o SHA no ar), `/opt/stillon/versao-anterior` (o que estava antes) e
+`/opt/stillon/historico` (um SHA por deploy saudável).
 
 ### Voltar uma versão
 
-Rode o mesmo workflow com o SHA anterior (`cat /opt/vigilume/versao-anterior` na VPS). Só é
+Rode o mesmo workflow com o SHA anterior (`cat /opt/stillon/versao-anterior` na VPS). Só é
 seguro se as migrations da versão nova forem **aditivas**: o `goose` não roda `Down` sozinho, e o
 rollback automático do script também não desfaz migration.
 
-**Se sair 3 com `vigilume:<sha> já existe com outra imagem`:** uma tag `v*` publicada depois
+**Se sair 3 com `stillon:<sha> já existe com outra imagem`:** uma tag `v*` publicada depois
 daquele deploy **moveu** a tag `:<sha>` do GHCR para o digest do build da tag (mesmo código, outro
 build, reescaneado; `ci.yml`), e o workflow leva esse digest novo. A VPS ainda guarda a imagem
 antiga daquele SHA e **recusa** trocá-la, porque é exatamente a imagem para onde um rollback
@@ -1776,28 +1815,28 @@ resolve** (sai 3 outra vez), e não é adulteração. Dois caminhos:
 2. **Com pressa, à mão na VPS**, com a imagem que já esteve no ar e ainda está lá. Primeiro,
    confira que ela existe (sem trava nenhuma, só leitura):
    ```bash
-   ANT=$(cat /opt/vigilume/versao-anterior)
-   ATUAL=$(cat /opt/vigilume/versao)
+   ANT=$(cat /opt/stillon/versao-anterior)
+   ATUAL=$(cat /opt/stillon/versao)
    echo "no ar: $ATUAL; voltar para: $ANT"
-   sudo docker image inspect -f '{{.Id}}' "vigilume:$ANT"
+   sudo docker image inspect -f '{{.Id}}' "stillon:$ANT"
    ```
    **Deve aparecer:** os dois SHAs e um `sha256:…`. Se disser `No such image`, a imagem já foi
    podada: só o caminho 1 serve. Então troque, sob a mesma trava do deploy e do backup (se um
    deles estiver rodando, o comando espera até 10 min):
    ```bash
-   sudo ANT="$ANT" ATUAL="$ATUAL" flock -w 600 /opt/vigilume/.entrada.trava sh -ec '
-     docker tag "vigilume:$ANT" vigilume:atual
-     docker compose -f /opt/vigilume/compose.prod.yaml up -d --force-recreate --wait --wait-timeout 90 app
-     echo "$ATUAL" > /opt/vigilume/versao-anterior
-     echo "$ANT" > /opt/vigilume/versao
+   sudo ANT="$ANT" ATUAL="$ATUAL" flock -w 600 /opt/stillon/.entrada.trava sh -ec '
+     docker tag "stillon:$ANT" stillon:atual
+     docker compose -f /opt/stillon/compose.prod.yaml up -d --force-recreate --wait --wait-timeout 90 app
+     echo "$ATUAL" > /opt/stillon/versao-anterior
+     echo "$ANT" > /opt/stillon/versao
      echo "no ar: $ANT"
    '
    ```
-   **Deve aparecer:** o `app` `Healthy` e `no ar: <o SHA anterior>`; `cat /opt/vigilume/versao`
+   **Deve aparecer:** o `app` `Healthy` e `no ar: <o SHA anterior>`; `cat /opt/stillon/versao`
    mostra o mesmo. Os dois arquivos de versão são atualizados à mão porque o próximo deploy os
    usa para saber para onde voltar se ele mesmo falhar. Se o `up` não ficar saudável, o comando
    para antes de mexer neles; volte para a versão que estava no ar com
-   `sudo docker tag "vigilume:$ATUAL" vigilume:atual` e `vc up -d --force-recreate app`, e siga
+   `sudo docker tag "stillon:$ATUAL" stillon:atual` e `vc up -d --force-recreate app`, e siga
    pelo caminho 1.
 
 Refazer o deploy do SHA que **já está no ar** depois de um `v*` também sai 3 com essa mensagem:
@@ -1805,18 +1844,22 @@ não há o que fazer, a versão no ar é o mesmo código.
 
 ### Depuração do deploy
 
-Os códigos de saída do `vigilume-entrada deploy`, mais o 255 do próprio SSH. O job termina com um
+Os códigos de saída do `stillon-entrada deploy`, mais o 255 do próprio SSH. O job termina com um
 resumo do código (`deploy/ci/vps.sh`), mas a razão exata é a linha que começa com
-`vigilume-entrada:` no log do job (ou no fim do `/opt/vigilume/entrada.log`, na VPS). Procure-a
-na coluna do meio:
+`stillon-entrada:` no log do job (o código 0 é a exceção: a linha dele é só
+`deploy de <sha> saudável`, sem o prefixo). Procure-a na coluna do meio. Na VPS, o
+`/opt/stillon/entrada.log` traz a mesma linha logo acima da última, a
+`== <UTC> fim: <pedido>: código N (<sentido>)`, que dá o código; os pedidos recusados antes da
+trava (a primeira linha de código 2 da tabela e o 1 da trava ocupada) não chegam ao
+`entrada.log`, só ao log do job.
 
-| Código | A linha `vigilume-entrada:` diz | O que fazer |
+| Código | A linha diz (com o prefixo `stillon-entrada:`, menos no 0) | O que fazer |
 |---|---|---|
-| 0 | `deploy de <sha> saudável` | nada |
+| 0 | `deploy de <sha> saudável` (sem prefixo) | nada |
 | 2 | `pedido vazio`, `caractere não permitido no pedido`, `verbo desconhecido`, `deploy leva o SHA e o image-id`, `SHA malformado`, `image-id malformado` ou `argumento na linha de comando não é aceito` | conferir o SHA passado ao workflow (os 40 caracteres do commit, passo 4.8) |
 | 2 | `nada chegou na entrada padrão` | o tar não chegou: veja no job se o passo que baixa a imagem falhou; rode de novo |
 | 2 | `a imagem passa de 2147483648 bytes` | a imagem normal tem dezenas de MB: o `publish` produziu algo errado; não force, investigue |
-| 3 | `vigilume:<sha> já existe com outra imagem (…)` | só com o SHA no ar ou o anterior, depois de um `v*`: **rodar de novo não resolve**; veja "Voltar uma versão" acima |
+| 3 | `stillon:<sha> já existe com outra imagem (…)` | só com o SHA no ar ou o anterior, depois de um `v*`: **rodar de novo não resolve**; veja "Voltar uma versão" acima |
 | 3 | `a imagem carregada é …, e o deploy pediu …`, `o index.json do tar não é uma imagem só, sem nome, com o manifesto …`, `o tar não trouxe exatamente uma imagem sem nome`, `o que chegou não é um tar legível`, ou outra que começa com `o tar` (layout OCI, membro repetido ou estranho; as duas de disco cheio são código 1) | rodar de novo **uma vez**; se repetir, a imagem mudou no caminho (ou o formato do `crane` mudou): não force, investigue |
 | 4 | `rollback feito: <anterior> de volta no ar; <sha> não subiu` | a anterior já voltou: o log do job traz o log do app; corrija e publique outra versão |
 | 4 | `primeiro deploy e sem versão anterior: o app ficou parado` | **o site está fora** (não há anterior): passo 4.8, "Se o primeiro deploy sair com 4" |
@@ -1824,9 +1867,9 @@ na coluna do meio:
 | 1 | `o jq não está instalado (…): veja docs/deploy/vps.md` | `sudo apt install -y jq` (passo 3.3) e rode de novo |
 | 1 | `o Docker não usa o image store containerd; veja docs/deploy/vps.md (Docker)` | `sudo docker info -f '{{.DriverStatus}}'` e o `daemon.json` do passo 3.2 |
 | 1 | `outra operação da entrada não terminou em 10 min` | um backup (ou outro deploy) segurou a trava: veja o `entrada.log`, espere terminar e rode de novo |
-| 1 | `o tar não se extraiu …` ou `o tar refeito não se gravou …` (`disco cheio?`) | disco: `df -h /opt/vigilume /var/lib/docker` (veja "Operação do Postgres", linha Disco) |
+| 1 | `o tar não se extraiu …` ou `o tar refeito não se gravou …` (`disco cheio?`) | disco: `df -h /opt/stillon /var/lib/docker` (veja "Operação do Postgres", linha Disco) |
 | 1 | outra | a mensagem diz qual (Docker parado: `sudo systemctl status docker`) |
-| 255 | (nenhuma: o SSH não chegou ao script, ou a conexão caiu no meio) | se o job caiu **depois** de mandar a imagem, o deploy pode ter terminado na VPS: confira `cat /opt/vigilume/versao` e o `entrada.log` antes de repetir (passo 4.8). Se nem conectou: VPS fora do ar, porta 22 fechada, chave do servidor diferente do `VPS_HOST_KEY` (VPS reinstalada?) ou chave do deploy recusada; `ssh vigilume true` do seu computador; se a VPS foi reinstalada, passos 4.2 a 4.6 de novo |
+| 255 | (nenhuma: o SSH não chegou ao script, ou a conexão caiu no meio) | se o job caiu **depois** de mandar a imagem, o deploy pode ter terminado na VPS: confira `cat /opt/stillon/versao` e a última linha `fim:` do `entrada.log` antes de repetir (passo 4.8). Se nem conectou: VPS fora do ar, porta 22 fechada, chave do servidor diferente do `VPS_HOST_KEY` (VPS reinstalada?) ou chave do deploy recusada; `ssh stillon true` do seu computador; se a VPS foi reinstalada, passos 4.2 a 4.6 de novo |
 
 O `backup` usa os mesmos códigos do `deploy/backup/backup.sh`: 0, cópia restaurada e conferida;
 3, uma checagem da cópia falhou (o dump não serve, e nada é guardado); 4, conferido e guardado,
@@ -1835,15 +1878,15 @@ backup), inclusive `outra operação da entrada não terminou em 10 min` (um dep
 trava: rode de novo); 255, o SSH não chegou ao script.
 
 A imagem do app **não tem shell** (distroless): `vc exec app sh` não funciona. O que serve: os
-logs, os subcomandos do binário (`vc exec app /vigilume version`, `… healthcheck`, `… user …`) e o
-`psql` do banco (`vc exec db psql -U postgres -d vigilume`). O `vigilume healthcheck` consulta o
+logs, os subcomandos do binário (`vc exec app /stillon version`, `… healthcheck`, `… user …`) e o
+`psql` do banco (`vc exec db psql -U postgres -d stillon`). O `stillon healthcheck` consulta o
 `/readyz` com prazo de 3 s:
 
 | Código | Quando |
 |---|---|
 | 0 | o `/readyz` respondeu 200 dentro dos 3 s |
 | 1 | qualquer outra resposta, prazo esgotado, conexão recusada ou `HTTP_ADDR` inválido |
-| 2 | argumento a mais (`vigilume healthcheck x`); o `vigilume version` faz o mesmo |
+| 2 | argumento a mais (`stillon healthcheck x`); o `stillon version` faz o mesmo |
 | 130 | interrompido (Ctrl-C ou SIGTERM) |
 
 Uma `PUBLIC_BASE_URL` com usuário e senha (`https://usuario:senha@…`) é recusada no boot: o app
@@ -1860,21 +1903,21 @@ banco, o disco ou o `.env`. Na VPS:
 ```bash
 vc ps -a
 vc logs --tail 100 app db
-df -h /opt/vigilume /var/lib/docker
+df -h /opt/stillon /var/lib/docker
 ```
 
 - `db` fora de `healthy`, ou erro de conexão/senha no log do app: o banco (veja o log do `db`; um
   `vc up -d db` o sobe de novo se ele tiver parado).
 - Disco a 100%: libere espaço (linha Disco de "Operação do Postgres").
-- Erro de variável no boot do app: o `.env` mudou (`sudo nano /opt/vigilume/.env`, compare com o
+- Erro de variável no boot do app: o `.env` mudou (`sudo nano /opt/stillon/.env`, compare com o
   gerenciador).
 
-Corrigida a causa, suba a última versão saudável (a etiqueta `vigilume:atual`, que só anda num
+Corrigida a causa, suba a última versão saudável (a etiqueta `stillon:atual`, que só anda num
 deploy saudável):
 
 ```bash
 vc up -d --wait app
-cat /opt/vigilume/versao
+cat /opt/stillon/versao
 ```
 
 O `app` `Healthy`, e o `versao` é o SHA dela. Se não ficar saudável, o log do `vc logs --tail 100
@@ -1884,24 +1927,24 @@ app` diz o que ainda falta. Só depois disso tente de novo o deploy da versão n
 
 O deploy troca só a imagem do app. Os arquivos abaixo foram copiados à mão (passos 3.3, 3.5, 4.1 e
 8) e **não** se atualizam sozinhos. Quando um PR mudar um deles, recopie o que mudou do mesmo
-jeito: no seu computador, na `main` atualizada, o `scp` para `vigilume:vigilume-arquivos/`; na
+jeito: no seu computador, na `main` atualizada, o `scp` para `stillon:stillon-arquivos/`; na
 VPS, o `sudo install` para o destino da tabela, com o modo dela e dono `root`; e aplique:
 
 | Arquivo do repositório | Destino na VPS | Modo | Para valer |
 |---|---|---|---|
-| `deploy/vps/compose.prod.yaml` | `/opt/vigilume/compose.prod.yaml` | `0644` | `vc up -d` |
-| `deploy/vps/Caddyfile` | `/opt/vigilume/Caddyfile` | `0644` | `vc up -d --force-recreate caddy` e a conferência abaixo |
-| `deploy/vps/initdb.sh` | `/opt/vigilume/initdb.sh` | `0755` | nada: só roda num banco **vazio**, e trocá-lo não muda um banco que já existe |
-| `deploy/vps/env.exemplo` | nenhum: é o modelo do `/opt/vigilume/.env` | — | variável nova no modelo: acrescente-a ao `.env` (`sudo nano /opt/vigilume/.env`) e ao gerenciador; variável que saiu: apague-a do `.env` |
-| `deploy/vps/vigilume-entrada` | `/usr/local/sbin/vigilume-entrada` | `0755` | nada: vale no próximo deploy ou backup |
-| `deploy/vps/sudoers-vigilume-entrada` | `/etc/sudoers.d/vigilume-entrada` | `0440` | `sudo visudo -cf` **antes** do `install` e `sudo visudo -c` depois (passo 4.1) |
-| `deploy/vps/vigia.sh` | `/usr/local/sbin/vigilume-vigia` | `0755` | nada: vale na próxima execução do timer |
-| `deploy/vps/vigilume-vigia.service` e `vigilume-vigia.timer` | `/etc/systemd/system/` | `0644` | `sudo systemctl daemon-reload && sudo systemctl restart vigilume-vigia.timer` |
-| `deploy/vps/vigia.env.exemplo` | nenhum: é o modelo do `/opt/vigilume/vigia.env` | — | variável nova no modelo: acrescente-a ao `vigia.env` (`sudo nano /opt/vigilume/vigia.env`) |
-| `deploy/backup/backup.sh` e `deploy/backup/verificar.sql` | `/opt/vigilume/deploy/backup/` | `0644` | nada: vale no próximo backup |
-| `deploy/compose/initdb.sql` | `/opt/vigilume/deploy/compose/` | `0644` | nada: vale no próximo backup |
+| `deploy/vps/compose.prod.yaml` | `/opt/stillon/compose.prod.yaml` | `0644` | `vc up -d` |
+| `deploy/vps/Caddyfile` | `/opt/stillon/Caddyfile` | `0644` | `vc up -d --force-recreate caddy` e a conferência abaixo |
+| `deploy/vps/initdb.sh` | `/opt/stillon/initdb.sh` | `0755` | nada: só roda num banco **vazio**, e trocá-lo não muda um banco que já existe |
+| `deploy/vps/env.exemplo` | nenhum: é o modelo do `/opt/stillon/.env` | — | variável nova no modelo: acrescente-a ao `.env` (`sudo nano /opt/stillon/.env`) e ao gerenciador; variável que saiu: apague-a do `.env` |
+| `deploy/vps/stillon-entrada` | `/usr/local/sbin/stillon-entrada` | `0755` | nada: vale no próximo deploy ou backup |
+| `deploy/vps/sudoers-stillon-entrada` | `/etc/sudoers.d/stillon-entrada` | `0440` | `sudo visudo -cf` **antes** do `install` e `sudo visudo -c` depois (passo 4.1) |
+| `deploy/vps/vigia.sh` | `/usr/local/sbin/stillon-vigia` | `0755` | nada: vale na próxima execução do timer |
+| `deploy/vps/stillon-vigia.service` e `stillon-vigia.timer` | `/etc/systemd/system/` | `0644` | `sudo systemctl daemon-reload && sudo systemctl restart stillon-vigia.timer` |
+| `deploy/vps/vigia.env.exemplo` | nenhum: é o modelo do `/opt/stillon/vigia.env` | — | variável nova no modelo: acrescente-a ao `vigia.env` (`sudo nano /opt/stillon/vigia.env`) |
+| `deploy/backup/backup.sh` e `deploy/backup/verificar.sql` | `/opt/stillon/deploy/backup/` | `0644` | nada: vale no próximo backup |
+| `deploy/compose/initdb.sql` | `/opt/stillon/deploy/compose/` | `0644` | nada: vale no próximo backup |
 
-Os pacotes do host que o `vigilume-entrada` e o vigia usam (`age`, `curl`, `jq`, `util-linux`,
+Os pacotes do host que o `stillon-entrada` e o vigia usam (`age`, `curl`, `jq`, `util-linux`,
 passo 3.3) vêm do Ubuntu e se atualizam sozinhos (passo 2.11). Se um PR passar a exigir um pacote
 novo, a descrição dele diz qual: `sudo apt install -y <pacote>` antes de recopiar o script.
 
@@ -1913,7 +1956,7 @@ fica instalada no disco e sem efeito nenhum. **Confira** depois de todo `Caddyfi
 
 ```bash
 vc up -d --force-recreate caddy
-vc exec -T caddy cat /etc/caddy/Caddyfile | sudo diff - /opt/vigilume/Caddyfile && echo "Caddy com o arquivo novo"
+vc exec -T caddy cat /etc/caddy/Caddyfile | sudo diff - /opt/stillon/Caddyfile && echo "Caddy com o arquivo novo"
 ```
 
 `Caddy com o arquivo novo`, e nenhuma linha de diferença. Recriar o Caddy derruba o site por um
@@ -1943,7 +1986,7 @@ deixe para as 04:30).
 Sem o app **e** sem os códigos, o login para no segundo fator. Na VPS:
 
 ```bash
-vc exec app /vigilume user reset-2fa --email voce@exemplo.com
+vc exec app /stillon user reset-2fa --email voce@exemplo.com
 ```
 
 Ele desliga o 2FA, apaga os códigos de recuperação, zera o bloqueio da conta e encerra todas as
@@ -1957,7 +2000,7 @@ entre só com a senha e ative o 2FA de novo (passo 5.2).
 Quem ainda tem o app ou um código de recuperação não precisa disto: **Configurações → Trocar
 autenticador** troca de celular sem desligar o 2FA.
 
-Esqueceu a senha: `vc exec app /vigilume user set-password --email voce@exemplo.com` (pede a
+Esqueceu a senha: `vc exec app /stillon user set-password --email voce@exemplo.com` (pede a
 senha nova duas vezes, sem eco; encerra todas as sessões).
 
 ### Perdi a chave SSH, ou fui bloqueado
@@ -1995,11 +2038,11 @@ Numa janela calma, com o backup do dia verde:
    ```bash
    sudo -v
    vc stop app
-   vc exec -T db pg_dump -U postgres --format=custom vigilume | sudo tee /root/vigilume-antes-do-19.dump >/dev/null
-   sudo ls -l /root/vigilume-antes-do-19.dump
+   vc exec -T db pg_dump -U postgres --format=custom stillon | sudo tee /root/stillon-antes-do-19.dump >/dev/null
+   sudo ls -l /root/stillon-antes-do-19.dump
    ```
 3. Por PR, a imagem nova em `deploy/vps/db/Dockerfile` e nos outros lugares do digest, e o
-   `compose.prod.yaml` apontando o `db` para um **volume novo** (hoje o volume se chama `pgdata`, `vigilume_pgdata` no `docker volume ls`: montado
+   `compose.prod.yaml` apontando o `db` para um **volume novo** (hoje o volume se chama `pgdata`, `stillon_pgdata` no `docker volume ls`: montado
    como `pgdata:/var/lib/postgresql` no serviço `db` e declarado no bloco `volumes:` do fim do
    arquivo; o novo, por exemplo `pgdata19`, troca o nome nos dois lugares), para o volume velho continuar
    intacto. Recopie o `compose.prod.yaml` e suba **só o banco**: `vc up -d db` (o `initdb.sh`
@@ -2007,8 +2050,8 @@ Numa janela calma, com o backup do dia verde:
 4. Restaure no banco novo como superusuário, preservando os donos, e apague o dump:
    ```bash
    sudo -v
-   sudo cat /root/vigilume-antes-do-19.dump | vc exec -T db pg_restore -U postgres --exit-on-error -d vigilume
-   sudo shred -u /root/vigilume-antes-do-19.dump
+   sudo cat /root/stillon-antes-do-19.dump | vc exec -T db pg_restore -U postgres --exit-on-error -d stillon
+   sudo shred -u /root/stillon-antes-do-19.dump
    ```
 5. `vc up -d app`, confira o passo 4.8 (dono das tabelas, papéis) e rode o `backup` à mão.
 6. Mantenha o volume velho por 7 dias antes de apagá-lo (`sudo docker volume rm <volume velho>`).
@@ -2027,28 +2070,28 @@ cópia (`http://localhost:8080`) e recrie à mão na produção.
 2. Se não houver backup da Hostinger que sirva: reinstale o Ubuntu 24.04 (ou crie outra VPS) e
    refaça o bloco 2, o bloco 3 e o bloco 4 **até o 4.7** (o 4.8 é o item 3 abaixo). Nos passos
    que guardam segredo, **não gere nada novo; restaure do gerenciador**:
-   - **3.4:** pule o bloco que gera os segredos. Abra o `.env` (`sudo nano /opt/vigilume/.env`) e
+   - **3.4:** pule o bloco que gera os segredos. Abra o `.env` (`sudo nano /opt/stillon/.env`) e
      cole **todos** os valores do gerenciador (a `MASTER_KEY`, as três senhas do Postgres, tudo).
      Com outra `MASTER_KEY`, o banco restaurado teria headers e canais ilegíveis; com outras
      senhas, os papéis não bateriam com o dump.
    - **3.5:** **não** rode o `age-keygen -o`: uma chave nova não abre os dumps que já existem, e o
-     item 4 falharia. Se o `~/vigilume-backup.key` ainda existe no seu computador, use-o; se não
-     (o computador também foi trocado), recrie-o com o conteúdo da entrada "Vigilume – chave
+     item 4 falharia. Se o `~/stillon-backup.key` ainda existe no seu computador, use-o; se não
+     (o computador também foi trocado), recrie-o com o conteúdo da entrada "StillOn – chave
      privada do backup (age)". Crie o arquivo **vazio e já `600`** antes de abrir o editor, para
      a chave nunca ficar num arquivo que outro usuário leia, e cole nele:
      ```bash
-     install -m 600 /dev/null ~/vigilume-backup.key
-     nano ~/vigilume-backup.key
-     stat -c '%a' ~/vigilume-backup.key
+     install -m 600 /dev/null ~/stillon-backup.key
+     nano ~/stillon-backup.key
+     stat -c '%a' ~/stillon-backup.key
      ```
      (cole, `Ctrl+O`, Enter, `Ctrl+X`; o `stat` tem de dizer `600`). Depois, só a pública, a
      partir dela:
-     `age-keygen -y ~/vigilume-backup.key > ~/vigilume-age-recipient.txt`, e siga o 3.5 do
+     `age-keygen -y ~/stillon-backup.key > ~/stillon-age-recipient.txt`, e siga o 3.5 do
      "Leve a pública para a VPS" em diante (o `echo "ida e volta"` confere o par).
 
    O IP pode mudar: atualize o registro `A` (passo
-   1.4), o `~/.vigilume-vps`, o `HostName` do `~/.ssh/config` (editando a linha, sem acrescentar
-   outro `Host vigilume`: passo 2.6), e grave de novo `VPS_HOST` e `VPS_HOST_KEY`
+   1.4), o `~/.stillon-vps`, o `HostName` do `~/.ssh/config` (editando a linha, sem acrescentar
+   outro `Host stillon`: passo 2.6), e grave de novo `VPS_HOST` e `VPS_HOST_KEY`
    (passos 4.5 e 4.6; a VPS nova tem outra chave de servidor, e o `ssh` do seu computador vai
    reclamar dela: `ssh-keygen -R <IP velho>` e confira a nova pelo terminal do painel).
 3. Faça o primeiro deploy (passo 4.8) com o SHA que estava no ar (o último deploy verde do Actions).
@@ -2056,20 +2099,20 @@ cópia (`http://localhost:8080`) e recrie à mão na produção.
    seu computador (passo 7.2, itens 1 e 2), leve-o para a VPS e apague a cópia em claro do seu
    computador:
    ```bash
-   scp ~/vigilume-restauro/vigilume.dump vigilume:
-   shred -u ~/vigilume-restauro/vigilume.dump
+   scp ~/stillon-restauro/stillon.dump stillon:
+   shred -u ~/stillon-restauro/stillon.dump
    ```
    Depois, na VPS:
    ```bash
-   vc exec -T db dropdb -U postgres vigilume
-   vc exec -T db psql -U postgres -c "CREATE DATABASE vigilume OWNER vigilume_app;"
-   vc exec -T db pg_restore -U postgres --exit-on-error -d vigilume < ~/vigilume.dump
-   shred -u ~/vigilume.dump
+   vc exec -T db dropdb -U postgres stillon
+   vc exec -T db psql -U postgres -c "CREATE DATABASE stillon OWNER stillon_app;"
+   vc exec -T db pg_restore -U postgres --exit-on-error -d stillon < ~/stillon.dump
+   shred -u ~/stillon.dump
    vc start app
    ```
    (O banco é recriado vazio porque o app já migrou um schema no primeiro deploy.)
 5. Refaça o **bloco 8** inteiro (o vigia, com o `vigia.env`: a `HC_URL` vem do gerenciador,
-   entrada "Vigilume – HC_URL"), até o healthchecks voltar a **up**. Sem ele, a VPS nova fica sem
+   entrada "StillOn – HC_URL"), até o healthchecks voltar a **up**. Sem ele, a VPS nova fica sem
    vigia justamente depois de um desastre, e o `down` do healthchecks parece ser só a
    reconstrução. Não pause nem silencie o check no healthchecks: ele volta a **up** sozinho quando
    o vigia novo pingar.
@@ -2084,12 +2127,12 @@ cópia (`http://localhost:8080`) e recrie à mão na produção.
 - `IP_HASH_KEY`: o mesmo caminho; os hashes de IP antigos da auditoria deixam de casar com os
   novos.
 - `RESEND_API_KEY`: no painel do Resend (**API Keys**), crie uma chave nova e apague a velha;
-  cole a nova no `.env` (`sudo nano /opt/vigilume/.env`) e no gerenciador; `vc up -d app`.
+  cole a nova no `.env` (`sudo nano /opt/stillon/.env`) e no gerenciador; `vc up -d app`.
 - `HC_URL` (um check novo no healthchecks, ou a URL vazou): troque-a no `vigia.env`
-  (`sudo nano /opt/vigilume/vigia.env`) e no gerenciador. Vale na próxima execução do timer, sem
+  (`sudo nano /opt/stillon/vigia.env`) e no gerenciador. Vale na próxima execução do timer, sem
   reiniciar nada.
-- `VIGILUME_APP_PASSWORD` (a senha do papel do app): logo abaixo, "A senha do app".
-- `MASTER_KEY`, `POSTGRES_PASSWORD` e `VIGILUME_BACKUP_PASSWORD`: **não** há rotação pronta. A
+- `STILLON_APP_PASSWORD` (a senha do papel do app): logo abaixo, "A senha do app".
+- `MASTER_KEY`, `POSTGRES_PASSWORD` e `STILLON_BACKUP_PASSWORD`: **não** há rotação pronta. A
   `MASTER_KEY` cifra os segredos gravados no banco (trocá-la exige decifrar e cifrar de novo
   tudo); as duas senhas o app nem vê (o compose não as entrega a ele). Se uma delas vazar, é
   trabalho de plano próprio; até lá, troque na origem o que a `MASTER_KEY` protege (item 6 da
@@ -2097,7 +2140,7 @@ cópia (`http://localhost:8080`) e recrie à mão na produção.
 - A chave de deploy do GitHub, numa troca **de rotina** (sem suspeita de vazamento): passos 4.3
   a 4.6 com uma chave nova (a linha antiga do `authorized_keys` é substituída).
 
-#### A senha do app (`VIGILUME_APP_PASSWORD`)
+#### A senha do app (`STILLON_APP_PASSWORD`)
 
 A senha do papel do app vive em dois lugares, no `.env` e no banco, e os dois mudam juntos. Na
 VPS, cole o bloco **inteiro de uma vez**; como no 3.4, a senha nasce e é gravada dentro de um
@@ -2107,12 +2150,12 @@ processo do root, sem passar pela tela nem pelo `ps`:
 sudo sh -s <<'FIM'
 set -eu
 umask 077
-cd /opt/vigilume
+cd /opt/stillon
 NOVA=$(openssl rand -hex 32)
-printf "ALTER ROLE vigilume_app PASSWORD '%s';\n" "$NOVA" \
+printf "ALTER ROLE stillon_app PASSWORD '%s';\n" "$NOVA" \
   | docker compose -f compose.prod.yaml exec -T db psql -U postgres -v ON_ERROR_STOP=1 -q
 VALOR=$NOVA awk '
-  /^VIGILUME_APP_PASSWORD=/ { print "VIGILUME_APP_PASSWORD=" ENVIRON["VALOR"]; next }
+  /^STILLON_APP_PASSWORD=/ { print "STILLON_APP_PASSWORD=" ENVIRON["VALOR"]; next }
   { print }
 ' .env > .env.novo
 cat .env.novo > .env
@@ -2124,18 +2167,18 @@ FIM
 **Deve aparecer:** só `senha do app trocada no banco e no .env` (se o `psql` falhar, o bloco
 para antes de mexer no `.env`, e nada mudou). Rode **logo em seguida** `vc up -d --wait app`: o
 app que está de pé ainda usa a senha velha, e cada conexão nova dele ao banco falha até a troca.
-Depois, copie a senha nova para o gerenciador: `sudo grep '^VIGILUME_APP_PASSWORD='
-/opt/vigilume/.env` e `clear`. A senha velha do gerenciador não serve mais: numa reconstrução
+Depois, copie a senha nova para o gerenciador: `sudo grep '^STILLON_APP_PASSWORD='
+/opt/stillon/.env` e `clear`. A senha velha do gerenciador não serve mais: numa reconstrução
 ("A VPS morreu"), o `initdb.sh` cria o papel com a do `.env`, e a do gerenciador tem de ser a
 mesma.
 
 #### A chave de deploy vazou (ou você suspeita)
 
-**Não é uma troca simples.** A chave só roda o `vigilume-entrada`, e ele não dá root na VPS nem
+**Não é uma troca simples.** A chave só roda o `stillon-entrada`, e ele não dá root na VPS nem
 acesso ao `.env`. Mas ela faz **deploy de qualquer imagem** como o app: quem a tem sobe um
-programa seu no lugar do Vigilume, e esse programa vê tudo o que o app vê. Isso é o app
+programa seu no lugar do StillOn, e esse programa vê tudo o que o app vê. Isso é o app
 **inteiro** e os segredos que ele recebe: a `MASTER_KEY`, o `JWT_SECRET`, o `IP_HASH_KEY`, a
-senha do `vigilume_app` (dona das tabelas: lê e muda qualquer dado), a `RESEND_API_KEY`, e, por
+senha do `stillon_app` (dona das tabelas: lê e muda qualquer dado), a `RESEND_API_KEY`, e, por
 meio da `MASTER_KEY`, os headers dos alvos e as configurações dos canais (webhooks do Discord,
 tokens) guardados cifrados. O `image-id` do pedido não protege contra isso: quem tem a chave
 escolhe o ID. (O backup pela chave só entrega o dump **cifrado**: sem a sua chave privada do
@@ -2151,23 +2194,26 @@ escolhe o ID. (O backup pela chave só entrega o dump **cifrado**: sem a sua cha
 2. **Tire do ar o que pode ser dele** e veja o que aconteceu:
    ```bash
    vc rm -sf app
-   sudo tail -n 200 /opt/vigilume/entrada.log
-   cat /opt/vigilume/historico
-   sudo docker image ls vigilume
+   tail -n 200 /opt/stillon/entrada.log
+   cat /opt/stillon/entrada.log.1
+   cat /opt/stillon/historico
+   sudo docker image ls stillon
    ```
-   O site fica fora (`502`) até o item 7. Compare cada `deploy de <sha>` do `entrada.log` e cada
-   SHA do `historico` com as execuções do `deploy` na aba Actions
-   (`gh run list --repo BipoXDXD/vigilume --workflow deploy.yml --limit 20`): um deploy que não
+   O site fica fora (`502`) até o item 7. (O `entrada.log.1` só existe se o log já passou do teto
+   de ~1 MiB; se não existir, o `cat` diz `No such file or directory`, e tudo bem.) Compare cada
+   `deploy de <sha>` do `entrada.log` e do `entrada.log.1`, e cada SHA do `historico` com as
+   execuções do `deploy` na aba Actions
+   (`gh run list --repo BipoXDXD/stillon --workflow deploy.yml --limit 20`): um deploy que não
    saiu de lá foi de outra pessoa. Anote a data do primeiro.
-3. **Apague todas as imagens `vigilume` locais**, para nenhuma etiqueta apontar para uma imagem
+3. **Apague todas as imagens `stillon` locais**, para nenhuma etiqueta apontar para uma imagem
    dele (o próximo deploy baixa a certa do GHCR):
    ```bash
-   sudo docker image ls vigilume --format '{{.Repository}}:{{.Tag}}' | xargs -r sudo docker rmi
-   sudo docker image ls vigilume
+   sudo docker image ls stillon --format '{{.Repository}}:{{.Tag}}' | xargs -r sudo docker rmi
+   sudo docker image ls stillon
    ```
    A segunda linha mostra só os títulos, sem imagem nenhuma.
 4. **Troque os segredos que o app vê**, com o app parado (itens acima): o `JWT_SECRET`, o
-   `IP_HASH_KEY`, a `RESEND_API_KEY` e a `VIGILUME_APP_PASSWORD` ("A senha do app": pule o
+   `IP_HASH_KEY`, a `RESEND_API_KEY` e a `STILLON_APP_PASSWORD` ("A senha do app": pule o
    `vc up -d --wait app`: quem sobe o app é o deploy do item 7). O `db` continua de pé.
 5. **Uma chave de deploy nova:** passos 4.3 a 4.6 (o 4.4 grava a linha nova no
    `authorized_keys` vazio; o 4.6 troca o secret `VPS_SSH_KEY`), e apague a chave do seu
@@ -2176,7 +2222,7 @@ escolhe o ID. (O backup pela chave só entrega o dump **cifrado**: sem a sua cha
    decifrado: crie webhooks novos do Discord (e apague os velhos no Discord), gere tokens novos
    para os headers dos seus alvos, e atualize-os no painel depois do item 7. A `MASTER_KEY` em si
    continua a mesma (não há rotação pronta; ela é só uma chave: o que importa é o que ela abria).
-   Troque também a sua senha do painel (`vc exec app /vigilume user set-password …`, depois do
+   Troque também a sua senha do painel (`vc exec app /stillon user set-password …`, depois do
    item 7) e o autenticador (**Configurações → Trocar autenticador**): o segredo do 2FA também
    estava no banco.
 7. **O deploy de um SHA conhecido**: o último verde da `main` que **você** conferiu (passo 4.8,
@@ -2208,7 +2254,7 @@ O repositório é **privado por decisão do dono**. No dia de abrir:
 3. O e-mail pessoal do autor está no histórico e **fica** (decisão do dono).
 4. Settings → General → Change visibility. O pacote do GHCR tem visibilidade própria: Package
    settings → Change visibility → Public. Confira de uma máquina sem login:
-   `docker pull ghcr.io/bipoxdxd/vigilume:latest`.
+   `docker pull ghcr.io/bipoxdxd/stillon:latest`.
 5. No README, troque o parágrafo "enquanto o repositório for privado" pelo dos 30 segundos: o
    `docker compose up` passa a puxar a imagem em vez de construir, sem mudar o compose.
 6. **Deploy com revisor:** num repositório público, o GitHub Free tem *environments* com revisor

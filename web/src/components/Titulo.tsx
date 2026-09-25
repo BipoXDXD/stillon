@@ -24,7 +24,7 @@ export function Titulo({ children, aba, descritoPor }: { children: ReactNode; ab
   // a segunda não pode achar que já não é a primeira tela.
   const focar = useRef<boolean | null>(null)
   useEffect(() => {
-    document.title = `${aba} — Vigilume`
+    document.title = `${aba} — StillOn`
   }, [aba])
   useEffect(() => {
     if (focar.current === null) {

@@ -1,8 +1,8 @@
-# Imagem do Vigilume (Plano 7): o painel (Vite) → o binário Go com o painel
+# Imagem do StillOn (Plano 7): o painel (Vite) → o binário Go com o painel
 # embutido → distroless nonroot, sem shell nem ferramenta nenhuma (spec §5.9).
 #
-#   docker build -t vigilume .                  a imagem de produção (runtime)
-#   docker build --target tools -t vigilume:tools .
+#   docker build -t stillon .                  a imagem de produção (runtime)
+#   docker build --target tools -t stillon:tools .
 #                                               a variante com busybox, só para
 #                                               o seed do compose (D6)
 #
@@ -38,21 +38,21 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
     go build -trimpath -buildvcs=false -ldflags="-s -w -X main.version=${VERSION}" \
-      -o /out/vigilume ./cmd/vigilume
+      -o /out/stillon ./cmd/stillon
 
 # tools: o mesmo binário sobre a variante debug, que tem o busybox. Só o seed
 # do compose a usa, para passar a senha de demo pelo stdin (D6). NUNCA vai
 # para produção.
 FROM gcr.io/distroless/static-debian13:debug-nonroot@sha256:2a581fcbda6320d4d17fd6ff4774bb96e4825d2be9c2bca59f0777b429997f51 AS tools
-COPY --from=build /out/vigilume /vigilume
+COPY --from=build /out/stillon /stillon
 USER nonroot:nonroot
-ENTRYPOINT ["/vigilume"]
+ENTRYPOINT ["/stillon"]
 
 # runtime: o último estágio, o padrão do `docker build`. Sem HEALTHCHECK: os
-# compose (o local e o de produção) usam `vigilume healthcheck` (D5).
+# compose (o local e o de produção) usam `stillon healthcheck` (D5).
 FROM gcr.io/distroless/static-debian13:nonroot@sha256:e2e927ec666bae08560abb3c55d0659eceabb657f56b6782ab500a9fc7f555e3 AS runtime
-COPY --from=build /out/vigilume /vigilume
+COPY --from=build /out/stillon /stillon
 USER nonroot:nonroot
 EXPOSE 8080
-ENTRYPOINT ["/vigilume"]
+ENTRYPOINT ["/stillon"]
 CMD ["--role=all"]

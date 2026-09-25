@@ -81,7 +81,7 @@ func TestComposePublicBaseURLIsLocal(t *testing.T) {
 	if m == nil {
 		t.Fatal("PUBLIC_BASE_URL ausente do compose.yaml")
 	}
-	// A interpolação do compose com o padrão: ${VIGILUME_PORT:-8080} → 8080.
+	// A interpolação do compose com o padrão: ${STILLON_PORT:-8080} → 8080.
 	base := regexp.MustCompile(`\$\{[A-Z_]+:-([^}]*)\}`).ReplaceAllString(string(m[1]), "$1")
 	if EhHTTPS(base) || !hostLocal(base) {
 		t.Errorf("PUBLIC_BASE_URL do compose.yaml (%s) não é http de loopback: o boot recusaria as chaves de demo", base)
@@ -127,9 +127,9 @@ func TestComposeHeaderSaysItIsLocalOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cabecalho, _, ok := bytes.Cut(compose, []byte("\nname: vigilume\n"))
+	cabecalho, _, ok := bytes.Cut(compose, []byte("\nname: stillon\n"))
 	if !ok {
-		t.Fatal("compose.yaml sem a linha name: vigilume")
+		t.Fatal("compose.yaml sem a linha name: stillon")
 	}
 	// "atrás de um proxy": o seed e o boot olham só a PUBLIC_BASE_URL
 	// declarada. O compose copiado para um servidor, com um proxy na frente e

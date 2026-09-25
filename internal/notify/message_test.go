@@ -7,13 +7,13 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/BipoXDXD/vigilume/internal/crypto"
-	"github.com/BipoXDXD/vigilume/internal/incident"
+	"github.com/BipoXDXD/stillon/internal/crypto"
+	"github.com/BipoXDXD/stillon/internal/incident"
 )
 
 func TestMessageForOpenedAndResolved(t *testing.T) {
 	assunto, corpo := mensagem(evAberto)
-	if assunto != "[Vigilume] API de pagamentos está fora do ar" ||
+	if assunto != "[StillOn] API de pagamentos está fora do ar" ||
 		corpo != "API de pagamentos está fora do ar desde 24/09/2026 12:00 UTC.\nCausa: tempo esgotado.\n" {
 		t.Errorf("abertura: %q / %q", assunto, corpo)
 	}
@@ -22,7 +22,7 @@ func TestMessageForOpenedAndResolved(t *testing.T) {
 	fechou.Kind = incident.EventResolved
 	fechou.ResolvedAt = fechou.StartedAt.Add(2*time.Hour + 5*time.Minute + 40*time.Second)
 	assunto, corpo = mensagem(fechou)
-	if assunto != "[Vigilume] API de pagamentos voltou" ||
+	if assunto != "[StillOn] API de pagamentos voltou" ||
 		corpo != "API de pagamentos voltou em 24/09/2026 14:05 UTC, depois de 2h 05min fora do ar.\n" {
 		t.Errorf("fechamento: %q / %q", assunto, corpo)
 	}

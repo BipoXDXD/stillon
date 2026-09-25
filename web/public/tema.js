@@ -3,7 +3,7 @@
 ;(function () {
   var tema = 'sistema'
   try {
-    tema = localStorage.getItem('vigilume.tema') || 'sistema'
+    tema = localStorage.getItem('stillon.tema') || 'sistema'
   } catch {}
   var escuro =
     tema === 'escuro' || (tema === 'sistema' && window.matchMedia('(prefers-color-scheme: dark)').matches)
