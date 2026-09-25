@@ -32,8 +32,8 @@ name: vigilume
 # !!! CHAVES DE DEMONSTRAÇÃO, PÚBLICAS NO REPOSITÓRIO. NÃO USE EM PRODUÇÃO. !!!
 # Com elas, qualquer um forja um JWT e decifra os segredos gravados. O boot
 # só as aceita com PUBLIC_BASE_URL http em localhost ou num IP de loopback
-# (D14); https, ou outro host, é recusado. Produção: o compose de produção do
-# Plano 11 (deploy/vps/compose.prod.yaml; runbook docs/deploy/vps.md).
+# (D14); https, ou outro host, é recusado. Produção: deploy/vps/compose.prod.yaml,
+# pelo runbook docs/deploy/vps.md.
 x-ambiente: &ambiente
   DATABASE_URL: postgres://vigilume_app:vigilume_app@db:5432/vigilume?sslmode=disable
   # A mesma porta publicada abaixo: os links dos e-mails e da página de
