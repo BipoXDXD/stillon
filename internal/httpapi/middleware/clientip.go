@@ -71,23 +71,36 @@ func ClientIP(r *http.Request, p Proxies) string {
 // peloCabecalho lê o cabeçalho de cliente de um valor só (Fly-Client-IP).
 func peloCabecalho(r *http.Request, p Proxies, direto string) string {
 	valor := strings.TrimSpace(r.Header.Get(p.Header))
+	origem, err := netip.ParseAddr(direto)
+	doProxy := err == nil && confiavel(origem, p.Trusted)
 	if valor == "" {
+		if doProxy {
+			avisoSemCabecalho.avisar(msgSemCabecalho, direto, p.Header)
+		}
 		return direto
 	}
-	origem, err := netip.ParseAddr(direto)
-	if err != nil || !confiavel(origem, p.Trusted) {
+	if !doProxy {
 		// O cabeçalho chegou, mas não de um proxy da lista. Ou é alguém
 		// forjando, ou é TRUSTED_PROXIES errado; o aviso diz qual é o
 		// endereço que a conexão tem, que é o que falta para configurar.
-		avisoDeProxy.avisar(direto, p.Header)
+		avisoDeProxy.avisar(msgForaDaLista, direto, p.Header)
 		return direto
 	}
 	ip, err := netip.ParseAddr(valor)
 	if err != nil || ip.Zone() != "" {
+		// Do proxy, mas ilegível: o valor não vai para o log (pode ser
+		// qualquer coisa que o cliente pôs num cabeçalho de mesmo nome).
+		avisoSemCabecalho.avisar(msgSemCabecalho, direto, p.Header)
 		return direto
 	}
 	return ip.Unmap().String()
 }
+
+const (
+	msgForaDaLista  = "cabeçalho de IP do cliente ignorado: a conexão não vem de TRUSTED_PROXIES"
+	msgSemCabecalho = "cabeçalho de IP do cliente ausente ou ilegível numa conexão de TRUSTED_PROXIES: " +
+		"confira o CLIENT_IP_HEADER; estes clientes dividem o balde do proxy"
+)
 
 func confiavel(ip netip.Addr, trusted []netip.Prefix) bool {
 	ip = ip.Unmap()
@@ -104,8 +117,13 @@ func confiavel(ip netip.Addr, trusted []netip.Prefix) bool {
 // a mesma frase.
 var avisoDeProxy = &aviso{agora: time.Now, intervalo: time.Minute}
 
-// aviso limita o log de "cabeçalho de proxy ignorado" a um por intervalo.
-// Com TRUSTED_PROXIES errado, TODA requisição cairia aqui.
+// avisoSemCabecalho é o outro lado: a conexão vem de um proxy confiável, mas
+// sem o cabeçalho, ou com um valor ilegível. Limite próprio, para um aviso
+// não calar o outro.
+var avisoSemCabecalho = &aviso{agora: time.Now, intervalo: time.Minute}
+
+// aviso limita um log de configuração de proxy a um por intervalo. Com
+// TRUSTED_PROXIES ou CLIENT_IP_HEADER errado, TODA requisição cairia aqui.
 type aviso struct {
 	mu        sync.Mutex
 	ultimo    time.Time
@@ -113,7 +131,7 @@ type aviso struct {
 	intervalo time.Duration
 }
 
-func (a *aviso) avisar(remoto, cabecalho string) {
+func (a *aviso) avisar(msg, remoto, cabecalho string) {
 	a.mu.Lock()
 	agora := a.agora()
 	if !a.ultimo.IsZero() && agora.Sub(a.ultimo) < a.intervalo {
@@ -122,6 +140,5 @@ func (a *aviso) avisar(remoto, cabecalho string) {
 	}
 	a.ultimo = agora
 	a.mu.Unlock()
-	slog.Warn("cabeçalho de IP do cliente ignorado: a conexão não vem de TRUSTED_PROXIES",
-		"cabecalho", cabecalho, "remote_addr", remoto)
+	slog.Warn(msg, "cabecalho", cabecalho, "remote_addr", remoto)
 }
