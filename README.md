@@ -35,12 +35,16 @@ no primeiro `up`: `DEMO_TARGETS_EXTRA="https://seu.site/ https://outro.site/" do
 - As chaves do `compose.yaml` são de demonstração e estão no repositório. O boot valida a
   `PUBLIC_BASE_URL` (esquema `http` ou `https`, com host, sem usuário e senha) e só aceita essas
   chaves com `http` e host de loopback (`localhost` ou IP de loopback, como `127.0.0.1` e `::1`).
-  Com `https` ele recusa sempre, até em `https://localhost`; com qualquer outro host, também: o
-  compose copiado para um servidor não sobe com elas.
+  Com `https` ele recusa sempre, até em `https://localhost`; com qualquer outro host, também. O
+  boot só olha a URL **declarada**: o compose copiado para um servidor com um proxy na frente e a
+  `PUBLIC_BASE_URL` ainda `http://localhost:8080` sobe com elas (ver abaixo).
 - **O `compose.yaml` é só para a máquina local, nunca para servidor.** O usuário de
   demonstração tem senha pública, e o sistema é de um dono só: num servidor, ele seria o dono. O
   `seed` recusa rodar (sai com 1, e o `up` para) se a `PUBLIC_BASE_URL` não for `http` em
-  `localhost` ou IP de loopback. Para hospedar, o compose de produção vem no Plano 11, sem o
+  `localhost` ou IP de loopback. **Isso não protege um servidor**: atrás de um proxy (um Caddy com
+  `reverse_proxy app:8080`) e com a `PUBLIC_BASE_URL` ainda local, o seed e o boot aceitam, o
+  usuário de demonstração nasce, e qualquer um entra com a senha pública. Nenhuma checagem do
+  `Host` recebido existe hoje. Para hospedar, o compose de produção vem no Plano 11, sem o
   `seed` e sem nenhuma chave ou senha do repositório.
 
 `docker compose down` para; `docker compose down -v` apaga o banco também.

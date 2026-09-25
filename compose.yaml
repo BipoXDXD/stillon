@@ -4,7 +4,11 @@
 # públicas. Num servidor, esse usuário vira O dono do Vigilume, e qualquer um
 # entra. Para hospedar, use o compose de produção (Plano 11, hospedagem): sem
 # o seed, sem estas chaves, com os segredos fora do git. O seed.sh recusa
-# rodar com um PUBLIC_BASE_URL que não seja http em localhost (D1 do Plano 10).
+# rodar com um PUBLIC_BASE_URL que não seja http em localhost (D1 do Plano 10),
+# mas ele e o boot só olham a URL DECLARADA. Copiado para um servidor e posto
+# atrás de um proxy (um Caddy com reverse_proxy app:8080) com a PUBLIC_BASE_URL
+# ainda local, este compose sobe, o seed cria o demo, e ele vira o dono. Nada
+# aqui impede isso: não copie este arquivo para um servidor.
 #
 # Vigilume local, com um comando (spec §15):
 #

@@ -57,7 +57,7 @@ linha diz de onde veio o achado (relatório e número).
 | IP público da VPS e IPv6 global da rede Docker fora da lista do safedial (hairpin por fora do firewall externo) | sondador S4 | O compose de produção não publica porta além de 80/443 do Caddy | **Requisito do Plano 11** (abaixo). Uma lista extra (`PROBE_DENY_CIDRS`) fica para o Plano 12, se o Plano 11 não bastar |
 | `blocked` contra `dns` enumera os nomes internos da rede Docker | sondador S5 | Baixo: só informação, e só o dono vê | Aceito como está; Plano 12 se o cadastro abrir (recusar host sem ponto) |
 | Refresh repetido depois de resposta perdida vira "roubo" (família revogada, auditoria `session.reuse_detected` falsa) | auth C2 | Pede janela de tolerância, que é mudança de desenho da detecção de reúso | Plano 12, com desenho próprio |
-| Checagem de `Host` contra `PUBLIC_BASE_URL` | banco S1, parte | O compose de produção do Plano 11 não tem o seed nem as chaves de demo; o `seed.sh` recusa (D1) | Plano 12, se o Plano 11 não a tornar necessária |
+| Checagem de `Host` contra `PUBLIC_BASE_URL` | banco S1, parte | O compose de produção do Plano 11 não tem o seed nem as chaves de demo. O `seed.sh` (D1) **não** cobre este caso: ele só olha a URL declarada, e atrás de um proxy com a `PUBLIC_BASE_URL` local ele e o boot aceitam (limite abaixo; revisão, banco-docs I1) | **Requisito do Plano 11** (obrigação 5); a checagem no app, Plano 12, se o Plano 11 não a tornar necessária |
 | Limpeza do code review (lista abaixo) | code review do PR #15 | Confirmados, sem efeito para o usuário | Plano 12, exceto o que o Plano 10 tocou de passagem |
 | O que estava em `PENDENCIAS-PARA-O-PLANO-10.md` e não foi tocado | — | Fora do tema da revisão | Plano 12 (abaixo) |
 
@@ -103,7 +103,11 @@ critério de pronto do Plano 11. Cada um vem de um achado da revisão.
 5. **Compose de produção sem o `seed`, sem o bloco `x-ambiente` do `compose.yaml` e sem nenhuma
    chave ou senha do repositório** (banco S1): segredos num `env_file` fora do git,
    `POSTGRES_PASSWORD` e a senha do `vigilume_app` geradas (`openssl rand -hex 32`),
-   `restart: unless-stopped` em todos os serviços (banco C1).
+   `restart: unless-stopped` em todos os serviços (banco C1). É **a única** proteção contra o
+   `compose.yaml` local copiado para o servidor atrás do Caddy com a `PUBLIC_BASE_URL` ainda
+   local (o seed e o boot aceitam; revisão, banco-docs I1): o runbook do Plano 11 diz, com essas
+   palavras, que o `compose.yaml` não vai para o servidor, e a `PUBLIC_BASE_URL` de produção é
+   `https://<domínio>` (com ela o boot recusa as chaves de demo).
 6. **Backup e deploy da VPS.** O `backup.yml` e o `deploy.yml` só falam com o Fly: na VPS não há
    backup nenhum até isso ser adaptado. O runbook novo gera a chave do `age` fora do repositório.
 7. **Um vigia externo do `/healthz` público** (banco C1): o Vigilume não consegue avisar da
@@ -165,6 +169,11 @@ Os limites dos Planos 7 e 8 seguem como estão no `PENDENCIAS-PARA-O-PLANO-8.md`
   dispositivo (HttpOnly) ganha 5 tentativas próprias a cada 15 min, além das do IP.
 - **Sob ataque ao Argon2id, o dono também pode receber `429` no login** por alguns segundos (A1).
 - **Quem troca o domínio de um alvo redigita os headers** (B1); o painel avisa antes de salvar.
+- **O `compose.yaml` copiado para um servidor atrás de um proxy, com a `PUBLIC_BASE_URL` ainda
+  local, sobe com o usuário de demonstração** (revisão, banco-docs I1): o `seed.sh` (D1) e o boot
+  só olham a URL declarada, e nenhum dos dois vê o `Host` que chega. O demo, com a senha pública,
+  vira o dono. Só o compose de produção do Plano 11 resolve (obrigação 5); a checagem de `Host`
+  no app ficou fora (tabela do "fora de escopo").
 - **O `seed.sh` só aceita `localhost`, `127.0.0.0/8` em IPv4 decimal e `[::1]`**: formas que o
   boot aceita e o seed não (como `[::ffff:127.0.0.1]`) são recusadas pelo seed, que é o lado
   seguro. O teste roda o script no `sh` do host (o `dash` no CI); o `busybox sh` da imagem

@@ -152,7 +152,11 @@ func TestComposeHeaderSaysItIsLocalOnly(t *testing.T) {
 	if !ok {
 		t.Fatal("compose.yaml sem a linha name: vigilume")
 	}
-	for _, frase := range []string{"SÓ PARA A MÁQUINA LOCAL", "NUNCA EM SERVIDOR", "compose de produção"} {
+	// "atrás de um proxy": o seed e o boot olham só a PUBLIC_BASE_URL
+	// declarada. O compose copiado para um servidor, com um proxy na frente e
+	// a URL ainda local, passa pelos dois (I1 da revisão do Plano 10), e o
+	// cabeçalho não pode prometer proteção que não existe.
+	for _, frase := range []string{"SÓ PARA A MÁQUINA LOCAL", "NUNCA EM SERVIDOR", "compose de produção", "atrás de um proxy"} {
 		if !bytes.Contains(cabecalho, []byte(frase)) {
 			t.Errorf("o cabeçalho do compose.yaml não diz %q", frase)
 		}
