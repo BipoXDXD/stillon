@@ -51,7 +51,7 @@ limpar() {
         return
     fi
     # Um postgres descartável esquecido pela entrada seguraria a rede.
-    docker ps -aq --filter name=stillon-restauro- | xargs -r docker rm -f >/dev/null 2>&1 || true
+    docker ps -aq --filter name=stillon-restauro- | xargs -r docker rm -f -v >/dev/null 2>&1 || true
     dc down -v --remove-orphans >/dev/null 2>&1 || true
     for r in "$REPO_TESTE" "$REPO_TESTE-fonte"; do
         docker image ls --format '{{.Repository}}:{{.Tag}}' "$r" | xargs -r docker rmi >/dev/null 2>&1 || true
@@ -582,8 +582,10 @@ ok "stillon-entrada: deploy doente volta à versão anterior (4)"
 # 8c'. Rollback por tempo esgotado: um app que fica de pé e nunca saudável
 #      (o processo não cai; o healthcheck sempre falha). A imagem doente de
 #      cima morre no boot e o --wait volta em segundos; esta prova a espera
-#      de ESPERA_S inteira. A base é a imagem do db (já na máquina, com sh).
-printf '%s\n' "FROM $pg" \
+#      de ESPERA_S inteira. A base é o ubuntu:24.04 (o mesmo do 8f, com sh):
+#      a do db declara VOLUME, e cada contêiner dela deixaria um volume
+#      anônimo para trás no rollback.
+printf '%s\n' "FROM ubuntu:24.04" \
     "RUN printf '#!/bin/sh\\nexit 1\\n' > /stillon && chmod 755 /stillon" \
     'ENTRYPOINT ["/bin/sh", "-c", "trap \"exit 0\" TERM; while :; do sleep 1; done", "--"]' |
     docker build -q -t "$REPO_TESTE-fonte:lento" - >/dev/null
@@ -798,6 +800,12 @@ ok "sudoers: só a entrada, sem argumento, com o SSH_ORIGINAL_COMMAND"
 # ---------------------------------------------------------------------------
 # 9. stillon-entrada backup: só texto cifrado na saída padrão.
 # ---------------------------------------------------------------------------
+# Os volumes antes dos backups: no fim do bloco, nenhum volume novo fora os da
+# pilha (o descartável, inclusive o de um backup morto, sai com os dele).
+volumes() {
+    docker volume ls -q | sort | comm -23 - <(docker volume ls -q --filter "label=com.docker.compose.project=$PROJETO" | sort)
+}
+volumes_antes=$(volumes)
 # Os scripts do backup no layout que a entrada espera ($DIR/deploy), tais e
 # quais os do repositório; a chave do age gerada aqui (a privada fica em
 # $TARS, só para conferir).
@@ -814,7 +822,11 @@ c=$(entrada "backup extra" < /dev/null)
 # postgres descartável. O próximo backup apaga os dois, já sob a trava.
 mkdir -p "$TARS/stillon-backup.morto"
 echo 'PGDMP em claro' > "$TARS/stillon-backup.morto/stillon.dump"
+# Sem o --tmpfs da entrada: o VOLUME da imagem do postgres vira um volume
+# anônimo, que tem de sair junto com ele.
 docker run -d --name stillon-restauro-morto --entrypoint sleep "$pg" 600 >/dev/null
+[ -n "$(docker inspect -f '{{range .Mounts}}{{if eq .Type "volume"}}{{.Name}}{{end}}{{end}}' stillon-restauro-morto)" ] ||
+    falhar "controle: o descartável morto do teste não tem volume anônimo"
 c=$(entrada backup < /dev/null)
 [ -e "$TARS/stillon-backup.morto" ] && falhar "o dump em claro de um backup morto ficou para trás"
 docker inspect stillon-restauro-morto >/dev/null 2>&1 && falhar "o postgres descartável de um backup morto ficou para trás"
@@ -906,6 +918,9 @@ for caso in "DF_PCT=91 disco da VPS" "DF_TAMANHO=1000000 volume do banco"; do
     fi
 done
 ok "stillon-entrada backup: disco ou volume acima de 85% manda o cifrado e sai 4"
+sobras=$(comm -13 <(echo "$volumes_antes") <(volumes))
+[ -z "$sobras" ] || falhar "os backups deixaram volumes: $(tr "\n" " " <<<"$sobras")"
+ok "stillon-entrada backup: nenhum volume sobra dos descartáveis"
 
 if [ "$falhas" -gt 0 ]; then
     dc logs >&2

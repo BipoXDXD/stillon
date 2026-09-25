@@ -86,7 +86,10 @@ PEDIDO=
 fim() {
     local codigo=$? sentido
     [ -z "$TMP_DEPLOY" ] || rm -rf "$TMP_DEPLOY"
-    [ -z "$RESTAURO" ] || docker rm -f "$RESTAURO" >/dev/null 2>&1 || true
+    # Com -v: um volume anônimo do descartável (o VOLUME da imagem do
+    # postgres, se um dia o --tmpfs não o cobrir) sai junto, e não sobra um
+    # por backup.
+    [ -z "$RESTAURO" ] || docker rm -f -v "$RESTAURO" >/dev/null 2>&1 || true
     if [ -n "$TMP_BACKUP" ]; then
         shred -u "$TMP_BACKUP"/* 2>/dev/null || true
         rm -rf "$TMP_BACKUP"
@@ -396,9 +399,10 @@ backup() {
     img=$(docker inspect -f '{{.Config.Image}}' "$db")
 
     # Sob a trava: o que sobrou de um backup morto por SIGKILL (o dump em
-    # claro na memória, o postgres descartável) sai agora.
+    # claro na memória, o postgres descartável com os volumes anônimos dele)
+    # sai agora.
     find "$SHM_BASE" -maxdepth 1 -name 'stillon-backup.*' -exec rm -rf {} + || true
-    docker ps -aq --filter name=stillon-restauro- | xargs -r docker rm -f >/dev/null 2>&1 || true
+    docker ps -aq --filter name=stillon-restauro- | xargs -r docker rm -f -v >/dev/null 2>&1 || true
     nome=stillon-restauro-$$
     RESTAURO=$nome
     tmp=$(mktemp -d "$SHM_BASE/stillon-backup.XXXXXX")
