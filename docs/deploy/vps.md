@@ -2047,7 +2047,8 @@ cópia (`http://localhost:8080`) e recrie à mão na produção.
      "Leve a pública para a VPS" em diante (o `echo "ida e volta"` confere o par).
 
    O IP pode mudar: atualize o registro `A` (passo
-   1.4), o `~/.vigilume-vps`, o `~/.ssh/config`, e grave de novo `VPS_HOST` e `VPS_HOST_KEY`
+   1.4), o `~/.vigilume-vps`, o `HostName` do `~/.ssh/config` (editando a linha, sem acrescentar
+   outro `Host vigilume`: passo 2.6), e grave de novo `VPS_HOST` e `VPS_HOST_KEY`
    (passos 4.5 e 4.6; a VPS nova tem outra chave de servidor, e o `ssh` do seu computador vai
    reclamar dela: `ssh-keygen -R <IP velho>` e confira a nova pelo terminal do painel).
 3. Faça o primeiro deploy (passo 4.8) com o SHA que estava no ar (o último deploy verde do Actions).
