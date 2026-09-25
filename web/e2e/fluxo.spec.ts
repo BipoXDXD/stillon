@@ -39,7 +39,7 @@ let nomeDoAlvoEmLimpeza = ''
 // login é o mais apertado, 5 de burst por IP).
 async function apagarPeloNome(request: APIRequestContext, email: string, senha: string, nome: string) {
   nomeDoAlvoEmLimpeza = nome
-  const mutacao = { 'X-Requested-With': 'vigilume' }
+  const mutacao = { 'X-Requested-With': 'stillon' }
   const login = await comRecuo('o login', () =>
     request.post('/api/v1/auth/login', { headers: mutacao, data: { email, password: senha } }),
   )
@@ -99,7 +99,7 @@ test('login, cadastro de alvo, status, F5, detalhe, apagar, encerrar a sessão e
 
   // 1. Sem sessão: o splash e depois o login; nunca o painel piscando.
   await page.goto('/')
-  await expect(page.getByRole('heading', { name: 'Entrar no Vigilume' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Entrar no StillOn' })).toBeVisible()
   await controlePositivo(page, 'o login')
 
   // 2. Login só com o teclado, do topo da página: Tab até o e-mail, Tab até
@@ -117,7 +117,7 @@ test('login, cadastro de alvo, status, F5, detalhe, apagar, encerrar a sessão e
   //    cadastro, que não resolve DNS, e nunca resolve: sem rede externa.
   await page.getByRole('link', { name: 'Cadastrar alvo' }).click()
   await page.getByLabel('Nome').fill(nomeDoAlvo)
-  await page.getByLabel('URL').fill('https://vigilume-e2e.invalid/')
+  await page.getByLabel('URL').fill('https://stillon-e2e.invalid/')
   await page.getByRole('button', { name: 'Cadastrar' }).click()
   await expect(page.getByRole('heading', { name: nomeDoAlvo })).toBeVisible()
 
@@ -159,7 +159,7 @@ test('login, cadastro de alvo, status, F5, detalhe, apagar, encerrar a sessão e
   //    guardas: o HttpOnly é do servidor — este teste prova a propriedade.)
   const armazenado = await page.evaluate(() => JSON.stringify({ ...localStorage, ...sessionStorage }))
   expect(armazenado).not.toMatch(/eyJ/)
-  expect(await page.evaluate(() => document.cookie)).not.toContain('vigilume_refresh')
+  expect(await page.evaluate(() => document.cookie)).not.toContain('stillon_refresh')
 
   // 9. Zero violações de CSP no caminho todo, inclusive antes dos F5.
   await controlePositivo(page, 'o caminho até o passo 9')
@@ -172,7 +172,7 @@ test('login, cadastro de alvo, status, F5, detalhe, apagar, encerrar a sessão e
   await page.getByRole('alertdialog').getByRole('button', { name: 'Encerrar' }).click()
   await expect(page.getByText('Você encerrou esta sessão.')).toBeVisible()
   await page.reload()
-  await expect(page.getByRole('heading', { name: 'Entrar no Vigilume' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Entrar no StillOn' })).toBeVisible()
 
   // 11. Entrar de novo (o ?next= volta a Configurações), sair; F5 continua fora.
   await page.getByLabel('E-mail').fill(credenciais.email)
@@ -180,8 +180,8 @@ test('login, cadastro de alvo, status, F5, detalhe, apagar, encerrar a sessão e
   await page.getByRole('button', { name: 'Entrar' }).click()
   await expect(page.getByRole('heading', { name: 'Configurações' })).toBeVisible()
   await page.getByRole('button', { name: 'Sair' }).click()
-  await expect(page.getByRole('heading', { name: 'Entrar no Vigilume' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Entrar no StillOn' })).toBeVisible()
   await page.reload()
-  await expect(page.getByRole('heading', { name: 'Entrar no Vigilume' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Entrar no StillOn' })).toBeVisible()
   await controlePositivo(page, 'o fim do fluxo')
 })

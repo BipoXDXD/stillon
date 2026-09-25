@@ -23,7 +23,7 @@ import (
 // Marcador é o valor de html.cspNonce em web/vite.config.ts. O Vite o põe
 // nos <script> e <link> do index.html e num <meta property="csp-nonce">; o
 // handler troca cada ocorrência pelo nonce da resposta.
-const Marcador = "VIGILUME_CSP_NONCE"
+const Marcador = "STILLON_CSP_NONCE"
 
 // O dist inteiro, com o prefixo all: por dois motivos. Antes do primeiro
 // build, dist/ só tem o .gitkeep, e sem all: o compilador recusa o diretório

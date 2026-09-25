@@ -41,7 +41,7 @@ export type ResultadoLogin = { tipo: 'ok' } | { tipo: 'totp'; desafio: string }
 
 type Aviso = { tipo: 'encerrada' } | { tipo: 'iniciada' }
 
-const TRAVA = 'vigilume:refresh'
+const TRAVA = 'stillon:refresh'
 
 export function travaDoNavegador(): Travar {
   if (typeof navigator !== 'undefined' && navigator.locks) {
@@ -51,7 +51,7 @@ export function travaDoNavegador(): Travar {
 }
 
 export function canalDoNavegador(): Canal | null {
-  return typeof BroadcastChannel === 'undefined' ? null : new BroadcastChannel('vigilume:sessao')
+  return typeof BroadcastChannel === 'undefined' ? null : new BroadcastChannel('stillon:sessao')
 }
 
 export type Sessao = ReturnType<typeof criarSessao>

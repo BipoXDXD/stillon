@@ -10,11 +10,11 @@ import { codigoNovo } from './totp'
 // pediu uma troca ponta a ponta. Aqui o painel de produção, embutido no
 // binário, ativa o 2FA, troca de aplicativo e entra de novo com o novo.
 //
-// O Vigilume tem um usuário só, o das outras specs: este teste liga o 2FA
+// O StillOn tem um usuário só, o das outras specs: este teste liga o 2FA
 // nele e, no fim, desliga. Uma falha no meio o deixaria ligado para as specs
 // seguintes (uma spec nova depois de "troca", --repeat-each) ou para a
 // próxima rodada contra a mesma pilha. Por isso o afterAll desliga o 2FA pelo
-// CLI (vigilume user reset-2fa) mesmo com o teste vermelho, e o beforeAll faz
+// CLI (stillon user reset-2fa) mesmo com o teste vermelho, e o beforeAll faz
 // o mesmo antes, para uma rodada anterior interrompida não deixar o teste
 // começar com o 2FA ligado (M2 da revisão do painel do Plano 10). Roda na
 // pilha própria e contra o compose (o job e2e do CI, com E2E_COMPOSE_SERVICE);
@@ -101,7 +101,7 @@ test('ativar o 2FA, trocar de autenticador com o rotation, entrar com o app novo
 
   // 4. Sair e entrar com o app novo: o segredo trocou de verdade.
   await page.getByRole('button', { name: 'Sair' }).click()
-  await expect(page.getByRole('heading', { name: 'Entrar no Vigilume' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Entrar no StillOn' })).toBeVisible()
   await page.getByLabel('E-mail').fill(email)
   await page.getByLabel('Senha').fill(credenciais.senha)
   await page.getByRole('button', { name: 'Entrar' }).click()

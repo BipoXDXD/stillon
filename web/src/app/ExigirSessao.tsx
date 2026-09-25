@@ -14,7 +14,7 @@ export function ExigirSessao() {
       <>
         <AvisoDeContexto />
         <div className="grid min-h-screen place-items-center" aria-busy="true">
-          <p className="text-suave">Carregando o Vigilume…</p>
+          <p className="text-suave">Carregando o StillOn…</p>
         </div>
       </>
     )

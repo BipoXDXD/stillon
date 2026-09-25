@@ -62,7 +62,7 @@ test('duas abas recarregando juntas continuam dentro', async ({ page, context, c
   await controlePositivo(outra, 'segunda aba, antes dos F5')
 
   await segurarRefreshes([await context.newCDPSession(page), await context.newCDPSession(outra)])
-  const assentou = /^(Painel|Entrar no Vigilume)$/
+  const assentou = /^(Painel|Entrar no StillOn)$/
   for (let rodada = 0; rodada < 2; rodada++) {
     await Promise.all([page.reload(), outra.reload()])
     // As duas abas terminam o boot (dentro ou no login) antes de olhar o

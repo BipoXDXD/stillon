@@ -2,7 +2,7 @@ import { defineConfig, devices } from '@playwright/test'
 
 // O E2E roda contra o binário real (spec do Plano 6 §7.4; reconciliação,
 // item 4). O globalSetup sobe a pilha (Postgres em container, o binário com
-// o painel embutido, vigilume user create) — ou, com E2E_BASE_URL,
+// o painel embutido, stillon user create) — ou, com E2E_BASE_URL,
 // E2E_EMAIL e E2E_PASSWORD, usa uma pilha já de pé (o compose do Plano 7).
 // O webServer do Playwright não serve: ele sobe ANTES do globalSetup, e o
 // binário precisa do banco antes.

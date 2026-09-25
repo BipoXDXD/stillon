@@ -14,7 +14,7 @@ const saida = path.resolve(import.meta.dirname, '../internal/webui/dist')
 // binário. Este plugin devolve o .gitkeep depois de cada build.
 function manterGitkeep(): Plugin {
   return {
-    name: 'vigilume:gitkeep',
+    name: 'stillon:gitkeep',
     apply: 'build',
     closeBundle() {
       mkdirSync(saida, { recursive: true })
@@ -29,7 +29,7 @@ export default defineConfig({
   // O Vite põe este marcador em <meta property="csp-nonce">, nos <script> e
   // nos <link> do index.html; o handler Go (internal/webui) troca cada
   // ocorrência pelo nonce da resposta. O valor é webui.Marcador.
-  html: { cspNonce: 'VIGILUME_CSP_NONCE' },
+  html: { cspNonce: 'STILLON_CSP_NONCE' },
   // O limite de aviso sobe para o chunk principal (React, Router, Query, Radix,
   // Zod): o Recharts, que era metade do bundle, já saiu dele (lazy).
   build: { outDir: saida, emptyOutDir: true, sourcemap: false, chunkSizeWarningLimit: 700 },

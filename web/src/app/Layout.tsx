@@ -65,7 +65,7 @@ export function Layout() {
       <AvisoDeContexto />
       <header className="border-b border-borda">
         <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-4 px-4 py-3">
-          <span className="font-semibold">Vigilume</span>
+          <span className="font-semibold">StillOn</span>
           <nav aria-label="Principal" className="flex flex-wrap gap-1">
             {links.map((l) => (
               <NavLink

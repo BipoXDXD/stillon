@@ -16,16 +16,16 @@ export function violacoes(page: Page): string[] {
 export async function registrarCsp(page: Page) {
   const lista: string[] = []
   registros.set(page, lista)
-  await page.exposeFunction('vigilumeViolacao', (v: string) => {
+  await page.exposeFunction('stillonViolacao', (v: string) => {
     lista.push(v)
   })
   await page.addInitScript(() => {
     document.addEventListener('securitypolicyviolation', (e) => {
-      const w = window as unknown as { vigilumeViolacao: (v: string) => void }
+      const w = window as unknown as { stillonViolacao: (v: string) => void }
       // A violação do controle positivo chega com o <style> dele como alvo
       // (o evento é disparado no elemento e sobe até o document).
       const marca = e.target instanceof Element ? e.target.getAttribute('data-controle') : null
-      w.vigilumeViolacao(marca ? `controle ${marca}` : `${e.violatedDirective} ${e.blockedURI} ${e.sample}`)
+      w.stillonViolacao(marca ? `controle ${marca}` : `${e.violatedDirective} ${e.blockedURI} ${e.sample}`)
     })
   })
 }

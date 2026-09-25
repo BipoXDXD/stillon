@@ -9,7 +9,7 @@ export function AvisoDeContexto() {
     <div role="alert" className="border-b border-perigo bg-painel px-4 py-3 text-sm">
       <p className="mx-auto max-w-6xl">
         <strong>Este painel precisa de HTTPS (ou de localhost).</strong> Sem conexão segura, o navegador não coordena a
-        sessão entre abas: com mais de uma aba aberta, a sessão cai. Peça a quem opera o Vigilume para servir o painel
+        sessão entre abas: com mais de uma aba aberta, a sessão cai. Peça a quem opera o StillOn para servir o painel
         por HTTPS.
       </p>
     </div>

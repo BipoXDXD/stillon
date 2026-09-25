@@ -80,7 +80,7 @@ const respostas: Record<string, unknown> = {
 // e do confirm.
 const SEGREDO_NOVO = 'KRSXG5CTMVRXEZLU'
 const troca: z.input<typeof InicioDaTroca> = {
-  otpauth_uri: `otpauth://totp/Vigilume:dono%40exemplo.com?secret=${SEGREDO_NOVO}&issuer=Vigilume`,
+  otpauth_uri: `otpauth://totp/StillOn:dono%40exemplo.com?secret=${SEGREDO_NOVO}&issuer=StillOn`,
   rotation: '0123456789abcdef0123456789abcdef',
 }
 const codigosNovos: z.input<typeof ConfirmacaoTotp> = {
@@ -289,7 +289,7 @@ test('a barreira da CSP pega a violação que ainda não chegou', async ({ page 
     route.fulfill({ status: 401, json: { error: { code: 'invalid_session', message: '' }, trace_id: 't' } }),
   )
   await page.goto('/')
-  await expect(page.getByRole('heading', { name: 'Entrar no Vigilume' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Entrar no StillOn' })).toBeVisible()
   await page.evaluate(() => {
     const s = document.createElement('style')
     s.textContent = '.violacao-tardia{color:red}'
@@ -307,7 +307,7 @@ test('a barreira da CSP falha com o coletor quebrado', async ({ context }) => {
     route.fulfill({ status: 401, json: { error: { code: 'invalid_session', message: '' }, trace_id: 't' } }),
   )
   await semColetor.goto('/')
-  await expect(semColetor.getByRole('heading', { name: 'Entrar no Vigilume' })).toBeVisible()
+  await expect(semColetor.getByRole('heading', { name: 'Entrar no StillOn' })).toBeVisible()
   await expect(controlePositivo(semColetor, 'sem coletor')).rejects.toThrow(/sem coletor: a violação do controle positivo/)
 })
 
@@ -316,7 +316,7 @@ test('a tela de login, sem sessão', async ({ page }) => {
     route.fulfill({ status: 401, json: { error: { code: 'invalid_session', message: '' }, trace_id: 't' } }),
   )
   await page.goto('/')
-  await expect(page.getByRole('heading', { name: 'Entrar no Vigilume' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Entrar no StillOn' })).toBeVisible()
   const r = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze()
   expect(r.violations.map((v) => v.id)).toEqual([])
   await controlePositivo(page, 'login')
