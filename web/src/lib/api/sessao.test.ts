@@ -296,6 +296,24 @@ describe('erros de rede', () => {
     expect(sessao.estado()).toBe('anonimo')
   })
 
+  // A9 do Plano 10: um logout que o servidor não conseguiu fazer responde
+  // 500 e não apaga o cookie. A aba não larga a sessão: o erro sobe, e o
+  // Sair pode ser tentado de novo. Sem rede continua como acima (a aba
+  // larga). Sabotagem: tirar o "if (r && !r.ok) throw" de sair() → anônimo.
+  it('logout que o servidor recusa sobe o erro e não larga a sessão', async () => {
+    const falsa = usarApiFalsa()
+    const { sessao } = novaSessao()
+    await sessao.entrar(EMAIL, SENHA)
+    falsa.estado.forcar.set('POST /auth/logout', { status: 500, code: 'internal_error' })
+    await expect(sessao.sair()).rejects.toMatchObject({ status: 500, code: 'internal_error' })
+    expect(sessao.token()).not.toBeNull()
+    expect(sessao.estado()).toBe('autenticado')
+    falsa.estado.forcar.delete('POST /auth/logout')
+    await sessao.sair()
+    expect(sessao.estado()).toBe('anonimo')
+    expect(sessao.motivo()).toBe('saiu')
+  })
+
   // M5 da revisão final: um logout que nunca responde (rede presa) travava
   // o "Sair" para sempre. Com o prazo, a aba larga a sessão do mesmo jeito.
   // O buscar imita o fetch: só rejeita quando o sinal aborta. Sabotagem:

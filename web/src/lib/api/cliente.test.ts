@@ -4,6 +4,7 @@ import { EMAIL, rotacao, SEGREDO_NOVO, SENHA, TOTP_NOVO, TOTP_OK } from '@/test/
 import { buscarDoTeste, novaSessao, usarApiFalsa } from '@/test/ambiente'
 import { servidor } from '@/test/setup'
 import { ApiError } from './http'
+import { mensagemDe } from './mensagens'
 
 async function logado() {
   const falsa = usarApiFalsa()
@@ -222,6 +223,57 @@ describe('o envelope de erro', () => {
     expect(e).toBeInstanceOf(ApiError)
     expect(e).toMatchObject({ status: 400, code: 'validation_failed', traceId: 'trace-falso' })
     expect((e as ApiError).fields).toEqual([{ field: 'url', reason: 'forbidden' }])
+  })
+
+  // A1 do Plano 10: o 429 do teto de hashes manda Retry-After em segundos.
+  // Ele vai para o erro e para o texto; a forma de data HTTP não é lida (o
+  // texto de sempre). Sabotagem: em duracao(), trocar o Math.ceil por
+  // Math.floor → "1 minuto" para 90 s.
+  it('o Retry-After de um 429 vai para o erro e para o texto', async () => {
+    const { api } = await logado()
+    const esperas: [string, number | null, string][] = [
+      ['1', 1, 'Muitas tentativas. Aguarde 1 segundo e tente de novo.'],
+      ['2', 2, 'Muitas tentativas. Aguarde 2 segundos e tente de novo.'],
+      ['90', 90, 'Muitas tentativas. Aguarde 2 minutos e tente de novo.'],
+      ['Wed, 21 Oct 2026 07:28:00 GMT', null, 'Muitas requisições. Aguarde um minuto e tente de novo.'],
+    ]
+    for (const [cabecalho, segundos, texto] of esperas) {
+      servidor.use(
+        http.get(
+          '*/api/v1/me',
+          () =>
+            HttpResponse.json(
+              { error: { code: 'rate_limited', message: '' }, trace_id: 't' },
+              { status: 429, headers: { 'Retry-After': cabecalho } },
+            ),
+          { once: true },
+        ),
+      )
+      const e = await api.me().catch((x: unknown) => x)
+      expect({ cabecalho, retryAfter: (e as ApiError).retryAfter, texto: mensagemDe(e) }).toEqual({
+        cabecalho,
+        retryAfter: segundos,
+        texto,
+      })
+    }
+  })
+
+  // B5 do Plano 10: método inexistente sob /api/ responde 405 no envelope,
+  // com o código novo method_not_allowed (o painel velho, depois de uma rota
+  // mudar). Sabotagem: tirar method_not_allowed de porCodigo → "Não foi
+  // possível concluir.".
+  it('405 method_not_allowed diz que o painel pode estar desatualizado', async () => {
+    const { api } = await logado()
+    servidor.use(
+      http.get(
+        '*/api/v1/me',
+        () => HttpResponse.json({ error: { code: 'method_not_allowed', message: '' }, trace_id: 't' }, { status: 405 }),
+        { once: true },
+      ),
+    )
+    const e = await api.me().catch((x: unknown) => x)
+    expect(e).toMatchObject({ status: 405, code: 'method_not_allowed' })
+    expect(mensagemDe(e)).toBe('O servidor não aceita esta operação. O painel pode estar desatualizado: recarregue a página.')
   })
 
   // Um 502 do proxy com HTML não é o envelope: vira 'unexpected', com o

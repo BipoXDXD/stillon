@@ -203,16 +203,21 @@ export function criarSessao(o: Opcoes) {
   }
 
   async function sair(): Promise<void> {
+    let r: Response | null = null
     try {
       // Com prazo: uma rede presa não pode deixar o "Sair" sem resposta. O
       // prazo vencido chega como ApiError 'network' (enviar só repassa o
       // AbortError, e o do prazo é um TimeoutError).
-      await enviar(o.buscar, { metodo: 'POST', caminho: '/auth/logout', sinal: AbortSignal.timeout(prazoMs) })
+      r = await enviar(o.buscar, { metodo: 'POST', caminho: '/auth/logout', sinal: AbortSignal.timeout(prazoMs) })
     } catch (e) {
       // Sem rede, o logout no servidor não acontece, mas a aba larga a
       // sessão do mesmo jeito: o refresh que ficou vence sozinho.
       if (!(e instanceof ApiError)) throw e
     }
+    // A9 do Plano 10: o servidor que não conseguiu revogar a sessão responde
+    // 500 e não apaga o cookie, para o cliente tentar de novo. Largar a
+    // sessão aqui seria fingir que saiu: ela continuaria viva no servidor.
+    if (r && !r.ok) throw await lerErro(r)
     encerrar('saiu')
   }
 

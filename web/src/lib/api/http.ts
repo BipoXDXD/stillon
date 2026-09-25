@@ -12,19 +12,30 @@ export type ErroDeCampo = { field: string; reason: string }
 // ApiError é a única forma de erro que chega às telas. code é o contrato com
 // o servidor; 'network' e 'unexpected' são do cliente: rede caída e resposta
 // que não é o envelope (502 do proxy, HTML, JSON inválido).
+// retryAfter: os segundos do cabeçalho Retry-After de um 429, quando vem
+// (o teto de hashes em paralelo do login manda; A1 do Plano 10).
 export class ApiError extends Error {
   readonly status: number
   readonly code: string
   readonly fields: ErroDeCampo[]
   readonly traceId: string | null
+  readonly retryAfter: number | null
 
-  constructor(status: number, code: string, message: string, fields: ErroDeCampo[] = [], traceId: string | null = null) {
+  constructor(
+    status: number,
+    code: string,
+    message: string,
+    fields: ErroDeCampo[] = [],
+    traceId: string | null = null,
+    retryAfter: number | null = null,
+  ) {
     super(message)
     this.name = 'ApiError'
     this.status = status
     this.code = code
     this.fields = fields
     this.traceId = traceId
+    this.retryAfter = retryAfter
   }
 }
 
@@ -59,7 +70,18 @@ export async function lerErro(r: Response): Promise<ApiError> {
     return new ApiError(r.status, 'unexpected', `Resposta inesperada do servidor (${r.status}).`)
   }
   const traceId = typeof corpo?.trace_id === 'string' && corpo.trace_id !== '' ? corpo.trace_id : null
-  return new ApiError(r.status, e.code, typeof e.message === 'string' ? e.message : '', camposDe(e.fields), traceId)
+  // Só a forma em segundos (RFC 9110 §10.2.3), que é a do servidor; a data
+  // HTTP fica de fora e cai no texto de sempre.
+  const espera = r.headers.get('Retry-After')?.trim() ?? ''
+  const retryAfter = /^\d+$/.test(espera) ? Number(espera) : null
+  return new ApiError(
+    r.status,
+    e.code,
+    typeof e.message === 'string' ? e.message : '',
+    camposDe(e.fields),
+    traceId,
+    retryAfter,
+  )
 }
 
 // lerCorpo lê uma resposta de sucesso pelo schema da rota. JSON quebrado ou

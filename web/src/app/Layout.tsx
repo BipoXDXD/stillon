@@ -2,8 +2,10 @@ import { useState } from 'react'
 import { NavLink, Outlet } from 'react-router'
 import { ProvedorDeAnuncios } from '@/components/Anunciador'
 import { AvisoDeContexto } from '@/components/AvisoDeContexto'
+import { useAvisar } from '@/components/ui/avisos'
 import { Botao } from '@/components/ui/botao'
 import { useAbertos, useMe } from '@/lib/api/consultas'
+import { mensagemDe } from '@/lib/api/mensagens'
 import { useTema, type Tema } from '@/lib/tema'
 import { cn } from '@/lib/utils'
 import { useSessao } from './contexto'
@@ -47,6 +49,7 @@ function ContadorDeAbertos({ n }: { n: string }) {
 
 export function Layout() {
   const { sessao } = useSessao()
+  const avisar = useAvisar()
   const [saindo, setSaindo] = useState(false)
   const me = useMe()
   const abertos = useAbertos().data
@@ -98,6 +101,10 @@ export function Layout() {
                 setSaindo(true)
                 try {
                   await sessao.sair()
+                } catch (e) {
+                  // O servidor não fez o logout (A9 do Plano 10): a sessão
+                  // continua, e o Sair pode ser tentado de novo.
+                  avisar(`Não foi possível sair. ${mensagemDe(e)}`, 'erro')
                 } finally {
                   setSaindo(false)
                 }
