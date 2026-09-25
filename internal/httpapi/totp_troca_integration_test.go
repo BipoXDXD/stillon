@@ -3,6 +3,7 @@ package httpapi_test
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/url"
 	"sync"
@@ -516,20 +517,33 @@ func TestRotateRechecksTheFamilyUnderTheLock(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// A requisição é montada aqui, e a goroutine só a envia e lê a resposta:
+	// nada de t.Fatal fora da goroutine do teste (ele não pararia o teste, e
+	// o <-fim abaixo esperaria até o timeout). As asserções ficam depois do
+	// <-fim.
 	type resposta struct {
 		status int
-		codigo string
+		corpo  []byte
+		err    error
 	}
+	req, err := http.NewRequest(http.MethodPost, a.srv.URL+"/api/v1/auth/totp/rotate",
+		jsonBody(t, map[string]string{"password": testPass, "code": codigoDe(t, a, velho)}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Requested-With", "vigilume")
+	req.Header.Set("Authorization", "Bearer "+token)
 	fim := make(chan resposta, 1)
-	corpo := map[string]string{"password": testPass, "code": codigoDe(t, a, velho)}
 	go func() {
-		resp := postComToken(t, http.DefaultClient, a.srv.URL+"/api/v1/auth/totp/rotate", token, corpo)
-		defer resp.Body.Close()
-		r := resposta{status: resp.StatusCode}
-		if resp.StatusCode != http.StatusOK {
-			r.codigo = codigoDoErro(t, resp)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			fim <- resposta{err: err}
+			return
 		}
-		fim <- r
+		defer resp.Body.Close()
+		corpo, err := io.ReadAll(resp.Body)
+		fim <- resposta{status: resp.StatusCode, corpo: corpo, err: err}
 	}()
 
 	esperou := false
@@ -553,11 +567,22 @@ func TestRotateRechecksTheFamilyUnderTheLock(t *testing.T) {
 	}
 	soltar()
 	r := <-fim
-	if !esperou {
-		t.Fatalf("o rotate não esperou a trava do usuário (terminou com %d %s)", r.status, r.codigo)
+	if r.err != nil {
+		t.Fatalf("rotate: %v", r.err)
 	}
-	if r.status != http.StatusUnauthorized || r.codigo != "unauthorized" {
-		t.Errorf("rotate com a família revogada sob a trava: %d %s, queria 401 unauthorized", r.status, r.codigo)
+	var env envelope
+	codigo := ""
+	if r.status != http.StatusOK {
+		if err := json.Unmarshal(r.corpo, &env); err != nil {
+			t.Fatalf("rotate %d sem envelope de erro: %q", r.status, r.corpo)
+		}
+		codigo = env.Error.Code
+	}
+	if !esperou {
+		t.Fatalf("o rotate não esperou a trava do usuário (terminou com %d %s)", r.status, codigo)
+	}
+	if r.status != http.StatusUnauthorized || codigo != "unauthorized" {
+		t.Errorf("rotate com a família revogada sob a trava: %d %s, queria 401 unauthorized", r.status, codigo)
 	}
 	if temPendente(t, a) {
 		t.Error("o rotate com a família revogada gravou o pendente")

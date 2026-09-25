@@ -68,6 +68,9 @@ Spec: `docs/superpowers/specs/2026-09-25-plano-9-operacao-design.md`.
   ao passo 1 com "concluída ou cancelada em outra aba", e não diz que o código do passo 1 foi gasto.
 - **O E2E de acessibilidade falhou uma vez sem causa encontrada.** Se repetir, guardar o trace do
   Playwright antes de rodar de novo.
+- **O rotate gasta a prova antes da trava.** O `StartRotation` verifica o código (e consome o
+  timestep ou o código de recuperação) antes de tomar a trava de sessões e reconferir a família.
+  Na corrida em que a família morre sob a trava, o rotate responde 401 e o código já foi gasto.
 - **As checagens de CSP do E2E dos diálogos de canal leem as violações uma vez**, sem
   `expect.poll`: uma violação que chegue depois da leitura passa despercebida.
 
