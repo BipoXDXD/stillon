@@ -161,6 +161,25 @@ que a onda de correção não fechou. Os que ela fechou: auth M1 (a espera do Ar
   `http://[::1]:8080.evil.com`, quebra de linha na `PUBLIC_BASE_URL`): o host real nunca é outro,
   mas o usuário demo já foi criado quando o boot falha. Endurecer: o resto depois do host vazio ou
   `:[0-9]+`, e recusar espaço, tab e quebra de linha.
+- revisão final, conta: a troca de senha consome o código do 2FA ou o de recuperação
+  (`s.totp.Verify`) **antes** do `auth.HashPassword` da senha nova (`internal/account/account.go`,
+  `ChangePassword`); sem vaga no semáforo do Argon2id, ela responde `429` com o código já gasto. O
+  painel (`erroDeCredencial` em `PaginaConfiguracoes.tsx`) só avisa do código de recuperação
+  possivelmente gasto em `401` ou resposta perdida, não no `429`.
+- revisão final, cookie de dispositivo: o carimbo não muda com o encerramento de sessões (nem com
+  "encerrar todas") nem com a troca de autenticador; só com a troca de senha, o `set-password`, o
+  `reset-2fa` e a ativação ou o disable do 2FA. Quem teve acesso completo (senha e 2FA) pode cunhar
+  vários cookies antes de perdê-lo, e cada um tem o seu contador (5 chutes a cada 15 min) no
+  `/totp/verify`, fora do bloqueio da conta. A remediação é trocar a senha, e o painel e o README não
+  dizem isso. O mesmo carimbo derruba o cookie do próprio dono nessas operações (ver "Limites
+  conhecidos"): re-emitir no Plano 11.
+- revisão final, `SameOrigin`: `internal/targets/validate.go` usa o `golang.org/x/net/idna` direto
+  (versão do `go.mod`), e o `net/http` disca com a cópia embutida na biblioteca padrão (versão do
+  Go). As tabelas Unicode das duas podem divergir num host novo, e a comparação deixa de ser "como
+  o `net/http` disca" exatamente nesse host.
+- revisão final, e2e: o `docker compose exec app /vigilume user reset-2fa` do `troca.spec`
+  (`E2E_COMPOSE_SERVICE: app` no job `e2e` do `ci.yml`) só foi validado localmente; conferir no
+  primeiro CI que a troca roda e não é pulada.
 
 ## Para o Plano 12 (de `PENDENCIAS-PARA-O-PLANO-10.md`, ainda abertas)
 
