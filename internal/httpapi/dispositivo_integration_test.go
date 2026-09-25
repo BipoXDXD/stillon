@@ -244,10 +244,18 @@ func TestDeviceFailuresCountOnTheDeviceOnly(t *testing.T) {
 // O cookie vale também no segundo passo: com a conta trancada, o dono com o
 // cookie recebe o desafio e fecha o login no /totp/verify. O mesmo desafio,
 // apresentado sem o cookie, cai no bloqueio da conta.
+//
+// O cookie do login do cadastro não serve: ligar o 2FA muda o carimbo das
+// credenciais (I1 da revisão do Plano 10). O dono entra de novo, com o 2FA,
+// e é esse login completo que põe o cookie.
 func TestDeviceCookieAlsoCoversTheSecondFactor(t *testing.T) {
 	a := apiAtrasDeProxy(t)
 	dono := clientWithJar(t)
-	segredo := cadastrarTOTP(t, a, dono) // o login completo do cadastro pôs o cookie
+	segredo := cadastrarTOTP(t, a, clientWithJar(t))
+	a.clk.Advance(time.Second)
+	if st := entrarComFator(t, a, dono, segredo); st != http.StatusOK {
+		t.Fatalf("login completo do dono com o 2FA: %d", st)
+	}
 	bloquearConta(t, a)
 	a.clk.Advance(time.Second)
 
@@ -453,4 +461,31 @@ func TestLockedAccountDoesNotBurnARecoveryCode(t *testing.T) {
 	if _, _, codigos, _ := estadoDoSegundoFator(t, a); codigos != 10 {
 		t.Errorf("%d códigos de recuperação depois da recusa, queria 10: o código foi gasto", codigos)
 	}
+}
+
+// entrarComFator faz o login em dois passos com o cliente dado, de uma origem
+// nova, e devolve o status do /totp/verify (ou o do login, se ele não deu o
+// desafio). Deixa o relógio 30 s adiante: o timestep usado fica para trás.
+func entrarComFator(t *testing.T, a *api, c *http.Client, segredo string) int {
+	t.Helper()
+	resp, err := postDe(c, a.srv.URL+"/api/v1/auth/login", map[string]string{"email": testEmail, "password": testPass})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var d struct {
+		Challenge string `json:"challenge"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&d)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || d.Challenge == "" {
+		return resp.StatusCode
+	}
+	v, err := postDe(c, a.srv.URL+"/api/v1/auth/totp/verify",
+		map[string]string{"challenge": d.Challenge, "code": codigoDe(t, a, segredo)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	v.Body.Close()
+	a.clk.Advance(30 * time.Second)
+	return v.StatusCode
 }

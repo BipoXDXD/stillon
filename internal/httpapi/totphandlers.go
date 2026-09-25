@@ -201,7 +201,7 @@ func (h *AuthHandlers) TOTPVerify(w http.ResponseWriter, r *http.Request) {
 	// /totp/verify é por IP, e um atacante com várias origens passa por cima
 	// dele sem que a conta jamais tranque. Bloqueado é o mesmo 401 genérico
 	// do login (R34), sem olhar o código.
-	tentativas := h.tentativas(r, userID, now)
+	tentativas := h.tentativas(r, user, now)
 	reservou, err := tentativas.Reserve(r.Context())
 	if err != nil {
 		h.internal(w, r, "reservar tentativa de segundo fator", err)
@@ -250,7 +250,7 @@ func (h *AuthHandlers) TOTPVerify(w http.ResponseWriter, r *http.Request) {
 	// mudou desde então (set-password, troca de senha), Issue recusa, e o
 	// desafio obtido com a senha antiga morre com ela. A prova do 2FA é
 	// reconferida do mesmo jeito (A4 do Plano 10).
-	h.issue(w, r, userID, desafio.Stamp, &prova)
+	h.issue(w, r, userID, desafio.Stamp, &prova, user.DeviceStamp())
 }
 
 type passwordRequest struct {

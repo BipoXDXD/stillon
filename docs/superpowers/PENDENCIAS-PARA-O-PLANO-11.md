@@ -172,6 +172,15 @@ Os limites dos Planos 7 e 8 seguem como estão no `PENDENCIAS-PARA-O-PLANO-8.md`
   (`deploy/ci/checar-compose.sh`).
 - **O rollup gravado no futuro fica no banco** (D4) até a retenção o apagar pela idade; a barra da
   status page o mostra na hora dele quando o tempo real chegar lá.
+- **O cookie de dispositivo morre com as credenciais** (I1 da revisão): o MAC cobre o hash da senha
+  e a data de ativação do 2FA, então a troca de senha, o `set-password`, o `reset-2fa`, a ativação
+  e o disable do 2FA invalidam todos os cookies da conta, **os do dono inclusive**: ele volta ao
+  bloqueio da conta até o próximo login completo (o mesmo custo do D7 com a `MASTER_KEY`); o
+  rehash do Argon2id no login (parâmetros novos) também. A troca de autenticador **não** muda o
+  carimbo: quem tinha a senha e a semente e guardou cookies continua com eles até o dono trocar
+  a senha. Um cookie cunhado com o 2FA desligado volta a valer se o 2FA for ligado e resetado com
+  a mesma senha (quem o tem entrou com essa senha, que sozinha já abre a conta). Para o Plano 11:
+  re-emitir o cookie na resposta das rotas em que o dono logado muda a própria credencial.
 - **O dono num navegador novo (ou com os cookies limpos) enquanto um anônimo mantém a conta
   travada** não tem cookie de dispositivo: espera os 15 min ou usa `vigilume user set-password`
   (A3, D6 do plano).

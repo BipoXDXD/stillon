@@ -30,6 +30,16 @@ type User struct {
 	// instante do último desafio consumido, nil se nenhum foi. Só ByID a
 	// preenche; é o TOTPVerify quem a lê.
 	TOTPChallengeMark *time.Time
+	// TOTPConfirmedAt é a data de ativação do 2FA, nil se desligado. ByEmail
+	// e ByID a preenchem: entra no carimbo do cookie de dispositivo
+	// (DeviceStamp).
+	TOTPConfirmedAt *time.Time
+}
+
+// DeviceStamp é o carimbo das credenciais atuais do usuário para o cookie de
+// dispositivo (ver NewDeviceStamp).
+func (u User) DeviceStamp() DeviceStamp {
+	return NewDeviceStamp(u.PasswordHash, u.TOTPConfirmedAt)
 }
 
 // IsLocked recebe o instante em vez de chamar time.Now para que o bloqueio
@@ -157,9 +167,9 @@ type UserStore interface {
 func (s *PGStore) ByEmail(ctx context.Context, email string) (User, error) {
 	var u User
 	err := s.pool.QueryRow(ctx, `
-		SELECT id, email, password_hash, failed_attempts, locked_until
+		SELECT id, email, password_hash, failed_attempts, locked_until, totp_confirmed_at
 		  FROM users WHERE email = $1`, email).
-		Scan(&u.ID, &u.Email, &u.PasswordHash, &u.FailedAttempts, &u.LockedUntil)
+		Scan(&u.ID, &u.Email, &u.PasswordHash, &u.FailedAttempts, &u.LockedUntil, &u.TOTPConfirmedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return User{}, ErrNotFound
 	}
@@ -281,9 +291,9 @@ func (s *PGStore) ConsumeChallenge(ctx context.Context, userID uuid.UUID, issued
 func (s *PGStore) ByID(ctx context.Context, userID uuid.UUID) (User, error) {
 	var u User
 	err := s.pool.QueryRow(ctx, `
-		SELECT id, email, password_hash, failed_attempts, locked_until, totp_challenge_mark
+		SELECT id, email, password_hash, failed_attempts, locked_until, totp_challenge_mark, totp_confirmed_at
 		  FROM users WHERE id = $1`, userID).
-		Scan(&u.ID, &u.Email, &u.PasswordHash, &u.FailedAttempts, &u.LockedUntil, &u.TOTPChallengeMark)
+		Scan(&u.ID, &u.Email, &u.PasswordHash, &u.FailedAttempts, &u.LockedUntil, &u.TOTPChallengeMark, &u.TOTPConfirmedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return User{}, ErrNotFound
 	}

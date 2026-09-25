@@ -104,7 +104,7 @@ func (h *AuthHandlers) Login(w http.ResponseWriter, r *http.Request) {
 	// A spec escolheu esse lado: o bloqueio dura 15 minutos e o evento fica no
 	// audit log, que é onde essa informação pertence. Não "melhore a UX" aqui
 	// sem reabrir o buraco.
-	tentativas := h.tentativas(r, user.ID, now)
+	tentativas := h.tentativas(r, user, now)
 	ok, needsRehash, err := auth.CheckPassword(r.Context(), tentativas, user, req.Password)
 	if err != nil {
 		h.internal(w, r, "verificar senha", err)
@@ -169,20 +169,25 @@ func (h *AuthHandlers) Login(w http.ResponseWriter, r *http.Request) {
 		slog.Error("zerar falhas de login", "erro", err)
 	}
 
-	h.issue(w, r, user.ID, auth.PasswordStamp(verificado), nil)
+	// O cookie de dispositivo sai com o carimbo do hash verificado (o do
+	// rehash, se houve): é ele o hash da conta daqui em diante.
+	h.issue(w, r, user.ID, auth.PasswordStamp(verificado), nil, auth.NewDeviceStamp(verificado, user.TOTPConfirmedAt))
 }
 
 // tentativas escolhe o contador do login (A3 do Plano 10): o do cookie de
 // dispositivo, se ele vale para esta conta e não está sendo ignorado (errou o
 // limite há menos de 15 min); senão, o bloqueio da conta, como antes. O
 // limitador por IP vale para os dois.
-func (h *AuthHandlers) tentativas(r *http.Request, userID uuid.UUID, now time.Time) auth.Attempts {
+func (h *AuthHandlers) tentativas(r *http.Request, user auth.User, now time.Time) auth.Attempts {
 	if ck, err := r.Cookie(deviceCookieName); err == nil {
-		if id, ok := h.dispositivos.Check(ck.Value, userID); ok && !h.dispositivos.Ignored(id) {
+		// O carimbo das credenciais de agora (I1 da revisão do Plano 10): o
+		// cookie cunhado antes de uma troca de senha, set-password ou
+		// reset-2fa não vale mais.
+		if id, ok := h.dispositivos.Check(ck.Value, user.ID, user.DeviceStamp()); ok && !h.dispositivos.Ignored(id) {
 			return h.dispositivos.Attempts(id)
 		}
 	}
-	return auth.AccountAttempts(h.users, userID, now)
+	return auth.AccountAttempts(h.users, user.ID, now)
 }
 
 // devolverTentativa devolve a reserva de uma prova certa que não terminou o
@@ -220,7 +225,7 @@ func (h *AuthHandlers) Refresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.grantSession(w, r, token, s, false)
+	h.grantSession(w, r, token, s, nil)
 }
 
 // Logout encerra a família do refresh apresentado e apaga o cookie.
@@ -249,7 +254,10 @@ func (h *AuthHandlers) Logout(w http.ResponseWriter, r *http.Request) {
 // Com o 2FA (prova não nil), a sessão também só nasce se o segredo que aceitou
 // o código ainda for o ativo (A4 do Plano 10); se uma troca de autenticador ou
 // um disable comitou no meio, o mesmo 401 invalid_credentials.
-func (h *AuthHandlers) issue(w http.ResponseWriter, r *http.Request, userID uuid.UUID, stamp string, prova *auth.SecondFactorProof) {
+//
+// dispositivo é o carimbo das credenciais para o cookie de dispositivo que o
+// login completo recebe (ver auth.DeviceStamp).
+func (h *AuthHandlers) issue(w http.ResponseWriter, r *http.Request, userID uuid.UUID, stamp string, prova *auth.SecondFactorProof, dispositivo auth.DeviceStamp) {
 	var token string
 	var s auth.Session
 	var err error
@@ -266,7 +274,7 @@ func (h *AuthHandlers) issue(w http.ResponseWriter, r *http.Request, userID uuid
 		h.internal(w, r, "emitir sessão", err)
 		return
 	}
-	h.grantSession(w, r, token, s, true)
+	h.grantSession(w, r, token, s, &dispositivo)
 }
 
 // grantSession entrega a sessão ao cliente, e a ORDEM aqui é o ponto (item
@@ -285,18 +293,19 @@ func (h *AuthHandlers) issue(w http.ResponseWriter, r *http.Request, userID uuid
 // O access token leva a família da sessão (claim sid): é a mesma família do
 // refresh que vai no cookie.
 //
-// login diz que a sessão nasce de um login completo (senha e, se ligado, o
-// 2FA), e não de uma renovação: só aí sai um cookie de dispositivo novo (A3 do
-// Plano 10), pela mesma ordem — depois de o access token ser assinado.
-func (h *AuthHandlers) grantSession(w http.ResponseWriter, r *http.Request, refresh string, s auth.Session, login bool) {
+// dispositivo não nil diz que a sessão nasce de um login completo (senha e,
+// se ligado, o 2FA), e não de uma renovação: só aí sai um cookie de
+// dispositivo novo (A3 do Plano 10), com esse carimbo das credenciais, pela
+// mesma ordem — depois de o access token ser assinado.
+func (h *AuthHandlers) grantSession(w http.ResponseWriter, r *http.Request, refresh string, s auth.Session, dispositivo *auth.DeviceStamp) {
 	access, err := auth.NewAccessToken(h.jwtSecret, s.UserID, s.FamilyID, h.clk.Now())
 	if err != nil {
 		h.internal(w, r, "assinar access token", err)
 		return
 	}
 	h.setCookie(w, refresh, s.ExpiresAt)
-	if login {
-		h.setDeviceCookie(w, s.UserID)
+	if dispositivo != nil {
+		h.setDeviceCookie(w, s.UserID, *dispositivo)
 	}
 	apierr.WriteJSON(w, http.StatusOK, tokenResponse{
 		AccessToken: access,
@@ -323,8 +332,8 @@ func (h *AuthHandlers) setCookie(w http.ResponseWriter, token string, expires ti
 // são os do refresh (HttpOnly, SameSite=Strict, Path /api/v1/auth, Secure com
 // https), e a validade é auth.DeviceTTL. Uma falha ao sortear o identificador
 // não derruba o login: o próximo login completo tenta de novo.
-func (h *AuthHandlers) setDeviceCookie(w http.ResponseWriter, userID uuid.UUID) {
-	valor, _, err := h.dispositivos.Issue(userID)
+func (h *AuthHandlers) setDeviceCookie(w http.ResponseWriter, userID uuid.UUID, carimbo auth.DeviceStamp) {
+	valor, _, err := h.dispositivos.Issue(userID, carimbo)
 	if err != nil {
 		slog.Error("emitir cookie de dispositivo", "erro", err)
 		return

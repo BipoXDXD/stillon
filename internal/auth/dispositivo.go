@@ -29,6 +29,14 @@ import (
 // em memória, e cinco falhas fazem o cookie ser ignorado por 15 min (o login
 // volta ao bloqueio da conta). Nada novo no banco: o MAC é a prova, e a chave
 // é derivada da MASTER_KEY com um rótulo próprio.
+//
+// O MAC cobre também um carimbo das credenciais da conta (DeviceStamp; I1 da
+// revisão do Plano 10): o hash da senha e a data de ativação do 2FA. Sem ele,
+// os cookies de quem já teve acesso completo sobreviviam à remediação do dono
+// (troca de senha, set-password, reset-2fa, que encerram as sessões), cada um
+// com o seu contador fora do bloqueio da conta. Com ele, esses eventos
+// invalidam todos os cookies da conta, os do dono inclusive: ele volta ao
+// bloqueio da conta até o próximo login completo.
 
 // DeviceTTL é a validade do cookie de dispositivo. O prazo vai dentro do
 // cookie, sob o MAC: o servidor o confere, e não só o navegador.
@@ -73,8 +81,34 @@ func NewDevices(masterKey []byte, clk clock.Clock) *Devices {
 	return &Devices{chave: chave, clk: clk, contas: map[DeviceID]*contaDeDispositivo{}}
 }
 
-// Issue emite o valor de um cookie novo para o usuário, e o prazo dele.
-func (d *Devices) Issue(userID uuid.UUID) (value string, expires time.Time, err error) {
+// DeviceStamp é o carimbo das credenciais que o cookie de dispositivo leva
+// sob o MAC: o SHA-256 do hash da senha e da data de ativação do 2FA (nil,
+// desligado). Muda com a troca de senha e o set-password (o hash) e com o
+// reset-2fa, a ativação e o disable (a data). Não muda com a troca de
+// autenticador, que mantém a data de ativação.
+//
+// Um cookie cunhado com o 2FA desligado volta a valer se o 2FA for ligado e
+// depois resetado com a mesma senha: quem o tem entrou com essa senha, que
+// continua valendo e, com o 2FA desligado, já abre a conta sozinha.
+type DeviceStamp [sha256.Size]byte
+
+// NewDeviceStamp calcula o carimbo de um hash de senha e da data de ativação
+// do 2FA.
+func NewDeviceStamp(passwordHash string, totpConfirmedAt *time.Time) DeviceStamp {
+	h := sha256.New()
+	h.Write([]byte(passwordHash))
+	h.Write([]byte{0})
+	if totpConfirmedAt != nil {
+		h.Write(binary.BigEndian.AppendUint64(nil, uint64(totpConfirmedAt.UnixMicro()))) // #nosec G115 -- só identidade: o sinal não importa
+	}
+	var c DeviceStamp
+	h.Sum(c[:0])
+	return c
+}
+
+// Issue emite o valor de um cookie novo para o usuário, com o carimbo das
+// credenciais atuais dele, e o prazo do cookie.
+func (d *Devices) Issue(userID uuid.UUID, carimbo DeviceStamp) (value string, expires time.Time, err error) {
 	var id DeviceID
 	if _, err := rand.Read(id[:]); err != nil {
 		return "", time.Time{}, fmt.Errorf("sortear o dispositivo: %w", err)
@@ -83,20 +117,21 @@ func (d *Devices) Issue(userID uuid.UUID) (value string, expires time.Time, err 
 	bruto := make([]byte, 0, tamValorDecodific)
 	bruto = append(bruto, id[:]...)
 	bruto = binary.BigEndian.AppendUint64(bruto, uint64(expires.Unix())) // #nosec G115 -- um instante de 2026 em diante é positivo
-	bruto = append(bruto, d.mac(userID, bruto)...)
+	bruto = append(bruto, d.mac(userID, carimbo, bruto)...)
 	return base64.RawURLEncoding.EncodeToString(bruto), expires, nil
 }
 
-// Check confere o cookie para a conta userID: formato, prazo e MAC. Um cookie
-// de outra conta, vencido, adulterado ou assinado com outra chave mestra não
-// vale, e quem chama segue pelo bloqueio da conta.
-func (d *Devices) Check(value string, userID uuid.UUID) (DeviceID, bool) {
+// Check confere o cookie para a conta userID com as credenciais atuais dela
+// (carimbo): formato, prazo e MAC. Um cookie de outra conta, vencido,
+// adulterado, assinado com outra chave mestra ou cunhado antes de a senha ou o
+// 2FA mudarem não vale, e quem chama segue pelo bloqueio da conta.
+func (d *Devices) Check(value string, userID uuid.UUID, carimbo DeviceStamp) (DeviceID, bool) {
 	bruto, err := base64.RawURLEncoding.DecodeString(value)
 	if err != nil || len(bruto) != tamValorDecodific {
 		return DeviceID{}, false
 	}
 	corpo, mac := bruto[:tamIDDispositivo+tamPrazo], bruto[tamIDDispositivo+tamPrazo:]
-	if !hmac.Equal(mac, d.mac(userID, corpo)) {
+	if !hmac.Equal(mac, d.mac(userID, carimbo, corpo)) {
 		return DeviceID{}, false
 	}
 	prazo := binary.BigEndian.Uint64(corpo[tamIDDispositivo:])
@@ -108,11 +143,13 @@ func (d *Devices) Check(value string, userID uuid.UUID) (DeviceID, bool) {
 	return id, true
 }
 
-// mac amarra o corpo (identificador e prazo) à conta: o cookie de um usuário
-// não vale no login de outro.
-func (d *Devices) mac(userID uuid.UUID, corpo []byte) []byte {
+// mac amarra o corpo (identificador e prazo) à conta e às credenciais dela: o
+// cookie de um usuário não vale no login de outro, nem depois de a senha ou o
+// 2FA mudarem.
+func (d *Devices) mac(userID uuid.UUID, carimbo DeviceStamp, corpo []byte) []byte {
 	h := hmac.New(sha256.New, d.chave)
 	h.Write(userID[:])
+	h.Write(carimbo[:])
 	h.Write(corpo)
 	return h.Sum(nil)
 }
