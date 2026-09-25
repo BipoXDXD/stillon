@@ -1,6 +1,7 @@
 import { http, HttpResponse } from 'msw'
 import { describe, expect, it, vi } from 'vitest'
-import { EMAIL, rotacao, SEGREDO_NOVO, SENHA, TOTP_NOVO, TOTP_OK } from '@/test/api-falsa'
+import { EMAIL, RECUPERACAO_OK, rotacao, SEGREDO_NOVO, SENHA, TOTP_NOVO, TOTP_OK } from '@/test/api-falsa'
+import { canal } from '@/test/fixtures'
 import { buscarDoTeste, novaSessao, usarApiFalsa } from '@/test/ambiente'
 import { servidor } from '@/test/setup'
 import { ApiError } from './http'
@@ -319,5 +320,107 @@ describe('a API falsa imita o servidor', () => {
     falsa.estado.totpLigado = true
     await expect(api.totpConfirmar(TOTP_OK)).rejects.toMatchObject({ status: 403, code: 'forbidden' })
     expect(falsa.estado.totpLigado).toBe(true)
+  })
+})
+
+// E8 do Plano 10: a API falsa reproduz o servidor nas rotas dos Planos 8 a
+// 10. Cada teste é uma divergência que a falsa antiga tinha (o teste
+// falharia contra ela), com o handler Go que ela imita. Sem isto, um teste
+// de tela passava contra um servidor que não existe.
+describe('a API falsa segue o servidor', () => {
+  // A mutação crua, para os corpos que o cliente nunca manda.
+  async function patchCru(token: string | null, caminho: string, corpo: string) {
+    return fetch(new URL(`/api/v1${caminho}`, location.origin), {
+      method: 'PATCH',
+      headers: {
+        Authorization: `Bearer ${token ?? ''}`,
+        'X-Requested-With': 'vigilume',
+        'Content-Type': 'application/json',
+      },
+      body: corpo,
+    })
+  }
+
+  // account.ChangePassword: SwapUserHash apaga o pendente (D6 do Plano 9).
+  it('trocar a senha mata a troca de autenticador pendente', async () => {
+    const { falsa, api } = await logado()
+    falsa.estado.totpLigado = true
+    const troca = await api.totpTrocar(SENHA, TOTP_OK)
+    await api.trocarSenha({ current_password: SENHA, new_password: 'outra senha bem comprida', totp_code: TOTP_OK })
+    await expect(api.totpConfirmarTroca(TOTP_NOVO, troca.rotation)).rejects.toMatchObject({ status: 403 })
+  })
+
+  // TOTP.Verify apaga o código de recuperação usado: ele não vale de novo
+  // em rota nenhuma (disable, verify do login).
+  it('código de recuperação gasto não vale de novo', async () => {
+    const { falsa, api, sessao } = await logado()
+    falsa.estado.totpLigado = true
+    await api.totpTrocar(SENHA, RECUPERACAO_OK)
+    await expect(api.totpDesativar(SENHA, RECUPERACAO_OK)).rejects.toMatchObject({ code: 'invalid_credentials' })
+    expect(falsa.estado.totpLigado).toBe(true)
+    await sessao.sair()
+    const r = await sessao.entrar(EMAIL, SENHA)
+    expect(r.tipo).toBe('totp')
+    await expect(sessao.verificarTotp('desafio-1', RECUPERACAO_OK)).rejects.toMatchObject({ code: 'invalid_credentials' })
+  })
+
+  // TOTPRotate: senhaConfere ANTES do StartRotation. Com o 2FA desligado,
+  // senha errada é 401, e só a senha certa chega ao 403.
+  it('rotate confere a senha antes de olhar o 2FA', async () => {
+    const { api } = await logado()
+    await expect(api.totpTrocar('errada', TOTP_OK)).rejects.toMatchObject({ status: 401, code: 'invalid_credentials' })
+    await expect(api.totpTrocar(SENHA, TOTP_OK)).rejects.toMatchObject({ status: 403, code: 'forbidden' })
+  })
+
+  // TOTPDisable com o 2FA desligado: o Disable devolve ErrTOTPNotEnrolled,
+  // que é o mesmo 401 invalid_credentials da prova errada.
+  it('disable com o 2FA desligado é 401 invalid_credentials', async () => {
+    const { api } = await logado()
+    await expect(api.totpDesativar(SENHA, TOTP_OK)).rejects.toMatchObject({ status: 401, code: 'invalid_credentials' })
+  })
+
+  // ConfirmRotation: o pendente é da família que o criou. Outra sessão (um
+  // login novo) recebe 403, como "sem troca".
+  it('o pendente é da sessão que o criou', async () => {
+    const { falsa, api, sessao } = await logado()
+    falsa.estado.totpLigado = true
+    const troca = await api.totpTrocar(SENHA, TOTP_OK)
+    await sessao.sair()
+    await sessao.entrar(EMAIL, SENHA)
+    await sessao.verificarTotp('desafio-1', TOTP_OK)
+    await expect(api.totpConfirmarTroca(TOTP_NOVO, troca.rotation)).rejects.toMatchObject({ status: 403 })
+  })
+
+  // account.ChangePassword valida a senha nova ANTES da atual: senha nova
+  // curta é 400 mesmo com a atual errada.
+  it('troca de senha olha a política da senha nova antes da senha atual', async () => {
+    const { api } = await logado()
+    const e = await api.trocarSenha({ current_password: 'errada', new_password: 'curta' }).catch((x: unknown) => x)
+    expect(e).toMatchObject({ status: 400, code: 'validation_failed' })
+    expect((e as ApiError).fields).toEqual([{ field: 'new_password', reason: 'too_short' }])
+  })
+
+  // ChannelHandlers.SetEnabled: o corpo é lido (decodeJSONStrict) ANTES de
+  // procurar o canal, e campo desconhecido é 400 SEM fields (o nome do campo
+  // vem do cliente e não ecoa). Canal que não existe, com corpo bom, é 404.
+  it('PATCH de canal: corpo antes do canal, e campo desconhecido sem fields', async () => {
+    const { falsa, sessao } = await logado()
+    falsa.estado.canais = [canal()]
+    const desconhecido = await patchCru(sessao.token(), '/channels/canal-1', '{"enabled":true,"cor":"azul"}')
+    expect(desconhecido.status).toBe(400)
+    const envelope = (await desconhecido.json()) as { error: { code: string; fields?: unknown } }
+    expect(envelope.error.code).toBe('validation_failed')
+    expect(envelope.error.fields).toBeUndefined()
+    const semCanal = await patchCru(sessao.token(), '/channels/nao-existe', '{"enabled":"sim"}')
+    expect(semCanal.status).toBe(400)
+    expect((await semCanal.json()).error.fields).toEqual([{ field: 'enabled', reason: 'invalid' }])
+    expect((await patchCru(sessao.token(), '/channels/nao-existe', '{"enabled":true}')).status).toBe(404)
+  })
+
+  // ChannelHandlers.Delete e Resend: canal que não existe é 404.
+  it('apagar ou reenviar a verificação de canal que não existe é 404', async () => {
+    const { api } = await logado()
+    await expect(api.apagarCanal('nao-existe')).rejects.toMatchObject({ status: 404, code: 'not_found' })
+    await expect(api.reenviarVerificacao('nao-existe')).rejects.toMatchObject({ status: 404, code: 'not_found' })
   })
 })

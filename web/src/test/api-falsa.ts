@@ -50,16 +50,18 @@ export function criarApiFalsa() {
     pote: null as string | null,
     consumidos: new Set<string>(),
     familiaRevogada: false,
+    // A família de sessão do login atual; cada access token sabe a dele
+    // (a claim sid do servidor).
     familia: 'f-atual',
     seq: 0,
-    acessos: new Set<string>(),
+    acessos: new Map<string, string>(),
     atrasoRefresh: 0,
     totpLigado: false,
     totpPendente: false,
     // Troca de autenticador em andamento: o segredo pendente do rotate
     // (spec do Plano 9 §3.2), com o rotation que o identifica (A7 do Plano
     // 10). Só o confirm, o disable e outro rotate o mexem.
-    troca: null as { rotation: string } | null,
+    troca: null as { rotation: string; familia?: string } | null,
     rotacoes: 0,
     // Códigos de recuperação já gastos. Com trocaFalhaDepoisDoCodigo, a
     // troca de senha gasta o código e DEPOIS falha com 401 unauthorized, como
@@ -100,7 +102,7 @@ export function criarApiFalsa() {
   function novoAcesso() {
     st.seq++
     const t = `acesso-${st.seq}`
-    st.acessos.add(t)
+    st.acessos.set(t, st.familia)
     return t
   }
 
@@ -109,11 +111,28 @@ export function criarApiFalsa() {
     return `refresh-${st.seq}`
   }
 
+  // Um login completo abre uma família nova (o refresh continua a dela).
   function abrirSessao() {
     st.pote = novoCookie()
+    st.familia = `f-${++st.seq}`
     st.familiaRevogada = false
     return HttpResponse.json({ access_token: novoAcesso(), expires_in: 900 })
   }
+
+  // A posse do fator (TOTP.Verify): o código do app, ou um código de
+  // recuperação ainda não gasto, que fica gasto (E8 do Plano 10: a falsa
+  // antiga aceitava o mesmo código de recuperação para sempre no disable e
+  // no verify).
+  function provaDoFator(codigo: string): boolean {
+    if (codigo === TOTP_OK) return true
+    if (codigo !== RECUPERACAO_OK || st.recuperacaoGasta.has(codigo)) return false
+    st.recuperacaoGasta.add(codigo)
+    return true
+  }
+
+  // A família do access token da requisição.
+  const familiaDe = (request: Request) =>
+    st.acessos.get(request.headers.get('Authorization')?.replace(/^Bearer /, '') ?? '')
 
   // As rotas que exigem a família do token viva (Plano 5: /auth/password e
   // /sessions; Task 11 do Plano 5: os três do 2FA). Um access token ainda
@@ -177,7 +196,7 @@ export function criarApiFalsa() {
         // Task 11 do Plano 5: a senha mudou depois do desafio → a senha
         // verificada é velha, e o verify responde invalid_credentials.
         if (!st.desafioValido) return erro(401, 'invalid_credentials')
-        if (corpo.code !== TOTP_OK && corpo.code !== RECUPERACAO_OK) return erro(401, 'invalid_credentials')
+        if (!provaDoFator(String(corpo.code ?? ''))) return erro(401, 'invalid_credentials')
         return abrirSessao()
       },
       false,
@@ -304,23 +323,29 @@ export function criarApiFalsa() {
       st.canais.push(c)
       return HttpResponse.json(c, { status: 201 })
     }),
+    // ChannelHandlers.Delete e Resend: canal que não existe é 404.
     rota('delete', '/channels/:id', ({ params }) => {
+      if (!st.canais.some((c) => c.id === params.id)) return erro(404, 'not_found')
       st.canais = st.canais.filter((c) => c.id !== params.id)
       return new HttpResponse(null, { status: 204 })
     }),
-    rota('post', '/channels/:id/verify/resend', () => new HttpResponse(null, { status: 204 })),
-    // Spec do Plano 9 §3.3: o corpo é só {enabled: bool}; qualquer outra
-    // coisa é 400 validation_failed. Canal que não existe (ou de outro
-    // usuário) é 404. Mudar para o valor que já está é 200 sem efeito.
+    rota('post', '/channels/:id/verify/resend', ({ params }) =>
+      st.canais.some((c) => c.id === params.id) ? new HttpResponse(null, { status: 204 }) : erro(404, 'not_found'),
+    ),
+    // ChannelHandlers.SetEnabled (spec do Plano 9 §3.3): o corpo é lido
+    // ANTES de procurar o canal. Campo desconhecido é 400 sem fields
+    // (decodeJSONStrict: o nome vem do cliente e não ecoa); sem enabled é
+    // required; enabled que não é booleano é invalid. Depois, canal que não
+    // existe (ou de outro usuário) é 404. Mudar para o valor que já está é
+    // 200 sem efeito.
     rota('patch', '/channels/:id', ({ params, corpo }) => {
-      const c = st.canais.find((x) => x.id === params.id)
-      if (!c) return erro(404, 'not_found')
       const chaves = Object.keys(corpo)
+      if (chaves.some((k) => k !== 'enabled')) return erro(400, 'validation_failed')
       if (typeof corpo.enabled !== 'boolean') {
         return erro(400, 'validation_failed', [{ field: 'enabled', reason: chaves.includes('enabled') ? 'invalid' : 'required' }])
       }
-      const outro = chaves.find((k) => k !== 'enabled')
-      if (outro) return erro(400, 'validation_failed', [{ field: outro, reason: 'unknown' }])
+      const c = st.canais.find((x) => x.id === params.id)
+      if (!c) return erro(404, 'not_found')
       c.enabled = corpo.enabled
       return HttpResponse.json(c)
     }),
@@ -359,21 +384,23 @@ export function criarApiFalsa() {
       }
       return new HttpResponse(null, { status: 204 })
     }),
+    // account.ChangePassword: a política da senha nova vem ANTES da senha
+    // atual (e do código, que então não é gasto).
     rota('post', '/auth/password', ({ corpo }) => {
+      const n = [...String(corpo.new_password)].length
+      if (n < 15) return erro(400, 'validation_failed', [{ field: 'new_password', reason: 'too_short' }])
       if (corpo.current_password !== SENHA) return erro(401, 'invalid_credentials')
       if (st.totpLigado) {
         const codigo = String(corpo.totp_code ?? '')
-        const recuperacao = codigo === RECUPERACAO_OK && !st.recuperacaoGasta.has(codigo)
-        if (codigo !== TOTP_OK && !recuperacao) return erro(401, 'invalid_credentials')
-        if (recuperacao) st.recuperacaoGasta.add(codigo)
-        if (recuperacao && st.trocaFalhaDepoisDoCodigo) return erro(401, 'unauthorized')
+        if (!provaDoFator(codigo)) return erro(401, 'invalid_credentials')
+        if (codigo === RECUPERACAO_OK && st.trocaFalhaDepoisDoCodigo) return erro(401, 'unauthorized')
       }
-      const n = [...String(corpo.new_password)].length
-      if (n < 15) return erro(400, 'validation_failed', [{ field: 'new_password', reason: 'too_short' }])
       st.sessoes = st.sessoes.filter((s) => s.current)
       // Task 11 do Plano 5: trocar a senha apaga o cadastro de 2FA pendente
-      // e invalida os desafios de login em aberto.
+      // e invalida os desafios de login em aberto; D6 do Plano 9, a troca de
+      // autenticador pendente também (SwapUserHash).
       st.totpPendente = false
+      st.troca = null
       st.desafioValido = false
       return new HttpResponse(null, { status: 204 })
     }),
@@ -393,10 +420,10 @@ export function criarApiFalsa() {
     }),
     rota('post', '/auth/totp/disable', ({ corpo }) => {
       // D24 do Plano 5: senha ou código errado é invalid_credentials;
-      // unauthorized fica só para o token recusado.
-      if (corpo.password !== SENHA || (corpo.code !== TOTP_OK && corpo.code !== RECUPERACAO_OK)) {
-        return erro(401, 'invalid_credentials')
-      }
+      // unauthorized fica só para o token recusado. Com o 2FA desligado, o
+      // Disable devolve ErrTOTPNotEnrolled, que é o mesmo 401.
+      if (corpo.password !== SENHA || !st.totpLigado) return erro(401, 'invalid_credentials')
+      if (!provaDoFator(String(corpo.code || corpo.recovery_code || ''))) return erro(401, 'invalid_credentials')
       st.totpLigado = false
       // O disable apaga a troca pendente (spec do Plano 9 §3.2).
       st.troca = null
@@ -406,14 +433,15 @@ export function criarApiFalsa() {
     // de recuperação). 2FA desligado é 403; prova errada é
     // invalid_credentials (D24 do Plano 5). O código de recuperação fica
     // gasto mesmo que a troca não seja confirmada.
-    rota('post', '/auth/totp/rotate', ({ corpo }) => {
+    // TOTPRotate: a senha (senhaConfere) antes de tudo; depois, 2FA
+    // desligado é 403, e só então a prova do fator.
+    rota('post', '/auth/totp/rotate', ({ request, corpo }) => {
+      if (corpo.password !== SENHA) return erro(401, 'invalid_credentials')
       if (!st.totpLigado) return erro(403, 'forbidden')
-      const codigo = String(corpo.code ?? corpo.recovery_code ?? '')
-      const recuperacao = codigo === RECUPERACAO_OK && !st.recuperacaoGasta.has(codigo)
-      if (corpo.password !== SENHA || (codigo !== TOTP_OK && !recuperacao)) return erro(401, 'invalid_credentials')
-      if (recuperacao) st.recuperacaoGasta.add(codigo)
-      // Outro rotate substitui o pendente, e o rotation muda com ele.
-      st.troca = { rotation: rotacao(++st.rotacoes) }
+      if (!provaDoFator(String(corpo.code || corpo.recovery_code || ''))) return erro(401, 'invalid_credentials')
+      // Outro rotate substitui o pendente, e o rotation muda com ele. O
+      // pendente é da família do token (totp_pending_family_id).
+      st.troca = { rotation: rotacao(++st.rotacoes), familia: familiaDe(request) }
       return HttpResponse.json({
         otpauth_uri: `otpauth://totp/Vigilume:dono%40exemplo.com?secret=${SEGREDO_NOVO}&issuer=Vigilume`,
         rotation: st.troca.rotation,
@@ -423,8 +451,11 @@ export function criarApiFalsa() {
     // já substituiu (A7 do Plano 10), é 403, sem contar falha; código errado
     // é 401 e o pendente fica. O sucesso encerra as OUTRAS sessões e entrega
     // 10 códigos novos.
-    rota('post', '/auth/totp/rotate/confirm', ({ corpo }) => {
-      if (!st.troca || corpo.rotation !== st.troca.rotation) return erro(403, 'forbidden')
+    rota('post', '/auth/totp/rotate/confirm', ({ request, corpo }) => {
+      // O pendente de outra família é, para esta, "nenhuma troca". Um
+      // pendente posto à mão pelo teste (sem família) vale para qualquer uma.
+      const deOutra = st.troca?.familia !== undefined && st.troca.familia !== familiaDe(request)
+      if (!st.troca || deOutra || corpo.rotation !== st.troca.rotation) return erro(403, 'forbidden')
       if (corpo.code !== TOTP_NOVO) return erro(401, 'invalid_credentials')
       st.troca = null
       st.sessoes = st.sessoes.filter((s) => s.current)
