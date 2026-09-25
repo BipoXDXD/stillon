@@ -616,10 +616,26 @@ describe('troca de autenticador', () => {
     const r = await comTotp()
     const refreshes = r.falsa.chamadas('POST /auth/refresh')
     const dialogo = await iniciar(r, '000000')
-    expect(await within(dialogo).findByRole('alert')).toHaveTextContent('Senha ou código incorretos.')
+    const alerta = await within(dialogo).findByRole('alert')
+    expect(alerta).toHaveTextContent('Senha ou código incorretos.')
+    // Um código de 6 dígitos não é de recuperação: nada de aviso de código gasto.
+    expect(alerta).not.toHaveTextContent('código de recuperação')
     expect(within(dialogo).getByLabelText('Sua senha')).toHaveValue(SENHA)
     expect(r.falsa.chamadas(ROTATE)).toBe(1)
     expect(r.falsa.chamadas('POST /auth/refresh')).toBe(refreshes)
+  })
+
+  // E5 do Plano 10: como na troca de senha, um 401 depois de um código de
+  // recuperação no passo 1 avisa que ele pode ter sido gasto. Sabotagem:
+  // tirar o código do erroDeCredencial do passo 1 → o aviso some.
+  it('401 no passo 1 com um código de recuperação avisa que ele pode ter sido consumido', async () => {
+    const r = await comTotp()
+    r.falsa.estado.forcar.set(ROTATE, { status: 401, code: 'unauthorized' })
+    const dialogo = await iniciar(r, RECUPERACAO_OK)
+    expect(await within(dialogo).findByRole('alert')).toHaveTextContent(
+      'O acesso desta tela venceu. Se você usou um código de recuperação, ele pode ter sido consumido; use outro.',
+    )
+    expect(within(dialogo).getByRole('button', { name: 'Renovar acesso e tentar de novo' })).toBeInTheDocument()
   })
 
   // Código errado no passo 2: o pendente fica, e o código certo depois
@@ -875,6 +891,28 @@ describe('envio em voo nos diálogos do 2FA', () => {
     expect(await within(dialogo).findByText(SEGREDO_NOVO)).toBeInTheDocument()
     await tique()
     expect(r.falsa.chamadas(ROTATE)).toBe(1)
+  })
+
+  // E1 do Plano 10: o passo 1 também trava o diálogo com o rotate em voo.
+  // Antes, o Esc fechava, e a resposta chegava a um diálogo fechado: o
+  // aoIniciar marcava a troca "no meio" sem diálogo (e, com um código de
+  // recuperação, ele era gasto sem aviso). Sabotagem: tirar o
+  // aoOcupar(true) do passo 1 → o Esc fecha.
+  it('troca: Esc com o rotate em voo não fecha; o QR aparece', async () => {
+    const r = await comTotp()
+    const dialogo = await abrirTroca(r)
+    const s = segurar('/auth/totp/rotate')
+    await r.usuario.click(within(dialogo).getByRole('button', { name: 'Continuar' }))
+    await waitFor(() => expect(s.estado.chegou).toBe(1))
+    await r.usuario.keyboard('{Escape}')
+    await tique()
+    expect(screen.getByRole('dialog')).toBe(dialogo)
+    s.soltar()
+    expect(await within(dialogo).findByText(SEGREDO_NOVO)).toBeInTheDocument()
+    // Solto de novo: no passo 2, fechar volta a valer (com o "nada mudou").
+    await r.usuario.keyboard('{Escape}')
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    expect(await screen.findAllByText('Nada mudou: o app atual continua valendo.')).toHaveLength(1)
   })
 
   // F2: Esc com o confirm em voo fechava o diálogo com "Nada mudou" (falso

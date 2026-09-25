@@ -496,7 +496,7 @@ function TrocarTotp({
   // recuperação no passo 1, ele já foi gasto: R1 da spec).
   aoIniciar: (usouRecuperacao: boolean) => void
   aoVoltar: () => void
-  // O confirm está em voo: o diálogo não fecha até a resposta.
+  // O rotate ou o confirm está em voo: o diálogo não fecha até a resposta.
   aoOcupar: (ocupado: boolean) => void
   aoTravar: () => void
   aoTerminar: () => void
@@ -524,6 +524,10 @@ function TrocarTotp({
         aoMudarErro={setErro}
         aoEnviar={async (senha, codigo) => {
           setErro(null)
+          // Travado antes de aguardar, como os confirms (E1 do Plano 10):
+          // fechar com o rotate em voo deixava a resposta sem diálogo, e o
+          // código de recuperação, se era um, gasto sem aviso.
+          aoOcupar(true)
           try {
             setTroca(await api.totpTrocar(senha, codigo))
             aoIniciar(ehDeRecuperacao(codigo))
@@ -531,7 +535,11 @@ function TrocarTotp({
           } catch (e) {
             // 403: o 2FA foi desligado em outra aba; não há o que trocar.
             if (e instanceof ApiError && e.status === 403) aoDesativada()
-            else setErro(erroDeCredencial(e, 'Senha ou código incorretos.'))
+            // O código vai junto: um 401 depois de um código de recuperação
+            // avisa que ele pode ter sido gasto (E5), como na troca de senha.
+            else setErro(erroDeCredencial(e, 'Senha ou código incorretos.', codigo))
+          } finally {
+            aoOcupar(false)
           }
         }}
       />
