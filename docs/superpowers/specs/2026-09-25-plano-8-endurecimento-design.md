@@ -111,9 +111,10 @@ consumido" passa a descrever a marca.
 **Hoje.** `middleware.ClientIP` tem três saídas. Só a do cabeçalho de um valor só
 (`peloCabecalho`) faz `Unmap()` e recusa endereço com zona. As outras duas devolvem a string
 crua: o `RemoteAddr` e o último salto do `X-Forwarded-For`. O mesmo cliente IPv4 pode aparecer
-como `1.2.3.4` e como `::ffff:1.2.3.4`. O efeito é maior que o registrado nas pendências: além de
-dois `ip_hash` na auditoria, são **dois baldes** em cada limitador de requisições, porque a chave
-do balde é essa string.
+como `1.2.3.4` e como `::ffff:1.2.3.4`, e ganha dois `ip_hash` na auditoria e duas origens em
+`GET /sessions`. (A primeira versão desta spec dizia que eram também dois baldes em cada
+limitador; a validação do plano mostrou que não: `chaveDe`, em `ratelimit.go`, já faz `Unmap` na
+chave do balde.)
 
 **Desenho.** Uma função `normalizar(s string) (string, bool)`: `netip.ParseAddr`, recusa zona,
 devolve `Unmap().String()`. Todas as saídas passam por ela:
@@ -254,7 +255,7 @@ Cada linha tem uma sabotagem que o ledger registra com o resultado.
 | 3.1 | Desafio sem `cat` é recusado por `ParseChallengeToken` | Aceitar `cat` ausente |
 | 3.1 | Dois desafios emitidos no mesmo segundo têm `cat` diferentes, e os dois funcionam em ordem | Usar `iat` no lugar de `cat` |
 | 3.2 | `::ffff:1.2.3.4` pelo `RemoteAddr` e pelo último salto do `X-Forwarded-For` dá `1.2.3.4` | Tirar o `Unmap` de cada caminho |
-| 3.2 | Mesmo cliente por `1.2.3.4` e `::ffff:1.2.3.4` cai no mesmo balde do limitador | Idem |
+| 3.2 | Mesmo cliente por `1.2.3.4` e `::ffff:1.2.3.4` sai de `ClientIP` com o mesmo valor, que é o do `ip_hash` | Idem |
 | 3.2 | Último salto com zona (`fe80::1%eth0`) cai no endereço direto | Tirar a recusa de zona |
 | 3.3 | Cada nome da denylist, em caixas variadas, é recusado no boot; `Fly-Client-IP` passa | Esvaziar a lista |
 | 3.4 | `time = 0`, `threads = 0`, memória `< 8*threads` e salt vazio dão erro, sem panic | Tirar a checagem |
@@ -270,7 +271,7 @@ confirma o critério 1 da §1.
 
 - §3.1 fecha a sessão paralela com um desafio só. O desafio continua sem estado próprio; o único
   estado novo é um instante por usuário.
-- §3.2 fecha dois baldes e dois `ip_hash` por cliente IPv4 em pilha dupla.
+- §3.2 fecha dois `ip_hash` por cliente IPv4 em pilha dupla.
 - §3.3 transforma um erro de configuração silencioso em falha no boot.
 - §3.4 e §3.5 são robustez: nenhum dos dois está explorável hoje.
 - §3.6 não muda código de produção; troca uma afirmação falsa por uma prova.
@@ -282,7 +283,7 @@ confirma o critério 1 da §1.
 | R1 | Desafios em trânsito no deploy morrem (não têm `cat`) | Aceito: no pior caso, um login refeito dentro de cinco minutos |
 | R2 | Relógio do processo andando para trás entre dois desafios do mesmo usuário deixa o mais novo com `cat` menor | Aceito: a consequência é um 401 e um login refeito; o `clock` do projeto é o do sistema |
 | R3 | A denylist recusa um cabeçalho que algum proxy real use para o IP do cliente | Nenhum dos nomes da lista carrega IP de cliente em proxy conhecido; se aparecer, é uma linha a menos |
-| R4 | Normalizar o `RemoteAddr` muda a chave de balde de quem hoje chega como `::ffff:` | Desejado; o efeito é um balde a menos por cliente, e os baldes são em memória (zeram no deploy) |
+| R4 | Normalizar o `RemoteAddr` muda o `ip_hash` de quem hoje chega como `::ffff:` | Desejado; auditorias antigas desse cliente ficam com o hash da forma mapeada. Os baldes do limitador não mudam (já eram normalizados) |
 | R5 | O teste concorrente do §3.6 oscila sob carga | O mesmo desenho do `limit_test.go` dos alvos, que não oscilou no CI; o prazo do gancho só encurta o teste quando a trava funciona |
 
 ## 9. Execução
