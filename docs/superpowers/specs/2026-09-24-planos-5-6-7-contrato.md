@@ -7,17 +7,17 @@ três compartilham. Nenhum agente muda o que está aqui sozinho; uma divergênci
 
 | Plano | Escopo | Spec |
 |---|---|---|
-| 5 | Lacunas da API para o painel (Go) | `docs/superpowers/specs/2026-09-24-plano-5-api-do-painel-design.md` |
-| 6 | Painel React (TypeScript) e o servir do painel pelo binário | `docs/superpowers/specs/2026-09-24-plano-6-painel-react-design.md` |
-| 7 | Empacotamento, compose, CI, deploy e README | `docs/superpowers/specs/2026-09-24-plano-7-empacotamento-e-deploy-design.md` |
+| 5 | Lacunas da API para o painel (Go) | apagada em 2026-09-25 (README, Histórico) |
+| 6 | Painel React (TypeScript) e o servir do painel pelo binário | apagada em 2026-09-25 (README, Histórico) |
+| 7 | Empacotamento, compose, CI, deploy e README | apagada em 2026-09-25 (README, Histórico) |
 
 Ordem de execução: 5 → 6 → 7. O 6 é escrito contra este contrato; o 7, contra os dois.
 
 ## Decisões já tomadas
 
-1. **Usuário inicial por subcomando de CLI** (decisão do usuário): `vigilume user create --email <e>`
+1. **Usuário inicial por subcomando de CLI** (decisão do usuário): `stillon user create --email <e>`
    lê a senha do stdin (sem eco num terminal; aceita pipe, para o compose). Nenhuma rota pública
-   de cadastro. `vigilume user set-password --email <e>` é o caminho de recuperação (não há
+   de cadastro. `stillon user set-password --email <e>` é o caminho de recuperação (não há
    "esqueci a senha" por e-mail num sistema de usuário único).
 2. **O painel é servido pelo binário Go, na mesma origem da API.** O build do Vite sai em
    `internal/webui/dist/`, embutido por `internal/webui` com `//go:embed all:dist` (um
@@ -29,7 +29,7 @@ Ordem de execução: 5 → 6 → 7. O 6 é escrito contra este contrato; o 7, co
    `/readyz` continuam como estão.
 3. **Desenvolvimento local do painel:** `vite` com proxy de `/api` para `http://localhost:8080`.
    `CORS_ORIGIN` continua existindo para quem servir o painel em outro host.
-4. **Toda mutação envia `X-Requested-With: vigilume`** (spec §11.2 item 4). Envelope de erro
+4. **Toda mutação envia `X-Requested-With: stillon`** (spec §11.2 item 4). Envelope de erro
    da spec §9.1 com `fields` de vocabulário fechado.
 5. **Código novo de banco em sqlc.** A migração de `auth.PGStore`/`auth.TOTP` para sqlc (R2) é
    plano próprio e não entra em nenhum dos três.
@@ -112,12 +112,12 @@ e prevalecem sobre o texto das specs onde houver diferença.
 3. **`401 unauthorized`** em `/auth/password` e `/sessions` com a família do token morta: vale como
    escrito no Plano 5. O painel renova só em `401` com `code: unauthorized`, fora de `/auth/*`.
 4. **E2E** (Plano 6 escreve, Plano 7 roda no CI): por padrão o Playwright sobe a própria pilha no
-   `globalSetup` (Postgres em container, binário real, `vigilume user create`). Com `E2E_BASE_URL`,
+   `globalSetup` (Postgres em container, binário real, `stillon user create`). Com `E2E_BASE_URL`,
    `E2E_EMAIL` e `E2E_PASSWORD`, roda contra uma pilha já de pé (o compose). O alvo cadastrado
-   no teste é `https://vigilume-e2e.invalid/`: não é endereço privado (o `safedial` aceita o
+   no teste é `https://stillon-e2e.invalid/`: não é endereço privado (o `safedial` aceita o
    cadastro), não depende de rede, e o teste só confere que ele aparece, sem depender do estado.
 5. **Seed do compose:** a senha de demonstração respeita a política do Plano 5 (15 a 128 code
-   points). O código de saída **3** de `vigilume user create` quer dizer "já existe usuário, nada
+   points). O código de saída **3** de `stillon user create` quer dizer "já existe usuário, nada
    mudou", e não muda de sentido; o seed o trata como sucesso.
 6. **Despacho de subcomandos** nasce no Plano 5 (`user create`, `user set-password`); o Plano 7
    acrescenta `healthcheck` e `version` no mesmo despacho.
