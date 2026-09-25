@@ -1396,32 +1396,57 @@ vc logs app | grep 'cabeçalho de IP do cliente' | tail -3
 nenhum; o segundo (`… ignorado` ou `… ausente ou ilegível`), que o `TRUSTED_PROXIES` não bate com
 o IP do Caddy (172.30.0.2).
 
-**O teste de duas redes** (no seu computador; um e-mail que não existe e senha errada):
+**O teste de duas redes** (no seu computador; sempre o e-mail `ninguem@exemplo.com`, que não
+existe, e senha errada: com o **seu** e-mail, cada erro contaria no bloqueio da conta, 5 em
+15 minutos).
+
+O limitador do login deixa **5 tentativas de uma vez** por IP e devolve **uma a cada 6 s**. Por
+isso as provas abaixo têm de ser rápidas: depois de 6 s parado, o balde já ganhou uma ficha, e um
+`401` não prova mais nada.
+
+**Parte A, de casa: o cabeçalho forjado não escolhe o balde.** Cole o bloco **inteiro de uma
+vez** (os sete pedidos saem em poucos segundos, dentro da janela de 6 s):
 
 ```bash
 . ~/.vigilume-vps
-for i in 1 2 3 4 5 6; do
+tentar() {
   curl -s -o /dev/null -w '%{http_code}\n' -X POST "https://$DOMINIO/api/v1/auth/login" \
     -H 'Content-Type: application/json' -H 'X-Requested-With: vigilume' \
-    -d '{"email":"ninguem@exemplo.com","password":"errada-errada-1234"}'
-done
+    -d '{"email":"ninguem@exemplo.com","password":"errada-errada-1234"}' "$@"
+}
+for i in 1 2 3 4 5 6; do printf '%s: ' "$i"; tentar; done
+printf 'forjado: '
+tentar -H 'X-Real-IP: 203.0.113.77' -H 'Fly-Client-IP: 203.0.113.77' \
+  -H 'CF-Connecting-IP: 203.0.113.77' -H 'X-Forwarded-For: 203.0.113.77'
 ```
 
-- Da sua rede de casa: cinco `401` e um `429`.
-- Logo depois, do celular em 4G/5G (o mesmo `curl` no Termux, ou abra o painel e tente entrar
-  com a senha errada): `401`, não `429`. Os baldes de cada cliente estão separados.
-- De novo de casa, forjando os cabeçalhos que o Caddy remove:
-  ```bash
-  curl -s -o /dev/null -w '%{http_code}\n' -X POST "https://$DOMINIO/api/v1/auth/login" \
-    -H 'Content-Type: application/json' -H 'X-Requested-With: vigilume' \
-    -H 'X-Real-IP: 203.0.113.77' -H 'Fly-Client-IP: 203.0.113.77' -H 'CF-Connecting-IP: 203.0.113.77' \
-    -H 'X-Forwarded-For: 203.0.113.77' \
-    -d '{"email":"ninguem@exemplo.com","password":"errada-errada-1234"}'
-  ```
-  Continua `429`: o cabeçalho forjado não escolhe o balde.
+**Deve aparecer:** `1: 401` a `5: 401`, `6: 429` e `forjado: 429`. O pedido forjado diz ser de
+outro IP (`203.0.113.77`), mas o Caddy troca o `X-Forwarded-For` e remove os outros três: ele cai
+no mesmo balde vazio da sua casa. Se o `forjado` der `401`, o app acreditou no cabeçalho do
+cliente e escolheu um balde novo: pare e confira, na VPS, o `Caddyfile` que o Caddy está usando
+(`vc exec caddy cat /etc/caddy/Caddyfile`) e o `TRUSTED_PROXIES` (`vc config | grep TRUSTED`).
+A conclusão só vale com o `6: 429`: se ele vier `401` (a rede demorou mais de 6 s nos cinco
+primeiros) ou se já o `1` vier `429` (você testou há pouco), espere um minuto, para o balde
+encher de novo, e cole o bloco outra vez.
 
-Se o 4G levar `429`, todos os clientes estão dividindo um balde: o `TRUSTED_PROXIES` do app não é
-o IP do Caddy. Pare e confira o `compose.prod.yaml` e o `.env`.
+**Parte B, casa e celular ao mesmo tempo: cada cliente tem o seu balde.** No computador, deixe a
+casa gastando o balde por um minuto e meio (a função `tentar` é a da parte A, no mesmo terminal):
+
+```bash
+for i in $(seq 1 90); do printf '%s: ' "$i"; tentar; sleep 1; done
+```
+
+Quase tudo `429`, com um `401` a cada 6 s mais ou menos (a ficha que volta é gasta logo). **Enquanto
+ele roda**, no celular em 4G/5G, com o **Wi-Fi desligado**, faça **três** tentativas, com alguns
+segundos entre elas: o mesmo `curl` no Termux, ou o painel no navegador com o e-mail
+`ninguem@exemplo.com` e uma senha qualquer.
+
+**Deve aparecer:** no celular, três vezes `401` (no painel, "E-mail ou senha incorretos."), nunca
+`429`. O balde do celular está cheio, porque é outro IP.
+
+Se o celular levar algum `429`, todos os clientes estão dividindo um balde: o app vê o IP do
+Caddy em todo pedido, e o `TRUSTED_PROXIES` do app não é o IP do Caddy. Pare e confira o
+`compose.prod.yaml` e o `.env`.
 
 ### 9.3 `Host` estranho não chega ao app (obrigação 5, a parte do Caddy)
 
