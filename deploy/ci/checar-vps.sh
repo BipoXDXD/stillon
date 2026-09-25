@@ -19,6 +19,12 @@
 set -euo pipefail
 
 IMAGEM_APP=${1:?uso: checar-vps.sh <imagem do app>}
+# As ferramentas, antes de subir qualquer coisa: sem uma delas, o teste
+# morreria no meio (127) com a pilha de pé.
+for f in docker jq curl openssl python3 age age-keygen awk sed tar sha1sum base64 od flock; do
+    command -v "$f" >/dev/null || { echo "checar-vps.sh: falta '$f' no PATH (veja o cabeçalho)" >&2; exit 2; }
+done
+docker compose version >/dev/null 2>&1 || { echo "checar-vps.sh: falta o plugin docker compose" >&2; exit 2; }
 RAIZ=$(cd "$(dirname "$0")/../.." && pwd)
 HTTP=${TESTE_VPS_HTTP:-18580}
 HTTPS=${TESTE_VPS_HTTPS:-18543}
