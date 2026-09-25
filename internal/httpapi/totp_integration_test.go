@@ -316,6 +316,11 @@ func TestRecoveryCodeClosesLoginOnlyOnce(t *testing.T) {
 
 	usar := func(codigo string) int {
 		t.Helper()
+		// Um segundo entre os logins: o desafio vale uma vez e só abre sessão
+		// se for mais novo que o último consumido (Plano 8). Com o relógio
+		// parado, os três desafios sairiam no mesmo instante, e o terceiro
+		// seria recusado pela marca d'água, e não pelo código de recuperação.
+		a.clk.Advance(time.Second)
 		resp := login(t, a, c, testEmail, testPass)
 		var d struct {
 			Challenge string `json:"challenge"`

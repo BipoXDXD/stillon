@@ -144,15 +144,57 @@ func TestChallengeTokenRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, gotCarimbo, err := auth.ParseChallengeToken(jwtSecret, raw, now.Add(time.Minute))
+	got, err := auth.ParseChallengeToken(jwtSecret, raw, now.Add(time.Minute))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != userID {
-		t.Errorf("userID = %s, queria %s", got, userID)
+	if got.UserID != userID {
+		t.Errorf("userID = %s, queria %s", got.UserID, userID)
 	}
-	if gotCarimbo != carimbo {
-		t.Errorf("carimbo = %q, queria %q", gotCarimbo, carimbo)
+	if got.Stamp != carimbo {
+		t.Errorf("carimbo = %q, queria %q", got.Stamp, carimbo)
+	}
+	if !got.IssuedAt.Equal(now) {
+		t.Errorf("emitido em %v, queria %v", got.IssuedAt, now)
+	}
+}
+
+// O instante do desafio tem resolução de microssegundo, e não de segundo como
+// o iat: é a chave da marca d'água do /totp/verify, e dois desafios do mesmo
+// usuário no mesmo segundo precisam de marcas diferentes (Plano 8).
+func TestChallengeTokenKeepsTheIssueInstantToTheMicrosecond(t *testing.T) {
+	now := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
+	instantes := []time.Time{now.Add(1 * time.Microsecond), now.Add(2 * time.Microsecond)}
+	for _, em := range instantes {
+		raw, err := auth.NewChallengeToken(jwtSecret, uuid.New(), auth.PasswordStamp("x"), em)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := auth.ParseChallengeToken(jwtSecret, raw, em)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !got.IssuedAt.Equal(em) {
+			t.Errorf("emitido em %v, voltou %v: o instante perdeu resolução", em, got.IssuedAt)
+		}
+	}
+}
+
+// Desafio sem instante de emissão (um emitido antes do Plano 8) é recusado:
+// sem ele, o /totp/verify não tem o que gravar como marca d'água.
+func TestChallengeTokenRequiresTheIssueInstant(t *testing.T) {
+	now := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
+	semInstante, err := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"sub": uuid.NewString(),
+		"aud": []string{"totp-challenge"},
+		"exp": now.Add(time.Minute).Unix(),
+		"pws": auth.PasswordStamp("x"),
+	}).SignedString(jwtSecret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := auth.ParseChallengeToken(jwtSecret, semInstante, now); err == nil {
+		t.Error("desafio sem instante de emissão foi aceito")
 	}
 }
 
@@ -172,7 +214,7 @@ func TestChallengeTokenRequiresThePasswordStamp(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := auth.ParseChallengeToken(jwtSecret, semCarimbo, now); err == nil {
+	if _, err := auth.ParseChallengeToken(jwtSecret, semCarimbo, now); err == nil {
 		t.Error("desafio sem carimbo foi aceito")
 	}
 }
@@ -198,10 +240,10 @@ func TestChallengeTokenExpiresQuickly(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, _, err := auth.ParseChallengeToken(jwtSecret, raw, now.Add(auth.ChallengeTTL-time.Minute)); err != nil {
+	if _, err := auth.ParseChallengeToken(jwtSecret, raw, now.Add(auth.ChallengeTTL-time.Minute)); err != nil {
 		t.Errorf("dentro do prazo o desafio deveria valer: %v", err)
 	}
-	if _, _, err := auth.ParseChallengeToken(jwtSecret, raw, now.Add(auth.ChallengeTTL+time.Minute)); err == nil {
+	if _, err := auth.ParseChallengeToken(jwtSecret, raw, now.Add(auth.ChallengeTTL+time.Minute)); err == nil {
 		t.Error("o desafio deveria ter expirado")
 	}
 }
@@ -232,7 +274,7 @@ func TestChallengeAndAccessTokensAreNotInterchangeable(t *testing.T) {
 	if _, err := auth.ParseAccessToken(jwtSecret, desafio, now); err == nil {
 		t.Error("o token de desafio foi aceito como access token: o segundo fator seria decorativo")
 	}
-	if _, _, err := auth.ParseChallengeToken(jwtSecret, acesso, now); err == nil {
+	if _, err := auth.ParseChallengeToken(jwtSecret, acesso, now); err == nil {
 		t.Error("um access token comum foi aceito como desafio: o segundo fator seria dispensável")
 	}
 }
