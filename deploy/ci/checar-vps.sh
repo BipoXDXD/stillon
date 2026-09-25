@@ -525,8 +525,12 @@ montar "$TARS/m-sobe.tar" "oci-layout=$TARS/bx/oci-layout" "../index.json=$TARS/
 montar "$TARS/m-fifo.tar" "oci-layout=$TARS/bx/oci-layout" "index.json=$TARS/bx/index.json" "$FALSO=@fifo" "${blobs[@]}"
 montar "$TARS/m-index-dir.tar" "oci-layout=$TARS/bx/oci-layout" "index.json=@dir" "${blobs[@]}"
 montar "$TARS/m-sem-blobs.tar" "oci-layout=$TARS/bx/oci-layout" "index.json=$TARS/bx/index.json"
+# blobs ou blobs/sha256 como ARQUIVO, com os blobs depois: o tar -x falharia
+# (e não seria culpa da máquina).
+montar "$TARS/m-blobs-arquivo.tar" "oci-layout=$TARS/bx/oci-layout" "index.json=$TARS/bx/index.json" "blobs=$TARS/bx/oci-layout" "${blobs[@]}"
+montar "$TARS/m-sha256-arquivo.tar" "oci-layout=$TARS/bx/oci-layout" "index.json=$TARS/bx/index.json" "blobs/sha256=$TARS/bx/oci-layout" "${blobs[@]}"
 antes=$(etiquetas)
-for m in ponto-barra ponto-ponto duplicado escape repotags grande dois-valores symlink hardlink absoluto sobe fifo index-dir sem-blobs; do
+for m in ponto-barra ponto-ponto duplicado escape repotags grande dois-valores symlink hardlink absoluto sobe fifo index-dir sem-blobs blobs-arquivo sha256-arquivo; do
     c=$(entrada "deploy $SHA_B $ID_B" < "$TARS/m-$m.tar")
     [ "$c" = 3 ] || falhar "tar malicioso '$m' saiu $c, queria 3: $(tail -1 "$TARS/erro")"
     [ "$(etiquetas)" = "$antes" ] || falhar "tar malicioso '$m' mexeu nas etiquetas: $(diff <(echo "$antes") <(etiquetas) | tr '\n' ' ')"
@@ -648,7 +652,30 @@ env -i PATH="$PATH" HOME="$HOME" SSH_ORIGINAL_COMMAND="deploy $SHA_D $ID_D" LANG
 [ "$c" = 0 ] || falhar "redeploy de d (com DOCKER_* e COMPOSE_* no ambiente) saiu $c: $(tail -3 "$TARS/erro")"
 [ "$(cat "$DIR/versao-anterior")" = "$SHA_C" ] || falhar "o redeploy de d mudou a versao-anterior"
 [ "$(imagem_do_app)" = "$REPO_TESTE:$SHA_D" ] || falhar "depois do redeploy o app roda $(imagem_do_app)"
-ok "vigilume-entrada: versao-anterior, as 3 últimas imagens, historico longo, temporário velho e ambiente ignorado"
+# versao, versao-anterior e historico legíveis sem sudo (não são segredo),
+# apesar do umask 077 da entrada.
+for f in versao versao-anterior historico; do
+    [ "$(stat -c %a "$DIR/$f")" = 644 ] || falhar "$f com modo $(stat -c %a "$DIR/$f"), queria 644"
+done
+ok "vigilume-entrada: versao-anterior, as 3 últimas imagens, historico longo, temporário velho, ambiente ignorado, modos 644"
+
+# 8d'. A etiqueta de um SHA que já existe com outra imagem: recusada (3) só se
+#      o SHA é um alvo do rollback (versao ou versao-anterior; o da versao é o
+#      8b). Qualquer outro SHA (um publish refeito, uma tag v* refeita) troca a
+#      etiqueta velha e segue.
+c=$(entrada "deploy $SHA_C $ID_A" < "$TARS/a.tar")
+[ "$c" = 3 ] || falhar "o SHA da versao-anterior com outra imagem saiu $c, queria 3: $(tail -1 "$TARS/erro")"
+grep -q 'já existe com outra imagem' "$TARS/erro" || falhar "o SHA da versao-anterior com outra imagem: não disse por quê"
+[ "$(docker image inspect -f '{{.Id}}' "$REPO_TESTE:$SHA_C")" = "$ID_C" ] || falhar "a etiqueta $REPO_TESTE:$SHA_C (versao-anterior) foi movida"
+no_ar "$SHA_D" || falhar "o SHA da versao-anterior com outra imagem mexeu na versão"
+c=$(entrada "deploy $SHA_B $ID_A" < "$TARS/a.tar")
+[ "$c" = 0 ] || falhar "um SHA fora do rollback (b) com outra imagem saiu $c, queria 0: $(tail -3 "$TARS/erro")"
+[ "$(docker image inspect -f '{{.Id}}' "$REPO_TESTE:$SHA_B")" = "$ID_A" ] || falhar "a etiqueta velha de b não foi trocada pela imagem nova"
+no_ar "$SHA_B" || falhar "depois de trocar a etiqueta de b, versao $(versao), app $(imagem_do_app)"
+# De volta a d (o 8e' parte dele).
+c=$(entrada "deploy $SHA_D $ID_D" < "$TARS/d.tar")
+if ! { [ "$c" = 0 ] && no_ar "$SHA_D"; }; then falhar "a volta para d saiu $c: $(tail -3 "$TARS/erro")"; fi
+ok "vigilume-entrada: SHA etiquetado com outra imagem, 3 se é a versao-anterior, trocado se não é alvo do rollback"
 
 # 8e. Docker sem o image store containerd: recusa com 1. Um docker falso na
 #     frente do PATH responde ao `docker info` como o store clássico.
@@ -765,6 +792,28 @@ fi
 [ -z "$(docker ps -aq --filter name=vigilume-restauro-)" ] || falhar "o postgres descartável do backup ficou para trás"
 ls "$TARS"/vigilume-backup.* >/dev/null 2>&1 && falhar "o diretório do dump em claro ficou para trás"
 ok "vigilume-entrada backup: conferido, só o cifrado na saída padrão"
+
+# A senha do backup no .env com aspas em volta e CRLF (o compose tira as
+# aspas): o backup a lê igual. Com um caractere que o compose e a URL do
+# backup leriam diferente: recusa com 1, antes do dump.
+cp "$DIR/.env" "$TARS/env.original"
+senha_bk=$(env_do_teste VIGILUME_BACKUP_PASSWORD)
+for forma in "\"$senha_bk\"\r" "'$senha_bk'"; do
+    grep -v '^VIGILUME_BACKUP_PASSWORD=' "$TARS/env.original" > "$DIR/.env"
+    printf 'VIGILUME_BACKUP_PASSWORD=%b\n' "$forma" >> "$DIR/.env"
+    c=$(entrada backup < /dev/null)
+    [ "$c" = 0 ] || falhar "backup com a senha escrita como $(printf %q "$forma") no .env saiu $c, queria 0: $(tail -2 "$TARS/erro")"
+    [ "$(head -c 21 "$TARS/saida")" = "age-encryption.org/v1" ] || falhar "backup com a senha entre aspas não mandou o cifrado"
+done
+grep -v '^VIGILUME_BACKUP_PASSWORD=' "$TARS/env.original" > "$DIR/.env"
+printf 'VIGILUME_BACKUP_PASSWORD=%s$x\n' "$senha_bk" >> "$DIR/.env"
+c=$(entrada backup < /dev/null)
+[ "$c" = 1 ] || falhar "backup com \$ na senha saiu $c, queria 1"
+grep -q 'VIGILUME_BACKUP_PASSWORD' "$TARS/erro" || falhar "backup com \$ na senha não disse por quê: $(tail -1 "$TARS/erro")"
+grep -q 'postgres descartável' "$TARS/erro" && falhar "backup com \$ na senha fez o dump antes de recusar"
+[ ! -s "$TARS/saida" ] || falhar "backup com \$ na senha escreveu na saída padrão"
+cp "$TARS/env.original" "$DIR/.env"
+ok "vigilume-entrada backup: senha com aspas e CRLF lida igual ao compose; caractere ambíguo recusado (1)"
 
 # Sem a chave pública: 1, e nada na saída padrão.
 mv "$DIR/age-recipient" "$DIR/age-recipient.fora"

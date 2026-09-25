@@ -172,16 +172,25 @@ podar() {
 # conferido é exatamente o carregado. Sai 3 em qualquer desvio.
 conferir_tar() {
     local dir=$1 id=$2 membros
-    # Tipo (a 1ª letra) e tamanho (o 3º campo, com o dono numérico e sem
-    # espaço) de cada membro: só arquivo e diretório, e o total extraído
+    # Tipo (a 1ª letra), tamanho (o 3º campo, com o dono numérico e sem
+    # espaço) e nome (o último) de cada membro: diretório só a raiz, blobs e
+    # blobs/sha256; o resto, arquivo comum. Um blobs que fosse arquivo faria o
+    # tar -x falhar lá embaixo, como se fosse a máquina. O total extraído
     # também cabe no teto.
     membros=$(tar -tvf "$dir/imagem.tar" --numeric-owner 2>/dev/null) ||
         sair 3 "o que chegou não é um tar legível"
     awk -v teto="$TETO_BYTES" '
-        substr($0, 1, 1) != "-" && substr($0, 1, 1) != "d" { exit 1 }
-        { total += $3 }
+        {
+            tipo = substr($0, 1, 1)
+            nome = $NF
+            sub(/^\.\//, "", nome)
+            sub(/\/$/, "", nome)
+            dir = (nome == "" || nome == "." || nome == "blobs" || nome == "blobs/sha256")
+            if ((dir && tipo != "d") || (!dir && tipo != "-")) exit 1
+            total += $3
+        }
         END { if (total > teto) exit 1 }' <<<"$membros" ||
-        sair 3 "o tar traz membro que não é arquivo nem diretório, ou passa de $TETO_BYTES bytes extraído"
+        sair 3 "o tar traz membro de tipo inesperado (diretório só ., blobs e blobs/sha256; o resto, arquivo comum), ou passa de $TETO_BYTES bytes extraído"
     membros=$(tar -tf "$dir/imagem.tar")
     grep -vxE '(\./)?|(\./)?(oci-layout|index\.json|blobs/?|blobs/sha256/?|blobs/sha256/[0-9a-f]{64})' <<<"$membros" >"$dir/estranhos" &&
         sair 3 "o tar foge do layout OCI (oci-layout, index.json, blobs/sha256/): $(head -c 200 "$dir/estranhos")"
@@ -223,12 +232,21 @@ deploy() {
     [ "$tam" -le "$TETO_BYTES" ] || uso "a imagem passa de $TETO_BYTES bytes"
 
     conferir_tar "$tmp" "$id"
-    # A etiqueta $IMAGEM:<sha> é o que o rollback sobe: se ela já existe com
-    # OUTRA imagem, etiquetar por cima trocaria a versão boa (inclusive a no
-    # ar) pela nova, antes do healthcheck. Com a mesma, é o redeploy e segue.
+    # A etiqueta $IMAGEM:<sha> é o que o rollback sobe. Se ela já existe com
+    # OUTRA imagem e o <sha> é um alvo do rollback (a versão no ar ou a
+    # anterior), etiquetar por cima trocaria a versão boa pela nova antes do
+    # healthcheck: recusa. De outro SHA (um publish refeito, uma tag v*
+    # refeita, um deploy que saiu 4), a etiqueta velha é trocada. Com a mesma
+    # imagem, é o redeploy e segue.
     existente=$(docker image inspect -f '{{.Id}}' "$IMAGEM:$sha" 2>/dev/null || true)
     if [ -n "$existente" ] && [ "$existente" != "$id" ]; then
-        sair 3 "$IMAGEM:$sha já existe com outra imagem ($existente); o deploy pediu $id"
+        if [ "$sha" = "$(cat "$DIR/versao" 2>/dev/null || true)" ] ||
+            [ "$sha" = "$(cat "$DIR/versao-anterior" 2>/dev/null || true)" ]; then
+            sair 3 "$IMAGEM:$sha já existe com outra imagem ($existente), e é a versão no ar ou a anterior; o deploy pediu $id"
+        fi
+        echo "$IMAGEM:$sha já existe com outra imagem ($existente), fora do rollback: a etiqueta passa para $id"
+    else
+        existente=
     fi
     tar -cf "$tmp/refeito.tar" -C "$tmp/x" oci-layout index.json blobs ||
         sair 1 "o tar refeito não se gravou em $tmp (disco cheio?)"
@@ -246,16 +264,23 @@ deploy() {
         sair 3 "a imagem carregada é $carregados, e o deploy pediu $id"
     fi
     docker tag "$id" "$IMAGEM:$sha"
+    # A imagem da etiqueta trocada, se ficou sem nome nenhum, sai (em uso, o
+    # rmi recusa).
+    if [ -n "$existente" ] && [ "$(docker image inspect -f '{{len .RepoTags}}' "$existente" 2>/dev/null)" = 0 ]; then
+        docker rmi "$existente" >/dev/null 2>&1 || true
+    fi
 
     anterior=$(cat "$DIR/versao" 2>/dev/null || true)
     echo "deploy de $sha (antes: ${anterior:-nenhuma})"
     if VIGILUME_SHA=$sha dc up -d --wait --wait-timeout "$ESPERA_S"; then
-        echo "$sha" > "$DIR/versao.novo" && mv "$DIR/versao.novo" "$DIR/versao"
+        # 0644: não são segredo, e o dono os lê sem sudo (o umask é 077).
+        echo "$sha" > "$DIR/versao.novo" && chmod 644 "$DIR/versao.novo" && mv "$DIR/versao.novo" "$DIR/versao"
         if [ -n "$anterior" ] && [ "$anterior" != "$sha" ]; then
-            echo "$anterior" > "$DIR/versao-anterior.novo" && mv "$DIR/versao-anterior.novo" "$DIR/versao-anterior"
+            echo "$anterior" > "$DIR/versao-anterior.novo" && chmod 644 "$DIR/versao-anterior.novo" &&
+                mv "$DIR/versao-anterior.novo" "$DIR/versao-anterior"
         fi
-        echo "$sha" >> "$DIR/historico"
-        tail -n "$HISTORICO_MAX" "$DIR/historico" > "$DIR/historico.novo" && mv "$DIR/historico.novo" "$DIR/historico"
+        { cat "$DIR/historico" 2>/dev/null || true; echo "$sha"; } | tail -n "$HISTORICO_MAX" > "$DIR/historico.novo" &&
+            chmod 644 "$DIR/historico.novo" && mv "$DIR/historico.novo" "$DIR/historico"
         docker tag "$IMAGEM:$sha" "$IMAGEM:atual"
         podar
         echo "deploy de $sha saudável"
@@ -287,8 +312,18 @@ backup() {
     if ! { [ -f "$SCRIPTS/backup/backup.sh" ] && [ -f "$SCRIPTS/backup/verificar.sql" ] && [ -f "$SCRIPTS/compose/initdb.sql" ]; }; then
         sair 1 "faltam os scripts do backup em $SCRIPTS (backup/backup.sh, backup/verificar.sql, compose/initdb.sql)"
     fi
+    # A senha como o compose a lê do .env: sem o CR de um arquivo editado no
+    # Windows e sem aspas em volta. Só o que não precisa de escape nem no
+    # .env nem na URL do postgres (o runbook gera hex); o resto seria lido de
+    # um jeito pelo compose (que interpola $) e de outro aqui: recusa.
     senha=$(sed -n 's/^VIGILUME_BACKUP_PASSWORD=//p' "$DIR/.env" | tail -n 1)
+    senha=${senha%$'\r'}
+    case "$senha" in
+        \"*\" | \'*\') senha=${senha:1:${#senha}-2} ;;
+    esac
     [ -n "$senha" ] || sair 1 "VIGILUME_BACKUP_PASSWORD vazio no $DIR/.env"
+    [[ "$senha" =~ ^[A-Za-z0-9._~-]+$ ]] ||
+        sair 1 "VIGILUME_BACKUP_PASSWORD no $DIR/.env tem caractere fora de letras, dígitos e ._~- (o compose e o backup a leriam diferente): gere com openssl rand -hex 32 (docs/deploy/vps.md)"
     db=$(dc ps -q db)
     [ -n "$db" ] || sair 1 "o serviço db não está de pé"
     rede=$(docker inspect -f '{{range $k, $v := .NetworkSettings.Networks}}{{$k}}{{end}}' "$db")
