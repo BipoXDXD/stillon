@@ -1611,22 +1611,48 @@ host)", sem repetir o valor.
 
 ### Arquivos da VPS: quando algo em `deploy/vps/` muda na `main`
 
-O deploy troca só a imagem do app. Se um PR mudar `compose.prod.yaml`, `Caddyfile`, `initdb.sh`,
-`vigilume-entrada`, o `sudoers`, os arquivos do vigia ou os scripts do backup
-(`deploy/backup/backup.sh`, `deploy/backup/verificar.sql`, `deploy/compose/initdb.sql`), recopie o
-que mudou, como nos passos 3.3, 4.1 e 8 (o `scp` para `~/vigilume-arquivos` e o `sudo install`
-para o mesmo destino), e aplique:
+O deploy troca só a imagem do app. Os arquivos abaixo foram copiados à mão (passos 3.3, 3.5, 4.1 e
+8) e **não** se atualizam sozinhos. Quando um PR mudar um deles, recopie o que mudou do mesmo
+jeito: no seu computador, na `main` atualizada, o `scp` para `vigilume:vigilume-arquivos/`; na
+VPS, o `sudo install` para o destino da tabela, com o modo dela e dono `root`; e aplique:
+
+| Arquivo do repositório | Destino na VPS | Modo | Para valer |
+|---|---|---|---|
+| `deploy/vps/compose.prod.yaml` | `/opt/vigilume/compose.prod.yaml` | `0644` | `vc up -d` |
+| `deploy/vps/Caddyfile` | `/opt/vigilume/Caddyfile` | `0644` | `vc up -d --force-recreate caddy` e a conferência abaixo |
+| `deploy/vps/initdb.sh` | `/opt/vigilume/initdb.sh` | `0755` | nada: só roda num banco **vazio**, e trocá-lo não muda um banco que já existe |
+| `deploy/vps/env.exemplo` | nenhum: é o modelo do `/opt/vigilume/.env` | — | variável nova no modelo: acrescente-a ao `.env` (`sudo nano /opt/vigilume/.env`) e ao gerenciador; variável que saiu: apague-a do `.env` |
+| `deploy/vps/vigilume-entrada` | `/usr/local/sbin/vigilume-entrada` | `0755` | nada: vale no próximo deploy ou backup |
+| `deploy/vps/sudoers-vigilume-entrada` | `/etc/sudoers.d/vigilume-entrada` | `0440` | `sudo visudo -cf` **antes** do `install` e `sudo visudo -c` depois (passo 4.1) |
+| `deploy/vps/vigia.sh` | `/usr/local/sbin/vigilume-vigia` | `0755` | nada: vale na próxima execução do timer |
+| `deploy/vps/vigilume-vigia.service` e `vigilume-vigia.timer` | `/etc/systemd/system/` | `0644` | `sudo systemctl daemon-reload && sudo systemctl restart vigilume-vigia.timer` |
+| `deploy/vps/vigia.env.exemplo` | nenhum: é o modelo do `/opt/vigilume/vigia.env` | — | variável nova no modelo: acrescente-a ao `vigia.env` (`sudo nano /opt/vigilume/vigia.env`) |
+| `deploy/backup/backup.sh` e `deploy/backup/verificar.sql` | `/opt/vigilume/deploy/backup/` | `0644` | nada: vale no próximo backup |
+| `deploy/compose/initdb.sql` | `/opt/vigilume/deploy/compose/` | `0644` | nada: vale no próximo backup |
+
+Os pacotes do host que o `vigilume-entrada` e o vigia usam (`age`, `curl`, `jq`, `util-linux`,
+passo 3.3) vêm do Ubuntu e se atualizam sozinhos (passo 2.11). Se um PR passar a exigir um pacote
+novo, a descrição dele diz qual: `sudo apt install -y <pacote>` antes de recopiar o script.
+
+**Por que o Caddy precisa de `--force-recreate`:** o `Caddyfile` entra no contêiner como um
+arquivo só (`./Caddyfile:/etc/caddy/Caddyfile:ro`). O `sudo install` põe um arquivo **novo** no
+lugar do velho, e o contêiner que já está de pé continua vendo o velho; o `vc up -d` sozinho não
+recria um serviço cujo compose não mudou. Sem recriar, uma correção de segurança no `Caddyfile`
+fica instalada no disco e sem efeito nenhum. **Confira** depois de todo `Caddyfile` novo (na VPS):
 
 ```bash
-vc up -d            # depois de trocar compose.prod.yaml
-vc restart caddy    # depois de trocar o Caddyfile (o up -d não o relê)
-sudo systemctl daemon-reload && sudo systemctl restart vigilume-vigia.timer   # depois do vigia
+vc up -d --force-recreate caddy
+vc exec -T caddy cat /etc/caddy/Caddyfile | sudo diff - /opt/vigilume/Caddyfile && echo "Caddy com o arquivo novo"
 ```
+
+`Caddy com o arquivo novo`, e nenhuma linha de diferença. Recriar o Caddy derruba o site por um
+ou dois segundos.
 
 Para ver o que mudou desde a última cópia: no seu computador,
 `git log --oneline -- deploy/vps/ deploy/backup/ deploy/compose/initdb.sql` e
-`git diff <commit da última cópia> main -- deploy/vps/ deploy/backup/ deploy/compose/initdb.sql`. O
-`initdb.sh` só roda num banco **vazio**: trocá-lo não muda um banco que já existe.
+`git diff <commit da última cópia> main -- deploy/vps/ deploy/backup/ deploy/compose/initdb.sql`.
+Anote no gerenciador o commit de cada cópia (`git rev-parse HEAD` na hora do `scp`): é o
+`<commit da última cópia>` da próxima vez.
 
 ### Atualizações do sistema e do Docker
 
