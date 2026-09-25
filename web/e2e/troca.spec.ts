@@ -1,5 +1,6 @@
 import type { Page } from '@playwright/test'
 import { controlePositivo, expect, test } from './fixtures'
+import { desligar2FA, podeDesligar2FA } from './pilha'
 import { codigoNovo } from './totp'
 
 // A troca de autenticador contra o binário (A7 do Plano 10 com a G1 do
@@ -10,19 +11,28 @@ import { codigoNovo } from './totp'
 // binário, ativa o 2FA, troca de aplicativo e entra de novo com o novo.
 //
 // O Vigilume tem um usuário só, o das outras specs: este teste liga o 2FA
-// nele e, no fim, desliga. Por isso só roda na pilha própria, que nasce e
-// morre com a rodada (contra uma pilha externa, um teste que falhasse no meio
-// deixaria o 2FA ligado para sempre), e é a última spec em ordem alfabética:
-// uma falha no meio só pode afetar specs que rodassem depois dela.
+// nele e, no fim, desliga. Uma falha no meio o deixaria ligado para as specs
+// seguintes (uma spec nova depois de "troca", --repeat-each) ou para a
+// próxima rodada contra a mesma pilha. Por isso o afterAll desliga o 2FA pelo
+// CLI (vigilume user reset-2fa) mesmo com o teste vermelho, e o beforeAll faz
+// o mesmo antes, para uma rodada anterior interrompida não deixar o teste
+// começar com o 2FA ligado (M2 da revisão do painel do Plano 10). Roda na
+// pilha própria e contra o compose (o job e2e do CI, com E2E_COMPOSE_SERVICE);
+// contra outra pilha externa, onde não há como rodar o CLI, é pulado.
 
 // Os baldes do login (5 de burst por IP) e do /totp/verify, que o fluxo
 // acabou de gastar; a mesma pausa do fluxo.spec.ts.
 const RECARGA_DOS_BALDES_MS = 21_000
 
 test.beforeAll(async () => {
-  test.skip(!process.env.E2E_PILHA_PROPRIA, 'só com a pilha própria: o teste liga o 2FA do único usuário')
-  test.setTimeout(RECARGA_DOS_BALDES_MS + 10_000)
+  test.skip(!podeDesligar2FA(), 'sem como desligar o 2FA pelo CLI: o teste liga o 2FA do único usuário')
+  test.setTimeout(RECARGA_DOS_BALDES_MS + 30_000)
+  desligar2FA(process.env.E2E_EMAIL!)
   await new Promise((ok) => setTimeout(ok, RECARGA_DOS_BALDES_MS))
+})
+
+test.afterAll(() => {
+  if (podeDesligar2FA()) desligar2FA(process.env.E2E_EMAIL!)
 })
 
 async function chaveNaTela(page: Page): Promise<string> {

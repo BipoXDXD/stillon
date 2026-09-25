@@ -299,6 +299,12 @@ jobs:
           E2E_BASE_URL: http://127.0.0.1:8080
           E2E_EMAIL: demo@vigilume.local
           E2E_PASSWORD: demo-vigilume-2026
+          # O troca.spec liga o 2FA do demo e o desliga no afterAll (e antes,
+          # no beforeAll) com `docker compose exec app /vigilume user
+          # reset-2fa`, mesmo se falhar no meio. Sem isto ele é pulado, e o CI
+          # ficava verde sem nunca ter passado pela troca contra o binário (M2
+          # da revisão do painel do Plano 10).
+          E2E_COMPOSE_SERVICE: app
         # Em série (workers: 1 no playwright.config.ts): o fluxo.spec espera
         # ~21 s o balde do login encher de novo. --trace off: contra uma pilha
         # externa, o trace gravaria a senha digitada, e o artifact de falha

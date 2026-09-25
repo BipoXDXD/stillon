@@ -48,5 +48,5 @@ down:
 e2e:
 	docker compose down -v
 	UP_ARGS=--build sh deploy/ci/checar-compose.sh
-	cd web && E2E_BASE_URL=http://127.0.0.1:$${VIGILUME_PORT:-8080} \
+	cd web && E2E_BASE_URL=http://127.0.0.1:$${VIGILUME_PORT:-8080} E2E_COMPOSE_SERVICE=app \
 		E2E_EMAIL=demo@vigilume.local E2E_PASSWORD=demo-vigilume-2026 npx playwright test
