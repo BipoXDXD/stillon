@@ -250,6 +250,40 @@ c=$(entrada "deploy $SHA_DOENTE $ID_DOENTE" < "$TARS/doente.tar")
 grep -q 'sem versão anterior' "$TARS/erro" || falhar "primeiro deploy doente não disse que não havia versão anterior"
 [ "$(versao)" = - ] || falhar "primeiro deploy doente gravou a versão $(versao)"
 [ -z "$(dc ps -q app)" ] || falhar "primeiro deploy doente deixou o app de pé"
+# DEPURAÇÃO (debug-vps-*): o 2a repetido, com o estado do app e os eventos.
+diag_app() {
+    local id
+    for id in $(dc ps -aq app); do
+        docker inspect -f '{{.Name}} status={{.State.Status}} restarting={{.State.Restarting}} running={{.State.Running}} pid={{.State.Pid}} restarts={{.RestartCount}} exit={{.State.ExitCode}} started={{.State.StartedAt}} finished={{.State.FinishedAt}} health={{if .State.Health}}{{.State.Health.Status}}{{end}}' "$id"
+    done
+}
+de_pe=0
+for i in $(seq 1 25); do
+    dc rm -sf app >/dev/null 2>&1
+    docker events --format '{{.TimeNano}} {{.Action}} {{index .Actor.Attributes "name"}} exit={{index .Actor.Attributes "exitCode"}}' \
+        --filter label=com.docker.compose.project=stillon-teste-vps --filter type=container > "$TARS/ev" 2>&1 &
+    ev=$!
+    sleep 0.3
+    t0=$(date +%s%N)
+    c=$(entrada "deploy $SHA_DOENTE $ID_DOENTE" < "$TARS/doente.tar")
+    t1=$(date +%s%N)
+    agora=$(dc ps -q app)
+    sleep 12
+    depois=$(dc ps -q app)
+    kill "$ev" 2>/dev/null; wait "$ev" 2>/dev/null
+    echo "DIAG 2a #$i: código $c em $(((t1 - t0) / 1000000)) ms; app de pé logo depois: ${agora:+sim}${agora:-não}; 12 s depois: ${depois:+sim}${depois:-não}"
+    if [ -n "$agora" ] || [ "$c" != 4 ]; then
+        de_pe=$((de_pe + 1))
+        echo "----- DIAG 2a #$i: erro da entrada"
+        grep -v '^{' "$TARS/erro" | tail -n 25
+        echo "----- DIAG 2a #$i: estado"
+        diag_app
+        echo "----- DIAG 2a #$i: eventos (ns desde o início da entrada)"
+        awk -v t0="$t0" '{ $1 = int(($1 - t0) / 1000000) "ms"; print }' "$TARS/ev" | grep -v 'exec_' | tail -n 60
+    fi
+done
+echo "DIAG 2a: app de pé logo depois do código 4 em $de_pe de 25"
+dc rm -sf app >/dev/null 2>&1
 
 # 2b. O deploy saudável.
 c=$(entrada "deploy $SHA_A $ID_A" < "$TARS/a.tar")
@@ -578,7 +612,7 @@ SHA_LENTO=$(sha_de lento)
 inicio=$(date +%s)
 c=$(entrada "deploy $SHA_LENTO $ID_LENTO" < "$TARS/lento.tar")
 duracao=$(($(date +%s) - inicio))
-[ "$c" = 4 ] || falhar "deploy que nunca fica saudável saiu $c, queria 4: $(tail -3 "$TARS/erro")"
+[ "$c" = 4 ] || { falhar "deploy que nunca fica saudável saiu $c, queria 4: $(tail -3 "$TARS/erro")"; echo "----- DIAG 8c': duração $duracao s; erro:"; grep -v '^{' "$TARS/erro" | tail -n 30; diag_app; }
 grep -q 'rollback feito' "$TARS/erro" || falhar "o deploy lento não disse que fez o rollback"
 [ "$duracao" -ge 45 ] || falhar "o deploy lento voltou em $duracao s, antes da espera de 45 s: não foi o tempo esgotado"
 [ "$(versao)" = "$SHA_A" ] || falhar "depois do rollback por tempo, versao = $(versao)"

@@ -51,6 +51,7 @@ env:
 
 jobs:
   lint:
+    if: false # DEPURAÇÃO (debug-vps-*): só image e vps
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -93,6 +94,7 @@ jobs:
           govulncheck ./...
 
   test:
+    if: false # DEPURAÇÃO (debug-vps-*): só image e vps
     # Produção roda o 18; a perna do 17 mantém o código compatível com um
     # Postgres que ainda não tenha o 18 (Reconciliação 7 do contrato). Uma
     # migration com uuidv7() nativo, por exemplo, fica vermelha aqui.
@@ -130,6 +132,7 @@ jobs:
         run: go test -race -count=1 -coverprofile=coverage.out ./...
 
   secrets:
+    if: false # DEPURAÇÃO (debug-vps-*): só image e vps
     # O histórico INTEIRO, em todo PR: com o repositório privado, um segredo
     # commitado hoje fica público no dia em que ele abrir. Os falsos positivos
     # conferidos à mão ficam no .gitleaksignore, pela fingerprint (D37); as
@@ -152,6 +155,7 @@ jobs:
           gitleaks git . --config .gitleaks.toml --redact --no-banner --verbose
 
   workflows:
+    if: false # DEPURAÇÃO (debug-vps-*): só image e vps
     # Os workflows não rodam fora do GitHub, e o deploy e o backup só rodam
     # à mão ou de madrugada: um erro neles aparece no pior momento. Aqui: o
     # actionlint (sintaxe, expressões e o shellcheck de cada `run:`), as
@@ -188,6 +192,7 @@ jobs:
         run: sh deploy/ci/testar-vps.sh
 
   web:
+    if: false # DEPURAÇÃO (debug-vps-*): só image e vps
     runs-on: ubuntu-latest
     timeout-minutes: 15
     defaults:
@@ -294,6 +299,7 @@ jobs:
           if-no-files-found: error
 
   e2e:
+    if: false # DEPURAÇÃO (debug-vps-*): só image e vps
     # O compose do avaliador, com a imagem que acabou de passar no Trivy (D18):
     # se o seed, o healthcheck, o init do Postgres ou o painel embutido
     # quebrarem, o PR fica vermelho.
@@ -401,8 +407,19 @@ jobs:
         run: go install "filippo.io/age/cmd/age@${AGE_VERSION}" "filippo.io/age/cmd/age-keygen@${AGE_VERSION}"
       - name: vigia externo (vigia.sh e as unidades do systemd)
         run: bash deploy/ci/checar-vigia.sh
+      - name: versões (DEPURAÇÃO)
+        run: |
+          docker version
+          docker compose version
+          docker info -f '{{.DriverStatus}}'
+          nproc; free -m
+      - name: corrida do --wait-timeout no compose do runner (DEPURAÇÃO)
+        run: bash deploy/ci/diag-wait.sh
       - name: checagens da VPS
         run: bash deploy/ci/checar-vps.sh "$IMAGEM:ci"
+      - name: log do dockerd (DEPURAÇÃO)
+        if: always()
+        run: sudo journalctl -u docker --since "-25min" --no-pager | grep -v "level=debug" | tail -n 300
 
   publish:
     # Só depois de tudo verde, e só em push para a main ou tag v* deste
