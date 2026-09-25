@@ -6,3 +6,11 @@
 # para provar que o Recover não escreve o caminho no log. Nunca existiu fora
 # do teste.
 ae726caf892701f2b5111f59f01014d094a2cd0a:internal/httpapi/middleware/middleware_test.go:generic-api-key:87
+
+# A "chave" OpenSSH do ssh falso do deploy/ci/testar-vps.sh: o cabeçalho, uma
+# linha de base64 truncada e o rodapé, só para o vps.sh reconhecer o formato
+# do secret VPS_SSH_KEY. Não é uma chave (não decodifica em chave nenhuma) e
+# nunca abriu servidor algum. Está no histórico: a do script (77dd712) e a
+# cópia no plano do Plano 11 (7a50dc3).
+77dd712d1ac4da3c7c979a7e03257aa44cf4c465:deploy/ci/testar-vps.sh:private-key:50
+7a50dc3c03983aef5a2700700f56d61ffeb3be8b:docs/superpowers/plans/2026-09-25-hospedagem.md:private-key:2508

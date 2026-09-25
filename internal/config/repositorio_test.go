@@ -42,10 +42,12 @@ func TestDependabotWaitsSevenDaysForGoAndNpm(t *testing.T) {
 	}
 }
 
-// D3 (Plano 10, §3.4; banco S3 da revisão): o runbook (docs/deploy/fly.md)
-// gera a chave privada do age e decifra o backup no diretório de trabalho.
-// Um `git add -A` na raiz a levaria para o histórico, e o gitleaks do CI só a
-// acha depois do push. Os nomes são os do runbook e do backup.yml; os
+// D3 (Plano 10, §3.4; banco S3 da revisão): o runbook (docs/deploy/vps.md)
+// gera a chave privada do age em ~ e decifra o backup em ~/vigilume-restauro,
+// fora do repositório. A regra do .gitignore é a defesa para quando um desses
+// arquivos for parar num clone (copiado, baixado ali, ou gerado lá por
+// engano): um `git add -A` na raiz o levaria para o histórico, e o gitleaks
+// do CI só o acha depois do push. Os nomes são os do runbook e do backup.yml; os
 // arquivos do repositório continuam fora da regra (a perna oposta pega um
 // padrão largo demais, como "*").
 func TestGitignoreCoversTheBackupKeyAndDumps(t *testing.T) {
@@ -65,7 +67,7 @@ func TestGitignoreCoversTheBackupKeyAndDumps(t *testing.T) {
 	// exemplo de ambiente, o .env de desenvolvimento do Vite (sem segredo, por
 	// convenção dele) e chaves de fixture TLS em testdata/.
 	versionados := []string{
-		"compose.yaml", "deploy/compose/seed.sh", "docs/deploy/fly.md", "go.mod",
+		"compose.yaml", "deploy/compose/seed.sh", "docs/deploy/vps.md", "go.mod",
 		".env.example", "web/.env.example", "web/.env.development",
 		"internal/prober/safedial/testdata/server.key", "testdata/tls/ca.key",
 	}

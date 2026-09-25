@@ -1,0 +1,418 @@
+#!/usr/bin/env bash
+# vigilume-entrada: a ÚNICA coisa que a chave de deploy alcança na VPS (Plano
+# 11, spec §3). Instalado em /usr/local/sbin/vigilume-entrada (root, 755). O
+# authorized_keys do usuário deploy força:
+#
+#   restrict,command="sudo /usr/local/sbin/vigilume-entrada" ssh-ed25519 ...
+#
+# e o sudoers (deploy/vps/sudoers-vigilume-entrada) deixa o deploy rodar só
+# este arquivo, sem argumento, guardando o SSH_ORIGINAL_COMMAND. O pedido vem
+# do SSH_ORIGINAL_COMMAND, e nunca da linha de comando:
+#
+#   ssh deploy@VPS "deploy <sha 40 hex> <image-id sha256:64 hex>" < imagem.tar
+#       O tar (layout OCI, sem nome) chega pela entrada padrão. Códigos: 0
+#       deploy saudável; 2 pedido recusado (uso, argumento); 3 imagem
+#       divergente (o ID carregado não é o pedido, ou o tar traz nome, ou foge
+#       do layout OCI do crane); 4 não ficou saudável e o rollback foi feito; 1
+#       qualquer outro erro. Precisa do jq na VPS (docs/deploy/vps.md).
+#
+#   ssh deploy@VPS backup > vigilume-<data>.dump.age
+#       O dump do banco, restaurado e conferido pelo deploy/backup/backup.sh
+#       (sem mudança), cifrado com a chave PÚBLICA do age em
+#       /opt/vigilume/age-recipient, na saída padrão; o log na de erro.
+#       Códigos: 0 conferido; 3 a cópia não passou nas checagens (nada na
+#       saída); 4 conferido e enviado, mas o disco passou de 85%; 1 outro
+#       erro (nada, ou um cifrado incompleto, na saída: descarte).
+#       Os scripts ficam em /opt/vigilume/deploy/, com o layout do
+#       repositório (backup/backup.sh, backup/verificar.sql,
+#       compose/initdb.sql), porque o backup.sh acha o initdb.sql por
+#       ../compose/.
+#
+# Tudo o que o script escreve vai para a saída de ERRO: a saída padrão fica
+# reservada (o verbo backup manda por ela só o dump cifrado). Depois da trava,
+# esse log vai também para /opt/vigilume/entrada.log (0644, rodado para
+# entrada.log.1 acima de 1 MiB), por um tee que sobrevive à queda do SSH: se
+# o runner some no meio de um deploy, a entrada termina o deploy (ou o
+# rollback) mesmo assim, e o dono confere em /opt/vigilume/versao e no log.
+#
+# Sem variável de ambiente que mude o comportamento: o sudo limpa o ambiente
+# (sobram TERM, HOME, SHELL e as de idioma, LANG e LC_*), e os caminhos abaixo
+# são constantes. Mesmo assim, o idioma é fixado e as variáveis do docker e do
+# compose saem, por defesa. O teste do CI (deploy/ci/checar-vps.sh) roda uma
+# cópia com estas constantes trocadas por sed.
+set -euo pipefail
+umask 077
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+export LC_ALL=C
+for v in $(compgen -e); do
+    case "$v" in DOCKER_* | COMPOSE_*) unset "$v" ;; esac
+done
+
+DIR=/opt/vigilume
+IMAGEM=vigilume
+ARQUIVOS_COMPOSE="$DIR/compose.prod.yaml"
+ESPERA_S=90
+# O tar do deploy é recebido, extraído e refeito aqui (o mesmo disco das
+# imagens): cabe até 3 vezes o TETO_BYTES durante o deploy.
+TMP_BASE=$DIR
+SHM_BASE=/dev/shm
+SCRIPTS="$DIR/deploy"
+TETO_BYTES=$((2 * 1024 * 1024 * 1024))
+# Linhas do historico que ficam depois de cada deploy (a poda só usa as 3
+# últimas versões distintas).
+HISTORICO_MAX=50
+# Acima disto, o entrada.log vira entrada.log.1 (a anterior sai).
+LOG_TETO=$((1024 * 1024))
+
+# fd 3 = a saída padrão de verdade; daqui em diante, o que não for o dump
+# cifrado vai para a de erro.
+exec 3>&1 1>&2
+
+sair() {
+    local codigo=$1
+    shift
+    echo "vigilume-entrada: $*"
+    exit "$codigo"
+}
+uso() { sair 2 "$* (uso: \"deploy <sha de 40 hex> sha256:<64 hex>\" ou \"backup\")"; }
+
+# O que o EXIT apaga: fixado por quem cria (deploy e backup), vazio antes.
+TMP_DEPLOY=
+TMP_BACKUP=
+RESTAURO=
+TEE_PID=
+PEDIDO=
+# shellcheck disable=SC2317,SC2329 # chamada pelo trap EXIT (0.9 e 0.10+ dão códigos diferentes)
+fim() {
+    local codigo=$? sentido
+    [ -z "$TMP_DEPLOY" ] || rm -rf "$TMP_DEPLOY"
+    [ -z "$RESTAURO" ] || docker rm -f "$RESTAURO" >/dev/null 2>&1 || true
+    if [ -n "$TMP_BACKUP" ]; then
+        shred -u "$TMP_BACKUP"/* 2>/dev/null || true
+        rm -rf "$TMP_BACKUP"
+    fi
+    # A linha final do entrada.log, com o resultado: é ela que o dono lê
+    # depois de uma queda do SSH. O tee termina de gravar antes de a entrada
+    # sair: fechar as duas saídas dá a ele o fim do pipe.
+    if [ -n "$TEE_PID" ]; then
+        case "$PEDIDO:$codigo" in
+            *:0) sentido="feito" ;;
+            *:2) sentido="pedido recusado" ;;
+            deploy*:3) sentido="imagem recusada; nada mudou" ;;
+            deploy*:4) sentido="não ficou saudável; rollback feito, ou app parado no primeiro deploy" ;;
+            backup*:3) sentido="a cópia não passou nas checagens; nada enviado" ;;
+            backup*:4) sentido="enviado, mas o disco passou de 85%" ;;
+            *) sentido="erro; veja as linhas acima" ;;
+        esac
+        echo "== $(date -u +%Y-%m-%dT%H:%M:%SZ) fim: $PEDIDO: código $codigo ($sentido)"
+        exec 1>&- 2>&-
+        wait "$TEE_PID" 2>/dev/null || true
+    fi
+    exit "$codigo"
+}
+trap fim EXIT
+
+# registrar: chamado logo depois da trava, nos dois verbos. O log (fd 1 e 2)
+# passa por um tee que grava no entrada.log e repassa à stderr do SSH. Com
+# -p, o tee ignora o pipe quebrado (a conexão que caiu) e segue gravando no
+# arquivo; SIGPIPE e SIGHUP ignorados aqui valem para a entrada e para os
+# filhos (docker compose, docker), que só escrevem no tee. A fd 3 (a saída
+# padrão de verdade, o cifrado do backup) e a 9 (a trava) não passam pelo
+# tee: o tee as fecha.
+registrar() {
+    local log="$DIR/entrada.log"
+    if [ -f "$log" ] && [ "$(stat -c %s "$log")" -gt "$LOG_TETO" ]; then
+        mv -f "$log" "$log.1"
+    fi
+    : >>"$log"
+    chmod 644 "$log"
+    trap '' PIPE HUP
+    exec 1> >(exec tee -p -a "$log" >&2 3>&- 9>&-) 2>&1
+    TEE_PID=$!
+    PEDIDO=$1
+    echo "== $(date -u +%Y-%m-%dT%H:%M:%SZ) início: $PEDIDO"
+}
+
+dc() { COMPOSE_FILE="$ARQUIVOS_COMPOSE" docker compose --project-directory "$DIR" "$@"; }
+
+# O ID que o deploy.yml manda é o digest do manifesto linux/amd64, e só o
+# image store containerd devolve esse valor no `docker load` e no `.Id` (no
+# store clássico, o ID é o da config). Com o outro store, a conferência
+# recusaria todo deploy: melhor dizer por quê.
+exigir_containerd() {
+    local drivers
+    drivers=$(docker info -f '{{.DriverStatus}}' 2>/dev/null || true)
+    [[ "$drivers" == *io.containerd.snapshotter.v1* ]] ||
+        sair 1 "o Docker não usa o image store containerd; veja docs/deploy/vps.md (Docker)"
+}
+
+# Mantém as imagens das 3 últimas versões que ficaram no ar (o historico,
+# uma linha por deploy saudável); as outras etiquetas $IMAGEM:<sha> saem,
+# inclusive as de deploys que não ficaram saudáveis. Uma em uso não sai (o rmi
+# recusa) e não é erro. Sem `head` no pipe: sob pipefail, o SIGPIPE do awk
+# derrubaria a entrada com 141 quando o historico crescesse.
+podar() {
+    local manter tag
+    manter=$(tac "$DIR/historico" | awk '!visto[$0]++ && n++ < 3')
+    while read -r tag; do
+        [ "$tag" = atual ] && continue
+        grep -qxF -- "$tag" <<<"$manter" && continue
+        docker rmi "$IMAGEM:$tag" >/dev/null 2>&1 || true
+    done < <(docker image ls "$IMAGEM" --format '{{.Tag}}')
+}
+
+# O tar do deploy.yml é o layout OCI do `crane pull --format oci`, empacotado
+# com `tar -C dir -cf - .`: oci-layout, index.json e blobs/sha256/<digest>,
+# com ou sem o "./" na frente. Um tar com nome etiquetaria, no load, uma
+# imagem qualquer desta máquina (vigilume:atual, caddy:2) antes de qualquer
+# conferência. Por isso o tar não é lido como texto: é extraído em $1/x (só
+# arquivos e diretórios, só esses nomes, sem repetição), o index.json é
+# conferido por um parser de JSON (uma imagem, o digest pedido, sem anotação
+# nenhuma), e o que o load recebe é um tar REFEITO a partir de $1/x: o
+# conferido é exatamente o carregado. Sai 3 em qualquer desvio.
+conferir_tar() {
+    local dir=$1 id=$2 membros
+    # Tipo (a 1ª letra), tamanho (o 3º campo, com o dono numérico e sem
+    # espaço) e nome (o último) de cada membro: diretório só a raiz, blobs e
+    # blobs/sha256; o resto, arquivo comum. Um blobs que fosse arquivo faria o
+    # tar -x falhar lá embaixo, como se fosse a máquina. O total extraído
+    # também cabe no teto.
+    membros=$(tar -tvf "$dir/imagem.tar" --numeric-owner 2>/dev/null) ||
+        sair 3 "o que chegou não é um tar legível"
+    awk -v teto="$TETO_BYTES" '
+        {
+            tipo = substr($0, 1, 1)
+            nome = $NF
+            sub(/^\.\//, "", nome)
+            sub(/\/$/, "", nome)
+            dir = (nome == "" || nome == "." || nome == "blobs" || nome == "blobs/sha256")
+            if ((dir && tipo != "d") || (!dir && tipo != "-")) exit 1
+            total += $3
+        }
+        END { if (total > teto) exit 1 }' <<<"$membros" ||
+        sair 3 "o tar traz membro de tipo inesperado (diretório só ., blobs e blobs/sha256; o resto, arquivo comum), ou passa de $TETO_BYTES bytes extraído"
+    membros=$(tar -tf "$dir/imagem.tar")
+    grep -vxE '(\./)?|(\./)?(oci-layout|index\.json|blobs/?|blobs/sha256/?|blobs/sha256/[0-9a-f]{64})' <<<"$membros" >"$dir/estranhos" &&
+        sair 3 "o tar foge do layout OCI (oci-layout, index.json, blobs/sha256/): $(head -c 200 "$dir/estranhos")"
+    [ -z "$(sed -E 's|^\./||; s|/$||' <<<"$membros" | grep -v '^$' | sort | uniq -d)" ] ||
+        sair 3 "o tar traz o mesmo membro duas vezes"
+    mkdir "$dir/x"
+    # O tar já foi conferido: se a extração falha, é a máquina (disco cheio).
+    tar -xf "$dir/imagem.tar" -C "$dir/x" --no-same-owner --no-same-permissions ||
+        sair 1 "o tar não se extraiu em $dir (disco cheio?)"
+    rm -f "$dir/imagem.tar"
+    if ! { [ -f "$dir/x/oci-layout" ] && [ -f "$dir/x/index.json" ] && [ -d "$dir/x/blobs" ]; }; then
+        sair 3 "o tar não é um layout OCI (falta oci-layout, index.json ou blobs)"
+    fi
+    # -s: o arquivo inteiro, com um valor JSON só (sem ele, o -e julgaria só o
+    # último de vários, e o containerd lê o primeiro).
+    jq -e -s --arg id "$id" 'length == 1 and (.[0] |
+        type == "object" and
+        (keys - ["schemaVersion", "mediaType", "manifests"]) == [] and
+        (.manifests | type) == "array" and (.manifests | length) == 1 and
+        (.manifests[0] | type) == "object" and
+        (.manifests[0] | keys - ["mediaType", "digest", "size", "platform"]) == [] and
+        .manifests[0].digest == $id)' "$dir/x/index.json" >/dev/null 2>&1 ||
+        sair 3 "o index.json do tar não é uma imagem só, sem nome, com o manifesto $id"
+}
+
+deploy() {
+    local sha=$1 id=$2 tmp tam saida carregados anterior existente
+    command -v jq >/dev/null || sair 1 "o jq não está instalado (a entrada confere o tar com ele): veja docs/deploy/vps.md"
+    exigir_containerd
+
+    # Sob a trava: nenhum outro deploy está de pé. O que sobrou aqui é de um
+    # deploy morto por SIGKILL (o trap não rodou).
+    find "$TMP_BASE" -maxdepth 1 -name '.vigilume-entrada.*' -exec rm -rf {} + || true
+    tmp=$(mktemp -d "$TMP_BASE/.vigilume-entrada.XXXXXX")
+    TMP_DEPLOY=$tmp
+    head -c $((TETO_BYTES + 1)) > "$tmp/imagem.tar"
+    tam=$(stat -c %s "$tmp/imagem.tar")
+    [ "$tam" -gt 0 ] || uso "nada chegou na entrada padrão (o tar do layout OCI da imagem)"
+    [ "$tam" -le "$TETO_BYTES" ] || uso "a imagem passa de $TETO_BYTES bytes"
+
+    conferir_tar "$tmp" "$id"
+    # A etiqueta $IMAGEM:<sha> é o que o rollback sobe. Se ela já existe com
+    # OUTRA imagem e o <sha> é um alvo do rollback (a versão no ar ou a
+    # anterior), etiquetar por cima trocaria a versão boa pela nova antes do
+    # healthcheck: recusa. De outro SHA (um publish refeito, uma tag v*
+    # refeita, um deploy que saiu 4), a etiqueta velha é trocada. Com a mesma
+    # imagem, é o redeploy e segue.
+    existente=$(docker image inspect -f '{{.Id}}' "$IMAGEM:$sha" 2>/dev/null || true)
+    if [ -n "$existente" ] && [ "$existente" != "$id" ]; then
+        if [ "$sha" = "$(cat "$DIR/versao" 2>/dev/null || true)" ] ||
+            [ "$sha" = "$(cat "$DIR/versao-anterior" 2>/dev/null || true)" ]; then
+            sair 3 "$IMAGEM:$sha já existe com outra imagem ($existente), e é a versão no ar ou a anterior; o deploy pediu $id"
+        fi
+        echo "$IMAGEM:$sha já existe com outra imagem ($existente), fora do rollback: a etiqueta passa para $id"
+    else
+        existente=
+    fi
+    tar -cf "$tmp/refeito.tar" -C "$tmp/x" oci-layout index.json blobs ||
+        sair 1 "o tar refeito não se gravou em $tmp (disco cheio?)"
+    rm -rf "$tmp/x"
+    saida=$(docker load -i "$tmp/refeito.tar") || sair 1 "docker load falhou"
+    rm -f "$tmp/refeito.tar"
+    echo "$saida"
+    carregados=$(sed -n 's/^Loaded image ID: //p' <<<"$saida")
+    if [ -z "$carregados" ] || [ "$(wc -l <<<"$carregados")" -ne 1 ] || grep -q '^Loaded image: ' <<<"$saida"; then
+        sair 3 "o tar não trouxe exatamente uma imagem sem nome"
+    fi
+    if [ "$carregados" != "$id" ]; then
+        # Sem etiqueta, e fora de uso: sai. Em uso ou etiquetada, o rmi recusa.
+        docker rmi "$carregados" >/dev/null 2>&1 || true
+        sair 3 "a imagem carregada é $carregados, e o deploy pediu $id"
+    fi
+    docker tag "$id" "$IMAGEM:$sha"
+    # A imagem da etiqueta trocada, se ficou sem nome nenhum, sai (em uso, o
+    # rmi recusa).
+    if [ -n "$existente" ] && [ "$(docker image inspect -f '{{len .RepoTags}}' "$existente" 2>/dev/null)" = 0 ]; then
+        docker rmi "$existente" >/dev/null 2>&1 || true
+    fi
+
+    anterior=$(cat "$DIR/versao" 2>/dev/null || true)
+    echo "deploy de $sha (antes: ${anterior:-nenhuma})"
+    if VIGILUME_SHA=$sha dc up -d --wait --wait-timeout "$ESPERA_S"; then
+        # 0644: não são segredo, e o dono os lê sem sudo (o umask é 077).
+        echo "$sha" > "$DIR/versao.novo" && chmod 644 "$DIR/versao.novo" && mv "$DIR/versao.novo" "$DIR/versao"
+        if [ -n "$anterior" ] && [ "$anterior" != "$sha" ]; then
+            echo "$anterior" > "$DIR/versao-anterior.novo" && chmod 644 "$DIR/versao-anterior.novo" &&
+                mv "$DIR/versao-anterior.novo" "$DIR/versao-anterior"
+        fi
+        { cat "$DIR/historico" 2>/dev/null || true; echo "$sha"; } | tail -n "$HISTORICO_MAX" > "$DIR/historico.novo" &&
+            chmod 644 "$DIR/historico.novo" && mv "$DIR/historico.novo" "$DIR/historico"
+        docker tag "$IMAGEM:$sha" "$IMAGEM:atual"
+        podar
+        echo "deploy de $sha saudável"
+        exit 0
+    fi
+
+    echo "o app não ficou saudável em ${ESPERA_S} s; o log dele:"
+    dc logs --no-color --tail 100 app || true
+    if [ -z "$anterior" ]; then
+        dc stop app || true
+        sair 4 "primeiro deploy e sem versão anterior: o app ficou parado"
+    fi
+    # A etiqueta atual só anda no sucesso: continua na anterior.
+    if VIGILUME_SHA=$anterior dc up -d --wait --wait-timeout "$ESPERA_S"; then
+        sair 4 "rollback feito: $anterior de volta no ar; $sha não subiu"
+    fi
+    dc logs --no-color --tail 100 app || true
+    sair 1 "o rollback para $anterior também não ficou saudável: veja docs/deploy/vps.md"
+}
+
+# backup: o deploy/backup/backup.sh SEM MUDANÇA (Plano 11, spec §4), dentro de
+# um postgres descartável (a mesma imagem do db) ligado à rede do compose,
+# com os dados em tmpfs. O dump em claro fica num diretório em memória
+# ($SHM_BASE) e sai daqui só cifrado com a chave PÚBLICA do age.
+backup() {
+    local db ip rede img senha codigo=0 raiz_docker pct nome tmp
+    [ -s "$DIR/age-recipient" ] || sair 1 "falta $DIR/age-recipient (a chave PÚBLICA do age)"
+    command -v age >/dev/null || sair 1 "o age não está instalado"
+    if ! { [ -f "$SCRIPTS/backup/backup.sh" ] && [ -f "$SCRIPTS/backup/verificar.sql" ] && [ -f "$SCRIPTS/compose/initdb.sql" ]; }; then
+        sair 1 "faltam os scripts do backup em $SCRIPTS (backup/backup.sh, backup/verificar.sql, compose/initdb.sql)"
+    fi
+    # A senha como o compose a lê do .env: sem o CR de um arquivo editado no
+    # Windows e sem aspas em volta. Só o que não precisa de escape nem no
+    # .env nem na URL do postgres (o runbook gera hex); o resto seria lido de
+    # um jeito pelo compose (que interpola $) e de outro aqui: recusa.
+    senha=$(sed -n 's/^VIGILUME_BACKUP_PASSWORD=//p' "$DIR/.env" | tail -n 1)
+    senha=${senha%$'\r'}
+    case "$senha" in
+        \"*\" | \'*\') senha=${senha:1:${#senha}-2} ;;
+    esac
+    [ -n "$senha" ] || sair 1 "VIGILUME_BACKUP_PASSWORD vazio no $DIR/.env"
+    [[ "$senha" =~ ^[A-Za-z0-9._~-]+$ ]] ||
+        sair 1 "VIGILUME_BACKUP_PASSWORD no $DIR/.env tem caractere fora de letras, dígitos e ._~- (o compose e o backup a leriam diferente): gere com openssl rand -hex 32 (docs/deploy/vps.md)"
+    db=$(dc ps -q db)
+    [ -n "$db" ] || sair 1 "o serviço db não está de pé"
+    rede=$(docker inspect -f '{{range $k, $v := .NetworkSettings.Networks}}{{$k}}{{end}}' "$db")
+    ip=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$db")
+    img=$(docker inspect -f '{{.Config.Image}}' "$db")
+
+    # Sob a trava: o que sobrou de um backup morto por SIGKILL (o dump em
+    # claro na memória, o postgres descartável) sai agora.
+    find "$SHM_BASE" -maxdepth 1 -name 'vigilume-backup.*' -exec rm -rf {} + || true
+    docker ps -aq --filter name=vigilume-restauro- | xargs -r docker rm -f >/dev/null 2>&1 || true
+    nome=vigilume-restauro-$$
+    RESTAURO=$nome
+    tmp=$(mktemp -d "$SHM_BASE/vigilume-backup.XXXXXX")
+    TMP_BACKUP=$tmp
+
+    # A senha do descartável é de uso único; a do vigilume_backup vai ao
+    # contêiner pelo ambiente (-e NOME, sem valor), fora da linha de comando.
+    export POSTGRES_PASSWORD PGPASSWORD ORIGEM_URL VOLUME_BYTES
+    POSTGRES_PASSWORD=$(head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')
+    PGPASSWORD=$POSTGRES_PASSWORD
+    ORIGEM_URL="postgres://vigilume_backup:$senha@$ip:5432/vigilume?sslmode=disable"
+    raiz_docker=$(docker info -f '{{.DockerRootDir}}')
+    VOLUME_BYTES=$(df -B1 --output=size "$raiz_docker" | tail -n 1 | tr -d ' ')
+
+    echo "== postgres descartável ($img) na rede $rede"
+    docker run -d --name "$nome" --network "$rede" --memory 3g \
+        --tmpfs /var/lib/postgresql:rw,size=2g -e POSTGRES_PASSWORD \
+        -v "$SCRIPTS:/deploy:ro" -v "$tmp:/saida" "$img" >/dev/null ||
+        sair 1 "o postgres descartável não subiu"
+    for _ in $(seq 1 60); do
+        docker exec "$nome" pg_isready -h 127.0.0.1 -U postgres >/dev/null 2>&1 && break
+        sleep 1
+    done
+    docker exec "$nome" pg_isready -h 127.0.0.1 -U postgres >/dev/null || sair 1 "o postgres descartável não ficou pronto"
+
+    # O mesmo usuário de quem roda a entrada (root, na VPS): o dump sai com
+    # esse dono, e o shred consegue apagá-lo.
+    docker exec --user "$(id -u):$(id -g)" -e ORIGEM_URL -e PGPASSWORD -e VOLUME_BYTES \
+        -e SAIDA=/saida/vigilume.dump -e PGHOST=127.0.0.1 -e PGPORT=5432 -e PGUSER=postgres \
+        "$nome" sh /deploy/backup/backup.sh || codigo=$?
+    case "$codigo" in
+        0 | 4) ;;
+        3) sair 3 "a cópia restaurada não passou nas checagens: não há backup que sirva" ;;
+        *) sair 1 "o backup.sh saiu com $codigo: não houve backup" ;;
+    esac
+    [ -s "$tmp/vigilume.dump" ] || sair 1 "o backup.sh saiu $codigo sem deixar o dump"
+
+    # O disco de verdade: o sistema de arquivos dos volumes do Docker. O
+    # backup.sh mede o banco contra ele; aqui, a ocupação total (imagens,
+    # logs, volumes). Acima de 85%, o backup vai do mesmo jeito, com o 4.
+    pct=$(df --output=pcent "$raiz_docker" | tail -n 1 | tr -dc 0-9)
+    echo "disco de $raiz_docker: ${pct}% ocupado"
+    if [ "$pct" -ge 85 ]; then
+        echo "ERRO: o disco da VPS passou de 85%: libere espaço (docs/deploy/vps.md, disco)"
+        codigo=4
+    fi
+
+    age -R "$DIR/age-recipient" < "$tmp/vigilume.dump" >&3 || sair 1 "o age falhou: o backup cifrado está incompleto"
+    echo "backup cifrado enviado (código $codigo)"
+    exit "$codigo"
+}
+
+[ "$#" -eq 0 ] || uso "argumento na linha de comando não é aceito; o pedido vem do SSH"
+pedido=${SSH_ORIGINAL_COMMAND:-}
+# Só minúsculas, dígitos, ":" e espaço: nada que um shell ou o docker
+# interpretem (as palavras nunca passam por eval).
+case "$pedido" in
+    "") uso "pedido vazio" ;;
+    *[!a-z0-9:\ ]*) uso "caractere não permitido no pedido" ;;
+esac
+read -r -a palavras <<<"$pedido"
+[ "${#palavras[@]}" -gt 0 ] || uso "pedido vazio"
+
+case "${palavras[0]}" in
+    deploy)
+        [ "${#palavras[@]}" -eq 3 ] || uso "deploy leva o SHA e o image-id"
+        [[ "${palavras[1]}" =~ ^[0-9a-f]{40}$ ]] || uso "SHA malformado: '${palavras[1]}'"
+        [[ "${palavras[2]}" =~ ^sha256:[0-9a-f]{64}$ ]] || uso "image-id malformado: '${palavras[2]}'"
+        exec 9>"$DIR/.entrada.trava"
+        flock -w 600 9 || sair 1 "outra operação da entrada não terminou em 10 min"
+        registrar "$pedido"
+        deploy "${palavras[1]}" "${palavras[2]}"
+        ;;
+    backup)
+        [ "${#palavras[@]}" -eq 1 ] || uso "backup não leva argumento"
+        exec 9>"$DIR/.entrada.trava"
+        flock -w 600 9 || sair 1 "outra operação da entrada não terminou em 10 min"
+        registrar "$pedido"
+        backup
+        ;;
+    *) uso "verbo desconhecido: '${palavras[0]}'" ;;
+esac

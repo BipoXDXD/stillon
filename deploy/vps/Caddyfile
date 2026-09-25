@@ -1,0 +1,39 @@
+# Caddy de produção do Vigilume (Plano 11, spec §2). Montado só-leitura em
+# /etc/caddy/Caddyfile pelo deploy/vps/compose.prod.yaml; na VPS, fica em
+# /opt/vigilume/Caddyfile.
+#
+# {$VIGILUME_DOMINIO} vem do /opt/vigilume/.env (pelo environment do serviço
+# caddy no compose). {$VIGILUME_CADDY_TESTE} é vazio em produção; o teste do
+# CI (deploy/ci/checar-vps.sh) põe ali `local_certs`, e o certificado sai da
+# CA interna do Caddy em vez do Let's Encrypt.
+{
+	{$VIGILUME_CADDY_TESTE}
+
+	# SEM trusted_proxies, de propósito (obrigação 1 do Plano 11): não há CDN
+	# na frente, e sem a lista o Caddy SUBSTITUI o X-Forwarded-For que o
+	# cliente mandou pelo IP de quem abriu a conexão. O app confia no
+	# X-Forwarded-For só quando vem do IP fixo do Caddy (TRUSTED_PROXIES) e
+	# lê o último salto; com trusted_proxies aqui, um cliente escolheria o
+	# próprio IP em todo limitador e no ip_hash.
+	servers {
+		# Só HTTP/1.1 e HTTP/2: a 443/udp (HTTP/3) não é publicada no compose.
+		protocols h1 h2
+	}
+}
+
+# Um bloco de site só para o domínio. Uma requisição com outro Host (ou outro
+# SNI) não casa com nada e não chega ao app: é a checagem de Host da revisão.
+{$VIGILUME_DOMINIO} {
+	reverse_proxy app:8080 {
+		# O Caddy repassa todo cabeçalho do cliente e só reescreve os
+		# X-Forwarded-*. Estes três carregam "o IP do cliente" em outras
+		# plataformas; o app não os lê com CLIENT_IP_HEADER vazio, mas um
+		# CLIENT_IP_HEADER posto por engano passaria a acreditar no valor do
+		# cliente. Removidos aqui, o engano cai no IP do Caddy (um aviso no
+		# log), e não no IP que o atacante escolheu (obrigação 1; B4 do
+		# Plano 10).
+		header_up -Fly-Client-IP
+		header_up -X-Real-IP
+		header_up -CF-Connecting-IP
+	}
+}

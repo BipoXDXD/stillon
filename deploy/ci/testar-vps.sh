@@ -1,0 +1,356 @@
+#!/bin/sh
+# Testes de deploy/ci/vps.sh com um ssh FALSO (nenhuma VPS é tocada). O job
+# workflows do CI (.github/workflows/ci.yml) os roda; localmente, da raiz do
+# repositório:
+#
+#   sh deploy/ci/testar-vps.sh
+#
+# O ssh falso grava os argumentos, a entrada padrão e a chave que recebeu,
+# escreve SSH_FALSO_SAIDA na saída padrão e SSH_FALSO_ERRO na de erro, e sai
+# com SSH_FALSO_CODIGO.
+set -eu
+
+RAIZ=$(cd "$(dirname "$0")/../.." && pwd)
+VPS=$RAIZ/deploy/ci/vps.sh
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+falhas=0
+casos=0
+falhar() { echo "FALHOU: $*" >&2; falhas=$((falhas + 1)); }
+# ler <arquivo>: o conteúdo, ou nada se não existe (um caso que falha não
+# derruba os seguintes pelo set -e).
+ler() { cat "$1" 2>/dev/null || true; }
+
+mkdir "$tmp/bin"
+cat >"$tmp/bin/ssh" <<'FALSO'
+#!/bin/sh
+: >"$SSH_FALSO_DIR/chamado"
+printf '%s\n' "$@" >"$SSH_FALSO_DIR/args"
+# A chave e o known_hosts, copiados enquanto existem (o script os apaga).
+anterior=
+for a in "$@"; do
+    case $anterior in
+        -i)
+            cp "$a" "$SSH_FALSO_DIR/chave"
+            stat -c %a "$a" >"$SSH_FALSO_DIR/chave.modo"
+            echo "$a" >"$SSH_FALSO_DIR/chave.caminho"
+            ;;
+    esac
+    case $a in
+        UserKnownHostsFile=*) cp "${a#UserKnownHostsFile=}" "$SSH_FALSO_DIR/known_hosts" ;;
+    esac
+    anterior=$a
+done
+cat >"$SSH_FALSO_DIR/stdin"
+# SSH_FALSO_SAIDA_ARQ: a saída padrão vem de um arquivo (bytes que uma
+# variável não carrega, como o NUL).
+if [ -n "${SSH_FALSO_SAIDA_ARQ:-}" ]; then cat "$SSH_FALSO_SAIDA_ARQ"; fi
+printf '%s' "${SSH_FALSO_SAIDA:-}"
+printf '%s' "${SSH_FALSO_ERRO:-}" >&2
+exit "${SSH_FALSO_CODIGO:-0}"
+FALSO
+chmod +x "$tmp/bin/ssh"
+
+CHAVE='-----BEGIN OPENSSH PRIVATE KEY-----
+b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW
+-----END OPENSSH PRIVATE KEY-----'
+HOSTKEY='ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl root@vps'
+SHA=0123456789abcdef0123456789abcdef01234567
+ID=sha256:1111111111111111111111111111111111111111111111111111111111111111
+AGE='age-encryption.org/v1
+-> X25519 abc
+--- def
+binario'
+
+# rodar <nome do caso> <args do vps.sh...>: roda com o ambiente de um secret
+# válido (sobrescrevível por variáveis exportadas antes) e deixa em $saida a
+# saída e o erro juntos, e em $codigo o código.
+rodar() {
+    casos=$((casos + 1))
+    caso=$1
+    shift
+    SSH_FALSO_DIR=$tmp/caso-$casos
+    mkdir -p "$SSH_FALSO_DIR"
+    export SSH_FALSO_DIR
+    codigo=0
+    saida=$(PATH="$tmp/bin:$PATH" RUNNER_TEMP="$tmp" \
+        VPS_HOST="${T_HOST-vps.exemplo.com}" VPS_SSH_KEY="${T_CHAVE-$CHAVE}" VPS_HOST_KEY="${T_HOSTKEY-$HOSTKEY}" \
+        sh "$VPS" "$@" <"${T_ENTRADA:-/dev/null}" 2>&1) || codigo=$?
+}
+esperar_codigo() {
+    [ "$codigo" = "$1" ] || falhar "$caso: código $codigo, queria $1 (saída: $saida)"
+}
+esperar_texto() {
+    case $saida in
+        *"$1"*) ;;
+        *) falhar "$caso: a saída não diz \"$1\" (saída: $saida)" ;;
+    esac
+}
+esperar_ssh_nao_chamado() {
+    [ ! -e "$SSH_FALSO_DIR/chamado" ] || falhar "$caso: chamou o ssh, e devia recusar antes"
+}
+
+# opcoes_do_ssh <arquivo de args>: as opções com que o ssh falso foi chamado,
+# uma por linha e sem o destino e o comando (os dois últimos argumentos). Um
+# "-o" vira "<nome>=<valor>", com o nome em minúsculas (o ssh não distingue
+# maiúsculas no nome, e aceita "-oNome=v", "-o Nome=v" e "-o 'Nome v'"); "-F"
+# e "-i" viram "-F <arquivo>" e "-i <arquivo>"; qualquer outro argumento vira
+# "flag <arg>", que nenhuma lista esperada contém.
+opcoes_do_ssh() {
+    awk '
+        { a[NR] = $0 }
+        END {
+            for (i = 1; i <= NR - 2; i++) {
+                x = a[i]
+                if (x == "-o" || x == "-F" || x == "-i") { f = x; i++; v = a[i] }
+                else if (x ~ /^-[oFi]./) { f = substr(x, 1, 2); v = substr(x, 3) }
+                else { print "flag " x; continue }
+                if (f != "-o") { print f " " v; continue }
+                k = v; sub(/[ \t=].*/, "", k)
+                r = substr(v, length(k) + 1); sub(/^[ \t]*=?[ \t]*/, "", r)
+                print tolower(k) "=" r
+            }
+        }' "$1"
+}
+
+# esperar_opcoes_do_ssh: cada opção que o vps.sh fixa aparece EXATAMENTE uma
+# vez, com o valor esperado, e não há nenhuma outra. O ssh usa o PRIMEIRO
+# valor de cada opção: um "-o StrictHostKeyChecking=accept-new" a mais, antes
+# do certo, ganharia dele, e o runner confiaria em qualquer servidor.
+esperar_opcoes_do_ssh() {
+    chave_usada=$(ler "$SSH_FALSO_DIR/chave.caminho")
+    esperadas="-F /dev/null
+-i $chave_usada
+identitiesonly=yes
+userknownhostsfile=$(dirname "$chave_usada")/known_hosts
+globalknownhostsfile=/dev/null
+stricthostkeychecking=yes
+hostkeyalgorithms=ssh-ed25519
+batchmode=yes
+connecttimeout=20
+serveraliveinterval=15
+serveralivecountmax=4
+loglevel=ERROR"
+    obtidas=$(opcoes_do_ssh "$SSH_FALSO_DIR/args" 2>/dev/null || true)
+    printf '%s\n' "$esperadas" | while IFS= read -r e; do
+        nome=${e%%[= ]*}
+        n=$(printf '%s\n' "$obtidas" | awk -v nome="$nome" 'index($0, nome) == 1 && (substr($0, length(nome) + 1, 1) == "=" || substr($0, length(nome) + 1, 1) == " ")' | wc -l)
+        [ "$n" -eq 1 ] || echo "$caso: a opção $nome do ssh aparece $n vez(es), queria exatamente uma ($e)"
+        printf '%s\n' "$obtidas" | grep -qxF -- "$e" || echo "$caso: o ssh não recebeu $e"
+    done >"$tmp/opcoes.falhas"
+    if [ "$(printf '%s\n' "$esperadas" | sort)" != "$(printf '%s\n' "$obtidas" | sort)" ]; then
+        echo "$caso: as opções do ssh não são exatamente as esperadas: $(printf '%s\n' "$obtidas" | tr '\n' ' ')" >>"$tmp/opcoes.falhas"
+    fi
+    while IFS= read -r f; do falhar "$f"; done <"$tmp/opcoes.falhas"
+}
+
+# ---- deploy ----------------------------------------------------------------
+
+printf 'tar-da-imagem\001\002fim' >"$tmp/imagem.tar"
+T_ENTRADA=$tmp/imagem.tar SSH_FALSO_CODIGO=0 SSH_FALSO_ERRO='log do deploy
+' rodar "deploy saudável" deploy "$SHA" "$ID"
+esperar_codigo 0
+esperar_texto "deploy de $SHA saudável na VPS"
+esperar_texto "log do deploy"
+cmp -s "$tmp/imagem.tar" "$SSH_FALSO_DIR/stdin" || falhar "$caso: a imagem não chegou byte a byte à entrada do ssh"
+args=$(ler "$SSH_FALSO_DIR/args")
+[ "$(ler "$SSH_FALSO_DIR/args" | tail -n 1)" = "deploy $SHA $ID" ] || falhar "$caso: comando remoto $(ler "$SSH_FALSO_DIR/args" | tail -n 1)"
+[ "$(ler "$SSH_FALSO_DIR/args" | tail -n 2 | head -n 1)" = "deploy@vps.exemplo.com" ] || falhar "$caso: destino errado: $args"
+esperar_opcoes_do_ssh
+[ "$(ler "$SSH_FALSO_DIR/known_hosts")" = "vps.exemplo.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl" ] ||
+    falhar "$caso: known_hosts = $(ler "$SSH_FALSO_DIR/known_hosts")"
+# O secret vem sem a quebra de linha final; o ssh recusa a chave sem ela.
+printf '%s\n' "$CHAVE" | cmp -s - "$SSH_FALSO_DIR/chave" ||
+    falhar "$caso: a chave entregue ao ssh não é a do secret terminada em quebra de linha"
+[ "$(ler "$SSH_FALSO_DIR/chave.modo")" = 600 ] || falhar "$caso: a chave com modo $(ler "$SSH_FALSO_DIR/chave.modo"), queria 600"
+if ! { [ -s "$SSH_FALSO_DIR/chave.caminho" ] && [ ! -e "$(ler "$SSH_FALSO_DIR/chave.caminho")" ]; }; then
+    falhar "$caso: a chave privada ficou no disco do runner"
+fi
+
+for par in \
+    "2|código 2: uso ou argumento inválido" \
+    "3|código 3: image-id divergente" \
+    "4|rollback feito" \
+    "255|falha de SSH (código 255)" \
+    "1|erro na VPS (código 1)" \
+    "7|erro na VPS (código 7)"; do
+    c=${par%%|*}
+    T_ENTRADA=$tmp/imagem.tar SSH_FALSO_CODIGO=$c rodar "deploy, a VPS sai $c" deploy "$SHA" "$ID"
+    esperar_codigo "$c"
+    esperar_texto "${par#*|}"
+    esperar_texto "::error::"
+done
+# 3: a outra causa (a etiqueta do SHA já existe com outra imagem). 255: a
+# conexão pode ter caído depois de a imagem ir; a VPS termina sozinha, e o
+# dono confere antes de repetir.
+T_ENTRADA=$tmp/imagem.tar SSH_FALSO_CODIGO=3 rodar "deploy, a VPS sai 3 (a outra causa)" deploy "$SHA" "$ID"
+esperar_texto "vigilume:$SHA já existe com outra imagem"
+T_ENTRADA=$tmp/imagem.tar SSH_FALSO_CODIGO=255 rodar "deploy, 255 depois do envio" deploy "$SHA" "$ID"
+esperar_texto "/opt/vigilume/versao"
+esperar_texto "/opt/vigilume/entrada.log"
+esperar_texto "antes de repetir"
+
+NL='
+'
+for ruim in "${SHA}0" "$SHA${NL}x" "x${NL}$SHA" "0123456789ABCDEF0123456789abcdef01234567" "$SHA-tools" "" "$SHA; reboot"; do
+    rodar "deploy, SHA recusado ($ruim)" deploy "$ruim" "$ID"
+    esperar_codigo 2
+    esperar_texto "SHA inválido"
+    esperar_ssh_nao_chamado
+done
+for ruim in "sha256:abc" "1111111111111111111111111111111111111111111111111111111111111111" "sha256:1111111111111111111111111111111111111111111111111111111111111111 x" "$ID${NL}x"; do
+    rodar "deploy, image-id recusado ($ruim)" deploy "$SHA" "$ruim"
+    esperar_codigo 2
+    esperar_texto "image-id inválido"
+    esperar_ssh_nao_chamado
+done
+rodar "deploy sem o image-id" deploy "$SHA"
+esperar_codigo 2
+esperar_ssh_nao_chamado
+rodar "verbo desconhecido" reboot
+esperar_codigo 2
+esperar_ssh_nao_chamado
+
+for ruim in "" "-oProxyCommand=x" "vps.exemplo.com${NL}x" "vps.exemplo.com -p 2222" "deploy@vps"; do
+    T_HOST=$ruim rodar "VPS_HOST recusado ($ruim)" deploy "$SHA" "$ID"
+    esperar_codigo 2
+    esperar_texto "VPS_HOST"
+    esperar_ssh_nao_chamado
+done
+for ruim in "" "SHA256:abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG" "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQ" "vps.exemplo.com ssh-ed25519 AAAAC3Nza" "x${NL}$HOSTKEY"; do
+    T_HOSTKEY=$ruim rodar "VPS_HOST_KEY recusado ($ruim)" deploy "$SHA" "$ID"
+    esperar_codigo 2
+    esperar_texto "VPS_HOST_KEY"
+    esperar_ssh_nao_chamado
+done
+T_CHAVE="" rodar "VPS_SSH_KEY vazio" deploy "$SHA" "$ID"
+esperar_codigo 2
+esperar_texto "VPS_SSH_KEY"
+esperar_ssh_nao_chamado
+
+# ---- backup ----------------------------------------------------------------
+
+arq=$tmp/vigilume-20260925.sql.age
+SSH_FALSO_SAIDA=$AGE SSH_FALSO_ERRO='== dump
+Postgres: 40% do disco
+' rodar "backup conferido" backup "$arq"
+esperar_codigo 0
+esperar_texto "backup cifrado e conferido"
+esperar_texto "== dump"
+[ "$(ler "$arq")" = "$AGE" ] || falhar "$caso: o arquivo não é a saída padrão do ssh"
+[ "$(ler "$SSH_FALSO_DIR/args" | tail -n 1)" = backup ] || falhar "$caso: comando remoto $(ler "$SSH_FALSO_DIR/args" | tail -n 1)"
+[ "$(ler "$SSH_FALSO_DIR/args" | tail -n 2 | head -n 1)" = "deploy@vps.exemplo.com" ] || falhar "$caso: destino errado: $(ler "$SSH_FALSO_DIR/args" | tr '\n' ' ')"
+esperar_opcoes_do_ssh
+case $(ler "$arq") in *"== dump"*) falhar "$caso: o log foi parar no arquivo do backup" ;; esac
+# O backup não manda nada para a VPS: a entrada padrão do passo não chega ao
+# ssh (o comando remoto não a lê, e um ssh que a herdasse a esperaria).
+T_ENTRADA=$tmp/imagem.tar SSH_FALSO_SAIDA=$AGE rodar "backup não repassa a entrada padrão" backup "$arq"
+esperar_codigo 0
+if ! { [ -e "$SSH_FALSO_DIR/stdin" ] && [ ! -s "$SSH_FALSO_DIR/stdin" ]; }; then
+    falhar "$caso: o ssh do backup recebeu a entrada padrão do passo ($(wc -c <"$SSH_FALSO_DIR/stdin" 2>/dev/null) bytes)"
+fi
+: >"$tmp/resumo"
+GITHUB_STEP_SUMMARY=$tmp/resumo SSH_FALSO_SAIDA=$AGE SSH_FALSO_ERRO='Postgres: 40% do disco
+' rodar "backup, linha do disco no resumo" backup "$arq"
+esperar_codigo 0
+grep -qx 'Postgres: 40% do disco' "$tmp/resumo" || falhar "$caso: a linha do disco não foi para o resumo do job"
+
+for claro in 'PGDMP binario do pg_dump' '-- PostgreSQL database dump' 'age-encryption.org/v2
+x' ' age-encryption.org/v1
+x' 'xage-encryption.org/v1'; do
+    SSH_FALSO_SAIDA=$claro rodar "backup em claro recusado ($claro)" backup "$arq"
+    esperar_codigo 1
+    esperar_texto "não começa com o cabeçalho do age"
+    [ ! -e "$arq" ] || falhar "$caso: o arquivo em claro ficou no disco"
+done
+
+# O cabeçalho inteiro do age (a linha da versão, a do destinatário X25519 e a
+# do MAC), não só a primeira linha: um defeito na VPS que escrevesse a linha
+# do age e depois o dump em claro não passa.
+for ruim in 'age-encryption.org/v1
+PGDMP binario' 'age-encryption.org/v1
+-> scrypt abc
+--- def
+x' 'age-encryption.org/v1
+-> X25519 abc
+binario sem a linha do MAC'; do
+    SSH_FALSO_SAIDA=$ruim rodar "backup com cabeçalho do age incompleto ($ruim)" backup "$arq"
+    esperar_codigo 1
+    esperar_texto "não começa com o cabeçalho do age"
+    [ ! -e "$arq" ] || falhar "$caso: o arquivo sem o cabeçalho inteiro ficou no disco"
+done
+# Um dump em claro DEPOIS de um cabeçalho do age certo: o do formato custom
+# do pg_dump (a assinatura PGDMP com versão 1.x, int de 4 bytes, offset de 8
+# e formato custom), ou o de um SQL, colado depois do cifrado.
+printf '%s\nPGDMP\001\020\000\004\010\001\000toc' "$AGE" >"$tmp/pgdmp"
+SSH_FALSO_SAIDA_ARQ=$tmp/pgdmp rodar "backup com o dump custom em claro depois do cabeçalho" backup "$arq"
+esperar_codigo 1
+esperar_texto "dump em claro"
+[ ! -e "$arq" ] || falhar "$caso: o arquivo com o dump em claro ficou no disco"
+SSH_FALSO_SAIDA="$AGE
+--
+-- PostgreSQL database dump
+--" rodar "backup com um dump SQL depois do cifrado" backup "$arq"
+esperar_codigo 1
+esperar_texto "dump em claro"
+[ ! -e "$arq" ] || falhar "$caso: o arquivo com o dump em claro ficou no disco"
+# Cinco bytes "PGDMP" soltos no cifrado acontecem (1 em 2^40 por posição);
+# sem o resto da assinatura, o backup vale.
+SSH_FALSO_SAIDA="${AGE}PGDMPxyz" rodar "backup com PGDMP solto no cifrado" backup "$arq"
+esperar_codigo 0
+[ "$(ler "$arq")" = "${AGE}PGDMPxyz" ] || falhar "$caso: o backup cifrado não ficou"
+
+# O grep que procura o dump em claro falha (código 2: sem -P, por exemplo):
+# sem saber, o backup não vale.
+mkdir "$tmp/bin-grep"
+cat >"$tmp/bin-grep/grep" <<FALSO
+#!/bin/sh
+for a; do case \$a in -*P*) echo "grep: -P não suportado" >&2; exit 2 ;; esac; done
+exec $(command -v grep) "\$@"
+FALSO
+chmod +x "$tmp/bin-grep/grep"
+PATH_ORIGINAL=$PATH
+PATH=$tmp/bin-grep:$PATH
+SSH_FALSO_SAIDA=$AGE rodar "backup com o grep -P falhando" backup "$arq"
+PATH=$PATH_ORIGINAL
+esperar_codigo 1
+esperar_texto "não deu para conferir"
+[ ! -e "$arq" ] || falhar "$caso: o arquivo não conferido ficou no disco"
+
+SSH_FALSO_SAIDA='' rodar "backup vazio" backup "$arq"
+esperar_codigo 1
+esperar_texto "saída veio vazia"
+[ ! -e "$arq" ] || falhar "$caso: o arquivo vazio ficou"
+
+SSH_FALSO_SAIDA=$AGE SSH_FALSO_CODIGO=4 rodar "backup com disco acima de 85%" backup "$arq"
+esperar_codigo 4
+esperar_texto "acima de 85%"
+[ "$(ler "$arq")" = "$AGE" ] || falhar "$caso: o backup conferido do código 4 não ficou para ser guardado"
+
+SSH_FALSO_SAIDA='PGDMP' SSH_FALSO_CODIGO=4 rodar "backup código 4 em claro" backup "$arq"
+esperar_codigo 1
+[ ! -e "$arq" ] || falhar "$caso: o arquivo em claro ficou"
+
+for par in \
+    "3|restauração conferida (código 3)" \
+    "255|falha de SSH (código 255)" \
+    "1|falhou na VPS (código 1)"; do
+    c=${par%%|*}
+    SSH_FALSO_SAIDA=$AGE SSH_FALSO_CODIGO=$c rodar "backup, a VPS sai $c" backup "$arq"
+    esperar_codigo "$c"
+    esperar_texto "${par#*|}"
+    [ ! -e "$arq" ] || falhar "$caso: sobrou o arquivo de um backup que não serve"
+done
+
+T_HOSTKEY="" rodar "backup sem VPS_HOST_KEY" backup "$arq"
+esperar_codigo 2
+esperar_ssh_nao_chamado
+rodar "backup sem arquivo" backup
+esperar_codigo 2
+esperar_ssh_nao_chamado
+
+if [ "$falhas" -gt 0 ]; then
+    echo "$falhas falha(s) em $casos casos" >&2
+    exit 1
+fi
+echo "vps.sh: $casos casos, tudo certo"

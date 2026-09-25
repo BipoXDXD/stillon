@@ -30,9 +30,9 @@ func TestComposeUsesTheDemoKeys(t *testing.T) {
 }
 
 // O Postgres de produção, do compose, da perna 18 do CI e dos testes tem de
-// ser o MESMO digest (D29 do Plano 7). O Dependabot só atualiza o
-// deploy/fly/db/Dockerfile e o compose.yaml; as outras duas strings são a mão,
-// e este teste pega a que ficou para trás.
+// ser o MESMO digest (D29 do Plano 7). O Dependabot atualiza o
+// deploy/vps/db/Dockerfile, o deploy/vps/compose.prod.yaml e o compose.yaml;
+// as outras duas strings são a mão, e este teste pega a que ficou para trás.
 func TestPostgres18DigestIsTheSameEverywhere(t *testing.T) {
 	digest18 := regexp.MustCompile(`postgres:18-alpine@sha256:[0-9a-f]{64}`)
 	fontes := []struct {
@@ -40,7 +40,8 @@ func TestPostgres18DigestIsTheSameEverywhere(t *testing.T) {
 		// regex com um grupo que isola a linha onde o digest 18 deve estar.
 		linha *regexp.Regexp
 	}{
-		{"../../deploy/fly/db/Dockerfile", regexp.MustCompile(`(?m)^FROM (\S+)$`)},
+		{"../../deploy/vps/db/Dockerfile", regexp.MustCompile(`(?m)^FROM (\S+)$`)},
+		{"../../deploy/vps/compose.prod.yaml", regexp.MustCompile(`(?m)^\s+image: (postgres:\S+)$`)},
 		{"../../compose.yaml", regexp.MustCompile(`(?m)^\s+image: (postgres:\S+)$`)},
 		{"../../.github/workflows/ci.yml", regexp.MustCompile(`(?m)^\s+image: (postgres:18\S*)$`)},
 		{"../storage/testdb/testdb.go", regexp.MustCompile(`(?m)^const imagemPadrao = "([^"]+)"$`)},
@@ -64,30 +65,8 @@ func TestPostgres18DigestIsTheSameEverywhere(t *testing.T) {
 		if referencia == "" {
 			referencia, origem = img, f.arquivo
 		} else if img != referencia {
-			t.Errorf("%s usa %s, mas %s usa %s: atualize os quatro juntos", f.arquivo, img, origem, referencia)
+			t.Errorf("%s usa %s, mas %s usa %s: atualize os cinco juntos", f.arquivo, img, origem, referencia)
 		}
-	}
-}
-
-// O deploy e o backup usam o mesmo flyctl: um comando que funciona num e
-// não no outro por diferença de versão é o tipo de coisa que só aparece em
-// produção.
-func TestFlyctlVersionIsTheSameInDeployAndBackup(t *testing.T) {
-	re := regexp.MustCompile(`(?ms)setup-flyctl@\S+.*?^\s+version: (\S+)$`)
-	var versoes []string
-	for _, arq := range []string{"../../.github/workflows/deploy.yml", "../../.github/workflows/backup.yml"} {
-		conteudo, err := os.ReadFile(arq)
-		if err != nil {
-			t.Fatal(err)
-		}
-		m := re.FindSubmatch(conteudo)
-		if m == nil {
-			t.Fatalf("%s: versão do setup-flyctl não encontrada", arq)
-		}
-		versoes = append(versoes, string(m[1]))
-	}
-	if versoes[0] != versoes[1] {
-		t.Errorf("flyctl %s no deploy.yml e %s no backup.yml", versoes[0], versoes[1])
 	}
 }
 

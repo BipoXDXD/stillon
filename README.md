@@ -43,9 +43,9 @@ no primeiro `up`: `DEMO_TARGETS_EXTRA="https://seu.site/ https://outro.site/" do
   `seed` recusa rodar (sai com 1, e o `up` para) se a `PUBLIC_BASE_URL` não for `http` em
   `localhost` ou IP de loopback. **Isso não protege um servidor**: atrás de um proxy (um Caddy com
   `reverse_proxy app:8080`) e com a `PUBLIC_BASE_URL` ainda local, o seed e o boot aceitam, o
-  usuário de demonstração nasce, e qualquer um entra com a senha pública. Nenhuma checagem do
-  `Host` recebido existe hoje. Para hospedar, o compose de produção vem no Plano 11, sem o
-  `seed` e sem nenhuma chave ou senha do repositório.
+  usuário de demonstração nasce, e qualquer um entra com a senha pública. O app não confere o
+  `Host` recebido. Para hospedar, use o compose de produção de [`deploy/vps/`](deploy/vps/), sem
+  o `seed` e sem nenhuma chave ou senha do repositório, pelo [runbook](docs/deploy/vps.md).
 
 `docker compose down` para; `docker compose down -v` apaga o banco também.
 
@@ -96,10 +96,12 @@ Kafka, porque o volume de um monitor destes cabe com folga no banco que já exis
 | Segredos com AES-256-GCM e o id da linha como AAD (um texto cifrado não muda de linha); tipo `Secret` que não sai em log nem em JSON | [`box.go`](internal/crypto/box.go), [`secret.go`](internal/crypto/secret.go) | [`box_test.go`](internal/crypto/box_test.go) (`TestOpenRejectsCiphertextMovedToAnotherRow`), [`secret_test.go`](internal/crypto/secret_test.go) |
 | Chaves de demonstração do compose aceitas no boot só com `PUBLIC_BASE_URL` `http` em `localhost` ou IP de loopback; `https` recusado sempre, em qualquer host; URL malformada ou com usuário e senha recusada | [`config.go`](internal/config/config.go) | [`config_test.go`](internal/config/config_test.go) (`TestLoadRejectsDemoKeysOverHTTPS`, `TestLoadRejectsDemoKeysOnANonLoopbackHost`, `TestLoadAcceptsDemoKeysOnLoopback`, `TestLoadRejectsMalformedPublicBaseURL`), [`compose_test.go`](internal/config/compose_test.go) (`TestComposeUsesTheDemoKeys`) |
 | Status page com DTO próprio: nada interno chega à página pública | [`public.go`](internal/statuspage/public.go) | [`public_test.go`](internal/statuspage/public_test.go) (`TestPublicViewHasNoInternalFields`) |
-| IP real do cliente atrás do proxy, com falha **fechada**: o cabeçalho (`Fly-Client-IP` no Fly) só vale vindo de `TRUSTED_PROXIES`, e um prefixo `/0` ali é recusado no boot. `CLIENT_IP_HEADER` só serve atrás de proxy que **substitui** esse cabeçalho (o do Fly substitui); atrás do Caddy, que repassa o que o cliente mandou, deixe-o **vazio** e vale o último salto do `X-Forwarded-For`, com todas as linhas lidas juntas. Com `PUBLIC_BASE_URL` https, um `X-Forwarded-For` de fora de `TRUSTED_PROXIES` vira aviso no log (um por minuto, com o `remote_addr`) | [`clientip.go`](internal/httpapi/middleware/clientip.go) | [`clientip_test.go`](internal/httpapi/middleware/clientip_test.go) (`TestRateLimitSeparatesClientsBehindFly`, `TestClientIPJoinsEveryForwardedForLine`), `TestSessionsBehindFlyRecordDistinctOrigins`, `TestForwardedForFromOutsideTheListWarnsInProduction`, [`config_test.go`](internal/config/config_test.go) (`TestLoadRejectsAZeroBitTrustedProxy`) |
+| IP real do cliente atrás do proxy, com falha **fechada**: o `X-Forwarded-For` (ou o cabeçalho de `CLIENT_IP_HEADER`) só vale vindo de `TRUSTED_PROXIES`, e um prefixo `/0` ali é recusado no boot. `CLIENT_IP_HEADER` só serve atrás de proxy que **substitui** esse cabeçalho; atrás do Caddy da produção ele fica **vazio**, o `TRUSTED_PROXIES` é o IP fixo do Caddy na rede do compose, e vale o último salto do `X-Forwarded-For`, com todas as linhas lidas juntas. O Caddy remove `X-Real-IP`, `Fly-Client-IP` e `CF-Connecting-IP` vindos do cliente. Com `PUBLIC_BASE_URL` https, um `X-Forwarded-For` de fora de `TRUSTED_PROXIES` vira aviso no log (um por minuto, com o `remote_addr`) | [`clientip.go`](internal/httpapi/middleware/clientip.go) | [`clientip_test.go`](internal/httpapi/middleware/clientip_test.go) (`TestRateLimitSeparatesClientsBehindFly`, `TestClientIPJoinsEveryForwardedForLine`), `TestSessionsBehindFlyRecordDistinctOrigins`, `TestForwardedForFromOutsideTheListWarnsInProduction`, [`config_test.go`](internal/config/config_test.go) (`TestLoadRejectsAZeroBitTrustedProxy`) |
 | Argon2id com teto de concorrência: toda verificação e todo hash (inclusive o do e-mail inexistente) passam por um semáforo de `min(NumCPU, 4)` vagas (`ARGON2_MAX_CONCURRENT`, 1–64); sem vaga em 2 s, `429 rate_limited` com `Retry-After: 2`, em vez de o processo morrer sem memória | [`argon2.go`](internal/auth/argon2.go) | [`argon2_test.go`](internal/auth/argon2_test.go) (`TestEveryArgon2PathWaitsForASlot`), [`argon2_integration_test.go`](internal/httpapi/argon2_integration_test.go) (`TestSaturatedArgon2AnswersRateLimited`) |
 | Bloqueio de conta atômico (a tentativa é reservada **antes** do Argon2 ou do TOTP: N requisições paralelas gastam N tentativas) e sem negação de serviço ao dono: um login completo deixa o cookie de dispositivo `vigilume_dispositivo`, e quem o apresenta não é barrado pelo bloqueio que um anônimo provocou; nas rotas autenticadas, a 5ª prova errada revoga a família da sessão | [`user.go`](internal/auth/user.go), [`dispositivo.go`](internal/auth/dispositivo.go), [`provas.go`](internal/auth/provas.go), [`provas.go` (httpapi)](internal/httpapi/provas.go) | [`user_test.go`](internal/auth/user_test.go) (`TestConcurrentReservationsStopAtTheThreshold`), [`dispositivo_integration_test.go`](internal/httpapi/dispositivo_integration_test.go) (`TestParallelLoginGuessesStopAtTheLock`, `TestDeviceCookieLetsTheOwnerInPastTheAccountLock`), [`dispositivo_revogacao_integration_test.go`](internal/httpapi/dispositivo_revogacao_integration_test.go) (`TestDeviceCookieDiesWithTheCredentials`), [`provas_familia_integration_test.go`](internal/httpapi/provas_familia_integration_test.go) (`TestFifthWrongProofDropsTheFamily`) |
-| O `seed` do compose recusa `PUBLIC_BASE_URL` fora de `http` em loopback, antes de chamar o binário. Isso **não** protege um servidor: atrás de um proxy e com a URL ainda local, ele roda e o usuário de demonstração nasce. O `compose.yaml` é só para a máquina local; para hospedar, o compose de produção do Plano 11, sem o `seed` | [`seed.sh`](deploy/compose/seed.sh) | [`seed_test.go`](internal/config/seed_test.go) (`TestSeedRefusesOutsideLoopback`), [`compose_test.go`](internal/config/compose_test.go) (`TestComposeHeaderSaysItIsLocalOnly`) |
+| O `seed` do compose recusa `PUBLIC_BASE_URL` fora de `http` em loopback, antes de chamar o binário. Isso **não** protege um servidor: atrás de um proxy e com a URL ainda local, ele roda e o usuário de demonstração nasce. O `compose.yaml` é só para a máquina local; para hospedar, o compose de produção de `deploy/vps/`, sem o `seed` | [`seed.sh`](deploy/compose/seed.sh) | [`seed_test.go`](internal/config/seed_test.go) (`TestSeedRefusesOutsideLoopback`), [`compose_test.go`](internal/config/compose_test.go) (`TestComposeHeaderSaysItIsLocalOnly`) |
+| Produção: só o Caddy publica porta (80 e 443); uma requisição com outro `Host` não chega ao app; `X-Real-IP`, `Fly-Client-IP` e `CF-Connecting-IP` mandados pelo cliente são removidos; o banco não aceita conexão de fora da rede do compose; rede sem IPv6 | [`compose.prod.yaml`](deploy/vps/compose.prod.yaml), [`Caddyfile`](deploy/vps/Caddyfile) | [`checar-vps.sh`](deploy/ci/checar-vps.sh) (job `vps` do CI: sobe o compose de produção com o Caddy em modo local; blocos 1 a 7) |
+| Deploy por uma chave SSH que só roda um script: verbo desconhecido, SHA malformado, imagem divergente e o SHA no ar (ou o anterior) já etiquetado com outra imagem recusados; rollback automático se a versão nova não ficar saudável; o backup só devolve texto cifrado | [`vigilume-entrada`](deploy/vps/vigilume-entrada) | [`checar-vps.sh`](deploy/ci/checar-vps.sh), blocos 2, 8 (recusas, imagem divergente, rollback, store, `sudoers`) e 9 (backup) |
 | CSP com nonce por resposta, no painel e na status page | [`webui.go`](internal/webui/webui.go), [`publicpage.go`](internal/httpapi/publicpage.go) | [`publicpage_integration_test.go`](internal/httpapi/publicpage_integration_test.go) (`TestPublicPageRendersWithoutLeaking`); E2E: [`fluxo.spec.ts`](web/e2e/fluxo.spec.ts) (zero violações, com controle positivo) |
 | Imagem distroless **nonroot, sem shell**, Trivy sem achado HIGH/CRITICAL corrigível, varredura de segredos (gitleaks) no histórico inteiro em todo PR | [`Dockerfile`](Dockerfile), [`ci.yml`](.github/workflows/ci.yml), [`.gitleaks.toml`](.gitleaks.toml) | [`checar-imagem.sh`](deploy/ci/checar-imagem.sh) |
 | Versão nova de dependência Go ou npm espera 7 dias antes de entrar no PR do Dependabot (as atualizações de segurança não esperam); a chave privada do `age` e os dumps do backup não entram no git | [`dependabot.yml`](.github/dependabot.yml), [`.gitignore`](.gitignore) | [`repositorio_test.go`](internal/config/repositorio_test.go) (`TestDependabotWaitsSevenDaysForGoAndNpm`, `TestGitignoreCoversTheBackupKeyAndDumps`) |
@@ -148,7 +150,7 @@ make e2e           # APAGA o banco do compose, sobe com --build, confere e roda 
 | Banco | PostgreSQL 18 (compatível com o 17) |
 | Painel | React 19, TypeScript, Vite, TanStack Query, React Router, React Hook Form + Zod, Radix, Tailwind, Recharts |
 | Testes | `testing` + testcontainers, Vitest + Testing Library + MSW, Playwright + axe |
-| Entrega | Docker (distroless), GitHub Actions, GHCR, Fly.io |
+| Entrega | Docker (distroless), GitHub Actions, GHCR, uma VPS (Hostinger) com Caddy |
 
 ## Desenvolvimento
 
@@ -204,27 +206,39 @@ O que mudou no Plano 10 (spec do Plano 10, §4):
 
 ## Deploy e operação
 
-A hospedagem escolhida é uma VPS na Hostinger, com Caddy na frente: é o Plano 11, que traz o
-compose de produção e o runbook próprio. Até lá, o que existe é o alvo do Fly.io, descrito
-abaixo. Dois apps no Fly.io: o binário (`--role=all`) e um Postgres 18 com a imagem oficial, sem gerência
-do Fly, só na rede privada. **Nada disso foi criado ainda**: os artefatos e o runbook existem, e o
-primeiro deploy é decisão do dono do projeto.
+Uma VPS na Hostinger (Ubuntu 24.04), com três contêineres num compose de produção
+([`deploy/vps/compose.prod.yaml`](deploy/vps/compose.prod.yaml)): o **Caddy**, com HTTPS
+automático e o único que publica porta (80 e 443); o **binário** (`--role=all`), sem porta
+publicada; e o **Postgres 18** com a imagem oficial fixada por digest, só na rede interna. Os
+segredos ficam num `.env` do root na própria VPS, gerados lá, com cópia no gerenciador de senhas do
+dono. A VPS vem endurecida pelo runbook: SSH só por chave e sem root, `fail2ban`, firewall no
+sistema e no painel da Hostinger, atualizações de segurança automáticas.
 
 - **Imagem:** ~7,6 MB comprimida. A de produção sai do mesmo código e das mesmas bases fixadas
   por digest que o E2E testou, mas é construída de novo no `publish` (amd64 e arm64) e
   **reescaneada** pelo Trivy antes de ganhar as tags `:<sha do commit>` e `:latest`.
 - **Deploy:** sempre manual (Actions → deploy → Run workflow), só da `main` e só de um commit
-  que está nela, com o **SHA do commit** como entrada. O job resolve a tag `:<sha>`, que só
-  existe depois do reescaneamento, no digest dela, copia a imagem por esse digest para o
-  registry do Fly e faz o deploy. No GitHub Free com repositório privado não há revisor
-  obrigatório: quem pode disparar é quem tem acesso de escrita ao repositório (hoje, só o dono),
-  e os tokens do Fly são secrets de repositório.
-- **Backup:** dump lógico diário, cifrado com `age`, restaurado num banco descartável e
-  conferido (dono das tabelas, RLS com `FORCE`, contagens, partições). Uma checagem que falha
-  sai com código 3. Disco acima de 85% sai com código 4: o dump já conferido é cifrado e guardado
-  mesmo assim, e o job fica vermelho no fim.
+  que está nela, com o **SHA do commit** como entrada. O job resolve a tag `:<sha>` (que só existe
+  depois do reescaneamento) no digest, baixa a imagem linux/amd64 por esse digest e a entrega por
+  SSH a um usuário `deploy` cuja chave só roda
+  [`vigilume-entrada`](deploy/vps/vigilume-entrada): ele confere o ID da imagem, troca a versão,
+  espera o healthcheck e **volta sozinho à anterior** se a nova não ficar saudável; se a conexão
+  cair no meio, o deploy (ou o rollback) termina na própria VPS, que guarda o log de cada deploy e
+  backup em `/opt/vigilume/entrada.log`. A chave do
+  servidor é fixada num secret (nada de `StrictHostKeyChecking=no`). No GitHub Free com
+  repositório privado não há revisor obrigatório: quem pode disparar é quem tem acesso de escrita
+  ao repositório (hoje, só o dono).
+- **Backup:** dump lógico diário, feito na VPS e restaurado num banco descartável e conferido
+  (dono das tabelas, RLS com `FORCE`, contagens, partições) antes de sair **já cifrado** com
+  `age` (a chave privada fica só com o dono) para um artifact de 30 dias. Uma checagem que falha
+  sai com código 3; disco acima de 85% sai com 4 (o dump é guardado mesmo assim, e o job fica
+  vermelho). Por cima, o backup semanal da Hostinger.
+- **Vigia externo:** um timer na VPS consulta o `/healthz` público a cada minuto e pinga o
+  healthchecks.io, que avisa o dono por e-mail se o site cair ou a VPS sumir: o Vigilume não
+  consegue avisar da própria queda.
 
-Runbook: [`docs/deploy/fly.md`](docs/deploy/fly.md).
+Runbook, do "VPS recém-criada" ao "no ar com 2FA, e-mail, backup e vigia", e a operação:
+[`docs/deploy/vps.md`](docs/deploy/vps.md).
 
 ## O que ficou de fora, e por quê
 
@@ -235,9 +249,11 @@ Runbook: [`docs/deploy/fly.md`](docs/deploy/fly.md).
 - **Slack, Telegram, webhook genérico**: dois canais já provam a abstração de notificação.
 - **SSE ou WebSocket no painel**: o painel consulta de tempos em tempos, e isso basta.
 - **Domínio próprio na status page**: verificação de DNS é escopo próprio.
-- **Réplica, failover e PITR do Postgres**: um nó com snapshot diário e dump diário basta para
-  este volume; no pior caso, perde-se um dia de checks.
-- **Métricas raspadas em produção**: exigiriam abrir o endpoint na rede privada do Fly.
+- **Réplica, failover e PITR do Postgres**: um nó com o dump diário conferido e cifrado, mais o
+  backup semanal da VPS inteira na Hostinger, basta para este volume; no pior caso, perde-se um
+  dia de checks.
+- **Métricas raspadas em produção**: exigiriam um coletor na VPS; em produção,
+  `METRICS_ADDR=off`.
 - **Cotas por usuário no sondador e no despacho**: só o operador cria contas (pelo CLI), então
   quem as esgotaria é uma conta que o próprio dono criou. Volta à mesa se o cadastro abrir.
 
@@ -247,4 +263,4 @@ e nos [planos](docs/superpowers/plans/).
 ## Licença
 
 Ainda não definida (repositório privado). A escolha é do dono do projeto e vem junto com a
-publicação ([runbook](docs/deploy/fly.md), "Tornar o repositório público").
+publicação ([runbook](docs/deploy/vps.md), "Tornar o repositório público").
