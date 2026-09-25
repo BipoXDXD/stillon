@@ -28,7 +28,7 @@ repositório" é o que o CI roda.
 | 3 | Só 80 e 443, do Caddy, publicadas; sem `ports:` no `db` e no `app`; sem IPv6 global na rede do compose | `compose.prod.yaml` com `ports` só no `caddy` e a rede sem IPv6; na VPS, `ufw` e o firewall do painel com 22, 80 e 443 | `deploy/ci/checar-vps.sh`, bloco 1 (só o `caddy` publica, exatamente `0.0.0.0:80` e `0.0.0.0:443` TCP; `enable_ipv6: false`; sub-rede 172.30.0.0/24), bloco 2b (na pilha de pé, só `caddy:80` e `caddy:443` publicadas, `app` e `db` sem `PortBindings`, rede sem IPv6) e bloco 7 (de outra rede do Docker o banco não responde) | runbook 9.1 (`nmap` de fora, `ss -tlnp` de dentro) |
 | 4 | `GOMEMLIMIT` no app e `mem_limit` em cada serviço | `compose.prod.yaml` | `deploy/ci/checar-vps.sh`, bloco 1 (`mem_limit` e `restart: unless-stopped` em `caddy`, `app` e `db`; `GOMEMLIMIT` abaixo do `mem_limit` do app) | runbook 9.5 |
 | 5 | Compose de produção sem `seed`, sem `x-ambiente`, sem chave ou senha do repositório; segredos num `env_file` fora do git, gerados com `openssl rand`; `restart: unless-stopped` em tudo; o runbook diz que o `compose.yaml` não vai para o servidor e a `PUBLIC_BASE_URL` é `https://<domínio>` | `compose.prod.yaml` + `deploy/vps/env.exemplo` (modelo sem valores do `/opt/vigilume/.env`, que o compose lê pela interpolação, e não por `env_file`: cada serviço recebe só o que usa) + `deploy/vps/initdb.sh` (papéis a partir das senhas do ambiente); runbook "Como ler este runbook" (a frase literal) e 3.4 (segredos gerados na VPS, cópia no gerenciador) | `deploy/ci/checar-vps.sh`, bloco 1 (serviços exatamente `app`, `caddy` e `db`, sem `seed`; nenhuma chave de demonstração no arquivo; `PUBLIC_BASE_URL` = `https://<domínio>`; o `env.exemplo` sem valor e com toda variável que o compose lê; o Caddy sem segredo e o app sem a senha do superusuário nem a do backup) e bloco 4 (`Host` estranho não chega ao app) | runbook 3.4 e 9.5 (`config --services` sem `seed`) e 9.3 (`Host` estranho não chega ao app) |
-| 6 | Backup e deploy da VPS; a chave do `age` gerada fora do repositório | `deploy.yml` e `backup.yml` reescritos para `ssh deploy@VPS deploy …`/`backup`, com a chave presa a `deploy/vps/vigilume-entrada` por `restrict,command=` e `sudoers`; host key fixada em `VPS_HOST_KEY`; a chave do `age` nasce em `~/vigilume-backup.key`, fora do repositório (runbook 3.5) | `deploy/ci/checar-vps.sh`, blocos 2 (primeiro deploy doente e deploy saudável), 8a–8f (pedidos recusados com 2, imagem divergente e tar com nome com 3, rollback com 4, as 3 últimas imagens, store que não é o do containerd com 1, `sudoers` num Ubuntu 24.04) e 9 (backup: só o cifrado na saída padrão, 1 sem chave e 3 com a cópia reprovada); `deploy/ci/checar-workflows.sh` (job `workflows` do CI: nenhum `StrictHostKeyChecking=no`, nada do Fly) e `deploy/ci/vps.sh` (os códigos do deploy e do backup com mensagem, testados com ssh falso por `deploy/ci/testar-vps.sh`) | runbook 4.4 (a chave só faz o que deve), 4.8 (primeiro deploy), 7.1 e 7.2 (backup e ensaio de restauração) |
+| 6 | Backup e deploy da VPS; a chave do `age` gerada fora do repositório | `deploy.yml` e `backup.yml` reescritos para `ssh deploy@VPS deploy …`/`backup`, com a chave presa a `deploy/vps/vigilume-entrada` por `restrict,command=` e `sudoers`; host key fixada em `VPS_HOST_KEY`; a chave do `age` nasce em `~/vigilume-backup.key`, fora do repositório (runbook 3.5) | `deploy/ci/checar-vps.sh`, blocos 2 (primeiro deploy doente e deploy saudável), 8a–8f (pedidos recusados com 2, imagem divergente, tar com nome e o SHA no ar ou o anterior já etiquetado com outra imagem com 3, rollback com 4, as 3 últimas imagens, store que não é o do containerd com 1, `sudoers` num Ubuntu 24.04) e 9 (backup: só o cifrado na saída padrão, 1 sem chave e 3 com a cópia reprovada); `deploy/ci/checar-workflows.sh` (job `workflows` do CI: nenhum `StrictHostKeyChecking=no`, nada do Fly) e `deploy/ci/vps.sh` (os códigos do deploy e do backup com mensagem, testados com ssh falso por `deploy/ci/testar-vps.sh`) | runbook 4.4 (a chave só faz o que deve), 4.8 (primeiro deploy), 7.1 e 7.2 (backup e ensaio de restauração) |
 | 7 | Um vigia externo do `/healthz` público | `deploy/vps/vigia.sh` + `vigilume-vigia.service` + `vigilume-vigia.timer`: a cada minuto, `curl` no `/healthz` público e ping no healthchecks.io (`HC_URL` no `/opt/vigilume/vigia.env`, o arquivo só do vigia; o `.env` não chega a ele), `/fail` quando falha | `deploy/ci/checar-vigia.sh` (job `vps` do CI), blocos 1 e 2 (saudável pinga a `HC_URL`; fora do ar pinga `HC_URL/fail` e sai com erro), 3 a 6 (barra no fim, sem `HC_URL`, sem domínio, certificado conferido e prazos) e 7 (as unidades: timer a cada minuto, `DynamicUser`, `LoadCredential`, `ExecStart=/usr/local/sbin/vigilume-vigia`) | runbook 8 (derrubar o app de propósito e receber o e-mail) |
 
 **Também fechado no Plano 11**, dos itens que o Plano 10 mandou para cá:
@@ -104,14 +104,14 @@ E as do runbook (desta parte do Plano 11):
   layout OCI do `crane pull --format oci`): a entrada foi testada com um layout OCI montado no
   próprio teste, não com a saída do `crane`, e a VPS exige o image store do containerd (com o
   clássico, todo deploy sai 1 com a mensagem). Se o `crane` puser
-  `org.opencontainers.image.ref.name` no `index.json`, todo deploy sai 3 ("o tar traz nome de
-  imagem"). Conferir no primeiro deploy guiado: o log mostra `Loaded image ID: sha256:<IMAGE_ID do
+  `org.opencontainers.image.ref.name` no `index.json`, todo deploy sai 3 ("o index.json do tar não é uma
+  imagem só, sem nome, com o manifesto …"). Conferir no primeiro deploy guiado: o log mostra `Loaded image ID: sha256:<IMAGE_ID do
   job>`.
 - **SSH de verdade nunca foi exercitado**: nem o `restrict,command=` com o `sudo` guardando o
   `SSH_ORIGINAL_COMMAND` (provado num contêiner com `su deploy -c …`), nem o tar binário passando
   por `ssh | sudo | script`, nem o `known_hosts` escrito a partir do `VPS_HOST_KEY` (as opções do
   `ssh` foram conferidas com `ssh -G` e o resto com um ssh falso). O primeiro deploy guiado é a
-  prova.
+  prova, até o Plano 12 levar isso para o CI (abaixo, "Da revisão final do Plano 11").
 - **`docker compose up --wait` com o app em loop de reinício** sai em segundos no Compose medido
   (v5.5.1); um Compose mais velho na VPS pode esperar os 90 s inteiros.
 - **O IP que o Caddy vê** só foi testado com o cliente no próprio host (o `docker-proxy` entrega o
@@ -128,6 +128,28 @@ E as do runbook (desta parte do Plano 11):
 - **Host key só `ssh-ed25519`** (`HostKeyAlgorithms=ssh-ed25519`): uma VPS sem essa chave é
   recusada com mensagem; trocar é uma linha. Um `255` que viesse da própria entrada (não vem: ela
   só usa 0–4) cairia na mensagem de "falha de SSH".
+
+## Da revisão final do Plano 11 (para o Plano 12)
+
+- **O caminho SSH de verdade no CI** (M7 da revisão final do código). Hoje o `restrict,command=`
+  + `/bin/sh` + `sudo` + a entrada padrão binária + o código de saída só se provam no primeiro
+  deploy guiado (acima, "SSH de verdade nunca foi exercitado"). Proposta: no `checar-vps.sh`, um
+  contêiner com `openssh-server`, o usuário `deploy` com o `authorized_keys` e o `sudoers` de
+  `deploy/vps/`, e uma entrada falsa que ecoa o pedido e o `sha256` da entrada padrão e sai com
+  um código escolhido; o teste confere, pelo `ssh` de verdade com o `known_hosts` montado como o
+  `deploy/ci/vps.sh` monta, que o pedido, os bytes e o código chegam intactos. Sabotagem: tirar o
+  `SSH_ORIGINAL_COMMAND` do `env_keep` do `sudoers` tem de derrubar o teste.
+- **Risco residual da opção A: a VPS não confere assinatura da imagem** (revisão final do
+  código, "Risco residual"; a opção A foi aprovada pelo dono). A chave de deploy não dá root no
+  host (o pedido é filtrado, o tar só é extraído com os nomes da lista, o app roda com
+  `cap_drop: ALL` e `no-new-privileges`, sem socket do Docker e sem porta publicada), mas dá o
+  app **inteiro**: quem a tem sobe qualquer imagem como o app, com a `MASTER_KEY`, o
+  `JWT_SECRET`, o `IP_HASH_KEY`, a senha do `vigilume_app` e a `RESEND_API_KEY`. O `image-id` do
+  pedido não protege contra isso, porque quem ataca o escolhe. A defesa de verdade: o `publish`
+  assinar a imagem (cosign, ou o atestado de proveniência do GitHub), o deploy mandar o bundle
+  pelo mesmo SSH, e a entrada recusar (3) a imagem cuja assinatura não confere com a identidade
+  do workflow `publish` da `main`. Até lá, o runbook ("Trocar um segredo", "A chave de deploy
+  vazou") trata a chave vazada como vazamento de todos os segredos do app, com o passo a passo.
 
 ## Fora de escopo do Plano 11, com destino
 
