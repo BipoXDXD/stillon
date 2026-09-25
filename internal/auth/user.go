@@ -27,6 +27,10 @@ type User struct {
 	PasswordHash   string
 	FailedAttempts int
 	LockedUntil    *time.Time
+	// TOTPChallengeMark é a marca d'água do desafio de 2FA (Plano 8): o
+	// instante do último desafio consumido, nil se nenhum foi. Só ByID a
+	// preenche; é o TOTPVerify quem a lê.
+	TOTPChallengeMark *time.Time
 }
 
 // IsLocked recebe o instante em vez de chamar time.Now para que o bloqueio
@@ -191,16 +195,17 @@ func (s *PGStore) ConsumeChallenge(ctx context.Context, userID uuid.UUID, issued
 
 // ByID atende os dois caminhos de TOTP que só têm o id vindo do token: o
 // cadastro, que precisa do e-mail para o nome da conta na URI otpauth://, e a
-// verificação do segundo fator, que precisa do estado de bloqueio (R40).
+// verificação do segundo fator, que precisa do estado de bloqueio (R40) e da
+// marca d'água do desafio (Plano 8).
 //
 // Uma consulta só, em vez de um EmailByID ao lado de um ByID lendo a mesma
 // linha da mesma tabela.
 func (s *PGStore) ByID(ctx context.Context, userID uuid.UUID) (User, error) {
 	var u User
 	err := s.pool.QueryRow(ctx, `
-		SELECT id, email, password_hash, failed_attempts, locked_until
+		SELECT id, email, password_hash, failed_attempts, locked_until, totp_challenge_mark
 		  FROM users WHERE id = $1`, userID).
-		Scan(&u.ID, &u.Email, &u.PasswordHash, &u.FailedAttempts, &u.LockedUntil)
+		Scan(&u.ID, &u.Email, &u.PasswordHash, &u.FailedAttempts, &u.LockedUntil, &u.TOTPChallengeMark)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return User{}, ErrNotFound
 	}

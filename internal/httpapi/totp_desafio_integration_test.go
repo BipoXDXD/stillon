@@ -137,3 +137,46 @@ func TestTOTPChallengeFromBeforeTheMarkIsRefusedAsExpired(t *testing.T) {
 		t.Errorf("code = %q, queria unauthorized", code)
 	}
 }
+
+// Um desafio já consumido é recusado ANTES do código, e o código de
+// recuperação enviado com ele continua valendo (revisão final do Plano 8).
+// Antes, o TOTP.Verify apagava o código de recuperação numa transação própria
+// e só depois o ConsumeChallenge recusava o desafio: o usuário recebia 401 e
+// perdia um código que não se renova. Os gatilhos reais são duas abas (a mais
+// nova já entrou) e a resposta do verify perdida na rede, com o reenvio do
+// mesmo desafio e o próximo código.
+func TestSpentTOTPChallengeDoesNotBurnARecoveryCode(t *testing.T) {
+	a := newAPI(t)
+	c := clientWithJar(t)
+	segredo := cadastrarTOTP(t, a, c)
+	recuperacao := codigosDeRecuperacao(t, a, c)
+	desafio := desafioAtual(t, a, c)
+
+	primeiro := verificar(t, a, c, segredo, desafio)
+	defer primeiro.Body.Close()
+	if primeiro.StatusCode != http.StatusOK {
+		t.Fatalf("primeiro uso do desafio devolveu %d, queria 200", primeiro.StatusCode)
+	}
+
+	reuso := post(t, c, a.srv.URL+"/api/v1/auth/totp/verify",
+		map[string]string{"challenge": desafio, "code": recuperacao[0]})
+	defer reuso.Body.Close()
+	if reuso.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("o desafio gasto com um código de recuperação devolveu %d, queria 401", reuso.StatusCode)
+	}
+	if code := decodeEnvelope(t, reuso).Error.Code; code != "unauthorized" {
+		t.Errorf("code = %q, queria unauthorized (o desafio, e não o código, foi recusado)", code)
+	}
+
+	// A prova de que o código não foi gasto: com um desafio NOVO, o MESMO
+	// código de recuperação abre a sessão. O segundo de avanço é o do D10:
+	// com o relógio parado, o desafio novo sairia no mesmo microssegundo do
+	// consumido e seria recusado pela marca.
+	a.clk.Advance(time.Second)
+	novo := post(t, c, a.srv.URL+"/api/v1/auth/totp/verify",
+		map[string]string{"challenge": desafioAtual(t, a, c), "code": recuperacao[0]})
+	defer novo.Body.Close()
+	if novo.StatusCode != http.StatusOK {
+		t.Errorf("o mesmo código de recuperação, com um desafio novo, devolveu %d, queria 200 (o desafio gasto queimou o código)", novo.StatusCode)
+	}
+}

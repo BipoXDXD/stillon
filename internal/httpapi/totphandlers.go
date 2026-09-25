@@ -102,6 +102,11 @@ func (h *AuthHandlers) TOTPConfirm(w http.ResponseWriter, r *http.Request) {
 // os cinco minutos de validade. Efeito colateral aceito: consumir um desafio
 // invalida os mais antigos do mesmo usuário ainda abertos (dois logins quase
 // simultâneos: se o mais novo terminar primeiro, o mais antigo refaz a senha).
+//
+// Ordem: desafio → usuário/bloqueio → pré-checagem da marca → código →
+// ResetFailures → ConsumeChallenge → sessão. A pré-checagem recusa antes do
+// código o desafio que já não pode abrir sessão, para não gastar um código de
+// recuperação com ele (revisão final do Plano 8).
 func (h *AuthHandlers) TOTPVerify(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Challenge string `json:"challenge"`
@@ -135,6 +140,23 @@ func (h *AuthHandlers) TOTPVerify(w http.ResponseWriter, r *http.Request) {
 	if user.IsLocked(now) {
 		// Mesmo 401 genérico do login, pelo mesmo motivo do R34.
 		apierr.WriteError(w, r, apierr.CodeInvalidCredentials)
+		return
+	}
+
+	// Pré-checagem da marca, ANTES do código: um desafio já consumido, ou mais
+	// antigo que um consumido, não abre sessão de jeito nenhum, e verificar o
+	// código com ele só custaria caro — gastaria um código de recuperação (que
+	// não se renova e o TOTP.Verify apaga numa transação própria), o timestep
+	// e zeraria o contador de falhas, tudo para devolver 401. Não conta no
+	// bloqueio: não houve código errado. É o mesmo 401 unauthorized do
+	// desafio vencido.
+	//
+	// NÃO é atômica: dois verify simultâneos com o mesmo desafio passam os
+	// dois por aqui. O ConsumeChallenge depois do código continua sendo a
+	// autoridade, e nessa corrida o perdedor ainda pode gastar um código
+	// (resíduo registrado nas pendências).
+	if user.TOTPChallengeMark != nil && !desafio.IssuedAt.After(*user.TOTPChallengeMark) {
+		apierr.WriteError(w, r, apierr.CodeUnauthorized)
 		return
 	}
 
