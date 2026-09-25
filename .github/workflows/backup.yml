@@ -37,6 +37,15 @@ jobs:
     # Nenhuma senha do banco nem chave do age passa pelo GitHub.
     timeout-minutes: 30
     steps:
+      - name: só da main
+        # Só da main, como o deploy: o vps.sh que fala com a VPS, com os
+        # secrets dela, é o que passou por PR. O agendamento roda na main;
+        # disparado à mão de outro branch, o backup fica vermelho (recusado).
+        run: |
+          if [ "$GITHUB_REF" != refs/heads/main ]; then
+            echo "backup só da main (disparado de $GITHUB_REF)" >&2
+            exit 1
+          fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           sparse-checkout: deploy/ci

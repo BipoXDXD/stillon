@@ -71,9 +71,11 @@ jobs:
         # O input vai para o shell só por variável de ambiente, e só no
         # formato de um SHA completo: nada de texto livre na linha de comando.
         # Exatamente 40 hex também exclui as tags da variante tools
-        # (<sha>-tools), que nunca vai para produção.
+        # (<sha>-tools), que nunca vai para produção. O teste é do bash, sobre
+        # o valor INTEIRO: um `grep -x` casaria uma das linhas de um input com
+        # quebra de linha, que o workflow_dispatch pela API aceita.
         run: |
-          if ! printf '%s' "$SHA" | grep -Eqx '[0-9a-f]{40}'; then
+          if ! [[ $SHA =~ ^[0-9a-f]{40}$ ]]; then
             echo "SHA inválido: use o SHA completo do commit (40 hex minúsculos)" >&2
             exit 1
           fi

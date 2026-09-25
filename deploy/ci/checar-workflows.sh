@@ -118,6 +118,50 @@ perms=$(sed -n '/^permissions:/,/^[a-z]/p' "$BACKUP" | grep -E '^  ' | tr -d ' '
 tem "$DEPLOY" 'sh deploy/ci/vps\.sh deploy "\$SHA" "\$IMAGE_ID"$' "a entrega não passa por deploy/ci/vps.sh deploy"
 tem "$BACKUP" 'sh deploy/ci/vps\.sh backup ' "o backup não passa por deploy/ci/vps.sh backup"
 
+# Os passos de guarda rodam aqui de verdade, com o bash do runner (o
+# `shell: bash` dos dois workflows): o texto deles pode enganar, o
+# comportamento não. passo <arquivo> <nome>: o `run: |` do passo, sem o recuo.
+passo() {
+    awk -v nome="$2" '
+        $0 == "      - name: " nome { dentro = 1; next }
+        dentro && /^      - / { exit }
+        dentro && $0 == "        run: |" { bloco = 1; next }
+        dentro && bloco {
+            if ($0 == "") print ""
+            else if ($0 ~ /^          /) print substr($0, 11)
+            else exit
+        }' "$1"
+}
+# guarda <arquivo> <nome> <passa|recusa> <VAR> <valor>: roda o passo com a
+# variável e confere se ele deixa o job seguir (sai 0) ou o para.
+guarda() {
+    bloco=$(passo "$1" "$2")
+    if [ -z "$bloco" ]; then
+        falhar "$1: sem o passo \"$2\""
+        return
+    fi
+    if env "$4=$5" bash -eo pipefail -c "$bloco" >/dev/null 2>&1; then r=passa; else r=recusa; fi
+    [ "$r" = "$3" ] || falhar "$1: o passo \"$2\" com $4=$(printf '%s' "$5" | tr '\n' '|') $r, e devia: $3"
+}
+# Só da main (revisão dos workflows, M4): o vps.sh que fala com a VPS, com os
+# secrets dela, é o que passou por PR. Vale para o deploy e para o backup.
+for f in "$DEPLOY" "$BACKUP"; do
+    guarda "$f" "só da main" passa GITHUB_REF refs/heads/main
+    for ruim in refs/heads/outro refs/tags/v1.0.0 refs/heads/main2 refs/heads/x/refs/heads/main ""; do
+        guarda "$f" "só da main" recusa GITHUB_REF "$ruim"
+    done
+done
+# O SHA inteiro, numa linha só (M1): o grep -x casaria UMA das linhas de um
+# input com quebra de linha, que o workflow_dispatch pela API aceita.
+SHA_BOM=0123456789abcdef0123456789abcdef01234567
+guarda "$DEPLOY" "conferir o SHA" passa SHA "$SHA_BOM"
+for ruim in "x
+$SHA_BOM" "$SHA_BOM
+x" "$SHA_BOM
+" "${SHA_BOM}0" "0123456789ABCDEF0123456789abcdef01234567" "$SHA_BOM-tools" ""; do
+    guarda "$DEPLOY" "conferir o SHA" recusa SHA "$ruim"
+done
+
 # 4. Backup: diário às 06:17 UTC e à mão, desligado até BACKUP_ENABLED=1,
 #    artifact por 30 dias.
 tem "$BACKUP" "^    - cron: '17 6 \\* \\* \\*'" "sem o agendamento diário das 06:17 UTC"
