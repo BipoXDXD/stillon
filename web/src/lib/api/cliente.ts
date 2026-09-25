@@ -128,6 +128,10 @@ export function criarApi(sessao: Sessao, buscar: Buscar) {
     apagarCanal: (id: string) => pedir({ metodo: 'DELETE', caminho: `/channels/${encodeURIComponent(id)}` }, null),
     reenviarVerificacao: (id: string) =>
       pedir({ metodo: 'POST', caminho: `/channels/${encodeURIComponent(id)}/verify/resend` }, null),
+    // Spec do Plano 9 §3.3: pausar (enabled false) e retomar (true) pelo
+    // mesmo PATCH; a resposta é o canal no formato da lista.
+    pausarCanal: (id: string, enabled: boolean) =>
+      pedir({ metodo: 'PATCH', caminho: `/channels/${encodeURIComponent(id)}`, corpo: { enabled } }, Canal),
 
     paginas: () => get('/status-pages', ListaDePaginas),
     criarPagina: (e: EntradaPagina) => pedir({ metodo: 'POST', caminho: '/status-pages', corpo: e }, PaginaDeStatus),

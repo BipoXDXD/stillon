@@ -6,7 +6,8 @@ import { alvo, canal, incidente, itemDoResumo, me, pagina, sessao } from '../src
 import { controlePositivo, expect, test, violacoes } from './fixtures'
 
 // Todas as rotas do painel, com a API respondida pelo próprio teste
-// (page.route): os cinco estados do dashboard, um canal falhando, sessões.
+// (page.route): os cinco estados do dashboard, um canal falhando, um canal
+// pausado, sessões.
 // Para cada rota, nos dois temas: axe (WCAG 2 A e AA, contraste incluído)
 // sem violações, e zero violações de CSP. É o que dá cobertura de CSP a
 // TODAS as telas, não só às do fluxo crítico. O axe roda sob a CSP de
@@ -66,6 +67,8 @@ const respostas: Record<string, unknown> = {
       canal({ id: 'c1', created_at: agora }),
       canal({ id: 'c2', hint: 'discord.com/…/zzzz', status: 'failing', created_at: agora, last_error: 'invalid_channel', last_failure_at: agora }),
       canal({ id: 'c3', kind: 'email', hint: 'd***@exemplo.com', status: 'pending', created_at: agora }),
+      // Pausado (spec do Plano 9 §4.1): a linha "Pausado" e o "Retomar".
+      canal({ id: 'c4', hint: 'discord.com/…/pppp', enabled: false, created_at: agora }),
     ],
   },
   'GET /status-pages': { items: [pagina({ id: 'p1', items: [{ target_id: 'a1', display_name: 'API' }], created_at: agora })] },
@@ -127,6 +130,14 @@ for (const tema of ['claro', 'escuro'] as const) {
     await expect(page.getByRole('dialog')).toBeVisible()
     const r = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze()
     expect(r.violations.map((v) => v.id)).toEqual([])
+    expect(violacoes(page)).toEqual([])
+    // A confirmação de pausar (spec do Plano 9 §4.1), e a linha do pausado.
+    await page.keyboard.press('Escape')
+    await expect(page.getByText('⏸ Pausado: os avisos são descartados')).toBeVisible()
+    await page.getByRole('button', { name: 'Pausar o canal discord.com/…/abcd' }).click()
+    await expect(page.getByRole('alertdialog')).toBeVisible()
+    const pausar = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze()
+    expect(pausar.violations.map((v) => v.id)).toEqual([])
     expect(violacoes(page)).toEqual([])
     await controlePositivo(page)
   })

@@ -123,6 +123,10 @@ export function PaginaCanais() {
   // Um POST ou DELETE por vez: sem e-mail em dobro, sem DELETE em dobro.
   const [reenviando, setReenviando] = useState<string | null>(null)
   const [apagando, setApagando] = useState(false)
+  // Pausar pede confirmação (spec do Plano 9 §4.1): os avisos da pausa são
+  // descartados. Um PATCH por vez, como o DELETE.
+  const [pausar, setPausar] = useState<Canal | null>(null)
+  const [alternando, setAlternando] = useState<string | null>(null)
 
   const recarregar = () => qc.invalidateQueries({ queryKey: ['channels'] })
 
@@ -152,6 +156,26 @@ export function PaginaCanais() {
       if (!(await listaVelha(e))) setErro(textoDoErro(e, 'reenviar'))
     } finally {
       setReenviando(null)
+    }
+  }
+
+  // Pausa (enabled false) ou retoma (true). O despacho cancela os avisos de
+  // canal pausado na hora do envio (semEnvio, Plano 3): retomar não reenvia
+  // o que passou.
+  async function alternar(c: Canal) {
+    if (alternando !== null) return
+    const enabled = !c.enabled
+    setErro(null)
+    setAlternando(c.id)
+    try {
+      await api.pausarCanal(c.id, enabled)
+      await recarregar()
+      avisar(enabled ? 'Canal retomado.' : 'Canal pausado.')
+    } catch (e) {
+      if (!(await listaVelha(e))) setErro(mensagemDe(e))
+    } finally {
+      setAlternando(null)
+      setPausar(null)
     }
   }
 
@@ -191,6 +215,7 @@ export function PaginaCanais() {
                       {c.kind === 'discord' ? 'Discord' : 'E-mail'} <span className="font-normal text-suave">{c.hint}</span>
                     </p>
                     <p className={`text-sm font-medium ${estados[c.status].cor}`}>{estados[c.status].texto}</p>
+                    {!c.enabled && <p className="text-sm font-medium">⏸ Pausado: os avisos são descartados</p>}
                     {c.last_error && c.last_failure_at && (
                       <p className="text-sm text-suave">
                         {c.status === 'failing' ? 'Falha' : 'Última falha'}: {textoDoErroDeCanal(c.last_error)}, em{' '}
@@ -210,6 +235,20 @@ export function PaginaCanais() {
                         Reenviar verificação
                       </Botao>
                     )}
+                    {/* Um botão só, que muda de texto: o foco devolvido pelo
+                        Confirmar ("Pausar") cai no mesmo elemento, agora "Retomar". */}
+                    <Botao
+                      tipo="secundario"
+                      tamanho="pequeno"
+                      // aria-disabled, e não disabled: o Retomar não abre
+                      // diálogo, e o botão desabilitado perderia o foco para o
+                      // <body>. A guarda contra o clique duplo é a de alternar().
+                      aria-disabled={alternando === c.id || undefined}
+                      onClick={() => (c.enabled ? setPausar(c) : void alternar(c))}
+                      aria-label={`${c.enabled ? 'Pausar' : 'Retomar'} o canal ${c.hint}`}
+                    >
+                      {c.enabled ? 'Pausar' : 'Retomar'}
+                    </Botao>
                     <Botao
                       tipo="perigo"
                       tamanho="pequeno"
@@ -234,6 +273,15 @@ export function PaginaCanais() {
           }}
         />
       </Dialogo>
+      <Confirmar
+        aberto={pausar !== null}
+        aoMudar={(v) => !v && setPausar(null)}
+        titulo="Pausar o canal?"
+        descricao="Enquanto pausado, os avisos de incidentes deste canal são descartados, e não são reenviados ao retomar."
+        acao="Pausar canal"
+        ocupado={alternando !== null}
+        aoConfirmar={() => pausar && void alternar(pausar)}
+      />
       <Confirmar
         aberto={apagar !== null}
         aoMudar={(v) => !v && setApagar(null)}

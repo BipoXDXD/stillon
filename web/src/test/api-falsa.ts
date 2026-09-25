@@ -277,6 +277,21 @@ export function criarApiFalsa() {
       return new HttpResponse(null, { status: 204 })
     }),
     rota('post', '/channels/:id/verify/resend', () => new HttpResponse(null, { status: 204 })),
+    // Spec do Plano 9 §3.3: o corpo é só {enabled: bool}; qualquer outra
+    // coisa é 400 validation_failed. Canal que não existe (ou de outro
+    // usuário) é 404. Mudar para o valor que já está é 200 sem efeito.
+    rota('patch', '/channels/:id', ({ params, corpo }) => {
+      const c = st.canais.find((x) => x.id === params.id)
+      if (!c) return erro(404, 'not_found')
+      const chaves = Object.keys(corpo)
+      if (typeof corpo.enabled !== 'boolean') {
+        return erro(400, 'validation_failed', [{ field: 'enabled', reason: chaves.includes('enabled') ? 'invalid' : 'required' }])
+      }
+      const outro = chaves.find((k) => k !== 'enabled')
+      if (outro) return erro(400, 'validation_failed', [{ field: outro, reason: 'unknown' }])
+      c.enabled = corpo.enabled
+      return HttpResponse.json(c)
+    }),
 
     rota('get', '/status-pages', () => HttpResponse.json({ items: st.paginas })),
     rota('post', '/status-pages', ({ corpo }) => {
