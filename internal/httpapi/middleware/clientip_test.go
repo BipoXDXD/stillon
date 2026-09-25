@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"strings"
 	"testing"
 
 	"github.com/BipoXDXD/vigilume/internal/httpapi/middleware"
@@ -189,5 +190,68 @@ func TestRateLimitSeparatesClientsBehindFly(t *testing.T) {
 		if w.Code != http.StatusOK {
 			t.Errorf("cliente %d (%s) recebeu %d: gastou o balde de outro cliente", i, cliente, w.Code)
 		}
+	}
+}
+
+// Plano 8: todas as saídas de ClientIP têm a mesma forma. Antes, só o
+// Fly-Client-IP passava por Unmap; o endereço da conexão e o último salto do
+// X-Forwarded-For saíam crus, e o mesmo cliente IPv4 numa pilha dupla ganhava
+// dois ip_hash na auditoria e duas origens em GET /sessions.
+func TestClientIPIsTheSameForAMappedAndAPlainClient(t *testing.T) {
+	confiaveis := middleware.Proxies{Trusted: prefixos(t, "10.0.0.0/8")}
+	casos := []struct {
+		nome          string
+		mapeado, puro *http.Request
+		px            middleware.Proxies
+	}{
+		{"endereço da conexão, sem proxy",
+			requisicaoDe("[::ffff:203.0.113.9]:4444", ""), requisicaoDe("203.0.113.9:4444", ""),
+			middleware.Proxies{}},
+		{"endereço da conexão, fora da lista",
+			requisicaoDe("[::ffff:203.0.113.9]:4444", "1.2.3.4"), requisicaoDe("203.0.113.9:4444", "1.2.3.4"),
+			confiaveis},
+		{"último salto do X-Forwarded-For",
+			requisicaoDe("10.1.2.3:5555", "::ffff:198.51.100.7"), requisicaoDe("10.1.2.3:5555", "198.51.100.7"),
+			confiaveis},
+		{"proxy confiável mapeado, sem X-Forwarded-For",
+			requisicaoDe("[::ffff:10.1.2.3]:5555", ""), requisicaoDe("10.1.2.3:5555", ""),
+			confiaveis},
+	}
+	for _, c := range casos {
+		m, p := middleware.ClientIP(c.mapeado, c.px), middleware.ClientIP(c.puro, c.px)
+		if m != p || strings.Contains(m, ":") {
+			t.Errorf("%s: mapeado = %q, puro = %q; queria os dois iguais e em IPv4", c.nome, m, p)
+		}
+	}
+}
+
+// Uma zona no último salto é texto do cliente, e não um endereço de onde a
+// requisição possa ter vindo: cai no endereço da conexão, como o ilegível.
+func TestClientIPRejectsAZonedForwardedHop(t *testing.T) {
+	r := requisicaoDe("10.1.2.3:5555", "fe80::1%eth0")
+	if got := middleware.ClientIP(r, middleware.Proxies{Trusted: prefixos(t, "10.0.0.0/8")}); got != "10.1.2.3" {
+		t.Errorf("ClientIP = %q, queria o fallback 10.1.2.3", got)
+	}
+}
+
+// O que não é IP no RemoteAddr (listener de unix socket) continua como veio.
+func TestClientIPKeepsANonIPConnectionAddress(t *testing.T) {
+	r := requisicaoDe("@", "")
+	if got := middleware.ClientIP(r, middleware.Proxies{}); got != "@" {
+		t.Errorf("ClientIP = %q, queria @", got)
+	}
+}
+
+// Um IPv6 escrito de outro jeito (maiúsculas, zeros explícitos) é o mesmo
+// cliente: sai na forma canônica, e ganha um ip_hash só.
+func TestClientIPWritesIPv6InTheCanonicalForm(t *testing.T) {
+	confiaveis := middleware.Proxies{Trusted: prefixos(t, "10.0.0.0/8")}
+	for _, grafia := range []string{"2001:DB8:0:0::1", "2001:0db8::0001", "2001:db8::1"} {
+		if got := middleware.ClientIP(requisicaoDe("10.1.2.3:5555", grafia), confiaveis); got != "2001:db8::1" {
+			t.Errorf("último salto %q: ClientIP = %q, queria 2001:db8::1", grafia, got)
+		}
+	}
+	if got := middleware.ClientIP(requisicaoDe("[2001:DB8::1]:4444", ""), middleware.Proxies{}); got != "2001:db8::1" {
+		t.Errorf("endereço da conexão: ClientIP = %q, queria 2001:db8::1", got)
 	}
 }

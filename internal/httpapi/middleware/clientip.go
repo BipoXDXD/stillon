@@ -38,6 +38,14 @@ func ClientIP(r *http.Request, p Proxies) string {
 	if err != nil {
 		direto = r.RemoteAddr
 	}
+	// O endereço da conexão sai na mesma forma que os dos cabeçalhos (Plano
+	// 8): sem isto, o mesmo cliente IPv4 numa pilha dupla chegava como
+	// "::ffff:1.2.3.4" e ganhava um ip_hash diferente do "1.2.3.4". O que não
+	// é IP (listener de unix socket, pipe de teste) continua como veio: não há
+	// outro valor para usar.
+	if n, ok := normalizar(direto); ok {
+		direto = n
+	}
 	if p.Header != "" {
 		return peloCabecalho(r, p, direto)
 	}
@@ -59,8 +67,8 @@ func ClientIP(r *http.Request, p Proxies) string {
 		return direto
 	}
 	partes := strings.Split(cadeia, ",")
-	ultimo := strings.TrimSpace(partes[len(partes)-1])
-	if _, err := netip.ParseAddr(ultimo); err != nil {
+	ultimo, ok := normalizar(strings.TrimSpace(partes[len(partes)-1]))
+	if !ok {
 		// Cabeçalho ilegível não pode virar chave de balde nem hash de
 		// origem: cai no endereço que a conexão realmente tem.
 		return direto
@@ -86,14 +94,25 @@ func peloCabecalho(r *http.Request, p Proxies, direto string) string {
 		avisoDeProxy.avisar(msgForaDaLista, direto, p.Header)
 		return direto
 	}
-	ip, err := netip.ParseAddr(valor)
-	if err != nil || ip.Zone() != "" {
+	ip, ok := normalizar(valor)
+	if !ok {
 		// Do proxy, mas ilegível: o valor não vai para o log (pode ser
 		// qualquer coisa que o cliente pôs num cabeçalho de mesmo nome).
 		avisoSemCabecalho.avisar(msgSemCabecalho, direto, p.Header)
 		return direto
 	}
-	return ip.Unmap().String()
+	return ip
+}
+
+// normalizar é a forma única de um IP que sai de ClientIP: IPv4 mapeado em
+// IPv6 vira o IPv4, e endereço com zona é recusado (uma zona num cabeçalho é
+// texto do cliente, não um endereço de onde a requisição possa ter vindo).
+func normalizar(s string) (string, bool) {
+	ip, err := netip.ParseAddr(s)
+	if err != nil || ip.Zone() != "" {
+		return "", false
+	}
+	return ip.Unmap().String(), true
 }
 
 const (

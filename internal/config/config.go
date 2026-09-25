@@ -209,6 +209,10 @@ func Load(getenv func(string) string) (*Config, error) {
 			errs = append(errs, fmt.Errorf("%s: deixe vazio para usar o X-Forwarded-For; a variável é para um cabeçalho de um valor só, como Fly-Client-IP", name))
 			return ""
 		}
+		if cabecalhoProibido(raw) {
+			errs = append(errs, fmt.Errorf("%s %q não carrega o IP do cliente: a variável é para o cabeçalho de um valor só que o proxy escreve, como Fly-Client-IP", name, raw))
+			return ""
+		}
 		return http.CanonicalHeaderKey(raw)
 	}
 
@@ -322,6 +326,37 @@ func hostLocal(s string) bool {
 func chaveDeDemo(k []byte) bool {
 	for _, d := range chavesDeDemo {
 		if bytes.Equal(k, d) {
+			return true
+		}
+	}
+	return false
+}
+
+// cabecalhosProibidos são nomes que nunca carregam o IP do cliente, mas que
+// alguém copiaria por engano para o CLIENT_IP_HEADER (Plano 8). Com um deles,
+// o app leria um valor que não é IP, cairia no endereço do proxy para todo
+// cliente e só avisaria uma vez por minuto no log: o erro de configuração
+// apareceria como rate limit coletivo, e não no boot.
+//
+// É uma lista de proibidos, e não de permitidos, de propósito: uma lista de
+// permitidos recusaria o cabeçalho de um proxy legítimo que não estivesse
+// nela, e trocar de provedor exigiria mudar código.
+var cabecalhosProibidos = []string{
+	"Forwarded",
+	"Host", "Cookie", "Authorization", "Proxy-Authorization",
+	"Connection", "Upgrade", "TE", "Trailer", "Transfer-Encoding", "Keep-Alive",
+	"Content-Length", "Content-Type",
+}
+
+// cabecalhoProibido também recusa toda a família X-Forwarded-* (Host, Proto,
+// Port...): nenhum deles é o endereço do cliente. O X-Forwarded-For tem
+// mensagem própria antes desta checagem.
+func cabecalhoProibido(nome string) bool {
+	if len(nome) >= len("X-Forwarded-") && strings.EqualFold(nome[:len("X-Forwarded-")], "X-Forwarded-") {
+		return true
+	}
+	for _, p := range cabecalhosProibidos {
+		if strings.EqualFold(nome, p) {
 			return true
 		}
 	}
