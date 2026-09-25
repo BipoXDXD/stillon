@@ -1,6 +1,10 @@
 package targets
 
 import (
+	"context"
+	"errors"
+	"net"
+	"net/http"
 	"strings"
 	"testing"
 )
@@ -157,6 +161,17 @@ func TestSameOrigin(t *testing.T) {
 		{"http://api.exemplo.com:443/", "https://api.exemplo.com/", false},
 		{"https://api.exemplo.com/", "://quebrada", false},
 		{"https://api.exemplo.com/", "", false},
+
+		// Q1 da revisão do Plano 10: o host é comparado como o net/http o
+		// disca (idna.Lookup.ToASCII). strings.ToLower dizia "mesma origem"
+		// para os dois primeiros, mas o transporte disca xn--strae-oqa.de
+		// num e strasse.de no outro, que é outro domínio registrável.
+		{"https://straße.de/", "https://STRAẞE.de/", false},
+		{"https://straẞe.de/", "https://strasse.de/x", true},
+		{"https://straße.de/", "https://xn--strae-oqa.de/x", true},
+		{"https://BÜCHER.example/", "https://bücher.example/x", true},
+		// Um host que não converte não é a origem de ninguém, nem dele mesmo.
+		{"https://-é.de/", "https://-é.de/x", false},
 	}
 	for _, c := range cases {
 		if got := SameOrigin(c.a, c.b); got != c.quer {
@@ -164,6 +179,42 @@ func TestSameOrigin(t *testing.T) {
 		}
 		if got := SameOrigin(c.b, c.a); got != c.quer {
 			t.Errorf("SameOrigin(%q, %q) = %v, queria %v (a regra é simétrica)", c.b, c.a, got, c.quer)
+		}
+	}
+}
+
+// O SameOrigin concorda com o que o transporte do net/http de fato disca
+// (Q1 da revisão do Plano 10): para cada par de hosts IDN, "mesma origem"
+// se e só se as duas URLs discam o mesmo endereço. Prende o perfil do
+// idna.Lookup ao do net/http: se um dos dois mudar, este teste vê.
+func TestSameOriginAgreesWithTheDialedHost(t *testing.T) {
+	discado := func(u string) string {
+		t.Helper()
+		var addr string
+		tr := &http.Transport{DialContext: func(_ context.Context, _, a string) (net.Conn, error) {
+			addr = a
+			return nil, errors.New("só anotando")
+		}}
+		resp, err := (&http.Client{Transport: tr}).Get(u)
+		if err == nil {
+			resp.Body.Close()
+		}
+		if addr == "" {
+			t.Fatalf("o transporte não discou %q: %v", u, err)
+		}
+		return addr
+	}
+	pares := [][2]string{
+		{"https://straße.de/", "https://STRAẞE.de/"},
+		{"https://straẞe.de/", "https://strasse.de/"},
+		{"https://straße.de/", "https://xn--strae-oqa.de/"},
+		{"https://BÜCHER.example/", "https://bücher.example/"},
+		{"https://Ⅸ.example/", "https://ix.example/"},
+	}
+	for _, p := range pares {
+		mesmo := discado(p[0]) == discado(p[1])
+		if got := SameOrigin(p[0], p[1]); got != mesmo {
+			t.Errorf("SameOrigin(%q, %q) = %v, mas o transporte disca %q e %q", p[0], p[1], got, discado(p[0]), discado(p[1]))
 		}
 	}
 }

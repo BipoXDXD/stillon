@@ -191,9 +191,12 @@ Os limites dos Planos 7 e 8 seguem como estão no `PENDENCIAS-PARA-O-PLANO-8.md`
 - **Sonda da URL antiga em voo durante o PATCH** entra na histerese zerada como o primeiro check da
   URL nova (C4). E o incidente aberto da URL antiga fecha pelos sucessos da nova, com a duração
   somada (H10 do plano).
-- **O aviso do painel e o servidor divergem em hosts exóticos** (B1): IDN em Unicode de um lado e
-  punycode do outro, IPv4 em hexadecimal, ponto final no host. O servidor apaga os headers (o lado
-  seguro) e o painel pode não avisar.
+- **O aviso do painel e o servidor divergem em hosts exóticos** (B1): IPv4 em hexadecimal, ponto
+  final no host, host que o navegador aceita e o `idna.Lookup.ToASCII` recusa. O servidor apaga os
+  headers (o lado seguro) e o painel pode não avisar. Desde a revisão (Q1), o servidor compara o
+  host como o `net/http` o disca (`idna.Lookup.ToASCII`, o mesmo UTS 46 do `new URL().origin`):
+  `straße.de` e `STRAẞE.de` são origens diferentes (discam `xn--strae-oqa.de` e `strasse.de`), e
+  Unicode × punycode do mesmo host é a mesma origem (`TestSameOriginAgreesWithTheDialedHost`).
 - **Alvo com `expected_status` 1xx ou 3xx gravado antes do Plano 10** (só pela API) continua no
   banco, e todo PATCH nele responde `400 expected_status/out_of_range` até o valor ser corrigido (C2).
 - **HTTP/2 com cabeçalho de resposta enorme** (C1): o teto vale, mas os testes só exercitam HTTP/1.
