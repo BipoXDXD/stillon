@@ -34,18 +34,18 @@ const cspVerificacao = "default-src 'none'; form-action 'self'; frame-ancestors 
 // não é escrito no HTML.
 const (
 	paginaConfirmar = `<!doctype html><html lang="pt-BR"><meta charset="utf-8">` +
-		`<meta name="viewport" content="width=device-width"><title>Vigilume: confirmar e-mail</title>` +
+		`<meta name="viewport" content="width=device-width"><title>StillOn: confirmar e-mail</title>` +
 		`<h1>Confirmar este e-mail</h1>` +
-		`<p>Este endereço vai receber os alertas de incidente do Vigilume.</p>` +
+		`<p>Este endereço vai receber os alertas de incidente do StillOn.</p>` +
 		`<form method="post"><button type="submit">Confirmar</button></form></html>`
 	paginaConfirmado = `<!doctype html><html lang="pt-BR"><meta charset="utf-8">` +
-		`<meta name="viewport" content="width=device-width"><title>Vigilume: e-mail confirmado</title>` +
+		`<meta name="viewport" content="width=device-width"><title>StillOn: e-mail confirmado</title>` +
 		`<h1>E-mail confirmado</h1><p>Os alertas de incidente vão chegar neste endereço.</p></html>`
 	paginaInvalida = `<!doctype html><html lang="pt-BR"><meta charset="utf-8">` +
-		`<meta name="viewport" content="width=device-width"><title>Vigilume: link inválido</title>` +
-		`<h1>Link inválido ou vencido</h1><p>Peça um novo link no painel do Vigilume.</p></html>`
+		`<meta name="viewport" content="width=device-width"><title>StillOn: link inválido</title>` +
+		`<h1>Link inválido ou vencido</h1><p>Peça um novo link no painel do StillOn.</p></html>`
 	paginaErro = `<!doctype html><html lang="pt-BR"><meta charset="utf-8">` +
-		`<title>Vigilume: erro</title><h1>Algo deu errado</h1><p>Tente de novo em instantes.</p></html>`
+		`<title>StillOn: erro</title><h1>Algo deu errado</h1><p>Tente de novo em instantes.</p></html>`
 )
 
 func (h *VerifyHandlers) Page(w http.ResponseWriter, r *http.Request) {

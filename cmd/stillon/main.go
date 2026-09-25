@@ -30,7 +30,7 @@ import (
 )
 
 // totpIssuer é o nome que aparece no app autenticador do usuário.
-const totpIssuer = "Vigilume"
+const totpIssuer = "StillOn"
 
 // subcomandos são os modos do binário que não sobem o servidor. O primeiro
 // argumento escolhe um deles; sem subcomando, o processo sobe o servidor
@@ -219,11 +219,11 @@ func graceDoSondador(total time.Duration) time.Duration {
 
 // erroDeServidor é a falha de um servidor ao subir. A porta de métricas
 // ocupada ganha a saída na mensagem (M7, Plano 9 §3.4): o caso comum é outro
-// processo do Vigilume no mesmo host (--role=api e --role=prober), e quem lê
+// processo do StillOn no mesmo host (--role=api e --role=prober), e quem lê
 // o log precisa saber qual variável mudar.
 func erroDeServidor(nome string, err error) error {
 	if nome == "métricas" && errors.Is(err, syscall.EADDRINUSE) {
-		return fmt.Errorf("servidor %s: %w; a porta já está em uso (outro processo do Vigilume no mesmo host?): "+
+		return fmt.Errorf("servidor %s: %w; a porta já está em uso (outro processo do StillOn no mesmo host?): "+
 			"defina METRICS_ADDR com outra porta de loopback, como 127.0.0.1:9092, ou METRICS_ADDR=off", nome, err)
 	}
 	return fmt.Errorf("servidor %s: %w", nome, err)

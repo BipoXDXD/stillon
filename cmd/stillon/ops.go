@@ -12,27 +12,27 @@ import (
 )
 
 // version é carimbada no build: -ldflags "-X main.version=…" (Dockerfile,
-// Makefile, CI). Sai no log de boot e em `vigilume version`, e em nenhuma
+// Makefile, CI). Sai no log de boot e em `stillon version`, e em nenhuma
 // resposta HTTP: expor a versão facilita achar uma vulnerável.
 var version = "dev"
 
-// healthcheckPrazo é o teto do `vigilume healthcheck`. É maior que o
+// healthcheckPrazo é o teto do `stillon healthcheck`. É maior que o
 // readyzTimeout (2 s) do servidor, para um banco lento aparecer como o 503 do
 // /readyz e não como um prazo estourado aqui, e menor que o timeout do
 // healthcheck do compose (TestHealthcheckDeadlinesNest).
 const healthcheckPrazo = 3 * time.Second
 
-// runVersion é `vigilume version`: imprime a versão carimbada no build.
+// runVersion é `stillon version`: imprime a versão carimbada no build.
 func runVersion(args []string, stdout, stderr io.Writer) int {
 	if len(args) > 0 {
-		fmt.Fprintln(stderr, "uso: vigilume version")
+		fmt.Fprintln(stderr, "uso: stillon version")
 		return saidaUso
 	}
 	fmt.Fprintln(stdout, version)
 	return 0
 }
 
-// runHealthcheck é `vigilume healthcheck`: 0 se o /readyz do próprio processo
+// runHealthcheck é `stillon healthcheck`: 0 se o /readyz do próprio processo
 // responde 200 dentro do prazo, 1 em qualquer outro caso; 2 com argumento a
 // mais e 130 se interrompido (Ctrl-C, SIGTERM), como o `user`.
 //
@@ -40,7 +40,7 @@ func runVersion(args []string, stdout, stderr io.Writer) int {
 // ferramenta do healthcheck do compose.
 func runHealthcheck(ctx context.Context, args []string, stderr io.Writer, getenv func(string) string) int {
 	if len(args) > 0 {
-		fmt.Fprintln(stderr, "uso: vigilume healthcheck (a porta vem de HTTP_ADDR)")
+		fmt.Fprintln(stderr, "uso: stillon healthcheck (a porta vem de HTTP_ADDR)")
 		return saidaUso
 	}
 	url, err := urlDeProntidao(getenv("HTTP_ADDR"))

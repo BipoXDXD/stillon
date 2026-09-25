@@ -28,7 +28,7 @@ func novo(t *testing.T) (*account.Service, *pgxpool.Pool) {
 	return account.NewService(pool, nil, clock.NewFake(time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)), nil), pool
 }
 
-// Dois `vigilume user create` ao mesmo tempo não criam dois donos (D9 do Plano
+// Dois `stillon user create` ao mesmo tempo não criam dois donos (D9 do Plano
 // 5). O gancho segura cada criação entre a contagem e a inserção até as duas
 // chegarem ali, ou por meio segundo: com a trava, a segunda não chega à
 // contagem enquanto a primeira não comitar, e espera o meio segundo sozinha;
@@ -152,13 +152,13 @@ func montar(t *testing.T) cenario {
 	if err != nil {
 		t.Fatal(err)
 	}
-	segundoFator := auth.NewTOTP(pool, box, "Vigilume")
+	segundoFator := auth.NewTOTP(pool, box, "StillOn")
 	svc := account.NewService(pool, segundoFator, clk, ipKey)
 	return cenario{svc: svc, pool: pool, user: user, atual: s.FamilyID, clk: clk, totp: segundoFator}
 }
 
 func chaveDoUsuario(user uuid.UUID) string {
-	return "hashtextextended('vigilume.sessions:' || '" + user.String() + "', 0)"
+	return "hashtextextended('stillon.sessions:' || '" + user.String() + "', 0)"
 }
 
 // segurarTrava toma, numa conexão do teste, a mesma advisory lock que as

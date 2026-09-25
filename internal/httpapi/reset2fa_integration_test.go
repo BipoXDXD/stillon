@@ -10,7 +10,7 @@ import (
 	"github.com/BipoXDXD/stillon/internal/account"
 )
 
-// resetarPeloCLI é o que `vigilume user reset-2fa` chama (Plano 9, §3.1): o
+// resetarPeloCLI é o que `stillon user reset-2fa` chama (Plano 9, §3.1): o
 // serviço sem segundo fator e sem chave de IP, como o CLI o monta.
 func resetarPeloCLI(t *testing.T, a *api) {
 	t.Helper()

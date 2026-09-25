@@ -42,10 +42,10 @@ func (r *Resend) Send(ctx context.Context, dest crypto.Secret, ev Event) error {
 // SendVerification manda o link de verificação (spec §5.8). Não leva
 // Idempotency-Key: cada envio tem um token novo, então o corpo muda.
 func (r *Resend) SendVerification(ctx context.Context, dest crypto.Secret, link string) error {
-	corpo := "Alguém cadastrou este endereço para receber alertas do Vigilume.\n\n" +
+	corpo := "Alguém cadastrou este endereço para receber alertas do StillOn.\n\n" +
 		"Para confirmar, abra o link abaixo em até 24 horas:\n" + link + "\n\n" +
 		"Se não foi você, ignore esta mensagem: sem a confirmação, nenhum alerta é enviado.\n"
-	return r.post(ctx, dest, "[Vigilume] Confirme este endereço", corpo, "")
+	return r.post(ctx, dest, "[StillOn] Confirme este endereço", corpo, "")
 }
 
 type resendPayload struct {

@@ -79,7 +79,7 @@ func postSemT(c *http.Client, url, token string, body any) (*http.Response, erro
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Requested-With", "vigilume")
+	req.Header.Set("X-Requested-With", "stillon")
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}

@@ -125,7 +125,7 @@ func TestCheckRedirectDropsTargetHeadersWhenTheHopLeavesTheOrigin(t *testing.T) 
 			if err != nil {
 				t.Fatal(err)
 			}
-			req.Header.Set("User-Agent", "Vigilume/teste")
+			req.Header.Set("User-Agent", "StillOn/teste")
 			req.Header.Set("X-Api-Key", "segredo")
 			req.Header.Set("Authorization", "Bearer segredo")
 
@@ -140,7 +140,7 @@ func TestCheckRedirectDropsTargetHeadersWhenTheHopLeavesTheOrigin(t *testing.T) 
 			case !c.limpa && !manteve:
 				t.Errorf("headers = %v, queria os do alvo intactos", req.Header)
 			}
-			if req.Header.Get("User-Agent") != "Vigilume/teste" {
+			if req.Header.Get("User-Agent") != "StillOn/teste" {
 				t.Errorf("User-Agent = %q, queria mantido", req.Header.Get("User-Agent"))
 			}
 		})

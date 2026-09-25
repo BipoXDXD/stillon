@@ -1,4 +1,4 @@
-// Package middleware reúne os middlewares HTTP do Vigilume, um por arquivo
+// Package middleware reúne os middlewares HTTP do StillOn, um por arquivo
 // para que cada um seja testado e revisado isoladamente.
 package middleware
 

@@ -235,7 +235,7 @@ func TestProbeSendsConfiguredHeadersAndUserAgent(t *testing.T) {
 	if recebido.Get("Authorization") != "Bearer abc" {
 		t.Errorf("Authorization = %q", recebido.Get("Authorization"))
 	}
-	if !strings.HasPrefix(recebido.Get("User-Agent"), "Vigilume/") {
+	if !strings.HasPrefix(recebido.Get("User-Agent"), "StillOn/") {
 		t.Errorf("User-Agent = %q", recebido.Get("User-Agent"))
 	}
 }
@@ -314,7 +314,7 @@ func TestProbeRedirectToAnotherHostDropsTargetHeaders(t *testing.T) {
 	if v := h.Get("Authorization"); v != "" {
 		t.Errorf("Authorization = %q chegou ao outro host", v)
 	}
-	if !strings.HasPrefix(h.Get("User-Agent"), "Vigilume/") {
+	if !strings.HasPrefix(h.Get("User-Agent"), "StillOn/") {
 		t.Errorf("User-Agent = %q no outro host, queria o do monitor", h.Get("User-Agent"))
 	}
 }

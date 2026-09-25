@@ -91,7 +91,7 @@ func (d *Discord) Send(ctx context.Context, dest crypto.Secret, ev Event) error 
 
 // SendTest é a verificação do canal no cadastro: só um 2xx cria o canal.
 func (d *Discord) SendTest(ctx context.Context, dest crypto.Secret) error {
-	return d.post(ctx, dest, "✅ Vigilume conectado. Os alertas de incidente vão chegar neste canal.")
+	return d.post(ctx, dest, "✅ StillOn conectado. Os alertas de incidente vão chegar neste canal.")
 }
 
 func (d *Discord) post(ctx context.Context, dest crypto.Secret, conteudo string) error {

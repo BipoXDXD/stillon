@@ -1,4 +1,4 @@
-// Package httpapi expõe a API HTTP do Vigilume.
+// Package httpapi expõe a API HTTP do StillOn.
 package httpapi
 
 import (

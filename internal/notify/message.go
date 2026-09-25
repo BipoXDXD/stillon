@@ -26,7 +26,7 @@ const formatoData = "02/01/2006 15:04 UTC"
 // banco: a mesma notificação produz sempre o mesmo texto.
 func mensagem(ev Event) (assunto, corpo string) {
 	if ev.Kind == incident.EventResolved {
-		return fmt.Sprintf("[Vigilume] %s voltou", ev.TargetName),
+		return fmt.Sprintf("[StillOn] %s voltou", ev.TargetName),
 			fmt.Sprintf("%s voltou em %s, depois de %s fora do ar.\n",
 				ev.TargetName, ev.ResolvedAt.UTC().Format(formatoData), duracao(ev.ResolvedAt.Sub(ev.StartedAt)))
 	}
@@ -34,7 +34,7 @@ func mensagem(ev Event) (assunto, corpo string) {
 	if !ok {
 		causa = causas["unknown"]
 	}
-	return fmt.Sprintf("[Vigilume] %s está fora do ar", ev.TargetName),
+	return fmt.Sprintf("[StillOn] %s está fora do ar", ev.TargetName),
 		fmt.Sprintf("%s está fora do ar desde %s.\nCausa: %s.\n",
 			ev.TargetName, ev.StartedAt.UTC().Format(formatoData), causa)
 }

@@ -37,7 +37,7 @@ const (
 	// O limite por IP é folgado: o visitante de uma página em incidente
 	// recarrega. Com TRUSTED_PROXIES vazio atrás do proxy do Fly, todos os
 	// visitantes dividem um balde, e a página cai no pior momento (ver
-	// PENDENCIAS-PARA-O-PLANO-5).
+	// pendência do Plano 5).
 	publicPorMinuto = 120
 	publicBurst     = 60
 )

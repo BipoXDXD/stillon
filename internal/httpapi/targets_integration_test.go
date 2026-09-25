@@ -56,7 +56,7 @@ func chamar(t *testing.T, a *api, metodo, caminho, token string, corpo any) *htt
 		req.Header.Set("Content-Type", "application/json")
 	}
 	if metodo != http.MethodGet {
-		req.Header.Set("X-Requested-With", "vigilume")
+		req.Header.Set("X-Requested-With", "stillon")
 	}
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)

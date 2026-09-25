@@ -18,12 +18,12 @@ import (
 	"github.com/BipoXDXD/stillon/internal/observability"
 )
 
-const refreshCookieName = "vigilume_refresh"
+const refreshCookieName = "stillon_refresh"
 
 // deviceCookieName é o cookie de dispositivo (A3 do Plano 10): ver
 // auth.Devices. Mesmo Path do refresh, e por isso vai no login e no
 // /totp/verify, os dois lugares que o leem.
-const deviceCookieName = "vigilume_dispositivo"
+const deviceCookieName = "stillon_dispositivo"
 
 type AuthHandlers struct {
 	users        auth.UserStore

@@ -19,7 +19,7 @@ import (
 	"github.com/BipoXDXD/stillon/internal/storage"
 )
 
-// Códigos de saída de `vigilume user` (spec do Plano 5, §4.1). O 3 não muda de
+// Códigos de saída de `stillon user` (spec do Plano 5, §4.1). O 3 não muda de
 // sentido: um passo idempotente (o seed do compose) o trata como sucesso.
 const (
 	saidaOK            = 0
@@ -59,7 +59,7 @@ type entradaDaSenha struct {
 }
 
 // avisoDoPipe é a linha que avisarPipe escreve no stderr.
-const avisoDoPipe = "vigilume user: lendo a senha do stdin (uma linha; termine com Ctrl-D). Para digitar sem eco, use um terminal (-t)."
+const avisoDoPipe = "stillon user: lendo a senha do stdin (uma linha; termine com Ctrl-D). Para digitar sem eco, use um terminal (-t)."
 
 // stdinDoProcesso decide entre terminal e pipe olhando o stdin de verdade.
 func stdinDoProcesso() entradaDaSenha {
@@ -109,15 +109,15 @@ func lerOuDesistir(ctx context.Context, ler func() ([]byte, error)) ([]byte, err
 }
 
 const usoUser = `uso:
-  vigilume user create --email <e-mail>        cria o dono (só se não houver usuário)
-  vigilume user set-password --email <e-mail>  redefine a senha e encerra todas as sessões
-  vigilume user reset-2fa --email <e-mail>     desliga o 2FA e encerra todas as sessões
+  stillon user create --email <e-mail>        cria o dono (só se não houver usuário)
+  stillon user set-password --email <e-mail>  redefine a senha e encerra todas as sessões
+  stillon user reset-2fa --email <e-mail>     desliga o 2FA e encerra todas as sessões
 
 A senha (create, set-password) vem do stdin: num terminal, é pedida duas
 vezes, sem eco; num pipe, é a única linha da entrada. O reset-2fa não pede
 senha. Só DATABASE_URL é lida do ambiente.`
 
-// runUser é `vigilume user ...`. Devolve o código de saída; quem chama sai do
+// runUser é `stillon user ...`. Devolve o código de saída; quem chama sai do
 // processo com ele.
 func runUser(ctx context.Context, args []string, in entradaDaSenha, stdout, stderr io.Writer, getenv func(string) string) int {
 	falhar := func(codigo int, formato string, a ...any) int {
@@ -125,10 +125,10 @@ func runUser(ctx context.Context, args []string, in entradaDaSenha, stdout, stde
 		// em qualquer fase: o pgx devolve o erro do contexto, e sair com 1
 		// diria "ambiente quebrado" a quem só desistiu.
 		if ctx.Err() != nil {
-			fmt.Fprintln(stderr, "vigilume user: interrompido")
+			fmt.Fprintln(stderr, "stillon user: interrompido")
 			return saidaInterrompida
 		}
-		fmt.Fprintf(stderr, "vigilume user: "+formato+"\n", a...)
+		fmt.Fprintf(stderr, "stillon user: "+formato+"\n", a...)
 		return codigo
 	}
 	if len(args) == 0 || (args[0] != "create" && args[0] != "set-password" && args[0] != "reset-2fa") {
@@ -136,7 +136,7 @@ func runUser(ctx context.Context, args []string, in entradaDaSenha, stdout, stde
 		return saidaUso
 	}
 	sub := args[0]
-	fs := flag.NewFlagSet("vigilume user "+sub, flag.ContinueOnError)
+	fs := flag.NewFlagSet("stillon user "+sub, flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	email := fs.String("email", "", "e-mail do usuário")
 	if err := fs.Parse(args[1:]); err != nil {
@@ -201,7 +201,7 @@ func runUser(ctx context.Context, args []string, in entradaDaSenha, stdout, stde
 			return falhar(saidaAmbiente, "%v", err)
 		}
 		if existe {
-			return falhar(saidaJaExiste, "já existe um usuário; nada foi alterado (use `vigilume user set-password` para trocar a senha)")
+			return falhar(saidaJaExiste, "já existe um usuário; nada foi alterado (use `stillon user set-password` para trocar a senha)")
 		}
 	case "set-password":
 		if _, err := svc.UserIDByEmail(ctx, e); errors.Is(err, account.ErrUserNotFound) {

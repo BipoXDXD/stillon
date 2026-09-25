@@ -158,7 +158,7 @@ func TestReset2FAExitCodes(t *testing.T) {
 	}
 
 	r := rodarUser(t, dsn, "")
-	if r.codigo != saidaUso || !strings.Contains(r.stderr, "vigilume user reset-2fa --email <e-mail>") {
+	if r.codigo != saidaUso || !strings.Contains(r.stderr, "stillon user reset-2fa --email <e-mail>") {
 		t.Errorf("o uso não lista o reset-2fa (código %d): %q", r.codigo, r.stderr)
 	}
 }

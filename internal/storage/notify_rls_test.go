@@ -338,7 +338,7 @@ func TestPartitionCreationWaitsForTheAdvisoryLock(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer trava.Release()
-	const chave = `hashtextextended('vigilume.ensure_checks_partition', 0)`
+	const chave = `hashtextextended('stillon.ensure_checks_partition', 0)`
 	if _, err := trava.Exec(ctx, `SELECT pg_advisory_lock(`+chave+`)`); err != nil {
 		t.Fatal(err)
 	}

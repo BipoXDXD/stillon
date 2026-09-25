@@ -490,7 +490,7 @@ func (q *Queries) ListTargets(ctx context.Context, arg ListTargetsParams) ([]Tar
 }
 
 const lockUserTargets = `-- name: LockUserTargets :exec
-SELECT pg_advisory_xact_lock(hashtextextended('vigilume.targets:' || $1::uuid::text, 0))
+SELECT pg_advisory_xact_lock(hashtextextended('stillon.targets:' || $1::uuid::text, 0))
 `
 
 // O teto de alvos por usuário (Plano 5): contar e inserir sob esta trava.

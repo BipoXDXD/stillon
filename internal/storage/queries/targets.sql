@@ -129,7 +129,7 @@ SELECT c.target_id, count(*)::int AS total, (count(*) FILTER (WHERE c.status <> 
 -- O teto de alvos por usuário (Plano 5): contar e inserir sob esta trava.
 -- Sem ela, dois POST simultâneos passariam os dois pela contagem.
 -- name: LockUserTargets :exec
-SELECT pg_advisory_xact_lock(hashtextextended('vigilume.targets:' || sqlc.arg(user_id)::uuid::text, 0));
+SELECT pg_advisory_xact_lock(hashtextextended('stillon.targets:' || sqlc.arg(user_id)::uuid::text, 0));
 
 -- name: CountTargets :one
 SELECT count(*) FROM targets WHERE user_id = $1;

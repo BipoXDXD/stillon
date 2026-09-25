@@ -48,7 +48,7 @@ func deleteComToken(t *testing.T, url, token string) *http.Response {
 	if err != nil {
 		t.Fatal(err)
 	}
-	req.Header.Set("X-Requested-With", "vigilume")
+	req.Header.Set("X-Requested-With", "stillon")
 	req.Header.Set("Authorization", "Bearer "+token)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -333,7 +333,7 @@ func TestRevokeCurrentSessionClearsCookie(t *testing.T) {
 	}
 	ck := refreshCookie(resp)
 	if ck == nil || ck.Value != "" || ck.MaxAge >= 0 || ck.Path != "/api/v1/auth" {
-		t.Fatalf("cookie = %+v; queria vigilume_refresh vazio, vencido, Path=/api/v1/auth", ck)
+		t.Fatalf("cookie = %+v; queria stillon_refresh vazio, vencido, Path=/api/v1/auth", ck)
 	}
 	if renova(t, a, c) {
 		t.Error("a sessão encerrada ainda renova")

@@ -315,10 +315,10 @@ func TestNoSendPastTheLastAttempt(t *testing.T) {
 	if n := b.auditorias(t); n != 1 {
 		t.Errorf("%d entradas de auditoria, queria 1", n)
 	}
-	// A falha foi do Vigilume (o desfecho não chegou a ser gravado), não do
+	// A falha foi do StillOn (o desfecho não chegou a ser gravado), não do
 	// canal: ele não vira failing (achado da revisão).
 	if c := b.canalVisto(t); c.Status != StatusVerified {
-		t.Errorf("canal = %+v; queria verified, sem culpa pela falha do próprio Vigilume", c)
+		t.Errorf("canal = %+v; queria verified, sem culpa pela falha do próprio StillOn", c)
 	}
 }
 
@@ -502,7 +502,7 @@ func TestPlainErrorIsRetried(t *testing.T) {
 // canalVisto é o canal como o dono o vê em GET /channels.
 func (b *bancada) canalVisto(t *testing.T) Channel {
 	t.Helper()
-	svc := NewChannelService(b.pool, b.box, b.clk, nil, nil, "https://vigilume.dev")
+	svc := NewChannelService(b.pool, b.box, b.clk, nil, nil, "https://stillon.example")
 	cs, err := svc.List(context.Background(), b.dono)
 	if err != nil || len(cs) != 1 {
 		t.Fatalf("List = %v, %v", cs, err)
@@ -812,7 +812,7 @@ func TestDeferralKeepsThePreSendDecisions(t *testing.T) {
 		t.Errorf("linha além do teto: %+v; queria failed por unknown", l)
 	}
 	if c := b.canalVisto(t); c.Status != StatusVerified {
-		t.Errorf("canal = %+v; queria verified: a falha por lease vencido é do Vigilume", c)
+		t.Errorf("canal = %+v; queria verified: a falha por lease vencido é do StillOn", c)
 	}
 }
 

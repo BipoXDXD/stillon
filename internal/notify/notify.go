@@ -137,4 +137,4 @@ func drenar(resp *http.Response) {
 	_ = resp.Body.Close()
 }
 
-const userAgent = "Vigilume/1.0 (+monitor de disponibilidade)"
+const userAgent = "StillOn/1.0 (+monitor de disponibilidade)"

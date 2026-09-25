@@ -198,7 +198,7 @@ func TestRunFailsWhenAServerCannotStart(t *testing.T) {
 }
 
 // M7 (Plano 9, §3.4): com a porta de métricas ocupada (outro processo do
-// Vigilume no mesmo host, o caso de --role=api e --role=prober), o boot cai
+// StillOn no mesmo host, o caso de --role=api e --role=prober), o boot cai
 // com o EADDRINUSE do servidor de métricas, e a mensagem sugere o
 // METRICS_ADDR. A perna oposta (a porta da API ocupada não sugere) está em
 // TestRunFailsWhenAServerCannotStart.

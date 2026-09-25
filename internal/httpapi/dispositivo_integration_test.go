@@ -24,7 +24,7 @@ import (
 // de verificar (A2), o navegador que completou um login recebe o cookie de
 // dispositivo e tem um contador próprio (A3), e o logout não mente (A9).
 
-const nomeDoCookieDeDispositivo = "vigilume_dispositivo"
+const nomeDoCookieDeDispositivo = "stillon_dispositivo"
 
 func cookieDeDispositivo(resp *http.Response) *http.Cookie {
 	for _, ck := range resp.Cookies() {
@@ -61,7 +61,7 @@ func postDe(c *http.Client, url string, body any) (*http.Response, error) {
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Requested-With", "vigilume")
+	req.Header.Set("X-Requested-With", "stillon")
 	req.Header.Set("X-Forwarded-For", novaOrigem())
 	return c.Do(req)
 }
@@ -144,7 +144,7 @@ func TestDeviceCookieComesOnlyWithACompleteLogin(t *testing.T) {
 // Com PUBLIC_BASE_URL https, o cookie de dispositivo sai Secure, como o de
 // refresh.
 func TestDeviceCookieIsSecureWithHTTPS(t *testing.T) {
-	a := newAPIWith(t, func(cfg *config.Config) { cfg.PublicBaseURL = "https://vigilume.exemplo.com" })
+	a := newAPIWith(t, func(cfg *config.Config) { cfg.PublicBaseURL = "https://stillon.example" })
 	resp := login(t, a, http.DefaultClient, testEmail, testPass)
 	resp.Body.Close()
 	if ck := cookieDeDispositivo(resp); ck == nil || !ck.Secure {

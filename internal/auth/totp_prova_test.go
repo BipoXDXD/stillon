@@ -262,7 +262,7 @@ func prenderTravaDoUsuario(t *testing.T, pool *pgxpool.Pool, userID uuid.UUID) f
 	if err != nil {
 		t.Fatal(err)
 	}
-	chave := "hashtextextended('vigilume.sessions:' || '" + userID.String() + "', 0)"
+	chave := "hashtextextended('stillon.sessions:' || '" + userID.String() + "', 0)"
 	var umaVez sync.Once
 	soltar := func() {
 		umaVez.Do(func() {

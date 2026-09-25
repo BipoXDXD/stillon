@@ -35,7 +35,7 @@ func postAssincrono(t *testing.T, url, token string, corpo any) <-chan resposta 
 		t.Fatal(err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Requested-With", "vigilume")
+	req.Header.Set("X-Requested-With", "stillon")
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
@@ -65,7 +65,7 @@ func prenderTravaDeSessoes(t *testing.T, a *api) func() {
 	if err != nil {
 		t.Fatal(err)
 	}
-	chave := "hashtextextended('vigilume.sessions:' || '" + a.userID.String() + "', 0)"
+	chave := "hashtextextended('stillon.sessions:' || '" + a.userID.String() + "', 0)"
 	var umaVez sync.Once
 	soltar := func() {
 		umaVez.Do(func() {

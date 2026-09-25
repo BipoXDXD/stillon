@@ -24,9 +24,9 @@ import (
 )
 
 const (
-	dbName    = "vigilume_test"
-	adminUser = "vigilume"
-	adminPass = "vigilume"
+	dbName    = "stillon_test"
+	adminUser = "stillon"
+	adminPass = "stillon"
 
 	// appUser é o papel com que a aplicação roda nos testes, e existe por
 	// causa da RLS. O usuário do contêiner é superusuário, e superusuário
@@ -35,8 +35,8 @@ const (
 	// apagar a política deixaria a suíte verde. As migrations rodam como
 	// appUser para que ele seja o DONO das tabelas, exatamente como em
 	// produção (D8).
-	appUser = "vigilume_app"
-	appPass = "vigilume_app"
+	appUser = "stillon_app"
+	appPass = "stillon_app"
 )
 
 var (
@@ -104,7 +104,7 @@ func EmptyDatabase(t *testing.T) string {
 	// O nome cru vai na URL; o sanitizado, entre aspas, no SQL. Os dois saem
 	// da MESMA leitura do contador: relê-lo com testes em paralelo devolveria
 	// o número de outro teste.
-	cru := fmt.Sprintf("vigilume_vazio_%d", vazios.Add(1))
+	cru := fmt.Sprintf("stillon_vazio_%d", vazios.Add(1))
 	nome := pgx.Identifier{cru}.Sanitize()
 	admin, err := pgx.Connect(ctx, adminDSN)
 	if err != nil {

@@ -147,7 +147,7 @@ LANGUAGE plpgsql AS $$
 DECLARE
     inicio date := date_trunc('month', p_month)::date;
 BEGIN
-    PERFORM pg_advisory_xact_lock(hashtextextended('vigilume.ensure_checks_partition', 0));
+    PERFORM pg_advisory_xact_lock(hashtextextended('stillon.ensure_checks_partition', 0));
     EXECUTE format(
         'CREATE TABLE IF NOT EXISTS %I PARTITION OF checks FOR VALUES FROM (%L) TO (%L)',
         'checks_' || to_char(inicio, 'YYYY_MM'),

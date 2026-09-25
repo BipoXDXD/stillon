@@ -236,7 +236,7 @@ func TestUserHasNoPasswordFlagOrEnv(t *testing.T) {
 	if r := rodarUser(t, dsn, "", "create", "--email", "dono@exemplo.com", senhaMarcada); r.codigo != saidaUso {
 		t.Errorf("senha posicional: código %d, queria 2", r.codigo)
 	}
-	env := map[string]string{"VIGILUME_PASSWORD": senhaMarcada, "PASSWORD": senhaMarcada, "SENHA": senhaMarcada}
+	env := map[string]string{"STILLON_PASSWORD": senhaMarcada, "PASSWORD": senhaMarcada, "SENHA": senhaMarcada}
 	r := rodarUserCom(t, dsn, entradaDaSenha{pipe: strings.NewReader("")}, env, "create", "--email", "dono@exemplo.com")
 	if r.codigo != saidaUso || !strings.Contains(r.stderr, "muito curta") {
 		t.Errorf("senha no ambiente: código %d, stderr %q; queria 2 e \"muito curta\"", r.codigo, r.stderr)

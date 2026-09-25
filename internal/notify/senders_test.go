@@ -223,7 +223,7 @@ func TestSendErrorNeverCarriesTheWebhookToken(t *testing.T) {
 
 func TestResendSendsTheAlertWithAnIdempotencyKey(t *testing.T) {
 	srv, client, pedidos := provedor(t, status(http.StatusOK))
-	r := &Resend{client: client, endpoint: srv.URL + "/emails", apiKey: crypto.Secret("re_chave"), from: "Vigilume <alertas@vigilume.dev>"}
+	r := &Resend{client: client, endpoint: srv.URL + "/emails", apiKey: crypto.Secret("re_chave"), from: "StillOn <alertas@stillon.example>"}
 
 	for range 2 {
 		if err := r.Send(context.Background(), crypto.Secret("pessoa@exemplo.com"), evAberto); err != nil {
