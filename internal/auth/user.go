@@ -88,6 +88,11 @@ type UserStore interface {
 	// RehashPassword troca oldHash por newHash só se oldHash ainda for o hash
 	// gravado; swapped diz se trocou.
 	RehashPassword(ctx context.Context, userID uuid.UUID, oldHash, newHash string) (swapped bool, err error)
+	// ConsumeChallenge avança a marca d'água do desafio de 2FA até issuedAt,
+	// só se o desafio for mais novo que ela; consumed diz se avançou. Um
+	// desafio que não avança a marca já foi usado, ou é mais antigo que um
+	// usado (Plano 8).
+	ConsumeChallenge(ctx context.Context, userID uuid.UUID, issuedAt time.Time) (consumed bool, err error)
 }
 
 func (s *PGStore) ByEmail(ctx context.Context, email string) (User, error) {
@@ -164,6 +169,24 @@ func (s *PGStore) RehashPassword(ctx context.Context, userID uuid.UUID, oldHash,
 		return false, fmt.Errorf("atualizar hash de senha: %w", err)
 	}
 	return n == 1, nil
+}
+
+// ConsumeChallenge é um compare-and-swap numa instrução: dois /totp/verify
+// concorrentes com o mesmo desafio disputam a mesma linha, o segundo espera o
+// commit do primeiro, relê a linha (READ COMMITTED) e não satisfaz mais o
+// WHERE. Não precisa de trava explícita.
+//
+// O "<" estrito é o que faz o desafio valer uma vez: com "<=", o mesmo
+// desafio passaria de novo, porque a marca ficou igual ao instante dele.
+func (s *PGStore) ConsumeChallenge(ctx context.Context, userID uuid.UUID, issuedAt time.Time) (bool, error) {
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE users SET totp_challenge_mark = $2
+		 WHERE id = $1 AND (totp_challenge_mark IS NULL OR totp_challenge_mark < $2)`,
+		userID, issuedAt)
+	if err != nil {
+		return false, fmt.Errorf("consumir desafio de 2FA: %w", err)
+	}
+	return tag.RowsAffected() == 1, nil
 }
 
 // ByID atende os dois caminhos de TOTP que só têm o id vindo do token: o

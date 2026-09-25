@@ -95,15 +95,13 @@ func (h *AuthHandlers) TOTPConfirm(w http.ResponseWriter, r *http.Request) {
 
 // TOTPVerify fecha o login em dois passos: valida o desafio e emite a sessão.
 //
-// O desafio NÃO é consumido — é um JWT sem jti, e revogá-lo exigiria estado
-// que este plano não tem. O comentário anterior dizia que ele era consumido,
-// e isso era falso. O que sobra depois do item 11 (consumo do timestep,
-// RFC 6238 §5.2) é estreito: com o desafio de cinco minutos em mãos, cada
-// sessão adicional exige um código NOVO do autenticador, porque o já usado
-// não entra duas vezes. O R40 limita as tentativas erradas a LockThreshold.
-// O resíduo é sessão paralela para quem já provou senha e segundo fator —
-// higiene, não escalada. Fechar de vez pede jti em denylist ou um
-// challenge_id consumido no verify; fica nomeado para o Plano 5.
+// O desafio vale uma vez (Plano 8). É um JWT sem estado próprio; o que o torna
+// de uso único é a marca d'água em users.totp_challenge_mark: o desafio só
+// abre sessão se for mais novo que a marca, e abri-la a avança até o instante
+// dele. Antes, o mesmo desafio abria uma sessão por código TOTP novo durante
+// os cinco minutos de validade. Efeito colateral aceito: consumir um desafio
+// invalida os mais antigos do mesmo usuário ainda abertos (dois logins quase
+// simultâneos: se o mais novo terminar primeiro, o mais antigo refaz a senha).
 func (h *AuthHandlers) TOTPVerify(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Challenge string `json:"challenge"`
@@ -114,11 +112,12 @@ func (h *AuthHandlers) TOTPVerify(w http.ResponseWriter, r *http.Request) {
 	}
 	now := h.clk.Now()
 
-	userID, stamp, err := auth.ParseChallengeToken(h.jwtSecret, req.Challenge, now)
+	desafio, err := auth.ParseChallengeToken(h.jwtSecret, req.Challenge, now)
 	if err != nil {
 		apierr.WriteError(w, r, apierr.CodeUnauthorized)
 		return
 	}
+	userID := desafio.UserID
 
 	// O segundo fator entra no MESMO bloqueio progressivo do login (R40).
 	// Sem isto, quem já tem a senha chuta seis dígitos indefinidamente: o
@@ -158,10 +157,25 @@ func (h *AuthHandlers) TOTPVerify(w http.ResponseWriter, r *http.Request) {
 		slog.Error("zerar falhas de segundo fator", "erro", err)
 	}
 
+	// O consumo vem DEPOIS do código, de propósito: consumido antes, um
+	// código digitado errado queimaria o desafio e obrigaria a digitar a
+	// senha de novo. Desafio já usado é o mesmo 401 unauthorized de um
+	// desafio vencido, e não conta no bloqueio: quem chega aqui acertou o
+	// código.
+	consumido, err := h.users.ConsumeChallenge(r.Context(), userID, desafio.IssuedAt)
+	if err != nil {
+		h.internal(w, r, "consumir desafio", err)
+		return
+	}
+	if !consumido {
+		apierr.WriteError(w, r, apierr.CodeUnauthorized)
+		return
+	}
+
 	// O carimbo é o da senha verificada no login, antes do desafio: se ela
 	// mudou desde então (set-password, troca de senha), Issue recusa, e o
 	// desafio obtido com a senha antiga morre com ela.
-	h.issue(w, r, userID, stamp)
+	h.issue(w, r, userID, desafio.Stamp)
 }
 
 type passwordRequest struct {

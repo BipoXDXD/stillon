@@ -30,11 +30,11 @@ func TestMigrationsApplyAndSchemaIsUsable(t *testing.T) {
 		}
 	}
 
-	// As migrations 00002 e 00003 só entregam valor pelas colunas que
+	// As migrations 00002, 00003 e 00008 só entregam valor pelas colunas que
 	// acrescentam em users. Provar que a tabela existe não prova que elas
 	// rodaram: sem esta checagem o teste ficaria verde com o schema da
 	// 00001 sozinho.
-	for _, column := range []string{"totp_confirmed_at", "totp_secret_enc", "totp_last_timestep"} {
+	for _, column := range []string{"totp_confirmed_at", "totp_secret_enc", "totp_last_timestep", "totp_challenge_mark"} {
 		var exists bool
 		err := pool.QueryRow(ctx,
 			`SELECT EXISTS (SELECT 1 FROM information_schema.columns
