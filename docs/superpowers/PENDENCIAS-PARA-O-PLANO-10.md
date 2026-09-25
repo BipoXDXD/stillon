@@ -1,0 +1,111 @@
+# Pendências depois do Plano 9
+
+Este arquivo existe porque o ledger de execução vive em `.superpowers/`, fora do controle de
+versão. O que está aqui é o subconjunto que não pode se perder. Ele substitui o
+`PENDENCIAS-PARA-O-PLANO-9.md` como estado corrente; os anteriores ficam como histórico.
+
+## Fechadas no Plano 9
+
+O grupo B das pendências (operação), escolhido pelo usuário em 2026-09-25, com API e painel.
+Spec: `docs/superpowers/specs/2026-09-25-plano-9-operacao-design.md`.
+
+| Pendência | Como fechou |
+|---|---|
+| Recuperação do 2FA pelo CLI | `vigilume user reset-2fa --email <e>`: desliga o 2FA (inclusive uma troca pendente), apaga os códigos de recuperação e encerra todas as sessões numa transação, com auditoria `totp.reset_cli`. Idempotente: com o 2FA desligado, sai 0 e "nada mudou". Runbook: "Perdeu o autenticador e os códigos de recuperação" |
+| Troca de autenticador | Segredo pendente (`users.totp_pending_secret_enc`, amarrado à família que o criou por `users.totp_pending_family_id`, migration `00009`): `POST /api/v1/auth/totp/rotate` (senha + posse do fator atual) e `POST /api/v1/auth/totp/rotate/confirm` (código do app novo). O app antigo vale até a confirmação; ela troca o segredo, gera 10 códigos novos e encerra as outras sessões. Painel: Configurações → Trocar autenticador |
+| Rota para desabilitar canal | `PATCH /api/v1/channels/{id}` com `{"enabled": bool}`. Painel: Pausar (com confirmação) e Retomar na lista de canais |
+| Porta de métricas em desenvolvimento (M7) | Sem `METRICS_ADDR`, o padrão depende do papel: `api` e `all` em `127.0.0.1:9090`, `prober` em `127.0.0.1:9091`. A falha de porta ocupada sugere o `METRICS_ADDR` |
+
+## Dependem do dono do projeto (nenhum agente faz)
+
+- Criar os apps, o volume, os papéis e os segredos no Fly, e o primeiro deploy (runbook
+  `docs/deploy/fly.md`). **Tem custo recorrente** (estimativa do Plano 7: ~US$ 9–11/mês); a
+  decisão de criar é do dono.
+- Gravar os secrets de repositório (`FLY_DEPLOY_TOKEN`, `FLY_BACKUP_TOKEN`,
+  `BACKUP_DATABASE_PASSWORD`, `AGE_RECIPIENT`) e as variáveis (`PG_VOLUME_GB`, `BACKUP_ENABLED=1`);
+  rodar o `backup` à mão uma vez (runbook, passo 13).
+- Medir o endereço do proxy do Fly, preencher `TRUSTED_PROXIES` e levá-lo ao `fly.toml` por PR;
+  o teste de dois pontos de rede (que também prova se o proxy sobrescreve um `Fly-Client-IP`
+  mandado pelo cliente).
+- **Tráfego do próprio Fly sem `Fly-Client-IP`** (runbook, passo 9): se, no primeiro deploy, o
+  aviso "cabeçalho de IP do cliente ausente ou ilegível" voltar a cada minuto com o
+  `remote_addr` do proxy, é tráfego do Fly (health check, por exemplo) que chega sem o
+  cabeçalho. Não foi ensaiado; a resposta é decidir se o aviso deve ignorar esse caso, e não
+  mudar o `fly.toml`.
+- Opcional: GitHub Pro (~US$ 4/mês) dá secrets por environment num repositório privado.
+- Escolher a licença e tornar o repositório e o pacote do GHCR públicos, quando quiser
+  (runbook, última seção).
+- Hospedagem sem custo (pergunta do dono em 2026-09-25): uma VM grátis rodando o
+  `compose.yaml` seria um alvo de deploy novo, com runbook, HTTPS e backup próprios. Não é
+  trabalho de nenhum plano ainda; vira plano próprio se o dono quiser.
+
+## Limites conhecidos do Plano 9
+
+- **Pausar descarta os avisos.** O despacho cancela a notificação de canal desabilitado no envio
+  (desde o Plano 3); retomar não reenvia o que passou. O diálogo de "Pausar" diz isso.
+- **Um canal pausado só aparece na lista de canais**: o dashboard não avisa. Quem pausa e esquece
+  fica sem aviso daquele canal até olhar a lista.
+- **O código de recuperação usado para iniciar uma troca fica gasto**, mesmo que a troca não seja
+  confirmada (é a prova de posse, como no `disable`). O painel avisa ao fechar no passo 2.
+- **O segredo pendente não tem prazo, mas é da família de sessão que o criou**
+  (`totp_pending_family_id`, revisão final): só ela o confirma, com o código do app novo; outra
+  sessão viva do dono recebe o 403 de "sem troca". Morre com a família (revogada por `DELETE
+  /sessions/{id}`, logout ou troca de senha, ele fica inconfirmável) e, junto com a família, na
+  confirmação, numa nova troca (que o substitui), no `disable`, no `reset-2fa`, na troca de senha
+  e no `set-password`. Todo rotate aceito deixa a auditoria `totp.rotation_started`.
+- **`PATCH /channels/{id}` com campo desconhecido** responde `400 validation_failed` sem `fields`,
+  como as outras rotas de recurso: o vocabulário fechado não tem nome para um campo inventado pelo
+  cliente.
+- **O `reset-2fa` não zera a marca do desafio** (`totp_challenge_mark`, Plano 8): ela só recusa
+  desafios velhos.
+- **Porta 9091 ocupada por outro programa** em desenvolvimento: o `--role=prober` não sobe, e a
+  mensagem sugere o `METRICS_ADDR`.
+- **Uma notificação já reivindicada pode sair logo depois de uma pausa**: o despacho lê `enabled`
+  do lote reivindicado, e não de novo no envio.
+- **No painel, o `/me` relido no passo 2 da troca** (outra aba desligou o 2FA) fecha o diálogo
+  pelo portão, sem o aviso de "nada mudou".
+- **Um 403 na confirmação da troca perde o aviso de código de recuperação gasto**: o diálogo volta
+  ao passo 1 com "concluída ou cancelada em outra aba", e não diz que o código do passo 1 foi gasto.
+- **O E2E de acessibilidade falhou uma vez sem causa encontrada.** Se repetir, guardar o trace do
+  Playwright antes de rodar de novo.
+- **O rotate gasta a prova antes da trava.** O `StartRotation` verifica o código (e consome o
+  timestep ou o código de recuperação) antes de tomar a trava de sessões e reconferir a família.
+  Na corrida em que a família morre sob a trava, o rotate responde 401 e o código já foi gasto.
+- **Um `disable` entre o `Verify` e o `UPDATE` do `StartRotation`** gasta a prova do rotate, e ele
+  responde `403 forbidden` (a guarda `totp_confirmed_at IS NOT NULL` do `UPDATE` não casa).
+  Corrida estreita, sem efeito além do código gasto.
+- **Usuário apagado no meio de um rotate ou confirm vira 500**: o `ErrNotFound` do
+  `StartRotation`/`ConfirmRotation` (e o do `users.ByID` antes deles) cai no erro interno. As
+  outras rotas do TOTP fazem o mesmo; só o `/auth/totp/verify` o trata (`401
+  invalid_credentials`).
+- **`ROLE` inválido fica em `cfg.Role`**, e o padrão de `METRICS_ADDR` calculado com ele cai em
+  `127.0.0.1:9090` (`internal/config/config.go`). É inofensivo hoje só porque o `Load` acumula o
+  erro e devolve `nil, err`, e o `cfg` é descartado; um `Load` que devolvesse o `cfg` junto com o
+  erro deixaria os dois valores errados à vista.
+- **Os testes de trava procuram a espera pelo `pg_stat_activity` sem amarrar o backend** (nem
+  `pid`, nem a chave da trava em `pg_locks`). Com `wait_event = 'advisory'`:
+  `TestConfirmRotationTakesTheUserLock` (`internal/auth/totp_rotation_test.go`),
+  `TestRotateRechecksTheFamilyUnderTheLock` (`internal/httpapi/totp_troca_integration_test.go`),
+  o `esperarAlguemNaTrava` de `internal/account/account_test.go` e o teste do
+  `EnsureChecksPartitions` em `internal/storage/notify_rls_test.go` (este filtra pela query, mas
+  não pelo banco). Só com `wait_event_type = 'Lock'`, qualquer trava: o `esperarBloqueados` de
+  `internal/account/account_test.go`, `internal/auth/session_race_test.go`,
+  `internal/httpapi/login_race_integration_test.go` e `internal/statuspage/service_test.go`. Hoje
+  cada teste tem o próprio banco (`testdb.New`), nenhum usa `t.Parallel`, e os filtros por
+  `datname` (ou pela query, no de partições) os separam; o falso verde possível é outro backend do
+  mesmo teste, ou de um teste paralelo no mesmo banco se isso vier a existir, esperando outra
+  trava. O `internal/prober/scheduler_test.go` já exclui o próprio `pid` e filtra pela query.
+- **As checagens de CSP do E2E dos diálogos de canal leem as violações uma vez**, sem
+  `expect.poll`: uma violação que chegue depois da leitura passa despercebida.
+
+Os limites dos Planos 7 e 8 seguem como estão no `PENDENCIAS-PARA-O-PLANO-8.md` e no
+`PENDENCIAS-PARA-O-PLANO-9.md`.
+
+## Herdadas, ainda abertas
+
+**Dívidas menores** (grupo C): a seção "Dívidas menores herdadas, ainda abertas" do
+`PENDENCIAS-PARA-O-PLANO-5.md`, inteira.
+
+**R2** (grupo D): migrar `auth.PGStore` e `auth.TOTP` para sqlc. O método novo do Plano 8
+(`ConsumeChallenge`) e os da troca de autenticador do Plano 9 (`internal/auth/totp_rotation.go`)
+também são SQL à mão.

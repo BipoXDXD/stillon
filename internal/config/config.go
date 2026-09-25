@@ -147,12 +147,29 @@ func Load(getenv func(string) string) (*Config, error) {
 		return out
 	}
 
+	// O papel efetivo vem antes das métricas: o padrão de METRICS_ADDR depende
+	// dele (M7). O --role já sobrepôs ROLE antes do Load.
+	role := Role(opt("ROLE", string(RoleAll)))
+	switch role {
+	case RoleAll, RoleAPI, RoleProber:
+	default:
+		errs = append(errs, fmt.Errorf("ROLE inválido: %q (use all, api ou prober)", role))
+	}
+
 	// /metrics entrega o mapa operacional (spec §5.7): quantos alvos, que
 	// latências, quanta conexão. Só escuta em loopback; "off", em qualquer
 	// caixa, desliga. Um host vazio (":9090") escutaria em todas as
 	// interfaces, e por isso é erro, não padrão (D10).
+	//
+	// Sem a variável, o padrão é por papel (M7, Plano 9 §3.4): o sondador fica
+	// na 9091, e --role=api e --role=prober no mesmo host deixam de disputar
+	// a 9090. Definida (inclusive off), ela vale como sempre.
 	metricsAddr := func(name string) string {
-		raw := opt(name, "127.0.0.1:9090")
+		padrao := "127.0.0.1:9090"
+		if role == RoleProber {
+			padrao = "127.0.0.1:9091"
+		}
+		raw := opt(name, padrao)
 		if strings.EqualFold(raw, "off") {
 			return ""
 		}
@@ -217,6 +234,7 @@ func Load(getenv func(string) string) (*Config, error) {
 	}
 
 	cfg := &Config{
+		Role:           role,
 		HTTPAddr:       opt("HTTP_ADDR", ":8080"),
 		MetricsAddr:    metricsAddr("METRICS_ADDR"),
 		DatabaseURL:    req("DATABASE_URL"),
@@ -269,13 +287,6 @@ func Load(getenv func(string) string) (*Config, error) {
 					"gere uma com `openssl rand -base64 32`", k.nome))
 			}
 		}
-	}
-
-	switch role := Role(opt("ROLE", string(RoleAll))); role {
-	case RoleAll, RoleAPI, RoleProber:
-		cfg.Role = role
-	default:
-		errs = append(errs, fmt.Errorf("ROLE inválido: %q (use all, api ou prober)", role))
 	}
 
 	switch lvl := strings.ToLower(opt("LOG_LEVEL", "info")); lvl {

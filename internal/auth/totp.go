@@ -22,6 +22,9 @@ var (
 	ErrTOTPNotEnrolled = errors.New("segundo fator não cadastrado")
 	// ErrTOTPAlreadyEnabled fecha o bypass do R38: ver Enroll.
 	ErrTOTPAlreadyEnabled = errors.New("segundo fator já está ativo")
+	// ErrTOTPNoRotation: não há troca de autenticador em andamento (nenhum
+	// segredo pendente), ou o 2FA foi desligado no meio (Plano 9, §3.2).
+	ErrTOTPNoRotation = errors.New("nenhuma troca de autenticador em andamento")
 )
 
 const (
@@ -60,22 +63,16 @@ func NewTOTP(pool *pgxpool.Pool, box *crypto.Box, issuer string) *TOTP {
 // passar só com a senha. Comprometer a sessão passava a bastar, que é
 // exatamente o que o segundo fator existe para impedir.
 //
-// O preço aceito e registrado: não há caminho para trocar de autenticador
-// depois de ativado. É lacuna de funcionalidade, não de segurança, e sai do
-// Plano 5 com prova de posse adequada. Não "conserte" isso zerando a coluna.
+// Trocar de autenticador depois de ativado tem caminho próprio, com prova de
+// posse do fator atual: StartRotation e ConfirmRotation (Plano 9, §3.2). Não
+// "conserte" o Enroll zerando a coluna.
 func (s *TOTP) Enroll(ctx context.Context, userID uuid.UUID, email string) (string, error) {
-	key, err := totp.Generate(totp.GenerateOpts{
-		Issuer:      s.issuer,
-		AccountName: email,
-		Period:      totpPeriod,
-		Digits:      otp.DigitsSix,
-		Algorithm:   otp.AlgorithmSHA1, // exigido por Google Authenticator e afins
-	})
+	key, err := s.novaChave(email)
 	if err != nil {
-		return "", fmt.Errorf("gerar chave TOTP: %w", err)
+		return "", err
 	}
 
-	sealed, err := s.box.Seal([]byte(key.Secret()), crypto.AAD("users", "totp_secret_enc", userID))
+	sealed, err := s.box.Seal([]byte(key.Secret()), aadAtivo(userID))
 	if err != nil {
 		return "", fmt.Errorf("cifrar segredo TOTP: %w", err)
 	}
@@ -117,13 +114,9 @@ func (s *TOTP) Confirm(ctx context.Context, userID uuid.UUID, code string, now t
 		return nil, ErrTOTPInvalid
 	}
 
-	codes := make([]string, recoveryCodeCount)
-	for i := range codes {
-		raw := make([]byte, recoveryCodeBytes)
-		if _, err := rand.Read(raw); err != nil {
-			return nil, fmt.Errorf("gerar código de recuperação: %w", err)
-		}
-		codes[i] = base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(raw)
+	codes, err := novosCodigosDeRecuperacao()
+	if err != nil {
+		return nil, err
 	}
 
 	tx, err := s.pool.Begin(ctx)
@@ -165,20 +158,8 @@ func (s *TOTP) Confirm(ctx context.Context, userID uuid.UUID, code string, now t
 		return nil, ErrTOTPNotEnrolled
 	}
 	// Recadastro invalida os códigos anteriores.
-	if _, err := tx.Exec(ctx,
-		`DELETE FROM totp_recovery_codes WHERE user_id = $1`, userID); err != nil {
-		return nil, fmt.Errorf("limpar códigos antigos: %w", err)
-	}
-	for _, c := range codes {
-		id, err := uuid.NewV7()
-		if err != nil {
-			return nil, fmt.Errorf("gerar id: %w", err)
-		}
-		if _, err := tx.Exec(ctx,
-			`INSERT INTO totp_recovery_codes (id, user_id, code_hash) VALUES ($1, $2, $3)`,
-			id, userID, crypto.HashToken(c)); err != nil {
-			return nil, fmt.Errorf("gravar código de recuperação: %w", err)
-		}
+	if err := substituirCodigos(ctx, tx, userID, codes); err != nil {
+		return nil, err
 	}
 
 	// Ativar um segundo fator é evento de segurança, e vai na mesma transação
@@ -284,8 +265,13 @@ func (s *TOTP) Disable(ctx context.Context, userID uuid.UUID, code string, now t
 
 	// A guarda vai na cláusula WHERE, e não num SELECT anterior, pelo mesmo
 	// motivo do R38: entre ler e escrever cabe uma desativação concorrente.
+	//
+	// O segredo pendente de uma troca (Plano 9, §3.2) cai junto: sem isto, o
+	// QR de uma troca abandonada ainda confirmaria depois que o 2FA fosse
+	// ligado de novo com outro app.
 	tag, err := tx.Exec(ctx,
-		`UPDATE users SET totp_secret_enc = NULL, totp_confirmed_at = NULL
+		`UPDATE users SET totp_secret_enc = NULL, totp_confirmed_at = NULL, totp_pending_secret_enc = NULL,
+		                  totp_pending_family_id = NULL
 		   WHERE id = $1 AND totp_confirmed_at IS NOT NULL`, userID)
 	if err != nil {
 		return fmt.Errorf("desativar TOTP: %w", err)
@@ -369,7 +355,7 @@ func (s *TOTP) loadSealed(ctx context.Context, userID uuid.UUID) (secret string,
 		return "", false, nil, ErrTOTPNotEnrolled
 	}
 
-	plain, err := s.box.Open(sealed, crypto.AAD("users", "totp_secret_enc", userID))
+	plain, err := s.box.Open(sealed, aadAtivo(userID))
 	if err != nil {
 		return "", false, nil, fmt.Errorf("decifrar segredo TOTP: %w", err)
 	}
@@ -397,4 +383,65 @@ func validateTOTP(code, secret string, now time.Time) (int64, bool) {
 		}
 	}
 	return 0, false
+}
+
+// aadAtivo e aadPendente amarram cada selo à tabela, à coluna e ao usuário:
+// um valor não abre na linha de outro usuário, nem na outra coluna (Plano 9,
+// §3.2). Por isso a confirmação da troca decifra o pendente e cifra de novo
+// com aadAtivo, em vez de copiar os bytes.
+func aadAtivo(userID uuid.UUID) []byte {
+	return crypto.AAD("users", "totp_secret_enc", userID)
+}
+
+func aadPendente(userID uuid.UUID) []byte {
+	return crypto.AAD("users", "totp_pending_secret_enc", userID)
+}
+
+// novaChave sorteia um segredo TOTP. O Enroll e o rotate usam a mesma, para
+// que o app novo de uma troca receba exatamente o que o cadastro daria.
+func (s *TOTP) novaChave(email string) (*otp.Key, error) {
+	key, err := totp.Generate(totp.GenerateOpts{
+		Issuer:      s.issuer,
+		AccountName: email,
+		Period:      totpPeriod,
+		Digits:      otp.DigitsSix,
+		Algorithm:   otp.AlgorithmSHA1, // exigido por Google Authenticator e afins
+	})
+	if err != nil {
+		return nil, fmt.Errorf("gerar chave TOTP: %w", err)
+	}
+	return key, nil
+}
+
+func novosCodigosDeRecuperacao() ([]string, error) {
+	codes := make([]string, recoveryCodeCount)
+	for i := range codes {
+		raw := make([]byte, recoveryCodeBytes)
+		if _, err := rand.Read(raw); err != nil {
+			return nil, fmt.Errorf("gerar código de recuperação: %w", err)
+		}
+		codes[i] = base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(raw)
+	}
+	return codes, nil
+}
+
+// substituirCodigos apaga os códigos de recuperação do usuário e grava os
+// hashes dos novos, na transação de quem chama.
+func substituirCodigos(ctx context.Context, tx pgx.Tx, userID uuid.UUID, codes []string) error {
+	if _, err := tx.Exec(ctx,
+		`DELETE FROM totp_recovery_codes WHERE user_id = $1`, userID); err != nil {
+		return fmt.Errorf("limpar códigos antigos: %w", err)
+	}
+	for _, c := range codes {
+		id, err := uuid.NewV7()
+		if err != nil {
+			return fmt.Errorf("gerar id: %w", err)
+		}
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO totp_recovery_codes (id, user_id, code_hash) VALUES ($1, $2, $3)`,
+			id, userID, crypto.HashToken(c)); err != nil {
+			return fmt.Errorf("gravar código de recuperação: %w", err)
+		}
+	}
+	return nil
 }

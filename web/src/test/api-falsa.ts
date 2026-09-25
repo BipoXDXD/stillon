@@ -32,6 +32,11 @@ export const EMAIL = 'dono@exemplo.com'
 export const SENHA = 'uma senha bem comprida'
 export const TOTP_OK = '123456'
 export const RECUPERACAO_OK = 'ABCDEFGHIJKLMNOP'
+// O código do app NOVO na troca de autenticador (spec do Plano 9 §3.2).
+export const TOTP_NOVO = '654321'
+export const SEGREDO_NOVO = 'KRSXG5CTMVRXEZLU'
+// Os 10 códigos de recuperação que a confirmação da troca entrega.
+export const CODIGOS_NOVOS = Array.from({ length: 10 }, (_, i) => `NOVO${String(i).padStart(2, '0')}CODIGO000${i}`)
 
 const agora = () => new Date('2026-09-24T12:00:00Z')
 
@@ -48,6 +53,9 @@ export function criarApiFalsa() {
     atrasoRefresh: 0,
     totpLigado: false,
     totpPendente: false,
+    // Troca de autenticador em andamento: o segredo pendente do rotate
+    // (spec do Plano 9 §3.2). Só o confirm, o disable e outro rotate o mexem.
+    trocaPendente: false,
     // Códigos de recuperação já gastos. Com trocaFalhaDepoisDoCodigo, a
     // troca de senha gasta o código e DEPOIS falha com 401 unauthorized, como
     // o servidor quando a família morre no meio da troca (PENDENCIAS do
@@ -111,6 +119,8 @@ export function criarApiFalsa() {
     'POST /auth/totp/enroll',
     'POST /auth/totp/confirm',
     'POST /auth/totp/disable',
+    'POST /auth/totp/rotate',
+    'POST /auth/totp/rotate/confirm',
     'GET /sessions',
     'DELETE /sessions/:id',
   ])
@@ -277,6 +287,21 @@ export function criarApiFalsa() {
       return new HttpResponse(null, { status: 204 })
     }),
     rota('post', '/channels/:id/verify/resend', () => new HttpResponse(null, { status: 204 })),
+    // Spec do Plano 9 §3.3: o corpo é só {enabled: bool}; qualquer outra
+    // coisa é 400 validation_failed. Canal que não existe (ou de outro
+    // usuário) é 404. Mudar para o valor que já está é 200 sem efeito.
+    rota('patch', '/channels/:id', ({ params, corpo }) => {
+      const c = st.canais.find((x) => x.id === params.id)
+      if (!c) return erro(404, 'not_found')
+      const chaves = Object.keys(corpo)
+      if (typeof corpo.enabled !== 'boolean') {
+        return erro(400, 'validation_failed', [{ field: 'enabled', reason: chaves.includes('enabled') ? 'invalid' : 'required' }])
+      }
+      const outro = chaves.find((k) => k !== 'enabled')
+      if (outro) return erro(400, 'validation_failed', [{ field: outro, reason: 'unknown' }])
+      c.enabled = corpo.enabled
+      return HttpResponse.json(c)
+    }),
 
     rota('get', '/status-pages', () => HttpResponse.json({ items: st.paginas })),
     rota('post', '/status-pages', ({ corpo }) => {
@@ -351,7 +376,31 @@ export function criarApiFalsa() {
         return erro(401, 'invalid_credentials')
       }
       st.totpLigado = false
+      // O disable apaga a troca pendente (spec do Plano 9 §3.2).
+      st.trocaPendente = false
       return new HttpResponse(null, { status: 204 })
+    }),
+    // Spec do Plano 9 §3.2: as provas do disable (senha e código do app ou
+    // de recuperação). 2FA desligado é 403; prova errada é
+    // invalid_credentials (D24 do Plano 5). O código de recuperação fica
+    // gasto mesmo que a troca não seja confirmada.
+    rota('post', '/auth/totp/rotate', ({ corpo }) => {
+      if (!st.totpLigado) return erro(403, 'forbidden')
+      const codigo = String(corpo.code ?? corpo.recovery_code ?? '')
+      const recuperacao = codigo === RECUPERACAO_OK && !st.recuperacaoGasta.has(codigo)
+      if (corpo.password !== SENHA || (codigo !== TOTP_OK && !recuperacao)) return erro(401, 'invalid_credentials')
+      if (recuperacao) st.recuperacaoGasta.add(codigo)
+      st.trocaPendente = true
+      return HttpResponse.json({ otpauth_uri: `otpauth://totp/Vigilume:dono%40exemplo.com?secret=${SEGREDO_NOVO}&issuer=Vigilume` })
+    }),
+    // Sem troca pendente é 403; código errado é 401 e o pendente fica. O
+    // sucesso encerra as OUTRAS sessões e entrega 10 códigos novos.
+    rota('post', '/auth/totp/rotate/confirm', ({ corpo }) => {
+      if (!st.trocaPendente) return erro(403, 'forbidden')
+      if (corpo.code !== TOTP_NOVO) return erro(401, 'invalid_credentials')
+      st.trocaPendente = false
+      st.sessoes = st.sessoes.filter((s) => s.current)
+      return HttpResponse.json({ recovery_codes: CODIGOS_NOVOS })
     }),
   ]
 

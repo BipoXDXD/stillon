@@ -1,6 +1,6 @@
 // Package account é o serviço da conta do dono (Plano 5): criar e redefinir a
-// senha pelo CLI; ler a conta e trocar a senha pela API. O CLI e a API chamam
-// o mesmo serviço, para que a
+// senha pelo CLI, e desligar o 2FA pelo CLI (reset-2fa, Plano 9); ler a conta
+// e trocar a senha pela API. O CLI e a API chamam o mesmo serviço, para que a
 // política de senha e a normalização do e-mail sejam as mesmas nos dois (D20
 // do Plano 5).
 //
@@ -358,6 +358,59 @@ func (s *Service) ResetPassword(ctx context.Context, email, password string) (in
 		return audit(ctx, q, userID, "user.password_reset", nil, nil, nil, now)
 	})
 	return revogadas, err
+}
+
+// ResetTwoFactor é o `vigilume user reset-2fa` (Plano 9, §3.1): a saída de quem
+// perdeu o autenticador E os códigos de recuperação, sem SQL à mão. Não pede
+// senha: quem tem a DATABASE_URL já pode tudo no banco, e o comando existe
+// para que o SQL certo não precise ser escrito, não como fronteira de
+// segurança.
+//
+// Numa transação: o 2FA desligado (segredo, confirmação, timestep e a troca
+// pendente), os códigos de recuperação apagados, TODAS as sessões encerradas
+// (quem estivesse dentro com uma sessão roubada sai, como no set-password) e a
+// auditoria totp.reset_cli. Sem 2FA ligado, nada muda: ligado volta false, sem
+// sessão encerrada e sem auditoria.
+//
+// Devolve ErrUserNotFound para e-mail não cadastrado; revogadas conta as
+// famílias vivas, como o ResetPassword.
+func (s *Service) ResetTwoFactor(ctx context.Context, email string) (ligado bool, revogadas int64, err error) {
+	now := s.clk.Now()
+	err = s.inTx(ctx, func(q *db.Queries) error {
+		userID, err := q.GetUserIDByEmail(ctx, auth.NormalizeEmail(email))
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrUserNotFound
+		}
+		if err != nil {
+			return fmt.Errorf("buscar usuário: %w", err)
+		}
+		// A trava do usuário antes de tocar em users e sessions (D1), na
+		// ordem do set-password: sem ela, uma rotação em curso deixaria o
+		// sucessor fora da revogação.
+		if err := q.LockUserSessions(ctx, userID); err != nil {
+			return fmt.Errorf("travar sessões: %w", err)
+		}
+		n, err := q.ResetTOTP(ctx, userID)
+		if err != nil {
+			return fmt.Errorf("desligar 2FA: %w", err)
+		}
+		if n == 0 {
+			return nil // já estava desligado: nada muda
+		}
+		ligado = true
+		if err := q.DeleteRecoveryCodes(ctx, userID); err != nil {
+			return fmt.Errorf("apagar códigos de recuperação: %w", err)
+		}
+		revogadas, err = q.RevokeAllFamilies(ctx, db.RevokeAllFamiliesParams{UserID: userID, Now: now})
+		if err != nil {
+			return fmt.Errorf("revogar sessões: %w", err)
+		}
+		return audit(ctx, q, userID, "totp.reset_cli", nil, nil, nil, now)
+	})
+	if err != nil {
+		return false, 0, err
+	}
+	return ligado, revogadas, nil
 }
 
 // Session é uma família de refresh viva, como GET /sessions a mostra (D13 do

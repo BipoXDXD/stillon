@@ -107,6 +107,52 @@ func (q *Queries) GetChannel(ctx context.Context, arg GetChannelParams) (NotifCh
 	return i, err
 }
 
+const getChannelView = `-- name: GetChannelView :one
+SELECT c.id, c.kind, c.config_enc, c.verified_at, c.verify_expires_at, c.enabled, c.created_at,
+       h.last_success_at, h.last_failure_at, h.last_error
+  FROM notif_channels c
+  LEFT JOIN channel_health h ON h.channel_id = c.id
+ WHERE c.user_id = $1 AND c.id = $2
+`
+
+type GetChannelViewParams struct {
+	UserID uuid.UUID
+	ID     uuid.UUID
+}
+
+type GetChannelViewRow struct {
+	ID              uuid.UUID
+	Kind            string
+	ConfigEnc       []byte
+	VerifiedAt      *time.Time
+	VerifyExpiresAt *time.Time
+	Enabled         bool
+	CreatedAt       time.Time
+	LastSuccessAt   *time.Time
+	LastFailureAt   *time.Time
+	LastError       *string
+}
+
+// Um canal no formato da listagem (ListChannels), para a resposta do PATCH
+// /channels/{id} (Plano 9, §3.3).
+func (q *Queries) GetChannelView(ctx context.Context, arg GetChannelViewParams) (GetChannelViewRow, error) {
+	row := q.db.QueryRow(ctx, getChannelView, arg.UserID, arg.ID)
+	var i GetChannelViewRow
+	err := row.Scan(
+		&i.ID,
+		&i.Kind,
+		&i.ConfigEnc,
+		&i.VerifiedAt,
+		&i.VerifyExpiresAt,
+		&i.Enabled,
+		&i.CreatedAt,
+		&i.LastSuccessAt,
+		&i.LastFailureAt,
+		&i.LastError,
+	)
+	return i, err
+}
+
 const insertChannel = `-- name: InsertChannel :exec
 INSERT INTO notif_channels (id, user_id, kind, config_enc, verified_at,
                             verify_token_hash, verify_expires_at, enabled, created_at)
@@ -229,6 +275,28 @@ func (q *Queries) RenewVerification(ctx context.Context, arg RenewVerificationPa
 		arg.UserID,
 		arg.ID,
 	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const setChannelEnabled = `-- name: SetChannelEnabled :execrows
+UPDATE notif_channels SET enabled = $1
+ WHERE user_id = $2 AND id = $3
+`
+
+type SetChannelEnabledParams struct {
+	Enabled bool
+	UserID  uuid.UUID
+	ID      uuid.UUID
+}
+
+// Pausar e retomar (Plano 9, §3.3). O despacho lê enabled na hora do envio
+// (semEnvio): pausado, o aviso é cancelado, e retomar não o reenvia. Gravar o
+// valor que já está afeta a linha do mesmo jeito: a rota é idempotente.
+func (q *Queries) SetChannelEnabled(ctx context.Context, arg SetChannelEnabledParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setChannelEnabled, arg.Enabled, arg.UserID, arg.ID)
 	if err != nil {
 		return 0, err
 	}

@@ -329,6 +329,7 @@ func TestChannelRoutesRequireAuthentication(t *testing.T) {
 		{http.MethodGet, "/api/v1/channels"},
 		{http.MethodPost, "/api/v1/channels"},
 		{http.MethodDelete, "/api/v1/channels/" + id},
+		{http.MethodPatch, "/api/v1/channels/" + id},
 		{http.MethodPost, "/api/v1/channels/" + id + "/verify/resend"},
 	} {
 		resp := chamar(t, a, r.metodo, r.caminho, "", nil)

@@ -101,7 +101,7 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	mux.Handle("POST /api/v1/auth/refresh", http.HandlerFunc(h.Refresh))
 	mux.Handle("POST /api/v1/auth/logout", http.HandlerFunc(h.Logout))
 
-	// As três exigem a família do token viva (D11, Task 11): um token de
+	// Todas exigem a família do token viva (D11, Task 11): um token de
 	// sessão encerrada não mexe no 2FA.
 	viva := ah.exigirSessaoViva
 	mux.Handle("POST /api/v1/auth/totp/enroll", authn(viva(http.HandlerFunc(h.TOTPEnroll))))
@@ -109,6 +109,11 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	// Desativar é a saída que o R38 tirou. Exige senha E posse do fator, no
 	// handler — a sessão sozinha aqui seria o bypass de volta.
 	mux.Handle("POST /api/v1/auth/totp/disable", authn(viva(http.HandlerFunc(h.TOTPDisable))))
+	// A troca de autenticador (Plano 9, §3.2): a mesma cadeia, sem limitador
+	// por IP próprio. Quem limita as provas erradas é o bloqueio progressivo
+	// por conta, que as duas rotas alimentam (D4 e D5 do Plano 5).
+	mux.Handle("POST /api/v1/auth/totp/rotate", authn(viva(http.HandlerFunc(h.TOTPRotate))))
+	mux.Handle("POST /api/v1/auth/totp/rotate/confirm", authn(viva(http.HandlerFunc(h.TOTPRotateConfirm))))
 	// Verify não passa por authn: o usuário ainda não tem sessão, só o
 	// desafio. O limitador cobre o lugar do bloqueio por conta, que aqui não
 	// se aplica — a senha já foi acertada, o que resta é adivinhar seis
@@ -147,6 +152,9 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	mux.Handle("GET /api/v1/channels", protegida(ch.List))
 	mux.Handle("POST /api/v1/channels", comEnvio(ch.Create))
 	mux.Handle("DELETE /api/v1/channels/{id}", protegida(ch.Delete))
+	// Pausar e retomar (Plano 9, §3.3) não manda mensagem para fora: fica no
+	// limitador comum, e não no balde de envio.
+	mux.Handle("PATCH /api/v1/channels/{id}", protegida(ch.SetEnabled))
 	mux.Handle("POST /api/v1/channels/{id}/verify/resend", comEnvio(ch.Resend))
 
 	mux.Handle("GET /api/v1/status-pages", protegida(sp.List))

@@ -1,7 +1,7 @@
 import { fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { http, HttpResponse } from 'msw'
 import { describe, expect, it, vi } from 'vitest'
-import { RECUPERACAO_OK, TOTP_OK } from '@/test/api-falsa'
+import { CODIGOS_NOVOS, RECUPERACAO_OK, SEGREDO_NOVO, TOTP_NOVO, TOTP_OK } from '@/test/api-falsa'
 import { sessao as familia, me } from '@/test/fixtures'
 import { renderizarPainel, SENHA } from '@/test/renderizar'
 import { ATRASO_DA_REVOGACAO } from './PaginaConfiguracoes'
@@ -409,7 +409,7 @@ describe('2FA', () => {
 
   // I2 da revisão: no passo dos códigos, Esc (e o clique fora) não fecham —
   // os códigos não aparecem de novo. Sabotagem prevista: no Dialogo de
-  // ativar, trocar "travado={travado}" por "travado={travado && Math.random() > 2}".
+  // ativar, trocar "travado={preso}" por "travado={preso && Math.random() > 2}".
   it('no passo dos códigos, Esc não fecha o diálogo', async () => {
     const r = await renderizarPainel('/settings')
     await r.usuario.click(await screen.findByRole('button', { name: 'Ativar' }))
@@ -424,7 +424,7 @@ describe('2FA', () => {
     expect(within(dialogo).getByText('AAAABBBBCCCCDDDD')).toBeInTheDocument()
     // O /me relido (foco da janela, outro poll) já diz "ligado": o diálogo
     // continua, pelo travado. Sabotagem prevista: no portão, trocar
-    // "totp === false || travado" por "totp === false && (travado || !travado)".
+    // "totp === false || preso" por "totp === false && (preso || !preso)".
     await r.cliente.refetchQueries({ queryKey: ['me'] })
     await waitFor(() => expect(r.falsa.chamadas('GET /me')).toBeGreaterThanOrEqual(3))
     expect(screen.getByRole('dialog')).toBe(dialogo)
@@ -532,5 +532,423 @@ describe('2FA', () => {
     await r.cliente.refetchQueries({ queryKey: ['me'] })
     expect(await screen.findByRole('button', { name: 'Desativar' })).toBeInTheDocument()
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+})
+
+// Spec do Plano 9 §4.2: trocar de autenticador sem desligar o 2FA.
+describe('troca de autenticador', () => {
+  const ROTATE = 'POST /auth/totp/rotate'
+  const CONFIRM = 'POST /auth/totp/rotate/confirm'
+
+  async function comTotp() {
+    const r = await renderizarPainel('/settings')
+    r.falsa.estado.totpLigado = true
+    await r.cliente.refetchQueries()
+    return r
+  }
+
+  // Abre o diálogo e passa pelo passo 1 com as provas dadas.
+  async function iniciar(r: Awaited<ReturnType<typeof renderizarPainel>>, codigo = TOTP_OK) {
+    await r.usuario.click(await screen.findByRole('button', { name: 'Trocar autenticador' }))
+    const dialogo = await screen.findByRole('dialog', { name: 'Trocar o autenticador' })
+    await r.usuario.type(within(dialogo).getByLabelText('Sua senha'), SENHA)
+    await r.usuario.type(within(dialogo).getByLabelText('Código do autenticador'), codigo)
+    await r.usuario.click(within(dialogo).getByRole('button', { name: 'Continuar' }))
+    return dialogo
+  }
+
+  it('só aparece com o 2FA ligado, ao lado de Desativar', async () => {
+    const r = await renderizarPainel('/settings')
+    expect(await screen.findByRole('button', { name: 'Ativar' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Trocar autenticador' })).not.toBeInTheDocument()
+    r.falsa.estado.totpLigado = true
+    await r.cliente.refetchQueries()
+    expect(await screen.findByRole('button', { name: 'Trocar autenticador' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Desativar' })).toBeInTheDocument()
+  })
+
+  // Os três passos. Sabotagem (passo 3): no Dialogo de trocar, trocar
+  // "travado={preso}" por "travado={preso && Math.random() > 2}" → o Esc
+  // fecha e os códigos somem.
+  it('três passos: provas, QR do app novo e os 10 códigos, que só fecham depois de guardados', async () => {
+    const r = await comTotp()
+    r.falsa.estado.sessoes = [familia(), familia({ id: 'fam-2', current: false })]
+    await r.cliente.refetchQueries()
+    expect(await screen.findAllByRole('button', { name: 'Encerrar' })).toHaveLength(2)
+    const dialogo = await iniciar(r)
+    // Passo 1: as mesmas provas do Desativar.
+    expect(r.falsa.corpos(ROTATE)).toEqual([{ password: SENHA, code: TOTP_OK }])
+    // Passo 2: o QR e a chave do app NOVO.
+    expect(await within(dialogo).findByText(SEGREDO_NOVO)).toBeInTheDocument()
+    expect(within(dialogo).getByTitle('QR code do autenticador')).toBeInTheDocument()
+    expect(within(dialogo).getByText(/O app atual continua valendo até você confirmar/)).toBeInTheDocument()
+    await r.usuario.type(within(dialogo).getByLabelText('Código de 6 dígitos'), TOTP_NOVO)
+    await r.usuario.click(within(dialogo).getByRole('button', { name: 'Confirmar a troca' }))
+    // Passo 3: os 10 códigos novos.
+    expect(await within(dialogo).findByText(CODIGOS_NOVOS[0]!)).toBeInTheDocument()
+    expect(within(dialogo).getAllByRole('listitem')).toHaveLength(10)
+    expect(r.falsa.corpos(CONFIRM)).toEqual([{ code: TOTP_NOVO }])
+    await r.usuario.keyboard('{Escape}')
+    expect(screen.getByRole('dialog')).toBe(dialogo)
+    const concluir = within(dialogo).getByRole('button', { name: 'Concluir' })
+    expect(concluir).toBeDisabled()
+    await r.usuario.click(within(dialogo).getByLabelText('Guardei os códigos'))
+    await r.usuario.click(concluir)
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    expect(await screen.findByText('Autenticador trocado. As outras sessões foram encerradas.')).toBeInTheDocument()
+    // As outras sessões caíram: a lista relida mostra só esta.
+    await waitFor(() => expect(screen.getAllByRole('button', { name: 'Encerrar' })).toHaveLength(1))
+    expect(screen.queryByText('Nada mudou: o app atual continua valendo.')).not.toBeInTheDocument()
+    expect(screen.getByText('Ativada.')).toBeInTheDocument()
+  })
+
+  it('código de recuperação serve de prova no passo 1', async () => {
+    const r = await comTotp()
+    const dialogo = await iniciar(r, RECUPERACAO_OK)
+    expect(await within(dialogo).findByText(SEGREDO_NOVO)).toBeInTheDocument()
+    expect(r.falsa.corpos(ROTATE)).toEqual([{ password: SENHA, code: RECUPERACAO_OK }])
+  })
+
+  // D24 do Plano 5: prova errada é "Senha ou código incorretos.", sem
+  // refresh; o diálogo fica no passo 1, com o formulário.
+  it('prova errada no passo 1: o texto de credencial, sem renovar, e o formulário fica', async () => {
+    const r = await comTotp()
+    const refreshes = r.falsa.chamadas('POST /auth/refresh')
+    const dialogo = await iniciar(r, '000000')
+    expect(await within(dialogo).findByRole('alert')).toHaveTextContent('Senha ou código incorretos.')
+    expect(within(dialogo).getByLabelText('Sua senha')).toHaveValue(SENHA)
+    expect(r.falsa.chamadas(ROTATE)).toBe(1)
+    expect(r.falsa.chamadas('POST /auth/refresh')).toBe(refreshes)
+  })
+
+  // Código errado no passo 2: o pendente fica, e o código certo depois
+  // funciona (a perna positiva no mesmo diálogo).
+  it('código errado no passo 2: "Código incorreto.", e o certo depois conclui', async () => {
+    const r = await comTotp()
+    const dialogo = await iniciar(r)
+    await r.usuario.type(await within(dialogo).findByLabelText('Código de 6 dígitos'), '000000')
+    await r.usuario.click(within(dialogo).getByRole('button', { name: 'Confirmar a troca' }))
+    expect(await within(dialogo).findByRole('alert')).toHaveTextContent('Código incorreto.')
+    expect(within(dialogo).getByText(SEGREDO_NOVO)).toBeInTheDocument()
+    await r.usuario.clear(within(dialogo).getByLabelText('Código de 6 dígitos'))
+    await r.usuario.type(within(dialogo).getByLabelText('Código de 6 dígitos'), TOTP_NOVO)
+    await r.usuario.click(within(dialogo).getByRole('button', { name: 'Confirmar a troca' }))
+    expect(await within(dialogo).findByText(CODIGOS_NOVOS[9]!)).toBeInTheDocument()
+    expect(r.falsa.chamadas(CONFIRM)).toBe(2)
+  })
+
+  // 403 no rotate: outra aba desligou o 2FA. O diálogo fecha e avisa.
+  // Sabotagem: em aoDesativada, não chamar fechar() (só avisar) → o
+  // diálogo fica aberto.
+  it('403 ao iniciar: o 2FA foi desligado em outra aba; o diálogo fecha e avisa', async () => {
+    const r = await comTotp()
+    await r.usuario.click(await screen.findByRole('button', { name: 'Trocar autenticador' }))
+    const dialogo = await screen.findByRole('dialog')
+    await r.usuario.type(within(dialogo).getByLabelText('Sua senha'), SENHA)
+    await r.usuario.type(within(dialogo).getByLabelText('Código do autenticador'), TOTP_OK)
+    // Desligado em outra aba, mas o /me desta ainda diz "ligado" até ser relido.
+    r.falsa.estado.forcar.set(ROTATE, { status: 403, code: 'forbidden' })
+    await r.usuario.click(within(dialogo).getByRole('button', { name: 'Continuar' }))
+    expect((await screen.findAllByText('A verificação em duas etapas já está desativada.'))[0]).toBeInTheDocument()
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    expect(screen.queryByText('Operação não permitida.')).not.toBeInTheDocument()
+    expect(r.falsa.chamadas(ROTATE)).toBe(1)
+  })
+
+  // 403 no confirm: a troca foi concluída ou cancelada em outra aba. O
+  // diálogo volta ao passo 1, com o texto da spec, e recomeçar funciona.
+  // Sabotagem: tratar o 403 do confirm como credencial (tirar o ramo do
+  // 403) → aparece "Operação não permitida." no passo 2.
+  it('403 ao confirmar: "concluída ou cancelada em outra aba", e recomeçar funciona', async () => {
+    const r = await comTotp()
+    const dialogo = await iniciar(r)
+    await r.usuario.type(await within(dialogo).findByLabelText('Código de 6 dígitos'), TOTP_NOVO)
+    // Outra aba concluiu a troca: não há mais pendente.
+    r.falsa.estado.trocaPendente = false
+    await r.usuario.click(within(dialogo).getByRole('button', { name: 'Confirmar a troca' }))
+    expect(await within(dialogo).findByRole('alert')).toHaveTextContent(
+      'A troca foi concluída ou cancelada em outra aba. Comece de novo.',
+    )
+    expect(within(dialogo).queryByText(SEGREDO_NOVO)).not.toBeInTheDocument()
+    await r.usuario.type(within(dialogo).getByLabelText('Sua senha'), SENHA)
+    await r.usuario.type(within(dialogo).getByLabelText('Código do autenticador'), TOTP_OK)
+    await r.usuario.click(within(dialogo).getByRole('button', { name: 'Continuar' }))
+    expect(await within(dialogo).findByText(SEGREDO_NOVO)).toBeInTheDocument()
+    expect(r.falsa.chamadas(ROTATE)).toBe(2)
+  })
+
+  // Fechar no passo 2 não muda nada: o aviso diz isso. Fechar no passo 1
+  // não avisa (nada começou). Sabotagem: em fechar(), não olhar o passo
+  // (tirar o aviso) → o texto não aparece.
+  it('fechar no passo 2 avisa que nada mudou; no passo 1, não', async () => {
+    const r = await comTotp()
+    await r.usuario.click(await screen.findByRole('button', { name: 'Trocar autenticador' }))
+    await screen.findByRole('dialog')
+    await r.usuario.keyboard('{Escape}')
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    const dialogo = await iniciar(r)
+    await within(dialogo).findByText(SEGREDO_NOVO)
+    await r.usuario.keyboard('{Escape}')
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    expect(await screen.findAllByText('Nada mudou: o app atual continua valendo.')).toHaveLength(1)
+    expect(screen.queryByText(/foi gasto/)).not.toBeInTheDocument()
+    expect(r.falsa.chamadas(CONFIRM)).toBe(0)
+  })
+
+  // R1 da spec: o código de recuperação gasto no passo 1 fica gasto. O
+  // "nada mudou" diz isso quando foi um código de recuperação.
+  it('fechar no passo 2 depois de usar um código de recuperação avisa que ele foi gasto', async () => {
+    const r = await comTotp()
+    const dialogo = await iniciar(r, RECUPERACAO_OK)
+    await within(dialogo).findByText(SEGREDO_NOVO)
+    await r.usuario.keyboard('{Escape}')
+    expect(
+      await screen.findByText(
+        'Nada mudou: o app atual continua valendo. O código de recuperação usado foi gasto; use outro da próxima vez.',
+      ),
+    ).toBeInTheDocument()
+  })
+
+  // Enter vazio não chega ao servidor (R34), nos dois passos com envio.
+  // Sabotagem: no passo 1, trocar o esquema por um sem min(1) → o rotate é
+  // chamado.
+  it('Enter vazio na troca não chama o servidor', async () => {
+    const r = await comTotp()
+    await r.usuario.click(await screen.findByRole('button', { name: 'Trocar autenticador' }))
+    const dialogo = await screen.findByRole('dialog')
+    await r.usuario.click(within(dialogo).getByLabelText('Sua senha'))
+    await r.usuario.keyboard('{Enter}')
+    expect(await within(dialogo).findByText('Informe a senha.')).toBeInTheDocument()
+    expect(within(dialogo).getByText('Informe o código.')).toBeInTheDocument()
+    expect(r.falsa.chamadas(ROTATE)).toBe(0)
+    await r.usuario.type(within(dialogo).getByLabelText('Sua senha'), SENHA)
+    await r.usuario.type(within(dialogo).getByLabelText('Código do autenticador'), TOTP_OK)
+    await r.usuario.keyboard('{Enter}')
+    await r.usuario.click(await within(dialogo).findByLabelText('Código de 6 dígitos'))
+    await r.usuario.keyboard('{Enter}')
+    expect(await within(dialogo).findByText('Informe o código.')).toBeInTheDocument()
+    expect(r.falsa.chamadas(CONFIRM)).toBe(0)
+    expect(r.falsa.chamadas(ROTATE)).toBe(1)
+  })
+
+  // A trava do /me: com o 2FA desligado em outra aba, "Trocar autenticador"
+  // não abre (o rotate responderia 403 e gastaria uma tentativa). Sabotagem:
+  // em abrir(), trocar "d !== 'ativar' && !ligado" por
+  // "d === 'desativar' && !ligado" → o diálogo de trocar abre.
+  it('com o 2FA desligado em outra aba, "Trocar autenticador" não abre', async () => {
+    const r = await comTotp()
+    const trocar = await screen.findByRole('button', { name: 'Trocar autenticador' })
+    r.falsa.estado.totpLigado = false
+    await r.usuario.click(trocar)
+    expect(await screen.findByRole('button', { name: 'Ativar' })).toBeInTheDocument()
+    expect(await screen.findByText('A verificação em duas etapas já está desativada.')).toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(r.falsa.chamadas(ROTATE)).toBe(0)
+  })
+
+  // A trava espera o /me relido: com ele lento, nada abre pelo cache.
+  // Sabotagem: no onClick do botão, "void abrir('trocar')" por
+  // "setDialogo('trocar')" (abrir sem reler o /me) → o diálogo aparece
+  // enquanto o /me está segurado.
+  it('"Trocar autenticador" espera o /me relido antes de abrir', async () => {
+    const r = await comTotp()
+    const trocar = await screen.findByRole('button', { name: 'Trocar autenticador' })
+    const antes = r.falsa.chamadas('GET /me')
+    const p = portao()
+    servidor.use(
+      http.get('*/api/v1/me', async () => {
+        await p.aberto
+        return HttpResponse.json(me({ totp_enabled: true }))
+      }),
+    )
+    await r.usuario.click(trocar)
+    await new Promise((res) => setTimeout(res, 50))
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    p.soltar()
+    expect(await screen.findByRole('dialog', { name: 'Trocar o autenticador' })).toBeInTheDocument()
+    // O /me relido foi o do handler segurado, não o da API falsa.
+    expect(r.falsa.chamadas('GET /me')).toBe(antes)
+  })
+})
+
+// Revisão final do Plano 9: os envios dos diálogos do 2FA com a resposta
+// ainda em voo — clique duplo (F1) e fechar no meio (F2).
+describe('envio em voo nos diálogos do 2FA', () => {
+  const ROTATE = 'POST /auth/totp/rotate'
+  const CONFIRM = 'POST /auth/totp/rotate/confirm'
+  const TROCA_SUMIU = 'A troca foi concluída ou cancelada em outra aba. Comece de novo.'
+  const tique = () => new Promise((res) => setTimeout(res, 50))
+
+  async function comTotp() {
+    const r = await renderizarPainel('/settings')
+    r.falsa.estado.totpLigado = true
+    await r.cliente.refetchQueries()
+    return r
+  }
+
+  // Segura a rota até o teste soltar; depois, a API falsa responde (e conta).
+  function segurar(metodoECaminho: string) {
+    const p = portao()
+    const estado = { chegou: 0 }
+    servidor.use(
+      http.post(`*/api/v1${metodoECaminho}`, async () => {
+        estado.chegou++
+        await p.aberto
+      }),
+    )
+    return { ...p, estado }
+  }
+
+  async function abrirTroca(r: Awaited<ReturnType<typeof renderizarPainel>>) {
+    await r.usuario.click(await screen.findByRole('button', { name: 'Trocar autenticador' }))
+    const dialogo = await screen.findByRole('dialog', { name: 'Trocar o autenticador' })
+    await r.usuario.type(within(dialogo).getByLabelText('Sua senha'), SENHA)
+    await r.usuario.type(within(dialogo).getByLabelText('Código do autenticador'), TOTP_OK)
+    return dialogo
+  }
+
+  async function noPassoDoQr(r: Awaited<ReturnType<typeof renderizarPainel>>) {
+    const dialogo = await abrirTroca(r)
+    await r.usuario.click(within(dialogo).getByRole('button', { name: 'Continuar' }))
+    await r.usuario.type(await within(dialogo).findByLabelText('Código de 6 dígitos'), TOTP_NOVO)
+    return dialogo
+  }
+
+  // F1: o 2º confirm de um clique duplo voltava 403 (o pendente já tinha
+  // sido consumido pelo 1º) e levava o diálogo de volta ao passo 1, com
+  // "concluída ou cancelada em outra aba": os 10 códigos novos nunca
+  // apareciam. Sabotagem: tirar a guarda de envio único do PassoDoQr → 2
+  // confirms (e, tirando também o "ignorar se já está nos códigos" do catch,
+  // os códigos somem).
+  it('clique duplo em "Confirmar a troca" manda um confirm só, e os 10 códigos aparecem', async () => {
+    const r = await comTotp()
+    const dialogo = await noPassoDoQr(r)
+    const s = segurar('/auth/totp/rotate/confirm')
+    const confirmar = within(dialogo).getByRole('button', { name: 'Confirmar a troca' })
+    fireEvent.click(confirmar)
+    fireEvent.click(confirmar)
+    await waitFor(() => expect(s.estado.chegou).toBeGreaterThanOrEqual(1))
+    await tique()
+    s.soltar()
+    expect(await within(dialogo).findByText(CODIGOS_NOVOS[9]!)).toBeInTheDocument()
+    // Um tique para uma 2ª resposta, se houvesse, chegar e desfazer a tela.
+    await tique()
+    expect(within(dialogo).getAllByRole('listitem')).toHaveLength(10)
+    expect(screen.queryByText(TROCA_SUMIU)).not.toBeInTheDocument()
+    expect(r.falsa.chamadas(CONFIRM)).toBe(1)
+    await r.usuario.keyboard('{Escape}')
+    expect(screen.getByRole('dialog')).toBe(dialogo)
+  })
+
+  // F1, no passo 1: o clique duplo em "Continuar" mandava dois rotates.
+  // Sabotagem: tirar a guarda de envio único do FormularioDeProvas → 2.
+  it('clique duplo em "Continuar" manda um rotate só', async () => {
+    const r = await comTotp()
+    const dialogo = await abrirTroca(r)
+    const s = segurar('/auth/totp/rotate')
+    const continuar = within(dialogo).getByRole('button', { name: 'Continuar' })
+    fireEvent.click(continuar)
+    fireEvent.click(continuar)
+    await waitFor(() => expect(s.estado.chegou).toBeGreaterThanOrEqual(1))
+    await tique()
+    s.soltar()
+    expect(await within(dialogo).findByText(SEGREDO_NOVO)).toBeInTheDocument()
+    await tique()
+    expect(r.falsa.chamadas(ROTATE)).toBe(1)
+  })
+
+  // F2: Esc com o confirm em voo fechava o diálogo com "Nada mudou" (falso
+  // se o confirm desse certo), os códigos se perdiam e o aoTravar, rodando
+  // depois, deixava o travado preso. Agora o diálogo trava antes de aguardar
+  // o confirm. E, concluído, o diálogo seguinte fecha com Esc. Sabotagens:
+  // não travar durante o envio (tirar o "ocupado" do travado do Dialogo) →
+  // o Esc fecha; não zerar travado/ocupado ao fechar nem ao abrir → o
+  // diálogo seguinte não fecha com Esc.
+  it('troca: Esc com o confirm em voo não fecha; os códigos aparecem, e o diálogo seguinte fecha com Esc', async () => {
+    const r = await comTotp()
+    const dialogo = await noPassoDoQr(r)
+    const s = segurar('/auth/totp/rotate/confirm')
+    await r.usuario.click(within(dialogo).getByRole('button', { name: 'Confirmar a troca' }))
+    await waitFor(() => expect(s.estado.chegou).toBe(1))
+    await r.usuario.keyboard('{Escape}')
+    await tique()
+    expect(screen.getByRole('dialog')).toBe(dialogo)
+    expect(screen.queryByText('Nada mudou: o app atual continua valendo.')).not.toBeInTheDocument()
+    s.soltar()
+    expect(await within(dialogo).findByText(CODIGOS_NOVOS[0]!)).toBeInTheDocument()
+    await r.usuario.keyboard('{Escape}')
+    expect(screen.getByRole('dialog')).toBe(dialogo)
+    await r.usuario.click(within(dialogo).getByLabelText('Guardei os códigos'))
+    await r.usuario.click(within(dialogo).getByRole('button', { name: 'Concluir' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+
+    // O seguinte é outra troca: o Desativar não usa o travado, e com ele o
+    // teste não veria um travado preso.
+    await r.usuario.click(screen.getByRole('button', { name: 'Trocar autenticador' }))
+    await screen.findByRole('dialog', { name: 'Trocar o autenticador' })
+    await r.usuario.keyboard('{Escape}')
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+  })
+
+  // Rodada complementar (decisão do usuário): o "Continuar" do passo da senha
+  // da ativação também mandava dois enroll num clique duplo, e o QR na tela era
+  // o da última resposta a chegar, não necessariamente o do segredo que ficou
+  // pendente no servidor. Cada enroll aqui devolve um segredo diferente.
+  // Sabotagem: tirar a guarda de envio único do passo da senha → 2 enroll.
+  it('clique duplo em "Continuar" da ativação manda um enroll só, e o QR é o dele', async () => {
+    const r = await renderizarPainel('/settings')
+    await r.usuario.click(await screen.findByRole('button', { name: 'Ativar' }))
+    const dialogo = await screen.findByRole('dialog')
+    await r.usuario.type(within(dialogo).getByLabelText('Sua senha'), SENHA)
+    const p = portao()
+    const segredos = ['PRIMEIROENROLLAA', 'SEGUNDOENROLLBBB']
+    let enrolls = 0
+    servidor.use(
+      http.post('*/api/v1/auth/totp/enroll', async () => {
+        const segredo = segredos[enrolls++]!
+        await p.aberto
+        return HttpResponse.json({
+          otpauth_uri: `otpauth://totp/Vigilume:dono%40exemplo.com?secret=${segredo}&issuer=Vigilume`,
+        })
+      }),
+    )
+    const continuar = within(dialogo).getByRole('button', { name: 'Continuar' })
+    fireEvent.click(continuar)
+    fireEvent.click(continuar)
+    await waitFor(() => expect(enrolls).toBeGreaterThanOrEqual(1))
+    await tique()
+    p.soltar()
+    expect(await within(dialogo).findByText('PRIMEIROENROLLAA')).toBeInTheDocument()
+    await tique()
+    expect(enrolls).toBe(1)
+    expect(within(dialogo).queryByText('SEGUNDOENROLLBBB')).not.toBeInTheDocument()
+  })
+
+  // F2, a mesma corrida na ativação (totpConfirmar).
+  it('ativação: Esc com o confirm em voo não fecha; os códigos aparecem, e o diálogo seguinte fecha com Esc', async () => {
+    const r = await renderizarPainel('/settings')
+    await r.usuario.click(await screen.findByRole('button', { name: 'Ativar' }))
+    const dialogo = await screen.findByRole('dialog')
+    await r.usuario.type(within(dialogo).getByLabelText('Sua senha'), SENHA)
+    await r.usuario.click(within(dialogo).getByRole('button', { name: 'Continuar' }))
+    await r.usuario.type(await within(dialogo).findByLabelText('Código de 6 dígitos'), TOTP_OK)
+    const s = segurar('/auth/totp/confirm')
+    await r.usuario.click(within(dialogo).getByRole('button', { name: 'Ativar' }))
+    await waitFor(() => expect(s.estado.chegou).toBe(1))
+    await r.usuario.keyboard('{Escape}')
+    await tique()
+    expect(screen.getByRole('dialog')).toBe(dialogo)
+    s.soltar()
+    expect(await within(dialogo).findByText('AAAABBBBCCCCDDDD')).toBeInTheDocument()
+    await r.usuario.keyboard('{Escape}')
+    expect(screen.getByRole('dialog')).toBe(dialogo)
+    await r.usuario.click(within(dialogo).getByLabelText('Guardei os códigos'))
+    await r.usuario.click(within(dialogo).getByRole('button', { name: 'Concluir' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+
+    await r.usuario.click(await screen.findByRole('button', { name: 'Trocar autenticador' }))
+    await screen.findByRole('dialog', { name: 'Trocar o autenticador' })
+    await r.usuario.keyboard('{Escape}')
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
   })
 })

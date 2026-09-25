@@ -24,6 +24,22 @@ SELECT c.id, c.kind, c.config_enc, c.verified_at, c.verify_expires_at, c.enabled
  WHERE c.user_id = $1
  ORDER BY c.id DESC;
 
+-- Um canal no formato da listagem (ListChannels), para a resposta do PATCH
+-- /channels/{id} (Plano 9, §3.3).
+-- name: GetChannelView :one
+SELECT c.id, c.kind, c.config_enc, c.verified_at, c.verify_expires_at, c.enabled, c.created_at,
+       h.last_success_at, h.last_failure_at, h.last_error
+  FROM notif_channels c
+  LEFT JOIN channel_health h ON h.channel_id = c.id
+ WHERE c.user_id = $1 AND c.id = $2;
+
+-- Pausar e retomar (Plano 9, §3.3). O despacho lê enabled na hora do envio
+-- (semEnvio): pausado, o aviso é cancelado, e retomar não o reenvia. Gravar o
+-- valor que já está afeta a linha do mesmo jeito: a rota é idempotente.
+-- name: SetChannelEnabled :execrows
+UPDATE notif_channels SET enabled = sqlc.arg(enabled)
+ WHERE user_id = sqlc.arg(user_id) AND id = sqlc.arg(id);
+
 -- name: GetChannel :one
 SELECT * FROM notif_channels WHERE user_id = $1 AND id = $2;
 

@@ -151,7 +151,14 @@ cd web && npm run dev # o painel em http://localhost:5173, com proxy de /api par
 Depois de mudar o código, `docker compose up --build` (ou `make up`): sem o `--build`, o compose
 reusa a imagem que já tem. Para o `npm run dev`, suba a API pelo compose (o `CORS_ORIGIN` do
 compose já é o do Vite). Criar ou recuperar o usuário dono: `vigilume user create --email <e>` e
-`vigilume user set-password --email <e>`, com a senha pelo stdin.
+`vigilume user set-password --email <e>`, com a senha pelo stdin. Quem perdeu o autenticador **e**
+os códigos de recuperação: `vigilume user reset-2fa --email <e>` desliga o 2FA e encerra todas as
+sessões (não pede senha: só lê a `DATABASE_URL`); depois, entre com a senha e ative de novo pelo
+painel.
+
+Para rodar a API e o sondador separados no mesmo host (`--role=api` e `--role=prober`), não
+precisa configurar nada: sem `METRICS_ADDR`, a porta de métricas é `127.0.0.1:9090` para `api` e
+`all` e `127.0.0.1:9091` para `prober`.
 
 ## Deploy e operação
 
