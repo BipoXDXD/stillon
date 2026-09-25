@@ -20,6 +20,11 @@ import (
 
 const refreshCookieName = "vigilume_refresh"
 
+// deviceCookieName é o cookie de dispositivo (A3 do Plano 10): ver
+// auth.Devices. Mesmo Path do refresh, e por isso vai no login e no
+// /totp/verify, os dois lugares que o leem.
+const deviceCookieName = "vigilume_dispositivo"
+
 type AuthHandlers struct {
 	users        auth.UserStore
 	sessions     *auth.Manager
@@ -34,10 +39,13 @@ type AuthHandlers struct {
 	// provas conta as provas erradas das rotas autenticadas por família de
 	// sessão (A3 do Plano 10); a mesma instância do AccountHandlers.
 	provas *provasDaFamilia
+	// dispositivos emite e confere o cookie de dispositivo, e conta as falhas
+	// de login de cada um (A3 do Plano 10).
+	dispositivos *auth.Devices
 }
 
-func NewAuthHandlers(users auth.UserStore, sessions *auth.Manager, totp *auth.TOTP, clk clock.Clock, jwtSecret []byte, secureCookie bool, proxies middleware.Proxies, provas *provasDaFamilia) *AuthHandlers {
-	return &AuthHandlers{users: users, sessions: sessions, totp: totp, clk: clk, jwtSecret: jwtSecret, secureCookie: secureCookie, proxies: proxies, provas: provas}
+func NewAuthHandlers(users auth.UserStore, sessions *auth.Manager, totp *auth.TOTP, clk clock.Clock, jwtSecret []byte, secureCookie bool, proxies middleware.Proxies, provas *provasDaFamilia, dispositivos *auth.Devices) *AuthHandlers {
+	return &AuthHandlers{users: users, sessions: sessions, totp: totp, clk: clk, jwtSecret: jwtSecret, secureCookie: secureCookie, proxies: proxies, provas: provas, dispositivos: dispositivos}
 }
 
 type loginRequest struct {
@@ -57,6 +65,10 @@ type tokenResponse struct {
 // resposta para senha errada em ~100 ms, e a diferença enumeraria as contas
 // do sistema (spec §5.2). O caminho de conta bloqueada paga o mesmo custo
 // pela mesma razão.
+//
+// A tentativa é reservada antes do Argon2id (A2 do Plano 10), no contador
+// que h.tentativas escolhe: o do cookie de dispositivo, se ele vale para esta
+// conta, ou o bloqueio da conta (A3).
 func (h *AuthHandlers) Login(w http.ResponseWriter, r *http.Request) {
 	var req loginRequest
 	if !decodeJSON(w, r, &req) {
@@ -78,7 +90,7 @@ func (h *AuthHandlers) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// CheckPassword recusa a conta bloqueada sem olhar a senha. O bloqueio
+	// CheckPassword recusa o contador bloqueado sem olhar a senha. O bloqueio
 	// não se anuncia (R34, spec §5.2): a resposta é o mesmo 401 genérico de
 	// senha errada e de e-mail inexistente.
 	//
@@ -92,7 +104,8 @@ func (h *AuthHandlers) Login(w http.ResponseWriter, r *http.Request) {
 	// A spec escolheu esse lado: o bloqueio dura 15 minutos e o evento fica no
 	// audit log, que é onde essa informação pertence. Não "melhore a UX" aqui
 	// sem reabrir o buraco.
-	ok, needsRehash, err := auth.CheckPassword(r.Context(), h.users, user, req.Password, now)
+	tentativas := h.tentativas(r, user.ID, now)
+	ok, needsRehash, err := auth.CheckPassword(r.Context(), tentativas, user, req.Password)
 	if err != nil {
 		h.internal(w, r, "verificar senha", err)
 		return
@@ -126,10 +139,16 @@ func (h *AuthHandlers) Login(w http.ResponseWriter, r *http.Request) {
 	// própria, que ParseAccessToken recusa como credencial.
 	enabled, err := h.totp.IsEnabled(r.Context(), user.ID)
 	if err != nil {
+		devolverTentativa(r, tentativas)
 		h.internal(w, r, "consultar segundo fator", err)
 		return
 	}
 	if enabled {
+		// A senha certa não termina o login: a reserva dela volta (Refund),
+		// sem zerar o contador. Zerar aqui daria ao atacante que já tem a
+		// senha um botão de destravar entre um chute de seis dígitos e o
+		// próximo, e o bloqueio do R40 nunca chegaria ao limiar.
+		devolverTentativa(r, tentativas)
 		challenge, err := auth.NewChallengeToken(h.jwtSecret, user.ID, auth.PasswordStamp(verificado), now)
 		if err != nil {
 			h.internal(w, r, "assinar desafio", err)
@@ -144,16 +163,35 @@ func (h *AuthHandlers) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// O contador de falhas só zera quando o login de fato termina. Com
-	// segundo fator ativo ele termina em /totp/verify, e é lá que o reset
-	// acontece: zerar aqui daria ao atacante que já tem a senha um botão de
-	// destravar entre um chute de seis dígitos e o próximo, e o bloqueio do
-	// R40 nunca chegaria ao limiar.
-	if err := h.users.ResetFailures(r.Context(), user.ID); err != nil {
+	// O contador só zera quando o login de fato termina. Com segundo fator
+	// ativo ele termina em /totp/verify, e é lá que o reset acontece.
+	if err := tentativas.Reset(r.Context()); err != nil {
 		slog.Error("zerar falhas de login", "erro", err)
 	}
 
 	h.issue(w, r, user.ID, auth.PasswordStamp(verificado))
+}
+
+// tentativas escolhe o contador do login (A3 do Plano 10): o do cookie de
+// dispositivo, se ele vale para esta conta e não está sendo ignorado (errou o
+// limite há menos de 15 min); senão, o bloqueio da conta, como antes. O
+// limitador por IP vale para os dois.
+func (h *AuthHandlers) tentativas(r *http.Request, userID uuid.UUID, now time.Time) auth.Attempts {
+	if ck, err := r.Cookie(deviceCookieName); err == nil {
+		if id, ok := h.dispositivos.Check(ck.Value, userID); ok && !h.dispositivos.Ignored(id) {
+			return h.dispositivos.Attempts(id)
+		}
+	}
+	return auth.AccountAttempts(h.users, userID, now)
+}
+
+// devolverTentativa devolve a reserva de uma prova certa que não terminou o
+// login (ver auth.Attempts). Falhar ao devolver não muda a resposta: a prova
+// estava certa, e o pior caso é uma tentativa a mais contada.
+func devolverTentativa(r *http.Request, t auth.Attempts) {
+	if err := t.Refund(r.Context()); err != nil {
+		slog.Error("devolver tentativa de login", "erro", err)
+	}
 }
 
 func (h *AuthHandlers) Refresh(w http.ResponseWriter, r *http.Request) {
@@ -182,13 +220,21 @@ func (h *AuthHandlers) Refresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.grantSession(w, r, token, s)
+	h.grantSession(w, r, token, s, false)
 }
 
+// Logout encerra a família do refresh apresentado e apaga o cookie.
+//
+// Se a revogação falha no banco, a resposta é 500 e o cookie FICA (A9 do
+// Plano 10): antes, o erro ia só para o log, o navegador recebia 204 e perdia
+// o cookie, e a família continuava viva por até 30 dias no servidor — com
+// quem tivesse copiado o refresh ainda dentro, e o dono achando que tinha
+// saído. Com o cookie mantido, o painel pode avisar e tentar de novo.
 func (h *AuthHandlers) Logout(w http.ResponseWriter, r *http.Request) {
 	if ck, err := r.Cookie(refreshCookieName); err == nil {
 		if err := h.sessions.Revoke(r.Context(), ck.Value); err != nil {
-			slog.Error("revogar sessão", "erro", err)
+			h.internal(w, r, "revogar sessão", err)
+			return
 		}
 	}
 	h.clearCookie(w)
@@ -209,7 +255,7 @@ func (h *AuthHandlers) issue(w http.ResponseWriter, r *http.Request, userID uuid
 		h.internal(w, r, "emitir sessão", err)
 		return
 	}
-	h.grantSession(w, r, token, s)
+	h.grantSession(w, r, token, s, true)
 }
 
 // grantSession entrega a sessão ao cliente, e a ORDEM aqui é o ponto (item
@@ -227,13 +273,20 @@ func (h *AuthHandlers) issue(w http.ResponseWriter, r *http.Request, userID uuid
 //
 // O access token leva a família da sessão (claim sid): é a mesma família do
 // refresh que vai no cookie.
-func (h *AuthHandlers) grantSession(w http.ResponseWriter, r *http.Request, refresh string, s auth.Session) {
+//
+// login diz que a sessão nasce de um login completo (senha e, se ligado, o
+// 2FA), e não de uma renovação: só aí sai um cookie de dispositivo novo (A3 do
+// Plano 10), pela mesma ordem — depois de o access token ser assinado.
+func (h *AuthHandlers) grantSession(w http.ResponseWriter, r *http.Request, refresh string, s auth.Session, login bool) {
 	access, err := auth.NewAccessToken(h.jwtSecret, s.UserID, s.FamilyID, h.clk.Now())
 	if err != nil {
 		h.internal(w, r, "assinar access token", err)
 		return
 	}
 	h.setCookie(w, refresh, s.ExpiresAt)
+	if login {
+		h.setDeviceCookie(w, s.UserID)
+	}
 	apierr.WriteJSON(w, http.StatusOK, tokenResponse{
 		AccessToken: access,
 		ExpiresIn:   int(auth.AccessTTL.Seconds()),
@@ -249,6 +302,28 @@ func (h *AuthHandlers) setCookie(w http.ResponseWriter, token string, expires ti
 		// então não é enviado em nenhuma outra requisição da aplicação.
 		Path:     "/api/v1/auth",
 		Expires:  expires,
+		HttpOnly: true,
+		Secure:   h.secureCookie,
+		SameSite: http.SameSiteStrictMode,
+	})
+}
+
+// setDeviceCookie põe o cookie de dispositivo (A3 do Plano 10). Os atributos
+// são os do refresh (HttpOnly, SameSite=Strict, Path /api/v1/auth, Secure com
+// https), e a validade é auth.DeviceTTL. Uma falha ao sortear o identificador
+// não derruba o login: o próximo login completo tenta de novo.
+func (h *AuthHandlers) setDeviceCookie(w http.ResponseWriter, userID uuid.UUID) {
+	valor, _, err := h.dispositivos.Issue(userID)
+	if err != nil {
+		slog.Error("emitir cookie de dispositivo", "erro", err)
+		return
+	}
+	// #nosec G124 -- falso positivo: mesmo caso do setCookie; Secure vem de PUBLIC_BASE_URL (routes.go), com HttpOnly e SameSite=Strict fixos.
+	http.SetCookie(w, &http.Cookie{
+		Name:     deviceCookieName,
+		Value:    valor,
+		Path:     "/api/v1/auth",
+		MaxAge:   int(auth.DeviceTTL / time.Second),
 		HttpOnly: true,
 		Secure:   h.secureCookie,
 		SameSite: http.SameSiteStrictMode,

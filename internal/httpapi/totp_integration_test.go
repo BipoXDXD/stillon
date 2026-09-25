@@ -429,8 +429,11 @@ func TestEnrollIsForbiddenAfterTOTPIsConfirmed(t *testing.T) {
 // limite de /totp/verify é por IP, e várias origens passam por cima dele.
 func TestFailedSecondFactorLocksTheAccount(t *testing.T) {
 	a := newAPI(t)
+	// c é um navegador SEM o cookie de dispositivo (A3 do Plano 10): o do
+	// cadastro o recebeu no login completo, e as falhas dele não contariam na
+	// conta.
+	cadastrarTOTP(t, a, clientWithJar(t))
 	c := clientWithJar(t)
-	cadastrarTOTP(t, a, c)
 
 	if falhas, bloqueado := estadoDoBloqueio(t, a); falhas != 0 || bloqueado {
 		t.Fatalf("a conta já começou com %d falhas (bloqueada=%v)", falhas, bloqueado)
@@ -480,8 +483,11 @@ func TestFailedSecondFactorLocksTheAccount(t *testing.T) {
 // conta de quem acerta.
 func TestSuccessfulSecondFactorClearsTheFailureCount(t *testing.T) {
 	a := newAPI(t)
+	// c é um navegador SEM o cookie de dispositivo (A3 do Plano 10): o do
+	// cadastro o recebeu no login completo, e as falhas dele não contariam na
+	// conta.
+	secret := cadastrarTOTP(t, a, clientWithJar(t))
 	c := clientWithJar(t)
-	secret := cadastrarTOTP(t, a, c)
 
 	desafio := desafioAtual(t, a, c)
 	for i := 0; i < 2; i++ {
@@ -515,8 +521,11 @@ func TestSuccessfulSecondFactorClearsTheFailureCount(t *testing.T) {
 // próximo, e o bloqueio do R40 nunca chegaria ao limiar.
 func TestLoggingInAgainDoesNotClearSecondFactorFailures(t *testing.T) {
 	a := newAPI(t)
+	// c é um navegador SEM o cookie de dispositivo (A3 do Plano 10): o do
+	// cadastro o recebeu no login completo, e as falhas dele não contariam na
+	// conta.
+	cadastrarTOTP(t, a, clientWithJar(t))
 	c := clientWithJar(t)
-	cadastrarTOTP(t, a, c)
 
 	desafio := desafioAtual(t, a, c)
 	for i := 0; i < 2; i++ {
@@ -544,8 +553,11 @@ func TestLoggingInAgainDoesNotClearSecondFactorFailures(t *testing.T) {
 // ResetFailures do sucesso ainda destravaria a conta para ele.
 func TestSecondFactorIsRefusedWhileTheAccountIsLocked(t *testing.T) {
 	a := newAPI(t)
+	// c é um navegador SEM o cookie de dispositivo (A3 do Plano 10): o do
+	// cadastro o recebeu no login completo, e as falhas dele não contariam na
+	// conta.
+	secret := cadastrarTOTP(t, a, clientWithJar(t))
 	c := clientWithJar(t)
-	secret := cadastrarTOTP(t, a, c)
 
 	// O desafio é obtido ANTES do bloqueio: com a conta trancada o login nem
 	// chega a emitir um.

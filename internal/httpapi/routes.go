@@ -76,7 +76,10 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	// Uma instância do contador de provas por família para a troca de senha e
 	// as rotas do 2FA (A3 do Plano 10): o orçamento é da família, não da rota.
 	provas := &provasDaFamilia{contador: auth.NewFamilyProofs(d.Clock), contas: d.Accounts, proxies: proxiesDe(cfg)}
-	h := NewAuthHandlers(d.Store, d.Sessions, d.TOTP, d.Clock, cfg.JWTSecret, secureCookie, proxiesDe(cfg), provas)
+	// O cookie de dispositivo (A3 do Plano 10): a chave do MAC vem da
+	// MASTER_KEY por HKDF, com rótulo próprio.
+	dispositivos := auth.NewDevices(cfg.MasterKey, d.Clock)
+	h := NewAuthHandlers(d.Store, d.Sessions, d.TOTP, d.Clock, cfg.JWTSecret, secureCookie, proxiesDe(cfg), provas, dispositivos)
 	th := NewTargetHandlers(d.Targets, d.Clock)
 	ih := NewIncidentHandlers(d.Incidents)
 	ch := NewChannelHandlers(d.Channels)
@@ -95,12 +98,13 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	// então cinco falhas na mesma conta chegam em poucos segundos — o
 	// bloqueio não fica inalcançável (R35).
 	//
-	// A ordem tem uma propriedade que vale preservar: o rate limit responde
-	// ANTES de o handler rodar, então um atacante remoto é barrado por IP
-	// antes de acumular falhas suficientes para trancar a conta de uma vítima.
-	// Sem isso, o próprio lockout viraria o ataque — negação de serviço por
-	// bloqueio de conta alheia, que é um problema real em sistemas com
-	// lockout. Não afrouxe este limitador sem pensar nisso.
+	// O limitador NÃO protege o dono contra o bloqueio da própria conta: o
+	// burst (5) é igual ao limiar (5), e um único IP tranca a conta com cinco
+	// senhas erradas a cada 15 min. (Uma versão anterior deste comentário
+	// dizia o contrário; a revisão de 2026-09-25 mostrou que era falso.) Quem
+	// deixa o dono entrar mesmo assim é o cookie de dispositivo (A3 do Plano
+	// 10): o navegador que já completou um login tem um contador próprio, e o
+	// bloqueio disparado por outras origens não o alcança.
 	//
 	// Uma instância só, e não uma por rota: a troca de senha divide o balde do
 	// login (D5 do Plano 5; contrato dos Planos 5–7, "mesmo limite por IP da

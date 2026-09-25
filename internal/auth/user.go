@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"strings"
 	"time"
 
@@ -53,45 +52,97 @@ func NormalizeEmail(email string) string {
 	return strings.TrimSpace(email)
 }
 
+// Attempts é o contador de tentativas de uma credencial de login (A2 e A3 do
+// Plano 10): o bloqueio da conta (AccountAttempts) ou o do cookie de
+// dispositivo (Devices.Attempts). A tentativa é RESERVADA antes de verificar
+// — N tentativas simultâneas gastam N, e a que passa do limite nem chega a
+// verificar —, e quem reservou decide o fim dela:
+//
+//   - errada: nada; a reserva fica contada;
+//   - certa, com o login terminando aqui: Reset (zera);
+//   - certa, com outro passo pela frente (a senha certa com 2FA ligado):
+//     Refund, que devolve só esta reserva. Zerar ali daria ao atacante que já
+//     tem a senha um botão de destravar entre um chute de seis dígitos e o
+//     próximo (R40).
+type Attempts interface {
+	// Reserve devolve false quando o contador está bloqueado: nada foi
+	// reservado, e quem chama recusa sem verificar a credencial.
+	Reserve(ctx context.Context) (bool, error)
+	Refund(ctx context.Context) error
+	Reset(ctx context.Context) error
+}
+
+// AccountAttempts é o bloqueio da conta (spec §5.2) como Attempts: users,
+// com o relógio do instante do login.
+func AccountAttempts(users UserStore, userID uuid.UUID, now time.Time) Attempts {
+	return contaAttempts{users: users, userID: userID, now: now}
+}
+
+type contaAttempts struct {
+	users  UserStore
+	userID uuid.UUID
+	now    time.Time
+}
+
+func (c contaAttempts) Reserve(ctx context.Context) (bool, error) {
+	return c.users.ReserveAttempt(ctx, c.userID, c.now)
+}
+
+func (c contaAttempts) Refund(ctx context.Context) error {
+	return c.users.RefundAttempt(ctx, c.userID)
+}
+
+func (c contaAttempts) Reset(ctx context.Context) error {
+	return c.users.ResetFailures(ctx, c.userID)
+}
+
 // CheckPassword é a verificação de senha do login. Custa um Argon2id em todo
 // caminho. As rotas autenticadas que pedem a senha de novo (troca de senha e
-// as do 2FA) não passam mais por aqui desde o A3 do Plano 10: elas usam
+// as do 2FA) não passam por aqui desde o A3 do Plano 10: elas usam
 // VerifyPassword e o contador da família de sessão, e não o bloqueio da conta.
 //
-// Conta bloqueada é recusada sem olhar a senha, pagando VerifyDummy: o
-// bloqueio não se anuncia (R34), nem pela resposta nem pelo tempo. Senha
-// errada conta no bloqueio progressivo: sem isto, uma rota que pede a senha
-// vira oráculo de senha limitado só por IP para quem tem um access token
-// roubado. O sucesso NÃO zera o contador; quem chama decide quando o
-// processo de autenticação terminou (com segundo fator, é depois dele).
+// A ordem é o ponto (A2 do Plano 10): a vaga do Argon2id primeiro, depois a
+// reserva da tentativa, e só então a verificação. Antes, o bloqueio era lido
+// antes e a falha gravada depois do Argon2id, e N requisições simultâneas
+// passavam todas pela leitura: o limite de 5 virava o número de origens do
+// atacante. A vaga vem antes da reserva para que um 429 do semáforo não gaste
+// tentativa do dono.
+//
+// Contador bloqueado é recusado sem olhar a senha, pagando o mesmo Argon2id
+// (o dummy): o bloqueio não se anuncia (R34), nem pela resposta nem pelo
+// tempo. Senha errada deixa a reserva contada. Senha certa também deixa a
+// reserva: quem chama devolve (Refund) ou zera (Reset), conforme o login
+// termine ou não aqui (ver Attempts).
 //
 // needsRehash só vale quando ok. Com o teto do Argon2id cheio, devolve
-// ErrArgon2Busy sem verificar nem contar nada (A1 do Plano 10).
-func CheckPassword(ctx context.Context, users UserStore, u User, plain string, now time.Time) (ok, needsRehash bool, err error) {
-	if u.IsLocked(now) {
-		if err := VerifyDummy(); err != nil {
-			return false, false, err
-		}
-		return false, false, nil
-	}
-	ok, needsRehash, err = VerifyPassword(u.PasswordHash, plain)
+// ErrArgon2Busy sem reservar nada (A1 do Plano 10).
+func CheckPassword(ctx context.Context, t Attempts, u User, plain string) (ok, needsRehash bool, err error) {
+	soltar, err := ReserveArgon2()
 	if err != nil {
 		return false, false, err
 	}
-	if !ok {
-		// Falhar ao registrar não muda a resposta: a senha estava errada.
-		if err := users.RecordFailure(ctx, u.ID, now); err != nil {
-			slog.Error("registrar falha de senha", "erro", err)
-		}
+	defer soltar()
+
+	reservou, err := t.Reserve(ctx)
+	if err != nil {
+		return false, false, err
+	}
+	if !reservou {
+		_, _, _ = verificarSenha(dummyHash(), plain)
 		return false, false, nil
 	}
-	return true, needsRehash, nil
+	return verificarSenha(u.PasswordHash, plain)
 }
 
 type UserStore interface {
 	ByEmail(ctx context.Context, email string) (User, error)
 	ByID(ctx context.Context, userID uuid.UUID) (User, error)
-	RecordFailure(ctx context.Context, userID uuid.UUID, at time.Time) error
+	// ReserveAttempt reserva uma tentativa de credencial no bloqueio da
+	// conta; false quando a conta está bloqueada em at (nada reservado).
+	ReserveAttempt(ctx context.Context, userID uuid.UUID, at time.Time) (bool, error)
+	// RefundAttempt devolve uma reserva de uma prova certa num passo
+	// intermediário do login (ver Attempts).
+	RefundAttempt(ctx context.Context, userID uuid.UUID) error
 	ResetFailures(ctx context.Context, userID uuid.UUID) error
 	// RehashPassword troca oldHash por newHash só se oldHash ainda for o hash
 	// gravado; swapped diz se trocou.
@@ -118,9 +169,16 @@ func (s *PGStore) ByEmail(ctx context.Context, email string) (User, error) {
 	return u, nil
 }
 
-// RecordFailure incrementa o contador e aplica o bloqueio no mesmo UPDATE.
-// Fazer as duas coisas em uma instrução evita corrida entre tentativas
-// simultâneas de força bruta.
+// ReserveAttempt reserva a tentativa ANTES da verificação, numa instrução só
+// (A2 do Plano 10): incrementa o contador e aplica o bloqueio no mesmo
+// UPDATE, e só se a conta não estiver bloqueada em at. Sem linha de volta, a
+// conta está bloqueada, e nada muda. Duas reservas simultâneas disputam a
+// mesma linha: a segunda espera a primeira comitar e relê (READ COMMITTED),
+// então N reservas simultâneas contam N, e as que chegam depois do bloqueio
+// não passam.
+//
+// A reserva que atinge o limiar trava a conta e ainda assim é concedida: ela é
+// a quinta tentativa, e é verificada. Se estiver certa, quem chama zera.
 //
 // Um bloqueio VENCIDO reinicia a contagem, e isso não é detalhe. O contador
 // só zerava em ResetFailures, que roda apenas num login bem sucedido — e o
@@ -132,28 +190,44 @@ func (s *PGStore) ByEmail(ctx context.Context, email string) (User, error) {
 // nenhum: era negação de serviço pura sobre conta alheia, e silenciosa,
 // porque o bloqueio não se anuncia (R34).
 //
-// A comparação usa $4, o instante recebido, e nunca now(): o relógio é
+// A comparação usa $3, o instante recebido, e nunca now(): o relógio é
 // injetado, e um now() do banco divergiria do clock.Fake nos testes.
 //
 // Ambos os CASE enxergam a linha ANTES do UPDATE, que é o que permite decidir
 // as duas colunas a partir do mesmo estado. (Pressupõe LockThreshold >= 2: com
 // limiar 1, a contagem reiniciada nunca voltaria a travar no mesmo UPDATE.)
-func (s *PGStore) RecordFailure(ctx context.Context, userID uuid.UUID, at time.Time) error {
-	_, err := s.pool.Exec(ctx, `
+func (s *PGStore) ReserveAttempt(ctx context.Context, userID uuid.UUID, at time.Time) (bool, error) {
+	tag, err := s.pool.Exec(ctx, `
 		UPDATE users
 		   SET failed_attempts = CASE
-		           WHEN locked_until IS NOT NULL AND locked_until <= $4 THEN 1
+		           WHEN locked_until IS NOT NULL AND locked_until <= $3 THEN 1
 		           ELSE failed_attempts + 1
 		       END,
 		       locked_until = CASE
-		           WHEN locked_until IS NOT NULL AND locked_until <= $4 THEN NULL
-		           WHEN failed_attempts + 1 >= $2 THEN $3
+		           WHEN locked_until IS NOT NULL AND locked_until <= $3 THEN NULL
+		           WHEN failed_attempts + 1 >= $2 THEN $4
 		           ELSE locked_until
 		       END
-		 WHERE id = $1`,
-		userID, LockThreshold, at.Add(LockDuration), at)
+		 WHERE id = $1 AND (locked_until IS NULL OR locked_until <= $3)`,
+		userID, LockThreshold, at, at.Add(LockDuration))
 	if err != nil {
-		return fmt.Errorf("registrar falha de login: %w", err)
+		return false, fmt.Errorf("reservar tentativa de login: %w", err)
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
+// RefundAttempt devolve UMA reserva: a de uma senha certa com o segundo fator
+// pela frente. Se a reserva devolvida tinha travado a conta (era a quinta), a
+// trava sai com ela; abaixo do limiar não há trava a manter.
+func (s *PGStore) RefundAttempt(ctx context.Context, userID uuid.UUID) error {
+	_, err := s.pool.Exec(ctx, `
+		UPDATE users
+		   SET failed_attempts = GREATEST(failed_attempts - 1, 0),
+		       locked_until = CASE WHEN failed_attempts - 1 < $2 THEN NULL ELSE locked_until END
+		 WHERE id = $1`,
+		userID, LockThreshold)
+	if err != nil {
+		return fmt.Errorf("devolver tentativa de login: %w", err)
 	}
 	return nil
 }

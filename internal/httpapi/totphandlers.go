@@ -132,10 +132,17 @@ func (h *AuthHandlers) TOTPConfirm(w http.ResponseWriter, r *http.Request) {
 // invalida os mais antigos do mesmo usuário ainda abertos (dois logins quase
 // simultâneos: se o mais novo terminar primeiro, o mais antigo refaz a senha).
 //
-// Ordem: desafio → usuário/bloqueio → pré-checagem da marca → código →
-// ResetFailures → ConsumeChallenge → sessão. A pré-checagem recusa antes do
+// Ordem: desafio → usuário → pré-checagem da marca → reserva da tentativa →
+// código → Reset → ConsumeChallenge → sessão. A pré-checagem recusa antes do
 // código o desafio que já não pode abrir sessão, para não gastar um código de
 // recuperação com ele (revisão final do Plano 8).
+//
+// A tentativa é reservada ANTES do código (A2 do Plano 10): antes, o bloqueio
+// era lido antes e a falha gravada depois, e quem tinha a senha disparava
+// centenas de códigos simultâneos de várias origens, todos passando pela
+// leitura antes de a quinta falha ser gravada. O contador é o do login
+// (h.tentativas): o cookie de dispositivo, se vale para a conta, ou o
+// bloqueio da conta (A3).
 func (h *AuthHandlers) TOTPVerify(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Challenge string `json:"challenge"`
@@ -153,10 +160,6 @@ func (h *AuthHandlers) TOTPVerify(w http.ResponseWriter, r *http.Request) {
 	}
 	userID := desafio.UserID
 
-	// O segundo fator entra no MESMO bloqueio progressivo do login (R40).
-	// Sem isto, quem já tem a senha chuta seis dígitos indefinidamente: o
-	// limite de /totp/verify é por IP, e um atacante com várias origens passa
-	// por cima dele sem que a conta jamais tranque.
 	user, err := h.users.ByID(r.Context(), userID)
 	if errors.Is(err, auth.ErrNotFound) {
 		apierr.WriteError(w, r, apierr.CodeInvalidCredentials)
@@ -164,11 +167,6 @@ func (h *AuthHandlers) TOTPVerify(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		h.internal(w, r, "buscar usuário", err)
-		return
-	}
-	if user.IsLocked(now) {
-		// Mesmo 401 genérico do login, pelo mesmo motivo do R34.
-		apierr.WriteError(w, r, apierr.CodeInvalidCredentials)
 		return
 	}
 
@@ -189,22 +187,37 @@ func (h *AuthHandlers) TOTPVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// O segundo fator entra no MESMO contador do login (R40). Sem isto, quem
+	// já tem a senha chuta seis dígitos indefinidamente: o limite de
+	// /totp/verify é por IP, e um atacante com várias origens passa por cima
+	// dele sem que a conta jamais tranque. Bloqueado é o mesmo 401 genérico
+	// do login (R34), sem olhar o código.
+	tentativas := h.tentativas(r, userID, now)
+	reservou, err := tentativas.Reserve(r.Context())
+	if err != nil {
+		h.internal(w, r, "reservar tentativa de segundo fator", err)
+		return
+	}
+	if !reservou {
+		apierr.WriteError(w, r, apierr.CodeInvalidCredentials)
+		return
+	}
+
 	if err := h.totp.Verify(r.Context(), userID, req.Code, now); err != nil {
 		// O mesmo 401 genérico do login errado (R34): um código distinto para
 		// "segundo fator falhou" contaria ao atacante que a senha estava
-		// certa, e a senha é justamente o que ele está testando.
+		// certa, e a senha é justamente o que ele está testando. A reserva
+		// fica contada.
 		if errors.Is(err, auth.ErrTOTPInvalid) || errors.Is(err, auth.ErrTOTPNotEnrolled) {
-			if err := h.users.RecordFailure(r.Context(), userID, now); err != nil {
-				slog.Error("registrar falha de segundo fator", "erro", err)
-			}
 			apierr.WriteError(w, r, apierr.CodeInvalidCredentials)
 			return
 		}
+		devolverTentativa(r, tentativas)
 		h.internal(w, r, "verificar TOTP", err)
 		return
 	}
 
-	if err := h.users.ResetFailures(r.Context(), userID); err != nil {
+	if err := tentativas.Reset(r.Context()); err != nil {
 		slog.Error("zerar falhas de segundo fator", "erro", err)
 	}
 
