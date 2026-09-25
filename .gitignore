@@ -9,6 +9,13 @@
 /internal/webui/dist/*
 !/internal/webui/dist/.gitkeep
 .env
+.env.*
+# O backup (docs/deploy/fly.md, D3 do Plano 10): a chave privada do age
+# (vigilume-backup.key), o dump decifrado na restauração (vigilume.dump) e o
+# artifact baixado (vigilume-AAAAMMDD.dump.age). Nenhum deles vai para o git.
+*.key
+*.dump
+*.age
 *.test
 coverage.out
 /.superpowers/

@@ -19,6 +19,12 @@ updates:
     groups:
       go:
         patterns: ['*']
+    # Uma versão recém-publicada espera 7 dias antes de entrar no PR
+    # agrupado: tempo para uma versão maliciosa ser descoberta e retirada
+    # (banco S2 da revisão; D2 do Plano 10). Só vale para atualização de
+    # versão: as de segurança não esperam (documentação do GitHub, cooldown).
+    cooldown:
+      default-days: 7
 
   - package-ecosystem: npm
     directory: /web
@@ -27,6 +33,12 @@ updates:
     groups:
       painel:
         patterns: ['*']
+    # Uma versão recém-publicada espera 7 dias antes de entrar no PR
+    # agrupado: tempo para uma versão maliciosa ser descoberta e retirada
+    # (banco S2 da revisão; D2 do Plano 10). Só vale para atualização de
+    # versão: as de segurança não esperam (documentação do GitHub, cooldown).
+    cooldown:
+      default-days: 7
 
   - package-ecosystem: github-actions
     directory: /
