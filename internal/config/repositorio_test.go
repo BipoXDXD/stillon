@@ -56,8 +56,19 @@ func TestGitignoreCoversTheBackupKeyAndDumps(t *testing.T) {
 		"vigilume-20260925.dump.age",
 		".env",
 		".env.production",
+		"web/.env.local",
+		"web/.env.development.local",
+		"web/.env.production",
 	}
-	versionados := []string{"compose.yaml", "deploy/compose/seed.sh", "docs/deploy/fly.md", "go.mod"}
+	// A perna oposta inclui arquivos que um dia serão versionados e que um
+	// padrão largo demais esconderia sem aviso (m2 da revisão do Plano 10): o
+	// exemplo de ambiente, o .env de desenvolvimento do Vite (sem segredo, por
+	// convenção dele) e chaves de fixture TLS em testdata/.
+	versionados := []string{
+		"compose.yaml", "deploy/compose/seed.sh", "docs/deploy/fly.md", "go.mod",
+		".env.example", "web/.env.example", "web/.env.development",
+		"internal/prober/safedial/testdata/server.key", "testdata/tls/ca.key",
+	}
 
 	args := append([]string{"-C", "../..", "check-ignore", "--no-index"}, append(ignorados, versionados...)...)
 	saida, err := exec.Command("git", args...).Output()

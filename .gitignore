@@ -8,14 +8,22 @@
 # o .gitkeep é versionado, para o //go:embed all:dist compilar sem build.
 /internal/webui/dist/*
 !/internal/webui/dist/.gitkeep
+# Ambiente com segredo: .env e as variantes (.env.production, .env.local,
+# .env.*.local). Ficam de fora os que existem para ser versionados: o
+# exemplo (.env.example) e o de desenvolvimento do Vite (web/.env.development,
+# sem segredo por convenção; o segredo local vai no .env.development.local).
 .env
 .env.*
+!.env.example
+!/web/.env.development
 # O backup (docs/deploy/fly.md, D3 do Plano 10): a chave privada do age
 # (vigilume-backup.key), o dump decifrado na restauração (vigilume.dump) e o
 # artifact baixado (vigilume-AAAAMMDD.dump.age). Nenhum deles vai para o git.
 *.key
 *.dump
 *.age
+# Chaves de fixture de teste (TLS em testdata/) são do repositório.
+!**/testdata/**/*.key
 *.test
 coverage.out
 /.superpowers/
