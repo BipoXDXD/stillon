@@ -115,9 +115,47 @@ func TestVerifyDummyDoesNotPanic(t *testing.T) {
 
 func mustHashWith(t *testing.T, plain string, m, tt uint32, p uint8) string {
 	t.Helper()
-	h := auth.HashPasswordWith(plain, []byte("saltsaltsaltsa"), m, tt, p)
+	h, err := auth.HashPasswordWith(plain, []byte("saltsaltsaltsa"), m, tt, p)
+	if err != nil {
+		t.Fatal(err)
+	}
 	parts := strings.Split(h, "$")
 	return parts[len(parts)-1]
+}
+
+// HashPasswordWith recusa, com erro e sem panic, o que o decodeHash recusaria
+// ao ler (Plano 8). A perna positiva é o menor valor aceito em cada eixo.
+func TestHashPasswordWithRejectsOutOfRangeParams(t *testing.T) {
+	sal := []byte("saltsaltsaltsalt")
+	casos := []struct {
+		nome   string
+		salt   []byte
+		m, tt  uint32
+		p      uint8
+		aceita bool
+	}{
+		{"t=0", sal, 64, 0, 1, false},
+		{"p=0", sal, 64, 1, 0, false},
+		{"memória abaixo de 8p", sal, 15, 1, 2, false},
+		{"salt vazio", nil, 64, 1, 1, false},
+		{"o mínimo de cada eixo", sal, 16, 1, 2, true},
+	}
+	for _, c := range casos {
+		h, err := auth.HashPasswordWith("senha", c.salt, c.m, c.tt, c.p)
+		if c.aceita {
+			if err != nil {
+				t.Errorf("%s: erro = %v, queria hash", c.nome, err)
+				continue
+			}
+			if ok, _, err := auth.VerifyPassword(h, "senha"); !ok || err != nil {
+				t.Errorf("%s: o hash escrito não é lido de volta (ok=%v, err=%v)", c.nome, ok, err)
+			}
+			continue
+		}
+		if !errors.Is(err, auth.ErrInvalidHash) || h != "" {
+			t.Errorf("%s: hash = %q, erro = %v, queria ErrInvalidHash", c.nome, h, err)
+		}
+	}
 }
 
 // TestVerifyPasswordRejectsOutOfRangeParams cobre hashes cujos parâmetros são

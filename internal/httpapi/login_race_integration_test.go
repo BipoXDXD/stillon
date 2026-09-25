@@ -299,7 +299,10 @@ func TestLoginRacingAPasswordResetThatCommitsSecond(t *testing.T) {
 // e a senha antiga voltava a valer.
 func TestLoginRehashDoesNotUndoAPasswordReset(t *testing.T) {
 	a := newAPI(t)
-	fraco := auth.HashPasswordWith(testPass, []byte("sal-de-16-bytes!"), 8*1024, 1, 1)
+	fraco, err := auth.HashPasswordWith(testPass, []byte("sal-de-16-bytes!"), 8*1024, 1, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, err := a.pool.Exec(context.Background(),
 		`UPDATE users SET password_hash = $2 WHERE id = $1`, a.userID, fraco); err != nil {
 		t.Fatal(err)
