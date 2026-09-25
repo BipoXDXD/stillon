@@ -1,8 +1,10 @@
 import { fireEvent, screen, waitFor, within } from '@testing-library/react'
+import { http } from 'msw'
 import { describe, expect, it } from 'vitest'
 import { dataHora } from '@/lib/format'
 import { canal } from '@/test/fixtures'
 import { renderizarPainel } from '@/test/renderizar'
+import { servidor } from '@/test/setup'
 
 const RESEND = 'POST /channels/:id/verify/resend'
 const PATCH = 'PATCH /channels/:id'
@@ -309,6 +311,41 @@ describe('canais', () => {
     fireEvent.click(acao)
     expect((await screen.findAllByText('Canal pausado.'))[0]).toBeInTheDocument()
     expect(r.falsa.chamadas(PATCH)).toBe(1)
+  })
+
+  // Revisão final do Plano 9 (F4): o finally de alternar() fechava QUALQUER
+  // Confirmar de pausa. Com o Retomar de um canal em voo, o Pausar aberto de
+  // outro fechava sozinho quando o Retomar terminava. Sabotagem: voltar o
+  // "setPausar((p) => (p?.id === c.id ? null : p))" para "setPausar(null)" →
+  // o Confirmar do outro some.
+  it('o Retomar em voo de um canal não fecha o Confirmar de pausa de outro', async () => {
+    const r = await renderizarPainel('/channels')
+    r.falsa.estado.canais = [canal({ enabled: false }), canal({ id: 'c2', hint: 'discord.com/…/zzzz' })]
+    await r.cliente.refetchQueries()
+    let soltar!: () => void
+    const aberto = new Promise<void>((res) => (soltar = res))
+    let chegou = 0
+    servidor.use(
+      http.patch('*/api/v1/channels/:id', async () => {
+        chegou++
+        await aberto
+      }),
+    )
+    await r.usuario.click(await screen.findByRole('button', { name: 'Retomar o canal discord.com/…/abcd' }))
+    await waitFor(() => expect(chegou).toBe(1))
+    await r.usuario.click(screen.getByRole('button', { name: 'Pausar o canal discord.com/…/zzzz' }))
+    const confirmar = await screen.findByRole('alertdialog')
+    soltar()
+    expect((await screen.findAllByText('Canal retomado.'))[0]).toBeInTheDocument()
+    // Um tique para o finally do Retomar rodar, se fosse fechar o diálogo.
+    await new Promise((res) => setTimeout(res, 50))
+    expect(screen.getByRole('alertdialog')).toBe(confirmar)
+    // A perna positiva: o Confirmar que ficou pausa o canal certo.
+    await waitFor(() => expect(within(confirmar).getByRole('button', { name: 'Pausar canal' })).toBeEnabled())
+    await r.usuario.click(within(confirmar).getByRole('button', { name: 'Pausar canal' }))
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument())
+    expect(r.falsa.corpos(PATCH)).toEqual([{ enabled: true }, { enabled: false }])
+    expect(r.falsa.estado.canais.find((c) => c.id === 'c2')?.enabled).toBe(false)
   })
 
   // O 404 é a lista velha (o canal foi apagado em outra aba), como no

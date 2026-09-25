@@ -1,7 +1,7 @@
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useQueryClient } from '@tanstack/react-query'
 import { QRCodeSVG } from 'qrcode.react'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { z } from 'zod'
 import { useApi, useSessao } from '@/app/contexto'
@@ -204,6 +204,28 @@ const esquemaCodigo = z.object({ codigo: z.string().trim().min(1, 'Informe o có
 // este diálogo aberto; totphandlers.go).
 const jaAtivada = (e: unknown) => e instanceof ApiError && e.status === 403
 
+// Um envio por vez (revisão final do Plano 9). O handleSubmit do
+// react-hook-form não impede reentrada: um clique duplo (ou Enter duas vezes)
+// mandava dois rotate, ou dois confirm — e o 2º confirm, com o pendente já
+// consumido pelo 1º, voltava 403 e tirava da tela os códigos novos. A ref
+// segura a reentrada no mesmo tique; o estado alimenta o aria-disabled.
+function useEnvioUnico() {
+  const emVoo = useRef(false)
+  const [enviando, setEnviando] = useState(false)
+  const enviar = async (fn: () => Promise<void>) => {
+    if (emVoo.current) return
+    emVoo.current = true
+    setEnviando(true)
+    try {
+      await fn()
+    } finally {
+      emVoo.current = false
+      setEnviando(false)
+    }
+  }
+  return { enviando, enviar }
+}
+
 // O QR e a chave de um segredo novo, e o código que o app gera com ele: o
 // passo 2 de ativar e o de trocar de autenticador (spec do Plano 9 §4.2).
 function PassoDoQr({
@@ -222,11 +244,12 @@ function PassoDoQr({
   aoEnviar: (codigo: string) => Promise<void>
 }) {
   const codigo = useForm({ resolver: zodResolver(esquemaCodigo), defaultValues: { codigo: '' } })
+  const { enviando, enviar } = useEnvioUnico()
   return (
     <form
       noValidate
       className="space-y-4"
-      onSubmit={codigo.handleSubmit((v) => aoEnviar(v.codigo.replace(/\s+/g, '')))}
+      onSubmit={codigo.handleSubmit((v) => enviar(() => aoEnviar(v.codigo.replace(/\s+/g, ''))))}
     >
       <AvisoDeCredencial erro={erro} aoMudar={aoMudarErro} />
       <p className="text-sm">{instrucao}</p>
@@ -239,7 +262,12 @@ function PassoDoQr({
       <Campo rotulo="Código de 6 dígitos" erro={codigo.formState.errors.codigo?.message}>
         {(a) => <Entrada {...a} inputMode="numeric" autoComplete="one-time-code" {...codigo.register('codigo')} />}
       </Campo>
-      <Botao type="submit">{acao}</Botao>
+      {/* aria-disabled, e não disabled: o botão desabilitado perderia o foco,
+          que cairia no <body> dentro do diálogo. Quem segura o envio é o
+          useEnvioUnico. */}
+      <Botao type="submit" aria-disabled={enviando || undefined}>
+        {acao}
+      </Botao>
     </form>
   )
 }
@@ -312,11 +340,12 @@ function FormularioDeProvas({
   aoEnviar: (senha: string, codigo: string) => Promise<void>
 }) {
   const f = useForm({ resolver: zodResolver(esquemaSenha.and(esquemaCodigo)), defaultValues: { senha: '', codigo: '' } })
+  const { enviando, enviar } = useEnvioUnico()
   return (
     <form
       noValidate
       className="space-y-4"
-      onSubmit={f.handleSubmit((v) => aoEnviar(v.senha, v.codigo.replace(/\s+/g, '')))}
+      onSubmit={f.handleSubmit((v) => enviar(() => aoEnviar(v.senha, v.codigo.replace(/\s+/g, ''))))}
     >
       <AvisoDeCredencial erro={erro} aoMudar={aoMudarErro} />
       <Campo rotulo="Sua senha" erro={f.formState.errors.senha?.message}>
@@ -325,7 +354,7 @@ function FormularioDeProvas({
       <Campo rotulo="Código do autenticador" ajuda="Ou um código de recuperação." erro={f.formState.errors.codigo?.message}>
         {(a) => <Entrada {...a} autoComplete="one-time-code" {...f.register('codigo')} />}
       </Campo>
-      <Botao type="submit" tipo={tipo}>
+      <Botao type="submit" tipo={tipo} aria-disabled={enviando || undefined}>
         {acao}
       </Botao>
     </form>
@@ -334,10 +363,13 @@ function FormularioDeProvas({
 
 function AtivarTotp({
   aoTerminar,
+  aoOcupar,
   aoTravar,
   aoJaAtivada,
 }: {
   aoTerminar: () => void
+  // O confirm está em voo: o diálogo não fecha até a resposta.
+  aoOcupar: (ocupado: boolean) => void
   aoTravar: () => void
   aoJaAtivada: () => void
 }) {
@@ -384,6 +416,11 @@ function AtivarTotp({
         aoMudarErro={setErro}
         aoEnviar={async (c) => {
           setErro(null)
+          // Travado ANTES de aguardar (revisão final do Plano 9): fechar com
+          // o confirm em voo dizia "nada mudou" e perdia os códigos, se ele
+          // desse certo; e o aoTravar, rodando depois, deixava o travado
+          // preso para o diálogo seguinte.
+          aoOcupar(true)
           try {
             setCodigos((await api.totpConfirmar(c)).recovery_codes)
             // Daqui em diante os códigos só existem nesta tela: Esc e o
@@ -401,6 +438,8 @@ function AtivarTotp({
                 ? { texto: CODIGO_NAO_ACEITO, renovavel: false }
                 : erroDeCredencial(e, 'Código incorreto.'),
             )
+          } finally {
+            aoOcupar(false)
           }
         }}
       />
@@ -441,6 +480,7 @@ const TROCA_SUMIU = 'A troca foi concluída ou cancelada em outra aba. Comece de
 function TrocarTotp({
   aoIniciar,
   aoVoltar,
+  aoOcupar,
   aoTravar,
   aoTerminar,
   aoDesativada,
@@ -449,6 +489,8 @@ function TrocarTotp({
   // recuperação no passo 1, ele já foi gasto: R1 da spec).
   aoIniciar: (usouRecuperacao: boolean) => void
   aoVoltar: () => void
+  // O confirm está em voo: o diálogo não fecha até a resposta.
+  aoOcupar: (ocupado: boolean) => void
   aoTravar: () => void
   aoTerminar: () => void
   aoDesativada: () => void
@@ -459,6 +501,9 @@ function TrocarTotp({
   const [uri, setUri] = useState('')
   const [codigos, setCodigos] = useState<string[]>([])
   const [erro, setErro] = useState<ErroDeCredencial | null>(null)
+  // Os códigos novos já estão na tela: uma resposta atrasada de outro
+  // confirm (um 403, o pendente já consumido) não pode tirá-los de lá.
+  const concluida = useRef(false)
 
   if (passo === 'provas') {
     return (
@@ -492,20 +537,26 @@ function TrocarTotp({
         aoMudarErro={setErro}
         aoEnviar={async (c) => {
           setErro(null)
+          // Travado antes de aguardar, como na ativação.
+          aoOcupar(true)
           try {
             setCodigos((await api.totpConfirmarTroca(c)).recovery_codes)
             // Os códigos só existem nesta tela, como na ativação.
+            concluida.current = true
             aoTravar()
             setPasso('codigos')
             // O confirm encerrou as outras sessões.
             void qc.invalidateQueries({ queryKey: chaves.sessoes })
           } catch (e) {
+            if (concluida.current) return
             if (e instanceof ApiError && e.status === 403) {
               // O QR desta tela não vale mais: de volta ao passo 1.
               setErro({ texto: TROCA_SUMIU, renovavel: false })
               aoVoltar()
               setPasso('provas')
             } else setErro(erroDeCredencial(e, 'Código incorreto.'))
+          } finally {
+            aoOcupar(false)
           }
         }}
       />
@@ -610,6 +661,10 @@ export function PaginaConfiguracoes() {
   const avisar = useAvisar()
   const [dialogo, setDialogo] = useState<Dialogo2fa | null>(null)
   const [travado, setTravado] = useState(false)
+  // Um confirm (ativar ou trocar) em voo: o diálogo não fecha até a resposta,
+  // como no passo dos códigos (revisão final do Plano 9).
+  const [ocupado, setOcupado] = useState(false)
+  const preso = travado || ocupado
   // A troca de autenticador está no passo 2 (o QR do app novo na tela):
   // fechar avisa que nada mudou. usouRecuperacao: o código de recuperação
   // do passo 1 já foi gasto (R1 da spec do Plano 9).
@@ -636,6 +691,10 @@ export function PaginaConfiguracoes() {
     if (d === 'ativar' && ligado) avisar(JA_ATIVADA)
     else if (d !== 'ativar' && !ligado) avisar(JA_DESATIVADA)
     else {
+      // Um diálogo novo começa solto, mesmo que um callback atrasado do
+      // anterior tenha travado depois de ele fechar.
+      setTravado(false)
+      setOcupado(false)
       setTrocaNoMeio(null)
       setDialogo(d)
     }
@@ -650,6 +709,7 @@ export function PaginaConfiguracoes() {
     }
     setDialogo(null)
     setTravado(false)
+    setOcupado(false)
     setTrocaNoMeio(null)
     reler()
   }
@@ -665,10 +725,10 @@ export function PaginaConfiguracoes() {
   // sozinho quando o /me mudasse de novo.
   const portao =
     dialogo === 'ativar'
-      ? totp === false || travado
+      ? totp === false || preso
       : dialogo === 'desativar'
         ? totp === true
-        : dialogo === 'trocar' && (totp === true || travado)
+        : dialogo === 'trocar' && (totp === true || preso)
   if (dialogo !== null && !portao) {
     setDialogo(null)
     setTrocaNoMeio(null)
@@ -730,10 +790,11 @@ export function PaginaConfiguracoes() {
       <Dialogo
         aberto={dialogo === 'ativar' && portao}
         aoMudar={(v) => !v && fechar()}
-        travado={travado}
+        travado={preso}
         titulo="Ativar a verificação em duas etapas"
       >
         <AtivarTotp
+          aoOcupar={setOcupado}
           aoTravar={() => setTravado(true)}
           aoTerminar={() => terminar('Verificação em duas etapas ativada.')}
           // O /me relido fecha o diálogo (o portão); o aviso fica no toast,
@@ -758,12 +819,13 @@ export function PaginaConfiguracoes() {
       <Dialogo
         aberto={dialogo === 'trocar' && portao}
         aoMudar={(v) => !v && fechar()}
-        travado={travado}
+        travado={preso}
         titulo="Trocar o autenticador"
       >
         <TrocarTotp
           aoIniciar={(usouRecuperacao) => setTrocaNoMeio({ usouRecuperacao })}
           aoVoltar={() => setTrocaNoMeio(null)}
+          aoOcupar={setOcupado}
           aoTravar={() => {
             setTravado(true)
             setTrocaNoMeio(null)

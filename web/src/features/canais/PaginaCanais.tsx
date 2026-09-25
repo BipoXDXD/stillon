@@ -175,7 +175,9 @@ export function PaginaCanais() {
       if (!(await listaVelha(e))) setErro(mensagemDe(e))
     } finally {
       setAlternando(null)
-      setPausar(null)
+      // Só o Confirmar DESTE canal fecha: com um Retomar em voo, o Pausar de
+      // outro canal pode ter sido aberto no meio (revisão final do Plano 9).
+      setPausar((p) => (p?.id === c.id ? null : p))
     }
   }
 
