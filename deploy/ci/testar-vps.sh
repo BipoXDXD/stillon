@@ -1,6 +1,7 @@
 #!/bin/sh
 # Testes de deploy/ci/vps.sh com um ssh FALSO (nenhuma VPS é tocada). O job
-# lint do CI os roda; localmente, da raiz do repositório:
+# workflows do CI (.github/workflows/ci.yml) os roda; localmente, da raiz do
+# repositório:
 #
 #   sh deploy/ci/testar-vps.sh
 #
