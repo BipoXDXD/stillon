@@ -18,9 +18,13 @@ import (
 //
 // StartRotation grava o segredo do app novo em totp_pending_secret_enc, e o
 // antigo continua valendo; ConfirmRotation, com um código do app novo, promove
-// o pendente numa transação só. O pendente não tem prazo: só o confirma quem
-// viu o QR, com uma sessão viva do dono. Cai na confirmação, no Disable, no
-// reset-2fa do CLI e num novo StartRotation (que o substitui).
+// o pendente numa transação só. O pendente não tem prazo, mas é da família de
+// sessão que o criou (totp_pending_family_id, revisão final do Plano 9): só
+// ela o confirma, e ele morre com ela — revogada a família (DELETE
+// /sessions/{id}, logout, troca de senha), nenhuma outra sessão viva o
+// confirma. Pendente e família caem juntos na confirmação, no Disable, no
+// reset-2fa do CLI, na troca de senha e no set-password, e um novo
+// StartRotation substitui os dois.
 
 // StartRotation inicia a troca. O chamador já provou a senha
 // (auth.CheckPassword); aqui se prova a posse do fator ATUAL, pelo código do
@@ -33,9 +37,16 @@ import (
 // depois), e o código de recuperação fica gasto com o rastro
 // totp.recovery_used, mesmo que a troca nunca seja confirmada (R1 da spec).
 //
-// Devolve ErrTOTPNotEnrolled com o 2FA desligado e ErrTOTPInvalid com a prova
-// errada ou vazia.
-func (s *TOTP) StartRotation(ctx context.Context, userID uuid.UUID, email, code string, now time.Time) (string, error) {
+// A gravação é sob a trava de sessões do usuário (D1 do Plano 5), com a
+// família do token (familyID) reconferida ali: uma troca de senha que comita
+// entre a guarda da rota e a gravação revoga a família, e o pendente de quem
+// ela está expulsando não pode ser gravado depois dela. Pendente e família são
+// gravados juntos, com a auditoria totp.rotation_started (a pista do dono de
+// que uma troca foi iniciada).
+//
+// Devolve ErrTOTPNotEnrolled com o 2FA desligado, ErrTOTPInvalid com a prova
+// errada ou vazia e ErrInvalidSession se a família caiu antes da trava.
+func (s *TOTP) StartRotation(ctx context.Context, userID, familyID uuid.UUID, email, code string, now time.Time) (string, error) {
 	ligado, err := s.IsEnabled(ctx, userID)
 	if err != nil {
 		return "", err
@@ -58,16 +69,46 @@ func (s *TOTP) StartRotation(ctx context.Context, userID uuid.UUID, email, code 
 	if err != nil {
 		return "", fmt.Errorf("cifrar segredo TOTP pendente: %w", err)
 	}
+
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return "", fmt.Errorf("abrir transação: %w", err)
+	}
+	defer tx.Rollback(ctx) // no-op depois de Commit
+	q := db.New(tx)
+
+	// A trava antes da linha de users, na ordem da troca de senha e do
+	// ConfirmRotation. Sob ela, a família não cai no meio: ou a troca de
+	// senha já comitou (e a família está morta aqui), ou ela espera esta
+	// transação e apaga o pendente gravado.
+	if err := q.LockUserSessions(ctx, userID); err != nil {
+		return "", fmt.Errorf("travar sessões: %w", err)
+	}
+	viva, err := q.FamilyIsLive(ctx, db.FamilyIsLiveParams{UserID: userID, FamilyID: familyID, Now: now})
+	if err != nil {
+		return "", fmt.Errorf("conferir família de sessão: %w", err)
+	}
+	if !viva {
+		return "", ErrInvalidSession
+	}
+
 	// A guarda na WHERE, pelo motivo do R38: entre o Verify e o UPDATE cabe
 	// uma desativação concorrente, e um pendente sem fator ativo seria lixo.
-	tag, err := s.pool.Exec(ctx,
-		`UPDATE users SET totp_pending_secret_enc = $2 WHERE id = $1 AND totp_confirmed_at IS NOT NULL`,
-		userID, sealed)
+	tag, err := tx.Exec(ctx,
+		`UPDATE users SET totp_pending_secret_enc = $2, totp_pending_family_id = $3
+		   WHERE id = $1 AND totp_confirmed_at IS NOT NULL`,
+		userID, sealed, familyID)
 	if err != nil {
 		return "", fmt.Errorf("gravar segredo TOTP pendente: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
 		return "", ErrTOTPNotEnrolled
+	}
+	if err := insertAudit(ctx, tx, userID, "totp.rotation_started", nil, now); err != nil {
+		return "", err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return "", fmt.Errorf("gravar segredo TOTP pendente: %w", err)
 	}
 	return key.URL(), nil
 }
@@ -81,22 +122,28 @@ func (s *TOTP) StartRotation(ctx context.Context, userID uuid.UUID, email, code 
 // Encerrar as outras sessões pelo mesmo motivo da troca de senha: um celular
 // trocado pode ter sido perdido ou roubado.
 //
-// Devolve ErrTOTPNoRotation sem pendente (ou com o 2FA desligado),
-// ErrTOTPInvalid com o código errado (o pendente fica) e ErrInvalidSession se
+// Só a família que iniciou a troca a confirma (totp_pending_family_id): o
+// pendente de outra família é, para esta, "nenhuma troca em andamento".
+//
+// Devolve ErrTOTPNoRotation sem pendente, com o pendente de outra família (ou
+// com o 2FA desligado), ErrTOTPInvalid com o código errado (o pendente fica) e ErrInvalidSession se
 // a família caiu antes da trava.
 func (s *TOTP) ConfirmRotation(ctx context.Context, userID, familyID uuid.UUID, code string, now time.Time) ([]string, error) {
 	var pendente []byte
+	var dona *uuid.UUID
 	var confirmado *time.Time
 	err := s.pool.QueryRow(ctx,
-		`SELECT totp_pending_secret_enc, totp_confirmed_at FROM users WHERE id = $1`, userID).
-		Scan(&pendente, &confirmado)
+		`SELECT totp_pending_secret_enc, totp_pending_family_id, totp_confirmed_at FROM users WHERE id = $1`, userID).
+		Scan(&pendente, &dona, &confirmado)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	if err != nil {
 		return nil, fmt.Errorf("carregar troca de TOTP: %w", err)
 	}
-	if len(pendente) == 0 || confirmado == nil {
+	// O pendente de outra família sai aqui, antes do código: o mesmo 403 de
+	// "sem troca", sem contar falha no bloqueio.
+	if len(pendente) == 0 || confirmado == nil || dona == nil || *dona != familyID {
 		return nil, ErrTOTPNoRotation
 	}
 	plain, err := s.box.Open(pendente, aadPendente(userID))
@@ -141,13 +188,16 @@ func (s *TOTP) ConfirmRotation(ctx context.Context, userID, familyID uuid.UUID, 
 		return nil, ErrInvalidSession
 	}
 
-	// Compare-and-swap no pendente lido: um rotate que o substituiu, uma
-	// confirmação concorrente ou um Disable no meio fazem a WHERE não casar,
-	// e o código validado com o segredo velho não promove nada.
+	// Compare-and-swap no pendente lido e na família: um rotate que o
+	// substituiu, uma confirmação concorrente ou um Disable no meio fazem a
+	// WHERE não casar, e o código validado com o segredo velho não promove
+	// nada.
 	tag, err := tx.Exec(ctx,
-		`UPDATE users SET totp_secret_enc = $2, totp_pending_secret_enc = NULL, totp_last_timestep = $3
-		   WHERE id = $1 AND totp_confirmed_at IS NOT NULL AND totp_pending_secret_enc = $4`,
-		userID, ativo, step, pendente)
+		`UPDATE users SET totp_secret_enc = $2, totp_pending_secret_enc = NULL, totp_pending_family_id = NULL,
+		                  totp_last_timestep = $3
+		   WHERE id = $1 AND totp_confirmed_at IS NOT NULL AND totp_pending_secret_enc = $4
+		     AND totp_pending_family_id = $5`,
+		userID, ativo, step, pendente, familyID)
 	if err != nil {
 		return nil, fmt.Errorf("promover segredo TOTP: %w", err)
 	}

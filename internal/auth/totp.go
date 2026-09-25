@@ -270,7 +270,8 @@ func (s *TOTP) Disable(ctx context.Context, userID uuid.UUID, code string, now t
 	// QR de uma troca abandonada ainda confirmaria depois que o 2FA fosse
 	// ligado de novo com outro app.
 	tag, err := tx.Exec(ctx,
-		`UPDATE users SET totp_secret_enc = NULL, totp_confirmed_at = NULL, totp_pending_secret_enc = NULL
+		`UPDATE users SET totp_secret_enc = NULL, totp_confirmed_at = NULL, totp_pending_secret_enc = NULL,
+		                  totp_pending_family_id = NULL
 		   WHERE id = $1 AND totp_confirmed_at IS NOT NULL`, userID)
 	if err != nil {
 		return fmt.Errorf("desativar TOTP: %w", err)

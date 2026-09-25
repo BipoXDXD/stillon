@@ -22,11 +22,12 @@ INSERT INTO users (id, email, password_hash, created_at) VALUES ($1, $2, $3, $4)
 -- Uma troca de autenticador em andamento (totp_pending_secret_enc, Plano 9)
 -- cai pelo mesmo motivo: o pendente não tem prazo, quem o iniciou pode ser o
 -- invasor, e uma sessão roubada o confirmaria depois, ficando com o 2FA.
--- Trocar a senha é a reação do dono à suspeita, e mata a troca.
+-- Trocar a senha é a reação do dono à suspeita, e mata a troca. A família que
+-- a iniciou (totp_pending_family_id) cai junto: os dois andam juntos.
 -- name: ReplaceUserHash :execrows
 UPDATE users SET password_hash = $2, failed_attempts = 0, locked_until = NULL,
        totp_secret_enc = CASE WHEN totp_confirmed_at IS NULL THEN NULL ELSE totp_secret_enc END,
-       totp_pending_secret_enc = NULL
+       totp_pending_secret_enc = NULL, totp_pending_family_id = NULL
  WHERE id = $1;
 
 -- Serializa dois `vigilume user create` simultâneos: sem ela, os dois contam
@@ -55,7 +56,7 @@ SELECT id, email, (totp_confirmed_at IS NOT NULL)::bool AS totp_enabled, created
 -- name: SwapUserHash :execrows
 UPDATE users SET password_hash = sqlc.arg(new_hash), failed_attempts = 0, locked_until = NULL,
        totp_secret_enc = CASE WHEN totp_confirmed_at IS NULL THEN NULL ELSE totp_secret_enc END,
-       totp_pending_secret_enc = NULL
+       totp_pending_secret_enc = NULL, totp_pending_family_id = NULL
  WHERE id = sqlc.arg(id) AND password_hash = sqlc.arg(old_hash);
 
 -- O hash atual, lido por auth.Manager.Issue SOB a trava do usuário (D1): a
@@ -80,7 +81,7 @@ UPDATE users SET password_hash = sqlc.arg(new_hash)
 -- ela só recusa desafios velhos, e zerá-la não ajuda ninguém.
 -- name: ResetTOTP :execrows
 UPDATE users SET totp_secret_enc = NULL, totp_confirmed_at = NULL, totp_last_timestep = NULL,
-       totp_pending_secret_enc = NULL
+       totp_pending_secret_enc = NULL, totp_pending_family_id = NULL
  WHERE id = $1 AND totp_confirmed_at IS NOT NULL;
 
 -- Os códigos de recuperação morrem com o fator (reset-2fa).

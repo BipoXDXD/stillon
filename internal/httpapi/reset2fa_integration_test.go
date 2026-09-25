@@ -49,6 +49,10 @@ func TestLoginAfterReset2FANeedsOnlyThePassword(t *testing.T) {
 
 // O reset-2fa apaga a troca pendente: ligado de novo com outro app, o QR da
 // troca abandonada não confirma (spec do Plano 9, §6, linha 3.2).
+//
+// Desde a revisão final do Plano 9 o confirm abaixo, feito de outra família
+// (o reset encerrou a que iniciou), seria 403 mesmo sem a limpeza: quem prova
+// a limpeza é o temPendente, que confere o segredo E a família.
 func TestReset2FADropsThePendingRotation(t *testing.T) {
 	a := newAPI(t)
 	velho := cadastrarTOTP(t, a, clientWithJar(t))

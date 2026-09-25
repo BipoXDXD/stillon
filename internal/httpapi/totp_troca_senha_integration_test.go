@@ -46,7 +46,11 @@ func TestPasswordChangeKillsAPendingRotation(t *testing.T) {
 				if _, err := account.NewService(a.pool, nil, a.clk, nil).ResetPassword(context.Background(), testEmail, senhaNova); err != nil {
 					t.Fatal(err)
 				}
-				token = accessTokenValido(t, a) // o set-password encerrou todas as sessões
+				// O set-password encerrou todas as sessões; o confirm sai de
+				// outra família e seria 403 mesmo sem a limpeza (o pendente é
+				// da família que o criou). Quem prova a limpeza aqui é o
+				// temPendente, que confere o segredo E a família.
+				token = accessTokenValido(t, a)
 			}
 			if caso.status == http.StatusForbidden && temPendente(t, a) {
 				t.Errorf("%s deixou o segredo pendente", caso.nome)

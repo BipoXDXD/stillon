@@ -177,7 +177,7 @@ func (q *Queries) RehashUser(ctx context.Context, arg RehashUserParams) (int64, 
 const replaceUserHash = `-- name: ReplaceUserHash :execrows
 UPDATE users SET password_hash = $2, failed_attempts = 0, locked_until = NULL,
        totp_secret_enc = CASE WHEN totp_confirmed_at IS NULL THEN NULL ELSE totp_secret_enc END,
-       totp_pending_secret_enc = NULL
+       totp_pending_secret_enc = NULL, totp_pending_family_id = NULL
  WHERE id = $1
 `
 
@@ -197,7 +197,8 @@ type ReplaceUserHashParams struct {
 // Uma troca de autenticador em andamento (totp_pending_secret_enc, Plano 9)
 // cai pelo mesmo motivo: o pendente não tem prazo, quem o iniciou pode ser o
 // invasor, e uma sessão roubada o confirmaria depois, ficando com o 2FA.
-// Trocar a senha é a reação do dono à suspeita, e mata a troca.
+// Trocar a senha é a reação do dono à suspeita, e mata a troca. A família que
+// a iniciou (totp_pending_family_id) cai junto: os dois andam juntos.
 func (q *Queries) ReplaceUserHash(ctx context.Context, arg ReplaceUserHashParams) (int64, error) {
 	result, err := q.db.Exec(ctx, replaceUserHash, arg.ID, arg.PasswordHash)
 	if err != nil {
@@ -208,7 +209,7 @@ func (q *Queries) ReplaceUserHash(ctx context.Context, arg ReplaceUserHashParams
 
 const resetTOTP = `-- name: ResetTOTP :execrows
 UPDATE users SET totp_secret_enc = NULL, totp_confirmed_at = NULL, totp_last_timestep = NULL,
-       totp_pending_secret_enc = NULL
+       totp_pending_secret_enc = NULL, totp_pending_family_id = NULL
  WHERE id = $1 AND totp_confirmed_at IS NOT NULL
 `
 
@@ -228,7 +229,7 @@ func (q *Queries) ResetTOTP(ctx context.Context, id uuid.UUID) (int64, error) {
 const swapUserHash = `-- name: SwapUserHash :execrows
 UPDATE users SET password_hash = $1, failed_attempts = 0, locked_until = NULL,
        totp_secret_enc = CASE WHEN totp_confirmed_at IS NULL THEN NULL ELSE totp_secret_enc END,
-       totp_pending_secret_enc = NULL
+       totp_pending_secret_enc = NULL, totp_pending_family_id = NULL
  WHERE id = $2 AND password_hash = $3
 `
 

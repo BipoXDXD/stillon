@@ -57,12 +57,34 @@ func pendenteGravado(t *testing.T, pool *pgxpool.Pool, userID uuid.UUID) []byte 
 	return sealed
 }
 
+// familiaDoPendente devolve a família de sessão gravada com o pendente
+// (totp_pending_family_id), ou nil.
+func familiaDoPendente(t *testing.T, pool *pgxpool.Pool, userID uuid.UUID) *uuid.UUID {
+	t.Helper()
+	var f *uuid.UUID
+	if err := pool.QueryRow(context.Background(),
+		`SELECT totp_pending_family_id FROM users WHERE id = $1`, userID).Scan(&f); err != nil {
+		t.Fatal(err)
+	}
+	return f
+}
+
+// revogarFamilia encerra a família direto no banco, como um DELETE
+// /sessions/{id} de outro aparelho faria.
+func revogarFamilia(t *testing.T, pool *pgxpool.Pool, familia uuid.UUID, em time.Time) {
+	t.Helper()
+	if _, err := pool.Exec(context.Background(),
+		`UPDATE sessions SET revoked_at = $2 WHERE family_id = $1`, familia, em); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // iniciarTroca grava o segredo antigo, inicia a troca com um código dele e
 // devolve o segredo novo.
-func iniciarTroca(t *testing.T, svc *auth.TOTP, pool *pgxpool.Pool, userID uuid.UUID) string {
+func iniciarTroca(t *testing.T, svc *auth.TOTP, pool *pgxpool.Pool, userID, familia uuid.UUID) string {
 	t.Helper()
 	gravarSegredoTOTP(t, pool, userID, segredoDeTroca)
-	uri, err := svc.StartRotation(context.Background(), userID, "totp@exemplo.com",
+	uri, err := svc.StartRotation(context.Background(), userID, familia, "totp@exemplo.com",
 		codigoEm(t, segredoDeTroca, inicioDaTroca), inicioDaTroca)
 	if err != nil {
 		t.Fatalf("iniciar a troca: %v", err)
@@ -77,7 +99,7 @@ func TestRotationKeepsTheOldSecretUntilConfirmed(t *testing.T) {
 	svc, pool, userID := setupTOTP(t)
 	ctx := context.Background()
 	familia := familiaViva(t, pool, userID, inicioDaTroca)
-	novo := iniciarTroca(t, svc, pool, userID)
+	novo := iniciarTroca(t, svc, pool, userID, familia)
 	if novo == segredoDeTroca {
 		t.Fatal("o segredo novo é igual ao antigo")
 	}
@@ -88,6 +110,9 @@ func TestRotationKeepsTheOldSecretUntilConfirmed(t *testing.T) {
 	}
 	if bytes.Contains(sealed, []byte(novo)) {
 		t.Error("o segredo pendente foi gravado em claro")
+	}
+	if f := familiaDoPendente(t, pool, userID); f == nil || *f != familia {
+		t.Errorf("família do pendente = %v, queria %s (a que iniciou a troca)", f, familia)
 	}
 
 	t1 := inicioDaTroca.Add(30 * time.Second)
@@ -109,6 +134,9 @@ func TestRotationKeepsTheOldSecretUntilConfirmed(t *testing.T) {
 	if p := pendenteGravado(t, pool, userID); len(p) != 0 {
 		t.Error("o segredo pendente sobreviveu à confirmação")
 	}
+	if f := familiaDoPendente(t, pool, userID); f != nil {
+		t.Errorf("a família do pendente (%s) sobreviveu à confirmação", f)
+	}
 
 	t3 := t2.Add(30 * time.Second)
 	if err := svc.Verify(ctx, userID, codigoEm(t, segredoDeTroca, t3), t3); !errors.Is(err, auth.ErrTOTPInvalid) {
@@ -128,7 +156,7 @@ func TestRotationConfirmConsumesTheTimestep(t *testing.T) {
 	svc, pool, userID := setupTOTP(t)
 	ctx := context.Background()
 	familia := familiaViva(t, pool, userID, inicioDaTroca)
-	novo := iniciarTroca(t, svc, pool, userID)
+	novo := iniciarTroca(t, svc, pool, userID, familia)
 
 	em := inicioDaTroca.Add(30 * time.Second)
 	codigo := codigoEm(t, novo, em)
@@ -150,8 +178,9 @@ func TestRotationConfirmConsumesTheTimestep(t *testing.T) {
 func TestStartRotationRequiresTheCurrentFactor(t *testing.T) {
 	svc, pool, userID := setupTOTP(t)
 	ctx := context.Background()
+	familia := familiaViva(t, pool, userID, inicioDaTroca)
 
-	if _, err := svc.StartRotation(ctx, userID, "totp@exemplo.com", "000000", inicioDaTroca); !errors.Is(err, auth.ErrTOTPNotEnrolled) {
+	if _, err := svc.StartRotation(ctx, userID, familia, "totp@exemplo.com", "000000", inicioDaTroca); !errors.Is(err, auth.ErrTOTPNotEnrolled) {
 		t.Errorf("rotate com o 2FA desligado devolveu %v, queria ErrTOTPNotEnrolled", err)
 	}
 	if p := pendenteGravado(t, pool, userID); len(p) != 0 {
@@ -165,7 +194,7 @@ func TestStartRotationRequiresTheCurrentFactor(t *testing.T) {
 		errado = "111111"
 	}
 	for nome, codigo := range map[string]string{"errado": errado, "vazio": ""} {
-		if _, err := svc.StartRotation(ctx, userID, "totp@exemplo.com", codigo, inicioDaTroca); !errors.Is(err, auth.ErrTOTPInvalid) {
+		if _, err := svc.StartRotation(ctx, userID, familia, "totp@exemplo.com", codigo, inicioDaTroca); !errors.Is(err, auth.ErrTOTPInvalid) {
 			t.Errorf("rotate com código %s devolveu %v, queria ErrTOTPInvalid", nome, err)
 		}
 	}
@@ -174,7 +203,7 @@ func TestStartRotationRequiresTheCurrentFactor(t *testing.T) {
 	}
 
 	// A perna positiva, no mesmo cenário.
-	if _, err := svc.StartRotation(ctx, userID, "totp@exemplo.com", certo, inicioDaTroca); err != nil {
+	if _, err := svc.StartRotation(ctx, userID, familia, "totp@exemplo.com", certo, inicioDaTroca); err != nil {
 		t.Fatalf("rotate com o código certo devolveu %v", err)
 	}
 	if p := pendenteGravado(t, pool, userID); len(p) == 0 {
@@ -194,6 +223,7 @@ func TestStartRotationAcceptsARecoveryCode(t *testing.T) {
 	svc, pool, userID := setupTOTP(t)
 	ctx := context.Background()
 	now := inicioDaTroca
+	familia := familiaViva(t, pool, userID, now)
 
 	uri, err := svc.Enroll(ctx, userID, "totp@exemplo.com")
 	if err != nil {
@@ -203,7 +233,7 @@ func TestStartRotationAcceptsARecoveryCode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.StartRotation(ctx, userID, "totp@exemplo.com", recuperacao[0], now); err != nil {
+	if _, err := svc.StartRotation(ctx, userID, familia, "totp@exemplo.com", recuperacao[0], now); err != nil {
 		t.Fatalf("rotate com código de recuperação devolveu %v", err)
 	}
 	if err := svc.Verify(ctx, userID, recuperacao[0], now); !errors.Is(err, auth.ErrTOTPInvalid) {
@@ -220,7 +250,7 @@ func TestConfirmRotationWrongCodeKeepsThePending(t *testing.T) {
 	svc, pool, userID := setupTOTP(t)
 	ctx := context.Background()
 	familia := familiaViva(t, pool, userID, inicioDaTroca)
-	novo := iniciarTroca(t, svc, pool, userID)
+	novo := iniciarTroca(t, svc, pool, userID, familia)
 	antes := pendenteGravado(t, pool, userID)
 
 	em := inicioDaTroca.Add(30 * time.Second)
@@ -261,10 +291,10 @@ func TestRotateAgainReplacesThePending(t *testing.T) {
 	svc, pool, userID := setupTOTP(t)
 	ctx := context.Background()
 	familia := familiaViva(t, pool, userID, inicioDaTroca)
-	primeiro := iniciarTroca(t, svc, pool, userID)
+	primeiro := iniciarTroca(t, svc, pool, userID, familia)
 
 	em := inicioDaTroca.Add(30 * time.Second)
-	uri, err := svc.StartRotation(ctx, userID, "totp@exemplo.com", codigoEm(t, segredoDeTroca, em), em)
+	uri, err := svc.StartRotation(ctx, userID, familia, "totp@exemplo.com", codigoEm(t, segredoDeTroca, em), em)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -297,7 +327,7 @@ func TestConfirmRotationReplacesTheRecoveryCodes(t *testing.T) {
 		t.Fatal(err)
 	}
 	em := now.Add(30 * time.Second)
-	uri, err = svc.StartRotation(ctx, userID, "totp@exemplo.com", codigoEm(t, atual, em), em)
+	uri, err = svc.StartRotation(ctx, userID, familia, "totp@exemplo.com", codigoEm(t, atual, em), em)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -325,7 +355,7 @@ func TestConfirmRotationRevokesTheOtherFamilies(t *testing.T) {
 	ctx := context.Background()
 	atual := familiaViva(t, pool, userID, inicioDaTroca)
 	outra := familiaViva(t, pool, userID, inicioDaTroca)
-	novo := iniciarTroca(t, svc, pool, userID)
+	novo := iniciarTroca(t, svc, pool, userID, atual)
 
 	em := inicioDaTroca.Add(30 * time.Second)
 	if _, err := svc.ConfirmRotation(ctx, userID, atual, codigoEm(t, novo, em), em); err != nil {
@@ -356,7 +386,7 @@ func TestConfirmRotationRechecksTheFamily(t *testing.T) {
 	svc, pool, userID := setupTOTP(t)
 	ctx := context.Background()
 	familia := familiaViva(t, pool, userID, inicioDaTroca)
-	novo := iniciarTroca(t, svc, pool, userID)
+	novo := iniciarTroca(t, svc, pool, userID, familia)
 	if _, err := pool.Exec(ctx, `UPDATE sessions SET revoked_at = $2 WHERE family_id = $1`,
 		familia, inicioDaTroca); err != nil {
 		t.Fatal(err)
@@ -373,10 +403,14 @@ func TestConfirmRotationRechecksTheFamily(t *testing.T) {
 		t.Errorf("a confirmação recusada trocou o segredo: %v", err)
 	}
 
-	// A perna positiva: com uma família viva, o mesmo pendente confirma.
-	viva := familiaViva(t, pool, userID, em)
+	// A perna positiva: com a família de volta à vida, o mesmo pendente
+	// confirma. (Outra família viva não serve: o pendente é só da família
+	// que o iniciou, revisão final do Plano 9.)
+	if _, err := pool.Exec(ctx, `UPDATE sessions SET revoked_at = NULL WHERE family_id = $1`, familia); err != nil {
+		t.Fatal(err)
+	}
 	depois := em.Add(30 * time.Second)
-	if _, err := svc.ConfirmRotation(ctx, userID, viva, codigoEm(t, novo, depois), depois); err != nil {
+	if _, err := svc.ConfirmRotation(ctx, userID, familia, codigoEm(t, novo, depois), depois); err != nil {
 		t.Errorf("confirmar com a família viva devolveu %v", err)
 	}
 }
@@ -388,7 +422,7 @@ func TestConfirmRotationTakesTheUserLock(t *testing.T) {
 	svc, pool, userID := setupTOTP(t)
 	ctx := context.Background()
 	familia := familiaViva(t, pool, userID, inicioDaTroca)
-	novo := iniciarTroca(t, svc, pool, userID)
+	novo := iniciarTroca(t, svc, pool, userID, familia)
 
 	conn, err := pool.Acquire(ctx)
 	if err != nil {
@@ -445,7 +479,7 @@ func TestDisableDropsThePendingRotation(t *testing.T) {
 	svc, pool, userID := setupTOTP(t)
 	ctx := context.Background()
 	familia := familiaViva(t, pool, userID, inicioDaTroca)
-	velho := iniciarTroca(t, svc, pool, userID)
+	velho := iniciarTroca(t, svc, pool, userID, familia)
 
 	em := inicioDaTroca.Add(30 * time.Second)
 	if err := svc.Disable(ctx, userID, codigoEm(t, segredoDeTroca, em), em); err != nil {
@@ -453,6 +487,9 @@ func TestDisableDropsThePendingRotation(t *testing.T) {
 	}
 	if p := pendenteGravado(t, pool, userID); len(p) != 0 {
 		t.Error("o Disable deixou o segredo pendente")
+	}
+	if f := familiaDoPendente(t, pool, userID); f != nil {
+		t.Errorf("o Disable deixou a família do pendente (%s)", f)
 	}
 
 	// Liga de novo, com outro app, e tenta confirmar a troca abandonada.
@@ -479,7 +516,7 @@ func TestPendingSecretIsBoundToColumnAndUser(t *testing.T) {
 	svc, pool, dono := setupTOTP(t)
 	ctx := context.Background()
 	familia := familiaViva(t, pool, dono, inicioDaTroca)
-	novo := iniciarTroca(t, svc, pool, dono)
+	novo := iniciarTroca(t, svc, pool, dono, familia)
 	sealed := pendenteGravado(t, pool, dono)
 
 	outro := uuid.New()
@@ -489,8 +526,10 @@ func TestPendingSecretIsBoundToColumnAndUser(t *testing.T) {
 	}
 	gravarSegredoTOTP(t, pool, outro, segredoDeTroca)
 	familiaDoOutro := familiaViva(t, pool, outro, inicioDaTroca)
+	// A família vai junto, para a recusa ser a da AAD, e não a da família.
 	if _, err := pool.Exec(ctx,
-		`UPDATE users SET totp_pending_secret_enc = $2 WHERE id = $1`, outro, sealed); err != nil {
+		`UPDATE users SET totp_pending_secret_enc = $2, totp_pending_family_id = $3 WHERE id = $1`,
+		outro, sealed, familiaDoOutro); err != nil {
 		t.Fatal(err)
 	}
 
@@ -528,5 +567,144 @@ func TestPendingSecretIsBoundToColumnAndUser(t *testing.T) {
 	depois := em.Add(30 * time.Second)
 	if err := svc.Verify(ctx, dono, codigoEm(t, novo, depois), depois); err != nil {
 		t.Errorf("o segredo promovido não abre no login: %v", err)
+	}
+}
+
+// O pendente é da família de sessão que o criou (revisão final do Plano 9):
+// outra família do mesmo dono, viva, não o confirma, nem com o código certo —
+// é ErrTOTPNoRotation (403 no handler, o mesmo de "sem troca em andamento"), e
+// nada muda. A perna positiva é a família que iniciou, no mesmo cenário.
+func TestConfirmRotationOnlyFromTheFamilyThatStartedIt(t *testing.T) {
+	svc, pool, userID := setupTOTP(t)
+	ctx := context.Background()
+	dona := familiaViva(t, pool, userID, inicioDaTroca)
+	outra := familiaViva(t, pool, userID, inicioDaTroca)
+	novo := iniciarTroca(t, svc, pool, userID, dona)
+	antes := pendenteGravado(t, pool, userID)
+
+	em := inicioDaTroca.Add(30 * time.Second)
+	// Código errado da outra família: o mesmo ErrTOTPNoRotation, não
+	// ErrTOTPInvalid (que contaria no bloqueio) — a família vem antes.
+	if _, err := svc.ConfirmRotation(ctx, userID, outra, codigoEm(t, segredoDeTroca, em), em); !errors.Is(err, auth.ErrTOTPNoRotation) {
+		t.Errorf("confirmar pela outra família com código errado devolveu %v, queria ErrTOTPNoRotation", err)
+	}
+	if _, err := svc.ConfirmRotation(ctx, userID, outra, codigoEm(t, novo, em), em); !errors.Is(err, auth.ErrTOTPNoRotation) {
+		t.Errorf("confirmar pela outra família devolveu %v, queria ErrTOTPNoRotation", err)
+	}
+	if !bytes.Equal(pendenteGravado(t, pool, userID), antes) {
+		t.Error("a confirmação recusada mexeu no pendente")
+	}
+	if n := eventosDeAuditoria(t, pool, userID, "totp.rotated"); n != 0 {
+		t.Errorf("%d eventos totp.rotated depois da recusa", n)
+	}
+	if err := svc.Verify(ctx, userID, codigoEm(t, segredoDeTroca, em), em); err != nil {
+		t.Errorf("a confirmação recusada trocou o segredo: %v", err)
+	}
+
+	depois := em.Add(30 * time.Second)
+	if _, err := svc.ConfirmRotation(ctx, userID, dona, codigoEm(t, novo, depois), depois); err != nil {
+		t.Errorf("confirmar pela família que iniciou devolveu %v", err)
+	}
+}
+
+// Um rotate novo, de outra família, substitui o pendente E a família: a
+// primeira deixa de confirmar, mesmo com o QR novo nas mãos.
+func TestRotateAgainMovesThePendingToTheNewFamily(t *testing.T) {
+	svc, pool, userID := setupTOTP(t)
+	ctx := context.Background()
+	primeira := familiaViva(t, pool, userID, inicioDaTroca)
+	segunda := familiaViva(t, pool, userID, inicioDaTroca)
+	iniciarTroca(t, svc, pool, userID, primeira)
+
+	em := inicioDaTroca.Add(30 * time.Second)
+	uri, err := svc.StartRotation(ctx, userID, segunda, "totp@exemplo.com", codigoEm(t, segredoDeTroca, em), em)
+	if err != nil {
+		t.Fatal(err)
+	}
+	novo := secretFromURI(t, uri)
+	if f := familiaDoPendente(t, pool, userID); f == nil || *f != segunda {
+		t.Errorf("família do pendente = %v, queria %s (a do rotate que substituiu)", f, segunda)
+	}
+
+	depois := em.Add(30 * time.Second)
+	if _, err := svc.ConfirmRotation(ctx, userID, primeira, codigoEm(t, novo, depois), depois); !errors.Is(err, auth.ErrTOTPNoRotation) {
+		t.Errorf("a família do rotate substituído confirmou: %v", err)
+	}
+	if _, err := svc.ConfirmRotation(ctx, userID, segunda, codigoEm(t, novo, depois), depois); err != nil {
+		t.Errorf("a família do rotate novo não confirmou: %v", err)
+	}
+}
+
+// A família do token pode cair entre a guarda da rota e a gravação (um DELETE
+// /sessions de outro aparelho, uma troca de senha): o StartRotation a
+// reconfere sob a trava do usuário e, morta, devolve ErrInvalidSession (401
+// unauthorized no handler) sem gravar pendente, família nem auditoria. A
+// perna positiva é a mesma família, de volta à vida.
+func TestStartRotationRechecksTheFamily(t *testing.T) {
+	svc, pool, userID := setupTOTP(t)
+	ctx := context.Background()
+	familia := familiaViva(t, pool, userID, inicioDaTroca)
+	gravarSegredoTOTP(t, pool, userID, segredoDeTroca)
+	revogarFamilia(t, pool, familia, inicioDaTroca)
+
+	if _, err := svc.StartRotation(ctx, userID, familia, "totp@exemplo.com",
+		codigoEm(t, segredoDeTroca, inicioDaTroca), inicioDaTroca); !errors.Is(err, auth.ErrInvalidSession) {
+		t.Errorf("rotate com a família morta devolveu %v, queria ErrInvalidSession", err)
+	}
+	if p := pendenteGravado(t, pool, userID); len(p) != 0 {
+		t.Error("o rotate com a família morta gravou o pendente")
+	}
+	if f := familiaDoPendente(t, pool, userID); f != nil {
+		t.Errorf("o rotate com a família morta gravou a família %s", f)
+	}
+	if n := eventosDeAuditoria(t, pool, userID, "totp.rotation_started"); n != 0 {
+		t.Errorf("%d eventos totp.rotation_started com a família morta", n)
+	}
+
+	if _, err := pool.Exec(ctx, `UPDATE sessions SET revoked_at = NULL WHERE family_id = $1`, familia); err != nil {
+		t.Fatal(err)
+	}
+	em := inicioDaTroca.Add(30 * time.Second)
+	if _, err := svc.StartRotation(ctx, userID, familia, "totp@exemplo.com", codigoEm(t, segredoDeTroca, em), em); err != nil {
+		t.Errorf("rotate com a família viva devolveu %v", err)
+	}
+	if f := familiaDoPendente(t, pool, userID); f == nil || *f != familia {
+		t.Errorf("família do pendente = %v, queria %s", f, familia)
+	}
+}
+
+// Todo rotate aceito deixa o rastro totp.rotation_started, para o dono ver
+// que uma troca foi iniciada (antes, só havia rastro quando a prova era um
+// código de recuperação). Um por rotate; o recusado não deixa.
+func TestStartRotationIsAudited(t *testing.T) {
+	svc, pool, userID := setupTOTP(t)
+	ctx := context.Background()
+	familia := familiaViva(t, pool, userID, inicioDaTroca)
+	gravarSegredoTOTP(t, pool, userID, segredoDeTroca)
+
+	certo := codigoEm(t, segredoDeTroca, inicioDaTroca)
+	errado := "000000"
+	if errado == certo {
+		errado = "111111"
+	}
+	if _, err := svc.StartRotation(ctx, userID, familia, "totp@exemplo.com", errado, inicioDaTroca); !errors.Is(err, auth.ErrTOTPInvalid) {
+		t.Fatalf("rotate com código errado devolveu %v", err)
+	}
+	if n := eventosDeAuditoria(t, pool, userID, "totp.rotation_started"); n != 0 {
+		t.Errorf("%d eventos totp.rotation_started depois de um rotate recusado", n)
+	}
+
+	if _, err := svc.StartRotation(ctx, userID, familia, "totp@exemplo.com", certo, inicioDaTroca); err != nil {
+		t.Fatal(err)
+	}
+	if n := eventosDeAuditoria(t, pool, userID, "totp.rotation_started"); n != 1 {
+		t.Errorf("%d eventos totp.rotation_started depois de um rotate, queria 1", n)
+	}
+	em := inicioDaTroca.Add(30 * time.Second)
+	if _, err := svc.StartRotation(ctx, userID, familia, "totp@exemplo.com", codigoEm(t, segredoDeTroca, em), em); err != nil {
+		t.Fatal(err)
+	}
+	if n := eventosDeAuditoria(t, pool, userID, "totp.rotation_started"); n != 2 {
+		t.Errorf("%d eventos totp.rotation_started depois de dois rotates, queria 2", n)
 	}
 }

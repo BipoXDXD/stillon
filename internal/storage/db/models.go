@@ -156,4 +156,5 @@ type User struct {
 	TotpLastTimestep     *int64
 	TotpChallengeMark    *time.Time
 	TotpPendingSecretEnc []byte
+	TotpPendingFamilyID  *uuid.UUID
 }

@@ -31,7 +31,7 @@ func donoCom2FA(t *testing.T, pool *pgxpool.Pool, dsn string, ligar bool) uuid.U
 	if ligar {
 		if _, err := pool.Exec(ctx,
 			`UPDATE users SET totp_secret_enc = '\x01', totp_confirmed_at = now(), totp_last_timestep = 7,
-			        totp_pending_secret_enc = '\x02' WHERE id = $1`, dono); err != nil {
+			        totp_pending_secret_enc = '\x02', totp_pending_family_id = gen_random_uuid() WHERE id = $1`, dono); err != nil {
 			t.Fatal(err)
 		}
 		for range 3 {
@@ -74,7 +74,7 @@ func TestReset2FATurnsItOffAndEndsEverySession(t *testing.T) {
 	if r.codigo != saidaOK {
 		t.Fatalf("reset-2fa: código %d; stderr %q", r.codigo, r.stderr)
 	}
-	queria := "2FA desativado para dono@exemplo.com; 2 sessões encerradas. Entre com a senha e ative de novo pelo painel.\n"
+	queria := "2FA desativado para dono@exemplo.com; 2 sessões encerradas. Acessos já abertos expiram em até 15 minutos. Entre com a senha e ative de novo pelo painel.\n"
 	if r.stdout != queria {
 		t.Errorf("stdout = %q, queria %q", r.stdout, queria)
 	}
@@ -83,7 +83,8 @@ func TestReset2FATurnsItOffAndEndsEverySession(t *testing.T) {
 	var codigos int
 	if err := pool.QueryRow(context.Background(),
 		`SELECT totp_confirmed_at IS NOT NULL,
-		        totp_secret_enc IS NOT NULL OR totp_last_timestep IS NOT NULL OR totp_pending_secret_enc IS NOT NULL,
+		        totp_secret_enc IS NOT NULL OR totp_last_timestep IS NOT NULL OR totp_pending_secret_enc IS NOT NULL
+		           OR totp_pending_family_id IS NOT NULL,
 		        (SELECT count(*) FROM totp_recovery_codes WHERE user_id = $1)
 		   FROM users WHERE id = $1`, dono).Scan(&ligado, &sobra, &codigos); err != nil {
 		t.Fatal(err)

@@ -189,7 +189,7 @@ func runUser(ctx context.Context, args []string, in entradaDaSenha, stdout, stde
 			fmt.Fprintf(stdout, "o 2FA já estava desativado para %s; nada mudou\n", e)
 			return saidaOK
 		}
-		fmt.Fprintf(stdout, "2FA desativado para %s; %d sessões encerradas. Entre com a senha e ative de novo pelo painel.\n", e, n)
+		fmt.Fprintf(stdout, "2FA desativado para %s; %d sessões encerradas. Acessos já abertos expiram em até 15 minutos. Entre com a senha e ative de novo pelo painel.\n", e, n)
 		return saidaOK
 	}
 

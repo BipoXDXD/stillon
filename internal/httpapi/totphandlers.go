@@ -306,10 +306,12 @@ func (h *AuthHandlers) TOTPDisable(w http.ResponseWriter, r *http.Request) {
 //
 // 2FA desligado é 403 forbidden, o espelho do enroll com o 2FA ligado; prova
 // errada ou ausente é 401 invalid_credentials, nunca unauthorized (D24 do
-// Plano 5), e conta no bloqueio (R40).
+// Plano 5), e conta no bloqueio (R40). O pendente fica amarrado à família do
+// token; se ela caiu antes da gravação, 401 unauthorized.
 func (h *AuthHandlers) TOTPRotate(w http.ResponseWriter, r *http.Request) {
 	userID, ok := middleware.UserID(r.Context())
-	if !ok {
+	familyID, okF := middleware.FamilyID(r.Context())
+	if !ok || !okF {
 		apierr.WriteError(w, r, apierr.CodeUnauthorized)
 		return
 	}
@@ -337,7 +339,7 @@ func (h *AuthHandlers) TOTPRotate(w http.ResponseWriter, r *http.Request) {
 		prova = req.RecoveryCode
 	}
 	now := h.clk.Now()
-	uri, err := h.totp.StartRotation(r.Context(), userID, user.Email, prova, now)
+	uri, err := h.totp.StartRotation(r.Context(), userID, familyID, user.Email, prova, now)
 	if errors.Is(err, auth.ErrTOTPNotEnrolled) {
 		apierr.WriteError(w, r, apierr.CodeForbidden)
 		return
@@ -349,6 +351,13 @@ func (h *AuthHandlers) TOTPRotate(w http.ResponseWriter, r *http.Request) {
 			slog.Error("registrar falha de segundo fator", "erro", err)
 		}
 		apierr.WriteError(w, r, apierr.CodeInvalidCredentials)
+		return
+	}
+	if errors.Is(err, auth.ErrInvalidSession) {
+		// A família caiu entre a guarda da rota e a trava (uma troca de
+		// senha, um DELETE /sessions): o mesmo 401 unauthorized da guarda, e
+		// nenhum pendente gravado.
+		apierr.WriteError(w, r, apierr.CodeUnauthorized)
 		return
 	}
 	if err != nil {
@@ -363,7 +372,8 @@ func (h *AuthHandlers) TOTPRotate(w http.ResponseWriter, r *http.Request) {
 // a do token fica.
 //
 // Sem troca em andamento é 403 forbidden (concluída ou cancelada em outra
-// aba). Código errado é 401 invalid_credentials, conta no bloqueio, e o
+// aba), e também quando a troca foi iniciada por outra família de sessão: o
+// pendente é só da que o criou (revisão final do Plano 9). Código errado é 401 invalid_credentials, conta no bloqueio, e o
 // pendente fica. Conta bloqueada é o mesmo 401 antes do código, como no
 // /totp/verify (R40): senão o confirm seria um lugar para chutar seis dígitos
 // que o bloqueio não alcança.

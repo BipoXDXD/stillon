@@ -18,6 +18,7 @@ import (
 // recuperação e a marca do desafio, que ele NÃO mexe.
 type estadoDo2FA struct {
 	segredo, confirmado, timestep, pendente bool
+	familia                                 bool // a do pendente (totp_pending_family_id)
 	codigos                                 int
 	marca                                   *time.Time
 }
@@ -28,9 +29,9 @@ func lerEstadoDo2FA(t *testing.T, pool *pgxpool.Pool, user uuid.UUID) estadoDo2F
 	var e estadoDo2FA
 	if err := pool.QueryRow(ctx,
 		`SELECT totp_secret_enc IS NOT NULL, totp_confirmed_at IS NOT NULL, totp_last_timestep IS NOT NULL,
-		        totp_pending_secret_enc IS NOT NULL, totp_challenge_mark
+		        totp_pending_secret_enc IS NOT NULL, totp_pending_family_id IS NOT NULL, totp_challenge_mark
 		   FROM users WHERE id = $1`, user).
-		Scan(&e.segredo, &e.confirmado, &e.timestep, &e.pendente, &e.marca); err != nil {
+		Scan(&e.segredo, &e.confirmado, &e.timestep, &e.pendente, &e.familia, &e.marca); err != nil {
 		t.Fatal(err)
 	}
 	if err := pool.QueryRow(ctx,
@@ -71,27 +72,30 @@ func eventos(t *testing.T, pool *pgxpool.Pool, user uuid.UUID, acao string) int 
 }
 
 // Com o 2FA ligado (e uma troca pendente), o reset-2fa desliga tudo numa
-// transação: as quatro colunas nulas, os códigos apagados, TODAS as sessões
+// transação: as cinco colunas nulas (o pendente com a família dele), os códigos apagados, TODAS as sessões
 // encerradas e a auditoria totp.reset_cli. A marca do desafio fica. Outro
 // usuário não é tocado.
 func TestResetTwoFactorTurnsItOff(t *testing.T) {
 	c := montar(t)
 	ctx := context.Background()
 	segredo := cadastrarTOTP(t, c, true)
-	if _, err := c.totp.StartRotation(ctx, c.user, "dono@exemplo.com", codigoAgora(t, c, segredo), c.clk.Now()); err != nil {
-		t.Fatal(err)
-	}
-	marca := c.clk.Now().Add(-time.Minute)
-	if _, err := c.pool.Exec(ctx, `UPDATE users SET totp_challenge_mark = $2 WHERE id = $1`, c.user, marca); err != nil {
-		t.Fatal(err)
-	}
-	// Uma segunda família do dono, e um outro usuário com 2FA e sessão.
+	// Uma segunda família do dono, que inicia a troca (o pendente fica
+	// amarrado a ela, revisão final do Plano 9), e um outro usuário com 2FA e
+	// sessão.
 	mgr := auth.NewManager(auth.NewPGStore(c.pool), c.clk, ipKey)
 	var hash string
 	if err := c.pool.QueryRow(ctx, `SELECT password_hash FROM users WHERE id = $1`, c.user).Scan(&hash); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := mgr.Issue(ctx, c.user, auth.PasswordStamp(hash), auth.Meta{IP: "203.0.113.9"}); err != nil {
+	_, sessao, err := mgr.Issue(ctx, c.user, auth.PasswordStamp(hash), auth.Meta{IP: "203.0.113.9"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.totp.StartRotation(ctx, c.user, sessao.FamilyID, "dono@exemplo.com", codigoAgora(t, c, segredo), c.clk.Now()); err != nil {
+		t.Fatal(err)
+	}
+	marca := c.clk.Now().Add(-time.Minute)
+	if _, err := c.pool.Exec(ctx, `UPDATE users SET totp_challenge_mark = $2 WHERE id = $1`, c.user, marca); err != nil {
 		t.Fatal(err)
 	}
 	outro := uuid.New()
@@ -109,7 +113,7 @@ func TestResetTwoFactorTurnsItOff(t *testing.T) {
 	}
 
 	antes := lerEstadoDo2FA(t, c.pool, c.user)
-	if !antes.segredo || !antes.confirmado || !antes.timestep || !antes.pendente || antes.codigos != 10 {
+	if !antes.segredo || !antes.confirmado || !antes.timestep || !antes.pendente || !antes.familia || antes.codigos != 10 {
 		t.Fatalf("o cenário não tem o 2FA completo: %+v", antes)
 	}
 
@@ -121,7 +125,7 @@ func TestResetTwoFactorTurnsItOff(t *testing.T) {
 		t.Errorf("ResetTwoFactor devolveu ligado=%v, %d sessões; queria true, 2", ligado, n)
 	}
 	depois := lerEstadoDo2FA(t, c.pool, c.user)
-	if depois.segredo || depois.confirmado || depois.timestep || depois.pendente {
+	if depois.segredo || depois.confirmado || depois.timestep || depois.pendente || depois.familia {
 		t.Errorf("sobrou estado do 2FA: %+v", depois)
 	}
 	if depois.codigos != 0 {

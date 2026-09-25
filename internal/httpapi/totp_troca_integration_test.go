@@ -4,11 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/url"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/pquerna/otp"
 	"github.com/pquerna/otp/totp"
+
+	"github.com/BipoXDXD/vigilume/internal/auth"
 )
 
 // A troca de autenticador com segredo pendente (Plano 9, §3.2), pelo HTTP:
@@ -65,14 +70,48 @@ func confirmarTrocaHTTP(t *testing.T, a *api, token, codigo string) (int, string
 	return resp.StatusCode, "", r.RecoveryCodes
 }
 
+// temPendente diz se há troca em andamento. O segredo pendente e a família
+// que o iniciou (revisão final do Plano 9) andam juntos: gravados no rotate,
+// apagados em toda limpeza. Um sem o outro é erro do teste que chamou — assim
+// toda checagem de limpeza confere também a família.
 func temPendente(t *testing.T, a *api) bool {
 	t.Helper()
 	var sealed []byte
+	var familia *uuid.UUID
 	if err := a.pool.QueryRow(context.Background(),
-		`SELECT totp_pending_secret_enc FROM users WHERE id = $1`, a.userID).Scan(&sealed); err != nil {
+		`SELECT totp_pending_secret_enc, totp_pending_family_id FROM users WHERE id = $1`, a.userID).
+		Scan(&sealed, &familia); err != nil {
 		t.Fatal(err)
 	}
+	if (len(sealed) > 0) != (familia != nil) {
+		t.Errorf("pendente e família descasados: segredo gravado=%v, família=%v", len(sealed) > 0, familia)
+	}
 	return len(sealed) > 0
+}
+
+func eventosDe(t *testing.T, a *api, acao string) int {
+	t.Helper()
+	var n int
+	if err := a.pool.QueryRow(context.Background(),
+		`SELECT count(*) FROM audit_log WHERE user_id = $1 AND action = $2`, a.userID, acao).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
+// familiaComRefresh abre uma família pelo Manager (sem o balde do login) e
+// devolve o access token dela, o refresh (para o logout) e o id.
+func familiaComRefresh(t *testing.T, a *api) (token, refresh string, familia uuid.UUID) {
+	t.Helper()
+	refresh, s, err := gerente(a).Issue(context.Background(), a.userID, carimboDe(t, a, a.userID), auth.Meta{IP: "203.0.113.9"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, err = auth.NewAccessToken(testJWTSecret, a.userID, s.FamilyID, a.clk.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return token, refresh, s.FamilyID
 }
 
 // entrarCom faz o login em dois passos com o código dado (do app ou de
@@ -120,6 +159,9 @@ func TestRotateRefusesWrongProofsAndCountsThem(t *testing.T) {
 	if temPendente(t, a) {
 		t.Error("um rotate recusado gravou o segredo pendente")
 	}
+	if n := eventosDe(t, a, "totp.rotation_started"); n != 0 {
+		t.Errorf("%d eventos totp.rotation_started depois de rotates recusados", n)
+	}
 
 	// A perna positiva, no mesmo cenário.
 	if st, novo := iniciarTrocaHTTP(t, a, token, map[string]string{"password": testPass, "code": certo}); st != http.StatusOK || novo == "" {
@@ -127,6 +169,9 @@ func TestRotateRefusesWrongProofsAndCountsThem(t *testing.T) {
 	}
 	if !temPendente(t, a) {
 		t.Error("o rotate aceito não gravou o segredo pendente")
+	}
+	if n := eventosDe(t, a, "totp.rotation_started"); n != 1 {
+		t.Errorf("%d eventos totp.rotation_started depois do rotate aceito, queria 1", n)
 	}
 }
 
@@ -269,6 +314,9 @@ func TestRotateConfirmReplacesCodesAndOtherSessions(t *testing.T) {
 	if st != http.StatusOK || len(novos) != 10 {
 		t.Fatalf("confirm: %d com %d códigos", st, len(novos))
 	}
+	if temPendente(t, a) {
+		t.Error("o pendente sobreviveu à confirmação")
+	}
 
 	if renova(t, a, outroAparelho) {
 		t.Error("a sessão do outro aparelho sobreviveu à troca de autenticador")
@@ -349,5 +397,178 @@ func TestRotateRoutesRefuseALockedAccount(t *testing.T) {
 	}
 	if st, _, _ := confirmarTrocaHTTP(t, a, token, codigoDe(t, a, novo)); st != http.StatusOK {
 		t.Errorf("confirm depois do desbloqueio devolveu %d, queria 200", st)
+	}
+}
+
+// O pendente é da família de sessão que o iniciou (revisão final do Plano 9).
+// Outra sessão viva do dono não o confirma: nem com a dona viva, nem depois
+// de a dona ser encerrada por DELETE /sessions/{id} ou pelo logout — antes,
+// o pendente sobrevivia à sessão que o criou e qualquer outra o confirmava. É
+// o 403 forbidden de "sem troca em andamento", conferido antes do código e sem
+// contar falha. A perna
+// positiva, no mesmo cenário: rotate e confirm na mesma família.
+func TestRotationBelongsToTheFamilyThatStartedIt(t *testing.T) {
+	for _, caso := range []string{"dona viva", "DELETE /sessions", "logout"} {
+		t.Run(caso, func(t *testing.T) {
+			a := newAPI(t)
+			velho := cadastrarTOTP(t, a, clientWithJar(t))
+			tokenA, refreshA, familiaA := familiaComRefresh(t, a)
+			tokenB := accessTokenValido(t, a)
+
+			st, novo := iniciarTrocaHTTP(t, a, tokenA, map[string]string{"password": testPass, "code": codigoDe(t, a, velho)})
+			if st != http.StatusOK {
+				t.Fatalf("rotate devolveu %d", st)
+			}
+
+			switch caso {
+			case "DELETE /sessions":
+				resp := deleteComToken(t, a.srv.URL+"/api/v1/sessions/"+familiaA.String(), tokenB)
+				resp.Body.Close()
+				if resp.StatusCode != http.StatusNoContent {
+					t.Fatalf("DELETE /sessions/{A} devolveu %d", resp.StatusCode)
+				}
+			case "logout":
+				c := clientWithJar(t)
+				u, err := url.Parse(a.srv.URL + "/api/v1/auth")
+				if err != nil {
+					t.Fatal(err)
+				}
+				c.Jar.SetCookies(u, []*http.Cookie{{Name: "vigilume_refresh", Value: refreshA, Path: "/api/v1/auth"}})
+				resp := post(t, c, a.srv.URL+"/api/v1/auth/logout", nil)
+				resp.Body.Close()
+				if resp.StatusCode != http.StatusNoContent {
+					t.Fatalf("logout devolveu %d", resp.StatusCode)
+				}
+			}
+			if caso != "dona viva" {
+				if st := statusDaListaDeSessoes(t, a, tokenA); st != http.StatusUnauthorized {
+					t.Fatalf("a família A continuou viva depois de %s (GET /sessions deu %d)", caso, st)
+				}
+			}
+
+			a.clk.Advance(30 * time.Second)
+			// Com um código errado (o do app antigo) também é 403, e não o 401
+			// que conta no bloqueio: a família é conferida antes do código.
+			st, codigo, _ := confirmarTrocaHTTP(t, a, tokenB, codigoDe(t, a, velho))
+			if st != http.StatusForbidden || codigo != "forbidden" {
+				t.Errorf("confirm pela família B com código errado (%s): %d %s, queria 403 forbidden", caso, st, codigo)
+			}
+			st, codigo, _ = confirmarTrocaHTTP(t, a, tokenB, codigoDe(t, a, novo))
+			if st != http.StatusForbidden || codigo != "forbidden" {
+				t.Errorf("confirm pela família B (%s): %d %s, queria 403 forbidden", caso, st, codigo)
+			}
+			if n := falhasDeLogin(t, a); n != 0 {
+				t.Errorf("o confirm pela outra família contou %d falhas", n)
+			}
+			if n := eventosDe(t, a, "totp.rotated"); n != 0 {
+				t.Errorf("%d eventos totp.rotated depois da recusa", n)
+			}
+
+			// A perna positiva: a família B inicia e confirma a sua troca.
+			a.clk.Advance(30 * time.Second)
+			st, novoDeB := iniciarTrocaHTTP(t, a, tokenB, map[string]string{"password": testPass, "code": codigoDe(t, a, velho)})
+			if st != http.StatusOK {
+				t.Fatalf("rotate pela família B devolveu %d", st)
+			}
+			a.clk.Advance(30 * time.Second)
+			if st, _, _ := confirmarTrocaHTTP(t, a, tokenB, codigoDe(t, a, novoDeB)); st != http.StatusOK {
+				t.Errorf("rotate e confirm na mesma família: confirm devolveu %d, queria 200", st)
+			}
+		})
+	}
+}
+
+func statusDaListaDeSessoes(t *testing.T, a *api, token string) int {
+	t.Helper()
+	resp := getComToken(t, a.srv.URL+"/api/v1/sessions", token)
+	resp.Body.Close()
+	return resp.StatusCode
+}
+
+// O rotate reconfere a família sob a trava do usuário: uma revogação (aqui, a
+// de uma troca de senha em outro aparelho) que comita enquanto ele espera a
+// trava faz o rotate devolver 401 unauthorized — o da guarda da rota — sem
+// gravar o pendente. Antes, o pendente de quem a troca de senha estava
+// expulsando era gravado depois dela. A perna positiva é o mesmo rotate com
+// uma família viva, sem ninguém segurando a trava.
+func TestRotateRechecksTheFamilyUnderTheLock(t *testing.T) {
+	a := newAPI(t)
+	ctx := context.Background()
+	velho := cadastrarTOTP(t, a, clientWithJar(t))
+	token, _, familia := familiaComRefresh(t, a)
+
+	conn, err := a.pool.Acquire(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	chave := "hashtextextended('vigilume.sessions:' || '" + a.userID.String() + "', 0)"
+	var umaVez sync.Once
+	soltar := func() {
+		umaVez.Do(func() {
+			if _, err := conn.Exec(ctx, `SELECT pg_advisory_unlock(`+chave+`)`); err != nil {
+				t.Error(err)
+			}
+			conn.Release()
+		})
+	}
+	t.Cleanup(soltar)
+	if _, err := conn.Exec(ctx, `SELECT pg_advisory_lock(`+chave+`)`); err != nil {
+		t.Fatal(err)
+	}
+
+	type resposta struct {
+		status int
+		codigo string
+	}
+	fim := make(chan resposta, 1)
+	corpo := map[string]string{"password": testPass, "code": codigoDe(t, a, velho)}
+	go func() {
+		resp := postComToken(t, http.DefaultClient, a.srv.URL+"/api/v1/auth/totp/rotate", token, corpo)
+		defer resp.Body.Close()
+		r := resposta{status: resp.StatusCode}
+		if resp.StatusCode != http.StatusOK {
+			r.codigo = codigoDoErro(t, resp)
+		}
+		fim <- r
+	}()
+
+	esperou := false
+	for prazo := time.Now().Add(5 * time.Second); time.Now().Before(prazo); time.Sleep(10 * time.Millisecond) {
+		var n int
+		if err := a.pool.QueryRow(ctx,
+			`SELECT count(*) FROM pg_stat_activity
+			  WHERE datname = current_database() AND wait_event_type = 'Lock' AND wait_event = 'advisory'`).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		if n > 0 {
+			esperou = true
+			break
+		}
+	}
+	// A revogação comita enquanto o rotate espera (a troca de senha faria o
+	// mesmo sob a trava; aqui, direto no banco).
+	if _, err := a.pool.Exec(ctx, `UPDATE sessions SET revoked_at = $2 WHERE family_id = $1`,
+		familia, a.clk.Now()); err != nil {
+		t.Fatal(err)
+	}
+	soltar()
+	r := <-fim
+	if !esperou {
+		t.Fatalf("o rotate não esperou a trava do usuário (terminou com %d %s)", r.status, r.codigo)
+	}
+	if r.status != http.StatusUnauthorized || r.codigo != "unauthorized" {
+		t.Errorf("rotate com a família revogada sob a trava: %d %s, queria 401 unauthorized", r.status, r.codigo)
+	}
+	if temPendente(t, a) {
+		t.Error("o rotate com a família revogada gravou o pendente")
+	}
+	if n := eventosDe(t, a, "totp.rotation_started"); n != 0 {
+		t.Errorf("%d eventos totp.rotation_started com a família revogada", n)
+	}
+
+	// A perna positiva: outra família, viva, sem trava segura.
+	a.clk.Advance(30 * time.Second)
+	if st, _ := iniciarTrocaHTTP(t, a, accessTokenValido(t, a), map[string]string{"password": testPass, "code": codigoDe(t, a, velho)}); st != http.StatusOK {
+		t.Errorf("rotate com a família viva devolveu %d, queria 200", st)
 	}
 }
