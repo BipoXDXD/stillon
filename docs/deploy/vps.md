@@ -1727,7 +1727,10 @@ vc logs -f --tail 50 app            # acompanhar ao vivo; Ctrl+C sai
 ```
 
 O vigia: `sudo journalctl -u vigilume-vigia.service --since today`. O deploy e o backup: o log
-do próprio job no Actions (o script manda o log dele pela saída de erro, que o job mostra).
+do próprio job no Actions (o script manda o log dele pela saída de erro, que o job mostra) e,
+na VPS, o mesmo log em `/opt/vigilume/entrada.log`, de todos os deploys e backups (até ~1 MiB; o
+mais velho sai sozinho): `sudo tail -n 50 /opt/vigilume/entrada.log`. É por ele que você sabe
+como terminou um deploy cuja conexão caiu (passo 4.8).
 
 ### Deploy seguinte
 
@@ -1736,34 +1739,86 @@ Actions → `ci` na `main` → espere o `publish` verde → Actions → `deploy`
 estava no ar em `/opt/vigilume/versao-anterior` e mantém as 3 últimas imagens. Durante a troca há
 alguns segundos de `502` (o painel mostra "Resposta inesperada do servidor (502)"; recarregue).
 
+Os três arquivos de versão, na VPS, são legíveis sem `sudo` (`0644`: não são segredo):
+`/opt/vigilume/versao` (o SHA no ar), `/opt/vigilume/versao-anterior` (o que estava antes) e
+`/opt/vigilume/historico` (um SHA por deploy saudável).
+
 ### Voltar uma versão
 
 Rode o mesmo workflow com o SHA anterior (`cat /opt/vigilume/versao-anterior` na VPS). Só é
 seguro se as migrations da versão nova forem **aditivas**: o `goose` não roda `Down` sozinho, e o
-rollback automático do script também não desfaz migration. Atenção: uma tag `v*` publicada depois
-**move** a tag `:<sha>` daquele commit para o digest do build da tag (mesmo código, outro build,
-reescaneado); o workflow leva então esse digest.
+rollback automático do script também não desfaz migration.
+
+**Se sair 3 com `vigilume:<sha> já existe com outra imagem`:** uma tag `v*` publicada depois
+daquele deploy **moveu** a tag `:<sha>` do GHCR para o digest do build da tag (mesmo código, outro
+build, reescaneado; `ci.yml`), e o workflow leva esse digest novo. A VPS ainda guarda a imagem
+antiga daquele SHA e **recusa** trocá-la, porque é exatamente a imagem para onde um rollback
+voltaria: ela só recusa assim o SHA que está no ar (`versao`) e o anterior (`versao-anterior`);
+para qualquer outro SHA, a etiqueta velha é trocada e o deploy segue. **Rodar de novo não
+resolve** (sai 3 outra vez), e não é adulteração. Dois caminhos:
+
+1. **Sem pressa (o recomendado):** um commit novo na `main` com o código da versão boa (um
+   `git revert` dos commits da versão ruim, por PR, como sempre), e o deploy do SHA **desse
+   commit** quando o `ci` dele ficar verde. É um SHA que a VPS nunca viu: nada a recusar.
+2. **Com pressa, à mão na VPS**, com a imagem que já esteve no ar e ainda está lá. Primeiro,
+   confira que ela existe (sem trava nenhuma, só leitura):
+   ```bash
+   ANT=$(cat /opt/vigilume/versao-anterior)
+   ATUAL=$(cat /opt/vigilume/versao)
+   echo "no ar: $ATUAL; voltar para: $ANT"
+   sudo docker image inspect -f '{{.Id}}' "vigilume:$ANT"
+   ```
+   **Deve aparecer:** os dois SHAs e um `sha256:…`. Se disser `No such image`, a imagem já foi
+   podada: só o caminho 1 serve. Então troque, sob a mesma trava do deploy e do backup (se um
+   deles estiver rodando, o comando espera até 10 min):
+   ```bash
+   sudo ANT="$ANT" ATUAL="$ATUAL" flock -w 600 /opt/vigilume/.entrada.trava sh -ec '
+     docker tag "vigilume:$ANT" vigilume:atual
+     docker compose -f /opt/vigilume/compose.prod.yaml up -d --force-recreate --wait --wait-timeout 90 app
+     echo "$ATUAL" > /opt/vigilume/versao-anterior
+     echo "$ANT" > /opt/vigilume/versao
+     echo "no ar: $ANT"
+   '
+   ```
+   **Deve aparecer:** o `app` `Healthy` e `no ar: <o SHA anterior>`; `cat /opt/vigilume/versao`
+   mostra o mesmo. Os dois arquivos de versão são atualizados à mão porque o próximo deploy os
+   usa para saber para onde voltar se ele mesmo falhar. Se o `up` não ficar saudável, o comando
+   para antes de mexer neles; volte para a versão que estava no ar com
+   `sudo docker tag "vigilume:$ATUAL" vigilume:atual` e `vc up -d app`, e siga pelo caminho 1.
+
+Refazer o deploy do SHA que **já está no ar** depois de um `v*` também sai 3 com essa mensagem:
+não há o que fazer, a versão no ar é o mesmo código.
 
 ### Depuração do deploy
 
-Os códigos de saída do `vigilume-entrada deploy`, que o job repete com uma mensagem
-(`deploy/ci/vps.sh`), mais o 255 do próprio SSH:
+Os códigos de saída do `vigilume-entrada deploy`, mais o 255 do próprio SSH. O job termina com um
+resumo do código (`deploy/ci/vps.sh`), mas a razão exata é a linha que começa com
+`vigilume-entrada:` no log do job (ou no fim do `/opt/vigilume/entrada.log`, na VPS). Procure-a
+na coluna do meio:
 
-| Código | Quer dizer | O que fazer |
+| Código | A linha `vigilume-entrada:` diz | O que fazer |
 |---|---|---|
-| 0 | deploy saudável | nada |
-| 2 | pedido recusado: verbo desconhecido, SHA fora do formato (40 hex), ID fora do formato | conferir o SHA passado ao workflow |
-| 3 | a imagem recebida não tem o ID esperado | rodar de novo; se repetir, a imagem mudou no caminho: não force, investigue |
-| 4 | a versão nova não ficou saudável em 90 s; **a anterior já voltou** | o log do job traz o log do app: corrija e publique outra versão |
-| 1 | outro erro (disco, Docker parado, **image store que não é o do containerd**, …) | a mensagem diz qual; para o store, o passo 3.2 |
-| 255 | o SSH nem chegou ao script: VPS fora do ar, porta 22 fechada, chave do servidor diferente do `VPS_HOST_KEY` (VPS reinstalada?) ou chave do deploy recusada | `ssh vigilume true` do seu computador; se a VPS foi reinstalada, passos 4.2 a 4.6 de novo |
+| 0 | `deploy de <sha> saudável` | nada |
+| 2 | `pedido vazio`, `caractere não permitido no pedido`, `verbo desconhecido`, `deploy leva o SHA e o image-id`, `SHA malformado`, `image-id malformado` ou `argumento na linha de comando não é aceito` | conferir o SHA passado ao workflow (os 40 caracteres do commit, passo 4.8) |
+| 2 | `nada chegou na entrada padrão` | o tar não chegou: veja no job se o passo que baixa a imagem falhou; rode de novo |
+| 2 | `a imagem passa de 2147483648 bytes` | a imagem normal tem dezenas de MB: o `publish` produziu algo errado; não force, investigue |
+| 3 | `vigilume:<sha> já existe com outra imagem (…)` | só com o SHA no ar ou o anterior, depois de um `v*`: **rodar de novo não resolve**; veja "Voltar uma versão" acima |
+| 3 | `a imagem carregada é …, e o deploy pediu …`, `o index.json do tar não é uma imagem só, sem nome, com o manifesto …`, `o tar não trouxe exatamente uma imagem sem nome`, `o que chegou não é um tar legível`, ou outra que começa com `o tar` (layout OCI, membro repetido ou estranho; as duas de disco cheio são código 1) | rodar de novo **uma vez**; se repetir, a imagem mudou no caminho (ou o formato do `crane` mudou): não force, investigue |
+| 4 | `rollback feito: <anterior> de volta no ar; <sha> não subiu` | a anterior já voltou: o log do job traz o log do app; corrija e publique outra versão |
+| 4 | `primeiro deploy e sem versão anterior: o app ficou parado` | **o site está fora** (não há anterior): passo 4.8, "Se o primeiro deploy sair com 4" |
+| 1 | `o rollback para <anterior> também não ficou saudável: veja docs/deploy/vps.md` | **o site está fora**: "O rollback também não ficou saudável", logo depois desta seção |
+| 1 | `o jq não está instalado (…): veja docs/deploy/vps.md` | `sudo apt install -y jq` (passo 3.3) e rode de novo |
+| 1 | `o Docker não usa o image store containerd; veja docs/deploy/vps.md (Docker)` | `sudo docker info -f '{{.DriverStatus}}'` e o `daemon.json` do passo 3.2 |
+| 1 | `outra operação da entrada não terminou em 10 min` | um backup (ou outro deploy) segurou a trava: veja o `entrada.log`, espere terminar e rode de novo |
+| 1 | `o tar não se extraiu …` ou `o tar refeito não se gravou …` (`disco cheio?`) | disco: `df -h /opt/vigilume /var/lib/docker` (veja "Operação do Postgres", linha Disco) |
+| 1 | outra | a mensagem diz qual (Docker parado: `sudo systemctl status docker`) |
+| 255 | (nenhuma: o SSH não chegou ao script, ou a conexão caiu no meio) | se o job caiu **depois** de mandar a imagem, o deploy pode ter terminado na VPS: confira `cat /opt/vigilume/versao` e o `entrada.log` antes de repetir (passo 4.8). Se nem conectou: VPS fora do ar, porta 22 fechada, chave do servidor diferente do `VPS_HOST_KEY` (VPS reinstalada?) ou chave do deploy recusada; `ssh vigilume true` do seu computador; se a VPS foi reinstalada, passos 4.2 a 4.6 de novo |
 
 O `backup` usa os mesmos códigos do `deploy/backup/backup.sh`: 0, cópia restaurada e conferida;
 3, uma checagem da cópia falhou (o dump não serve, e nada é guardado); 4, conferido e guardado,
 mas o disco passou de 85% (o job fica vermelho no fim, de propósito); 1, outro erro (não houve
-backup); 255, o SSH não chegou ao script.
-
-O store: se a mensagem for `vigilume-entrada: o Docker não usa o image store containerd; veja docs/deploy/vps.md (Docker)`, confira `sudo docker info -f '{{.DriverStatus}}'` e o `daemon.json` do passo 3.2.
+backup), inclusive `outra operação da entrada não terminou em 10 min` (um deploy segurou a
+trava: rode de novo); 255, o SSH não chegou ao script.
 
 A imagem do app **não tem shell** (distroless): `vc exec app sh` não funciona. O que serve: os
 logs, os subcomandos do binário (`vc exec app /vigilume version`, `… healthcheck`, `… user …`) e o
@@ -1780,6 +1835,36 @@ logs, os subcomandos do binário (`vc exec app /vigilume version`, `… healthch
 Uma `PUBLIC_BASE_URL` com usuário e senha (`https://usuario:senha@…`) é recusada no boot: o app
 não sobe, e o log diz "PUBLIC_BASE_URL não pode trazer credenciais na URL (a parte com @ antes do
 host)", sem repetir o valor.
+
+### O rollback também não ficou saudável
+
+A mensagem é `o rollback para <anterior> também não ficou saudável: veja docs/deploy/vps.md`,
+com código 1. **O site está fora do ar**: nem a versão nova nem a anterior ficaram saudáveis. Como
+a anterior estava bem minutos antes, a causa quase sempre é comum às duas, e não o código: o
+banco, o disco ou o `.env`. Na VPS:
+
+```bash
+vc ps -a
+vc logs --tail 100 app db
+df -h /opt/vigilume /var/lib/docker
+```
+
+- `db` fora de `healthy`, ou erro de conexão/senha no log do app: o banco (veja o log do `db`; um
+  `vc up -d db` o sobe de novo se ele tiver parado).
+- Disco a 100%: libere espaço (linha Disco de "Operação do Postgres").
+- Erro de variável no boot do app: o `.env` mudou (`sudo nano /opt/vigilume/.env`, compare com o
+  gerenciador).
+
+Corrigida a causa, suba a última versão saudável (a etiqueta `vigilume:atual`, que só anda num
+deploy saudável):
+
+```bash
+vc up -d --wait app
+cat /opt/vigilume/versao
+```
+
+O `app` `Healthy`, e o `versao` é o SHA dela. Se não ficar saudável, o log do `vc logs --tail 100
+app` diz o que ainda falta. Só depois disso tente de novo o deploy da versão nova.
 
 ### Arquivos da VPS: quando algo em `deploy/vps/` muda na `main`
 
