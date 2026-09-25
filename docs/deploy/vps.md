@@ -444,6 +444,13 @@ FIM
 chmod 600 ~/.ssh/config
 ```
 
+**Se já existe um `Host vigilume`** no seu `~/.ssh/config` (você está refazendo este passo numa
+reconstrução, "A VPS morreu" no bloco 10), **não rode o bloco acima**: um segundo `Host vigilume`
+fica depois do primeiro, e o `ssh` usa o primeiro valor que lê, ou seja, o IP velho. Em vez disso,
+abra o arquivo com `nano ~/.ssh/config`, troque só o valor da linha `HostName` do `Host vigilume`
+pelo IP novo, salve (`Ctrl+O`, Enter, `Ctrl+X`) e rode o **Confira** abaixo. Confira quantos há com
+`grep -c '^Host vigilume$' ~/.ssh/config`: tem de dar `1`.
+
 **Por quê:** a partir daqui, `ssh vigilume` e `scp arquivo vigilume:` bastam; o `IdentitiesOnly`
 evita que o SSH ofereça outras chaves suas e conte tentativas no `fail2ban` (passo 2.8).
 
