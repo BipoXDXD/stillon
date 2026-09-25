@@ -135,6 +135,57 @@ registrar() {
 
 dc() { COMPOSE_FILE="$ARQUIVOS_COMPOSE" docker compose --project-directory "$DIR" "$@"; }
 
+# subir <sha> <id>: sobe a pilha com a versão <sha> e sai 0 só se ela ficou
+# saudável, conferida AQUI, e não pelo código do `up --wait`: o docker compose
+# até a v5.5.0 sai 0 quando o --wait-timeout vence com um contêiner ainda em
+# `starting` (o laço da espera volta sem erro quando o prazo acaba, numa
+# corrida com o tique de 500 ms; corrigido na v5.5.1). Saudável: cada serviço
+# com um contêiner só, `running` (nunca `restarting`), `healthy` onde há
+# healthcheck, e o do app com a etiqueta $IMAGEM:<sha> e o image-id <id> (o
+# contêiner criado para esta versão, e não um que sobrou). Um `starting`
+# segue esperando até ESPERA_S depois do início do `up`; depois disso, falha.
+subir() {
+    local sha=$1 id=$2 prazo servicos s ctr status saude imagem imagem_id pronto
+    prazo=$(($(date +%s) + ESPERA_S))
+    STILLON_SHA=$sha dc up -d --wait --wait-timeout "$ESPERA_S" || return 1
+    servicos=$(STILLON_SHA=$sha dc config --services) || return 1
+    while :; do
+        pronto=1
+        for s in $servicos; do
+            ctr=$(dc ps -aq "$s") || return 1
+            if [ -z "$ctr" ] || [ "$(wc -l <<<"$ctr")" -ne 1 ]; then
+                echo "o serviço $s tem $(grep -c . <<<"$ctr") contêineres, e não 1"
+                return 1
+            fi
+            read -r status saude imagem imagem_id < <(docker inspect -f \
+                '{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{else}}-{{end}} {{.Config.Image}} {{.Image}}' "$ctr") ||
+                return 1
+            if [ "$s" = app ] && { [ "$imagem" != "$IMAGEM:$sha" ] || [ "$imagem_id" != "$id" ]; }; then
+                echo "o app roda $imagem ($imagem_id), e não $IMAGEM:$sha ($id)"
+                return 1
+            fi
+            if [ "$status" != running ]; then
+                echo "o $s está $status"
+                return 1
+            fi
+            case "$saude" in
+                healthy | -) ;;
+                starting) pronto=0 ;;
+                *)
+                    echo "o $s está $saude"
+                    return 1
+                    ;;
+            esac
+        done
+        [ "$pronto" = 0 ] || return 0
+        if [ "$(date +%s)" -ge "$prazo" ]; then
+            echo "o up saiu, mas a pilha segue em starting depois de ${ESPERA_S} s"
+            return 1
+        fi
+        sleep 1
+    done
+}
+
 # O ID que o deploy.yml manda é o digest do manifesto linux/amd64, e só o
 # image store containerd devolve esse valor no `docker load` e no `.Id` (no
 # store clássico, o ID é o da config). Com o outro store, a conferência
@@ -217,7 +268,7 @@ conferir_tar() {
 }
 
 deploy() {
-    local sha=$1 id=$2 tmp tam saida carregados anterior existente
+    local sha=$1 id=$2 tmp tam saida carregados anterior existente id_anterior
     command -v jq >/dev/null || sair 1 "o jq não está instalado (a entrada confere o tar com ele): veja docs/deploy/vps.md"
     exigir_containerd
 
@@ -272,7 +323,7 @@ deploy() {
 
     anterior=$(cat "$DIR/versao" 2>/dev/null || true)
     echo "deploy de $sha (antes: ${anterior:-nenhuma})"
-    if STILLON_SHA=$sha dc up -d --wait --wait-timeout "$ESPERA_S"; then
+    if subir "$sha" "$id"; then
         # 0644: não são segredo, e o dono os lê sem sudo (o umask é 077).
         echo "$sha" > "$DIR/versao.novo" && chmod 644 "$DIR/versao.novo" && mv "$DIR/versao.novo" "$DIR/versao"
         if [ -n "$anterior" ] && [ "$anterior" != "$sha" ]; then
@@ -290,11 +341,25 @@ deploy() {
     echo "o app não ficou saudável em ${ESPERA_S} s; o log dele:"
     dc logs --no-color --tail 100 app || true
     if [ -z "$anterior" ]; then
-        dc stop app || true
-        sair 4 "primeiro deploy e sem versão anterior: o app ficou parado"
+        # Parado E removido, e conferido: o app doente fica em laço de
+        # reinício (restart: unless-stopped), e o código de um `stop` nele
+        # não prova que ele parou. O rm -f mata e marca o contêiner para
+        # remoção, e um contêiner marcado o Docker não reinicia. O log dele
+        # já ficou logo acima (e no entrada.log).
+        local _ restantes
+        for _ in 1 2 3; do
+            dc rm -s -f app || true
+            if restantes=$(dc ps -aq app) && [ -z "$restantes" ]; then
+                sair 4 "primeiro deploy e sem versão anterior: o app ficou parado (e removido)"
+            fi
+            sleep 2
+        done
+        dc ps -a app || true
+        sair 1 "primeiro deploy e sem versão anterior, e o app não saiu do ar (removido 3 vezes): veja docs/deploy/vps.md"
     fi
-    # A etiqueta atual só anda no sucesso: continua na anterior.
-    if STILLON_SHA=$anterior dc up -d --wait --wait-timeout "$ESPERA_S"; then
+    # A etiqueta atual só anda no sucesso: continua na anterior. O image-id
+    # dela é o que a etiqueta $IMAGEM:<anterior> tem aqui (a poda a guarda).
+    if id_anterior=$(docker image inspect -f '{{.Id}}' "$IMAGEM:$anterior") && subir "$anterior" "$id_anterior"; then
         sair 4 "rollback feito: $anterior de volta no ar; $sha não subiu"
     fi
     dc logs --no-color --tail 100 app || true
