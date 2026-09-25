@@ -68,7 +68,6 @@ JWT_SECRET=$(b64)
 IP_HASH_KEY=$IP_HASH_KEY
 RESEND_API_KEY=
 EMAIL_FROM=
-HC_URL=
 VIGILUME_CADDY_TESTE=local_certs
 TESTE_VPS_HTTP=$HTTP
 TESTE_VPS_HTTPS=$HTTPS
@@ -193,6 +192,20 @@ caddy_ip=$(q '.services.caddy.networks.vigilume.ipv4_address')
 [ "$(q '.services.app.environment | has("POSTGRES_PASSWORD") or has("VIGILUME_BACKUP_PASSWORD")')" = false ] ||
     falhar "o app recebe a senha do superusuário ou a do backup"
 grep -q -- '-demo-\|ZGVtby12aWdpbHVtZS' "$RAIZ/deploy/vps/compose.prod.yaml" && falhar "o compose.prod.yaml tem chave de demonstração"
+# Nenhuma chave ou senha escrita no compose (obrigação 5): na config resolvida
+# com o .env do teste, cada segredo é o valor gerado acima. Um literal
+# qualquer (POSTGRES_PASSWORD: postgres, uma MASTER_KEY fixa) fica diferente.
+env_do_teste() { sed -n "s/^$1=//p" "$DIR/.env"; }
+for par in app:MASTER_KEY app:JWT_SECRET app:IP_HASH_KEY db:POSTGRES_PASSWORD db:VIGILUME_APP_PASSWORD db:VIGILUME_BACKUP_PASSWORD; do
+    s=${par%%:*} v=${par#*:}
+    [ "$(q ".services.$s.environment.$v // empty")" = "$(env_do_teste "$v")" ] ||
+        falhar "o $v do $s não é o do .env (valor escrito no compose.prod.yaml?)"
+done
+[ "$(q '.services.app.environment.DATABASE_URL')" = "postgres://vigilume_app:$(env_do_teste VIGILUME_APP_PASSWORD)@172.30.0.4:5432/vigilume?sslmode=disable" ] ||
+    falhar "a DATABASE_URL do app não usa a senha do .env: $(q '.services.app.environment.DATABASE_URL' | sed 's/:[^:@]*@/:***@/')"
+# Sem trusted_proxies no Caddyfile (obrigação 1), fora dos comentários.
+[ "$(sed 's/#.*//' "$RAIZ/deploy/vps/Caddyfile" | grep -c trusted_proxies || true)" = 0 ] ||
+    falhar "o Caddyfile tem trusted_proxies: um cliente escolheria o próprio IP"
 # O env.exemplo é o modelo do .env: sem valor nenhum, e com toda variável que
 # o compose.prod.yaml lê (menos VIGILUME_SHA, da entrada, e o modo de teste).
 grep -Ev '^(#|$)' "$RAIZ/deploy/vps/env.exemplo" | grep -v '=$' && falhar "o env.exemplo tem valor preenchido"
@@ -200,7 +213,12 @@ while read -r v; do
     case "$v" in VIGILUME_SHA | VIGILUME_CADDY_TESTE) continue ;; esac
     grep -q "^$v=$" "$RAIZ/deploy/vps/env.exemplo" || falhar "o env.exemplo não tem $v"
 done < <(grep -o '\${[A-Z_]*' "$RAIZ/deploy/vps/compose.prod.yaml" | sed 's/^\${//' | sort -u)
-ok "compose.prod.yaml: portas, restart, mem_limit, GOMEMLIMIT, IPs fixos, IPv6, variáveis"
+# E o contrário: o env.exemplo só tem o que o compose lê (a HC_URL do vigia
+# fica no vigia.env, longe dos segredos).
+while read -r v; do
+    grep -q "\${${v}[:}-]" "$RAIZ/deploy/vps/compose.prod.yaml" || falhar "o env.exemplo tem $v, que o compose.prod.yaml não lê"
+done < <(grep -Eo '^[A-Z_]+=' "$RAIZ/deploy/vps/env.exemplo" | tr -d =)
+ok "compose.prod.yaml: portas, restart, mem_limit, GOMEMLIMIT, IPs fixos, IPv6, variáveis, segredos do .env; Caddyfile sem trusted_proxies"
 
 # A entrada e o compose falam da mesma imagem.
 grep -qx 'IMAGEM=vigilume' "$RAIZ/deploy/vps/vigilume-entrada" &&
@@ -297,6 +315,9 @@ ultimo_hash() { sql "SELECT encode(ip_hash, 'hex') FROM sessions ORDER BY create
 real=$(ultimo_hash)
 [ -n "$real" ] || falhar "a sessão do login não tem ip_hash"
 [ "$real" = "$(hmac "$caddy_ip")" ] && falhar "o app viu o IP do Caddy: TRUSTED_PROXIES não casa, e todo cliente divide um balde"
+# O cliente do host chega à rede pelo gateway fixo: é esse o IP que o app vê.
+gateway=$(q '.networks.vigilume.ipam.config[0].gateway')
+[ "$real" = "$(hmac "$gateway")" ] || falhar "o app não viu o IP do cliente ($gateway, o gateway da rede)"
 [ "$(entrar -H 'X-Real-IP: 1.2.3.4' -H 'Fly-Client-IP: 1.2.3.5' -H 'CF-Connecting-IP: 1.2.3.6' -H 'X-Forwarded-For: 1.2.3.7')" = 200 ] ||
     falhar "login com cabeçalhos forjados não deu 200"
 forjado=$(ultimo_hash)
@@ -305,7 +326,11 @@ for ip in 1.2.3.4 1.2.3.5 1.2.3.6 1.2.3.7; do
     [ "$forjado" = "$(hmac "$ip")" ] && falhar "o app acreditou no IP forjado $ip"
 done
 # O aviso da B3 (X-Forwarded-For de fora de TRUSTED_PROXIES) não aparece.
-dc logs app 2>&1 | grep -q 'não vem de TRUSTED_PROXIES' && falhar "o app avisou que o X-Forwarded-For não vem de TRUSTED_PROXIES"
+# Em arquivo, e não num pipe: sob pipefail, o grep -q sairia no acerto e o
+# SIGPIPE do `logs` deixaria a pipeline falsa (a asserção de ausência nunca
+# falharia).
+dc logs app > "$TARS/app.log" 2>&1 || falhar "docker compose logs app falhou"
+grep -q 'não vem de TRUSTED_PROXIES' "$TARS/app.log" && falhar "o app avisou que o X-Forwarded-For não vem de TRUSTED_PROXIES"
 ok "X-Real-IP, Fly-Client-IP, CF-Connecting-IP e X-Forwarded-For do cliente não mudam o IP visto"
 
 # 6. O Caddy tira os três cabeçalhos: com um CLIENT_IP_HEADER posto por
@@ -490,12 +515,42 @@ grep -q 'ARGON2_MAX_CONCURRENT' "$TARS/erro" || falhar "o deploy doente não mos
 [ "$(cu -o /dev/null -w '%{http_code}' "$BASE/healthz")" = 200 ] || falhar "depois do rollback, /healthz pelo Caddy não deu 200"
 ok "vigilume-entrada: deploy doente volta à versão anterior (4)"
 
+# 8c'. Rollback por tempo esgotado: um app que fica de pé e nunca saudável
+#      (o processo não cai; o healthcheck sempre falha). A imagem doente de
+#      cima morre no boot e o --wait volta em segundos; esta prova a espera
+#      de ESPERA_S inteira. A base é a imagem do db (já na máquina, com sh).
+printf '%s\n' "FROM $pg" \
+    "RUN printf '#!/bin/sh\\nexit 1\\n' > /vigilume && chmod 755 /vigilume" \
+    'ENTRYPOINT ["/bin/sh", "-c", "trap \"exit 0\" TERM; while :; do sleep 1; done", "--"]' |
+    docker build -q -t "$REPO_TESTE-fonte:lento" - >/dev/null
+ID_LENTO=$(oci_tar "$REPO_TESTE-fonte:lento" "$TARS/lento.tar")
+SHA_LENTO=$(sha_de lento)
+inicio=$(date +%s)
+c=$(entrada "deploy $SHA_LENTO $ID_LENTO" < "$TARS/lento.tar")
+duracao=$(($(date +%s) - inicio))
+[ "$c" = 4 ] || falhar "deploy que nunca fica saudável saiu $c, queria 4: $(tail -3 "$TARS/erro")"
+grep -q 'rollback feito' "$TARS/erro" || falhar "o deploy lento não disse que fez o rollback"
+[ "$duracao" -ge 45 ] || falhar "o deploy lento voltou em $duracao s, antes da espera de 45 s: não foi o tempo esgotado"
+[ "$(versao)" = "$SHA_A" ] || falhar "depois do rollback por tempo, versao = $(versao)"
+[ "$(imagem_do_app)" = "$REPO_TESTE:$SHA_A" ] || falhar "depois do rollback por tempo o app roda $(imagem_do_app)"
+[ "$(docker inspect -f '{{.State.Health.Status}}' "$(dc ps -q app)")" = healthy ] || falhar "depois do rollback por tempo o app não está saudável"
+ok "vigilume-entrada: deploy que nunca fica saudável volta à anterior depois da espera (4)"
+
 # 8d. Deploys seguidos: versao-anterior anda, e ficam as 3 últimas imagens
 #     (as 3 últimas que ficaram no ar; a doente sai), fora a etiqueta atual.
 ID_C=$(fonte c 'LABEL vigilume.teste=c')
 SHA_C=$(sha_de c)
 ID_D=$(fonte d 'LABEL vigilume.teste=d')
 SHA_D=$(sha_de d)
+# O tar de c sem o "./" na frente dos nomes (tar -C dir oci-layout …): as
+# duas formas do layout OCI passam.
+rm -rf "$TARS/cx" && mkdir "$TARS/cx" && tar -xf "$TARS/c.tar" -C "$TARS/cx"
+tar -cf "$TARS/c.tar" -C "$TARS/cx" oci-layout index.json blobs
+tar -tf "$TARS/c.tar" | grep -q '^\./' && falhar "controle: o tar de c ainda tem ./"
+# Um historico longo (I2): 2000 versões antigas, como depois de anos de
+# deploy. A poda não pode morrer de SIGPIPE, e o historico não cresce sem
+# limite.
+for i in $(seq 1 2000); do sha_de "antiga-$i"; done >> "$DIR/historico"
 for par in "b $SHA_B $ID_B" "c $SHA_C $ID_C" "d $SHA_D $ID_D"; do
     read -r nome sha id <<<"$par"
     c=$(entrada "deploy $sha $id" < "$TARS/$nome.tar")
@@ -591,8 +646,8 @@ grep -aqE 'vigilume_app|goose_db_version|CREATE TABLE|backup conferido' "$TARS/s
 if age -d -i "$TARS/chave-age" -o "$TARS/decifrado.dump" "$TARS/saida"; then
     [ "$(head -c 5 "$TARS/decifrado.dump")" = PGDMP ] || falhar "o backup decifrado não é um dump do pg_dump"
     chmod 644 "$TARS/decifrado.dump"
-    docker run --rm -v "$TARS/decifrado.dump:/d.dump:ro" "$pg" pg_restore -l /d.dump 2>/dev/null |
-        grep -q 'TABLE public users' || falhar "o dump decifrado não tem a tabela users"
+    docker run --rm -v "$TARS/decifrado.dump:/d.dump:ro" "$pg" pg_restore -l /d.dump > "$TARS/lista" 2>/dev/null || true
+    grep -q 'TABLE public users' "$TARS/lista" || falhar "o dump decifrado não tem a tabela users"
     rm -f "$TARS/decifrado.dump"
 else
     falhar "o backup não decifra com a chave privada"
@@ -620,6 +675,31 @@ c=$(entrada backup < /dev/null)
 cp "$TARS/verificar.sql" "$DIR/deploy/backup/verificar.sql"
 [ -z "$(docker ps -aq --filter name=vigilume-restauro-)" ] || falhar "o postgres descartável ficou para trás depois da falha"
 ok "vigilume-entrada backup: sem chave (1) e cópia reprovada (3) não mandam nada"
+
+# O código 4: o backup vai, cifrado, e o código avisa do disco. Um df falso na
+# frente do PATH: (a) o disco da VPS acima de 85% (o df da entrada); (b) o
+# banco acima de 85% do volume (o backup.sh sai 4, pelo VOLUME_BYTES que a
+# entrada mede).
+mkdir -p "$TARS/bin-df"
+printf '#!/bin/sh\ncase "$*" in\n*--output=pcent*) [ -n "${DF_PCT:-}" ] && { echo Use%%; echo " $DF_PCT%%"; exit 0; } ;;\n*--output=size*) [ -n "${DF_TAMANHO:-}" ] && { echo 1B-blocks; echo "$DF_TAMANHO"; exit 0; } ;;\nesac\nexec %s "$@"\n' \
+    "$(command -v df)" > "$TARS/bin-df/df"
+chmod +x "$TARS/bin-df/df"
+sed 's|^export PATH=.*|export PATH="$PATH"|' "$ENTRADA" > "$TARS/entrada-df"
+for caso in "DF_PCT=91 disco da VPS" "DF_TAMANHO=1000000 volume do banco"; do
+    read -r var motivo <<<"$caso"
+    c=0
+    env -i PATH="$TARS/bin-df:$PATH" HOME="$HOME" SSH_ORIGINAL_COMMAND=backup "$var" \
+        bash "$TARS/entrada-df" < /dev/null > "$TARS/saida" 2> "$TARS/erro" || c=$?
+    [ "$c" = 4 ] || falhar "backup com o $motivo acima de 85% saiu $c, queria 4: $(tail -3 "$TARS/erro")"
+    grep -q '85%' "$TARS/erro" || falhar "backup com o $motivo acima de 85% não avisou"
+    if age -d -i "$TARS/chave-age" -o "$TARS/decifrado.dump" "$TARS/saida" 2>/dev/null; then
+        [ "$(head -c 5 "$TARS/decifrado.dump")" = PGDMP ] || falhar "backup com o $motivo cheio: o cifrado não é um dump"
+        rm -f "$TARS/decifrado.dump"
+    else
+        falhar "backup com o $motivo cheio: a saída não decifra (o cifrado não saiu?)"
+    fi
+done
+ok "vigilume-entrada backup: disco ou volume acima de 85% manda o cifrado e sai 4"
 
 if [ "$falhas" -gt 0 ]; then
     dc logs >&2
