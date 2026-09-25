@@ -7,7 +7,7 @@
 #   bash deploy/ci/checar-vps.sh <imagem do app>     (ex.: vigilume:dev)
 #
 # Precisa de docker (com o image store containerd, como a VPS), jq, curl,
-# openssl e do age/age-keygen no PATH.
+# openssl, python3 (monta os tars maliciosos) e do age/age-keygen no PATH.
 # O projeto do compose é "vigilume-teste-vps" e as portas do Caddy vão para o
 # loopback (TESTE_VPS_HTTP, padrão 18580; TESTE_VPS_HTTPS, padrão 18543):
 # deploy/ci/vps/compose.teste.yaml. A rede é a de produção (172.30.0.0/24):
@@ -94,7 +94,6 @@ trocar 'DIR=/opt/vigilume' "DIR=$DIR"
 trocar 'IMAGEM=vigilume' "IMAGEM=$REPO_TESTE"
 trocar 'ARQUIVOS_COMPOSE="$DIR/compose.prod.yaml"' 'ARQUIVOS_COMPOSE="$DIR/compose.prod.yaml:$DIR/compose.teste.yaml"'
 trocar 'ESPERA_S=90' 'ESPERA_S=45'
-trocar 'TMP_BASE=/var/tmp' "TMP_BASE=$TARS"
 trocar 'SHM_BASE=/dev/shm' "SHM_BASE=$TARS"
 # O age do teste pode não estar num diretório do PATH fixo da entrada (na
 # VPS ele vem do apt, em /usr/bin).
@@ -355,6 +354,7 @@ recusa() {
     [ "$c" = 2 ] || falhar "pedido '$pedido' ($motivo) saiu $c, queria 2"
 }
 recusa "" "vazio"
+recusa "   " "só espaços"
 recusa "reiniciar" "verbo desconhecido"
 recusa "DEPLOY $SHA_A $ID_A" "verbo em maiúsculas"
 recusa "deploy" "sem argumentos"
@@ -407,8 +407,76 @@ for anot in io.containerd.image.name org.opencontainers.image.ref.name; do
     docker image inspect "$REPO_TESTE-fonte:anotado" >/dev/null 2>&1 && falhar "o tar com $anot foi carregado com o nome"
     docker rmi "$REPO_TESTE-fonte:anotado" >/dev/null 2>&1 || true
 done
+# Os desvios da revisão (I1): tars que o docker load (containerd) lê com
+# nome e que uma checagem por texto deixaria passar. O nome pedido é o do
+# app no ar ($REPO_TESTE:atual): se o load acontecesse, a etiqueta atual
+# passaria a apontar para b, sem healthcheck e sem historico. Cada um sai 3,
+# e nenhuma etiqueta muda. O pedido traz o ID certo de b: só o tar é o
+# problema.
+etiquetas() {
+    docker image ls --no-trunc --format '{{.Repository}}:{{.Tag}} {{.ID}}' |
+        grep -E "^($REPO_TESTE|$REPO_TESTE-fonte):" | sort || true
+}
+rm -rf "$TARS/bx" && mkdir "$TARS/bx"
+tar -xf "$TARS/b.tar" -C "$TARS/bx"
+NOME_ATUAL=docker.io/library/$REPO_TESTE:atual
+jq -c --arg n "$NOME_ATUAL" '.manifests[0].annotations = {"io.containerd.image.name": $n}' "$TARS/bx/index.json" > "$TARS/index-nomeado.json"
+# O mesmo nome com escape JSON na chave ("\u002e" é o "."), que o
+# encoding/json do containerd decodifica igual.
+jq -c --arg n "$NOME_ATUAL" '.manifests[0].annotations = {"CHAVE": $n}' "$TARS/bx/index.json" |
+    sed 's/"CHAVE"/"io\\u002econtainerd\\u002eimage\\u002ename"/' > "$TARS/index-escapado.json"
+grep -q 'u002e' "$TARS/index-escapado.json" || falhar "controle: o index.json escapado não tem o escape"
+# O nome no começo e depois 1 MB de espaço em branco (JSON válido).
+{
+    jq -c --arg n "$NOME_ATUAL" '{manifests: [{annotations: {"io.containerd.image.name": $n}} + .manifests[0]], schemaVersion, mediaType}' "$TARS/bx/index.json"
+    head -c 1048576 /dev/zero | tr '\0' '\n'
+} > "$TARS/index-grande.json"
+# O manifest.json do formato v1.2 (sem oci-layout), com o nome no RepoTags
+# e espaço depois dos dois-pontos.
+man=$(jq -r '.manifests[0].digest | sub(":"; "/")' "$TARS/bx/index.json")
+jq -c --arg n "$REPO_TESTE:atual" '[{Config: ("blobs/" + (.config.digest | sub(":"; "/"))), RepoTags: [$n],
+    Layers: [.layers[].digest | "blobs/" + sub(":"; "/")]}]' "$TARS/bx/blobs/$man" |
+    sed 's/"RepoTags":\[/"RepoTags": [/' > "$TARS/manifest-v12.json"
+grep -q '"RepoTags": \[' "$TARS/manifest-v12.json" || falhar "controle: o manifest.json não tem o espaço"
+# montar <saida> <nome no tar>=<arquivo> ...: um tar com esses membros, na
+# ordem, com os nomes exatamente como dados (o GNU tar os normalizaria).
+montar() {
+    python3 - "$@" <<'PY'
+import sys, tarfile
+with tarfile.open(sys.argv[1], "w", format=tarfile.PAX_FORMAT) as t:
+    for par in sys.argv[2:]:
+        nome, arq = par.split("=", 1)
+        with open(arq, "rb") as f:
+            dados = f.read()
+        info = tarfile.TarInfo(nome)
+        info.size = len(dados)
+        info.mode = 0o644
+        with open(arq, "rb") as f:
+            t.addfile(info, f)
+PY
+}
+blobs=()
+for f in "$TARS"/bx/blobs/sha256/*; do blobs+=("blobs/sha256/${f##*/}=$f"); done
+montar "$TARS/m-ponto-barra.tar" "oci-layout=$TARS/bx/oci-layout" ".//index.json=$TARS/index-nomeado.json" "${blobs[@]}"
+montar "$TARS/m-ponto-ponto.tar" "oci-layout=$TARS/bx/oci-layout" "x/../index.json=$TARS/index-nomeado.json" "${blobs[@]}"
+montar "$TARS/m-duplicado.tar" "oci-layout=$TARS/bx/oci-layout" "index.json=$TARS/bx/index.json" "${blobs[@]}" "./index.json=$TARS/index-nomeado.json"
+montar "$TARS/m-escape.tar" "oci-layout=$TARS/bx/oci-layout" "index.json=$TARS/index-escapado.json" "${blobs[@]}"
+montar "$TARS/m-repotags.tar" "manifest.json=$TARS/manifest-v12.json" "${blobs[@]}"
+montar "$TARS/m-grande.tar" "oci-layout=$TARS/bx/oci-layout" "index.json=$TARS/index-grande.json" "${blobs[@]}"
+antes=$(etiquetas)
+for m in ponto-barra ponto-ponto duplicado escape repotags grande; do
+    c=$(entrada "deploy $SHA_B $ID_B" < "$TARS/m-$m.tar")
+    [ "$c" = 3 ] || falhar "tar malicioso '$m' saiu $c, queria 3: $(tail -1 "$TARS/erro")"
+    [ "$(etiquetas)" = "$antes" ] || falhar "tar malicioso '$m' mexeu nas etiquetas: $(diff <(echo "$antes") <(etiquetas) | tr '\n' ' ')"
+    if [ "$(docker image inspect -f '{{.Id}}' "$REPO_TESTE:atual")" != "$ID_A" ]; then
+        falhar "tar malicioso '$m' reetiquetou $REPO_TESTE:atual"
+        # De volta, para o caso seguinte ser julgado sozinho.
+        docker tag "$ID_A" "$REPO_TESTE:atual"
+    fi
+    antes=$(etiquetas)
+done
 [ "$(versao)" = "$SHA_A" ] && [ "$(imagem_do_app)" = "$REPO_TESTE:$SHA_A" ] || falhar "uma imagem divergente mexeu na versão"
-ok "vigilume-entrada: imagem divergente e tar com nome recusados com 3"
+ok "vigilume-entrada: imagem divergente, tar com nome e os desvios de layout recusados com 3"
 
 # 8c. Rollback: um deploy que não fica saudável volta à versão anterior.
 c=$(entrada "deploy $SHA_DOENTE $ID_DOENTE" < "$TARS/doente.tar")
@@ -438,11 +506,19 @@ done
 restantes=$(docker image ls "$REPO_TESTE" --format '{{.Tag}}' | grep -vx atual | sort | tr '\n' ' ')
 esperadas=$(printf '%s\n' "$SHA_B" "$SHA_C" "$SHA_D" | sort | tr '\n' ' ')
 [ "$restantes" = "$esperadas" ] || falhar "imagens que sobraram: '$restantes', queria as de b, c e d"
-# O mesmo SHA de novo (redeploy) é aceito e não mexe na anterior.
-c=$(entrada "deploy $SHA_D $ID_D" < "$TARS/d.tar")
-[ "$c" = 0 ] || falhar "redeploy de d saiu $c: $(tail -3 "$TARS/erro")"
+[ "$(wc -l < "$DIR/historico")" -le 50 ] || falhar "o historico ficou com $(wc -l < "$DIR/historico") linhas: cresce sem limite"
+[ "$(tail -n 3 "$DIR/historico" | tr '\n' ' ')" = "$SHA_B $SHA_C $SHA_D " ] || falhar "o historico perdeu as últimas versões"
+# O mesmo SHA de novo (redeploy) é aceito e não mexe na anterior. Com
+# variáveis do docker e do compose no ambiente (que o sudo tiraria): a
+# entrada não as usa.
+c=0
+env -i PATH="$PATH" HOME="$HOME" SSH_ORIGINAL_COMMAND="deploy $SHA_D $ID_D" LANG=C.UTF-8 \
+    DOCKER_HOST=unix:///nada.sock DOCKER_CONTEXT=nada COMPOSE_PROJECT_NAME=outro COMPOSE_FILE=/nada.yaml \
+    bash "$ENTRADA" < "$TARS/d.tar" > "$TARS/saida" 2> "$TARS/erro" || c=$?
+[ "$c" = 0 ] || falhar "redeploy de d (com DOCKER_* e COMPOSE_* no ambiente) saiu $c: $(tail -3 "$TARS/erro")"
 [ "$(cat "$DIR/versao-anterior")" = "$SHA_C" ] || falhar "o redeploy de d mudou a versao-anterior"
-ok "vigilume-entrada: versao-anterior e as 3 últimas imagens"
+[ "$(imagem_do_app)" = "$REPO_TESTE:$SHA_D" ] || falhar "depois do redeploy o app roda $(imagem_do_app)"
+ok "vigilume-entrada: versao-anterior, as 3 últimas imagens, historico longo e ambiente ignorado"
 
 # 8e. Docker sem o image store containerd: recusa com 1. Um docker falso na
 #     frente do PATH responde ao `docker info` como o store clássico.

@@ -12,8 +12,9 @@
 #   ssh deploy@VPS "deploy <sha 40 hex> <image-id sha256:64 hex>" < imagem.tar
 #       O tar (layout OCI, sem nome) chega pela entrada padrão. Códigos: 0
 #       deploy saudável; 2 pedido recusado (uso, argumento); 3 imagem
-#       divergente (o ID carregado não é o pedido, ou o tar traz nome); 4 não
-#       ficou saudável e o rollback foi feito; 1 qualquer outro erro.
+#       divergente (o ID carregado não é o pedido, ou o tar traz nome, ou foge
+#       do layout OCI do crane); 4 não ficou saudável e o rollback foi feito; 1
+#       qualquer outro erro. Precisa do jq na VPS (docs/deploy/vps.md).
 #
 #   ssh deploy@VPS backup > vigilume-<data>.dump.age
 #       O dump do banco, restaurado e conferido pelo deploy/backup/backup.sh
@@ -30,21 +31,32 @@
 # Tudo o que o script escreve vai para a saída de ERRO: a saída padrão fica
 # reservada (o verbo backup manda por ela só o dump cifrado).
 #
-# Sem variável de ambiente que mude o comportamento: o sudo limpa o ambiente,
-# e os caminhos abaixo são constantes. O teste do CI (deploy/ci/checar-vps.sh)
-# roda uma cópia com estas constantes trocadas por sed.
+# Sem variável de ambiente que mude o comportamento: o sudo limpa o ambiente
+# (sobram TERM, HOME, SHELL e as de idioma, LANG e LC_*), e os caminhos abaixo
+# são constantes. Mesmo assim, o idioma é fixado e as variáveis do docker e do
+# compose saem, por defesa. O teste do CI (deploy/ci/checar-vps.sh) roda uma
+# cópia com estas constantes trocadas por sed.
 set -euo pipefail
 umask 077
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+export LC_ALL=C
+for v in $(compgen -e); do
+    case "$v" in DOCKER_* | COMPOSE_*) unset "$v" ;; esac
+done
 
 DIR=/opt/vigilume
 IMAGEM=vigilume
 ARQUIVOS_COMPOSE="$DIR/compose.prod.yaml"
 ESPERA_S=90
-TMP_BASE=/var/tmp
+# O tar do deploy é recebido, extraído e refeito aqui (o mesmo disco das
+# imagens): cabe até 3 vezes o TETO_BYTES durante o deploy.
+TMP_BASE=$DIR
 SHM_BASE=/dev/shm
 SCRIPTS="$DIR/deploy"
 TETO_BYTES=$((2 * 1024 * 1024 * 1024))
+# Linhas do historico que ficam depois de cada deploy (a poda só usa as 3
+# últimas versões distintas).
+HISTORICO_MAX=50
 
 # fd 3 = a saída padrão de verdade; daqui em diante, o que não for o dump
 # cifrado vai para a de erro.
@@ -65,17 +77,20 @@ dc() { COMPOSE_FILE="$ARQUIVOS_COMPOSE" docker compose --project-directory "$DIR
 # store clássico, o ID é o da config). Com o outro store, a conferência
 # recusaria todo deploy: melhor dizer por quê.
 exigir_containerd() {
-    docker info -f '{{.DriverStatus}}' 2>/dev/null | grep -q 'io.containerd.snapshotter.v1' ||
+    local drivers
+    drivers=$(docker info -f '{{.DriverStatus}}' 2>/dev/null || true)
+    [[ "$drivers" == *io.containerd.snapshotter.v1* ]] ||
         sair 1 "o Docker não usa o image store containerd; veja docs/deploy/vps.md (Docker)"
 }
 
 # Mantém as imagens das 3 últimas versões que ficaram no ar (o historico,
 # uma linha por deploy saudável); as outras etiquetas $IMAGEM:<sha> saem,
 # inclusive as de deploys que não ficaram saudáveis. Uma em uso não sai (o rmi
-# recusa) e não é erro.
+# recusa) e não é erro. Sem `head` no pipe: sob pipefail, o SIGPIPE do awk
+# derrubaria a entrada com 141 quando o historico crescesse.
 podar() {
     local manter tag
-    manter=$(tac "$DIR/historico" | awk '!visto[$0]++' | head -n 3)
+    manter=$(tac "$DIR/historico" | awk '!visto[$0]++ && n++ < 3')
     while read -r tag; do
         [ "$tag" = atual ] && continue
         grep -qxF -- "$tag" <<<"$manter" && continue
@@ -83,39 +98,64 @@ podar() {
     done < <(docker image ls "$IMAGEM" --format '{{.Tag}}')
 }
 
-# Conteúdo de um arquivo da raiz do tar, com ou sem o "./" na frente; nada se
-# não houver.
-ler_do_tar() {
-    local membro
-    membro=$(tar -tf "$1" | grep -xE "(\./)?$2" | head -n 1 || true)
-    [ -z "$membro" ] || tar -xOf "$1" "$membro"
+# O tar do deploy.yml é o layout OCI do `crane pull --format oci`, empacotado
+# com `tar -C dir -cf - .`: oci-layout, index.json e blobs/sha256/<digest>,
+# com ou sem o "./" na frente. Um tar com nome etiquetaria, no load, uma
+# imagem qualquer desta máquina (vigilume:atual, caddy:2) antes de qualquer
+# conferência. Por isso o tar não é lido como texto: é extraído em $1/x (só
+# arquivos e diretórios, só esses nomes, sem repetição), o index.json é
+# conferido por um parser de JSON (uma imagem, o digest pedido, sem anotação
+# nenhuma), e o que o load recebe é um tar REFEITO a partir de $1/x: o
+# conferido é exatamente o carregado. Sai 3 em qualquer desvio.
+conferir_tar() {
+    local dir=$1 id=$2 membros
+    # Tipo (a 1ª letra) e tamanho (o 3º campo, com o dono numérico e sem
+    # espaço) de cada membro: só arquivo e diretório, e o total extraído
+    # também cabe no teto.
+    membros=$(tar -tvf "$dir/imagem.tar" --numeric-owner 2>/dev/null) ||
+        sair 3 "o que chegou não é um tar legível"
+    awk -v teto="$TETO_BYTES" '
+        substr($0, 1, 1) != "-" && substr($0, 1, 1) != "d" { exit 1 }
+        { total += $3 }
+        END { if (total > teto) exit 1 }' <<<"$membros" ||
+        sair 3 "o tar traz membro que não é arquivo nem diretório, ou passa de $TETO_BYTES bytes extraído"
+    membros=$(tar -tf "$dir/imagem.tar")
+    grep -vxE '(\./)?|(\./)?(oci-layout|index\.json|blobs/?|blobs/sha256/?|blobs/sha256/[0-9a-f]{64})' <<<"$membros" >"$dir/estranhos" &&
+        sair 3 "o tar foge do layout OCI (oci-layout, index.json, blobs/sha256/): $(head -c 200 "$dir/estranhos")"
+    [ -z "$(sed -E 's|^\./||; s|/$||' <<<"$membros" | grep -v '^$' | sort | uniq -d)" ] ||
+        sair 3 "o tar traz o mesmo membro duas vezes"
+    mkdir "$dir/x"
+    tar -xf "$dir/imagem.tar" -C "$dir/x" --no-same-owner --no-same-permissions ||
+        sair 3 "o tar não se extraiu"
+    rm -f "$dir/imagem.tar"
+    [ -f "$dir/x/oci-layout" ] && [ -f "$dir/x/index.json" ] ||
+        sair 3 "o tar não é um layout OCI (falta oci-layout ou index.json)"
+    jq -e --arg id "$id" '
+        (keys - ["schemaVersion", "mediaType", "manifests"]) == [] and
+        (.manifests | type) == "array" and (.manifests | length) == 1 and
+        (.manifests[0] | type) == "object" and
+        (.manifests[0] | keys - ["mediaType", "digest", "size", "platform"]) == [] and
+        .manifests[0].digest == $id' "$dir/x/index.json" >/dev/null 2>&1 ||
+        sair 3 "o index.json do tar não é uma imagem só, sem nome, com o manifesto $id"
 }
 
 deploy() {
     local sha=$1 id=$2 tmp tam saida carregados anterior
     exigir_containerd
 
-    tmp=$(mktemp -d "$TMP_BASE/vigilume-entrada.XXXXXX")
+    tmp=$(mktemp -d "$TMP_BASE/.vigilume-entrada.XXXXXX")
     # shellcheck disable=SC2064 # o caminho é fixado agora, de propósito
     trap "rm -rf '$tmp'" EXIT
     head -c $((TETO_BYTES + 1)) > "$tmp/imagem.tar"
     tam=$(stat -c %s "$tmp/imagem.tar")
-    [ "$tam" -gt 0 ] || uso "nada chegou na entrada padrão (o docker save da imagem)"
+    [ "$tam" -gt 0 ] || uso "nada chegou na entrada padrão (o tar do layout OCI da imagem)"
     [ "$tam" -le "$TETO_BYTES" ] || uso "a imagem passa de $TETO_BYTES bytes"
 
-    # O tar do deploy.yml não tem nome (layout OCI do crane). Um tar com nome
-    # etiquetaria, no load, uma imagem qualquer desta máquina (caddy:2, por
-    # exemplo) antes de qualquer conferência: recusado sem carregar.
-    # O membro pode vir como "index.json" ou "./index.json" (tar -C dir .).
-    if ler_do_tar "$tmp/imagem.tar" index.json |
-        grep -Eq '"(org\.opencontainers\.image\.ref\.name|io\.containerd\.image\.name)"'; then
-        sair 3 "o tar traz nome de imagem (index.json); o deploy manda o tar sem nome"
-    fi
-    if ler_do_tar "$tmp/imagem.tar" manifest.json | grep -q '"RepoTags":\["'; then
-        sair 3 "o tar traz nome de imagem (manifest.json); o deploy manda o tar sem nome"
-    fi
-
-    saida=$(docker load -i "$tmp/imagem.tar") || sair 1 "docker load falhou"
+    conferir_tar "$tmp" "$id"
+    tar -cf "$tmp/refeito.tar" -C "$tmp/x" oci-layout index.json blobs
+    rm -rf "$tmp/x"
+    saida=$(docker load -i "$tmp/refeito.tar") || sair 1 "docker load falhou"
+    rm -f "$tmp/refeito.tar"
     echo "$saida"
     carregados=$(sed -n 's/^Loaded image ID: //p' <<<"$saida")
     if [ -z "$carregados" ] || [ "$(wc -l <<<"$carregados")" -ne 1 ] || grep -q '^Loaded image: ' <<<"$saida"; then
@@ -136,6 +176,7 @@ deploy() {
             echo "$anterior" > "$DIR/versao-anterior.novo" && mv "$DIR/versao-anterior.novo" "$DIR/versao-anterior"
         fi
         echo "$sha" >> "$DIR/historico"
+        tail -n "$HISTORICO_MAX" "$DIR/historico" > "$DIR/historico.novo" && mv "$DIR/historico.novo" "$DIR/historico"
         docker tag "$IMAGEM:$sha" "$IMAGEM:atual"
         podar
         echo "deploy de $sha saudável"
@@ -235,6 +276,7 @@ case "$pedido" in
     *[!a-z0-9:\ ]*) uso "caractere não permitido no pedido" ;;
 esac
 read -r -a palavras <<<"$pedido"
+[ "${#palavras[@]}" -gt 0 ] || uso "pedido vazio"
 
 case "${palavras[0]}" in
     deploy)

@@ -59,8 +59,9 @@ services:
     restart: unless-stopped
 
   app:
-    # A imagem que o vigilume-entrada carregou do docker save do deploy.yml
-    # (a mesma que passou no Trivy), etiquetada localmente. pull_policy never:
+    # A imagem que o vigilume-entrada carregou do tar do deploy.yml (o layout
+    # OCI do `crane pull --format oci`, com o manifesto publicado, o mesmo
+    # que passou no Trivy), etiquetada localmente. pull_policy never:
     # sem ela, uma imagem ausente viraria um pull de docker.io/library/vigilume.
     image: vigilume:${VIGILUME_SHA:-atual}
     pull_policy: never
