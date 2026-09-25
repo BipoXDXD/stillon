@@ -1385,6 +1385,11 @@ houve backup naquele dia, e o GitHub não manda e-mail por isso. A causa usual �
    docker pull "ghcr.io/bipoxdxd/vigilume:$SHA"
    docker logout ghcr.io
    ```
+   O `echo` tem de mostrar os 40 caracteres do SHA no ar (o `versao` é legível sem `sudo`, passo
+   4.8). Se mostrar uma linha em branco, com um `Permission denied` antes, e o `docker pull`
+   falhar com `invalid reference format`, o `vigilume-entrada` da VPS é de antes dessa mudança:
+   recopie-o (bloco 10, "Arquivos da VPS") ou, por ora, rode `sudo cat /opt/vigilume/versao` na
+   VPS e, aqui, `SHA=` seguido do valor colado, e repita a partir do `docker login`.
    O `docker login` grava o token no `~/.docker/config.json` do seu computador, **em claro** (o
    próprio Docker avisa: `stored unencrypted`). E esse token não é só de leitura de pacotes: é o
    do `gh`, que escreve em todos os seus repositórios. O `docker logout` o apaga; a imagem já
