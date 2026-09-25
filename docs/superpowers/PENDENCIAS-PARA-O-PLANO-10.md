@@ -37,7 +37,7 @@ Spec: `docs/superpowers/specs/2026-09-25-plano-9-operacao-design.md`.
   (runbook, última seção).
 - Hospedagem sem custo (pergunta do dono em 2026-09-25): uma VM grátis rodando o
   `compose.yaml` seria um alvo de deploy novo, com runbook, HTTPS e backup próprios. Não é
-  trabalho do Plano 8; vira plano próprio se o dono quiser.
+  trabalho de nenhum plano ainda; vira plano próprio se o dono quiser.
 
 ## Limites conhecidos do Plano 9
 
@@ -47,9 +47,12 @@ Spec: `docs/superpowers/specs/2026-09-25-plano-9-operacao-design.md`.
   fica sem aviso daquele canal até olhar a lista.
 - **O código de recuperação usado para iniciar uma troca fica gasto**, mesmo que a troca não seja
   confirmada (é a prova de posse, como no `disable`). O painel avisa ao fechar no passo 2.
-- **O segredo pendente não tem prazo.** Ele morre na confirmação, numa nova troca, no `disable`, no
-  `reset-2fa`, na troca de senha e no `set-password`. Confirmá-lo exige uma sessão viva do dono e o
-  código do app novo.
+- **O segredo pendente não tem prazo, mas é da família de sessão que o criou**
+  (`totp_pending_family_id`, revisão final): só ela o confirma, com o código do app novo; outra
+  sessão viva do dono recebe o 403 de "sem troca". Morre com a família (revogada por `DELETE
+  /sessions/{id}`, logout ou troca de senha, ele fica inconfirmável) e, junto com a família, na
+  confirmação, numa nova troca (que o substitui), no `disable`, no `reset-2fa`, na troca de senha
+  e no `set-password`. Todo rotate aceito deixa a auditoria `totp.rotation_started`.
 - **`PATCH /channels/{id}` com campo desconhecido** responde `400 validation_failed` sem `fields`,
   como as outras rotas de recurso: o vocabulário fechado não tem nome para um campo inventado pelo
   cliente.
@@ -57,6 +60,16 @@ Spec: `docs/superpowers/specs/2026-09-25-plano-9-operacao-design.md`.
   desafios velhos.
 - **Porta 9091 ocupada por outro programa** em desenvolvimento: o `--role=prober` não sobe, e a
   mensagem sugere o `METRICS_ADDR`.
+- **Uma notificação já reivindicada pode sair logo depois de uma pausa**: o despacho lê `enabled`
+  do lote reivindicado, e não de novo no envio.
+- **No painel, o `/me` relido no passo 2 da troca** (outra aba desligou o 2FA) fecha o diálogo
+  pelo portão, sem o aviso de "nada mudou".
+- **Um 403 na confirmação da troca perde o aviso de código de recuperação gasto**: o diálogo volta
+  ao passo 1 com "concluída ou cancelada em outra aba", e não diz que o código do passo 1 foi gasto.
+- **O E2E de acessibilidade falhou uma vez sem causa encontrada.** Se repetir, guardar o trace do
+  Playwright antes de rodar de novo.
+- **As checagens de CSP do E2E dos diálogos de canal leem as violações uma vez**, sem
+  `expect.poll`: uma violação que chegue depois da leitura passa despercebida.
 
 Os limites dos Planos 7 e 8 seguem como estão no `PENDENCIAS-PARA-O-PLANO-8.md` e no
 `PENDENCIAS-PARA-O-PLANO-9.md`.

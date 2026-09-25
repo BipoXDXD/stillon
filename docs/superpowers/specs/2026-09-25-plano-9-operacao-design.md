@@ -113,7 +113,13 @@ a AAD de `totp_secret_enc`, em vez de copiar os bytes.
    - O segredo **antigo** vale até este passo e para de valer nele.
 - **O pendente não tem prazo.** Ele só é confirmável por quem viu o QR, com uma sessão viva do
   dono. É apagado na confirmação, no `disable`, no `reset-2fa` (§3.1) e numa nova chamada de
-  `rotate` (que o substitui).
+  `rotate` (que o substitui). (Corrigido na revisão final: o pendente sobrevivia à revogação da
+  sessão que o criou e outra sessão viva o confirmava, e o `rotate` o gravava sem trava, depois
+  de uma troca de senha que acabara de revogar a família dele. Agora a 00009 também cria
+  `totp_pending_family_id`: o `rotate` grava o pendente e a família do token sob a trava de
+  sessões do usuário, reconferindo a família viva (morta: `401 unauthorized`), e audita
+  `totp.rotation_started`; o `rotate/confirm` só aceita essa família, e de outra é o `403
+  forbidden` de "sem troca"; toda limpeza do pendente limpa a família junto.)
 - **Limitador:** a mesma cadeia das outras rotas do TOTP (`enroll`, `confirm`, `disable`):
   `authn` e família viva, sem limitador por IP próprio. Quem limita as provas erradas é o
   bloqueio progressivo por conta, que as duas rotas alimentam (D4 e D5 do Plano 5).
