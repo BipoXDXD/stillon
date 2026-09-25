@@ -1,7 +1,7 @@
 import AxeBuilder from '@axe-core/playwright'
 import type { Page, Route } from '@playwright/test'
 import type { z } from 'zod'
-import type { Serie } from '../src/lib/api/schemas'
+import type { CadastroTotp, ConfirmacaoTotp, Serie } from '../src/lib/api/schemas'
 import { alvo, canal, incidente, itemDoResumo, me, pagina, sessao } from '../src/test/fixtures'
 import { controlePositivo, expect, test, violacoes } from './fixtures'
 
@@ -75,6 +75,18 @@ const respostas: Record<string, unknown> = {
   'GET /sessions': { items: [sessao({ id: 'f1', created_at: agora, last_used_at: agora })] },
 }
 
+// A troca de autenticador (spec do Plano 9 §4.2): as respostas do rotate e
+// do rotate/confirm, no formato do enroll e do confirm.
+const SEGREDO_NOVO = 'KRSXG5CTMVRXEZLU'
+const troca: z.input<typeof CadastroTotp> = {
+  otpauth_uri: `otpauth://totp/Vigilume:dono%40exemplo.com?secret=${SEGREDO_NOVO}&issuer=Vigilume`,
+}
+const codigosNovos: z.input<typeof ConfirmacaoTotp> = {
+  recovery_codes: Array.from({ length: 10 }, (_, i) => `NOVO${String(i).padStart(2, '0')}CODIGO000${i}`),
+}
+respostas['POST /auth/totp/rotate'] = troca
+respostas['POST /auth/totp/rotate/confirm'] = codigosNovos
+
 function respostaDe(metodo: string, u: URL): unknown {
   const chave = `${metodo} ${u.pathname.replace('/api/v1', '')}`
   if (chave === 'GET /targets/a1/checks') {
@@ -139,6 +151,51 @@ for (const tema of ['claro', 'escuro'] as const) {
     const pausar = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze()
     expect(pausar.violations.map((v) => v.id)).toEqual([])
     expect(violacoes(page)).toEqual([])
+    await controlePositivo(page)
+  })
+}
+
+// Os três passos do diálogo de troca de autenticador (spec do Plano 9
+// §4.3), com o 2FA ligado no /me: axe e CSP em cada passo, nos dois temas.
+// O passo 2 tem o QR (SVG) do app novo; o 3, os códigos.
+for (const tema of ['claro', 'escuro'] as const) {
+  test(`troca de autenticador: axe e CSP nos três passos, tema ${tema}`, async ({ page }) => {
+    await page.emulateMedia({ colorScheme: tema === 'escuro' ? 'dark' : 'light' })
+    await imitarApi(page)
+    // Registrada depois, esta rota vence a do imitarApi para o /me.
+    await page.route('**/api/v1/me', (route) =>
+      route.fulfill({ status: 200, json: me({ totp_enabled: true, created_at: agora }) }),
+    )
+    const passar = async (passo: string) => {
+      const r = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze()
+      expect(r.violations.map((v) => `${passo}: ${v.id} (${v.nodes.map((n) => n.target.join(' ')).join(', ')})`)).toEqual([])
+      await expect.poll(() => violacoes(page), passo).toEqual([])
+    }
+    await page.goto('/settings')
+    await page.getByRole('button', { name: 'Trocar autenticador' }).click()
+    const dialogo = page.getByRole('dialog', { name: 'Trocar o autenticador' })
+    await expect(dialogo.getByLabel('Sua senha')).toBeVisible()
+    await passar('passo 1')
+    await dialogo.getByLabel('Sua senha').fill('uma senha bem comprida')
+    await dialogo.getByLabel('Código do autenticador').fill('123456')
+    await dialogo.getByRole('button', { name: 'Continuar' }).click()
+    await expect(dialogo.getByText(SEGREDO_NOVO)).toBeVisible()
+    // O <title> do SVG não é o atributo title que o getByTitle procura.
+    await expect(dialogo.locator('svg', { has: page.locator('title', { hasText: 'QR code do autenticador' }) })).toBeVisible()
+    await passar('passo 2')
+    await dialogo.getByLabel('Código de 6 dígitos').fill('654321')
+    await dialogo.getByRole('button', { name: 'Confirmar a troca' }).click()
+    await expect(dialogo.getByText(codigosNovos.recovery_codes[0]!)).toBeVisible()
+    await passar('passo 3')
+    await dialogo.getByLabel('Guardei os códigos').check()
+    await dialogo.getByRole('button', { name: 'Concluir' }).click()
+    await expect(dialogo).toBeHidden()
+    // Dentro da região dos avisos: o Radix Toast copia o texto para uma região
+    // de anúncio oculta por um instante, e um getByText na página inteira
+    // acharia os dois (o modo estrito do Playwright recusa, conforme o tempo).
+    await expect(
+      page.getByRole('region', { name: /Notifications/ }).getByText('Autenticador trocado. As outras sessões foram encerradas.'),
+    ).toBeVisible()
     await controlePositivo(page)
   })
 }

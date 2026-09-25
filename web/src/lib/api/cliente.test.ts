@@ -1,6 +1,6 @@
 import { http, HttpResponse } from 'msw'
 import { describe, expect, it, vi } from 'vitest'
-import { EMAIL, SENHA, TOTP_OK } from '@/test/api-falsa'
+import { EMAIL, SEGREDO_NOVO, SENHA, TOTP_NOVO, TOTP_OK } from '@/test/api-falsa'
 import { buscarDoTeste, novaSessao, usarApiFalsa } from '@/test/ambiente'
 import { servidor } from '@/test/setup'
 import { ApiError } from './http'
@@ -48,6 +48,26 @@ describe('a regra do 401', () => {
     ).rejects.toMatchObject({ code: 'invalid_credentials' })
     expect(falsa.chamadas('POST /auth/refresh')).toBe(0)
     expect(falsa.chamadas('POST /auth/password')).toBe(1)
+  })
+
+  // Spec do Plano 9 §4.2: a troca de autenticador tem o tratamento do
+  // totpDesativar (D24 do Plano 5): invalid_credentials no rotate e no
+  // rotate/confirm não renova nem repete (repetir contaria outra falha no
+  // bloqueio). Perna positiva: as provas certas passam, com o mesmo token.
+  // Sabotagem: podeRenovar() devolvendo true para todo 401 → refresh e
+  // chamada em dobro.
+  it('invalid_credentials na troca de autenticador não renova nem repete', async () => {
+    const { falsa, api } = await logado()
+    falsa.estado.totpLigado = true
+    await expect(api.totpTrocar(SENHA, '000000')).rejects.toMatchObject({ code: 'invalid_credentials' })
+    expect(falsa.chamadas('POST /auth/totp/rotate')).toBe(1)
+    expect((await api.totpTrocar(SENHA, TOTP_OK)).otpauth_uri).toContain(`secret=${SEGREDO_NOVO}`)
+    expect(falsa.corpos('POST /auth/totp/rotate')[1]).toEqual({ password: SENHA, code: TOTP_OK })
+    await expect(api.totpConfirmarTroca('000000')).rejects.toMatchObject({ code: 'invalid_credentials' })
+    expect(falsa.chamadas('POST /auth/totp/rotate/confirm')).toBe(1)
+    expect((await api.totpConfirmarTroca(TOTP_NOVO)).recovery_codes).toHaveLength(10)
+    expect(falsa.corpos('POST /auth/totp/rotate/confirm')[1]).toEqual({ code: TOTP_NOVO })
+    expect(falsa.chamadas('POST /auth/refresh')).toBe(0)
   })
 
   // Só "unauthorized" (o Authn recusando o token) renova. Sabotagem

@@ -25,8 +25,9 @@ import type { Sessao } from './sessao'
 //
 // Em /auth/* um 401 nunca renova. "invalid_credentials" é senha ou código
 // errado (em /auth/password, /auth/totp/enroll e /auth/totp/disable, D24 do
-// Plano 5), e repetir reenviaria o erro e contaria outra falha no bloqueio
-// progressivo.
+// Plano 5; e em /auth/totp/rotate e /auth/totp/rotate/confirm, spec do
+// Plano 9 §3.2), e repetir reenviaria o erro e contaria outra falha no
+// bloqueio progressivo.
 function podeRenovar(caminho: string, code: string) {
   return code === 'unauthorized' && !caminho.startsWith('/auth/')
 }
@@ -148,5 +149,12 @@ export function criarApi(sessao: Sessao, buscar: Buscar) {
       pedir({ metodo: 'POST', caminho: '/auth/totp/confirm', corpo: { code: codigo } }, ConfirmacaoTotp),
     totpDesativar: (senha: string, codigo: string) =>
       pedir({ metodo: 'POST', caminho: '/auth/totp/disable', corpo: { password: senha, code: codigo } }, null),
+    // A troca de autenticador (spec do Plano 9 §3.2): as provas do disable
+    // (o código do app atual ou um de recuperação) e, depois, o código do
+    // app NOVO. As respostas têm o formato do enroll e do confirm.
+    totpTrocar: (senha: string, codigo: string) =>
+      pedir({ metodo: 'POST', caminho: '/auth/totp/rotate', corpo: { password: senha, code: codigo } }, CadastroTotp),
+    totpConfirmarTroca: (codigo: string) =>
+      pedir({ metodo: 'POST', caminho: '/auth/totp/rotate/confirm', corpo: { code: codigo } }, ConfirmacaoTotp),
   }
 }
