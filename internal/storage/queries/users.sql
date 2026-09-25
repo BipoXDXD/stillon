@@ -18,9 +18,15 @@ INSERT INTO users (id, email, password_hash, created_at) VALUES ($1, $2, $3, $4)
 -- Um cadastro de 2FA pendente (segredo sem confirmação) cai junto: quem o
 -- iniciou pode ser o invasor que a redefinição está expulsando, e ele o
 -- confirmaria com o autenticador dele. O 2FA confirmado fica (D10). Task 11.
+--
+-- Uma troca de autenticador em andamento (totp_pending_secret_enc, Plano 9)
+-- cai pelo mesmo motivo: o pendente não tem prazo, quem o iniciou pode ser o
+-- invasor, e uma sessão roubada o confirmaria depois, ficando com o 2FA.
+-- Trocar a senha é a reação do dono à suspeita, e mata a troca.
 -- name: ReplaceUserHash :execrows
 UPDATE users SET password_hash = $2, failed_attempts = 0, locked_until = NULL,
-       totp_secret_enc = CASE WHEN totp_confirmed_at IS NULL THEN NULL ELSE totp_secret_enc END
+       totp_secret_enc = CASE WHEN totp_confirmed_at IS NULL THEN NULL ELSE totp_secret_enc END,
+       totp_pending_secret_enc = NULL
  WHERE id = $1;
 
 -- Serializa dois `vigilume user create` simultâneos: sem ela, os dois contam
@@ -44,10 +50,12 @@ SELECT id, email, (totp_confirmed_at IS NOT NULL)::bool AS totp_enabled, created
 -- é o que foi verificado. Duas trocas simultâneas com a mesma senha atual não
 -- se atropelam, e a verificação (Argon2id) não precisa segurar trava. Zera o
 -- bloqueio: a senha e o segundo fator acabaram de ser provados. Apaga o
--- cadastro de 2FA pendente, pelo motivo do ReplaceUserHash.
+-- cadastro de 2FA pendente e a troca de autenticador em andamento, pelos
+-- motivos do ReplaceUserHash.
 -- name: SwapUserHash :execrows
 UPDATE users SET password_hash = sqlc.arg(new_hash), failed_attempts = 0, locked_until = NULL,
-       totp_secret_enc = CASE WHEN totp_confirmed_at IS NULL THEN NULL ELSE totp_secret_enc END
+       totp_secret_enc = CASE WHEN totp_confirmed_at IS NULL THEN NULL ELSE totp_secret_enc END,
+       totp_pending_secret_enc = NULL
  WHERE id = sqlc.arg(id) AND password_hash = sqlc.arg(old_hash);
 
 -- O hash atual, lido por auth.Manager.Issue SOB a trava do usuário (D1): a
@@ -64,3 +72,17 @@ SELECT password_hash FROM users WHERE id = $1;
 -- name: RehashUser :execrows
 UPDATE users SET password_hash = sqlc.arg(new_hash)
  WHERE id = sqlc.arg(id) AND password_hash = sqlc.arg(old_hash);
+
+-- vigilume user reset-2fa (Plano 9, §3.1): desliga o 2FA inteiro, inclusive a
+-- troca de autenticador pendente. A guarda na WHERE torna o comando
+-- idempotente: sem 2FA confirmado, nenhuma linha muda, e quem chama não
+-- encerra sessão nem audita. A marca do desafio (totp_challenge_mark) fica:
+-- ela só recusa desafios velhos, e zerá-la não ajuda ninguém.
+-- name: ResetTOTP :execrows
+UPDATE users SET totp_secret_enc = NULL, totp_confirmed_at = NULL, totp_last_timestep = NULL,
+       totp_pending_secret_enc = NULL
+ WHERE id = $1 AND totp_confirmed_at IS NOT NULL;
+
+-- Os códigos de recuperação morrem com o fator (reset-2fa).
+-- name: DeleteRecoveryCodes :exec
+DELETE FROM totp_recovery_codes WHERE user_id = $1;
