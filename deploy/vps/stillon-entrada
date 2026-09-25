@@ -13,8 +13,9 @@
 #       O tar (layout OCI, sem nome) chega pela entrada padrão. Códigos: 0
 #       deploy saudável; 2 pedido recusado (uso, argumento); 3 imagem
 #       divergente (o ID carregado não é o pedido, ou o tar traz nome, ou foge
-#       do layout OCI do crane); 4 não ficou saudável e o rollback foi feito; 1
-#       qualquer outro erro. Precisa do jq na VPS (docs/deploy/vps.md).
+#       do layout OCI do crane); 4 não ficou saudável e o rollback foi feito
+#       (ou, no primeiro deploy, sem anterior, o app foi parado e removido);
+#       1 qualquer outro erro. Precisa do jq na VPS (docs/deploy/vps.md).
 #
 #   ssh deploy@VPS backup > stillon-<data>.dump.age
 #       O dump do banco, restaurado e conferido pelo deploy/backup/backup.sh
@@ -138,6 +139,15 @@ registrar() {
 
 dc() { COMPOSE_FILE="$ARQUIVOS_COMPOSE" docker compose --project-directory "$DIR" "$@"; }
 
+# conteineres <servico>: os IDs dos contêineres do serviço, em qualquer
+# estado, pelos rótulos do compose e sem os one-off (um `compose run` que
+# sobrou não é o serviço). O `dc ps -a` os incluiria. PROJETO vem do deploy.
+PROJETO=
+conteineres() {
+    docker ps -aq --filter "label=com.docker.compose.project=$PROJETO" \
+        --filter "label=com.docker.compose.service=$1" --filter label=com.docker.compose.oneoff=False
+}
+
 # subir <sha> <id>: sobe a pilha com a versão <sha> e sai 0 só se ela ficou
 # saudável, conferida AQUI, e não pelo código do `up --wait`: o docker compose
 # até a v5.5.0 sai 0 quando o --wait-timeout vence com um contêiner ainda em
@@ -155,7 +165,7 @@ subir() {
     while :; do
         pronto=1
         for s in $servicos; do
-            ctr=$(dc ps -aq "$s") || return 1
+            ctr=$(conteineres "$s") || return 1
             if [ -z "$ctr" ] || [ "$(wc -l <<<"$ctr")" -ne 1 ]; then
                 echo "o serviço $s tem $(grep -c . <<<"$ctr") contêineres, e não 1"
                 return 1
@@ -324,6 +334,9 @@ deploy() {
         docker rmi "$existente" >/dev/null 2>&1 || true
     fi
 
+    if ! PROJETO=$(dc config --format json | jq -r .name) || [ -z "$PROJETO" ]; then
+        sair 1 "o docker compose não leu o nome do projeto em $ARQUIVOS_COMPOSE"
+    fi
     anterior=$(cat "$DIR/versao" 2>/dev/null || true)
     echo "deploy de $sha (antes: ${anterior:-nenhuma})"
     if subir "$sha" "$id"; then
@@ -341,7 +354,7 @@ deploy() {
         exit 0
     fi
 
-    echo "o app não ficou saudável em ${ESPERA_S} s; o log dele:"
+    echo "a pilha não ficou saudável em ${ESPERA_S} s; o log do app:"
     dc logs --no-color --tail 100 app || true
     if [ -z "$anterior" ]; then
         # Parado E removido, e conferido: o app doente fica em laço de
@@ -355,10 +368,10 @@ deploy() {
         local _ restantes
         for _ in 1 2 3; do
             dc rm -s -f app || true
-            restantes=$(dc ps -aq app) || true
+            restantes=$(conteineres app) || true
             # shellcheck disable=SC2086 # um ID por palavra
             [ -z "$restantes" ] || docker rm -f $restantes >/dev/null || true
-            if restantes=$(dc ps -aq app) && [ -z "$restantes" ]; then
+            if restantes=$(conteineres app) && [ -z "$restantes" ]; then
                 sair 4 "primeiro deploy e sem versão anterior: o app ficou parado (e removido)"
             fi
             sleep 2
@@ -368,7 +381,9 @@ deploy() {
     fi
     # A etiqueta atual só anda no sucesso: continua na anterior. O image-id
     # dela é o que a etiqueta $IMAGEM:<anterior> tem aqui (a poda a guarda).
-    if id_anterior=$(docker image inspect -f '{{.Id}}' "$IMAGEM:$anterior") && subir "$anterior" "$id_anterior"; then
+    id_anterior=$(docker image inspect -f '{{.Id}}' "$IMAGEM:$anterior") ||
+        sair 1 "a imagem de $anterior ($IMAGEM:$anterior) sumiu: o rollback não foi tentado; veja docs/deploy/vps.md"
+    if subir "$anterior" "$id_anterior"; then
         sair 4 "rollback feito: $anterior de volta no ar; $sha não subiu"
     fi
     dc logs --no-color --tail 100 app || true

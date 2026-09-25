@@ -1195,7 +1195,7 @@ o Caddy e o banco ficam de pé. Quase sempre é o `.env` (uma variável mal pree
 DNS. O contêiner do app é **removido**, e não só parado: um app que morre no boot fica em laço de
 reinício (`restart: unless-stopped`), e só a remoção garante que ele não volta. Por isso o
 `logs app` do compose fica vazio: as últimas 100 linhas do log do app estão no log do job e no
-`entrada.log`, logo depois de `o app não ficou saudável em 90 s; o log dele:`. Veja por que o app
+`entrada.log`, logo depois de `a pilha não ficou saudável em 90 s; o log do app:`. Veja por que o app
 não subiu:
 
 ```bash
@@ -1875,6 +1875,7 @@ trava (a primeira linha de código 2 da tabela e o 1 da trava ocupada) não cheg
 | 4 | `primeiro deploy e sem versão anterior: o app ficou parado (e removido)` | **o site está fora** (não há anterior): passo 4.8, "Se o primeiro deploy sair com 4" |
 | 1 | `primeiro deploy e sem versão anterior, e o app não saiu do ar depois de 3 tentativas: veja docs/deploy/vps.md` | **o site está fora**, e o app doente segue de pé: passo 4.8, "Se o primeiro deploy sair com 4" |
 | 1 | `o rollback para <anterior> também não ficou saudável: veja docs/deploy/vps.md` | **o site está fora**: "O rollback também não ficou saudável", logo depois desta seção |
+| 1 | `a imagem de <anterior> (stillon:<anterior>) sumiu: o rollback não foi tentado; veja docs/deploy/vps.md` | **o site está fora**, e a imagem da versão que estava no ar não está mais na VPS: rode o workflow com o SHA de `cat /opt/stillon/versao` (passo 4.8), que a manda de novo |
 | 1 | `o jq não está instalado (…): veja docs/deploy/vps.md` | `sudo apt install -y jq` (passo 3.3) e rode de novo |
 | 1 | `o Docker não usa o image store containerd; veja docs/deploy/vps.md (Docker)` | `sudo docker info -f '{{.DriverStatus}}'` e o `daemon.json` do passo 3.2 |
 | 1 | `outra operação da entrada não terminou em 10 min` | um backup (ou outro deploy) segurou a trava: veja o `entrada.log`, espere terminar e rode de novo |
