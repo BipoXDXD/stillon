@@ -82,7 +82,7 @@ TMP_BACKUP=
 RESTAURO=
 TEE_PID=
 PEDIDO=
-# shellcheck disable=SC2317 # chamada pelo trap EXIT
+# shellcheck disable=SC2317,SC2329 # chamada pelo trap EXIT (0.9 e 0.10+ dão códigos diferentes)
 fim() {
     local codigo=$? sentido
     [ -z "$TMP_DEPLOY" ] || rm -rf "$TMP_DEPLOY"
