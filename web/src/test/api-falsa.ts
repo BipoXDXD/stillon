@@ -43,6 +43,10 @@ export const rotacao = (n: number) => n.toString(16).padStart(32, '0')
 
 const agora = () => new Date('2026-09-24T12:00:00Z')
 
+// auth.FamilyProofLimit (= LockThreshold): a 5ª prova errada na mesma família
+// de sessão a derruba (A3 do Plano 10).
+export const LIMITE_DE_PROVAS = 5
+
 export type ApiFalsa = ReturnType<typeof criarApiFalsa>
 
 export function criarApiFalsa() {
@@ -69,6 +73,15 @@ export function criarApiFalsa() {
     // Plano 6: o código é consumido antes da transação).
     recuperacaoGasta: new Set<string>(),
     trocaFalhaDepoisDoCodigo: false,
+    // Provas erradas por família de sessão (auth.FamilyProofs, A3 do Plano
+    // 10): a troca de senha e as cinco rotas do 2FA dividem o contador. A 5ª
+    // derruba a família (401 unauthorized); a prova certa zera.
+    provasErradas: new Map<string, number>(),
+    // O bloqueio da CONTA (users.locked_until): só o login e o /totp/verify o
+    // olham. As rotas autenticadas deixaram de consultá-lo (A3 do Plano 10);
+    // o rotate, o rotate/confirm e a troca de senha bem-sucedidos o zeram (A6;
+    // SwapUserHash).
+    contaBloqueada: false,
     // O desafio de 2FA do login ainda vale (a senha não mudou desde ele).
     desafioValido: false,
     chamadas: new Map<string, number>(),
@@ -134,6 +147,21 @@ export function criarApiFalsa() {
   const familiaDe = (request: Request) =>
     st.acessos.get(request.headers.get('Authorization')?.replace(/^Bearer /, '') ?? '')
 
+  // provasDaFamilia.errou: até a 4ª, a resposta de sempre da rota; a 5ª
+  // derruba a família (RevokeFamilyForWrongProofs) e responde 401
+  // unauthorized. O cookie fica no navegador, mas a renovação falha.
+  function provaErrada(request: Request, status: number, code: string) {
+    const f = familiaDe(request) ?? ''
+    const n = (st.provasErradas.get(f) ?? 0) + 1
+    st.provasErradas.set(f, n)
+    if (n < LIMITE_DE_PROVAS) return erro(status, code)
+    if (f === st.familia) st.familiaRevogada = true
+    return erro(401, 'unauthorized')
+  }
+
+  // ProofReservation.Succeed: as provas pedidas conferiram, a família zera.
+  const provaCerta = (request: Request) => st.provasErradas.delete(familiaDe(request) ?? '')
+
   // As rotas que exigem a família do token viva (Plano 5: /auth/password e
   // /sessions; Task 11 do Plano 5: os três do 2FA). Um access token ainda
   // válido de uma família revogada passa pelo Authn e morre aqui, com 401
@@ -179,6 +207,9 @@ export function criarApiFalsa() {
       'post',
       '/auth/login',
       ({ corpo }) => {
+        // Conta bloqueada: o mesmo 401 genérico, sem olhar a senha (o cookie
+        // de dispositivo, que a dispensaria, não está nesta falsa).
+        if (st.contaBloqueada) return erro(401, 'invalid_credentials')
         if (corpo.email !== EMAIL || corpo.password !== SENHA) return erro(401, 'invalid_credentials')
         if (st.totpLigado) {
           st.desafioValido = true
@@ -196,6 +227,7 @@ export function criarApiFalsa() {
         // Task 11 do Plano 5: a senha mudou depois do desafio → a senha
         // verificada é velha, e o verify responde invalid_credentials.
         if (!st.desafioValido) return erro(401, 'invalid_credentials')
+        if (st.contaBloqueada) return erro(401, 'invalid_credentials')
         if (!provaDoFator(String(corpo.code ?? ''))) return erro(401, 'invalid_credentials')
         return abrirSessao()
       },
@@ -386,15 +418,18 @@ export function criarApiFalsa() {
     }),
     // account.ChangePassword: a política da senha nova vem ANTES da senha
     // atual (e do código, que então não é gasto).
-    rota('post', '/auth/password', ({ corpo }) => {
+    // A prova errada conta na família (a política não: a reserva volta).
+    rota('post', '/auth/password', ({ request, corpo }) => {
       const n = [...String(corpo.new_password)].length
       if (n < 15) return erro(400, 'validation_failed', [{ field: 'new_password', reason: 'too_short' }])
-      if (corpo.current_password !== SENHA) return erro(401, 'invalid_credentials')
+      if (corpo.current_password !== SENHA) return provaErrada(request, 401, 'invalid_credentials')
       if (st.totpLigado) {
         const codigo = String(corpo.totp_code ?? '')
-        if (!provaDoFator(codigo)) return erro(401, 'invalid_credentials')
+        if (!provaDoFator(codigo)) return provaErrada(request, 401, 'invalid_credentials')
         if (codigo === RECUPERACAO_OK && st.trocaFalhaDepoisDoCodigo) return erro(401, 'unauthorized')
       }
+      provaCerta(request)
+      st.contaBloqueada = false
       st.sessoes = st.sessoes.filter((s) => s.current)
       // Task 11 do Plano 5: trocar a senha apaga o cadastro de 2FA pendente
       // e invalida os desafios de login em aberto; D6 do Plano 9, a troca de
@@ -404,26 +439,37 @@ export function criarApiFalsa() {
       st.desafioValido = false
       return new HttpResponse(null, { status: 204 })
     }),
-    rota('post', '/auth/totp/enroll', ({ corpo }) => {
-      if (corpo.password !== SENHA) return erro(401, 'invalid_credentials')
+    rota('post', '/auth/totp/enroll', ({ request, corpo }) => {
+      if (corpo.password !== SENHA) return provaErrada(request, 401, 'invalid_credentials')
+      provaCerta(request)
       if (st.totpLigado) return erro(403, 'forbidden')
       st.totpPendente = true
       return HttpResponse.json({ otpauth_uri: 'otpauth://totp/Vigilume:dono%40exemplo.com?secret=JBSWY3DPEHPK3PXP&issuer=Vigilume' })
     }),
-    rota('post', '/auth/totp/confirm', ({ corpo }) => {
-      // totphandlers.go: com o 2FA já ligado, 403 forbidden, como o enroll.
+    // TOTP.Confirm confere o código ANTES de ver que o 2FA já está ligado: o
+    // código certo com o 2FA ligado é 403 forbidden (e zera a família, o
+    // código conferiu); o errado é prova errada, 400 validation_failed, e
+    // conta (A3 do Plano 10, que fechou o S5). Sem cadastro pendente não há
+    // código a errar: 400 sem contar.
+    rota('post', '/auth/totp/confirm', ({ request, corpo }) => {
+      if (!st.totpLigado && !st.totpPendente) return erro(400, 'validation_failed')
+      if (corpo.code !== TOTP_OK) return provaErrada(request, 400, 'validation_failed')
+      provaCerta(request)
       if (st.totpLigado) return erro(403, 'forbidden')
-      if (!st.totpPendente || corpo.code !== TOTP_OK) return erro(400, 'validation_failed')
       st.totpLigado = true
       st.totpPendente = false
       return HttpResponse.json({ recovery_codes: ['AAAABBBBCCCCDDDD', 'EEEEFFFFGGGGHHHH'] })
     }),
-    rota('post', '/auth/totp/disable', ({ corpo }) => {
+    rota('post', '/auth/totp/disable', ({ request, corpo }) => {
       // D24 do Plano 5: senha ou código errado é invalid_credentials;
-      // unauthorized fica só para o token recusado. Com o 2FA desligado, o
-      // Disable devolve ErrTOTPNotEnrolled, que é o mesmo 401.
-      if (corpo.password !== SENHA || !st.totpLigado) return erro(401, 'invalid_credentials')
-      if (!provaDoFator(String(corpo.code || corpo.recovery_code || ''))) return erro(401, 'invalid_credentials')
+      // unauthorized fica só para o token recusado (e para a 5ª prova errada
+      // da família). Com o 2FA desligado, o Disable devolve
+      // ErrTOTPNotEnrolled, que é o mesmo 401 e também conta.
+      if (corpo.password !== SENHA || !st.totpLigado) return provaErrada(request, 401, 'invalid_credentials')
+      if (!provaDoFator(String(corpo.code || corpo.recovery_code || ''))) {
+        return provaErrada(request, 401, 'invalid_credentials')
+      }
+      provaCerta(request)
       st.totpLigado = false
       // O disable apaga a troca pendente (spec do Plano 9 §3.2).
       st.troca = null
@@ -436,9 +482,14 @@ export function criarApiFalsa() {
     // TOTPRotate: a senha (senhaConfere) antes de tudo; depois, 2FA
     // desligado é 403, e só então a prova do fator.
     rota('post', '/auth/totp/rotate', ({ request, corpo }) => {
-      if (corpo.password !== SENHA) return erro(401, 'invalid_credentials')
+      if (corpo.password !== SENHA) return provaErrada(request, 401, 'invalid_credentials')
+      // 403 sem contar e sem zerar: a reserva volta (Release).
       if (!st.totpLigado) return erro(403, 'forbidden')
-      if (!provaDoFator(String(corpo.code || corpo.recovery_code || ''))) return erro(401, 'invalid_credentials')
+      if (!provaDoFator(String(corpo.code || corpo.recovery_code || ''))) {
+        return provaErrada(request, 401, 'invalid_credentials')
+      }
+      provaCerta(request)
+      st.contaBloqueada = false
       // Outro rotate substitui o pendente, e o rotation muda com ele. O
       // pendente é da família do token (totp_pending_family_id).
       st.troca = { rotation: rotacao(++st.rotacoes), familia: familiaDe(request) }
@@ -456,7 +507,9 @@ export function criarApiFalsa() {
       // pendente posto à mão pelo teste (sem família) vale para qualquer uma.
       const deOutra = st.troca?.familia !== undefined && st.troca.familia !== familiaDe(request)
       if (!st.troca || deOutra || corpo.rotation !== st.troca.rotation) return erro(403, 'forbidden')
-      if (corpo.code !== TOTP_NOVO) return erro(401, 'invalid_credentials')
+      if (corpo.code !== TOTP_NOVO) return provaErrada(request, 401, 'invalid_credentials')
+      provaCerta(request)
+      st.contaBloqueada = false
       st.troca = null
       st.sessoes = st.sessoes.filter((s) => s.current)
       return HttpResponse.json({ recovery_codes: CODIGOS_NOVOS })

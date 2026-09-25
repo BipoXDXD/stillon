@@ -1,6 +1,15 @@
 import { http, HttpResponse } from 'msw'
 import { describe, expect, it, vi } from 'vitest'
-import { EMAIL, RECUPERACAO_OK, rotacao, SEGREDO_NOVO, SENHA, TOTP_NOVO, TOTP_OK } from '@/test/api-falsa'
+import {
+  EMAIL,
+  LIMITE_DE_PROVAS,
+  RECUPERACAO_OK,
+  rotacao,
+  SEGREDO_NOVO,
+  SENHA,
+  TOTP_NOVO,
+  TOTP_OK,
+} from '@/test/api-falsa'
 import { canal } from '@/test/fixtures'
 import { buscarDoTeste, novaSessao, usarApiFalsa } from '@/test/ambiente'
 import { servidor } from '@/test/setup'
@@ -422,5 +431,93 @@ describe('a API falsa segue o servidor', () => {
     const { api } = await logado()
     await expect(api.apagarCanal('nao-existe')).rejects.toMatchObject({ status: 404, code: 'not_found' })
     await expect(api.reenviarVerificacao('nao-existe')).rejects.toMatchObject({ status: 404, code: 'not_found' })
+  })
+})
+
+// A3 e A6 do Plano 10, depois da integração com o auth: a falsa da parte
+// painel imitava o servidor de fab20c2 (sem contador por família, e com a
+// conta bloqueada valendo nas rotas autenticadas). Os handlers que ela imita:
+// provasDaFamilia (httpapi/provas.go), auth.FamilyProofs (auth/provas.go),
+// TOTPConfirm/Disable/Rotate/RotateConfirm e AccountHandlers.ChangePassword.
+describe('a API falsa conta as provas erradas por família, como o servidor', () => {
+  it('a 5ª prova errada derruba a família, e a troca de senha e o 2FA dividem o contador', async () => {
+    const { falsa, api } = await logado()
+    falsa.estado.totpLigado = true
+    const erradas = [
+      () => api.trocarSenha({ current_password: 'errada', new_password: 'outra senha bem comprida', totp_code: TOTP_OK }),
+      () => api.totpDesativar('errada', TOTP_OK),
+      () => api.totpTrocar(SENHA, '000000'),
+      () => api.totpCadastrar('errada'),
+    ]
+    for (const errar of erradas) {
+      await expect(errar()).rejects.toMatchObject({ status: 401, code: 'invalid_credentials' })
+    }
+    expect(falsa.estado.familiaRevogada).toBe(false)
+    await expect(api.totpDesativar(SENHA, '000000')).rejects.toMatchObject({ status: 401, code: 'unauthorized' })
+    expect(falsa.estado.familiaRevogada).toBe(true)
+    // A família caiu: o 2FA continua ligado, e nem as provas certas passam
+    // mais pela guarda da família (o painel renova, e a renovação falha).
+    expect(falsa.estado.totpLigado).toBe(true)
+    await expect(api.totpDesativar(SENHA, TOTP_OK)).rejects.toMatchObject({ status: 401, code: 'unauthorized' })
+    expect(falsa.estado.totpLigado).toBe(true)
+  })
+
+  it('a prova certa zera o contador da família', async () => {
+    const { falsa, api } = await logado()
+    falsa.estado.totpLigado = true
+    for (let i = 1; i < LIMITE_DE_PROVAS; i++) {
+      await expect(api.totpDesativar('errada', TOTP_OK)).rejects.toMatchObject({ code: 'invalid_credentials' })
+    }
+    await api.totpTrocar(SENHA, TOTP_OK)
+    for (let i = 1; i < LIMITE_DE_PROVAS; i++) {
+      await expect(api.totpDesativar('errada', TOTP_OK)).rejects.toMatchObject({ code: 'invalid_credentials' })
+    }
+    expect(falsa.estado.familiaRevogada).toBe(false)
+  })
+
+  it('o /totp/confirm conta o código errado: 400 até a 4ª, e a 5ª é 401 unauthorized', async () => {
+    const { falsa, api } = await logado()
+    await api.totpCadastrar(SENHA)
+    for (let i = 1; i < LIMITE_DE_PROVAS; i++) {
+      await expect(api.totpConfirmar('000000')).rejects.toMatchObject({ status: 400, code: 'validation_failed' })
+    }
+    await expect(api.totpConfirmar('000000')).rejects.toMatchObject({ status: 401, code: 'unauthorized' })
+    expect(falsa.estado.familiaRevogada).toBe(true)
+    expect(falsa.estado.totpLigado).toBe(false)
+  })
+
+  it('403 e política da senha não contam como prova errada', async () => {
+    const { falsa, api } = await logado()
+    for (let i = 0; i < LIMITE_DE_PROVAS + 1; i++) {
+      await expect(api.totpTrocar(SENHA, TOTP_OK)).rejects.toMatchObject({ status: 403 })
+      await expect(api.totpConfirmarTroca(TOTP_NOVO, rotacao(1))).rejects.toMatchObject({ status: 403 })
+      await expect(api.trocarSenha({ current_password: 'errada', new_password: 'curta' })).rejects.toMatchObject({
+        status: 400,
+      })
+    }
+    expect(falsa.estado.familiaRevogada).toBe(false)
+  })
+
+  // TOTP.Confirm valida o código contra o segredo ANTES de ver que o 2FA já
+  // está ligado: o código errado é 400 (e conta), só o certo chega ao 403.
+  it('confirm com o 2FA já ligado: código errado é 400, o certo é 403', async () => {
+    const { falsa, api } = await logado()
+    falsa.estado.totpLigado = true
+    await expect(api.totpConfirmar('000000')).rejects.toMatchObject({ status: 400, code: 'validation_failed' })
+    await expect(api.totpConfirmar(TOTP_OK)).rejects.toMatchObject({ status: 403, code: 'forbidden' })
+  })
+
+  it('a conta bloqueada barra o login, não as rotas autenticadas; a troca de autenticador a destrava', async () => {
+    const { falsa, api, sessao } = await logado()
+    falsa.estado.totpLigado = true
+    falsa.estado.contaBloqueada = true
+    const troca = await api.totpTrocar(SENHA, TOTP_OK)
+    expect(falsa.estado.contaBloqueada).toBe(false)
+    falsa.estado.contaBloqueada = true
+    await api.totpConfirmarTroca(TOTP_NOVO, troca.rotation)
+    expect(falsa.estado.contaBloqueada).toBe(false)
+    falsa.estado.contaBloqueada = true
+    await sessao.sair()
+    await expect(sessao.entrar(EMAIL, SENHA)).rejects.toMatchObject({ code: 'invalid_credentials' })
   })
 })

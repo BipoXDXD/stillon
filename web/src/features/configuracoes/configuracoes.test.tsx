@@ -149,6 +149,34 @@ describe('senha', () => {
   })
 })
 
+// A3 do Plano 10, depois da integração com o auth: a 5ª prova errada na
+// família derruba a sessão (401 unauthorized). Na tela é o mesmo caminho da
+// família morta: "O acesso desta tela venceu.", e renovar leva ao login.
+describe('provas erradas na família', () => {
+  it('a 5ª senha errada no diálogo do 2FA derruba a sessão e volta ao login', async () => {
+    const r = await renderizarPainel('/settings')
+    await r.usuario.click(await screen.findByRole('button', { name: 'Ativar' }))
+    const dialogo = await screen.findByRole('dialog')
+    const senha = within(dialogo).getByLabelText('Sua senha')
+    for (let i = 1; i < 5; i++) {
+      await r.usuario.clear(senha)
+      await r.usuario.type(senha, 'errada')
+      await r.usuario.click(within(dialogo).getByRole('button', { name: 'Continuar' }))
+      await waitFor(() => expect(r.falsa.chamadas('POST /auth/totp/enroll')).toBe(i))
+      expect(await within(dialogo).findByRole('alert')).not.toHaveTextContent('O acesso desta tela venceu.')
+    }
+    expect(r.falsa.estado.familiaRevogada).toBe(false)
+    await r.usuario.clear(senha)
+    await r.usuario.type(senha, 'errada')
+    await r.usuario.click(within(dialogo).getByRole('button', { name: 'Continuar' }))
+    await waitFor(() => expect(within(dialogo).getByRole('alert')).toHaveTextContent('O acesso desta tela venceu.'))
+    expect(r.falsa.estado.familiaRevogada).toBe(true)
+    await r.usuario.click(within(dialogo).getByRole('button', { name: 'Renovar acesso e tentar de novo' }))
+    expect(await screen.findByText('Sua sessão terminou. Entre de novo.')).toBeInTheDocument()
+    expect(r.router.state.location.pathname).toBe('/login')
+  })
+})
+
 describe('sessões', () => {
   // Nota do Plano 5 §12: o 204 já apagou o cookie; o painel larga o token e
   // vai ao login SEM chamar refresh nem logout. Sabotagem prevista: trocar
