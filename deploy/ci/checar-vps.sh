@@ -658,7 +658,24 @@ grep -q 'rollback feito' "$TARS/erro" || falhar "com o compose que diz saudável
 no_ar "$SHA_A" || falhar "com o compose que diz saudável sem esperar, versao $(versao), app $(imagem_do_app)"
 [ "$(docker inspect -f '{{.State.Health.Status}}' "$(dc ps -q app)")" = healthy ] ||
     falhar "com o compose que diz saudável sem esperar, o app não ficou saudável: $(estado)"
-ok "stillon-entrada: não acredita no código do up --wait; confere ela mesma o contêiner novo (4)"
+# O mesmo compose falso com a imagem lenta (de pé e sempre em `starting` na
+# espera): o caso da causa raiz, sempre. O `up` volta na hora; a entrada
+# espera ela mesma até ESPERA_S, sai pelo prazo (e não por um `unhealthy`,
+# que só viria depois dele) e faz o rollback.
+inicio=$(date +%s)
+c=0
+env -i PATH="$TARS/bin-compose:$PATH" HOME="$HOME" SSH_ORIGINAL_COMMAND="deploy $SHA_LENTO $ID_LENTO" \
+    bash "$TARS/entrada-compose" < "$TARS/lento.tar" > "$TARS/saida" 2> "$TARS/erro" || c=$?
+duracao=$(($(date +%s) - inicio))
+[ "$c" = 4 ] || falhar "com o compose falso, o deploy lento saiu $c (em $duracao s), queria 4: $(estado)"
+[ "$duracao" -ge 45 ] || falhar "com o compose falso, o deploy lento voltou em $duracao s, antes da espera de 45 s"
+grep -q 'segue em starting depois de 45 s' "$TARS/erro" ||
+    falhar "com o compose falso, o deploy lento não saiu pelo prazo da espera: $(estado)"
+grep -q 'rollback feito' "$TARS/erro" || falhar "com o compose falso, o deploy lento não fez o rollback: $(estado)"
+no_ar "$SHA_A" || falhar "com o compose falso e o deploy lento, versao $(versao), app $(imagem_do_app)"
+[ "$(docker inspect -f '{{.State.Health.Status}}' "$(dc ps -q app)")" = healthy ] ||
+    falhar "com o compose falso e o deploy lento, o app não ficou saudável: $(estado)"
+ok "stillon-entrada: não acredita no código do up --wait; confere ela mesma o contêiner novo e espera o prazo (4)"
 
 # 8d. Deploys seguidos: versao-anterior anda, e ficam as 3 últimas imagens
 #     (as 3 últimas que ficaram no ar; a doente sai), fora a etiqueta atual.
