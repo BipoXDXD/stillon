@@ -2,6 +2,7 @@
 package auth
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/base64"
@@ -60,12 +61,15 @@ func ValidateNewPassword(plain string) string {
 }
 
 // HashPassword gera um hash no formato PHC, com salt aleatório.
-func HashPassword(plain string) (string, error) {
+//
+// Toma uma vaga do semáforo do Argon2id (A1 do Plano 10): sem vaga no prazo,
+// ou com ctx cancelado enquanto espera, ErrArgon2Busy.
+func HashPassword(ctx context.Context, plain string) (string, error) {
 	salt := make([]byte, argonSaltLen)
 	if _, err := rand.Read(salt); err != nil {
 		return "", fmt.Errorf("gerar salt: %w", err)
 	}
-	return HashPasswordWith(plain, salt, argonMemory, argonTime, argonThreads)
+	return hashCom(ctx, plain, salt, argonMemory, argonTime, argonThreads)
 }
 
 // HashPasswordWith é exportada para que os testes consigam construir hashes
@@ -79,10 +83,14 @@ func HashPassword(plain string) (string, error) {
 // Toma uma vaga do semáforo do Argon2id (A1 do Plano 10): sem vaga no prazo,
 // ErrArgon2Busy.
 func HashPasswordWith(plain string, salt []byte, memory, time uint32, threads uint8) (string, error) {
+	return hashCom(context.Background(), plain, salt, memory, time, threads)
+}
+
+func hashCom(ctx context.Context, plain string, salt []byte, memory, time uint32, threads uint8) (string, error) {
 	if !parametrosValidos(memory, time, threads) || len(salt) == 0 {
 		return "", ErrInvalidHash
 	}
-	soltar, err := ReserveArgon2()
+	soltar, err := ReserveArgon2(ctx)
 	if err != nil {
 		return "", err
 	}
@@ -125,9 +133,10 @@ func Argon2Verifications() uint64 { return verificacoes.Load() }
 // hash com os parâmetros atuais.
 //
 // Toma uma vaga do semáforo do Argon2id (A1 do Plano 10): sem vaga no prazo,
-// ErrArgon2Busy, e a senha não foi verificada.
-func VerifyPassword(encoded, plain string) (ok bool, needsRehash bool, err error) {
-	soltar, err := ReserveArgon2()
+// ErrArgon2Busy, e a senha não foi verificada; o mesmo com ctx cancelado
+// enquanto espera a vaga (o cliente desistiu).
+func VerifyPassword(ctx context.Context, encoded, plain string) (ok bool, needsRehash bool, err error) {
+	soltar, err := ReserveArgon2(ctx)
 	if err != nil {
 		return false, false, err
 	}
@@ -215,8 +224,8 @@ var dummyHash = sync.OnceValue(func() string {
 // Passa pelo mesmo semáforo da verificação real (A1 do Plano 10): com o teto
 // cheio, a conta existente e a inexistente recebem o mesmo ErrArgon2Busy, no
 // mesmo prazo.
-func VerifyDummy() error {
-	soltar, err := ReserveArgon2()
+func VerifyDummy(ctx context.Context) error {
+	soltar, err := ReserveArgon2(ctx)
 	if err != nil {
 		return err
 	}

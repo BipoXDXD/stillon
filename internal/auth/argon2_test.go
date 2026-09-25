@@ -1,6 +1,7 @@
 package auth_test
 
 import (
+	"context"
 	"errors"
 	"runtime"
 	"testing"
@@ -22,7 +23,7 @@ func ocuparArgon2(t *testing.T, n int) []func() {
 		auth.SetArgon2MaxConcurrent(auth.DefaultArgon2MaxConcurrent())
 	})
 	for range n {
-		soltar, err := auth.ReserveArgon2()
+		soltar, err := auth.ReserveArgon2(context.Background())
 		if err != nil {
 			t.Fatalf("reservar vaga %d de %d: %v", len(vagas)+1, n, err)
 		}
@@ -37,23 +38,23 @@ func ocuparArgon2(t *testing.T, n int) []func() {
 // no prazo com ErrArgon2Busy sem rodar o Argon2id; solta uma vaga, o mesmo
 // caminho passa.
 func TestEveryArgon2PathWaitsForASlot(t *testing.T) {
-	h, err := auth.HashPassword(senha)
+	h, err := auth.HashPassword(context.Background(), senha)
 	if err != nil {
 		t.Fatal(err)
 	}
-	auth.VerifyDummy() // prepara o hash dummy fora do teste (ele é calculado uma vez)
+	auth.VerifyDummy(context.Background()) // prepara o hash dummy fora do teste (ele é calculado uma vez)
 	auth.EncurtarEsperaDoArgon2(t, 50*time.Millisecond)
 	vagas := ocuparArgon2(t, 2)
 
 	antes := auth.Argon2Verifications()
 	caminhos := map[string]func() error{
-		"HashPassword": func() error { _, err := auth.HashPassword(senha); return err },
+		"HashPassword": func() error { _, err := auth.HashPassword(context.Background(), senha); return err },
 		"HashPasswordWith": func() error {
 			_, err := auth.HashPasswordWith(senha, []byte("saltsaltsaltsalt"), 64*1024, 3, 2)
 			return err
 		},
-		"VerifyPassword": func() error { _, _, err := auth.VerifyPassword(h, senha); return err },
-		"VerifyDummy":    auth.VerifyDummy,
+		"VerifyPassword": func() error { _, _, err := auth.VerifyPassword(context.Background(), h, senha); return err },
+		"VerifyDummy":    func() error { return auth.VerifyDummy(context.Background()) },
 	}
 	for nome, chamar := range caminhos {
 		inicio := time.Now()
@@ -69,7 +70,7 @@ func TestEveryArgon2PathWaitsForASlot(t *testing.T) {
 	}
 
 	vagas[0]() // o Cleanup solta de novo: soltar é idempotente
-	ok, _, err := auth.VerifyPassword(h, senha)
+	ok, _, err := auth.VerifyPassword(context.Background(), h, senha)
 	if err != nil || !ok {
 		t.Errorf("com uma vaga livre: ok=%v err=%v, queria a senha aceita", ok, err)
 	}
@@ -78,7 +79,7 @@ func TestEveryArgon2PathWaitsForASlot(t *testing.T) {
 // Quem espera ganha a vaga que se solta dentro do prazo: o semáforo é fila
 // curta, não recusa imediata.
 func TestArgon2WaiterGetsTheReleasedSlot(t *testing.T) {
-	h, err := auth.HashPassword(senha)
+	h, err := auth.HashPassword(context.Background(), senha)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,7 +87,7 @@ func TestArgon2WaiterGetsTheReleasedSlot(t *testing.T) {
 
 	fim := make(chan error, 1)
 	go func() {
-		_, _, err := auth.VerifyPassword(h, senha)
+		_, _, err := auth.VerifyPassword(context.Background(), h, senha)
 		fim <- err
 	}()
 	time.Sleep(100 * time.Millisecond)
@@ -99,6 +100,47 @@ func TestArgon2WaiterGetsTheReleasedSlot(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("a verificação não pegou a vaga solta")
 	}
+}
+
+// M1 da revisão do Plano 10 (auth): quem espera a vaga com o contexto da
+// requisição desiste quando ele é cancelado (o cliente foi embora), e não
+// segura a goroutine na fila até o fim do prazo. O erro é ErrArgon2Busy (a
+// API responde como ao semáforo cheio, sem contar prova) e também o do
+// contexto. Com o prazo longo aqui, desistir antes dele só pode ser o ctx.
+func TestArgon2WaitStopsWhenTheContextIsCanceled(t *testing.T) {
+	auth.EncurtarEsperaDoArgon2(t, 5*time.Second)
+	ocuparArgon2(t, 1)
+
+	ctx, cancelar := context.WithCancel(context.Background())
+	fim := make(chan error, 1)
+	inicio := time.Now()
+	go func() {
+		soltar, err := auth.ReserveArgon2(ctx)
+		soltar()
+		fim <- err
+	}()
+	time.Sleep(50 * time.Millisecond)
+	cancelar()
+	select {
+	case err := <-fim:
+		if !errors.Is(err, auth.ErrArgon2Busy) || !errors.Is(err, context.Canceled) {
+			t.Errorf("erro = %v, queria ErrArgon2Busy e context.Canceled", err)
+		}
+		if d := time.Since(inicio); d > 2*time.Second {
+			t.Errorf("desistiu em %v, só no prazo, e não no cancelamento", d)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("a espera pela vaga não parou com o contexto cancelado")
+	}
+
+	// Um contexto já cancelado com vaga livre: a vaga é tomada (o select
+	// prefere a vaga livre), porque a verificação custa o mesmo que desistir.
+	auth.SetArgon2MaxConcurrent(1)
+	soltar, err := auth.ReserveArgon2(ctx)
+	if err != nil {
+		t.Errorf("com vaga livre e o ctx cancelado: %v, queria a vaga", err)
+	}
+	soltar()
 }
 
 // Capacidade: o padrão é min(NumCPU, 4); a faixa aceita é 1–64, e o que

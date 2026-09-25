@@ -127,7 +127,7 @@ func (c contaAttempts) Reset(ctx context.Context) error {
 // needsRehash só vale quando ok. Com o teto do Argon2id cheio, devolve
 // ErrArgon2Busy sem reservar nada (A1 do Plano 10).
 func CheckPassword(ctx context.Context, t Attempts, u User, plain string) (ok, needsRehash bool, err error) {
-	soltar, err := ReserveArgon2()
+	soltar, err := ReserveArgon2(ctx)
 	if err != nil {
 		return false, false, err
 	}

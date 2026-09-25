@@ -138,7 +138,7 @@ func montar(t *testing.T) cenario {
 	if err != nil {
 		t.Fatal(err)
 	}
-	hash, err := auth.HashPassword(senha)
+	hash, err := auth.HashPassword(context.Background(), senha)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -281,7 +281,7 @@ func TestChangePasswordRechecksTheFamilyUnderTheLock(t *testing.T) {
 	if err := c.pool.QueryRow(context.Background(), `SELECT password_hash FROM users WHERE id = $1`, c.user).Scan(&hash); err != nil {
 		t.Fatal(err)
 	}
-	if ok, _, _ := auth.VerifyPassword(hash, senha); !ok {
+	if ok, _, _ := auth.VerifyPassword(context.Background(), hash, senha); !ok {
 		t.Error("a senha mudou mesmo com a sessão atual encerrada")
 	}
 }
@@ -297,7 +297,7 @@ func TestChangePasswordLosesToAConcurrentChange(t *testing.T) {
 		soltar()
 		t.Fatal("a troca não chegou à trava")
 	}
-	outra, err := auth.HashPassword("a-outra-troca-que-ganhou")
+	outra, err := auth.HashPassword(context.Background(), "a-outra-troca-que-ganhou")
 	if err != nil {
 		t.Fatal(err)
 	}

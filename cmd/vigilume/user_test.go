@@ -69,7 +69,7 @@ func senhaGravadaConfere(t *testing.T, pool *pgxpool.Pool, email, senha string) 
 		`SELECT password_hash FROM users WHERE email = $1`, email).Scan(&hash); err != nil {
 		t.Fatal(err)
 	}
-	ok, _, err := auth.VerifyPassword(hash, senha)
+	ok, _, err := auth.VerifyPassword(context.Background(), hash, senha)
 	if err != nil {
 		t.Fatal(err)
 	}

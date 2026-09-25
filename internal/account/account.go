@@ -159,7 +159,7 @@ func (s *Service) ChangePassword(ctx context.Context, userID, familyID uuid.UUID
 		return err
 	}
 
-	ok, _, err := auth.VerifyPassword(u.PasswordHash, in.Current)
+	ok, _, err := auth.VerifyPassword(ctx, u.PasswordHash, in.Current)
 	if err != nil {
 		return err
 	}
@@ -184,7 +184,7 @@ func (s *Service) ChangePassword(ctx context.Context, userID, familyID uuid.UUID
 		}
 	}
 
-	hash, err := auth.HashPassword(in.New)
+	hash, err := auth.HashPassword(ctx, in.New)
 	if err != nil {
 		return err
 	}
@@ -273,7 +273,7 @@ func (s *Service) CreateUser(ctx context.Context, email, password string) (uuid.
 		return uuid.Nil, PolicyError{Reason: motivo}
 	}
 	// O Argon2id leva ~100 ms: fora da transação, para não segurar a trava.
-	hash, err := auth.HashPassword(password)
+	hash, err := auth.HashPassword(ctx, password)
 	if err != nil {
 		return uuid.Nil, err
 	}
@@ -325,7 +325,7 @@ func (s *Service) ResetPassword(ctx context.Context, email, password string) (in
 	if motivo := auth.ValidateNewPassword(password); motivo != "" {
 		return 0, PolicyError{Reason: motivo}
 	}
-	hash, err := auth.HashPassword(password)
+	hash, err := auth.HashPassword(ctx, password)
 	if err != nil {
 		return 0, err
 	}

@@ -214,7 +214,7 @@ func TestRehashPasswordIsACompareAndSwap(t *testing.T) {
 	store := auth.NewPGStore(pool)
 	ctx := context.Background()
 
-	novo, err := auth.HashPassword("outra-senha-bem-comprida")
+	novo, err := auth.HashPassword(context.Background(), "outra-senha-bem-comprida")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -319,7 +319,7 @@ func TestCheckPassword(t *testing.T) {
 	store := auth.NewPGStore(pool)
 	ctx := context.Background()
 
-	hash, err := auth.HashPassword(senha)
+	hash, err := auth.HashPassword(context.Background(), senha)
 	if err != nil {
 		t.Fatal(err)
 	}

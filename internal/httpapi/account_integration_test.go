@@ -54,7 +54,7 @@ func senhaGravadaE(t *testing.T, a *api, senha string) bool {
 		`SELECT password_hash FROM users WHERE id = $1`, a.userID).Scan(&hash); err != nil {
 		t.Fatal(err)
 	}
-	ok, _, err := auth.VerifyPassword(hash, senha)
+	ok, _, err := auth.VerifyPassword(context.Background(), hash, senha)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1,6 +1,7 @@
 package httpapi_test
 
 import (
+	"context"
 	"net/http"
 	"testing"
 
@@ -21,7 +22,7 @@ func prenderVagasDoArgon2(t *testing.T, n int) func() {
 	}
 	t.Cleanup(soltar)
 	for range n {
-		s, err := auth.ReserveArgon2()
+		s, err := auth.ReserveArgon2(context.Background())
 		if err != nil {
 			t.Fatalf("prender vaga %d de %d: %v", len(vagas)+1, n, err)
 		}

@@ -1,7 +1,9 @@
 package auth
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -60,9 +62,15 @@ func Argon2MaxConcurrent() int { return cap(*vagasArgon2.Load()) }
 // devolvida solta a vaga (chamá-la de novo não faz nada). Sem vaga no prazo,
 // devolve ErrArgon2Busy e uma função que não faz nada.
 //
+// A espera também para quando ctx é cancelado (M1 da revisão do Plano 10): o
+// cliente que desistiu não segura uma goroutine na fila pelo prazo inteiro. O
+// erro é ErrArgon2Busy, para quem chama responder como ao semáforo cheio (sem
+// verificar nem contar nada), e também o erro do ctx. Uma vaga livre é tomada
+// mesmo com ctx já cancelado: o caminho rápido não olha o ctx.
+//
 // Exportada para que os testes de fora do pacote segurem vagas; o código de
 // produção só a usa por HashPassword, VerifyPassword e VerifyDummy.
-func ReserveArgon2() (release func(), err error) {
+func ReserveArgon2(ctx context.Context) (release func(), err error) {
 	vagas := *vagasArgon2.Load()
 	soltar := sync.OnceFunc(func() { <-vagas })
 	select {
@@ -77,5 +85,7 @@ func ReserveArgon2() (release func(), err error) {
 		return soltar, nil
 	case <-prazo.C:
 		return func() {}, ErrArgon2Busy
+	case <-ctx.Done():
+		return func() {}, fmt.Errorf("%w: %w", ErrArgon2Busy, ctx.Err())
 	}
 }

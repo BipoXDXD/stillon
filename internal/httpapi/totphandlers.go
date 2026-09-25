@@ -280,7 +280,7 @@ func (h *AuthHandlers) usuarioOuInterno(w http.ResponseWriter, r *http.Request, 
 // porque um anônimo travou o login), nem conta a falha (quem tem a sessão e
 // chuta a senha é expulso da sessão, e não tranca o dono).
 func (h *AuthHandlers) senhaConfere(w http.ResponseWriter, r *http.Request, res *auth.ProofReservation, user auth.User, senha string) bool {
-	ok, _, err := auth.VerifyPassword(user.PasswordHash, senha)
+	ok, _, err := auth.VerifyPassword(r.Context(), user.PasswordHash, senha)
 	if err != nil {
 		h.internal(w, r, "verificar senha", err)
 		return false

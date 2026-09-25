@@ -78,7 +78,7 @@ func (h *AuthHandlers) Login(w http.ResponseWriter, r *http.Request) {
 
 	user, err := h.users.ByEmail(r.Context(), auth.NormalizeEmail(req.Email))
 	if errors.Is(err, auth.ErrNotFound) {
-		if err := auth.VerifyDummy(); err != nil {
+		if err := auth.VerifyDummy(r.Context()); err != nil {
 			h.internal(w, r, "verificar senha", err)
 			return
 		}
@@ -123,7 +123,7 @@ func (h *AuthHandlers) Login(w http.ResponseWriter, r *http.Request) {
 		// O rehash é um compare-and-swap: se um set-password comitou depois da
 		// verificação, ele não grava, a prova continua sendo o hash antigo, e
 		// Issue recusa a sessão. Sem o CAS, o rehash desfazia a redefinição.
-		if novo, err := auth.HashPassword(req.Password); err == nil {
+		if novo, err := auth.HashPassword(r.Context(), req.Password); err == nil {
 			trocou, err := h.users.RehashPassword(r.Context(), user.ID, user.PasswordHash, novo)
 			if err != nil {
 				slog.Error("regravar hash de senha", "erro", err)
