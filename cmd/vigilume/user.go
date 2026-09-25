@@ -189,7 +189,7 @@ func runUser(ctx context.Context, args []string, in entradaDaSenha, stdout, stde
 			fmt.Fprintf(stdout, "o 2FA já estava desativado para %s; nada mudou\n", e)
 			return saidaOK
 		}
-		fmt.Fprintf(stdout, "2FA desativado para %s; %d sessões encerradas. Acessos já abertos expiram em até 15 minutos. Entre com a senha e ative de novo pelo painel.\n", e, n)
+		fmt.Fprintf(stdout, "2FA desativado para %s; %s. Acessos já abertos expiram em até 15 minutos. Entre com a senha e ative de novo pelo painel.\n", e, sessoesEncerradas(n))
 		return saidaOK
 	}
 
@@ -242,7 +242,7 @@ func runUser(ctx context.Context, args []string, in entradaDaSenha, stdout, stde
 		if err != nil {
 			return falhar(saidaAmbiente, "%v", err)
 		}
-		fmt.Fprintf(stdout, "senha redefinida; %d sessões encerradas. Acessos já abertos expiram em até 15 minutos.\n", n)
+		fmt.Fprintf(stdout, "senha redefinida; %s. Acessos já abertos expiram em até 15 minutos.\n", sessoesEncerradas(n))
 	}
 	return saidaOK
 }
@@ -335,4 +335,13 @@ func validarTexto(b []byte) (string, error) {
 		return "", errors.New("a senha não é UTF-8 válido")
 	}
 	return string(b), nil
+}
+
+// sessoesEncerradas concorda o número: "1 sessão encerrada", e "N sessões
+// encerradas" para os outros (0 inclusive).
+func sessoesEncerradas(n int64) string {
+	if n == 1 {
+		return "1 sessão encerrada"
+	}
+	return fmt.Sprintf("%d sessões encerradas", n)
 }

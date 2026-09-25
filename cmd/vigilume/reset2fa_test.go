@@ -162,3 +162,49 @@ func TestReset2FAExitCodes(t *testing.T) {
 		t.Errorf("o uso não lista o reset-2fa (código %d): %q", r.codigo, r.stderr)
 	}
 }
+
+// "1 sessão encerrada", no singular; "N sessões encerradas" nos outros casos,
+// no reset-2fa e no set-password (antes, "1 sessões"). O dono do donoCom2FA tem
+// duas famílias vivas; o caso de 1 encerra uma delas direto no banco antes.
+// Sabotagem registrada: tirar o ramo "n == 1" de sessoesEncerradas → os dois
+// casos de 1 ficam vermelhos ("1 sessões encerradas").
+func TestSessionCountAgreesInNumber(t *testing.T) {
+	for _, caso := range []struct {
+		nome   string
+		vivas  int
+		trecho string
+	}{
+		{"uma", 1, "; 1 sessão encerrada."},
+		{"duas", 2, "; 2 sessões encerradas."},
+	} {
+		for _, cmd := range []string{"reset-2fa", "set-password"} {
+			t.Run(cmd+", "+caso.nome, func(t *testing.T) {
+				pool := testdb.New(t)
+				dsn := testdb.DSN(t)
+				dono := donoCom2FA(t, pool, dsn, cmd == "reset-2fa")
+				if caso.vivas == 1 {
+					if _, err := pool.Exec(context.Background(),
+						`UPDATE sessions SET revoked_at = now()
+						  WHERE family_id = (SELECT family_id FROM sessions WHERE user_id = $1 LIMIT 1)`, dono); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if v := vivasDe(t, pool, dono); v != caso.vivas {
+					t.Fatalf("o cenário tem %d sessões vivas, queria %d", v, caso.vivas)
+				}
+				var r execucao
+				if cmd == "reset-2fa" {
+					r = rodarUserCom(t, dsn, entradaDaSenha{pipe: novoLeitorParado(t)}, nil, cmd, "--email", "dono@exemplo.com")
+				} else {
+					r = rodarUser(t, dsn, "a-senha-nova-do-dono", cmd, "--email", "dono@exemplo.com")
+				}
+				if r.codigo != saidaOK {
+					t.Fatalf("%s: código %d; %s", cmd, r.codigo, r.stderr)
+				}
+				if !strings.Contains(r.stdout, caso.trecho) {
+					t.Errorf("stdout = %q, queria o trecho %q", r.stdout, caso.trecho)
+				}
+			})
+		}
+	}
+}

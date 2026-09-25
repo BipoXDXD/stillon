@@ -1,7 +1,6 @@
 // Package account é o serviço da conta do dono (Plano 5): criar e redefinir a
 // senha pelo CLI, e desligar o 2FA pelo CLI (reset-2fa, Plano 9); ler a conta
-// e trocar a senha pela API. O CLI e a API chamam
-// o mesmo serviço, para que a
+// e trocar a senha pela API. O CLI e a API chamam o mesmo serviço, para que a
 // política de senha e a normalização do e-mail sejam as mesmas nos dois (D20
 // do Plano 5).
 //
