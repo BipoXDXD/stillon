@@ -230,6 +230,12 @@ esperar_texto "== dump"
 [ "$(ler "$SSH_FALSO_DIR/args" | tail -n 2 | head -n 1)" = "deploy@vps.exemplo.com" ] || falhar "$caso: destino errado: $(ler "$SSH_FALSO_DIR/args" | tr '\n' ' ')"
 esperar_opcoes_do_ssh
 case $(ler "$arq") in *"== dump"*) falhar "$caso: o log foi parar no arquivo do backup" ;; esac
+# O backup não manda nada para a VPS: a entrada padrão do passo não chega ao
+# ssh (o comando remoto não a lê, e um ssh que a herdasse a esperaria).
+T_ENTRADA=$tmp/imagem.tar SSH_FALSO_SAIDA=$AGE rodar "backup não repassa a entrada padrão" backup "$arq"
+esperar_codigo 0
+[ -e "$SSH_FALSO_DIR/stdin" ] && [ ! -s "$SSH_FALSO_DIR/stdin" ] ||
+    falhar "$caso: o ssh do backup recebeu a entrada padrão do passo ($(wc -c <"$SSH_FALSO_DIR/stdin" 2>/dev/null) bytes)"
 : >"$tmp/resumo"
 GITHUB_STEP_SUMMARY=$tmp/resumo SSH_FALSO_SAIDA=$AGE SSH_FALSO_ERRO='Postgres: 40% do disco
 ' rodar "backup, linha do disco no resumo" backup "$arq"

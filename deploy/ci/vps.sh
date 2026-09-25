@@ -152,10 +152,12 @@ fazer_backup() {
     conferir_ambiente
 
     # A saída padrão do ssh (o cifrado) vai para o arquivo; a de erro (o log
-    # do backup) aparece no job e fica copiada para achar a linha do disco.
+    # do backup) aparece no job e fica copiada para achar a linha do disco. A
+    # entrada é /dev/null: o backup não manda nada para a VPS (um -n no
+    # conectar mudaria as opções do ssh, que o teste fixa).
     {
         {
-            if conectar backup 2>&1 >&3 3>&-; then c=0; else c=$?; fi
+            if conectar backup </dev/null 2>&1 >&3 3>&-; then c=0; else c=$?; fi
             echo "$c" >"$dir/codigo"
         } | tee "$dir/log" >&2
     } 3>"$saida"
