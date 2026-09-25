@@ -36,6 +36,26 @@ describe('detalhe', () => {
     await waitFor(() => expect(within(secao).getAllByRole('listitem')).toHaveLength(1))
   })
 
+  // B6 do Plano 10: a série pede a janela pelo nome (?window=1h), e o
+  // servidor calcula o from com o relógio dele. Antes, o from saía do
+  // relógio do navegador: adiantado 1 h, a janela "1 h" pedia um from
+  // depois do "agora" do servidor, e a série respondia 400. Sabotagem:
+  // mandar também o from no serie() do cliente → 400 da API falsa.
+  it('a série pede a janela ao servidor pelo nome, sem from do navegador', async () => {
+    const r = await renderizarPainel('/targets/alvo-1?janela=1h')
+    r.falsa.estado.alvos = [alvo()]
+    r.falsa.estado.serie = {
+      resolution: 'raw',
+      items: [{ checked_at: '2026-09-24T11:00:00Z', status: 'up', latency_ms: 100, status_code: 200, error_kind: null }],
+    }
+    await r.cliente.refetchQueries()
+    expect(await screen.findByText(/Mediana 100 ms/)).toBeInTheDocument()
+    const consultas = () => r.falsa.corpos('GET /targets/:id/checks')
+    expect(consultas()[consultas().length - 1]).toEqual({ window: '1h' })
+    await r.usuario.click(screen.getByRole('button', { name: '30 dias' }))
+    await waitFor(() => expect(consultas()[consultas().length - 1]).toEqual({ window: '30d' }))
+  })
+
   it('a janela acima de 48h desenha pelo que o servidor decidiu (resolution 1h)', async () => {
     const r = await renderizarPainel('/targets/alvo-1?janela=7d')
     r.falsa.estado.alvos = [alvo()]

@@ -16,7 +16,7 @@ import type { Serie } from '@/lib/api/schemas'
 import { dataHora, duracao, fuso, milissegundos, porcento } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { GraficoDeLatencia } from './GraficoDeLatencia'
-import { desde, ehJanela, JANELAS, resumir, type Janela } from './serie'
+import { ehJanela, JANELAS, resumir, type Janela } from './serie'
 
 const NOMES: Record<Janela, string> = { '1h': '1 h', '6h': '6 h', '24h': '24 h', '7d': '7 dias', '30d': '30 dias', '90d': '90 dias' }
 
@@ -141,7 +141,7 @@ function DetalheDoAlvo({ id }: { id: string }) {
   const avisar = useAvisar()
   const alvo = useAlvo(id)
   const resumo = useResumo()
-  const serie = useSerie(id, janela, () => desde(janela, Date.now()))
+  const serie = useSerie(id, janela)
   const [apagando, setApagando] = useState(false)
   const [ocupado, setOcupado] = useState(false)
   const [erro, setErro] = useState<string | null>(null)

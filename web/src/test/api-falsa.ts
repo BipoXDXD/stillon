@@ -130,7 +130,8 @@ export function criarApiFalsa() {
     'DELETE /sessions/:id',
   ])
 
-  // Envolve um handler com as guardas do servidor.
+  // Envolve um handler com as guardas do servidor. Num GET, o "corpo"
+  // guardado é a query string (os testes da série leem o window).
   function rota(
     metodo: 'get' | 'post' | 'patch' | 'delete',
     caminho: string,
@@ -140,7 +141,8 @@ export function criarApiFalsa() {
     return http[metodo](`*/api/v1${caminho}`, async ({ request, params }) => {
       const chave = `${metodo.toUpperCase()} ${caminho}`
       const corpo = request.headers.get('Content-Type')?.includes('json') ? ((await request.json()) as Json) : {}
-      contar(chave, corpo)
+      const consulta = Object.fromEntries(new URL(request.url).searchParams)
+      contar(chave, metodo === 'get' ? (Object.keys(consulta).length ? consulta : undefined) : corpo)
       if (metodo !== 'get' && request.headers.get('X-Requested-With') !== 'vigilume') return erro(403, 'forbidden')
       if (protegida) {
         const t = request.headers.get('Authorization')?.replace(/^Bearer /, '')
@@ -255,7 +257,17 @@ export function criarApiFalsa() {
       st.resumo = st.resumo.filter((x) => x.id !== params.id)
       return new HttpResponse(null, { status: 204 })
     }),
-    rota('get', '/targets/:id/checks', () => HttpResponse.json(st.serie)),
+    // B6 do Plano 10: a janela vai por nome (?window=), e o servidor calcula
+    // o from com o relógio dele. window fora da lista, vazio, ou junto com
+    // from é 400 (field window, reason invalid).
+    rota('get', '/targets/:id/checks', ({ request }) => {
+      const q = new URL(request.url).searchParams
+      const janela = q.get('window')
+      if (janela !== null && (!['1h', '6h', '24h', '7d', '30d', '90d'].includes(janela) || q.has('from'))) {
+        return erro(400, 'validation_failed', [{ field: 'window', reason: 'invalid' }])
+      }
+      return HttpResponse.json(st.serie)
+    }),
 
     rota('get', '/incidents', ({ request }) => {
       const q = new URL(request.url).searchParams

@@ -121,9 +121,11 @@ export function criarApi(sessao: Sessao, buscar: Buscar, o: OpcoesDaApi = {}) {
     alterarAlvo: (id: string, a: AlteracaoAlvo) =>
       pedir({ metodo: 'PATCH', caminho: `/targets/${encodeURIComponent(id)}`, corpo: a }, Alvo),
     apagarAlvo: (id: string) => pedir({ metodo: 'DELETE', caminho: `/targets/${encodeURIComponent(id)}` }, null),
-    // Só from: o "agora" é do servidor, sem depender do relógio do navegador.
-    serie: (id: string, desde: string) =>
-      get(`/targets/${encodeURIComponent(id)}/checks${consulta({ from: desde })}`, Serie),
+    // Só a janela, pelo nome (B6 do Plano 10): o servidor calcula from = to −
+    // janela com o relógio dele. O from calculado aqui dependia do relógio
+    // do navegador, e o to sempre foi o do servidor.
+    serie: (id: string, janela: string) =>
+      get(`/targets/${encodeURIComponent(id)}/checks${consulta({ window: janela })}`, Serie),
 
     incidentes: (f: FiltroIncidentes) =>
       get(

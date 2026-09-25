@@ -91,9 +91,10 @@ respostas['POST /auth/totp/rotate/confirm'] = codigosNovos
 
 function respostaDe(metodo: string, u: URL): unknown {
   const chave = `${metodo} ${u.pathname.replace('/api/v1', '')}`
+  // A janela vem pelo nome (?window=, B6 do Plano 10); acima de 48 h, o
+  // servidor responde por hora.
   if (chave === 'GET /targets/a1/checks') {
-    const desde = Date.parse(u.searchParams.get('from') ?? '')
-    return Date.now() - desde > 48 * 3_600_000 ? horaria : bruta
+    return ['7d', '30d', '90d'].includes(u.searchParams.get('window') ?? '') ? horaria : bruta
   }
   return respostas[chave]
 }
