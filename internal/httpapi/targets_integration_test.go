@@ -685,3 +685,51 @@ func TestChecksWindowIsComputedByTheServer(t *testing.T) {
 		}
 	}
 }
+
+// B1 (Plano 10), pelo contrato: PATCH com url de outra origem e sem headers
+// responde header_names vazio.
+func TestPatchToAnotherOriginDropsTheHeaders(t *testing.T) {
+	a := newAPI(t)
+	tok := tokenDe(t, a, a.userID)
+	var criado alvoJSON
+	lerCorpo(t, chamar(t, a, http.MethodPost, "/api/v1/targets", tok, alvoValido), &criado)
+
+	resp := chamar(t, a, http.MethodPatch, "/api/v1/targets/"+criado.ID, tok, map[string]any{"url": "https://atacante.example/"})
+	var got alvoJSON
+	cru := lerCorpo(t, resp, &got)
+	if resp.StatusCode != http.StatusOK || got.HeaderNames == nil || len(got.HeaderNames) != 0 {
+		t.Errorf("PATCH para outra origem deu %d %s, queria 200 com header_names []", resp.StatusCode, cru)
+	}
+}
+
+// C2 (Plano 10): 1xx e 3xx em expected_status são 400 no POST e no PATCH.
+func TestExpectedStatusOutsideTheReachableRangesIs400(t *testing.T) {
+	a := newAPI(t)
+	tok := tokenDe(t, a, a.userID)
+	var criado alvoJSON
+	lerCorpo(t, chamar(t, a, http.MethodPost, "/api/v1/targets", tok, alvoValido), &criado)
+
+	type campos struct {
+		Error struct {
+			Fields []struct {
+				Field  string `json:"field"`
+				Reason string `json:"reason"`
+			} `json:"fields"`
+		} `json:"error"`
+	}
+	for _, status := range []int{101, 301, 302, 308} {
+		corpo := map[string]any{"name": "API", "url": "https://api.exemplo.com/", "expected_status": status}
+		for _, r := range []struct{ metodo, caminho string }{
+			{http.MethodPost, "/api/v1/targets"},
+			{http.MethodPatch, "/api/v1/targets/" + criado.ID},
+		} {
+			resp := chamar(t, a, r.metodo, r.caminho, tok, corpo)
+			var env campos
+			cru := lerCorpo(t, resp, &env)
+			if resp.StatusCode != http.StatusBadRequest || len(env.Error.Fields) != 1 ||
+				env.Error.Fields[0].Field != "expected_status" || env.Error.Fields[0].Reason != "out_of_range" {
+				t.Errorf("%s com expected_status %d deu %d %s, queria 400 expected_status/out_of_range", r.metodo, status, resp.StatusCode, cru)
+			}
+		}
+	}
+}

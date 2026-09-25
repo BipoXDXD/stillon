@@ -56,6 +56,18 @@ func TestValidate(t *testing.T) {
 
 		{"status 99", func(f *fields) { f.ExpectedStatus = 99 }, "expected_status", ReasonOutOfRange},
 		{"status 600", func(f *fields) { f.ExpectedStatus = 600 }, "expected_status", ReasonOutOfRange},
+		// C2 (Plano 10): 1xx o net/http consome, e 3xx o cliente segue; os
+		// dois nunca chegam à comparação, e o alvo ficaria down para sempre.
+		{"status 100", func(f *fields) { f.ExpectedStatus = 100 }, "expected_status", ReasonOutOfRange},
+		{"status 199", func(f *fields) { f.ExpectedStatus = 199 }, "expected_status", ReasonOutOfRange},
+		{"status 200", func(f *fields) { f.ExpectedStatus = 200 }, "", ""},
+		{"status 299", func(f *fields) { f.ExpectedStatus = 299 }, "", ""},
+		{"status 300", func(f *fields) { f.ExpectedStatus = 300 }, "expected_status", ReasonOutOfRange},
+		{"status 301", func(f *fields) { f.ExpectedStatus = 301 }, "expected_status", ReasonOutOfRange},
+		{"status 399", func(f *fields) { f.ExpectedStatus = 399 }, "expected_status", ReasonOutOfRange},
+		{"status 400", func(f *fields) { f.ExpectedStatus = 400 }, "", ""},
+		{"status 404", func(f *fields) { f.ExpectedStatus = 404 }, "", ""},
+		{"status 599", func(f *fields) { f.ExpectedStatus = 599 }, "", ""},
 
 		{"limiar 0", func(f *fields) { f.DegradedThresholdMS = ptr[int32](0) }, "degraded_threshold_ms", ReasonOutOfRange},
 		{"limiar 60001", func(f *fields) { f.DegradedThresholdMS = ptr[int32](60001) }, "degraded_threshold_ms", ReasonOutOfRange},
@@ -118,5 +130,40 @@ func TestValidateCanonicalizesHeaderNames(t *testing.T) {
 	}
 	if _, ok := f.Headers["X-Api-Key"]; !ok || len(f.Headers) != 1 {
 		t.Errorf("headers = %v, queria só X-Api-Key", f.Headers)
+	}
+}
+
+// B1 (Plano 10): a origem é esquema, host e porta, na regra do navegador
+// (WHATWG): esquema e host sem diferença de caixa, e a porta padrão do
+// esquema igual a porta nenhuma. Caminho, consulta e fragmento não contam.
+func TestSameOrigin(t *testing.T) {
+	cases := []struct {
+		a, b string
+		quer bool
+	}{
+		{"https://api.exemplo.com/health", "https://api.exemplo.com/v2/health?x=1#y", true},
+		{"https://API.Exemplo.com/", "https://api.exemplo.com/", true},
+		{"HTTPS://api.exemplo.com/", "https://api.exemplo.com/", true},
+		{"https://api.exemplo.com/", "https://api.exemplo.com:443/", true},
+		{"http://api.exemplo.com/", "http://api.exemplo.com:80/x", true},
+		{" https://api.exemplo.com/ ", "https://api.exemplo.com/x", true},
+		{"http://[2001:DB8::1]:8080/", "http://[2001:db8::1]:8080/x", true},
+
+		{"https://api.exemplo.com/", "https://atacante.example/", false},
+		{"https://api.exemplo.com/", "https://outra.api.exemplo.com/", false},
+		{"https://api.exemplo.com/", "https://api.exemplo.com:8443/", false},
+		{"https://api.exemplo.com/", "http://api.exemplo.com/", false},
+		{"http://api.exemplo.com/", "https://api.exemplo.com/", false},
+		{"http://api.exemplo.com:443/", "https://api.exemplo.com/", false},
+		{"https://api.exemplo.com/", "://quebrada", false},
+		{"https://api.exemplo.com/", "", false},
+	}
+	for _, c := range cases {
+		if got := SameOrigin(c.a, c.b); got != c.quer {
+			t.Errorf("SameOrigin(%q, %q) = %v, queria %v", c.a, c.b, got, c.quer)
+		}
+		if got := SameOrigin(c.b, c.a); got != c.quer {
+			t.Errorf("SameOrigin(%q, %q) = %v, queria %v (a regra é simétrica)", c.b, c.a, got, c.quer)
+		}
 	}
 }

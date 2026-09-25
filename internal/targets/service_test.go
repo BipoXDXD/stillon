@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -375,5 +376,204 @@ func TestChecksReadsHourlyRollupsAboveTheRawWindow(t *testing.T) {
 	intruso := a.usuario(t)
 	if _, err := a.svc.Checks(ctx, intruso, alvo.ID, inicio, fim); !errors.Is(err, targets.ErrNotFound) {
 		t.Errorf("série horária do intruso = %v, queria ErrNotFound", err)
+	}
+}
+
+// headersGravados abre o que ficou no banco, pelo lado de fora da RLS.
+func (a ambiente) headersGravados(t *testing.T, id uuid.UUID) map[string]string {
+	t.Helper()
+	var enc []byte
+	if err := a.admin.QueryRow(context.Background(), `SELECT headers_enc FROM targets WHERE id = $1`, id).Scan(&enc); err != nil {
+		t.Fatal(err)
+	}
+	h, err := targets.OpenHeaders(caixa(t), id, enc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return h
+}
+
+// B1 (Plano 10): um PATCH que troca a origem da URL (esquema, host ou porta)
+// sem mandar headers apaga os headers. Sem isso, quem tivesse um access token
+// do dono (uma sessão roubada, ou encerrada há menos de 15 min) apontava o
+// alvo para um host dele e recebia o Authorization do dono no próximo check,
+// sem rastro. Mudar só o caminho mantém; mandar headers junto usa os novos.
+func TestUpdateToAnotherOriginDropsTheHeaders(t *testing.T) {
+	a := novoAmbiente(t)
+	ctx := context.Background()
+	dono := a.usuario(t)
+
+	alvo, err := a.svc.Create(ctx, dono, entrada())
+	if err != nil {
+		t.Fatal(err)
+	}
+	caminho := "https://api.exemplo.com:443/v2/health"
+	got, err := a.svc.Update(ctx, dono, alvo.ID, targets.Patch{URL: &caminho})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.HeaderNames) != 1 || a.headersGravados(t, alvo.ID)["Authorization"] != "Bearer segredo-do-cliente" {
+		t.Errorf("mudar só o caminho mexeu nos headers: %v", got.HeaderNames)
+	}
+
+	for _, outra := range []string{"https://atacante.example/", "https://api.exemplo.com:8443/", "http://api.exemplo.com/v2/health"} {
+		t.Run(outra, func(t *testing.T) {
+			alvo, err := a.svc.Create(ctx, dono, entrada())
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := a.svc.Update(ctx, dono, alvo.ID, targets.Patch{URL: &outra})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(got.HeaderNames) != 0 {
+				t.Errorf("header_names = %v, queria vazio", got.HeaderNames)
+			}
+			if h := a.headersGravados(t, alvo.ID); len(h) != 0 {
+				t.Errorf("headers gravados = %v, queria nenhum", h)
+			}
+		})
+	}
+
+	// Com headers no mesmo PATCH, valem os que vieram: o dono que troca de
+	// domínio redigita os dele.
+	alvo, err = a.svc.Create(ctx, dono, entrada())
+	if err != nil {
+		t.Fatal(err)
+	}
+	outra := "https://novo.exemplo.com/"
+	got, err = a.svc.Update(ctx, dono, alvo.ID, targets.Patch{
+		URL: &outra, SetHeaders: true, Headers: map[string]string{"X-Api-Key": "chave-nova"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h := a.headersGravados(t, alvo.ID); len(got.HeaderNames) != 1 || h["X-Api-Key"] != "chave-nova" || len(h) != 1 {
+		t.Errorf("headers gravados = %v, queria só o X-Api-Key novo", h)
+	}
+}
+
+// saude grava uma histerese no meio de uma sequência de falhas, como o
+// sondador deixaria depois de duas falhas.
+func (a ambiente) saude(t *testing.T, id uuid.UUID, desde, ultimo time.Time) {
+	t.Helper()
+	if _, err := a.admin.Exec(context.Background(), `
+		INSERT INTO target_health (target_id, consecutive_failures, consecutive_successes, streak_since, last_checked_at)
+		VALUES ($1, 2, 0, $2, $3)
+		ON CONFLICT (target_id) DO UPDATE SET consecutive_failures = 2, consecutive_successes = 0,
+		       streak_since = $2, last_checked_at = $3`, id, desde, ultimo); err != nil {
+		t.Fatal(err)
+	}
+}
+
+type histerese struct {
+	falhas, sucessos int32
+	desde, ultimo    *time.Time
+}
+
+func (h histerese) String() string {
+	quando := func(t *time.Time) string {
+		if t == nil {
+			return "nulo"
+		}
+		return t.UTC().Format(time.RFC3339)
+	}
+	return fmt.Sprintf("falhas=%d sucessos=%d desde=%s último=%s", h.falhas, h.sucessos, quando(h.desde), quando(h.ultimo))
+}
+
+func (a ambiente) lerSaude(t *testing.T, id uuid.UUID) histerese {
+	t.Helper()
+	var h histerese
+	if err := a.admin.QueryRow(context.Background(), `
+		SELECT consecutive_failures, consecutive_successes, streak_since, last_checked_at
+		  FROM target_health WHERE target_id = $1`, id).Scan(&h.falhas, &h.sucessos, &h.desde, &h.ultimo); err != nil {
+		t.Fatal(err)
+	}
+	return h
+}
+
+// C4 (Plano 10): trocar a URL ou o método troca o serviço sondado, e as
+// falhas do anterior não podem somar com as do novo: a primeira falha
+// passageira da URL nova abriria um incidente com o started_at da antiga. A
+// histerese volta a "sem dados" (contadores zerados, sem início de
+// sequência); o last_checked_at fica, porque é a guarda de check fora de
+// ordem do detector. Outras mudanças (nome, intervalo, status esperado) não
+// mexem nela.
+func TestUpdateOfURLOrMethodResetsTheHysteresis(t *testing.T) {
+	a := novoAmbiente(t)
+	ctx := context.Background()
+	dono := a.usuario(t)
+	alvo, err := a.svc.Create(ctx, dono, entrada())
+	if err != nil {
+		t.Fatal(err)
+	}
+	desde := a.clk.Now().Add(-2 * time.Minute)
+	ultimo := a.clk.Now().Add(-time.Minute)
+
+	nome, intervalo, status := "Outro nome", int32(120), int32(204)
+	for _, p := range []targets.Patch{{Name: &nome}, {IntervalSec: &intervalo}, {ExpectedStatus: &status}} {
+		a.saude(t, alvo.ID, desde, ultimo)
+		if _, err := a.svc.Update(ctx, dono, alvo.ID, p); err != nil {
+			t.Fatal(err)
+		}
+		if h := a.lerSaude(t, alvo.ID); h.falhas != 2 || h.desde == nil {
+			t.Errorf("um PATCH que não troca o serviço zerou a histerese: %s", h)
+		}
+	}
+
+	url, metodo := "https://api.exemplo.com/v2/health", "HEAD"
+	for nomeDoCaso, p := range map[string]targets.Patch{"url": {URL: &url}, "método": {Method: &metodo}} {
+		a.saude(t, alvo.ID, desde, ultimo)
+		if _, err := a.svc.Update(ctx, dono, alvo.ID, p); err != nil {
+			t.Fatal(err)
+		}
+		h := a.lerSaude(t, alvo.ID)
+		if h.falhas != 0 || h.sucessos != 0 || h.desde != nil {
+			t.Errorf("trocar %s: histerese = %s, queria zerada e sem início", nomeDoCaso, h)
+		}
+		if h.ultimo == nil || !h.ultimo.Equal(ultimo) {
+			t.Errorf("trocar %s: last_checked_at = %v, queria %v intacto", nomeDoCaso, h.ultimo, ultimo)
+		}
+	}
+}
+
+// A troca de URL não resolve o incidente aberto (decisão do Plano 10): ele
+// fecha pelos sucessos da URL nova, que é o caso comum (o dono corrigiu uma
+// URL errada), e o aviso "voltou" sai quando o novo endereço provar que está
+// no ar, não no PATCH. Os outros alvos do mesmo dono não são tocados.
+func TestUpdateOfURLKeepsTheOpenIncidentAndOtherTargets(t *testing.T) {
+	a := novoAmbiente(t)
+	ctx := context.Background()
+	dono := a.usuario(t)
+	alvo, err := a.svc.Create(ctx, dono, entrada())
+	if err != nil {
+		t.Fatal(err)
+	}
+	vizinho, err := a.svc.Create(ctx, dono, entrada())
+	if err != nil {
+		t.Fatal(err)
+	}
+	desde, ultimo := a.clk.Now().Add(-2*time.Minute), a.clk.Now().Add(-time.Minute)
+	a.saude(t, alvo.ID, desde, ultimo)
+	a.saude(t, vizinho.ID, desde, ultimo)
+	incidente := uuid.Must(uuid.NewV7())
+	if _, err := a.admin.Exec(ctx, `INSERT INTO incidents (id, target_id, started_at, cause) VALUES ($1, $2, $3, 'timeout')`,
+		incidente, alvo.ID, desde); err != nil {
+		t.Fatal(err)
+	}
+
+	url := "https://novo.exemplo.com/"
+	if _, err := a.svc.Update(ctx, dono, alvo.ID, targets.Patch{URL: &url}); err != nil {
+		t.Fatal(err)
+	}
+	var aberto bool
+	if err := a.admin.QueryRow(ctx, `SELECT resolved_at IS NULL FROM incidents WHERE id = $1`, incidente).Scan(&aberto); err != nil {
+		t.Fatal(err)
+	}
+	if !aberto {
+		t.Error("a troca de URL resolveu o incidente aberto")
+	}
+	if h := a.lerSaude(t, vizinho.ID); h.falhas != 2 || h.desde == nil {
+		t.Errorf("a histerese de outro alvo do dono mudou: %s", h)
 	}
 }

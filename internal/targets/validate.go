@@ -4,6 +4,7 @@ import (
 	"maps"
 	"net/http"
 	"net/netip"
+	"net/url"
 	"slices"
 	"strings"
 	"unicode"
@@ -119,7 +120,10 @@ func validate(f *fields) *ValidationError {
 		v.add("timeout_ms", ReasonOutOfRange)
 	}
 
-	if f.ExpectedStatus < 100 || f.ExpectedStatus > 599 {
+	// C2 (Plano 10): só 2xx e 4xx–5xx podem ser o status final. O 1xx o
+	// net/http consome, e o 3xx o cliente segue (até 3 saltos); esperar um
+	// deles deixaria o alvo down para sempre, com um incidente que não fecha.
+	if s := f.ExpectedStatus; !(s >= 200 && s <= 299) && !(s >= 400 && s <= 599) {
 		v.add("expected_status", ReasonOutOfRange)
 	}
 
@@ -239,4 +243,36 @@ func validHeaderValue(s string) bool {
 		}
 	}
 	return true
+}
+
+// SameOrigin diz se as duas URLs têm a mesma origem, na regra do navegador
+// (WHATWG): esquema e host sem diferença de caixa, e a porta padrão do
+// esquema (80 no http, 443 no https) igual a porta nenhuma. Caminho,
+// consulta e fragmento não contam. Uma URL que não se lê não tem a origem de
+// ninguém.
+//
+// É a regra do B1 do Plano 10: um PATCH que troca a origem sem mandar
+// headers os apaga. O painel a reimplementa com new URL(x).origin para avisar
+// antes de salvar; onde as duas divergirem (host IDN escrito em Unicode de um
+// lado e em punycode do outro, IPv4 em notação não canônica), o servidor vê
+// origem diferente e apaga, que é o lado seguro.
+func SameOrigin(a, b string) bool {
+	ua, err := url.Parse(strings.TrimSpace(a))
+	if err != nil {
+		return false
+	}
+	ub, err := url.Parse(strings.TrimSpace(b))
+	if err != nil {
+		return false
+	}
+	return origem(ua) == origem(ub) && ua.Hostname() != ""
+}
+
+func origem(u *url.URL) string {
+	esquema := strings.ToLower(u.Scheme)
+	porta := u.Port()
+	if esquema == "http" && porta == "80" || esquema == "https" && porta == "443" {
+		porta = ""
+	}
+	return esquema + "://" + strings.ToLower(u.Hostname()) + "|" + porta
 }
