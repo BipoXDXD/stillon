@@ -1082,17 +1082,26 @@ certificado).
 
 **Faça** (no navegador, ou no seu computador):
 
-1. Ache o SHA completo (40 caracteres) do último commit da `main` com o job `publish` do `ci`
-   verde. A tag `:<sha>` da imagem só existe depois que o Trivy aprovou:
+1. Ache o SHA completo (40 caracteres) do último commit da `main` com o `ci` verde (o job
+   `publish` só roda depois de todos os outros, e a tag `:<sha>` da imagem só existe depois que o
+   Trivy aprovou). O `gh` pergunta direto ao GitHub; o `git fetch` atualiza a sua cópia, para
+   comparar:
    ```bash
-   gh run list --repo BipoXDXD/vigilume --workflow ci.yml --branch main --limit 3
+   SHA=$(gh run list --repo BipoXDXD/vigilume --workflow ci.yml --branch main --event push \
+     --status success --limit 1 --json headSha -q '.[0].headSha')
+   echo "$SHA"
+   git -C ~/Projetos/Go/Vigilume fetch origin
    git -C ~/Projetos/Go/Vigilume rev-parse origin/main
    ```
+   **Deve aparecer:** duas linhas de 40 caracteres, normalmente **iguais**. Se forem diferentes,
+   o topo da `main` ainda não passou no `ci` (está rodando ou ficou vermelho: veja
+   `gh run list --repo BipoXDXD/vigilume --workflow ci.yml --branch main --limit 3`). Espere ele
+   ficar verde e repita, ou faça o deploy do `$SHA` da primeira linha, que é o último que passou.
+   Se a primeira linha vier vazia, nenhum `ci` da `main` passou ainda: não há imagem para
+   entregar.
 2. **Actions → deploy → Run workflow**, na `main`, com o SHA no campo `sha`. Ou, pelo
-   terminal:
+   terminal, no mesmo terminal do item 1 (ele usa o `$SHA`):
    ```bash
-   SHA=$(git -C ~/Projetos/Go/Vigilume rev-parse origin/main)
-   echo "$SHA"
    gh workflow run deploy.yml --repo BipoXDXD/vigilume --ref main -f sha="$SHA"
    gh run watch --repo BipoXDXD/vigilume
    ```
