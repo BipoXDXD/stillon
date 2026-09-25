@@ -270,7 +270,8 @@ for i in $(seq 1 25); do
     agora=$(dc ps -q app)
     sleep 12
     depois=$(dc ps -q app)
-    kill "$ev" 2>/dev/null; wait "$ev" 2>/dev/null
+    kill "$ev" 2>/dev/null || true
+    wait "$ev" 2>/dev/null || true
     echo "DIAG 2a #$i: código $c em $(((t1 - t0) / 1000000)) ms; app de pé logo depois: ${agora:+sim}${agora:-não}; 12 s depois: ${depois:+sim}${depois:-não}"
     if [ -n "$agora" ] || [ "$c" != 4 ]; then
         de_pe=$((de_pe + 1))
