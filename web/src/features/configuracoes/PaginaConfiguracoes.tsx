@@ -173,6 +173,10 @@ function TrocaDeSenha({ comTotp }: { comTotp: boolean }) {
 }
 
 const JA_ATIVADA = 'A verificação em duas etapas já está ativada.'
+const JA_DESATIVADA = 'A verificação em duas etapas já está desativada.'
+// Fechar no passo 2 da troca (spec do Plano 9 §4.2). O pendente fica no
+// servidor sem efeito: só um confirm com o código do app novo o usa.
+const NADA_MUDOU = 'Nada mudou: o app atual continua valendo.'
 
 // Quanto a URL do .txt dos códigos vive depois do clique (o do FileSaver.js).
 export const ATRASO_DA_REVOGACAO = 40_000
@@ -200,96 +204,55 @@ const esquemaCodigo = z.object({ codigo: z.string().trim().min(1, 'Informe o có
 // este diálogo aberto; totphandlers.go).
 const jaAtivada = (e: unknown) => e instanceof ApiError && e.status === 403
 
-function AtivarTotp({
-  aoTerminar,
-  aoTravar,
-  aoJaAtivada,
+// O QR e a chave de um segredo novo, e o código que o app gera com ele: o
+// passo 2 de ativar e o de trocar de autenticador (spec do Plano 9 §4.2).
+function PassoDoQr({
+  uri,
+  instrucao,
+  acao,
+  erro,
+  aoMudarErro,
+  aoEnviar,
 }: {
-  aoTerminar: () => void
-  aoTravar: () => void
-  aoJaAtivada: () => void
+  uri: string
+  instrucao: string
+  acao: string
+  erro: ErroDeCredencial | null
+  aoMudarErro: (e: ErroDeCredencial | null) => void
+  aoEnviar: (codigo: string) => Promise<void>
 }) {
-  const api = useApi()
-  const [passo, setPasso] = useState<'senha' | 'codigo' | 'codigos'>('senha')
-  const [uri, setUri] = useState('')
-  const [codigos, setCodigos] = useState<string[]>([])
+  const codigo = useForm({ resolver: zodResolver(esquemaCodigo), defaultValues: { codigo: '' } })
+  return (
+    <form
+      noValidate
+      className="space-y-4"
+      onSubmit={codigo.handleSubmit((v) => aoEnviar(v.codigo.replace(/\s+/g, '')))}
+    >
+      <AvisoDeCredencial erro={erro} aoMudar={aoMudarErro} />
+      <p className="text-sm">{instrucao}</p>
+      <div className="inline-block bg-white p-3">
+        <QRCodeSVG value={uri} size={176} title="QR code do autenticador" />
+      </div>
+      <p className="text-sm">
+        Chave: <code className="break-all">{segredoDe(uri)}</code>
+      </p>
+      <Campo rotulo="Código de 6 dígitos" erro={codigo.formState.errors.codigo?.message}>
+        {(a) => <Entrada {...a} inputMode="numeric" autoComplete="one-time-code" {...codigo.register('codigo')} />}
+      </Campo>
+      <Botao type="submit">{acao}</Botao>
+    </form>
+  )
+}
+
+// Os códigos de recuperação novos, que só existem nesta tela: copiar,
+// baixar, e "Concluir" só depois de "Guardei os códigos". O último passo de
+// ativar e o de trocar de autenticador.
+function CodigosDeRecuperacao({ codigos, aoTerminar }: { codigos: string[]; aoTerminar: () => void }) {
   const [guardei, setGuardei] = useState(false)
-  const [erro, setErro] = useState<ErroDeCredencial | null>(null)
   const { copiado, copiar } = useCopiar({
     ok: 'Códigos copiados.',
     falha: 'Não foi possível copiar. Selecione os códigos e copie à mão, ou baixe o .txt.',
   })
-  const senha = useForm({ resolver: zodResolver(esquemaSenha), defaultValues: { senha: '' } })
-  const codigo = useForm({ resolver: zodResolver(esquemaCodigo), defaultValues: { codigo: '' } })
-
-  if (passo === 'senha') {
-    return (
-      <form
-        noValidate
-        className="space-y-4"
-        onSubmit={senha.handleSubmit(async (v) => {
-          setErro(null)
-          try {
-            setUri((await api.totpCadastrar(v.senha)).otpauth_uri)
-            setPasso('codigo')
-          } catch (e) {
-            if (jaAtivada(e)) {
-              setErro({ texto: JA_ATIVADA, renovavel: false })
-              aoJaAtivada()
-            } else setErro(erroDeCredencial(e, 'Senha incorreta.'))
-          }
-        })}
-      >
-        <AvisoDeCredencial erro={erro} aoMudar={setErro} />
-        <Campo rotulo="Sua senha" erro={senha.formState.errors.senha?.message}>
-          {(a) => <Entrada {...a} type="password" autoComplete="current-password" {...senha.register('senha')} />}
-        </Campo>
-        <Botao type="submit">Continuar</Botao>
-      </form>
-    )
-  }
-  if (passo === 'codigo') {
-    return (
-      <form
-        noValidate
-        className="space-y-4"
-        onSubmit={codigo.handleSubmit(async (v) => {
-          setErro(null)
-          try {
-            setCodigos((await api.totpConfirmar(v.codigo.replace(/\s+/g, ''))).recovery_codes)
-            // Daqui em diante os códigos só existem nesta tela: Esc e o
-            // clique fora não fecham o diálogo, só "Concluir".
-            aoTravar()
-            setPasso('codigos')
-          } catch (e) {
-            if (jaAtivada(e)) {
-              setErro({ texto: JA_ATIVADA, renovavel: false })
-              aoJaAtivada()
-              return
-            }
-            setErro(
-              e instanceof ApiError && e.code === 'validation_failed'
-                ? { texto: CODIGO_NAO_ACEITO, renovavel: false }
-                : erroDeCredencial(e, 'Código incorreto.'),
-            )
-          }
-        })}
-      >
-        <AvisoDeCredencial erro={erro} aoMudar={setErro} />
-        <p className="text-sm">Leia o QR code com o aplicativo autenticador, ou digite a chave.</p>
-        <div className="inline-block bg-white p-3">
-          <QRCodeSVG value={uri} size={176} title="QR code do autenticador" />
-        </div>
-        <p className="text-sm">
-          Chave: <code className="break-all">{segredoDe(uri)}</code>
-        </p>
-        <Campo rotulo="Código de 6 dígitos" erro={codigo.formState.errors.codigo?.message}>
-          {(a) => <Entrada {...a} inputMode="numeric" autoComplete="one-time-code" {...codigo.register('codigo')} />}
-        </Campo>
-        <Botao type="submit">Ativar</Botao>
-      </form>
-    )
-  }
   return (
     <div className="space-y-4">
       <p className="text-sm">
@@ -332,36 +295,223 @@ function AtivarTotp({
   )
 }
 
-function DesativarTotp({ aoTerminar }: { aoTerminar: () => void }) {
-  const api = useApi()
+// Senha e posse do fator atual (código do app ou de recuperação): as
+// provas do Desativar e as do passo 1 da troca de autenticador, que são as
+// mesmas no servidor (spec do Plano 9 §3.2).
+function FormularioDeProvas({
+  acao,
+  tipo,
+  erro,
+  aoMudarErro,
+  aoEnviar,
+}: {
+  acao: string
+  tipo: 'perigo' | 'primario'
+  erro: ErroDeCredencial | null
+  aoMudarErro: (e: ErroDeCredencial | null) => void
+  aoEnviar: (senha: string, codigo: string) => Promise<void>
+}) {
   const f = useForm({ resolver: zodResolver(esquemaSenha.and(esquemaCodigo)), defaultValues: { senha: '', codigo: '' } })
-  const [erro, setErro] = useState<ErroDeCredencial | null>(null)
   return (
     <form
       noValidate
       className="space-y-4"
-      onSubmit={f.handleSubmit(async (v) => {
-        setErro(null)
-        try {
-          await api.totpDesativar(v.senha, v.codigo.replace(/\s+/g, ''))
-          aoTerminar()
-        } catch (e) {
-          setErro(erroDeCredencial(e, 'Senha ou código incorretos.'))
-        }
-      })}
+      onSubmit={f.handleSubmit((v) => aoEnviar(v.senha, v.codigo.replace(/\s+/g, '')))}
     >
-      <AvisoDeCredencial erro={erro} aoMudar={setErro} />
+      <AvisoDeCredencial erro={erro} aoMudar={aoMudarErro} />
       <Campo rotulo="Sua senha" erro={f.formState.errors.senha?.message}>
         {(a) => <Entrada {...a} type="password" autoComplete="current-password" {...f.register('senha')} />}
       </Campo>
       <Campo rotulo="Código do autenticador" ajuda="Ou um código de recuperação." erro={f.formState.errors.codigo?.message}>
         {(a) => <Entrada {...a} autoComplete="one-time-code" {...f.register('codigo')} />}
       </Campo>
-      <Botao type="submit" tipo="perigo">
-        Desativar
+      <Botao type="submit" tipo={tipo}>
+        {acao}
       </Botao>
     </form>
   )
+}
+
+function AtivarTotp({
+  aoTerminar,
+  aoTravar,
+  aoJaAtivada,
+}: {
+  aoTerminar: () => void
+  aoTravar: () => void
+  aoJaAtivada: () => void
+}) {
+  const api = useApi()
+  const [passo, setPasso] = useState<'senha' | 'codigo' | 'codigos'>('senha')
+  const [uri, setUri] = useState('')
+  const [codigos, setCodigos] = useState<string[]>([])
+  const [erro, setErro] = useState<ErroDeCredencial | null>(null)
+  const senha = useForm({ resolver: zodResolver(esquemaSenha), defaultValues: { senha: '' } })
+
+  if (passo === 'senha') {
+    return (
+      <form
+        noValidate
+        className="space-y-4"
+        onSubmit={senha.handleSubmit(async (v) => {
+          setErro(null)
+          try {
+            setUri((await api.totpCadastrar(v.senha)).otpauth_uri)
+            setPasso('codigo')
+          } catch (e) {
+            if (jaAtivada(e)) {
+              setErro({ texto: JA_ATIVADA, renovavel: false })
+              aoJaAtivada()
+            } else setErro(erroDeCredencial(e, 'Senha incorreta.'))
+          }
+        })}
+      >
+        <AvisoDeCredencial erro={erro} aoMudar={setErro} />
+        <Campo rotulo="Sua senha" erro={senha.formState.errors.senha?.message}>
+          {(a) => <Entrada {...a} type="password" autoComplete="current-password" {...senha.register('senha')} />}
+        </Campo>
+        <Botao type="submit">Continuar</Botao>
+      </form>
+    )
+  }
+  if (passo === 'codigo') {
+    return (
+      <PassoDoQr
+        uri={uri}
+        instrucao="Leia o QR code com o aplicativo autenticador, ou digite a chave."
+        acao="Ativar"
+        erro={erro}
+        aoMudarErro={setErro}
+        aoEnviar={async (c) => {
+          setErro(null)
+          try {
+            setCodigos((await api.totpConfirmar(c)).recovery_codes)
+            // Daqui em diante os códigos só existem nesta tela: Esc e o
+            // clique fora não fecham o diálogo, só "Concluir".
+            aoTravar()
+            setPasso('codigos')
+          } catch (e) {
+            if (jaAtivada(e)) {
+              setErro({ texto: JA_ATIVADA, renovavel: false })
+              aoJaAtivada()
+              return
+            }
+            setErro(
+              e instanceof ApiError && e.code === 'validation_failed'
+                ? { texto: CODIGO_NAO_ACEITO, renovavel: false }
+                : erroDeCredencial(e, 'Código incorreto.'),
+            )
+          }
+        }}
+      />
+    )
+  }
+  return <CodigosDeRecuperacao codigos={codigos} aoTerminar={aoTerminar} />
+}
+
+function DesativarTotp({ aoTerminar }: { aoTerminar: () => void }) {
+  const api = useApi()
+  const [erro, setErro] = useState<ErroDeCredencial | null>(null)
+  return (
+    <FormularioDeProvas
+      acao="Desativar"
+      tipo="perigo"
+      erro={erro}
+      aoMudarErro={setErro}
+      aoEnviar={async (senha, codigo) => {
+        setErro(null)
+        try {
+          await api.totpDesativar(senha, codigo)
+          aoTerminar()
+        } catch (e) {
+          setErro(erroDeCredencial(e, 'Senha ou código incorretos.'))
+        }
+      }}
+    />
+  )
+}
+
+// 403 no rotate/confirm: não há troca pendente. Outra aba concluiu a troca,
+// ou a cancelou (desativar apaga o pendente; outro rotate o substitui).
+const TROCA_SUMIU = 'A troca foi concluída ou cancelada em outra aba. Comece de novo.'
+
+// A troca de autenticador (spec do Plano 9 §4.2), em três passos: as provas
+// do Desativar; o QR do app NOVO e o código dele; os 10 códigos novos. O
+// app atual vale até o passo 2 ser confirmado.
+function TrocarTotp({
+  aoIniciar,
+  aoVoltar,
+  aoTravar,
+  aoTerminar,
+  aoDesativada,
+}: {
+  // O passo 2 começou: fechar agora não muda nada (e, com um código de
+  // recuperação no passo 1, ele já foi gasto: R1 da spec).
+  aoIniciar: (usouRecuperacao: boolean) => void
+  aoVoltar: () => void
+  aoTravar: () => void
+  aoTerminar: () => void
+  aoDesativada: () => void
+}) {
+  const api = useApi()
+  const qc = useQueryClient()
+  const [passo, setPasso] = useState<'provas' | 'codigo' | 'codigos'>('provas')
+  const [uri, setUri] = useState('')
+  const [codigos, setCodigos] = useState<string[]>([])
+  const [erro, setErro] = useState<ErroDeCredencial | null>(null)
+
+  if (passo === 'provas') {
+    return (
+      <FormularioDeProvas
+        acao="Continuar"
+        tipo="primario"
+        erro={erro}
+        aoMudarErro={setErro}
+        aoEnviar={async (senha, codigo) => {
+          setErro(null)
+          try {
+            setUri((await api.totpTrocar(senha, codigo)).otpauth_uri)
+            aoIniciar(ehDeRecuperacao(codigo))
+            setPasso('codigo')
+          } catch (e) {
+            // 403: o 2FA foi desligado em outra aba; não há o que trocar.
+            if (e instanceof ApiError && e.status === 403) aoDesativada()
+            else setErro(erroDeCredencial(e, 'Senha ou código incorretos.'))
+          }
+        }}
+      />
+    )
+  }
+  if (passo === 'codigo') {
+    return (
+      <PassoDoQr
+        uri={uri}
+        instrucao="Leia o QR code com o aplicativo autenticador novo, ou digite a chave. O app atual continua valendo até você confirmar."
+        acao="Confirmar a troca"
+        erro={erro}
+        aoMudarErro={setErro}
+        aoEnviar={async (c) => {
+          setErro(null)
+          try {
+            setCodigos((await api.totpConfirmarTroca(c)).recovery_codes)
+            // Os códigos só existem nesta tela, como na ativação.
+            aoTravar()
+            setPasso('codigos')
+            // O confirm encerrou as outras sessões.
+            void qc.invalidateQueries({ queryKey: chaves.sessoes })
+          } catch (e) {
+            if (e instanceof ApiError && e.status === 403) {
+              // O QR desta tela não vale mais: de volta ao passo 1.
+              setErro({ texto: TROCA_SUMIU, renovavel: false })
+              aoVoltar()
+              setPasso('provas')
+            } else setErro(erroDeCredencial(e, 'Código incorreto.'))
+          }
+        }}
+      />
+    )
+  }
+  return <CodigosDeRecuperacao codigos={codigos} aoTerminar={aoTerminar} />
 }
 
 function Sessoes() {
@@ -451,20 +601,27 @@ function Sessoes() {
   )
 }
 
+type Dialogo2fa = 'ativar' | 'desativar' | 'trocar'
+
 export function PaginaConfiguracoes() {
   const me = useMe()
   const api = useApi()
   const qc = useQueryClient()
   const avisar = useAvisar()
-  const [dialogo, setDialogo] = useState<'ativar' | 'desativar' | null>(null)
+  const [dialogo, setDialogo] = useState<Dialogo2fa | null>(null)
   const [travado, setTravado] = useState(false)
+  // A troca de autenticador está no passo 2 (o QR do app novo na tela):
+  // fechar avisa que nada mudou. usouRecuperacao: o código de recuperação
+  // do passo 1 já foi gasto (R1 da spec do Plano 9).
+  const [trocaNoMeio, setTrocaNoMeio] = useState<{ usouRecuperacao: boolean } | null>(null)
   const [abrindo, setAbrindo] = useState(false)
   // ['me'] não vence sozinho (staleTime Infinity): outra aba pode ter
   // ligado ou desligado o 2FA. Abrir e fechar um diálogo do 2FA relê /me.
   const reler = () => void qc.invalidateQueries({ queryKey: chaves.me })
   // Abrir ESPERA o /me relido: decidir pelo cache abriria "Desativar" com o
   // 2FA já desligado em outra aba, e o disable contaria tentativa falha (R34).
-  const abrir = async (d: 'ativar' | 'desativar') => {
+  // "Trocar autenticador" tem a mesma trava: o rotate também conta.
+  const abrir = async (d: Dialogo2fa) => {
     if (abrindo) return
     setAbrindo(true)
     let ligado: boolean
@@ -477,12 +634,23 @@ export function PaginaConfiguracoes() {
       setAbrindo(false)
     }
     if (d === 'ativar' && ligado) avisar(JA_ATIVADA)
-    else if (d === 'desativar' && !ligado) avisar('A verificação em duas etapas já está desativada.')
-    else setDialogo(d)
+    else if (d !== 'ativar' && !ligado) avisar(JA_DESATIVADA)
+    else {
+      setTrocaNoMeio(null)
+      setDialogo(d)
+    }
   }
   const fechar = () => {
+    if (dialogo === 'trocar' && trocaNoMeio) {
+      avisar(
+        trocaNoMeio.usouRecuperacao
+          ? `${NADA_MUDOU} O código de recuperação usado foi gasto; use outro da próxima vez.`
+          : NADA_MUDOU,
+      )
+    }
     setDialogo(null)
     setTravado(false)
+    setTrocaNoMeio(null)
     reler()
   }
   const terminar = (texto: string) => {
@@ -491,11 +659,20 @@ export function PaginaConfiguracoes() {
   }
   const totp = me.data?.totp_enabled
   // O portão de cada diálogo: Ativar só com o 2FA desligado (ou no passo
-  // dos códigos, travado); Desativar só com ele ligado. Se o /me relido o
-  // fecha com o diálogo aberto, o diálogo fecha de vez: sem isto, ele
-  // reapareceria sozinho quando o /me mudasse de novo.
-  const portao = dialogo === 'ativar' ? totp === false || travado : dialogo === 'desativar' && totp === true
-  if (dialogo !== null && !portao) setDialogo(null)
+  // dos códigos, travado); Desativar só com ele ligado; Trocar também só com
+  // ele ligado (ou no passo dos códigos novos). Se o /me relido o fecha com
+  // o diálogo aberto, o diálogo fecha de vez: sem isto, ele reapareceria
+  // sozinho quando o /me mudasse de novo.
+  const portao =
+    dialogo === 'ativar'
+      ? totp === false || travado
+      : dialogo === 'desativar'
+        ? totp === true
+        : dialogo === 'trocar' && (totp === true || travado)
+  if (dialogo !== null && !portao) {
+    setDialogo(null)
+    setTrocaNoMeio(null)
+  }
   return (
     <>
       <Titulo aba="Configurações">Configurações</Titulo>
@@ -520,15 +697,22 @@ export function PaginaConfiguracoes() {
                 Verificação em duas etapas
               </h2>
               <p className="text-sm">{eu.totp_enabled ? 'Ativada.' : 'Desativada.'}</p>
-              <Botao
-                tipo={eu.totp_enabled ? 'perigo' : 'primario'}
-                // aria-disabled, e não disabled: o botão desabilitado perde o
-                // foco, que cairia no <body>.
-                aria-disabled={abrindo || undefined}
-                onClick={() => void abrir(eu.totp_enabled ? 'desativar' : 'ativar')}
-              >
-                {eu.totp_enabled ? 'Desativar' : 'Ativar'}
-              </Botao>
+              <div className="flex flex-wrap gap-2">
+                <Botao
+                  tipo={eu.totp_enabled ? 'perigo' : 'primario'}
+                  // aria-disabled, e não disabled: o botão desabilitado perde o
+                  // foco, que cairia no <body>.
+                  aria-disabled={abrindo || undefined}
+                  onClick={() => void abrir(eu.totp_enabled ? 'desativar' : 'ativar')}
+                >
+                  {eu.totp_enabled ? 'Desativar' : 'Ativar'}
+                </Botao>
+                {eu.totp_enabled && (
+                  <Botao tipo="secundario" aria-disabled={abrindo || undefined} onClick={() => void abrir('trocar')}>
+                    Trocar autenticador
+                  </Botao>
+                )}
+              </div>
             </section>
           </>
         )}
@@ -568,6 +752,30 @@ export function PaginaConfiguracoes() {
         titulo="Desativar a verificação em duas etapas"
       >
         <DesativarTotp aoTerminar={() => terminar('Verificação em duas etapas desativada.')} />
+      </Dialogo>
+      {/* Trocar só com o 2FA ligado segundo o /me relido (o rotate conta
+          tentativa falha, R34). No passo dos códigos, travado. */}
+      <Dialogo
+        aberto={dialogo === 'trocar' && portao}
+        aoMudar={(v) => !v && fechar()}
+        travado={travado}
+        titulo="Trocar o autenticador"
+      >
+        <TrocarTotp
+          aoIniciar={(usouRecuperacao) => setTrocaNoMeio({ usouRecuperacao })}
+          aoVoltar={() => setTrocaNoMeio(null)}
+          aoTravar={() => {
+            setTravado(true)
+            setTrocaNoMeio(null)
+          }}
+          aoTerminar={() => terminar('Autenticador trocado. As outras sessões foram encerradas.')}
+          // O 2FA foi desligado em outra aba: fecha e avisa (o toast
+          // sobrevive ao diálogo).
+          aoDesativada={() => {
+            fechar()
+            avisar(JA_DESATIVADA)
+          }}
+        />
       </Dialogo>
     </>
   )

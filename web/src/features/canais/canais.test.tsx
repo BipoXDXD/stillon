@@ -5,6 +5,7 @@ import { canal } from '@/test/fixtures'
 import { renderizarPainel } from '@/test/renderizar'
 
 const RESEND = 'POST /channels/:id/verify/resend'
+const PATCH = 'PATCH /channels/:id'
 const escapar = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
 // Abre o diálogo, escolhe e-mail e manda o endereço.
@@ -236,6 +237,108 @@ describe('canais', () => {
     await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument())
     await waitFor(() => expect(document.activeElement).not.toBe(document.body))
     expect(screen.getByRole('heading', { name: 'Canais de notificação', level: 1 })).toHaveFocus()
+  })
+
+  // Spec do Plano 9 §4.1: pausar descarta os avisos, então pede confirmação;
+  // retomar não. Sabotagem: no onClick do botão, chamar alternar(c) direto
+  // também para o canal ativo (pular o Confirmar) → o PATCH sai antes da
+  // confirmação e o Cancelar não impede nada.
+  it('pausar pede confirmação, e só o Confirmar manda enabled:false', async () => {
+    const r = await renderizarPainel('/channels')
+    r.falsa.estado.canais = [canal()]
+    await r.cliente.refetchQueries()
+    await r.usuario.click(await screen.findByRole('button', { name: 'Pausar o canal discord.com/…/abcd' }))
+    let confirmar = await screen.findByRole('alertdialog')
+    expect(confirmar).toHaveTextContent(
+      'Enquanto pausado, os avisos de incidentes deste canal são descartados, e não são reenviados ao retomar.',
+    )
+    // Cancelar não pausa.
+    await r.usuario.click(within(confirmar).getByRole('button', { name: 'Cancelar' }))
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument())
+    expect(r.falsa.chamadas(PATCH)).toBe(0)
+
+    await r.usuario.click(screen.getByRole('button', { name: 'Pausar o canal discord.com/…/abcd' }))
+    confirmar = await screen.findByRole('alertdialog')
+    await r.usuario.click(within(confirmar).getByRole('button', { name: 'Pausar canal' }))
+    expect((await screen.findAllByText('Canal pausado.'))[0]).toBeInTheDocument()
+    expect(r.falsa.corpos(PATCH)).toEqual([{ enabled: false }])
+    // A linha nova aparece, e o estado de verificação continua.
+    expect(await screen.findByText('⏸ Pausado: os avisos são descartados')).toBeInTheDocument()
+    expect(screen.getByText('✓ Verificado')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Retomar o canal discord.com/…/abcd' })).toBeInTheDocument()
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+  })
+
+  // Sabotagem: fazer o Retomar também abrir o Confirmar → nenhum PATCH sai
+  // no clique, e o teste espera o aviso em vão.
+  it('retomar manda enabled:true sem confirmação, e a linha "Pausado" some', async () => {
+    const r = await renderizarPainel('/channels')
+    r.falsa.estado.canais = [canal({ kind: 'email', hint: 'd***@exemplo.com', status: 'pending', enabled: false })]
+    await r.cliente.refetchQueries()
+    // Pausado e aguardando verificação: as duas linhas.
+    expect(await screen.findByText('⏸ Pausado: os avisos são descartados')).toBeInTheDocument()
+    expect(screen.getByText('… Aguardando verificação')).toBeInTheDocument()
+    await r.usuario.click(screen.getByRole('button', { name: 'Retomar o canal d***@exemplo.com' }))
+    expect((await screen.findAllByText('Canal retomado.'))[0]).toBeInTheDocument()
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    expect(r.falsa.corpos(PATCH)).toEqual([{ enabled: true }])
+    await waitFor(() => expect(screen.queryByText('⏸ Pausado: os avisos são descartados')).not.toBeInTheDocument())
+    expect(screen.getByRole('button', { name: 'Pausar o canal d***@exemplo.com' })).toBeInTheDocument()
+  })
+
+  // A linha "Pausado" é de enabled:false, e só dele. Sabotagem: mostrar a
+  // linha para todo canal (tirar o "!c.enabled &&") → aparece duas vezes.
+  it('só o canal pausado mostra a linha "Pausado"', async () => {
+    const r = await renderizarPainel('/channels')
+    r.falsa.estado.canais = [canal(), canal({ id: 'c2', hint: 'discord.com/…/zzzz', enabled: false })]
+    await r.cliente.refetchQueries()
+    expect(await screen.findAllByText('⏸ Pausado: os avisos são descartados')).toHaveLength(1)
+    expect(screen.getByRole('button', { name: 'Pausar o canal discord.com/…/abcd' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Retomar o canal discord.com/…/zzzz' })).toBeInTheDocument()
+  })
+
+  // Sabotagem: tirar o "|| alternando !== null" de alternar() e o
+  // ocupado={alternando !== null} do Confirmar → dois PATCH.
+  it('pausar: um PATCH só, mesmo com dois cliques no Confirmar', async () => {
+    const r = await renderizarPainel('/channels')
+    r.falsa.estado.canais = [canal()]
+    await r.cliente.refetchQueries()
+    await r.usuario.click(await screen.findByRole('button', { name: 'Pausar o canal discord.com/…/abcd' }))
+    const acao = within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Pausar canal' })
+    fireEvent.click(acao)
+    fireEvent.click(acao)
+    expect((await screen.findAllByText('Canal pausado.'))[0]).toBeInTheDocument()
+    expect(r.falsa.chamadas(PATCH)).toBe(1)
+  })
+
+  // O 404 é a lista velha (o canal foi apagado em outra aba), como no
+  // reenviar e no apagar. Sabotagem: no catch de alternar(), trocar
+  // "if (!(await listaVelha(e)))" por "if (true)" → o erro genérico, sem
+  // recarregar.
+  it('pausar ou retomar canal que outra aba apagou recarrega a lista e explica', async () => {
+    const r = await renderizarPainel('/channels')
+    r.falsa.estado.canais = [canal({ enabled: false })]
+    await r.cliente.refetchQueries()
+    const retomar = await screen.findByRole('button', { name: 'Retomar o canal discord.com/…/abcd' })
+    r.falsa.estado.canais = []
+    await r.usuario.click(retomar)
+    expect(await screen.findByText('O canal já tinha sido apagado, talvez em outra aba.')).toBeInTheDocument()
+    expect(await screen.findByText(/Nenhum canal/)).toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(r.falsa.chamadas(PATCH)).toBe(1)
+  })
+
+  // Outro erro fica na tela, e o canal não muda.
+  it('pausar que falha mostra o erro e não muda o canal', async () => {
+    const r = await renderizarPainel('/channels')
+    r.falsa.estado.canais = [canal()]
+    await r.cliente.refetchQueries()
+    r.falsa.estado.forcar.set(PATCH, { status: 429, code: 'rate_limited' })
+    await r.usuario.click(await screen.findByRole('button', { name: 'Pausar o canal discord.com/…/abcd' }))
+    await r.usuario.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Pausar canal' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('Muitas requisições. Aguarde um minuto e tente de novo.')
+    expect(screen.queryByText('⏸ Pausado: os avisos são descartados')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Pausar o canal discord.com/…/abcd' })).toBeInTheDocument()
   })
 })
 
