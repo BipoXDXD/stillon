@@ -91,7 +91,11 @@ código TOTP novo (o timestep já é consumido), mas é sessão paralela aberta 
    confere → `ResetFailures` → **consumo** → `issue`. O consumo vem **depois** do código de
    propósito: consumido antes, um código digitado errado queimaria o desafio e obrigaria a
    digitar a senha de novo. O custo dessa ordem é gastar um timestep TOTP numa requisição que
-   depois é recusada, o que não abre nada.
+   depois é recusada, o que não abre nada. (Corrigido na revisão final: o custo incluía gastar
+   um código de recuperação, que não se renova. Uma pré-checagem da marca antes do código, não
+   atômica, evita isso no caso sequencial; o consumo depois do código continua sendo a
+   autoridade, e só a corrida de dois verify simultâneos com o mesmo desafio ainda pode gastar
+   um código.)
 6. **Desafio já consumido:** `401 unauthorized`, a mesma resposta de um desafio vencido ou
    adulterado. O código não conta no bloqueio progressivo: quem chega aqui acertou o código.
 

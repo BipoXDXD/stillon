@@ -11,8 +11,8 @@ O grupo A das pendências (segurança e correção), escolhido pelo usuário em 
 
 | Pendência | Como fechou |
 |---|---|
-| Desafio do 2FA reutilizável por cinco minutos (`jti` em denylist ou `challenge_id` consumido) | Marca d'água em `users.totp_challenge_mark` (migration `00008`) e claim `cat` em microssegundos no desafio; o `/totp/verify` consome o desafio depois do código certo, num `UPDATE` condicional. Desafio reusado: `401 unauthorized` |
-| `Unmap` no caminho `X-Forwarded-For`/`RemoteAddr` do `ip_hash` | Toda saída de `middleware.ClientIP` passa por `normalizar` (`Unmap`, zona recusada). O limitador já normalizava a chave do balde (`chaveDe`); o defeito atingia o `ip_hash` e o `ip` da auditoria e de `GET /sessions` |
+| Desafio do 2FA reutilizável por cinco minutos (`jti` em denylist ou `challenge_id` consumido) | Marca d'água em `users.totp_challenge_mark` (migration `00008`) e claim `cat` em microssegundos no desafio; o `/totp/verify` consome o desafio depois do código certo, num `UPDATE` condicional. Desafio reusado: `401 unauthorized`. Uma pré-checagem da marca recusa antes do código um desafio que já não pode abrir sessão, para não gastar código de recuperação |
+| `Unmap` no caminho `X-Forwarded-For`/`RemoteAddr` do `ip_hash` | Todo IP que sai de `middleware.ClientIP` passa por `normalizar` (`Unmap`, zona recusada). O limitador já normalizava a chave do balde (`chaveDe`); o defeito atingia o `ip_hash` e o `ip` da auditoria e de `GET /sessions` |
 | Nomes de cabeçalho perigosos em `CLIENT_IP_HEADER` | Denylist no boot: `Forwarded`, a família `X-Forwarded-*`, `Host`, `Cookie`, `Authorization`, `Proxy-Authorization`, os hop-by-hop, `Content-Length` e `Content-Type` |
 | `HashPasswordWith` com parâmetros fora de faixa | Devolve `ErrInvalidHash` com `t=0`, `p=0`, memória abaixo de `8*p` ou salt vazio; a regra é a mesma função do `decodeHash` |
 | `LogValue` de `Spec.Headers` (M6 do Plano 2) | `prober.Spec.LogValue` mostra os nomes dos headers, nunca os valores |
@@ -55,12 +55,19 @@ O grupo A das pendências (segurança e correção), escolhido pelo usuário em 
   envia.
 - **Desafios emitidos antes do deploy do Plano 8 morrem** (não têm `cat`): no pior caso, um
   login refeito dentro de cinco minutos.
-- **Relógio andando para trás** entre dois desafios do mesmo usuário deixa o mais novo com
-  `cat` menor que a marca: 401 e um login refeito.
-- **Um desafio reusado com o código certo zera o contador de falhas** antes de ser recusado
-  (o `ResetFailures` vem antes do consumo). Chegar lá exige a senha e o segundo fator.
+- **Relógio andando para trás:** se o relógio do servidor estava adiantado de X quando um
+  desafio foi consumido e depois foi corrigido, a marca fica X no futuro, e **todo** login com
+  2FA daquele usuário é recusado (401 no verify) por até X, não um só. Remédio do operador:
+  `UPDATE users SET totp_challenge_mark = NULL WHERE id = '<id>';`.
+- **Dois `verify` simultâneos com o mesmo desafio** passam os dois pela pré-checagem da marca,
+  que não é atômica: um abre a sessão, e o outro recebe 401 depois de ter gastado o código (de
+  recuperação, ou o timestep) e zerado o contador de falhas. No caso sequencial a pré-checagem
+  recusa antes do código. Chegar lá exige a senha e o segundo fator.
 - **Endereço de conexão com zona** (par IPv6 link-local ligado direto no app) continua como
   veio, com a zona. Não acontece atrás de proxy.
+- **Sessões e auditoria de antes do deploy mantêm o IP mapeado:** o `ip` de `GET /sessions` e o
+  `ip_hash` da auditoria gravados antes do Plano 8 guardam a forma mapeada (`::ffff:…`) para um
+  cliente IPv4 em pilha dupla, até essas sessões vencerem; os novos saem na forma normalizada.
 
 Os limites do Plano 7 seguem como estão no `PENDENCIAS-PARA-O-PLANO-8.md`, seção "Limites
 conhecidos do Plano 7".
