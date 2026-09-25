@@ -1,6 +1,6 @@
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useQueryClient } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useForm, useWatch } from 'react-hook-form'
 import { z } from 'zod'
 import { useApi } from '@/app/contexto'
@@ -124,9 +124,12 @@ export function PaginaCanais() {
   const [reenviando, setReenviando] = useState<string | null>(null)
   const [apagando, setApagando] = useState(false)
   // Pausar pede confirmação (spec do Plano 9 §4.1): os avisos da pausa são
-  // descartados. Um PATCH por vez, como o DELETE.
+  // descartados. Um PATCH por canal de cada vez (E4 do Plano 10): o de um
+  // canal não segura o de outro. A ref segura a reentrada no mesmo tique; o
+  // estado alimenta o aria-disabled e o ocupado do Confirmar.
   const [pausar, setPausar] = useState<Canal | null>(null)
-  const [alternando, setAlternando] = useState<string | null>(null)
+  const emVoo = useRef(new Set<string>())
+  const [alternando, setAlternando] = useState<ReadonlySet<string>>(new Set())
 
   const recarregar = () => qc.invalidateQueries({ queryKey: ['channels'] })
 
@@ -163,18 +166,23 @@ export function PaginaCanais() {
   // canal pausado na hora do envio (semEnvio, Plano 3): retomar não reenvia
   // o que passou.
   async function alternar(c: Canal) {
-    if (alternando !== null) return
+    if (emVoo.current.has(c.id)) return
+    emVoo.current.add(c.id)
+    setAlternando(new Set(emVoo.current))
     const enabled = !c.enabled
     setErro(null)
-    setAlternando(c.id)
     try {
       await api.pausarCanal(c.id, enabled)
       await recarregar()
-      avisar(enabled ? 'Canal retomado.' : 'Canal pausado.')
+      // Com dois canais mudando juntos, o aviso diz qual.
+      avisar(`Canal ${c.hint} ${enabled ? 'retomado' : 'pausado'}.`)
     } catch (e) {
-      if (!(await listaVelha(e))) setErro(mensagemDe(e))
+      if (!(await listaVelha(e))) {
+        setErro(`Não foi possível ${enabled ? 'retomar' : 'pausar'} o canal ${c.hint}. ${mensagemDe(e)}`)
+      }
     } finally {
-      setAlternando(null)
+      emVoo.current.delete(c.id)
+      setAlternando(new Set(emVoo.current))
       // Só o Confirmar DESTE canal fecha: com um Retomar em voo, o Pausar de
       // outro canal pode ter sido aberto no meio (revisão final do Plano 9).
       setPausar((p) => (p?.id === c.id ? null : p))
@@ -245,7 +253,7 @@ export function PaginaCanais() {
                       // aria-disabled, e não disabled: o Retomar não abre
                       // diálogo, e o botão desabilitado perderia o foco para o
                       // <body>. A guarda contra o clique duplo é a de alternar().
-                      aria-disabled={alternando === c.id || undefined}
+                      aria-disabled={alternando.has(c.id) || undefined}
                       onClick={() => (c.enabled ? setPausar(c) : void alternar(c))}
                       aria-label={`${c.enabled ? 'Pausar' : 'Retomar'} o canal ${c.hint}`}
                     >
@@ -281,7 +289,7 @@ export function PaginaCanais() {
         titulo="Pausar o canal?"
         descricao="Enquanto pausado, os avisos de incidentes deste canal são descartados, e não são reenviados ao retomar."
         acao="Pausar canal"
-        ocupado={alternando !== null}
+        ocupado={pausar !== null && alternando.has(pausar.id)}
         aoConfirmar={() => pausar && void alternar(pausar)}
       />
       <Confirmar
