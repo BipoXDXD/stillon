@@ -31,10 +31,10 @@ EOF
 chmod +x "$T/bin/curl"
 
 HC=https://hc-ping.com/0000-teste
-# roda <cenário de saúde> <conteúdo do .env>; devolve o código do vigia.
+# roda <cenário de saúde> <conteúdo do vigia.env>; devolve o código do vigia.
 roda() {
     local c=0
-    printf '%s\n' "$2" > "$T/cred/vigilume-env"
+    printf '%s\n' "$2" > "$T/cred/vigilume-vigia"
     : > "$T/registro"
     env -i PATH="$T/bin:/usr/bin:/bin" CREDENTIALS_DIRECTORY="$T/cred" REGISTRO="$T/registro" SAUDE="$1" \
         sh "$VIGIA" 2> "$T/erro" || c=$?
@@ -42,7 +42,6 @@ roda() {
 }
 urls() { awk '{ print $NF }' "$T/registro" | tr '\n' ' '; }
 ENV_OK="VIGILUME_DOMINIO=vigilume.exemplo.com
-MASTER_KEY=nao-importa
 HC_URL=$HC"
 
 # 1. Saudável: pede o /healthz público e pinga a HC_URL.
@@ -78,12 +77,16 @@ roda ok "$ENV_OK" >/dev/null
 grep -Eq -- '(^| )(-k|--insecure)( |$)' "$T/registro" && falhar "o vigia desliga a conferência do certificado"
 [ "$(grep -c -- '--max-time' "$T/registro")" = 2 ] || falhar "algum pedido do vigia sem --max-time"
 
-# 7. As unidades: o timer dispara o serviço a cada minuto; o serviço lê o
-#    .env pelo LoadCredential, com usuário dinâmico, e roda o vigia instalado.
+# 7. As unidades: o timer dispara o serviço a cada minuto; o serviço lê SÓ o
+#    vigia.env (nunca o .env com os segredos) pelo LoadCredential, com
+#    usuário dinâmico, e roda o vigia instalado.
 S=$RAIZ/deploy/vps/vigilume-vigia.service
 TM=$RAIZ/deploy/vps/vigilume-vigia.timer
 grep -qx 'ExecStart=/usr/local/sbin/vigilume-vigia' "$S" || falhar "o serviço não roda /usr/local/sbin/vigilume-vigia"
-grep -qx 'LoadCredential=vigilume-env:/opt/vigilume/.env' "$S" || falhar "o serviço não entrega o .env como vigilume-env"
+grep -qx 'LoadCredential=vigilume-vigia:/opt/vigilume/vigia.env' "$S" || falhar "o serviço não entrega o vigia.env como vigilume-vigia"
+[ "$(grep -c '^LoadCredential' "$S")" = 1 ] || falhar "o serviço entrega mais de uma credencial"
+grep -v '^#' "$S" > "$T/servico-sem-comentario"
+grep -Eq '/opt/vigilume/\.env|EnvironmentFile' "$T/servico-sem-comentario" && falhar "o serviço lê o .env com os segredos"
 grep -qx 'DynamicUser=yes' "$S" || falhar "o serviço não usa usuário dinâmico"
 grep -qx 'Type=oneshot' "$S" || falhar "o serviço não é oneshot"
 grep -qx 'OnCalendar=\*-\*-\* \*:\*:00' "$TM" || falhar "o timer não dispara a cada minuto"
@@ -100,6 +103,34 @@ if command -v systemd-analyze >/dev/null; then
     [ ! -s "$T/verify" ] || falhar "systemd-analyze verify avisou: $(cat "$T/verify")"
 else
     echo "aviso: sem systemd-analyze, as unidades não foram verificadas" >&2
+fi
+
+# 8. Os modelos: o vigia.env.exemplo tem só o domínio e a HC_URL, sem valor;
+#    a HC_URL não está mais no env.exemplo (o .env com os segredos).
+[ "$(grep -Ev '^(#|$)' "$RAIZ/deploy/vps/vigia.env.exemplo" | sort | tr '\n' ' ')" = "HC_URL= VIGILUME_DOMINIO= " ] ||
+    falhar "o vigia.env.exemplo não é só VIGILUME_DOMINIO= e HC_URL=: $(grep -Ev '^(#|$)' "$RAIZ/deploy/vps/vigia.env.exemplo" | tr '\n' ' ')"
+grep -q '^HC_URL=' "$RAIZ/deploy/vps/env.exemplo" && falhar "a HC_URL ainda está no env.exemplo (é do vigia.env)"
+
+# 9. O pior caso do vigia (tudo esgota o prazo) cabe no TimeoutStartSec, para
+#    o /fail sair antes de o systemd matar o serviço; e o TimeoutStartSec fica
+#    abaixo do intervalo do timer (60 s). A conta usa as opções de verdade de
+#    cada curl do cenário "fora do ar": --max-time por tentativa, --retry
+#    tentativas a mais, e as esperas do curl entre elas (1, 2, 4… s).
+roda falha "$ENV_OK" >/dev/null
+pior=$(awk '{
+    m = 0; r = 0
+    for (i = 1; i < NF; i++) {
+        if ($i == "--max-time") m = $(i + 1)
+        if ($i == "--retry") r = $(i + 1)
+    }
+    if (m == 0) sem = 1
+    espera = 0; e = 1
+    for (k = 0; k < r; k++) { espera += e; e *= 2 }
+    total += m * (r + 1) + espera
+} END { print (sem ? "sem-prazo" : total) }' "$T/registro")
+teto=$(sed -n 's/^TimeoutStartSec=//p' "$S")
+if [ -z "$pior" ] || [ "$pior" = sem-prazo ] || [ -z "$teto" ] || [ "$pior" -gt "$teto" ] || [ "$teto" -ge 60 ]; then
+    falhar "pior caso do vigia: ${pior} s, TimeoutStartSec=${teto:-nenhum} (tem de caber, e abaixo de 60 s)"
 fi
 
 [ "$falhas" = 0 ] || exit 1

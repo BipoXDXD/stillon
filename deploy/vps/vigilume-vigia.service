@@ -10,9 +10,10 @@ After=network-online.target
 Type=oneshot
 ExecStart=/usr/local/sbin/vigilume-vigia
 # Um usuário criado só para esta execução, sem acesso ao /opt/vigilume: o
-# systemd (como root) lê o .env e entrega a cópia em $CREDENTIALS_DIRECTORY.
+# systemd (como root) lê o vigia.env (SÓ o domínio e a HC_URL, nenhum segredo
+# do .env) e entrega a cópia em $CREDENTIALS_DIRECTORY.
 DynamicUser=yes
-LoadCredential=vigilume-env:/opt/vigilume/.env
+LoadCredential=vigilume-vigia:/opt/vigilume/vigia.env
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes
@@ -23,5 +24,8 @@ ProtectKernelModules=yes
 ProtectControlGroups=yes
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 CapabilityBoundingSet=
-# Menos que o intervalo do timer: uma execução presa não encavala na seguinte.
+# Menos que o intervalo do timer (uma execução presa não encavala na
+# seguinte) e mais que o pior caso do vigia.sh, para o /fail sair antes de o
+# systemd matar o serviço: 15 s do /healthz + um ping com --max-time 8 e
+# --retry 2 (3 tentativas de 8 s, mais as esperas de 1 e 2 s do curl) = 42 s.
 TimeoutStartSec=50

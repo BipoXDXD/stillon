@@ -8,15 +8,17 @@
 # deu certo, a HC_URL/fail se não. Se a VPS morrer ou perder a rede, os pings
 # param, e o healthchecks.io manda o e-mail ao dono do mesmo jeito.
 #
-# Lê VIGILUME_DOMINIO e HC_URL do /opt/vigilume/.env. O serviço roda com um
-# usuário dinâmico, sem acesso ao /opt/vigilume: o systemd entrega uma cópia
-# do .env em $CREDENTIALS_DIRECTORY/vigilume-env (LoadCredential).
+# Lê VIGILUME_DOMINIO e HC_URL do /opt/vigilume/vigia.env (root, 600; modelo
+# em deploy/vps/vigia.env.exemplo), que tem SÓ essas duas: o vigia não vê os
+# segredos do .env. O serviço roda com um usuário dinâmico, sem acesso ao
+# /opt/vigilume: o systemd entrega uma cópia do vigia.env em
+# $CREDENTIALS_DIRECTORY/vigilume-vigia (LoadCredential).
 set -eu
 
 if [ -n "${CREDENTIALS_DIRECTORY:-}" ]; then
-    ARQ_ENV=$CREDENTIALS_DIRECTORY/vigilume-env
+    ARQ_ENV=$CREDENTIALS_DIRECTORY/vigilume-vigia
 else
-    ARQ_ENV=/opt/vigilume/.env
+    ARQ_ENV=/opt/vigilume/vigia.env
 fi
 valor() { sed -n "s/^$1=//p" "$ARQ_ENV" | tail -n 1; }
 
@@ -28,7 +30,9 @@ if [ -z "$hc" ]; then
 fi
 hc=${hc%/}
 
-pingar() { curl -fsS -o /dev/null --max-time 10 --retry 3 "$1"; }
+# Prazos: o pior caso cabe no TimeoutStartSec do vigilume-vigia.service (a
+# conta está lá; deploy/ci/checar-vigia.sh a refaz com as opções de verdade).
+pingar() { curl -fsS -o /dev/null --max-time 8 --retry 2 "$1"; }
 
 if [ -n "$dominio" ] && curl -fsS -o /dev/null --max-time 15 "https://$dominio/healthz"; then
     pingar "$hc"
