@@ -1532,11 +1532,13 @@ Cada item abaixo é uma das obrigações do Plano 10 (`docs/superpowers/PENDENCI
 
 ### 9.1 Só 22, 80 e 443 abertas, vistas de fora (obrigação 3)
 
-**Faça** (no seu computador, **fora** da VPS; demora alguns minutos):
+**Faça** (no seu computador, **fora** da VPS; pode levar **até meia hora**, porque o firewall
+do painel descarta em silêncio as 65 mil portas fechadas e o `nmap` espera cada uma; não
+interrompa):
 
 ```bash
 . ~/.vigilume-vps
-sudo nmap -Pn -p- --open "$VPS"
+sudo nmap -Pn -T4 -p- --open "$VPS"
 ```
 
 **Deve aparecer:** `22/tcp open ssh`, `80/tcp open http`, `443/tcp open https`, e **nenhuma**
@@ -1548,8 +1550,9 @@ outra porta (sem 5432, sem 8080, sem 9090).
 sudo ss -tlnp
 ```
 
-Escutando em todos os endereços (`0.0.0.0` ou `[::]`): só a 22 (`sshd`) e a 80 e 443
-(`docker-proxy`). O resto, se houver, só em `127.0.0.x` (como o DNS local do Ubuntu, `127.0.0.53`).
+Escutando em todos os endereços (`0.0.0.0` ou `[::]`): só a 22 (`sshd` ou `systemd`: no
+Ubuntu 24.04 o SSH é ativado por socket, e quem escuta a 22 pode aparecer como `systemd`, com ou
+sem o `sshd` ao lado) e a 80 e 443 (`docker-proxy`). O resto, se houver, só em `127.0.0.x` (como o DNS local do Ubuntu, `127.0.0.53`).
 
 **Confira no compose:**
 
