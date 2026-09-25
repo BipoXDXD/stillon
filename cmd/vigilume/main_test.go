@@ -188,8 +188,48 @@ func TestRunFailsWhenAServerCannotStart(t *testing.T) {
 		if !errors.Is(err, syscall.EADDRINUSE) || !strings.Contains(err.Error(), "servidor api") {
 			t.Errorf("run = %v, queria o EADDRINUSE do servidor api", err)
 		}
+		// A dica do METRICS_ADDR é só da porta de métricas (M7, Plano 9).
+		if err != nil && strings.Contains(err.Error(), "METRICS_ADDR") {
+			t.Errorf("a porta da API ocupada sugeriu o METRICS_ADDR: %v", err)
+		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("run seguiu vivo com a API morta")
+	}
+}
+
+// M7 (Plano 9, §3.4): com a porta de métricas ocupada (outro processo do
+// Vigilume no mesmo host, o caso de --role=api e --role=prober), o boot cai
+// com o EADDRINUSE do servidor de métricas, e a mensagem sugere o
+// METRICS_ADDR. A perna oposta (a porta da API ocupada não sugere) está em
+// TestRunFailsWhenAServerCannotStart.
+func TestBusyMetricsPortSuggestsMetricsAddr(t *testing.T) {
+	testdb.New(t)
+	ocupada, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ocupada.Close()
+
+	cfg := &config.Config{
+		Role: config.RoleAPI, DatabaseURL: testdb.DSN(t), HTTPAddr: "127.0.0.1:0",
+		MetricsAddr:   ocupada.Addr().String(),
+		PublicBaseURL: "http://localhost", CORSOrigin: "http://localhost:5173",
+		MasterKey: chave, JWTSecret: chave, IPHashKey: chave,
+		ShutdownGrace: time.Second,
+	}
+	fim := make(chan error, 1)
+	go func() { fim <- run(context.Background(), cfg) }()
+
+	select {
+	case err := <-fim:
+		if !errors.Is(err, syscall.EADDRINUSE) || !strings.Contains(err.Error(), "servidor métricas") {
+			t.Fatalf("run = %v, queria o EADDRINUSE do servidor de métricas", err)
+		}
+		if !strings.Contains(err.Error(), "METRICS_ADDR") {
+			t.Errorf("a mensagem não sugere o METRICS_ADDR: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("run seguiu vivo com as métricas mortas")
 	}
 }
 
