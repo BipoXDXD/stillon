@@ -39,11 +39,11 @@ var subcomandos = map[string]func(ctx context.Context, args []string) int{
 	"user": func(ctx context.Context, args []string) int {
 		return runUser(ctx, args, stdinDoProcesso(), os.Stdout, os.Stderr, os.Getenv)
 	},
-	"healthcheck": func(ctx context.Context, _ []string) int {
-		return runHealthcheck(ctx, os.Stderr, os.Getenv)
+	"healthcheck": func(ctx context.Context, args []string) int {
+		return runHealthcheck(ctx, args, os.Stderr, os.Getenv)
 	},
-	"version": func(context.Context, []string) int {
-		return runVersion(os.Stdout)
+	"version": func(_ context.Context, args []string) int {
+		return runVersion(args, os.Stdout, os.Stderr)
 	},
 }
 

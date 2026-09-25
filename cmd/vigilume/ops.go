@@ -16,28 +16,43 @@ import (
 // resposta HTTP: expor a versão facilita achar uma vulnerável.
 var version = "dev"
 
-// healthcheckPrazo é o teto do `vigilume healthcheck`. O compose checa a
-// cada 2 s; um app que não responde em 2 s não está pronto.
-const healthcheckPrazo = 2 * time.Second
+// healthcheckPrazo é o teto do `vigilume healthcheck`. É maior que o
+// readyzTimeout (2 s) do servidor, para um banco lento aparecer como o 503 do
+// /readyz e não como um prazo estourado aqui, e menor que o timeout do
+// healthcheck do compose (TestHealthcheckDeadlinesNest).
+const healthcheckPrazo = 3 * time.Second
 
 // runVersion é `vigilume version`: imprime a versão carimbada no build.
-func runVersion(stdout io.Writer) int {
+func runVersion(args []string, stdout, stderr io.Writer) int {
+	if len(args) > 0 {
+		fmt.Fprintln(stderr, "uso: vigilume version")
+		return saidaUso
+	}
 	fmt.Fprintln(stdout, version)
 	return 0
 }
 
 // runHealthcheck é `vigilume healthcheck`: 0 se o /readyz do próprio processo
-// responde 200 dentro do prazo, 1 em qualquer outro caso.
+// responde 200 dentro do prazo, 1 em qualquer outro caso; 2 com argumento a
+// mais e 130 se interrompido (Ctrl-C, SIGTERM), como o `user`.
 //
 // A imagem final não tem shell nem curl (spec §5.9): o próprio binário é a
 // ferramenta do healthcheck do compose.
-func runHealthcheck(ctx context.Context, stderr io.Writer, getenv func(string) string) int {
+func runHealthcheck(ctx context.Context, args []string, stderr io.Writer, getenv func(string) string) int {
+	if len(args) > 0 {
+		fmt.Fprintln(stderr, "uso: vigilume healthcheck (a porta vem de HTTP_ADDR)")
+		return saidaUso
+	}
 	url, err := urlDeProntidao(getenv("HTTP_ADDR"))
 	if err != nil {
 		fmt.Fprintln(stderr, "healthcheck:", err)
 		return 1
 	}
 	if err := checar(ctx, url, healthcheckPrazo); err != nil {
+		if ctx.Err() != nil {
+			fmt.Fprintln(stderr, "healthcheck: interrompido")
+			return saidaInterrompida
+		}
 		fmt.Fprintln(stderr, "healthcheck:", err)
 		return 1
 	}
@@ -48,7 +63,8 @@ func runHealthcheck(ctx context.Context, stderr io.Writer, getenv func(string) s
 // processo. O host do HTTP_ADDR não interessa: o healthcheck roda dentro do
 // mesmo contêiner, e o servidor escuta em todas as interfaces.
 func urlDeProntidao(httpAddr string) (string, error) {
-	if strings.TrimSpace(httpAddr) == "" {
+	httpAddr = strings.TrimSpace(httpAddr)
+	if httpAddr == "" {
 		httpAddr = ":8080"
 	}
 	_, porta, err := net.SplitHostPort(httpAddr)

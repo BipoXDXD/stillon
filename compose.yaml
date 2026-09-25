@@ -90,7 +90,9 @@ services:
       # A imagem não tem curl nem shell: o próprio binário checa o /readyz (D5).
       test: ["CMD", "/vigilume", "healthcheck"]
       interval: 10s
-      timeout: 3s
+      # Maior que o prazo do binário (3 s), que é maior que o do /readyz
+      # (2 s): TestHealthcheckDeadlinesNest.
+      timeout: 5s
       retries: 3
       start_period: 30s
       start_interval: 500ms

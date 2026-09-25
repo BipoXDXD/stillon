@@ -3,9 +3,13 @@ package main
 import (
 	"bytes"
 	"context"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -26,7 +30,7 @@ func healthcheck(t *testing.T, httpAddr string) (int, string) {
 	t.Helper()
 	var errb bytes.Buffer
 	env := map[string]string{"HTTP_ADDR": httpAddr}
-	codigo := runHealthcheck(context.Background(), &errb, func(k string) string { return env[k] })
+	codigo := runHealthcheck(context.Background(), nil, &errb, func(k string) string { return env[k] })
 	return codigo, errb.String()
 }
 
@@ -117,7 +121,7 @@ func TestVersionPrintsTheStampedVersion(t *testing.T) {
 	version = "v9.9.9-teste"
 	t.Cleanup(func() { version = antiga })
 	var out bytes.Buffer
-	codigo := runVersion(&out)
+	codigo := runVersion(nil, &out, io.Discard)
 	if codigo != 0 || strings.TrimSpace(out.String()) != "v9.9.9-teste" {
 		t.Errorf("version: código %d, saída %q; queria 0 e a versão carimbada", codigo, out.String())
 	}
@@ -136,5 +140,87 @@ func TestOperationSubcommandsShareTheDispatch(t *testing.T) {
 		if _, ok := subcomandos[arg]; ok {
 			t.Errorf("%q foi tratado como subcomando; o servidor é o padrão", arg)
 		}
+	}
+}
+
+// O compose passa o HTTP_ADDR como veio do ambiente; um espaço sobrando não
+// pode virar "porta inválida" e deixar o app eternamente não pronto.
+func TestHealthcheckTrimsHTTPAddr(t *testing.T) {
+	addr := servidorDeProntidao(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	if codigo, errb := healthcheck(t, "  "+addr+" \n"); codigo != 0 {
+		t.Errorf("HTTP_ADDR com espaços: código %d (%s), queria 0", codigo, errb)
+	}
+}
+
+// Ctrl-C no meio do healthcheck é "o operador desistiu" (130, como no `user`),
+// não "o app não está pronto" (1).
+func TestHealthcheckInterruptedIs130(t *testing.T) {
+	chegou := make(chan struct{}, 1)
+	addr := servidorDeProntidao(t, func(w http.ResponseWriter, r *http.Request) {
+		chegou <- struct{}{}
+		<-r.Context().Done()
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() { <-chegou; cancel() }()
+	var errb bytes.Buffer
+	env := map[string]string{"HTTP_ADDR": addr}
+	codigo := runHealthcheck(ctx, nil, &errb, func(k string) string { return env[k] })
+	if codigo != saidaInterrompida {
+		t.Errorf("interrompido: código %d (%s), queria %d", codigo, errb.String(), saidaInterrompida)
+	}
+}
+
+// Argumento a mais é erro de uso (2), como no `user`: `vigilume healthcheck
+// --porta 9000` não pode checar a 8080 e dizer que está tudo bem.
+func TestOperationSubcommandsRejectExtraArgs(t *testing.T) {
+	addr := servidorDeProntidao(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	env := map[string]string{"HTTP_ADDR": addr}
+	var errb bytes.Buffer
+	if codigo := runHealthcheck(context.Background(), []string{"--porta", "9000"}, &errb, func(k string) string { return env[k] }); codigo != saidaUso {
+		t.Errorf("healthcheck com argumento: código %d, queria %d", codigo, saidaUso)
+	}
+	var out bytes.Buffer
+	errb.Reset()
+	if codigo := runVersion([]string{"x"}, &out, &errb); codigo != saidaUso || out.Len() != 0 {
+		t.Errorf("version com argumento: código %d, saída %q; queria %d e nada no stdout", codigo, out.String(), saidaUso)
+	}
+}
+
+// O prazo do healthcheck tem de caber o do /readyz (senão um banco lento vira
+// "não pronto" com o /readyz ainda esperando o ping), e o timeout do
+// healthcheck do compose tem de caber o prazo do binário (senão o Docker mata
+// o processo antes de ele responder).
+func TestHealthcheckDeadlinesNest(t *testing.T) {
+	routes, err := os.ReadFile("../../internal/httpapi/routes.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := regexp.MustCompile(`(?m)^const readyzTimeout = (\d+) \* time\.Second$`).FindSubmatch(routes)
+	if m == nil {
+		t.Fatal("readyzTimeout não encontrado em internal/httpapi/routes.go")
+	}
+	readyz, _ := strconv.Atoi(string(m[1]))
+	if healthcheckPrazo <= time.Duration(readyz)*time.Second {
+		t.Errorf("healthcheckPrazo %v não é maior que o readyzTimeout %ds", healthcheckPrazo, readyz)
+	}
+
+	compose, err := os.ReadFile("../../compose.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m = regexp.MustCompile(`"/vigilume", "healthcheck"\]\n(?:[ \t]+(?:#|\w+:)[^\n]*\n)*?[ \t]+timeout: (\S+)\n`).FindSubmatch(compose)
+	if m == nil {
+		t.Fatal("timeout do healthcheck do app não encontrado no compose.yaml")
+	}
+	timeout, err := time.ParseDuration(string(m[1]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if timeout <= healthcheckPrazo {
+		t.Errorf("timeout do healthcheck do compose (%v) não é maior que o prazo do binário (%v)", timeout, healthcheckPrazo)
 	}
 }
