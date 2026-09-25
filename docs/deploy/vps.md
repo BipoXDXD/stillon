@@ -1169,13 +1169,24 @@ sudo docker compose -f /opt/stillon/compose.prod.yaml ps
 ```
 
 O `versao` diz qual SHA ficou registrado no ar, e o `ps` diz se o `app` está de pé e `healthy`.
-Se o `versao` não é o SHA que você mandou, ou o `app` está parado, reiniciando ou `unhealthy`,
-repita o deploy **do mesmo SHA** pelo Actions (passo 4.8, item 2). Se o `versao` é o SHA novo e o
-`app` está `healthy`, o site está no ar com a versão nova; repetir o mesmo SHA ainda assim é
-inofensivo (a imagem é a mesma) e termina o que a entrada pode ter deixado pela metade depois de
-gravar o `versao` (a etiqueta `stillon:atual` e a poda das imagens velhas). A trava da entrada
-some sozinha com o processo que morreu, e o próximo deploy (ou backup) apaga, antes de começar,
-os temporários que o morto deixou: não há nada para limpar à mão.
+Qualquer que seja o resultado, **repita o deploy do mesmo SHA** pelo Actions (passo 4.8, item 2),
+mesmo que o `versao` já seja o SHA novo e o `app` esteja `healthy`. O motivo: a entrada grava o
+`versao` antes de mover a etiqueta `stillon:atual`; se ela morreu entre as duas coisas, o `atual`
+ficou na versão velha, e o próximo `up -d app` sem SHA rebaixaria o app sem aviso. Repetir o mesmo
+SHA é seguro em qualquer ponto em que a entrada possa ter morrido (a imagem é a mesma) e termina o
+que ficou pela metade.
+
+A trava pode demorar a sair: um filho da entrada morta (o `docker load` ou o `docker compose up`)
+pode seguir rodando, órfão, e segurar a trava até terminar. O próximo deploy espera por ela até
+10 minutos. Se ainda assim ele falhar com `outra operação da entrada não terminou em 10 min`,
+veja se sobrou algum desses filhos, espere alguns minutos e repita:
+
+```bash
+pgrep -af 'docker (load|compose)'
+```
+
+O próximo **deploy** apaga, antes de começar, os temporários que o morto deixou em `/opt/stillon`
+(os `.stillon-entrada.*`, que podem ocupar alguns GB): não os apague à mão.
 
 **Se o primeiro deploy sair com 4**, o app **ficou parado**: no primeiro deploy não há versão
 anterior para onde voltar (a mensagem é
