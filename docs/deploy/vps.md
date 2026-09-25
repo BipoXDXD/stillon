@@ -20,8 +20,9 @@ pode revisar estão na §9 dela.
   terminal as ignora.
 - **`sudo` pede a sua senha** (a do seu usuário na VPS, criada no passo 2.5). Ao digitá-la, nada
   aparece na tela: é normal.
-- **Segredos só vão para dois lugares:** o gerenciador de senhas e o arquivo `/opt/vigilume/.env`
-  na VPS. Nunca num chat, num e-mail, num print, num arquivo do repositório ou num campo do
+- **Segredos só vão para o gerenciador de senhas e para dois arquivos do root na VPS:** o
+  `/opt/vigilume/.env` (os do app e do banco) e o `/opt/vigilume/vigia.env` (só a URL do vigia,
+  bloco 8). Nunca num chat, num e-mail, num print, num arquivo do repositório ou num campo do
   GitHub. Os três segredos que o GitHub precisa (bloco 4) vão por um comando que lê de arquivo,
   sem colar nada.
 - **O `compose.yaml` da raiz do repositório não vai para o servidor.** Ele cria um usuário de
@@ -283,7 +284,7 @@ Anote o remetente que vai usar, no formato `Vigilume <alertas@avisos.seu-domíni
 2. No projeto, **Add Check**: nome `vigilume-healthz`; **Period** `1 minute`; **Grace Time**
    `5 minutes`.
 3. Copie a **ping URL** do check (o formato é `https://hc-ping.com/<uuid>`) para o gerenciador
-   (entrada "Vigilume – HC_URL").
+   (entrada "Vigilume – HC_URL"). Ela só volta a ser usada no bloco 8.
 
 **Por quê:** um timer na VPS vai pingar essa URL a cada minuto quando o site responder, e pingar
 `/fail` quando não responder (bloco 8). Se os pings pararem (VPS morta) ou falharem, o
@@ -701,11 +702,11 @@ git switch main && git pull --ff-only
 ssh vigilume 'mkdir -p ~/vigilume-arquivos'
 scp deploy/vps/compose.prod.yaml deploy/vps/Caddyfile deploy/vps/initdb.sh deploy/vps/env.exemplo \
     deploy/vps/vigilume-entrada deploy/vps/sudoers-vigilume-entrada \
-    deploy/vps/vigia.sh deploy/vps/vigilume-vigia.service deploy/vps/vigilume-vigia.timer \
     vigilume:vigilume-arquivos/
 ```
 
-**Deve aparecer:** uma linha de progresso por arquivo, nove no total.
+**Deve aparecer:** uma linha de progresso por arquivo, seis no total. (Os arquivos do vigia vêm
+só no bloco 8, quando são instalados.)
 
 **Depois, na VPS:**
 
@@ -737,38 +738,54 @@ scp deploy/backup/backup.sh deploy/backup/verificar.sql deploy/compose/initdb.sq
 Depois, na VPS:
 
 ```bash
-sudo apt install -y age curl util-linux
+sudo apt install -y age curl jq util-linux
 cd ~/vigilume-arquivos
 sudo install -d -m 0755 -o root -g root /opt/vigilume/deploy/backup /opt/vigilume/deploy/compose
 sudo install -m 0644 -o root -g root backup.sh verificar.sql /opt/vigilume/deploy/backup/
 sudo install -m 0644 -o root -g root initdb.sql /opt/vigilume/deploy/compose/
 ls -la /opt/vigilume/deploy/backup /opt/vigilume/deploy/compose
-command -v age curl flock
+command -v age curl flock jq
 ```
 
 **Por quê:** o verbo `backup` do `vigilume-entrada` roda o `deploy/backup/backup.sh` do
 repositório, sem mudança, dentro de um Postgres descartável, e ele acha o `initdb.sql` por
 `../compose/`: por isso os três arquivos ficam em `/opt/vigilume/deploy/` com o mesmo layout do
 repositório. O `age` cifra o dump com a chave pública (passo 3.5), o `flock` (do `util-linux`)
-impede que um deploy e um backup rodem ao mesmo tempo, e o `curl` é o que o vigia (bloco 8) usa.
+impede que um deploy e um backup rodem ao mesmo tempo, o `jq` confere o índice da imagem que o
+deploy recebe antes de carregá-la, e o `curl` é o que o vigia (bloco 8) usa.
 
 **Deve aparecer:** `backup.sh` e `verificar.sql` em `/opt/vigilume/deploy/backup`, `initdb.sql`
-em `/opt/vigilume/deploy/compose`, todos do `root`, e os três caminhos do `command -v` (por
-exemplo `/usr/bin/age`, `/usr/bin/curl`, `/usr/bin/flock`).
+em `/opt/vigilume/deploy/compose`, todos do `root`, e os quatro caminhos do `command -v` (por
+exemplo `/usr/bin/age`, `/usr/bin/curl`, `/usr/bin/flock`, `/usr/bin/jq`).
 
 ### 3.4 Os segredos, gerados na VPS
 
 **Faça** (na VPS):
 
+Cole o bloco **inteiro de uma vez** (do `sudo sh -s` até o `FIM`):
+
 ```bash
+sudo sh -s <<'FIM'
+set -eu
+umask 077
 cd /opt/vigilume
-for v in POSTGRES_PASSWORD VIGILUME_APP_PASSWORD VIGILUME_BACKUP_PASSWORD; do
-  sudo sed -i "s|^$v=\$|$v=$(openssl rand -hex 32)|" .env
-done
-for v in MASTER_KEY JWT_SECRET IP_HASH_KEY; do
-  sudo sed -i "s|^$v=\$|$v=$(openssl rand -base64 32)|" .env
-done
+gerar() {
+  VALOR=$(openssl rand "-$2" 32) NOME=$1 awk '
+    $0 == ENVIRON["NOME"] "=" { print ENVIRON["NOME"] "=" ENVIRON["VALOR"]; next }
+    { print }
+  ' .env > .env.novo
+  cat .env.novo > .env
+  rm .env.novo
+}
+for v in POSTGRES_PASSWORD VIGILUME_APP_PASSWORD VIGILUME_BACKUP_PASSWORD; do gerar "$v" hex; done
+for v in MASTER_KEY JWT_SECRET IP_HASH_KEY; do gerar "$v" base64; done
+FIM
 ```
+
+Ele não imprime nada. Cada valor nasce e é gravado dentro de um processo do root: não passa pela
+linha de comando de nenhum programa (que outro usuário da VPS veria no `ps`), nem pelo seu
+histórico. Só preenche variável **vazia**: rodar de novo por engano não troca um segredo que já
+existe.
 
 (`POSTGRES_PASSWORD` é a senha do superusuário do Postgres; `VIGILUME_APP_PASSWORD` e
 `VIGILUME_BACKUP_PASSWORD`, as dos papéis do app e do backup.)
@@ -785,14 +802,14 @@ sudo nano /opt/vigilume/.env
 ```
 
 - `VIGILUME_DOMINIO`: o seu domínio, sem `https://` (o valor de `DOMINIO`).
-- `RESEND_API_KEY`: cole a chave do gerenciador (passo 1.5). Este `.env` é um dos dois lugares
+- `RESEND_API_KEY`: cole a chave do gerenciador (passo 1.5). Este `.env` é um dos lugares
   onde segredo pode ser colado.
 - `EMAIL_FROM`: `Vigilume <alertas@avisos.seu-domínio>` (passo 1.5).
-- `HC_URL`: a ping URL do healthchecks (passo 1.6).
 
 Salve com `Ctrl+O` e Enter, saia com `Ctrl+X`.
 
-O `.env` tem só estas dez variáveis. O resto o `compose.prod.yaml` monta sozinho: a
+O `.env` tem só estas nove variáveis (a `HC_URL` do healthchecks não está nele: ela vai para
+o `vigia.env` do bloco 8, e o vigia nunca lê o `.env`). O resto o `compose.prod.yaml` monta sozinho: a
 `PUBLIC_BASE_URL` e a `CORS_ORIGIN` (`https://` + `VIGILUME_DOMINIO`), a `DATABASE_URL` (com a
 `VIGILUME_APP_PASSWORD` e o IP fixo do banco) e o `TRUSTED_PROXIES` (o IP fixo do Caddy). O
 compose lê o `.env` pela interpolação (`${…}`), e cada serviço recebe só as variáveis de que
@@ -1325,26 +1342,66 @@ sobrescreve a VPS inteira.
 
 ```bash
 cd ~/Projetos/Go/Vigilume
+git switch main && git pull --ff-only
 ssh vigilume 'mkdir -p ~/vigilume-arquivos'
-scp deploy/vps/vigia.sh deploy/vps/vigilume-vigia.service deploy/vps/vigilume-vigia.timer vigilume:vigilume-arquivos/
+scp deploy/vps/vigia.sh deploy/vps/vigilume-vigia.service deploy/vps/vigilume-vigia.timer \
+    deploy/vps/vigia.env.exemplo vigilume:vigilume-arquivos/
 ```
 
-**Depois, na VPS:**
+**Depois, na VPS**, os arquivos nos lugares certos e o `vigia.env` nascendo do modelo, sem
+valores, só do root:
 
 ```bash
 cd ~/vigilume-arquivos
 sudo install -m 0755 -o root -g root vigia.sh /usr/local/sbin/vigilume-vigia
 sudo install -m 0644 -o root -g root vigilume-vigia.service vigilume-vigia.timer /etc/systemd/system/
+sudo install -m 0600 -o root -g root vigia.env.exemplo /opt/vigilume/vigia.env
+```
+
+(`/usr/local/sbin/vigilume-vigia` é o caminho que o `ExecStart` do `vigilume-vigia.service` espera.)
+
+**Preencha o `vigia.env`.** O domínio vem do `.env` (não é segredo; o `echo` o mostra para você
+conferir):
+
+```bash
+dom=$(sudo sed -n 's/^VIGILUME_DOMINIO=//p' /opt/vigilume/.env)
+echo "$dom"
+sudo sed -i "s|^VIGILUME_DOMINIO=\$|VIGILUME_DOMINIO=$dom|" /opt/vigilume/vigia.env
+sudo nano /opt/vigilume/vigia.env
+```
+
+No editor, cole em `HC_URL=` a ping URL do gerenciador (passo 1.6), sem espaço em volta do `=`.
+Salve com `Ctrl+O` e Enter, saia com `Ctrl+X`.
+
+**Por quê:** o vigia recebe **só** este arquivo, com as duas variáveis de que precisa: o domínio e
+a URL do healthchecks. O `.env`, com a `MASTER_KEY` e as senhas do banco, nunca chega a ele. O
+serviço roda com um usuário criado na hora, sem acesso ao `/opt/vigilume`; o systemd, como root,
+lê o `vigia.env` e entrega uma cópia ao vigia (`LoadCredential`).
+
+**Confira** (o `HC_URL` não aparece na tela):
+
+```bash
+sudo stat -c '%U %a' /opt/vigilume/vigia.env
+sudo grep -oE '^[A-Z_]+=' /opt/vigilume/vigia.env
+sudo grep -cE '^[A-Z_]+=$' /opt/vigilume/vigia.env
+sudo grep -c '^HC_URL=https://hc-ping.com/' /opt/vigilume/vigia.env
+sudo grep -c '^HC_URL=' /opt/vigilume/.env
+```
+
+`root 600`; só `VIGILUME_DOMINIO=` e `HC_URL=`; `0` (nenhuma vazia); `1` (a URL do healthchecks
+no formato certo); e `0` na última (a `HC_URL` não está no `.env`).
+
+**Ligue o timer e limpe a pasta de trabalho:**
+
+```bash
 sudo systemctl daemon-reload
 sudo systemctl enable --now vigilume-vigia.timer
 rm -r ~/vigilume-arquivos
 ```
 
-(`/usr/local/sbin/vigilume-vigia` é o caminho que o `ExecStart` do `vigilume-vigia.service` espera.)
-
 **Por quê:** a cada minuto o timer faz um `curl` em `https://seu-domínio/healthz`, passando por
-DNS, certificado, Caddy e app como um visitante; se der certo, pinga a `HC_URL` do `.env`; se não,
-pinga `HC_URL/fail`. O healthchecks manda e-mail quando chega um `/fail` ou quando os pings
+DNS, certificado, Caddy e app como um visitante; se der certo, pinga a `HC_URL` do `vigia.env`;
+se não, pinga `HC_URL/fail`. O healthchecks manda e-mail quando chega um `/fail` ou quando os pings
 param (VPS morta, rede fora).
 
 **Confira:**
