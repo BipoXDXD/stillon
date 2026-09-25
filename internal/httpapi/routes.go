@@ -176,7 +176,7 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	// um erro produzido por qualquer middleware acima dele sairia com
 	// trace_id vazio, impossível de correlacionar com o log. Recover vem
 	// logo em seguida, para capturar panic de todo o resto da cadeia.
-	var handler http.Handler = mux
+	var handler http.Handler = comEnvelope(mux)
 	handler = middleware.RequireCustomHeader(handler)
 	handler = middleware.BodyLimit(maxBodyBytes)(handler)
 	// Preflight fica DENTRO do rate limit e FORA do RequireCustomHeader: o

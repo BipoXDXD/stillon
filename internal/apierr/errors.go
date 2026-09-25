@@ -38,6 +38,7 @@ const (
 	CodeStatusPageExists   ErrorCode = "status_page_exists"
 	CodeSlugTaken          ErrorCode = "slug_taken"
 	CodeTargetLimit        ErrorCode = "target_limit_reached"
+	CodeMethodNotAllowed   ErrorCode = "method_not_allowed"
 )
 
 // A mensagem vem sempre desta tabela, nunca do erro subjacente.
@@ -70,6 +71,10 @@ var errorTable = map[ErrorCode]struct {
 	// O teto de alvos por usuário (D17 do Plano 5); reconciliado no contrato
 	// dos Planos 5–7.
 	CodeTargetLimit: {http.StatusConflict, "Limite de alvos atingido."},
+	// O método não existe naquela rota (B5 do Plano 10). Nenhum código
+	// anterior tinha 405: o not_found mudaria o status, e o Allow do ServeMux
+	// perderia o sentido.
+	CodeMethodNotAllowed: {http.StatusMethodNotAllowed, "Método não permitido nesta rota."},
 }
 
 // FieldError aponta o campo culpado de um 400 (D14). Field e Reason vêm de

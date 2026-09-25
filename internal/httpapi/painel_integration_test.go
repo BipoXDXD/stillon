@@ -36,8 +36,9 @@ func TestCadaPrefixoCaiNaCadeiaCerta(t *testing.T) {
 		tipo    string
 	}{
 		// A API continua respondendo como API, inclusive onde não há rota:
-		// um /api/ que caísse no painel devolveria o index com 200.
-		{"/api/v1/nao-existe", http.StatusNotFound, false, "text/plain; charset=utf-8"},
+		// um /api/ que caísse no painel devolveria o index com 200. Desde o
+		// B5 do Plano 10, no envelope JSON.
+		{"/api/v1/nao-existe", http.StatusNotFound, false, "application/json; charset=utf-8"},
 		{"/api/v1/me", http.StatusUnauthorized, false, "application/json; charset=utf-8"},
 		{"/healthz", http.StatusOK, false, ""},
 		{"/readyz", http.StatusOK, false, ""},

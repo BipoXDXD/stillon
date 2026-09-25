@@ -248,6 +248,17 @@ func (h *TargetHandlers) Delete(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// janelasDaSerie são as janelas que GET /targets/{id}/checks aceita em
+// ?window= (B6 do Plano 10): as do gráfico do painel, e só elas.
+var janelasDaSerie = map[string]time.Duration{
+	"1h":  time.Hour,
+	"6h":  6 * time.Hour,
+	"24h": 24 * time.Hour,
+	"7d":  7 * 24 * time.Hour,
+	"30d": 30 * 24 * time.Hour,
+	"90d": 90 * 24 * time.Hour,
+}
+
 func (h *TargetHandlers) Checks(w http.ResponseWriter, r *http.Request) {
 	userID, ok := usuario(w, r)
 	if !ok {
@@ -269,6 +280,17 @@ func (h *TargetHandlers) Checks(w http.ResponseWriter, r *http.Request) {
 		to = v
 	}
 	from := to.Add(-24 * time.Hour)
+	// B6 (Plano 10): com window, o servidor calcula o from, e o gráfico não
+	// depende do relógio do navegador. window e from juntos seriam duas
+	// respostas para a mesma pergunta.
+	if q.Has("window") {
+		janela, ok := janelasDaSerie[q.Get("window")]
+		if !ok || q.Has("from") {
+			campoInvalido(w, r, "window", targets.ReasonInvalid)
+			return
+		}
+		from = to.Add(-janela)
+	}
 	if s := q.Get("from"); s != "" {
 		v, err := time.Parse(time.RFC3339, s)
 		if err != nil {

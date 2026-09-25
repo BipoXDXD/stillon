@@ -608,3 +608,80 @@ func TestTargetLimitIs409(t *testing.T) {
 		t.Errorf("%d alvos depois da recusa, queria %d", n, targets.MaxTargetsPerUser)
 	}
 }
+
+// B6 (Plano 10): a janela do gráfico sem relógio do navegador. Com
+// ?window=, o servidor calcula from = to - janela, e to é o agora do
+// servidor (ou o to pedido). Só as janelas do painel valem; window junto com
+// from é ambíguo e recusado.
+func TestChecksWindowIsComputedByTheServer(t *testing.T) {
+	a := newAPI(t)
+	ctx := context.Background()
+	tok := tokenDe(t, a, a.userID)
+	if err := storage.EnsureChecksPartitions(ctx, a.pool, a.clk.Now()); err != nil {
+		t.Fatal(err)
+	}
+	var criado alvoJSON
+	lerCorpo(t, chamar(t, a, http.MethodPost, "/api/v1/targets", tok, alvoValido), &criado)
+	agora := a.clk.Now().UTC()
+	for _, em := range []time.Time{agora.Add(-90 * time.Minute), agora.Add(-30 * time.Minute)} {
+		p := db.InsertCheckParams{ID: uuid.Must(uuid.NewV7()), TargetID: uuid.MustParse(criado.ID), CheckedAt: em, Status: "up", LatencyMS: 5}
+		if err := storage.InProberTx(ctx, a.pool, func(q *db.Queries) error { return q.InsertCheck(ctx, p) }); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	type serie struct {
+		Resolution string `json:"resolution"`
+		Items      []struct {
+			CheckedAt time.Time `json:"checked_at"`
+		} `json:"items"`
+	}
+	pedir := func(consulta string) (int, serie, string) {
+		t.Helper()
+		resp := chamar(t, a, http.MethodGet, "/api/v1/targets/"+criado.ID+"/checks?"+consulta, tok, nil)
+		var s serie
+		cru := string(lerCorpo(t, resp, &s))
+		return resp.StatusCode, s, cru
+	}
+
+	if st, s, cru := pedir("window=1h"); st != http.StatusOK || s.Resolution != "raw" || len(s.Items) != 1 ||
+		!s.Items[0].CheckedAt.Equal(agora.Add(-30*time.Minute)) {
+		t.Errorf("window=1h deu %d %s, queria só o check de 30 min atrás", st, cru)
+	}
+	if st, s, cru := pedir("window=6h"); st != http.StatusOK || len(s.Items) != 2 {
+		t.Errorf("window=6h deu %d %s, queria os dois checks", st, cru)
+	}
+	// A base é o to: com to uma hora atrás, a janela de 1h pega o de 90 min.
+	to := agora.Add(-time.Hour).Format(time.RFC3339)
+	if st, s, cru := pedir("window=1h&to=" + to); st != http.StatusOK || len(s.Items) != 1 ||
+		!s.Items[0].CheckedAt.Equal(agora.Add(-90*time.Minute)) {
+		t.Errorf("window=1h&to=%s deu %d %s, queria só o check de 90 min atrás", to, st, cru)
+	}
+	// Acima de 48h a resolução é horária, como com from.
+	if st, s, cru := pedir("window=7d"); st != http.StatusOK || s.Resolution != "1h" {
+		t.Errorf("window=7d deu %d %s, queria resolution 1h", st, cru)
+	}
+	for _, j := range []string{"1h", "6h", "24h", "7d", "30d", "90d"} {
+		if st, _, cru := pedir("window=" + j); st != http.StatusOK {
+			t.Errorf("window=%s deu %d %s, queria 200", j, st, cru)
+		}
+	}
+
+	for _, consulta := range []string{"window=2h", "window=1d", "window=", "window=1h&from=" + to} {
+		resp := chamar(t, a, http.MethodGet, "/api/v1/targets/"+criado.ID+"/checks?"+consulta, tok, nil)
+		var env struct {
+			Error struct {
+				Code   string `json:"code"`
+				Fields []struct {
+					Field  string `json:"field"`
+					Reason string `json:"reason"`
+				} `json:"fields"`
+			} `json:"error"`
+		}
+		cru := lerCorpo(t, resp, &env)
+		if resp.StatusCode != http.StatusBadRequest || len(env.Error.Fields) != 1 ||
+			env.Error.Fields[0].Field != "window" || env.Error.Fields[0].Reason != "invalid" {
+			t.Errorf("%s deu %d %s, queria 400 window/invalid", consulta, resp.StatusCode, cru)
+		}
+	}
+}
