@@ -41,7 +41,7 @@ linha diz de onde veio o achado (relatório e número).
 | D1 | banco S1 (Alto) e C1 (Médio) | O `seed.sh` recusa rodar (sai 1, antes de chamar o binário) se `PUBLIC_BASE_URL` não for `http` em `localhost`, `127.0.0.0/8` ou `[::1]`; `restart: unless-stopped` no `db` do `compose.yaml`; o cabeçalho do compose diz, em destaque, que ele é só para a máquina local |
 | D2 | banco S2 | `cooldown: default-days: 7` no Dependabot de Go e de npm. Pela documentação do GitHub, o cooldown só vale para atualização de versão: as de segurança não esperam |
 | D3 | banco S3 | `.gitignore` com `*.key`, `*.dump`, `*.age` e `.env.*` (os nomes do runbook: `vigilume-backup.key`, `vigilume.dump`, `vigilume-AAAAMMDD.dump.age`) |
-| D4 | banco C2 | Marca d'água dos rollups no futuro limitada a "agora": a consolidação não congela depois de um salto de relógio |
+| D4 | banco C2 | A marca d'água dos rollups é o último rollup **antes** da hora corrente (`max(bucket) WHERE bucket < ate`): um rollup no futuro não a congela, e (desde a revisão, M1) também não esconde a última marca real, então uma parada de mais de 2 h com um rollup no futuro ainda recupera as horas perdidas (`TestConsolidationCatchesUpAfterAGapWithAWatermarkInTheFuture`) |
 | D5 | banco C3 | Comentário da migration 00001 diz que a produção roda o 18 |
 | E1–E6 | code review 4, 5, 8, 9, 10, 11 | Painel: passo 1 da troca trava o diálogo; resposta perdida no confirm diz que **não sabe** se a troca aconteceu; confirms com prazo de 30 s; guarda por canal; aviso de código de recuperação possivelmente gasto no passo 1; foco não cai no `<body>` (vai ao botão Ativar/Desativar ao lado). Textos finais que diferem da spec: o aviso de canal usa o `hint`, porque o canal não tem nome (`Canal discord.com/…/abcd retomado.`); o 429 diz `Muitas tentativas. Aguarde N segundos e tente de novo.` com o `Retry-After`; o aviso de código de recuperação gasto aparece em qualquer 401 depois de um código que não tem 6 dígitos, não só no `unauthorized` |
 | E7 | code review 12; limite do Plano 9 ("as checagens de CSP dos diálogos de canal leem as violações uma vez") | O controle positivo da CSP no E2E identifica e espera a própria violação e exige o resto vazio, depois de cada diálogo |
@@ -73,7 +73,8 @@ de um item corrigido:
   segunda metade): o limite da marca d'água já desfaz o congelamento. Destino: Plano 12.
 - **A janela de horas brutas do resumo com a marca no futuro** (banco C2): `Summary` já limita o
   corte à hora corrente, e a última hora fechada fica de fora só até a próxima rodada da
-  manutenção consolidá-la (agora que ela não congela). Aceito como está.
+  manutenção consolidá-la: ela não congela, e a marca d'água ignora o rollup do futuro, então
+  nem uma parada de mais de 2 h a perde (M1 da revisão). Aceito como está.
 - **Aviso no boot quando `CLIENT_IP_HEADER` está preenchido fora do Fly** (http S3, parte da
   correção): a B4 ficou na documentação, e o Plano 11 fixa `CLIENT_IP_HEADER` vazio no compose
   de produção. Destino: Plano 12, se o Plano 11 não o fizer.

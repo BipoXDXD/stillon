@@ -21,10 +21,14 @@ ON CONFLICT (target_id, bucket) DO UPDATE
    SET total = EXCLUDED.total, ok = EXCLUDED.ok, p50 = EXCLUDED.p50,
        p95 = EXCLUDED.p95, p99 = EXCLUDED.p99, max = EXCLUDED.max;
 
--- A marca d'água: a hora mais recente já consolidada. Sem rollup nenhum,
--- devolve a época Unix.
--- name: LatestRollupBucket :one
-SELECT coalesce(max(bucket), 'epoch'::timestamptz)::timestamptz FROM check_rollup_1h;
+-- A marca d'água: a hora mais recente já consolidada ANTES de before (a hora
+-- corrente). Um rollup gravado no futuro (relógio adiantado) não conta: com
+-- ele, a marca real ficava escondida, e uma parada de mais de 2 h perdia as
+-- horas antes dela (M1 da revisão do Plano 10). Sem rollup nenhum antes de
+-- before, devolve a época Unix.
+-- name: LatestRollupBucketBefore :one
+SELECT coalesce(max(bucket), 'epoch'::timestamptz)::timestamptz FROM check_rollup_1h
+ WHERE bucket < sqlc.arg(before)::timestamptz;
 
 -- Vale só até o fim da transação (o terceiro argumento de set_config).
 -- name: SetLocalLockTimeout :exec
