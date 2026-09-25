@@ -1797,7 +1797,8 @@ resolve** (sai 3 outra vez), e não é adulteração. Dois caminhos:
    mostra o mesmo. Os dois arquivos de versão são atualizados à mão porque o próximo deploy os
    usa para saber para onde voltar se ele mesmo falhar. Se o `up` não ficar saudável, o comando
    para antes de mexer neles; volte para a versão que estava no ar com
-   `sudo docker tag "vigilume:$ATUAL" vigilume:atual` e `vc up -d app`, e siga pelo caminho 1.
+   `sudo docker tag "vigilume:$ATUAL" vigilume:atual` e `vc up -d --force-recreate app`, e siga
+   pelo caminho 1.
 
 Refazer o deploy do SHA que **já está no ar** depois de um `v*` também sai 3 com essa mensagem:
 não há o que fazer, a versão no ar é o mesmo código.
