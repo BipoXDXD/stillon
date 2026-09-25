@@ -307,7 +307,7 @@ func TestLoginRehashDoesNotUndoAPasswordReset(t *testing.T) {
 		`UPDATE users SET password_hash = $2 WHERE id = $1`, a.userID, fraco); err != nil {
 		t.Fatal(err)
 	}
-	if _, precisa, err := auth.VerifyPassword(fraco, testPass); err != nil || !precisa {
+	if _, precisa, err := auth.VerifyPassword(context.Background(), fraco, testPass); err != nil || !precisa {
 		t.Fatalf("o hash fraco não pede rehash (%v): o teste não exercitaria o caminho", err)
 	}
 	svc := account.NewService(a.pool, nil, a.clk, nil)

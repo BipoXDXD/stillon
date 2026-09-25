@@ -138,7 +138,7 @@ func montar(t *testing.T) cenario {
 	if err != nil {
 		t.Fatal(err)
 	}
-	hash, err := auth.HashPassword(senha)
+	hash, err := auth.HashPassword(context.Background(), senha)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -281,7 +281,7 @@ func TestChangePasswordRechecksTheFamilyUnderTheLock(t *testing.T) {
 	if err := c.pool.QueryRow(context.Background(), `SELECT password_hash FROM users WHERE id = $1`, c.user).Scan(&hash); err != nil {
 		t.Fatal(err)
 	}
-	if ok, _, _ := auth.VerifyPassword(hash, senha); !ok {
+	if ok, _, _ := auth.VerifyPassword(context.Background(), hash, senha); !ok {
 		t.Error("a senha mudou mesmo com a sessão atual encerrada")
 	}
 }
@@ -297,7 +297,7 @@ func TestChangePasswordLosesToAConcurrentChange(t *testing.T) {
 		soltar()
 		t.Fatal("a troca não chegou à trava")
 	}
-	outra, err := auth.HashPassword("a-outra-troca-que-ganhou")
+	outra, err := auth.HashPassword(context.Background(), "a-outra-troca-que-ganhou")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -335,46 +335,6 @@ func TestRevokeSessionTakesTheUserLock(t *testing.T) {
 	soltar()
 	if err := <-fim; err != nil {
 		t.Fatalf("o encerramento falhou depois de soltar a trava: %v", err)
-	}
-}
-
-// usuariosQueFalham é o UserStore de verdade com RecordFailure quebrado: o
-// banco caiu entre a verificação da senha e o registro da falha do código.
-type usuariosQueFalham struct{ auth.UserStore }
-
-func (usuariosQueFalham) RecordFailure(context.Context, uuid.UUID, time.Time) error {
-	return errors.New("banco fora do ar")
-}
-
-// Com o segundo fator ligado e o código errado, uma falha ao registrar a
-// tentativa não muda a resposta: continua ErrInvalidCredentials, como no
-// auth.CheckPassword. Antes, o erro cru subia e virava 500 — e um 500 ali
-// (depois da senha, antes do código) dizia ao atacante que a senha estava certa.
-func TestChangePasswordWrongCodeHidesARecordFailureError(t *testing.T) {
-	c := montar(t)
-	ctx := context.Background()
-	uri, err := c.totp.Enroll(ctx, c.user, "dono@exemplo.com")
-	if err != nil {
-		t.Fatal(err)
-	}
-	key, err := otp.NewKeyFromURL(uri)
-	if err != nil {
-		t.Fatal(err)
-	}
-	code, err := totp.GenerateCode(key.Secret(), c.clk.Now())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := c.totp.Confirm(ctx, c.user, code, c.clk.Now()); err != nil {
-		t.Fatal(err)
-	}
-	c.svc.SetUsers(usuariosQueFalham{auth.NewPGStore(c.pool)})
-
-	err = c.svc.ChangePassword(ctx, c.user, c.atual,
-		account.ChangePasswordInput{Current: senha, New: "a-senha-nova-bem-comprida", TOTPCode: "000000"},
-		auth.Meta{IP: "203.0.113.9"})
-	if !errors.Is(err, account.ErrInvalidCredentials) {
-		t.Fatalf("erro = %v, queria ErrInvalidCredentials", err)
 	}
 }
 

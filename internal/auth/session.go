@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -33,6 +34,11 @@ var (
 	// usuário (um set-password ou uma troca de senha comitou no meio do
 	// login). Quem chama responde como a senha errada: invalid_credentials.
 	ErrStalePassword = errors.New("a senha mudou depois de verificada")
+	// ErrStaleSecondFactor: o segredo do 2FA que aceitou o código já não é o
+	// do usuário (uma troca de autenticador ou um disable comitou entre o
+	// /totp/verify e a sessão; A4 do Plano 10). Quem chama responde como o
+	// código errado: invalid_credentials.
+	ErrStaleSecondFactor = errors.New("o segundo fator mudou depois de verificado")
 )
 
 type Session struct {
@@ -94,6 +100,22 @@ func PasswordStamp(hash string) string {
 // A trava do usuário vem antes de qualquer outra coisa, como em toda
 // transação que muda sessions; Issue não trava linha nenhuma de sessions.
 func (m *Manager) Issue(ctx context.Context, userID uuid.UUID, stamp string, meta Meta) (string, Session, error) {
+	return m.issue(ctx, userID, stamp, nil, meta)
+}
+
+// IssueAfterSecondFactor é o Issue do login com 2FA: além do carimbo da senha,
+// confere, sob a MESMA trava do usuário, que o segredo que aceitou o código
+// (proof) ainda é o segredo ativo, e recusa com ErrStaleSecondFactor se não
+// for (A4 do Plano 10). Sem isto, um código do app ANTIGO aceito um instante
+// antes de uma troca de autenticador comitar abria uma sessão depois da
+// troca, que a troca (que encerra as outras famílias sob a mesma trava) já não
+// alcançava. Com a trava, ou a troca comita antes (e a reconferência recusa),
+// ou a sessão comita antes (e a troca a encerra).
+func (m *Manager) IssueAfterSecondFactor(ctx context.Context, userID uuid.UUID, stamp string, proof SecondFactorProof, meta Meta) (string, Session, error) {
+	return m.issue(ctx, userID, stamp, &proof, meta)
+}
+
+func (m *Manager) issue(ctx context.Context, userID uuid.UUID, stamp string, proof *SecondFactorProof, meta Meta) (string, Session, error) {
 	if stamp == "" {
 		return "", Session{}, errors.New("emitir sessão: sem o carimbo da senha verificada")
 	}
@@ -117,6 +139,15 @@ func (m *Manager) Issue(ctx context.Context, userID uuid.UUID, stamp string, met
 		}
 		if subtle.ConstantTimeCompare([]byte(PasswordStamp(hash)), []byte(stamp)) != 1 {
 			return ErrStalePassword
+		}
+		if proof != nil {
+			ativo, err := tx.UserTOTPSecret(ctx, userID)
+			if err != nil {
+				return err
+			}
+			if len(ativo) == 0 || !bytes.Equal(ativo, proof.sealed) {
+				return ErrStaleSecondFactor
+			}
 		}
 		token, s, err = m.insert(ctx, tx, userID, familyID, meta)
 		return err

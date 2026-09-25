@@ -6,7 +6,9 @@ import (
 	"encoding/base32"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
+	"unicode"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -15,6 +17,7 @@ import (
 	"github.com/pquerna/otp/totp"
 
 	"github.com/BipoXDXD/vigilume/internal/crypto"
+	"github.com/BipoXDXD/vigilume/internal/storage/db"
 )
 
 var (
@@ -104,10 +107,19 @@ func (s *TOTP) Enroll(ctx context.Context, userID uuid.UUID, email string) (stri
 
 // Confirm ativa o segundo fator e devolve os códigos de recuperação. Eles são
 // mostrados uma única vez: o banco guarda apenas o hash.
+//
+// Com o fator já ligado, recusa com ErrTOTPAlreadyEnabled ANTES de conferir o
+// código (C1 da revisão do Plano 10). Conferido antes, o código certo dava
+// ErrTOTPAlreadyEnabled e o errado ErrTOTPInvalid: um oráculo do código do
+// segredo ATIVO, sem consumir o timestep, que quem tinha só a sessão
+// consultava e depois usava no disable ou no rotate.
 func (s *TOTP) Confirm(ctx context.Context, userID uuid.UUID, code string, now time.Time) ([]string, error) {
-	secret, _, sealed, err := s.loadSealed(ctx, userID)
+	secret, confirmado, sealed, err := s.loadSealed(ctx, userID)
 	if err != nil {
 		return nil, err
+	}
+	if confirmado {
+		return nil, ErrTOTPAlreadyEnabled
 	}
 	step, ok := validateTOTP(code, secret, now)
 	if !ok {
@@ -174,19 +186,34 @@ func (s *TOTP) Confirm(ctx context.Context, userID uuid.UUID, code string, now t
 	return codes, nil
 }
 
+// SecondFactorProof é o que um VerifyWithProof aceito prova: o segredo ativo
+// como estava cifrado no banco quando o código foi aceito. O login a entrega a
+// Manager.IssueAfterSecondFactor, que a reconfere sob a trava do usuário (A4 do
+// Plano 10): uma troca de autenticador ou um disable que comite entre o código
+// e a sessão faz a sessão ser recusada.
+type SecondFactorProof struct{ sealed []byte }
+
 // Verify aceita tanto um código do app quanto um código de recuperação. O de
 // recuperação é consumido no momento do uso.
 func (s *TOTP) Verify(ctx context.Context, userID uuid.UUID, code string, now time.Time) error {
-	secret, confirmed, err := s.load(ctx, userID)
+	_, err := s.VerifyWithProof(ctx, userID, code, now)
+	return err
+}
+
+// VerifyWithProof é o Verify que devolve a prova do segredo que aceitou o
+// código (ver SecondFactorProof). É o do segundo passo do login.
+func (s *TOTP) VerifyWithProof(ctx context.Context, userID uuid.UUID, code string, now time.Time) (SecondFactorProof, error) {
+	secret, confirmed, sealed, err := s.loadSealed(ctx, userID)
 	if err != nil {
-		return err
+		return SecondFactorProof{}, err
 	}
 	if !confirmed {
-		return ErrTOTPNotEnrolled
+		return SecondFactorProof{}, ErrTOTPNotEnrolled
 	}
+	prova := SecondFactorProof{sealed: sealed}
 
 	if step, ok := validateTOTP(code, secret, now); ok {
-		return s.consumirTimestep(ctx, userID, step)
+		return prova, s.consumirTimestep(ctx, userID, step, sealed)
 	}
 
 	// O consumo e o registro de auditoria vão na mesma transação: uso de
@@ -196,31 +223,54 @@ func (s *TOTP) Verify(ctx context.Context, userID uuid.UUID, code string, now ti
 	// ou rastro de um consumo que não aconteceu.
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return fmt.Errorf("abrir transação: %w", err)
+		return SecondFactorProof{}, fmt.Errorf("abrir transação: %w", err)
 	}
 	defer tx.Rollback(ctx) // no-op depois de Commit
 
-	// DELETE ... RETURNING resolve o consumo do código em uma única
-	// instrução: dois usos simultâneos do mesmo código não podem ambos
-	// encontrar a linha.
+	if err := consumirRecuperacao(ctx, tx, userID, code); err != nil {
+		return SecondFactorProof{}, err
+	}
+	if err := insertAudit(ctx, tx, userID, "totp.recovery_used", nil, now); err != nil {
+		return SecondFactorProof{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return SecondFactorProof{}, fmt.Errorf("consumir código de recuperação: %w", err)
+	}
+	return prova, nil
+}
+
+// consumirRecuperacao gasta um código de recuperação, na transação de quem
+// chama. DELETE ... RETURNING resolve o consumo em uma única instrução: dois
+// usos simultâneos do mesmo código não podem ambos encontrar a linha. Sem
+// código que case, ErrTOTPInvalid.
+func consumirRecuperacao(ctx context.Context, tx pgx.Tx, userID uuid.UUID, code string) error {
 	var id uuid.UUID
-	err = tx.QueryRow(ctx,
+	err := tx.QueryRow(ctx,
 		`DELETE FROM totp_recovery_codes WHERE user_id = $1 AND code_hash = $2 RETURNING id`,
-		userID, crypto.HashToken(code)).Scan(&id)
+		userID, crypto.HashToken(normalizarRecuperacao(code))).Scan(&id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrTOTPInvalid
 	}
 	if err != nil {
 		return fmt.Errorf("consumir código de recuperação: %w", err)
 	}
-
-	if err := insertAudit(ctx, tx, userID, "totp.recovery_used", nil, now); err != nil {
-		return err
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("consumir código de recuperação: %w", err)
-	}
 	return nil
+}
+
+// normalizarRecuperacao põe o código de recuperação digitado no formato em
+// que ele foi gerado (A8 do Plano 10): base32 maiúsculo, sem separador. Sai
+// todo espaço e todo hífen, e a caixa sobe. O dono digita em minúsculas no
+// celular, ou o teclado capitaliza só a primeira letra, ou copia com espaço:
+// antes o hash não casava, a resposta era 401 e a falha contava — justamente
+// no caminho de recuperação. Os códigos já gravados continuam valendo: o hash
+// deles é do formato gerado, que a normalização não muda.
+func normalizarRecuperacao(code string) string {
+	return strings.ToUpper(strings.Map(func(r rune) rune {
+		if r == '-' || unicode.IsSpace(r) {
+			return -1
+		}
+		return r
+	}, code))
 }
 
 // Disable desliga o segundo fator e apaga tudo que o sustentava.
@@ -233,51 +283,45 @@ func (s *TOTP) Verify(ctx context.Context, userID uuid.UUID, code string, now ti
 //
 // Um código de recuperação serve no lugar do código do app, que é o caso que
 // motiva a rota existir.
+//
+// Tudo numa transação, na ordem global de travas (A5 do Plano 10): a trava de
+// sessões do usuário, a linha de users (FOR NO KEY UPDATE), os códigos de
+// recuperação, a auditoria. Antes, o código de recuperação era apagado ANTES
+// de a linha de users ser travada, e um rotate/confirm ou um reset-2fa, que
+// fazem o contrário, fechavam um ciclo com ele (deadlock). E a prova é
+// conferida dentro da transação, sob a trava da linha: o código do app tem de
+// ser de um timestep ainda não usado (A4) — antes só era validado, e o código
+// usado no login desligava o 2FA na mesma janela de 90 s. (Gravar o timestep
+// aqui não mudaria nada: o segredo cai na mesma transação.)
 func (s *TOTP) Disable(ctx context.Context, userID uuid.UUID, code string, now time.Time) error {
-	secret, confirmed, err := s.load(ctx, userID)
-	if err != nil {
-		return err
-	}
-	if !confirmed {
-		return ErrTOTPNotEnrolled
-	}
-
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("abrir transação: %w", err)
 	}
 	defer tx.Rollback(ctx) // no-op depois de Commit
 
-	if _, ok := validateTOTP(code, secret, now); !ok {
-		// O DELETE ... RETURNING é a própria verificação do código de
-		// recuperação: não há janela entre conferir e consumir.
-		var id uuid.UUID
-		err := tx.QueryRow(ctx,
-			`DELETE FROM totp_recovery_codes WHERE user_id = $1 AND code_hash = $2 RETURNING id`,
-			userID, crypto.HashToken(code)).Scan(&id)
-		if errors.Is(err, pgx.ErrNoRows) {
-			return ErrTOTPInvalid
-		}
-		if err != nil {
-			return fmt.Errorf("consumir código de recuperação: %w", err)
-		}
+	if err := db.New(tx).LockUserSessions(ctx, userID); err != nil {
+		return fmt.Errorf("travar sessões: %w", err)
+	}
+	f, err := s.fatorTravado(ctx, tx, userID)
+	if err != nil {
+		return err
+	}
+	if !f.confirmado {
+		return ErrTOTPNotEnrolled
+	}
+	if _, _, err := f.provar(ctx, tx, userID, code, now); err != nil {
+		return err
 	}
 
-	// A guarda vai na cláusula WHERE, e não num SELECT anterior, pelo mesmo
-	// motivo do R38: entre ler e escrever cabe uma desativação concorrente.
-	//
 	// O segredo pendente de uma troca (Plano 9, §3.2) cai junto: sem isto, o
 	// QR de uma troca abandonada ainda confirmaria depois que o 2FA fosse
 	// ligado de novo com outro app.
-	tag, err := tx.Exec(ctx,
+	if _, err := tx.Exec(ctx,
 		`UPDATE users SET totp_secret_enc = NULL, totp_confirmed_at = NULL, totp_pending_secret_enc = NULL,
 		                  totp_pending_family_id = NULL
-		   WHERE id = $1 AND totp_confirmed_at IS NOT NULL`, userID)
-	if err != nil {
+		   WHERE id = $1`, userID); err != nil {
 		return fmt.Errorf("desativar TOTP: %w", err)
-	}
-	if tag.RowsAffected() == 0 {
-		return ErrTOTPNotEnrolled
 	}
 
 	// Os códigos restantes morrem com o fator: deixá-los vivos seria manter
@@ -298,6 +342,64 @@ func (s *TOTP) Disable(ctx context.Context, userID uuid.UUID, code string, now t
 	return nil
 }
 
+// fatorTravado é o estado do segundo fator lido com a linha de users travada
+// (FOR NO KEY UPDATE, A5 do Plano 10), na transação de quem chama, depois da
+// trava de sessões. FOR NO KEY UPDATE, e não FOR UPDATE: o INSERT em audit_log
+// toma KEY SHARE na linha de users (a chave estrangeira), e FOR UPDATE o faria
+// esperar. Sob esta trava, conferir e consumir a prova não têm janela entre
+// si.
+type fatorTravado struct {
+	confirmado bool
+	segredo    string
+	sealed     []byte
+	ultimo     *int64
+}
+
+func (s *TOTP) fatorTravado(ctx context.Context, tx pgx.Tx, userID uuid.UUID) (fatorTravado, error) {
+	var f fatorTravado
+	var at *time.Time
+	err := tx.QueryRow(ctx,
+		`SELECT totp_secret_enc, totp_confirmed_at, totp_last_timestep FROM users WHERE id = $1 FOR NO KEY UPDATE`,
+		userID).Scan(&f.sealed, &at, &f.ultimo)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return fatorTravado{}, ErrNotFound
+	}
+	if err != nil {
+		return fatorTravado{}, fmt.Errorf("carregar TOTP: %w", err)
+	}
+	f.confirmado = at != nil && len(f.sealed) > 0
+	if !f.confirmado {
+		return f, nil
+	}
+	plain, err := s.box.Open(f.sealed, aadAtivo(userID))
+	if err != nil {
+		return fatorTravado{}, fmt.Errorf("decifrar segredo TOTP: %w", err)
+	}
+	f.segredo = string(plain.Reveal())
+	return f, nil
+}
+
+// provar confere a prova de posse do fator ATIVO sob a trava da linha: o
+// código do app (o timestep tem de ser mais novo que o último usado; quem
+// chama grava o timestep devolvido) ou um código de recuperação, que é gasto
+// na mesma transação (recuperacao diz qual foi). Vazia ou errada é
+// ErrTOTPInvalid, e nada foi gasto.
+func (f fatorTravado) provar(ctx context.Context, tx pgx.Tx, userID uuid.UUID, code string, now time.Time) (step *int64, recuperacao bool, err error) {
+	if code == "" {
+		return nil, false, ErrTOTPInvalid
+	}
+	if passo, ok := validateTOTP(code, f.segredo, now); ok {
+		if f.ultimo != nil && *f.ultimo >= passo {
+			return nil, false, ErrTOTPInvalid
+		}
+		return &passo, false, nil
+	}
+	if err := consumirRecuperacao(ctx, tx, userID, code); err != nil {
+		return nil, false, err
+	}
+	return nil, true, nil
+}
+
 // consumirTimestep marca o período como usado e recusa se ele já foi.
 //
 // A condição vai na cláusula WHERE, e não num SELECT anterior, pelo mesmo
@@ -305,11 +407,16 @@ func (s *TOTP) Disable(ctx context.Context, userID uuid.UUID, code string, now t
 // código, e é exatamente essa corrida que o reúso explora. Recusar `<=` e não
 // só `=` fecha também o código do período ANTERIOR depois que um posterior
 // entrou.
-func (s *TOTP) consumirTimestep(ctx context.Context, userID uuid.UUID, step int64) error {
+//
+// E o segredo tem de ser o mesmo que validou o código (A4 do Plano 10): uma
+// troca de autenticador que comitou entre a leitura do segredo e aqui faria o
+// código do app ANTIGO ser aceito depois da troca. É o compare-and-swap que o
+// Confirm já fazia.
+func (s *TOTP) consumirTimestep(ctx context.Context, userID uuid.UUID, step int64, sealed []byte) error {
 	tag, err := s.pool.Exec(ctx,
 		`UPDATE users SET totp_last_timestep = $2
-		   WHERE id = $1 AND (totp_last_timestep IS NULL OR totp_last_timestep < $2)`,
-		userID, step)
+		   WHERE id = $1 AND (totp_last_timestep IS NULL OR totp_last_timestep < $2) AND totp_secret_enc = $3`,
+		userID, step, sealed)
 	if err != nil {
 		return fmt.Errorf("consumir timestep TOTP: %w", err)
 	}
@@ -332,13 +439,9 @@ func (s *TOTP) IsEnabled(ctx context.Context, userID uuid.UUID) (bool, error) {
 	return confirmed != nil, nil
 }
 
-func (s *TOTP) load(ctx context.Context, userID uuid.UUID) (secret string, confirmed bool, err error) {
-	secret, confirmed, _, err = s.loadSealed(ctx, userID)
-	return secret, confirmed, err
-}
-
-// loadSealed é load devolvendo também o segredo cifrado como está no banco,
-// para quem precisa gravar só se ele não mudou (Confirm).
+// loadSealed lê o segredo ativo decifrado, se ele está confirmado, e o segredo
+// cifrado como está no banco, para quem precisa gravar só se ele não mudou
+// (Confirm, e o consumo do timestep do Verify).
 func (s *TOTP) loadSealed(ctx context.Context, userID uuid.UUID) (secret string, confirmed bool, sealed []byte, err error) {
 	var at *time.Time
 

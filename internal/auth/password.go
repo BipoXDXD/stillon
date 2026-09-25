@@ -2,6 +2,7 @@
 package auth
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/base64"
@@ -60,12 +61,15 @@ func ValidateNewPassword(plain string) string {
 }
 
 // HashPassword gera um hash no formato PHC, com salt aleatório.
-func HashPassword(plain string) (string, error) {
+//
+// Toma uma vaga do semáforo do Argon2id (A1 do Plano 10): sem vaga no prazo,
+// ou com ctx cancelado enquanto espera, ErrArgon2Busy.
+func HashPassword(ctx context.Context, plain string) (string, error) {
 	salt := make([]byte, argonSaltLen)
 	if _, err := rand.Read(salt); err != nil {
 		return "", fmt.Errorf("gerar salt: %w", err)
 	}
-	return HashPasswordWith(plain, salt, argonMemory, argonTime, argonThreads)
+	return hashCom(ctx, plain, salt, argonMemory, argonTime, argonThreads)
 }
 
 // HashPasswordWith é exportada para que os testes consigam construir hashes
@@ -75,16 +79,33 @@ func HashPassword(plain string) (string, error) {
 // Recusa os mesmos parâmetros que o decodeHash recusa ao ler (Plano 8), e
 // salt vazio: argon2.IDKey entra em panic com t=0, p=0 ou memória abaixo de
 // 8*p, e um hash assim nem seria lido de volta.
+//
+// Toma uma vaga do semáforo do Argon2id (A1 do Plano 10): sem vaga no prazo,
+// ErrArgon2Busy.
 func HashPasswordWith(plain string, salt []byte, memory, time uint32, threads uint8) (string, error) {
+	return hashCom(context.Background(), plain, salt, memory, time, threads)
+}
+
+func hashCom(ctx context.Context, plain string, salt []byte, memory, time uint32, threads uint8) (string, error) {
 	if !parametrosValidos(memory, time, threads) || len(salt) == 0 {
 		return "", ErrInvalidHash
 	}
+	soltar, err := ReserveArgon2(ctx)
+	if err != nil {
+		return "", err
+	}
+	defer soltar()
+	return formatarHash(plain, salt, memory, time, threads), nil
+}
+
+// formatarHash roda o Argon2id SEM o semáforo: quem chama já tem a vaga.
+func formatarHash(plain string, salt []byte, memory, time uint32, threads uint8) string {
 	sum := argon2.IDKey([]byte(plain), salt, time, memory, threads, argonKeyLen)
 	return fmt.Sprintf("$argon2id$v=%d$m=%d,t=%d,p=%d$%s$%s",
 		argon2.Version, memory, time, threads,
 		base64.RawStdEncoding.EncodeToString(salt),
 		base64.RawStdEncoding.EncodeToString(sum),
-	), nil
+	)
 }
 
 // parametrosValidos é a faixa que argon2.IDKey aceita sem panic. É uma regra
@@ -110,7 +131,21 @@ func Argon2Verifications() uint64 { return verificacoes.Load() }
 // needsRehash permite subir o custo do Argon2 no futuro sem invalidar senha
 // nenhuma: o login valida com os parâmetros gravados, e quem chama regrava o
 // hash com os parâmetros atuais.
-func VerifyPassword(encoded, plain string) (ok bool, needsRehash bool, err error) {
+//
+// Toma uma vaga do semáforo do Argon2id (A1 do Plano 10): sem vaga no prazo,
+// ErrArgon2Busy, e a senha não foi verificada; o mesmo com ctx cancelado
+// enquanto espera a vaga (o cliente desistiu).
+func VerifyPassword(ctx context.Context, encoded, plain string) (ok bool, needsRehash bool, err error) {
+	soltar, err := ReserveArgon2(ctx)
+	if err != nil {
+		return false, false, err
+	}
+	defer soltar()
+	return verificarSenha(encoded, plain)
+}
+
+// verificarSenha é o VerifyPassword SEM o semáforo: quem chama já tem a vaga.
+func verificarSenha(encoded, plain string) (ok bool, needsRehash bool, err error) {
 	memory, time, threads, salt, want, err := decodeHash(encoded)
 	if err != nil {
 		return false, false, err
@@ -168,12 +203,16 @@ func decodeHash(encoded string) (memory, time uint32, threads uint8, salt, sum [
 // dummyHash é calculado uma única vez, na primeira chamada. Calcular sob
 // demanda evita pagar 64 MiB e três iterações no boot de todo processo,
 // inclusive nos que rodam só como --role=prober.
+//
+// Roda SEM tomar vaga do semáforo: só o VerifyDummy o chama, e já com a vaga
+// dele. Tomar outra aqui travaria com o teto em 1, e um ErrArgon2Busy dentro
+// do OnceValue viraria panic.
 var dummyHash = sync.OnceValue(func() string {
-	h, err := HashPassword("senha-inexistente-usada-apenas-para-tempo-constante")
-	if err != nil {
+	salt := make([]byte, argonSaltLen)
+	if _, err := rand.Read(salt); err != nil {
 		panic("auth: não foi possível preparar o hash dummy: " + err.Error())
 	}
-	return h
+	return formatarHash("senha-inexistente-usada-apenas-para-tempo-constante", salt, argonMemory, argonTime, argonThreads)
 })
 
 // VerifyDummy consome o mesmo trabalho de CPU de uma verificação real.
@@ -181,6 +220,16 @@ var dummyHash = sync.OnceValue(func() string {
 // O login chama esta função quando o e-mail não existe, para que a resposta
 // custe o mesmo de uma senha errada. Sem isso, o tempo de resposta diz ao
 // atacante quais e-mails têm conta (spec §5.2).
-func VerifyDummy() {
-	_, _, _ = VerifyPassword(dummyHash(), "qualquer-coisa")
+//
+// Passa pelo mesmo semáforo da verificação real (A1 do Plano 10): com o teto
+// cheio, a conta existente e a inexistente recebem o mesmo ErrArgon2Busy, no
+// mesmo prazo.
+func VerifyDummy(ctx context.Context) error {
+	soltar, err := ReserveArgon2(ctx)
+	if err != nil {
+		return err
+	}
+	defer soltar()
+	_, _, _ = verificarSenha(dummyHash(), "qualquer-coisa")
+	return nil
 }

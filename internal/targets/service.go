@@ -158,6 +158,14 @@ func (s *Service) Update(ctx context.Context, userID, id uuid.UUID, p Patch) (Ta
 		if verr := validate(&f); verr != nil {
 			return verr
 		}
+		// C4 (Plano 10): outra URL ou outro método é outro serviço. As falhas
+		// do anterior não somam com as do novo; o incidente aberto fica e
+		// fecha pelos sucessos do novo.
+		if f.URL != row.URL || f.Method != row.Method {
+			if err := q.ResetTargetHealth(ctx, db.ResetTargetHealthParams{UserID: userID, TargetID: row.ID}); err != nil {
+				return fmt.Errorf("zerar histerese do alvo: %w", err)
+			}
+		}
 
 		sealed, err := SealHeaders(s.box, row.ID, f.Headers)
 		if err != nil {
@@ -188,6 +196,10 @@ func (s *Service) Update(ctx context.Context, userID, id uuid.UUID, p Patch) (Ta
 }
 
 // apply devolve true quando a mudança altera O QUE é sondado (D13).
+//
+// Uma URL de outra origem sem headers no mesmo PATCH apaga os headers (B1
+// do Plano 10): eles são credenciais daquele destino, e levá-los a outro
+// host é o mesmo vazamento que o sondador já evita num redirecionamento.
 func (p Patch) apply(f *fields, enabled *bool) bool {
 	antes := *f
 	if p.Name != nil {
@@ -213,6 +225,8 @@ func (p Patch) apply(f *fields, enabled *bool) bool {
 	}
 	if p.SetHeaders {
 		f.Headers = p.Headers
+	} else if !SameOrigin(antes.URL, f.URL) {
+		f.Headers = nil
 	}
 	if p.Enabled != nil {
 		*enabled = *p.Enabled

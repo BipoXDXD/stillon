@@ -4,10 +4,13 @@ import (
 	"maps"
 	"net/http"
 	"net/netip"
+	"net/url"
 	"slices"
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"golang.org/x/net/idna"
 
 	"github.com/BipoXDXD/vigilume/internal/prober/safedial"
 )
@@ -119,7 +122,10 @@ func validate(f *fields) *ValidationError {
 		v.add("timeout_ms", ReasonOutOfRange)
 	}
 
-	if f.ExpectedStatus < 100 || f.ExpectedStatus > 599 {
+	// C2 (Plano 10): só 2xx e 4xx–5xx podem ser o status final. O 1xx o
+	// net/http consome, e o 3xx o cliente segue (até 3 saltos); esperar um
+	// deles deixaria o alvo down para sempre, com um incidente que não fecha.
+	if s := f.ExpectedStatus; !(s >= 200 && s <= 299) && !(s >= 400 && s <= 599) {
 		v.add("expected_status", ReasonOutOfRange)
 	}
 
@@ -235,6 +241,75 @@ func validHeaderValue(s string) bool {
 			continue
 		}
 		if c < 0x20 || c == 0x7f {
+			return false
+		}
+	}
+	return true
+}
+
+// SameOrigin diz se as duas URLs têm a mesma origem, na regra do navegador
+// (WHATWG): esquema sem diferença de caixa, o host como o transporte o disca,
+// e a porta padrão do esquema (80 no http, 443 no https) igual a porta
+// nenhuma. Caminho, consulta e fragmento não contam. Uma URL que não se lê, ou
+// cujo host não converte para ASCII, não tem a origem de ninguém.
+//
+// O host é comparado depois de idna.Lookup.ToASCII, o perfil que o net/http
+// (e com ele o safedial) usa para discar e para o SNI (Q1 da revisão do Plano
+// 10). Com strings.ToLower, "straße.de" e "STRAẞE.de" davam a mesma origem,
+// mas o transporte disca xn--strae-oqa.de num e strasse.de no outro, que é
+// outro domínio: o PATCH mantinha os headers e o próximo check os levava ao
+// domínio novo.
+//
+// É a regra do B1 do Plano 10: um PATCH que troca a origem sem mandar
+// headers os apaga. O painel a reimplementa com new URL(x).origin para avisar
+// antes de salvar, que usa o mesmo UTS 46. Onde as duas ainda divergirem
+// (IPv4 em notação não canônica, um host que o navegador aceita e o ToASCII
+// recusa), o servidor vê origem diferente e apaga, que é o lado seguro.
+func SameOrigin(a, b string) bool {
+	oa, ok := origem(a)
+	if !ok {
+		return false
+	}
+	ob, ok := origem(b)
+	return ok && oa == ob
+}
+
+func origem(s string) (string, bool) {
+	u, err := url.Parse(strings.TrimSpace(s))
+	if err != nil || u.Hostname() == "" {
+		return "", false
+	}
+	host, ok := hostDiscado(u.Hostname())
+	if !ok {
+		return "", false
+	}
+	esquema := strings.ToLower(u.Scheme)
+	porta := u.Port()
+	if esquema == "http" && porta == "80" || esquema == "https" && porta == "443" {
+		porta = ""
+	}
+	return esquema + "://" + host + "|" + porta, true
+}
+
+// hostDiscado é o host como o net/http o disca: ASCII passa como está (o
+// idnaASCII do net/http não o toca), e o resto passa por
+// idna.Lookup.ToASCII. A caixa sai baixa nos dois casos, porque o DNS não a
+// distingue. O ToASCII devolve um valor mesmo quando falha; a falha conta
+// como "não converte".
+func hostDiscado(h string) (string, bool) {
+	if ehASCII(h) {
+		return strings.ToLower(h), true
+	}
+	a, err := idna.Lookup.ToASCII(h)
+	if err != nil {
+		return "", false
+	}
+	return strings.ToLower(a), true
+}
+
+func ehASCII(s string) bool {
+	for i := range len(s) {
+		if s[i] >= utf8.RuneSelf {
 			return false
 		}
 	}

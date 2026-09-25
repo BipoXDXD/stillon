@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"bytes"
+	"fmt"
 	"log/slog"
 	"net/http/httptest"
 	"net/netip"
@@ -143,5 +144,81 @@ func TestTrustedPeerWithoutAUsableHeaderWarnsAtMostOncePerMinute(t *testing.T) {
 	ClientIP(r, px)
 	if !strings.Contains(log.String(), "cabeçalho de IP do cliente ignorado") {
 		t.Errorf("o aviso de origem fora da lista sumiu depois do outro: %s", log.String())
+	}
+}
+
+// B3 (Plano 10): em produção (PUBLIC_BASE_URL https, que liga AvisarXFF), um
+// X-Forwarded-For vindo de fora de TRUSTED_PROXIES é quase sempre a lista
+// errada (o gateway da bridge do Docker no lugar do 127.0.0.1): todo
+// visitante cai num balde só, e antes nada avisava. O aviso é o mesmo do modo
+// com cabeçalho, com o mesmo limite de um por minuto, e traz o remote_addr,
+// que é o que falta para corrigir a lista. Com a lista vazia também avisa:
+// o aviso do boot não diz qual endereço pôr.
+func TestForwardedForFromOutsideTheListWarnsInProduction(t *testing.T) {
+	const frase = "cabeçalho de IP do cliente ignorado"
+	for _, trusted := range [][]netip.Prefix{{netip.MustParsePrefix("127.0.0.1/32")}, nil} {
+		t.Run(fmt.Sprint(trusted), func(t *testing.T) {
+			agora := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
+			log := capturarAvisos(t, &agora)
+			px := Proxies{Trusted: trusted, AvisarXFF: true}
+
+			pedir := func() string {
+				r := httptest.NewRequest("GET", "/", nil)
+				r.RemoteAddr = "172.18.0.1:5555"
+				r.Header.Set("X-Forwarded-For", "198.51.100.7")
+				return ClientIP(r, px)
+			}
+			for range 100 {
+				if got := pedir(); got != "172.18.0.1" {
+					t.Fatalf("ClientIP = %q, queria o endereço da conexão 172.18.0.1", got)
+				}
+			}
+			if n := strings.Count(log.String(), frase); n != 1 {
+				t.Fatalf("%d avisos em 100 requisições no mesmo minuto, queria 1: %s", n, log.String())
+			}
+			if !strings.Contains(log.String(), "remote_addr=172.18.0.1") || !strings.Contains(log.String(), "X-Forwarded-For") {
+				t.Errorf("o aviso não traz o remote_addr e o nome do cabeçalho: %s", log.String())
+			}
+			if strings.Contains(log.String(), "198.51.100.7") {
+				t.Errorf("o aviso repete o valor do cabeçalho: %s", log.String())
+			}
+
+			agora = agora.Add(time.Minute)
+			pedir()
+			if n := strings.Count(log.String(), frase); n != 2 {
+				t.Errorf("%d avisos depois de um minuto, queria 2", n)
+			}
+		})
+	}
+}
+
+// As pernas que não podem avisar: sem AvisarXFF (desenvolvimento, http), sem
+// X-Forwarded-For na requisição (um cliente direto é normal), e do proxy
+// confiável (o caminho de todo dia em produção).
+func TestForwardedForWarningOnlyWhenItMeansAWrongList(t *testing.T) {
+	agora := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
+	log := capturarAvisos(t, &agora)
+	lista := []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")}
+
+	casos := []struct {
+		nome   string
+		px     Proxies
+		remoto string
+		comXFF bool
+	}{
+		{"http, fora da lista", Proxies{Trusted: lista}, "172.18.0.1:5555", true},
+		{"https, sem X-Forwarded-For", Proxies{Trusted: lista, AvisarXFF: true}, "172.18.0.1:5555", false},
+		{"https, do proxy confiável", Proxies{Trusted: lista, AvisarXFF: true}, "10.1.2.3:5555", true},
+	}
+	for _, c := range casos {
+		r := httptest.NewRequest("GET", "/", nil)
+		r.RemoteAddr = c.remoto
+		if c.comXFF {
+			r.Header.Set("X-Forwarded-For", "198.51.100.7")
+		}
+		ClientIP(r, c.px)
+		if log.Len() != 0 {
+			t.Fatalf("%s: saiu aviso: %s", c.nome, log.String())
+		}
 	}
 }

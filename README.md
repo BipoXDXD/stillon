@@ -35,8 +35,17 @@ no primeiro `up`: `DEMO_TARGETS_EXTRA="https://seu.site/ https://outro.site/" do
 - As chaves do `compose.yaml` são de demonstração e estão no repositório. O boot valida a
   `PUBLIC_BASE_URL` (esquema `http` ou `https`, com host, sem usuário e senha) e só aceita essas
   chaves com `http` e host de loopback (`localhost` ou IP de loopback, como `127.0.0.1` e `::1`).
-  Com `https` ele recusa sempre, até em `https://localhost`; com qualquer outro host, também: o
-  compose copiado para um servidor não sobe com elas.
+  Com `https` ele recusa sempre, até em `https://localhost`; com qualquer outro host, também. O
+  boot só olha a URL **declarada**: o compose copiado para um servidor com um proxy na frente e a
+  `PUBLIC_BASE_URL` ainda `http://localhost:8080` sobe com elas (ver abaixo).
+- **O `compose.yaml` é só para a máquina local, nunca para servidor.** O usuário de
+  demonstração tem senha pública, e o sistema é de um dono só: num servidor, ele seria o dono. O
+  `seed` recusa rodar (sai com 1, e o `up` para) se a `PUBLIC_BASE_URL` não for `http` em
+  `localhost` ou IP de loopback. **Isso não protege um servidor**: atrás de um proxy (um Caddy com
+  `reverse_proxy app:8080`) e com a `PUBLIC_BASE_URL` ainda local, o seed e o boot aceitam, o
+  usuário de demonstração nasce, e qualquer um entra com a senha pública. Nenhuma checagem do
+  `Host` recebido existe hoje. Para hospedar, o compose de produção vem no Plano 11, sem o
+  `seed` e sem nenhuma chave ou senha do repositório.
 
 `docker compose down` para; `docker compose down -v` apaga o banco também.
 
@@ -87,9 +96,13 @@ Kafka, porque o volume de um monitor destes cabe com folga no banco que já exis
 | Segredos com AES-256-GCM e o id da linha como AAD (um texto cifrado não muda de linha); tipo `Secret` que não sai em log nem em JSON | [`box.go`](internal/crypto/box.go), [`secret.go`](internal/crypto/secret.go) | [`box_test.go`](internal/crypto/box_test.go) (`TestOpenRejectsCiphertextMovedToAnotherRow`), [`secret_test.go`](internal/crypto/secret_test.go) |
 | Chaves de demonstração do compose aceitas no boot só com `PUBLIC_BASE_URL` `http` em `localhost` ou IP de loopback; `https` recusado sempre, em qualquer host; URL malformada ou com usuário e senha recusada | [`config.go`](internal/config/config.go) | [`config_test.go`](internal/config/config_test.go) (`TestLoadRejectsDemoKeysOverHTTPS`, `TestLoadRejectsDemoKeysOnANonLoopbackHost`, `TestLoadAcceptsDemoKeysOnLoopback`, `TestLoadRejectsMalformedPublicBaseURL`), [`compose_test.go`](internal/config/compose_test.go) (`TestComposeUsesTheDemoKeys`) |
 | Status page com DTO próprio: nada interno chega à página pública | [`public.go`](internal/statuspage/public.go) | [`public_test.go`](internal/statuspage/public_test.go) (`TestPublicViewHasNoInternalFields`) |
-| IP real do cliente atrás do proxy, com falha **fechada**: o cabeçalho (`Fly-Client-IP` no Fly) só vale vindo de `TRUSTED_PROXIES`, e um prefixo `/0` ali é recusado no boot | [`clientip.go`](internal/httpapi/middleware/clientip.go) | [`clientip_test.go`](internal/httpapi/middleware/clientip_test.go) (`TestRateLimitSeparatesClientsBehindFly`), `TestSessionsBehindFlyRecordDistinctOrigins`, [`config_test.go`](internal/config/config_test.go) (`TestLoadRejectsAZeroBitTrustedProxy`) |
+| IP real do cliente atrás do proxy, com falha **fechada**: o cabeçalho (`Fly-Client-IP` no Fly) só vale vindo de `TRUSTED_PROXIES`, e um prefixo `/0` ali é recusado no boot. `CLIENT_IP_HEADER` só serve atrás de proxy que **substitui** esse cabeçalho (o do Fly substitui); atrás do Caddy, que repassa o que o cliente mandou, deixe-o **vazio** e vale o último salto do `X-Forwarded-For`, com todas as linhas lidas juntas. Com `PUBLIC_BASE_URL` https, um `X-Forwarded-For` de fora de `TRUSTED_PROXIES` vira aviso no log (um por minuto, com o `remote_addr`) | [`clientip.go`](internal/httpapi/middleware/clientip.go) | [`clientip_test.go`](internal/httpapi/middleware/clientip_test.go) (`TestRateLimitSeparatesClientsBehindFly`, `TestClientIPJoinsEveryForwardedForLine`), `TestSessionsBehindFlyRecordDistinctOrigins`, `TestForwardedForFromOutsideTheListWarnsInProduction`, [`config_test.go`](internal/config/config_test.go) (`TestLoadRejectsAZeroBitTrustedProxy`) |
+| Argon2id com teto de concorrência: toda verificação e todo hash (inclusive o do e-mail inexistente) passam por um semáforo de `min(NumCPU, 4)` vagas (`ARGON2_MAX_CONCURRENT`, 1–64); sem vaga em 2 s, `429 rate_limited` com `Retry-After: 2`, em vez de o processo morrer sem memória | [`argon2.go`](internal/auth/argon2.go) | [`argon2_test.go`](internal/auth/argon2_test.go) (`TestEveryArgon2PathWaitsForASlot`), [`argon2_integration_test.go`](internal/httpapi/argon2_integration_test.go) (`TestSaturatedArgon2AnswersRateLimited`) |
+| Bloqueio de conta atômico (a tentativa é reservada **antes** do Argon2 ou do TOTP: N requisições paralelas gastam N tentativas) e sem negação de serviço ao dono: um login completo deixa o cookie de dispositivo `vigilume_dispositivo`, e quem o apresenta não é barrado pelo bloqueio que um anônimo provocou; nas rotas autenticadas, a 5ª prova errada revoga a família da sessão | [`user.go`](internal/auth/user.go), [`dispositivo.go`](internal/auth/dispositivo.go), [`provas.go`](internal/auth/provas.go), [`provas.go` (httpapi)](internal/httpapi/provas.go) | [`user_test.go`](internal/auth/user_test.go) (`TestConcurrentReservationsStopAtTheThreshold`), [`dispositivo_integration_test.go`](internal/httpapi/dispositivo_integration_test.go) (`TestParallelLoginGuessesStopAtTheLock`, `TestDeviceCookieLetsTheOwnerInPastTheAccountLock`), [`dispositivo_revogacao_integration_test.go`](internal/httpapi/dispositivo_revogacao_integration_test.go) (`TestDeviceCookieDiesWithTheCredentials`), [`provas_familia_integration_test.go`](internal/httpapi/provas_familia_integration_test.go) (`TestFifthWrongProofDropsTheFamily`) |
+| O `seed` do compose recusa `PUBLIC_BASE_URL` fora de `http` em loopback, antes de chamar o binário. Isso **não** protege um servidor: atrás de um proxy e com a URL ainda local, ele roda e o usuário de demonstração nasce. O `compose.yaml` é só para a máquina local; para hospedar, o compose de produção do Plano 11, sem o `seed` | [`seed.sh`](deploy/compose/seed.sh) | [`seed_test.go`](internal/config/seed_test.go) (`TestSeedRefusesOutsideLoopback`), [`compose_test.go`](internal/config/compose_test.go) (`TestComposeHeaderSaysItIsLocalOnly`) |
 | CSP com nonce por resposta, no painel e na status page | [`webui.go`](internal/webui/webui.go), [`publicpage.go`](internal/httpapi/publicpage.go) | [`publicpage_integration_test.go`](internal/httpapi/publicpage_integration_test.go) (`TestPublicPageRendersWithoutLeaking`); E2E: [`fluxo.spec.ts`](web/e2e/fluxo.spec.ts) (zero violações, com controle positivo) |
 | Imagem distroless **nonroot, sem shell**, Trivy sem achado HIGH/CRITICAL corrigível, varredura de segredos (gitleaks) no histórico inteiro em todo PR | [`Dockerfile`](Dockerfile), [`ci.yml`](.github/workflows/ci.yml), [`.gitleaks.toml`](.gitleaks.toml) | [`checar-imagem.sh`](deploy/ci/checar-imagem.sh) |
+| Versão nova de dependência Go ou npm espera 7 dias antes de entrar no PR do Dependabot (as atualizações de segurança não esperam); a chave privada do `age` e os dumps do backup não entram no git | [`dependabot.yml`](.github/dependabot.yml), [`.gitignore`](.gitignore) | [`repositorio_test.go`](internal/config/repositorio_test.go) (`TestDependabotWaitsSevenDaysForGoAndNpm`, `TestGitignoreCoversTheBackupKeyAndDumps`) |
 
 ## Concorrência
 
@@ -152,17 +165,48 @@ Depois de mudar o código, `docker compose up --build` (ou `make up`): sem o `--
 reusa a imagem que já tem. Para o `npm run dev`, suba a API pelo compose (o `CORS_ORIGIN` do
 compose já é o do Vite). Criar ou recuperar o usuário dono: `vigilume user create --email <e>` e
 `vigilume user set-password --email <e>`, com a senha pelo stdin. Quem perdeu o autenticador **e**
-os códigos de recuperação: `vigilume user reset-2fa --email <e>` desliga o 2FA e encerra todas as
-sessões (não pede senha: só lê a `DATABASE_URL`); depois, entre com a senha e ative de novo pelo
-painel.
+os códigos de recuperação: `vigilume user reset-2fa --email <e>` desliga o 2FA, zera o bloqueio da
+conta e encerra todas as sessões (não pede senha: só lê a `DATABASE_URL`); depois, entre com a senha e ative de novo pelo
+painel. Sem 2FA ligado, o comando diz "nada mudou" e não mexe em nada, **nem no bloqueio**: para
+destravar uma conta sem 2FA, use o `set-password`.
 
 Para rodar a API e o sondador separados no mesmo host (`--role=api` e `--role=prober`), não
 precisa configurar nada: sem `METRICS_ADDR`, a porta de métricas é `127.0.0.1:9090` para `api` e
 `all` e `127.0.0.1:9091` para `prober`.
 
+## API
+
+REST sob `/api/v1`, usada pelo painel (a [spec, §9](docs/superpowers/specs/2026-09-22-vigilume-design.md)
+tem as convenções). Todo erro, inclusive rota ou método inexistente sob `/api/`, vem no envelope
+`{"error": {"code", "message"}, "trace_id"}`; o `code` é o contrato, a `message` é para gente.
+
+- `401 unauthorized` é só token recusado (ausente, inválido, vencido, de família morta): o
+  cliente renova a sessão. `401 invalid_credentials` é senha ou código errado: não renova.
+- `429 rate_limited` vem dos limitadores por IP e por usuário (sem `Retry-After`) e, desde o
+  Plano 10, do teto de concorrência do Argon2id (com `Retry-After: 2`).
+- Mutação exige o cabeçalho `X-Requested-With: vigilume`.
+
+O que mudou no Plano 10 (spec do Plano 10, §4):
+
+| Rota | Antes | Agora |
+|---|---|---|
+| `POST /auth/login`, `/auth/password`, `/auth/totp/enroll`, `/auth/totp/disable`, `/auth/totp/rotate` (as que pagam Argon2id) | — | `429 rate_limited` com `Retry-After: 2` quando o Argon2id não tem vaga em 2 s |
+| Rotas autenticadas de credencial (`/auth/password`, `/auth/totp/enroll`, `confirm`, `disable`, `rotate`, `rotate/confirm`) | conta bloqueada → `401 invalid_credentials` | não olham o bloqueio da conta; a 5ª prova errada na mesma família de sessão (as seis rotas dividem o contador) revoga a família e responde `401 unauthorized`; da 1ª à 4ª, a resposta de sempre (`401 invalid_credentials`; `400 validation_failed` no `confirm`, que antes não contava falha); com o 2FA ligado, o `confirm` e o `enroll` respondem `403 forbidden` sem conferir o código e sem zerar o contador (só a prova do fator o zera) |
+| `POST /auth/totp/rotate` | `{"otpauth_uri"}` | mais `"rotation"` (32 caracteres hexadecimais) |
+| `POST /auth/totp/rotate/confirm` | `{"code"}` | `{"code", "rotation"}`; `rotation` ausente ou diferente do da troca em andamento → `403 forbidden`, antes do código e sem contar falha |
+| `POST /auth/logout` | `204` mesmo com a revogação falhando | `500 internal` sem apagar o cookie, para tentar de novo |
+| Rotas do TOTP com o usuário apagado no meio | `500 internal` | `401 unauthorized` |
+| `PATCH /targets/{id}` que muda esquema, host ou porta da URL sem mandar `headers` | mantinha os headers | apaga os headers (`"header_names": []`); mudar só o caminho mantém |
+| `POST` e `PATCH /targets` com `expected_status` 1xx ou 3xx | aceito (o alvo ficava `down` para sempre) | `400 validation_failed`, `out_of_range` |
+| 404 e 405 sob `/api/` | texto puro do `net/http` | envelope: `404 not_found` e `405 method_not_allowed` (código novo) |
+| `GET /targets/{id}/checks` | o painel mandava `from` calculado com o relógio do navegador | `?window=1h\|6h\|24h\|7d\|30d\|90d`: o servidor calcula `from = to − janela` com o relógio dele; `window` vazio, fora da lista ou junto com `from` → `400 validation_failed` (`window`/`invalid`); `from`/`to` sem `window` continuam valendo |
+| Login completo (senha e, se ligado, 2FA) | — | cookie `vigilume_dispositivo` (`HttpOnly`, `SameSite=Strict`, `Path=/api/v1/auth`, 180 dias; `Secure` com `PUBLIC_BASE_URL` https), que dispensa o bloqueio da conta no login e no `/totp/verify`; morre com a troca de senha, o `set-password`, o `reset-2fa` e a ativação ou o disable do 2FA (o MAC cobre o hash da senha e a data de ativação do 2FA) |
+
 ## Deploy e operação
 
-Dois apps no Fly.io: o binário (`--role=all`) e um Postgres 18 com a imagem oficial, sem gerência
+A hospedagem escolhida é uma VPS na Hostinger, com Caddy na frente: é o Plano 11, que traz o
+compose de produção e o runbook próprio. Até lá, o que existe é o alvo do Fly.io, descrito
+abaixo. Dois apps no Fly.io: o binário (`--role=all`) e um Postgres 18 com a imagem oficial, sem gerência
 do Fly, só na rede privada. **Nada disso foi criado ainda**: os artefatos e o runbook existem, e o
 primeiro deploy é decisão do dono do projeto.
 
@@ -194,6 +238,8 @@ Runbook: [`docs/deploy/fly.md`](docs/deploy/fly.md).
 - **Réplica, failover e PITR do Postgres**: um nó com snapshot diário e dump diário basta para
   este volume; no pior caso, perde-se um dia de checks.
 - **Métricas raspadas em produção**: exigiriam abrir o endpoint na rede privada do Fly.
+- **Cotas por usuário no sondador e no despacho**: só o operador cria contas (pelo CLI), então
+  quem as esgotaria é uma conta que o próprio dono criou. Volta à mesa se o cadastro abrir.
 
 Os motivos completos estão na [spec](docs/superpowers/specs/2026-09-22-vigilume-design.md) (§2.2)
 e nos [planos](docs/superpowers/plans/).

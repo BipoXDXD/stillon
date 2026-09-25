@@ -110,14 +110,18 @@ func (q *Queries) DropChecksPartitionsBefore(ctx context.Context, cutoff time.Ti
 	return column_1, err
 }
 
-const latestRollupBucket = `-- name: LatestRollupBucket :one
+const latestRollupBucketBefore = `-- name: LatestRollupBucketBefore :one
 SELECT coalesce(max(bucket), 'epoch'::timestamptz)::timestamptz FROM check_rollup_1h
+ WHERE bucket < $1::timestamptz
 `
 
-// A marca d'água: a hora mais recente já consolidada. Sem rollup nenhum,
-// devolve a época Unix.
-func (q *Queries) LatestRollupBucket(ctx context.Context) (time.Time, error) {
-	row := q.db.QueryRow(ctx, latestRollupBucket)
+// A marca d'água: a hora mais recente já consolidada ANTES de before (a hora
+// corrente). Um rollup gravado no futuro (relógio adiantado) não conta: com
+// ele, a marca real ficava escondida, e uma parada de mais de 2 h perdia as
+// horas antes dela (M1 da revisão do Plano 10). Sem rollup nenhum antes de
+// before, devolve a época Unix.
+func (q *Queries) LatestRollupBucketBefore(ctx context.Context, before time.Time) (time.Time, error) {
+	row := q.db.QueryRow(ctx, latestRollupBucketBefore, before)
 	var column_1 time.Time
 	err := row.Scan(&column_1)
 	return column_1, err

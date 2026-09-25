@@ -23,6 +23,10 @@ const maxRedirects = 3
 // de memória.
 const MaxBodyBytes = 64 << 10
 
+// maxResponseHeaderBytes é o teto dos cabeçalhos de uma resposta. Acima
+// dele, a requisição falha e a sonda sai down (unknown).
+const maxResponseHeaderBytes = 64 << 10
+
 // NewTransport devolve um http.Transport que se recusa a conectar em
 // endereços internos.
 //
@@ -61,6 +65,12 @@ func newTransport(allowed []netip.AddrPort) *http.Transport {
 		DisableKeepAlives: true,
 
 		ForceAttemptHTTP2: true,
+
+		// C1 (Plano 10): o padrão do net/http é 10 MiB de cabeçalho por
+		// resposta, e o HTTP/2 herda este número. Com 64 sondas em voo, um
+		// alvo hostil segurava ~660 MiB de heap. Nenhum alvo legítimo de
+		// monitoramento, nem o Discord ou o Resend, manda mais que isto.
+		MaxResponseHeaderBytes: maxResponseHeaderBytes,
 
 		// Sem Timeout no Dialer, sem TLSHandshakeTimeout, sem
 		// ResponseHeaderTimeout: propositalmente nenhum limite por fase. O
@@ -129,13 +139,15 @@ func newClient(timeout time.Duration, allowed []netip.AddrPort) *http.Client {
 			// comparação é estrita: com maxRedirects = 3 o cliente segue
 			// três saltos e para no quarto, que é o que a constante diz.
 			if len(via) > maxRedirects {
-				return fmt.Errorf("%w: mais de %d redirecionamentos", ErrBlocked, maxRedirects)
+				return fmt.Errorf("%w: mais de %d redirecionamentos", ErrRedirect, maxRedirects)
 			}
 			// O IP do destino já será revalidado no dial, porque não há
 			// reuso de conexão. O que falta checar aqui é o esquema: um
 			// redirecionamento para file:// ou gopher:// nunca chega a discar.
+			// O motivo vai como texto (%v), para o erro não envolver
+			// ErrInvalidURL, que o sondador lê como proteção de rede.
 			if _, err := ValidateURL(req.URL.String()); err != nil {
-				return err
+				return fmt.Errorf("%w: %v", ErrRedirect, err)
 			}
 			if deveLimparHeaders(cadeia(via, req)) {
 				limparHeaders(req.Header)

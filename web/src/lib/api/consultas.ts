@@ -35,11 +35,11 @@ export function useAlvo(id: string) {
   return useQuery({ queryKey: chaves.alvo(id), queryFn: () => api.alvo(id), refetchInterval: 60_000 })
 }
 
-export function useSerie(id: string, janela: string, desde: () => string) {
+export function useSerie(id: string, janela: string) {
   const api = useApi()
   return useQuery({
     queryKey: chaves.serie(id, janela),
-    queryFn: () => api.serie(id, desde()),
+    queryFn: () => api.serie(id, janela),
     refetchInterval: 60_000,
     placeholderData: keepPreviousData,
   })

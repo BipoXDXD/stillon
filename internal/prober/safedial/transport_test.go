@@ -59,11 +59,17 @@ func TestCheckRedirectRevalidaEsquemaELimitaSaltos(t *testing.T) {
 		t.Errorf("salto legítimo recusado: %v", err)
 	}
 
-	// Um salto para esquema não permitido é recusado antes de discar.
-	err := client.CheckRedirect(req("file:///etc/passwd"), nil)
-	if !errors.Is(err, safedial.ErrInvalidURL) {
-		t.Errorf("salto para file:// deu erro = %v, queria envolver ErrInvalidURL", err)
+	// Um salto para esquema não permitido é recusado antes de discar. O erro
+	// é de redirecionamento, e não de proteção de rede (C3 do Plano 10): o
+	// dono que lê "destino bloqueado" procura um SSRF que não existe.
+	recusado := func(err error, oque string) {
+		t.Helper()
+		if !errors.Is(err, safedial.ErrRedirect) || errors.Is(err, safedial.ErrBlocked) || errors.Is(err, safedial.ErrInvalidURL) {
+			t.Errorf("%s deu erro = %v, queria só ErrRedirect (nem ErrBlocked nem ErrInvalidURL)", oque, err)
+		}
 	}
+	recusado(client.CheckRedirect(req("file:///etc/passwd"), nil), "salto para file://")
+	recusado(client.CheckRedirect(req("ftp://exemplo.com/"), nil), "salto para ftp://")
 
 	// A cadeia é limitada. net/http já inclui a requisição original em via,
 	// então via com 3 elementos é o terceiro salto — ainda permitido — e via
@@ -79,10 +85,7 @@ func TestCheckRedirectRevalidaEsquemaELimitaSaltos(t *testing.T) {
 	}
 
 	via = append(via, req("https://exemplo.com/3"))
-	err = client.CheckRedirect(req("https://exemplo.com/4"), via)
-	if !errors.Is(err, safedial.ErrBlocked) {
-		t.Errorf("cadeia longa deu erro = %v, queria envolver ErrBlocked", err)
-	}
+	recusado(client.CheckRedirect(req("https://exemplo.com/4"), via), "cadeia longa")
 }
 
 // A decisão de levar ou não os headers do alvo para o próximo salto, caso a
@@ -278,5 +281,16 @@ func TestTransportLeavesTheDeadlineToTheContext(t *testing.T) {
 	}
 	if tr.TLSHandshakeTimeout != 0 {
 		t.Errorf("TLSHandshakeTimeout = %v, queria 0: o prazo fica só com o context", tr.TLSHandshakeTimeout)
+	}
+}
+
+// C1 (Plano 10): sem teto, o net/http aceita até 10 MiB de cabeçalho por
+// resposta (e o HTTP/2 herda o mesmo número). 64 sondas em voo com 10 MiB
+// cada davam ~660 MiB de heap. O teto vale também para o Discord e o Resend,
+// que usam este transporte. O comportamento está em TestProbe... do pacote
+// prober; aqui fica o número.
+func TestTransportCapsTheResponseHeaders(t *testing.T) {
+	if got := safedial.NewTransport().MaxResponseHeaderBytes; got != 64<<10 {
+		t.Errorf("MaxResponseHeaderBytes = %d, queria %d (64 KiB)", got, 64<<10)
 	}
 }

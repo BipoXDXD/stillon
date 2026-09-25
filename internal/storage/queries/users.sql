@@ -79,9 +79,15 @@ UPDATE users SET password_hash = sqlc.arg(new_hash)
 -- idempotente: sem 2FA confirmado, nenhuma linha muda, e quem chama não
 -- encerra sessão nem audita. A marca do desafio (totp_challenge_mark) fica:
 -- ela só recusa desafios velhos, e zerá-la não ajuda ninguém.
+--
+-- Tira também o bloqueio, como o set-password (A6 do Plano 10): quem roda o
+-- comando é o operador, a identidade foi provada fora da API, e o dono que
+-- perdeu o autenticador costuma chegar aqui com a conta travada pelos chutes
+-- dele mesmo. Com o 2FA já desligado, nada muda, nem o bloqueio.
 -- name: ResetTOTP :execrows
 UPDATE users SET totp_secret_enc = NULL, totp_confirmed_at = NULL, totp_last_timestep = NULL,
-       totp_pending_secret_enc = NULL, totp_pending_family_id = NULL
+       totp_pending_secret_enc = NULL, totp_pending_family_id = NULL,
+       failed_attempts = 0, locked_until = NULL
  WHERE id = $1 AND totp_confirmed_at IS NOT NULL;
 
 -- Os códigos de recuperação morrem com o fator (reset-2fa).

@@ -41,6 +41,11 @@ const (
 // propósito: nesse caso o erro devolvido é a própria causa, e não
 // context.Canceled. Quem cancelou é que sabe, olhando context.Cause.
 func Classify(err error) ErrorKind {
+	// Redirecionamento recusado (saltos demais, esquema que não é http(s))
+	// é configuração do site: o residual, e não blocked (C3 do Plano 10).
+	if errors.Is(err, safedial.ErrRedirect) {
+		return KindUnknown
+	}
 	if errors.Is(err, safedial.ErrBlocked) || errors.Is(err, safedial.ErrInvalidURL) {
 		return KindBlocked
 	}

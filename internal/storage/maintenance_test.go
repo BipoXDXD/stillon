@@ -3,6 +3,7 @@ package storage_test
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 	"time"
 
@@ -143,6 +144,68 @@ func TestConsolidationCatchesUpAfterAGap(t *testing.T) {
 	consolidar(t, pool, hora(21, 0))
 	if rs := rollupsDe(t, pool, dono, alvo); len(rs) != 3 {
 		t.Errorf("%d rollups depois do buraco, queria 3 (01h, 15h e 20h)", len(rs))
+	}
+}
+
+// D4 (Plano 10, §3.4; banco C2 da revisão): o host sobe com o relógio
+// adiantado (RTC errado antes do NTP), e a manutenção grava um rollup no
+// futuro. Quando o relógio volta ao certo, a marca d'água ficava à frente de
+// "agora" e a consolidação não fazia nada até o tempo real a alcançar. A
+// marca é limitada a "agora": as horas reais seguem sendo consolidadas.
+func TestConsolidationSurvivesAWatermarkInTheFuture(t *testing.T) {
+	pool := testdb.New(t)
+	dono := novoUsuario(t, pool)
+	alvo := novoAlvo(t, pool, dono, agora)
+	if err := storage.EnsureChecksPartitions(context.Background(), pool, agora); err != nil {
+		t.Fatal(err)
+	}
+	// Relógio 10 h adiantado: o check e o rollup ficam às 20h.
+	checkEm(t, pool, alvo, hora(20, 5), "up", 100)
+	consolidar(t, pool, hora(21, 0))
+
+	// O relógio volta ao certo: 11h.
+	checkEm(t, pool, alvo, hora(10, 5), "up", 100)
+	consolidar(t, pool, hora(11, 0))
+
+	var horas []time.Time
+	for _, r := range rollupsDe(t, pool, dono, alvo) {
+		horas = append(horas, r.Bucket.UTC())
+	}
+	if len(horas) != 2 || !horas[0].Equal(hora(10, 0)) {
+		t.Errorf("rollups = %v, queria as 10h (a hora real) e as 20h (a do relógio adiantado)", horas)
+	}
+}
+
+// M1 da revisão do Plano 10 (banco-docs): com um rollup no futuro, a marca
+// d'água limitada a "agora" escondia a última marca real, e uma parada de
+// mais de 2 h (app fora, manutenção falhando) perdia para sempre as horas
+// antes dela. A marca é a última hora consolidada ANTES de "agora" (max(bucket)
+// WHERE bucket < ate): o buraco depois de uma parada é recuperado, com ou sem
+// rollup no futuro.
+func TestConsolidationCatchesUpAfterAGapWithAWatermarkInTheFuture(t *testing.T) {
+	pool := testdb.New(t)
+	dono := novoUsuario(t, pool)
+	alvo := novoAlvo(t, pool, dono, agora)
+	if err := storage.EnsureChecksPartitions(context.Background(), pool, agora); err != nil {
+		t.Fatal(err)
+	}
+	// Um rollup às 20h (relógio adiantado numa rodada antiga).
+	checkEm(t, pool, alvo, hora(20, 5), "up", 100)
+	consolidar(t, pool, hora(21, 0))
+	// De volta ao relógio certo: o check das 9h é consolidado às 10h.
+	checkEm(t, pool, alvo, hora(9, 5), "up", 100)
+	consolidar(t, pool, hora(10, 0))
+	// Um check às 10h30, e o app fica parado até as 14h.
+	checkEm(t, pool, alvo, hora(10, 30), "up", 100)
+	consolidar(t, pool, hora(14, 0))
+
+	var horas []time.Time
+	for _, r := range rollupsDe(t, pool, dono, alvo) {
+		horas = append(horas, r.Bucket.UTC())
+	}
+	quer := []time.Time{hora(9, 0), hora(10, 0), hora(20, 0)}
+	if !slices.EqualFunc(horas, quer, time.Time.Equal) {
+		t.Errorf("rollups = %v, queria %v (a hora das 10h não pode se perder na parada)", horas, quer)
 	}
 }
 

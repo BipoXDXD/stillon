@@ -403,7 +403,8 @@ func (txFalsa) LockUserSessions(context.Context, uuid.UUID) error { return nil }
 func (txFalsa) UserPasswordHash(context.Context, uuid.UUID) (string, error) {
 	return "x", nil
 }
-func (txFalsa) InsertSession(context.Context, auth.SessionRow) error { return nil }
+func (txFalsa) UserTOTPSecret(context.Context, uuid.UUID) ([]byte, error) { return nil, nil }
+func (txFalsa) InsertSession(context.Context, auth.SessionRow) error      { return nil }
 func (txFalsa) MarkSessionUsed(context.Context, uuid.UUID, time.Time) error {
 	return nil
 }

@@ -255,3 +255,32 @@ func TestClientIPWritesIPv6InTheCanonicalForm(t *testing.T) {
 		t.Errorf("endereço da conexão: ClientIP = %q, queria 2001:db8::1", got)
 	}
 }
+
+// B2 (Plano 10): um proxy que acrescenta uma LINHA nova de X-Forwarded-For
+// (o HAProxy com option forwardfor), em vez de concatenar, deixa a linha do
+// cliente em primeiro lugar. As linhas são lidas juntas, na ordem, e o último
+// salto é o da última linha, que é a do proxy.
+func TestClientIPJoinsEveryForwardedForLine(t *testing.T) {
+	confiaveis := middleware.Proxies{Trusted: prefixos(t, "10.0.0.0/8")}
+	cases := []struct {
+		nome   string
+		linhas []string
+		quer   string
+	}{
+		{"linha forjada antes da do proxy", []string{"6.6.6.6", "198.51.100.7"}, "198.51.100.7"},
+		{"cadeia na primeira e o proxy na segunda", []string{"6.6.6.6, 7.7.7.7", "198.51.100.7"}, "198.51.100.7"},
+		{"cadeia na última linha", []string{"6.6.6.6", "7.7.7.7, 198.51.100.7"}, "198.51.100.7"},
+		{"última linha ilegível", []string{"198.51.100.7", "nao-e-ip"}, "10.1.2.3"},
+	}
+	for _, c := range cases {
+		t.Run(c.nome, func(t *testing.T) {
+			r := requisicaoDe("10.1.2.3:5555", "")
+			for _, l := range c.linhas {
+				r.Header.Add("X-Forwarded-For", l)
+			}
+			if got := middleware.ClientIP(r, confiaveis); got != c.quer {
+				t.Errorf("linhas %q: ClientIP = %q, queria %q", c.linhas, got, c.quer)
+			}
+		})
+	}
+}

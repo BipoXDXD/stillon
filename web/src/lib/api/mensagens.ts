@@ -12,6 +12,8 @@ const porCodigo: Record<string, string> = {
   rate_limited: 'Muitas requisições. Aguarde um minuto e tente de novo.',
   payload_too_large: 'Os dados enviados são grandes demais.',
   not_found: 'Não encontrado.',
+  // B5 do Plano 10: o 405 da API vem no envelope, com código próprio.
+  method_not_allowed: 'O servidor não aceita esta operação. O painel pode estar desatualizado: recarregue a página.',
   forbidden: 'Operação não permitida.',
   unauthorized: 'Sua sessão terminou. Entre de novo.',
   invalid_session: 'Sua sessão terminou. Entre de novo.',
@@ -25,8 +27,19 @@ const porCodigo: Record<string, string> = {
   slug_taken: 'Este endereço já está em uso.',
 }
 
+function duracao(segundos: number): string {
+  if (segundos <= 1) return '1 segundo'
+  if (segundos < 60) return `${segundos} segundos`
+  const minutos = Math.ceil(segundos / 60)
+  return minutos === 1 ? '1 minuto' : `${minutos} minutos`
+}
+
 export function mensagemDe(e: unknown): string {
   if (e instanceof ApiError) {
+    // O servidor disse quanto esperar (A1 do Plano 10): a tela repete.
+    if (e.code === 'rate_limited' && e.retryAfter !== null) {
+      return `Muitas tentativas. Aguarde ${duracao(e.retryAfter)} e tente de novo.`
+    }
     const base = porCodigo[e.code] ?? 'Não foi possível concluir.'
     // O trace_id liga a tela ao log do servidor (spec §9.1).
     if ((e.code === 'internal_error' || e.code === 'unexpected') && e.traceId) {

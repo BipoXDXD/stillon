@@ -1,9 +1,9 @@
 import AxeBuilder from '@axe-core/playwright'
 import type { Page, Route } from '@playwright/test'
 import type { z } from 'zod'
-import type { CadastroTotp, ConfirmacaoTotp, Serie } from '../src/lib/api/schemas'
+import type { ConfirmacaoTotp, InicioDaTroca, Serie } from '../src/lib/api/schemas'
 import { alvo, canal, incidente, itemDoResumo, me, pagina, sessao } from '../src/test/fixtures'
-import { controlePositivo, expect, test, violacoes } from './fixtures'
+import { controlePositivo, expect, test } from './fixtures'
 
 // Todas as rotas do painel, com a API respondida pelo próprio teste
 // (page.route): os cinco estados do dashboard, um canal falhando, um canal
@@ -76,10 +76,12 @@ const respostas: Record<string, unknown> = {
 }
 
 // A troca de autenticador (spec do Plano 9 §4.2): as respostas do rotate e
-// do rotate/confirm, no formato do enroll e do confirm.
+// do rotate/confirm, no formato do enroll (mais o rotation, A7 do Plano 10)
+// e do confirm.
 const SEGREDO_NOVO = 'KRSXG5CTMVRXEZLU'
-const troca: z.input<typeof CadastroTotp> = {
+const troca: z.input<typeof InicioDaTroca> = {
   otpauth_uri: `otpauth://totp/Vigilume:dono%40exemplo.com?secret=${SEGREDO_NOVO}&issuer=Vigilume`,
+  rotation: '0123456789abcdef0123456789abcdef',
 }
 const codigosNovos: z.input<typeof ConfirmacaoTotp> = {
   recovery_codes: Array.from({ length: 10 }, (_, i) => `NOVO${String(i).padStart(2, '0')}CODIGO000${i}`),
@@ -89,9 +91,10 @@ respostas['POST /auth/totp/rotate/confirm'] = codigosNovos
 
 function respostaDe(metodo: string, u: URL): unknown {
   const chave = `${metodo} ${u.pathname.replace('/api/v1', '')}`
+  // A janela vem pelo nome (?window=, B6 do Plano 10); acima de 48 h, o
+  // servidor responde por hora.
   if (chave === 'GET /targets/a1/checks') {
-    const desde = Date.parse(u.searchParams.get('from') ?? '')
-    return Date.now() - desde > 48 * 3_600_000 ? horaria : bruta
+    return ['7d', '30d', '90d'].includes(u.searchParams.get('window') ?? '') ? horaria : bruta
   }
   return respostas[chave]
 }
@@ -134,7 +137,7 @@ for (const tema of ['claro', 'escuro'] as const) {
       }
       const r = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze()
       expect(r.violations.map((v) => `${rota}: ${v.id} (${v.nodes.map((n) => n.target.join(' ')).join(', ')})`)).toEqual([])
-      await expect.poll(() => violacoes(page), rota).toEqual([])
+      await controlePositivo(page, rota)
     }
     // Um diálogo aberto também passa pelo axe e pela CSP.
     await page.goto('/channels')
@@ -142,7 +145,7 @@ for (const tema of ['claro', 'escuro'] as const) {
     await expect(page.getByRole('dialog')).toBeVisible()
     const r = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze()
     expect(r.violations.map((v) => v.id)).toEqual([])
-    expect(violacoes(page)).toEqual([])
+    await controlePositivo(page, 'diálogo de novo canal')
     // A confirmação de pausar (spec do Plano 9 §4.1), e a linha do pausado.
     await page.keyboard.press('Escape')
     await expect(page.getByText('⏸ Pausado: os avisos são descartados')).toBeVisible()
@@ -150,8 +153,15 @@ for (const tema of ['claro', 'escuro'] as const) {
     await expect(page.getByRole('alertdialog')).toBeVisible()
     const pausar = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze()
     expect(pausar.violations.map((v) => v.id)).toEqual([])
-    expect(violacoes(page)).toEqual([])
-    await controlePositivo(page)
+    await controlePositivo(page, 'confirmação de pausar')
+    // O aviso de trocar o destino de um alvo com headers (B1 do Plano 10).
+    await page.goto('/targets/a1/edit')
+    await page.getByLabel('URL').fill('https://outro.exemplo.com/health')
+    await page.getByRole('button', { name: 'Salvar' }).click()
+    await expect(page.getByRole('alertdialog', { name: 'Trocar o destino do alvo?' })).toBeVisible()
+    const destino = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze()
+    expect(destino.violations.map((v) => v.id)).toEqual([])
+    await controlePositivo(page, 'aviso de trocar o destino')
   })
 }
 
@@ -169,7 +179,7 @@ for (const tema of ['claro', 'escuro'] as const) {
     const passar = async (passo: string) => {
       const r = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze()
       expect(r.violations.map((v) => `${passo}: ${v.id} (${v.nodes.map((n) => n.target.join(' ')).join(', ')})`)).toEqual([])
-      await expect.poll(() => violacoes(page), passo).toEqual([])
+      await controlePositivo(page, passo)
     }
     await page.goto('/settings')
     await page.getByRole('button', { name: 'Trocar autenticador' }).click()
@@ -196,7 +206,7 @@ for (const tema of ['claro', 'escuro'] as const) {
     await expect(
       page.getByRole('region', { name: /Notifications/ }).getByText('Autenticador trocado. As outras sessões foram encerradas.'),
     ).toBeVisible()
-    await controlePositivo(page)
+    await controlePositivo(page, 'depois da troca')
   })
 }
 
@@ -270,6 +280,37 @@ test('passada de teclado em todas as rotas', async ({ page }, info) => {
   await info.attach('passada-de-teclado.txt', { body: relatorio.join('\n'), contentType: 'text/plain' })
 })
 
+// E7 do Plano 10: a barreira da CSP. Uma violação provocada ANTES da
+// barreira, cujo aviso ainda não chegou ao processo do teste, tem de
+// derrubá-la. O "expect.poll(() => violacoes(page)).toEqual([])" de antes
+// passava na primeira leitura vazia, antes de o aviso chegar.
+test('a barreira da CSP pega a violação que ainda não chegou', async ({ page }) => {
+  await page.route('**/api/v1/auth/refresh', (route) =>
+    route.fulfill({ status: 401, json: { error: { code: 'invalid_session', message: '' }, trace_id: 't' } }),
+  )
+  await page.goto('/')
+  await expect(page.getByRole('heading', { name: 'Entrar no Vigilume' })).toBeVisible()
+  await page.evaluate(() => {
+    const s = document.createElement('style')
+    s.textContent = '.violacao-tardia{color:red}'
+    document.head.append(s)
+  })
+  await expect(controlePositivo(page, 'violação tardia')).rejects.toThrow(/violação tardia: violações de CSP/)
+})
+
+// O outro lado da barreira: sem coletor (uma aba sem o registrarCsp), a
+// violação do próprio controle nunca chega, e a barreira falha em vez de
+// ler "zero violações" de uma lista que ninguém enche.
+test('a barreira da CSP falha com o coletor quebrado', async ({ context }) => {
+  const semColetor = await context.newPage()
+  await semColetor.route('**/api/v1/auth/refresh', (route) =>
+    route.fulfill({ status: 401, json: { error: { code: 'invalid_session', message: '' }, trace_id: 't' } }),
+  )
+  await semColetor.goto('/')
+  await expect(semColetor.getByRole('heading', { name: 'Entrar no Vigilume' })).toBeVisible()
+  await expect(controlePositivo(semColetor, 'sem coletor')).rejects.toThrow(/sem coletor: a violação do controle positivo/)
+})
+
 test('a tela de login, sem sessão', async ({ page }) => {
   await page.route('**/api/v1/auth/refresh', (route) =>
     route.fulfill({ status: 401, json: { error: { code: 'invalid_session', message: '' }, trace_id: 't' } }),
@@ -278,5 +319,5 @@ test('a tela de login, sem sessão', async ({ page }) => {
   await expect(page.getByRole('heading', { name: 'Entrar no Vigilume' })).toBeVisible()
   const r = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze()
   expect(r.violations.map((v) => v.id)).toEqual([])
-  expect(violacoes(page)).toEqual([])
+  await controlePositivo(page, 'login')
 })

@@ -3,6 +3,8 @@ package auth_test
 import (
 	"context"
 	"errors"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -56,29 +58,40 @@ func TestByEmailReturnsErrNotFoundForUnknownEmail(t *testing.T) {
 	}
 }
 
+// reservar é ReserveAttempt com o teste parando no erro.
+func reservar(t *testing.T, store *auth.PGStore, userID uuid.UUID, at time.Time) bool {
+	t.Helper()
+	ok, err := store.ReserveAttempt(context.Background(), userID, at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ok
+}
+
 // O bloqueio só pode cair no limiar, nunca antes: travar cedo seria negação
-// de serviço contra o dono da conta.
-func TestRecordFailureLocksExactlyAtTheThreshold(t *testing.T) {
+// de serviço contra o dono da conta. A reserva que atinge o limiar trava a
+// conta e ainda é concedida (é a quinta tentativa, e é verificada); a
+// seguinte é recusada e não conta nada (A2 do Plano 10).
+func TestReserveAttemptLocksExactlyAtTheThreshold(t *testing.T) {
 	_, pool, clk, userID := setup(t)
 	store := auth.NewPGStore(pool)
-	ctx := context.Background()
 	agora := clk.Now()
 
 	for i := 1; i < auth.LockThreshold; i++ {
-		if err := store.RecordFailure(ctx, userID, agora); err != nil {
-			t.Fatal(err)
+		if !reservar(t, store, userID, agora) {
+			t.Fatalf("reserva %d recusada antes do limiar", i)
 		}
 		tentativas, ate := lerTravas(t, pool, userID)
 		if tentativas != i {
-			t.Errorf("depois de %d falhas, failed_attempts = %d", i, tentativas)
+			t.Errorf("depois de %d reservas, failed_attempts = %d", i, tentativas)
 		}
 		if ate != nil {
-			t.Fatalf("conta travou com apenas %d falhas (limiar é %d)", i, auth.LockThreshold)
+			t.Fatalf("conta travou com apenas %d reservas (limiar é %d)", i, auth.LockThreshold)
 		}
 	}
 
-	if err := store.RecordFailure(ctx, userID, agora); err != nil {
-		t.Fatal(err)
+	if !reservar(t, store, userID, agora) {
+		t.Fatal("a reserva do limiar foi recusada: a quinta tentativa nem seria verificada")
 	}
 	tentativas, ate := lerTravas(t, pool, userID)
 	if tentativas != auth.LockThreshold {
@@ -90,6 +103,72 @@ func TestRecordFailureLocksExactlyAtTheThreshold(t *testing.T) {
 	if querido := agora.Add(auth.LockDuration); !ate.Equal(querido) {
 		t.Errorf("locked_until = %v, queria %v", ate, querido)
 	}
+
+	if reservar(t, store, userID, agora) {
+		t.Error("a conta travada concedeu mais uma reserva")
+	}
+	if tentativas, _ := lerTravas(t, pool, userID); tentativas != auth.LockThreshold {
+		t.Errorf("a reserva recusada contou: failed_attempts = %d, queria %d", tentativas, auth.LockThreshold)
+	}
+}
+
+// A2 (Plano 10): reservas simultâneas não furam o limiar. Doze de uma vez
+// concedem exatamente LockThreshold, e o contador para nele.
+func TestConcurrentReservationsStopAtTheThreshold(t *testing.T) {
+	_, pool, clk, userID := setup(t)
+	store := auth.NewPGStore(pool)
+
+	var concedidas atomic.Int32
+	var wg sync.WaitGroup
+	for range 12 {
+		wg.Go(func() {
+			ok, err := store.ReserveAttempt(context.Background(), userID, clk.Now())
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			if ok {
+				concedidas.Add(1)
+			}
+		})
+	}
+	wg.Wait()
+	if n := concedidas.Load(); n != auth.LockThreshold {
+		t.Errorf("%d reservas concedidas em 12 simultâneas, queria %d", n, auth.LockThreshold)
+	}
+	if tentativas, _ := lerTravas(t, pool, userID); tentativas != auth.LockThreshold {
+		t.Errorf("failed_attempts = %d, queria %d", tentativas, auth.LockThreshold)
+	}
+}
+
+// RefundAttempt devolve uma reserva só: a da senha certa com o 2FA pela
+// frente. Se ela tinha travado a conta, a trava sai junto; abaixo de zero o
+// contador não vai.
+func TestRefundAttemptGivesBackOneReservation(t *testing.T) {
+	_, pool, clk, userID := setup(t)
+	store := auth.NewPGStore(pool)
+	ctx := context.Background()
+
+	for range auth.LockThreshold {
+		reservar(t, store, userID, clk.Now())
+	}
+	if err := store.RefundAttempt(ctx, userID); err != nil {
+		t.Fatal(err)
+	}
+	if tentativas, ate := lerTravas(t, pool, userID); tentativas != auth.LockThreshold-1 || ate != nil {
+		t.Errorf("depois de devolver a quinta: %d falhas, locked_until = %v; queria %d e sem trava",
+			tentativas, ate, auth.LockThreshold-1)
+	}
+
+	if err := store.ResetFailures(ctx, userID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RefundAttempt(ctx, userID); err != nil {
+		t.Fatal(err)
+	}
+	if tentativas, _ := lerTravas(t, pool, userID); tentativas != 0 {
+		t.Errorf("devolver com o contador em zero deixou %d", tentativas)
+	}
 }
 
 func TestResetFailuresClearsTheLock(t *testing.T) {
@@ -97,10 +176,8 @@ func TestResetFailuresClearsTheLock(t *testing.T) {
 	store := auth.NewPGStore(pool)
 	ctx := context.Background()
 
-	for i := 0; i < auth.LockThreshold; i++ {
-		if err := store.RecordFailure(ctx, userID, clk.Now()); err != nil {
-			t.Fatal(err)
-		}
+	for range auth.LockThreshold {
+		reservar(t, store, userID, clk.Now())
 	}
 	if err := store.ResetFailures(ctx, userID); err != nil {
 		t.Fatal(err)
@@ -137,7 +214,7 @@ func TestRehashPasswordIsACompareAndSwap(t *testing.T) {
 	store := auth.NewPGStore(pool)
 	ctx := context.Background()
 
-	novo, err := auth.HashPassword("outra-senha-bem-comprida")
+	novo, err := auth.HashPassword(context.Background(), "outra-senha-bem-comprida")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -186,13 +263,10 @@ var (
 func TestExpiredLockRestartsTheFailureCount(t *testing.T) {
 	_, pool, clk, userID := setup(t)
 	store := auth.NewPGStore(pool)
-	ctx := context.Background()
 	agora := clk.Now()
 
 	for range auth.LockThreshold {
-		if err := store.RecordFailure(ctx, userID, agora); err != nil {
-			t.Fatal(err)
-		}
+		reservar(t, store, userID, agora)
 	}
 	if _, ate := lerTravas(t, pool, userID); ate == nil {
 		t.Fatal("a conta não travou no limiar; o resto do teste seria vácuo")
@@ -200,8 +274,8 @@ func TestExpiredLockRestartsTheFailureCount(t *testing.T) {
 
 	// Depois do vencimento, uma única falha não pode re-travar.
 	depois := agora.Add(auth.LockDuration).Add(time.Minute)
-	if err := store.RecordFailure(ctx, userID, depois); err != nil {
-		t.Fatal(err)
+	if !reservar(t, store, userID, depois) {
+		t.Fatal("o bloqueio vencido recusou a reserva")
 	}
 
 	tentativas, ate := lerTravas(t, pool, userID)
@@ -218,13 +292,10 @@ func TestExpiredLockRestartsTheFailureCount(t *testing.T) {
 func TestFailuresStillAccumulateWhileTheLockIsLive(t *testing.T) {
 	_, pool, clk, userID := setup(t)
 	store := auth.NewPGStore(pool)
-	ctx := context.Background()
 	agora := clk.Now()
 
 	for i := range 3 {
-		if err := store.RecordFailure(ctx, userID, agora.Add(time.Duration(i)*time.Second)); err != nil {
-			t.Fatal(err)
-		}
+		reservar(t, store, userID, agora.Add(time.Duration(i)*time.Second))
 	}
 	if tentativas, _ := lerTravas(t, pool, userID); tentativas != 3 {
 		t.Errorf("failed_attempts = %d, queria 3: a contagem parou de somar", tentativas)
@@ -238,53 +309,57 @@ func TestNormalizeEmail(t *testing.T) {
 	}
 }
 
-// CheckPassword é a verificação do login para toda rota que pede a senha. Os
-// três caminhos: senha certa não mexe no contador (quem chama decide quando
-// zerar); senha errada conta uma falha; conta bloqueada recusa até a senha
-// certa, sem contar falha nova.
+// CheckPassword é a verificação do login (A2 do Plano 10): reserva a
+// tentativa no contador recebido ANTES do Argon2id. Os três caminhos: senha
+// certa deixa a reserva (quem chama devolve ou zera); senha errada também;
+// contador bloqueado recusa até a senha certa, sem reservar nada, pagando o
+// mesmo Argon2id (o dummy).
 func TestCheckPassword(t *testing.T) {
 	_, pool, clk, userID := setup(t)
 	store := auth.NewPGStore(pool)
 	ctx := context.Background()
 
-	hash, err := auth.HashPassword(senha)
+	hash, err := auth.HashPassword(context.Background(), senha)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `UPDATE users SET password_hash = $2 WHERE id = $1`, userID, hash); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.RecordFailure(ctx, userID, clk.Now()); err != nil {
-		t.Fatal(err)
-	}
 	u, err := store.ByID(ctx, userID)
 	if err != nil {
 		t.Fatal(err)
 	}
+	conta := auth.AccountAttempts(store, userID, clk.Now())
 
-	ok, _, err := auth.CheckPassword(ctx, store, u, senha, clk.Now())
+	ok, _, err := auth.CheckPassword(ctx, conta, u, senha)
 	if err != nil || !ok {
 		t.Fatalf("senha certa: ok = %v, erro = %v", ok, err)
 	}
 	if n, _ := lerTravas(t, pool, userID); n != 1 {
-		t.Errorf("senha certa mexeu no contador: %d falhas, queria 1", n)
+		t.Errorf("senha certa: %d reservas, queria 1 (quem chama devolve ou zera)", n)
 	}
 
-	ok, _, err = auth.CheckPassword(ctx, store, u, "senha-errada-com-mais-de-15", clk.Now())
+	ok, _, err = auth.CheckPassword(ctx, conta, u, "senha-errada-com-mais-de-15")
 	if err != nil || ok {
 		t.Fatalf("senha errada: ok = %v, erro = %v", ok, err)
 	}
 	if n, _ := lerTravas(t, pool, userID); n != 2 {
-		t.Errorf("senha errada não contou: %d falhas, queria 2", n)
+		t.Errorf("senha errada não contou: %d reservas, queria 2", n)
 	}
 
-	ate := clk.Now().Add(time.Minute)
-	u.LockedUntil = &ate
-	ok, _, err = auth.CheckPassword(ctx, store, u, senha, clk.Now())
+	if _, err := pool.Exec(ctx, `UPDATE users SET locked_until = $2 WHERE id = $1`, userID, clk.Now().Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	antes := auth.Argon2Verifications()
+	ok, _, err = auth.CheckPassword(ctx, conta, u, senha)
 	if err != nil || ok {
 		t.Fatalf("conta bloqueada aceitou a senha certa: ok = %v, erro = %v", ok, err)
 	}
 	if n, _ := lerTravas(t, pool, userID); n != 2 {
-		t.Errorf("conta bloqueada contou falha: %d, queria 2", n)
+		t.Errorf("conta bloqueada contou reserva: %d, queria 2", n)
+	}
+	if n := auth.Argon2Verifications() - antes; n != 1 {
+		t.Errorf("conta bloqueada: %d Argon2id, queria 1 (o dummy): o bloqueio se anunciaria pelo tempo", n)
 	}
 }

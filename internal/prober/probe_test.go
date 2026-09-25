@@ -158,12 +158,64 @@ func TestProbeFollowsRedirectWithinLimit(t *testing.T) {
 // O handler redireciona para o próprio Host da requisição. Ler srv.URL de
 // dentro dele seria corrida de dados: a variável é escrita pela goroutine do
 // teste, e o detector não enxerga a rede como sincronização.
-func TestProbeRedirectLoopIsBlocked(t *testing.T) {
+//
+// C3 (Plano 10): excesso de saltos e esquema que não é http(s) no Location
+// são erro de configuração do site, e não proteção de rede: saem como
+// unknown ("erro de rede" no alerta), e não como blocked ("destino bloqueado
+// pela proteção de rede"). O blocked fica para o IP recusado no dial.
+func TestProbeRedirectLoopIsUnknown(t *testing.T) {
 	srv, client := servidor(t, func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "http://"+r.Host+"/", http.StatusFound)
 	})
-	if res := Probe(t.Context(), client, especificacao(srv.URL)); res.ErrorKind != KindBlocked {
-		t.Errorf("res = %+v, queria blocked depois de 3 saltos", res)
+	if res := Probe(t.Context(), client, especificacao(srv.URL)); res.Status != StatusDown || res.ErrorKind != KindUnknown {
+		t.Errorf("res = %+v, queria down/unknown depois de 3 saltos", res)
+	}
+}
+
+func TestProbeRedirectToAnotherSchemeIsUnknown(t *testing.T) {
+	for _, destino := range []string{"ftp://exemplo.com/arquivo", "mailto:contato@exemplo.com"} {
+		srv, client := servidor(t, func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, destino, http.StatusFound)
+		})
+		if res := Probe(t.Context(), client, especificacao(srv.URL)); res.Status != StatusDown || res.ErrorKind != KindUnknown {
+			t.Errorf("redirect para %s: res = %+v, queria down/unknown", destino, res)
+		}
+	}
+}
+
+// A outra metade do C3: o salto para um endereço interno continua blocked.
+// A outra porta do 127.0.0.1 não está liberada no cliente do teste.
+func TestProbeRedirectToAnInternalAddressIsStillBlocked(t *testing.T) {
+	interno := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	t.Cleanup(interno.Close)
+	srv, client := servidor(t, func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, interno.URL, http.StatusFound)
+	})
+	if res := Probe(t.Context(), client, especificacao(srv.URL)); res.Status != StatusDown || res.ErrorKind != KindBlocked {
+		t.Errorf("res = %+v, queria down/blocked no salto para outro endereço interno", res)
+	}
+}
+
+// C1 (Plano 10): uma resposta com cabeçalho acima de 64 KiB é down, sem que
+// o sondador aloque o que o servidor quiser mandar. O tipo é unknown, o
+// residual: o net/http não tem erro próprio para isso, só texto. Um
+// cabeçalho grande, mas legítimo, passa.
+func TestProbeResponseHeadersAboveTheCapAreDown(t *testing.T) {
+	for _, c := range []struct {
+		tamanho int
+		down    bool
+	}{{1 << 20, true}, {100 << 10, true}, {32 << 10, false}} {
+		srv, client := servidor(t, func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("X-Enchimento", strings.Repeat("a", c.tamanho))
+			w.WriteHeader(http.StatusOK)
+		})
+		res := Probe(t.Context(), client, especificacao(srv.URL))
+		switch {
+		case c.down && (res.Status != StatusDown || res.ErrorKind != KindUnknown || res.StatusCode != 0):
+			t.Errorf("cabeçalho de %d bytes: res = %+v, queria down/unknown sem status", c.tamanho, res)
+		case !c.down && res.Status != StatusUp:
+			t.Errorf("cabeçalho de %d bytes: res = %+v, queria up", c.tamanho, res)
+		}
 	}
 }
 

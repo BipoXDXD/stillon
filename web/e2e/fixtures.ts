@@ -22,23 +22,40 @@ export async function registrarCsp(page: Page) {
   await page.addInitScript(() => {
     document.addEventListener('securitypolicyviolation', (e) => {
       const w = window as unknown as { vigilumeViolacao: (v: string) => void }
-      w.vigilumeViolacao(`${e.violatedDirective} ${e.blockedURI} ${e.sample}`)
+      // A violação do controle positivo chega com o <style> dele como alvo
+      // (o evento é disparado no elemento e sobe até o document).
+      const marca = e.target instanceof Element ? e.target.getAttribute('data-controle') : null
+      w.vigilumeViolacao(marca ? `controle ${marca}` : `${e.violatedDirective} ${e.blockedURI} ${e.sample}`)
     })
   })
 }
 
-// Controle positivo: um <style> sem nonce TEM de virar violação. Sem isto,
-// "zero violações" seria verde também com o listener quebrado. Devolve a
-// lista sem a violação provocada.
-export async function controlePositivo(page: Page) {
-  const antes = violacoes(page).length
-  await page.evaluate(() => {
+let controles = 0
+
+// Controle positivo e barreira da CSP (E7 do Plano 10). Um <style> sem nonce
+// TEM de virar violação: sem isto, "zero violações" seria verde também com o
+// coletor quebrado. O <style> leva uma marca própria, e a barreira espera a
+// violação DELE: as violações provocadas antes dela já chegaram (o aviso
+// vem na ordem em que a página as dispara). Então tira a marca e exige que
+// o resto seja []. Antes, um expect.poll(...).toEqual([]) passava na
+// primeira leitura vazia, antes de uma violação tardia chegar, e o
+// controle tirava do fim da lista a violação que chegasse primeiro, que
+// podia não ser a dele.
+export async function controlePositivo(page: Page, contexto: string) {
+  const marca = String(++controles)
+  await page.evaluate((m) => {
     const s = document.createElement('style')
+    s.dataset.controle = m
     s.textContent = '.controle-positivo{color:red}'
     document.head.append(s)
-  })
-  await expect.poll(() => violacoes(page).length).toBe(antes + 1)
-  violacoes(page).pop()
+  }, marca)
+  await expect
+    .poll(() => violacoes(page).includes(`controle ${marca}`), `${contexto}: a violação do controle positivo`)
+    .toBe(true)
+  await page.evaluate((m) => document.querySelector(`style[data-controle="${m}"]`)?.remove(), marca)
+  const lista = violacoes(page)
+  lista.splice(lista.indexOf(`controle ${marca}`), 1)
+  expect([...lista], `${contexto}: violações de CSP`).toEqual([])
 }
 
 export const test = base.extend<{ credenciais: { email: string; senha: string } }>({

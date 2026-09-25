@@ -4,6 +4,8 @@ import type { Check, Hora, Serie } from '@/lib/api/schemas'
 // o Recharts não desenha no jsdom, então o que importa (o que é "fora", o
 // resumo em texto) é testado aqui, e o desenho, no E2E.
 
+// As chaves são os valores do ?window= do servidor (B6 do Plano 10), que
+// calcula o from; a duração fica como documentação do nome.
 export const JANELAS = {
   '1h': 3_600_000,
   '6h': 6 * 3_600_000,
@@ -18,11 +20,6 @@ export type Janela = keyof typeof JANELAS
 export function ehJanela(v: string | null): v is Janela {
   // hasOwn, e não `in`: "toString" está no protótipo de todo objeto.
   return v !== null && Object.hasOwn(JANELAS, v)
-}
-
-// RFC 3339 sem milissegundos, no formato que o servidor lê.
-export function desde(j: Janela, agora: number): string {
-  return new Date(agora - JANELAS[j]).toISOString().replace(/\.\d{3}Z$/, 'Z')
 }
 
 export type PontoBruto = { t: number; latencia: number | null; fora: number | null }

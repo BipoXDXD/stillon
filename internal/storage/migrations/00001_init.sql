@@ -3,7 +3,7 @@ CREATE EXTENSION IF NOT EXISTS citext;
 
 -- IDs são UUIDv7 gerados na aplicação (spec §4.2): o id existe antes do
 -- INSERT e não depende da versão do servidor (uuidv7() nativo só existe a
--- partir do Postgres 18, e a produção roda o 17).
+-- partir do Postgres 18; a produção roda o 18, mas o CI ainda testa o 17).
 CREATE TABLE users (
     id              uuid PRIMARY KEY,
     email           citext NOT NULL UNIQUE,

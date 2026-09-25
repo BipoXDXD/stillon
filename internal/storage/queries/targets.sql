@@ -30,6 +30,17 @@ UPDATE targets
        enabled = $11, next_run_at = $12
  WHERE user_id = $1 AND id = $2;
 
+-- C4 (Plano 10): trocar a URL ou o método zera a histerese (a linha volta a
+-- "sem dados"). last_checked_at fica: é a guarda de check fora de ordem do
+-- detector. O EXISTS filtra pelo dono, como o resto deste arquivo, além da
+-- RLS de target_health.
+-- name: ResetTargetHealth :exec
+UPDATE target_health
+   SET consecutive_failures = 0, consecutive_successes = 0, streak_since = NULL
+ WHERE target_id = sqlc.arg(target_id)
+   AND EXISTS (SELECT 1 FROM targets t
+                WHERE t.id = target_health.target_id AND t.user_id = sqlc.arg(user_id));
+
 -- name: DeleteTarget :execrows
 DELETE FROM targets WHERE user_id = $1 AND id = $2;
 

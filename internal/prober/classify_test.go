@@ -25,7 +25,9 @@ func TestClassify(t *testing.T) {
 		quer ErrorKind
 	}{
 		{"bloqueado no dial", embrulhar(&net.OpError{Op: "dial", Err: fmt.Errorf("%w: 10.0.0.5", safedial.ErrBlocked)}), KindBlocked},
-		{"redirect para file://", embrulhar(fmt.Errorf("%w: esquema", safedial.ErrInvalidURL)), KindBlocked},
+		{"URL recusada pelo safedial", embrulhar(fmt.Errorf("%w: esquema", safedial.ErrInvalidURL)), KindBlocked},
+		// C3 (Plano 10): o redirecionamento recusado não é proteção de rede.
+		{"redirecionamento recusado", embrulhar(fmt.Errorf("%w: mais de 3 redirecionamentos", safedial.ErrRedirect)), KindUnknown},
 		{"prazo no cabeçalho", embrulhar(context.DeadlineExceeded), KindTimeout},
 		{"prazo no corpo, sem url.Error", context.DeadlineExceeded, KindTimeout},
 		{"DNS inexistente", embrulhar(&net.DNSError{Err: "no such host", Name: "x.invalid", IsNotFound: true}), KindDNS},

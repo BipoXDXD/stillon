@@ -500,6 +500,28 @@ func (q *Queries) LockUserTargets(ctx context.Context, userID uuid.UUID) error {
 	return err
 }
 
+const resetTargetHealth = `-- name: ResetTargetHealth :exec
+UPDATE target_health
+   SET consecutive_failures = 0, consecutive_successes = 0, streak_since = NULL
+ WHERE target_id = $1
+   AND EXISTS (SELECT 1 FROM targets t
+                WHERE t.id = target_health.target_id AND t.user_id = $2)
+`
+
+type ResetTargetHealthParams struct {
+	TargetID uuid.UUID
+	UserID   uuid.UUID
+}
+
+// C4 (Plano 10): trocar a URL ou o método zera a histerese (a linha volta a
+// "sem dados"). last_checked_at fica: é a guarda de check fora de ordem do
+// detector. O EXISTS filtra pelo dono, como o resto deste arquivo, além da
+// RLS de target_health.
+func (q *Queries) ResetTargetHealth(ctx context.Context, arg ResetTargetHealthParams) error {
+	_, err := q.db.Exec(ctx, resetTargetHealth, arg.TargetID, arg.UserID)
+	return err
+}
+
 const updateTarget = `-- name: UpdateTarget :exec
 UPDATE targets
    SET name = $3, url = $4, method = $5, interval_sec = $6, timeout_ms = $7,

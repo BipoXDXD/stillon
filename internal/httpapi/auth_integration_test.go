@@ -54,6 +54,10 @@ type api struct {
 	// discord e email substituem os envios de verificação dos canais.
 	discord *discordFalso
 	email   *carteiroFalso
+	// rotacao é o rotation da última troca de autenticador que o
+	// iniciarTrocaHTTP viu aceita (A7 do Plano 10): o confirmarTrocaHTTP o
+	// manda de volta.
+	rotacao string
 }
 
 func newAPI(t *testing.T) *api {
@@ -76,7 +80,7 @@ func newAPICom(t *testing.T, ajustar func(*config.Config), ajustarDeps func(*htt
 	pool := testdb.New(t)
 	clk := clock.NewFake(time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC))
 
-	hash, err := auth.HashPassword(testPass)
+	hash, err := auth.HashPassword(context.Background(), testPass)
 	if err != nil {
 		t.Fatal(err)
 	}

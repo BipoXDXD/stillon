@@ -77,11 +77,18 @@ func Maintain(ctx context.Context, pool *pgxpool.Pool, now time.Time) (Maintenan
 // última hora completa antes de now (em UTC). Volta rollupReconsolidate antes
 // da marca d'água; sem rollup nenhum, volta rollupBackfill. Devolve quantas
 // linhas de rollup gravou ou reescreveu.
+//
+// A marca d'água é o último rollup ANTES de ate. Um rollup no futuro (o
+// relógio esteve adiantado quando foi gravado) não conta: com a marca no
+// futuro, de ficava depois de ate e nenhuma hora era consolidada (D4 do Plano
+// 10); limitada a ate, ela escondia a última marca real, e uma parada de mais
+// de 2 h perdia para sempre as horas antes dela (M1 da revisão). O rollup do
+// futuro fica; a retenção o apaga com a idade.
 func ConsolidateRollups(ctx context.Context, pool *pgxpool.Pool, now time.Time) (int64, error) {
 	ate := now.UTC().Truncate(time.Hour)
 	var n int64
 	err := InProberTx(ctx, pool, func(q *db.Queries) error {
-		ultima, err := q.LatestRollupBucket(ctx)
+		ultima, err := q.LatestRollupBucketBefore(ctx, ate)
 		if err != nil {
 			return fmt.Errorf("ler marca d'água dos rollups: %w", err)
 		}

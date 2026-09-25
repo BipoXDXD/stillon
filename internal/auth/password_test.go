@@ -1,6 +1,7 @@
 package auth_test
 
 import (
+	"context"
 	"errors"
 	"regexp"
 	"strings"
@@ -12,12 +13,12 @@ import (
 const senha = "uma-senha-bem-comprida-e-boa"
 
 func TestHashAndVerifyRoundTrip(t *testing.T) {
-	h, err := auth.HashPassword(senha)
+	h, err := auth.HashPassword(context.Background(), senha)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	ok, needsRehash, err := auth.VerifyPassword(h, senha)
+	ok, needsRehash, err := auth.VerifyPassword(context.Background(), h, senha)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -30,9 +31,9 @@ func TestHashAndVerifyRoundTrip(t *testing.T) {
 }
 
 func TestVerifyRejectsWrongPassword(t *testing.T) {
-	h, _ := auth.HashPassword(senha)
+	h, _ := auth.HashPassword(context.Background(), senha)
 
-	ok, _, err := auth.VerifyPassword(h, senha+"x")
+	ok, _, err := auth.VerifyPassword(context.Background(), h, senha+"x")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,8 +46,8 @@ func TestVerifyRejectsWrongPassword(t *testing.T) {
 // mesmo registro — e com isso impede tabela arco-íris e comparação entre
 // contas em caso de vazamento.
 func TestSamePasswordProducesDifferentHashes(t *testing.T) {
-	a, _ := auth.HashPassword(senha)
-	b, _ := auth.HashPassword(senha)
+	a, _ := auth.HashPassword(context.Background(), senha)
+	b, _ := auth.HashPassword(context.Background(), senha)
 
 	if a == b {
 		t.Error("dois hashes da mesma senha saíram idênticos: o salt não é aleatório")
@@ -54,7 +55,7 @@ func TestSamePasswordProducesDifferentHashes(t *testing.T) {
 }
 
 func TestHashUsesSpecParameters(t *testing.T) {
-	h, _ := auth.HashPassword(senha)
+	h, _ := auth.HashPassword(context.Background(), senha)
 
 	// Formato PHC: $argon2id$v=19$m=65536,t=3,p=2$<salt>$<hash>
 	re := regexp.MustCompile(`^\$argon2id\$v=19\$m=65536,t=3,p=2\$[A-Za-z0-9+/]+\$[A-Za-z0-9+/]+$`)
@@ -70,7 +71,7 @@ func TestVerifyFlagsWeakerParametersForRehash(t *testing.T) {
 	fraco := "$argon2id$v=19$m=19456,t=2,p=1$c2FsdHNhbHRzYWx0c2E$" +
 		mustHashWith(t, senha, 19456, 2, 1)
 
-	ok, needsRehash, err := auth.VerifyPassword(fraco, senha)
+	ok, needsRehash, err := auth.VerifyPassword(context.Background(), fraco, senha)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +99,7 @@ func TestVerifyRejectsMalformedHash(t *testing.T) {
 
 	for nome, h := range cases {
 		t.Run(nome, func(t *testing.T) {
-			if _, _, err := auth.VerifyPassword(h, senha); !errors.Is(err, auth.ErrInvalidHash) {
+			if _, _, err := auth.VerifyPassword(context.Background(), h, senha); !errors.Is(err, auth.ErrInvalidHash) {
 				t.Errorf("erro = %v, queria ErrInvalidHash", err)
 			}
 		})
@@ -110,7 +111,7 @@ func TestVerifyRejectsMalformedHash(t *testing.T) {
 // (spec §5.2). O teste aqui só garante que a função é chamável e não entra em
 // pânico; afirmar sobre tempo em teste é receita de flakiness.
 func TestVerifyDummyDoesNotPanic(t *testing.T) {
-	auth.VerifyDummy()
+	auth.VerifyDummy(context.Background())
 }
 
 func mustHashWith(t *testing.T, plain string, m, tt uint32, p uint8) string {
@@ -147,7 +148,7 @@ func TestHashPasswordWithRejectsOutOfRangeParams(t *testing.T) {
 				t.Errorf("%s: erro = %v, queria hash", c.nome, err)
 				continue
 			}
-			if ok, _, err := auth.VerifyPassword(h, "senha"); !ok || err != nil {
+			if ok, _, err := auth.VerifyPassword(context.Background(), h, "senha"); !ok || err != nil {
 				t.Errorf("%s: o hash escrito não é lido de volta (ok=%v, err=%v)", c.nome, ok, err)
 			}
 			continue
@@ -176,7 +177,7 @@ func TestVerifyPasswordRejectsOutOfRangeParams(t *testing.T) {
 					t.Fatalf("VerifyPassword entrou em panic: %v", r)
 				}
 			}()
-			if _, _, err := auth.VerifyPassword(h, senha); !errors.Is(err, auth.ErrInvalidHash) {
+			if _, _, err := auth.VerifyPassword(context.Background(), h, senha); !errors.Is(err, auth.ErrInvalidHash) {
 				t.Errorf("erro = %v, queria ErrInvalidHash", err)
 			}
 		})

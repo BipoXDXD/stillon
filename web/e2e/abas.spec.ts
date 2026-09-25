@@ -1,5 +1,5 @@
 import type { CDPSession, Page } from '@playwright/test'
-import { controlePositivo, expect, registrarCsp, test, violacoes } from './fixtures'
+import { controlePositivo, expect, registrarCsp, test } from './fixtures'
 import { contarAuditoria } from './pilha'
 
 // Duas abas do MESMO contexto (dividem cookies, não memória) recarregando
@@ -58,8 +58,8 @@ test('duas abas recarregando juntas continuam dentro', async ({ page, context, c
   await expect(outra.getByRole('heading', { name: 'Painel' })).toBeVisible()
   // Controle positivo nas duas abas (spec do Plano 6 §7.4): sem ele, "zero
   // violações" seria verde também com o coletor quebrado.
-  await controlePositivo(page)
-  await controlePositivo(outra)
+  await controlePositivo(page, 'primeira aba, antes dos F5')
+  await controlePositivo(outra, 'segunda aba, antes dos F5')
 
   await segurarRefreshes([await context.newCDPSession(page), await context.newCDPSession(outra)])
   const assentou = /^(Painel|Entrar no Vigilume)$/
@@ -75,6 +75,6 @@ test('duas abas recarregando juntas continuam dentro', async ({ page, context, c
     await expect(page.getByRole('heading', { name: 'Painel' })).toBeVisible()
     await expect(outra.getByRole('heading', { name: 'Painel' })).toBeVisible()
   }
-  await expect.poll(() => violacoes(page), 'CSP, primeira aba').toEqual([])
-  await expect.poll(() => violacoes(outra), 'CSP, segunda aba').toEqual([])
+  await controlePositivo(page, 'primeira aba')
+  await controlePositivo(outra, 'segunda aba')
 })

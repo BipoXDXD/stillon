@@ -15,7 +15,9 @@ export const EMAIL = 'e2e@vigilume.test'
 // A política de senha nova do Plano 5: de 15 a 128 code points.
 export const SENHA = 'uma senha de teste bem comprida'
 
-type Estado = { container: string; pid: number }
+// databaseURL: a do binário, para o desligar2FA rodar o CLI contra o mesmo
+// banco (só credenciais do container desta rodada, em e2e/.tmp).
+type Estado = { container: string; pid: number; databaseURL?: string }
 
 const chave = () => randomBytes(32).toString('base64')
 
@@ -134,6 +136,7 @@ async function terminarDeSubir(container: string, binario: string, estado: Estad
   }
   const proc = spawn(binario, [], { env, stdio: ['ignore', 'inherit', 'inherit'], detached: true })
   estado.pid = proc.pid ?? 0
+  estado.databaseURL = env.DATABASE_URL
   writeFileSync(ESTADO, JSON.stringify(estado))
   // O binário que sai antes do /readyz (configuração recusada, porta ocupada)
   // falha a subida na hora, com o código de saída, e não depois de 60 s.
@@ -174,6 +177,40 @@ export function contarAuditoria(acao: string): number | null {
     { encoding: 'utf8' },
   )
   return Number(saida.trim())
+}
+
+// desligar2FA roda `vigilume user reset-2fa` para o e-mail: o 2FA desligado e
+// as sessões encerradas, pelo CLI, sem passar pelo painel. É a rede de
+// segurança do troca.spec.ts (M2 da revisão do painel do Plano 10): o teste
+// liga o 2FA do único usuário, e uma falha no meio o deixaria ligado para as
+// specs seguintes (ou para a próxima rodada contra a mesma pilha). Idempotente:
+// sem 2FA ligado, o comando diz "nada mudou" e sai 0.
+//
+// Na pilha própria, o binário desta rodada com a DATABASE_URL dela. Contra uma
+// pilha externa, só o compose (E2E_COMPOSE_SERVICE, o serviço do app, como no
+// CI): `docker compose exec` no binário do contêiner, que já tem a
+// DATABASE_URL. Devolve false quando não há como (outra pilha externa): quem
+// chama pula o teste.
+export function podeDesligar2FA(): boolean {
+  return Boolean((process.env.E2E_PILHA_PROPRIA && existsSync(ESTADO)) || process.env.E2E_COMPOSE_SERVICE)
+}
+
+export function desligar2FA(email: string) {
+  if (process.env.E2E_PILHA_PROPRIA && existsSync(ESTADO)) {
+    const e = JSON.parse(readFileSync(ESTADO, 'utf8')) as Estado
+    if (!e.databaseURL) throw new Error('E2E: pilha.json sem a DATABASE_URL')
+    execFileSync(path.join(TMP, 'vigilume'), ['user', 'reset-2fa', '--email', email], {
+      env: { ...process.env, DATABASE_URL: e.databaseURL },
+      stdio: ['ignore', 'inherit', 'inherit'],
+    })
+    return
+  }
+  const servico = process.env.E2E_COMPOSE_SERVICE
+  if (!servico) throw new Error('E2E: sem pilha própria nem E2E_COMPOSE_SERVICE, não há como desligar o 2FA')
+  execFileSync('docker', ['compose', 'exec', '-T', servico, '/vigilume', 'user', 'reset-2fa', '--email', email], {
+    cwd: RAIZ,
+    stdio: ['ignore', 'inherit', 'inherit'],
+  })
 }
 
 // É o nosso binário: o pid de uma rodada velha pode ter sido reusado por

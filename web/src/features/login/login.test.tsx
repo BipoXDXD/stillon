@@ -138,6 +138,37 @@ describe('entrar', () => {
     }
   })
 
+  // A1 do Plano 10: com o teto de hashes em paralelo esgotado, o login
+  // responde 429 rate_limited com Retry-After (em segundos), e a tela diz
+  // quanto esperar. Sem o cabeçalho (o limitador por IP), o texto de sempre.
+  // Sabotagem: não ler o Retry-After em lerErro → "Aguarde um minuto".
+  it('429 no login diz quanto esperar quando o servidor manda o Retry-After', async () => {
+    const { usuario } = await renderizarPainel('/login', { logado: false })
+    const limitado = (cabecalhos: Record<string, string>) =>
+      servidor.use(
+        http.post(
+          '*/api/v1/auth/login',
+          () =>
+            HttpResponse.json(
+              { error: { code: 'rate_limited', message: '' }, trace_id: 't' },
+              { status: 429, headers: cabecalhos },
+            ),
+          { once: true },
+        ),
+      )
+    limitado({ 'Retry-After': '2' })
+    await usuario.type(await screen.findByLabelText('E-mail'), EMAIL)
+    await usuario.type(screen.getByLabelText('Senha'), SENHA)
+    await usuario.click(screen.getByRole('button', { name: 'Entrar' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('Muitas tentativas. Aguarde 2 segundos e tente de novo.')
+    limitado({})
+    await usuario.type(screen.getByLabelText('Senha'), SENHA)
+    await usuario.click(screen.getByRole('button', { name: 'Entrar' }))
+    await waitFor(() =>
+      expect(screen.getByRole('alert')).toHaveTextContent('Muitas requisições. Aguarde um minuto e tente de novo.'),
+    )
+  })
+
   it('e-mail vazio ou sem @ não chama o servidor', async () => {
     const { usuario, falsa } = await renderizarPainel('/login', { logado: false })
     await usuario.type(await screen.findByLabelText('Senha'), SENHA)
@@ -290,6 +321,28 @@ describe('sair', () => {
     soltar()
     await screen.findByRole('heading', { name: 'Entrar no Vigilume' })
     expect(r.falsa.chamadas('POST /auth/logout')).toBe(1)
+  })
+
+  // A9 do Plano 10: o servidor que não conseguiu revogar a sessão responde
+  // 500 e não apaga o cookie. O painel avisa e continua dentro, em vez de
+  // fingir que saiu (a sessão seguiria viva no servidor). Sabotagem: em
+  // sair(), tirar o "if (r && !r.ok) throw" → volta ao login.
+  it('Sair que falha no servidor avisa e continua dentro', async () => {
+    const r = await renderizarPainel('/')
+    await screen.findByRole('heading', { name: 'Painel' })
+    r.falsa.estado.forcar.set('POST /auth/logout', { status: 500, code: 'internal_error' })
+    const sair = screen.getByRole('button', { name: 'Sair' })
+    await r.usuario.click(sair)
+    expect(
+      (await screen.findAllByText('Não foi possível sair. Erro interno do servidor. Código para suporte: trace-falso.'))[0],
+    ).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Painel' })).toBeInTheDocument()
+    expect(r.sessao.estado()).toBe('autenticado')
+    await waitFor(() => expect(sair).not.toHaveAttribute('aria-disabled'))
+    // De novo, com o servidor bom: sai.
+    r.falsa.estado.forcar.delete('POST /auth/logout')
+    await r.usuario.click(sair)
+    await screen.findByRole('heading', { name: 'Entrar no Vigilume' })
   })
 
   it('sessão encerrada em outra aba volta ao login com o aviso', async () => {

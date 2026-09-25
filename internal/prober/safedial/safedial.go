@@ -21,6 +21,12 @@ import (
 var (
 	ErrBlocked    = errors.New("endereço bloqueado")
 	ErrInvalidURL = errors.New("URL inválida")
+	// ErrRedirect é o redirecionamento recusado: saltos demais ou um
+	// Location que não é http(s) sem credenciais (C3 do Plano 10). Não
+	// envolve ErrBlocked nem ErrInvalidURL de propósito: é configuração do
+	// site, e não a proteção de rede agindo. O IP interno num salto continua
+	// ErrBlocked, no dial.
+	ErrRedirect = errors.New("redirecionamento recusado")
 )
 
 // blockedPrefixes cobre tudo que não deve ser alcançável a partir do

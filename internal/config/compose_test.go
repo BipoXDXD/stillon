@@ -108,3 +108,57 @@ func TestComposePublicBaseURLIsLocal(t *testing.T) {
 		t.Errorf("PUBLIC_BASE_URL do compose.yaml (%s) não é http de loopback: o boot recusaria as chaves de demo", base)
 	}
 }
+
+// servicoDoCompose devolve o bloco de um serviço do compose.yaml: da linha
+// "  <nome>:" até o próximo serviço ou a próxima chave de topo.
+func servicoDoCompose(t *testing.T, nome string) string {
+	t.Helper()
+	compose, err := os.ReadFile("../../compose.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := regexp.MustCompile(`(?m)^  ` + nome + `:\n((?:(?:    .*|[ \t]*)\n)*)`).FindSubmatch(compose)
+	if m == nil {
+		t.Fatalf("serviço %s ausente do compose.yaml", nome)
+	}
+	return string(m[1])
+}
+
+// D1 (Plano 10, §3.4; banco C1 da revisão): depois de um reboot, ou de um
+// restart do Docker, o daemon só religa os contêineres com política de
+// restart. O app voltava e o db não: o monitor ficava parado e calado. O
+// seed não entra: ele roda uma vez e sai.
+func TestComposeDBRestartsWithTheHost(t *testing.T) {
+	re := regexp.MustCompile(`(?m)^    restart: unless-stopped$`)
+	for _, nome := range []string{"db", "app"} {
+		if !re.MatchString(servicoDoCompose(t, nome)) {
+			t.Errorf("serviço %s do compose.yaml sem restart: unless-stopped", nome)
+		}
+	}
+	if regexp.MustCompile(`(?m)^    restart:`).MatchString(servicoDoCompose(t, "seed")) {
+		t.Error("o seed tem restart: ele rodaria de novo a cada saída")
+	}
+}
+
+// D1 (Plano 10, §3.4; banco S1 da revisão): quem copia o compose.yaml para
+// um servidor leva junto o usuário de demonstração e as chaves públicas. O
+// cabeçalho diz, antes de qualquer serviço, que ele é só da máquina local.
+func TestComposeHeaderSaysItIsLocalOnly(t *testing.T) {
+	compose, err := os.ReadFile("../../compose.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cabecalho, _, ok := bytes.Cut(compose, []byte("\nname: vigilume\n"))
+	if !ok {
+		t.Fatal("compose.yaml sem a linha name: vigilume")
+	}
+	// "atrás de um proxy": o seed e o boot olham só a PUBLIC_BASE_URL
+	// declarada. O compose copiado para um servidor, com um proxy na frente e
+	// a URL ainda local, passa pelos dois (I1 da revisão do Plano 10), e o
+	// cabeçalho não pode prometer proteção que não existe.
+	for _, frase := range []string{"SÓ PARA A MÁQUINA LOCAL", "NUNCA EM SERVIDOR", "compose de produção", "atrás de um proxy"} {
+		if !bytes.Contains(cabecalho, []byte(frase)) {
+			t.Errorf("o cabeçalho do compose.yaml não diz %q", frase)
+		}
+	}
+}
