@@ -15,7 +15,7 @@ A seção "Já valendo em produção" do `PENDENCIAS-PARA-O-PLANO-5.md` (itens 1
 | 2. Papel comum do Postgres | `deploy/compose/initdb.sql`: `vigilume_app` sem superusuário nem `BYPASSRLS`, dono do banco. O mesmo SQL no compose, na restauração do backup e em produção |
 | 3. `METRICS_ADDR` | `off` em produção (D33); raspar pelo Fly exigiria abrir a rede privada |
 | 4. E-mail | Opcional no runbook (passo 6): `RESEND_API_KEY` e `EMAIL_FROM` juntas, domínio verificado |
-| 5. `PUBLIC_BASE_URL` | `https://<app>.fly.dev` no `fly.toml`; é o host da API, do painel e da status page. O boot a valida (esquema `http`/`https`, host não vazio, sem usuário e senha) e só aceita as chaves de demonstração com host de loopback (`localhost` ou IP de loopback), em qualquer esquema |
+| 5. `PUBLIC_BASE_URL` | `https://<app>.fly.dev` no `fly.toml`; é o host da API, do painel e da status page. O boot a valida (esquema `http`/`https`, host não vazio, sem usuário e senha) e só aceita as chaves de demonstração com `http` e host de loopback (`localhost` ou IP de loopback); com `https` recusa sempre, até em `https://localhost` |
 | 6. Primeira manutenção | Num banco novo não há o que consolidar (runbook, passo 12) |
 | Usuário inicial | Seed do compose por pipe (código 3 = sucesso); em produção, `vigilume user create` pelo `fly proxy` (passo 10) |
 | Política de senha | A senha de demonstração tem 18 caracteres |
@@ -98,7 +98,7 @@ A seção "Já valendo em produção" do `PENDENCIAS-PARA-O-PLANO-5.md` (itens 1
 ## Da revisão do Plano 7, ainda abertas
 
 A onda final do Plano 7 fechou o resto dos achados das revisões (runbook no deploy pelo SHA,
-commit da `main` no `deploy`, `/0`, chaves de demo só em loopback, `userinfo` na
+commit da `main` no `deploy`, `/0`, chaves de demo só com `http` em loopback, `userinfo` na
 `PUBLIC_BASE_URL`, `healthcheck`, avisos do IP do cliente, imagem, compose, o teste oscilante do
 `cmd/vigilume`, o `pull` do Postgres no e2e e o ensaio do backup no tree integrado). Ficam:
 

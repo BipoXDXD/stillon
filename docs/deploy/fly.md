@@ -186,6 +186,25 @@ Troque `gru` pela região escolhida em `fly platform regions`, nos dois `fly.tom
    Se a rede B levar `429`, o `TRUSTED_PROXIES` não cobre o proxy: volte ao aviso. Se o aviso
    voltar a aparecer depois, com outro `remote_addr`, o proxy mudou de endereço: acrescente-o à
    lista pelo mesmo caminho (PR e deploy).
+
+   Depois do `TRUSTED_PROXIES` no ar, há um segundo aviso, o do outro lado, também no máximo um
+   por minuto:
+   ```sh
+   fly logs -a vigilume | grep "cabeçalho de IP do cliente ausente ou ilegível"
+   ```
+   A mensagem inteira é "cabeçalho de IP do cliente ausente ou ilegível numa conexão de
+   TRUSTED_PROXIES: confira o CLIENT_IP_HEADER; estes clientes dividem o balde do proxy", com o
+   nome do cabeçalho (`cabecalho`) e o `remote_addr` da conexão; o valor do cabeçalho não vai para
+   o log. Quer dizer que uma conexão veio de um endereço da lista, mas sem o cabeçalho, ou com um
+   valor que não é um IP. Essa requisição conta com o IP do proxy: todos os clientes nessa
+   situação dividem um balde de rate limit e um `ip_hash`. Confira, nesta ordem:
+   - `CLIENT_IP_HEADER` no `fly.toml`: tem de ser `Fly-Client-IP`, escrito certo. Com outro nome,
+     o app procura um cabeçalho que o proxy não manda, e o aviso aparece a cada minuto;
+   - `TRUSTED_PROXIES`: se o `remote_addr` do aviso é de outra máquina sua na 6PN, e não do
+     proxy, a faixa está larga demais (volte ao `/32` ou `/128`, acima);
+   - se o `remote_addr` é mesmo o do proxy, é tráfego do próprio Fly que chega sem
+     `Fly-Client-IP`. Não foi ensaiado (não há app no Fly na validação); se acontecer, o aviso
+     fica voltando uma vez por minuto, e isso vai para as pendências, não para o `fly.toml`.
 10. **Seu usuário**, com o binário **da versão que está no ar** (o `user create` aplica as
     migrations antes: uma versão mais nova migraria o banco de produção por fora do deploy).
     `fly releases -a vigilume --image` mostra o digest em produção; `vigilume version` numa imagem
@@ -319,8 +338,14 @@ pelo workflow. Nenhum deles é lido de outro: cada um está escrito à mão.
 | Pacote do GHCR (`ghcr.io/bipoxdxd/vigilume`) | `.github/workflows/ci.yml`: `IMAGEM`; `.github/workflows/deploy.yml`: `ORIGEM`; `compose.yaml`: o `image` do `seed` e do `app` |
 | Este runbook | Os comandos com `-a vigilume`, `-a vigilume-db`, `registry.fly.io/vigilume`, e as URLs `https://vigilume.fly.dev` (passos 9 e 11) |
 
-Depois do PR, `grep -rn 'vigilume\.fly\.dev\|vigilume-db\|registry.fly.io/vigilume' .github fly.toml deploy docs/deploy`
-não deve achar o nome antigo.
+Depois do PR, este `grep` não deve achar o nome antigo fora desta seção (a tabela acima e o
+próprio comando citam os nomes antigos de propósito):
+```sh
+grep -rn 'vigilume\.fly\.dev\|vigilume-db\|registry\.fly\.io/vigilume\|app = "vigilume"\|-a vigilume' \
+  .github fly.toml deploy docs/deploy
+```
+O `app = "vigilume"` pega o `app` do `fly.toml`, e o `-a vigilume` pega o do `deploy.yml` e os
+comandos deste runbook (o do banco, `-a vigilume-db`, também).
 
 ## Depuração
 
@@ -328,7 +353,22 @@ A imagem do app não tem shell (spec §5.9): `fly ssh console -a vigilume` não 
 `fly logs`, os subcomandos do binário (`vigilume version`, `vigilume healthcheck`,
 `vigilume user …`) e o console do **banco**, que tem shell. O `vigilume healthcheck` consulta o
 `/readyz` com prazo de 3 s (acima dos 2 s que o próprio `/readyz` dá ao banco, para que um 503
-apareça como 503, e não como tempo esgotado).
+apareça como 503, e não como tempo esgotado). O healthcheck do `compose.yaml` dá 5 s ao
+subcomando (`timeout: 5s`), acima desses 3 s: quem responde pela falha é o próprio subcomando
+(código 1), e não o Docker matando o processo por tempo. Os códigos de saída:
+
+| Código | Quando |
+|---|---|
+| 0 | o `/readyz` respondeu 200 dentro dos 3 s |
+| 1 | qualquer outra resposta, prazo esgotado, conexão recusada ou `HTTP_ADDR` inválido |
+| 2 | argumento a mais (`vigilume healthcheck x`); o `vigilume version` faz o mesmo |
+| 130 | interrompido (Ctrl-C ou SIGTERM), como o `vigilume user` |
+
+A `PUBLIC_BASE_URL` com usuário e senha (`https://usuario:senha@…`) é recusada no boot, porque
+a credencial iria parar nos links dos e-mails: a máquina não sobe, e o erro no log diz
+"PUBLIC_BASE_URL não pode trazer credenciais na URL (a parte com @ antes do host)". A mensagem
+não repete o valor, de propósito: ele traria a senha para o `fly logs`. Tire a credencial do
+`fly.toml` e faça o deploy de novo.
 
 ## Operação do Postgres
 
