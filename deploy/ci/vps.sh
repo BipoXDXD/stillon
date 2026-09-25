@@ -111,9 +111,11 @@ fazer_deploy() {
             resumo "Deploy de \`$sha\` (\`$id\`): saudável."
             ;;
         2) erro "a VPS recusou o pedido (código 2: uso ou argumento inválido); nada mudou em produção" ;;
-        3) erro "a imagem que chegou à VPS não é a esperada (código 3: image-id divergente de $id); nada mudou em produção" ;;
+        3) erro "a VPS recusou a imagem (código 3: image-id divergente de $id, tar fora do layout OCI, ou vigilume:$sha já existe com outra imagem e é a versão no ar ou a anterior); nada mudou em produção; a causa está no log acima" ;;
         4) erro "a versão nova não ficou saudável (código 4): a VPS voltou para a versão anterior (rollback feito); o log do app está acima" ;;
-        255) erro "falha de SSH (código 255): conexão, VPS_SSH_KEY ou VPS_HOST_KEY; confira a mensagem do ssh acima antes de tentar de novo" ;;
+        # O 255 é o mesmo antes e depois de a imagem ir: se a conexão caiu
+        # no meio, a VPS termina o deploy (ou o rollback) sozinha.
+        255) erro "falha de SSH (código 255): conexão, VPS_SSH_KEY ou VPS_HOST_KEY (confira a mensagem do ssh acima). Se a conexão caiu depois de a imagem ir, a VPS termina o deploy ou o rollback sozinha: confira /opt/vigilume/versao e a última linha de /opt/vigilume/entrada.log antes de repetir" ;;
         *) erro "erro na VPS (código $codigo); o log está acima" ;;
     esac
     exit "$codigo"
@@ -140,10 +142,14 @@ cifrado() {
 # assinatura do formato custom é "PGDMP", versão 1.x, int de 4 bytes, offset
 # de 8 e formato 1 (custom): 9 bytes fixos, que um cifrado não repete por
 # acaso (só "PGDMP" sairia uma vez a cada 2^40 posições, e apagaria um
-# backup bom).
+# backup bom). Sai 0 (achou), 1 (não achou) ou 2 (o grep falhou, por
+# exemplo sem -P: não se sabe, e o chamador não guarda o arquivo).
 em_claro() {
-    LC_ALL=C grep -aqP 'PGDMP\x01[\x00-\xff]{2}\x04\x08\x01' "$1" ||
-        LC_ALL=C grep -aqF 'PostgreSQL database dump' "$1"
+    if LC_ALL=C grep -aqP 'PGDMP\x01[\x00-\xff]{2}\x04\x08\x01' "$1"; then return 0; else r=$?; fi
+    [ "$r" -eq 1 ] || return 2
+    if LC_ALL=C grep -aqF 'PostgreSQL database dump' "$1"; then return 0; else r=$?; fi
+    [ "$r" -eq 1 ] || return 2
+    return 1
 }
 
 fazer_backup() {
@@ -176,9 +182,15 @@ fazer_backup() {
                 erro "a saída do backup não começa com o cabeçalho do age ($CABECALHO_AGE, o destinatário X25519 e o MAC): não é um arquivo cifrado, e foi apagada sem ser guardada"
                 exit 1
             fi
-            if em_claro "$saida"; then
+            if em_claro "$saida"; then r=0; else r=$?; fi
+            if [ "$r" -eq 0 ]; then
                 rm -f "$saida"
                 erro "a saída do backup tem um dump em claro depois do cabeçalho do age: foi apagada sem ser guardada; confira o backup na VPS"
+                exit 1
+            fi
+            if [ "$r" -ne 1 ]; then
+                rm -f "$saida"
+                erro "não deu para conferir se a saída do backup tem um dump em claro (o grep falhou; o runner tem grep -P?): foi apagada sem ser guardada"
                 exit 1
             fi
             if [ "$codigo" -eq 4 ]; then

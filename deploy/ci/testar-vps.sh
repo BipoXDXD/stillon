@@ -180,6 +180,15 @@ for par in \
     esperar_texto "${par#*|}"
     esperar_texto "::error::"
 done
+# 3: a outra causa (a etiqueta do SHA já existe com outra imagem). 255: a
+# conexão pode ter caído depois de a imagem ir; a VPS termina sozinha, e o
+# dono confere antes de repetir.
+T_ENTRADA=$tmp/imagem.tar SSH_FALSO_CODIGO=3 rodar "deploy, a VPS sai 3 (a outra causa)" deploy "$SHA" "$ID"
+esperar_texto "vigilume:$SHA já existe com outra imagem"
+T_ENTRADA=$tmp/imagem.tar SSH_FALSO_CODIGO=255 rodar "deploy, 255 depois do envio" deploy "$SHA" "$ID"
+esperar_texto "/opt/vigilume/versao"
+esperar_texto "/opt/vigilume/entrada.log"
+esperar_texto "antes de repetir"
 
 NL='
 '
@@ -290,6 +299,23 @@ esperar_texto "dump em claro"
 SSH_FALSO_SAIDA="${AGE}PGDMPxyz" rodar "backup com PGDMP solto no cifrado" backup "$arq"
 esperar_codigo 0
 [ "$(ler "$arq")" = "${AGE}PGDMPxyz" ] || falhar "$caso: o backup cifrado não ficou"
+
+# O grep que procura o dump em claro falha (código 2: sem -P, por exemplo):
+# sem saber, o backup não vale.
+mkdir "$tmp/bin-grep"
+cat >"$tmp/bin-grep/grep" <<FALSO
+#!/bin/sh
+for a; do case \$a in -*P*) echo "grep: -P não suportado" >&2; exit 2 ;; esac; done
+exec $(command -v grep) "\$@"
+FALSO
+chmod +x "$tmp/bin-grep/grep"
+PATH_ORIGINAL=$PATH
+PATH=$tmp/bin-grep:$PATH
+SSH_FALSO_SAIDA=$AGE rodar "backup com o grep -P falhando" backup "$arq"
+PATH=$PATH_ORIGINAL
+esperar_codigo 1
+esperar_texto "não deu para conferir"
+[ ! -e "$arq" ] || falhar "$caso: o arquivo não conferido ficou no disco"
 
 SSH_FALSO_SAIDA='' rodar "backup vazio" backup "$arq"
 esperar_codigo 1
