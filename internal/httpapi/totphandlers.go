@@ -46,7 +46,7 @@ func (h *AuthHandlers) TOTPEnroll(w http.ResponseWriter, r *http.Request) {
 
 	user, err := h.users.ByID(r.Context(), userID)
 	if err != nil {
-		h.internal(w, r, "buscar usuário", err)
+		h.usuarioOuInterno(w, r, "buscar usuário", err)
 		return
 	}
 
@@ -63,7 +63,7 @@ func (h *AuthHandlers) TOTPEnroll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		h.internal(w, r, "cadastrar TOTP", err)
+		h.usuarioOuInterno(w, r, "cadastrar TOTP", err)
 		return
 	}
 	// A URI otpauth:// vai para o cliente, que renderiza o QR code. Gerar a
@@ -113,7 +113,7 @@ func (h *AuthHandlers) TOTPConfirm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		h.internal(w, r, "confirmar TOTP", err)
+		h.usuarioOuInterno(w, r, "confirmar TOTP", err)
 		return
 	}
 	res.Succeed()
@@ -203,7 +203,8 @@ func (h *AuthHandlers) TOTPVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.totp.Verify(r.Context(), userID, req.Code, now); err != nil {
+	prova, err := h.totp.VerifyWithProof(r.Context(), userID, req.Code, now)
+	if err != nil {
 		// O mesmo 401 genérico do login errado (R34): um código distinto para
 		// "segundo fator falhou" contaria ao atacante que a senha estava
 		// certa, e a senha é justamente o que ele está testando. A reserva
@@ -238,12 +239,25 @@ func (h *AuthHandlers) TOTPVerify(w http.ResponseWriter, r *http.Request) {
 
 	// O carimbo é o da senha verificada no login, antes do desafio: se ela
 	// mudou desde então (set-password, troca de senha), Issue recusa, e o
-	// desafio obtido com a senha antiga morre com ela.
-	h.issue(w, r, userID, desafio.Stamp)
+	// desafio obtido com a senha antiga morre com ela. A prova do 2FA é
+	// reconferida do mesmo jeito (A4 do Plano 10).
+	h.issue(w, r, userID, desafio.Stamp, &prova)
 }
 
 type passwordRequest struct {
 	Password string `json:"password"`
+}
+
+// usuarioOuInterno é o erro das rotas do 2FA: o usuário do token que sumiu
+// no meio da requisição (auth.ErrNotFound) é 401 unauthorized, como no /me e
+// na troca de senha (A10 do Plano 10) — o painel volta ao login em vez de
+// mostrar um erro interno. O resto é h.internal.
+func (h *AuthHandlers) usuarioOuInterno(w http.ResponseWriter, r *http.Request, op string, err error) {
+	if errors.Is(err, auth.ErrNotFound) {
+		apierr.WriteError(w, r, apierr.CodeUnauthorized)
+		return
+	}
+	h.internal(w, r, op, err)
 }
 
 // senhaConfere escreve o erro e devolve false quando a senha não bate. O erro
@@ -307,7 +321,7 @@ func (h *AuthHandlers) TOTPDisable(w http.ResponseWriter, r *http.Request) {
 
 	user, err := h.users.ByID(r.Context(), userID)
 	if err != nil {
-		h.internal(w, r, "buscar usuário", err)
+		h.usuarioOuInterno(w, r, "buscar usuário", err)
 		return
 	}
 	if !h.senhaConfere(w, r, res, user, req.Password) {
@@ -332,7 +346,7 @@ func (h *AuthHandlers) TOTPDisable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		h.internal(w, r, "desativar TOTP", err)
+		h.usuarioOuInterno(w, r, "desativar TOTP", err)
 		return
 	}
 	res.Succeed()
@@ -377,7 +391,7 @@ func (h *AuthHandlers) TOTPRotate(w http.ResponseWriter, r *http.Request) {
 
 	user, err := h.users.ByID(r.Context(), userID)
 	if err != nil {
-		h.internal(w, r, "buscar usuário", err)
+		h.usuarioOuInterno(w, r, "buscar usuário", err)
 		return
 	}
 	if !h.senhaConfere(w, r, res, user, req.Password) {
@@ -389,7 +403,7 @@ func (h *AuthHandlers) TOTPRotate(w http.ResponseWriter, r *http.Request) {
 		prova = req.RecoveryCode
 	}
 	now := h.clk.Now()
-	uri, err := h.totp.StartRotation(r.Context(), userID, familyID, user.Email, prova, now)
+	uri, rotacao, err := h.totp.StartRotation(r.Context(), userID, familyID, user.Email, prova, now)
 	if errors.Is(err, auth.ErrTOTPNotEnrolled) {
 		// Só a senha foi provada; nenhuma prova errou: a reserva volta.
 		apierr.WriteError(w, r, apierr.CodeForbidden)
@@ -409,16 +423,20 @@ func (h *AuthHandlers) TOTPRotate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		h.internal(w, r, "iniciar troca de TOTP", err)
+		h.usuarioOuInterno(w, r, "iniciar troca de TOTP", err)
 		return
 	}
 	res.Succeed()
-	apierr.WriteJSON(w, http.StatusOK, map[string]string{"otpauth_uri": uri})
+	// rotation identifica ESTA troca (A7 do Plano 10): o rotate/confirm o
+	// exige de volta.
+	apierr.WriteJSON(w, http.StatusOK, map[string]string{"otpauth_uri": uri, "rotation": rotacao})
 }
 
 // TOTPRotateConfirm conclui a troca com um código do app NOVO e devolve os 10
 // códigos de recuperação novos, no formato do confirm. As outras sessões caem;
-// a do token fica.
+// a do token fica. O corpo é {code, rotation}: rotation é o que o rotate
+// devolveu (A7 do Plano 10); ausente ou de outra troca é o 403 de "sem troca",
+// antes do código e sem contar prova errada.
 //
 // Sem troca em andamento é 403 forbidden (concluída ou cancelada em outra
 // aba), e também quando a troca foi iniciada por outra família de sessão: o
@@ -438,7 +456,10 @@ func (h *AuthHandlers) TOTPRotateConfirm(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	var req codeRequest
+	var req struct {
+		Code     string `json:"code"`
+		Rotation string `json:"rotation"`
+	}
 	if !decodeJSON(w, r, &req) {
 		return
 	}
@@ -448,7 +469,7 @@ func (h *AuthHandlers) TOTPRotateConfirm(w http.ResponseWriter, r *http.Request)
 	}
 	defer res.Release()
 
-	codes, err := h.totp.ConfirmRotation(r.Context(), userID, familyID, req.Code, h.clk.Now())
+	codes, err := h.totp.ConfirmRotation(r.Context(), userID, familyID, req.Rotation, req.Code, h.clk.Now())
 	switch {
 	case errors.Is(err, auth.ErrTOTPNoRotation):
 		apierr.WriteError(w, r, apierr.CodeForbidden)
@@ -459,7 +480,7 @@ func (h *AuthHandlers) TOTPRotateConfirm(w http.ResponseWriter, r *http.Request)
 		// unauthorized da guarda.
 		apierr.WriteError(w, r, apierr.CodeUnauthorized)
 	case err != nil:
-		h.internal(w, r, "confirmar troca de TOTP", err)
+		h.usuarioOuInterno(w, r, "confirmar troca de TOTP", err)
 	default:
 		res.Succeed()
 		// Única vez em que os códigos novos aparecem em claro.

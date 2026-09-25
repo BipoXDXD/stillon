@@ -169,7 +169,7 @@ func (h *AuthHandlers) Login(w http.ResponseWriter, r *http.Request) {
 		slog.Error("zerar falhas de login", "erro", err)
 	}
 
-	h.issue(w, r, user.ID, auth.PasswordStamp(verificado))
+	h.issue(w, r, user.ID, auth.PasswordStamp(verificado), nil)
 }
 
 // tentativas escolhe o contador do login (A3 do Plano 10): o do cookie de
@@ -245,9 +245,20 @@ func (h *AuthHandlers) Logout(w http.ResponseWriter, r *http.Request) {
 // hash verificado. Se a senha mudou no meio (set-password, troca de senha), a
 // resposta é o mesmo 401 da senha errada: a senha que o cliente mandou já não
 // é a da conta (R34).
-func (h *AuthHandlers) issue(w http.ResponseWriter, r *http.Request, userID uuid.UUID, stamp string) {
-	token, s, err := h.sessions.Issue(r.Context(), userID, stamp, h.meta(r))
-	if errors.Is(err, auth.ErrStalePassword) {
+//
+// Com o 2FA (prova não nil), a sessão também só nasce se o segredo que aceitou
+// o código ainda for o ativo (A4 do Plano 10); se uma troca de autenticador ou
+// um disable comitou no meio, o mesmo 401 invalid_credentials.
+func (h *AuthHandlers) issue(w http.ResponseWriter, r *http.Request, userID uuid.UUID, stamp string, prova *auth.SecondFactorProof) {
+	var token string
+	var s auth.Session
+	var err error
+	if prova != nil {
+		token, s, err = h.sessions.IssueAfterSecondFactor(r.Context(), userID, stamp, *prova, h.meta(r))
+	} else {
+		token, s, err = h.sessions.Issue(r.Context(), userID, stamp, h.meta(r))
+	}
+	if errors.Is(err, auth.ErrStalePassword) || errors.Is(err, auth.ErrStaleSecondFactor) {
 		apierr.WriteError(w, r, apierr.CodeInvalidCredentials)
 		return
 	}

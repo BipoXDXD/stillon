@@ -31,7 +31,8 @@ func codigoDe(t *testing.T, a *api, segredo string) string {
 }
 
 // iniciarTrocaHTTP chama o rotate e devolve o status e, no 200, o segredo novo
-// tirado da otpauth_uri.
+// tirado da otpauth_uri. O rotation da resposta (A7 do Plano 10) fica em
+// a.rotacao, para o confirmarTrocaHTTP.
 func iniciarTrocaHTTP(t *testing.T, a *api, token string, corpo map[string]string) (int, string) {
 	t.Helper()
 	resp := postComToken(t, http.DefaultClient, a.srv.URL+"/api/v1/auth/totp/rotate", token, corpo)
@@ -40,11 +41,16 @@ func iniciarTrocaHTTP(t *testing.T, a *api, token string, corpo map[string]strin
 		return resp.StatusCode, ""
 	}
 	var r struct {
-		URI string `json:"otpauth_uri"`
+		URI      string `json:"otpauth_uri"`
+		Rotation string `json:"rotation"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&r); err != nil {
 		t.Fatal(err)
 	}
+	if len(r.Rotation) != 32 {
+		t.Fatalf("rotate devolveu rotation %q, queria 32 caracteres hex", r.Rotation)
+	}
+	a.rotacao = r.Rotation
 	key, err := otp.NewKeyFromURL(r.URI)
 	if err != nil {
 		t.Fatalf("rotate não devolveu uma URI otpauth:// válida: %v", err)
@@ -52,12 +58,13 @@ func iniciarTrocaHTTP(t *testing.T, a *api, token string, corpo map[string]strin
 	return resp.StatusCode, key.Secret()
 }
 
-// confirmarTrocaHTTP chama o rotate/confirm e devolve o status, o code do
-// envelope (vazio no sucesso) e, no 200, os códigos de recuperação.
+// confirmarTrocaHTTP chama o rotate/confirm com o rotation da última troca
+// aceita e devolve o status, o code do envelope (vazio no sucesso) e, no 200,
+// os códigos de recuperação.
 func confirmarTrocaHTTP(t *testing.T, a *api, token, codigo string) (int, string, []string) {
 	t.Helper()
 	resp := postComToken(t, http.DefaultClient, a.srv.URL+"/api/v1/auth/totp/rotate/confirm", token,
-		map[string]string{"code": codigo})
+		map[string]string{"code": codigo, "rotation": a.rotacao})
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		return resp.StatusCode, codigoDoErro(t, resp), nil

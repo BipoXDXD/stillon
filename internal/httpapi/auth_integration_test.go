@@ -54,6 +54,10 @@ type api struct {
 	// discord e email substituem os envios de verificação dos canais.
 	discord *discordFalso
 	email   *carteiroFalso
+	// rotacao é o rotation da última troca de autenticador que o
+	// iniciarTrocaHTTP viu aceita (A7 do Plano 10): o confirmarTrocaHTTP o
+	// manda de volta.
+	rotacao string
 }
 
 func newAPI(t *testing.T) *api {

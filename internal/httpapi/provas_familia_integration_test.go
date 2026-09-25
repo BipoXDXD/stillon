@@ -109,7 +109,7 @@ func TestFifthWrongProofDropsTheFamily(t *testing.T) {
 				t.Fatalf("rotate devolveu %d", st)
 			}
 			return postEProva("/api/v1/auth/totp/rotate/confirm", func(t *testing.T, a *api) map[string]string {
-				return map[string]string{"code": codigoErradoPara(t, a, velho)}
+				return map[string]string{"code": codigoErradoPara(t, a, velho), "rotation": a.rotacao}
 			})
 		}, http.StatusUnauthorized, "invalid_credentials"},
 	}

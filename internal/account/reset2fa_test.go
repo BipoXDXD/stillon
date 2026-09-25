@@ -91,7 +91,7 @@ func TestResetTwoFactorTurnsItOff(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.totp.StartRotation(ctx, c.user, sessao.FamilyID, "dono@exemplo.com", codigoAgora(t, c, segredo), c.clk.Now()); err != nil {
+	if _, _, err := c.totp.StartRotation(ctx, c.user, sessao.FamilyID, "dono@exemplo.com", codigoAgora(t, c, segredo), c.clk.Now()); err != nil {
 		t.Fatal(err)
 	}
 	marca := c.clk.Now().Add(-time.Minute)

@@ -43,6 +43,10 @@ type Tx interface {
 	// UserPasswordHash é o hash atual do usuário, lido por Issue depois de
 	// LockUserSessions; ErrNotFound se o usuário não existe.
 	UserPasswordHash(ctx context.Context, userID uuid.UUID) (string, error)
+	// UserTOTPSecret é o segredo ativo do 2FA, cifrado como está no banco
+	// (nil sem 2FA), lido por IssueAfterSecondFactor depois de
+	// LockUserSessions (A4 do Plano 10).
+	UserTOTPSecret(ctx context.Context, userID uuid.UUID) ([]byte, error)
 	InsertSession(ctx context.Context, r SessionRow) error
 	MarkSessionUsed(ctx context.Context, id uuid.UUID, at time.Time) error
 	RevokeFamily(ctx context.Context, familyID uuid.UUID, at time.Time) error
@@ -125,6 +129,18 @@ func (t *pgTx) UserPasswordHash(ctx context.Context, userID uuid.UUID) (string, 
 		return "", fmt.Errorf("ler hash de senha: %w", err)
 	}
 	return hash, nil
+}
+
+func (t *pgTx) UserTOTPSecret(ctx context.Context, userID uuid.UUID) ([]byte, error) {
+	var sealed []byte
+	err := t.tx.QueryRow(ctx, `SELECT totp_secret_enc FROM users WHERE id = $1`, userID).Scan(&sealed)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("ler segredo TOTP: %w", err)
+	}
+	return sealed, nil
 }
 
 func (t *pgTx) InsertSession(ctx context.Context, r SessionRow) error {
