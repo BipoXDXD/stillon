@@ -14,13 +14,17 @@ import { novaSessao, usarApiFalsa } from './ambiente'
 // Monta o painel inteiro (rotas, provedores, sessão) numa rota, contra a API
 // falsa. logado: o navegador tem um cookie de refresh válido, e o boot entra.
 // atrasoDoBoot: quanto o refresh do boot demora (para ver o splash).
-export async function renderizarPainel(rota: string, o: { logado?: boolean; atrasoDoBoot?: number } = {}) {
+// prazoDoConfirmMs: o prazo dos confirms do 2FA (30 s no painel).
+export async function renderizarPainel(
+  rota: string,
+  o: { logado?: boolean; atrasoDoBoot?: number; prazoDoConfirmMs?: number } = {},
+) {
   // Cada render é uma carga de página nova: a primeira tela não recebe foco.
   esquecerAPrimeiraTela()
   const falsa = usarApiFalsa()
   if (o.logado ?? true) falsa.logado()
   falsa.estado.atrasoRefresh = o.atrasoDoBoot ?? 0
-  const { sessao, api } = novaSessao()
+  const { sessao, api } = novaSessao({ prazoDoConfirmMs: o.prazoDoConfirmMs })
   const cliente = criarClienteDeConsultas()
   // Nos testes, erro é erro: sem as tentativas que escondem um 500.
   cliente.setDefaultOptions({

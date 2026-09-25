@@ -813,6 +813,10 @@ describe('envio em voo nos diálogos do 2FA', () => {
   const ROTATE = 'POST /auth/totp/rotate'
   const CONFIRM = 'POST /auth/totp/rotate/confirm'
   const TROCA_SUMIU = 'A troca foi concluída ou cancelada em outra aba. Comece de novo.'
+  const TROCA_INCERTA =
+    'A resposta do servidor não chegou, e não dá para saber se a troca foi concluída. Saia e entre com um código do app novo: se ele valer, a troca foi feita e os códigos de recuperação antigos não valem mais (troque o autenticador de novo para gerar outros); se não valer, o app atual continua valendo.'
+  const ATIVACAO_INCERTA =
+    'A resposta do servidor não chegou, e não dá para saber se a verificação em duas etapas foi ativada. Feche e confira nesta tela: se ela estiver ativada, os códigos de recuperação desta ativação se perderam; use "Trocar autenticador" para gerar outros.'
   const tique = () => new Promise((res) => setTimeout(res, 50))
 
   async function comTotp() {
@@ -946,6 +950,79 @@ describe('envio em voo nos diálogos do 2FA', () => {
     await screen.findByRole('dialog', { name: 'Trocar o autenticador' })
     await r.usuario.keyboard('{Escape}')
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+  })
+
+  // E2 e E3 do Plano 10: a resposta do confirm se perdeu (um 502 do proxy
+  // sem o envelope, a rede, o prazo). A troca pode ter sido gravada: o
+  // diálogo diz que não sabe, e nunca "Nada mudou". O fechamento usa o
+  // mesmo texto. Sabotagem: tirar o ramo da resposta perdida do confirm
+  // da troca → "O servidor respondeu algo inesperado." e, ao fechar, "Nada
+  // mudou".
+  it('troca: confirm sem resposta legível diz que não se sabe se a troca foi concluída', async () => {
+    const r = await comTotp()
+    const dialogo = await noPassoDoQr(r)
+    servidor.use(
+      http.post('*/api/v1/auth/totp/rotate/confirm', () => new HttpResponse('<html>Bad Gateway</html>', { status: 502 }), {
+        once: true,
+      }),
+    )
+    await r.usuario.click(within(dialogo).getByRole('button', { name: 'Confirmar a troca' }))
+    expect(await within(dialogo).findByRole('alert')).toHaveTextContent(TROCA_INCERTA)
+    // O confirm tinha passado (o 502 veio do proxy, depois): de novo, 403.
+    // Continua sem saber, e não volta ao passo 1 como "outra aba".
+    r.falsa.estado.troca = null
+    await r.usuario.click(within(dialogo).getByRole('button', { name: 'Confirmar a troca' }))
+    await waitFor(() => expect(r.falsa.chamadas(CONFIRM)).toBe(1))
+    expect(await within(dialogo).findByRole('alert')).toHaveTextContent(TROCA_INCERTA)
+    expect(within(dialogo).queryByText(TROCA_SUMIU)).not.toBeInTheDocument()
+    await r.usuario.keyboard('{Escape}')
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    expect((await screen.findAllByText(TROCA_INCERTA))[0]).toBeInTheDocument()
+    expect(screen.queryByText(/Nada mudou/)).not.toBeInTheDocument()
+  })
+
+  // E3: o confirm tem prazo. Sem ele, o diálogo ficava travado para
+  // sempre com a rede presa. Sabotagem: tirar o sinal do totpConfirmarTroca
+  // → o diálogo continua travado, sem texto.
+  it('troca: confirm que não responde no prazo destrava e diz que não se sabe', async () => {
+    const r = await renderizarPainel('/settings', { prazoDoConfirmMs: 100 })
+    r.falsa.estado.totpLigado = true
+    await r.cliente.refetchQueries()
+    const dialogo = await noPassoDoQr(r)
+    servidor.use(http.post('*/api/v1/auth/totp/rotate/confirm', () => new Promise<never>(() => {})))
+    await r.usuario.click(within(dialogo).getByRole('button', { name: 'Confirmar a troca' }))
+    expect(await within(dialogo).findByRole('alert', {}, { timeout: 3000 })).toHaveTextContent(TROCA_INCERTA)
+    await r.usuario.keyboard('{Escape}')
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+  })
+
+  // A mesma coisa na ativação (totpConfirmar): sem rede ou sem resposta no
+  // prazo, o 2FA pode ter sido ligado. Sabotagens: tirar o ramo da resposta
+  // perdida da ativação → "Sem conexão…"; tirar o sinal do totpConfirmar →
+  // o diálogo continua travado.
+  it('ativação: confirm sem rede ou sem resposta no prazo diz que não se sabe se ativou', async () => {
+    const r = await renderizarPainel('/settings', { prazoDoConfirmMs: 100 })
+    await r.usuario.click(await screen.findByRole('button', { name: 'Ativar' }))
+    const dialogo = await screen.findByRole('dialog')
+    await r.usuario.type(within(dialogo).getByLabelText('Sua senha'), SENHA)
+    await r.usuario.click(within(dialogo).getByRole('button', { name: 'Continuar' }))
+    await r.usuario.type(await within(dialogo).findByLabelText('Código de 6 dígitos'), TOTP_OK)
+    servidor.use(http.post('*/api/v1/auth/totp/confirm', () => HttpResponse.error(), { once: true }))
+    await r.usuario.click(within(dialogo).getByRole('button', { name: 'Ativar' }))
+    expect(await within(dialogo).findByRole('alert')).toHaveTextContent(ATIVACAO_INCERTA)
+    servidor.use(http.post('*/api/v1/auth/totp/confirm', () => new Promise<never>(() => {})))
+    await r.usuario.click(within(dialogo).getByRole('button', { name: 'Ativar' }))
+    await tique()
+    // Travado enquanto espera: o Esc não fecha.
+    await r.usuario.keyboard('{Escape}')
+    expect(screen.getByRole('dialog')).toBe(dialogo)
+    await waitFor(() => expect(within(dialogo).getByRole('button', { name: 'Ativar' })).not.toHaveAttribute('aria-disabled'), {
+      timeout: 3000,
+    })
+    expect(within(dialogo).getByRole('alert')).toHaveTextContent(ATIVACAO_INCERTA)
+    await r.usuario.keyboard('{Escape}')
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    expect((await screen.findAllByText(ATIVACAO_INCERTA))[0]).toBeInTheDocument()
   })
 
   // Rodada complementar (decisão do usuário): o "Continuar" do passo da senha

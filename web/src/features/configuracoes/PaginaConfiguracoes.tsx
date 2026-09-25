@@ -204,6 +204,18 @@ const esquemaCodigo = z.object({ codigo: z.string().trim().min(1, 'Informe o có
 // este diálogo aberto; totphandlers.go).
 const jaAtivada = (e: unknown) => e instanceof ApiError && e.status === 403
 
+// A resposta de um confirm se perdeu (E2 do Plano 10): sem rede, prazo
+// estourado (os dois chegam como 'network'), um 5xx do proxy sem o envelope,
+// ou um 2xx que não se lê. O servidor pode ter gravado. Um erro COM o
+// envelope é a resposta do servidor, e ela diz o que aconteceu.
+const respostaPerdida = (e: unknown) =>
+  e instanceof ApiError && (e.code === 'network' || (e.code === 'unexpected' && (e.status >= 500 || e.status < 400)))
+
+const ATIVACAO_INCERTA =
+  'A resposta do servidor não chegou, e não dá para saber se a verificação em duas etapas foi ativada. Feche e confira nesta tela: se ela estiver ativada, os códigos de recuperação desta ativação se perderam; use "Trocar autenticador" para gerar outros.'
+const TROCA_INCERTA =
+  'A resposta do servidor não chegou, e não dá para saber se a troca foi concluída. Saia e entre com um código do app novo: se ele valer, a troca foi feita e os códigos de recuperação antigos não valem mais (troque o autenticador de novo para gerar outros); se não valer, o app atual continua valendo.'
+
 // Um envio por vez (revisão final do Plano 9). O handleSubmit do
 // react-hook-form não impede reentrada: um clique duplo (ou Enter duas vezes)
 // mandava dois rotate, ou dois confirm — e o 2º confirm, com o pendente já
@@ -366,12 +378,15 @@ function AtivarTotp({
   aoOcupar,
   aoTravar,
   aoJaAtivada,
+  aoIncerta,
 }: {
   aoTerminar: () => void
   // O confirm está em voo: o diálogo não fecha até a resposta.
   aoOcupar: (ocupado: boolean) => void
   aoTravar: () => void
   aoJaAtivada: () => void
+  // A resposta do confirm se perdeu: fechar avisa com este texto.
+  aoIncerta: (texto: string) => void
 }) {
   const api = useApi()
   const [passo, setPasso] = useState<'senha' | 'codigo' | 'codigos'>('senha')
@@ -435,6 +450,11 @@ function AtivarTotp({
             aoTravar()
             setPasso('codigos')
           } catch (e) {
+            if (respostaPerdida(e)) {
+              setErro({ texto: ATIVACAO_INCERTA, renovavel: false })
+              aoIncerta(ATIVACAO_INCERTA)
+              return
+            }
             if (jaAtivada(e)) {
               setErro({ texto: JA_ATIVADA, renovavel: false })
               aoJaAtivada()
@@ -491,6 +511,7 @@ function TrocarTotp({
   aoTravar,
   aoTerminar,
   aoDesativada,
+  aoIncerta,
 }: {
   // O passo 2 começou: fechar agora não muda nada (e, com um código de
   // recuperação no passo 1, ele já foi gasto: R1 da spec).
@@ -501,6 +522,8 @@ function TrocarTotp({
   aoTravar: () => void
   aoTerminar: () => void
   aoDesativada: () => void
+  // A resposta do confirm se perdeu: fechar avisa com este texto.
+  aoIncerta: (texto: string) => void
 }) {
   const api = useApi()
   const qc = useQueryClient()
@@ -514,6 +537,9 @@ function TrocarTotp({
   // Os códigos novos já estão na tela: uma resposta atrasada de outro
   // confirm (um 403, o pendente já consumido) não pode tirá-los de lá.
   const concluida = useRef(false)
+  // Um confirm anterior perdeu a resposta: um 403 agora pode ser ele mesmo
+  // (a troca feita), e não "outra aba".
+  const incerta = useRef(false)
 
   if (passo === 'provas') {
     return (
@@ -567,6 +593,12 @@ function TrocarTotp({
             void qc.invalidateQueries({ queryKey: chaves.sessoes })
           } catch (e) {
             if (concluida.current) return
+            if (respostaPerdida(e) || (incerta.current && e instanceof ApiError && e.status === 403)) {
+              incerta.current = true
+              setErro({ texto: TROCA_INCERTA, renovavel: false })
+              aoIncerta(TROCA_INCERTA)
+              return
+            }
             if (e instanceof ApiError && e.status === 403) {
               // O QR desta tela não vale mais: de volta ao passo 1.
               setErro({ texto: TROCA_SUMIU, renovavel: false })
@@ -687,6 +719,9 @@ export function PaginaConfiguracoes() {
   // fechar avisa que nada mudou. usouRecuperacao: o código de recuperação
   // do passo 1 já foi gasto (R1 da spec do Plano 9).
   const [trocaNoMeio, setTrocaNoMeio] = useState<{ usouRecuperacao: boolean } | null>(null)
+  // A resposta de um confirm se perdeu (E2 do Plano 10): fechar avisa com
+  // este texto, e nunca com "Nada mudou".
+  const [incerta, setIncerta] = useState<string | null>(null)
   const [abrindo, setAbrindo] = useState(false)
   // ['me'] não vence sozinho (staleTime Infinity): outra aba pode ter
   // ligado ou desligado o 2FA. Abrir e fechar um diálogo do 2FA relê /me.
@@ -714,11 +749,13 @@ export function PaginaConfiguracoes() {
       setTravado(false)
       setOcupado(false)
       setTrocaNoMeio(null)
+      setIncerta(null)
       setDialogo(d)
     }
   }
   const fechar = () => {
-    if (dialogo === 'trocar' && trocaNoMeio) {
+    if (incerta) avisar(incerta)
+    else if (dialogo === 'trocar' && trocaNoMeio) {
       avisar(
         trocaNoMeio.usouRecuperacao
           ? `${NADA_MUDOU} O código de recuperação usado foi gasto; use outro da próxima vez.`
@@ -729,6 +766,7 @@ export function PaginaConfiguracoes() {
     setTravado(false)
     setOcupado(false)
     setTrocaNoMeio(null)
+    setIncerta(null)
     reler()
   }
   const terminar = (texto: string) => {
@@ -813,7 +851,11 @@ export function PaginaConfiguracoes() {
       >
         <AtivarTotp
           aoOcupar={setOcupado}
-          aoTravar={() => setTravado(true)}
+          aoIncerta={setIncerta}
+          aoTravar={() => {
+            setTravado(true)
+            setIncerta(null)
+          }}
           aoTerminar={() => terminar('Verificação em duas etapas ativada.')}
           // O /me relido fecha o diálogo (o portão); o aviso fica no toast,
           // que sobrevive a ele.
@@ -844,9 +886,11 @@ export function PaginaConfiguracoes() {
           aoIniciar={(usouRecuperacao) => setTrocaNoMeio({ usouRecuperacao })}
           aoVoltar={() => setTrocaNoMeio(null)}
           aoOcupar={setOcupado}
+          aoIncerta={setIncerta}
           aoTravar={() => {
             setTravado(true)
             setTrocaNoMeio(null)
+            setIncerta(null)
           }}
           aoTerminar={() => terminar('Autenticador trocado. As outras sessões foram encerradas.')}
           // O 2FA foi desligado em outra aba: fecha e avisa (o toast

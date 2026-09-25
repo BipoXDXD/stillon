@@ -14,10 +14,12 @@ export function usarApiFalsa() {
   return falsa
 }
 
-export function novaSessao(o: { travar?: Travar; canal?: Canal | null; buscar?: Buscar; prazoMs?: number } = {}) {
+export function novaSessao(
+  o: { travar?: Travar; canal?: Canal | null; buscar?: Buscar; prazoMs?: number; prazoDoConfirmMs?: number } = {},
+) {
   const buscar = o.buscar ?? buscarDoTeste
   const sessao = criarSessao({ buscar, travar: o.travar, canal: o.canal ?? null, prazoMs: o.prazoMs })
-  const api = criarApi(sessao, buscar)
+  const api = criarApi(sessao, buscar, { prazoDoConfirmMs: o.prazoDoConfirmMs })
   return { sessao, api }
 }
 

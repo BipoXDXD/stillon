@@ -70,7 +70,15 @@ function consulta(p: Record<string, string | number | undefined>) {
 
 export type Api = ReturnType<typeof criarApi>
 
-export function criarApi(sessao: Sessao, buscar: Buscar) {
+// O prazo dos confirms do 2FA (E3 do Plano 10). O diálogo trava enquanto o
+// confirm voa, e sem prazo uma rede presa o prendia sem saída; estourado, o
+// painel diz que não sabe se o servidor gravou (a resposta se perdeu).
+export const PRAZO_DO_CONFIRM = 30_000
+
+export type OpcoesDaApi = { prazoDoConfirmMs?: number }
+
+export function criarApi(sessao: Sessao, buscar: Buscar, o: OpcoesDaApi = {}) {
+  const prazoDoConfirm = () => AbortSignal.timeout(o.prazoDoConfirmMs ?? PRAZO_DO_CONFIRM)
   async function pedir<T>(p: Omit<Pedido, 'token'>, esquema: z.ZodType<T> | null): Promise<T> {
     const usado = sessao.token()
     let r = await enviar(buscar, { ...p, token: usado })
@@ -147,7 +155,10 @@ export function criarApi(sessao: Sessao, buscar: Buscar) {
     totpCadastrar: (senha: string) =>
       pedir({ metodo: 'POST', caminho: '/auth/totp/enroll', corpo: { password: senha } }, CadastroTotp),
     totpConfirmar: (codigo: string) =>
-      pedir({ metodo: 'POST', caminho: '/auth/totp/confirm', corpo: { code: codigo } }, ConfirmacaoTotp),
+      pedir(
+        { metodo: 'POST', caminho: '/auth/totp/confirm', corpo: { code: codigo }, sinal: prazoDoConfirm() },
+        ConfirmacaoTotp,
+      ),
     totpDesativar: (senha: string, codigo: string) =>
       pedir({ metodo: 'POST', caminho: '/auth/totp/disable', corpo: { password: senha, code: codigo } }, null),
     // A troca de autenticador (spec do Plano 9 §3.2): as provas do disable
@@ -158,7 +169,12 @@ export function criarApi(sessao: Sessao, buscar: Buscar) {
       pedir({ metodo: 'POST', caminho: '/auth/totp/rotate', corpo: { password: senha, code: codigo } }, InicioDaTroca),
     totpConfirmarTroca: (codigo: string, rotation: string) =>
       pedir(
-        { metodo: 'POST', caminho: '/auth/totp/rotate/confirm', corpo: { code: codigo, rotation } },
+        {
+          metodo: 'POST',
+          caminho: '/auth/totp/rotate/confirm',
+          corpo: { code: codigo, rotation },
+          sinal: prazoDoConfirm(),
+        },
         ConfirmacaoTotp,
       ),
   }
