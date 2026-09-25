@@ -357,6 +357,7 @@ passo 2.1 (sem a pergunta, desta vez).
 **Faça** (na VPS, como root):
 
 ```bash
+apt install -y systemd-timesyncd
 timedatectl set-timezone America/Sao_Paulo
 timedatectl set-ntp true
 timedatectl status
@@ -364,7 +365,9 @@ timedatectl status
 
 **Por quê:** o reinício automático (passo 2.11) é às 04:30 **no horário da VPS**; o fuso de
 Brasília faz esse horário ser o seu. O relógio certo (NTP, pelo `systemd-timesyncd`) é exigência
-do 2FA (os códigos mudam a cada 30 s) e dos rollups de uptime.
+do 2FA (os códigos mudam a cada 30 s) e dos rollups de uptime. No Ubuntu 24.04 o
+`systemd-timesyncd` é um pacote à parte: sem ele, o `set-ntp true` falha com
+`NTP not supported`. O `apt install` não faz nada se ele já estiver lá.
 
 **Deve aparecer:** `Time zone: America/Sao_Paulo (-03, -0300)`, `System clock synchronized: yes`,
 `NTP service: active`.
@@ -467,6 +470,22 @@ que adivinhar. A porta continua 22: mudar a porta só diminui o barulho do log, 
 **Deve aparecer:** o `sshd -t` não imprime nada (configuração válida); as três linhas finais são
 `permitrootlogin no`, `passwordauthentication no` e `kbdinteractiveauthentication no`.
 
+**Se alguma das três disser outra coisa** (`yes`, `prohibit-password`…), não siga: o root ou a
+senha continuariam abertos. Veja de onde vem:
+
+```bash
+sudo grep -nE '^[[:space:]]*(Include|Match|PermitRootLogin|PasswordAuthentication|KbdInteractiveAuthentication)' /etc/ssh/sshd_config
+```
+
+- Uma linha `PermitRootLogin`, `PasswordAuthentication` ou `KbdInteractiveAuthentication`
+  **antes** da linha `Include /etc/ssh/sshd_config.d/*.conf` vence o `00-vigilume.conf` (o
+  primeiro valor lido vale). Ponha um `#` no começo dela (`sudo nano /etc/ssh/sshd_config`),
+  rode `sudo sshd -t && sudo systemctl restart ssh` e o `sshd -T … | grep` de novo, até as três
+  darem `no`.
+- Uma linha `Match`: ela muda as regras para certas conexões, e o `sshd -T` sozinho não a
+  mostra. Uma imagem limpa do Ubuntu não tem nenhuma: se houver, pare aqui e não siga sem
+  entender o que ela libera.
+
 **Confira**, **sem fechar** o terminal em que você está (num terminal novo do seu computador):
 
 ```bash
@@ -482,8 +501,9 @@ com `sudo rm /etc/ssh/sshd_config.d/00-vigilume.conf && sudo systemctl restart s
 passos 2.5 e 2.6.
 
 **Confira também o terminal do painel:** feche a aba do **Web console** e abra de novo. Anote o
-que acontece: se ele entrar sozinho, ótimo; se pedir usuário e senha, entre com o **seu** usuário
-e a senha do `sudo`. Ele é a sua porta de emergência (bloco 10, "Perdi a chave SSH"): garanta
+que acontece: se ele entrar sozinho, ótimo; se pedir usuário e senha, entre como `root` com a
+senha de root do passo 1.2 e anote se funcionou (é a volta se um dia o `sudo` quebrar, passo
+4.1); se o root não entrar, confira ao menos que o **seu** usuário e a senha do `sudo` entram. Ele é a sua porta de emergência (bloco 10, "Perdi a chave SSH"): garanta
 agora que ela abre. Se não abrir de jeito nenhum, a emergência passa a ser o **Emergency mode** do
 painel (**Settings**, [fonte](https://support.hostinger.com/en/articles/5726577-how-to-use-emergency-mode-on-your-vps)).
 
@@ -548,8 +568,9 @@ sudo ufw status verbose
 ```
 
 `Status: active`, `Default: deny (incoming), allow (outgoing)`, e as três portas com `ALLOW IN`
-(em IPv4 e `(v6)`). E, num terminal novo do seu computador, `ssh vigilume true && echo ok`
-continua dando `ok`.
+(em IPv4 e `(v6)`). E, num terminal novo do seu computador, **sem fechar** o terminal em que você
+está, `ssh vigilume true && echo ok` continua dando `ok`. Se não der, desfaça pelo terminal que
+ficou aberto (`sudo ufw disable`) e releia o passo.
 
 ### 2.10 Firewall do painel da Hostinger
 
@@ -565,10 +586,11 @@ VPS.
 ou um pacote novo abrir uma porta lá dentro. A Hostinger descarta todo tráfego que nenhuma regra
 aceita, e aplica a mudança em até 2 minutos. Com isso o `ping` para de responder: é esperado.
 
-**Confira**, depois de 2 minutos:
+**Confira**, depois de 2 minutos, **sem fechar** o terminal da VPS em que você está (ele é a
+rede de segurança: se a conexão nova falhar, a aberta costuma seguir de pé):
 
 ```bash
-# no seu computador
+# no seu computador, num terminal novo
 ssh vigilume true && echo "ssh ok"
 ```
 
@@ -580,6 +602,8 @@ sudo apt update
 
 `ssh ok`; o `curl` responde `200`; o `apt update` termina sem `E:`. Se a saída falhar, o firewall
 do painel está bloqueando as respostas: revise as regras (só entrada, `accept`) antes de seguir.
+Se o `ssh ok` não vier, desative o firewall no painel (o `⋯` ao lado dele), espere 2 minutos,
+confira a regra da porta `22` e ative de novo.
 
 ### 2.11 Atualizações automáticas, com reinício às 04:30
 
@@ -903,8 +927,11 @@ sudo visudo -c
 ```
 
 **Por quê:** o `sudoers` deixa o `deploy` rodar como root **só** esse script. O `visudo -c` confere
-a sintaxe antes e depois: um `sudoers` quebrado pode travar o `sudo` de todo mundo (se acontecer,
-conserte pelo terminal do painel).
+a sintaxe antes e depois: um `sudoers` quebrado pode travar o `sudo` de todo mundo. Se
+acontecer, o conserto não pode depender do `sudo`: pelo terminal do painel, entre como **root**
+com a senha de root do passo 1.2 e apague o arquivo (`rm /etc/sudoers.d/vigilume-entrada`). Se o
+terminal do painel só entrar com o seu usuário (o `sudo` quebrado não serve), use o **Emergency
+mode** (bloco 10, "Perdi a chave SSH", item 3), que dá acesso ao disco.
 
 **Deve aparecer:** `parsed OK` nas duas conferências (a segunda lista todos os arquivos).
 
