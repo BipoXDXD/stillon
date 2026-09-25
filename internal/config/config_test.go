@@ -202,6 +202,52 @@ func TestMetricsAddrMustBeLoopback(t *testing.T) {
 	}
 }
 
+// M7 (Plano 9, §3.4): sem METRICS_ADDR, o padrão depende do papel efetivo,
+// para que --role=api e --role=prober no mesmo host não disputem a porta. Com
+// METRICS_ADDR definida (inclusive off), ela vale para qualquer papel, e as
+// validações de sempre continuam.
+func TestMetricsAddrDefaultsByRole(t *testing.T) {
+	cases := []struct {
+		role, metrics string
+		quer          string
+		ok            bool
+	}{
+		{"", "", "127.0.0.1:9090", true}, // ROLE ausente é all
+		{"all", "", "127.0.0.1:9090", true},
+		{"api", "", "127.0.0.1:9090", true},
+		{"prober", "", "127.0.0.1:9091", true},
+		{"prober", "127.0.0.1:9100", "127.0.0.1:9100", true},
+		{"api", "127.0.0.1:9091", "127.0.0.1:9091", true},
+		{"prober", "off", "", true},
+		{"prober", "0.0.0.0:9091", "", false},
+		{"prober", ":9091", "", false},
+	}
+	for _, c := range cases {
+		t.Run(c.role+"/"+c.metrics, func(t *testing.T) {
+			env := validEnv()
+			if c.role != "" {
+				env["ROLE"] = c.role
+			}
+			if c.metrics != "" {
+				env["METRICS_ADDR"] = c.metrics
+			}
+			cfg, err := Load(getenvFrom(env))
+			if !c.ok {
+				if err == nil || !strings.Contains(err.Error(), "METRICS_ADDR") {
+					t.Fatalf("ROLE=%q METRICS_ADDR=%q aceito (err = %v)", c.role, c.metrics, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ROLE=%q METRICS_ADDR=%q recusado: %v", c.role, c.metrics, err)
+			}
+			if cfg.MetricsAddr != c.quer {
+				t.Errorf("ROLE=%q METRICS_ADDR=%q: MetricsAddr = %q, queria %q", c.role, c.metrics, cfg.MetricsAddr, c.quer)
+			}
+		})
+	}
+}
+
 func TestEmailSettingsGoTogether(t *testing.T) {
 	cases := []struct {
 		nome        string

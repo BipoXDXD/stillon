@@ -217,6 +217,18 @@ func graceDoSondador(total time.Duration) time.Duration {
 	return total
 }
 
+// erroDeServidor é a falha de um servidor ao subir. A porta de métricas
+// ocupada ganha a saída na mensagem (M7, Plano 9 §3.4): o caso comum é outro
+// processo do Vigilume no mesmo host (--role=api e --role=prober), e quem lê
+// o log precisa saber qual variável mudar.
+func erroDeServidor(nome string, err error) error {
+	if nome == "métricas" && errors.Is(err, syscall.EADDRINUSE) {
+		return fmt.Errorf("servidor %s: %w; a porta já está em uso (outro processo do Vigilume no mesmo host?): "+
+			"defina METRICS_ADDR com outra porta de loopback, como 127.0.0.1:9092, ou METRICS_ADDR=off", nome, err)
+	}
+	return fmt.Errorf("servidor %s: %w", nome, err)
+}
+
 // servir roda srv até ctx acabar e então o desliga com prazo (spec §6.2).
 // Uma falha ao subir volta como erro do grupo e derruba o resto.
 func servir(ctx context.Context, g *errgroup.Group, srv *http.Server, nome string, grace time.Duration) {
@@ -225,7 +237,7 @@ func servir(ctx context.Context, g *errgroup.Group, srv *http.Server, nome strin
 		go func() {
 			slog.Info("servindo", "servidor", nome, "addr", srv.Addr)
 			if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-				falhou <- fmt.Errorf("servidor %s: %w", nome, err)
+				falhou <- erroDeServidor(nome, err)
 			}
 		}()
 		select {
