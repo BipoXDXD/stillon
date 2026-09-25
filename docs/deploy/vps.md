@@ -1315,14 +1315,18 @@ Rodar à mão agora confere tudo (chave, script, `age`, artifact) antes de confi
 
 **Deve aparecer:** o job verde, e no resumo uma linha `Postgres: N% …` com a ocupação do disco.
 
-**Confira** (na VPS), que o dump em texto claro não ficou no disco:
+**Confira** (na VPS), que o dump em texto claro e o banco descartável não sobraram:
 
 ```bash
-sudo find / -xdev -name '*.dump' -newer /opt/vigilume/versao 2>/dev/null
+sudo ls -A /dev/shm
+sudo docker ps -a --filter name=vigilume-restauro-
 ```
 
-Nenhuma linha (a restauração de conferência roda num banco descartável, e só o cifrado sai da
-VPS).
+O `ls` não mostra nenhum `vigilume-backup.*`, e o `docker ps` mostra só a linha de títulos
+(`CONTAINER ID   IMAGE …`), sem nenhum contêiner. O dump em claro só existe durante o backup, em
+`/dev/shm` (memória, não disco), e a restauração de conferência roda num Postgres descartável
+chamado `vigilume-restauro-…`; o script apaga os dois no fim, e só o cifrado sai da VPS. Se sobrar
+algum (um backup morto no meio), o próximo backup os apaga antes de começar.
 
 **Depois de ligado, um `backup` agendado *skipped* (cinza) é falha**, tanto quanto um vermelho: não
 houve backup naquele dia, e o GitHub não manda e-mail por isso. A causa usual é a variável
