@@ -27,6 +27,10 @@ type User struct {
 	PasswordHash   string
 	FailedAttempts int
 	LockedUntil    *time.Time
+	// TOTPChallengeMark é a marca d'água do desafio de 2FA (Plano 8): o
+	// instante do último desafio consumido, nil se nenhum foi. Só ByID a
+	// preenche; é o TOTPVerify quem a lê.
+	TOTPChallengeMark *time.Time
 }
 
 // IsLocked recebe o instante em vez de chamar time.Now para que o bloqueio
@@ -88,6 +92,11 @@ type UserStore interface {
 	// RehashPassword troca oldHash por newHash só se oldHash ainda for o hash
 	// gravado; swapped diz se trocou.
 	RehashPassword(ctx context.Context, userID uuid.UUID, oldHash, newHash string) (swapped bool, err error)
+	// ConsumeChallenge avança a marca d'água do desafio de 2FA até issuedAt,
+	// só se o desafio for mais novo que ela; consumed diz se avançou. Um
+	// desafio que não avança a marca já foi usado, ou é mais antigo que um
+	// usado (Plano 8).
+	ConsumeChallenge(ctx context.Context, userID uuid.UUID, issuedAt time.Time) (consumed bool, err error)
 }
 
 func (s *PGStore) ByEmail(ctx context.Context, email string) (User, error) {
@@ -166,18 +175,37 @@ func (s *PGStore) RehashPassword(ctx context.Context, userID uuid.UUID, oldHash,
 	return n == 1, nil
 }
 
+// ConsumeChallenge é um compare-and-swap numa instrução: dois /totp/verify
+// concorrentes com o mesmo desafio disputam a mesma linha, o segundo espera o
+// commit do primeiro, relê a linha (READ COMMITTED) e não satisfaz mais o
+// WHERE. Não precisa de trava explícita.
+//
+// O "<" estrito é o que faz o desafio valer uma vez: com "<=", o mesmo
+// desafio passaria de novo, porque a marca ficou igual ao instante dele.
+func (s *PGStore) ConsumeChallenge(ctx context.Context, userID uuid.UUID, issuedAt time.Time) (bool, error) {
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE users SET totp_challenge_mark = $2
+		 WHERE id = $1 AND (totp_challenge_mark IS NULL OR totp_challenge_mark < $2)`,
+		userID, issuedAt)
+	if err != nil {
+		return false, fmt.Errorf("consumir desafio de 2FA: %w", err)
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
 // ByID atende os dois caminhos de TOTP que só têm o id vindo do token: o
 // cadastro, que precisa do e-mail para o nome da conta na URI otpauth://, e a
-// verificação do segundo fator, que precisa do estado de bloqueio (R40).
+// verificação do segundo fator, que precisa do estado de bloqueio (R40) e da
+// marca d'água do desafio (Plano 8).
 //
 // Uma consulta só, em vez de um EmailByID ao lado de um ByID lendo a mesma
 // linha da mesma tabela.
 func (s *PGStore) ByID(ctx context.Context, userID uuid.UUID) (User, error) {
 	var u User
 	err := s.pool.QueryRow(ctx, `
-		SELECT id, email, password_hash, failed_attempts, locked_until
+		SELECT id, email, password_hash, failed_attempts, locked_until, totp_challenge_mark
 		  FROM users WHERE id = $1`, userID).
-		Scan(&u.ID, &u.Email, &u.PasswordHash, &u.FailedAttempts, &u.LockedUntil)
+		Scan(&u.ID, &u.Email, &u.PasswordHash, &u.FailedAttempts, &u.LockedUntil, &u.TOTPChallengeMark)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return User{}, ErrNotFound
 	}

@@ -4,7 +4,9 @@ package prober
 import (
 	"context"
 	"io"
+	"log/slog"
 	"net/http"
+	"slices"
 	"time"
 
 	"github.com/BipoXDXD/vigilume/internal/prober/safedial"
@@ -28,6 +30,28 @@ type Spec struct {
 	ExpectedStatus    int
 	DegradedThreshold time.Duration // 0: sem classificação degraded
 	Headers           map[string]string
+}
+
+// LogValue mostra os NOMES dos headers e nunca os valores (Plano 8). Os
+// headers chegam aqui decifrados e costumam ser credencial de terceiro
+// (Authorization, X-Api-Key); sem isto, um slog.Any("spec", spec) gravaria
+// essa credencial no log. A proteção é do tipo, não da disciplina, como no
+// crypto.Secret e no config.Config. A URL sai como está: o dono já a vê na
+// API, e credenciais na URL são recusadas no cadastro.
+func (s Spec) LogValue() slog.Value {
+	nomes := make([]string, 0, len(s.Headers))
+	for nome := range s.Headers {
+		nomes = append(nomes, nome)
+	}
+	slices.Sort(nomes)
+	return slog.GroupValue(
+		slog.String("url", s.URL),
+		slog.String("method", s.Method),
+		slog.Duration("timeout", s.Timeout),
+		slog.Int("expected_status", s.ExpectedStatus),
+		slog.Duration("degraded_threshold", s.DegradedThreshold),
+		slog.Any("headers", nomes),
+	)
 }
 
 // Result é o que sai de uma sonda. Não tem campo para mensagem de erro, e é

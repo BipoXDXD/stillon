@@ -318,6 +318,62 @@ func TestChannelLimitIsCheckedBeforeSending(t *testing.T) {
 	}
 }
 
+// A segunda conferência do limite, a da gravação, é serializada pela trava
+// na linha do usuário (LockUser). O R9 da spec do Plano 5 dizia que não; o
+// código tinha a trava desde o Plano 3, e faltava esta prova (Plano 8). Com
+// nove canais, duas criações simultâneas se encontram depois da contagem: sem
+// a trava, as duas contam nove e gravam, e o usuário fica com onze.
+func TestConcurrentCreatesDoNotPassTheChannelLimit(t *testing.T) {
+	b := novaBancadaCanais(t, true)
+	ctx := context.Background()
+	for range MaxChannels - 1 {
+		if _, err := b.svc.Create(ctx, b.dono, ChannelInput{Kind: KindDiscord, URL: webhookValido}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// As duas criações esperam uma pela outra depois de contar, por no
+	// máximo 500 ms. Com a trava, a segunda nem chega a contar antes do
+	// commit da primeira, e a espera só encurta o teste.
+	var chegaram sync.WaitGroup
+	chegaram.Add(2)
+	todas := make(chan struct{})
+	go func() { chegaram.Wait(); close(todas) }()
+	b.svc.depoisDeContar = func() {
+		chegaram.Done()
+		select {
+		case <-todas:
+		case <-time.After(500 * time.Millisecond):
+		}
+	}
+
+	erros := make([]error, 2)
+	var wg sync.WaitGroup
+	for i := range erros {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, erros[i] = b.svc.Create(ctx, b.dono, ChannelInput{Kind: KindDiscord, URL: webhookValido})
+		}()
+	}
+	wg.Wait()
+
+	if n := len(b.listar(t, b.dono)); n != MaxChannels {
+		t.Errorf("%d canais depois de duas criações simultâneas (erros: %v), queria %d", n, erros, MaxChannels)
+	}
+	recusadas := 0
+	for _, err := range erros {
+		if errors.Is(err, ErrLimitReached) {
+			recusadas++
+		} else if err != nil {
+			t.Errorf("erro inesperado: %v", err)
+		}
+	}
+	if recusadas != 1 {
+		t.Errorf("%d criações recusadas pelo limite, queria 1", recusadas)
+	}
+}
+
 func TestAnotherUsersChannelIsInvisible(t *testing.T) {
 	b := novaBancadaCanais(t, true)
 	ctx := context.Background()

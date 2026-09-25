@@ -337,6 +337,7 @@ pelo workflow. Nenhum deles é lido de outro: cada um está escrito à mão.
 | App do banco (`vigilume-db`) | `deploy/fly/db/fly.toml`: `app`; `.github/workflows/backup.yml`: o `-a` do `flyctl proxy`; o host do secret `DATABASE_URL` do app (`<app do banco>.internal`); o secret `FLY_BACKUP_TOKEN` |
 | Pacote do GHCR (`ghcr.io/bipoxdxd/vigilume`) | `.github/workflows/ci.yml`: `IMAGEM`; `.github/workflows/deploy.yml`: `ORIGEM`; `compose.yaml`: o `image` do `seed` e do `app` |
 | Este runbook | Os comandos com `-a vigilume`, `-a vigilume-db`, `registry.fly.io/vigilume`, e as URLs `https://vigilume.fly.dev` (passos 9 e 11) |
+| Comentários que citam os nomes | `fly.toml` (o `fly deploy --image` do cabeçalho); `deploy/fly/db/fly.toml` (o host `vigilume-db.internal`); `.github/workflows/backup.yml`, `ci.yml` e `deploy.yml` (as listas e notas de onde cada nome está). Não mudam o comportamento, mas o `grep` abaixo os acha, e um comentário com o nome velho ensina o nome errado a quem renomear de novo |
 
 Depois do PR, este `grep` não deve achar o nome antigo fora desta seção (a tabela acima e o
 próprio comando citam os nomes antigos de propósito):

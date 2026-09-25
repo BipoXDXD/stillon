@@ -282,12 +282,49 @@ func TestLoadRejectsABadClientIPHeader(t *testing.T) {
 	}
 }
 
+// Plano 8: nomes que nunca carregam o IP do cliente são recusados no boot, em
+// qualquer caixa. Sem isto, o erro só aparecia como um balde de rate limit
+// dividido por todos os clientes.
+func TestLoadRejectsHeadersThatNeverCarryTheClientIP(t *testing.T) {
+	// Lista literal, e não cabecalhosProibidos: um teste que percorresse a
+	// própria lista encolheria junto com ela, e ficaria verde com a lista
+	// vazia.
+	nomes := []string{
+		"Forwarded", "X-Forwarded-Host", "X-Forwarded-Proto", "X-Forwarded-Port",
+		"Host", "Cookie", "Authorization", "Proxy-Authorization",
+		"Connection", "Upgrade", "TE", "Trailer", "Transfer-Encoding", "Keep-Alive",
+		"Content-Length", "Content-Type",
+	}
+	for _, nome := range nomes {
+		for _, v := range []string{nome, strings.ToLower(nome), strings.ToUpper(nome), " " + nome + " "} {
+			env := validEnv()
+			env["CLIENT_IP_HEADER"] = v
+			_, err := Load(getenvFrom(env))
+			if err == nil || !strings.Contains(err.Error(), "CLIENT_IP_HEADER") {
+				t.Errorf("CLIENT_IP_HEADER=%q: erro = %v, queria recusa citando a variável", v, err)
+			}
+		}
+	}
+	// A perna positiva: os cabeçalhos de IP de cliente dos proxies comuns
+	// passam, inclusive um que começa parecido com a família proibida.
+	for _, v := range []string{"Fly-Client-IP", "CF-Connecting-IP", "True-Client-IP", "X-Real-IP", "X-Forwarded"} {
+		env := validEnv()
+		env["CLIENT_IP_HEADER"] = v
+		if _, err := Load(getenvFrom(env)); err != nil {
+			t.Errorf("CLIENT_IP_HEADER=%q foi recusado: %v", v, err)
+		}
+	}
+}
+
 // As chaves de demonstração do compose.yaml são públicas no repositório. Com
 // elas em produção, qualquer um forja JWT e decifra os segredos.
 func TestLoadRejectsDemoKeysOverHTTPS(t *testing.T) {
 	// O esquema não diferencia maiúsculas (RFC 3986): "HTTPS://" também é
 	// produção, e não pode passar pelo portão como se fosse http.
-	for _, base := range []string{"https://vigilume.example", "HTTPS://vigilume.example"} {
+	// https em loopback também recusa (Plano 8): o portão é "http E
+	// loopback", e não "loopback"; sem estes dois casos, uma regressão para
+	// só !hostLocal passaria no CI.
+	for _, base := range []string{"https://vigilume.example", "HTTPS://vigilume.example", "https://localhost", "https://127.0.0.1"} {
 		for i, nome := range []string{"MASTER_KEY", "JWT_SECRET", "IP_HASH_KEY"} {
 			env := validEnv()
 			env["PUBLIC_BASE_URL"] = base
