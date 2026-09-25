@@ -54,10 +54,14 @@ done
 #    PID 1 que ignora o TERM nunca sai): por isso o -k, que manda KILL ao
 #    cliente 5 s depois. O timeout mata só o cliente; o contêiner nomeado
 #    sai no `docker rm -f` logo abaixo (e no trap, se algo abortar antes).
-if got=$(timeout -k 5 30 docker run --rm --name "$ctr_versao" "$IMAGEM" version 2>&1); then
+#    Só o stdout entra na comparação: um aviso do docker no stderr (o
+#    WARNING de plataforma, "Unable to find image…") viraria "versão
+#    errada". O stderr segue direto para o log, e a mensagem de erro aponta
+#    para ele.
+if got=$(timeout -k 5 30 docker run --rm --name "$ctr_versao" "$IMAGEM" version); then
     [ "$got" = "$VERSAO" ] || falhar "vigilume version = '$got', queria '$VERSAO'"
 else
-    falhar "vigilume version não respondeu em 30 s ou saiu com erro (código $?): $got"
+    falhar "vigilume version não respondeu em 30 s ou saiu com erro (código $?; o stderr está logo acima): '$got'"
 fi
 docker rm -f "$ctr_versao" >/dev/null 2>&1 || true
 
