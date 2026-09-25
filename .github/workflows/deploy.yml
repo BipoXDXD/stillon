@@ -55,7 +55,8 @@ jobs:
     timeout-minutes: 20
     env:
       SHA: ${{ inputs.sha }}
-      # Nome repetido à mão: IMAGEM do ci.yml e image do compose.yaml.
+      # Nome repetido à mão em quatro lugares: aqui, no IMAGEM do ci.yml e
+      # nos dois image do compose.yaml (app e tools). Ver o ci.yml.
       ORIGEM: ghcr.io/bipoxdxd/stillon
     steps:
       - name: só da main

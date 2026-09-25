@@ -241,9 +241,10 @@ func TestTodoArquivoDoDistTemTipo(t *testing.T) {
 		t.Fatal(err)
 	}
 	if n == 0 {
-		// Sem build, o teste não confere nada. O CI que roda depois do
-		// "npm run build" liga STILLON_EXIGIR_DIST=1 (Plano 7): lá, um dist
-		// vazio é erro, e não um verde vazio.
+		// Sem build, o teste não confere nada. Quem liga
+		// STILLON_EXIGIR_DIST=1 é o CI (ci.yml, job web, no passo depois do
+		// "npm run build"; Plano 6), e não o build: lá, um dist vazio é
+		// erro, e não um verde vazio.
 		if os.Getenv("STILLON_EXIGIR_DIST") == "1" {
 			t.Fatal("STILLON_EXIGIR_DIST=1 e o dist embutido está vazio: rode npm run build em web/ antes")
 		}

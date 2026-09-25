@@ -375,7 +375,10 @@ func TestLoadRejectsDemoKeysOverHTTPS(t *testing.T) {
 			env := validEnv()
 			env["PUBLIC_BASE_URL"] = base
 			// Cada variável com a chave de demo de OUTRA: embaralhar não escapa.
-			env[nome] = base64.StdEncoding.EncodeToString(chavesDeDemo[(i+1)%len(chavesDeDemo)])
+			// O % 3 gira só entre as três chaves de hoje (as três primeiras de
+			// chavesDeDemo): MASTER_KEY recebe a do JWT_SECRET, e assim por
+			// diante. As antigas: TestLoadRejectsEveryDemoKeyOverHTTPS.
+			env[nome] = base64.StdEncoding.EncodeToString(chavesDeDemo[(i+1)%3])
 			_, err := Load(getenvFrom(env))
 			if err == nil || !strings.Contains(err.Error(), nome) || !strings.Contains(err.Error(), "demonstração") {
 				t.Errorf("%s com chave de demo e %s: erro = %v, queria recusa", nome, base, err)
