@@ -116,7 +116,7 @@ jobs:
         # cancelado antes das tags), o inspect falha e o job para aqui.
         run: |
           if ! digest=$(docker buildx imagetools inspect "$ORIGEM:$SHA" --format '{{json .Manifest}}' | jq -r .digest) \
-            || ! printf '%s' "$digest" | grep -Eqx 'sha256:[0-9a-f]{64}'; then
+            || ! [[ $digest =~ ^sha256:[0-9a-f]{64}$ ]]; then
             echo "não achei a imagem $ORIGEM:$SHA (o publish desse commit terminou?)" >&2
             exit 1
           fi
@@ -129,7 +129,7 @@ jobs:
         run: |
           id=$(docker buildx imagetools inspect --raw "$ORIGEM@$DIGEST" \
             | jq -r '[.manifests[]? | select(.platform.os == "linux" and .platform.architecture == "amd64")] | if length == 1 then .[0].digest else empty end')
-          if ! printf '%s' "$id" | grep -Eqx 'sha256:[0-9a-f]{64}'; then
+          if ! [[ $id =~ ^sha256:[0-9a-f]{64}$ ]]; then
             echo "o índice $ORIGEM@$DIGEST não tem exatamente um manifesto linux/amd64" >&2
             exit 1
           fi
@@ -137,13 +137,24 @@ jobs:
           echo "IMAGE_ID=$id" >> "$GITHUB_ENV"
 
       - name: baixar a imagem (layout OCI)
-        # O crane grava o manifesto e as camadas como estão no registry; a
-        # conferência abaixo prova que o tar leva o manifesto do IMAGE_ID.
+        # O crane grava o manifesto e as camadas como estão no registry. O
+        # index.json passa pela MESMA conferência da VPS (conferir_tar do
+        # deploy/vps/vigilume-entrada; o checar-workflows.sh confere que o
+        # programa do jq é igual): um valor JSON, um manifesto só, o do
+        # IMAGE_ID, e só as chaves permitidas. Uma chave a mais (annotations,
+        # se o publish passar a anotar os manifestos) faria a VPS recusar com
+        # 3 e uma mensagem genérica; aqui, o job para com a causa.
         run: |
           crane pull --platform linux/amd64 --format oci "$ORIGEM@$DIGEST" "$RUNNER_TEMP/imagem"
-          no_tar=$(jq -r '[.manifests[].digest] | if length == 1 then .[0] else "vários" end' "$RUNNER_TEMP/imagem/index.json")
-          if [ "$no_tar" != "$IMAGE_ID" ]; then
-            echo "o layout baixado leva $no_tar, e não o manifesto $IMAGE_ID" >&2
+          if ! jq -e -s --arg id "$IMAGE_ID" 'length == 1 and (.[0] |
+              type == "object" and
+              (keys - ["schemaVersion", "mediaType", "manifests"]) == [] and
+              (.manifests | type) == "array" and (.manifests | length) == 1 and
+              (.manifests[0] | type) == "object" and
+              (.manifests[0] | keys - ["mediaType", "digest", "size", "platform"]) == [] and
+              .manifests[0].digest == $id)' "$RUNNER_TEMP/imagem/index.json" >/dev/null; then
+            echo "o index.json do layout baixado não é o que a VPS aceita (um manifesto só, o $IMAGE_ID, sem chave fora de schemaVersion/mediaType/manifests e mediaType/digest/size/platform; annotations?): a VPS recusaria com 3" >&2
+            jq . "$RUNNER_TEMP/imagem/index.json" >&2 || true
             exit 1
           fi
           du -sh "$RUNNER_TEMP/imagem"

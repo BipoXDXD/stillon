@@ -162,6 +162,30 @@ x" "$SHA_BOM
     guarda "$DEPLOY" "conferir o SHA" recusa SHA "$ruim"
 done
 
+# O index.json do layout: o deploy.yml o confere com o MESMO programa do jq
+# que a entrada da VPS (revisão final, M3), para parar no runner com a causa
+# em vez de um 3 genérico na VPS. programa_jq <arquivo>: o texto entre as
+# aspas simples do `jq -e -s`, com os espaços juntados.
+programa_jq() {
+    sed -n "/jq -e -s --arg id /,/\$id)'/p" "$1" |
+        sed "1s/^[^']*'//; \$s/'[^']*\$//" | tr -s ' \n' '  ' | sed 's/^ //; s/ $//'
+}
+ENTRADA=deploy/vps/vigilume-entrada
+prog_vps=$(programa_jq "$ENTRADA")
+prog_wf=$(programa_jq "$DEPLOY")
+[ -n "$prog_vps" ] || falhar "$ENTRADA: sem o jq -e -s que confere o index.json"
+[ "$prog_wf" = "$prog_vps" ] ||
+    falhar "$DEPLOY: o jq do index.json não é o da entrada da VPS ($ENTRADA): '$prog_wf' contra '$prog_vps'"
+# E o programa faz o que diz: aceita o index.json do crane e recusa o com
+# annotations no descritor.
+ID_BOM=sha256:1111111111111111111111111111111111111111111111111111111111111111
+indice='{"schemaVersion":2,"mediaType":"application/vnd.oci.image.index.v1+json","manifests":[{"mediaType":"application/vnd.oci.image.manifest.v1+json","digest":"'$ID_BOM'","size":1234,"platform":{"architecture":"amd64","os":"linux"}}]}'
+printf '%s' "$indice" | jq -e -s --arg id "$ID_BOM" "$prog_wf" >/dev/null ||
+    falhar "$DEPLOY: o jq do index.json recusa o layout do crane"
+printf '%s' "$indice" | jq -c '.manifests[0].annotations = {"org.opencontainers.image.ref.name": "x"}' |
+    jq -e -s --arg id "$ID_BOM" "$prog_wf" >/dev/null &&
+    falhar "$DEPLOY: o jq do index.json aceita annotations no descritor"
+
 # 4. Backup: diário às 06:17 UTC e à mão, desligado até BACKUP_ENABLED=1,
 #    artifact por 30 dias.
 tem "$BACKUP" "^    - cron: '17 6 \\* \\* \\*'" "sem o agendamento diário das 06:17 UTC"
