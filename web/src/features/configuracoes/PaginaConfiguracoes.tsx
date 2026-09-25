@@ -379,30 +379,37 @@ function AtivarTotp({
   const [codigos, setCodigos] = useState<string[]>([])
   const [erro, setErro] = useState<ErroDeCredencial | null>(null)
   const senha = useForm({ resolver: zodResolver(esquemaSenha), defaultValues: { senha: '' } })
+  // Um enroll por vez: dois gravariam dois segredos, e o QR na tela seria o da
+  // última resposta a chegar, não necessariamente o que ficou no servidor.
+  const { enviando, enviar } = useEnvioUnico()
 
   if (passo === 'senha') {
     return (
       <form
         noValidate
         className="space-y-4"
-        onSubmit={senha.handleSubmit(async (v) => {
-          setErro(null)
-          try {
-            setUri((await api.totpCadastrar(v.senha)).otpauth_uri)
-            setPasso('codigo')
-          } catch (e) {
-            if (jaAtivada(e)) {
-              setErro({ texto: JA_ATIVADA, renovavel: false })
-              aoJaAtivada()
-            } else setErro(erroDeCredencial(e, 'Senha incorreta.'))
-          }
-        })}
+        onSubmit={senha.handleSubmit((v) =>
+          enviar(async () => {
+            setErro(null)
+            try {
+              setUri((await api.totpCadastrar(v.senha)).otpauth_uri)
+              setPasso('codigo')
+            } catch (e) {
+              if (jaAtivada(e)) {
+                setErro({ texto: JA_ATIVADA, renovavel: false })
+                aoJaAtivada()
+              } else setErro(erroDeCredencial(e, 'Senha incorreta.'))
+            }
+          }),
+        )}
       >
         <AvisoDeCredencial erro={erro} aoMudar={setErro} />
         <Campo rotulo="Sua senha" erro={senha.formState.errors.senha?.message}>
           {(a) => <Entrada {...a} type="password" autoComplete="current-password" {...senha.register('senha')} />}
         </Campo>
-        <Botao type="submit">Continuar</Botao>
+        <Botao type="submit" aria-disabled={enviando || undefined}>
+          Continuar
+        </Botao>
       </form>
     )
   }

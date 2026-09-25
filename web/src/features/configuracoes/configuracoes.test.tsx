@@ -890,6 +890,40 @@ describe('envio em voo nos diálogos do 2FA', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
   })
 
+  // Rodada complementar (decisão do usuário): o "Continuar" do passo da senha
+  // da ativação também mandava dois enroll num clique duplo, e o QR na tela era
+  // o da última resposta a chegar, não necessariamente o do segredo que ficou
+  // pendente no servidor. Cada enroll aqui devolve um segredo diferente.
+  // Sabotagem: tirar a guarda de envio único do passo da senha → 2 enroll.
+  it('clique duplo em "Continuar" da ativação manda um enroll só, e o QR é o dele', async () => {
+    const r = await renderizarPainel('/settings')
+    await r.usuario.click(await screen.findByRole('button', { name: 'Ativar' }))
+    const dialogo = await screen.findByRole('dialog')
+    await r.usuario.type(within(dialogo).getByLabelText('Sua senha'), SENHA)
+    const p = portao()
+    const segredos = ['PRIMEIROENROLLAA', 'SEGUNDOENROLLBBB']
+    let enrolls = 0
+    servidor.use(
+      http.post('*/api/v1/auth/totp/enroll', async () => {
+        const segredo = segredos[enrolls++]!
+        await p.aberto
+        return HttpResponse.json({
+          otpauth_uri: `otpauth://totp/Vigilume:dono%40exemplo.com?secret=${segredo}&issuer=Vigilume`,
+        })
+      }),
+    )
+    const continuar = within(dialogo).getByRole('button', { name: 'Continuar' })
+    fireEvent.click(continuar)
+    fireEvent.click(continuar)
+    await waitFor(() => expect(enrolls).toBeGreaterThanOrEqual(1))
+    await tique()
+    p.soltar()
+    expect(await within(dialogo).findByText('PRIMEIROENROLLAA')).toBeInTheDocument()
+    await tique()
+    expect(enrolls).toBe(1)
+    expect(within(dialogo).queryByText('SEGUNDOENROLLBBB')).not.toBeInTheDocument()
+  })
+
   // F2, a mesma corrida na ativação (totpConfirmar).
   it('ativação: Esc com o confirm em voo não fecha; os códigos aparecem, e o diálogo seguinte fecha com Esc', async () => {
     const r = await renderizarPainel('/settings')
