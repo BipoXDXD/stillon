@@ -119,15 +119,31 @@ fazer_deploy() {
     exit "$codigo"
 }
 
-# O age escreve esta linha no começo de todo arquivo cifrado (formato
-# binário). O dump em claro do pg_dump começa com "PGDMP"; um SQL, com
-# comentário ou comando. Só o cabeçalho prova que o que chegou está cifrado.
+# O cabeçalho do age (formato binário, um destinatário X25519, que é a chave
+# pública em /opt/vigilume/age-recipient): a linha da versão, a do
+# destinatário e, algumas linhas abaixo, a do MAC ("--- "). O dump em claro
+# do pg_dump começa com "PGDMP"; um SQL, com comentário ou comando.
 CABECALHO_AGE=age-encryption.org/v1
 
+# cifrado <arquivo>: tem o cabeçalho inteiro do age.
 cifrado() {
     [ -s "$1" ] || return 1
     primeira=$(head -n 1 "$1" | head -c 64)
-    [ "$primeira" = "$CABECALHO_AGE" ]
+    [ "$primeira" = "$CABECALHO_AGE" ] || return 1
+    segunda=$(sed -n '2{p;q}' "$1" | head -c 64)
+    case $segunda in '-> X25519 '?*) ;; *) return 1 ;; esac
+    head -n 16 "$1" | LC_ALL=C grep -aq '^--- '
+}
+
+# em_claro <arquivo>: há um dump em claro em algum lugar do arquivo (depois
+# de um cabeçalho do age certo, por exemplo, por um defeito na VPS). A
+# assinatura do formato custom é "PGDMP", versão 1.x, int de 4 bytes, offset
+# de 8 e formato 1 (custom): 9 bytes fixos, que um cifrado não repete por
+# acaso (só "PGDMP" sairia uma vez a cada 2^40 posições, e apagaria um
+# backup bom).
+em_claro() {
+    LC_ALL=C grep -aqP 'PGDMP\x01[\x00-\xff]{2}\x04\x08\x01' "$1" ||
+        LC_ALL=C grep -aqF 'PostgreSQL database dump' "$1"
 }
 
 fazer_backup() {
@@ -155,7 +171,12 @@ fazer_backup() {
             fi
             if ! cifrado "$saida"; then
                 rm -f "$saida"
-                erro "a saída do backup não começa com o cabeçalho do age ($CABECALHO_AGE): não é um arquivo cifrado, e foi apagada sem ser guardada"
+                erro "a saída do backup não começa com o cabeçalho do age ($CABECALHO_AGE, o destinatário X25519 e o MAC): não é um arquivo cifrado, e foi apagada sem ser guardada"
+                exit 1
+            fi
+            if em_claro "$saida"; then
+                rm -f "$saida"
+                erro "a saída do backup tem um dump em claro depois do cabeçalho do age: foi apagada sem ser guardada; confira o backup na VPS"
                 exit 1
             fi
             if [ "$codigo" -eq 4 ]; then

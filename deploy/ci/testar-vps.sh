@@ -41,6 +41,9 @@ for a in "$@"; do
     anterior=$a
 done
 cat >"$SSH_FALSO_DIR/stdin"
+# SSH_FALSO_SAIDA_ARQ: a saída padrão vem de um arquivo (bytes que uma
+# variável não carrega, como o NUL).
+if [ -n "${SSH_FALSO_SAIDA_ARQ:-}" ]; then cat "$SSH_FALSO_SAIDA_ARQ"; fi
 printf '%s' "${SSH_FALSO_SAIDA:-}"
 printf '%s' "${SSH_FALSO_ERRO:-}" >&2
 exit "${SSH_FALSO_CODIGO:-0}"
@@ -241,6 +244,42 @@ x' 'xage-encryption.org/v1'; do
     esperar_texto "não começa com o cabeçalho do age"
     [ ! -e "$arq" ] || falhar "$caso: o arquivo em claro ficou no disco"
 done
+
+# O cabeçalho inteiro do age (a linha da versão, a do destinatário X25519 e a
+# do MAC), não só a primeira linha: um defeito na VPS que escrevesse a linha
+# do age e depois o dump em claro não passa.
+for ruim in 'age-encryption.org/v1
+PGDMP binario' 'age-encryption.org/v1
+-> scrypt abc
+--- def
+x' 'age-encryption.org/v1
+-> X25519 abc
+binario sem a linha do MAC'; do
+    SSH_FALSO_SAIDA=$ruim rodar "backup com cabeçalho do age incompleto ($ruim)" backup "$arq"
+    esperar_codigo 1
+    esperar_texto "não começa com o cabeçalho do age"
+    [ ! -e "$arq" ] || falhar "$caso: o arquivo sem o cabeçalho inteiro ficou no disco"
+done
+# Um dump em claro DEPOIS de um cabeçalho do age certo: o do formato custom
+# do pg_dump (a assinatura PGDMP com versão 1.x, int de 4 bytes, offset de 8
+# e formato custom), ou o de um SQL, colado depois do cifrado.
+printf '%s\nPGDMP\001\020\000\004\010\001\000toc' "$AGE" >"$tmp/pgdmp"
+SSH_FALSO_SAIDA_ARQ=$tmp/pgdmp rodar "backup com o dump custom em claro depois do cabeçalho" backup "$arq"
+esperar_codigo 1
+esperar_texto "dump em claro"
+[ ! -e "$arq" ] || falhar "$caso: o arquivo com o dump em claro ficou no disco"
+SSH_FALSO_SAIDA="$AGE
+--
+-- PostgreSQL database dump
+--" rodar "backup com um dump SQL depois do cifrado" backup "$arq"
+esperar_codigo 1
+esperar_texto "dump em claro"
+[ ! -e "$arq" ] || falhar "$caso: o arquivo com o dump em claro ficou no disco"
+# Cinco bytes "PGDMP" soltos no cifrado acontecem (1 em 2^40 por posição);
+# sem o resto da assinatura, o backup vale.
+SSH_FALSO_SAIDA="${AGE}PGDMPxyz" rodar "backup com PGDMP solto no cifrado" backup "$arq"
+esperar_codigo 0
+[ "$(ler "$arq")" = "${AGE}PGDMPxyz" ] || falhar "$caso: o backup cifrado não ficou"
 
 SSH_FALSO_SAIDA='' rodar "backup vazio" backup "$arq"
 esperar_codigo 1
