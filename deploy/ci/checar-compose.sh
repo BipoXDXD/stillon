@@ -64,6 +64,7 @@ alheias=$(sql "SELECT count(*) FROM pg_tables WHERE schemaname = 'public' AND ta
 
 # 5. Os alvos de exemplo (D15): o example.com, reservado para isso, e os de
 #    DEMO_TARGETS_EXTRA, se quem roda pediu. Nenhum outro site de terceiros.
+# shellcheck disable=SC2086 # sem aspas de propósito: conta as palavras
 extras=$(echo ${DEMO_TARGETS_EXTRA:-} | wc -w)
 usuarios=$(sql "SELECT count(*) FROM users")
 alvos=$(sql "SELECT count(*) FROM targets")

@@ -23,7 +23,9 @@ name: vigilume
 # (D14); https, ou outro host, é recusado. Produção: docs/deploy/fly.md.
 x-ambiente: &ambiente
   DATABASE_URL: postgres://vigilume_app:vigilume_app@db:5432/vigilume?sslmode=disable
-  PUBLIC_BASE_URL: http://localhost:8080
+  # A mesma porta publicada abaixo: os links dos e-mails e da página de
+  # status apontam para onde o painel está de fato.
+  PUBLIC_BASE_URL: http://localhost:${VIGILUME_PORT:-8080}
   # O `vite dev` do painel (Plano 6), para quem desenvolve contra este compose.
   CORS_ORIGIN: http://localhost:5173
   METRICS_ADDR: "off"
@@ -45,8 +47,10 @@ services:
       - pgdata:/var/lib/postgresql
       - ./deploy/compose/initdb.sql:/docker-entrypoint-initdb.d/10-vigilume.sql:ro
     healthcheck:
-      # Pelo TCP: durante o init o Postgres só escuta no socket, e o banco
-      # vigilume ainda não existe.
+      # Pelo TCP: durante o init o servidor temporário só escuta no socket, e
+      # o TCP só responde depois que o initdb.sql rodou. O pg_isready só olha
+      # se o servidor aceita conexões: o -U e o -d não conferem se o papel ou
+      # o banco existem (a mensagem do log fica com os nomes certos).
       test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "vigilume_app", "-d", "vigilume"]
       interval: 10s
       timeout: 3s

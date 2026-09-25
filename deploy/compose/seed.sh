@@ -69,6 +69,11 @@ for url in https://example.com/ ${DEMO_TARGETS_EXTRA:-}; do
     fi
     n=$((n + 1))
 done
-# A sessão do seed não fica viva no banco: logout revoga a família.
-postar --header "Cookie: $refresh" --post-data '' "http://$API/api/v1/auth/logout" >/dev/null
+# A sessão do seed não fica viva no banco: logout revoga a família. Se ele
+# falhar, um refresh de 7 dias fica parado no banco: é falha do seed, dita
+# aqui, e não só uma contagem estranha no checar-compose.sh.
+if ! postar --header "Cookie: $refresh" --post-data '' "http://$API/api/v1/auth/logout" >/dev/null; then
+    echo "seed: o logout da sessão do seed falhou; a sessão ficou viva no banco" >&2
+    exit 1
+fi
 echo "seed: usuário $DEMO_EMAIL e $n alvo(s) de exemplo"
