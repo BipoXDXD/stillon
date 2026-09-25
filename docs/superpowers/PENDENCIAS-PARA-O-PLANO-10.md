@@ -12,7 +12,7 @@ Spec: `docs/superpowers/specs/2026-09-25-plano-9-operacao-design.md`.
 | Pendência | Como fechou |
 |---|---|
 | Recuperação do 2FA pelo CLI | `vigilume user reset-2fa --email <e>`: desliga o 2FA (inclusive uma troca pendente), apaga os códigos de recuperação e encerra todas as sessões numa transação, com auditoria `totp.reset_cli`. Idempotente: com o 2FA desligado, sai 0 e "nada mudou". Runbook: "Perdeu o autenticador e os códigos de recuperação" |
-| Troca de autenticador | Segredo pendente (`users.totp_pending_secret_enc`, migration `00009`): `POST /auth/totp/rotate` (senha + posse do fator atual) e `POST /auth/totp/rotate/confirm` (código do app novo). O app antigo vale até a confirmação; ela troca o segredo, gera 10 códigos novos e encerra as outras sessões. Painel: Configurações → Trocar autenticador |
+| Troca de autenticador | Segredo pendente (`users.totp_pending_secret_enc`, amarrado à família que o criou por `users.totp_pending_family_id`, migration `00009`): `POST /api/v1/auth/totp/rotate` (senha + posse do fator atual) e `POST /api/v1/auth/totp/rotate/confirm` (código do app novo). O app antigo vale até a confirmação; ela troca o segredo, gera 10 códigos novos e encerra as outras sessões. Painel: Configurações → Trocar autenticador |
 | Rota para desabilitar canal | `PATCH /api/v1/channels/{id}` com `{"enabled": bool}`. Painel: Pausar (com confirmação) e Retomar na lista de canais |
 | Porta de métricas em desenvolvimento (M7) | Sem `METRICS_ADDR`, o padrão depende do papel: `api` e `all` em `127.0.0.1:9090`, `prober` em `127.0.0.1:9091`. A falha de porta ocupada sugere o `METRICS_ADDR` |
 
@@ -71,6 +71,30 @@ Spec: `docs/superpowers/specs/2026-09-25-plano-9-operacao-design.md`.
 - **O rotate gasta a prova antes da trava.** O `StartRotation` verifica o código (e consome o
   timestep ou o código de recuperação) antes de tomar a trava de sessões e reconferir a família.
   Na corrida em que a família morre sob a trava, o rotate responde 401 e o código já foi gasto.
+- **Um `disable` entre o `Verify` e o `UPDATE` do `StartRotation`** gasta a prova do rotate, e ele
+  responde `403 forbidden` (a guarda `totp_confirmed_at IS NOT NULL` do `UPDATE` não casa).
+  Corrida estreita, sem efeito além do código gasto.
+- **Usuário apagado no meio de um rotate ou confirm vira 500**: o `ErrNotFound` do
+  `StartRotation`/`ConfirmRotation` (e o do `users.ByID` antes deles) cai no erro interno. As
+  outras rotas do TOTP fazem o mesmo; só o `/auth/totp/verify` o trata (`401
+  invalid_credentials`).
+- **`ROLE` inválido fica em `cfg.Role`**, e o padrão de `METRICS_ADDR` calculado com ele cai em
+  `127.0.0.1:9090` (`internal/config/config.go`). É inofensivo hoje só porque o `Load` acumula o
+  erro e devolve `nil, err`, e o `cfg` é descartado; um `Load` que devolvesse o `cfg` junto com o
+  erro deixaria os dois valores errados à vista.
+- **Os testes de trava procuram a espera pelo `pg_stat_activity` sem amarrar o backend** (nem
+  `pid`, nem a chave da trava em `pg_locks`). Com `wait_event = 'advisory'`:
+  `TestConfirmRotationTakesTheUserLock` (`internal/auth/totp_rotation_test.go`),
+  `TestRotateRechecksTheFamilyUnderTheLock` (`internal/httpapi/totp_troca_integration_test.go`),
+  o `esperarAlguemNaTrava` de `internal/account/account_test.go` e o teste do
+  `EnsureChecksPartitions` em `internal/storage/notify_rls_test.go` (este filtra pela query, mas
+  não pelo banco). Só com `wait_event_type = 'Lock'`, qualquer trava: o `esperarBloqueados` de
+  `internal/account/account_test.go`, `internal/auth/session_race_test.go`,
+  `internal/httpapi/login_race_integration_test.go` e `internal/statuspage/service_test.go`. Hoje
+  cada teste tem o próprio banco (`testdb.New`), nenhum usa `t.Parallel`, e os filtros por
+  `datname` (ou pela query, no de partições) os separam; o falso verde possível é outro backend do
+  mesmo teste, ou de um teste paralelo no mesmo banco se isso vier a existir, esperando outra
+  trava. O `internal/prober/scheduler_test.go` já exclui o próprio `pid` e filtra pela query.
 - **As checagens de CSP do E2E dos diálogos de canal leem as violações uma vez**, sem
   `expect.poll`: uma violação que chegue depois da leitura passa despercebida.
 

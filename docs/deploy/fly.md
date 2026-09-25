@@ -395,9 +395,9 @@ por `host.docker.internal` e tire o `--network host`, como no passo 10.
 
 Sem `-it`: o `reset-2fa` não lê nada do terminal. A saída diz o e-mail e quantas sessões caíram
 ("2FA desativado para …; N sessões encerradas. Acessos já abertos expiram em até 15
-minutos."); com o 2FA já desligado, diz "nada mudou" e sai com 0. Código 4 é e-mail não
-cadastrado; 2, uso errado; 1, banco ou papel. Depois, entre só com a senha e ative o 2FA de novo
-pelo painel (Configurações).
+minutos.", ou "1 sessão encerrada" quando é uma só); com o 2FA já desligado, diz "nada mudou" e
+sai com 0. Código 4 é e-mail não cadastrado; 2, uso errado; 1, banco ou papel. Depois, entre só
+com a senha e ative o 2FA de novo pelo painel (Configurações).
 
 Quem ainda tem o app ou um código de recuperação não precisa disto: **Configurações → Trocar
 autenticador** troca de celular sem desligar o 2FA.
