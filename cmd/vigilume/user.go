@@ -26,7 +26,7 @@ const (
 	saidaAmbiente      = 1 // banco, papel com rolsuper/rolbypassrls, migration
 	saidaUso           = 2 // flag, e-mail, DATABASE_URL, senha fora da política
 	saidaJaExiste      = 3 // create: já existe usuário; nada mudou
-	saidaNaoCadastrado = 4 // set-password: e-mail não cadastrado; nada mudou
+	saidaNaoCadastrado = 4 // set-password, reset-2fa: e-mail não cadastrado; nada mudou
 	// saidaInterrompida é Ctrl-C ou SIGTERM, em qualquer fase: 128 + SIGINT,
 	// o que o shell mostra para um programa interrompido por Ctrl-C. Separado
 	// do 1 para um script distinguir "o operador desistiu" de "o ambiente está
@@ -111,9 +111,11 @@ func lerOuDesistir(ctx context.Context, ler func() ([]byte, error)) ([]byte, err
 const usoUser = `uso:
   vigilume user create --email <e-mail>        cria o dono (só se não houver usuário)
   vigilume user set-password --email <e-mail>  redefine a senha e encerra todas as sessões
+  vigilume user reset-2fa --email <e-mail>     desliga o 2FA e encerra todas as sessões
 
-A senha vem do stdin: num terminal, é pedida duas vezes, sem eco; num pipe,
-é a única linha da entrada. Só DATABASE_URL é lida do ambiente.`
+A senha (create, set-password) vem do stdin: num terminal, é pedida duas
+vezes, sem eco; num pipe, é a única linha da entrada. O reset-2fa não pede
+senha. Só DATABASE_URL é lida do ambiente.`
 
 // runUser é `vigilume user ...`. Devolve o código de saída; quem chama sai do
 // processo com ele.
@@ -129,7 +131,7 @@ func runUser(ctx context.Context, args []string, in entradaDaSenha, stdout, stde
 		fmt.Fprintf(stderr, "vigilume user: "+formato+"\n", a...)
 		return codigo
 	}
-	if len(args) == 0 || (args[0] != "create" && args[0] != "set-password") {
+	if len(args) == 0 || (args[0] != "create" && args[0] != "set-password" && args[0] != "reset-2fa") {
 		fmt.Fprintln(stderr, usoUser)
 		return saidaUso
 	}
@@ -141,6 +143,9 @@ func runUser(ctx context.Context, args []string, in entradaDaSenha, stdout, stde
 		return saidaUso
 	}
 	if fs.NArg() > 0 {
+		if sub == "reset-2fa" {
+			return falhar(saidaUso, "argumento inesperado: %q", fs.Arg(0))
+		}
 		return falhar(saidaUso, "argumento inesperado: %q (a senha vem do stdin)", fs.Arg(0))
 	}
 	e, err := account.ValidateEmail(*email)
@@ -168,6 +173,25 @@ func runUser(ctx context.Context, args []string, in entradaDaSenha, stdout, stde
 	}
 	// Sem segundo fator e sem chave de IP: o CLI não troca senha pela API.
 	svc := account.NewService(pool, nil, clock.Real{}, nil)
+
+	// reset-2fa não lê senha (spec do Plano 9, §3.1): quem tem a DATABASE_URL
+	// já pode tudo no banco. O e-mail sai na mensagem para quem rodou contra o
+	// banco errado perceber (R5 da spec).
+	if sub == "reset-2fa" {
+		ligado, n, err := svc.ResetTwoFactor(ctx, e)
+		if errors.Is(err, account.ErrUserNotFound) {
+			return falhar(saidaNaoCadastrado, "nenhum usuário com o e-mail %s; nada foi alterado", e)
+		}
+		if err != nil {
+			return falhar(saidaAmbiente, "%v", err)
+		}
+		if !ligado {
+			fmt.Fprintf(stdout, "o 2FA já estava desativado para %s; nada mudou\n", e)
+			return saidaOK
+		}
+		fmt.Fprintf(stdout, "2FA desativado para %s; %d sessões encerradas. Entre com a senha e ative de novo pelo painel.\n", e, n)
+		return saidaOK
+	}
 
 	// A pré-condição vem ANTES da senha: ninguém digita duas vezes à toa.
 	switch sub {

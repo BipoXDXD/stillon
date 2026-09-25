@@ -27,6 +27,16 @@ func (q *Queries) CountUsers(ctx context.Context) (int64, error) {
 	return count, err
 }
 
+const deleteRecoveryCodes = `-- name: DeleteRecoveryCodes :exec
+DELETE FROM totp_recovery_codes WHERE user_id = $1
+`
+
+// Os códigos de recuperação morrem com o fator (reset-2fa).
+func (q *Queries) DeleteRecoveryCodes(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, deleteRecoveryCodes, userID)
+	return err
+}
+
 const getAccount = `-- name: GetAccount :one
 SELECT id, email, (totp_confirmed_at IS NOT NULL)::bool AS totp_enabled, created_at
   FROM users WHERE id = $1
@@ -166,7 +176,8 @@ func (q *Queries) RehashUser(ctx context.Context, arg RehashUserParams) (int64, 
 
 const replaceUserHash = `-- name: ReplaceUserHash :execrows
 UPDATE users SET password_hash = $2, failed_attempts = 0, locked_until = NULL,
-       totp_secret_enc = CASE WHEN totp_confirmed_at IS NULL THEN NULL ELSE totp_secret_enc END
+       totp_secret_enc = CASE WHEN totp_confirmed_at IS NULL THEN NULL ELSE totp_secret_enc END,
+       totp_pending_secret_enc = NULL
  WHERE id = $1
 `
 
@@ -182,6 +193,11 @@ type ReplaceUserHashParams struct {
 // Um cadastro de 2FA pendente (segredo sem confirmação) cai junto: quem o
 // iniciou pode ser o invasor que a redefinição está expulsando, e ele o
 // confirmaria com o autenticador dele. O 2FA confirmado fica (D10). Task 11.
+//
+// Uma troca de autenticador em andamento (totp_pending_secret_enc, Plano 9)
+// cai pelo mesmo motivo: o pendente não tem prazo, quem o iniciou pode ser o
+// invasor, e uma sessão roubada o confirmaria depois, ficando com o 2FA.
+// Trocar a senha é a reação do dono à suspeita, e mata a troca.
 func (q *Queries) ReplaceUserHash(ctx context.Context, arg ReplaceUserHashParams) (int64, error) {
 	result, err := q.db.Exec(ctx, replaceUserHash, arg.ID, arg.PasswordHash)
 	if err != nil {
@@ -190,9 +206,29 @@ func (q *Queries) ReplaceUserHash(ctx context.Context, arg ReplaceUserHashParams
 	return result.RowsAffected(), nil
 }
 
+const resetTOTP = `-- name: ResetTOTP :execrows
+UPDATE users SET totp_secret_enc = NULL, totp_confirmed_at = NULL, totp_last_timestep = NULL,
+       totp_pending_secret_enc = NULL
+ WHERE id = $1 AND totp_confirmed_at IS NOT NULL
+`
+
+// vigilume user reset-2fa (Plano 9, §3.1): desliga o 2FA inteiro, inclusive a
+// troca de autenticador pendente. A guarda na WHERE torna o comando
+// idempotente: sem 2FA confirmado, nenhuma linha muda, e quem chama não
+// encerra sessão nem audita. A marca do desafio (totp_challenge_mark) fica:
+// ela só recusa desafios velhos, e zerá-la não ajuda ninguém.
+func (q *Queries) ResetTOTP(ctx context.Context, id uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, resetTOTP, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const swapUserHash = `-- name: SwapUserHash :execrows
 UPDATE users SET password_hash = $1, failed_attempts = 0, locked_until = NULL,
-       totp_secret_enc = CASE WHEN totp_confirmed_at IS NULL THEN NULL ELSE totp_secret_enc END
+       totp_secret_enc = CASE WHEN totp_confirmed_at IS NULL THEN NULL ELSE totp_secret_enc END,
+       totp_pending_secret_enc = NULL
  WHERE id = $2 AND password_hash = $3
 `
 
@@ -206,7 +242,8 @@ type SwapUserHashParams struct {
 // é o que foi verificado. Duas trocas simultâneas com a mesma senha atual não
 // se atropelam, e a verificação (Argon2id) não precisa segurar trava. Zera o
 // bloqueio: a senha e o segundo fator acabaram de ser provados. Apaga o
-// cadastro de 2FA pendente, pelo motivo do ReplaceUserHash.
+// cadastro de 2FA pendente e a troca de autenticador em andamento, pelos
+// motivos do ReplaceUserHash.
 func (q *Queries) SwapUserHash(ctx context.Context, arg SwapUserHashParams) (int64, error) {
 	result, err := q.db.Exec(ctx, swapUserHash, arg.NewHash, arg.ID, arg.OldHash)
 	if err != nil {

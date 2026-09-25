@@ -294,3 +294,120 @@ func (h *AuthHandlers) TOTPDisable(w http.ResponseWriter, r *http.Request) {
 
 	w.WriteHeader(http.StatusNoContent)
 }
+
+// TOTPRotate inicia a troca de autenticador (Plano 9, §3.2): grava o segredo
+// do app novo como PENDENTE e devolve a otpauth_uri dele, no formato do
+// enroll. O app antigo continua valendo até o rotate/confirm.
+//
+// As provas são as do TOTPDisable, pelos mesmos motivos: a senha (a
+// verificação do login, que conta no bloqueio) E a posse do fator atual, por
+// código do app ou de recuperação, em code ou recovery_code. Só a sessão
+// entregaria o segundo fator a quem a roubou (R38).
+//
+// 2FA desligado é 403 forbidden, o espelho do enroll com o 2FA ligado; prova
+// errada ou ausente é 401 invalid_credentials, nunca unauthorized (D24 do
+// Plano 5), e conta no bloqueio (R40).
+func (h *AuthHandlers) TOTPRotate(w http.ResponseWriter, r *http.Request) {
+	userID, ok := middleware.UserID(r.Context())
+	if !ok {
+		apierr.WriteError(w, r, apierr.CodeUnauthorized)
+		return
+	}
+
+	var req struct {
+		Password     string `json:"password"`
+		Code         string `json:"code"`
+		RecoveryCode string `json:"recovery_code"`
+	}
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+
+	user, err := h.users.ByID(r.Context(), userID)
+	if err != nil {
+		h.internal(w, r, "buscar usuário", err)
+		return
+	}
+	if !h.senhaConfere(w, r, user, req.Password) {
+		return
+	}
+
+	prova := req.Code
+	if prova == "" {
+		prova = req.RecoveryCode
+	}
+	now := h.clk.Now()
+	uri, err := h.totp.StartRotation(r.Context(), userID, user.Email, prova, now)
+	if errors.Is(err, auth.ErrTOTPNotEnrolled) {
+		apierr.WriteError(w, r, apierr.CodeForbidden)
+		return
+	}
+	if errors.Is(err, auth.ErrTOTPInvalid) {
+		// Ausente conta como errada, como no disable: a senha sozinha nunca
+		// troca o fator.
+		if err := h.users.RecordFailure(r.Context(), userID, now); err != nil {
+			slog.Error("registrar falha de segundo fator", "erro", err)
+		}
+		apierr.WriteError(w, r, apierr.CodeInvalidCredentials)
+		return
+	}
+	if err != nil {
+		h.internal(w, r, "iniciar troca de TOTP", err)
+		return
+	}
+	apierr.WriteJSON(w, http.StatusOK, map[string]string{"otpauth_uri": uri})
+}
+
+// TOTPRotateConfirm conclui a troca com um código do app NOVO e devolve os 10
+// códigos de recuperação novos, no formato do confirm. As outras sessões caem;
+// a do token fica.
+//
+// Sem troca em andamento é 403 forbidden (concluída ou cancelada em outra
+// aba). Código errado é 401 invalid_credentials, conta no bloqueio, e o
+// pendente fica. Conta bloqueada é o mesmo 401 antes do código, como no
+// /totp/verify (R40): senão o confirm seria um lugar para chutar seis dígitos
+// que o bloqueio não alcança.
+func (h *AuthHandlers) TOTPRotateConfirm(w http.ResponseWriter, r *http.Request) {
+	userID, ok := middleware.UserID(r.Context())
+	familyID, okF := middleware.FamilyID(r.Context())
+	if !ok || !okF {
+		apierr.WriteError(w, r, apierr.CodeUnauthorized)
+		return
+	}
+
+	var req codeRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+
+	now := h.clk.Now()
+	user, err := h.users.ByID(r.Context(), userID)
+	if err != nil {
+		h.internal(w, r, "buscar usuário", err)
+		return
+	}
+	if user.IsLocked(now) {
+		apierr.WriteError(w, r, apierr.CodeInvalidCredentials)
+		return
+	}
+
+	codes, err := h.totp.ConfirmRotation(r.Context(), userID, familyID, req.Code, now)
+	switch {
+	case errors.Is(err, auth.ErrTOTPNoRotation):
+		apierr.WriteError(w, r, apierr.CodeForbidden)
+	case errors.Is(err, auth.ErrTOTPInvalid):
+		if err := h.users.RecordFailure(r.Context(), userID, now); err != nil {
+			slog.Error("registrar falha de segundo fator", "erro", err)
+		}
+		apierr.WriteError(w, r, apierr.CodeInvalidCredentials)
+	case errors.Is(err, auth.ErrInvalidSession):
+		// A família caiu entre a guarda da rota e a trava: o mesmo 401
+		// unauthorized da guarda.
+		apierr.WriteError(w, r, apierr.CodeUnauthorized)
+	case err != nil:
+		h.internal(w, r, "confirmar troca de TOTP", err)
+	default:
+		// Única vez em que os códigos novos aparecem em claro.
+		apierr.WriteJSON(w, http.StatusOK, map[string]any{"recovery_codes": codes})
+	}
+}

@@ -14,7 +14,7 @@ import (
 
 // As rotas do segundo fator exigem a família do token viva, como /sessions e
 // /auth/password (D11): um access token de sessão encerrada não cadastra,
-// não confirma nem desliga o 2FA. Morta é 401 unauthorized (D24), antes de
+// não confirma, não desliga nem troca o 2FA. Morta é 401 unauthorized (D24), antes de
 // olhar senha ou código.
 func TestTOTPRoutesRejectADeadFamily(t *testing.T) {
 	a := newAPI(t)
@@ -26,6 +26,9 @@ func TestTOTPRoutesRejectADeadFamily(t *testing.T) {
 		"enroll":  {"password": testPass},
 		"confirm": {"code": "000000"},
 		"disable": {"password": testPass, "code": "000000"},
+		// A troca de autenticador (Plano 9, §3.2) entra na mesma cadeia.
+		"rotate":         {"password": testPass, "code": "000000"},
+		"rotate/confirm": {"code": "000000"},
 	} {
 		resp := postComToken(t, http.DefaultClient, a.srv.URL+"/api/v1/auth/totp/"+rota, token, corpo)
 		codigo := codigoDoErro(t, resp)
