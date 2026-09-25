@@ -660,6 +660,12 @@ func TestConfirmIsRefusedOnAnAlreadyConfirmedAccount(t *testing.T) {
 	if _, err := svc.Confirm(ctx, userID, outro, depois); !errors.Is(err, auth.ErrTOTPAlreadyEnabled) {
 		t.Errorf("segundo Confirm devolveu %v, queria ErrTOTPAlreadyEnabled", err)
 	}
+	// Com o fator ligado, o código nem é conferido (C1 da revisão do Plano
+	// 10): o errado recebe o mesmo ErrTOTPAlreadyEnabled do certo, e o
+	// Confirm deixa de ser um oráculo do código do segredo ativo.
+	if _, err := svc.Confirm(ctx, userID, codigoErradoDe(t, secret, depois), depois); !errors.Is(err, auth.ErrTOTPAlreadyEnabled) {
+		t.Errorf("Confirm com código errado e o fator ligado devolveu %v, queria ErrTOTPAlreadyEnabled", err)
+	}
 
 	var agora *time.Time
 	if err := pool.QueryRow(ctx,
@@ -743,4 +749,18 @@ func TestDisableOnAnAccountWithoutTOTP(t *testing.T) {
 	if err := svc.Disable(context.Background(), userID, "000000", now); !errors.Is(err, auth.ErrTOTPNotEnrolled) {
 		t.Errorf("Disable sem segundo fator devolveu %v, queria ErrTOTPNotEnrolled", err)
 	}
+}
+
+// codigoErradoDe é um código de seis dígitos que não é o do segredo no
+// instante dado.
+func codigoErradoDe(t *testing.T, secret string, em time.Time) string {
+	t.Helper()
+	certo, err := totp.GenerateCode(secret, em)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if certo == "000000" {
+		return "111111"
+	}
+	return "000000"
 }

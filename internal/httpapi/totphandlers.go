@@ -53,12 +53,17 @@ func (h *AuthHandlers) TOTPEnroll(w http.ResponseWriter, r *http.Request) {
 	if !h.senhaConfere(w, r, res, user, req.Password) {
 		return
 	}
-	res.Succeed()
 
 	uri, err := h.totp.Enroll(r.Context(), userID, user.Email)
 	if errors.Is(err, auth.ErrTOTPAlreadyEnabled) {
 		// R38: recadastrar não pode ser a porta dos fundos para desligar o
 		// segundo fator de quem já o tem ativo.
+		//
+		// E a senha certa aqui NÃO zera a família (C1 da revisão do Plano
+		// 10): a reserva volta pelo Release do defer. Zerada, quem tem a
+		// sessão e a senha, mas não o fator, chutava quatro códigos no
+		// disable ou no rotate, mandava um enroll, e chutava mais quatro,
+		// sem fim. Com o 2FA ligado, só a prova do fator zera a família.
 		apierr.WriteError(w, r, apierr.CodeForbidden)
 		return
 	}
@@ -66,6 +71,9 @@ func (h *AuthHandlers) TOTPEnroll(w http.ResponseWriter, r *http.Request) {
 		h.usuarioOuInterno(w, r, "cadastrar TOTP", err)
 		return
 	}
+	// Só depois de o cadastro dar certo: aí o 2FA estava desligado, e a
+	// senha era toda a credencial que havia a provar.
+	res.Succeed()
 	// A URI otpauth:// vai para o cliente, que renderiza o QR code. Gerar a
 	// imagem no servidor só acrescentaria payload.
 	apierr.WriteJSON(w, http.StatusOK, map[string]string{"otpauth_uri": uri})
@@ -97,9 +105,10 @@ func (h *AuthHandlers) TOTPConfirm(w http.ResponseWriter, r *http.Request) {
 	codes, err := h.totp.Confirm(r.Context(), userID, req.Code, h.clk.Now())
 	if errors.Is(err, auth.ErrTOTPAlreadyEnabled) {
 		// Mesmo 403 do enroll: reconfirmar rotacionaria os códigos de
-		// recuperação e apagaria a data de ativação original. O código
-		// conferiu: não é prova errada.
-		res.Succeed()
+		// recuperação e apagaria a data de ativação original. O Confirm
+		// recusa antes de olhar o código (C1 da revisão do Plano 10), então
+		// o 403 é o mesmo para o código certo e o errado, e não é oráculo.
+		// Nada foi provado: a reserva volta, e a família não zera.
 		apierr.WriteError(w, r, apierr.CodeForbidden)
 		return
 	}

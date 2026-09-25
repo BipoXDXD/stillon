@@ -107,10 +107,19 @@ func (s *TOTP) Enroll(ctx context.Context, userID uuid.UUID, email string) (stri
 
 // Confirm ativa o segundo fator e devolve os códigos de recuperação. Eles são
 // mostrados uma única vez: o banco guarda apenas o hash.
+//
+// Com o fator já ligado, recusa com ErrTOTPAlreadyEnabled ANTES de conferir o
+// código (C1 da revisão do Plano 10). Conferido antes, o código certo dava
+// ErrTOTPAlreadyEnabled e o errado ErrTOTPInvalid: um oráculo do código do
+// segredo ATIVO, sem consumir o timestep, que quem tinha só a sessão
+// consultava e depois usava no disable ou no rotate.
 func (s *TOTP) Confirm(ctx context.Context, userID uuid.UUID, code string, now time.Time) ([]string, error) {
-	secret, _, sealed, err := s.loadSealed(ctx, userID)
+	secret, confirmado, sealed, err := s.loadSealed(ctx, userID)
 	if err != nil {
 		return nil, err
+	}
+	if confirmado {
+		return nil, ErrTOTPAlreadyEnabled
 	}
 	step, ok := validateTOTP(code, secret, now)
 	if !ok {

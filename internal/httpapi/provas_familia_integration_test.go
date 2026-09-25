@@ -229,3 +229,99 @@ func TestParallelWrongProofsVerifyAtMostTheBudget(t *testing.T) {
 		t.Errorf("%d falhas no bloqueio da conta, queria 0", n)
 	}
 }
+
+// C1 da revisão do Plano 10: quem tem a sessão e a senha, mas não o fator,
+// não pode zerar o orçamento da família com uma prova só de senha. Antes, o
+// enroll com a senha certa zerava a família (Succeed antes do Enroll) e só
+// depois respondia 403 por o 2FA já estar ligado: quatro códigos chutados no
+// disable (ou no rotate), um enroll, e mais quatro, sem fim. Agora o enroll
+// com o 2FA ligado devolve a reserva sem zerar nada, e a quinta prova errada
+// derruba a família.
+func TestPasswordAloneDoesNotResetTheFamilyBudget(t *testing.T) {
+	for _, rota := range []string{"/api/v1/auth/totp/disable", "/api/v1/auth/totp/rotate"} {
+		t.Run(rota, func(t *testing.T) {
+			a := newAPI(t)
+			segredo := cadastrarTOTP(t, a, clientWithJar(t))
+			token, _, familia := familiaComRefresh(t, a)
+			chutar := postEProva(rota, func(t *testing.T, a *api) map[string]string {
+				return map[string]string{"password": testPass, "code": codigoErradoPara(t, a, segredo)}
+			})
+			enroll := postEProva("/api/v1/auth/totp/enroll", func(*testing.T, *api) map[string]string {
+				return map[string]string{"password": testPass}
+			})
+			confirm := postEProva("/api/v1/auth/totp/confirm", func(t *testing.T, a *api) map[string]string {
+				return map[string]string{"code": codigoDe(t, a, segredo)}
+			})
+
+			for i := 1; i < provasPorFamilia; i++ {
+				if st, codigo := chutar(t, a, token); st != http.StatusUnauthorized || codigo != "invalid_credentials" {
+					t.Fatalf("chute %d: %d %s, queria 401 invalid_credentials", i, st, codigo)
+				}
+			}
+			if st, codigo := enroll(t, a, token); st != http.StatusForbidden || codigo != "forbidden" {
+				t.Fatalf("enroll com o 2FA ligado: %d %s, queria 403 forbidden", st, codigo)
+			}
+			// O confirm com o 2FA ligado também é 403 sem provar nada, e
+			// também não pode zerar a família.
+			if st, codigo := confirm(t, a, token); st != http.StatusForbidden || codigo != "forbidden" {
+				t.Fatalf("confirm com o 2FA ligado: %d %s, queria 403 forbidden", st, codigo)
+			}
+			if st, codigo := chutar(t, a, token); st != http.StatusUnauthorized || codigo != "unauthorized" {
+				t.Errorf("quinta prova errada depois do enroll e do confirm: %d %s, queria 401 unauthorized (algum deles zerou a família?)", st, codigo)
+			}
+			if st := statusDaListaDeSessoes(t, a, token); st != http.StatusUnauthorized {
+				t.Errorf("GET /sessions com o token da família que chutou: %d, queria 401", st)
+			}
+			if n := eventosDaFamilia(t, a, "session.proof_limit", familia); n != 1 {
+				t.Errorf("%d eventos session.proof_limit da família, queria 1", n)
+			}
+		})
+	}
+}
+
+// C1(b) da revisão do Plano 10: com o 2FA ligado, o /totp/confirm responde 403
+// ANTES de olhar o código. Antes ele conferia o código contra o segredo ativo
+// e respondia 403 ao certo e 400 ao errado: um oráculo que, com o enroll
+// zerando a família, dava para consultar sem limite. O ciclo é o da prova de
+// conceito da revisão (quatro chutes no confirm e um enroll com a senha,
+// repetido): nenhuma resposta distingue o código certo, e o confirm não gasta
+// prova (não há o que provar), então a família continua viva.
+func TestConfirmWithTheFactorOnIsNotAnOracle(t *testing.T) {
+	a := newAPI(t)
+	segredo := cadastrarTOTP(t, a, clientWithJar(t))
+	token, _, _ := familiaComRefresh(t, a)
+	confirm := func(codigo string) (int, string) {
+		t.Helper()
+		resp := postComToken(t, http.DefaultClient, a.srv.URL+"/api/v1/auth/totp/confirm", token,
+			map[string]string{"code": codigo})
+		defer resp.Body.Close()
+		return resp.StatusCode, codigoDoErro(t, resp)
+	}
+	enroll := postEProva("/api/v1/auth/totp/enroll", func(*testing.T, *api) map[string]string {
+		return map[string]string{"password": testPass}
+	})
+
+	for rodada := 1; rodada <= 3; rodada++ {
+		for i := 1; i < provasPorFamilia; i++ {
+			if st, codigo := confirm(codigoErradoPara(t, a, segredo)); st != http.StatusForbidden || codigo != "forbidden" {
+				t.Fatalf("rodada %d, chute %d no confirm: %d %s, queria 403 forbidden", rodada, i, st, codigo)
+			}
+		}
+		if st, codigo := enroll(t, a, token); st != http.StatusForbidden || codigo != "forbidden" {
+			t.Fatalf("rodada %d, enroll: %d %s, queria 403 forbidden", rodada, st, codigo)
+		}
+	}
+	if st, codigo := confirm(codigoDe(t, a, segredo)); st != http.StatusForbidden || codigo != "forbidden" {
+		t.Errorf("confirm com o código certo e o 2FA ligado: %d %s, queria o mesmo 403 forbidden do errado", st, codigo)
+	}
+	if st := statusDaListaDeSessoes(t, a, token); st != http.StatusOK {
+		t.Errorf("a família caiu com confirms que não provam nada: GET /sessions %d", st)
+	}
+	// O confirm não consumiu o timestep: o código certo ainda desliga o fator.
+	resp := postComToken(t, http.DefaultClient, a.srv.URL+"/api/v1/auth/totp/disable", token,
+		map[string]string{"password": testPass, "code": codigoDe(t, a, segredo)})
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Errorf("disable com o código que o confirm recusou: %d, queria 204", resp.StatusCode)
+	}
+}

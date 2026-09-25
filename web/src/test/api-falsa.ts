@@ -441,21 +441,24 @@ export function criarApiFalsa() {
     }),
     rota('post', '/auth/totp/enroll', ({ request, corpo }) => {
       if (corpo.password !== SENHA) return provaErrada(request, 401, 'invalid_credentials')
-      provaCerta(request)
+      // Com o 2FA ligado, a senha certa NÃO zera a família (C1 da revisão do
+      // Plano 10): 403, e a reserva volta. Só o cadastro feito zera.
       if (st.totpLigado) return erro(403, 'forbidden')
+      provaCerta(request)
       st.totpPendente = true
       return HttpResponse.json({ otpauth_uri: 'otpauth://totp/Vigilume:dono%40exemplo.com?secret=JBSWY3DPEHPK3PXP&issuer=Vigilume' })
     }),
-    // TOTP.Confirm confere o código ANTES de ver que o 2FA já está ligado: o
-    // código certo com o 2FA ligado é 403 forbidden (e zera a família, o
-    // código conferiu); o errado é prova errada, 400 validation_failed, e
-    // conta (A3 do Plano 10, que fechou o S5). Sem cadastro pendente não há
-    // código a errar: 400 sem contar.
+    // TOTP.Confirm com o 2FA já ligado é 403 forbidden ANTES de olhar o
+    // código (C1 da revisão do Plano 10): o mesmo 403 para o certo e o
+    // errado, sem contar nem zerar a família. Com o cadastro pendente, o
+    // código errado é prova errada, 400 validation_failed, e conta (A3 do
+    // Plano 10, que fechou o S5). Sem cadastro não há código a errar: 400
+    // sem contar.
     rota('post', '/auth/totp/confirm', ({ request, corpo }) => {
-      if (!st.totpLigado && !st.totpPendente) return erro(400, 'validation_failed')
+      if (st.totpLigado) return erro(403, 'forbidden')
+      if (!st.totpPendente) return erro(400, 'validation_failed')
       if (corpo.code !== TOTP_OK) return provaErrada(request, 400, 'validation_failed')
       provaCerta(request)
-      if (st.totpLigado) return erro(403, 'forbidden')
       st.totpLigado = true
       st.totpPendente = false
       return HttpResponse.json({ recovery_codes: ['AAAABBBBCCCCDDDD', 'EEEEFFFFGGGGHHHH'] })

@@ -498,13 +498,24 @@ describe('a API falsa conta as provas erradas por família, como o servidor', ()
     expect(falsa.estado.familiaRevogada).toBe(false)
   })
 
-  // TOTP.Confirm valida o código contra o segredo ANTES de ver que o 2FA já
-  // está ligado: o código errado é 400 (e conta), só o certo chega ao 403.
-  it('confirm com o 2FA já ligado: código errado é 400, o certo é 403', async () => {
+  // C1 da revisão do Plano 10: TOTP.Confirm com o 2FA já ligado é 403 ANTES
+  // de olhar o código (o certo e o errado recebem o mesmo 403, que não conta),
+  // e nem ele nem o enroll com a senha certa zeram a família: com o 2FA
+  // ligado, só a prova do fator zera.
+  it('com o 2FA ligado, confirm e enroll são 403 sem contar nem zerar a família', async () => {
     const { falsa, api } = await logado()
     falsa.estado.totpLigado = true
-    await expect(api.totpConfirmar('000000')).rejects.toMatchObject({ status: 400, code: 'validation_failed' })
-    await expect(api.totpConfirmar(TOTP_OK)).rejects.toMatchObject({ status: 403, code: 'forbidden' })
+    for (let i = 1; i < LIMITE_DE_PROVAS; i++) {
+      await expect(api.totpDesativar(SENHA, '000000')).rejects.toMatchObject({ code: 'invalid_credentials' })
+    }
+    for (let i = 0; i < LIMITE_DE_PROVAS + 1; i++) {
+      await expect(api.totpConfirmar('000000')).rejects.toMatchObject({ status: 403, code: 'forbidden' })
+      await expect(api.totpConfirmar(TOTP_OK)).rejects.toMatchObject({ status: 403, code: 'forbidden' })
+      await expect(api.totpCadastrar(SENHA)).rejects.toMatchObject({ status: 403, code: 'forbidden' })
+    }
+    expect(falsa.estado.familiaRevogada).toBe(false)
+    await expect(api.totpDesativar(SENHA, '000000')).rejects.toMatchObject({ status: 401, code: 'unauthorized' })
+    expect(falsa.estado.familiaRevogada).toBe(true)
   })
 
   it('a conta bloqueada barra o login, não as rotas autenticadas; a troca de autenticador a destrava', async () => {
