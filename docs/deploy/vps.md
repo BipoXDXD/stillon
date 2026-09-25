@@ -289,8 +289,13 @@ Anote o remetente que vai usar, no formato `Vigilume <alertas@avisos.seu-domíni
 **Por quê:** um timer na VPS vai pingar essa URL a cada minuto quando o site responder, e pingar
 `/fail` quando não responder (bloco 8). Se os pings pararem (VPS morta) ou falharem, o
 healthchecks manda e-mail: o Vigilume não consegue avisar da própria queda. A carência de 5 min
-evita alarme no reinício automático das 04:30 (passo 2.11). A URL é quase-segredo: quem a tem
-pode pingar por você e esconder uma queda.
+só vale para ping que **não chega** (a VPS desligada por uns minutos no reinício automático das
+04:30, passo 2.11). Um `/fail` põe o check em **down** na hora e manda o e-mail, sem carência: se
+o vigia rodar enquanto o app ainda sobe (logo depois de um reinício, ou nos segundos de troca de
+um deploy), chega um par de e-mails, **down** e, no minuto seguinte, **up**. Reconheça o par pela
+hora (perto das 04:30, ou de um deploy seu) e pelo **up** logo depois: não é queda. Um **down**
+sem **up** em poucos minutos é queda de verdade. A URL é quase-segredo: quem a tem pode pingar
+por você e esconder uma queda.
 
 **Confira:** o check aparece com status **new** (cinza) e o canal de e-mail da conta está ativo
 (**Integrations**).
