@@ -16,7 +16,7 @@
 .env.*
 !.env.example
 !/web/.env.development
-# O backup (docs/deploy/fly.md, D3 do Plano 10): a chave privada do age
+# O backup (docs/deploy/vps.md, D3 do Plano 10): a chave privada do age
 # (vigilume-backup.key), o dump decifrado na restauração (vigilume.dump) e o
 # artifact baixado (vigilume-AAAAMMDD.dump.age). Nenhum deles vai para o git.
 *.key

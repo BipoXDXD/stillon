@@ -42,7 +42,7 @@ func TestDependabotWaitsSevenDaysForGoAndNpm(t *testing.T) {
 	}
 }
 
-// D3 (Plano 10, §3.4; banco S3 da revisão): o runbook (docs/deploy/fly.md)
+// D3 (Plano 10, §3.4; banco S3 da revisão): o runbook (docs/deploy/vps.md)
 // gera a chave privada do age e decifra o backup no diretório de trabalho.
 // Um `git add -A` na raiz a levaria para o histórico, e o gitleaks do CI só a
 // acha depois do push. Os nomes são os do runbook e do backup.yml; os
@@ -65,7 +65,7 @@ func TestGitignoreCoversTheBackupKeyAndDumps(t *testing.T) {
 	// exemplo de ambiente, o .env de desenvolvimento do Vite (sem segredo, por
 	// convenção dele) e chaves de fixture TLS em testdata/.
 	versionados := []string{
-		"compose.yaml", "deploy/compose/seed.sh", "docs/deploy/fly.md", "go.mod",
+		"compose.yaml", "deploy/compose/seed.sh", "docs/deploy/vps.md", "go.mod",
 		".env.example", "web/.env.example", "web/.env.development",
 		"internal/prober/safedial/testdata/server.key", "testdata/tls/ca.key",
 	}

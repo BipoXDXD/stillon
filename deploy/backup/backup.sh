@@ -63,7 +63,7 @@ if [ -n "${VOLUME_BYTES:-}" ]; then
     if [ "$pct" -ge 85 ]; then
         # O backup acima já está conferido; 4 (e não 3) diz a quem chama que
         # ele deve ser cifrado e guardado mesmo assim.
-        echo "ERRO: acima de 85%: aumente o volume (fly volumes extend)" >&2
+        echo "ERRO: acima de 85%: libere espaço ou aumente o disco" >&2
         exit 4
     elif [ "$pct" -ge 70 ]; then
         echo "AVISO: acima de 70% do volume"

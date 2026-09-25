@@ -42,14 +42,14 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 
 # tools: o mesmo binário sobre a variante debug, que tem o busybox. Só o seed
 # do compose a usa, para passar a senha de demo pelo stdin (D6). NUNCA vai
-# para o Fly.
+# para produção.
 FROM gcr.io/distroless/static-debian13:debug-nonroot@sha256:2a581fcbda6320d4d17fd6ff4774bb96e4825d2be9c2bca59f0777b429997f51 AS tools
 COPY --from=build /out/vigilume /vigilume
 USER nonroot:nonroot
 ENTRYPOINT ["/vigilume"]
 
-# runtime: o último estágio, o padrão do `docker build`. Sem HEALTHCHECK: o
-# Fly faz as próprias checagens, e o compose usa `vigilume healthcheck` (D5).
+# runtime: o último estágio, o padrão do `docker build`. Sem HEALTHCHECK: os
+# compose (o local e o de produção) usam `vigilume healthcheck` (D5).
 FROM gcr.io/distroless/static-debian13:nonroot@sha256:e2e927ec666bae08560abb3c55d0659eceabb657f56b6782ab500a9fc7f555e3 AS runtime
 COPY --from=build /out/vigilume /vigilume
 USER nonroot:nonroot

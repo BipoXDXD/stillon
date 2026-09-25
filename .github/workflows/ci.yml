@@ -43,12 +43,8 @@ env:
   # O nome com que o job image carrega a imagem e o e2e a usa: o mesmo do
   # compose.yaml, com VIGILUME_TAG=ci.
   #
-  # Nomes repetidos à mão: ghcr.io/bipoxdxd/vigilume aqui, no ORIGEM do
-  # deploy.yml e no image do compose.yaml. Os apps do Fly (vigilume e
-  # vigilume-db) estão no deploy.yml, no backup.yml, nos dois fly.toml
-  # (inclusive PUBLIC_BASE_URL e CORS_ORIGIN) e no secret DATABASE_URL
-  # (vigilume-db.internal). Renomear é mexer em todos juntos: a lista
-  # completa está no runbook, "Se o nome do app estiver tomado".
+  # Nome repetido à mão: ghcr.io/bipoxdxd/vigilume aqui, no ORIGEM do
+  # deploy.yml e no image do compose.yaml. Renomear é mexer nos três juntos.
   IMAGEM: ghcr.io/bipoxdxd/vigilume
 
 jobs:
@@ -466,10 +462,10 @@ jobs:
           build-args: VERSION=${{ env.VERSION }}
           cache-from: type=gha,scope=imagem
           # Sem atestado de proveniência: ele vira uma entrada "unknown/unknown"
-          # no índice, que o Fly e o Trivy teriam de pular.
+          # no índice, que o Trivy e o deploy teriam de pular.
           provenance: false
 
-      # O tools (só o seed do compose; nunca vai para o Fly) não passa pelo
+      # O tools (só o seed do compose; nunca vai para produção) não passa pelo
       # reescaneamento daqui: o Trivy do job image já o varreu na amd64 (mesmo
       # código e bases); a arm64 dele não passa por Trivy.
       - id: tools

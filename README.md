@@ -148,7 +148,7 @@ make e2e           # APAGA o banco do compose, sobe com --build, confere e roda 
 | Banco | PostgreSQL 18 (compatível com o 17) |
 | Painel | React 19, TypeScript, Vite, TanStack Query, React Router, React Hook Form + Zod, Radix, Tailwind, Recharts |
 | Testes | `testing` + testcontainers, Vitest + Testing Library + MSW, Playwright + axe |
-| Entrega | Docker (distroless), GitHub Actions, GHCR, Fly.io |
+| Entrega | Docker (distroless), GitHub Actions, GHCR, VPS com Docker Compose e Caddy |
 
 ## Desenvolvimento
 
@@ -204,27 +204,29 @@ O que mudou no Plano 10 (spec do Plano 10, §4):
 
 ## Deploy e operação
 
-A hospedagem escolhida é uma VPS na Hostinger, com Caddy na frente: é o Plano 11, que traz o
-compose de produção e o runbook próprio. Até lá, o que existe é o alvo do Fly.io, descrito
-abaixo. Dois apps no Fly.io: o binário (`--role=all`) e um Postgres 18 com a imagem oficial, sem gerência
-do Fly, só na rede privada. **Nada disso foi criado ainda**: os artefatos e o runbook existem, e o
-primeiro deploy é decisão do dono do projeto.
+Produção é uma VPS (Hostinger, Ubuntu 24.04) com Docker Compose: Caddy na frente (só as portas 80
+e 443, HTTPS automático), o binário (`--role=all`) e um Postgres 18 com a imagem oficial, os dois
+só na rede interna do compose (`deploy/vps/`). **O primeiro deploy é feito com o dono, guiado
+pelo runbook.**
 
 - **Imagem:** ~7,6 MB comprimida. A de produção sai do mesmo código e das mesmas bases fixadas
   por digest que o E2E testou, mas é construída de novo no `publish` (amd64 e arm64) e
   **reescaneada** pelo Trivy antes de ganhar as tags `:<sha do commit>` e `:latest`.
 - **Deploy:** sempre manual (Actions → deploy → Run workflow), só da `main` e só de um commit
   que está nela, com o **SHA do commit** como entrada. O job resolve a tag `:<sha>`, que só
-  existe depois do reescaneamento, no digest dela, copia a imagem por esse digest para o
-  registry do Fly e faz o deploy. No GitHub Free com repositório privado não há revisor
-  obrigatório: quem pode disparar é quem tem acesso de escrita ao repositório (hoje, só o dono),
-  e os tokens do Fly são secrets de repositório.
-- **Backup:** dump lógico diário, cifrado com `age`, restaurado num banco descartável e
-  conferido (dono das tabelas, RLS com `FORCE`, contagens, partições). Uma checagem que falha
-  sai com código 3. Disco acima de 85% sai com código 4: o dump já conferido é cifrado e guardado
+  existe depois do reescaneamento, no digest dela, baixa a imagem linux/amd64 por esse digest e
+  a entrega à VPS por SSH, com a host key fixada num secret e uma chave que só alcança o script
+  de entrada (`deploy/vps/vigilume-entrada`). A VPS confere a imagem, troca o app e volta
+  sozinha para a versão anterior se a nova não ficar saudável. No GitHub Free com repositório
+  privado não há revisor obrigatório: quem pode disparar é quem tem acesso de escrita ao
+  repositório (hoje, só o dono).
+- **Backup:** dump lógico diário, feito na VPS, restaurado num banco descartável e conferido
+  (dono das tabelas, RLS com `FORCE`, contagens, partições), cifrado com a chave **pública** do
+  `age` (a privada fica só com o dono) e guardado como artifact por 30 dias. Uma checagem que
+  falha sai com código 3. Disco acima de 85% sai com código 4: o dump já conferido é guardado
   mesmo assim, e o job fica vermelho no fim.
 
-Runbook: [`docs/deploy/fly.md`](docs/deploy/fly.md).
+Runbook: [`docs/deploy/vps.md`](docs/deploy/vps.md).
 
 ## O que ficou de fora, e por quê
 
@@ -237,7 +239,7 @@ Runbook: [`docs/deploy/fly.md`](docs/deploy/fly.md).
 - **Domínio próprio na status page**: verificação de DNS é escopo próprio.
 - **Réplica, failover e PITR do Postgres**: um nó com snapshot diário e dump diário basta para
   este volume; no pior caso, perde-se um dia de checks.
-- **Métricas raspadas em produção**: exigiriam abrir o endpoint na rede privada do Fly.
+- **Métricas raspadas em produção**: exigiriam um coletor e abrir o endpoint na rede do compose.
 - **Cotas por usuário no sondador e no despacho**: só o operador cria contas (pelo CLI), então
   quem as esgotaria é uma conta que o próprio dono criou. Volta à mesa se o cadastro abrir.
 
@@ -247,4 +249,4 @@ e nos [planos](docs/superpowers/plans/).
 ## Licença
 
 Ainda não definida (repositório privado). A escolha é do dono do projeto e vem junto com a
-publicação ([runbook](docs/deploy/fly.md), "Tornar o repositório público").
+publicação ([runbook](docs/deploy/vps.md), "Tornar o repositório público").

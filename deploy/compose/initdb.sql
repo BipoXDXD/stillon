@@ -1,7 +1,7 @@
--- Papel e banco da aplicação. É o MESMO SQL em três lugares: o init do
--- Postgres do compose, o banco descartável em que o backup é restaurado todo
--- dia, e o console do Postgres de produção (docs/deploy/fly.md, passo 4, com
--- senha nova).
+-- Papel e banco da aplicação. É o MESMO SQL em dois lugares: o init do
+-- Postgres do compose e o banco descartável em que o backup é restaurado todo
+-- dia. O Postgres de produção cria os papéis com deploy/vps/initdb.sh, com as
+-- senhas geradas na VPS.
 --
 -- O papel é comum de propósito: sem SUPERUSER e sem BYPASSRLS, que
 -- atravessariam a row-level security em silêncio. O boot recusa um papel

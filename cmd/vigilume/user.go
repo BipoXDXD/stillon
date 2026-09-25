@@ -53,7 +53,7 @@ type entradaDaSenha struct {
 	// pipe: uma linha só, lida daqui.
 	pipe io.Reader
 	// avisarPipe: o stdin não é terminal, mas o stderr é — uma pessoa digitando
-	// num `docker exec -i` sem -t, ou num `fly ssh console -C`. Sem o aviso, o
+	// num `docker exec -i` sem -t, ou num `docker compose exec -T`. Sem o aviso, o
 	// comando parece travado: espera a linha em silêncio, e com eco.
 	avisarPipe bool
 }
