@@ -258,8 +258,10 @@ diag_app() {
     done
 }
 de_pe=0
-for i in $(seq 1 25); do
-    dc rm -sf app >/dev/null 2>&1
+for i in $(seq 1 15); do
+    # A pilha inteira nova a cada volta, como no 2a de verdade (o banco faz
+    # o init, e o app sobe logo que ele fica saudável).
+    dc down -v --remove-orphans >/dev/null 2>&1
     docker events --format '{{.TimeNano}} {{.Action}} {{index .Actor.Attributes "name"}} exit={{index .Actor.Attributes "exitCode"}}' \
         --filter label=com.docker.compose.project=stillon-teste-vps --filter type=container > "$TARS/ev" 2>&1 &
     ev=$!
@@ -283,7 +285,7 @@ for i in $(seq 1 25); do
         awk -v t0="$t0" '{ $1 = int(($1 - t0) / 1000000) "ms"; print }' "$TARS/ev" | grep -v 'exec_' | tail -n 60
     fi
 done
-echo "DIAG 2a: app de pé logo depois do código 4 em $de_pe de 25"
+echo "DIAG 2a: app de pé logo depois do código 4 em $de_pe de 15 (pilha nova a cada volta)"
 dc rm -sf app >/dev/null 2>&1
 
 # 2b. O deploy saudável.

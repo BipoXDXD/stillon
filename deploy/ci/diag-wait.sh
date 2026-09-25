@@ -38,7 +38,7 @@ docker pull -q alpine:3 >/dev/null
 docker compose up -d --wait --wait-timeout 5 >/dev/null 2>&1
 zeros=0
 codigos=
-for _ in $(seq 1 40); do
+for _ in $(seq 1 20); do
     docker compose up -d --wait --wait-timeout 2 > saida 2>&1
     c=$?
     codigos="$codigos $c"
@@ -49,5 +49,5 @@ for _ in $(seq 1 40); do
     fi
 done
 echo "códigos:$codigos"
-echo "DIAG: up --wait --wait-timeout 2 saiu 0 com o app em starting: $zeros de 40"
+echo "DIAG: up --wait --wait-timeout 2 saiu 0 com o app em starting: $zeros de 20"
 docker compose down -t 1 >/dev/null 2>&1
