@@ -194,6 +194,21 @@ func TestDiscordRevalidatesTheURLBeforeSending(t *testing.T) {
 	}
 }
 
+// C3 (Plano 10) não muda o despacho: um webhook que redireciona sem fim
+// continua falha definitiva de canal inválido, como quando o erro era
+// ErrBlocked. Sem isto, virava falha de rede e seria tentado de novo.
+func TestDiscordRedirectLoopIsAPermanentFailure(t *testing.T) {
+	srv, client, _ := provedor(t, func(w http.ResponseWriter) {
+		w.Header().Set("Location", "/api/webhooks/1/t")
+		w.WriteHeader(http.StatusFound)
+	})
+	d := &Discord{client: client, validate: aceitarQualquer}
+	err := d.Send(context.Background(), crypto.Secret(srv.URL+"/api/webhooks/1/t"), evAberto)
+	if se := comoSendError(t, err); se.Reason != ReasonInvalidChannel || !se.Permanent {
+		t.Errorf("redirecionamento sem fim deu %+v, queria invalid_channel permanente", se)
+	}
+}
+
 // O SendError não carrega o erro de origem, que traz a URL com o token.
 func TestSendErrorNeverCarriesTheWebhookToken(t *testing.T) {
 	d := &Discord{client: safedial.NewClient(0), validate: aceitarQualquer}
