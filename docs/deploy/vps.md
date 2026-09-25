@@ -526,7 +526,7 @@ sudo ufw enable
 ```
 
 O `enable` avisa que pode derrubar conexões SSH: responda `y`. (A 22 foi liberada antes, então a
-sua não cai.) ⟦VPS: se o compose.prod.yaml publicar 443/udp para HTTP/3, acrescente aqui `sudo ufw allow 443/udp` e a regra UDP 443 no passo 2.10; se não, apague esta frase⟧
+sua não cai.)
 
 **Por quê:** fecha tudo o que chega, menos SSH (22), HTTP (80, que o Caddy usa para o certificado e
 para redirecionar) e HTTPS (443). **Atenção:** o Docker passa por cima do `ufw` nas portas que um
@@ -718,7 +718,36 @@ valores, com permissão `600` (só o root lê).
 **Deve aparecer:** `compose.prod.yaml`, `Caddyfile`, `initdb.sh` e `.env`, todos com dono `root`;
 o `.env` com `-rw-------`.
 
-⟦VPS: se o vigilume-entrada precisar de arquivos ou pacotes do host além destes (por exemplo o `age`, o `deploy/backup/backup.sh`, o `verificar.sql` ou o `deploy/compose/initdb.sql` para o backup), o comando exato de instalação vai aqui, com o destino; se não precisar, apague este parágrafo⟧
+**Faça também** os scripts do backup e os pacotes de que o `vigilume-entrada` precisa. No seu
+computador:
+
+```bash
+cd ~/Projetos/Go/Vigilume
+scp deploy/backup/backup.sh deploy/backup/verificar.sql deploy/compose/initdb.sql \
+    vigilume:vigilume-arquivos/
+```
+
+Depois, na VPS:
+
+```bash
+sudo apt install -y age curl util-linux
+cd ~/vigilume-arquivos
+sudo install -d -m 0755 -o root -g root /opt/vigilume/deploy/backup /opt/vigilume/deploy/compose
+sudo install -m 0644 -o root -g root backup.sh verificar.sql /opt/vigilume/deploy/backup/
+sudo install -m 0644 -o root -g root initdb.sql /opt/vigilume/deploy/compose/
+ls -la /opt/vigilume/deploy/backup /opt/vigilume/deploy/compose
+command -v age curl flock
+```
+
+**Por quê:** o verbo `backup` do `vigilume-entrada` roda o `deploy/backup/backup.sh` do
+repositório, sem mudança, dentro de um Postgres descartável, e ele acha o `initdb.sql` por
+`../compose/`: por isso os três arquivos ficam em `/opt/vigilume/deploy/` com o mesmo layout do
+repositório. O `age` cifra o dump com a chave pública (passo 3.5), o `flock` (do `util-linux`)
+impede que um deploy e um backup rodem ao mesmo tempo, e o `curl` é o que o vigia (bloco 8) usa.
+
+**Deve aparecer:** `backup.sh` e `verificar.sql` em `/opt/vigilume/deploy/backup`, `initdb.sql`
+em `/opt/vigilume/deploy/compose`, todos do `root`, e os três caminhos do `command -v` (por
+exemplo `/usr/bin/age`, `/usr/bin/curl`, `/usr/bin/flock`).
 
 ### 3.4 Os segredos, gerados na VPS
 
@@ -726,7 +755,7 @@ o `.env` com `-rw-------`.
 
 ```bash
 cd /opt/vigilume
-for v in ⟦VPS-SENHA-DO-SUPERUSUARIO⟧ VIGILUME_APP_PASSWORD VIGILUME_BACKUP_PASSWORD; do
+for v in POSTGRES_PASSWORD VIGILUME_APP_PASSWORD VIGILUME_BACKUP_PASSWORD; do
   sudo sed -i "s|^$v=\$|$v=$(openssl rand -hex 32)|" .env
 done
 for v in MASTER_KEY JWT_SECRET IP_HASH_KEY; do
@@ -734,7 +763,8 @@ for v in MASTER_KEY JWT_SECRET IP_HASH_KEY; do
 done
 ```
 
-(`⟦VPS-SENHA-DO-SUPERUSUARIO⟧` é o nome, no `env.exemplo`, da senha do superusuário do Postgres.)
+(`POSTGRES_PASSWORD` é a senha do superusuário do Postgres; `VIGILUME_APP_PASSWORD` e
+`VIGILUME_BACKUP_PASSWORD`, as dos papéis do app e do backup.)
 
 **Por quê:** segredo gerado na própria VPS nunca passou pela rede nem por outro computador. As
 senhas do Postgres são hexadecimais porque entram em URLs `postgres://usuário:senha@…`, e o `/`,
@@ -747,7 +777,7 @@ base64, o formato que o boot exige.
 sudo nano /opt/vigilume/.env
 ```
 
-- ⟦VPS: nome da variável do domínio⟧: o seu domínio, sem `https://` (o valor de `DOMINIO`).
+- `VIGILUME_DOMINIO`: o seu domínio, sem `https://` (o valor de `DOMINIO`).
 - `RESEND_API_KEY`: cole a chave do gerenciador (passo 1.5). Este `.env` é um dos dois lugares
   onde segredo pode ser colado.
 - `EMAIL_FROM`: `Vigilume <alertas@avisos.seu-domínio>` (passo 1.5).
@@ -755,7 +785,11 @@ sudo nano /opt/vigilume/.env
 
 Salve com `Ctrl+O` e Enter, saia com `Ctrl+X`.
 
-⟦VPS: conferir que o env.exemplo tem exatamente estas variáveis e nenhuma outra sem valor; se o compose de produção derivar PUBLIC_BASE_URL, CORS_ORIGIN, DATABASE_URL e TRUSTED_PROXIES sozinho (do domínio, das senhas e do IP fixo do Caddy), dizer isso aqui em uma frase⟧
+O `.env` tem só estas dez variáveis. O resto o `compose.prod.yaml` monta sozinho: a
+`PUBLIC_BASE_URL` e a `CORS_ORIGIN` (`https://` + `VIGILUME_DOMINIO`), a `DATABASE_URL` (com a
+`VIGILUME_APP_PASSWORD` e o IP fixo do banco) e o `TRUSTED_PROXIES` (o IP fixo do Caddy). O
+compose lê o `.env` pela interpolação (`${…}`), e cada serviço recebe só as variáveis de que
+precisa: o Caddy não vê segredo nenhum, e o app não vê a senha do superusuário nem a do backup.
 
 **Confira:**
 
@@ -913,7 +947,8 @@ ssh -i ~/.ssh/vigilume_deploy -o IdentitiesOnly=yes deploy@"$VPS" ls / ; echo "s
 ssh -i ~/.ssh/vigilume_deploy -o IdentitiesOnly=yes -W 172.30.0.4:5432 deploy@"$VPS" ; echo "saiu com $?"
 ```
 
-- As duas primeiras: ⟦VPS: a mensagem de uso que o vigilume-entrada imprime⟧ e `saiu com 2` (pedido
+- As duas primeiras: `vigilume-entrada: pedido vazio (uso: "deploy <sha de 40 hex> sha256:<64 hex>" ou "backup")`
+  (a segunda com `caractere não permitido no pedido` no lugar de `pedido vazio`) e `saiu com 2` (pedido
   recusado; nada de lista de arquivos, nada de terminal). A primeira pode mostrar antes
   `PTY allocation request failed on channel 0`: é o `restrict` negando o terminal, como deve.
 - A terceira: `open failed: administratively prohibited` e `saiu com 255` (o túnel para o banco
@@ -989,8 +1024,6 @@ rm -r ~/vigilume-arquivos
 **Por quê:** os arquivos já estão instalados nos lugares certos; cópias soltas envelhecem e
 confundem. Na próxima mudança de `deploy/vps/` você recopia (bloco 10, "Arquivos da VPS").
 
-⟦VPS: se o primeiro deploy precisar do banco e do Caddy de pé antes (o verbo `deploy` só faz `up -d app`), o comando que os sobe e o que conferir (`db` healthy, `docker compose exec db psql …` com os papéis `vigilume_app f f` e `vigilume_backup f t`) vai aqui como passo 4.7b; se o verbo sobe tudo, apague este parágrafo⟧
-
 ### 4.8 O primeiro deploy, pelo Actions
 
 **Antes:** o `getent` do passo 1.4 já devolve o IP da VPS (o Caddy precisa disso para o
@@ -1004,19 +1037,21 @@ certificado).
    gh run list --repo BipoXDXD/vigilume --workflow ci.yml --branch main --limit 3
    git -C ~/Projetos/Go/Vigilume rev-parse origin/main
    ```
-2. **Actions → ⟦WORKFLOWS: nome do workflow de deploy⟧ → Run workflow**, na `main`, com o SHA no campo
-   ⟦WORKFLOWS: nome do input do SHA⟧. Ou, pelo terminal:
+2. **Actions → deploy → Run workflow**, na `main`, com o SHA no campo `sha`. Ou, pelo
+   terminal:
    ```bash
    SHA=$(git -C ~/Projetos/Go/Vigilume rev-parse origin/main)
    echo "$SHA"
-   gh workflow run deploy.yml --repo BipoXDXD/vigilume --ref main -f ⟦WORKFLOWS-INPUT-DO-SHA⟧="$SHA"
+   gh workflow run deploy.yml --repo BipoXDXD/vigilume --ref main -f sha="$SHA"
    gh run watch --repo BipoXDXD/vigilume
    ```
 
 **Por quê:** o deploy é sempre manual e sempre de uma imagem que passou no CI e no Trivy. O job
-resolve a tag no digest, baixa a imagem do GHCR, manda por SSH (`docker save | ssh deploy@… deploy
-<sha> <id>`), e o script na VPS confere o ID, sobe a versão nova, espera o healthcheck por até
-90 s e volta sozinho à anterior se ela não ficar saudável.
+resolve a tag no digest, baixa do GHCR a imagem linux/amd64 por esse digest (um tar em layout
+OCI, sem nome), manda por SSH (`ssh deploy@… "deploy <sha> <id>"`, com o tar na entrada padrão), e
+o script na VPS confere o ID, sobe a pilha inteira com a versão nova (no primeiro deploy, o Caddy e
+o banco sobem junto com o app; nos seguintes, só o app muda), espera o healthcheck por até 90 s e
+volta sozinho à anterior se ela não ficar saudável.
 
 **Deve aparecer:** o job verde. Os códigos do script, se ficar vermelho, estão no bloco 10
 ("Depuração do deploy").
@@ -1274,14 +1309,14 @@ scp deploy/vps/vigia.sh deploy/vps/vigilume-vigia.service deploy/vps/vigilume-vi
 
 ```bash
 cd ~/vigilume-arquivos
-sudo install -m 0755 -o root -g root vigia.sh ⟦VPS-DESTINO-DO-VIGIA⟧
+sudo install -m 0755 -o root -g root vigia.sh /usr/local/sbin/vigilume-vigia
 sudo install -m 0644 -o root -g root vigilume-vigia.service vigilume-vigia.timer /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now vigilume-vigia.timer
 rm -r ~/vigilume-arquivos
 ```
 
-(`⟦VPS-DESTINO-DO-VIGIA⟧` é o caminho que o `ExecStart` do `vigilume-vigia.service` espera.)
+(`/usr/local/sbin/vigilume-vigia` é o caminho que o `ExecStart` do `vigilume-vigia.service` espera.)
 
 **Por quê:** a cada minuto o timer faz um `curl` em `https://seu-domínio/healthz`, passando por
 DNS, certificado, Caddy e app como um visitante; se der certo, pinga a `HC_URL` do `.env`; se não,
@@ -1399,8 +1434,12 @@ curl -sk -o /dev/null -w '%{http_code}\n' -H 'Host: outro.exemplo' "https://$DOM
 curl -sk -o /dev/null -w '%{http_code}\n' "https://$VPS/healthz"; echo "curl saiu com $?"
 ```
 
-**Deve aparecer:** ⟦VPS: o que o Caddy responde a um Host desconhecido nas três formas (por exemplo, sem 200 do app, e a terceira falhando no TLS)⟧. Nunca `200` com
-o corpo do Vigilume.
+**Deve aparecer:** `308` na primeira (o Caddy manda todo `http` para o `https`, sem passar pelo
+app); `200` na segunda, mas **vazio e do próprio Caddy**: nenhum bloco casa com esse `Host`, e o
+app não é chamado; e `000` com `curl saiu com 35` na terceira (sem certificado para o IP, o TLS
+nem fecha). Para ver que a segunda não veio do app, repita-a com `-D -` no lugar do
+`-o /dev/null -w …`: `content-length: 0` e nenhum `x-trace-id` (todo pedido que chega ao app
+volta com ele). Nunca `200` com o corpo do Vigilume.
 
 **Por quê:** o Caddy só tem o bloco do seu domínio; uma requisição com outro nome não chega ao app.
 
@@ -1495,7 +1534,7 @@ do próprio job no Actions (o script manda o log dele pela saída de erro, que o
 
 ### Deploy seguinte
 
-Actions → `ci` na `main` → espere o `publish` verde → Actions → ⟦WORKFLOWS: nome do workflow de deploy⟧ →
+Actions → `ci` na `main` → espere o `publish` verde → Actions → `deploy` →
 **Run workflow** na `main`, com o SHA completo do commit (passo 4.8). O script guarda a versão que
 estava no ar em `/opt/vigilume/versao-anterior` e mantém as 3 últimas imagens. Durante a troca há
 alguns segundos de `502` (o painel mostra "Resposta inesperada do servidor (502)"; recarregue).
@@ -1527,7 +1566,7 @@ O `backup` usa os mesmos códigos do `deploy/backup/backup.sh`: 0, cópia restau
 mas o disco passou de 85% (o job fica vermelho no fim, de propósito); 1, outro erro (não houve
 backup); 255, o SSH não chegou ao script.
 
-O store: se a mensagem for ⟦VPS: a mensagem exata do vigilume-entrada para store que não é o do containerd⟧, confira `sudo docker info -f '{{.DriverStatus}}'` e o `daemon.json` do passo 3.2.
+O store: se a mensagem for `vigilume-entrada: o Docker não usa o image store containerd; veja docs/deploy/vps.md (Docker)`, confira `sudo docker info -f '{{.DriverStatus}}'` e o `daemon.json` do passo 3.2.
 
 A imagem do app **não tem shell** (distroless): `vc exec app sh` não funciona. O que serve: os
 logs, os subcomandos do binário (`vc exec app /vigilume version`, `… healthcheck`, `… user …`) e o
@@ -1548,16 +1587,20 @@ host)", sem repetir o valor.
 ### Arquivos da VPS: quando algo em `deploy/vps/` muda na `main`
 
 O deploy troca só a imagem do app. Se um PR mudar `compose.prod.yaml`, `Caddyfile`, `initdb.sh`,
-`vigilume-entrada`, o `sudoers` ou os arquivos do vigia, recopie o que mudou, como nos passos 3.3,
-4.1 e 8 (o `scp` para `~/vigilume-arquivos` e o `sudo install` para o mesmo destino), e aplique:
+`vigilume-entrada`, o `sudoers`, os arquivos do vigia ou os scripts do backup
+(`deploy/backup/backup.sh`, `deploy/backup/verificar.sql`, `deploy/compose/initdb.sql`), recopie o
+que mudou, como nos passos 3.3, 4.1 e 8 (o `scp` para `~/vigilume-arquivos` e o `sudo install`
+para o mesmo destino), e aplique:
 
 ```bash
-vc up -d            # depois de trocar compose.prod.yaml ou Caddyfile
+vc up -d            # depois de trocar compose.prod.yaml
+vc restart caddy    # depois de trocar o Caddyfile (o up -d não o relê)
 sudo systemctl daemon-reload && sudo systemctl restart vigilume-vigia.timer   # depois do vigia
 ```
 
 Para ver o que mudou desde a última cópia: no seu computador,
-`git log --oneline -- deploy/vps/` e `git diff <commit da última cópia> main -- deploy/vps/`. O
+`git log --oneline -- deploy/vps/ deploy/backup/ deploy/compose/initdb.sql` e
+`git diff <commit da última cópia> main -- deploy/vps/ deploy/backup/ deploy/compose/initdb.sql`. O
 `initdb.sh` só roda num banco **vazio**: trocá-lo não muda um banco que já existe.
 
 ### Atualizações do sistema e do Docker
@@ -1616,7 +1659,7 @@ senha nova duas vezes, sem eco; encerra todas as sessões).
 | Ensaio de restauração | Automático em cada `backup`; à mão a cada trimestre (passo 7.2) | Diário e trimestral |
 | Cópia local | Baixe um artifact por mês para o seu computador (ou um disco externo): os do GitHub somem em 30 dias | Mensal |
 | Disco | O `backup` avisa acima de 70% e **falha** acima de 85% (o dump do dia ainda é guardado; o job fica vermelho no fim). O disco é o da VPS: `df -h /var/lib/docker` na VPS. Para liberar: logs e imagens velhas (`sudo docker image prune` só depois de conferir `sudo docker image ls`; o script já guarda só 3 versões do app); se for o banco crescendo, o plano maior da Hostinger | Quando avisar |
-| Upgrade menor (18.x) | PR do Dependabot em `deploy/vps/db/Dockerfile`. O mesmo digest está em mais lugares, que sobem juntos no mesmo PR (`deploy/vps/db/Dockerfile`, `compose.yaml`, `.github/workflows/ci.yml`, `internal/storage/testdb` ⟦VPS: e o compose.prod.yaml, se o digest estiver nele⟧). Depois do merge, recopie o `compose.prod.yaml` (seção acima) e `vc up -d db` (10–30 s fora). O backup passa a usar a imagem nova sozinho | Quando o Dependabot abrir |
+| Upgrade menor (18.x) | PR do Dependabot em `deploy/vps/db/Dockerfile`. O mesmo digest está em mais lugares, que sobem juntos no mesmo PR (`deploy/vps/db/Dockerfile`, `compose.yaml`, `.github/workflows/ci.yml`, `internal/storage/testdb` e `deploy/vps/compose.prod.yaml`; o Dependabot já muda o do compose de produção junto). Depois do merge, recopie o `compose.prod.yaml` (seção acima) e `vc up -d db` (10–30 s fora). O backup passa a usar a imagem nova sozinho | Quando o Dependabot abrir |
 | Upgrade maior (18 → 19) | **Não** vem por PR: o `dependabot.yml` ignora versão maior de `postgres`. Dump e restauração num volume novo (abaixo) | ~1 vez por ano |
 
 #### Upgrade maior do Postgres
@@ -1634,7 +1677,9 @@ Numa janela calma, com o backup do dia verde:
    sudo ls -l /root/vigilume-antes-do-19.dump
    ```
 3. Por PR, a imagem nova em `deploy/vps/db/Dockerfile` e nos outros lugares do digest, e o
-   `compose.prod.yaml` apontando o `db` para um **volume novo** ⟦VPS: nome do volume do Postgres e como o compose.prod.yaml o declara⟧, para o volume velho continuar
+   `compose.prod.yaml` apontando o `db` para um **volume novo** (hoje o volume se chama `pgdata`, `vigilume_pgdata` no `docker volume ls`: montado
+   como `pgdata:/var/lib/postgresql` no serviço `db` e declarado no bloco `volumes:` do fim do
+   arquivo; o novo, por exemplo `pgdata19`, troca o nome nos dois lugares), para o volume velho continuar
    intacto. Recopie o `compose.prod.yaml` e suba **só o banco**: `vc up -d db` (o `initdb.sh`
    cria os papéis no volume novo com as senhas do `.env`).
 4. Restaure no banco novo como superusuário, preservando os donos, e apague o dump:

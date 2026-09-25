@@ -23,20 +23,20 @@ repositório" é o que o CI roda.
 
 | # | Obrigação | Como foi atendida | Prova no repositório | Verificação na VPS |
 |---|---|---|---|---|
-| 1 | O Caddy remove `Fly-Client-IP`, `X-Real-IP` e `CF-Connecting-IP` do cliente, e **não** configura `trusted_proxies` | `deploy/vps/Caddyfile`: um bloco de site só para o domínio, com a remoção dos três cabeçalhos na entrada, sem `trusted_proxies` (o Caddy substitui o `X-Forwarded-For` pelo IP real) | ⟦VPS: teste do CI que manda os cabeçalhos forjados e confere o IP visto⟧ | runbook 9.2 (o `429` continua com os cabeçalhos forjados) |
-| 2 | `TRUSTED_PROXIES` = o IP fixo do Caddy, `CLIENT_IP_HEADER` vazio | Rede `vigilume` 172.30.0.0/24 fixada por `ipam` no `compose.prod.yaml`, Caddy em 172.30.0.2; o app com `TRUSTED_PROXIES=172.30.0.2/32` e `CLIENT_IP_HEADER` vazio | ⟦VPS: teste que lê o compose.prod.yaml e confere os dois valores⟧ | runbook 9.2 (sem o aviso da B3 no log; o teste de duas redes separa os baldes) |
-| 3 | Só 80 e 443, do Caddy, publicadas; sem `ports:` no `db` e no `app`; sem IPv6 global na rede do compose | `compose.prod.yaml` com `ports` só no `caddy` e a rede sem IPv6; na VPS, `ufw` e o firewall do painel com 22, 80 e 443 | ⟦VPS: teste do compose de produção (portas publicadas e rede sem IPv6)⟧ | runbook 9.1 (`nmap` de fora, `ss -tlnp` de dentro) |
-| 4 | `GOMEMLIMIT` no app e `mem_limit` em cada serviço | `compose.prod.yaml` | ⟦VPS: teste que confere `mem_limit` por serviço e `GOMEMLIMIT` abaixo do do app⟧ | runbook 9.5 |
-| 5 | Compose de produção sem `seed`, sem `x-ambiente`, sem chave ou senha do repositório; segredos num `env_file` fora do git, gerados com `openssl rand`; `restart: unless-stopped` em tudo; o runbook diz que o `compose.yaml` não vai para o servidor e a `PUBLIC_BASE_URL` é `https://<domínio>` | `compose.prod.yaml` + `deploy/vps/env.exemplo` (modelo sem valores) + `deploy/vps/initdb.sh` (papéis a partir das senhas do ambiente); runbook "Como ler este runbook" (a frase literal) e 3.4 (segredos gerados na VPS, cópia no gerenciador) | ⟦VPS: teste que confere a ausência do seed e de chave do repositório no compose de produção⟧ | runbook 3.4 e 9.5 (`config --services` sem `seed`) e 9.3 (`Host` estranho não chega ao app) |
-| 6 | Backup e deploy da VPS; a chave do `age` gerada fora do repositório | `deploy.yml` e `backup.yml` reescritos para `ssh deploy@VPS deploy …`/`backup`, com a chave presa a `deploy/vps/vigilume-entrada` por `restrict,command=` e `sudoers`; host key fixada em `VPS_HOST_KEY`; a chave do `age` nasce em `~/vigilume-backup.key`, fora do repositório (runbook 3.5) | ⟦VPS: testes do vigilume-entrada⟧; `deploy/ci/checar-workflows.sh` (job `workflows` do CI: nenhum `StrictHostKeyChecking=no`, nada do Fly) e `deploy/ci/vps.sh` (os códigos do deploy e do backup com mensagem) | runbook 4.4 (a chave só faz o que deve), 4.8 (primeiro deploy), 7.1 e 7.2 (backup e ensaio de restauração) |
-| 7 | Um vigia externo do `/healthz` público | `deploy/vps/vigia.sh` + `vigilume-vigia.service` + `vigilume-vigia.timer`: a cada minuto, `curl` no `/healthz` público e ping no healthchecks.io (`HC_URL` no `.env`), `/fail` quando falha | ⟦VPS: teste do vigia.sh (ping de sucesso e /fail)⟧ | runbook 8 (derrubar o app de propósito e receber o e-mail) |
+| 1 | O Caddy remove `Fly-Client-IP`, `X-Real-IP` e `CF-Connecting-IP` do cliente, e **não** configura `trusted_proxies` | `deploy/vps/Caddyfile`: um bloco de site só para o domínio, com a remoção dos três cabeçalhos na entrada, sem `trusted_proxies` (o Caddy substitui o `X-Forwarded-For` pelo IP real) | `deploy/ci/checar-vps.sh` (job `vps` do CI), bloco 5 (login com `X-Real-IP`, `Fly-Client-IP`, `CF-Connecting-IP` e `X-Forwarded-For` forjados: o `ip_hash` da sessão é o da conexão, não o forjado) e bloco 6 (com um `CLIENT_IP_HEADER` posto por engano, o app cai no IP do Caddy: o Caddy tirou o cabeçalho) | runbook 9.2 (o `429` continua com os cabeçalhos forjados) |
+| 2 | `TRUSTED_PROXIES` = o IP fixo do Caddy, `CLIENT_IP_HEADER` vazio | Rede `vigilume` 172.30.0.0/24 fixada por `ipam` no `compose.prod.yaml`, Caddy em 172.30.0.2; o app com `TRUSTED_PROXIES=172.30.0.2/32` e `CLIENT_IP_HEADER` vazio | `deploy/ci/checar-vps.sh`, bloco 1 (a config resolvida do `compose.prod.yaml`: Caddy em 172.30.0.2, `TRUSTED_PROXIES` = `172.30.0.2/32`, `CLIENT_IP_HEADER` vazio) e bloco 5 (o `ip_hash` do login não é o do Caddy, nem aparece o aviso da B3) | runbook 9.2 (sem o aviso da B3 no log; o teste de duas redes separa os baldes) |
+| 3 | Só 80 e 443, do Caddy, publicadas; sem `ports:` no `db` e no `app`; sem IPv6 global na rede do compose | `compose.prod.yaml` com `ports` só no `caddy` e a rede sem IPv6; na VPS, `ufw` e o firewall do painel com 22, 80 e 443 | `deploy/ci/checar-vps.sh`, bloco 1 (só o `caddy` publica, exatamente `0.0.0.0:80` e `0.0.0.0:443` TCP; `enable_ipv6: false`; sub-rede 172.30.0.0/24), bloco 2b (na pilha de pé, só `caddy:80` e `caddy:443` publicadas, `app` e `db` sem `PortBindings`, rede sem IPv6) e bloco 7 (de outra rede do Docker o banco não responde) | runbook 9.1 (`nmap` de fora, `ss -tlnp` de dentro) |
+| 4 | `GOMEMLIMIT` no app e `mem_limit` em cada serviço | `compose.prod.yaml` | `deploy/ci/checar-vps.sh`, bloco 1 (`mem_limit` e `restart: unless-stopped` em `caddy`, `app` e `db`; `GOMEMLIMIT` abaixo do `mem_limit` do app) | runbook 9.5 |
+| 5 | Compose de produção sem `seed`, sem `x-ambiente`, sem chave ou senha do repositório; segredos num `env_file` fora do git, gerados com `openssl rand`; `restart: unless-stopped` em tudo; o runbook diz que o `compose.yaml` não vai para o servidor e a `PUBLIC_BASE_URL` é `https://<domínio>` | `compose.prod.yaml` + `deploy/vps/env.exemplo` (modelo sem valores do `/opt/vigilume/.env`, que o compose lê pela interpolação, e não por `env_file`: cada serviço recebe só o que usa) + `deploy/vps/initdb.sh` (papéis a partir das senhas do ambiente); runbook "Como ler este runbook" (a frase literal) e 3.4 (segredos gerados na VPS, cópia no gerenciador) | `deploy/ci/checar-vps.sh`, bloco 1 (serviços exatamente `app`, `caddy` e `db`, sem `seed`; nenhuma chave de demonstração no arquivo; `PUBLIC_BASE_URL` = `https://<domínio>`; o `env.exemplo` sem valor e com toda variável que o compose lê; o Caddy sem segredo e o app sem a senha do superusuário nem a do backup) e bloco 4 (`Host` estranho não chega ao app) | runbook 3.4 e 9.5 (`config --services` sem `seed`) e 9.3 (`Host` estranho não chega ao app) |
+| 6 | Backup e deploy da VPS; a chave do `age` gerada fora do repositório | `deploy.yml` e `backup.yml` reescritos para `ssh deploy@VPS deploy …`/`backup`, com a chave presa a `deploy/vps/vigilume-entrada` por `restrict,command=` e `sudoers`; host key fixada em `VPS_HOST_KEY`; a chave do `age` nasce em `~/vigilume-backup.key`, fora do repositório (runbook 3.5) | `deploy/ci/checar-vps.sh`, blocos 2 (primeiro deploy doente e deploy saudável), 8a–8f (pedidos recusados com 2, imagem divergente e tar com nome com 3, rollback com 4, as 3 últimas imagens, store que não é o do containerd com 1, `sudoers` num Ubuntu 24.04) e 9 (backup: só o cifrado na saída padrão, 1 sem chave e 3 com a cópia reprovada); `deploy/ci/checar-workflows.sh` (job `workflows` do CI: nenhum `StrictHostKeyChecking=no`, nada do Fly) e `deploy/ci/vps.sh` (os códigos do deploy e do backup com mensagem, testados com ssh falso por `deploy/ci/testar-vps.sh`) | runbook 4.4 (a chave só faz o que deve), 4.8 (primeiro deploy), 7.1 e 7.2 (backup e ensaio de restauração) |
+| 7 | Um vigia externo do `/healthz` público | `deploy/vps/vigia.sh` + `vigilume-vigia.service` + `vigilume-vigia.timer`: a cada minuto, `curl` no `/healthz` público e ping no healthchecks.io (`HC_URL` no `.env`), `/fail` quando falha | `deploy/ci/checar-vigia.sh` (job `vps` do CI), blocos 1 e 2 (saudável pinga a `HC_URL`; fora do ar pinga `HC_URL/fail` e sai com erro), 3 a 6 (barra no fim, sem `HC_URL`, sem domínio, certificado conferido e prazos) e 7 (as unidades: timer a cada minuto, `DynamicUser`, `LoadCredential`, `ExecStart=/usr/local/sbin/vigilume-vigia`) | runbook 8 (derrubar o app de propósito e receber o e-mail) |
 
 **Também fechado no Plano 11**, dos itens que o Plano 10 mandou para cá:
 
 - **`age-keygen -o ~/vigilume-backup.key`, fora do repositório, no runbook** (banco S3 da revisão):
   runbook 3.5.
 - **O Fly**: `docs/deploy/fly.md` apagado, com o genérico migrado para `docs/deploy/vps.md`
-  (reset-2fa, operação do Postgres, restauração, "tornar o repositório público"); ⟦CONTROLADOR: o que o grupo vps removeu (`fly.toml`, `deploy/fly/`)⟧; os workflows não falam mais com o Fly
+  (reset-2fa, operação do Postgres, restauração, "tornar o repositório público"); o `fly.toml` e o `deploy/fly/` (o `Dockerfile` e o `fly.toml` do Postgres) apagados, com o digest do Postgres de produção agora em `deploy/vps/db/Dockerfile`; os workflows não falam mais com o Fly
   (o `deploy/ci/checar-workflows.sh` do CI recusa qualquer menção fora de `docs/superpowers/`), e
   o Dependabot lê o digest do Postgres em `deploy/vps/db/Dockerfile`. Os secrets e variáveis de
   antes (`BACKUP_DATABASE_PASSWORD`, `AGE_RECIPIENT`, `PG_VOLUME_GB` e os tokens) saíram: o backup
@@ -94,7 +94,37 @@ E as do runbook (desta parte do Plano 11):
   "Arquivos da VPS").
 - **Não há rotação pronta da `MASTER_KEY` nem das senhas do Postgres** (runbook, "Trocar um
   segredo").
-- ⟦CONTROLADOR: os limites registrados pelos grupos vps e workflows⟧
+- **O passo do job `vps` que liga o image store do containerd no runner** (`daemon.json` +
+  `systemctl restart docker`) nunca rodou fora do GitHub: a máquina da validação já usava o
+  containerd. Um `daemon.json` inesperado no runner deixa o job vermelho no primeiro passo.
+- **O ID da imagem entre o runner e a VPS** (`<image-id>` = digest do manifesto linux/amd64; tar em
+  layout OCI do `crane pull --format oci`): a entrada foi testada com um layout OCI montado no
+  próprio teste, não com a saída do `crane`, e a VPS exige o image store do containerd (com o
+  clássico, todo deploy sai 1 com a mensagem). Se o `crane` puser
+  `org.opencontainers.image.ref.name` no `index.json`, todo deploy sai 3 ("o tar traz nome de
+  imagem"). Conferir no primeiro deploy guiado: o log mostra `Loaded image ID: sha256:<IMAGE_ID do
+  job>`.
+- **SSH de verdade nunca foi exercitado**: nem o `restrict,command=` com o `sudo` guardando o
+  `SSH_ORIGINAL_COMMAND` (provado num contêiner com `su deploy -c …`), nem o tar binário passando
+  por `ssh | sudo | script`, nem o `known_hosts` escrito a partir do `VPS_HOST_KEY` (as opções do
+  `ssh` foram conferidas com `ssh -G` e o resto com um ssh falso). O primeiro deploy guiado é a
+  prova.
+- **`docker compose up --wait` com o app em loop de reinício** sai em segundos no Compose medido
+  (v5.5.1); um Compose mais velho na VPS pode esperar os 90 s inteiros.
+- **O IP que o Caddy vê** só foi testado com o cliente no próprio host (o `docker-proxy` entrega o
+  IP do gateway); para clientes de fora, em IPv4, o Docker preserva a origem, e o runbook confere
+  no 9.2.
+- **O backup** roda o `backup.sh` como o usuário de quem chama (root na VPS), num Postgres
+  descartável com `--memory 3g` e os dados em `tmpfs` de 2 GB: um banco restaurado acima de ~2 GB
+  faz o backup sair 1 (hoje o banco é de MB; revisar quando o `backup.sh` mostrar mais de 1 GB).
+  Deploy e backup dividem uma trava (`flock -w 600`): um espera até 10 min atrás do outro.
+- **O `shellcheck` do job `workflows`** é o da imagem do runner, chamado direto; se ela deixar de
+  trazê-lo, o job fica vermelho (instalar por `apt-get` no passo). A perna 6 do
+  `checar-workflows.sh` procura o Fly por uma lista de termos: um termo novo da plataforma, fora
+  da lista, passaria.
+- **Host key só `ssh-ed25519`** (`HostKeyAlgorithms=ssh-ed25519`): uma VPS sem essa chave é
+  recusada com mensagem; trocar é uma linha. Um `255` que viesse da própria entrada (não vem: ela
+  só usa 0–4) cairia na mensagem de "falha de SSH".
 
 ## Fora de escopo do Plano 11, com destino
 
