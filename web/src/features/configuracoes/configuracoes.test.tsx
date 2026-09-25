@@ -1038,6 +1038,38 @@ describe('envio em voo nos diálogos do 2FA', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
   })
 
+  // I1 da revisão do Plano 10: o passo 1 da troca trava o diálogo (E1), e o
+  // rotate não tinha prazo. Com a rede presa, o diálogo ficava travado para
+  // sempre, sem botão de fechar. Agora o rotate tem o prazo dos confirms: no
+  // estouro o diálogo destrava com "Sem conexão…" e, se a prova era um código
+  // de recuperação, o aviso de que ele pode ter sido gasto (o rotate pode ter
+  // comitado). Sabotagens: tirar o sinal do totpTrocar → o diálogo continua
+  // travado, sem texto; tirar a resposta perdida do aviso de código de
+  // recuperação → o caso de recuperação fica sem o aviso.
+  it.each([
+    ['do app', TOTP_OK, false],
+    ['de recuperação', RECUPERACAO_OK, true],
+  ] as const)('troca: rotate que não responde no prazo destrava o diálogo (código %s)', async (_, codigo, gasto) => {
+    const r = await renderizarPainel('/settings', { prazoDoConfirmMs: 100 })
+    r.falsa.estado.totpLigado = true
+    await r.cliente.refetchQueries()
+    servidor.use(http.post('*/api/v1/auth/totp/rotate', () => new Promise<never>(() => {})))
+    await r.usuario.click(await screen.findByRole('button', { name: 'Trocar autenticador' }))
+    const dialogo = await screen.findByRole('dialog', { name: 'Trocar o autenticador' })
+    await r.usuario.type(within(dialogo).getByLabelText('Sua senha'), SENHA)
+    await r.usuario.type(within(dialogo).getByLabelText('Código do autenticador'), codigo)
+    await r.usuario.click(within(dialogo).getByRole('button', { name: 'Continuar' }))
+    await tique()
+    // Travado enquanto espera: o Esc não fecha.
+    await r.usuario.keyboard('{Escape}')
+    expect(screen.getByRole('dialog')).toBe(dialogo)
+    const alerta = await within(dialogo).findByRole('alert', {}, { timeout: 3000 })
+    expect(alerta).toHaveTextContent('Sem conexão com o servidor')
+    expect(alerta.textContent?.includes('pode ter sido consumido')).toBe(gasto)
+    await r.usuario.keyboard('{Escape}')
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+  })
+
   // A mesma coisa na ativação (totpConfirmar): sem rede ou sem resposta no
   // prazo, o 2FA pode ter sido ligado. Sabotagens: tirar o ramo da resposta
   // perdida da ativação → "Sem conexão…"; tirar o sinal do totpConfirmar →

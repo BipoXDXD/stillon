@@ -39,7 +39,9 @@ function erroDeCredencial(e: unknown, errado: string, codigoEnviado?: string): E
   // PENDENCIAS do Plano 6: o código de recuperação é consumido ANTES da
   // transação da troca de senha. Se ela falha depois (família revogada,
   // outra troca concorrente), o código já foi gasto.
-  if (e instanceof ApiError && e.status === 401 && ehDeRecuperacao(codigoEnviado)) {
+  // Sem resposta (a rede, o prazo), o servidor pode ter gasto o código do
+  // mesmo jeito: o rotate que estourou o prazo pode ter comitado.
+  if (e instanceof ApiError && (e.status === 401 || respostaPerdida(e)) && ehDeRecuperacao(codigoEnviado)) {
     r = { ...r, texto: `${r.texto} Se você usou um código de recuperação, ele pode ter sido consumido; use outro.` }
   }
   return r

@@ -167,8 +167,19 @@ export function criarApi(sessao: Sessao, buscar: Buscar, o: OpcoesDaApi = {}) {
     // (o código do app atual ou um de recuperação) e, depois, o código do
     // app NOVO com o rotation que o rotate devolveu (A7 do Plano 10). As
     // respostas têm o formato do enroll (mais o rotation) e do confirm.
+    // O rotate tem o prazo dos confirms (I1 da revisão do Plano 10): o
+    // passo 1 trava o diálogo enquanto ele voa (E1), e sem prazo a rede presa
+    // deixava o diálogo travado para sempre.
     totpTrocar: (senha: string, codigo: string) =>
-      pedir({ metodo: 'POST', caminho: '/auth/totp/rotate', corpo: { password: senha, code: codigo } }, InicioDaTroca),
+      pedir(
+        {
+          metodo: 'POST',
+          caminho: '/auth/totp/rotate',
+          corpo: { password: senha, code: codigo },
+          sinal: prazoDoConfirm(),
+        },
+        InicioDaTroca,
+      ),
     totpConfirmarTroca: (codigo: string, rotation: string) =>
       pedir(
         {
