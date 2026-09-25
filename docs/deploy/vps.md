@@ -1128,6 +1128,37 @@ volta sozinho à anterior se ela não ficar saudável.
 **Deve aparecer:** o job verde. Os códigos do script, se ficar vermelho, estão no bloco 10
 ("Depuração do deploy").
 
+**Não cancele o job no meio**, mesmo que ele pareça parado (a espera do healthcheck leva até
+90 s sem imprimir quase nada). E se cancelar, ou a conexão cair: depois que a imagem chegou à VPS,
+o deploy (e o rollback, se for o caso) **termina sozinho lá**, sem o GitHub. O job fica vermelho
+(`255`, ou cancelado), mas isso não diz como a VPS terminou. Confira na VPS antes de repetir:
+
+```bash
+cat /opt/vigilume/versao
+sudo tail -n 30 /opt/vigilume/entrada.log
+```
+
+O `versao` é o SHA que está no ar; o `entrada.log` é o log de cada deploy e backup, o mesmo que o
+job mostra, gravado na VPS (fica em até ~1 MiB; o mais velho sai sozinho). As últimas linhas
+mostram como o deploy acabou: saudável, com rollback para a anterior, ou o erro. Se ele ainda
+estiver rodando (as linhas continuam chegando), espere dois minutos e olhe de novo. Só rode o
+deploy outra vez depois de ver como este terminou.
+
+**Se o primeiro deploy sair com 4**, o app **ficou parado**: no primeiro deploy não há versão
+anterior para onde voltar (a mensagem é
+`primeiro deploy e sem versão anterior: o app ficou parado`). O site responde `502`, e o Caddy e
+o banco ficam de pé. Quase sempre é o `.env` (uma variável mal preenchida no 3.4) ou o DNS. Veja
+por que o app não subiu:
+
+```bash
+sudo docker compose -f /opt/vigilume/compose.prod.yaml logs app | tail -30
+sudo docker compose -f /opt/vigilume/compose.prod.yaml ps -a
+```
+
+O app diz no boot o que falta ou o que está errado (uma variável ausente, uma chave fora do
+formato, o banco recusando o papel). Corrija a causa (por exemplo, `sudo nano /opt/vigilume/.env`)
+e rode o deploy de novo com o mesmo SHA: não é preciso publicar outra versão.
+
 **Confira** (na VPS):
 
 ```bash
@@ -1137,7 +1168,11 @@ sudo docker compose -f /opt/vigilume/compose.prod.yaml logs app | head -20
 ```
 
 - `ps`: `caddy`, `app` e `db` com estado `running` (e `healthy` onde há healthcheck);
-- `versao`: o SHA que você mandou;
+- `versao`: o SHA que você mandou (o `cat` vai sem `sudo`: o `versao`, o `versao-anterior` e o
+  `historico` são `0644`, legíveis pelo seu usuário, porque não são segredo; o `.env` e o
+  `vigia.env` continuam só do root). Se aparecer `Permission denied`, o `vigilume-entrada`
+  instalado é de antes dessa mudança: recopie-o (bloco 10, "Arquivos da VPS") e, até o próximo
+  deploy, use `sudo cat`;
 - `logs`: `iniciando` com a versão, `migrations aplicadas`, `sondador ativo`, `servindo`, e
   **nenhuma** linha `TRUSTED_PROXIES vazio`.
 
