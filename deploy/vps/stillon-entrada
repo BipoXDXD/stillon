@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# vigilume-entrada: a ÚNICA coisa que a chave de deploy alcança na VPS (Plano
-# 11, spec §3). Instalado em /usr/local/sbin/vigilume-entrada (root, 755). O
+# stillon-entrada: a ÚNICA coisa que a chave de deploy alcança na VPS (Plano
+# 11, spec §3). Instalado em /usr/local/sbin/stillon-entrada (root, 755). O
 # authorized_keys do usuário deploy força:
 #
-#   restrict,command="sudo /usr/local/sbin/vigilume-entrada" ssh-ed25519 ...
+#   restrict,command="sudo /usr/local/sbin/stillon-entrada" ssh-ed25519 ...
 #
-# e o sudoers (deploy/vps/sudoers-vigilume-entrada) deixa o deploy rodar só
+# e o sudoers (deploy/vps/sudoers-stillon-entrada) deixa o deploy rodar só
 # este arquivo, sem argumento, guardando o SSH_ORIGINAL_COMMAND. O pedido vem
 # do SSH_ORIGINAL_COMMAND, e nunca da linha de comando:
 #
@@ -16,24 +16,24 @@
 #       do layout OCI do crane); 4 não ficou saudável e o rollback foi feito; 1
 #       qualquer outro erro. Precisa do jq na VPS (docs/deploy/vps.md).
 #
-#   ssh deploy@VPS backup > vigilume-<data>.dump.age
+#   ssh deploy@VPS backup > stillon-<data>.dump.age
 #       O dump do banco, restaurado e conferido pelo deploy/backup/backup.sh
 #       (sem mudança), cifrado com a chave PÚBLICA do age em
-#       /opt/vigilume/age-recipient, na saída padrão; o log na de erro.
+#       /opt/stillon/age-recipient, na saída padrão; o log na de erro.
 #       Códigos: 0 conferido; 3 a cópia não passou nas checagens (nada na
 #       saída); 4 conferido e enviado, mas o disco passou de 85%; 1 outro
 #       erro (nada, ou um cifrado incompleto, na saída: descarte).
-#       Os scripts ficam em /opt/vigilume/deploy/, com o layout do
+#       Os scripts ficam em /opt/stillon/deploy/, com o layout do
 #       repositório (backup/backup.sh, backup/verificar.sql,
 #       compose/initdb.sql), porque o backup.sh acha o initdb.sql por
 #       ../compose/.
 #
 # Tudo o que o script escreve vai para a saída de ERRO: a saída padrão fica
 # reservada (o verbo backup manda por ela só o dump cifrado). Depois da trava,
-# esse log vai também para /opt/vigilume/entrada.log (0644, rodado para
+# esse log vai também para /opt/stillon/entrada.log (0644, rodado para
 # entrada.log.1 acima de 1 MiB), por um tee que sobrevive à queda do SSH: se
 # o runner some no meio de um deploy, a entrada termina o deploy (ou o
-# rollback) mesmo assim, e o dono confere em /opt/vigilume/versao e no log.
+# rollback) mesmo assim, e o dono confere em /opt/stillon/versao e no log.
 #
 # Sem variável de ambiente que mude o comportamento: o sudo limpa o ambiente
 # (sobram TERM, HOME, SHELL e as de idioma, LANG e LC_*), e os caminhos abaixo
@@ -48,8 +48,8 @@ for v in $(compgen -e); do
     case "$v" in DOCKER_* | COMPOSE_*) unset "$v" ;; esac
 done
 
-DIR=/opt/vigilume
-IMAGEM=vigilume
+DIR=/opt/stillon
+IMAGEM=stillon
 ARQUIVOS_COMPOSE="$DIR/compose.prod.yaml"
 ESPERA_S=90
 # O tar do deploy é recebido, extraído e refeito aqui (o mesmo disco das
@@ -71,7 +71,7 @@ exec 3>&1 1>&2
 sair() {
     local codigo=$1
     shift
-    echo "vigilume-entrada: $*"
+    echo "stillon-entrada: $*"
     exit "$codigo"
 }
 uso() { sair 2 "$* (uso: \"deploy <sha de 40 hex> sha256:<64 hex>\" ou \"backup\")"; }
@@ -164,7 +164,7 @@ podar() {
 # O tar do deploy.yml é o layout OCI do `crane pull --format oci`, empacotado
 # com `tar -C dir -cf - .`: oci-layout, index.json e blobs/sha256/<digest>,
 # com ou sem o "./" na frente. Um tar com nome etiquetaria, no load, uma
-# imagem qualquer desta máquina (vigilume:atual, caddy:2) antes de qualquer
+# imagem qualquer desta máquina (stillon:atual, caddy:2) antes de qualquer
 # conferência. Por isso o tar não é lido como texto: é extraído em $1/x (só
 # arquivos e diretórios, só esses nomes, sem repetição), o index.json é
 # conferido por um parser de JSON (uma imagem, o digest pedido, sem anotação
@@ -223,8 +223,8 @@ deploy() {
 
     # Sob a trava: nenhum outro deploy está de pé. O que sobrou aqui é de um
     # deploy morto por SIGKILL (o trap não rodou).
-    find "$TMP_BASE" -maxdepth 1 -name '.vigilume-entrada.*' -exec rm -rf {} + || true
-    tmp=$(mktemp -d "$TMP_BASE/.vigilume-entrada.XXXXXX")
+    find "$TMP_BASE" -maxdepth 1 -name '.stillon-entrada.*' -exec rm -rf {} + || true
+    tmp=$(mktemp -d "$TMP_BASE/.stillon-entrada.XXXXXX")
     TMP_DEPLOY=$tmp
     head -c $((TETO_BYTES + 1)) > "$tmp/imagem.tar"
     tam=$(stat -c %s "$tmp/imagem.tar")
@@ -272,7 +272,7 @@ deploy() {
 
     anterior=$(cat "$DIR/versao" 2>/dev/null || true)
     echo "deploy de $sha (antes: ${anterior:-nenhuma})"
-    if VIGILUME_SHA=$sha dc up -d --wait --wait-timeout "$ESPERA_S"; then
+    if STILLON_SHA=$sha dc up -d --wait --wait-timeout "$ESPERA_S"; then
         # 0644: não são segredo, e o dono os lê sem sudo (o umask é 077).
         echo "$sha" > "$DIR/versao.novo" && chmod 644 "$DIR/versao.novo" && mv "$DIR/versao.novo" "$DIR/versao"
         if [ -n "$anterior" ] && [ "$anterior" != "$sha" ]; then
@@ -294,7 +294,7 @@ deploy() {
         sair 4 "primeiro deploy e sem versão anterior: o app ficou parado"
     fi
     # A etiqueta atual só anda no sucesso: continua na anterior.
-    if VIGILUME_SHA=$anterior dc up -d --wait --wait-timeout "$ESPERA_S"; then
+    if STILLON_SHA=$anterior dc up -d --wait --wait-timeout "$ESPERA_S"; then
         sair 4 "rollback feito: $anterior de volta no ar; $sha não subiu"
     fi
     dc logs --no-color --tail 100 app || true
@@ -316,14 +316,14 @@ backup() {
     # Windows e sem aspas em volta. Só o que não precisa de escape nem no
     # .env nem na URL do postgres (o runbook gera hex); o resto seria lido de
     # um jeito pelo compose (que interpola $) e de outro aqui: recusa.
-    senha=$(sed -n 's/^VIGILUME_BACKUP_PASSWORD=//p' "$DIR/.env" | tail -n 1)
+    senha=$(sed -n 's/^STILLON_BACKUP_PASSWORD=//p' "$DIR/.env" | tail -n 1)
     senha=${senha%$'\r'}
     case "$senha" in
         \"*\" | \'*\') senha=${senha:1:${#senha}-2} ;;
     esac
-    [ -n "$senha" ] || sair 1 "VIGILUME_BACKUP_PASSWORD vazio no $DIR/.env"
+    [ -n "$senha" ] || sair 1 "STILLON_BACKUP_PASSWORD vazio no $DIR/.env"
     [[ "$senha" =~ ^[A-Za-z0-9._~-]+$ ]] ||
-        sair 1 "VIGILUME_BACKUP_PASSWORD no $DIR/.env tem caractere fora de letras, dígitos e ._~- (o compose e o backup a leriam diferente): gere com openssl rand -hex 32 (docs/deploy/vps.md)"
+        sair 1 "STILLON_BACKUP_PASSWORD no $DIR/.env tem caractere fora de letras, dígitos e ._~- (o compose e o backup a leriam diferente): gere com openssl rand -hex 32 (docs/deploy/vps.md)"
     db=$(dc ps -q db)
     [ -n "$db" ] || sair 1 "o serviço db não está de pé"
     rede=$(docker inspect -f '{{range $k, $v := .NetworkSettings.Networks}}{{$k}}{{end}}' "$db")
@@ -332,19 +332,19 @@ backup() {
 
     # Sob a trava: o que sobrou de um backup morto por SIGKILL (o dump em
     # claro na memória, o postgres descartável) sai agora.
-    find "$SHM_BASE" -maxdepth 1 -name 'vigilume-backup.*' -exec rm -rf {} + || true
-    docker ps -aq --filter name=vigilume-restauro- | xargs -r docker rm -f >/dev/null 2>&1 || true
-    nome=vigilume-restauro-$$
+    find "$SHM_BASE" -maxdepth 1 -name 'stillon-backup.*' -exec rm -rf {} + || true
+    docker ps -aq --filter name=stillon-restauro- | xargs -r docker rm -f >/dev/null 2>&1 || true
+    nome=stillon-restauro-$$
     RESTAURO=$nome
-    tmp=$(mktemp -d "$SHM_BASE/vigilume-backup.XXXXXX")
+    tmp=$(mktemp -d "$SHM_BASE/stillon-backup.XXXXXX")
     TMP_BACKUP=$tmp
 
-    # A senha do descartável é de uso único; a do vigilume_backup vai ao
+    # A senha do descartável é de uso único; a do stillon_backup vai ao
     # contêiner pelo ambiente (-e NOME, sem valor), fora da linha de comando.
     export POSTGRES_PASSWORD PGPASSWORD ORIGEM_URL VOLUME_BYTES
     POSTGRES_PASSWORD=$(head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')
     PGPASSWORD=$POSTGRES_PASSWORD
-    ORIGEM_URL="postgres://vigilume_backup:$senha@$ip:5432/vigilume?sslmode=disable"
+    ORIGEM_URL="postgres://stillon_backup:$senha@$ip:5432/stillon?sslmode=disable"
     raiz_docker=$(docker info -f '{{.DockerRootDir}}')
     VOLUME_BYTES=$(df -B1 --output=size "$raiz_docker" | tail -n 1 | tr -d ' ')
 
@@ -362,14 +362,14 @@ backup() {
     # O mesmo usuário de quem roda a entrada (root, na VPS): o dump sai com
     # esse dono, e o shred consegue apagá-lo.
     docker exec --user "$(id -u):$(id -g)" -e ORIGEM_URL -e PGPASSWORD -e VOLUME_BYTES \
-        -e SAIDA=/saida/vigilume.dump -e PGHOST=127.0.0.1 -e PGPORT=5432 -e PGUSER=postgres \
+        -e SAIDA=/saida/stillon.dump -e PGHOST=127.0.0.1 -e PGPORT=5432 -e PGUSER=postgres \
         "$nome" sh /deploy/backup/backup.sh || codigo=$?
     case "$codigo" in
         0 | 4) ;;
         3) sair 3 "a cópia restaurada não passou nas checagens: não há backup que sirva" ;;
         *) sair 1 "o backup.sh saiu com $codigo: não houve backup" ;;
     esac
-    [ -s "$tmp/vigilume.dump" ] || sair 1 "o backup.sh saiu $codigo sem deixar o dump"
+    [ -s "$tmp/stillon.dump" ] || sair 1 "o backup.sh saiu $codigo sem deixar o dump"
 
     # O disco de verdade: o sistema de arquivos dos volumes do Docker. O
     # backup.sh mede o banco contra ele; aqui, a ocupação total (imagens,
@@ -381,7 +381,7 @@ backup() {
         codigo=4
     fi
 
-    age -R "$DIR/age-recipient" < "$tmp/vigilume.dump" >&3 || sair 1 "o age falhou: o backup cifrado está incompleto"
+    age -R "$DIR/age-recipient" < "$tmp/stillon.dump" >&3 || sair 1 "o age falhou: o backup cifrado está incompleto"
     echo "backup cifrado enviado (código $codigo)"
     exit "$codigo"
 }

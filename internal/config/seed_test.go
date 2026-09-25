@@ -15,13 +15,13 @@ import (
 // num host de loopback, a mesma regra que o boot usa para aceitar as chaves
 // de demo (hostLocal), e recusa ANTES de chamar o binário.
 //
-// O /vigilume é trocado por um falso (VIGILUME_BIN) que anota a chamada e sai
+// O /stillon é trocado por um falso (STILLON_BIN) que anota a chamada e sai
 // 3 ("já existe usuário"): com a URL local o seed segue e sai 0; com a URL de
 // servidor ele sai 1, avisa, e o falso nunca é chamado.
 func TestSeedRefusesOutsideLoopback(t *testing.T) {
 	dir := t.TempDir()
 	registro := filepath.Join(dir, "chamadas")
-	falso := filepath.Join(dir, "vigilume")
+	falso := filepath.Join(dir, "stillon")
 	script := "#!/bin/sh\necho \"$*\" >> \"$REGISTRO\"\ncat >/dev/null\nexit 3\n"
 	if err := os.WriteFile(falso, []byte(script), 0o700); err != nil {
 		t.Fatal(err)
@@ -39,8 +39,8 @@ func TestSeedRefusesOutsideLoopback(t *testing.T) {
 		{"HTTP://LocalHost:8080", true},
 		{"", false},
 		{"https://localhost:8080", false},
-		{"https://vigilume.exemplo.com.br", false},
-		{"http://vigilume.exemplo.com.br", false},
+		{"https://stillon.example", false},
+		{"http://stillon.example", false},
 		{"http://203.0.113.7:8080", false},
 		{"http://10.0.0.5:8080", false},
 		{"http://localhost.exemplo.com:8080", false},
@@ -56,10 +56,10 @@ func TestSeedRefusesOutsideLoopback(t *testing.T) {
 			cmd := exec.Command("sh", "../../deploy/compose/seed.sh")
 			cmd.Env = []string{
 				"PATH=" + os.Getenv("PATH"),
-				"VIGILUME_BIN=" + falso,
+				"STILLON_BIN=" + falso,
 				"REGISTRO=" + registro,
-				"DEMO_EMAIL=demo@vigilume.local",
-				"DEMO_PASSWORD=demo-vigilume-2026",
+				"DEMO_EMAIL=demo@stillon.local",
+				"DEMO_PASSWORD=demo-stillon-2026",
 			}
 			if c.url != "" {
 				cmd.Env = append(cmd.Env, "PUBLIC_BASE_URL="+c.url)

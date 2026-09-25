@@ -38,13 +38,32 @@ func (r Role) RunsProber() bool { return r == RoleAll || r == RoleProber }
 // só as aceita numa máquina local: PUBLIC_BASE_URL http com host localhost ou
 // IP de loopback (hostLocal). Https, ou qualquer outro host, é produção.
 //
+// As três primeiras são as do compose.yaml de hoje, na ordem MASTER_KEY,
+// JWT_SECRET e IP_HASH_KEY (TestComposeUsesTheDemoKeys compara pelo índice).
+// As três seguintes são as chaves de demo do nome anterior do projeto, e
+// continuam recusadas: um .env copiado de um compose antigo as traria para
+// produção. Ficam em base64 (demoAntiga), como estavam no compose.
+//
 // Não mude estes valores sozinhos: o .gitleaks.toml libera exatamente o base64
-// destas três strings, e o compose.yaml as usa (TestComposeUsesTheDemoKeys).
-// Mudar uma chave aqui exige mudar as duas pontas junto.
+// destas seis strings, e o compose.yaml usa as três primeiras. Mudar uma chave
+// aqui exige mudar as duas pontas junto.
 var chavesDeDemo = [][]byte{
-	[]byte("demo-vigilume-MASTER_KEY-naouse!"),
-	[]byte("demo-vigilume-JWT_SECRET-naouse!"),
-	[]byte("demo-vigilume-IP_HASH_KEY-naouse"),
+	[]byte("demo-stillon-MASTER_KEY-naouse!!"),
+	[]byte("demo-stillon-JWT_SECRET-naouse!!"),
+	[]byte("demo-stillon-IP_HASH_KEY-naouse!"),
+	demoAntiga("ZGVtby12aWdpbHVtZS1NQVNURVJfS0VZLW5hb3VzZSE="),
+	demoAntiga("ZGVtby12aWdpbHVtZS1KV1RfU0VDUkVULW5hb3VzZSE="),
+	demoAntiga("ZGVtby12aWdpbHVtZS1JUF9IQVNIX0tFWS1uYW91c2U="),
+}
+
+// demoAntiga decodifica uma chave de demo antiga escrita em base64. Um valor
+// inválido é defeito do código, e não da configuração: panic na inicialização.
+func demoAntiga(b64 string) []byte {
+	k, err := base64.StdEncoding.DecodeString(b64)
+	if err != nil {
+		panic("config: chave de demo antiga com base64 inválido: " + err.Error())
+	}
+	return k
 }
 
 // keyLen é o tamanho exigido para toda chave simétrica: 32 bytes (AES-256,

@@ -1,10 +1,10 @@
 #!/bin/sh
-# Backup lógico do Vigilume com restauração conferida (D32 do Plano 7).
+# Backup lógico do StillOn com restauração conferida (D32 do Plano 7).
 #
 # Roda DENTRO de postgres:18-alpine (o cliente tem de ser da mesma versão
 # maior do servidor; o pg_dump do runner pode ser mais velho e recusar).
 #
-#   ORIGEM_URL   conexão com o banco de produção como vigilume_backup
+#   ORIGEM_URL   conexão com o banco de produção como stillon_backup
 #                (NOSUPERUSER BYPASSRLS + pg_read_all_data). O dono das
 #                tabelas NÃO serve: com FORCE ROW LEVEL SECURITY, o pg_dump
 #                dele falha.
@@ -45,11 +45,11 @@ psql --no-psqlrc -X -q -v ON_ERROR_STOP=1 -d postgres -f "$AQUI/../compose/initd
 # Como superusuário e PRESERVANDO os donos do dump: restaurar como o papel da
 # aplicação esbarra no FORCE ROW LEVEL SECURITY, e --no-owner deixaria as
 # tabelas com o dono errado (medido no spike do Plano 7).
-pg_restore --exit-on-error --no-password -d vigilume "$SAIDA"
+pg_restore --exit-on-error --no-password -d stillon "$SAIDA"
 
 echo "== checagens"
 # Uma checagem que falha sai com 3 (o código do psql com ON_ERROR_STOP).
-psql --no-psqlrc -X -q -d vigilume -v versao="$versao" -v usuarios="$usuarios" -v alvos="$alvos" \
+psql --no-psqlrc -X -q -d stillon -v versao="$versao" -v usuarios="$usuarios" -v alvos="$alvos" \
     -f "$AQUI/verificar.sql"
 echo "backup conferido"
 

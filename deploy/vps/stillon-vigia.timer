@@ -1,0 +1,13 @@
+# /etc/systemd/system/stillon-vigia.timer (Plano 11, spec §6). Ligar com
+# `systemctl enable --now stillon-vigia.timer`. A cada minuto; volta sozinho
+# depois de um reboot.
+[Unit]
+Description=StillOn: vigia externo a cada minuto
+
+[Timer]
+OnCalendar=*-*-* *:*:00
+AccuracySec=1s
+Unit=stillon-vigia.service
+
+[Install]
+WantedBy=timers.target

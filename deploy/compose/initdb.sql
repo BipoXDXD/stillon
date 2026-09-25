@@ -12,6 +12,6 @@
 --
 -- A senha abaixo é de demonstração e fica pública no repositório; o banco do
 -- compose só escuta na rede interna do compose.
-CREATE ROLE vigilume_app LOGIN PASSWORD 'vigilume_app'
+CREATE ROLE stillon_app LOGIN PASSWORD 'stillon_app'
     NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE;
-CREATE DATABASE vigilume OWNER vigilume_app;
+CREATE DATABASE stillon OWNER stillon_app;

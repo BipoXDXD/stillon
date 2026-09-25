@@ -13,7 +13,7 @@
 #   VPS_HOST_KEY  a chave pública do servidor, como está no
 #                 /etc/ssh/ssh_host_ed25519_key.pub da VPS ("ssh-ed25519 AAAA…")
 #
-# O outro lado é o /usr/local/sbin/vigilume-entrada (deploy/vps/), que o
+# O outro lado é o /usr/local/sbin/stillon-entrada (deploy/vps/), que o
 # authorized_keys do deploy força: "deploy …" sai 0 (saudável), 2 (uso ou
 # argumento recusado), 3 (imagem divergente), 4 (não ficou saudável; rollback
 # feito) ou 1 (outro erro); "backup" manda o dump cifrado pela saída padrão e
@@ -111,18 +111,18 @@ fazer_deploy() {
             resumo "Deploy de \`$sha\` (\`$id\`): saudável."
             ;;
         2) erro "a VPS recusou o pedido (código 2: uso ou argumento inválido); nada mudou em produção" ;;
-        3) erro "a VPS recusou a imagem (código 3: image-id divergente de $id, tar fora do layout OCI, ou vigilume:$sha já existe com outra imagem e é a versão no ar ou a anterior); nada mudou em produção; a causa está no log acima" ;;
+        3) erro "a VPS recusou a imagem (código 3: image-id divergente de $id, tar fora do layout OCI, ou stillon:$sha já existe com outra imagem e é a versão no ar ou a anterior); nada mudou em produção; a causa está no log acima" ;;
         4) erro "a versão nova não ficou saudável (código 4): a VPS voltou para a versão anterior (rollback feito); o log do app está acima" ;;
         # O 255 é o mesmo antes e depois de a imagem ir: se a conexão caiu
         # no meio, a VPS termina o deploy (ou o rollback) sozinha.
-        255) erro "falha de SSH (código 255): conexão, VPS_SSH_KEY ou VPS_HOST_KEY (confira a mensagem do ssh acima). Se a conexão caiu depois de a imagem ir, a VPS termina o deploy ou o rollback sozinha: confira /opt/vigilume/versao e a última linha de /opt/vigilume/entrada.log antes de repetir" ;;
+        255) erro "falha de SSH (código 255): conexão, VPS_SSH_KEY ou VPS_HOST_KEY (confira a mensagem do ssh acima). Se a conexão caiu depois de a imagem ir, a VPS termina o deploy ou o rollback sozinha: confira /opt/stillon/versao e a última linha de /opt/stillon/entrada.log antes de repetir" ;;
         *) erro "erro na VPS (código $codigo); o log está acima" ;;
     esac
     exit "$codigo"
 }
 
 # O cabeçalho do age (formato binário, um destinatário X25519, que é a chave
-# pública em /opt/vigilume/age-recipient): a linha da versão, a do
+# pública em /opt/stillon/age-recipient): a linha da versão, a do
 # destinatário e, algumas linhas abaixo, a do MAC ("--- "). O dump em claro
 # do pg_dump começa com "PGDMP"; um SQL, com comentário ou comando.
 CABECALHO_AGE=age-encryption.org/v1

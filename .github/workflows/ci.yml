@@ -41,11 +41,13 @@ env:
   AGE_VERSION: v1.3.2
   ACTIONLINT_VERSION: v1.7.12
   # O nome com que o job image carrega a imagem e o e2e a usa: o mesmo do
-  # compose.yaml, com VIGILUME_TAG=ci.
+  # compose.yaml, com STILLON_TAG=ci.
   #
-  # Nome repetido à mão: ghcr.io/bipoxdxd/vigilume aqui, no ORIGEM do
-  # deploy.yml e no image do compose.yaml. Renomear é mexer nos três juntos.
-  IMAGEM: ghcr.io/bipoxdxd/vigilume
+  # Nome repetido à mão: ghcr.io/bipoxdxd/stillon aqui, no ORIGEM do
+  # deploy.yml e nos dois image do compose.yaml (app e tools). Renomear é
+  # mexer nos quatro juntos. A tag local da VPS (stillon) é outra: fica no
+  # IMAGEM do deploy/vps/stillon-entrada e no image do compose.prod.yaml.
+  IMAGEM: ghcr.io/bipoxdxd/stillon
 
 jobs:
   lint:
@@ -176,7 +178,7 @@ jobs:
         # errado na entrada de produção não pode passar por aviso desligado.
         run: |
           shellcheck --version
-          shellcheck deploy/ci/*.sh deploy/vps/vigilume-entrada deploy/vps/vigia.sh \
+          shellcheck deploy/ci/*.sh deploy/vps/stillon-entrada deploy/vps/vigia.sh \
             deploy/vps/initdb.sh deploy/backup/backup.sh
       - name: checagens dos workflows
         run: sh deploy/ci/checar-workflows.sh
@@ -212,7 +214,7 @@ jobs:
 
       # O teste do internal/webui contra o dist de verdade. Com o dist vazio
       # (só o .gitkeep, como no job test) ele passaria sem conferir nada;
-      # VIGILUME_EXIGIR_DIST=1 faz o dist vazio ser falha (Plano 6).
+      # STILLON_EXIGIR_DIST=1 faz o dist vazio ser falha (Plano 6).
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
@@ -223,7 +225,7 @@ jobs:
       - name: go test do painel embutido
         working-directory: .
         env:
-          VIGILUME_EXIGIR_DIST: '1'
+          STILLON_EXIGIR_DIST: '1'
         run: go test -count=1 ./internal/webui/
 
   image:
@@ -297,8 +299,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
-      VIGILUME_TAG: ci
-      # Nem pull nem build: a imagem do Vigilume é a do artifact, ou nada. O
+      STILLON_TAG: ci
+      # Nem pull nem build: a imagem do StillOn é a do artifact, ou nada. O
       # --pull never vale para TODOS os serviços, e por isso o Postgres é
       # puxado antes, num passo próprio. --wait-timeout: um healthcheck que
       # nunca fica verde derruba o passo em 2 min, em vez de ficar até o
@@ -314,7 +316,7 @@ jobs:
           path: ${{ runner.temp }}
       - run: gunzip -c "$RUNNER_TEMP/imagens.tar.gz" | docker load
       - name: Postgres do compose
-        # O artifact só traz as imagens do Vigilume. Sem este pull, num runner
+        # O artifact só traz as imagens do StillOn. Sem este pull, num runner
         # novo o db não existe, e o `up --pull never` falha antes de começar.
         # Só o serviço db, pelo digest do compose.yaml.
         run: docker compose pull db
@@ -331,10 +333,10 @@ jobs:
         working-directory: web
         env:
           E2E_BASE_URL: http://127.0.0.1:8080
-          E2E_EMAIL: demo@vigilume.local
-          E2E_PASSWORD: demo-vigilume-2026
+          E2E_EMAIL: demo@stillon.local
+          E2E_PASSWORD: demo-stillon-2026
           # O troca.spec liga o 2FA do demo e o desliga no afterAll (e antes,
-          # no beforeAll) com `docker compose exec app /vigilume user
+          # no beforeAll) com `docker compose exec app /stillon user
           # reset-2fa`, mesmo se falhar no meio. Sem isto ele é pulado, e o CI
           # ficava verde sem nunca ter passado pela troca contra o binário (M2
           # da revisão do painel do Plano 10).
@@ -364,7 +366,7 @@ jobs:
   vps:
     # A produção da VPS (Plano 11, spec §8) com a imagem que acabou de passar
     # no Trivy: o deploy/vps/compose.prod.yaml com o Caddy em modo local, e o
-    # vigilume-entrada (deploy, rollback, backup) contra ele. Portas, Host,
+    # stillon-entrada (deploy, rollback, backup) contra ele. Portas, Host,
     # IP do cliente, banco fechado, recusas e backup só cifrado.
     needs: image
     runs-on: ubuntu-latest
@@ -374,7 +376,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Docker com o image store containerd, como na VPS
-        # O vigilume-entrada recusa o store clássico: o image-id do protocolo
+        # O stillon-entrada recusa o store clássico: o image-id do protocolo
         # é o digest do manifesto, que só o containerd devolve. Antes do load:
         # trocar de store esconde as imagens do outro.
         run: |
@@ -404,7 +406,7 @@ jobs:
     # Só depois de tudo verde, e só em push para a main ou tag v* deste
     # repositório (nunca em PR, nem num fork). O pacote do GHCR segue a
     # visibilidade do repositório: privado, por enquanto.
-    if: github.event_name == 'push' && github.repository == 'BipoXDXD/vigilume'
+    if: github.event_name == 'push' && github.repository == 'BipoXDXD/stillon'
     needs: [lint, test, secrets, web, image, e2e, vps, workflows]
     runs-on: ubuntu-latest
     timeout-minutes: 30

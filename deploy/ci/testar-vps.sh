@@ -184,10 +184,10 @@ done
 # conexão pode ter caído depois de a imagem ir; a VPS termina sozinha, e o
 # dono confere antes de repetir.
 T_ENTRADA=$tmp/imagem.tar SSH_FALSO_CODIGO=3 rodar "deploy, a VPS sai 3 (a outra causa)" deploy "$SHA" "$ID"
-esperar_texto "vigilume:$SHA já existe com outra imagem"
+esperar_texto "stillon:$SHA já existe com outra imagem"
 T_ENTRADA=$tmp/imagem.tar SSH_FALSO_CODIGO=255 rodar "deploy, 255 depois do envio" deploy "$SHA" "$ID"
-esperar_texto "/opt/vigilume/versao"
-esperar_texto "/opt/vigilume/entrada.log"
+esperar_texto "/opt/stillon/versao"
+esperar_texto "/opt/stillon/entrada.log"
 esperar_texto "antes de repetir"
 
 NL='
@@ -230,7 +230,7 @@ esperar_ssh_nao_chamado
 
 # ---- backup ----------------------------------------------------------------
 
-arq=$tmp/vigilume-20260925.sql.age
+arq=$tmp/stillon-20260925.sql.age
 SSH_FALSO_SAIDA=$AGE SSH_FALSO_ERRO='== dump
 Postgres: 40% do disco
 ' rodar "backup conferido" backup "$arq"

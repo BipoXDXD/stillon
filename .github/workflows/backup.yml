@@ -1,9 +1,9 @@
 name: backup
 # Backup lógico diário do Postgres de produção, com restauração conferida
 # (D32 do Plano 7) e aviso de disco (D35), feito NA VPS (Plano 11, spec §4):
-# o verbo `backup` do vigilume-entrada roda o deploy/backup/backup.sh num
+# o verbo `backup` do stillon-entrada roda o deploy/backup/backup.sh num
 # Postgres descartável, cifra com a chave PÚBLICA do age que mora na VPS
-# (/opt/vigilume/age-recipient) e manda só o cifrado pela saída padrão. A
+# (/opt/stillon/age-recipient) e manda só o cifrado pela saída padrão. A
 # chave privada fica com o dono, fora do GitHub e da VPS.
 #
 # Desligado até o dono ligar: o job só roda com a variável de repositório
@@ -67,14 +67,14 @@ jobs:
         # arquivo foi apagado e o job para aqui.
         run: |
           codigo=0
-          sh deploy/ci/vps.sh backup "$RUNNER_TEMP/vigilume-$(date -u +%Y%m%d).dump.age" || codigo=$?
+          sh deploy/ci/vps.sh backup "$RUNNER_TEMP/stillon-$(date -u +%Y%m%d).dump.age" || codigo=$?
           echo "codigo=$codigo" >> "$GITHUB_OUTPUT"
           if [ "$codigo" -ne 0 ] && [ "$codigo" -ne 4 ]; then exit "$codigo"; fi
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: vigilume-backup-${{ github.run_id }}
-          path: ${{ runner.temp }}/vigilume-*.dump.age
+          name: stillon-backup-${{ github.run_id }}
+          path: ${{ runner.temp }}/stillon-*.dump.age
           retention-days: 30
           if-no-files-found: error
 

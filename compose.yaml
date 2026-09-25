@@ -1,7 +1,7 @@
 # !!! SÓ PARA A MÁQUINA LOCAL. NUNCA EM SERVIDOR. !!!
-# Este compose cria o usuário demo@vigilume.local com a senha abaixo, que é
+# Este compose cria o usuário demo@stillon.local com a senha abaixo, que é
 # pública (está no repositório), e usa chaves e senhas do Postgres também
-# públicas. Num servidor, esse usuário vira O dono do Vigilume, e qualquer um
+# públicas. Num servidor, esse usuário vira O dono do StillOn, e qualquer um
 # entra. Para hospedar, use o compose de produção (Plano 11, hospedagem): sem
 # o seed, sem estas chaves, com os segredos fora do git. O seed.sh recusa
 # rodar com um PUBLIC_BASE_URL que não seja http em localhost (D1 do Plano 10),
@@ -10,10 +10,10 @@
 # ainda local, este compose sobe, o seed cria o demo, e ele vira o dono. Nada
 # aqui impede isso: não copie este arquivo para um servidor.
 #
-# Vigilume local, com um comando (spec §15):
+# StillOn local, com um comando (spec §15):
 #
 #   docker compose up --wait        e abra http://localhost:8080
-#   login: demo@vigilume.local / demo-vigilume-2026
+#   login: demo@stillon.local / demo-stillon-2026
 #
 # Pelo localhost, e não pelo IP da máquina: o painel exige contexto seguro
 # (HTTPS ou localhost). Em HTTP por outro endereço ele mostra um aviso e
@@ -24,10 +24,10 @@
 # usuário de demonstração; o app só sobe depois de o seed sair com 0. Com o
 # seed depois do app, o `up --wait` devolve 1 mesmo com o seed saindo 0.
 #
-# Cada serviço do Vigilume tem `image` E `build`: com a imagem publicada e
+# Cada serviço do StillOn tem `image` E `build`: com a imagem publicada e
 # acessível, o compose a puxa; se o pull é negado (pacote privado), ele
 # constrói do código (D17).
-name: vigilume
+name: stillon
 
 # !!! CHAVES DE DEMONSTRAÇÃO, PÚBLICAS NO REPOSITÓRIO. NÃO USE EM PRODUÇÃO. !!!
 # Com elas, qualquer um forja um JWT e decifra os segredos gravados. O boot
@@ -35,36 +35,36 @@ name: vigilume
 # (D14); https, ou outro host, é recusado. Produção: deploy/vps/compose.prod.yaml,
 # pelo runbook docs/deploy/vps.md.
 x-ambiente: &ambiente
-  DATABASE_URL: postgres://vigilume_app:vigilume_app@db:5432/vigilume?sslmode=disable
+  DATABASE_URL: postgres://stillon_app:stillon_app@db:5432/stillon?sslmode=disable
   # A mesma porta publicada abaixo: os links dos e-mails e da página de
   # status apontam para onde o painel está de fato.
-  PUBLIC_BASE_URL: http://localhost:${VIGILUME_PORT:-8080}
+  PUBLIC_BASE_URL: http://localhost:${STILLON_PORT:-8080}
   # O `vite dev` do painel (Plano 6), para quem desenvolve contra este compose.
   CORS_ORIGIN: http://localhost:5173
   METRICS_ADDR: "off"
   LOG_LEVEL: info
-  MASTER_KEY: ZGVtby12aWdpbHVtZS1NQVNURVJfS0VZLW5hb3VzZSE=  # "demo-vigilume-MASTER_KEY-naouse!"
-  JWT_SECRET: ZGVtby12aWdpbHVtZS1KV1RfU0VDUkVULW5hb3VzZSE=  # "demo-vigilume-JWT_SECRET-naouse!"
-  IP_HASH_KEY: ZGVtby12aWdpbHVtZS1JUF9IQVNIX0tFWS1uYW91c2U= # "demo-vigilume-IP_HASH_KEY-naouse"
+  MASTER_KEY: ZGVtby1zdGlsbG9uLU1BU1RFUl9LRVktbmFvdXNlISE=  # "demo-stillon-MASTER_KEY-naouse!!"
+  JWT_SECRET: ZGVtby1zdGlsbG9uLUpXVF9TRUNSRVQtbmFvdXNlISE=  # "demo-stillon-JWT_SECRET-naouse!!"
+  IP_HASH_KEY: ZGVtby1zdGlsbG9uLUlQX0hBU0hfS0VZLW5hb3VzZSE= # "demo-stillon-IP_HASH_KEY-naouse!"
 
 services:
   db:
     # A mesma imagem (tag e digest) de produção e dos testes (D29).
     image: postgres:18-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
     environment:
-      # Superusuário só para o init; a aplicação usa vigilume_app.
+      # Superusuário só para o init; a aplicação usa stillon_app.
       POSTGRES_PASSWORD: postgres
     volumes:
       # Layout do 18: o volume é /var/lib/postgresql, não .../data (D11).
       # Em .../data os dados iriam para um volume anônimo e sumiriam.
       - pgdata:/var/lib/postgresql
-      - ./deploy/compose/initdb.sql:/docker-entrypoint-initdb.d/10-vigilume.sql:ro
+      - ./deploy/compose/initdb.sql:/docker-entrypoint-initdb.d/10-stillon.sql:ro
     healthcheck:
       # Pelo TCP: durante o init o servidor temporário só escuta no socket, e
       # o TCP só responde depois que o initdb.sql rodou. O pg_isready só olha
       # se o servidor aceita conexões: o -U e o -d não conferem se o papel ou
       # o banco existem (a mensagem do log fica com os nomes certos).
-      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "vigilume_app", "-d", "vigilume"]
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "stillon_app", "-d", "stillon"]
       interval: 10s
       timeout: 3s
       retries: 5
@@ -76,16 +76,16 @@ services:
     restart: unless-stopped
 
   seed:
-    image: ghcr.io/bipoxdxd/vigilume:${VIGILUME_TAG:-latest}-tools
+    image: ghcr.io/bipoxdxd/stillon:${STILLON_TAG:-latest}-tools
     build:
       context: .
       target: tools
     entrypoint: ["/busybox/sh", "/seed/seed.sh"]
     environment:
       <<: *ambiente
-      DEMO_EMAIL: demo@vigilume.local
+      DEMO_EMAIL: demo@stillon.local
       # A política do Plano 5: de 15 a 128 code points.
-      DEMO_PASSWORD: demo-vigilume-2026
+      DEMO_PASSWORD: demo-stillon-2026
       # 1 = o alvo https://example.com/ (domínio reservado para exemplos), para
       # o painel não nascer vazio. Mais alvos: DEMO_TARGETS_EXTRA com URLs
       # públicas separadas por espaço, no ambiente de quem roda o compose.
@@ -98,7 +98,7 @@ services:
         condition: service_healthy
 
   app:
-    image: ghcr.io/bipoxdxd/vigilume:${VIGILUME_TAG:-latest}
+    image: ghcr.io/bipoxdxd/stillon:${STILLON_TAG:-latest}
     build:
       context: .
       target: runtime
@@ -106,10 +106,10 @@ services:
     ports:
       # Só no loopback: numa rede de café, o painel de demo com senha
       # conhecida ficaria aberto a todos (D16).
-      - "127.0.0.1:${VIGILUME_PORT:-8080}:8080"
+      - "127.0.0.1:${STILLON_PORT:-8080}:8080"
     healthcheck:
       # A imagem não tem curl nem shell: o próprio binário checa o /readyz (D5).
-      test: ["CMD", "/vigilume", "healthcheck"]
+      test: ["CMD", "/stillon", "healthcheck"]
       interval: 10s
       # Maior que o prazo do binário (3 s), que é maior que o do /readyz
       # (2 s): TestHealthcheckDeadlinesNest.
