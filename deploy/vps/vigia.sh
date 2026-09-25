@@ -32,7 +32,8 @@ hc=${hc%/}
 
 # Prazos: o pior caso cabe no TimeoutStartSec do vigilume-vigia.service (a
 # conta está lá; deploy/ci/checar-vigia.sh a refaz com as opções de verdade).
-pingar() { curl -fsS -o /dev/null --max-time 8 --retry 2 "$1"; }
+# O --retry-max-time limita também o Retry-After que o hc-ping mandar.
+pingar() { curl -fsS -o /dev/null --max-time 8 --retry 2 --retry-max-time 15 "$1"; }
 
 if [ -n "$dominio" ] && curl -fsS -o /dev/null --max-time 15 "https://$dominio/healthz"; then
     pingar "$hc"

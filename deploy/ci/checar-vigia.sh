@@ -114,19 +114,25 @@ grep -q '^HC_URL=' "$RAIZ/deploy/vps/env.exemplo" && falhar "a HC_URL ainda est�
 # 9. O pior caso do vigia (tudo esgota o prazo) cabe no TimeoutStartSec, para
 #    o /fail sair antes de o systemd matar o serviço; e o TimeoutStartSec fica
 #    abaixo do intervalo do timer (60 s). A conta usa as opções de verdade de
-#    cada curl do cenário "fora do ar": --max-time por tentativa, --retry
-#    tentativas a mais, e as esperas do curl entre elas (1, 2, 4… s).
+#    cada curl do cenário "fora do ar". Sem --retry: o --max-time. Com
+#    --retry, o curl respeita o Retry-After do servidor (que pode ser de
+#    horas), e só o --retry-max-time o limita: o curl não começa espera nem
+#    tentativa nova depois dele. O pior caso é então o --retry-max-time, mais
+#    a maior espera exponencial (2^(retry-1) s), mais uma tentativa inteira
+#    (--max-time). Com --retry e sem --retry-max-time, não há teto.
 roda falha "$ENV_OK" >/dev/null
 pior=$(awk '{
-    m = 0; r = 0
+    m = 0; r = 0; t = 0
     for (i = 1; i < NF; i++) {
         if ($i == "--max-time") m = $(i + 1)
         if ($i == "--retry") r = $(i + 1)
+        if ($i == "--retry-max-time") t = $(i + 1)
     }
-    if (m == 0) sem = 1
-    espera = 0; e = 1
-    for (k = 0; k < r; k++) { espera += e; e *= 2 }
-    total += m * (r + 1) + espera
+    if (m == 0 || (r > 0 && t == 0)) sem = 1
+    if (r == 0) { total += m; next }
+    e = 1
+    for (k = 1; k < r; k++) e *= 2
+    total += t + e + m
 } END { print (sem ? "sem-prazo" : total) }' "$T/registro")
 teto=$(sed -n 's/^TimeoutStartSec=//p' "$S")
 if [ -z "$pior" ] || [ "$pior" = sem-prazo ] || [ -z "$teto" ] || [ "$pior" -gt "$teto" ] || [ "$teto" -ge 60 ]; then

@@ -26,6 +26,8 @@ RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 CapabilityBoundingSet=
 # Menos que o intervalo do timer (uma execução presa não encavala na
 # seguinte) e mais que o pior caso do vigia.sh, para o /fail sair antes de o
-# systemd matar o serviço: 15 s do /healthz + um ping com --max-time 8 e
-# --retry 2 (3 tentativas de 8 s, mais as esperas de 1 e 2 s do curl) = 42 s.
+# systemd matar o serviço: 15 s do /healthz + um ping com --retry 2 e
+# --retry-max-time 15 (que limita também um Retry-After do servidor): nada
+# começa depois de 15 s, mais a última espera (2 s) e uma tentativa inteira
+# (--max-time 8) = 15 + 15 + 2 + 8 = 40 s.
 TimeoutStartSec=50
