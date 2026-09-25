@@ -371,6 +371,33 @@ a credencial iria parar nos links dos e-mails: a máquina não sobe, e o erro no
 não repete o valor, de propósito: ele traria a senha para o `fly logs`. Tire a credencial do
 `fly.toml` e faça o deploy de novo.
 
+## Perdeu o autenticador e os códigos de recuperação
+
+Sem o app **e** sem os códigos, o login para no segundo fator. O `vigilume user reset-2fa`
+desliga o 2FA, apaga os códigos de recuperação e encerra todas as sessões, numa transação só. Ele
+não pede senha: quem tem a `DATABASE_URL` já pode tudo no banco, e o comando só evita o SQL à mão.
+Rode-o como o `user create` do passo 10: o túnel num terminal, e no outro o binário **da versão
+que está no ar** (o subcomando aplica as migrations antes):
+
+```sh
+fly proxy 15432:5432 -a vigilume-db
+```
+
+```sh
+fly auth docker
+docker run --rm --network host \
+  -e DATABASE_URL='postgres://vigilume_app:<senha>@127.0.0.1:15432/vigilume?sslmode=disable' \
+  registry.fly.io/vigilume@sha256:<digest em produção> user reset-2fa --email <seu e-mail>
+```
+
+Sem `-it`: o `reset-2fa` não lê nada do terminal. A saída diz o e-mail e quantas sessões caíram
+("2FA desativado para …; N sessões encerradas"); com o 2FA já desligado, diz "nada mudou" e sai
+com 0. Código 4 é e-mail não cadastrado; 2, uso errado; 1, banco ou papel. Depois, entre só com a
+senha e ative o 2FA de novo pelo painel (Configurações).
+
+Quem ainda tem o app ou um código de recuperação não precisa disto: **Configurações → Trocar
+autenticador** troca de celular sem desligar o 2FA.
+
 ## Operação do Postgres
 
 | Responsabilidade | Mecanismo | Frequência |
