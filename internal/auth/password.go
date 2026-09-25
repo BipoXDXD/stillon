@@ -65,19 +65,33 @@ func HashPassword(plain string) (string, error) {
 	if _, err := rand.Read(salt); err != nil {
 		return "", fmt.Errorf("gerar salt: %w", err)
 	}
-	return HashPasswordWith(plain, salt, argonMemory, argonTime, argonThreads), nil
+	return HashPasswordWith(plain, salt, argonMemory, argonTime, argonThreads)
 }
 
 // HashPasswordWith é exportada para que os testes consigam construir hashes
 // com parâmetros antigos e exercitar o caminho de rehash. O código de
 // produção usa sempre HashPassword.
-func HashPasswordWith(plain string, salt []byte, memory, time uint32, threads uint8) string {
+//
+// Recusa os mesmos parâmetros que o decodeHash recusa ao ler (Plano 8), e
+// salt vazio: argon2.IDKey entra em panic com t=0, p=0 ou memória abaixo de
+// 8*p, e um hash assim nem seria lido de volta.
+func HashPasswordWith(plain string, salt []byte, memory, time uint32, threads uint8) (string, error) {
+	if !parametrosValidos(memory, time, threads) || len(salt) == 0 {
+		return "", ErrInvalidHash
+	}
 	sum := argon2.IDKey([]byte(plain), salt, time, memory, threads, argonKeyLen)
 	return fmt.Sprintf("$argon2id$v=%d$m=%d,t=%d,p=%d$%s$%s",
 		argon2.Version, memory, time, threads,
 		base64.RawStdEncoding.EncodeToString(salt),
 		base64.RawStdEncoding.EncodeToString(sum),
-	)
+	), nil
+}
+
+// parametrosValidos é a faixa que argon2.IDKey aceita sem panic. É uma regra
+// só para a escrita (HashPasswordWith) e a leitura (decodeHash), para que as
+// duas não divirjam.
+func parametrosValidos(memory, time uint32, threads uint8) bool {
+	return time >= 1 && threads >= 1 && memory >= 8*uint32(threads)
 }
 
 // verificacoes conta os Argon2id de verificação (VerifyPassword, e por ela
@@ -139,7 +153,7 @@ func decodeHash(encoded string) (memory, time uint32, threads uint8, salt, sum [
 	// quiser — o panic seria um downgrade do ataque, e o middleware.Recover
 	// já o converteria em 500. Recusar o hash é simplesmente a resposta
 	// certa para um valor que não é um hash válido.
-	if time < 1 || threads < 1 || memory < 8*uint32(threads) {
+	if !parametrosValidos(memory, time, threads) {
 		return 0, 0, 0, nil, nil, ErrInvalidHash
 	}
 	if salt, err = base64.RawStdEncoding.DecodeString(parts[4]); err != nil || len(salt) == 0 {
