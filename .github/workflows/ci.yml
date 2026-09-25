@@ -39,6 +39,7 @@ env:
   GITLEAKS_VERSION: v8.30.1
   # O mesmo do backup.yml (o job vps cifra e decifra um backup de teste).
   AGE_VERSION: v1.3.2
+  ACTIONLINT_VERSION: v1.7.12
   # O nome com que o job image carrega a imagem e o e2e a usa: o mesmo do
   # compose.yaml, com VIGILUME_TAG=ci.
   #
@@ -151,6 +152,37 @@ jobs:
         run: |
           go install "github.com/zricethezav/gitleaks/v8@${GITLEAKS_VERSION}"
           gitleaks git . --config .gitleaks.toml --redact --no-banner --verbose
+
+  workflows:
+    # Os workflows não rodam fora do GitHub, e o deploy e o backup só rodam
+    # à mão ou de madrugada: um erro neles aparece no pior momento. Aqui: o
+    # actionlint (sintaxe, expressões e o shellcheck de cada `run:`), as
+    # checagens de texto que ele não faz (host key fixada, actions por SHA,
+    # permissões, gatilhos) e o vps.sh contra um ssh falso.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: actionlint
+        # O shellcheck vem na imagem do runner; sem ele, o actionlint pularia
+        # os `run:` em silêncio, e por isso o passo seguinte o chama direto.
+        run: |
+          go install "github.com/rhysd/actionlint/cmd/actionlint@${ACTIONLINT_VERSION}"
+          actionlint
+      - name: shellcheck dos scripts de deploy/ci
+        run: |
+          shellcheck --version
+          shellcheck deploy/ci/*.sh
+      - name: checagens dos workflows
+        run: sh deploy/ci/checar-workflows.sh
+      - name: vps.sh contra um ssh falso
+        run: sh deploy/ci/testar-vps.sh
 
   web:
     runs-on: ubuntu-latest
@@ -374,7 +406,7 @@ jobs:
     # repositório (nunca em PR, nem num fork). O pacote do GHCR segue a
     # visibilidade do repositório: privado, por enquanto.
     if: github.event_name == 'push' && github.repository == 'BipoXDXD/vigilume'
-    needs: [lint, test, secrets, web, image, e2e, vps]
+    needs: [lint, test, secrets, web, image, e2e, vps, workflows]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:

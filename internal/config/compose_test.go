@@ -70,28 +70,6 @@ func TestPostgres18DigestIsTheSameEverywhere(t *testing.T) {
 	}
 }
 
-// O deploy e o backup usam o mesmo flyctl: um comando que funciona num e
-// não no outro por diferença de versão é o tipo de coisa que só aparece em
-// produção.
-func TestFlyctlVersionIsTheSameInDeployAndBackup(t *testing.T) {
-	re := regexp.MustCompile(`(?ms)setup-flyctl@\S+.*?^\s+version: (\S+)$`)
-	var versoes []string
-	for _, arq := range []string{"../../.github/workflows/deploy.yml", "../../.github/workflows/backup.yml"} {
-		conteudo, err := os.ReadFile(arq)
-		if err != nil {
-			t.Fatal(err)
-		}
-		m := re.FindSubmatch(conteudo)
-		if m == nil {
-			t.Fatalf("%s: versão do setup-flyctl não encontrada", arq)
-		}
-		versoes = append(versoes, string(m[1]))
-	}
-	if versoes[0] != versoes[1] {
-		t.Errorf("flyctl %s no deploy.yml e %s no backup.yml", versoes[0], versoes[1])
-	}
-}
-
 // O compose tem de continuar subindo com as chaves de demo: o PUBLIC_BASE_URL
 // dele precisa ser http e de loopback, senão o boot as recusa (hostLocal).
 func TestComposePublicBaseURLIsLocal(t *testing.T) {

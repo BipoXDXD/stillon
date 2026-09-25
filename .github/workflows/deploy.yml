@@ -1,7 +1,7 @@
 name: deploy
-# Deploy no Fly.io, SÓ à mão (contrato, decisão 6): Actions → deploy → Run
-# workflow, com o SHA completo do commit (40 hex) cuja imagem o job publish
-# do ci publicou, a partir da main.
+# Deploy na VPS, SÓ à mão (Plano 11, spec §3): Actions → deploy → Run
+# workflow, com o SHA completo (40 hex) do commit cuja imagem o job publish
+# do ci publicou, a partir da main. Runbook: docs/deploy/vps.md.
 #
 # Quem pode disparar: só quem tem acesso de escrita ao repositório (hoje, só
 # o dono). No GitHub Free com repositório privado não há environment com
@@ -9,16 +9,19 @@ name: deploy
 # um environment "production" com revisor pode ser acrescentado (runbook,
 # "Tornar o repositório público").
 #
-# O Fly puxa de registry.fly.io, não do GHCR (D34): o pacote do GHCR é
-# privado, e dar ao Fly uma credencial do GitHub seria guardar um token
-# pessoal fora do GitHub. O job copia pelo digest a imagem que o publish
-# empurrou e reescaneou, sem rebuild.
-#
 # O input é o SHA, não um digest: o publish só dá a tag :<sha> DEPOIS do
 # Trivy. Um digest qualquer do pacote podia ser um que subiu e reprovou no
 # Trivy, o de um publish cancelado no meio, ou o da variante tools; a tag
 # :<sha> da imagem runtime só existe para o que passou. O job resolve a tag
 # no digest uma vez e daí em diante só usa o digest.
+#
+# A VPS não fala com o GHCR (o pacote é privado, e ela guardaria um token do
+# GitHub): o job baixa a imagem linux/amd64 e a entrega por SSH, na entrada
+# padrão de `deploy <sha> <image-id>` (deploy/ci/vps.sh). O <image-id> é o
+# digest do manifesto linux/amd64 do índice publicado; o tar vai em layout
+# OCI com os blobs originais (crane), e o `docker load` da VPS (image store
+# containerd, o padrão do Docker 29) dá à imagem exatamente esse ID. Um
+# `docker save` do runner não serve: ele regenera o manifesto, e o ID muda.
 on:
   workflow_dispatch:
     inputs:
@@ -31,7 +34,7 @@ permissions:
   contents: read
   packages: read
 
-# Um deploy nunca é cancelado no meio por outro.
+# Um deploy nunca é cancelado no meio por outro: o segundo espera.
 concurrency:
   group: deploy
   cancel-in-progress: false
@@ -41,26 +44,24 @@ defaults:
   run:
     shell: bash
 
+env:
+  # Versão fixada: o `go install` confere o módulo no checksum database do Go
+  # (sum.golang.org). O Dependabot não a atualiza (fica à mão, dependabot.yml).
+  CRANE_VERSION: v0.22.1
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     env:
       SHA: ${{ inputs.sha }}
-      # Nomes repetidos à mão. Renomear é mexer em todos juntos, num PR só
-      # (lista completa no runbook, "Se o nome do app estiver tomado"):
-      # - pacote do GHCR: ORIGEM aqui, IMAGEM do ci.yml, image do compose.yaml;
-      # - app vigilume: DESTINO e o `-a` do último passo aqui; `app`,
-      #   PUBLIC_BASE_URL e CORS_ORIGIN (https://vigilume.fly.dev) do fly.toml;
-      # - app vigilume-db: `app` de deploy/fly/db/fly.toml, `-a` do backup.yml
-      #   e o host vigilume-db.internal do secret DATABASE_URL.
+      # Nome repetido à mão: IMAGEM do ci.yml e image do compose.yaml.
       ORIGEM: ghcr.io/bipoxdxd/vigilume
-      DESTINO: registry.fly.io/vigilume
     steps:
       - name: só da main
-        # Só da main: o fly.toml do deploy é o que passou por PR. Um passo que
-        # falha, e não um `if:` no job: disparado de outro branch, o deploy
-        # fica vermelho (recusado), e não "skipped" (parecendo que deu certo).
+        # Só da main: o vps.sh que conversa com a VPS é o que passou por PR.
+        # Um passo que falha, e não um `if:` no job: disparado de outro
+        # branch, o deploy fica vermelho (recusado), e não "skipped".
         run: |
           if [ "$GITHUB_REF" != refs/heads/main ]; then
             echo "deploy só da main (disparado de $GITHUB_REF)" >&2
@@ -70,7 +71,7 @@ jobs:
         # O input vai para o shell só por variável de ambiente, e só no
         # formato de um SHA completo: nada de texto livre na linha de comando.
         # Exatamente 40 hex também exclui as tags da variante tools
-        # (<sha>-tools), que nunca vai para o Fly.
+        # (<sha>-tools), que nunca vai para produção.
         run: |
           if ! printf '%s' "$SHA" | grep -Eqx '[0-9a-f]{40}'; then
             echo "SHA inválido: use o SHA completo do commit (40 hex minúsculos)" >&2
@@ -84,8 +85,7 @@ jobs:
       - name: o commit está na main
         # Uma tag v* num commit fora da main também publica :<sha> (ci.yml),
         # sem que ele tenha passado por PR. Só vai para produção o que a main
-        # contém. O SHA existe? (mensagem própria, e não o "fatal" do
-        # merge-base) E é ancestral de origin/main?
+        # contém.
         run: |
           if ! git cat-file -e "$SHA^{commit}" 2>/dev/null; then
             echo "o commit $SHA não existe neste repositório" >&2
@@ -96,29 +96,13 @@ jobs:
             exit 1
           fi
 
-      - name: conferir o TRUSTED_PROXIES
-        # Vazio, todo cliente divide um balde de rate limit e o mesmo ip_hash
-        # (D22). O valor é medido no primeiro deploy, feito à mão (runbook,
-        # passo 9), e entra no fly.toml por PR antes de o workflow ser usado.
-        # Aceita uma lista separada por vírgula, com espaço opcional depois
-        # dela ("172.16.0.0/12, fdaa::/16"); recusa vazio, só espaço e vírgula
-        # sobrando. Recusa também um prefixo /0 (0.0.0.0/0, ::/0): confiar na
-        # internet inteira deixaria qualquer cliente forjar o Fly-Client-IP.
-        # O boot recusa o /0 do mesmo jeito; aqui o deploy nem começa.
-        run: |
-          if ! grep -Eq '^[[:space:]]*TRUSTED_PROXIES[[:space:]]*=[[:space:]]*"[^",[:space:]]+(,[[:space:]]*[^",[:space:]]+)*"' fly.toml; then
-            echo "TRUSTED_PROXIES vazio no fly.toml: meça o proxy do Fly (docs/deploy/fly.md, passo 9) e faça o PR antes" >&2
-            exit 1
-          fi
-          if grep -Eq '^[[:space:]]*TRUSTED_PROXIES[[:space:]]*=.*/0([",[:space:]]|$)' fly.toml; then
-            echo "TRUSTED_PROXIES com prefixo /0 no fly.toml: use o endereço medido do proxy (docs/deploy/fly.md, passo 9)" >&2
-            exit 1
-          fi
-
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
-      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1 # 1.6
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          version: 0.4.108
+          go-version: '1.26'
+          cache: false
+      - name: crane
+        run: go install "github.com/google/go-containerregistry/cmd/crane@${CRANE_VERSION}"
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
@@ -137,30 +121,40 @@ jobs:
           echo "imagem: $ORIGEM:$SHA = $digest"
           echo "DIGEST=$digest" >> "$GITHUB_ENV"
 
-      # Secret de repositório: FLY_DEPLOY_TOKEN = `fly tokens create deploy -a
-      # vigilume`, que só alcança este app.
-      - name: copiar para o registry do Fly, pelo digest
-        env:
-          FLY_API_TOKEN: ${{ secrets.FLY_DEPLOY_TOKEN }}
+      - name: manifesto linux/amd64
+        # A VPS é amd64. Exatamente uma entrada linux/amd64 no índice, ou
+        # nada: um índice estranho para o deploy aqui, e não na VPS.
         run: |
-          flyctl auth docker
-          # Copia o índice multi-arch inteiro; o digest continua o mesmo.
-          docker buildx imagetools create -t "$DESTINO:run-$GITHUB_RUN_ID" "$ORIGEM@$DIGEST"
+          id=$(docker buildx imagetools inspect --raw "$ORIGEM@$DIGEST" \
+            | jq -r '[.manifests[]? | select(.platform.os == "linux" and .platform.architecture == "amd64")] | if length == 1 then .[0].digest else empty end')
+          if ! printf '%s' "$id" | grep -Eqx 'sha256:[0-9a-f]{64}'; then
+            echo "o índice $ORIGEM@$DIGEST não tem exatamente um manifesto linux/amd64" >&2
+            exit 1
+          fi
+          echo "manifesto linux/amd64: $id"
+          echo "IMAGE_ID=$id" >> "$GITHUB_ENV"
 
-      - name: flyctl deploy
-        env:
-          FLY_API_TOKEN: ${{ secrets.FLY_DEPLOY_TOKEN }}
-        # rolling: com uma máquina, alguns segundos fora (D26). --ha=false:
-        # sem ele, o primeiro deploy de um app cria DUAS máquinas, e dois
-        # processos --role=all mandariam cada notificação em dobro.
-        #
-        # A conferência conta só as máquinas de pé (started/running): uma
-        # parada ou destruída não manda notificação. Se o flyctl ou o jq
-        # falharem, o `lista=$(…)` sai com erro e o bash -e para o passo:
-        # sem lista, não há "1" por acaso.
+      - name: baixar a imagem (layout OCI)
+        # O crane grava o manifesto e as camadas como estão no registry; a
+        # conferência abaixo prova que o tar leva o manifesto do IMAGE_ID.
         run: |
-          flyctl deploy --image "$DESTINO@$DIGEST" --strategy rolling --ha=false
-          lista=$(flyctl machines list -a vigilume --json)
-          maquinas=$(printf '%s' "$lista" | jq '[.[] | select(.state == "started" or .state == "running")] | length')
-          echo "máquinas de pé no app: $maquinas"
-          [ "$maquinas" = 1 ] || { echo "queria exatamente 1 máquina de pé" >&2; exit 1; }
+          crane pull --platform linux/amd64 --format oci "$ORIGEM@$DIGEST" "$RUNNER_TEMP/imagem"
+          no_tar=$(jq -r '[.manifests[].digest] | if length == 1 then .[0] else "vários" end' "$RUNNER_TEMP/imagem/index.json")
+          if [ "$no_tar" != "$IMAGE_ID" ]; then
+            echo "o layout baixado leva $no_tar, e não o manifesto $IMAGE_ID" >&2
+            exit 1
+          fi
+          du -sh "$RUNNER_TEMP/imagem"
+
+      # Secrets de repositório (runbook, "Secrets do GitHub"): VPS_HOST (nome
+      # ou IP), VPS_SSH_KEY (a chave privada ed25519 do usuário deploy, só
+      # para isto), VPS_HOST_KEY (a linha de /etc/ssh/ssh_host_ed25519_key.pub
+      # da VPS). O vps.sh fixa a host key (nunca a aceita às cegas), sai
+      # com o código da VPS e diz o que ele significa: 2 recusado, 3 imagem
+      # divergente, 4 não ficou saudável (rollback feito), 255 SSH.
+      - name: entregar na VPS
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_HOST_KEY: ${{ secrets.VPS_HOST_KEY }}
+        run: tar -C "$RUNNER_TEMP/imagem" -cf - . | sh deploy/ci/vps.sh deploy "$SHA" "$IMAGE_ID"

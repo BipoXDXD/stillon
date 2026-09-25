@@ -6,7 +6,7 @@
 # backup.yml é o de produção) têm um Dockerfile de uma linha cada, lido pelo
 # workflow: o Dependabot não lê o `env` de um workflow. Ficam à mão:
 # - as versões das ferramentas Go no env do ci.yml (sqlc, staticcheck, gosec,
-#   govulncheck, gitleaks);
+#   govulncheck, gitleaks, actionlint) e o crane do deploy.yml;
 # - os digests do Postgres 17 e 18 na matriz do job test do ci.yml;
 # - o imagemPadrao de internal/storage/testdb (o mesmo digest do 18);
 # - a versão do flyctl (0.4.108) no deploy.yml e no backup.yml.
