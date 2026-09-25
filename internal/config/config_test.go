@@ -248,3 +248,239 @@ func TestLogValueRedactsTheResendKey(t *testing.T) {
 		t.Errorf("log = %s", buf.String())
 	}
 }
+
+func TestLoadParsesTheClientIPHeader(t *testing.T) {
+	env := validEnv()
+	env["CLIENT_IP_HEADER"] = "fly-client-ip"
+	cfg, err := Load(getenvFrom(env))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ClientIPHeader != "Fly-Client-Ip" {
+		t.Errorf("ClientIPHeader = %q, queria a forma canônica Fly-Client-Ip", cfg.ClientIPHeader)
+	}
+}
+
+func TestClientIPHeaderDefaultsToEmpty(t *testing.T) {
+	cfg, err := Load(getenvFrom(validEnv()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ClientIPHeader != "" {
+		t.Errorf("sem CLIENT_IP_HEADER veio %q, queria vazio (último salto do XFF)", cfg.ClientIPHeader)
+	}
+}
+
+func TestLoadRejectsABadClientIPHeader(t *testing.T) {
+	for _, v := range []string{"Fly Client IP", "Fly-Client-IP:", "X-Forwarded-For", "x-forwarded-for"} {
+		env := validEnv()
+		env["CLIENT_IP_HEADER"] = v
+		_, err := Load(getenvFrom(env))
+		if err == nil || !strings.Contains(err.Error(), "CLIENT_IP_HEADER") {
+			t.Errorf("CLIENT_IP_HEADER=%q: erro = %v, queria recusa citando a variável", v, err)
+		}
+	}
+}
+
+// As chaves de demonstração do compose.yaml são públicas no repositório. Com
+// elas em produção, qualquer um forja JWT e decifra os segredos.
+func TestLoadRejectsDemoKeysOverHTTPS(t *testing.T) {
+	// O esquema não diferencia maiúsculas (RFC 3986): "HTTPS://" também é
+	// produção, e não pode passar pelo portão como se fosse http.
+	for _, base := range []string{"https://vigilume.example", "HTTPS://vigilume.example"} {
+		for i, nome := range []string{"MASTER_KEY", "JWT_SECRET", "IP_HASH_KEY"} {
+			env := validEnv()
+			env["PUBLIC_BASE_URL"] = base
+			// Cada variável com a chave de demo de OUTRA: embaralhar não escapa.
+			env[nome] = base64.StdEncoding.EncodeToString(chavesDeDemo[(i+1)%len(chavesDeDemo)])
+			_, err := Load(getenvFrom(env))
+			if err == nil || !strings.Contains(err.Error(), nome) || !strings.Contains(err.Error(), "demonstração") {
+				t.Errorf("%s com chave de demo e %s: erro = %v, queria recusa", nome, base, err)
+				continue
+			}
+			// A mensagem vai para o log do boot: não pode repetir a chave,
+			// nem em texto nem em base64.
+			vazamentos := []string{"naouse"}
+			for _, d := range chavesDeDemo {
+				vazamentos = append(vazamentos, string(d), base64.StdEncoding.EncodeToString(d))
+			}
+			for _, vazado := range vazamentos {
+				if strings.Contains(err.Error(), vazado) {
+					t.Errorf("%s com %s: a mensagem de erro repete a chave (%q): %v", nome, base, vazado, err)
+				}
+			}
+		}
+	}
+}
+
+func TestEhHTTPS(t *testing.T) {
+	casos := map[string]bool{
+		"https://vigilume.example":   true,
+		"HTTPS://vigilume.example":   true,
+		"Https://vigilume.example":   true,
+		" https://vigilume.example ": true,
+		"http://localhost:8080":      false,
+		"HTTP://localhost:8080":      false,
+		"httpsx://vigilume.example":  false,
+		"vigilume.example":           false,
+		"":                           false,
+	}
+	for s, want := range casos {
+		if got := EhHTTPS(s); got != want {
+			t.Errorf("EhHTTPS(%q) = %v, queria %v", s, got, want)
+		}
+	}
+}
+
+func TestLoadAcceptsDemoKeysOverHTTP(t *testing.T) {
+	env := validEnv()
+	env["PUBLIC_BASE_URL"] = "http://localhost:8080"
+	env["MASTER_KEY"] = base64.StdEncoding.EncodeToString(chavesDeDemo[0])
+	env["JWT_SECRET"] = base64.StdEncoding.EncodeToString(chavesDeDemo[1])
+	env["IP_HASH_KEY"] = base64.StdEncoding.EncodeToString(chavesDeDemo[2])
+	if _, err := Load(getenvFrom(env)); err != nil {
+		t.Errorf("chaves de demo com http (o compose) deveriam subir: %v", err)
+	}
+}
+
+// As chaves de demo têm de ter o tamanho certo: senão o compose nem sobe, e
+// a recusa acima nunca seria exercida por quem copiou o arquivo.
+func TestDemoKeysHaveTheRequiredLength(t *testing.T) {
+	for i, k := range chavesDeDemo {
+		if len(k) != keyLen {
+			t.Errorf("chave de demo %d tem %d bytes, queria %d", i, len(k), keyLen)
+		}
+	}
+}
+
+// PUBLIC_BASE_URL decide se o processo está em produção. Um valor malformado
+// que começa com https:// não pode passar como http e ligar as chaves de demo,
+// tirar o Secure do cookie e calar o aviso de TRUSTED_PROXIES: o boot recusa.
+func TestLoadRejectsMalformedPublicBaseURL(t *testing.T) {
+	for _, v := range []string{
+		"https://exa mple.com",
+		`"https://x"`,
+		"ftp://x",
+		"https://",
+		"x",
+		"https://x%zz",
+		"https://[::1",
+		"https://:443",
+		"https://usuario:segredo@[::1",
+	} {
+		env := validEnv()
+		env["PUBLIC_BASE_URL"] = v
+		_, err := Load(getenvFrom(env))
+		if err == nil || !strings.Contains(err.Error(), "PUBLIC_BASE_URL") {
+			t.Errorf("PUBLIC_BASE_URL=%q: erro = %v, queria recusa", v, err)
+			continue
+		}
+		if strings.Contains(err.Error(), "segredo") {
+			t.Errorf("PUBLIC_BASE_URL=%q: a mensagem repete a credencial: %v", v, err)
+		}
+	}
+}
+
+func TestLoadAcceptsValidPublicBaseURL(t *testing.T) {
+	for _, v := range []string{
+		"https://vigilume.example",
+		"HTTPS://vigilume.example",
+		"https://vigilume.example/",
+		"https://vigilume.example/status",
+		"http://localhost:8080",
+		"http://127.0.0.1:8080",
+		"http://[::1]:8080",
+	} {
+		env := validEnv()
+		env["PUBLIC_BASE_URL"] = v
+		cfg, err := Load(getenvFrom(env))
+		if err != nil {
+			t.Errorf("PUBLIC_BASE_URL=%q: %v", v, err)
+			continue
+		}
+		if cfg.PublicBaseURL != v {
+			t.Errorf("PUBLIC_BASE_URL=%q guardado como %q", v, cfg.PublicBaseURL)
+		}
+	}
+}
+
+// As chaves de demo só servem numa máquina local. Um compose copiado para um
+// servidor com http e um host de verdade (ou 0.0.0.0) também é produção, e o
+// esquema sozinho não pega isso (I3 da revisão do Plano 7).
+func TestLoadRejectsDemoKeysOnANonLoopbackHost(t *testing.T) {
+	for _, base := range []string{
+		"http://vigilume.example",
+		"http://vigilume.example:8080",
+		"http://10.0.0.5:8080",
+		"http://192.168.1.10",
+		"http://0.0.0.0:8080",
+		"http://[::]:8080",
+		"http://[2001:db8::1]:8080",
+		"http://localhost.vigilume.example",
+		"http://127.0.0.1.nip.io",
+	} {
+		env := validEnv()
+		env["PUBLIC_BASE_URL"] = base
+		env["JWT_SECRET"] = base64.StdEncoding.EncodeToString(chavesDeDemo[1])
+		_, err := Load(getenvFrom(env))
+		if err == nil || !strings.Contains(err.Error(), "JWT_SECRET") || !strings.Contains(err.Error(), "demonstração") {
+			t.Errorf("chave de demo com %s: erro = %v, queria recusa", base, err)
+		}
+	}
+}
+
+func TestLoadAcceptsDemoKeysOnLoopback(t *testing.T) {
+	for _, base := range []string{
+		"http://localhost:8080",
+		"http://LocalHost:8080",
+		"http://localhost",
+		"http://127.0.0.1:18080",
+		"http://127.8.9.1",
+		"http://[::1]:8080",
+	} {
+		env := validEnv()
+		env["PUBLIC_BASE_URL"] = base
+		env["MASTER_KEY"] = base64.StdEncoding.EncodeToString(chavesDeDemo[0])
+		env["JWT_SECRET"] = base64.StdEncoding.EncodeToString(chavesDeDemo[1])
+		env["IP_HASH_KEY"] = base64.StdEncoding.EncodeToString(chavesDeDemo[2])
+		if _, err := Load(getenvFrom(env)); err != nil {
+			t.Errorf("chaves de demo com %s (máquina local) deveriam subir: %v", base, err)
+		}
+	}
+}
+
+// Credencial na PUBLIC_BASE_URL vai parar em link de e-mail e no log do boot:
+// o boot recusa, e a mensagem não repete o valor.
+func TestLoadRejectsUserinfoInPublicBaseURL(t *testing.T) {
+	for _, v := range []string{
+		"https://usuario:segredo@vigilume.example",
+		"https://segredo@vigilume.example",
+		"http://usuario:segredo@localhost:8080",
+		"https://:segredo@vigilume.example",
+	} {
+		env := validEnv()
+		env["PUBLIC_BASE_URL"] = v
+		_, err := Load(getenvFrom(env))
+		if err == nil || !strings.Contains(err.Error(), "PUBLIC_BASE_URL") {
+			t.Errorf("PUBLIC_BASE_URL=%q: erro = %v, queria recusa", v, err)
+			continue
+		}
+		if strings.Contains(err.Error(), "segredo") || strings.Contains(err.Error(), "usuario") {
+			t.Errorf("PUBLIC_BASE_URL=%q: a mensagem repete a credencial: %v", v, err)
+		}
+	}
+}
+
+// Um prefixo /0 em TRUSTED_PROXIES confia no X-Forwarded-For (ou no
+// CLIENT_IP_HEADER) de qualquer origem: é a falha aberta que a lista existe
+// para evitar. Também dentro de uma lista com outros prefixos.
+func TestLoadRejectsAZeroBitTrustedProxy(t *testing.T) {
+	for _, v := range []string{"0.0.0.0/0", "::/0", "10.0.0.0/8, 0.0.0.0/0", "1.2.3.4/0"} {
+		env := validEnv()
+		env["TRUSTED_PROXIES"] = v
+		_, err := Load(getenvFrom(env))
+		if err == nil || !strings.Contains(err.Error(), "TRUSTED_PROXIES") || !strings.Contains(err.Error(), "/0") {
+			t.Errorf("TRUSTED_PROXIES=%q: erro = %v, queria recusa citando /0", v, err)
+		}
+	}
+}

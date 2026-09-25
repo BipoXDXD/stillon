@@ -4,7 +4,6 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
-	"net/netip"
 	"time"
 
 	"github.com/google/uuid"
@@ -19,15 +18,15 @@ import (
 // AccountHandlers são as rotas da conta do dono (Plano 5): GET /me, POST
 // /auth/password, GET /sessions e DELETE /sessions/{id}.
 type AccountHandlers struct {
-	svc            *account.Service
-	trustedProxies []netip.Prefix
+	svc     *account.Service
+	proxies middleware.Proxies
 	// secureCookie: o mesmo critério do AuthHandlers, para apagar o cookie de
 	// refresh quando a sessão encerrada é a atual.
 	secureCookie bool
 }
 
-func NewAccountHandlers(svc *account.Service, trustedProxies []netip.Prefix, secureCookie bool) *AccountHandlers {
-	return &AccountHandlers{svc: svc, trustedProxies: trustedProxies, secureCookie: secureCookie}
+func NewAccountHandlers(svc *account.Service, proxies middleware.Proxies, secureCookie bool) *AccountHandlers {
+	return &AccountHandlers{svc: svc, proxies: proxies, secureCookie: secureCookie}
 }
 
 // meResponse é construído campo a campo: nada de hash, bloqueio ou segredo.
@@ -87,7 +86,7 @@ func (h *AccountHandlers) ChangePassword(w http.ResponseWriter, r *http.Request)
 
 	err := h.svc.ChangePassword(r.Context(), userID, familyID, account.ChangePasswordInput{
 		Current: req.CurrentPassword, New: req.NewPassword, TOTPCode: req.TOTPCode,
-	}, auth.Meta{IP: middleware.ClientIP(r, h.trustedProxies), UserAgent: r.UserAgent()})
+	}, auth.Meta{IP: middleware.ClientIP(r, h.proxies), UserAgent: r.UserAgent()})
 	var pe account.PolicyError
 	switch {
 	case errors.As(err, &pe):
@@ -189,7 +188,7 @@ func (h *AccountHandlers) RevokeSession(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	err := h.svc.RevokeSession(r.Context(), userID, alvo,
-		auth.Meta{IP: middleware.ClientIP(r, h.trustedProxies), UserAgent: r.UserAgent()})
+		auth.Meta{IP: middleware.ClientIP(r, h.proxies), UserAgent: r.UserAgent()})
 	if errors.Is(err, account.ErrSessionNotFound) {
 		apierr.WriteError(w, r, apierr.CodeNotFound)
 		return

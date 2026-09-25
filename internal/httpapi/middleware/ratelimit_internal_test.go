@@ -20,7 +20,7 @@ import (
 // Por isso os dois saem juntos.
 func TestRateLimitCapsTheNumberOfBuckets(t *testing.T) {
 	const teto = 8
-	h := rateLimit(t.Context(), porMinuto(60), 5, porIP(nil), teto)(http.HandlerFunc(
+	h := rateLimit(t.Context(), porMinuto(60), 5, porIP(Proxies{}), teto)(http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) }))
 
 	for i := range 500 {
@@ -38,7 +38,7 @@ func TestRateLimitCapsTheNumberOfBuckets(t *testing.T) {
 // bloco que um único assinante recebe, então dar um balde por endereço
 // entrega ao atacante bilhões de baldes de graça.
 func TestIPv6ClientsShareABucketPerSlash64(t *testing.T) {
-	h := rateLimit(t.Context(), porMinuto(60), 1, porIP(nil), 1000)(http.HandlerFunc(
+	h := rateLimit(t.Context(), porMinuto(60), 1, porIP(Proxies{}), 1000)(http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) }))
 
 	var negados int

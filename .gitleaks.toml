@@ -1,0 +1,22 @@
+# Configuração do gitleaks (D37 do Plano 7). Estende as regras padrão: todas
+# continuam ativas; aqui só se tiram valores conferidos à mão.
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Chaves de demonstração públicas do compose"
+# As três chaves de demonstração do compose.yaml (MASTER_KEY, JWT_SECRET e
+# IP_HASH_KEY), em base64 de "demo-vigilume-…-naouse". Estão no repositório de
+# propósito e são públicas: o boot as recusa quando PUBLIC_BASE_URL é https
+# (Task 2 do Plano 7; D13 e D14 da spec
+# docs/superpowers/specs/2026-09-24-plano-7-empacotamento-e-deploy-design.md).
+# Só estes três valores exatos, ancorados; nada de padrão largo. Se uma chave
+# de demo mudar, a linha daqui muda junto, e o gitleaks roda de novo.
+# Só a regra que as pega; as outras continuam vendo estes valores.
+targetRules = ["generic-api-key"]
+regexTarget = "secret"
+regexes = [
+  '''^ZGVtby12aWdpbHVtZS1NQVNURVJfS0VZLW5hb3VzZSE=$''',
+  '''^ZGVtby12aWdpbHVtZS1KV1RfU0VDUkVULW5hb3VzZSE=$''',
+  '''^ZGVtby12aWdpbHVtZS1JUF9IQVNIX0tFWS1uYW91c2U=$''',
+]

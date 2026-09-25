@@ -12,3 +12,5 @@
 *.test
 coverage.out
 /.superpowers/
+# Configuração local do GoLand/Rider; não vai para o repositório.
+.idea/

@@ -30,8 +30,8 @@ type chaveFn func(*http.Request) (string, bool)
 // um jeito explícito de terminar; amarrar isso ao contexto do servidor faz
 // a goroutine morrer no shutdown gracioso junto com o resto, em vez de
 // vazar para sempre (R32).
-func RateLimit(ctx context.Context, perMinute, burst int, trusted []netip.Prefix) func(http.Handler) http.Handler {
-	return rateLimit(ctx, porMinuto(perMinute), burst, porIP(trusted), maxBuckets)
+func RateLimit(ctx context.Context, perMinute, burst int, px Proxies) func(http.Handler) http.Handler {
+	return rateLimit(ctx, porMinuto(perMinute), burst, porIP(px), maxBuckets)
 }
 
 // RateLimitUser limita por usuário autenticado, a segunda camada da spec
@@ -52,9 +52,9 @@ func RateLimitUserEvery(ctx context.Context, every time.Duration, burst int) fun
 
 func porMinuto(n int) rate.Limit { return rate.Limit(float64(n) / 60.0) }
 
-func porIP(trusted []netip.Prefix) chaveFn {
+func porIP(px Proxies) chaveFn {
 	return func(r *http.Request) (string, bool) {
-		return chaveDe(ClientIP(r, trusted)), true
+		return chaveDe(ClientIP(r, px)), true
 	}
 }
 

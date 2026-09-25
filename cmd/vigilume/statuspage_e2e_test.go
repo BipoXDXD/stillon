@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/BipoXDXD/vigilume/internal/config"
 	"github.com/BipoXDXD/vigilume/internal/storage"
@@ -74,20 +75,55 @@ func TestAllRoleConsolidatesAndServesThePublicPage(t *testing.T) {
 	fim := make(chan error, 1)
 	go func() { fim <- run(runCtx, cfg) }()
 
-	var corpo string
-	prazo := time.Now().Add(15 * time.Second)
-	for !strings.Contains(corpo, "100,00% no ar em 90 dias") {
+	// Espera o sinal certo antes de ler a página: o rollup da hora no banco.
+	// Ler /p/ antes dele põe no cache (30 s) uma página sem o uptime, e um
+	// poll rápido de /p/ esgota o limitador da página (burst 60, 2/s): sob
+	// carga, as duas coisas faziam o teste falhar com 429 ou por prazo.
+	// A leitura é como superusuário, por fora da RLS.
+	admin, err := pgx.Connect(ctx, testdb.AdminDSN(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer admin.Close(ctx)
+	prazo := time.Now().Add(30 * time.Second)
+	for {
+		var n int
+		if err := admin.QueryRow(ctx, `SELECT count(*) FROM check_rollup_1h WHERE target_id = $1`, alvo).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		if n > 0 {
+			break
+		}
 		if time.Now().After(prazo) {
-			t.Fatalf("a página não mostrou o uptime consolidado em 15s:\n%s", corpo)
+			t.Fatal("a manutenção não consolidou a hora em 30s")
 		}
 		time.Sleep(100 * time.Millisecond)
+	}
+
+	// Com o rollup gravado, a primeira resposta 200 já tem de trazer o
+	// uptime. O poll a 500 ms (o ritmo de reposição do limitador) só espera o
+	// servidor HTTP subir; não esgota o burst nem em 15 s.
+	var corpo string
+	prazo = time.Now().Add(15 * time.Second)
+	for {
+		if time.Now().After(prazo) {
+			t.Fatalf("a página não respondeu 200 em 15s:\n%s", corpo)
+		}
 		resp, err := http.Get("http://" + addr + "/p/empresa-e2e")
 		if err != nil {
+			time.Sleep(500 * time.Millisecond)
 			continue
 		}
 		b, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
 		corpo = string(b)
+		if resp.StatusCode == http.StatusOK {
+			break
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	if !strings.Contains(corpo, "100,00% no ar em 90 dias") {
+		t.Errorf("a página não mostrou o uptime consolidado:\n%s", corpo)
 	}
 	for _, quer := range []string{"Status E2E", "API pública", "Sem dados", "latência típica 80 ms"} {
 		if !strings.Contains(corpo, quer) {

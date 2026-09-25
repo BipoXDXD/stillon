@@ -2,23 +2,75 @@ name: ci
 on:
   push:
     branches: [main]
+    # Uma tag v* no commit que já saiu pela main publica DE NOVO: outro
+    # build, outro Trivy, e a tag :<sha> passa para o digest novo (o mesmo
+    # código, reescaneado); :latest fica onde estava, e ganha-se :<versão>.
+    # Um deploy pelo SHA depois disso leva o digest do build da tag.
+    tags: ['v*']
   pull_request:
 
+# Nenhum job escreve nada por padrão. Quem precisa de mais pede no job.
+permissions:
+  contents: read
+
+# shell: bash dá `bash -eo pipefail` a todo run. O padrão do GitHub é
+# `bash -e`, sem pipefail: um `comando | tee log` que falha deixaria o passo
+# verde, porque o código do pipe é o do tee.
+defaults:
+  run:
+    shell: bash
+
+# Um push novo no mesmo ref (PR, main ou tag) cancela a execução anterior:
+# com o repositório privado, os minutos de Actions contam na cota (2.000/mês),
+# e uma execução superada não prova nada. Na main, o publish da execução
+# nova substitui o da cancelada.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# Actions fixadas por SHA completo (a tag vem no comentário) e ferramentas com
+# versão: uma tag móvel roda código alheio com o GITHUB_TOKEN, e @latest muda
+# o resultado do CI sem commit nenhum (D20 do Plano 7). O Dependabot atualiza.
+env:
+  SQLC_VERSION: v1.31.1
+  STATICCHECK_VERSION: v0.8.1
+  GOSEC_VERSION: v2.29.0
+  GOVULNCHECK_VERSION: v1.8.0
+  GITLEAKS_VERSION: v8.30.1
+  # O nome com que o job image carrega a imagem e o e2e a usa: o mesmo do
+  # compose.yaml, com VIGILUME_TAG=ci.
+  #
+  # Nomes repetidos à mão: ghcr.io/bipoxdxd/vigilume aqui, no ORIGEM do
+  # deploy.yml e no image do compose.yaml. Os apps do Fly (vigilume e
+  # vigilume-db) estão no deploy.yml, no backup.yml, nos dois fly.toml
+  # (inclusive PUBLIC_BASE_URL e CORS_ORIGIN) e no secret DATABASE_URL
+  # (vigilume-db.internal). Renomear é mexer em todos juntos: a lista
+  # completa está no runbook, "Se o nome do app estiver tomado".
+  IMAGEM: ghcr.io/bipoxdxd/vigilume
+
 jobs:
-  go:
+  lint:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          go-version: '1.26'
-          cache: true
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          # Chave própria, diferente da do test: o setup-go não tem sufixo de
+          # chave, só o hash destes arquivos. O ci.yml entra porque as versões
+          # das ferramentas instaladas aqui moram no env dele.
+          cache-dependency-path: |
+            go.sum
+            .github/workflows/ci.yml
 
       - name: sqlc diff
         # Código gerado desatualizado em relação ao SQL é o erro que o sqlc
         # existe para impedir; o CI o transforma em falha de build.
         run: |
-          go install github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1
+          go install "github.com/sqlc-dev/sqlc/cmd/sqlc@${SQLC_VERSION}"
           sqlc diff
 
       - name: vet
@@ -26,18 +78,372 @@ jobs:
 
       - name: staticcheck
         run: |
-          go install honnef.co/go/tools/cmd/staticcheck@latest
+          go install "honnef.co/go/tools/cmd/staticcheck@${STATICCHECK_VERSION}"
           staticcheck ./...
 
       - name: gosec
         run: |
-          go install github.com/securego/gosec/v2/cmd/gosec@latest
+          go install "github.com/securego/gosec/v2/cmd/gosec@${GOSEC_VERSION}"
           gosec -quiet ./...
 
       - name: govulncheck
         run: |
-          go install golang.org/x/vuln/cmd/govulncheck@latest
+          go install "golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}"
           govulncheck ./...
+
+  test:
+    # Produção roda o 18; a perna do 17 mantém o código compatível com um
+    # Postgres que ainda não tenha o 18 (Reconciliação 7 do contrato). Uma
+    # migration com uuidv7() nativo, por exemplo, fica vermelha aqui.
+    strategy:
+      fail-fast: false
+      matrix:
+        # Por digest, com a tag na string. O Dependabot não atualiza estas
+        # strings: a mão, junto com o digest de deploy/fly/db/Dockerfile (o
+        # 18 é o de produção, igual ao do Dockerfile, do compose.yaml e do
+        # testdb) e com o imagemPadrao de internal/storage/testdb.
+        include:
+          - label: postgres:17-alpine
+            image: postgres:17-alpine@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24
+          - label: postgres:18-alpine
+            image: postgres:18-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
+    name: test (${{ matrix.label }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      TEST_POSTGRES_IMAGE: ${{ matrix.image }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          # Só o go.sum: a chave difere da do lint (que também hashia o
+          # ci.yml). As duas pernas compilam o mesmo código com as mesmas
+          # flags, então dividem a chave; o cache delas é equivalente.
+          cache-dependency-path: go.sum
 
       - name: test
         run: go test -race -count=1 -coverprofile=coverage.out ./...
+
+  secrets:
+    # O histórico INTEIRO, em todo PR: com o repositório privado, um segredo
+    # commitado hoje fica público no dia em que ele abrir. Os falsos positivos
+    # conferidos à mão ficam no .gitleaksignore, pela fingerprint (D37); as
+    # chaves de demo públicas do compose, no allowlist do .gitleaks.toml.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: gitleaks
+        run: |
+          go install "github.com/zricethezav/gitleaks/v8@${GITLEAKS_VERSION}"
+          gitleaks git . --config .gitleaks.toml --redact --no-banner --verbose
+
+  web:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+        working-directory: web
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npx vitest run
+      - run: npm run build
+      - name: o build não suja a árvore
+        # O .gitignore ignora internal/webui/dist menos o .gitkeep (Plano 6):
+        # um build que apagasse o .gitkeep, ou escrevesse fora dali, aparece aqui.
+        working-directory: .
+        run: test -z "$(git status --porcelain)"
+
+      # O teste do internal/webui contra o dist de verdade. Com o dist vazio
+      # (só o .gitkeep, como no job test) ele passaria sem conferir nada;
+      # VIGILUME_EXIGIR_DIST=1 faz o dist vazio ser falha (Plano 6).
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          # Sem cache: este job compila um pacote só, e com o go.sum como chave
+          # ele disputaria a chave do test (o primeiro a terminar grava um cache
+          # quase vazio para os dois).
+          cache: false
+      - name: go test do painel embutido
+        working-directory: .
+        env:
+          VIGILUME_EXIGIR_DIST: '1'
+        run: go test -count=1 ./internal/webui/
+
+  image:
+    # A imagem de produção que o e2e vai usar, só amd64 (a do runner). O
+    # publish constrói as duas arquiteturas do mesmo código, com o cache daqui.
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: build (runtime)
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          target: runtime
+          platforms: linux/amd64
+          load: true
+          tags: ${{ env.IMAGEM }}:ci
+          build-args: VERSION=${{ github.sha }}
+          cache-from: type=gha,scope=imagem
+          cache-to: type=gha,scope=imagem,mode=max
+
+      - name: build (tools, só o seed do compose)
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          target: tools
+          platforms: linux/amd64
+          load: true
+          tags: ${{ env.IMAGEM }}:ci-tools
+          build-args: VERSION=${{ github.sha }}
+          cache-from: type=gha,scope=imagem
+
+      - name: trivy
+        # Achado HIGH ou CRITICAL com correção disponível derruba o job. A
+        # imagem (por digest) vem de deploy/ci/trivy/Dockerfile, que o
+        # Dependabot atualiza.
+        run: |
+          trivy=$(sed -n 's/^FROM //p' deploy/ci/trivy/Dockerfile)
+          # Dois espelhos do banco de CVEs: o ghcr.io sozinho limita downloads
+          # anônimos e derruba o job de vez em quando.
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock "$trivy" \
+            image --quiet --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 \
+            --db-repository public.ecr.aws/aquasecurity/trivy-db,ghcr.io/aquasecurity/trivy-db "$IMAGEM:ci"
+          # O tools também: é o que o seed do compose roda na máquina de quem
+          # avalia, e é publicado sem o reescaneamento do publish.
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock "$trivy" \
+            image --quiet --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 \
+            --db-repository public.ecr.aws/aquasecurity/trivy-db,ghcr.io/aquasecurity/trivy-db "$IMAGEM:ci-tools"
+
+      - name: checagens da imagem
+        run: sh deploy/ci/checar-imagem.sh "$IMAGEM:ci" "$GITHUB_SHA"
+
+      - name: exportar para o e2e
+        run: docker save "$IMAGEM:ci" "$IMAGEM:ci-tools" | gzip -1 > "$RUNNER_TEMP/imagens.tar.gz"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: imagens
+          path: ${{ runner.temp }}/imagens.tar.gz
+          retention-days: 1
+          if-no-files-found: error
+
+  e2e:
+    # O compose do avaliador, com a imagem que acabou de passar no Trivy (D18):
+    # se o seed, o healthcheck, o init do Postgres ou o painel embutido
+    # quebrarem, o PR fica vermelho.
+    needs: image
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      VIGILUME_TAG: ci
+      # Nem pull nem build: a imagem do Vigilume é a do artifact, ou nada. O
+      # --pull never vale para TODOS os serviços, e por isso o Postgres é
+      # puxado antes, num passo próprio. --wait-timeout: um healthcheck que
+      # nunca fica verde derruba o passo em 2 min, em vez de ficar até o
+      # timeout-minutes do job.
+      UP_ARGS: --no-build --pull never --wait-timeout 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: imagens
+          path: ${{ runner.temp }}
+      - run: gunzip -c "$RUNNER_TEMP/imagens.tar.gz" | docker load
+      - name: Postgres do compose
+        # O artifact só traz as imagens do Vigilume. Sem este pull, num runner
+        # novo o db não existe, e o `up --pull never` falha antes de começar.
+        # Só o serviço db, pelo digest do compose.yaml.
+        run: docker compose pull db
+
+      - name: compose (tempo, login, papel, seed, idempotência, persistência)
+        run: sh deploy/ci/checar-compose.sh
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: playwright
+        working-directory: web
+        env:
+          E2E_BASE_URL: http://127.0.0.1:8080
+          E2E_EMAIL: demo@vigilume.local
+          E2E_PASSWORD: demo-vigilume-2026
+        # Em série (workers: 1 no playwright.config.ts): o fluxo.spec espera
+        # ~21 s o balde do login encher de novo. --trace off: contra uma pilha
+        # externa, o trace gravaria a senha digitada, e o artifact de falha
+        # abaixo o levaria junto.
+        run: |
+          npm ci --no-audit --no-fund
+          npx playwright install --with-deps chromium
+          npx playwright test --trace off
+
+      - name: logs do compose
+        if: failure()
+        run: docker compose logs
+      - name: derrubar o compose
+        if: always()
+        run: docker compose down -v
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: failure()
+        with:
+          name: playwright
+          path: web/test-results
+          retention-days: 7
+
+  publish:
+    # Só depois de tudo verde, e só em push para a main ou tag v* deste
+    # repositório (nunca em PR, nem num fork). O pacote do GHCR segue a
+    # visibilidade do repositório: privado, por enquanto.
+    if: github.event_name == 'push' && github.repository == 'BipoXDXD/vigilume'
+    needs: [lint, test, secrets, web, image, e2e]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      digest: ${{ steps.runtime.outputs.digest }}
+    env:
+      VERSION: ${{ github.ref_type == 'tag' && github.ref_name || github.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # :<sha> e :latest na main; :<versão> numa tag v*. O tools ganha o
+      # sufixo -tools, e o compose.yaml usa :latest-tools.
+      - id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ${{ env.IMAGEM }}
+          tags: |
+            type=sha,format=long,prefix=
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=semver,pattern={{version}}
+      - id: meta-tools
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ${{ env.IMAGEM }}
+          flavor: suffix=-tools,onlatest=true
+          tags: |
+            type=sha,format=long,prefix=
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=semver,pattern={{version}}
+
+      # O publish CONSTRÓI de novo, para as duas arquiteturas: é o mesmo
+      # código, com as mesmas bases fixadas por digest e o cache do job image,
+      # mas não é byte a byte a imagem que o e2e viu (o binário é
+      # reprodutível; a imagem não, D9 da spec). Por isso ela é reescaneada
+      # ANTES de ganhar qualquer tag: as duas variantes sobem só pelo digest,
+      # depois o Trivy, e só então um passo único dá todas as tags. Um publish
+      # que falha ou é cancelado antes desse passo não move tag nenhuma (nem
+      # :latest-tools adiantado em relação a :latest).
+      - id: runtime
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          target: runtime
+          platforms: linux/amd64,linux/arm64
+          outputs: type=image,name=${{ env.IMAGEM }},push-by-digest=true,name-canonical=true,push=true
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: VERSION=${{ env.VERSION }}
+          cache-from: type=gha,scope=imagem
+          # Sem atestado de proveniência: ele vira uma entrada "unknown/unknown"
+          # no índice, que o Fly e o Trivy teriam de pular.
+          provenance: false
+
+      # O tools (só o seed do compose; nunca vai para o Fly) não passa pelo
+      # reescaneamento daqui: o Trivy do job image já o varreu na amd64 (mesmo
+      # código e bases); a arm64 dele não passa por Trivy.
+      - id: tools
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          target: tools
+          platforms: linux/amd64,linux/arm64
+          outputs: type=image,name=${{ env.IMAGEM }},push-by-digest=true,name-canonical=true,push=true
+          labels: ${{ steps.meta-tools.outputs.labels }}
+          build-args: VERSION=${{ env.VERSION }}
+          cache-from: type=gha,scope=imagem
+          provenance: false
+
+      - name: trivy do digest publicado
+        env:
+          DIGEST: ${{ steps.runtime.outputs.digest }}
+        # O pacote é privado: o Trivy lê a credencial que o login-action
+        # gravou em ~/.docker/config.json (só leitura, e só neste contêiner).
+        # É o GITHUB_TOKEN deste job, com packages:write; o contêiner do
+        # Trivy é fixado por digest (deploy/ci/trivy/Dockerfile), e o token
+        # expira com o job.
+        run: |
+          trivy=$(sed -n 's/^FROM //p' deploy/ci/trivy/Dockerfile)
+          for plataforma in linux/amd64 linux/arm64; do
+            docker run --rm -v "$HOME/.docker/config.json:/root/.docker/config.json:ro" "$trivy" \
+              image --quiet --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 \
+              --db-repository public.ecr.aws/aquasecurity/trivy-db,ghcr.io/aquasecurity/trivy-db \
+              --platform "$plataforma" "$IMAGEM@$DIGEST"
+          done
+
+      - name: tags das imagens conferidas
+        # Tudo o que dá tag, num passo só e depois de todas as checagens. O
+        # tools primeiro: quando :<sha> (a entrada do deploy) e :latest
+        # existem, o -tools do mesmo commit já existe também.
+        env:
+          DIGEST: ${{ steps.runtime.outputs.digest }}
+          DIGEST_TOOLS: ${{ steps.tools.outputs.digest }}
+          TAGS: ${{ steps.meta.outputs.tags }}
+          TAGS_TOOLS: ${{ steps.meta-tools.outputs.tags }}
+        run: |
+          args_tools=()
+          while read -r tag; do [ -n "$tag" ] && args_tools+=(-t "$tag"); done <<< "$TAGS_TOOLS"
+          args=()
+          while read -r tag; do [ -n "$tag" ] && args+=(-t "$tag"); done <<< "$TAGS"
+          docker buildx imagetools create "${args_tools[@]}" "$IMAGEM@$DIGEST_TOOLS"
+          docker buildx imagetools create "${args[@]}" "$IMAGEM@$DIGEST"
+
+      - name: resumo
+        env:
+          DIGEST: ${{ steps.runtime.outputs.digest }}
+        run: |
+          {
+            echo "Imagem publicada: \`$IMAGEM:$GITHUB_SHA\` = \`$IMAGEM@$DIGEST\`"
+            echo
+            echo "Deploy: Actions → deploy → Run workflow com o SHA \`$GITHUB_SHA\`."
+          } >> "$GITHUB_STEP_SUMMARY"

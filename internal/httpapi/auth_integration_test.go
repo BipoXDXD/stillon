@@ -771,6 +771,28 @@ func TestRefreshCookieIsSecureWhenPublicBaseURLIsHTTPS(t *testing.T) {
 	}
 }
 
+// O esquema de uma URL não diferencia maiúsculas: PUBLIC_BASE_URL com
+// "HTTPS://" é produção, e o cookie tem de sair Secure do mesmo jeito.
+func TestRefreshCookieIsSecureWhenPublicBaseURLIsUppercaseHTTPS(t *testing.T) {
+	a := newAPIWith(t, func(cfg *config.Config) {
+		cfg.PublicBaseURL = "HTTPS://vigilume.exemplo.com"
+	})
+
+	resp := login(t, a, http.DefaultClient, testEmail, testPass)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("login devolveu %d", resp.StatusCode)
+	}
+
+	ck := refreshCookie(resp)
+	if ck == nil {
+		t.Fatal("login não devolveu cookie de refresh")
+	}
+	if !ck.Secure {
+		t.Error("cookie sem Secure com PUBLIC_BASE_URL HTTPS: o refresh trafegaria em claro")
+	}
+}
+
 // RequestID precisa ser o middleware MAIS EXTERNO da cadeia montada por
 // Routes. Se não for, apierr.WriteError lê um contexto sem trace e todo
 // envelope de erro sai com trace_id vazio — o erro visto pelo cliente deixa
@@ -878,6 +900,92 @@ func TestSessionsBehindATrustedProxyRecordDistinctOrigins(t *testing.T) {
 	if distintos != 2 {
 		t.Errorf("%d origens distintas gravadas em sessions.ip_hash, queria 2: "+
 			"a coluna não correlaciona nada se todo mundo é o proxy", distintos)
+	}
+}
+
+// TestSessionsBehindFlyRecordDistinctOrigins é a mesma trava no formato do
+// Fly (D22 do Plano 7): o X-Forwarded-For termina no IP do app, igual para
+// todos, e o cliente vem em Fly-Client-IP. Passa pelo wiring inteiro:
+// config → Routes → AuthHandlers → ClientIP.
+func TestSessionsBehindFlyRecordDistinctOrigins(t *testing.T) {
+	a := newAPIWith(t, func(cfg *config.Config) {
+		cfg.TrustedProxies = []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")}
+		cfg.ClientIPHeader = "Fly-Client-IP"
+	})
+
+	entrarComOrigem := func(origem string) {
+		t.Helper()
+		req, err := http.NewRequest(http.MethodPost, a.srv.URL+"/api/v1/auth/login",
+			jsonBody(t, map[string]string{"email": testEmail, "password": testPass}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Requested-With", "vigilume")
+		req.Header.Set("X-Forwarded-For", origem+", 66.241.124.63")
+		req.Header.Set("Fly-Client-IP", origem)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("login devolveu %d", resp.StatusCode)
+		}
+	}
+
+	entrarComOrigem("198.51.100.1")
+	entrarComOrigem("203.0.113.42")
+
+	var distintos int
+	if err := a.pool.QueryRow(context.Background(),
+		`SELECT count(DISTINCT ip_hash) FROM sessions WHERE user_id = $1`, a.userID).
+		Scan(&distintos); err != nil {
+		t.Fatal(err)
+	}
+	if distintos != 2 {
+		t.Errorf("%d origens distintas gravadas em sessions.ip_hash, queria 2: "+
+			"no formato do Fly, o último salto do XFF é o app, e todo mundo vira um só", distintos)
+	}
+}
+
+// TestPasswordChangeBehindFlyAuditsTheClient: as rotas da conta (Plano 5)
+// também gravam ip_hash, na auditoria. Cada grupo de handlers recebe os
+// proxies do Routes por um caminho próprio; o teste do login não trava este.
+func TestPasswordChangeBehindFlyAuditsTheClient(t *testing.T) {
+	a := newAPIWith(t, func(cfg *config.Config) {
+		cfg.TrustedProxies = []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")}
+		cfg.ClientIPHeader = "Fly-Client-IP"
+	})
+	_, token := entrar(t, a)
+
+	req, err := http.NewRequest(http.MethodPost, a.srv.URL+"/api/v1/auth/password",
+		jsonBody(t, map[string]string{"current_password": testPass, "new_password": "outra-senha-bem-comprida"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Requested-With", "vigilume")
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("X-Forwarded-For", "198.51.100.9, 66.241.124.63")
+	req.Header.Set("Fly-Client-IP", "198.51.100.9")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("troca devolveu %d, queria 204", resp.StatusCode)
+	}
+
+	var gravado []byte
+	if err := a.pool.QueryRow(context.Background(),
+		`SELECT ip_hash FROM audit_log WHERE user_id = $1 AND action = 'user.password_changed'`,
+		a.userID).Scan(&gravado); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(gravado, crypto.HashIP(testIPHashKey, "198.51.100.9")) {
+		t.Error("a auditoria da troca de senha não gravou o hash do Fly-Client-IP")
 	}
 }
 

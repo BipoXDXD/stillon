@@ -50,7 +50,7 @@ func paginaPublica(ctx context.Context, cfg *config.Config, svc *statuspage.Serv
 	mux.HandleFunc("GET /p/{slug}", (&PublicPageHandlers{svc: svc}).Page)
 
 	var h http.Handler = mux
-	h = middleware.RateLimit(ctx, publicPorMinuto, publicBurst, cfg.TrustedProxies)(h)
+	h = middleware.RateLimit(ctx, publicPorMinuto, publicBurst, proxiesDe(cfg))(h)
 	h = middleware.SecurityHeaders(h)
 	h = middleware.Recover(h)
 	h = middleware.RequestID(h)

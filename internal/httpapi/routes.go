@@ -5,7 +5,6 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
-	"strings"
 	"sync"
 	"time"
 
@@ -65,13 +64,13 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	// Sem https não há como marcar o cookie como Secure: o navegador
 	// simplesmente não o guardaria, e o desenvolvimento local pararia. Em
 	// produção PUBLIC_BASE_URL é https, e o refresh nunca trafega em claro.
-	secureCookie := strings.HasPrefix(cfg.PublicBaseURL, "https://")
-	h := NewAuthHandlers(d.Store, d.Sessions, d.TOTP, d.Clock, cfg.JWTSecret, secureCookie, cfg.TrustedProxies)
+	secureCookie := config.EhHTTPS(cfg.PublicBaseURL)
+	h := NewAuthHandlers(d.Store, d.Sessions, d.TOTP, d.Clock, cfg.JWTSecret, secureCookie, proxiesDe(cfg))
 	th := NewTargetHandlers(d.Targets, d.Clock)
 	ih := NewIncidentHandlers(d.Incidents)
 	ch := NewChannelHandlers(d.Channels)
 	sp := NewStatusPageHandlers(d.StatusPages, cfg.PublicBaseURL)
-	ah := NewAccountHandlers(d.Accounts, cfg.TrustedProxies, secureCookie)
+	ah := NewAccountHandlers(d.Accounts, proxiesDe(cfg), secureCookie)
 	authn := middleware.Authn(cfg.JWTSecret, d.Clock)
 
 	mux := http.NewServeMux()
@@ -96,7 +95,7 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	// login (D5 do Plano 5; contrato dos Planos 5–7, "mesmo limite por IP da
 	// rota de login"). Com instâncias separadas, quem adivinha senha dobraria
 	// o orçamento alternando as duas rotas.
-	limiteLogin := middleware.RateLimit(ctx, 10, 5, cfg.TrustedProxies)
+	limiteLogin := middleware.RateLimit(ctx, 10, 5, proxiesDe(cfg))
 	mux.Handle("POST /api/v1/auth/login", limiteLogin(http.HandlerFunc(h.Login)))
 	mux.Handle("POST /api/v1/auth/password", limiteLogin(authn(http.HandlerFunc(ah.ChangePassword))))
 	mux.Handle("POST /api/v1/auth/refresh", http.HandlerFunc(h.Refresh))
@@ -115,7 +114,7 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	// se aplica — a senha já foi acertada, o que resta é adivinhar seis
 	// dígitos.
 	mux.Handle("POST /api/v1/auth/totp/verify",
-		middleware.RateLimit(ctx, 20, 5, cfg.TrustedProxies)(http.HandlerFunc(h.TOTPVerify)))
+		middleware.RateLimit(ctx, 20, 5, proxiesDe(cfg))(http.HandlerFunc(h.TOTPVerify)))
 
 	// Rotas de recurso: Authn primeiro, depois o limite por USUÁRIO (spec
 	// §5.7), que precisa do usuário que Authn põe no contexto. Uma instância
@@ -178,7 +177,7 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	// CORS continuam por fora do limitador, em middleware.CORS, para que o
 	// 429 também os leve (R33).
 	handler = middleware.Preflight()(handler)
-	handler = middleware.RateLimit(ctx, 120, 30, cfg.TrustedProxies)(handler)
+	handler = middleware.RateLimit(ctx, 120, 30, proxiesDe(cfg))(handler)
 	handler = middleware.CORS(cfg.CORSOrigin)(handler)
 	handler = middleware.SecurityHeaders(handler)
 	handler = middleware.Recover(handler)
@@ -222,6 +221,13 @@ func painel(arquivos fs.FS) http.Handler {
 // Routes() em quase todo teste.
 var painelEmbutido = sync.OnceValue(func() *webui.Painel { return webui.New(webui.Dist()) })
 
+// proxiesDe junta as duas variáveis que decidem de onde vem o IP do cliente.
+// Todo limitador por IP e o ip_hash da auditoria passam por aqui: um lugar
+// só para errar ou acertar.
+func proxiesDe(cfg *config.Config) middleware.Proxies {
+	return middleware.Proxies{Trusted: cfg.TrustedProxies, Header: cfg.ClientIPHeader}
+}
+
 // readyzTimeout limita o ping: um banco que não responde tem de virar 503
 // rápido, e não segurar o health check do orquestrador.
 const readyzTimeout = 2 * time.Second
@@ -260,7 +266,7 @@ func verificacao(ctx context.Context, cfg *config.Config, svc *notify.ChannelSer
 
 	var h http.Handler = mux
 	h = middleware.BodyLimit(verifyBodyBytes)(h)
-	h = middleware.RateLimit(ctx, 20, 10, cfg.TrustedProxies)(h)
+	h = middleware.RateLimit(ctx, 20, 10, proxiesDe(cfg))(h)
 	h = middleware.SecurityHeaders(h)
 	h = middleware.Recover(h)
 	h = middleware.RequestID(h)
