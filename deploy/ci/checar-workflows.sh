@@ -25,15 +25,52 @@ contar_marcas() {
     : >"$marcas"
 }
 
-# 1. Nenhum workflow aceita a host key do primeiro servidor que responder.
-#    O ssh aceita "no", "off" e "accept-new" (este último também confia no
-#    primeiro contato); ssh-keyscan no job é o mesmo erro por outro caminho.
-if grep -EniH 'StrictHostKeyChecking[[:space:]=]+"?(no|off|accept-new)' "$WF"/*.yml; then
-    falhar "workflow com StrictHostKeyChecking desligado (acima): a host key vem do secret VPS_HOST_KEY"
+# 1. Nem workflow nem script de deploy/ci aceita a host key do primeiro
+#    servidor que responder. O ssh aceita "no", "off" e "accept-new" (este
+#    último também confia no primeiro contato); UserKnownHostsFile=/dev/null
+#    esquece a chave fixada; ssh-keyscan é o mesmo erro por outro caminho.
+#    Desde a W2 o ssh de verdade está em deploy/ci/vps.sh, e por isso os
+#    scripts entram na busca (menos este, que cita os padrões). Nos scripts
+#    só conta o código: um comentário pode citar o que é proibido.
+# Os scripts ficam nos parâmetros posicionais ("$@"), que este script não usa.
+set --
+for f in deploy/ci/*.sh; do
+    [ "$f" = deploy/ci/checar-workflows.sh ] || set -- "$@" "$f"
+done
+# codigo <arquivo...>: as linhas que não são só comentário, com arquivo e número.
+codigo() { grep -nH '' "$@" | grep -Ev '^[^:]+:[0-9]+:[[:space:]]*#'; }
+DESLIGADO_ERE='StrictHostKeyChecking[[:space:]=]+"?(no|off|accept-new)|UserKnownHostsFile[[:space:]=]+"?/dev/null'
+if { grep -EniH "$DESLIGADO_ERE" "$WF"/*.yml; codigo "$@" | grep -Ei "$DESLIGADO_ERE"; } >&2; then
+    falhar "StrictHostKeyChecking desligado ou known_hosts vazio (acima): a host key vem do secret VPS_HOST_KEY"
 fi
-if grep -EniH 'ssh-keyscan' "$WF"/*.yml; then
-    falhar "workflow com ssh-keyscan (acima): a host key vem do secret VPS_HOST_KEY, nunca da rede"
+if { grep -EniH 'ssh-keyscan' "$WF"/*.yml; codigo "$@" | grep -Ei 'ssh-keyscan'; } >&2; then
+    falhar "ssh-keyscan (acima): a host key vem do secret VPS_HOST_KEY, nunca da rede"
 fi
+# O ssh usa o PRIMEIRO valor de cada opção: um "-o StrictHostKeyChecking=
+# accept-new" a mais, antes do certo, ganharia dele. No vps.sh, cada opção
+# que fixa a host key e a identidade aparece EXATAMENTE uma vez, com o valor
+# esperado (o nome sem distinguir maiúsculas, como o ssh; "-F <arquivo>"
+# também muda tudo, e só vale /dev/null). O
+# deploy/ci/testar-vps.sh confere o mesmo nos argumentos que o ssh recebe.
+VPS_SH=deploy/ci/vps.sh
+# shellcheck disable=SC2016 # o "$conhecidos" é texto do vps.sh
+for par in \
+    '-F|-F /dev/null' \
+    'IdentitiesOnly|-o IdentitiesOnly=yes' \
+    'UserKnownHostsFile|-o UserKnownHostsFile="$conhecidos"' \
+    'GlobalKnownHostsFile|-o GlobalKnownHostsFile=/dev/null' \
+    'StrictHostKeyChecking|-o StrictHostKeyChecking=yes' \
+    'HostKeyAlgorithms|-o HostKeyAlgorithms=ssh-ed25519' \
+    'BatchMode|-o BatchMode=yes'; do
+    nome=${par%%|*}
+    certo=${par#*|}
+    # -F é flag (sensível a maiúsculas: -f é outra coisa); os nomes do -o, não.
+    case $nome in -F) i= ;; *) i=i ;; esac
+    n=$(codigo "$VPS_SH" | grep -Eo$i -- "(^|[[:space:]'\"]|-o)$nome([[:space:]=]|\$)" | wc -l)
+    [ "$n" -eq 1 ] || falhar "$VPS_SH: $nome aparece $n vez(es) no código, queria exatamente uma ($certo)"
+    # O valor inteiro: "ssh-ed25519,ssh-rsa" não é "ssh-ed25519".
+    codigo "$VPS_SH" | sed 's/$/ /' | grep -qF -- "$certo " || falhar "$VPS_SH: sem $certo"
+done
 
 # 2. Toda action fixada por SHA completo (o comentário diz a tag), em TODOS
 #    os workflows: uma tag móvel roda código alheio com o GITHUB_TOKEN e com

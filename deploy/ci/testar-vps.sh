@@ -86,6 +86,60 @@ esperar_ssh_nao_chamado() {
     [ ! -e "$SSH_FALSO_DIR/chamado" ] || falhar "$caso: chamou o ssh, e devia recusar antes"
 }
 
+# opcoes_do_ssh <arquivo de args>: as opções com que o ssh falso foi chamado,
+# uma por linha e sem o destino e o comando (os dois últimos argumentos). Um
+# "-o" vira "<nome>=<valor>", com o nome em minúsculas (o ssh não distingue
+# maiúsculas no nome, e aceita "-oNome=v", "-o Nome=v" e "-o 'Nome v'"); "-F"
+# e "-i" viram "-F <arquivo>" e "-i <arquivo>"; qualquer outro argumento vira
+# "flag <arg>", que nenhuma lista esperada contém.
+opcoes_do_ssh() {
+    awk '
+        { a[NR] = $0 }
+        END {
+            for (i = 1; i <= NR - 2; i++) {
+                x = a[i]
+                if (x == "-o" || x == "-F" || x == "-i") { f = x; i++; v = a[i] }
+                else if (x ~ /^-[oFi]./) { f = substr(x, 1, 2); v = substr(x, 3) }
+                else { print "flag " x; continue }
+                if (f != "-o") { print f " " v; continue }
+                k = v; sub(/[ \t=].*/, "", k)
+                r = substr(v, length(k) + 1); sub(/^[ \t]*=?[ \t]*/, "", r)
+                print tolower(k) "=" r
+            }
+        }' "$1"
+}
+
+# esperar_opcoes_do_ssh: cada opção que o vps.sh fixa aparece EXATAMENTE uma
+# vez, com o valor esperado, e não há nenhuma outra. O ssh usa o PRIMEIRO
+# valor de cada opção: um "-o StrictHostKeyChecking=accept-new" a mais, antes
+# do certo, ganharia dele, e o runner confiaria em qualquer servidor.
+esperar_opcoes_do_ssh() {
+    chave_usada=$(ler "$SSH_FALSO_DIR/chave.caminho")
+    esperadas="-F /dev/null
+-i $chave_usada
+identitiesonly=yes
+userknownhostsfile=$(dirname "$chave_usada")/known_hosts
+globalknownhostsfile=/dev/null
+stricthostkeychecking=yes
+hostkeyalgorithms=ssh-ed25519
+batchmode=yes
+connecttimeout=20
+serveraliveinterval=15
+serveralivecountmax=4
+loglevel=ERROR"
+    obtidas=$(opcoes_do_ssh "$SSH_FALSO_DIR/args" 2>/dev/null || true)
+    printf '%s\n' "$esperadas" | while IFS= read -r e; do
+        nome=${e%%[= ]*}
+        n=$(printf '%s\n' "$obtidas" | awk -v nome="$nome" 'index($0, nome) == 1 && (substr($0, length(nome) + 1, 1) == "=" || substr($0, length(nome) + 1, 1) == " ")' | wc -l)
+        [ "$n" -eq 1 ] || echo "$caso: a opção $nome do ssh aparece $n vez(es), queria exatamente uma ($e)"
+        printf '%s\n' "$obtidas" | grep -qxF -- "$e" || echo "$caso: o ssh não recebeu $e"
+    done >"$tmp/opcoes.falhas"
+    if [ "$(printf '%s\n' "$esperadas" | sort)" != "$(printf '%s\n' "$obtidas" | sort)" ]; then
+        echo "$caso: as opções do ssh não são exatamente as esperadas: $(printf '%s\n' "$obtidas" | tr '\n' ' ')" >>"$tmp/opcoes.falhas"
+    fi
+    while IFS= read -r f; do falhar "$f"; done <"$tmp/opcoes.falhas"
+}
+
 # ---- deploy ----------------------------------------------------------------
 
 printf 'tar-da-imagem\001\002fim' >"$tmp/imagem.tar"
@@ -98,11 +152,7 @@ cmp -s "$tmp/imagem.tar" "$SSH_FALSO_DIR/stdin" || falhar "$caso: a imagem não 
 args=$(ler "$SSH_FALSO_DIR/args")
 [ "$(ler "$SSH_FALSO_DIR/args" | tail -n 1)" = "deploy $SHA $ID" ] || falhar "$caso: comando remoto $(ler "$SSH_FALSO_DIR/args" | tail -n 1)"
 [ "$(ler "$SSH_FALSO_DIR/args" | tail -n 2 | head -n 1)" = "deploy@vps.exemplo.com" ] || falhar "$caso: destino errado: $args"
-for opcao in StrictHostKeyChecking=yes GlobalKnownHostsFile=/dev/null IdentitiesOnly=yes BatchMode=yes HostKeyAlgorithms=ssh-ed25519; do
-    printf '%s\n' "$args" | grep -qx "$opcao" || falhar "$caso: sem -o $opcao"
-done
-printf '%s\n' "$args" | grep -qi 'StrictHostKeyChecking=no' && falhar "$caso: StrictHostKeyChecking=no"
-printf '%s\n' "$args" | grep -qx -- '-F' || falhar "$caso: sem -F /dev/null"
+esperar_opcoes_do_ssh
 [ "$(ler "$SSH_FALSO_DIR/known_hosts")" = "vps.exemplo.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl" ] ||
     falhar "$caso: known_hosts = $(ler "$SSH_FALSO_DIR/known_hosts")"
 # O secret vem sem a quebra de linha final; o ssh recusa a chave sem ela.
@@ -174,6 +224,8 @@ esperar_texto "backup cifrado e conferido"
 esperar_texto "== dump"
 [ "$(ler "$arq")" = "$AGE" ] || falhar "$caso: o arquivo não é a saída padrão do ssh"
 [ "$(ler "$SSH_FALSO_DIR/args" | tail -n 1)" = backup ] || falhar "$caso: comando remoto $(ler "$SSH_FALSO_DIR/args" | tail -n 1)"
+[ "$(ler "$SSH_FALSO_DIR/args" | tail -n 2 | head -n 1)" = "deploy@vps.exemplo.com" ] || falhar "$caso: destino errado: $(ler "$SSH_FALSO_DIR/args" | tr '\n' ' ')"
+esperar_opcoes_do_ssh
 case $(ler "$arq") in *"== dump"*) falhar "$caso: o log foi parar no arquivo do backup" ;; esac
 : >"$tmp/resumo"
 GITHUB_STEP_SUMMARY=$tmp/resumo SSH_FALSO_SAIDA=$AGE SSH_FALSO_ERRO='Postgres: 40% do disco
