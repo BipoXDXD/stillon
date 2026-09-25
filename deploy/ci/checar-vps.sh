@@ -582,6 +582,30 @@ grep -q 'rollback feito' "$TARS/erro" || falhar "o deploy lento não disse que f
 [ "$(docker inspect -f '{{.State.Health.Status}}' "$(dc ps -q app)")" = healthy ] || falhar "depois do rollback por tempo o app não está saudável"
 ok "vigilume-entrada: deploy que nunca fica saudável volta à anterior depois da espera (4)"
 
+# 8c''. A conexão cai no meio do deploy (I1): o runner cancelado ou perdido
+#       fecha o canal do SSH, e a stderr da entrada vira um pipe sem leitor. A
+#       entrada termina o que começou (aqui, o rollback de um deploy doente) e
+#       o log inteiro fica no entrada.log. A stderr vai para um head que lê a
+#       primeira linha e sai. O entrada.log começa acima do teto: é rodado.
+head -c $((1024 * 1024 + 1)) /dev/zero > "$DIR/entrada.log"
+c=0
+env -i PATH="$PATH" HOME="$HOME" SSH_ORIGINAL_COMMAND="deploy $SHA_DOENTE $ID_DOENTE" \
+    bash "$ENTRADA" < "$TARS/doente.tar" > "$TARS/saida" 2> >(head -n 1 > "$TARS/primeira") || c=$?
+[ "$c" = 4 ] || falhar "com a conexão caída no meio, o deploy doente saiu $c, queria 4 (rollback feito)"
+no_ar "$SHA_A" || falhar "com a conexão caída no meio, o rollback não aconteceu: versao $(versao), app $(imagem_do_app)"
+[ "$(docker inspect -f '{{.State.Health.Status}}' "$(dc ps -q app)")" = healthy ] ||
+    falhar "com a conexão caída no meio, o app não ficou saudável"
+grep -q 'rollback feito' "$DIR/entrada.log" || falhar "o entrada.log não registrou o rollback"
+# A linha final (a que o dono lê depois de uma queda do SSH): o pedido e o código.
+tail -n 1 "$DIR/entrada.log" | grep -Eq "^== [0-9TZ:-]+ fim: deploy $SHA_DOENTE $ID_DOENTE: código 4 \(" ||
+    falhar "a última linha do entrada.log não é o fim do deploy com o código 4: $(tail -n 1 "$DIR/entrada.log")"
+grep -q 'ARGON2_MAX_CONCURRENT' "$DIR/entrada.log" || falhar "o entrada.log não tem o log do app"
+[ "$(stat -c %s "$DIR/entrada.log")" -lt 1048576 ] || falhar "o entrada.log acima do teto não foi rodado"
+[ "$(stat -c %s "$DIR/entrada.log.1" 2>/dev/null || echo 0)" -gt 1048576 ] || falhar "o entrada.log rodado não ficou em entrada.log.1"
+[ "$(stat -c %a "$DIR/entrada.log")" = 644 ] || falhar "o entrada.log com modo $(stat -c %a "$DIR/entrada.log"), queria 644"
+rm -f "$DIR/entrada.log.1"
+ok "vigilume-entrada: a conexão cai no meio e o rollback acontece; entrada.log com teto"
+
 # 8d. Deploys seguidos: versao-anterior anda, e ficam as 3 últimas imagens
 #     (as 3 últimas que ficaram no ar; a doente sai), fora a etiqueta atual.
 ID_C=$(fonte c 'LABEL vigilume.teste=c')

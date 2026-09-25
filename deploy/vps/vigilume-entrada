@@ -29,7 +29,11 @@
 #       ../compose/.
 #
 # Tudo o que o script escreve vai para a saída de ERRO: a saída padrão fica
-# reservada (o verbo backup manda por ela só o dump cifrado).
+# reservada (o verbo backup manda por ela só o dump cifrado). Depois da trava,
+# esse log vai também para /opt/vigilume/entrada.log (0644, rodado para
+# entrada.log.1 acima de 1 MiB), por um tee que sobrevive à queda do SSH: se
+# o runner some no meio de um deploy, a entrada termina o deploy (ou o
+# rollback) mesmo assim, e o dono confere em /opt/vigilume/versao e no log.
 #
 # Sem variável de ambiente que mude o comportamento: o sudo limpa o ambiente
 # (sobram TERM, HOME, SHELL e as de idioma, LANG e LC_*), e os caminhos abaixo
@@ -57,6 +61,8 @@ TETO_BYTES=$((2 * 1024 * 1024 * 1024))
 # Linhas do historico que ficam depois de cada deploy (a poda só usa as 3
 # últimas versões distintas).
 HISTORICO_MAX=50
+# Acima disto, o entrada.log vira entrada.log.1 (a anterior sai).
+LOG_TETO=$((1024 * 1024))
 
 # fd 3 = a saída padrão de verdade; daqui em diante, o que não for o dump
 # cifrado vai para a de erro.
@@ -69,6 +75,63 @@ sair() {
     exit "$codigo"
 }
 uso() { sair 2 "$* (uso: \"deploy <sha de 40 hex> sha256:<64 hex>\" ou \"backup\")"; }
+
+# O que o EXIT apaga: fixado por quem cria (deploy e backup), vazio antes.
+TMP_DEPLOY=
+TMP_BACKUP=
+RESTAURO=
+TEE_PID=
+PEDIDO=
+# shellcheck disable=SC2317 # chamada pelo trap EXIT
+fim() {
+    local codigo=$? sentido
+    [ -z "$TMP_DEPLOY" ] || rm -rf "$TMP_DEPLOY"
+    [ -z "$RESTAURO" ] || docker rm -f "$RESTAURO" >/dev/null 2>&1 || true
+    if [ -n "$TMP_BACKUP" ]; then
+        shred -u "$TMP_BACKUP"/* 2>/dev/null || true
+        rm -rf "$TMP_BACKUP"
+    fi
+    # A linha final do entrada.log, com o resultado: é ela que o dono lê
+    # depois de uma queda do SSH. O tee termina de gravar antes de a entrada
+    # sair: fechar as duas saídas dá a ele o fim do pipe.
+    if [ -n "$TEE_PID" ]; then
+        case "$PEDIDO:$codigo" in
+            *:0) sentido="feito" ;;
+            *:2) sentido="pedido recusado" ;;
+            deploy*:3) sentido="imagem recusada; nada mudou" ;;
+            deploy*:4) sentido="não ficou saudável; rollback feito, ou app parado no primeiro deploy" ;;
+            backup*:3) sentido="a cópia não passou nas checagens; nada enviado" ;;
+            backup*:4) sentido="enviado, mas o disco passou de 85%" ;;
+            *) sentido="erro; veja as linhas acima" ;;
+        esac
+        echo "== $(date -u +%Y-%m-%dT%H:%M:%SZ) fim: $PEDIDO: código $codigo ($sentido)"
+        exec 1>&- 2>&-
+        wait "$TEE_PID" 2>/dev/null || true
+    fi
+    exit "$codigo"
+}
+trap fim EXIT
+
+# registrar: chamado logo depois da trava, nos dois verbos. O log (fd 1 e 2)
+# passa por um tee que grava no entrada.log e repassa à stderr do SSH. Com
+# -p, o tee ignora o pipe quebrado (a conexão que caiu) e segue gravando no
+# arquivo; SIGPIPE e SIGHUP ignorados aqui valem para a entrada e para os
+# filhos (docker compose, docker), que só escrevem no tee. A fd 3 (a saída
+# padrão de verdade, o cifrado do backup) e a 9 (a trava) não passam pelo
+# tee: o tee as fecha.
+registrar() {
+    local log="$DIR/entrada.log"
+    if [ -f "$log" ] && [ "$(stat -c %s "$log")" -gt "$LOG_TETO" ]; then
+        mv -f "$log" "$log.1"
+    fi
+    : >>"$log"
+    chmod 644 "$log"
+    trap '' PIPE HUP
+    exec 1> >(exec tee -p -a "$log" >&2 3>&- 9>&-) 2>&1
+    TEE_PID=$!
+    PEDIDO=$1
+    echo "== $(date -u +%Y-%m-%dT%H:%M:%SZ) início: $PEDIDO"
+}
 
 dc() { COMPOSE_FILE="$ARQUIVOS_COMPOSE" docker compose --project-directory "$DIR" "$@"; }
 
@@ -153,8 +216,7 @@ deploy() {
     # deploy morto por SIGKILL (o trap não rodou).
     find "$TMP_BASE" -maxdepth 1 -name '.vigilume-entrada.*' -exec rm -rf {} + || true
     tmp=$(mktemp -d "$TMP_BASE/.vigilume-entrada.XXXXXX")
-    # shellcheck disable=SC2064 # o caminho é fixado agora, de propósito
-    trap "rm -rf '$tmp'" EXIT
+    TMP_DEPLOY=$tmp
     head -c $((TETO_BYTES + 1)) > "$tmp/imagem.tar"
     tam=$(stat -c %s "$tmp/imagem.tar")
     [ "$tam" -gt 0 ] || uso "nada chegou na entrada padrão (o tar do layout OCI da imagem)"
@@ -238,9 +300,9 @@ backup() {
     find "$SHM_BASE" -maxdepth 1 -name 'vigilume-backup.*' -exec rm -rf {} + || true
     docker ps -aq --filter name=vigilume-restauro- | xargs -r docker rm -f >/dev/null 2>&1 || true
     nome=vigilume-restauro-$$
+    RESTAURO=$nome
     tmp=$(mktemp -d "$SHM_BASE/vigilume-backup.XXXXXX")
-    # shellcheck disable=SC2064 # nome e caminho fixados agora, de propósito
-    trap "docker rm -f '$nome' >/dev/null 2>&1 || true; shred -u '$tmp'/* 2>/dev/null || true; rm -rf '$tmp'" EXIT
+    TMP_BACKUP=$tmp
 
     # A senha do descartável é de uso único; a do vigilume_backup vai ao
     # contêiner pelo ambiente (-e NOME, sem valor), fora da linha de comando.
@@ -307,12 +369,14 @@ case "${palavras[0]}" in
         [[ "${palavras[2]}" =~ ^sha256:[0-9a-f]{64}$ ]] || uso "image-id malformado: '${palavras[2]}'"
         exec 9>"$DIR/.entrada.trava"
         flock -w 600 9 || sair 1 "outra operação da entrada não terminou em 10 min"
+        registrar "$pedido"
         deploy "${palavras[1]}" "${palavras[2]}"
         ;;
     backup)
         [ "${#palavras[@]}" -eq 1 ] || uso "backup não leva argumento"
         exec 9>"$DIR/.entrada.trava"
         flock -w 600 9 || sair 1 "outra operação da entrada não terminou em 10 min"
+        registrar "$pedido"
         backup
         ;;
     *) uso "verbo desconhecido: '${palavras[0]}'" ;;
