@@ -2076,14 +2076,110 @@ cópia (`http://localhost:8080`) e recrie à mão na produção.
   gerenciador, `vc up -d app`. Todas as sessões caem; entra-se de novo.
 - `IP_HASH_KEY`: o mesmo caminho; os hashes de IP antigos da auditoria deixam de casar com os
   novos.
+- `RESEND_API_KEY`: no painel do Resend (**API Keys**), crie uma chave nova e apague a velha;
+  cole a nova no `.env` (`sudo nano /opt/vigilume/.env`) e no gerenciador; `vc up -d app`.
 - `HC_URL` (um check novo no healthchecks, ou a URL vazou): troque-a no `vigia.env`
   (`sudo nano /opt/vigilume/vigia.env`) e no gerenciador. Vale na próxima execução do timer, sem
   reiniciar nada.
-- `MASTER_KEY` e as senhas do Postgres: **não** há rotação pronta. A `MASTER_KEY` cifra os
-  segredos gravados; as senhas dos papéis vivem também no banco (trocar exige `ALTER ROLE` no
-  mesmo momento). Se uma delas vazar, é trabalho de plano próprio.
-- A chave de deploy do GitHub: passos 4.3 a 4.6 com uma chave nova (a linha antiga do
-  `authorized_keys` é substituída).
+- `VIGILUME_APP_PASSWORD` (a senha do papel do app): logo abaixo, "A senha do app".
+- `MASTER_KEY`, `POSTGRES_PASSWORD` e `VIGILUME_BACKUP_PASSWORD`: **não** há rotação pronta. A
+  `MASTER_KEY` cifra os segredos gravados no banco (trocá-la exige decifrar e cifrar de novo
+  tudo); as duas senhas o app nem vê (o compose não as entrega a ele). Se uma delas vazar, é
+  trabalho de plano próprio; até lá, troque na origem o que a `MASTER_KEY` protege (item 6 da
+  lista abaixo).
+- A chave de deploy do GitHub, numa troca **de rotina** (sem suspeita de vazamento): passos 4.3
+  a 4.6 com uma chave nova (a linha antiga do `authorized_keys` é substituída).
+
+#### A senha do app (`VIGILUME_APP_PASSWORD`)
+
+A senha do papel do app vive em dois lugares, no `.env` e no banco, e os dois mudam juntos. Na
+VPS, cole o bloco **inteiro de uma vez**; como no 3.4, a senha nasce e é gravada dentro de um
+processo do root, sem passar pela tela nem pelo `ps`:
+
+```bash
+sudo sh -s <<'FIM'
+set -eu
+umask 077
+cd /opt/vigilume
+NOVA=$(openssl rand -hex 32)
+printf "ALTER ROLE vigilume_app PASSWORD '%s';\n" "$NOVA" \
+  | docker compose -f compose.prod.yaml exec -T db psql -U postgres -v ON_ERROR_STOP=1 -q
+VALOR=$NOVA awk '
+  /^VIGILUME_APP_PASSWORD=/ { print "VIGILUME_APP_PASSWORD=" ENVIRON["VALOR"]; next }
+  { print }
+' .env > .env.novo
+cat .env.novo > .env
+rm .env.novo
+echo "senha do app trocada no banco e no .env"
+FIM
+```
+
+**Deve aparecer:** só `senha do app trocada no banco e no .env` (se o `psql` falhar, o bloco
+para antes de mexer no `.env`, e nada mudou). Rode **logo em seguida** `vc up -d --wait app`: o
+app que está de pé ainda usa a senha velha, e cada conexão nova dele ao banco falha até a troca.
+Depois, copie a senha nova para o gerenciador: `sudo grep '^VIGILUME_APP_PASSWORD='
+/opt/vigilume/.env` e `clear`. A senha velha do gerenciador não serve mais: numa reconstrução
+("A VPS morreu"), o `initdb.sh` cria o papel com a do `.env`, e a do gerenciador tem de ser a
+mesma.
+
+#### A chave de deploy vazou (ou você suspeita)
+
+**Não é uma troca simples.** A chave só roda o `vigilume-entrada`, e ele não dá root na VPS nem
+acesso ao `.env`. Mas ela faz **deploy de qualquer imagem** como o app: quem a tem sobe um
+programa seu no lugar do Vigilume, e esse programa vê tudo o que o app vê. Isso é o app
+**inteiro** e os segredos que ele recebe: a `MASTER_KEY`, o `JWT_SECRET`, o `IP_HASH_KEY`, a
+senha do `vigilume_app` (dona das tabelas: lê e muda qualquer dado), a `RESEND_API_KEY`, e, por
+meio da `MASTER_KEY`, os headers dos alvos e as configurações dos canais (webhooks do Discord,
+tokens) guardados cifrados. O `image-id` do pedido não protege contra isso: quem tem a chave
+escolhe o ID. (O backup pela chave só entrega o dump **cifrado**: sem a sua chave privada do
+`age`, não serve para nada.) Na ordem, **na VPS**:
+
+1. **Corte o acesso**, antes de tudo: esvazie o `authorized_keys` do `deploy`. Daqui em diante
+   nenhum deploy nem backup entra (o backup diário fica vermelho até o item 5; é o esperado).
+   ```bash
+   sudo truncate -s 0 /home/deploy/.ssh/authorized_keys
+   sudo wc -c /home/deploy/.ssh/authorized_keys
+   ```
+   `0 /home/deploy/.ssh/authorized_keys`.
+2. **Tire do ar o que pode ser dele** e veja o que aconteceu:
+   ```bash
+   vc rm -sf app
+   sudo tail -n 200 /opt/vigilume/entrada.log
+   cat /opt/vigilume/historico
+   sudo docker image ls vigilume
+   ```
+   O site fica fora (`502`) até o item 7. Compare cada `deploy de <sha>` do `entrada.log` e cada
+   SHA do `historico` com as execuções do `deploy` na aba Actions
+   (`gh run list --repo BipoXDXD/vigilume --workflow deploy.yml --limit 20`): um deploy que não
+   saiu de lá foi de outra pessoa. Anote a data do primeiro.
+3. **Apague todas as imagens `vigilume` locais**, para nenhuma etiqueta apontar para uma imagem
+   dele (o próximo deploy baixa a certa do GHCR):
+   ```bash
+   sudo docker image ls vigilume --format '{{.Repository}}:{{.Tag}}' | xargs -r sudo docker rmi
+   sudo docker image ls vigilume
+   ```
+   A segunda linha mostra só os títulos, sem imagem nenhuma.
+4. **Troque os segredos que o app vê**, com o app parado (itens acima): o `JWT_SECRET`, o
+   `IP_HASH_KEY`, a `RESEND_API_KEY` e a `VIGILUME_APP_PASSWORD` ("A senha do app": pule o
+   `vc up -d --wait app`: quem sobe o app é o deploy do item 7). O `db` continua de pé.
+5. **Uma chave de deploy nova:** passos 4.3 a 4.6 (o 4.4 grava a linha nova no
+   `authorized_keys` vazio; o 4.6 troca o secret `VPS_SSH_KEY`), e apague a chave do seu
+   computador, como lá.
+6. **Troque na origem o que a `MASTER_KEY` protege**, porque um programa dele pôde ler tudo
+   decifrado: crie webhooks novos do Discord (e apague os velhos no Discord), gere tokens novos
+   para os headers dos seus alvos, e atualize-os no painel depois do item 7. A `MASTER_KEY` em si
+   continua a mesma (não há rotação pronta; ela é só uma chave: o que importa é o que ela abria).
+   Troque também a sua senha do painel (`vc exec app /vigilume user set-password …`, depois do
+   item 7) e o autenticador (**Configurações → Trocar autenticador**): o segredo do 2FA também
+   estava no banco.
+7. **O deploy de um SHA conhecido**: o último verde da `main` que **você** conferiu (passo 4.8,
+   item 1), pelo workflow. Sem imagem local nenhuma, não há o que recusar. Se o deploy sair com 1
+   (`o rollback para … também não ficou saudável`), é porque a versão anterior não existe mais
+   (o item 3 a apagou): olhe o log do job como no 4.8 e corrija.
+8. **Os dados:** se o item 2 mostrou deploy de outra pessoa, o banco pode ter sido mudado por
+   ela. Restaure uma cópia do backup **anterior à data anotada** no seu computador (passo 7.2) e
+   compare no painel dela com a produção (usuários, alvos, canais). Se algo foi mexido, restaure
+   esse backup na produção ("A VPS morreu", item 4), perdendo o que veio depois dele.
 
 ### Minutos de Actions
 
