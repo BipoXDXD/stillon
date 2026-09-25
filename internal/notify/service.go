@@ -308,6 +308,35 @@ func (s *ChannelService) Delete(ctx context.Context, userID, id uuid.UUID) error
 	})
 }
 
+// SetEnabled pausa (false) ou retoma (true) o canal (Plano 9, §3.3) e o
+// devolve no formato da listagem. Canal alheio ou inexistente é ErrNotFound:
+// a RLS e o user_id na WHERE o escondem. Mudar para o valor que já está não é
+// erro.
+//
+// Pausado, o canal não recebe nada: o despacho cancela o aviso na hora do
+// envio (semEnvio), e retomar não reenvia o que passou. Guardar os avisos
+// exigiria outro estado na fila e renderia uma enxurrada de alertas velhos ao
+// retomar.
+func (s *ChannelService) SetEnabled(ctx context.Context, userID, id uuid.UUID, enabled bool) (Channel, error) {
+	var out Channel
+	err := storage.InUserTx(ctx, s.pool, userID, func(q *db.Queries) error {
+		n, err := q.SetChannelEnabled(ctx, db.SetChannelEnabledParams{UserID: userID, ID: id, Enabled: enabled})
+		if err != nil {
+			return fmt.Errorf("pausar canal: %w", err)
+		}
+		if n == 0 {
+			return ErrNotFound
+		}
+		r, err := q.GetChannelView(ctx, db.GetChannelViewParams{UserID: userID, ID: id})
+		if err != nil {
+			return fmt.Errorf("ler canal: %w", err)
+		}
+		out = s.toChannel(db.ListChannelsRow(r))
+		return nil
+	})
+	return out, err
+}
+
 // ResendVerification manda um link novo a um e-mail pendente (vencido ou
 // não) e invalida o anterior. Envia antes de trocar o token: se o envio
 // falha, o link antigo continua valendo.

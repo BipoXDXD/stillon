@@ -147,6 +147,9 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	mux.Handle("GET /api/v1/channels", protegida(ch.List))
 	mux.Handle("POST /api/v1/channels", comEnvio(ch.Create))
 	mux.Handle("DELETE /api/v1/channels/{id}", protegida(ch.Delete))
+	// Pausar e retomar (Plano 9, §3.3) não manda mensagem para fora: fica no
+	// limitador comum, e não no balde de envio.
+	mux.Handle("PATCH /api/v1/channels/{id}", protegida(ch.SetEnabled))
 	mux.Handle("POST /api/v1/channels/{id}/verify/resend", comEnvio(ch.Resend))
 
 	mux.Handle("GET /api/v1/status-pages", protegida(sp.List))
