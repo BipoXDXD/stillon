@@ -18,40 +18,36 @@ linha diz de onde veio o achado (relatório e número).
 
 | Item | Achado | Como fechou |
 |---|---|---|
-| A1 | auth S1 (Alto) | Semáforo global no Argon2id, em toda verificação e todo hash, inclusive o `VerifyDummy`: `min(NumCPU, 4)` vagas, configurável por `ARGON2_MAX_CONCURRENT` (1–64); sem vaga em 2 s, `429 rate_limited` com `Retry-After: 2`. Os parâmetros do Argon2 não mudaram |
-| A2 | auth S2 (Alto) | A tentativa é **reservada** num `UPDATE … RETURNING` antes de verificar (antes do Argon2, no login); N requisições paralelas gastam N tentativas. No sucesso, zera |
-| A3 | auth S3 e S5, http S1 (Médios e Baixo) | Cookie de dispositivo `vigilume_dispositivo` depois do login completo (MAC com chave derivada da `MASTER_KEY` por HKDF, 180 dias, nada no banco): quem o apresenta não é barrado pelo bloqueio da conta, e as falhas dele contam num contador por dispositivo em memória. As rotas autenticadas de credencial deixaram de olhar e de alimentar o bloqueio da conta; a 5ª prova errada na família revoga a família (`401 unauthorized`). O comentário de `routes.go` sobre o burst do login foi corrigido |
-| A4 | auth S4, code review 1 e 2 (Médio) | O consumo do timestep faz CAS em `totp_secret_enc`; a sessão depois do 2FA confere, sob a trava, que o segredo validado ainda vale; o `disable` consome o timestep e verifica na mesma transação |
+| A1 | auth S1 (Alto) | Semáforo global no Argon2id, em toda verificação e todo hash, inclusive o `VerifyDummy`: `min(NumCPU, 4)` vagas, configurável por `ARGON2_MAX_CONCURRENT` (1–64); sem vaga em 2 s, `429 rate_limited` com `Retry-After: 2`, só nas rotas que pagam Argon2id (login, troca de senha, `enroll`, `disable`, `rotate`; o `/totp/verify` e os confirms não o rodam). Os parâmetros do Argon2 não mudaram |
+| A2 | auth S2 (Alto) | A tentativa é **reservada** num `UPDATE … RETURNING` antes de verificar (antes do Argon2, no login); N requisições paralelas gastam N tentativas. O sucesso que **termina** o login zera; a senha certa com o 2FA pela frente só devolve a própria reserva (zerar ali daria a quem tem a senha um botão de destravar entre dois chutes de seis dígitos) |
+| A3 | auth S3 e S5, http S1 (Médios e Baixo) | Cookie de dispositivo `vigilume_dispositivo` depois do login completo (MAC com chave derivada da `MASTER_KEY` por HKDF, 180 dias, nada no banco): quem o apresenta não é barrado pelo bloqueio da conta, no login **e** no `/totp/verify`, e as falhas dele contam num contador por dispositivo em memória. As rotas autenticadas de credencial (troca de senha, `enroll`, `confirm`, `disable`, `rotate`, `rotate/confirm`) deixaram de olhar e de alimentar o bloqueio da conta e dividem um contador por família; a 5ª prova errada revoga a família (`401 unauthorized`, auditoria `session.proof_limit`). O `/totp/confirm`, que antes não contava falha nenhuma, conta (fecha o S5; as quatro primeiras continuam `400 validation_failed`). O comentário de `routes.go` sobre o burst do login foi corrigido |
+| A4 | auth S4, code review 1 e 2 (Médio) | O consumo do timestep faz CAS em `totp_secret_enc`; a sessão depois do 2FA confere, sob a trava, que o segredo validado ainda vale; o `disable` confere, sob a trava da linha, que o timestep ainda não foi usado, na mesma transação que apaga o segredo (gravar o timestep ali não teria efeito observável); o código do login não desliga o 2FA |
 | A5 | code review 6 (Médio) | `disable` toma a trava de sessões primeiro e segue a ordem global (advisory → `users` → `totp_recovery_codes` → `sessions` → `audit_log`); `StartRotation` verifica a prova dentro da transação, depois de reconferir a família |
-| A6 | code review 3 e 15 | `reset-2fa` zera `failed_attempts` e `locked_until`; `rotate` e `rotate/confirm` bem-sucedidos zeram o contador (revê a D5 do Plano 9) |
-| A7 | code review 7 | `rotate` devolve `rotation`; `rotate/confirm` o exige; diferente → `403 forbidden` sem contar falha |
-| A8 | auth C1 | Código de recuperação sem espaços nem hífens e em minúsculas antes do hash; os gravados continuam válidos ⟦A8: registrar aqui o que a tarefa conferiu sobre o formato gerado⟧ |
+| A6 | code review 3 e 15 | `reset-2fa` zera `failed_attempts` e `locked_until` quando havia 2FA ligado (sem 2FA ele diz "nada mudou" e não muda nada, nem o bloqueio); `rotate` e `rotate/confirm` bem-sucedidos zeram o contador (revê a D5 do Plano 9) |
+| A7 | code review 7 | `rotate` devolve `rotation`; `rotate/confirm` o exige; ausente ou diferente → `403 forbidden`, antes do código e sem contar falha |
+| A8 | auth C1 | Código de recuperação sem espaços nem hífens e em **maiúsculas** antes do hash; os gravados continuam válidos. Conferido: o formato gerado é base32 sem padding, maiúsculo (`^[A-Z2-7]{16}$`, preso em `TestRecoveryCodesAreNormalized`); baixar a caixa invalidaria todos os códigos já gravados, cujo hash é do texto maiúsculo |
 | A9 | auth C3 | Logout com falha na revogação responde `500 internal` e não apaga o cookie |
 | A10 | limite do Plano 9 ("usuário apagado no meio de um rotate ou confirm vira 500") | As rotas do TOTP respondem `401 unauthorized` |
 | B1 | http S2 (Médio) | `PATCH` que muda a origem da URL sem `headers` apaga os headers guardados; o painel avisa antes de salvar |
 | B2 | http S4 | Várias linhas de `X-Forwarded-For` são lidas juntas, na ordem |
 | B3 | http S5, auth S6 | Com `https`, um `X-Forwarded-For` vindo de fora de `TRUSTED_PROXIES` gera um aviso por minuto com o `remote_addr` |
 | B4 | http S3 (Médio) | O comentário da config e o README dizem que `CLIENT_IP_HEADER` só serve atrás de proxy que **substitui** o cabeçalho; atrás do Caddy, vazio. A remoção dos cabeçalhos no Caddy é obrigação do Plano 11 (abaixo) |
-| B5 | http C2 | 404 e 405 sob `/api/` no envelope, com `trace_id` ⟦B5: código final do 405⟧ |
-| B6 | http C1 | A série do detalhe não depende do relógio do navegador ⟦B6: o contrato escolhido⟧ |
-| C1 | sondador S1 (Alto) | `MaxResponseHeaderBytes: 64 << 10` no transporte do safedial; acima disso, `down` ⟦C1: `error_kind` final⟧ |
+| B5 | http C2 | 404 e 405 sob `/api/` no envelope, com `trace_id`: `404 not_found` e o código novo `405 method_not_allowed` (o `Allow` do ServeMux fica) |
+| B6 | http C1 | A série do detalhe não depende do relógio do navegador: `GET /targets/{id}/checks?window=1h|6h|24h|7d|30d|90d`, com `from = to − janela` no relógio do servidor; `window` vazio, fora da lista ou junto com `from` → `400 validation_failed` (`window`/`invalid`); o painel manda só o `window` |
+| C1 | sondador S1 (Alto) | `MaxResponseHeaderBytes: 64 << 10` no transporte do safedial; acima disso, `down` com `error_kind` `unknown` (o `net/http` não tem erro próprio para isso; casar o texto da biblioteca quebraria calado). Vale para todo cliente do `safedial` (sondador, Discord, Resend) |
 | C2 | sondador C1 | `expected_status` só em 200–299 e 400–599 (`400 validation_failed`, `out_of_range`) |
-| C3 | sondador C2 | Excesso de redirecionamentos e esquema inválido no `Location` deixam de ser `blocked` ⟦C3: `error_kind` final⟧ |
-| C4 | sondador C3 | Trocar URL ou método zera a histerese do alvo ⟦C4: dizer se o incidente aberto do alvo antigo também fecha, ou registrar como limite⟧ |
+| C3 | sondador C2 | Excesso de redirecionamentos e esquema inválido no `Location` deixam de ser `blocked`: `unknown` (sentinela `safedial.ErrRedirect`); redirecionamento para endereço interno continua `blocked`, e no despacho de avisos continua falha definitiva de canal |
+| C4 | sondador C3 | Trocar URL ou método zera a histerese do alvo (`last_checked_at` fica: é a guarda de check fora de ordem). O incidente aberto **não** fecha no PATCH: fecha pelos sucessos da URL nova, com o aviso "voltou" (limite abaixo) |
 | D1 | banco S1 (Alto) e C1 (Médio) | O `seed.sh` recusa rodar (sai 1, antes de chamar o binário) se `PUBLIC_BASE_URL` não for `http` em `localhost`, `127.0.0.0/8` ou `[::1]`; `restart: unless-stopped` no `db` do `compose.yaml`; o cabeçalho do compose diz, em destaque, que ele é só para a máquina local |
 | D2 | banco S2 | `cooldown: default-days: 7` no Dependabot de Go e de npm. Pela documentação do GitHub, o cooldown só vale para atualização de versão: as de segurança não esperam |
 | D3 | banco S3 | `.gitignore` com `*.key`, `*.dump`, `*.age` e `.env.*` (os nomes do runbook: `vigilume-backup.key`, `vigilume.dump`, `vigilume-AAAAMMDD.dump.age`) |
 | D4 | banco C2 | Marca d'água dos rollups no futuro limitada a "agora": a consolidação não congela depois de um salto de relógio |
 | D5 | banco C3 | Comentário da migration 00001 diz que a produção roda o 18 |
-| E1–E6 | code review 4, 5, 8, 9, 10, 11 | Painel: passo 1 da troca trava o diálogo; resposta perdida no confirm diz que **não sabe** se a troca aconteceu; confirms com prazo de 30 s; guarda por canal; aviso de código de recuperação possivelmente gasto no passo 1; foco não cai no `<body>` ⟦E: nomes finais dos textos, se mudarem da spec⟧ |
+| E1–E6 | code review 4, 5, 8, 9, 10, 11 | Painel: passo 1 da troca trava o diálogo; resposta perdida no confirm diz que **não sabe** se a troca aconteceu; confirms com prazo de 30 s; guarda por canal; aviso de código de recuperação possivelmente gasto no passo 1; foco não cai no `<body>` (vai ao botão Ativar/Desativar ao lado). Textos finais que diferem da spec: o aviso de canal usa o `hint`, porque o canal não tem nome (`Canal discord.com/…/abcd retomado.`); o 429 diz `Muitas tentativas. Aguarde N segundos e tente de novo.` com o `Retry-After`; o aviso de código de recuperação gasto aparece em qualquer 401 depois de um código que não tem 6 dígitos, não só no `unauthorized` |
 | E7 | code review 12; limite do Plano 9 ("as checagens de CSP dos diálogos de canal leem as violações uma vez") | O controle positivo da CSP no E2E identifica e espera a própria violação e exige o resto vazio, depois de cada diálogo |
 | E8 | code review 13 | A API falsa (MSW) reproduz o servidor nas rotas dos Planos 8–10 |
-| E9 | code review 14 | `TestRotateRoutesRefuseALockedAccount` confere o `error.code`, reescrito para a regra da A3 ⟦E9/A3: nome final do teste⟧ |
-
-⟦CONTROLADOR: conferir, na montagem, se alguma tarefa também fechou os limites do Plano 9 "O
-rotate gasta a prova antes da trava" e "Um `disable` entre o `Verify` e o `UPDATE` do
-`StartRotation`" (A5 verifica a prova dentro da transação, sob a trava). Se sim, mova-os para esta
-tabela e tire-os de "Para o Plano 12".⟧
+| E9 | code review 14 | `TestRotateRoutesRefuseALockedAccount` confere o `error.code`, reescrito para a regra da A3: agora `TestRotateRoutesIgnoreTheAccountLock` (`internal/httpapi/totp_troca_integration_test.go`) |
+| Plano 9 | limites "O rotate gasta a prova antes da trava" e "Um `disable` entre o `Verify` e o `UPDATE` do `StartRotation`" | Fechados pela A5: o `StartRotation` toma a trava de sessões, reconfere a família e só então lê a linha de `users` com `FOR NO KEY UPDATE` e confere a prova (`fatorTravado.provar`). Família morta não gasta nada (`TestStartRotationSpendsNothingForADeadFamily`); um `disable` concorrente espera a mesma trava, e o rotate que vem depois vê o 2FA desligado e responde `403` sem gastar a prova |
 
 ## Fora de escopo do Plano 10 (spec, §5), item a item
 
@@ -115,15 +111,15 @@ critério de pronto do Plano 11. Cada um vem de um achado da revisão.
 
 ## Limpeza do code review (para o Plano 12)
 
-Confirmados no code review do PR #15 e cortados do Plano 10 por não mudarem o comportamento. Um
-item que uma tarefa do Plano 10 tenha resolvido de passagem sai da lista na montagem
-⟦CONTROLADOR: conferir contra os diffs dos grupos A e E⟧.
+Confirmados no code review do PR #15 e cortados do Plano 10 por não mudarem o comportamento. Conferido
+contra os diffs dos grupos A e E na integração: nenhum item saiu inteiro; um mudou de forma (abaixo).
 
 - CHECKs no banco para o par segredo pendente / família (`totp_pending_secret_enc` e
   `totp_pending_family_id` juntos), numa migration futura.
 - `Disable` repete o SQL de `ResetTOTP` e `DeleteRecoveryCodes`.
-- O tratamento das provas e o bloco "registra a falha e responde 401" copiados 5 vezes nos
-  handlers do TOTP.
+- A reserva da prova (`provas.reservar`, `defer Release`, `Succeed`) repetida nos 6 handlers de
+  credencial. O bloco "registra a falha e responde 401", que era copiado 5 vezes, virou uma chamada
+  a `provasDaFamilia.errou` na A3.
 - Trava de sessões + `FamilyIsLive` repetidos 4 vezes.
 - `useEnvioUnico` local no painel, em vez de compartilhado.
 - `GetChannelView` repete a query de `ListChannels`.
@@ -151,8 +147,6 @@ Os limites conhecidos do Plano 9 que o Plano 10 não fechou:
   "nada mudou".
 - **Um 403 na confirmação da troca perde o aviso de código de recuperação gasto.**
 - **O E2E de acessibilidade falhou uma vez sem causa encontrada.** Se repetir, guardar o trace.
-- **O rotate gasta a prova antes da trava** e **um `disable` entre o `Verify` e o `UPDATE` do
-  `StartRotation`** ⟦CONTROLADOR: ver a nota em "Fechadas no Plano 10"⟧.
 - **`ROLE` inválido fica em `cfg.Role`** (`internal/config/config.go`), inofensivo porque o `Load`
   devolve `nil, err`.
 - **Os testes de trava procuram a espera pelo `pg_stat_activity` sem amarrar o backend** (a lista
@@ -178,7 +172,29 @@ Os limites dos Planos 7 e 8 seguem como estão no `PENDENCIAS-PARA-O-PLANO-8.md`
   (`deploy/ci/checar-compose.sh`).
 - **O rollup gravado no futuro fica no banco** (D4) até a retenção o apagar pela idade; a barra da
   status page o mostra na hora dele quando o tempo real chegar lá.
-- ⟦CONTROLADOR: os limites que os grupos A, B, C e E registrarem nas partes deles⟧
+- **O dono num navegador novo (ou com os cookies limpos) enquanto um anônimo mantém a conta
+  travada** não tem cookie de dispositivo: espera os 15 min ou usa `vigilume user set-password`
+  (A3, D6 do plano).
+- **Painel velho em cache depois do deploy**: o `rotate/confirm` sem `rotation` recebe `403`, e o
+  painel antigo diz "concluída ou cancelada em outra aba" até o dono recarregar (A7).
+- **A 5ª prova errada numa rota autenticada desloga** sem explicação própria: o painel mostra "O
+  acesso desta tela venceu." e, ao renovar, "Sua sessão terminou" (A3).
+- **Sonda da URL antiga em voo durante o PATCH** entra na histerese zerada como o primeiro check da
+  URL nova (C4). E o incidente aberto da URL antiga fecha pelos sucessos da nova, com a duração
+  somada (H10 do plano).
+- **O aviso do painel e o servidor divergem em hosts exóticos** (B1): IDN em Unicode de um lado e
+  punycode do outro, IPv4 em hexadecimal, ponto final no host. O servidor apaga os headers (o lado
+  seguro) e o painel pode não avisar.
+- **Alvo com `expected_status` 1xx ou 3xx gravado antes do Plano 10** (só pela API) continua no
+  banco, e todo PATCH nele responde `400 expected_status/out_of_range` até o valor ser corrigido (C2).
+- **HTTP/2 com cabeçalho de resposta enorme** (C1): o teto vale, mas os testes só exercitam HTTP/1.
+- **O aviso de `TRUSTED_PROXIES` (B3) não distingue lista errada de porta do app exposta**: um
+  cliente falando direto com a porta publicada gera o mesmo aviso.
+- **Resposta perdida de um confirm que o servidor comitou**: o painel diz que não sabe e ensina a
+  conferir; nenhum teste passa por um servidor que comita e perde a resposta (E2).
+- **Dois canais mudando juntos e os dois falhando**: a tela mostra um erro só, o último (E4).
+- **Logout com o banco fora por muito tempo**: cada "Sair" mostra o erro e a aba continua dentro
+  (A9); não há "sair só desta aba".
 
 ## Dependem do dono do projeto (nenhum agente faz)
 
@@ -199,4 +215,6 @@ Os limites dos Planos 7 e 8 seguem como estão no `PENDENCIAS-PARA-O-PLANO-8.md`
 
 **R2** (Plano 13): migrar `auth.PGStore` e `auth.TOTP` para sqlc. O `ConsumeChallenge` do Plano 8,
 os métodos da troca de autenticador do Plano 9 (`internal/auth/totp_rotation.go`) e o SQL novo do
-Plano 10 no `auth` ⟦A: arquivos do SQL à mão novo⟧ também são SQL à mão.
+Plano 10 no `auth` (`ReserveAttempt` e `RefundAttempt` em `internal/auth/user.go`, o `fatorTravado`
+e o consumo do timestep com CAS em `internal/auth/totp.go` e `internal/auth/totp_rotation.go`, e
+`Tx.UserTOTPSecret` em `internal/auth/store.go`) também são SQL à mão.

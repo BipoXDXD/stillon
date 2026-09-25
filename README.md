@@ -93,8 +93,8 @@ Kafka, porque o volume de um monitor destes cabe com folga no banco que já exis
 | Chaves de demonstração do compose aceitas no boot só com `PUBLIC_BASE_URL` `http` em `localhost` ou IP de loopback; `https` recusado sempre, em qualquer host; URL malformada ou com usuário e senha recusada | [`config.go`](internal/config/config.go) | [`config_test.go`](internal/config/config_test.go) (`TestLoadRejectsDemoKeysOverHTTPS`, `TestLoadRejectsDemoKeysOnANonLoopbackHost`, `TestLoadAcceptsDemoKeysOnLoopback`, `TestLoadRejectsMalformedPublicBaseURL`), [`compose_test.go`](internal/config/compose_test.go) (`TestComposeUsesTheDemoKeys`) |
 | Status page com DTO próprio: nada interno chega à página pública | [`public.go`](internal/statuspage/public.go) | [`public_test.go`](internal/statuspage/public_test.go) (`TestPublicViewHasNoInternalFields`) |
 | IP real do cliente atrás do proxy, com falha **fechada**: o cabeçalho (`Fly-Client-IP` no Fly) só vale vindo de `TRUSTED_PROXIES`, e um prefixo `/0` ali é recusado no boot. `CLIENT_IP_HEADER` só serve atrás de proxy que **substitui** esse cabeçalho (o do Fly substitui); atrás do Caddy, que repassa o que o cliente mandou, deixe-o **vazio** e vale o último salto do `X-Forwarded-For`, com todas as linhas lidas juntas. Com `PUBLIC_BASE_URL` https, um `X-Forwarded-For` de fora de `TRUSTED_PROXIES` vira aviso no log (um por minuto, com o `remote_addr`) | [`clientip.go`](internal/httpapi/middleware/clientip.go) | [`clientip_test.go`](internal/httpapi/middleware/clientip_test.go) (`TestRateLimitSeparatesClientsBehindFly`, `TestClientIPJoinsEveryForwardedForLine`), `TestSessionsBehindFlyRecordDistinctOrigins`, `TestForwardedForFromOutsideTheListWarnsInProduction`, [`config_test.go`](internal/config/config_test.go) (`TestLoadRejectsAZeroBitTrustedProxy`) |
-| Argon2id com teto de concorrência: toda verificação e todo hash (inclusive o do e-mail inexistente) passam por um semáforo de `min(NumCPU, 4)` vagas (`ARGON2_MAX_CONCURRENT`, 1–64); sem vaga em 2 s, `429 rate_limited` com `Retry-After: 2`, em vez de o processo morrer sem memória | ⟦A1: arquivo do semáforo⟧ | ⟦A1: teste⟧ |
-| Bloqueio de conta atômico (a tentativa é reservada **antes** do Argon2 ou do TOTP: N requisições paralelas gastam N tentativas) e sem negação de serviço ao dono: um login completo deixa o cookie de dispositivo `vigilume_dispositivo`, e quem o apresenta não é barrado pelo bloqueio que um anônimo provocou; nas rotas autenticadas, a 5ª prova errada revoga a família da sessão | ⟦A2/A3: arquivos⟧ | ⟦A2: teste das tentativas paralelas⟧, ⟦A3: teste do dono com cookie de dispositivo⟧, ⟦A3: teste da 5ª prova na família⟧ |
+| Argon2id com teto de concorrência: toda verificação e todo hash (inclusive o do e-mail inexistente) passam por um semáforo de `min(NumCPU, 4)` vagas (`ARGON2_MAX_CONCURRENT`, 1–64); sem vaga em 2 s, `429 rate_limited` com `Retry-After: 2`, em vez de o processo morrer sem memória | [`argon2.go`](internal/auth/argon2.go) | [`argon2_test.go`](internal/auth/argon2_test.go) (`TestEveryArgon2PathWaitsForASlot`), [`argon2_integration_test.go`](internal/httpapi/argon2_integration_test.go) (`TestSaturatedArgon2AnswersRateLimited`) |
+| Bloqueio de conta atômico (a tentativa é reservada **antes** do Argon2 ou do TOTP: N requisições paralelas gastam N tentativas) e sem negação de serviço ao dono: um login completo deixa o cookie de dispositivo `vigilume_dispositivo`, e quem o apresenta não é barrado pelo bloqueio que um anônimo provocou; nas rotas autenticadas, a 5ª prova errada revoga a família da sessão | [`user.go`](internal/auth/user.go), [`dispositivo.go`](internal/auth/dispositivo.go), [`provas.go`](internal/auth/provas.go), [`provas.go` (httpapi)](internal/httpapi/provas.go) | [`user_test.go`](internal/auth/user_test.go) (`TestConcurrentReservationsStopAtTheThreshold`), [`dispositivo_integration_test.go`](internal/httpapi/dispositivo_integration_test.go) (`TestParallelLoginGuessesStopAtTheLock`, `TestDeviceCookieLetsTheOwnerInPastTheAccountLock`), [`provas_familia_integration_test.go`](internal/httpapi/provas_familia_integration_test.go) (`TestFifthWrongProofDropsTheFamily`) |
 | O usuário de demonstração não nasce em servidor: o `seed` do compose só roda com `PUBLIC_BASE_URL` `http` em loopback, e recusa antes de chamar o binário | [`seed.sh`](deploy/compose/seed.sh) | [`seed_test.go`](internal/config/seed_test.go) (`TestSeedRefusesOutsideLoopback`), [`compose_test.go`](internal/config/compose_test.go) (`TestComposeHeaderSaysItIsLocalOnly`) |
 | CSP com nonce por resposta, no painel e na status page | [`webui.go`](internal/webui/webui.go), [`publicpage.go`](internal/httpapi/publicpage.go) | [`publicpage_integration_test.go`](internal/httpapi/publicpage_integration_test.go) (`TestPublicPageRendersWithoutLeaking`); E2E: [`fluxo.spec.ts`](web/e2e/fluxo.spec.ts) (zero violações, com controle positivo) |
 | Imagem distroless **nonroot, sem shell**, Trivy sem achado HIGH/CRITICAL corrigível, varredura de segredos (gitleaks) no histórico inteiro em todo PR | [`Dockerfile`](Dockerfile), [`ci.yml`](.github/workflows/ci.yml), [`.gitleaks.toml`](.gitleaks.toml) | [`checar-imagem.sh`](deploy/ci/checar-imagem.sh) |
@@ -161,8 +161,8 @@ Depois de mudar o código, `docker compose up --build` (ou `make up`): sem o `--
 reusa a imagem que já tem. Para o `npm run dev`, suba a API pelo compose (o `CORS_ORIGIN` do
 compose já é o do Vite). Criar ou recuperar o usuário dono: `vigilume user create --email <e>` e
 `vigilume user set-password --email <e>`, com a senha pelo stdin. Quem perdeu o autenticador **e**
-os códigos de recuperação: `vigilume user reset-2fa --email <e>` desliga o 2FA e encerra todas as
-sessões (não pede senha: só lê a `DATABASE_URL`); depois, entre com a senha e ative de novo pelo
+os códigos de recuperação: `vigilume user reset-2fa --email <e>` desliga o 2FA, zera o bloqueio da
+conta e encerra todas as sessões (não pede senha: só lê a `DATABASE_URL`); depois, entre com a senha e ative de novo pelo
 painel.
 
 Para rodar a API e o sondador separados no mesmo host (`--role=api` e `--role=prober`), não
@@ -177,25 +177,25 @@ tem as convenções). Todo erro, inclusive rota ou método inexistente sob `/api
 
 - `401 unauthorized` é só token recusado (ausente, inválido, vencido, de família morta): o
   cliente renova a sessão. `401 invalid_credentials` é senha ou código errado: não renova.
-- `429 rate_limited` vem com `Retry-After`: dos limitadores por IP e por usuário e, desde o
-  Plano 10, do teto de concorrência do Argon2id.
+- `429 rate_limited` vem dos limitadores por IP e por usuário (sem `Retry-After`) e, desde o
+  Plano 10, do teto de concorrência do Argon2id (com `Retry-After: 2`).
 - Mutação exige o cabeçalho `X-Requested-With: vigilume`.
 
 O que mudou no Plano 10 (spec do Plano 10, §4):
 
 | Rota | Antes | Agora |
 |---|---|---|
-| `POST /auth/login`, `/auth/totp/verify` e as rotas que verificam senha | — | `429 rate_limited` com `Retry-After: 2` quando o Argon2id não tem vaga em 2 s |
-| Rotas autenticadas de credencial (`/auth/password`, `/auth/totp/enroll`, `confirm`, `disable`, `rotate`, `rotate/confirm`) | conta bloqueada → `401 invalid_credentials` | não olham o bloqueio da conta; a 5ª prova errada na mesma família de sessão revoga a família e responde `401 unauthorized` |
+| `POST /auth/login`, `/auth/password`, `/auth/totp/enroll`, `/auth/totp/disable`, `/auth/totp/rotate` (as que pagam Argon2id) | — | `429 rate_limited` com `Retry-After: 2` quando o Argon2id não tem vaga em 2 s |
+| Rotas autenticadas de credencial (`/auth/password`, `/auth/totp/enroll`, `confirm`, `disable`, `rotate`, `rotate/confirm`) | conta bloqueada → `401 invalid_credentials` | não olham o bloqueio da conta; a 5ª prova errada na mesma família de sessão (as seis rotas dividem o contador) revoga a família e responde `401 unauthorized`; da 1ª à 4ª, a resposta de sempre (`401 invalid_credentials`; `400 validation_failed` no `confirm`, que antes não contava falha) |
 | `POST /auth/totp/rotate` | `{"otpauth_uri"}` | mais `"rotation"` (32 caracteres hexadecimais) |
-| `POST /auth/totp/rotate/confirm` | `{"code"}` | `{"code", "rotation"}`; `rotation` diferente do da troca em andamento → `403 forbidden`, sem contar falha |
+| `POST /auth/totp/rotate/confirm` | `{"code"}` | `{"code", "rotation"}`; `rotation` ausente ou diferente do da troca em andamento → `403 forbidden`, antes do código e sem contar falha |
 | `POST /auth/logout` | `204` mesmo com a revogação falhando | `500 internal` sem apagar o cookie, para tentar de novo |
 | Rotas do TOTP com o usuário apagado no meio | `500 internal` | `401 unauthorized` |
 | `PATCH /targets/{id}` que muda esquema, host ou porta da URL sem mandar `headers` | mantinha os headers | apaga os headers (`"header_names": []`); mudar só o caminho mantém |
 | `POST` e `PATCH /targets` com `expected_status` 1xx ou 3xx | aceito (o alvo ficava `down` para sempre) | `400 validation_failed`, `out_of_range` |
-| 404 e 405 sob `/api/` | texto puro do `net/http` | envelope, `404 not_found` e `405` ⟦B5: código final do 405⟧ |
-| `GET /targets/{id}/checks` | ⟦B6: `from` calculado no navegador⟧ | ⟦B6: contrato final da janela, ou "sem mudança" se o painel passou a usar o relógio do servidor⟧ |
-| Login completo (senha e, se ligado, 2FA) | — | cookie `vigilume_dispositivo` (`HttpOnly`, `SameSite=Strict`, `Path=/api/v1/auth`, 180 dias) |
+| 404 e 405 sob `/api/` | texto puro do `net/http` | envelope: `404 not_found` e `405 method_not_allowed` (código novo) |
+| `GET /targets/{id}/checks` | o painel mandava `from` calculado com o relógio do navegador | `?window=1h\|6h\|24h\|7d\|30d\|90d`: o servidor calcula `from = to − janela` com o relógio dele; `window` vazio, fora da lista ou junto com `from` → `400 validation_failed` (`window`/`invalid`); `from`/`to` sem `window` continuam valendo |
+| Login completo (senha e, se ligado, 2FA) | — | cookie `vigilume_dispositivo` (`HttpOnly`, `SameSite=Strict`, `Path=/api/v1/auth`, 180 dias; `Secure` com `PUBLIC_BASE_URL` https), que dispensa o bloqueio da conta no login e no `/totp/verify` |
 
 ## Deploy e operação
 
