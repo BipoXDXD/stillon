@@ -1,3 +1,11 @@
+# !!! SÓ PARA A MÁQUINA LOCAL. NUNCA EM SERVIDOR. !!!
+# Este compose cria o usuário demo@vigilume.local com a senha abaixo, que é
+# pública (está no repositório), e usa chaves e senhas do Postgres também
+# públicas. Num servidor, esse usuário vira O dono do Vigilume, e qualquer um
+# entra. Para hospedar, use o compose de produção (Plano 11, hospedagem): sem
+# o seed, sem estas chaves, com os segredos fora do git. O seed.sh recusa
+# rodar com um PUBLIC_BASE_URL que não seja http em localhost (D1 do Plano 10).
+#
 # Vigilume local, com um comando (spec §15):
 #
 #   docker compose up --wait        e abra http://localhost:8080
@@ -20,7 +28,8 @@ name: vigilume
 # !!! CHAVES DE DEMONSTRAÇÃO, PÚBLICAS NO REPOSITÓRIO. NÃO USE EM PRODUÇÃO. !!!
 # Com elas, qualquer um forja um JWT e decifra os segredos gravados. O boot
 # só as aceita com PUBLIC_BASE_URL http em localhost ou num IP de loopback
-# (D14); https, ou outro host, é recusado. Produção: docs/deploy/fly.md.
+# (D14); https, ou outro host, é recusado. Produção: o compose de produção do
+# Plano 11 (e, enquanto existir, docs/deploy/fly.md).
 x-ambiente: &ambiente
   DATABASE_URL: postgres://vigilume_app:vigilume_app@db:5432/vigilume?sslmode=disable
   # A mesma porta publicada abaixo: os links dos e-mails e da página de
@@ -57,6 +66,10 @@ services:
       retries: 5
       start_period: 30s
       start_interval: 500ms
+    # Depois de um reboot, ou de um restart do Docker, o daemon só religa o
+    # que tem política de restart. Sem esta linha o app voltava e o banco não
+    # (banco C1 da revisão; D1 do Plano 10). O seed não tem: roda uma vez.
+    restart: unless-stopped
 
   seed:
     image: ghcr.io/bipoxdxd/vigilume:${VIGILUME_TAG:-latest}-tools

@@ -13,9 +13,45 @@
 #    contêiner, e a derruba no fim. Os alvos precisam ser públicos: um serviço
 #    dentro do compose tem IP privado, e o safedial o recusa de propósito
 #    (spec §5.1).
+#
+# Antes de tudo, a trava do D1 (Plano 10): o seed só roda na máquina local.
+# A senha de demonstração está no repositório, e o sistema é de usuário
+# único: num servidor, o usuário demo passaria a ser O usuário (banco S1 da
+# revisão de 2026-09-25). A regra é a do boot para as chaves de demo
+# (hostLocal em internal/config): PUBLIC_BASE_URL http, com host localhost ou
+# um IPv4 de 127.0.0.0/8 ou [::1]. TestSeedRefusesOutsideLoopback a prende.
+#
+# VIGILUME_BIN existe só para o teste trocar o binário por um falso.
 set -u
 
-printf '%s\n' "$DEMO_PASSWORD" | /vigilume user create --email "$DEMO_EMAIL"
+VIGILUME=${VIGILUME_BIN:-/vigilume}
+
+# local_ou_nao diz (código 0) se a URL é http num host de loopback. Um nome
+# que só começa com "localhost" ou "127." (localhost.exemplo.com,
+# 127.0.0.1.nip.io) resolve para onde o dono do domínio quiser, e não conta.
+local_ou_nao() {
+    url=$(printf '%s' "$1" | tr 'A-Z' 'a-z')
+    case "$url" in
+        http://*) ;;
+        *) return 1 ;;
+    esac
+    hostporta=${url#http://}
+    hostporta=${hostporta%%/*}
+    case "$hostporta" in
+        *@*) return 1 ;;
+        '[::1]' | '[::1]:'*) return 0 ;;
+    esac
+    host=${hostporta%%:*}
+    [ "$host" = localhost ] && return 0
+    printf '%s\n' "$host" | grep -Eq '^127\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$'
+}
+
+if ! local_ou_nao "${PUBLIC_BASE_URL:-}"; then
+    echo "seed: recusado; o usuário de demonstração só roda na máquina local (PUBLIC_BASE_URL http em localhost ou 127.0.0.1), e este é '${PUBLIC_BASE_URL:-}'. Em servidor, use o compose de produção, sem o seed." >&2
+    exit 1
+fi
+
+printf '%s\n' "$DEMO_PASSWORD" | "$VIGILUME" user create --email "$DEMO_EMAIL"
 rc=$?
 if [ "$rc" -eq 3 ]; then
     echo "seed: já existe usuário; nada muda"
@@ -25,12 +61,12 @@ fi
 [ "${DEMO_TARGETS:-0}" = 1 ] || exit 0
 
 API=127.0.0.1:18080
-HTTP_ADDR=$API /vigilume --role=api >/tmp/seed-api.log 2>&1 &
+HTTP_ADDR=$API "$VIGILUME" --role=api >/tmp/seed-api.log 2>&1 &
 pid=$!
 trap 'kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null' EXIT
 
 tentativas=0
-until HTTP_ADDR=$API /vigilume healthcheck 2>/dev/null; do
+until HTTP_ADDR=$API "$VIGILUME" healthcheck 2>/dev/null; do
     tentativas=$((tentativas + 1))
     if [ "$tentativas" -ge 60 ]; then
         echo "seed: a API temporária não ficou pronta" >&2
