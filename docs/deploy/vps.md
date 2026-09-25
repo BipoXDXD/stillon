@@ -1871,15 +1871,33 @@ cópia (`http://localhost:8080`) e recrie à mão na produção.
    semanal volta a VPS inteira à semana passada; depois disso, siga do item 4 abaixo com o dump de
    ontem para recuperar a semana.
 2. Se não houver backup da Hostinger que sirva: reinstale o Ubuntu 24.04 (ou crie outra VPS) e
-   refaça os blocos 2, 3 e 4. **No passo 3.4, não gere segredos novos**: preencha o `.env` com os
-   valores do gerenciador (a `MASTER_KEY`, as senhas, tudo). Com outra `MASTER_KEY`, o banco
-   restaurado teria headers e canais ilegíveis. O IP pode mudar: atualize o registro `A` (passo
+   refaça o bloco 2, o bloco 3 e o bloco 4 **até o 4.7** (o 4.8 é o item 3 abaixo). Nos passos
+   que guardam segredo, **não gere nada novo; restaure do gerenciador**:
+   - **3.4:** pule o bloco que gera os segredos. Abra o `.env` (`sudo nano /opt/vigilume/.env`) e
+     cole **todos** os valores do gerenciador (a `MASTER_KEY`, as três senhas do Postgres, tudo).
+     Com outra `MASTER_KEY`, o banco restaurado teria headers e canais ilegíveis; com outras
+     senhas, os papéis não bateriam com o dump.
+   - **3.5:** **não** rode o `age-keygen -o`: uma chave nova não abre os dumps que já existem, e o
+     item 4 falharia. Se o `~/vigilume-backup.key` ainda existe no seu computador, use-o; se não
+     (o computador também foi trocado), recrie-o com o conteúdo da entrada "Vigilume – chave
+     privada do backup (age)" (`nano ~/vigilume-backup.key`, cole, salve, e
+     `chmod 600 ~/vigilume-backup.key`). Depois, só a pública, a partir dela:
+     `age-keygen -y ~/vigilume-backup.key > ~/vigilume-age-recipient.txt`, e siga o 3.5 do
+     "Leve a pública para a VPS" em diante (o `echo "ida e volta"` confere o par).
+
+   O IP pode mudar: atualize o registro `A` (passo
    1.4), o `~/.vigilume-vps`, o `~/.ssh/config`, e grave de novo `VPS_HOST` e `VPS_HOST_KEY`
    (passos 4.5 e 4.6; a VPS nova tem outra chave de servidor, e o `ssh` do seu computador vai
    reclamar dela: `ssh-keygen -R <IP velho>` e confira a nova pelo terminal do painel).
 3. Faça o primeiro deploy (passo 4.8) com o SHA que estava no ar (o último deploy verde do Actions).
 4. Restaure o último dump do Actions no banco novo: pare o app (`vc stop app`), decifre o dump no
-   seu computador (passo 7.2, itens 1 e 2), leve-o com `scp vigilume.dump vigilume:` e, na VPS:
+   seu computador (passo 7.2, itens 1 e 2), leve-o para a VPS e apague a cópia em claro do seu
+   computador:
+   ```bash
+   scp ~/vigilume-restauro/vigilume.dump vigilume:
+   shred -u ~/vigilume-restauro/vigilume.dump
+   ```
+   Depois, na VPS:
    ```bash
    vc exec -T db dropdb -U postgres vigilume
    vc exec -T db psql -U postgres -c "CREATE DATABASE vigilume OWNER vigilume_app;"
@@ -1888,8 +1906,14 @@ cópia (`http://localhost:8080`) e recrie à mão na produção.
    vc start app
    ```
    (O banco é recriado vazio porque o app já migrou um schema no primeiro deploy.)
-5. Confira os passos 4.8 (tabelas e papéis), 5.2 (entrar com 2FA), 6.1 (e-mail) e rode o
-   `backup` à mão. Perde-se no máximo o que aconteceu desde o dump de ontem (checks e incidentes).
+5. Refaça o **bloco 8** inteiro (o vigia, com o `vigia.env`: a `HC_URL` vem do gerenciador,
+   entrada "Vigilume – HC_URL"), até o healthchecks voltar a **up**. Sem ele, a VPS nova fica sem
+   vigia justamente depois de um desastre, e o `down` do healthchecks parece ser só a
+   reconstrução. Não pause nem silencie o check no healthchecks: ele volta a **up** sozinho quando
+   o vigia novo pingar.
+6. Confira os passos 4.8 (tabelas e papéis), 5.2 (entrar com 2FA), 6.1 (e-mail) e rode o
+   `backup` à mão (passo 7.1). Perde-se no máximo o que aconteceu desde o dump de ontem (checks e
+   incidentes).
 
 ### Trocar um segredo
 
