@@ -31,10 +31,13 @@ type AuthHandlers struct {
 	// middleware.ClientIP: sem a lista, acreditar no cabeçalho seria pior que
 	// ignorá-lo.
 	proxies middleware.Proxies
+	// provas conta as provas erradas das rotas autenticadas por família de
+	// sessão (A3 do Plano 10); a mesma instância do AccountHandlers.
+	provas *provasDaFamilia
 }
 
-func NewAuthHandlers(users auth.UserStore, sessions *auth.Manager, totp *auth.TOTP, clk clock.Clock, jwtSecret []byte, secureCookie bool, proxies middleware.Proxies) *AuthHandlers {
-	return &AuthHandlers{users: users, sessions: sessions, totp: totp, clk: clk, jwtSecret: jwtSecret, secureCookie: secureCookie, proxies: proxies}
+func NewAuthHandlers(users auth.UserStore, sessions *auth.Manager, totp *auth.TOTP, clk clock.Clock, jwtSecret []byte, secureCookie bool, proxies middleware.Proxies, provas *provasDaFamilia) *AuthHandlers {
+	return &AuthHandlers{users: users, sessions: sessions, totp: totp, clk: clk, jwtSecret: jwtSecret, secureCookie: secureCookie, proxies: proxies, provas: provas}
 }
 
 type loginRequest struct {

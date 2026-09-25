@@ -94,8 +94,12 @@ func (s *TOTP) StartRotation(ctx context.Context, userID, familyID uuid.UUID, em
 
 	// A guarda na WHERE, pelo motivo do R38: entre o Verify e o UPDATE cabe
 	// uma desativação concorrente, e um pendente sem fator ativo seria lixo.
+	//
+	// O bloqueio da conta zera junto (A6 do Plano 10, revendo a D5 do Plano
+	// 9): a senha e a posse do fator acabaram de ser provadas.
 	tag, err := tx.Exec(ctx,
-		`UPDATE users SET totp_pending_secret_enc = $2, totp_pending_family_id = $3
+		`UPDATE users SET totp_pending_secret_enc = $2, totp_pending_family_id = $3,
+		                  failed_attempts = 0, locked_until = NULL
 		   WHERE id = $1 AND totp_confirmed_at IS NOT NULL`,
 		userID, sealed, familyID)
 	if err != nil {
@@ -191,10 +195,10 @@ func (s *TOTP) ConfirmRotation(ctx context.Context, userID, familyID uuid.UUID, 
 	// Compare-and-swap no pendente lido e na família: um rotate que o
 	// substituiu, uma confirmação concorrente ou um Disable no meio fazem a
 	// WHERE não casar, e o código validado com o segredo velho não promove
-	// nada.
+	// nada. O bloqueio da conta zera junto (A6 do Plano 10).
 	tag, err := tx.Exec(ctx,
 		`UPDATE users SET totp_secret_enc = $2, totp_pending_secret_enc = NULL, totp_pending_family_id = NULL,
-		                  totp_last_timestep = $3
+		                  totp_last_timestep = $3, failed_attempts = 0, locked_until = NULL
 		   WHERE id = $1 AND totp_confirmed_at IS NOT NULL AND totp_pending_secret_enc = $4
 		     AND totp_pending_family_id = $5`,
 		userID, ativo, step, pendente, familyID)

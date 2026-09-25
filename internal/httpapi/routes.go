@@ -73,12 +73,15 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	} else {
 		auth.SetArgon2MaxConcurrent(auth.DefaultArgon2MaxConcurrent())
 	}
-	h := NewAuthHandlers(d.Store, d.Sessions, d.TOTP, d.Clock, cfg.JWTSecret, secureCookie, proxiesDe(cfg))
+	// Uma instância do contador de provas por família para a troca de senha e
+	// as rotas do 2FA (A3 do Plano 10): o orçamento é da família, não da rota.
+	provas := &provasDaFamilia{contador: auth.NewFamilyProofs(d.Clock), contas: d.Accounts, proxies: proxiesDe(cfg)}
+	h := NewAuthHandlers(d.Store, d.Sessions, d.TOTP, d.Clock, cfg.JWTSecret, secureCookie, proxiesDe(cfg), provas)
 	th := NewTargetHandlers(d.Targets, d.Clock)
 	ih := NewIncidentHandlers(d.Incidents)
 	ch := NewChannelHandlers(d.Channels)
 	sp := NewStatusPageHandlers(d.StatusPages, cfg.PublicBaseURL)
-	ah := NewAccountHandlers(d.Accounts, proxiesDe(cfg), secureCookie)
+	ah := NewAccountHandlers(d.Accounts, proxiesDe(cfg), secureCookie, provas)
 	authn := middleware.Authn(cfg.JWTSecret, d.Clock)
 
 	mux := http.NewServeMux()
@@ -118,8 +121,10 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	// handler — a sessão sozinha aqui seria o bypass de volta.
 	mux.Handle("POST /api/v1/auth/totp/disable", authn(viva(http.HandlerFunc(h.TOTPDisable))))
 	// A troca de autenticador (Plano 9, §3.2): a mesma cadeia, sem limitador
-	// por IP próprio. Quem limita as provas erradas é o bloqueio progressivo
-	// por conta, que as duas rotas alimentam (D4 e D5 do Plano 5).
+	// por IP próprio. Quem limita as provas erradas destas rotas, e das três
+	// acima e da troca de senha, é o contador por família de sessão
+	// (provasDaFamilia, A3 do Plano 10): a quinta prova errada derruba a
+	// família. O bloqueio da conta é só do login e do /totp/verify.
 	mux.Handle("POST /api/v1/auth/totp/rotate", authn(viva(http.HandlerFunc(h.TOTPRotate))))
 	mux.Handle("POST /api/v1/auth/totp/rotate/confirm", authn(viva(http.HandlerFunc(h.TOTPRotateConfirm))))
 	// Verify não passa por authn: o usuário ainda não tem sessão, só o

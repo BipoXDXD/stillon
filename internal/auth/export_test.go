@@ -14,3 +14,11 @@ func EncurtarEsperaDoArgon2(t *testing.T, d time.Duration) {
 	esperaArgon2 = d
 	t.Cleanup(func() { esperaArgon2 = antes })
 }
+
+// Len diz quantas famílias o contador acompanha: é a única forma de observar a
+// varredura das paradas sem exportar o mapa.
+func (f *FamilyProofs) Len() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.contas)
+}

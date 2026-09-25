@@ -131,7 +131,8 @@ func entrarCom(t *testing.T, a *api, codigo string) int {
 
 // As provas do rotate são as do disable: a senha E a posse do fator atual.
 // Senha errada, código errado e código ausente são 401 invalid_credentials
-// (D24 do Plano 5), cada um conta no bloqueio, e nada é gravado.
+// (D24 do Plano 5), cada um conta na família (A3 do Plano 10, e não no
+// bloqueio da conta), e nada é gravado.
 func TestRotateRefusesWrongProofsAndCountsThem(t *testing.T) {
 	a := newAPI(t)
 	segredo := cadastrarTOTP(t, a, clientWithJar(t))
@@ -154,8 +155,8 @@ func TestRotateRefusesWrongProofsAndCountsThem(t *testing.T) {
 			t.Errorf("rotate com %s: %d %s, queria 401 invalid_credentials", nome, resp.StatusCode, codigo)
 		}
 	}
-	if n := falhasDeLogin(t, a); n != 3 {
-		t.Errorf("%d falhas contadas, queria 3", n)
+	if n := falhasDeLogin(t, a); n != 0 {
+		t.Errorf("%d falhas no bloqueio da conta, queria 0 (A3)", n)
 	}
 	if temPendente(t, a) {
 		t.Error("um rotate recusado gravou o segredo pendente")
@@ -251,8 +252,9 @@ func TestOldAppWorksUntilTheRotationIsConfirmed(t *testing.T) {
 	}
 }
 
-// Código errado no confirm: 401 invalid_credentials, conta no bloqueio, e o
-// pendente fica; um confirm certo depois funciona.
+// Código errado no confirm: 401 invalid_credentials, conta na família (não no
+// bloqueio da conta, A3 do Plano 10), e o pendente fica; um confirm certo
+// depois funciona.
 func TestRotateConfirmWrongCodeKeepsThePending(t *testing.T) {
 	a := newAPI(t)
 	velho := cadastrarTOTP(t, a, clientWithJar(t))
@@ -265,8 +267,8 @@ func TestRotateConfirmWrongCodeKeepsThePending(t *testing.T) {
 	if st != http.StatusUnauthorized || codigo != "invalid_credentials" {
 		t.Errorf("confirm com o app antigo: %d %s, queria 401 invalid_credentials", st, codigo)
 	}
-	if n := falhasDeLogin(t, a); n != 1 {
-		t.Errorf("%d falhas contadas, queria 1", n)
+	if n := falhasDeLogin(t, a); n != 0 {
+		t.Errorf("%d falhas no bloqueio da conta, queria 0 (A3)", n)
 	}
 	if !temPendente(t, a) {
 		t.Fatal("o confirm recusado apagou o pendente")
@@ -368,36 +370,59 @@ func TestDisableDropsThePendingRotationOverHTTP(t *testing.T) {
 	}
 }
 
-// Conta bloqueada não troca de autenticador, nem com as provas certas: o
-// rotate recusa pela senha (auth.CheckPassword) e o confirm pelo bloqueio,
-// como o /totp/verify (R40) — sem isto, o confirm seria um lugar para chutar
-// seis dígitos que o bloqueio não alcança. O mesmo 401 invalid_credentials.
-func TestRotateRoutesRefuseALockedAccount(t *testing.T) {
+// A conta bloqueada não impede o dono logado de trocar de autenticador (A3 do
+// Plano 10; antes, era recusada com 401 invalid_credentials nas duas rotas): o
+// bloqueio é do login. Cada perna confere o error.code, e não só o status
+// (E9): o 401 de prova errada é invalid_credentials, o de sessão derrubada é
+// unauthorized, e o painel reage a eles de formas opostas.
+//
+// A prova errada, com a conta bloqueada, não mexe no bloqueio (conta na
+// família); as provas certas o zeram, no rotate e no confirm (A6 do Plano 10,
+// revendo a D5 do Plano 9).
+func TestRotateRoutesIgnoreTheAccountLock(t *testing.T) {
 	a := newAPI(t)
 	velho := cadastrarTOTP(t, a, clientWithJar(t))
 	token := accessTokenValido(t, a)
-	_, novo := iniciarTrocaHTTP(t, a, token, map[string]string{"password": testPass, "code": codigoDe(t, a, velho)})
-	a.clk.Advance(30 * time.Second)
+	errado := "000000"
+	if errado == codigoDe(t, a, velho) {
+		errado = "111111"
+	}
 	bloquearConta(t, a)
 
-	if st, _ := iniciarTrocaHTTP(t, a, token, map[string]string{"password": testPass, "code": codigoDe(t, a, velho)}); st != http.StatusUnauthorized {
-		t.Errorf("rotate com a conta bloqueada devolveu %d, queria 401", st)
+	resp := postComToken(t, http.DefaultClient, a.srv.URL+"/api/v1/auth/totp/rotate", token,
+		map[string]string{"password": testPass, "code": errado})
+	codigo := codigoDoErro(t, resp)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized || codigo != "invalid_credentials" {
+		t.Errorf("rotate com código errado e a conta bloqueada: %d %s, queria 401 invalid_credentials", resp.StatusCode, codigo)
 	}
-	st, codigo, _ := confirmarTrocaHTTP(t, a, token, codigoDe(t, a, novo))
-	if st != http.StatusUnauthorized || codigo != "invalid_credentials" {
-		t.Errorf("confirm com a conta bloqueada: %d %s, queria 401 invalid_credentials", st, codigo)
-	}
-	if !temPendente(t, a) {
-		t.Error("o confirm recusado pelo bloqueio apagou o pendente")
+	if falhas, bloqueado := estadoDoBloqueio(t, a); falhas != auth.LockThreshold || !bloqueado {
+		t.Errorf("a prova errada mexeu no bloqueio da conta: %d falhas, bloqueada=%v", falhas, bloqueado)
 	}
 
-	// A perna positiva: desbloqueada, a mesma confirmação passa.
-	if _, err := a.pool.Exec(context.Background(),
-		`UPDATE users SET failed_attempts = 0, locked_until = NULL WHERE id = $1`, a.userID); err != nil {
-		t.Fatal(err)
+	st, novo := iniciarTrocaHTTP(t, a, token, map[string]string{"password": testPass, "code": codigoDe(t, a, velho)})
+	if st != http.StatusOK {
+		t.Fatalf("rotate com as provas certas e a conta bloqueada: %d, queria 200", st)
 	}
-	if st, _, _ := confirmarTrocaHTTP(t, a, token, codigoDe(t, a, novo)); st != http.StatusOK {
-		t.Errorf("confirm depois do desbloqueio devolveu %d, queria 200", st)
+	if falhas, bloqueado := estadoDoBloqueio(t, a); falhas != 0 || bloqueado {
+		t.Errorf("o rotate aceito não zerou o bloqueio: %d falhas, bloqueada=%v", falhas, bloqueado)
+	}
+
+	a.clk.Advance(30 * time.Second)
+	bloquearConta(t, a)
+	st, codigo, _ = confirmarTrocaHTTP(t, a, token, codigoDe(t, a, velho))
+	if st != http.StatusUnauthorized || codigo != "invalid_credentials" {
+		t.Errorf("confirm com o app antigo e a conta bloqueada: %d %s, queria 401 invalid_credentials", st, codigo)
+	}
+	if !temPendente(t, a) {
+		t.Error("o confirm recusado apagou o pendente")
+	}
+	st, codigo, codigos := confirmarTrocaHTTP(t, a, token, codigoDe(t, a, novo))
+	if st != http.StatusOK || len(codigos) != 10 {
+		t.Errorf("confirm com o app novo e a conta bloqueada: %d %s, queria 200 com 10 códigos", st, codigo)
+	}
+	if falhas, bloqueado := estadoDoBloqueio(t, a); falhas != 0 || bloqueado {
+		t.Errorf("o confirm aceito não zerou o bloqueio: %d falhas, bloqueada=%v", falhas, bloqueado)
 	}
 }
 

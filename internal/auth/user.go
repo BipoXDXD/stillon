@@ -53,9 +53,10 @@ func NormalizeEmail(email string) string {
 	return strings.TrimSpace(email)
 }
 
-// CheckPassword é a verificação de senha do login, e de toda rota que pede a
-// senha de novo (troca de senha, cadastro e desativação do segundo fator; D4
-// do Plano 5). Custa um Argon2id em todo caminho.
+// CheckPassword é a verificação de senha do login. Custa um Argon2id em todo
+// caminho. As rotas autenticadas que pedem a senha de novo (troca de senha e
+// as do 2FA) não passam mais por aqui desde o A3 do Plano 10: elas usam
+// VerifyPassword e o contador da família de sessão, e não o bloqueio da conta.
 //
 // Conta bloqueada é recusada sem olhar a senha, pagando VerifyDummy: o
 // bloqueio não se anuncia (R34), nem pela resposta nem pelo tempo. Senha

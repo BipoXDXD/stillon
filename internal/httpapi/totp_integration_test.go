@@ -631,37 +631,47 @@ func falhasDeLogin(t *testing.T, a *api) int {
 }
 
 // Um access token roubado não pode virar oráculo de senha pelo cadastro do
-// segundo fator: cada senha errada ali conta no mesmo bloqueio do login (D4 do
-// Plano 5), e a conta trava no limiar.
-func TestEnrollWrongPasswordCountsTowardTheLock(t *testing.T) {
+// segundo fator: cada senha errada ali conta no contador da família de sessão
+// (A3 do Plano 10), e a quinta derruba a família — 401 unauthorized, e o token
+// deixa de valer nas rotas que exigem a sessão viva. O dono não é trancado: a
+// conta não conta nada, e o login com a senha certa entra.
+func TestEnrollWrongPasswordCountsInTheFamily(t *testing.T) {
 	a := newAPI(t)
 	roubado := accessTokenValido(t, a)
 
-	for i := range auth.LockThreshold {
+	for i := range provasPorFamilia {
 		resp := postComToken(t, http.DefaultClient, a.srv.URL+"/api/v1/auth/totp/enroll", roubado,
 			map[string]string{"password": "chute-numero-" + strconv.Itoa(i)})
+		codigo := codigoDoErro(t, resp)
 		resp.Body.Close()
-		if resp.StatusCode != http.StatusUnauthorized {
-			t.Fatalf("chute %d devolveu %d, queria 401", i, resp.StatusCode)
+		quer := "invalid_credentials"
+		if i == provasPorFamilia-1 {
+			quer = "unauthorized"
+		}
+		if resp.StatusCode != http.StatusUnauthorized || codigo != quer {
+			t.Fatalf("chute %d: %d %s, queria 401 %s", i+1, resp.StatusCode, codigo, quer)
 		}
 	}
-	if n := falhasDeLogin(t, a); n != auth.LockThreshold {
-		t.Errorf("%d falhas contadas, queria %d", n, auth.LockThreshold)
+	if st := statusDaListaDeSessoes(t, a, roubado); st != http.StatusUnauthorized {
+		t.Errorf("GET /sessions com o token da família derrubada: %d, queria 401", st)
+	}
+	if n := falhasDeLogin(t, a); n != 0 {
+		t.Errorf("%d falhas no bloqueio da conta, queria 0 (A3)", n)
 	}
 
-	// A prova que importa: travada, a conta recusa até a senha certa no login.
+	// A prova que importa: o dono não foi trancado, e a senha certa entra.
 	entrada := login(t, a, clientWithJar(t), testEmail, testPass)
 	defer entrada.Body.Close()
-	if entrada.StatusCode != http.StatusUnauthorized {
-		t.Errorf("login com a senha certa depois dos chutes devolveu %d, queria 401", entrada.StatusCode)
+	if entrada.StatusCode != http.StatusOK {
+		t.Errorf("login com a senha certa depois dos chutes devolveu %d, queria 200", entrada.StatusCode)
 	}
 }
 
-// Conta bloqueada não cadastra nem desliga o segundo fator, nem com a senha
-// certa: é o mesmo bloqueio do login, e a mesma resposta, 401
-// invalid_credentials (R34, D24). O cadastro com o fator já ativo daria 403
-// depois da senha; o 401 prova que o bloqueio vem antes.
-func TestSecondFactorRoutesRefuseALockedAccount(t *testing.T) {
+// A conta bloqueada NÃO impede o dono logado de mexer no segundo fator (A3 do
+// Plano 10): o bloqueio é do login e do /totp/verify. Com a senha certa, o
+// enroll chega ao 403 do fator já ativo, e o disable desliga — antes, os dois
+// eram 401 invalid_credentials enquanto um anônimo mantivesse o login travado.
+func TestSecondFactorRoutesIgnoreTheAccountLock(t *testing.T) {
 	a := newAPI(t)
 	c := clientWithJar(t)
 	segredo := cadastrarTOTP(t, a, c)
@@ -672,19 +682,24 @@ func TestSecondFactorRoutesRefuseALockedAccount(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for rota, corpo := range map[string]map[string]string{
-		"enroll":  {"password": testPass},
-		"disable": {"password": testPass, "code": code},
+	for _, caso := range []struct {
+		rota   string
+		corpo  map[string]string
+		status int
+		codigo string
+	}{
+		{"enroll", map[string]string{"password": testPass}, http.StatusForbidden, "forbidden"},
+		{"disable", map[string]string{"password": testPass, "code": code}, http.StatusNoContent, ""},
 	} {
-		resp := postComToken(t, http.DefaultClient, a.srv.URL+"/api/v1/auth/totp/"+rota, token, corpo)
+		resp := postComToken(t, http.DefaultClient, a.srv.URL+"/api/v1/auth/totp/"+caso.rota, token, caso.corpo)
 		codigo := codigoDoErro(t, resp)
 		resp.Body.Close()
-		if resp.StatusCode != http.StatusUnauthorized || codigo != "invalid_credentials" {
-			t.Errorf("%s com a conta bloqueada: %d %s, queria 401 invalid_credentials", rota, resp.StatusCode, codigo)
+		if resp.StatusCode != caso.status || codigo != caso.codigo {
+			t.Errorf("%s com a conta bloqueada: %d %s, queria %d %s", caso.rota, resp.StatusCode, codigo, caso.status, caso.codigo)
 		}
 	}
-	if confirmado, temSegredo, codigos, _ := estadoDoSegundoFator(t, a); !confirmado || !temSegredo || codigos != 10 {
-		t.Errorf("a conta bloqueada mexeu no segundo fator: confirmado=%v segredo=%v códigos=%d", confirmado, temSegredo, codigos)
+	if confirmado, _, codigos, _ := estadoDoSegundoFator(t, a); confirmado || codigos != 0 {
+		t.Errorf("o disable com a conta bloqueada não desligou: confirmado=%v códigos=%d", confirmado, codigos)
 	}
 }
 
@@ -726,10 +741,11 @@ func TestSecondFactorRoutesAnswerInvalidCredentials(t *testing.T) {
 			t.Errorf("%s: %d %s, queria 401 %s", caso.nome, resp.StatusCode, got, caso.codigo)
 		}
 	}
-	// Senha errada duas vezes, código ausente e código errado: quatro falhas no
-	// mesmo bloqueio do login.
-	if n := falhasDeLogin(t, a); n != 4 {
-		t.Errorf("%d falhas contadas, queria 4", n)
+	// Senha errada duas vezes, código ausente e código errado: quatro falhas na
+	// mesma família (abaixo do limite, que derrubaria a família e responderia
+	// unauthorized), e nenhuma no bloqueio da conta (A3 do Plano 10).
+	if n := falhasDeLogin(t, a); n != 0 {
+		t.Errorf("%d falhas no bloqueio da conta, queria 0 (A3)", n)
 	}
 	if confirmado, _, _, _ := estadoDoSegundoFator(t, a); !confirmado {
 		t.Error("uma recusa desligou o segundo fator")

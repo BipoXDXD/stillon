@@ -338,46 +338,6 @@ func TestRevokeSessionTakesTheUserLock(t *testing.T) {
 	}
 }
 
-// usuariosQueFalham é o UserStore de verdade com RecordFailure quebrado: o
-// banco caiu entre a verificação da senha e o registro da falha do código.
-type usuariosQueFalham struct{ auth.UserStore }
-
-func (usuariosQueFalham) RecordFailure(context.Context, uuid.UUID, time.Time) error {
-	return errors.New("banco fora do ar")
-}
-
-// Com o segundo fator ligado e o código errado, uma falha ao registrar a
-// tentativa não muda a resposta: continua ErrInvalidCredentials, como no
-// auth.CheckPassword. Antes, o erro cru subia e virava 500 — e um 500 ali
-// (depois da senha, antes do código) dizia ao atacante que a senha estava certa.
-func TestChangePasswordWrongCodeHidesARecordFailureError(t *testing.T) {
-	c := montar(t)
-	ctx := context.Background()
-	uri, err := c.totp.Enroll(ctx, c.user, "dono@exemplo.com")
-	if err != nil {
-		t.Fatal(err)
-	}
-	key, err := otp.NewKeyFromURL(uri)
-	if err != nil {
-		t.Fatal(err)
-	}
-	code, err := totp.GenerateCode(key.Secret(), c.clk.Now())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := c.totp.Confirm(ctx, c.user, code, c.clk.Now()); err != nil {
-		t.Fatal(err)
-	}
-	c.svc.SetUsers(usuariosQueFalham{auth.NewPGStore(c.pool)})
-
-	err = c.svc.ChangePassword(ctx, c.user, c.atual,
-		account.ChangePasswordInput{Current: senha, New: "a-senha-nova-bem-comprida", TOTPCode: "000000"},
-		auth.Meta{IP: "203.0.113.9"})
-	if !errors.Is(err, account.ErrInvalidCredentials) {
-		t.Fatalf("erro = %v, queria ErrInvalidCredentials", err)
-	}
-}
-
 // segredoPendente diz se há segredo TOTP gravado e se está confirmado.
 func segredoPendente(t *testing.T, c cenario) (temSegredo, confirmado bool) {
 	t.Helper()

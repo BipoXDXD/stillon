@@ -203,3 +203,50 @@ func TestResetTwoFactorTakesTheUserLock(t *testing.T) {
 		t.Fatalf("o reset-2fa falhou depois de soltar a trava: %v", err)
 	}
 }
+
+// A6 (Plano 10, §3.1): o reset-2fa tira o bloqueio da conta, como o
+// set-password: o operador provou a identidade fora da API, e o dono que
+// perdeu o autenticador costuma chegar com a conta travada pelos próprios
+// chutes. Sem 2FA ligado o comando não muda nada — nem o bloqueio (a perna
+// oposta, que também prova que a leitura enxerga o bloqueio).
+func TestResetTwoFactorClearsTheLock(t *testing.T) {
+	bloqueio := func(t *testing.T, c cenario) (falhas int, travada bool) {
+		t.Helper()
+		if err := c.pool.QueryRow(context.Background(),
+			`SELECT failed_attempts, locked_until IS NOT NULL FROM users WHERE id = $1`, c.user).
+			Scan(&falhas, &travada); err != nil {
+			t.Fatal(err)
+		}
+		return falhas, travada
+	}
+	travar := func(t *testing.T, c cenario) {
+		t.Helper()
+		if _, err := c.pool.Exec(context.Background(),
+			`UPDATE users SET failed_attempts = $2, locked_until = $3 WHERE id = $1`,
+			c.user, auth.LockThreshold, c.clk.Now().Add(time.Hour)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	t.Run("2FA ligado", func(t *testing.T) {
+		c := montar(t)
+		cadastrarTOTP(t, c, true)
+		travar(t, c)
+		if ligado, _, err := c.svc.ResetTwoFactor(context.Background(), "dono@exemplo.com"); err != nil || !ligado {
+			t.Fatalf("ResetTwoFactor: ligado=%v err=%v", ligado, err)
+		}
+		if falhas, travada := bloqueio(t, c); falhas != 0 || travada {
+			t.Errorf("depois do reset-2fa: %d falhas, travada=%v; queria o bloqueio zerado", falhas, travada)
+		}
+	})
+	t.Run("2FA desligado", func(t *testing.T) {
+		c := montar(t)
+		travar(t, c)
+		if ligado, _, err := c.svc.ResetTwoFactor(context.Background(), "dono@exemplo.com"); err != nil || ligado {
+			t.Fatalf("ResetTwoFactor sem 2FA: ligado=%v err=%v", ligado, err)
+		}
+		if falhas, travada := bloqueio(t, c); falhas != auth.LockThreshold || !travada {
+			t.Errorf("o reset-2fa sem 2FA mexeu no bloqueio: %d falhas, travada=%v", falhas, travada)
+		}
+	})
+}

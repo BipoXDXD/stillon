@@ -13,7 +13,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"net/mail"
 	"slices"
 	"time"
@@ -122,16 +121,20 @@ type ChangePasswordInput struct {
 //  1. a política da senha nova (pública: validá-la primeiro não vaza nada e
 //     não gasta Argon2 nem conta falha por erro de digitação na nova);
 //  2. a família do token viva (leitura barata; a verdade vem no passo 6);
-//  3. a senha atual, pela verificação do login (auth.CheckPassword): conta
-//     bloqueada recusa, senha errada conta no bloqueio;
+//  3. a senha atual (auth.VerifyPassword);
 //  4. o segundo fator, se ligado, por auth.TOTP.Verify (aceita o código de
-//     recuperação); errado ou ausente conta no bloqueio (R40);
+//     recuperação);
 //  5. o hash novo, fora da transação;
 //  6. a transação: trava do usuário (D1), família viva de novo, CAS do hash,
 //     as OUTRAS famílias revogadas, auditoria.
 //
+// O bloqueio da CONTA não entra aqui (A3 do Plano 10): nem recusa a conta
+// bloqueada, nem conta a prova errada. Quem conta as provas erradas desta
+// rota é o contador da família de sessão, no handler (auth.FamilyProofs).
+//
 // Devolve PolicyError, ErrSessionGone ou ErrInvalidCredentials; nil quer
-// dizer "trocada, e a família atual continua viva".
+// dizer "trocada, e a família atual continua viva". Com o teto do Argon2id
+// cheio, auth.ErrArgon2Busy.
 func (s *Service) ChangePassword(ctx context.Context, userID, familyID uuid.UUID, in ChangePasswordInput, meta auth.Meta) error {
 	if s.totp == nil || len(s.ipKey) == 0 {
 		return errors.New("account: ChangePassword sem segundo fator ou sem chave de IP")
@@ -156,7 +159,7 @@ func (s *Service) ChangePassword(ctx context.Context, userID, familyID uuid.UUID
 		return err
 	}
 
-	ok, _, err := auth.CheckPassword(ctx, s.users, u, in.Current, now)
+	ok, _, err := auth.VerifyPassword(u.PasswordHash, in.Current)
 	if err != nil {
 		return err
 	}
@@ -174,12 +177,6 @@ func (s *Service) ChangePassword(ctx context.Context, userID, familyID uuid.UUID
 		// próximo código de 30 s.
 		err := s.totp.Verify(ctx, userID, in.TOTPCode, now)
 		if errors.Is(err, auth.ErrTOTPInvalid) || errors.Is(err, auth.ErrTOTPNotEnrolled) {
-			// Falhar ao registrar não muda a resposta, como em
-			// auth.CheckPassword: o código estava errado. Um 500 aqui, depois
-			// da senha e antes do código, contaria que a senha estava certa.
-			if err := s.users.RecordFailure(ctx, userID, now); err != nil {
-				slog.Error("registrar falha de segundo fator", "erro", err)
-			}
 			return ErrInvalidCredentials
 		}
 		if err != nil {
@@ -367,9 +364,10 @@ func (s *Service) ResetPassword(ctx context.Context, email, password string) (in
 // segurança.
 //
 // Numa transação: o 2FA desligado (segredo, confirmação, timestep e a troca
-// pendente), os códigos de recuperação apagados, TODAS as sessões encerradas
-// (quem estivesse dentro com uma sessão roubada sai, como no set-password) e a
-// auditoria totp.reset_cli. Sem 2FA ligado, nada muda: ligado volta false, sem
+// pendente), o bloqueio da conta zerado (A6 do Plano 10, como o
+// set-password), os códigos de recuperação apagados, TODAS as sessões
+// encerradas (quem estivesse dentro com uma sessão roubada sai, como no
+// set-password) e a auditoria totp.reset_cli. Sem 2FA ligado, nada muda: ligado volta false, sem
 // sessão encerrada e sem auditoria.
 //
 // Devolve ErrUserNotFound para e-mail não cadastrado; revogadas conta as
@@ -486,8 +484,25 @@ func cortar(s string, n int) string {
 // (D14): a família "existe" para a API exatamente quando aparece em GET
 // /sessions.
 func (s *Service) RevokeSession(ctx context.Context, userID, familyID uuid.UUID, meta auth.Meta) error {
+	return s.revogarFamilia(ctx, userID, familyID, meta, "session.revoked")
+}
+
+// RevokeFamilyForWrongProofs derruba a família que errou provas demais numa
+// rota autenticada (A3 do Plano 10), com a auditoria session.proof_limit: é a
+// pista do dono de que alguém com uma sessão dele chutou a senha ou o código.
+// A família já morta é nil: duas requisições que estouram juntas derrubam uma
+// vez só.
+func (s *Service) RevokeFamilyForWrongProofs(ctx context.Context, userID, familyID uuid.UUID, meta auth.Meta) error {
+	err := s.revogarFamilia(ctx, userID, familyID, meta, "session.proof_limit")
+	if errors.Is(err, ErrSessionNotFound) {
+		return nil
+	}
+	return err
+}
+
+func (s *Service) revogarFamilia(ctx context.Context, userID, familyID uuid.UUID, meta auth.Meta, acao string) error {
 	if len(s.ipKey) == 0 {
-		return errors.New("account: RevokeSession sem chave de IP")
+		return errors.New("account: revogar sessão sem chave de IP")
 	}
 	now := s.clk.Now()
 	ipHash := crypto.HashIP(s.ipKey, meta.IP)
@@ -510,7 +525,7 @@ func (s *Service) RevokeSession(ctx context.Context, userID, familyID uuid.UUID,
 			return fmt.Errorf("revogar sessão: %w", err)
 		}
 		entidade := "session_family"
-		return audit(ctx, q, userID, "session.revoked", &entidade, &familyID, ipHash, now)
+		return audit(ctx, q, userID, acao, &entidade, &familyID, ipHash, now)
 	})
 }
 

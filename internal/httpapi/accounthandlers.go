@@ -23,10 +23,13 @@ type AccountHandlers struct {
 	// secureCookie: o mesmo critério do AuthHandlers, para apagar o cookie de
 	// refresh quando a sessão encerrada é a atual.
 	secureCookie bool
+	// provas: o contador de provas erradas por família (A3 do Plano 10), o
+	// mesmo das rotas do 2FA.
+	provas *provasDaFamilia
 }
 
-func NewAccountHandlers(svc *account.Service, proxies middleware.Proxies, secureCookie bool) *AccountHandlers {
-	return &AccountHandlers{svc: svc, proxies: proxies, secureCookie: secureCookie}
+func NewAccountHandlers(svc *account.Service, proxies middleware.Proxies, secureCookie bool, provas *provasDaFamilia) *AccountHandlers {
+	return &AccountHandlers{svc: svc, proxies: proxies, secureCookie: secureCookie, provas: provas}
 }
 
 // meResponse é construído campo a campo: nada de hash, bloqueio ou segredo.
@@ -69,9 +72,12 @@ type changePasswordRequest struct {
 // ChangePassword é POST /auth/password: 204, e as OUTRAS sessões encerradas.
 //
 // Os erros seguem o contrato dos Planos 5–7: senha nova fora da política é 400
-// com o campo; senha atual, segundo fator ou bloqueio é o 401 genérico do
-// login (R34); a sessão do token já encerrada é 401 unauthorized, que o painel
+// com o campo; senha atual ou segundo fator errado é o 401 genérico do login
+// (R34); a sessão do token já encerrada é 401 unauthorized, que o painel
 // trata renovando (e a renovação falha, levando ao login).
+//
+// A prova errada conta no contador da família (A3 do Plano 10), e a quinta
+// derruba a família (401 unauthorized). O bloqueio da conta não entra aqui.
 func (h *AccountHandlers) ChangePassword(w http.ResponseWriter, r *http.Request) {
 	userID, ok := middleware.UserID(r.Context())
 	familyID, okF := middleware.FamilyID(r.Context())
@@ -83,6 +89,11 @@ func (h *AccountHandlers) ChangePassword(w http.ResponseWriter, r *http.Request)
 	if !decodeJSON(w, r, &req) {
 		return
 	}
+	res := h.provas.reservar(w, r, userID, familyID)
+	if res == nil {
+		return
+	}
+	defer res.Release()
 
 	err := h.svc.ChangePassword(r.Context(), userID, familyID, account.ChangePasswordInput{
 		Current: req.CurrentPassword, New: req.NewPassword, TOTPCode: req.TOTPCode,
@@ -94,10 +105,11 @@ func (h *AccountHandlers) ChangePassword(w http.ResponseWriter, r *http.Request)
 	case errors.Is(err, account.ErrSessionGone):
 		apierr.WriteError(w, r, apierr.CodeUnauthorized)
 	case errors.Is(err, account.ErrInvalidCredentials):
-		apierr.WriteError(w, r, apierr.CodeInvalidCredentials)
+		h.provas.errou(w, r, res, userID, apierr.CodeInvalidCredentials)
 	case err != nil:
 		h.internal(w, r, "trocar senha", err)
 	default:
+		res.Succeed()
 		w.WriteHeader(http.StatusNoContent)
 	}
 }

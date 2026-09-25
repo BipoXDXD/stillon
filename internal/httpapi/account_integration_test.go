@@ -201,58 +201,42 @@ func TestChangePasswordWrongCurrent(t *testing.T) {
 	if !senhaGravadaE(t, a, testPass) {
 		t.Error("a senha mudou com a senha atual errada")
 	}
-	if n := falhasDeLogin(t, a); n != 1 {
-		t.Errorf("%d falhas contadas, queria 1: a troca virou oráculo de senha", n)
+	// A senha errada conta no contador da família (A3 do Plano 10), e não no
+	// bloqueio da conta: quem chuta a senha com a sessão não tranca o dono.
+	if n := falhasDeLogin(t, a); n != 0 {
+		t.Errorf("%d falhas no bloqueio da conta, queria 0 (A3)", n)
 	}
 	if !renova(t, a, outro) {
 		t.Error("a troca recusada revogou as outras sessões")
 	}
 }
 
-// Bloqueada, a conta recusa até a senha certa (R34): mesmo 401, nada muda.
-func TestChangePasswordLockedAccount(t *testing.T) {
+// A conta bloqueada NÃO impede o dono logado de trocar a senha (A3 do Plano
+// 10): o bloqueio é do login. Antes, um anônimo que travasse o login a cada 15
+// min tirava do dono, junto, a troca de senha pelo painel. A troca com as
+// provas certas passa e zera o bloqueio, como sempre zerou (SwapUserHash).
+func TestChangePasswordIgnoresTheAccountLock(t *testing.T) {
 	a := newAPI(t)
 	_, token := entrar(t, a)
 	bloquearConta(t, a)
 
 	resp := trocarSenha(t, a, token, map[string]string{"current_password": testPass, "new_password": senhaNova})
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusUnauthorized || codigoDoErro(t, resp) != "invalid_credentials" {
-		t.Fatalf("status %d, queria 401 invalid_credentials", resp.StatusCode)
+	codigo := codigoDoErro(t, resp)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("troca com a conta bloqueada: %d %s, queria 204", resp.StatusCode, codigo)
 	}
-	if !senhaGravadaE(t, a, testPass) {
-		t.Error("a conta bloqueada trocou a senha")
+	if !senhaGravadaE(t, a, senhaNova) {
+		t.Error("a troca aceita não gravou a senha nova")
 	}
-}
-
-// Conta bloqueada paga o mesmo Argon2id que a senha errada: sem VerifyDummy, a
-// resposta rápida anunciaria o bloqueio (R34). Conta verificações, e não
-// relógio, como no login (Task 11).
-func TestChangePasswordSpendsTheSameCPU(t *testing.T) {
-	a := newAPI(t)
-	_, token := entrar(t, a)
-	argon2 := func(atual string) uint64 {
-		t.Helper()
-		antes := auth.Argon2Verifications()
-		resp := trocarSenha(t, a, token, map[string]string{"current_password": atual, "new_password": senhaNova})
-		resp.Body.Close()
-		if resp.StatusCode != http.StatusUnauthorized {
-			t.Fatalf("status %d, queria 401", resp.StatusCode)
-		}
-		return auth.Argon2Verifications() - antes
-	}
-	if n := argon2("errada-numero-um-longa"); n != 1 {
-		t.Fatalf("senha errada: %d verificações Argon2id, queria 1", n)
-	}
-
-	bloquearConta(t, a)
-	if n := argon2(testPass); n != 1 {
-		t.Errorf("conta bloqueada: %d verificações Argon2id, queria 1: falta VerifyDummy", n)
+	if falhas, bloqueado := estadoDoBloqueio(t, a); falhas != 0 || bloqueado {
+		t.Errorf("depois da troca: %d falhas, bloqueada=%v; queria o bloqueio zerado", falhas, bloqueado)
 	}
 }
 
 // Com o segundo fator ligado, a senha sozinha não troca nada: sem código e com
-// código errado é o 401 genérico, e o errado conta no bloqueio (R40).
+// código errado é o 401 genérico. A falha conta na família (A3 do Plano 10), e
+// não no bloqueio da conta.
 func TestChangePasswordRequiresTOTP(t *testing.T) {
 	a := newAPI(t)
 	c := clientWithJar(t)
@@ -275,8 +259,8 @@ func TestChangePasswordRequiresTOTP(t *testing.T) {
 	if !senhaGravadaE(t, a, testPass) {
 		t.Fatal("a senha mudou sem o segundo fator")
 	}
-	if n := falhasDeLogin(t, a); n != 2 {
-		t.Errorf("%d falhas, queria 2 (sem código e código errado)", n)
+	if n := falhasDeLogin(t, a); n != 0 {
+		t.Errorf("%d falhas no bloqueio da conta, queria 0 (A3)", n)
 	}
 
 	code, err := totp.GenerateCode(segredo, a.clk.Now())
