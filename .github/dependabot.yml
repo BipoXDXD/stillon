@@ -2,9 +2,10 @@
 # repositório fixa por versão, SHA ou digest tem de ter quem o atualize, ou a
 # fixação vira atraso: um CVE corrigido na base fica na imagem para sempre.
 #
-# As imagens que só um workflow usa (o Trivy do ci.yml; o Postgres do
-# backup.yml é o de produção) têm um Dockerfile de uma linha cada, lido pelo
-# workflow: o Dependabot não lê o `env` de um workflow. Ficam à mão:
+# A imagem que só um workflow usa (o Trivy do ci.yml) tem um Dockerfile de
+# uma linha, lido pelo workflow: o Dependabot não lê o `env` de um workflow.
+# O Postgres de produção da VPS tem o seu (deploy/vps/db), o ponto fixo do
+# digest. Ficam à mão:
 # - as versões das ferramentas Go no env do ci.yml (sqlc, staticcheck, gosec,
 #   govulncheck, gitleaks, actionlint) e o crane do deploy.yml;
 # - os digests do Postgres 17 e 18 na matriz do job test do ci.yml;
@@ -54,8 +55,9 @@ updates:
     schedule:
       interval: weekly
     # Versão MAIOR de Postgres e Node não vem por PR: o Postgres maior é dump
-    # e restauração num app novo (D36; runbook, "Upgrade maior"), e o Node
-    # maior muda o que o build do painel exige. Menores e digests, sim.
+    # e restauração num volume novo na VPS (D36; runbook, "Upgrade maior do
+    # Postgres"), e o Node maior muda o que o build do painel exige. Menores
+    # e digests, sim.
     ignore:
       - dependency-name: postgres
         update-types: ['version-update:semver-major']
@@ -71,8 +73,9 @@ updates:
     schedule:
       interval: weekly
     # Versão MAIOR de Postgres e Node não vem por PR: o Postgres maior é dump
-    # e restauração num app novo (D36; runbook, "Upgrade maior"), e o Node
-    # maior muda o que o build do painel exige. Menores e digests, sim.
+    # e restauração num volume novo na VPS (D36; runbook, "Upgrade maior do
+    # Postgres"), e o Node maior muda o que o build do painel exige. Menores
+    # e digests, sim.
     ignore:
       - dependency-name: postgres
         update-types: ['version-update:semver-major']
