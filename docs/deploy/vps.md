@@ -1921,6 +1921,9 @@ cópia (`http://localhost:8080`) e recrie à mão na produção.
   gerenciador, `vc up -d app`. Todas as sessões caem; entra-se de novo.
 - `IP_HASH_KEY`: o mesmo caminho; os hashes de IP antigos da auditoria deixam de casar com os
   novos.
+- `HC_URL` (um check novo no healthchecks, ou a URL vazou): troque-a no `vigia.env`
+  (`sudo nano /opt/vigilume/vigia.env`) e no gerenciador. Vale na próxima execução do timer, sem
+  reiniciar nada.
 - `MASTER_KEY` e as senhas do Postgres: **não** há rotação pronta. A `MASTER_KEY` cifra os
   segredos gravados; as senhas dos papéis vivem também no banco (trocar exige `ALTER ROLE` no
   mesmo momento). Se uma delas vazar, é trabalho de plano próprio.

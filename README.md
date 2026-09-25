@@ -247,8 +247,9 @@ Runbook, do "VPS recém-criada" ao "no ar com 2FA, e-mail, backup e vigia", e a 
 - **Slack, Telegram, webhook genérico**: dois canais já provam a abstração de notificação.
 - **SSE ou WebSocket no painel**: o painel consulta de tempos em tempos, e isso basta.
 - **Domínio próprio na status page**: verificação de DNS é escopo próprio.
-- **Réplica, failover e PITR do Postgres**: um nó com snapshot diário e dump diário basta para
-  este volume; no pior caso, perde-se um dia de checks.
+- **Réplica, failover e PITR do Postgres**: um nó com o dump diário conferido e cifrado, mais o
+  backup semanal da VPS inteira na Hostinger, basta para este volume; no pior caso, perde-se um
+  dia de checks.
 - **Métricas raspadas em produção**: exigiriam um coletor na VPS; em produção,
   `METRICS_ADDR=off`.
 - **Cotas por usuário no sondador e no despacho**: só o operador cria contas (pelo CLI), então
