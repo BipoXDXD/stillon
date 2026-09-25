@@ -1,0 +1,165 @@
+#!/usr/bin/env bash
+# vigilume-entrada: a ÚNICA coisa que a chave de deploy alcança na VPS (Plano
+# 11, spec §3). Instalado em /usr/local/sbin/vigilume-entrada (root, 755). O
+# authorized_keys do usuário deploy força:
+#
+#   restrict,command="sudo /usr/local/sbin/vigilume-entrada" ssh-ed25519 ...
+#
+# e o sudoers (deploy/vps/sudoers-vigilume-entrada) deixa o deploy rodar só
+# este arquivo, sem argumento, guardando o SSH_ORIGINAL_COMMAND. O pedido vem
+# do SSH_ORIGINAL_COMMAND, e nunca da linha de comando:
+#
+#   ssh deploy@VPS "deploy <sha 40 hex> <image-id sha256:64 hex>" < imagem.tar
+#       O tar (layout OCI, sem nome) chega pela entrada padrão. Códigos: 0
+#       deploy saudável; 2 pedido recusado (uso, argumento); 3 imagem
+#       divergente (o ID carregado não é o pedido, ou o tar traz nome); 4 não
+#       ficou saudável e o rollback foi feito; 1 qualquer outro erro.
+#
+# Tudo o que o script escreve vai para a saída de ERRO: a saída padrão fica
+# reservada (o verbo backup manda por ela só o dump cifrado).
+#
+# Sem variável de ambiente que mude o comportamento: o sudo limpa o ambiente,
+# e os caminhos abaixo são constantes. O teste do CI (deploy/ci/checar-vps.sh)
+# roda uma cópia com estas constantes trocadas por sed.
+set -euo pipefail
+umask 077
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+DIR=/opt/vigilume
+IMAGEM=vigilume
+ARQUIVOS_COMPOSE="$DIR/compose.prod.yaml"
+ESPERA_S=90
+TMP_BASE=/var/tmp
+TETO_BYTES=$((2 * 1024 * 1024 * 1024))
+
+# fd 3 = a saída padrão de verdade; daqui em diante, o que não for o dump
+# cifrado vai para a de erro.
+exec 3>&1 1>&2
+
+sair() {
+    local codigo=$1
+    shift
+    echo "vigilume-entrada: $*"
+    exit "$codigo"
+}
+uso() { sair 2 "$* (uso: \"deploy <sha de 40 hex> sha256:<64 hex>\")"; }
+
+dc() { COMPOSE_FILE="$ARQUIVOS_COMPOSE" docker compose --project-directory "$DIR" "$@"; }
+
+# O ID que o deploy.yml manda é o digest do manifesto linux/amd64, e só o
+# image store containerd devolve esse valor no `docker load` e no `.Id` (no
+# store clássico, o ID é o da config). Com o outro store, a conferência
+# recusaria todo deploy: melhor dizer por quê.
+exigir_containerd() {
+    docker info -f '{{.DriverStatus}}' 2>/dev/null | grep -q 'io.containerd.snapshotter.v1' ||
+        sair 1 "o Docker não usa o image store containerd; veja docs/deploy/vps.md (Docker)"
+}
+
+# Mantém as imagens das 3 últimas versões que ficaram no ar (o historico,
+# uma linha por deploy saudável); as outras etiquetas $IMAGEM:<sha> saem,
+# inclusive as de deploys que não ficaram saudáveis. Uma em uso não sai (o rmi
+# recusa) e não é erro.
+podar() {
+    local manter tag
+    manter=$(tac "$DIR/historico" | awk '!visto[$0]++' | head -n 3)
+    while read -r tag; do
+        [ "$tag" = atual ] && continue
+        grep -qxF -- "$tag" <<<"$manter" && continue
+        docker rmi "$IMAGEM:$tag" >/dev/null 2>&1 || true
+    done < <(docker image ls "$IMAGEM" --format '{{.Tag}}')
+}
+
+# Conteúdo de um arquivo da raiz do tar, com ou sem o "./" na frente; nada se
+# não houver.
+ler_do_tar() {
+    local membro
+    membro=$(tar -tf "$1" | grep -xE "(\./)?$2" | head -n 1 || true)
+    [ -z "$membro" ] || tar -xOf "$1" "$membro"
+}
+
+deploy() {
+    local sha=$1 id=$2 tmp tam saida carregados anterior
+    exigir_containerd
+
+    tmp=$(mktemp -d "$TMP_BASE/vigilume-entrada.XXXXXX")
+    # shellcheck disable=SC2064 # o caminho é fixado agora, de propósito
+    trap "rm -rf '$tmp'" EXIT
+    head -c $((TETO_BYTES + 1)) > "$tmp/imagem.tar"
+    tam=$(stat -c %s "$tmp/imagem.tar")
+    [ "$tam" -gt 0 ] || uso "nada chegou na entrada padrão (o docker save da imagem)"
+    [ "$tam" -le "$TETO_BYTES" ] || uso "a imagem passa de $TETO_BYTES bytes"
+
+    # O tar do deploy.yml não tem nome (layout OCI do crane). Um tar com nome
+    # etiquetaria, no load, uma imagem qualquer desta máquina (caddy:2, por
+    # exemplo) antes de qualquer conferência: recusado sem carregar.
+    # O membro pode vir como "index.json" ou "./index.json" (tar -C dir .).
+    if ler_do_tar "$tmp/imagem.tar" index.json |
+        grep -Eq '"(org\.opencontainers\.image\.ref\.name|io\.containerd\.image\.name)"'; then
+        sair 3 "o tar traz nome de imagem (index.json); o deploy manda o tar sem nome"
+    fi
+    if ler_do_tar "$tmp/imagem.tar" manifest.json | grep -q '"RepoTags":\["'; then
+        sair 3 "o tar traz nome de imagem (manifest.json); o deploy manda o tar sem nome"
+    fi
+
+    saida=$(docker load -i "$tmp/imagem.tar") || sair 1 "docker load falhou"
+    echo "$saida"
+    carregados=$(sed -n 's/^Loaded image ID: //p' <<<"$saida")
+    if [ -z "$carregados" ] || [ "$(wc -l <<<"$carregados")" -ne 1 ] || grep -q '^Loaded image: ' <<<"$saida"; then
+        sair 3 "o tar não trouxe exatamente uma imagem sem nome"
+    fi
+    if [ "$carregados" != "$id" ]; then
+        # Sem etiqueta, e fora de uso: sai. Em uso ou etiquetada, o rmi recusa.
+        docker rmi "$carregados" >/dev/null 2>&1 || true
+        sair 3 "a imagem carregada é $carregados, e o deploy pediu $id"
+    fi
+    docker tag "$id" "$IMAGEM:$sha"
+
+    anterior=$(cat "$DIR/versao" 2>/dev/null || true)
+    echo "deploy de $sha (antes: ${anterior:-nenhuma})"
+    if VIGILUME_SHA=$sha dc up -d --wait --wait-timeout "$ESPERA_S"; then
+        echo "$sha" > "$DIR/versao.novo" && mv "$DIR/versao.novo" "$DIR/versao"
+        if [ -n "$anterior" ] && [ "$anterior" != "$sha" ]; then
+            echo "$anterior" > "$DIR/versao-anterior.novo" && mv "$DIR/versao-anterior.novo" "$DIR/versao-anterior"
+        fi
+        echo "$sha" >> "$DIR/historico"
+        docker tag "$IMAGEM:$sha" "$IMAGEM:atual"
+        podar
+        echo "deploy de $sha saudável"
+        exit 0
+    fi
+
+    echo "o app não ficou saudável em ${ESPERA_S} s; o log dele:"
+    dc logs --no-color --tail 100 app || true
+    if [ -z "$anterior" ]; then
+        dc stop app || true
+        sair 4 "primeiro deploy e sem versão anterior: o app ficou parado"
+    fi
+    # A etiqueta atual só anda no sucesso: continua na anterior.
+    if VIGILUME_SHA=$anterior dc up -d --wait --wait-timeout "$ESPERA_S"; then
+        sair 4 "rollback feito: $anterior de volta no ar; $sha não subiu"
+    fi
+    dc logs --no-color --tail 100 app || true
+    sair 1 "o rollback para $anterior também não ficou saudável: veja docs/deploy/vps.md"
+}
+
+[ "$#" -eq 0 ] || uso "argumento na linha de comando não é aceito; o pedido vem do SSH"
+pedido=${SSH_ORIGINAL_COMMAND:-}
+# Só minúsculas, dígitos, ":" e espaço: nada que um shell ou o docker
+# interpretem (as palavras nunca passam por eval).
+case "$pedido" in
+    "") uso "pedido vazio" ;;
+    *[!a-z0-9:\ ]*) uso "caractere não permitido no pedido" ;;
+esac
+read -r -a palavras <<<"$pedido"
+
+case "${palavras[0]}" in
+    deploy)
+        [ "${#palavras[@]}" -eq 3 ] || uso "deploy leva o SHA e o image-id"
+        [[ "${palavras[1]}" =~ ^[0-9a-f]{40}$ ]] || uso "SHA malformado: '${palavras[1]}'"
+        [[ "${palavras[2]}" =~ ^sha256:[0-9a-f]{64}$ ]] || uso "image-id malformado: '${palavras[2]}'"
+        exec 9>"$DIR/.entrada.trava"
+        flock -w 600 9 || sair 1 "outra operação da entrada não terminou em 10 min"
+        deploy "${palavras[1]}" "${palavras[2]}"
+        ;;
+    *) uso "verbo desconhecido: '${palavras[0]}'" ;;
+esac

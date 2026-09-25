@@ -1,0 +1,12 @@
+# /etc/sudoers.d/vigilume-entrada (root, 0440; confira com `visudo -cf`).
+#
+# O usuário deploy (sem sudo geral, fora do grupo docker) roda como root SÓ o
+# vigilume-entrada, e SEM argumento nenhum (o "" no fim da regra): o pedido
+# vem do SSH_ORIGINAL_COMMAND, que o sshd põe no ambiente do comando forçado
+# do authorized_keys. O sudo limpa o ambiente; esta linha guarda só essa
+# variável, e só para este comando. Nenhuma outra variável passa (o script
+# não lê nenhuma outra, e as constantes dele não se mudam por ambiente).
+Defaults!/usr/local/sbin/vigilume-entrada env_keep += "SSH_ORIGINAL_COMMAND"
+# Sem pseudo-terminal: o docker save chega pela entrada padrão, em binário.
+Defaults!/usr/local/sbin/vigilume-entrada !use_pty
+deploy ALL=(root) NOPASSWD: /usr/local/sbin/vigilume-entrada ""
