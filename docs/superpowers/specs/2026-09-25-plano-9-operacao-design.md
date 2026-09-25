@@ -1,6 +1,6 @@
 # Vigilume — Plano 9: operação (design)
 
-**Status:** proposta, aguardando revisão do usuário. Nada aqui é código de produto nem plano de
+**Status:** aprovada pelo usuário em 2026-09-25. Nada aqui é código de produto nem plano de
 implementação; o plano vem depois da aprovação desta spec.
 
 **Base de código:** `main` em `88c1a62` (Plano 8 integrado).
