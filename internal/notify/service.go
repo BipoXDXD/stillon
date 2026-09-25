@@ -108,6 +108,10 @@ type ChannelService struct {
 	// e-mail responde erro de validação no campo kind.
 	email   VerificationMailer
 	baseURL string
+	// depoisDeContar é um gancho de teste, chamado entre a contagem travada e
+	// o INSERT: é onde duas criações simultâneas se encontrariam se a trava
+	// não existisse (Plano 8, o mesmo desenho do targets.Service).
+	depoisDeContar func()
 }
 
 // NewChannelService recebe publicBaseURL para montar o link de verificação.
@@ -229,6 +233,9 @@ func (s *ChannelService) cabeNa(ctx context.Context, q *db.Queries, userID uuid.
 	n, err := q.CountChannels(ctx, userID)
 	if err != nil {
 		return fmt.Errorf("contar canais: %w", err)
+	}
+	if travar && s.depoisDeContar != nil {
+		s.depoisDeContar()
 	}
 	if n >= MaxChannels {
 		return ErrLimitReached
