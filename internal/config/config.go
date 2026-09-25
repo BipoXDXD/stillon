@@ -63,6 +63,13 @@ type Config struct {
 	// ClientIPHeader é o cabeçalho de um valor só em que o proxy da
 	// plataforma escreve o IP do cliente (no Fly, "Fly-Client-IP"). Vazio,
 	// vale o último salto do X-Forwarded-For. Só é lido de TRUSTED_PROXIES.
+	//
+	// Só serve atrás de um proxy que SUBSTITUI esse cabeçalho em toda
+	// requisição, como o do Fly. Um proxy genérico (o Caddy, por padrão)
+	// repassa o valor que o cliente mandou, e a origem confiável não prova
+	// que foi o proxy que o escreveu: qualquer um escolheria o próprio IP em
+	// todo limitador e no ip_hash. Atrás do Caddy, deixe vazio (B4 do Plano
+	// 10).
 	ClientIPHeader string
 	LogLevel       slog.Level
 	ShutdownGrace  time.Duration
@@ -212,7 +219,8 @@ func Load(getenv func(string) string) (*Config, error) {
 
 	// CLIENT_IP_HEADER é um nome de cabeçalho HTTP, e de um valor só. O
 	// X-Forwarded-For é recusado aqui porque tem vários valores e já é o
-	// comportamento padrão (variável vazia).
+	// comportamento padrão (variável vazia). Só para proxy que substitui o
+	// cabeçalho (o do Fly); atrás do Caddy, vazio (ver Config.ClientIPHeader).
 	clientIPHeader := func(name string) string {
 		raw := strings.TrimSpace(getenv(name))
 		if raw == "" {

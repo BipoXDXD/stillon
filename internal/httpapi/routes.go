@@ -231,9 +231,13 @@ var painelEmbutido = sync.OnceValue(func() *webui.Painel { return webui.New(webu
 
 // proxiesDe junta as duas variáveis que decidem de onde vem o IP do cliente.
 // Todo limitador por IP e o ip_hash da auditoria passam por aqui: um lugar
-// só para errar ou acertar.
+// só para errar ou acertar. Com PUBLIC_BASE_URL https, um X-Forwarded-For de
+// fora de TRUSTED_PROXIES vira aviso no log (B3 do Plano 10).
 func proxiesDe(cfg *config.Config) middleware.Proxies {
-	return middleware.Proxies{Trusted: cfg.TrustedProxies, Header: cfg.ClientIPHeader}
+	return middleware.Proxies{
+		Trusted: cfg.TrustedProxies, Header: cfg.ClientIPHeader,
+		AvisarXFF: config.EhHTTPS(cfg.PublicBaseURL),
+	}
 }
 
 // readyzTimeout limita o ping: um banco que não responde tem de virar 503

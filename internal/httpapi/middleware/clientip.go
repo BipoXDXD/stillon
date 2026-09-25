@@ -18,9 +18,19 @@ import (
 // o IP do próprio app (o anycast em que o cliente bateu), e o último salto
 // passa a ser o mesmo para todo mundo. Com o cabeçalho dedicado, o proxy
 // escreve um valor só: o do cliente.
+//
+// Header só serve atrás de um proxy que SUBSTITUI esse cabeçalho, como o do
+// Fly: um proxy genérico (o Caddy, por padrão) repassa o valor que o cliente
+// mandou, e aí qualquer um escolhe o próprio IP. Atrás do Caddy, vazio (B4 do
+// Plano 10).
+//
+// AvisarXFF liga o aviso de X-Forwarded-For vindo de fora de Trusted (B3 do
+// Plano 10). Em produção (PUBLIC_BASE_URL https) isso quase sempre é a lista
+// errada; em desenvolvimento seria ruído.
 type Proxies struct {
-	Trusted []netip.Prefix
-	Header  string
+	Trusted   []netip.Prefix
+	Header    string
+	AvisarXFF bool
 }
 
 // ClientIP devolve o endereço do cliente, considerando os cabeçalhos de proxy
@@ -49,12 +59,19 @@ func ClientIP(r *http.Request, p Proxies) string {
 	if p.Header != "" {
 		return peloCabecalho(r, p, direto)
 	}
-	if len(p.Trusted) == 0 {
-		return direto
-	}
 
+	// Todas as linhas, na ordem (B2 do Plano 10): um proxy que acrescenta uma
+	// linha nova em vez de concatenar (o HAProxy com option forwardfor) deixa
+	// a linha do cliente em primeiro lugar, e o Get só devolveria essa.
+	linhas := r.Header.Values("X-Forwarded-For")
 	origem, err := netip.ParseAddr(direto)
 	if err != nil || !confiavel(origem, p.Trusted) {
+		// O cabeçalho chegou de uma origem fora da lista (ou a lista está
+		// vazia). Em produção, é a lista errada até prova em contrário, e todo
+		// cliente cai num balde só; o aviso diz qual endereço a conexão tem.
+		if p.AvisarXFF && len(linhas) > 0 {
+			avisoDeProxy.avisar(msgForaDaLista, direto, "X-Forwarded-For")
+		}
 		return direto
 	}
 
@@ -62,7 +79,7 @@ func ClientIP(r *http.Request, p Proxies) string {
 	// proxy que anexa o endereço observado ao fim da cadeia escreveu só o
 	// último elemento; tudo antes dele veio do cliente e vale tanto quanto o
 	// cliente. (No Fly o último é o IP do app: por isso lá se usa o Header.)
-	cadeia := r.Header.Get("X-Forwarded-For")
+	cadeia := strings.Join(linhas, ",")
 	if cadeia == "" {
 		return direto
 	}
