@@ -1,0 +1,13 @@
+# /etc/systemd/system/vigilume-vigia.timer (Plano 11, spec §6). Ligar com
+# `systemctl enable --now vigilume-vigia.timer`. A cada minuto; volta sozinho
+# depois de um reboot.
+[Unit]
+Description=Vigilume: vigia externo a cada minuto
+
+[Timer]
+OnCalendar=*-*-* *:*:00
+AccuracySec=1s
+Unit=vigilume-vigia.service
+
+[Install]
+WantedBy=timers.target

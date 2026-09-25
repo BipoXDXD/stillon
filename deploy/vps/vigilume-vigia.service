@@ -1,0 +1,27 @@
+# /etc/systemd/system/vigilume-vigia.service (Plano 11, spec §6). Disparado
+# a cada minuto pelo vigilume-vigia.timer; roda o /usr/local/sbin/vigilume-vigia
+# (deploy/vps/vigia.sh) uma vez.
+[Unit]
+Description=Vigilume: vigia externo do /healthz público (healthchecks.io)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/vigilume-vigia
+# Um usuário criado só para esta execução, sem acesso ao /opt/vigilume: o
+# systemd (como root) lê o .env e entrega a cópia em $CREDENTIALS_DIRECTORY.
+DynamicUser=yes
+LoadCredential=vigilume-env:/opt/vigilume/.env
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+CapabilityBoundingSet=
+# Menos que o intervalo do timer: uma execução presa não encavala na seguinte.
+TimeoutStartSec=50

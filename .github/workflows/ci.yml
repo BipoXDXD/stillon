@@ -364,6 +364,8 @@ jobs:
       - name: age
         # A mesma versão do backup.yml: o teste cifra e decifra o backup.
         run: go install "filippo.io/age/cmd/age@${AGE_VERSION}" "filippo.io/age/cmd/age-keygen@${AGE_VERSION}"
+      - name: vigia externo (vigia.sh e as unidades do systemd)
+        run: bash deploy/ci/checar-vigia.sh
       - name: checagens da VPS
         run: bash deploy/ci/checar-vps.sh "$IMAGEM:ci"
 
