@@ -241,7 +241,8 @@ que a onda de correção não fechou. Os que ela fechou: auth M1 (a espera do Ar
   teste Vitest que leia `public/tema.js` e compare com `CHAVE` fecharia.
 - revisão da renomeação, testes: o middleware de CSRF (`RequireCustomHeader`, em
   `internal/httpapi/middleware/csrf.go`) só confere se o `X-Requested-With` existe, não o valor. O
-  valor `stillon` é provado só pela API falsa do painel, nem no e2e.
+  valor `stillon` só aparece na API falsa do painel, que o confere; nem o servidor nem o e2e o
+  conferem, e um valor trocado passaria sem aviso.
 
 
 ## Para o Plano 12 (limites do Plano 9, das pendências do Plano 10, ainda abertos)

@@ -277,6 +277,8 @@ e no histórico dos planos (abaixo).
   ARQUIVO=docs/superpowers/plans/...   # troque os ... por um nome da lista
   git show "2e1c3ce7d816a0ccdb144ab3057878a4c66255a9:$ARQUIVO"
   ```
+- O plano da própria renomeação não está nesse commit: foi apagado no PR que a fez (#20). Leia-o
+  com `git show 24dda3f:docs/superpowers/plans/2026-09-25-renomeacao-stillon.md`.
 - Os comentários do código citam decisões por identificador ("D32 do Plano 7", "spec do Plano 10,
   §4", "banco S1 da revisão"), que se resolvem nesses arquivos. "spec §N" sem número de plano é a
   spec do sistema, `docs/superpowers/specs/2026-09-22-stillon-design.md`, que continua aqui.

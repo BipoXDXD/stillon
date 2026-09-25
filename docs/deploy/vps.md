@@ -1157,6 +1157,26 @@ dão o detalhe. Se a última `início:` ainda não tem a sua `fim:` (as linhas c
 ainda está rodando: espere dois minutos e olhe de novo. Só rode o deploy outra vez depois de ver
 a `fim:` deste.
 
+**Se a `fim:` nunca chegar** (as linhas pararam, e passaram mais de 12 minutos da `início:`), a
+entrada morreu no meio, sem chance de gravar a última linha: um `SIGKILL`, a VPS sem memória
+(OOM) ou o reinício automático das 04:30 (passo 2.11) no meio do deploy. Confira se ela ainda
+roda; se o comando não mostrar nada, ela morreu:
+
+```bash
+pgrep -af stillon-entrada
+cat /opt/stillon/versao
+sudo docker compose -f /opt/stillon/compose.prod.yaml ps
+```
+
+O `versao` diz qual SHA ficou registrado no ar, e o `ps` diz se o `app` está de pé e `healthy`.
+Se o `versao` não é o SHA que você mandou, ou o `app` está parado, reiniciando ou `unhealthy`,
+repita o deploy **do mesmo SHA** pelo Actions (passo 4.8, item 2). Se o `versao` é o SHA novo e o
+`app` está `healthy`, o site está no ar com a versão nova; repetir o mesmo SHA ainda assim é
+inofensivo (a imagem é a mesma) e termina o que a entrada pode ter deixado pela metade depois de
+gravar o `versao` (a etiqueta `stillon:atual` e a poda das imagens velhas). A trava da entrada
+some sozinha com o processo que morreu, e o próximo deploy (ou backup) apaga, antes de começar,
+os temporários que o morto deixou: não há nada para limpar à mão.
+
 **Se o primeiro deploy sair com 4**, o app **ficou parado**: no primeiro deploy não há versão
 anterior para onde voltar (a mensagem é
 `primeiro deploy e sem versão anterior: o app ficou parado`). O site responde `502`, e o Caddy e
