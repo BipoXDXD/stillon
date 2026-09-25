@@ -133,6 +133,35 @@ contra os diffs dos grupos A e E na integração: nenhum item saiu inteiro; um m
 - Comentários de sabotagem desatualizados nos testes.
 - A dica de porta de métricas ocupada nunca aparece no Windows (o erro não é `EADDRINUSE`).
 
+## Minors da revisão do Plano 10 (para o Plano 12)
+
+Achados menores das quatro revisões por grupo (`.superpowers/sdd/2026-09-25-revisao/revisao-*.md`)
+que a onda de correção não fechou. Os que ela fechou: auth M1 (a espera do Argon2id respeita o
+`ctx`), banco-docs M1 (marca d'água), m2 (`.gitignore`) e m3 (README do `reset-2fa`), painel I1
+(prazo do rotate) e M2 (a troca no CI), http Q2 (a lista de divergências, com o Q1).
+
+- auth M2: `FamilyProofs.Fail` decide pelo `n` da hora da reserva; se reservas anteriores em voo
+  forem devolvidas (um `429` do semáforo), a 5ª reserva que errar derruba a família com menos de 5
+  erros reais. Só com requisições simultâneas da mesma família; não é explorável por terceiros.
+- auth M3: a família parada é esquecida em 24 h (`familiaParada`): um ladrão com a sessão (30 dias de
+  refresh) tem 4 chutes de senha por dia, além dos de cada restart. O D3 só cita o restart.
+- painel M1: na ativação, repetir o confirm depois de "não se sabe" termina no toast "já está
+  ativada" (o `403`), sem repetir que os códigos desta ativação se perderam; a troca trata o `403`
+  depois da resposta perdida, a ativação não.
+- painel M4a: o teste "a barreira da CSP pega a violação que ainda não chegou" (`a11y.spec.ts`) fica
+  verde sem a espera (sabotagem S2 declarada); quem prova a espera é o do coletor quebrado. O nome
+  promete mais do que verifica.
+- painel M4b: o PATCH de alvo da API falsa compara a origem pela regra WHATWG do painel, e não pelo
+  `SameOrigin` do servidor: um teste de IPv4 não canônico ou de host que o `ToASCII` recusa passa
+  contra a falsa e diverge do servidor. A falsa não serve de prova nesse ponto.
+- painel M5: em Canais, o `aria-disabled` não segura o clique: entre o `recarregar()` do Retomar e o
+  `finally`, o botão já diz "Pausar", o clique abre o Confirmar e o `finally` o fecha em seguida (uma
+  piscada; nada é enviado).
+- banco-docs m1: o `seed.sh` aceita URLs inválidas que o boot recusa (`http://localhost:evil.com`,
+  `http://[::1]:8080.evil.com`, quebra de linha na `PUBLIC_BASE_URL`): o host real nunca é outro,
+  mas o usuário demo já foi criado quando o boot falha. Endurecer: o resto depois do host vazio ou
+  `:[0-9]+`, e recusar espaço, tab e quebra de linha.
+
 ## Para o Plano 12 (de `PENDENCIAS-PARA-O-PLANO-10.md`, ainda abertas)
 
 Os limites conhecidos do Plano 9 que o Plano 10 não fechou:
@@ -208,7 +237,9 @@ Os limites dos Planos 7 e 8 seguem como estão no `PENDENCIAS-PARA-O-PLANO-8.md`
   `straße.de` e `STRAẞE.de` são origens diferentes (discam `xn--strae-oqa.de` e `strasse.de`), e
   Unicode × punycode do mesmo host é a mesma origem (`TestSameOriginAgreesWithTheDialedHost`).
 - **Alvo com `expected_status` 1xx ou 3xx gravado antes do Plano 10** (só pela API) continua no
-  banco, e todo PATCH nele responde `400 expected_status/out_of_range` até o valor ser corrigido (C2).
+  banco, e todo PATCH nele responde `400 expected_status/out_of_range` até o valor ser corrigido (C2),
+  inclusive o `{"enabled": false}` do Pausar do painel, que não destaca campo nenhum: justamente o
+  alvo que está `down` para sempre não pode ser pausado (revisão, http-sondador Q3).
 - **HTTP/2 com cabeçalho de resposta enorme** (C1): o teto vale, mas os testes só exercitam HTTP/1.
 - **O aviso de `TRUSTED_PROXIES` (B3) não distingue lista errada de porta do app exposta**: um
   cliente falando direto com a porta publicada gera o mesmo aviso.
@@ -216,7 +247,9 @@ Os limites dos Planos 7 e 8 seguem como estão no `PENDENCIAS-PARA-O-PLANO-8.md`
   conferir; nenhum teste passa por um servidor que comita e perde a resposta (E2).
 - **Dois canais mudando juntos e os dois falhando**: a tela mostra um erro só, o último (E4).
 - **Logout com o banco fora por muito tempo**: cada "Sair" mostra o erro e a aba continua dentro
-  (A9); não há "sair só desta aba".
+  (A9); não há "sair só desta aba". O mesmo vale para o `502`/`504` sem envelope do proxy com o
+  binário fora (o caso mais provável atrás do Caddy do Plano 11): o painel diz "Resposta inesperada
+  do servidor (502)" e a sessão local fica, enquanto sem rede ela é largada (P8; revisão, painel M3).
 
 ## Dependem do dono do projeto (nenhum agente faz)
 

@@ -167,7 +167,8 @@ compose já é o do Vite). Criar ou recuperar o usuário dono: `vigilume user cr
 `vigilume user set-password --email <e>`, com a senha pelo stdin. Quem perdeu o autenticador **e**
 os códigos de recuperação: `vigilume user reset-2fa --email <e>` desliga o 2FA, zera o bloqueio da
 conta e encerra todas as sessões (não pede senha: só lê a `DATABASE_URL`); depois, entre com a senha e ative de novo pelo
-painel.
+painel. Sem 2FA ligado, o comando diz "nada mudou" e não mexe em nada, **nem no bloqueio**: para
+destravar uma conta sem 2FA, use o `set-password`.
 
 Para rodar a API e o sondador separados no mesmo host (`--role=api` e `--role=prober`), não
 precisa configurar nada: sem `METRICS_ADDR`, a porta de métricas é `127.0.0.1:9090` para `api` e
