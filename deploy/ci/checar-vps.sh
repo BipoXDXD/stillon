@@ -153,6 +153,8 @@ fonte() {
 sha_de() { printf %s "$1" | sha1sum | cut -c1-40; }
 versao() { cat "$DIR/versao" 2>/dev/null || echo -; }
 imagem_do_app() { docker inspect -f '{{.Config.Image}}' "$(dc ps -q app)"; }
+# no_ar <sha>: a versão gravada e a imagem do app são as desse SHA.
+no_ar() { [ "$(versao)" = "$1" ] && [ "$(imagem_do_app)" = "$REPO_TESTE:$1" ]; }
 
 # ---------------------------------------------------------------------------
 # 1. O compose.prod.yaml sozinho (o que vai para a VPS), pela config resolvida.
@@ -178,8 +180,9 @@ case "$gomem" in
     *GiB) gomem_b=$((${gomem%GiB} * 1024 * 1024 * 1024)) ;;
     *) gomem_b=0 ;;
 esac
-[ "$gomem_b" -gt 0 ] && [ "$gomem_b" -lt "$limite" ] ||
+if ! { [ "$gomem_b" -gt 0 ] && [ "$gomem_b" -lt "$limite" ]; }; then
     falhar "GOMEMLIMIT '$gomem' não está abaixo do mem_limit do app ($limite bytes)"
+fi
 # O IP do cliente (obrigação 2): TRUSTED_PROXIES é o IP fixo do Caddy.
 caddy_ip=$(q '.services.caddy.networks.vigilume.ipv4_address')
 [ "$caddy_ip" = 172.30.0.2 ] || falhar "IP do caddy é '$caddy_ip', queria 172.30.0.2"
@@ -227,9 +230,10 @@ done < <(grep -Eo '^[A-Z_]+=' "$RAIZ/deploy/vps/env.exemplo" | tr -d =)
 ok "compose.prod.yaml: portas, restart, mem_limit, GOMEMLIMIT, IPs fixos, IPv6, variáveis, segredos do .env; Caddyfile sem trusted_proxies"
 
 # A entrada e o compose falam da mesma imagem.
-grep -qx 'IMAGEM=vigilume' "$RAIZ/deploy/vps/vigilume-entrada" &&
-    [ "$(q '.services.app.image')" = "vigilume:atual" ] ||
+if ! { grep -qx 'IMAGEM=vigilume' "$RAIZ/deploy/vps/vigilume-entrada" &&
+    [ "$(q '.services.app.image')" = "vigilume:atual" ]; }; then
     falhar "o IMAGEM do vigilume-entrada e o image do app no compose.prod.yaml não casam"
+fi
 
 # ---------------------------------------------------------------------------
 # 2. A pilha de pé pelo vigilume-entrada, com o Caddy em modo local.
@@ -402,7 +406,7 @@ recusa 'deploy $(id) '"$ID_A" "substituição de comando"
 # Com um pedido e um tar válidos: só o argumento é recusado.
 c=$(entrada "deploy $SHA_A $ID_A" backup < "$TARS/a.tar")
 [ "$c" = 2 ] || falhar "argumento na linha de comando saiu $c, queria 2"
-[ "$(versao)" = "$SHA_A" ] && [ "$(imagem_do_app)" = "$REPO_TESTE:$SHA_A" ] || falhar "um pedido recusado mexeu na versão"
+no_ar "$SHA_A" || falhar "um pedido recusado mexeu na versão"
 c=$(entrada "deploy $SHA_A $ID_A" < /dev/null)
 [ "$c" = 2 ] || falhar "deploy sem nada na entrada padrão saiu $c, queria 2"
 ok "vigilume-entrada: pedidos malformados recusados com 2"
@@ -533,7 +537,7 @@ for m in ponto-barra ponto-ponto duplicado escape repotags grande dois-valores s
     fi
     antes=$(etiquetas)
 done
-[ "$(versao)" = "$SHA_A" ] && [ "$(imagem_do_app)" = "$REPO_TESTE:$SHA_A" ] || falhar "uma imagem divergente mexeu na versão"
+no_ar "$SHA_A" || falhar "uma imagem divergente mexeu na versão"
 # O SHA de uma versão que já existe com OUTRA imagem (aqui, o SHA no ar com a
 # imagem doente): etiquetar moveria $REPO_TESTE:<sha> para a doente, e o
 # rollback, que usa o mesmo SHA, subiria a doente. Recusado com 3 antes.
@@ -541,7 +545,7 @@ c=$(entrada "deploy $SHA_A $ID_DOENTE" < "$TARS/doente.tar")
 [ "$c" = 3 ] || falhar "SHA existente com outra imagem saiu $c, queria 3: $(tail -1 "$TARS/erro")"
 grep -q 'já existe com outra imagem' "$TARS/erro" || falhar "SHA existente com outra imagem: não disse por quê"
 [ "$(docker image inspect -f '{{.Id}}' "$REPO_TESTE:$SHA_A")" = "$ID_A" ] || falhar "a etiqueta $REPO_TESTE:$SHA_A foi movida"
-[ "$(versao)" = "$SHA_A" ] && [ "$(imagem_do_app)" = "$REPO_TESTE:$SHA_A" ] || falhar "o SHA existente com outra imagem mexeu na versão"
+no_ar "$SHA_A" || falhar "o SHA existente com outra imagem mexeu na versão"
 [ "$(docker inspect -f '{{.State.Health.Status}}' "$(dc ps -q app)")" = healthy ] || falhar "depois do SHA existente com outra imagem o app não está saudável"
 ok "vigilume-entrada: imagem divergente, tar com nome, os desvios de layout e o SHA já etiquetado recusados com 3"
 
@@ -660,7 +664,7 @@ for caso in "x FALHAR_TAR=x $TARS/bin-tar:$PATH" "c FALHAR_TAR=c $TARS/bin-tar:$
     [ "$(etiquetas)" = "$antes" ] || falhar "deploy com falha de máquina ($nome) mexeu nas etiquetas"
 done
 grep -q 'docs/deploy/vps.md' "$TARS/erro" || falhar "sem jq, a entrada não apontou o runbook: $(tail -1 "$TARS/erro")"
-[ "$(versao)" = "$SHA_D" ] && [ "$(imagem_do_app)" = "$REPO_TESTE:$SHA_D" ] || falhar "uma falha de máquina mexeu na versão"
+no_ar "$SHA_D" || falhar "uma falha de máquina mexeu na versão"
 ok "vigilume-entrada: tar que não extrai ou não refaz, e jq ausente, saem 1 sem etiquetar"
 
 # 8f. O sudoers: sintaxe (visudo) e efeito, num Ubuntu 24.04 descartável com

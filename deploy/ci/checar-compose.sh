@@ -68,8 +68,9 @@ alheias=$(sql "SELECT count(*) FROM pg_tables WHERE schemaname = 'public' AND ta
 extras=$(echo ${DEMO_TARGETS_EXTRA:-} | wc -w)
 usuarios=$(sql "SELECT count(*) FROM users")
 alvos=$(sql "SELECT count(*) FROM targets")
-[ "$usuarios" = 1 ] && [ "$alvos" = $((1 + extras)) ] ||
+if ! { [ "$usuarios" = 1 ] && [ "$alvos" = $((1 + extras)) ]; }; then
     falhar "seed: $usuarios usuário(s) e $alvos alvo(s), queria 1 e $((1 + extras))"
+fi
 [ "$(sql "SELECT count(*) FROM targets WHERE url = 'https://example.com/'")" = 1 ] ||
     falhar "seed: o alvo https://example.com/ não foi cadastrado"
 

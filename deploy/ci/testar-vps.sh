@@ -163,7 +163,9 @@ esperar_opcoes_do_ssh
 printf '%s\n' "$CHAVE" | cmp -s - "$SSH_FALSO_DIR/chave" ||
     falhar "$caso: a chave entregue ao ssh não é a do secret terminada em quebra de linha"
 [ "$(ler "$SSH_FALSO_DIR/chave.modo")" = 600 ] || falhar "$caso: a chave com modo $(ler "$SSH_FALSO_DIR/chave.modo"), queria 600"
-[ -s "$SSH_FALSO_DIR/chave.caminho" ] && [ ! -e "$(ler "$SSH_FALSO_DIR/chave.caminho")" ] || falhar "$caso: a chave privada ficou no disco do runner"
+if ! { [ -s "$SSH_FALSO_DIR/chave.caminho" ] && [ ! -e "$(ler "$SSH_FALSO_DIR/chave.caminho")" ]; }; then
+    falhar "$caso: a chave privada ficou no disco do runner"
+fi
 
 for par in \
     "2|código 2: uso ou argumento inválido" \
@@ -235,8 +237,9 @@ case $(ler "$arq") in *"== dump"*) falhar "$caso: o log foi parar no arquivo do 
 # ssh (o comando remoto não a lê, e um ssh que a herdasse a esperaria).
 T_ENTRADA=$tmp/imagem.tar SSH_FALSO_SAIDA=$AGE rodar "backup não repassa a entrada padrão" backup "$arq"
 esperar_codigo 0
-[ -e "$SSH_FALSO_DIR/stdin" ] && [ ! -s "$SSH_FALSO_DIR/stdin" ] ||
+if ! { [ -e "$SSH_FALSO_DIR/stdin" ] && [ ! -s "$SSH_FALSO_DIR/stdin" ]; }; then
     falhar "$caso: o ssh do backup recebeu a entrada padrão do passo ($(wc -c <"$SSH_FALSO_DIR/stdin" 2>/dev/null) bytes)"
+fi
 : >"$tmp/resumo"
 GITHUB_STEP_SUMMARY=$tmp/resumo SSH_FALSO_SAIDA=$AGE SSH_FALSO_ERRO='Postgres: 40% do disco
 ' rodar "backup, linha do disco no resumo" backup "$arq"
