@@ -4,7 +4,7 @@ import (
 	"regexp"
 	"testing"
 
-	"github.com/BipoXDXD/vigilume/internal/crypto"
+	"github.com/BipoXDXD/stillon/internal/crypto"
 )
 
 // O nonce vai para um atributo HTML e para o cabeçalho da CSP, e os dois

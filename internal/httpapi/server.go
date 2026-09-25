@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/BipoXDXD/vigilume/internal/config"
+	"github.com/BipoXDXD/stillon/internal/config"
 )
 
 // NewServer configura o http.Server com todos os timeouts.

@@ -21,8 +21,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/BipoXDXD/vigilume/internal/crypto"
-	"github.com/BipoXDXD/vigilume/internal/prober/safedial"
+	"github.com/BipoXDXD/stillon/internal/crypto"
+	"github.com/BipoXDXD/stillon/internal/prober/safedial"
 )
 
 type Kind string

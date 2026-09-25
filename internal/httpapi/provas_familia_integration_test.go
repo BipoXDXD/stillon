@@ -9,7 +9,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/BipoXDXD/vigilume/internal/auth"
+	"github.com/BipoXDXD/stillon/internal/auth"
 )
 
 // O contador de provas por família das rotas autenticadas (A3 do Plano 10):

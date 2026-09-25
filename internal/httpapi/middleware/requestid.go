@@ -7,7 +7,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/BipoXDXD/vigilume/internal/observability"
+	"github.com/BipoXDXD/stillon/internal/observability"
 )
 
 const TraceHeader = "X-Trace-Id"

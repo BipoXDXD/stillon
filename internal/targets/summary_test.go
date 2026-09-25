@@ -8,11 +8,11 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/BipoXDXD/vigilume/internal/storage"
-	"github.com/BipoXDXD/vigilume/internal/storage/db"
-	"github.com/BipoXDXD/vigilume/internal/storage/testdb"
-	"github.com/BipoXDXD/vigilume/internal/targets"
-	"github.com/BipoXDXD/vigilume/internal/targetstate"
+	"github.com/BipoXDXD/stillon/internal/storage"
+	"github.com/BipoXDXD/stillon/internal/storage/db"
+	"github.com/BipoXDXD/stillon/internal/storage/testdb"
+	"github.com/BipoXDXD/stillon/internal/targets"
+	"github.com/BipoXDXD/stillon/internal/targetstate"
 )
 
 // gravarCheck grava um check como o sondador grava (InProberTx), criando a

@@ -9,9 +9,9 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"github.com/BipoXDXD/vigilume/internal/storage"
-	"github.com/BipoXDXD/vigilume/internal/storage/db"
-	"github.com/BipoXDXD/vigilume/internal/storage/testdb"
+	"github.com/BipoXDXD/stillon/internal/storage"
+	"github.com/BipoXDXD/stillon/internal/storage/db"
+	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 )
 
 // target_health e incidents não têm user_id: a RLS delega ao alvo, como em

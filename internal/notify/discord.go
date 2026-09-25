@@ -10,9 +10,9 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/BipoXDXD/vigilume/internal/crypto"
-	"github.com/BipoXDXD/vigilume/internal/incident"
-	"github.com/BipoXDXD/vigilume/internal/prober/safedial"
+	"github.com/BipoXDXD/stillon/internal/crypto"
+	"github.com/BipoXDXD/stillon/internal/incident"
+	"github.com/BipoXDXD/stillon/internal/prober/safedial"
 )
 
 var ErrDiscordURL = errors.New("URL de webhook do Discord inválida")

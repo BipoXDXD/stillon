@@ -8,7 +8,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/BipoXDXD/vigilume/internal/crypto"
+	"github.com/BipoXDXD/stillon/internal/crypto"
 )
 
 // SealHeaders cifra os headers do alvo para headers_enc (spec §5.4).

@@ -8,7 +8,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/pquerna/otp/totp"
 
-	"github.com/BipoXDXD/vigilume/internal/auth"
+	"github.com/BipoXDXD/stillon/internal/auth"
 )
 
 // verificar manda o desafio com o código TOTP "de agora" e devolve a resposta.

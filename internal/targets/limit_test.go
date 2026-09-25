@@ -9,7 +9,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/BipoXDXD/vigilume/internal/targets"
+	"github.com/BipoXDXD/stillon/internal/targets"
 )
 
 // encherAte cria n alvos do dono direto no banco (o Create inteiro, n vezes,

@@ -13,9 +13,9 @@ import (
 	"github.com/pquerna/otp"
 	"github.com/pquerna/otp/totp"
 
-	"github.com/BipoXDXD/vigilume/internal/auth"
-	"github.com/BipoXDXD/vigilume/internal/crypto"
-	"github.com/BipoXDXD/vigilume/internal/storage/testdb"
+	"github.com/BipoXDXD/stillon/internal/auth"
+	"github.com/BipoXDXD/stillon/internal/crypto"
+	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 )
 
 var totpMasterKey = bytes.Repeat([]byte{3}, crypto.KeySize)

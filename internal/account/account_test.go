@@ -13,11 +13,11 @@ import (
 	"github.com/pquerna/otp"
 	"github.com/pquerna/otp/totp"
 
-	"github.com/BipoXDXD/vigilume/internal/account"
-	"github.com/BipoXDXD/vigilume/internal/auth"
-	"github.com/BipoXDXD/vigilume/internal/clock"
-	"github.com/BipoXDXD/vigilume/internal/crypto"
-	"github.com/BipoXDXD/vigilume/internal/storage/testdb"
+	"github.com/BipoXDXD/stillon/internal/account"
+	"github.com/BipoXDXD/stillon/internal/auth"
+	"github.com/BipoXDXD/stillon/internal/clock"
+	"github.com/BipoXDXD/stillon/internal/crypto"
+	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 )
 
 const senha = "uma-senha-bem-comprida-e-boa"

@@ -9,8 +9,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
-	"github.com/BipoXDXD/vigilume/internal/storage"
-	"github.com/BipoXDXD/vigilume/internal/storage/db"
+	"github.com/BipoXDXD/stillon/internal/storage"
+	"github.com/BipoXDXD/stillon/internal/storage/db"
 )
 
 // D9/M1 do Plano 2: apagar um alvo PARADO não passa pelo sondador. A série

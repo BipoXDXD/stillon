@@ -8,17 +8,17 @@ import (
 	"sync"
 	"time"
 
-	"github.com/BipoXDXD/vigilume/internal/account"
-	"github.com/BipoXDXD/vigilume/internal/apierr"
-	"github.com/BipoXDXD/vigilume/internal/auth"
-	"github.com/BipoXDXD/vigilume/internal/clock"
-	"github.com/BipoXDXD/vigilume/internal/config"
-	"github.com/BipoXDXD/vigilume/internal/httpapi/middleware"
-	"github.com/BipoXDXD/vigilume/internal/incident/history"
-	"github.com/BipoXDXD/vigilume/internal/notify"
-	"github.com/BipoXDXD/vigilume/internal/statuspage"
-	"github.com/BipoXDXD/vigilume/internal/targets"
-	"github.com/BipoXDXD/vigilume/internal/webui"
+	"github.com/BipoXDXD/stillon/internal/account"
+	"github.com/BipoXDXD/stillon/internal/apierr"
+	"github.com/BipoXDXD/stillon/internal/auth"
+	"github.com/BipoXDXD/stillon/internal/clock"
+	"github.com/BipoXDXD/stillon/internal/config"
+	"github.com/BipoXDXD/stillon/internal/httpapi/middleware"
+	"github.com/BipoXDXD/stillon/internal/incident/history"
+	"github.com/BipoXDXD/stillon/internal/notify"
+	"github.com/BipoXDXD/stillon/internal/statuspage"
+	"github.com/BipoXDXD/stillon/internal/targets"
+	"github.com/BipoXDXD/stillon/internal/webui"
 )
 
 // maxBodyBytes cobre com folga qualquer payload legítimo desta API.

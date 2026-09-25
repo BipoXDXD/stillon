@@ -13,11 +13,11 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/BipoXDXD/vigilume/internal/apierr"
-	"github.com/BipoXDXD/vigilume/internal/auth"
-	"github.com/BipoXDXD/vigilume/internal/storage"
-	"github.com/BipoXDXD/vigilume/internal/storage/db"
-	"github.com/BipoXDXD/vigilume/internal/targets"
+	"github.com/BipoXDXD/stillon/internal/apierr"
+	"github.com/BipoXDXD/stillon/internal/auth"
+	"github.com/BipoXDXD/stillon/internal/storage"
+	"github.com/BipoXDXD/stillon/internal/storage/db"
+	"github.com/BipoXDXD/stillon/internal/targets"
 )
 
 func tokenDe(t *testing.T, a *api, userID uuid.UUID) string {

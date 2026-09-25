@@ -15,9 +15,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/BipoXDXD/vigilume/internal/auth"
-	"github.com/BipoXDXD/vigilume/internal/config"
-	"github.com/BipoXDXD/vigilume/internal/httpapi"
+	"github.com/BipoXDXD/stillon/internal/auth"
+	"github.com/BipoXDXD/stillon/internal/config"
+	"github.com/BipoXDXD/stillon/internal/httpapi"
 )
 
 // O login e o /totp/verify depois do Plano 10: a tentativa é reservada antes

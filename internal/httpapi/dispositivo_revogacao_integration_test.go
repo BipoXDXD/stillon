@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/BipoXDXD/vigilume/internal/account"
+	"github.com/BipoXDXD/stillon/internal/account"
 )
 
 // I1 da revisão do Plano 10: o cookie de dispositivo morre com a remediação.

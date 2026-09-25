@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/BipoXDXD/vigilume/internal/observability"
+	"github.com/BipoXDXD/stillon/internal/observability"
 )
 
 func TestMetricsServerExposesRuntimeMetrics(t *testing.T) {

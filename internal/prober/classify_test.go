@@ -13,7 +13,7 @@ import (
 	"syscall"
 	"testing"
 
-	"github.com/BipoXDXD/vigilume/internal/prober/safedial"
+	"github.com/BipoXDXD/stillon/internal/prober/safedial"
 )
 
 func TestClassify(t *testing.T) {

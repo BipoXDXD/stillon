@@ -5,7 +5,7 @@ import (
 	"encoding/hex"
 	"testing"
 
-	"github.com/BipoXDXD/vigilume/internal/crypto"
+	"github.com/BipoXDXD/stillon/internal/crypto"
 )
 
 func TestHashTokenIsDeterministicAndFixedLength(t *testing.T) {

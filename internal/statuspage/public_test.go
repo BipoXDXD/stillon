@@ -11,10 +11,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/BipoXDXD/vigilume/internal/statuspage"
-	"github.com/BipoXDXD/vigilume/internal/storage"
-	"github.com/BipoXDXD/vigilume/internal/storage/db"
-	"github.com/BipoXDXD/vigilume/internal/storage/testdb"
+	"github.com/BipoXDXD/stillon/internal/statuspage"
+	"github.com/BipoXDXD/stillon/internal/storage"
+	"github.com/BipoXDXD/stillon/internal/storage/db"
+	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 )
 
 // admin enxerga o banco como superusuário: grava rollups e incidentes em

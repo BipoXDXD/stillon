@@ -12,7 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/BipoXDXD/vigilume/internal/storage/db"
+	"github.com/BipoXDXD/stillon/internal/storage/db"
 )
 
 // A troca de autenticador com segredo pendente (Plano 9, §3.2). Antes dela,

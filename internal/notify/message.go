@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/BipoXDXD/vigilume/internal/incident"
+	"github.com/BipoXDXD/stillon/internal/incident"
 )
 
 // causas traduz o error_kind para quem lê o alerta. É o enum, e nunca a

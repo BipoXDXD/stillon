@@ -11,11 +11,11 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/BipoXDXD/vigilume/internal/clock"
-	"github.com/BipoXDXD/vigilume/internal/statuspage"
-	"github.com/BipoXDXD/vigilume/internal/storage"
-	"github.com/BipoXDXD/vigilume/internal/storage/db"
-	"github.com/BipoXDXD/vigilume/internal/storage/testdb"
+	"github.com/BipoXDXD/stillon/internal/clock"
+	"github.com/BipoXDXD/stillon/internal/statuspage"
+	"github.com/BipoXDXD/stillon/internal/storage"
+	"github.com/BipoXDXD/stillon/internal/storage/db"
+	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 )
 
 var agora = time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)

@@ -6,8 +6,8 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/BipoXDXD/vigilume/internal/notify"
-	"github.com/BipoXDXD/vigilume/internal/observability"
+	"github.com/BipoXDXD/stillon/internal/notify"
+	"github.com/BipoXDXD/stillon/internal/observability"
 )
 
 // VerifyHandlers servem o link do e-mail de verificação (spec §5.8, §9).

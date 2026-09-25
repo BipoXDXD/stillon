@@ -6,8 +6,8 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 
-	"github.com/BipoXDXD/vigilume/internal/storage"
-	"github.com/BipoXDXD/vigilume/internal/storage/testdb"
+	"github.com/BipoXDXD/stillon/internal/storage"
+	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 )
 
 func valorDe(t *testing.T, reg *prometheus.Registry, nome string) float64 {

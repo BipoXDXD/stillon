@@ -10,9 +10,9 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/BipoXDXD/vigilume/internal/clock"
-	"github.com/BipoXDXD/vigilume/internal/crypto"
-	"github.com/BipoXDXD/vigilume/internal/storage/testdb"
+	"github.com/BipoXDXD/stillon/internal/clock"
+	"github.com/BipoXDXD/stillon/internal/crypto"
+	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 )
 
 type testadorFalso struct {

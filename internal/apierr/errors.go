@@ -15,7 +15,7 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/BipoXDXD/vigilume/internal/observability"
+	"github.com/BipoXDXD/stillon/internal/observability"
 )
 
 type ErrorCode string

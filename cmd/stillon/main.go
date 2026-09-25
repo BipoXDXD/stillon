@@ -14,19 +14,19 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
-	"github.com/BipoXDXD/vigilume/internal/account"
-	"github.com/BipoXDXD/vigilume/internal/auth"
-	"github.com/BipoXDXD/vigilume/internal/clock"
-	"github.com/BipoXDXD/vigilume/internal/config"
-	"github.com/BipoXDXD/vigilume/internal/crypto"
-	"github.com/BipoXDXD/vigilume/internal/httpapi"
-	"github.com/BipoXDXD/vigilume/internal/incident/history"
-	"github.com/BipoXDXD/vigilume/internal/notify"
-	"github.com/BipoXDXD/vigilume/internal/observability"
-	"github.com/BipoXDXD/vigilume/internal/prober"
-	"github.com/BipoXDXD/vigilume/internal/statuspage"
-	"github.com/BipoXDXD/vigilume/internal/storage"
-	"github.com/BipoXDXD/vigilume/internal/targets"
+	"github.com/BipoXDXD/stillon/internal/account"
+	"github.com/BipoXDXD/stillon/internal/auth"
+	"github.com/BipoXDXD/stillon/internal/clock"
+	"github.com/BipoXDXD/stillon/internal/config"
+	"github.com/BipoXDXD/stillon/internal/crypto"
+	"github.com/BipoXDXD/stillon/internal/httpapi"
+	"github.com/BipoXDXD/stillon/internal/incident/history"
+	"github.com/BipoXDXD/stillon/internal/notify"
+	"github.com/BipoXDXD/stillon/internal/observability"
+	"github.com/BipoXDXD/stillon/internal/prober"
+	"github.com/BipoXDXD/stillon/internal/statuspage"
+	"github.com/BipoXDXD/stillon/internal/storage"
+	"github.com/BipoXDXD/stillon/internal/targets"
 )
 
 // totpIssuer é o nome que aparece no app autenticador do usuário.

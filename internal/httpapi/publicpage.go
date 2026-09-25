@@ -14,11 +14,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/BipoXDXD/vigilume/internal/config"
-	"github.com/BipoXDXD/vigilume/internal/crypto"
-	"github.com/BipoXDXD/vigilume/internal/httpapi/middleware"
-	"github.com/BipoXDXD/vigilume/internal/observability"
-	"github.com/BipoXDXD/vigilume/internal/statuspage"
+	"github.com/BipoXDXD/stillon/internal/config"
+	"github.com/BipoXDXD/stillon/internal/crypto"
+	"github.com/BipoXDXD/stillon/internal/httpapi/middleware"
+	"github.com/BipoXDXD/stillon/internal/observability"
+	"github.com/BipoXDXD/stillon/internal/statuspage"
 )
 
 // A status page pública (spec §10): HTML renderizado aqui, sem JavaScript,

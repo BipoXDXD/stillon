@@ -10,7 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/BipoXDXD/vigilume/internal/storage/db"
+	"github.com/BipoXDXD/stillon/internal/storage/db"
 )
 
 // LockThreshold e LockDuration implementam o bloqueio progressivo da

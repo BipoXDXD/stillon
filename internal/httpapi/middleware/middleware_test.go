@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/BipoXDXD/vigilume/internal/httpapi/middleware"
+	"github.com/BipoXDXD/stillon/internal/httpapi/middleware"
 )
 
 func ok(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) }

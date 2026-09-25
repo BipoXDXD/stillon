@@ -7,8 +7,8 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/BipoXDXD/vigilume/internal/crypto"
-	"github.com/BipoXDXD/vigilume/internal/prober/safedial"
+	"github.com/BipoXDXD/stillon/internal/crypto"
+	"github.com/BipoXDXD/stillon/internal/prober/safedial"
 )
 
 const resendEndpoint = "https://api.resend.com/emails"

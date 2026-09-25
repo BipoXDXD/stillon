@@ -13,7 +13,7 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/BipoXDXD/vigilume/internal/webui"
+	"github.com/BipoXDXD/stillon/internal/webui"
 )
 
 // indexDeTeste imita o index.html que o Vite gera com html.cspNonce: o

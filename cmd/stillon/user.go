@@ -13,10 +13,10 @@ import (
 
 	"golang.org/x/term"
 
-	"github.com/BipoXDXD/vigilume/internal/account"
-	"github.com/BipoXDXD/vigilume/internal/auth"
-	"github.com/BipoXDXD/vigilume/internal/clock"
-	"github.com/BipoXDXD/vigilume/internal/storage"
+	"github.com/BipoXDXD/stillon/internal/account"
+	"github.com/BipoXDXD/stillon/internal/auth"
+	"github.com/BipoXDXD/stillon/internal/clock"
+	"github.com/BipoXDXD/stillon/internal/storage"
 )
 
 // Códigos de saída de `vigilume user` (spec do Plano 5, §4.1). O 3 não muda de

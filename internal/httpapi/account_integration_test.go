@@ -10,7 +10,7 @@ import (
 
 	"github.com/pquerna/otp/totp"
 
-	"github.com/BipoXDXD/vigilume/internal/auth"
+	"github.com/BipoXDXD/stillon/internal/auth"
 )
 
 // A política pede 15 caracteres; testPass tem 22.

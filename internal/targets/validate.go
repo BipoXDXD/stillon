@@ -12,7 +12,7 @@ import (
 
 	"golang.org/x/net/idna"
 
-	"github.com/BipoXDXD/vigilume/internal/prober/safedial"
+	"github.com/BipoXDXD/stillon/internal/prober/safedial"
 )
 
 // Motivos de validação. Vocabulário fechado: a camada HTTP os repassa ao

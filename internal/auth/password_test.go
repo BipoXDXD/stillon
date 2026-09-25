@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/BipoXDXD/vigilume/internal/auth"
+	"github.com/BipoXDXD/stillon/internal/auth"
 )
 
 const senha = "uma-senha-bem-comprida-e-boa"

@@ -6,7 +6,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/BipoXDXD/vigilume/internal/clock"
+	"github.com/BipoXDXD/stillon/internal/clock"
 )
 
 // As provas das rotas autenticadas (A3 do Plano 10): a troca de senha e o

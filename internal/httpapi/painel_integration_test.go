@@ -7,8 +7,8 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/BipoXDXD/vigilume/internal/config"
-	"github.com/BipoXDXD/vigilume/internal/httpapi"
+	"github.com/BipoXDXD/stillon/internal/config"
+	"github.com/BipoXDXD/stillon/internal/httpapi"
 )
 
 // indexFalso é o bastante para reconhecer o painel numa resposta.

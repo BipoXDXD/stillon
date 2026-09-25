@@ -14,9 +14,9 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pquerna/otp/totp"
 
-	"github.com/BipoXDXD/vigilume/internal/account"
-	"github.com/BipoXDXD/vigilume/internal/auth"
-	"github.com/BipoXDXD/vigilume/internal/httpapi"
+	"github.com/BipoXDXD/stillon/internal/account"
+	"github.com/BipoXDXD/stillon/internal/auth"
+	"github.com/BipoXDXD/stillon/internal/httpapi"
 )
 
 // Um login que verificou a senha ANTIGA não pode deixar uma sessão viva

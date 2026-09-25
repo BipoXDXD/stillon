@@ -7,9 +7,9 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/BipoXDXD/vigilume/internal/apierr"
-	"github.com/BipoXDXD/vigilume/internal/notify"
-	"github.com/BipoXDXD/vigilume/internal/observability"
+	"github.com/BipoXDXD/stillon/internal/apierr"
+	"github.com/BipoXDXD/stillon/internal/notify"
+	"github.com/BipoXDXD/stillon/internal/observability"
 )
 
 type ChannelHandlers struct {

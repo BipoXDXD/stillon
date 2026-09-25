@@ -9,7 +9,7 @@ import (
 	"slices"
 	"time"
 
-	"github.com/BipoXDXD/vigilume/internal/prober/safedial"
+	"github.com/BipoXDXD/stillon/internal/prober/safedial"
 )
 
 type Status string

@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/BipoXDXD/vigilume/internal/account"
+	"github.com/BipoXDXD/stillon/internal/account"
 )
 
 // resetarPeloCLI é o que `vigilume user reset-2fa` chama (Plano 9, §3.1): o

@@ -7,7 +7,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/BipoXDXD/vigilume/internal/storage/db"
+	"github.com/BipoXDXD/stillon/internal/storage/db"
 )
 
 // EnsureChecksPartitions garante as partições de checks do mês corrente e do

@@ -9,9 +9,9 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/BipoXDXD/vigilume/internal/apierr"
-	"github.com/BipoXDXD/vigilume/internal/observability"
-	"github.com/BipoXDXD/vigilume/internal/statuspage"
+	"github.com/BipoXDXD/stillon/internal/apierr"
+	"github.com/BipoXDXD/stillon/internal/observability"
+	"github.com/BipoXDXD/stillon/internal/statuspage"
 )
 
 // StatusPageHandlers servem o cadastro do dono (spec §9). A API é no

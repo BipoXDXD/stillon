@@ -10,7 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/BipoXDXD/vigilume/internal/storage/db"
+	"github.com/BipoXDXD/stillon/internal/storage/db"
 )
 
 // Beginner é o mínimo que uma transação com escopo precisa. *pgxpool.Pool e

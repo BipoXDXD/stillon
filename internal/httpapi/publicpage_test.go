@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/BipoXDXD/vigilume/internal/statuspage"
+	"github.com/BipoXDXD/stillon/internal/statuspage"
 )
 
 // paginaDeTeste monta a projeção de cinco serviços com nomes longos e o

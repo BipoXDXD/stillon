@@ -14,7 +14,7 @@ import (
 	"github.com/pquerna/otp"
 	"github.com/pquerna/otp/totp"
 
-	"github.com/BipoXDXD/vigilume/internal/auth"
+	"github.com/BipoXDXD/stillon/internal/auth"
 )
 
 // A troca de autenticador com segredo pendente (Plano 9, §3.2), pelo HTTP:

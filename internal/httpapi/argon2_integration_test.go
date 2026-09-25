@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/BipoXDXD/vigilume/internal/auth"
-	"github.com/BipoXDXD/vigilume/internal/config"
+	"github.com/BipoXDXD/stillon/internal/auth"
+	"github.com/BipoXDXD/stillon/internal/config"
 )
 
 // prenderVagasDoArgon2 segura n vagas do semáforo do Argon2id (A1) até o fim

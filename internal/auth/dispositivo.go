@@ -14,7 +14,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/BipoXDXD/vigilume/internal/clock"
+	"github.com/BipoXDXD/stillon/internal/clock"
 )
 
 // O cookie de dispositivo (A3 do Plano 10; OWASP, "Slow down online guessing

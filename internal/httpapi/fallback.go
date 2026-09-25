@@ -3,7 +3,7 @@ package httpapi
 import (
 	"net/http"
 
-	"github.com/BipoXDXD/vigilume/internal/apierr"
+	"github.com/BipoXDXD/stillon/internal/apierr"
 )
 
 // comEnvelope põe o 404 e o 405 do próprio ServeMux no envelope de erro (B5

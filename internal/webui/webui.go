@@ -17,7 +17,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/BipoXDXD/vigilume/internal/crypto"
+	"github.com/BipoXDXD/stillon/internal/crypto"
 )
 
 // Marcador é o valor de html.cspNonce em web/vite.config.ts. O Vite o põe
