@@ -12,6 +12,20 @@ TETO_BYTES=$((15 * 1000 * 1000))
 falhas=0
 falhar() { echo "FALHOU: $*" >&2; falhas=$((falhas + 1)); }
 
+# Tudo o que o script cria sai no fim, inclusive se um passo abortar no meio
+# (set -e): o diretório temporário, o contêiner do `version` e o do `docker
+# create`. Nomes com o PID, para duas execuções em paralelo não se pisarem.
+tmp=$(mktemp -d)
+ctr_versao=checar-imagem-versao-$$
+ctr_copia=checar-imagem-copia-$$
+limpar() {
+    docker rm -f "$ctr_versao" "$ctr_copia" >/dev/null 2>&1 || true
+    rm -rf "$tmp"
+}
+trap limpar EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
 # 1. Não é root. Duas guardas dão isso: a base :nonroot já traz o usuário
 #    65532, e o Dockerfile repete USER nonroot:nonroot. Tirar só uma delas
 #    fica verde aqui; a checagem prova a propriedade, não cada guarda.
@@ -33,19 +47,27 @@ for sh in /bin/sh /busybox/sh; do
     fi
 done
 
-# 3. A versão carimbada chegou ao binário.
-got=$(docker run --rm "$IMAGEM" version)
-[ "$got" = "$VERSAO" ] || falhar "vigilume version = '$got', queria '$VERSAO'"
+# 3. A versão carimbada chegou ao binário. Com prazo, e como falha contada,
+#    não aborto: um binário que trava ou sai com erro no `version` tem de
+#    aparecer como FALHOU, e as outras checagens rodam mesmo assim. O
+#    cliente do docker repassa o TERM ao contêiner e continua esperando (um
+#    PID 1 que ignora o TERM nunca sai): por isso o -k, que manda KILL ao
+#    cliente 5 s depois. O timeout mata só o cliente; o contêiner nomeado
+#    sai no `docker rm -f` logo abaixo (e no trap, se algo abortar antes).
+if got=$(timeout -k 5 30 docker run --rm --name "$ctr_versao" "$IMAGEM" version 2>&1); then
+    [ "$got" = "$VERSAO" ] || falhar "vigilume version = '$got', queria '$VERSAO'"
+else
+    falhar "vigilume version não respondeu em 30 s ou saiu com erro (código $?): $got"
+fi
+docker rm -f "$ctr_versao" >/dev/null 2>&1 || true
 
 # 4. O painel está DENTRO do binário. O build passa com o dist vazio (o
 #    .gitkeep basta para o go:embed), e o painel viraria um 503: por isso a
 #    checagem olha o conteúdo, não o build. O index.html do Vite referencia o
 #    bundle com hash; nenhum código Go tem essa string.
-tmp=$(mktemp -d)
-trap 'rm -rf "$tmp"' EXIT
-id=$(docker create "$IMAGEM")
-docker cp -q "$id:/vigilume" "$tmp/vigilume"
-docker rm "$id" >/dev/null
+docker create --name "$ctr_copia" "$IMAGEM" >/dev/null
+docker cp -q "$ctr_copia:/vigilume" "$tmp/vigilume"
+docker rm "$ctr_copia" >/dev/null
 grep -aq 'src="/assets/index-' "$tmp/vigilume" || falhar "o binário não embute o index.html do painel"
 
 # 5. Teto de tamanho: pega uma base errada ou um node_modules que vazou.
