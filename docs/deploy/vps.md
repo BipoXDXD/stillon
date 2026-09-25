@@ -899,8 +899,16 @@ do GitHub vê só texto cifrado. Fora do repositório para um `git add -A` nunca
 `age1…`.
 
 **Guarde** o conteúdo de `~/vigilume-backup.key` no gerenciador (entrada "Vigilume – chave
-privada do backup (age)"): `cat ~/vigilume-backup.key`. **Perder a chave privada = perder todos
-os backups.**
+privada do backup (age)"):
+
+```bash
+cat ~/vigilume-backup.key
+clear
+```
+
+Copie as três linhas do arquivo (o comentário `# created: …`, o `# public key: age1…` e a
+`AGE-SECRET-KEY-1…`) para o gerenciador e rode o `clear` em seguida, como no 3.4: a chave privada
+não fica na tela. **Perder a chave privada = perder todos os backups.**
 
 **Leve a pública para a VPS:**
 
@@ -1927,8 +1935,15 @@ cópia (`http://localhost:8080`) e recrie à mão na produção.
    - **3.5:** **não** rode o `age-keygen -o`: uma chave nova não abre os dumps que já existem, e o
      item 4 falharia. Se o `~/vigilume-backup.key` ainda existe no seu computador, use-o; se não
      (o computador também foi trocado), recrie-o com o conteúdo da entrada "Vigilume – chave
-     privada do backup (age)" (`nano ~/vigilume-backup.key`, cole, salve, e
-     `chmod 600 ~/vigilume-backup.key`). Depois, só a pública, a partir dela:
+     privada do backup (age)". Crie o arquivo **vazio e já `600`** antes de abrir o editor, para
+     a chave nunca ficar num arquivo que outro usuário leia, e cole nele:
+     ```bash
+     install -m 600 /dev/null ~/vigilume-backup.key
+     nano ~/vigilume-backup.key
+     stat -c '%a' ~/vigilume-backup.key
+     ```
+     (cole, `Ctrl+O`, Enter, `Ctrl+X`; o `stat` tem de dizer `600`). Depois, só a pública, a
+     partir dela:
      `age-keygen -y ~/vigilume-backup.key > ~/vigilume-age-recipient.txt`, e siga o 3.5 do
      "Leve a pública para a VPS" em diante (o `echo "ida e volta"` confere o par).
 
