@@ -1,5 +1,5 @@
 import type { APIRequestContext, APIResponse } from '@playwright/test'
-import { controlePositivo, expect, test, violacoes } from './fixtures'
+import { controlePositivo, expect, test } from './fixtures'
 
 // O alvo que o teste cadastra. Um passo que falha no meio deixaria o alvo
 // para trás, e contra uma pilha externa eles se acumulariam até o teto de
@@ -100,7 +100,7 @@ test('login, cadastro de alvo, status, F5, detalhe, apagar, encerrar a sessão e
   // 1. Sem sessão: o splash e depois o login; nunca o painel piscando.
   await page.goto('/')
   await expect(page.getByRole('heading', { name: 'Entrar no Vigilume' })).toBeVisible()
-  await controlePositivo(page)
+  await controlePositivo(page, 'o login')
 
   // 2. Login só com o teclado, do topo da página: Tab até o e-mail, Tab até
   //    a senha, Enter.
@@ -162,7 +162,7 @@ test('login, cadastro de alvo, status, F5, detalhe, apagar, encerrar a sessão e
   expect(await page.evaluate(() => document.cookie)).not.toContain('vigilume_refresh')
 
   // 9. Zero violações de CSP no caminho todo, inclusive antes dos F5.
-  expect(violacoes(page)).toEqual([])
+  await controlePositivo(page, 'o caminho até o passo 9')
 
   // 10. Encerrar a própria sessão em Configurações: o 204 apagou o cookie, e
   //     o F5 não volta (nota do Plano 5 §12).
@@ -183,5 +183,5 @@ test('login, cadastro de alvo, status, F5, detalhe, apagar, encerrar a sessão e
   await expect(page.getByRole('heading', { name: 'Entrar no Vigilume' })).toBeVisible()
   await page.reload()
   await expect(page.getByRole('heading', { name: 'Entrar no Vigilume' })).toBeVisible()
-  await expect.poll(() => violacoes(page)).toEqual([])
+  await controlePositivo(page, 'o fim do fluxo')
 })
