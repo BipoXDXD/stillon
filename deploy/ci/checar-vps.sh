@@ -6,6 +6,8 @@
 #
 #   bash deploy/ci/checar-vps.sh <imagem do app>     (ex.: vigilume:dev)
 #
+# Precisa de docker (com o image store containerd, como a VPS), jq, curl,
+# openssl e do age/age-keygen no PATH.
 # O projeto do compose é "vigilume-teste-vps" e as portas do Caddy vão para o
 # loopback (TESTE_VPS_HTTP, padrão 18580; TESTE_VPS_HTTPS, padrão 18543):
 # deploy/ci/vps/compose.teste.yaml. A rede é a de produção (172.30.0.0/24):
@@ -28,7 +30,12 @@ SENHA=senha-do-teste-da-vps-2026
 
 falhas=0
 falhar() { echo "FALHOU: $*" >&2; falhas=$((falhas + 1)); }
-ok() { echo "ok: $*"; }
+# "ok" só quando o bloco que ele fecha não falhou.
+falhas_antes=0
+ok() {
+    [ "$falhas" = "$falhas_antes" ] && echo "ok: $*"
+    falhas_antes=$falhas
+}
 
 # O diretório que faz o papel de /opt/vigilume.
 DIR=$(mktemp -d)
@@ -37,6 +44,8 @@ limpar() {
         echo "de pé em $DIR (projeto $PROJETO)" >&2
         return
     fi
+    # Um postgres descartável esquecido pela entrada seguraria a rede.
+    docker ps -aq --filter name=vigilume-restauro- | xargs -r docker rm -f >/dev/null 2>&1 || true
     dc down -v --remove-orphans >/dev/null 2>&1 || true
     for r in "$REPO_TESTE" "$REPO_TESTE-fonte"; do
         docker image ls --format '{{.Repository}}:{{.Tag}}' "$r" | xargs -r docker rmi >/dev/null 2>&1 || true
@@ -86,6 +95,11 @@ trocar 'IMAGEM=vigilume' "IMAGEM=$REPO_TESTE"
 trocar 'ARQUIVOS_COMPOSE="$DIR/compose.prod.yaml"' 'ARQUIVOS_COMPOSE="$DIR/compose.prod.yaml:$DIR/compose.teste.yaml"'
 trocar 'ESPERA_S=90' 'ESPERA_S=45'
 trocar 'TMP_BASE=/var/tmp' "TMP_BASE=$TARS"
+trocar 'SHM_BASE=/dev/shm' "SHM_BASE=$TARS"
+# O age do teste pode não estar num diretório do PATH fixo da entrada (na
+# VPS ele vem do apt, em /usr/bin).
+trocar 'export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin' \
+    "export PATH=$(dirname "$(command -v age)"):/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 # Como o sudo a roda: ambiente limpo, só o pedido do SSH. A saída padrão e a
 # de erro ficam em $TARS/saida e $TARS/erro; devolve o código.
 entrada() {
@@ -472,6 +486,64 @@ grep -qx 'B negado' "$TARS/sudo.log" || falhar "sudoers: a entrada aceitou argum
 grep -qx 'C negado' "$TARS/sudo.log" || falhar "sudoers: o deploy rodou um shell como root"
 grep -qx 'D negado' "$TARS/sudo.log" || falhar "sudoers: o deploy rodou outro comando como root"
 ok "sudoers: só a entrada, sem argumento, com o SSH_ORIGINAL_COMMAND"
+
+# ---------------------------------------------------------------------------
+# 9. vigilume-entrada backup: só texto cifrado na saída padrão.
+# ---------------------------------------------------------------------------
+# Os scripts do backup no layout que a entrada espera ($DIR/deploy), tais e
+# quais os do repositório; a chave do age gerada aqui (a privada fica em
+# $TARS, só para conferir).
+mkdir -p "$DIR/deploy/backup" "$DIR/deploy/compose"
+cp "$RAIZ/deploy/backup/backup.sh" "$RAIZ/deploy/backup/verificar.sql" "$DIR/deploy/backup/"
+cp "$RAIZ/deploy/compose/initdb.sql" "$DIR/deploy/compose/"
+age-keygen -o "$TARS/chave-age" 2>/dev/null
+age-keygen -y "$TARS/chave-age" > "$DIR/age-recipient"
+
+c=$(entrada "backup extra" < /dev/null)
+[ "$c" = 2 ] || falhar "backup com argumento saiu $c, queria 2"
+
+c=$(entrada backup < /dev/null)
+if [ "$c" != 0 ]; then
+    cat "$TARS/erro" >&2
+    falhar "backup saiu $c, queria 0"
+fi
+grep -q 'backup conferido' "$TARS/erro" || falhar "o log do backup não diz 'backup conferido'"
+[ "$(head -c 21 "$TARS/saida")" = "age-encryption.org/v1" ] || falhar "a saída padrão do backup não começa com o cabeçalho do age"
+grep -aq 'PGDMP' "$TARS/saida" && falhar "a saída padrão do backup tem o dump em claro (PGDMP)"
+grep -aqE 'vigilume_app|goose_db_version|CREATE TABLE|backup conferido' "$TARS/saida" && falhar "a saída padrão do backup tem texto em claro"
+# Decifrado com a privada, é um dump do pg_dump que o pg_restore lê.
+if age -d -i "$TARS/chave-age" -o "$TARS/decifrado.dump" "$TARS/saida"; then
+    [ "$(head -c 5 "$TARS/decifrado.dump")" = PGDMP ] || falhar "o backup decifrado não é um dump do pg_dump"
+    chmod 644 "$TARS/decifrado.dump"
+    docker run --rm -v "$TARS/decifrado.dump:/d.dump:ro" "$pg" pg_restore -l /d.dump 2>/dev/null |
+        grep -q 'TABLE public users' || falhar "o dump decifrado não tem a tabela users"
+    rm -f "$TARS/decifrado.dump"
+else
+    falhar "o backup não decifra com a chave privada"
+fi
+# Nada sobra: nem o postgres descartável, nem o dump em claro.
+[ -z "$(docker ps -aq --filter name=vigilume-restauro-)" ] || falhar "o postgres descartável do backup ficou para trás"
+ls "$TARS"/vigilume-backup.* >/dev/null 2>&1 && falhar "o diretório do dump em claro ficou para trás"
+ok "vigilume-entrada backup: conferido, só o cifrado na saída padrão"
+
+# Sem a chave pública: 1, e nada na saída padrão.
+mv "$DIR/age-recipient" "$DIR/age-recipient.fora"
+c=$(entrada backup < /dev/null)
+[ "$c" = 1 ] || falhar "backup sem age-recipient saiu $c, queria 1"
+[ ! -s "$TARS/saida" ] || falhar "backup sem age-recipient escreveu na saída padrão"
+grep -q 'postgres descartável' "$TARS/erro" && falhar "backup sem age-recipient fez o dump antes de recusar"
+mv "$DIR/age-recipient.fora" "$DIR/age-recipient"
+# A cópia que não passa nas checagens: 3, e nada na saída padrão. O
+# verificar.sql do diretório da entrada é trocado por um que sempre falha
+# (o do repositório não muda).
+cp "$DIR/deploy/backup/verificar.sql" "$TARS/verificar.sql"
+printf '\\set ON_ERROR_STOP on\nDO $$ BEGIN RAISE EXCEPTION %s; END $$;\n' "'checagem do teste'" > "$DIR/deploy/backup/verificar.sql"
+c=$(entrada backup < /dev/null)
+[ "$c" = 3 ] || falhar "backup com a checagem falhando saiu $c, queria 3"
+[ ! -s "$TARS/saida" ] || falhar "backup com a checagem falhando escreveu na saída padrão"
+cp "$TARS/verificar.sql" "$DIR/deploy/backup/verificar.sql"
+[ -z "$(docker ps -aq --filter name=vigilume-restauro-)" ] || falhar "o postgres descartável ficou para trás depois da falha"
+ok "vigilume-entrada backup: sem chave (1) e cópia reprovada (3) não mandam nada"
 
 if [ "$falhas" -gt 0 ]; then
     dc logs >&2

@@ -15,6 +15,18 @@
 #       divergente (o ID carregado não é o pedido, ou o tar traz nome); 4 não
 #       ficou saudável e o rollback foi feito; 1 qualquer outro erro.
 #
+#   ssh deploy@VPS backup > vigilume-<data>.dump.age
+#       O dump do banco, restaurado e conferido pelo deploy/backup/backup.sh
+#       (sem mudança), cifrado com a chave PÚBLICA do age em
+#       /opt/vigilume/age-recipient, na saída padrão; o log na de erro.
+#       Códigos: 0 conferido; 3 a cópia não passou nas checagens (nada na
+#       saída); 4 conferido e enviado, mas o disco passou de 85%; 1 outro
+#       erro (nada, ou um cifrado incompleto, na saída: descarte).
+#       Os scripts ficam em /opt/vigilume/deploy/, com o layout do
+#       repositório (backup/backup.sh, backup/verificar.sql,
+#       compose/initdb.sql), porque o backup.sh acha o initdb.sql por
+#       ../compose/.
+#
 # Tudo o que o script escreve vai para a saída de ERRO: a saída padrão fica
 # reservada (o verbo backup manda por ela só o dump cifrado).
 #
@@ -30,6 +42,8 @@ IMAGEM=vigilume
 ARQUIVOS_COMPOSE="$DIR/compose.prod.yaml"
 ESPERA_S=90
 TMP_BASE=/var/tmp
+SHM_BASE=/dev/shm
+SCRIPTS="$DIR/deploy"
 TETO_BYTES=$((2 * 1024 * 1024 * 1024))
 
 # fd 3 = a saída padrão de verdade; daqui em diante, o que não for o dump
@@ -42,7 +56,7 @@ sair() {
     echo "vigilume-entrada: $*"
     exit "$codigo"
 }
-uso() { sair 2 "$* (uso: \"deploy <sha de 40 hex> sha256:<64 hex>\")"; }
+uso() { sair 2 "$* (uso: \"deploy <sha de 40 hex> sha256:<64 hex>\" ou \"backup\")"; }
 
 dc() { COMPOSE_FILE="$ARQUIVOS_COMPOSE" docker compose --project-directory "$DIR" "$@"; }
 
@@ -142,6 +156,76 @@ deploy() {
     sair 1 "o rollback para $anterior também não ficou saudável: veja docs/deploy/vps.md"
 }
 
+# backup: o deploy/backup/backup.sh SEM MUDANÇA (Plano 11, spec §4), dentro de
+# um postgres descartável (a mesma imagem do db) ligado à rede do compose,
+# com os dados em tmpfs. O dump em claro fica num diretório em memória
+# ($SHM_BASE) e sai daqui só cifrado com a chave PÚBLICA do age.
+backup() {
+    local db ip rede img senha codigo=0 raiz_docker pct nome tmp
+    [ -s "$DIR/age-recipient" ] || sair 1 "falta $DIR/age-recipient (a chave PÚBLICA do age)"
+    command -v age >/dev/null || sair 1 "o age não está instalado"
+    [ -f "$SCRIPTS/backup/backup.sh" ] && [ -f "$SCRIPTS/backup/verificar.sql" ] && [ -f "$SCRIPTS/compose/initdb.sql" ] ||
+        sair 1 "faltam os scripts do backup em $SCRIPTS (backup/backup.sh, backup/verificar.sql, compose/initdb.sql)"
+    senha=$(sed -n 's/^VIGILUME_BACKUP_PASSWORD=//p' "$DIR/.env" | tail -n 1)
+    [ -n "$senha" ] || sair 1 "VIGILUME_BACKUP_PASSWORD vazio no $DIR/.env"
+    db=$(dc ps -q db)
+    [ -n "$db" ] || sair 1 "o serviço db não está de pé"
+    rede=$(docker inspect -f '{{range $k, $v := .NetworkSettings.Networks}}{{$k}}{{end}}' "$db")
+    ip=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$db")
+    img=$(docker inspect -f '{{.Config.Image}}' "$db")
+
+    nome=vigilume-restauro-$$
+    tmp=$(mktemp -d "$SHM_BASE/vigilume-backup.XXXXXX")
+    # shellcheck disable=SC2064 # nome e caminho fixados agora, de propósito
+    trap "docker rm -f '$nome' >/dev/null 2>&1 || true; shred -u '$tmp'/* 2>/dev/null || true; rm -rf '$tmp'" EXIT
+
+    # A senha do descartável é de uso único; a do vigilume_backup vai ao
+    # contêiner pelo ambiente (-e NOME, sem valor), fora da linha de comando.
+    export POSTGRES_PASSWORD PGPASSWORD ORIGEM_URL VOLUME_BYTES
+    POSTGRES_PASSWORD=$(head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')
+    PGPASSWORD=$POSTGRES_PASSWORD
+    ORIGEM_URL="postgres://vigilume_backup:$senha@$ip:5432/vigilume?sslmode=disable"
+    raiz_docker=$(docker info -f '{{.DockerRootDir}}')
+    VOLUME_BYTES=$(df -B1 --output=size "$raiz_docker" | tail -n 1 | tr -d ' ')
+
+    echo "== postgres descartável ($img) na rede $rede"
+    docker run -d --name "$nome" --network "$rede" --memory 3g \
+        --tmpfs /var/lib/postgresql:rw,size=2g -e POSTGRES_PASSWORD \
+        -v "$SCRIPTS:/deploy:ro" -v "$tmp:/saida" "$img" >/dev/null ||
+        sair 1 "o postgres descartável não subiu"
+    for _ in $(seq 1 60); do
+        docker exec "$nome" pg_isready -h 127.0.0.1 -U postgres >/dev/null 2>&1 && break
+        sleep 1
+    done
+    docker exec "$nome" pg_isready -h 127.0.0.1 -U postgres >/dev/null || sair 1 "o postgres descartável não ficou pronto"
+
+    # O mesmo usuário de quem roda a entrada (root, na VPS): o dump sai com
+    # esse dono, e o shred consegue apagá-lo.
+    docker exec --user "$(id -u):$(id -g)" -e ORIGEM_URL -e PGPASSWORD -e VOLUME_BYTES \
+        -e SAIDA=/saida/vigilume.dump -e PGHOST=127.0.0.1 -e PGPORT=5432 -e PGUSER=postgres \
+        "$nome" sh /deploy/backup/backup.sh || codigo=$?
+    case "$codigo" in
+        0 | 4) ;;
+        3) sair 3 "a cópia restaurada não passou nas checagens: não há backup que sirva" ;;
+        *) sair 1 "o backup.sh saiu com $codigo: não houve backup" ;;
+    esac
+    [ -s "$tmp/vigilume.dump" ] || sair 1 "o backup.sh saiu $codigo sem deixar o dump"
+
+    # O disco de verdade: o sistema de arquivos dos volumes do Docker. O
+    # backup.sh mede o banco contra ele; aqui, a ocupação total (imagens,
+    # logs, volumes). Acima de 85%, o backup vai do mesmo jeito, com o 4.
+    pct=$(df --output=pcent "$raiz_docker" | tail -n 1 | tr -dc 0-9)
+    echo "disco de $raiz_docker: ${pct}% ocupado"
+    if [ "$pct" -ge 85 ]; then
+        echo "ERRO: o disco da VPS passou de 85%: libere espaço (docs/deploy/vps.md, disco)"
+        codigo=4
+    fi
+
+    age -R "$DIR/age-recipient" < "$tmp/vigilume.dump" >&3 || sair 1 "o age falhou: o backup cifrado está incompleto"
+    echo "backup cifrado enviado (código $codigo)"
+    exit "$codigo"
+}
+
 [ "$#" -eq 0 ] || uso "argumento na linha de comando não é aceito; o pedido vem do SSH"
 pedido=${SSH_ORIGINAL_COMMAND:-}
 # Só minúsculas, dígitos, ":" e espaço: nada que um shell ou o docker
@@ -160,6 +244,12 @@ case "${palavras[0]}" in
         exec 9>"$DIR/.entrada.trava"
         flock -w 600 9 || sair 1 "outra operação da entrada não terminou em 10 min"
         deploy "${palavras[1]}" "${palavras[2]}"
+        ;;
+    backup)
+        [ "${#palavras[@]}" -eq 1 ] || uso "backup não leva argumento"
+        exec 9>"$DIR/.entrada.trava"
+        flock -w 600 9 || sair 1 "outra operação da entrada não terminou em 10 min"
+        backup
         ;;
     *) uso "verbo desconhecido: '${palavras[0]}'" ;;
 esac

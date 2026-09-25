@@ -37,6 +37,8 @@ env:
   GOSEC_VERSION: v2.29.0
   GOVULNCHECK_VERSION: v1.8.0
   GITLEAKS_VERSION: v8.30.1
+  # O mesmo do backup.yml (o job vps cifra e decifra um backup de teste).
+  AGE_VERSION: v1.3.2
   # O nome com que o job image carrega a imagem e o e2e a usa: o mesmo do
   # compose.yaml, com VIGILUME_TAG=ci.
   #
@@ -355,6 +357,13 @@ jobs:
           name: imagens
           path: ${{ runner.temp }}
       - run: gunzip -c "$RUNNER_TEMP/imagens.tar.gz" | docker load
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: age
+        # A mesma versão do backup.yml: o teste cifra e decifra o backup.
+        run: go install "filippo.io/age/cmd/age@${AGE_VERSION}" "filippo.io/age/cmd/age-keygen@${AGE_VERSION}"
       - name: checagens da VPS
         run: bash deploy/ci/checar-vps.sh "$IMAGEM:ci"
 
