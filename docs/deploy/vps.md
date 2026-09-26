@@ -11,7 +11,9 @@ as decisões que você ainda podia revisar estavam na §9 dela.
 ## Como ler este runbook
 
 - **Dois computadores.** Todo bloco de comando diz onde roda:
-  - **no seu computador** (o seu Linux, num terminal: `Ctrl+Alt+T` no Ubuntu);
+  - **no seu computador** (o seu Linux, num terminal: `Ctrl+Alt+T` no Ubuntu; num **Mac**, leia
+    antes [mac.md](mac.md), com as trocas de comando e o que refazer ao mudar de computador no
+    meio do caminho);
   - **na VPS** (o servidor da Hostinger, num terminal conectado a ela por SSH, que você abre no
     bloco 2).
 - **Um comando por vez.** Copie a linha inteira, cole no terminal (`Ctrl+Shift+V`), aperte Enter e
