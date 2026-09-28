@@ -86,6 +86,16 @@ Hostinger (**Settings → SSH keys**); o `ls` mostra `-rw-------`. Se o `ssh-key
 `invalid format` ou `error in libcrypto`, a colagem perdeu as quebras de linha ou a última linha:
 abra de novo com o `nano` e confira que cada linha ficou como está no gerenciador.
 
+**Se o `ssh-keygen` disser `incorrect passphrase supplied to decrypt private key`** mesmo com a
+frase **colada** do gerenciador (e não digitada), a frase guardada não é a desta chave, e não há
+como recuperá-la.
+Antes do bloco 2 isso custa pouco (a chave ainda não entrou em lugar nenhum além do painel): gere
+a frase nova no gerenciador, apague `~/.ssh/stillon_admin*`, refaça o passo 1.1 **colando** a
+frase, guarde a privada nova no gerenciador (`pbcopy < ~/.ssh/stillon_admin`, cole, e confira com
+`[ "$(pbpaste)" = "$(cat ~/.ssh/stillon_admin)" ] && echo iguais`; depois `pbcopy < /dev/null`) e,
+no painel (**Settings → SSH keys**), apague a `stillon-admin` velha e cadastre a nova. Foi o que
+aconteceu em 2026-09-28. Depois do bloco 2, o caminho é o de "Perdi a chave SSH" (bloco 10).
+
 **A primeira conexão do Mac com a VPS** pergunta a impressão digital de novo (o `known_hosts` é
 de cada computador). Confira-a como no passo 2.1, pelo terminal do painel, antes do `yes`. Se o
 passo 2.7 já foi feito, a conexão é pelo seu usuário (`ssh stillon`), não pelo root.
