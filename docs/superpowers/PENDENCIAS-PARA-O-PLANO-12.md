@@ -165,6 +165,20 @@ E as do runbook (desta parte do Plano 11):
 | `blocked` contra `dns` enumera os nomes internos da rede Docker | sondador S5 | Aceito; Plano 12 se o cadastro abrir |
 | Cotas por usuário no sondador e no despacho | sondador S2 e S3 | Limite registrado; reavaliar se o cadastro abrir |
 
+## Da avaliação da estrutura (2026-09-28, para o Plano 12)
+
+Nenhum muda comportamento; são de organização.
+
+- **O `safedial` mora em `internal/prober/safedial`, mas três pacotes o usam** (`prober`,
+  `targets` e `notify`). A guarda anti-SSRF vale para o sistema inteiro: o lugar dela é
+  `internal/safedial`. Só mover (os imports mudam; o código, não).
+- **Arquivos que cresceram demais**, candidatos a dividir por assunto:
+  `web/src/features/configuracoes/PaginaConfiguracoes.tsx` (936 linhas),
+  `internal/account/account.go` (558) e `internal/auth/totp.go` (550; o `totp.go` junto com a R2,
+  que já mexe nele).
+- **`internal/apierr` sem teste** (o envelope de erro da §9.1). Os testes de integração do
+  `httpapi` o exercitam por fora; um table-driven próprio fixaria o contrato `code` → status.
+
 ## Limpeza do code review do PR #15 (para o Plano 12)
 
 Confirmados no code review do PR #15 e cortados do Plano 10 por não mudarem o comportamento. Conferido

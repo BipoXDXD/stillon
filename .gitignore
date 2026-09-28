@@ -29,3 +29,5 @@ coverage.out
 /.superpowers/
 # Configuração local do GoLand/Rider; não vai para o repositório.
 .idea/
+# Metadados que o Finder do macOS cria em toda pasta aberta.
+.DS_Store

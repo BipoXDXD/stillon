@@ -102,7 +102,7 @@ importa e por isso são os mais fáceis e os mais testados.
 |---|---|
 | Linguagem | Go 1.26 |
 | HTTP | `net/http` stdlib (`ServeMux` com padrões de método, desde 1.22) |
-| Banco | PostgreSQL 18 em desenvolvimento, testes e produção (imagem oficial num app próprio no Fly.io, sem gerência; ver a spec do Plano 7, D28–D29). O CI também testa o 17 |
+| Banco | PostgreSQL 18 em desenvolvimento, testes e produção (imagem oficial fixada por digest, sem gerência, no compose de produção da VPS; ver §15). O CI também testa o 17 |
 | Driver | `jackc/pgx` v5 + `pgxpool` |
 | Queries | `sqlc` (SQL puro → Go tipado; sem ORM) |
 | Migrations | `goose`, embutidas via `embed.FS`, aplicadas no boot |
@@ -758,12 +758,23 @@ Cobertura de handler CRUD não é perseguida.
 
 **Pipeline (GitHub Actions):**
 `go vet` → `staticcheck` → `gosec` → `govulncheck` → `go test -race -cover` →
-`npm run typecheck` → `vitest run` → build multi-stage → Trivy → deploy.
+`npm run typecheck` → `vitest run` → build multi-stage → Trivy → publicação no GHCR.
+O deploy não é automático: é disparado à mão, com o SHA de um commit da `main`
+que passou por tudo isso.
 
 **Imagem:** multi-stage terminando em `gcr.io/distroless/static:nonroot`. Binário
 estático, sem shell no container.
 
-**Deploy:** Fly.io, com Postgres gerenciado. Migrations aplicadas no boot.
+**Deploy:** uma VPS da Hostinger (Ubuntu 24.04) com um compose de produção
+(`deploy/vps/compose.prod.yaml`): Caddy com HTTPS automático, o binário em
+`--role=all` e o Postgres 18 sem gerência, com backup diário conferido e
+cifrado. Migrations aplicadas no boot. O passo a passo e a operação estão no
+runbook `docs/deploy/vps.md`.
+
+Esta seção dizia "Fly.io, com Postgres gerenciado" até o Plano 11, que trocou o
+Fly pela VPS em 2026-09-25, por decisão do dono (item 5 das decisões em
+`docs/superpowers/PENDENCIAS-PARA-O-PLANO-12.md`; a spec do Plano 11 está no
+commit indicado no README, Histórico).
 
 **Desenvolvimento local:** `docker compose up` sobe aplicação, banco e seed em um
 comando. Requisito não negociável: se o avaliador não consegue rodar em 30
