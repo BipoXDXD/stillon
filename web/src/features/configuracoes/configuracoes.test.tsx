@@ -704,16 +704,24 @@ describe('troca de autenticador', () => {
   // diálogo volta ao passo 1, com o texto da spec, e recomeçar funciona.
   // Sabotagem: tratar o 403 do confirm como credencial (tirar o ramo do
   // 403) → aparece "Operação não permitida." no passo 2.
-  it('403 ao confirmar: "concluída ou cancelada em outra aba", e recomeçar funciona', async () => {
+  // Sabotagem: omitir a recuperação gasta do erro de 403 mantendo a volta
+  // ao passo 1. Só a perna de recuperação deve ficar vermelha.
+  it.each([
+    ['do app', TOTP_OK, false],
+    ['de recuperação', RECUPERACAO_OK, true],
+  ] as const)('403 ao confirmar preserva o aviso e recomeçar funciona (código %s)', async (_, codigo, gasto) => {
     const r = await comTotp()
-    const dialogo = await iniciar(r)
+    const dialogo = await iniciar(r, codigo)
     await r.usuario.type(await within(dialogo).findByLabelText('Código de 6 dígitos'), TOTP_NOVO)
     // Outra aba concluiu a troca: não há mais pendente.
     r.falsa.estado.troca = null
     await r.usuario.click(within(dialogo).getByRole('button', { name: 'Confirmar a troca' }))
-    expect(await within(dialogo).findByRole('alert')).toHaveTextContent(
+    const alerta = await within(dialogo).findByRole('alert')
+    expect(alerta).toHaveTextContent(
       'A troca foi concluída ou cancelada em outra aba. Comece de novo.',
     )
+    expect(alerta.textContent?.includes('O código de recuperação usado foi gasto')).toBe(gasto)
+    expect(screen.queryByText(/Nada mudou/)).not.toBeInTheDocument()
     expect(within(dialogo).queryByText(SEGREDO_NOVO)).not.toBeInTheDocument()
     await r.usuario.type(within(dialogo).getByLabelText('Sua senha'), SENHA)
     await r.usuario.type(within(dialogo).getByLabelText('Código do autenticador'), TOTP_OK)
@@ -771,6 +779,78 @@ describe('troca de autenticador', () => {
         'Nada mudou: o app atual continua valendo. O código de recuperação usado foi gasto; use outro da próxima vez.',
       ),
     ).toBeInTheDocument()
+  })
+
+  // Sabotagem: fechar pelo portão sem emitir aviso, ou apagar o contexto
+  // da recuperação antes de compor o texto. O diálogo ainda fecha, mas a
+  // orientação observável desaparece. O refetch seguinte não duplica toast.
+  it.each([
+    ['do app', TOTP_OK, false],
+    ['de recuperação', RECUPERACAO_OK, true],
+  ] as const)('/me desativado no QR fecha com aviso fiel ao estado (código %s)', async (_, codigo, gasto) => {
+    const r = await comTotp()
+    const dialogo = await iniciar(r, codigo)
+    await within(dialogo).findByText(SEGREDO_NOVO)
+    r.falsa.estado.totpLigado = false
+    await r.cliente.refetchQueries({ queryKey: ['me'] })
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    const avisos = await screen.findAllByText(/A verificação em duas etapas já está desativada\./)
+    expect(avisos).toHaveLength(1)
+    expect(avisos[0]?.textContent?.includes('O código de recuperação usado foi gasto')).toBe(gasto)
+    expect(screen.queryByText(/Nada mudou/)).not.toBeInTheDocument()
+    expect(r.falsa.chamadas(CONFIRM)).toBe(0)
+    r.falsa.estado.totpLigado = true
+    await r.cliente.refetchQueries({ queryKey: ['me'] })
+    expect(await screen.findByRole('button', { name: 'Trocar autenticador' })).toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.getAllByText(/A verificação em duas etapas já está desativada\./)).toHaveLength(1)
+  })
+
+  // Sabotagem: escolher o aviso genérico de desativação antes do confirm
+  // incerto. Recuperação gasta é conhecida, mas o resultado da mutação não.
+  it('/me desativado preserva confirmação incerta e recuperação gasta', async () => {
+    const r = await comTotp()
+    const dialogo = await iniciar(r, RECUPERACAO_OK)
+    await r.usuario.type(await within(dialogo).findByLabelText('Código de 6 dígitos'), TOTP_NOVO)
+    servidor.use(http.post('*/api/v1/auth/totp/rotate/confirm', () => HttpResponse.error(), { once: true }))
+    await r.usuario.click(within(dialogo).getByRole('button', { name: 'Confirmar a troca' }))
+    await within(dialogo).findByRole('alert')
+    r.falsa.estado.totpLigado = false
+    await r.cliente.refetchQueries({ queryKey: ['me'] })
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    const avisos = await screen.findAllByText(/A resposta do servidor não chegou, e não dá para saber se a troca foi concluída\./)
+    expect(avisos).toHaveLength(1)
+    expect(avisos[0]).toHaveTextContent('O código de recuperação usado foi gasto')
+    expect(screen.queryByText(/Nada mudou/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/^A verificação em duas etapas já está desativada\./)).not.toBeInTheDocument()
+  })
+
+  // O reset perde o dado antigo enquanto relê: ausência não prova que o
+  // 2FA foi desligado. Sabotagem: trocar o fallback null do aviso do portão
+  // por JA_DESATIVADA; o diálogo fecha, mas surge uma afirmação sem /me.
+  it('/me sem dado durante releitura fecha sem afirmar desativação ou resultado da troca', async () => {
+    const r = await comTotp()
+    const dialogo = await iniciar(r, RECUPERACAO_OK)
+    await within(dialogo).findByText(SEGREDO_NOVO)
+    const p = portao()
+    servidor.use(http.get('*/api/v1/me', async () => {
+      await p.aberto
+      return HttpResponse.json(me({ totp_enabled: true }))
+    }))
+    const leitura = r.cliente.resetQueries({ queryKey: ['me'] })
+    try {
+      await screen.findByText('Carregando…')
+      expect(r.cliente.getQueryData(['me'])).toBeUndefined()
+      await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+      expect(screen.queryByText(/A verificação em duas etapas já está desativada\./)).not.toBeInTheDocument()
+      expect(screen.queryByText(/Nada mudou/)).not.toBeInTheDocument()
+    } finally {
+      p.soltar()
+      await leitura
+    }
+    expect(await screen.findByRole('button', { name: 'Trocar autenticador' })).toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(r.falsa.chamadas(CONFIRM)).toBe(0)
   })
 
   // Enter vazio não chega ao servidor (R34), nos dois passos com envio.
