@@ -49,6 +49,41 @@ no primeiro `up`: `DEMO_TARGETS_EXTRA="https://seu.site/ https://outro.site/" do
 
 `docker compose down` para; `docker compose down -v` apaga o banco também.
 
+## Verificar os canais de avisos
+
+No painel, abra **Canais → Novo canal**. Esta verificação é do destino dos avisos,
+independente do e-mail usado para entrar na conta.
+
+- **Discord:** escolha Discord e cole a URL do webhook do canal do seu servidor.
+  Ao cadastrar, o StillOn manda uma mensagem de teste; só marca **Verificado** se o
+  Discord aceitar a entrega. O webhook precisa ser de um canal de texto, não de fórum.
+  A URL fica no formulário do painel; não publique essa URL no chat ou no Git.
+- **E-mail:** escolha E-mail e informe o endereço que receberá os avisos. Abra o link
+  recebido e clique em **Confirmar**. O link vale por 24 horas; abrir a página sozinho
+  não confirma o canal. Se vencer, use **Reenviar verificação** no painel.
+  Apenas canais verificados e ativos recebem os avisos de incidentes.
+
+### Habilitar e-mail na demonstração local
+
+O envio de e-mail fica desligado por padrão. Para habilitar, primeiro guarde a chave
+Resend no Bitwarden, na pasta **StillOn**. No seu computador, copie `.env.example`
+para `.env`, restrinja a leitura com `chmod 600 .env` e preencha no editor local:
+
+- `RESEND_API_KEY`: a chave do Resend guardada no Bitwarden.
+- `EMAIL_FROM`: um remetente de domínio verificado no Resend, no formato
+  `StillOn <alertas@seu-dominio>`.
+
+As duas variáveis devem estar preenchidas juntas. O `.env` não vai para o Git nem
+para a imagem Docker. Aplique a configuração ao serviço local:
+
+```sh
+docker compose up -d --no-deps --wait app
+```
+
+Depois, cadastre o canal de e-mail no painel. Na demonstração, o link recebido usa
+`localhost` e deve ser aberto no mesmo computador que executa o StillOn. Para avisos
+na VPS, siga a configuração de e-mail do [runbook de produção](docs/deploy/vps.md).
+
 ## O que faz
 
 - **Sonda** alvos HTTP (GET, HEAD ou POST) de 30 s a 24 h, com headers cifrados, status
