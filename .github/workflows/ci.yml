@@ -127,7 +127,27 @@ jobs:
           cache-dependency-path: go.sum
 
       - name: test
-        run: go test -race -count=1 -coverprofile=coverage.out ./...
+        # VM/daemon local exclusivo deste job: só este comando cria fixtures.
+        # Não compartilhar a sessão TC entre pacotes; o collector acompanha
+        # todas as sessões próprias e nunca para/remove contêineres.
+        run: |
+          python3 deploy/ci/diagnostico-fixture.py \
+            --output "$RUNNER_TEMP/fixture-diagnostic" --daemon-exclusivo -- \
+            go test -race -count=1 -coverprofile=coverage.out ./...
+
+      - name: diagnóstico limitado das fixtures
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: fixture-${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}
+          path: |
+            ${{ runner.temp }}/fixture-diagnostic/manifesto.json
+            ${{ runner.temp }}/fixture-diagnostic/eventos.jsonl
+            ${{ runner.temp }}/fixture-diagnostic/estados.jsonl
+            ${{ runner.temp }}/fixture-diagnostic/ryuk.jsonl
+          if-no-files-found: warn
+          retention-days: 3
 
   secrets:
     # O histórico INTEIRO, em todo PR: com o repositório privado, um segredo
@@ -182,6 +202,8 @@ jobs:
             deploy/vps/initdb.sh deploy/backup/backup.sh
       - name: checagens dos workflows
         run: sh deploy/ci/checar-workflows.sh
+      - name: collector das fixtures contra Docker falso
+        run: python3 deploy/ci/testar-diagnostico-fixture.py
       - name: nome anterior do projeto
         run: sh deploy/ci/checar-nome.sh
       - name: vps.sh contra um ssh falso
