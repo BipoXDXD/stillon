@@ -15,6 +15,55 @@ guiada, depois do merge** (spec §1, critério 5): até lá, nada disto está no
 A ordem dos planos segue a de 2026-09-25: **12 = pendências** (as do Plano 9, as dívidas do grupo
 C e o que os Planos 10 e 11 empurraram para cá), **13 = R2** (`auth` para sqlc).
 
+## Atualização local de 2026-10-04: primeira onda do Plano 12
+
+Implementação e provas na branch `melhoria/plano-12-seguranca-painel`, sem deploy nem
+CI remoto nesta execução. O [relatório da primeira onda](reports/2026-10-04-primeira-onda.md)
+concentra resultados, cobertura de leitura, referências e limites. O Plano 12 continua parcial.
+
+Fechadas no código local: headers secretos em redirects (inclusive User-Agent e comparação
+IDNA compartilhada), recovery preservado quando o segundo hash de senha satura, contagem de
+erros reais e isolamento de gerações das provas de família, senhas fora do argv de initdb/backup,
+URL inválida antes do seed, instalação npm sem hooks, checks futuros recusados no banco,
+CHECK do par segredo/família TOTP pendentes, aviso de canal pausado no dashboard e guarda do
+clique Pausar durante Retomar. Corrigida também a espera de SQL/pool além do WriteTimeout:
+contexto de trabalho com 15 s e `503 unavailable` na API; a projeção pública preserva seu worker
+independente de até 5 s. O painel recebeu proposta de redesign com prova de acessibilidade,
+CSP e responsividade; a aceitação estética é do dono.
+
+O transporte SSH real agora tem ensaio local/CI com OpenSSH, sudoers de produção e entrada
+simulada: bytes, códigos, host key, comando forçado e recusa de PTY. Isso não substitui o
+primeiro deploy guiado nem a conferência das restrições na VPS.
+
+Os parágrafos históricos abaixo descrevem o estado ao fim dos planos anteriores. Para a
+hospedagem, o [PR #26 ainda aberto](https://github.com/BipoXDXD/stillon/pull/26) registra os
+blocos 0 a 2 concluídos em 28/09 e o bloco 3 como próximo; não houve nova conferência na VPS.
+A decisão posterior do dono é operar por esta máquina Linux, dispensando o fluxo Mac.
+Ele esclareceu que pretende apagar os dados que colocou na VPS Hostinger; o servidor
+considerado continua na Hostinger, administrado por este Linux. Nenhuma ação destrutiva
+foi executada. Depois da limpeza, reconferir os passos afetados; se houver reinstalação,
+os registros anteriores ficam históricos e todos os passos aplicáveis exigem novos Confira.
+Preservar chaves/segredos e, se houver dados a recuperar, backup e MASTER_KEY.
+Os PRs de documentação #25/#26 continuam separados.
+
+**Segunda onda, fechada no código local:** contagens e `pg_dump` compartilham snapshot
+exportado. Supervisor Go com clientes libpq, limites e coleta dos filhos; binário distribuído
+automaticamente para o PG18 descartável e executado como UID/GID 65532, sem capabilities.
+DELETE/INSERT, interrupções, URI/ambiente, owners/RLS/partições e códigos 0/3/4 receberam
+provas reais, sabotagens compiláveis e revisão independente. A trava comum de criação/retenção
+também tem teste comportamental nos PG17/18. Build/vet/make test com race, lint/sec, imagens
+e ensaio VPS local completos passaram. [Resultados e limites](reports/2026-10-04-segunda-onda.md).
+Recursos 3 GiB/2 GiB e predicados de integridade foram preservados. Não houve deploy;
+proveniência assinada da imagem e assinatura GPG do commit continuam pendentes.
+
+**Terceira onda, fechada no código local:** bootstrap do tema normaliza preferência
+inválida como sistema, de acordo com o provider. Testes executam o script público
+real, montagem, persistência e recarga; 18 novos casos, 269 Vitest no total, com
+sabotagens isoladas restauradas. Mutações HTTP exigem o literal `stillon` já publicado;
+35 casos unitários e cinco HTTP reais conferem recusas e controle positivo exato.
+Isso alinha o contrato, sem alegar bypass CSRF anterior. Gates e limites da rodada
+estão no [relatório da terceira onda](reports/2026-10-04-terceira-onda.md).
+
 ## Fechadas no Plano 11: as 7 obrigações do Plano 10
 
 Todas eram critério de pronto (as pendências do Plano 11, "Obrigações do Plano 11"; o arquivo foi
@@ -108,11 +157,12 @@ E as do runbook (desta parte do Plano 11):
   `org.opencontainers.image.ref.name` no `index.json`, todo deploy sai 3 ("o index.json do tar não é uma
   imagem só, sem nome, com o manifesto …"). Conferir no primeiro deploy guiado: o log mostra `Loaded image ID: sha256:<IMAGE_ID do
   job>`.
-- **SSH de verdade nunca foi exercitado**: nem o `restrict,command=` com o `sudo` guardando o
+- **SSH na VPS ainda depende de conferência guiada**. Ao fim do Plano 11, nem o `restrict,command=` com o `sudo` guardando o
   `SSH_ORIGINAL_COMMAND` (provado num contêiner com `su deploy -c …`), nem o tar binário passando
   por `ssh | sudo | script`, nem o `known_hosts` escrito a partir do `VPS_HOST_KEY` (as opções do
   `ssh` foram conferidas com `ssh -G` e o resto com um ssh falso). O primeiro deploy guiado é a
-  prova, até o Plano 12 levar isso para o CI (abaixo, "Da revisão final do Plano 11").
+  prova naquele estado. A primeira onda do Plano 12 acrescentou o ensaio real em contêineres
+  (abaixo); o hardening completo e o deploy da VPS continuam com o dono.
 - **`docker compose up --wait` com o app em loop de reinício** sai em segundos no Compose medido
   (v5.5.1); um Compose mais velho na VPS pode esperar os 90 s inteiros.
 - **O IP que o Caddy vê** só foi testado com o cliente no próprio host (o `docker-proxy` entrega o
@@ -132,7 +182,9 @@ E as do runbook (desta parte do Plano 11):
 
 ## Da revisão final do Plano 11 (para o Plano 12)
 
-- **O caminho SSH de verdade no CI** (M7 da revisão final do código). Hoje o `restrict,command=`
+- **O caminho SSH de verdade no CI — fechado localmente em 2026-10-04** (M7 da revisão final do código).
+  `deploy/ci/testar-ssh-real.sh` e `deploy/ci/ssh/` implementam o ensaio no job VPS existente;
+  provas e limites no relatório da primeira onda. O desenho que originou a tarefa era: o `restrict,command=`
   + `/bin/sh` + `sudo` + a entrada padrão binária + o código de saída só se provam no primeiro
   deploy guiado (acima, "SSH de verdade nunca foi exercitado"). Proposta: no `checar-vps.sh`, um
   contêiner com `openssh-server`, o usuário `deploy` com o `authorized_keys` e o `sudoers` de
@@ -159,8 +211,8 @@ E as do runbook (desta parte do Plano 11):
 | Aviso no boot quando `CLIENT_IP_HEADER` está preenchido | http S3 (parte), Plano 10 | Plano 12. O compose de produção o fixa vazio, e o aviso da B3 cobre o `TRUSTED_PROXIES` errado |
 | Re-emitir o cookie de dispositivo nas rotas em que o dono logado muda a própria credencial | revisão final do Plano 10 | Plano 12 (o Plano 11 não mexeu em código do app) |
 | Lista extra de bloqueio no safedial (`PROBE_DENY_CIDRS`) para o IP público da VPS | sondador S4 | Plano 12, só se o hairpin voltar a importar: a rede do compose não tem IPv6 e só o Caddy publica porta |
-| `npm ci --ignore-scripts` no Dockerfile e no CI | banco S2 (segunda metade) | Plano 12 |
-| Recusar o INSERT de check com `checked_at` muito à frente do `now()` do banco | banco C2 (segunda metade) | Plano 12 |
+| `npm ci --ignore-scripts` no Dockerfile e no CI | banco S2 (segunda metade) | Fechado localmente na primeira onda do Plano 12; build Linux/Alpine e imagem reais |
+| Recusar o INSERT de check com `checked_at` muito à frente do `now()` do banco | banco C2 (segunda metade) | Fechado localmente: migration 00010, trigger de INSERT/UPDATE com `statement_timestamp()`; não repara dados antigos nem o lease do agendador |
 | Refresh repetido depois de resposta perdida vira "roubo" | auth C2 | Plano 12, com desenho próprio |
 | `blocked` contra `dns` enumera os nomes internos da rede Docker | sondador S5 | Aceito; Plano 12 se o cadastro abrir |
 | Cotas por usuário no sondador e no despacho | sondador S2 e S3 | Limite registrado; reavaliar se o cadastro abrir |
@@ -170,8 +222,10 @@ E as do runbook (desta parte do Plano 11):
 Confirmados no code review do PR #15 e cortados do Plano 10 por não mudarem o comportamento. Conferido
 contra os diffs dos grupos A e E na integração: nenhum item saiu inteiro; um mudou de forma (abaixo).
 
-- CHECKs no banco para o par segredo pendente / família (`totp_pending_secret_enc` e
-  `totp_pending_family_id` juntos), numa migration futura.
+- **Fechado localmente na primeira onda:** CHECK no banco para o par segredo pendente / família
+  (`totp_pending_secret_enc` e `totp_pending_family_id` juntos), migration 00011. Dados antigos
+  inconsistentes recusam a migration e precisam de investigação; nenhuma credencial é reparada
+  automaticamente.
 - `Disable` repete o SQL de `ResetTOTP` e `DeleteRecoveryCodes`.
 - A reserva da prova (`provas.reservar`, `defer Release`, `Succeed`) repetida nos 6 handlers de
   credencial. O bloco "registra a falha e responde 401", que era copiado 5 vezes, virou uma chamada
@@ -194,7 +248,9 @@ que a onda de correção não fechou. Os que ela fechou: auth M1 (a espera do Ar
 
 - auth M2: `FamilyProofs.Fail` decide pelo `n` da hora da reserva; se reservas anteriores em voo
   forem devolvidas (um `429` do semáforo), a 5ª reserva que errar derruba a família com menos de 5
-  erros reais. Só com requisições simultâneas da mesma família; não é explorável por terceiros.
+  erros reais. **Fechado localmente na primeira onda:** Fail conta erros concluídos e reservas de
+  geração antiga não devolvem vagas à nova. `Exhausted` na sexta reserva em voo continua com
+  a política anterior; não foi redesenhado nesta onda.
 - auth M3: a família parada é esquecida em 24 h (`familiaParada`): um ladrão com a sessão (30 dias de
   refresh) tem 4 chutes de senha por dia, além dos de cada restart. O D3 só cita o restart.
 - painel M1: na ativação, repetir o confirm depois de "não se sabe" termina no toast "já está
@@ -208,16 +264,19 @@ que a onda de correção não fechou. Os que ela fechou: auth M1 (a espera do Ar
   contra a falsa e diverge do servidor. A falsa não serve de prova nesse ponto.
 - painel M5: em Canais, o `aria-disabled` não segura o clique: entre o `recarregar()` do Retomar e o
   `finally`, o botão já diz "Pausar", o clique abre o Confirmar e o `finally` o fecha em seguida (uma
-  piscada; nada é enviado).
+  piscada; nada é enviado). **Fechado localmente:** guarda `emVoo` antes de abrir confirmação.
 - banco-docs m1: o `seed.sh` aceita URLs inválidas que o boot recusa (`http://localhost:evil.com`,
   `http://[::1]:8080.evil.com`, quebra de linha na `PUBLIC_BASE_URL`): o host real nunca é outro,
   mas o usuário demo já foi criado quando o boot falha. Endurecer: o resto depois do host vazio ou
-  `:[0-9]+`, e recusar espaço, tab e quebra de linha.
+  `:[0-9]+`, e recusar espaço, tab e quebra de linha. **Fechado localmente na primeira onda:**
+  parser POSIX valida URL inteira, loopback canônico e porta 1–65535 antes do binário.
 - revisão final, conta: a troca de senha consome o código do 2FA ou o de recuperação
   (`s.totp.Verify`) **antes** do `auth.HashPassword` da senha nova (`internal/account/account.go`,
   `ChangePassword`); sem vaga no semáforo do Argon2id, ela responde `429` com o código já gasto. O
   painel (`erroDeCredencial` em `PaginaConfiguracoes.tsx`) só avisa do código de recuperação
-  possivelmente gasto em `401` ou resposta perdida, não no `429`.
+  possivelmente gasto em `401` ou resposta perdida, não no `429`. **Fechado localmente:** o hash
+  novo termina antes de verificar/consumir o fator; teste prova recovery utilizável após `429`.
+  Isso não garante devolução do fator em todo erro posterior da transação.
 - revisão final, cookie de dispositivo: o carimbo não muda com o encerramento de sessões (nem com
   "encerrar todas") nem com a troca de autenticador; só com a troca de senha, o `set-password`, o
   `reset-2fa` e a ativação ou o disable do 2FA. Quem teve acesso completo (senha e 2FA) pode cunhar
@@ -232,17 +291,21 @@ que a onda de correção não fechou. Os que ela fechou: auth M1 (a espera do Ar
 - revisão final, e2e: o `docker compose exec app /stillon user reset-2fa` do `troca.spec`
   (`E2E_COMPOSE_SERVICE: app` no job `e2e` do `ci.yml`) só foi validado localmente; conferir no
   primeiro CI que a troca roda e não é pulada.
-- revisão da renomeação, testes: a trava advisory de `drop_checks_partitions_before` (migration
-  00006) não tem teste que a compare com a de `ensure_checks_partition`; um teste que leia o
-  `prosrc` das duas funções em `pg_proc` e exija a mesma chave fecharia (lacuna anterior à
-  renomeação).
-- revisão da renomeação, testes: a chave do tema, `stillon.tema`, está em
-  `web/src/lib/tema.tsx` (`CHAVE`) e em `web/public/tema.js`, sem teste que compare as duas; um
-  teste Vitest que leia `public/tema.js` e compare com `CHAVE` fecharia.
-- revisão da renomeação, testes: o middleware de CSRF (`RequireCustomHeader`, em
-  `internal/httpapi/middleware/csrf.go`) só confere se o `X-Requested-With` existe, não o valor. O
-  valor `stillon` só aparece na API falsa do painel, que o confere; nem o servidor nem o e2e o
-  conferem, e um valor trocado passaria sem aviso.
+- revisão da renomeação, testes — **fechado localmente na segunda onda:** a trava advisory
+  de `drop_checks_partitions_before` e `ensure_checks_partition` foi exercitada nos dois
+  sentidos, com transação dona aberta e observação por PID. O teste não compara texto SQL;
+  uma chave divergente na retenção recebeu RED compilável, restauração e GREEN no PG18,
+  além de GREEN focado no PG17.
+- revisão da renomeação, testes — **fechado localmente na terceira onda:** preferência
+  persistida é exercitada no bootstrap e provider reais com sistema oposto e nova carga.
+  Chave divergente em qualquer lado recebe RED comportamental; normalização inválida
+  também. Não foi criada comparação por regex da constante.
+- revisão da renomeação, testes — **fechado localmente na terceira onda:**
+  `RequireCustomHeader` exige o valor literal documentado `stillon`. Valores ausente,
+  vazio, outro e caixa diferente são recusados no middleware e login HTTP reais;
+  controle correto chega à autenticação e recebe `401 invalid_credentials`. GET/HEAD/
+  OPTIONS preservados. Literal é contrato público, não token secreto; callers externos
+  que antes enviavam outro valor passam a receber 403.
 
 
 ## Para o Plano 12 (limites do Plano 9, das pendências do Plano 10, ainda abertos)
@@ -252,7 +315,8 @@ em 2026-09-25; ver README, Histórico):
 
 - **Pausar descarta os avisos.** Retomar não reenvia o que passou; o diálogo de "Pausar" diz
   isso.
-- **Um canal pausado só aparece na lista de canais**: o dashboard não avisa.
+- **Fechado localmente:** o dashboard avisa sobre canais pausados, ausência de canal ativo
+  verificado e erros da consulta, sem inferir ausência quando a consulta falha.
 - **O código de recuperação usado para iniciar uma troca fica gasto**, mesmo que a troca não seja
   confirmada. O painel avisa ao fechar no passo 2 (e, desde o Plano 10, no 401 do passo 1).
 - **O segredo pendente não tem prazo**, mas é da família que o criou e morre com ela (confirmação,

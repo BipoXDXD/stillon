@@ -234,6 +234,68 @@ func TestChangePasswordTakesTheUserLock(t *testing.T) {
 	}
 }
 
+// Sabotagem: consumir o segundo fator antes do hash novo. O hasher enche o
+// semáforo real exatamente no segundo Argon2, sem depender de corrida/sleep.
+func TestChangePasswordKeepsRecoveryCodeWhenTheNewHashIsRateLimited(t *testing.T) {
+	c := montar(t)
+	ctx := t.Context()
+	uri, err := c.totp.Enroll(ctx, c.user, "dono@exemplo.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := otp.NewKeyFromURL(uri)
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, err := totp.GenerateCode(key.Secret(), c.clk.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	codes, err := c.totp.Confirm(ctx, c.user, code, c.clk.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(codes) != 10 {
+		t.Fatalf("%d códigos de recuperação, queria 10", len(codes))
+	}
+
+	limiteAnterior := auth.Argon2MaxConcurrent()
+	auth.SetArgon2MaxConcurrent(1)
+	t.Cleanup(func() { auth.SetArgon2MaxConcurrent(limiteAnterior) })
+	c.svc.SetPasswordHasher(func(ctx context.Context, password string) (string, error) {
+		soltar, err := auth.ReserveArgon2(ctx)
+		if err != nil {
+			return "", err
+		}
+		defer soltar()
+		return auth.HashPassword(ctx, password)
+	})
+	err = c.svc.ChangePassword(ctx, c.user, c.atual,
+		account.ChangePasswordInput{Current: senha, New: "a-senha-nova-bem-comprida", TOTPCode: codes[0]},
+		auth.Meta{IP: "203.0.113.9"})
+	if !errors.Is(err, auth.ErrArgon2Busy) {
+		t.Fatalf("troca = %v, queria o erro que a API responde como 429", err)
+	}
+	var usados int
+	if err := c.pool.QueryRow(ctx,
+		`SELECT count(*) FROM audit_log WHERE user_id = $1 AND action = 'totp.recovery_used'`, c.user).Scan(&usados); err != nil {
+		t.Fatal(err)
+	}
+	if usados != 0 {
+		t.Errorf("%d consumos auditados depois do 429, queria nenhum", usados)
+	}
+	if err := c.totp.Verify(ctx, c.user, codes[0], c.clk.Now()); err != nil {
+		t.Errorf("o código de recuperação foi gasto pelo 429: %v", err)
+	}
+	var hash string
+	if err := c.pool.QueryRow(ctx, `SELECT password_hash FROM users WHERE id = $1`, c.user).Scan(&hash); err != nil {
+		t.Fatal(err)
+	}
+	if ok, _, err := auth.VerifyPassword(ctx, hash, senha); err != nil || !ok {
+		t.Errorf("a senha atual deixou de valer depois do 429: ok=%v, erro=%v", ok, err)
+	}
+}
+
 // O set-password do CLI também toma a trava do usuário antes de revogar as
 // famílias (D1, D10): sem ela, o sucessor de uma rotação em curso escaparia.
 func TestResetPasswordTakesTheUserLock(t *testing.T) {

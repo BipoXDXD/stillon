@@ -24,6 +24,10 @@ import (
 // maxBodyBytes cobre com folga qualquer payload legítimo desta API.
 const maxBodyBytes = 1 << 20 // 1 MiB
 
+// Termina o trabalho no banco antes do WriteTimeout de 30s, deixando
+// margem para responder com o envelope de erro. ReadTimeout só limita I/O.
+const requestTimeout = 15 * time.Second
+
 // As rotas que mandam mensagem para fora (criar canal, reenviar
 // verificação) ganham um balde próprio por usuário: um envio a cada 6
 // minutos, 5 de uma vez. Dá 10 por hora depois do burst (spec §5.8).
@@ -191,8 +195,9 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	// RequestID tem de ser o mais externo de todos. apierr.WriteError lê o
 	// trace do contexto, e o contexto só o tem depois que RequestID rodou —
 	// um erro produzido por qualquer middleware acima dele sairia com
-	// trace_id vazio, impossível de correlacionar com o log. Recover vem
-	// logo em seguida, para capturar panic de todo o resto da cadeia.
+	// trace_id vazio, impossível de correlacionar com o log. Deadline fica
+	// antes de Recover para que até um erro recuperado observe o prazo;
+	// Recover captura panic de todo o restante da cadeia.
 	var handler http.Handler = comEnvelope(mux)
 	handler = middleware.RequireCustomHeader(handler)
 	handler = middleware.BodyLimit(maxBodyBytes)(handler)
@@ -206,6 +211,7 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	handler = middleware.CORS(cfg.CORSOrigin)(handler)
 	handler = middleware.SecurityHeaders(handler)
 	handler = middleware.Recover(handler)
+	handler = middleware.Deadline(requestTimeout)(handler)
 	handler = middleware.RequestID(handler)
 
 	// A raiz separa as cadeias pelo prefixo, e o ServeMux escolhe sempre o
@@ -298,6 +304,7 @@ func verificacao(ctx context.Context, cfg *config.Config, svc *notify.ChannelSer
 	h = middleware.RateLimit(ctx, 20, 10, proxiesDe(cfg))(h)
 	h = middleware.SecurityHeaders(h)
 	h = middleware.Recover(h)
+	h = middleware.Deadline(requestTimeout)(h)
 	h = middleware.RequestID(h)
 	return h
 }

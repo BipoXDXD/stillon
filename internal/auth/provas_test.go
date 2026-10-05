@@ -120,3 +120,43 @@ func TestFamilyProofsForgetIdleFamilies(t *testing.T) {
 		t.Errorf("%d famílias no mapa, queria 1: a outra, parada, não foi varrida", n)
 	}
 }
+
+// Sabotagem: decidir pela posição da reserva (n), em vez dos erros reais.
+func TestFamilyProofsDoNotCountReleasedReservationsAsFailures(t *testing.T) {
+	provas := auth.NewFamilyProofs(clock.NewFake(time.Date(2026, 10, 4, 12, 0, 0, 0, time.UTC)))
+	familia := uuid.New()
+	reservas := make([]*auth.ProofReservation, auth.FamilyProofLimit)
+	for i := range reservas {
+		reservas[i] = provas.Reserve(familia)
+	}
+	for _, reserva := range reservas[:len(reservas)-1] {
+		reserva.Release()
+	}
+	if reservas[len(reservas)-1].Fail() {
+		t.Error("a única prova errada derrubou a família depois de devolver as outras reservas")
+	}
+	for erros := 2; erros < auth.FamilyProofLimit; erros++ {
+		if provas.Reserve(familia).Fail() {
+			t.Fatalf("a falha real %d derrubou a família antes do limite", erros)
+		}
+	}
+	if !provas.Reserve(familia).Fail() {
+		t.Error("a quinta falha real não derrubou a família")
+	}
+}
+
+// Um sucesso zera o orçamento. Reservas anteriores não podem devolver vagas
+// da conta nova. Sabotagem: Release procurar somente pelo id da família.
+func TestFamilyProofsOldReservationCannotRefundANewBudget(t *testing.T) {
+	provas := auth.NewFamilyProofs(clock.NewFake(time.Date(2026, 10, 4, 12, 0, 0, 0, time.UTC)))
+	familia := uuid.New()
+	antiga := provas.Reserve(familia)
+	provas.Reserve(familia).Succeed()
+	for range auth.FamilyProofLimit {
+		provas.Reserve(familia)
+	}
+	antiga.Release()
+	if !provas.Reserve(familia).Exhausted() {
+		t.Error("a reserva antiga devolveu uma vaga da conta nova ainda em voo")
+	}
+}

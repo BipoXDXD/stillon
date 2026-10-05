@@ -10,8 +10,6 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"golang.org/x/net/idna"
-
 	"github.com/BipoXDXD/stillon/internal/prober/safedial"
 )
 
@@ -279,7 +277,7 @@ func origem(s string) (string, bool) {
 	if err != nil || u.Hostname() == "" {
 		return "", false
 	}
-	host, ok := hostDiscado(u.Hostname())
+	host, ok := safedial.DialedHost(u.Hostname())
 	if !ok {
 		return "", false
 	}
@@ -289,29 +287,4 @@ func origem(s string) (string, bool) {
 		porta = ""
 	}
 	return esquema + "://" + host + "|" + porta, true
-}
-
-// hostDiscado é o host como o net/http o disca: ASCII passa como está (o
-// idnaASCII do net/http não o toca), e o resto passa por
-// idna.Lookup.ToASCII. A caixa sai baixa nos dois casos, porque o DNS não a
-// distingue. O ToASCII devolve um valor mesmo quando falha; a falha conta
-// como "não converte".
-func hostDiscado(h string) (string, bool) {
-	if ehASCII(h) {
-		return strings.ToLower(h), true
-	}
-	a, err := idna.Lookup.ToASCII(h)
-	if err != nil {
-		return "", false
-	}
-	return strings.ToLower(a), true
-}
-
-func ehASCII(s string) bool {
-	for i := range len(s) {
-		if s[i] >= utf8.RuneSelf {
-			return false
-		}
-	}
-	return true
 }

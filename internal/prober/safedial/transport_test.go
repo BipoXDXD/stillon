@@ -7,12 +7,46 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"net/url"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/BipoXDXD/stillon/internal/prober/safedial"
 )
+
+// A comparação acompanha o host que net/http disca, não o case folding do
+// Unicode cru. Sabotagem: substituir a canonicalização por strings.EqualFold.
+func TestCheckRedirectComparesCanonicalIDNAHosts(t *testing.T) {
+	client := safedial.NewClient(time.Second)
+	for _, caso := range []struct {
+		nome, origem, destino string
+		limpar                bool
+	}{
+		{"sharp s muda o domínio", "https://straße.de/", "https://STRAẞE.de/", true},
+		{"Unicode e punycode do mesmo domínio", "https://straße.de/", "https://xn--strae-oqa.de/", false},
+		{"caixa do mesmo domínio IDN", "https://BÜCHER.example/", "https://bücher.example/", false},
+		{"host Unicode inválido", "https://exemplo.com/", "https://\u200d.example/", true},
+	} {
+		t.Run(caso.nome, func(t *testing.T) {
+			origem, err := url.Parse(caso.origem)
+			if err != nil {
+				t.Fatal(err)
+			}
+			destino, err := http.NewRequest(http.MethodGet, caso.destino, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			destino.Header.Set("X-Token", "sentinela-publica")
+			if err := client.CheckRedirect(destino, []*http.Request{{URL: origem}}); err != nil {
+				t.Fatal(err)
+			}
+			if removido := destino.Header.Get("X-Token") == ""; removido != caso.limpar {
+				t.Errorf("header removido = %v, queria %v", removido, caso.limpar)
+			}
+		})
+	}
+}
 
 // Este é o teste que importa. httptest.NewServer escuta em 127.0.0.1, então
 // um cliente comum o alcança sem esforço. Se o cliente do safedial conseguir
@@ -140,8 +174,12 @@ func TestCheckRedirectDropsTargetHeadersWhenTheHopLeavesTheOrigin(t *testing.T) 
 			case !c.limpa && !manteve:
 				t.Errorf("headers = %v, queria os do alvo intactos", req.Header)
 			}
-			if req.Header.Get("User-Agent") != "StillOn/teste" {
-				t.Errorf("User-Agent = %q, queria mantido", req.Header.Get("User-Agent"))
+			ua := "StillOn/teste"
+			if c.limpa {
+				ua = "StillOn/1.0 (+monitor de disponibilidade)"
+			}
+			if req.Header.Get("User-Agent") != ua {
+				t.Errorf("User-Agent = %q, queria %q", req.Header.Get("User-Agent"), ua)
 			}
 		})
 	}

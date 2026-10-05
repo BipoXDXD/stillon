@@ -151,7 +151,7 @@ function Formulario({ pagina, alvos }: { pagina: PaginaDeStatus | null; alvos: A
       <fieldset ref={lista} className="space-y-3">
         <legend className="text-sm font-medium">Alvos na página ({itens.fields.length} de {MAX_ITENS})</legend>
         {itens.fields.map((it, i) => (
-          <div key={it.id} className="grid grid-cols-[1fr_auto] items-end gap-2 rounded-md border border-borda p-3">
+          <div key={it.id} className="grid grid-cols-1 items-end gap-3 sm:grid-cols-[minmax(0,1fr)_auto] rounded-md border border-borda p-3">
             <Campo
               rotulo={`Nome de exibição de ${nomeDoAlvo.get(it.target_id) ?? 'alvo apagado'}`}
               erro={e.items?.[i]?.display_name?.message}
@@ -159,7 +159,7 @@ function Formulario({ pagina, alvos }: { pagina: PaginaDeStatus | null; alvos: A
               {(a) => <Entrada {...a} {...f.register(`items.${i}.display_name`)} />}
             </Campo>
             {/* Ordem por botões, não arrastar: teclado e leitor de tela. */}
-            <div className="flex gap-1">
+            <div className="flex flex-wrap gap-1">
               {/* aria-disabled, e não disabled, nas pontas: o botão que leva o
                   item à ponta está com o foco, e desabilitado o perderia para o
                   <body> (como o Reconhecer). A guarda fica no clique. */}
@@ -191,7 +191,7 @@ function Formulario({ pagina, alvos }: { pagina: PaginaDeStatus | null; alvos: A
           <p className="text-sm text-perigo">{e.items?.message ?? e.items?.root?.message}</p>
         )}
         {livres.length > 0 && itens.fields.length < MAX_ITENS && (
-          <div className="flex items-end gap-2">
+          <div className="flex flex-wrap items-end gap-2">
             <Campo rotulo="Acrescentar alvo">
               {(a) => (
                 <Selecao {...a} value={escolhido} onChange={(ev) => setEscolhido(ev.target.value)}>
@@ -266,7 +266,7 @@ export function PaginaStatusPage() {
                   <p className="text-sm font-medium">Link público</p>
                   <p className="break-all">{pagina.public_url}</p>
                   {pagina.published ? (
-                    <div className="flex gap-2">
+                    <div className="flex flex-wrap gap-2">
                       <Botao
                         tipo="secundario"
                         tamanho="pequeno"

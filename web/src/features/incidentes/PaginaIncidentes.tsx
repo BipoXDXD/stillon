@@ -38,7 +38,7 @@ function Linha({
 }) {
   const inicio = new Date(i.started_at).getTime()
   return (
-    <li className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-borda p-4">
+    <li className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-borda bg-superficie p-4">
       <div className="space-y-1">
         <Link to={`/targets/${i.target_id}`} className="font-semibold underline-offset-2 hover:underline">
           {i.target_name}

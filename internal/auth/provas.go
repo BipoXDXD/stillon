@@ -45,6 +45,7 @@ type contaDeProvas struct {
 	// reservadas conta as provas em voo e as erradas: uma reserva só sai
 	// daqui por Release (não chegou a errar) ou Succeed (zera tudo).
 	reservadas int
+	erros      int
 	visto      time.Time
 }
 
@@ -59,6 +60,7 @@ type ProofReservation struct {
 	f       *FamilyProofs
 	familia uuid.UUID
 	n       int
+	conta   *contaDeProvas
 	fechada bool
 }
 
@@ -80,7 +82,7 @@ func (f *FamilyProofs) Reserve(familyID uuid.UUID) *ProofReservation {
 	}
 	c.reservadas++
 	c.visto = agora
-	return &ProofReservation{f: f, familia: familyID, n: c.reservadas}
+	return &ProofReservation{f: f, familia: familyID, n: c.reservadas, conta: c}
 }
 
 // FamilyID é a família da reserva.
@@ -93,29 +95,45 @@ func (r *ProofReservation) Exhausted() bool { return r.n > FamilyProofLimit }
 // Fail registra a prova errada, que fica contada. Devolve true quando ela é
 // a do limite: quem chama derruba a família.
 func (r *ProofReservation) Fail() (derrubar bool) {
+	r.f.mu.Lock()
+	defer r.f.mu.Unlock()
+	if r.fechada {
+		return false
+	}
 	r.fechada = true
-	return r.n >= FamilyProofLimit
+	// A posição da reserva conta chamadas em voo, não erros. Um Argon2
+	// saturado devolve sua reserva e não pode aproximar a família da expulsão.
+	if r.f.contas[r.familia] != r.conta {
+		return false // um sucesso já zerou a conta desta prova em voo
+	}
+	r.conta.erros++
+	return r.conta.erros >= FamilyProofLimit
 }
 
 // Succeed zera a família: as provas pedidas conferiram.
 func (r *ProofReservation) Succeed() {
-	r.fechada = true
 	r.f.mu.Lock()
 	defer r.f.mu.Unlock()
-	delete(r.f.contas, r.familia)
+	if r.fechada {
+		return
+	}
+	r.fechada = true
+	if r.f.contas[r.familia] == r.conta {
+		delete(r.f.contas, r.familia)
+	}
 }
 
 // Release devolve a reserva de quem não chegou a errar prova (corpo inválido
 // depois da reserva, 403, 500, sessão caída). Depois de Fail ou Succeed, não
 // faz nada.
 func (r *ProofReservation) Release() {
+	r.f.mu.Lock()
+	defer r.f.mu.Unlock()
 	if r.fechada {
 		return
 	}
 	r.fechada = true
-	r.f.mu.Lock()
-	defer r.f.mu.Unlock()
-	if c, ok := r.f.contas[r.familia]; ok && c.reservadas > 0 {
+	if c, ok := r.f.contas[r.familia]; ok && c == r.conta && c.reservadas > 0 {
 		c.reservadas--
 	}
 }

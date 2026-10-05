@@ -203,7 +203,7 @@ jobs:
           node-version: '24'
           cache: npm
           cache-dependency-path: web/package-lock.json
-      - run: npm ci --no-audit --no-fund
+      - run: npm ci --ignore-scripts --no-audit --no-fund
       - run: npm run typecheck
       - run: npm run lint
       - run: npx vitest run
@@ -348,7 +348,7 @@ jobs:
         # externa, o trace gravaria a senha digitada, e o artifact de falha
         # abaixo o levaria junto.
         run: |
-          npm ci --no-audit --no-fund
+          npm ci --ignore-scripts --no-audit --no-fund
           npx playwright install --with-deps chromium
           npx playwright test --trace off
 
@@ -403,6 +403,11 @@ jobs:
         run: bash deploy/ci/checar-vigia.sh
       - name: checagens da VPS
         run: bash deploy/ci/checar-vps.sh "$IMAGEM:ci"
+      - name: SSH real da chave restrita de deploy
+        timeout-minutes: 5
+        run: |
+          shellcheck deploy/ci/ssh/*.sh
+          bash deploy/ci/testar-ssh-real.sh
 
   publish:
     # Só depois de tudo verde, e só em push para a main ou tag v* deste

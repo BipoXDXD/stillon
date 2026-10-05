@@ -130,7 +130,7 @@ export function PaginaLogin() {
   return (
     <>
       <AvisoDeContexto />
-      <main className="mx-auto mt-16 max-w-sm space-y-6 px-4">
+      <main className="mx-auto my-10 max-w-md space-y-6 rounded-2xl border border-borda bg-superficie p-6 shadow-sm sm:my-20 sm:p-8">
         {/* O foco vai ao <h1> depois de a sessão acabar (é uma navegação), e
             o leitor de tela lê o motivo junto, pela descrição. */}
         <Titulo aba="Entrar" descritoPor={textoDoMotivo ? ID_MOTIVO : undefined}>

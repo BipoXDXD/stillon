@@ -1,5 +1,6 @@
 -- Checagens da cópia restaurada. Rodam no banco restaurado, como
--- superusuário, com as variáveis do psql que backup.sh lê da ORIGEM:
+-- superusuário, com as variáveis do psql que backup.sh recebe do mesmo
+-- snapshot da ORIGEM usado pelo pg_dump:
 -- :versao (a maior versão do goose), :usuarios e :alvos (contagens).
 -- Qualquer RAISE derruba o psql (ON_ERROR_STOP) e o job fica vermelho.
 \set ON_ERROR_STOP on
@@ -45,10 +46,10 @@ BEGIN
         RAISE EXCEPTION 'versão do schema restaurado = %, origem = %', versao, current_setting('verificar.versao');
     END IF;
 
-    -- 4. Dados: as tabelas que mudam devagar voltam inteiras. A contagem da
-    --    origem é de ANTES do dump (outro instante): um alvo cadastrado no meio
-    --    entra no dump e não na contagem. Por isso ">=", e não "=". (checks
-    --    muda a cada minuto e não entra.)
+    -- 4. Dados: cardinalidade mínima de users/targets no mesmo snapshot do
+    --    dump. Preservamos os limites >= e users >= 1 do contrato anterior;
+    --    reforçar para igualdade é mudança separada. Contagem não demonstra
+    --    identidade integral das linhas. checks continua fora deste controle.
     SELECT count(*) INTO n FROM users;
     IF n < 1 OR n < current_setting('verificar.usuarios')::bigint THEN
         RAISE EXCEPTION 'users restaurado = %, origem = %', n, current_setting('verificar.usuarios');

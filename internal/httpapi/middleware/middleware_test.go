@@ -198,27 +198,53 @@ func TestCORSOnlyEchoesTheConfiguredOrigin(t *testing.T) {
 // Segunda camada anti-CSRF (spec §5.3): um formulário HTML cross-site não
 // consegue definir header customizado.
 func TestRequireCustomHeaderOnMutations(t *testing.T) {
-	h := middleware.RequireCustomHeader(http.HandlerFunc(ok))
-
-	sem := httptest.NewRequest(http.MethodPost, "/", nil)
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, sem)
-	if rec.Code != http.StatusForbidden {
-		t.Errorf("POST sem o header devolveu %d, queria 403", rec.Code)
+	values := []struct {
+		name, value      string
+		present, allowed bool
+	}{
+		{name: "ausente"},
+		{name: "vazio", present: true},
+		{name: "outro", present: true, value: "outro"},
+		{name: "caixa diferente", present: true, value: "STILLON"},
+		{name: "correto", present: true, value: "stillon", allowed: true},
 	}
-
-	com := httptest.NewRequest(http.MethodPost, "/", nil)
-	com.Header.Set("X-Requested-With", "stillon")
-	rec = httptest.NewRecorder()
-	h.ServeHTTP(rec, com)
-	if rec.Code != http.StatusOK {
-		t.Errorf("POST com o header devolveu %d, queria 200", rec.Code)
-	}
-
-	leitura := httptest.NewRequest(http.MethodGet, "/", nil)
-	rec = httptest.NewRecorder()
-	h.ServeHTTP(rec, leitura)
-	if rec.Code != http.StatusOK {
-		t.Error("GET não deveria exigir o header")
+	for _, group := range []struct {
+		methods  []string
+		mutation bool
+	}{
+		{methods: []string{http.MethodPost, http.MethodPatch, http.MethodDelete, http.MethodPut}, mutation: true},
+		{methods: []string{http.MethodGet, http.MethodHead, http.MethodOptions}},
+	} {
+		for _, method := range group.methods {
+			for _, value := range values {
+				t.Run(method+"/"+value.name, func(t *testing.T) {
+					called := false
+					h := middleware.RequireCustomHeader(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+						called = true
+						w.WriteHeader(http.StatusCreated)
+					}))
+					req := httptest.NewRequest(method, "/", nil)
+					if value.present {
+						req.Header.Set("x-requested-with", value.value)
+					}
+					rec := httptest.NewRecorder()
+					h.ServeHTTP(rec, req)
+					wantCall := !group.mutation || value.allowed
+					wantStatus := http.StatusForbidden
+					if wantCall {
+						wantStatus = http.StatusCreated
+					}
+					if rec.Code != wantStatus || called != wantCall {
+						t.Fatalf("status%d, next=%t; esperado%d, next=%t", rec.Code, called, wantStatus, wantCall)
+					}
+					if !wantCall {
+						var env struct{ Error struct{ Code string } }
+						if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil || env.Error.Code != "forbidden" {
+							t.Fatalf("recusa sem envelope forbidden: %s; %v", rec.Body.String(), err)
+						}
+					}
+				})
+			}
+		}
 	}
 }

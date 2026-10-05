@@ -1,3 +1,4 @@
+#!/bin/sh
 # Seed do compose (D10 e D15 do Plano 7). Roda no alvo tools da imagem, que
 # tem o busybox: a imagem de produção não tem shell (spec §5.9).
 #
@@ -30,20 +31,36 @@ STILLON=${STILLON_BIN:-/stillon}
 # que só começa com "localhost" ou "127." (localhost.exemplo.com,
 # 127.0.0.1.nip.io) resolve para onde o dono do domínio quiser, e não conta.
 local_ou_nao() {
-    url=$(printf '%s' "$1" | tr 'A-Z' 'a-z')
-    case "$url" in
-        http://*) ;;
-        *) return 1 ;;
-    esac
-    hostporta=${url#http://}
-    hostporta=${hostporta%%/*}
-    case "$hostporta" in
-        *@*) return 1 ;;
-        '[::1]' | '[::1]:'*) return 0 ;;
-    esac
-    host=${hostporta%%:*}
-    [ "$host" = localhost ] && return 0
-    printf '%s\n' "$host" | grep -Eq '^127\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$'
+    # Só awk POSIX, disponível também no busybox da imagem tools. Validar
+    # a URL inteira impede que whitespace escondido no caminho seja aceito;
+    # a porta e cada octeto precisam ser válidos antes de criar o demo.
+    printf '%s\n' "$1" | LC_ALL=C awk '
+        NR == 1 { url = tolower($0) }
+        END {
+            if (NR != 1 || url ~ /[[:space:][:cntrl:]\\]/ || url !~ /^http:\/\//) exit 1
+            sub(/^http:\/\//, "", url)
+            sub(/[\/?#].*$/, "", url)
+            if (url ~ /@/) exit 1
+            if (url ~ /^\[::1\]/) {
+                host = "[::1]"
+                resto = substr(url, 6)
+            } else {
+                host = url
+                sub(/:.*$/, "", host)
+                resto = substr(url, length(host) + 1)
+            }
+            if (resto != "") {
+                if (resto !~ /^:[0-9]+$/) exit 1
+                porta = substr(resto, 2)
+                if (length(porta) > 5 || porta + 0 < 1 || porta + 0 > 65535) exit 1
+            }
+            if (host == "localhost" || host == "[::1]") exit 0
+            if (host !~ /^127\.[0-9]+\.[0-9]+\.[0-9]+$/) exit 1
+            split(host, octetos, ".")
+            for (i = 1; i <= 4; i++) {
+                if (octetos[i] + 0 > 255 || (length(octetos[i]) > 1 && substr(octetos[i], 1, 1) == "0")) exit 1
+            }
+        }'
 }
 
 if ! local_ou_nao "${PUBLIC_BASE_URL:-}"; then

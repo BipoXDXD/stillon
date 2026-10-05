@@ -42,6 +42,9 @@ var subcomandos = map[string]func(ctx context.Context, args []string) int{
 	"healthcheck": func(ctx context.Context, args []string) int {
 		return runHealthcheck(ctx, args, os.Stderr, os.Getenv)
 	},
+	"backup-snapshot": func(ctx context.Context, args []string) int {
+		return runBackupSnapshot(ctx, args, os.Stdout, os.Stderr, os.Getenv)
+	},
 	"version": func(_ context.Context, args []string) int {
 		return runVersion(args, os.Stdout, os.Stderr)
 	},

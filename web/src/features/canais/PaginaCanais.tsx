@@ -219,8 +219,8 @@ export function PaginaCanais() {
           ) : (
             <ul className="space-y-3">
               {d.items.map((c) => (
-                <li key={c.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-borda p-4">
-                  <div className="space-y-1">
+                <li key={c.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-borda bg-superficie p-4">
+                  <div className="min-w-0 space-y-1 break-words">
                     <p className="font-semibold">
                       {c.kind === 'discord' ? 'Discord' : 'E-mail'} <span className="font-normal text-suave">{c.hint}</span>
                     </p>
@@ -233,7 +233,7 @@ export function PaginaCanais() {
                       </p>
                     )}
                   </div>
-                  <div className="flex gap-2">
+                  <div className="flex flex-wrap gap-2">
                     {(c.status === 'pending' || c.status === 'expired') && (
                       <Botao
                         tipo="secundario"
@@ -254,7 +254,11 @@ export function PaginaCanais() {
                       // diálogo, e o botão desabilitado perderia o foco para o
                       // <body>. A guarda contra o clique duplo é a de alternar().
                       aria-disabled={alternando.has(c.id) || undefined}
-                      onClick={() => (c.enabled ? setPausar(c) : void alternar(c))}
+                      onClick={() => {
+                        if (emVoo.current.has(c.id)) return
+                        if (c.enabled) setPausar(c)
+                        else void alternar(c)
+                      }}
                       aria-label={`${c.enabled ? 'Pausar' : 'Retomar'} o canal ${c.hint}`}
                     >
                       {c.enabled ? 'Pausar' : 'Retomar'}

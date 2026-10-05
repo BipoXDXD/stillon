@@ -20,7 +20,7 @@ const (
 	StatusDown     Status = "down"
 )
 
-const userAgent = "StillOn/1.0 (+monitor de disponibilidade)"
+const userAgent = safedial.UserAgent
 
 // Spec é o que uma sonda precisa saber sobre o alvo, já decifrado.
 type Spec struct {

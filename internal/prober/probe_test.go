@@ -373,3 +373,39 @@ func TestProbeRedirectBackToTheOriginStaysClean(t *testing.T) {
 		t.Errorf("headers na volta à origem = %v, queria sem os do alvo", h)
 	}
 }
+
+// O User-Agent também pode ser configurado pelo dono: não é exceção à
+// proteção dos headers. Sabotagem: preservar o User-Agent em limparHeaders.
+func TestProbeRedirectDropsCustomUserAgentThroughoutAnUnsafeChain(t *testing.T) {
+	const sentinela = "credencial-publica-de-teste-no-user-agent"
+	naOrigem, noDesvio, naVolta := make(chan string, 1), make(chan string, 1), make(chan string, 1)
+	desvio := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		noDesvio <- r.Header.Get("User-Agent")
+		http.Redirect(w, r, r.URL.Query().Get("volta"), http.StatusFound)
+	}))
+	t.Cleanup(desvio.Close)
+	origem := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/volta" {
+			naVolta <- r.Header.Get("User-Agent")
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		naOrigem <- r.Header.Get("User-Agent")
+		http.Redirect(w, r, desvio.URL+"/?volta=http://"+r.Host+"/volta", http.StatusFound)
+	}))
+	t.Cleanup(origem.Close)
+	client := safedial.NewClientAllowing(0, enderecoDe(t, origem), enderecoDe(t, desvio))
+	s := especificacao(origem.URL)
+	s.Headers = map[string]string{"User-Agent": sentinela}
+	if res := Probe(t.Context(), client, s); res.Status != StatusUp {
+		t.Fatalf("sonda = %+v, queria sucesso", res)
+	}
+	if recebido := <-naOrigem; recebido != sentinela {
+		t.Fatalf("a origem recebeu %q, queria o valor personalizado", recebido)
+	}
+	for salto, recebido := range map[string]string{"outro destino": <-noDesvio, "volta à origem": <-naVolta} {
+		if recebido == sentinela || !strings.HasPrefix(recebido, "StillOn/") {
+			t.Errorf("%s recebeu User-Agent %q, queria somente identificação pública", salto, recebido)
+		}
+	}
+}

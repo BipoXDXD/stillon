@@ -25,7 +25,7 @@ export function ProvedorDeAvisos({ children }: { children: ReactNode }) {
           onOpenChange={(aberto) => {
             if (!aberto) setAvisos((l) => l.filter((x) => x.id !== a.id))
           }}
-          className={`rounded-md border bg-fundo p-3 text-sm shadow ${a.tipo === 'erro' ? 'border-perigo' : 'border-borda'}`}
+          className={`rounded-xl border bg-superficie p-3 text-sm shadow ${a.tipo === 'erro' ? 'border-perigo' : 'border-borda'}`}
         >
           <Toast.Title>{a.texto}</Toast.Title>
         </Toast.Root>

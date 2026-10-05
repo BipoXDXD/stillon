@@ -173,7 +173,7 @@ export function FormularioAlvo({
         {modoHeaders === 'substituir' && (
           <div className="space-y-2">
             {headers.fields.map((h, i) => (
-              <div key={h.id} className="grid grid-cols-[1fr_1fr_auto] items-end gap-2">
+              <div key={h.id} className="grid grid-cols-1 items-end gap-3 rounded-lg border border-borda p-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
                 <Campo rotulo={`Nome do header ${i + 1}`} erro={e.headers?.[i]?.nome?.message}>
                   {(a) => <Entrada {...a} {...f.register(`headers.${i}.nome`)} />}
                 </Campo>

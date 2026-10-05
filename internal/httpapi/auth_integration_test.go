@@ -728,27 +728,46 @@ func statusComToken(t *testing.T, a *api, token string) int {
 // propriedade da rota ou de outra camada.
 func TestMutationWithoutCustomHeaderIsRejected(t *testing.T) {
 	a := newAPI(t)
-
 	body, err := json.Marshal(map[string]string{"email": testEmail, "password": "errada"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	semHeader, err := http.Post(a.srv.URL+"/api/v1/auth/login", "application/json", bytes.NewReader(body))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer semHeader.Body.Close()
-	if semHeader.StatusCode != http.StatusForbidden {
-		t.Errorf("status = %d, queria 403", semHeader.StatusCode)
-	}
-	if code := decodeEnvelope(t, semHeader).Error.Code; code != "forbidden" {
-		t.Errorf("code = %q, queria forbidden", code)
-	}
-
-	comHeader := login(t, a, http.DefaultClient, testEmail, "errada")
-	defer comHeader.Body.Close()
-	if comHeader.StatusCode == http.StatusForbidden {
-		t.Error("o mesmo POST com o header customizado continuou 403: o 403 não vem do middleware")
+	for _, c := range []struct {
+		name, value, code string
+		present           bool
+		status            int
+	}{
+		{name: "ausente", status: http.StatusForbidden, code: "forbidden"},
+		{name: "vazio", present: true, status: http.StatusForbidden, code: "forbidden"},
+		{name: "outro", present: true, value: "outro", status: http.StatusForbidden, code: "forbidden"},
+		{name: "caixa diferente", present: true, value: "STILLON", status: http.StatusForbidden, code: "forbidden"},
+		{name: "correto chega à autenticação", present: true, value: "stillon", status: http.StatusUnauthorized, code: "invalid_credentials"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			req, err := http.NewRequest(http.MethodPost, a.srv.URL+"/api/v1/auth/login", bytes.NewReader(body))
+			if err != nil {
+				t.Fatal(err)
+			}
+			req.Header.Set("Content-Type", "application/json")
+			if c.present {
+				req.Header.Set("x-requested-with", c.value)
+			}
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != c.status {
+				t.Errorf("status%d, esperado%d", resp.StatusCode, c.status)
+			}
+			env := decodeEnvelope(t, resp)
+			if env.Error.Code != c.code {
+				t.Errorf("code%q, esperado%q", env.Error.Code, c.code)
+			}
+			if env.TraceID == "" {
+				t.Error("erro sem trace_id na cadeia real")
+			}
+		})
 	}
 }
 

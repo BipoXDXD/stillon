@@ -321,3 +321,89 @@ test('a tela de login, sem sessão', async ({ page }) => {
   expect(r.violations.map((v) => v.id)).toEqual([])
   await controlePositivo(page, 'login')
 })
+
+// Plano 12: o layout precisa caber no celular, inclusive campos e ações.
+// Sabotagem: impor min-width: 800px ao main deve derrubar a medição.
+for (const tema of ['claro', 'escuro'] as const) {
+  test(`celular de 360 px: navegação e formulários sem overflow, tema ${tema}`, async ({ page }) => {
+    await page.setViewportSize({ width: 360, height: 800 })
+    await page.emulateMedia({ colorScheme: tema === 'escuro' ? 'dark' : 'light' })
+    await imitarApi(page)
+    const conferir = async (contexto: string) => {
+      await expect.poll(() => page.evaluate(() => ({
+        conteudo: document.documentElement.scrollWidth,
+        tela: document.documentElement.clientWidth,
+      })), contexto).toEqual({ conteudo: 360, tela: 360 })
+      const axe = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze()
+      expect(axe.violations.map((v) => `${contexto}: ${v.id}`)).toEqual([])
+      await controlePositivo(page, contexto)
+    }
+    for (const [rota, titulo] of ROTAS) {
+      await page.goto(rota)
+      await expect(page.getByRole('heading', { name: titulo, level: 1 })).toBeVisible()
+      await esperarOConteudo(page, rota)
+      await expect(page.locator('html')).toHaveClass(tema === 'escuro' ? /dark/ : /^(?!.*dark)/)
+      await expect(page.getByRole('navigation', { name: 'Principal' })).toBeVisible()
+      await conferir(rota)
+    }
+    await page.goto('/targets/new')
+    await page.getByRole('button', { name: 'Adicionar header' }).click()
+    await page.getByLabel('Nome do header 1', { exact: true }).fill('Authorization')
+    await page.getByLabel('Valor do header 1', { exact: true }).fill('sentinela-publica-de-teste')
+    await expect(page.getByRole('button', { name: 'Remover o header 1' })).toBeVisible()
+    // Caber sem overflow não basta se o campo fica espremido entre outro
+    // campo e a ação: uma linha de header mantém largura útil no celular.
+    for (const rotulo of ['Nome do header 1', 'Valor do header 1']) {
+      const caixa = await page.getByLabel(rotulo, { exact: true }).boundingBox()
+      expect(caixa?.width, rotulo).toBeGreaterThanOrEqual(160)
+    }
+    await conferir('formulário com header')
+    await page.getByRole('link', { name: 'Canais', exact: true }).click()
+    await expect(page.getByRole('heading', { name: 'Canais de notificação' })).toBeFocused()
+    await page.getByRole('button', { name: 'Novo canal' }).click()
+    await expect(page.getByRole('dialog')).toBeVisible()
+    await conferir('diálogo no celular')
+  })
+}
+
+// P2 do shell: visibilidade CSS não detecta texto encoberto por uma
+// lateral fixa. O hit-test e a geometria precisam enxergar o aviso inteiro.
+test('aviso de HTTPS fica visível fora da lateral no desktop e mantém login e celular', async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(window, 'isSecureContext', { value: false, configurable: true })
+  })
+  await imitarApi(page)
+  const titulo = 'Este painel precisa de HTTPS (ou de localhost).'
+  for (const largura of [360, 1024, 1280, 1600]) {
+    await page.setViewportSize({ width: largura, height: 900 })
+    await page.goto('/')
+    await expect(page.getByRole('heading', { name: 'Painel', level: 1 })).toBeVisible()
+    const aviso = page.getByRole('alert').filter({ hasText: titulo })
+    await expect(aviso).toBeVisible()
+    const texto = aviso.locator('strong')
+    const caixaTexto = await texto.boundingBox()
+    const lateral = await page.locator('header').boundingBox()
+    expect(caixaTexto).not.toBeNull()
+    expect(lateral).not.toBeNull()
+    if (largura >= 1024) expect(caixaTexto!.x, `${largura}: título fora da lateral`).toBeGreaterThanOrEqual(lateral!.x + lateral!.width)
+    else expect(caixaTexto!.y, 'celular: aviso antes do cabeçalho').toBeLessThan(lateral!.y)
+    expect(await texto.evaluate((elemento) => {
+      const primeiraLinha = elemento.getClientRects()[0]!
+      const superior = document.elementFromPoint(primeiraLinha.left + 2, primeiraLinha.top + primeiraLinha.height / 2)
+      return superior === elemento || elemento.contains(superior)
+    }), `${largura}: o título não pode ficar encoberto`).toBe(true)
+    expect(await page.evaluate(() => document.documentElement.scrollWidth), `${largura}: largura`).toBe(largura)
+  }
+  // O mesmo componente também está no login, onde não há lateral nem
+  // espaço reservado. A correção precisa ficar exclusiva ao shell.
+  await page.route('**/api/v1/auth/refresh', (route) => route.fulfill({
+    status: 401, json: { error: { code: 'invalid_session', message: '' }, trace_id: 't' },
+  }))
+  await page.setViewportSize({ width: 1024, height: 900 })
+  await page.goto('/login')
+  await expect(page.getByRole('heading', { name: 'Entrar no StillOn' })).toBeVisible()
+  const avisoLogin = page.getByRole('alert').filter({ hasText: titulo })
+  expect((await avisoLogin.boundingBox())?.x).toBe(0)
+  expect((await avisoLogin.boundingBox())?.width).toBe(1024)
+  await controlePositivo(page, 'aviso de HTTPS no login')
+})

@@ -11,9 +11,8 @@ as decisões que você ainda podia revisar estavam na §9 dela.
 ## Como ler este runbook
 
 - **Dois computadores.** Todo bloco de comando diz onde roda:
-  - **no seu computador** (o seu Linux, num terminal: `Ctrl+Alt+T` no Ubuntu; num **Mac**, leia
-    antes [mac.md](mac.md), com as trocas de comando e o que refazer ao mudar de computador no
-    meio do caminho);
+  - **no seu computador** (esta máquina Linux, o ponto atual de operação; num terminal:
+    `Ctrl+Alt+T` no Ubuntu);
   - **na VPS** (o servidor da Hostinger, num terminal conectado a ela por SSH, que você abre no
     bloco 2).
 - **Um comando por vez.** Copie a linha inteira, cole no terminal (`Ctrl+Shift+V`), aperte Enter e
@@ -29,6 +28,15 @@ as decisões que você ainda podia revisar estavam na §9 dela.
 - **O `compose.yaml` da raiz do repositório não vai para o servidor.** Ele cria um usuário de
   demonstração com senha pública e usa chaves públicas: num servidor, qualquer um entraria como
   dono. O servidor usa só os arquivos de `deploy/vps/`.
+
+O guia [mac.md](mac.md) permanece como referência histórica e opcional para outra máquina;
+a operação atual segue por este Linux, sem exigir passos no Mac. Preserve as chaves e as
+entradas do gerenciador de senhas existentes.
+
+Se a VPS tiver sido reinstalada, os registros de passos concluídos antes disso são históricos:
+confira novamente cada passo aplicável com o respectivo **Confira** antes de continuar. O estado
+anterior, inclusive o registrado no PR #26, não comprova o estado do servidor reinstalado. Esta
+conferência deve ocorrer antes de restaurar segredos ou iniciar o serviço.
 
 ## Topologia
 
@@ -1342,9 +1350,43 @@ O backup diário (06:17 UTC, 03:17 de Brasília) roda no GitHub: `ssh deploy@VPS
 dump **já cifrado** com a sua chave pública, que vira um artifact de 30 dias. Na VPS, o script
 sobe um Postgres descartável, faz o dump como `stillon_backup`, restaura a cópia e a confere
 (`deploy/backup/backup.sh` e `verificar.sql`) antes de cifrar. Um backup que não restaura não é
-backup.
+backup. A referência de schema/usuários/alvos e o dump usam o mesmo snapshot; mudanças
+confirmadas depois da referência não entram nesse dump.
+
+O supervisor vem automaticamente de `/stillon` na imagem local `stillon:<SHA>` indicada
+por `/opt/stillon/versao`: a entrada resolve seu ID, cria um contêiner auxiliar parado,
+copia o binário para memória e depois para a camada regular do Postgres descartável.
+Não precisa de binário instalado à mão, imagem extra ou app rodando. O probe de protocolo
+ocorre antes de conectar à origem; imagem antiga e scripts novos recusam com código 1.
+O binário nunca executa no host ou por montagem executável de `/dev/shm`.
+
+O probe tem prazo de 30 s, com mais 5 s para matar o cliente Docker; como matar
+o cliente sozinho não encerra um `docker exec` remoto, a entrada remove seu contêiner
+exato na falha.
+
+O helper roda com UID/GID 65532, sem capabilities efetivas, em contêiner com `--init`
+e `no-new-privileges`. O PostgreSQL descartável conserva o limite de 3 GiB e o tmpfs de
+2 GiB. Esse controle de UID/capabilities é do sistema operacional: o helper ainda
+pode alcançar o PostgreSQL descartável local e a cópia dos dados de produção; não
+é uma barreira de isolamento entre o helper e o banco de conferência.
+O supervisor limita preparação, dump e encerramento dos seus filhos; restauro,
+verificação e consulta final de disco são etapas separadas. A consulta de disco tem
+connect timeout de 10 s e statement timeout de 30 s; isso não é prazo global de todo o
+backup. A URI pública continua aceitando parâmetros libpq, exceto credenciais na query e
+`options`, `service`, `application_name`, `fallback_application_name`, `connect_timeout`,
+que poderiam alterar as proteções de conexão/sessão. A senha da autoridade não vai a argv.
 
 ### 7.1 Ligar e rodar o primeiro à mão
+
+**Confira primeiro** (na VPS, depois do deploy e da cópia dos scripts da mesma versão):
+
+```bash
+vc exec -T app /stillon version --backup-snapshot-protocol
+```
+
+Deve aparecer somente `stillon-backup-snapshot-v1`. Se recusar o argumento, a imagem
+é antiga: atualize imagem, `stillon-entrada` e `backup.sh` juntos antes de ligar o backup.
+Esse comando só verifica o protocolo; não inicia servidor nem conecta ao banco.
 
 **Faça** (no seu computador):
 
@@ -1365,14 +1407,17 @@ Rodar à mão agora confere tudo (chave, script, `age`, artifact) antes de confi
 
 ```bash
 sudo ls -A /dev/shm
-sudo docker ps -a --filter name=stillon-restauro-
+sudo docker ps -a --filter label=io.stillon.backup.raiz=/opt/stillon
 ```
 
-O `ls` não mostra nenhum `stillon-backup.*`, e o `docker ps` mostra só a linha de títulos
+O `ls` não mostra nenhum `stillon-backup.*` nem `stillon-backup-helper.*`, e o `docker ps` mostra só a linha de títulos
 (`CONTAINER ID   IMAGE …`), sem nenhum contêiner. O dump em claro só existe durante o backup, em
 `/dev/shm` (memória, não disco), e a restauração de conferência roda num Postgres descartável
 chamado `stillon-restauro-…`; o script apaga os dois no fim, e só o cifrado sai da VPS. Se sobrar
-algum (um backup morto no meio), o próximo backup os apaga antes de começar.
+algum recurso próprio (um backup morto por SIGKILL), a entrada seguinte o recupera sob
+a mesma trava, conferindo labels privadas, nome, nonce e imagem antes de remover por ID.
+Contêineres legados sem esses labels ou de outros projetos não são apagados automaticamente;
+se houver um, confira sua origem antes de qualquer remoção manual.
 
 **Depois de ligado, um `backup` agendado *skipped* (cinza) é falha**, tanto quanto um vermelho: não
 houve backup naquele dia, e o GitHub não manda e-mail por isso. A causa usual é a variável
@@ -1889,7 +1934,18 @@ O `backup` usa os mesmos códigos do `deploy/backup/backup.sh`: 0, cópia restau
 3, uma checagem da cópia falhou (o dump não serve, e nada é guardado); 4, conferido e guardado,
 mas o disco passou de 85% (o job fica vermelho no fim, de propósito); 1, outro erro (não houve
 backup), inclusive `outra operação da entrada não terminou em 10 min` (um deploy segurou a
-trava: rode de novo); 255, o SSH não chegou ao script.
+trava: rode de novo); 130/143, interrupção por sinal; 255, o SSH não chegou ao script.
+
+| Mensagem do backup (código 1) | Confira |
+|---|---|
+| `falta a versão aprovada` ou `imagem local da versão aprovada ausente` | `cat /opt/stillon/versao` e `sudo docker image inspect stillon:<SHA> --format '{{.Id}}'`; a imagem deve ser a do deploy aprovado, não uma tag arbitrária |
+| `imagem aprovada não oferece o protocolo` ou `protocolo incompatível` | imagem, entrada e scripts precisam ser da mesma versão; use o probe do passo 7.1 |
+| `não foi possível copiar` ou `instalar o helper` | confira espaço e o erro Docker no `entrada.log`; a entrada não conecta à origem sem cópia e probe válidos |
+| `snapshot ou dump não concluído` | consulte o `entrada.log`; timeout, perda da origem ou falha de encerramento não publicam manifesto nem tornam o dump válido |
+
+O ID fixa os bytes da imagem local durante a cópia; não é uma assinatura de procedência.
+A confiança continua dependendo do deploy aprovado e do controle root do Docker e dos
+arquivos em `/opt/stillon`. Não substitua a tag de SHA por uma imagem de terceiros.
 
 A imagem do app **não tem shell** (distroless): `vc exec app sh` não funciona. O que serve: os
 logs, os subcomandos do binário (`vc exec app /stillon version`, `… healthcheck`, `… user …`) e o
@@ -1957,6 +2013,10 @@ VPS, o `sudo install` para o destino da tabela, com o modo dela e dono `root`; e
 | `deploy/vps/vigia.env.exemplo` | nenhum: é o modelo do `/opt/stillon/vigia.env` | — | variável nova no modelo: acrescente-a ao `vigia.env` (`sudo nano /opt/stillon/vigia.env`) |
 | `deploy/backup/backup.sh` e `deploy/backup/verificar.sql` | `/opt/stillon/deploy/backup/` | `0644` | nada: vale no próximo backup |
 | `deploy/compose/initdb.sql` | `/opt/stillon/deploy/compose/` | `0644` | nada: vale no próximo backup |
+
+Quando mudar o protocolo do backup, publique a imagem e recopie `stillon-entrada` e
+`backup.sh` da mesma revisão; confira o probe do passo 7.1. A imagem fornece o helper
+automaticamente, sem quarto arquivo de backup para instalar.
 
 Os pacotes do host que o `stillon-entrada` e o vigia usam (`age`, `curl`, `jq`, `util-linux`,
 passo 3.3) vêm do Ubuntu e se atualizam sozinhos (passo 2.11). Se um PR passar a exigir um pacote
