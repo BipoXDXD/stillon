@@ -157,8 +157,12 @@ comandos deste runbook.
 ssh-keygen -t ed25519 -C "stillon-admin" -f ~/.ssh/stillon_admin
 ```
 
-Ele pede uma *passphrase* duas vezes: invente uma frase longa, guarde-a no gerenciador (entrada
-"StillOn – passphrase da chave SSH") e digite-a. Nada aparece enquanto digita.
+Ele pede uma *passphrase* duas vezes. **Antes**, gere a frase no gerenciador (entrada "StillOn –
+passphrase da chave SSH"; no Bitwarden, o gerador no modo *Passphrase*, com palavras sem acento) e
+salve a entrada. Depois **cole** a frase nas duas perguntas, sem digitar: uma frase digitada pode
+sair diferente da guardada (acentos, outro teclado), e aí nenhum computador abre a chave. Nada
+aparece enquanto você cola, e a segunda pergunta (`Enter same passphrase again:`) espera a
+colagem de novo.
 
 **Por quê:** a VPS vai aceitar entrada **só** por chave, nunca por senha (passo 2.7). A chave
 privada (`~/.ssh/stillon_admin`) nunca sai do seu computador; a pública (`.pub`) vai para a VPS.
@@ -168,7 +172,11 @@ A passphrase protege a chave se alguém copiar o arquivo.
 desenho de caracteres (o *randomart*).
 
 **Confira:** `ls -l ~/.ssh/stillon_admin*` lista dois arquivos, o sem `.pub` com permissão
-`-rw-------`.
+`-rw-------`. E que a frase do gerenciador abre a chave: `ssh-keygen -y -f ~/.ssh/stillon_admin`,
+colando a frase, imprime a mesma linha `ssh-ed25519 AAAA…` do `.pub`. Com
+`incorrect passphrase supplied to decrypt private key`, a frase guardada não é a da chave: apague
+os dois arquivos e gere de novo, agora colando (em 2026-09-28 foi isso que obrigou a refazer a
+chave, já no Mac).
 
 **Cópia de segurança:** guarde também o **conteúdo** da chave privada no gerenciador (entrada
 "StillOn – chave SSH do administrador", como anexo ou nota segura): `cat ~/.ssh/stillon_admin`
@@ -317,7 +325,8 @@ ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub
 
 **Deve aparecer:** uma linha como `256 SHA256:AbC…xyz root@… (ED25519)`. Deixe essa aba aberta.
 
-**Faça, depois, no seu computador:**
+**Faça, depois, no seu computador**, com a passphrase **já copiada** do gerenciador (o servidor
+dá 2 minutos para o login terminar; passado disso, fecha com `Connection closed`, e basta repetir):
 
 ```bash
 ssh -i ~/.ssh/stillon_admin root@"$VPS"
@@ -333,6 +342,18 @@ do painel, você está falando com a sua VPS, e não com alguém no meio do cami
 `yes`, e a passphrase da chave. O prompt vira `root@…:~#`: você está **na VPS**.
 
 Se forem diferentes, digite `no` e pare: releia o IP no `~/.stillon-vps`.
+
+**Confira também** (na VPS, como root) quais chaves o root aceita, porque o passo 2.5 as copia para
+o seu usuário:
+
+```bash
+cat /root/.ssh/authorized_keys
+```
+
+Uma linha só, terminando em `stillon-admin`; se você trocou a chave no painel, a antiga não pode
+estar ali. Se o prompt aparecer **colado** no fim da linha, o arquivo não termina com quebra de
+linha (a Hostinger o grava assim), e uma chave acrescentada depois com `>>` grudaria nela:
+`printf '\n' >> /root/.ssh/authorized_keys`.
 
 ### 2.2 Atualizar o sistema
 
@@ -441,6 +462,7 @@ Host stillon
     User $EU
     IdentityFile ~/.ssh/stillon_admin
     IdentitiesOnly yes
+    ServerAliveInterval 30
 FIM
 chmod 600 ~/.ssh/config
 ```
@@ -453,7 +475,11 @@ pelo IP novo, salve (`Ctrl+O`, Enter, `Ctrl+X`) e rode o **Confira** abaixo. Con
 `grep -c '^Host stillon$' ~/.ssh/config`: tem de dar `1`.
 
 **Por quê:** a partir daqui, `ssh stillon` e `scp arquivo stillon:` bastam; o `IdentitiesOnly`
-evita que o SSH ofereça outras chaves suas e conte tentativas no `fail2ban` (passo 2.8).
+evita que o SSH ofereça outras chaves suas e conte tentativas no `fail2ban` (passo 2.8). O
+`ServerAliveInterval` manda um sinal a cada 30 s: sem ele, uma sessão parada enquanto você lê o
+runbook pode ser derrubada pelo roteador (`Operation timed out`), e o terminal volta para o seu
+computador sem aviso. **Olhe o prompt antes de colar cada comando**: um comando "da VPS" rodado no
+seu computador pode achar a mesma pasta (o macOS também tem `/etc/ssh/sshd_config.d`).
 
 **Confira:** `ssh stillon true && echo ok` imprime `ok` (depois da passphrase, se o seu
 chaveiro não a lembrar).
