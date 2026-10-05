@@ -45,7 +45,16 @@ Lições da execução guiada (2026-09-28):
 - Configuração do Mac sem segredo (ex.: `~/.ssh/config`), o Claude escreve; o dono roda o que
   pede passphrase, `sudo` ou painel.
 
-## Onde parou (2026-09-28)
+## Orientação atual (2026-10-05)
+
+O estado de desenvolvimento, dos PRs e das integrações está no
+[registro de continuidade](docs/superpowers/reports/2026-10-05-continuacao.md).
+A execução histórica dos blocos 0–2 está registrada abaixo; a VPS não foi
+conferida nesta retomada. Qualquer continuação da hospedagem parte do computador
+Linux e segue o [runbook](docs/deploy/vps.md), guiada, um passo numerado e seu
+**Confira** por vez. Confirme o estado atual antes de escolher o próximo bloco.
+
+## Registro histórico (2026-09-28)
 
 - `main` = PRs #1–#24 integrados (Planos 1–11 e a renomeação); imagem publicada em
   `ghcr.io/bipoxdxd/stillon`. PR #25 (spec sem o Fly, `.DS_Store`) aberto.
