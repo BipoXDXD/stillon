@@ -1,8 +1,45 @@
 # Continuidade do StillOn — 2026-10-05
 
-Registro desta retomada, em andamento. Atualiza o estado operacional do
-[registro anterior](2026-10-04-continuacao.md), preservando o histórico.
-Não houve integração à `main`, deploy ou operação na VPS.
+Atualiza o [registro anterior](2026-10-04-continuacao.md), preservando o histórico.
+
+## Fechamento da integração e próxima fase
+
+O [PR #27](https://github.com/BipoXDXD/stillon/pull/27) foi integrado na main pelo
+commit assinado `0f42101b133d6d76e7e71e0f3c3333bd6c4a60d8`. Antes dele, os PRs
+documentais #25/#26 e Dependabot #17/#18 foram integrados separadamente. A cadeia
+de fases foi concluída, incluindo o redesign vintage (#54), configuração local de
+e-mail (#55) e correção da cadência E2E (#56), trazidos por #48 → #36 → #34 → #27.
+
+O [CI final do PR](https://github.com/BipoXDXD/stillon/actions/runs/37285773323)
+aprovou os nove checks. Seis checkouts reais foram conferidos: HEAD `a81c288`,
+base `c25b67f` e árvore `dbeb6f5edd4c20cf6375ef211ddece7917174338`.
+Essa árvore corresponde exatamente aos 417 caminhos/blobs/modos da candidata
+congelada, e foi reconferida no merge real da main. Validação local conjunta:
+453 testes web e `go build ./...`, `go vet ./...`, `make test` com PostgreSQL 17 e
+18, todos aprovados; 424 hashes únicos de fontes/bundle permaneceram invariantes.
+Lacunas de cobertura documentadas permanecem: não há alegação de 100% global.
+
+O servidor Discord foi criado e organizado com Informações/boas-vindas,
+Monitoramento/avisos/operacao e Conversa/Operação, ícone creme/oliva e convite
+permanente. Webhook cadastrado na conta demonstrativa local, marcado Verificado,
+com mensagem de teste realmente recebida. Não registrar convite, webhook ou tokens
+neste repositório. Isso verifica o canal de entrega, não a identidade de cada pessoa.
+
+A [especificação de vinculação de contas](../specs/2026-10-05-vinculacao-discord-design.md)
+foi aprovada pelo dono. O [plano de implementação](../plans/2026-10-05-vinculacao-discord.md)
+está pronto para revisão; código dessa nova fase ainda não implementado. Cargo
+Verificado apenas identifica contas vinculadas, sem restringir canais. A frequência
+de lembretes por e-mail/Discord está em discussão; sugestões não são configuração aplicada.
+
+E-mail local depende da chave Resend e do remetente no ambiente privado. Não houve
+deploy ou operação na VPS. Histórico de blocos 0–2 não substitui conferência atual:
+retomar hospedagem pelo Linux, um passo do runbook com seu Confira por vez.
+O [CI de push da main](https://github.com/BipoXDXD/stillon/actions/runs/37287203451)
+ainda executava às 09:06 UTC; publicação da nova imagem não estava confirmada.
+
+Evidências locais: `.superpowers/publicacao-final-2026-10-05/`, incluindo
+`review-main-merge-final-real.json` e `auditoria-ci-final/ci27-verificador-final.json`.
+As seções seguintes são checkpoints históricos e não descrevem pendências atuais.
 
 ## Publicação após liberação da assinatura
 

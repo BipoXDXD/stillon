@@ -1,6 +1,6 @@
 # Vinculação da conta StillOn ao Discord
 
-Estado: proposta para revisão do dono; nenhuma implementação deste fluxo está concluída.
+Estado: especificação aprovada pelo dono em 2026-10-05; implementação ainda pendente.
 
 ## Objetivo e decisões do dono
 
