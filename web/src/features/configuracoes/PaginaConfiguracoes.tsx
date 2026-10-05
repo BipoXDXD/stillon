@@ -910,7 +910,7 @@ export function PaginaConfiguracoes() {
           // O /me relido fecha o diálogo (o portão); o aviso fica no toast,
           // que sobrevive a ele.
           aoJaAtivada={() => {
-            avisar(JA_ATIVADA)
+            avisar(incerta ?? JA_ATIVADA)
             reler()
           }}
         />
