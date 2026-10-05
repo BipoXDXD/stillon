@@ -19,7 +19,7 @@
 #
 #   ssh deploy@VPS backup > stillon-<data>.dump.age
 #       O dump do banco, restaurado e conferido pelo deploy/backup/backup.sh
-#       (sem mudança), cifrado com a chave PÚBLICA do age em
+#       supervisionado, cifrado com a chave PÚBLICA do age em
 #       /opt/stillon/age-recipient, na saída padrão; o log na de erro.
 #       Códigos: 0 conferido; 3 a cópia não passou nas checagens (nada na
 #       saída); 4 conferido e enviado, mas o disco passou de 85%; 1 outro
@@ -81,6 +81,8 @@ uso() { sair 2 "$* (uso: \"deploy <sha de 40 hex> sha256:<64 hex>\" ou \"backup\
 TMP_DEPLOY=
 TMP_BACKUP=
 RESTAURO=
+HELPER=
+TMP_HELPER=
 TEE_PID=
 PEDIDO=
 # shellcheck disable=SC2317,SC2329 # chamada pelo trap EXIT (0.9 e 0.10+ dão códigos diferentes)
@@ -90,7 +92,12 @@ fim() {
     # Com -v: um volume anônimo do descartável (o VOLUME da imagem do
     # postgres, se um dia o --tmpfs não o cobrir) sai junto, e não sobra um
     # por backup.
-    [ -z "$RESTAURO" ] || docker rm -f -v "$RESTAURO" >/dev/null 2>&1 || true
+    [ -z "$HELPER" ] || remover_recurso_backup "$HELPER" helper || true
+    [ -z "$TMP_HELPER" ] || rm -rf "$TMP_HELPER"
+    if [ -n "$RESTAURO" ]; then
+        limpar_dump_restauro "$RESTAURO" || true
+        remover_recurso_backup "$RESTAURO" restauro || true
+    fi
     if [ -n "$TMP_BACKUP" ]; then
         shred -u "$TMP_BACKUP"/* 2>/dev/null || true
         rm -rf "$TMP_BACKUP"
@@ -390,12 +397,107 @@ deploy() {
     sair 1 "o rollback para $anterior também não ficou saudável: veja docs/deploy/vps.md"
 }
 
-# backup: o deploy/backup/backup.sh SEM MUDANÇA (Plano 11, spec §4), dentro de
-# um postgres descartável (a mesma imagem do db) ligado à rede do compose,
-# com os dados em tmpfs. O dump em claro fica num diretório em memória
-# ($SHM_BASE) e sai daqui só cifrado com a chave PÚBLICA do age.
+# Identidade privada do backup: nome, labels, nonce e imagem devem concordar.
+# Um prefixo parecido, sozinho, não autoriza apagar contêiner de outro projeto.
+recurso_backup_proprio() {
+    local cid=$1 tipo=$2 nome raiz rotulo nonce imagem esperada
+    read -r nome raiz rotulo nonce imagem esperada < <(docker inspect -f \
+        '{{.Name}} {{index .Config.Labels "io.stillon.backup.raiz"}} {{index .Config.Labels "io.stillon.backup.tipo"}} {{index .Config.Labels "io.stillon.backup.nonce"}} {{.Image}} {{index .Config.Labels "io.stillon.backup.imagem"}}' "$cid" 2>/dev/null) || return 1
+    [ "$raiz" = "$DIR" ] && [ "$rotulo" = "$tipo" ] && [ "$imagem" = "$esperada" ] || return 1
+    [[ "$nonce" =~ ^[0-9a-f]{16}$ && "$imagem" =~ ^sha256:[0-9a-f]{64}$ ]] || return 1
+    case "$tipo" in
+        helper) [ "$nome" = "/stillon-backup-helper-$nonce" ] ;;
+        restauro) [ "$nome" = "/stillon-restauro-$nonce" ] ;;
+        *) return 1 ;;
+    esac
+}
+
+remover_recurso_backup() {
+    local cid tipo=$2
+    cid=$(docker inspect -f '{{.Id}}' "$1" 2>/dev/null) || return 0
+    recurso_backup_proprio "$cid" "$tipo" || return 1
+    docker rm -f -v "$cid" >/dev/null
+}
+
+limpar_dump_restauro() {
+    local cid
+    cid=$(docker inspect -f '{{.Id}}' "$1" 2>/dev/null) || return 0
+    recurso_backup_proprio "$cid" restauro || return 1
+    # Arquivos exclusivos do backup, antes de remover o contêiner: o dump
+    # criado pelo helper nonroot pode ainda não pertencer ao dono do host.
+    docker exec --user 0 "$cid" sh -c 'rm -f /saida/stillon.dump /saida/.stillon-snapshot.*' >/dev/null 2>&1 || true
+}
+
+recuperar_backups() {
+    local tipo cid d base nonce dono
+    for tipo in helper restauro; do
+        for cid in $(docker ps -aq --filter "label=io.stillon.backup.raiz=$DIR" \
+            --filter "label=io.stillon.backup.tipo=$tipo"); do
+            recurso_backup_proprio "$cid" "$tipo" || continue
+            [ "$tipo" != restauro ] || limpar_dump_restauro "$cid"
+            remover_recurso_backup "$cid" "$tipo" || sair 1 "não foi possível remover recurso próprio do backup anterior"
+        done
+    done
+    # O registro é criado ANTES do docker create/run: mesmo sem CID capturado,
+    # labels+nome permitem recuperação sob a trava na entrada seguinte.
+    for d in "$SHM_BASE"/stillon-backup-helper.* "$SHM_BASE"/stillon-backup.*; do
+        if ! { [ -d "$d" ] && [ ! -L "$d" ] && [ -f "$d/.stillon-backup-owner" ]; }; then
+            continue
+        fi
+        base=${d##*/}
+        nonce=${base##*.}
+        [[ "$nonce" =~ ^[0-9a-f]{16}$ ]] || continue
+        case "$base" in "stillon-backup.$nonce" | "stillon-backup-helper.$nonce") ;; *) continue ;; esac
+        dono=$(cat "$d/.stillon-backup-owner")
+        [ "$dono" = "$DIR" ] || continue
+        rm -rf "$d"
+    done
+}
+
+# Extrai o mesmo binário da imagem local da versão aprovada, sem iniciar app.
+# A tag de SHA é fixada pelo deploy; o chamador SSH não escolhe a imagem.
+preparar_helper_backup() {
+    local sha imagem nonce nome cid tamanho
+    sha=$(cat "$DIR/versao" 2>/dev/null) || sair 1 "falta a versão aprovada para o helper do backup"
+    [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || sair 1 "versão aprovada inválida para o helper do backup"
+    imagem=$(docker image inspect -f '{{.Id}}' "$IMAGEM:$sha" 2>/dev/null) || \
+        sair 1 "imagem local da versão aprovada ausente para o helper do backup"
+    [[ "$imagem" =~ ^sha256:[0-9a-f]{64}$ ]] || sair 1 "imagem aprovada inválida para o helper do backup"
+    nonce=$(head -c 8 /dev/urandom | od -An -tx1 | tr -d ' \n')
+    TMP_HELPER=$SHM_BASE/stillon-backup-helper.$nonce
+    mkdir -m 0700 "$TMP_HELPER"
+    printf '%s\n' "$DIR" > "$TMP_HELPER/.stillon-backup-owner"
+    nome=stillon-backup-helper-$nonce
+    HELPER=$nome
+    printf '%s\n%s\n' "$nome" "$imagem" > "$TMP_HELPER/lease"
+    docker create --pull=never --name "$nome" --cidfile "$TMP_HELPER/cid" \
+        --label "io.stillon.backup.raiz=$DIR" --label io.stillon.backup.tipo=helper \
+        --label "io.stillon.backup.nonce=$nonce" --label "io.stillon.backup.imagem=$imagem" \
+        "$imagem" version >/dev/null || sair 1 "não foi possível criar a fonte privada do helper"
+    cid=$(cat "$TMP_HELPER/cid")
+    if ! { [[ "$cid" =~ ^[0-9a-f]{64}$ ]] && recurso_backup_proprio "$cid" helper; }; then
+        sair 1 "fonte privada do helper inválida"
+    fi
+    HELPER=$cid
+    docker cp "$cid:/stillon" "$TMP_HELPER/stillon" || sair 1 "não foi possível copiar o helper da imagem aprovada"
+    if ! { [ -f "$TMP_HELPER/stillon" ] && [ ! -L "$TMP_HELPER/stillon" ]; }; then
+        sair 1 "helper não é arquivo regular"
+    fi
+    tamanho=$(stat -c %s "$TMP_HELPER/stillon")
+    if ! { [ "$tamanho" -gt 0 ] && [ "$tamanho" -le $((64 * 1024 * 1024)) ] &&
+        [ "$(od -An -tx1 -N4 "$TMP_HELPER/stillon" | tr -d ' \n')" = 7f454c46 ]; }; then
+        sair 1 "helper inválido ou maior que 64 MiB"
+    fi
+    chmod 0600 "$TMP_HELPER/stillon"
+    remover_recurso_backup "$cid" helper || sair 1 "não foi possível remover a fonte privada do helper"
+    HELPER=
+}
+
+# backup: o PostgreSQL descartável usa a mesma imagem do db, memória/tmpfs
+# preservados. O helper é copiado para sua camada regular, nunca executado
+# no host ou por bind de /dev/shm, e roda com UID/GID 65532 e caps efetivas zero.
 backup() {
-    local db ip rede img senha codigo=0 raiz_docker pct nome tmp
+    local db ip rede img senha codigo=0 raiz_docker pct nome tmp nonce uid_host gid_host
     [ -s "$DIR/age-recipient" ] || sair 1 "falta $DIR/age-recipient (a chave PÚBLICA do age)"
     command -v age >/dev/null || sair 1 "o age não está instalado"
     if ! { [ -f "$SCRIPTS/backup/backup.sh" ] && [ -f "$SCRIPTS/backup/verificar.sql" ] && [ -f "$SCRIPTS/compose/initdb.sql" ]; }; then
@@ -417,17 +519,20 @@ backup() {
     [ -n "$db" ] || sair 1 "o serviço db não está de pé"
     rede=$(docker inspect -f '{{range $k, $v := .NetworkSettings.Networks}}{{$k}}{{end}}' "$db")
     ip=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$db")
-    img=$(docker inspect -f '{{.Config.Image}}' "$db")
+    img=$(docker inspect -f '{{.Image}}' "$db")
 
-    # Sob a trava: o que sobrou de um backup morto por SIGKILL (o dump em
-    # claro na memória, o postgres descartável com os volumes anônimos dele)
-    # sai agora.
-    find "$SHM_BASE" -maxdepth 1 -name 'stillon-backup.*' -exec rm -rf {} + || true
-    docker ps -aq --filter name=stillon-restauro- | xargs -r docker rm -f -v >/dev/null 2>&1 || true
-    nome=stillon-restauro-$$
+    recuperar_backups
+    preparar_helper_backup
+    nonce=$(head -c 8 /dev/urandom | od -An -tx1 | tr -d ' \n')
+    nome=stillon-restauro-$nonce
     RESTAURO=$nome
-    tmp=$(mktemp -d "$SHM_BASE/stillon-backup.XXXXXX")
+    tmp=$SHM_BASE/stillon-backup.$nonce
+    mkdir -m 0700 "$tmp"
     TMP_BACKUP=$tmp
+    printf '%s\n' "$DIR" > "$tmp/.stillon-backup-owner"
+    printf '%s\n%s\n' "$nome" "$img" > "$tmp/lease"
+    uid_host=$(id -u)
+    gid_host=$(id -g)
 
     # A senha do descartável é de uso único; a do stillon_backup vai ao
     # contêiner pelo ambiente (-e NOME, sem valor), fora da linha de comando.
@@ -439,7 +544,10 @@ backup() {
     VOLUME_BYTES=$(df -B1 --output=size "$raiz_docker" | tail -n 1 | tr -d ' ')
 
     echo "== postgres descartável ($img) na rede $rede"
-    docker run -d --name "$nome" --network "$rede" --memory 3g \
+    docker run -d --pull=never --init --security-opt no-new-privileges:true \
+        --name "$nome" --cidfile "$tmp/cid" --network "$rede" --memory 3g \
+        --label "io.stillon.backup.raiz=$DIR" --label io.stillon.backup.tipo=restauro \
+        --label "io.stillon.backup.nonce=$nonce" --label "io.stillon.backup.imagem=$img" \
         --tmpfs /var/lib/postgresql:rw,size=2g -e POSTGRES_PASSWORD \
         -v "$SCRIPTS:/deploy:ro" -v "$tmp:/saida" "$img" >/dev/null ||
         sair 1 "o postgres descartável não subiu"
@@ -449,17 +557,44 @@ backup() {
     done
     docker exec "$nome" pg_isready -h 127.0.0.1 -U postgres >/dev/null || sair 1 "o postgres descartável não ficou pronto"
 
-    # O mesmo usuário de quem roda a entrada (root, na VPS): o dump sai com
-    # esse dono, e o shred consegue apagá-lo.
-    docker exec --user "$(id -u):$(id -g)" -e ORIGEM_URL -e PGPASSWORD -e VOLUME_BYTES \
+    docker cp "$TMP_HELPER/stillon" "$nome:/stillon" || sair 1 "não foi possível instalar o helper no descartável"
+    docker exec --user 0 "$nome" chmod 0555 /stillon || sair 1 "não foi possível preparar o helper no descartável"
+    # O probe usa version, já reconhecido por imagens antigas: nenhuma queda
+    # acidental para configuração/boot do servidor antes de recusar protocolo.
+    # timeout limita o cliente Docker; o trap remove o PG exato para matar
+    # também um processo remoto do probe que sobreviva à perda desse cliente.
+    if ! timeout -k 5s 30s docker exec --user 0 "$nome" env -u POSTGRES_PASSWORD /usr/local/bin/gosu 65532:65532 \
+        /stillon version --backup-snapshot-protocol > "$TMP_HELPER/protocolo" 2>/dev/null; then
+        sair 1 "imagem aprovada não oferece o protocolo do backup; atualize a imagem e os scripts juntos"
+    fi
+    cmp -s "$TMP_HELPER/protocolo" <(printf 'stillon-backup-snapshot-v1\n') || \
+        sair 1 "protocolo incompatível do helper do backup"
+    rm -rf "$TMP_HELPER"
+    TMP_HELPER=
+
+    # O dono do host continua dono do diretório. Só o grupo/mode permitem
+    # que o helper nonroot crie o dump privado; nenhuma mudança recursiva.
+    if ! { docker exec --user 0 "$nome" chgrp 65532 /saida &&
+        docker exec --user 0 "$nome" chmod 0770 /saida; }; then
+        sair 1 "não foi possível preparar a saída privada do helper"
+    fi
+    docker exec --user 0 -e ORIGEM_URL -e PGPASSWORD -e VOLUME_BYTES \
         -e SAIDA=/saida/stillon.dump -e PGHOST=127.0.0.1 -e PGPORT=5432 -e PGUSER=postgres \
         "$nome" sh /deploy/backup/backup.sh || codigo=$?
     case "$codigo" in
         0 | 4) ;;
+        130 | 143) sair "$codigo" "backup interrompido" ;;
         3) sair 3 "a cópia restaurada não passou nas checagens: não há backup que sirva" ;;
         *) sair 1 "o backup.sh saiu com $codigo: não houve backup" ;;
     esac
-    [ -s "$tmp/stillon.dump" ] || sair 1 "o backup.sh saiu $codigo sem deixar o dump"
+    if ! { [ -f "$tmp/stillon.dump" ] && [ ! -L "$tmp/stillon.dump" ] && [ -s "$tmp/stillon.dump" ]; }; then
+        sair 1 "o backup.sh saiu $codigo sem deixar dump regular"
+    fi
+    # Após Wait e antes de age no host: repassar SOMENTE o arquivo regular,
+    # sem seguir symlinks ou mudar o dono da árvore montada.
+    docker exec --user 0 "$nome" sh -c \
+        '[ -f /saida/stillon.dump ] && [ ! -L /saida/stillon.dump ] && chown -h "$1:$2" /saida/stillon.dump && chmod 0600 /saida/stillon.dump' \
+        repassar "$uid_host" "$gid_host" || sair 1 "não foi possível devolver o dump ao dono do host"
 
     # O disco de verdade: o sistema de arquivos dos volumes do Docker. O
     # backup.sh mede o banco contra ele; aqui, a ocupação total (imagens,

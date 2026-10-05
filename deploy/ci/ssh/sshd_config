@@ -1,0 +1,15 @@
+# Daemon descartável: as restrições de comando/PTY vêm da chave, não daqui.
+Port 22
+HostKey /fixture/servidor
+PidFile /run/sshd.pid
+AuthorizedKeysFile .ssh/authorized_keys
+AllowUsers deploy
+PubkeyAuthentication yes
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PermitEmptyPasswords no
+PermitRootLogin no
+StrictModes yes
+UsePAM no
+PermitTTY yes
+LogLevel VERBOSE

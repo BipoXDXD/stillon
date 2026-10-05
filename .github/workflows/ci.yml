@@ -127,7 +127,27 @@ jobs:
           cache-dependency-path: go.sum
 
       - name: test
-        run: go test -race -count=1 -coverprofile=coverage.out ./...
+        # VM/daemon local exclusivo deste job: só este comando cria fixtures.
+        # Não compartilhar a sessão TC entre pacotes; o collector acompanha
+        # todas as sessões próprias e nunca para/remove contêineres.
+        run: |
+          python3 deploy/ci/diagnostico-fixture.py \
+            --output "$RUNNER_TEMP/fixture-diagnostic" --daemon-exclusivo -- \
+            go test -race -count=1 -coverprofile=coverage.out ./...
+
+      - name: diagnóstico limitado das fixtures
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: fixture-${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}
+          path: |
+            ${{ runner.temp }}/fixture-diagnostic/manifesto.json
+            ${{ runner.temp }}/fixture-diagnostic/eventos.jsonl
+            ${{ runner.temp }}/fixture-diagnostic/estados.jsonl
+            ${{ runner.temp }}/fixture-diagnostic/ryuk.jsonl
+          if-no-files-found: warn
+          retention-days: 3
 
   secrets:
     # O histórico INTEIRO, em todo PR: com o repositório privado, um segredo
@@ -182,6 +202,8 @@ jobs:
             deploy/vps/initdb.sh deploy/backup/backup.sh
       - name: checagens dos workflows
         run: sh deploy/ci/checar-workflows.sh
+      - name: collector das fixtures contra Docker falso
+        run: python3 deploy/ci/testar-diagnostico-fixture.py
       - name: nome anterior do projeto
         run: sh deploy/ci/checar-nome.sh
       - name: vps.sh contra um ssh falso
@@ -203,7 +225,7 @@ jobs:
           node-version: '24'
           cache: npm
           cache-dependency-path: web/package-lock.json
-      - run: npm ci --no-audit --no-fund
+      - run: npm ci --ignore-scripts --no-audit --no-fund
       - run: npm run typecheck
       - run: npm run lint
       - run: npx vitest run
@@ -348,7 +370,7 @@ jobs:
         # externa, o trace gravaria a senha digitada, e o artifact de falha
         # abaixo o levaria junto.
         run: |
-          npm ci --no-audit --no-fund
+          npm ci --ignore-scripts --no-audit --no-fund
           npx playwright install --with-deps chromium
           npx playwright test --trace off
 
@@ -403,6 +425,11 @@ jobs:
         run: bash deploy/ci/checar-vigia.sh
       - name: checagens da VPS
         run: bash deploy/ci/checar-vps.sh "$IMAGEM:ci"
+      - name: SSH real da chave restrita de deploy
+        timeout-minutes: 5
+        run: |
+          shellcheck deploy/ci/ssh/*.sh
+          bash deploy/ci/testar-ssh-real.sh
 
   publish:
     # Só depois de tudo verde, e só em push para a main ou tag v* deste

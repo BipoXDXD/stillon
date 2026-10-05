@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/BipoXDXD/stillon/internal/backup"
 )
 
 // version é carimbada no build: -ldflags "-X main.version=…" (Dockerfile,
@@ -24,6 +26,10 @@ const healthcheckPrazo = 3 * time.Second
 
 // runVersion é `stillon version`: imprime a versão carimbada no build.
 func runVersion(args []string, stdout, stderr io.Writer) int {
+	if len(args) == 1 && args[0] == "--backup-snapshot-protocol" {
+		fmt.Fprintln(stdout, backup.Protocol)
+		return 0
+	}
 	if len(args) > 0 {
 		fmt.Fprintln(stderr, "uso: stillon version")
 		return saidaUso

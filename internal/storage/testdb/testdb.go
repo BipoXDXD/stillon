@@ -8,6 +8,8 @@ package testdb
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
 	"fmt"
 	"net/url"
 	"os"
@@ -47,6 +49,23 @@ var (
 	startErr  error
 	vazios    atomic.Int64
 )
+
+// Cada pacote de go test é um processo, mas o Testcontainers deriva a sessão
+// pelo pai compartilhado. Um Ryuk recriado por outro pacote pode então recolher
+// nosso Postgres ainda em uso se a ligação ao Ryuk anterior falhou no handshake.
+// Definir antes do primeiro acesso à configuração mantém provedor, labels e
+// guardião na mesma sessão, exclusiva deste processo. O namespace herdado vira
+// hash para não expor texto arbitrário nem exceder o limite do nome Docker.
+func init() {
+	namespace := sha256.Sum256([]byte(os.Getenv("TESTCONTAINERS_SESSION_ID")))
+	var nonce [16]byte
+	// No Go 1.26, Read preenche tudo ou encerra o processo se não houver entropia.
+	_, _ = rand.Read(nonce[:])
+	id := fmt.Sprintf("stillon-test-%x-%d-%x", namespace[:8], os.Getpid(), nonce)
+	if err := os.Setenv("TESTCONTAINERS_SESSION_ID", id); err != nil {
+		panic(fmt.Errorf("definir sessão do Postgres de teste: %w", err))
+	}
+}
 
 // New devolve um pool ligado a um Postgres limpo e migrado, como o papel
 // da aplicação.

@@ -64,6 +64,8 @@ type Service struct {
 	totp  *auth.TOTP
 	clk   clock.Clock
 	ipKey []byte
+	// O custo de derivação fica fora das transações, separado da persistência.
+	hashPassword func(context.Context, string) (string, error)
 	// depoisDeContar existe para o teste de criação concorrente: roda entre a
 	// contagem de usuários e a inserção.
 	depoisDeContar func()
@@ -72,7 +74,7 @@ type Service struct {
 // NewService: totp e ipKey só servem à API (troca de senha). O CLI passa nil
 // nos dois, e ChangePassword recusa rodar sem eles.
 func NewService(pool *pgxpool.Pool, totp *auth.TOTP, clk clock.Clock, ipKey []byte) *Service {
-	return &Service{pool: pool, users: auth.NewPGStore(pool), totp: totp, clk: clk, ipKey: ipKey}
+	return &Service{pool: pool, users: auth.NewPGStore(pool), totp: totp, clk: clk, ipKey: ipKey, hashPassword: auth.HashPassword}
 }
 
 // Account é o que GET /me devolve.
@@ -122,9 +124,9 @@ type ChangePasswordInput struct {
 //     não gasta Argon2 nem conta falha por erro de digitação na nova);
 //  2. a família do token viva (leitura barata; a verdade vem no passo 6);
 //  3. a senha atual (auth.VerifyPassword);
-//  4. o segundo fator, se ligado, por auth.TOTP.Verify (aceita o código de
+//  4. o hash novo, fora da transação e antes de consumir o segundo fator;
+//  5. o segundo fator, se ligado, por auth.TOTP.Verify (aceita o código de
 //     recuperação);
-//  5. o hash novo, fora da transação;
 //  6. a transação: trava do usuário (D1), família viva de novo, CAS do hash,
 //     as OUTRAS famílias revogadas, auditoria.
 //
@@ -167,6 +169,13 @@ func (s *Service) ChangePassword(ctx context.Context, userID, familyID uuid.UUID
 		return ErrInvalidCredentials
 	}
 
+	// Derivar a senha nova pode recusar por saturação do Argon2id. Nenhum
+	// timestep ou código de recuperação pode ser gasto por esse 429.
+	hash, err := s.hashPassword(ctx, in.New)
+	if err != nil {
+		return err
+	}
+
 	ligado, err := s.totp.IsEnabled(ctx, userID)
 	if err != nil {
 		return err
@@ -184,10 +193,6 @@ func (s *Service) ChangePassword(ctx context.Context, userID, familyID uuid.UUID
 		}
 	}
 
-	hash, err := auth.HashPassword(ctx, in.New)
-	if err != nil {
-		return err
-	}
 	ipHash := crypto.HashIP(s.ipKey, meta.IP)
 
 	return s.inTx(ctx, func(q *db.Queries) error {

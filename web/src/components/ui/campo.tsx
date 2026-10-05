@@ -2,7 +2,7 @@ import { useId, type ComponentProps, type ReactNode } from 'react'
 import { cn } from '@/lib/utils'
 
 export const estiloDeEntrada =
-  'block w-full rounded-md border border-borda bg-fundo px-3 py-2 text-sm text-texto aria-invalid:border-perigo'
+  'block w-full min-h-11 min-w-0 rounded-lg border border-borda bg-superficie px-3 py-2.5 text-sm text-texto aria-invalid:border-perigo'
 
 // Campo liga rótulo, ajuda e erro ao controle: aria-describedby e
 // aria-invalid, como o leitor de tela precisa. O controle vem por função,
@@ -23,7 +23,7 @@ export function Campo({
   const idErro = `${id}-erro`
   const descrito = [ajuda ? idAjuda : null, erro ? idErro : null].filter(Boolean).join(' ') || undefined
   return (
-    <div className="space-y-1">
+    <div className="min-w-0 space-y-1.5">
       <label htmlFor={id} className="block text-sm font-medium">
         {rotulo}
       </label>

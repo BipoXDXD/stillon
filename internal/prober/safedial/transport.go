@@ -8,7 +8,6 @@ import (
 	"net/netip"
 	"net/url"
 	"slices"
-	"strings"
 	"syscall"
 	"time"
 )
@@ -22,6 +21,10 @@ const maxRedirects = 3
 // do conteúdo; ler mais do que isso só criaria canal de exfiltração e pressão
 // de memória.
 const MaxBodyBytes = 64 << 10
+
+// UserAgent é a identificação pública; um header personalizado do alvo nunca
+// pode ocupar seu lugar num salto que exige a remoção de segredos.
+const UserAgent = "StillOn/1.0 (+monitor de disponibilidade)"
 
 // maxResponseHeaderBytes é o teto dos cabeçalhos de uma resposta. Acima
 // dele, a requisição falha e a sonda sai down (unknown).
@@ -182,16 +185,21 @@ func cadeia(via []*http.Request, prox *http.Request) []*url.URL {
 
 // deveLimparHeaders decide se os headers do alvo ficam para trás no último
 // salto da cadeia. Limpa se algum salto foi para host:porta diferente do
-// original (sem diferenciar maiúsculas) ou se algum salto rebaixou https
-// para http. O host é comparado como está na URL: http://a → https://a é o
-// mesmo host e mantém os headers, que passam a ir cifrados.
+// original (canonicalizado como o transporte) ou se algum salto rebaixou
+// https para http. Mantém a política de portas explícitas: http://a →
+// https://a é o mesmo destino e mantém os headers, que passam a ir cifrados.
 func deveLimparHeaders(saltos []*url.URL) bool {
 	if len(saltos) < 2 {
 		return false
 	}
 	origem := saltos[0]
+	hostOriginal, ok := DialedHost(origem.Hostname())
+	if !ok {
+		return true
+	}
 	for i := 1; i < len(saltos); i++ {
-		if !strings.EqualFold(saltos[i].Host, origem.Host) {
+		host, ok := DialedHost(saltos[i].Hostname())
+		if !ok || host != hostOriginal || saltos[i].Port() != origem.Port() {
 			return true
 		}
 		if saltos[i-1].Scheme == "https" && saltos[i].Scheme == "http" {
@@ -201,13 +209,12 @@ func deveLimparHeaders(saltos []*url.URL) bool {
 	return false
 }
 
-// limparHeaders remove tudo, menos o User-Agent, que identifica o monitor e
-// não é segredo de ninguém. Vai junto o Referer que o net/http acabou de pôr:
-// ele carrega a URL do salto anterior, que também é do alvo.
+// limparHeaders remove todos os valores copiados do alvo, inclusive um
+// User-Agent personalizado. Só recoloca a identificação pública do monitor.
+// Vai junto o Referer: ele carrega a URL anterior, que também é do alvo.
 func limparHeaders(h http.Header) {
 	for nome := range h {
-		if http.CanonicalHeaderKey(nome) != "User-Agent" {
-			delete(h, nome)
-		}
+		delete(h, nome)
 	}
+	h.Set("User-Agent", UserAgent)
 }

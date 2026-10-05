@@ -37,6 +37,8 @@ func TestSeedRefusesOutsideLoopback(t *testing.T) {
 		{"http://127.1.2.3:8080", true},
 		{"http://[::1]:8080", true},
 		{"HTTP://LocalHost:8080", true},
+		{"http://[::1]", true},
+		{"http://localhost:65535/caminho?x=1#parte", true},
 		{"", false},
 		{"https://localhost:8080", false},
 		{"https://stillon.example", false},
@@ -49,6 +51,18 @@ func TestSeedRefusesOutsideLoopback(t *testing.T) {
 		{"http://127.0.0.1:8080@exemplo.com", false},
 		{"http://[::1].exemplo.com", false},
 		{"ftp://localhost", false},
+		{"http://localhost:abc", false},
+		{"http://localhost:", false},
+		{"http://localhost:0", false},
+		{"http://localhost:65536", false},
+		{"http://localhost:80:90", false},
+		{"http://[::1]:abc", false},
+		{"http://[::1]:65536", false},
+		{"http://127.256.0.1:8080", false},
+		{"http://localhost:8080/ com espaço", false},
+		{"http://localhost:8080/\t", false},
+		{"http://localhost:8080/\n", false},
+		{"http://localhost\\@exemplo.com", false},
 	}
 	for _, c := range cases {
 		t.Run(c.url, func(t *testing.T) {

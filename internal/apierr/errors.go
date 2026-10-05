@@ -11,7 +11,9 @@
 package apierr
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 
@@ -110,6 +112,12 @@ func writeError(w http.ResponseWriter, r *http.Request, code ErrorCode, fields [
 	if !known {
 		entry = errorTable[CodeInternal]
 		code = CodeInternal
+	}
+	// O prazo vencido representa indisponibilidade temporária. Erros de
+	// domínio continuam com seus códigos, e nenhum erro SQL é exposto.
+	if code == CodeInternal && errors.Is(r.Context().Err(), context.DeadlineExceeded) {
+		code = CodeUnavailable
+		entry = errorTable[code]
 	}
 
 	var body errorBody

@@ -1,6 +1,6 @@
 import { screen, waitFor, within } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
-import { incidente, itemDoResumo } from '@/test/fixtures'
+import { canal, incidente, itemDoResumo } from '@/test/fixtures'
 import { renderizarPainel } from '@/test/renderizar'
 import { ItemDoResumo } from '@/lib/api/schemas'
 import { mapaDeEstados, transicoes } from './transicoes'
@@ -101,4 +101,67 @@ describe('navegação', () => {
     await r.cliente.refetchQueries()
     await waitFor(() => expect(link).toHaveAccessibleName('Incidentes'))
   })
+})
+
+// Plano 12: tirar a contagem por enabled ou os avisos de canais precisa
+// derrubar estes casos. A API falsa só fornece respostas; a tela é real.
+describe('resumo operacional', () => {
+  it('conta os estados reais e separa alvo pausado de sem dados', async () => {
+    const r = await renderizarPainel('/')
+    r.falsa.estado.resumo = [
+      itemDoResumo({ id: 'a1' }), itemDoResumo({ id: 'a2' }),
+      itemDoResumo({ id: 'a3', state: 'degraded' }),
+      itemDoResumo({ id: 'a4', state: 'down' }),
+      itemDoResumo({ id: 'a5', state: 'unknown' }),
+      itemDoResumo({ id: 'a6', state: 'up', enabled: false }),
+    ]
+    await r.cliente.refetchQueries()
+    const resumo = await screen.findByRole('region', { name: 'Resumo dos alvos' })
+    for (const [estado, numero] of [['No ar', '2'], ['Degradado', '1'], ['Fora do ar', '1'], ['Sem dados', '1'], ['Pausado', '1']] as const) {
+      expect(within(resumo).getByText(estado).nextElementSibling).toHaveTextContent(numero)
+    }
+    expect(screen.getByText(/Última atualização:/)).toBeInTheDocument()
+  })
+
+  it('sem canais avisa como configurar os alertas sem esconder os alvos', async () => {
+    const r = await renderizarPainel('/')
+    r.falsa.estado.resumo = [itemDoResumo()]
+    await r.cliente.refetchQueries()
+    expect(await screen.findByText('Nenhum canal de notificação cadastrado. Os incidentes não enviam avisos.')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Configurar canais' })).toHaveAttribute('href', '/channels')
+    expect(screen.getByRole('link', { name: 'API' })).toBeInTheDocument()
+  })
+
+  it('avisa de canais pausados e de ausência de canal verificado ativo', async () => {
+    const r = await renderizarPainel('/')
+    r.falsa.estado.canais = [canal({ enabled: false }), canal({ id: 'c2', status: 'pending' })]
+    await r.cliente.refetchQueries()
+    expect(await screen.findByText('1 canal pausado. Os avisos desse canal são descartados.')).toBeInTheDocument()
+    expect(screen.getByText('Nenhum canal verificado está ativo para receber avisos.')).toBeInTheDocument()
+    r.falsa.estado.canais = [canal(), canal({ id: 'c2', enabled: false })]
+    await r.cliente.refetchQueries({ queryKey: ['channels'] })
+    await waitFor(() => expect(screen.queryByText('Nenhum canal verificado está ativo para receber avisos.')).not.toBeInTheDocument())
+    expect(screen.getByText('1 canal pausado. Os avisos desse canal são descartados.')).toBeInTheDocument()
+  })
+
+  it('falha na consulta de canais não é apresentada como ausência e mantém os alvos', async () => {
+    const r = await renderizarPainel('/')
+    r.falsa.estado.resumo = [itemDoResumo()]
+    await r.cliente.refetchQueries()
+    r.falsa.estado.forcar.set('GET /channels', { status: 502, code: 'unavailable' })
+    await r.cliente.refetchQueries({ queryKey: ['channels'] })
+    expect(await screen.findByText('Não foi possível conferir os canais de notificação agora.')).toBeInTheDocument()
+    expect(screen.queryByText('Nenhum canal de notificação cadastrado. Os incidentes não enviam avisos.')).not.toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'API' })).toBeInTheDocument()
+  })
+})
+
+// Um canal failing continua verificado e recebendo tentativas (notify).
+// Sabotagem: considerar apenas status verified no aviso de canal ativo.
+it('canal falhando é avisado e continua contado como verificado ativo', async () => {
+  const r = await renderizarPainel('/')
+  r.falsa.estado.canais = [canal({ status: 'failing' })]
+  await r.cliente.refetchQueries()
+  expect(await screen.findByText('1 canal está falhando na entrega.')).toBeInTheDocument()
+  expect(screen.queryByText('Nenhum canal verificado está ativo para receber avisos.')).not.toBeInTheDocument()
 })

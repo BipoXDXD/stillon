@@ -6,9 +6,9 @@ import { Botao } from './botao'
 // react-remove-scroll, que injeta um <style>: é o nonce de src/lib/nonce.ts
 // que o deixa passar pela CSP (spec do Plano 6, §8.1).
 
-const sobreposicao = 'fixed inset-0 bg-black/50'
+const sobreposicao = 'fixed inset-0 z-40 bg-black/60'
 const caixa =
-  'fixed top-1/2 left-1/2 w-[min(32rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 space-y-4 rounded-lg border border-borda bg-fundo p-6 shadow-lg max-h-[90vh] overflow-y-auto'
+  'fixed z-50 top-1/2 left-1/2 w-[min(32rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 space-y-4 rounded-xl border border-borda bg-superficie p-5 sm:p-6 shadow-lg max-h-[90vh] overflow-y-auto'
 
 // O foco volta a quem abriu. O Radix devolve o foco ao seu Trigger, mas aqui
 // o diálogo abre por `aberto`, sem Trigger: sem isto, o foco caía no <body>

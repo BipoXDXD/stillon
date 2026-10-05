@@ -1,6 +1,8 @@
 package prober
 
 import (
+	"crypto/tls"
+	"crypto/x509"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -219,6 +221,57 @@ func TestProbeResponseHeadersAboveTheCapAreDown(t *testing.T) {
 	}
 }
 
+// C1: o transporte real também propaga o teto de cabeçalhos ao HTTP/2.
+// Sabotagem: maxResponseHeaderBytes de 64 KiB para 2 MiB deixa o caso de
+// 100 KiB up e reprova este teste. O caso pequeno prova sucesso com TLS
+// validado, e cada caso observa o protocolo usado no servidor.
+func TestProbeHTTP2ResponseHeadersAboveTheCapAreDown(t *testing.T) {
+	for _, c := range []struct {
+		nome    string
+		tamanho int
+		down    bool
+	}{{"32_KiB_passam", 32 << 10, false}, {"100_KiB_excedem_o_teto", 100 << 10, true}} {
+		t.Run(c.nome, func(t *testing.T) {
+			protocolo := make(chan int, 1)
+			srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				protocolo <- r.ProtoMajor
+				w.Header().Set("X-Enchimento", strings.Repeat("a", c.tamanho))
+				w.WriteHeader(http.StatusOK)
+			}))
+			srv.EnableHTTP2 = true
+			srv.StartTLS()
+			t.Cleanup(srv.Close)
+
+			client := safedial.NewClientAllowing(0, enderecoDe(t, srv))
+			transport, ok := client.Transport.(*http.Transport)
+			if !ok {
+				t.Fatalf("transporte de produção = %T, queria *http.Transport", client.Transport)
+			}
+			raizes := x509.NewCertPool()
+			raizes.AddCert(srv.Certificate())
+			transport.TLSClientConfig = &tls.Config{RootCAs: raizes}
+			t.Cleanup(transport.CloseIdleConnections)
+
+			res := Probe(t.Context(), client, especificacao(srv.URL))
+			select {
+			case major := <-protocolo:
+				if major != 2 {
+					t.Fatalf("servidor recebeu HTTP/%d, queria HTTP/2", major)
+				}
+			default:
+				t.Fatal("o handler não recebeu a requisição; TLS ou bloqueio mascarou a prova do teto")
+			}
+			if c.down {
+				if res.Status != StatusDown || res.ErrorKind != KindUnknown || res.StatusCode != 0 {
+					t.Errorf("cabeçalho de %d bytes em HTTP/2: res = %+v, queria down/unknown sem status", c.tamanho, res)
+				}
+			} else if res.Status != StatusUp || res.ErrorKind != "" || res.StatusCode != http.StatusOK {
+				t.Errorf("cabeçalho de %d bytes em HTTP/2: res = %+v, queria up/200/sem erro", c.tamanho, res)
+			}
+		})
+	}
+}
+
 func TestProbeSendsConfiguredHeadersAndUserAgent(t *testing.T) {
 	// Canal, e não variável: o handler roda em outra goroutine, e o detector
 	// de corrida não conta a resposta HTTP como sincronização.
@@ -371,5 +424,41 @@ func TestProbeRedirectBackToTheOriginStaysClean(t *testing.T) {
 	}
 	if h := <-naVolta; h.Get("X-Token") != "" || h.Get("Authorization") != "" {
 		t.Errorf("headers na volta à origem = %v, queria sem os do alvo", h)
+	}
+}
+
+// O User-Agent também pode ser configurado pelo dono: não é exceção à
+// proteção dos headers. Sabotagem: preservar o User-Agent em limparHeaders.
+func TestProbeRedirectDropsCustomUserAgentThroughoutAnUnsafeChain(t *testing.T) {
+	const sentinela = "credencial-publica-de-teste-no-user-agent"
+	naOrigem, noDesvio, naVolta := make(chan string, 1), make(chan string, 1), make(chan string, 1)
+	desvio := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		noDesvio <- r.Header.Get("User-Agent")
+		http.Redirect(w, r, r.URL.Query().Get("volta"), http.StatusFound)
+	}))
+	t.Cleanup(desvio.Close)
+	origem := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/volta" {
+			naVolta <- r.Header.Get("User-Agent")
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		naOrigem <- r.Header.Get("User-Agent")
+		http.Redirect(w, r, desvio.URL+"/?volta=http://"+r.Host+"/volta", http.StatusFound)
+	}))
+	t.Cleanup(origem.Close)
+	client := safedial.NewClientAllowing(0, enderecoDe(t, origem), enderecoDe(t, desvio))
+	s := especificacao(origem.URL)
+	s.Headers = map[string]string{"User-Agent": sentinela}
+	if res := Probe(t.Context(), client, s); res.Status != StatusUp {
+		t.Fatalf("sonda = %+v, queria sucesso", res)
+	}
+	if recebido := <-naOrigem; recebido != sentinela {
+		t.Fatalf("a origem recebeu %q, queria o valor personalizado", recebido)
+	}
+	for salto, recebido := range map[string]string{"outro destino": <-noDesvio, "volta à origem": <-naVolta} {
+		if recebido == sentinela || !strings.HasPrefix(recebido, "StillOn/") {
+			t.Errorf("%s recebeu User-Agent %q, queria somente identificação pública", salto, recebido)
+		}
 	}
 }

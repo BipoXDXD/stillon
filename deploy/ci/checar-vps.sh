@@ -21,7 +21,7 @@ set -euo pipefail
 IMAGEM_APP=${1:?uso: checar-vps.sh <imagem do app>}
 # As ferramentas, antes de subir qualquer coisa: sem uma delas, o teste
 # morreria no meio (127) com a pilha de pé.
-for f in docker jq curl openssl python3 age age-keygen awk sed tar sha1sum base64 od flock; do
+for f in docker jq curl openssl python3 age age-keygen awk sed tar sha1sum base64 od flock timeout; do
     command -v "$f" >/dev/null || { echo "checar-vps.sh: falta '$f' no PATH (veja o cabeçalho)" >&2; exit 2; }
 done
 docker compose version >/dev/null 2>&1 || { echo "checar-vps.sh: falta o plugin docker compose" >&2; exit 2; }
@@ -45,18 +45,28 @@ ok() {
 
 # O diretório que faz o papel de /opt/stillon.
 DIR=$(mktemp -d)
+TERCEIRO_BACKUP=
 limpar() {
     if [ "${TESTE_VPS_MANTER:-}" = 1 ]; then
         echo "de pé em $DIR (projeto $PROJETO)" >&2
         return
     fi
-    # Um postgres descartável esquecido pela entrada seguraria a rede.
-    docker ps -aq --filter name=stillon-restauro- | xargs -r docker rm -f -v >/dev/null 2>&1 || true
+    # Só os recursos com identidade privada desta fixture; prefixo não basta.
+    local cid nome nonce tipo raiz imagem esperada
+    for cid in $(docker ps -aq --filter "label=io.stillon.backup.raiz=$DIR"); do
+        read -r nome nonce tipo raiz imagem esperada < <(docker inspect -f '{{.Name}} {{index .Config.Labels "io.stillon.backup.nonce"}} {{index .Config.Labels "io.stillon.backup.tipo"}} {{index .Config.Labels "io.stillon.backup.raiz"}} {{.Image}} {{index .Config.Labels "io.stillon.backup.imagem"}}' "$cid") || continue
+        if ! { [[ "$nonce" =~ ^[0-9a-f]{16}$ ]] && [ "$raiz" = "$DIR" ] && [ "$imagem" = "$esperada" ]; }; then
+            continue
+        fi
+        case "$tipo:$nome" in "restauro:/stillon-restauro-$nonce" | "helper:/stillon-backup-helper-$nonce")
+            docker rm -f -v "$cid" >/dev/null 2>&1 || true ;; esac
+    done
+    [ -z "$TERCEIRO_BACKUP" ] || docker rm -f -v "$TERCEIRO_BACKUP" >/dev/null 2>&1 || true
     dc down -v --remove-orphans >/dev/null 2>&1 || true
     for r in "$REPO_TESTE" "$REPO_TESTE-fonte"; do
         docker image ls --format '{{.Repository}}:{{.Tag}}' "$r" | xargs -r docker rmi >/dev/null 2>&1 || true
     done
-    rm -rf "$DIR" "$TARS"
+    rm -rf "$DIR" "${TARS:-}"
 }
 trap limpar EXIT
 
@@ -835,18 +845,103 @@ age-keygen -y "$TARS/chave-age" > "$DIR/age-recipient"
 c=$(entrada "backup extra" < /dev/null)
 [ "$c" = 2 ] || falhar "backup com argumento saiu $c, queria 2"
 
+# Fronteiras Docker da distribuição: somente a cópia da entrada recebe um
+# wrapper de teste. O script de produção não possui chave de desativação.
+mkdir -p "$TARS/bin-distribuicao"
+docker_real=$(command -v docker)
+cat > "$TARS/bin-distribuicao/docker" <<'FIM'
+#!/usr/bin/env bash
+set -eu
+atingiu() { printf 'fixture-distribuicao:%s\n' "$CASO_DISTRIBUICAO" >> "$FIXTURE_STAGE_FILE"; }
+case "$CASO_DISTRIBUICAO:$1" in
+    create:create) atingiu; exit 1 ;;
+    copia-fonte:cp) case "$2" in *:/stillon) atingiu; exit 1 ;; esac ;;
+    copia-destino:cp) case "$3" in *:/stillon) atingiu; exit 1 ;; esac ;;
+    protocolo:exec | antigo:exec | probe-travado:exec)
+        if [ "${*: -2}" = 'version --backup-snapshot-protocol' ]; then
+            atingiu
+            if [ "$CASO_DISTRIBUICAO" = probe-travado ]; then
+                # Processo REAL no descartável: perder o cliente Docker não
+                # basta; o trap da entrada deve remover o contêiner exato.
+                exec "$FIXTURE_DOCKER_BIN" exec --user 65532:65532 "$4" sleep 600
+            fi
+            [ "$CASO_DISTRIBUICAO" != antigo ] || exit 2
+            printf 'protocolo-incompativel\n'; exit 0
+        fi ;;
+    kill-sem-cid:create)
+        "$FIXTURE_DOCKER_BIN" "$@"
+        atingiu
+        anterior=
+        for arg in "$@"; do
+            [ "$anterior" != --cidfile ] || rm -f "$arg"
+            anterior=$arg
+        done
+        kill -KILL "$PPID"
+        exit 0 ;;
+    kill-com-cid:cp)
+        case "$2" in *:/stillon) atingiu; kill -KILL "$PPID"; exit 0 ;; esac ;;
+esac
+exec "$FIXTURE_DOCKER_BIN" "$@"
+FIM
+chmod 0755 "$TARS/bin-distribuicao/docker"
+sed 's|^export PATH=.*|export PATH="$PATH"|' "$ENTRADA" > "$TARS/entrada-distribuicao"
+for caso_distribuicao in create copia-fonte copia-destino protocolo antigo probe-travado kill-sem-cid kill-com-cid; do
+    c=0
+    inicio_distribuicao=$SECONDS
+    : > "$TARS/fronteira-distribuicao"
+    env -i PATH="$TARS/bin-distribuicao:$PATH" HOME="$HOME" SSH_ORIGINAL_COMMAND=backup \
+        CASO_DISTRIBUICAO="$caso_distribuicao" FIXTURE_DOCKER_BIN="$docker_real" FIXTURE_STAGE_FILE="$TARS/fronteira-distribuicao" \
+        bash "$TARS/entrada-distribuicao" < /dev/null > "$TARS/saida" 2> "$TARS/erro" || c=$?
+    grep -qx "fixture-distribuicao:$caso_distribuicao" "$TARS/fronteira-distribuicao" ||
+        falhar "$caso_distribuicao: não atingiu fronteira injetada: $(tail -3 "$TARS/erro")"
+    if [ "$caso_distribuicao" = probe-travado ]; then
+        [ "$((SECONDS - inicio_distribuicao))" -ge 25 ] || falhar "controle do probe travado não bloqueou realmente"
+        [ "$((SECONDS - inicio_distribuicao))" -le 45 ] || falhar "probe travado escapou do prazo e limpeza"
+        [ -z "$(docker ps -aq --filter "label=io.stillon.backup.raiz=$DIR")" ] || falhar "probe travado deixou processo/contêiner próprio"
+    fi
+    case "$caso_distribuicao" in
+        kill-*) [ "$c" = 137 ] || falhar "$caso_distribuicao saiu $c, queria SIGKILL/137"
+            [ -n "$(docker ps -aq --filter "label=io.stillon.backup.raiz=$DIR" --filter label=io.stillon.backup.tipo=helper)" ] ||
+                falhar "$caso_distribuicao: controle não deixou auxiliar recuperável" ;;
+        *) [ "$c" = 1 ] || falhar "$caso_distribuicao saiu $c, queria 1" ;;
+    esac
+    [ ! -s "$TARS/saida" ] || falhar "$caso_distribuicao publicou saída"
+    grep -q '^== origem' "$TARS/erro" && falhar "$caso_distribuicao conectou à origem antes do probe válido"
+    # A entrada seguinte, sem wrapper, precisa recuperar e produzir backup.
+    c=$(entrada backup < /dev/null)
+    [ "$c" = 0 ] || falhar "$caso_distribuicao: recuperação saiu $c: $(tail -3 "$TARS/erro")"
+    [ "$(head -c 21 "$TARS/saida")" = age-encryption.org/v1 ] || falhar "$caso_distribuicao: recuperação sem cifrado"
+    [ -z "$(docker ps -aq --filter "label=io.stillon.backup.raiz=$DIR")" ] || falhar "$caso_distribuicao: recurso próprio ficou"
+done
+ok "distribuição: create/cópias/protocolo recusam antes da origem; SIGKILL com/sem CID recuperado"
+
 # O que um backup morto por SIGKILL deixaria: o dump em claro na memória e o
 # postgres descartável. O próximo backup apaga os dois, já sob a trava.
-mkdir -p "$TARS/stillon-backup.morto"
-echo 'PGDMP em claro' > "$TARS/stillon-backup.morto/stillon.dump"
-# Sem o --tmpfs da entrada: o VOLUME da imagem do postgres vira um volume
-# anônimo, que tem de sair junto com ele.
-docker run -d --name stillon-restauro-morto --entrypoint sleep "$pg" 600 >/dev/null
-[ -n "$(docker inspect -f '{{range .Mounts}}{{if eq .Type "volume"}}{{.Name}}{{end}}{{end}}' stillon-restauro-morto)" ] ||
+nonce_morto=1111222233334444
+pasta_morta=$TARS/stillon-backup.$nonce_morto
+mkdir -m 0700 "$pasta_morta"
+printf '%s\n' "$DIR" > "$pasta_morta/.stillon-backup-owner"
+echo 'PGDMP em claro' > "$pasta_morta/stillon.dump"
+pg_id=$(docker image inspect -f '{{.Id}}' "$pg")
+# Sem tmpfs: o volume anônimo deve ser removido junto do ID próprio.
+morto=$(docker run -d --name "stillon-restauro-$nonce_morto" \
+    --label "io.stillon.backup.raiz=$DIR" --label io.stillon.backup.tipo=restauro \
+    --label "io.stillon.backup.nonce=$nonce_morto" --label "io.stillon.backup.imagem=$pg_id" \
+    --entrypoint sleep "$pg_id" 600)
+[ -n "$(docker inspect -f '{{range .Mounts}}{{if eq .Type "volume"}}{{.Name}}{{end}}{{end}}' "$morto")" ] ||
     falhar "controle: o descartável morto do teste não tem volume anônimo"
+# Prefixo semelhante SEM labels não é propriedade da entrada. A fixture
+# guarda o ID exato para sua própria limpeza, incluindo o volume anônimo.
+TERCEIRO_BACKUP=$(docker run -d --name "stillon-restauro-controle-${DIR##*/}" --entrypoint sleep "$pg_id" 600)
+volume_terceiro=$(docker inspect -f '{{range .Mounts}}{{if eq .Type "volume"}}{{.Name}}{{end}}{{end}}' "$TERCEIRO_BACKUP")
+[ -n "$volume_terceiro" ] || falhar "controle terceiro não tem volume"
+dc stop app >/dev/null
 c=$(entrada backup < /dev/null)
-[ -e "$TARS/stillon-backup.morto" ] && falhar "o dump em claro de um backup morto ficou para trás"
-docker inspect stillon-restauro-morto >/dev/null 2>&1 && falhar "o postgres descartável de um backup morto ficou para trás"
+dc start app >/dev/null
+[ ! -e "$pasta_morta" ] || falhar "o dump em claro de um backup morto ficou para trás"
+docker inspect "$morto" >/dev/null 2>&1 && falhar "o postgres descartável próprio morto ficou para trás"
+docker inspect "$TERCEIRO_BACKUP" >/dev/null 2>&1 || falhar "a entrada apagou terceiro de prefixo semelhante"
+docker volume inspect "$volume_terceiro" >/dev/null 2>&1 || falhar "a entrada apagou volume do terceiro"
 if [ "$c" != 0 ]; then
     cat "$TARS/erro" >&2
     falhar "backup saiu $c, queria 0"
@@ -866,7 +961,7 @@ else
     falhar "o backup não decifra com a chave privada"
 fi
 # Nada sobra: nem o postgres descartável, nem o dump em claro.
-[ -z "$(docker ps -aq --filter name=stillon-restauro-)" ] || falhar "o postgres descartável do backup ficou para trás"
+[ -z "$(docker ps -aq --filter "label=io.stillon.backup.raiz=$DIR" --filter label=io.stillon.backup.tipo=restauro)" ] || falhar "o postgres descartável do backup ficou para trás"
 ls "$TARS"/stillon-backup.* >/dev/null 2>&1 && falhar "o diretório do dump em claro ficou para trás"
 ok "stillon-entrada backup: conferido, só o cifrado na saída padrão"
 
@@ -908,7 +1003,7 @@ c=$(entrada backup < /dev/null)
 [ "$c" = 3 ] || falhar "backup com a checagem falhando saiu $c, queria 3"
 [ ! -s "$TARS/saida" ] || falhar "backup com a checagem falhando escreveu na saída padrão"
 cp "$TARS/verificar.sql" "$DIR/deploy/backup/verificar.sql"
-[ -z "$(docker ps -aq --filter name=stillon-restauro-)" ] || falhar "o postgres descartável ficou para trás depois da falha"
+[ -z "$(docker ps -aq --filter "label=io.stillon.backup.raiz=$DIR" --filter label=io.stillon.backup.tipo=restauro)" ] || falhar "o postgres descartável ficou para trás depois da falha"
 ok "stillon-entrada backup: sem chave (1) e cópia reprovada (3) não mandam nada"
 
 # O código 4: o backup vai, cifrado, e o código avisa do disco. Um df falso na
@@ -935,6 +1030,10 @@ for caso in "DF_PCT=91 disco da VPS" "DF_TAMANHO=1000000 volume do banco"; do
     fi
 done
 ok "stillon-entrada backup: disco ou volume acima de 85% manda o cifrado e sai 4"
+docker inspect "$TERCEIRO_BACKUP" >/dev/null 2>&1 || falhar "falhas de backup apagaram o terceiro"
+docker volume inspect "$volume_terceiro" >/dev/null 2>&1 || falhar "falhas de backup apagaram volume do terceiro"
+docker rm -f -v "$TERCEIRO_BACKUP" >/dev/null
+TERCEIRO_BACKUP=
 sobras=$(comm -13 <(echo "$volumes_antes") <(volumes))
 [ -z "$sobras" ] || falhar "os backups deixaram volumes: $(tr "\n" " " <<<"$sobras")"
 ok "stillon-entrada backup: nenhum volume sobra dos descartáveis"

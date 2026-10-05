@@ -1,55 +1,57 @@
 @import 'tailwindcss';
 
 /* O tema escuro é a classe .dark no <html>, posta por /tema.js e por
-   src/lib/theme.tsx. */
+   src/lib/tema.tsx. */
 @custom-variant dark (&:where(.dark, .dark *));
 
 /* Tokens do painel. As cores de estado foram escolhidas para contraste AA
    (4,5:1) como texto sobre o fundo de cada tema; o projeto a11y do
    Playwright confere com o axe nos dois temas. */
 :root {
-  --fundo: #ffffff;
-  --texto: #0f172a;
-  --suave: #475569;
-  --borda: #cbd5e1;
-  --painel: #f8fafc;
-  --primaria: #1d4ed8;
-  --primaria-texto: #ffffff;
-  --realce: #1d4ed8;
-  --perigo: #b91c1c;
-  --foco: #1d4ed8;
-  --estado-no-ar: #15803d;
-  --estado-degradado: #a16207;
-  --estado-fora: #b91c1c;
-  --estado-sem-dados: #475569;
-  --grafico-linha: #1d4ed8;
-  --grafico-faixa: #93c5fd;
-  --grafico-uptime: #bbf7d0;
+  --fundo: #f3f0e7;
+  --superficie: #fcfaf4;
+  --texto: #272c27;
+  --suave: #62665b;
+  --borda: #d5d5c7;
+  --painel: #e9e9dc;
+  --primaria: #45583c;
+  --primaria-texto: #fffdf5;
+  --realce: #45583c;
+  --perigo: #a83b2c;
+  --foco: #45583c;
+  --estado-no-ar: #3d633b;
+  --estado-degradado: #895a16;
+  --estado-fora: #a83b2c;
+  --estado-sem-dados: #62665b;
+  --grafico-linha: #45583c;
+  --grafico-faixa: #c9d1b9;
+  --grafico-uptime: #d4dec7;
 }
 
 .dark {
-  --fundo: #0b1120;
-  --texto: #e2e8f0;
-  --suave: #94a3b8;
-  --borda: #334155;
-  --painel: #111827;
-  --primaria: #1d4ed8;
-  --primaria-texto: #ffffff;
-  /* Links: o azul do botão não tem contraste como texto no fundo escuro. */
-  --realce: #93c5fd;
-  --perigo: #f87171;
-  --foco: #93c5fd;
-  --estado-no-ar: #4ade80;
-  --estado-degradado: #facc15;
-  --estado-fora: #f87171;
-  --estado-sem-dados: #94a3b8;
-  --grafico-linha: #60a5fa;
-  --grafico-faixa: #1e3a8a;
-  --grafico-uptime: #14532d;
+  --fundo: #1c211d;
+  --superficie: #242a24;
+  --texto: #f0eee3;
+  --suave: #b8bdad;
+  --borda: #444d40;
+  --painel: #30382d;
+  --primaria: #c5d2ac;
+  --primaria-texto: #242c20;
+  --realce: #c5d2ac;
+  --perigo: #f0a28e;
+  --foco: #d1deb7;
+  --estado-no-ar: #b4d49a;
+  --estado-degradado: #e6c17d;
+  --estado-fora: #f0a28e;
+  --estado-sem-dados: #b8bdad;
+  --grafico-linha: #c5d2ac;
+  --grafico-faixa: #485b3b;
+  --grafico-uptime: #384d30;
 }
 
 @theme inline {
   --color-fundo: var(--fundo);
+  --color-superficie: var(--superficie);
   --color-texto: var(--texto);
   --color-suave: var(--suave);
   --color-borda: var(--borda);
@@ -63,7 +65,7 @@
   --color-degradado: var(--estado-degradado);
   --color-fora: var(--estado-fora);
   --color-sem-dados: var(--estado-sem-dados);
-  --font-sans: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-sans: 'Helvetica Neue', Helvetica, Arial, sans-serif;
 }
 
 html {
@@ -91,4 +93,66 @@ body {
     animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+/* Componentes que mostram texto informado pelo dono não podem alargar
+   a página. O conteúdo continua visível, inclusive nomes e URLs longos. */
+main, main section, main form, main fieldset {
+  min-width: 0;
+}
+main p, main h1, main h2, main a, main dd, main label {
+  overflow-wrap: anywhere;
+}
+main > section:not([aria-label='Resumo dos alvos']):not([aria-label='Avisos de notificação']) {
+  border: 1px solid var(--borda);
+  border-radius: 0.5rem;
+  background: var(--superficie);
+  padding: 1.25rem;
+}
+.cartao-alvo {
+  transition: border-color 150ms ease;
+}
+.cartao-alvo:hover {
+  border-color: var(--realce);
+}
+
+#conteudo > form {
+  border: 1px solid var(--borda);
+  border-radius: 0.5rem;
+  background: var(--superficie);
+  padding: 1.25rem;
+}
+
+/* A identidade editorial usa a mesma família em toda a interface. */
+h1, h2, h3 {
+  font-weight: 700;
+  letter-spacing: -0.025em;
+}
+
+.marca-simbolo {
+  border: 1px solid var(--primaria);
+  box-shadow: inset 0 0 0 3px var(--superficie);
+}
+
+.resumo-operacional {
+  border-top: 2px solid var(--texto);
+  border-bottom: 1px solid var(--borda);
+}
+
+.resumo-operacional > div {
+  border-left: 1px solid var(--borda);
+}
+
+.resumo-operacional > div:nth-child(2n + 1) {
+  border-left: 0;
+}
+
+@media (min-width: 40rem) {
+  .resumo-operacional > div:nth-child(n) { border-left: 1px solid var(--borda); }
+  .resumo-operacional > div:nth-child(3n + 1) { border-left: 0; }
+}
+
+@media (min-width: 80rem) {
+  .resumo-operacional > div:nth-child(n) { border-left: 1px solid var(--borda); }
+  .resumo-operacional > div:first-child { border-left: 0; }
 }

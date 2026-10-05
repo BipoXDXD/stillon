@@ -34,7 +34,7 @@ export function Titulo({ children, aba, descritoPor }: { children: ReactNode; ab
     if (focar.current) ref.current?.focus()
   }, [])
   return (
-    <h1 ref={ref} tabIndex={-1} aria-describedby={descritoPor} className="text-2xl font-semibold outline-none">
+    <h1 ref={ref} tabIndex={-1} aria-describedby={descritoPor} className="text-3xl font-bold tracking-tight outline-none sm:text-4xl">
       {children}
     </h1>
   )

@@ -14,7 +14,9 @@
 FROM --platform=$BUILDPLATFORM node:24-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1 AS web
 WORKDIR /src/web
 COPY web/package.json web/package-lock.json ./
-RUN --mount=type=cache,target=/root/.npm npm ci --no-audit --no-fund
+# O build explícito abaixo continua; os hooks de instalação das dependências
+# não rodam. Manter opcionais: elas entregam os binários nativos do bundler.
+RUN --mount=type=cache,target=/root/.npm npm ci --ignore-scripts --no-audit --no-fund
 COPY web/ ./
 # O vite.config.ts manda o build para ../internal/webui/dist (contrato).
 RUN npm run build

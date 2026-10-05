@@ -16,10 +16,13 @@
 : "${STILLON_APP_PASSWORD:?defina STILLON_APP_PASSWORD no /opt/stillon/.env}"
 : "${STILLON_BACKUP_PASSWORD:?defina STILLON_BACKUP_PASSWORD no /opt/stillon/.env}"
 
-# As senhas entram como variáveis do psql (:'app'), citadas por ele: nem
-# aspas na senha quebram o SQL, nem a senha aparece na linha de comando.
+# O psql lê as senhas do ambiente por \getenv e cita os literais (:'app'):
+# aspas e barras não quebram o SQL, e nenhum segredo entra no argv.
+export STILLON_APP_PASSWORD STILLON_BACKUP_PASSWORD
 psql -v ON_ERROR_STOP=1 --no-psqlrc --username "${POSTGRES_USER:-postgres}" --dbname postgres \
-    -v app="$STILLON_APP_PASSWORD" -v backup="$STILLON_BACKUP_PASSWORD" <<'SQL'
+    <<'SQL'
+\getenv app STILLON_APP_PASSWORD
+\getenv backup STILLON_BACKUP_PASSWORD
 CREATE ROLE stillon_app LOGIN PASSWORD :'app'
     NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE;
 CREATE DATABASE stillon OWNER stillon_app;

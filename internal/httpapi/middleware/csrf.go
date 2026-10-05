@@ -15,12 +15,13 @@ const CustomHeaderName = "X-Requested-With"
 // Este header cobre o resto: um <form> em site hostil consegue disparar POST
 // com o cookie junto, mas não consegue definir header customizado sem passar
 // pelo preflight de CORS — que a origem hostil não passa.
+// O valor stillon é o contrato publicado dos clientes, não um segredo CSRF.
 func RequireCustomHeader(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet, http.MethodHead, http.MethodOptions:
 		default:
-			if r.Header.Get(CustomHeaderName) == "" {
+			if r.Header.Get(CustomHeaderName) != "stillon" {
 				apierr.WriteError(w, r, apierr.CodeForbidden)
 				return
 			}

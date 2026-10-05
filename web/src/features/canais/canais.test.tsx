@@ -417,3 +417,33 @@ describe('canais', () => {
   })
 })
 
+
+// Sabotagem: remover a guarda do onClick antes de setPausar. A lista
+// atualiza durante o PATCH, mas o envio ainda está em voo.
+it('Pausar não abre confirmação enquanto o Retomar do mesmo canal está em voo', async () => {
+  const r = await renderizarPainel('/channels')
+  r.falsa.estado.canais = [canal({ enabled: false })]
+  await r.cliente.refetchQueries()
+  let soltar!: () => void
+  const pendente = new Promise<void>((resolve) => (soltar = resolve))
+  let chegou = false
+  servidor.use(http.patch('*/api/v1/channels/:id', async () => {
+    chegou = true
+    await pendente
+  }))
+  try {
+    await r.usuario.click(await screen.findByRole('button', { name: 'Retomar o canal discord.com/…/abcd' }))
+    await waitFor(() => expect(chegou).toBe(true))
+    r.falsa.estado.canais = [canal({ enabled: true })]
+    await r.cliente.refetchQueries({ queryKey: ['channels'] })
+    const pausar = await screen.findByRole('button', { name: 'Pausar o canal discord.com/…/abcd' })
+    expect(pausar).toHaveAttribute('aria-disabled', 'true')
+    await r.usuario.click(pausar)
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+  } finally {
+    soltar()
+  }
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Pausar o canal discord.com/…/abcd' })).not.toHaveAttribute('aria-disabled'))
+  await r.usuario.click(screen.getByRole('button', { name: 'Pausar o canal discord.com/…/abcd' }))
+  expect(await screen.findByRole('alertdialog')).toBeInTheDocument()
+})

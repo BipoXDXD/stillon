@@ -4,16 +4,16 @@ import type { ComponentProps } from 'react'
 import { cn } from '@/lib/utils'
 
 const variantes = cva(
-  'inline-flex items-center justify-center gap-2 rounded-md text-sm font-medium whitespace-nowrap disabled:pointer-events-none disabled:opacity-60 aria-disabled:opacity-60',
+  'inline-flex items-center justify-center gap-2 rounded-md text-sm font-bold whitespace-nowrap disabled:pointer-events-none disabled:opacity-60 aria-disabled:opacity-60',
   {
     variants: {
       tipo: {
         primario: 'bg-primaria text-primaria-texto hover:opacity-90',
-        secundario: 'border border-borda bg-fundo text-texto hover:bg-painel',
-        perigo: 'border border-perigo bg-fundo text-perigo hover:bg-painel',
+        secundario: 'border border-borda bg-superficie text-texto hover:bg-painel',
+        perigo: 'border border-perigo bg-superficie text-perigo hover:bg-painel',
         fantasma: 'text-texto hover:bg-painel',
       },
-      tamanho: { normal: 'h-9 px-4', pequeno: 'h-8 px-3' },
+      tamanho: { normal: 'min-h-11 px-4 py-2', pequeno: 'min-h-10 px-3 py-1.5' },
     },
     defaultVariants: { tipo: 'primario', tamanho: 'normal' },
   },

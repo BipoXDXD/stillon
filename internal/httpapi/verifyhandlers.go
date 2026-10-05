@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"errors"
 	"io"
 	"log/slog"
@@ -52,7 +53,7 @@ func (h *VerifyHandlers) Page(w http.ResponseWriter, r *http.Request) {
 	estado, err := h.svc.CheckToken(r.Context(), r.PathValue("token"))
 	if err != nil {
 		slog.Error("verificar token", "erro", err, "trace_id", observability.TraceID(r.Context()))
-		pagina(w, http.StatusInternalServerError, paginaErro)
+		pagina(w, statusErroVerificacao(r.Context()), paginaErro)
 		return
 	}
 	switch estado {
@@ -74,8 +75,15 @@ func (h *VerifyHandlers) Confirm(w http.ResponseWriter, r *http.Request) {
 		pagina(w, http.StatusNotFound, paginaInvalida)
 	default:
 		slog.Error("confirmar token", "erro", err, "trace_id", observability.TraceID(r.Context()))
-		pagina(w, http.StatusInternalServerError, paginaErro)
+		pagina(w, statusErroVerificacao(r.Context()), paginaErro)
 	}
+}
+
+func statusErroVerificacao(ctx context.Context) int {
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return http.StatusServiceUnavailable
+	}
+	return http.StatusInternalServerError
 }
 
 func pagina(w http.ResponseWriter, status int, html string) {
