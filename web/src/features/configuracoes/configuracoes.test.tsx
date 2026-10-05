@@ -379,6 +379,7 @@ describe('2FA', () => {
       await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
       expect(await screen.findByRole('button', { name: 'Desativar' })).toBeInTheDocument()
       expect(screen.queryByText('Operação não permitida.')).not.toBeInTheDocument()
+      expect(screen.queryByText(/os códigos de recuperação desta ativação se perderam/)).not.toBeInTheDocument()
     })
   }
 
@@ -794,7 +795,10 @@ describe('troca de autenticador', () => {
     r.falsa.estado.totpLigado = false
     await r.cliente.refetchQueries({ queryKey: ['me'] })
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
-    const avisos = await screen.findAllByText(/A verificação em duas etapas já está desativada\./)
+    // O anúncio aria-live do Radix repete o texto fora do viewport;
+    // contamos os toasts reais, inclusive depois da próxima releitura.
+    const notificacoes = within(screen.getByRole('region', { name: 'Notifications (F8)' }))
+    const avisos = await notificacoes.findAllByText(/A verificação em duas etapas já está desativada\./)
     expect(avisos).toHaveLength(1)
     expect(avisos[0]?.textContent?.includes('O código de recuperação usado foi gasto')).toBe(gasto)
     expect(screen.queryByText(/Nada mudou/)).not.toBeInTheDocument()
@@ -803,7 +807,7 @@ describe('troca de autenticador', () => {
     await r.cliente.refetchQueries({ queryKey: ['me'] })
     expect(await screen.findByRole('button', { name: 'Trocar autenticador' })).toBeInTheDocument()
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
-    expect(screen.getAllByText(/A verificação em duas etapas já está desativada\./)).toHaveLength(1)
+    expect(notificacoes.getAllByText(/A verificação em duas etapas já está desativada\./)).toHaveLength(1)
   })
 
   // Sabotagem: escolher o aviso genérico de desativação antes do confirm
@@ -1177,6 +1181,61 @@ describe('envio em voo nos diálogos do 2FA', () => {
     await r.usuario.keyboard('{Escape}')
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
     expect((await screen.findAllByText(ATIVACAO_INCERTA))[0]).toBeInTheDocument()
+  })
+
+  // M1: o primeiro confirm pode ter gravado e perdido a resposta. O 403
+  // seguinte fecha o diálogo, mas não pode apagar o aviso dos códigos perdidos.
+  // Sabotagem: aoJaAtivada volta a avisar só JA_ATIVADA → o caso 403 falha.
+  // Se o retry entrega os códigos, aoTravar deve limpar a incerteza anterior.
+  // Sabotagem: tirar setIncerta(null) de aoTravar → o caso sucesso falha ao concluir.
+  async function ativacaoComRespostaPerdida(gravou: boolean) {
+    const r = await renderizarPainel('/settings')
+    await r.usuario.click(await screen.findByRole('button', { name: 'Ativar' }))
+    const dialogo = await screen.findByRole('dialog')
+    await r.usuario.type(within(dialogo).getByLabelText('Sua senha'), SENHA)
+    await r.usuario.click(within(dialogo).getByRole('button', { name: 'Continuar' }))
+    await r.usuario.type(await within(dialogo).findByLabelText('Código de 6 dígitos'), TOTP_OK)
+    servidor.use(
+      http.post('*/api/v1/auth/totp/confirm', () => {
+        if (gravou) {
+          // Simula o commit antes de o proxy perder a resposta; o retry
+          // segue pelo handler real da API falsa e responde forbidden.
+          r.falsa.estado.totpLigado = true
+          r.falsa.estado.totpPendente = false
+        }
+        return new HttpResponse('<html>Bad Gateway</html>', { status: 502 })
+      }, { once: true }),
+    )
+    await r.usuario.click(within(dialogo).getByRole('button', { name: 'Ativar' }))
+    expect(await within(dialogo).findByRole('alert')).toHaveTextContent(ATIVACAO_INCERTA)
+    return { r, dialogo }
+  }
+
+  it('ativação incerta: retry 403 preserva o aviso depois de o diálogo fechar', async () => {
+    const { r, dialogo } = await ativacaoComRespostaPerdida(true)
+    await r.usuario.click(within(dialogo).getByRole('button', { name: 'Ativar' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    expect(await screen.findByRole('button', { name: 'Desativar' })).toBeInTheDocument()
+    expect((await screen.findAllByText(ATIVACAO_INCERTA))[0]).toBeInTheDocument()
+    expect(screen.queryByText('A verificação em duas etapas já está ativada.')).not.toBeInTheDocument()
+    expect(screen.queryByText('AAAABBBBCCCCDDDD')).not.toBeInTheDocument()
+  })
+
+  it('ativação incerta: retry sucesso entrega os códigos e limpa a incerteza', async () => {
+    const { r, dialogo } = await ativacaoComRespostaPerdida(false)
+    await r.usuario.click(within(dialogo).getByRole('button', { name: 'Ativar' }))
+    expect(await within(dialogo).findByText('AAAABBBBCCCCDDDD')).toBeInTheDocument()
+    expect(within(dialogo).getByText('EEEEFFFFGGGGHHHH')).toBeInTheDocument()
+    expect(within(dialogo).queryByRole('alert')).not.toBeInTheDocument()
+    expect(within(dialogo).getByRole('button', { name: 'Concluir' })).toBeDisabled()
+    await r.usuario.keyboard('{Escape}')
+    expect(screen.getByRole('dialog')).toBe(dialogo)
+    await r.usuario.click(within(dialogo).getByLabelText('Guardei os códigos'))
+    await r.usuario.click(within(dialogo).getByRole('button', { name: 'Concluir' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    expect(await screen.findByRole('button', { name: 'Desativar' })).toBeInTheDocument()
+    expect(await screen.findByText('Verificação em duas etapas ativada.')).toBeInTheDocument()
+    expect(screen.queryByText(ATIVACAO_INCERTA)).not.toBeInTheDocument()
   })
 
   // Rodada complementar (decisão do usuário): o "Continuar" do passo da senha
