@@ -1,4 +1,4 @@
-import { render } from '@testing-library/react'
+import { act, render } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { StrictMode } from 'react'
 import { createMemoryRouter } from 'react-router'
@@ -44,8 +44,22 @@ export async function renderizarPainel(
       </ProvedorDoPainel>
     </StrictMode>,
   )
-  const boot = sessao.iniciar()
-  if (!o.atrasoDoBoot) await boot
+  await act(async () => {
+    const boot = sessao.iniciar()
+    if (!o.atrasoDoBoot) await boot
+    // O boot da sessão pode terminar antes do import da primeira rota lazy.
+    // idle não sinaliza prontidão nessa navegação; initialized sinaliza.
+    if (!router.state.initialized) {
+      await new Promise<void>((resolve) => {
+        const parar = router.subscribe((estado) => {
+          if (estado.initialized) {
+            parar()
+            resolve()
+          }
+        })
+      })
+    }
+  })
   return { falsa, sessao, api, cliente, router, usuario, tela }
 }
 

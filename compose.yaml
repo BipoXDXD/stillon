@@ -102,7 +102,11 @@ services:
     build:
       context: .
       target: runtime
-    environment: *ambiente
+    environment:
+      <<: *ambiente
+      # Opcionais: defina as duas no .env privado para avisos por e-mail.
+      RESEND_API_KEY: "${RESEND_API_KEY:-}"
+      EMAIL_FROM: "${EMAIL_FROM:-}"
     ports:
       # Só no loopback: numa rede de café, o painel de demo com senha
       # conhecida ficaria aberto a todos (D16).
