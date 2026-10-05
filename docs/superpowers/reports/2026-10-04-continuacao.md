@@ -1,5 +1,8 @@
 # Continuidade da execução — 2026-10-04
 
+**Estado operacional mais recente:** [continuidade de 2026-10-05](2026-10-05-continuacao.md).
+As informações abaixo preservam o histórico anterior às novas publicações.
+
 Branch: `melhoria/plano-12-seguranca-painel`, publicada com upstream.
 Commit assinado da publicação inicial: `83fca6e74e7bd92210d2f97abc24bfbd0ac1d6f0`.
 Base: `cd816221c2398126a5eb2786ad28042d16c97a1c`.
