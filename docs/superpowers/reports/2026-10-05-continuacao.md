@@ -123,8 +123,10 @@ São árvores diferentes: não somar métricas nem afirmar medição conjunta.
 Evidências em `.superpowers/fase-*`, `revisao-*`, `ci-publicacao-2026-10-04`
 e `retomada-ci-pr27-2026-10-04.md`. Checkpoints de publicação tiveram aplicação
 em clones de recuperação e bytes/modos conferidos. Não reaplicar checkpoints
-antigos. Principal permanece no #27; `AGENTS.md` não versionado preservado
-fora do índice. Instrumentos frontend temporários foram removidos, sem deriva
+antigos. Após publicar o [checkpoint documental #33](https://github.com/BipoXDXD/stillon/pull/33),
+o principal passou para `docs/continuacao-fases-20261005`, preservando a branch
+do #27 e `AGENTS.md` não versionado fora do índice. Instrumentos frontend
+temporários foram removidos, sem deriva
 dos manifests ou dos pacotes instalados originais.
 
 ## Decisões críticas pendentes
