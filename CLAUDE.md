@@ -62,6 +62,12 @@ A próxima fase é a [vinculação individual do Discord](docs/superpowers/specs
 com spec aprovada e plano aguardando revisão. Não confundir canal verificado com
 identidade vinculada, nem anunciar deploy/publicação de imagem sem conferência.
 
+Encerramento combinado em 2026-10-05: VPS fica para 2026-10-06, guiada pelo runbook.
+CI da main funcional `0f42101` e publicação da imagem concluídos com sucesso;
+nenhum deploy feito. Padrão equilibrado de lembretes aprovado e registrado na
+continuidade, ainda não implementado. Retomar vinculação/cargo e frequência como
+etapas próprias, sem confundir planejamento aprovado com código pronto.
+
 ## Registro histórico (2026-09-28)
 
 - `main` = PRs #1–#24 integrados (Planos 1–11 e a renomeação); imagem publicada em
