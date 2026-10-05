@@ -15,6 +15,32 @@ guiada, depois do merge** (spec §1, critério 5): até lá, nada disto está no
 A ordem dos planos segue a de 2026-09-25: **12 = pendências** (as do Plano 9, as dívidas do grupo
 C e o que os Planos 10 e 11 empurraram para cá), **13 = R2** (`auth` para sqlc).
 
+## Continuidade de 2026-10-05
+
+Atualização após a preparação: o dono reiterou autorização de commit, push,
+PR e merge; a assinatura GPG voltou a funcionar. As oito fases pendentes e
+a alternativa independente da fixture foram assinadas, publicadas e abertas
+nos PRs #45–#53. A integração foi autorizada com as lacunas documentadas,
+sem afirmar cobertura global de 100%. Checks remotos e validação conjunta
+completa ainda precisam concluir antes do merge final. O bloqueio GPG
+descrito abaixo registra o checkpoint anterior, não a situação atual.
+
+O [registro atual](reports/2026-10-05-continuacao.md) concentra os PRs publicados,
+os resultados de CI, os perfis conjuntos e os checkpoints locais desta retomada.
+As publicações não foram integradas à `main`; os parágrafos históricos abaixo
+continuam descrevendo suas respectivas rodadas. A meta global de cobertura ainda
+não foi atingida, e exceções aos limites defensivos dependem do dono.
+
+Depois de commits assinados já publicados, uma nova assinatura retornou
+`No pinentry`, também confirmado na retomada posterior. O dono autorizou
+commit, push e PR de todas as fases pendentes, e merge na `main` somente com
+testes reforçados. A equipe atual tem um coordenador e quatro auxiliares
+GPT 6.1 Sol High. Novos commits aguardam desbloqueio no terminal do dono,
+sem desativar assinatura ou pedir senha no chat. Testes e revisões continuam.
+Os patches pendentes têm recuperação local conferida. Exceções de cobertura,
+deploy, migrações e operações na VPS permanecem pendentes; não retomar o
+runbook automaticamente.
+
 ## Atualização local de 2026-10-04: primeira onda do Plano 12
 
 Implementação e provas na branch `melhoria/plano-12-seguranca-painel`, sem deploy nem
