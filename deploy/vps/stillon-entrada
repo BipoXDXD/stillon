@@ -441,7 +441,9 @@ recuperar_backups() {
     # O registro é criado ANTES do docker create/run: mesmo sem CID capturado,
     # labels+nome permitem recuperação sob a trava na entrada seguinte.
     for d in "$SHM_BASE"/stillon-backup-helper.* "$SHM_BASE"/stillon-backup.*; do
-        [ -d "$d" ] && [ ! -L "$d" ] && [ -f "$d/.stillon-backup-owner" ] || continue
+        if ! { [ -d "$d" ] && [ ! -L "$d" ] && [ -f "$d/.stillon-backup-owner" ]; }; then
+            continue
+        fi
         base=${d##*/}
         nonce=${base##*.}
         [[ "$nonce" =~ ^[0-9a-f]{16}$ ]] || continue
@@ -478,11 +480,14 @@ preparar_helper_backup() {
     fi
     HELPER=$cid
     docker cp "$cid:/stillon" "$TMP_HELPER/stillon" || sair 1 "não foi possível copiar o helper da imagem aprovada"
-    [ -f "$TMP_HELPER/stillon" ] && [ ! -L "$TMP_HELPER/stillon" ] || sair 1 "helper não é arquivo regular"
+    if ! { [ -f "$TMP_HELPER/stillon" ] && [ ! -L "$TMP_HELPER/stillon" ]; }; then
+        sair 1 "helper não é arquivo regular"
+    fi
     tamanho=$(stat -c %s "$TMP_HELPER/stillon")
-    [ "$tamanho" -gt 0 ] && [ "$tamanho" -le $((64 * 1024 * 1024)) ] && \
-        [ "$(od -An -tx1 -N4 "$TMP_HELPER/stillon" | tr -d ' \n')" = 7f454c46 ] || \
+    if ! { [ "$tamanho" -gt 0 ] && [ "$tamanho" -le $((64 * 1024 * 1024)) ] &&
+        [ "$(od -An -tx1 -N4 "$TMP_HELPER/stillon" | tr -d ' \n')" = 7f454c46 ]; }; then
         sair 1 "helper inválido ou maior que 64 MiB"
+    fi
     chmod 0600 "$TMP_HELPER/stillon"
     remover_recurso_backup "$cid" helper || sair 1 "não foi possível remover a fonte privada do helper"
     HELPER=
@@ -582,8 +587,9 @@ backup() {
         3) sair 3 "a cópia restaurada não passou nas checagens: não há backup que sirva" ;;
         *) sair 1 "o backup.sh saiu com $codigo: não houve backup" ;;
     esac
-    [ -f "$tmp/stillon.dump" ] && [ ! -L "$tmp/stillon.dump" ] && [ -s "$tmp/stillon.dump" ] || \
+    if ! { [ -f "$tmp/stillon.dump" ] && [ ! -L "$tmp/stillon.dump" ] && [ -s "$tmp/stillon.dump" ]; }; then
         sair 1 "o backup.sh saiu $codigo sem deixar dump regular"
+    fi
     # Após Wait e antes de age no host: repassar SOMENTE o arquivo regular,
     # sem seguir symlinks ou mudar o dono da árvore montada.
     docker exec --user 0 "$nome" sh -c \

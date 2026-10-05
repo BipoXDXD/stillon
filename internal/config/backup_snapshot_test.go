@@ -2,6 +2,7 @@ package config
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -46,9 +47,19 @@ func TestBackupSnapshotConcurrentChangesAndRestore(t *testing.T) {
 	if testing.Short() {
 		t.Skip("precisa de PostgreSQL 18 e Docker")
 	}
-	if _, err := exec.LookPath("docker"); err != nil {
+	docker, err := exec.LookPath("docker")
+	if err != nil {
 		t.Fatal("integração de backup precisa de Docker")
 	}
+	// Um pull frio escreve progresso no stderr e somente o ID no stdout.
+	// Exercite essa fronteira mesmo com a imagem já presente no host: o
+	// launcher dá EXEC ao Docker real, sem fabricar ID ou resultado SQL.
+	launcher := t.TempDir()
+	body := "#!/bin/sh\nif [ \"${1:-}\" = run ]; then printf '%s\\n' 'fixture: progresso de pull no stderr' >&2; fi\nexec '" + strings.ReplaceAll(docker, "'", "'\"'\"'") + "' \"$@\"\n"
+	if err := os.WriteFile(filepath.Join(launcher, "docker"), []byte(body), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", launcher+":"+os.Getenv("PATH"))
 	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
 	defer cancel()
 	dir := t.TempDir()
@@ -564,9 +575,13 @@ func snapshotDocker(t *testing.T, ctx context.Context, env map[string]string, ar
 	for key, value := range env {
 		cmd.Env = append(cmd.Env, key+"="+value)
 	}
-	out, err := cmd.CombinedOutput()
+	// Progresso de pull e avisos pertencem ao stderr; nunca podem entrar
+	// no ID do contêiner nem nos dados que o chamador recebe do stdout.
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
 	if err != nil {
-		t.Fatalf("Docker fixture: %v\n%s", err, out)
+		t.Fatalf("Docker fixture: %v\n%s\n%s", err, out, stderr.String())
 	}
 	return strings.TrimSuffix(string(out), "\n")
 }

@@ -151,9 +151,9 @@ fi
 IFS='|' read -r _protocolo versao usuarios alvos < "$meta"
 rm -f "$meta"
 trap - 0
-[ -f "$SAIDA" ] && [ ! -L "$SAIDA" ] && [ -s "$SAIDA" ] || {
+if ! { [ -f "$SAIDA" ] && [ ! -L "$SAIDA" ] && [ -s "$SAIDA" ]; }; then
     echo "backup: snapshot sem dump regular" >&2; exit 1;
-}
+fi
 echo "schema $versao, $usuarios usuário(s), $alvos alvo(s)"
 ls -l "$SAIDA"
 

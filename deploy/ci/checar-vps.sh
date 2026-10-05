@@ -55,7 +55,9 @@ limpar() {
     local cid nome nonce tipo raiz imagem esperada
     for cid in $(docker ps -aq --filter "label=io.stillon.backup.raiz=$DIR"); do
         read -r nome nonce tipo raiz imagem esperada < <(docker inspect -f '{{.Name}} {{index .Config.Labels "io.stillon.backup.nonce"}} {{index .Config.Labels "io.stillon.backup.tipo"}} {{index .Config.Labels "io.stillon.backup.raiz"}} {{.Image}} {{index .Config.Labels "io.stillon.backup.imagem"}}' "$cid") || continue
-        [[ "$nonce" =~ ^[0-9a-f]{16}$ ]] && [ "$raiz" = "$DIR" ] && [ "$imagem" = "$esperada" ] || continue
+        if ! { [[ "$nonce" =~ ^[0-9a-f]{16}$ ]] && [ "$raiz" = "$DIR" ] && [ "$imagem" = "$esperada" ]; }; then
+            continue
+        fi
         case "$tipo:$nome" in "restauro:/stillon-restauro-$nonce" | "helper:/stillon-backup-helper-$nonce")
             docker rm -f -v "$cid" >/dev/null 2>&1 || true ;; esac
     done
