@@ -393,7 +393,12 @@ do Plano 5 (apagadas em 2026-09-25; ver README, Histórico), inteira.
   banco, e todo PATCH nele responde `400 expected_status/out_of_range` até o valor ser corrigido (C2),
   inclusive o `{"enabled": false}` do Pausar do painel, que não destaca campo nenhum: justamente o
   alvo que está `down` para sempre não pode ser pausado (revisão, http-sondador Q3).
-- **HTTP/2 com cabeçalho de resposta enorme** (C1): o teto vale, mas os testes só exercitam HTTP/1.
+- **HTTP/2 com cabeçalho de resposta enorme** (C1): fechado por
+  `TestProbeHTTP2ResponseHeadersAboveTheCapAreDown`, com TLS validado e o transporte real do
+  sondador. Cada caso confirma HTTP/2 no servidor: 32 KiB passa como `up/200`, enquanto 100 KiB
+  sai `down/unknown` sem status. A sabotagem do teto de 64 KiB para 2 MiB deixa o segundo caso
+  `up/200` e reprova o teste. A prova cobre a propagação do teto no HTTP/2, inclusive quando o
+  servidor respeita o limite anunciado; não atribui a recusa exclusivamente ao parser do cliente.
 - **O aviso de `TRUSTED_PROXIES` (B3) não distingue lista errada de porta do app exposta**: um
   cliente falando direto com a porta publicada gera o mesmo aviso.
 - **Resposta perdida de um confirm que o servidor comitou**: o painel diz que não sabe e ensina a
