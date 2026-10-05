@@ -32,15 +32,44 @@ Claude Code não tem TTY).
 Lições da Hostinger: "invalid nameserver structure" = digitou na área **Nameservers** em vez de
 **DNS records**; usuário Linux só em minúsculas.
 
-## Onde parou (2026-09-25)
+Lições da execução guiada (2026-09-28):
 
-- `main` = PRs #1–#23 integrados (Planos 1–11 e a renomeação); imagem publicada em
-  `ghcr.io/bipoxdxd/stillon`.
-- **Runbook: blocos 0 e 1 feitos** (no computador Linux do dono). Já existem: VPS Hostinger KVM 2
-  com Ubuntu 24.04 e a chave `stillon-admin` cadastrada; domínio `stillon.tech` com o registro `A`;
-  Resend com `avisos.stillon.tech` verificado (remetente `StillOn <alertas@avisos.stillon.tech>`);
-  check "StillOn" no healthchecks.io; todos os segredos no Bitwarden.
-- **Próximo: bloco 2** (primeiro SSH, passos 2.1 a 2.7 numa sentada só). Num computador novo,
-  primeiro a seção "Trocando de computador no meio do runbook" do `mac.md`.
+- **Linhas curtas, um comando por bloco.** Heredoc, linha longa e um `.` solto no fim se
+  perderam ou se partiram na colagem. No lugar do heredoc do runbook: `cd <pasta>` e vários
+  `echo '…' | sudo tee -a <arquivo>`; destino no começo (`install -t .`).
+- **Diga onde cada comando roda e o prompt esperado.** Uma sessão SSH caiu em silêncio e o
+  comando seguinte rodou no Mac (que também tem `/etc/ssh/sshd_config.d`).
+- **Senha e passphrase: colar do Bitwarden, nunca digitar.** A primeira chave SSH se perdeu com uma
+  passphrase que não batia. Nada aparece ao colar, e as perguntas de confirmação pedem a colagem
+  duas vezes. Copie a passphrase **antes** do `ssh`: o prazo de login do servidor é de 2 min.
+- Configuração do Mac sem segredo (ex.: `~/.ssh/config`), o Claude escreve; o dono roda o que
+  pede passphrase, `sudo` ou painel.
+
+## Orientação atual (2026-10-05)
+
+O estado de desenvolvimento, dos PRs e das integrações está no
+[registro de continuidade](docs/superpowers/reports/2026-10-05-continuacao.md).
+A execução histórica dos blocos 0–2 está registrada abaixo; a VPS não foi
+conferida nesta retomada. Qualquer continuação da hospedagem parte do computador
+Linux e segue o [runbook](docs/deploy/vps.md), guiada, um passo numerado e seu
+**Confira** por vez. Confirme o estado atual antes de escolher o próximo bloco.
+
+## Registro histórico (2026-09-28)
+
+- `main` = PRs #1–#24 integrados (Planos 1–11 e a renomeação); imagem publicada em
+  `ghcr.io/bipoxdxd/stillon`. PR #25 (spec sem o Fly, `.DS_Store`) aberto.
+- **Runbook: blocos 0, 1 e 2 feitos.** Blocos 0 e 1 no Linux; o 2 no Mac (MacBook Air), depois da
+  seção "Trocando de computador" do `mac.md`. Já existem: VPS Hostinger KVM 2 com Ubuntu 24.04
+  (o IP está no `~/.stillon-vps` do Mac); domínio `stillon.tech` com o registro `A`; Resend com
+  `avisos.stillon.tech` verificado (remetente `StillOn <alertas@avisos.stillon.tech>`); check
+  "StillOn" no healthchecks.io; todos os segredos no Bitwarden.
+- **A chave `stillon-admin` foi refeita no Mac** (a passphrase guardada não abria a antiga): chave,
+  passphrase e a pública nova no Bitwarden e no painel. Usuário da VPS: `biposlayer`, com `sudo`.
+  No Mac: `~/.stillon-vps` e `Host stillon` no `~/.ssh/config` (com `ServerAliveInterval 30`).
+- Bloco 2 conferido: SSH só por chave e sem root (provado de fora), `fail2ban`, `ufw` e firewall
+  do painel (só 22, 80 e 443; o `ping` não responde), atualizações automáticas com reinício às
+  04:30. O terminal do navegador pede login depois do 2.7, e **root com a senha de root** entra.
+- **Próximo: bloco 3** (Docker, `/opt/stillon`, segredos, chave do backup). Antes do 3.5, no Mac:
+  `brew install age nmap`.
 - Depois da VPS no ar: redesign do painel (o dono acha o visual ruim). Os dois PRs abertos do
   Dependabot (#17, #18) esperam revisão.

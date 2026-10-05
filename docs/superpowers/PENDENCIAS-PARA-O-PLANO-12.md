@@ -154,14 +154,15 @@ E as do runbook (desta parte do Plano 11):
 
 ## Limites conhecidos do Plano 11
 
-- **A execução real não foi feita**: nenhum passo do runbook rodou numa VPS da Hostinger (spec §1,
-  critério 5). Os comandos foram conferidos com `bash -n`, com o `--help` das ferramentas
+- **A execução real está pela metade** (spec §1, critério 5): os blocos 0 a 2 foram executados de
+  verdade, guiados, em 2026-09-25 e 2026-09-28; do bloco 3 em diante, ainda não. Os comandos foram
+  conferidos com `bash -n`, com o `--help` das ferramentas
   disponíveis e com a documentação pública (Hostinger, Resend, Docker, healthchecks.io); os rótulos
   do painel da Hostinger vêm da documentação dela e podem ter mudado.
-- **O terminal do painel (Web console) depois do SSH endurecido**: a documentação da Hostinger não
-  diz se ele depende do `sshd` nem com que usuário entra quando o root não pode entrar por SSH. O
-  runbook manda testá-lo no passo 2.7, logo depois de endurecer, e aponta o **Emergency mode** se
-  ele não abrir. Confirmar na execução guiada.
+- ~~**O terminal do painel (Web console) depois do SSH endurecido**~~: **confirmado na execução
+  guiada (2026-09-28).** Antes do passo 2.7 o terminal do navegador entra sozinho como root;
+  depois, pede login, e `root` com a senha de root do passo 1.2 entra (ele não passa pelo `sshd`,
+  então o `PermitRootLogin no` não vale para ele). O **Emergency mode** fica como segunda volta.
 - **Segundos de `502` durante a troca de versão**, e o rollback automático não desfaz migration
   (as migrations são aditivas; spec §3).
 - **O vigia mora na própria VPS** ([D] 3): uma falha de rede que o `curl` de dentro não vê atrasa
@@ -242,6 +243,20 @@ E as do runbook (desta parte do Plano 11):
 | Refresh repetido depois de resposta perdida vira "roubo" | auth C2 | Plano 12, com desenho próprio |
 | `blocked` contra `dns` enumera os nomes internos da rede Docker | sondador S5 | Aceito; Plano 12 se o cadastro abrir |
 | Cotas por usuário no sondador e no despacho | sondador S2 e S3 | Limite registrado; reavaliar se o cadastro abrir |
+
+## Da avaliação da estrutura (2026-09-28, para o Plano 12)
+
+Nenhum muda comportamento; são de organização.
+
+- **O `safedial` mora em `internal/prober/safedial`, mas três pacotes o usam** (`prober`,
+  `targets` e `notify`). A guarda anti-SSRF vale para o sistema inteiro: o lugar dela é
+  `internal/safedial`. Só mover (os imports mudam; o código, não).
+- **Arquivos que cresceram demais**, candidatos a dividir por assunto:
+  `web/src/features/configuracoes/PaginaConfiguracoes.tsx` (936 linhas),
+  `internal/account/account.go` (558) e `internal/auth/totp.go` (550; o `totp.go` junto com a R2,
+  que já mexe nele).
+- **`internal/apierr` sem teste** (o envelope de erro da §9.1). Os testes de integração do
+  `httpapi` o exercitam por fora; um table-driven próprio fixaria o contrato `code` → status.
 
 ## Limpeza do code review do PR #15 (para o Plano 12)
 
