@@ -33,9 +33,9 @@ function resumoEmTexto(itens: ItemDoResumo[]): string {
 
 function Cartao({ it, agora }: { it: ItemDoResumo; agora: Date }) {
   return (
-    <li className="cartao-alvo min-w-0 space-y-4 rounded-xl border border-borda bg-superficie p-5 shadow-sm">
-      <div className="flex items-start justify-between gap-2">
-        <Link to={`/targets/${it.id}`} className="min-w-0 break-words text-base font-semibold underline-offset-4 hover:text-realce hover:underline">
+    <li className="cartao-alvo min-w-0 space-y-5 rounded-lg border border-borda bg-superficie p-6">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <Link to={`/targets/${it.id}`} className="min-w-0 break-words text-lg font-bold leading-snug tracking-tight underline-offset-4 hover:text-realce hover:underline">
           {it.name}
         </Link>
         <SeloDeEstado estado={estadoExibido(it.state, it.enabled)} />
@@ -84,7 +84,7 @@ function AvisoDeCanais() {
   }
   if (!frases.length) return null
   return (
-    <section aria-label="Avisos de notificação" className="flex flex-wrap items-start gap-3 rounded-xl border border-borda bg-painel p-4 text-sm">
+    <section aria-label="Avisos de notificação" className="flex flex-wrap items-start gap-3 rounded-md border border-borda bg-painel p-4 text-sm">
       <Bell aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-suave" />
       <div className="min-w-0 flex-1 space-y-1">{frases.map((frase) => <p key={frase}>{frase}</p>)}</div>
       <Link to="/channels" className="basis-full pl-7 font-medium text-realce underline underline-offset-4 sm:basis-auto sm:pl-0">Configurar canais</Link>
@@ -102,11 +102,11 @@ function ResumoOperacional({ itens }: { itens: ItemDoResumo[] }) {
   }
   return (
     <section aria-label="Resumo dos alvos">
-      <dl className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
+      <dl className="resumo-operacional grid grid-cols-2 gap-y-4 py-5 sm:grid-cols-3 xl:grid-cols-5">
         {ESTADOS.map((estado) => (
-          <div key={estado} className="rounded-xl border border-borda bg-superficie p-4">
+          <div key={estado} className="px-5 py-1">
             <dt className="text-sm text-suave">{textoDoEstado(estado)}</dt>
-            <dd className="mt-2 text-3xl font-semibold tracking-tight tabular-nums">{conta.get(estado) ?? 0}</dd>
+            <dd className="mt-2 text-4xl font-bold tracking-tight tabular-nums">{conta.get(estado) ?? 0}</dd>
           </div>
         ))}
       </dl>
@@ -131,7 +131,7 @@ export function PaginaPainel() {
   return (
     <>
       <div className="flex flex-wrap items-center justify-between gap-4">
-        <div className="space-y-1">
+        <div className="space-y-2">
           <Titulo aba="Painel">Painel</Titulo>
           <p className="text-sm text-suave">Acompanhe a disponibilidade dos seus serviços.</p>
         </div>
@@ -143,7 +143,7 @@ export function PaginaPainel() {
       <EstadoDaConsulta consulta={consulta}>
         {(d) =>
           d.items.length === 0 ? (
-            <p className="rounded-xl border border-dashed border-borda bg-superficie p-8 text-center">
+            <p className="rounded-lg border border-dashed border-borda bg-superficie p-8 text-center">
               Nenhum alvo ainda.{' '}
               <Link to="/targets/new" className="text-realce underline">
                 Cadastrar o primeiro alvo
@@ -153,7 +153,7 @@ export function PaginaPainel() {
             <>
               <ResumoOperacional itens={d.items} />
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <h2 className="flex items-center gap-2 text-base font-semibold"><Activity aria-hidden="true" className="size-4 text-suave" />Seus alvos</h2>
+                <h2 className="flex items-center gap-2 text-xl font-bold"><Activity aria-hidden="true" className="size-4 text-suave" />Seus alvos</h2>
                 <p className="text-xs text-suave">Última atualização: <time dateTime={agora.toISOString()}>{dataHora(agora.toISOString())}</time></p>
               </div>
               <p className="sr-only">{resumoEmTexto(d.items)}</p>

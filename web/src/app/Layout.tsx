@@ -27,7 +27,7 @@ function SeletorDeTema() {
       <select
         value={tema}
         onChange={(e) => mudar(e.target.value as Tema)}
-        className="min-h-10 rounded-lg border border-borda bg-superficie px-3 text-texto"
+        className="min-h-10 rounded-md border border-borda bg-fundo px-3 text-texto"
       >
         <option value="sistema">Sistema</option>
         <option value="claro">Claro</option>
@@ -69,10 +69,10 @@ export function Layout() {
         <AvisoDeContexto />
       </div>
       <header className="border-b border-borda bg-superficie lg:fixed lg:inset-y-0 lg:left-0 lg:z-20 lg:w-60 lg:overflow-y-auto lg:border-r lg:border-b-0">
-        <div className="flex min-w-0 flex-col gap-4 px-4 py-4 lg:h-full lg:gap-8 lg:px-5 lg:py-7">
+        <div className="flex min-w-0 flex-col gap-4 px-4 py-4 lg:h-full lg:gap-10 lg:px-5 lg:py-9">
           <div className="flex items-center gap-3">
-            <span className="flex size-10 items-center justify-center rounded-xl bg-primaria text-primaria-texto"><Activity aria-hidden="true" className="size-6" /></span>
-            <div><span className="text-xl font-semibold tracking-tight">StillOn</span><p className="text-xs text-suave">Monitor de disponibilidade</p></div>
+            <span className="marca-simbolo flex size-10 items-center justify-center rounded-full bg-primaria text-primaria-texto"><Activity aria-hidden="true" className="size-6" /></span>
+            <div><span className="text-2xl font-bold tracking-tight">StillOn</span><p className="mt-0.5 text-[0.65rem] leading-relaxed text-suave">Monitor de disponibilidade</p></div>
           </div>
           <nav aria-label="Principal" className="flex flex-wrap gap-1 lg:flex-col lg:gap-2">
             {links.map((l) => (
@@ -86,7 +86,7 @@ export function Layout() {
                     : undefined
                 }
                 className={({ isActive }) =>
-                  cn('inline-flex min-h-10 items-center gap-2 rounded-lg px-3 py-2 text-sm text-suave hover:bg-painel hover:text-texto lg:w-full', isActive && 'bg-painel font-semibold text-texto')
+                  cn('inline-flex min-h-10 items-center gap-3 rounded-md px-3 py-3 text-sm text-suave hover:bg-painel hover:text-texto lg:w-full', isActive && 'bg-painel font-bold text-texto ring-1 ring-inset ring-borda')
                 }
               >
                 <l.Icone aria-hidden="true" className="size-4 shrink-0" />
@@ -124,7 +124,7 @@ export function Layout() {
           </div>
         </div>
       </header>
-      <main id="conteudo" className="mx-auto min-w-0 max-w-[100rem] space-y-6 px-4 py-7 sm:px-6 lg:ml-60 lg:px-8 lg:py-10 xl:px-10">
+      <main id="conteudo" className="mx-auto min-w-0 max-w-[100rem] space-y-8 px-5 py-8 sm:px-8 lg:ml-60 lg:px-10 lg:py-12 xl:px-14">
         <Outlet />
       </main>
     </ProvedorDeAnuncios>

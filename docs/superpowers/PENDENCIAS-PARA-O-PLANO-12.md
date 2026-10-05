@@ -281,7 +281,10 @@ que a onda de correção não fechou. Os que ela fechou: auth M1 (a espera do Ar
   refresh) tem 4 chutes de senha por dia, além dos de cada restart. O D3 só cita o restart.
 - painel M1: na ativação, repetir o confirm depois de "não se sabe" termina no toast "já está
   ativada" (o `403`), sem repetir que os códigos desta ativação se perderam; a troca trata o `403`
-  depois da resposta perdida, a ativação não.
+  depois da resposta perdida, a ativação não. **Fechado localmente em 2026-10-05:** o
+  toast após o `403` mantém o aviso de ativação incerta e dos códigos perdidos. Um `403` sem
+  resposta perdida continua dizendo "já está ativada"; um retry bem-sucedido mostra os códigos
+  e limpa a incerteza. Sem mudança no protocolo de autenticação.
 - painel M4a: o teste "a barreira da CSP pega a violação que ainda não chegou" (`a11y.spec.ts`) fica
   verde sem a espera (sabotagem S2 declarada); quem prova a espera é o do coletor quebrado. O nome
   promete mais do que verifica.

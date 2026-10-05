@@ -1,7 +1,7 @@
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useQueryClient } from '@tanstack/react-query'
 import { QRCodeSVG } from 'qrcode.react'
-import { useLayoutEffect, useRef, useState, type ComponentProps, type RefObject } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type ComponentProps, type RefObject } from 'react'
 import { useForm } from 'react-hook-form'
 import { z } from 'zod'
 import { useApi, useSessao } from '@/app/contexto'
@@ -502,11 +502,13 @@ function DesativarTotp({ aoTerminar }: { aoTerminar: () => void }) {
 // 403 no rotate/confirm: não há troca pendente. Outra aba concluiu a troca,
 // ou a cancelou (desativar apaga o pendente; outro rotate o substitui).
 const TROCA_SUMIU = 'A troca foi concluída ou cancelada em outra aba. Comece de novo.'
+const RECUPERACAO_GASTA = 'O código de recuperação usado foi gasto; use outro da próxima vez.'
 
 // A troca de autenticador (spec do Plano 9 §4.2), em três passos: as provas
 // do Desativar; o QR do app NOVO e o código dele; os 10 códigos novos. O
 // app atual vale até o passo 2 ser confirmado.
 function TrocarTotp({
+  usouRecuperacao,
   aoIniciar,
   aoVoltar,
   aoOcupar,
@@ -515,6 +517,8 @@ function TrocarTotp({
   aoDesativada,
   aoIncerta,
 }: {
+  // A prova do rotate aceito já foi consumida, mesmo se o confirm falhar.
+  usouRecuperacao: boolean
   // O passo 2 começou: fechar agora não muda nada (e, com um código de
   // recuperação no passo 1, ele já foi gasto: R1 da spec).
   aoIniciar: (usouRecuperacao: boolean) => void
@@ -603,7 +607,10 @@ function TrocarTotp({
             }
             if (e instanceof ApiError && e.status === 403) {
               // O QR desta tela não vale mais: de volta ao passo 1.
-              setErro({ texto: TROCA_SUMIU, renovavel: false })
+              setErro({
+                texto: usouRecuperacao ? `${TROCA_SUMIU} ${RECUPERACAO_GASTA}` : TROCA_SUMIU,
+                renovavel: false,
+              })
               aoVoltar()
               setPasso('provas')
             } else setErro(erroDeCredencial(e, 'Código incorreto.'))
@@ -743,6 +750,7 @@ export function PaginaConfiguracoes() {
   // A resposta de um confirm se perdeu (E2 do Plano 10): fechar avisa com
   // este texto, e nunca com "Nada mudou".
   const [incerta, setIncerta] = useState<string | null>(null)
+  const [avisoDoPortao, setAvisoDoPortao] = useState<string | null>(null)
   const [abrindo, setAbrindo] = useState(false)
   // O botão que fica na seção do 2FA (Ativar ou Desativar): a reserva do
   // foco quando o "Trocar autenticador" some.
@@ -774,6 +782,7 @@ export function PaginaConfiguracoes() {
       setOcupado(false)
       setTrocaNoMeio(null)
       setIncerta(null)
+      setAvisoDoPortao(null)
       setDialogo(d)
     }
   }
@@ -782,7 +791,7 @@ export function PaginaConfiguracoes() {
     else if (dialogo === 'trocar' && trocaNoMeio) {
       avisar(
         trocaNoMeio.usouRecuperacao
-          ? `${NADA_MUDOU} O código de recuperação usado foi gasto; use outro da próxima vez.`
+          ? `${NADA_MUDOU} ${RECUPERACAO_GASTA}`
           : NADA_MUDOU,
       )
     }
@@ -810,9 +819,20 @@ export function PaginaConfiguracoes() {
         ? totp === true
         : dialogo === 'trocar' && (totp === true || preso)
   if (dialogo !== null && !portao) {
+    // O /me fechou a troca: o app atual não pode ser declarado válido com
+    // o 2FA desligado. Confirmação incerta continua tendo precedência.
+    if (dialogo === 'trocar' && trocaNoMeio) {
+      const texto = incerta ?? (totp === false ? JA_DESATIVADA : null)
+      if (texto) setAvisoDoPortao(trocaNoMeio.usouRecuperacao ? `${texto} ${RECUPERACAO_GASTA}` : texto)
+    }
     setDialogo(null)
     setTrocaNoMeio(null)
+    setIncerta(null)
   }
+  // O aviso pertence ao provedor de toasts, fora desta renderização.
+  useEffect(() => {
+    if (avisoDoPortao) avisar(avisoDoPortao)
+  }, [avisoDoPortao, avisar])
   return (
     <>
       <Titulo aba="Configurações">Configurações</Titulo>
@@ -890,7 +910,7 @@ export function PaginaConfiguracoes() {
           // O /me relido fecha o diálogo (o portão); o aviso fica no toast,
           // que sobrevive a ele.
           aoJaAtivada={() => {
-            avisar(JA_ATIVADA)
+            avisar(incerta ?? JA_ATIVADA)
             reler()
           }}
         />
@@ -913,6 +933,7 @@ export function PaginaConfiguracoes() {
         titulo="Trocar o autenticador"
       >
         <TrocarTotp
+          usouRecuperacao={trocaNoMeio?.usouRecuperacao ?? false}
           aoIniciar={(usouRecuperacao) => setTrocaNoMeio({ usouRecuperacao })}
           aoVoltar={() => setTrocaNoMeio(null)}
           aoOcupar={setOcupado}
