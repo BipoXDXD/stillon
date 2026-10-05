@@ -4,6 +4,34 @@ Atualiza o [registro anterior](2026-10-04-continuacao.md), preservando o histór
 
 ## Fechamento da integração e próxima fase
 
+### Checkpoint de encerramento do dia
+
+Em 2026-10-05, o dono combinou encerrar após este checkpoint e configurar a VPS
+amanhã, 2026-10-06. Não houve deploy nem nova operação na VPS hoje. Retomar pelo
+Linux e conferir o estado real antes do próximo passo do runbook.
+
+O CI de push `37287203451`, no commit funcional `0f42101`, terminou com sucesso:
+nove checks e `publish` aprovados. A publicação da imagem desse commit foi
+confirmada; publicação não equivale a deploy. O PR documental #60 também foi
+integrado, preservando a especificação aprovada e o plano da vinculação Discord.
+
+O dono aprovou o padrão equilibrado de avisos: primeiro aviso imediato depois da
+queda confirmada; lembrete Discord a cada 30 minutos e e-mail a cada duas horas;
+depois de seis horas de incidente, intervalos de seis horas e 24 horas,
+respectivamente; um aviso por canal na recuperação. Preservar três falhas para
+abrir e cinco sucessos para encerrar. Reconhecer o incidente interrompe somente
+lembretes. Essa política está definida, mas ainda não foi implementada.
+
+Próximas etapas de desenvolvimento: revisar o plano escrito de vinculação Discord
+antes de implementar; implementar a política de lembretes aprovada em fase própria.
+Vinculação de pessoa/cargo não existe ainda; o webhook de avisos local já foi
+verificado com entrega real. Chave Resend/remetente ainda dependem de configuração
+privada. Não solicitar segredo no chat. Manter Astra Medium e quatro Sol High,
+commits assinados e integração por PR após testes reforçados.
+
+Os parágrafos abaixo registram os passos do fechamento e seus estados naquele
+momento; esta seção prevalece quando indicar conclusão posterior.
+
 O [PR #27](https://github.com/BipoXDXD/stillon/pull/27) foi integrado na main pelo
 commit assinado `0f42101b133d6d76e7e71e0f3c3333bd6c4a60d8`. Antes dele, os PRs
 documentais #25/#26 e Dependabot #17/#18 foram integrados separadamente. A cadeia
