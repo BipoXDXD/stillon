@@ -41,14 +41,28 @@ conferência deve ocorrer antes de restaurar segredos ou iniciar o serviço.
 ## Topologia
 
 Uma VPS (Hostinger KVM 2: 2 vCPU, 8 GB, 100 GB NVMe, datacenter no Brasil) com Ubuntu 24.04 LTS e
-Docker. Em `/opt/stillon`, um `compose.prod.yaml` com três serviços numa rede interna
-`stillon` (172.30.0.0/24, sem IPv6):
+Docker, **dividida com o GoblinShift**, outro projeto seu
+([spec](../superpowers/specs/2026-10-13-vps-compartilhada-design.md)):
+
+```
+internet ──80/443──► borda: Caddy (/srv/edge, 172.31.0.2 na rede edge)
+                     ├─ stillon.tech ──► stillon-caddy :80 (redes edge e stillon)
+                     │                     └─► app :8080 ─► db  (rede stillon, 10.30.0.0/24)
+                     └─ :80 por IP ────► goblinshift-web
+```
+
+A **borda** é do host, não de um projeto: ela ouve a 80 e a 443, faz o HTTPS (Let's Encrypt) e
+encaminha cada domínio para o seu projeto pela rede Docker `edge`. Os arquivos dela vêm do
+repositório do GoblinShift; o StillOn só entrega o trecho dele, `deploy/vps/edge/stillon.caddy`.
+
+Em `/opt/stillon`, um `compose.prod.yaml` com três serviços numa rede interna `stillon`
+(10.30.0.0/24, sem IPv6):
 
 | Serviço | O que é | Endereço | Porta publicada |
 |---|---|---|---|
-| `caddy` | Proxy com HTTPS automático (Let's Encrypt), só para o seu domínio | 172.30.0.2 | **80 e 443, e só ele** |
-| `app` | O binário do StillOn (`--role=all`): API, painel, sondador, avisos, manutenção | 172.30.0.3 | nenhuma |
-| `db` | Postgres 18, a imagem oficial, fixada por digest | 172.30.0.4 | nenhuma |
+| `caddy` | Proxy só HTTP, só para o seu domínio; o único do StillOn na rede `edge` | 10.30.0.2 | nenhuma |
+| `app` | O binário do StillOn (`--role=all`): API, painel, sondador, avisos, manutenção | 10.30.0.3 | nenhuma |
+| `db` | Postgres 18, a imagem oficial, fixada por digest | 10.30.0.4 | nenhuma |
 
 Por fora: o GitHub Actions entrega cada versão nova por SSH, com uma chave que só sabe fazer
 `deploy` e `backup` (bloco 4); o backup diário sai cifrado para o GitHub (bloco 7); e o
@@ -603,10 +617,10 @@ sudo ufw enable
 O `enable` avisa que pode derrubar conexões SSH: responda `y`. (A 22 foi liberada antes, então a
 sua não cai.)
 
-**Por quê:** fecha tudo o que chega, menos SSH (22), HTTP (80, que o Caddy usa para o certificado e
+**Por quê:** fecha tudo o que chega, menos SSH (22), HTTP (80, que a borda usa para o certificado e
 para redirecionar) e HTTPS (443). **Atenção:** o Docker passa por cima do `ufw` nas portas que um
-contêiner publica. Quem garante que só 80 e 443 ficam abertas é o `compose.prod.yaml` (só o Caddy
-publica porta) e o firewall do painel (passo seguinte); o bloco 9 confere de fora.
+contêiner publica. Quem garante que só 80 e 443 ficam abertas são os composes (só a borda publica
+porta; o StillOn, nenhuma) e o firewall do painel (passo seguinte); o bloco 9 confere de fora.
 
 **Confira:**
 
@@ -691,76 +705,75 @@ termina sem `Traceback` nem `error`.
 
 ## Bloco 3: Docker, `/opt/stillon`, segredos e a chave do backup
 
-### 3.1 Docker pelo repositório oficial
+### 3.1 O Docker que já está na VPS
 
-Fonte: Docker, [Install Docker Engine on Ubuntu](https://docs.docker.com/engine/install/ubuntu/).
+O Docker foi instalado pelo `provision.sh` do GoblinShift, do repositório oficial da Docker. Aqui
+você só confere que ele serve ao StillOn.
 
-**Faça** (na VPS):
+**Faça** (na VPS, prompt `biposlayer@srv2008471:~$`), um comando por vez:
 
 ```bash
-sudo apt install -y ca-certificates curl
-sudo install -m 0755 -d /etc/apt/keyrings
-sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
-sudo chmod a+r /etc/apt/keyrings/docker.asc
-gpg --show-keys /etc/apt/keyrings/docker.asc
+docker --version
 ```
 
-**Confira** que a impressão digital mostrada é `9DC8 5822 9FC7 DD38 854A  E2D8 8D81 803C 0EBF CD88`
-(a chave de assinatura da Docker). Se for outra, pare: não é a chave da Docker.
-
 ```bash
-sudo tee /etc/apt/sources.list.d/docker.sources >/dev/null <<FIM
-Types: deb
-URIs: https://download.docker.com/linux/ubuntu
-Suites: $(. /etc/os-release && echo "${UBUNTU_CODENAME:-$VERSION_CODENAME}")
-Components: stable
-Architectures: $(dpkg --print-architecture)
-Signed-By: /etc/apt/keyrings/docker.asc
-FIM
-sudo apt update
-sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-```
-
-**Por quê:** o Docker do repositório da própria Docker é o suportado e o que recebe correção
-primeiro; o `docker.io` do Ubuntu fica para trás. (O `unattended-upgrades` só aplica as
-atualizações de segurança do Ubuntu: o Docker você atualiza no passo mensal do bloco 10.)
-
-**Confira:** `sudo docker run --rm hello-world` imprime `Hello from Docker!`.
-
-### 3.2 Configuração do Docker: logs, `live-restore` e o image store do containerd
-
-**Faça** (na VPS):
-
-```bash
-sudo tee /etc/docker/daemon.json >/dev/null <<'FIM'
-{
-  "log-driver": "json-file",
-  "log-opts": { "max-size": "10m", "max-file": "3" },
-  "live-restore": true,
-  "features": { "containerd-snapshotter": true }
-}
-FIM
-sudo systemctl restart docker
-sudo docker info -f '{{.LoggingDriver}} {{.LiveRestoreEnabled}}'
 sudo docker info -f '{{.DriverStatus}}'
 ```
 
-**Por quê:** sem rotação, o log de um contêiner cresce até encher o disco (aqui, no máximo 3
-arquivos de 10 MB por contêiner). O `live-restore` mantém os contêineres de pé quando o próprio
-Docker é atualizado ou reiniciado. E o deploy (bloco 4) confere que a imagem carregada é a
-aprovada comparando o ID dela com o digest do GitHub, o que só funciona com o *image store* do
-containerd: ele é o padrão das instalações novas do Docker 29
-([fonte](https://docs.docker.com/engine/storage/containerd/)), e a linha `features` o garante
-mesmo numa instalação que veio de uma versão anterior. O `stillon-entrada` recusa o deploy (sai
-com 1 e diz o motivo) se o store não for o do containerd.
+```bash
+ip -4 route
+```
 
-**Deve aparecer:** `json-file true` e, na última linha, algo com
-`[[driver-type io.containerd.snapshotter.v1]]`.
+**Deve aparecer:** `Docker version 29` ou maior; no `DriverStatus`, algo com
+`io.containerd.snapshotter.v1`; e nenhuma linha do `ip -4 route` começando com `10.30.`.
 
-**Confira:** se a última linha **não** tiver `io.containerd.snapshotter.v1`, o `daemon.json` não
-foi lido: `sudo cat /etc/docker/daemon.json` (tem de ser exatamente o JSON acima) e
-`sudo journalctl -u docker -n 20` (um erro de JSON aparece ali). Não siga sem ela. (Trocar de store
-esconde as imagens do store antigo; numa VPS nova, só o `hello-world` some, e não faz falta.)
+**Por quê:** o deploy (bloco 4) confere a imagem pelo ID, o que só funciona com o *image store* do
+containerd, o padrão do Docker 29 instalado do zero
+([fonte](https://docs.docker.com/engine/storage/containerd/)); o `stillon-entrada` recusa o deploy
+sem ele. E a rede interna do StillOn usa `10.30.0.0/24`, que não pode coincidir com nenhuma rota da
+máquina.
+
+**Confira:** sem o `snapshotter`, pare e chame o Claude: trocar de store esconde as imagens que o
+GoblinShift já baixou. Com uma rota em `10.30.`, pare também: a faixa precisa mudar no
+`compose.prod.yaml` antes de seguir.
+
+### 3.2 `live-restore` sem derrubar ninguém
+
+O `/etc/docker/daemon.json` é do host e já tem a configuração do GoblinShift (rotação de log, as
+faixas de rede e o runtime do gVisor). Você só acrescenta uma chave, sem apagar nada.
+
+**Faça** (na VPS), um comando por vez:
+
+```bash
+sudo apt install -y jq
+```
+
+```bash
+sudo cp /etc/docker/daemon.json /etc/docker/daemon.json.antes-do-stillon
+```
+
+```bash
+sudo jq '. + {"live-restore": true}' /etc/docker/daemon.json.antes-do-stillon | sudo tee /etc/docker/daemon.json
+```
+
+```bash
+sudo systemctl reload docker
+```
+
+```bash
+sudo docker info -f '{{.LiveRestoreEnabled}}'
+```
+
+**Deve aparecer:** o `tee` mostra o JSON com as chaves que já existiam (`default-address-pools`,
+`log-opts`, `runtimes`) **e** `"live-restore": true`; o último comando mostra `true`.
+
+**Por quê:** o `live-restore` mantém os contêineres de pé quando o próprio Docker é atualizado ou
+reiniciado. O `reload` aplica a opção sem reiniciar o Docker (ela é das que ele relê), então o
+GoblinShift não cai.
+
+**Confira:** `sudo docker ps --format '{{.Names}} {{.Status}}'` não mostra nenhum contêiner com
+`Up` de poucos segundos. Se o `tee` mostrar um JSON sem as chaves antigas, volte a cópia
+(`sudo cp /etc/docker/daemon.json.antes-do-stillon /etc/docker/daemon.json`) e chame o Claude.
 
 ### 3.3 Os arquivos do StillOn em `/opt/stillon`
 
@@ -772,12 +785,13 @@ cd ~/Projetos/Go/StillOn
 git switch main && git pull --ff-only
 ssh stillon 'mkdir -p ~/stillon-arquivos'
 scp deploy/vps/compose.prod.yaml deploy/vps/Caddyfile deploy/vps/initdb.sh deploy/vps/env.exemplo \
-    deploy/vps/stillon-entrada deploy/vps/sudoers-stillon-entrada \
+    deploy/vps/stillon-entrada deploy/vps/sudoers-stillon-entrada deploy/vps/edge/stillon.caddy \
     stillon:stillon-arquivos/
 ```
 
-**Deve aparecer:** uma linha de progresso por arquivo, seis no total. (Os arquivos do vigia vêm
-só no bloco 8, quando são instalados.)
+**Deve aparecer:** uma linha de progresso por arquivo, sete no total. (Os arquivos do vigia vêm
+só no bloco 8, quando são instalados. O `stillon.caddy` fica na pasta até o passo "O StillOn na
+borda", depois do primeiro deploy.)
 
 **Depois, na VPS:**
 
@@ -1050,7 +1064,7 @@ nem o próprio `deploy` pode trocar a chave.
 . ~/.stillon-vps
 ssh -i ~/.ssh/stillon_deploy -o IdentitiesOnly=yes deploy@"$VPS" ; echo "saiu com $?"
 ssh -i ~/.ssh/stillon_deploy -o IdentitiesOnly=yes deploy@"$VPS" ls / ; echo "saiu com $?"
-ssh -i ~/.ssh/stillon_deploy -o IdentitiesOnly=yes -W 172.30.0.4:5432 deploy@"$VPS" ; echo "saiu com $?"
+ssh -i ~/.ssh/stillon_deploy -o IdentitiesOnly=yes -W 10.30.0.4:5432 deploy@"$VPS" ; echo "saiu com $?"
 ```
 
 - As duas primeiras: `stillon-entrada: pedido vazio (uso: "deploy <sha de 40 hex> sha256:<64 hex>" ou "backup")`
@@ -1264,18 +1278,7 @@ sudo docker compose -f /opt/stillon/compose.prod.yaml logs app | head -20
 - `logs`: `iniciando` com a versão, `migrations aplicadas`, `sondador ativo`, `servindo`, e
   **nenhuma** linha `TRUSTED_PROXIES vazio`.
 
-**E de fora** (no seu computador):
-
-```bash
-. ~/.stillon-vps
-curl -sS "https://$DOMINIO/healthz"; echo
-curl -sS -o /dev/null -w '%{http_code}\n' "https://$DOMINIO/readyz"
-```
-
-`/healthz` responde (o corpo do app) sem erro de certificado, e `/readyz` dá `200`. Se o `curl`
-reclamar do certificado, espere um minuto (o Caddy pode estar terminando de pegar o certificado)
-e veja `sudo docker compose -f /opt/stillon/compose.prod.yaml logs caddy | tail -20`: um erro de
-"challenge" quase sempre é DNS ainda não propagado ou porta 80 fechada no firewall do painel.
+**De fora** ainda não responde: a borda só passa a encaminhar o domínio para o StillOn no 4.9.
 
 **Um atalho para os próximos comandos** (na VPS; opcional, mas o resto do runbook o usa):
 
@@ -1293,6 +1296,58 @@ vc exec db psql -U postgres -c "SELECT rolname, rolsuper, rolbypassrls FROM pg_r
 ```
 
 Só `stillon_app` na primeira; `stillon_app | f | f` e `stillon_backup | f | t` na segunda.
+
+### 4.9 O StillOn na borda
+
+**Antes:** a borda em `/srv/edge` já é o Caddy (não o nginx) e a 443 responde de fora; os dois
+foram feitos na troca da borda, guiada pelo Claude
+([spec](../superpowers/specs/2026-10-13-vps-compartilhada-design.md), "Ordem na VPS"). Sem isso,
+o pedido de certificado falha e conta no limite do Let's Encrypt.
+
+**Faça** (na VPS), um comando por vez:
+
+```bash
+sudo install -m 0644 -o root -g root ~/stillon-arquivos/stillon.caddy /srv/edge/conf.d/
+```
+
+```bash
+cd /srv/edge
+```
+
+```bash
+sudo docker compose exec proxy caddy validate --config /etc/caddy/Caddyfile
+```
+
+```bash
+sudo docker compose exec proxy caddy reload --config /etc/caddy/Caddyfile
+```
+
+**Deve aparecer:** `Valid configuration` no `validate`; o `reload` sem erro.
+
+**Por quê:** o trecho diz à borda para pedir o certificado de `stillon.tech` e encaminhar o
+domínio ao Caddy do StillOn (`stillon-caddy`, na rede `edge`). O `validate` vem antes porque um
+trecho inválido impede o `reload` da borda inteira, que também atende o GoblinShift (a
+configuração anterior fica no ar, mas nenhuma mudança entra).
+
+**Confira** (no seu computador, prompt `%`):
+
+```bash
+. ~/.stillon-vps
+```
+
+```bash
+curl -sS "https://$DOMINIO/healthz"; echo
+```
+
+```bash
+curl -sS -o /dev/null -w '%{http_code}\n' "https://$DOMINIO/readyz"
+```
+
+`/healthz` responde (o corpo do app) sem erro de certificado, e `/readyz` dá `200`. Se o `curl`
+reclamar do certificado, espere um minuto e veja, na VPS, em `/srv/edge`:
+`sudo docker compose logs --tail 30 proxy`. Um erro de "challenge" quase sempre é DNS ainda não
+propagado ou a 80/443 fechada no firewall do painel. Não repita o `reload` em sequência: cada
+tentativa falha conta no limite do Let's Encrypt.
 
 ---
 
@@ -1675,15 +1730,20 @@ sudo ss -tlnp
 
 Escutando em todos os endereços (`0.0.0.0` ou `[::]`): só a 22 (`sshd` ou `systemd`: no
 Ubuntu 24.04 o SSH é ativado por socket, e quem escuta a 22 pode aparecer como `systemd`, com ou
-sem o `sshd` ao lado) e a 80 e 443 (`docker-proxy`). O resto, se houver, só em `127.0.0.x` (como o DNS local do Ubuntu, `127.0.0.53`).
+sem o `sshd` ao lado) e a 80 e 443 (`docker-proxy`, da borda). O resto, se houver, só em
+`127.0.0.x` (como o DNS local do Ubuntu, `127.0.0.53`, e o OpenObserve do GoblinShift, `127.0.0.1:5080`).
 
-**Confira no compose:**
+**Confira nos composes:**
 
 ```bash
-vc config | grep -n -A3 'ports:'
+vc config | grep -c 'ports:'
 ```
 
-Só o serviço `caddy` tem `ports`.
+```bash
+cd /srv/edge && sudo docker compose config | grep -n -A6 'ports:'
+```
+
+O StillOn não tem `ports` nenhum (`0`); só a borda publica, e só a 80 e a 443.
 
 ### 9.2 O IP do cliente chega certo (obrigações 1 e 2)
 
@@ -1696,7 +1756,7 @@ vc logs app | grep 'cabeçalho de IP do cliente' | tail -3
 
 **Deve aparecer:** `0` e nenhuma linha. O primeiro aviso diria que o app não confia em proxy
 nenhum; o segundo (`… ignorado` ou `… ausente ou ilegível`), que o `TRUSTED_PROXIES` não bate com
-o IP do Caddy (172.30.0.2).
+o IP do Caddy (10.30.0.2).
 
 **O teste de duas redes** (no seu computador; sempre o e-mail `ninguem@exemplo.com`, que não
 existe, e senha errada: com o **seu** e-mail, cada erro contaria no bloqueio da conta, 5 em
@@ -1723,10 +1783,13 @@ tentar -H 'X-Real-IP: 203.0.113.77' -H 'Fly-Client-IP: 203.0.113.77' \
 ```
 
 **Deve aparecer:** `1: 401` a `5: 401`, `6: 429` e `forjado: 429`. O pedido forjado diz ser de
-outro IP (`203.0.113.77`), mas o Caddy troca o `X-Forwarded-For` e remove os outros três: ele cai
-no mesmo balde vazio da sua casa. Se o `forjado` der `401`, o app acreditou no cabeçalho do
-cliente e escolheu um balde novo: pare e confira, na VPS, o `Caddyfile` que o Caddy está usando
-(`vc exec caddy cat /etc/caddy/Caddyfile`) e o `TRUSTED_PROXIES` (`vc config | grep TRUSTED`).
+outro IP (`203.0.113.77`), mas a borda troca o `X-Forwarded-For` pelo IP da sua casa, o Caddy do
+StillOn só acredita na borda e remove os outros três: ele cai no mesmo balde vazio da sua casa. Se
+o `forjado` der `401`, o app acreditou no cabeçalho do cliente e escolheu um balde novo: pare e
+confira, na VPS, o `Caddyfile` que o Caddy do StillOn está usando
+(`vc exec caddy cat /etc/caddy/Caddyfile`), o trecho da borda
+(`cat /srv/edge/conf.d/stillon.caddy`, sem `header_up` nem `trusted_proxies`) e o
+`TRUSTED_PROXIES` (`vc config | grep TRUSTED`).
 A conclusão só vale com o `6: 429`: se ele vier `401` (a rede demorou mais de 6 s nos cinco
 primeiros) ou se já o `1` vier `429` (você testou há pouco), espere um minuto, para o balde
 encher de novo, e cole o bloco outra vez.
@@ -1761,14 +1824,15 @@ curl -sk -o /dev/null -w '%{http_code}\n' -H 'Host: outro.exemplo' "https://$DOM
 curl -sk -o /dev/null -w '%{http_code}\n' "https://$VPS/healthz"; echo "curl saiu com $?"
 ```
 
-**Deve aparecer:** `308` na primeira (o Caddy manda todo `http` para o `https`, sem passar pelo
-app); `200` na segunda, mas **vazio e do próprio Caddy**: nenhum bloco casa com esse `Host`, e o
-app não é chamado; e `000` com `curl saiu com 35` na terceira (sem certificado para o IP, o TLS
-nem fecha). Para ver que a segunda não veio do app, repita-a com `-D -` no lugar do
-`-o /dev/null -w …`: `content-length: 0` e nenhum `x-trace-id` (todo pedido que chega ao app
-volta com ele). Nunca `200` com o corpo do StillOn.
+**Deve aparecer:** na primeira, a resposta do GoblinShift (a borda manda todo `http` pelo IP para
+ele: hoje, `404`), sem passar pelo StillOn; `200` na segunda, mas **vazio e da própria borda**:
+nenhum bloco casa com esse `Host`, e nenhum app é chamado; e `000` com `curl saiu com 35` na
+terceira (sem certificado para o IP, o TLS nem fecha). Para ver que nenhuma delas veio do
+StillOn, repita cada uma com `-D -` no lugar do `-o /dev/null -w …`: nenhum `x-trace-id` (todo
+pedido que chega ao app do StillOn volta com ele). Nunca o corpo do StillOn.
 
-**Por quê:** o Caddy só tem o bloco do seu domínio; uma requisição com outro nome não chega ao app.
+**Por quê:** a borda só tem o bloco do seu domínio para o StillOn, e o Caddy do StillOn também só
+aceita esse nome; uma requisição com outro nome não chega ao app.
 
 ### 9.4 Certificado e cabeçalhos
 
@@ -1783,7 +1847,7 @@ curl -s -o /dev/null -w '%{http_code} %{redirect_url}\n' "http://$DOMINIO/"
 ```
 
 **Deve aparecer:** `subject` com o seu domínio, `issuer` do Let's Encrypt (ou do ZeroSSL, a
-alternativa automática do Caddy) e `notAfter` uns 90 dias à frente; a resposta `200` com
+alternativa automática do Caddy da borda) e `notAfter` uns 90 dias à frente; a resposta `200` com
 `Strict-Transport-Security`, `Content-Security-Policy` e `X-Content-Type-Options`; e o `http://`
 redirecionando (`308`) para `https://`.
 
@@ -1816,13 +1880,15 @@ Espere dois minutos e entre de novo (`ssh stillon`):
 
 ```bash
 vc ps
+cd /srv/edge && sudo docker compose ps; cd
 systemctl list-timers stillon-vigia.timer
 sudo ufw status | head -1
 sudo fail2ban-client status sshd | head -1
 timedatectl | grep synchronized
 ```
 
-**Deve aparecer:** os três serviços `running`/`healthy`; o timer do vigia agendado; `Status:
+**Deve aparecer:** os três serviços `running`/`healthy`; a borda (`proxy`) `running`; o timer do
+vigia agendado; `Status:
 active`; `Status for the jail: sshd`; `System clock synchronized: yes`. E, de fora,
 `curl -sS -o /dev/null -w '%{http_code}\n' "https://$DOMINIO/readyz"` dá `200`. O healthchecks
 pode ter mandado um par de e-mails, **down** e **up** no minuto seguinte: é o custo do reinício
@@ -1834,11 +1900,12 @@ pode ter mandado um par de e-mails, **down** e **up** no minuto seguinte: é o c
 |---|---|
 | SSH só por chave, sem root; `fail2ban`; `ufw` e firewall do painel | 2.7–2.10 |
 | Atualizações automáticas com reinício às 04:30 | 2.11 |
-| Docker com rotação de log, `live-restore` e o store do containerd | 3.2 |
+| Docker com rotação de log, `live-restore` e o store do containerd | 3.1, 3.2 |
 | `.env` do root, `600`, sem variável vazia, copiado no gerenciador | 3.4 |
 | Chave privada do `age` só no seu computador e no gerenciador | 3.5 |
 | `deploy` preso ao script; túnel recusado | 4.4 |
 | Primeiro deploy verde, papéis e dono das tabelas certos | 4.8 |
+| A borda encaminha o domínio, com certificado | 4.9 |
 | 2FA ligado e códigos de recuperação guardados | 5.2 |
 | E-mail e incidente de teste chegaram | 6.1, 6.2 |
 | Backup verde e restauração ensaiada | 7.1, 7.2 |
@@ -2031,6 +2098,7 @@ VPS, o `sudo install` para o destino da tabela, com o modo dela e dono `root`; e
 | `deploy/vps/compose.prod.yaml` | `/opt/stillon/compose.prod.yaml` | `0644` | `vc up -d` |
 | `deploy/vps/Caddyfile` | `/opt/stillon/Caddyfile` | `0644` | `vc up -d --force-recreate caddy` e a conferência abaixo |
 | `deploy/vps/initdb.sh` | `/opt/stillon/initdb.sh` | `0755` | nada: só roda num banco **vazio**, e trocá-lo não muda um banco que já existe |
+| `deploy/vps/edge/stillon.caddy` | `/srv/edge/conf.d/stillon.caddy` | `0644` | `caddy validate` e `caddy reload` na borda, em `/srv/edge` (passo 4.9) |
 | `deploy/vps/env.exemplo` | nenhum: é o modelo do `/opt/stillon/.env` | — | variável nova no modelo: acrescente-a ao `.env` (`sudo nano /opt/stillon/.env`) e ao gerenciador; variável que saiu: apague-a do `.env` |
 | `deploy/vps/stillon-entrada` | `/usr/local/sbin/stillon-entrada` | `0755` | nada: vale no próximo deploy ou backup |
 | `deploy/vps/sudoers-stillon-entrada` | `/etc/sudoers.d/stillon-entrada` | `0440` | `sudo visudo -cf` **antes** do `install` e `sudo visudo -c` depois (passo 4.1) |

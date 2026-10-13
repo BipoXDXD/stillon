@@ -1,7 +1,7 @@
 # StillOn e GoblinShift na mesma VPS
 
-Estado: design aprovado pelo dono em 2026-10-13; spec aguardando revisão.
-Implementação pendente.
+Estado: spec aprovada pelo dono em 2026-10-13; implementação em andamento
+([plano](../plans/2026-10-13-vps-compartilhada.md)).
 
 ## Contexto
 
