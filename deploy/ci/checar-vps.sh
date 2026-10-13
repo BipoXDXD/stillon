@@ -434,6 +434,24 @@ rm -f "$DIR/compose.cabecalho.yaml"
 STILLON_SHA=$SHA_A dc up -d --wait --wait-timeout 120 app >&2 || falhar "o app não voltou à configuração de produção"
 ok "o Caddy remove X-Real-IP, Fly-Client-IP e CF-Connecting-IP"
 
+# 6b. Um contêiner de outro projeto na rede edge, falando direto com o Caddy
+#     do StillOn (sem a borda), não escolhe o IP que o app vê: o Caddy só
+#     confia no X-Forwarded-For que vem de 172.31.0.2. A conta é a do dono
+#     (o StillOn tem um usuário só); o limitador de login é por IP, e o
+#     vizinho tem o dele.
+caddy_edge=$(docker inspect -f '{{(index .NetworkSettings.Networks "edge").IPAddress}}' "$(dc ps -q caddy)")
+vizinho_ip=172.31.0.77
+c=$(docker run --rm --network edge --ip "$vizinho_ip" --add-host "$DOMINIO:$caddy_edge" \
+    --entrypoint curl "$caddy_img" -sS --max-time 10 -o /dev/null -w '%{http_code}' \
+    -X POST "http://$DOMINIO/api/v1/auth/login" \
+    -H 'Content-Type: application/json' -H 'X-Requested-With: stillon' -H 'X-Forwarded-For: 1.2.3.8' \
+    -d "{\"email\":\"$EMAIL\",\"password\":\"$SENHA\"}" || true)
+[ "$c" = 200 ] || falhar "login do vizinho direto no Caddy do StillOn não deu 200 ($c)"
+direto=$(ultimo_hash)
+[ "$direto" = "$(hmac 1.2.3.8)" ] && falhar "o Caddy do StillOn acreditou no X-Forwarded-For de um vizinho da rede edge"
+[ "$direto" = "$(hmac "$vizinho_ip")" ] || falhar "o app não viu o IP do vizinho ($vizinho_ip)"
+ok "um vizinho da rede edge não escolhe o IP visto pelo app"
+
 # 7. O banco não aceita conexão de fora da rede do compose. O controle
 #    positivo (de dentro da rede) prova que a sonda funciona.
 pg=$(docker inspect -f '{{.Config.Image}}' "$(dc ps -q db)")
@@ -443,6 +461,24 @@ if docker run --rm "$pg" pg_isready -h 10.30.0.4 -t 5 >/dev/null 2>&1; then
     falhar "de outra rede do Docker, o banco aceitou conexão"
 fi
 ok "o banco só aceita conexão de dentro da rede"
+
+# 7b. A borda não depende do StillOn: com o Caddy dele parado, ela continua
+#     de pé e responde 502 ao domínio; com ele de volta, encaminha de novo.
+dc stop caddy >&2
+c=$(cu -o /dev/null -w '%{http_code}' "$BASE/healthz" || true)
+[ "$c" = 502 ] || falhar "com o StillOn parado, a borda respondeu $c, queria 502"
+[ "$(docker inspect -f '{{.State.Running}}' "$(bd ps -q proxy)")" = true ] || falhar "a borda caiu com o StillOn parado"
+dc start caddy >&2
+de_volta=
+for _ in $(seq 30); do
+    if [ "$(cu -o /dev/null -w '%{http_code}' "$BASE/healthz" || true)" = 200 ]; then
+        de_volta=1
+        break
+    fi
+    sleep 1
+done
+[ -n "$de_volta" ] || falhar "com o Caddy do StillOn de volta, a borda não voltou a encaminhar em 30 s"
+ok "a borda segue de pé com o StillOn parado (502) e volta a encaminhar"
 
 # ---------------------------------------------------------------------------
 # 8. stillon-entrada: recusas, imagem divergente, rollback, as 3 últimas.
