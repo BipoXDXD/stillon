@@ -1,0 +1,9 @@
+# O StillOn na borda do host (spec 2026-10-13-vps-compartilhada). Vai para
+# /srv/edge/conf.d/stillon.caddy (runbook, passo "O StillOn na borda"); a
+# borda importa todo conf.d/*.caddy. O domínio é literal: a borda não lê o
+# .env do StillOn. TLS e o redirecionamento de http para https são da borda;
+# sem trusted_proxies na borda, o X-Forwarded-For que chega aqui é o IP de
+# quem conectou, nunca o que o cliente mandou.
+stillon.tech {
+	reverse_proxy stillon-caddy:80
+}

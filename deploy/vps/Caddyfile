@@ -1,30 +1,35 @@
-# Caddy de produção do StillOn (Plano 11, spec §2). Montado só-leitura em
-# /etc/caddy/Caddyfile pelo deploy/vps/compose.prod.yaml; na VPS, fica em
-# /opt/stillon/Caddyfile.
+# Caddy de produção do StillOn (Plano 11; spec 2026-10-13-vps-compartilhada).
+# Montado só-leitura em /etc/caddy/Caddyfile pelo deploy/vps/compose.prod.yaml;
+# na VPS, fica em /opt/stillon/Caddyfile.
 #
-# {$STILLON_DOMINIO} vem do /opt/stillon/.env (pelo environment do serviço
-# caddy no compose). {$STILLON_CADDY_TESTE} é vazio em produção; o teste do
-# CI (deploy/ci/checar-vps.sh) põe ali `local_certs`, e o certificado sai da
-# CA interna do Caddy em vez do Let's Encrypt.
+# Fica atrás da borda do host (/srv/edge), que faz o TLS e encaminha o domínio
+# para cá pela rede edge. {$STILLON_DOMINIO} vem do /opt/stillon/.env (pelo
+# environment do serviço caddy no compose).
 {
-	{$STILLON_CADDY_TESTE}
-
-	# SEM trusted_proxies, de propósito (obrigação 1 do Plano 11): não há CDN
-	# na frente, e sem a lista o Caddy SUBSTITUI o X-Forwarded-For que o
-	# cliente mandou pelo IP de quem abriu a conexão. O app confia no
-	# X-Forwarded-For só quando vem do IP fixo do Caddy (TRUSTED_PROXIES) e
-	# lê o último salto; com trusted_proxies aqui, um cliente escolheria o
-	# próprio IP em todo limitador e no ip_hash.
 	servers {
-		# Só HTTP/1.1 e HTTP/2: a 443/udp (HTTP/3) não é publicada no compose.
 		protocols h1 h2
+
+		# Só a borda, pelo IP fixo dela na rede edge, informa o IP do cliente
+		# (obrigação 1). Estrito: vale o salto mais à direita que não é da
+		# borda. Qualquer outra origem (um contêiner de outro projeto na rede
+		# edge) vale pelo IP da própria conexão, e o X-Forwarded-For dela é
+		# ignorado.
+		trusted_proxies static 172.31.0.2/32
+		trusted_proxies_strict
+		client_ip_headers X-Forwarded-For
 	}
 }
 
-# Um bloco de site só para o domínio. Uma requisição com outro Host (ou outro
-# SNI) não casa com nada e não chega ao app: é a checagem de Host da revisão.
-{$STILLON_DOMINIO} {
+# Só HTTP: o TLS termina na borda. Uma requisição com outro Host não casa com
+# nada e não chega ao app: é a checagem de Host da revisão.
+http://{$STILLON_DOMINIO} {
 	reverse_proxy app:8080 {
+		# O app confia no último salto do X-Forwarded-For quando a conexão vem
+		# deste Caddy (TRUSTED_PROXIES). Sem esta linha, o Caddy acrescentaria
+		# o IP da borda ao fim da cadeia e todo cliente viraria a borda; com
+		# ela, o único salto é o cliente que o Caddy calculou acima.
+		header_up X-Forwarded-For {client_ip}
+
 		# O Caddy repassa todo cabeçalho do cliente e só reescreve os
 		# X-Forwarded-*. Estes três carregam "o IP do cliente" em outras
 		# plataformas; o app não os lê com CLIENT_IP_HEADER vazio, mas um
