@@ -70,7 +70,11 @@ limpar() {
 }
 trap limpar EXIT
 
-cp "$RAIZ/deploy/vps/compose.prod.yaml" "$RAIZ/deploy/vps/Caddyfile" "$RAIZ/deploy/vps/initdb.sh" "$DIR/"
+cp "$RAIZ/deploy/vps/compose.prod.yaml" "$RAIZ/deploy/vps/Caddyfile" "$DIR/"
+# 0755 como o runbook instala (3.3). Com o 0644 do checkout, o Docker Desktop
+# (VirtioFS) responde -x ao bash do entrypoint do Postgres, o exec falha e o
+# banco sobe sem os papéis no reinício.
+install -m 0755 "$RAIZ/deploy/vps/initdb.sh" "$DIR/"
 cp "$RAIZ/deploy/ci/vps/compose.teste.yaml" "$DIR/"
 b64() { openssl rand -base64 32; }
 IP_HASH_KEY=$(b64)
