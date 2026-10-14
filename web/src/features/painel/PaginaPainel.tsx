@@ -11,6 +11,7 @@ import { useCanais, useResumo } from '@/lib/api/consultas'
 import type { ItemDoResumo } from '@/lib/api/schemas'
 import { contarPorEstado, estadoExibido, textoDoEstado, type EstadoExibido } from '@/lib/estado'
 import { dataHora, haQuanto, milissegundos, plural, porcento } from '@/lib/format'
+import { avisosDosCanais } from './avisos-dos-canais'
 import { mapaDeEstados, transicoes } from './transicoes'
 
 function resumoEmTexto(itens: ItemDoResumo[]): string {
@@ -61,24 +62,7 @@ function Cartao({ it, agora }: { it: ItemDoResumo; agora: Date }) {
 // A consulta de canais é independente: falhar nunca esconde os alvos nem
 // transforma "não se sabe" em "nenhum canal".
 function AvisoDeCanais() {
-  const consulta = useCanais()
-  const canais = consulta.data?.items
-  let frases: string[] = []
-  if (consulta.error) frases = ['Não foi possível conferir os canais de notificação agora.']
-  else if (canais) {
-    if (!canais.length) frases.push('Nenhum canal de notificação cadastrado. Os incidentes não enviam avisos.')
-    else {
-      const pausados = canais.filter((c) => !c.enabled).length
-      if (pausados) frases.push(pausados === 1
-        ? '1 canal pausado. Os avisos desse canal são descartados.'
-        : `${pausados} canais pausados. Os avisos desses canais são descartados.`)
-      if (!canais.some((c) => c.enabled && (c.status === 'verified' || c.status === 'failing'))) {
-        frases.push('Nenhum canal verificado está ativo para receber avisos.')
-      }
-      const falhando = canais.filter((c) => c.enabled && c.status === 'failing').length
-      if (falhando) frases.push(falhando === 1 ? '1 canal está falhando na entrega.' : `${falhando} canais estão falhando na entrega.`)
-    }
-  }
+  const frases = avisosDosCanais(useCanais())
   if (!frases.length) return null
   return (
     <section aria-label="Avisos de notificação" className="flex flex-wrap items-start gap-3 rounded-md border border-borda bg-painel p-4 text-sm">
