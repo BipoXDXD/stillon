@@ -2,6 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> **Nota (2026-10-13):** o alias `stillon-caddy` descrito neste plano foi superado por decisão do dono em 2026-10-13: o Caddy do StillOn tem IP fixo `172.31.0.3` na rede `edge` (sem alias), o trecho da borda aponta para esse IP, e o Caddy fala com o app em `10.30.0.3`. Vale a [spec](../specs/2026-10-13-vps-compartilhada-design.md); onde o plano e a spec divergem, vale a spec.
+
 **Goal:** pôr o StillOn em `https://stillon.tech` atrás de uma borda Caddy do host, dividida com o GoblinShift, sem perder nenhuma obrigação de hospedagem do Plano 11.
 
 **Architecture:** a borda (`/srv/edge`, Caddy, `172.31.0.2` na rede Docker `edge`) faz o TLS e encaminha por domínio. O Caddy do StillOn deixa de publicar portas, atende só HTTP para o domínio, confia só no IP da borda e entrega ao app `X-Forwarded-For: {client_ip}`. A rede `stillon` sai de `172.30.0.0/24` (ocupada na VPS) para `10.30.0.0/24`. O app não muda.

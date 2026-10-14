@@ -1145,8 +1145,27 @@ confundem. Na próxima mudança de `deploy/vps/` você recopia (bloco 10, "Arqui
 
 ### 4.8 O primeiro deploy, pelo Actions
 
-**Antes:** o `getent` do passo 1.4 já devolve o IP da VPS (o Caddy precisa disso para o
-certificado).
+**Antes:** a rede `edge` já existe e o `172.31.0.3` está livre. O Caddy do StillOn nasce nesse
+IP, e o Docker recusa subir se outro contêiner já o usa. (O DNS do domínio não importa aqui: o
+certificado agora é da borda, no 4.9.)
+
+**Confira** (na VPS), um comando por vez:
+
+```bash
+sudo docker network inspect edge --format '{{range .IPAM.Config}}{{.Subnet}} {{.IPRange}}{{"\n"}}{{end}}'
+```
+
+```bash
+sudo docker network inspect edge --format '{{range .Containers}}{{.Name}} {{.IPv4Address}}{{"\n"}}{{end}}'
+```
+
+**Por quê:** o contrato da borda fixa a sub-rede e reserva o `.128/25` aos IPs dinâmicos; o
+`172.31.0.3` fica de fora dele, só para o Caddy do StillOn.
+
+**Deve aparecer:** no primeiro, `172.31.0.0/24 172.31.0.128/25`. No segundo, a borda em
+`172.31.0.2/24` e o Nginx do GoblinShift em `172.31.0.4/24`, e **nenhuma linha** com
+`172.31.0.3/24`. Se o Docker disser `No such network`, a borda não foi instalada: pare e siga a
+[spec](../superpowers/specs/2026-10-13-vps-compartilhada-design.md) ("Ordem na VPS"). Se outro contêiner estiver no `.3`, pare: o IP é do StillOn pelo ADR 014.
 
 **Faça** (no navegador, ou no seu computador):
 
@@ -1303,6 +1322,25 @@ foram feitos na troca da borda, guiada pelo Claude
 ([spec](../superpowers/specs/2026-10-13-vps-compartilhada-design.md), "Ordem na VPS"). Sem isso,
 o pedido de certificado falha e conta no limite do Let's Encrypt.
 
+**Confira o Antes** (no seu computador, prompt `%`), um comando por vez:
+
+```bash
+. ~/.stillon-vps
+```
+
+```bash
+nc -vz -w 5 "$VPS" 443
+```
+
+```bash
+dig +short "$DOMINIO"
+```
+
+**Deve aparecer:** o `nc` conectando (`succeeded` ou `open`, conforme o `nc` do sistema) e o
+`dig` devolvendo um IP igual ao `$VPS`. Se a 443 não conectar, a borda ou o firewall do painel
+estão errados; se o `dig` vier vazio ou diferente, o DNS (passo 1.4) ainda não propagou. Nos dois
+casos, não siga: o pedido de certificado falharia e contaria no limite do Let's Encrypt.
+
 **Faça, primeiro no seu computador** (prompt `%`), com a `main` atualizada:
 
 ```bash
@@ -1352,8 +1390,14 @@ curl -sS "https://$DOMINIO/healthz"; echo
 curl -sS -o /dev/null -w '%{http_code}\n' "https://$DOMINIO/readyz"
 ```
 
-`/healthz` responde (o corpo do app) sem erro de certificado, e `/readyz` dá `200`. Se o `curl`
-reclamar do certificado, espere um minuto e veja, na VPS, em `/srv/edge`:
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' "http://$VPS/"
+```
+
+`/healthz` responde (o corpo do app) sem erro de certificado, e `/readyz` dá `200`. O último
+`curl` confere que o GoblinShift, que a mesma borda atende pelo IP, continua respondendo depois
+do `reload`: tem de devolver o código da resposta dele (hoje `404`), nunca erro de conexão. Se o
+`curl` do domínio reclamar do certificado, espere um minuto e veja, na VPS, em `/srv/edge`:
 `sudo docker compose logs --tail 30 proxy`. Um erro de "challenge" quase sempre é DNS ainda não
 propagado ou a 80/443 fechada no firewall do painel. Não repita o `reload` em sequência: cada
 tentativa falha conta no limite do Let's Encrypt.
@@ -1818,9 +1862,14 @@ segundos entre elas: o mesmo `curl` no Termux, ou o painel no navegador com o e-
 **Deve aparecer:** no celular, três vezes `401` (no painel, "E-mail ou senha incorretos."), nunca
 `429`. O balde do celular está cheio, porque é outro IP.
 
-Se o celular levar algum `429`, todos os clientes estão dividindo um balde: o app vê o IP do
-Caddy em todo pedido, e o `TRUSTED_PROXIES` do app não é o IP do Caddy. Pare e confira o
-`compose.prod.yaml` e o `.env`.
+Se o celular levar algum `429`, todos os clientes estão dividindo um balde. Há duas causas, e
+as duas se conferem:
+
+- O app vê o IP do Caddy do StillOn em todo pedido: o `TRUSTED_PROXIES` do app não é o IP do
+  Caddy (10.30.0.2). Confira o `compose.prod.yaml` e o `.env`.
+- O app vê o IP da borda (172.31.0.2) em todo pedido: o Caddyfile do StillOn está sem
+  `header_up X-Forwarded-For {client_ip}`, ou o `trusted_proxies` dele não casa com o IP da
+  borda (`172.31.0.2/32`). Confira com `vc exec caddy cat /etc/caddy/Caddyfile`.
 
 ### 9.3 `Host` estranho não chega ao app (obrigação 5, a parte do Caddy)
 
@@ -1899,7 +1948,9 @@ timedatectl | grep synchronized
 **Deve aparecer:** os três serviços `running`/`healthy`; a borda (`proxy`) `running`; o timer do
 vigia agendado; `Status:
 active`; `Status for the jail: sshd`; `System clock synchronized: yes`. E, de fora,
-`curl -sS -o /dev/null -w '%{http_code}\n' "https://$DOMINIO/readyz"` dá `200`. O healthchecks
+`curl -sS -o /dev/null -w '%{http_code}\n' "https://$DOMINIO/readyz"` dá `200`, e
+`curl -s -o /dev/null -w '%{http_code}\n' "http://$VPS/"` devolve a resposta do GoblinShift
+(hoje `404`), nunca erro de conexão: o outro projeto da borda também voltou. O healthchecks
 pode ter mandado um par de e-mails, **down** e **up** no minuto seguinte: é o custo do reinício
 (passo 1.6, "Por quê"), e não uma queda.
 

@@ -72,9 +72,10 @@ internet ──80/443──► borda: Caddy (/srv/edge, 172.31.0.2 na rede edge)
   `X-Forwarded-For` do cliente pelo IP de quem conectou. Termina em
   `import conf.d/*.caddy`.
 - Cada projeto entrega um trecho em `/srv/edge/conf.d/<projeto>.caddy` e nunca
-  sobrescreve o de outro. O upstream é resolvido por nome na hora da conexão: um
-  projeto parado não impede a borda de subir; as requisições dele recebem 502.
-- Trecho do GoblinShift: `:80` (acesso pelo IP) para `goblinshift-web`, como hoje.
+  sobrescreve o de outro. O upstream é um IP fixo da rede `edge` (sem resolução de
+  nome): um projeto parado não impede a borda de subir; as requisições dele recebem 502.
+- Trecho do GoblinShift: `:80` (acesso pelo IP) para o Nginx dele (`goblinshift-web`,
+  `172.31.0.4`), como hoje.
   Os cabeçalhos que o app dele lê (`X-Forwarded-For`, `X-Forwarded-Proto`) mantêm o
   significado: o Caddy sem proxies confiáveis põe o IP do cliente e o esquema real.
 - Contrato que o StillOn assume, e que o teste do StillOn reproduz: rede externa
