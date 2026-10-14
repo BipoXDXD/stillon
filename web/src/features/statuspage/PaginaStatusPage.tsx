@@ -10,7 +10,7 @@ import { Titulo } from '@/components/Titulo'
 import { useAvisar } from '@/components/ui/avisos'
 import { Botao } from '@/components/ui/botao'
 import { useCopiar } from '@/components/ui/copiar'
-import { Campo, Entrada, ErroDoFormulario, Selecao } from '@/components/ui/campo'
+import { CaixaDeMarcar, Campo, Entrada, ErroDoFormulario, Selecao } from '@/components/ui/campo'
 import { useAlvos, usePaginas, useResumo } from '@/lib/api/consultas'
 import { ApiError, naoEncontrado } from '@/lib/api/http'
 import { mensagemDe, mensagemDoCampo } from '@/lib/api/mensagens'
@@ -154,10 +154,7 @@ function Formulario({ pagina, alvos }: { pagina: PaginaDeStatus | null; alvos: A
       >
         {(a) => <Entrada {...a} autoCapitalize="none" spellCheck={false} {...f.register('slug')} />}
       </Campo>
-      <label className="flex items-center gap-2 text-sm">
-        <input type="checkbox" {...f.register('published')} />
-        Publicada (visível para qualquer pessoa com o link)
-      </label>
+      <CaixaDeMarcar {...f.register('published')}>Publicada (visível para qualquer pessoa com o link)</CaixaDeMarcar>
 
       <fieldset ref={lista} className="space-y-3">
         <legend className="text-sm font-medium">Alvos na página ({itens.fields.length} de {MAX_ITENS})</legend>
