@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -60,6 +61,14 @@ func (u User) IsLocked(now time.Time) bool {
 // uma migration futura trocasse o tipo da coluna.
 func NormalizeEmail(email string) string {
 	return strings.TrimSpace(email)
+}
+
+// maxEmailBytes é o teto de um endereço no RFC 5321 (caminho de 256 menos os
+// dois sinais de maior e menor).
+const maxEmailBytes = 254
+
+func emailPossivel(email string) bool {
+	return len(email) <= maxEmailBytes && !strings.ContainsFunc(email, unicode.IsControl)
 }
 
 // Attempts é o contador de tentativas de uma credencial de login (A2 e A3 do
@@ -165,6 +174,12 @@ type UserStore interface {
 }
 
 func (s *PGStore) ByEmail(ctx context.Context, email string) (User, error) {
+	// Um e-mail que nenhuma conta pode ter (controle, NUL, mais que o teto
+	// do RFC 5321) é conta inexistente: o NUL nem chega ao Postgres, que o
+	// recusa em text e viraria 500.
+	if !emailPossivel(email) {
+		return User{}, ErrNotFound
+	}
 	var u User
 	err := s.pool.QueryRow(ctx, `
 		SELECT id, email, password_hash, failed_attempts, locked_until, totp_confirmed_at

@@ -206,16 +206,16 @@ func TestListSessionsOrderAndTimes(t *testing.T) {
 
 	var familias []uuid.UUID
 	for range 2 {
-		time.Sleep(5 * time.Millisecond) // o UUIDv7 tem resolução de milissegundo
-		antes := time.Now()
+		// O UUIDv7 da família carrega o login no relógio do Manager, com
+		// resolução de milissegundo (é dele que sai a idade da família).
+		a.clk.Advance(time.Second)
 		_, s, err := mgr.Issue(ctx, a.userID, carimboDe(t, a, a.userID), auth.Meta{IP: "203.0.113.9"})
 		if err != nil {
 			t.Fatal(err)
 		}
-		depois := time.Now()
 		seg, nseg := s.FamilyID.Time().UnixTime()
-		if criada := time.Unix(seg, nseg); criada.Before(antes.Truncate(time.Millisecond)) || criada.After(depois) {
-			t.Fatalf("o UUIDv7 da família (%v) está fora do login (%v a %v)", criada, antes, depois)
+		if criada := time.Unix(seg, nseg); !criada.Equal(a.clk.Now().Truncate(time.Millisecond)) {
+			t.Fatalf("o UUIDv7 da família (%v) não é o instante do login (%v)", criada, a.clk.Now())
 		}
 		familias = append(familias, s.FamilyID)
 	}

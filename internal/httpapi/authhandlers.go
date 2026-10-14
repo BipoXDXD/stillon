@@ -408,42 +408,39 @@ func argon2Ocupado(w http.ResponseWriter, r *http.Request, op string) {
 // posto ali pelo middleware.BodyLimit; tratá-lo como validação, como antes,
 // mandava 400 para quem não tinha erro de validação nenhum.
 //
+// O DTO é estrito em toda a API: campo desconhecido é 400, porque um campo
+// com o nome errado ("intervalsec") seria ignorado em silêncio, e o cliente
+// acharia que salvou. Depois do objeto só cabe espaço em branco: um segundo
+// objeto que o decoder ignorasse seria lido de outro jeito por um proxy ou
+// WAF na frente.
+//
 // Devolve false quando já escreveu o erro — o chamador só precisa retornar.
 func decodeJSON(w http.ResponseWriter, r *http.Request, dst any) bool {
-	return decodeJSONWith(w, r, dst, false)
-}
-
-// decodeJSONStrict recusa campo desconhecido. Nas rotas de recurso, um campo
-// com o nome errado ("intervalsec") seria ignorado em silêncio, e o cliente
-// acharia que salvou.
-func decodeJSONStrict(w http.ResponseWriter, r *http.Request, dst any) bool {
-	return decodeJSONWith(w, r, dst, true)
-}
-
-func decodeJSONWith(w http.ResponseWriter, r *http.Request, dst any, strict bool) bool {
 	dec := json.NewDecoder(r.Body)
-	if strict {
-		dec.DisallowUnknownFields()
+	dec.DisallowUnknownFields()
+	err := dec.Decode(dst)
+	if err == nil {
+		_, err = dec.Token()
+		if errors.Is(err, io.EOF) {
+			return true
+		}
 	}
-	if err := dec.Decode(dst); err != nil {
-		var tooLarge *http.MaxBytesError
-		if errors.As(err, &tooLarge) {
-			apierr.WriteError(w, r, apierr.CodePayloadTooLarge)
-			return false
-		}
-		// O erro de sintaxe chega ANTES do limite quando o corpo gigante nem
-		// é JSON: o decoder para no primeiro byte inválido, muito longe do
-		// 1 MiB, e nunca vê o MaxBytesError. Drenar o resto (que o próprio
-		// MaxBytesReader mantém limitado) revela se o corpo também estourava
-		// o limite; quando estoura, o tamanho é a causa mais útil de relatar
-		// — mandar 400 faria o cliente procurar um defeito nos dados que o
-		// servidor sequer chegou a ler.
-		if _, drenar := io.Copy(io.Discard, r.Body); errors.As(drenar, &tooLarge) {
-			apierr.WriteError(w, r, apierr.CodePayloadTooLarge)
-			return false
-		}
-		apierr.WriteError(w, r, apierr.CodeValidation)
+	var tooLarge *http.MaxBytesError
+	if errors.As(err, &tooLarge) {
+		apierr.WriteError(w, r, apierr.CodePayloadTooLarge)
 		return false
 	}
-	return true
+	// O erro de sintaxe chega ANTES do limite quando o corpo gigante nem
+	// é JSON: o decoder para no primeiro byte inválido, muito longe do
+	// 1 MiB, e nunca vê o MaxBytesError. Drenar o resto (que o próprio
+	// MaxBytesReader mantém limitado) revela se o corpo também estourava
+	// o limite; quando estoura, o tamanho é a causa mais útil de relatar
+	// — mandar 400 faria o cliente procurar um defeito nos dados que o
+	// servidor sequer chegou a ler.
+	if _, drenar := io.Copy(io.Discard, r.Body); errors.As(drenar, &tooLarge) {
+		apierr.WriteError(w, r, apierr.CodePayloadTooLarge)
+		return false
+	}
+	apierr.WriteError(w, r, apierr.CodeValidation)
+	return false
 }

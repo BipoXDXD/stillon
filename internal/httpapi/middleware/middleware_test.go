@@ -23,9 +23,11 @@ func TestSecurityHeadersArePresent(t *testing.T) {
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
 
 	want := map[string]string{
-		"X-Content-Type-Options":    "nosniff",
-		"Referrer-Policy":           "no-referrer",
-		"Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+		"X-Content-Type-Options":       "nosniff",
+		"Referrer-Policy":              "no-referrer",
+		"Strict-Transport-Security":    "max-age=31536000; includeSubDomains",
+		"Cross-Origin-Resource-Policy": "same-origin",
+		"Permissions-Policy":           "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
 	}
 	for k, v := range want {
 		if got := rec.Header().Get(k); got != v {

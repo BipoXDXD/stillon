@@ -32,6 +32,10 @@ func TestValidate(t *testing.T) {
 		{"nome com 101 caracteres", func(f *fields) { f.Name = strings.Repeat("á", 101) }, "name", ReasonTooLong},
 		{"nome com 100 caracteres", func(f *fields) { f.Name = strings.Repeat("á", 100) }, "", ""},
 		{"nome com controle", func(f *fields) { f.Name = "a\x00b" }, "name", ReasonInvalid},
+		{"nome com inversão bidi", func(f *fields) { f.Name = "a\u202eb" }, "name", ReasonInvalid},
+		{"nome com espaço de largura zero", func(f *fields) { f.Name = "a\u200bb" }, "name", ReasonInvalid},
+		{"nome com acento", func(f *fields) { f.Name = "Página de preço" }, "", ""},
+		{"nome com emoji de profissão (ZWJ)", func(f *fields) { f.Name = "Equipe \U0001F469\U0000200D\U0001F4BB" }, "", ""},
 
 		{"url vazia", func(f *fields) { f.URL = "" }, "url", ReasonRequired},
 		{"url ftp", func(f *fields) { f.URL = "ftp://exemplo.com" }, "url", ReasonInvalid},
@@ -46,6 +50,23 @@ func TestValidate(t *testing.T) {
 		{"url sub.localhost", func(f *fields) { f.URL = "http://app.localhost/" }, "url", ReasonForbidden},
 		{"url IP público literal", func(f *fields) { f.URL = "http://8.8.8.8/" }, "", ""},
 		{"url sem host", func(f *fields) { f.URL = "http://:8080/" }, "url", ReasonInvalid},
+		// IPv4 fora da forma canônica: o resolver do sistema (cgo) o converte
+		// em IP, e o Go puro o manda ao DNS. Só a forma a.b.c.d é aceita.
+		{"url IP decimal", func(f *fields) { f.URL = "http://2130706433/" }, "url", ReasonInvalid},
+		{"url IP hexadecimal", func(f *fields) { f.URL = "http://0x7f.1/" }, "url", ReasonInvalid},
+		{"url IP octal", func(f *fields) { f.URL = "http://017700000001/" }, "url", ReasonInvalid},
+		{"url IP abreviado", func(f *fields) { f.URL = "http://127.1/" }, "url", ReasonInvalid},
+		{"url IP com zero à esquerda", func(f *fields) { f.URL = "http://0177.0.0.1/" }, "url", ReasonInvalid},
+		{"url IP público decimal", func(f *fields) { f.URL = "http://134744072/" }, "url", ReasonInvalid},
+		{"url com dígito no meio do nome", func(f *fields) { f.URL = "http://api2.exemplo.com/" }, "", ""},
+		{"url com hífen e número no rótulo", func(f *fields) { f.URL = "http://host-1.exemplo.com/" }, "", ""},
+		{"url com TLD alfanumérico", func(f *fields) { f.URL = "http://api.v2/" }, "", ""},
+		{"url com ponto final", func(f *fields) { f.URL = "http://exemplo.com./" }, "", ""},
+		{"url IP público com ponto final", func(f *fields) { f.URL = "http://8.8.8.8./" }, "", ""},
+		{"url loopback com ponto final", func(f *fields) { f.URL = "http://127.0.0.1./" }, "url", ReasonForbidden},
+		{"url IP decimal com ponto final", func(f *fields) { f.URL = "http://2130706433./" }, "url", ReasonInvalid},
+		{"url IPv6 público literal", func(f *fields) { f.URL = "http://[2606:4700:4700::1111]/" }, "", ""},
+		{"url IP hexadecimal maiúsculo", func(f *fields) { f.URL = "http://0X7F.1/" }, "url", ReasonInvalid},
 
 		{"método DELETE", func(f *fields) { f.Method = "DELETE" }, "method", ReasonInvalid},
 

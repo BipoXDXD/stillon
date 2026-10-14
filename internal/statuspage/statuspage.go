@@ -13,10 +13,11 @@ import (
 	"regexp"
 	"strings"
 	"time"
-	"unicode"
 	"unicode/utf8"
 
 	"github.com/google/uuid"
+
+	"github.com/BipoXDXD/stillon/internal/rotulo"
 )
 
 var (
@@ -135,7 +136,9 @@ func texto(s string, max int) string {
 		return ReasonRequired
 	case utf8.RuneCountInString(s) > max:
 		return ReasonTooLong
-	case strings.ContainsFunc(s, unicode.IsControl):
+	// A inversão bidi e o espaço de largura zero fariam o título ou o nome
+	// mentir na página pública.
+	case rotulo.TemInvisivel(s):
 		return ReasonInvalid
 	}
 	return ""

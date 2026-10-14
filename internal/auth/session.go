@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"time"
@@ -19,6 +20,12 @@ import (
 
 // RefreshTTL vem da spec §5.2.
 const RefreshTTL = 30 * 24 * time.Hour
+
+// MaxFamilyAge é a idade máxima de uma família de refresh, contada do login.
+// Cada rotação empurra o vencimento do token, mas não passa deste teto: sem
+// ele, um refresh roubado de um navegador abandonado, rotacionado pelo ladrão
+// a cada poucos dias, valeria para sempre. Depois dele, login de novo.
+const MaxFamilyAge = 90 * 24 * time.Hour
 
 // refreshTokenBytes: 32 bytes de crypto/rand, ou seja 256 bits de entropia
 // (spec §5.2). É o que torna busca exaustiva inviável e permite guardar
@@ -119,7 +126,7 @@ func (m *Manager) issue(ctx context.Context, userID uuid.UUID, stamp string, pro
 	if stamp == "" {
 		return "", Session{}, errors.New("emitir sessão: sem o carimbo da senha verificada")
 	}
-	familyID, err := uuid.NewV7()
+	familyID, err := novaFamilia(m.clk.Now())
 	if err != nil {
 		return "", Session{}, fmt.Errorf("gerar família: %w", err)
 	}
@@ -199,7 +206,7 @@ func (m *Manager) Rotate(ctx context.Context, token string, meta Meta) (string, 
 			reuso = true
 			return nil
 		}
-		if cur.RevokedAt != nil || now.After(cur.ExpiresAt) {
+		if cur.RevokedAt != nil || now.After(cur.ExpiresAt) || !now.Before(fimDaFamilia(cur.FamilyID)) {
 			return ErrInvalidSession
 		}
 
@@ -300,7 +307,7 @@ func (m *Manager) insert(ctx context.Context, tx Tx, userID, familyID uuid.UUID,
 		UserID:    userID,
 		FamilyID:  familyID,
 		TokenHash: crypto.HashToken(token),
-		ExpiresAt: m.clk.Now().Add(RefreshTTL),
+		ExpiresAt: minTempo(m.clk.Now().Add(RefreshTTL), fimDaFamilia(familyID)),
 		IPHash:    crypto.HashIP(m.ipKey, meta.IP),
 		UserAgent: meta.UserAgent,
 	}
@@ -314,4 +321,38 @@ func (m *Manager) insert(ctx context.Context, tx Tx, userID, familyID uuid.UUID,
 		FamilyID:  row.FamilyID,
 		ExpiresAt: row.ExpiresAt,
 	}, nil
+}
+
+// novaFamilia gera o id da família, um UUIDv7 cujo carimbo de 48 bits é o
+// instante do login no relógio do Manager. É dele que fimDaFamilia tira a
+// idade, sem coluna nova: o id já carrega o nascimento da família.
+func novaFamilia(agora time.Time) (uuid.UUID, error) {
+	id, err := uuid.NewV7()
+	if err != nil {
+		return uuid.UUID{}, err
+	}
+	var ms [8]byte
+	binary.BigEndian.PutUint64(ms[:], uint64(agora.UnixMilli()))
+	copy(id[:6], ms[2:])
+	return id, nil
+}
+
+// fimDaFamilia é o instante em que a família passa de MaxFamilyAge. Um id
+// que não é v7 não tem nascimento legível e já nasce vencido: toda família
+// foi gerada como v7, então isso só falha fechado diante de dado estranho.
+func fimDaFamilia(familyID uuid.UUID) time.Time {
+	if familyID.Version() != 7 {
+		return time.Time{}
+	}
+	var ms [8]byte
+	copy(ms[2:], familyID[:6])
+	// #nosec G115 -- os dois bytes altos ficam zerados: o valor cabe em 48 bits, longe do sinal do int64.
+	return time.UnixMilli(int64(binary.BigEndian.Uint64(ms[:]))).Add(MaxFamilyAge)
+}
+
+func minTempo(a, b time.Time) time.Time {
+	if b.Before(a) {
+		return b
+	}
+	return a
 }

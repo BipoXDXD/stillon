@@ -7,10 +7,10 @@ import (
 	"net/url"
 	"slices"
 	"strings"
-	"unicode"
 	"unicode/utf8"
 
 	"github.com/BipoXDXD/stillon/internal/prober/safedial"
+	"github.com/BipoXDXD/stillon/internal/rotulo"
 )
 
 // Motivos de validação. Vocabulário fechado: a camada HTTP os repassa ao
@@ -91,7 +91,7 @@ func validate(f *fields) *ValidationError {
 		v.add("name", ReasonRequired)
 	case utf8.RuneCountInString(f.Name) > maxNameRunes:
 		v.add("name", ReasonTooLong)
-	case strings.ContainsFunc(f.Name, unicode.IsControl):
+	case rotulo.TemInvisivel(f.Name):
 		v.add("name", ReasonInvalid)
 	}
 
@@ -169,11 +169,27 @@ func checkURL(raw string) string {
 		}
 		return ""
 	}
+	// Host que termina em número é IPv4 fora da forma a.b.c.d (2130706433,
+	// 0x7f.1, 127.1): o resolver do sistema o lê como IP, o Go puro o manda ao
+	// DNS, e o cadastro não tem como saber qual dos dois vai sondá-lo.
+	if terminaEmNumero(host) {
+		return ReasonInvalid
+	}
 	// RFC 6761: localhost e todo *.localhost resolvem para loopback.
 	if host == "localhost" || strings.HasSuffix(host, ".localhost") {
 		return ReasonForbidden
 	}
 	return ""
+}
+
+// terminaEmNumero é a regra "ends in a number" do WHATWG URL: o último rótulo
+// só com dígitos, ou 0x seguido de hexadecimal, faz do host um IPv4.
+func terminaEmNumero(host string) bool {
+	rotulo := host[strings.LastIndexByte(host, '.')+1:]
+	if hexa, ok := strings.CutPrefix(rotulo, "0x"); ok {
+		return strings.Trim(hexa, "0123456789abcdef") == ""
+	}
+	return rotulo != "" && strings.Trim(rotulo, "0123456789") == ""
 }
 
 func normalizeHeaders(in map[string]string) (map[string]string, string) {

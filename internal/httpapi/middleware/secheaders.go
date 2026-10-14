@@ -17,6 +17,12 @@ func SecurityHeaders(next http.Handler) http.Handler {
 			"default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
 		h.Set("Cross-Origin-Opener-Policy", "same-origin")
 		h.Set("X-Frame-Options", "DENY")
+		// CORP barra a leitura destas respostas por <script>/<img> de outra
+		// origem (Spectre e afins); o fetch com CORS do painel não é afetado.
+		h.Set("Cross-Origin-Resource-Policy", "same-origin")
+		// Nada aqui usa câmera, microfone, localização, pagamento ou USB: um
+		// script injetado também não pode.
+		h.Set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=()")
 		// Item 26: nada que sai desta API deve ser guardado. A resposta de
 		// POST já não é cacheável por padrão, então isto é defesa em
 		// profundidade — cobre o histórico do navegador (que guarda respostas

@@ -22,8 +22,18 @@
 *.key
 *.dump
 *.age
+# Chaves e certificados privados de qualquer formato (as chaves SSH da VPS
+# vivem no Bitwarden e em ~/.ssh, nunca aqui) e o arquivo local da VPS.
+*.pem
+*.p12
+*.pfx
+id_rsa*
+id_ecdsa*
+id_ed25519*
+.stillon-vps
 # Chaves de fixture de teste (TLS em testdata/) são do repositório.
 !**/testdata/**/*.key
+!**/testdata/**/*.pem
 *.test
 coverage.out
 /.superpowers/
