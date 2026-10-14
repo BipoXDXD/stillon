@@ -256,6 +256,32 @@ func TestLongGapRestartsTheHysteresis(t *testing.T) {
 	}
 }
 
+// A borda da lacuna (on/off point): três intervalos exatos ainda somam as
+// sequências; um segundo a mais recomeça a histerese. Trocar <= por < na
+// regra, ou o fator 3 por 2 ou 4, quebra um dos dois casos.
+func TestGapBoundaryOfTheHysteresis(t *testing.T) {
+	ultimo := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
+	antes := incident.State{ConsecutiveFailures: 2, StreakSince: ultimo, LastCheckedAt: ultimo}
+	const intervaloSec = 60
+	casos := []struct {
+		nome   string
+		lacuna time.Duration
+		falhas int32
+	}{
+		{"três intervalos exatos somam", 3 * time.Minute, 2},
+		{"três intervalos e um segundo recomeçam", 3*time.Minute + time.Second, 0},
+	}
+	for _, c := range casos {
+		t.Run(c.nome, func(t *testing.T) {
+			depois := recomecarAposLacuna(antes, ultimo.Add(c.lacuna), intervaloSec)
+			if depois.ConsecutiveFailures != c.falhas || depois.ConsecutiveSuccesses != 0 ||
+				!depois.LastCheckedAt.Equal(ultimo) || !depois.StreakSince.Equal(ultimo) {
+				t.Errorf("lacuna de %v: estado = %+v; queria %d falhas e os instantes intactos", c.lacuna, depois, c.falhas)
+			}
+		})
+	}
+}
+
 // degraded conta como SUCESSO para a histerese: zera a sequência de falhas
 // e fecha o incidente. Só down é falha.
 func TestDegradedChecksResolveTheIncident(t *testing.T) {
