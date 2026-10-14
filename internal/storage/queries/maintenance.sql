@@ -30,6 +30,13 @@ ON CONFLICT (target_id, bucket) DO UPDATE
 SELECT coalesce(max(bucket), 'epoch'::timestamptz)::timestamptz FROM check_rollup_1h
  WHERE bucket < sqlc.arg(before)::timestamptz;
 
+-- Uma consolidação por vez entre todas as instâncias (E3 da revisão de
+-- 2026-10-14): o upsert é idempotente, mas dois em paralelo travam as mesmas
+-- linhas em ordens diferentes (deadlock 40P01). A trava é de transação e
+-- não espera: quem não a pega pula a rodada, e a próxima tenta de novo.
+-- name: TryLockRollups :one
+SELECT pg_try_advisory_xact_lock(hashtextextended(sqlc.arg(key)::text, 0)) AS acquired;
+
 -- Vale só até o fim da transação (o terceiro argumento de set_config).
 -- name: SetLocalLockTimeout :exec
 SELECT set_config('lock_timeout', sqlc.arg(timeout)::text, true);

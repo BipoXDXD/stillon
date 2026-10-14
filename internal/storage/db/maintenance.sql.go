@@ -211,3 +211,18 @@ func (q *Queries) SetLocalStatementTimeout(ctx context.Context, timeout string) 
 	_, err := q.db.Exec(ctx, setLocalStatementTimeout, timeout)
 	return err
 }
+
+const tryLockRollups = `-- name: TryLockRollups :one
+SELECT pg_try_advisory_xact_lock(hashtextextended($1::text, 0)) AS acquired
+`
+
+// Uma consolidação por vez entre todas as instâncias (E3 da revisão de
+// 2026-10-14): o upsert é idempotente, mas dois em paralelo travam as mesmas
+// linhas em ordens diferentes (deadlock 40P01). A trava é de transação e
+// não espera: quem não a pega pula a rodada, e a próxima tenta de novo.
+func (q *Queries) TryLockRollups(ctx context.Context, key string) (bool, error) {
+	row := q.db.QueryRow(ctx, tryLockRollups, key)
+	var acquired bool
+	err := row.Scan(&acquired)
+	return acquired, err
+}

@@ -47,6 +47,9 @@ const (
 	// statementTimeout do pool: a primeira consolidação volta 62 dias de
 	// checks, e a primeira retenção apaga meses de linhas.
 	maintenanceStatementTimeout = 5 * time.Minute
+	// rollupLockKey nomeia a advisory lock da consolidação, hasheada no banco
+	// como a de ensure_checks_partition (migration 00006).
+	rollupLockKey = "stillon.consolidate_rollups"
 )
 
 var ErrMaintenanceInterval = errors.New("intervalo de manutenção precisa ser positivo")
@@ -86,6 +89,10 @@ func Maintain(ctx context.Context, pool *pgxpool.Pool, now time.Time) (Maintenan
 // da marca d'água; sem rollup nenhum, volta rollupBackfill. Devolve quantas
 // linhas de rollup gravou ou reescreveu.
 //
+// Com outra instância consolidando (a advisory lock rollupLockKey tomada),
+// pula a rodada e devolve 0 sem erro: o upsert é idempotente, e a rodada
+// seguinte cobre a janela.
+//
 // A marca d'água é o último rollup ANTES de ate. Um rollup no futuro (o
 // relógio esteve adiantado quando foi gravado) não conta: com a marca no
 // futuro, de ficava depois de ate e nenhuma hora era consolidada (D4 do Plano
@@ -96,6 +103,14 @@ func ConsolidateRollups(ctx context.Context, pool *pgxpool.Pool, now time.Time) 
 	ate := now.UTC().Truncate(time.Hour)
 	var n int64
 	err := InProberTx(ctx, pool, func(q *db.Queries) error {
+		livre, err := q.TryLockRollups(ctx, rollupLockKey)
+		if err != nil {
+			return fmt.Errorf("travar a consolidação: %w", err)
+		}
+		if !livre {
+			slog.InfoContext(ctx, "consolidação de rollups pulada: outra instância está consolidando")
+			return nil
+		}
 		if err := q.SetLocalStatementTimeout(ctx, milissegundos(maintenanceStatementTimeout)); err != nil {
 			return fmt.Errorf("prazo da consolidação: %w", err)
 		}
