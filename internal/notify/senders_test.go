@@ -332,3 +332,23 @@ func TestRetryAfter(t *testing.T) {
 		}
 	}
 }
+
+// O lembrete chega no Discord com a cor da abertura: o alvo segue fora.
+func TestDiscordReminderHasTheOpenedColor(t *testing.T) {
+	srv, client, pedidos := provedor(t, status(http.StatusOK))
+	d := &Discord{client: client, validate: aceitarQualquer}
+	ev := evAberto
+	ev.Kind = incident.EventReminder
+	ev.QueuedAt = ev.StartedAt.Add(time.Hour)
+
+	if err := d.Send(context.Background(), crypto.Secret(srv.URL+"/api/webhooks/1/tok"), ev); err != nil {
+		t.Fatal(err)
+	}
+	var corpo discordPayload
+	if err := json.Unmarshal(receber(t, pedidos).Corpo, &corpo); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(corpo.Content, "🔴 API de pagamentos continua fora do ar") {
+		t.Errorf("conteúdo = %q", corpo.Content)
+	}
+}

@@ -27,7 +27,7 @@ WITH claimed AS (
 )
 SELECT cl.id, cl.event, cl.attempts, cl.created_at,
        c.id AS channel_id, c.user_id, c.kind, c.config_enc, c.enabled, c.verified_at,
-       i.id AS incident_id, i.started_at, i.resolved_at, i.cause,
+       i.id AS incident_id, i.started_at, i.resolved_at, i.ack_at, i.cause,
        t.name AS target_name
   FROM claimed cl
   JOIN notif_channels c ON c.id = cl.channel_id
@@ -55,6 +55,7 @@ type ClaimDueNotificationsRow struct {
 	IncidentID uuid.UUID
 	StartedAt  time.Time
 	ResolvedAt *time.Time
+	AckAt      *time.Time
 	Cause      string
 	TargetName string
 }
@@ -87,6 +88,7 @@ func (q *Queries) ClaimDueNotifications(ctx context.Context, arg ClaimDueNotific
 			&i.IncidentID,
 			&i.StartedAt,
 			&i.ResolvedAt,
+			&i.AckAt,
 			&i.Cause,
 			&i.TargetName,
 		); err != nil {

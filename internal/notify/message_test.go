@@ -99,3 +99,17 @@ func TestHintNeverShowsTheSecret(t *testing.T) {
 		t.Errorf("hint do e-mail = %q", h)
 	}
 }
+
+// O lembrete conta a duração até o enfileiramento, e não até o envio: a
+// retentativa repete o texto (Idempotency-Key do Resend).
+func TestMessageForReminder(t *testing.T) {
+	ev := evAberto
+	ev.Kind = incident.EventReminder
+	ev.QueuedAt = ev.StartedAt.Add(6*time.Hour + 30*time.Minute + 15*time.Second)
+	assunto, corpo := mensagem(ev)
+	if assunto != "[StillOn] API de pagamentos continua fora do ar" ||
+		corpo != "API de pagamentos continua fora do ar desde 24/09/2026 12:00 UTC (há 6h 30min).\n"+
+			"Causa: tempo esgotado.\nReconheça o incidente no painel para parar os lembretes.\n" {
+		t.Errorf("lembrete: %q / %q", assunto, corpo)
+	}
+}
