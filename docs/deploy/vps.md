@@ -228,6 +228,8 @@ comandos deste runbook.
 
 **Faça** (no seu computador):
 
+**1/1 · Mac.** Rode só este e espere a saída:
+
 ```bash
 ssh-keygen -t ed25519 -C "stillon-admin" -f ~/.ssh/stillon_admin
 ```
@@ -279,6 +281,8 @@ em emergência: o SSH de root vai ser desligado no passo 2.7.
 **Faça:** na página **Overview** da VPS, copie o endereço **IPv4** e ponha-o no `~/.stillon-vps`
 (`VPS=…`, passo 0.3). Depois, no seu computador:
 
+**1/1 · Mac.** Rode só este e espere a saída:
+
 ```bash
 cat ~/.ssh/stillon_admin.pub
 ```
@@ -315,6 +319,8 @@ IPv4. Sem `www`: o Caddy atende um nome só (o `www` não teria certificado).
 `@` ou `www`.
 
 **Confira** (no seu computador; a propagação pode levar de minutos até 24 h):
+
+**1/1 · Mac.** Rode só este e espere a saída:
 
 ```bash
 getent ahostsv4 "$DOMINIO" | head -1
@@ -394,6 +400,8 @@ por você e esconder uma queda.
 **Browser terminal**; fonte: Hostinger, [How to use the Browser terminal](https://www.hostinger.com/support/7978544-how-to-use-the-browser-terminal-in-hostinger/)).
 Abre uma aba com um terminal já logado como root. Nele:
 
+**1/3 · VPS, como root.** Rode só este e espere a saída:
+
 ```bash
 ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub
 ```
@@ -402,6 +410,8 @@ ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub
 
 **Faça, depois, no seu computador**, com a passphrase **já copiada** do gerenciador (o servidor
 dá 2 minutos para o login terminar; passado disso, fecha com `Connection closed`, e basta repetir):
+
+**2/3 · Mac.** Rode só este e espere a saída:
 
 ```bash
 ssh -i ~/.ssh/stillon_admin root@"$VPS"
@@ -421,6 +431,8 @@ Se forem diferentes, digite `no` e pare: releia o IP no `~/.stillon-vps`.
 **Confira também** (na VPS, como root) quais chaves o root aceita, porque o passo 2.5 as copia para
 o seu usuário:
 
+**3/3 · VPS, como root.** Rode só este e espere a saída:
+
 ```bash
 cat /root/.ssh/authorized_keys
 ```
@@ -434,6 +446,8 @@ linha (a Hostinger o grava assim), e uma chave acrescentada depois com `>>` grud
 
 **Faça** (na VPS, como root):
 
+**1/2 · VPS, como root.** Rode só este e espere a saída:
+
 ```bash
 apt update && apt full-upgrade -y
 ```
@@ -446,6 +460,8 @@ segurança do intervalo entram agora.
 (Enter).
 
 **Confira:**
+
+**2/2 · VPS, como root.** Rode só este e espere a saída:
 
 ```bash
 [ -e /var/run/reboot-required ] && echo reiniciar || echo "sem reinício"
@@ -509,6 +525,8 @@ volta a VPS a este ponto. O snapshot da Hostinger expira em 24 h e só existe um
 
 **Faça** (na VPS, como root), trocando `lucas` pelo valor de `EU` do seu `~/.stillon-vps`:
 
+**1/5 · VPS, como root.** Rode só este e espere a saída:
+
 ```bash
 adduser lucas
 ```
@@ -516,25 +534,25 @@ adduser lucas
 Ele pede uma senha duas vezes (gere uma longa no gerenciador, entrada "StillOn – senha sudo do
 administrador") e depois nome, telefone etc.: deixe em branco com Enter e confirme com `Y`.
 
-**1/4 · VPS, como root.** Rode só este e espere a saída:
+**2/5 · VPS, como root.** Rode só este e espere a saída:
 
 ```bash
 usermod -aG sudo lucas
 ```
 
-**2/4 · VPS, como root.** Rode só este e espere a saída:
+**3/5 · VPS, como root.** Rode só este e espere a saída:
 
 ```bash
 cd /home/lucas
 ```
 
-**3/4 · VPS, como root.** Rode só este e espere a saída:
+**4/5 · VPS, como root.** Rode só este e espere a saída:
 
 ```bash
 install -d -m 700 -o lucas -g lucas .ssh
 ```
 
-**4/4 · VPS, como root.** Rode só este e espere a saída:
+**5/5 · VPS, como root.** Rode só este e espere a saída:
 
 ```bash
 install -m 600 -o lucas -g lucas /root/.ssh/authorized_keys .ssh/
@@ -546,19 +564,21 @@ vira root com `sudo` quando precisa, digitando a senha: quem roubar só a chave 
 **Confira**, num **terminal novo** do seu computador (deixe o do root aberto, é a sua rede de
 segurança):
 
-**1/2 · Mac.** Rode só este e espere a saída:
+**1/3 · Mac.** Rode só este e espere a saída:
 
 ```bash
 . ~/.stillon-vps
 ```
 
-**2/2 · Mac.** Rode só este e espere a saída:
+**2/3 · Mac.** Rode só este e espere a saída:
 
 ```bash
 ssh -i ~/.ssh/stillon_admin "$EU@$VPS"
 ```
 
 e, já na VPS, como você:
+
+**3/3 · VPS, como você.** Rode só este e espere a saída:
 
 ```bash
 sudo whoami
@@ -862,6 +882,8 @@ IP que errar 5 vezes em 10 minutos. `backend = systemd` lê o diário do sistema
 
 **Confira:**
 
+**1/1 · VPS (sessão `ssh stillon`).** Rode só este e espere a saída:
+
 ```bash
 sudo fail2ban-client status sshd
 ```
@@ -920,6 +942,8 @@ porta; o StillOn, nenhuma) e o firewall do painel (passo seguinte); o bloco 9 co
 
 **Confira:**
 
+**1/1 · VPS (sessão `ssh stillon`).** Rode só este e espere a saída:
+
 ```bash
 sudo ufw status verbose
 ```
@@ -946,20 +970,20 @@ aceita, e aplica a mudança em até 2 minutos. Com isso o `ping` para de respond
 **Confira**, depois de 2 minutos, **sem fechar** o terminal da VPS em que você está (ele é a
 rede de segurança: se a conexão nova falhar, a aberta costuma seguir de pé):
 
-**Mac, num terminal novo.** Rode só este e espere a saída:
+**1/3 · Mac, num terminal novo.** Rode só este e espere a saída:
 
 ```bash
 ssh stillon true && echo "ssh ok"
 ```
 
-**1/2 · VPS (sessão `ssh stillon`).** A saída continua livre (o sondador precisa dela). Rode só este
+**2/3 · VPS (sessão `ssh stillon`).** A saída continua livre (o sondador precisa dela). Rode só este
 e espere a saída:
 
 ```bash
 curl -sS -o /dev/null -w '%{http_code}\n' https://example.com/
 ```
 
-**2/2 · VPS (sessão `ssh stillon`).** Rode só este e espere a saída:
+**3/3 · VPS (sessão `ssh stillon`).** Rode só este e espere a saída:
 
 ```bash
 sudo apt update
@@ -1079,13 +1103,19 @@ você só confere que ele serve ao StillOn.
 
 **Faça** (na VPS, prompt `<seu usuário>@<host da VPS>:~$`), um comando por vez:
 
+**1/3 · VPS (sessão `ssh stillon`).** Rode só este e espere a saída:
+
 ```bash
 docker --version
 ```
 
+**2/3 · VPS (sessão `ssh stillon`).** Rode só este e espere a saída:
+
 ```bash
 sudo docker info -f '{{.DriverStatus}}'
 ```
+
+**3/3 · VPS (sessão `ssh stillon`).** Rode só este e espere a saída:
 
 ```bash
 ip -4 route
@@ -1408,6 +1438,8 @@ o `+` e o `=` do base64 quebrariam a URL. As três chaves do app são 32 bytes a
 base64, o formato que o boot exige.
 
 **Agora preencha o que não é gerado**, no editor:
+
+**1/1 · VPS (sessão `ssh stillon`).** Rode só este e espere a saída:
 
 ```bash
 sudo nano /opt/stillon/.env
@@ -1894,6 +1926,8 @@ rm ~/.ssh/stillon_deploy.pub
 
 **Faça** (na VPS):
 
+**1/1 · VPS (sessão `ssh stillon`).** Rode só este e espere a saída:
+
 ```bash
 rm -r ~/stillon-arquivos
 ```
@@ -1949,6 +1983,9 @@ sudo docker network inspect edge --format "$F"
    comparar. Um comando por vez, cada um numa linha só (sem `\` no fim). O comando do `gh` é
    longo para a tela: ele fica num arquivo de uma linha, criado uma vez (a linha é a do bloco
    `text`, tudo numa só):
+
+   **1/6 · Mac.** Rode só este e espere a saída:
+
    ```bash
    nano ~/sha-ci.sh
    ```
@@ -1956,19 +1993,34 @@ sudo docker network inspect edge --format "$F"
    gh run list -R BipoXDXD/stillon -w ci.yml -b main -e push -s success -L 1 --json headSha -q '.[0].headSha'
    ```
    Salve com `Ctrl+O` e Enter, saia com `Ctrl+X`. Agora:
+
+   **2/6 · Mac.** Rode só este e espere a saída:
+
    ```bash
    SHA=$(bash ~/sha-ci.sh)
    ```
+
+   **3/6 · Mac.** Rode só este e espere a saída:
+
    ```bash
    echo "$SHA"
    ```
+
+   **4/6 · Mac.** Rode só este e espere a saída:
+
    ```bash
    cd ~/Projetos/Go/StillOn
    ```
    (No Mac do dono o clone é `~/Documents/Projetos/Go/StillOn`: use o caminho do seu.)
+
+   **5/6 · Mac.** Rode só este e espere a saída:
+
    ```bash
    git fetch origin
    ```
+
+   **6/6 · Mac.** Rode só este e espere a saída:
+
    ```bash
    git rev-parse origin/main
    ```
@@ -1986,17 +2038,26 @@ sudo docker network inspect edge --format "$F"
    ponta por outro caminho (um PR de código, que roda o `ci` completo) antes.
 2. **Actions → deploy → Run workflow**, na `main`, com o SHA no campo `sha`. Ou, pelo
    terminal, no mesmo terminal do item 1 (ele usa o `$SHA`):
+
+   **1/3 · Mac.** Rode só este e espere a saída:
+
    ```bash
    gh workflow run deploy.yml --repo BipoXDXD/stillon --ref main -f sha="$SHA"
    ```
    O `gh run watch` **sem id pergunta** qual execução acompanhar (é interativo). Pegue o id da
    execução que acabou de começar e passe-o, com `--exit-status` para o comando terminar com o
    resultado do job:
+
+   **2/3 · Mac.** Rode só este e espere a saída:
+
    ```bash
    gh run list --repo BipoXDXD/stillon --workflow deploy.yml --limit 1
    ```
    Confira que a linha é `queued` ou `in_progress` e de agora: logo depois do `workflow run`, o
    `list` ainda pode mostrar o deploy **anterior**. Se for o caso, repita o `list`.
+
+   **3/3 · Mac.** Rode só este e espere a saída:
+
    ```bash
    gh run watch ID --repo BipoXDXD/stillon --exit-status
    ```
@@ -2077,6 +2138,8 @@ pode seguir rodando, órfão, e segurar a trava até terminar. O próximo deploy
 10 minutos. Se ainda assim ele falhar com `outra operação da entrada não terminou em 10 min`,
 veja se sobrou algum desses filhos, espere alguns minutos e repita:
 
+**1/1 · VPS (sessão `ssh stillon`).** Rode só este e espere a saída:
+
 ```bash
 pgrep -af 'docker (load|compose)'
 ```
@@ -2093,6 +2156,8 @@ reinício (`restart: unless-stopped`), e só a remoção garante que ele não vo
 `logs app` do compose fica vazio: as últimas 100 linhas do log do app estão no log do job e no
 `entrada.log`, logo depois de `a pilha não ficou saudável em 90 s; o log do app:`. Veja por que o app
 não subiu:
+
+**1/1 · VPS (sessão `ssh stillon`).** Rode só este e espere a saída:
 
 ```bash
 tail -n 150 /opt/stillon/entrada.log
@@ -2149,6 +2214,8 @@ sudo docker compose -f compose.prod.yaml logs app | head -20
 A linha do alias passa de 90 colunas e mistura aspas simples e duplas: digitada ou colada num
 `echo`, ela se parte ou perde uma aspa. Grave-a num editor, uma única linha:
 
+**1/3 · VPS (sessão `ssh stillon`).** Rode só este e espere a saída:
+
 ```bash
 nano ~/.bash_aliases
 ```
@@ -2159,9 +2226,13 @@ No editor, cole esta linha (e salve com `Ctrl+O` e Enter, saia com `Ctrl+X`):
 alias vc='sudo docker compose -f /opt/stillon/compose.prod.yaml'
 ```
 
+**2/3 · VPS (sessão `ssh stillon`).** Rode só este e espere a saída:
+
 ```bash
 . ~/.bash_aliases
 ```
+
+**3/3 · VPS (sessão `ssh stillon`).** Rode só este e espere a saída:
 
 ```bash
 vc ps
@@ -2177,6 +2248,8 @@ criar o alias, onde o runbook diz `vc …` use o comando longo
 consultas têm aspas aninhadas, e o `exec` sem `-T` não aceita
 redirecionamento de arquivo; por isso elas vão para um arquivo, lido com `exec -T`:
 
+**1/2 · VPS (sessão `ssh stillon`).** Rode só este e espere a saída:
+
 ```bash
 nano ~/estado.sql
 ```
@@ -2190,6 +2263,8 @@ SELECT rolname, rolsuper, rolbypassrls
   FROM pg_roles WHERE rolname LIKE 'stillon%'
   ORDER BY 1;
 ```
+
+**2/2 · VPS (sessão `ssh stillon`).** Rode só este e espere a saída:
 
 ```bash
 vc exec -T db psql -U postgres -d stillon < ~/estado.sql
@@ -2211,21 +2286,31 @@ certificado, no Confira do fim do passo. O que se confere antes é o DNS e a por
 
 **Confira o Antes** (no seu computador, prompt `%`), um comando por vez:
 
+**1/5 · Mac.** Rode só este e espere a saída:
+
 ```bash
 . ~/.stillon-vps
 ```
+
+**2/5 · Mac.** Rode só este e espere a saída:
 
 ```bash
 dig +short "$DOMINIO"
 ```
 
+**3/5 · Mac.** Rode só este e espere a saída:
+
 ```bash
 dig +short AAAA "$DOMINIO"
 ```
 
+**4/5 · Mac.** Rode só este e espere a saída:
+
 ```bash
 dig +short CAA "$DOMINIO"
 ```
+
+**5/5 · Mac.** Rode só este e espere a saída:
 
 ```bash
 curl -sI "http://$DOMINIO/"
@@ -2245,6 +2330,8 @@ não siga: o pedido de certificado falharia e contaria no limite do Let's Encryp
 caminho completo do clone (o comando não pode depender da pasta em que o terminal está, nem do
 branch em que o clone está):
 
+**1/1 · Mac.** Rode só este e espere a saída:
+
 ```bash
 scp ~/Projetos/Go/StillOn/deploy/vps/edge/stillon.caddy stillon:
 ```
@@ -2255,15 +2342,21 @@ SHA-256 do que chegou à VPS com o do arquivo da `main`.)
 
 **Compare os SHA-256** (um comando por vez). No seu computador, na pasta do clone (prompt `%`):
 
+**1/3 · Mac.** Rode só este e espere a saída:
+
 ```bash
 git fetch origin
 ```
+
+**2/3 · Mac.** Rode só este e espere a saída:
 
 ```bash
 git show origin/main:deploy/vps/edge/stillon.caddy | shasum -a 256
 ```
 
 Na VPS (prompt `$`):
+
+**3/3 · VPS (sessão `ssh stillon`).** Rode só este e espere a saída:
 
 ```bash
 sha256sum ~/stillon.caddy
@@ -2274,21 +2367,31 @@ arquivo é de outra versão; apague-o (`rm ~/stillon.caddy`), atualize o clone e
 
 **Depois, na VPS**, um comando por vez:
 
+**1/5 · VPS (sessão `ssh stillon`).** Rode só este e espere a saída:
+
 ```bash
 sudo install -m 0644 -o root -g root ~/stillon.caddy /srv/edge/conf.d/
 ```
+
+**2/5 · VPS (sessão `ssh stillon`).** Rode só este e espere a saída:
 
 ```bash
 rm ~/stillon.caddy
 ```
 
+**3/5 · VPS (sessão `ssh stillon`).** Rode só este e espere a saída:
+
 ```bash
 cd /srv/edge
 ```
 
+**4/5 · VPS (sessão `ssh stillon`).** Rode só este e espere a saída:
+
 ```bash
 sudo docker compose exec proxy caddy validate --config /etc/caddy/Caddyfile
 ```
+
+**5/5 · VPS (sessão `ssh stillon`).** Rode só este e espere a saída:
 
 ```bash
 sudo docker compose exec proxy caddy reload --config /etc/caddy/Caddyfile
@@ -2308,17 +2411,25 @@ suspeitar; é essa emissão que prova que a 443 e o DNS estão certos.
 
 **Confira** (no seu computador, prompt `%`):
 
+**1/4 · Mac.** Rode só este e espere a saída:
+
 ```bash
 . ~/.stillon-vps
 ```
+
+**2/4 · Mac.** Rode só este e espere a saída:
 
 ```bash
 curl -sS "https://$DOMINIO/healthz"; echo
 ```
 
+**3/4 · Mac.** Rode só este e espere a saída:
+
 ```bash
 curl -sS -o /dev/null -w '%{http_code}\n' "https://$DOMINIO/readyz"
 ```
+
+**4/4 · Mac.** Rode só este e espere a saída:
 
 ```bash
 curl -s -o /dev/null -w '%{http_code}\n' "http://$VPS/"
@@ -2344,6 +2455,8 @@ tentativa falha conta no limite do Let's Encrypt.
 **Faça** (na VPS, **numa sessão interativa**: abra com `ssh stillon` e rode o comando no prompt
 dela; ele pede um terminal, então não funciona como `ssh stillon '…'`), com o seu e-mail no lugar
 do exemplo:
+
+**1/1 · VPS (sessão `ssh stillon`).** Rode só este e espere a saída:
 
 ```bash
 vc exec app /stillon user create --email voce@exemplo.com
@@ -2456,6 +2569,8 @@ que poderiam alterar as proteções de conexão/sessão. A senha da autoridade n
 
 **Confira primeiro** (na VPS, depois do deploy e da cópia dos scripts da mesma versão):
 
+**1/1 · VPS (sessão `ssh stillon`).** Rode só este e espere a saída:
+
 ```bash
 vc exec -T app /stillon version --backup-snapshot-protocol
 ```
@@ -2466,13 +2581,19 @@ Esse comando só verifica o protocolo; não inicia servidor nem conecta ao banco
 
 **Faça** (no seu computador):
 
+**1/4 · Mac.** Rode só este e espere a saída:
+
 ```bash
 gh variable set BACKUP_ENABLED --repo BipoXDXD/stillon --body 1
 ```
 
+**2/4 · Mac.** Rode só este e espere a saída:
+
 ```bash
 gh workflow run backup.yml --repo BipoXDXD/stillon --ref main
 ```
+
+**3/4 · Mac.** Rode só este e espere a saída:
 
 ```bash
 gh run list --repo BipoXDXD/stillon --workflow backup.yml --limit 1
@@ -2480,6 +2601,8 @@ gh run list --repo BipoXDXD/stillon --workflow backup.yml --limit 1
 
 Confira que a linha é `queued` ou `in_progress` e de agora: logo depois do `workflow run`, o
 `list` ainda pode mostrar o backup **anterior** (e o id errado). Se for o caso, repita o `list`.
+
+**4/4 · Mac.** Rode só este e espere a saída:
 
 ```bash
 gh run watch ID --repo BipoXDXD/stillon --exit-status
@@ -2526,24 +2649,45 @@ houve backup naquele dia, e o GitHub não manda e-mail por isso. A causa usual �
 **Faça** (no seu computador):
 
 1. Baixe o artifact da execução do passo 7.1, um comando por bloco:
+
+   **1/7 · Mac.** Rode só este e espere a saída:
+
    ```bash
    mkdir -p ~/stillon-restauro
    ```
+
+   **2/7 · Mac.** Rode só este e espere a saída:
+
    ```bash
    cd ~/stillon-restauro
    ```
+
+   **3/7 · Mac.** Rode só este e espere a saída:
+
    ```bash
    RUN_ID=ID_DO_PASSO_7_1
    ```
+
+   **4/7 · Mac.** Rode só este e espere a saída:
+
    ```bash
    echo "$RUN_ID"
    ```
+
+   **5/7 · Mac.** Rode só este e espere a saída:
+
    ```bash
    gh run download "$RUN_ID" --repo BipoXDXD/stillon
    ```
+
+   **6/7 · Mac.** Rode só este e espere a saída:
+
    ```bash
    ARQ=$(find ~/stillon-restauro -name 'stillon-*.dump.age' | sort | tail -1)
    ```
+
+   **7/7 · Mac.** Rode só este e espere a saída:
+
    ```bash
    echo "$ARQ"
    ```
@@ -2552,6 +2696,9 @@ houve backup naquele dia, e o GitHub não manda e-mail por isso. A causa usual �
    são os do log **desta** execução. Deve aparecer o caminho de um arquivo
    `stillon-AAAAMMDD.dump.age` (o dump do Postgres, em formato custom, cifrado).
 2. Decifre, com a chave que só você tem:
+
+   **1/1 · Mac.** Rode só este e espere a saída:
+
    ```bash
    age -d -i ~/stillon-backup.key -o ~/stillon-restauro/stillon.dump "$ARQ"
    ```
@@ -2630,7 +2777,7 @@ houve backup naquele dia, e o GitHub não manda e-mail por isso. A causa usual �
    ```
    As mesmas checagens do backup, com os números da linha `schema N, U usuário(s), A alvo(s)` do
    log daquela execução (`gh run view "$RUN_ID" --repo BipoXDXD/stillon --log | grep 'schema '`).
-   Troque `N`, `U` e `A` no primeiro comando pelos números do log:
+   Troque `N`, `U` e `A` no 1/2 pelos números do log:
 
    **1/2 · Mac.** Rode só este e espere a saída:
 
@@ -2886,29 +3033,41 @@ sobrescreve a VPS inteira.
 
 **Faça** (no seu computador, na `main` atualizada), um comando por bloco:
 
+**1/3 · Mac.** Rode só este e espere a saída:
+
 ```bash
 cd ~/Projetos/Go/StillOn
 ```
 
+**2/3 · Mac.** Rode só este e espere a saída:
+
 ```bash
 git switch main && git pull --ff-only
 ```
+
+**3/3 · Mac.** Rode só este e espere a saída:
 
 ```bash
 cd deploy/vps
 ```
 
 **Se o clone estiver em outro branch** (ou com arquivos seus não rastreados), não rode o
-`git switch`. Leia a `main` sem mexer no clone: troque os dois primeiros blocos acima por estes,
-e o terceiro por `cd ~/stillon-main/deploy/vps`:
+`git switch`. Leia a `main` sem mexer no clone: troque o 1/3 e o 2/3 acima pelos três
+abaixo (com a numeração própria deles), e o 3/3 acima por `cd ~/stillon-main/deploy/vps`:
+
+**1/3 · Mac.** Rode só este e espere a saída:
 
 ```bash
 git fetch origin
 ```
 
+**2/3 · Mac.** Rode só este e espere a saída:
+
 ```bash
 mkdir ~/stillon-main
 ```
+
+**3/3 · Mac.** Rode só este e espere a saída:
 
 ```bash
 git archive origin/main deploy | tar -x -C ~/stillon-main
@@ -2918,13 +3077,19 @@ O `mkdir` sem `-p` falha se a pasta já existe: use sempre uma pasta nova e vazi
 `rm -r ~/stillon-main` e repita). Em qualquer das duas formas, daqui em diante você está na pasta
 `deploy/vps`:
 
+**1/3 · Mac.** Rode só este e espere a saída:
+
 ```bash
 ssh stillon 'mkdir -p ~/stillon-arquivos'
 ```
 
+**2/3 · Mac.** Rode só este e espere a saída:
+
 ```bash
 scp vigia.sh stillon-vigia.service stillon-vigia.timer stillon:stillon-arquivos/
 ```
+
+**3/3 · Mac.** Rode só este e espere a saída:
 
 ```bash
 scp vigia.env.exemplo stillon:stillon-arquivos/
@@ -2935,21 +3100,31 @@ Com a variante, apague a pasta depois dos `scp`: `rm -r ~/stillon-main`.
 **Depois, na VPS**, os arquivos nos lugares certos e o `vigia.env` nascendo do modelo, sem
 valores, só do root:
 
+**1/5 · VPS (sessão `ssh stillon`).** Rode só este e espere a saída:
+
 ```bash
 cd ~/stillon-arquivos
 ```
+
+**2/5 · VPS (sessão `ssh stillon`).** Rode só este e espere a saída:
 
 ```bash
 sudo install -m 0755 vigia.sh /usr/local/sbin/stillon-vigia
 ```
 
+**3/5 · VPS (sessão `ssh stillon`).** Rode só este e espere a saída:
+
 ```bash
 sudo install -m 0644 stillon-vigia.service /etc/systemd/system/
 ```
 
+**4/5 · VPS (sessão `ssh stillon`).** Rode só este e espere a saída:
+
 ```bash
 sudo install -m 0644 stillon-vigia.timer /etc/systemd/system/
 ```
+
+**5/5 · VPS (sessão `ssh stillon`).** Rode só este e espere a saída:
 
 ```bash
 sudo install -m 0600 vigia.env.exemplo /opt/stillon/vigia.env
@@ -2962,9 +3137,13 @@ resultado, em linhas que cabem na tela. Uma unidade por `install`, pelo mesmo mo
 **Preencha o `vigia.env`.** O domínio é o do `.env` (não é segredo; confira-o primeiro, que o
 `grep` o mostra):
 
+**1/2 · VPS (sessão `ssh stillon`).** Rode só este e espere a saída:
+
 ```bash
 sudo grep '^STILLON_DOMINIO=' /opt/stillon/.env
 ```
+
+**2/2 · VPS (sessão `ssh stillon`).** Rode só este e espere a saída:
 
 ```bash
 sudo nano /opt/stillon/vigia.env
@@ -2982,32 +3161,44 @@ lê o `vigia.env` e entrega uma cópia ao vigia (`LoadCredential`).
 
 **Confira** (o `HC_URL` não aparece na tela):
 
+**1/6 · VPS (sessão `ssh stillon`).** Rode só este e espere a saída:
+
 ```bash
 sudo stat -c '%U %a' /opt/stillon/vigia.env
 ```
+
+**2/6 · VPS (sessão `ssh stillon`).** Rode só este e espere a saída:
 
 ```bash
 sudo grep -oE '^[A-Z_]+=' /opt/stillon/vigia.env
 ```
 
+**3/6 · VPS (sessão `ssh stillon`).** Rode só este e espere a saída:
+
 ```bash
 sudo grep -cE '^[A-Z_]+=$' /opt/stillon/vigia.env
 ```
+
+**4/6 · VPS (sessão `ssh stillon`).** Rode só este e espere a saída:
 
 ```bash
 sudo grep -c '^HC_URL=https://hc-ping.com/' /opt/stillon/vigia.env
 ```
 
+**5/6 · VPS (sessão `ssh stillon`).** Rode só este e espere a saída:
+
 ```bash
 sudo grep -c '^HC_URL=' /opt/stillon/.env
 ```
+
+**6/6 · VPS (sessão `ssh stillon`).** Rode só este e espere a saída:
 
 ```bash
 sudo grep '^STILLON_DOMINIO=' /opt/stillon/vigia.env
 ```
 
 `root 600`; só `STILLON_DOMINIO=` e `HC_URL=`; `0` (nenhuma vazia); `1` (a URL do healthchecks
-no formato certo); `0` na quinta (a `HC_URL` não está no `.env`); e, na última, o mesmo domínio
+no formato certo); `0` no 5/6 (a `HC_URL` não está no `.env`); e, no 6/6, o mesmo domínio
 que o `.env` tem.
 
 **Ligue o timer e limpe a pasta de trabalho:**
@@ -3037,13 +3228,13 @@ param (VPS morta, rede fora).
 
 **Confira:**
 
-**1/2 · VPS (sessão `ssh stillon`).** Rode só este e espere a saída:
+**1/3 · VPS (sessão `ssh stillon`).** Rode só este e espere a saída:
 
 ```bash
 systemctl list-timers stillon-vigia.timer
 ```
 
-**2/2 · VPS (sessão `ssh stillon`).** Rode só este e espere a saída:
+**2/3 · VPS (sessão `ssh stillon`).** Rode só este e espere a saída:
 
 ```bash
 sudo journalctl -u stillon-vigia.service -n 5 --no-pager
@@ -3051,6 +3242,8 @@ sudo journalctl -u stillon-vigia.service -n 5 --no-pager
 
 O timer com a próxima execução em menos de um minuto; o diário sem erro. Só o `journalctl` exige
 `sudo`; o resultado da última execução se lê sem ele:
+
+**3/3 · VPS (sessão `ssh stillon`).** Rode só este e espere a saída:
 
 ```bash
 systemctl show stillon-vigia.service -p Result -p ExecMainStatus
@@ -3062,6 +3255,8 @@ no pior caso).
 
 **Confira que o alarme funciona**, derrubando o app de propósito (na VPS):
 
+**1/2 · VPS (sessão `ssh stillon`).** Rode só este e espere a saída:
+
 ```bash
 vc stop app
 ```
@@ -3069,6 +3264,8 @@ vc stop app
 Em um ou dois minutos o check fica **down** e chega o e-mail do healthchecks (o e-mail de `down`
 sai **na hora** do `/fail` que o vigia manda quando o `curl` falha; os 5 minutos de carência só
 valem quando o ping *some*, com a VPS morta). Então:
+
+**2/2 · VPS (sessão `ssh stillon`).** Rode só este e espere a saída:
 
 ```bash
 vc start app
@@ -3090,9 +3287,13 @@ pronto com todos verdes.
 do painel descarta em silêncio as 65 mil portas fechadas e o `nmap` espera cada uma; não
 interrompa):
 
+**1/2 · Mac.** Rode só este e espere a saída:
+
 ```bash
 . ~/.stillon-vps
 ```
+
+**2/2 · Mac.** Rode só este e espere a saída:
 
 ```bash
 sudo nmap -Pn -T4 -p- --open "$VPS"
@@ -3104,11 +3305,15 @@ outra porta (sem 5432, sem 8080, sem 9090).
 **No Mac**, a varredura SYN (`-sS`, a padrão com `sudo`) pede root. A varredura de conexão
 (`-sT`) **não pede senha**, é mais lenta e basta para este objetivo:
 
+**1/1 · Mac.** Rode só este e espere a saída:
+
 ```bash
 nmap -Pn -T4 -p- --open -sT "$VPS"
 ```
 
 **E por dentro** (na VPS; sem `sudo` o `ss` funciona, só não mostra o nome do processo):
+
+**1/1 · VPS (sessão `ssh stillon`).** Rode só este e espere a saída:
 
 ```bash
 sudo ss -tlnp
@@ -3121,20 +3326,26 @@ sem o `sshd` ao lado) e a 80 e 443 (`docker-proxy`, da borda). O resto, se houve
 
 **Confira nos composes:**
 
+**1/3 · VPS (sessão `ssh stillon`).** Rode só este e espere a saída:
+
 ```bash
 vc config | grep -c 'ports:'
 ```
+
+**2/3 · VPS (sessão `ssh stillon`).** Rode só este e espere a saída:
 
 ```bash
 cd /srv/edge
 ```
 
+**3/3 · VPS (sessão `ssh stillon`).** Rode só este e espere a saída:
+
 ```bash
 sudo docker compose config | grep -n -A6 'ports:'
 ```
 
-O StillOn não tem `ports` nenhum (`0`); só a borda publica, e só a 80 e a 443. (Os dois comandos
-da borda são separados, sem `&&`: um `cd` solto numa linha com outro comando se perde se a
+O StillOn não tem `ports` nenhum (`0`); só a borda publica, e só a 80 e a 443. (O 2/3 e o 3/3,
+os da borda, são separados, sem `&&`: um `cd` solto numa linha com outro comando se perde se a
 sessão cair. A alternativa sem `config` é ler o `compose.prod.yaml` do StillOn e o
 `/srv/edge/compose.yaml`, que são legíveis, e procurar `ports:`.) Volte com `cd` ao terminar.
 
@@ -3170,7 +3381,7 @@ isso as provas abaixo têm de ser rápidas: depois de 6 s parado, o balde já ga
 segundos, dentro da janela de 6 s; por isso eles ficam numa função que você roda com **um** comando
 só. Crie o arquivo com a função no editor:
 
-**Mac.** Rode só este e espere a saída:
+**1/3 · Mac.** Rode só este e espere a saída:
 
 ```bash
 nano ~/tentar.sh
@@ -3199,15 +3410,15 @@ parte_a() {
 }
 ```
 
-Depois, um comando por vez (o 2/2 é o teste: os sete pedidos saem dentro dele, em poucos segundos):
+Depois, um comando por vez (o 3/3 é o teste: os sete pedidos saem dentro dele, em poucos segundos):
 
-**1/2 · Mac.** Rode só este e espere a saída:
+**2/3 · Mac.** Rode só este e espere a saída:
 
 ```bash
 . ~/tentar.sh
 ```
 
-**2/2 · Mac.** Rode só este e espere a saída:
+**3/3 · Mac.** Rode só este e espere a saída:
 
 ```bash
 parte_a
@@ -3227,6 +3438,8 @@ encher de novo, e rode o `parte_a` outra vez.
 
 **Parte B, casa e celular ao mesmo tempo: cada cliente tem o seu balde.** No computador, deixe a
 casa gastando o balde por um minuto e meio (a função `tentar` é a da parte A, no mesmo terminal):
+
+**1/1 · Mac.** Rode só este e espere a saída:
 
 ```bash
 for i in $(seq 1 90); do printf '%s: ' "$i"; tentar; sleep 1; done
@@ -3251,7 +3464,7 @@ as duas se conferem:
 
 **Ao fim da parte B**, apague o arquivo da função:
 
-**Mac.** Rode só este e espere a saída:
+**1/1 · Mac.** Rode só este e espere a saída:
 
 ```bash
 rm ~/tentar.sh
@@ -3396,11 +3609,15 @@ Nenhuma senha de produção está no repositório: o `.env` só existe na VPS e 
 borda, o GoblinShift e o StillOn), no lugar de um `vc ps` mais um `docker compose ps` na pasta da
 borda:
 
+**1/6 · VPS (sessão `ssh stillon`).** Rode só este e espere a saída:
+
 ```bash
 sudo docker ps --format '{{.Names}} {{.Status}}'
 ```
 
 **Faça** (na VPS):
+
+**2/6 · VPS (sessão `ssh stillon`).** Rode só este e espere a saída:
 
 ```bash
 sudo reboot
@@ -3411,25 +3628,25 @@ minutos e entre de novo, numa sessão nova (`ssh stillon`; se você deu `ssh-add
 a chave pode ter vencido durante o bloco 9: dê o `ssh-add` outra vez). Repita o comando da linha
 de base e compare: os mesmos contêineres, de volta (os com healthcheck `healthy`). Depois:
 
-**1/4 · VPS (sessão `ssh stillon`).** Rode só este e espere a saída:
+**3/6 · VPS (sessão `ssh stillon`).** Rode só este e espere a saída:
 
 ```bash
 systemctl list-timers stillon-vigia.timer
 ```
 
-**2/4 · VPS (sessão `ssh stillon`).** Rode só este e espere a saída:
+**4/6 · VPS (sessão `ssh stillon`).** Rode só este e espere a saída:
 
 ```bash
 sudo ufw status | head -1
 ```
 
-**3/4 · VPS (sessão `ssh stillon`).** Rode só este e espere a saída:
+**5/6 · VPS (sessão `ssh stillon`).** Rode só este e espere a saída:
 
 ```bash
 sudo fail2ban-client status sshd | head -1
 ```
 
-**4/4 · VPS (sessão `ssh stillon`).** Rode só este e espere a saída:
+**6/6 · VPS (sessão `ssh stillon`).** Rode só este e espere a saída:
 
 ```bash
 timedatectl | grep synchronized
@@ -3554,7 +3771,7 @@ resolve** (sai 3 outra vez), e não é adulteração. Dois caminhos:
    podada: só o caminho 1 serve. Então troque, sob a mesma trava do deploy e do backup (se um
    deles estiver rodando, o comando espera até 10 min):
 
-   **VPS (sessão `ssh stillon`).** Rode só este e espere a saída:
+   **1/4 · VPS (sessão `ssh stillon`).** Rode só este e espere a saída:
 
    ```bash
    nano ~/voltar.sh
@@ -3576,19 +3793,19 @@ resolve** (sai 3 outra vez), e não é adulteração. Dois caminhos:
 
    Agora, um comando por vez:
 
-   **1/3 · VPS (sessão `ssh stillon`).** Rode só este e espere a saída:
+   **2/4 · VPS (sessão `ssh stillon`).** Rode só este e espere a saída:
 
    ```bash
    T=/opt/stillon/.entrada.trava
    ```
 
-   **2/3 · VPS (sessão `ssh stillon`).** Rode só este e espere a saída:
+   **3/4 · VPS (sessão `ssh stillon`).** Rode só este e espere a saída:
 
    ```bash
    sudo ANT="$ANT" ATUAL="$ATUAL" flock -w 600 $T sh -e ~/voltar.sh
    ```
 
-   **3/3 · VPS (sessão `ssh stillon`).** Rode só este e espere a saída:
+   **4/4 · VPS (sessão `ssh stillon`).** Rode só este e espere a saída:
 
    ```bash
    rm ~/voltar.sh
@@ -3803,6 +4020,8 @@ deixe para as 04:30).
 ### Perdeu o autenticador e os códigos de recuperação
 
 Sem o app **e** sem os códigos, o login para no segundo fator. Na VPS:
+
+**1/1 · VPS (sessão `ssh stillon`).** Rode só este e espere a saída:
 
 ```bash
 vc exec app /stillon user reset-2fa --email voce@exemplo.com
@@ -4069,7 +4288,7 @@ A senha do papel do app vive em dois lugares, no `.env` e no banco, e os dois mu
 o script abaixo faz as duas trocas; como no 3.4, a senha nasce e é gravada dentro de um processo do
 root, sem passar pela tela nem pelo `ps`. Crie o arquivo no editor:
 
-**VPS (sessão `ssh stillon`).** Rode só este e espere a saída:
+**1/2 · VPS (sessão `ssh stillon`).** Rode só este e espere a saída:
 
 ```bash
 nano ~/trocar-senha.sh
@@ -4101,7 +4320,7 @@ echo "senha do app trocada no banco e no .env"
 
 Rode o script:
 
-**VPS (sessão `ssh stillon`).** Rode só este e espere a saída:
+**2/2 · VPS (sessão `ssh stillon`).** Rode só este e espere a saída:
 
 ```bash
 sudo sh ~/trocar-senha.sh
