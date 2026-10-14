@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-> **Nota (2026-10-13):** o alias `stillon-caddy` descrito neste plano foi superado por decisão do dono em 2026-10-13: o Caddy do StillOn tem IP fixo `172.31.0.3` na rede `edge` (sem alias), o trecho da borda aponta para esse IP, e o Caddy fala com o app em `10.30.0.3`. Vale a [spec](../specs/2026-10-13-vps-compartilhada-design.md); onde o plano e a spec divergem, vale a spec.
+> **Nota (2026-10-13):** o alias `stillon-caddy` descrito neste plano foi superado por decisão do dono em 2026-10-13: o Caddy do StillOn tem IP fixo `172.31.0.3` na rede `edge` (sem alias), o trecho da borda aponta para esse IP, e o Caddy fala com o app em `10.30.0.3`. O trecho `stillon.caddy` vai por `scp` direto para a home da VPS (a pasta `~/stillon-arquivos` e o `cd /srv/edge` do texto abaixo foram superados no runbook 4.9). Vale a [spec](../specs/2026-10-13-vps-compartilhada-design.md); onde o plano e a spec divergem, vale a spec.
 
 **Goal:** pôr o StillOn em `https://stillon.tech` atrás de uma borda Caddy do host, dividida com o GoblinShift, sem perder nenhuma obrigação de hospedagem do Plano 11.
 
@@ -25,7 +25,7 @@
 
 ## Review Focus
 
-1. **Emissão do certificado com a 443 fechada ou o DNS errado.** O esperado é que o trecho do StillOn só entre na borda depois que a 443 responder de fora (Task 6, passo 6.4 antes do 6.6), para não gastar o limite do Let's Encrypt.
+1. **Emissão do certificado com a 443 fechada ou o DNS errado.** O esperado é que o trecho do StillOn só entre na borda depois de conferir o DNS (A, sem AAAA, sem CAA), a porta 80 e a regra da 443 no painel (Task 6, passo 6.4 antes do 6.6), para não gastar o limite do Let's Encrypt. (A 443 em si só abre com o trecho: ver a correção no 6.4.)
 2. **Reboot da VPS.** O esperado é que a borda, o GoblinShift e o StillOn voltem sozinhos. Coberto pelo 9.6 do runbook, que o passo 6.7 roda.
 3. **O GoblinShift pelo IP depois da troca da borda.** O esperado é que ele responda como antes, com `X-Forwarded-For` = IP do cliente e `X-Forwarded-Proto` = esquema real. Coberto pelo teste de fumaça da Task 4 e pela conferência do passo 6.3.
 4. **Um vizinho na rede `edge` forjando `X-Forwarded-For` direto no Caddy do StillOn.** O esperado é que o app veja o IP do vizinho. Coberto pela checagem 6b da Task 2.
@@ -947,11 +947,11 @@ O merge do StillOn e o `push` do GoblinShift são do dono. Depois do merge, conf
 
 Guiada como o `CLAUDE.md` manda: um passo numerado por vez, dizendo onde roda e o prompt esperado, o que deve aparecer e o porquê em uma frase. O dono roda o que pede `sudo` num terminal separado e confirma; o Claude confere com o **Confira** antes do próximo. A chave entra no agente com `ssh-add -t 4h ~/.ssh/stillon_admin`, para o Claude poder conferir sem `sudo`.
 
-- [ ] **6.1** Runbook 3.1 novo: Docker, store do containerd, nenhuma rota em `10.30.`.
-- [ ] **6.2** Runbook 3.2 novo: `live-restore` com `reload`. Confira: os contêineres do GoblinShift não reiniciaram.
-- [ ] **6.3** Troca da borda: no Mac, `scp` de `deploy/edge/compose.yaml`, `deploy/edge/Caddyfile` e `deploy/edge/conf.d/goblinshift.caddy` (do GoblinShift já integrado) para `~/borda/` na VPS. Na VPS: `sudo cp /srv/edge/compose.yaml /srv/edge/compose.yaml.nginx`; `sudo install -m 0644 -o root -g root ~/borda/compose.yaml ~/borda/Caddyfile /srv/edge/`; `sudo install -m 0644 -o root -g root ~/borda/goblinshift.caddy /srv/edge/conf.d/`; `sudo rm /srv/edge/conf.d/default.conf`; `cd /srv/edge`; `sudo docker compose up -d`; `sudo docker compose exec proxy caddy validate --config /etc/caddy/Caddyfile`. Confira, do Mac: `curl -sS http://$VPS/` responde como o GoblinShift respondia (hoje, `{"detail":"Not Found"}`), e `curl -sSI http://$VPS/` não mostra `Server: nginx`. Para voltar atrás: `sudo cp /srv/edge/compose.yaml.nginx /srv/edge/compose.yaml`, devolver o `default.conf` e `sudo docker compose up -d`.
-- [ ] **6.4** Firewall do painel da Hostinger: conferir que a regra da 443/tcp existe e está antes de qualquer "drop". Confira, do Mac: `nc -z -G 5 $VPS 443 && echo aberta` (com a borda ouvindo, tem de abrir).
-- [ ] **6.5** Runbook do StillOn do 3.3 ao 4.8, com a `main` nova, um passo e seu **Confira** por vez (o 3.4 gera segredos: antes dele, um passo próprio "crie a entrada no Bitwarden").
-- [ ] **6.6** Passo novo "O StillOn na borda" (Task 3, Step 5). Confira: `https://stillon.tech/healthz` responde `200` com certificado Let's Encrypt.
-- [ ] **6.7** Blocos 5 a 9 do runbook, inclusive o reboot de teste do 9.6: a borda, o GoblinShift e o StillOn voltam sozinhos.
-- [ ] **6.8** Registro de continuidade novo em `docs/superpowers/reports/` e `CLAUDE.md` atualizados com o estado real (o que foi feito, o que foi conferido, o que falta), num PR só de documentação com `[skip ci]`.
+- [x] **6.1** Runbook 3.1 novo: Docker, store do containerd, nenhuma rota em `10.30.`.
+- [x] **6.2** Runbook 3.2 novo: `live-restore` com `reload`. Confira: os contêineres do GoblinShift não reiniciaram.
+- [x] **6.3** Troca da borda: no Mac, `scp` de `deploy/edge/compose.yaml`, `deploy/edge/Caddyfile` e `deploy/edge/conf.d/goblinshift.caddy` (do GoblinShift já integrado) para `~/borda/` na VPS. Na VPS: `sudo cp /srv/edge/compose.yaml /srv/edge/compose.yaml.nginx`; `sudo install -m 0644 -o root -g root ~/borda/compose.yaml ~/borda/Caddyfile /srv/edge/`; `sudo install -m 0644 -o root -g root ~/borda/goblinshift.caddy /srv/edge/conf.d/`; `sudo rm /srv/edge/conf.d/default.conf`; `cd /srv/edge`; `sudo docker compose up -d`; `sudo docker compose exec proxy caddy validate --config /etc/caddy/Caddyfile`. Confira, do Mac: `curl -sS http://$VPS/` responde como o GoblinShift respondia (hoje, `{"detail":"Not Found"}`), e `curl -sSI http://$VPS/` mostra `Via: 1.1 Caddy` (o `Server: nginx` que ainda aparece é o nginx interno do GoblinShift, atrás da borda; a ausência dele não prova nada). Para voltar atrás: `sudo cp /srv/edge/compose.yaml.nginx /srv/edge/compose.yaml`, devolver o `default.conf` e `sudo docker compose up -d`.
+- [x] **6.4** Firewall do painel da Hostinger: conferir que a regra da 443/tcp existe e está antes de qualquer "drop". Confira, do Mac: `nc -z -G 5 $VPS 443 && echo aberta`. **Correção (execução de 2026-10-14):** a 443 só abre depois do trecho do StillOn entrar na borda, porque a borda é um Caddy com só o site `:80` (sem site com nome de domínio ele não ouve a 443); antes disso a 443 está fechada (RST), e é assim mesmo. A prova da 443 é a emissão do certificado no 6.6.
+- [x] **6.5** Runbook do StillOn do 3.3 ao 4.8, com a `main` nova, um passo e seu **Confira** por vez (o 3.4 gera segredos: antes dele, um passo próprio "crie a entrada no Bitwarden").
+- [x] **6.6** Passo novo "O StillOn na borda" (Task 3, Step 5). Confira: `https://stillon.tech/healthz` responde `200` com certificado Let's Encrypt.
+- [x] **6.7** Blocos 5 a 9 do runbook, inclusive o reboot de teste do 9.6: a borda, o GoblinShift e o StillOn voltam sozinhos.
+- [x] **6.8** Registro de continuidade novo em `docs/superpowers/reports/` e `CLAUDE.md` atualizados com o estado real (o que foi feito, o que foi conferido, o que falta), num PR só de documentação com `[skip ci]`.

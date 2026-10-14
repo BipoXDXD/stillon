@@ -11,8 +11,8 @@ as decisões que você ainda podia revisar estavam na §9 dela.
 ## Como ler este runbook
 
 - **Dois computadores.** Todo bloco de comando diz onde roda:
-  - **no seu computador** (esta máquina Linux, o ponto atual de operação; num terminal:
-    `Ctrl+Alt+T` no Ubuntu);
+  - **no seu computador** (o ponto de operação: um Linux, num terminal `Ctrl+Alt+T` no Ubuntu, ou
+    o Mac, pelo [mac.md](mac.md));
   - **na VPS** (o servidor da Hostinger, num terminal conectado a ela por SSH, que você abre no
     bloco 2).
 - **Um comando por vez.** Copie a linha inteira, cole no terminal (`Ctrl+Shift+V`), aperte Enter e
@@ -29,9 +29,16 @@ as decisões que você ainda podia revisar estavam na §9 dela.
   demonstração com senha pública e usa chaves públicas: num servidor, qualquer um entraria como
   dono. O servidor usa só os arquivos de `deploy/vps/`.
 
-O guia [mac.md](mac.md) permanece como referência histórica e opcional para outra máquina;
-a operação atual segue por este Linux, sem exigir passos no Mac. Preserve as chaves e as
-entradas do gerenciador de senhas existentes.
+Desde 2026-10-13 a operação parte de um **Mac**: siga o [mac.md](mac.md) para o que muda no
+"seu computador" (o Terminal do Mac abre o `zsh`; rode `bash` antes de colar os comandos).
+Preserve as chaves e as entradas do gerenciador de senhas existentes.
+
+**Caminho do clone.** Os blocos 0.2, 3.3, 4.8, 4.9, 7.2 e 8 escrevem o clone como
+`~/Projetos/Go/StillOn`. Se o seu está em outro lugar (no Mac do dono,
+`~/Documents/Projetos/Go/StillOn`), troque o caminho nesses comandos. E se o clone estiver em
+outro branch ou com arquivos seus não rastreados, não rode o `git pull --ff-only` (com o
+`git switch main` antes) dos blocos 3.3 e 8: leia os arquivos da `main` com `git fetch` e
+`git archive origin/main`, como na variante do bloco 8 (e a do 7.2, item 3).
 
 Se a VPS tiver sido reinstalada, os registros de passos concluídos antes disso são históricos:
 confira novamente cada passo aplicável com o respectivo **Confira** antes de continuar. O estado
@@ -1113,9 +1120,10 @@ gh secret list --repo BipoXDXD/stillon
 ```
 
 **Por quê:** o `gh` lê o valor do arquivo e o cifra antes de mandar; nada passa pela área de
-transferência nem pela tela. No GitHub Free com repositório privado não há *environments*: são
-secrets de repositório, e quem pode disparar o deploy é quem tem acesso de escrita (hoje, só
-você). Secrets de repositório não chegam a PR de fork.
+transferência nem pela tela. São secrets de repositório (não *environments*; o repositório é
+público desde 2026-10-14, e o `environment` com revisor é o item 6 do bloco 10, ainda não
+adotado): quem pode disparar o deploy é quem tem acesso de escrita (hoje, só você). Secrets de
+repositório não chegam a PR de fork.
 
 **Deve aparecer:** a lista com `VPS_HOST`, `VPS_HOST_KEY` e `VPS_SSH_KEY` (com a data de hoje). São
 os únicos secrets que o deploy e o backup usam; se aparecer algum outro, de uma hospedagem
@@ -1172,13 +1180,31 @@ sudo docker network inspect edge --format '{{range .Containers}}{{.Name}} {{.IPv
 1. Ache o SHA completo (40 caracteres) do último commit da `main` com o `ci` verde (o job
    `publish` só roda depois de todos os outros, e a tag `:<sha>` da imagem só existe depois que o
    Trivy aprovou). O `gh` pergunta direto ao GitHub; o `git fetch` atualiza a sua cópia, para
-   comparar:
+   comparar. Um comando por vez, cada um numa linha só (sem `\` no fim). O comando do `gh` é
+   longo para a tela: ele fica num arquivo de uma linha, criado uma vez (a linha é a do bloco
+   `text`, tudo numa só):
    ```bash
-   SHA=$(gh run list --repo BipoXDXD/stillon --workflow ci.yml --branch main --event push \
-     --status success --limit 1 --json headSha -q '.[0].headSha')
+   nano ~/sha-ci.sh
+   ```
+   ```text
+   gh run list -R BipoXDXD/stillon -w ci.yml -b main -e push -s success -L 1 --json headSha -q '.[0].headSha'
+   ```
+   Salve com `Ctrl+O` e Enter, saia com `Ctrl+X`. Agora:
+   ```bash
+   SHA=$(bash ~/sha-ci.sh)
+   ```
+   ```bash
    echo "$SHA"
-   git -C ~/Projetos/Go/StillOn fetch origin
-   git -C ~/Projetos/Go/StillOn rev-parse origin/main
+   ```
+   ```bash
+   cd ~/Projetos/Go/StillOn
+   ```
+   (No Mac do dono o clone é `~/Documents/Projetos/Go/StillOn`: use o caminho do seu.)
+   ```bash
+   git fetch origin
+   ```
+   ```bash
+   git rev-parse origin/main
    ```
    **Deve aparecer:** duas linhas de 40 caracteres, normalmente **iguais**. Se forem diferentes,
    o topo da `main` ainda não passou no `ci` (está rodando ou ficou vermelho: veja
@@ -1186,12 +1212,29 @@ sudo docker network inspect edge --format '{{range .Containers}}{{.Name}} {{.IPv
    ficar verde e repita, ou faça o deploy do `$SHA` da primeira linha, que é o último que passou.
    Se a primeira linha vier vazia, nenhum `ci` da `main` passou ainda: não há imagem para
    entregar.
+
+   **Cuidado com o `[skip ci]`.** Um squash merge cujo título ou corpo traga `[skip ci]` faz o `ci`
+   da `main` pular, e a ponta da `main` fica **sem imagem**. Aí o `--status success --limit 1`
+   devolve o SHA **anterior**, que pode não ter o último conserto. Se as duas linhas divergirem e
+   o commit que falta mexe em código do deploy, não faça o deploy do `$SHA` às cegas: publique a
+   ponta por outro caminho (um PR de código, que roda o `ci` completo) antes.
 2. **Actions → deploy → Run workflow**, na `main`, com o SHA no campo `sha`. Ou, pelo
    terminal, no mesmo terminal do item 1 (ele usa o `$SHA`):
    ```bash
    gh workflow run deploy.yml --repo BipoXDXD/stillon --ref main -f sha="$SHA"
-   gh run watch --repo BipoXDXD/stillon
    ```
+   O `gh run watch` **sem id pergunta** qual execução acompanhar (é interativo). Pegue o id da
+   execução que acabou de começar e passe-o, com `--exit-status` para o comando terminar com o
+   resultado do job:
+   ```bash
+   gh run list --repo BipoXDXD/stillon --workflow deploy.yml --limit 1
+   ```
+   Confira que a linha é `queued` ou `in_progress` e de agora: logo depois do `workflow run`, o
+   `list` ainda pode mostrar o deploy **anterior**. Se for o caso, repita o `list`.
+   ```bash
+   gh run watch ID --repo BipoXDXD/stillon --exit-status
+   ```
+   (`ID` é o número da execução que aparece na linha do `list`.)
 
 **Por quê:** o deploy é sempre manual e sempre de uma imagem que passou no CI e no Trivy. O job
 resolve a tag no digest, baixa do GHCR a imagem linux/amd64 por esse digest (um tar em layout
@@ -1300,27 +1343,68 @@ sudo docker compose -f /opt/stillon/compose.prod.yaml logs app | head -20
 
 **Um atalho para os próximos comandos** (na VPS; opcional, mas o resto do runbook o usa):
 
+A linha do alias passa de 90 colunas e mistura aspas simples e duplas: digitada ou colada num
+`echo`, ela se parte ou perde uma aspa. Grave-a num editor, uma única linha:
+
 ```bash
-echo "alias vc='sudo docker compose -f /opt/stillon/compose.prod.yaml'" >> ~/.bash_aliases
+nano ~/.bash_aliases
+```
+
+No editor, cole esta linha (e salve com `Ctrl+O` e Enter, saia com `Ctrl+X`):
+
+```text
+alias vc='sudo docker compose -f /opt/stillon/compose.prod.yaml'
+```
+
+```bash
 . ~/.bash_aliases
+```
+
+```bash
 vc ps
 ```
 
-**Confira no banco** quem é dono das tabelas (as migrations rodaram como o papel comum):
+O alias só vale em **shell interativo**: não funciona em `ssh stillon '<comando>'`. E uma sessão
+nova só o terá se o `~/.bashrc` ler o `~/.bash_aliases` (no Ubuntu lê; se `vc` disser
+`command not found` numa sessão nova, rode o `. ~/.bash_aliases` de novo). Se você preferir não
+criar o alias, onde o runbook diz `vc …` use o comando longo
+`sudo docker compose -f /opt/stillon/compose.prod.yaml …`.
+
+**Confira no banco** quem é dono das tabelas (as migrations rodaram como o papel comum). As duas
+consultas têm aspas aninhadas, e o `exec` sem `-T` não aceita
+redirecionamento de arquivo; por isso elas vão para um arquivo, lido com `exec -T`:
 
 ```bash
-vc exec db psql -U postgres -d stillon -c "SELECT tableowner, count(*) FROM pg_tables WHERE schemaname = 'public' GROUP BY 1;"
-vc exec db psql -U postgres -c "SELECT rolname, rolsuper, rolbypassrls FROM pg_roles WHERE rolname LIKE 'stillon%' ORDER BY 1;"
+nano ~/estado.sql
+```
+
+No editor, cole as duas consultas, em linhas curtas (o `psql` junta as linhas até o `;`):
+
+```text
+SELECT tableowner, count(*) FROM pg_tables
+  WHERE schemaname = 'public' GROUP BY 1;
+SELECT rolname, rolsuper, rolbypassrls
+  FROM pg_roles WHERE rolname LIKE 'stillon%'
+  ORDER BY 1;
+```
+
+```bash
+vc exec -T db psql -U postgres -d stillon < ~/estado.sql
 ```
 
 Só `stillon_app` na primeira; `stillon_app | f | f` e `stillon_backup | f | t` na segunda.
+Depois, `rm ~/estado.sql`.
 
 ### 4.9 O StillOn na borda
 
-**Antes:** a borda em `/srv/edge` já é o Caddy (não o nginx) e a 443 responde de fora; os dois
-foram feitos na troca da borda, guiada pelo Claude
-([spec](../superpowers/specs/2026-10-13-vps-compartilhada-design.md), "Ordem na VPS"). Sem isso,
-o pedido de certificado falha e conta no limite do Let's Encrypt.
+**Antes:** a borda em `/srv/edge` já é o Caddy (não o nginx), feito na troca da borda, guiada
+pelo Claude ([spec](../superpowers/specs/2026-10-13-vps-compartilhada-design.md), "Ordem na
+VPS"). Sem isso, o pedido de certificado falha e conta no limite do Let's Encrypt.
+
+**A 443 ainda não responde, e é assim mesmo.** A borda só tem o site `:80` até o trecho deste
+passo entrar: sem um site com nome de domínio, o Caddy não ouve a 443. Por isso um `nc` na 443
+**antes** do trecho dá porta fechada (e não prova nada). A prova da 443 é a própria emissão do
+certificado, no Confira do fim do passo. O que se confere antes é o DNS e a porta 80.
 
 **Confira o Antes** (no seu computador, prompt `%`), um comando por vez:
 
@@ -1329,23 +1413,61 @@ o pedido de certificado falha e conta no limite do Let's Encrypt.
 ```
 
 ```bash
-nc -vz -w 5 "$VPS" 443
-```
-
-```bash
 dig +short "$DOMINIO"
 ```
 
-**Deve aparecer:** o `nc` conectando (`succeeded` ou `open`, conforme o `nc` do sistema) e o
-`dig` devolvendo um IP igual ao `$VPS`. Se a 443 não conectar, a borda ou o firewall do painel
-estão errados; se o `dig` vier vazio ou diferente, o DNS (passo 1.4) ainda não propagou. Nos dois
-casos, não siga: o pedido de certificado falharia e contaria no limite do Let's Encrypt.
-
-**Faça, primeiro no seu computador** (prompt `%`), com a `main` atualizada:
+```bash
+dig +short AAAA "$DOMINIO"
+```
 
 ```bash
-scp deploy/vps/edge/stillon.caddy stillon:
+dig +short CAA "$DOMINIO"
 ```
+
+```bash
+curl -sI "http://$DOMINIO/"
+```
+
+**Deve aparecer:** o primeiro `dig` devolvendo um IP igual ao `$VPS`; o `AAAA` e o `CAA`
+**vazios** (um `AAAA` aponta o Let's Encrypt para um endereço que a VPS não atende, e um `CAA`
+alheio o impede de emitir); e o `curl` com `404` (do GoblinShift) e `Via: 1.1 Caddy`, que mostra
+que a resposta passou pela borda nova. Confira também, no painel da Hostinger, que a regra da
+443/tcp existe no firewall (passo 2.10). Se o `dig` vier vazio ou diferente, o DNS (passo 1.4)
+ainda não propagou; se o `curl` não mostrar o `Via`, a borda ainda é o nginx. Em qualquer caso,
+não siga: o pedido de certificado falharia e contaria no limite do Let's Encrypt.
+
+(No macOS, se for testar uma porta com `nc`, o tempo de conexão é `-G`; o `-w` é de ociosidade.)
+
+**Faça, primeiro no seu computador** (prompt `%`), com o arquivo da `main` atualizada. Use o
+caminho completo do clone (o comando não pode depender da pasta em que o terminal está, nem do
+branch em que o clone está):
+
+```bash
+scp ~/Projetos/Go/StillOn/deploy/vps/edge/stillon.caddy stillon:
+```
+
+(Troque o caminho pelo do seu clone; no Mac do dono, `~/Documents/Projetos/Go/StillOn`. Se o clone
+não estiver na `main`, o arquivo pode ser de outra versão; por isso compare, antes de instalar, o
+SHA-256 do que chegou à VPS com o do arquivo da `main`.)
+
+**Compare os SHA-256** (um comando por vez). No seu computador, na pasta do clone (prompt `%`):
+
+```bash
+git fetch origin
+```
+
+```bash
+git show origin/main:deploy/vps/edge/stillon.caddy | shasum -a 256
+```
+
+Na VPS (prompt `$`):
+
+```bash
+sha256sum ~/stillon.caddy
+```
+
+**Deve aparecer:** o mesmo hash de 64 caracteres nos dois. Se forem diferentes, não instale: o
+arquivo é de outra versão; apague-o (`rm ~/stillon.caddy`), atualize o clone e envie de novo.
 
 **Depois, na VPS**, um comando por vez:
 
@@ -1376,6 +1498,11 @@ domínio ao Caddy do StillOn (`172.31.0.3`, o IP reservado a ele na rede `edge`)
 trecho inválido impede o `reload` da borda inteira, que também atende o GoblinShift (a
 configuração anterior fica no ar, mas nenhuma mudança entra).
 
+**A emissão do certificado é assíncrona:** o `reload` volta na hora, mas o Caddy da borda ainda
+leva alguns segundos para pedir e receber o certificado. Um `curl` colado logo em seguida pode
+falhar por TLS sem que nada esteja errado. Espere e repita **até uns 90 segundos** antes de
+suspeitar; é essa emissão que prova que a 443 e o DNS estão certos.
+
 **Confira** (no seu computador, prompt `%`):
 
 ```bash
@@ -1397,7 +1524,7 @@ curl -s -o /dev/null -w '%{http_code}\n' "http://$VPS/"
 `/healthz` responde (o corpo do app) sem erro de certificado, e `/readyz` dá `200`. O último
 `curl` confere que o GoblinShift, que a mesma borda atende pelo IP, continua respondendo depois
 do `reload`: tem de devolver o código da resposta dele (hoje `404`), nunca erro de conexão. Se o
-`curl` do domínio reclamar do certificado, espere um minuto e veja, na VPS, em `/srv/edge`:
+`curl` do domínio reclamar do certificado, espere até uns 90 segundos e veja, na VPS, em `/srv/edge`:
 `sudo docker compose logs --tail 30 proxy`. Um erro de "challenge" quase sempre é DNS ainda não
 propagado ou a 80/443 fechada no firewall do painel. Não repita o `reload` em sequência: cada
 tentativa falha conta no limite do Let's Encrypt.
@@ -1408,14 +1535,18 @@ tentativa falha conta no limite do Let's Encrypt.
 
 ### 5.1 Criar o dono
 
-**Faça** (na VPS), com o seu e-mail no lugar do exemplo:
+**Antes, no gerenciador de senhas** (passo próprio, antes de qualquer comando): crie a entrada
+"StillOn – login do painel" e gere nela a senha (de 15 a 128 caracteres). Deixe-a copiada.
+
+**Faça** (na VPS, **numa sessão interativa**: abra com `ssh stillon` e rode o comando no prompt
+dela; ele pede um terminal, então não funciona como `ssh stillon '…'`), com o seu e-mail no lugar
+do exemplo:
 
 ```bash
 vc exec app /stillon user create --email voce@exemplo.com
 ```
 
-Ele pede `Senha:` e `Confirme a senha:`, sem eco. Gere a senha no gerenciador (entrada "StillOn
-– login do painel"; de 15 a 128 caracteres) e cole-a nas duas perguntas.
+Ele pede `Senha:` e `Confirme a senha:`, sem eco. Cole a senha da entrada nas duas perguntas.
 
 **Por quê:** o sistema é de um dono só, e não há cadastro pela web: o primeiro usuário nasce pelo
 CLI, dentro do contêiner que já tem a `DATABASE_URL`. A senha vem do terminal, nunca de argumento
@@ -1428,10 +1559,15 @@ não ecoa.
 
 ### 5.2 Entrar e ligar o 2FA
 
+**Antes, no gerenciador de senhas:** crie a entrada "StillOn – códigos de recuperação do 2FA"
+(vazia por ora), para os códigos terem onde cair assim que aparecerem.
+
 **Faça** (no navegador): abra `https://seu-domínio`, entre com o e-mail e a senha. Vá em
-**Configurações → Verificação em duas etapas → Ativar**, leia o QR code com o seu app
-autenticador (Aegis, 2FAS, Google Authenticator…), digite o código de 6 dígitos e guarde os
-**códigos de recuperação** no gerenciador (entrada "StillOn – códigos de recuperação do 2FA").
+**Configurações → Verificação em duas etapas** e siga os botões, nesta ordem: **Ativar**, digite a
+senha e **Continuar**, leia o QR code com o seu app autenticador (Aegis, 2FAS, Google
+Authenticator…), digite o código de 6 dígitos e **Ativar**. Aparecem os **códigos de recuperação**: use só **Copiar** e cole
+na entrada do gerenciador (**não use Baixar .txt**: ele deixa os códigos em texto numa pasta de
+Downloads). Confira a entrada, volte à tela e clique **Guardei os códigos** e depois **Concluir**.
 
 **Por quê:** com o painel na internet, a senha sozinha é pouco. Os códigos de recuperação são a
 volta se o celular sumir; sem eles e sem o app, só o `reset-2fa` pelo CLI (bloco 10).
@@ -1445,7 +1581,8 @@ volta se o celular sumir; sem eles e sem o app, só o `reset-2fa` pelo CLI (bloc
 
 ### 6.1 Canal de e-mail
 
-**Faça** (no painel): **Canais de notificação → Novo canal**, tipo **E-mail**, com o seu e-mail.
+**Faça** (no painel): no menu, **Canais** (a página se chama "Canais de notificação") → botão
+**Novo canal**, tipo **E-mail**, com o seu e-mail.
 
 **Por quê:** confere ponta a ponta o Resend (domínio verificado, chave, remetente) e os links, que
 usam a `PUBLIC_BASE_URL` de produção.
@@ -1462,18 +1599,20 @@ outro domínio).
 
 ### 6.2 Alvo de teste e um incidente de verdade
 
-**Faça** (no painel): **Novo alvo** com a URL `https://example.com/`, intervalo de 30 s e
-**status esperado 500** (de propósito: o site responde 200, então o StillOn o verá fora do
-ar).
+**Faça** (no painel): **Cadastrar alvo** (página "Novo alvo") com a URL `https://example.com/`,
+**Intervalo** "30 segundos" (é uma lista, não um número) e **status esperado 500** (de propósito:
+o site responde 200, então o StillOn o verá fora do ar). O botão que grava é **Cadastrar**; o
+**Salvar** só aparece ao editar um alvo existente.
 
 **Por quê:** força um incidente sem depender de derrubar nada: confere sondador, detector,
 fila de avisos e e-mail, tudo de uma vez.
 
 **Deve aparecer:** em um ou dois minutos, o alvo fica fora do ar no painel, um incidente abre e
-chega o e-mail de alerta.
+chega o e-mail de alerta (o detector abre com 3 falhas seguidas).
 
-**Confira:** depois do e-mail, edite o alvo e ponha o status esperado **200**. Em mais um ou dois
-minutos o incidente fecha e chega o aviso de que voltou. Então apague o alvo, ou deixe-o com 200
+**Confira:** depois do e-mail, edite o alvo e ponha o status esperado **200**. O incidente fecha
+só com **5 sucessos seguidos**, ou seja, uns 2,5 minutos a 30 s (não "um ou dois minutos"), e
+então chega o aviso de que voltou. Então apague o alvo, ou deixe-o com 200
 como monitor de exemplo.
 
 ---
@@ -1526,11 +1665,26 @@ Esse comando só verifica o protocolo; não inicia servidor nem conecta ao banco
 
 ```bash
 gh variable set BACKUP_ENABLED --repo BipoXDXD/stillon --body 1
-gh workflow run backup.yml --repo BipoXDXD/stillon --ref main
-gh run watch --repo BipoXDXD/stillon
 ```
 
-(O `gh run watch` pergunta qual execução acompanhar: escolha a do `backup` que acabou de começar.)
+```bash
+gh workflow run backup.yml --repo BipoXDXD/stillon --ref main
+```
+
+```bash
+gh run list --repo BipoXDXD/stillon --workflow backup.yml --limit 1
+```
+
+Confira que a linha é `queued` ou `in_progress` e de agora: logo depois do `workflow run`, o
+`list` ainda pode mostrar o backup **anterior** (e o id errado). Se for o caso, repita o `list`.
+
+```bash
+gh run watch ID --repo BipoXDXD/stillon --exit-status
+```
+
+(O `gh run watch` sem id pergunta qual execução acompanhar; com o id da execução do `backup` que
+acabou de começar, que o `list` mostra, ele acompanha e termina com o resultado do job. **Anote
+esse id**: o 7.2 baixa o artifact dessa execução exata.)
 
 **Por quê:** até a variável existir, o agendamento diário termina em *skipped* sem fazer nada.
 Rodar à mão agora confere tudo (chave, script, `age`, artifact) antes de confiar no automático.
@@ -1561,18 +1715,32 @@ houve backup naquele dia, e o GitHub não manda e-mail por isso. A causa usual �
 
 **Faça** (no seu computador):
 
-1. Baixe o artifact da execução do passo 7.1:
+1. Baixe o artifact da execução do passo 7.1, um comando por bloco:
    ```bash
-   mkdir -p ~/stillon-restauro && cd ~/stillon-restauro
-   RUN_ID=$(gh run list --repo BipoXDXD/stillon --workflow backup.yml --status success --limit 1 \
-     --json databaseId -q '.[0].databaseId')
+   mkdir -p ~/stillon-restauro
+   ```
+   ```bash
+   cd ~/stillon-restauro
+   ```
+   ```bash
+   RUN_ID=ID_DO_PASSO_7_1
+   ```
+   ```bash
    echo "$RUN_ID"
+   ```
+   ```bash
    gh run download "$RUN_ID" --repo BipoXDXD/stillon
+   ```
+   ```bash
    ARQ=$(find ~/stillon-restauro -name 'stillon-*.dump.age' | sort | tail -1)
+   ```
+   ```bash
    echo "$ARQ"
    ```
-   Deve aparecer o caminho de um arquivo `stillon-AAAAMMDD.dump.age` (o dump do Postgres, em
-   formato custom, cifrado).
+   Troque `ID_DO_PASSO_7_1` pelo id anotado no 7.1: o `gh run list --status success --limit 1`
+   pode devolver outro backup (um agendado, mais antigo ou mais novo), e os números do item 3
+   são os do log **desta** execução. Deve aparecer o caminho de um arquivo
+   `stillon-AAAAMMDD.dump.age` (o dump do Postgres, em formato custom, cifrado).
 2. Decifre, com a chave que só você tem:
    ```bash
    age -d -i ~/stillon-backup.key -o ~/stillon-restauro/stillon.dump "$ARQ"
@@ -1580,7 +1748,10 @@ houve backup naquele dia, e o GitHub não manda e-mail por isso. A causa usual �
 3. Restaure num Postgres descartável, da mesma imagem de produção (o digest de
    `deploy/vps/db/Dockerfile`), só no `127.0.0.1` do seu computador. O `docker compose stop`
    para o compose de desenvolvimento, se estiver de pé: ele ocupa a `127.0.0.1:8080` que a cópia
-   usa no item 4 (sem ele de pé, o comando não faz nada):
+   usa no item 4 (sem ele de pé, o comando não faz nada). Os comandos abaixo leem arquivos do
+   `deploy/` e rodam na pasta do clone. **Se o clone estiver em outro branch**, siga antes a
+   variante do bloco 8 (`git fetch`, pasta nova com `git archive`) e rode estes comandos na
+   `~/stillon-main` (o `docker compose stop` continua na pasta do clone):
    ```bash
    cd ~/Projetos/Go/StillOn
    docker compose stop
@@ -1599,9 +1770,11 @@ houve backup naquele dia, e o GitHub não manda e-mail por isso. A causa usual �
    Deve terminar em `NOTICE:  cópia conferida`.
 4. Suba o StillOn **da versão que está no ar** contra a cópia, **só com a API** (`--role=api`):
    com `--role=all`, a cópia sondaria os seus alvos e mandaria alertas aos canais **reais**. A
-   imagem é privada: entre no GHCR com o token do `gh`, depois de dar a ele a permissão
-   `read:packages` (o `refresh` abre o navegador uma vez), baixe a imagem e **saia logo em
-   seguida**:
+   imagem é privada (o pacote tem visibilidade própria: **continua privado mesmo com o repositório
+   público**, e um `pull` anônimo dá `UNAUTHORIZED`): entre no GHCR com o token do `gh`, depois de
+   dar a ele a permissão `read:packages` (o `refresh` abre o navegador uma vez), baixe a imagem e
+   **saia logo em seguida**. Se o token do `gh` já tem `write:packages` (veja o `gh auth status`),
+   que inclui a leitura, o `refresh` é desnecessário: pule-o.
    ```bash
    gh auth refresh -s read:packages
    SHA=$(ssh stillon cat /opt/stillon/versao)
@@ -1616,13 +1789,15 @@ houve backup naquele dia, e o GitHub não manda e-mail por isso. A causa usual �
    recopie-o (bloco 10, "Arquivos da VPS") ou, por ora, rode `sudo cat /opt/stillon/versao` na
    VPS e, aqui, `SHA=` seguido do valor colado, e repita a partir do `docker login`.
    O `docker login` grava o token no `~/.docker/config.json` do seu computador, **em claro** (o
-   próprio Docker avisa: `stored unencrypted`). E esse token não é só de leitura de pacotes: é o
-   do `gh`, que escreve em todos os seus repositórios. O `docker logout` o apaga; a imagem já
+   próprio Docker avisa: `stored unencrypted`). **No Mac não é assim:** o Docker Desktop guarda no
+   Chaveiro (`credsStore: desktop`), e o `config.json` não mostra o `ghcr.io`; veja o item 6.
+   E esse token não é só de leitura de pacotes: é o do `gh`, que escreve em todos os seus
+   repositórios. O `docker logout` o apaga; a imagem já
    baixada continua no seu Docker. Então suba a cópia:
    ```bash
    read -rs -p 'MASTER_KEY de produção (do gerenciador): ' MASTER_KEY; echo
    export MASTER_KEY
-   docker run --rm --network host \
+   docker run --rm --name restauro-app --network host \
      -e DATABASE_URL='postgres://stillon_app:stillon_app@127.0.0.1:25433/stillon?sslmode=disable' \
      -e MASTER_KEY \
      -e JWT_SECRET="$(openssl rand -base64 32)" -e IP_HASH_KEY="$(openssl rand -base64 32)" \
@@ -1630,6 +1805,12 @@ houve backup naquele dia, e o GitHub não manda e-mail por isso. A causa usual �
      -e HTTP_ADDR=127.0.0.1:8080 -e METRICS_ADDR=off \
      "ghcr.io/bipoxdxd/stillon:$SHA" --role=api
    ```
+   O `read -rs -p` só existe no `bash`: no `zsh` do Mac ele falha com `read: -p: no coprocess`
+   (rode `bash` antes, ou execute os comandos num script com `#!/bin/bash`). O
+   `--network host` exige, no Docker Desktop, a opção **Enable host networking**; sem ela, use a
+   variante do [mac.md](mac.md) (com `host.docker.internal` e `-p 127.0.0.1:8080:8080`), que
+   sobe com `-d --rm --name restauro-app`, sem prender o terminal (aí o `Ctrl+C` do item 6 não é
+   preciso: o `docker rm -f restauro-app` remove o contêiner).
    O `read -rs` lê a chave sem eco e sem gravá-la no histórico; o `-e MASTER_KEY` sem valor passa
    a variável ao contêiner sem ela aparecer na linha de comando. A senha `stillon_app` vale aqui
    porque o `initdb.sql` é o do compose local (a de demonstração, num banco que só existe no seu
@@ -1641,13 +1822,18 @@ houve backup naquele dia, e o GitHub não manda e-mail por isso. A causa usual �
    ```bash
    # Ctrl+C no terminal do docker run, e então:
    unset MASTER_KEY
-   docker rm -f restauro
+   docker rm -f restauro-app restauro
    shred -u ~/stillon-restauro/stillon.dump
    docker logout ghcr.io
    grep -q ghcr.io ~/.docker/config.json 2>/dev/null && echo "AINDA LOGADO" || echo "sem login do ghcr"
    ```
+   O `docker rm -f restauro-app restauro` tira também a cópia da API, que tem a `MASTER_KEY` na
+   memória e não pode ficar de pé; se ela já saiu (o `Ctrl+C` com `--rm`), o `docker` avisa
+   `No such container: restauro-app` e remove o `restauro` do mesmo jeito.
    O `docker logout` de novo é por garantia (se o item 4 parou no meio); a última linha tem de
-   dizer `sem login do ghcr`.
+   dizer `sem login do ghcr`. **No Mac:** não existe `shred` (use `rm -f`, com o FileVault ligado:
+   [mac.md](mac.md)), e o `grep` no `config.json` não prova nada, porque o login mora no Chaveiro.
+   A prova é `docker-credential-desktop list`, que não pode mostrar o `ghcr.io`.
 
 **Confira:** o passo 5 funcionou. Anote a data do ensaio no gerenciador: ele se repete a cada
 trimestre (bloco 10).
@@ -1663,40 +1849,96 @@ sobrescreve a VPS inteira.
 
 ## Bloco 8: o vigia externo
 
-**Faça** (no seu computador, na `main` atualizada):
+**Faça** (no seu computador, na `main` atualizada), um comando por bloco:
 
 ```bash
 cd ~/Projetos/Go/StillOn
-git switch main && git pull --ff-only
-ssh stillon 'mkdir -p ~/stillon-arquivos'
-scp deploy/vps/vigia.sh deploy/vps/stillon-vigia.service deploy/vps/stillon-vigia.timer \
-    deploy/vps/vigia.env.exemplo stillon:stillon-arquivos/
 ```
+
+```bash
+git switch main && git pull --ff-only
+```
+
+```bash
+cd deploy/vps
+```
+
+**Se o clone estiver em outro branch** (ou com arquivos seus não rastreados), não rode o
+`git switch`. Leia a `main` sem mexer no clone: troque os dois primeiros blocos acima por estes,
+e o terceiro por `cd ~/stillon-main/deploy/vps`:
+
+```bash
+git fetch origin
+```
+
+```bash
+mkdir ~/stillon-main
+```
+
+```bash
+git archive origin/main deploy | tar -x -C ~/stillon-main
+```
+
+O `mkdir` sem `-p` falha se a pasta já existe: use sempre uma pasta nova e vazia (se falhou,
+`rm -r ~/stillon-main` e repita). Em qualquer das duas formas, daqui em diante você está na pasta
+`deploy/vps`:
+
+```bash
+ssh stillon 'mkdir -p ~/stillon-arquivos'
+```
+
+```bash
+scp vigia.sh stillon-vigia.service stillon-vigia.timer stillon:stillon-arquivos/
+```
+
+```bash
+scp vigia.env.exemplo stillon:stillon-arquivos/
+```
+
+Com a variante, apague a pasta depois dos `scp`: `rm -r ~/stillon-main`.
 
 **Depois, na VPS**, os arquivos nos lugares certos e o `vigia.env` nascendo do modelo, sem
 valores, só do root:
 
 ```bash
 cd ~/stillon-arquivos
-sudo install -m 0755 -o root -g root vigia.sh /usr/local/sbin/stillon-vigia
-sudo install -m 0644 -o root -g root stillon-vigia.service stillon-vigia.timer /etc/systemd/system/
-sudo install -m 0600 -o root -g root vigia.env.exemplo /opt/stillon/vigia.env
 ```
 
-(`/usr/local/sbin/stillon-vigia` é o caminho que o `ExecStart` do `stillon-vigia.service` espera.)
-
-**Preencha o `vigia.env`.** O domínio vem do `.env` (não é segredo; o `echo` o mostra para você
-conferir):
+```bash
+sudo install -m 0755 vigia.sh /usr/local/sbin/stillon-vigia
+```
 
 ```bash
-dom=$(sudo sed -n 's/^STILLON_DOMINIO=//p' /opt/stillon/.env)
-echo "$dom"
-sudo sed -i "s|^STILLON_DOMINIO=\$|STILLON_DOMINIO=$dom|" /opt/stillon/vigia.env
+sudo install -m 0644 stillon-vigia.service /etc/systemd/system/
+```
+
+```bash
+sudo install -m 0644 stillon-vigia.timer /etc/systemd/system/
+```
+
+```bash
+sudo install -m 0600 vigia.env.exemplo /opt/stillon/vigia.env
+```
+
+(Sob `sudo` o dono dos arquivos instalados já é o root, por isso sem `-o root -g root`: mesmo
+resultado, em linhas que cabem na tela. Uma unidade por `install`, pelo mesmo motivo.
+`/usr/local/sbin/stillon-vigia` é o caminho que o `ExecStart` do `stillon-vigia.service` espera.)
+
+**Preencha o `vigia.env`.** O domínio é o do `.env` (não é segredo; confira-o primeiro, que o
+`grep` o mostra):
+
+```bash
+sudo grep '^STILLON_DOMINIO=' /opt/stillon/.env
+```
+
+```bash
 sudo nano /opt/stillon/vigia.env
 ```
 
-No editor, cole em `HC_URL=` a ping URL do gerenciador (passo 1.6), sem espaço em volta do `=`.
-Salve com `Ctrl+O` e Enter, saia com `Ctrl+X`.
+No editor, digite o domínio depois de `STILLON_DOMINIO=` (o mesmo que o `grep` mostrou) e cole em
+`HC_URL=` a ping URL do gerenciador (passo 1.6), sem espaço em volta do `=`. Salve com `Ctrl+O` e
+Enter, saia com `Ctrl+X`. (Um comando `sed` com `$(…)` e `\$` numa linha só se perde na colagem;
+por isso o domínio é digitado no editor.)
 
 **Por quê:** o vigia recebe **só** este arquivo, com as duas variáveis de que precisa: o domínio e
 a URL do healthchecks. O `.env`, com a `MASTER_KEY` e as senhas do banco, nunca chega a ele. O
@@ -1707,14 +1949,31 @@ lê o `vigia.env` e entrega uma cópia ao vigia (`LoadCredential`).
 
 ```bash
 sudo stat -c '%U %a' /opt/stillon/vigia.env
+```
+
+```bash
 sudo grep -oE '^[A-Z_]+=' /opt/stillon/vigia.env
+```
+
+```bash
 sudo grep -cE '^[A-Z_]+=$' /opt/stillon/vigia.env
+```
+
+```bash
 sudo grep -c '^HC_URL=https://hc-ping.com/' /opt/stillon/vigia.env
+```
+
+```bash
 sudo grep -c '^HC_URL=' /opt/stillon/.env
 ```
 
+```bash
+sudo grep '^STILLON_DOMINIO=' /opt/stillon/vigia.env
+```
+
 `root 600`; só `STILLON_DOMINIO=` e `HC_URL=`; `0` (nenhuma vazia); `1` (a URL do healthchecks
-no formato certo); e `0` na última (a `HC_URL` não está no `.env`).
+no formato certo); `0` na quinta (a `HC_URL` não está no `.env`); e, na última, o mesmo domínio
+que o `.env` tem.
 
 **Ligue o timer e limpe a pasta de trabalho:**
 
@@ -1736,8 +1995,16 @@ systemctl list-timers stillon-vigia.timer
 sudo journalctl -u stillon-vigia.service -n 5 --no-pager
 ```
 
-O timer com a próxima execução em menos de um minuto; o diário sem erro. No healthchecks.io, o
-check `StillOn` fica **up** (verde) em até dois minutos.
+O timer com a próxima execução em menos de um minuto; o diário sem erro. Só o `journalctl` exige
+`sudo`; o resultado da última execução se lê sem ele:
+
+```bash
+systemctl show stillon-vigia.service -p Result -p ExecMainStatus
+```
+
+Deve dar `Result=success` e `ExecMainStatus=0`. No healthchecks.io, o check `StillOn` fica **up**
+(verde): como o timer dispara no segundo `:00` de cada minuto, em geral um minuto basta (até dois
+no pior caso).
 
 **Confira que o alarme funciona**, derrubando o app de propósito (na VPS):
 
@@ -1745,7 +2012,9 @@ check `StillOn` fica **up** (verde) em até dois minutos.
 vc stop app
 ```
 
-Em um ou dois minutos o check fica **down** e chega o e-mail do healthchecks. Então:
+Em um ou dois minutos o check fica **down** e chega o e-mail do healthchecks (o e-mail de `down`
+sai **na hora** do `/fail` que o vigia manda quando o `curl` falha; os 5 minutos de carência só
+valem quando o ping *some*, com a VPS morta). Então:
 
 ```bash
 vc start app
@@ -1769,13 +2038,23 @@ interrompa):
 
 ```bash
 . ~/.stillon-vps
+```
+
+```bash
 sudo nmap -Pn -T4 -p- --open "$VPS"
 ```
 
 **Deve aparecer:** `22/tcp open ssh`, `80/tcp open http`, `443/tcp open https`, e **nenhuma**
 outra porta (sem 5432, sem 8080, sem 9090).
 
-**E por dentro** (na VPS):
+**No Mac**, a varredura SYN (`-sS`, a padrão com `sudo`) pede root. A varredura de conexão
+(`-sT`) **não pede senha**, é mais lenta e basta para este objetivo:
+
+```bash
+nmap -Pn -T4 -p- --open -sT "$VPS"
+```
+
+**E por dentro** (na VPS; sem `sudo` o `ss` funciona, só não mostra o nome do processo):
 
 ```bash
 sudo ss -tlnp
@@ -1793,10 +2072,17 @@ vc config | grep -c 'ports:'
 ```
 
 ```bash
-cd /srv/edge && sudo docker compose config | grep -n -A6 'ports:'
+cd /srv/edge
 ```
 
-O StillOn não tem `ports` nenhum (`0`); só a borda publica, e só a 80 e a 443.
+```bash
+sudo docker compose config | grep -n -A6 'ports:'
+```
+
+O StillOn não tem `ports` nenhum (`0`); só a borda publica, e só a 80 e a 443. (Os dois comandos
+da borda são separados, sem `&&`: um `cd` solto numa linha com outro comando se perde se a
+sessão cair. A alternativa sem `config` é ler o `compose.prod.yaml` do StillOn e o
+`/srv/edge/compose.yaml`, que são legíveis, e procurar `ports:`.) Volte com `cd` ao terminar.
 
 ### 9.2 O IP do cliente chega certo (obrigações 1 e 2)
 
@@ -1885,9 +2171,12 @@ curl -sk -o /dev/null -w '%{http_code}\n' "https://$VPS/healthz"; echo "curl sai
 **Deve aparecer:** na primeira, a resposta do GoblinShift (a borda manda todo `http` pelo IP para
 ele: hoje, `404`), sem passar pelo StillOn; `200` na segunda, mas **vazio e da própria borda**:
 nenhum bloco casa com esse `Host`, e nenhum app é chamado; e `000` com `curl saiu com 35` na
-terceira (sem certificado para o IP, o TLS nem fecha). Para ver que nenhuma delas veio do
+terceira (sem certificado para o IP, o TLS nem fecha; o `curl` do macOS usa o LibreSSL, e o código
+de saída pode não ser exatamente `35`: o que vale é o `000`). Para ver que nenhuma delas veio do
 StillOn, repita cada uma com `-D -` no lugar do `-o /dev/null -w …`: nenhum `x-trace-id` (todo
-pedido que chega ao app do StillOn volta com ele). Nunca o corpo do StillOn.
+pedido que chega ao app do StillOn volta com ele). Nunca o corpo do StillOn. **Não use a ausência
+de `Server: nginx` como prova**: o nginx interno do GoblinShift continua respondendo atrás da
+borda, e a borda aparece em `Via: 1.1 Caddy`. A prova é a ausência do `x-trace-id`.
 
 **Por quê:** a borda só tem o bloco do seu domínio para o StillOn, e o Caddy do StillOn também só
 aceita esse nome; uma requisição com outro nome não chega ao app.
@@ -1928,25 +2217,34 @@ Nenhuma senha de produção está no repositório: o `.env` só existe na VPS e 
 
 ### 9.6 Reboot de teste: tudo volta sozinho
 
+**Antes** (na VPS), a linha de base: guarde a saída deste comando, que mostra as três pilhas (a
+borda, o GoblinShift e o StillOn), no lugar de um `vc ps` mais um `docker compose ps` na pasta da
+borda:
+
+```bash
+sudo docker ps --format '{{.Names}} {{.Status}}'
+```
+
 **Faça** (na VPS):
 
 ```bash
 sudo reboot
 ```
 
-Espere dois minutos e entre de novo (`ssh stillon`):
+A sessão SSH cai no `reboot` e o prompt volta para o seu computador: é o esperado. Espere dois
+minutos e entre de novo, numa sessão nova (`ssh stillon`; se você deu `ssh-add -t 4h` no começo,
+a chave pode ter vencido durante o bloco 9: dê o `ssh-add` outra vez). Repita o comando da linha
+de base e compare: os mesmos contêineres, de volta (os com healthcheck `healthy`). Depois:
 
 ```bash
-vc ps
-cd /srv/edge && sudo docker compose ps; cd
 systemctl list-timers stillon-vigia.timer
 sudo ufw status | head -1
 sudo fail2ban-client status sshd | head -1
 timedatectl | grep synchronized
 ```
 
-**Deve aparecer:** os três serviços `running`/`healthy`; a borda (`proxy`) `running`; o timer do
-vigia agendado; `Status:
+**Deve aparecer:** os serviços do StillOn (`caddy`, `app`, `db`) e a borda de pé, como na linha de
+base; o timer do vigia agendado; `Status:
 active`; `Status for the jail: sshd`; `System clock synchronized: yes`. E, de fora,
 `curl -sS -o /dev/null -w '%{http_code}\n' "https://$DOMINIO/readyz"` dá `200`, e
 `curl -s -o /dev/null -w '%{http_code}\n' "http://$VPS/"` devolve a resposta do GoblinShift
@@ -2469,14 +2767,28 @@ escolhe o ID. (O backup pela chave só entrega o dump **cifrado**: sem a sua cha
 
 ### Minutos de Actions
 
-Com o repositório privado, o CI gasta a cota gratuita (2.000 min/mês na conta pessoal): ~15 min de
-runner por push somando os jobs, dos quais o `e2e` é o maior, e alguns minutos por dia do
-`backup`. Um push novo no mesmo branch cancela a execução anterior. Se a cota apertar, o primeiro
-corte é o `e2e` só na `main` (`if: github.event_name == 'push'` no job).
+Enquanto o repositório era privado, o CI gastava a cota gratuita (2.000 min/mês na conta
+pessoal): ~15 min de runner por push somando os jobs, dos quais o `e2e` é o maior, e alguns minutos
+por dia do `backup`. Desde 2026-10-14 o repositório é público, e os minutos de Actions não contam
+para a cota. Um push novo no mesmo branch continua cancelando a execução anterior; o `[skip ci]`
+em mudança só de documentação segue valendo, para não ocupar os runners à toa.
 
-## Tornar o repositório público (passo futuro)
+## Tornar o repositório público (feito em 2026-10-14)
 
-O repositório é **privado por decisão do dono**. No dia de abrir:
+Registro: o repositório ficou público em 2026-10-14, e o pacote do GHCR segue privado.
+
+> **Atualização (2026-10-14):** o repositório **já ficou público**, e os itens 1 a 8 abaixo valem
+> como lista do que isso mudou. A decisão do dono sobre o item 7: **os artifacts do backup ficam
+> públicos**, porque são cifrados com o `age` e a confidencialidade depende só da chave privada,
+> que só o dono tem. Custo aceito: tamanho, data e frequência do dump, e as contagens do log do
+> `backup` (versão do schema, usuários, alvos, disco), ficam à vista de qualquer conta do GitHub.
+> Alternativas, se isso incomodar: voltar o repositório para privado (com custo de minutos de
+> Actions) ou reduzir o `retention-days`. O pacote do GHCR tem visibilidade própria e continua
+> **privado** (item 4): por isso o `docker login` do 7.2 segue necessário.
+
+O repositório era **privado por decisão do dono**. A lista abaixo é o que se fazia no dia de
+abrir. O item 6 (`environment` com revisor) ainda não foi adotado: os workflows não usam
+`environment`.
 
 1. Varredura do histórico inteiro: `gitleaks git . --redact -v` (o job `secrets` do CI já faz
    isso em todo PR). O falso positivo conhecido está no `.gitleaksignore`, com o motivo.
