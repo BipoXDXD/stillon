@@ -366,9 +366,10 @@ for (const tema of ['claro', 'escuro'] as const) {
   })
 }
 
-// P2 do shell: visibilidade CSS não detecta texto encoberto por uma
-// lateral fixa. O hit-test e a geometria precisam enxergar o aviso inteiro.
-test('aviso de HTTPS fica visível fora da lateral no desktop e mantém login e celular', async ({ page }) => {
+// P2 do shell, com a navegação no topo (PR 2 do redesign): o aviso vem
+// antes do cabeçalho em toda largura. O hit-test e a geometria precisam
+// enxergar o aviso inteiro, sem nada por cima.
+test('aviso de HTTPS fica acima do cabeçalho em toda largura e mantém o login', async ({ page }) => {
   await page.addInitScript(() => {
     Object.defineProperty(window, 'isSecureContext', { value: false, configurable: true })
   })
@@ -382,11 +383,10 @@ test('aviso de HTTPS fica visível fora da lateral no desktop e mantém login e 
     await expect(aviso).toBeVisible()
     const texto = aviso.locator('strong')
     const caixaTexto = await texto.boundingBox()
-    const lateral = await page.locator('header').boundingBox()
+    const cabecalho = await page.locator('header').boundingBox()
     expect(caixaTexto).not.toBeNull()
-    expect(lateral).not.toBeNull()
-    if (largura >= 1024) expect(caixaTexto!.x, `${largura}: título fora da lateral`).toBeGreaterThanOrEqual(lateral!.x + lateral!.width)
-    else expect(caixaTexto!.y, 'celular: aviso antes do cabeçalho').toBeLessThan(lateral!.y)
+    expect(cabecalho).not.toBeNull()
+    expect(caixaTexto!.y, `${largura}: aviso antes do cabeçalho`).toBeLessThan(cabecalho!.y)
     expect(await texto.evaluate((elemento) => {
       const primeiraLinha = elemento.getClientRects()[0]!
       const superior = document.elementFromPoint(primeiraLinha.left + 2, primeiraLinha.top + primeiraLinha.height / 2)
@@ -480,6 +480,10 @@ for (const largura of [400, 1280]) {
       ['nome do alvo', page.getByRole('link', { name: 'API', exact: true })],
       ['Configurar canais', page.getByRole('link', { name: 'Configurar canais' })],
       ['Incidente aberto', page.getByRole('link', { name: 'Incidente aberto' })],
+      ...['Painel', 'Incidentes', 'Canais', 'Status', 'Conta'].map((aba): [string, Locator] => [
+        `aba ${aba}`,
+        page.getByRole('navigation', { name: 'Principal' }).getByRole('link', { name: new RegExp(`^${aba}`) }),
+      ]),
     ])
     expect(await controlesEncobertos(page), `${largura} px: painel`).toEqual([])
     await page.goto('/targets/a1')
@@ -507,12 +511,12 @@ for (const largura of [400, 1280]) {
     expect(await controlesEncobertos(page), `${largura} px: incidentes`).toEqual([])
     // Os botões do tamanho "pequeno": o cabeçalho em toda tela, o formulário
     // de alvo, os canais e a status page. Sabotagem: tirar o min-h-11 da base
-    // do Botao (components/ui/botao.tsx), ou o do seletor de tema.
+    // do Botao (components/ui/botao.tsx), ou o size-11 do botão de tema.
     await page.goto('/targets/new')
     await expect(page.getByRole('heading', { name: 'Novo alvo', level: 1 })).toBeVisible()
     await page.getByRole('button', { name: 'Adicionar header' }).click()
     await conferir([
-      ['seletor de tema', page.getByLabel('Tema')],
+      ['tema', page.getByRole('button', { name: /^Tema:/ })],
       ['Sair', page.getByRole('button', { name: 'Sair' })],
       ['Adicionar header', page.getByRole('button', { name: 'Adicionar header' })],
       ['Remover o header 1', page.getByRole('button', { name: 'Remover o header 1' })],
@@ -593,5 +597,111 @@ for (const largura of [400, 1280]) {
       expect(cortados, `${largura} px, ${rota}`).toEqual([])
     }
     await controlePositivo(page, `eixos do gráfico ${largura}`)
+  })
+}
+
+// Review Focus 4 do redesign: no celular, a navegação é uma barra fixa no pé
+// da tela. Rolado até o fim, o último bloco do conteúdo tem de ficar acima
+// dela, ou o último botão de um formulário fica inalcançável ao toque.
+// Sabotagem: tirar o pb-16 do <main> no Layout.
+test('celular de 400 px: a barra inferior não cobre o fim do conteúdo', async ({ page }) => {
+  await page.setViewportSize({ width: 400, height: 700 })
+  await imitarApi(page)
+  for (const [rota, titulo] of ROTAS) {
+    await page.goto(rota)
+    await expect(page.getByRole('heading', { name: titulo, level: 1 })).toBeVisible()
+    await esperarOConteudo(page, rota)
+    const sobra = await page.evaluate(() => {
+      window.scrollTo(0, document.documentElement.scrollHeight)
+      const barra = document.querySelector('nav[aria-label="Principal"]')?.getBoundingClientRect()
+      const ultimo = document.querySelector('#conteudo')?.lastElementChild?.getBoundingClientRect()
+      return barra && ultimo ? barra.top - ultimo.bottom : null
+    })
+    expect(sobra, `${rota}: barra ou conteúdo não encontrados`).not.toBeNull()
+    expect(sobra ?? -1, `${rota}: o fim do conteúdo fica acima da barra`).toBeGreaterThanOrEqual(0)
+  }
+  await controlePositivo(page, 'barra inferior')
+})
+
+// O contador de incidentes abertos fica ao lado do texto da aba, em fluxo:
+// sobreposto ao ícone, ele cobria o "I" de "Incidentes" a 1280 px.
+// Sabotagem: voltar o contador a absolute sobre o ícone.
+for (const largura of [400, 1280]) {
+  test(`contador de abertos sem cobrir o texto da aba, ${largura} px`, async ({ page }) => {
+    await page.setViewportSize({ width: largura, height: 700 })
+    await imitarApi(page)
+    await page.goto('/')
+    await expect(page.getByRole('heading', { name: 'Painel', level: 1 })).toBeVisible()
+    const aba = page.getByRole('navigation', { name: 'Principal' }).getByRole('link', { name: 'Incidentes, 1 aberto' })
+    const texto = await aba.getByText('Incidentes', { exact: true }).boundingBox()
+    const contador = await aba.locator('[aria-hidden="true"]').filter({ hasText: /^1$/ }).boundingBox()
+    expect(texto, 'texto da aba').not.toBeNull()
+    expect(contador, 'contador').not.toBeNull()
+    const cruzaX = texto!.x < contador!.x + contador!.width && contador!.x < texto!.x + texto!.width
+    const cruzaY = texto!.y < contador!.y + contador!.height && contador!.y < texto!.y + texto!.height
+    expect(cruzaX && cruzaY, `${largura} px: texto ${JSON.stringify(texto)} × contador ${JSON.stringify(contador)}`).toBe(false)
+    expect(await page.evaluate(() => document.documentElement.scrollWidth), `${largura} px: overflow`).toBe(largura)
+    await controlePositivo(page, `contador ${largura}`)
+  })
+}
+
+// Teclado com a navegação nova: o salto continua o primeiro Tab e leva ao
+// conteúdo; o cabeçalho vem na ordem do DOM (as cinco abas, o tema, o Sair)
+// nas duas larguras, porque é um <nav> só. No celular, cada controle do
+// conteúdo que recebe o foco pelo Tab fica acima da barra fixa (WCAG
+// 2.4.11). Sabotagem: tirar o scroll-padding-bottom do index.css.
+const ORDEM_DO_CABECALHO = ['Pular para o conteúdo', 'Painel', 'Incidentes', 'Canais', 'Status', 'Conta', 'Tema:', 'Sair']
+
+for (const largura of [400, 1280]) {
+  test(`teclado a ${largura} px: salto, ordem do cabeçalho e foco fora da barra`, async ({ page }) => {
+    await page.setViewportSize({ width: largura, height: 700 })
+    await imitarApi(page)
+    for (const [rota, titulo] of [['/targets/new', 'Novo alvo'], ['/settings', 'Configurações']] as const) {
+      await page.goto(rota)
+      await expect(page.getByRole('heading', { name: titulo, level: 1 })).toBeVisible()
+      await esperarOConteudo(page, rota)
+      await page.keyboard.press('Tab')
+      await expect(page.getByRole('link', { name: 'Pular para o conteúdo' }), rota).toBeFocused()
+      await page.keyboard.press('Enter')
+      await page.keyboard.press('Tab')
+      expect(await page.evaluate(() => !!document.activeElement?.closest('#conteudo')), `${rota}: depois do salto`).toBe(true)
+
+      await page.goto(rota)
+      await expect(page.getByRole('heading', { name: titulo, level: 1 })).toBeVisible()
+      await esperarOConteudo(page, rota)
+      const cabecalho: string[] = []
+      for (let i = 0; i < ORDEM_DO_CABECALHO.length; i++) {
+        await page.keyboard.press('Tab')
+        cabecalho.push(await page.evaluate(() => {
+          const e = document.activeElement
+          return (e?.getAttribute('aria-label') ?? e?.textContent ?? '').trim()
+        }))
+      }
+      cabecalho.forEach((nome, i) => expect(nome, `${largura} px, ${rota}: parada ${i + 1}`).toMatch(new RegExp(`^${ORDEM_DO_CABECALHO[i]}`)))
+
+      const sobBarra: string[] = []
+      let paradasNoConteudo = 0
+      for (let i = 0; i < 150; i++) {
+        await page.keyboard.press('Tab')
+        const p = await page.evaluate(() => {
+          const e = document.activeElement
+          if (!e || e === document.body || !e.closest('#conteudo')) return null
+          const nav = document.querySelector('nav[aria-label="Principal"]')!
+          // No celular o limite é o topo da barra fixa; no desktop a
+          // navegação está no topo, no fluxo, e vale caber na janela.
+          const limite = getComputedStyle(nav).position === 'fixed' ? nav.getBoundingClientRect().top : window.innerHeight
+          const rotulo = (e as HTMLInputElement).labels?.[0]?.textContent
+          const nome = `${e.tagName.toLowerCase()} "${(e.getAttribute('aria-label') ?? rotulo ?? e.textContent ?? '').trim().slice(0, 30)}"`
+          return { nome, folga: limite - e.getBoundingClientRect().bottom }
+        })
+        if (!p) break
+        paradasNoConteudo++
+        if (p.folga < 0) sobBarra.push(`${p.nome} (${p.folga.toFixed(0)} px)`)
+      }
+      // Sem isto, um laço que saísse no primeiro Tab passaria sem conferir nada.
+      expect(paradasNoConteudo, `${largura} px, ${rota}: paradas no conteúdo`).toBeGreaterThanOrEqual(5)
+      expect(sobBarra, `${largura} px, ${rota}: foco sob a barra ou fora da janela`).toEqual([])
+    }
+    await controlePositivo(page, `teclado ${largura}`)
   })
 }

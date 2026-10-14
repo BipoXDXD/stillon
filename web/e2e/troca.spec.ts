@@ -62,7 +62,7 @@ test('ativar o 2FA, trocar de autenticador com o rotation, entrar com o app novo
   await page.getByLabel('Senha').fill(credenciais.senha)
   await page.getByRole('button', { name: 'Entrar' }).click()
   await expect(page.getByRole('heading', { name: 'Painel' })).toBeVisible()
-  await page.getByRole('link', { name: 'Configurações' }).click()
+  await page.getByRole('link', { name: 'Conta', exact: true }).click()
 
   // 1. Ativar: senha, o QR (a chave em texto), o código, os códigos.
   await page.getByRole('button', { name: 'Ativar' }).click()

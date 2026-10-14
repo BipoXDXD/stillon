@@ -76,13 +76,15 @@ it('o bootstrap real reidrata a sessão e entrega tema, avisos e estilos autoriz
 
   expect(await screen.findByRole('heading', { name: 'Canais de notificação' })).toBeInTheDocument()
   expect(await screen.findByText(EMAIL)).toBeInTheDocument()
-  expect(screen.getByRole('combobox', { name: 'Tema' })).toHaveValue('escuro')
+  expect(screen.getByRole('button', { name: 'Tema: Escuro' })).toBeInTheDocument()
   expect(document.documentElement).toHaveClass('dark')
 
+  // Do Escuro, o clique leva a Sistema; o sistema do jsdom é claro.
   const usuario = userEvent.setup()
-  await usuario.selectOptions(screen.getByRole('combobox', { name: 'Tema' }), 'claro')
+  await usuario.click(screen.getByRole('button', { name: 'Tema: Escuro' }))
+  expect(screen.getByRole('button', { name: 'Tema: Sistema' })).toBeInTheDocument()
   expect(document.documentElement).not.toHaveClass('dark')
-  expect(localStorage.getItem('stillon.tema')).toBe('claro')
+  expect(localStorage.getItem('stillon.tema')).toBe('sistema')
 
   await usuario.click(screen.getByRole('button', { name: 'Novo canal' }))
   const dialogo = await screen.findByRole('dialog', { name: 'Novo canal' })

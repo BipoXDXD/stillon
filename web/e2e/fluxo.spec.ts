@@ -168,7 +168,7 @@ test('login, cadastro de alvo, status, F5, detalhe, apagar, encerrar a sessão e
 
     // 10. Encerrar a própria sessão em Configurações: o 204 apagou o cookie, e
     //     o F5 não volta (nota do Plano 5 §12).
-    await page.getByRole('link', { name: 'Configurações' }).click()
+    await page.getByRole('link', { name: 'Conta', exact: true }).click()
     const atual = page.getByRole('listitem').filter({ hasText: 'Esta sessão' })
     await atual.getByRole('button', { name: 'Encerrar' }).click()
     await page.getByRole('alertdialog').getByRole('button', { name: 'Encerrar' }).click()
