@@ -14,6 +14,7 @@ const ARQUIVOS_NO_SISTEMA = [
   'src/components/Minigrafico.tsx',
   'src/components/Titulo.tsx',
   'src/components/SeloDeEstado.tsx',
+  'src/components/SeloDoIncidente.tsx',
   'src/components/ui/avisos.tsx',
   'src/components/ui/botao.tsx',
   'src/components/ui/campo.tsx',
