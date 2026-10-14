@@ -2818,44 +2818,53 @@ houve backup naquele dia, e o GitHub não manda e-mail por isso. A causa usual �
 
    Primeiro, `Ctrl+C` no terminal do `docker run`. Então:
 
-   **1/6 · Mac.** Rode só este e espere a saída:
+   **1/7 · Mac.** Rode só este e espere a saída:
 
    ```bash
-   unset MASTER_KEY
+   unset MASTER_KEY JWT_SECRET IP_HASH_KEY POSTGRES_PASSWORD
    ```
 
-   **2/6 · Mac.** Rode só este e espere a saída:
+   **2/7 · Mac.** Rode só este e espere a saída:
 
    ```bash
    docker rm -f restauro-app restauro
    ```
 
-   **3/6 · Mac.** Rode só este e espere a saída:
+   **3/7 · Mac.** Rode só este e espere a saída:
 
    ```bash
    shred -u ~/stillon-restauro/stillon.dump
    ```
 
-   **4/6 · Mac.** Rode só este e espere a saída:
+   **4/7 · Mac.** Rode só este e espere a saída:
+
+   ```bash
+   rm ~/stillon-restauro/app.env
+   ```
+
+   **5/7 · Mac.** Rode só este e espere a saída:
 
    ```bash
    docker logout ghcr.io
    ```
 
-   **5/6 · Mac.** Rode só este e espere a saída:
+   **6/7 · Mac.** Rode só este e espere a saída:
 
    ```bash
    C=~/.docker/config.json
    ```
 
-   **6/6 · Mac.** Rode só este e espere a saída:
+   **7/7 · Mac.** Rode só este e espere a saída:
 
    ```bash
-   grep -q ghcr.io $C 2>&- && echo "AINDA LOGADO" || echo "sem login do ghcr"
+   grep -qs ghcr.io $C && echo "AINDA LOGADO" || echo "sem login do ghcr"
    ```
    O `docker rm -f restauro-app restauro` tira também a cópia da API, que tem a `MASTER_KEY` na
    memória e não pode ficar de pé; se ela já saiu (o `Ctrl+C` com `--rm`), o `docker` avisa
    `No such container: restauro-app` e remove o `restauro` do mesmo jeito.
+   O `unset` tira do terminal os quatro valores do ensaio (o `POSTGRES_PASSWORD` exportado no
+   item 3 mudaria um `docker compose` rodado depois neste terminal). O `app.env` não tem
+   segredo, mas não fica para trás.
    O `docker logout` de novo é por garantia (se o item 4 parou no meio); a última linha tem de
    dizer `sem login do ghcr`. **No Mac:** não existe `shred` (use `rm -f`, com o FileVault ligado:
    [mac.md](mac.md)), e o `grep` no `config.json` não prova nada, porque o login mora no Chaveiro.
@@ -3240,6 +3249,14 @@ as duas se conferem:
   `header_up X-Forwarded-For {client_ip}`, ou o `trusted_proxies` dele não casa com o IP da
   borda (`172.31.0.2/32`). Confira com `vc exec caddy cat /etc/caddy/Caddyfile`.
 
+**Ao fim da parte B**, apague o arquivo da função:
+
+**Mac.** Rode só este e espere a saída:
+
+```bash
+rm ~/tentar.sh
+```
+
 ### 9.3 `Host` estranho não chega ao app (obrigação 5, a parte do Caddy)
 
 **Faça** (no seu computador):
@@ -3543,8 +3560,8 @@ resolve** (sai 3 outra vez), e não é adulteração. Dois caminhos:
    nano ~/voltar.sh
    ```
 
-No editor, cole estas linhas (o conteúdo do arquivo, que não é comando), salve com `Ctrl+O` e Enter
-e saia com `Ctrl+X`:
+   No editor, cole estas linhas (o conteúdo do arquivo, que não é comando), salve com
+   `Ctrl+O` e Enter e saia com `Ctrl+X`:
 
    ```text
    export COMPOSE_FILE=/opt/stillon/compose.prod.yaml
@@ -3557,7 +3574,7 @@ e saia com `Ctrl+X`:
    echo "no ar: $ANT"
    ```
 
-Agora, um comando por vez:
+   Agora, um comando por vez:
 
    **1/3 · VPS (sessão `ssh stillon`).** Rode só este e espere a saída:
 

@@ -143,45 +143,52 @@ Antes do bloco 2 isso custa pouco (a chave ainda não entrou em lugar nenhum al�
 a frase nova no gerenciador, apague `~/.ssh/stillon_admin*`, refaça o passo 1.1 **colando** a
 frase, guarde a privada nova no gerenciador e confira que a entrada ficou igual ao arquivo, sem
 depender da área de transferência (ela guarda só o último texto copiado, e o último copiado é um
-comando deste runbook). Um comando por vez: o 1/6 copia a chave para você colar na entrada do
-gerenciador; o 2/6 limpa a área de transferência; do 3/6 ao 5/6, abra a entrada no gerenciador,
+comando deste runbook). Um comando por vez: o 1/7 copia a chave para você colar na entrada do
+gerenciador; o 2/7 limpa a área de transferência; do 3/7 ao 5/7, abra a entrada no gerenciador,
 copie o conteúdo e cole-o no editor do `nano` (salve com `Ctrl+O` e Enter, saia com `Ctrl+X`),
-e o `diff` do 5/6 diz `iguais`:
+e o `diff` do 5/7 diz `iguais`; o 7/7 limpa de novo a área de transferência, que ficou com a
+chave copiada do gerenciador:
 
-**1/6 · Mac.** Rode só este e espere a saída:
+**1/7 · Mac.** Rode só este e espere a saída:
 
 ```bash
 pbcopy < ~/.ssh/stillon_admin
 ```
 
-**2/6 · Mac.** Rode só este e espere a saída:
+**2/7 · Mac.** Rode só este e espere a saída:
 
 ```bash
 pbcopy < /dev/null
 ```
 
-**3/6 · Mac.** Rode só este e espere a saída:
+**3/7 · Mac.** Rode só este e espere a saída:
 
 ```bash
 install -m 600 /dev/null ~/conferir.key
 ```
 
-**4/6 · Mac.** Rode só este e espere a saída:
+**4/7 · Mac.** Rode só este e espere a saída:
 
 ```bash
 nano ~/conferir.key
 ```
 
-**5/6 · Mac.** Rode só este e espere a saída:
+**5/7 · Mac.** Rode só este e espere a saída:
 
 ```bash
 diff ~/conferir.key ~/.ssh/stillon_admin && echo iguais
 ```
 
-**6/6 · Mac.** Rode só este e espere a saída:
+**6/7 · Mac.** Rode só este e espere a saída:
 
 ```bash
 rm ~/conferir.key
+```
+
+**7/7 · Mac.** Rode só este e espere a saída:
+
+```bash
+pbcopy < /dev/null
 ```
 
 Por fim, no painel (**Settings → SSH keys**), apague a `stillon-admin` velha e cadastre a nova.
