@@ -13,7 +13,7 @@ const variantes = cva(
         perigo: 'border border-perigo bg-superficie text-perigo hover:bg-painel',
         fantasma: 'text-texto hover:bg-painel',
       },
-      tamanho: { normal: 'min-h-11 px-4 py-2', pequeno: 'min-h-10 px-3 py-1.5' },
+      tamanho: { normal: 'min-h-11 px-4 py-2', pequeno: 'alvo-de-toque min-h-10 px-3 py-1.5' },
     },
     defaultVariants: { tipo: 'primario', tamanho: 'normal' },
   },
