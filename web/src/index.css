@@ -4,6 +4,29 @@
    src/lib/tema.tsx. */
 @custom-variant dark (&:where(.dark, .dark *));
 
+/* Fontes auto-hospedadas (spec do redesign, "Decisões técnicas"): woff2
+   variável, subconjunto latino, licença OFL ao lado. public/ não ganha hash,
+   então a URL é estável e serve também à página pública. O swap mostra o
+   texto na fonte do sistema até a fonte chegar. scripts/gerar-fontes.sh
+   refaz os arquivos; src/fontes.test.ts confere. */
+@font-face {
+  font-family: 'Fraunces';
+  src: url('/fonts/fraunces-latin.woff2') format('woff2');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2190-2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: 'Inter';
+  src: url('/fonts/inter-latin.woff2') format('woff2');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2190-2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
 /* Tokens do painel. As cores de estado foram escolhidas para contraste AA
    (4,5:1) como texto sobre o fundo de cada tema; o projeto a11y do
    Playwright confere com o axe nos dois temas. --borda é divisória
@@ -70,7 +93,13 @@
   --color-degradado: var(--estado-degradado);
   --color-fora: var(--estado-fora);
   --color-sem-dados: var(--estado-sem-dados);
-  --font-sans: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+}
+
+/* static: as variáveis saem sempre no CSS, mesmo as que só o CSS deste
+   arquivo usa (o base dos títulos, o main > section). */
+@theme static {
+  --font-sans: 'Inter', ui-sans-serif, system-ui, sans-serif;
+  --font-display: 'Fraunces', ui-serif, Georgia, serif;
 }
 
 html {
@@ -83,7 +112,6 @@ html.dark {
 body {
   background: var(--fundo);
   color: var(--texto);
-  font-family: var(--font-sans);
 }
 
 /* Checkbox e radio na cor da marca, não no azul do navegador. */
