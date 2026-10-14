@@ -133,7 +133,7 @@ for (const tema of ['claro', 'escuro'] as const) {
         // As barras de uptime da hora desenham, com cor (variável CSS).
         const barra = page.getByTestId('grafico-latencia').locator('.recharts-bar-rectangle path').first()
         await expect(barra).toBeAttached()
-        expect(await barra.evaluate((e) => getComputedStyle(e).fill)).toMatch(/^rgb/)
+        expect(await barra.evaluate((e) => getComputedStyle(e).fill)).toMatch(/^(rgb|oklch)\(/)
       }
       const r = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze()
       expect(r.violations.map((v) => `${rota}: ${v.id} (${v.nodes.map((n) => n.target.join(' ')).join(', ')})`)).toEqual([])

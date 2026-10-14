@@ -145,7 +145,7 @@ test('login, cadastro de alvo, status, F5, detalhe, apagar, encerrar a sessão e
     await expect(page.getByText(/no ar nesta janela/)).toBeVisible()
     const marca = page.getByTestId('grafico-latencia').locator('.recharts-symbols').first()
     await expect(marca).toBeAttached()
-    expect(await marca.evaluate((e) => getComputedStyle(e).fill)).toMatch(/^rgb/)
+    expect(await marca.evaluate((e) => getComputedStyle(e).fill)).toMatch(/^(rgb|oklch)\(/)
 
     // 7. Um diálogo (Radix + react-remove-scroll, que injeta <style>) trava a
     //    rolagem: o nonce funcionou. E o alvo sai: o teto é de 100 alvos, e
