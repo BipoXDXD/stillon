@@ -42,6 +42,32 @@ describe('haQuanto', () => {
   })
 })
 
+// A unidade é escolhida depois de arredondar: 59 min 50 s não pode virar
+// "há 60 minutos", nem 23 h 50 min "há 24 horas". O arredondamento é
+// simétrico entre passado e futuro (Math.round(-59.5) daria -59).
+// Sabotagens: escolher a unidade pelo valor bruto, antes de arredondar; ou
+// arredondar o valor com sinal.
+describe('haQuanto: arredonda antes de escolher a unidade', () => {
+  const agora = new Date('2026-10-05T12:00:00Z')
+
+  it.each([
+    ['2026-10-05T11:59:00.6Z', 'há 59 segundos'],
+    ['2026-10-05T11:59:00.4Z', 'há 1 minuto'],
+    ['2026-10-05T11:01:31Z', 'há 58 minutos'],
+    ['2026-10-05T11:00:31Z', 'há 59 minutos'],
+    ['2026-10-05T11:00:30Z', 'há 1 hora'],
+    ['2026-10-05T11:00:10Z', 'há 1 hora'],
+    ['2026-10-05T12:59:50Z', 'em 1 hora'],
+    ['2026-10-05T11:00:00Z', 'há 1 hora'],
+    ['2026-10-04T12:30:01Z', 'há 23 horas'],
+    ['2026-10-04T12:30:00Z', 'ontem'],
+    ['2026-10-04T12:10:00Z', 'ontem'],
+    ['2026-10-06T11:50:00Z', 'amanhã'],
+  ])('apresenta %s como “%s”', (instante, esperado) => {
+    expect(haQuanto(instante, agora)).toBe(esperado)
+  })
+})
+
 describe('pontosDeCodigo', () => {
   it('conta code points, não unidades UTF-16', () => {
     expect(pontosDeCodigo('😀'.repeat(15))).toBe(15)

@@ -25,13 +25,28 @@ export function duracao(ms: number): string {
 
 const relativa = new Intl.RelativeTimeFormat('pt-BR', { numeric: 'auto' })
 
+const MS_POR_SEGUNDO = 1000
+const SEGUNDOS_POR_MINUTO = 60
+const MINUTOS_POR_HORA = 60
+const HORAS_POR_DIA = 24
+
+// A unidade é escolhida depois de arredondar, para que 59 min 50 s vire
+// "há 1 hora", e não "há 60 minutos".
 export function haQuanto(iso: string, agora: Date): string {
-  const seg = Math.round((new Date(iso).getTime() - agora.getTime()) / 1000)
-  const abs = Math.abs(seg)
-  if (abs < 60) return relativa.format(Math.round(seg), 'second')
-  if (abs < 3600) return relativa.format(Math.round(seg / 60), 'minute')
-  if (abs < 86400) return relativa.format(Math.round(seg / 3600), 'hour')
-  return relativa.format(Math.round(seg / 86400), 'day')
+  const ms = new Date(iso).getTime() - agora.getTime()
+  const seg = arredondaSimetrico(ms / MS_POR_SEGUNDO)
+  if (Math.abs(seg) < SEGUNDOS_POR_MINUTO) return relativa.format(seg, 'second')
+  const min = arredondaSimetrico(ms / (MS_POR_SEGUNDO * SEGUNDOS_POR_MINUTO))
+  if (Math.abs(min) < MINUTOS_POR_HORA) return relativa.format(min, 'minute')
+  const horas = arredondaSimetrico(ms / (MS_POR_SEGUNDO * SEGUNDOS_POR_MINUTO * MINUTOS_POR_HORA))
+  if (Math.abs(horas) < HORAS_POR_DIA) return relativa.format(horas, 'hour')
+  const dias = arredondaSimetrico(ms / (MS_POR_SEGUNDO * SEGUNDOS_POR_MINUTO * MINUTOS_POR_HORA * HORAS_POR_DIA))
+  return relativa.format(dias, 'day')
+}
+
+// Math.round(-59.5) é -59: passado e futuro arredondariam diferente.
+function arredondaSimetrico(x: number): number {
+  return Math.sign(x) * Math.round(Math.abs(x))
 }
 
 const dataHoraFmt = new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' })
