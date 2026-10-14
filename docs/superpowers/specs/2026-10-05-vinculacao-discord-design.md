@@ -1,6 +1,6 @@
 # Vinculação da conta StillOn ao Discord
 
-Estado: especificação aprovada pelo dono em 2026-10-05; implementação ainda pendente.
+Estado: especificação aprovada pelo dono em 2026-10-05; plano de implementação revisado em 2026-10-14 contra o código atual e aguardando as decisões D1–D3 do dono; implementação ainda pendente.
 
 ## Objetivo e decisões do dono
 
