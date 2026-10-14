@@ -84,6 +84,35 @@ describe('status page: contratos públicos complementares', () => {
     expect(r.falsa.chamadas(PATCH)).toBe(0)
   })
 
+  it.each([
+    ['Título', 'inversão bidi', 'Status‮oficial'],
+    ['Título', 'espaço de largura zero', 'Status​oficial'],
+    ['Nome de exibição de API', 'hífen suave', 'API­pública'],
+    ['Nome de exibição de API', 'ZWJ no fim', 'API pública‍'],
+  ])('%s com %s mostra o motivo no campo e bloqueia o PATCH', async (rotulo, _caso, texto) => {
+    const r = await montar({ pagina: comItem() })
+    fireEvent.change(screen.getByLabelText(rotulo), { target: { value: texto } })
+    await r.usuario.click(screen.getByRole('button', { name: 'Salvar' }))
+    await waitFor(() =>
+      expect(screen.getByLabelText(rotulo)).toHaveAccessibleDescription(
+        'Sem caracteres invisíveis ou de controle (direção do texto, largura zero, hífen suave).',
+      ),
+    )
+    expect(r.falsa.chamadas(PATCH)).toBe(0)
+  })
+
+  it('emoji com ZWJ e ZWNJ persa entre letras são enviados', async () => {
+    const r = await montar({ pagina: comItem() })
+    fireEvent.change(screen.getByLabelText('Título'), { target: { value: 'Equipe 👩‍💻' } })
+    fireEvent.change(screen.getByLabelText('Nome de exibição de API'), { target: { value: 'می‌خواهم' } })
+    await r.usuario.click(screen.getByRole('button', { name: 'Salvar' }))
+    await waitFor(() => expect(r.falsa.chamadas(PATCH)).toBe(1))
+    expect(r.falsa.corpos(PATCH)[0]).toMatchObject({
+      title: 'Equipe 👩‍💻',
+      items: [{ target_id: 'alvo-1', display_name: 'می‌خواهم' }],
+    })
+  })
+
   it('100 pontos de código multibyte em título e item são enviados sem contar unidades UTF-16', async () => {
     const r = await montar({ pagina: comItem() })
     const texto = '🙂'.repeat(100)
