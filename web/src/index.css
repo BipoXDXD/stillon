@@ -128,15 +128,54 @@
 }
 
 /* static: as variáveis saem sempre no CSS, mesmo as que só o CSS deste
-   arquivo usa (o base dos títulos, o main > section). */
+   arquivo usa (o base dos títulos, o main > section). Escala de fonte da
+   spec: 12, 13, 14, 16, 18, 20, 24, 28, 36 px. O padrão do Tailwind já tem
+   12 (xs), 14 (sm), 16 (base), 18 (lg), 20 (xl), 24 (2xl) e 36 (4xl); entram
+   o 13 (meta) e o 28 no lugar do 30 do text-3xl. Um raio só: 8 px. */
 @theme static {
   --font-sans: 'Inter', ui-sans-serif, system-ui, sans-serif;
   --font-display: 'Fraunces', ui-serif, Georgia, serif;
+  --text-meta: 0.8125rem;
+  --text-meta--line-height: 1.125rem;
+  --text-3xl: 1.75rem;
+  --text-3xl--line-height: 2.25rem;
+  --radius-padrao: 0.5rem;
 }
 
+/* Sombras de dois níveis (DI 9): 1 para cartão e item ativo, 2 para diálogo,
+   popover e aviso. No escuro as duas são transparentes. */
+@utility sombra-nivel-1 {
+  box-shadow: var(--sombra-nivel-1);
+}
+@utility sombra-nivel-2 {
+  box-shadow: var(--sombra-nivel-2);
+}
+
+/* Caixa alta só em rótulo de grupo pequeno, com 0,05em (DI 6). */
+@utility rotulo-de-grupo {
+  font-size: var(--text-xs);
+  line-height: var(--text-xs--line-height);
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+/* Títulos em Fraunces 600. Na camada base, para uma classe da tela poder
+   mudar tamanho, peso ou família (um KPI dentro de um título usa font-sans). */
+@layer base {
+  h1,
+  h2,
+  h3 {
+    font-family: var(--font-display);
+    font-weight: 600;
+  }
+}
+
+/* Números sempre em cifras tabulares (spec, Tipografia): colunas de latência e uptime alinham. */
 body {
   background: var(--fundo);
   color: var(--texto);
+  font-variant-numeric: tabular-nums;
 }
 
 /* Checkbox e radio na cor da marca, não no azul do navegador. */
@@ -201,12 +240,6 @@ main > section:not([aria-label='Resumo dos alvos']):not([aria-label='Avisos de n
   border-radius: 0.5rem;
   background: var(--superficie);
   padding: 1.25rem;
-}
-
-/* A identidade editorial usa a mesma família em toda a interface. */
-h1, h2, h3 {
-  font-weight: 700;
-  letter-spacing: -0.025em;
 }
 
 .marca-simbolo {
