@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -26,7 +27,14 @@ func TestValidateURLRejectsMalformedEscape(t *testing.T) {
 // DialContext é uma fronteira pública, embora HTTP normalmente use TCP.
 // Uma exceção para loopback TCP nunca deve liberar um socket Unix local.
 func TestLoopbackExceptionDoesNotAllowUnixSocket(t *testing.T) {
-	address := filepath.Join(t.TempDir(), "alvo.sock")
+	// No macOS o caminho de um socket Unix cabe em 104 bytes, e o t.TempDir()
+	// leva o nome longo do teste para dentro do $TMPDIR comprido do sistema.
+	dir, err := os.MkdirTemp("", "sock")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	address := filepath.Join(dir, "alvo.sock")
 	listener, err := net.Listen("unix", address)
 	if err != nil {
 		t.Fatal(err)

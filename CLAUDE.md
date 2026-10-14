@@ -54,6 +54,20 @@ conferida nesta retomada. Qualquer continuação da hospedagem parte do computad
 Linux e segue o [runbook](docs/deploy/vps.md), guiada, um passo numerado e seu
 **Confira** por vez. Confirme o estado atual antes de escolher o próximo bloco.
 
+Integração do PR #27 concluída na main em `0f42101`, com nove checks aprovados e
+árvore idêntica à candidata validada nos PG17/18 e em 453 testes web. Dependabot,
+redesign vintage, configuração local de e-mail e correção E2E já integrados.
+Discord local recebeu a mensagem real do webhook; e-mail ainda depende de configuração.
+A próxima fase é a [vinculação individual do Discord](docs/superpowers/specs/2026-10-05-vinculacao-discord-design.md),
+com spec aprovada e plano aguardando revisão. Não confundir canal verificado com
+identidade vinculada, nem anunciar deploy/publicação de imagem sem conferência.
+
+Encerramento combinado em 2026-10-05: VPS fica para 2026-10-06, guiada pelo runbook.
+CI da main funcional `0f42101` e publicação da imagem concluídos com sucesso;
+nenhum deploy feito. Padrão equilibrado de lembretes aprovado e registrado na
+continuidade, ainda não implementado. Retomar vinculação/cargo e frequência como
+etapas próprias, sem confundir planejamento aprovado com código pronto.
+
 ## Registro histórico (2026-09-28)
 
 - `main` = PRs #1–#24 integrados (Planos 1–11 e a renomeação); imagem publicada em
