@@ -2,7 +2,7 @@
 
 Monitor de disponibilidade de serviços HTTP: sonda cada alvo no intervalo que você define, abre e
 fecha incidentes sozinho, avisa pelo Discord e por e-mail, e publica uma página de status. Um
-binário Go com o painel React embutido e um Postgres.
+binário Go com o painel React embutido e um Postgres. Ao vivo em <https://stillon.tech>.
 
 [![ci](https://github.com/BipoXDXD/stillon/actions/workflows/ci.yml/badge.svg)](https://github.com/BipoXDXD/stillon/actions/workflows/ci.yml)
 ![Go 1.26](https://img.shields.io/badge/Go-1.26-00ADD8)
@@ -12,7 +12,7 @@ binário Go com o painel React embutido e um Postgres.
 Precisa de Docker 25+ com Compose v2.20+ (o healthcheck usa `start_interval`).
 
 ```sh
-git clone git@github.com:BipoXDXD/stillon.git && cd stillon
+git clone https://github.com/BipoXDXD/stillon.git && cd stillon
 docker compose up --wait
 ```
 
@@ -20,12 +20,12 @@ Abra <http://localhost:8080> e entre com `demo@stillon.local` / `demo-stillon-20
 tem um alvo de exemplo, `https://example.com/` (domínio reservado para isso). Para cadastrar mais
 no primeiro `up`: `DEMO_TARGETS_EXTRA="https://seu.site/ https://outro.site/" docker compose up --wait`.
 
-- **Enquanto o repositório for privado**, a imagem publicada também é privada, e o compose
+- O repositório é público, mas o **pacote do GHCR segue privado**, e o compose
   **constrói do código** quando o pull é negado. Medido numa máquina de 16 núcleos: o build frio
   da imagem, num builder novo, levou ~34 s (provavelmente já contando o download das
   imagens-base); o `up --wait` levou ~4,5–5 s com as imagens prontas e ~8 s quando também
   construiu. Num notebook comum, o build demora mais. Depois
-  que o job `publish` da `main` tiver rodado, quem tem acesso ao repositório pode puxar a imagem
+  que o job `publish` da `main` tiver rodado, quem tem acesso ao pacote pode puxar a imagem
   pronta (`docker login ghcr.io` com um token `read:packages`, depois `docker compose pull`).
 - Use **`localhost`**, não o IP da máquina: o painel exige contexto seguro (HTTPS ou
   `localhost`). Em HTTP por outro endereço ele mostra um aviso e desliga a coordenação entre
@@ -184,8 +184,9 @@ make e2e           # APAGA o banco do compose, sobe com --build, confere e roda 
   requisição (login e por usuário) encherem de novo depois das specs anteriores, e a limpeza do
   fim, que roda com os baldes gastos, repete com recuo (até ~30 s) quando leva um 429.
 - O **backup** de produção tem workflow próprio que restaura o dump num banco descartável e o
-  confere; ele roda todo dia depois de ligado (`BACKUP_ENABLED=1`), o que só acontece depois do
-  primeiro deploy.
+  confere; ele roda todo dia, ligado em 2026-10-14 com `BACKUP_ENABLED=1`. Os artifacts são
+  públicos (o repositório é público), mas cifrados com `age`: a decisão está no
+  [runbook](docs/deploy/vps.md), seção "Tornar o repositório público".
 - **Prova por sabotagem.** Todo teste que afirma uma ausência ("o segredo não vaza", "o cliente
   não alcança") é conferido quebrando a propriedade de propósito e vendo ficar vermelho. Um caso
   real: os testes de middleware montavam a cadeia à mão, e apagar `SecurityHeaders`, `CORS` e
@@ -234,7 +235,7 @@ tem as convenções). Todo erro, inclusive rota ou método inexistente sob `/api
 
 - `401 unauthorized` é só token recusado (ausente, inválido, vencido, de família morta): o
   cliente renova a sessão. `401 invalid_credentials` é senha ou código errado: não renova.
-- `429 rate_limited` vem dos limitadores por IP e por usuário (sem `Retry-After`) e, desde o
+- `429 rate_limited` vem dos limitadores por IP e por usuário (com `Retry-After` desde o #77) e, desde o
   Plano 10, do teto de concorrência do Argon2id (com `Retry-After: 2`).
 - Mutação exige o cabeçalho `X-Requested-With: stillon`, com esse valor literal
   sensível a caixa. O valor é público; a defesa contra CSRF depende também de
@@ -280,9 +281,9 @@ sistema e no painel da Hostinger, atualizações de segurança automáticas.
   espera o healthcheck e **volta sozinho à anterior** se a nova não ficar saudável; se a conexão
   cair no meio, o deploy (ou o rollback) termina na própria VPS, que guarda o log de cada deploy e
   backup em `/opt/stillon/entrada.log`. A chave do
-  servidor é fixada num secret (nada de `StrictHostKeyChecking=no`). No GitHub Free com
-  repositório privado não há revisor obrigatório: quem pode disparar é quem tem acesso de escrita
-  ao repositório (hoje, só o dono).
+  servidor é fixada num secret (nada de `StrictHostKeyChecking=no`). Não há environment com
+  revisor (decisão pendente do dono): a `main` exige PR e 9 checks, e o deploy é disparado por
+  quem tem acesso de escrita ao repositório (hoje, só o dono).
 - **Backup:** dump lógico diário, feito na VPS e restaurado num banco descartável e conferido
   (dono das tabelas, RLS com `FORCE`, contagens, partições) antes de sair **já cifrado** com
   `age` (a chave privada fica só com o dono) para um artifact de 30 dias. Uma checagem que falha
@@ -344,5 +345,4 @@ e no histórico dos planos (abaixo).
 
 ## Licença
 
-Ainda não definida (repositório privado). A escolha é do dono do projeto e vem junto com a
-publicação ([runbook](docs/deploy/vps.md), "Tornar o repositório público").
+MIT, veja [LICENSE](LICENSE).

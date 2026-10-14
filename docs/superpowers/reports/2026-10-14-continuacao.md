@@ -6,9 +6,10 @@ guiada na VPS terminou.
 
 ## Estado real
 
-O StillOn está **no ar** em <https://stillon.tech>, com o deploy do commit `1a5e2ca` (a imagem da
-`main` depois do #67, que tirou o `artifactType` do `index.json`). O certificado é do Let's Encrypt,
-válido até 2027-01-12. O StillOn fica atrás da **borda Caddy compartilhada com o GoblinShift**, em
+O StillOn está **no ar** em <https://stillon.tech>, com o deploy do commit `b685891` (o último, de
+2026-10-14; ver "Deploy de 2026-10-14 (feito)"). Antes disso o deploy era o
+`1a5e2ca` (a imagem da `main` depois do #67, que tirou o `artifactType` do `index.json`). O
+certificado é do Let's Encrypt, válido até 2027-01-12. O StillOn fica atrás da **borda Caddy compartilhada com o GoblinShift**, em
 `/srv/edge`, como a [spec](../specs/2026-10-13-vps-compartilhada-design.md) decidiu: a borda
 termina o TLS por domínio, e o Caddy do StillOn (IP fixo na rede `edge`) recebe só o domínio
 `stillon.tech`.
@@ -83,7 +84,7 @@ corrigido: o `Server: nginx` que aparece é o nginx interno do GoblinShift; a pr
 
 O dono pediu trabalho autônomo com vários agentes, sem perguntas. Cada PR de código passou por
 revisão independente antes do merge, e todos tiveram CI verde (os 9 checks e, a partir do #77, o
-CodeQL). **Nada disso está em produção:** o último deploy continua sendo o `1a5e2ca`.
+CodeQL). Tudo isso foi para produção no deploy de 2026-10-14 (ver "Deploy de 2026-10-14 (feito)").
 
 | PR | O que entrou |
 |---|---|
@@ -114,23 +115,42 @@ CodeQL). **Nada disso está em produção:** o último deploy continua sendo o `
 - os CHECKs da 00013 como `NOT VALID`;
 - E7, a diferença de cerca de 0,4 ms no login, foi medida e não mexida, porque detectá-la exige uns 88 mil logins por e-mail.
 
-## Próximo deploy
+## Deploy de 2026-10-14 (feito)
 
-O próximo deploy leva tudo o que está acima e as migrations 00012 e 00013. Antes e depois dele:
+1. **`compose.prod.yaml` copiado para `/opt/stillon`.** O deploy só envia a imagem; sem essa
+   cópia, o grace period de 30 s do #76 não valeria.
+2. **Deploy do `e7db119` às 12:11 UTC**, com as migrations 00012 e 00013.
+3. **Consulta da 00013 em produção: voltou vazia** (a tabela estava vazia, então nenhuma linha
+   violava os CHECKs). A 00014 (#93) valida os dois CHECKs com `VALIDATE CONSTRAINT`.
+4. **Deploy do `b685891` às 12:43 UTC**, com a 00014. É o que está no ar.
 
-1. **Atualizar o `/opt/stillon/compose.prod.yaml` na VPS.** O deploy só envia a imagem; sem essa
-   cópia, o grace period de 30 s do #76 não vale.
-2. **Depois do deploy:** rodar em produção a consulta do comentário da 00013. Se voltar vazia,
-   uma migration nova faz `VALIDATE CONSTRAINT` nos dois CHECKs.
-3. **Conferir os lembretes de verdade** com um alvo de teste fora do ar por mais de 30 min, e o
-   reconhecimento parando os lembretes.
+5. **Lembretes conferidos em produção**, com o alvo de teste "Teste de lembretes (apagar)" (sempre
+   503, criado direto no banco). Já apagado.
+   - O incidente abriu às 12:16 UTC e o e-mail de abertura saiu.
+   - Às 12:58 houve um ack pelo painel, provavelmente do dono, que cortou o primeiro lembrete
+     (comportamento certo). O ack não gera linha no `audit_log`: achado menor, sem correção ainda.
+   - O ack foi tirado e a base recuou 2 h no banco. Com isso, o lembrete por e-mail (`seq 1`) foi
+     enfileirado e enviado no tique seguinte (14:20:10 → 14:20:13).
+   - Com o ack de novo e a base do segundo lembrete também vencida, nenhum `seq 2` saiu em 90 s
+     (três tiques). **O reconhecimento corta os lembretes.**
+
+## Revisão completa (tarde de 2026-10-14)
+
+Três frentes: código, documentação e segurança.
+
+- **Código:** 2 defeitos, cada um com PR: os lembretes de um alvo pausado e a série longa da
+  página pública, que perdia a queda em curso.
+- **Documentação:** este PR (licença MIT, estado pós-deploy, trechos do README e comentários dos
+  workflows que ainda tratavam o repositório como privado).
+- **Segurança:** nenhum segredo (gitleaks em todo o histórico e nas refs de PR) e nenhuma falha
+  alta. Corrigidos em PR: o log do app no Actions público, o endurecimento do compose e o host de
+  rótulo único. **Ficam com o dono:** o environment `production`, o e-mail noreply nos commits, a
+  sessão viva nas rotas de recurso e os dumps públicos por 30 dias.
 
 ## Decisões pendentes do dono
 
 - **Vinculação Discord:** D1 (PKCE), D2 (mecanismo de cargo) e D3 (provedor falso no E2E), com
-  recomendação no [plano](../plans/2026-10-05-vinculacao-discord.md). A migration dela é a 00014.
-- **Redesign do painel:** escolher entre as três direções da auditoria (A, "Operacional sóbrio",
-  recomendada; B, "Terminal/mono"; C, "Editorial claro"), o matiz da primária e a fonte.
+  recomendação no [plano](../plans/2026-10-05-vinculacao-discord.md). A migration dela é a 00015.
 - **Environment `production` no GitHub:** passar os segredos da VPS do nível do repositório
   para o environment, colando do Bitwarden.
 - **Exigir sessão viva nas rotas de recurso:** hoje um access token de sessão encerrada vale por
@@ -140,9 +160,15 @@ O próximo deploy leva tudo o que está acima e as migrations 00012 e 00013. Ant
   lembretes, porque a retenção apaga as linhas. A recomendação é registrar a limitação e não
   mudar nada.
 
+## Redesign decidido
+
+Direção C, "Editorial claro" (Fraunces + Inter, primária índigo), na
+[spec](../specs/2026-10-14-redesign-painel-design.md). O painel antigo fica na tag
+`painel-antes-do-redesign` e em `docs/design/painel-antes/`.
+
 ## Depois
 
 - **Vinculação Discord**, assim que D1, D2 e D3 estiverem decididos.
-- **Redesign do painel**, assim que a direção for escolhida.
+- **Redesign do painel**, conforme a spec acima.
 
 Não confundir planejamento aprovado com código pronto, nem anunciar deploy sem conferência.

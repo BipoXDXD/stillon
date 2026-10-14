@@ -51,7 +51,7 @@ O dono migrou do Linux para o **Mac** (MacBook Air): a hospedagem e o desenvolvi
 dele. Ambiente conferido em 2026-10-13 (Go, Node, Docker Desktop, GPG, ferramentas do CI); o
 PR #64 faz a suíte Go passar no macOS.
 
-**O StillOn está no ar** em <https://stillon.tech> (deploy do commit `1a5e2ca`, certificado
+**O StillOn está no ar** em <https://stillon.tech> (deploy do commit `b685891`, certificado
 Let's Encrypt até 2027-01-12). A VPS é **compartilhada com o GoblinShift**, outro projeto do dono
 (`~/Documents/Projetos/Python/GoblinShift`): a borda em `/srv/edge` é um Caddy com TLS por
 domínio, e o Caddy do StillOn fica atrás dela
@@ -78,9 +78,9 @@ deploy é `amd64`): localmente, ele roda num Ubuntu descartável com o socket do
 
 **Desenvolvimento (tarde de 2026-10-14):** a `main` recebeu os lembretes de incidente (#73), o
 reforço de segurança (#77), a acessibilidade do painel e as correções da revisão de código
-(#74–#90). **Nada disso está em produção:** o próximo deploy leva as migrations 00012 e 00013 e
-exige copiar o `compose.prod.yaml` novo para `/opt/stillon`. A lista, as decisões e o que conferir
-estão na seção "Desenvolvimento na ausência do dono" da
+(#74–#90). **Em produção desde `b685891`:** migrations até a 00014 (que valida os CHECKs da
+00013) e o `compose.prod.yaml` com `stop_grace_period: 30s` já na VPS. A lista, as decisões e o
+que conferir estão na seção "Desenvolvimento na ausência do dono" da
 [continuidade de 2026-10-14](docs/superpowers/reports/2026-10-14-continuacao.md).
 
 A `main` tem ruleset (PR obrigatório e 9 checks); um PR `[skip ci]` entra com
@@ -88,9 +88,12 @@ A `main` tem ruleset (PR obrigatório e 9 checks); um PR `[skip ci]` entra com
 
 Esperam decisão do dono: D1–D3 da
 [vinculação Discord](docs/superpowers/plans/2026-10-05-vinculacao-discord.md) (a migration dela é
-a 00014), a direção do redesign do painel, o environment `production` no GitHub e exigir sessão viva
-nas rotas de recurso. Não confundir planejamento aprovado com código pronto, nem anunciar deploy
-sem conferência.
+a 00015), o environment `production` no GitHub e exigir sessão viva nas rotas de recurso. Não
+confundir planejamento aprovado com código pronto, nem anunciar deploy sem conferência.
+
+Redesign decidido: direção C, "Editorial claro" (Fraunces + Inter, primária índigo),
+[spec](docs/superpowers/specs/2026-10-14-redesign-painel-design.md); painel antigo na tag
+`painel-antes-do-redesign` e em `docs/design/painel-antes/`.
 
 ## Registro histórico (2026-09-28)
 
@@ -109,5 +112,3 @@ sem conferência.
   04:30. O terminal do navegador pede login depois do 2.7, e **root com a senha de root** entra.
 - **Próximo: bloco 3** (Docker, `/opt/stillon`, segredos, chave do backup). Antes do 3.5, no Mac:
   `brew install age nmap`.
-- Depois da VPS no ar: redesign do painel (o dono acha o visual ruim). Os dois PRs abertos do
-  Dependabot (#17, #18) esperam revisão.

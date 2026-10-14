@@ -32,8 +32,8 @@ jobs:
   backup:
     if: vars.BACKUP_ENABLED == '1'
     runs-on: ubuntu-latest
-    # Secrets de REPOSITÓRIO (no GitHub Free com repositório privado não há
-    # environment), os mesmos do deploy: VPS_HOST, VPS_SSH_KEY, VPS_HOST_KEY.
+    # Secrets de REPOSITÓRIO (ainda não há environment; decisão pendente do
+    # dono), os mesmos do deploy: VPS_HOST, VPS_SSH_KEY, VPS_HOST_KEY.
     # Nenhuma senha do banco nem chave do age passa pelo GitHub.
     timeout-minutes: 30
     steps:

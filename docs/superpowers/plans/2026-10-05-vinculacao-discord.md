@@ -406,5 +406,6 @@ gates e ativação real. Contratos de tipos estão definidos acima; não há eta
 Discord, cadastro público, leitura de mensagens ou bloqueio de canais.
 
 Revisado em 2026-10-14 contra a `main` (8ca962d): caminhos e linhas conferidos no código
-atual, migration renumerada para 00014 (a 00013 ficou com o PR #90), tabela STRIDE com testes, decisões D1–D3 separadas
+atual, migration renumerada para 00014 (depois 00015, quando a 00014 ficou com a validação dos
+CHECKs, #93) (a 00013 ficou com o PR #90), tabela STRIDE com testes, decisões D1–D3 separadas
 para o dono. O plano aguarda a escolha de D1, D2 e D3 antes de qualquer execução.
