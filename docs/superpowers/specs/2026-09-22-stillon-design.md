@@ -504,7 +504,11 @@ type Notifier interface {
 - **Idempotência no banco, não em mutex.** Cada incidente notifica no máximo uma
   vez na abertura e uma no fechamento, garantido por
   `UPDATE incidents SET open_notified_at = now() WHERE id = $1 AND open_notified_at IS NULL`
-  — a corrida é resolvida pelo Postgres.
+  — a corrida é resolvida pelo Postgres. **Revisado em 2026-10-14:** enquanto o
+  incidente segue aberto e sem ack, cada canal recebe lembretes periódicos (Discord a
+  cada 30 min nas primeiras 6 h e depois a cada 6 h; e-mail a cada 2 h e depois a cada
+  24 h), cada um idempotente pelo `UNIQUE (incident_id, channel_id, event, seq)`. Ver
+  [lembretes de incidente aberto](2026-10-14-lembretes-design.md).
 - **Fan-out** para todos os canais habilitados **e verificados** do usuário.
 - **Retry** com backoff exponencial e teto de tentativas. Falha definitiva vai para
   o audit log e nunca derruba o sondador.
