@@ -79,11 +79,70 @@ corrigido: o `Server: nginx` que aparece é o nginx interno do GoblinShift; a pr
 3. **Mover o login do StillOn para o Bitwarden** (entrada "StillOn – login do painel").
 4. *Opcional:* adicionar também o e-mail principal na integração do healthchecks.io.
 
+## Desenvolvimento na ausência do dono (tarde de 2026-10-14)
+
+O dono pediu trabalho autônomo com vários agentes, sem perguntas. Cada PR de código passou por
+revisão independente antes do merge, e todos tiveram CI verde (os 9 checks e, a partir do #77, o
+CodeQL). **Nada disso está em produção:** o último deploy continua sendo o `1a5e2ca`.
+
+| PR | O que entrou |
+|---|---|
+| #73 | Lembretes de incidente aberto ([design](../specs/2026-10-14-lembretes-design.md)). O Discord avisa a cada 30 min e o e-mail a cada 2 h; depois de 6 h de incidente, a cada 6 h e a cada 24 h. O reconhecimento corta os lembretes. A migration é a 00012. |
+| #74, #80, #86 | Acessibilidade do painel: bordas com contraste ≥ 3:1, estado sinalizado também sem cor (minigráfico e página pública), alvos de toque de 44 px. |
+| #75 | A página pública mostra a queda em curso sem atraso, com teto de 24 h nos checks ainda não consolidados. Rollups gravados no futuro são ignorados. |
+| #76 | `stop_grace_period: 30s` no `app` do `compose.prod.yaml`. |
+| #77 | Reforço de segurança: sessões com idade máxima de 90 dias, JSON estrito em todas as rotas, `Retry-After` nas respostas 429, JWT sem `exp` recusado, IP disfarçado e caracteres invisíveis recusados nos nomes, testes de nega-por-padrão e de acesso a recurso alheio em todas as rotas, `SECURITY.md`. O gitleaks não achou nada nos 409 commits. |
+| #79 | A troca de senha relê o 2FA antes de enviar. |
+| #87, #88 | Painel: a mesma regra de caracteres invisíveis do servidor, reenvio de verificação sem POST duplo, tempos relativos corretos, refetch dos incidentes. |
+| #89 | Prazos em cada rodada do sondador, do dispatcher e da manutenção. O pool usa `statement_timeout` de 30 s e `idle_in_transaction_session_timeout` de 1 min. O shutdown do dispatcher tem orçamento de 12 s. Erros de banco deixam de passar por "alvo apagado". |
+| #90 | O limitador de requisições despeja em O(1). Os erros do backup guardam a causa. A migration 00013 cria os CHECKs de latência do rollup como `NOT VALID`. Os testes do Argon2 não usam mais `sleep`. |
+| #70–#72 | Plano da vinculação Discord revisado contra o código; runbook com um comando por bloco, todos numerados e com o lugar onde rodam. |
+| #78, #81–#85 | Atualizações do Dependabot, todas minor ou patch. |
+
+**Configuração do GitHub (autorizada pelo dono):**
+- ruleset da `main` com PR obrigatório, 9 checks, sem force push nem exclusão; o admin só contorna no merge de PR, então os PRs `[skip ci]` entram com `gh pr merge --admin`;
+- tags `v*` imutáveis;
+- alertas e correções de segurança do Dependabot;
+- relato privado de vulnerabilidade;
+- CodeQL;
+- actions só fixadas por SHA;
+- aprovação para PR de fork.
+
+**Decisões tomadas sem o dono:**
+- o desenho dos lembretes: uma linha por lembrete com `seq` e UNIQUE no banco, e o nome do alvo gravado na fila para o corpo não mudar entre tentativas;
+- o teto de 24 h nos checks brutos da página pública;
+- os CHECKs da 00013 como `NOT VALID`;
+- E7, a diferença de cerca de 0,4 ms no login, foi medida e não mexida, porque detectá-la exige uns 88 mil logins por e-mail.
+
+## Próximo deploy
+
+O próximo deploy leva tudo o que está acima e as migrations 00012 e 00013. Antes e depois dele:
+
+1. **Atualizar o `/opt/stillon/compose.prod.yaml` na VPS.** O deploy só envia a imagem; sem essa
+   cópia, o grace period de 30 s do #76 não vale.
+2. **Depois do deploy:** rodar em produção a consulta do comentário da 00013. Se voltar vazia,
+   uma migration nova faz `VALIDATE CONSTRAINT` nos dois CHECKs.
+3. **Conferir os lembretes de verdade** com um alvo de teste fora do ar por mais de 30 min, e o
+   reconhecimento parando os lembretes.
+
+## Decisões pendentes do dono
+
+- **Vinculação Discord:** D1 (PKCE), D2 (mecanismo de cargo) e D3 (provedor falso no E2E), com
+  recomendação no [plano](../plans/2026-10-05-vinculacao-discord.md). A migration dela é a 00014.
+- **Redesign do painel:** escolher entre as três direções da auditoria (A, "Operacional sóbrio",
+  recomendada; B, "Terminal/mono"; C, "Editorial claro"), o matiz da primária e a fonte.
+- **Environment `production` no GitHub:** passar os segredos da VPS do nível do repositório
+  para o environment, colando do Bitwarden.
+- **Exigir sessão viva nas rotas de recurso:** hoje um access token de sessão encerrada vale por
+  até 15 min.
+- **Tipos da API:** gerar de uma spec OpenAPI, ou manter o `schemas.ts` escrito à mão.
+- **Lembretes:** um canal pausado por mais de 30 dias com o incidente aberto perde a base dos
+  lembretes, porque a retenção apaga as linhas. A recomendação é registrar a limitação e não
+  mudar nada.
+
 ## Depois
 
-- **Vinculação Discord:** o [plano](../plans/2026-10-05-vinculacao-discord.md) aguarda revisão.
-- **Política de lembretes** aprovada em 2026-10-05, ainda sem implementação.
-- **Redesign do painel.**
-- Os PRs do Dependabot que restarem.
+- **Vinculação Discord**, assim que D1, D2 e D3 estiverem decididos.
+- **Redesign do painel**, assim que a direção for escolhida.
 
 Não confundir planejamento aprovado com código pronto, nem anunciar deploy sem conferência.

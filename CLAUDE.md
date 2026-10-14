@@ -76,12 +76,21 @@ O `checar-vps.sh` não roda nativo no Mac (o `stillon-entrada` fixa um `PATH` de
 deploy é `amd64`): localmente, ele roda num Ubuntu descartável com o socket do Docker e
 `DOCKER_DEFAULT_PLATFORM=linux/amd64`; o bloco 9 (backup) só fecha no job `vps` do CI.
 
-Pendentes de desenvolvimento:
-[vinculação Discord](docs/superpowers/specs/2026-10-05-vinculacao-discord-design.md) (plano
-aguardando revisão), a política de lembretes aprovada (registrada na
-[continuidade de 2026-10-05](docs/superpowers/reports/2026-10-05-continuacao.md)), o redesign do
-painel e os PRs do Dependabot. Não confundir planejamento aprovado com código pronto, nem anunciar
-deploy sem conferência.
+**Desenvolvimento (tarde de 2026-10-14):** a `main` recebeu os lembretes de incidente (#73), o
+reforço de segurança (#77), a acessibilidade do painel e as correções da revisão de código
+(#74–#90). **Nada disso está em produção:** o próximo deploy leva as migrations 00012 e 00013 e
+exige copiar o `compose.prod.yaml` novo para `/opt/stillon`. A lista, as decisões e o que conferir
+estão na seção "Desenvolvimento na ausência do dono" da
+[continuidade de 2026-10-14](docs/superpowers/reports/2026-10-14-continuacao.md).
+
+A `main` tem ruleset (PR obrigatório e 9 checks); um PR `[skip ci]` entra com
+`gh pr merge --admin`.
+
+Esperam decisão do dono: D1–D3 da
+[vinculação Discord](docs/superpowers/plans/2026-10-05-vinculacao-discord.md) (a migration dela é
+a 00014), a direção do redesign do painel, o environment `production` no GitHub e exigir sessão viva
+nas rotas de recurso. Não confundir planejamento aprovado com código pronto, nem anunciar deploy
+sem conferência.
 
 ## Registro histórico (2026-09-28)
 
