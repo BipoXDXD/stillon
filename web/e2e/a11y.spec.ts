@@ -623,6 +623,28 @@ test('celular de 400 px: a barra inferior não cobre o fim do conteúdo', async 
   await controlePositivo(page, 'barra inferior')
 })
 
+// O contador de incidentes abertos fica ao lado do texto da aba, em fluxo:
+// sobreposto ao ícone, ele cobria o "I" de "Incidentes" a 1280 px.
+// Sabotagem: voltar o contador a absolute sobre o ícone.
+for (const largura of [400, 1280]) {
+  test(`contador de abertos sem cobrir o texto da aba, ${largura} px`, async ({ page }) => {
+    await page.setViewportSize({ width: largura, height: 700 })
+    await imitarApi(page)
+    await page.goto('/')
+    await expect(page.getByRole('heading', { name: 'Painel', level: 1 })).toBeVisible()
+    const aba = page.getByRole('navigation', { name: 'Principal' }).getByRole('link', { name: 'Incidentes, 1 aberto' })
+    const texto = await aba.getByText('Incidentes', { exact: true }).boundingBox()
+    const contador = await aba.locator('[aria-hidden="true"]').filter({ hasText: /^1$/ }).boundingBox()
+    expect(texto, 'texto da aba').not.toBeNull()
+    expect(contador, 'contador').not.toBeNull()
+    const cruzaX = texto!.x < contador!.x + contador!.width && contador!.x < texto!.x + texto!.width
+    const cruzaY = texto!.y < contador!.y + contador!.height && contador!.y < texto!.y + texto!.height
+    expect(cruzaX && cruzaY, `${largura} px: texto ${JSON.stringify(texto)} × contador ${JSON.stringify(contador)}`).toBe(false)
+    expect(await page.evaluate(() => document.documentElement.scrollWidth), `${largura} px: overflow`).toBe(largura)
+    await controlePositivo(page, `contador ${largura}`)
+  })
+}
+
 // Teclado com a navegação nova: o salto continua o primeiro Tab e leva ao
 // conteúdo; o cabeçalho vem na ordem do DOM (as cinco abas, o tema, o Sair)
 // nas duas larguras, porque é um <nav> só. No celular, cada controle do

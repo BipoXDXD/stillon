@@ -23,6 +23,23 @@ describe('Layout', () => {
     expect(within(nav).getByRole('link', { name: 'Painel' })).not.toHaveAttribute('aria-current')
   })
 
+  // O detalhe, o cadastro e a edição de um alvo saem do Painel: a aba Painel
+  // continua a atual nelas.
+  it.each(['/targets/a3', '/targets/new', '/targets/a3/edit'])('em %s a aba atual é o Painel', async (rota) => {
+    await renderizarPainel(rota)
+    const nav = await screen.findByRole('navigation', { name: 'Principal' })
+    expect(within(nav).getByRole('link', { name: 'Painel' })).toHaveAttribute('aria-current', 'page')
+    expect(within(nav).getByRole('link', { name: 'Painel' })).toHaveClass('bg-primaria-100')
+    expect(within(nav).getAllByRole('link').filter((a) => a.hasAttribute('aria-current'))).toHaveLength(1)
+  })
+
+  it('fora do Painel, uma rota mais funda marca só a sua aba', async () => {
+    await renderizarPainel('/settings/sessions')
+    const nav = await screen.findByRole('navigation', { name: 'Principal' })
+    expect(within(nav).getByRole('link', { name: 'Conta' })).toHaveAttribute('aria-current', 'page')
+    expect(within(nav).getByRole('link', { name: 'Painel' })).not.toHaveAttribute('aria-current')
+  })
+
   it('cada aba é um alvo de toque de 44 px', async () => {
     await renderizarPainel('/')
     const nav = await screen.findByRole('navigation', { name: 'Principal' })

@@ -1,6 +1,6 @@
 import { Bell, LayoutDashboard, LogOut, Settings, ShieldCheck, TriangleAlert, type LucideIcon } from 'lucide-react'
 import { useState } from 'react'
-import { NavLink, Outlet } from 'react-router'
+import { Link, Outlet, useLocation } from 'react-router'
 import { ProvedorDeAnuncios } from '@/components/Anunciador'
 import { AvisoDeContexto } from '@/components/AvisoDeContexto'
 import { Marca } from '@/components/Marca'
@@ -14,13 +14,22 @@ import { useSessao } from './contexto'
 
 // As cinco abas, com os mesmos nomes no topo (desktop) e na barra inferior
 // (celular): o nome acessível não muda com a largura da tela (WCAG 3.2.4).
-const ABAS: { para: string; texto: string; Icone: LucideIcon; fim?: boolean; contador?: boolean }[] = [
-  { para: '/', texto: 'Painel', fim: true, Icone: LayoutDashboard },
-  { para: '/incidents', texto: 'Incidentes', contador: true, Icone: TriangleAlert },
-  { para: '/channels', texto: 'Canais', Icone: Bell },
-  { para: '/status-pages', texto: 'Status', Icone: ShieldCheck },
-  { para: '/settings', texto: 'Conta', Icone: Settings },
+// `secoes`: os caminhos (e o que vem abaixo deles) em que a aba é a atual,
+// além do próprio `para`. O detalhe, o cadastro e a edição de alvo saem do
+// Painel; a raiz "/" não entra como prefixo, ou o Painel valeria em tudo.
+type Aba = { para: string; texto: string; Icone: LucideIcon; secoes: string[]; contador?: boolean }
+
+const ABAS: Aba[] = [
+  { para: '/', texto: 'Painel', Icone: LayoutDashboard, secoes: ['/targets'] },
+  { para: '/incidents', texto: 'Incidentes', Icone: TriangleAlert, secoes: ['/incidents'], contador: true },
+  { para: '/channels', texto: 'Canais', Icone: Bell, secoes: ['/channels'] },
+  { para: '/status-pages', texto: 'Status', Icone: ShieldCheck, secoes: ['/status-pages'] },
+  { para: '/settings', texto: 'Conta', Icone: Settings, secoes: ['/settings'] },
 ]
+
+function ehAAtual(aba: Aba, caminho: string): boolean {
+  return caminho === aba.para || aba.secoes.some((s) => caminho === s || caminho.startsWith(`${s}/`))
+}
 
 export function Layout() {
   const me = useMe()
@@ -58,9 +67,10 @@ export function Layout() {
 // (auditoria L1: antes, ~265 px de menu vinham antes do conteúdo); a partir
 // de lg (1024 px) ela volta ao fluxo do cabeçalho. Um <nav> só nos dois
 // casos: a ordem do Tab e o nome da região não mudam com a largura. O item
-// ativo usa a primária 100 e o peso 600, e o aria-current do NavLink diz o
-// mesmo ao leitor de tela.
+// atual usa a primária 100 e o peso 600, e o aria-current diz o mesmo ao
+// leitor de tela.
 function NavegacaoPrincipal() {
+  const { pathname } = useLocation()
   const abertos = useAbertos().data
   const contador = abertos && abertos !== '0' ? abertos : null
   return (
@@ -69,41 +79,46 @@ function NavegacaoPrincipal() {
       className="fixed inset-x-0 bottom-0 z-30 border-t border-borda bg-superficie px-2 py-1 lg:static lg:z-auto lg:border-t-0 lg:bg-transparent lg:p-0"
     >
       <ul className="grid grid-cols-5 gap-1 lg:flex">
-        {ABAS.map((aba) => (
-          <li key={aba.para}>
-            <NavLink
-              to={aba.para}
-              end={aba.fim}
-              aria-label={
-                aba.contador && contador ? `${aba.texto}, ${contador} ${contador === '1' ? 'aberto' : 'abertos'}` : undefined
-              }
-              className={({ isActive }) =>
-                cn(
+        {ABAS.map((aba) => {
+          const atual = ehAAtual(aba, pathname)
+          return (
+            <li key={aba.para}>
+              <Link
+                to={aba.para}
+                aria-current={atual ? 'page' : undefined}
+                aria-label={
+                  aba.contador && contador ? `${aba.texto}, ${contador} ${contador === '1' ? 'aberto' : 'abertos'}` : undefined
+                }
+                className={cn(
                   'flex min-h-11 flex-col items-center justify-center gap-1 rounded-padrao px-2 text-xs text-suave hover:text-texto',
                   'lg:flex-row lg:gap-2 lg:px-3 lg:text-sm',
-                  isActive && 'bg-primaria-100 font-semibold text-primaria hover:text-primaria',
-                )
-              }
-            >
-              <span className="relative">
-                <aba.Icone aria-hidden="true" className="size-5 lg:size-4" />
-                {aba.contador && contador && <ContadorDeAbertos n={contador} />}
-              </span>
-              {aba.texto}
-            </NavLink>
-          </li>
-        ))}
+                  atual && 'bg-primaria-100 font-semibold text-primaria hover:text-primaria',
+                )}
+              >
+                {/* No celular, o contador fica na linha do ícone, ao lado
+                    dele; no desktop, lg:contents solta os dois na linha do
+                    link e o order põe o contador depois do texto. Sempre em
+                    fluxo, com gap: nunca por cima do texto. */}
+                <span className="flex items-center gap-1 lg:contents">
+                  <aba.Icone aria-hidden="true" className="size-5 lg:size-4" />
+                  {aba.contador && contador && <ContadorDeAbertos n={contador} />}
+                </span>
+                <span>{aba.texto}</span>
+              </Link>
+            </li>
+          )
+        })}
       </ul>
     </nav>
   )
 }
 
-// O número de incidentes abertos sobre o ícone de "Incidentes" (spec §4.9).
-// Zero não aparece. O número é decorativo para o leitor de tela: o nome do
-// link já diz "Incidentes, 2 abertos".
+// O número de incidentes abertos junto da aba "Incidentes" (spec §4.9). Zero
+// não aparece. O número é decorativo para o leitor de tela: o nome do link já
+// diz "Incidentes, 2 abertos".
 function ContadorDeAbertos({ n }: { n: string }) {
   return (
-    <span aria-hidden="true" className="absolute -top-2 -right-3 rounded-full bg-perigo px-1 text-xs font-semibold text-perigo-texto">
+    <span aria-hidden="true" className="rounded-full bg-perigo px-1 text-xs font-semibold text-perigo-texto lg:order-last">
       {n}
     </span>
   )
