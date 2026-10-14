@@ -38,6 +38,20 @@ function arredondarParaCima(x: number): number {
   return (DEGRAUS.find((d) => d * potencia >= x) ?? 10) * potencia
 }
 
+// As marcas do eixo Y de 0 ao teto, em passos redondos: com o teto como
+// última marca, o maior rótulo do eixo é conhecido, e a largura do eixo
+// (eixo.ts) sai dele. Cinco intervalos, ou quatro quando o quinto do teto não
+// é redondo (200 / 5 = 40; 200 / 4 = 50).
+export function marcasDoEixoY(teto: number): number[] {
+  const intervalos = ehRedondo(teto / 5) ? 5 : 4
+  return Array.from({ length: intervalos + 1 }, (_, i) => (teto * i) / intervalos)
+}
+
+function ehRedondo(x: number): boolean {
+  const potencia = 10 ** Math.floor(Math.log10(x))
+  return DEGRAUS.some((d) => Math.abs(d * potencia - x) < 1e-9 * x)
+}
+
 // A anotação da legenda: "pico de 2.400 ms às 03:10, fora da escala".
 export function textoDoPico(escala: EscalaY, comData: boolean): string | null {
   const { pico, foraDaEscala } = escala

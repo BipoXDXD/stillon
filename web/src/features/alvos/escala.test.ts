@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { dominioX, escalaRobusta, textoDoPico, ticksDoEixoX } from './escala'
+import { dominioX, escalaRobusta, marcasDoEixoY, textoDoPico, ticksDoEixoX } from './escala'
 
 const ponto = (ms: number, t = 0) => ({ t, ms })
 const vezes = (n: number, ms: number) => Array.from({ length: n }, (_, i) => ponto(ms, i))
@@ -123,5 +123,19 @@ describe('ticksDoEixoX', () => {
     expect(porDia).toBe(true)
     expect(marcas.length).toBeGreaterThan(0)
     expect(marcas.length).toBeLessThanOrEqual(7)
+  })
+})
+
+// O topo do eixo Y é o próprio teto: a largura do eixo (eixo.ts) sai do
+// rótulo do teto, e o e2e confere que nenhum rótulo sai do <svg>.
+describe('marcasDoEixoY', () => {
+  it.each([
+    [10, [0, 2, 4, 6, 8, 10]],
+    [200, [0, 50, 100, 150, 200]],
+    [2500, [0, 500, 1000, 1500, 2000, 2500]],
+    [5000, [0, 1000, 2000, 3000, 4000, 5000]],
+    [20000, [0, 5000, 10000, 15000, 20000]],
+  ])('teto %i → %j', (teto, marcas) => {
+    expect(marcasDoEixoY(teto)).toEqual(marcas)
   })
 })

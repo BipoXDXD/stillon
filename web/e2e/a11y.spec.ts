@@ -574,7 +574,9 @@ for (const largura of [400, 1280]) {
       const janela = new URL(route.request().url()).searchParams.get('window')
       return route.fulfill({ status: 200, json: janela === '7d' ? horariaLenta : lenta })
     })
-    for (const [rota, maior] of [['/targets/a1', '2400 ms'], ['/targets/a1?janela=7d', '10000 ms']] as const) {
+    // O maior rótulo é o teto da escala robusta: 2400 ms vai a 5000; o p95
+    // de 9800 ms, a 20000.
+    for (const [rota, maior] of [['/targets/a1', '5000 ms'], ['/targets/a1?janela=7d', '20000 ms']] as const) {
       await page.goto(rota)
       await expect(page.getByRole('heading', { name: 'API', level: 1 })).toBeVisible()
       const grafico = page.getByTestId('grafico-latencia')

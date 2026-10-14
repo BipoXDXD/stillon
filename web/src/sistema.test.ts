@@ -20,6 +20,7 @@ const ARQUIVOS_NO_SISTEMA = [
   'src/components/ui/controle-segmentado.tsx',
   'src/components/ui/dialogo.tsx',
   'src/features/painel/EsqueletoDoPainel.tsx',
+  'src/features/alvos/GraficoDeLatencia.tsx',
   'src/features/painel/PaginaPainel.tsx',
 ]
 
