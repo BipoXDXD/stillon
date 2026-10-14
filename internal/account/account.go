@@ -65,7 +65,8 @@ type Service struct {
 	clk   clock.Clock
 	ipKey []byte
 	// O custo de derivação fica fora das transações, separado da persistência.
-	hashPassword func(context.Context, string) (string, error)
+	hashPassword   func(context.Context, string) (string, error)
+	verifyPassword func(ctx context.Context, encoded, plain string) (ok, needsRehash bool, err error)
 	// depoisDeContar existe para o teste de criação concorrente: roda entre a
 	// contagem de usuários e a inserção.
 	depoisDeContar func()
@@ -74,7 +75,10 @@ type Service struct {
 // NewService: totp e ipKey só servem à API (troca de senha). O CLI passa nil
 // nos dois, e ChangePassword recusa rodar sem eles.
 func NewService(pool *pgxpool.Pool, totp *auth.TOTP, clk clock.Clock, ipKey []byte) *Service {
-	return &Service{pool: pool, users: auth.NewPGStore(pool), totp: totp, clk: clk, ipKey: ipKey, hashPassword: auth.HashPassword}
+	return &Service{
+		pool: pool, users: auth.NewPGStore(pool), totp: totp, clk: clk, ipKey: ipKey,
+		hashPassword: auth.HashPassword, verifyPassword: auth.VerifyPassword,
+	}
 }
 
 // Account é o que GET /me devolve.
@@ -123,7 +127,7 @@ type ChangePasswordInput struct {
 //  1. a política da senha nova (pública: validá-la primeiro não vaza nada e
 //     não gasta Argon2 nem conta falha por erro de digitação na nova);
 //  2. a família do token viva (leitura barata; a verdade vem no passo 6);
-//  3. a senha atual (auth.VerifyPassword);
+//  3. a senha atual (s.verifyPassword, o auth.VerifyPassword em produção);
 //  4. o hash novo, fora da transação e antes de consumir o segundo fator;
 //  5. o segundo fator, se ligado, por auth.TOTP.Verify (aceita o código de
 //     recuperação);
@@ -161,7 +165,7 @@ func (s *Service) ChangePassword(ctx context.Context, userID, familyID uuid.UUID
 		return err
 	}
 
-	ok, _, err := auth.VerifyPassword(ctx, u.PasswordHash, in.Current)
+	ok, _, err := s.verifyPassword(ctx, u.PasswordHash, in.Current)
 	if err != nil {
 		return err
 	}
@@ -278,7 +282,7 @@ func (s *Service) CreateUser(ctx context.Context, email, password string) (uuid.
 		return uuid.Nil, PolicyError{Reason: motivo}
 	}
 	// O Argon2id leva ~100 ms: fora da transação, para não segurar a trava.
-	hash, err := auth.HashPassword(ctx, password)
+	hash, err := s.hashPassword(ctx, password)
 	if err != nil {
 		return uuid.Nil, err
 	}
@@ -330,7 +334,7 @@ func (s *Service) ResetPassword(ctx context.Context, email, password string) (in
 	if motivo := auth.ValidateNewPassword(password); motivo != "" {
 		return 0, PolicyError{Reason: motivo}
 	}
-	hash, err := auth.HashPassword(ctx, password)
+	hash, err := s.hashPassword(ctx, password)
 	if err != nil {
 		return 0, err
 	}
