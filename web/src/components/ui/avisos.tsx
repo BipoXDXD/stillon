@@ -7,7 +7,10 @@ import { createContext, useCallback, useContext, useState, type ReactNode } from
 
 type Aviso = { id: number; texto: string; tipo: 'ok' | 'erro' }
 
-const Contexto = createContext<(texto: string, tipo?: Aviso['tipo']) => void>(() => {})
+type Avisar = (texto: string, tipo?: Aviso['tipo']) => void
+
+// null fora do provedor: um aviso nunca some em silêncio.
+const Contexto = createContext<Avisar | null>(null)
 
 export function ProvedorDeAvisos({ children }: { children: ReactNode }) {
   const [avisos, setAvisos] = useState<Aviso[]>([])
@@ -35,6 +38,8 @@ export function ProvedorDeAvisos({ children }: { children: ReactNode }) {
   )
 }
 
-export function useAvisar() {
-  return useContext(Contexto)
+export function useAvisar(): Avisar {
+  const avisar = useContext(Contexto)
+  if (!avisar) throw new Error('fora do ProvedorDeAvisos')
+  return avisar
 }

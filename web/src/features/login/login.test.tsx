@@ -364,6 +364,20 @@ describe('sair', () => {
     await waitFor(() => expect(titulo).toHaveFocus())
     expect(titulo).toHaveAccessibleDescription('Sua sessão terminou. Entre de novo.')
   })
+
+  // G5 da revisão de 2026-10-14: o location.state vem do history do navegador
+  // e era lido com um cast. Um motivo como "toString" achava a função do
+  // protótipo no mapa de textos e virava a descrição do título. Sabotagem:
+  // voltar ao "avisosDeMotivo[motivo]" → o título ganha aria-describedby.
+  it.each([{ motivo: 'toString' }, { motivo: 42 }, 'expirou', null])(
+    'um location.state fora do contrato (%o) não descreve o título',
+    async (state) => {
+      const r = await renderizarPainel('/login', { logado: false })
+      await act(() => r.router.navigate('/login', { state }))
+      const titulo = await screen.findByRole('heading', { name: 'Entrar no StillOn' })
+      expect(titulo).not.toHaveAttribute('aria-describedby')
+    },
+  )
 })
 
 // Spec §4.9 e §3.7 juntos: na carga da página, o primeiro Tab é o "Pular para

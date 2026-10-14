@@ -1,4 +1,4 @@
-import { fireEvent, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { http } from 'msw'
 import { describe, expect, it } from 'vitest'
 import { dataHora } from '@/lib/format'
@@ -9,6 +9,17 @@ import { servidor } from '@/test/setup'
 const RESEND = 'POST /channels/:id/verify/resend'
 const PATCH = 'PATCH /channels/:id'
 const escapar = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+// O onClick que o React registrou no elemento, para simular um evento que
+// chega ao handler antes de o disabled ser aplicado (o fireEvent respeita o
+// disabled, e o clique duplo real no mesmo tique não passa por ele).
+function onClickDoReact(el: HTMLElement): () => void {
+  const chave = Object.keys(el).find((k) => k.startsWith('__reactProps$'))
+  const props: unknown = chave ? Reflect.get(el, chave) : undefined
+  const onClick: unknown = props && typeof props === 'object' ? Reflect.get(props, 'onClick') : undefined
+  if (typeof onClick !== 'function') throw new Error('o elemento não tem onClick do React')
+  return () => onClick()
+}
 
 // Abre o diálogo, escolhe e-mail e manda o endereço.
 async function cadastrarEmail(r: Awaited<ReturnType<typeof renderizarPainel>>, email: string) {
@@ -141,6 +152,48 @@ describe('canais', () => {
     expect((await screen.findAllByText('Link de verificação reenviado.'))[0]).toBeInTheDocument()
     expect(r.falsa.chamadas(RESEND)).toBe(1)
     await waitFor(() => expect(botao).toBeEnabled())
+  })
+
+  // E8 da revisão de 2026-10-14: o estado guardava um id só. Com o reenvio de
+  // um canal em voo, o clique no de outro canal reabilitava o primeiro, e um
+  // novo clique nele mandava o 2º POST (o servidor responde 429 ao 2º).
+  // Sabotagens: voltar a um id só (useState<string | null>) → o primeiro
+  // reabilita com o POST dele em voo; tirar a guarda da ref em reenviar() → o
+  // handler chamado antes do disabled manda o 3º POST.
+  it('reenviar: o envio em voo de um canal continua bloqueado ao reenviar outro', async () => {
+    const r = await renderizarPainel('/channels')
+    r.falsa.estado.canais = [
+      canal({ id: 'c1', kind: 'email', hint: 'a***@exemplo.com', status: 'pending' }),
+      canal({ id: 'c2', kind: 'email', hint: 'b***@exemplo.com', status: 'pending' }),
+    ]
+    await r.cliente.refetchQueries()
+    let soltar!: () => void
+    const aberto = new Promise<void>((res) => (soltar = res))
+    let chegou = 0
+    servidor.use(
+      http.post('*/api/v1/channels/:id/verify/resend', async () => {
+        chegou++
+        await aberto
+        return new Response(null, { status: 204 })
+      }),
+    )
+    const primeiro = await screen.findByRole('button', { name: 'Reenviar verificação do canal a***@exemplo.com' })
+    const segundo = screen.getByRole('button', { name: 'Reenviar verificação do canal b***@exemplo.com' })
+    await r.usuario.click(primeiro)
+    await waitFor(() => expect(chegou).toBe(1))
+    await r.usuario.click(segundo)
+    await waitFor(() => expect(chegou).toBe(2))
+    // Os dois seguem em voo: nenhum dos botões solta.
+    expect(primeiro).toBeDisabled()
+    expect(segundo).toBeDisabled()
+    // Um clique que chegue ao handler antes do React desabilitar o botão
+    // (dois eventos no mesmo tique) também não manda outro POST.
+    act(() => onClickDoReact(primeiro)())
+    await new Promise((res) => setTimeout(res, 50))
+    expect(chegou).toBe(2)
+    soltar()
+    await waitFor(() => expect(primeiro).toBeEnabled())
+    await waitFor(() => expect(segundo).toBeEnabled())
   })
 
   it('reenviar: limite de envios, e-mail não configurado e entrega que falha viram texto', async () => {

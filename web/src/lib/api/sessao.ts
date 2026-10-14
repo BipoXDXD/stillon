@@ -41,6 +41,14 @@ export type ResultadoLogin = { tipo: 'ok' } | { tipo: 'totp'; desafio: string }
 
 type Aviso = { tipo: 'encerrada' } | { tipo: 'iniciada' }
 
+// O que chega pelo BroadcastChannel vem de outra aba (de outra versão do
+// painel, talvez): entra como unknown, e o que não é um Aviso é ignorado.
+function avisoDe(dado: unknown): Aviso | null {
+  if (typeof dado !== 'object' || dado === null) return null
+  const tipo: unknown = Reflect.get(dado, 'tipo')
+  return tipo === 'encerrada' || tipo === 'iniciada' ? { tipo } : null
+}
+
 const TRAVA = 'stillon:refresh'
 
 export function travaDoNavegador(): Travar {
@@ -174,7 +182,7 @@ export function criarSessao(o: Opcoes) {
   }
 
   canal?.addEventListener('message', (e) => {
-    const a = e.data as Aviso
+    const a = avisoDe(e.data)
     // Também no boot: um refresh que o servidor aceitou antes do logout da
     // outra aba entraria numa sessão que o dono acabou de encerrar. A época
     // nova descarta a resposta dele, e o boot termina anônimo.

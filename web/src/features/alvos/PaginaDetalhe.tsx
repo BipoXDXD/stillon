@@ -134,7 +134,8 @@ export function PaginaDetalhe() {
 
 function DetalheDoAlvo({ id }: { id: string }) {
   const [params, setParams] = useSearchParams()
-  const janela: Janela = ehJanela(params.get('janela')) ? (params.get('janela') as Janela) : '24h'
+  const janelaDaUrl = params.get('janela')
+  const janela: Janela = ehJanela(janelaDaUrl) ? janelaDaUrl : '24h'
   const api = useApi()
   const qc = useQueryClient()
   const navegar = useNavigate()

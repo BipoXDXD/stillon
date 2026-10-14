@@ -59,7 +59,7 @@ function NovoCanal({ aoCriar }: { aoCriar: (c: Canal) => void }) {
   const api = useApi()
   const f = useForm<Valores>({
     resolver: zodResolver(esquema),
-    defaultValues: { kind: 'discord', url: '' } as Valores,
+    defaultValues: { kind: 'discord', url: '' },
   })
   const [erro, setErro] = useState<string | null>(null)
   const tipo = useWatch({ control: f.control, name: 'kind' })
@@ -120,8 +120,11 @@ export function PaginaCanais() {
   const [criando, setCriando] = useState(false)
   const [apagar, setApagar] = useState<Canal | null>(null)
   const [erro, setErro] = useState<string | null>(null)
-  // Um POST ou DELETE por vez: sem e-mail em dobro, sem DELETE em dobro.
-  const [reenviando, setReenviando] = useState<string | null>(null)
+  // Um POST de reenvio por canal de cada vez (E8 da revisão de 2026-10-14):
+  // a ref segura a reentrada no mesmo tique, e o estado desabilita o botão,
+  // como no pausar. Um DELETE por vez: sem DELETE em dobro.
+  const reenvioEmVoo = useRef(new Set<string>())
+  const [reenviando, setReenviando] = useState<ReadonlySet<string>>(new Set())
   const [apagando, setApagando] = useState(false)
   // Pausar pede confirmação (spec do Plano 9 §4.1): os avisos da pausa são
   // descartados. Um PATCH por canal de cada vez (E4 do Plano 10): o de um
@@ -150,15 +153,18 @@ export function PaginaCanais() {
   }
 
   async function reenviar(c: Canal) {
+    if (reenvioEmVoo.current.has(c.id)) return
+    reenvioEmVoo.current.add(c.id)
+    setReenviando(new Set(reenvioEmVoo.current))
     setErro(null)
-    setReenviando(c.id)
     try {
       await api.reenviarVerificacao(c.id)
       avisar('Link de verificação reenviado.')
     } catch (e) {
       if (!(await listaVelha(e))) setErro(textoDoErro(e, 'reenviar'))
     } finally {
-      setReenviando(null)
+      reenvioEmVoo.current.delete(c.id)
+      setReenviando(new Set(reenvioEmVoo.current))
     }
   }
 
@@ -238,7 +244,7 @@ export function PaginaCanais() {
                       <Botao
                         tipo="secundario"
                         tamanho="pequeno"
-                        disabled={reenviando === c.id}
+                        disabled={reenviando.has(c.id)}
                         onClick={() => void reenviar(c)}
                         aria-label={`Reenviar verificação do canal ${c.hint}`}
                       >

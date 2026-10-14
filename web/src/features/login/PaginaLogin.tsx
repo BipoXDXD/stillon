@@ -35,6 +35,14 @@ const avisosDeMotivo: Partial<Record<Motivo, string>> = {
   'encerrada-aqui': 'Você encerrou esta sessão.',
 }
 
+// O location.state vem do history do navegador: entra como unknown. A busca
+// é pelas chaves próprias do mapa ("toString" está no protótipo).
+function textoDoMotivoEm(state: unknown): string | undefined {
+  if (typeof state !== 'object' || state === null) return undefined
+  const motivo: unknown = Reflect.get(state, 'motivo')
+  return Object.entries(avisosDeMotivo).find(([chave]) => chave === motivo)?.[1]
+}
+
 const ID_MOTIVO = 'motivo-do-fim-da-sessao'
 
 const esquemaSenha = z.object({
@@ -60,8 +68,7 @@ export function PaginaLogin() {
   const [recuperacao, setRecuperacao] = useState(false)
   const [erro, setErro] = useState<string | null>(null)
   const destino = destinoSeguro(params.get('next'))
-  const motivo = (local.state as { motivo?: Motivo } | null)?.motivo
-  const textoDoMotivo = motivo ? avisosDeMotivo[motivo] : undefined
+  const textoDoMotivo = textoDoMotivoEm(local.state)
 
   const senha = useForm({ resolver: zodResolver(esquemaSenha), defaultValues: { email: '', senha: '' } })
   const codigo = useForm({ resolver: zodResolver(esquemaCodigo), defaultValues: { codigo: '' } })

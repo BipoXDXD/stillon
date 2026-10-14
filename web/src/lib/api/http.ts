@@ -58,10 +58,24 @@ function camposDe(v: unknown): ErroDeCampo[] {
   )
 }
 
+// O corpo de um erro é de quem respondeu (o servidor, ou o proxy na frente
+// dele): entra como unknown, e o que não é objeto não é envelope.
+function envelopeDe(v: unknown): Envelope | null {
+  if (typeof v !== 'object' || v === null) return null
+  const error: unknown = Reflect.get(v, 'error')
+  return {
+    error:
+      typeof error === 'object' && error !== null
+        ? { code: Reflect.get(error, 'code'), message: Reflect.get(error, 'message'), fields: Reflect.get(error, 'fields') }
+        : undefined,
+    trace_id: Reflect.get(v, 'trace_id'),
+  }
+}
+
 export async function lerErro(r: Response): Promise<ApiError> {
   let corpo: Envelope | null = null
   try {
-    corpo = (await r.json()) as Envelope
+    corpo = envelopeDe(await r.json())
   } catch {
     corpo = null
   }

@@ -9,10 +9,14 @@ export type Tema = 'sistema' | 'claro' | 'escuro'
 const CHAVE = 'stillon.tema'
 const ESCURO = '(prefers-color-scheme: dark)'
 
+export function ehTema(v: string | null): v is Tema {
+  return v === 'sistema' || v === 'claro' || v === 'escuro'
+}
+
 function lerTema(): Tema {
   try {
     const v = localStorage.getItem(CHAVE)
-    return v === 'claro' || v === 'escuro' ? v : 'sistema'
+    return ehTema(v) ? v : 'sistema'
   } catch {
     return 'sistema'
   }
@@ -23,7 +27,10 @@ function aplicar(t: Tema) {
   document.documentElement.classList.toggle('dark', escuro)
 }
 
-const Contexto = createContext<{ tema: Tema; mudar: (t: Tema) => void }>({ tema: 'sistema', mudar: () => {} })
+type ValorDoTema = { tema: Tema; mudar: (t: Tema) => void }
+
+// null fora do provedor: trocar o tema nunca é ignorado em silêncio.
+const Contexto = createContext<ValorDoTema | null>(null)
 
 export function ProvedorDeTema({ children }: { children: ReactNode }) {
   const [tema, setTema] = useState<Tema>(lerTema)
@@ -49,6 +56,8 @@ export function ProvedorDeTema({ children }: { children: ReactNode }) {
   return <Contexto.Provider value={{ tema, mudar }}>{children}</Contexto.Provider>
 }
 
-export function useTema() {
-  return useContext(Contexto)
+export function useTema(): ValorDoTema {
+  const valor = useContext(Contexto)
+  if (!valor) throw new Error('fora do ProvedorDeTema')
+  return valor
 }
