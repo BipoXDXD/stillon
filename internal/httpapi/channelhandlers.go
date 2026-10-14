@@ -76,7 +76,7 @@ func (h *ChannelHandlers) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req channelRequest
-	if !decodeJSONStrict(w, r, &req) {
+	if !decodeJSON(w, r, &req) {
 		return
 	}
 	c, err := h.svc.Create(r.Context(), userID, notify.ChannelInput{
@@ -124,7 +124,7 @@ func (h *ChannelHandlers) SetEnabled(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Enabled json.RawMessage `json:"enabled"`
 	}
-	if !decodeJSONStrict(w, r, &req) {
+	if !decodeJSON(w, r, &req) {
 		return
 	}
 	if len(req.Enabled) == 0 {

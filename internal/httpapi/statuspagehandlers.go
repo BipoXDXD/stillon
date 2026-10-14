@@ -99,7 +99,7 @@ func (h *StatusPageHandlers) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req statusPageRequest
-	if !decodeJSONStrict(w, r, &req) {
+	if !decodeJSON(w, r, &req) {
 		return
 	}
 	p, err := h.svc.Create(r.Context(), userID, statuspage.Input{
@@ -121,7 +121,7 @@ func (h *StatusPageHandlers) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req statusPagePatchRequest
-	if !decodeJSONStrict(w, r, &req) {
+	if !decodeJSON(w, r, &req) {
 		return
 	}
 	patch := statuspage.Patch{Slug: req.Slug, Title: req.Title, Published: req.Published}

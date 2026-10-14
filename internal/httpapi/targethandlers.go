@@ -105,7 +105,7 @@ func (h *TargetHandlers) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req targetRequest
-	if !decodeJSONStrict(w, r, &req) {
+	if !decodeJSON(w, r, &req) {
 		return
 	}
 
@@ -205,7 +205,7 @@ func (h *TargetHandlers) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req targetPatchRequest
-	if !decodeJSONStrict(w, r, &req) {
+	if !decodeJSON(w, r, &req) {
 		return
 	}
 
