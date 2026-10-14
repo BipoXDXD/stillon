@@ -114,7 +114,7 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	// login (D5 do Plano 5; contrato dos Planos 5–7, "mesmo limite por IP da
 	// rota de login"). Com instâncias separadas, quem adivinha senha dobraria
 	// o orçamento alternando as duas rotas.
-	limiteLogin := middleware.RateLimit(ctx, 10, 5, proxiesDe(cfg))
+	limiteLogin := middleware.RateLimit(ctx, d.Clock, 10, 5, proxiesDe(cfg))
 	mux.Handle("POST /api/v1/auth/login", limiteLogin(http.HandlerFunc(h.Login)))
 	mux.Handle("POST /api/v1/auth/password", limiteLogin(authn(http.HandlerFunc(ah.ChangePassword))))
 	mux.Handle("POST /api/v1/auth/refresh", http.HandlerFunc(h.Refresh))
@@ -140,7 +140,7 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	// se aplica — a senha já foi acertada, o que resta é adivinhar seis
 	// dígitos.
 	mux.Handle("POST /api/v1/auth/totp/verify",
-		middleware.RateLimit(ctx, 20, 5, proxiesDe(cfg))(http.HandlerFunc(h.TOTPVerify)))
+		middleware.RateLimit(ctx, d.Clock, 20, 5, proxiesDe(cfg))(http.HandlerFunc(h.TOTPVerify)))
 
 	// Rotas de recurso: Authn primeiro, depois o limite por USUÁRIO (spec
 	// §5.7), que precisa do usuário que Authn põe no contexto. Uma instância
@@ -149,7 +149,7 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	// 60/min com burst 20 é mais apertado que o por IP (120/min, burst 30)
 	// de propósito: um usuário sozinho esgota o seu antes de esgotar o do
 	// IP, e é isso que torna a camada observável (TestPerUserRateLimit).
-	porUsuario := middleware.RateLimitUser(ctx, 60, 20)
+	porUsuario := middleware.RateLimitUser(ctx, d.Clock, 60, 20)
 	protegida := func(fn http.HandlerFunc) http.Handler { return authn(porUsuario(fn)) }
 
 	mux.Handle("GET /api/v1/me", protegida(ah.Me))
@@ -168,7 +168,7 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	mux.Handle("GET /api/v1/incidents", protegida(ih.List))
 	mux.Handle("POST /api/v1/incidents/{id}/ack", protegida(ih.Ack))
 
-	porEnvio := middleware.RateLimitUserEvery(ctx, envioACada, envioBurst)
+	porEnvio := middleware.RateLimitUserEvery(ctx, d.Clock, envioACada, envioBurst)
 	comEnvio := func(fn http.HandlerFunc) http.Handler { return authn(porUsuario(porEnvio(fn))) }
 	mux.Handle("GET /api/v1/channels", protegida(ch.List))
 	mux.Handle("POST /api/v1/channels", comEnvio(ch.Create))
@@ -207,7 +207,7 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	// CORS continuam por fora do limitador, em middleware.CORS, para que o
 	// 429 também os leve (R33).
 	handler = middleware.Preflight()(handler)
-	handler = middleware.RateLimit(ctx, 120, 30, proxiesDe(cfg))(handler)
+	handler = middleware.RateLimit(ctx, d.Clock, 120, 30, proxiesDe(cfg))(handler)
 	handler = middleware.CORS(cfg.CORSOrigin)(handler)
 	handler = middleware.SecurityHeaders(handler)
 	handler = middleware.Recover(handler)
@@ -222,8 +222,8 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	raiz.Handle("/api/", handler)
 	raiz.Handle("/healthz", handler)
 	raiz.Handle("/readyz", handler)
-	raiz.Handle("/verify/", verificacao(ctx, cfg, d.Channels))
-	raiz.Handle("/p/", paginaPublica(ctx, cfg, d.StatusPages))
+	raiz.Handle("/verify/", verificacao(ctx, cfg, d.Clock, d.Channels))
+	raiz.Handle("/p/", paginaPublica(ctx, cfg, d.Clock, d.StatusPages))
 	raiz.Handle("/", painel(d.Painel))
 	return raiz
 }
@@ -293,7 +293,7 @@ func readyz(ping func(context.Context) error) http.HandlerFunc {
 // Sem cookie e sem sessão, não há o que um CSRF roubaria: a credencial é o
 // token no caminho, que o atacante não tem. Também fica fora do CORS, que é
 // da API. O limite por IP é mais apertado que o da API.
-func verificacao(ctx context.Context, cfg *config.Config, svc *notify.ChannelService) http.Handler {
+func verificacao(ctx context.Context, cfg *config.Config, clk clock.Clock, svc *notify.ChannelService) http.Handler {
 	vh := NewVerifyHandlers(svc)
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /verify/{token}", vh.Page)
@@ -301,7 +301,7 @@ func verificacao(ctx context.Context, cfg *config.Config, svc *notify.ChannelSer
 
 	var h http.Handler = mux
 	h = middleware.BodyLimit(verifyBodyBytes)(h)
-	h = middleware.RateLimit(ctx, 20, 10, proxiesDe(cfg))(h)
+	h = middleware.RateLimit(ctx, clk, 20, 10, proxiesDe(cfg))(h)
 	h = middleware.SecurityHeaders(h)
 	h = middleware.Recover(h)
 	h = middleware.Deadline(requestTimeout)(h)

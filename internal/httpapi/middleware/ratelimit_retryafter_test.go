@@ -20,7 +20,7 @@ import (
 func TestRateLimitAnnouncesRetryAfter(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	h := middleware.RateLimit(ctx, 10, 2, middleware.Proxies{})(http.HandlerFunc(ok))
+	h := middleware.RateLimit(ctx, clock.Real{}, 10, 2, middleware.Proxies{})(http.HandlerFunc(ok))
 
 	var rec *httptest.ResponseRecorder
 	for range 3 {
@@ -48,7 +48,7 @@ func TestRateLimitUserEveryAnnouncesItsOwnRetryAfter(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	limitado := middleware.RateLimitUserEvery(ctx, 6*time.Minute, 1)(http.HandlerFunc(ok))
+	limitado := middleware.RateLimitUserEvery(ctx, clock.Real{}, 6*time.Minute, 1)(http.HandlerFunc(ok))
 	h := middleware.Authn(chave, clock.NewFake(agora))(limitado)
 
 	var rec *httptest.ResponseRecorder
@@ -74,7 +74,7 @@ func TestRateLimitUserEveryAnnouncesItsOwnRetryAfter(t *testing.T) {
 func TestRateLimitRefusalDoesNotSpendTokens(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	h := middleware.RateLimit(ctx, 10, 2, middleware.Proxies{})(http.HandlerFunc(ok))
+	h := middleware.RateLimit(ctx, clock.Real{}, 10, 2, middleware.Proxies{})(http.HandlerFunc(ok))
 
 	var rec *httptest.ResponseRecorder
 	for range 12 {

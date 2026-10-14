@@ -11,11 +11,11 @@ import (
 	"github.com/BipoXDXD/stillon/internal/auth"
 )
 
-// ocuparArgon2 enche o semáforo do Argon2id com capacidade n e devolve as n
-// vagas presas; o Cleanup as solta e volta à capacidade padrão.
-func ocuparArgon2(t *testing.T, n int) []func() {
+// ocuparArgon2 enche o semáforo do Argon2id com capacidade n e prazo espera e
+// devolve as n vagas presas; o Cleanup as solta e volta ao semáforo padrão.
+func ocuparArgon2(t *testing.T, n int, espera time.Duration) []func() {
 	t.Helper()
-	auth.SetArgon2MaxConcurrent(n)
+	auth.SetArgon2MaxConcurrentWithWait(n, espera)
 	var vagas []func()
 	t.Cleanup(func() {
 		for _, soltar := range vagas {
@@ -44,8 +44,7 @@ func TestEveryArgon2PathWaitsForASlot(t *testing.T) {
 		t.Fatal(err)
 	}
 	auth.VerifyDummy(context.Background()) // prepara o hash dummy fora do teste (ele é calculado uma vez)
-	auth.EncurtarEsperaDoArgon2(t, 50*time.Millisecond)
-	vagas := ocuparArgon2(t, 2)
+	vagas := ocuparArgon2(t, 2, 50*time.Millisecond)
 
 	antes := auth.Argon2Verifications()
 	caminhos := map[string]func() error{

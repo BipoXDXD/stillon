@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/BipoXDXD/stillon/internal/clock"
 	"github.com/BipoXDXD/stillon/internal/httpapi/middleware"
 )
 
@@ -85,7 +86,7 @@ func TestClientIPFallsBackWhenTheForwardedHeaderIsUnusable(t *testing.T) {
 func TestRateLimitSeparatesClientsBehindATrustedProxy(t *testing.T) {
 	ctx := t.Context()
 	confiaveis := prefixos(t, "10.0.0.0/8")
-	h := middleware.RateLimit(ctx, 60, 1, middleware.Proxies{Trusted: confiaveis})(http.HandlerFunc(
+	h := middleware.RateLimit(ctx, clock.Real{}, 60, 1, middleware.Proxies{Trusted: confiaveis})(http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) }))
 
 	for i, xff := range []string{"198.51.100.1", "198.51.100.2", "198.51.100.3"} {
@@ -181,7 +182,7 @@ func TestClientIPUnmapsFlyClientIP(t *testing.T) {
 // antiga do projeto: no formato do Fly, sem o cabeçalho dedicado, todos os
 // clientes caem no balde do IP do app.
 func TestRateLimitSeparatesClientsBehindFly(t *testing.T) {
-	h := middleware.RateLimit(t.Context(), 60, 1, fly(t))(http.HandlerFunc(
+	h := middleware.RateLimit(t.Context(), clock.Real{}, 60, 1, fly(t))(http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) }))
 
 	for i, cliente := range []string{"198.51.100.1", "198.51.100.2", "198.51.100.3"} {

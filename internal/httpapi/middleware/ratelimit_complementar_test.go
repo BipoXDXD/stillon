@@ -37,7 +37,7 @@ func TestRateLimitZeroKeepsOpaqueOriginsSeparatedComplementar(t *testing.T) {
 	t.Cleanup(cancel)
 	calls := 0
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { calls++; w.WriteHeader(http.StatusNoContent) })
-	handler := middleware.RateLimit(ctx, 0, 2, middleware.Proxies{})(next)
+	handler := middleware.RateLimit(ctx, clock.Real{}, 0, 2, middleware.Proxies{})(next)
 	steps := []struct {
 		origin, forged string
 		status, calls  int
@@ -93,7 +93,7 @@ func TestRateLimitUserEveryNonpositiveUsesInfinityComplementar(t *testing.T) {
 				calls++
 				w.WriteHeader(http.StatusNoContent)
 			})
-			handler := middleware.Authn(key, clk)(middleware.RateLimitUserEvery(ctx, tc.every, 0)(next))
+			handler := middleware.Authn(key, clk)(middleware.RateLimitUserEvery(ctx, clock.Real{}, tc.every, 0)(next))
 			send := func(bearer string) *httptest.ResponseRecorder {
 				request := httptest.NewRequest(http.MethodPost, "/api/v1/channels", nil)
 				request.RemoteAddr = "192.0.2.10:1234"
