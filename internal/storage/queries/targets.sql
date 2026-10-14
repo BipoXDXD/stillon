@@ -79,13 +79,16 @@ SELECT t.id, t.name, t.enabled, t.interval_sec,
 -- A marca d'água DO DONO: a hora mais recente já consolidada entre os alvos
 -- dele. max(bucket) da tabela inteira não serve: sob a RLS, um dono sem
 -- rollups recentes faria o Postgres varrer o índice de bucket da instância
--- inteira, testando a política linha a linha. Sem rollup, a época Unix.
+-- inteira, testando a política linha a linha. Só conta rollup ANTES de before
+-- (a hora corrente): um gravado no futuro por relógio adiantado esconderia as
+-- horas ainda não consolidadas (C8, a mesma guarda de
+-- LatestRollupBucketBefore). Sem rollup, a época Unix.
 -- name: LatestUserRollupBucket :one
 SELECT coalesce(max(r.bucket), 'epoch'::timestamptz)::timestamptz
   FROM targets t
   CROSS JOIN LATERAL (
        SELECT bucket FROM check_rollup_1h
-        WHERE target_id = t.id
+        WHERE target_id = t.id AND bucket < sqlc.arg(before)::timestamptz
         ORDER BY bucket DESC LIMIT 1) r
  WHERE t.user_id = sqlc.arg(user_id);
 

@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/BipoXDXD/stillon/internal/rollupcut"
 	"github.com/BipoXDXD/stillon/internal/storage"
 	"github.com/BipoXDXD/stillon/internal/storage/db"
 	"github.com/BipoXDXD/stillon/internal/targetstate"
@@ -58,6 +59,7 @@ type contagem struct{ total, ok int64 }
 // uptime cego à queda em curso; ler só os brutos custa ~390 ms com 100 alvos
 // (medido na spec). O corte é um valor fixo lido antes das consultas 3 e 4:
 // uma consolidação que comite entre elas não conta hora nenhuma duas vezes.
+// A regra do corte mora em rollupcut, a mesma da página pública.
 func (s *Service) Summary(ctx context.Context, userID uuid.UUID) ([]Summary, error) {
 	agora := s.clk.Now()
 	h := agora.UTC().Truncate(time.Hour)
@@ -69,17 +71,11 @@ func (s *Service) Summary(ctx context.Context, userID uuid.UUID) ([]Summary, err
 		if err != nil {
 			return fmt.Errorf("listar alvos do resumo: %w", err)
 		}
-		marca, err := q.LatestUserRollupBucket(ctx, userID)
+		marca, err := q.LatestUserRollupBucket(ctx, db.LatestUserRollupBucketParams{Before: h, UserID: userID})
 		if err != nil {
 			return fmt.Errorf("marca d'água dos rollups: %w", err)
 		}
-		corte := marca.UTC().Add(time.Hour)
-		if corte.Before(inicio) {
-			corte = inicio
-		}
-		if corte.After(h) {
-			corte = h
-		}
+		corte := rollupcut.At(marca, inicio, h)
 
 		horas := map[uuid.UUID][]SparkHour{}
 		rollups, err := q.ListSummaryRollups(ctx, db.ListSummaryRollupsParams{UserID: userID, FromAt: inicio, ToAt: corte})

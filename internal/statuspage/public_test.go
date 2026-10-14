@@ -3,6 +3,7 @@ package statuspage_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -153,25 +154,33 @@ func TestPublicProjection(t *testing.T) {
 	if !apiItem.Days[0].Date.Equal(primeiro) || !apiItem.Days[statuspage.Days-1].Date.Equal(hoje) {
 		t.Errorf("barra de %v a %v, queria de %v a %v", apiItem.Days[0].Date, apiItem.Days[statuspage.Days-1].Date, primeiro, hoje)
 	}
-	if u := apiItem.Days[statuspage.Days-1].Uptime; u == nil || *u != 0.75 {
-		t.Errorf("uptime de hoje = %v, queria 0.75 (90 de 120)", u)
+	// Rollups até 09:00 (90 de 120) e, depois do corte das 10:00, o check
+	// bruto das 11:59, down: 90 de 121.
+	if u := apiItem.Days[statuspage.Days-1].Uptime; u == nil || *u != 90.0/121.0 {
+		t.Errorf("uptime de hoje = %s, queria 90/121", texto(u))
 	}
 	if u := apiItem.Days[0].Uptime; u == nil || *u != 0 {
-		t.Errorf("uptime do 1º dia = %v, queria 0", u)
+		t.Errorf("uptime do 1º dia = %s, queria 0", texto(u))
 	}
 	if apiItem.Days[1].Uptime != nil {
 		t.Errorf("dia sem check tem uptime %v, queria nil", *apiItem.Days[1].Uptime)
 	}
-	if u := apiItem.Uptime90; u == nil || *u != 90.0/130.0 {
-		t.Errorf("uptime de 90 dias = %v, queria 90/130", u)
+	if u := apiItem.Uptime90; u == nil || *u != 90.0/131.0 {
+		t.Errorf("uptime de 90 dias = %s, queria 90/131", texto(u))
 	}
 	// Mediana ponderada pelos sucessos: (100×60 + 300×30) / 90 = 166,67,
-	// arredondada (sum de bigint é numeric, e o ::int arredonda).
+	// arredondada (sum de bigint é numeric, e o ::int arredonda). O check
+	// bruto da API foi down e não entra.
 	if l := apiItem.LatencyMS; l == nil || *l != 167 {
-		t.Errorf("latência = %v, queria 167", l)
+		t.Errorf("latência = %s, queria 167", texto(l))
 	}
-	if v.Items[0].Uptime90 != nil || v.Items[0].LatencyMS != nil {
-		t.Errorf("item sem rollup tem uptime/latência: %+v", v.Items[0])
+	// O Site não tem rollup: o uptime e a latência vêm só do check bruto
+	// degraded (sucesso, 50 ms).
+	if s := v.Items[0]; s.Uptime90 == nil || *s.Uptime90 != 1 || s.LatencyMS == nil || *s.LatencyMS != 50 {
+		t.Errorf("Site: uptime %s, latência %s; queria 1 e 50", texto(s.Uptime90), texto(s.LatencyMS))
+	}
+	if n := v.Items[4]; n.Uptime90 != nil || n.LatencyMS != nil {
+		t.Errorf("item sem check tem uptime/latência: %+v", n)
 	}
 
 	if len(v.Incidents) != 2 || v.Incidents[0].Name != "API" ||
@@ -194,6 +203,128 @@ func TestPublicIncidentsAreCapped(t *testing.T) {
 	v, err := a.svc.Public(context.Background(), "empresa")
 	if err != nil || len(v.Incidents) != statuspage.MaxIncidents {
 		t.Errorf("%d incidentes (%v), queria %d", len(v.Incidents), err, statuspage.MaxIncidents)
+	}
+}
+
+// A página completa os rollups com os checks brutos depois da marca d'água,
+// como o dashboard: uma queda que a manutenção ainda não consolidou aparece
+// na barra de hoje, no uptime de 90 dias e na latência (C4 da revisão).
+//
+// Relógio em 12:00. Rollup só até 09:00 (60 de 60, p50 100): o corte é
+// 10:00. O check das 09:30 já está no rollup e não conta de novo; os das
+// 10:30 (up, 50 ms) e 11:59 (down) vêm dos brutos. Hoje: 61 ok de 62.
+// Latência: (100×60 + 50×1) / 61 = 99,18, arredondada para 99.
+func TestPublicSeesChecksNotYetConsolidated(t *testing.T) {
+	a := novoAmbiente(t)
+	adm := admin(t)
+	dono := a.usuario(t)
+	api := a.alvo(t, dono, "api")
+	a.publicar(t, dono, "empresa", true, statuspage.Item{TargetID: api, DisplayName: "API"})
+	hoje := agora.Truncate(24 * time.Hour)
+	p50 := 100
+	rollup(t, adm, api, hoje.Add(9*time.Hour), 60, 60, &p50)
+	a.check(t, api, hoje.Add(9*time.Hour+30*time.Minute), "up")
+	a.check(t, api, hoje.Add(10*time.Hour+30*time.Minute), "up")
+	a.check(t, api, hoje.Add(11*time.Hour+59*time.Minute), "down")
+
+	v, err := a.svc.Public(context.Background(), "empresa")
+	if err != nil {
+		t.Fatal(err)
+	}
+	it := v.Items[0]
+	if it.State != statuspage.StateDown {
+		t.Errorf("estado = %q, queria down", it.State)
+	}
+	if u := it.Days[statuspage.Days-1].Uptime; u == nil || *u != 61.0/62.0 {
+		t.Errorf("uptime de hoje = %s, queria 61/62", texto(u))
+	}
+	if u := it.Uptime90; u == nil || *u != 61.0/62.0 {
+		t.Errorf("uptime de 90 dias = %s, queria 61/62", texto(u))
+	}
+	if l := it.LatencyMS; l == nil || *l != 99 {
+		t.Errorf("latência = %s, queria 99", texto(l))
+	}
+}
+
+// Um rollup gravado no futuro (relógio adiantado) não vira a marca d'água da
+// página: com ele, as horas fechadas e ainda não consolidadas sumiriam (C8).
+//
+// Relógio em 12:00; rollups às 09:00 (60 de 60, p50 100) e às 14:00
+// (futuro, 60 de 60, p50 300). O check das 10:30 foi down: hoje fica 60 ok
+// de 61, e a latência é só a do rollup das 09:00.
+func TestPublicIgnoresRollupsFromTheFuture(t *testing.T) {
+	a := novoAmbiente(t)
+	adm := admin(t)
+	dono := a.usuario(t)
+	api := a.alvo(t, dono, "api")
+	a.publicar(t, dono, "empresa", true, statuspage.Item{TargetID: api, DisplayName: "API"})
+	hoje := agora.Truncate(24 * time.Hour)
+	p50, p50Futuro := 100, 300
+	rollup(t, adm, api, hoje.Add(9*time.Hour), 60, 60, &p50)
+	rollup(t, adm, api, hoje.Add(14*time.Hour), 60, 60, &p50Futuro)
+	a.check(t, api, hoje.Add(10*time.Hour+30*time.Minute), "down")
+
+	v, err := a.svc.Public(context.Background(), "empresa")
+	if err != nil {
+		t.Fatal(err)
+	}
+	it := v.Items[0]
+	if u := it.Days[statuspage.Days-1].Uptime; u == nil || *u != 60.0/61.0 {
+		t.Errorf("uptime de hoje = %s, queria 60/61", texto(u))
+	}
+	if l := it.LatencyMS; l == nil || *l != 100 {
+		t.Errorf("latência = %s, queria 100", texto(l))
+	}
+}
+
+// Com a manutenção parada, a página não lê mais que rollupcut.MaxRawWindow de
+// checks brutos por requisição anônima: o check down de 3 dias atrás, nunca
+// consolidado, fica fora; o das 11:00 entra. Sem o teto, o corte voltava ao
+// início dos 90 dias e o uptime seria 1/2.
+func TestPublicCapsTheRawWindow(t *testing.T) {
+	a := novoAmbiente(t)
+	dono := a.usuario(t)
+	api := a.alvo(t, dono, "api")
+	a.publicar(t, dono, "empresa", true, statuspage.Item{TargetID: api, DisplayName: "API"})
+	a.check(t, api, agora.Add(-72*time.Hour), "down")
+	a.check(t, api, agora.Add(-time.Hour), "up")
+
+	v, err := a.svc.Public(context.Background(), "empresa")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u := v.Items[0].Uptime90; u == nil || *u != 1 {
+		t.Errorf("uptime de 90 dias = %s, queria 1 (só o check dentro do teto)", texto(u))
+	}
+}
+
+// texto mostra o valor apontado, e não o endereço, na mensagem de falha.
+func texto[T any](p *T) string {
+	if p == nil {
+		return "nil"
+	}
+	return fmt.Sprint(*p)
+}
+
+// Um incidente entra no histórico se a queda tocou a janela de 90 dias, e não
+// só se começou dentro dela: a barra pinta o dia de vermelho, e a lista
+// precisa explicá-lo (C9).
+func TestPublicIncidentsOverlappingTheWindowStart(t *testing.T) {
+	a := novoAmbiente(t)
+	adm := admin(t)
+	dono := a.usuario(t)
+	api := a.alvo(t, dono, "api")
+	a.publicar(t, dono, "empresa", true, statuspage.Item{TargetID: api, DisplayName: "API"})
+	primeiro := agora.Truncate(24*time.Hour).AddDate(0, 0, -(statuspage.Days - 1))
+	inicio, fim := primeiro.Add(-24*time.Hour), primeiro.Add(48*time.Hour)
+	incidenteResolvido(t, adm, api, inicio, fim)
+
+	v, err := a.svc.Public(context.Background(), "empresa")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(v.Incidents) != 1 || !v.Incidents[0].StartedAt.Equal(inicio) || !v.Incidents[0].ResolvedAt.Equal(fim) {
+		t.Errorf("incidentes = %+v; queria a queda de %v a %v, que atravessa o início da janela", v.Incidents, inicio, fim)
 	}
 }
 

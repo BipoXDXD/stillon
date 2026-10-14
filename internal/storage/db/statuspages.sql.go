@@ -118,13 +118,44 @@ func (q *Queries) InsertStatusPageItem(ctx context.Context, arg InsertStatusPage
 	return err
 }
 
+const latestPageRollupBucket = `-- name: LatestPageRollupBucket :one
+SELECT coalesce(max(r.bucket), 'epoch'::timestamptz)::timestamptz
+  FROM status_page_items i
+  CROSS JOIN LATERAL (
+       SELECT bucket FROM check_rollup_1h
+        WHERE target_id = i.target_id AND bucket < $1::timestamptz
+        ORDER BY bucket DESC LIMIT 1) r
+ WHERE i.status_page_id = $2
+`
+
+type LatestPageRollupBucketParams struct {
+	Before time.Time
+	PageID uuid.UUID
+}
+
+// A marca d'água da página: a hora mais recente já consolidada entre os alvos
+// dela, ANTES de before (a hora corrente), como LatestUserRollupBucket. Sem
+// rollup, a época Unix.
+func (q *Queries) LatestPageRollupBucket(ctx context.Context, arg LatestPageRollupBucketParams) (time.Time, error) {
+	row := q.db.QueryRow(ctx, latestPageRollupBucket, arg.Before, arg.PageID)
+	var column_1 time.Time
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const listPublicDailyUptime = `-- name: ListPublicDailyUptime :many
-SELECT r.target_id,
-       to_timestamp(floor(extract(epoch FROM r.bucket) / 86400) * 86400)::timestamptz AS day,
-       sum(r.total)::bigint AS total, sum(r.ok)::bigint AS ok
-  FROM check_rollup_1h r
-  JOIN status_page_items i ON i.target_id = r.target_id AND i.status_page_id = $1
- WHERE r.bucket >= $2::timestamptz
+SELECT u.target_id,
+       to_timestamp(floor(extract(epoch FROM u.at) / 86400) * 86400)::timestamptz AS day,
+       sum(u.total)::bigint AS total, sum(u.ok)::bigint AS ok
+  FROM (SELECT r.target_id, r.bucket AS at, r.total, r.ok
+          FROM check_rollup_1h r
+          JOIN status_page_items i ON i.target_id = r.target_id AND i.status_page_id = $1
+         WHERE r.bucket >= $2::timestamptz AND r.bucket < $3::timestamptz
+        UNION ALL
+        SELECT c.target_id, c.checked_at, 1, (c.status <> 'down')::int
+          FROM checks c
+          JOIN status_page_items i ON i.target_id = c.target_id AND i.status_page_id = $1
+         WHERE c.checked_at >= $3::timestamptz AND c.checked_at < $4::timestamptz) u
  GROUP BY 1, 2
  ORDER BY 1, 2
 `
@@ -132,6 +163,8 @@ SELECT r.target_id,
 type ListPublicDailyUptimeParams struct {
 	PageID uuid.UUID
 	Since  time.Time
+	Cut    time.Time
+	Until  time.Time
 }
 
 type ListPublicDailyUptimeRow struct {
@@ -141,9 +174,17 @@ type ListPublicDailyUptimeRow struct {
 	Ok       int64
 }
 
-// Uptime diário (UTC) dos alvos da página, a partir dos rollups.
+// Uptime diário (UTC) dos alvos da página: os rollups de [since, cut) mais
+// os checks brutos de [cut, until), no corte do pacote rollupcut (o mesmo do
+// dashboard). Sem os brutos, a página ficava até ~1h15 atrasada e cega à
+// queda em curso (C4 da revisão).
 func (q *Queries) ListPublicDailyUptime(ctx context.Context, arg ListPublicDailyUptimeParams) ([]ListPublicDailyUptimeRow, error) {
-	rows, err := q.db.Query(ctx, listPublicDailyUptime, arg.PageID, arg.Since)
+	rows, err := q.db.Query(ctx, listPublicDailyUptime,
+		arg.PageID,
+		arg.Since,
+		arg.Cut,
+		arg.Until,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -171,7 +212,7 @@ const listPublicIncidents = `-- name: ListPublicIncidents :many
 SELECT i.display_name, x.started_at, x.resolved_at::timestamptz AS resolved_at
   FROM incidents x
   JOIN status_page_items i ON i.target_id = x.target_id AND i.status_page_id = $1
- WHERE x.resolved_at IS NOT NULL AND x.started_at >= $2::timestamptz
+ WHERE x.resolved_at IS NOT NULL AND x.resolved_at >= $2::timestamptz
  ORDER BY x.started_at DESC
  LIMIT $3::int
 `
@@ -188,8 +229,11 @@ type ListPublicIncidentsRow struct {
 	ResolvedAt  time.Time
 }
 
-// Incidentes resolvidos dos alvos da página: só o nome de exibição, o início
-// e o fim. A causa não sai (spec §5.6).
+// Incidentes resolvidos dos alvos da página que tocam a janela [since,
+// agora): resolvidos depois de since, mesmo que tenham começado antes. Filtrar
+// pelo início deixava sem explicação o dia vermelho da queda que atravessa o
+// começo da barra (C9). Só o nome de exibição, o início e o fim; a causa não
+// sai (spec §5.6).
 func (q *Queries) ListPublicIncidents(ctx context.Context, arg ListPublicIncidentsParams) ([]ListPublicIncidentsRow, error) {
 	rows, err := q.db.Query(ctx, listPublicIncidents, arg.PageID, arg.Since, arg.MaxRows)
 	if err != nil {
@@ -264,16 +308,29 @@ func (q *Queries) ListPublicItems(ctx context.Context, pageID uuid.UUID) ([]List
 }
 
 const listPublicLatency = `-- name: ListPublicLatency :many
-SELECT r.target_id, (sum(r.p50::bigint * r.ok) / nullif(sum(r.ok), 0))::int AS p50
-  FROM check_rollup_1h r
-  JOIN status_page_items i ON i.target_id = r.target_id AND i.status_page_id = $1
- WHERE r.bucket >= $2::timestamptz AND r.ok > 0
+SELECT h.target_id, (sum(h.p50::bigint * h.ok) / nullif(sum(h.ok), 0))::int AS p50
+  FROM (SELECT r.target_id, r.p50, r.ok
+          FROM check_rollup_1h r
+          JOIN status_page_items i ON i.target_id = r.target_id AND i.status_page_id = $1
+         WHERE r.bucket >= $2::timestamptz AND r.bucket < $3::timestamptz
+        UNION ALL
+        SELECT c.target_id,
+               percentile_disc(0.50) WITHIN GROUP (ORDER BY c.latency_ms) FILTER (WHERE c.status <> 'down'),
+               (count(*) FILTER (WHERE c.status <> 'down'))::int
+          FROM checks c
+          JOIN status_page_items i ON i.target_id = c.target_id AND i.status_page_id = $1
+         WHERE c.checked_at >= greatest($3::timestamptz, $2::timestamptz)
+           AND c.checked_at < $4::timestamptz
+         GROUP BY c.target_id, floor(extract(epoch FROM c.checked_at) / 3600)) h
+ WHERE h.ok > 0
  GROUP BY 1
 `
 
 type ListPublicLatencyParams struct {
 	PageID uuid.UUID
 	Since  time.Time
+	Cut    time.Time
+	Until  time.Time
 }
 
 type ListPublicLatencyRow struct {
@@ -282,9 +339,15 @@ type ListPublicLatencyRow struct {
 }
 
 // Latência mediana aproximada: média das medianas horárias, ponderada pelos
-// sucessos de cada hora.
+// sucessos de cada hora. As horas de [cut, until) saem dos checks brutos, com
+// a mediana de ConsolidateRollups; as anteriores, dos rollups.
 func (q *Queries) ListPublicLatency(ctx context.Context, arg ListPublicLatencyParams) ([]ListPublicLatencyRow, error) {
-	rows, err := q.db.Query(ctx, listPublicLatency, arg.PageID, arg.Since)
+	rows, err := q.db.Query(ctx, listPublicLatency,
+		arg.PageID,
+		arg.Since,
+		arg.Cut,
+		arg.Until,
+	)
 	if err != nil {
 		return nil, err
 	}
