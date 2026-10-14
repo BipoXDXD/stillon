@@ -62,6 +62,20 @@ func TestSourceEnvironmentDoesNotInheritRestoreOrPolicy(t *testing.T) {
 	}
 }
 
+// falhaEsperada é o começo da mensagem de cada modo: prova que cada falha sai
+// pelo passo certo do supervisor (characterization test da extração do run).
+var falhaEsperada = map[string]string{
+	"bad-reference":     "referência da origem inválida",
+	"overflow":          "protocolo da origem interrompido ou excessivo",
+	"sql-error":         "protocolo da origem interrompido ou excessivo",
+	"dump-error":        "dump interrompido ou falhou",
+	"extra-output":      "fechamento do exportador inválido",
+	"exporter-error":    "exportador não encerrou corretamente",
+	"remaining-session": "checagem das sessões interrompida",
+	"blocked-read":      "protocolo da origem interrompido ou excessivo",
+	"closed-stdout":     "exportador não encerrou corretamente",
+}
+
 func TestSupervisorDoesNotAcceptFailedOrUnclosedClients(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("supervisor exige Linux")
@@ -121,6 +135,8 @@ exit 0
 				}
 			} else if err == nil {
 				t.Fatalf("%s passou como sucesso: %+v", mode, ref)
+			} else if !strings.HasPrefix(err.Error(), falhaEsperada[mode]) {
+				t.Fatalf("%s falhou no passo errado: %q, queria começar com %q", mode, err, falhaEsperada[mode])
 			}
 			if mode != "good" {
 				if _, e := os.Stat(filepath.Join(dir, "dump")); !os.IsNotExist(e) {
