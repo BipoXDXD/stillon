@@ -47,3 +47,24 @@ it('404 com dados na tela é terminal, e não "dados velhos"', () => {
   expect(screen.queryByRole('status')).not.toBeInTheDocument()
 })
 
+
+// O esqueleto que imita a tela (P12 da auditoria): a tela passa o dela.
+// Sabotagem: ignorar a prop e devolver sempre o <Esqueleto />.
+it('carregando, mostra o esqueleto dado no lugar do padrão', () => {
+  render(
+    <EstadoDaConsulta
+      consulta={{
+        data: undefined,
+        error: null,
+        isPending: true,
+        refetch: () => Promise.reject(new Error('não usado')),
+        dataUpdatedAt: 0,
+      }}
+      esqueleto={<p>o esqueleto da tela</p>}
+    >
+      {() => <p>os dados</p>}
+    </EstadoDaConsulta>,
+  )
+  expect(screen.getByText('o esqueleto da tela')).toBeInTheDocument()
+  expect(screen.queryByText('Carregando…')).not.toBeInTheDocument()
+})

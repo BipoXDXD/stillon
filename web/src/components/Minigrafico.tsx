@@ -1,33 +1,34 @@
 import type { HoraDoSpark } from '@/lib/api/schemas'
+import { plural } from '@/lib/format'
 
-type EstadoDaHora = 'no-ar' | 'degradado' | 'fora'
+export type EstadoDaHora = 'no-ar' | 'degradado' | 'fora'
 
-// Cor da barra e altura da marca sob ela. A marca é o sinal que não depende
-// da cor (WCAG 1.4.1): verde e vermelho têm 1,09:1 entre si e são o par que
-// a deuteranopia não separa. Hora no ar não tem marca.
-const ESTILO: Record<EstadoDaHora, { cor: string; marca: number }> = {
-  'no-ar': { cor: 'var(--estado-no-ar)', marca: 0 },
-  degradado: { cor: 'var(--estado-degradado)', marca: 2 },
-  fora: { cor: 'var(--estado-fora)', marca: 4 },
+// Forma + cor (spec do redesign, Telas > 1): a hora boa é uma barra cheia e
+// cinza; a degradada tem dois terços da altura, e a fora do ar, um terço,
+// nas cores do estado. A altura carrega o sinal sem depender da cor (WCAG
+// 1.4.1). O cinza é a borda de controle, com 3:1 sobre o fundo e o cartão
+// (src/tokens.test.ts): um cinza mais claro se confundiria com a hora sem
+// check, que é lacuna. As alturas são as da página pública (PR 7); lá, o dia sem dados é contorno.
+const ESTILO: Record<EstadoDaHora, { cor: string; fracao: number }> = {
+  'no-ar': { cor: 'var(--borda-controle)', fracao: 1 },
+  degradado: { cor: 'var(--estado-degradado)', fracao: 2 / 3 },
+  fora: { cor: 'var(--estado-fora)', fracao: 1 / 3 },
 }
 
-const LARGURA = 120
-const ALTURA_DAS_BARRAS = 28
-const VAO = 2
-const MARCA_MAXIMA = 4
-const ALTURA = ALTURA_DAS_BARRAS + VAO + MARCA_MAXIMA
-const PASSO = LARGURA / 24
+const HORAS = 24
+const PASSO = 4
+const LARGURA = HORAS * PASSO
+const ALTURA = 24
+const MS_POR_HORA = 3_600_000
 
-// As 24 horas do dashboard em SVG próprio: o Recharts fica fora do
-// dashboard (quase metade do bundle — spec do Plano 6, D4). Altura da barra
-// = latência mediana; cor e marca = uptime da hora. Hora sem check é
-// lacuna, não zero. O nome acessível resume as horas por estado.
+// As 24 horas do painel em SVG próprio: o Recharts fica fora do painel
+// (quase metade do bundle, spec do Plano 6, D4). Hora sem check é lacuna,
+// não zero. O nome acessível resume as horas por estado.
 export function Minigrafico({ horas, agora }: { horas: HoraDoSpark[]; agora: Date }) {
-  const inicio = Math.floor(agora.getTime() / 3_600_000) - 24
-  const maior = Math.max(1, ...horas.map((h) => h.p50_ms ?? 0))
+  const inicio = Math.floor(agora.getTime() / MS_POR_HORA) - HORAS
   const desenhadas = horas.flatMap((h) => {
-    const i = Math.floor(new Date(h.bucket).getTime() / 3_600_000) - inicio
-    return i < 0 || i >= 24 || h.total === 0 ? [] : [{ h, x: i * PASSO + 0.5, estado: estadoDaHora(h) }]
+    const i = Math.floor(new Date(h.bucket).getTime() / MS_POR_HORA) - inicio
+    return i < 0 || i >= HORAS || h.total === 0 ? [] : [{ h, x: i * PASSO, estado: estadoDaHora(h) }]
   })
   return (
     // SVG desenhado aqui não vira <img>: role="img" com aria-label é o
@@ -38,23 +39,19 @@ export function Minigrafico({ horas, agora }: { horas: HoraDoSpark[]; agora: Dat
       width={LARGURA}
       height={ALTURA}
       viewBox={`0 0 ${LARGURA} ${ALTURA}`}
-      className="overflow-visible"
     >
       {desenhadas.map(({ h, x, estado }) => {
-        const alt = Math.max(3, ((h.p50_ms ?? maior) / maior) * ALTURA_DAS_BARRAS)
-        const { cor, marca } = ESTILO[estado]
-        return (
-          <g key={h.bucket}>
-            <rect x={x} y={ALTURA_DAS_BARRAS - alt} width={PASSO - 1} height={alt} fill={cor} />
-            {marca > 0 && <path d={`M${x} ${ALTURA - marca}h${PASSO - 1}v${marca}h-${PASSO - 1}z`} fill={cor} />}
-          </g>
-        )
+        const { cor, fracao } = ESTILO[estado]
+        const altura = ALTURA * fracao
+        return <rect key={h.bucket} x={x} y={ALTURA - altura} width={PASSO - 1} height={altura} fill={cor} />
       })}
     </svg>
   )
 }
 
-function estadoDaHora(h: HoraDoSpark): EstadoDaHora {
+// Os limiares de sempre (99,9% e 99%, inclusivos). O gráfico do detalhe usa
+// o mesmo "fora" para hachurar a hora (src/features/alvos/serie.ts).
+export function estadoDaHora(h: { total: number; ok: number }): EstadoDaHora {
   const fracao = h.ok / h.total
   if (fracao >= 0.999) return 'no-ar'
   return fracao >= 0.99 ? 'degradado' : 'fora'
@@ -71,6 +68,6 @@ function resumir(estados: EstadoDaHora[]): string {
   return (Object.keys(NOMES) as EstadoDaHora[])
     .map((e) => [e, estados.filter((x) => x === e).length] as const)
     .filter(([, n]) => n > 0)
-    .map(([e, n]) => `${n} ${NOMES[e][n === 1 ? 0 : 1]}`)
+    .map(([e, n]) => plural(n, ...NOMES[e]))
     .join(', ')
 }

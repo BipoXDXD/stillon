@@ -479,7 +479,7 @@ for (const largura of [400, 1280]) {
     await conferir([
       ['nome do alvo', page.getByRole('link', { name: 'API', exact: true })],
       ['Configurar canais', page.getByRole('link', { name: 'Configurar canais' })],
-      ['Incidente aberto', page.getByRole('link', { name: 'Incidente aberto' })],
+      ['Ver incidente', page.getByRole('link', { name: 'Ver incidente de Banco' })],
       ...['Painel', 'Incidentes', 'Canais', 'Status', 'Conta'].map((aba): [string, Locator] => [
         `aba ${aba}`,
         page.getByRole('navigation', { name: 'Principal' }).getByRole('link', { name: new RegExp(`^${aba}`) }),
@@ -703,5 +703,60 @@ for (const largura of [400, 1280]) {
       expect(sobBarra, `${largura} px, ${rota}: foco sob a barra ou fora da janela`).toEqual([])
     }
     await controlePositivo(page, `teclado ${largura}`)
+  })
+}
+
+// Auditoria P8: o cartão de problema é clicável inteiro, não só o nome. O
+// clique no canto de baixo à direita (longe do nome e do "Ver incidente")
+// abre o detalhe. Sabotagem: tirar o before:absolute do link do nome.
+test('o cartão de problema é clicável inteiro', async ({ page }) => {
+  await imitarApi(page)
+  await page.goto('/')
+  const cartao = page.getByRole('listitem').filter({ has: page.getByRole('heading', { name: 'Banco', level: 3 }) })
+  await expect(cartao).toBeVisible()
+  const caixa = await cartao.boundingBox()
+  expect(caixa).not.toBeNull()
+  await page.mouse.click(caixa!.x + caixa!.width - 8, caixa!.y + caixa!.height - 8)
+  await expect(page).toHaveURL(/\/targets\/a3$/)
+  await controlePositivo(page, 'cartão clicável')
+})
+
+// Review Focus 3, 8 e 9 da parte 2 do plano: 32 alvos (30 no ar, um fora do
+// ar com nome de 100 caracteres sem espaço, o teto do servidor, e um
+// degradado). A página não rola de lado, e cada linha de "Funcionando" fica
+// compacta (até 48 px), para 30 alvos caberem em poucas telas. Sabotagens:
+// trocar o h-11 da linha por h-16 (64 px); pôr whitespace-nowrap no link do
+// nome do cartão (a página rola de lado no celular).
+const NOME_LONGO = 'ServicoSemEspacos'.repeat(6).slice(0, 100)
+const MUITOS_ALVOS = [
+  item('a1', NOME_LONGO, 'down'),
+  item('m-lento', 'Lento', 'degraded'),
+  ...Array.from({ length: 30 }, (_, i) => item(`m${i}`, `Serviço ${i + 1}`, 'up')),
+]
+
+for (const largura of [400, 1280]) {
+  test(`muitos alvos e nome longo, ${largura} px`, async ({ page }) => {
+    await page.setViewportSize({ width: largura, height: 900 })
+    await imitarApi(page)
+    // Registrada depois, esta rota vence a do imitarApi para o resumo.
+    await page.route('**/api/v1/targets/summary', (route) => route.fulfill({ status: 200, json: { items: MUITOS_ALVOS } }))
+    const semRolagemLateral = async (contexto: string) => {
+      expect(await page.evaluate(() => document.documentElement.scrollWidth), `${contexto}: largura`).toBe(largura)
+      const axe = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze()
+      expect(axe.violations.map((v) => `${contexto}: ${v.id}`)).toEqual([])
+      await controlePositivo(page, contexto)
+    }
+
+    await page.goto('/')
+    await expect(page.getByRole('heading', { name: 'Dois serviços pedem atenção.', level: 2 })).toBeVisible()
+    await esperarOConteudo(page, '/')
+    const funcionando = page.getByRole('region', { name: /^funcionando$/i })
+    await expect(funcionando.getByRole('rowheader')).toHaveCount(30)
+    const alturas = await funcionando
+      .locator('tbody tr')
+      .evaluateAll((linhas) => linhas.map((l) => l.getBoundingClientRect().height))
+    expect(Math.max(...alturas), `${largura} px: a linha mais alta de "Funcionando"`).toBeLessThanOrEqual(48)
+    await expect(page.getByRole('heading', { name: NOME_LONGO, level: 3 })).toBeVisible()
+    await semRolagemLateral(`painel ${largura}`)
   })
 }

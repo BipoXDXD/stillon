@@ -21,3 +21,12 @@ export function textoDoEstado(e: EstadoExibido): string {
 export function estadoExibido(estado: EstadoAlvo, ativo: boolean): EstadoExibido {
   return ativo ? estado : 'pausado'
 }
+
+// Quantos alvos há em cada estado exibido; zero onde não há nenhum.
+export function contarPorEstado(
+  itens: readonly { state: EstadoAlvo; enabled: boolean }[],
+): Record<EstadoExibido, number> {
+  const conta: Record<EstadoExibido, number> = { up: 0, degraded: 0, down: 0, unknown: 0, pausado: 0 }
+  for (const it of itens) conta[estadoExibido(it.state, it.enabled)] += 1
+  return conta
+}

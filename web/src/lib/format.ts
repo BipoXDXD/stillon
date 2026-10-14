@@ -14,6 +14,11 @@ export function milissegundos(ms: number | null | undefined): string {
   return ms === null || ms === undefined ? '—' : `${Math.round(ms).toLocaleString('pt-BR')} ms`
 }
 
+// "1 canal", "0 canais", "2 canais": em português, só o 1 é singular.
+export function plural(n: number, um: string, varios: string): string {
+  return `${n} ${n === 1 ? um : varios}`
+}
+
 export function duracao(ms: number): string {
   const min = Math.round(ms / 60_000)
   if (min < 1) return 'menos de 1 min'
@@ -55,6 +60,14 @@ const dataHoraFmt = new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeS
 // pública, que é UTC); o fuso aparece escrito onde a hora importa.
 export function dataHora(iso: string): string {
   return dataHoraFmt.format(new Date(iso))
+}
+
+const horaMinutoFmt = new Intl.DateTimeFormat('pt-BR', { hour: '2-digit', minute: '2-digit' })
+
+// "09:05", no fuso do navegador: a meta do painel, o último check e as
+// marcas do eixo do gráfico.
+export function horaMinuto(instante: string | number): string {
+  return horaMinutoFmt.format(new Date(instante))
 }
 
 export function fuso(): string {

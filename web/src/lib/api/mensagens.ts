@@ -1,3 +1,4 @@
+import { plural } from '@/lib/format'
 import { ApiError } from './http'
 
 // Tradução de vocabulário fechado para texto. Nada do que o servidor manda
@@ -31,7 +32,7 @@ function duracao(segundos: number): string {
   if (segundos <= 1) return '1 segundo'
   if (segundos < 60) return `${segundos} segundos`
   const minutos = Math.ceil(segundos / 60)
-  return minutos === 1 ? '1 minuto' : `${minutos} minutos`
+  return plural(minutos, 'minuto', 'minutos')
 }
 
 export function mensagemDe(e: unknown): string {
@@ -95,6 +96,13 @@ export function textoDoErroDeCheck(kind: string | null, statusCode: number | nul
   if (!kind) return ''
   const base = tiposDeErro[kind] ?? 'Falha'
   return kind === 'http_status' && statusCode !== null ? `${base} (${statusCode})` : base
+}
+
+// A causa de um incidente para a tela. A coluna cause guarda o error_kind
+// do check que abriu o incidente; vazia (um dado antigo), vira uma frase, e
+// não um espaço em branco entre dois "·".
+export function textoDaCausa(cause: string): string {
+  return textoDoErroDeCheck(cause, null) || 'Causa não registrada'
 }
 
 const errosDeCanal: Record<string, string> = {

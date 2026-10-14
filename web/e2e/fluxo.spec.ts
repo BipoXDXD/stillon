@@ -128,10 +128,16 @@ test('login, cadastro de alvo, status, F5, detalhe, apagar, encerrar a sessão e
     //    sonda sai em ~1 s; o próprio poll do dashboard (15 s) traz o estado
     //    classificado, sem recarregar a página (recarregar em laço gastaria o
     //    burst do limite por usuário).
+    // O alvo aparece primeiro em "Sem dados ou pausados" e, classificado,
+    // passa a "Pedem atenção" (o .invalid fica fora do ar) ou a
+    // "Funcionando" (um DNS que sequestra NXDOMAIN). exact: o cartão tem
+    // também o "Ver incidente de <nome>".
     await page.getByRole('link', { name: 'Painel' }).click()
-    const cartao = page.getByRole('listitem').filter({ has: page.getByRole('link', { name: nomeDoAlvo }) })
-    await expect(cartao).toBeVisible()
-    await expect(cartao.getByText(/^(No ar|Degradado|Fora do ar)$/)).toBeVisible({ timeout: 30_000 })
+    await expect(page.getByRole('link', { name: nomeDoAlvo, exact: true })).toBeVisible()
+    const classificado = page
+      .getByRole('region', { name: /^(pedem atenção|funcionando)$/i })
+      .getByRole('link', { name: nomeDoAlvo, exact: true })
+    await expect(classificado).toBeVisible({ timeout: 30_000 })
 
     // 5. F5: continua dentro, pelo cookie de refresh.
     await page.reload()
@@ -141,7 +147,7 @@ test('login, cadastro de alvo, status, F5, detalhe, apagar, encerrar a sessão e
     //    "fora do ar", que viram marcas na base do gráfico; a marca tem cor
     //    computada (variável CSS do index.css). O dashboard já mostrou um
     //    check: a série tem pontos na primeira carga.
-    await page.getByRole('link', { name: nomeDoAlvo }).click()
+    await page.getByRole('link', { name: nomeDoAlvo, exact: true }).click()
     await expect(page.getByText(/no ar nesta janela/)).toBeVisible()
     const marca = page.getByTestId('grafico-latencia').locator('.recharts-symbols').first()
     await expect(marca).toBeAttached()

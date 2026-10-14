@@ -231,17 +231,11 @@ main, main section, main form, main fieldset {
 main p, main h1, main h2, main a, main dd, main label {
   overflow-wrap: anywhere;
 }
-main > section:not([aria-label='Resumo dos alvos']):not([aria-label='Avisos de notificação']) {
+main > section:not([aria-label='Avisos de notificação']) {
   border: 1px solid var(--borda);
   border-radius: 0.5rem;
   background: var(--superficie);
   padding: 1.25rem;
-}
-.cartao-alvo {
-  transition: border-color 150ms ease;
-}
-.cartao-alvo:hover {
-  border-color: var(--realce);
 }
 
 #conteudo > form {
@@ -249,27 +243,4 @@ main > section:not([aria-label='Resumo dos alvos']):not([aria-label='Avisos de n
   border-radius: 0.5rem;
   background: var(--superficie);
   padding: 1.25rem;
-}
-
-.resumo-operacional {
-  border-top: 2px solid var(--texto);
-  border-bottom: 1px solid var(--borda);
-}
-
-.resumo-operacional > div {
-  border-left: 1px solid var(--borda);
-}
-
-.resumo-operacional > div:nth-child(2n + 1) {
-  border-left: 0;
-}
-
-@media (min-width: 40rem) {
-  .resumo-operacional > div:nth-child(n) { border-left: 1px solid var(--borda); }
-  .resumo-operacional > div:nth-child(3n + 1) { border-left: 0; }
-}
-
-@media (min-width: 80rem) {
-  .resumo-operacional > div:nth-child(n) { border-left: 1px solid var(--borda); }
-  .resumo-operacional > div:first-child { border-left: 0; }
 }
