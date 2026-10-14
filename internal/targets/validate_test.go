@@ -35,6 +35,7 @@ func TestValidate(t *testing.T) {
 		{"nome com inversão bidi", func(f *fields) { f.Name = "a\u202eb" }, "name", ReasonInvalid},
 		{"nome com espaço de largura zero", func(f *fields) { f.Name = "a\u200bb" }, "name", ReasonInvalid},
 		{"nome com acento", func(f *fields) { f.Name = "Página de preço" }, "", ""},
+		{"nome com emoji de profissão (ZWJ)", func(f *fields) { f.Name = "Equipe \U0001F469\U0000200D\U0001F4BB" }, "", ""},
 
 		{"url vazia", func(f *fields) { f.URL = "" }, "url", ReasonRequired},
 		{"url ftp", func(f *fields) { f.URL = "ftp://exemplo.com" }, "url", ReasonInvalid},

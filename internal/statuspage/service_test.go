@@ -173,6 +173,27 @@ func TestValidationNamesEveryField(t *testing.T) {
 	}
 }
 
+// O ZWJ entre dois caracteres visíveis é emoji composto, não texto escondido:
+// o título e o nome com ele são aceitos e voltam iguais.
+func TestComposedEmojiIsAcceptedInTitleAndNames(t *testing.T) {
+	a := novoAmbiente(t)
+	ctx := context.Background()
+	dono := a.usuario(t)
+	alvo := a.alvo(t, dono, "api")
+	const titulo = "Status \U0001F469\U0000200D\U0001F4BB"
+	const nome = "API \U00002764\U0000FE0F\U0000200D\U0001F525"
+
+	p, err := a.svc.Create(ctx, dono, statuspage.Input{
+		Slug: "empresa", Title: titulo, Items: []statuspage.Item{{TargetID: alvo, DisplayName: nome}},
+	})
+	if err != nil {
+		t.Fatalf("título e nome com emoji composto: %v", err)
+	}
+	if p.Title != titulo || len(p.Items) != 1 || p.Items[0].DisplayName != nome {
+		t.Errorf("voltou %+q e %+v, queria %+q e o nome %+q", p.Title, p.Items, titulo, nome)
+	}
+}
+
 // Spec §5.5: o alvo de outro usuário não entra na página, e a recusa
 // desfaz tudo, inclusive a página.
 func TestAnotherUsersTargetIsRefused(t *testing.T) {

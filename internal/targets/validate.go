@@ -7,10 +7,10 @@ import (
 	"net/url"
 	"slices"
 	"strings"
-	"unicode"
 	"unicode/utf8"
 
 	"github.com/BipoXDXD/stillon/internal/prober/safedial"
+	"github.com/BipoXDXD/stillon/internal/rotulo"
 )
 
 // Motivos de validação. Vocabulário fechado: a camada HTTP os repassa ao
@@ -91,7 +91,7 @@ func validate(f *fields) *ValidationError {
 		v.add("name", ReasonRequired)
 	case utf8.RuneCountInString(f.Name) > maxNameRunes:
 		v.add("name", ReasonTooLong)
-	case strings.ContainsFunc(f.Name, ehInvisivel):
+	case rotulo.TemInvisivel(f.Name):
 		v.add("name", ReasonInvalid)
 	}
 
@@ -180,13 +180,6 @@ func checkURL(raw string) string {
 		return ReasonForbidden
 	}
 	return ""
-}
-
-// ehInvisivel recusa controle (Cc) e formatação (Cf): a inversão bidi e o
-// espaço de largura zero deixariam o nome do alvo mentir no painel, na
-// página pública e nos avisos.
-func ehInvisivel(r rune) bool {
-	return unicode.IsControl(r) || unicode.Is(unicode.Cf, r)
 }
 
 // terminaEmNumero é a regra "ends in a number" do WHATWG URL: o último rótulo
