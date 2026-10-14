@@ -108,6 +108,11 @@ services:
     security_opt: ["no-new-privileges:true"]
     logging: *log
     restart: unless-stopped
+    # O padrão do Docker é SIGKILL 10 s depois do SIGTERM, e o app se dá 15 s
+    # (config.shutdownGrace) para fechar as sondas em voo, gravar os checks e
+    # marcar os avisos entregues. Com folga acima disso; o teste
+    # TestComposeProdGracePeriodCoversTheAppShutdown confere.
+    stop_grace_period: 30s
     depends_on:
       db:
         condition: service_healthy
