@@ -102,6 +102,11 @@ A cada 30 s (`time.NewTicker`, como os outros jobs), sob `InProberTx`:
   - no Discord, o mesmo prefixo de cor da abertura.
 - A idempotência no Resend continua `notification/<id>`. Cada lembrete é uma linha
   própria.
+- Revisão do PR #73: o nome do alvo vai para `notifications.target_name` no
+  enfileiramento (abertura, lembrete e fechamento). Antes ele era relido a cada
+  tentativa, e renomear o alvo entre duas tentativas mudava o corpo, o que o Resend
+  recusa com 409 para a mesma Idempotency-Key. Linhas de antes da 00012 ficam com
+  `NULL` e usam o nome atual.
 
 ## Painel
 
