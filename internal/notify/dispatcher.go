@@ -401,9 +401,12 @@ func (d *Dispatcher) tentar(envios context.Context, n db.ClaimDueNotificationsRo
 	if err == nil {
 		return desfecho{status: "sent"}
 	}
-	// Abortado pelo encerramento: volta à fila para já. Se o destino chegou
-	// a receber, sai duplicado, mas só este aviso, e não o lote inteiro
-	// depois do lease.
+	// Abortado pelo encerramento: volta à fila para já. A entrega é
+	// at-least-once. No e-mail, a Idempotency-Key (id da notificação) faz o
+	// Resend descartar o reenvio; o webhook do Discord não tem chave, e um
+	// POST que chegou ao Discord antes do aborto sai duplicado. O custo é só
+	// este aviso, e só quando o envio passa de shutdownSendGrace depois do
+	// sinal; sem o aborto, o SIGKILL deixaria o lote inteiro para o lease.
 	if errors.Is(context.Cause(envios), errEncerramento) {
 		return interrompida(d.clk.Now())
 	}
