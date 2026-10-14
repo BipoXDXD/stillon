@@ -785,13 +785,12 @@ cd ~/Projetos/Go/StillOn
 git switch main && git pull --ff-only
 ssh stillon 'mkdir -p ~/stillon-arquivos'
 scp deploy/vps/compose.prod.yaml deploy/vps/Caddyfile deploy/vps/initdb.sh deploy/vps/env.exemplo \
-    deploy/vps/stillon-entrada deploy/vps/sudoers-stillon-entrada deploy/vps/edge/stillon.caddy \
+    deploy/vps/stillon-entrada deploy/vps/sudoers-stillon-entrada \
     stillon:stillon-arquivos/
 ```
 
-**Deve aparecer:** uma linha de progresso por arquivo, sete no total. (Os arquivos do vigia vêm
-só no bloco 8, quando são instalados. O `stillon.caddy` fica na pasta até o passo "O StillOn na
-borda", depois do primeiro deploy.)
+**Deve aparecer:** uma linha de progresso por arquivo, seis no total. (Os arquivos do vigia vêm
+só no bloco 8, quando são instalados; o trecho da borda, `stillon.caddy`, no 4.9.)
 
 **Depois, na VPS:**
 
@@ -1304,10 +1303,20 @@ foram feitos na troca da borda, guiada pelo Claude
 ([spec](../superpowers/specs/2026-10-13-vps-compartilhada-design.md), "Ordem na VPS"). Sem isso,
 o pedido de certificado falha e conta no limite do Let's Encrypt.
 
-**Faça** (na VPS), um comando por vez:
+**Faça, primeiro no seu computador** (prompt `%`), com a `main` atualizada:
 
 ```bash
-sudo install -m 0644 -o root -g root ~/stillon-arquivos/stillon.caddy /srv/edge/conf.d/
+scp deploy/vps/edge/stillon.caddy stillon:
+```
+
+**Depois, na VPS**, um comando por vez:
+
+```bash
+sudo install -m 0644 -o root -g root ~/stillon.caddy /srv/edge/conf.d/
+```
+
+```bash
+rm ~/stillon.caddy
 ```
 
 ```bash
@@ -2235,8 +2244,11 @@ cópia (`http://localhost:8080`) e recrie à mão na produção.
 1. Primeiro o mais barato: **Snapshots & Backups** da Hostinger (passo 7.3). Restaurar o backup
    semanal volta a VPS inteira à semana passada; depois disso, siga do item 4 abaixo com o dump de
    ontem para recuperar a semana.
-2. Se não houver backup da Hostinger que sirva: reinstale o Ubuntu 24.04 (ou crie outra VPS) e
-   refaça o bloco 2, o bloco 3 e o bloco 4 **até o 4.7** (o 4.8 é o item 3 abaixo). Nos passos
+2. Se não houver backup da Hostinger que sirva: reinstale o Ubuntu 24.04 (ou crie outra VPS),
+   refaça o bloco 2 e, **antes do bloco 3**, o provisionamento do GoblinShift (o `provision.sh`
+   dele instala o Docker e a borda em `/srv/edge`, com a rede `edge`; sem ela, o 4.8 falha com
+   "network edge declared as external, but could not be found"). Depois, o bloco 3 e o bloco 4
+   **até o 4.7** (o 4.8 e o 4.9 são o item 3 abaixo). Nos passos
    que guardam segredo, **não gere nada novo; restaure do gerenciador**:
    - **3.4:** pule o bloco que gera os segredos. Abra o `.env` (`sudo nano /opt/stillon/.env`) e
      cole **todos** os valores do gerenciador (a `MASTER_KEY`, as três senhas do Postgres, tudo).
@@ -2262,7 +2274,8 @@ cópia (`http://localhost:8080`) e recrie à mão na produção.
    outro `Host stillon`: passo 2.6), e grave de novo `VPS_HOST` e `VPS_HOST_KEY`
    (passos 4.5 e 4.6; a VPS nova tem outra chave de servidor, e o `ssh` do seu computador vai
    reclamar dela: `ssh-keygen -R <IP velho>` e confira a nova pelo terminal do painel).
-3. Faça o primeiro deploy (passo 4.8) com o SHA que estava no ar (o último deploy verde do Actions).
+3. Faça o primeiro deploy (passo 4.8) com o SHA que estava no ar (o último deploy verde do Actions)
+   e ponha o StillOn na borda (passo 4.9).
 4. Restaure o último dump do Actions no banco novo: pare o app (`vc stop app`), decifre o dump no
    seu computador (passo 7.2, itens 1 e 2), leve-o para a VPS e apague a cópia em claro do seu
    computador:
@@ -2284,7 +2297,8 @@ cópia (`http://localhost:8080`) e recrie à mão na produção.
    vigia justamente depois de um desastre, e o `down` do healthchecks parece ser só a
    reconstrução. Não pause nem silencie o check no healthchecks: ele volta a **up** sozinho quando
    o vigia novo pingar.
-6. Confira os passos 4.8 (tabelas e papéis), 5.2 (entrar com 2FA), 6.1 (e-mail) e rode o
+6. Confira os passos 4.8 (tabelas e papéis), 4.9 (o domínio pela borda), 5.2 (entrar com 2FA),
+   6.1 (e-mail) e rode o
    `backup` à mão (passo 7.1). Perde-se no máximo o que aconteceu desde o dump de ontem (checks e
    incidentes).
 

@@ -99,7 +99,9 @@ de HTTP para HTTPS é o padrão do Caddy.
 - Opções globais: `trusted_proxies static 172.31.0.2/32`, `trusted_proxies_strict`
   e `client_ip_headers X-Forwarded-For`. O `{client_ip}` passa a ser o IP real do
   cliente quando a conexão vem da borda, e o IP da conexão em qualquer outro caso.
-- `reverse_proxy app:8080` com `header_up X-Forwarded-For {client_ip}`. Sem isso, o
+- `reverse_proxy 10.30.0.3:8080` (o app pelo IP fixo: este Caddy também está na
+  `edge`, e o DNS do Docker resolveria o nome `app` em qualquer rede dele, inclusive
+  para um contêiner de outro projeto) com `header_up X-Forwarded-For {client_ip}`. Sem isso, o
   Caddy acrescentaria o IP da borda ao fim da cadeia, e o app, que confia só no
   último salto, veria a borda no lugar de todo cliente. Continuam os
   `header_up -Fly-Client-IP`, `-X-Real-IP` e `-CF-Connecting-IP`.

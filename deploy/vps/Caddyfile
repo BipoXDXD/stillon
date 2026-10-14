@@ -23,7 +23,10 @@
 # Só HTTP: o TLS termina na borda. Uma requisição com outro Host não casa com
 # nada e não chega ao app: é a checagem de Host da revisão.
 http://{$STILLON_DOMINIO} {
-	reverse_proxy app:8080 {
+	# O app pelo IP fixo (compose.prod.yaml), e não pelo nome: este Caddy
+	# também está na rede edge, e o DNS do Docker resolveria "app" em qualquer
+	# rede dele, inclusive para um contêiner de outro projeto com esse nome.
+	reverse_proxy 10.30.0.3:8080 {
 		# O app confia no último salto do X-Forwarded-For quando a conexão vem
 		# deste Caddy (TRUSTED_PROXIES). Sem esta linha, o Caddy acrescentaria
 		# o IP da borda ao fim da cadeia e todo cliente viraria a borda; com

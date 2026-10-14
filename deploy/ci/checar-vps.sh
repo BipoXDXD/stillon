@@ -273,6 +273,10 @@ if ! { [ "$(sem_comentario "$RAIZ/deploy/vps/Caddyfile" | grep -c 'trusted_proxi
 fi
 sem_comentario "$RAIZ/deploy/vps/Caddyfile" | grep -qxE '[[:space:]]*header_up X-Forwarded-For \{client_ip\}' ||
     falhar "o Caddyfile não reescreve o X-Forwarded-For com o {client_ip}: o app veria a borda"
+if ! { [ "$(q '.services.app.networks.stillon.ipv4_address')" = 10.30.0.3 ] &&
+    sem_comentario "$RAIZ/deploy/vps/Caddyfile" | grep -qxE '[[:space:]]*reverse_proxy 10\.30\.0\.3:8080 \{'; }; then
+    falhar "o Caddyfile não chama o app pelo IP fixo 10.30.0.3: um vizinho chamado app na rede edge receberia o tráfego"
+fi
 # O trecho da borda não confia em ninguém e aponta para o IP fixo.
 [ "$(sem_comentario "$RAIZ/deploy/vps/edge/stillon.caddy" 2>/dev/null | grep -c trusted_proxies || true)" = 0 ] ||
     falhar "o trecho da borda tem trusted_proxies: um cliente escolheria o próprio IP"
@@ -455,6 +459,39 @@ direto=$(ultimo_hash)
 [ "$direto" = "$(hmac 1.2.3.8)" ] && falhar "o Caddy do StillOn acreditou no X-Forwarded-For de um vizinho da rede edge"
 [ "$direto" = "$(hmac "$vizinho_ip")" ] || falhar "o app não viu o IP do vizinho ($vizinho_ip)"
 ok "um vizinho da rede edge não escolhe o IP visto pelo app"
+
+# 6c. Um vizinho na rede edge que se chame "app" não recebe o tráfego do
+#     StillOn: o Caddy fala com o app pelo IP fixo, e não pelo nome, que o DNS
+#     do Docker resolveria em qualquer rede do contêiner. O chamariz responde
+#     200 sem X-Trace-Id; o app de verdade sempre manda o dele. O Caddy é
+#     reiniciado depois que o chamariz sobe: sem isso, ele reusaria a conexão
+#     keep-alive com o app e nem consultaria o DNS de novo.
+chamariz=$(docker run -d --network edge --network-alias app --entrypoint caddy "$caddy_img" \
+    respond --listen :8080 --body chamariz)
+dc restart caddy >&2
+for _ in $(seq 30); do
+    [ "$(cu -o /dev/null -w '%{http_code}' "$BASE/healthz" || true)" = 200 ] && break
+    sleep 1
+done
+chegou_ao_chamariz=
+for _ in 1 2 3 4 5; do
+    resp=$(cu -D - -o /dev/null "$BASE/healthz" || true)
+    echo "$resp" | grep -qi '^x-trace-id:' || chegou_ao_chamariz=1
+done
+docker rm -f "$chamariz" >/dev/null
+[ -z "$chegou_ao_chamariz" ] || falhar "um contêiner chamado app na rede edge recebeu o tráfego do StillOn"
+ok "um vizinho chamado app na rede edge não recebe o tráfego do StillOn"
+
+# 6d. A checagem de Host é do Caddy do StillOn, não só da borda: direto nele,
+#     pela rede edge, só o domínio chega ao app.
+direto_host() {
+    docker run --rm --network edge --entrypoint curl "$caddy_img" -sS --max-time 10 -D - -o /dev/null "$@" \
+        "http://172.31.0.3/healthz" || true
+}
+direto_host -H 'Host: estranho.teste' | grep -qi '^x-trace-id:' && falhar "Host estranho direto no Caddy do StillOn chegou ao app"
+direto_host | grep -qi '^x-trace-id:' && falhar "Host 172.31.0.3 direto no Caddy do StillOn chegou ao app"
+direto_host -H "Host: $DOMINIO" | grep -qi '^x-trace-id:' || falhar "controle: o domínio direto no Caddy do StillOn não chegou ao app"
+ok "direto no Caddy do StillOn, só o domínio chega ao app"
 
 # 7. O banco não aceita conexão de fora da rede do compose. O controle
 #    positivo (de dentro da rede) prova que a sonda funciona.
