@@ -1,135 +1,142 @@
-import { Activity, Bell, CircleUserRound, LayoutDashboard, LogOut, Settings, ShieldCheck, TriangleAlert } from 'lucide-react'
+import { Bell, LayoutDashboard, LogOut, Settings, ShieldCheck, TriangleAlert, type LucideIcon } from 'lucide-react'
 import { useState } from 'react'
 import { NavLink, Outlet } from 'react-router'
 import { ProvedorDeAnuncios } from '@/components/Anunciador'
 import { AvisoDeContexto } from '@/components/AvisoDeContexto'
+import { Marca } from '@/components/Marca'
 import { useAvisar } from '@/components/ui/avisos'
 import { Botao } from '@/components/ui/botao'
 import { useAbertos, useMe } from '@/lib/api/consultas'
 import { mensagemDe } from '@/lib/api/mensagens'
-import { ehTema, useTema } from '@/lib/tema'
 import { cn } from '@/lib/utils'
+import { BotaoDeTema } from './BotaoDeTema'
 import { useSessao } from './contexto'
 
-const links = [
+// As cinco abas, com os mesmos nomes no topo (desktop) e na barra inferior
+// (celular): o nome acessível não muda com a largura da tela (WCAG 3.2.4).
+const ABAS: { para: string; texto: string; Icone: LucideIcon; fim?: boolean; contador?: boolean }[] = [
   { para: '/', texto: 'Painel', fim: true, Icone: LayoutDashboard },
   { para: '/incidents', texto: 'Incidentes', contador: true, Icone: TriangleAlert },
   { para: '/channels', texto: 'Canais', Icone: Bell },
-  { para: '/status-pages', texto: 'Status page', Icone: ShieldCheck },
-  { para: '/settings', texto: 'Configurações', Icone: Settings },
+  { para: '/status-pages', texto: 'Status', Icone: ShieldCheck },
+  { para: '/settings', texto: 'Conta', Icone: Settings },
 ]
 
-function SeletorDeTema() {
-  const { tema, mudar } = useTema()
+export function Layout() {
+  const me = useMe()
   return (
-    <label className="flex items-center gap-2 text-sm text-suave">
-      Tema
-      <select
-        value={tema}
-        onChange={(e) => {
-          const valor = e.target.value
-          if (ehTema(valor)) mudar(valor)
-        }}
-        className="min-h-11 rounded-md border border-borda-controle bg-fundo px-3 text-texto"
+    <ProvedorDeAnuncios>
+      <a
+        href="#conteudo"
+        className="sr-only focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:z-50 focus:rounded-padrao focus:bg-superficie focus:p-2"
       >
-        <option value="sistema">Sistema</option>
-        <option value="claro">Claro</option>
-        <option value="escuro">Escuro</option>
-      </select>
-    </label>
+        Pular para o conteúdo
+      </a>
+      <AvisoDeContexto />
+      <header className="border-b border-borda bg-superficie">
+        <div className="mx-auto flex min-h-16 max-w-6xl items-center gap-4 px-4 sm:px-6 lg:gap-8">
+          <Marca />
+          <NavegacaoPrincipal />
+          <div className="ml-auto flex min-w-0 items-center gap-2">
+            {/* O e-mail some no celular (auditoria L1); a conta está na aba Conta. */}
+            {me.data && <span className="hidden max-w-64 truncate text-meta text-apagado lg:inline">{me.data.email}</span>}
+            <BotaoDeTema />
+            <BotaoSair />
+          </div>
+        </div>
+      </header>
+      {/* pb-16 no celular: o fim do conteúdo fica acima da barra inferior
+          fixa (53 px). */}
+      <main id="conteudo" className="mx-auto min-w-0 max-w-6xl space-y-8 px-4 pt-8 pb-16 sm:px-6 lg:pt-12 lg:pb-12">
+        <Outlet />
+      </main>
+    </ProvedorDeAnuncios>
   )
 }
 
-// O número de incidentes abertos ao lado de "Incidentes" (spec §4.9). Zero
-// não aparece. O número é decorativo para o leitor de tela: o nome do link
-// já diz "Incidentes, 2 abertos".
+// No celular a navegação é a barra inferior fixa, de 5 abas de 44 px
+// (auditoria L1: antes, ~265 px de menu vinham antes do conteúdo); a partir
+// de lg (1024 px) ela volta ao fluxo do cabeçalho. Um <nav> só nos dois
+// casos: a ordem do Tab e o nome da região não mudam com a largura. O item
+// ativo usa a primária 100 e o peso 600, e o aria-current do NavLink diz o
+// mesmo ao leitor de tela.
+function NavegacaoPrincipal() {
+  const abertos = useAbertos().data
+  const contador = abertos && abertos !== '0' ? abertos : null
+  return (
+    <nav
+      aria-label="Principal"
+      className="fixed inset-x-0 bottom-0 z-30 border-t border-borda bg-superficie px-2 py-1 lg:static lg:z-auto lg:border-t-0 lg:bg-transparent lg:p-0"
+    >
+      <ul className="grid grid-cols-5 gap-1 lg:flex">
+        {ABAS.map((aba) => (
+          <li key={aba.para}>
+            <NavLink
+              to={aba.para}
+              end={aba.fim}
+              aria-label={
+                aba.contador && contador ? `${aba.texto}, ${contador} ${contador === '1' ? 'aberto' : 'abertos'}` : undefined
+              }
+              className={({ isActive }) =>
+                cn(
+                  'flex min-h-11 flex-col items-center justify-center gap-1 rounded-padrao px-2 text-xs text-suave hover:text-texto',
+                  'lg:flex-row lg:gap-2 lg:px-3 lg:text-sm',
+                  isActive && 'bg-primaria-100 font-semibold text-primaria hover:text-primaria',
+                )
+              }
+            >
+              <span className="relative">
+                <aba.Icone aria-hidden="true" className="size-5 lg:size-4" />
+                {aba.contador && contador && <ContadorDeAbertos n={contador} />}
+              </span>
+              {aba.texto}
+            </NavLink>
+          </li>
+        ))}
+      </ul>
+    </nav>
+  )
+}
+
+// O número de incidentes abertos sobre o ícone de "Incidentes" (spec §4.9).
+// Zero não aparece. O número é decorativo para o leitor de tela: o nome do
+// link já diz "Incidentes, 2 abertos".
 function ContadorDeAbertos({ n }: { n: string }) {
   return (
-    <span aria-hidden="true" className="ml-auto rounded-full bg-fora px-2 py-0.5 text-xs font-semibold text-fundo">
+    <span aria-hidden="true" className="absolute -top-2 -right-3 rounded-full bg-perigo px-1 text-xs font-semibold text-perigo-texto">
       {n}
     </span>
   )
 }
 
-export function Layout() {
+// Ocupado enquanto o logout voa (até o prazo da sessão): um segundo clique
+// não manda outro. aria-disabled, e não disabled, para o foco não cair no
+// <body>.
+function BotaoSair() {
   const { sessao } = useSessao()
   const avisar = useAvisar()
   const [saindo, setSaindo] = useState(false)
-  const me = useMe()
-  const abertos = useAbertos().data
-  const contador = abertos && abertos !== '0' ? abertos : null
   return (
-    <ProvedorDeAnuncios>
-      <a
-        href="#conteudo"
-        className="sr-only focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:z-50 focus:rounded focus:bg-fundo focus:p-2"
-      >
-        Pular para o conteúdo
-      </a>
-      {/* A lateral fixa ocupa 240 px só no desktop. O aviso compartilha
-          o mesmo espaço do conteúdo; no login o componente não tem offset. */}
-      <div className="lg:ml-60">
-        <AvisoDeContexto />
-      </div>
-      <header className="border-b border-borda bg-superficie lg:fixed lg:inset-y-0 lg:left-0 lg:z-20 lg:w-60 lg:overflow-y-auto lg:border-r lg:border-b-0">
-        <div className="flex min-w-0 flex-col gap-4 px-4 py-4 lg:h-full lg:gap-10 lg:px-5 lg:py-9">
-          <div className="flex items-center gap-3">
-            <span className="marca-simbolo flex size-10 items-center justify-center rounded-full bg-primaria text-primaria-texto"><Activity aria-hidden="true" className="size-6" /></span>
-            <div><span className="text-2xl font-bold tracking-tight">StillOn</span><p className="mt-0.5 text-[0.65rem] leading-relaxed text-suave">Monitor de disponibilidade</p></div>
-          </div>
-          <nav aria-label="Principal" className="flex flex-wrap gap-1 lg:flex-col lg:gap-2">
-            {links.map((l) => (
-              <NavLink
-                key={l.para}
-                to={l.para}
-                end={l.fim}
-                aria-label={
-                  l.contador && contador
-                    ? `${l.texto}, ${contador} ${contador === '1' ? 'aberto' : 'abertos'}`
-                    : undefined
-                }
-                className={({ isActive }) =>
-                  cn('inline-flex min-h-10 items-center gap-3 rounded-md px-3 py-3 text-sm text-suave hover:bg-painel hover:text-texto lg:w-full', isActive && 'bg-painel font-bold text-texto ring-1 ring-inset ring-borda')
-                }
-              >
-                <l.Icone aria-hidden="true" className="size-4 shrink-0" />
-                {l.texto}
-                {l.contador && contador && <ContadorDeAbertos n={contador} />}
-              </NavLink>
-            ))}
-          </nav>
-          <div className="flex min-w-0 flex-wrap items-center gap-3 border-t border-borda pt-4 lg:mt-auto lg:flex-col lg:items-stretch lg:gap-4">
-            <SeletorDeTema />
-            {me.data && <div className="flex min-w-0 items-center gap-2 lg:order-first"><CircleUserRound aria-hidden="true" className="size-4 shrink-0 text-suave" /><span className="min-w-0 break-all text-xs text-suave">{me.data.email}</span></div>}
-            {/* Ocupado enquanto o logout voa (até o prazo da sessão): um
-                segundo clique não manda outro. aria-disabled, e não disabled,
-                para o foco não cair no <body>. */}
-            <Botao
-              tipo="secundario"
-              tamanho="pequeno"
-              aria-disabled={saindo || undefined}
-              onClick={async () => {
-                if (saindo) return
-                setSaindo(true)
-                try {
-                  await sessao.sair()
-                } catch (e) {
-                  // O servidor não fez o logout (A9 do Plano 10): a sessão
-                  // continua, e o Sair pode ser tentado de novo.
-                  avisar(`Não foi possível sair. ${mensagemDe(e)}`, 'erro')
-                } finally {
-                  setSaindo(false)
-                }
-              }}
-            >
-              <LogOut aria-hidden="true" className="size-4" />Sair
-            </Botao>
-          </div>
-        </div>
-      </header>
-      <main id="conteudo" className="mx-auto min-w-0 max-w-[100rem] space-y-8 px-5 py-8 sm:px-8 lg:ml-60 lg:px-10 lg:py-12 xl:px-14">
-        <Outlet />
-      </main>
-    </ProvedorDeAnuncios>
+    <Botao
+      tipo="terciario"
+      tamanho="pequeno"
+      aria-disabled={saindo || undefined}
+      onClick={async () => {
+        if (saindo) return
+        setSaindo(true)
+        try {
+          await sessao.sair()
+        } catch (e) {
+          // O servidor não fez o logout (A9 do Plano 10): a sessão
+          // continua, e o Sair pode ser tentado de novo.
+          avisar(`Não foi possível sair. ${mensagemDe(e)}`, 'erro')
+        } finally {
+          setSaindo(false)
+        }
+      }}
+    >
+      <LogOut aria-hidden="true" className="size-4" />
+      Sair
+    </Botao>
   )
 }

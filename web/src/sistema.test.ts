@@ -9,6 +9,7 @@ import { describe, expect, it } from 'vitest'
 // lista quando o PR que o redesenha chega; o PR 8 troca a lista por todo o src.
 const ARQUIVOS_NO_SISTEMA = [
   'src/app/BotaoDeTema.tsx',
+  'src/app/Layout.tsx',
   'src/components/Marca.tsx',
   'src/components/Titulo.tsx',
   'src/components/SeloDeEstado.tsx',

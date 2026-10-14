@@ -33,7 +33,8 @@ export function ProvedorDeAvisos({ children }: { children: ReactNode }) {
           <Toast.Title>{a.texto}</Toast.Title>
         </Toast.Root>
       ))}
-      <Toast.Viewport className="fixed right-4 bottom-4 z-50 flex w-80 max-w-[calc(100vw-2rem)] flex-col gap-2" />
+      {/* bottom-16 no celular: o aviso fica acima da barra inferior fixa. */}
+      <Toast.Viewport className="fixed right-4 bottom-16 z-50 flex w-80 max-w-[calc(100vw-2rem)] flex-col gap-2 lg:bottom-4" />
     </Toast.Provider>
   )
 }
