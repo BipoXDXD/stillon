@@ -351,11 +351,15 @@ func (s *Scheduler) gravar(a db.ClaimDueTargetsRow, em time.Time, res Result) {
 			default:
 			}
 		}
-	case alvoSumiu(err):
+	case pareceAlvoSumido(err) && s.alvoApagado(ctx, a.ID):
 		// Review Focus 3 do Plano 2: o dono apagou o alvo com a sonda em
 		// voo. Não é erro, é o dono tendo mudado de ideia.
 		s.metrics.forget(a.ID)
 	default:
+		// Com o alvo vivo, o 42501 ou o 23503 veio de outra tabela (um canal
+		// apagado durante o enfileiramento, um GRANT ou uma RLS que
+		// regrediu), e o rollback levou check, histerese e incidente: é erro
+		// (C6 da revisão).
 		slog.Error("gravar check", "target_id", a.ID, "erro", err)
 	}
 }
@@ -513,11 +517,28 @@ func (s *Scheduler) medirFila(ctx context.Context, now time.Time) error {
 	})
 }
 
-// alvoSumiu reconhece o INSERT de check para alvo apagado. O 42501 é a RLS
-// de checks (o EXISTS no alvo falha) e chega ANTES da FK; o 23503 é a FK,
-// mantida para o caso de a política um dia mudar
-// (TestCheckForVanishedTargetFailsWithRLSCode).
-func alvoSumiu(err error) bool {
+// alvoApagado relê targets para confirmar que o alvo sumiu. Se a releitura
+// falha, a resposta é não: o erro original vai ao log como erro.
+func (s *Scheduler) alvoApagado(ctx context.Context, id uuid.UUID) bool {
+	var existentes []uuid.UUID
+	err := storage.InProberTx(ctx, s.pool, func(q *db.Queries) error {
+		var err error
+		existentes, err = q.ExistingTargetIDs(ctx, []uuid.UUID{id})
+		return err
+	})
+	if err != nil {
+		slog.Error("conferir se o alvo sumiu", "target_id", id, "erro", err)
+		return false
+	}
+	return len(existentes) == 0
+}
+
+// pareceAlvoSumido reconhece os códigos do INSERT de check para alvo
+// apagado. O 42501 é a RLS de checks (o EXISTS no alvo falha) e chega ANTES
+// da FK; o 23503 é a FK, mantida para o caso de a política um dia mudar
+// (TestCheckForVanishedTargetFailsWithRLSCode). Os mesmos códigos vêm também
+// do enfileiramento dos avisos, por isso quem chama confirma com alvoApagado.
+func pareceAlvoSumido(err error) bool {
 	var pgErr *pgconn.PgError
 	return errors.As(err, &pgErr) && (pgErr.Code == "42501" || pgErr.Code == "23503")
 }

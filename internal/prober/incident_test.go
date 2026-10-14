@@ -2,7 +2,10 @@ package prober
 
 import (
 	"context"
+	"fmt"
 	"net/http"
+	"slices"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -303,5 +306,52 @@ func TestDegradedChecksResolveTheIncident(t *testing.T) {
 	inc := b.incidentes(t)
 	if len(inc) != 1 || inc[0].ResolvedAt == nil || !inc[0].ResolvedAt.Equal(voltou) {
 		t.Fatalf("cinco degraded: incidentes = %+v; queria resolvido em %v", inc, voltou)
+	}
+}
+
+// C6 da revisão: 42501 e 23503 viravam sempre "o alvo foi apagado", sem log.
+// Mas a transação que abre o incidente também enfileira os avisos, e o
+// INSERT em notifications gera os mesmos códigos (canal apagado em corrida,
+// GRANT ou RLS que regrediu). O rollback levava check, histerese e
+// incidente, a série de um alvo vivo era esquecida, e nada ia ao log. A
+// trigger simula a falha vinda de outra tabela com o alvo vivo; o snapshot
+// restaurado no fim do teste a leva embora.
+func TestRLSOrFKErrorWithTheTargetAliveIsLogged(t *testing.T) {
+	for _, codigo := range []string{"42501", "23503"} {
+		t.Run(codigo, func(t *testing.T) {
+			b := novaBancada(t, nil, MaxInFlight)
+			alvo := b.alvo(t, "https://exemplo.com", nil)
+			b.canal(t, true, true)
+			a := db.ClaimDueTargetsRow{ID: alvo, UserID: b.dono, IntervalSec: 60}
+			falha := Result{Status: StatusDown, ErrorKind: KindTimeout}
+			t0 := b.clk.Now()
+			b.s.gravar(a, t0, falha)
+			b.s.gravar(a, t0.Add(time.Minute), falha)
+			b.m.observe(alvo, falha)
+
+			ctx := context.Background()
+			// #nosec G201 -- codigo vem da tabela do próprio teste.
+			if _, err := b.pool.Exec(ctx, fmt.Sprintf(`
+				CREATE FUNCTION recusar_aviso() RETURNS trigger LANGUAGE plpgsql AS $$
+				BEGIN
+					RAISE EXCEPTION 'aviso recusado pelo teste' USING ERRCODE = '%s';
+				END $$;
+				CREATE TRIGGER recusar_aviso BEFORE INSERT ON notifications
+					FOR EACH ROW EXECUTE FUNCTION recusar_aviso();`, codigo)); err != nil {
+				t.Fatal(err)
+			}
+			log := capturarLog(t)
+
+			// A terceira falha abre o incidente e enfileira o aviso.
+			b.s.gravar(a, t0.Add(2*time.Minute), falha)
+
+			if s := log.String(); !strings.Contains(s, "level=ERROR") || !strings.Contains(s, "gravar check") ||
+				!strings.Contains(s, alvo.String()) || !strings.Contains(s, codigo) {
+				t.Errorf("log = %q; queria o erro de gravar check com o alvo e o código %s", s, codigo)
+			}
+			if vistos := b.m.alvosVistos(); !slices.Contains(vistos, alvo) {
+				t.Errorf("alvos vistos = %v; a série do alvo vivo %s foi esquecida", vistos, alvo)
+			}
+		})
 	}
 }
