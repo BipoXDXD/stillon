@@ -1,17 +1,19 @@
 #!/usr/bin/env bash
-# Checagens da produção na VPS (Plano 11, spec §8), sem VPS: sobe o
-# deploy/vps/compose.prod.yaml com o Caddy em modo local (certificado da CA
-# interna, domínio stillon.example) e confere o que a revisão exigiu da
+# Checagens da produção na VPS (Plano 11, spec §8; spec 2026-10-13-vps-
+# compartilhada), sem VPS: sobe uma borda de teste igual ao contrato
+# (deploy/ci/vps/borda, CA interna, domínio stillon.example) e, atrás dela,
+# o deploy/vps/compose.prod.yaml, e confere o que a revisão exigiu da
 # hospedagem. O job "vps" do CI roda; localmente, da raiz do repositório:
 #
 #   bash deploy/ci/checar-vps.sh <imagem do app>     (ex.: stillon:dev)
 #
 # Precisa de docker (com o image store containerd, como a VPS), jq, curl,
 # openssl, python3 (monta os tars maliciosos) e do age/age-keygen no PATH.
-# O projeto do compose é "stillon-teste-vps" e as portas do Caddy vão para o
-# loopback (TESTE_VPS_HTTP, padrão 18580; TESTE_VPS_HTTPS, padrão 18543):
-# deploy/ci/vps/compose.teste.yaml. A rede é a de produção (172.30.0.0/24):
-# não rode numa máquina que já tenha o StillOn de produção de pé.
+# Os projetos do compose são "stillon-teste-vps" e "stillon-teste-borda", e
+# as portas da borda vão para o loopback (TESTE_VPS_HTTP, padrão 18580;
+# TESTE_VPS_HTTPS, padrão 18543). As redes são as de produção (edge,
+# 172.31.0.0/24, e 10.30.0.0/24): não rode numa máquina que já tenha a borda
+# ou o StillOn de produção de pé.
 # Derruba tudo no fim (TESTE_VPS_MANTER=1 deixa de pé, para investigar).
 # O script escreve outros scripts e procura ${...} em arquivos: muita string
 # com $ literal entre aspas simples, de propósito.
@@ -63,6 +65,7 @@ limpar() {
     done
     [ -z "$TERCEIRO_BACKUP" ] || docker rm -f -v "$TERCEIRO_BACKUP" >/dev/null 2>&1 || true
     dc down -v --remove-orphans >/dev/null 2>&1 || true
+    bd down -v --remove-orphans >/dev/null 2>&1 || true
     for r in "$REPO_TESTE" "$REPO_TESTE-fonte"; do
         docker image ls --format '{{.Repository}}:{{.Tag}}' "$r" | xargs -r docker rmi >/dev/null 2>&1 || true
     done
@@ -70,8 +73,19 @@ limpar() {
 }
 trap limpar EXIT
 
-cp "$RAIZ/deploy/vps/compose.prod.yaml" "$RAIZ/deploy/vps/Caddyfile" "$RAIZ/deploy/vps/initdb.sh" "$DIR/"
+cp "$RAIZ/deploy/vps/compose.prod.yaml" "$RAIZ/deploy/vps/Caddyfile" "$DIR/"
+# 0755 como o runbook instala (3.3). Com o 0644 do checkout, o Docker Desktop
+# (VirtioFS) responde -x ao bash do entrypoint do Postgres, o exec falha e o
+# banco sobe sem os papéis no reinício.
+install -m 0755 "$RAIZ/deploy/vps/initdb.sh" "$DIR/"
 cp "$RAIZ/deploy/ci/vps/compose.teste.yaml" "$DIR/"
+# A borda de teste com o trecho de produção, trocando só o domínio (uma
+# linha, exatamente, ou o teste rodaria outra coisa).
+mkdir -p "$DIR/borda/conf.d"
+cp "$RAIZ/deploy/ci/vps/borda/compose.yaml" "$RAIZ/deploy/ci/vps/borda/Caddyfile" "$DIR/borda/"
+[ "$(grep -cx 'stillon.tech {' "$RAIZ/deploy/vps/edge/stillon.caddy")" = 1 ] ||
+    { echo "FALHOU: o stillon.caddy não tem a linha 'stillon.tech {' (uma vez)" >&2; exit 1; }
+sed "s/^stillon\.tech {\$/$DOMINIO {/" "$RAIZ/deploy/vps/edge/stillon.caddy" > "$DIR/borda/conf.d/stillon.caddy"
 b64() { openssl rand -base64 32; }
 IP_HASH_KEY=$(b64)
 cat > "$DIR/.env" <<EOF
@@ -84,7 +98,6 @@ JWT_SECRET=$(b64)
 IP_HASH_KEY=$IP_HASH_KEY
 RESEND_API_KEY=
 EMAIL_FROM=
-STILLON_CADDY_TESTE=local_certs
 TESTE_VPS_HTTP=$HTTP
 TESTE_VPS_HTTPS=$HTTPS
 EOF
@@ -94,6 +107,11 @@ chmod 600 "$DIR/.env"
 # interpolação, mais o arquivo do teste por cima.
 dc() { COMPOSE_FILE="$DIR/compose.prod.yaml:$DIR/compose.teste.yaml" docker compose --project-directory "$DIR" "$@"; }
 sql() { dc exec -T db psql -U postgres -d stillon -Atq -c "$1"; }
+bd() {
+    CADDY_IMAGEM=$caddy_img TESTE_VPS_HTTP=$HTTP TESTE_VPS_HTTPS=$HTTPS \
+        docker compose --project-directory "$DIR/borda" -f "$DIR/borda/compose.yaml" "$@"
+}
+caddy_img=
 
 # A entrada do teste: a de produção com as constantes trocadas (o diretório,
 # o nome da imagem, o compose do teste por cima, uma espera menor). Cada troca
@@ -184,13 +202,27 @@ estado() {
 # ---------------------------------------------------------------------------
 cfg=$(cd "$DIR" && docker compose -f compose.prod.yaml config --format json)
 q() { jq -r "$1" <<<"$cfg"; }
+caddy_img=$(q '.services.caddy.image')
 
-[ "$(q '[.services | to_entries[] | select(.value.ports != null and (.value.ports | length) > 0) | .key] | join(",")')" = caddy ] ||
-    falhar "algum serviço além do caddy publica porta"
-[ "$(q '[.services.caddy.ports[] | "\(.host_ip)|\(.published)|\(.target)|\(.protocol)"] | sort | join(" ")')" = "0.0.0.0|443|443|tcp 0.0.0.0|80|80|tcp" ] ||
-    falhar "o caddy não publica exatamente 80 e 443 (tcp, IPv4): $(q '.services.caddy.ports')"
+[ "$(q '[.services | to_entries[] | select(.value.ports != null and (.value.ports | length) > 0) | .key] | join(",")')" = "" ] ||
+    falhar "algum serviço publica porta: quem ouve a 80 e a 443 é a borda do host"
 [ "$(q '.services | keys | sort | join(",")')" = app,caddy,db ] ||
     falhar "serviços do compose.prod: $(q '.services | keys | join(",")'), queria app, caddy e db"
+# Só o Caddy está na rede da borda, no IP fixo que o trecho dela usa. IP, e
+# não alias: um segundo contêiner com o mesmo alias dividiria o tráfego em
+# silêncio; com o mesmo IP, o Docker recusa.
+[ "$(q '[.services | to_entries[] | select(.value.networks.edge != null) | .key] | join(",")')" = caddy ] ||
+    falhar "outro serviço além do caddy está na rede edge"
+[ "$(q '.services.caddy.networks.edge.ipv4_address')" = 172.31.0.3 ] ||
+    falhar "o caddy não está no IP fixo 172.31.0.3 da rede edge"
+[ "$(q '.services.caddy.networks.edge.aliases // [] | length')" = 0 ] ||
+    falhar "o caddy tem alias na rede edge: o trecho da borda usa o IP fixo"
+[ "$(q '.networks.edge.external')/$(q '.networks.edge.name')" = true/edge ] ||
+    falhar "a rede edge não é a externa 'edge' da borda"
+# Sem NET_RAW, o Caddy não forja ARP nem pacote cru na rede edge, que é
+# dividida com os outros projetos.
+[ "$(q '.services.caddy.cap_drop // [] | index("NET_RAW") != null')" = true ] ||
+    falhar "o caddy não tira NET_RAW (cap_drop): forjaria ARP na rede edge"
 for s in caddy app db; do
     [ "$(q ".services.$s.restart")" = unless-stopped ] || falhar "$s sem restart: unless-stopped"
     [ "$(q ".services.$s.mem_limit // empty")" != "" ] || falhar "$s sem mem_limit"
@@ -208,19 +240,19 @@ if ! { [ "$gomem_b" -gt 0 ] && [ "$gomem_b" -lt "$limite" ]; }; then
 fi
 # O IP do cliente (obrigação 2): TRUSTED_PROXIES é o IP fixo do Caddy.
 caddy_ip=$(q '.services.caddy.networks.stillon.ipv4_address')
-[ "$caddy_ip" = 172.30.0.2 ] || falhar "IP do caddy é '$caddy_ip', queria 172.30.0.2"
+[ "$caddy_ip" = 10.30.0.2 ] || falhar "IP do caddy é '$caddy_ip', queria 10.30.0.2"
 [ "$(q '.services.app.environment.TRUSTED_PROXIES')" = "$caddy_ip/32" ] ||
     falhar "TRUSTED_PROXIES do app não é $caddy_ip/32"
 [ "$(q '.services.app.environment.CLIENT_IP_HEADER')" = "" ] || falhar "CLIENT_IP_HEADER do app não é vazio"
 [ "$(q '.services.app.environment.PUBLIC_BASE_URL')" = "https://$DOMINIO" ] || falhar "PUBLIC_BASE_URL não é https://<domínio>"
 [ "$(q '.services.app.environment.METRICS_ADDR')" = off ] || falhar "METRICS_ADDR do app não é off"
-[ "$(q '.services.app.networks.stillon.ipv4_address')/$(q '.services.db.networks.stillon.ipv4_address')" = 172.30.0.3/172.30.0.4 ] ||
-    falhar "IPs fixos do app e do db não são 172.30.0.3 e 172.30.0.4"
+[ "$(q '.services.app.networks.stillon.ipv4_address')/$(q '.services.db.networks.stillon.ipv4_address')" = 10.30.0.3/10.30.0.4 ] ||
+    falhar "IPs fixos do app e do db não são 10.30.0.3 e 10.30.0.4"
 [ "$(q '.networks.stillon.enable_ipv6')" = false ] || falhar "a rede stillon não desliga o IPv6"
-[ "$(q '.networks.stillon.ipam.config[0].subnet')" = 172.30.0.0/24 ] || falhar "sub-rede da rede stillon não é 172.30.0.0/24"
+[ "$(q '.networks.stillon.ipam.config[0].subnet')" = 10.30.0.0/24 ] || falhar "sub-rede da rede stillon não é 10.30.0.0/24"
 # O Caddy não recebe segredo nenhum; o app não recebe a senha do superusuário.
-[ "$(q '.services.caddy.environment | keys | sort | join(",")')" = STILLON_CADDY_TESTE,STILLON_DOMINIO ] ||
-    falhar "o caddy recebe variáveis além do domínio e do modo de teste: $(q '.services.caddy.environment | keys | join(",")')"
+[ "$(q '.services.caddy.environment | keys | sort | join(",")')" = STILLON_DOMINIO ] ||
+    falhar "o caddy recebe variáveis além do domínio: $(q '.services.caddy.environment | keys | join(",")')"
 [ "$(q '.services.app.environment | has("POSTGRES_PASSWORD") or has("STILLON_BACKUP_PASSWORD")')" = false ] ||
     falhar "o app recebe a senha do superusuário ou a do backup"
 grep -q -- '-demo-\|ZGVtby12aWdpbHVtZS' "$RAIZ/deploy/vps/compose.prod.yaml" && falhar "o compose.prod.yaml tem chave de demonstração"
@@ -233,16 +265,32 @@ for par in app:MASTER_KEY app:JWT_SECRET app:IP_HASH_KEY db:POSTGRES_PASSWORD db
     [ "$(q ".services.$s.environment.$v // empty")" = "$(env_do_teste "$v")" ] ||
         falhar "o $v do $s não é o do .env (valor escrito no compose.prod.yaml?)"
 done
-[ "$(q '.services.app.environment.DATABASE_URL')" = "postgres://stillon_app:$(env_do_teste STILLON_APP_PASSWORD)@172.30.0.4:5432/stillon?sslmode=disable" ] ||
+[ "$(q '.services.app.environment.DATABASE_URL')" = "postgres://stillon_app:$(env_do_teste STILLON_APP_PASSWORD)@10.30.0.4:5432/stillon?sslmode=disable" ] ||
     falhar "a DATABASE_URL do app não usa a senha do .env: $(q '.services.app.environment.DATABASE_URL' | sed 's/:[^:@]*@/:***@/')"
-# Sem trusted_proxies no Caddyfile (obrigação 1), fora dos comentários.
-[ "$(sed 's/#.*//' "$RAIZ/deploy/vps/Caddyfile" | grep -c trusted_proxies || true)" = 0 ] ||
-    falhar "o Caddyfile tem trusted_proxies: um cliente escolheria o próprio IP"
+# O Caddyfile confia só na borda (obrigação 1), fora dos comentários: uma
+# lista mais larga deixaria um vizinho da rede edge escolher o IP do cliente.
+sem_comentario() { sed 's/#.*//' "$1"; }
+if ! { [ "$(sem_comentario "$RAIZ/deploy/vps/Caddyfile" | grep -c 'trusted_proxies' || true)" = 2 ] &&
+    sem_comentario "$RAIZ/deploy/vps/Caddyfile" | grep -qxE '[[:space:]]*trusted_proxies static 172\.31\.0\.2/32' &&
+    sem_comentario "$RAIZ/deploy/vps/Caddyfile" | grep -qxE '[[:space:]]*trusted_proxies_strict'; }; then
+    falhar "o Caddyfile não confia exatamente em 172.31.0.2/32, em modo estrito"
+fi
+sem_comentario "$RAIZ/deploy/vps/Caddyfile" | grep -qxE '[[:space:]]*header_up X-Forwarded-For \{client_ip\}' ||
+    falhar "o Caddyfile não reescreve o X-Forwarded-For com o {client_ip}: o app veria a borda"
+if ! { [ "$(q '.services.app.networks.stillon.ipv4_address')" = 10.30.0.3 ] &&
+    sem_comentario "$RAIZ/deploy/vps/Caddyfile" | grep -qxE '[[:space:]]*reverse_proxy 10\.30\.0\.3:8080 \{'; }; then
+    falhar "o Caddyfile não chama o app pelo IP fixo 10.30.0.3: um vizinho chamado app na rede edge receberia o tráfego"
+fi
+# O trecho da borda não confia em ninguém e aponta para o IP fixo.
+[ "$(sem_comentario "$RAIZ/deploy/vps/edge/stillon.caddy" 2>/dev/null | grep -c trusted_proxies || true)" = 0 ] ||
+    falhar "o trecho da borda tem trusted_proxies: um cliente escolheria o próprio IP"
+sem_comentario "$RAIZ/deploy/vps/edge/stillon.caddy" 2>/dev/null | grep -qxE '[[:space:]]*reverse_proxy 172\.31\.0\.3:80' ||
+    falhar "o trecho da borda não encaminha para 172.31.0.3:80"
 # O env.exemplo é o modelo do .env: sem valor nenhum, e com toda variável que
 # o compose.prod.yaml lê (menos STILLON_SHA, da entrada, e o modo de teste).
 grep -Ev '^(#|$)' "$RAIZ/deploy/vps/env.exemplo" | grep -v '=$' && falhar "o env.exemplo tem valor preenchido"
 while read -r v; do
-    case "$v" in STILLON_SHA | STILLON_CADDY_TESTE) continue ;; esac
+    case "$v" in STILLON_SHA) continue ;; esac
     grep -q "^$v=$" "$RAIZ/deploy/vps/env.exemplo" || falhar "o env.exemplo não tem $v"
 done < <(grep -o '\${[A-Z_]*' "$RAIZ/deploy/vps/compose.prod.yaml" | sed 's/^\${//' | sort -u)
 # E o contrário: o env.exemplo só tem o que o compose lê (a HC_URL do vigia
@@ -250,7 +298,7 @@ done < <(grep -o '\${[A-Z_]*' "$RAIZ/deploy/vps/compose.prod.yaml" | sed 's/^\${
 while read -r v; do
     grep -q "\${${v}[:}-]" "$RAIZ/deploy/vps/compose.prod.yaml" || falhar "o env.exemplo tem $v, que o compose.prod.yaml não lê"
 done < <(grep -Eo '^[A-Z_]+=' "$RAIZ/deploy/vps/env.exemplo" | tr -d =)
-ok "compose.prod.yaml: portas, restart, mem_limit, GOMEMLIMIT, IPs fixos, IPv6, variáveis, segredos do .env; Caddyfile sem trusted_proxies"
+ok "compose.prod.yaml: sem portas, só o caddy na rede edge, restart, mem_limit, GOMEMLIMIT, IPs fixos, IPv6, variáveis, segredos do .env; Caddyfile confia só na borda"
 
 # A entrada e o compose falam da mesma imagem.
 if ! { grep -qx 'IMAGEM=stillon' "$RAIZ/deploy/vps/stillon-entrada" &&
@@ -259,8 +307,15 @@ if ! { grep -qx 'IMAGEM=stillon' "$RAIZ/deploy/vps/stillon-entrada" &&
 fi
 
 # ---------------------------------------------------------------------------
-# 2. A pilha de pé pelo stillon-entrada, com o Caddy em modo local.
+# 2. A pilha de pé pelo stillon-entrada, atrás da borda de teste.
 # ---------------------------------------------------------------------------
+# A borda antes da pilha: o compose.prod.yaml só sobe com a rede edge.
+bd up -d --wait --wait-timeout 60 >&2 || { echo "FALHOU: a borda de teste não subiu" >&2; exit 1; }
+# O curl do host chega à borda pelo gateway da rede edge: é esse o IP do
+# cliente que o app tem de ver.
+cliente_ip=$(docker network inspect -f '{{(index .IPAM.Config 0).Gateway}}' edge)
+[ -n "$cliente_ip" ] || { echo "FALHOU: a rede edge não informou o gateway" >&2; exit 1; }
+
 ID_A=$(fonte a 'LABEL stillon.teste=a')
 ID_DOENTE=$(fonte doente 'ENV ARGON2_MAX_CONCURRENT=999')
 SHA_A=$(sha_de a)
@@ -289,26 +344,28 @@ fi
 [ ! -s "$TARS/saida" ] || falhar "o deploy escreveu na saída padrão"
 ok "stillon-entrada: primeiro deploy doente para o app (4); deploy saudável (0)"
 
-# Só o caddy publica, e só 80 e 443 (de dentro do contêiner).
-publicadas=$(dc ps --format json | jq -rs '[.[] | .Service as $s | (.Publishers // [])[] | select(.PublishedPort > 0) | "\($s):\(.TargetPort)"] | sort | unique | join(" ")')
-[ "$publicadas" = "caddy:443 caddy:80" ] || falhar "portas publicadas na pilha: '$publicadas'"
-for s in app db; do
+# Ninguém da pilha publica porta: só a borda, e só 80 e 443.
+publicadas=$(dc ps --format json | jq -rs '[.[] | (.Publishers // [])[] | select(.PublishedPort > 0)] | length')
+[ "$publicadas" = 0 ] || falhar "a pilha do StillOn publica porta"
+borda_portas=$(bd ps --format json | jq -rs '[.[] | .Service as $s | (.Publishers // [])[] | select(.PublishedPort > 0) | "\($s):\(.TargetPort)"] | sort | unique | join(" ")')
+[ "$borda_portas" = "proxy:443 proxy:80" ] || falhar "portas publicadas na borda: '$borda_portas'"
+for s in caddy app db; do
     [ "$(docker inspect -f '{{json .HostConfig.PortBindings}}' "$(dc ps -q "$s")")" = "{}" ] ||
         falhar "$s tem porta publicada no host"
 done
 rede=$(docker inspect -f '{{range $k, $v := .NetworkSettings.Networks}}{{$k}}{{end}}' "$(dc ps -q db)")
 [ "$(docker network inspect -f '{{.EnableIPv6}}' "$rede")" = false ] || falhar "a rede $rede tem IPv6"
 
-# A CA interna do Caddy, para o curl conferir o certificado de verdade.
-dc exec -T caddy cat /data/caddy/pki/authorities/local/root.crt > "$DIR/ca.crt"
+# A CA interna da borda, para o curl conferir o certificado de verdade.
+bd exec -T proxy cat /data/caddy/pki/authorities/local/root.crt > "$DIR/ca.crt"
 cu() { curl -sS --max-time 10 --cacert "$DIR/ca.crt" --resolve "$DOMINIO:$HTTPS:127.0.0.1" "$@"; }
 BASE=https://$DOMINIO:$HTTPS
 
-# 3. /healthz pelo Caddy, com TLS conferido, chegando ao app (X-Trace-Id é do app).
+# 3. /healthz pela borda, com TLS conferido, chegando ao app (X-Trace-Id é do app).
 resp=$(cu -D - -o /dev/null "$BASE/healthz" || true)
-echo "$resp" | head -1 | grep -q ' 200' || falhar "/healthz pelo Caddy não deu 200: $(echo "$resp" | head -1)"
-echo "$resp" | grep -qi '^x-trace-id:' || falhar "/healthz pelo Caddy não veio do app (sem X-Trace-Id)"
-ok "/healthz pelo Caddy, com o certificado da CA interna"
+echo "$resp" | head -1 | grep -q ' 200' || falhar "/healthz pela borda não deu 200: $(echo "$resp" | head -1)"
+echo "$resp" | grep -qi '^x-trace-id:' || falhar "/healthz pela borda não veio do app (sem X-Trace-Id)"
+ok "/healthz pela borda, com o certificado da CA interna"
 
 # 4. Host estranho não chega ao app.
 #    a) outro nome no SNI: sem certificado para ele, nada responde.
@@ -345,13 +402,12 @@ entrar() {
 }
 ultimo_hash() { sql "SELECT encode(ip_hash, 'hex') FROM sessions ORDER BY created_at DESC, id DESC LIMIT 1"; }
 
-[ "$(entrar)" = 200 ] || falhar "login pelo Caddy não deu 200"
+[ "$(entrar)" = 200 ] || falhar "login pela borda não deu 200"
 real=$(ultimo_hash)
 [ -n "$real" ] || falhar "a sessão do login não tem ip_hash"
 [ "$real" = "$(hmac "$caddy_ip")" ] && falhar "o app viu o IP do Caddy: TRUSTED_PROXIES não casa, e todo cliente divide um balde"
-# O cliente do host chega à rede pelo gateway fixo: é esse o IP que o app vê.
-gateway=$(q '.networks.stillon.ipam.config[0].gateway')
-[ "$real" = "$(hmac "$gateway")" ] || falhar "o app não viu o IP do cliente ($gateway, o gateway da rede)"
+[ "$real" = "$(hmac 172.31.0.2)" ] && falhar "o app viu o IP da borda: o Caddy do StillOn não reescreve o X-Forwarded-For"
+[ "$real" = "$(hmac "$cliente_ip")" ] || falhar "o app não viu o IP do cliente ($cliente_ip, o gateway da rede edge)"
 [ "$(entrar -H 'X-Real-IP: 1.2.3.4' -H 'Fly-Client-IP: 1.2.3.5' -H 'CF-Connecting-IP: 1.2.3.6' -H 'X-Forwarded-For: 1.2.3.7')" = 200 ] ||
     falhar "login com cabeçalhos forjados não deu 200"
 forjado=$(ultimo_hash)
@@ -390,15 +446,107 @@ rm -f "$DIR/compose.cabecalho.yaml"
 STILLON_SHA=$SHA_A dc up -d --wait --wait-timeout 120 app >&2 || falhar "o app não voltou à configuração de produção"
 ok "o Caddy remove X-Real-IP, Fly-Client-IP e CF-Connecting-IP"
 
+# 6b. Um contêiner de outro projeto na rede edge, falando direto com o Caddy
+#     do StillOn (sem a borda), não escolhe o IP que o app vê: o Caddy só
+#     confia no X-Forwarded-For que vem de 172.31.0.2. A conta é a do dono
+#     (o StillOn tem um usuário só); o limitador de login é por IP, e o
+#     vizinho tem o dele.
+caddy_edge=$(docker inspect -f '{{(index .NetworkSettings.Networks "edge").IPAddress}}' "$(dc ps -q caddy)")
+vizinho_ip=172.31.0.77
+c=$(docker run --rm --network edge --ip "$vizinho_ip" --add-host "$DOMINIO:$caddy_edge" \
+    --entrypoint curl "$caddy_img" -sS --max-time 10 -o /dev/null -w '%{http_code}' \
+    -X POST "http://$DOMINIO/api/v1/auth/login" \
+    -H 'Content-Type: application/json' -H 'X-Requested-With: stillon' -H 'X-Forwarded-For: 1.2.3.8' \
+    -d "{\"email\":\"$EMAIL\",\"password\":\"$SENHA\"}" || true)
+[ "$c" = 200 ] || falhar "login do vizinho direto no Caddy do StillOn não deu 200 ($c)"
+direto=$(ultimo_hash)
+[ "$direto" = "$(hmac 1.2.3.8)" ] && falhar "o Caddy do StillOn acreditou no X-Forwarded-For de um vizinho da rede edge"
+[ "$direto" = "$(hmac "$vizinho_ip")" ] || falhar "o app não viu o IP do vizinho ($vizinho_ip)"
+ok "um vizinho da rede edge não escolhe o IP visto pelo app"
+
+# 6b'. O modo estrito do Caddy do StillOn (trusted_proxies_strict): com uma
+#      borda que confia no cliente e por isso ACRESCENTA o salto (chega
+#      "1.2.3.9, <cliente>"), vale o salto mais à direita que não é da borda,
+#      o IP real. Sem o modo estrito, o Caddy pegaria o mais à esquerda, o
+#      que o cliente escreveu. Com a borda do contrato (que troca o
+#      X-Forwarded-For) os dois modos dão o mesmo IP: só esta variante
+#      distingue. A variante entra por caddy reload, que mantém a CA.
+awk '{ print } /^\tservers \{$/ { print "\t\ttrusted_proxies static private_ranges"; n++ } END { exit n != 1 }' \
+    "$DIR/borda/Caddyfile" > "$DIR/borda/Caddyfile.saltos" ||
+    { echo "FALHOU: o Caddyfile da borda de teste não tem o bloco servers (uma vez)" >&2; exit 1; }
+recarregar_borda() { bd exec -T proxy caddy reload --adapter caddyfile --config "$1" >&2; }
+if recarregar_borda /dev/stdin < "$DIR/borda/Caddyfile.saltos"; then
+    [ "$(entrar -H 'X-Forwarded-For: 1.2.3.9')" = 200 ] || falhar "login pela borda que acrescenta salto não deu 200"
+    h=$(ultimo_hash)
+    [ "$h" = "$(hmac 1.2.3.9)" ] && falhar "com a borda acrescentando salto, o Caddy do StillOn pegou o X-Forwarded-For do cliente (sem modo estrito?)"
+    [ "$h" = "$(hmac "$cliente_ip")" ] || falhar "com a borda acrescentando salto, o app não viu o IP do cliente ($cliente_ip)"
+else
+    falhar "a borda de teste não recarregou a variante que acrescenta salto"
+fi
+recarregar_borda /etc/caddy/Caddyfile || { echo "FALHOU: a borda de teste não voltou ao Caddyfile do contrato" >&2; exit 1; }
+[ "$(cu -o /dev/null -w '%{http_code}' "$BASE/healthz" || true)" = 200 ] || falhar "depois de restaurar a borda, /healthz não deu 200"
+ok "com a borda acrescentando salto, o modo estrito ignora o X-Forwarded-For do cliente"
+
+# 6c. Um vizinho na rede edge que se chame "app" não recebe o tráfego do
+#     StillOn: o Caddy fala com o app pelo IP fixo, e não pelo nome, que o DNS
+#     do Docker resolveria em qualquer rede do contêiner. O chamariz responde
+#     200 sem X-Trace-Id; o app de verdade sempre manda o dele. O Caddy é
+#     reiniciado depois que o chamariz sobe: sem isso, ele reusaria a conexão
+#     keep-alive com o app e nem consultaria o DNS de novo.
+chamariz=$(docker run -d --network edge --network-alias app --entrypoint caddy "$caddy_img" \
+    respond --listen :8080 --body chamariz)
+dc restart caddy >&2
+for _ in $(seq 30); do
+    [ "$(cu -o /dev/null -w '%{http_code}' "$BASE/healthz" || true)" = 200 ] && break
+    sleep 1
+done
+chegou_ao_chamariz=
+for _ in 1 2 3 4 5; do
+    resp=$(cu -D - -o /dev/null "$BASE/healthz" || true)
+    echo "$resp" | grep -qi '^x-trace-id:' || chegou_ao_chamariz=1
+done
+docker rm -f "$chamariz" >/dev/null
+[ -z "$chegou_ao_chamariz" ] || falhar "um contêiner chamado app na rede edge recebeu o tráfego do StillOn"
+ok "um vizinho chamado app na rede edge não recebe o tráfego do StillOn"
+
+# 6d. A checagem de Host é do Caddy do StillOn, não só da borda: direto nele,
+#     pela rede edge, só o domínio chega ao app.
+direto_host() {
+    docker run --rm --network edge --entrypoint curl "$caddy_img" -sS --max-time 10 -D - -o /dev/null "$@" \
+        "http://172.31.0.3/healthz" || true
+}
+direto_host -H 'Host: estranho.teste' | grep -qi '^x-trace-id:' && falhar "Host estranho direto no Caddy do StillOn chegou ao app"
+direto_host | grep -qi '^x-trace-id:' && falhar "Host 172.31.0.3 direto no Caddy do StillOn chegou ao app"
+direto_host -H "Host: $DOMINIO" | grep -qi '^x-trace-id:' || falhar "controle: o domínio direto no Caddy do StillOn não chegou ao app"
+ok "direto no Caddy do StillOn, só o domínio chega ao app"
+
 # 7. O banco não aceita conexão de fora da rede do compose. O controle
 #    positivo (de dentro da rede) prova que a sonda funciona.
 pg=$(docker inspect -f '{{.Config.Image}}' "$(dc ps -q db)")
-docker run --rm --network "$rede" "$pg" pg_isready -h 172.30.0.4 -t 5 >/dev/null ||
+docker run --rm --network "$rede" "$pg" pg_isready -h 10.30.0.4 -t 5 >/dev/null ||
     falhar "controle: de dentro da rede, o pg_isready não alcançou o banco"
-if docker run --rm "$pg" pg_isready -h 172.30.0.4 -t 5 >/dev/null 2>&1; then
+if docker run --rm "$pg" pg_isready -h 10.30.0.4 -t 5 >/dev/null 2>&1; then
     falhar "de outra rede do Docker, o banco aceitou conexão"
 fi
 ok "o banco só aceita conexão de dentro da rede"
+
+# 7b. A borda não depende do StillOn: com o Caddy dele parado, ela continua
+#     de pé e responde 502 ao domínio; com ele de volta, encaminha de novo.
+dc stop caddy >&2
+c=$(cu -o /dev/null -w '%{http_code}' "$BASE/healthz" || true)
+[ "$c" = 502 ] || falhar "com o StillOn parado, a borda respondeu $c, queria 502"
+[ "$(docker inspect -f '{{.State.Running}}' "$(bd ps -q proxy)")" = true ] || falhar "a borda caiu com o StillOn parado"
+dc start caddy >&2
+de_volta=
+for _ in $(seq 30); do
+    if [ "$(cu -o /dev/null -w '%{http_code}' "$BASE/healthz" || true)" = 200 ]; then
+        de_volta=1
+        break
+    fi
+    sleep 1
+done
+[ -n "$de_volta" ] || falhar "com o Caddy do StillOn de volta, a borda não voltou a encaminhar em 30 s"
+ok "a borda segue de pé com o StillOn parado (502) e volta a encaminhar"
 
 # ---------------------------------------------------------------------------
 # 8. stillon-entrada: recusas, imagem divergente, rollback, as 3 últimas.
@@ -586,7 +734,7 @@ grep -q 'ARGON2_MAX_CONCURRENT' "$TARS/erro" || falhar "o deploy doente não mos
 [ "$(imagem_do_app)" = "$REPO_TESTE:$SHA_A" ] || falhar "depois do rollback o app roda $(imagem_do_app)"
 [ "$(docker image inspect -f '{{.Id}}' "$REPO_TESTE:atual")" = "$ID_A" ] || falhar "depois do rollback, atual não é a versão no ar"
 [ "$(docker inspect -f '{{.State.Health.Status}}' "$(dc ps -q app)")" = healthy ] || falhar "depois do rollback o app não está saudável: $(estado)"
-[ "$(cu -o /dev/null -w '%{http_code}' "$BASE/healthz")" = 200 ] || falhar "depois do rollback, /healthz pelo Caddy não deu 200"
+[ "$(cu -o /dev/null -w '%{http_code}' "$BASE/healthz")" = 200 ] || falhar "depois do rollback, /healthz pela borda não deu 200"
 ok "stillon-entrada: deploy doente volta à versão anterior (4)"
 
 # 8c'. Rollback por tempo esgotado: um app que fica de pé e nunca saudável

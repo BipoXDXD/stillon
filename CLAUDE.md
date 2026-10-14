@@ -45,28 +45,30 @@ Lições da execução guiada (2026-09-28):
 - Configuração do Mac sem segredo (ex.: `~/.ssh/config`), o Claude escreve; o dono roda o que
   pede passphrase, `sudo` ou painel.
 
-## Orientação atual (2026-10-05)
+## Orientação atual (2026-10-13)
 
-O estado de desenvolvimento, dos PRs e das integrações está no
-[registro de continuidade](docs/superpowers/reports/2026-10-05-continuacao.md).
-A execução histórica dos blocos 0–2 está registrada abaixo; a VPS não foi
-conferida nesta retomada. Qualquer continuação da hospedagem parte do computador
-Linux e segue o [runbook](docs/deploy/vps.md), guiada, um passo numerado e seu
-**Confira** por vez. Confirme o estado atual antes de escolher o próximo bloco.
+O dono migrou do Linux para o **Mac** (MacBook Air): a hospedagem e o desenvolvimento partem
+dele. Ambiente conferido em 2026-10-13 (Go, Node, Docker Desktop, GPG, ferramentas do CI); o
+PR #64 faz a suíte Go passar no macOS.
 
-Integração do PR #27 concluída na main em `0f42101`, com nove checks aprovados e
-árvore idêntica à candidata validada nos PG17/18 e em 453 testes web. Dependabot,
-redesign vintage, configuração local de e-mail e correção E2E já integrados.
-Discord local recebeu a mensagem real do webhook; e-mail ainda depende de configuração.
-A próxima fase é a [vinculação individual do Discord](docs/superpowers/specs/2026-10-05-vinculacao-discord-design.md),
-com spec aprovada e plano aguardando revisão. Não confundir canal verificado com
-identidade vinculada, nem anunciar deploy/publicação de imagem sem conferência.
+A VPS é **compartilhada com o GoblinShift**, outro projeto do dono
+(`~/Documents/Projetos/Python/GoblinShift`), que já tem o Docker, o usuário `goblinshift` e uma
+borda em `/srv/edge`. Decisão do dono: a borda vira Caddy com TLS por domínio, e o Caddy do
+StillOn fica atrás dela ([spec](docs/superpowers/specs/2026-10-13-vps-compartilhada-design.md),
+[plano](docs/superpowers/plans/2026-10-13-vps-compartilhada.md)). A rede `stillon` mudou para
+`10.30.0.0/24` (a antiga, `172.30.0.0/24`, é do GoblinShift na VPS). O próximo passo na VPS é a
+Task 6 desse plano, guiada, um passo e seu **Confira** por vez; o runbook do 3.3 em diante segue
+valendo, com o 3.1, o 3.2 e o 4.9 reescritos para a borda.
 
-Encerramento combinado em 2026-10-05: VPS fica para 2026-10-06, guiada pelo runbook.
-CI da main funcional `0f42101` e publicação da imagem concluídos com sucesso;
-nenhum deploy feito. Padrão equilibrado de lembretes aprovado e registrado na
-continuidade, ainda não implementado. Retomar vinculação/cargo e frequência como
-etapas próprias, sem confundir planejamento aprovado com código pronto.
+O `checar-vps.sh` não roda nativo no Mac (o `stillon-entrada` fixa um `PATH` de Ubuntu e o tar do
+deploy é `amd64`): localmente, ele roda num Ubuntu descartável com o socket do Docker e
+`DOCKER_DEFAULT_PLATFORM=linux/amd64`; o bloco 9 (backup) só fecha no job `vps` do CI.
+
+Pendentes depois da VPS: [vinculação Discord](docs/superpowers/specs/2026-10-05-vinculacao-discord-design.md)
+(plano aguardando revisão), a política de lembretes aprovada (registrada na
+[continuidade de 2026-10-05](docs/superpowers/reports/2026-10-05-continuacao.md)) e os PRs do
+Dependabot. Não confundir planejamento aprovado com código pronto, nem anunciar deploy sem
+conferência.
 
 ## Registro histórico (2026-09-28)
 
@@ -78,7 +80,7 @@ etapas próprias, sem confundir planejamento aprovado com código pronto.
   `avisos.stillon.tech` verificado (remetente `StillOn <alertas@avisos.stillon.tech>`); check
   "StillOn" no healthchecks.io; todos os segredos no Bitwarden.
 - **A chave `stillon-admin` foi refeita no Mac** (a passphrase guardada não abria a antiga): chave,
-  passphrase e a pública nova no Bitwarden e no painel. Usuário da VPS: `biposlayer`, com `sudo`.
+  passphrase e a pública nova no Bitwarden e no painel. Usuário da VPS: o `EU` do `~/.stillon-vps`, com `sudo`.
   No Mac: `~/.stillon-vps` e `Host stillon` no `~/.ssh/config` (com `ServerAliveInterval 30`).
 - Bloco 2 conferido: SSH só por chave e sem root (provado de fora), `fail2ban`, `ufw` e firewall
   do painel (só 22, 80 e 443; o `ping` não responde), atualizações automáticas com reinício às

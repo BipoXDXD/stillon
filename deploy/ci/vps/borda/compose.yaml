@@ -1,0 +1,35 @@
+# SÓ PARA O TESTE (deploy/ci/checar-vps.sh). NUNCA vai para a VPS.
+#
+# A borda do host como o contrato da spec 2026-10-13-vps-compartilhada a
+# descreve (a de verdade vem do repositório do GoblinShift): rede edge
+# 172.31.0.0/24 com os dinâmicos em .128/25, a borda em 172.31.0.2, sem
+# trusted_proxies, h1 e h2, um trecho por projeto em conf.d. As portas vão
+# para o loopback, em portas altas; o certificado sai da CA interna.
+name: stillon-teste-borda
+
+services:
+  proxy:
+    # O mesmo digest do Caddy do compose.prod.yaml (o checar-vps.sh passa).
+    image: ${CADDY_IMAGEM:?o checar-vps.sh define CADDY_IMAGEM}
+    ports:
+      - "127.0.0.1:${TESTE_VPS_HTTP:-18580}:80"
+      - "127.0.0.1:${TESTE_VPS_HTTPS:-18543}:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./conf.d:/etc/caddy/conf.d:ro
+    networks:
+      edge:
+        ipv4_address: 172.31.0.2
+
+networks:
+  edge:
+    name: edge
+    ipam:
+      config:
+        - subnet: 172.31.0.0/24
+          # Gateway explícito só no teste: o Docker do Linux não informa no
+          # inspect um gateway que ele escolheu sozinho, e o checar-vps.sh lê
+          # dele o IP com que o curl do host chega à borda. O contrato não
+          # fixa o gateway.
+          gateway: 172.31.0.1
+          ip_range: 172.31.0.128/25

@@ -1,0 +1,11 @@
+# SÓ PARA O TESTE: a borda do contrato, com a CA interna no lugar do Let's
+# Encrypt. Sem trusted_proxies, de propósito: é o que faz a borda trocar o
+# X-Forwarded-For do cliente pelo IP de quem conectou.
+{
+	local_certs
+	servers {
+		protocols h1 h2
+	}
+}
+
+import /etc/caddy/conf.d/*.caddy

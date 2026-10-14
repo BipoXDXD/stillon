@@ -1,16 +1,11 @@
 # SÓ PARA O TESTE (deploy/ci/checar-vps.sh). NUNCA vai para a VPS.
 #
-# Por cima do deploy/vps/compose.prod.yaml: outro nome de projeto, as portas
-# 80 e 443 do Caddy em portas altas do loopback (o runner ou a máquina de quem
-# testa pode ter a 80 ocupada), e outro nome de imagem para o app, para o
-# teste nunca mexer numa imagem stillon:* de verdade. O resto (IPs fixos,
-# ambiente do app, healthchecks, limites) é o de produção.
+# Por cima do deploy/vps/compose.prod.yaml: outro nome de projeto e outro
+# nome de imagem para o app, para o teste nunca mexer numa imagem stillon:*
+# de verdade. As portas são da borda de teste (deploy/ci/vps/borda). O resto
+# (IPs fixos, ambiente do app, healthchecks, limites) é o de produção.
 name: stillon-teste-vps
 
 services:
-  caddy:
-    ports: !override
-      - "127.0.0.1:${TESTE_VPS_HTTP:-18580}:80"
-      - "127.0.0.1:${TESTE_VPS_HTTPS:-18543}:443"
   app:
     image: stillon-teste-vps:${STILLON_SHA:-atual}

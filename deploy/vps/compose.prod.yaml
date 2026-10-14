@@ -1,6 +1,7 @@
-# StillOn em produção numa VPS (Plano 11, spec §2). Fica em
-# /opt/stillon/compose.prod.yaml, ao lado do Caddyfile, do initdb.sh e do
-# .env (segredos, root 600, fora do git; modelo em deploy/vps/env.exemplo).
+# StillOn em produção numa VPS (Plano 11, spec §2; spec 2026-10-13-vps-
+# compartilhada). Fica em /opt/stillon/compose.prod.yaml, ao lado do
+# Caddyfile, do initdb.sh e do .env (segredos, root 600, fora do git; modelo
+# em deploy/vps/env.exemplo). Depende da rede edge da borda do host.
 #
 # O compose.yaml da raiz do repositório NÃO vai para o servidor: ele tem o
 # seed do usuário de demonstração e chaves públicas (obrigação 5).
@@ -31,29 +32,30 @@ services:
     # caddy:2 por digest (a tag fica no nome). O Dependabot atualiza este
     # digest e o do Postgres (ecossistema docker-compose, /deploy/vps).
     image: caddy:2@sha256:0c994536bddb66445885237f1a5dcc1916bccea922661c76b4e9fc24061f9b52
-    # SÓ o Caddy publica porta, e só 80 e 443 em IPv4 (obrigação 3). O Docker
-    # ignora o ufw para porta publicada: esta lista é o firewall que vale.
-    # Em IPv4 de propósito: numa porta publicada em [::], o Docker entrega a
-    # conexão IPv6 pelo docker-proxy, e todo cliente IPv6 chegaria ao Caddy
-    # com o IP do gateway da rede — um balde de rate limit só para todos.
-    # (Sem registro AAAA no DNS: runbook.)
-    ports:
-      - "0.0.0.0:80:80"
-      - "0.0.0.0:443:443"
+    # Nenhuma porta publicada (obrigação 3). Quem ouve a 80 e a 443 da VPS é
+    # a borda do host (/srv/edge), dividida com o GoblinShift: ela faz o TLS
+    # e encaminha o domínio para cá pela rede edge. Este Caddy é o único
+    # contêiner do StillOn naquela rede: o app e o banco ficam fora do
+    # alcance dos outros projetos.
     environment:
       STILLON_DOMINIO: ${STILLON_DOMINIO:?defina STILLON_DOMINIO no /opt/stillon/.env}
-      # Vazio em produção. Só o teste do CI o preenche (local_certs).
-      STILLON_CADDY_TESTE: ${STILLON_CADDY_TESTE:-}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      # Os certificados. Perder o volume é pedir tudo de novo ao Let's
-      # Encrypt, que tem limite semanal por domínio.
-      - caddy_data:/data
-      - caddy_config:/config
     networks:
       stillon:
-        ipv4_address: 172.30.0.2
+        ipv4_address: 10.30.0.2
+      edge:
+        # O IP reservado ao StillOn na rede da borda (ADR 014 do GoblinShift),
+        # fora da faixa dinâmica (.128/25), e o que o trecho da borda
+        # (deploy/vps/edge/stillon.caddy) usa. IP, e não alias: outro
+        # contêiner com o mesmo alias dividiria o tráfego em silêncio; com o
+        # mesmo IP, o Docker recusa.
+        ipv4_address: 172.31.0.3
     mem_limit: 256m
+    # Sem NET_RAW, o Caddy não forja ARP nem pacote cru na rede edge, dividida
+    # com os outros projetos. Ele ouve a 80 como root e não precisa dela; as
+    # demais capacidades padrão ficam (NET_BIND_SERVICE, troca de dono).
+    cap_drop: [NET_RAW]
     security_opt: ["no-new-privileges:true"]
     logging: *log
     restart: unless-stopped
@@ -67,14 +69,15 @@ services:
     pull_policy: never
     command: ["--role=all"]
     environment:
-      DATABASE_URL: postgres://stillon_app:${STILLON_APP_PASSWORD:?defina STILLON_APP_PASSWORD no /opt/stillon/.env}@172.30.0.4:5432/stillon?sslmode=disable
+      DATABASE_URL: postgres://stillon_app:${STILLON_APP_PASSWORD:?defina STILLON_APP_PASSWORD no /opt/stillon/.env}@10.30.0.4:5432/stillon?sslmode=disable
       # Com https, o boot recusa as chaves de demonstração e liga o cookie
       # Secure (obrigação 5).
       PUBLIC_BASE_URL: https://${STILLON_DOMINIO:?defina STILLON_DOMINIO no /opt/stillon/.env}
       CORS_ORIGIN: https://${STILLON_DOMINIO}
       # O IP fixo do Caddy, e o CLIENT_IP_HEADER vazio: o app lê o último
-      # salto do X-Forwarded-For, que o Caddy escreve (obrigação 2).
-      TRUSTED_PROXIES: 172.30.0.2/32
+      # salto do X-Forwarded-For, que o Caddy reescreve com o IP do cliente
+      # que a borda informou (obrigação 2).
+      TRUSTED_PROXIES: 10.30.0.2/32
       CLIENT_IP_HEADER: ""
       METRICS_ADDR: "off"
       LOG_LEVEL: info
@@ -99,7 +102,7 @@ services:
       start_interval: 500ms
     networks:
       stillon:
-        ipv4_address: 172.30.0.3
+        ipv4_address: 10.30.0.3
     mem_limit: 1g
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
@@ -137,7 +140,7 @@ services:
     # rede (stillon-entrada backup).
     networks:
       stillon:
-        ipv4_address: 172.30.0.4
+        ipv4_address: 10.30.0.4
     mem_limit: 1g
     logging: *log
     restart: unless-stopped
@@ -149,13 +152,18 @@ networks:
     enable_ipv6: false
     ipam:
       config:
-        - subnet: 172.30.0.0/24
-          gateway: 172.30.0.1
+        # Fora dos default-address-pools do daemon.json da VPS (172.16/12 e
+        # 192.168/16): nenhuma rede criada por outro projeto toma esta faixa.
+        - subnet: 10.30.0.0/24
+          gateway: 10.30.0.1
           # Os IPs dinâmicos (o Postgres descartável do backup) saem da
           # metade de cima; os fixos (.2, .3, .4) ficam fora do sorteio.
-          ip_range: 172.30.0.128/25
+          ip_range: 10.30.0.128/25
+  edge:
+    # A rede da borda do host, criada pelo compose dela (/srv/edge).
+    # Externa: o StillOn nunca a cria nem a apaga.
+    external: true
+    name: edge
 
 volumes:
   pgdata:
-  caddy_data:
-  caddy_config:

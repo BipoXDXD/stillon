@@ -389,9 +389,10 @@ jobs:
 
   vps:
     # A produção da VPS (Plano 11, spec §8) com a imagem que acabou de passar
-    # no Trivy: o deploy/vps/compose.prod.yaml com o Caddy em modo local, e o
-    # stillon-entrada (deploy, rollback, backup) contra ele. Portas, Host,
-    # IP do cliente, banco fechado, recusas e backup só cifrado.
+    # no Trivy: o deploy/vps/compose.prod.yaml atrás de uma borda de teste
+    # (deploy/ci/vps/borda, CA interna), e o stillon-entrada (deploy,
+    # rollback, backup) contra ele. Portas, Host, IP do cliente, banco
+    # fechado, recusas e backup só cifrado.
     needs: image
     runs-on: ubuntu-latest
     timeout-minutes: 20
