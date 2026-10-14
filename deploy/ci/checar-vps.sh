@@ -219,6 +219,10 @@ caddy_img=$(q '.services.caddy.image')
     falhar "o caddy tem alias na rede edge: o trecho da borda usa o IP fixo"
 [ "$(q '.networks.edge.external')/$(q '.networks.edge.name')" = true/edge ] ||
     falhar "a rede edge não é a externa 'edge' da borda"
+# Sem NET_RAW, o Caddy não forja ARP nem pacote cru na rede edge, que é
+# dividida com os outros projetos.
+[ "$(q '.services.caddy.cap_drop // [] | index("NET_RAW") != null')" = true ] ||
+    falhar "o caddy não tira NET_RAW (cap_drop): forjaria ARP na rede edge"
 for s in caddy app db; do
     [ "$(q ".services.$s.restart")" = unless-stopped ] || falhar "$s sem restart: unless-stopped"
     [ "$(q ".services.$s.mem_limit // empty")" != "" ] || falhar "$s sem mem_limit"

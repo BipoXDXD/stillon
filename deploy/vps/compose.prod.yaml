@@ -52,6 +52,10 @@ services:
         # mesmo IP, o Docker recusa.
         ipv4_address: 172.31.0.3
     mem_limit: 256m
+    # Sem NET_RAW, o Caddy não forja ARP nem pacote cru na rede edge, dividida
+    # com os outros projetos. Ele ouve a 80 como root e não precisa dela; as
+    # demais capacidades padrão ficam (NET_BIND_SERVICE, troca de dono).
+    cap_drop: [NET_RAW]
     security_opt: ["no-new-privileges:true"]
     logging: *log
     restart: unless-stopped
