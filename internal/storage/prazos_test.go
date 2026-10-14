@@ -103,3 +103,52 @@ func erroDo(r slog.Record) string {
 	})
 	return erro
 }
+
+// A consolidação e a retenção sobem o próprio statement_timeout com SET
+// LOCAL, porque a primeira rodada varre semanas de linhas e passaria dos 30 s
+// do pool. Uma trigger de comando em check_rollup_1h anota o prazo em vigor
+// no INSERT da consolidação e no DELETE da retenção. O snapshot restaurado
+// no fim do teste leva a tabela e as triggers embora.
+func TestMaintenanceRaisesItsOwnStatementTimeout(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, `
+		CREATE TABLE prazo_visto (etapa text NOT NULL, valor text NOT NULL);
+		CREATE FUNCTION anotar_prazo() RETURNS trigger LANGUAGE plpgsql AS $$
+		BEGIN
+			INSERT INTO prazo_visto VALUES (TG_OP, current_setting('statement_timeout'));
+			RETURN NULL;
+		END $$;
+		CREATE TRIGGER anotar_prazo AFTER INSERT OR DELETE ON check_rollup_1h
+			FOR EACH STATEMENT EXECUTE FUNCTION anotar_prazo();`); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := storage.ConsolidateRollups(ctx, pool, agora); err != nil {
+		t.Fatalf("ConsolidateRollups: %v", err)
+	}
+	if _, err := storage.ApplyRetention(ctx, pool, agora); err != nil {
+		t.Fatalf("ApplyRetention: %v", err)
+	}
+
+	vistos := map[string]string{}
+	linhas, err := pool.Query(ctx, `SELECT etapa, valor FROM prazo_visto`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for linhas.Next() {
+		var etapa, valor string
+		if err := linhas.Scan(&etapa, &valor); err != nil {
+			t.Fatal(err)
+		}
+		vistos[etapa] = valor
+	}
+	if err := linhas.Err(); err != nil {
+		t.Fatal(err)
+	}
+	for _, etapa := range []string{"INSERT", "DELETE"} {
+		if vistos[etapa] != "5min" {
+			t.Errorf("statement_timeout no %s da manutenção = %q, queria \"5min\"", etapa, vistos[etapa])
+		}
+	}
+}
