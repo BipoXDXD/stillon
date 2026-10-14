@@ -72,7 +72,7 @@ func TestReconcileReportsOpenIncidents(t *testing.T) {
 func TestTransitionSignalsTheReconcileLoop(t *testing.T) {
 	b := novaBancada(t, nil, MaxInFlight)
 	alvo := b.alvo(t, "https://exemplo.com", nil)
-	a := db.ClaimDueTargetsRow{ID: alvo, UserID: b.dono}
+	a := db.ClaimDueTargetsRow{ID: alvo, UserID: b.dono, URL: "https://exemplo.com", Method: "GET"}
 	falha := Result{Status: StatusDown, ErrorKind: KindDNS}
 
 	b.s.gravar(a, b.clk.Now(), falha)

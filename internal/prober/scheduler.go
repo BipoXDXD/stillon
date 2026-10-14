@@ -339,6 +339,9 @@ func (s *Scheduler) gravar(a db.ClaimDueTargetsRow, em time.Time, res Result) {
 
 	var acao incident.Action
 	err = storage.InProberTx(ctx, s.pool, func(q *db.Queries) error {
+		if err := conferirSonda(ctx, q, a); err != nil {
+			return err
+		}
 		if err := q.InsertCheck(ctx, p); err != nil {
 			return err
 		}
@@ -347,6 +350,13 @@ func (s *Scheduler) gravar(a db.ClaimDueTargetsRow, em time.Time, res Result) {
 		return err
 	})
 	switch {
+	case errors.Is(err, errSondaVelha):
+		// O dono trocou a URL ou o método com a sonda em voo (E2 da revisão
+		// de 2026-10-14). Não é erro: o resultado é de outro serviço.
+		slog.Info("sonda descartada: o alvo mudou de URL ou método durante a sonda", "target_id", a.ID)
+	case errors.Is(err, errAlvoSumido):
+		// Review Focus 3 do Plano 2, visto pela trava do alvo.
+		s.metrics.forget(a.ID)
 	case err == nil:
 		if acao != incident.ActionNone {
 			select {
@@ -365,6 +375,30 @@ func (s *Scheduler) gravar(a db.ClaimDueTargetsRow, em time.Time, res Result) {
 		// (C6 da revisão).
 		slog.Error("gravar check", "target_id", a.ID, "erro", err)
 	}
+}
+
+var (
+	errSondaVelha = errors.New("o alvo mudou de URL ou método durante a sonda")
+	errAlvoSumido = errors.New("o alvo foi apagado durante a sonda")
+)
+
+// conferirSonda é o fencing da gravação: trava a linha do alvo e confere se a
+// URL e o método ainda são os da reivindicação. Um PATCH aberto é esperado, e
+// o que vale é o que ele gravou. Uma troca de ida e volta (A, B, A) passa:
+// a sonda foi de fato sobre a URL atual, e a histerese zerada recomeça por
+// um resultado dela.
+func conferirSonda(ctx context.Context, q *db.Queries, a db.ClaimDueTargetsRow) error {
+	atual, err := q.LockTargetProbeSpec(ctx, a.ID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return errAlvoSumido
+	}
+	if err != nil {
+		return fmt.Errorf("conferir a URL do alvo: %w", err)
+	}
+	if atual.URL != a.URL || atual.Method != a.Method {
+		return errSondaVelha
+	}
+	return nil
 }
 
 // avaliar aplica o check à histerese do alvo (spec §7) e, numa transição,

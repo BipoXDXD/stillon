@@ -134,3 +134,28 @@ func (q *Queries) InsertCheck(ctx context.Context, arg InsertCheckParams) error 
 	)
 	return err
 }
+
+const lockTargetProbeSpec = `-- name: LockTargetProbeSpec :one
+SELECT url, method FROM targets WHERE id = $1 FOR KEY SHARE
+`
+
+type LockTargetProbeSpecRow struct {
+	URL    string
+	Method string
+}
+
+// Fencing da gravação (E2 da revisão de 2026-10-14). A sonda leva a URL e o
+// método da reivindicação; antes de gravar, o sondador relê os do alvo. Se o
+// dono trocou um dos dois com a sonda em voo, o PATCH zerou a histerese, e o
+// resultado é de outro serviço: a gravação é descartada.
+//
+// FOR KEY SHARE espera o FOR UPDATE do PATCH (targets.GetTargetForUpdate) e,
+// depois do commit dele, devolve a linha nova. É a mesma trava que a FK do
+// INSERT em checks já pegaria, então não cria disputa nova com a
+// reivindicação. Sem linha: o alvo foi apagado.
+func (q *Queries) LockTargetProbeSpec(ctx context.Context, id uuid.UUID) (LockTargetProbeSpecRow, error) {
+	row := q.db.QueryRow(ctx, lockTargetProbeSpec, id)
+	var i LockTargetProbeSpecRow
+	err := row.Scan(&i.URL, &i.Method)
+	return i, err
+}

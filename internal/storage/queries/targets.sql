@@ -11,6 +11,9 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13);
 -- name: GetTarget :one
 SELECT * FROM targets WHERE user_id = $1 AND id = $2;
 
+-- FOR UPDATE, e não FOR NO KEY UPDATE: a gravação do sondador
+-- (LockTargetProbeSpec, FOR KEY SHARE) precisa esperar o PATCH inteiro para
+-- ver a URL nova (E2 da revisão de 2026-10-14).
 -- name: GetTargetForUpdate :one
 SELECT * FROM targets WHERE user_id = $1 AND id = $2 FOR UPDATE;
 

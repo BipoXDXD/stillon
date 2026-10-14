@@ -215,7 +215,7 @@ func TestOnlyDownCountsAsFailure(t *testing.T) {
 func TestOutOfOrderCheckDoesNotResetTheFailureStreak(t *testing.T) {
 	b := novaBancada(t, nil, MaxInFlight)
 	alvo := b.alvo(t, "https://exemplo.com", nil)
-	a := db.ClaimDueTargetsRow{ID: alvo, UserID: b.dono}
+	a := db.ClaimDueTargetsRow{ID: alvo, UserID: b.dono, URL: "https://exemplo.com", Method: "GET"}
 	falha := Result{Status: StatusDown, ErrorKind: KindTimeout}
 	t0 := b.clk.Now()
 
@@ -239,7 +239,7 @@ func TestOutOfOrderCheckDoesNotResetTheFailureStreak(t *testing.T) {
 func TestLongGapRestartsTheHysteresis(t *testing.T) {
 	b := novaBancada(t, nil, MaxInFlight)
 	alvo := b.alvo(t, "https://exemplo.com", nil)
-	a := db.ClaimDueTargetsRow{ID: alvo, UserID: b.dono, IntervalSec: 60}
+	a := db.ClaimDueTargetsRow{ID: alvo, UserID: b.dono, URL: "https://exemplo.com", Method: "GET", IntervalSec: 60}
 	falha := Result{Status: StatusDown, ErrorKind: KindTimeout}
 	t0 := b.clk.Now()
 
@@ -290,7 +290,7 @@ func TestGapBoundaryOfTheHysteresis(t *testing.T) {
 func TestDegradedChecksResolveTheIncident(t *testing.T) {
 	b := novaBancada(t, nil, MaxInFlight)
 	alvo := b.alvo(t, "https://exemplo.com", nil)
-	a := db.ClaimDueTargetsRow{ID: alvo, UserID: b.dono, IntervalSec: 60}
+	a := db.ClaimDueTargetsRow{ID: alvo, UserID: b.dono, URL: "https://exemplo.com", Method: "GET", IntervalSec: 60}
 	t0 := b.clk.Now()
 
 	for i := range 3 {
@@ -322,7 +322,7 @@ func TestRLSOrFKErrorWithTheTargetAliveIsLogged(t *testing.T) {
 			b := novaBancada(t, nil, MaxInFlight)
 			alvo := b.alvo(t, "https://exemplo.com", nil)
 			b.canal(t, true, true)
-			a := db.ClaimDueTargetsRow{ID: alvo, UserID: b.dono, IntervalSec: 60}
+			a := db.ClaimDueTargetsRow{ID: alvo, UserID: b.dono, URL: "https://exemplo.com", Method: "GET", IntervalSec: 60}
 			falha := Result{Status: StatusDown, ErrorKind: KindTimeout}
 			t0 := b.clk.Now()
 			b.s.gravar(a, t0, falha)

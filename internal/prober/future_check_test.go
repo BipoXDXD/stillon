@@ -25,7 +25,7 @@ func TestFutureCheckCannotPoisonIncidentHysteresis(t *testing.T) {
 	if err := storage.EnsureChecksPartitions(ctx, b.pool, futuro); err != nil {
 		t.Fatal(err)
 	}
-	claim := db.ClaimDueTargetsRow{ID: alvo, UserID: b.dono, IntervalSec: 60}
+	claim := db.ClaimDueTargetsRow{ID: alvo, UserID: b.dono, URL: "https://example.com", Method: "GET", IntervalSec: 60}
 	falha := Result{Status: StatusDown, ErrorKind: KindDNS}
 	b.s.gravar(claim, futuro, falha)
 
