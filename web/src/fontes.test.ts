@@ -44,8 +44,8 @@ describe('@font-face do index.css', () => {
     expect(propriedade(face, 'font-display')).toBe('swap')
   })
 
-  // Review Focus 1: as setas de "← Painel" e "Ver incidente →" entram no
-  // subconjunto; o resto (grego, cirílico, emoji) cai na família genérica.
+  // As setas de "← Painel" e "Ver incidente →" entram no subconjunto; o
+  // resto (grego, cirílico, emoji) cai na família genérica.
   it.each(POR_FAMILIA)('%s cobre o latim e as setas', (_familia, face) => {
     const faixa = propriedade(face, 'unicode-range')
     expect(faixa).toContain('U+0000-00FF')
@@ -54,8 +54,8 @@ describe('@font-face do index.css', () => {
 })
 
 describe('pilhas de fonte do tema', () => {
-  // Review Focus 1: sem a família genérica no fim, um caractere fora do
-  // subconjunto não teria para onde cair.
+  // Sem a família genérica no fim, um caractere fora do subconjunto não
+  // teria para onde cair.
   it.each([
     ['--font-sans', "'Inter', ui-sans-serif, system-ui, sans-serif"],
     ['--font-display', "'Fraunces', ui-serif, Georgia, serif"],

@@ -107,9 +107,9 @@ describe('ControleSegmentado', () => {
     expect(aoMudar).not.toHaveBeenCalled()
   })
 
-  // Review Focus 2: uma URL editada à mão (?janela=abc) chega como valor fora
-  // das opções. Nenhum item mente que está marcado, e o grupo continua
-  // alcançável pelo Tab.
+  // Uma URL editada à mão (?janela=abc) chega como valor fora das opções.
+  // Nenhum item mente que está marcado, e o grupo continua alcançável pelo
+  // Tab.
   it('com valor fora das opções, nada fica marcado e o primeiro item entra na ordem do Tab', async () => {
     const aoMudar = vi.fn<(v: string) => void>()
     render(

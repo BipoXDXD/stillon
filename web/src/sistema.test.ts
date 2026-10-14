@@ -102,11 +102,12 @@ describe('o index.css publica a escala e os utilitários', () => {
   })
 })
 
-// Review Focus 3 (auditoria C1, G2): o vermelho sólido é só do botão que
-// confirma uma ação destrutiva. Cada uso de tipo="perigo" está contado por
-// arquivo; um "Apagar" vermelho numa linha de lista muda a contagem. Os dois
-// usos: o Confirmar do diálogo e o envio do Desativar 2FA, que já é o passo
-// de confirmação, dentro do diálogo.
+// O vermelho sólido é só do botão que confirma uma ação destrutiva; em toda
+// linha de lista, ele grita mais que o problema que a tela quer mostrar.
+// Cada uso de tipo="perigo" está contado por arquivo; um "Apagar" vermelho
+// numa linha de lista muda a contagem. Os dois usos: o Confirmar do diálogo
+// e o envio do Desativar 2FA, que já é o passo de confirmação, dentro do
+// diálogo.
 describe('vermelho sólido só na confirmação', () => {
   const PERIGO = /tipo="perigo"|tipo=\{[^}]*'perigo'/g
   const USOS_PERMITIDOS = {
