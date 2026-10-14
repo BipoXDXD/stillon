@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { duracao, haQuanto, horaMinuto, milissegundos, navegadorDe, plural, pontosDeCodigo, porcento } from './format'
+import { diaMes, duracao, haQuanto, horaMinuto, milissegundos, navegadorDe, plural, pontosDeCodigo, porcento } from './format'
 
 describe('porcento', () => {
   it('trunca em duas casas, nunca arredonda para cima', () => {
@@ -102,5 +102,11 @@ describe('horaMinuto', () => {
   it('hora e minuto com dois dígitos, no fuso do navegador', () => {
     expect(horaMinuto(new Date(2026, 9, 14, 9, 5).getTime())).toBe('09:05')
     expect(horaMinuto(new Date(2026, 9, 14, 23, 59).toISOString())).toBe('23:59')
+  })
+})
+
+describe('diaMes', () => {
+  it('dia e mês com dois dígitos, no fuso do navegador', () => {
+    expect(diaMes(new Date(2026, 9, 4, 23, 59).getTime())).toBe('04/10')
   })
 })

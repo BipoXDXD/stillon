@@ -79,6 +79,7 @@ const TEXTOS = ['texto', 'suave', 'apagado', 'primaria', 'realce', 'perigo', 'es
 // Texto sobre fundo tintado: o selo de estado sobre o tom 100, o item ativo
 // e o selo de reconhecido sobre a primária 100, os botões sólidos, o erro do
 // formulário.
+const TONS_100 = ['estado-no-ar-100', 'estado-degradado-100', 'estado-fora-100', 'estado-sem-dados-100']
 const SOBRE_TINTA: [string, string][] = [
   ['estado-no-ar', 'estado-no-ar-100'],
   ['estado-degradado', 'estado-degradado-100'],
@@ -89,12 +90,18 @@ const SOBRE_TINTA: [string, string][] = [
   ['texto', 'primaria-100'],
   ['primaria-texto', 'primaria'],
   ['perigo-texto', 'perigo'],
+  // A faixa de estado do detalhe (PR 4): título em texto e detalhe em suave
+  // sobre o tom 100. O apagado não entra: no escuro fica em 4,1:1.
+  ...['texto', 'suave'].flatMap((t) => TONS_100.map((f): [string, string] => [t, f])),
 ]
 // Componentes de UI (1.4.11, 3:1): o limite dos controles, o anel de foco
 // (também sobre o item ativo da navegação) e o fundo do botão primário.
 const COMPONENTES: [string, string][] = [
   ...['borda-controle', 'foco', 'primaria'].flatMap((c) => FUNDOS.map((f): [string, string] => [c, f])),
   ['foco', 'primaria-100'],
+  // O Reconhecer da faixa é primário, com o foco por cima do tom 100. O
+  // secundário não serviria: a borda de controle fica em 2,7:1 no escuro.
+  ...['primaria', 'foco'].flatMap((c) => TONS_100.map((f): [string, string] => [c, f])),
 ]
 
 describe.each(['claro', 'escuro'] as const)('contraste dos tokens, tema %s', (tema) => {
