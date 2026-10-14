@@ -86,6 +86,34 @@ func TestEveryProtectedRouteRejectsForgedToken(t *testing.T) {
 	}
 }
 
+// Toda mutação registrada da API, pública ou não (refresh e logout usam o
+// cookie, que é o que um CSRF aproveitaria), exige o X-Requested-With. Só o
+// POST /verify/{token} fica de fora: ele vem de um <form> HTML, sem cookie
+// nem sessão, e a credencial é o token no caminho.
+func TestEveryMutationRequiresTheAntiCSRFHeader(t *testing.T) {
+	a := newAPI(t)
+	for _, rota := range rotasRegistradas(t) {
+		metodo, caminho, _ := strings.Cut(rota, " ")
+		if metodo == http.MethodGet || rota == "POST /verify/{token}" {
+			continue
+		}
+		req, err := http.NewRequest(metodo, a.srv.URL+preencherCuringas(caminho), strings.NewReader("{}"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Cookie", "stillon_refresh=qualquer")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusForbidden {
+			t.Errorf("%s sem X-Requested-With deu %d, queria 403", rota, resp.StatusCode)
+		}
+	}
+}
+
 // padraoDeRota casa "MÉTODO /caminho", o formato do ServeMux do Go 1.22+.
 var padraoDeRota = regexp.MustCompile(`^(GET|HEAD|POST|PUT|PATCH|DELETE|OPTIONS) /\S*$`)
 
