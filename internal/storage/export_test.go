@@ -27,3 +27,6 @@ func MigrateDownTo(ctx context.Context, dsn string, version int64) error {
 	_, err = provider.DownTo(ctx, version)
 	return err
 }
+
+// RollupLockKey deixa o teste segurar a mesma trava da consolidação.
+const RollupLockKey = rollupLockKey

@@ -79,6 +79,9 @@ type GetTargetForUpdateParams struct {
 	ID     uuid.UUID
 }
 
+// FOR UPDATE, e não FOR NO KEY UPDATE: a gravação do sondador
+// (LockTargetProbeSpec, FOR KEY SHARE) precisa esperar o PATCH inteiro para
+// ver a URL nova (E2 da revisão de 2026-10-14).
 func (q *Queries) GetTargetForUpdate(ctx context.Context, arg GetTargetForUpdateParams) (Target, error) {
 	row := q.db.QueryRow(ctx, getTargetForUpdate, arg.UserID, arg.ID)
 	var i Target
