@@ -104,4 +104,7 @@ func (d Detector) Evaluate(s State, r ProbeResult) (State, Action) {
 const (
 	EventOpened   = "opened"
 	EventResolved = "resolved"
+	// EventReminder é o lembrete de incidente aberto e sem ack. Não sai do
+	// detector: o job notify.Reminders o enfileira.
+	EventReminder = "reminder"
 )

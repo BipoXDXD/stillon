@@ -68,7 +68,7 @@ const enqueueNotification = `-- name: EnqueueNotification :exec
 INSERT INTO notifications (id, incident_id, channel_id, event, next_attempt_at, created_at)
 VALUES ($1, $2, $3, $4,
         $5, $5)
-ON CONFLICT (incident_id, channel_id, event) DO NOTHING
+ON CONFLICT (incident_id, channel_id, event, seq) DO NOTHING
 `
 
 type EnqueueNotificationParams struct {

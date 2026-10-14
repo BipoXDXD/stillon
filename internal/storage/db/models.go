@@ -82,6 +82,7 @@ type Notification struct {
 	LastError     *string
 	CreatedAt     time.Time
 	SentAt        *time.Time
+	Seq           int32
 }
 
 type Session struct {

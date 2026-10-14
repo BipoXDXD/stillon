@@ -45,7 +45,7 @@ SELECT id FROM notif_channels
 INSERT INTO notifications (id, incident_id, channel_id, event, next_attempt_at, created_at)
 VALUES (sqlc.arg(id), sqlc.arg(incident_id), sqlc.arg(channel_id), sqlc.arg(event),
         sqlc.arg(now), sqlc.arg(now))
-ON CONFLICT (incident_id, channel_id, event) DO NOTHING;
+ON CONFLICT (incident_id, channel_id, event, seq) DO NOTHING;
 
 -- Reconciliação das métricas (D9/M1 do Plano 2).
 -- name: CountOpenIncidents :one
