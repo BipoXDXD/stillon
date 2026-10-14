@@ -9,10 +9,14 @@ export type Tema = 'sistema' | 'claro' | 'escuro'
 const CHAVE = 'stillon.tema'
 const ESCURO = '(prefers-color-scheme: dark)'
 
+export function ehTema(v: string | null): v is Tema {
+  return v === 'sistema' || v === 'claro' || v === 'escuro'
+}
+
 function lerTema(): Tema {
   try {
     const v = localStorage.getItem(CHAVE)
-    return v === 'claro' || v === 'escuro' ? v : 'sistema'
+    return ehTema(v) ? v : 'sistema'
   } catch {
     return 'sistema'
   }

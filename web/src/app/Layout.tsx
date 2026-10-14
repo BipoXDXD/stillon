@@ -7,7 +7,7 @@ import { useAvisar } from '@/components/ui/avisos'
 import { Botao } from '@/components/ui/botao'
 import { useAbertos, useMe } from '@/lib/api/consultas'
 import { mensagemDe } from '@/lib/api/mensagens'
-import { useTema, type Tema } from '@/lib/tema'
+import { ehTema, useTema } from '@/lib/tema'
 import { cn } from '@/lib/utils'
 import { useSessao } from './contexto'
 
@@ -26,7 +26,10 @@ function SeletorDeTema() {
       Tema
       <select
         value={tema}
-        onChange={(e) => mudar(e.target.value as Tema)}
+        onChange={(e) => {
+          const valor = e.target.value
+          if (ehTema(valor)) mudar(valor)
+        }}
         className="min-h-11 rounded-md border border-borda-controle bg-fundo px-3 text-texto"
       >
         <option value="sistema">Sistema</option>

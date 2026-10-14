@@ -59,7 +59,7 @@ function NovoCanal({ aoCriar }: { aoCriar: (c: Canal) => void }) {
   const api = useApi()
   const f = useForm<Valores>({
     resolver: zodResolver(esquema),
-    defaultValues: { kind: 'discord', url: '' } as Valores,
+    defaultValues: { kind: 'discord', url: '' },
   })
   const [erro, setErro] = useState<string | null>(null)
   const tipo = useWatch({ control: f.control, name: 'kind' })

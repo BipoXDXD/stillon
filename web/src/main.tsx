@@ -16,7 +16,11 @@ void sessao.iniciar()
 
 const router = createBrowserRouter(rotas)
 
-createRoot(document.getElementById('root')!).render(
+// O #root vem do index.html; sem ele, o erro diz o que falta.
+const raiz = document.getElementById('root')
+if (!raiz) throw new Error('index.html sem o elemento #root')
+
+createRoot(raiz).render(
   <StrictMode>
     <ProvedorDoPainel sessao={sessao} api={api}>
       <ProvedorDeTema>
