@@ -78,7 +78,7 @@ func TestRollupLatencyMigrationKeepsOldRowsAndGuardsNewOnes(t *testing.T) {
 		t.Fatalf("linha antiga, gravada antes da 00013: %v", err)
 	}
 
-	if err := storage.Migrate(ctx, dsn); err != nil {
+	if err := storage.MigrateUpTo(ctx, dsn, 13); err != nil {
 		t.Fatalf("a 00013 não sobe sobre uma linha antiga incoerente: %v", err)
 	}
 	if err := inserirRollup(t, pool, dono, alvo, agora.Add(time.Hour), 2, ptr(20), ptr(10), nil, ptr(5)); !violaCheck(err) {
@@ -91,6 +91,51 @@ func TestRollupLatencyMigrationKeepsOldRowsAndGuardsNewOnes(t *testing.T) {
 	if err := inserirRollup(t, pool, dono, alvo, agora.Add(2*time.Hour), 2, ptr(20), ptr(10), nil, ptr(5)); err != nil {
 		t.Errorf("depois do down o CHECK ainda recusa: %v", err)
 	}
+}
+
+// A 00014 valida os dois CHECKs: o Postgres passa a garanti-los também nas
+// linhas que já existiam. Produção só tem linhas gravadas depois da 00013,
+// então o VALIDATE não acha nada fora da regra. O down volta ao NOT VALID da
+// 00013, que continua barrando a escrita nova.
+func TestRollupLatencyChecksAreValidated(t *testing.T) {
+	ctx := context.Background()
+	dsn := testdb.EmptyDatabase(t)
+	if err := storage.Migrate(ctx, dsn); err != nil {
+		t.Fatal(err)
+	}
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	if got := checksValidados(t, pool); got != 2 {
+		t.Fatalf("CHECKs de latência validados depois da 00014 = %d, queria 2", got)
+	}
+
+	if err := storage.MigrateDownTo(ctx, dsn, 13); err != nil {
+		t.Fatalf("down da 00014: %v", err)
+	}
+	if got := checksValidados(t, pool); got != 0 {
+		t.Errorf("CHECKs de latência validados depois do down da 00014 = %d, queria 0 (NOT VALID)", got)
+	}
+	dono := novoUsuario(t, pool)
+	alvo := novoAlvo(t, pool, dono, agora)
+	if err := inserirRollup(t, pool, dono, alvo, agora, 2, ptr(20), ptr(10), nil, ptr(5)); !violaCheck(err) {
+		t.Errorf("rollup incoerente depois do down da 00014: erro = %v, queria check_violation (23514)", err)
+	}
+}
+
+func checksValidados(t *testing.T, pool *pgxpool.Pool) int {
+	t.Helper()
+	var n int
+	if err := pool.QueryRow(context.Background(), `
+		SELECT count(*) FROM pg_constraint
+		 WHERE conrelid = 'check_rollup_1h'::regclass
+		   AND conname IN ('check_rollup_1h_latencias_juntas', 'check_rollup_1h_latencias_em_ordem')
+		   AND convalidated`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n
 }
 
 func ptr(n int32) *int32 { return &n }
