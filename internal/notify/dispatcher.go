@@ -23,6 +23,13 @@ import (
 
 const (
 	dispatchEvery = 2 * time.Second
+	// claimTimeout é o prazo da reivindicação do lote, espera por conexão do
+	// pool incluída: uma consulta presa não para a entrega de todos os avisos
+	// (C2 da revisão). Fica acima de dispatchEvery pelo mesmo motivo do
+	// tickTimeout do sondador: o Ticker descarta os disparos perdidos, e um
+	// prazo apertado demais pararia a entrega com o banco só lento. Os envios
+	// e as gravações dos desfechos têm prazos próprios.
+	claimTimeout = 5 * time.Second
 	// maxConcurrentSends é o tamanho do lote e o teto de envios simultâneos.
 	// O Resend aceita 10 pedidos por segundo por conta; 8 fica abaixo.
 	maxConcurrentSends = 8
@@ -51,17 +58,36 @@ const (
 	// hora de atraso já perdeu quase todo o valor, e um webhook que responde
 	// 429 para sempre não segura a fila para sempre.
 	rateLimitGrace = time.Hour
+
+	// shutdownSendGrace é quanto, depois do sinal de encerramento, os envios
+	// em curso ainda têm antes de serem abortados (C1 da revisão). Nenhum
+	// envio novo começa depois do sinal.
+	shutdownSendGrace = 7 * time.Second
+
+	// ShutdownBudget é o máximo que Dispatch leva depois do sinal de
+	// encerramento: os envios em curso, e depois a gravação dos desfechos. Tem
+	// de caber no ShutdownGrace do app (TestDispatcherFitsTheShutdownGrace),
+	// senão o processo sai com aviso entregue e ainda não marcado, que volta
+	// pelo lease e sai duplicado.
+	ShutdownBudget = shutdownSendGrace + persistTimeout
 )
+
+// errEncerramento é a causa do cancelamento dos envios abortados no
+// encerramento.
+var errEncerramento = errors.New("encerramento do dispatcher")
 
 // Dispatcher consome a outbox de notificações (spec §8). Roda no papel do
 // sondador, fora do caminho crítico da sonda.
 type Dispatcher struct {
-	pool        *pgxpool.Pool
-	box         *crypto.Box
-	clk         clock.Clock
-	notifiers   map[Kind]Notifier
-	total       *prometheus.CounterVec
-	sendTimeout time.Duration
+	pool         *pgxpool.Pool
+	box          *crypto.Box
+	clk          clock.Clock
+	notifiers    map[Kind]Notifier
+	total        *prometheus.CounterVec
+	sendTimeout  time.Duration
+	claimTimeout time.Duration
+	// shutdownSendGrace é campo para que os testes o encurtem.
+	shutdownSendGrace time.Duration
 }
 
 // NewDispatcher recebe os canais que o operador configurou. Um canal de
@@ -74,7 +100,7 @@ func NewDispatcher(pool *pgxpool.Pool, box *crypto.Box, clk clock.Clock, reg pro
 			Name: "notify_total",
 			Help: "Desfechos de envio de notificação, por canal e resultado.",
 		}, []string{"kind", "result"}),
-		sendTimeout: sendTimeout,
+		sendTimeout: sendTimeout, claimTimeout: claimTimeout, shutdownSendGrace: shutdownSendGrace,
 	}
 	for _, n := range notifiers {
 		d.notifiers[n.Kind()] = n
@@ -84,8 +110,7 @@ func NewDispatcher(pool *pgxpool.Pool, box *crypto.Box, clk clock.Clock, reg pro
 }
 
 // Run despacha a cada dispatchEvery até ctx acabar. Um lote em andamento
-// termina antes de Run voltar: os envios têm prazo próprio, e não herdam o
-// cancelamento do shutdown.
+// termina antes de Run voltar, em até ShutdownBudget (ver Dispatch).
 func (d *Dispatcher) Run(ctx context.Context) error {
 	t := time.NewTicker(dispatchEvery)
 	defer t.Stop()
@@ -103,7 +128,65 @@ func (d *Dispatcher) Run(ctx context.Context) error {
 
 // Dispatch reivindica um lote, envia em paralelo e espera todos terminarem.
 // Devolve quantas notificações reivindicou.
+//
+// O fim de ctx é o sinal de encerramento. Depois dele, nenhum envio novo
+// começa; os envios em curso têm shutdownSendGrace para terminar, e os
+// desfechos, mais persistTimeout para serem gravados. O que não chegou a sair
+// volta à fila na hora, sem gastar tentativa, em vez de esperar o lease.
 func (d *Dispatcher) Dispatch(ctx context.Context) (int, error) {
+	lote, err := d.reivindicar(ctx)
+	if err != nil {
+		return 0, err
+	}
+
+	envios, fimEnvios := sobrevida(ctx, d.shutdownSendGrace)
+	defer fimEnvios()
+	gravacoes, fimGravacoes := sobrevida(ctx, d.shutdownSendGrace+persistTimeout)
+	defer fimGravacoes()
+	p := prazos{parada: ctx, envios: envios, gravacoes: gravacoes}
+
+	var wg sync.WaitGroup
+	for _, fila := range porCanal(lote) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			d.entregarEmSerie(p, fila)
+		}()
+	}
+	wg.Wait()
+	return len(lote), nil
+}
+
+// prazos são os contextos de um lote, todos ligados ao sinal de
+// encerramento.
+type prazos struct {
+	// parada acaba no sinal: nenhum envio começa depois dele.
+	parada context.Context
+	// envios acaba shutdownSendGrace depois do sinal, abortando os envios
+	// em curso.
+	envios context.Context
+	// gravacoes acaba persistTimeout depois de envios: o desfecho de um
+	// envio abortado ainda é gravado.
+	gravacoes context.Context
+}
+
+// sobrevida devolve um contexto que acaba prazo depois de ctx acabar, com a
+// causa errEncerramento. A função devolvida o encerra antes disso.
+func sobrevida(ctx context.Context, prazo time.Duration) (context.Context, context.CancelFunc) {
+	sob, cancelar := context.WithCancelCause(context.WithoutCancel(ctx))
+	parar := context.AfterFunc(ctx, func() {
+		time.AfterFunc(prazo, func() { cancelar(errEncerramento) })
+	})
+	return sob, func() {
+		parar()
+		cancelar(context.Canceled)
+	}
+}
+
+// reivindicar pega o lote, com o prazo claimTimeout.
+func (d *Dispatcher) reivindicar(ctx context.Context) ([]db.ClaimDueNotificationsRow, error) {
+	ctx, cancel := context.WithTimeout(ctx, d.claimTimeout)
+	defer cancel()
 	now := d.clk.Now()
 	var lote []db.ClaimDueNotificationsRow
 	err := storage.InProberTx(ctx, d.pool, func(q *db.Queries) error {
@@ -114,19 +197,9 @@ func (d *Dispatcher) Dispatch(ctx context.Context) (int, error) {
 		return err
 	})
 	if err != nil {
-		return 0, fmt.Errorf("reivindicar notificações: %w", err)
+		return nil, fmt.Errorf("reivindicar notificações: %w", err)
 	}
-
-	var wg sync.WaitGroup
-	for _, fila := range porCanal(lote) {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			d.entregarEmSerie(fila)
-		}()
-	}
-	wg.Wait()
-	return len(lote), nil
+	return lote, nil
 }
 
 // porCanal separa o lote por canal, cada fila na ordem de enfileiramento
@@ -157,30 +230,52 @@ func porCanal(lote []db.ClaimDueNotificationsRow) [][]db.ClaimDueNotificationsRo
 // sendTimeout por notificação. Sem isso, um webhook que trava seguraria o
 // lote inteiro por k × sendTimeout, e os outros canais esperariam junto
 // (achado da revisão).
-func (d *Dispatcher) entregarEmSerie(fila []db.ClaimDueNotificationsRow) {
+//
+// Com o sinal de encerramento, o resto da fila volta à fila sem envio.
+func (d *Dispatcher) entregarEmSerie(p prazos, fila []db.ClaimDueNotificationsRow) {
 	var parou *desfecho
 	for _, n := range fila {
-		if parou != nil {
-			d.adiar(n, *parou)
-			continue
-		}
-		if f := d.entregarProtegido(n); f.transitoria {
-			parou = &f
+		switch {
+		case p.parada.Err() != nil:
+			d.liberar(p, n)
+		case parou != nil:
+			d.adiar(p, n, *parou)
+		default:
+			if f := d.entregarProtegido(p, n); f.transitoria {
+				parou = &f
+			}
 		}
 	}
+}
+
+// liberar devolve à fila, para já e sem gastar tentativa, uma notificação
+// que o encerramento impediu de sair: outro dispatcher, ou este processo
+// quando voltar, a envia sem esperar o lease.
+func (d *Dispatcher) liberar(p prazos, n db.ClaimDueNotificationsRow) {
+	d.total.WithLabelValues(n.Kind, "deferred").Inc()
+	if err := d.persistir(p.gravacoes, n, interrompida(d.clk.Now())); err != nil {
+		slog.Error("devolver notificação no encerramento", "notification_id", n.ID, "erro", err)
+	}
+}
+
+// interrompida é o desfecho de uma notificação que o encerramento parou:
+// pendente para agora, com a tentativa devolvida. A falha é do StillOn, e
+// não do canal.
+func interrompida(agora time.Time) desfecho {
+	return desfecho{status: "pending", proxima: agora, devolver: true}
 }
 
 // entregarProtegido isola o panic de um envio: a notificação fica como a
 // reivindicação a deixou e volta quando o lease vencer, e o resto da fila
 // do canal segue.
-func (d *Dispatcher) entregarProtegido(n db.ClaimDueNotificationsRow) (f desfecho) {
+func (d *Dispatcher) entregarProtegido(p prazos, n db.ClaimDueNotificationsRow) (f desfecho) {
 	defer func() {
 		if r := recover(); r != nil {
 			slog.Error("panic no envio de notificação", "notification_id", n.ID, "panic", fmt.Sprint(r))
 			f = desfecho{}
 		}
 	}()
-	return d.entregar(n)
+	return d.entregar(p, n)
 }
 
 // perdoa429 diz se um 429 para esta notificação ainda não gasta tentativa.
@@ -193,7 +288,7 @@ func (d *Dispatcher) perdoa429(n db.ClaimDueNotificationsRow) bool {
 // tentativa: é o provedor pedindo espera. Nos outros casos a tentativa conta,
 // como contaria se ela tivesse sido enviada e falhado igual, e quem já está
 // no teto falha de vez, sem esperar outro sendTimeout.
-func (d *Dispatcher) adiar(n db.ClaimDueNotificationsRow, parou desfecho) {
+func (d *Dispatcher) adiar(p prazos, n db.ClaimDueNotificationsRow, parou desfecho) {
 	f, decidido := semEnvio(n)
 	if !decidido {
 		proxima := parou.proxima
@@ -217,7 +312,7 @@ func (d *Dispatcher) adiar(n db.ClaimDueNotificationsRow, parou desfecho) {
 	if f.status == "failed" && !f.doSistema {
 		slog.Warn("notificação falhou de vez", "notification_id", n.ID, "channel_id", n.ChannelID, "motivo", f.reason)
 	}
-	if err := d.persistir(n, f); err != nil {
+	if err := d.persistir(p.gravacoes, n, f); err != nil {
 		slog.Error("gravar desfecho de notificação", "notification_id", n.ID, "erro", err)
 	}
 }
@@ -239,14 +334,14 @@ type desfecho struct {
 	doSistema bool
 }
 
-func (d *Dispatcher) entregar(n db.ClaimDueNotificationsRow) desfecho {
-	f := d.tentar(n)
+func (d *Dispatcher) entregar(p prazos, n db.ClaimDueNotificationsRow) desfecho {
+	f := d.tentar(p.envios, n)
 	d.total.WithLabelValues(n.Kind, resultado(f.status)).Inc()
 	if f.status == "failed" {
 		// Só o motivo vai ao log, nunca o destino.
 		slog.Warn("notificação falhou de vez", "notification_id", n.ID, "channel_id", n.ChannelID, "motivo", f.reason)
 	}
-	if err := d.persistir(n, f); err != nil {
+	if err := d.persistir(p.gravacoes, n, f); err != nil {
 		slog.Error("gravar desfecho de notificação", "notification_id", n.ID, "erro", err)
 	}
 	return f
@@ -283,7 +378,8 @@ func semEnvio(n db.ClaimDueNotificationsRow) (desfecho, bool) {
 	return desfecho{}, false
 }
 
-func (d *Dispatcher) tentar(n db.ClaimDueNotificationsRow) desfecho {
+// envios é o contexto do lote: acaba quando o encerramento aborta os envios.
+func (d *Dispatcher) tentar(envios context.Context, n db.ClaimDueNotificationsRow) desfecho {
 	if f, ok := semEnvio(n); ok {
 		return f
 	}
@@ -296,7 +392,7 @@ func (d *Dispatcher) tentar(n db.ClaimDueNotificationsRow) desfecho {
 		return desfecho{status: "failed", reason: ReasonInvalidChannel}
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), d.sendTimeout)
+	ctx, cancel := context.WithTimeout(envios, d.sendTimeout)
 	defer cancel()
 	err = canal.Send(ctx, dest, Event{
 		NotificationID: n.ID, Kind: n.Event, TargetName: n.TargetName,
@@ -304,6 +400,15 @@ func (d *Dispatcher) tentar(n db.ClaimDueNotificationsRow) desfecho {
 	})
 	if err == nil {
 		return desfecho{status: "sent"}
+	}
+	// Abortado pelo encerramento: volta à fila para já. A entrega é
+	// at-least-once. No e-mail, a Idempotency-Key (id da notificação) faz o
+	// Resend descartar o reenvio; o webhook do Discord não tem chave, e um
+	// POST que chegou ao Discord antes do aborto sai duplicado. O custo é só
+	// este aviso, e só quando o envio passa de shutdownSendGrace depois do
+	// sinal; sem o aborto, o SIGKILL deixaria o lote inteiro para o lease.
+	if errors.Is(context.Cause(envios), errEncerramento) {
+		return interrompida(d.clk.Now())
 	}
 
 	var se *SendError
@@ -336,8 +441,10 @@ func backoff(tentativa int32) time.Duration {
 	return min(d, maxBackoff)
 }
 
-func (d *Dispatcher) persistir(n db.ClaimDueNotificationsRow, f desfecho) error {
-	ctx, cancel := context.WithTimeout(context.Background(), persistTimeout)
+// gravacoes é o contexto do lote: acaba persistTimeout depois de os envios
+// serem abortados no encerramento.
+func (d *Dispatcher) persistir(gravacoes context.Context, n db.ClaimDueNotificationsRow, f desfecho) error {
+	ctx, cancel := context.WithTimeout(gravacoes, persistTimeout)
 	defer cancel()
 	var motivo *string
 	if f.reason != "" {

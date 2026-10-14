@@ -34,6 +34,12 @@ SELECT coalesce(max(bucket), 'epoch'::timestamptz)::timestamptz FROM check_rollu
 -- name: SetLocalLockTimeout :exec
 SELECT set_config('lock_timeout', sqlc.arg(timeout)::text, true);
 
+-- A manutenção passa do statement_timeout do pool (storage.NewPool): a
+-- primeira consolidação e a primeira retenção varrem semanas de linhas. Vale
+-- só até o fim da transação.
+-- name: SetLocalStatementTimeout :exec
+SELECT set_config('statement_timeout', sqlc.arg(timeout)::text, true);
+
 -- name: DropChecksPartitionsBefore :one
 SELECT drop_checks_partitions_before(sqlc.arg(cutoff)::timestamptz)::int;
 

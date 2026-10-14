@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"net"
 	"net/url"
@@ -14,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/BipoXDXD/stillon/internal/config"
+	"github.com/BipoXDXD/stillon/internal/notify"
 	"github.com/BipoXDXD/stillon/internal/prober"
 	"github.com/BipoXDXD/stillon/internal/storage"
 	"github.com/BipoXDXD/stillon/internal/storage/db"
@@ -245,5 +247,23 @@ func TestProberGraceFitsTheShutdownBudget(t *testing.T) {
 		if got := graceDoSondador(c.total); got != c.quer {
 			t.Errorf("graceDoSondador(%v) = %v, queria %v", c.total, got, c.quer)
 		}
+	}
+}
+
+// O dispatcher roda no mesmo errgroup e também tem de caber no ShutdownGrace
+// padrão (C1 da revisão): depois dele vem o SIGKILL, e um aviso entregue e
+// ainda não marcado volta pelo lease e sai duplicado.
+func TestDispatcherFitsTheShutdownGrace(t *testing.T) {
+	k := base64.StdEncoding.EncodeToString(chave)
+	env := map[string]string{
+		"DATABASE_URL": "postgres://localhost/stillon", "PUBLIC_BASE_URL": "https://stillon.example",
+		"CORS_ORIGIN": "https://app.stillon.example", "MASTER_KEY": k, "JWT_SECRET": k, "IP_HASH_KEY": k,
+	}
+	cfg, err := config.Load(func(chave string) string { return env[chave] })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if notify.ShutdownBudget >= cfg.ShutdownGrace {
+		t.Errorf("o dispatcher leva até %v no encerramento, e o ShutdownGrace é %v", notify.ShutdownBudget, cfg.ShutdownGrace)
 	}
 }

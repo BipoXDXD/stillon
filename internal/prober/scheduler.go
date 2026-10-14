@@ -31,9 +31,23 @@ const MaxInFlight int32 = 64
 
 const tickEvery = time.Second
 
+// tickTimeout é o prazo de um Tick inteiro (reivindicar e medir a fila),
+// espera por conexão do pool incluída: uma consulta presa não segura o
+// despacho de todos os alvos, e o Tick seguinte tenta de novo (C2 da
+// revisão). Fica ACIMA de tickEvery de propósito: o Ticker descarta os
+// disparos perdidos, então um Tick lento só atrasa o seguinte, enquanto um
+// prazo abaixo de 1 s transformaria um banco lento, mas vivo (pool disputado
+// pelas gravações das sondas), num sondador parado.
+const tickTimeout = 5 * time.Second
+
 // reconcileEvery é o intervalo da reconciliação das métricas. Uma
 // transição de incidente também dispara uma, sem esperar o intervalo.
 const reconcileEvery = 30 * time.Second
+
+// reconcileTimeout é o prazo de uma reconciliação. Ela divide o laço de Run
+// com o Tick, então o prazo é curto: presa, ela custa no máximo alguns
+// despachos, em vez de parar o sondador.
+const reconcileTimeout = 5 * time.Second
 
 // PersistTimeout é o prazo próprio de cada gravação de check. Uma sonda que
 // termina no limite do grace de Stop ainda grava com este prazo, então Stop
@@ -52,6 +66,10 @@ type Scheduler struct {
 	sem      *semaphore.Weighted
 	max      int32
 	detector incident.Detector
+
+	// Prazos das rodadas; campos para que os testes os encurtem.
+	tickTimeout      time.Duration
+	reconcileTimeout time.Duration
 
 	// transicao avisa o laço de Run que um incidente abriu ou fechou, para
 	// que incidents_open não espere a próxima reconciliação periódica.
@@ -80,6 +98,7 @@ func newScheduler(pool *pgxpool.Pool, box *crypto.Box, clk clock.Clock, m *Metri
 		sem: semaphore.NewWeighted(int64(max)), max: max,
 		detector: incident.Default, transicao: make(chan struct{}, 1),
 		sondas: sondas, abortar: abortar,
+		tickTimeout: tickTimeout, reconcileTimeout: reconcileTimeout,
 	}
 }
 
@@ -123,6 +142,8 @@ func (s *Scheduler) reconciliar(ctx context.Context) {
 // separados nem poderia: sem esta reconciliação, a série do alvo apagado
 // vivia até o restart.
 func (s *Scheduler) Reconcile(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, s.reconcileTimeout)
+	defer cancel()
 	vistos := s.metrics.alvosVistos()
 	var existentes []uuid.UUID
 	var abertos int64
@@ -154,8 +175,11 @@ func (s *Scheduler) Reconcile(ctx context.Context) error {
 }
 
 // Tick reivindica até "vagas livres" alvos vencidos e dispara uma goroutine
-// por alvo. Devolve quantos disparou.
+// por alvo. Devolve quantos disparou. O Tick inteiro tem o prazo tickTimeout;
+// as sondas disparadas não herdam esse prazo.
 func (s *Scheduler) Tick(ctx context.Context) (int, error) {
+	ctx, cancel := context.WithTimeout(ctx, s.tickTimeout)
+	defer cancel()
 	now := s.clk.Now()
 
 	// As vagas vêm ANTES da reivindicação. Reivindicar grava o próximo
@@ -330,11 +354,15 @@ func (s *Scheduler) gravar(a db.ClaimDueTargetsRow, em time.Time, res Result) {
 			default:
 			}
 		}
-	case alvoSumiu(err):
+	case pareceAlvoSumido(err) && s.alvoApagado(ctx, a.ID):
 		// Review Focus 3 do Plano 2: o dono apagou o alvo com a sonda em
 		// voo. Não é erro, é o dono tendo mudado de ideia.
 		s.metrics.forget(a.ID)
 	default:
+		// Com o alvo vivo, o 42501 ou o 23503 veio de outra tabela (um canal
+		// apagado durante o enfileiramento, um GRANT ou uma RLS que
+		// regrediu), e o rollback levou check, histerese e incidente: é erro
+		// (C6 da revisão).
 		slog.Error("gravar check", "target_id", a.ID, "erro", err)
 	}
 }
@@ -492,11 +520,28 @@ func (s *Scheduler) medirFila(ctx context.Context, now time.Time) error {
 	})
 }
 
-// alvoSumiu reconhece o INSERT de check para alvo apagado. O 42501 é a RLS
-// de checks (o EXISTS no alvo falha) e chega ANTES da FK; o 23503 é a FK,
-// mantida para o caso de a política um dia mudar
-// (TestCheckForVanishedTargetFailsWithRLSCode).
-func alvoSumiu(err error) bool {
+// alvoApagado relê targets para confirmar que o alvo sumiu. Se a releitura
+// falha, a resposta é não: o erro original vai ao log como erro.
+func (s *Scheduler) alvoApagado(ctx context.Context, id uuid.UUID) bool {
+	var existentes []uuid.UUID
+	err := storage.InProberTx(ctx, s.pool, func(q *db.Queries) error {
+		var err error
+		existentes, err = q.ExistingTargetIDs(ctx, []uuid.UUID{id})
+		return err
+	})
+	if err != nil {
+		slog.Error("conferir se o alvo sumiu", "target_id", id, "erro", err)
+		return false
+	}
+	return len(existentes) == 0
+}
+
+// pareceAlvoSumido reconhece os códigos do INSERT de check para alvo
+// apagado. O 42501 é a RLS de checks (o EXISTS no alvo falha) e chega ANTES
+// da FK; o 23503 é a FK, mantida para o caso de a política um dia mudar
+// (TestCheckForVanishedTargetFailsWithRLSCode). Os mesmos códigos vêm também
+// do enfileiramento dos avisos, por isso quem chama confirma com alvoApagado.
+func pareceAlvoSumido(err error) bool {
 	var pgErr *pgconn.PgError
 	return errors.As(err, &pgErr) && (pgErr.Code == "42501" || pgErr.Code == "23503")
 }

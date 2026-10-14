@@ -199,3 +199,15 @@ func (q *Queries) SetLocalLockTimeout(ctx context.Context, timeout string) error
 	_, err := q.db.Exec(ctx, setLocalLockTimeout, timeout)
 	return err
 }
+
+const setLocalStatementTimeout = `-- name: SetLocalStatementTimeout :exec
+SELECT set_config('statement_timeout', $1::text, true)
+`
+
+// A manutenção passa do statement_timeout do pool (storage.NewPool): a
+// primeira consolidação e a primeira retenção varrem semanas de linhas. Vale
+// só até o fim da transação.
+func (q *Queries) SetLocalStatementTimeout(ctx context.Context, timeout string) error {
+	_, err := q.db.Exec(ctx, setLocalStatementTimeout, timeout)
+	return err
+}

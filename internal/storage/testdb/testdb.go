@@ -103,6 +103,31 @@ func DSN(t *testing.T) string {
 	return appDSN
 }
 
+// LockTable trava table com ACCESS EXCLUSIVE numa transação que só acaba no
+// fim do teste: toda consulta que a toque fica presa, como atrás de uma
+// conexão meio-aberta ou de uma migration demorada. Serve para provar que um
+// laço desiste no prazo, em vez de esperar para sempre. O papel da aplicação
+// é dono das tabelas, e por isso pode travá-las.
+func LockTable(t *testing.T, pool *pgxpool.Pool, table string) {
+	t.Helper()
+	ctx := context.Background()
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("abrir transação que trava %s: %v", table, err)
+	}
+	// Registrado depois do cleanup de New: roda antes, e a trava sai antes
+	// de o pool fechar e o snapshot voltar.
+	t.Cleanup(func() {
+		if err := tx.Rollback(context.Background()); err != nil {
+			t.Errorf("soltar a trava de %s: %v", table, err)
+		}
+	})
+	// #nosec G201 -- table vem do próprio teste, sanitizada como identificador.
+	if _, err := tx.Exec(ctx, fmt.Sprintf(`LOCK TABLE %s IN ACCESS EXCLUSIVE MODE`, pgx.Identifier{table}.Sanitize())); err != nil {
+		t.Fatalf("travar %s: %v", table, err)
+	}
+}
+
 // AdminDSN é a conexão como superusuário. Serve para provar que o boot
 // RECUSA esse papel e para ler o banco "por fora" da RLS, como faria quem
 // tivesse um dump.
