@@ -505,6 +505,41 @@ for (const largura of [400, 1280]) {
       ['Reconhecer', page.getByRole('button', { name: 'Reconhecer o incidente de Banco' })],
     ])
     expect(await controlesEncobertos(page), `${largura} px: incidentes`).toEqual([])
+    // Os botões do tamanho "pequeno" (min-h-10 sozinho dava 40 px): o
+    // cabeçalho em toda tela, o formulário de alvo, os canais e a status
+    // page. Sabotagem: tirar o alvo-de-toque do tamanho pequeno do Botao, ou
+    // o min-h-11 do seletor de tema.
+    await page.goto('/targets/new')
+    await expect(page.getByRole('heading', { name: 'Novo alvo', level: 1 })).toBeVisible()
+    await page.getByRole('button', { name: 'Adicionar header' }).click()
+    await conferir([
+      ['seletor de tema', page.getByLabel('Tema')],
+      ['Sair', page.getByRole('button', { name: 'Sair' })],
+      ['Adicionar header', page.getByRole('button', { name: 'Adicionar header' })],
+      ['Remover o header 1', page.getByRole('button', { name: 'Remover o header 1' })],
+    ])
+    expect(await controlesEncobertos(page), `${largura} px: novo alvo`).toEqual([])
+    await page.goto('/channels')
+    await expect(page.getByRole('heading', { name: 'Canais de notificação', level: 1 })).toBeVisible()
+    await esperarOConteudo(page, '/channels')
+    await conferir([
+      ['Reenviar verificação', page.getByRole('button', { name: /^Reenviar verificação do canal/ })],
+      ['Pausar', page.getByRole('button', { name: 'Pausar o canal discord.com/…/abcd' })],
+      ['Retomar', page.getByRole('button', { name: 'Retomar o canal discord.com/…/pppp' })],
+      ['Apagar', page.getByRole('button', { name: 'Apagar o canal discord.com/…/abcd' })],
+    ])
+    expect(await controlesEncobertos(page), `${largura} px: canais`).toEqual([])
+    await page.goto('/status-pages')
+    await expect(page.getByRole('heading', { name: 'Status page', level: 1 })).toBeVisible()
+    await esperarOConteudo(page, '/status-pages')
+    await conferir([
+      ['Copiar', page.getByRole('button', { name: 'Copiar', exact: true })],
+      ['Abrir', page.getByRole('link', { name: 'Abrir', exact: true })],
+      ['Subir', page.getByRole('button', { name: 'Subir API' })],
+      ['Descer', page.getByRole('button', { name: 'Descer API' })],
+      ['Tirar', page.getByRole('button', { name: 'Tirar API da página' })],
+    ])
+    expect(await controlesEncobertos(page), `${largura} px: status page`).toEqual([])
     await controlePositivo(page, `alvos de toque ${largura}`)
   })
 }
