@@ -40,7 +40,7 @@ function Linha({
   return (
     <li className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-borda bg-superficie p-4">
       <div className="space-y-1">
-        <Link to={`/targets/${i.target_id}`} className="font-semibold underline-offset-2 hover:underline">
+        <Link to={`/targets/${i.target_id}`} className="alvo-de-toque font-semibold underline-offset-2 hover:underline">
           {i.target_name}
         </Link>
         <p className="text-sm">
@@ -59,7 +59,6 @@ function Linha({
       {!i.resolved_at && !i.acknowledged_at && (
         <Botao
           tipo="secundario"
-          tamanho="pequeno"
           // aria-disabled, e não disabled: o botão desabilitado perderia o
           // foco para o <body> enquanto o POST voa.
           aria-disabled={reconhecendo || undefined}
@@ -137,7 +136,7 @@ export function PaginaIncidentes() {
               setErro(null)
               setParams({ status: f }, { replace: true })
             }}
-            className={cn('rounded-md border border-borda px-3 py-1 text-sm', f === filtro && 'bg-painel font-semibold')}
+            className={cn('min-h-11 rounded-md border border-borda-controle px-3 py-1 text-sm', f === filtro && 'bg-painel font-semibold')}
           >
             {t}
           </button>

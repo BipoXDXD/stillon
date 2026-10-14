@@ -412,7 +412,7 @@ test('aviso de HTTPS fica visível fora da lateral no desktop e mantém login e 
 // cada controle cobre 44 px na largura e na altura, centrados nele. A medida é pelo
 // hit-test (elementFromPoint), não pela caixa: o link de texto cresce por um
 // pseudo-elemento, sem mudar o layout. Sabotagem: tirar a classe
-// alvo-de-toque de um link, ou o min-h-11 do seletor de janela.
+// alvo-de-toque de um link, ou o min-h-11 do seletor de janela ou do filtro de incidentes.
 async function pontosForaDoAlvo(controle: Locator): Promise<string[]> {
   return controle.evaluate((e) => {
     e.scrollIntoView({ block: 'center', inline: 'center' })
@@ -494,6 +494,17 @@ for (const largura of [400, 1280]) {
     ])
     await page.locator('summary', { hasText: 'Ver dados em tabela' }).click()
     expect(await controlesEncobertos(page), `${largura} px: detalhe do alvo`).toEqual([])
+    await page.goto('/incidents')
+    await expect(page.getByRole('heading', { name: 'Incidentes', level: 1 })).toBeVisible()
+    await esperarOConteudo(page, '/incidents')
+    await conferir([
+      ...['Abertos', 'Resolvidos', 'Todos'].map(
+        (f): [string, Locator] => [`filtro ${f}`, page.getByRole('button', { name: f, exact: true })],
+      ),
+      ['nome do alvo do incidente', page.getByRole('link', { name: 'Banco', exact: true })],
+      ['Reconhecer', page.getByRole('button', { name: 'Reconhecer o incidente de Banco' })],
+    ])
+    expect(await controlesEncobertos(page), `${largura} px: incidentes`).toEqual([])
     await controlePositivo(page, `alvos de toque ${largura}`)
   })
 }
