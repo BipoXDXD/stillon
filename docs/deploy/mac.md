@@ -14,8 +14,15 @@ Mac exatamente como está no runbook.
    menos um comando dele (o `read -rs -p` do passo 7.2) quebra no `zsh`
    (`read: -p: no coprocess`). **Em todo terminal novo**, antes de qualquer comando do runbook:
 
+   **1/2 · Mac.** Rode só este e espere a saída:
+
    ```bash
    bash
+   ```
+
+   **2/2 · Mac.** Rode só este e espere a saída:
+
+   ```bash
    . ~/.stillon-vps
    ```
 
@@ -26,8 +33,15 @@ Mac exatamente como está no runbook.
 4. **As ferramentas** (`ssh`, `scp`, `curl`, `openssl`, `dig` e `git` já vêm no macOS; o Xcode
    Command Line Tools pode pedir para instalar o `git` na primeira vez):
 
+   **1/2 · Mac.** Rode só este e espere a saída:
+
    ```bash
    brew install age nmap gh
+   ```
+
+   **2/2 · Mac.** Rode só este e espere a saída:
+
+   ```bash
    gh auth login
    ```
 
@@ -43,8 +57,15 @@ Mac exatamente como está no runbook.
    `docker` disser que não acha o `docker.sock`, é o Docker Desktop fechado.
 6. **O clone, no mesmo caminho do runbook:**
 
+   **1/2 · Mac.** Rode só este e espere a saída:
+
    ```bash
    mkdir -p ~/Projetos/Go
+   ```
+
+   **2/2 · Mac.** Rode só este e espere a saída:
+
+   ```bash
    git clone https://github.com/BipoXDXD/stillon.git ~/Projetos/Go/StillOn
    ```
 
@@ -70,18 +91,42 @@ senhas vem junto: nada disso se refaz. O que mora só no computador antigo, sim:
 
 **Restaurar a chave SSH do administrador** (entrada "StillOn – chave SSH do administrador"):
 
+**1/3 · Mac.** Rode só este e espere a saída:
+
 ```bash
 mkdir -p ~/.ssh && chmod 700 ~/.ssh
+```
+
+**2/3 · Mac.** Rode só este e espere a saída:
+
+```bash
 install -m 600 /dev/null ~/.ssh/stillon_admin
+```
+
+**3/3 · Mac.** Rode só este e espere a saída:
+
+```bash
 nano ~/.ssh/stillon_admin
 ```
 
 Cole o conteúdo inteiro da entrada, da linha `-----BEGIN OPENSSH PRIVATE KEY-----` até a
 `-----END OPENSSH PRIVATE KEY-----`, salve (`Ctrl+O`, Enter) e saia (`Ctrl+X`). Depois, a pública:
 
+**1/3 · Mac.** Rode só este e espere a saída:
+
 ```bash
 ssh-keygen -y -f ~/.ssh/stillon_admin > ~/.ssh/stillon_admin.pub
+```
+
+**2/3 · Mac.** Rode só este e espere a saída:
+
+```bash
 cat ~/.ssh/stillon_admin.pub
+```
+
+**3/3 · Mac.** Rode só este e espere a saída:
+
+```bash
 ls -l ~/.ssh/stillon_admin
 ```
 
@@ -96,10 +141,52 @@ frase **colada** do gerenciador (e não digitada), a frase guardada não é a de
 como recuperá-la.
 Antes do bloco 2 isso custa pouco (a chave ainda não entrou em lugar nenhum além do painel): gere
 a frase nova no gerenciador, apague `~/.ssh/stillon_admin*`, refaça o passo 1.1 **colando** a
-frase, guarde a privada nova no gerenciador (`pbcopy < ~/.ssh/stillon_admin`, cole, e confira com
-`[ "$(pbpaste)" = "$(cat ~/.ssh/stillon_admin)" ] && echo iguais`; depois `pbcopy < /dev/null`) e,
-no painel (**Settings → SSH keys**), apague a `stillon-admin` velha e cadastre a nova. Foi o que
-aconteceu em 2026-09-28. Depois do bloco 2, o caminho é o de "Perdi a chave SSH" (bloco 10).
+frase, guarde a privada nova no gerenciador e confira que a entrada ficou igual ao arquivo, sem
+depender da área de transferência (ela guarda só o último texto copiado, e o último copiado é um
+comando deste runbook). Um comando por vez: o 1/6 copia a chave para você colar na entrada do
+gerenciador; o 2/6 limpa a área de transferência; do 3/6 ao 5/6, abra a entrada no gerenciador,
+copie o conteúdo e cole-o no editor do `nano` (salve com `Ctrl+O` e Enter, saia com `Ctrl+X`),
+e o `diff` do 5/6 diz `iguais`:
+
+**1/6 · Mac.** Rode só este e espere a saída:
+
+```bash
+pbcopy < ~/.ssh/stillon_admin
+```
+
+**2/6 · Mac.** Rode só este e espere a saída:
+
+```bash
+pbcopy < /dev/null
+```
+
+**3/6 · Mac.** Rode só este e espere a saída:
+
+```bash
+install -m 600 /dev/null ~/conferir.key
+```
+
+**4/6 · Mac.** Rode só este e espere a saída:
+
+```bash
+nano ~/conferir.key
+```
+
+**5/6 · Mac.** Rode só este e espere a saída:
+
+```bash
+diff ~/conferir.key ~/.ssh/stillon_admin && echo iguais
+```
+
+**6/6 · Mac.** Rode só este e espere a saída:
+
+```bash
+rm ~/conferir.key
+```
+
+Por fim, no painel (**Settings → SSH keys**), apague a `stillon-admin` velha e cadastre a nova.
+Foi o que aconteceu em 2026-09-28. Depois do bloco 2, o caminho é o de "Perdi a chave SSH"
+(bloco 10).
 
 **A primeira conexão do Mac com a VPS** pergunta a impressão digital de novo (o `known_hosts` é
 de cada computador). Confira-a como no passo 2.1, pelo terminal do painel, antes do `yes`. Se o
@@ -129,20 +216,111 @@ que os blocos antigos sumam (o disco grava em outro lugar). Quem protege o que f
 
 ### 7.2, item 4, sem o host networking
 
-Se preferir não ligar o **Enable host networking**, suba a cópia assim (o resto do item 4 e o item
-5 ficam iguais). Ela sobe em segundo plano e com nome (`restauro-app`); o item 6 a remove com
+Se preferir não ligar o **Enable host networking**, suba a cópia assim, no lugar dos comandos do
+item 4 que vão do `read` ao `docker run` (o resto do item 4 e o item 5 ficam iguais). Ela sobe em
+segundo plano e com nome (`restauro-app`); o item 6 a remove com
 `docker rm -f restauro-app restauro`, para a cópia com a `MASTER_KEY` não ficar de pé:
 
+**1/17 · Mac.** Rode só este e espere a saída:
+
 ```bash
-read -rs -p 'MASTER_KEY de produção (do gerenciador): ' MASTER_KEY; echo
+read -rs -p 'MASTER_KEY de produção (do gerenciador): ' MASTER_KEY && echo
+```
+
+**2/17 · Mac.** Rode só este e espere a saída:
+
+```bash
 export MASTER_KEY
-docker run -d --rm --name restauro-app -p 127.0.0.1:8080:8080 \
-  -e DATABASE_URL='postgres://stillon_app:stillon_app@host.docker.internal:25433/stillon?sslmode=disable' \
-  -e MASTER_KEY \
-  -e JWT_SECRET="$(openssl rand -base64 32)" -e IP_HASH_KEY="$(openssl rand -base64 32)" \
-  -e PUBLIC_BASE_URL=http://localhost:8080 -e CORS_ORIGIN=http://localhost:8080 \
-  -e HTTP_ADDR=:8080 -e METRICS_ADDR=off \
-  "ghcr.io/bipoxdxd/stillon:$SHA" --role=api
+```
+
+**3/17 · Mac.** Rode só este e espere a saída:
+
+```bash
+export JWT_SECRET="$(openssl rand -base64 32)"
+```
+
+**4/17 · Mac.** Rode só este e espere a saída:
+
+```bash
+export IP_HASH_KEY="$(openssl rand -base64 32)"
+```
+
+**5/17 · Mac.** Rode só este e espere a saída:
+
+```bash
+cd ~/stillon-restauro
+```
+
+**6/17 · Mac.** Rode só este e espere a saída:
+
+```bash
+echo 'MASTER_KEY' > app.env
+```
+
+**7/17 · Mac.** Rode só este e espere a saída:
+
+```bash
+echo 'JWT_SECRET' >> app.env
+```
+
+**8/17 · Mac.** Rode só este e espere a saída:
+
+```bash
+echo 'IP_HASH_KEY' >> app.env
+```
+
+**9/17 · Mac.** Rode só este e espere a saída:
+
+```bash
+echo 'PUBLIC_BASE_URL=http://localhost:8080' >> app.env
+```
+
+**10/17 · Mac.** Rode só este e espere a saída:
+
+```bash
+echo 'CORS_ORIGIN=http://localhost:8080' >> app.env
+```
+
+**11/17 · Mac.** Rode só este e espere a saída:
+
+```bash
+echo 'HTTP_ADDR=:8080' >> app.env
+```
+
+**12/17 · Mac.** Rode só este e espere a saída:
+
+```bash
+echo 'METRICS_ADDR=off' >> app.env
+```
+
+**13/17 · Mac.** Rode só este e espere a saída:
+
+```bash
+B=postgres://stillon_app:stillon_app@host.docker.internal:25433
+```
+
+**14/17 · Mac.** Rode só este e espere a saída:
+
+```bash
+echo "DATABASE_URL=$B/stillon?sslmode=disable" >> app.env
+```
+
+**15/17 · Mac.** Rode só este e espere a saída:
+
+```bash
+A="ghcr.io/bipoxdxd/stillon:$SHA"
+```
+
+**16/17 · Mac.** Rode só este e espere a saída:
+
+```bash
+O="-d --rm --name restauro-app -p 127.0.0.1:8080:8080"
+```
+
+**17/17 · Mac.** Rode só este e espere a saída:
+
+```bash
+docker run $O --env-file app.env $A --role=api
 ```
 
 **Por quê:** no Docker Desktop, os contêineres rodam numa máquina virtual; o `127.0.0.1` de dentro
