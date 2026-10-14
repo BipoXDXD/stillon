@@ -35,6 +35,8 @@ type canalFalso struct {
 	destinos  []string
 	bloquear  bool
 	panico    bool
+	// chegou, quando não é nil, recebe um sinal a cada envio que começa.
+	chegou chan struct{}
 }
 
 func (*canalFalso) Kind() Kind { return KindDiscord }
@@ -47,8 +49,11 @@ func (c *canalFalso) Send(ctx context.Context, dest crypto.Secret, ev Event) err
 	if len(c.respostas) > 0 {
 		resp, c.respostas = c.respostas[0], c.respostas[1:]
 	}
-	bloquear, panico := c.bloquear, c.panico
+	bloquear, panico, chegou := c.bloquear, c.panico, c.chegou
 	c.mu.Unlock()
+	if chegou != nil {
+		chegou <- struct{}{}
+	}
 	if panico {
 		panic("canal quebrado")
 	}

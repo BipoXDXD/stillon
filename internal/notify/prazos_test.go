@@ -48,3 +48,44 @@ func TestDispatchClaimGivesUpAtTheDeadline(t *testing.T) {
 		t.Errorf("%d envios com a reivindicação presa, queria 0", n)
 	}
 }
+
+// C1 da revisão: no encerramento, o lote em curso não tinha teto. Um webhook
+// lento segurava o processo além do ShutdownGrace, o Docker o matava, e o
+// aviso entregue mas não marcado voltava pelo lease e saía duplicado. Agora,
+// depois do sinal, nenhum envio novo começa, o envio em curso é abortado em
+// shutdownSendGrace, e os dois voltam à fila para já, sem gastar tentativa.
+func TestShutdownBoundsTheBatchAndReturnsItToTheQueue(t *testing.T) {
+	b := novaBancada(t, nil)
+	ids := b.apagao(t, 2)
+	b.canal.bloquear = true
+	b.canal.chegou = make(chan struct{}, len(ids))
+	b.d.sendTimeout = time.Minute // sem o teto do encerramento, o lote esperaria isto
+	b.d.shutdownSendGrace = 200 * time.Millisecond
+
+	ctx, encerrar := context.WithCancel(context.Background())
+	defer encerrar()
+	feito := make(chan error, 1)
+	go func() {
+		_, err := b.d.Dispatch(ctx)
+		feito <- err
+	}()
+	select {
+	case <-b.canal.chegou:
+	case <-time.After(esperaMaxima):
+		t.Fatal("o primeiro envio não começou")
+	}
+	encerrar()
+
+	if err := terminaNoPrazo(t, "Dispatch no encerramento", func() error { return <-feito }); err != nil {
+		t.Fatalf("Dispatch = %v", err)
+	}
+	if n := b.canal.quantos(); n != 1 {
+		t.Errorf("%d envios, queria 1: nenhum envio novo começa depois do sinal", n)
+	}
+	for i, id := range ids {
+		l := b.estado(t, id)
+		if l.Status != "pending" || l.Attempts != 0 || !l.Proxima.Equal(b.clk.Now()) || l.Erro != nil {
+			t.Errorf("notificação %d: %+v; queria pendente para agora, sem tentativa gasta e sem erro", i, l)
+		}
+	}
+}
