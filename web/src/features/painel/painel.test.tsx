@@ -101,6 +101,21 @@ describe('navegação', () => {
     await r.cliente.refetchQueries()
     await waitFor(() => expect(link).toHaveAccessibleName('Incidentes'))
   })
+
+  // T5 da revisão de 2026-10-14: a fronteira do "99+" (uma página de até 100
+  // abertos). 99 → "99"; 100 → "99+"; 101 (página cheia com next_cursor) →
+  // "99+". Sabotagem: trocar "> 99" por "> 100" → o caso de 100 mostra "100".
+  it.each([
+    [99, 'Incidentes, 99 abertos'],
+    [100, 'Incidentes, 99+ abertos'],
+    [101, 'Incidentes, 99+ abertos'],
+  ])('com %i incidentes abertos, o contador diz “%s”', async (quantos, nome) => {
+    const r = await renderizarPainel('/')
+    const link = await screen.findByRole('link', { name: 'Incidentes' })
+    r.falsa.estado.incidentes = Array.from({ length: quantos }, (_, i) => incidente({ id: `i${i}` }))
+    await r.cliente.refetchQueries()
+    await waitFor(() => expect(link).toHaveAccessibleName(nome))
+  })
 })
 
 // Plano 12: tirar a contagem por enabled ou os avisos de canais precisa
