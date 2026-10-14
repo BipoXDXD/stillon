@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"golang.org/x/sync/singleflight"
 
+	"github.com/BipoXDXD/stillon/internal/rollupcut"
 	"github.com/BipoXDXD/stillon/internal/storage"
 	"github.com/BipoXDXD/stillon/internal/storage/db"
 	"github.com/BipoXDXD/stillon/internal/targetstate"
@@ -128,6 +129,7 @@ func (s *Service) projetarComPrazo(ctx context.Context, slug string, agora time.
 }
 
 func (s *Service) projetar(ctx context.Context, slug string, agora time.Time) (View, error) {
+	h := agora.UTC().Truncate(time.Hour)
 	hoje := agora.UTC().Truncate(24 * time.Hour)
 	desde := hoje.AddDate(0, 0, -(Days - 1))
 	v := View{GeneratedAt: agora}
@@ -145,11 +147,22 @@ func (s *Service) projetar(ctx context.Context, slug string, agora time.Time) (V
 		if err != nil {
 			return fmt.Errorf("listar itens públicos: %w", err)
 		}
-		dias, err := q.ListPublicDailyUptime(ctx, db.ListPublicDailyUptimeParams{PageID: pagina.ID, Since: desde})
+		// Rollups até o corte e checks brutos dele até o fim da hora
+		// corrente, como o dashboard: a queda em curso aparece na barra.
+		marca, err := q.LatestPageRollupBucket(ctx, db.LatestPageRollupBucketParams{Before: h, PageID: pagina.ID})
+		if err != nil {
+			return fmt.Errorf("marca d'água dos rollups da página: %w", err)
+		}
+		corte, ate := rollupcut.At(marca, desde, h), h.Add(time.Hour)
+		dias, err := q.ListPublicDailyUptime(ctx, db.ListPublicDailyUptimeParams{
+			PageID: pagina.ID, Since: desde, Cut: corte, Until: ate,
+		})
 		if err != nil {
 			return fmt.Errorf("listar uptime diário: %w", err)
 		}
-		latencias, err := q.ListPublicLatency(ctx, db.ListPublicLatencyParams{PageID: pagina.ID, Since: agora.Add(-latencyWindow)})
+		latencias, err := q.ListPublicLatency(ctx, db.ListPublicLatencyParams{
+			PageID: pagina.ID, Since: agora.Add(-latencyWindow), Cut: corte, Until: ate,
+		})
 		if err != nil {
 			return fmt.Errorf("listar latência: %w", err)
 		}
