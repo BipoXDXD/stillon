@@ -2,8 +2,10 @@ package middleware
 
 import (
 	"context"
+	"math"
 	"net/http"
 	"net/netip"
+	"strconv"
 	"sync"
 	"time"
 
@@ -144,14 +146,36 @@ func (h *limiterHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.st.buckets[chave] = b
 	}
 	b.seen = time.Now()
-	allow := b.lim.Allow()
+	espera, allow := reservar(b.lim)
 	h.st.mu.Unlock()
 
 	if !allow {
+		// Retry-After diz ao cliente legítimo quanto esperar. Sem prazo
+		// conhecido (taxa zero), o cabeçalho fica de fora.
+		if espera > 0 {
+			w.Header().Set("Retry-After", strconv.Itoa(int(math.Ceil(espera.Seconds()))))
+		}
 		apierr.WriteError(w, r, apierr.CodeRateLimited)
 		return
 	}
 	h.next.ServeHTTP(w, r)
+}
+
+// reservar é o Allow que também diz quanto falta para o próximo token. A
+// reserva recusada é devolvida (Cancel): recusar não pode gastar o token que
+// o cliente receberia ao respeitar o Retry-After.
+func reservar(lim *rate.Limiter) (time.Duration, bool) {
+	agora := time.Now()
+	res := lim.ReserveN(agora, 1)
+	if !res.OK() {
+		return 0, false
+	}
+	espera := res.DelayFrom(agora)
+	if espera > 0 {
+		res.CancelAt(agora)
+		return espera, false
+	}
+	return 0, true
 }
 
 // varrer remove o que está parado há tempo demais. Chamar com mu travado.
