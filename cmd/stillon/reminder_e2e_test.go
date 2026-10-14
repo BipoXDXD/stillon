@@ -30,11 +30,12 @@ func TestProberRoleEnqueuesOverdueReminders(t *testing.T) {
 	agora := time.Now()
 	avisada := agora.Add(-31 * time.Minute)
 	err := storage.InUserTx(ctx, pool, dono, func(q *db.Queries) error {
-		// Desligado: o sondador não mexe no alvo durante o teste.
+		// Ligado, porque alvo pausado não gera lembrete, mas com a próxima
+		// sonda daqui a um dia: o sondador não mexe no alvo durante o teste.
 		if err := q.InsertTarget(ctx, db.InsertTargetParams{
 			ID: alvo, UserID: dono, Name: "fora", URL: "https://exemplo.com/",
 			Method: "GET", IntervalSec: 60, TimeoutMS: 1000, ExpectedStatus: 200,
-			Enabled: false, NextRunAt: agora, CreatedAt: agora,
+			Enabled: true, NextRunAt: agora.Add(24 * time.Hour), CreatedAt: agora,
 		}); err != nil {
 			return err
 		}

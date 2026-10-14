@@ -99,6 +99,22 @@ func TestPendingReminderIsCancelledOnceResolved(t *testing.T) {
 	}
 }
 
+// Um lembrete já na fila quando o alvo é pausado não sai: o alvo pausado
+// não gera lembrete, e o incidente segue aberto.
+func TestPendingReminderIsCancelledOnceTargetIsPaused(t *testing.T) {
+	b := novaBancada(t, nil)
+	id := b.lembrar(t, 1)
+	pausarAlvoDoIncidente(t, b.pool, b.dono, b.incidente, true)
+
+	b.despachar(t, 1)
+	if l := b.estado(t, id); l.Status != "cancelled" {
+		t.Errorf("lembrete de alvo pausado: %+v, queria cancelled", l)
+	}
+	if b.canal.quantos() != 0 {
+		t.Errorf("enviou %d, queria 0", b.canal.quantos())
+	}
+}
+
 // O ack para só os lembretes: abertura e fechamento saem do mesmo jeito.
 func TestAcknowledgeDoesNotStopOpenedNorResolved(t *testing.T) {
 	b := novaBancada(t, nil)

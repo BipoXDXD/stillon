@@ -19,7 +19,8 @@ WITH claimed AS (
 SELECT cl.id, cl.event, cl.attempts, cl.created_at,
        c.id AS channel_id, c.user_id, c.kind, c.config_enc, c.enabled, c.verified_at,
        i.id AS incident_id, i.started_at, i.resolved_at, i.ack_at, i.cause,
-       COALESCE(cl.target_name, t.name)::text AS target_name
+       COALESCE(cl.target_name, t.name)::text AS target_name,
+       t.enabled AS target_enabled
   FROM claimed cl
   JOIN notif_channels c ON c.id = cl.channel_id
   JOIN incidents i ON i.id = cl.incident_id
@@ -59,8 +60,9 @@ ON CONFLICT (channel_id) DO UPDATE
 
 -- Lembretes de incidente aberto (migration 00012). Rodam só sob InProberTx.
 -- Um par (incidente, canal) é candidato enquanto o incidente segue aberto,
--- sem ack e com a abertura avisada, e o canal está habilitado e verificado
--- agora. Só pares que já receberam a abertura entram: o fan-out continua
+-- sem ack e com a abertura avisada, o alvo não está pausado (sem sonda, o
+-- incidente dele não fecha) e o canal está habilitado e verificado agora.
+-- Só pares que já receberam a abertura entram: o fan-out continua
 -- acontecendo só na transição. base_at é o enfileiramento do aviso mais
 -- recente entre abertura e lembretes; last_seq, o maior seq de lembrete
 -- (0 sem lembrete). A paginação é por chave, e quem chama segue até a
@@ -71,9 +73,11 @@ SELECT n.incident_id, n.channel_id, c.kind, i.started_at,
        max(n.created_at)::timestamptz AS base_at
   FROM notifications n
   JOIN incidents i ON i.id = n.incident_id
+  JOIN targets t ON t.id = i.target_id
   JOIN notif_channels c ON c.id = n.channel_id
  WHERE n.event IN ('opened', 'reminder')
    AND i.resolved_at IS NULL AND i.ack_at IS NULL AND i.open_notified_at IS NOT NULL
+   AND t.enabled
    AND c.enabled AND c.verified_at IS NOT NULL
    AND (n.incident_id, n.channel_id) > (sqlc.arg(after_incident)::uuid, sqlc.arg(after_channel)::uuid)
  GROUP BY n.incident_id, n.channel_id, c.kind, i.started_at
