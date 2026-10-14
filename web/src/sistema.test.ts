@@ -23,6 +23,9 @@ const ARQUIVOS_NO_SISTEMA = [
   'src/features/painel/EsqueletoDoPainel.tsx',
   'src/features/alvos/FaixaDeEstado.tsx',
   'src/features/alvos/GraficoDeLatencia.tsx',
+  'src/features/alvos/Indicadores.tsx',
+  'src/features/alvos/IncidentesRecentes.tsx',
+  'src/features/alvos/PaginaDetalhe.tsx',
   'src/features/painel/PaginaPainel.tsx',
 ]
 
