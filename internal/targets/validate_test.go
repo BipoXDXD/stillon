@@ -67,6 +67,17 @@ func TestValidate(t *testing.T) {
 		{"url IP decimal com ponto final", func(f *fields) { f.URL = "http://2130706433./" }, "url", ReasonInvalid},
 		{"url IPv6 público literal", func(f *fields) { f.URL = "http://[2606:4700:4700::1111]/" }, "", ""},
 		{"url IP hexadecimal maiúsculo", func(f *fields) { f.URL = "http://0X7F.1/" }, "url", ReasonInvalid},
+		// Host de rótulo único (sem ponto) é nome da rede interna: num
+		// contêiner, o DNS do Docker o resolve (db, caddy, app). Recusá-lo no
+		// cadastro impede usar o sondador para descobrir quais nomes existem.
+		{"url rótulo único", func(f *fields) { f.URL = "http://db/" }, "url", ReasonForbidden},
+		{"url rótulo único com porta", func(f *fields) { f.URL = "http://db:5432/" }, "url", ReasonForbidden},
+		{"url rótulo único com ponto final", func(f *fields) { f.URL = "http://db./" }, "url", ReasonForbidden},
+		{"url rótulo único com dois pontos finais", func(f *fields) { f.URL = "http://db../" }, "url", ReasonForbidden},
+		{"url rótulo único em maiúsculas", func(f *fields) { f.URL = "https://INTRANET/" }, "url", ReasonForbidden},
+		{"url rótulo único com ponto ideográfico", func(f *fields) { f.URL = "http://db\u3002/" }, "url", ReasonForbidden},
+		{"url com dois rótulos curtos", func(f *fields) { f.URL = "http://a.b/" }, "", ""},
+		{"url exemplo.com", func(f *fields) { f.URL = "https://exemplo.com/" }, "", ""},
 
 		{"método DELETE", func(f *fields) { f.Method = "DELETE" }, "method", ReasonInvalid},
 

@@ -54,7 +54,12 @@ func newTransport(allowed []netip.AddrPort) *http.Transport {
 	}
 
 	return &http.Transport{
-		DialContext: dialer.DialContext,
+		DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
+			if err := allowHostName(address); err != nil {
+				return nil, err
+			}
+			return dialer.DialContext(ctx, network, address)
+		},
 
 		// Sem proxy: HTTP_PROXY no ambiente faria toda requisição passar por
 		// um intermediário, e o ControlContext validaria o IP do proxy em vez
@@ -88,6 +93,25 @@ func newTransport(allowed []netip.AddrPort) *http.Transport {
 		// pacote net. TestTransportLeavesTheDeadlineToTheContext trava só os
 		// dois campos do próprio http.Transport.
 	}
+}
+
+// allowHostName barra o nome de rótulo único ANTES da resolução. O
+// ControlContext só vê o IP já resolvido: ele bloqueia o nome que existe na
+// rede interna, mas o que não existe falharia antes, no DNS, com outro
+// error_kind. Barrar aqui iguala os dois casos, inclusive num redirect.
+func allowHostName(address string) error {
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		// Endereço ilegível: o próprio dialer devolve o erro.
+		return nil
+	}
+	if _, err := netip.ParseAddr(host); err == nil {
+		return nil
+	}
+	if IsSingleLabel(host) {
+		return fmt.Errorf("%w: host de rótulo único %q", ErrBlocked, host)
+	}
+	return nil
 }
 
 // liberado diz se address está na lista de exceções exatas. O Unmap iguala

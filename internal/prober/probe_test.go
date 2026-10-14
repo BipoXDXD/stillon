@@ -326,6 +326,44 @@ func TestProbeWithProductionClientIsBlocked(t *testing.T) {
 	}
 }
 
+// Um nome de rótulo único (sem ponto) é nome da rede interna: o DNS do
+// Docker resolve db, caddy e app. Se o que existe saísse blocked (o IP é
+// interno) e o que não existe saísse dns, o error_kind diria quais nomes há
+// na rede. Os dois têm de sair blocked, sem chegar ao DNS. O localhost faz o
+// papel do nome que existe: resolve para loopback em qualquer máquina.
+func TestProbeSingleLabelHostIsBlockedWhetherItExistsOrNot(t *testing.T) {
+	cases := []struct{ nome, url string }{
+		{"nome que existe", "http://localhost/"},
+		{"nome que existe em maiúsculas", "http://LOCALHOST:8080/"},
+		{"nome que existe com ponto final", "http://localhost./"},
+		{"nome que não existe", "http://naoexiste-stillon-x7q/"},
+		{"nome que não existe com ponto final", "http://naoexiste-stillon-x7q./"},
+	}
+	for _, c := range cases {
+		t.Run(c.nome, func(t *testing.T) {
+			res := Probe(t.Context(), safedial.NewClient(0), especificacao(c.url))
+			if res.Status != StatusDown || res.ErrorKind != KindBlocked {
+				t.Errorf("Probe(%q) = %+v, queria down/blocked", c.url, res)
+			}
+		})
+	}
+}
+
+// O mesmo vale no meio de um redirecionamento: o salto para um nome de
+// rótulo único não pode revelar se ele existe.
+func TestProbeRedirectToASingleLabelHostIsBlocked(t *testing.T) {
+	for _, destino := range []string{"http://localhost/", "http://naoexiste-stillon-x7q/"} {
+		t.Run(destino, func(t *testing.T) {
+			srv, client := servidor(t, func(w http.ResponseWriter, r *http.Request) {
+				http.Redirect(w, r, destino, http.StatusFound)
+			})
+			if res := Probe(t.Context(), client, especificacao(srv.URL)); res.Status != StatusDown || res.ErrorKind != KindBlocked {
+				t.Errorf("salto para %q: res = %+v, queria down/blocked", destino, res)
+			}
+		})
+	}
+}
+
 // segredos são headers de alvo que o net/http trata de jeitos diferentes:
 // Authorization ele mesmo tira ao trocar de domínio, X-Token não.
 func segredos() map[string]string {

@@ -93,6 +93,19 @@ describe('validação pública do formulário de alvo', () => {
     expect(esquemaAlvo.safeParse(entrada({ url })).success).toBe(aceito)
   })
 
+  // Host de rótulo único (sem ponto) é nome da rede interna, como o
+  // servidor recusa (safedial.IsSingleLabel).
+  it.each([
+    ['http://db/', false], ['http://db:5432/', false], ['http://db./', false],
+    ['http://db../', false], ['https://INTRANET/', false], ['http://db。/', false],
+    ['http://a.b/', true], ['https://exemplo.com/', true], ['http://exemplo.com./', true],
+    ['http://[2606:4700:4700::1111]/', true],
+  ])('URL %s: aceitação pelo formulário %s', (url, aceito) => {
+    // Só o subconjunto de rejeições antecipadas do formulário, sem afirmar
+    // que o endereço passa pela autorização de rede ou resolve publicamente.
+    expect(esquemaAlvo.safeParse(entrada({ url })).success).toBe(aceito)
+  })
+
   it.each([
     ['ASCII com 2048 bytes', 'https://a.invalid/' + 'a'.repeat(2030), true],
     ['ASCII com 2049 bytes', 'https://a.invalid/' + 'a'.repeat(2031), false],
