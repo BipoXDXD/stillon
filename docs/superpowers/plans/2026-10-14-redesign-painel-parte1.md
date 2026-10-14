@@ -69,6 +69,7 @@ PR 1, Fundação:
 | `web/src/components/Titulo.tsx` | `h1` em Fraunces 600, 28/36 px |
 | `web/src/components/ui/botao.tsx` + `botao.test.tsx` (novo) | Pirâmide de botões |
 | `web/src/components/ui/campo.tsx` + `campo.test.tsx` (novo) | Campo de 44 px e `CaixaDeMarcar` |
+| `web/src/lib/estado.ts` + `estado.test.ts` (novos) | `EstadoExibido`, `estadoExibido` e `textoDoEstado` (R1.1 do backlog de refatoração) |
 | `web/src/components/SeloDeEstado.tsx` + `selo.test.tsx` (novo) | `Selo` e `SeloDeEstado` em pílula com fundo 100 |
 | `web/src/components/ui/controle-segmentado.tsx` + `controle-segmentado.test.tsx` (novos) | Radiogroup segmentado |
 | `web/src/components/ui/dialogo.tsx`, `avisos.tsx` | Raio, sombra nível 2, sobreposição por token |
@@ -1460,21 +1461,31 @@ git commit -m "feat(painel): campo de 44 px e caixa de marcar com a linha inteir
 
 ### Task 6: Selo de estado em pílula com fundo 100
 
+> **Ajuste aprovado pelo dono (R1.1 do [backlog de refatoração](../reports/2026-10-14-backlog-refatoracao.md), Onda 1):**
+> `EstadoExibido`, `estadoExibido` e `textoDoEstado` são regra de domínio, sem visual, e moram em
+> `web/src/lib/estado.ts`. O `SeloDeEstado.tsx` só os importa (sem reexportar), e os consumidores
+> (`painel/transicoes.ts`, `painel/PaginaPainel.tsx`, `alvos/PaginaDetalhe.tsx`,
+> `statuspage/PaginaStatusPage.tsx`) importam de `@/lib/estado`.
+
 **Files:**
+- Create: `web/src/lib/estado.ts`, `web/src/lib/estado.test.ts`
 - Modify: `web/src/components/SeloDeEstado.tsx` (arquivo inteiro)
 - Create: `web/src/components/selo.test.tsx`
 - Modify: `web/src/sistema.test.ts` (lista)
+- Modify (imports): `web/src/features/painel/transicoes.ts`, `web/src/features/painel/PaginaPainel.tsx`, `web/src/features/alvos/PaginaDetalhe.tsx`, `web/src/features/statuspage/PaginaStatusPage.tsx`
 
 **Interfaces:**
 - Consumes: cores `no-ar`, `no-ar-100`, `degradado`, `degradado-100`, `fora`, `fora-100`, `sem-dados`, `sem-dados-100`, `primaria`, `primaria-100`; `text-meta`; `cn` estendido (Task 3: sem ele o `text-meta` some ao lado da cor).
 - Produces:
 
 ```ts
-// web/src/components/SeloDeEstado.tsx
+// web/src/lib/estado.ts
 export type EstadoExibido = EstadoAlvo | 'pausado'
-export type TomDoSelo = 'no-ar' | 'degradado' | 'fora' | 'sem-dados' | 'primaria'
 export function textoDoEstado(e: EstadoExibido): string
 export function estadoExibido(estado: EstadoAlvo, ativo: boolean): EstadoExibido
+
+// web/src/components/SeloDeEstado.tsx
+export type TomDoSelo = 'no-ar' | 'degradado' | 'fora' | 'sem-dados' | 'primaria'
 export function SeloDeEstado(props: { estado: EstadoExibido; className?: string })
 export type PropsDoSelo = { tom: TomDoSelo; Icone: LucideIcon; cheio?: boolean; children: ReactNode; className?: string }
 export function Selo(props: PropsDoSelo)
@@ -1537,45 +1548,36 @@ Em `web/src/sistema.test.ts`, acrescente `'src/components/SeloDeEstado.tsx'` à 
 Run: `cd web && npx vitest run src/components/selo.test.tsx src/sistema.test.ts`
 Expected: FAIL. `Selo` não é exportado; o selo não tem `rounded-full` nem fundo; `SeloDeEstado.tsx` reprova (`gap-1.5`, `font-medium`). O teste das formas passa: é de caracterização. Sabotagem para vê-lo falhar: troque o ícone do `degraded` por `Circle` → 4 formas. Desfaça.
 
-- [ ] **Step 3: Reescrever o `SeloDeEstado.tsx`**
+- [ ] **Step 3: Criar `lib/estado.ts` e reescrever o `SeloDeEstado.tsx`**
+
+Crie `web/src/lib/estado.ts` com `EstadoExibido`, a tabela de textos (`No ar`, `Degradado`, `Fora do ar`, `Sem dados`, `Pausado`), `textoDoEstado` e `estadoExibido` (código antes no selo), e `web/src/lib/estado.test.ts` com uma tabela por função (ativo × inativo para os quatro estados; o texto de cada estado). Troque os imports dos quatro consumidores para `@/lib/estado`.
 
 Substitua `web/src/components/SeloDeEstado.tsx` por:
 
 ```tsx
 import { Circle, CircleDashed, Pause, Triangle, X, type LucideIcon } from 'lucide-react'
 import type { ReactNode } from 'react'
-import type { EstadoAlvo } from '@/lib/api/schemas'
+import { textoDoEstado, type EstadoExibido } from '@/lib/estado'
 import { cn } from '@/lib/utils'
 
 // Estado com forma, cor E texto, nunca só cor (spec §11.6 e spec do
 // redesign): verde e vermelho são o par que a deuteranopia não separa, então
 // os ícones também diferem.
-export type EstadoExibido = EstadoAlvo | 'pausado'
 export type TomDoSelo = 'no-ar' | 'degradado' | 'fora' | 'sem-dados' | 'primaria'
 
-const selos: Record<EstadoExibido, { texto: string; Icone: LucideIcon; tom: TomDoSelo; cheio: boolean }> = {
-  up: { texto: 'No ar', Icone: Circle, tom: 'no-ar', cheio: true },
-  degraded: { texto: 'Degradado', Icone: Triangle, tom: 'degradado', cheio: true },
-  down: { texto: 'Fora do ar', Icone: X, tom: 'fora', cheio: false },
-  unknown: { texto: 'Sem dados', Icone: CircleDashed, tom: 'sem-dados', cheio: false },
-  pausado: { texto: 'Pausado', Icone: Pause, tom: 'sem-dados', cheio: false },
-}
-
-export function textoDoEstado(e: EstadoExibido) {
-  return selos[e].texto
-}
-
-// O servidor diz "unknown" também para alvo desativado; o painel distingue
-// pelo enabled (spec do Plano 6 §4.2).
-export function estadoExibido(estado: EstadoAlvo, ativo: boolean): EstadoExibido {
-  return ativo ? estado : 'pausado'
+const selos: Record<EstadoExibido, { Icone: LucideIcon; tom: TomDoSelo; cheio: boolean }> = {
+  up: { Icone: Circle, tom: 'no-ar', cheio: true },
+  degraded: { Icone: Triangle, tom: 'degradado', cheio: true },
+  down: { Icone: X, tom: 'fora', cheio: false },
+  unknown: { Icone: CircleDashed, tom: 'sem-dados', cheio: false },
+  pausado: { Icone: Pause, tom: 'sem-dados', cheio: false },
 }
 
 export function SeloDeEstado({ estado, className }: { estado: EstadoExibido; className?: string }) {
-  const { texto, Icone, tom, cheio } = selos[estado]
+  const { Icone, tom, cheio } = selos[estado]
   return (
     <Selo tom={tom} Icone={Icone} cheio={cheio} className={className}>
-      {texto}
+      {textoDoEstado(estado)}
     </Selo>
   )
 }
@@ -1617,7 +1619,7 @@ Expected: tudo verde.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add web/src/components/SeloDeEstado.tsx web/src/components/selo.test.tsx web/src/sistema.test.ts
+git add web/src/lib/estado.ts web/src/lib/estado.test.ts web/src/components/SeloDeEstado.tsx web/src/components/selo.test.tsx web/src/sistema.test.ts web/src/features
 git commit -m "feat(painel): selo de estado em pílula com o fundo 100 da cor"
 ```
 
@@ -2745,11 +2747,13 @@ export function CaixaDeMarcar(props: Omit<ComponentProps<'input'>, 'type' | 'chi
 // className vai para a linha (<label>); o resto, ao <input type="checkbox">.
 export function ErroDoFormulario(props: { children?: ReactNode })
 
-// web/src/components/SeloDeEstado.tsx
+// web/src/lib/estado.ts (R1.1: regra de domínio fora do componente visual)
 export type EstadoExibido = EstadoAlvo | 'pausado'
-export type TomDoSelo = 'no-ar' | 'degradado' | 'fora' | 'sem-dados' | 'primaria'
 export function textoDoEstado(e: EstadoExibido): string   // 'No ar' | 'Degradado' | 'Fora do ar' | 'Sem dados' | 'Pausado'
 export function estadoExibido(estado: EstadoAlvo, ativo: boolean): EstadoExibido
+
+// web/src/components/SeloDeEstado.tsx (importa EstadoExibido e textoDoEstado de @/lib/estado; não reexporta)
+export type TomDoSelo = 'no-ar' | 'degradado' | 'fora' | 'sem-dados' | 'primaria'
 export function SeloDeEstado(props: { estado: EstadoExibido; className?: string })
 export type PropsDoSelo = { tom: TomDoSelo; Icone: LucideIcon; cheio?: boolean; children: ReactNode; className?: string }
 export function Selo(props: PropsDoSelo)

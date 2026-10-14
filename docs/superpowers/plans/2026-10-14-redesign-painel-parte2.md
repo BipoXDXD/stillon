@@ -129,7 +129,7 @@ git switch main && git pull --ff-only && git switch -c feat/redesign-painel
 - Create: `web/src/features/painel/manchete.ts`, `web/src/features/painel/manchete.test.ts`
 
 **Interfaces:**
-- Consumes: `estadoExibido`, `textoDoEstado`, `type EstadoExibido` (`@/components/SeloDeEstado`, PR 1); `textoDoErroDeCheck` (`@/lib/api/mensagens`); `dataHora`, `duracao`, `haQuanto`, `milissegundos` (`@/lib/format`); tipos `Incidente`, `ItemDoResumo`.
+- Consumes: `estadoExibido`, `textoDoEstado`, `type EstadoExibido` (`@/lib/estado`, PR 1); `textoDoErroDeCheck` (`@/lib/api/mensagens`); `dataHora`, `duracao`, `haQuanto`, `milissegundos` (`@/lib/format`); tipos `Incidente`, `ItemDoResumo`.
 - Produces:
 
 ```ts
@@ -438,9 +438,9 @@ export function textoDaCausa(cause: string): string {
 Crie `web/src/features/painel/grupos.ts`:
 
 ```ts
-import { estadoExibido, type EstadoExibido } from '@/components/SeloDeEstado'
 import { textoDaCausa } from '@/lib/api/mensagens'
 import type { Incidente, ItemDoResumo } from '@/lib/api/schemas'
+import { estadoExibido, type EstadoExibido } from '@/lib/estado'
 import { duracao, haQuanto, milissegundos } from '@/lib/format'
 
 // A ordem do painel (spec do redesign, Telas > 1): os problemas primeiro, em
@@ -503,8 +503,8 @@ export function linhaSemDados(it: ItemDoResumo, agora: Date): string {
 Crie `web/src/features/painel/manchete.ts`:
 
 ```ts
-import { estadoExibido, type EstadoExibido } from '@/components/SeloDeEstado'
 import type { Incidente, ItemDoResumo } from '@/lib/api/schemas'
+import { estadoExibido, type EstadoExibido } from '@/lib/estado'
 import { dataHora, horaMinuto } from '@/lib/format'
 import { ehProblema } from './grupos'
 
@@ -1448,11 +1448,12 @@ import { Link } from 'react-router'
 import { useAnunciar } from '@/components/Anunciador'
 import { EstadoDaConsulta } from '@/components/EstadoDaConsulta'
 import { Minigrafico } from '@/components/Minigrafico'
-import { estadoExibido, SeloDeEstado } from '@/components/SeloDeEstado'
+import { SeloDeEstado } from '@/components/SeloDeEstado'
 import { Titulo } from '@/components/Titulo'
 import { Botao } from '@/components/ui/botao'
 import { useCanais, useIncidentesAbertos, useResolvidosRecentes, useResumo } from '@/lib/api/consultas'
 import type { Incidente, ItemDoResumo } from '@/lib/api/schemas'
+import { estadoExibido } from '@/lib/estado'
 import { milissegundos, porcento } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { EsqueletoDoPainel } from './EsqueletoDoPainel'
@@ -2827,9 +2828,9 @@ Expected: FAIL com `Failed to resolve import "./estado-do-alvo"` e `"./SeloDoInc
 Crie `web/src/features/alvos/estado-do-alvo.ts`:
 
 ```ts
-import { estadoExibido, textoDoEstado, type EstadoExibido } from '@/components/SeloDeEstado'
 import { textoDaCausa } from '@/lib/api/mensagens'
 import type { Incidente, ItemDoResumo } from '@/lib/api/schemas'
+import { estadoExibido, textoDoEstado, type EstadoExibido } from '@/lib/estado'
 import { dataHora, duracao, haQuanto, horaMinuto, milissegundos, porcento } from '@/lib/format'
 
 // O topo do detalhe (spec do redesign, Telas > 2) em funções puras: a faixa
@@ -3100,11 +3101,12 @@ import { useQueryClient } from '@tanstack/react-query'
 import { Check, Circle, CircleDashed, Pause, Triangle, X, type LucideIcon } from 'lucide-react'
 import { useEffect, useId, useRef, useState } from 'react'
 import { useApi } from '@/app/contexto'
-import { Selo, type EstadoExibido } from '@/components/SeloDeEstado'
+import { Selo } from '@/components/SeloDeEstado'
 import { Botao } from '@/components/ui/botao'
 import { naoEncontrado } from '@/lib/api/http'
 import { mensagemDe } from '@/lib/api/mensagens'
 import type { Incidente, ItemDoResumo } from '@/lib/api/schemas'
+import type { EstadoExibido } from '@/lib/estado'
 import { dataHora } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { faixaDoEstado } from './estado-do-alvo'
@@ -3220,7 +3222,7 @@ export function FaixaDeEstado({ item, incidentes, agora, aoSumir, aoErrar }: Pro
 
 Em `web/src/features/alvos/PaginaDetalhe.tsx`:
 
-(a) Troque `import { estadoExibido, SeloDeEstado } from '@/components/SeloDeEstado'` por `import { SeloDeEstado } from '@/components/SeloDeEstado'` (o selo continua na tabela) e acrescente, depois do import do `GraficoDeLatencia`, `import { FaixaDeEstado } from './FaixaDeEstado'`.
+(a) Tire `import { estadoExibido } from '@/lib/estado'`, que fica sem uso depois do (d); o `import { SeloDeEstado } from '@/components/SeloDeEstado'` fica (o selo continua na tabela) e acrescente, depois do import do `GraficoDeLatencia`, `import { FaixaDeEstado } from './FaixaDeEstado'`.
 
 (b) O componente `Incidentes` passa a receber a consulta. Troque:
 
