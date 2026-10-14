@@ -8,7 +8,7 @@ import { afterAll, afterEach, beforeAll } from 'vitest'
 // teste esqueceu de imitar não pode passar em silêncio.
 export const servidor = setupServer()
 
-beforeAll(() => servidor.listen({ onUnhandledRequest: 'error' }))
+beforeAll(() => servidor.listen({ onUnhandledFrame: 'error' }))
 afterEach(() => {
   cleanup()
   servidor.resetHandlers()
