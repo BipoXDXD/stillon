@@ -25,18 +25,28 @@ const formatoData = "02/01/2006 15:04 UTC"
 // mensagem monta assunto e corpo do alerta. Só usa campos de ev, que vêm do
 // banco: a mesma notificação produz sempre o mesmo texto.
 func mensagem(ev Event) (assunto, corpo string) {
-	if ev.Kind == incident.EventResolved {
+	desde := ev.StartedAt.UTC().Format(formatoData)
+	switch ev.Kind {
+	case incident.EventResolved:
 		return fmt.Sprintf("[StillOn] %s voltou", ev.TargetName),
 			fmt.Sprintf("%s voltou em %s, depois de %s fora do ar.\n",
 				ev.TargetName, ev.ResolvedAt.UTC().Format(formatoData), duracao(ev.ResolvedAt.Sub(ev.StartedAt)))
-	}
-	causa, ok := causas[ev.Cause]
-	if !ok {
-		causa = causas["unknown"]
+	case incident.EventReminder:
+		return fmt.Sprintf("[StillOn] %s continua fora do ar", ev.TargetName),
+			fmt.Sprintf("%s continua fora do ar desde %s (há %s).\nCausa: %s.\n"+
+				"Reconheça o incidente no painel para parar os lembretes.\n",
+				ev.TargetName, desde, duracao(ev.QueuedAt.Sub(ev.StartedAt)), causa(ev.Cause))
 	}
 	return fmt.Sprintf("[StillOn] %s está fora do ar", ev.TargetName),
-		fmt.Sprintf("%s está fora do ar desde %s.\nCausa: %s.\n",
-			ev.TargetName, ev.StartedAt.UTC().Format(formatoData), causa)
+		fmt.Sprintf("%s está fora do ar desde %s.\nCausa: %s.\n", ev.TargetName, desde, causa(ev.Cause))
+}
+
+// causa traduz o error_kind; o que estiver fora do enum vira o residual.
+func causa(errorKind string) string {
+	if c, ok := causas[errorKind]; ok {
+		return c
+	}
+	return causas["unknown"]
 }
 
 // duracao escreve d em minutos, horas ou dias, arredondando para baixo.

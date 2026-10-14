@@ -253,7 +253,8 @@ func (d *Dispatcher) entregar(n db.ClaimDueNotificationsRow) desfecho {
 }
 
 // semEnvio decide o que não depende de enviar: canal desabilitado ou não
-// verificado, abertura velha, linha que voltou do lease além do teto. Vale
+// verificado, abertura velha, lembrete de incidente resolvido ou reconhecido,
+// linha que voltou do lease além do teto. Vale
 // para quem vai ser enviado (tentar) e para quem vai ser adiado (adiar):
 // uma abertura velha é cancelada mesmo quando o canal parou no lote.
 func semEnvio(n db.ClaimDueNotificationsRow) (desfecho, bool) {
@@ -265,6 +266,11 @@ func semEnvio(n db.ClaimDueNotificationsRow) (desfecho, bool) {
 	// Uma abertura que ainda não saiu quando o incidente já fechou fica
 	// velha: o fechamento diz quando caiu e quando voltou.
 	if n.Event == incident.EventOpened && n.ResolvedAt != nil {
+		return desfecho{status: "cancelled"}, true
+	}
+	// Um lembrete só faz sentido com o incidente aberto e sem ack:
+	// reconhecer interrompe os lembretes, inclusive os que já estão na fila.
+	if n.Event == incident.EventReminder && (n.ResolvedAt != nil || n.AckAt != nil) {
 		return desfecho{status: "cancelled"}, true
 	}
 	// A reivindicação já contou esta tentativa. Passar do teto só acontece
@@ -294,7 +300,7 @@ func (d *Dispatcher) tentar(n db.ClaimDueNotificationsRow) desfecho {
 	defer cancel()
 	err = canal.Send(ctx, dest, Event{
 		NotificationID: n.ID, Kind: n.Event, TargetName: n.TargetName,
-		StartedAt: n.StartedAt, ResolvedAt: valorOuZero(n.ResolvedAt), Cause: n.Cause,
+		StartedAt: n.StartedAt, ResolvedAt: valorOuZero(n.ResolvedAt), QueuedAt: n.CreatedAt, Cause: n.Cause,
 	})
 	if err == nil {
 		return desfecho{status: "sent"}

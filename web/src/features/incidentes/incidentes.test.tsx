@@ -18,7 +18,7 @@ describe('incidentes', () => {
     expect(within(lista).getByText(/Tempo esgotado/)).toBeInTheDocument()
     // O que o botão faz está num texto visível, e não só num title.
     expect(screen.getByRole('button', { name: 'Reconhecer o incidente de API' })).toHaveAccessibleDescription(
-      /marca que você está ciente/,
+      'Reconhecer interrompe os lembretes; não resolve o incidente.',
     )
     await r.usuario.click(screen.getByRole('button', { name: 'Reconhecer o incidente de API' }))
     expect(await screen.findByText(/Reconhecido em/)).toBeInTheDocument()

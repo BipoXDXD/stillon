@@ -14,12 +14,12 @@ WITH claimed AS (
             ORDER BY next_attempt_at
             LIMIT sqlc.arg(max_rows)::int
               FOR UPDATE SKIP LOCKED)
-    RETURNING n.id, n.incident_id, n.channel_id, n.event, n.attempts, n.created_at
+    RETURNING n.id, n.incident_id, n.channel_id, n.event, n.attempts, n.created_at, n.target_name
 )
 SELECT cl.id, cl.event, cl.attempts, cl.created_at,
        c.id AS channel_id, c.user_id, c.kind, c.config_enc, c.enabled, c.verified_at,
-       i.id AS incident_id, i.started_at, i.resolved_at, i.cause,
-       t.name AS target_name
+       i.id AS incident_id, i.started_at, i.resolved_at, i.ack_at, i.cause,
+       COALESCE(cl.target_name, t.name)::text AS target_name
   FROM claimed cl
   JOIN notif_channels c ON c.id = cl.channel_id
   JOIN incidents i ON i.id = cl.incident_id
@@ -56,3 +56,35 @@ INSERT INTO channel_health (channel_id, last_failure_at, last_error)
 VALUES (sqlc.arg(channel_id), sqlc.arg(now)::timestamptz, sqlc.arg(last_error))
 ON CONFLICT (channel_id) DO UPDATE
    SET last_failure_at = EXCLUDED.last_failure_at, last_error = EXCLUDED.last_error;
+
+-- Lembretes de incidente aberto (migration 00012). Rodam só sob InProberTx.
+-- Um par (incidente, canal) é candidato enquanto o incidente segue aberto,
+-- sem ack e com a abertura avisada, e o canal está habilitado e verificado
+-- agora. Só pares que já receberam a abertura entram: o fan-out continua
+-- acontecendo só na transição. base_at é o enfileiramento do aviso mais
+-- recente entre abertura e lembretes; last_seq, o maior seq de lembrete
+-- (0 sem lembrete). A paginação é por chave, e quem chama segue até a
+-- página vir menor que max_rows.
+-- name: ListReminderCandidates :many
+SELECT n.incident_id, n.channel_id, c.kind, i.started_at,
+       max(n.seq)::int AS last_seq,
+       max(n.created_at)::timestamptz AS base_at
+  FROM notifications n
+  JOIN incidents i ON i.id = n.incident_id
+  JOIN notif_channels c ON c.id = n.channel_id
+ WHERE n.event IN ('opened', 'reminder')
+   AND i.resolved_at IS NULL AND i.ack_at IS NULL AND i.open_notified_at IS NOT NULL
+   AND c.enabled AND c.verified_at IS NOT NULL
+   AND (n.incident_id, n.channel_id) > (sqlc.arg(after_incident)::uuid, sqlc.arg(after_channel)::uuid)
+ GROUP BY n.incident_id, n.channel_id, c.kind, i.started_at
+ ORDER BY n.incident_id, n.channel_id
+ LIMIT sqlc.arg(max_rows)::int;
+
+-- O UNIQUE (incident_id, channel_id, event, seq) faz de dois sondadores que
+-- calculam o mesmo lembrete uma inserção só.
+-- name: EnqueueReminder :execrows
+INSERT INTO notifications (id, incident_id, channel_id, event, seq, next_attempt_at, created_at, target_name)
+VALUES (sqlc.arg(id), sqlc.arg(incident_id), sqlc.arg(channel_id), 'reminder', sqlc.arg(seq),
+        sqlc.arg(now)::timestamptz, sqlc.arg(now)::timestamptz,
+        (SELECT t.name FROM incidents i JOIN targets t ON t.id = i.target_id WHERE i.id = sqlc.arg(incident_id)))
+ON CONFLICT (incident_id, channel_id, event, seq) DO NOTHING;

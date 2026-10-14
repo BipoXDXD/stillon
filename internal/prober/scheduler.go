@@ -453,7 +453,8 @@ func paraDetector(em time.Time, r Result) incident.ProbeResult {
 // enfileirar grava uma notificação por canal entregável do dono (spec §8).
 // Os ids são UUIDv7 gerados aqui, como em toda a aplicação (spec §4.2); com
 // no máximo notify.MaxChannels canais, um INSERT por canal é barato. O
-// UNIQUE (incident, channel, event) torna a repetição inofensiva.
+// UNIQUE (incident, channel, event, seq), com seq 0 na abertura e no
+// fechamento, torna a repetição inofensiva.
 func enfileirar(ctx context.Context, q *db.Queries, dono, incidente uuid.UUID, evento string, em time.Time) error {
 	canais, err := q.ListDeliverableChannels(ctx, dono)
 	if err != nil {
