@@ -1,4 +1,4 @@
-import { render } from '@testing-library/react'
+import { render, screen } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 import { Minigrafico } from './Minigrafico'
 
@@ -6,10 +6,10 @@ import { Minigrafico } from './Minigrafico'
 const agora = new Date('2026-10-05T12:37:00Z')
 
 describe('minigráfico das últimas 24 horas', () => {
-  // Sabotagem: desenhar uma barra para série vazia ou anunciar SVG decorativo.
-  it('série vazia não inventa medições e permanece decorativa', () => {
+  // Sabotagem: desenhar uma barra para série vazia ou anunciar horas que não existem.
+  it('série vazia não inventa medições e diz que não há checks', () => {
     const { container } = render(<Minigrafico horas={[]} agora={agora} />, { reactStrictMode: true })
-    expect(container.querySelector('svg')).toHaveAttribute('aria-hidden', 'true')
+    expect(screen.getByRole('img')).toHaveAccessibleName('Últimas 24 h: sem checks')
     expect(container.querySelectorAll('rect')).toHaveLength(0)
   })
 
@@ -110,5 +110,46 @@ describe('minigráfico das últimas 24 horas', () => {
     const barras = Array.from(container.querySelectorAll('rect'))
     expect(barras.map((barra) => barra.getAttribute('height'))).toEqual(['28', '28'])
     expect(barras.map((barra) => barra.getAttribute('y'))).toEqual(['0', '0'])
+  })
+
+  // Cor nunca é o único sinal (WCAG 1.4.1): verde e vermelho têm 1,09:1 entre
+  // si. Hora com falha ganha uma marca sob a barra, mais alta quando fora do
+  // ar. Sabotagem: marcar a hora no ar, trocar as alturas ou perder a marca.
+  it('marca sob a barra distingue degradação e falha sem depender da cor', () => {
+    const { container } = render(
+      <Minigrafico
+        agora={agora}
+        horas={[
+          { bucket: '2026-10-05T07:00:00Z', total: 1000, ok: 999, p50_ms: 100 },
+          { bucket: '2026-10-05T08:00:00Z', total: 1000, ok: 990, p50_ms: 100 },
+          { bucket: '2026-10-05T09:00:00Z', total: 1000, ok: 989, p50_ms: 100 },
+        ]}
+      />,
+      { reactStrictMode: true },
+    )
+    // Marca = retângulo de 4 px de largura sob a barra: 2 px de altura na
+    // hora degradada, 4 px na hora fora do ar.
+    expect(Array.from(container.querySelectorAll('path'), (m) => m.getAttribute('d'))).toEqual([
+      'M100.5 32h4v2h-4z',
+      'M105.5 30h4v4h-4z',
+    ])
+  })
+
+  // Sabotagem: contar a hora sem checks, errar o limiar ou o plural.
+  it('o nome acessível resume as horas por estado', () => {
+    render(
+      <Minigrafico
+        agora={agora}
+        horas={[
+          { bucket: '2026-10-05T06:00:00Z', total: 1000, ok: 1000, p50_ms: 100 },
+          { bucket: '2026-10-05T07:00:00Z', total: 1000, ok: 999, p50_ms: 100 },
+          { bucket: '2026-10-05T08:00:00Z', total: 1000, ok: 990, p50_ms: 100 },
+          { bucket: '2026-10-05T09:00:00Z', total: 0, ok: 0, p50_ms: null },
+          { bucket: '2026-10-05T10:00:00Z', total: 1000, ok: 989, p50_ms: 100 },
+        ]}
+      />,
+      { reactStrictMode: true },
+    )
+    expect(screen.getByRole('img')).toHaveAccessibleName('Últimas 24 h: 2 horas no ar, 1 hora degradada, 1 hora fora do ar')
   })
 })
