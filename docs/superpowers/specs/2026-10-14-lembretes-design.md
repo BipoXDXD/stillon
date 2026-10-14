@@ -51,6 +51,9 @@ continua acontecendo só na transição.
 - O canal precisa estar habilitado e verificado **no momento do lembrete**.
 - Um canal pausado não gera lembrete. Quando ele volta, o próximo tique enfileira um
   único lembrete (o vencido), não um por intervalo perdido.
+- Um alvo pausado (`targets.enabled = false`) não gera lembrete, e o incidente continua
+  aberto. Ao reativar, vale a regra do canal pausado: um único lembrete, o vencido. Um
+  lembrete já na fila de alvo pausado é cancelado no envio.
 - O incidente precisa estar aberto (`resolved_at IS NULL`), sem ack (`ack_at IS NULL`)
   e com `open_notified_at` preenchido.
 

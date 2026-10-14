@@ -348,8 +348,8 @@ func (d *Dispatcher) entregar(p prazos, n db.ClaimDueNotificationsRow) desfecho 
 }
 
 // semEnvio decide o que não depende de enviar: canal desabilitado ou não
-// verificado, abertura velha, lembrete de incidente resolvido ou reconhecido,
-// linha que voltou do lease além do teto. Vale
+// verificado, abertura velha, lembrete de incidente resolvido ou reconhecido
+// ou de alvo pausado, linha que voltou do lease além do teto. Vale
 // para quem vai ser enviado (tentar) e para quem vai ser adiado (adiar):
 // uma abertura velha é cancelada mesmo quando o canal parou no lote.
 func semEnvio(n db.ClaimDueNotificationsRow) (desfecho, bool) {
@@ -363,9 +363,10 @@ func semEnvio(n db.ClaimDueNotificationsRow) (desfecho, bool) {
 	if n.Event == incident.EventOpened && n.ResolvedAt != nil {
 		return desfecho{status: "cancelled"}, true
 	}
-	// Um lembrete só faz sentido com o incidente aberto e sem ack:
-	// reconhecer interrompe os lembretes, inclusive os que já estão na fila.
-	if n.Event == incident.EventReminder && (n.ResolvedAt != nil || n.AckAt != nil) {
+	// Um lembrete só faz sentido com o incidente aberto, sem ack e com o
+	// alvo ativo: reconhecer ou pausar o alvo interrompe os lembretes,
+	// inclusive os que já estão na fila.
+	if n.Event == incident.EventReminder && (n.ResolvedAt != nil || n.AckAt != nil || !n.TargetEnabled) {
 		return desfecho{status: "cancelled"}, true
 	}
 	// A reivindicação já contou esta tentativa. Passar do teto só acontece

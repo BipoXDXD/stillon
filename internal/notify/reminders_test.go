@@ -342,6 +342,58 @@ func TestRemindersPausedChannelGetsOneOnResume(t *testing.T) {
 	}
 }
 
+// pausarAlvoDoIncidente pausa ou reativa, como o dono no painel, o alvo do
+// incidente.
+func pausarAlvoDoIncidente(t *testing.T, pool *pgxpool.Pool, dono, incidente uuid.UUID, pausado bool) {
+	t.Helper()
+	ctx := context.Background()
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `SELECT set_config('app.user_id', $1, true)`, dono.String()); err != nil {
+		t.Fatal(err)
+	}
+	tag, err := tx.Exec(ctx, `UPDATE targets SET enabled = $1 WHERE id = (SELECT target_id FROM incidents WHERE id = $2)`, !pausado, incidente)
+	if err != nil || tag.RowsAffected() != 1 {
+		t.Fatalf("pausar alvo: %v, %d linhas", err, tag.RowsAffected())
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Alvo pausado não tem sonda, e o incidente dele não fecha: sem este filtro,
+// os lembretes seguiriam para sempre. O incidente continua aberto.
+func TestRemindersSkipPausedTarget(t *testing.T) {
+	b := novaBancadaLembretes(t)
+	discord := b.canal(t, KindDiscord, nil)
+	pausarAlvoDoIncidente(t, b.pool, b.dono, b.incidente, true)
+
+	b.avancarETicar(t, discordShortInterval, 0)
+	b.avancarETicar(t, 3*discordShortInterval, 0)
+	if ls := b.lembretes(t, discord); len(ls) != 0 {
+		t.Errorf("lembretes de alvo pausado: %+v", ls)
+	}
+}
+
+// Reativado depois de vários intervalos, o alvo gera um lembrete só, o
+// vencido, como o canal retomado.
+func TestRemindersResumedTargetGetsOne(t *testing.T) {
+	b := novaBancadaLembretes(t)
+	discord := b.canal(t, KindDiscord, nil)
+	pausarAlvoDoIncidente(t, b.pool, b.dono, b.incidente, true)
+
+	b.avancarETicar(t, discordShortInterval, 0)
+	b.avancarETicar(t, 3*discordShortInterval, 0)
+	pausarAlvoDoIncidente(t, b.pool, b.dono, b.incidente, false)
+	b.avancarETicar(t, 0, 1)
+	if ls := b.lembretes(t, discord); len(ls) != 1 || ls[0].Seq != 1 {
+		t.Errorf("lembretes = %+v; queria um, seq 1", ls)
+	}
+}
+
 // Um canal criado no meio do incidente não recebeu a abertura e não recebe
 // lembrete.
 func TestRemindersSkipChannelWithoutOpened(t *testing.T) {
