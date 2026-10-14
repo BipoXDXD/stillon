@@ -44,6 +44,11 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    # O mesmo atraso de 7 dias do gomod e do npm: uma action comprometida
+    # na tag nova (o caso do tj-actions/changed-files) tem tempo de ser
+    # descoberta antes de o SHA dela entrar aqui.
+    cooldown:
+      default-days: 7
 
   # O Dockerfile do app (node, golang, distroless); o do Postgres de
   # produção (deploy/vps/db, o ponto fixo do digest), o do Trivy do CI e o
@@ -56,6 +61,8 @@ updates:
       - /deploy/ci/ssh
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
     # Versão MAIOR de Postgres e Node não vem por PR: o Postgres maior é dump
     # e restauração num volume novo na VPS (D36; runbook, "Upgrade maior do
     # Postgres"), e o Node maior muda o que o build do painel exige. Menores
@@ -74,6 +81,8 @@ updates:
       - /deploy/vps
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
     # Versão MAIOR de Postgres e Node não vem por PR: o Postgres maior é dump
     # e restauração num volume novo na VPS (D36; runbook, "Upgrade maior do
     # Postgres"), e o Node maior muda o que o build do painel exige. Menores
