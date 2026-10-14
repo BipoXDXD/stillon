@@ -138,14 +138,64 @@ CodeQL). Tudo isso foi para produção no deploy de 2026-10-14 (ver "Deploy de 2
 
 Três frentes: código, documentação e segurança.
 
-- **Código:** 2 defeitos, cada um com PR: os lembretes de um alvo pausado e a série longa da
-  página pública, que perdia a queda em curso.
+- **Código:** 2 defeitos, cada um com PR: os lembretes de um alvo pausado (#96) e a série de 7,
+  30 e 90 dias do detalhe do alvo, que perdia a queda em curso (#99).
 - **Documentação:** este PR (licença MIT, estado pós-deploy, trechos do README e comentários dos
   workflows que ainda tratavam o repositório como privado).
 - **Segurança:** nenhum segredo (gitleaks em todo o histórico e nas refs de PR) e nenhuma falha
-  alta. Corrigidos em PR: o log do app no Actions público, o endurecimento do compose e o host de
-  rótulo único. **Ficam com o dono:** o environment `production`, o e-mail noreply nos commits, a
+  alta. Corrigidos em PR: o log do app no Actions público e o endurecimento do compose (#98), e o
+  host de rótulo único (#97, parcial: ver as decisões). **Ficam com o dono:** o environment `production`, o e-mail noreply nos commits, a
   sessão viva nas rotas de recurso e os dumps públicos por 30 dias.
+
+## Fim da tarde de 2026-10-14 (sessão autônoma)
+
+**Deploy do `6e3b747` às 15:22 UTC (feito e conferido).** Leva os PRs #96 a #99. Antes dele,
+foram copiados para a VPS o `compose.prod.yaml` e o `stillon-entrada` novos (bloco 10). Houve
+um backup antes e outro depois do deploy, ambos verdes, o segundo já com o `db` endurecido.
+O `app` roda em `read_only`, os dois contêineres têm `cap_drop: ALL` e `no-new-privileges`, e
+o grace period é de 30 s. O `/readyz` respondeu 200.
+
+| PR | O que entrou |
+|---|---|
+| #96 | Alvo pausado não gera lembrete, e o lembrete já na fila é cancelado. |
+| #97 | Host sem ponto (`db`, `localhost`) é recusado no cadastro e no dial. |
+| #98 | O log do app de um deploy doente vai só para o `entrada.log`. `db` com `cap_drop`, `app` com `read_only`. |
+| #99 | As janelas de 7, 30 e 90 dias do detalhe juntam os checks não consolidados e mostram a queda em curso. |
+
+**Plano do redesign:** três partes em `docs/superpowers/plans/2026-10-14-redesign-painel-parte{1,2,3}.md`,
+com 43 tarefas em 8 PRs. Passou por revisão cruzada (nomes, assinaturas, cobertura da spec).
+**Nada foi implementado.**
+
+**Refatoração:** auditoria de todo o projeto à luz de Code Complete 2 e Refactoring 2, feita
+com quatro agentes, um por área, e consolidada em
+[backlog](2026-10-14-backlog-refatoracao.md): 55 itens em 7 ondas e 14 descartes. O possível
+bug do 2FA (`Disable` × `ResetTOTP`) foi conferido e **não é bug**; virou o item R2.6.
+**Nada foi refatorado.**
+
+**Testes sensíveis a carga:** `internal/account` e `TestChangePasswordSharesTheLoginLimiter`
+falham com a máquina carregada, por usarem prazo de relógio real com dois Argon2id de 64 MiB.
+No CI, passam. O item está na Onda 0 do backlog.
+
+## Para resolver com o dono
+
+1. **Revisar o plano do redesign** e escolher o modo de execução (subagentes por tarefa, ou
+   execução direta com revisão no fim).
+2. **Ordem entre refatoração e redesign** (D1 do backlog). A revisão cruzada mostrou que as
+   Tasks 14, 16, 20, 23 e 26 do redesign reescrevem arquivos inteiros que a Onda 1 refatoraria.
+   Recomendação: Onda 0 primeiro, depois o redesign, e a Onda 1 aplicada dentro das tarefas do
+   redesign que tocam aqueles arquivos.
+3. **Decisões D2 a D5 do backlog:** SQL inline do `auth` para o sqlc, a função SQL do rollup só
+   depois do `EXPLAIN`, o `checar-vps.sh` dividido em shell, e o tipo `FamilyID`.
+4. **Página pública acima de 10 KB** (parte 3 do plano): servir com gzip (~2 KB) e teto de
+   16 KB sem compressão.
+5. **Oráculo de host interno (#97 parcial):** um nome interno com ponto ainda pode distinguir
+   "existe" de "não existe". A correção completa é resolver os alvos por um DNS público. O custo
+   é uma dependência externa, e a gravidade é baixa.
+6. **Segurança, já listadas:** o environment `production` no GitHub, o e-mail noreply nos
+   commits, a sessão viva nas rotas de recurso e os dumps públicos por 30 dias.
+7. **Achado menor:** o ack de incidente não gera linha no `audit_log`.
+8. **Sudo temporário na VPS:** é revogado em 2026-10-15 às 00:35 (horário de Brasília), pelo
+   timer transitório `revoga-sudo-claude-estendido`. Um reboot antes disso deixa a regra sem prazo.
 
 ## Decisões pendentes do dono
 
@@ -168,7 +218,7 @@ Direção C, "Editorial claro" (Fraunces + Inter, primária índigo), na
 
 ## Depois
 
+- **Redesign e refatoração**, na ordem decidida no item 2 acima.
 - **Vinculação Discord**, assim que D1, D2 e D3 estiverem decididos.
-- **Redesign do painel**, conforme a spec acima.
 
 Não confundir planejamento aprovado com código pronto, nem anunciar deploy sem conferência.

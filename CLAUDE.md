@@ -51,7 +51,7 @@ O dono migrou do Linux para o **Mac** (MacBook Air): a hospedagem e o desenvolvi
 dele. Ambiente conferido em 2026-10-13 (Go, Node, Docker Desktop, GPG, ferramentas do CI); o
 PR #64 faz a suíte Go passar no macOS.
 
-**O StillOn está no ar** em <https://stillon.tech> (deploy do commit `b685891`, certificado
+**O StillOn está no ar** em <https://stillon.tech> (deploy do commit `6e3b747`, certificado
 Let's Encrypt até 2027-01-12). A VPS é **compartilhada com o GoblinShift**, outro projeto do dono
 (`~/Documents/Projetos/Python/GoblinShift`): a borda em `/srv/edge` é um Caddy com TLS por
 domínio, e o Caddy do StillOn fica atrás dela
@@ -78,7 +78,7 @@ deploy é `amd64`): localmente, ele roda num Ubuntu descartável com o socket do
 
 **Desenvolvimento (tarde de 2026-10-14):** a `main` recebeu os lembretes de incidente (#73), o
 reforço de segurança (#77), a acessibilidade do painel e as correções da revisão de código
-(#74–#90). **Em produção desde `b685891`:** migrations até a 00014 (que valida os CHECKs da
+(#74–#90). **Em produção desde `6e3b747` (PRs #96–#99):** migrations até a 00014 (que valida os CHECKs da
 00013) e o `compose.prod.yaml` com `stop_grace_period: 30s` já na VPS. A lista, as decisões e o
 que conferir estão na seção "Desenvolvimento na ausência do dono" da
 [continuidade de 2026-10-14](docs/superpowers/reports/2026-10-14-continuacao.md).
