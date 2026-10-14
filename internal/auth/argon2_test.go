@@ -5,6 +5,7 @@ import (
 	"errors"
 	"runtime"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/BipoXDXD/stillon/internal/auth"
@@ -76,71 +77,106 @@ func TestEveryArgon2PathWaitsForASlot(t *testing.T) {
 	}
 }
 
+// emBolha roda f numa bolha do synctest com o semáforo do Argon2id criado
+// DENTRO dela (capacidade n), para que a espera por vaga conte como
+// bloqueio durável e synctest.Wait saiba quando a goroutine está na fila.
+// O canal da bolha não pode sobreviver a ela: o semáforo padrão é recriado
+// fora, no Cleanup do teste de fora.
+func emBolha(t *testing.T, n int, f func(t *testing.T)) {
+	t.Helper()
+	t.Cleanup(func() { auth.SetArgon2MaxConcurrent(auth.DefaultArgon2MaxConcurrent()) })
+	synctest.Test(t, func(t *testing.T) {
+		auth.SetArgon2MaxConcurrent(n)
+		f(t)
+	})
+}
+
+// reservarNaBolha toma uma vaga do semáforo da bolha e devolve quem a solta.
+func reservarNaBolha(t *testing.T) func() {
+	t.Helper()
+	soltar, err := auth.ReserveArgon2(context.Background())
+	if err != nil {
+		t.Fatalf("reservar a vaga da bolha: %v", err)
+	}
+	return soltar
+}
+
 // Quem espera ganha a vaga que se solta dentro do prazo: o semáforo é fila
-// curta, não recusa imediata.
+// curta, não recusa imediata. synctest.Wait garante que a verificação já
+// está parada na fila quando a vaga é solta; sem isso, uma goroutine atrasada
+// pegaria a vaga livre pelo caminho rápido e o teste passaria sem provar a
+// espera.
 func TestArgon2WaiterGetsTheReleasedSlot(t *testing.T) {
 	h, err := auth.HashPassword(context.Background(), senha)
 	if err != nil {
 		t.Fatal(err)
 	}
-	vagas := ocuparArgon2(t, 1)
+	emBolha(t, 1, func(t *testing.T) {
+		soltar := reservarNaBolha(t)
+		defer soltar() // num Fatal, a goroutine presa na fila termina
 
-	fim := make(chan error, 1)
-	go func() {
-		_, _, err := auth.VerifyPassword(context.Background(), h, senha)
-		fim <- err
-	}()
-	time.Sleep(100 * time.Millisecond)
-	vagas[0]()
-	select {
-	case err := <-fim:
-		if err != nil {
+		fim := make(chan error, 1)
+		go func() {
+			_, _, err := auth.VerifyPassword(context.Background(), h, senha)
+			fim <- err
+		}()
+		synctest.Wait()
+		select {
+		case err := <-fim:
+			t.Fatalf("a verificação terminou com o semáforo cheio, sem esperar a vaga: %v", err)
+		default:
+		}
+
+		soltar()
+		if err := <-fim; err != nil {
 			t.Errorf("a verificação que esperou a vaga falhou: %v", err)
 		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("a verificação não pegou a vaga solta")
-	}
+	})
 }
 
 // M1 da revisão do Plano 10 (auth): quem espera a vaga com o contexto da
 // requisição desiste quando ele é cancelado (o cliente foi embora), e não
 // segura a goroutine na fila até o fim do prazo. O erro é ErrArgon2Busy (a
 // API responde como ao semáforo cheio, sem contar prova) e também o do
-// contexto. Com o prazo longo aqui, desistir antes dele só pode ser o ctx.
+// contexto. No relógio da bolha, desistir sem o tempo andar só pode ser o ctx.
 func TestArgon2WaitStopsWhenTheContextIsCanceled(t *testing.T) {
-	auth.EncurtarEsperaDoArgon2(t, 5*time.Second)
-	ocuparArgon2(t, 1)
+	emBolha(t, 1, func(t *testing.T) {
+		soltarOcupada := reservarNaBolha(t)
+		defer soltarOcupada()
 
-	ctx, cancelar := context.WithCancel(context.Background())
-	fim := make(chan error, 1)
-	inicio := time.Now()
-	go func() {
-		soltar, err := auth.ReserveArgon2(ctx)
-		soltar()
-		fim <- err
-	}()
-	time.Sleep(50 * time.Millisecond)
-	cancelar()
-	select {
-	case err := <-fim:
+		ctx, cancelar := context.WithCancel(context.Background())
+		fim := make(chan error, 1)
+		inicio := time.Now()
+		go func() {
+			soltar, err := auth.ReserveArgon2(ctx)
+			soltar()
+			fim <- err
+		}()
+		synctest.Wait()
+		select {
+		case err := <-fim:
+			t.Fatalf("a espera terminou antes do cancelamento: %v", err)
+		default:
+		}
+
+		cancelar()
+		err := <-fim
 		if !errors.Is(err, auth.ErrArgon2Busy) || !errors.Is(err, context.Canceled) {
 			t.Errorf("erro = %v, queria ErrArgon2Busy e context.Canceled", err)
 		}
-		if d := time.Since(inicio); d > 2*time.Second {
-			t.Errorf("desistiu em %v, só no prazo, e não no cancelamento", d)
+		if d := time.Since(inicio); d != 0 {
+			t.Errorf("desistiu depois de %v no relógio da bolha, queria no cancelamento", d)
 		}
-	case <-time.After(3 * time.Second):
-		t.Fatal("a espera pela vaga não parou com o contexto cancelado")
-	}
 
-	// Um contexto já cancelado com vaga livre: a vaga é tomada (o select
-	// prefere a vaga livre), porque a verificação custa o mesmo que desistir.
-	auth.SetArgon2MaxConcurrent(1)
-	soltar, err := auth.ReserveArgon2(ctx)
-	if err != nil {
-		t.Errorf("com vaga livre e o ctx cancelado: %v, queria a vaga", err)
-	}
-	soltar()
+		// Um contexto já cancelado com vaga livre: a vaga é tomada (o select
+		// prefere a vaga livre), porque a verificação custa o mesmo que desistir.
+		soltarOcupada()
+		soltar, err := auth.ReserveArgon2(ctx)
+		if err != nil {
+			t.Errorf("com vaga livre e o ctx cancelado: %v, queria a vaga", err)
+		}
+		soltar()
+	})
 }
 
 // Capacidade: o padrão é min(NumCPU, 4); a faixa aceita é 1–64, e o que
