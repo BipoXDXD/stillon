@@ -176,6 +176,38 @@ bug do 2FA (`Disable` × `ResetTOTP`) foi conferido e **não é bug**; virou o i
 falham com a máquina carregada, por usarem prazo de relógio real com dois Argon2id de 64 MiB.
 No CI, passam. O item está na Onda 0 do backlog.
 
+## Noite de 2026-10-14: Onda 0 e redesign em andamento
+
+O dono aprovou a ordem recomendada: a Onda 0 do backlog primeiro e depois o redesign PR a PR,
+com os itens da Onda 1 aplicados dentro das tarefas que tocam os mesmos arquivos. As
+recomendações D2 a D5 e o gzip da página pública foram aceitos.
+
+| PR | O que entrou na `main` |
+|---|---|
+| #101, #102 | **Onda 0 completa** (R0.1 a R0.3): testes de conta esperam por evento, hasher injetado, relógio no limitador e no semáforo do Argon2id. Os testes de senha não falham mais sob carga. |
+| #103 | Redesign, PR 1: tokens OKLCH, Fraunces + Inter em `web/public/fonts/` (OFL), teste de contraste, componentes base e R1.1 (`lib/estado.ts`). Revisão pegou o eixo Y cortado pela fonte nova, corrigido com `eixo.ts`. |
+| #104 | Redesign, PR 2: navegação no topo e barra inferior de 5 abas no celular, tema em botão. Revisão pegou o contador sobre "Incidentes" e a aba ativa em `/targets/*`, corrigidos. |
+| #105 | Redesign, PR 3: painel (manchete, gravidade, cartões de problema, linhas, "Tudo no ar."), mais R1.2, R1.3 e R1.5. Aprovado na revisão sem bloqueio. |
+
+**Aberto:** o PR #106 (redesign, PR 4: detalhe do alvo, com R1.4). Ainda não foi revisado nem
+mesclado.
+
+**Sem deploy:** produção segue no `6e3b747`. Com o detalhe, os incidentes e as demais telas
+ainda no layout antigo, o visual ficaria pela metade. O próximo deploy vem depois do PR 5
+(incidentes), ou no fim do redesign.
+
+**Próximos passos:**
+1. Revisar o #106 (código e capturas) e mesclar.
+2. PR 5 (incidentes), PR 6 (demais telas e login, com R1.4, R1.6, R1.9 a R1.11), PR 7
+   (página pública com gzip) e PR 8 (capturas "depois" e README).
+3. Fechada a parte de front, seguir as Ondas 2 a 6 do backlog.
+
+**Notas:**
+- Duas falhas isoladas em `alvos.test.tsx` e `statuspage.test.tsx` passaram ao rodar de novo.
+  Podem ser intermitentes; entram na triagem R0.5.
+- Os itens 5 (oráculo de host interno), 6 (auditoria de ações de recurso) e 7 (segurança) da
+  lista "Para resolver com o dono" seguem abertos.
+
 ## Para resolver com o dono
 
 1. **Revisar o plano do redesign** e escolher o modo de execução (subagentes por tarefa, ou
