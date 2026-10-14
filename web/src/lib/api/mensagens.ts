@@ -98,6 +98,13 @@ export function textoDoErroDeCheck(kind: string | null, statusCode: number | nul
   return kind === 'http_status' && statusCode !== null ? `${base} (${statusCode})` : base
 }
 
+// A causa de um incidente para a tela. A coluna cause guarda o error_kind
+// do check que abriu o incidente; vazia (um dado antigo), vira uma frase, e
+// não um espaço em branco entre dois "·".
+export function textoDaCausa(cause: string): string {
+  return textoDoErroDeCheck(cause, null) || 'Causa não registrada'
+}
+
 const errosDeCanal: Record<string, string> = {
   timeout: 'Tempo esgotado',
   network: 'Falha de rede',

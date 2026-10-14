@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { duracao, haQuanto, milissegundos, navegadorDe, plural, pontosDeCodigo, porcento } from './format'
+import { duracao, haQuanto, horaMinuto, milissegundos, navegadorDe, plural, pontosDeCodigo, porcento } from './format'
 
 describe('porcento', () => {
   it('trunca em duas casas, nunca arredonda para cima', () => {
@@ -94,5 +94,13 @@ describe('plural', () => {
     [100, '100 canais'],
   ])('%i → "%s"', (n, texto) => {
     expect(plural(n, 'canal', 'canais')).toBe(texto)
+  })
+})
+
+// Datas pelo construtor local: o teste vale em qualquer fuso.
+describe('horaMinuto', () => {
+  it('hora e minuto com dois dígitos, no fuso do navegador', () => {
+    expect(horaMinuto(new Date(2026, 9, 14, 9, 5).getTime())).toBe('09:05')
+    expect(horaMinuto(new Date(2026, 9, 14, 23, 59).toISOString())).toBe('23:59')
   })
 })

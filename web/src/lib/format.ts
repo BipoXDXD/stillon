@@ -62,6 +62,14 @@ export function dataHora(iso: string): string {
   return dataHoraFmt.format(new Date(iso))
 }
 
+const horaMinutoFmt = new Intl.DateTimeFormat('pt-BR', { hour: '2-digit', minute: '2-digit' })
+
+// "09:05", no fuso do navegador: a meta do painel, o último check e as
+// marcas do eixo do gráfico.
+export function horaMinuto(instante: string | number): string {
+  return horaMinutoFmt.format(new Date(instante))
+}
+
 export function fuso(): string {
   return Intl.DateTimeFormat().resolvedOptions().timeZone
 }
