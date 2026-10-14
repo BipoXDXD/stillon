@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/BipoXDXD/stillon/internal/auth"
 )
 
@@ -62,5 +64,26 @@ func TestFamilyRotatesUntilJustBeforeMaxFamilyAge(t *testing.T) {
 	clk.Advance(auth.MaxFamilyAge - 80*24*time.Hour - time.Minute)
 	if _, _, err := mgr.Rotate(context.Background(), tok, meta); err != nil {
 		t.Errorf("rotação um minuto antes de MaxFamilyAge: %v", err)
+	}
+}
+
+// Uma família cujo id não é UUIDv7 não tem nascimento legível: a rotação
+// falha fechada (login de novo), em vez de a família virar imortal. Toda
+// família emitida pelo Manager é v7, então isto só cobre dado estranho no
+// banco (uma linha escrita à mão, uma restauração de outra origem).
+func TestFamilyWithoutV7IdCannotRotate(t *testing.T) {
+	mgr, pool, _, userID := setup(t)
+	ctx := context.Background()
+
+	tok, _, err := mgr.Issue(ctx, userID, carimbo, meta)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v4 := uuid.New()
+	if _, err := pool.Exec(ctx, `UPDATE sessions SET family_id = $2 WHERE user_id = $1`, userID, v4); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := mgr.Rotate(ctx, tok, meta); !errors.Is(err, auth.ErrInvalidSession) {
+		t.Errorf("rotação de família com id v4: erro = %v, queria ErrInvalidSession", err)
 	}
 }
