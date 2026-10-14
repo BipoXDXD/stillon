@@ -22,6 +22,10 @@ const (
 	// reminderPageSize é o teto de pares (incidente, canal) lidos por
 	// consulta; o tique pagina por chave até esgotar.
 	reminderPageSize = 200
+	// reminderTickTimeout é o prazo de um tique inteiro, espera por conexão
+	// do pool incluída. Fica abaixo de remindEvery: um banco que trava não
+	// segura o job para sempre, e o tique seguinte tenta de novo.
+	reminderTickTimeout = 20 * time.Second
 )
 
 // Reminders enfileira os lembretes de incidente aberto e sem ack
@@ -29,14 +33,15 @@ const (
 // sondador, ao lado do Dispatcher, que os entrega como qualquer outra linha
 // da outbox.
 type Reminders struct {
-	pool     *pgxpool.Pool
-	clk      clock.Clock
-	policy   Policy
-	pageSize int32
+	pool        *pgxpool.Pool
+	clk         clock.Clock
+	policy      Policy
+	pageSize    int32
+	tickTimeout time.Duration
 }
 
 func NewReminders(pool *pgxpool.Pool, clk clock.Clock, policy Policy) *Reminders {
-	return &Reminders{pool: pool, clk: clk, policy: policy, pageSize: reminderPageSize}
+	return &Reminders{pool: pool, clk: clk, policy: policy, pageSize: reminderPageSize, tickTimeout: reminderTickTimeout}
 }
 
 // Run roda Tick na subida e depois a cada remindEvery, até ctx acabar: um
@@ -60,8 +65,10 @@ func (r *Reminders) Run(ctx context.Context) error {
 // Tick enfileira um lembrete para cada par (incidente, canal) cujo próximo
 // lembrete já venceu, e devolve quantos enfileirou. Cada página roda numa
 // transação própria; um par que outro sondador acabou de lembrar colide no
-// UNIQUE e não conta.
+// UNIQUE e não conta. O tique inteiro tem o prazo reminderTickTimeout.
 func (r *Reminders) Tick(ctx context.Context) (int, error) {
+	ctx, cancel := context.WithTimeout(ctx, r.tickTimeout)
+	defer cancel()
 	now := r.clk.Now()
 	total := 0
 	var after db.ListReminderCandidatesParams

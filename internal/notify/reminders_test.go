@@ -2,6 +2,7 @@ package notify
 
 import (
 	"context"
+	"errors"
 	"runtime"
 	"testing"
 	"time"
@@ -410,5 +411,44 @@ func TestRemindersPageThroughAllPairs(t *testing.T) {
 		if ls := b.lembretes(t, c); len(ls) != 1 {
 			t.Errorf("canal %s com %d lembretes, queria 1", c, len(ls))
 		}
+	}
+}
+
+// Um tique tem prazo: preso numa trava (ou esperando conexão do pool), ele
+// desiste com erro em vez de parar o job para sempre. A trava aqui é a de um
+// outro sondador que inseriu o mesmo lembrete e não confirma.
+func TestRemindersTickGivesUpAtTheDeadline(t *testing.T) {
+	b := novaBancadaLembretes(t)
+	discord := b.canal(t, KindDiscord, nil)
+	b.clk.Advance(discordShortInterval)
+	b.r.tickTimeout = 200 * time.Millisecond
+
+	ctx := context.Background()
+	tx, err := b.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `SELECT set_config('app.scope', 'prober', true)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.New(tx).EnqueueReminder(ctx, db.EnqueueReminderParams{
+		ID: uuid.Must(uuid.NewV7()), IncidentID: b.incidente, ChannelID: discord, Seq: 1, Now: b.clk.Now(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	feito := make(chan error, 1)
+	go func() {
+		_, err := b.r.Tick(ctx)
+		feito <- err
+	}()
+	select {
+	case err := <-feito:
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Errorf("Tick travado = %v; queria context.DeadlineExceeded", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("Tick seguiu travado depois do prazo")
 	}
 }
