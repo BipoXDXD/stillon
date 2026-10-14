@@ -67,6 +67,9 @@ func ParseAccessToken(secret []byte, raw string, now time.Time) (AccessClaims, e
 		// Relógio injetado para que o teste de expiração não dependa do
 		// tempo real da máquina.
 		jwt.WithTimeFunc(func() time.Time { return now }),
+		// O jwt/v5 só confere o exp quando ele existe: sem esta opção, um
+		// token sem exp valeria para sempre.
+		jwt.WithExpirationRequired(),
 	)
 	if err != nil {
 		return AccessClaims{}, fmt.Errorf("%w: %v", ErrInvalidToken, err)
@@ -162,6 +165,9 @@ func ParseChallengeToken(secret []byte, raw string, now time.Time) (Challenge, e
 		func(t *jwt.Token) (any, error) { return secret, nil },
 		jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Alg()}),
 		jwt.WithTimeFunc(func() time.Time { return now }),
+		// O jwt/v5 só confere o exp quando ele existe: sem esta opção, um
+		// token sem exp valeria para sempre.
+		jwt.WithExpirationRequired(),
 		// Sem esta checagem, um access token comum seria aceito como desafio
 		// e vice-versa.
 		jwt.WithAudience(challengeAudience),
