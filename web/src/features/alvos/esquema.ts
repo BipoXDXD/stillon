@@ -26,6 +26,8 @@ const NOME_DE_HEADER = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/
 
 const bytes = (s: string) => new TextEncoder().encode(s).length
 
+const INTERNO = 'Endereços internos (localhost, redes privadas) não podem ser monitorados.'
+
 // Um SUBCONJUNTO da lista do safedial, só para responder cedo aos casos
 // óbvios. Nunca pode ser mais restritivo que o servidor: recusar aqui o que o
 // servidor aceita seria um bug sem saída para o usuário.
@@ -39,8 +41,11 @@ function urlPermitida(raw: string): string | null {
   if (u.protocol !== 'http:' && u.protocol !== 'https:') return 'Só http:// e https://.'
   const host = u.hostname.replace(/\.$/, '').toLowerCase()
   if (host === '') return 'Use uma URL http:// ou https:// completa.'
-  if (host === 'localhost' || host.endsWith('.localhost'))
-    return 'Endereços internos (localhost, redes privadas) não podem ser monitorados.'
+  if (host === 'localhost' || host.endsWith('.localhost')) return INTERNO
+  // Nome sem ponto (db, intranet) é da rede interna; o servidor também o
+  // recusa (safedial.IsSingleLabel). O new URL já converteu IP decimal em
+  // a.b.c.d, e IPv6 vem entre colchetes.
+  if (!host.startsWith('[') && !host.replace(/\.+$/, '').includes('.')) return INTERNO
   const v4 = host.match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/)
   if (v4) {
     const [a, b] = [Number(v4[1]), Number(v4[2])]
@@ -53,14 +58,14 @@ function urlPermitida(raw: string): string | null {
       (a === 172 && b >= 16 && b <= 31) ||
       (a === 192 && b === 168) ||
       (a === 100 && b >= 64 && b <= 127)
-    if (interno) return 'Endereços internos (localhost, redes privadas) não podem ser monitorados.'
+    if (interno) return INTERNO
   }
   if (host.startsWith('[')) {
     const h = host.slice(1, -1)
     // Hextetos inteiros: fc00::/7 e fe80::/10. "fc::1" é 00fc::1, público
     // para o safedial, e não pode ser recusado aqui.
     if (h === '::1' || h === '::' || /^f[cd][0-9a-f]{2}:/.test(h) || /^fe[89ab][0-9a-f]:/.test(h)) {
-      return 'Endereços internos (localhost, redes privadas) não podem ser monitorados.'
+      return INTERNO
     }
   }
   return null

@@ -179,6 +179,11 @@ func checkURL(raw string) string {
 	if host == "localhost" || strings.HasSuffix(host, ".localhost") {
 		return ReasonForbidden
 	}
+	// Nome sem ponto (db, intranet) é da rede interna. O dial também o
+	// barra; a recusa aqui só dá a resposta já no cadastro.
+	if safedial.IsSingleLabel(host) {
+		return ReasonForbidden
+	}
 	return ""
 }
 
