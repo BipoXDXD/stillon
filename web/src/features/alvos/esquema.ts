@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import type { AlteracaoAlvo, EntradaAlvo } from '@/lib/api/cliente'
 import type { Alvo } from '@/lib/api/schemas'
+import { MENSAGEM_INVISIVEL, temInvisivel } from '@/lib/rotulo'
 
 // O formulário de alvo espelha internal/targets/validate.go. O servidor é a
 // fonte da verdade: o espelho só antecipa o erro, e o 400 com fields cai no
@@ -78,7 +79,7 @@ export function esquemaDoAlvo(base?: { url: string }) {
         .trim()
         .min(1, 'Obrigatório.')
         .refine((s) => [...s].length <= 100, 'Até 100 caracteres.')
-        .refine((s) => !/\p{Cc}/u.test(s), 'Sem caracteres de controle.'),
+        .refine((s) => !temInvisivel(s), MENSAGEM_INVISIVEL),
       url: z
         .string()
         .trim()

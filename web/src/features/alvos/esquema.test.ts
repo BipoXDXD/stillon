@@ -46,6 +46,29 @@ describe('validação pública do formulário de alvo', () => {
     expect(esquemaAlvo.safeParse(entrada({ name })).success).toBe(aceito)
   })
 
+  // A regra inteira está em lib/rotulo.test.ts; aqui, que o campo name a usa
+  // e diz o motivo (o servidor só devolveria "Valor inválido.").
+  it.each([
+    ['inversão bidi', 'API‮telas'],
+    ['espaço de largura zero', 'API​pública'],
+    ['BOM no meio', 'API﻿pública'],
+    ['hífen suave', 'API­pública'],
+    ['ZWJ solto', 'API‍ pública'],
+  ])('nome com %s mostra o motivo no campo', (_caso, name) => {
+    const r = esquemaAlvo.safeParse(entrada({ name }))
+    expect(r.success).toBe(false)
+    expect(r.error?.issues.map((e) => [e.path.join('.'), e.message])).toEqual([
+      ['name', 'Sem caracteres invisíveis ou de controle (direção do texto, largura zero, hífen suave).'],
+    ])
+  })
+
+  it.each([
+    ['emoji com ZWJ', 'Equipe 👩‍💻'],
+    ['persa com ZWNJ', 'می‌خواهم'],
+  ])('nome com %s é aceito', (_caso, name) => {
+    expect(esquemaAlvo.safeParse(entrada({ name })).success).toBe(true)
+  })
+
   it.each([
     ['não é uma URL', false], ['https://', false], ['ftp://exemplo.com/', false],
     ['http://./', false],

@@ -15,20 +15,31 @@ import { useAlvos, usePaginas, useResumo } from '@/lib/api/consultas'
 import { ApiError, naoEncontrado } from '@/lib/api/http'
 import { mensagemDe, mensagemDoCampo } from '@/lib/api/mensagens'
 import type { Alvo, PaginaDeStatus } from '@/lib/api/schemas'
+import { MENSAGEM_INVISIVEL, temInvisivel } from '@/lib/rotulo'
 
 // O CHECK de status_pages.slug (Plano 4, D13).
 const SLUG = /^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$/
 const MAX_ITENS = 20
 
 const esquema = z.object({
-  title: z.string().trim().min(1, 'Obrigatório.').refine((s) => [...s].length <= 100, 'Até 100 caracteres.'),
+  title: z
+    .string()
+    .trim()
+    .min(1, 'Obrigatório.')
+    .refine((s) => [...s].length <= 100, 'Até 100 caracteres.')
+    .refine((s) => !temInvisivel(s), MENSAGEM_INVISIVEL),
   slug: z.string().regex(SLUG, 'De 3 a 40 caracteres: letras minúsculas, números e hífens, sem hífen nas pontas.'),
   published: z.boolean(),
   items: z
     .array(
       z.object({
         target_id: z.string().min(1),
-        display_name: z.string().trim().min(1, 'Obrigatório.').refine((s) => [...s].length <= 100, 'Até 100 caracteres.'),
+        display_name: z
+          .string()
+          .trim()
+          .min(1, 'Obrigatório.')
+          .refine((s) => [...s].length <= 100, 'Até 100 caracteres.')
+          .refine((s) => !temInvisivel(s), MENSAGEM_INVISIVEL),
       }),
     )
     .max(MAX_ITENS, `Até ${MAX_ITENS} alvos.`),
