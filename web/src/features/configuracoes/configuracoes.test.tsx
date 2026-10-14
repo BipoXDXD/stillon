@@ -14,6 +14,18 @@ function portao() {
   return { aberto, soltar }
 }
 
+// A troca de senha relê o /me antes de enviar (C5), e o /me com o acesso
+// vencido renovaria sozinho. Para o POST /auth/password chegar com o acesso
+// vencido, ele vence logo depois da resposta do /me relido.
+function expirarDepoisDoMe(falsa: { expirarAcessos: () => void }) {
+  const expirar = ({ request }: { request: Request }) => {
+    if (request.method !== 'GET' || new URL(request.url).pathname !== '/api/v1/me') return
+    servidor.events.removeListener('response:mocked', expirar)
+    falsa.expirarAcessos()
+  }
+  servidor.events.on('response:mocked', expirar)
+}
+
 describe('senha', () => {
   it('a política conta code points: 14 emojis não bastam, mesmo sendo 28 unidades UTF-16', async () => {
     const r = await renderizarPainel('/settings')
@@ -54,6 +66,42 @@ describe('senha', () => {
     expect(alerta).not.toHaveTextContent('código de recuperação')
   })
 
+  // C5 da revisão de 2026-10-14: o formulário decidia pedir o código pelo
+  // /me do cache (staleTime Infinity). Com o 2FA ligado em outra aba, a
+  // troca saía sem código, dizia "Senha atual incorreta" (falso) e contava
+  // uma prova errada no bloqueio. Sabotagem: em TrocaDeSenha, não reler o
+  // /me antes de enviar → o POST sai sem totp_code.
+  it('com o 2FA ligado em outra aba, relê o /me, pede o código e não envia sem ele', async () => {
+    const r = await renderizarPainel('/settings')
+    await r.usuario.type(await screen.findByLabelText('Senha atual'), SENHA)
+    await r.usuario.type(screen.getByLabelText('Senha nova'), 'outra senha bem comprida')
+    await r.usuario.type(screen.getByLabelText('Confirme a senha nova'), 'outra senha bem comprida')
+    r.falsa.estado.totpLigado = true
+    await r.usuario.click(screen.getByRole('button', { name: 'Trocar a senha' }))
+    expect(await screen.findByText('A verificação em duas etapas foi ativada. Informe o código.')).toBeInTheDocument()
+    expect(screen.queryByText('Senha atual incorreta.')).not.toBeInTheDocument()
+    expect(r.falsa.chamadas('POST /auth/password')).toBe(0)
+    await r.usuario.type(screen.getByLabelText('Código do autenticador'), TOTP_OK)
+    await r.usuario.click(screen.getByRole('button', { name: 'Trocar a senha' }))
+    expect(await screen.findByText(/pode durar até 15 minutos/)).toBeInTheDocument()
+    expect(r.falsa.corpos('POST /auth/password')).toEqual([
+      { current_password: SENHA, new_password: 'outra senha bem comprida', totp_code: TOTP_OK },
+    ])
+  })
+
+  // Sabotagem: no catch da releitura, não retornar → o POST sai sem saber
+  // se o 2FA está ligado.
+  it('se o /me relido falha, a troca não sai e o erro aparece', async () => {
+    const r = await renderizarPainel('/settings')
+    await r.usuario.type(await screen.findByLabelText('Senha atual'), SENHA)
+    await r.usuario.type(screen.getByLabelText('Senha nova'), 'outra senha bem comprida')
+    await r.usuario.type(screen.getByLabelText('Confirme a senha nova'), 'outra senha bem comprida')
+    servidor.use(http.get('*/api/v1/me', () => HttpResponse.error(), { once: true }))
+    await r.usuario.click(screen.getByRole('button', { name: 'Trocar a senha' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('Sem conexão com o servidor.')
+    expect(r.falsa.chamadas('POST /auth/password')).toBe(0)
+  })
+
   // pendência do Plano 6: o código de recuperação é gasto antes da
   // transação da troca; se ela falha depois, o usuário tem de saber que
   // aquele código não vale mais. Sabotagem prevista: em ehDeRecuperacao,
@@ -87,7 +135,7 @@ describe('senha', () => {
     await r.usuario.type(screen.getByLabelText('Senha nova'), 'outra senha bem comprida')
     await r.usuario.type(screen.getByLabelText('Confirme a senha nova'), 'outra senha bem comprida')
     const refreshes = r.falsa.chamadas('POST /auth/refresh')
-    r.falsa.expirarAcessos()
+    expirarDepoisDoMe(r.falsa)
     await r.usuario.click(screen.getByRole('button', { name: 'Trocar a senha' }))
     expect(await screen.findByRole('alert')).toHaveTextContent('O acesso desta tela venceu.')
     expect(r.falsa.chamadas('POST /auth/refresh')).toBe(refreshes)
@@ -114,7 +162,7 @@ describe('senha', () => {
     await r.usuario.type(atual, SENHA)
     await r.usuario.type(screen.getByLabelText('Senha nova'), 'outra senha bem comprida')
     await r.usuario.type(screen.getByLabelText('Confirme a senha nova'), 'outra senha bem comprida')
-    r.falsa.expirarAcessos()
+    expirarDepoisDoMe(r.falsa)
     await r.usuario.click(screen.getByRole('button', { name: 'Trocar a senha' }))
     expect(await screen.findByRole('alert')).toHaveTextContent('O acesso desta tela venceu.')
     servidor.use(http.post('*/api/v1/auth/refresh', () => HttpResponse.error(), { once: true }))
