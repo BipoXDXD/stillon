@@ -13,10 +13,10 @@ import { useAlvo, useIncidentes, useResumo, useSerie } from '@/lib/api/consultas
 import { naoEncontrado } from '@/lib/api/http'
 import { mensagemDe, textoDoErroDeCheck } from '@/lib/api/mensagens'
 import type { Serie } from '@/lib/api/schemas'
-import { estadoExibido } from '@/lib/estado'
 import { dataHora, duracao, fuso, milissegundos, porcento } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { GraficoDeLatencia } from './GraficoDeLatencia'
+import { FaixaDeEstado } from './FaixaDeEstado'
 import { ehJanela, JANELAS, resumir, type Janela } from './serie'
 
 const NOMES: Record<Janela, string> = { '1h': '1 h', '6h': '6 h', '24h': '24 h', '7d': '7 dias', '30d': '30 dias', '90d': '90 dias' }
@@ -89,8 +89,7 @@ function Tabela({ serie }: { serie: Serie }) {
   )
 }
 
-function Incidentes({ id }: { id: string }) {
-  const consulta = useIncidentes('all', id, 10)
+function Incidentes({ consulta }: { consulta: ReturnType<typeof useIncidentes> }) {
   // Pela EstadoDaConsulta (D17): um poll de fundo que falha mantém a lista,
   // com o aviso de que ela está velha.
   return (
@@ -144,6 +143,8 @@ function DetalheDoAlvo({ id }: { id: string }) {
   const alvo = useAlvo(id)
   const resumo = useResumo()
   const serie = useSerie(id, janela)
+  // Os incidentes recentes do alvo: a lista do fim da tela e o aberto da faixa.
+  const incidentes = useIncidentes('all', id, 10)
   const [apagando, setApagando] = useState(false)
   const [ocupado, setOcupado] = useState(false)
   const [erro, setErro] = useState<string | null>(null)
@@ -220,7 +221,6 @@ function DetalheDoAlvo({ id }: { id: string }) {
               <p className="text-sm break-all text-suave">
                 {a.method} {a.url} · a cada {a.interval_sec} s
               </p>
-              {noResumo && <SeloDeEstado estado={estadoExibido(noResumo.state, noResumo.enabled)} />}
             </div>
             <div className="flex flex-wrap gap-2">
               <Botao tipo="secundario" asChild>
@@ -235,6 +235,15 @@ function DetalheDoAlvo({ id }: { id: string }) {
             </div>
           </div>
           <ErroDoFormulario>{erro}</ErroDoFormulario>
+          {noResumo && (
+            <FaixaDeEstado
+              item={noResumo}
+              incidentes={incidentes.data?.pages.flatMap((p) => p.items) ?? []}
+              agora={new Date(resumo.dataUpdatedAt)}
+              aoSumir={() => void sumiu()}
+              aoErrar={setErro}
+            />
+          )}
 
           <section className="space-y-3" aria-labelledby="titulo-latencia">
             <h2 id="titulo-latencia" className="text-lg font-semibold">
@@ -280,7 +289,7 @@ function DetalheDoAlvo({ id }: { id: string }) {
             </EstadoDaConsulta>
           </section>
 
-          <Incidentes id={id} />
+          <Incidentes consulta={incidentes} />
 
           <Confirmar
             aberto={apagando}

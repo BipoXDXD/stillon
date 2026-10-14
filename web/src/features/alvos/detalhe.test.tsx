@@ -261,6 +261,84 @@ describe('detalhe', () => {
     expect(await screen.findByRole('button', { name: '24 h' })).toHaveAttribute('aria-pressed', 'true')
   })
 
+  describe('faixa de estado', () => {
+    // Spec, Telas > 2: a faixa diz há quanto tempo o alvo está fora, a causa
+    // e o início, com Reconhecer. O foco vai ao "Reconhecido" quando o botão
+    // some (o cuidado I1 da tela de incidentes). Sabotagem: tirar o
+    // "focarDepois.current = true" → o foco cai no <body>.
+    it('fora do ar com incidente aberto: tempo, causa e Reconhecer, que manda o ack e leva o foco', async () => {
+      const r = await renderizarPainel('/targets/alvo-1')
+      r.falsa.estado.alvos = [alvo()]
+      r.falsa.estado.resumo = [itemDoResumo({ state: 'down', open_incident_id: 'inc-1' })]
+      r.falsa.estado.incidentes = [incidente({ cause: 'conn_refused' })]
+      await r.cliente.refetchQueries()
+      const faixa = await screen.findByRole('region', { name: /^Fora do ar há / })
+      expect(within(faixa).getByText(/^Conexão recusada · desde /)).toBeInTheDocument()
+      const botao = within(faixa).getByRole('button', { name: 'Reconhecer' })
+      expect(botao).toHaveAccessibleDescription('Reconhecer interrompe os lembretes; não resolve o incidente.')
+      await r.usuario.click(botao)
+      const feito = await within(faixa).findByText(/lembretes parados desde/)
+      await waitFor(() => expect(feito).toHaveFocus())
+      expect(within(faixa).queryByRole('button', { name: 'Reconhecer' })).not.toBeInTheDocument()
+      expect(r.falsa.chamadas('POST /incidents/:id/ack')).toBe(1)
+    })
+
+    it('sem incidente aberto, a faixa diz o estado e o último check, sem Reconhecer', async () => {
+      const r = await renderizarPainel('/targets/alvo-1')
+      r.falsa.estado.alvos = [alvo()]
+      r.falsa.estado.resumo = [itemDoResumo()]
+      await r.cliente.refetchQueries()
+      const faixa = await screen.findByRole('region', { name: 'No ar' })
+      expect(within(faixa).getByText(/^Último check /)).toBeInTheDocument()
+      expect(within(faixa).queryByRole('button')).not.toBeInTheDocument()
+    })
+
+    it('pausado: a faixa diz que os checks estão parados', async () => {
+      const r = await renderizarPainel('/targets/alvo-1')
+      r.falsa.estado.alvos = [alvo({ enabled: false })]
+      r.falsa.estado.resumo = [itemDoResumo({ state: 'unknown', enabled: false })]
+      await r.cliente.refetchQueries()
+      const faixa = await screen.findByRole('region', { name: 'Pausado' })
+      expect(within(faixa).getByText('Os checks estão parados. Retome para voltar a vigiar.')).toBeInTheDocument()
+    })
+
+    // Review Focus 4.
+    it('alvo sem nenhum check: "Sem dados" e "Nenhum check ainda."', async () => {
+      const r = await renderizarPainel('/targets/alvo-1')
+      r.falsa.estado.alvos = [alvo()]
+      r.falsa.estado.resumo = [itemDoResumo({ state: 'unknown', last_checked_at: null, uptime_24h: null, spark: [] })]
+      await r.cliente.refetchQueries()
+      const faixa = await screen.findByRole('region', { name: 'Sem dados' })
+      expect(within(faixa).getByText('Nenhum check ainda.')).toBeInTheDocument()
+    })
+
+    // M3: o incidente sumiu com o alvo, apagado em outra aba. Sabotagem:
+    // tirar o ramo do naoEncontrado em reconhecer() → o erro cru fica na tela.
+    it('o ack com 404 explica e volta à lista', async () => {
+      const r = await renderizarPainel('/targets/alvo-1')
+      r.falsa.estado.alvos = [alvo()]
+      r.falsa.estado.resumo = [itemDoResumo({ state: 'down', open_incident_id: 'inc-1' })]
+      r.falsa.estado.incidentes = [incidente()]
+      await r.cliente.refetchQueries()
+      const botao = await screen.findByRole('button', { name: 'Reconhecer' })
+      r.falsa.estado.incidentes = []
+      await r.usuario.click(botao)
+      expect((await screen.findAllByText('O alvo já tinha sido apagado, talvez em outra aba.'))[0]).toBeInTheDocument()
+      await waitFor(() => expect(r.router.state.location.pathname).toBe('/'))
+    })
+
+    it('um ack que falha mostra o erro e mantém o Reconhecer', async () => {
+      const r = await renderizarPainel('/targets/alvo-1')
+      r.falsa.estado.alvos = [alvo()]
+      r.falsa.estado.resumo = [itemDoResumo({ state: 'down', open_incident_id: 'inc-1' })]
+      r.falsa.estado.incidentes = [incidente()]
+      await r.cliente.refetchQueries()
+      r.falsa.estado.forcar.set('POST /incidents/:id/ack', { status: 502, code: 'unavailable' })
+      await r.usuario.click(await screen.findByRole('button', { name: 'Reconhecer' }))
+      expect(await screen.findByRole('alert')).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Reconhecer' })).toBeInTheDocument()
+    })
+  })
 })
 
 // M3 da revisão final: 404 tratado como em Canais. O alvo sumiu (apagado em
