@@ -27,7 +27,7 @@ function SeletorDeTema() {
       <select
         value={tema}
         onChange={(e) => mudar(e.target.value as Tema)}
-        className="min-h-10 rounded-md border border-borda bg-fundo px-3 text-texto"
+        className="min-h-10 rounded-md border border-borda-controle bg-fundo px-3 text-texto"
       >
         <option value="sistema">Sistema</option>
         <option value="claro">Claro</option>

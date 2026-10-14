@@ -6,13 +6,16 @@
 
 /* Tokens do painel. As cores de estado foram escolhidas para contraste AA
    (4,5:1) como texto sobre o fundo de cada tema; o projeto a11y do
-   Playwright confere com o axe nos dois temas. */
+   Playwright confere com o axe nos dois temas. --borda é divisória
+   decorativa; --borda-controle é o limite de campos e botões, com 3:1 sobre
+   fundo, superfície e painel (WCAG 1.4.11). src/tokens.test.ts confere. */
 :root {
   --fundo: #f3f0e7;
   --superficie: #fcfaf4;
   --texto: #272c27;
   --suave: #62665b;
   --borda: #d5d5c7;
+  --borda-controle: #838678;
   --painel: #e9e9dc;
   --primaria: #45583c;
   --primaria-texto: #fffdf5;
@@ -34,6 +37,7 @@
   --texto: #f0eee3;
   --suave: #b8bdad;
   --borda: #444d40;
+  --borda-controle: #7a8373;
   --painel: #30382d;
   --primaria: #c5d2ac;
   --primaria-texto: #242c20;
@@ -55,6 +59,7 @@
   --color-texto: var(--texto);
   --color-suave: var(--suave);
   --color-borda: var(--borda);
+  --color-borda-controle: var(--borda-controle);
   --color-painel: var(--painel);
   --color-primaria: var(--primaria);
   --color-primaria-texto: var(--primaria-texto);
@@ -79,6 +84,12 @@ body {
   background: var(--fundo);
   color: var(--texto);
   font-family: var(--font-sans);
+}
+
+/* Checkbox e radio na cor da marca, não no azul do navegador. */
+input[type='checkbox'],
+input[type='radio'] {
+  accent-color: var(--primaria);
 }
 
 :focus-visible {
