@@ -1,11 +1,16 @@
 import { screen, waitFor, within } from '@testing-library/react'
+import { http, HttpResponse } from 'msw'
 import { describe, expect, it } from 'vitest'
 import { canal, incidente, itemDoResumo } from '@/test/fixtures'
 import { renderizarPainel } from '@/test/renderizar'
+import { servidor } from '@/test/setup'
 import { ItemDoResumo } from '@/lib/api/schemas'
 import { mapaDeEstados, transicoes } from './transicoes'
 
 const resumido = (p: Parameters<typeof itemDoResumo>[0]) => ItemDoResumo.parse(itemDoResumo(p))
+const regiao = (nome: string) => screen.getByRole('region', { name: nome })
+const cartaoDe = async (nome: string) =>
+  (await screen.findByRole('heading', { level: 3, name: nome })).closest('li') as HTMLElement
 
 describe('transicoes', () => {
   // Sabotagem prevista: anunciar todo item a cada resposta (ignorar o
@@ -23,38 +28,175 @@ describe('transicoes', () => {
 })
 
 describe('painel', () => {
-  it('sem alvos, oferece cadastrar o primeiro', async () => {
+  // Review Focus 1.
+  it('sem alvos, a manchete diz que não há o que vigiar e oferece cadastrar o primeiro', async () => {
     await renderizarPainel('/')
-    expect(await screen.findByRole('link', { name: 'Cadastrar o primeiro alvo' })).toHaveAttribute('href', '/targets/new')
+    expect(await screen.findByRole('heading', { level: 2, name: 'Nenhum serviço vigiado ainda.' })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Cadastrar o primeiro alvo' })).toHaveAttribute('href', '/targets/new')
+    expect(screen.queryByText(/^Atualizado às/)).not.toBeInTheDocument()
   })
 
-  it('mostra os cinco estados com texto, e pausado no lugar de "sem dados" para alvo desativado', async () => {
+  // Spec, Telas > 1: problemas primeiro, em cartões; o que funciona, em
+  // linhas com o cabeçalho uma vez só; sem dados e pausados, em texto, sem
+  // gráfico (auditoria P7). Review Focus 4 (o "Novo" nunca foi verificado).
+  it('ordena por gravidade: problemas em cartões, no ar em linhas, sem dados e pausados em texto', async () => {
     const r = await renderizarPainel('/')
     r.falsa.estado.resumo = [
-      itemDoResumo({ id: 'a', name: 'No ar', state: 'up', uptime_24h: 0.99999 }),
-      itemDoResumo({ id: 'b', name: 'Lento', state: 'degraded' }),
-      itemDoResumo({ id: 'c', name: 'Caiu', state: 'down', last_latency_ms: null, open_incident_id: 'inc-1' }),
-      itemDoResumo({ id: 'd', name: 'Novo', state: 'unknown', last_checked_at: null, uptime_24h: null, spark: [] }),
-      itemDoResumo({ id: 'e', name: 'Parado', state: 'unknown', enabled: false }),
+      itemDoResumo({ id: 'z', name: 'Zeta' }),
+      itemDoResumo({ id: 'a', name: 'alfa', uptime_24h: 0.99999 }),
+      itemDoResumo({ id: 'l', name: 'Lento', state: 'degraded', last_latency_ms: 2400 }),
+      itemDoResumo({ id: 'c', name: 'Caiu', state: 'down', last_latency_ms: null }),
+      itemDoResumo({ id: 'b', name: 'Banco', state: 'down', last_latency_ms: null }),
+      itemDoResumo({ id: 'p', name: 'Parado', state: 'unknown', enabled: false }),
+      itemDoResumo({ id: 'n', name: 'Novo', state: 'unknown', last_checked_at: null, uptime_24h: null, spark: [] }),
     ]
     await r.cliente.refetchQueries()
-    const cartao = (nome: string) => screen.getByRole('link', { name: nome }).closest('li') as HTMLElement
-    await screen.findByRole('link', { name: 'No ar' })
-    expect(within(cartao('No ar')).getByText('No ar', { selector: 'span' })).toBeInTheDocument()
+    const problemas = await screen.findByRole('region', { name: 'Pedem atenção' })
+    expect(within(problemas).getAllByRole('heading', { level: 3 }).map((h) => h.textContent)).toEqual(['Banco', 'Caiu', 'Lento'])
+    expect(within(problemas).getAllByText('Fora do ar')).toHaveLength(2)
+    expect(within(problemas).getByText('Degradado')).toBeInTheDocument()
+
+    const funcionando = regiao('Funcionando')
+    expect(within(funcionando).getAllByRole('columnheader').map((c) => c.textContent)).toEqual([
+      'Alvo',
+      'Latência',
+      '24 h',
+      'Últimas 24 h',
+    ])
+    expect(within(funcionando).getAllByRole('rowheader').map((c) => c.textContent)).toEqual(['alfa', 'Zeta'])
     // Truncado: 0,99999 é "99,99%", nunca "100,00%".
-    expect(within(cartao('No ar')).getByText('99,99%')).toBeInTheDocument()
-    expect(within(cartao('Lento')).getByText('Degradado')).toBeInTheDocument()
-    expect(within(cartao('Caiu')).getByText('Fora do ar')).toBeInTheDocument()
-    expect(within(cartao('Caiu')).getByText('—')).toBeInTheDocument()
-    expect(within(cartao('Caiu')).getByRole('link', { name: 'Incidente aberto' })).toBeInTheDocument()
-    expect(within(cartao('Novo')).getByText('Sem dados')).toBeInTheDocument()
-    expect(within(cartao('Novo')).getByText('nunca')).toBeInTheDocument()
-    expect(within(cartao('Parado')).getByText('Pausado')).toBeInTheDocument()
-    expect(screen.getByText('1 no ar, 1 degradado, 1 fora do ar, 1 sem dados, 1 pausado')).toBeInTheDocument()
-    // O ícone é decorativo: o leitor de tela ouve só o texto.
-    for (const svg of within(cartao('Caiu')).getAllByText('Fora do ar')[0]!.querySelectorAll('svg')) {
-      expect(svg).toHaveAttribute('aria-hidden', 'true')
-    }
+    expect(within(funcionando).getByRole('row', { name: /alfa/ })).toHaveTextContent('99,99%')
+
+    const semDados = regiao('Sem dados ou pausados')
+    expect(
+      within(semDados)
+        .getAllByRole('listitem')
+        .map((li) => [within(li).getByRole('link').textContent, li.querySelector('span')?.textContent]),
+    ).toEqual([
+      ['Novo', 'Sem dados · nunca verificado'],
+      ['Parado', 'Pausado'],
+    ])
+    expect(within(semDados).queryByRole('img')).not.toBeInTheDocument()
+  })
+
+  it('a manchete conta os problemas por extenso e detalha os estados por gravidade', async () => {
+    const r = await renderizarPainel('/')
+    r.falsa.estado.resumo = [
+      itemDoResumo({ id: 'b', name: 'Banco', state: 'down' }),
+      itemDoResumo({ id: 'l', name: 'Lento', state: 'degraded' }),
+      itemDoResumo({ id: 'a', name: 'API' }),
+      itemDoResumo({ id: 's', name: 'Site' }),
+    ]
+    await r.cliente.refetchQueries()
+    expect(await screen.findByRole('heading', { level: 2, name: 'Dois serviços pedem atenção.' })).toBeInTheDocument()
+    expect(screen.getByText('1 fora do ar, 1 degradado, 2 no ar.')).toBeInTheDocument()
+    expect(screen.getByText(/^Atualizado às \d{2}:\d{2} · 2 de 4 no ar$/)).toBeInTheDocument()
+  })
+
+  // Review Focus 2.
+  it('todos pausados: a manchete diz, e a meta não inventa um total', async () => {
+    const r = await renderizarPainel('/')
+    r.falsa.estado.resumo = [itemDoResumo({ enabled: false }), itemDoResumo({ id: 'b', name: 'Banco', state: 'unknown', enabled: false })]
+    await r.cliente.refetchQueries()
+    expect(await screen.findByRole('heading', { level: 2, name: 'Todos os alvos estão pausados.' })).toBeInTheDocument()
+    expect(screen.getByText(/· nenhum alvo ativo$/)).toBeInTheDocument()
+  })
+
+  it('um ativo ainda sem dados: a manchete espera, e não diz "Tudo no ar."', async () => {
+    const r = await renderizarPainel('/')
+    r.falsa.estado.resumo = [itemDoResumo(), itemDoResumo({ id: 'n', name: 'Novo', state: 'unknown', last_checked_at: null })]
+    await r.cliente.refetchQueries()
+    expect(await screen.findByRole('heading', { level: 2, name: 'Um serviço ainda sem dados.' })).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Tudo no ar.' })).not.toBeInTheDocument()
+  })
+
+  describe('tudo no ar', () => {
+    // A rota ordena pela abertura: o último a terminar vem depois na lista.
+    // Sabotagem: em ultimoResolvido, devolver o primeiro → aparece 08:30.
+    it('mostra o check em círculo verde e a hora do último incidente resolvido, pelo fim', async () => {
+      const r = await renderizarPainel('/')
+      r.falsa.estado.resumo = [itemDoResumo()]
+      r.falsa.estado.incidentes = [
+        incidente({ id: 'i2', started_at: '2026-09-24T09:00:00Z', resolved_at: new Date(2026, 8, 24, 8, 30).toISOString() }),
+        incidente({ id: 'i1', started_at: '2026-09-24T07:00:00Z', resolved_at: new Date(2026, 8, 24, 9, 12).toISOString() }),
+      ]
+      await r.cliente.refetchQueries()
+      const titulo = await screen.findByRole('heading', { level: 2, name: 'Tudo no ar.' })
+      expect(titulo.previousElementSibling).toHaveClass('bg-no-ar-100')
+      expect(await screen.findByText(/^Último incidente resolvido em 24\/09\/2026,? 09:12\.$/)).toBeInTheDocument()
+    })
+
+    it('sem incidente resolvido, diz que não houve nenhum', async () => {
+      const r = await renderizarPainel('/')
+      r.falsa.estado.resumo = [itemDoResumo()]
+      await r.cliente.refetchQueries()
+      expect(await screen.findByText('Nenhum incidente registrado.')).toBeInTheDocument()
+    })
+
+    // Não saber não é "nenhum". Sabotagem: em fraseDoUltimoResolvido,
+    // tratar undefined como lista vazia.
+    it('se a consulta dos resolvidos falha, não diz "nenhum"', async () => {
+      const r = await renderizarPainel('/')
+      r.falsa.estado.resumo = [itemDoResumo()]
+      r.falsa.estado.forcar.set('GET /incidents', { status: 502, code: 'unavailable' })
+      await r.cliente.refetchQueries()
+      await screen.findByRole('heading', { level: 2, name: 'Tudo no ar.' })
+      await waitFor(() =>
+        expect(r.cliente.getQueryCache().find({ queryKey: ['incidents', 'resolved'], exact: false })?.state.status).toBe('error'),
+      )
+      expect(screen.queryByText('Nenhum incidente registrado.')).not.toBeInTheDocument()
+      expect(screen.queryByText(/^Último incidente resolvido/)).not.toBeInTheDocument()
+    })
+  })
+
+  it('cartão de problema: a causa e há quanto tempo do incidente aberto, e o link para ele', async () => {
+    const r = await renderizarPainel('/')
+    r.falsa.estado.resumo = [
+      itemDoResumo({ id: 'b', name: 'Banco', state: 'down', last_latency_ms: null, open_incident_id: 'inc-9' }),
+      itemDoResumo({ id: 'l', name: 'Lento', state: 'degraded', last_latency_ms: 2400 }),
+    ]
+    r.falsa.estado.incidentes = [incidente({ id: 'inc-9', target_id: 'b', target_name: 'Banco', cause: 'conn_refused' })]
+    await r.cliente.refetchQueries()
+    const banco = await cartaoDe('Banco')
+    expect(banco).toHaveClass('border-l-fora')
+    expect(await within(banco).findByText(/^Conexão recusada · há /)).toBeInTheDocument()
+    expect(within(banco).getByRole('link', { name: 'Banco' })).toHaveAttribute('href', '/targets/b')
+    expect(within(banco).getByRole('link', { name: 'Ver incidente de Banco' })).toHaveAttribute('href', '/incidents?status=open')
+
+    const lento = await cartaoDe('Lento')
+    expect(lento).toHaveClass('border-l-degradado')
+    expect(within(lento).getByText('Latência de 2.400 ms no último check')).toBeInTheDocument()
+    // "Ver detalhes" é pista visual: o cartão já leva ao detalhe.
+    expect(within(lento).getAllByRole('link').map((a) => a.getAttribute('href'))).toEqual(['/targets/l'])
+    expect(within(lento).getByText('Ver detalhes')).toHaveAttribute('aria-hidden', 'true')
+  })
+
+  // Review Focus 7.
+  it('incidente sem causa: o cartão diz que a causa não foi registrada', async () => {
+    const r = await renderizarPainel('/')
+    r.falsa.estado.resumo = [itemDoResumo({ id: 'b', name: 'Banco', state: 'down', open_incident_id: 'inc-9' })]
+    r.falsa.estado.incidentes = [incidente({ id: 'inc-9', target_id: 'b', target_name: 'Banco', cause: '' })]
+    await r.cliente.refetchQueries()
+    expect(await within(await cartaoDe('Banco')).findByText(/^Causa não registrada · há /)).toBeInTheDocument()
+  })
+
+  // P12. Sabotagem: tirar o esqueleto={<EsqueletoDoPainel />} da tela → o
+  // esqueleto padrão tem 3 blocos.
+  it('enquanto o resumo não chega, o esqueleto do painel ocupa o lugar', async () => {
+    const r = await renderizarPainel('/')
+    let soltar!: () => void
+    const segurado = new Promise<void>((ok) => (soltar = ok))
+    servidor.use(
+      http.get('*/api/v1/targets/summary', async () => {
+        await segurado
+        return HttpResponse.json({ items: [] })
+      }),
+    )
+    void r.cliente.resetQueries({ queryKey: ['targets', 'summary'] })
+    const ocupado = (await screen.findByText('Carregando…')).closest('[aria-busy="true"]') as HTMLElement
+    expect(ocupado.querySelectorAll('[aria-hidden="true"]')).toHaveLength(8)
+    soltar()
+    expect(await screen.findByRole('heading', { level: 2, name: 'Nenhum serviço vigiado ainda.' })).toBeInTheDocument()
   })
 
   it('anuncia na região aria-live quando um alvo cai, e não na primeira carga', async () => {
@@ -62,18 +204,18 @@ describe('painel', () => {
     r.falsa.estado.resumo = [itemDoResumo({ id: 'a', name: 'API', state: 'up' })]
     await r.cliente.refetchQueries()
     await screen.findByRole('link', { name: 'API' })
-    const regiao = screen.getByTestId('anuncios')
-    expect(regiao).toHaveTextContent('')
+    const anuncios = screen.getByTestId('anuncios')
+    expect(anuncios).toHaveTextContent('')
     r.falsa.estado.resumo = [itemDoResumo({ id: 'a', name: 'API', state: 'down' })]
     await r.cliente.refetchQueries()
-    await waitFor(() => expect(regiao).toHaveTextContent('API: fora do ar'))
+    await waitFor(() => expect(anuncios).toHaveTextContent('API: fora do ar'))
   })
 
   // Spec §4 e M9 da revisão: um poll de fundo que falha não esconde o que já
   // se sabia. Sabotagem prevista: em EstadoDaConsulta, trocar
   // "if (consulta.data === undefined)" por
   // "if (consulta.data === undefined || consulta.error)".
-  it('um poll que falha mantém os cartões e avisa que os dados estão velhos', async () => {
+  it('um poll que falha mantém os alvos e avisa que os dados estão velhos', async () => {
     const r = await renderizarPainel('/')
     r.falsa.estado.resumo = [itemDoResumo({ id: 'a', name: 'API' })]
     await r.cliente.refetchQueries()
@@ -118,26 +260,9 @@ describe('navegação', () => {
   })
 })
 
-// Plano 12: tirar a contagem por enabled ou os avisos de canais precisa
-// derrubar estes casos. A API falsa só fornece respostas; a tela é real.
-describe('resumo operacional', () => {
-  it('conta os estados reais e separa alvo pausado de sem dados', async () => {
-    const r = await renderizarPainel('/')
-    r.falsa.estado.resumo = [
-      itemDoResumo({ id: 'a1' }), itemDoResumo({ id: 'a2' }),
-      itemDoResumo({ id: 'a3', state: 'degraded' }),
-      itemDoResumo({ id: 'a4', state: 'down' }),
-      itemDoResumo({ id: 'a5', state: 'unknown' }),
-      itemDoResumo({ id: 'a6', state: 'up', enabled: false }),
-    ]
-    await r.cliente.refetchQueries()
-    const resumo = await screen.findByRole('region', { name: 'Resumo dos alvos' })
-    for (const [estado, numero] of [['No ar', '2'], ['Degradado', '1'], ['Fora do ar', '1'], ['Sem dados', '1'], ['Pausado', '1']] as const) {
-      expect(within(resumo).getByText(estado).nextElementSibling).toHaveTextContent(numero)
-    }
-    expect(screen.getByText(/Última atualização:/)).toBeInTheDocument()
-  })
-
+// Plano 12: tirar os avisos de canais precisa derrubar estes casos. A API
+// falsa só fornece respostas; a tela é real.
+describe('avisos de canais', () => {
   it('sem canais avisa como configurar os alertas sem esconder os alvos', async () => {
     const r = await renderizarPainel('/')
     r.falsa.estado.resumo = [itemDoResumo()]
@@ -169,14 +294,14 @@ describe('resumo operacional', () => {
     expect(screen.queryByText('Nenhum canal de notificação cadastrado. Os incidentes não enviam avisos.')).not.toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'API' })).toBeInTheDocument()
   })
-})
 
-// Um canal failing continua verificado e recebendo tentativas (notify).
-// Sabotagem: considerar apenas status verified no aviso de canal ativo.
-it('canal falhando é avisado e continua contado como verificado ativo', async () => {
-  const r = await renderizarPainel('/')
-  r.falsa.estado.canais = [canal({ status: 'failing' })]
-  await r.cliente.refetchQueries()
-  expect(await screen.findByText('1 canal está falhando na entrega.')).toBeInTheDocument()
-  expect(screen.queryByText('Nenhum canal verificado está ativo para receber avisos.')).not.toBeInTheDocument()
+  // Um canal failing continua verificado e recebendo tentativas (notify).
+  // Sabotagem: considerar apenas status verified no aviso de canal ativo.
+  it('canal falhando é avisado e continua contado como verificado ativo', async () => {
+    const r = await renderizarPainel('/')
+    r.falsa.estado.canais = [canal({ status: 'failing' })]
+    await r.cliente.refetchQueries()
+    expect(await screen.findByText('1 canal está falhando na entrega.')).toBeInTheDocument()
+    expect(screen.queryByText('Nenhum canal verificado está ativo para receber avisos.')).not.toBeInTheDocument()
+  })
 })
