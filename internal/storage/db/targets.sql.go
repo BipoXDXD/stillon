@@ -235,6 +235,86 @@ func (q *Queries) ListChecks(ctx context.Context, arg ListChecksParams) ([]ListC
 	return items, nil
 }
 
+const listRawHours = `-- name: ListRawHours :many
+SELECT c.target_id,
+       to_timestamp(floor(extract(epoch FROM c.checked_at) / 3600) * 3600)::timestamptz AS bucket,
+       count(*)::int AS total,
+       (count(*) FILTER (WHERE c.status <> 'down'))::int AS ok,
+       coalesce(percentile_disc(0.50) WITHIN GROUP (ORDER BY c.latency_ms)
+                FILTER (WHERE c.status <> 'down'), 0)::int AS p50,
+       coalesce(percentile_disc(0.95) WITHIN GROUP (ORDER BY c.latency_ms)
+                FILTER (WHERE c.status <> 'down'), 0)::int AS p95,
+       coalesce(percentile_disc(0.99) WITHIN GROUP (ORDER BY c.latency_ms)
+                FILTER (WHERE c.status <> 'down'), 0)::int AS p99,
+       coalesce(max(c.latency_ms) FILTER (WHERE c.status <> 'down'), 0)::int AS max
+  FROM checks c
+  JOIN targets t ON t.id = c.target_id
+ WHERE t.user_id = $1
+   AND ($2::uuid IS NULL OR c.target_id = $2::uuid)
+   AND c.checked_at >= $3::timestamptz
+   AND c.checked_at < $4::timestamptz
+ GROUP BY 1, 2
+ ORDER BY 1, 2
+`
+
+type ListRawHoursParams struct {
+	UserID   uuid.UUID
+	TargetID *uuid.UUID
+	FromAt   time.Time
+	ToAt     time.Time
+}
+
+type ListRawHoursRow struct {
+	TargetID uuid.UUID
+	Bucket   time.Time
+	Total    int32
+	Ok       int32
+	P50      int32
+	P95      int32
+	P99      int32
+	Max      int32
+}
+
+// As horas cheias ainda não consolidadas, com a MESMA fórmula de
+// ConsolidateRollups. Serve o resumo (todos os alvos do dono, target_id nulo)
+// e a série longa de um alvo (GET /targets/{id}/checks acima de 48 h). As
+// latências saem 0 numa hora sem sucesso (o sqlc não enxerga a nulidade do
+// percentil); quem lê usa ok = 0 para saber que não há latência, a mesma
+// regra do CHECK de check_rollup_1h.
+func (q *Queries) ListRawHours(ctx context.Context, arg ListRawHoursParams) ([]ListRawHoursRow, error) {
+	rows, err := q.db.Query(ctx, listRawHours,
+		arg.UserID,
+		arg.TargetID,
+		arg.FromAt,
+		arg.ToAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListRawHoursRow
+	for rows.Next() {
+		var i ListRawHoursRow
+		if err := rows.Scan(
+			&i.TargetID,
+			&i.Bucket,
+			&i.Total,
+			&i.Ok,
+			&i.P50,
+			&i.P95,
+			&i.P99,
+			&i.Max,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listSummaryCurrentHour = `-- name: ListSummaryCurrentHour :many
 SELECT c.target_id, count(*)::int AS total, (count(*) FILTER (WHERE c.status <> 'down'))::int AS ok
   FROM checks c
@@ -269,65 +349,6 @@ func (q *Queries) ListSummaryCurrentHour(ctx context.Context, arg ListSummaryCur
 	for rows.Next() {
 		var i ListSummaryCurrentHourRow
 		if err := rows.Scan(&i.TargetID, &i.Total, &i.Ok); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listSummaryRawHours = `-- name: ListSummaryRawHours :many
-SELECT c.target_id,
-       to_timestamp(floor(extract(epoch FROM c.checked_at) / 3600) * 3600)::timestamptz AS bucket,
-       count(*)::int AS total,
-       (count(*) FILTER (WHERE c.status <> 'down'))::int AS ok,
-       coalesce(percentile_disc(0.50) WITHIN GROUP (ORDER BY c.latency_ms)
-                FILTER (WHERE c.status <> 'down'), 0)::int AS p50
-  FROM checks c
-  JOIN targets t ON t.id = c.target_id
- WHERE t.user_id = $1
-   AND c.checked_at >= $2::timestamptz
-   AND c.checked_at < $3::timestamptz
- GROUP BY 1, 2
-`
-
-type ListSummaryRawHoursParams struct {
-	UserID uuid.UUID
-	FromAt time.Time
-	ToAt   time.Time
-}
-
-type ListSummaryRawHoursRow struct {
-	TargetID uuid.UUID
-	Bucket   time.Time
-	Total    int32
-	Ok       int32
-	P50      int32
-}
-
-// As horas cheias ainda não consolidadas, com a MESMA fórmula de
-// ConsolidateRollups. p50 sai 0 numa hora sem sucesso (o sqlc não enxerga a
-// nulidade do percentil); quem lê usa ok = 0 para saber que não há mediana,
-// a mesma regra do CHECK de check_rollup_1h.
-func (q *Queries) ListSummaryRawHours(ctx context.Context, arg ListSummaryRawHoursParams) ([]ListSummaryRawHoursRow, error) {
-	rows, err := q.db.Query(ctx, listSummaryRawHours, arg.UserID, arg.FromAt, arg.ToAt)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []ListSummaryRawHoursRow
-	for rows.Next() {
-		var i ListSummaryRawHoursRow
-		if err := rows.Scan(
-			&i.TargetID,
-			&i.Bucket,
-			&i.Total,
-			&i.Ok,
-			&i.P50,
-		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

@@ -104,22 +104,31 @@ SELECT r.target_id, r.bucket, r.total, r.ok, r.p50
    AND r.bucket < sqlc.arg(to_at)::timestamptz;
 
 -- As horas cheias ainda não consolidadas, com a MESMA fórmula de
--- ConsolidateRollups. p50 sai 0 numa hora sem sucesso (o sqlc não enxerga a
--- nulidade do percentil); quem lê usa ok = 0 para saber que não há mediana,
--- a mesma regra do CHECK de check_rollup_1h.
--- name: ListSummaryRawHours :many
+-- ConsolidateRollups. Serve o resumo (todos os alvos do dono, target_id nulo)
+-- e a série longa de um alvo (GET /targets/{id}/checks acima de 48 h). As
+-- latências saem 0 numa hora sem sucesso (o sqlc não enxerga a nulidade do
+-- percentil); quem lê usa ok = 0 para saber que não há latência, a mesma
+-- regra do CHECK de check_rollup_1h.
+-- name: ListRawHours :many
 SELECT c.target_id,
        to_timestamp(floor(extract(epoch FROM c.checked_at) / 3600) * 3600)::timestamptz AS bucket,
        count(*)::int AS total,
        (count(*) FILTER (WHERE c.status <> 'down'))::int AS ok,
        coalesce(percentile_disc(0.50) WITHIN GROUP (ORDER BY c.latency_ms)
-                FILTER (WHERE c.status <> 'down'), 0)::int AS p50
+                FILTER (WHERE c.status <> 'down'), 0)::int AS p50,
+       coalesce(percentile_disc(0.95) WITHIN GROUP (ORDER BY c.latency_ms)
+                FILTER (WHERE c.status <> 'down'), 0)::int AS p95,
+       coalesce(percentile_disc(0.99) WITHIN GROUP (ORDER BY c.latency_ms)
+                FILTER (WHERE c.status <> 'down'), 0)::int AS p99,
+       coalesce(max(c.latency_ms) FILTER (WHERE c.status <> 'down'), 0)::int AS max
   FROM checks c
   JOIN targets t ON t.id = c.target_id
  WHERE t.user_id = sqlc.arg(user_id)
+   AND (sqlc.narg(target_id)::uuid IS NULL OR c.target_id = sqlc.narg(target_id)::uuid)
    AND c.checked_at >= sqlc.arg(from_at)::timestamptz
    AND c.checked_at < sqlc.arg(to_at)::timestamptz
- GROUP BY 1, 2;
+ GROUP BY 1, 2
+ ORDER BY 1, 2;
 
 -- A hora corrente entra só no uptime, não no spark: só contagens, sem
 -- percentil.
