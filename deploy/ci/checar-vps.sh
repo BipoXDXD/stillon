@@ -145,7 +145,7 @@ entrada() {
 # manifesto linux/amd64 da imagem, SEM nome. Imprime o digest do manifesto,
 # que é o image-id do protocolo.
 oci_tar() {
-    local img=$1 saida=$2 x y d f m
+    local img=$1 saida=$2 x y d f m manifesto config
     x=$(mktemp -d "$TARS/x.XXXX")
     y=$(mktemp -d "$TARS/y.XXXX")
     docker save "$img" | tar -xf - -C "$x"
@@ -164,8 +164,16 @@ oci_tar() {
     for b in "$m" $(jq -r '.config.digest, .layers[].digest' "$x/blobs/${m/://}"); do
         cp "$x/blobs/${b/://}" "$y/blobs/sha256/"
     done
-    printf '{"schemaVersion":2,"mediaType":"application/vnd.oci.image.index.v1+json","manifests":[{"mediaType":"%s","digest":"%s","size":%s}]}' \
-        "$(jq -r .mediaType "$x/blobs/${m/://}")" "$m" "$(stat -c %s "$x/blobs/${m/://}")" > "$y/index.json"
+    # O index.json como chega à VPS: o do crane v0.22.1, já sem o artifactType
+    # que o deploy.yml tira, e COM o platform (o os e a architecture da
+    # config). Sem ele, o teste não passaria pelo caminho real do load.
+    manifesto=$x/blobs/${m/://}
+    config=$x/blobs/$(jq -r '.config.digest | sub(":"; "/")' "$manifesto")
+    jq -c -n --arg mt "$(jq -r .mediaType "$manifesto")" --arg d "$m" \
+        --argjson tam "$(stat -c %s "$manifesto")" \
+        --argjson plat "$(jq -c '{architecture, os}' "$config")" \
+        '{schemaVersion: 2, mediaType: "application/vnd.oci.image.index.v1+json",
+          manifests: [{mediaType: $mt, size: $tam, digest: $d, platform: $plat}]}' > "$y/index.json"
     tar -cf "$saida" -C "$y" .
     rm -rf "$x" "$y"
     echo "$m"
