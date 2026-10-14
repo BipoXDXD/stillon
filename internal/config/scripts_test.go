@@ -247,8 +247,15 @@ func TestInitDBAppliesLiteralPasswords(t *testing.T) {
 	if err != nil {
 		t.Fatal("teste de integração precisa do Docker")
 	}
-	script, err := filepath.Abs("../../deploy/vps/initdb.sh")
+	// Montado com o modo da produção (o runbook instala 0755), e não com o 0644
+	// do checkout: o bash do entrypoint pergunta -x ao VirtioFS do Docker
+	// Desktop, que responde pelo dono no host, e o exec falha em seguida.
+	source, err := os.ReadFile("../../deploy/vps/initdb.sh")
 	if err != nil {
+		t.Fatal(err)
+	}
+	script := filepath.Join(t.TempDir(), "initdb.sh")
+	if err := os.WriteFile(script, source, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	name := fmt.Sprintf("stillon-initdb-%d", time.Now().UnixNano())
@@ -269,8 +276,11 @@ func TestInitDBAppliesLiteralPasswords(t *testing.T) {
 	if image == "" {
 		t.Fatal("Dockerfile do banco sem FROM")
 	}
+	// O pg_hba.conf da imagem dá trust a 127.0.0.1: sem --auth-host, qualquer
+	// senha entraria e o teste não provaria nada sobre os literais.
 	cmd := exec.CommandContext(ctx, docker, "run", "-d", "--name", name, "--network", "none",
 		"-e", "POSTGRES_PASSWORD", "-e", "STILLON_APP_PASSWORD", "-e", "STILLON_BACKUP_PASSWORD",
+		"-e", "POSTGRES_INITDB_ARGS=--auth-host=scram-sha-256",
 		"--mount", "type=bind,src="+script+",dst=/docker-entrypoint-initdb.d/10-stillon.sh,readonly", image)
 	cmd.Env = append(os.Environ(), "POSTGRES_PASSWORD=sentinela-admin", "STILLON_APP_PASSWORD="+app, "STILLON_BACKUP_PASSWORD="+backup)
 	if out, err := cmd.CombinedOutput(); err != nil {
@@ -296,12 +306,18 @@ func TestInitDBAppliesLiteralPasswords(t *testing.T) {
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
-	for _, credentials := range []struct{ user, password string }{{"stillon_app", app}, {"stillon_backup", backup}} {
-		cmd := exec.CommandContext(ctx, docker, "exec", "-e", "PGPASSWORD", name, "psql", "-X", "-Atq", "-h", "127.0.0.1", "-U", credentials.user, "-d", "stillon", "-c", "SELECT current_user")
-		cmd.Env = append(os.Environ(), "PGPASSWORD="+credentials.password)
+	login := func(user, password string) (string, error) {
+		cmd := exec.CommandContext(ctx, docker, "exec", "-e", "PGPASSWORD", name, "psql", "-X", "-Atq", "-h", "127.0.0.1", "-U", user, "-d", "stillon", "-c", "SELECT current_user")
+		cmd.Env = append(os.Environ(), "PGPASSWORD="+password)
 		out, err := cmd.CombinedOutput()
-		if err != nil || strings.TrimSpace(string(out)) != credentials.user {
+		return string(out), err
+	}
+	for _, credentials := range []struct{ user, password string }{{"stillon_app", app}, {"stillon_backup", backup}} {
+		if out, err := login(credentials.user, credentials.password); err != nil || strings.TrimSpace(out) != credentials.user {
 			t.Errorf("autenticar %s com senha literal: %v\n%s", credentials.user, err, out)
+		}
+		if out, err := login(credentials.user, "senha-errada"); err == nil {
+			t.Errorf("%s entrou com senha errada: a autenticação não está sendo exercitada\n%s", credentials.user, out)
 		}
 	}
 }

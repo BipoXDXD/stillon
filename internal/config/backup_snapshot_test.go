@@ -91,7 +91,8 @@ func TestBackupSnapshotConcurrentChangesAndRestore(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	copySnapshotFile(t, filepath.Join(root, "deploy/vps/initdb.sh"), filepath.Join(dir, "initdb.sh"), 0644)
+	// 0755 como o runbook instala; ver TestInitDBAppliesLiteralPasswords.
+	copySnapshotFile(t, filepath.Join(root, "deploy/vps/initdb.sh"), filepath.Join(dir, "initdb.sh"), 0755)
 	if err := os.WriteFile(filepath.Join(dir, "pg_hba.conf"), []byte("local all all trust\nhost all all 127.0.0.1/32 scram-sha-256\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
