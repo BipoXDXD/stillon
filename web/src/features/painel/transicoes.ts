@@ -1,5 +1,5 @@
-import { estadoExibido, textoDoEstado, type EstadoExibido } from '@/components/SeloDeEstado'
 import type { ItemDoResumo } from '@/lib/api/schemas'
+import { estadoExibido, textoDoEstado, type EstadoExibido } from '@/lib/estado'
 
 // O que anunciar entre duas respostas do resumo: só as MUDANÇAS de estado.
 // Nada na primeira carga (anterior null) e nada num poll sem mudança — um
