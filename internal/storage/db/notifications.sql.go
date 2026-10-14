@@ -23,12 +23,12 @@ WITH claimed AS (
             ORDER BY next_attempt_at
             LIMIT $3::int
               FOR UPDATE SKIP LOCKED)
-    RETURNING n.id, n.incident_id, n.channel_id, n.event, n.attempts, n.created_at
+    RETURNING n.id, n.incident_id, n.channel_id, n.event, n.attempts, n.created_at, n.target_name
 )
 SELECT cl.id, cl.event, cl.attempts, cl.created_at,
        c.id AS channel_id, c.user_id, c.kind, c.config_enc, c.enabled, c.verified_at,
        i.id AS incident_id, i.started_at, i.resolved_at, i.ack_at, i.cause,
-       t.name AS target_name
+       COALESCE(cl.target_name, t.name)::text AS target_name
   FROM claimed cl
   JOIN notif_channels c ON c.id = cl.channel_id
   JOIN incidents i ON i.id = cl.incident_id
@@ -119,9 +119,10 @@ func (q *Queries) CloseNotification(ctx context.Context, arg CloseNotificationPa
 }
 
 const enqueueReminder = `-- name: EnqueueReminder :execrows
-INSERT INTO notifications (id, incident_id, channel_id, event, seq, next_attempt_at, created_at)
+INSERT INTO notifications (id, incident_id, channel_id, event, seq, next_attempt_at, created_at, target_name)
 VALUES ($1, $2, $3, 'reminder', $4,
-        $5::timestamptz, $5::timestamptz)
+        $5::timestamptz, $5::timestamptz,
+        (SELECT t.name FROM incidents i JOIN targets t ON t.id = i.target_id WHERE i.id = $2))
 ON CONFLICT (incident_id, channel_id, event, seq) DO NOTHING
 `
 

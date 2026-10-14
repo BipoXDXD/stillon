@@ -14,12 +14,12 @@ WITH claimed AS (
             ORDER BY next_attempt_at
             LIMIT sqlc.arg(max_rows)::int
               FOR UPDATE SKIP LOCKED)
-    RETURNING n.id, n.incident_id, n.channel_id, n.event, n.attempts, n.created_at
+    RETURNING n.id, n.incident_id, n.channel_id, n.event, n.attempts, n.created_at, n.target_name
 )
 SELECT cl.id, cl.event, cl.attempts, cl.created_at,
        c.id AS channel_id, c.user_id, c.kind, c.config_enc, c.enabled, c.verified_at,
        i.id AS incident_id, i.started_at, i.resolved_at, i.ack_at, i.cause,
-       t.name AS target_name
+       COALESCE(cl.target_name, t.name)::text AS target_name
   FROM claimed cl
   JOIN notif_channels c ON c.id = cl.channel_id
   JOIN incidents i ON i.id = cl.incident_id
@@ -83,7 +83,8 @@ SELECT n.incident_id, n.channel_id, c.kind, i.started_at,
 -- O UNIQUE (incident_id, channel_id, event, seq) faz de dois sondadores que
 -- calculam o mesmo lembrete uma inserção só.
 -- name: EnqueueReminder :execrows
-INSERT INTO notifications (id, incident_id, channel_id, event, seq, next_attempt_at, created_at)
+INSERT INTO notifications (id, incident_id, channel_id, event, seq, next_attempt_at, created_at, target_name)
 VALUES (sqlc.arg(id), sqlc.arg(incident_id), sqlc.arg(channel_id), 'reminder', sqlc.arg(seq),
-        sqlc.arg(now)::timestamptz, sqlc.arg(now)::timestamptz)
+        sqlc.arg(now)::timestamptz, sqlc.arg(now)::timestamptz,
+        (SELECT t.name FROM incidents i JOIN targets t ON t.id = i.target_id WHERE i.id = sqlc.arg(incident_id)))
 ON CONFLICT (incident_id, channel_id, event, seq) DO NOTHING;

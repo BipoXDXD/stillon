@@ -19,11 +19,19 @@ ALTER TABLE notifications DROP CONSTRAINT notifications_incident_id_channel_id_e
 ALTER TABLE notifications ADD CONSTRAINT notifications_incident_channel_event_seq_key
     UNIQUE (incident_id, channel_id, event, seq);
 
+-- O nome do alvo no enfileiramento. O corpo do aviso sai só da linha e do
+-- incidente, e a retentativa repete o texto da primeira tentativa: o Resend
+-- recusa a mesma Idempotency-Key com outro corpo, e renomear o alvo entre
+-- as tentativas faria o aviso falhar de vez. NULL só nas linhas de antes
+-- desta migration; o dispatcher cai no nome atual do alvo.
+ALTER TABLE notifications ADD COLUMN target_name text;
+
 -- +goose Down
 DELETE FROM notifications WHERE event = 'reminder';
 ALTER TABLE notifications DROP CONSTRAINT notifications_incident_channel_event_seq_key;
 ALTER TABLE notifications ADD CONSTRAINT notifications_incident_id_channel_id_event_key
     UNIQUE (incident_id, channel_id, event);
+ALTER TABLE notifications DROP COLUMN target_name;
 ALTER TABLE notifications DROP CONSTRAINT notifications_seq_check;
 ALTER TABLE notifications DROP COLUMN seq;
 ALTER TABLE notifications DROP CONSTRAINT notifications_event_check;

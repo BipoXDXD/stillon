@@ -116,3 +116,85 @@ func TestAcknowledgeDoesNotStopOpenedNorResolved(t *testing.T) {
 		}
 	}
 }
+
+// renomearAlvo troca o nome do alvo do incidente, como o dono faria no painel.
+func (b *bancada) renomearAlvo(t *testing.T, nome string) {
+	t.Helper()
+	ctx := context.Background()
+	tx, err := b.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `SELECT set_config('app.user_id', $1, true)`, b.dono.String()); err != nil {
+		t.Fatal(err)
+	}
+	tag, err := tx.Exec(ctx, `UPDATE targets SET name = $1 WHERE id = (SELECT target_id FROM incidents WHERE id = $2)`, nome, b.incidente)
+	if err != nil || tag.RowsAffected() != 1 {
+		t.Fatalf("renomear alvo: %v, %d linhas", err, tag.RowsAffected())
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A retentativa repete o corpo da primeira tentativa, porque o Resend recusa
+// a mesma Idempotency-Key com outro corpo (409 invalid_idempotent_request, que
+// é falha definitiva). O nome do alvo é o do enfileiramento, e renomear o
+// alvo entre as tentativas não muda o texto.
+func TestRetryKeepsTheTargetNameOfTheQueueTime(t *testing.T) {
+	for _, evento := range []string{incident.EventOpened, incident.EventReminder} {
+		t.Run(evento, func(t *testing.T) {
+			b := novaBancada(t, nil)
+			b.canal.respostas = []error{&SendError{Reason: ReasonServerError}}
+			if evento == incident.EventReminder {
+				b.lembrar(t, 1)
+			} else {
+				b.enfileirar(t, evento)
+			}
+
+			b.despachar(t, 1)
+			b.renomearAlvo(t, "API renomeada")
+			b.clk.Advance(firstBackoff)
+			b.despachar(t, 1)
+
+			if b.canal.quantos() != 2 {
+				t.Fatalf("%d envios, queria 2", b.canal.quantos())
+			}
+			for i, ev := range b.canal.envios {
+				if ev.TargetName != "API" {
+					t.Errorf("envio %d com o alvo %q; queria %q, o nome no enfileiramento", i+1, ev.TargetName, "API")
+				}
+			}
+		})
+	}
+}
+
+// Uma linha enfileirada antes da migration 00012 não tem o nome gravado e
+// sai com o nome atual do alvo.
+func TestRowWithoutTargetNameUsesTheCurrentName(t *testing.T) {
+	b := novaBancada(t, nil)
+	id := b.enfileirar(t, incident.EventOpened)
+	ctx := context.Background()
+	tx, err := b.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `SELECT set_config('app.scope', 'prober', true)`); err != nil {
+		t.Fatal(err)
+	}
+	tag, err := tx.Exec(ctx, `UPDATE notifications SET target_name = NULL WHERE id = $1`, id)
+	if err != nil || tag.RowsAffected() != 1 {
+		t.Fatalf("limpar target_name: %v, %d linhas", err, tag.RowsAffected())
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	b.renomearAlvo(t, "API renomeada")
+
+	b.despachar(t, 1)
+	if b.canal.quantos() != 1 || b.canal.envios[0].TargetName != "API renomeada" {
+		t.Errorf("envios = %+v; queria um, com o alvo %q", b.canal.envios, "API renomeada")
+	}
+}

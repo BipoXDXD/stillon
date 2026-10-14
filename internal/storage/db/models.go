@@ -83,6 +83,7 @@ type Notification struct {
 	CreatedAt     time.Time
 	SentAt        *time.Time
 	Seq           int32
+	TargetName    *string
 }
 
 type Session struct {

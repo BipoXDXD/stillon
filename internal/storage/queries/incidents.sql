@@ -42,9 +42,10 @@ SELECT id FROM notif_channels
  ORDER BY id;
 
 -- name: EnqueueNotification :exec
-INSERT INTO notifications (id, incident_id, channel_id, event, next_attempt_at, created_at)
+INSERT INTO notifications (id, incident_id, channel_id, event, next_attempt_at, created_at, target_name)
 VALUES (sqlc.arg(id), sqlc.arg(incident_id), sqlc.arg(channel_id), sqlc.arg(event),
-        sqlc.arg(now), sqlc.arg(now))
+        sqlc.arg(now), sqlc.arg(now),
+        (SELECT t.name FROM incidents i JOIN targets t ON t.id = i.target_id WHERE i.id = sqlc.arg(incident_id)))
 ON CONFLICT (incident_id, channel_id, event, seq) DO NOTHING;
 
 -- Reconciliação das métricas (D9/M1 do Plano 2).
