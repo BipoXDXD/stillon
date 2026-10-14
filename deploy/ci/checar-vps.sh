@@ -307,7 +307,7 @@ if ! { grep -qx 'IMAGEM=stillon' "$RAIZ/deploy/vps/stillon-entrada" &&
 fi
 
 # ---------------------------------------------------------------------------
-# 2. A pilha de pé pelo stillon-entrada, com o Caddy em modo local.
+# 2. A pilha de pé pelo stillon-entrada, atrás da borda de teste.
 # ---------------------------------------------------------------------------
 # A borda antes da pilha: o compose.prod.yaml só sobe com a rede edge.
 bd up -d --wait --wait-timeout 60 >&2 || { echo "FALHOU: a borda de teste não subiu" >&2; exit 1; }
