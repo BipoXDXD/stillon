@@ -1,8 +1,8 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useRef, useState } from 'react'
 import { describe, expect, it, vi } from 'vitest'
-import { Dialogo } from './dialogo'
+import { Confirmar, Dialogo } from './dialogo'
 
 // O Radix só ouve o pointerdown de fora depois de um tique (setTimeout 0), e
 // com o botão principal só decide no click que vem depois.
@@ -109,5 +109,18 @@ describe('Dialogo: foco ao fechar', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'Fazer' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
     await waitFor(() => expect(screen.getByRole('heading', { name: 'Tela' })).toHaveFocus())
+  })
+})
+
+// DI 4: na confirmação, a ação destrutiva é a primária e só ali fica
+// vermelha. Antes dela, Apagar e Encerrar são terciários.
+describe('Confirmar', () => {
+  it('o botão da ação é o vermelho sólido; o Cancelar, secundário', async () => {
+    render(
+      <Confirmar aberto aoMudar={() => {}} titulo="Apagar o alvo?" descricao="Ele some do painel." acao="Apagar" aoConfirmar={() => {}} />,
+    )
+    const dialogo = await screen.findByRole('alertdialog', { name: 'Apagar o alvo?' })
+    expect(within(dialogo).getByRole('button', { name: 'Apagar' })).toHaveClass('bg-perigo')
+    expect(within(dialogo).getByRole('button', { name: 'Cancelar' })).toHaveClass('border-borda-controle')
   })
 })

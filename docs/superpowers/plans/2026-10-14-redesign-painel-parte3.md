@@ -841,8 +841,9 @@ Expected: FAIL. A prévia não tem o título nem a frase; Subir é `text-primari
 Crie `web/src/features/statuspage/PreviaDaPagina.tsx`:
 
 ```tsx
-import { estadoExibido, SeloDeEstado } from '@/components/SeloDeEstado'
+import { SeloDeEstado } from '@/components/SeloDeEstado'
 import type { EstadoAlvo } from '@/lib/api/schemas'
+import { estadoExibido } from '@/lib/estado'
 import { cn } from '@/lib/utils'
 import { faixaDaPagina } from './faixa'
 
@@ -904,7 +905,7 @@ export function PreviaDaPagina({ titulo, itens }: { titulo: string; itens: reado
 
 Em `web/src/features/statuspage/PaginaStatusPage.tsx`:
 
-1. Imports: tire `import { estadoExibido, SeloDeEstado } from '@/components/SeloDeEstado'` e acrescente:
+1. Imports: tire `import { SeloDeEstado } from '@/components/SeloDeEstado'` e `import { estadoExibido } from '@/lib/estado'` e acrescente:
 
 ```tsx
 import { ArrowDown, ArrowUp } from 'lucide-react'

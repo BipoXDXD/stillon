@@ -5,16 +5,17 @@ import { useFieldArray, useForm, useWatch } from 'react-hook-form'
 import { z } from 'zod'
 import { useApi } from '@/app/contexto'
 import { EstadoDaConsulta } from '@/components/EstadoDaConsulta'
-import { estadoExibido, SeloDeEstado } from '@/components/SeloDeEstado'
+import { SeloDeEstado } from '@/components/SeloDeEstado'
 import { Titulo } from '@/components/Titulo'
 import { useAvisar } from '@/components/ui/avisos'
 import { Botao } from '@/components/ui/botao'
 import { useCopiar } from '@/components/ui/copiar'
-import { Campo, Entrada, ErroDoFormulario, Selecao } from '@/components/ui/campo'
+import { CaixaDeMarcar, Campo, Entrada, ErroDoFormulario, Selecao } from '@/components/ui/campo'
 import { useAlvos, usePaginas, useResumo } from '@/lib/api/consultas'
 import { ApiError, naoEncontrado } from '@/lib/api/http'
 import { mensagemDe, mensagemDoCampo } from '@/lib/api/mensagens'
 import type { Alvo, PaginaDeStatus } from '@/lib/api/schemas'
+import { estadoExibido } from '@/lib/estado'
 import { MENSAGEM_INVISIVEL, temInvisivel } from '@/lib/rotulo'
 
 // O CHECK de status_pages.slug (Plano 4, D13).
@@ -154,10 +155,7 @@ function Formulario({ pagina, alvos }: { pagina: PaginaDeStatus | null; alvos: A
       >
         {(a) => <Entrada {...a} autoCapitalize="none" spellCheck={false} {...f.register('slug')} />}
       </Campo>
-      <label className="flex items-center gap-2 text-sm">
-        <input type="checkbox" {...f.register('published')} />
-        Publicada (visível para qualquer pessoa com o link)
-      </label>
+      <CaixaDeMarcar {...f.register('published')}>Publicada (visível para qualquer pessoa com o link)</CaixaDeMarcar>
 
       <fieldset ref={lista} className="space-y-3">
         <legend className="text-sm font-medium">Alvos na página ({itens.fields.length} de {MAX_ITENS})</legend>
@@ -174,20 +172,20 @@ function Formulario({ pagina, alvos }: { pagina: PaginaDeStatus | null; alvos: A
               {/* aria-disabled, e não disabled, nas pontas: o botão que leva o
                   item à ponta está com o foco, e desabilitado o perderia para o
                   <body> (como o Reconhecer). A guarda fica no clique. */}
-              <Botao tipo="fantasma" tamanho="pequeno" aria-disabled={i === 0 || undefined}
+              <Botao tipo="terciario" tamanho="pequeno" aria-disabled={i === 0 || undefined}
                 onClick={() => {
                   if (i > 0) itens.move(i, i - 1)
                 }}
                 aria-label={`Subir ${nomeDoAlvo.get(it.target_id) ?? 'item'}`}>
                 Subir
               </Botao>
-              <Botao tipo="fantasma" tamanho="pequeno" aria-disabled={i === itens.fields.length - 1 || undefined}
+              <Botao tipo="terciario" tamanho="pequeno" aria-disabled={i === itens.fields.length - 1 || undefined}
                 onClick={() => {
                   if (i < itens.fields.length - 1) itens.move(i, i + 1)
                 }} aria-label={`Descer ${nomeDoAlvo.get(it.target_id) ?? 'item'}`}>
                 Descer
               </Botao>
-              <Botao tipo="fantasma" tamanho="pequeno" data-tirar=""
+              <Botao tipo="terciario" tamanho="pequeno" data-tirar=""
                 onClick={() => {
                   focarDepoisDeTirar.current = i
                   itens.remove(i)

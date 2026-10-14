@@ -2,7 +2,7 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { useState } from 'react'
 import { useFieldArray, useForm, useWatch } from 'react-hook-form'
 import { Botao } from '@/components/ui/botao'
-import { Campo, Entrada, ErroDoFormulario, Selecao } from '@/components/ui/campo'
+import { CaixaDeMarcar, Campo, Entrada, ErroDoFormulario, Selecao } from '@/components/ui/campo'
 import { ApiError } from '@/lib/api/http'
 import { mensagemDe, mensagemDoCampo } from '@/lib/api/mensagens'
 import { campoDoServidor, esquemaDoAlvo, INTERVALOS, OUTRO, type ValoresDoAlvo } from './esquema'
@@ -137,10 +137,7 @@ export function FormularioAlvo({
         )}
       </fieldset>
 
-      <label className="flex items-center gap-2 text-sm">
-        <input type="checkbox" {...f.register('enabled')} />
-        Ativo (sondar este alvo)
-      </label>
+      <CaixaDeMarcar {...f.register('enabled')}>Ativo (sondar este alvo)</CaixaDeMarcar>
 
       <fieldset className="space-y-3">
         <legend className="text-sm font-medium">Headers</legend>
@@ -180,7 +177,7 @@ export function FormularioAlvo({
                 <Campo rotulo={`Valor do header ${i + 1}`} erro={e.headers?.[i]?.valor?.message}>
                   {(a) => <Entrada {...a} {...f.register(`headers.${i}.valor`)} />}
                 </Campo>
-                <Botao tipo="fantasma" onClick={() => headers.remove(i)} aria-label={`Remover o header ${i + 1}`}>
+                <Botao tipo="terciario" onClick={() => headers.remove(i)} aria-label={`Remover o header ${i + 1}`}>
                   Remover
                 </Botao>
               </div>

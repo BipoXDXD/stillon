@@ -270,7 +270,7 @@ export function PaginaCanais() {
                       {c.enabled ? 'Pausar' : 'Retomar'}
                     </Botao>
                     <Botao
-                      tipo="perigo"
+                      tipo="terciario"
                       tamanho="pequeno"
                       onClick={() => setApagar(c)}
                       aria-label={`Apagar o canal ${c.hint}`}

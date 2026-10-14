@@ -4,86 +4,178 @@
    src/lib/tema.tsx. */
 @custom-variant dark (&:where(.dark, .dark *));
 
-/* Tokens do painel. As cores de estado foram escolhidas para contraste AA
-   (4,5:1) como texto sobre o fundo de cada tema; o projeto a11y do
-   Playwright confere com o axe nos dois temas. --borda é divisória
-   decorativa; --borda-controle é o limite de campos e botões, com 3:1 sobre
-   fundo, superfície e painel (WCAG 1.4.11). src/tokens.test.ts confere. */
-:root {
-  --fundo: #f3f0e7;
-  --superficie: #fcfaf4;
-  --texto: #272c27;
-  --suave: #62665b;
-  --borda: #d5d5c7;
-  --borda-controle: #838678;
-  --painel: #e9e9dc;
-  --primaria: #45583c;
-  --primaria-texto: #fffdf5;
-  --realce: #45583c;
-  --perigo: #a83b2c;
-  --foco: #45583c;
-  --estado-no-ar: #3d633b;
-  --estado-degradado: #895a16;
-  --estado-fora: #a83b2c;
-  --estado-sem-dados: #62665b;
-  --grafico-linha: #45583c;
-  --grafico-faixa: #c9d1b9;
-  --grafico-uptime: #d4dec7;
+/* Fontes auto-hospedadas (spec do redesign, "Decisões técnicas"): woff2
+   variável, subconjunto latino, licença OFL ao lado. public/ não ganha hash,
+   então a URL é estável e serve também à página pública. O swap mostra o
+   texto na fonte do sistema até a fonte chegar. scripts/gerar-fontes.sh
+   refaz os arquivos; src/fontes.test.ts confere. */
+@font-face {
+  font-family: 'Fraunces';
+  src: url('/fonts/fraunces-latin.woff2') format('woff2');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2190-2193, U+2212, U+2215, U+FEFF, U+FFFD;
 }
 
+@font-face {
+  font-family: 'Inter';
+  src: url('/fonts/inter-latin.woff2') format('woff2');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2190-2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+/* Tokens do painel em OKLCH (spec do redesign, "Sistema > Cor"). Os nomes
+   semânticos de antes ficam; entram o texto apagado, os tons 100 dos
+   estados e da primária, o texto sobre o perigo, a sobreposição e as duas
+   sombras. --borda é divisória decorativa; --borda-controle é o limite de
+   campos e botões (WCAG 1.4.11). src/tokens.test.ts converte para sRGB e
+   confere o contraste de cada par (4,5:1 texto, 3:1 componente e foco) nos
+   dois temas: um par reprovado ajusta a luminosidade, nunca o matiz. O
+   apagado do claro saiu de 0.58 (spec) para 0.53, que passa sobre o fundo. */
+:root {
+  color-scheme: light;
+  --fundo: oklch(0.98 0.008 85);
+  --superficie: oklch(1 0 0);
+  --painel: oklch(0.95 0.01 80);
+  --texto: oklch(0.22 0.015 60);
+  --suave: oklch(0.45 0.015 60);
+  --apagado: oklch(0.53 0.012 60);
+  --borda: oklch(0.9 0.01 80);
+  --borda-controle: oklch(0.62 0.015 60);
+  --primaria: oklch(0.47 0.15 270);
+  --primaria-texto: oklch(1 0 0);
+  --primaria-100: oklch(0.95 0.03 270);
+  --realce: var(--primaria);
+  --foco: var(--primaria);
+  --perigo: var(--estado-fora);
+  --perigo-texto: oklch(1 0 0);
+  --estado-no-ar: oklch(0.48 0.11 150);
+  --estado-no-ar-100: oklch(0.96 0.03 150);
+  --estado-degradado: oklch(0.52 0.12 70);
+  --estado-degradado-100: oklch(0.97 0.035 85);
+  --estado-fora: oklch(0.5 0.17 30);
+  --estado-fora-100: oklch(0.96 0.025 30);
+  --estado-sem-dados: var(--suave);
+  --estado-sem-dados-100: var(--painel);
+  --grafico-linha: var(--primaria);
+  --grafico-faixa: var(--primaria-100);
+  --grafico-uptime: oklch(0.88 0.05 150);
+  --sobreposicao: oklch(0.22 0.015 60 / 0.6);
+  /* Duas camadas (DI 9): uma grande e suave, outra pequena e escura. */
+  --sombra-nivel-1: 0 1px 3px oklch(0.22 0.015 60 / 0.12), 0 1px 2px oklch(0.22 0.015 60 / 0.08);
+  --sombra-nivel-2: 0 12px 24px oklch(0.22 0.015 60 / 0.14), 0 4px 8px oklch(0.22 0.015 60 / 0.08);
+}
+
+/* O escuro não usa sombra: a superfície mais clara que o fundo faz o papel,
+   e o painel (trilho, área rebaixada) fica mais escuro que ele. A sombra é
+   "0 0 transparent", não "none": o Tailwind compõe sombras numa lista, onde
+   none invalida a declaração. */
 .dark {
-  --fundo: #1c211d;
-  --superficie: #242a24;
-  --texto: #f0eee3;
-  --suave: #b8bdad;
-  --borda: #444d40;
-  --borda-controle: #7a8373;
-  --painel: #30382d;
-  --primaria: #c5d2ac;
-  --primaria-texto: #242c20;
-  --realce: #c5d2ac;
-  --perigo: #f0a28e;
-  --foco: #d1deb7;
-  --estado-no-ar: #b4d49a;
-  --estado-degradado: #e6c17d;
-  --estado-fora: #f0a28e;
-  --estado-sem-dados: #b8bdad;
-  --grafico-linha: #c5d2ac;
-  --grafico-faixa: #485b3b;
-  --grafico-uptime: #384d30;
+  color-scheme: dark;
+  --fundo: oklch(0.2 0.01 60);
+  --superficie: oklch(0.25 0.01 60);
+  --painel: oklch(0.16 0.01 60);
+  --texto: oklch(0.93 0.01 80);
+  --suave: oklch(0.75 0.012 70);
+  --apagado: oklch(0.65 0.012 70);
+  --borda: oklch(0.32 0.01 60);
+  --borda-controle: oklch(0.55 0.012 70);
+  --primaria: oklch(0.76 0.11 270);
+  --primaria-texto: oklch(0.2 0.03 270);
+  --primaria-100: oklch(0.3 0.05 270);
+  --perigo-texto: oklch(0.2 0.03 30);
+  --estado-no-ar: oklch(0.78 0.13 150);
+  --estado-no-ar-100: oklch(0.3 0.05 150);
+  --estado-degradado: oklch(0.82 0.13 80);
+  --estado-degradado-100: oklch(0.31 0.05 80);
+  --estado-fora: oklch(0.72 0.17 30);
+  --estado-fora-100: oklch(0.3 0.06 30);
+  --estado-sem-dados-100: oklch(0.3 0.01 60);
+  --grafico-uptime: oklch(0.4 0.06 150);
+  --sobreposicao: oklch(0 0 0 / 0.6);
+  --sombra-nivel-1: 0 0 transparent;
+  --sombra-nivel-2: 0 0 transparent;
 }
 
 @theme inline {
   --color-fundo: var(--fundo);
   --color-superficie: var(--superficie);
+  --color-painel: var(--painel);
   --color-texto: var(--texto);
   --color-suave: var(--suave);
+  --color-apagado: var(--apagado);
   --color-borda: var(--borda);
   --color-borda-controle: var(--borda-controle);
-  --color-painel: var(--painel);
   --color-primaria: var(--primaria);
   --color-primaria-texto: var(--primaria-texto);
+  --color-primaria-100: var(--primaria-100);
   --color-realce: var(--realce);
-  --color-perigo: var(--perigo);
   --color-foco: var(--foco);
+  --color-perigo: var(--perigo);
+  --color-perigo-texto: var(--perigo-texto);
   --color-no-ar: var(--estado-no-ar);
+  --color-no-ar-100: var(--estado-no-ar-100);
   --color-degradado: var(--estado-degradado);
+  --color-degradado-100: var(--estado-degradado-100);
   --color-fora: var(--estado-fora);
+  --color-fora-100: var(--estado-fora-100);
   --color-sem-dados: var(--estado-sem-dados);
-  --font-sans: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  --color-sem-dados-100: var(--estado-sem-dados-100);
+  --color-sobreposicao: var(--sobreposicao);
 }
 
-html {
-  color-scheme: light;
-}
-html.dark {
-  color-scheme: dark;
+/* static: as variáveis saem sempre no CSS, mesmo as que só o CSS deste
+   arquivo usa (o base dos títulos, o main > section). Escala de fonte da
+   spec: 12, 13, 14, 16, 18, 20, 24, 28, 36 px. O padrão do Tailwind já tem
+   12 (xs), 14 (sm), 16 (base), 18 (lg), 20 (xl), 24 (2xl) e 36 (4xl); entram
+   o 13 (meta) e o 28 no lugar do 30 do text-3xl. Um raio só: 8 px. */
+@theme static {
+  --font-sans: 'Inter', ui-sans-serif, system-ui, sans-serif;
+  --font-display: 'Fraunces', ui-serif, Georgia, serif;
+  --text-meta: 0.8125rem;
+  --text-meta--line-height: 1.125rem;
+  --text-3xl: 1.75rem;
+  --text-3xl--line-height: 2.25rem;
+  --radius-padrao: 0.5rem;
 }
 
+/* Sombras de dois níveis (DI 9): 1 para cartão e item ativo, 2 para diálogo,
+   popover e aviso. No escuro as duas são transparentes. */
+@utility sombra-nivel-1 {
+  box-shadow: var(--sombra-nivel-1);
+}
+@utility sombra-nivel-2 {
+  box-shadow: var(--sombra-nivel-2);
+}
+
+/* Caixa alta só em rótulo de grupo pequeno, com 0,05em (DI 6). */
+@utility rotulo-de-grupo {
+  font-size: var(--text-xs);
+  line-height: var(--text-xs--line-height);
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+/* Títulos em Fraunces 600. Na camada base, para uma classe da tela poder
+   mudar tamanho, peso ou família (um KPI dentro de um título usa font-sans). */
+@layer base {
+  h1,
+  h2,
+  h3 {
+    font-family: var(--font-display);
+    font-weight: 600;
+  }
+}
+
+/* Números sempre em cifras tabulares (spec, Tipografia): colunas de latência e uptime alinham. */
 body {
   background: var(--fundo);
   color: var(--texto);
-  font-family: var(--font-sans);
+  font-variant-numeric: tabular-nums;
 }
 
 /* Checkbox e radio na cor da marca, não no azul do navegador. */
@@ -148,12 +240,6 @@ main > section:not([aria-label='Resumo dos alvos']):not([aria-label='Avisos de n
   border-radius: 0.5rem;
   background: var(--superficie);
   padding: 1.25rem;
-}
-
-/* A identidade editorial usa a mesma família em toda a interface. */
-h1, h2, h3 {
-  font-weight: 700;
-  letter-spacing: -0.025em;
 }
 
 .marca-simbolo {

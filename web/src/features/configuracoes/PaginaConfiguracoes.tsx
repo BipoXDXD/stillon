@@ -10,7 +10,7 @@ import { Titulo } from '@/components/Titulo'
 import { useAvisar } from '@/components/ui/avisos'
 import { Botao } from '@/components/ui/botao'
 import { useCopiar } from '@/components/ui/copiar'
-import { Campo, Entrada, ErroDoFormulario } from '@/components/ui/campo'
+import { CaixaDeMarcar, Campo, Entrada, ErroDoFormulario } from '@/components/ui/campo'
 import { Confirmar, Dialogo } from '@/components/ui/dialogo'
 import { chaves, useMe, useSessoes } from '@/lib/api/consultas'
 import { ApiError } from '@/lib/api/http'
@@ -339,10 +339,9 @@ function CodigosDeRecuperacao({ codigos, aoTerminar }: { codigos: string[]; aoTe
           Baixar .txt
         </Botao>
       </div>
-      <label className="flex items-center gap-2 text-sm">
-        <input type="checkbox" checked={guardei} onChange={(e) => setGuardei(e.target.checked)} />
+      <CaixaDeMarcar checked={guardei} onChange={(e) => setGuardei(e.target.checked)}>
         Guardei os códigos
-      </label>
+      </CaixaDeMarcar>
       <Botao disabled={!guardei} onClick={aoTerminar}>
         Concluir
       </Botao>
@@ -699,7 +698,7 @@ function Sessoes() {
                     Desde {dataHora(s.created_at)} · último acesso por volta de {dataHora(s.last_used_at)}
                   </p>
                 </div>
-                <Botao tipo="perigo" tamanho="pequeno" onClick={() => setAlvo(s)}>
+                <Botao tipo="terciario" tamanho="pequeno" onClick={() => setAlvo(s)}>
                   Encerrar
                 </Botao>
               </li>
@@ -873,7 +872,7 @@ export function PaginaConfiguracoes() {
               <div className="flex flex-wrap gap-2">
                 <Botao
                   ref={botao2fa}
-                  tipo={eu.totp_enabled ? 'perigo' : 'primario'}
+                  tipo={eu.totp_enabled ? 'terciario' : 'primario'}
                   // aria-disabled, e não disabled: o botão desabilitado perde o
                   // foco, que cairia no <body>.
                   aria-disabled={abrindo || undefined}
