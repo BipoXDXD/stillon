@@ -542,3 +542,56 @@ for (const largura of [400, 1280]) {
     await controlePositivo(page, `alvos de toque ${largura}`)
   })
 }
+
+// Os rótulos dos eixos do gráfico cabem no <svg>: com a Inter e as cifras
+// tabulares, um eixo de largura fixa cortava "2400 ms" à esquerda (virava
+// "!400 ms"). Latências de 4 e 5 dígitos, nas duas resoluções da série, no
+// celular e no desktop, já com a fonte carregada.
+const lenta: z.input<typeof Serie> = {
+  resolution: 'raw',
+  items: [
+    { checked_at: agora, status: 'up', latency_ms: 2400, status_code: 200, error_kind: null },
+    { checked_at: agora, status: 'up', latency_ms: 1800, status_code: 200, error_kind: null },
+  ],
+}
+const horariaLenta: z.input<typeof Serie> = {
+  resolution: '1h',
+  items: [
+    { bucket: hora, total: 60, ok: 57, p50_ms: 4100, p95_ms: 9800, p99_ms: 9900, max_ms: 9950 },
+    { bucket: agora, total: 30, ok: 30, p50_ms: 3000, p95_ms: 7000, p99_ms: 8000, max_ms: 9000 },
+  ],
+}
+
+for (const largura of [400, 1280]) {
+  test(`rótulos dos eixos do gráfico inteiros, ${largura} px`, async ({ page }) => {
+    await page.setViewportSize({ width: largura, height: 900 })
+    await imitarApi(page)
+    await page.route('**/api/v1/targets/a1/checks**', (route) => {
+      const janela = new URL(route.request().url()).searchParams.get('window')
+      return route.fulfill({ status: 200, json: janela === '7d' ? horariaLenta : lenta })
+    })
+    for (const [rota, maior] of [['/targets/a1', '2400 ms'], ['/targets/a1?janela=7d', '10000 ms']] as const) {
+      await page.goto(rota)
+      await expect(page.getByRole('heading', { name: 'API', level: 1 })).toBeVisible()
+      const grafico = page.getByTestId('grafico-latencia')
+      await expect(grafico.locator('.recharts-cartesian-axis-tick-value').first()).toBeVisible()
+      await page.evaluate(() => document.fonts.ready)
+      // O maior rótulo numa linha só: estreito demais, o Recharts quebra
+      // "10000 ms" em "10000" e "ms" (dois <tspan>, texto "10000ms").
+      await expect(grafico.locator('.recharts-cartesian-axis-tick-value').filter({ hasText: new RegExp(`^${maior}$`) })).toHaveCount(1)
+      const cortados = await grafico.evaluate((figura) => {
+        const svg = figura.querySelector('svg.recharts-surface')
+        if (!svg) return ['sem <svg> do gráfico']
+        const caixa = svg.getBoundingClientRect()
+        return Array.from(figura.querySelectorAll('.recharts-cartesian-axis-tick-value'))
+          .filter((t) => {
+            const r = t.getBoundingClientRect()
+            return r.left < caixa.left - 0.5 || r.right > caixa.right + 0.5
+          })
+          .map((t) => t.textContent ?? '')
+      })
+      expect(cortados, `${largura} px, ${rota}`).toEqual([])
+    }
+    await controlePositivo(page, `eixos do gráfico ${largura}`)
+  })
+}

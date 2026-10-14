@@ -11,6 +11,7 @@ import {
   YAxis,
 } from 'recharts'
 import type { Serie } from '@/lib/api/schemas'
+import { larguraDoEixo, maiorLatencia, rotuloDoTopo } from './eixo'
 import { pontosBrutos, pontosHorarios, type PontoBruto, type PontoHorario } from './serie'
 
 // Recharts, só aqui: este arquivo entra no chunk do detalhe, carregado sob
@@ -27,6 +28,8 @@ export function GraficoDeLatencia({ serie, descritoPor }: { serie: Serie; descri
   const dados: (PontoBruto | PontoHorario)[] =
     serie.resolution === '1h' ? pontosHorarios(serie.items) : pontosBrutos(serie.items)
   const fmt = (t: number) => (horaria ? dia.format(t) : hora.format(t))
+  // Largura pelo rótulo mais largo: fixa, cortava 4 cifras e quebrava 5.
+  const larguraDaLatencia = larguraDoEixo(rotuloDoTopo(maiorLatencia(dados)))
   return (
     // O nome e a descrição ficam no <svg> do Recharts, que é o que recebe o
     // foco (a accessibilityLayer: role="application", tabIndex 0). No
@@ -48,7 +51,7 @@ export function GraficoDeLatencia({ serie, descritoPor }: { serie: Serie; descri
             tickFormatter={fmt}
             stroke="var(--suave)"
           />
-          <YAxis stroke="var(--suave)" unit=" ms" width={72} />
+          <YAxis stroke="var(--suave)" unit=" ms" width={larguraDaLatencia} />
           {horaria && (
             // O uptime de cada hora (ok/total) em barras, no eixo da direita
             // (spec do Plano 6 §4.4). Atrás das linhas: vem antes delas.
@@ -58,7 +61,7 @@ export function GraficoDeLatencia({ serie, descritoPor }: { serie: Serie; descri
               domain={[0, 1]}
               tickFormatter={pct}
               stroke="var(--suave)"
-              width={48}
+              width={larguraDoEixo(pct(1))}
             />
           )}
           <Tooltip
