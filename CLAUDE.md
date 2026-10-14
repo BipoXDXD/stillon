@@ -80,7 +80,7 @@ conferência.
   `avisos.stillon.tech` verificado (remetente `StillOn <alertas@avisos.stillon.tech>`); check
   "StillOn" no healthchecks.io; todos os segredos no Bitwarden.
 - **A chave `stillon-admin` foi refeita no Mac** (a passphrase guardada não abria a antiga): chave,
-  passphrase e a pública nova no Bitwarden e no painel. Usuário da VPS: `biposlayer`, com `sudo`.
+  passphrase e a pública nova no Bitwarden e no painel. Usuário da VPS: o `EU` do `~/.stillon-vps`, com `sudo`.
   No Mac: `~/.stillon-vps` e `Host stillon` no `~/.ssh/config` (com `ServerAliveInterval 30`).
 - Bloco 2 conferido: SSH só por chave e sem root (provado de fora), `fail2ban`, `ufw` e firewall
   do painel (só 22, 80 e 443; o `ping` não responde), atualizações automáticas com reinício às

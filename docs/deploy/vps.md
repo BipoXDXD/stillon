@@ -710,7 +710,7 @@ termina sem `Traceback` nem `error`.
 O Docker foi instalado pelo `provision.sh` do GoblinShift, do repositório oficial da Docker. Aqui
 você só confere que ele serve ao StillOn.
 
-**Faça** (na VPS, prompt `biposlayer@srv2008471:~$`), um comando por vez:
+**Faça** (na VPS, prompt `<seu usuário>@<host da VPS>:~$`), um comando por vez:
 
 ```bash
 docker --version

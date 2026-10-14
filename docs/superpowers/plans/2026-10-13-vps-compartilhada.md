@@ -601,7 +601,7 @@ Troque o desenho da seção "Topologia" pelo da spec (borda → `stillon-caddy` 
 
 - [ ] **Step 2: 3.1 vira "O Docker que já está na VPS"**
 
-**Faça** (na VPS, prompt `biposlayer@srv2008471:~$`):
+**Faça** (na VPS, prompt `<seu usuário>@<host da VPS>:~$`):
 
 ```bash
 docker --version
@@ -947,8 +947,8 @@ Guiada como o `CLAUDE.md` manda: um passo numerado por vez, dizendo onde roda e 
 
 - [ ] **6.1** Runbook 3.1 novo: Docker, store do containerd, nenhuma rota em `10.30.`.
 - [ ] **6.2** Runbook 3.2 novo: `live-restore` com `reload`. Confira: os contêineres do GoblinShift não reiniciaram.
-- [ ] **6.3** Troca da borda: no Mac, `scp` de `deploy/edge/compose.yaml`, `deploy/edge/Caddyfile` e `deploy/edge/conf.d/goblinshift.caddy` (do GoblinShift já integrado) para `~/borda/` na VPS. Na VPS: `sudo cp /srv/edge/compose.yaml /srv/edge/compose.yaml.nginx`; `sudo install -m 0644 -o root -g root ~/borda/compose.yaml ~/borda/Caddyfile /srv/edge/`; `sudo install -m 0644 -o root -g root ~/borda/goblinshift.caddy /srv/edge/conf.d/`; `sudo rm /srv/edge/conf.d/default.conf`; `cd /srv/edge`; `sudo docker compose up -d`; `sudo docker compose exec proxy caddy validate --config /etc/caddy/Caddyfile`. Confira, do Mac: `curl -sS http://179.197.70.102/` responde como o GoblinShift respondia (hoje, `{"detail":"Not Found"}`), e `curl -sSI http://179.197.70.102/` não mostra `Server: nginx`. Para voltar atrás: `sudo cp /srv/edge/compose.yaml.nginx /srv/edge/compose.yaml`, devolver o `default.conf` e `sudo docker compose up -d`.
-- [ ] **6.4** Firewall do painel da Hostinger: conferir que a regra da 443/tcp existe e está antes de qualquer "drop". Confira, do Mac: `nc -z -G 5 179.197.70.102 443 && echo aberta` (com a borda ouvindo, tem de abrir).
+- [ ] **6.3** Troca da borda: no Mac, `scp` de `deploy/edge/compose.yaml`, `deploy/edge/Caddyfile` e `deploy/edge/conf.d/goblinshift.caddy` (do GoblinShift já integrado) para `~/borda/` na VPS. Na VPS: `sudo cp /srv/edge/compose.yaml /srv/edge/compose.yaml.nginx`; `sudo install -m 0644 -o root -g root ~/borda/compose.yaml ~/borda/Caddyfile /srv/edge/`; `sudo install -m 0644 -o root -g root ~/borda/goblinshift.caddy /srv/edge/conf.d/`; `sudo rm /srv/edge/conf.d/default.conf`; `cd /srv/edge`; `sudo docker compose up -d`; `sudo docker compose exec proxy caddy validate --config /etc/caddy/Caddyfile`. Confira, do Mac: `curl -sS http://$VPS/` responde como o GoblinShift respondia (hoje, `{"detail":"Not Found"}`), e `curl -sSI http://$VPS/` não mostra `Server: nginx`. Para voltar atrás: `sudo cp /srv/edge/compose.yaml.nginx /srv/edge/compose.yaml`, devolver o `default.conf` e `sudo docker compose up -d`.
+- [ ] **6.4** Firewall do painel da Hostinger: conferir que a regra da 443/tcp existe e está antes de qualquer "drop". Confira, do Mac: `nc -z -G 5 $VPS 443 && echo aberta` (com a borda ouvindo, tem de abrir).
 - [ ] **6.5** Runbook do StillOn do 3.3 ao 4.8, com a `main` nova, um passo e seu **Confira** por vez (o 3.4 gera segredos: antes dele, um passo próprio "crie a entrada no Bitwarden").
 - [ ] **6.6** Passo novo "O StillOn na borda" (Task 3, Step 5). Confira: `https://stillon.tech/healthz` responde `200` com certificado Let's Encrypt.
 - [ ] **6.7** Blocos 5 a 9 do runbook, inclusive o reboot de teste do 9.6: a borda, o GoblinShift e o StillOn voltam sozinhos.
