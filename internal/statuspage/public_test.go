@@ -277,6 +277,27 @@ func TestPublicIgnoresRollupsFromTheFuture(t *testing.T) {
 	}
 }
 
+// Com a manutenção parada, a página não lê mais que rollupcut.MaxRawWindow de
+// checks brutos por requisição anônima: o check down de 3 dias atrás, nunca
+// consolidado, fica fora; o das 11:00 entra. Sem o teto, o corte voltava ao
+// início dos 90 dias e o uptime seria 1/2.
+func TestPublicCapsTheRawWindow(t *testing.T) {
+	a := novoAmbiente(t)
+	dono := a.usuario(t)
+	api := a.alvo(t, dono, "api")
+	a.publicar(t, dono, "empresa", true, statuspage.Item{TargetID: api, DisplayName: "API"})
+	a.check(t, api, agora.Add(-72*time.Hour), "down")
+	a.check(t, api, agora.Add(-time.Hour), "up")
+
+	v, err := a.svc.Public(context.Background(), "empresa")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u := v.Items[0].Uptime90; u == nil || *u != 1 {
+		t.Errorf("uptime de 90 dias = %s, queria 1 (só o check dentro do teto)", texto(u))
+	}
+}
+
 // texto mostra o valor apontado, e não o endereço, na mensagem de falha.
 func texto[T any](p *T) string {
 	if p == nil {

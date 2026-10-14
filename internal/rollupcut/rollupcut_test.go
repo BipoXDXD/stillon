@@ -40,3 +40,29 @@ func TestAtIsUTC(t *testing.T) {
 		t.Errorf("corte em %v, queria UTC", got.Location())
 	}
 }
+
+// Sem rollup recente numa janela longa (a página pública lê 90 dias), o corte
+// não volta mais que MaxRawWindow: a leitura dos brutos tem teto, mesmo com a
+// manutenção parada, porque a página é anônima.
+func TestAtCapsTheRawWindow(t *testing.T) {
+	h := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
+	inicio := h.AddDate(0, 0, -89)
+	teto := h.Add(-rollupcut.MaxRawWindow)
+	casos := []struct {
+		nome   string
+		marca  time.Time
+		queria time.Time
+	}{
+		{"sem rollup (época Unix): o teto", time.Unix(0, 0), teto},
+		{"marca antes do teto: o teto", teto.Add(-2 * time.Hour), teto},
+		{"marca na hora anterior ao teto: o próprio teto", teto.Add(-time.Hour), teto},
+		{"marca logo depois do teto: a hora seguinte a ela", teto, teto.Add(time.Hour)},
+	}
+	for _, c := range casos {
+		t.Run(c.nome, func(t *testing.T) {
+			if got := rollupcut.At(c.marca, inicio, h); !got.Equal(c.queria) {
+				t.Errorf("At(%v) = %v, queria %v", c.marca, got, c.queria)
+			}
+		})
+	}
+}
