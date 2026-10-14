@@ -205,6 +205,15 @@ input[type='radio'] {
   outline-offset: 2px;
 }
 
+/* Abaixo de lg, a navegação é uma barra fixa no pé da tela (app/Layout.tsx).
+   O foco levado pelo teclado ou pelo erro de um formulário não pode parar
+   embaixo dela (WCAG 2.4.11): a rolagem deixa 4rem livres no pé. */
+@media (width < 64rem) {
+  html {
+    scroll-padding-bottom: 4rem;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
