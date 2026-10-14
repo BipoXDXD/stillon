@@ -180,7 +180,7 @@ export function FormularioAlvo({
                 <Campo rotulo={`Valor do header ${i + 1}`} erro={e.headers?.[i]?.valor?.message}>
                   {(a) => <Entrada {...a} {...f.register(`headers.${i}.valor`)} />}
                 </Campo>
-                <Botao tipo="fantasma" onClick={() => headers.remove(i)} aria-label={`Remover o header ${i + 1}`}>
+                <Botao tipo="terciario" onClick={() => headers.remove(i)} aria-label={`Remover o header ${i + 1}`}>
                   Remover
                 </Botao>
               </div>

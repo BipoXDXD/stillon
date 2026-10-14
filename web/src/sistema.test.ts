@@ -1,5 +1,5 @@
 /// <reference types="node" />
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
 // Fitness function do sistema visual do redesign (DI 2 a 4): espaçamento só
@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest'
 // (rounded-padrao) e pílulas (rounded-full), pesos 400 e 600, sombras só de
 // dois níveis (sombra-nivel-1 e -2) e cor só por token. Um arquivo entra na
 // lista quando o PR que o redesenha chega; o PR 8 troca a lista por todo o src.
-const ARQUIVOS_NO_SISTEMA = ['src/components/Titulo.tsx']
+const ARQUIVOS_NO_SISTEMA = ['src/components/Titulo.tsx', 'src/components/ui/botao.tsx']
 
 const ESCALA = new Set(['0', 'auto', '1', '2', '3', '4', '6', '8', '12', '16'])
 const ESPACO = String.raw`(?:p[xytrblse]?|m[xytrblse]?|gap(?:-[xy])?|space-[xy])`
@@ -91,5 +91,29 @@ describe('o index.css publica a escala e os utilitários', () => {
     '@utility rotulo-de-grupo {',
   ])('%s', (trecho) => {
     expect(css).toContain(trecho)
+  })
+})
+
+// Review Focus 3 (auditoria C1, G2): o vermelho sólido é só do botão que
+// confirma uma ação destrutiva. Cada uso de tipo="perigo" está contado por
+// arquivo; um "Apagar" vermelho numa linha de lista muda a contagem. Os dois
+// usos: o Confirmar do diálogo e o envio do Desativar 2FA, que já é o passo
+// de confirmação, dentro do diálogo.
+describe('vermelho sólido só na confirmação', () => {
+  const PERIGO = /tipo="perigo"|tipo=\{[^}]*'perigo'/g
+  const USOS_PERMITIDOS = {
+    'src/components/ui/dialogo.tsx': 1,
+    'src/features/configuracoes/PaginaConfiguracoes.tsx': 1,
+  }
+
+  it('tipo="perigo" aparece só nos diálogos de confirmação', () => {
+    const usos: Record<string, number> = {}
+    for (const nome of readdirSync('src', { recursive: true, encoding: 'utf8' })) {
+      if (!nome.endsWith('.tsx') || nome.includes('.test.')) continue
+      const arquivo = `src/${nome}`
+      const total = (readFileSync(arquivo, 'utf8').match(PERIGO) ?? []).length
+      if (total > 0) usos[arquivo] = total
+    }
+    expect(usos).toEqual(USOS_PERMITIDOS)
   })
 })

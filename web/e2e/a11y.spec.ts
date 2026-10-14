@@ -505,10 +505,9 @@ for (const largura of [400, 1280]) {
       ['Reconhecer', page.getByRole('button', { name: 'Reconhecer o incidente de Banco' })],
     ])
     expect(await controlesEncobertos(page), `${largura} px: incidentes`).toEqual([])
-    // Os botões do tamanho "pequeno" (min-h-10 sozinho dava 40 px): o
-    // cabeçalho em toda tela, o formulário de alvo, os canais e a status
-    // page. Sabotagem: tirar o alvo-de-toque do tamanho pequeno do Botao, ou
-    // o min-h-11 do seletor de tema.
+    // Os botões do tamanho "pequeno": o cabeçalho em toda tela, o formulário
+    // de alvo, os canais e a status page. Sabotagem: tirar o min-h-11 da base
+    // do Botao (components/ui/botao.tsx), ou o do seletor de tema.
     await page.goto('/targets/new')
     await expect(page.getByRole('heading', { name: 'Novo alvo', level: 1 })).toBeVisible()
     await page.getByRole('button', { name: 'Adicionar header' }).click()

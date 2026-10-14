@@ -207,12 +207,12 @@ export function PaginaLogin() {
             <Botao type="submit" className="w-full" disabled={codigo.formState.isSubmitting}>
               Verificar
             </Botao>
-            <Botao tipo="fantasma" className="w-full" onClick={() => setRecuperacao((r) => !r)}>
+            <Botao tipo="terciario" className="w-full" onClick={() => setRecuperacao((r) => !r)}>
               {recuperacao ? 'Usar o código do aplicativo' : 'Usar um código de recuperação'}
             </Botao>
             {/* A mensagem de invalid_credentials manda voltar; o Voltar do
                 navegador sairia do /login, porque o passo é estado da tela. */}
-            <Botao tipo="fantasma" className="w-full" onClick={() => voltarASenha(null)}>
+            <Botao tipo="terciario" className="w-full" onClick={() => voltarASenha(null)}>
               Voltar
             </Botao>
           </form>

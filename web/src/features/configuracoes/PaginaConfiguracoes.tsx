@@ -699,7 +699,7 @@ function Sessoes() {
                     Desde {dataHora(s.created_at)} · último acesso por volta de {dataHora(s.last_used_at)}
                   </p>
                 </div>
-                <Botao tipo="perigo" tamanho="pequeno" onClick={() => setAlvo(s)}>
+                <Botao tipo="terciario" tamanho="pequeno" onClick={() => setAlvo(s)}>
                   Encerrar
                 </Botao>
               </li>
@@ -873,7 +873,7 @@ export function PaginaConfiguracoes() {
               <div className="flex flex-wrap gap-2">
                 <Botao
                   ref={botao2fa}
-                  tipo={eu.totp_enabled ? 'perigo' : 'primario'}
+                  tipo={eu.totp_enabled ? 'terciario' : 'primario'}
                   // aria-disabled, e não disabled: o botão desabilitado perde o
                   // foco, que cairia no <body>.
                   aria-disabled={abrindo || undefined}

@@ -228,7 +228,7 @@ function DetalheDoAlvo({ id }: { id: string }) {
               <Botao tipo="secundario" onClick={() => void alternar(!a.enabled)}>
                 {a.enabled ? 'Pausar' : 'Retomar'}
               </Botao>
-              <Botao tipo="perigo" onClick={() => setApagando(true)}>
+              <Botao tipo="terciario" onClick={() => setApagando(true)}>
                 Apagar
               </Botao>
             </div>
