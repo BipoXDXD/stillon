@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/BipoXDXD/stillon/internal/clock"
 	"github.com/BipoXDXD/stillon/internal/config"
 	"github.com/BipoXDXD/stillon/internal/crypto"
 	"github.com/BipoXDXD/stillon/internal/httpapi/middleware"
@@ -45,12 +46,12 @@ const (
 // paginaPublica é a cadeia de /p/{slug}, separada da API como a de
 // /verify/: sem CORS, sem RequireCustomHeader, e com a CSP e o cache
 // próprios desta página.
-func paginaPublica(ctx context.Context, cfg *config.Config, svc *statuspage.Service) http.Handler {
+func paginaPublica(ctx context.Context, cfg *config.Config, clk clock.Clock, svc *statuspage.Service) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /p/{slug}", (&PublicPageHandlers{svc: svc}).Page)
 
 	var h http.Handler = mux
-	h = middleware.RateLimit(ctx, publicPorMinuto, publicBurst, proxiesDe(cfg))(h)
+	h = middleware.RateLimit(ctx, clk, publicPorMinuto, publicBurst, proxiesDe(cfg))(h)
 	h = middleware.SecurityHeaders(h)
 	h = middleware.Recover(h)
 	h = middleware.Deadline(requestTimeout)(h)

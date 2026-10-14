@@ -5,6 +5,8 @@ import (
 	"net/http/httptest"
 	"net/netip"
 	"testing"
+
+	"github.com/BipoXDXD/stillon/internal/clock"
 )
 
 // requisicaoDeOrigem monta uma requisição de um IPv4 distinto por n: cada n
@@ -20,7 +22,7 @@ func requisicaoDeOrigem(n uint32) *http.Request {
 // mapa está no teto real (maxBuckets), todas as entradas são recentes, e
 // cada requisição vem de uma origem inédita, que obriga a despejar uma.
 func BenchmarkRateLimitOrigemNovaComMapaCheio(b *testing.B) {
-	h := rateLimit(b.Context(), porMinuto(60), 5, porIP(Proxies{}), maxBuckets)(http.HandlerFunc(
+	h := rateLimit(b.Context(), clock.Real{}, porMinuto(60), 5, porIP(Proxies{}), maxBuckets)(http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) }))
 	var n uint32 = 1 << 24
 	for range maxBuckets {

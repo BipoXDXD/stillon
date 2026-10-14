@@ -10,6 +10,8 @@ import (
 
 	"github.com/google/uuid"
 	"golang.org/x/time/rate"
+
+	"github.com/BipoXDXD/stillon/internal/clock"
 )
 
 // TestRateLimitCapsTheNumberOfBuckets trava o item 30, que hoje é inerte
@@ -20,7 +22,7 @@ import (
 // Por isso os dois saem juntos.
 func TestRateLimitCapsTheNumberOfBuckets(t *testing.T) {
 	const teto = 8
-	h := rateLimit(t.Context(), porMinuto(60), 5, porIP(Proxies{}), teto)(http.HandlerFunc(
+	h := rateLimit(t.Context(), clock.Real{}, porMinuto(60), 5, porIP(Proxies{}), teto)(http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) }))
 
 	for i := range 500 {
@@ -38,7 +40,7 @@ func TestRateLimitCapsTheNumberOfBuckets(t *testing.T) {
 // bloco que um único assinante recebe, então dar um balde por endereço
 // entrega ao atacante bilhões de baldes de graça.
 func TestIPv6ClientsShareABucketPerSlash64(t *testing.T) {
-	h := rateLimit(t.Context(), porMinuto(60), 1, porIP(Proxies{}), 1000)(http.HandlerFunc(
+	h := rateLimit(t.Context(), clock.Real{}, porMinuto(60), 1, porIP(Proxies{}), 1000)(http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) }))
 
 	var negados int
@@ -63,7 +65,7 @@ func TestIPv6ClientsShareABucketPerSlash64(t *testing.T) {
 // Authn na frente, ele não encontra usuário no contexto; cair num balde
 // anônimo compartilhado seria silencioso. A requisição tem de ser recusada.
 func TestRateLimitUserRefusesRequestsWithoutUser(t *testing.T) {
-	h := rateLimit(t.Context(), porMinuto(60), 5, porUsuario, 1000)(http.HandlerFunc(
+	h := rateLimit(t.Context(), clock.Real{}, porMinuto(60), 5, porUsuario, 1000)(http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) }))
 
 	rec := httptest.NewRecorder()
@@ -78,7 +80,7 @@ func TestRateLimitUserRefusesRequestsWithoutUser(t *testing.T) {
 // aos 10 minutos parado, o usuário ganharia 5 envios novos a cada 10
 // minutos, o triplo do limite.
 func TestSweepKeepsABucketUntilItCouldHaveRefilled(t *testing.T) {
-	h := rateLimit(t.Context(), rate.Every(6*time.Minute), 5, porUsuario, 1000)(http.HandlerFunc(
+	h := rateLimit(t.Context(), clock.Real{}, rate.Every(6*time.Minute), 5, porUsuario, 1000)(http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) }))
 	lh := h.(*limiterHandler)
 
@@ -109,7 +111,7 @@ func TestSweepKeepsABucketUntilItCouldHaveRefilled(t *testing.T) {
 // A varredura apaga o balde parado além do ocioso e mantém o que ainda está
 // dentro dele.
 func TestSweepRemovesOnlyTheIdleBuckets(t *testing.T) {
-	h := rateLimit(t.Context(), rate.Every(time.Hour), 1, porIP(Proxies{}), 1000)(http.HandlerFunc(
+	h := rateLimit(t.Context(), clock.Real{}, rate.Every(time.Hour), 1, porIP(Proxies{}), 1000)(http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) }))
 	lh := h.(*limiterHandler)
 	pedir := func(origem string) int {
@@ -142,7 +144,7 @@ func TestSweepRemovesOnlyTheIdleBuckets(t *testing.T) {
 // despejado volta cheio e responde 200.
 func TestRateLimitFullMapEvictsTheLeastRecentlyUsedOrigin(t *testing.T) {
 	const teto = 3
-	h := rateLimit(t.Context(), rate.Every(time.Hour), 1, porIP(Proxies{}), teto)(http.HandlerFunc(
+	h := rateLimit(t.Context(), clock.Real{}, rate.Every(time.Hour), 1, porIP(Proxies{}), teto)(http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) }))
 	pedir := func(origem string) int {
 		r := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", nil)

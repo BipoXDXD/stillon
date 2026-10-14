@@ -2,21 +2,16 @@ package auth
 
 import (
 	"context"
-	"testing"
 	"time"
 
 	"github.com/google/uuid"
 )
 
-// EncurtarEsperaDoArgon2 troca o prazo de aquisição do semáforo do Argon2id
-// (Argon2Wait) só durante o teste: os testes do pacote provam a recusa sem
-// esperar os 2 s de produção a cada caminho.
-func EncurtarEsperaDoArgon2(t *testing.T, d time.Duration) {
-	t.Helper()
-	antes := esperaArgon2
-	esperaArgon2 = d
-	t.Cleanup(func() { esperaArgon2 = antes })
-}
+// SetArgon2MaxConcurrentWithWait é SetArgon2MaxConcurrent com um prazo de
+// aquisição próprio no lugar de Argon2Wait: os testes do pacote provam a
+// recusa sem esperar os 2 s de produção a cada caminho. Quem chama devolve o
+// semáforo padrão no Cleanup.
+func SetArgon2MaxConcurrentWithWait(n int, espera time.Duration) { trocarSemaforoArgon2(n, espera) }
 
 // Len diz quantas famílias o contador acompanha: é a única forma de observar a
 // varredura das paradas sem exportar o mapa.

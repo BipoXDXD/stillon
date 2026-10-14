@@ -370,19 +370,34 @@ func TestChangePasswordDeadFamily(t *testing.T) {
 // 429 (sabotagens registradas na Task 11). Os cinco logins recusados com 401,
 // e não 429, são o contraponto: o balde tem 5 fichas, e a sexta requisição,
 // que é a troca, é a que o esgota.
+//
+// O limitador lê o relógio falso da API: parado, nenhuma ficha volta durante o
+// teste, por mais lenta que a máquina esteja. Avançar 6 s (o limite é 10 por
+// minuto) devolve exatamente uma.
 func TestChangePasswordSharesTheLoginLimiter(t *testing.T) {
 	a := newAPI(t)
-	for i := range 5 {
+	loginFalho := func() int {
 		resp := login(t, a, clientWithJar(t), "ninguem@exemplo.com", testPass)
 		resp.Body.Close()
-		if resp.StatusCode != http.StatusUnauthorized {
-			t.Fatalf("login %d devolveu %d, queria 401: o balde esgotou antes da troca", i+1, resp.StatusCode)
+		return resp.StatusCode
+	}
+	for i := range 5 {
+		if code := loginFalho(); code != http.StatusUnauthorized {
+			t.Fatalf("login %d devolveu %d, queria 401: o balde esgotou antes da troca", i+1, code)
 		}
 	}
 	resp := trocarSenha(t, a, "token-qualquer", map[string]string{"current_password": testPass, "new_password": senhaNova})
-	defer resp.Body.Close()
+	resp.Body.Close()
 	if resp.StatusCode != http.StatusTooManyRequests {
-		t.Errorf("status %d, queria 429: a troca não divide o balde do login", resp.StatusCode)
+		t.Fatalf("status %d, queria 429: a troca não divide o balde do login", resp.StatusCode)
+	}
+
+	a.clk.Advance(6 * time.Second)
+	if code := loginFalho(); code != http.StatusUnauthorized {
+		t.Fatalf("depois de 6 s, o login devolveu %d, queria 401: a ficha não voltou", code)
+	}
+	if code := loginFalho(); code != http.StatusTooManyRequests {
+		t.Errorf("a segunda requisição depois de 6 s devolveu %d, queria 429: voltou mais de uma ficha", code)
 	}
 }
 
