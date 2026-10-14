@@ -2,7 +2,8 @@ import { createContext, useCallback, useContext, useState, type ReactNode } from
 
 // A região aria-live do painel (spec §11.6): uma só, no layout. Quem muda de
 // estado anuncia aqui; o leitor de tela lê sem o foco sair do lugar.
-const Contexto = createContext<(texto: string) => void>(() => {})
+// null fora do provedor: um anúncio nunca some em silêncio.
+const Contexto = createContext<((texto: string) => void) | null>(null)
 
 export function ProvedorDeAnuncios({ children }: { children: ReactNode }) {
   const [texto, setTexto] = useState('')
@@ -22,6 +23,8 @@ export function ProvedorDeAnuncios({ children }: { children: ReactNode }) {
   )
 }
 
-export function useAnunciar() {
-  return useContext(Contexto)
+export function useAnunciar(): (texto: string) => void {
+  const anunciar = useContext(Contexto)
+  if (!anunciar) throw new Error('fora do ProvedorDeAnuncios')
+  return anunciar
 }
