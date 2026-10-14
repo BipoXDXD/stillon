@@ -168,3 +168,38 @@ func TestComposeProdGracePeriodCoversTheAppShutdown(t *testing.T) {
 		t.Errorf("stop_grace_period do app no compose.prod.yaml é %v: precisa passar dos %v de shutdown do app", grace, shutdownGrace)
 	}
 }
+
+// Auditoria de segurança de 2026-10-14: o db de produção subia com todas as
+// capacidades padrão do Docker e sem no-new-privileges. O entrypoint do
+// Postgres oficial roda como root só para acertar dono e modo do volume e do
+// /var/run/postgresql e trocar para o usuário postgres: CHOWN, DAC_OVERRIDE,
+// FOWNER, SETGID e SETUID bastam (sem nenhuma, o chown do volume falha e o
+// banco não sobe). O job vps do CI (deploy/ci/checar-vps.sh) prova a subida,
+// o reinício, o backup e o restauro com este conjunto.
+func TestComposeProdDBDropsCapabilities(t *testing.T) {
+	db := servicoDe(t, "../../deploy/vps/compose.prod.yaml", "db")
+	if !regexp.MustCompile(`(?m)^    security_opt: \["no-new-privileges:true"\]$`).MatchString(db) {
+		t.Error(`serviço db do compose.prod.yaml sem security_opt: ["no-new-privileges:true"]`)
+	}
+	if !regexp.MustCompile(`(?m)^    cap_drop: \[ALL\]$`).MatchString(db) {
+		t.Error("serviço db do compose.prod.yaml sem cap_drop: [ALL]")
+	}
+	m := regexp.MustCompile(`(?m)^    cap_add: \[([A-Z_, ]*)\]$`).FindStringSubmatch(db)
+	if m == nil {
+		t.Fatal("serviço db do compose.prod.yaml sem cap_add numa linha só")
+	}
+	const esperado = "CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID"
+	if m[1] != esperado {
+		t.Errorf("cap_add do db é [%s], queria [%s]", m[1], esperado)
+	}
+}
+
+// Auditoria de segurança de 2026-10-14: o binário do app não escreve em disco
+// (o backup roda o helper num Postgres descartável, não no contêiner do app),
+// então o sistema de arquivos dele é só leitura, sem tmpfs.
+func TestComposeProdAppIsReadOnly(t *testing.T) {
+	app := servicoDe(t, "../../deploy/vps/compose.prod.yaml", "app")
+	if !regexp.MustCompile(`(?m)^    read_only: true$`).MatchString(app) {
+		t.Error("serviço app do compose.prod.yaml sem read_only: true")
+	}
+}

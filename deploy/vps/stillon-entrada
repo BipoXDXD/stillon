@@ -35,6 +35,9 @@
 # entrada.log.1 acima de 1 MiB), por um tee que sobrevive à queda do SSH: se
 # o runner some no meio de um deploy, a entrada termina o deploy (ou o
 # rollback) mesmo assim, e o dono confere em /opt/stillon/versao e no log.
+# A exceção é o log do app de um deploy que não ficou saudável: ele vai só
+# para o entrada.log (guardar_log_do_app), porque a saída de erro aparece no
+# log público do job.
 #
 # Sem variável de ambiente que mude o comportamento: o sudo limpa o ambiente
 # (sobram TERM, HOME, SHELL e as de idioma, LANG e LC_*), e os caminhos abaixo
@@ -145,6 +148,20 @@ registrar() {
 }
 
 dc() { COMPOSE_FILE="$ARQUIVOS_COMPOSE" docker compose --project-directory "$DIR" "$@"; }
+
+# guardar_log_do_app: as últimas 100 linhas do log do app vão SÓ para o
+# entrada.log, por fora do tee. A saída de erro chega ao log do job do
+# Actions, que é público (o repositório é), e o log do app pode trazer dado
+# dos alvos ou da configuração. Ali fica só onde lê-lo.
+guardar_log_do_app() {
+    local log="$DIR/entrada.log"
+    echo "o log do app ficou só no $log, fora desta saída (o log do job é público): na VPS, tail -n 100 $log"
+    {
+        echo "== log do app (últimas 100 linhas), só neste arquivo"
+        dc logs --no-color --tail 100 app 2>&1 || true
+        echo "== fim do log do app"
+    } >>"$log"
+}
 
 # conteineres <servico>: os IDs dos contêineres do serviço, em qualquer
 # estado, pelos rótulos do compose e sem os one-off (um `compose run` que
@@ -361,8 +378,8 @@ deploy() {
         exit 0
     fi
 
-    echo "a pilha não ficou saudável em ${ESPERA_S} s; o log do app:"
-    dc logs --no-color --tail 100 app || true
+    echo "a pilha não ficou saudável em ${ESPERA_S} s"
+    guardar_log_do_app
     if [ -z "$anterior" ]; then
         # Parado E removido, e conferido: o app doente fica em laço de
         # reinício (restart: unless-stopped), e o código de um `stop` nele
@@ -371,7 +388,7 @@ deploy() {
         # contêiner em `restarting` conta como rodando e é pulado. O que
         # sobrar sai pelo `docker rm -f`, que mata e marca o contêiner para
         # remoção (um contêiner marcado o Docker não reinicia). O log dele já
-        # ficou logo acima (e no entrada.log).
+        # ficou no entrada.log.
         local _ restantes
         for _ in 1 2 3; do
             dc rm -s -f app || true
@@ -393,7 +410,7 @@ deploy() {
     if subir "$anterior" "$id_anterior"; then
         sair 4 "rollback feito: $anterior de volta no ar; $sha não subiu"
     fi
-    dc logs --no-color --tail 100 app || true
+    guardar_log_do_app
     sair 1 "o rollback para $anterior também não ficou saudável: veja docs/deploy/vps.md"
 }
 

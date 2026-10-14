@@ -106,6 +106,9 @@ services:
     mem_limit: 1g
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
+    # O binário não escreve em disco (o backup roda o helper num Postgres
+    # descartável, e não aqui): nada de tmpfs. TestComposeProdAppIsReadOnly.
+    read_only: true
     logging: *log
     restart: unless-stopped
     # O padrão do Docker é SIGKILL 10 s depois do SIGTERM, e o app se dá 15 s
@@ -147,6 +150,14 @@ services:
       stillon:
         ipv4_address: 10.30.0.4
     mem_limit: 1g
+    # O entrypoint do Postgres roda como root só para acertar dono e modo do
+    # volume e do /var/run/postgresql (CHOWN, DAC_OVERRIDE, FOWNER) e trocar
+    # para o usuário postgres (SETGID, SETUID). Sem nenhuma, o chown do volume
+    # falha e o banco não sobe. O job vps do CI prova subida, reinício, backup
+    # e restauro com este conjunto (TestComposeProdDBDropsCapabilities).
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID]
+    security_opt: ["no-new-privileges:true"]
     logging: *log
     restart: unless-stopped
 
