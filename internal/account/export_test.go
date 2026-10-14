@@ -10,3 +10,10 @@ func (s *Service) SetDepoisDeContar(fn func()) { s.depoisDeContar = fn }
 func (s *Service) SetPasswordHasher(fn func(context.Context, string) (string, error)) {
 	s.hashPassword = fn
 }
+
+// SetPasswordVerifier troca a verificação da senha atual, nos testes. Anda
+// junto com SetPasswordHasher: o verificador precisa entender o hash que o
+// hasher grava.
+func (s *Service) SetPasswordVerifier(fn func(ctx context.Context, encoded, plain string) (ok, needsRehash bool, err error)) {
+	s.verifyPassword = fn
+}

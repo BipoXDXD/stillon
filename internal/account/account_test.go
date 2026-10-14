@@ -22,10 +22,29 @@ import (
 
 const senha = "uma-senha-bem-comprida-e-boa"
 
+// O Argon2id custa ~100 ms e disputa o semáforo global de derivações: nos
+// testes em que ele não é o assunto, o serviço usa este par barato.
+const prefixoBarato = "barato$"
+
+func hashBarato(_ context.Context, plain string) (string, error) {
+	return prefixoBarato + plain, nil
+}
+
+func verificarBarato(_ context.Context, encoded, plain string) (ok, needsRehash bool, err error) {
+	return encoded == prefixoBarato+plain, false, nil
+}
+
+func comHasherBarato(svc *account.Service) *account.Service {
+	svc.SetPasswordHasher(hashBarato)
+	svc.SetPasswordVerifier(verificarBarato)
+	return svc
+}
+
 func novo(t *testing.T) (*account.Service, *pgxpool.Pool) {
 	t.Helper()
 	pool := testdb.New(t)
-	return account.NewService(pool, nil, clock.NewFake(time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)), nil), pool
+	svc := account.NewService(pool, nil, clock.NewFake(time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)), nil)
+	return comHasherBarato(svc), pool
 }
 
 // Dois `stillon user create` ao mesmo tempo não criam dois donos (D9 do Plano
@@ -126,6 +145,7 @@ type cenario struct {
 	pool  *pgxpool.Pool
 	user  uuid.UUID
 	atual uuid.UUID // família da sessão atual
+	hash  string    // o hash gravado de senha
 	clk   *clock.Fake
 	totp  *auth.TOTP
 }
@@ -138,7 +158,7 @@ func montar(t *testing.T) cenario {
 	if err != nil {
 		t.Fatal(err)
 	}
-	hash, err := auth.HashPassword(context.Background(), senha)
+	hash, err := hashBarato(context.Background(), senha)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,8 +173,8 @@ func montar(t *testing.T) cenario {
 		t.Fatal(err)
 	}
 	segundoFator := auth.NewTOTP(pool, box, "StillOn")
-	svc := account.NewService(pool, segundoFator, clk, ipKey)
-	return cenario{svc: svc, pool: pool, user: user, atual: s.FamilyID, clk: clk, totp: segundoFator}
+	svc := comHasherBarato(account.NewService(pool, segundoFator, clk, ipKey))
+	return cenario{svc: svc, pool: pool, user: user, atual: s.FamilyID, hash: hash, clk: clk, totp: segundoFator}
 }
 
 func chaveDoUsuario(user uuid.UUID) string {
@@ -191,24 +211,54 @@ func segurarTrava(t *testing.T, pool *pgxpool.Pool, user uuid.UUID) func() {
 	return soltar
 }
 
-// esperarAlguemNaTrava espera um backend aparecer esperando uma advisory lock.
-// Devolve false se ninguém aparecer: quem chama decide se isso é falha.
-func esperarAlguemNaTrava(t *testing.T, pool *pgxpool.Pool) bool {
+// esperarNaTravaDoUsuario espera a operação que devolve em fim aparecer
+// esperando a advisory lock de sessões DESTE usuário. Devolve false, com o
+// erro dela, se a operação terminar antes: terminar sem esperar é o defeito que
+// os testes de trava procuram.
+func esperarNaTravaDoUsuario(t *testing.T, pool *pgxpool.Pool, user uuid.UUID, fim <-chan error) (esperou bool, errFim error) {
 	t.Helper()
-	prazo := time.Now().Add(3 * time.Second)
-	for time.Now().Before(prazo) {
+	// Uma advisory lock de chave bigint aparece em pg_locks partida em duas
+	// metades de 32 bits: classid (a alta) e objid (a baixa), com objsubid 1.
+	k := chaveDoUsuario(user)
+	consulta := `SELECT count(*) FROM pg_locks
+	  WHERE locktype = 'advisory' AND NOT granted AND objsubid = 1
+	    AND database = (SELECT oid FROM pg_database WHERE datname = current_database())
+	    AND classid = ((` + k + ` >> 32) & 4294967295)::oid
+	    AND objid = (` + k + ` & 4294967295)::oid`
+	return esperarPresa(t, fim, func(ctx context.Context) bool {
 		var n int
-		if err := pool.QueryRow(context.Background(),
-			`SELECT count(*) FROM pg_stat_activity
-			  WHERE datname = current_database() AND wait_event_type = 'Lock' AND wait_event = 'advisory'`).Scan(&n); err != nil {
+		if err := pool.QueryRow(ctx, consulta).Scan(&n); err != nil {
 			t.Fatal(err)
 		}
-		if n > 0 {
-			return true
+		return n > 0
+	})
+}
+
+// intervaloDaConsulta é o passo do polling, não um prazo: a espera só acaba
+// por um dos dois eventos ou pelo t.Context().
+const intervaloDaConsulta = 10 * time.Millisecond
+
+// esperarPresa é a corrida entre dois eventos: a operação terminar (fim) ou
+// presa dizer que ela está esperando uma trava. Não tem prazo próprio, porque
+// prazo de parede falha à toa com a máquina carregada; o limite é o
+// t.Context() (na prática, o -timeout do go test).
+func esperarPresa(t *testing.T, fim <-chan error, presa func(context.Context) bool) (esperou bool, errFim error) {
+	t.Helper()
+	ctx := t.Context()
+	passo := time.NewTicker(intervaloDaConsulta)
+	defer passo.Stop()
+	for {
+		select {
+		case err := <-fim:
+			return false, err
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		case <-passo.C:
+			if presa(ctx) {
+				return true, nil
+			}
 		}
-		time.Sleep(10 * time.Millisecond)
 	}
-	return false
 }
 
 func trocar(c cenario) error {
@@ -224,9 +274,8 @@ func TestChangePasswordTakesTheUserLock(t *testing.T) {
 	fim := make(chan error, 1)
 	go func() { fim <- trocar(c) }()
 
-	if !esperarAlguemNaTrava(t, c.pool) {
-		soltar()
-		t.Fatalf("a troca não esperou a trava do usuário (terminou com %v)", <-fim)
+	if esperou, err := esperarNaTravaDoUsuario(t, c.pool, c.user, fim); !esperou {
+		t.Fatalf("a troca não esperou a trava do usuário (terminou com %v)", err)
 	}
 	soltar()
 	if err := <-fim; err != nil {
@@ -291,8 +340,8 @@ func TestChangePasswordKeepsRecoveryCodeWhenTheNewHashIsRateLimited(t *testing.T
 	if err := c.pool.QueryRow(ctx, `SELECT password_hash FROM users WHERE id = $1`, c.user).Scan(&hash); err != nil {
 		t.Fatal(err)
 	}
-	if ok, _, err := auth.VerifyPassword(ctx, hash, senha); err != nil || !ok {
-		t.Errorf("a senha atual deixou de valer depois do 429: ok=%v, erro=%v", ok, err)
+	if hash != c.hash {
+		t.Error("a senha atual deixou de valer depois do 429: o hash gravado mudou")
 	}
 }
 
@@ -307,9 +356,8 @@ func TestResetPasswordTakesTheUserLock(t *testing.T) {
 		fim <- err
 	}()
 
-	if !esperarAlguemNaTrava(t, c.pool) {
-		soltar()
-		t.Fatalf("a redefinição não esperou a trava do usuário (terminou com %v)", <-fim)
+	if esperou, err := esperarNaTravaDoUsuario(t, c.pool, c.user, fim); !esperou {
+		t.Fatalf("a redefinição não esperou a trava do usuário (terminou com %v)", err)
 	}
 	soltar()
 	if err := <-fim; err != nil {
@@ -325,9 +373,8 @@ func TestChangePasswordRechecksTheFamilyUnderTheLock(t *testing.T) {
 	soltar := segurarTrava(t, c.pool, c.user)
 	fim := make(chan error, 1)
 	go func() { fim <- trocar(c) }()
-	if !esperarAlguemNaTrava(t, c.pool) {
-		soltar()
-		t.Fatal("a troca não chegou à trava")
+	if esperou, err := esperarNaTravaDoUsuario(t, c.pool, c.user, fim); !esperou {
+		t.Fatalf("a troca não chegou à trava (terminou com %v)", err)
 	}
 	// Revogada por fora enquanto a troca espera a trava.
 	if _, err := c.pool.Exec(context.Background(),
@@ -343,7 +390,7 @@ func TestChangePasswordRechecksTheFamilyUnderTheLock(t *testing.T) {
 	if err := c.pool.QueryRow(context.Background(), `SELECT password_hash FROM users WHERE id = $1`, c.user).Scan(&hash); err != nil {
 		t.Fatal(err)
 	}
-	if ok, _, _ := auth.VerifyPassword(context.Background(), hash, senha); !ok {
+	if hash != c.hash {
 		t.Error("a senha mudou mesmo com a sessão atual encerrada")
 	}
 }
@@ -355,11 +402,10 @@ func TestChangePasswordLosesToAConcurrentChange(t *testing.T) {
 	soltar := segurarTrava(t, c.pool, c.user)
 	fim := make(chan error, 1)
 	go func() { fim <- trocar(c) }()
-	if !esperarAlguemNaTrava(t, c.pool) {
-		soltar()
-		t.Fatal("a troca não chegou à trava")
+	if esperou, err := esperarNaTravaDoUsuario(t, c.pool, c.user, fim); !esperou {
+		t.Fatalf("a troca não chegou à trava (terminou com %v)", err)
 	}
-	outra, err := auth.HashPassword(context.Background(), "a-outra-troca-que-ganhou")
+	outra, err := hashBarato(context.Background(), "a-outra-troca-que-ganhou")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -390,9 +436,8 @@ func TestRevokeSessionTakesTheUserLock(t *testing.T) {
 		fim <- c.svc.RevokeSession(context.Background(), c.user, c.atual, auth.Meta{IP: "203.0.113.9"})
 	}()
 
-	if !esperarAlguemNaTrava(t, c.pool) {
-		soltar()
-		t.Fatalf("o encerramento não esperou a trava do usuário (terminou com %v)", <-fim)
+	if esperou, err := esperarNaTravaDoUsuario(t, c.pool, c.user, fim); !esperou {
+		t.Fatalf("o encerramento não esperou a trava do usuário (terminou com %v)", err)
 	}
 	soltar()
 	if err := <-fim; err != nil {
@@ -504,11 +549,15 @@ func TestPendingTOTPConfirmLosesToAPasswordChange(t *testing.T) {
 	if _, err := tx.Exec(ctx, `SELECT 1 FROM users WHERE id = $1 FOR UPDATE`, c.user); err != nil {
 		t.Fatal(err)
 	}
+	var donoDaLinha int
+	if err := tx.QueryRow(ctx, `SELECT pg_backend_pid()`).Scan(&donoDaLinha); err != nil {
+		t.Fatal(err)
+	}
 
 	fimTroca := make(chan error, 1)
 	go func() { fimTroca <- trocar(c) }()
-	if !esperarBloqueados(t, c.pool, 1) {
-		t.Fatal("a troca não chegou ao UPDATE do hash")
+	if esperou, err := esperarPresosAtras(t, c.pool, donoDaLinha, 1, fimTroca); !esperou {
+		t.Fatalf("a troca não chegou ao UPDATE do hash (terminou com %v)", err)
 	}
 	code, err := totp.GenerateCode(segredo, c.clk.Now())
 	if err != nil {
@@ -519,8 +568,8 @@ func TestPendingTOTPConfirmLosesToAPasswordChange(t *testing.T) {
 		_, err := c.totp.Confirm(ctx, c.user, code, c.clk.Now())
 		fimConfirm <- err
 	}()
-	if !esperarBloqueados(t, c.pool, 2) {
-		t.Fatal("a confirmação não chegou ao UPDATE dela")
+	if esperou, err := esperarPresosAtras(t, c.pool, donoDaLinha, 2, fimConfirm); !esperou {
+		t.Fatalf("a confirmação não chegou ao UPDATE dela (terminou com %v)", err)
 	}
 	soltar()
 
@@ -535,24 +584,25 @@ func TestPendingTOTPConfirmLosesToAPasswordChange(t *testing.T) {
 	}
 }
 
-// esperarBloqueados espera n backends deste banco esperando uma trava
-// qualquer (de linha, de transação, advisory).
-func esperarBloqueados(t *testing.T, pool *pgxpool.Pool, n int) bool {
+// esperarPresosAtras espera n backends presos, direta ou indiretamente, atrás
+// da transação do backend dono (a fila da linha travada pelo teste). Devolve
+// false, com o erro dela, se a operação de fim terminar antes de a fila chegar
+// a n.
+func esperarPresosAtras(t *testing.T, pool *pgxpool.Pool, dono, n int, fim <-chan error) (esperou bool, errFim error) {
 	t.Helper()
-	prazo := time.Now().Add(5 * time.Second)
-	for time.Now().Before(prazo) {
+	return esperarPresa(t, fim, func(ctx context.Context) bool {
 		var m int
-		if err := pool.QueryRow(context.Background(),
-			`SELECT count(*) FROM pg_stat_activity
-			  WHERE datname = current_database() AND wait_event_type = 'Lock'`).Scan(&m); err != nil {
+		if err := pool.QueryRow(ctx,
+			`WITH RECURSIVE presos(pid) AS (
+			     SELECT pid FROM pg_stat_activity WHERE $1::int = ANY (pg_blocking_pids(pid))
+			     UNION
+			     SELECT a.pid FROM pg_stat_activity a JOIN presos p ON p.pid = ANY (pg_blocking_pids(a.pid))
+			 )
+			 SELECT count(*) FROM presos`, dono).Scan(&m); err != nil {
 			t.Fatal(err)
 		}
-		if m >= n {
-			return true
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	return false
+		return m >= n
+	})
 }
 
 // familiaRenovada abre uma família e a renova duas vezes: três linhas, uma
@@ -607,5 +657,76 @@ func TestRevocationsMarkOnlyTheLiveRow(t *testing.T) {
 	}
 	if r, n := linhasRevogadas(t, c, outra); r != 1 || n != 3 {
 		t.Errorf("troca de senha: %d de %d linhas revogadas, queria 1 de 3", r, n)
+	}
+}
+
+func hashGravado(t *testing.T, pool *pgxpool.Pool) string {
+	t.Helper()
+	var hash string
+	if err := pool.QueryRow(context.Background(),
+		`SELECT password_hash FROM users WHERE email = 'dono@exemplo.com'`).Scan(&hash); err != nil {
+		t.Fatal(err)
+	}
+	return hash
+}
+
+// O par injetado é o único caminho da senha no serviço: CreateUser e
+// ResetPassword derivam com ele, e ChangePassword verifica e deriva com ele.
+// Se algum caminho chamar o auth direto, a verificação recusa o hash barato
+// ou o hash gravado sai em Argon2id.
+func TestServiceUsesTheInjectedHasher(t *testing.T) {
+	t.Run("CreateUser", func(t *testing.T) {
+		svc, pool := novo(t)
+		if _, err := svc.CreateUser(context.Background(), "dono@exemplo.com", senha); err != nil {
+			t.Fatal(err)
+		}
+		if h := hashGravado(t, pool); h != prefixoBarato+senha {
+			t.Errorf("hash gravado = %q, queria o do hasher injetado", h)
+		}
+	})
+	t.Run("ResetPassword", func(t *testing.T) {
+		c := montar(t)
+		if _, err := c.svc.ResetPassword(context.Background(), "dono@exemplo.com", "a-senha-redefinida-pelo-cli"); err != nil {
+			t.Fatal(err)
+		}
+		if h := hashGravado(t, c.pool); h != prefixoBarato+"a-senha-redefinida-pelo-cli" {
+			t.Errorf("hash gravado = %q, queria o do hasher injetado", h)
+		}
+	})
+	t.Run("ChangePassword", func(t *testing.T) {
+		c := montar(t)
+		if err := trocar(c); err != nil {
+			t.Fatalf("a troca não conferiu a senha atual pelo verificador injetado: %v", err)
+		}
+		if h := hashGravado(t, c.pool); h != prefixoBarato+"a-senha-nova-bem-comprida" {
+			t.Errorf("hash gravado = %q, queria o do hasher injetado", h)
+		}
+	})
+}
+
+// Sem troca, o serviço é o do composition root: deriva com Argon2id, e o hash
+// gravado confere pelo verificador de produção.
+func TestNewServiceDerivesWithArgon2id(t *testing.T) {
+	pool := testdb.New(t)
+	svc := account.NewService(pool, nil, clock.NewFake(time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)), nil)
+	ctx := context.Background()
+	if _, err := svc.CreateUser(ctx, "dono@exemplo.com", senha); err != nil {
+		t.Fatal(err)
+	}
+	criado := hashGravado(t, pool)
+	if _, err := svc.ResetPassword(ctx, "dono@exemplo.com", "a-senha-redefinida-pelo-cli"); err != nil {
+		t.Fatal(err)
+	}
+	redefinido := hashGravado(t, pool)
+	for nome, c := range map[string]struct{ hash, senha string }{
+		"CreateUser":    {criado, senha},
+		"ResetPassword": {redefinido, "a-senha-redefinida-pelo-cli"},
+	} {
+		if !strings.HasPrefix(c.hash, "$argon2id$") {
+			t.Errorf("%s gravou %q, queria Argon2id", nome, c.hash)
+		}
+		if ok, _, err := auth.VerifyPassword(ctx, c.hash, c.senha); err != nil || !ok {
+			t.Errorf("%s: o hash não confere com a senha: ok=%v, erro=%v", nome, ok, err)
+		}
 	}
 }

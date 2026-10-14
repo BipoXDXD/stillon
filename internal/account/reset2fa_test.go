@@ -194,9 +194,8 @@ func TestResetTwoFactorTakesTheUserLock(t *testing.T) {
 		fim <- err
 	}()
 
-	if !esperarAlguemNaTrava(t, c.pool) {
-		soltar()
-		t.Fatalf("o reset-2fa não esperou a trava do usuário (terminou com %v)", <-fim)
+	if esperou, err := esperarNaTravaDoUsuario(t, c.pool, c.user, fim); !esperou {
+		t.Fatalf("o reset-2fa não esperou a trava do usuário (terminou com %v)", err)
 	}
 	soltar()
 	if err := <-fim; err != nil {
