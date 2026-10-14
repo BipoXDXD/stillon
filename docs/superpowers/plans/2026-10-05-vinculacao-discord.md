@@ -49,8 +49,8 @@ Na opção b, cada DiscordID ganha uma linha com `desired` (`present` ou `absent
 ## Ordem de integração
 
 1. Lembretes, com a migration `00012`.
-2. CHECKs das latências do rollup (PR #90), com a migration `00013`.
-3. Discord, com a migration `00014` (`internal/storage/migrations/00014_discord_links.sql`), só depois de a `00012` e a `00013` estarem na `main`. Ao rebasear, rodar `make generate` (sqlc) para regerar `internal/storage/db/*`; nunca mesclar à mão arquivo gerado.
+2. CHECKs das latências do rollup (PR #90), com a migration `00013`, validados pela `00014`.
+3. Discord, com a migration `00015` (`internal/storage/migrations/00015_discord_links.sql`), só depois de a `00012`, a `00013` e a `00014` estarem na `main`. Ao rebasear, rodar `make generate` (sqlc) para regerar `internal/storage/db/*`; nunca mesclar à mão arquivo gerado.
 
 A branch `feat/painel-vintage` (redesign) colide com a Tarefa 5 em `web/src/features/configuracoes/PaginaConfiguracoes.tsx`. Ela entra antes ou depois do Discord, nunca em paralelo.
 
@@ -176,8 +176,8 @@ e `NewService(pool *pgxpool.Pool, cfg Options, api API, clk clock.Clock) *LinkSe
 
 ### Tarefa 1: persistência, isolamento e sessão
 
-**Arquivos:** criar migration `internal/storage/migrations/00014_discord_links.sql` (a 00012
-é dos lembretes e a 00013 dos CHECKs do rollup; ver "Ordem de integração"), `internal/storage/queries/discord_links.sql`,
+**Arquivos:** criar migration `internal/storage/migrations/00015_discord_links.sql` (a 00012
+é dos lembretes, e a 00013 e a 00014 dos CHECKs do rollup; ver "Ordem de integração"), `internal/storage/queries/discord_links.sql`,
 `internal/discordlink/{types,store,store_test}.go`; alterar `internal/storage/scope.go` e gerar
 `internal/storage/db/*` com `make generate`.
 
