@@ -117,7 +117,7 @@ function Incidentes({ id }: { id: string }) {
           )
         }}
       </EstadoDaConsulta>
-      <Link to="/incidents" className="text-sm text-realce underline">
+      <Link to="/incidents" className="alvo-de-toque text-sm text-realce underline">
         Todos os incidentes
       </Link>
     </section>
@@ -246,7 +246,7 @@ function DetalheDoAlvo({ id }: { id: string }) {
                   type="button"
                   aria-pressed={j === janela}
                   onClick={() => setParams({ janela: j }, { replace: true })}
-                  className={cn('rounded-md border border-borda px-3 py-1 text-sm', j === janela && 'bg-painel font-semibold')}
+                  className={cn('min-h-11 rounded-md border border-borda-controle px-3 py-1 text-sm', j === janela && 'bg-painel font-semibold')}
                 >
                   {NOMES[j]}
                 </button>
@@ -270,7 +270,7 @@ function DetalheDoAlvo({ id }: { id: string }) {
                   </p>
                   <GraficoDeLatencia serie={s} descritoPor={idDoResumo} />
                   <details>
-                    <summary className="cursor-pointer text-sm">Ver dados em tabela (até os 200 mais recentes)</summary>
+                    <summary className="alvo-de-toque cursor-pointer text-sm">Ver dados em tabela (até os 200 mais recentes)</summary>
                     <Tabela serie={s} />
                   </details>
                 </div>

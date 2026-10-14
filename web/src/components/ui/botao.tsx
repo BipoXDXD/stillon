@@ -9,7 +9,7 @@ const variantes = cva(
     variants: {
       tipo: {
         primario: 'bg-primaria text-primaria-texto hover:opacity-90',
-        secundario: 'border border-borda bg-superficie text-texto hover:bg-painel',
+        secundario: 'border border-borda-controle bg-superficie text-texto hover:bg-painel',
         perigo: 'border border-perigo bg-superficie text-perigo hover:bg-painel',
         fantasma: 'text-texto hover:bg-painel',
       },

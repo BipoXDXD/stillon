@@ -2,7 +2,7 @@ import { useId, type ComponentProps, type ReactNode } from 'react'
 import { cn } from '@/lib/utils'
 
 export const estiloDeEntrada =
-  'block w-full min-h-11 min-w-0 rounded-lg border border-borda bg-superficie px-3 py-2.5 text-sm text-texto aria-invalid:border-perigo'
+  'block w-full min-h-11 min-w-0 rounded-lg border border-borda-controle bg-superficie px-3 py-2.5 text-sm text-texto aria-invalid:border-perigo'
 
 // Campo liga rótulo, ajuda e erro ao controle: aria-describedby e
 // aria-invalid, como o leitor de tela precisa. O controle vem por função,

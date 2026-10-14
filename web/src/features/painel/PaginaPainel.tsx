@@ -35,7 +35,7 @@ function Cartao({ it, agora }: { it: ItemDoResumo; agora: Date }) {
   return (
     <li className="cartao-alvo min-w-0 space-y-5 rounded-lg border border-borda bg-superficie p-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <Link to={`/targets/${it.id}`} className="min-w-0 break-words text-lg font-bold leading-snug tracking-tight underline-offset-4 hover:text-realce hover:underline">
+        <Link to={`/targets/${it.id}`} className="alvo-de-toque min-w-0 break-words text-lg font-bold leading-snug tracking-tight underline-offset-4 hover:text-realce hover:underline">
           {it.name}
         </Link>
         <SeloDeEstado estado={estadoExibido(it.state, it.enabled)} />
@@ -53,7 +53,7 @@ function Cartao({ it, agora }: { it: ItemDoResumo; agora: Date }) {
         <Minigrafico horas={it.spark} agora={agora} />
       </div>
       {it.open_incident_id && (
-        <Link to="/incidents?status=open" className="inline-flex items-center gap-1 text-sm font-medium text-fora underline underline-offset-4">
+        <Link to="/incidents?status=open" className="alvo-de-toque inline-flex items-center gap-1 text-sm font-medium text-fora underline underline-offset-4">
           Incidente aberto <ArrowUpRight aria-hidden="true" className="size-4" />
         </Link>
       )}
@@ -87,7 +87,7 @@ function AvisoDeCanais() {
     <section aria-label="Avisos de notificação" className="flex flex-wrap items-start gap-3 rounded-md border border-borda bg-painel p-4 text-sm">
       <Bell aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-suave" />
       <div className="min-w-0 flex-1 space-y-1">{frases.map((frase) => <p key={frase}>{frase}</p>)}</div>
-      <Link to="/channels" className="basis-full pl-7 font-medium text-realce underline underline-offset-4 sm:basis-auto sm:pl-0">Configurar canais</Link>
+      <Link to="/channels" className="alvo-de-toque basis-full pl-7 font-medium text-realce underline underline-offset-4 sm:basis-auto sm:pl-0">Configurar canais</Link>
     </section>
   )
 }
