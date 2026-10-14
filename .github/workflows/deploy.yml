@@ -144,9 +144,14 @@ jobs:
         # programa do jq é igual): um valor JSON, um manifesto só, o do
         # IMAGE_ID, e só as chaves permitidas. Uma chave a mais (annotations,
         # se o publish passar a anotar os manifestos) faria a VPS recusar com
-        # 3 e uma mensagem genérica; aqui, o job para com a causa.
+        # 3 e uma mensagem genérica; aqui, o job para com a causa. O crane
+        # grava no descritor o artifactType, que só repete o mediaType da
+        # config e a VPS não aceita: ele sai antes da conferência (o digest do
+        # manifesto não muda; annotations continuam recusadas).
         run: |
           crane pull --platform linux/amd64 --format oci "$ORIGEM@$DIGEST" "$RUNNER_TEMP/imagem"
+          jq -c 'del(.manifests[]?.artifactType)' "$RUNNER_TEMP/imagem/index.json" > "$RUNNER_TEMP/index.json"
+          mv "$RUNNER_TEMP/index.json" "$RUNNER_TEMP/imagem/index.json"
           if ! jq -e -s --arg id "$IMAGE_ID" 'length == 1 and (.[0] |
               type == "object" and
               (keys - ["schemaVersion", "mediaType", "manifests"]) == [] and

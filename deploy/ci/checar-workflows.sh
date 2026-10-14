@@ -185,6 +185,21 @@ printf '%s' "$indice" | jq -e -s --arg id "$ID_BOM" "$prog_wf" >/dev/null ||
 printf '%s' "$indice" | jq -c '.manifests[0].annotations = {"org.opencontainers.image.ref.name": "x"}' |
     jq -e -s --arg id "$ID_BOM" "$prog_wf" >/dev/null &&
     falhar "$DEPLOY: o jq do index.json aceita annotations no descritor"
+# O crane v0.22.1 de verdade (log do primeiro deploy, 2026-10-14) grava também
+# o artifactType no descritor. O deploy.yml o tira antes da conferência, com o
+# programa do `jq -c 'del(...)'`; a VPS continua sem aceitá-lo.
+prog_limpa=$(sed -n "s/^ *jq -c '\(del([^']*)\)' .*index\.json.*/\1/p" "$DEPLOY")
+[ -n "$prog_limpa" ] || falhar "$DEPLOY: sem o jq -c 'del(...)' que tira o artifactType do index.json"
+indice_crane=$(printf '%s' "$indice" | jq -c '.manifests[0].artifactType = "application/vnd.oci.image.config.v1+json"')
+printf '%s' "$indice_crane" | jq -e -s --arg id "$ID_BOM" "$prog_vps" >/dev/null &&
+    falhar "controle: a conferência da VPS aceita o artifactType"
+if [ -n "$prog_limpa" ]; then
+    printf '%s' "$indice_crane" | jq -c "$prog_limpa" | jq -e -s --arg id "$ID_BOM" "$prog_wf" >/dev/null ||
+        falhar "$DEPLOY: o index.json do crane v0.22.1, depois da limpeza, ainda é recusado"
+    printf '%s' "$indice_crane" | jq -c '.manifests[0].annotations = {"io.containerd.image.name": "x"}' |
+        jq -c "$prog_limpa" | jq -e -s --arg id "$ID_BOM" "$prog_wf" >/dev/null &&
+        falhar "$DEPLOY: a limpeza do index.json deixa passar annotations"
+fi
 
 # 4. Backup: diário às 06:17 UTC e à mão, desligado até BACKUP_ENABLED=1,
 #    artifact por 30 dias.
