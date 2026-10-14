@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest'
 // (rounded-padrao) e pílulas (rounded-full), pesos 400 e 600, sombras só de
 // dois níveis (sombra-nivel-1 e -2) e cor só por token. Um arquivo entra na
 // lista quando o PR que o redesenha chega; o PR 8 troca a lista por todo o src.
-const ARQUIVOS_NO_SISTEMA = ['src/components/Titulo.tsx', 'src/components/ui/botao.tsx', 'src/components/ui/campo.tsx', 'src/components/SeloDeEstado.tsx']
+const ARQUIVOS_NO_SISTEMA = ['src/components/Titulo.tsx', 'src/components/ui/botao.tsx', 'src/components/ui/campo.tsx', 'src/components/SeloDeEstado.tsx', 'src/components/ui/controle-segmentado.tsx']
 
 const ESCALA = new Set(['0', 'auto', '1', '2', '3', '4', '6', '8', '12', '16'])
 const ESPACO = String.raw`(?:p[xytrblse]?|m[xytrblse]?|gap(?:-[xy])?|space-[xy])`

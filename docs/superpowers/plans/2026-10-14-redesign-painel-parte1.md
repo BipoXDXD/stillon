@@ -1856,6 +1856,10 @@ export function ControleSegmentado<V extends string>({ rotulo, opcoes, valor, ao
               itens.current[i] = el
             }}
             type="button"
+            // O padrão "radio group" do APG com botões: o roving tabindex e a
+            // escolha pelas setas ficam explícitos aqui, sem o <input
+            // type="radio"> escondido atrás de um <label> estilizado.
+            // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role
             role="radio"
             aria-checked={ativo}
             tabIndex={i === naOrdemDoTab ? 0 : -1}
