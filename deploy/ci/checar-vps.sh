@@ -208,11 +208,15 @@ caddy_img=$(q '.services.caddy.image')
     falhar "algum serviço publica porta: quem ouve a 80 e a 443 é a borda do host"
 [ "$(q '.services | keys | sort | join(",")')" = app,caddy,db ] ||
     falhar "serviços do compose.prod: $(q '.services | keys | join(",")'), queria app, caddy e db"
-# Só o Caddy está na rede da borda, com o alias que o trecho dela usa.
+# Só o Caddy está na rede da borda, no IP fixo que o trecho dela usa. IP, e
+# não alias: um segundo contêiner com o mesmo alias dividiria o tráfego em
+# silêncio; com o mesmo IP, o Docker recusa.
 [ "$(q '[.services | to_entries[] | select(.value.networks.edge != null) | .key] | join(",")')" = caddy ] ||
     falhar "outro serviço além do caddy está na rede edge"
-[ "$(q '.services.caddy.networks.edge.aliases // [] | join(",")')" = stillon-caddy ] ||
-    falhar "o caddy não tem o alias stillon-caddy na rede edge"
+[ "$(q '.services.caddy.networks.edge.ipv4_address')" = 172.31.0.3 ] ||
+    falhar "o caddy não está no IP fixo 172.31.0.3 da rede edge"
+[ "$(q '.services.caddy.networks.edge.aliases // [] | length')" = 0 ] ||
+    falhar "o caddy tem alias na rede edge: o trecho da borda usa o IP fixo"
 [ "$(q '.networks.edge.external')/$(q '.networks.edge.name')" = true/edge ] ||
     falhar "a rede edge não é a externa 'edge' da borda"
 for s in caddy app db; do
@@ -269,11 +273,11 @@ if ! { [ "$(sem_comentario "$RAIZ/deploy/vps/Caddyfile" | grep -c 'trusted_proxi
 fi
 sem_comentario "$RAIZ/deploy/vps/Caddyfile" | grep -qxE '[[:space:]]*header_up X-Forwarded-For \{client_ip\}' ||
     falhar "o Caddyfile não reescreve o X-Forwarded-For com o {client_ip}: o app veria a borda"
-# O trecho da borda não confia em ninguém e aponta para o alias.
+# O trecho da borda não confia em ninguém e aponta para o IP fixo.
 [ "$(sem_comentario "$RAIZ/deploy/vps/edge/stillon.caddy" 2>/dev/null | grep -c trusted_proxies || true)" = 0 ] ||
     falhar "o trecho da borda tem trusted_proxies: um cliente escolheria o próprio IP"
-sem_comentario "$RAIZ/deploy/vps/edge/stillon.caddy" 2>/dev/null | grep -qxE '[[:space:]]*reverse_proxy stillon-caddy:80' ||
-    falhar "o trecho da borda não encaminha para stillon-caddy:80"
+sem_comentario "$RAIZ/deploy/vps/edge/stillon.caddy" 2>/dev/null | grep -qxE '[[:space:]]*reverse_proxy 172\.31\.0\.3:80' ||
+    falhar "o trecho da borda não encaminha para 172.31.0.3:80"
 # O env.exemplo é o modelo do .env: sem valor nenhum, e com toda variável que
 # o compose.prod.yaml lê (menos STILLON_SHA, da entrada, e o modo de teste).
 grep -Ev '^(#|$)' "$RAIZ/deploy/vps/env.exemplo" | grep -v '=$' && falhar "o env.exemplo tem valor preenchido"

@@ -57,7 +57,7 @@ Pôr o StillOn no ar em `https://stillon.tech` na mesma VPS do GoblinShift:
 
 ```
 internet ──80/443──► borda: Caddy (/srv/edge, 172.31.0.2 na rede edge)
-                     ├─ stillon.tech ──► stillon-caddy :80 (redes edge e stillon)
+                     ├─ stillon.tech ──► caddy do StillOn :80 (172.31.0.3 na edge; rede stillon)
                      │                     └─► app :8080 ─► db  (rede stillon, 10.30.0.0/24)
                      └─ :80 por IP ────► goblinshift-web (como hoje)
 ```
@@ -78,14 +78,18 @@ internet ──80/443──► borda: Caddy (/srv/edge, 172.31.0.2 na rede edge)
   Os cabeçalhos que o app dele lê (`X-Forwarded-For`, `X-Forwarded-Proto`) mantêm o
   significado: o Caddy sem proxies confiáveis põe o IP do cliente e o esquema real.
 - Contrato que o StillOn assume, e que o teste do StillOn reproduz: rede externa
-  `edge`, borda em `172.31.0.2`, sem `trusted_proxies`, HTTP/1.1 e HTTP/2, `Host`
-  original preservado, `import conf.d/*.caddy`.
+  `edge`, borda em `172.31.0.2`, `172.31.0.3` reservado ao Caddy do StillOn, sem
+  `trusted_proxies`, HTTP/1.1 e HTTP/2, `Host` original preservado,
+  `import conf.d/*.caddy`. Os IPs fixos da `edge` (fora de `.128/25`) são reservados
+  por projeto no ADR 014; o trecho de cada projeto aponta para IP, nunca para alias:
+  um alias duplicado reparte o tráfego em silêncio, um IP duplicado o Docker recusa
+  (decisão do dono em 2026-10-13, depois da revisão de segurança).
 
 ### Trecho do StillOn na borda (`deploy/vps/edge/stillon.caddy`)
 
 `{$STILLON_DOMINIO}` não existe no ambiente da borda: o arquivo traz o domínio
 literal `stillon.tech`, e o runbook o instala. Bloco de site para o domínio com
-`reverse_proxy stillon-caddy:80`. TLS automático pelo Let's Encrypt; o redirecionamento
+`reverse_proxy 172.31.0.3:80`. TLS automático pelo Let's Encrypt; o redirecionamento
 de HTTP para HTTPS é o padrão do Caddy.
 
 ### Caddy do StillOn
@@ -99,7 +103,7 @@ de HTTP para HTTPS é o padrão do Caddy.
   Caddy acrescentaria o IP da borda ao fim da cadeia, e o app, que confia só no
   último salto, veria a borda no lugar de todo cliente. Continuam os
   `header_up -Fly-Client-IP`, `-X-Real-IP` e `-CF-Connecting-IP`.
-- Redes: `edge` (externa, IP dinâmico, alias `stillon-caddy`) e `stillon`
+- Redes: `edge` (externa, IP fixo reservado `172.31.0.3`, sem alias) e `stillon`
   (IP fixo `10.30.0.2`). É o único contêiner do StillOn na `edge`.
 - A opção `STILLON_CADDY_TESTE` (`local_certs`) deixa de existir no Caddy do
   StillOn, que não emite certificado; ela passa para a borda do teste.
@@ -160,7 +164,7 @@ borda, e entram três novas:
 1. **XFF forjado:** um cliente que manda `X-Forwarded-For: 203.0.113.9` aparece para
    o app com o IP real dele (o da rede do teste), nunca com `203.0.113.9`.
 2. **Acesso direto sem a borda:** de um contêiner na rede `edge` que não é a borda,
-   uma requisição ao `stillon-caddy` com `X-Forwarded-For` forjado não muda o IP
+   uma requisição ao Caddy do StillOn com `X-Forwarded-For` forjado não muda o IP
    visto pelo app (o Caddy do StillOn só confia em `172.31.0.2`).
 3. **Borda sem o StillOn:** com a pilha do StillOn parada, a borda continua de pé
    e responde 502 ao domínio.
@@ -195,6 +199,14 @@ com a mitigação sabotada (por exemplo, `trusted_proxies` amplo ou sem
   equivalente, não contra a do GoblinShift. Se a borda real mudar o contrato, o teste
   não percebe. Mitigação: o contrato está escrito aqui e no ADR 014, e qualquer
   mudança nele é decisão do dono nos dois repositórios.
+
+- **Risco aceito: confiança por IP numa rede compartilhada.** Um contêiner na rede
+  `edge` que assuma `172.31.0.2` (com a borda parada, ou por ARP spoofing com
+  `NET_RAW`) forjaria o IP do cliente para o StillOn: drible do limitador por IP e
+  `ip_hash` da auditoria errado, sem acesso a contas. Exige controlar um contêiner na
+  `edge`. Aceito pelo dono em 2026-10-13, com um reforço: os contêineres do
+  GoblinShift ligados à `edge` perdem o `NET_RAW`. Fechar de vez pediria TLS mútuo
+  entre a borda e o Caddy do StillOn.
 
 ## Fora do escopo
 

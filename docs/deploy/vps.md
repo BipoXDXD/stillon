@@ -46,7 +46,7 @@ Docker, **dividida com o GoblinShift**, outro projeto seu
 
 ```
 internet ──80/443──► borda: Caddy (/srv/edge, 172.31.0.2 na rede edge)
-                     ├─ stillon.tech ──► stillon-caddy :80 (redes edge e stillon)
+                     ├─ stillon.tech ──► caddy do StillOn :80 (172.31.0.3 na edge; rede stillon)
                      │                     └─► app :8080 ─► db  (rede stillon, 10.30.0.0/24)
                      └─ :80 por IP ────► goblinshift-web
 ```
@@ -1325,7 +1325,7 @@ sudo docker compose exec proxy caddy reload --config /etc/caddy/Caddyfile
 **Deve aparecer:** `Valid configuration` no `validate`; o `reload` sem erro.
 
 **Por quê:** o trecho diz à borda para pedir o certificado de `stillon.tech` e encaminhar o
-domínio ao Caddy do StillOn (`stillon-caddy`, na rede `edge`). O `validate` vem antes porque um
+domínio ao Caddy do StillOn (`172.31.0.3`, o IP reservado a ele na rede `edge`). O `validate` vem antes porque um
 trecho inválido impede o `reload` da borda inteira, que também atende o GoblinShift (a
 configuração anterior fica no ar, mas nenhuma mudança entra).
 

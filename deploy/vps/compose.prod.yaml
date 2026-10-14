@@ -45,8 +45,12 @@ services:
       stillon:
         ipv4_address: 10.30.0.2
       edge:
-        # O nome que o trecho da borda (deploy/vps/edge/stillon.caddy) usa.
-        aliases: [stillon-caddy]
+        # O IP reservado ao StillOn na rede da borda (ADR 014 do GoblinShift),
+        # fora da faixa dinâmica (.128/25), e o que o trecho da borda
+        # (deploy/vps/edge/stillon.caddy) usa. IP, e não alias: outro
+        # contêiner com o mesmo alias dividiria o tráfego em silêncio; com o
+        # mesmo IP, o Docker recusa.
+        ipv4_address: 172.31.0.3
     mem_limit: 256m
     security_opt: ["no-new-privileges:true"]
     logging: *log
