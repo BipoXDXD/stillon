@@ -37,6 +37,11 @@ id_ed25519*
 *.test
 coverage.out
 /.superpowers/
+# Arquivos locais de ferramentas de IA (configuração, memória e instruções
+# de agentes); não fazem parte do projeto.
+/.claude/
+/.serena/
+/AGENTS.md
 # Configuração local do GoLand/Rider; não vai para o repositório.
 .idea/
 # Metadados que o Finder do macOS cria em toda pasta aberta.

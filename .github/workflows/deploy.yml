@@ -4,10 +4,10 @@ name: deploy
 # do ci publicou, a partir da main. Runbook: docs/deploy/vps.md.
 #
 # Quem pode disparar: só quem tem acesso de escrita ao repositório (hoje, só
-# o dono). No GitHub Free com repositório privado não há environment com
-# revisor obrigatório; essa é a trava que existe. Quando o repositório abrir,
-# um environment "production" com revisor pode ser acrescentado (runbook,
-# "Tornar o repositório público").
+# o dono). Não há environment com revisor obrigatório (decisão pendente do
+# dono); a trava que existe é a `main` protegida (PR e 9 checks) e a escrita
+# restrita. Um environment "production" com revisor pode ser acrescentado
+# (runbook, "Tornar o repositório público").
 #
 # O input é o SHA, não um digest: o publish só dá a tag :<sha> DEPOIS do
 # Trivy. Um digest qualquer do pacote podia ser um que subiu e reprovou no

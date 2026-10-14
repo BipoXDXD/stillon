@@ -21,8 +21,7 @@ defaults:
     shell: bash
 
 # Um push novo no mesmo ref (PR, main ou tag) cancela a execução anterior:
-# com o repositório privado, os minutos de Actions contam na cota (2.000/mês),
-# e uma execução superada não prova nada. Na main, o publish da execução
+# uma execução superada não prova nada e só gasta minutos de Actions. Na main, o publish da execução
 # nova substitui o da cancelada.
 concurrency:
   group: ci-${{ github.ref }}
@@ -150,8 +149,8 @@ jobs:
           retention-days: 3
 
   secrets:
-    # O histórico INTEIRO, em todo PR: com o repositório privado, um segredo
-    # commitado hoje fica público no dia em que ele abrir. Os falsos positivos
+    # O histórico INTEIRO, em todo PR: o repositório é público, então um segredo
+    # commitado já está à vista de todos. Os falsos positivos
     # conferidos à mão ficam no .gitleaksignore, pela fingerprint (D37); as
     # chaves de demo públicas do compose, no allowlist do .gitleaks.toml.
     runs-on: ubuntu-latest
@@ -434,8 +433,8 @@ jobs:
 
   publish:
     # Só depois de tudo verde, e só em push para a main ou tag v* deste
-    # repositório (nunca em PR, nem num fork). O pacote do GHCR segue a
-    # visibilidade do repositório: privado, por enquanto.
+    # repositório (nunca em PR, nem num fork). O pacote do GHCR tem
+    # visibilidade própria: segue privado, mesmo com o repositório público.
     if: github.event_name == 'push' && github.repository == 'BipoXDXD/stillon'
     needs: [lint, test, secrets, web, image, e2e, vps, workflows]
     runs-on: ubuntu-latest
