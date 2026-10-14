@@ -23,6 +23,11 @@ import (
 
 const (
 	dispatchEvery = 2 * time.Second
+	// claimTimeout é o prazo da reivindicação do lote, espera por conexão do
+	// pool incluída. Fica abaixo de dispatchEvery: uma consulta presa não
+	// para a entrega de todos os avisos (C2 da revisão). Os envios e as
+	// gravações dos desfechos têm prazos próprios.
+	claimTimeout = 1500 * time.Millisecond
 	// maxConcurrentSends é o tamanho do lote e o teto de envios simultâneos.
 	// O Resend aceita 10 pedidos por segundo por conta; 8 fica abaixo.
 	maxConcurrentSends = 8
@@ -56,12 +61,13 @@ const (
 // Dispatcher consome a outbox de notificações (spec §8). Roda no papel do
 // sondador, fora do caminho crítico da sonda.
 type Dispatcher struct {
-	pool        *pgxpool.Pool
-	box         *crypto.Box
-	clk         clock.Clock
-	notifiers   map[Kind]Notifier
-	total       *prometheus.CounterVec
-	sendTimeout time.Duration
+	pool         *pgxpool.Pool
+	box          *crypto.Box
+	clk          clock.Clock
+	notifiers    map[Kind]Notifier
+	total        *prometheus.CounterVec
+	sendTimeout  time.Duration
+	claimTimeout time.Duration
 }
 
 // NewDispatcher recebe os canais que o operador configurou. Um canal de
@@ -74,7 +80,7 @@ func NewDispatcher(pool *pgxpool.Pool, box *crypto.Box, clk clock.Clock, reg pro
 			Name: "notify_total",
 			Help: "Desfechos de envio de notificação, por canal e resultado.",
 		}, []string{"kind", "result"}),
-		sendTimeout: sendTimeout,
+		sendTimeout: sendTimeout, claimTimeout: claimTimeout,
 	}
 	for _, n := range notifiers {
 		d.notifiers[n.Kind()] = n
@@ -104,17 +110,9 @@ func (d *Dispatcher) Run(ctx context.Context) error {
 // Dispatch reivindica um lote, envia em paralelo e espera todos terminarem.
 // Devolve quantas notificações reivindicou.
 func (d *Dispatcher) Dispatch(ctx context.Context) (int, error) {
-	now := d.clk.Now()
-	var lote []db.ClaimDueNotificationsRow
-	err := storage.InProberTx(ctx, d.pool, func(q *db.Queries) error {
-		var err error
-		lote, err = q.ClaimDueNotifications(ctx, db.ClaimDueNotificationsParams{
-			Now: now, LeaseUntil: now.Add(lease), MaxRows: maxConcurrentSends,
-		})
-		return err
-	})
+	lote, err := d.reivindicar(ctx)
 	if err != nil {
-		return 0, fmt.Errorf("reivindicar notificações: %w", err)
+		return 0, err
 	}
 
 	var wg sync.WaitGroup
@@ -127,6 +125,25 @@ func (d *Dispatcher) Dispatch(ctx context.Context) (int, error) {
 	}
 	wg.Wait()
 	return len(lote), nil
+}
+
+// reivindicar pega o lote, com o prazo claimTimeout.
+func (d *Dispatcher) reivindicar(ctx context.Context) ([]db.ClaimDueNotificationsRow, error) {
+	ctx, cancel := context.WithTimeout(ctx, d.claimTimeout)
+	defer cancel()
+	now := d.clk.Now()
+	var lote []db.ClaimDueNotificationsRow
+	err := storage.InProberTx(ctx, d.pool, func(q *db.Queries) error {
+		var err error
+		lote, err = q.ClaimDueNotifications(ctx, db.ClaimDueNotificationsParams{
+			Now: now, LeaseUntil: now.Add(lease), MaxRows: maxConcurrentSends,
+		})
+		return err
+	})
+	if err != nil {
+		return nil, fmt.Errorf("reivindicar notificações: %w", err)
+	}
+	return lote, nil
 }
 
 // porCanal separa o lote por canal, cada fila na ordem de enfileiramento

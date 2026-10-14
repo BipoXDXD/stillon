@@ -31,9 +31,20 @@ const MaxInFlight int32 = 64
 
 const tickEvery = time.Second
 
+// tickTimeout é o prazo de um Tick inteiro (reivindicar e medir a fila),
+// espera por conexão do pool incluída. Fica abaixo de tickEvery: uma
+// consulta presa não segura o despacho de todos os alvos, e o Tick seguinte
+// tenta de novo (C2 da revisão).
+const tickTimeout = 900 * time.Millisecond
+
 // reconcileEvery é o intervalo da reconciliação das métricas. Uma
 // transição de incidente também dispara uma, sem esperar o intervalo.
 const reconcileEvery = 30 * time.Second
+
+// reconcileTimeout é o prazo de uma reconciliação. Ela divide o laço de Run
+// com o Tick, então o prazo é curto: presa, ela custa no máximo alguns
+// despachos, em vez de parar o sondador.
+const reconcileTimeout = 5 * time.Second
 
 // PersistTimeout é o prazo próprio de cada gravação de check. Uma sonda que
 // termina no limite do grace de Stop ainda grava com este prazo, então Stop
@@ -52,6 +63,10 @@ type Scheduler struct {
 	sem      *semaphore.Weighted
 	max      int32
 	detector incident.Detector
+
+	// Prazos das rodadas; campos para que os testes os encurtem.
+	tickTimeout      time.Duration
+	reconcileTimeout time.Duration
 
 	// transicao avisa o laço de Run que um incidente abriu ou fechou, para
 	// que incidents_open não espere a próxima reconciliação periódica.
@@ -80,6 +95,7 @@ func newScheduler(pool *pgxpool.Pool, box *crypto.Box, clk clock.Clock, m *Metri
 		sem: semaphore.NewWeighted(int64(max)), max: max,
 		detector: incident.Default, transicao: make(chan struct{}, 1),
 		sondas: sondas, abortar: abortar,
+		tickTimeout: tickTimeout, reconcileTimeout: reconcileTimeout,
 	}
 }
 
@@ -123,6 +139,8 @@ func (s *Scheduler) reconciliar(ctx context.Context) {
 // separados nem poderia: sem esta reconciliação, a série do alvo apagado
 // vivia até o restart.
 func (s *Scheduler) Reconcile(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, s.reconcileTimeout)
+	defer cancel()
 	vistos := s.metrics.alvosVistos()
 	var existentes []uuid.UUID
 	var abertos int64
@@ -154,8 +172,11 @@ func (s *Scheduler) Reconcile(ctx context.Context) error {
 }
 
 // Tick reivindica até "vagas livres" alvos vencidos e dispara uma goroutine
-// por alvo. Devolve quantos disparou.
+// por alvo. Devolve quantos disparou. O Tick inteiro tem o prazo tickTimeout;
+// as sondas disparadas não herdam esse prazo.
 func (s *Scheduler) Tick(ctx context.Context) (int, error) {
+	ctx, cancel := context.WithTimeout(ctx, s.tickTimeout)
+	defer cancel()
 	now := s.clk.Now()
 
 	// As vagas vêm ANTES da reivindicação. Reivindicar grava o próximo

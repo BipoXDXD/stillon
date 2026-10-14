@@ -39,6 +39,14 @@ const (
 	// dele o INSERT do sondador e as leituras da página pública. Melhor
 	// desistir e tentar na próxima rodada.
 	dropLockTimeout = 2 * time.Second
+	// maintenanceRoundTimeout é o prazo de uma rodada inteira de RunMaintenance,
+	// abaixo do intervalo de produção (15 min): presa, a rodada desiste, vai
+	// ao log, e a seguinte tenta de novo (C2 da revisão).
+	maintenanceRoundTimeout = 10 * time.Minute
+	// maintenanceStatementTimeout substitui, nas transações da manutenção, o
+	// statementTimeout do pool: a primeira consolidação volta 62 dias de
+	// checks, e a primeira retenção apaga meses de linhas.
+	maintenanceStatementTimeout = 5 * time.Minute
 )
 
 var ErrMaintenanceInterval = errors.New("intervalo de manutenção precisa ser positivo")
@@ -88,6 +96,9 @@ func ConsolidateRollups(ctx context.Context, pool *pgxpool.Pool, now time.Time) 
 	ate := now.UTC().Truncate(time.Hour)
 	var n int64
 	err := InProberTx(ctx, pool, func(q *db.Queries) error {
+		if err := q.SetLocalStatementTimeout(ctx, milissegundos(maintenanceStatementTimeout)); err != nil {
+			return fmt.Errorf("prazo da consolidação: %w", err)
+		}
 		ultima, err := q.LatestRollupBucketBefore(ctx, ate)
 		if err != nil {
 			return fmt.Errorf("ler marca d'água dos rollups: %w", err)
@@ -121,6 +132,9 @@ func ConsolidateRollups(ctx context.Context, pool *pgxpool.Pool, now time.Time) 
 func ApplyRetention(ctx context.Context, pool *pgxpool.Pool, now time.Time) (MaintenanceReport, error) {
 	var r MaintenanceReport
 	err := InProberTx(ctx, pool, func(q *db.Queries) error {
+		if err := q.SetLocalStatementTimeout(ctx, milissegundos(maintenanceStatementTimeout)); err != nil {
+			return fmt.Errorf("prazo da retenção: %w", err)
+		}
 		var err error
 		if r.DeletedRollups, err = q.DeleteOldRollups(ctx, now.AddDate(0, -RollupRetentionMonths, 0)); err != nil {
 			return fmt.Errorf("apagar rollups vencidos: %w", err)
@@ -140,7 +154,7 @@ func ApplyRetention(ctx context.Context, pool *pgxpool.Pool, now time.Time) (Mai
 		return r, err
 	}
 	err = InProberTx(ctx, pool, func(q *db.Queries) error {
-		if err := q.SetLocalLockTimeout(ctx, fmt.Sprintf("%dms", dropLockTimeout.Milliseconds())); err != nil {
+		if err := q.SetLocalLockTimeout(ctx, milissegundos(dropLockTimeout)); err != nil {
 			return fmt.Errorf("limitar a espera do DROP: %w", err)
 		}
 		var err error
@@ -155,12 +169,16 @@ func ApplyRetention(ctx context.Context, pool *pgxpool.Pool, now time.Time) (Mai
 // RunMaintenance roda Maintain ao subir e depois a cada every, até ctx acabar.
 // Substitui o MaintainChecksPartitions do Plano 2, que não tinha teste e dava
 // panic com every <= 0. Erro de uma rodada vai ao log; a próxima tenta de novo.
+// Cada rodada tem o prazo maintenanceRoundTimeout, nunca maior que every.
 func RunMaintenance(ctx context.Context, pool *pgxpool.Pool, clk clock.Clock, every time.Duration) error {
 	if every <= 0 {
 		return ErrMaintenanceInterval
 	}
+	prazo := min(maintenanceRoundTimeout, every)
 	rodar := func() {
-		r, err := Maintain(ctx, pool, clk.Now())
+		rodada, cancel := context.WithTimeout(ctx, prazo)
+		defer cancel()
+		r, err := Maintain(rodada, pool, clk.Now())
 		if err != nil && ctx.Err() != nil {
 			return
 		}
