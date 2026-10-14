@@ -85,3 +85,35 @@ func TestReminderFollowsTheChannelRLS(t *testing.T) {
 		t.Errorf("B viu %d notificações de A", n)
 	}
 }
+
+// O down da 00012 roda com o papel da aplicação, que não ignora a RLS: ele
+// precisa apagar os lembretes de todos os canais para o CHECK e o UNIQUE
+// antigos voltarem. A abertura fica.
+func TestReminderMigrationGoesDownWithRemindersInTheOutbox(t *testing.T) {
+	ctx := context.Background()
+	dsn := testdb.EmptyDatabase(t)
+	if err := storage.Migrate(ctx, dsn); err != nil {
+		t.Fatal(err)
+	}
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	dono := novoUsuario(t, pool)
+	canal := novoCanal(t, pool, dono, nil, time.Time{})
+	incidente := novoIncidente(t, pool, novoAlvo(t, pool, dono, agora))
+	novaNotificacao(t, pool, incidente, canal)
+	for seq := int32(1); seq <= 2; seq++ {
+		if _, err := enfileirarLembrete(t, pool, incidente, canal, seq); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := storage.MigrateDownTo(ctx, dsn, 11); err != nil {
+		t.Fatalf("down da 00012: %v", err)
+	}
+	if n := contarComoSondador(t, pool, `SELECT count(*) FROM notifications`); n != 1 {
+		t.Errorf("%d notificações depois do down, queria 1 (a abertura)", n)
+	}
+}

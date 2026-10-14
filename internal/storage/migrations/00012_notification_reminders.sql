@@ -27,6 +27,11 @@ ALTER TABLE notifications ADD CONSTRAINT notifications_incident_channel_event_se
 ALTER TABLE notifications ADD COLUMN target_name text;
 
 -- +goose Down
+-- A migration roda com o papel da aplicação, sujeito à RLS (FORCE): sem o
+-- escopo do sondador, o DELETE não enxergaria linha nenhuma, e o UNIQUE e o
+-- CHECK antigos falhariam com os lembretes que ficaram. O goose roda cada
+-- migration numa transação, e o set_config local morre com ela.
+SELECT set_config('app.scope', 'prober', true);
 DELETE FROM notifications WHERE event = 'reminder';
 ALTER TABLE notifications DROP CONSTRAINT notifications_incident_channel_event_seq_key;
 ALTER TABLE notifications ADD CONSTRAINT notifications_incident_id_channel_id_event_key
