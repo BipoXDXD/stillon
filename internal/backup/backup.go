@@ -151,7 +151,7 @@ func run(parent context.Context, publicURI, password, output string, o options) 
 		defer func() {
 			if releaseErr := release(); releaseErr != nil && err == nil {
 				ref = Reference{}
-				err = errors.New("proteção parental não foi desarmada")
+				err = fmt.Errorf("proteção parental não foi desarmada: %w", releaseErr)
 			}
 		}()
 	}
@@ -173,18 +173,18 @@ func run(parent context.Context, publicURI, password, output string, o options) 
 		if !stopClose() {
 			if closeErr := <-closeDone; closeErr != nil && err == nil {
 				ref = Reference{}
-				err = errors.New("fechamento dos pipes falhou")
+				err = fmt.Errorf("fechamento dos pipes falhou: %w", closeErr)
 			}
 		}
 	}()
 	null, e := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
 	if e != nil {
-		return ref, errors.New("saída privada indisponível")
+		return ref, fmt.Errorf("saída privada indisponível: %w", e)
 	}
 	defer null.Close()
 	exporter := novoExportador(exporterCtx, o, src, exportName, p, null)
 	if e = exporter.Start(); e != nil {
-		return ref, errors.New("exportador não iniciou")
+		return ref, fmt.Errorf("exportador não iniciou: %w", e)
 	}
 	exporterWaited := false
 	var dump *exec.Cmd
@@ -202,11 +202,11 @@ func run(parent context.Context, publicURI, password, output string, o options) 
 		// são consumidos; não podem converter a falha em sucesso.
 		if problema := encerrarClientes(p, pendentes...); problema != nil && err == nil {
 			ref = Reference{}
-			err = errors.New("encerramento dos clientes falhou")
+			err = fmt.Errorf("encerramento dos clientes falhou: %w", problema)
 		}
 	}()
-	if errors.Join(closePipe(p.inRead), closePipe(p.outWrite)) != nil {
-		return ref, errors.New("fechamento das extremidades dos filhos falhou")
+	if e = errors.Join(closePipe(p.inRead), closePipe(p.outWrite)); e != nil {
+		return ref, fmt.Errorf("fechamento das extremidades dos filhos falhou: %w", e)
 	}
 	s := &supervisao{ctx: ctx, inWrite: p.inWrite, outRead: p.outRead, reader: bufio.NewReaderSize(p.outRead, maxLinhaProtocolo)}
 	snapshot, ref, e := s.prepararReferencia(o.prepareTimeout)
@@ -215,7 +215,7 @@ func run(parent context.Context, publicURI, password, output string, o options) 
 	}
 	if o.afterReference != nil {
 		if e = o.afterReference(ctx, ref); e != nil {
-			return Reference{}, errors.New("preparação interrompida")
+			return Reference{}, fmt.Errorf("preparação interrompida: %w", e)
 		}
 	}
 	dumpCtx, cancelDump := context.WithTimeout(ctx, o.dumpTimeout)
@@ -223,12 +223,14 @@ func run(parent context.Context, publicURI, password, output string, o options) 
 	dump = novoDump(dumpCtx, o, src, dumpName, snapshot, output, null)
 	if e = dump.Start(); e != nil {
 		dump = nil
-		return Reference{}, errors.New("dump não iniciou")
+		return Reference{}, fmt.Errorf("dump não iniciou: %w", e)
 	}
 	e = dump.Wait()
 	dumpWaited = true
 	if e != nil {
-		return Reference{}, errors.New("dump interrompido ou falhou")
+		// O prazo do dump vence como sinal no processo; a causa que importa
+		// para o log é o prazo, e ela vai junto.
+		return Reference{}, fmt.Errorf("dump interrompido ou falhou: %w", errors.Join(e, context.Cause(dumpCtx)))
 	}
 	finishDone := make(chan struct{})
 	finishTimer := time.AfterFunc(o.cleanup, func() { cancelExporter(); close(finishDone) })
@@ -249,10 +251,10 @@ func run(parent context.Context, publicURI, password, output string, o options) 
 	e = exporter.Wait()
 	exporterWaited = true
 	if e != nil {
-		return Reference{}, errors.New("exportador não encerrou corretamente")
+		return Reference{}, fmt.Errorf("exportador não encerrou corretamente: %w", e)
 	}
-	if ctx.Err() != nil || exporterCtx.Err() != nil {
-		return Reference{}, errors.New("prazo ou cancelamento antes da conclusão")
+	if e = errors.Join(context.Cause(ctx), context.Cause(exporterCtx)); e != nil {
+		return Reference{}, fmt.Errorf("prazo ou cancelamento antes da conclusão: %w", e)
 	}
 	if e = conferirSaida(output, created); e != nil {
 		return Reference{}, e
@@ -290,14 +292,17 @@ func validarEntrada(publicURI, password, output string) error {
 func criarSaida(output string) (os.FileInfo, error) {
 	artifact, e := os.OpenFile(output, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600) // #nosec G304 -- SAIDA é o contrato de arquivo privado; O_EXCL recusa arquivos/symlinks anteriores e o inode é conferido.
 	if e != nil {
-		return nil, errors.New("saída não é um arquivo novo gravável")
+		return nil, fmt.Errorf("saída não é um arquivo novo gravável: %w", e)
 	}
 	created, e := artifact.Stat()
 	if e == nil {
 		e = artifact.Chmod(0600)
 	}
 	closeErr := artifact.Close()
-	if e != nil || closeErr != nil || created == nil || !created.Mode().IsRegular() {
+	if e = errors.Join(e, closeErr); e != nil {
+		return created, fmt.Errorf("saída privada indisponível: %w", e)
+	}
+	if created == nil || !created.Mode().IsRegular() {
 		return created, errors.New("saída privada indisponível")
 	}
 	return created, nil
@@ -311,7 +316,7 @@ func descartarSaida(output string, created os.FileInfo) error {
 		return nil
 	}
 	if removeErr := os.Remove(output); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
-		return errors.New("descarte da saída parcial falhou")
+		return fmt.Errorf("descarte da saída parcial falhou: %w", removeErr)
 	}
 	return nil
 }
@@ -319,7 +324,7 @@ func descartarSaida(output string, created os.FileInfo) error {
 func novaIdentidade() (string, error) {
 	var token [16]byte
 	if _, e := rand.Read(token[:]); e != nil {
-		return "", errors.New("identidade da execução indisponível")
+		return "", fmt.Errorf("identidade da execução indisponível: %w", e)
 	}
 	return "stillon_snapshot_" + hex.EncodeToString(token[:]), nil
 }
@@ -332,13 +337,13 @@ type pipes struct{ inRead, inWrite, outRead, outWrite *os.File }
 func abrirPipes() (pipes, error) {
 	inRead, inWrite, e := os.Pipe()
 	if e != nil {
-		return pipes{}, errors.New("pipe de entrada indisponível")
+		return pipes{}, fmt.Errorf("pipe de entrada indisponível: %w", e)
 	}
 	outRead, outWrite, e := os.Pipe()
 	if e != nil {
 		_ = inWrite.Close() // a falha que importa é a do pipe de saída
 		_ = inRead.Close()
-		return pipes{}, errors.New("pipe de saída indisponível")
+		return pipes{}, fmt.Errorf("pipe de saída indisponível: %w", e)
 	}
 	return pipes{inRead: inRead, inWrite: inWrite, outRead: outRead, outWrite: outWrite}, nil
 }
@@ -405,18 +410,21 @@ func (s *supervisao) definirPrazos(d time.Duration) error {
 		limit = deadline
 	}
 	if e := s.inWrite.SetWriteDeadline(limit); e != nil {
-		return errors.New("deadline da entrada indisponível")
+		return fmt.Errorf("deadline da entrada indisponível: %w", e)
 	}
 	if e := s.outRead.SetReadDeadline(limit); e != nil {
-		return errors.New("deadline da saída indisponível")
+		return fmt.Errorf("deadline da saída indisponível: %w", e)
 	}
 	return nil
 }
 
 func (s *supervisao) lerLinha() (string, error) {
 	data, e := s.reader.ReadSlice('\n')
+	if e != nil {
+		return "", fmt.Errorf("protocolo da origem interrompido ou excessivo: %w", e)
+	}
 	line := string(data)
-	if e != nil || len(line) > maxLinhaProtocolo {
+	if len(line) > maxLinhaProtocolo {
 		return "", errors.New("protocolo da origem interrompido ou excessivo")
 	}
 	return line, nil
@@ -429,7 +437,7 @@ func (s *supervisao) prepararReferencia(prazo time.Duration) (string, Reference,
 		return "", Reference{}, e
 	}
 	if _, e := io.WriteString(s.inWrite, consultaReferencia); e != nil {
-		return "", Reference{}, errors.New("preparação da origem interrompida")
+		return "", Reference{}, fmt.Errorf("preparação da origem interrompida: %w", e)
 	}
 	line, e := s.lerLinha()
 	if e != nil {
@@ -460,7 +468,7 @@ func (s *supervisao) aguardarSessoesEncerradas(prazo time.Duration, exportName, 
 		select {
 		case <-s.ctx.Done():
 			timer.Stop()
-			return errors.New("checagem das sessões interrompida")
+			return fmt.Errorf("checagem das sessões interrompida: %w", context.Cause(s.ctx))
 		case <-timer.C:
 		}
 	}
@@ -468,10 +476,13 @@ func (s *supervisao) aguardarSessoesEncerradas(prazo time.Duration, exportName, 
 
 func (s *supervisao) contarSessoes(consulta string) (uint64, error) {
 	if _, e := io.WriteString(s.inWrite, consulta); e != nil {
-		return 0, errors.New("checagem das sessões interrompida")
+		return 0, fmt.Errorf("checagem das sessões interrompida: %w", e)
 	}
 	blank, e := s.lerLinha()
-	if e != nil || blank != "\n" {
+	if e != nil {
+		return 0, fmt.Errorf("checagem das sessões inválida: %w", e)
+	}
+	if blank != "\n" {
 		return 0, errors.New("checagem das sessões inválida")
 	}
 	count, e := s.lerLinha()
@@ -480,6 +491,8 @@ func (s *supervisao) contarSessoes(consulta string) (uint64, error) {
 	}
 	n, e := strconv.ParseUint(strings.TrimSuffix(count, "\n"), 10, 64)
 	if e != nil {
+		// Sem %w: o erro do ParseUint repete a linha lida da origem, e nada
+		// que a origem mande entra numa mensagem.
 		return 0, errors.New("checagem das sessões inválida")
 	}
 	return n, nil
@@ -489,13 +502,16 @@ func (s *supervisao) contarSessoes(consulta string) (uint64, error) {
 // nada mais saia dele.
 func (s *supervisao) pedirFimDoExportador() error {
 	if _, e := io.WriteString(s.inWrite, "ROLLBACK;\n\\q\n"); e != nil {
-		return errors.New("fechamento do exportador interrompido")
+		return fmt.Errorf("fechamento do exportador interrompido: %w", e)
 	}
 	if e := closePipe(s.inWrite); e != nil {
-		return errors.New("fechamento da entrada do exportador falhou")
+		return fmt.Errorf("fechamento da entrada do exportador falhou: %w", e)
 	}
 	remainder, e := io.ReadAll(io.LimitReader(s.reader, maxLinhaProtocolo+1))
-	if e != nil || len(remainder) != 0 {
+	if e != nil {
+		return fmt.Errorf("fechamento do exportador inválido: %w", e)
+	}
+	if len(remainder) != 0 {
 		return errors.New("fechamento do exportador inválido")
 	}
 	return nil
@@ -505,7 +521,10 @@ func (s *supervisao) pedirFimDoExportador() error {
 // esta execução criou.
 func conferirSaida(output string, created os.FileInfo) error {
 	current, statErr := os.Lstat(output)
-	if statErr != nil || !os.SameFile(created, current) || !current.Mode().IsRegular() || current.Mode().Perm() != 0600 {
+	if statErr != nil {
+		return fmt.Errorf("saída da execução foi substituída ou alterada: %w", statErr)
+	}
+	if !os.SameFile(created, current) || !current.Mode().IsRegular() || current.Mode().Perm() != 0600 {
 		return errors.New("saída da execução foi substituída ou alterada")
 	}
 	return nil
