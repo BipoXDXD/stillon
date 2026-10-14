@@ -9,20 +9,16 @@ import { Titulo } from '@/components/Titulo'
 import { Botao } from '@/components/ui/botao'
 import { useCanais, useResumo } from '@/lib/api/consultas'
 import type { ItemDoResumo } from '@/lib/api/schemas'
-import { estadoExibido, textoDoEstado, type EstadoExibido } from '@/lib/estado'
-import { dataHora, haQuanto, milissegundos, porcento } from '@/lib/format'
+import { contarPorEstado, estadoExibido, textoDoEstado, type EstadoExibido } from '@/lib/estado'
+import { dataHora, haQuanto, milissegundos, plural, porcento } from '@/lib/format'
 import { mapaDeEstados, transicoes } from './transicoes'
 
 function resumoEmTexto(itens: ItemDoResumo[]): string {
-  const conta = new Map<EstadoExibido, number>()
-  for (const it of itens) {
-    const e = estadoExibido(it.state, it.enabled)
-    conta.set(e, (conta.get(e) ?? 0) + 1)
-  }
+  const conta = contarPorEstado(itens)
   const partes: string[] = []
   const add = (e: EstadoExibido, um: string, varios: string) => {
-    const n = conta.get(e) ?? 0
-    if (n) partes.push(`${n} ${n === 1 ? um : varios}`)
+    const n = conta[e]
+    if (n) partes.push(plural(n, um, varios))
   }
   add('up', 'no ar', 'no ar')
   add('degraded', 'degradado', 'degradados')
@@ -96,18 +92,14 @@ function AvisoDeCanais() {
 const ESTADOS: EstadoExibido[] = ['up', 'degraded', 'down', 'unknown', 'pausado']
 
 function ResumoOperacional({ itens }: { itens: ItemDoResumo[] }) {
-  const conta = new Map<EstadoExibido, number>()
-  for (const it of itens) {
-    const estado = estadoExibido(it.state, it.enabled)
-    conta.set(estado, (conta.get(estado) ?? 0) + 1)
-  }
+  const conta = contarPorEstado(itens)
   return (
     <section aria-label="Resumo dos alvos">
       <dl className="resumo-operacional grid grid-cols-2 gap-y-4 py-5 sm:grid-cols-3 xl:grid-cols-5">
         {ESTADOS.map((estado) => (
           <div key={estado} className="px-5 py-1">
             <dt className="text-sm text-suave">{textoDoEstado(estado)}</dt>
-            <dd className="mt-2 text-4xl font-bold tracking-tight tabular-nums">{conta.get(estado) ?? 0}</dd>
+            <dd className="mt-2 text-4xl font-bold tracking-tight tabular-nums">{conta[estado]}</dd>
           </div>
         ))}
       </dl>

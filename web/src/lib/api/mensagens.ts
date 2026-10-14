@@ -1,3 +1,4 @@
+import { plural } from '@/lib/format'
 import { ApiError } from './http'
 
 // Tradução de vocabulário fechado para texto. Nada do que o servidor manda
@@ -31,7 +32,7 @@ function duracao(segundos: number): string {
   if (segundos <= 1) return '1 segundo'
   if (segundos < 60) return `${segundos} segundos`
   const minutos = Math.ceil(segundos / 60)
-  return minutos === 1 ? '1 minuto' : `${minutos} minutos`
+  return plural(minutos, 'minuto', 'minutos')
 }
 
 export function mensagemDe(e: unknown): string {

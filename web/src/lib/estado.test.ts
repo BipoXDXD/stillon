@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { estadoExibido, textoDoEstado } from './estado'
+import { contarPorEstado, estadoExibido, textoDoEstado } from './estado'
 
 describe('estadoExibido', () => {
   it.each([
@@ -27,5 +27,25 @@ describe('textoDoEstado', () => {
     ['pausado', 'Pausado'],
   ] as const)('%s é "%s"', (estado, texto) => {
     expect(textoDoEstado(estado)).toBe(texto)
+  })
+})
+
+describe('contarPorEstado', () => {
+  it('lista vazia conta zero em todo estado', () => {
+    expect(contarPorEstado([])).toEqual({ up: 0, degraded: 0, down: 0, unknown: 0, pausado: 0 })
+  })
+
+  // O inativo conta como pausado, qualquer que seja o último estado.
+  it('conta pelo estado exibido, com o inativo como pausado', () => {
+    expect(
+      contarPorEstado([
+        { state: 'up', enabled: true },
+        { state: 'up', enabled: true },
+        { state: 'down', enabled: true },
+        { state: 'degraded', enabled: true },
+        { state: 'unknown', enabled: true },
+        { state: 'down', enabled: false },
+      ]),
+    ).toEqual({ up: 2, degraded: 1, down: 1, unknown: 1, pausado: 1 })
   })
 })

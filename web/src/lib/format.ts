@@ -14,6 +14,11 @@ export function milissegundos(ms: number | null | undefined): string {
   return ms === null || ms === undefined ? '—' : `${Math.round(ms).toLocaleString('pt-BR')} ms`
 }
 
+// "1 canal", "0 canais", "2 canais": em português, só o 1 é singular.
+export function plural(n: number, um: string, varios: string): string {
+  return `${n} ${n === 1 ? um : varios}`
+}
+
 export function duracao(ms: number): string {
   const min = Math.round(ms / 60_000)
   if (min < 1) return 'menos de 1 min'

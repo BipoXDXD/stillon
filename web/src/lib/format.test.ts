@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { duracao, haQuanto, milissegundos, navegadorDe, pontosDeCodigo, porcento } from './format'
+import { duracao, haQuanto, milissegundos, navegadorDe, plural, pontosDeCodigo, porcento } from './format'
 
 describe('porcento', () => {
   it('trunca em duas casas, nunca arredonda para cima', () => {
@@ -83,5 +83,16 @@ describe('navegadorDe', () => {
     )
     expect(navegadorDe('')).toBe('Navegador desconhecido')
     expect(navegadorDe('curl/8.0')).toBe('curl/8.0')
+  })
+})
+
+describe('plural', () => {
+  it.each([
+    [0, '0 canais'],
+    [1, '1 canal'],
+    [2, '2 canais'],
+    [100, '100 canais'],
+  ])('%i → "%s"', (n, texto) => {
+    expect(plural(n, 'canal', 'canais')).toBe(texto)
   })
 })

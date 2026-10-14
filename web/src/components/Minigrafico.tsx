@@ -1,4 +1,5 @@
 import type { HoraDoSpark } from '@/lib/api/schemas'
+import { plural } from '@/lib/format'
 
 type EstadoDaHora = 'no-ar' | 'degradado' | 'fora'
 
@@ -71,6 +72,6 @@ function resumir(estados: EstadoDaHora[]): string {
   return (Object.keys(NOMES) as EstadoDaHora[])
     .map((e) => [e, estados.filter((x) => x === e).length] as const)
     .filter(([, n]) => n > 0)
-    .map(([e, n]) => `${n} ${NOMES[e][n === 1 ? 0 : 1]}`)
+    .map(([e, n]) => plural(n, ...NOMES[e]))
     .join(', ')
 }
