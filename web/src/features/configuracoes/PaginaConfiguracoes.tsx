@@ -124,6 +124,19 @@ function TrocaDeSenha({ comTotp }: { comTotp: boolean }) {
       className="max-w-md space-y-4"
       onSubmit={f.handleSubmit(async (v) => {
         setErro(null)
+        // comTotp vem do /me em cache: outra aba pode ter ligado o 2FA, e a
+        // troca sem código contaria uma prova errada (R34). Relido, o /me
+        // mostra o campo do código, e o envio fica para o usuário.
+        try {
+          const eu = await qc.fetchQuery({ queryKey: chaves.me, queryFn: api.me, staleTime: 0 })
+          if (eu.totp_enabled && !comTotp) {
+            setErro({ texto: 'A verificação em duas etapas foi ativada. Informe o código.', renovavel: false })
+            return
+          }
+        } catch (err) {
+          setErro({ texto: mensagemDe(err), renovavel: false })
+          return
+        }
         const codigo = comTotp ? v.codigo.replace(/\s+/g, '') : undefined
         try {
           await api.trocarSenha({

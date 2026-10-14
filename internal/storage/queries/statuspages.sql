@@ -62,32 +62,68 @@ SELECT i.target_id, i.display_name, t.enabled, t.interval_sec,
  WHERE i.status_page_id = sqlc.arg(page_id)
  ORDER BY i.position;
 
--- Uptime diário (UTC) dos alvos da página, a partir dos rollups.
+-- A marca d'água da página: a hora mais recente já consolidada entre os alvos
+-- dela, ANTES de before (a hora corrente), como LatestUserRollupBucket. Sem
+-- rollup, a época Unix.
+-- name: LatestPageRollupBucket :one
+SELECT coalesce(max(r.bucket), 'epoch'::timestamptz)::timestamptz
+  FROM status_page_items i
+  CROSS JOIN LATERAL (
+       SELECT bucket FROM check_rollup_1h
+        WHERE target_id = i.target_id AND bucket < sqlc.arg(before)::timestamptz
+        ORDER BY bucket DESC LIMIT 1) r
+ WHERE i.status_page_id = sqlc.arg(page_id);
+
+-- Uptime diário (UTC) dos alvos da página: os rollups de [since, cut) mais
+-- os checks brutos de [cut, until), no corte do pacote rollupcut (o mesmo do
+-- dashboard). Sem os brutos, a página ficava até ~1h15 atrasada e cega à
+-- queda em curso (C4 da revisão).
 -- name: ListPublicDailyUptime :many
-SELECT r.target_id,
-       to_timestamp(floor(extract(epoch FROM r.bucket) / 86400) * 86400)::timestamptz AS day,
-       sum(r.total)::bigint AS total, sum(r.ok)::bigint AS ok
-  FROM check_rollup_1h r
-  JOIN status_page_items i ON i.target_id = r.target_id AND i.status_page_id = sqlc.arg(page_id)
- WHERE r.bucket >= sqlc.arg(since)::timestamptz
+SELECT u.target_id,
+       to_timestamp(floor(extract(epoch FROM u.at) / 86400) * 86400)::timestamptz AS day,
+       sum(u.total)::bigint AS total, sum(u.ok)::bigint AS ok
+  FROM (SELECT r.target_id, r.bucket AS at, r.total, r.ok
+          FROM check_rollup_1h r
+          JOIN status_page_items i ON i.target_id = r.target_id AND i.status_page_id = sqlc.arg(page_id)
+         WHERE r.bucket >= sqlc.arg(since)::timestamptz AND r.bucket < sqlc.arg(cut)::timestamptz
+        UNION ALL
+        SELECT c.target_id, c.checked_at, 1, (c.status <> 'down')::int
+          FROM checks c
+          JOIN status_page_items i ON i.target_id = c.target_id AND i.status_page_id = sqlc.arg(page_id)
+         WHERE c.checked_at >= sqlc.arg(cut)::timestamptz AND c.checked_at < sqlc.arg(until)::timestamptz) u
  GROUP BY 1, 2
  ORDER BY 1, 2;
 
 -- Latência mediana aproximada: média das medianas horárias, ponderada pelos
--- sucessos de cada hora.
+-- sucessos de cada hora. As horas de [cut, until) saem dos checks brutos, com
+-- a mediana de ConsolidateRollups; as anteriores, dos rollups.
 -- name: ListPublicLatency :many
-SELECT r.target_id, (sum(r.p50::bigint * r.ok) / nullif(sum(r.ok), 0))::int AS p50
-  FROM check_rollup_1h r
-  JOIN status_page_items i ON i.target_id = r.target_id AND i.status_page_id = sqlc.arg(page_id)
- WHERE r.bucket >= sqlc.arg(since)::timestamptz AND r.ok > 0
+SELECT h.target_id, (sum(h.p50::bigint * h.ok) / nullif(sum(h.ok), 0))::int AS p50
+  FROM (SELECT r.target_id, r.p50, r.ok
+          FROM check_rollup_1h r
+          JOIN status_page_items i ON i.target_id = r.target_id AND i.status_page_id = sqlc.arg(page_id)
+         WHERE r.bucket >= sqlc.arg(since)::timestamptz AND r.bucket < sqlc.arg(cut)::timestamptz
+        UNION ALL
+        SELECT c.target_id,
+               percentile_disc(0.50) WITHIN GROUP (ORDER BY c.latency_ms) FILTER (WHERE c.status <> 'down'),
+               (count(*) FILTER (WHERE c.status <> 'down'))::int
+          FROM checks c
+          JOIN status_page_items i ON i.target_id = c.target_id AND i.status_page_id = sqlc.arg(page_id)
+         WHERE c.checked_at >= greatest(sqlc.arg(cut)::timestamptz, sqlc.arg(since)::timestamptz)
+           AND c.checked_at < sqlc.arg(until)::timestamptz
+         GROUP BY c.target_id, floor(extract(epoch FROM c.checked_at) / 3600)) h
+ WHERE h.ok > 0
  GROUP BY 1;
 
--- Incidentes resolvidos dos alvos da página: só o nome de exibição, o início
--- e o fim. A causa não sai (spec §5.6).
+-- Incidentes resolvidos dos alvos da página que tocam a janela [since,
+-- agora): resolvidos depois de since, mesmo que tenham começado antes. Filtrar
+-- pelo início deixava sem explicação o dia vermelho da queda que atravessa o
+-- começo da barra (C9). Só o nome de exibição, o início e o fim; a causa não
+-- sai (spec §5.6).
 -- name: ListPublicIncidents :many
 SELECT i.display_name, x.started_at, x.resolved_at::timestamptz AS resolved_at
   FROM incidents x
   JOIN status_page_items i ON i.target_id = x.target_id AND i.status_page_id = sqlc.arg(page_id)
- WHERE x.resolved_at IS NOT NULL AND x.started_at >= sqlc.arg(since)::timestamptz
+ WHERE x.resolved_at IS NOT NULL AND x.resolved_at >= sqlc.arg(since)::timestamptz
  ORDER BY x.started_at DESC
  LIMIT sqlc.arg(max_rows)::int;

@@ -161,6 +161,10 @@ func run(ctx context.Context, cfg *config.Config) error {
 		// deixa --role=api e --role=prober separados sem perder nada.
 		disp := notify.NewDispatcher(pool, box, clk, reg, notificadores(cfg)...)
 		g.Go(func() error { return disp.Run(gctx) })
+		// Os lembretes de incidente aberto entram na mesma outbox, e o
+		// dispatcher os entrega como qualquer outro aviso.
+		lembretes := notify.NewReminders(pool, clk, notify.DefaultPolicy())
+		g.Go(func() error { return lembretes.Run(gctx) })
 		slog.Info("sondador ativo", "max_em_voo", prober.MaxInFlight, "email", cfg.EmailEnabled())
 	}
 

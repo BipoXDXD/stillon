@@ -91,7 +91,10 @@ na VPS, siga a configuração de e-mail do [runbook de produção](docs/deploy/v
 - **Incidentes** abrem depois de falhas seguidas e fecham depois de sucessos seguidos, com
   histórico por alvo.
 - **Notificações** pelo Discord e por e-mail (Resend), com entrega confiável: saem de uma fila
-  no próprio Postgres e sobrevivem a um restart.
+  no próprio Postgres e sobrevivem a um restart. Enquanto o incidente segue aberto e sem
+  reconhecimento, cada canal recebe lembretes (Discord a cada 30 min e e-mail a cada 2 h nas
+  primeiras 6 h; depois, a cada 6 h e 24 h). Reconhecer no painel interrompe os lembretes; o
+  aviso de que o alvo voltou sai do mesmo jeito.
 - **Página de status pública** em `/p/{slug}`, com os alvos que você escolher, uptime de 90 dias
   e os incidentes recentes.
 - **Painel** com contagens por estado, cartões de latência/uptime, avisos de canais,

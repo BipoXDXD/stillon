@@ -160,7 +160,7 @@ export function PaginaIncidentes() {
             <>
               {itens.some((i) => !i.resolved_at && !i.acknowledged_at) && (
                 <p id={ID_AJUDA_ACK} className="text-sm text-suave">
-                  Reconhecer marca que você está ciente; não resolve o incidente.
+                  Reconhecer interrompe os lembretes; não resolve o incidente.
                 </p>
               )}
               <ul className="space-y-3">

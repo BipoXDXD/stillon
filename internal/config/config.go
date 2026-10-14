@@ -70,6 +70,11 @@ func demoAntiga(b64 string) []byte {
 // HMAC-SHA256).
 const keyLen = 32
 
+// shutdownGrace é o prazo que o app se dá para encerrar depois do SIGTERM
+// (spec §6.2). O stop_grace_period do app no compose.prod.yaml tem de ficar
+// acima dele (TestComposeProdGracePeriodCoversTheAppShutdown).
+const shutdownGrace = 15 * time.Second
+
 type Config struct {
 	Role           Role
 	HTTPAddr       string
@@ -295,7 +300,7 @@ func Load(getenv func(string) string) (*Config, error) {
 		IPHashKey:           key("IP_HASH_KEY"),
 		TrustedProxies:      proxies("TRUSTED_PROXIES"),
 		ClientIPHeader:      clientIPHeader("CLIENT_IP_HEADER"),
-		ShutdownGrace:       15 * time.Second,
+		ShutdownGrace:       shutdownGrace,
 		Argon2MaxConcurrent: argon2("ARGON2_MAX_CONCURRENT"),
 		ResendAPIKey:        strings.TrimSpace(getenv("RESEND_API_KEY")),
 		EmailFrom:           strings.TrimSpace(getenv("EMAIL_FROM")),

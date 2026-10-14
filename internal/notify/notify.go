@@ -37,11 +37,15 @@ const (
 // exige isso, porque recusa a mesma Idempotency-Key com outro corpo.
 type Event struct {
 	NotificationID uuid.UUID
-	Kind           string // incident.EventOpened ou incident.EventResolved
+	Kind           string // incident.EventOpened, EventReminder ou EventResolved
 	TargetName     string
 	StartedAt      time.Time
 	ResolvedAt     time.Time // zero enquanto o incidente está aberto
-	Cause          string
+	// QueuedAt é quando a notificação entrou na outbox (created_at). O
+	// lembrete diz há quanto tempo o alvo caiu contando até aqui, e não até
+	// o envio, para a retentativa repetir o texto.
+	QueuedAt time.Time
+	Cause    string
 }
 
 // Notifier é a interface da spec §8. dest é a URL do webhook ou o endereço

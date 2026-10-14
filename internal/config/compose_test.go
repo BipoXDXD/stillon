@@ -6,6 +6,7 @@ import (
 	"os"
 	"regexp"
 	"testing"
+	"time"
 )
 
 // A recusa das chaves de demonstração (D14 do Plano 7) só protege se as
@@ -92,13 +93,19 @@ func TestComposePublicBaseURLIsLocal(t *testing.T) {
 // "  <nome>:" até o próximo serviço ou a próxima chave de topo.
 func servicoDoCompose(t *testing.T, nome string) string {
 	t.Helper()
-	compose, err := os.ReadFile("../../compose.yaml")
+	return servicoDe(t, "../../compose.yaml", nome)
+}
+
+// servicoDe devolve o bloco de um serviço de um arquivo compose qualquer.
+func servicoDe(t *testing.T, arquivo, nome string) string {
+	t.Helper()
+	compose, err := os.ReadFile(arquivo)
 	if err != nil {
 		t.Fatal(err)
 	}
 	m := regexp.MustCompile(`(?m)^  ` + nome + `:\n((?:(?:    .*|[ \t]*)\n)*)`).FindSubmatch(compose)
 	if m == nil {
-		t.Fatalf("serviço %s ausente do compose.yaml", nome)
+		t.Fatalf("serviço %s ausente do %s", nome, arquivo)
 	}
 	return string(m[1])
 }
@@ -139,5 +146,25 @@ func TestComposeHeaderSaysItIsLocalOnly(t *testing.T) {
 		if !bytes.Contains(cabecalho, []byte(frase)) {
 			t.Errorf("o cabeçalho do compose.yaml não diz %q", frase)
 		}
+	}
+}
+
+// C1 da revisão de 2026-10-14: sem stop_grace_period, o Docker manda SIGKILL
+// 10 s depois do SIGTERM, e o app planeja até shutdownGrace (15 s) para
+// terminar as sondas em voo e o lote do dispatcher. No `up` de um deploy, o
+// check em gravação se perdia e um aviso já entregue, mas ainda não marcado,
+// saía de novo depois do lease.
+func TestComposeProdGracePeriodCoversTheAppShutdown(t *testing.T) {
+	app := servicoDe(t, "../../deploy/vps/compose.prod.yaml", "app")
+	m := regexp.MustCompile(`(?m)^    stop_grace_period: (\S+)$`).FindStringSubmatch(app)
+	if m == nil {
+		t.Fatalf("serviço app do compose.prod.yaml sem stop_grace_period: o Docker o mata aos 10 s, antes dos %v de shutdown do app", shutdownGrace)
+	}
+	grace, err := time.ParseDuration(m[1])
+	if err != nil {
+		t.Fatalf("stop_grace_period %q do app no compose.prod.yaml: %v", m[1], err)
+	}
+	if grace <= shutdownGrace {
+		t.Errorf("stop_grace_period do app no compose.prod.yaml é %v: precisa passar dos %v de shutdown do app", grace, shutdownGrace)
 	}
 }

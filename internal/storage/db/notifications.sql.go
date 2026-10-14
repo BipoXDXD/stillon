@@ -23,12 +23,12 @@ WITH claimed AS (
             ORDER BY next_attempt_at
             LIMIT $3::int
               FOR UPDATE SKIP LOCKED)
-    RETURNING n.id, n.incident_id, n.channel_id, n.event, n.attempts, n.created_at
+    RETURNING n.id, n.incident_id, n.channel_id, n.event, n.attempts, n.created_at, n.target_name
 )
 SELECT cl.id, cl.event, cl.attempts, cl.created_at,
        c.id AS channel_id, c.user_id, c.kind, c.config_enc, c.enabled, c.verified_at,
-       i.id AS incident_id, i.started_at, i.resolved_at, i.cause,
-       t.name AS target_name
+       i.id AS incident_id, i.started_at, i.resolved_at, i.ack_at, i.cause,
+       COALESCE(cl.target_name, t.name)::text AS target_name
   FROM claimed cl
   JOIN notif_channels c ON c.id = cl.channel_id
   JOIN incidents i ON i.id = cl.incident_id
@@ -55,6 +55,7 @@ type ClaimDueNotificationsRow struct {
 	IncidentID uuid.UUID
 	StartedAt  time.Time
 	ResolvedAt *time.Time
+	AckAt      *time.Time
 	Cause      string
 	TargetName string
 }
@@ -87,6 +88,7 @@ func (q *Queries) ClaimDueNotifications(ctx context.Context, arg ClaimDueNotific
 			&i.IncidentID,
 			&i.StartedAt,
 			&i.ResolvedAt,
+			&i.AckAt,
 			&i.Cause,
 			&i.TargetName,
 		); err != nil {
@@ -116,6 +118,38 @@ func (q *Queries) CloseNotification(ctx context.Context, arg CloseNotificationPa
 	return err
 }
 
+const enqueueReminder = `-- name: EnqueueReminder :execrows
+INSERT INTO notifications (id, incident_id, channel_id, event, seq, next_attempt_at, created_at, target_name)
+VALUES ($1, $2, $3, 'reminder', $4,
+        $5::timestamptz, $5::timestamptz,
+        (SELECT t.name FROM incidents i JOIN targets t ON t.id = i.target_id WHERE i.id = $2))
+ON CONFLICT (incident_id, channel_id, event, seq) DO NOTHING
+`
+
+type EnqueueReminderParams struct {
+	ID         uuid.UUID
+	IncidentID uuid.UUID
+	ChannelID  uuid.UUID
+	Seq        int32
+	Now        time.Time
+}
+
+// O UNIQUE (incident_id, channel_id, event, seq) faz de dois sondadores que
+// calculam o mesmo lembrete uma inserção só.
+func (q *Queries) EnqueueReminder(ctx context.Context, arg EnqueueReminderParams) (int64, error) {
+	result, err := q.db.Exec(ctx, enqueueReminder,
+		arg.ID,
+		arg.IncidentID,
+		arg.ChannelID,
+		arg.Seq,
+		arg.Now,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const insertAudit = `-- name: InsertAudit :exec
 INSERT INTO audit_log (id, user_id, action, entity, entity_id, at) VALUES ($1, $2, $3, $4, $5, $6)
 `
@@ -141,6 +175,72 @@ func (q *Queries) InsertAudit(ctx context.Context, arg InsertAuditParams) error 
 		arg.At,
 	)
 	return err
+}
+
+const listReminderCandidates = `-- name: ListReminderCandidates :many
+SELECT n.incident_id, n.channel_id, c.kind, i.started_at,
+       max(n.seq)::int AS last_seq,
+       max(n.created_at)::timestamptz AS base_at
+  FROM notifications n
+  JOIN incidents i ON i.id = n.incident_id
+  JOIN notif_channels c ON c.id = n.channel_id
+ WHERE n.event IN ('opened', 'reminder')
+   AND i.resolved_at IS NULL AND i.ack_at IS NULL AND i.open_notified_at IS NOT NULL
+   AND c.enabled AND c.verified_at IS NOT NULL
+   AND (n.incident_id, n.channel_id) > ($1::uuid, $2::uuid)
+ GROUP BY n.incident_id, n.channel_id, c.kind, i.started_at
+ ORDER BY n.incident_id, n.channel_id
+ LIMIT $3::int
+`
+
+type ListReminderCandidatesParams struct {
+	AfterIncident uuid.UUID
+	AfterChannel  uuid.UUID
+	MaxRows       int32
+}
+
+type ListReminderCandidatesRow struct {
+	IncidentID uuid.UUID
+	ChannelID  uuid.UUID
+	Kind       string
+	StartedAt  time.Time
+	LastSeq    int32
+	BaseAt     time.Time
+}
+
+// Lembretes de incidente aberto (migration 00012). Rodam só sob InProberTx.
+// Um par (incidente, canal) é candidato enquanto o incidente segue aberto,
+// sem ack e com a abertura avisada, e o canal está habilitado e verificado
+// agora. Só pares que já receberam a abertura entram: o fan-out continua
+// acontecendo só na transição. base_at é o enfileiramento do aviso mais
+// recente entre abertura e lembretes; last_seq, o maior seq de lembrete
+// (0 sem lembrete). A paginação é por chave, e quem chama segue até a
+// página vir menor que max_rows.
+func (q *Queries) ListReminderCandidates(ctx context.Context, arg ListReminderCandidatesParams) ([]ListReminderCandidatesRow, error) {
+	rows, err := q.db.Query(ctx, listReminderCandidates, arg.AfterIncident, arg.AfterChannel, arg.MaxRows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListReminderCandidatesRow
+	for rows.Next() {
+		var i ListReminderCandidatesRow
+		if err := rows.Scan(
+			&i.IncidentID,
+			&i.ChannelID,
+			&i.Kind,
+			&i.StartedAt,
+			&i.LastSeq,
+			&i.BaseAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const markChannelFailure = `-- name: MarkChannelFailure :exec

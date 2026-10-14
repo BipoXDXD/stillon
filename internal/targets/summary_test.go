@@ -170,6 +170,31 @@ func TestSummaryUptimeSeesAnOngoingOutage(t *testing.T) {
 	}
 }
 
+// Um rollup gravado no futuro (relógio adiantado) não vira a marca d'água:
+// com ele, o corte ia para a hora corrente e as horas fechadas ainda não
+// consolidadas sumiam do spark e do uptime (C8 da revisão).
+//
+// Relógio em 12:20; rollups às 09:00 (60 de 60) e às 13:00 (futuro). O
+// check das 11:30 foi down: o spark tem 09:00 e 11:00, e o uptime é 60/61.
+func TestSummaryIgnoresRollupsFromTheFuture(t *testing.T) {
+	a := novoAmbiente(t)
+	h := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
+	a.clk.Advance(h.Add(20 * time.Minute).Sub(a.clk.Now()))
+	dono := a.usuario(t)
+	alvo := a.alvo(t, dono)
+	a.gravarRollup(t, alvo, h.Add(-3*time.Hour), 60, 60, ptr(int32(100)))
+	a.gravarRollup(t, alvo, h.Add(time.Hour), 60, 60, ptr(int32(100)))
+	a.gravarCheck(t, alvo, h.Add(-30*time.Minute), "down", 5000)
+
+	s := resumoDe(t, a, dono)[alvo]
+	if len(s.Spark) != 2 || !s.Spark[0].Bucket.Equal(h.Add(-3*time.Hour)) || !s.Spark[1].Bucket.Equal(h.Add(-time.Hour)) {
+		t.Fatalf("spark = %+v; queria as horas 09:00 (rollup) e 11:00 (bruto)", s.Spark)
+	}
+	if s.Uptime24h == nil || *s.Uptime24h != 60.0/61.0 {
+		t.Errorf("uptime_24h = %v, queria 60/61", s.Uptime24h)
+	}
+}
+
 // Alvo sem check: tudo nulo e spark vazio, não nil. Alvo desativado com check
 // recente: unknown, mas o último check continua visível.
 func TestSummaryNullables(t *testing.T) {
