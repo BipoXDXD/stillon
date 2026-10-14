@@ -30,8 +30,10 @@ export function Minigrafico({ horas, agora }: { horas: HoraDoSpark[]; agora: Dat
     return i < 0 || i >= 24 || h.total === 0 ? [] : [{ h, x: i * PASSO + 0.5, estado: estadoDaHora(h) }]
   })
   return (
-    <svg
-      role="img"
+    // SVG desenhado aqui não vira <img>: role="img" com aria-label é o
+    // padrão ARIA para dar nome a um SVG inline.
+    // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role
+    <svg role="img"
       aria-label={`Últimas 24 h: ${resumir(desenhadas.map((d) => d.estado))}`}
       width={LARGURA}
       height={ALTURA}

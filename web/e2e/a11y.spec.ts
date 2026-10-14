@@ -413,8 +413,8 @@ test('aviso de HTTPS fica visível fora da lateral no desktop e mantém login e 
 // hit-test (elementFromPoint), não pela caixa: o link de texto cresce por um
 // pseudo-elemento, sem mudar o layout. Sabotagem: tirar a classe
 // alvo-de-toque de um link, ou o min-h-11 do seletor de janela.
-async function pontosForaDoAlvo(alvo: Locator): Promise<string[]> {
-  return alvo.evaluate((e) => {
+async function pontosForaDoAlvo(controle: Locator): Promise<string[]> {
+  return controle.evaluate((e) => {
     e.scrollIntoView({ block: 'center', inline: 'center' })
     const r = e.getBoundingClientRect()
     const cx = r.left + r.width / 2
@@ -437,9 +437,9 @@ for (const largura of [400, 1280]) {
     await page.setViewportSize({ width: largura, height: 900 })
     await imitarApi(page)
     const conferir = async (alvos: [string, Locator][]) => {
-      for (const [nome, alvo] of alvos) {
-        await expect(alvo, nome).toBeVisible()
-        expect(await pontosForaDoAlvo(alvo), `${largura} px: ${nome}`).toEqual([])
+      for (const [nome, controle] of alvos) {
+        await expect(controle, nome).toBeVisible()
+        expect(await pontosForaDoAlvo(controle), `${largura} px: ${nome}`).toEqual([])
       }
     }
     await page.goto('/')
