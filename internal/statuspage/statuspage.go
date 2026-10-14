@@ -135,7 +135,9 @@ func texto(s string, max int) string {
 		return ReasonRequired
 	case utf8.RuneCountInString(s) > max:
 		return ReasonTooLong
-	case strings.ContainsFunc(s, unicode.IsControl):
+	// Controle (Cc) e formatação (Cf): a inversão bidi e o espaço de largura
+	// zero fariam o título ou o nome mentir na página pública.
+	case strings.ContainsFunc(s, func(r rune) bool { return unicode.IsControl(r) || unicode.Is(unicode.Cf, r) }):
 		return ReasonInvalid
 	}
 	return ""
