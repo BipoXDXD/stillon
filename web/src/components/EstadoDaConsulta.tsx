@@ -30,12 +30,15 @@ export function Esqueleto({ linhas = 3 }: { linhas?: number }) {
 // a resposta certa, e não uma falha de passagem.
 export function EstadoDaConsulta<T>({
   consulta,
+  esqueleto,
   children,
 }: {
   consulta: Pick<UseQueryResult<T>, 'data' | 'error' | 'isPending' | 'refetch' | 'dataUpdatedAt'>
+  // O esqueleto que imita a tela; sem ele, blocos genéricos.
+  esqueleto?: ReactNode
   children: (dados: T) => ReactNode
 }) {
-  if (consulta.isPending) return <Esqueleto />
+  if (consulta.isPending) return esqueleto ?? <Esqueleto />
   const tentar = (
     <Botao tipo="secundario" tamanho="pequeno" onClick={() => void consulta.refetch()}>
       Tentar de novo

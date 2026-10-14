@@ -19,6 +19,7 @@ const ARQUIVOS_NO_SISTEMA = [
   'src/components/ui/campo.tsx',
   'src/components/ui/controle-segmentado.tsx',
   'src/components/ui/dialogo.tsx',
+  'src/features/painel/EsqueletoDoPainel.tsx',
 ]
 
 const ESCALA = new Set(['0', 'auto', '1', '2', '3', '4', '6', '8', '12', '16'])
