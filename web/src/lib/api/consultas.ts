@@ -58,9 +58,15 @@ export function useIncidentes(filtro: 'open' | 'resolved' | 'all', alvo?: string
       }),
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (ultima) => ultima.next_cursor,
-    refetchInterval: 30_000,
+    // O poll de uma infinite query refaz todas as páginas carregadas, em série,
+    // e gasta o rate limit por usuário. O maxPages não serve: exige lista
+    // bidirecional, e o cursor só anda para frente. Então o poll só roda com
+    // uma página; com mais, a lista se atualiza no foco e no reconhecer.
+    refetchInterval: (q) => ((q.state.data?.pages.length ?? 0) > 1 ? false : INTERVALO_DOS_INCIDENTES_MS),
   })
 }
+
+const INTERVALO_DOS_INCIDENTES_MS = 30_000
 
 // O contador de incidentes abertos da navegação (spec do Plano 6 §4.9): uma
 // página de até 100 (o teto da rota); mais que isso vira "99+". A chave fica

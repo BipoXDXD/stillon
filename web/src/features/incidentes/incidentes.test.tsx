@@ -1,6 +1,6 @@
-import { screen, waitFor, within } from '@testing-library/react'
+import { act, screen, waitFor, within } from '@testing-library/react'
 import { http } from 'msw'
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 import { incidente } from '@/test/fixtures'
 import { renderizarPainel } from '@/test/renderizar'
 import { servidor } from '@/test/setup'
@@ -46,6 +46,66 @@ describe('incidentes', () => {
     await r.usuario.click(screen.getByRole('button', { name: 'Carregar mais' }))
     await waitFor(() => expect(itens()).toHaveLength(60))
     expect(screen.queryByRole('button', { name: 'Carregar mais' })).not.toBeInTheDocument()
+  })
+
+  // E10 da revisão de 2026-10-14: o poll de 30 s de uma infinite query refaz
+  // TODAS as páginas carregadas, em série, e gasta o rate limit por usuário.
+  // O maxPages do TanStack Query v5 exige lista bidirecional (o cursor daqui
+  // só anda para frente) e descartaria as páginas de cima. Então o poll só
+  // roda com uma página; com mais, a lista se atualiza no foco e no
+  // reconhecer. Sabotagens: voltar a "refetchInterval: 30_000" → 2 GETs no
+  // tique; "refetchInterval: false" → nenhum GET com uma página só.
+  describe('poll da lista de incidentes', () => {
+    // Só o setInterval é falso: o MSW e o React seguem no relógio real.
+    beforeEach(() => vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] }))
+    afterEach(() => vi.useRealTimers())
+
+    // Os GETs da lista da página (sem limit), não os do contador da navegação.
+    function contarGetsDaLista() {
+      const contagem = { valor: 0 }
+      const ouvir = ({ request }: { request: Request }) => {
+        const url = new URL(request.url)
+        if (request.method === 'GET' && url.pathname.endsWith('/incidents') && !url.searchParams.has('limit')) {
+          contagem.valor++
+        }
+      }
+      servidor.events.on('request:start', ouvir)
+      onTestFinished(() => servidor.events.removeListener('request:start', ouvir))
+      return contagem
+    }
+
+    async function listaCom(quantos: number) {
+      const r = await renderizarPainel('/incidents?status=all')
+      r.falsa.estado.incidentes = Array.from({ length: quantos }, (_, i) =>
+        incidente({ id: `inc-${String(i).padStart(2, '0')}`, target_name: `Alvo ${i}` }),
+      )
+      await r.cliente.refetchQueries()
+      return r
+    }
+    const itens = () => screen.getAllByRole('listitem').filter((li) => li.textContent?.includes('Tempo esgotado'))
+
+    it('com uma página, o poll de 30 s refaz essa página', async () => {
+      await listaCom(10)
+      await waitFor(() => expect(itens()).toHaveLength(10))
+      const gets = contarGetsDaLista()
+      act(() => vi.advanceTimersByTime(30_000))
+      // O waitFor sonda com setInterval, que aqui é falso: espera real.
+      await new Promise((res) => setTimeout(res, 50))
+      expect(gets.valor).toBe(1)
+    })
+
+    it('com mais de uma página carregada, o poll não refaz a lista inteira', async () => {
+      const r = await listaCom(60)
+      await waitFor(() => expect(itens()).toHaveLength(50))
+      await r.usuario.click(screen.getByRole('button', { name: 'Carregar mais' }))
+      await waitFor(() => expect(itens()).toHaveLength(60))
+      const gets = contarGetsDaLista()
+      act(() => vi.advanceTimersByTime(30_000))
+      // Um tique real para um GET agendado chegar ao MSW, se fosse sair.
+      await new Promise((res) => setTimeout(res, 50))
+      expect(gets.valor).toBe(0)
+      expect(itens()).toHaveLength(60)
+    })
   })
 
   // D17: uma página seguinte (ou um poll) que falha não apaga o que já está na tela.
