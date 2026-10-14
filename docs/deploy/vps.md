@@ -2091,7 +2091,8 @@ tail -n 30 /opt/stillon/entrada.log
 ```
 
 O `versao` é o SHA que está no ar; o `entrada.log` é o log de cada deploy e backup, o mesmo que o
-job mostra, gravado na VPS. Os dois são `0644`: leia-os **sem** `sudo`. O log tem um teto de
+job mostra, gravado na VPS, mais o log do app de um deploy que não ficou saudável, que **só** ele
+tem (o log do job é público). Os dois são `0644`: leia-os **sem** `sudo`. O log tem um teto de
 ~1 MiB: passado dele, a entrada o renomeia para `entrada.log.1` (no lugar do `.1` que houver) e
 começa um novo, e o `entrada.log.1` guarda a rodada anterior do log. Cada deploy e backup começa
 com a linha `== <UTC> início: <pedido>` e, mesmo que o SSH tenha caído, a entrada grava **por
@@ -2153,9 +2154,11 @@ anterior para onde voltar (a mensagem é
 o Caddy e o banco ficam de pé. Quase sempre é o `.env` (uma variável mal preenchida no 3.4) ou o
 DNS. O contêiner do app é **removido**, e não só parado: um app que morre no boot fica em laço de
 reinício (`restart: unless-stopped`), e só a remoção garante que ele não volta. Por isso o
-`logs app` do compose fica vazio: as últimas 100 linhas do log do app estão no log do job e no
-`entrada.log`, logo depois de `a pilha não ficou saudável em 90 s; o log do app:`. Veja por que o app
-não subiu:
+`logs app` do compose fica vazio: as últimas 100 linhas do log do app estão **só** no
+`entrada.log`, entre as linhas `== log do app (últimas 100 linhas), só neste arquivo` e
+`== fim do log do app`. O log do job não as traz, porque o repositório é público e o log do app pode
+carregar dado dos alvos ou da configuração: ele diz só `a pilha não ficou saudável em 90 s; o log
+do app ficou só no /opt/stillon/entrada.log (…)`. Veja por que o app não subiu:
 
 **1/1 · VPS (sessão `ssh stillon`).** Rode só este e espere a saída:
 
@@ -3706,8 +3709,9 @@ vc logs -f --tail 50 app
 ```
 
 O vigia: `sudo journalctl -u stillon-vigia.service --since today`. O deploy e o backup: o log
-do próprio job no Actions (o script manda o log dele pela saída de erro, que o job mostra) e,
-na VPS, o mesmo log em `/opt/stillon/entrada.log`, de todos os deploys e backups (`0644`, lido
+do próprio job no Actions (o script manda o log dele pela saída de erro, que o job mostra; o log
+do app de um deploy doente fica de fora, porque o log do job é público) e, na VPS, o mesmo log,
+com o do app, em `/opt/stillon/entrada.log`, de todos os deploys e backups (`0644`, lido
 sem `sudo`; acima de ~1 MiB ele vira `entrada.log.1`, que guarda a rodada anterior do log, e
 recomeça): `tail -n 50 /opt/stillon/entrada.log`. É pela última linha
 `== <UTC> fim: <pedido>: código N (<sentido>)`, que a entrada grava sempre por último, que você
@@ -3840,7 +3844,7 @@ trava (a primeira linha de código 2 da tabela e o 1 da trava ocupada) não cheg
 | 2 | `a imagem passa de 2147483648 bytes` | a imagem normal tem dezenas de MB: o `publish` produziu algo errado; não force, investigue |
 | 3 | `stillon:<sha> já existe com outra imagem (…)` | só com o SHA no ar ou o anterior, depois de um `v*`: **rodar de novo não resolve**; veja "Voltar uma versão" acima |
 | 3 | `a imagem carregada é …, e o deploy pediu …`, `o index.json do tar não é uma imagem só, sem nome, com o manifesto …`, `o tar não trouxe exatamente uma imagem sem nome`, `o que chegou não é um tar legível`, ou outra que começa com `o tar` (layout OCI, membro repetido ou estranho; as duas de disco cheio são código 1) | rodar de novo **uma vez**; se repetir, a imagem mudou no caminho (ou o formato do `crane` mudou): não force, investigue |
-| 4 | `rollback feito: <anterior> de volta no ar; <sha> não subiu` | a anterior já voltou: o log do job traz o log do app; corrija e publique outra versão |
+| 4 | `rollback feito: <anterior> de volta no ar; <sha> não subiu` | a anterior já voltou: o log do app está só na VPS (`tail -n 100 /opt/stillon/entrada.log`), fora do log do job, que é público; corrija e publique outra versão |
 | 4 | `primeiro deploy e sem versão anterior: o app ficou parado (e removido)` | **o site está fora** (não há anterior): passo 4.8, "Se o primeiro deploy sair com 4" |
 | 1 | `primeiro deploy e sem versão anterior, e o app não saiu do ar depois de 3 tentativas: veja docs/deploy/vps.md` | **o site está fora**, e o app doente segue de pé: passo 4.8, "Se o primeiro deploy sair com 4" |
 | 1 | `o rollback para <anterior> também não ficou saudável: veja docs/deploy/vps.md` | **o site está fora**: "O rollback também não ficou saudável", logo depois desta seção |
@@ -4435,7 +4439,7 @@ escolhe o ID. (O backup pela chave só entrega o dump **cifrado**: sem a sua cha
 7. **O deploy de um SHA conhecido**: o último verde da `main` que **você** conferiu (passo 4.8,
    item 1), pelo workflow. Sem imagem local nenhuma, não há o que recusar. Se o deploy sair com 1
    (`o rollback para … também não ficou saudável`), é porque a versão anterior não existe mais
-   (o item 3 a apagou): olhe o log do job como no 4.8 e corrija.
+   (o item 3 a apagou): olhe o `entrada.log` como no 4.8 e corrija.
 8. **Os dados:** se o item 2 mostrou deploy de outra pessoa, o banco pode ter sido mudado por
    ela. Restaure uma cópia do backup **anterior à data anotada** no seu computador (passo 7.2) e
    compare no painel dela com a produção (usuários, alvos, canais). Se algo foi mexido, restaure

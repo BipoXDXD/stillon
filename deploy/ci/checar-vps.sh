@@ -179,8 +179,20 @@ oci_tar() {
     echo "$m"
 }
 # Imagens diferentes do mesmo app (um LABEL a mais), e uma que nunca fica
-# saudável (o boot recusa ARGON2_MAX_CONCURRENT fora de 1–64; o compose não
-# define essa variável, e o ENV da imagem vale).
+# saudável (o boot recusa ARGON2_MAX_CONCURRENT que não é inteiro de 1 a 64,
+# e repete o valor no log; o compose não define essa variável, e o ENV da
+# imagem vale). O valor é um canário: o log do app doente não pode chegar à
+# saída de erro da entrada, que o job do Actions (público) mostra.
+CANARIO=CANARY-$(python3 -c 'import uuid; print(uuid.uuid4())')
+# sem_canario <caso>: o log do app ficou fora da saída do SSH (as duas fds) e
+# dentro do entrada.log, que diz onde lê-lo.
+sem_canario() {
+    ! grep -qF "$CANARIO" "$TARS/erro" "$TARS/saida" ||
+        falhar "$1: o log do app (o canário) apareceu na saída do SSH, que o job público mostra"
+    grep -qF "$CANARIO" "$DIR/entrada.log" || falhar "$1: o log do app (o canário) não ficou no entrada.log"
+    grep -qF "tail -n 100 $DIR/entrada.log" "$TARS/erro" ||
+        falhar "$1: a saída do SSH não diz onde ler o log do app (tail -n 100 $DIR/entrada.log)"
+}
 fonte() {
     local nome=$1 extra=$2
     printf 'FROM %s\n%s\n' "$IMAGEM_APP" "$extra" | docker build -q -t "$REPO_TESTE-fonte:$nome" - >/dev/null
@@ -231,6 +243,19 @@ caddy_img=$(q '.services.caddy.image')
 # dividida com os outros projetos.
 [ "$(q '.services.caddy.cap_drop // [] | index("NET_RAW") != null')" = true ] ||
     falhar "o caddy não tira NET_RAW (cap_drop): forjaria ARP na rede edge"
+# O db sem as capacidades padrão: o entrypoint do Postgres só precisa acertar
+# dono e modo do volume e trocar para o usuário postgres. O app, que não
+# escreve em disco, com o sistema de arquivos só leitura. O docker inspect,
+# mais abaixo, confere que os contêineres de pé têm o mesmo.
+DB_CAPS=CHOWN,DAC_OVERRIDE,FOWNER,SETGID,SETUID
+for s in caddy app db; do
+    [ "$(q ".services.$s.security_opt // [] | index(\"no-new-privileges:true\") != null")" = true ] ||
+        falhar "$s sem security_opt no-new-privileges:true"
+done
+[ "$(q '.services.db.cap_drop // [] | join(",")')" = ALL ] || falhar "o db não tira todas as capacidades (cap_drop: [ALL])"
+[ "$(q '.services.db.cap_add // [] | sort | join(",")')" = "$DB_CAPS" ] ||
+    falhar "cap_add do db é '$(q '.services.db.cap_add // [] | sort | join(",")')', queria $DB_CAPS"
+[ "$(q '.services.app.read_only // false')" = true ] || falhar "o app sem read_only: true"
 for s in caddy app db; do
     [ "$(q ".services.$s.restart")" = unless-stopped ] || falhar "$s sem restart: unless-stopped"
     [ "$(q ".services.$s.mem_limit // empty")" != "" ] || falhar "$s sem mem_limit"
@@ -325,7 +350,7 @@ cliente_ip=$(docker network inspect -f '{{(index .IPAM.Config 0).Gateway}}' edge
 [ -n "$cliente_ip" ] || { echo "FALHOU: a rede edge não informou o gateway" >&2; exit 1; }
 
 ID_A=$(fonte a 'LABEL stillon.teste=a')
-ID_DOENTE=$(fonte doente 'ENV ARGON2_MAX_CONCURRENT=999')
+ID_DOENTE=$(fonte doente "ENV ARGON2_MAX_CONCURRENT=$CANARIO")
 SHA_A=$(sha_de a)
 SHA_DOENTE=$(sha_de doente)
 
@@ -337,6 +362,7 @@ c=$(entrada "deploy $SHA_DOENTE $ID_DOENTE" < "$TARS/doente.tar")
 grep -q 'sem versão anterior' "$TARS/erro" || falhar "primeiro deploy doente não disse que não havia versão anterior"
 [ "$(versao)" = - ] || falhar "primeiro deploy doente gravou a versão $(versao)"
 [ -z "$(apps)" ] || falhar "primeiro deploy doente deixou contêiner do app: $(estado)"
+sem_canario "primeiro deploy doente"
 
 # 2b. O deploy saudável.
 c=$(entrada "deploy $SHA_A $ID_A" < "$TARS/a.tar")
@@ -361,6 +387,18 @@ for s in caddy app db; do
     [ "$(docker inspect -f '{{json .HostConfig.PortBindings}}' "$(dc ps -q "$s")")" = "{}" ] ||
         falhar "$s tem porta publicada no host"
 done
+# O endurecimento chegou aos contêineres de pé (e não só ao arquivo).
+db_cid=$(dc ps -q db)
+docker inspect -f '{{json .HostConfig.SecurityOpt}}' "$db_cid" | grep -qF '"no-new-privileges:true"' ||
+    falhar "o contêiner do db sem no-new-privileges"
+[ "$(docker inspect -f '{{json .HostConfig.CapDrop}}' "$db_cid" | jq -r 'join(",")')" = ALL ] ||
+    falhar "o contêiner do db não tirou todas as capacidades"
+# O Docker devolve as capacidades com o prefixo CAP_.
+[ "$(docker inspect -f '{{json .HostConfig.CapAdd}}' "$db_cid" | jq -r 'map(sub("^CAP_"; "")) | sort | join(",")')" = "$DB_CAPS" ] ||
+    falhar "o contêiner do db tem as capacidades $(docker inspect -f '{{json .HostConfig.CapAdd}}' "$db_cid"), queria $DB_CAPS"
+[ "$(docker inspect -f '{{.HostConfig.ReadonlyRootfs}}' "$(dc ps -q app)")" = true ] ||
+    falhar "o contêiner do app não tem o sistema de arquivos só leitura"
+ok "db sem capacidades além das do entrypoint e com no-new-privileges; app só leitura"
 rede=$(docker inspect -f '{{range $k, $v := .NetworkSettings.Networks}}{{$k}}{{end}}' "$(dc ps -q db)")
 [ "$(docker network inspect -f '{{.EnableIPv6}}' "$rede")" = false ] || falhar "a rede $rede tem IPv6"
 
@@ -733,11 +771,13 @@ no_ar "$SHA_A" || falhar "o SHA existente com outra imagem mexeu na versão"
 [ "$(docker inspect -f '{{.State.Health.Status}}' "$(dc ps -q app)")" = healthy ] || falhar "depois do SHA existente com outra imagem o app não está saudável"
 ok "stillon-entrada: imagem divergente, tar com nome, os desvios de layout e o SHA já etiquetado recusados com 3"
 
-# 8c. Rollback: um deploy que não fica saudável volta à versão anterior.
+# 8c. Rollback: um deploy que não fica saudável volta à versão anterior. O
+#     entrada.log recomeça vazio: o canário do 2a não vale aqui.
+: > "$DIR/entrada.log"
 c=$(entrada "deploy $SHA_DOENTE $ID_DOENTE" < "$TARS/doente.tar")
 [ "$c" = 4 ] || falhar "deploy doente saiu $c, queria 4: $(estado)"
 grep -q 'rollback feito' "$TARS/erro" || falhar "o deploy doente não disse que fez o rollback"
-grep -q 'ARGON2_MAX_CONCURRENT' "$TARS/erro" || falhar "o deploy doente não mostrou o log do app"
+sem_canario "deploy doente com rollback"
 [ "$(versao)" = "$SHA_A" ] || falhar "depois do rollback, versao = $(versao)"
 [ "$(imagem_do_app)" = "$REPO_TESTE:$SHA_A" ] || falhar "depois do rollback o app roda $(imagem_do_app)"
 [ "$(docker image inspect -f '{{.Id}}' "$REPO_TESTE:atual")" = "$ID_A" ] || falhar "depois do rollback, atual não é a versão no ar"
