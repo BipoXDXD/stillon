@@ -432,6 +432,37 @@ async function pontosForaDoAlvo(controle: Locator): Promise<string[]> {
   })
 }
 
+// O pseudo-elemento que cresce um alvo não pode cobrir outro controle: com
+// dois alvos colados, o toque na borda de um abre o outro. Cada controle
+// visível da tela tem de receber o hit-test no centro e perto do meio de
+// cada lado (2 px para dentro). Sabotagem: alargar o ::after de
+// .alvo-de-toque até ele cobrir um vizinho.
+async function controlesEncobertos(page: Page): Promise<string[]> {
+  return page.evaluate(() => {
+    const seletor = 'a[href], button, summary, input, select, textarea, [tabindex]:not([tabindex="-1"])'
+    const encobertos: string[] = []
+    for (const e of Array.from(document.querySelectorAll<HTMLElement>(seletor))) {
+      const r = e.getBoundingClientRect()
+      if (r.width === 0 || r.height === 0) continue
+      e.scrollIntoView({ block: 'center', inline: 'center' })
+      const c = e.getBoundingClientRect()
+      const cx = c.left + c.width / 2
+      const cy = c.top + c.height / 2
+      const pontos = [[cx, cy], [c.left + 2, cy], [c.right - 2, cy], [cx, c.top + 2], [cx, c.bottom - 2]] as const
+      for (const [x, y] of pontos) {
+        const p = document.elementFromPoint(x, y)
+        // Controle dentro de outro (ícone no botão, rótulo no campo) conta
+        // como dele; o que importa é outro alvo por cima.
+        if (p && p !== e && !e.contains(p) && !p.contains(e) && p.closest(seletor) !== null) {
+          encobertos.push(`${e.tagName} "${(e.textContent ?? '').trim().slice(0, 30)}" coberto por ${p.tagName} "${(p.textContent ?? '').trim().slice(0, 30)}"`)
+          break
+        }
+      }
+    }
+    return encobertos
+  })
+}
+
 for (const largura of [400, 1280]) {
   test(`alvos de toque de 44 px, ${largura} px`, async ({ page }) => {
     await page.setViewportSize({ width: largura, height: 900 })
@@ -450,6 +481,7 @@ for (const largura of [400, 1280]) {
       ['Configurar canais', page.getByRole('link', { name: 'Configurar canais' })],
       ['Incidente aberto', page.getByRole('link', { name: 'Incidente aberto' })],
     ])
+    expect(await controlesEncobertos(page), `${largura} px: painel`).toEqual([])
     await page.goto('/targets/a1')
     await expect(page.getByRole('heading', { name: 'API', level: 1 })).toBeVisible()
     await esperarOConteudo(page, '/targets/a1')
@@ -460,6 +492,8 @@ for (const largura of [400, 1280]) {
       ['Todos os incidentes', page.getByRole('link', { name: 'Todos os incidentes' })],
       ['Ver dados em tabela', page.locator('summary', { hasText: 'Ver dados em tabela' })],
     ])
+    await page.locator('summary', { hasText: 'Ver dados em tabela' }).click()
+    expect(await controlesEncobertos(page), `${largura} px: detalhe do alvo`).toEqual([])
     await controlePositivo(page, `alvos de toque ${largura}`)
   })
 }
