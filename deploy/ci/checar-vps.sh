@@ -464,6 +464,29 @@ direto=$(ultimo_hash)
 [ "$direto" = "$(hmac "$vizinho_ip")" ] || falhar "o app não viu o IP do vizinho ($vizinho_ip)"
 ok "um vizinho da rede edge não escolhe o IP visto pelo app"
 
+# 6b'. O modo estrito do Caddy do StillOn (trusted_proxies_strict): com uma
+#      borda que confia no cliente e por isso ACRESCENTA o salto (chega
+#      "1.2.3.9, <cliente>"), vale o salto mais à direita que não é da borda,
+#      o IP real. Sem o modo estrito, o Caddy pegaria o mais à esquerda, o
+#      que o cliente escreveu. Com a borda do contrato (que troca o
+#      X-Forwarded-For) os dois modos dão o mesmo IP: só esta variante
+#      distingue. A variante entra por caddy reload, que mantém a CA.
+awk '{ print } /^\tservers \{$/ { print "\t\ttrusted_proxies static private_ranges"; n++ } END { exit n != 1 }' \
+    "$DIR/borda/Caddyfile" > "$DIR/borda/Caddyfile.saltos" ||
+    { echo "FALHOU: o Caddyfile da borda de teste não tem o bloco servers (uma vez)" >&2; exit 1; }
+recarregar_borda() { bd exec -T proxy caddy reload --adapter caddyfile --config "$1" >&2; }
+if recarregar_borda /dev/stdin < "$DIR/borda/Caddyfile.saltos"; then
+    [ "$(entrar -H 'X-Forwarded-For: 1.2.3.9')" = 200 ] || falhar "login pela borda que acrescenta salto não deu 200"
+    h=$(ultimo_hash)
+    [ "$h" = "$(hmac 1.2.3.9)" ] && falhar "com a borda acrescentando salto, o Caddy do StillOn pegou o X-Forwarded-For do cliente (sem modo estrito?)"
+    [ "$h" = "$(hmac "$cliente_ip")" ] || falhar "com a borda acrescentando salto, o app não viu o IP do cliente ($cliente_ip)"
+else
+    falhar "a borda de teste não recarregou a variante que acrescenta salto"
+fi
+recarregar_borda /etc/caddy/Caddyfile || { echo "FALHOU: a borda de teste não voltou ao Caddyfile do contrato" >&2; exit 1; }
+[ "$(cu -o /dev/null -w '%{http_code}' "$BASE/healthz" || true)" = 200 ] || falhar "depois de restaurar a borda, /healthz não deu 200"
+ok "com a borda acrescentando salto, o modo estrito ignora o X-Forwarded-For do cliente"
+
 # 6c. Um vizinho na rede edge que se chame "app" não recebe o tráfego do
 #     StillOn: o Caddy fala com o app pelo IP fixo, e não pelo nome, que o DNS
 #     do Docker resolveria em qualquer rede do contêiner. O chamariz responde
