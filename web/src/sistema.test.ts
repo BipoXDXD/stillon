@@ -8,6 +8,8 @@ import { describe, expect, it } from 'vitest'
 // dois níveis (sombra-nivel-1 e -2) e cor só por token. Um arquivo entra na
 // lista quando o PR que o redesenha chega; o PR 8 troca a lista por todo o src.
 const ARQUIVOS_NO_SISTEMA = [
+  'src/app/BotaoDeTema.tsx',
+  'src/components/Marca.tsx',
   'src/components/Titulo.tsx',
   'src/components/SeloDeEstado.tsx',
   'src/components/ui/avisos.tsx',
