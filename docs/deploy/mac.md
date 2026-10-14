@@ -49,8 +49,9 @@ Mac exatamente como está no runbook.
    ```
 
    Se o clone já existe em outro lugar (no Mac do dono é `~/Documents/Projetos/Go/StillOn`), não
-   clone de novo: use o caminho dele onde o runbook diz `~/Projetos/Go/StillOn` (blocos 4.8, 4.9,
-   7.2 e 8).
+   clone de novo: use o caminho dele onde o runbook diz `~/Projetos/Go/StillOn` (blocos 0.2, 3.3,
+   4.8, 4.9, 7.2 e 8). E se ele estiver em outro branch, o aviso do `git pull --ff-only` vale
+   também para o 3.3: use a variante com `git archive origin/main` do bloco 8 do runbook.
 
 **Confira:** os mesmos quatro comandos do **Confira** do passo 0.2 (`age --version`, `nmap`,
 `git -C … remote -v` e `docker run --rm hello-world`, este sem `sudo`).
@@ -129,12 +130,13 @@ que os blocos antigos sumam (o disco grava em outro lugar). Quem protege o que f
 ### 7.2, item 4, sem o host networking
 
 Se preferir não ligar o **Enable host networking**, suba a cópia assim (o resto do item 4 e o item
-5 ficam iguais):
+5 ficam iguais). Ela sobe em segundo plano e com nome (`restauro-app`); o item 6 a remove com
+`docker rm -f restauro-app restauro`, para a cópia com a `MASTER_KEY` não ficar de pé:
 
 ```bash
 read -rs -p 'MASTER_KEY de produção (do gerenciador): ' MASTER_KEY; echo
 export MASTER_KEY
-docker run --rm -p 127.0.0.1:8080:8080 \
+docker run -d --rm --name restauro-app -p 127.0.0.1:8080:8080 \
   -e DATABASE_URL='postgres://stillon_app:stillon_app@host.docker.internal:25433/stillon?sslmode=disable' \
   -e MASTER_KEY \
   -e JWT_SECRET="$(openssl rand -base64 32)" -e IP_HASH_KEY="$(openssl rand -base64 32)" \

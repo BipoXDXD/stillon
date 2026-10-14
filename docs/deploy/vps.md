@@ -33,11 +33,12 @@ Desde 2026-10-13 a operação parte de um **Mac**: siga o [mac.md](mac.md) para 
 "seu computador" (o Terminal do Mac abre o `zsh`; rode `bash` antes de colar os comandos).
 Preserve as chaves e as entradas do gerenciador de senhas existentes.
 
-**Caminho do clone.** Os blocos 7.2 e 8 escrevem o clone como `~/Projetos/Go/StillOn`. Se o seu
-está em outro lugar (no Mac do dono, `~/Documents/Projetos/Go/StillOn`), troque o caminho nesses
-comandos. E se o clone estiver em outro branch ou com arquivos seus não rastreados, não rode o
-`git switch main && git pull --ff-only` do bloco 8: leia os arquivos da `main` com `git fetch` e
-`git archive origin/main`.
+**Caminho do clone.** Os blocos 0.2, 3.3, 4.8, 4.9, 7.2 e 8 escrevem o clone como
+`~/Projetos/Go/StillOn`. Se o seu está em outro lugar (no Mac do dono,
+`~/Documents/Projetos/Go/StillOn`), troque o caminho nesses comandos. E se o clone estiver em
+outro branch ou com arquivos seus não rastreados, não rode o `git pull --ff-only` (com o
+`git switch main` antes) dos blocos 3.3 e 8: leia os arquivos da `main` com `git fetch` e
+`git archive origin/main`, como na variante do bloco 8 (e a do 7.2, item 3).
 
 Se a VPS tiver sido reinstalada, os registros de passos concluídos antes disso são históricos:
 confira novamente cada passo aplicável com o respectivo **Confira** antes de continuar. O estado
@@ -1119,9 +1120,10 @@ gh secret list --repo BipoXDXD/stillon
 ```
 
 **Por quê:** o `gh` lê o valor do arquivo e o cifra antes de mandar; nada passa pela área de
-transferência nem pela tela. No GitHub Free com repositório privado não há *environments*: são
-secrets de repositório, e quem pode disparar o deploy é quem tem acesso de escrita (hoje, só
-você). Secrets de repositório não chegam a PR de fork.
+transferência nem pela tela. São secrets de repositório (não *environments*; o repositório é
+público desde 2026-10-14, e o `environment` com revisor é o item 6 do bloco 10, ainda não
+adotado): quem pode disparar o deploy é quem tem acesso de escrita (hoje, só você). Secrets de
+repositório não chegam a PR de fork.
 
 **Deve aparecer:** a lista com `VPS_HOST`, `VPS_HOST_KEY` e `VPS_SSH_KEY` (com a data de hoje). São
 os únicos secrets que o deploy e o backup usam; se aparecer algum outro, de uma hospedagem
@@ -1178,9 +1180,18 @@ sudo docker network inspect edge --format '{{range .Containers}}{{.Name}} {{.IPv
 1. Ache o SHA completo (40 caracteres) do último commit da `main` com o `ci` verde (o job
    `publish` só roda depois de todos os outros, e a tag `:<sha>` da imagem só existe depois que o
    Trivy aprovou). O `gh` pergunta direto ao GitHub; o `git fetch` atualiza a sua cópia, para
-   comparar. Um comando por vez, cada um numa linha só (sem `\` no fim):
+   comparar. Um comando por vez, cada um numa linha só (sem `\` no fim). O comando do `gh` é
+   longo para a tela: ele fica num arquivo de uma linha, criado uma vez (a linha é a do bloco
+   `text`, tudo numa só):
    ```bash
-   SHA=$(gh run list -R BipoXDXD/stillon -w ci.yml -b main -e push -s success -L 1 --json headSha -q '.[0].headSha')
+   nano ~/sha-ci.sh
+   ```
+   ```text
+   gh run list -R BipoXDXD/stillon -w ci.yml -b main -e push -s success -L 1 --json headSha -q '.[0].headSha'
+   ```
+   Salve com `Ctrl+O` e Enter, saia com `Ctrl+X`. Agora:
+   ```bash
+   SHA=$(bash ~/sha-ci.sh)
    ```
    ```bash
    echo "$SHA"
@@ -1218,6 +1229,8 @@ sudo docker network inspect edge --format '{{range .Containers}}{{.Name}} {{.IPv
    ```bash
    gh run list --repo BipoXDXD/stillon --workflow deploy.yml --limit 1
    ```
+   Confira que a linha é `queued` ou `in_progress` e de agora: logo depois do `workflow run`, o
+   `list` ainda pode mostrar o deploy **anterior**. Se for o caso, repita o `list`.
    ```bash
    gh run watch ID --repo BipoXDXD/stillon --exit-status
    ```
@@ -1358,18 +1371,21 @@ criar o alias, onde o runbook diz `vc …` use o comando longo
 `sudo docker compose -f /opt/stillon/compose.prod.yaml …`.
 
 **Confira no banco** quem é dono das tabelas (as migrations rodaram como o papel comum). As duas
-consultas têm mais de 100 colunas com aspas aninhadas, e o `exec` sem `-T` não aceita
+consultas têm aspas aninhadas, e o `exec` sem `-T` não aceita
 redirecionamento de arquivo; por isso elas vão para um arquivo, lido com `exec -T`:
 
 ```bash
 nano ~/estado.sql
 ```
 
-No editor, cole as duas consultas (uma por linha):
+No editor, cole as duas consultas, em linhas curtas (o `psql` junta as linhas até o `;`):
 
 ```text
-SELECT tableowner, count(*) FROM pg_tables WHERE schemaname = 'public' GROUP BY 1;
-SELECT rolname, rolsuper, rolbypassrls FROM pg_roles WHERE rolname LIKE 'stillon%' ORDER BY 1;
+SELECT tableowner, count(*) FROM pg_tables
+  WHERE schemaname = 'public' GROUP BY 1;
+SELECT rolname, rolsuper, rolbypassrls
+  FROM pg_roles WHERE rolname LIKE 'stillon%'
+  ORDER BY 1;
 ```
 
 ```bash
@@ -1431,8 +1447,27 @@ scp ~/Projetos/Go/StillOn/deploy/vps/edge/stillon.caddy stillon:
 ```
 
 (Troque o caminho pelo do seu clone; no Mac do dono, `~/Documents/Projetos/Go/StillOn`. Se o clone
-não estiver na `main`, o arquivo pode ser de outra versão: compare o SHA-256 do que chegou à VPS
-com o do `git show origin/main:deploy/vps/edge/stillon.caddy`.)
+não estiver na `main`, o arquivo pode ser de outra versão; por isso compare, antes de instalar, o
+SHA-256 do que chegou à VPS com o do arquivo da `main`.)
+
+**Compare os SHA-256** (um comando por vez). No seu computador, na pasta do clone (prompt `%`):
+
+```bash
+git fetch origin
+```
+
+```bash
+git show origin/main:deploy/vps/edge/stillon.caddy | shasum -a 256
+```
+
+Na VPS (prompt `$`):
+
+```bash
+sha256sum ~/stillon.caddy
+```
+
+**Deve aparecer:** o mesmo hash de 64 caracteres nos dois. Se forem diferentes, não instale: o
+arquivo é de outra versão; apague-o (`rm ~/stillon.caddy`), atualize o clone e envie de novo.
 
 **Depois, na VPS**, um comando por vez:
 
@@ -1489,7 +1524,7 @@ curl -s -o /dev/null -w '%{http_code}\n' "http://$VPS/"
 `/healthz` responde (o corpo do app) sem erro de certificado, e `/readyz` dá `200`. O último
 `curl` confere que o GoblinShift, que a mesma borda atende pelo IP, continua respondendo depois
 do `reload`: tem de devolver o código da resposta dele (hoje `404`), nunca erro de conexão. Se o
-`curl` do domínio reclamar do certificado, espere um minuto e veja, na VPS, em `/srv/edge`:
+`curl` do domínio reclamar do certificado, espere até uns 90 segundos e veja, na VPS, em `/srv/edge`:
 `sudo docker compose logs --tail 30 proxy`. Um erro de "challenge" quase sempre é DNS ainda não
 propagado ou a 80/443 fechada no firewall do painel. Não repita o `reload` em sequência: cada
 tentativa falha conta no limite do Let's Encrypt.
@@ -1528,9 +1563,9 @@ não ecoa.
 (vazia por ora), para os códigos terem onde cair assim que aparecerem.
 
 **Faça** (no navegador): abra `https://seu-domínio`, entre com o e-mail e a senha. Vá em
-**Configurações → Verificação em duas etapas** e siga os botões, nesta ordem: **Ativar**, leia o
-QR code com o seu app autenticador (Aegis, 2FAS, Google Authenticator…), **Continuar**, digite o
-código de 6 dígitos, **Ativar**. Aparecem os **códigos de recuperação**: use só **Copiar** e cole
+**Configurações → Verificação em duas etapas** e siga os botões, nesta ordem: **Ativar**, digite a
+senha e **Continuar**, leia o QR code com o seu app autenticador (Aegis, 2FAS, Google
+Authenticator…), digite o código de 6 dígitos e **Ativar**. Aparecem os **códigos de recuperação**: use só **Copiar** e cole
 na entrada do gerenciador (**não use Baixar .txt**: ele deixa os códigos em texto numa pasta de
 Downloads). Confira a entrada, volte à tela e clique **Guardei os códigos** e depois **Concluir**.
 
@@ -1630,9 +1665,18 @@ Esse comando só verifica o protocolo; não inicia servidor nem conecta ao banco
 
 ```bash
 gh variable set BACKUP_ENABLED --repo BipoXDXD/stillon --body 1
+```
+
+```bash
 gh workflow run backup.yml --repo BipoXDXD/stillon --ref main
+```
+
+```bash
 gh run list --repo BipoXDXD/stillon --workflow backup.yml --limit 1
 ```
+
+Confira que a linha é `queued` ou `in_progress` e de agora: logo depois do `workflow run`, o
+`list` ainda pode mostrar o backup **anterior** (e o id errado). Se for o caso, repita o `list`.
 
 ```bash
 gh run watch ID --repo BipoXDXD/stillon --exit-status
@@ -1671,13 +1715,26 @@ houve backup naquele dia, e o GitHub não manda e-mail por isso. A causa usual �
 
 **Faça** (no seu computador):
 
-1. Baixe o artifact da execução do passo 7.1:
+1. Baixe o artifact da execução do passo 7.1, um comando por bloco:
    ```bash
-   mkdir -p ~/stillon-restauro && cd ~/stillon-restauro
+   mkdir -p ~/stillon-restauro
+   ```
+   ```bash
+   cd ~/stillon-restauro
+   ```
+   ```bash
    RUN_ID=ID_DO_PASSO_7_1
+   ```
+   ```bash
    echo "$RUN_ID"
+   ```
+   ```bash
    gh run download "$RUN_ID" --repo BipoXDXD/stillon
+   ```
+   ```bash
    ARQ=$(find ~/stillon-restauro -name 'stillon-*.dump.age' | sort | tail -1)
+   ```
+   ```bash
    echo "$ARQ"
    ```
    Troque `ID_DO_PASSO_7_1` pelo id anotado no 7.1: o `gh run list --status success --limit 1`
@@ -1691,7 +1748,10 @@ houve backup naquele dia, e o GitHub não manda e-mail por isso. A causa usual �
 3. Restaure num Postgres descartável, da mesma imagem de produção (o digest de
    `deploy/vps/db/Dockerfile`), só no `127.0.0.1` do seu computador. O `docker compose stop`
    para o compose de desenvolvimento, se estiver de pé: ele ocupa a `127.0.0.1:8080` que a cópia
-   usa no item 4 (sem ele de pé, o comando não faz nada):
+   usa no item 4 (sem ele de pé, o comando não faz nada). Os comandos abaixo leem arquivos do
+   `deploy/` e rodam na pasta do clone. **Se o clone estiver em outro branch**, siga antes a
+   variante do bloco 8 (`git fetch`, pasta nova com `git archive`) e rode estes comandos na
+   `~/stillon-main` (o `docker compose stop` continua na pasta do clone):
    ```bash
    cd ~/Projetos/Go/StillOn
    docker compose stop
@@ -1730,13 +1790,14 @@ houve backup naquele dia, e o GitHub não manda e-mail por isso. A causa usual �
    VPS e, aqui, `SHA=` seguido do valor colado, e repita a partir do `docker login`.
    O `docker login` grava o token no `~/.docker/config.json` do seu computador, **em claro** (o
    próprio Docker avisa: `stored unencrypted`). **No Mac não é assim:** o Docker Desktop guarda no
-   Chaveiro (`credsStore: desktop`), e o `config.json` não mostra o `ghcr.io`; veja o item 6. E esse token não é só de leitura de pacotes: é o
-   do `gh`, que escreve em todos os seus repositórios. O `docker logout` o apaga; a imagem já
+   Chaveiro (`credsStore: desktop`), e o `config.json` não mostra o `ghcr.io`; veja o item 6.
+   E esse token não é só de leitura de pacotes: é o do `gh`, que escreve em todos os seus
+   repositórios. O `docker logout` o apaga; a imagem já
    baixada continua no seu Docker. Então suba a cópia:
    ```bash
    read -rs -p 'MASTER_KEY de produção (do gerenciador): ' MASTER_KEY; echo
    export MASTER_KEY
-   docker run --rm --network host \
+   docker run --rm --name restauro-app --network host \
      -e DATABASE_URL='postgres://stillon_app:stillon_app@127.0.0.1:25433/stillon?sslmode=disable' \
      -e MASTER_KEY \
      -e JWT_SECRET="$(openssl rand -base64 32)" -e IP_HASH_KEY="$(openssl rand -base64 32)" \
@@ -1748,8 +1809,8 @@ houve backup naquele dia, e o GitHub não manda e-mail por isso. A causa usual �
    (rode `bash` antes, ou execute os comandos num script com `#!/bin/bash`). O
    `--network host` exige, no Docker Desktop, a opção **Enable host networking**; sem ela, use a
    variante do [mac.md](mac.md) (com `host.docker.internal` e `-p 127.0.0.1:8080:8080`), que
-   convém subir com `-d --rm` para não prender o terminal (aí o `Ctrl+C` do item 6 não é preciso:
-   `docker rm -f` remove o contêiner).
+   sobe com `-d --rm --name restauro-app`, sem prender o terminal (aí o `Ctrl+C` do item 6 não é
+   preciso: o `docker rm -f restauro-app` remove o contêiner).
    O `read -rs` lê a chave sem eco e sem gravá-la no histórico; o `-e MASTER_KEY` sem valor passa
    a variável ao contêiner sem ela aparecer na linha de comando. A senha `stillon_app` vale aqui
    porque o `initdb.sql` é o do compose local (a de demonstração, num banco que só existe no seu
@@ -1761,11 +1822,14 @@ houve backup naquele dia, e o GitHub não manda e-mail por isso. A causa usual �
    ```bash
    # Ctrl+C no terminal do docker run, e então:
    unset MASTER_KEY
-   docker rm -f restauro
+   docker rm -f restauro-app restauro
    shred -u ~/stillon-restauro/stillon.dump
    docker logout ghcr.io
    grep -q ghcr.io ~/.docker/config.json 2>/dev/null && echo "AINDA LOGADO" || echo "sem login do ghcr"
    ```
+   O `docker rm -f restauro-app restauro` tira também a cópia da API, que tem a `MASTER_KEY` na
+   memória e não pode ficar de pé; se ela já saiu (o `Ctrl+C` com `--rm`), o `docker` avisa
+   `No such container: restauro-app` e remove o `restauro` do mesmo jeito.
    O `docker logout` de novo é por garantia (se o item 4 parou no meio); a última linha tem de
    dizer `sem login do ghcr`. **No Mac:** não existe `shred` (use `rm -f`, com o FileVault ligado:
    [mac.md](mac.md)), e o `grep` no `config.json` não prova nada, porque o login mora no Chaveiro.
@@ -1785,15 +1849,53 @@ sobrescreve a VPS inteira.
 
 ## Bloco 8: o vigia externo
 
-**Faça** (no seu computador, na `main` atualizada):
+**Faça** (no seu computador, na `main` atualizada), um comando por bloco:
 
 ```bash
 cd ~/Projetos/Go/StillOn
-git switch main && git pull --ff-only
-ssh stillon 'mkdir -p ~/stillon-arquivos'
-scp deploy/vps/vigia.sh deploy/vps/stillon-vigia.service deploy/vps/stillon-vigia.timer \
-    deploy/vps/vigia.env.exemplo stillon:stillon-arquivos/
 ```
+
+```bash
+git switch main && git pull --ff-only
+```
+
+```bash
+cd deploy/vps
+```
+
+**Se o clone estiver em outro branch** (ou com arquivos seus não rastreados), não rode o
+`git switch`. Leia a `main` sem mexer no clone: troque os dois primeiros blocos acima por estes,
+e o terceiro por `cd ~/stillon-main/deploy/vps`:
+
+```bash
+git fetch origin
+```
+
+```bash
+mkdir ~/stillon-main
+```
+
+```bash
+git archive origin/main deploy | tar -x -C ~/stillon-main
+```
+
+O `mkdir` sem `-p` falha se a pasta já existe: use sempre uma pasta nova e vazia (se falhou,
+`rm -r ~/stillon-main` e repita). Em qualquer das duas formas, daqui em diante você está na pasta
+`deploy/vps`:
+
+```bash
+ssh stillon 'mkdir -p ~/stillon-arquivos'
+```
+
+```bash
+scp vigia.sh stillon-vigia.service stillon-vigia.timer stillon:stillon-arquivos/
+```
+
+```bash
+scp vigia.env.exemplo stillon:stillon-arquivos/
+```
+
+Com a variante, apague a pasta depois dos `scp`: `rm -r ~/stillon-main`.
 
 **Depois, na VPS**, os arquivos nos lugares certos e o `vigia.env` nascendo do modelo, sem
 valores, só do root:
@@ -1847,10 +1949,25 @@ lê o `vigia.env` e entrega uma cópia ao vigia (`LoadCredential`).
 
 ```bash
 sudo stat -c '%U %a' /opt/stillon/vigia.env
+```
+
+```bash
 sudo grep -oE '^[A-Z_]+=' /opt/stillon/vigia.env
+```
+
+```bash
 sudo grep -cE '^[A-Z_]+=$' /opt/stillon/vigia.env
+```
+
+```bash
 sudo grep -c '^HC_URL=https://hc-ping.com/' /opt/stillon/vigia.env
+```
+
+```bash
 sudo grep -c '^HC_URL=' /opt/stillon/.env
+```
+
+```bash
 sudo grep '^STILLON_DOMINIO=' /opt/stillon/vigia.env
 ```
 
@@ -1921,6 +2038,9 @@ interrompa):
 
 ```bash
 . ~/.stillon-vps
+```
+
+```bash
 sudo nmap -Pn -T4 -p- --open "$VPS"
 ```
 
@@ -2647,12 +2767,15 @@ escolhe o ID. (O backup pela chave só entrega o dump **cifrado**: sem a sua cha
 
 ### Minutos de Actions
 
-Com o repositório privado, o CI gasta a cota gratuita (2.000 min/mês na conta pessoal): ~15 min de
-runner por push somando os jobs, dos quais o `e2e` é o maior, e alguns minutos por dia do
-`backup`. Um push novo no mesmo branch cancela a execução anterior. Se a cota apertar, o primeiro
-corte é o `e2e` só na `main` (`if: github.event_name == 'push'` no job).
+Enquanto o repositório era privado, o CI gastava a cota gratuita (2.000 min/mês na conta
+pessoal): ~15 min de runner por push somando os jobs, dos quais o `e2e` é o maior, e alguns minutos
+por dia do `backup`. Desde 2026-10-14 o repositório é público, e os minutos de Actions não contam
+para a cota. Um push novo no mesmo branch continua cancelando a execução anterior; o `[skip ci]`
+em mudança só de documentação segue valendo, para não ocupar os runners à toa.
 
-## Tornar o repositório público (passo futuro)
+## Tornar o repositório público (feito em 2026-10-14)
+
+Registro: o repositório ficou público em 2026-10-14, e o pacote do GHCR segue privado.
 
 > **Atualização (2026-10-14):** o repositório **já ficou público**, e os itens 1 a 8 abaixo valem
 > como lista do que isso mudou. A decisão do dono sobre o item 7: **os artifacts do backup ficam
@@ -2663,7 +2786,9 @@ corte é o `e2e` só na `main` (`if: github.event_name == 'push'` no job).
 > Actions) ou reduzir o `retention-days`. O pacote do GHCR tem visibilidade própria e continua
 > **privado** (item 4): por isso o `docker login` do 7.2 segue necessário.
 
-O repositório era **privado por decisão do dono**. No dia de abrir:
+O repositório era **privado por decisão do dono**. A lista abaixo é o que se fazia no dia de
+abrir. O item 6 (`environment` com revisor) ainda não foi adotado: os workflows não usam
+`environment`.
 
 1. Varredura do histórico inteiro: `gitleaks git . --redact -v` (o job `secrets` do CI já faz
    isso em todo PR). O falso positivo conhecido está no `.gitleaksignore`, com o motivo.

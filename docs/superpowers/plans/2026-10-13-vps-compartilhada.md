@@ -954,4 +954,4 @@ Guiada como o `CLAUDE.md` manda: um passo numerado por vez, dizendo onde roda e 
 - [x] **6.5** Runbook do StillOn do 3.3 ao 4.8, com a `main` nova, um passo e seu **Confira** por vez (o 3.4 gera segredos: antes dele, um passo próprio "crie a entrada no Bitwarden").
 - [x] **6.6** Passo novo "O StillOn na borda" (Task 3, Step 5). Confira: `https://stillon.tech/healthz` responde `200` com certificado Let's Encrypt.
 - [x] **6.7** Blocos 5 a 9 do runbook, inclusive o reboot de teste do 9.6: a borda, o GoblinShift e o StillOn voltam sozinhos.
-- [ ] **6.8** Registro de continuidade novo em `docs/superpowers/reports/` e `CLAUDE.md` atualizados com o estado real (o que foi feito, o que foi conferido, o que falta), num PR só de documentação com `[skip ci]`.
+- [x] **6.8** Registro de continuidade novo em `docs/superpowers/reports/` e `CLAUDE.md` atualizados com o estado real (o que foi feito, o que foi conferido, o que falta), num PR só de documentação com `[skip ci]`.

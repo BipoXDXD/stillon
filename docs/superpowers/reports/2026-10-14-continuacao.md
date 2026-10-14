@@ -29,10 +29,18 @@ termina o TLS por domínio, e o Caddy do StillOn (IP fixo na rede `edge`) recebe
   contêineres de volta.
 - **Limpeza.** O `sudo` sem senha temporário, usado só na execução guiada, foi **removido e
   conferido** (`sudo -n` pede senha). A pasta `~/borda` da VPS foi apagada.
+- **Hostinger (7.3).** Os backups semanais automáticos existem (2026-10-03 e 2026-10-10, cerca de
+  1,5 GB cada).
+- **healthchecks.io.** Sem defeito: a conta é de outro e-mail do dono, e os alarmes, o do reboot
+  inclusive, foram entregues lá.
 
 ### 9.1: portas vistas de fora
 
-<!-- NMAP -->
+Por dentro (`ss`), só 22, 80 e 443 escutam em todas as interfaces; o resto (a porta interna do
+GoblinShift, o agente da Hostinger e o DNS local) só em `127.x`, e o StillOn não publica porta.
+De fora, `nmap -Pn -sT -T4 -p- --open` do Mac em 2026-10-14 (03:37–04:22 -03, 45 min): das 65.535
+portas TCP, **só 22, 80 e 443 abertas**; as outras 65.532 sem resposta (o firewall do painel
+descarta).
 
 ## Decisões
 
@@ -65,11 +73,11 @@ corrigido: o `Server: nginx` que aparece é o nginx interno do GoblinShift; a pr
 
 ## Pendências do dono
 
-1. **Ligar o 2FA** do usuário do StillOn (runbook 5.2).
-2. **Mover o login do StillOn para o Bitwarden** (entrada "StillOn – login do painel").
-3. **Conferir a conta do healthchecks.io.** O e-mail de alarme nunca chegou ao Gmail do dono, o que
-   indica que a conta usa outro e-mail. Sem isso, o vigia externo avisa no vazio.
-4. **7.3:** conferir no painel da Hostinger que o backup semanal está ligado.
+1. **URGENTE: renovar a VPS** no painel da Hostinger. Ela **expira em 2026-10-25**; sem a
+   renovação, o StillOn e o GoblinShift saem do ar.
+2. **Ligar o 2FA** do usuário do StillOn (runbook 5.2).
+3. **Mover o login do StillOn para o Bitwarden** (entrada "StillOn – login do painel").
+4. *Opcional:* adicionar também o e-mail principal na integração do healthchecks.io.
 
 ## Depois
 

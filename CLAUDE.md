@@ -59,24 +59,29 @@ domínio, e o Caddy do StillOn fica atrás dela
 [plano](docs/superpowers/plans/2026-10-13-vps-compartilhada.md)). A rede `stillon` é
 `10.30.0.0/24` (a antiga, `172.30.0.0/24`, é do GoblinShift na VPS). A **Task 6 do plano está
 concluída** (6.1 a 6.7 feitos e conferidos, runbook dos blocos 3 a 9 inclusive backup, ensaio de
-restauração e reboot de teste); o runbook já traz as correções da execução real. O estado
+restauração e reboot de teste, sem o `sudo` temporário e sem a `~/borda`); o 9.1 visto de fora
+(`nmap`) mostra só 22, 80 e 443. O runbook já traz as correções da execução real. O estado
 completo, as decisões e a armadilha do `[skip ci]` estão na
 [continuidade de 2026-10-14](docs/superpowers/reports/2026-10-14-continuacao.md).
 
-**O que falta, do dono:** ligar o 2FA do usuário do StillOn (adiado por decisão dele); mover o
-login do StillOn para o Bitwarden; conferir a conta do healthchecks.io (o e-mail de alarme nunca
-chegou ao Gmail dele, então a conta provavelmente usa outro e-mail); e o 7.3, conferir o backup
-semanal no painel da Hostinger.
+**URGENTE, do dono: renovar a VPS no painel da Hostinger; ela expira em 2026-10-25.** Sem a
+renovação, o StillOn e o GoblinShift saem do ar.
+
+**O que mais falta, do dono:** ligar o 2FA do usuário do StillOn (adiado por decisão dele) e mover
+o login do StillOn para o Bitwarden. O healthchecks.io não tem defeito: a conta é de outro e-mail
+dele, e os alarmes (o do reboot inclusive) foram entregues lá. O backup semanal da Hostinger (7.3)
+está conferido: existem os de 2026-10-03 e 2026-10-10.
 
 O `checar-vps.sh` não roda nativo no Mac (o `stillon-entrada` fixa um `PATH` de Ubuntu e o tar do
 deploy é `amd64`): localmente, ele roda num Ubuntu descartável com o socket do Docker e
 `DOCKER_DEFAULT_PLATFORM=linux/amd64`; o bloco 9 (backup) só fecha no job `vps` do CI.
 
-Pendentes de desenvolvimento: [vinculação Discord](docs/superpowers/specs/2026-10-05-vinculacao-discord-design.md)
-(plano aguardando revisão), a política de lembretes aprovada (registrada na
+Pendentes de desenvolvimento:
+[vinculação Discord](docs/superpowers/specs/2026-10-05-vinculacao-discord-design.md) (plano
+aguardando revisão), a política de lembretes aprovada (registrada na
 [continuidade de 2026-10-05](docs/superpowers/reports/2026-10-05-continuacao.md)), o redesign do
-painel e os PRs do Dependabot. Não confundir planejamento aprovado com código pronto, nem anunciar deploy sem
-conferência.
+painel e os PRs do Dependabot. Não confundir planejamento aprovado com código pronto, nem anunciar
+deploy sem conferência.
 
 ## Registro histórico (2026-09-28)
 
