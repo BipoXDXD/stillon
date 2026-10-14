@@ -24,10 +24,12 @@ import (
 const (
 	dispatchEvery = 2 * time.Second
 	// claimTimeout é o prazo da reivindicação do lote, espera por conexão do
-	// pool incluída. Fica abaixo de dispatchEvery: uma consulta presa não
-	// para a entrega de todos os avisos (C2 da revisão). Os envios e as
-	// gravações dos desfechos têm prazos próprios.
-	claimTimeout = 1500 * time.Millisecond
+	// pool incluída: uma consulta presa não para a entrega de todos os avisos
+	// (C2 da revisão). Fica acima de dispatchEvery pelo mesmo motivo do
+	// tickTimeout do sondador: o Ticker descarta os disparos perdidos, e um
+	// prazo apertado demais pararia a entrega com o banco só lento. Os envios
+	// e as gravações dos desfechos têm prazos próprios.
+	claimTimeout = 5 * time.Second
 	// maxConcurrentSends é o tamanho do lote e o teto de envios simultâneos.
 	// O Resend aceita 10 pedidos por segundo por conta; 8 fica abaixo.
 	maxConcurrentSends = 8

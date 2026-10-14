@@ -32,10 +32,13 @@ const MaxInFlight int32 = 64
 const tickEvery = time.Second
 
 // tickTimeout é o prazo de um Tick inteiro (reivindicar e medir a fila),
-// espera por conexão do pool incluída. Fica abaixo de tickEvery: uma
-// consulta presa não segura o despacho de todos os alvos, e o Tick seguinte
-// tenta de novo (C2 da revisão).
-const tickTimeout = 900 * time.Millisecond
+// espera por conexão do pool incluída: uma consulta presa não segura o
+// despacho de todos os alvos, e o Tick seguinte tenta de novo (C2 da
+// revisão). Fica ACIMA de tickEvery de propósito: o Ticker descarta os
+// disparos perdidos, então um Tick lento só atrasa o seguinte, enquanto um
+// prazo abaixo de 1 s transformaria um banco lento, mas vivo (pool disputado
+// pelas gravações das sondas), num sondador parado.
+const tickTimeout = 5 * time.Second
 
 // reconcileEvery é o intervalo da reconciliação das métricas. Uma
 // transição de incidente também dispara uma, sem esperar o intervalo.
