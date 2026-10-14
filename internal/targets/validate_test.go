@@ -59,6 +59,14 @@ func TestValidate(t *testing.T) {
 		{"url IP com zero à esquerda", func(f *fields) { f.URL = "http://0177.0.0.1/" }, "url", ReasonInvalid},
 		{"url IP público decimal", func(f *fields) { f.URL = "http://134744072/" }, "url", ReasonInvalid},
 		{"url com dígito no meio do nome", func(f *fields) { f.URL = "http://api2.exemplo.com/" }, "", ""},
+		{"url com hífen e número no rótulo", func(f *fields) { f.URL = "http://host-1.exemplo.com/" }, "", ""},
+		{"url com TLD alfanumérico", func(f *fields) { f.URL = "http://api.v2/" }, "", ""},
+		{"url com ponto final", func(f *fields) { f.URL = "http://exemplo.com./" }, "", ""},
+		{"url IP público com ponto final", func(f *fields) { f.URL = "http://8.8.8.8./" }, "", ""},
+		{"url loopback com ponto final", func(f *fields) { f.URL = "http://127.0.0.1./" }, "url", ReasonForbidden},
+		{"url IP decimal com ponto final", func(f *fields) { f.URL = "http://2130706433./" }, "url", ReasonInvalid},
+		{"url IPv6 público literal", func(f *fields) { f.URL = "http://[2606:4700:4700::1111]/" }, "", ""},
+		{"url IP hexadecimal maiúsculo", func(f *fields) { f.URL = "http://0X7F.1/" }, "url", ReasonInvalid},
 
 		{"método DELETE", func(f *fields) { f.Method = "DELETE" }, "method", ReasonInvalid},
 
