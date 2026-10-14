@@ -6,6 +6,7 @@ import (
 	"go/token"
 	"io"
 	"net/http"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strconv"
@@ -30,8 +31,10 @@ var rotasPublicas = map[string]string{
 	"GET /p/{slug}":                 "a página de status é pública por definição",
 }
 
-// arquivosDeRotas são os fontes que registram rotas no ServeMux.
-var arquivosDeRotas = []string{"routes.go", "publicpage.go"}
+// montagens são os registros sem método da raiz de Routes: cada um entrega o
+// prefixo a uma cadeia cujas rotas, com método, a enumeração já cobre. "/" é
+// o painel, estático e público. Montagem nova entra aqui só de propósito.
+var montagens = []string{"/", "/api/", "/healthz", "/p/", "/readyz", "/verify/"}
 
 // TestEveryRegisteredRouteDeniesByDefault enumera as rotas registradas nos
 // fontes (o ServeMux não as expõe) e exige 401 unauthorized sem credencial em
@@ -39,9 +42,6 @@ var arquivosDeRotas = []string{"routes.go", "publicpage.go"}
 // guarda do handler, falha aqui.
 func TestEveryRegisteredRouteDeniesByDefault(t *testing.T) {
 	rotas := rotasRegistradas(t)
-	if len(rotas) < 30 {
-		t.Fatalf("achei só %d rotas nos fontes; o parser deixou de enxergar os registros", len(rotas))
-	}
 	for publica := range rotasPublicas {
 		if !slices.Contains(rotas, publica) {
 			t.Errorf("a allowlist tem %q, que não está mais registrada: tire-a", publica)
@@ -117,43 +117,73 @@ func TestEveryMutationRequiresTheAntiCSRFHeader(t *testing.T) {
 // padraoDeRota casa "MÉTODO /caminho", o formato do ServeMux do Go 1.22+.
 var padraoDeRota = regexp.MustCompile(`^(GET|HEAD|POST|PUT|PATCH|DELETE|OPTIONS) /\S*$`)
 
-// rotasRegistradas lê os fontes e devolve todo literal "MÉTODO /caminho"
-// passado a um .Handle ou .HandleFunc.
+// rotasRegistradas lê todos os fontes do pacote (fora os de teste) e devolve
+// todo literal "MÉTODO /caminho" passado a um .Handle ou .HandleFunc. Falha
+// alto no que não sabe classificar, para que um registro novo nunca fique de
+// fora em silêncio: padrão que não é literal (constante, Sprintf) e montagem
+// sem método fora da lista de montagens.
 func rotasRegistradas(t *testing.T) []string {
 	t.Helper()
-	var rotas []string
+	fontes, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rotas, achadas []string
 	fset := token.NewFileSet()
-	for _, nome := range arquivosDeRotas {
+	for _, nome := range fontes {
+		if strings.HasSuffix(nome, "_test.go") {
+			continue
+		}
 		arquivo, err := parser.ParseFile(fset, nome, nil, 0)
 		if err != nil {
 			t.Fatal(err)
 		}
 		ast.Inspect(arquivo, func(n ast.Node) bool {
-			if rota, ok := literalDeRegistro(n); ok {
-				rotas = append(rotas, rota)
+			padrao, ehRegistro := padraoDeRegistro(n)
+			switch {
+			case !ehRegistro:
+			case padrao == "":
+				t.Errorf("%s: registro de rota com padrão que não é literal; escreva o literal para a enumeração enxergá-lo",
+					fset.Position(n.Pos()))
+			case padraoDeRota.MatchString(padrao):
+				rotas = append(rotas, padrao)
+			default:
+				achadas = append(achadas, padrao)
 			}
 			return true
 		})
 	}
+	slices.Sort(achadas)
+	if !slices.Equal(achadas, montagens) {
+		t.Errorf("montagens sem método = %q, queria %q: rota sem método escapa da enumeração", achadas, montagens)
+	}
+	if len(rotas) < 30 {
+		t.Fatalf("achei só %d rotas nos fontes; o parser deixou de enxergar os registros", len(rotas))
+	}
 	return rotas
 }
 
-func literalDeRegistro(n ast.Node) (string, bool) {
+// padraoDeRegistro diz se n é uma chamada .Handle ou .HandleFunc e devolve o
+// padrão quando ele é um literal de string, ou "" quando não é.
+func padraoDeRegistro(n ast.Node) (string, bool) {
 	chamada, ok := n.(*ast.CallExpr)
-	if !ok || len(chamada.Args) == 0 {
+	if !ok {
 		return "", false
 	}
 	sel, ok := chamada.Fun.(*ast.SelectorExpr)
 	if !ok || (sel.Sel.Name != "Handle" && sel.Sel.Name != "HandleFunc") {
 		return "", false
 	}
+	if len(chamada.Args) == 0 {
+		return "", true
+	}
 	lit, ok := chamada.Args[0].(*ast.BasicLit)
 	if !ok || lit.Kind != token.STRING {
-		return "", false
+		return "", true
 	}
 	valor, err := strconv.Unquote(lit.Value)
-	if err != nil || !padraoDeRota.MatchString(valor) {
-		return "", false
+	if err != nil {
+		return "", true
 	}
 	return valor, true
 }
