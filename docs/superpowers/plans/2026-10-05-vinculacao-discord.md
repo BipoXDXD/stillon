@@ -49,7 +49,8 @@ Na opção b, cada DiscordID ganha uma linha com `desired` (`present` ou `absent
 ## Ordem de integração
 
 1. Lembretes, com a migration `00012`.
-2. Discord, com a migration `00013` (`internal/storage/migrations/00013_discord_links.sql`), só depois de a dos lembretes estar na `main`. Ao rebasear, rodar `make generate` (sqlc) para regerar `internal/storage/db/*`; nunca mesclar à mão arquivo gerado.
+2. CHECKs das latências do rollup (PR #90), com a migration `00013`.
+3. Discord, com a migration `00014` (`internal/storage/migrations/00014_discord_links.sql`), só depois de a `00012` e a `00013` estarem na `main`. Ao rebasear, rodar `make generate` (sqlc) para regerar `internal/storage/db/*`; nunca mesclar à mão arquivo gerado.
 
 A branch `feat/painel-vintage` (redesign) colide com a Tarefa 5 em `web/src/features/configuracoes/PaginaConfiguracoes.tsx`. Ela entra antes ou depois do Discord, nunca em paralelo.
 
@@ -175,8 +176,8 @@ e `NewService(pool *pgxpool.Pool, cfg Options, api API, clk clock.Clock) *LinkSe
 
 ### Tarefa 1: persistência, isolamento e sessão
 
-**Arquivos:** criar migration `internal/storage/migrations/00013_discord_links.sql` (a 00012
-é dos lembretes; ver "Ordem de integração"), `internal/storage/queries/discord_links.sql`,
+**Arquivos:** criar migration `internal/storage/migrations/00014_discord_links.sql` (a 00012
+é dos lembretes e a 00013 dos CHECKs do rollup; ver "Ordem de integração"), `internal/storage/queries/discord_links.sql`,
 `internal/discordlink/{types,store,store_test}.go`; alterar `internal/storage/scope.go` e gerar
 `internal/storage/db/*` com `make generate`.
 
@@ -387,7 +388,7 @@ Registrar hashes e comandos/resultados reais.
 e repetir somente gates afetados, depois gate final conforme exigências do projeto.
 - [ ] Commit final assinado, verificar assinatura, push e PR em português. Aguardar CI
 do HEAD exato e conferir árvore/base antes do merge autorizado na main. Confirmar antes que a
-migration dos lembretes (00012) já está na `main` e que o sqlc foi regerado (ver "Ordem de integração").
+migrations dos lembretes (00012) e dos CHECKs do rollup (00013) já estão na `main` e que o sqlc foi regerado (ver "Ordem de integração").
 - [ ] Preparar aplicativo/bot, cargo e URLs de retorno para revisão. Antes de gerar
 segredos, preparar entrada Bitwarden. Confirmar no navegador o acesso Gerenciar cargos,
 sem Administrador; credenciais por ambiente local, nunca chat. Etapas que exigem ação
@@ -405,5 +406,5 @@ gates e ativação real. Contratos de tipos estão definidos acima; não há eta
 Discord, cadastro público, leitura de mensagens ou bloqueio de canais.
 
 Revisado em 2026-10-14 contra a `main` (8ca962d): caminhos e linhas conferidos no código
-atual, migration renumerada para 00013, tabela STRIDE com testes, decisões D1–D3 separadas
+atual, migration renumerada para 00014 (a 00013 ficou com o PR #90), tabela STRIDE com testes, decisões D1–D3 separadas
 para o dono. O plano aguarda a escolha de D1, D2 e D3 antes de qualquer execução.

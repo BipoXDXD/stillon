@@ -2,7 +2,10 @@ package backup
 
 import (
 	"context"
+	"errors"
+	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -62,6 +65,20 @@ func TestSourceEnvironmentDoesNotInheritRestoreOrPolicy(t *testing.T) {
 	}
 }
 
+// falhaEsperada é o começo da mensagem de cada modo: prova que cada falha sai
+// pelo passo certo do supervisor (characterization test da extração do run).
+var falhaEsperada = map[string]string{
+	"bad-reference":     "referência da origem inválida",
+	"overflow":          "protocolo da origem interrompido ou excessivo",
+	"sql-error":         "protocolo da origem interrompido ou excessivo",
+	"dump-error":        "dump interrompido ou falhou",
+	"extra-output":      "fechamento do exportador inválido",
+	"exporter-error":    "exportador não encerrou corretamente",
+	"remaining-session": "checagem das sessões interrompida",
+	"blocked-read":      "protocolo da origem interrompido ou excessivo",
+	"closed-stdout":     "exportador não encerrou corretamente",
+}
+
 func TestSupervisorDoesNotAcceptFailedOrUnclosedClients(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("supervisor exige Linux")
@@ -69,9 +86,50 @@ func TestSupervisorDoesNotAcceptFailedOrUnclosedClients(t *testing.T) {
 	for _, mode := range []string{"good", "bad-reference", "overflow", "sql-error", "dump-error", "extra-output", "exporter-error", "remaining-session", "blocked-read", "closed-stdout"} {
 		t.Run(mode, func(t *testing.T) {
 			dir := t.TempDir()
-			psql := filepath.Join(dir, "psql")
-			dump := filepath.Join(dir, "pg_dump")
-			script := `#!/bin/sh
+			psql, dump := clientesFalsos(t, dir)
+			t.Setenv("BACKUP_TEST_MODE", mode)
+			t.Setenv("PGHOST", "restore")
+			t.Setenv("PGPASSWORD", "restore-secret")
+			start := time.Now()
+			ref, err := run(context.Background(), "postgresql://backup@localhost/stillon?gssencmode=disable", "source-secret", filepath.Join(dir, "dump"), opcoesDeTeste(psql, dump))
+			if mode == "good" {
+				info, statErr := os.Stat(filepath.Join(dir, "dump"))
+				if statErr != nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0600 {
+					t.Fatalf("artefato não privado/regular: %v %v", info, statErr)
+				}
+				if err != nil || ref != (Reference{21, 2, 3}) {
+					t.Fatalf("sucesso: %+v %v", ref, err)
+				}
+			} else if err == nil {
+				t.Fatalf("%s passou como sucesso: %+v", mode, ref)
+			} else if !strings.HasPrefix(err.Error(), falhaEsperada[mode]) {
+				t.Fatalf("%s falhou no passo errado: %q, queria começar com %q", mode, err, falhaEsperada[mode])
+			}
+			if mode != "good" {
+				if _, e := os.Stat(filepath.Join(dir, "dump")); !os.IsNotExist(e) {
+					t.Fatal("falha deixou artefato próprio")
+				}
+			}
+			if err != nil && (strings.Contains(err.Error(), "source-secret") || strings.Contains(err.Error(), "postgresql://")) {
+				t.Fatal("erro vazou credencial")
+			}
+			if mode == "closed-stdout" && time.Since(start) > 500*time.Millisecond {
+				t.Fatalf("Wait do exportador escapou do cleanup: %s", time.Since(start))
+			}
+			if elapsed := time.Since(start); elapsed > 2*time.Second {
+				t.Fatalf("cancelamento/cleanup presos: %s", elapsed)
+			}
+		})
+	}
+}
+
+// clientesFalsos grava psql e pg_dump de mentira em dir. BACKUP_TEST_MODE
+// escolhe a falha de cada um.
+func clientesFalsos(t *testing.T, dir string) (psql, dump string) {
+	t.Helper()
+	psql = filepath.Join(dir, "psql")
+	dump = filepath.Join(dir, "pg_dump")
+	script := `#!/bin/sh
 if [ -n "${PGHOST:-}" ] || [ "${PGPASSWORD:-}" != "source-secret" ]; then exit 9; fi
 while IFS= read -r line; do
 case "$line" in
@@ -91,50 +149,66 @@ esac
 done
 exit 0
 `
-			if err := os.WriteFile(psql, []byte(script), 0700); err != nil {
-				t.Fatal(err)
+	if err := os.WriteFile(psql, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	dumpScript := "#!/bin/sh\ncase \"$BACKUP_TEST_MODE\" in\n dump-error) exit 1;;\n dump-timeout) exec sleep 5;;\nesac\nexit 0\n"
+	if err := os.WriteFile(dump, []byte(dumpScript), 0700); err != nil {
+		t.Fatal(err)
+	}
+	return psql, dump
+}
+
+// opcoesDeTeste encurta os prazos para os clientes falsos.
+func opcoesDeTeste(psql, dump string) options {
+	o := defaultOptions()
+	o.psqlPath = psql
+	o.dumpPath = dump
+	o.protectParent = false
+	o.prepareTimeout = 150 * time.Millisecond
+	o.dumpTimeout = 150 * time.Millisecond
+	o.totalTimeout = time.Second
+	o.grace = 50 * time.Millisecond
+	o.cleanup = 100 * time.Millisecond
+	return o
+}
+
+// E4 da revisão: a mensagem continua dizendo o passo, mas a causa original
+// chega envelopada a quem chama, para o log do job distinguir prazo vencido,
+// código de saída do cliente e executável ausente.
+func TestFailuresKeepTheOriginalCause(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("supervisor exige Linux")
+	}
+	saiuCom := func(codigo int) func(error) bool {
+		return func(err error) bool {
+			var exitErr *exec.ExitError
+			return errors.As(err, &exitErr) && exitErr.ExitCode() == codigo
+		}
+	}
+	for _, tc := range []struct {
+		modo, causa string
+		confere     func(error) bool
+		semPsql     bool
+	}{
+		{modo: "dump-error", causa: "exit status 1 do pg_dump", confere: saiuCom(1)},
+		{modo: "exporter-error", causa: "exit status 3 do psql", confere: saiuCom(3)},
+		{modo: "dump-timeout", causa: "context.DeadlineExceeded", confere: func(err error) bool { return errors.Is(err, context.DeadlineExceeded) }},
+		{modo: "psql-ausente", causa: "fs.ErrNotExist do psql ausente", confere: func(err error) bool { return errors.Is(err, fs.ErrNotExist) }, semPsql: true},
+	} {
+		t.Run(tc.modo, func(t *testing.T) {
+			dir := t.TempDir()
+			psql, dump := clientesFalsos(t, dir)
+			if tc.semPsql {
+				psql = filepath.Join(dir, "psql-ausente")
 			}
-			if err := os.WriteFile(dump, []byte("#!/bin/sh\nif [ \"$BACKUP_TEST_MODE\" = dump-error ]; then exit 1; fi\nexit 0\n"), 0700); err != nil {
-				t.Fatal(err)
+			t.Setenv("BACKUP_TEST_MODE", tc.modo)
+			_, err := run(context.Background(), "postgresql://backup@localhost/stillon", "source-secret", filepath.Join(dir, "dump"), opcoesDeTeste(psql, dump))
+			if err == nil || !tc.confere(err) {
+				t.Fatalf("erro = %v, queria a causa %s envelopada", err, tc.causa)
 			}
-			t.Setenv("BACKUP_TEST_MODE", mode)
-			t.Setenv("PGHOST", "restore")
-			t.Setenv("PGPASSWORD", "restore-secret")
-			o := defaultOptions()
-			o.psqlPath = psql
-			o.dumpPath = dump
-			o.protectParent = false
-			o.prepareTimeout = 150 * time.Millisecond
-			o.dumpTimeout = 150 * time.Millisecond
-			o.totalTimeout = time.Second
-			o.grace = 50 * time.Millisecond
-			o.cleanup = 100 * time.Millisecond
-			start := time.Now()
-			ref, err := run(context.Background(), "postgresql://backup@localhost/stillon?gssencmode=disable", "source-secret", filepath.Join(dir, "dump"), o)
-			if mode == "good" {
-				info, statErr := os.Stat(filepath.Join(dir, "dump"))
-				if statErr != nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0600 {
-					t.Fatalf("artefato não privado/regular: %v %v", info, statErr)
-				}
-				if err != nil || ref != (Reference{21, 2, 3}) {
-					t.Fatalf("sucesso: %+v %v", ref, err)
-				}
-			} else if err == nil {
-				t.Fatalf("%s passou como sucesso: %+v", mode, ref)
-			}
-			if mode != "good" {
-				if _, e := os.Stat(filepath.Join(dir, "dump")); !os.IsNotExist(e) {
-					t.Fatal("falha deixou artefato próprio")
-				}
-			}
-			if err != nil && (strings.Contains(err.Error(), "source-secret") || strings.Contains(err.Error(), "postgresql://")) {
-				t.Fatal("erro vazou credencial")
-			}
-			if mode == "closed-stdout" && time.Since(start) > 500*time.Millisecond {
-				t.Fatalf("Wait do exportador escapou do cleanup: %s", time.Since(start))
-			}
-			if elapsed := time.Since(start); elapsed > 2*time.Second {
-				t.Fatalf("cancelamento/cleanup presos: %s", elapsed)
+			if strings.Contains(err.Error(), "source-secret") || strings.Contains(err.Error(), "postgresql://") {
+				t.Fatalf("a causa vazou credencial: %v", err)
 			}
 		})
 	}
@@ -168,6 +242,8 @@ func TestOutputMustBeFreshAndCannotTruncateSymlink(t *testing.T) {
 			o.dumpPath = "/missing"
 			if _, err := run(context.Background(), "postgresql://backup@localhost/stillon", "source-secret", path, o); err == nil {
 				t.Fatal("saída preexistente aceita")
+			} else if runtime.GOOS == "linux" && !errors.Is(err, fs.ErrExist) {
+				t.Fatalf("erro = %v, queria fs.ErrExist envelopado", err)
 			}
 			if _, e := os.Stat(marker); !os.IsNotExist(e) {
 				t.Fatal("saída existente iniciou cliente antes da recusa")

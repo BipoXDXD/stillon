@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"container/list"
 	"context"
 	"math"
 	"net/http"
@@ -72,13 +73,21 @@ func porUsuario(r *http.Request) (string, bool) {
 }
 
 type bucket struct {
-	lim  *rate.Limiter
-	seen time.Time
+	chave string
+	lim   *rate.Limiter
+	seen  time.Time
 }
 
+// limiterState guarda os baldes num LRU: o mapa acha o balde pela chave, e a
+// lista os ordena por uso, o mais recente na frente. Como todo uso move o
+// balde para a frente com seen = agora, a lista também fica em ordem de seen,
+// e o fundo é sempre o mais parado. Despejar e varrer começam pelo fundo e
+// param no primeiro que fica: cada balde é removido uma vez só, então o custo
+// por requisição é O(1) amortizado, mesmo com o mapa cheio sob ataque.
 type limiterState struct {
 	mu      sync.Mutex
-	buckets map[string]*bucket
+	buckets map[string]*list.Element
+	uso     *list.List
 	limit   rate.Limit
 	burst   int
 	chave   chaveFn
@@ -99,7 +108,8 @@ const ociosoMinimo = 10 * time.Minute
 // sem criar cem mil buckets.
 func rateLimit(ctx context.Context, limite rate.Limit, burst int, chave chaveFn, teto int) func(http.Handler) http.Handler {
 	st := &limiterState{
-		buckets: map[string]*bucket{},
+		buckets: map[string]*list.Element{},
+		uso:     list.New(),
 		limit:   limite,
 		burst:   burst,
 		chave:   chave,
@@ -139,13 +149,7 @@ func (h *limiterHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.st.mu.Lock()
-	b, ok := h.st.buckets[chave]
-	if !ok {
-		h.st.abrirEspaco()
-		b = &bucket{lim: rate.NewLimiter(h.st.limit, h.st.burst)}
-		h.st.buckets[chave] = b
-	}
-	b.seen = time.Now()
+	b := h.st.usar(chave)
 	espera, allow := reservar(b.lim)
 	h.st.mu.Unlock()
 
@@ -178,13 +182,30 @@ func reservar(lim *rate.Limiter) (time.Duration, bool) {
 	return 0, true
 }
 
+// usar devolve o balde da chave, criado se preciso, marcado como o mais
+// recente. Chamar com mu travado.
+func (s *limiterState) usar(chave string) *bucket {
+	if e, ok := s.buckets[chave]; ok {
+		b := e.Value.(*bucket)
+		b.seen = time.Now()
+		s.uso.MoveToFront(e)
+		return b
+	}
+	s.abrirEspaco()
+	b := &bucket{chave: chave, lim: rate.NewLimiter(s.limit, s.burst), seen: time.Now()}
+	s.buckets[chave] = s.uso.PushFront(b)
+	return b
+}
+
 // varrer remove o que está parado há tempo demais. Chamar com mu travado.
 func (s *limiterState) varrer() {
-	for k, b := range s.buckets {
-		if time.Since(b.seen) > s.ocioso {
-			delete(s.buckets, k)
-		}
+	for e := s.uso.Back(); e != nil && time.Since(e.Value.(*bucket).seen) > s.ocioso; e = s.uso.Back() {
+		s.despejar(e)
 	}
+}
+
+func (s *limiterState) despejar(e *list.Element) {
+	delete(s.buckets, s.uso.Remove(e).(*bucket).chave)
 }
 
 // tempoParaEncher é quanto um balde vazio leva para voltar ao burst.
@@ -198,23 +219,15 @@ func tempoParaEncher(limite rate.Limit, burst int) time.Duration {
 // abrirEspaco garante que cabe mais uma entrada. Chamar com mu travado.
 //
 // Primeiro tenta a varredura normal; se o mapa continuar cheio — o caso do
-// ataque, em que todas as entradas são recentes — despeja a menos vista
-// recentemente. O custo da varredura é O(max), e não O(origens observadas),
-// que é justamente a diferença entre ter e não ter teto.
+// ataque, em que todas as entradas são recentes — despeja a menos usada
+// recentemente, que é o fundo da lista.
 func (s *limiterState) abrirEspaco() {
 	if len(s.buckets) < s.max {
 		return
 	}
 	s.varrer()
 	for len(s.buckets) >= s.max {
-		var maisVelha string
-		var quando time.Time
-		for k, b := range s.buckets {
-			if quando.IsZero() || b.seen.Before(quando) {
-				maisVelha, quando = k, b.seen
-			}
-		}
-		delete(s.buckets, maisVelha)
+		s.despejar(s.uso.Back())
 	}
 }
 
