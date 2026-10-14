@@ -39,19 +39,20 @@ func NewReminders(pool *pgxpool.Pool, clk clock.Clock, policy Policy) *Reminders
 	return &Reminders{pool: pool, clk: clk, policy: policy, pageSize: reminderPageSize}
 }
 
-// Run roda Tick a cada remindEvery até ctx acabar. Um tique que falha fica
-// no log, e o seguinte tenta de novo: o estado está todo no banco.
+// Run roda Tick na subida e depois a cada remindEvery, até ctx acabar: um
+// lembrete que venceu com o processo fora do ar sai logo. Um tique que falha
+// fica no log, e o seguinte tenta de novo: o estado está todo no banco.
 func (r *Reminders) Run(ctx context.Context) error {
 	t := time.NewTicker(remindEvery)
 	defer t.Stop()
 	for {
+		if _, err := r.Tick(ctx); err != nil && ctx.Err() == nil {
+			slog.Error("enfileirar lembretes", "erro", err)
+		}
 		select {
 		case <-ctx.Done():
 			return nil
 		case <-t.C:
-			if _, err := r.Tick(ctx); err != nil && ctx.Err() == nil {
-				slog.Error("enfileirar lembretes", "erro", err)
-			}
 		}
 	}
 }
