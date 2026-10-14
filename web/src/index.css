@@ -92,6 +92,22 @@ input[type='radio'] {
   accent-color: var(--primaria);
 }
 
+/* Área de toque de 44 px (WCAG 2.5.5; o mínimo AA do 2.5.8 é 24) para
+   link de texto, sem mudar o layout: o pseudo-elemento, centrado no link,
+   cresce a área clicável e não ocupa espaço. e2e/a11y.spec.ts mede. */
+.alvo-de-toque {
+  position: relative;
+}
+.alvo-de-toque::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: max(100%, 2.75rem);
+  height: max(100%, 2.75rem);
+  transform: translate(-50%, -50%);
+}
+
 :focus-visible {
   outline: 3px solid var(--foco);
   outline-offset: 2px;
