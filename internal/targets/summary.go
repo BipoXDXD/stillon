@@ -85,7 +85,7 @@ func (s *Service) Summary(ctx context.Context, userID uuid.UUID) ([]Summary, err
 		for _, r := range rollups {
 			horas[r.TargetID] = append(horas[r.TargetID], SparkHour{Bucket: r.Bucket.UTC(), Total: r.Total, OK: r.Ok, P50: r.P50})
 		}
-		brutos, err := q.ListSummaryRawHours(ctx, db.ListSummaryRawHoursParams{UserID: userID, FromAt: corte, ToAt: h})
+		brutos, err := q.ListRawHours(ctx, db.ListRawHoursParams{UserID: userID, FromAt: corte, ToAt: h})
 		if err != nil {
 			return fmt.Errorf("checks do resumo: %w", err)
 		}

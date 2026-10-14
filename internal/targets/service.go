@@ -13,6 +13,7 @@ import (
 
 	"github.com/BipoXDXD/stillon/internal/clock"
 	"github.com/BipoXDXD/stillon/internal/crypto"
+	"github.com/BipoXDXD/stillon/internal/rollupcut"
 	"github.com/BipoXDXD/stillon/internal/storage"
 	"github.com/BipoXDXD/stillon/internal/storage/db"
 )
@@ -250,10 +251,8 @@ func (s *Service) Delete(ctx context.Context, userID, id uuid.UUID) error {
 }
 
 // Checks devolve a série de um alvo no intervalo [from, to). Até
-// MaxChecksWindow, os checks brutos; acima, as horas de check_rollup_1h, com
-// from arredondado para baixo até a hora cheia, para que a hora que o contém
-// entre. Os buckets saem em UTC: são horas cheias em UTC por definição, e o
-// pgx devolveria o fuso local do processo. Busca o alvo antes, e não só a série, porque uma lista vazia não
+// MaxChecksWindow, os checks brutos; acima, a série horária (serieHoraria).
+// Busca o alvo antes, e não só a série, porque uma lista vazia não
 // distinguiria "alvo de outro usuário" de "alvo sem sondas": o primeiro
 // precisa ser 404.
 func (s *Service) Checks(ctx context.Context, userID, id uuid.UUID, from, to time.Time) (Series, error) {
@@ -272,20 +271,9 @@ func (s *Service) Checks(ctx context.Context, userID, id uuid.UUID, from, to tim
 			return naoAchado(err)
 		}
 		if out.Resolution == Resolution1h {
-			rows, err := q.ListRollups(ctx, db.ListRollupsParams{
-				UserID: userID, TargetID: id, FromAt: from.Truncate(time.Hour), ToAt: to,
-			})
-			if err != nil {
-				return fmt.Errorf("listar rollups: %w", err)
-			}
-			out.Rollups = make([]Rollup, 0, len(rows))
-			for _, r := range rows {
-				out.Rollups = append(out.Rollups, Rollup{
-					Bucket: r.Bucket.UTC(), Total: r.Total, OK: r.Ok,
-					P50: r.P50, P95: r.P95, P99: r.P99, Max: r.Max,
-				})
-			}
-			return nil
+			var err error
+			out.Rollups, err = serieHoraria(ctx, q, userID, id, from, to, s.clk.Now())
+			return err
 		}
 		rows, err := q.ListChecks(ctx, db.ListChecksParams{UserID: userID, TargetID: id, FromAt: from, ToAt: to})
 		if err != nil {
@@ -301,6 +289,64 @@ func (s *Service) Checks(ctx context.Context, userID, id uuid.UUID, from, to tim
 		return nil
 	})
 	return out, err
+}
+
+// serieHoraria lê as horas de [from, to), com from arredondado para baixo até
+// a hora cheia, para que a hora que o contém entre. Como o resumo e a página
+// pública, junta os rollups até o corte de rollupcut e os checks brutos dele
+// em diante, agregados por hora com a fórmula dos rollups: ler só os rollups
+// deixava a série cega à queda em curso. O corte é lido antes das duas
+// consultas, para nenhuma hora contar duas vezes. Os buckets saem em UTC: são
+// horas cheias em UTC por definição, e o pgx devolveria o fuso local do
+// processo.
+func serieHoraria(ctx context.Context, q *db.Queries, userID, id uuid.UUID, from, to, agora time.Time) ([]Rollup, error) {
+	h := agora.UTC().Truncate(time.Hour)
+	inicio := from.UTC().Truncate(time.Hour)
+	marca, err := q.LatestUserRollupBucket(ctx, db.LatestUserRollupBucketParams{Before: h, UserID: userID})
+	if err != nil {
+		return nil, fmt.Errorf("marca d'água dos rollups: %w", err)
+	}
+	corte := rollupcut.At(marca, inicio, h)
+
+	rollups, err := q.ListRollups(ctx, db.ListRollupsParams{
+		UserID: userID, TargetID: id, FromAt: inicio, ToAt: minTime(corte, to),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("listar rollups: %w", err)
+	}
+	brutos, err := q.ListRawHours(ctx, db.ListRawHoursParams{UserID: userID, TargetID: &id, FromAt: corte, ToAt: to})
+	if err != nil {
+		return nil, fmt.Errorf("listar horas brutas: %w", err)
+	}
+	out := make([]Rollup, 0, len(rollups)+len(brutos))
+	for _, r := range rollups {
+		out = append(out, Rollup{
+			Bucket: r.Bucket.UTC(), Total: r.Total, OK: r.Ok,
+			P50: r.P50, P95: r.P95, P99: r.P99, Max: r.Max,
+		})
+	}
+	for _, r := range brutos {
+		out = append(out, horaBruta(r))
+	}
+	return out, nil
+}
+
+// horaBruta converte uma hora agregada dos checks brutos. Sem sucesso na hora
+// (ok = 0), a consulta devolve as latências como 0; aqui elas viram nil, como
+// no rollup.
+func horaBruta(r db.ListRawHoursRow) Rollup {
+	hora := Rollup{Bucket: r.Bucket.UTC(), Total: r.Total, OK: r.Ok}
+	if r.Ok > 0 {
+		hora.P50, hora.P95, hora.P99, hora.Max = &r.P50, &r.P95, &r.P99, &r.Max
+	}
+	return hora
+}
+
+func minTime(a, b time.Time) time.Time {
+	if a.Before(b) {
+		return a
+	}
+	return b
 }
 
 func (s *Service) toTarget(row db.Target) (Target, error) {

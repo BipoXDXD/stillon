@@ -337,10 +337,10 @@ func TestServiceSQLRecoveryComplementar(t *testing.T) {
 				t.Fatalf("Checks não recuperou: %+v, %v", got, err)
 			}
 		}},
-		{"Checks_rollups", `ALTER TABLE check_rollup_1h RENAME TO rollup_indisponivel_complementar`, `ALTER TABLE rollup_indisponivel_complementar RENAME TO check_rollup_1h`, "42P01", "listar rollups: ", func(t *testing.T, a ambiente, u, id uuid.UUID, broken bool) {
+		{"Checks_rollups", `ALTER TABLE check_rollup_1h RENAME TO rollup_indisponivel_complementar`, `ALTER TABLE rollup_indisponivel_complementar RENAME TO check_rollup_1h`, "42P01", "marca d'água dos rollups: ", func(t *testing.T, a ambiente, u, id uuid.UUID, broken bool) {
 			got, err := a.svc.Checks(context.Background(), u, id, a.clk.Now().Add(-72*time.Hour), a.clk.Now())
 			if broken {
-				exigirPGComplementar(t, err, "42P01", "listar rollups: ")
+				exigirPGComplementar(t, err, "42P01", "marca d'água dos rollups: ")
 			} else if err != nil || len(got.Rollups) != 1 || got.Rollups[0].Total != 2 || got.Rollups[0].OK != 1 {
 				t.Fatalf("Rollups não recuperou: %+v, %v", got, err)
 			}
