@@ -6,7 +6,7 @@
         "ALL"
       ],
       "command": [
-        "--role=api"
+        "--role=all"
       ],
       "depends_on": {},
       "environment": {
