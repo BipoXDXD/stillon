@@ -1,0 +1,121 @@
+{
+  "name": "stillon",
+  "services": {
+    "app": {
+      "cap_drop": [
+        "ALL"
+      ],
+      "command": [
+        "--role=all"
+      ],
+      "depends_on": {},
+      "environment": {
+        "CLIENT_IP_HEADER": "",
+        "CORS_ORIGIN": "https://${STILLON_DOMINIO}",
+        "DATABASE_URL": "postgres://stillon_app:${STILLON_APP_PASSWORD:?defina STILLON_APP_PASSWORD no /opt/stillon/.env}@10.30.0.4:5432/stillon?sslmode=disable",
+        "EMAIL_FROM": "${EMAIL_FROM:-}",
+        "GOMEMLIMIT": "768MiB",
+        "IP_HASH_KEY": "${IP_HASH_KEY:?defina IP_HASH_KEY no /opt/stillon/.env}",
+        "JWT_SECRET": "${JWT_SECRET:?defina JWT_SECRET no /opt/stillon/.env}",
+        "LOG_LEVEL": "info",
+        "MASTER_KEY": "${MASTER_KEY:?defina MASTER_KEY no /opt/stillon/.env}",
+        "METRICS_ADDR": "off",
+        "PUBLIC_BASE_URL": "https://${STILLON_DOMINIO:?defina STILLON_DOMINIO no /opt/stillon/.env}",
+        "RESEND_API_KEY": "${RESEND_API_KEY:-}",
+        "TRUSTED_PROXIES": "10.30.0.2/32"
+      },
+      "healthcheck": {
+        "interval": "10s",
+        "retries": 3,
+        "start_interval": "500ms",
+        "start_period": "30s",
+        "test": [
+          "CMD",
+          "/stillon",
+          "healthcheck"
+        ],
+        "timeout": "5s"
+      },
+      "image": "${STILLON_IMAGE:-stillon:6e3b747d58bf2b2a9ff2a3801f06f1eae2be8432@sha256:e8459ea82249c8dc3bbdc0e5543547dc5cc0f1bb895cb6a3f533b96d4ce07b9b}",
+      "logging": {
+        "driver": "json-file",
+        "options": {
+          "max-file": "3",
+          "max-size": "10m"
+        }
+      },
+      "mem_limit": "1g",
+      "networks": {
+        "stillon": {
+          "ipv4_address": "10.30.0.3"
+        }
+      },
+      "pull_policy": "never",
+      "read_only": true,
+      "restart": "unless-stopped",
+      "security_opt": [
+        "no-new-privileges:true"
+      ],
+      "stop_grace_period": "30s",
+      "container_name": "stillon-app-1",
+      "labels": [
+        "traefik.enable=false"
+      ]
+    },
+    "caddy": {
+      "cap_drop": [
+        "NET_RAW"
+      ],
+      "environment": {
+        "STILLON_DOMINIO": "${STILLON_DOMINIO:?defina STILLON_DOMINIO no /opt/stillon/.env}"
+      },
+      "image": "caddy:2@sha256:0c994536bddb66445885237f1a5dcc1916bccea922661c76b4e9fc24061f9b52",
+      "logging": {
+        "driver": "json-file",
+        "options": {
+          "max-file": "3",
+          "max-size": "10m"
+        }
+      },
+      "mem_limit": "256m",
+      "networks": {
+        "edge": {
+          "ipv4_address": "172.31.0.3"
+        },
+        "stillon": {
+          "ipv4_address": "10.30.0.2"
+        }
+      },
+      "restart": "unless-stopped",
+      "security_opt": [
+        "no-new-privileges:true"
+      ],
+      "volumes": [
+        {
+          "bind": {
+            "create_host_path": false
+          },
+          "read_only": true,
+          "source": "./deploy/vps/Caddyfile",
+          "target": "/etc/caddy/Caddyfile",
+          "type": "bind"
+        }
+      ],
+      "pull_policy": "never",
+      "container_name": "stillon-caddy-1",
+      "labels": [
+        "traefik.enable=false"
+      ]
+    }
+  },
+  "networks": {
+    "edge": {
+      "name": "edge",
+      "external": true
+    },
+    "stillon": {
+      "name": "stillon_stillon",
+      "external": true
+    }
+  }
+}

@@ -1,0 +1,91 @@
+{
+  "name": "stillon",
+  "services": {
+    "db": {
+      "cap_add": [
+        "CHOWN",
+        "DAC_OVERRIDE",
+        "FOWNER",
+        "SETGID",
+        "SETUID"
+      ],
+      "cap_drop": [
+        "ALL"
+      ],
+      "environment": {
+        "POSTGRES_PASSWORD": "${POSTGRES_PASSWORD:?defina POSTGRES_PASSWORD no /opt/stillon/.env}",
+        "STILLON_APP_PASSWORD": "${STILLON_APP_PASSWORD:?defina STILLON_APP_PASSWORD no /opt/stillon/.env}",
+        "STILLON_BACKUP_PASSWORD": "${STILLON_BACKUP_PASSWORD:?defina STILLON_BACKUP_PASSWORD no /opt/stillon/.env}"
+      },
+      "healthcheck": {
+        "interval": "10s",
+        "retries": 5,
+        "start_interval": "500ms",
+        "start_period": "30s",
+        "test": [
+          "CMD",
+          "pg_isready",
+          "-h",
+          "127.0.0.1",
+          "-U",
+          "stillon_app",
+          "-d",
+          "stillon"
+        ],
+        "timeout": "3s"
+      },
+      "image": "postgres:18-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873",
+      "logging": {
+        "driver": "json-file",
+        "options": {
+          "max-file": "3",
+          "max-size": "10m"
+        }
+      },
+      "mem_limit": "1g",
+      "networks": {
+        "stillon": {
+          "ipv4_address": "10.30.0.4"
+        }
+      },
+      "restart": "unless-stopped",
+      "security_opt": [
+        "no-new-privileges:true"
+      ],
+      "volumes": [
+        {
+          "source": "pgdata",
+          "target": "/var/lib/postgresql",
+          "type": "volume",
+          "volume": {}
+        },
+        {
+          "bind": {
+            "create_host_path": false
+          },
+          "read_only": true,
+          "source": "/opt/stillon/initdb.sh",
+          "target": "/docker-entrypoint-initdb.d/10-stillon.sh",
+          "type": "bind"
+        }
+      ],
+      "pull_policy": "never",
+      "container_name": "stillon-db-1",
+      "labels": [
+        "traefik.enable=false"
+      ]
+    }
+  },
+  "networks": {
+    "stillon": {
+      "name": "stillon_stillon",
+      "external": true
+    }
+  },
+  "volumes": {
+    "pgdata": {
+      "name": "stillon_pgdata",
+      "external": true
+    }
+  }
+}
