@@ -9,3 +9,5 @@ A configuração de containers permanece fixada no commit de infraestrutura revi
 Receptor: /opt/coolify-release/receiver.py; configuração /etc/coolify-release/<projeto>.json; recibos /var/lib/coolify-release/<projeto>/. Alterações do receptor no Git não atualizam automaticamente o executável root da VPS: exigem revisão e instalação administrativa.
 
 O receptor limita o arquivo OCI a4GiB, recusa extensões TAR, limita membros e metadados JSON e exige24GiB livres para transferência/importação segura. Um intent pendente bloqueia novas publicações; não excluir o recibo antes de conferir a fila e as imagens efetivas no Coolify. StillOn compartilha a trava original do backup e o backup recusa operação enquanto houver intent pendente.
+
+O receptor compartilhado2.0.1 usa protocolo2 e deve ter os mesmos bytes de Duora/GoblinShift. Instalação coordenada, homologação, trava global, orçamento de storage e reconciliação estão em [ISOLATION.md](ISOLATION.md).
