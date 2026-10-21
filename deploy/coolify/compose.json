@@ -1,0 +1,41 @@
+{
+  "services": {
+    "deployment-observer": {
+      "image": "caddy:2@sha256:0c994536bddb66445885237f1a5dcc1916bccea922661c76b4e9fc24061f9b52",
+      "pull_policy": "never",
+      "entrypoint": [
+        "/bin/sh",
+        "-c",
+        "exec sleep 2147483647"
+      ],
+      "user": "65532:65532",
+      "read_only": true,
+      "cap_drop": [
+        "ALL"
+      ],
+      "security_opt": [
+        "no-new-privileges:true"
+      ],
+      "restart": "unless-stopped",
+      "mem_limit": "24m",
+      "pids_limit": 16,
+      "healthcheck": {
+        "test": [
+          "CMD",
+          "wget",
+          "-q",
+          "-O",
+          "/dev/null",
+          "https://stillon.tech/readyz"
+        ],
+        "interval": "30s",
+        "timeout": "10s",
+        "retries": 3,
+        "start_period": "10s"
+      },
+      "labels": [
+        "traefik.enable=false"
+      ]
+    }
+  }
+}
