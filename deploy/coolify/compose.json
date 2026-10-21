@@ -18,7 +18,7 @@
       ],
       "restart": "unless-stopped",
       "mem_limit": "24m",
-      "pids_limit": 16,
+      "pids_limit": 64,
       "healthcheck": {
         "test": [
           "CMD",
@@ -35,7 +35,8 @@
       },
       "labels": [
         "traefik.enable=false"
-      ]
+      ],
+      "init": true
     }
   }
 }
