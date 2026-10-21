@@ -2,6 +2,8 @@
 
 Origem: [Duora #159](https://github.com/BipoXDXD/duora/pull/159) e
 [GoblinShift #122](https://github.com/BipoXDXD/GoblinShift/pull/122), já integrados.
+StillOn adotou o artefato nos [PRs #112](https://github.com/BipoXDXD/stillon/pull/112) e
+[#113](https://github.com/BipoXDXD/stillon/pull/113).
 Escopo: ingresso administrativo compartilhado; INV-12/T-12, ADR-0014 no Duora.
 Não altera APIs da aplicação, schema, Compose, recursos Coolify, workflow, credenciais ou política de rollback.
 Merge e instalação continuam sujeitos à revisão humana.
@@ -13,12 +15,16 @@ Merge e instalação continuam sujeitos à revisão humana.
 | Travas por projeto e concurrency do GitHub não coordenam dois repositórios; ambos passam pelo mesmo preflight de disco | `host.lock` comum, não bloqueante, antes de receber arquivos e mantido até confirmar saúde. Quem perde deve repetir depois pelos gates normais; não há fila/retry implícito |
 | Importação pode continuar no daemon após a morte do cliente; pendência de um projeto não bloqueava outro | Intent comum durável antes do primeiro import. Qualquer falha mantém esse intent; pendências antigas de qualquer diretório de projeto também bloqueiam o host |
 | `DockerRootDir` podia estar em outro filesystem; 4 GiB comprimidos não limitavam expansão de camadas | Inventário administrativo de storage, orçamento por filesystem, limite agregado de expansão e recusa de compressão não suportada |
-| Digest do manifesto era comparado ao Docker Image ID, que deriva do config | Confere manifesto/config e o ID retornado pelo daemon; confirma resolução local da referência imutável antes de configurar Coolify |
+| Identidade varia entre os stores Docker clássico e containerd | Confere manifesto/config e o ID comprovado do daemon; confirma resolução local da referência imutável antes de configurar Coolify |
 | Cópias do receptor podiam divergir sem vínculo com o executável instalado | Artefato versionado com SHA-256, comparação entre repositórios/instalação e protocolo v2 preso aos bytes do receptor |
 
 O digest do manifesto continua a identificar a imagem transportada/escaneada. O config digest é obtido
-do manifesto validado. A resolução local pelo manifesto deve retornar esse config ID ou o próprio
-manifest ID (Docker 29/containerd); o ID efetivamente retornado é usado para conferir `Image` do container. Não se troca digest por tag mutável.
+do manifesto validado. O receptor consulta primeiro o config e só usa o manifesto como fallback se o daemon
+responder HTTP 404 tipado; erros de rede ou servidor continuam sendo recusados. O ID comprovado precisa
+ser o config ID ou o manifest ID do grafo OCI e o descriptor, quando presente, precisa coincidir com o
+manifesto. Esse ID é usado para conferir `Image` do container; a referência imutável continua obrigatória.
+Após Coolify terminar a fila, health `starting` pode aguardar até 120 segundos dentro do deadline global;
+imagem/proprietário incorreto, unhealthy e expiração continuam recusados com a pendência preservada.
 Referência: [OCI config/ImageID](https://specs.opencontainers.org/image-spec/config/).
 
 ## Concorrência e limites da garantia
@@ -68,12 +74,14 @@ após confirmar que o processo/import correspondente terminou. Nunca executar pr
 
 ## Versionamento e instalação administrativa (não executada nesta revisão)
 
-`receiver-release.json` identifica a versão 2.0.1/protocolo 2 e o hash exato de `receiver.py`.
-Alterar receptor requer nova versão/hash e PRs coordenados nas duas cópias. O teste de artefato roda
-na suíte existente; não é necessária mudança de workflow. Para conferir ambos os checkouts:
+`receiver-release.json` identifica a versão 2.0.2/protocolo 2 e o hash exato de `receiver.py`.
+Alterar receptor requer nova versão/hash e PRs coordenados nas três cópias. O teste de artefato roda
+na suíte existente; não é necessária mudança de workflow. Para conferir os três checkouts:
 
 ```sh
-python3 /caminho/duora/scripts/release/coolify/verify_artifact.py \
+python3 /caminho/stillon/deploy/coolify/release/verify_artifact.py \
+  --peer /caminho/duora/scripts/release/coolify
+python3 /caminho/stillon/deploy/coolify/release/verify_artifact.py \
   --peer /caminho/GoblinShift/deploy/coolify/release
 ```
 
@@ -81,18 +89,18 @@ A comparação lê arquivos e termina com erro se houver bytes ou versões difer
 pode conferir o diretório da versão instalada. CI de um repositório isolado não prova o estado remoto;
 o hash também vai no pedido v2 e o receptor rejeita incompatibilidade antes de importar/configurar.
 
-Checklist para o administrador, depois da aprovação dos dois PRs:
+Checklist para o administrador, depois da aprovação dos artefatos nos três projetos:
 
 1. Congelar novos ingressos e aguardar todos os processos de receptores antigos, Docker imports e deployments
    terminarem. O receptor antigo não usa `host.lock`; adquirir a trava nova sozinho não basta na primeira troca.
    Conferir recibos pendentes e filas de todos os recursos. Não alterar serviços para fazer essa inspeção.
-2. Conferir os artefatos dos dois commits aprovados pelo comando acima. Se StillOn ou outro checkout usa
+2. Conferir os artefatos dos três commits aprovados pelo comando acima. Se outro checkout usa
    este mesmo executável, coordenar seu sender v2 e o mesmo hash **antes de reabrir o ingresso**. Sender v1
    será recusado; isso não derruba serviços existentes. Não ativar uma atualização parcial.
 3. Adquirir `/var/lib/coolify-release/host.lock` sem recriar seu inode. Sob essa trava, revisar o inventário
    de storage, confirmar ausência de intents e guardar evidência da versão atual, hashes e entrypoints.
 4. Instalar **os bytes aprovados**, sem editar no host, em diretório imutável root-owned
-   `/opt/coolify-release/versions/2.0.1-<sha256>/`, com `receiver.py` e `receiver-release.json`.
+   `/opt/coolify-release/versions/2.0.2-<sha256>/`, com `receiver.py` e `receiver-release.json`.
    Diretórios e executável 0755, metadados 0644; nenhum pai pode ser gravável pelas contas de publicação.
    Conferir a versão instalada com `verify_artifact.py --peer <diretorio-da-versao>`.
 5. Manter `/opt/coolify-release/receiver.py` como entrada estável apontando para a versão aprovada.
@@ -132,7 +140,7 @@ Operação exclusiva de administrador, fora do SSH restrito de CI; não existe e
 
 ```sh
 python3 -m unittest discover -s scripts/release/coolify -v       # Duora
-python3 -m unittest discover -s deploy/coolify/release -v       # GoblinShift
+python3 -m unittest discover -s deploy/coolify/release -v       # StillOn ou GoblinShift, em cada raiz
 ```
 
 Usar Python 3.12+ no host. As suítes executam processos independentes, flock e filesystem reais com dados
@@ -146,3 +154,6 @@ Sentinelas e simulações não comprovam integridade de PostgreSQL, isolamento e
 queda da VPS nem durabilidade do daemon. Nenhuma VPS, dado, segredo ou publicação de produção foi acessado.
 A aceitação ainda exige homologação descartável com Docker/Coolify reais, medição de memória/I/O/inodes,
 inventário atual de volumes/backups e ensaio de rollback com o schema e as versões efetivamente instaladas.
+
+A confirmação do artefato 2.0.2 nos três repositórios e os limites da homologação estão em
+[SYNC-2.0.2.md](SYNC-2.0.2.md). A verificação de fonte não comprova instalação na VPS.

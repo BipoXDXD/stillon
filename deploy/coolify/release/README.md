@@ -8,6 +8,15 @@ A configuração de containers permanece fixada no commit de infraestrutura revi
 
 Receptor: /opt/coolify-release/receiver.py; configuração /etc/coolify-release/<projeto>.json; recibos /var/lib/coolify-release/<projeto>/. Alterações do receptor no Git não atualizam automaticamente o executável root da VPS: exigem revisão e instalação administrativa.
 
-O receptor limita o arquivo OCI a4GiB, recusa extensões TAR, limita membros e metadados JSON e exige24GiB livres para transferência/importação segura. Um intent pendente bloqueia novas publicações; não excluir o recibo antes de conferir a fila e as imagens efetivas no Coolify. StillOn compartilha a trava original do backup e o backup recusa operação enquanto houver intent pendente.
+O transporte OCI é limitado a 4 GiB e a expansão agregada das camadas a 16 GiB. O preflight
+usa inventário administrativo de storage e orçamento por filesystem: quando staging e imagens
+compartilham o mesmo filesystem, exige **36 GiB livres**. São margens de admissão, não quota
+nem reserva física. A trava comum do host serializa os receptores participantes; pendências
+duráveis de qualquer projeto impedem novas releases até reconciliação administrativa.
+StillOn também mantém a trava original do backup, que recusa operação enquanto houver intent pendente.
 
-O receptor compartilhado2.0.1 usa protocolo2 e deve ter os mesmos bytes de Duora/GoblinShift. Instalação coordenada, homologação, trava global, orçamento de storage e reconciliação estão em [ISOLATION.md](ISOLATION.md).
+O receptor compartilhado **2.0.2**, protocolo **2**, deve ter os mesmos bytes de Duora e GoblinShift.
+Hash revisado: `1ccd1ada4777c80081c4f9bb2a64a500b1e221f794406319504d9e66cbb975cb`.
+A confirmação está em [SYNC-2.0.2.md](SYNC-2.0.2.md); instalação coordenada, homologação,
+trava global, orçamento de storage, reconciliação e rollback permanecem em [ISOLATION.md](ISOLATION.md).
+Este registro não instala ou ativa o receptor na VPS.
