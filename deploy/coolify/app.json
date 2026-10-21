@@ -36,7 +36,7 @@
         ],
         "timeout": "5s"
       },
-      "image": "stillon:6e3b747d58bf2b2a9ff2a3801f06f1eae2be8432@sha256:e8459ea82249c8dc3bbdc0e5543547dc5cc0f1bb895cb6a3f533b96d4ce07b9b",
+      "image": "${STILLON_IMAGE:-stillon:6e3b747d58bf2b2a9ff2a3801f06f1eae2be8432@sha256:e8459ea82249c8dc3bbdc0e5543547dc5cc0f1bb895cb6a3f533b96d4ce07b9b}",
       "logging": {
         "driver": "json-file",
         "options": {
@@ -109,12 +109,12 @@
     }
   },
   "networks": {
-    "stillon": {
-      "name": "stillon_stillon",
-      "external": true
-    },
     "edge": {
       "name": "edge",
+      "external": true
+    },
+    "stillon": {
+      "name": "stillon_stillon",
       "external": true
     }
   }
