@@ -7,6 +7,14 @@ on:
         type: boolean
         default: true
         required: true
+      periodic:
+        description: Use the repeating 18-hour audit interval
+        type: boolean
+        default: false
+      repeat:
+        description: Keep renewing recovery evidence independently
+        type: boolean
+        default: true
 permissions:
   contents: read
   actions: read
@@ -17,7 +25,7 @@ jobs:
   wait:
     name: Scheduled audit gate
     runs-on: ubuntu-24.04
-    environment: ${{ inputs.delayed && 'forwarding-audit-wait-20261023' || 'forwarding-audit-now-20261023' }}
+    environment: ${{ inputs.periodic && 'forwarding-audit-periodic-20261023' || inputs.delayed && 'forwarding-audit-wait-20261023' || 'forwarding-audit-now-20261023' }}
     timeout-minutes: 5
     steps:
       - run: echo 'Read-only evidence renewal; no production deployment.'
@@ -37,3 +45,19 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           AGE_IDENTITY: ${{ secrets.STILLON_BACKUP_AGE_IDENTITY }}
         run: python3 deploy/backup/restore-stored-audit.py
+
+  renew-next:
+    name: Schedule the next isolated revalidation
+    needs: restore
+    if: always() && !cancelled() && inputs.repeat
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          AUDIT_REF: ${{ github.ref_name }}
+        run: gh workflow run backup.yml --ref "$AUDIT_REF" -f delayed=true -f periodic=true -f repeat=true
