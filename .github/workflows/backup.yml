@@ -19,7 +19,7 @@ permissions:
   contents: read
   actions: read
 concurrency:
-  group: forwarding-audit-stillon
+  group: forwarding-audit-stillon-${{ inputs.periodic && 'periodic' || inputs.delayed && 'scheduled' || 'now' }}
   cancel-in-progress: false
 jobs:
   wait:
