@@ -191,7 +191,7 @@ jobs:
         # os `run:` em silêncio, e por isso o passo seguinte o chama direto.
         run: |
           go install "github.com/rhysd/actionlint/cmd/actionlint@${ACTIONLINT_VERSION}"
-          actionlint
+          python3 deploy/coolify/release/lint_workflows.py
       - name: shellcheck dos scripts de deploy
         # Na severidade padrão (até "info"), sem .shellcheckrc: um A && B || C
         # errado na entrada de produção não pode passar por aviso desligado.
