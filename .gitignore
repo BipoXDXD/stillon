@@ -46,3 +46,9 @@ coverage.out
 .idea/
 # Metadados que o Finder do macOS cria em toda pasta aberta.
 .DS_Store
+
+# Artefatos OCI de publicação; não são imagens locais nem código-fonte.
+.docker-artifacts/
+
+# Cache dos testes de contrato do wrapper Docker (biblioteca padrão do Python).
+__pycache__/
