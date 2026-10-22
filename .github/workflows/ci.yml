@@ -130,6 +130,7 @@ jobs:
         # Não compartilhar a sessão TC entre pacotes; o collector acompanha
         # todas as sessões próprias e nunca para/remove contêineres.
         run: |
+          python3 -m unittest discover -s deploy/ci -p test_docker_build.py -v
           python3 deploy/ci/diagnostico-fixture.py \
             --output "$RUNNER_TEMP/fixture-diagnostic" --daemon-exclusivo -- \
             go test -race -count=1 -coverprofile=coverage.out ./...
@@ -197,6 +198,7 @@ jobs:
         # errado na entrada de produção não pode passar por aviso desligado.
         run: |
           shellcheck --version
+          shellcheck scripts/docker-build.sh
           shellcheck deploy/ci/*.sh deploy/vps/stillon-entrada deploy/vps/vigia.sh \
             deploy/vps/initdb.sh deploy/backup/backup.sh
       - name: checagens dos workflows
@@ -513,6 +515,12 @@ jobs:
           build-args: VERSION=${{ env.VERSION }}
           cache-from: type=gha,scope=imagem
           provenance: false
+
+      - name: conferir as duas arquiteturas antes de mover tags
+        env:
+          DIGEST: ${{ steps.runtime.outputs.digest }}
+          DIGEST_TOOLS: ${{ steps.tools.outputs.digest }}
+        run: scripts/docker-build.sh published "$IMAGEM@$DIGEST" "$IMAGEM@$DIGEST_TOOLS"
 
       - name: trivy do digest publicado
         env:
