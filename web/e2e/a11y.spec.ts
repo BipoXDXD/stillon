@@ -130,10 +130,14 @@ for (const tema of ['claro', 'escuro'] as const) {
       await expect(page.getByRole('heading', { name: titulo, level: 1 })).toBeVisible()
       await expect(page.locator('html')).toHaveClass(tema === 'escuro' ? /dark/ : /^(?!.*dark)/)
       if (rota.endsWith('janela=7d')) {
-        // As barras de uptime da hora desenham, com cor (variável CSS).
-        const barra = page.getByTestId('grafico-latencia').locator('.recharts-bar-rectangle path').first()
-        await expect(barra).toBeAttached()
-        expect(await barra.evaluate((e) => getComputedStyle(e).fill)).toMatch(/^(rgb|oklch)\(/)
+        // A hora com menos de 99% no ar vira faixa hachurada (forma + cor),
+        // com o padrão do próprio gráfico e o traço em variável CSS.
+        const faixa = page.getByTestId('grafico-latencia').locator('.recharts-reference-area-rect').first()
+        await expect(faixa).toBeAttached()
+        const padrao = (await faixa.getAttribute('fill'))?.match(/^url\(#(.+)\)$/)?.[1]
+        expect(padrao, 'a faixa usa o padrão de hachura').toBeTruthy()
+        const traco = page.locator(`pattern[id="${padrao}"] path`)
+        expect(await traco.evaluate((e) => getComputedStyle(e).stroke)).toMatch(/^(rgb|oklch)\(/)
       }
       const r = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze()
       expect(r.violations.map((v) => `${rota}: ${v.id} (${v.nodes.map((n) => n.target.join(' ')).join(', ')})`)).toEqual([])
@@ -490,8 +494,9 @@ for (const largura of [400, 1280]) {
     await expect(page.getByRole('heading', { name: 'API', level: 1 })).toBeVisible()
     await esperarOConteudo(page, '/targets/a1')
     await conferir([
+      ['Voltar ao painel', page.getByRole('link', { name: 'Voltar ao painel' })],
       ...['1 h', '6 h', '24 h', '7 dias', '30 dias', '90 dias'].map(
-        (j): [string, Locator] => [`janela ${j}`, page.getByRole('button', { name: j, exact: true })],
+        (j): [string, Locator] => [`janela ${j}`, page.getByRole('radio', { name: j, exact: true })],
       ),
       ['Todos os incidentes', page.getByRole('link', { name: 'Todos os incidentes' })],
       ['Ver dados em tabela', page.locator('summary', { hasText: 'Ver dados em tabela' })],
@@ -574,7 +579,9 @@ for (const largura of [400, 1280]) {
       const janela = new URL(route.request().url()).searchParams.get('window')
       return route.fulfill({ status: 200, json: janela === '7d' ? horariaLenta : lenta })
     })
-    for (const [rota, maior] of [['/targets/a1', '2400 ms'], ['/targets/a1?janela=7d', '10000 ms']] as const) {
+    // O maior rótulo é o teto da escala robusta: 2400 ms vai a 5000; o p95
+    // de 9800 ms, a 20000.
+    for (const [rota, maior] of [['/targets/a1', '5000 ms'], ['/targets/a1?janela=7d', '20000 ms']] as const) {
       await page.goto(rota)
       await expect(page.getByRole('heading', { name: 'API', level: 1 })).toBeVisible()
       const grafico = page.getByTestId('grafico-latencia')
@@ -758,5 +765,14 @@ for (const largura of [400, 1280]) {
     expect(Math.max(...alturas), `${largura} px: a linha mais alta de "Funcionando"`).toBeLessThanOrEqual(48)
     await expect(page.getByRole('heading', { name: NOME_LONGO, level: 3 })).toBeVisible()
     await semRolagemLateral(`painel ${largura}`)
+    // O detalhe do alvo de nome longo, fora do ar.
+    await page.route('**/api/v1/targets/a1', (route) =>
+      route.fulfill({ status: 200, json: alvo({ id: 'a1', name: NOME_LONGO, created_at: agora }) }),
+    )
+    await page.goto('/targets/a1')
+    await expect(page.getByRole('heading', { name: NOME_LONGO, level: 1 })).toBeVisible()
+    await esperarOConteudo(page, '/targets/a1')
+    await expect(page.getByRole('region', { name: 'Fora do ar' })).toBeVisible()
+    await semRolagemLateral(`detalhe ${largura}`)
   })
 }

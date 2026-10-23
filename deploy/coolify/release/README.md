@@ -2,6 +2,13 @@
 
 Depois da CI bem-sucedida na main, o workflow Coolify release confere o commit exato e todos os gates. Imagens são transportadas em OCI por SSH, com digest e plataforma conferidos, para uma entrada restrita ao projeto. A VPS publica no recurso existente do Coolify e só registra sucesso após saúde real. Não há runner de PR nem token GitHub na VPS.
 
+A publicação exige CI de **push na main para o SHA exato**, incluindo o job `publish`.
+Um commit que suprima a CI não pode ser publicado por esse fluxo, mesmo que a CI do PR,
+as análises de segurança ou o backup estejam aprovados. O workflow de CI atual não tem
+acionamento manual. Para retomar a publicação, integrar por PR um novo commit sem marcador
+de supressão, aguardar a CI completa e reconferir main, pendências, filas e armazenamento.
+O acionamento manual de `Coolify release` também mantém essas exigências; não substitui a CI.
+
 A chave COOLIFY_RELEASE_SSH_KEY e o known_hosts COOLIFY_RELEASE_KNOWN_HOSTS ficam no environment production, restrito à main. A variável COOLIFY_RELEASE_TARGET identifica a conta restrita. O token Coolify é local, root-only, com API limitada a IPs locais. Chaves de backup continuam separadas.
 
 A configuração de containers permanece fixada no commit de infraestrutura revisado; releases só atualizam imagens. Volumes, bancos e assets não são removidos. preserved-assets.json bloqueia remoção ou alteração das mídias originais. Imagens antigas são retidas. Não há downgrade automático do schema; falha exige inspeção do deployment e do estado pending.json na VPS. Para rollback, verificar compatibilidade de schema e backup antes de publicar uma release anterior pelo procedimento administrativo.
@@ -27,3 +34,30 @@ Publicações manuais também exigem o SHA completo da main atual e a CI de push
 commit. Uma integração apenas documental precisa concluir a CI e publicar sua própria imagem
 antes da release. A aprovação do PR ou de um commit anterior não substitui esse gate.
 Não suprima a CI no commit de integração destinado à produção.
+
+## Fila e validação da publicação
+
+Este projeto recebe workflow_run da CI `ci` concluída com sucesso na main. O gate consulta
+novamente o push da main deste repositório, SHA e tentativa exatos, e exige todos os jobs obrigatórios.
+Eventos de PR/fork, tags, CI incompleta ou com falha não liberam produção. A execução manual exige
+um SHA completo e aprovado.
+
+Checks de PR têm fila independente. Produção preserva pendências com queue:max e mantém
+cancel-in-progress:false. Um SHA superado encerra com eligible=false antes de preparar o envio
+ou antes de transmiti-lo à VPS; não publica e não gera falha artificial. O novo SHA tem sua própria
+execução após o CI aprovado. Cancelamentos administrativos e o limite de100 pendências continuam possíveis.
+
+As imagens deste projeto já são publicadas pela CI. Repetições reutilizam as referências do commit;
+não dependem do número da tentativa do workflow de release. Digests, plataforma, scanners e assets
+continuam sujeitos às validações existentes. Não há artefato intermediário do Duora a copiar aqui.
+
+A aplicação usa o recurso nativo do Coolify. O receptor verifica propriedade e imagem executada,
+sem fixar a etiqueta informativa coolify.version; o executor de observador do Duora não se aplica.
+Outras incompatibilidades ou intents pendentes continuam bloqueadas para inspeção. O receptor
+compartilhado da VPS permanece inalterado.
+
+queue:max é aceito pelo GitHub e consta em sua documentação oficial. Actionlint1.7.12 ainda não
+conhece a propriedade. lint_workflows.py valida exatamente essa política, substitui somente
+a linha queue por uma linha vazia em memória e executa actionlint sobre todo o restante do
+arquivo e todos os outros workflows intactos, com shellcheck e erros propagados. A validação
+do parser real do GitHub e os demais gates continuam obrigatórios.

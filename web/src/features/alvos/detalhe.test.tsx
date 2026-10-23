@@ -37,10 +37,9 @@ describe('detalhe', () => {
   })
 
   // B6 do Plano 10: a série pede a janela pelo nome (?window=1h), e o
-  // servidor calcula o from com o relógio dele. Antes, o from saía do
-  // relógio do navegador: adiantado 1 h, a janela "1 h" pedia um from
-  // depois do "agora" do servidor, e a série respondia 400. Sabotagem:
-  // mandar também o from no serie() do cliente → 400 da API falsa.
+  // servidor calcula o from com o relógio dele. Sabotagem: mandar também o
+  // from no serie() do cliente → 400 da API falsa. Os indicadores pedem
+  // também 24 h e 30 dias: a ordem não importa, o formato sim.
   it('a série pede a janela ao servidor pelo nome, sem from do navegador', async () => {
     const r = await renderizarPainel('/targets/alvo-1?janela=1h')
     r.falsa.estado.alvos = [alvo()]
@@ -51,9 +50,10 @@ describe('detalhe', () => {
     await r.cliente.refetchQueries()
     expect(await screen.findByText(/Mediana 100 ms/)).toBeInTheDocument()
     const consultas = () => r.falsa.corpos('GET /targets/:id/checks')
-    expect(consultas()[consultas().length - 1]).toEqual({ window: '1h' })
-    await r.usuario.click(screen.getByRole('button', { name: '30 dias' }))
-    await waitFor(() => expect(consultas()[consultas().length - 1]).toEqual({ window: '30d' }))
+    expect(consultas()).toContainEqual({ window: '1h' })
+    await r.usuario.click(screen.getByRole('radio', { name: '6 h' }))
+    await waitFor(() => expect(consultas()).toContainEqual({ window: '6h' }))
+    expect(consultas().filter((c) => 'from' in c)).toEqual([])
   })
 
   it('a janela acima de 48h desenha pelo que o servidor decidiu (resolution 1h)', async () => {
@@ -65,7 +65,7 @@ describe('detalhe', () => {
     }
     await r.cliente.refetchQueries()
     expect(await screen.findByText(/Resolução por hora/)).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '7 dias' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByRole('radio', { name: '7 dias' })).toBeChecked()
   })
 
   it('apagar pede confirmação e volta ao painel', async () => {
@@ -204,7 +204,7 @@ describe('detalhe', () => {
         })
       }),
     )
-    await r.usuario.click(screen.getByRole('button', { name: '7 dias' }))
+    await r.usuario.click(screen.getByRole('radio', { name: '7 dias' }))
     const latencia = screen.getByRole('region', { name: 'Latência' })
     await waitFor(() => expect(within(latencia).getByText('Carregando…')).toBeInTheDocument())
     expect(within(latencia).getByText(/Mediana 100 ms/).closest('[aria-busy]')).toHaveAttribute('aria-busy', 'true')
@@ -258,9 +258,183 @@ describe('detalhe', () => {
     const r = await renderizarPainel('/targets/alvo-1?janela=toString')
     r.falsa.estado.alvos = [alvo()]
     await r.cliente.refetchQueries()
-    expect(await screen.findByRole('button', { name: '24 h' })).toHaveAttribute('aria-pressed', 'true')
+    expect(await screen.findByRole('radio', { name: '24 h' })).toBeChecked()
   })
 
+  it('volta ao painel pelo link "Painel"', async () => {
+    const r = await renderizarPainel('/targets/alvo-1')
+    r.falsa.estado.alvos = [alvo()]
+    await r.cliente.refetchQueries()
+    expect(await screen.findByRole('link', { name: 'Voltar ao painel' })).toHaveAttribute('href', '/')
+  })
+
+  // Spec, Telas > 2: quatro KPIs. 30 dias vem da janela horária; a mediana,
+  // da janela de 24 h. Sabotagem: trocar useSerie(alvoId, '30d') por '24h'
+  // → "No ar em 30 dias" mostra 66,66 %.
+  it('os quatro indicadores: no ar em 24 h e em 30 dias, mediana de 24 h e último check', async () => {
+    const r = await renderizarPainel('/targets/alvo-1?janela=1h')
+    r.falsa.estado.alvos = [alvo()]
+    r.falsa.estado.resumo = [itemDoResumo({ uptime_24h: 0.99999, last_checked_at: new Date(2026, 8, 24, 11, 59).toISOString() })]
+    servidor.use(
+      http.get('*/api/v1/targets/:id/checks', ({ request }) => {
+        if (new URL(request.url).searchParams.get('window') === '30d') {
+          return HttpResponse.json({
+            resolution: '1h',
+            items: [
+              { bucket: '2026-09-24T10:00:00Z', total: 60, ok: 30, p50_ms: 120, p95_ms: 300, p99_ms: 400, max_ms: 500 },
+              { bucket: '2026-09-24T11:00:00Z', total: 60, ok: 60, p50_ms: 120, p95_ms: 300, p99_ms: 400, max_ms: 500 },
+            ],
+          })
+        }
+        return HttpResponse.json({
+          resolution: 'raw',
+          items: [
+            { checked_at: '2026-09-24T11:00:00Z', status: 'up', latency_ms: 100, status_code: 200, error_kind: null },
+            { checked_at: '2026-09-24T11:01:00Z', status: 'up', latency_ms: 300, status_code: 200, error_kind: null },
+            { checked_at: '2026-09-24T11:02:00Z', status: 'down', latency_ms: 10000, status_code: null, error_kind: 'timeout' },
+          ],
+        })
+      }),
+    )
+    await r.cliente.refetchQueries()
+    const valor = (rotulo: string) => screen.getByText(rotulo).nextElementSibling
+    await waitFor(() => expect(valor('No ar em 30 dias')).toHaveTextContent('75,00 %'))
+    expect(valor('No ar em 24 h')).toHaveTextContent('99,99 %')
+    expect(valor('Latência mediana (24 h)')).toHaveTextContent('100 ms')
+    expect(valor('Último check')).toHaveTextContent(/^11:59 há /)
+  })
+
+  // Review Focus 4: sem check nenhum, traço e "nunca".
+  it('alvo sem nenhum check: os indicadores mostram traço, e o último check diz "nunca"', async () => {
+    const r = await renderizarPainel('/targets/alvo-1')
+    r.falsa.estado.alvos = [alvo()]
+    r.falsa.estado.resumo = [itemDoResumo({ state: 'unknown', last_checked_at: null, uptime_24h: null, spark: [] })]
+    await r.cliente.refetchQueries()
+    await screen.findByRole('region', { name: 'Sem dados' })
+    expect(screen.getByText('No ar em 24 h').nextElementSibling).toHaveTextContent('—')
+    expect(screen.getByText('Último check').nextElementSibling).toHaveTextContent('— nunca')
+  })
+
+  // Review Focus 5. Sabotagem: tirar o ramo "s.items.length === 0" → a
+  // tabela vazia aparece.
+  it('janela sem checks: uma frase no lugar do gráfico e da tabela', async () => {
+    const r = await renderizarPainel('/targets/alvo-1')
+    r.falsa.estado.alvos = [alvo()]
+    r.falsa.estado.serie = { resolution: 'raw', items: [] }
+    await r.cliente.refetchQueries()
+    const latencia = await screen.findByRole('region', { name: 'Latência' })
+    expect(await within(latencia).findByText('Nenhum check nesta janela.')).toBeInTheDocument()
+    expect(within(latencia).queryByTestId('grafico-latencia')).not.toBeInTheDocument()
+    expect(within(latencia).queryByRole('table')).not.toBeInTheDocument()
+    expect(within(latencia).getByText(/sem checks nesta janela/)).toBeInTheDocument()
+  })
+
+  it('a janela é um radiogroup: a seta escolhe a próxima e vai para a URL', async () => {
+    const r = await renderizarPainel('/targets/alvo-1')
+    r.falsa.estado.alvos = [alvo()]
+    await r.cliente.refetchQueries()
+    const grupo = await screen.findByRole('radiogroup', { name: 'Janela do gráfico' })
+    expect(within(grupo).getByRole('radio', { name: '24 h' })).toBeChecked()
+    await r.usuario.click(within(grupo).getByRole('radio', { name: '24 h' }))
+    await r.usuario.keyboard('{ArrowRight}')
+    expect(within(grupo).getByRole('radio', { name: '7 dias' })).toBeChecked()
+    expect(r.router.state.location.search).toBe('?janela=7d')
+  })
+
+  // Spec, Telas > 2: linhas com selo (Em andamento, Reconhecido, Resolvido)
+  // e a causa. Review Focus 7.
+  it('incidentes recentes: selo, causa (ou "Causa não registrada") e período', async () => {
+    const r = await renderizarPainel('/targets/alvo-1')
+    r.falsa.estado.alvos = [alvo()]
+    r.falsa.estado.incidentes = [incidente({ cause: '' }), incidente({ id: 'inc-2', resolved_at: '2026-09-24T11:30:00Z' })]
+    await r.cliente.refetchQueries()
+    const secao = await screen.findByRole('region', { name: 'Incidentes recentes' })
+    await waitFor(() => expect(within(secao).getAllByRole('listitem')).toHaveLength(2))
+    const [aberto, resolvido] = within(secao).getAllByRole('listitem') as [HTMLElement, HTMLElement]
+    expect(within(aberto).getByText('Em andamento')).toBeInTheDocument()
+    expect(within(aberto).getByText('Causa não registrada')).toBeInTheDocument()
+    expect(within(resolvido).getByText('Resolvido')).toBeInTheDocument()
+    expect(within(resolvido).getByText(/· durou 30 min$/)).toBeInTheDocument()
+  })
+
+  describe('faixa de estado', () => {
+    // Spec, Telas > 2: a faixa diz há quanto tempo o alvo está fora, a causa
+    // e o início, com Reconhecer. O foco vai ao "Reconhecido" quando o botão
+    // some (o cuidado I1 da tela de incidentes). Sabotagem: tirar o
+    // "focarDepois.current = true" → o foco cai no <body>.
+    it('fora do ar com incidente aberto: tempo, causa e Reconhecer, que manda o ack e leva o foco', async () => {
+      const r = await renderizarPainel('/targets/alvo-1')
+      r.falsa.estado.alvos = [alvo()]
+      r.falsa.estado.resumo = [itemDoResumo({ state: 'down', open_incident_id: 'inc-1' })]
+      r.falsa.estado.incidentes = [incidente({ cause: 'conn_refused' })]
+      await r.cliente.refetchQueries()
+      const faixa = await screen.findByRole('region', { name: /^Fora do ar há / })
+      expect(within(faixa).getByText(/^Conexão recusada · desde /)).toBeInTheDocument()
+      const botao = within(faixa).getByRole('button', { name: 'Reconhecer' })
+      expect(botao).toHaveAccessibleDescription('Reconhecer interrompe os lembretes; não resolve o incidente.')
+      await r.usuario.click(botao)
+      const feito = await within(faixa).findByText(/lembretes parados desde/)
+      await waitFor(() => expect(feito).toHaveFocus())
+      expect(within(faixa).queryByRole('button', { name: 'Reconhecer' })).not.toBeInTheDocument()
+      expect(r.falsa.chamadas('POST /incidents/:id/ack')).toBe(1)
+    })
+
+    it('sem incidente aberto, a faixa diz o estado e o último check, sem Reconhecer', async () => {
+      const r = await renderizarPainel('/targets/alvo-1')
+      r.falsa.estado.alvos = [alvo()]
+      r.falsa.estado.resumo = [itemDoResumo()]
+      await r.cliente.refetchQueries()
+      const faixa = await screen.findByRole('region', { name: 'No ar' })
+      expect(within(faixa).getByText(/^Último check /)).toBeInTheDocument()
+      expect(within(faixa).queryByRole('button')).not.toBeInTheDocument()
+    })
+
+    it('pausado: a faixa diz que os checks estão parados', async () => {
+      const r = await renderizarPainel('/targets/alvo-1')
+      r.falsa.estado.alvos = [alvo({ enabled: false })]
+      r.falsa.estado.resumo = [itemDoResumo({ state: 'unknown', enabled: false })]
+      await r.cliente.refetchQueries()
+      const faixa = await screen.findByRole('region', { name: 'Pausado' })
+      expect(within(faixa).getByText('Os checks estão parados. Retome para voltar a vigiar.')).toBeInTheDocument()
+    })
+
+    // Review Focus 4.
+    it('alvo sem nenhum check: "Sem dados" e "Nenhum check ainda."', async () => {
+      const r = await renderizarPainel('/targets/alvo-1')
+      r.falsa.estado.alvos = [alvo()]
+      r.falsa.estado.resumo = [itemDoResumo({ state: 'unknown', last_checked_at: null, uptime_24h: null, spark: [] })]
+      await r.cliente.refetchQueries()
+      const faixa = await screen.findByRole('region', { name: 'Sem dados' })
+      expect(within(faixa).getByText('Nenhum check ainda.')).toBeInTheDocument()
+    })
+
+    // M3: o incidente sumiu com o alvo, apagado em outra aba. Sabotagem:
+    // tirar o ramo do naoEncontrado em reconhecer() → o erro cru fica na tela.
+    it('o ack com 404 explica e volta à lista', async () => {
+      const r = await renderizarPainel('/targets/alvo-1')
+      r.falsa.estado.alvos = [alvo()]
+      r.falsa.estado.resumo = [itemDoResumo({ state: 'down', open_incident_id: 'inc-1' })]
+      r.falsa.estado.incidentes = [incidente()]
+      await r.cliente.refetchQueries()
+      const botao = await screen.findByRole('button', { name: 'Reconhecer' })
+      r.falsa.estado.incidentes = []
+      await r.usuario.click(botao)
+      expect((await screen.findAllByText('O alvo já tinha sido apagado, talvez em outra aba.'))[0]).toBeInTheDocument()
+      await waitFor(() => expect(r.router.state.location.pathname).toBe('/'))
+    })
+
+    it('um ack que falha mostra o erro e mantém o Reconhecer', async () => {
+      const r = await renderizarPainel('/targets/alvo-1')
+      r.falsa.estado.alvos = [alvo()]
+      r.falsa.estado.resumo = [itemDoResumo({ state: 'down', open_incident_id: 'inc-1' })]
+      r.falsa.estado.incidentes = [incidente()]
+      await r.cliente.refetchQueries()
+      r.falsa.estado.forcar.set('POST /incidents/:id/ack', { status: 502, code: 'unavailable' })
+      await r.usuario.click(await screen.findByRole('button', { name: 'Reconhecer' }))
+      expect(await screen.findByRole('alert')).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Reconhecer' })).toBeInTheDocument()
+    })
+  })
 })
 
 // M3 da revisão final: 404 tratado como em Canais. O alvo sumiu (apagado em
