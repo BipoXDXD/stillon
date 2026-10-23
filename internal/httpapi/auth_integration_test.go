@@ -78,7 +78,11 @@ func newAPIWith(t *testing.T, ajustar func(*config.Config)) *api {
 func newAPICom(t *testing.T, ajustar func(*config.Config), ajustarDeps func(*httpapi.Deps)) *api {
 	t.Helper()
 	pool := testdb.New(t)
-	clk := clock.NewFake(time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC))
+	// O cookiejar do cliente usa o relógio real para avaliar Expires. Uma
+	// data fixa faz os cookies de refresh nascerem vencidos após 30 dias.
+	// Ancoramos a fixture na hora UTC atual, mantendo o relógio controlável
+	// e a hora cheia usada pelos testes de agregação e suas janelas.
+	clk := clock.NewFake(time.Now().UTC().Truncate(time.Hour))
 
 	hash, err := auth.HashPassword(context.Background(), testPass)
 	if err != nil {

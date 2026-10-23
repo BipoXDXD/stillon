@@ -28,6 +28,12 @@ A confirmação está em [SYNC-2.0.2.md](SYNC-2.0.2.md); instalação coordenada
 trava global, orçamento de storage, reconciliação e rollback permanecem em [ISOLATION.md](ISOLATION.md).
 Este registro não instala ou ativa o receptor na VPS.
 
+## CI do commit destinado à publicação
+
+Publicações manuais também exigem o SHA completo da main atual e a CI de push desse mesmo
+commit. Uma integração apenas documental precisa concluir a CI e publicar sua própria imagem
+antes da release. A aprovação do PR ou de um commit anterior não substitui esse gate.
+Não suprima a CI no commit de integração destinado à produção.
 
 ## Fila e validação da publicação
 
