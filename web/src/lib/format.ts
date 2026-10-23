@@ -70,6 +70,13 @@ export function horaMinuto(instante: string | number): string {
   return horaMinutoFmt.format(new Date(instante))
 }
 
+const diaMesFmt = new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: '2-digit' })
+
+// "14/10", no fuso do navegador: as marcas do eixo nas janelas de dias.
+export function diaMes(instante: string | number): string {
+  return diaMesFmt.format(new Date(instante))
+}
+
 export function fuso(): string {
   return Intl.DateTimeFormat().resolvedOptions().timeZone
 }

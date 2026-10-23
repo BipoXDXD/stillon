@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Serie } from '@/lib/api/schemas'
-import { ehJanela, pontosBrutos, pontosHorarios, resumir } from './serie'
+import { ehJanela, faixasForaDoAr, latenciasDaSerie, pontosBrutos, pontosHorarios, resumir } from './serie'
 
 const check = (min: number, status: 'up' | 'degraded' | 'down', latency_ms: number) => ({
   checked_at: new Date(Date.UTC(2026, 8, 24, 12, min)).toISOString(),
@@ -48,4 +48,62 @@ it('ehJanela só aceita as janelas, não o que vem do protótipo', () => {
   expect(ehJanela('toString')).toBe(false)
   expect(ehJanela('__proto__')).toBe(false)
   expect(ehJanela(null)).toBe(false)
+})
+
+const t = (min: number) => Date.UTC(2026, 8, 24, 12, min)
+const hora = (h: number, total: number, ok: number, p50: number | null = 100, p95: number | null = 300) => ({
+  bucket: new Date(Date.UTC(2026, 8, 24, h)).toISOString(),
+  total,
+  ok,
+  p50_ms: p50,
+  p95_ms: p95,
+  p99_ms: p95,
+  max_ms: p95,
+})
+
+describe('faixasForaDoAr', () => {
+  it('bruta: cada check fora do ar vai até o seguinte, e vizinhos se fundem', () => {
+    const s: Serie = { resolution: 'raw', items: [check(0, 'up', 100), check(1, 'down', 10000), check(2, 'down', 10000), check(3, 'up', 100)] }
+    expect(faixasForaDoAr(s)).toEqual([{ de: t(1), ate: t(3) }])
+  })
+
+  it('bruta: o último check fora do ar vai um passo adiante', () => {
+    const s: Serie = { resolution: 'raw', items: [check(0, 'up', 100), check(2, 'up', 100), check(3, 'down', 10000)] }
+    expect(faixasForaDoAr(s)).toEqual([{ de: t(3), ate: t(4) }])
+  })
+
+  // Review Focus 6: sem dois checks para medir o passo, um minuto.
+  it('bruta: um check só, fora do ar, vale um minuto', () => {
+    expect(faixasForaDoAr({ resolution: 'raw', items: [check(0, 'down', 10000)] })).toEqual([{ de: t(0), ate: t(1) }])
+  })
+
+  it('horária: a hora inteira abaixo de 99% no ar; degradada e vazia não entram', () => {
+    const s: Serie = {
+      resolution: '1h',
+      items: [hora(8, 60, 60), hora(9, 60, 57), hora(10, 60, 0, null, null), hora(11, 1000, 995), hora(12, 0, 0, null, null)],
+    }
+    expect(faixasForaDoAr(s)).toEqual([{ de: Date.UTC(2026, 8, 24, 9), ate: Date.UTC(2026, 8, 24, 11) }])
+  })
+
+  it('série vazia não tem faixa', () => {
+    expect(faixasForaDoAr({ resolution: 'raw', items: [] })).toEqual([])
+  })
+})
+
+describe('latenciasDaSerie', () => {
+  it('bruta: só os checks que não caíram', () => {
+    const s: Serie = { resolution: 'raw', items: [check(0, 'up', 100), check(1, 'down', 10000), check(2, 'degraded', 2500)] }
+    expect(latenciasDaSerie(s)).toEqual([
+      { t: t(0), ms: 100 },
+      { t: t(2), ms: 2500 },
+    ])
+  })
+
+  it('horária: o topo da faixa (p95), o p50 sem p95, e nada sem os dois', () => {
+    const s: Serie = { resolution: '1h', items: [hora(8, 60, 60, 100, 300), hora(9, 60, 60, 120, null), hora(10, 60, 0, null, null)] }
+    expect(latenciasDaSerie(s)).toEqual([
+      { t: Date.UTC(2026, 8, 24, 8), ms: 300 },
+      { t: Date.UTC(2026, 8, 24, 9), ms: 120 },
+    ])
+  })
 })
