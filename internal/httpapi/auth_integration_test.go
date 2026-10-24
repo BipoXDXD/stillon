@@ -703,10 +703,7 @@ func TestProtectedRouteRequiresToken(t *testing.T) {
 
 	// E o token legítimo passa, o que descarta que o 401 venha de qualquer
 	// outra camada da cadeia.
-	bom, err := auth.NewAccessToken(testJWTSecret, a.userID, uuid.New(), a.clk.Now())
-	if err != nil {
-		t.Fatal(err)
-	}
+	bom := tokenDe(t, a, a.userID)
 	if got := statusComToken(t, a, bom); got != http.StatusOK {
 		t.Errorf("token válido: status = %d, queria 200", got)
 	}
