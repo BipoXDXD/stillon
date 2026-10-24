@@ -45,14 +45,14 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 # tools: o mesmo binário sobre a variante debug, que tem o busybox. Só o seed
 # do compose a usa, para passar a senha de demo pelo stdin (D6). NUNCA vai
 # para produção.
-FROM gcr.io/distroless/static-debian13:debug-nonroot@sha256:2a581fcbda6320d4d17fd6ff4774bb96e4825d2be9c2bca59f0777b429997f51 AS tools
+FROM gcr.io/distroless/static-debian13:debug-nonroot@sha256:06bfc1ed6f52f8efecd4e68e5f146fc06891b1c40f2d1654f1518392ba89815a AS tools
 COPY --from=build /out/stillon /stillon
 USER nonroot:nonroot
 ENTRYPOINT ["/stillon"]
 
 # runtime: o último estágio, o padrão do `docker build`. Sem HEALTHCHECK: os
 # compose (o local e o de produção) usam `stillon healthcheck` (D5).
-FROM gcr.io/distroless/static-debian13:nonroot@sha256:e2e927ec666bae08560abb3c55d0659eceabb657f56b6782ab500a9fc7f555e3 AS runtime
+FROM gcr.io/distroless/static-debian13:nonroot@sha256:d62067879de890a1def9da0e7766b7d20810a5e5555cef8506b752437d7a3e88 AS runtime
 COPY --from=build /out/stillon /stillon
 USER nonroot:nonroot
 EXPOSE 8080
