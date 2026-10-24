@@ -1,4 +1,5 @@
 """Seleção real do helper; Docker simulado, sem dump ou conexão com produção."""
+import copy
 import json
 import os
 from pathlib import Path
@@ -52,6 +53,8 @@ sys.exit(97)
         docker.chmod(0o755)
 
     def invoke(self, receipt=True):
+        for name in ["selected", "commands"]:
+            (self.directory / name).unlink(missing_ok=True)
         if receipt:
             path = self.state / "current.json"
             path.write_text(json.dumps(self.receipt))
@@ -80,7 +83,7 @@ SHM_BASE=$FIXTURE
 preparar_helper_backup
 '''
         result = subprocess.run(["bash", "-c", script], env={**self.env, "PATH": str(self.bin) + os.pathsep + os.environ["PATH"]}, capture_output=True, text=True)
-        self.assertNotEqual(result.returncode, 0)  # create é interrompido pelo teste.
+        self.assertEqual(result.returncode, 1, result.stderr)  # create é interrompido pelo teste.
         return (self.directory / "selected").read_text() if (self.directory / "selected").exists() else None
 
     def test_digest_aprovado_local_sem_alias_legado(self):
@@ -102,23 +105,23 @@ preparar_helper_backup
 
     def test_repositorio_imagem_estranho_recusado(self):
         self.receipt["release"]["images"]["app"] = "ghcr.io/terceiro/stillon@sha256:" + "c" * 64
-        self.assertIsNone(self.invoke())
+        self.assert_recusa_sem_fallback()
 
     def test_projeto_estranho_recusado(self):
         self.receipt["release"]["project"] = "duora"
-        self.assertIsNone(self.invoke())
+        self.assert_recusa_sem_fallback()
 
     def test_revision_divergente_recusada(self):
         self.env["REVISION"] = "e" * 40
-        self.assertIsNone(self.invoke())
+        self.assert_recusa_sem_fallback()
 
     def test_source_divergente_recusado(self):
         self.env["SOURCE"] = "https://github.com/terceiro/stillon"
-        self.assertIsNone(self.invoke())
+        self.assert_recusa_sem_fallback()
 
     def test_imagem_ausente_nao_faz_pull(self):
         self.env["PRESENT"] = "0"
-        self.assertIsNone(self.invoke())
+        self.assert_recusa_sem_fallback()
         commands = [json.loads(line) for line in (self.directory / "commands").read_text().splitlines()]
         self.assertTrue(all(command[:2] == ["image", "inspect"] for command in commands))
 
@@ -163,6 +166,75 @@ preparar_helper_backup
         target.chmod(0o600)
         self.env["BAD_METADATA"] = "size"
         self.assertIsNone(self.invoke(receipt=False))
+
+    def assert_recusa_sem_fallback(self, receipt=True):
+        # Um alias válido continuaria funcionando: recusa não pode ser causada
+        # pela ausência dele, nem chegar a create antes de perceber o recibo ruim.
+        self.env["LEGACY"] = "1"
+        self.assertIsNone(self.invoke(receipt=receipt))
+        commands = self.directory / "commands"
+        if commands.exists():
+            for command in map(json.loads, commands.read_text().splitlines()):
+                self.assertEqual(command[:2], ["image", "inspect"])
+                self.assertNotEqual(command[-1], "stillon:" + SHA)
+
+    def test_contrato_recibo_corrompido_nao_faz_fallback(self):
+        original = copy.deepcopy(self.receipt)
+        changes = [
+            ("versao", lambda r: r["release"].update(version=1)),
+            ("tipo_versao", lambda r: r["release"].update(version="2")),
+            ("campo_extra", lambda r: r["release"].update(extra=True)),
+            ("sem_receiver", lambda r: r["release"].pop("receiver_sha256")),
+            ("hash_receiver", lambda r: r["release"].update(receiver_sha256="invalido")),
+            ("tipo_receiver", lambda r: r["release"].update(receiver_sha256=12)),
+            ("papel_extra", lambda r: r["release"]["images"].update(db=REFERENCE)),
+            ("tipo_imagens", lambda r: r["release"].update(images=[])),
+            ("tipo_app", lambda r: r["release"]["images"].update(app=None)),
+            ("tag_mutavel", lambda r: r["release"]["images"].update(app="ghcr.io/bipoxdxd/stillon:latest")),
+            ("digest_curto", lambda r: r["release"]["images"].update(app="ghcr.io/bipoxdxd/stillon@sha256:abc")),
+            ("digest_upper", lambda r: r["release"]["images"].update(app="ghcr.io/bipoxdxd/stillon@sha256:" + "A" * 64)),
+            ("tipo_release", lambda r: r.update(release=[])),
+            ("sem_release", lambda r: r.pop("release")),
+        ]
+        for name, change in changes:
+            with self.subTest(name=name):
+                self.receipt = copy.deepcopy(original)
+                change(self.receipt)
+                self.assert_recusa_sem_fallback()
+
+    def test_json_truncado_ou_vazio_nao_faz_fallback(self):
+        for content in ["", '{"release":', "null", "[]"]:
+            with self.subTest(content=content):
+                target = self.state / "current.json"
+                target.write_text(content)
+                target.chmod(0o600)
+                self.assert_recusa_sem_fallback(receipt=False)
+
+    def test_labels_ausentes_nao_fazem_fallback(self):
+        for name in ["REVISION", "SOURCE"]:
+            with self.subTest(name=name):
+                original = self.env[name]
+                self.env[name] = ""
+                self.assert_recusa_sem_fallback()
+                self.env[name] = original
+
+    @unittest.skipUnless(os.geteuid() == 0, "ancestralidade exige Linux root real; não modelar no Mac")
+    def test_ancestral_symlink_nao_faz_fallback(self):
+        target = self.directory / "state-real"
+        self.state.rename(target)
+        self.state.symlink_to(target, target_is_directory=True)
+        self.assert_recusa_sem_fallback()
+
+    @unittest.skipUnless(os.geteuid() == 0, "ancestralidade exige Linux root real; não modelar no Mac")
+    def test_ancestral_gravavel_nao_faz_fallback(self):
+        self.state.chmod(0o770)
+        self.assert_recusa_sem_fallback()
+
+    @unittest.skipUnless(os.geteuid() == 0, "ancestralidade exige Linux root real; não modelar no Mac")
+    def test_ancestral_de_outro_dono_nao_faz_fallback(self):
+        os.chown(self.state, 1000, 1000)
+        self.addCleanup(os.chown, self.state, 0, 0)
+        self.assert_recusa_sem_fallback()
 
 
 if __name__ == "__main__":

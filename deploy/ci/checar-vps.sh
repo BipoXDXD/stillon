@@ -8,7 +8,8 @@
 #   bash deploy/ci/checar-vps.sh <imagem do app>     (ex.: stillon:dev)
 #
 # Precisa de docker (com o image store containerd, como a VPS), jq, curl,
-# openssl, python3 (monta os tars maliciosos) e do age/age-keygen no PATH.
+# openssl, python3 (monta os tars maliciosos), age/age-keygen e sudo sem senha
+# (somente o bloco backup, para o recibo root 0600) no runner Linux descartável.
 # Os projetos do compose são "stillon-teste-vps" e "stillon-teste-borda", e
 # as portas da borda vão para o loopback (TESTE_VPS_HTTP, padrão 18580;
 # TESTE_VPS_HTTPS, padrão 18543). As redes são as de produção (edge,
@@ -23,7 +24,7 @@ set -euo pipefail
 IMAGEM_APP=${1:?uso: checar-vps.sh <imagem do app>}
 # As ferramentas, antes de subir qualquer coisa: sem uma delas, o teste
 # morreria no meio (127) com a pilha de pé.
-for f in docker jq curl openssl python3 age age-keygen awk sed tar sha1sum base64 od flock timeout; do
+for f in docker jq curl openssl python3 age age-keygen awk sed tar sha1sum sha256sum base64 od flock timeout sudo; do
     command -v "$f" >/dev/null || { echo "checar-vps.sh: falta '$f' no PATH (veja o cabeçalho)" >&2; exit 2; }
 done
 docker compose version >/dev/null 2>&1 || { echo "checar-vps.sh: falta o plugin docker compose" >&2; exit 2; }
@@ -48,6 +49,10 @@ ok() {
 # O diretório que faz o papel de /opt/stillon.
 DIR=$(mktemp -d)
 TERCEIRO_BACKUP=
+ESTADO_BACKUP=
+IMAGEM_HELPER_TAG=
+ENTRADA_ROOT=()
+AMBIENTE_BACKUP=()
 limpar() {
     if [ "${TESTE_VPS_MANTER:-}" = 1 ]; then
         echo "de pé em $DIR (projeto $PROJETO)" >&2
@@ -69,7 +74,14 @@ limpar() {
     for r in "$REPO_TESTE" "$REPO_TESTE-fonte"; do
         docker image ls --format '{{.Repository}}:{{.Tag}}' "$r" | xargs -r docker rmi >/dev/null 2>&1 || true
     done
-    rm -rf "$DIR" "${TARS:-}"
+    [ -z "$IMAGEM_HELPER_TAG" ] || docker image rm "$IMAGEM_HELPER_TAG" >/dev/null 2>&1 || true
+    if [ -n "$ESTADO_BACKUP" ]; then
+        # Só caminhos privados criados por esta fixture; root pode ter deixado
+        # temporários 0700 depois de uma interrupção do teste.
+        sudo -n rm -rf -- "$ESTADO_BACKUP" "$DIR" "${TARS:-}"
+    else
+        rm -rf "$DIR" "${TARS:-}"
+    fi
 }
 trap limpar EXIT
 
@@ -128,6 +140,7 @@ trocar 'IMAGEM=stillon' "IMAGEM=$REPO_TESTE"
 trocar 'ARQUIVOS_COMPOSE="$DIR/compose.prod.yaml"' 'ARQUIVOS_COMPOSE="$DIR/compose.prod.yaml:$DIR/compose.teste.yaml"'
 trocar 'ESPERA_S=90' 'ESPERA_S=45'
 trocar 'SHM_BASE=/dev/shm' "SHM_BASE=$TARS"
+trocar 'ESTADO_COOLIFY=/var/lib/coolify-release/stillon' "ESTADO_COOLIFY=$DIR/coolify-ausente"
 # O age do teste pode não estar num diretório do PATH fixo da entrada (na
 # VPS ele vem do apt, em /usr/bin).
 trocar 'export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin' \
@@ -137,7 +150,8 @@ trocar 'export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 entrada() {
     local pedido=$1 codigo=0
     shift
-    env -i PATH="$PATH" HOME="$HOME" SSH_ORIGINAL_COMMAND="$pedido" bash "$ENTRADA" "$@" \
+    "${ENTRADA_ROOT[@]}" env -i PATH="${PATH_ENTRADA:-$PATH}" HOME="$HOME" \
+        "${AMBIENTE_BACKUP[@]}" SSH_ORIGINAL_COMMAND="$pedido" bash "$ENTRADA" "$@" \
         > "$TARS/saida" 2> "$TARS/erro" || codigo=$?
     echo "$codigo"
 }
@@ -1041,10 +1055,135 @@ age-keygen -y "$TARS/chave-age" > "$DIR/age-recipient"
 c=$(entrada "backup extra" < /dev/null)
 [ "$c" = 2 ] || falhar "backup com argumento saiu $c, queria 2"
 
+# Caminho Coolify REAL, só nesta fixture Linux: recibo root:root 0600 em
+# ancestralidade root, imagem local por digest e nenhum alias legado. O
+# binário continua vindo da imagem construída pela CI; labels são sintéticos.
+if ! command -v sudo >/dev/null || ! sudo -n true; then
+    echo 'FALHOU: bloco backup exige sudo sem senha no runner descartável' >&2; exit 2
+fi
+ESTADO_BACKUP=$(sudo -n mktemp -d /run/stillon-backup-fixture.XXXXXXXX)
+sudo -n chmod 0700 "$ESTADO_BACKUP"
+trocar "ESTADO_COOLIFY=$DIR/coolify-ausente" "ESTADO_COOLIFY=$ESTADO_BACKUP"
+ENTRADA_ROOT=(sudo -n)
+sha_helper=$(versao)
+[[ "$sha_helper" =~ ^[0-9a-f]{40}$ ]] || { echo 'FALHOU: fixture sem versão aprovada' >&2; exit 1; }
+alias_helper="$REPO_TESTE:$sha_helper"
+id_alias_helper=$(docker image inspect -f '{{.Id}}' "$alias_helper")
+IMAGEM_HELPER_TAG="ghcr.io/bipoxdxd/stillon:fixture-backup-${DIR##*/}"
+printf 'FROM %s\nLABEL org.opencontainers.image.revision="%s"\nLABEL org.opencontainers.image.source="https://github.com/BipoXDXD/stillon"\n' \
+    "$IMAGEM_APP" "$sha_helper" | docker build --pull=false -q -t "$IMAGEM_HELPER_TAG" - >/dev/null
+# Usa o mesmo extrator OCI do deploy real; não assume que o ID da config é
+# o digest do manifesto no image store containerd.
+digest_helper=$(oci_tar "$IMAGEM_HELPER_TAG" "$TARS/helper-recibo.tar")
+# Como import_images do receiver: carregar o OCI sem nomes e etiquetar o
+# manifesto local, não depender do índice/attestations do build de origem.
+docker load -i "$TARS/helper-recibo.tar" >/dev/null
+docker tag "$digest_helper" "$IMAGEM_HELPER_TAG"
+referencia_helper="ghcr.io/bipoxdxd/stillon@$digest_helper"
+id_helper=$(docker image inspect -f '{{.Id}}' "$referencia_helper")
+[ "$id_helper" != "$id_alias_helper" ] || { echo 'FALHOU: controle do alias não diverge do recibo' >&2; exit 1; }
+jq -n --arg sha "$sha_helper" --arg image "$referencia_helper" \
+    --arg receiver "$(sha256sum "$RAIZ/deploy/coolify/release/receiver.py" | cut -d' ' -f1)" \
+    '{release: {version: 2, receiver_sha256: $receiver, project: "stillon", commit: $sha, images: {app: $image}},
+      deployment_uuid: "fixture-linux-descartavel", finished_at: 1}' > "$TARS/current.json"
+sudo -n install -o root -g root -m 0600 "$TARS/current.json" "$ESTADO_BACKUP/current.json"
+[ "$(sudo -n stat -c '%u:%g:%a:%h' "$ESTADO_BACKUP/current.json")" = '0:0:600:1' ] || {
+    echo 'FALHOU: recibo da fixture não está protegido de verdade' >&2; exit 1;
+}
+
+# Observa chamadas reais e fixa o ID esperado sem substituir a resolução
+# pelo Docker. Se o helper tentar pull/tag/restart, o teste recusa antes do ato.
+mkdir -p "$TARS/bin-backup"
+cat > "$TARS/bin-backup/docker" <<'FIM'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%q ' "$@" >> "$FIXTURE_BACKUP_TRACE"
+printf '\n' >> "$FIXTURE_BACKUP_TRACE"
+proibir() {
+    printf '%s\n' "$*" >> "$FIXTURE_BACKUP_PROIBIDO"
+    echo "fixture: $*" >&2
+    exit 98
+}
+case "$1" in
+    pull | tag | restart) proibir 'mutação Docker proibida no backup' ;;
+    compose)
+        if [[ " $* " =~ [[:space:]](up|down|stop|start|restart)[[:space:]] ]]; then
+            proibir 'mudança do compose proibida no backup'
+        fi ;;
+    create)
+        [ "${*: -2:1}" = "$FIXTURE_HELPER_ID" ] || proibir 'helper não veio do recibo'
+        printf 'helper-id %s\n' "$FIXTURE_HELPER_ID" >> "$FIXTURE_BACKUP_TRACE" ;;
+esac
+exec "$FIXTURE_DOCKER_ORIGINAL" "$@"
+FIM
+chmod 0755 "$TARS/bin-backup/docker"
+: > "$TARS/docker-backup.trace"
+: > "$TARS/docker-backup.proibido"
+AMBIENTE_BACKUP=("FIXTURE_DOCKER_ORIGINAL=$(command -v docker)" "FIXTURE_HELPER_ID=$id_helper" "FIXTURE_BACKUP_TRACE=$TARS/docker-backup.trace" "FIXTURE_BACKUP_PROIBIDO=$TARS/docker-backup.proibido")
+PATH_ENTRADA="$TARS/bin-backup:$PATH"
+# Só a cópia da entrada aceita PATH do harness para observação; o arquivo
+# instalado em produção mantém o PATH fixo original.
+sed 's|^export PATH=.*|export PATH="$PATH"|' "$ENTRADA" > "$ENTRADA.novo"
+mv "$ENTRADA.novo" "$ENTRADA"
+
+# Alias válido/divergente é controle adversarial, não uma ausência que
+# tornaria um fallback indevido invisível. Recibo quebrado deve recusar sem
+# criar recurso, conectar à origem ou gerar cifrado.
+sudo -n sh -c 'printf "%s" "{release:" > "$1"' fixture "$ESTADO_BACKUP/current.json"
+c=$(entrada backup < /dev/null)
+[ "$c" = 1 ] || falhar "recibo corrompido com alias válido saiu $c, queria 1"
+[ ! -s "$TARS/saida" ] || falhar 'recibo corrompido publicou saída'
+grep -q 'imagem local ou recibo' "$TARS/erro" || falhar 'recibo corrompido não atingiu a recusa de seleção'
+grep -Eq '^(create|run|exec|helper-id) ' "$TARS/docker-backup.trace" && falhar 'recibo corrompido tentou usar helper/descartável'
+[ "$(docker image inspect -f '{{.Id}}' "$alias_helper")" = "$id_alias_helper" ] || falhar 'o controle de alias válido foi perdido'
+sudo -n install -o root -g root -m 0600 "$TARS/current.json" "$ESTADO_BACKUP/current.json"
+# Tira somente a tag privada da fixture. O contêiner de app fica intacto.
+docker image rm "$alias_helper" >/dev/null
+docker image inspect "$alias_helper" >/dev/null 2>&1 && { echo 'FALHOU: alias legado ainda presente' >&2; exit 1; }
+[ "$(docker image inspect -f '{{.Id}}' "$referencia_helper")" = "$id_helper" ] || {
+    echo 'FALHOU: retirar alias perdeu a imagem imutável aprovada' >&2; exit 1;
+}
+ok 'recibo root real: JSON corrompido recusa com alias divergente; digest local sobrevive sem alias'
+
+# A mesma trava que o receiver usa impede até a leitura do banco. Limita
+# apenas a espera da cópia de teste a 1s, em vez de atrasar a CI por 10 min.
+sed 's/flock -w 600 9/flock -w 1 9/g' "$ENTRADA" > "$TARS/entrada-trava"
+: > "$TARS/docker-backup.trace"
+exec 8>"$DIR/.entrada.trava"
+flock -n 8 || { echo 'FALHOU: não adquiriu trava de controle' >&2; exit 1; }
+c=0
+"${ENTRADA_ROOT[@]}" env -i PATH="$PATH_ENTRADA" HOME="$HOME" "${AMBIENTE_BACKUP[@]}" \
+    SSH_ORIGINAL_COMMAND=backup bash "$TARS/entrada-trava" < /dev/null > "$TARS/saida" 2> "$TARS/erro" || c=$?
+flock -u 8
+exec 8>&-
+[ "$c" = 1 ] || falhar "backup concorrente saiu $c, queria 1"
+grep -q 'outra operação da entrada' "$TARS/erro" || falhar 'controle de concorrência não atingiu flock'
+[ ! -s "$TARS/docker-backup.trace" ] || falhar 'backup concorrente acessou Docker antes da trava'
+[ ! -s "$TARS/saida" ] || falhar 'backup concorrente publicou saída'
+ok 'recibo: backup bloqueado pela trava compartilhada antes de tocar Docker'
+
+snapshot_banco_backup() {
+    docker inspect -f '{{.Id}}|{{.State.StartedAt}}|{{.RestartCount}}|{{json .Mounts}}' "$(dc ps -q db)"
+}
+banco_antes_backup=$(snapshot_banco_backup)
+usuarios_antes_backup=$(sql "SELECT md5(coalesce(string_agg(id::text || ':' || email, ',' ORDER BY id), '')) FROM users")
+[[ "$usuarios_antes_backup" =~ ^[0-9a-f]{32}$ ]] || { echo 'FALHOU: controle de dados da origem ausente' >&2; exit 1; }
+# Amplia somente verificar.sql da fixture: a restauração deve preservar as
+# identidades dos usuários, não apenas ter uma tabela users listável.
+cat >> "$DIR/deploy/backup/verificar.sql" <<FIM
+DO \$\$ BEGIN
+    IF (SELECT md5(coalesce(string_agg(id::text || ':' || email, ',' ORDER BY id), '')) FROM users)
+        IS DISTINCT FROM '$usuarios_antes_backup' THEN
+        RAISE EXCEPTION 'fixture: usuários restaurados divergem da origem';
+    END IF;
+END \$\$;
+FIM
+: > "$TARS/docker-backup.trace"
+
 # Fronteiras Docker da distribuição: somente a cópia da entrada recebe um
 # wrapper de teste. O script de produção não possui chave de desativação.
 mkdir -p "$TARS/bin-distribuicao"
-docker_real=$(command -v docker)
+docker_real="$TARS/bin-backup/docker"
 cat > "$TARS/bin-distribuicao/docker" <<'FIM'
 #!/usr/bin/env bash
 set -eu
@@ -1085,7 +1224,7 @@ for caso_distribuicao in create copia-fonte copia-destino protocolo antigo probe
     c=0
     inicio_distribuicao=$SECONDS
     : > "$TARS/fronteira-distribuicao"
-    env -i PATH="$TARS/bin-distribuicao:$PATH" HOME="$HOME" SSH_ORIGINAL_COMMAND=backup \
+    "${ENTRADA_ROOT[@]}" env -i PATH="$TARS/bin-distribuicao:$PATH" HOME="$HOME" "${AMBIENTE_BACKUP[@]}" SSH_ORIGINAL_COMMAND=backup \
         CASO_DISTRIBUICAO="$caso_distribuicao" FIXTURE_DOCKER_BIN="$docker_real" FIXTURE_STAGE_FILE="$TARS/fronteira-distribuicao" \
         bash "$TARS/entrada-distribuicao" < /dev/null > "$TARS/saida" 2> "$TARS/erro" || c=$?
     grep -qx "fixture-distribuicao:$caso_distribuicao" "$TARS/fronteira-distribuicao" ||
@@ -1214,7 +1353,7 @@ sed 's|^export PATH=.*|export PATH="$PATH"|' "$ENTRADA" > "$TARS/entrada-df"
 for caso in "DF_PCT=91 disco da VPS" "DF_TAMANHO=1000000 volume do banco"; do
     read -r var motivo <<<"$caso"
     c=0
-    env -i PATH="$TARS/bin-df:$PATH" HOME="$HOME" SSH_ORIGINAL_COMMAND=backup "$var" \
+    "${ENTRADA_ROOT[@]}" env -i PATH="$TARS/bin-df:$PATH_ENTRADA" HOME="$HOME" "${AMBIENTE_BACKUP[@]}" SSH_ORIGINAL_COMMAND=backup "$var" \
         bash "$TARS/entrada-df" < /dev/null > "$TARS/saida" 2> "$TARS/erro" || c=$?
     [ "$c" = 4 ] || falhar "backup com o $motivo acima de 85% saiu $c, queria 4: $(tail -3 "$TARS/erro")"
     grep -q '85%' "$TARS/erro" || falhar "backup com o $motivo acima de 85% não avisou"
@@ -1233,6 +1372,14 @@ TERCEIRO_BACKUP=
 sobras=$(comm -13 <(echo "$volumes_antes") <(volumes))
 [ -z "$sobras" ] || falhar "os backups deixaram volumes: $(tr "\n" " " <<<"$sobras")"
 ok "stillon-entrada backup: nenhum volume sobra dos descartáveis"
+[ "$(snapshot_banco_backup)" = "$banco_antes_backup" ] || falhar 'backup pelo recibo recriou/reiniciou banco ou alterou mounts'
+[ "$(sql "SELECT md5(coalesce(string_agg(id::text || ':' || email, ',' ORDER BY id), '')) FROM users")" = "$usuarios_antes_backup" ] || \
+    falhar 'backup pelo recibo alterou usuários na origem'
+grep -qFx "helper-id $id_helper" "$TARS/docker-backup.trace" || falhar 'ciclo real não usou o ID do recibo'
+grep -qF "$referencia_helper" "$TARS/docker-backup.trace" || falhar 'ciclo real não resolveu digest pelo Docker'
+docker image inspect "$alias_helper" >/dev/null 2>&1 && falhar 'ciclo real recriou o alias legado'
+[ ! -s "$TARS/docker-backup.proibido" ] || falhar 'backup tentou operação proibida ou imagem divergente, mesmo que tenha ignorado o erro'
+ok 'recibo sem alias: cópias/probe/dump/restauração/cifra e SIGKILL recuperados, origem preservada'
 
 if [ "$falhas" -gt 0 ]; then
     dc logs >&2
