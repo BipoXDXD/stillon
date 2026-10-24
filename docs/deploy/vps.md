@@ -3864,7 +3864,7 @@ trava: rode de novo); 130/143, interrupção por sinal; 255, o SSH não chegou a
 
 | Mensagem do backup (código 1) | Confira |
 |---|---|
-| `falta a versão aprovada` ou `imagem local da versão aprovada ausente` | `cat /opt/stillon/versao` e `sudo docker image inspect stillon:<SHA> --format '{{.Id}}'`; a imagem deve ser a do deploy aprovado, não uma tag arbitrária |
+| `falta a versão aprovada` ou `imagem local ou recibo da versão aprovada inválido` | confira `/opt/stillon/versao`. No Coolify, o recibo root `/var/lib/coolify-release/stillon/current.json` vincula `.release.commit` e `.release.images.app`: a imagem precisa existir localmente pelo digest GHCR, com revision e source oficiais. Sem recibo Coolify, confira `sudo docker image inspect stillon:<SHA> --format '{{.Id}}'`. Não troque por tag arbitrária nem ignore recibo inválido |
 | `imagem aprovada não oferece o protocolo` ou `protocolo incompatível` | imagem, entrada e scripts precisam ser da mesma versão; use o probe do passo 7.1 |
 | `não foi possível copiar` ou `instalar o helper` | confira espaço e o erro Docker no `entrada.log`; a entrada não conecta à origem sem cópia e probe válidos |
 | `snapshot ou dump não concluído` | consulte o `entrada.log`; timeout, perda da origem ou falha de encerramento não publicam manifesto nem tornam o dump válido |
@@ -3872,6 +3872,20 @@ trava: rode de novo); 130/143, interrupção por sinal; 255, o SSH não chegou a
 O ID fixa os bytes da imagem local durante a cópia; não é uma assinatura de procedência.
 A confiança continua dependendo do deploy aprovado e do controle root do Docker e dos
 arquivos em `/opt/stillon`. Não substitua a tag de SHA por uma imagem de terceiros.
+
+Na instalação Coolify, a seleção não depende da permanência do alias legado `stillon:<SHA>`:
+usa o digest do recibo protegido e confirma os rótulos OCI `revision` e `source`. Arquivo,
+ancestralidade, dono, permissões e ausência de symlinks são conferidos antes da leitura;
+um recibo presente mas inválido impede o backup, inclusive se o alias legado existir.
+Não há pull, tag ou reinício automático para tentar corrigir a ausência da imagem.
+
+Alterar este repositório **não atualiza** a entrada administrativa instalada na VPS.
+A aplicação de `deploy/vps/stillon-entrada` requer revisão, passagem operacional específica,
+conferência do hash anterior, cópia de recuperação e troca atômica sob a trava compartilhada.
+Depois dela, a comprovação operacional é um backup autorizado ou a próxima execução diária:
+restauração descartável aprovada e artifact cifrado fora da VPS. Não reexecute nem aprove
+outro workflow por inferência. A auditoria de backups armazenados tem sua própria espera;
+`backup_age_outside_policy` recusa uma cópia velha e não prova corrupção do dump.
 
 A imagem do app **não tem shell** (distroless): `vc exec app sh` não funciona. O que serve: os
 logs, os subcomandos do binário (`vc exec app /stillon version`, `… healthcheck`, `… user …`) e o
