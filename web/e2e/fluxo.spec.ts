@@ -132,7 +132,8 @@ test('login, cadastro de alvo, status, F5, detalhe, apagar, encerrar a sessão e
     // passa a "Pedem atenção" (o .invalid fica fora do ar) ou a
     // "Funcionando" (um DNS que sequestra NXDOMAIN). exact: o cartão tem
     // também o "Ver incidente de <nome>".
-    await page.getByRole('link', { name: 'Painel' }).click()
+    // A aba da navegação: o detalhe também tem o "Voltar ao painel".
+    await page.getByRole('navigation', { name: 'Principal' }).getByRole('link', { name: 'Painel' }).click()
     await expect(page.getByRole('link', { name: nomeDoAlvo, exact: true })).toBeVisible()
     const classificado = page
       .getByRole('region', { name: /^(pedem atenção|funcionando)$/i })
@@ -144,14 +145,18 @@ test('login, cadastro de alvo, status, F5, detalhe, apagar, encerrar a sessão e
     await expect(page.getByRole('heading', { name: 'Painel' })).toBeVisible()
 
     // 6. O detalhe carrega o chunk do Recharts. O alvo .invalid só tem checks
-    //    "fora do ar", que viram marcas na base do gráfico; a marca tem cor
-    //    computada (variável CSS do index.css). O dashboard já mostrou um
-    //    check: a série tem pontos na primeira carga.
+    //    "fora do ar", que viram faixas hachuradas; o traço do padrão tem
+    //    cor computada (variável CSS do index.css). O dashboard já mostrou
+    //    um check: a série tem pontos na primeira carga.
     await page.getByRole('link', { name: nomeDoAlvo, exact: true }).click()
     await expect(page.getByText(/no ar nesta janela/)).toBeVisible()
-    const marca = page.getByTestId('grafico-latencia').locator('.recharts-symbols').first()
-    await expect(marca).toBeAttached()
-    expect(await marca.evaluate((e) => getComputedStyle(e).fill)).toMatch(/^(rgb|oklch)\(/)
+    const faixa = page.getByTestId('grafico-latencia').locator('.recharts-reference-area-rect').first()
+    await expect(faixa).toBeAttached()
+    const padrao = (await faixa.getAttribute('fill'))?.match(/^url\(#(.+)\)$/)?.[1]
+    expect(padrao).toBeTruthy()
+    expect(await page.locator(`pattern[id="${padrao}"] path`).evaluate((e) => getComputedStyle(e).stroke)).toMatch(
+      /^(rgb|oklch)\(/,
+    )
 
     // 7. Um diálogo (Radix + react-remove-scroll, que injeta <style>) trava a
     //    rolagem: o nonce funcionou. E o alvo sai: o teto é de 100 alvos, e
