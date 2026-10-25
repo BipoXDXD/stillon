@@ -3,6 +3,8 @@
 import contextlib
 import io
 import json
+import os
+import secrets
 import stat
 import tempfile
 import unittest
@@ -121,7 +123,7 @@ class GoblinPolicyAtomicTests(unittest.TestCase):
     ) -> None:
         with (
             synthetic_goblin_policy(self.path) as policy,
-            patch.object(r.os, "fsync", side_effect=OSError("synthetic durability failure")),
+            patch.object(os, "fsync", side_effect=OSError("synthetic durability failure")),
             self.assertRaises(OSError),
         ):
             r.append_goblin_policy(policy, NEW)
@@ -144,7 +146,7 @@ class GoblinPolicyAtomicTests(unittest.TestCase):
         collision.symlink_to(target)
         with (
             synthetic_goblin_policy(self.path) as policy,
-            patch.object(r.secrets, "token_hex", return_value="0" * 32),
+            patch.object(secrets, "token_hex", return_value="0" * 32),
             self.assertRaises(FileExistsError),
         ):
             r.append_goblin_policy(policy, NEW)

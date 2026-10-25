@@ -1163,7 +1163,27 @@ grep -q 'outra operação da entrada' "$TARS/erro" || falhar 'controle de concor
 ok 'recibo: backup bloqueado pela trava compartilhada antes de tocar Docker'
 
 snapshot_banco_backup() {
-    docker inspect -f '{{.Id}}|{{.State.StartedAt}}|{{.RestartCount}}|{{json .Mounts}}' "$(dc ps -q db)"
+    # A ordem da lista de mounts não identifica mudança; todo o conteúdo fica.
+    # Canonicaliza as chaves antes de ordenar somente a lista externa Mounts.
+    docker inspect -f '{"Id":{{json .Id}},"StartedAt":{{json .State.StartedAt}},"RestartCount":{{json .RestartCount}},"Mounts":{{json .Mounts}}}' "$(dc ps -q db)" 2>/dev/null |
+        jq -ceS '
+            if type == "object" and keys == ["Id", "Mounts", "RestartCount", "StartedAt"]
+                and (.Id | type) == "string" and (.StartedAt | type) == "string"
+                and (.RestartCount | type) == "number" and (.Mounts | type) == "array"
+                and all(.Mounts[]; type == "object")
+            then . else error("snapshot invalido") end
+        ' 2>/dev/null |
+        jq -ceS '.Mounts |= sort_by(tojson)' 2>/dev/null
+}
+campos_snapshot_banco_backup() {
+    # Apenas nomes fechados de campos podem sair; nunca valores do inspect.
+    jq -cse '
+        if length != 2 then error("snapshots invalidos")
+        else .[0] as $antes | .[1] as $depois |
+            ["Id", "StartedAt", "RestartCount", "Mounts"] |
+            map(select($antes[.] != $depois[.]))
+        end
+    ' 2>/dev/null
 }
 banco_antes_backup=$(snapshot_banco_backup)
 usuarios_antes_backup=$(sql "SELECT md5(coalesce(string_agg(id::text || ':' || email, ',' ORDER BY id), '')) FROM users")
@@ -1372,7 +1392,13 @@ TERCEIRO_BACKUP=
 sobras=$(comm -13 <(echo "$volumes_antes") <(volumes))
 [ -z "$sobras" ] || falhar "os backups deixaram volumes: $(tr "\n" " " <<<"$sobras")"
 ok "stillon-entrada backup: nenhum volume sobra dos descartáveis"
-[ "$(snapshot_banco_backup)" = "$banco_antes_backup" ] || falhar 'backup pelo recibo recriou/reiniciou banco ou alterou mounts'
+if ! banco_depois_backup=$(snapshot_banco_backup); then
+    falhar 'snapshot do banco no controle do backup indisponível ou inválido'
+elif ! campos_banco_backup=$(printf '%s\n%s\n' "$banco_antes_backup" "$banco_depois_backup" | campos_snapshot_banco_backup); then
+    falhar 'comparação dos snapshots do banco inválida'
+elif [ "$campos_banco_backup" != '[]' ]; then
+    falhar "backup pelo recibo alterou campos do banco: $campos_banco_backup"
+fi
 [ "$(sql "SELECT md5(coalesce(string_agg(id::text || ':' || email, ',' ORDER BY id), '')) FROM users")" = "$usuarios_antes_backup" ] || \
     falhar 'backup pelo recibo alterou usuários na origem'
 grep -qFx "helper-id $id_helper" "$TARS/docker-backup.trace" || falhar 'ciclo real não usou o ID do recibo'

@@ -54,7 +54,7 @@ class NativePolicyTests(unittest.TestCase):
         )
 
     def test_uid1001_ancestor_refuses_before_policy_write(self) -> None:
-        self.directory.chown(1001, 1001)
+        os.chown(self.directory, 1001, 1001)
         with self.assertRaises(ValueError), r.goblin_policy():
             self.fail("untrusted ancestry admitted")
         self.assertEqual(self.path.read_bytes(), self.raw)
@@ -83,7 +83,7 @@ class NativePolicyTests(unittest.TestCase):
         self.assertFalse(self.path.exists())
 
     def test_foreign_leaf_owner_refuses(self) -> None:
-        self.path.chown(1001, 1001)
+        os.chown(self.path, 1001, 1001)
         with self.assertRaises(ValueError), r.goblin_policy():
             self.fail("foreign-owned file admitted")
 
@@ -128,7 +128,7 @@ class NativePolicyTests(unittest.TestCase):
                         for role, repo in r.PROJECTS["goblinshift"].items()
                     },
                 }
-                imported = []
+                imported: list[bool] = []
 
                 def unpack(
                     stream: object,
