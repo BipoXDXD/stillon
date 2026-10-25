@@ -29,7 +29,7 @@ vi.mock('@/test/ambiente', async (original) => {
       const preso = captura.refreshPreso
       const observar = captura.observarRefresh
       const buscar = opcoes?.buscar ?? modulo.buscarDoTeste
-      const criada = modulo.novaSessao({
+      const criada: ReturnType<typeof modulo.novaSessao> = modulo.novaSessao({
         ...opcoes,
         buscar: async (entrada, init) => {
           const me = captura.mePreso
