@@ -71,9 +71,7 @@ class GoblinPolicyMetadataTests(unittest.TestCase):
             {"st_nlink": 2},
         ]:
             with self.subTest(changed=changed), self.assertRaises(ValueError):
-                r.require_admin_metadata(
-                    SimpleNamespace(**(trusted | changed)), private=True
-                )
+                r.require_admin_metadata(SimpleNamespace(**(trusted | changed)), private=True)
         r.require_admin_metadata(SimpleNamespace(**trusted), private=True)
         r.require_admin_metadata(
             SimpleNamespace(**(trusted | {"st_mode": stat.S_IFDIR | 0o700})),
@@ -123,9 +121,7 @@ class GoblinPolicyAtomicTests(unittest.TestCase):
     ) -> None:
         with (
             synthetic_goblin_policy(self.path) as policy,
-            patch.object(
-                r.os, "fsync", side_effect=OSError("synthetic durability failure")
-            ),
+            patch.object(r.os, "fsync", side_effect=OSError("synthetic durability failure")),
             self.assertRaises(OSError),
         ):
             r.append_goblin_policy(policy, NEW)
@@ -163,9 +159,7 @@ class GoblinPolicyAtomicTests(unittest.TestCase):
             synthetic_goblin_policy(self.path) as policy,
             self.assertRaises(ValueError),
         ):
-            r.append_goblin_policy(
-                policy, "ghcr.io/attacker/executor@sha256:" + "b" * 64
-            )
+            r.append_goblin_policy(policy, "ghcr.io/attacker/executor@sha256:" + "b" * 64)
         self.assertEqual(self.path.read_bytes(), self.raw)
         self.assertEqual(other.read_bytes(), b"preserve")
 
