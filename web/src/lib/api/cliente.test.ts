@@ -142,6 +142,17 @@ describe('a regra do 401', () => {
     expect(sessao.motivo()).toBe('expirou')
   })
 
+  it('família revogada encerra o acesso sem esperar o token vencer', async () => {
+    const { falsa, sessao, api } = await logado()
+    await expect(api.me()).resolves.toMatchObject({ email: EMAIL })
+    // Sem expirarAcessos: o mesmo access token ainda está presente e é a
+    // revogação da família que faz o servidor recusar a próxima chamada.
+    falsa.estado.familiaRevogada = true
+    await expect(api.me()).rejects.toMatchObject({ code: 'unauthorized' })
+    expect(sessao.estado()).toBe('anonimo')
+    expect(sessao.motivo()).toBe('expirou')
+  })
+
   it('401 de novo depois de renovar não entra em laço', async () => {
     const { falsa, sessao, api } = await logado()
     falsa.estado.forcar.set('GET /me', { status: 401, code: 'unauthorized' })

@@ -147,7 +147,7 @@ function TrocaDeSenha({ comTotp }: { comTotp: boolean }) {
           f.reset()
           await qc.invalidateQueries({ queryKey: chaves.sessoes })
           avisar(
-            'Senha alterada. As outras sessões foram encerradas; um acesso já aberto em outro aparelho pode durar até 15 minutos.',
+            'Senha alterada. As outras sessões foram encerradas e não podem iniciar novos acessos. Ações já em andamento podem ser concluídas.',
           )
         } catch (err) {
           if (err instanceof ApiError && err.fields[0]?.field === 'new_password') {
@@ -656,9 +656,9 @@ function Sessoes() {
     try {
       await api.encerrarSessao(alvo.id)
       if (atual) {
-        // O 204 já apagou o cookie (D15 do Plano 5). O access token em
-        // memória ainda valeria até 15 minutos: o painel é quem o larga,
-        // sem chamar refresh nem logout, e sem recarregar nada.
+        // O 204 já apagou o cookie e o servidor recusa novos acessos desta
+        // família. O painel também larga o token em memória, sem chamar
+        // refresh nem logout, e sem recarregar nada.
         sessao.encerrar('encerrada-aqui')
         return
       }
@@ -678,7 +678,7 @@ function Sessoes() {
   return (
     <>
       <p className="text-sm text-suave">
-        Encerrar impede a renovação. Um acesso já aberto no outro aparelho pode continuar por até 15 minutos.
+        Encerrar uma sessão bloqueia novos acessos. Ações já em andamento podem ser concluídas.
       </p>
       <ErroDoFormulario>{erro}</ErroDoFormulario>
       <EstadoDaConsulta consulta={consulta}>

@@ -74,7 +74,7 @@ func TestReset2FATurnsItOffAndEndsEverySession(t *testing.T) {
 	if r.codigo != saidaOK {
 		t.Fatalf("reset-2fa: código %d; stderr %q", r.codigo, r.stderr)
 	}
-	queria := "2FA desativado para dono@exemplo.com; 2 sessões encerradas. Acessos já abertos expiram em até 15 minutos. Entre com a senha e ative de novo pelo painel.\n"
+	queria := "2FA desativado para dono@exemplo.com; 2 sessões encerradas. Novos acessos dessas sessões estão bloqueados; ações já em andamento podem ser concluídas. Entre com a senha e ative de novo pelo painel.\n"
 	if r.stdout != queria {
 		t.Errorf("stdout = %q, queria %q", r.stdout, queria)
 	}

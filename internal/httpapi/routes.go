@@ -150,7 +150,10 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	// de propósito: um usuário sozinho esgota o seu antes de esgotar o do
 	// IP, e é isso que torna a camada observável (TestPerUserRateLimit).
 	porUsuario := middleware.RateLimitUser(ctx, d.Clock, 60, 20)
-	protegida := func(fn http.HandlerFunc) http.Handler { return authn(porUsuario(fn)) }
+	// Revogar bloqueia novas requisições, mesmo com JWT ainda válido. Uma
+	// mutação que já passou pela guarda pode concluir; não há cancelamento
+	// retroativo em voo. O limite continua antes da consulta de sessão.
+	protegida := func(fn http.HandlerFunc) http.Handler { return authn(porUsuario(viva(fn))) }
 
 	mux.Handle("GET /api/v1/me", protegida(ah.Me))
 	mux.Handle("GET /api/v1/sessions", protegida(ah.ListSessions))
@@ -169,7 +172,7 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	mux.Handle("POST /api/v1/incidents/{id}/ack", protegida(ih.Ack))
 
 	porEnvio := middleware.RateLimitUserEvery(ctx, d.Clock, envioACada, envioBurst)
-	comEnvio := func(fn http.HandlerFunc) http.Handler { return authn(porUsuario(porEnvio(fn))) }
+	comEnvio := func(fn http.HandlerFunc) http.Handler { return authn(porUsuario(porEnvio(viva(fn)))) }
 	mux.Handle("GET /api/v1/channels", protegida(ch.List))
 	mux.Handle("POST /api/v1/channels", comEnvio(ch.Create))
 	mux.Handle("DELETE /api/v1/channels/{id}", protegida(ch.Delete))

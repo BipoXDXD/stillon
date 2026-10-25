@@ -162,21 +162,6 @@ export function criarApiFalsa() {
   // ProofReservation.Succeed: as provas pedidas conferiram, a família zera.
   const provaCerta = (request: Request) => st.provasErradas.delete(familiaDe(request) ?? '')
 
-  // As rotas que exigem a família do token viva (Plano 5: /auth/password e
-  // /sessions; Task 11 do Plano 5: os três do 2FA). Um access token ainda
-  // válido de uma família revogada passa pelo Authn e morre aqui, com 401
-  // unauthorized — antes de a rota olhar senha ou código.
-  const VIVAS = new Set([
-    'POST /auth/password',
-    'POST /auth/totp/enroll',
-    'POST /auth/totp/confirm',
-    'POST /auth/totp/disable',
-    'POST /auth/totp/rotate',
-    'POST /auth/totp/rotate/confirm',
-    'GET /sessions',
-    'DELETE /sessions/:id',
-  ])
-
   // Envolve um handler com as guardas do servidor. Num GET, o "corpo"
   // guardado é a query string (os testes da série leem o window).
   function rota(
@@ -194,7 +179,9 @@ export function criarApiFalsa() {
       if (protegida) {
         const t = request.headers.get('Authorization')?.replace(/^Bearer /, '')
         if (!t || !st.acessos.has(t)) return erro(401, 'unauthorized')
-        if (VIVAS.has(chave) && st.familiaRevogada) return erro(401, 'unauthorized')
+        // Toda rota protegida, inclusive /me e recursos, consulta a
+        // família: assinatura e prazo do access token não bastam.
+        if (st.familiaRevogada) return erro(401, 'unauthorized')
       }
       const f = st.forcar.get(chave)
       if (f) return erro(f.status, f.code, f.fields)

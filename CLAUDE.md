@@ -88,8 +88,9 @@ A `main` tem ruleset (PR obrigatório e 9 checks); um PR `[skip ci]` entra com
 
 Esperam decisão do dono: D1–D3 da
 [vinculação Discord](docs/superpowers/plans/2026-10-05-vinculacao-discord.md) (a migration dela é
-a 00015), o environment `production` no GitHub e exigir sessão viva nas rotas de recurso. Não
-confundir planejamento aprovado com código pronto, nem anunciar deploy sem conferência.
+a 00015) e o environment `production` no GitHub. As rotas de recurso exigem família de sessão
+viva: encerrar bloqueia novas requisições; ações já admitidas podem concluir. Não confundir
+planejamento aprovado com código pronto, nem anunciar deploy sem conferência.
 
 Redesign decidido: direção C, "Editorial claro" (Fraunces + Inter, primária índigo),
 [spec](docs/superpowers/specs/2026-10-14-redesign-painel-design.md); painel antigo na tag

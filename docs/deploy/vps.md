@@ -4034,7 +4034,8 @@ vc exec app /stillon user reset-2fa --email voce@exemplo.com
 Ele desliga o 2FA, apaga os códigos de recuperação, zera o bloqueio da conta e encerra todas as
 sessões, numa transação só. Não pede senha: quem tem a `DATABASE_URL` (o contêiner) já pode tudo
 no banco. A saída diz o e-mail e quantas sessões caíram ("2FA desativado para …; N sessões
-encerradas. Acessos já abertos expiram em até 15 minutos."); com o 2FA já desligado, diz "nada
+encerradas. Novos acessos dessas sessões estão bloqueados; ações já em andamento podem ser
+concluídas."); com o 2FA já desligado, diz "nada
 mudou" e sai com 0, **sem** mexer no bloqueio (para destravar uma conta sem 2FA, use o
 `set-password`). Código 4 é e-mail não cadastrado; 2, uso errado; 1, banco ou papel. Depois,
 entre só com a senha e ative o 2FA de novo (passo 5.2).

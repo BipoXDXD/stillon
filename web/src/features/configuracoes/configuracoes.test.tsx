@@ -38,13 +38,15 @@ describe('senha', () => {
     expect(r.falsa.chamadas('POST /auth/password')).toBe(0)
   })
 
-  it('troca e avisa da janela de 15 minutos', async () => {
+  it('troca e avisa que as outras sessões não podem iniciar novos acessos', async () => {
     const r = await renderizarPainel('/settings')
     await r.usuario.type(await screen.findByLabelText('Senha atual'), SENHA)
     await r.usuario.type(screen.getByLabelText('Senha nova'), 'outra senha bem comprida')
     await r.usuario.type(screen.getByLabelText('Confirme a senha nova'), 'outra senha bem comprida')
     await r.usuario.click(screen.getByRole('button', { name: 'Trocar a senha' }))
-    expect(await screen.findByText(/pode durar até 15 minutos/)).toBeInTheDocument()
+    expect(await screen.findByText(/As outras sessões foram encerradas e não podem iniciar novos acessos/)).toHaveTextContent(
+      'Ações já em andamento podem ser concluídas.',
+    )
     expect(r.falsa.corpos('POST /auth/password')[0]).toEqual({
       current_password: SENHA,
       new_password: 'outra senha bem comprida',
@@ -83,7 +85,7 @@ describe('senha', () => {
     expect(r.falsa.chamadas('POST /auth/password')).toBe(0)
     await r.usuario.type(screen.getByLabelText('Código do autenticador'), TOTP_OK)
     await r.usuario.click(screen.getByRole('button', { name: 'Trocar a senha' }))
-    expect(await screen.findByText(/pode durar até 15 minutos/)).toBeInTheDocument()
+    expect(await screen.findByText(/As outras sessões foram encerradas e não podem iniciar novos acessos/)).toBeInTheDocument()
     expect(r.falsa.corpos('POST /auth/password')).toEqual([
       { current_password: SENHA, new_password: 'outra senha bem comprida', totp_code: TOTP_OK },
     ])
@@ -145,7 +147,7 @@ describe('senha', () => {
     expect(r.falsa.chamadas('POST /auth/refresh')).toBe(refreshes + 1)
     expect(r.falsa.chamadas('POST /auth/password')).toBe(1)
     await r.usuario.click(screen.getByRole('button', { name: 'Trocar a senha' }))
-    expect(await screen.findByText(/pode durar até 15 minutos/)).toBeInTheDocument()
+    expect(await screen.findByText(/As outras sessões foram encerradas e não podem iniciar novos acessos/)).toBeInTheDocument()
     expect(r.falsa.chamadas('POST /auth/password')).toBe(2)
     // O aviso de renovado não sobrevive ao envio seguinte. Sabotagem
     // prevista: no início do envio, trocar "setErro(null)" por
