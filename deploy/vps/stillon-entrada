@@ -61,6 +61,7 @@ ESPERA_S=90
 TMP_BASE=$DIR
 SHM_BASE=/dev/shm
 SCRIPTS="$DIR/deploy"
+ESTADO_COOLIFY=/var/lib/coolify-release/stillon
 TETO_BYTES=$((2 * 1024 * 1024 * 1024))
 # Linhas do historico que ficam depois de cada deploy (a poda só usa as 3
 # últimas versões distintas).
@@ -471,14 +472,58 @@ recuperar_backups() {
     done
 }
 
+# No Coolify, o recibo administrativo fixa a imagem por digest, mesmo quando
+# uma limpeza remove a tag legada stillon:<sha>. Nunca baixa ou retagueia imagem.
+# Havendo recibo, uma divergência recusa; não cai silenciosamente no legado.
+imagem_helper_aprovada() {
+    local sha=$1 atual caminho metadados dono modo links bytes referencia imagem
+    atual=$ESTADO_COOLIFY/current.json
+    if [ ! -e "$atual" ] && [ ! -L "$atual" ]; then
+        docker image inspect -f '{{.Id}}' "$IMAGEM:$sha"
+        return
+    fi
+    caminho=$atual
+    while :; do
+        [ ! -L "$caminho" ] || return 1
+        if [ "$caminho" = "$atual" ]; then
+            [ -f "$caminho" ] || return 1
+        else
+            [ -d "$caminho" ] || return 1
+        fi
+        metadados=$(stat -c '%u %a %h %s' "$caminho") || return 1
+        read -r dono modo links bytes <<< "$metadados"
+        [[ "$modo" =~ ^[0-7]{3,4}$ && "$bytes" =~ ^[0-9]+$ ]] || return 1
+        [ "$dono" = 0 ] && (( (8#$modo & 022) == 0 )) || return 1
+        if [ "$caminho" = "$atual" ]; then
+            [ "$links" = 1 ] && [ "$bytes" -gt 0 ] && [ "$bytes" -le 262144 ] || return 1
+        fi
+        [ "$caminho" != / ] || break
+        caminho=${caminho%/*}
+        [ -n "$caminho" ] || caminho=/
+    done
+    referencia=$(jq -er --arg sha "$sha" '
+        .release | select(type == "object") |
+        select(keys == ["commit", "images", "project", "receiver_sha256", "version"]) |
+        select(.version == 2 and .project == "stillon" and .commit == $sha) |
+        select(.receiver_sha256 | type == "string" and test("^[0-9a-f]{64}$")) |
+        select(.images | type == "object" and keys == ["app"]) | .images.app
+    ' "$atual") || return 1
+    [[ "$referencia" =~ ^ghcr\.io/bipoxdxd/stillon@sha256:[0-9a-f]{64}$ ]] || return 1
+    metadados=$(docker image inspect -f '{{.Id}}|{{index .Config.Labels "org.opencontainers.image.revision"}}|{{index .Config.Labels "org.opencontainers.image.source"}}' "$referencia") || return 1
+    imagem=${metadados%%|*}
+    [[ "$imagem" =~ ^sha256:[0-9a-f]{64}$ ]] || return 1
+    [ "$metadados" = "$imagem|$sha|https://github.com/BipoXDXD/stillon" ] || return 1
+    printf '%s\n' "$imagem"
+}
+
 # Extrai o mesmo binário da imagem local da versão aprovada, sem iniciar app.
-# A tag de SHA é fixada pelo deploy; o chamador SSH não escolhe a imagem.
+# O chamador SSH não escolhe a imagem, o recibo ou a versão.
 preparar_helper_backup() {
     local sha imagem nonce nome cid tamanho
     sha=$(cat "$DIR/versao" 2>/dev/null) || sair 1 "falta a versão aprovada para o helper do backup"
     [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || sair 1 "versão aprovada inválida para o helper do backup"
-    imagem=$(docker image inspect -f '{{.Id}}' "$IMAGEM:$sha" 2>/dev/null) || \
-        sair 1 "imagem local da versão aprovada ausente para o helper do backup"
+    imagem=$(imagem_helper_aprovada "$sha" 2>/dev/null) || \
+        sair 1 "imagem local ou recibo da versão aprovada inválido para o helper do backup"
     [[ "$imagem" =~ ^sha256:[0-9a-f]{64}$ ]] || sair 1 "imagem aprovada inválida para o helper do backup"
     nonce=$(head -c 8 /dev/urandom | od -An -tx1 | tr -d ' \n')
     TMP_HELPER=$SHM_BASE/stillon-backup-helper.$nonce

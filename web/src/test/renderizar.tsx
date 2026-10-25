@@ -1,6 +1,6 @@
 import { act, render } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { StrictMode } from 'react'
+import { StrictMode, useEffect, type ReactNode } from 'react'
 import { createMemoryRouter } from 'react-router'
 import { RouterProvider } from 'react-router/dom'
 import { criarClienteDeConsultas, ProvedorDoPainel } from '@/app/contexto'
@@ -9,7 +9,12 @@ import { esquecerAPrimeiraTela } from '@/components/Titulo'
 import { ProvedorDeAvisos } from '@/components/ui/avisos'
 import { ProvedorDeTema } from '@/lib/tema'
 import { EMAIL, SENHA } from './api-falsa'
-import { novaSessao, usarApiFalsa } from './ambiente'
+import { buscarDoTeste, novaSessao, usarApiFalsa } from './ambiente'
+
+function EscopoDaFixture({ encerrar, children }: { encerrar: () => void; children: ReactNode }) {
+  useEffect(() => encerrar, [encerrar])
+  return children
+}
 
 // Monta o painel inteiro (rotas, provedores, sessão) numa rota, contra a API
 // falsa. logado: o navegador tem um cookie de refresh válido, e o boot entra.
@@ -24,7 +29,14 @@ export async function renderizarPainel(
   const falsa = usarApiFalsa()
   if (o.logado ?? true) falsa.logado()
   falsa.estado.atrasoRefresh = o.atrasoDoBoot ?? 0
-  const { sessao, api } = novaSessao({ prazoDoConfirmMs: o.prazoDoConfirmMs })
+  const vida = new AbortController()
+  const { sessao, api } = novaSessao({
+    prazoDoConfirmMs: o.prazoDoConfirmMs,
+    buscar: (entrada, init) => buscarDoTeste(entrada, {
+      ...init,
+      signal: init.signal ? AbortSignal.any([vida.signal, init.signal]) : vida.signal,
+    }),
+  })
   const cliente = criarClienteDeConsultas()
   // Nos testes, erro é erro: sem as tentativas que escondem um 500.
   cliente.setDefaultOptions({
@@ -33,16 +45,25 @@ export async function renderizarPainel(
   })
   const router = createMemoryRouter(rotas, { initialEntries: [rota] })
   const usuario = userEvent.setup()
+  const encerrar = () => {
+    vida.abort(new DOMException('A fixture foi desmontada.', 'AbortError'))
+    router.dispose()
+    cliente.clear()
+  }
   const tela = render(
-    <StrictMode>
-      <ProvedorDoPainel sessao={sessao} api={api} cliente={cliente}>
-        <ProvedorDeTema>
-          <ProvedorDeAvisos>
-            <RouterProvider router={router} />
-          </ProvedorDeAvisos>
-        </ProvedorDeTema>
-      </ProvedorDoPainel>
-    </StrictMode>,
+    // O escopo fica fora do StrictMode: o cleanup de desenvolvimento dos
+    // filhos não encerra uma carga de página ainda montada.
+    <EscopoDaFixture encerrar={encerrar}>
+      <StrictMode>
+        <ProvedorDoPainel sessao={sessao} api={api} cliente={cliente}>
+          <ProvedorDeTema>
+            <ProvedorDeAvisos>
+              <RouterProvider router={router} />
+            </ProvedorDeAvisos>
+          </ProvedorDeTema>
+        </ProvedorDoPainel>
+      </StrictMode>
+    </EscopoDaFixture>,
   )
   await act(async () => {
     const boot = sessao.iniciar()

@@ -189,7 +189,7 @@ func runUser(ctx context.Context, args []string, in entradaDaSenha, stdout, stde
 			fmt.Fprintf(stdout, "o 2FA já estava desativado para %s; nada mudou\n", e)
 			return saidaOK
 		}
-		fmt.Fprintf(stdout, "2FA desativado para %s; %s. Acessos já abertos expiram em até 15 minutos. Entre com a senha e ative de novo pelo painel.\n", e, sessoesEncerradas(n))
+		fmt.Fprintf(stdout, "2FA desativado para %s; %s. Novos acessos dessas sessões estão bloqueados; ações já em andamento podem ser concluídas. Entre com a senha e ative de novo pelo painel.\n", e, sessoesEncerradas(n))
 		return saidaOK
 	}
 
@@ -242,7 +242,7 @@ func runUser(ctx context.Context, args []string, in entradaDaSenha, stdout, stde
 		if err != nil {
 			return falhar(saidaAmbiente, "%v", err)
 		}
-		fmt.Fprintf(stdout, "senha redefinida; %s. Acessos já abertos expiram em até 15 minutos.\n", sessoesEncerradas(n))
+		fmt.Fprintf(stdout, "senha redefinida; %s. Novos acessos dessas sessões estão bloqueados; ações já em andamento podem ser concluídas.\n", sessoesEncerradas(n))
 	}
 	return saidaOK
 }

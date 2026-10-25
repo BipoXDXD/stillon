@@ -15,8 +15,8 @@ import { RespostaLogin, Token } from './schemas'
 //    servidor revoga a família inteira (spec §5.2). Com a trava, a segunda
 //    só envia depois de o navegador guardar o cookie novo;
 // 3. BroadcastChannel só com eventos, nunca com o token: "encerrada" faz as
-//    outras abas largarem o token na hora, em vez de continuarem lendo dados
-//    por até 15 minutos com o access token que têm.
+//    outras abas largarem o token e atualizarem a tela, sem esperar que a
+//    próxima requisição seja recusada pelo servidor.
 
 export type Estado = 'verificando' | 'autenticado' | 'anonimo' | 'offline'
 export type Motivo = 'saiu' | 'expirou' | 'encerrada-aqui' | 'outra-aba'

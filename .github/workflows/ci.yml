@@ -205,6 +205,8 @@ jobs:
         run: sh deploy/ci/checar-workflows.sh
       - name: collector das fixtures contra Docker falso
         run: python3 deploy/ci/testar-diagnostico-fixture.py
+      - name: imagem aprovada do backup e metadados root reais
+        run: sudo env "PATH=$PATH" python3 deploy/ci/testar-imagem-backup.py
       - name: nome anterior do projeto
         run: sh deploy/ci/checar-nome.sh
       - name: vps.sh contra um ssh falso

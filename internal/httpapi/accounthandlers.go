@@ -126,15 +126,18 @@ type sessionListResponse struct {
 	Items []sessionResponse `json:"items"`
 }
 
-// sessaoViva é a guarda das rotas de sessão (D11 do Plano 5): o token tem de
-// vir de uma família ainda viva. Sem ela, um access token de uma sessão já
-// encerrada — o do invasor, depois de o dono encerrá-la — continuaria por até
-// 15 minutos listando e derrubando as sessões do dono.
+// sessaoViva exige que o token venha de uma família ainda viva, além de
+// ter assinatura e prazo válidos. É a guarda comum dos recursos e das
+// operações de sessão/credencial. Falha na consulta nunca libera o handler.
 func (h *AccountHandlers) sessaoViva(w http.ResponseWriter, r *http.Request) (userID, familyID uuid.UUID, ok bool) {
 	userID, okU := middleware.UserID(r.Context())
 	familyID, okF := middleware.FamilyID(r.Context())
 	if !okU || !okF {
 		apierr.WriteError(w, r, apierr.CodeUnauthorized)
+		return uuid.Nil, uuid.Nil, false
+	}
+	if h.svc == nil {
+		h.internal(w, r, "conferir sessão", errors.New("serviço de conta ausente"))
 		return uuid.Nil, uuid.Nil, false
 	}
 	vivo, err := h.svc.FamilyIsLive(r.Context(), userID, familyID)
@@ -149,11 +152,9 @@ func (h *AccountHandlers) sessaoViva(w http.ResponseWriter, r *http.Request) (us
 	return userID, familyID, true
 }
 
-// exigirSessaoViva é o sessaoViva como middleware, para as rotas do segundo
-// fator, que moram no AuthHandlers: /auth/totp/enroll, /confirm e /disable
-// (Task 11 do Plano 5). Sem ele, o access token de uma sessão que a troca de
-// senha ou o set-password acabou de encerrar confirmava, nos 15 minutos que
-// lhe restam, o 2FA que o invasor tinha cadastrado com o autenticador dele.
+// exigirSessaoViva compõe a mesma guarda nas rotas de recurso e segundo
+// fator. A leitura impede admitir requisições depois da revogação comitada;
+// não cancela uma operação que já tenha passado pela guarda.
 func (h *AccountHandlers) exigirSessaoViva(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if _, _, ok := h.sessaoViva(w, r); !ok {

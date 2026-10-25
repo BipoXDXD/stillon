@@ -1,5 +1,5 @@
 import { setImmediate as concluirTurno } from 'node:timers/promises'
-import { act, screen } from '@testing-library/react'
+import { act, screen, waitFor } from '@testing-library/react'
 import { beforeEach, expect, it, vi } from 'vitest'
 import { rotas } from '@/app/rotas'
 import type { Sessao } from '@/lib/api/sessao'
@@ -14,6 +14,11 @@ const captura = vi.hoisted(() => ({
   prepararApi: undefined as ((falsa: ApiFalsa) => void) | undefined,
   refreshPreso: undefined as Promise<void> | undefined,
   observarRefresh: undefined as (() => void) | undefined,
+  mePreso: undefined as {
+    sessao: Sessao
+    entrou: () => void
+    liberar: Promise<void>
+  } | undefined,
 }))
 vi.mock('@/test/ambiente', async (original) => {
   const modulo = await original<typeof import('./ambiente')>()
@@ -24,16 +29,21 @@ vi.mock('@/test/ambiente', async (original) => {
       const preso = captura.refreshPreso
       const observar = captura.observarRefresh
       const buscar = opcoes?.buscar ?? modulo.buscarDoTeste
-      const criada = modulo.novaSessao(preso ? {
+      const criada: ReturnType<typeof modulo.novaSessao> = modulo.novaSessao({
         ...opcoes,
         buscar: async (entrada, init) => {
-          if (entrada.endsWith('/auth/refresh')) {
+          const me = captura.mePreso
+          if (entrada.endsWith('/me') && me?.sessao === criada.sessao) {
+            me.entrou()
+            await me.liberar
+          }
+          if (preso && entrada.endsWith('/auth/refresh')) {
             observar?.()
             await preso
           }
           return buscar(entrada, init)
         },
-      } : opcoes)
+      })
       captura.sessao = criada.sessao
       return criada
     },
@@ -63,6 +73,7 @@ beforeEach(() => {
   captura.prepararApi = undefined
   captura.refreshPreso = undefined
   captura.observarRefresh = undefined
+  captura.mePreso = undefined
 })
 
 function portao() {
@@ -76,6 +87,53 @@ function rotaDoDetalhe() {
   if (!rota || typeof rota.lazy !== 'function') throw new Error('rota lazy real do detalhe ausente')
   return rota
 }
+
+it('desmontar a fixture impede um GET retido de alcançar e renovar a sessão da próxima', async () => {
+  const anterior = await renderizarPainel('/targets/new')
+  await waitFor(() => expect(anterior.cliente.isFetching()).toBe(0))
+  // Evita que o token antigo coincida por acaso com o primeiro da API nova.
+  await anterior.sessao.renovar(anterior.sessao.token())
+  const entrou = portao()
+  const liberar = portao()
+  captura.mePreso = { sessao: anterior.sessao, entrou: entrou.abrir, liberar: liberar.aberto }
+  const tardia = anterior.api.me().then(
+    () => 'respondeu',
+    (e: unknown) => e instanceof DOMException ? e.name : 'outro erro',
+  )
+  await entrou.aberto
+  anterior.tela.unmount()
+  const seguinte = await renderizarPainel('/targets/new')
+  await waitFor(() => expect(seguinte.cliente.isFetching()).toBe(0))
+  const antes = {
+    me: seguinte.falsa.chamadas('GET /me'),
+    refresh: seguinte.falsa.chamadas('POST /auth/refresh'),
+    cookie: seguinte.falsa.estado.pote,
+    consumidos: seguinte.falsa.estado.consumidos.size,
+    acessos: seguinte.falsa.estado.acessos.size,
+  }
+  try {
+    liberar.abrir()
+    const desfecho = await tardia
+    expect({
+      desfecho,
+      gets: seguinte.falsa.chamadas('GET /me') - antes.me,
+      refreshes: seguinte.falsa.chamadas('POST /auth/refresh') - antes.refresh,
+      cookiePreservado: seguinte.falsa.estado.pote === antes.cookie,
+      consumidos: seguinte.falsa.estado.consumidos.size - antes.consumidos,
+      acessos: seguinte.falsa.estado.acessos.size - antes.acessos,
+      revogada: seguinte.falsa.estado.familiaRevogada,
+      sessao: seguinte.sessao.estado(),
+    }).toEqual({
+      desfecho: 'AbortError', gets: 0, refreshes: 0, cookiePreservado: true,
+      consumidos: 0, acessos: 0, revogada: false, sessao: 'autenticado',
+    })
+    await expect(seguinte.api.me()).resolves.toBeDefined()
+  } finally {
+    liberar.abrir()
+    await tardia
+    seguinte.tela.unmount()
+  }
+})
 
 it('a fixture não conclui antes da rota lazy real, mesmo com a sessão pronta', async () => {
   const rota = rotaDoDetalhe()

@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/BipoXDXD/stillon/internal/auth"
+	"github.com/BipoXDXD/stillon/internal/clock"
 	"github.com/BipoXDXD/stillon/internal/config"
 	"github.com/BipoXDXD/stillon/internal/crypto"
 	"github.com/BipoXDXD/stillon/internal/storage"
@@ -223,7 +224,14 @@ func TestAPIRoleWiresIncidentsChannelsAndReadyz(t *testing.T) {
 	fim := make(chan error, 1)
 	go func() { fim <- run(runCtx, cfg) }()
 
-	tok, err := auth.NewAccessToken(chave, dono, uuid.New(), time.Now())
+	// A chamada autorizada precisa de uma família real, como a emitida no
+	// login. Um sid inventado deve ser recusado pela guarda dos recursos.
+	_, sessao, err := auth.NewManager(auth.NewPGStore(pool), clock.Real{}, chave).
+		Issue(ctx, dono, auth.PasswordStamp("x"), auth.Meta{IP: "203.0.113.9"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tok, err := auth.NewAccessToken(chave, dono, sessao.FamilyID, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -22,7 +22,13 @@ import (
 
 func tokenDe(t *testing.T, a *api, userID uuid.UUID) string {
 	t.Helper()
-	tok, err := auth.NewAccessToken(testJWTSecret, userID, uuid.New(), a.clk.Now())
+	// Uma credencial autorizada precisa da família que o servidor consulta;
+	// os casos de família ausente assinam o token explicitamente no teste.
+	_, sessao, err := gerente(a).Issue(context.Background(), userID, carimboDe(t, a, userID), auth.Meta{IP: "203.0.113.9"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tok, err := auth.NewAccessToken(testJWTSecret, userID, sessao.FamilyID, a.clk.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
