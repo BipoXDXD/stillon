@@ -2,6 +2,8 @@
 
 Origem: [Duora #159](https://github.com/BipoXDXD/duora/pull/159) e
 [GoblinShift #122](https://github.com/BipoXDXD/GoblinShift/pull/122), já integrados.
+StillOn adotou o artefato nos [PRs #112](https://github.com/BipoXDXD/stillon/pull/112) e
+[#113](https://github.com/BipoXDXD/stillon/pull/113).
 Escopo: ingresso administrativo compartilhado; INV-12/T-12, ADR-0014 no Duora.
 Não altera APIs da aplicação, schema, Compose, recursos Coolify, workflow, credenciais ou política de rollback.
 Merge e instalação continuam sujeitos à revisão humana.
@@ -69,31 +71,33 @@ após confirmar que o processo/import correspondente terminou. Nunca executar pr
 
 ## Versionamento e instalação administrativa (produção não alterada)
 
-`receiver-release.json` identifica a versão 2.1.0/protocolo 2 e o hash exato de `receiver.py`.
+`receiver-release.json` identifica a versão 2.1.1/protocolo 2 e o hash exato de `receiver.py`.
 Alterar receptor requer nova versão/hash e PRs coordenados nas três cópias (Duora, GoblinShift e StillOn). O teste de artefato roda
-na suíte existente; não é necessária mudança de workflow. Para conferir ambos os checkouts:
+na suíte existente; não é necessária mudança de workflow. Para conferir os três checkouts:
 
 ```sh
 python3 /caminho/duora/scripts/release/coolify/verify_artifact.py \
   --peer /caminho/GoblinShift/deploy/coolify/release
+python3 /caminho/duora/scripts/release/coolify/verify_artifact.py \
+  --peer /caminho/stillon/deploy/coolify/release
 ```
 
 A comparação lê arquivos e termina com erro se houver bytes ou versões diferentes. A mesma ferramenta
 pode conferir o diretório da versão instalada. CI de um repositório isolado não prova o estado remoto;
 o hash também vai no pedido v2 e o receptor rejeita incompatibilidade antes de importar/configurar.
 
-Checklist para o administrador, depois da aprovação dos dois PRs:
+Checklist para o administrador, depois da aprovação dos três PRs:
 
 1. Congelar novos ingressos e aguardar todos os processos de receptores antigos, Docker imports e deployments
    terminarem. O receptor antigo não usa `host.lock`; adquirir a trava nova sozinho não basta na primeira troca.
    Conferir recibos pendentes e filas de todos os recursos. Não alterar serviços para fazer essa inspeção.
-2. Conferir os artefatos dos dois commits aprovados pelo comando acima. Se StillOn ou outro checkout usa
+2. Conferir os artefatos dos três commits aprovados pelos comandos acima. Se outro checkout usa
    este mesmo executável, coordenar seu sender v2 e o mesmo hash **antes de reabrir o ingresso**. Sender v1
    será recusado; isso não derruba serviços existentes. Não ativar uma atualização parcial.
 3. Adquirir `/var/lib/coolify-release/host.lock` sem recriar seu inode. Sob essa trava, revisar o inventário
    de storage, confirmar ausência de intents e guardar evidência da versão atual, hashes e entrypoints.
 4. Instalar **os bytes aprovados**, sem editar no host, em diretório imutável root-owned
-   `/opt/coolify-release/versions/2.1.0-<sha256>/`, com `receiver.py` e `receiver-release.json`.
+   `/opt/coolify-release/versions/2.1.1-<sha256>/`, com `receiver.py` e `receiver-release.json`.
    Diretórios e executável 0755, metadados 0644; nenhum pai pode ser gravável pelas contas de publicação.
    Conferir a versão instalada com `verify_artifact.py --peer <diretorio-da-versao>`.
 5. Manter `/opt/coolify-release/receiver.py` como entrada estável apontando para a versão aprovada.
@@ -151,6 +155,6 @@ efetivamente instalados continua exigindo validação operacional própria antes
 
 ## Política administrativa GoblinShift
 
-A versão2.1.0 fixa a política em estado root-owned e recusa a configuração legada antes de importar.
+A versão 2.1.1 fixa a política em estado root-owned e recusa a configuração legada antes de importar.
 A migração e o retorno compatível estão em [GOBLIN_POLICY_MIGRATION.md](GOBLIN_POLICY_MIGRATION.md).
 O processo ativo, as tentativas e as três cópias/senders precisam de qualificação coordenada; a fonte não instala o receptor.
