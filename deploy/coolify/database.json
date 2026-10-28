@@ -42,7 +42,8 @@
           "max-size": "10m"
         }
       },
-      "mem_limit": "1g",
+      "cpus": 0.5,
+      "mem_limit": "512m",
       "networks": {
         "stillon": {
           "ipv4_address": "10.30.0.4"

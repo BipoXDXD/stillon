@@ -3590,7 +3590,7 @@ vc config --services
 **2/3 · VPS (sessão `ssh stillon`).** Rode só este e espere a saída:
 
 ```bash
-vc config | grep -nE 'mem_limit|GOMEMLIMIT|restart:'
+vc config | grep -nE 'cpus|mem_limit|GOMEMLIMIT|restart:'
 ```
 
 **3/3 · VPS (sessão `ssh stillon`).** Rode só este e espere a saída:
@@ -3599,7 +3599,7 @@ vc config | grep -nE 'mem_limit|GOMEMLIMIT|restart:'
 vc exec app /stillon version
 ```
 
-**Deve aparecer:** os serviços `caddy`, `app` e `db`, e **nenhum** `seed`; um `mem_limit` e um
+**Deve aparecer:** os serviços `caddy`, `app` e `db`, e **nenhum** `seed`; um `cpus`, um `mem_limit` e um
 `restart: unless-stopped` por serviço, e o `GOMEMLIMIT` no app; a versão igual ao
 `/opt/stillon/versao`.
 

@@ -3,8 +3,13 @@ package config
 import (
 	"bytes"
 	"encoding/base64"
+	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"regexp"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -202,4 +207,122 @@ func TestComposeProdAppIsReadOnly(t *testing.T) {
 	if !regexp.MustCompile(`(?m)^    read_only: true$`).MatchString(app) {
 		t.Error("serviço app do compose.prod.yaml sem read_only: true")
 	}
+}
+
+// A VPS de produção tem 2 vCPUs divididas com outros projetos. Todo serviço
+// de produção tem teto de CPU e de memória: sem `cpus`, um laço quente do app
+// ou uma consulta pesada no db toma a máquina dos vizinhos; sem `mem_limit`, o
+// OOM killer do host escolhe a vítima. Vale para os composes que o Coolify
+// publica e para o compose.prod.yaml do stillon-entrada.
+const vcpusDaVPS = 2.0
+
+func TestProductionComposeLimitsEveryService(t *testing.T) {
+	for _, arquivo := range []string{"../../deploy/coolify/app.json", "../../deploy/coolify/database.json"} {
+		for nome, servico := range servicosCoolify(t, arquivo) {
+			conferirCPUs(t, arquivo, nome, servico.CPUs)
+			if _, err := bytesDoLimite(servico.MemLimit); err != nil {
+				t.Errorf("%s: serviço %s com mem_limit %q: %v", arquivo, nome, servico.MemLimit, err)
+			}
+		}
+	}
+	const prod = "../../deploy/vps/compose.prod.yaml"
+	for _, nome := range []string{"caddy", "app", "db"} {
+		bloco := servicoDe(t, prod, nome)
+		cpus := regexp.MustCompile(`(?m)^    cpus: (\S+)$`).FindStringSubmatch(bloco)
+		if cpus == nil {
+			t.Errorf("%s: serviço %s sem cpus", prod, nome)
+		} else {
+			conferirCPUs(t, prod, nome, json.Number(cpus[1]))
+		}
+		mem := regexp.MustCompile(`(?m)^    mem_limit: (\S+)$`).FindStringSubmatch(bloco)
+		if mem == nil {
+			t.Errorf("%s: serviço %s sem mem_limit", prod, nome)
+		} else if _, err := bytesDoLimite(mem[1]); err != nil {
+			t.Errorf("%s: serviço %s com mem_limit %q: %v", prod, nome, mem[1], err)
+		}
+	}
+}
+
+// Obrigação 4 no compose do Coolify: o GOMEMLIMIT fica abaixo do mem_limit do
+// app, para o GC apertar antes do OOM killer (o checar-vps.sh confere o mesmo
+// no compose.prod.yaml).
+func TestCoolifyAppGoMemLimitIsBelowMemLimit(t *testing.T) {
+	const arquivo = "../../deploy/coolify/app.json"
+	app, ok := servicosCoolify(t, arquivo)["app"]
+	if !ok {
+		t.Fatalf("%s sem o serviço app", arquivo)
+	}
+	limite, err := bytesDoLimite(app.MemLimit)
+	if err != nil {
+		t.Fatalf("mem_limit do app %q: %v", app.MemLimit, err)
+	}
+	gomem, err := bytesDoGoMemLimit(app.Environment["GOMEMLIMIT"])
+	if err != nil {
+		t.Fatalf("GOMEMLIMIT do app %q: %v", app.Environment["GOMEMLIMIT"], err)
+	}
+	if gomem >= limite {
+		t.Errorf("GOMEMLIMIT do app (%d bytes) não está abaixo do mem_limit (%d bytes)", gomem, limite)
+	}
+}
+
+type servicoCoolify struct {
+	CPUs        json.Number       `json:"cpus"`
+	MemLimit    string            `json:"mem_limit"`
+	Environment map[string]string `json:"environment"`
+}
+
+func servicosCoolify(t *testing.T, arquivo string) map[string]servicoCoolify {
+	t.Helper()
+	conteudo, err := os.ReadFile(arquivo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var compose struct {
+		Services map[string]servicoCoolify `json:"services"`
+	}
+	if err := json.Unmarshal(conteudo, &compose); err != nil {
+		t.Fatalf("%s: %v", arquivo, err)
+	}
+	if len(compose.Services) == 0 {
+		t.Fatalf("%s sem serviços", arquivo)
+	}
+	return compose.Services
+}
+
+func conferirCPUs(t *testing.T, arquivo, nome string, valor json.Number) {
+	t.Helper()
+	if valor == "" {
+		t.Errorf("%s: serviço %s sem cpus", arquivo, nome)
+		return
+	}
+	cpus, err := strconv.ParseFloat(string(valor), 64)
+	if err != nil || cpus <= 0 || cpus > vcpusDaVPS {
+		t.Errorf("%s: serviço %s com cpus %q: precisa ficar em (0, %v]", arquivo, nome, valor, vcpusDaVPS)
+	}
+}
+
+// bytesDoLimite lê o mem_limit do compose ("512m", "1g"); só os sufixos que os
+// composes de produção usam.
+func bytesDoLimite(valor string) (int64, error) {
+	return bytesComSufixo(valor, map[string]int64{"m": 1 << 20, "g": 1 << 30})
+}
+
+// bytesDoGoMemLimit lê o GOMEMLIMIT ("384MiB"); só os sufixos usados aqui.
+func bytesDoGoMemLimit(valor string) (int64, error) {
+	return bytesComSufixo(valor, map[string]int64{"MiB": 1 << 20, "GiB": 1 << 30})
+}
+
+func bytesComSufixo(valor string, sufixos map[string]int64) (int64, error) {
+	for sufixo, fator := range sufixos {
+		numero, achou := strings.CutSuffix(valor, sufixo)
+		if !achou {
+			continue
+		}
+		n, err := strconv.ParseInt(numero, 10, 64)
+		if err != nil || n <= 0 {
+			return 0, fmt.Errorf("quantidade inválida antes de %q", sufixo)
+		}
+		return n * fator, nil
+	}
+	return 0, errors.New("sufixo desconhecido")
 }

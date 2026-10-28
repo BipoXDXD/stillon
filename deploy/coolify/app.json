@@ -14,7 +14,7 @@
         "CORS_ORIGIN": "https://${STILLON_DOMINIO}",
         "DATABASE_URL": "postgres://stillon_app:${STILLON_APP_PASSWORD:?defina STILLON_APP_PASSWORD no /opt/stillon/.env}@10.30.0.4:5432/stillon?sslmode=disable",
         "EMAIL_FROM": "${EMAIL_FROM:-}",
-        "GOMEMLIMIT": "768MiB",
+        "GOMEMLIMIT": "384MiB",
         "IP_HASH_KEY": "${IP_HASH_KEY:?defina IP_HASH_KEY no /opt/stillon/.env}",
         "JWT_SECRET": "${JWT_SECRET:?defina JWT_SECRET no /opt/stillon/.env}",
         "LOG_LEVEL": "info",
@@ -44,7 +44,8 @@
           "max-size": "10m"
         }
       },
-      "mem_limit": "1g",
+      "cpus": 0.5,
+      "mem_limit": "512m",
       "networks": {
         "stillon": {
           "ipv4_address": "10.30.0.3"
@@ -77,7 +78,8 @@
           "max-size": "10m"
         }
       },
-      "mem_limit": "256m",
+      "cpus": 0.25,
+      "mem_limit": "128m",
       "networks": {
         "edge": {
           "ipv4_address": "172.31.0.3"

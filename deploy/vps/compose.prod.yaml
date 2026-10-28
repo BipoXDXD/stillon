@@ -51,7 +51,11 @@ services:
         # contêiner com o mesmo alias dividiria o tráfego em silêncio; com o
         # mesmo IP, o Docker recusa.
         ipv4_address: 172.31.0.3
-    mem_limit: 256m
+    # Tetos na VPS de 2 vCPUs dividida com outros projetos. O Caddy só
+    # repassa à borda (pico medido de 23 MiB): um quarto de CPU e 128 MiB.
+    # TestProductionComposeLimitsEveryService.
+    cpus: 0.25
+    mem_limit: 128m
     # Sem NET_RAW, o Caddy não forja ARP nem pacote cru na rede edge, dividida
     # com os outros projetos. Ele ouve a 80 como root e não precisa dela; as
     # demais capacidades padrão ficam (NET_BIND_SERVICE, troca de dono).
@@ -82,9 +86,11 @@ services:
       METRICS_ADDR: "off"
       LOG_LEVEL: info
       # Abaixo do mem_limit (obrigação 4): o GC aperta antes do OOM killer. A
-      # folga (256 MiB) é a memória que o GOMEMLIMIT não conta (pilhas das
-      # goroutines, binário, buffers do kernel contados no cgroup).
-      GOMEMLIMIT: 768MiB
+      # folga (128 MiB) é a memória que o GOMEMLIMIT não conta (pilhas das
+      # goroutines, binário, buffers do kernel contados no cgroup). Os 384 MiB
+      # cobrem o pior caso do Argon2id: 4 vagas de 64 MiB (o teto padrão de
+      # ARGON2_MAX_CONCURRENT) mais o heap do sondador.
+      GOMEMLIMIT: 384MiB
       MASTER_KEY: ${MASTER_KEY:?defina MASTER_KEY no /opt/stillon/.env}
       JWT_SECRET: ${JWT_SECRET:?defina JWT_SECRET no /opt/stillon/.env}
       IP_HASH_KEY: ${IP_HASH_KEY:?defina IP_HASH_KEY no /opt/stillon/.env}
@@ -103,7 +109,12 @@ services:
     networks:
       stillon:
         ipv4_address: 10.30.0.3
-    mem_limit: 1g
+    # Meia CPU: o sondador espera rede, e o pico de CPU é o Argon2id do login
+    # (~120 ms com CPU livre, perto do dobro no teto), raro num monitor de um
+    # dono. Memória: pico medido de 13 MiB sem login; o teto é o GOMEMLIMIT
+    # acima mais a folga.
+    cpus: 0.5
+    mem_limit: 512m
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
     # O binário não escreve em disco (o backup roda o helper num Postgres
@@ -149,7 +160,12 @@ services:
     networks:
       stillon:
         ipv4_address: 10.30.0.4
-    mem_limit: 1g
+    # Meia CPU e 512 MiB: pico medido de 55 MiB, e o pior caso cabe com
+    # folga (shared_buffers padrão de 128 MB, os backends do app e o do
+    # pg_dump do backup, o autovacuum). O restauro de teste e o snapshot do
+    # backup rodam num Postgres descartável, com teto próprio, e não aqui.
+    cpus: 0.5
+    mem_limit: 512m
     # O entrypoint do Postgres roda como root só para acertar dono e modo do
     # volume e do /var/run/postgresql (CHOWN, DAC_OVERRIDE, FOWNER) e trocar
     # para o usuário postgres (SETGID, SETUID). Sem nenhuma, o chown do volume

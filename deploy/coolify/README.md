@@ -9,3 +9,5 @@ A configuração de preparação não executa escritores em segundo plano. Depoi
 Segredos de interpolação são configurados como variáveis privadas no Coolify. O modo Raw conserva o isolamento por serviço das variáveis e dos arquivos de segredo. Não adicionar env_file global a todos os serviços.
 
 Manter backups e restauração verificada antes de atualizar uma versão. Não apontar tráfego para a origem com dados antigos após o destino aceitar escritas. Uma reversão precisa primeiro preservar e transferir o estado novo.
+
+Todo serviço tem teto de CPU (`cpus`) e de memória (`mem_limit`): a VPS tem 2 vCPUs divididas com outros projetos. Os valores e o porquê de cada um estão comentados no `deploy/vps/compose.prod.yaml`, que usa os mesmos tetos; o `TestProductionComposeLimitsEveryService` exige os dois em todo serviço. Como o Coolify fixa o commit de infraestrutura, um teto novo só chega aos containers depois que esse commit é atualizado no recurso e o recurso é publicado de novo.
