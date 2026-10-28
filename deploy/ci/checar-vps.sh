@@ -273,6 +273,8 @@ done
 for s in caddy app db; do
     [ "$(q ".services.$s.restart")" = unless-stopped ] || falhar "$s sem restart: unless-stopped"
     [ "$(q ".services.$s.mem_limit // empty")" != "" ] || falhar "$s sem mem_limit"
+    # A VPS de 2 vCPUs é dividida com outros projetos: todo serviço tem teto de CPU.
+    [ "$(q ".services.$s.cpus // 0 | tonumber > 0")" = true ] || falhar "$s sem cpus"
 done
 # GOMEMLIMIT abaixo do mem_limit do app (obrigação 4).
 gomem=$(q '.services.app.environment.GOMEMLIMIT // empty')
@@ -345,7 +347,7 @@ done < <(grep -o '\${[A-Z_]*' "$RAIZ/deploy/vps/compose.prod.yaml" | sed 's/^\${
 while read -r v; do
     grep -q "\${${v}[:}-]" "$RAIZ/deploy/vps/compose.prod.yaml" || falhar "o env.exemplo tem $v, que o compose.prod.yaml não lê"
 done < <(grep -Eo '^[A-Z_]+=' "$RAIZ/deploy/vps/env.exemplo" | tr -d =)
-ok "compose.prod.yaml: sem portas, só o caddy na rede edge, restart, mem_limit, GOMEMLIMIT, IPs fixos, IPv6, variáveis, segredos do .env; Caddyfile confia só na borda"
+ok "compose.prod.yaml: sem portas, só o caddy na rede edge, restart, mem_limit, cpus, GOMEMLIMIT, IPs fixos, IPv6, variáveis, segredos do .env; Caddyfile confia só na borda"
 
 # A entrada e o compose falam da mesma imagem.
 if ! { grep -qx 'IMAGEM=stillon' "$RAIZ/deploy/vps/stillon-entrada" &&
@@ -412,7 +414,13 @@ docker inspect -f '{{json .HostConfig.SecurityOpt}}' "$db_cid" | grep -qF '"no-n
     falhar "o contêiner do db tem as capacidades $(docker inspect -f '{{json .HostConfig.CapAdd}}' "$db_cid"), queria $DB_CAPS"
 [ "$(docker inspect -f '{{.HostConfig.ReadonlyRootfs}}' "$(dc ps -q app)")" = true ] ||
     falhar "o contêiner do app não tem o sistema de arquivos só leitura"
-ok "db sem capacidades além das do entrypoint e com no-new-privileges; app só leitura"
+for s in caddy app db; do
+    tetos=$(docker inspect -f '{{.HostConfig.NanoCpus}} {{.HostConfig.Memory}}' "$(dc ps -q "$s")")
+    case "$tetos" in
+        "0 "* | *" 0") falhar "o contêiner do $s sem teto de CPU ou de memória ($tetos)" ;;
+    esac
+done
+ok "db sem capacidades além das do entrypoint e com no-new-privileges; app só leitura; tetos de CPU e memória"
 rede=$(docker inspect -f '{{range $k, $v := .NetworkSettings.Networks}}{{$k}}{{end}}' "$(dc ps -q db)")
 [ "$(docker network inspect -f '{{.EnableIPv6}}' "$rede")" = false ] || falhar "a rede $rede tem IPv6"
 
