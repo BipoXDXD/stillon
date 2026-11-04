@@ -64,7 +64,9 @@ describe('status page', () => {
     await r.cliente.refetchQueries()
     const previa = await screen.findByRole('region', { name: 'Prévia aproximada' })
     expect(within(previa).getByText('Minha')).toHaveClass('font-display')
-    expect(await within(previa).findByText('1 serviço fora do ar.')).toBeInTheDocument()
+    const frase = await within(previa).findByText('1 serviço fora do ar.')
+    // A faixa tem a cor do pior estado, como na página pública.
+    expect(frase.parentElement).toHaveClass('bg-fora-100', 'border-l-fora')
     expect(within(previa).getByText('Fora do ar: API pública.')).toBeInTheDocument()
     expect(within(previa).getByText('Fora do ar')).toHaveClass('rounded-full')
     await r.usuario.clear(screen.getByLabelText('Título'))
@@ -81,7 +83,8 @@ describe('status page', () => {
     r.falsa.estado.paginas = [pagina({ items: [{ target_id: 'alvo-1', display_name: 'API pública' }] })]
     await r.cliente.refetchQueries()
     const previa = await screen.findByRole('region', { name: 'Prévia aproximada' })
-    expect(await within(previa).findByText('Sem dados recentes de 1 serviço.')).toBeInTheDocument()
+    const frase = await within(previa).findByText('Sem dados recentes de 1 serviço.')
+    expect(frase.parentElement).toHaveClass('bg-sem-dados-100', 'border-l-sem-dados')
   })
 
   // Auditoria SP2: reordenar é secundário, em ícone; Tirar, que remove, é
