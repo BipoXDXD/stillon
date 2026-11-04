@@ -72,6 +72,23 @@ export function CaixaDeMarcar({
   )
 }
 
+// Botão de opção (radio) com o rótulo na mesma linha, que inteira é a área de
+// toque (44 px), como a CaixaDeMarcar. A cor da marca vem do accent-color
+// global do index.css. className vai para a linha; o resto das props, ao
+// input (o register do react-hook-form passa name, ref e eventos).
+export function Opcao({
+  children,
+  className,
+  ...props
+}: Omit<ComponentProps<'input'>, 'type' | 'children'> & { children: ReactNode }) {
+  return (
+    <label className={cn('flex min-h-11 items-center gap-3 text-sm', className)}>
+      <input type="radio" className="size-5 shrink-0" {...props} />
+      {children}
+    </label>
+  )
+}
+
 // Erro do formulário inteiro (não de um campo): anunciado assim que aparece.
 export function ErroDoFormulario({ children }: { children?: ReactNode }) {
   if (!children) return null

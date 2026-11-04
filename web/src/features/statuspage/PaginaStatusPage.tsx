@@ -9,6 +9,7 @@ import { SeloDeEstado } from '@/components/SeloDeEstado'
 import { Titulo } from '@/components/Titulo'
 import { useAvisar } from '@/components/ui/avisos'
 import { Botao } from '@/components/ui/botao'
+import { estiloDeCartao } from '@/components/ui/cartao'
 import { useCopiar } from '@/components/ui/copiar'
 import { CaixaDeMarcar, Campo, Entrada, ErroDoFormulario, Selecao } from '@/components/ui/campo'
 import { useAlvos, usePaginas, useResumo } from '@/lib/api/consultas'
@@ -17,6 +18,7 @@ import { mensagemDe, mensagemDoCampo } from '@/lib/api/mensagens'
 import type { Alvo, PaginaDeStatus } from '@/lib/api/schemas'
 import { estadoExibido } from '@/lib/estado'
 import { MENSAGEM_INVISIVEL, temInvisivel } from '@/lib/rotulo'
+import { cn } from '@/lib/utils'
 
 // O CHECK de status_pages.slug (Plano 4, D13).
 const SLUG = /^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$/
@@ -131,7 +133,7 @@ function Formulario({ pagina, alvos }: { pagina: PaginaDeStatus | null; alvos: A
   }
 
   return (
-    <form noValidate className="max-w-2xl space-y-5" onSubmit={f.handleSubmit(enviar)}>
+    <form noValidate className={cn(estiloDeCartao, 'max-w-2xl space-y-6')} onSubmit={f.handleSubmit(enviar)}>
       <ErroDoFormulario>{erro}</ErroDoFormulario>
       <Campo rotulo="Título" erro={e.title?.message}>
         {(a) => (

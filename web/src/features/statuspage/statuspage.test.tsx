@@ -1,6 +1,6 @@
 import { screen, waitFor, within } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
-import { alvo } from '@/test/fixtures'
+import { alvo, pagina } from '@/test/fixtures'
 import { renderizarPainel } from '@/test/renderizar'
 import { sugerirSlug } from './PaginaStatusPage'
 
@@ -42,6 +42,15 @@ describe('status page', () => {
     })
     // Rascunho: o link existe, mas a página ainda não abre.
     expect(await screen.findByText('A página só fica acessível depois de publicada.')).toBeInTheDocument()
+  })
+
+  it('o formulário é um cartão de largura limitada', async () => {
+    const r = await renderizarPainel('/status-pages')
+    r.falsa.estado.alvos = [alvo()]
+    r.falsa.estado.paginas = [pagina()]
+    await r.cliente.refetchQueries()
+    const formulario = (await screen.findByLabelText('Título')).closest('form')
+    expect(formulario).toHaveClass('max-w-2xl', 'rounded-padrao', 'bg-superficie', 'sombra-nivel-1')
   })
 
   it('a prévia é rotulada como aproximada', async () => {

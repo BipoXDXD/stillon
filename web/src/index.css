@@ -235,10 +235,3 @@ main > section:not([aria-label='Avisos de notificação']) {
   background: var(--superficie);
   padding: 1.25rem;
 }
-
-#conteudo > form {
-  border: 1px solid var(--borda);
-  border-radius: 0.5rem;
-  background: var(--superficie);
-  padding: 1.25rem;
-}

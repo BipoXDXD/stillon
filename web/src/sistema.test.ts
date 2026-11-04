@@ -18,6 +18,7 @@ const ARQUIVOS_NO_SISTEMA = [
   'src/components/ui/avisos.tsx',
   'src/components/ui/botao.tsx',
   'src/components/ui/campo.tsx',
+  'src/components/ui/cartao.ts',
   'src/components/ui/controle-segmentado.tsx',
   'src/components/ui/dialogo.tsx',
   'src/features/painel/EsqueletoDoPainel.tsx',
@@ -136,5 +137,15 @@ describe('vermelho sólido só na confirmação', () => {
       if (total > 0) usos[arquivo] = total
     }
     expect(usos).toEqual(USOS_PERMITIDOS)
+  })
+})
+
+// Regras de manutenção da parte 1: o CSS legado de tela sai com o PR que a
+// redesenha. Estas regras têm especificidade maior que uma classe e venceriam
+// o padding do estiloDeCartao com 20 px, fora da escala.
+describe('CSS legado removido pelo PR 6', () => {
+  const css = readFileSync('src/index.css', 'utf8')
+  it.each(['#conteudo > form'])('o index.css não tem mais %s', (seletor) => {
+    expect(css).not.toContain(seletor)
   })
 })

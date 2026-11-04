@@ -2,10 +2,12 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { useState } from 'react'
 import { useFieldArray, useForm, useWatch } from 'react-hook-form'
 import { Botao } from '@/components/ui/botao'
+import { estiloDeCartao } from '@/components/ui/cartao'
 import { CaixaDeMarcar, Campo, Entrada, ErroDoFormulario, Selecao } from '@/components/ui/campo'
 import { ApiError } from '@/lib/api/http'
 import { mensagemDe, mensagemDoCampo } from '@/lib/api/mensagens'
 import { campoDoServidor, esquemaDoAlvo, INTERVALOS, OUTRO, type ValoresDoAlvo } from './esquema'
+import { cn } from '@/lib/utils'
 
 export function FormularioAlvo({
   iniciais,
@@ -60,7 +62,7 @@ export function FormularioAlvo({
 
   const numero = { valueAsNumber: true } as const
   return (
-    <form noValidate className="max-w-2xl space-y-5" onSubmit={f.handleSubmit(enviar)}>
+    <form noValidate className={cn(estiloDeCartao, 'max-w-2xl space-y-6')} onSubmit={f.handleSubmit(enviar)}>
       <ErroDoFormulario>{erroGeral}</ErroDoFormulario>
       <Campo rotulo="Nome" erro={e.name?.message}>
         {(a) => <Entrada {...a} {...f.register('name')} />}
