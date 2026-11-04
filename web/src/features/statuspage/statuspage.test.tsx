@@ -1,6 +1,6 @@
 import { screen, waitFor, within } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
-import { alvo, pagina } from '@/test/fixtures'
+import { alvo, itemDoResumo, pagina } from '@/test/fixtures'
 import { renderizarPainel } from '@/test/renderizar'
 import { sugerirSlug } from './PaginaStatusPage'
 
@@ -51,6 +51,70 @@ describe('status page', () => {
     await r.cliente.refetchQueries()
     const formulario = (await screen.findByLabelText('Título')).closest('form')
     expect(formulario).toHaveClass('max-w-2xl', 'rounded-padrao', 'bg-superficie', 'sombra-nivel-1')
+  })
+
+  // Auditoria SP3: a prévia parece a página pública: o título, a mesma faixa
+  // de estado (faixa.ts) e um cartão por alvo. Sabotagem: tirar a faixa da
+  // PreviaDaPagina → o teste não acha a frase.
+  it('a prévia parece a página pública: título, faixa de estado e um cartão por alvo', async () => {
+    const r = await renderizarPainel('/status-pages')
+    r.falsa.estado.alvos = [alvo()]
+    r.falsa.estado.resumo = [itemDoResumo({ state: 'down' })]
+    r.falsa.estado.paginas = [pagina({ items: [{ target_id: 'alvo-1', display_name: 'API pública' }] })]
+    await r.cliente.refetchQueries()
+    const previa = await screen.findByRole('region', { name: 'Prévia aproximada' })
+    expect(within(previa).getByText('Minha')).toHaveClass('font-display')
+    expect(await within(previa).findByText('1 serviço fora do ar.')).toBeInTheDocument()
+    expect(within(previa).getByText('Fora do ar: API pública.')).toBeInTheDocument()
+    expect(within(previa).getByText('Fora do ar')).toHaveClass('rounded-full')
+    await r.usuario.clear(screen.getByLabelText('Título'))
+    await r.usuario.type(screen.getByLabelText('Título'), 'Loja')
+    expect(within(previa).getByText('Loja')).toBeInTheDocument()
+  })
+
+  // A página pública não sabe de pausa: o alvo pausado sai "sem dados" na
+  // faixa, como sairá na página publicada.
+  it('na faixa da prévia, o alvo pausado conta como sem dados', async () => {
+    const r = await renderizarPainel('/status-pages')
+    r.falsa.estado.alvos = [alvo()]
+    r.falsa.estado.resumo = [itemDoResumo({ state: 'up', enabled: false })]
+    r.falsa.estado.paginas = [pagina({ items: [{ target_id: 'alvo-1', display_name: 'API pública' }] })]
+    await r.cliente.refetchQueries()
+    const previa = await screen.findByRole('region', { name: 'Prévia aproximada' })
+    expect(await within(previa).findByText('Sem dados recentes de 1 serviço.')).toBeInTheDocument()
+  })
+
+  // Auditoria SP2: reordenar é secundário, em ícone; Tirar, que remove, é
+  // terciário. Os nomes acessíveis de antes ficam.
+  it('Subir e Descer são botões de ícone secundários, e Tirar é terciário', async () => {
+    const r = await renderizarPainel('/status-pages')
+    r.falsa.estado.alvos = [alvo(), alvo({ id: 'alvo-2', name: 'Banco' })]
+    r.falsa.estado.paginas = [
+      pagina({
+        items: [
+          { target_id: 'alvo-1', display_name: 'API' },
+          { target_id: 'alvo-2', display_name: 'Banco' },
+        ],
+      }),
+    ]
+    await r.cliente.refetchQueries()
+    for (const nome of ['Subir Banco', 'Descer API']) {
+      const botao = await screen.findByRole('button', { name: nome })
+      expect(botao).toHaveClass('border-borda-controle', 'size-11')
+      expect(botao.querySelector('svg')).toHaveAttribute('aria-hidden', 'true')
+    }
+    const tirar = screen.getByRole('button', { name: 'Tirar API da página' })
+    expect(tirar).toHaveClass('text-primaria')
+    expect(tirar).not.toHaveClass('border-borda-controle')
+  })
+
+  it('o link público é um cartão de largura limitada', async () => {
+    const r = await renderizarPainel('/status-pages')
+    r.falsa.estado.alvos = [alvo()]
+    r.falsa.estado.paginas = [pagina()]
+    await r.cliente.refetchQueries()
+    const rotulo = await screen.findByText('Link público')
+    expect(rotulo.parentElement).toHaveClass('max-w-2xl', 'rounded-padrao', 'bg-superficie')
   })
 
   it('a prévia é rotulada como aproximada', async () => {

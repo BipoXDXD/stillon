@@ -2,10 +2,10 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
 import { useFieldArray, useForm, useWatch } from 'react-hook-form'
+import { ArrowDown, ArrowUp } from 'lucide-react'
 import { z } from 'zod'
 import { useApi } from '@/app/contexto'
 import { EstadoDaConsulta } from '@/components/EstadoDaConsulta'
-import { SeloDeEstado } from '@/components/SeloDeEstado'
 import { Titulo } from '@/components/Titulo'
 import { useAvisar } from '@/components/ui/avisos'
 import { Botao } from '@/components/ui/botao'
@@ -16,9 +16,9 @@ import { useAlvos, usePaginas, useResumo } from '@/lib/api/consultas'
 import { ApiError, naoEncontrado } from '@/lib/api/http'
 import { mensagemDe, mensagemDoCampo } from '@/lib/api/mensagens'
 import type { Alvo, PaginaDeStatus } from '@/lib/api/schemas'
-import { estadoExibido } from '@/lib/estado'
 import { MENSAGEM_INVISIVEL, temInvisivel } from '@/lib/rotulo'
 import { cn } from '@/lib/utils'
+import { PreviaDaPagina } from './PreviaDaPagina'
 
 // O CHECK de status_pages.slug (Plano 4, D13).
 const SLUG = /^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$/
@@ -77,6 +77,7 @@ function Formulario({ pagina, alvos }: { pagina: PaginaDeStatus | null; alvos: A
   const e = f.formState.errors
   const nomeDoAlvo = new Map(alvos.map((a) => [a.id, a.name]))
   const escolhidos = useWatch({ control: f.control, name: 'items' })
+  const tituloAtual = useWatch({ control: f.control, name: 'title' })
   const usados = new Set(escolhidos.map((i) => i.target_id))
   const livres = alvos.filter((a) => !usados.has(a.id))
   // I1: o "Tirar" some com a linha, e o foco iria ao <body>. Vai ao "Tirar"
@@ -160,39 +161,56 @@ function Formulario({ pagina, alvos }: { pagina: PaginaDeStatus | null; alvos: A
       <CaixaDeMarcar {...f.register('published')}>Publicada (visível para qualquer pessoa com o link)</CaixaDeMarcar>
 
       <fieldset ref={lista} className="space-y-3">
-        <legend className="text-sm font-medium">Alvos na página ({itens.fields.length} de {MAX_ITENS})</legend>
+        <legend className="text-sm font-semibold">Alvos na página ({itens.fields.length} de {MAX_ITENS})</legend>
         {itens.fields.map((it, i) => (
-          <div key={it.id} className="grid grid-cols-1 items-end gap-3 sm:grid-cols-[minmax(0,1fr)_auto] rounded-md border border-borda p-3">
+          <div key={it.id} className="grid grid-cols-1 items-end gap-3 sm:grid-cols-[minmax(0,1fr)_auto] rounded-padrao border border-borda p-3">
             <Campo
               rotulo={`Nome de exibição de ${nomeDoAlvo.get(it.target_id) ?? 'alvo apagado'}`}
               erro={e.items?.[i]?.display_name?.message}
             >
               {(a) => <Entrada {...a} {...f.register(`items.${i}.display_name`)} />}
             </Campo>
-            {/* Ordem por botões, não arrastar: teclado e leitor de tela. */}
-            <div className="flex flex-wrap gap-1">
-              {/* aria-disabled, e não disabled, nas pontas: o botão que leva o
-                  item à ponta está com o foco, e desabilitado o perderia para o
-                  <body> (como o Reconhecer). A guarda fica no clique. */}
-              <Botao tipo="terciario" tamanho="pequeno" aria-disabled={i === 0 || undefined}
+            {/* Ordem por botões, não arrastar: teclado e leitor de tela.
+                Reordenar é secundário; Tirar, que remove, é terciário
+                (auditoria SP2). aria-disabled, e não disabled, nas pontas:
+                o botão que leva o item à ponta está com o foco, e
+                desabilitado o perderia para o <body> (como o Reconhecer).
+                A guarda fica no clique. */}
+            <div className="flex flex-wrap items-center gap-2">
+              <Botao
+                tipo="secundario"
+                tamanho="icone"
+                title="Subir"
+                aria-disabled={i === 0 || undefined}
                 onClick={() => {
                   if (i > 0) itens.move(i, i - 1)
                 }}
-                aria-label={`Subir ${nomeDoAlvo.get(it.target_id) ?? 'item'}`}>
-                Subir
+                aria-label={`Subir ${nomeDoAlvo.get(it.target_id) ?? 'item'}`}
+              >
+                <ArrowUp aria-hidden="true" className="size-5" />
               </Botao>
-              <Botao tipo="terciario" tamanho="pequeno" aria-disabled={i === itens.fields.length - 1 || undefined}
+              <Botao
+                tipo="secundario"
+                tamanho="icone"
+                title="Descer"
+                aria-disabled={i === itens.fields.length - 1 || undefined}
                 onClick={() => {
                   if (i < itens.fields.length - 1) itens.move(i, i + 1)
-                }} aria-label={`Descer ${nomeDoAlvo.get(it.target_id) ?? 'item'}`}>
-                Descer
+                }}
+                aria-label={`Descer ${nomeDoAlvo.get(it.target_id) ?? 'item'}`}
+              >
+                <ArrowDown aria-hidden="true" className="size-5" />
               </Botao>
-              <Botao tipo="terciario" tamanho="pequeno" data-tirar=""
+              <Botao
+                tipo="terciario"
+                tamanho="pequeno"
+                data-tirar=""
                 onClick={() => {
                   focarDepoisDeTirar.current = i
                   itens.remove(i)
                 }}
-                aria-label={`Tirar ${nomeDoAlvo.get(it.target_id) ?? 'item'} da página`}>
+                aria-label={`Tirar ${nomeDoAlvo.get(it.target_id) ?? 'item'} da página`}
+              >
                 Tirar
               </Botao>
             </div>
@@ -229,25 +247,14 @@ function Formulario({ pagina, alvos }: { pagina: PaginaDeStatus | null; alvos: A
         )}
       </fieldset>
 
-      {/* Prévia aproximada (spec do Plano 6, D23): a página real é HTML do
-          servidor, só acessível depois de publicada. */}
       {escolhidos.length > 0 && (
-        <section aria-labelledby="titulo-previa" className="space-y-2 rounded-md border border-dashed border-borda p-4">
-          <h2 id="titulo-previa" className="font-semibold">
-            Prévia aproximada
-          </h2>
-          <ul className="space-y-1">
-            {escolhidos.map((it) => {
-              const r = resumo.data?.items.find((x) => x.id === it.target_id)
-              return (
-                <li key={it.target_id} className="flex justify-between gap-4 text-sm">
-                  <span>{it.display_name || '—'}</span>
-                  {r ? <SeloDeEstado estado={estadoExibido(r.state, r.enabled)} /> : <span className="text-suave">—</span>}
-                </li>
-              )
-            })}
-          </ul>
-        </section>
+        <PreviaDaPagina
+          titulo={tituloAtual}
+          itens={escolhidos.map((it) => {
+            const r = resumo.data?.items.find((x) => x.id === it.target_id)
+            return { id: it.target_id, nome: it.display_name, estado: r?.state ?? null, ativo: r?.enabled ?? true }
+          })}
+        />
       )}
 
       <Botao type="submit" disabled={f.formState.isSubmitting}>
@@ -273,8 +280,8 @@ export function PaginaStatusPage() {
           return (
             <>
               {pagina && (
-                <div className="space-y-2 rounded-lg border border-borda p-4">
-                  <p className="text-sm font-medium">Link público</p>
+                <div className={cn(estiloDeCartao, 'max-w-2xl space-y-2')}>
+                  <p className="text-sm font-semibold">Link público</p>
                   <p className="break-all">{pagina.public_url}</p>
                   {pagina.published ? (
                     <div className="flex flex-wrap gap-2">
