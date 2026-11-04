@@ -48,6 +48,17 @@
     "detalhe": "Sem dados: Fila."
   },
   {
+    "caso": "lento junto com sem dados, sem nenhum fora do ar: o lento dá a frase",
+    "itens": [
+      { "nome": "Fila", "estado": "unknown" },
+      { "nome": "API", "estado": "degraded" },
+      { "nome": "Site", "estado": "up" }
+    ],
+    "estado": "degraded",
+    "frase": "Instabilidade em 1 serviço.",
+    "detalhe": "Lento: API. Sem dados: Fila."
+  },
+  {
     "caso": "todos sem dados",
     "itens": [{ "nome": "Fila", "estado": "unknown" }, { "nome": "Novo", "estado": "unknown" }],
     "estado": "unknown",

@@ -19,8 +19,8 @@ const Caso = z.strictObject({
 const CASOS = z.array(Caso).parse(JSON.parse(readFileSync('../internal/httpapi/testdata/faixa.json', 'utf8')))
 
 describe('faixaDaPagina segue internal/httpapi/testdata/faixa.json', () => {
-  it('o arquivo tem os oito casos, com nomes distintos', () => {
-    expect(CASOS).toHaveLength(8)
+  it('o arquivo tem os nove casos, com nomes distintos', () => {
+    expect(CASOS).toHaveLength(9)
     expect(new Set(CASOS.map((c) => c.caso)).size).toBe(CASOS.length)
   })
 
