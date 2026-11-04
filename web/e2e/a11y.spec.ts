@@ -416,7 +416,7 @@ test('aviso de HTTPS fica acima do cabeçalho em toda largura e mantém o login'
 // cada controle cobre 44 px na largura e na altura, centrados nele. A medida é pelo
 // hit-test (elementFromPoint), não pela caixa: o link de texto cresce por um
 // pseudo-elemento, sem mudar o layout. Sabotagem: tirar a classe
-// alvo-de-toque de um link, ou o min-h-11 do seletor de janela ou do filtro de incidentes.
+// alvo-de-toque de um link, ou o min-h-11 do controle segmentado (janela e filtro de incidentes).
 async function pontosForaDoAlvo(controle: Locator): Promise<string[]> {
   return controle.evaluate((e) => {
     e.scrollIntoView({ block: 'center', inline: 'center' })
@@ -508,7 +508,7 @@ for (const largura of [400, 1280]) {
     await esperarOConteudo(page, '/incidents')
     await conferir([
       ...['Abertos', 'Resolvidos', 'Todos'].map(
-        (f): [string, Locator] => [`filtro ${f}`, page.getByRole('button', { name: f, exact: true })],
+        (f): [string, Locator] => [`filtro ${f}`, page.getByRole('radio', { name: f, exact: true })],
       ),
       ['nome do alvo do incidente', page.getByRole('link', { name: 'Banco', exact: true })],
       ['Reconhecer', page.getByRole('button', { name: 'Reconhecer o incidente de Banco' })],
@@ -774,5 +774,30 @@ for (const largura of [400, 1280]) {
     await esperarOConteudo(page, '/targets/a1')
     await expect(page.getByRole('region', { name: 'Fora do ar' })).toBeVisible()
     await semRolagemLateral(`detalhe ${largura}`)
+    // Os incidentes, com o nome longo e sem causa (Review Focus 7).
+    await page.route(
+      (url) => url.pathname === '/api/v1/incidents',
+      (route) =>
+        route.fulfill({
+          status: 200,
+          json: { items: [incidente({ id: 'inc-longo', target_id: 'a1', target_name: NOME_LONGO, started_at: agora, cause: '' })] },
+        }),
+    )
+    await page.goto('/incidents')
+    await expect(page.getByRole('heading', { name: 'Incidentes', level: 1 })).toBeVisible()
+    await esperarOConteudo(page, '/incidents')
+    await expect(page.getByText(/^Causa não registrada · início /)).toBeVisible()
+    if (largura >= 640) {
+      // Na tela larga, o Reconhecer fica na linha do nome, à direita, e não
+      // cai para baixo do texto. Sabotagem: tirar o sm:flex-nowrap do cartão.
+      const nome = await page.getByRole('link', { name: NOME_LONGO, exact: true }).boundingBox()
+      const reconhecer = await page.getByRole('button', { name: `Reconhecer o incidente de ${NOME_LONGO}` }).boundingBox()
+      expect(nome && reconhecer, 'caixas do nome e do Reconhecer').toBeTruthy()
+      if (nome && reconhecer) {
+        expect(reconhecer.y, `${largura} px: o Reconhecer começa na linha do nome`).toBeLessThan(nome.y + nome.height)
+        expect(reconhecer.x, `${largura} px: o Reconhecer fica à direita do nome`).toBeGreaterThanOrEqual(nome.x + nome.width)
+      }
+    }
+    await semRolagemLateral(`incidentes ${largura}`)
   })
 }
