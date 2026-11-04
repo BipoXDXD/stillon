@@ -1,3 +1,43 @@
 <!doctype html><html lang=pt-BR><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1"><title>{{.Title}}</title><style nonce="{{.Nonce}}">
-body{font:16px/1.5 system-ui,sans-serif;max-width:46rem;margin:0 auto;padding:1rem;color:#1b1b1b;background:#fff}h1{font-size:1.5rem;margin:.5rem 0}h2{font-size:1.1rem;margin-top:2rem}ul{list-style:none;padding:0}.s>li{border:1px solid #d6d6d6;border-radius:.5rem;padding:.75rem;margin:.5rem 0}.h{display:flex;justify-content:space-between;gap:1rem}.h span{white-space:nowrap}ol{display:flex;align-items:flex-end;gap:1px;list-style:none;padding:0;margin:.5rem 0;height:1.75rem}ol li{flex:1;border-radius:1px;height:50%;background:#2e9d5b}.d li{height:75%;background:#b07f00}.f li{height:100%;background:#d23c3c}.n li{height:25%;background:#8c8c8c}li.g{height:50%;background:#2e9d5b}li.d{height:75%;background:#b07f00}li.f{height:100%;background:#d23c3c}li.n{height:25%;background:#8c8c8c}.m,.i,footer{color:#555;font-size:.875rem}.up{color:#1f7a45}.degraded{color:#8a5f00}.down{color:#b3261e}.unknown{color:#555}@media(prefers-color-scheme:dark){body{background:#121212;color:#eee}.s>li{border-color:#3a3a3a}.m,.i,footer,.unknown{color:#aaa}.up{color:#5cc98a}.degraded{color:#f0c050}.down{color:#ff8a80}.n li,li.n{background:#6b6b6b}}
-</style><h1>{{.Title}}</h1><p>{{.Band.Text}}</p><ul class=s>{{range .Items}}<li><div class=h><strong>{{.Name}}</strong><span class={{.State}}>{{.Label}}</span></div><ol{{if .Bar}} class="{{.Bar}}"{{end}} aria-hidden=true>{{range .Days}}<li{{if .}} class="{{.}}"{{end}}>{{end}}</ol><p class=m>{{.Uptime}}{{with .Latency}} · {{.}}{{end}}</p>{{else}}<li>Nenhum serviço nesta página.{{end}}</ul>{{if .Items}}<p class=m>Cada barra é um dia, do mais antigo ao de hoje. Quanto mais alta, pior: baixa no ar, média lento, cheia fora do ar; a mais curta é dia sem dados.{{end}}<h2>Incidentes resolvidos (90 dias)</h2>{{if .Incidents}}<ul class=i>{{range .Incidents}}<li>{{.}}{{end}}</ul>{{else}}<p class=i>Nenhum incidente nos últimos 90 dias.{{end}}<footer>Atualizado em {{.Generated}} (UTC) · StillOn</footer></html>
+@font-face{font-family:Fraunces;src:url(/fonts/fraunces-latin.woff2)format("woff2");font-weight:100 900;font-display:swap}
+@font-face{font-family:Inter;src:url(/fonts/inter-latin.woff2)format("woff2");font-weight:100 900;font-display:swap}
+:root{color-scheme:light dark;--fundo:oklch(.98 .008 85);--superficie:oklch(1 0 0);--texto:oklch(.22 .015 60);--suave:oklch(.45 .015 60);--apagado:oklch(.53 .012 60);--borda:oklch(.9 .01 80);--borda-controle:oklch(.62 .015 60);--estado-no-ar:oklch(.48 .11 150);--estado-no-ar-100:oklch(.96 .03 150);--estado-degradado:oklch(.52 .12 70);--estado-degradado-100:oklch(.97 .035 85);--estado-fora:oklch(.5 .17 30);--estado-fora-100:oklch(.96 .025 30);--estado-sem-dados:var(--suave);--estado-sem-dados-100:oklch(.95 .01 80)}
+@media(prefers-color-scheme:dark){:root{--fundo:oklch(.2 .01 60);--superficie:oklch(.25 .01 60);--texto:oklch(.93 .01 80);--suave:oklch(.75 .012 70);--apagado:oklch(.65 .012 70);--borda:oklch(.32 .01 60);--borda-controle:oklch(.55 .012 70);--estado-no-ar:oklch(.78 .13 150);--estado-no-ar-100:oklch(.3 .05 150);--estado-degradado:oklch(.82 .13 80);--estado-degradado-100:oklch(.31 .05 80);--estado-fora:oklch(.72 .17 30);--estado-fora-100:oklch(.3 .06 30);--estado-sem-dados-100:oklch(.3 .01 60)}}
+body{margin:0 auto;max-width:46rem;padding:32px 16px 48px;font:16px/1.5 Inter,ui-sans-serif,system-ui,sans-serif;font-variant-numeric:tabular-nums;color:var(--texto);background:var(--fundo)}
+h1,h2,.b strong{font-family:Fraunces,ui-serif,Georgia,serif;font-weight:600}
+h1{margin:0;font-size:28px;line-height:1.25;overflow-wrap:anywhere}
+@media(min-width:40rem){h1{font-size:36px}}
+h2{margin:48px 0 12px;font-size:20px}
+.b{margin:24px 0 32px;padding:16px;border-left:4px solid;border-radius:8px}
+.b strong{display:block;font-size:20px;line-height:1.4}
+.b p{margin:4px 0 0;overflow-wrap:anywhere}
+.b.up{background:var(--estado-no-ar-100)}
+.b.degraded{background:var(--estado-degradado-100)}
+.b.down{background:var(--estado-fora-100)}
+.b.unknown{background:var(--estado-sem-dados-100)}
+.up{color:var(--estado-no-ar)}
+.degraded{color:var(--estado-degradado)}
+.down{color:var(--estado-fora)}
+.unknown{color:var(--estado-sem-dados)}
+ul{margin:0;padding:0;list-style:none}
+.s>li{margin:12px 0;padding:16px;border:1px solid var(--borda);border-radius:8px;background:var(--superficie)}
+.h{display:flex;justify-content:space-between;gap:16px}
+.h strong{min-width:0;overflow-wrap:anywhere}
+.h span{font-size:14px;font-weight:600;white-space:nowrap}
+ol{display:flex;align-items:flex-end;gap:1px;height:32px;margin:12px 0 8px;padding:0;list-style:none}
+ol li{flex:1;box-sizing:border-box;height:100%;border-radius:1px;background:var(--estado-no-ar)}
+.d li{height:66%;background:var(--estado-degradado)}
+.f li{height:33%;background:var(--estado-fora)}
+.n li{background:none;border:1px solid var(--borda-controle)}
+li.g{height:100%;background:var(--estado-no-ar);border:0}
+li.d{height:66%;background:var(--estado-degradado);border:0}
+li.f{height:33%;background:var(--estado-fora);border:0}
+li.n{height:100%;background:none;border:1px solid var(--borda-controle)}
+.l{display:flex;flex-wrap:wrap;gap:8px 16px;margin:16px 0 8px}
+.l>li{display:flex;align-items:center;gap:8px}
+.l ol{width:8px;height:16px;margin:0}
+.m,.l{font-size:14px;color:var(--suave)}
+.m{margin:0}
+.i li{margin:8px 0;overflow-wrap:anywhere}
+footer{margin-top:48px;font-size:13px;color:var(--apagado)}
+</style><main><h1>{{.Title}}</h1><div class="b {{.Band.State}}"><strong>{{.Band.Text}}</strong>{{with .Band.Detail}}<p>{{.}}{{end}}</div>{{if .Items}}<ul class=s>{{range .Items}}<li><div class=h><strong>{{.Name}}</strong><span class={{.State}}>{{.Label}}</span></div><ol{{with .Bar}} class="{{.}}"{{end}} aria-hidden=true>{{range .Days}}<li{{with .}} class="{{.}}"{{end}}>{{end}}</ol><p class=m>{{.Uptime}}{{with .Latency}} · {{.}}{{end}}{{end}}</ul><ul class=l><li><ol aria-hidden=true><li></ol>No ar (99,9% ou mais)<li><ol class=d aria-hidden=true><li></ol>Instável (99% a 99,9%)<li><ol class=f aria-hidden=true><li></ol>Fora do ar (menos de 99%)<li><ol class=n aria-hidden=true><li></ol>Sem dados</ul><p class=m>Cada barra é um dia, de 90 dias atrás até hoje.{{end}}<h2>Incidentes resolvidos (90 dias)</h2>{{if .Incidents}}<ul class=i>{{range .Incidents}}<li>{{.}}{{end}}</ul>{{else}}<p class=m>Nenhum incidente nos últimos 90 dias.{{end}}</main><footer>Atualizado em {{.Generated}} (UTC) · Monitorado pelo StillOn</footer></html>

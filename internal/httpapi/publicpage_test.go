@@ -6,9 +6,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/BipoXDXD/stillon/internal/statuspage"
 )
@@ -63,8 +66,8 @@ func TestPublicPageFitsInTenKilobytes(t *testing.T) {
 	if n := len(pior); n >= 16*1024 {
 		t.Errorf("pior caso sem compressão: %d bytes, queria menos de 16 KB", n)
 	}
-	if c, quer := strings.Count(pior, "<li"), 5*statuspage.Days+5+statuspage.MaxIncidents; c != quer {
-		t.Errorf("%d <li>, queria %d (dias, serviços e incidentes)", c, quer)
+	if c, quer := strings.Count(pior, "<li"), 5*statuspage.Days+5+statuspage.MaxIncidents+itensDaLegenda; c != quer {
+		t.Errorf("%d <li>, queria %d (dias, serviços, incidentes e legenda)", c, quer)
 	}
 	cheia := renderizar(t, paginaDeTeste(statuspage.MaxItems, espalhado))
 	if n := len(comprimida([]byte(cheia))); n >= 10*1024 {
@@ -169,5 +172,118 @@ func TestPublicPagePolicyOpensOnlyTheOwnFonts(t *testing.T) {
 		"frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
 	if got := politicaDaPagina("abc"); got != quer {
 		t.Errorf("CSP da página pública:\n got %q\nwant %q", got, quer)
+	}
+}
+
+// A legenda tem quatro <li> de texto, cada um com uma barra de um <li>.
+const itensDaLegenda = 8
+
+var (
+	listaDeServicosRE = regexp.MustCompile(`(?s)<ul class=s>(.*?)</ul>`)
+	barraRE           = regexp.MustCompile(`<ol(?: class="(\w)")? aria-hidden=true>(.*?)</ol>`)
+	diaRE             = regexp.MustCompile(`<li(?: class="(\w)")?>`)
+)
+
+// diasEfetivos lê de volta a classe de cada dia de cada barra da lista de
+// serviços: a do <li>, ou a da <ol> (a maioria), ou "g" (no ar) sem as duas.
+func diasEfetivos(t *testing.T, html string) [][]string {
+	t.Helper()
+	lista := listaDeServicosRE.FindStringSubmatch(html)
+	if lista == nil {
+		t.Fatal("a página não tem a lista de serviços")
+	}
+	var barras [][]string
+	for _, b := range barraRE.FindAllStringSubmatch(lista[1], -1) {
+		var dias []string
+		for _, d := range diaRE.FindAllStringSubmatch(b[2], -1) {
+			switch {
+			case d[1] != "":
+				dias = append(dias, d[1])
+			case b[1] != "":
+				dias = append(dias, b[1])
+			default:
+				dias = append(dias, "g")
+			}
+		}
+		barras = append(barras, dias)
+	}
+	return barras
+}
+
+func contem(t *testing.T, html string, trechos ...string) {
+	t.Helper()
+	for _, s := range trechos {
+		if !strings.Contains(html, s) {
+			t.Errorf("a página não tem %q", s)
+		}
+	}
+}
+
+// Spec do redesign, Telas 6: a faixa de estado em frase, a legenda e a classe
+// do estado de cada dia. Sabotagem: em classeDia, troque o "d" pelo "f" →
+// o segundo dia sai "f", e a lista de dias não confere.
+func TestTemplateRendersBandLegendAndDayClasses(t *testing.T) {
+	it := statuspage.PublicItem{Name: "API", State: statuspage.StateDegraded, Uptime90: ptr(0.9991)}
+	for d := range it.Days {
+		it.Days[d].Uptime = ptr(1)
+	}
+	it.Days[0].Uptime, it.Days[1].Uptime, it.Days[2].Uptime = nil, ptr(0.995), ptr(0.5)
+	html := renderizar(t, statuspage.View{Title: "Empresa", Items: []statuspage.PublicItem{it}})
+	contem(t, html,
+		`<div class="b degraded"><strong>Instabilidade em 1 serviço.</strong><p>Lento: API.</div>`,
+		`<span class=degraded>Lento</span>`,
+		"<ul class=l>", "No ar (99,9% ou mais)", "Instável (99% a 99,9%)", "Fora do ar (menos de 99%)", "Sem dados</ul>",
+		"Cada barra é um dia, de 90 dias atrás até hoje.",
+		"99,91% no ar em 90 dias",
+		"Monitorado pelo StillOn",
+	)
+	quer := append([]string{"n", "d", "f"}, slices.Repeat([]string{"g"}, statuspage.Days-3)...)
+	if got := diasEfetivos(t, html); len(got) != 1 || !slices.Equal(got[0], quer) {
+		t.Errorf("dias = %v, queria %v", got, quer)
+	}
+}
+
+// Review Focus 1: sem itens, a faixa diz isso, e não há lista, legenda nem
+// a nota das barras; o histórico continua.
+func TestPublicPageWithoutItems(t *testing.T) {
+	html := renderizar(t, statuspage.View{Title: "Empresa"})
+	contem(t, html,
+		`<div class="b unknown"><strong>Nenhum serviço nesta página.</strong></div>`,
+		"Nenhum incidente nos últimos 90 dias.",
+	)
+	for _, nao := range []string{"<ul class=s>", "<ul class=l>", "Cada barra é um dia"} {
+		if strings.Contains(html, nao) {
+			t.Errorf("a página sem itens tem %q", nao)
+		}
+	}
+}
+
+// Review Focus 2: um serviço sem nenhum check em 90 dias é a barra inteira
+// em contorno, com o uptime e o selo dizendo "sem dados".
+func TestComponentWithoutDataIn90Days(t *testing.T) {
+	novo := statuspage.PublicItem{Name: "Novo", State: statuspage.StateUnknown}
+	html := renderizar(t, statuspage.View{Title: "Empresa", Items: []statuspage.PublicItem{novo}})
+	contem(t, html,
+		`<ol class="n" aria-hidden=true>`+strings.Repeat("<li>", statuspage.Days)+`</ol>`,
+		"Sem dados nos últimos 90 dias",
+		`<span class=unknown>Sem dados</span>`,
+		`<div class="b unknown"><strong>Sem dados recentes de 1 serviço.</strong><p>Sem dados: Novo.</div>`,
+	)
+}
+
+// Review Focus 3: o maior título que o servidor aceita, sem espaço, quebra em
+// qualquer ponto, e o nome do serviço e o detalhe da faixa também.
+func TestLongOrganizationNameWraps(t *testing.T) {
+	titulo := strings.Repeat("Organizacao", 9) + "X"
+	if n := utf8.RuneCountInString(titulo); n != 100 {
+		t.Fatalf("título de %d runas, queria 100 (o teto do servidor)", n)
+	}
+	html := renderizar(t, statuspage.View{Title: titulo})
+	contem(t, html, "<title>"+titulo+"</title>", "<h1>"+titulo+"</h1>")
+	c := lerCSSDaPagina(t)
+	for _, sel := range []string{"h1", ".h strong", ".b p", ".i li"} {
+		if v := c.regras[sel]["overflow-wrap"]; v != "anywhere" {
+			t.Errorf("%s com overflow-wrap %q, queria anywhere", sel, v)
+		}
 	}
 }

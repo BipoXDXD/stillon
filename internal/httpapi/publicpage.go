@@ -153,8 +153,9 @@ type itemModelo struct {
 	Name, State, Label, Uptime, Latency string
 	// Bar é a classe da maioria dos dias, na <ol>; Days tem a classe só dos
 	// dias diferentes dela, e "" nos outros. Um dia sem atributo custa 4
-	// bytes, e com atributo, 14: codificar pela maioria é o que faz cinco
-	// barras de 90 dias caberem nos 10 KB (spec §10.1). "" em Bar é verde.
+	// bytes, e com atributo, 14: codificar pela maioria mantém o texto puro
+	// abaixo do teto de 16 KB e o comprimido bem abaixo dos 10 KB (spec
+	// §10.1). "" em Bar é verde.
 	Bar  string
 	Days [statuspage.Days]string
 }
@@ -240,9 +241,10 @@ func rotulo(s statuspage.State) string {
 	return "Sem dados"
 }
 
-// classeDia: verde (sem classe) a partir de 99,9%, amarelo a partir de 99%,
-// vermelho abaixo, cinza sem check. Com checks de minuto em minuto, 99,9%
-// de um dia é 1,4 check: uma sonda perdida não pinta o dia.
+// classeDia: no ar (sem classe, altura cheia) a partir de 99,9%, instável
+// ("d", dois terços da altura) a partir de 99%, fora do ar ("f", um terço)
+// abaixo, e sem dados ("n", só o contorno) sem check. Com checks de minuto
+// em minuto, 99,9% de um dia é 1,4 check: uma sonda perdida não pinta o dia.
 func classeDia(u *float64) string {
 	switch {
 	case u == nil:
