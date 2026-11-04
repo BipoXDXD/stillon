@@ -16,11 +16,11 @@ export function agruparIncidentes(itens: readonly Incidente[]): GruposDeIncident
 }
 
 // "1 em andamento, 2 reconhecidos." sobre os abertos (a consulta do
-// contador da navegação). Sem abertos, nada; página cheia, a conta exata
-// não se sabe.
+// contador da navegação). Sem abertos, nada. Página cheia: o servidor manda
+// next_cursor sempre que ela vem cheia, então pode haver exatamente 100.
 export function resumoDosAbertos(abertos: readonly Incidente[], completa: boolean): string | null {
   if (abertos.length === 0) return null
-  if (!completa) return `Mais de ${abertos.length} incidentes abertos.`
+  if (!completa) return `${abertos.length} ou mais incidentes abertos.`
   const reconhecidos = abertos.filter((i) => situacaoDoIncidente(i) === 'reconhecido').length
   const emAndamento = abertos.length - reconhecidos
   const partes = [

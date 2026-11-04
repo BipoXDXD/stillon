@@ -38,10 +38,11 @@ describe('resumoDosAbertos', () => {
     expect(resumoDosAbertos(ps.map((p, i) => inc({ id: `i${i}`, ...p })), true)).toBe(texto)
   })
 
-  // A consulta dos abertos tem uma página de 100: com mais, não se sabe a
-  // conta exata.
+  // A consulta dos abertos tem uma página de 100, e o servidor manda
+  // next_cursor sempre que a página vem cheia (len(items) == limit): com
+  // exatamente 100 abertos, "mais de 100" seria falso.
   it('página cheia: não finge saber a conta', () => {
     const cem = Array.from({ length: 100 }, (_, i) => inc({ id: `i${i}` }))
-    expect(resumoDosAbertos(cem, false)).toBe('Mais de 100 incidentes abertos.')
+    expect(resumoDosAbertos(cem, false)).toBe('100 ou mais incidentes abertos.')
   })
 })
