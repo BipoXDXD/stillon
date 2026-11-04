@@ -30,6 +30,7 @@ const ARQUIVOS_NO_SISTEMA = [
   'src/features/alvos/PaginaDetalhe.tsx',
   'src/features/painel/PaginaPainel.tsx',
   'src/features/canais/PaginaCanais.tsx',
+  'src/features/configuracoes/PaginaConfiguracoes.tsx',
   'src/features/statuspage/PaginaStatusPage.tsx',
   'src/features/statuspage/PreviaDaPagina.tsx',
 ]
@@ -149,7 +150,7 @@ describe('vermelho sólido só na confirmação', () => {
 // o padding do estiloDeCartao com 20 px, fora da escala.
 describe('CSS legado removido pelo PR 6', () => {
   const css = readFileSync('src/index.css', 'utf8')
-  it.each(['#conteudo > form'])('o index.css não tem mais %s', (seletor) => {
+  it.each(['#conteudo > form', 'main > section:not('])('o index.css não tem mais %s', (seletor) => {
     expect(css).not.toContain(seletor)
   })
 })

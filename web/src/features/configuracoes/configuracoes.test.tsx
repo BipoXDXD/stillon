@@ -1350,3 +1350,23 @@ describe('envio em voo nos diálogos do 2FA', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
   })
 })
+
+// Auditoria G3: o cartão tem a largura do conteúdo (max-w-2xl), e o
+// formulário de senha ocupa o cartão, sem o max-w-md que deixava metade dele
+// vazia. Antes, o cartão vinha do "main > section:not(…)" do index.css.
+describe('configurações no sistema visual', () => {
+  it('cada seção é um cartão de largura limitada, e a senha não fica espremida nele', async () => {
+    await renderizarPainel('/settings')
+    for (const nome of ['Conta', 'Senha', 'Verificação em duas etapas', 'Sessões ativas']) {
+      expect(await screen.findByRole('region', { name: nome })).toHaveClass('max-w-2xl', 'rounded-padrao', 'bg-superficie')
+    }
+    expect(screen.getByRole('region', { name: 'Senha' }).querySelector('form')).not.toHaveClass('max-w-md')
+  })
+
+  it('"Esta sessão" é um selo', async () => {
+    const r = await renderizarPainel('/settings')
+    r.falsa.estado.sessoes = [familia()]
+    await r.cliente.refetchQueries()
+    expect(await screen.findByText('Esta sessão')).toHaveClass('rounded-full', 'bg-primaria-100')
+  })
+})
