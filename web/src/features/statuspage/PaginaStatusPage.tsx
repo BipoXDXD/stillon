@@ -250,6 +250,7 @@ function Formulario({ pagina, alvos }: { pagina: PaginaDeStatus | null; alvos: A
       {escolhidos.length > 0 && (
         <PreviaDaPagina
           titulo={tituloAtual}
+          resumo={resumo.data ? 'pronto' : resumo.isError ? 'erro' : 'carregando'}
           itens={escolhidos.map((it) => {
             const r = resumo.data?.items.find((x) => x.id === it.target_id)
             return { id: it.target_id, nome: it.display_name, estado: r?.state ?? null, ativo: r?.enabled ?? true }

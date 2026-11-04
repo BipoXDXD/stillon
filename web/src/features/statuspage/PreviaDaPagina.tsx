@@ -12,6 +12,11 @@ export type ItemDaPrevia = {
   readonly ativo: boolean
 }
 
+// Sem o resumo, a prévia não sabe o estado de nenhum alvo: carregando, a
+// faixa não aparece; com erro, ela diz que o estado não carregou. Afirmar
+// "sem dados recentes" nos dois casos seria falso.
+export type EstadoDoResumo = 'carregando' | 'erro' | 'pronto'
+
 // A faixa com o fundo 100 do estado, o texto na cor dele (pares do
 // tokens.test.ts) e a borda de acento, como na página pública.
 const TONS_DA_FAIXA: Record<EstadoAlvo, string> = {
@@ -26,7 +31,15 @@ const TONS_DA_FAIXA: Record<EstadoAlvo, string> = {
 // real é HTML do servidor, só acessível depois de publicada, e o painel não
 // tem os 90 dias de cada alvo: a barra vira um contorno, e a nota diz o que
 // falta.
-export function PreviaDaPagina({ titulo, itens }: { titulo: string; itens: readonly ItemDaPrevia[] }) {
+export function PreviaDaPagina({
+  titulo,
+  itens,
+  resumo,
+}: {
+  titulo: string
+  itens: readonly ItemDaPrevia[]
+  resumo: EstadoDoResumo
+}) {
   // A página pública não sabe de pausa: alvo pausado ou fora do resumo sai
   // "sem dados" (targetstate.Current), e a faixa segue a mesma regra.
   const faixa = faixaDaPagina(
@@ -38,10 +51,17 @@ export function PreviaDaPagina({ titulo, itens }: { titulo: string; itens: reado
         Prévia aproximada
       </h2>
       <p className="font-display text-2xl font-semibold">{titulo.trim() || 'Título da página'}</p>
-      <div className={cn('space-y-1 rounded-padrao border-l-4 p-4', TONS_DA_FAIXA[faixa.estado])}>
-        <p className="font-display text-xl font-semibold">{faixa.frase}</p>
-        {faixa.detalhe && <p className="text-sm">{faixa.detalhe}</p>}
-      </div>
+      {resumo === 'pronto' && (
+        <div className={cn('space-y-1 rounded-padrao border-l-4 p-4', TONS_DA_FAIXA[faixa.estado])}>
+          <p className="font-display text-xl font-semibold">{faixa.frase}</p>
+          {faixa.detalhe && <p className="text-sm">{faixa.detalhe}</p>}
+        </div>
+      )}
+      {resumo === 'erro' && (
+        <div className="rounded-padrao bg-painel p-4">
+          <p className="text-sm text-suave">Não foi possível carregar o estado dos alvos.</p>
+        </div>
+      )}
       <ul className="space-y-3">
         {itens.map((it) => (
           <li key={it.id} className="space-y-3 rounded-padrao border border-borda bg-superficie p-4">

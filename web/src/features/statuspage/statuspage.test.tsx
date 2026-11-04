@@ -1,7 +1,9 @@
 import { screen, waitFor, within } from '@testing-library/react'
+import { http, HttpResponse } from 'msw'
 import { describe, expect, it, vi } from 'vitest'
 import { alvo, itemDoResumo, pagina } from '@/test/fixtures'
 import { renderizarPainel } from '@/test/renderizar'
+import { servidor } from '@/test/setup'
 import { sugerirSlug } from './PaginaStatusPage'
 
 it('sugerirSlug tira acento e o que não cabe na regra', () => {
@@ -85,6 +87,72 @@ describe('status page', () => {
     const previa = await screen.findByRole('region', { name: 'Prévia aproximada' })
     const frase = await within(previa).findByText('Sem dados recentes de 1 serviço.')
     expect(frase.parentElement).toHaveClass('bg-sem-dados-100', 'border-l-sem-dados')
+  })
+
+  // O alvo que não está no resumo (apagado entre as duas leituras) também
+  // sai "sem dados" na faixa: a página pública não o teria no ar.
+  it('na faixa da prévia, o alvo fora do resumo conta como sem dados', async () => {
+    const r = await renderizarPainel('/status-pages')
+    r.falsa.estado.alvos = [alvo(), alvo({ id: 'alvo-2', name: 'Banco' })]
+    r.falsa.estado.resumo = [itemDoResumo({ state: 'up' })]
+    r.falsa.estado.paginas = [
+      pagina({
+        items: [
+          { target_id: 'alvo-1', display_name: 'API' },
+          { target_id: 'alvo-2', display_name: 'Banco' },
+        ],
+      }),
+    ]
+    await r.cliente.refetchQueries()
+    const previa = await screen.findByRole('region', { name: 'Prévia aproximada' })
+    expect(await within(previa).findByText('Sem dados recentes de 1 serviço.')).toBeInTheDocument()
+    expect(within(previa).getByText('Sem dados: Banco.')).toBeInTheDocument()
+  })
+
+  // Sem o resumo, a prévia não sabe o estado de ninguém: carregando, a faixa
+  // não aparece; com erro, ela diz isso, em vez de "sem dados recentes".
+  it('enquanto o resumo carrega, a faixa da prévia não afirma estado nenhum', async () => {
+    const r = await renderizarPainel('/status-pages')
+    r.falsa.estado.alvos = [alvo()]
+    r.falsa.estado.resumo = [itemDoResumo({ state: 'down' })]
+    r.falsa.estado.paginas = [pagina()]
+    await r.cliente.refetchQueries()
+    let soltar!: () => void
+    const liberada = new Promise<void>((resolve) => {
+      soltar = resolve
+    })
+    servidor.use(
+      http.get(
+        '*/api/v1/targets/summary',
+        async () => {
+          await liberada
+          return HttpResponse.json({ items: [itemDoResumo({ state: 'down' })] })
+        },
+      ),
+    )
+    const leitura = r.cliente.resetQueries({ queryKey: ['targets', 'summary'] })
+    try {
+      const previa = await screen.findByRole('region', { name: 'Prévia aproximada' })
+      await waitFor(() => expect(r.cliente.getQueryState(['targets', 'summary'])?.status).toBe('pending'))
+      expect(within(previa).queryByText(/Sem dados recentes|fora do ar\.|Todos os sistemas/)).not.toBeInTheDocument()
+    } finally {
+      soltar()
+      await leitura
+    }
+    const previa = screen.getByRole('region', { name: 'Prévia aproximada' })
+    expect(await within(previa).findByText('1 serviço fora do ar.')).toBeInTheDocument()
+  })
+
+  it('se o resumo falha, a faixa da prévia diz que o estado não carregou', async () => {
+    const r = await renderizarPainel('/status-pages')
+    r.falsa.estado.alvos = [alvo()]
+    r.falsa.estado.paginas = [pagina()]
+    r.falsa.estado.forcar.set('GET /targets/summary', { status: 503, code: 'unavailable' })
+    await r.cliente.resetQueries()
+    const previa = await screen.findByRole('region', { name: 'Prévia aproximada' })
+    const aviso = await within(previa).findByText('Não foi possível carregar o estado dos alvos.')
+    expect(aviso.parentElement).toHaveClass('bg-painel')
+    expect(within(previa).queryByText(/Sem dados recentes/)).not.toBeInTheDocument()
   })
 
   // Auditoria SP2: reordenar é secundário, em ícone; Tirar, que remove, é
