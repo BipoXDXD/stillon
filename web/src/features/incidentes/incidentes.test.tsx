@@ -249,7 +249,9 @@ describe('incidentes', () => {
       expect(within(cartao(andamento, 'Site')).getByText(/· lembretes parados$/)).toBeInTheDocument()
       expect(within(cartao(andamento, 'Site')).queryByRole('button')).not.toBeInTheDocument()
 
-      expect(cartao(resolvidos, 'Banco')).not.toHaveClass('border-l-4')
+      // A borda de 4 px também no resolvido, na cor da borda: sem ela, o texto
+      // começaria 3 px à esquerda dos cartões abertos.
+      expect(cartao(resolvidos, 'Banco')).toHaveClass('border-l-4', 'border-l-borda')
       expect(within(resolvidos).getByRole('link', { name: 'Banco' })).toHaveClass('text-apagado')
       expect(within(cartao(resolvidos, 'Banco')).getByText('Resolvido')).toBeInTheDocument()
     })

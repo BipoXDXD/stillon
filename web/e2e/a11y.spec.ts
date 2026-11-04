@@ -787,6 +787,17 @@ for (const largura of [400, 1280]) {
     await expect(page.getByRole('heading', { name: 'Incidentes', level: 1 })).toBeVisible()
     await esperarOConteudo(page, '/incidents')
     await expect(page.getByText(/^Causa não registrada · início /)).toBeVisible()
+    if (largura >= 640) {
+      // Na tela larga, o Reconhecer fica na linha do nome, à direita, e não
+      // cai para baixo do texto. Sabotagem: tirar o sm:flex-nowrap do cartão.
+      const nome = await page.getByRole('link', { name: NOME_LONGO, exact: true }).boundingBox()
+      const reconhecer = await page.getByRole('button', { name: `Reconhecer o incidente de ${NOME_LONGO}` }).boundingBox()
+      expect(nome && reconhecer, 'caixas do nome e do Reconhecer').toBeTruthy()
+      if (nome && reconhecer) {
+        expect(reconhecer.y, `${largura} px: o Reconhecer começa na linha do nome`).toBeLessThan(nome.y + nome.height)
+        expect(reconhecer.x, `${largura} px: o Reconhecer fica à direita do nome`).toBeGreaterThanOrEqual(nome.x + nome.width)
+      }
+    }
     await semRolagemLateral(`incidentes ${largura}`)
   })
 }

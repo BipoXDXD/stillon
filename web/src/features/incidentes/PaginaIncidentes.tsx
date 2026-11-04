@@ -35,11 +35,12 @@ const FILTROS: readonly OpcaoSegmentada<Filtro>[] = [
 const ID_AJUDA_ACK = 'ajuda-reconhecer'
 
 // Borda de acento (spec do redesign, Telas > 3): vermelha no aberto, índigo
-// no reconhecido; o resolvido não tem.
+// no reconhecido. O resolvido tem a mesma largura na cor da borda, sem
+// acento visível, para o texto alinhar com o dos abertos.
 const ACENTO: Record<SituacaoDoIncidente, string> = {
   'em-andamento': 'border-l-4 border-l-fora',
   reconhecido: 'border-l-4 border-l-primaria',
-  resolvido: '',
+  resolvido: 'border-l-4 border-l-borda',
 }
 
 function Cartao({
@@ -55,9 +56,11 @@ function Cartao({
 }) {
   const situacao = situacaoDoIncidente(i)
   return (
+    // sm:flex-nowrap: na tela larga, o texto encolhe (min-w-0) e o Reconhecer
+    // fica na linha do nome; no celular, o botão desce para baixo do texto.
     <li
       className={cn(
-        'flex flex-wrap items-start justify-between gap-4 rounded-padrao border border-borda bg-superficie p-4 sombra-nivel-1 sm:p-6',
+        'flex flex-wrap items-start justify-between gap-4 sm:flex-nowrap rounded-padrao border border-borda bg-superficie p-4 sombra-nivel-1 sm:p-6',
         ACENTO[situacao],
       )}
     >
