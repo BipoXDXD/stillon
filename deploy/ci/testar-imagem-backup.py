@@ -30,8 +30,9 @@ class ImagemBackup(unittest.TestCase):
                         "deployment_uuid": "fixture", "finished_at": 1}
         self.env = {**os.environ, "FIXTURE": str(self.directory), "LEGACY": "0", "REVISION": SHA,
                     "SOURCE": SOURCE, "PRESENT": "1", "BAD_METADATA": "", "LEGACY_ID": IMAGE}
-        self.bin = self.directory / "bin"
-        self.bin.mkdir()
+        # O docker falso fica fora de /run: há runners que montam /run com noexec.
+        self.bin = Path(tempfile.mkdtemp(prefix="stillon-helper-bin-")).resolve()
+        self.addCleanup(shutil.rmtree, self.bin)
         docker = self.bin / "docker"
         docker.write_text("""#!/usr/bin/env python3
 import json,os,sys
