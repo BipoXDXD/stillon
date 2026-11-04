@@ -23,6 +23,7 @@ const ARQUIVOS_NO_SISTEMA = [
   'src/components/ui/dialogo.tsx',
   'src/features/painel/EsqueletoDoPainel.tsx',
   'src/features/alvos/FaixaDeEstado.tsx',
+  'src/features/alvos/FormularioAlvo.tsx',
   'src/features/alvos/GraficoDeLatencia.tsx',
   'src/features/alvos/Indicadores.tsx',
   'src/features/alvos/IncidentesRecentes.tsx',

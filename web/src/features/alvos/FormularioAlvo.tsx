@@ -3,7 +3,7 @@ import { useState } from 'react'
 import { useFieldArray, useForm, useWatch } from 'react-hook-form'
 import { Botao } from '@/components/ui/botao'
 import { estiloDeCartao } from '@/components/ui/cartao'
-import { CaixaDeMarcar, Campo, Entrada, ErroDoFormulario, Selecao } from '@/components/ui/campo'
+import { CaixaDeMarcar, Campo, Entrada, ErroDoFormulario, Opcao, Selecao } from '@/components/ui/campo'
 import { ApiError } from '@/lib/api/http'
 import { mensagemDe, mensagemDoCampo } from '@/lib/api/mensagens'
 import { campoDoServidor, esquemaDoAlvo, INTERVALOS, OUTRO, type ValoresDoAlvo } from './esquema'
@@ -116,7 +116,7 @@ export function FormularioAlvo({
       </Campo>
 
       <fieldset className="space-y-2">
-        <legend className="text-sm font-medium">Limiar de lentidão</legend>
+        <legend className="text-sm font-semibold">Limiar de lentidão</legend>
         <p className="text-sm text-suave">Acima dele, uma resposta boa conta como “degradada”.</p>
         {(
           [
@@ -125,10 +125,9 @@ export function FormularioAlvo({
             ['desativado', 'Desativado'],
           ] as const
         ).map(([v, t]) => (
-          <label key={v} className="flex items-center gap-2 text-sm">
-            <input type="radio" value={v} {...f.register('lentidao')} />
+          <Opcao key={v} value={v} {...f.register('lentidao')}>
             {t}
-          </label>
+          </Opcao>
         ))}
         {lentidao === 'personalizado' && (
           <Campo rotulo="Limiar (ms)" erro={e.degraded_threshold_ms?.message}>
@@ -142,7 +141,7 @@ export function FormularioAlvo({
       <CaixaDeMarcar {...f.register('enabled')}>Ativo (sondar este alvo)</CaixaDeMarcar>
 
       <fieldset className="space-y-3">
-        <legend className="text-sm font-medium">Headers</legend>
+        <legend className="text-sm font-semibold">Headers</legend>
         <p className="text-sm text-suave">
           Os headers não acompanham redirecionamento para outro host ou porta, nem de https para http.
         </p>
@@ -153,7 +152,7 @@ export function FormularioAlvo({
                 ? `Headers definidos: ${nomesDeHeaders.join(', ')} (valores ocultos).`
                 : 'Nenhum header definido.'}
             </p>
-            <div className="flex flex-wrap gap-4">
+            <div className="flex flex-wrap gap-x-6">
               {(
                 [
                   ['manter', 'Manter como está'],
@@ -161,10 +160,9 @@ export function FormularioAlvo({
                   ['remover', 'Remover todos'],
                 ] as const
               ).map(([v, t]) => (
-                <label key={v} className="flex items-center gap-2 text-sm">
-                  <input type="radio" value={v} {...f.register('modoHeaders')} />
+                <Opcao key={v} value={v} {...f.register('modoHeaders')}>
                   {t}
-                </label>
+                </Opcao>
               ))}
             </div>
           </>
@@ -172,7 +170,7 @@ export function FormularioAlvo({
         {modoHeaders === 'substituir' && (
           <div className="space-y-2">
             {headers.fields.map((h, i) => (
-              <div key={h.id} className="grid grid-cols-1 items-end gap-3 rounded-lg border border-borda p-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
+              <div key={h.id} className="grid grid-cols-1 items-end gap-3 rounded-padrao border border-borda p-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
                 <Campo rotulo={`Nome do header ${i + 1}`} erro={e.headers?.[i]?.nome?.message}>
                   {(a) => <Entrada {...a} {...f.register(`headers.${i}.nome`)} />}
                 </Campo>
