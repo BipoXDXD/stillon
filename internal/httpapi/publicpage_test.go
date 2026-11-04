@@ -129,3 +129,15 @@ func TestPresentationRules(t *testing.T) {
 		}
 	}
 }
+
+// Review Focus 4 da parte 3 do redesign: a página carrega as fontes de
+// /fonts/, no próprio host. A CSP abre font-src 'self' e nada além: a string
+// inteira é conferida, para uma diretiva a mais (script, imagem, outro host)
+// também quebrar o teste.
+func TestPublicPagePolicyOpensOnlyTheOwnFonts(t *testing.T) {
+	const quer = "default-src 'none'; style-src 'nonce-abc'; font-src 'self'; " +
+		"frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
+	if got := politicaDaPagina("abc"); got != quer {
+		t.Errorf("CSP da página pública:\n got %q\nwant %q", got, quer)
+	}
+}

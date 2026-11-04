@@ -88,7 +88,8 @@ func TestPublicPageRendersWithoutLeaking(t *testing.T) {
 	csp := resp.Header.Get("Content-Security-Policy")
 	m := nonceNoStyle.FindStringSubmatch(corpo)
 	if m == nil || !strings.Contains(csp, "style-src 'nonce-"+m[1]+"'") || strings.Contains(csp, "unsafe-inline") ||
-		!strings.Contains(csp, "default-src 'none'") || strings.Contains(corpo, "<script") {
+		!strings.Contains(csp, "default-src 'none'") || !strings.Contains(csp, "font-src 'self'") ||
+		strings.Contains(corpo, "<script") {
 		t.Errorf("CSP %q não autoriza só o <style> da página (nonce %v)", csp, m)
 	}
 	if cc := resp.Header.Get("Cache-Control"); cc != "public, max-age=30" {

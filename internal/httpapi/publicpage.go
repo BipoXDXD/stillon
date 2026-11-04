@@ -23,7 +23,8 @@ import (
 )
 
 // A status page pública (spec §10): HTML renderizado aqui, sem JavaScript,
-// com o CSS inline autorizado por nonce. É a página que se abre quando algo
+// com o CSS inline autorizado por nonce e as fontes do próprio host
+// (/fonts/). É a página que se abre quando algo
 // quebrou; ela não pode depender de bundle, hidratação nem API.
 
 //go:embed templates/status.html
@@ -90,11 +91,18 @@ func (h *PublicPageHandlers) Page(w http.ResponseWriter, r *http.Request) {
 	}
 	hd := w.Header()
 	hd.Set("Content-Type", "text/html; charset=utf-8")
-	hd.Set("Content-Security-Policy", "default-src 'none'; style-src 'nonce-"+nonce+"'; "+
-		"frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
+	hd.Set("Content-Security-Policy", politicaDaPagina(nonce))
 	hd.Set("Cache-Control", cachePublico)
 	w.WriteHeader(http.StatusOK)
 	_, _ = io.Copy(w, &buf)
+}
+
+// politicaDaPagina é a CSP da página pública: o <style> com o nonce desta
+// resposta e as fontes do próprio host (/fonts/, servidas pelo painel na
+// mesma origem). Nada de script, imagem nem conexão.
+func politicaDaPagina(nonce string) string {
+	return "default-src 'none'; style-src 'nonce-" + nonce + "'; font-src 'self'; " +
+		"frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
 }
 
 // As páginas de erro são texto fixo e saem com a CSP de /verify/ (sem
