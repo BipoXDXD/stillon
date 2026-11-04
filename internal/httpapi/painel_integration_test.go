@@ -17,8 +17,9 @@ const indexFalso = `<!doctype html><meta property="csp-nonce" nonce="STILLON_CSP
 
 func comPainel(d *httpapi.Deps) {
 	d.Painel = fstest.MapFS{
-		"index.html":          {Data: []byte(indexFalso)},
-		"assets/index-a1b.js": {Data: []byte("export {}")},
+		"index.html":              {Data: []byte(indexFalso)},
+		"assets/index-a1b.js":     {Data: []byte("export {}")},
+		"fonts/inter-latin.woff2": {Data: []byte("wOF2")},
 	}
 }
 
@@ -49,6 +50,9 @@ func TestCadaPrefixoCaiNaCadeiaCerta(t *testing.T) {
 		{"/", http.StatusOK, true, "text/html; charset=utf-8"},
 		{"/targets/0190a1b2", http.StatusOK, true, "text/html; charset=utf-8"},
 		{"/assets/index-a1b.js", http.StatusOK, false, "text/javascript; charset=utf-8"},
+		// A página pública (/p/…) carrega as fontes daqui, no mesmo host:
+		// é o que o font-src 'self' dela libera (redesign, PR 7).
+		{"/fonts/inter-latin.woff2", http.StatusOK, false, "font/woff2"},
 	}
 	for _, c := range casos {
 		t.Run(c.caminho, func(t *testing.T) {
