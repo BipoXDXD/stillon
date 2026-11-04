@@ -28,7 +28,7 @@ describe('incidentes', () => {
   it('o filtro vai para a URL e muda a consulta', async () => {
     const r = await renderizarPainel('/incidents')
     r.falsa.estado.incidentes = [incidente({ resolved_at: '2026-09-24T11:30:00Z', target_name: 'Site' })]
-    await r.usuario.click(await screen.findByRole('button', { name: 'Resolvidos' }))
+    await r.usuario.click(await screen.findByRole('radio', { name: 'Resolvidos' }))
     expect(r.router.state.location.search).toBe('?status=resolved')
     expect(await screen.findByText(/durou 30 min/)).toBeInTheDocument()
     // Resolvido não se reconhece.
@@ -135,7 +135,7 @@ describe('incidentes', () => {
     // Mesmo com a falha a lista é reconsultada: o ack pode ter chegado ao servidor.
     await waitFor(() => expect(r.falsa.chamadas('GET /incidents')).toBeGreaterThan(antes))
     expect(screen.getByRole('button', { name: 'Reconhecer o incidente de API' })).toBeEnabled()
-    await r.usuario.click(screen.getByRole('button', { name: 'Todos' }))
+    await r.usuario.click(screen.getByRole('radio', { name: 'Todos' }))
     await waitFor(() => expect(erro).not.toBeInTheDocument())
   })
 
@@ -195,5 +195,71 @@ describe('incidentes', () => {
     expect(await screen.findByText('Nenhum incidente aberto.')).toBeInTheDocument()
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
-})
 
+  describe('redesign da lista', () => {
+    it('o filtro é um radiogroup: a seta escolhe o próximo e vai para a URL', async () => {
+      const r = await renderizarPainel('/incidents')
+      const grupo = await screen.findByRole('radiogroup', { name: 'Filtro de incidentes' })
+      expect(within(grupo).getByRole('radio', { name: 'Abertos' })).toBeChecked()
+      await r.usuario.click(within(grupo).getByRole('radio', { name: 'Abertos' }))
+      await r.usuario.keyboard('{ArrowRight}')
+      expect(r.router.state.location.search).toBe('?status=resolved')
+      expect(within(grupo).getByRole('radio', { name: 'Resolvidos' })).toBeChecked()
+    })
+
+    // Spec, Telas > 3: a frase de resumo vem dos abertos, em qualquer filtro.
+    it('o resumo conta os abertos em andamento e os reconhecidos, mesmo no filtro de resolvidos', async () => {
+      const r = await renderizarPainel('/incidents?status=resolved')
+      r.falsa.estado.incidentes = [
+        incidente(),
+        incidente({ id: 'inc-2', target_name: 'Site', acknowledged_at: '2026-09-24T11:10:00Z' }),
+        incidente({ id: 'inc-3', resolved_at: '2026-09-24T11:30:00Z' }),
+      ]
+      await r.cliente.refetchQueries()
+      expect(await screen.findByText('1 em andamento, 1 reconhecido.')).toBeInTheDocument()
+    })
+
+    // I4 da auditoria: o vazio dos abertos é o estado bom. Sabotagem: voltar
+    // ao parágrafo "Nenhum incidente aberto." sem o ícone.
+    it('sem abertos, o vazio é positivo: check em círculo verde, sem frase de resumo', async () => {
+      await renderizarPainel('/incidents')
+      const frase = await screen.findByText('Nenhum incidente aberto.')
+      expect(frase.previousElementSibling).toHaveClass('bg-no-ar-100')
+      expect(screen.queryByText(/em andamento[,.]/)).not.toBeInTheDocument()
+    })
+
+    it('em Todos, os grupos separam em andamento e resolvidos, e cada cartão mostra a situação', async () => {
+      const r = await renderizarPainel('/incidents?status=all')
+      r.falsa.estado.incidentes = [
+        incidente({ id: 'a', target_name: 'API' }),
+        incidente({ id: 'b', target_name: 'Site', acknowledged_at: '2026-09-24T11:10:00Z' }),
+        incidente({ id: 'c', target_name: 'Banco', resolved_at: '2026-09-24T11:30:00Z' }),
+      ]
+      await r.cliente.refetchQueries()
+      const andamento = await screen.findByRole('region', { name: 'Em andamento' })
+      const resolvidos = screen.getByRole('region', { name: 'Resolvidos recentes' })
+      const cartao = (regiao: HTMLElement, nome: string) => within(regiao).getByRole('link', { name: nome }).closest('li') as HTMLElement
+      expect(within(andamento).getAllByRole('listitem')).toHaveLength(2)
+
+      expect(cartao(andamento, 'API')).toHaveClass('border-l-fora')
+      expect(within(cartao(andamento, 'API')).getByText('Em andamento')).toBeInTheDocument()
+      expect(within(cartao(andamento, 'API')).getByRole('button', { name: 'Reconhecer o incidente de API' })).toBeInTheDocument()
+
+      expect(cartao(andamento, 'Site')).toHaveClass('border-l-primaria')
+      expect(within(cartao(andamento, 'Site')).getByText(/· lembretes parados$/)).toBeInTheDocument()
+      expect(within(cartao(andamento, 'Site')).queryByRole('button')).not.toBeInTheDocument()
+
+      expect(cartao(resolvidos, 'Banco')).not.toHaveClass('border-l-4')
+      expect(within(resolvidos).getByRole('link', { name: 'Banco' })).toHaveClass('text-apagado')
+      expect(within(cartao(resolvidos, 'Banco')).getByText('Resolvido')).toBeInTheDocument()
+    })
+
+    // Review Focus 7.
+    it('incidente sem causa diz que a causa não foi registrada', async () => {
+      const r = await renderizarPainel('/incidents')
+      r.falsa.estado.incidentes = [incidente({ cause: '' })]
+      await r.cliente.refetchQueries()
+      expect(await screen.findByText(/^Causa não registrada · início /)).toBeInTheDocument()
+    })
+  })
+})
