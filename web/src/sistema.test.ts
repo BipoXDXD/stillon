@@ -28,6 +28,7 @@ const ARQUIVOS_NO_SISTEMA = [
   'src/features/alvos/Indicadores.tsx',
   'src/features/alvos/IncidentesRecentes.tsx',
   'src/features/alvos/PaginaDetalhe.tsx',
+  'src/features/incidentes/PaginaIncidentes.tsx',
   'src/features/painel/PaginaPainel.tsx',
   'src/features/canais/PaginaCanais.tsx',
   'src/features/configuracoes/PaginaConfiguracoes.tsx',
