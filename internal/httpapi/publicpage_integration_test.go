@@ -1,6 +1,8 @@
 package httpapi_test
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	"io"
 	"net/http"
@@ -138,5 +140,54 @@ func TestPublicPageIsGetOnly(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusMethodNotAllowed {
 		t.Errorf("POST /p/empresa deu %d, queria 405", resp.StatusCode)
+	}
+}
+
+// A página sai em gzip para quem aceita (spec §10.1, os 10 KB), e em texto
+// puro para quem não aceita. O Vary separa as duas no cache público.
+func TestPublicPageIsCompressedWhenTheClientAccepts(t *testing.T) {
+	a := newAPI(t)
+	tok := tokenDe(t, a, a.userID)
+	resp := chamar(t, a, http.MethodPost, "/api/v1/status-pages", tok, map[string]any{"slug": "comprimida", "title": "T", "published": true})
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("criar página deu %d", resp.StatusCode)
+	}
+	pedir := func(aceita string) (*http.Response, []byte) {
+		t.Helper()
+		req, err := http.NewRequest(http.MethodGet, a.srv.URL+"/p/comprimida", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Com o cabeçalho posto à mão, o Transport não descomprime sozinho.
+		req.Header.Set("Accept-Encoding", aceita)
+		r, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer r.Body.Close()
+		b, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return r, b
+	}
+
+	r, b := pedir("gzip, br")
+	if r.Header.Get("Content-Encoding") != "gzip" || !strings.Contains(r.Header.Get("Vary"), "Accept-Encoding") {
+		t.Fatalf("Content-Encoding %q e Vary %q, queria gzip e Accept-Encoding", r.Header.Get("Content-Encoding"), r.Header.Get("Vary"))
+	}
+	zr, err := gzip.NewReader(bytes.NewReader(b))
+	if err != nil {
+		t.Fatal(err)
+	}
+	html, err := io.ReadAll(zr)
+	if err != nil || !strings.Contains(string(html), "Nenhum serviço nesta página.") {
+		t.Errorf("corpo comprimido ilegível (%v):\n%s", err, html)
+	}
+
+	r, b = pedir("identity")
+	if r.Header.Get("Content-Encoding") != "" || !strings.Contains(string(b), "Nenhum serviço nesta página.") {
+		t.Errorf("sem gzip, Content-Encoding %q e corpo:\n%s", r.Header.Get("Content-Encoding"), b)
 	}
 }

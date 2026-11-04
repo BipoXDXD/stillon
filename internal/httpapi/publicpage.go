@@ -2,12 +2,12 @@ package httpapi
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"embed"
 	"errors"
 	"fmt"
 	"html/template"
-	"io"
 	"log/slog"
 	"math"
 	"net/http"
@@ -20,12 +20,13 @@ import (
 	"github.com/BipoXDXD/stillon/internal/httpapi/middleware"
 	"github.com/BipoXDXD/stillon/internal/observability"
 	"github.com/BipoXDXD/stillon/internal/statuspage"
+	"github.com/BipoXDXD/stillon/internal/webui"
 )
 
 // A status page pública (spec §10): HTML renderizado aqui, sem JavaScript,
 // com o CSS inline autorizado por nonce e as fontes do próprio host
-// (/fonts/). É a página que se abre quando algo
-// quebrou; ela não pode depender de bundle, hidratação nem API.
+// (/fonts/). É a página que se abre quando algo quebrou; ela não pode
+// depender de bundle, hidratação nem API.
 
 //go:embed templates/status.html
 var templatesFS embed.FS
@@ -89,12 +90,30 @@ func (h *PublicPageHandlers) Page(w http.ResponseWriter, r *http.Request) {
 		pagina(w, http.StatusServiceUnavailable, paginaIndisponivel)
 		return
 	}
+	corpo := buf.Bytes()
 	hd := w.Header()
 	hd.Set("Content-Type", "text/html; charset=utf-8")
 	hd.Set("Content-Security-Policy", politicaDaPagina(nonce))
 	hd.Set("Cache-Control", cachePublico)
+	// O pior caso passa de 10 KB em texto puro; comprimido, fica perto de
+	// 2 KB (spec §10.1). Vary: o cache público guarda as duas versões.
+	hd.Add("Vary", "Accept-Encoding")
+	if webui.AceitaGzip(r.Header.Get("Accept-Encoding")) {
+		hd.Set("Content-Encoding", "gzip")
+		corpo = comprimida(corpo)
+	}
 	w.WriteHeader(http.StatusOK)
-	_, _ = io.Copy(w, &buf)
+	_, _ = w.Write(corpo)
+}
+
+// comprimida devolve o corpo em gzip. O nonce muda a cada resposta, então
+// não há o que guardar: comprime a cada vez, no nível rápido.
+func comprimida(b []byte) []byte {
+	var out bytes.Buffer
+	zw, _ := gzip.NewWriterLevel(&out, gzip.BestSpeed) // nível válido: não falha
+	_, _ = zw.Write(b)                                 // bytes.Buffer não falha
+	_ = zw.Close()
+	return out.Bytes()
 }
 
 // politicaDaPagina é a CSP da página pública: o <style> com o nonce desta

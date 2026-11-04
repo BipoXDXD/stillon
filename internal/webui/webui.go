@@ -240,7 +240,7 @@ func (p *Painel) servirArquivo(w http.ResponseWriter, r *http.Request, nome, cac
 	corpo := a.corpo
 	if a.gz != nil {
 		h.Add("Vary", "Accept-Encoding")
-		if aceitaGzip(r.Header.Get("Accept-Encoding")) {
+		if AceitaGzip(r.Header.Get("Accept-Encoding")) {
 			h.Set("Content-Encoding", "gzip")
 			corpo = a.gz
 		}
@@ -252,9 +252,9 @@ func (p *Painel) servirArquivo(w http.ResponseWriter, r *http.Request, nome, cac
 	}
 }
 
-// aceitaGzip lê Accept-Encoding sem cerimônia: "gzip" presente e não
-// recusado com q=0.
-func aceitaGzip(v string) bool {
+// AceitaGzip lê Accept-Encoding sem cerimônia: "gzip" presente e não
+// recusado com q=0. O painel e a página pública (internal/httpapi) usam.
+func AceitaGzip(v string) bool {
 	for _, parte := range strings.Split(v, ",") {
 		nome, params, _ := strings.Cut(strings.TrimSpace(parte), ";")
 		if !strings.EqualFold(strings.TrimSpace(nome), "gzip") {

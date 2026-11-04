@@ -13,14 +13,14 @@ import (
 	"github.com/BipoXDXD/stillon/internal/statuspage"
 )
 
-// paginaDeTeste monta a projeção de cinco serviços com nomes longos e o
+// paginaDeTeste monta a projeção de n serviços com nomes longos e o
 // histórico cheio; dia(i) decide o uptime do dia i de cada barra.
-func paginaDeTeste(dia func(i int) *float64) statuspage.View {
+func paginaDeTeste(servicos int, dia func(i int) *float64) statuspage.View {
 	agora := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
 	u := 0.99912
 	lat := int32(143)
 	v := statuspage.View{Title: "Status da Empresa Exemplo de Serviços Online", GeneratedAt: agora}
-	for i := range 5 {
+	for i := range servicos {
 		it := statuspage.PublicItem{Name: fmt.Sprintf("Serviço número %d da empresa exemplo", i+1),
 			State: statuspage.StateDegraded, Uptime90: &u, LatencyMS: &lat}
 		for d := range it.Days {
@@ -46,25 +46,32 @@ func renderizar(t *testing.T, v statuspage.View) string {
 	return buf.String()
 }
 
-// Spec §10.1: resposta abaixo de 10 KB, com cinco serviços. O pior caso
-// tem os 90 dias espalhados por igual nas quatro classes, e a codificação
-// pela maioria quase não ajuda; o caso comum (barra de uma cor só) fica bem
-// abaixo. Com os 20 serviços que a página aceita, passa dos 10 KB: limite
-// conhecido, registrado no plano.
+// Spec §10.1: resposta abaixo de 10 KB. A página sai em gzip para quem o
+// aceita (todo navegador), e o teto vale para o corpo comprimido: no pior
+// caso de cinco serviços (os 90 dias espalhados por igual nas quatro
+// classes, onde a codificação pela maioria quase não ajuda) e com os 20
+// serviços que a página aceita, que em texto puro passavam dos 10 KB. Sem
+// compressão, o teto de 16 KB pega uma regressão grande para o cliente que
+// não aceita gzip.
 func TestPublicPageFitsInTenKilobytes(t *testing.T) {
 	valores := []*float64{nil, ptr(1), ptr(0.995), ptr(0.5)} // n, verde, d, f
-	pior := renderizar(t, paginaDeTeste(func(i int) *float64 { return valores[i%4] }))
-	if n := len(pior); n >= 10*1024 {
-		t.Errorf("pior caso: %d bytes, queria menos de 10 KB", n)
+	espalhado := func(i int) *float64 { return valores[i%4] }
+	pior := renderizar(t, paginaDeTeste(5, espalhado))
+	if n := len(comprimida([]byte(pior))); n >= 10*1024 {
+		t.Errorf("pior caso comprimido: %d bytes, queria menos de 10 KB", n)
 	}
-	if c := strings.Count(pior, "<li"); c != 5*statuspage.Days+5+statuspage.MaxIncidents {
-		t.Errorf("%d <li>, queria %d (dias, serviços e incidentes)", c, 5*statuspage.Days+5+statuspage.MaxIncidents)
+	if n := len(pior); n >= 16*1024 {
+		t.Errorf("pior caso sem compressão: %d bytes, queria menos de 16 KB", n)
 	}
-	comum := renderizar(t, paginaDeTeste(func(int) *float64 { return ptr(1) }))
-	if n := len(comum); n >= 7*1024 {
-		t.Errorf("caso comum: %d bytes, queria menos de 7 KB", n)
+	if c, quer := strings.Count(pior, "<li"), 5*statuspage.Days+5+statuspage.MaxIncidents; c != quer {
+		t.Errorf("%d <li>, queria %d (dias, serviços e incidentes)", c, quer)
 	}
-	t.Logf("pior caso %d bytes; caso comum %d bytes", len(pior), len(comum))
+	cheia := renderizar(t, paginaDeTeste(statuspage.MaxItems, espalhado))
+	if n := len(comprimida([]byte(cheia))); n >= 10*1024 {
+		t.Errorf("%d serviços comprimidos: %d bytes, queria menos de 10 KB", statuspage.MaxItems, n)
+	}
+	t.Logf("pior caso %d bytes (%d comprimido); %d serviços %d bytes (%d comprimido)",
+		len(pior), len(comprimida([]byte(pior))), statuspage.MaxItems, len(cheia), len(comprimida([]byte(cheia))))
 }
 
 func ptr(v float64) *float64 { return &v }
