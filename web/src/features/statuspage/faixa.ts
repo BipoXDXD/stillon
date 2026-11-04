@@ -1,9 +1,10 @@
 import type { EstadoAlvo } from '@/lib/api/schemas'
 
 // A faixa de estado da página pública (spec do redesign, Telas 6), para a
-// prévia do painel. A página publicada diz a mesma frase
-// (internal/httpapi/publicpage.go); os dois testes leem os casos de
-// internal/httpapi/testdata/faixa.json.
+// prévia do painel. Os casos ficam em internal/httpapi/testdata/faixa.json.
+// A página publicada só passa a dizer a mesma frase com o PR 7 do redesign
+// (faixa em internal/httpapi/publicpage.go, cujo teste lê o mesmo JSON); até
+// lá, ela diz "Há serviços fora do ar." e a prévia é mais detalhada que ela.
 export type ItemDaFaixa = { readonly nome: string; readonly estado: EstadoAlvo }
 export type Faixa = { readonly estado: EstadoAlvo; readonly frase: string; readonly detalhe: string }
 
