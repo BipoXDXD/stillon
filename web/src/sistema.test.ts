@@ -28,6 +28,7 @@ const ARQUIVOS_NO_SISTEMA = [
   'src/features/alvos/IncidentesRecentes.tsx',
   'src/features/alvos/PaginaDetalhe.tsx',
   'src/features/painel/PaginaPainel.tsx',
+  'src/features/canais/PaginaCanais.tsx',
 ]
 
 const ESCALA = new Set(['0', 'auto', '1', '2', '3', '4', '6', '8', '12', '16'])

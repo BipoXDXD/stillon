@@ -152,7 +152,7 @@ for (const tema of ['claro', 'escuro'] as const) {
     await controlePositivo(page, 'diálogo de novo canal')
     // A confirmação de pausar (spec do Plano 9 §4.1), e a linha do pausado.
     await page.keyboard.press('Escape')
-    await expect(page.getByText('⏸ Pausado: os avisos são descartados')).toBeVisible()
+    await expect(page.getByText('Os avisos são descartados.')).toBeVisible()
     await page.getByRole('button', { name: 'Pausar o canal discord.com/…/abcd' }).click()
     await expect(page.getByRole('alertdialog')).toBeVisible()
     const pausar = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze()

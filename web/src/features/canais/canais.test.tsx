@@ -46,9 +46,9 @@ describe('canais', () => {
       }),
     ]
     await r.cliente.refetchQueries()
-    expect(await screen.findByText('✓ Verificado')).toBeInTheDocument()
-    expect(screen.getByText('… Aguardando verificação')).toBeInTheDocument()
-    expect(screen.getByText('✕ Falhando')).toBeInTheDocument()
+    expect(await screen.findByText('Verificado')).toBeInTheDocument()
+    expect(screen.getByText('Aguardando verificação')).toBeInTheDocument()
+    expect(screen.getByText('Falhando')).toBeInTheDocument()
     const falha = screen.getByText(/Falha: Canal inválido \(o webhook foi apagado\?\)/)
     expect(falha).toHaveTextContent(new RegExp(`, em ${escapar(dataHora('2026-09-24T11:00:00Z'))}$`))
     expect(falha).toHaveTextContent('24/09/2026')
@@ -96,7 +96,7 @@ describe('canais', () => {
     const r = await renderizarPainel('/channels')
     r.falsa.estado.canais = [canal({ kind: 'email', hint: 'd***@exemplo.com', status: 'expired' })]
     await r.cliente.refetchQueries()
-    expect(await screen.findByText('⧖ Verificação expirada')).toBeInTheDocument()
+    expect(await screen.findByText('Verificação expirada')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Reenviar verificação do canal d***@exemplo.com' })).toBeInTheDocument()
   })
 
@@ -234,7 +234,7 @@ describe('canais', () => {
     r.falsa.estado.forcar.set(RESEND, { status: 409, code: 'channel_not_pending' })
     await r.usuario.click(primeiro)
     expect(await screen.findByText('O canal não está mais aguardando verificação.')).toBeInTheDocument()
-    expect(await screen.findByText('✓ Verificado')).toBeInTheDocument()
+    expect(await screen.findByText('Verificado')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Reenviar verificação do canal a***@exemplo.com' })).not.toBeInTheDocument()
 
     // Apagado em outra aba.
@@ -318,8 +318,8 @@ describe('canais', () => {
     expect((await screen.findAllByText('Canal discord.com/…/abcd pausado.'))[0]).toBeInTheDocument()
     expect(r.falsa.corpos(PATCH)).toEqual([{ enabled: false }])
     // A linha nova aparece, e o estado de verificação continua.
-    expect(await screen.findByText('⏸ Pausado: os avisos são descartados')).toBeInTheDocument()
-    expect(screen.getByText('✓ Verificado')).toBeInTheDocument()
+    expect(await screen.findByText('Pausado')).toBeInTheDocument()
+    expect(screen.getByText('Verificado')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Retomar o canal discord.com/…/abcd' })).toBeInTheDocument()
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
   })
@@ -331,13 +331,13 @@ describe('canais', () => {
     r.falsa.estado.canais = [canal({ kind: 'email', hint: 'd***@exemplo.com', status: 'pending', enabled: false })]
     await r.cliente.refetchQueries()
     // Pausado e aguardando verificação: as duas linhas.
-    expect(await screen.findByText('⏸ Pausado: os avisos são descartados')).toBeInTheDocument()
-    expect(screen.getByText('… Aguardando verificação')).toBeInTheDocument()
+    expect(await screen.findByText('Pausado')).toBeInTheDocument()
+    expect(screen.getByText('Aguardando verificação')).toBeInTheDocument()
     await r.usuario.click(screen.getByRole('button', { name: 'Retomar o canal d***@exemplo.com' }))
     expect((await screen.findAllByText('Canal d***@exemplo.com retomado.'))[0]).toBeInTheDocument()
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
     expect(r.falsa.corpos(PATCH)).toEqual([{ enabled: true }])
-    await waitFor(() => expect(screen.queryByText('⏸ Pausado: os avisos são descartados')).not.toBeInTheDocument())
+    await waitFor(() => expect(screen.queryByText('Pausado')).not.toBeInTheDocument())
     expect(screen.getByRole('button', { name: 'Pausar o canal d***@exemplo.com' })).toBeInTheDocument()
   })
 
@@ -347,7 +347,7 @@ describe('canais', () => {
     const r = await renderizarPainel('/channels')
     r.falsa.estado.canais = [canal(), canal({ id: 'c2', hint: 'discord.com/…/zzzz', enabled: false })]
     await r.cliente.refetchQueries()
-    expect(await screen.findAllByText('⏸ Pausado: os avisos são descartados')).toHaveLength(1)
+    expect(await screen.findAllByText('Pausado')).toHaveLength(1)
     expect(screen.getByRole('button', { name: 'Pausar o canal discord.com/…/abcd' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Retomar o canal discord.com/…/zzzz' })).toBeInTheDocument()
   })
@@ -465,8 +465,52 @@ describe('canais', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent(
       'Não foi possível pausar o canal discord.com/…/abcd. Muitas requisições. Aguarde um minuto e tente de novo.',
     )
-    expect(screen.queryByText('⏸ Pausado: os avisos são descartados')).not.toBeInTheDocument()
+    expect(screen.queryByText('Pausado')).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Pausar o canal discord.com/…/abcd' })).toBeInTheDocument()
+  })
+
+  // Auditoria C2 e S9: os estados usam ícones Lucide, com forma, cor e texto,
+  // e não glifos Unicode de métrica desigual.
+  it('cada estado é um selo com ícone Lucide e texto, sem glifo Unicode', async () => {
+    const r = await renderizarPainel('/channels')
+    r.falsa.estado.canais = [
+      canal(),
+      canal({ id: 'c2', kind: 'email', hint: 'd***@exemplo.com', status: 'pending' }),
+      canal({ id: 'c3', kind: 'email', hint: 'e***@exemplo.com', status: 'expired' }),
+      canal({
+        id: 'c4',
+        hint: 'discord.com/…/zzzz',
+        status: 'failing',
+        last_error: 'invalid_channel',
+        last_failure_at: '2026-09-24T11:00:00Z',
+      }),
+    ]
+    await r.cliente.refetchQueries()
+    const falhando = await screen.findByText('Falhando')
+    for (const [texto, fundo] of [
+      ['Verificado', 'bg-no-ar-100'],
+      ['Aguardando verificação', 'bg-degradado-100'],
+      ['Verificação expirada', 'bg-sem-dados-100'],
+      ['Falhando', 'bg-fora-100'],
+    ] as const) {
+      const selo = screen.getByText(texto)
+      expect(selo).toHaveClass('rounded-full', fundo)
+      expect(selo.querySelector('svg')).toHaveAttribute('aria-hidden', 'true')
+    }
+    expect(falhando.closest('ul')?.textContent).not.toMatch(/[✓⧖✕⏸]/)
+  })
+
+  // Auditoria C3: num canal pausado, o que importa é que os avisos são
+  // descartados. "Pausado" é o selo; a verificação vira texto apagado.
+  it('canal pausado mostra "Pausado" em destaque e a verificação rebaixada', async () => {
+    const r = await renderizarPainel('/channels')
+    r.falsa.estado.canais = [canal({ enabled: false })]
+    await r.cliente.refetchQueries()
+    expect(await screen.findByText('Pausado')).toHaveClass('rounded-full', 'bg-degradado-100')
+    expect(screen.getByText('Os avisos são descartados.')).toBeInTheDocument()
+    const verificacao = screen.getByText('Verificado')
+    expect(verificacao).not.toHaveClass('rounded-full')
+    expect(verificacao).toHaveClass('text-suave')
   })
 })
 
