@@ -865,3 +865,26 @@ for (const tema of ['claro', 'escuro'] as const) {
     await controlePositivo(page, `login com erro, ${tema}`)
   })
 }
+
+// O nome de exibição vai até 100 caracteres, inclusive sem espaço. Na prévia
+// da status page ele quebra em qualquer ponto, e a tela não ganha rolagem
+// lateral no celular. Sabotagem: voltar o nome do cartão da prévia a <span>,
+// que a regra de overflow-wrap do index.css não alcança.
+test('celular de 400 px: a prévia da status page com nome de exibição longo', async ({ page }) => {
+  await page.setViewportSize({ width: 400, height: 700 })
+  await imitarApi(page)
+  const nomeLongo = 'N'.repeat(100)
+  await page.route('**/api/v1/status-pages', (route) =>
+    route.fulfill({
+      status: 200,
+      json: { items: [pagina({ id: 'p1', items: [{ target_id: 'a1', display_name: nomeLongo }], created_at: agora })] },
+    }),
+  )
+  await page.goto('/status-pages')
+  await expect(page.getByRole('heading', { name: 'Status page', level: 1 })).toBeVisible()
+  await esperarOConteudo(page, '/status-pages')
+  const previa = page.getByRole('region', { name: 'Prévia aproximada' })
+  await expect(previa.getByText(nomeLongo, { exact: true })).toBeVisible()
+  expect(await page.evaluate(() => document.documentElement.scrollWidth), 'prévia: overflow').toBe(400)
+  await controlePositivo(page, 'prévia com nome longo')
+})

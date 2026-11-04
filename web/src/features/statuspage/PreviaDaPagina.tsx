@@ -46,7 +46,9 @@ export function PreviaDaPagina({ titulo, itens }: { titulo: string; itens: reado
         {itens.map((it) => (
           <li key={it.id} className="space-y-3 rounded-padrao border border-borda bg-superficie p-4">
             <div className="flex items-start justify-between gap-4">
-              <span className="min-w-0 font-semibold">{it.nome || '—'}</span>
+              {/* <p>, e não <span>: o overflow-wrap do index.css quebra o
+                  nome de 100 caracteres sem espaço (e2e/a11y.spec.ts). */}
+              <p className="min-w-0 font-semibold">{it.nome || '—'}</p>
               {it.estado ? (
                 <SeloDeEstado estado={estadoExibido(it.estado, it.ativo)} />
               ) : (
