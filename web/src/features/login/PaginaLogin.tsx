@@ -5,6 +5,7 @@ import { Navigate, useLocation, useNavigate, useSearchParams } from 'react-route
 import { z } from 'zod'
 import { useSessao } from '@/app/contexto'
 import { AvisoDeContexto } from '@/components/AvisoDeContexto'
+import { Marca } from '@/components/Marca'
 import { Titulo } from '@/components/Titulo'
 import { Botao } from '@/components/ui/botao'
 import { Campo, Entrada, ErroDoFormulario } from '@/components/ui/campo'
@@ -44,6 +45,9 @@ function textoDoMotivoEm(state: unknown): string | undefined {
 }
 
 const ID_MOTIVO = 'motivo-do-fim-da-sessao'
+
+// A frase de tom do login (spec do redesign, Telas 5). O dono troca aqui.
+const FRASE_DO_LOGIN = 'Seus serviços, vigiados de perto.'
 
 const esquemaSenha = z.object({
   // O cliente nunca é mais estrito que o servidor. O login do servidor só
@@ -137,86 +141,91 @@ export function PaginaLogin() {
   return (
     <>
       <AvisoDeContexto />
-      <main className="mx-auto my-10 w-[calc(100%-2.5rem)] max-w-md space-y-7 rounded-lg border border-borda border-t-4 border-t-primaria bg-superficie p-7 sm:my-24 sm:p-10">
-        <p className="text-xs font-bold tracking-[0.16em] text-suave uppercase">Monitor de disponibilidade</p>
-        {/* O foco vai ao <h1> depois de a sessão acabar (é uma navegação), e
-            o leitor de tela lê o motivo junto, pela descrição. */}
-        <Titulo aba="Entrar" descritoPor={textoDoMotivo ? ID_MOTIVO : undefined}>
-          Entrar no StillOn
-        </Titulo>
-        {textoDoMotivo && (
-          <p id={ID_MOTIVO} className="rounded-md border border-borda p-3 text-sm">
-            {textoDoMotivo}
-          </p>
-        )}
-        <ErroDoFormulario>{erro}</ErroDoFormulario>
-        {desafio === null ? (
-          // key nos dois formulários: trocar de passo monta campos novos, em vez
-          // de o React reaproveitar o <input> do e-mail para o código.
-          <form key="senha" noValidate className="space-y-4" onSubmit={senha.handleSubmit(entrar)}>
-            {/* type="text" com inputMode="email": o <input type="email"> do
-                Chromium entrega o domínio internacional em punycode no value,
-                e o texto que chegaria ao servidor não seria o cadastrado. */}
-            <Campo rotulo="E-mail" erro={senha.formState.errors.email?.message}>
-              {(a) => (
-                <Entrada
-                  {...a}
-                  type="text"
-                  inputMode="email"
-                  autoCapitalize="none"
-                  spellCheck={false}
-                  autoComplete="username"
-                  {...senha.register('email')}
-                />
-              )}
-            </Campo>
-            <Campo rotulo="Senha" erro={senha.formState.errors.senha?.message}>
-              {(a) => (
-                <Entrada
-                  {...a}
-                  type="password"
-                  autoComplete="current-password"
-                  autoFocus={voltou}
-                  {...senha.register('senha')}
-                />
-              )}
-            </Campo>
-            <Botao type="submit" className="w-full" disabled={senha.formState.isSubmitting}>
-              Entrar
-            </Botao>
-          </form>
-        ) : (
-          <form key="codigo" noValidate className="space-y-4" onSubmit={codigo.handleSubmit(verificar)}>
-            <Campo
-              rotulo={recuperacao ? 'Código de recuperação' : 'Código do aplicativo autenticador'}
-              ajuda={
-                recuperacao ? '16 caracteres, cada código vale uma vez.' : 'Os 6 dígitos que o aplicativo mostra agora.'
-              }
-              erro={codigo.formState.errors.codigo?.message}
-            >
-              {(a) => (
-                <Entrada
-                  {...a}
-                  autoFocus
-                  autoComplete="one-time-code"
-                  inputMode={recuperacao ? 'text' : 'numeric'}
-                  {...codigo.register('codigo')}
-                />
-              )}
-            </Campo>
-            <Botao type="submit" className="w-full" disabled={codigo.formState.isSubmitting}>
-              Verificar
-            </Botao>
-            <Botao tipo="terciario" className="w-full" onClick={() => setRecuperacao((r) => !r)}>
-              {recuperacao ? 'Usar o código do aplicativo' : 'Usar um código de recuperação'}
-            </Botao>
-            {/* A mensagem de invalid_credentials manda voltar; o Voltar do
-                navegador sairia do /login, porque o passo é estado da tela. */}
-            <Botao tipo="terciario" className="w-full" onClick={() => voltarASenha(null)}>
-              Voltar
-            </Botao>
-          </form>
-        )}
+      <main className="mx-auto max-w-md space-y-8 px-4 py-12 sm:py-16">
+        <div className="space-y-2">
+          <Marca tamanho="grande" />
+          <p className="font-display text-xl text-suave">{FRASE_DO_LOGIN}</p>
+        </div>
+        <div className="space-y-6 rounded-padrao border border-borda bg-superficie p-6 sombra-nivel-2 sm:p-8">
+          {/* O foco vai ao <h1> depois de a sessão acabar (é uma navegação), e
+              o leitor de tela lê o motivo junto, pela descrição. */}
+          <Titulo aba="Entrar" descritoPor={textoDoMotivo ? ID_MOTIVO : undefined}>
+            Entrar no StillOn
+          </Titulo>
+          {textoDoMotivo && (
+            <p id={ID_MOTIVO} className="rounded-padrao bg-painel p-3 text-sm">
+              {textoDoMotivo}
+            </p>
+          )}
+          <ErroDoFormulario>{erro}</ErroDoFormulario>
+          {desafio === null ? (
+            // key nos dois formulários: trocar de passo monta campos novos, em vez
+            // de o React reaproveitar o <input> do e-mail para o código.
+            <form key="senha" noValidate className="space-y-4" onSubmit={senha.handleSubmit(entrar)}>
+              {/* type="text" com inputMode="email": o <input type="email"> do
+                  Chromium entrega o domínio internacional em punycode no value,
+                  e o texto que chegaria ao servidor não seria o cadastrado. */}
+              <Campo rotulo="E-mail" erro={senha.formState.errors.email?.message}>
+                {(a) => (
+                  <Entrada
+                    {...a}
+                    type="text"
+                    inputMode="email"
+                    autoCapitalize="none"
+                    spellCheck={false}
+                    autoComplete="username"
+                    {...senha.register('email')}
+                  />
+                )}
+              </Campo>
+              <Campo rotulo="Senha" erro={senha.formState.errors.senha?.message}>
+                {(a) => (
+                  <Entrada
+                    {...a}
+                    type="password"
+                    autoComplete="current-password"
+                    autoFocus={voltou}
+                    {...senha.register('senha')}
+                  />
+                )}
+              </Campo>
+              <Botao type="submit" className="w-full" disabled={senha.formState.isSubmitting}>
+                Entrar
+              </Botao>
+            </form>
+          ) : (
+            <form key="codigo" noValidate className="space-y-4" onSubmit={codigo.handleSubmit(verificar)}>
+              <Campo
+                rotulo={recuperacao ? 'Código de recuperação' : 'Código do aplicativo autenticador'}
+                ajuda={
+                  recuperacao ? '16 caracteres, cada código vale uma vez.' : 'Os 6 dígitos que o aplicativo mostra agora.'
+                }
+                erro={codigo.formState.errors.codigo?.message}
+              >
+                {(a) => (
+                  <Entrada
+                    {...a}
+                    autoFocus
+                    autoComplete="one-time-code"
+                    inputMode={recuperacao ? 'text' : 'numeric'}
+                    {...codigo.register('codigo')}
+                  />
+                )}
+              </Campo>
+              <Botao type="submit" className="w-full" disabled={codigo.formState.isSubmitting}>
+                Verificar
+              </Botao>
+              <Botao tipo="terciario" className="w-full" onClick={() => setRecuperacao((r) => !r)}>
+                {recuperacao ? 'Usar o código do aplicativo' : 'Usar um código de recuperação'}
+              </Botao>
+              {/* A mensagem de invalid_credentials manda voltar; o Voltar do
+                  navegador sairia do /login, porque o passo é estado da tela. */}
+              <Botao tipo="terciario" className="w-full" onClick={() => voltarASenha(null)}>
+                Voltar
+              </Botao>
+            </form>
+          )}
+        </div>
       </main>
     </>
   )

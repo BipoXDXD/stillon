@@ -31,6 +31,7 @@ const ARQUIVOS_NO_SISTEMA = [
   'src/features/painel/PaginaPainel.tsx',
   'src/features/canais/PaginaCanais.tsx',
   'src/features/configuracoes/PaginaConfiguracoes.tsx',
+  'src/features/login/PaginaLogin.tsx',
   'src/features/statuspage/PaginaStatusPage.tsx',
   'src/features/statuspage/PreviaDaPagina.tsx',
 ]
