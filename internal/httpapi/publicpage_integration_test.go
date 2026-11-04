@@ -71,7 +71,7 @@ func TestPublicPageRendersWithoutLeaking(t *testing.T) {
 	if resp.StatusCode != http.StatusOK || !strings.HasPrefix(resp.Header.Get("Content-Type"), "text/html") {
 		t.Fatalf("GET /p/empresa deu %d %s: %s", resp.StatusCode, resp.Header.Get("Content-Type"), corpo)
 	}
-	for _, quer := range []string{"Fora do ar", "Há serviços fora do ar.", "Banco &lt;script&gt;", "Status &lt;da&gt; Empresa"} {
+	for _, quer := range []string{"Fora do ar", "1 serviço fora do ar.", "Banco &lt;script&gt;", "Status &lt;da&gt; Empresa"} {
 		if !strings.Contains(corpo, quer) {
 			t.Errorf("a página não tem %q:\n%s", quer, corpo)
 		}

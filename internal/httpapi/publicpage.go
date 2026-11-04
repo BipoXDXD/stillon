@@ -120,10 +120,15 @@ const (
 // O modelo de apresentação: só strings prontas. O template não formata,
 // não decide e não tem acesso a nada além disto.
 type paginaModelo struct {
-	Nonce, Title, Summary, Generated string
-	Items                            []itemModelo
-	Incidents                        []string
+	Nonce, Title, Generated string
+	Band                    bandModelo
+	Items                   []itemModelo
+	Incidents               []string
 }
+
+// bandModelo é a faixa de estado do topo (spec do redesign, Telas 6): a
+// frase, o detalhe com os nomes por estado e a classe da cor (o estado).
+type bandModelo struct{ State, Text, Detail string }
 
 type itemModelo struct {
 	Name, State, Label, Uptime, Latency string
@@ -137,7 +142,7 @@ type itemModelo struct {
 
 func apresentar(v statuspage.View, nonce string) paginaModelo {
 	m := paginaModelo{
-		Nonce: nonce, Title: v.Title, Summary: resumo(v.Items),
+		Nonce: nonce, Title: v.Title, Band: faixa(v.Items),
 		Generated: v.GeneratedAt.UTC().Format("02/01/2006 15:04"),
 		Items:     make([]itemModelo, 0, len(v.Items)),
 		Incidents: make([]string, 0, len(v.Incidents)),
@@ -160,23 +165,48 @@ func apresentar(v statuspage.View, nonce string) paginaModelo {
 	return m
 }
 
-func resumo(items []statuspage.PublicItem) string {
+// gravidade é a ordem da faixa: o primeiro estado presente dá a frase.
+var gravidade = []statuspage.State{statuspage.StateDown, statuspage.StateDegraded, statuspage.StateUnknown}
+
+// faixa diz o estado da página numa frase, pelo pior estado presente, e
+// lista os nomes por estado, do pior ao melhor, na ordem da página. Os casos
+// ficam em testdata/faixa.json, que a prévia do painel também lê.
+func faixa(items []statuspage.PublicItem) bandModelo {
 	if len(items) == 0 {
-		return "Nenhum serviço nesta página."
+		return bandModelo{State: string(statuspage.StateUnknown), Text: "Nenhum serviço nesta página."}
 	}
-	conta := map[statuspage.State]int{}
+	nomes := map[statuspage.State][]string{}
 	for _, it := range items {
-		conta[it.State]++
+		nomes[it.State] = append(nomes[it.State], it.Name)
 	}
-	switch {
-	case conta[statuspage.StateDown] > 0:
-		return "Há serviços fora do ar."
-	case conta[statuspage.StateDegraded] > 0:
-		return "Há serviços lentos."
-	case conta[statuspage.StateUnknown] > 0:
-		return "Há serviços sem dados recentes."
+	b := bandModelo{State: string(statuspage.StateUp), Text: "Todos os sistemas funcionando."}
+	var partes []string
+	for _, s := range gravidade {
+		n := nomes[s]
+		if len(n) == 0 {
+			continue
+		}
+		if len(partes) == 0 {
+			b.State, b.Text = string(s), fraseDaFaixa(s, len(n))
+		}
+		partes = append(partes, rotulo(s)+": "+strings.Join(n, ", ")+".")
 	}
-	return "Todos os serviços estão no ar."
+	b.Detail = strings.Join(partes, " ")
+	return b
+}
+
+func fraseDaFaixa(s statuspage.State, n int) string {
+	servicos := "1 serviço"
+	if n != 1 {
+		servicos = fmt.Sprintf("%d serviços", n)
+	}
+	switch s {
+	case statuspage.StateDown:
+		return servicos + " fora do ar."
+	case statuspage.StateDegraded:
+		return "Instabilidade em " + servicos + "."
+	}
+	return "Sem dados recentes de " + servicos + "."
 }
 
 func rotulo(s statuspage.State) string {

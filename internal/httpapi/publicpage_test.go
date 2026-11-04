@@ -2,7 +2,10 @@ package httpapi
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -110,23 +113,43 @@ func TestPresentationRules(t *testing.T) {
 			t.Errorf("duracao(%v) = %q, queria %q", d, got, quer)
 		}
 	}
-	for _, c := range []struct {
-		estados []statuspage.State
-		quer    string
-	}{
-		{nil, "Nenhum serviço nesta página."},
-		{[]statuspage.State{"up", "up"}, "Todos os serviços estão no ar."},
-		{[]statuspage.State{"up", "unknown"}, "Há serviços sem dados recentes."},
-		{[]statuspage.State{"degraded", "unknown"}, "Há serviços lentos."},
-		{[]statuspage.State{"degraded", "down"}, "Há serviços fora do ar."},
-	} {
-		var items []statuspage.PublicItem
-		for _, e := range c.estados {
-			items = append(items, statuspage.PublicItem{State: e})
-		}
-		if got := resumo(items); got != c.quer {
-			t.Errorf("resumo(%v) = %q, queria %q", c.estados, got, c.quer)
-		}
+}
+
+// A frase da faixa segue os casos de testdata/faixa.json, que a prévia do
+// painel (web/src/features/statuspage/faixa.test.ts) também lê: a página
+// publicada e a prévia dizem a mesma coisa.
+func TestBandPhraseFollowsTheSharedCases(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("testdata", "faixa.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var casos []struct {
+		Caso  string `json:"caso"`
+		Itens []struct {
+			Nome   string           `json:"nome"`
+			Estado statuspage.State `json:"estado"`
+		} `json:"itens"`
+		Estado  string `json:"estado"`
+		Frase   string `json:"frase"`
+		Detalhe string `json:"detalhe"`
+	}
+	if err := json.Unmarshal(b, &casos); err != nil {
+		t.Fatal(err)
+	}
+	if len(casos) != 9 {
+		t.Fatalf("%d casos em testdata/faixa.json, queria 9", len(casos))
+	}
+	for _, c := range casos {
+		t.Run(c.Caso, func(t *testing.T) {
+			items := make([]statuspage.PublicItem, 0, len(c.Itens))
+			for _, it := range c.Itens {
+				items = append(items, statuspage.PublicItem{Name: it.Nome, State: it.Estado})
+			}
+			quer := bandModelo{State: c.Estado, Text: c.Frase, Detail: c.Detalhe}
+			if got := faixa(items); got != quer {
+				t.Errorf("faixa = %+v, queria %+v", got, quer)
+			}
+		})
 	}
 }
 
