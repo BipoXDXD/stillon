@@ -66,15 +66,16 @@ function Cartao({
     >
       <div className="min-w-0 space-y-2">
         <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-          <Link
-            to={`/targets/${i.target_id}`}
-            className={cn(
-              'alvo-de-toque font-display text-lg font-semibold underline-offset-4 hover:underline',
-              situacao === 'resolvido' && 'text-apagado',
-            )}
-          >
-            {i.target_name}
-          </Link>
+          {/* O nome é o título do cartão, como no painel: o leitor de tela
+              navega pelos títulos (h1 da tela, h2 do grupo, h3 do cartão). */}
+          <h3 className="min-w-0 text-lg">
+            <Link
+              to={`/targets/${i.target_id}`}
+              className={cn('alvo-de-toque underline-offset-4 hover:underline', situacao === 'resolvido' && 'text-apagado')}
+            >
+              {i.target_name}
+            </Link>
+          </h3>
           <SeloDoIncidente incidente={i} />
         </div>
         <p className="text-sm">

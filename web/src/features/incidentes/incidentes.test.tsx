@@ -256,6 +256,21 @@ describe('incidentes', () => {
       expect(within(cartao(resolvidos, 'Banco')).getByText('Resolvido')).toBeInTheDocument()
     })
 
+    // O nome do alvo é o título do cartão, como no painel: o leitor de tela
+    // navega pelos títulos. Sabotagem: tirar o <h3> em volta do link.
+    it('o nome do alvo de cada cartão é um título de nível 3 com o link', async () => {
+      const r = await renderizarPainel('/incidents?status=all')
+      r.falsa.estado.incidentes = [
+        incidente({ id: 'a', target_name: 'API' }),
+        incidente({ id: 'c', target_name: 'Banco', resolved_at: '2026-09-24T11:30:00Z' }),
+      ]
+      await r.cliente.refetchQueries()
+      for (const nome of ['API', 'Banco']) {
+        const titulo = await screen.findByRole('heading', { level: 3, name: nome })
+        expect(within(titulo).getByRole('link', { name: nome })).toBeInTheDocument()
+      }
+    })
+
     // Review Focus 7.
     it('incidente sem causa diz que a causa não foi registrada', async () => {
       const r = await renderizarPainel('/incidents')
