@@ -2,7 +2,7 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { createRef } from 'react'
 import { describe, expect, it } from 'vitest'
-import { CaixaDeMarcar, Campo, Entrada, ErroDoFormulario, Selecao } from './campo'
+import { CaixaDeMarcar, Campo, Entrada, ErroDoFormulario, Opcao, Selecao } from './campo'
 
 describe('Campo', () => {
   it('liga o rótulo, a ajuda e o erro ao controle', () => {
@@ -77,5 +77,37 @@ describe('ErroDoFormulario', () => {
     expect(screen.getByRole('alert')).toHaveTextContent('Senha ou código incorretos.')
     rerender(<ErroDoFormulario />)
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+})
+
+describe('Opcao', () => {
+  it('é um radio com o próprio rótulo, e a linha inteira tem 44 px', async () => {
+    render(
+      <>
+        <Opcao name="tipo" value="discord">
+          Discord
+        </Opcao>
+        <Opcao name="tipo" value="email">
+          E-mail
+        </Opcao>
+      </>,
+    )
+    const email = screen.getByRole('radio', { name: 'E-mail' })
+    await userEvent.click(screen.getByText('E-mail'))
+    expect(email).toBeChecked()
+    expect(email.closest('label')).toHaveClass('min-h-11')
+  })
+
+  it('repassa ref e atributos ao input, como o register do react-hook-form pede', () => {
+    const ref = createRef<HTMLInputElement>()
+    render(
+      <Opcao ref={ref} name="kind" value="discord" defaultChecked>
+        Discord
+      </Opcao>,
+    )
+    const opcao = screen.getByRole('radio', { name: 'Discord' })
+    expect(ref.current).toBe(opcao)
+    expect(opcao).toHaveAttribute('value', 'discord')
+    expect(opcao).toBeChecked()
   })
 })

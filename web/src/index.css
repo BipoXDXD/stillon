@@ -229,16 +229,3 @@ main, main section, main form, main fieldset {
 main p, main h1, main h2, main a, main dd, main label {
   overflow-wrap: anywhere;
 }
-main > section:not([aria-label='Avisos de notificação']) {
-  border: 1px solid var(--borda);
-  border-radius: 0.5rem;
-  background: var(--superficie);
-  padding: 1.25rem;
-}
-
-#conteudo > form {
-  border: 1px solid var(--borda);
-  border-radius: 0.5rem;
-  background: var(--superficie);
-  padding: 1.25rem;
-}

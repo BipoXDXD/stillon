@@ -404,3 +404,21 @@ describe('foco', () => {
     await waitFor(() => expect(screen.getByRole('heading', { name: 'Página não encontrada', level: 1 })).toHaveFocus())
   })
 })
+
+// Spec do redesign, Telas 5: a marca (ponto índigo + "StillOn" em Fraunces
+// 28), a frase de tom em Fraunces e o cartão com sombra nível 2; campos e
+// botão de 44 px. Sabotagem: tirar a <Marca> → o primeiro expect falha.
+describe('a tela de entrada no sistema visual', () => {
+  it('tem a marca, a frase de tom, o cartão nível 2 e campos e botão de 44 px', async () => {
+    await renderizarPainel('/login', { logado: false })
+    const titulo = await screen.findByRole('heading', { name: 'Entrar no StillOn' })
+    expect(screen.getByText('StillOn', { exact: true })).toHaveClass('font-display', 'text-3xl')
+    expect(screen.getByText('Seus serviços, vigiados de perto.')).toHaveClass('font-display')
+    expect(titulo.parentElement).toHaveClass('sombra-nivel-2', 'rounded-padrao')
+    for (const campo of [screen.getByLabelText('E-mail'), screen.getByLabelText('Senha')]) {
+      expect(campo).toHaveClass('min-h-11')
+    }
+    expect(screen.getByRole('button', { name: 'Entrar' })).toHaveClass('min-h-11')
+    expect(screen.queryByText('Monitor de disponibilidade')).not.toBeInTheDocument()
+  })
+})

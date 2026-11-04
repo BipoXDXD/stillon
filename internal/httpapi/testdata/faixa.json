@@ -1,0 +1,68 @@
+[
+  { "caso": "página vazia", "itens": [], "estado": "unknown", "frase": "Nenhum serviço nesta página.", "detalhe": "" },
+  {
+    "caso": "todos no ar",
+    "itens": [{ "nome": "API", "estado": "up" }, { "nome": "Site", "estado": "up" }],
+    "estado": "up",
+    "frase": "Todos os sistemas funcionando.",
+    "detalhe": ""
+  },
+  {
+    "caso": "um lento",
+    "itens": [{ "nome": "API", "estado": "degraded" }, { "nome": "Site", "estado": "up" }],
+    "estado": "degraded",
+    "frase": "Instabilidade em 1 serviço.",
+    "detalhe": "Lento: API."
+  },
+  {
+    "caso": "dois lentos",
+    "itens": [{ "nome": "API", "estado": "degraded" }, { "nome": "Banco", "estado": "degraded" }],
+    "estado": "degraded",
+    "frase": "Instabilidade em 2 serviços.",
+    "detalhe": "Lento: API, Banco."
+  },
+  {
+    "caso": "o pior estado dá a frase, e o detalhe vai do pior ao melhor",
+    "itens": [
+      { "nome": "Fila", "estado": "unknown" },
+      { "nome": "Banco", "estado": "degraded" },
+      { "nome": "API", "estado": "down" },
+      { "nome": "Site", "estado": "up" }
+    ],
+    "estado": "down",
+    "frase": "1 serviço fora do ar.",
+    "detalhe": "Fora do ar: API. Lento: Banco. Sem dados: Fila."
+  },
+  {
+    "caso": "dois fora do ar, na ordem da página",
+    "itens": [{ "nome": "Site", "estado": "down" }, { "nome": "API", "estado": "down" }],
+    "estado": "down",
+    "frase": "2 serviços fora do ar.",
+    "detalhe": "Fora do ar: Site, API."
+  },
+  {
+    "caso": "sem dados ao lado de um no ar",
+    "itens": [{ "nome": "Fila", "estado": "unknown" }, { "nome": "Site", "estado": "up" }],
+    "estado": "unknown",
+    "frase": "Sem dados recentes de 1 serviço.",
+    "detalhe": "Sem dados: Fila."
+  },
+  {
+    "caso": "lento junto com sem dados, sem nenhum fora do ar: o lento dá a frase",
+    "itens": [
+      { "nome": "Fila", "estado": "unknown" },
+      { "nome": "API", "estado": "degraded" },
+      { "nome": "Site", "estado": "up" }
+    ],
+    "estado": "degraded",
+    "frase": "Instabilidade em 1 serviço.",
+    "detalhe": "Lento: API. Sem dados: Fila."
+  },
+  {
+    "caso": "todos sem dados",
+    "itens": [{ "nome": "Fila", "estado": "unknown" }, { "nome": "Novo", "estado": "unknown" }],
+    "estado": "unknown",
+    "frase": "Sem dados recentes de 2 serviços.",
+    "detalhe": "Sem dados: Fila, Novo."
+  }
+]

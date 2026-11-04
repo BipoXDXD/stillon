@@ -365,3 +365,22 @@ describe('ajustes da revisão (rodada 1)', () => {
     await waitFor(() => expect(r.falsa.corpos('PATCH /targets/:id')).toEqual([{ headers: null }]))
   })
 })
+
+// Auditoria G3: o cartão tem a largura do formulário, e não a da página.
+// Antes, o cartão vinha do "#conteudo > form" do index.css, que saiu.
+describe('formulário de alvo no sistema visual', () => {
+  it('o formulário é um cartão de largura limitada', async () => {
+    await renderizarPainel('/targets/new')
+    const formulario = (await screen.findByLabelText('Nome')).closest('form')
+    expect(formulario).toHaveClass('max-w-2xl', 'rounded-padrao', 'bg-superficie', 'sombra-nivel-1')
+  })
+
+  // DI 11: cada opção de rádio é uma linha de 44 px, com o rótulo dentro.
+  it('as opções do limiar de lentidão são linhas de 44 px', async () => {
+    await renderizarPainel('/targets/new')
+    for (const rotulo of ['Padrão (2000 ms)', 'Personalizado', 'Desativado']) {
+      const opcao = await screen.findByRole('radio', { name: rotulo })
+      expect(opcao.closest('label')).toHaveClass('min-h-11')
+    }
+  })
+})

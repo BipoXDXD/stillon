@@ -1792,7 +1792,7 @@ func faixa(items []statuspage.PublicItem) bandModelo
 
 - [ ] **Step 1: Escrever o teste que falha**
 
-Em `internal/httpapi/publicpage_test.go`, acrescente `"encoding/json"`, `"os"` e `"path/filepath"` aos imports e, no fim:
+O `testdata/faixa.json` tem nove casos: o PR 6 acrescentou "lento junto com sem dados, sem nenhum fora do ar", que fixa a precedência lento > sem dados na frase. Em `internal/httpapi/publicpage_test.go`, acrescente `"encoding/json"`, `"os"` e `"path/filepath"` aos imports e, no fim:
 
 ```go
 // A frase da faixa segue os casos de testdata/faixa.json, que a prévia do
@@ -1816,8 +1816,8 @@ func TestBandPhraseFollowsTheSharedCases(t *testing.T) {
 	if err := json.Unmarshal(b, &casos); err != nil {
 		t.Fatal(err)
 	}
-	if len(casos) != 8 {
-		t.Fatalf("%d casos em testdata/faixa.json, queria 8", len(casos))
+	if len(casos) != 9 {
+		t.Fatalf("%d casos em testdata/faixa.json, queria 9", len(casos))
 	}
 	for _, c := range casos {
 		t.Run(c.Caso, func(t *testing.T) {

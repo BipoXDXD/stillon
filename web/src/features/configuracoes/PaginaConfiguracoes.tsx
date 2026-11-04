@@ -1,22 +1,26 @@
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useQueryClient } from '@tanstack/react-query'
+import { Check } from 'lucide-react'
 import { QRCodeSVG } from 'qrcode.react'
 import { useEffect, useLayoutEffect, useRef, useState, type ComponentProps, type RefObject } from 'react'
 import { useForm } from 'react-hook-form'
 import { z } from 'zod'
 import { useApi, useSessao } from '@/app/contexto'
 import { EstadoDaConsulta } from '@/components/EstadoDaConsulta'
+import { Selo } from '@/components/SeloDeEstado'
 import { Titulo } from '@/components/Titulo'
 import { useAvisar } from '@/components/ui/avisos'
 import { Botao } from '@/components/ui/botao'
 import { useCopiar } from '@/components/ui/copiar'
 import { CaixaDeMarcar, Campo, Entrada, ErroDoFormulario } from '@/components/ui/campo'
+import { estiloDeCartao } from '@/components/ui/cartao'
 import { Confirmar, Dialogo } from '@/components/ui/dialogo'
 import { chaves, useMe, useSessoes } from '@/lib/api/consultas'
 import { ApiError } from '@/lib/api/http'
 import { mensagemDe, mensagemDoCampo } from '@/lib/api/mensagens'
 import type { Sessao } from '@/lib/api/schemas'
 import { dataHora, navegadorDe, pontosDeCodigo } from '@/lib/format'
+import { cn } from '@/lib/utils'
 
 // As rotas de credencial (/auth/password, /auth/totp/*) nunca renovam o
 // token sozinhas (reconciliação, item 3): um "unauthorized" delas é o
@@ -121,7 +125,7 @@ function TrocaDeSenha({ comTotp }: { comTotp: boolean }) {
   return (
     <form
       noValidate
-      className="max-w-md space-y-4"
+      className="space-y-4"
       onSubmit={f.handleSubmit(async (v) => {
         setErro(null)
         // comTotp vem do /me em cache: outra aba pode ter ligado o 2FA, e a
@@ -280,9 +284,9 @@ function PassoDoQr({
     >
       <AvisoDeCredencial erro={erro} aoMudar={aoMudarErro} />
       <p className="text-sm">{instrucao}</p>
-      <div className="inline-block bg-white p-3">
-        <QRCodeSVG value={uri} size={176} title="QR code do autenticador" />
-      </div>
+      {/* A zona de silêncio branca é do próprio SVG (marginSize, em
+          módulos): o leitor de QR precisa dela também no tema escuro. */}
+      <QRCodeSVG value={uri} size={176} marginSize={4} title="QR code do autenticador" className="rounded-padrao" />
       <p className="text-sm">
         Chave: <code className="break-all">{segredoDe(uri)}</code>
       </p>
@@ -687,12 +691,16 @@ function Sessoes() {
             {d.items.map((s) => (
               <li
                 key={s.id}
-                className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-borda p-3"
+                className="flex flex-wrap items-center justify-between gap-3 rounded-padrao border border-borda p-4"
               >
                 <div className="text-sm">
-                  <p className="font-medium">
+                  <p className="font-semibold">
                     {navegadorDe(s.user_agent)}
-                    {s.current && <span className="ml-2 rounded bg-painel px-2 py-0.5 text-xs">Esta sessão</span>}
+                    {s.current && (
+                      <Selo tom="primaria" Icone={Check} className="ml-2">
+                        Esta sessão
+                      </Selo>
+                    )}
                   </p>
                   <p className="text-suave">
                     Desde {dataHora(s.created_at)} · último acesso por volta de {dataHora(s.last_used_at)}
@@ -851,21 +859,21 @@ export function PaginaConfiguracoes() {
       <EstadoDaConsulta consulta={me}>
         {(eu) => (
           <>
-            <section aria-labelledby="t-conta" className="space-y-1">
-              <h2 id="t-conta" className="text-lg font-semibold">
+            <section aria-labelledby="t-conta" className={cn(estiloDeCartao, 'max-w-2xl space-y-1')}>
+              <h2 id="t-conta" className="text-xl">
                 Conta
               </h2>
               <p>{eu.email}</p>
               <p className="text-sm text-suave">Desde {dataHora(eu.created_at)}</p>
             </section>
-            <section aria-labelledby="t-senha" className="space-y-3">
-              <h2 id="t-senha" className="text-lg font-semibold">
+            <section aria-labelledby="t-senha" className={cn(estiloDeCartao, 'max-w-2xl space-y-4')}>
+              <h2 id="t-senha" className="text-xl">
                 Senha
               </h2>
               <TrocaDeSenha comTotp={eu.totp_enabled} />
             </section>
-            <section aria-labelledby="t-2fa" className="space-y-3">
-              <h2 id="t-2fa" className="text-lg font-semibold">
+            <section aria-labelledby="t-2fa" className={cn(estiloDeCartao, 'max-w-2xl space-y-4')}>
+              <h2 id="t-2fa" className="text-xl">
                 Verificação em duas etapas
               </h2>
               <p className="text-sm">{eu.totp_enabled ? 'Ativada.' : 'Desativada.'}</p>
@@ -895,8 +903,8 @@ export function PaginaConfiguracoes() {
           </>
         )}
       </EstadoDaConsulta>
-      <section aria-labelledby="t-sessoes" className="space-y-3">
-        <h2 id="t-sessoes" className="text-lg font-semibold">
+      <section aria-labelledby="t-sessoes" className={cn(estiloDeCartao, 'max-w-2xl space-y-4')}>
+        <h2 id="t-sessoes" className="text-xl">
           Sessões ativas
         </h2>
         <Sessoes />

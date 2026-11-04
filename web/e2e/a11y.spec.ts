@@ -152,7 +152,7 @@ for (const tema of ['claro', 'escuro'] as const) {
     await controlePositivo(page, 'diálogo de novo canal')
     // A confirmação de pausar (spec do Plano 9 §4.1), e a linha do pausado.
     await page.keyboard.press('Escape')
-    await expect(page.getByText('⏸ Pausado: os avisos são descartados')).toBeVisible()
+    await expect(page.getByText('Os avisos são descartados.')).toBeVisible()
     await page.getByRole('button', { name: 'Pausar o canal discord.com/…/abcd' }).click()
     await expect(page.getByRole('alertdialog')).toBeVisible()
     const pausar = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze()
@@ -801,3 +801,115 @@ for (const largura of [400, 1280]) {
     await semRolagemLateral(`incidentes ${largura}`)
   })
 }
+
+// Review Focus 6 da parte 3 do redesign: com erro de validação o formulário
+// cresce (uma linha de erro por campo). No celular de 400 px ele continua sem
+// overflow, o texto de cada erro aparece, e nem o campo que recebe o foco nem
+// o botão de envio param embaixo da barra inferior fixa (WCAG 2.4.11).
+// Sabotagens: tirar o scroll-padding-bottom do index.css → o botão de envio
+// em foco fica sob a barra; pôr whitespace-nowrap no <p> de erro do Campo →
+// overflow.
+async function folgaAcimaDaBarra(page: Page): Promise<number | null> {
+  return page.evaluate(() => {
+    const foco = document.activeElement?.getBoundingClientRect()
+    const barra = document.querySelector('nav[aria-label="Principal"]')?.getBoundingClientRect()
+    return foco && barra ? barra.top - foco.bottom : null
+  })
+}
+
+for (const tema of ['claro', 'escuro'] as const) {
+  test(`celular de 400 px: formulários com erro de validação, tema ${tema}`, async ({ page }) => {
+    await page.setViewportSize({ width: 400, height: 700 })
+    await page.emulateMedia({ colorScheme: tema === 'escuro' ? 'dark' : 'light' })
+    await imitarApi(page)
+    const casos: { rota: string; titulo: string; enviar: string; antes?: () => Promise<void> }[] = [
+      { rota: '/targets/new', titulo: 'Novo alvo', enviar: 'Cadastrar' },
+      {
+        rota: '/status-pages',
+        titulo: 'Status page',
+        enviar: 'Salvar',
+        // O slug vazio dá a mensagem de erro mais longa do painel: é ela que
+        // uma linha sem quebra empurraria para fora da tela.
+        antes: async () => {
+          await page.getByLabel('Título', { exact: true }).fill('')
+          await page.getByLabel('Endereço (slug)').fill('')
+          await page.getByLabel('Nome de exibição de API').fill('')
+        },
+      },
+      { rota: '/settings', titulo: 'Configurações', enviar: 'Trocar a senha' },
+    ]
+    for (const c of casos) {
+      await page.goto(c.rota)
+      await expect(page.getByRole('heading', { name: c.titulo, level: 1 })).toBeVisible()
+      await esperarOConteudo(page, c.rota)
+      await c.antes?.()
+      const enviar = page.getByRole('button', { name: c.enviar, exact: true })
+      await enviar.click()
+      const invalidos = page.locator('#conteudo [aria-invalid="true"]')
+      await expect(invalidos.first(), `${c.rota}: nenhum campo inválido`).toBeVisible()
+      expect(await folgaAcimaDaBarra(page), `${c.rota}: o campo com erro, em foco, fica sob a barra`).toBeGreaterThanOrEqual(0)
+      for (const campo of await invalidos.all()) {
+        const ids = ((await campo.getAttribute('aria-describedby')) ?? '').split(' ')
+        const erro = page.locator(`[id="${ids.at(-1) ?? ''}"]`)
+        await erro.scrollIntoViewIfNeeded()
+        await expect(erro, `${c.rota}: o texto do erro`).toBeVisible()
+      }
+      expect(await page.evaluate(() => document.documentElement.scrollWidth), `${c.rota}: overflow`).toBe(400)
+      // Do campo com erro até o botão de envio, pelo teclado. O Tab rola o
+      // foco só até a borda da janela, que é onde a barra fica; o focus() do
+      // Chromium centraliza o elemento e não provaria nada.
+      await invalidos.first().focus()
+      const sobBarra: string[] = []
+      for (let i = 0; i < 60 && !(await enviar.evaluate((b) => b === document.activeElement)); i++) {
+        await page.keyboard.press('Tab')
+        const folga = await folgaAcimaDaBarra(page)
+        if (folga !== null && folga < 0) {
+          const nome = await page.evaluate(() => {
+            const e = document.activeElement
+            const rotulo = (e as HTMLInputElement | null)?.labels?.[0]?.textContent
+            return `${e?.tagName.toLowerCase()} "${(e?.getAttribute('aria-label') ?? rotulo ?? e?.textContent ?? '').trim().slice(0, 30)}"`
+          })
+          sobBarra.push(`${nome} (${folga.toFixed(0)} px)`)
+        }
+      }
+      await expect(enviar, `${c.rota}: o Tab chega ao botão de envio`).toBeFocused()
+      expect(sobBarra, `${c.rota}: foco sob a barra, do campo com erro ao botão de envio`).toEqual([])
+      const axe = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze()
+      expect(axe.violations.map((v) => `${c.rota}: ${v.id}`)).toEqual([])
+      await controlePositivo(page, `${c.rota} com erro, ${tema}`)
+    }
+    // O login não tem a barra: só o overflow e o erro.
+    await page.route('**/api/v1/auth/refresh', (route) =>
+      route.fulfill({ status: 401, json: { error: { code: 'invalid_session', message: '' }, trace_id: 't' } }),
+    )
+    await page.goto('/login')
+    await expect(page.getByRole('heading', { name: 'Entrar no StillOn' })).toBeVisible()
+    await page.getByRole('button', { name: 'Entrar', exact: true }).click()
+    await expect(page.getByText('Informe o e-mail.')).toBeVisible()
+    expect(await page.evaluate(() => document.documentElement.scrollWidth), 'login: overflow').toBe(400)
+    await controlePositivo(page, `login com erro, ${tema}`)
+  })
+}
+
+// O nome de exibição vai até 100 caracteres, inclusive sem espaço. Na prévia
+// da status page ele quebra em qualquer ponto, e a tela não ganha rolagem
+// lateral no celular. Sabotagem: voltar o nome do cartão da prévia a <span>,
+// que a regra de overflow-wrap do index.css não alcança.
+test('celular de 400 px: a prévia da status page com nome de exibição longo', async ({ page }) => {
+  await page.setViewportSize({ width: 400, height: 700 })
+  await imitarApi(page)
+  const nomeLongo = 'N'.repeat(100)
+  await page.route('**/api/v1/status-pages', (route) =>
+    route.fulfill({
+      status: 200,
+      json: { items: [pagina({ id: 'p1', items: [{ target_id: 'a1', display_name: nomeLongo }], created_at: agora })] },
+    }),
+  )
+  await page.goto('/status-pages')
+  await expect(page.getByRole('heading', { name: 'Status page', level: 1 })).toBeVisible()
+  await esperarOConteudo(page, '/status-pages')
+  const previa = page.getByRole('region', { name: 'Prévia aproximada' })
+  await expect(previa.getByText(nomeLongo, { exact: true })).toBeVisible()
+  expect(await page.evaluate(() => document.documentElement.scrollWidth), 'prévia: overflow').toBe(400)
+  await controlePositivo(page, 'prévia com nome longo')
+})

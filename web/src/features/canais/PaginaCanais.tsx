@@ -2,25 +2,57 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { useQueryClient } from '@tanstack/react-query'
 import { useRef, useState } from 'react'
 import { useForm, useWatch } from 'react-hook-form'
+import { CircleCheck, CircleX, Clock, Pause, TimerOff, type LucideIcon } from 'lucide-react'
 import { z } from 'zod'
 import { useApi } from '@/app/contexto'
 import { EstadoDaConsulta } from '@/components/EstadoDaConsulta'
+import { Selo, type TomDoSelo } from '@/components/SeloDeEstado'
 import { Titulo } from '@/components/Titulo'
 import { useAvisar } from '@/components/ui/avisos'
 import { Botao } from '@/components/ui/botao'
-import { Campo, Entrada, ErroDoFormulario } from '@/components/ui/campo'
+import { Campo, Entrada, ErroDoFormulario, Opcao } from '@/components/ui/campo'
+import { estiloDeCartao } from '@/components/ui/cartao'
 import { Confirmar, Dialogo } from '@/components/ui/dialogo'
 import { useCanais } from '@/lib/api/consultas'
 import { ApiError } from '@/lib/api/http'
 import { mensagemDe, mensagemDoCampo, textoDoErroDeCanal } from '@/lib/api/mensagens'
 import type { Canal } from '@/lib/api/schemas'
 import { dataHora } from '@/lib/format'
+import { cn } from '@/lib/utils'
 
-const estados: Record<Canal['status'], { texto: string; cor: string }> = {
-  verified: { texto: '✓ Verificado', cor: 'text-no-ar' },
-  pending: { texto: '… Aguardando verificação', cor: 'text-degradado' },
-  expired: { texto: '⧖ Verificação expirada', cor: 'text-sem-dados' },
-  failing: { texto: '✕ Falhando', cor: 'text-fora' },
+// Estado da verificação com forma, cor e texto (auditoria C2, S9).
+const estados: Record<Canal['status'], { texto: string; Icone: LucideIcon; tom: TomDoSelo }> = {
+  verified: { texto: 'Verificado', Icone: CircleCheck, tom: 'no-ar' },
+  pending: { texto: 'Aguardando verificação', Icone: Clock, tom: 'degradado' },
+  expired: { texto: 'Verificação expirada', Icone: TimerOff, tom: 'sem-dados' },
+  failing: { texto: 'Falhando', Icone: CircleX, tom: 'fora' },
+}
+
+// Canal pausado (auditoria C3): o que importa é que os avisos são
+// descartados, então "Pausado" é o selo, em âmbar (o alvo pausado do painel
+// é cinza: pausar um alvo não perde nada). A verificação continua, rebaixada
+// a texto apagado.
+function EstadoDoCanal({ canal }: { canal: Canal }) {
+  const { texto, Icone, tom } = estados[canal.status]
+  if (canal.enabled) {
+    return (
+      <Selo tom={tom} Icone={Icone}>
+        {texto}
+      </Selo>
+    )
+  }
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <Selo tom="degradado" Icone={Pause}>
+        Pausado
+      </Selo>
+      <span className="text-sm">Os avisos são descartados.</span>
+      <span className="inline-flex items-center gap-1 text-meta text-suave">
+        <Icone aria-hidden="true" className="size-3.5 shrink-0" />
+        {texto}
+      </span>
+    </div>
+  )
 }
 
 const esquema = z.discriminatedUnion('kind', [
@@ -80,14 +112,16 @@ function NovoCanal({ aoCriar }: { aoCriar: (c: Canal) => void }) {
   return (
     <form noValidate className="space-y-4" onSubmit={f.handleSubmit(enviar)}>
       <ErroDoFormulario>{erro}</ErroDoFormulario>
-      <fieldset className="flex gap-4">
-        <legend className="mb-2 text-sm font-medium">Tipo</legend>
-        <label className="flex items-center gap-2 text-sm">
-          <input type="radio" value="discord" {...f.register('kind')} /> Discord
-        </label>
-        <label className="flex items-center gap-2 text-sm">
-          <input type="radio" value="email" {...f.register('kind')} /> E-mail
-        </label>
+      <fieldset>
+        <legend className="mb-2 text-sm font-semibold">Tipo</legend>
+        <div className="flex flex-wrap gap-x-6">
+          <Opcao value="discord" {...f.register('kind')}>
+            Discord
+          </Opcao>
+          <Opcao value="email" {...f.register('kind')}>
+            E-mail
+          </Opcao>
+        </div>
       </fieldset>
       {/* key: sem ela, o React reaproveita o mesmo <input> ao trocar o tipo,
           e o texto digitado fica registrado no campo anterior. */}
@@ -225,13 +259,12 @@ export function PaginaCanais() {
           ) : (
             <ul className="space-y-3">
               {d.items.map((c) => (
-                <li key={c.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-borda bg-superficie p-4">
-                  <div className="min-w-0 space-y-1 break-words">
+                <li key={c.id} className={cn(estiloDeCartao, 'flex flex-wrap items-center justify-between gap-4')}>
+                  <div className="min-w-0 space-y-2 break-words">
                     <p className="font-semibold">
                       {c.kind === 'discord' ? 'Discord' : 'E-mail'} <span className="font-normal text-suave">{c.hint}</span>
                     </p>
-                    <p className={`text-sm font-medium ${estados[c.status].cor}`}>{estados[c.status].texto}</p>
-                    {!c.enabled && <p className="text-sm font-medium">⏸ Pausado: os avisos são descartados</p>}
+                    <EstadoDoCanal canal={c} />
                     {c.last_error && c.last_failure_at && (
                       <p className="text-sm text-suave">
                         {c.status === 'failing' ? 'Falha' : 'Última falha'}: {textoDoErroDeCanal(c.last_error)}, em{' '}

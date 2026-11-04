@@ -1,7 +1,9 @@
 import { screen, waitFor, within } from '@testing-library/react'
+import { http, HttpResponse } from 'msw'
 import { describe, expect, it, vi } from 'vitest'
-import { alvo } from '@/test/fixtures'
+import { alvo, itemDoResumo, pagina } from '@/test/fixtures'
 import { renderizarPainel } from '@/test/renderizar'
+import { servidor } from '@/test/setup'
 import { sugerirSlug } from './PaginaStatusPage'
 
 it('sugerirSlug tira acento e o que não cabe na regra', () => {
@@ -42,6 +44,148 @@ describe('status page', () => {
     })
     // Rascunho: o link existe, mas a página ainda não abre.
     expect(await screen.findByText('A página só fica acessível depois de publicada.')).toBeInTheDocument()
+  })
+
+  it('o formulário é um cartão de largura limitada', async () => {
+    const r = await renderizarPainel('/status-pages')
+    r.falsa.estado.alvos = [alvo()]
+    r.falsa.estado.paginas = [pagina()]
+    await r.cliente.refetchQueries()
+    const formulario = (await screen.findByLabelText('Título')).closest('form')
+    expect(formulario).toHaveClass('max-w-2xl', 'rounded-padrao', 'bg-superficie', 'sombra-nivel-1')
+  })
+
+  // Auditoria SP3: a prévia parece a página pública: o título, a mesma faixa
+  // de estado (faixa.ts) e um cartão por alvo. Sabotagem: tirar a faixa da
+  // PreviaDaPagina → o teste não acha a frase.
+  it('a prévia parece a página pública: título, faixa de estado e um cartão por alvo', async () => {
+    const r = await renderizarPainel('/status-pages')
+    r.falsa.estado.alvos = [alvo()]
+    r.falsa.estado.resumo = [itemDoResumo({ state: 'down' })]
+    r.falsa.estado.paginas = [pagina({ items: [{ target_id: 'alvo-1', display_name: 'API pública' }] })]
+    await r.cliente.refetchQueries()
+    const previa = await screen.findByRole('region', { name: 'Prévia aproximada' })
+    expect(within(previa).getByText('Minha')).toHaveClass('font-display')
+    const frase = await within(previa).findByText('1 serviço fora do ar.')
+    // A faixa tem a cor do pior estado, como na página pública.
+    expect(frase.parentElement).toHaveClass('bg-fora-100', 'border-l-fora')
+    expect(within(previa).getByText('Fora do ar: API pública.')).toBeInTheDocument()
+    expect(within(previa).getByText('Fora do ar')).toHaveClass('rounded-full')
+    await r.usuario.clear(screen.getByLabelText('Título'))
+    await r.usuario.type(screen.getByLabelText('Título'), 'Loja')
+    expect(within(previa).getByText('Loja')).toBeInTheDocument()
+  })
+
+  // A página pública não sabe de pausa: o alvo pausado sai "sem dados" na
+  // faixa, como sairá na página publicada.
+  it('na faixa da prévia, o alvo pausado conta como sem dados', async () => {
+    const r = await renderizarPainel('/status-pages')
+    r.falsa.estado.alvos = [alvo()]
+    r.falsa.estado.resumo = [itemDoResumo({ state: 'up', enabled: false })]
+    r.falsa.estado.paginas = [pagina({ items: [{ target_id: 'alvo-1', display_name: 'API pública' }] })]
+    await r.cliente.refetchQueries()
+    const previa = await screen.findByRole('region', { name: 'Prévia aproximada' })
+    const frase = await within(previa).findByText('Sem dados recentes de 1 serviço.')
+    expect(frase.parentElement).toHaveClass('bg-sem-dados-100', 'border-l-sem-dados')
+  })
+
+  // O alvo que não está no resumo (apagado entre as duas leituras) também
+  // sai "sem dados" na faixa: a página pública não o teria no ar.
+  it('na faixa da prévia, o alvo fora do resumo conta como sem dados', async () => {
+    const r = await renderizarPainel('/status-pages')
+    r.falsa.estado.alvos = [alvo(), alvo({ id: 'alvo-2', name: 'Banco' })]
+    r.falsa.estado.resumo = [itemDoResumo({ state: 'up' })]
+    r.falsa.estado.paginas = [
+      pagina({
+        items: [
+          { target_id: 'alvo-1', display_name: 'API' },
+          { target_id: 'alvo-2', display_name: 'Banco' },
+        ],
+      }),
+    ]
+    await r.cliente.refetchQueries()
+    const previa = await screen.findByRole('region', { name: 'Prévia aproximada' })
+    expect(await within(previa).findByText('Sem dados recentes de 1 serviço.')).toBeInTheDocument()
+    expect(within(previa).getByText('Sem dados: Banco.')).toBeInTheDocument()
+  })
+
+  // Sem o resumo, a prévia não sabe o estado de ninguém: carregando, a faixa
+  // não aparece; com erro, ela diz isso, em vez de "sem dados recentes".
+  it('enquanto o resumo carrega, a faixa da prévia não afirma estado nenhum', async () => {
+    const r = await renderizarPainel('/status-pages')
+    r.falsa.estado.alvos = [alvo()]
+    r.falsa.estado.resumo = [itemDoResumo({ state: 'down' })]
+    r.falsa.estado.paginas = [pagina()]
+    await r.cliente.refetchQueries()
+    let soltar!: () => void
+    const liberada = new Promise<void>((resolve) => {
+      soltar = resolve
+    })
+    servidor.use(
+      http.get(
+        '*/api/v1/targets/summary',
+        async () => {
+          await liberada
+          return HttpResponse.json({ items: [itemDoResumo({ state: 'down' })] })
+        },
+      ),
+    )
+    const leitura = r.cliente.resetQueries({ queryKey: ['targets', 'summary'] })
+    try {
+      const previa = await screen.findByRole('region', { name: 'Prévia aproximada' })
+      await waitFor(() => expect(r.cliente.getQueryState(['targets', 'summary'])?.status).toBe('pending'))
+      expect(within(previa).queryByText(/Sem dados recentes|fora do ar\.|Todos os sistemas/)).not.toBeInTheDocument()
+    } finally {
+      soltar()
+      await leitura
+    }
+    const previa = screen.getByRole('region', { name: 'Prévia aproximada' })
+    expect(await within(previa).findByText('1 serviço fora do ar.')).toBeInTheDocument()
+  })
+
+  it('se o resumo falha, a faixa da prévia diz que o estado não carregou', async () => {
+    const r = await renderizarPainel('/status-pages')
+    r.falsa.estado.alvos = [alvo()]
+    r.falsa.estado.paginas = [pagina()]
+    r.falsa.estado.forcar.set('GET /targets/summary', { status: 503, code: 'unavailable' })
+    await r.cliente.resetQueries()
+    const previa = await screen.findByRole('region', { name: 'Prévia aproximada' })
+    const aviso = await within(previa).findByText('Não foi possível carregar o estado dos alvos.')
+    expect(aviso.parentElement).toHaveClass('bg-painel')
+    expect(within(previa).queryByText(/Sem dados recentes/)).not.toBeInTheDocument()
+  })
+
+  // Auditoria SP2: reordenar é secundário, em ícone; Tirar, que remove, é
+  // terciário. Os nomes acessíveis de antes ficam.
+  it('Subir e Descer são botões de ícone secundários, e Tirar é terciário', async () => {
+    const r = await renderizarPainel('/status-pages')
+    r.falsa.estado.alvos = [alvo(), alvo({ id: 'alvo-2', name: 'Banco' })]
+    r.falsa.estado.paginas = [
+      pagina({
+        items: [
+          { target_id: 'alvo-1', display_name: 'API' },
+          { target_id: 'alvo-2', display_name: 'Banco' },
+        ],
+      }),
+    ]
+    await r.cliente.refetchQueries()
+    for (const nome of ['Subir Banco', 'Descer API']) {
+      const botao = await screen.findByRole('button', { name: nome })
+      expect(botao).toHaveClass('border-borda-controle', 'size-11')
+      expect(botao.querySelector('svg')).toHaveAttribute('aria-hidden', 'true')
+    }
+    const tirar = screen.getByRole('button', { name: 'Tirar API da página' })
+    expect(tirar).toHaveClass('text-primaria')
+    expect(tirar).not.toHaveClass('border-borda-controle')
+  })
+
+  it('o link público é um cartão de largura limitada', async () => {
+    const r = await renderizarPainel('/status-pages')
+    r.falsa.estado.alvos = [alvo()]
+    r.falsa.estado.paginas = [pagina()]
+    await r.cliente.refetchQueries()
+    const rotulo = await screen.findByText('Link público')
+    expect(rotulo.parentElement).toHaveClass('max-w-2xl', 'rounded-padrao', 'bg-superficie')
   })
 
   it('a prévia é rotulada como aproximada', async () => {
