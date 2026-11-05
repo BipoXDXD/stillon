@@ -66,8 +66,9 @@ push na `main` termina com sucesso, confere o SHA exato e envia as imagens à VP
 - A `main` tem ruleset (PR obrigatório e checks). Migrations vão até a 00014; a 00015 é reservada
   à vinculação Discord.
 
-**Confirmar com o dono: a renovação da VPS.** Ela vencia em 2026-10-25 no painel da Hostinger, e a
-data já passou; sem renovação, os projetos da VPS saem do ar. Este arquivo não sabe se foi feita.
+**VPS (conferido na API da Hostinger em 2026-11-05).** A produção é a `srv2070196`, com Coolify, paga
+até 2027-10-17 e sem renovação automática. A anterior, `srv2008471`, foi cancelada de propósito e
+venceu em 2026-10-25: não perguntar sobre a renovação dela.
 
 **Redesign** (direção C, "Editorial claro", Fraunces + Inter, primária índigo,
 [spec](docs/superpowers/specs/2026-10-14-redesign-painel-design.md)): concluído (PRs 1 a 8 na `main`, o
