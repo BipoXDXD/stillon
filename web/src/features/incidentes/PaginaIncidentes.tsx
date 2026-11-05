@@ -21,7 +21,7 @@ import { mensagemDe, textoDaCausa } from '@/lib/api/mensagens'
 import type { Incidente } from '@/lib/api/schemas'
 import { dataHora } from '@/lib/format'
 import { cn } from '@/lib/utils'
-import { agruparIncidentes, resumoDosAbertos } from './agrupamento'
+import { agruparIncidentes, destinoDepoisDeCarregar, resumoDosAbertos } from './agrupamento'
 
 type Filtro = 'open' | 'resolved' | 'all'
 const FILTROS: readonly OpcaoSegmentada<Filtro>[] = [
@@ -70,6 +70,8 @@ function Cartao({
               navega pelos títulos (h1 da tela, h2 do grupo, h3 do cartão). */}
           <h3 className="min-w-0 text-lg">
             <Link
+              // O foco vem para cá depois do "Carregar mais".
+              id={`incidente-${i.id}`}
               to={`/targets/${i.target_id}`}
               className={cn('alvo-de-toque underline-offset-4 hover:underline', situacao === 'resolvido' && 'text-apagado')}
             >
@@ -164,6 +166,26 @@ export function PaginaIncidentes() {
     destino?.focus()
   })
 
+  // O destino do foco depois do "Carregar mais". O efeito roda depois do
+  // render que põe os itens novos na tela e não tira o foco de quem saiu do
+  // botão enquanto a página chegava.
+  const botaoCarregarMais = useRef<HTMLButtonElement>(null)
+  const [focarNoIncidente, setFocarNoIncidente] = useState<string>()
+  useEffect(() => {
+    if (!focarNoIncidente) return
+    const ativo = document.activeElement
+    if (ativo && ativo !== document.body && ativo !== botaoCarregarMais.current) return
+    document.getElementById(`incidente-${focarNoIncidente}`)?.focus()
+  }, [focarNoIncidente])
+
+  async function carregarMais(itens: readonly Incidente[]) {
+    if (consulta.isFetchingNextPage) return
+    const conhecidos = new Set(itens.map((i) => i.id))
+    const r = await consulta.fetchNextPage()
+    const todos = r.data?.pages.flatMap((pg) => pg.items) ?? []
+    setFocarNoIncidente(destinoDepoisDeCarregar(todos, conhecidos, r.hasNextPage))
+  }
+
   async function reconhecer(id: string) {
     setErro(null)
     setReconhecendo((s) => new Set(s).add(id))
@@ -242,7 +264,14 @@ export function PaginaIncidentes() {
               )}
               {/* Botão, e não rolagem infinita: previsível no teclado e no leitor de tela. */}
               {consulta.hasNextPage && (
-                <Botao tipo="secundario" disabled={consulta.isFetchingNextPage} onClick={() => void consulta.fetchNextPage()}>
+                <Botao
+                  ref={botaoCarregarMais}
+                  tipo="secundario"
+                  // aria-disabled, e não disabled: o botão desabilitado perderia
+                  // o foco para o <body> enquanto a página chega.
+                  aria-disabled={consulta.isFetchingNextPage || undefined}
+                  onClick={() => void carregarMais(itens)}
+                >
                   Carregar mais
                 </Botao>
               )}
