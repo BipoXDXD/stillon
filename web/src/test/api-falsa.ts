@@ -4,9 +4,11 @@ import type {
   Alvo,
   Canal,
   Check,
+  EventoDeHeartbeat,
   Heartbeat,
   Hora,
   Incidente,
+  IncidenteDeHeartbeat,
   ItemDoResumo,
   PaginaDeStatus,
   Sessao,
@@ -99,6 +101,8 @@ export function criarApiFalsa() {
     },
     incidentes: [] as Entrada<typeof Incidente>[],
     heartbeats: [] as Entrada<typeof Heartbeat>[],
+    eventos: [] as Entrada<typeof EventoDeHeartbeat>[],
+    incidentesDeHeartbeat: [] as Entrada<typeof IncidenteDeHeartbeat>[],
     canais: [] as Entrada<typeof Canal>[],
     paginas: [] as Entrada<typeof PaginaDeStatus>[],
     sessoes: [] as Entrada<typeof Sessao>[],
@@ -116,6 +120,16 @@ export function criarApiFalsa() {
       { error: { code, message: 'mensagem do servidor', ...(fields ? { fields } : {}) }, trace_id: 'trace-falso' },
       { status },
     )
+  }
+
+  // Como as rotas de lista do servidor: next_cursor quando a página vem cheia.
+  function paginar<T extends { id: string }>(itens: T[], request: Request) {
+    const q = new URL(request.url).searchParams
+    const limite = Number(q.get('limit') ?? 50)
+    const inicio = q.get('cursor') ? itens.findIndex((i) => i.id === q.get('cursor')) + 1 : 0
+    const pagina = itens.slice(inicio, inicio + limite)
+    const cheia = pagina.length === limite
+    return HttpResponse.json({ items: pagina, ...(cheia ? { next_cursor: pagina[pagina.length - 1]!.id } : {}) })
   }
 
   function novoAcesso() {
@@ -381,6 +395,21 @@ export function criarApiFalsa() {
       if (!st.heartbeats.some((x) => x.id === params.id)) return erro(404, 'not_found')
       st.heartbeats = st.heartbeats.filter((x) => x.id !== params.id)
       return new HttpResponse(null, { status: 204 })
+    }),
+    rota('get', '/heartbeats/:id/events', ({ request, params }) => {
+      if (!st.heartbeats.some((x) => x.id === params.id)) return erro(404, 'not_found')
+      return paginar(st.eventos, request)
+    }),
+    rota('get', '/heartbeats/:id/incidents', ({ request, params }) => {
+      if (!st.heartbeats.some((x) => x.id === params.id)) return erro(404, 'not_found')
+      return paginar(st.incidentesDeHeartbeat.filter((i) => i.heartbeat_id === params.id), request)
+    }),
+    // O ack é idempotente, como o do alvo: reconhecer de novo não muda a data.
+    rota('post', '/heartbeats/:id/incidents/:incident/ack', ({ params }) => {
+      const i = st.incidentesDeHeartbeat.find((x) => x.id === params.incident && x.heartbeat_id === params.id)
+      if (!i) return erro(404, 'not_found')
+      i.acknowledged_at ??= agora().toISOString()
+      return HttpResponse.json(i)
     }),
     rota('post', '/heartbeats/:id/token/rotate', ({ params }) => {
       const h = st.heartbeats.find((x) => x.id === params.id)

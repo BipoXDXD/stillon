@@ -20,7 +20,9 @@ const ROTAS: [string, string][] = [
   ['/targets/a1', 'API'],
   ['/targets/a1?janela=7d', 'API'],
   ['/targets/a1/edit', 'Editar alvo'],
+  ['/heartbeats/new', 'Novo heartbeat'],
   ['/heartbeats/h1', 'Backup noturno'],
+  ['/heartbeats/h1/edit', 'Editar heartbeat'],
   ['/incidents', 'Incidentes'],
   ['/channels', 'Canais de notificação'],
   ['/status-pages', 'Status page'],
@@ -642,6 +644,52 @@ for (const largura of [400, 1280]) {
       const axe = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze()
       expect(axe.violations.map((v) => v.id)).toEqual([])
       await controlePositivo(page, `sem resultado ${largura} ${tema}`)
+    })
+  }
+}
+
+// Spec da tela de heartbeats: o diálogo da URL de ping tem texto longo e sem
+// espaço, que quebra dentro do bloco. Sabotagem: tirar o break-all do Copiavel.
+for (const largura of [400, 1280]) {
+  for (const tema of ['claro', 'escuro'] as const) {
+    test(`heartbeats: diálogo da URL e alvos de toque, ${largura} px, tema ${tema}`, async ({ page }) => {
+      await page.setViewportSize({ width: largura, height: 900 })
+      await page.emulateMedia({ colorScheme: tema === 'escuro' ? 'dark' : 'light' })
+      await imitarApi(page)
+      await page.goto('/heartbeats/new')
+      await page.getByLabel('Nome', { exact: true }).fill('Backup')
+      await page.getByRole('button', { name: 'Cadastrar', exact: true }).click()
+      const dialogo = page.getByRole('dialog', { name: 'Guarde a URL de ping' })
+      await expect(dialogo).toBeVisible()
+      expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(largura)
+      const caixa = await dialogo.boundingBox()
+      expect((caixa?.x ?? 0) + (caixa?.width ?? 0)).toBeLessThanOrEqual(largura)
+      expect(await dialogo.evaluate((d) => d.scrollWidth <= d.clientWidth), 'nada rola de lado no diálogo').toBe(true)
+      const axe = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze()
+      expect(axe.violations.map((v) => `${v.id} (${v.nodes.map((n) => n.target.join(' ')).join(', ')})`)).toEqual([])
+      await controlePositivo(page, `diálogo da URL ${largura} ${tema}`)
+      await page.getByRole('button', { name: 'Já guardei' }).click()
+
+      await page.goto('/heartbeats/h1')
+      await expect(page.getByRole('heading', { name: 'Backup noturno', level: 1 })).toBeVisible()
+      await expect(page.getByRole('button', { name: /^Reconhecer o incidente/ })).toBeVisible()
+      await expect(page.getByText('levou 3 min')).toBeVisible()
+      expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(largura)
+      for (const controle of [
+        page.getByRole('link', { name: 'Editar' }),
+        page.getByRole('button', { name: 'Pausar' }),
+        page.getByRole('button', { name: 'Apagar' }),
+        page.getByRole('button', { name: /^Reconhecer o incidente/ }),
+        page.getByRole('button', { name: 'Gerar nova URL' }),
+      ]) {
+        expect(await pontosForaDoAlvo(controle)).toEqual([])
+      }
+
+      await page.goto('/incidents')
+      await expect(page.getByRole('region', { name: 'Tarefas com incidente aberto' }).getByRole('link', { name: 'Backup noturno' })).toBeVisible()
+      expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(largura)
+      const incidentes = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze()
+      expect(incidentes.violations.map((v) => v.id)).toEqual([])
     })
   }
 }

@@ -1,7 +1,7 @@
 import type { Page, Route } from '@playwright/test'
 import type { z } from 'zod'
 import type { ConfirmacaoTotp, InicioDaTroca, Serie } from '../src/lib/api/schemas'
-import { alvo, canal, heartbeat, incidente, itemDoResumo, me, pagina, sessao } from '../src/test/fixtures'
+import { alvo, canal, eventoDeHeartbeat, heartbeat, incidente, incidenteDeHeartbeat, itemDoResumo, me, pagina, sessao } from '../src/test/fixtures'
 
 // A API do painel respondida pelo próprio teste (page.route): o a11y.spec.ts
 // e o roteiro de captura (capturas.spec.ts) veem os mesmos dados. As
@@ -41,7 +41,7 @@ const horaria: z.input<typeof Serie> = {
   ],
 }
 const heartbeats = [
-  heartbeat({ id: 'h1', name: 'Backup noturno', state: 'late', deadline_at: agora, last_ping_at: agora, last_success_at: agora, created_at: agora }),
+  heartbeat({ id: 'h1', name: 'Backup noturno', state: 'late', open_incident_id: 'hi1', deadline_at: agora, last_ping_at: agora, last_success_at: agora, created_at: agora }),
   heartbeat({ id: 'h2', name: 'Relatório', last_ping_at: agora, last_success_at: agora, deadline_at: agora, created_at: agora }),
 ]
 const respostas: Record<string, unknown> = {
@@ -61,6 +61,19 @@ const respostas: Record<string, unknown> = {
   },
   'GET /heartbeats': { items: heartbeats },
   'GET /heartbeats/h1': heartbeats[0],
+  'GET /heartbeats/h1/events': {
+    items: [
+      eventoDeHeartbeat({ id: 'e1', at: agora, kind: 'fail' }),
+      eventoDeHeartbeat({ id: 'e2', at: agora, kind: 'success', runtime_ms: 183_000 }),
+      eventoDeHeartbeat({ id: 'e3', at: agora, kind: 'start' }),
+    ],
+  },
+  'GET /heartbeats/h1/incidents': {
+    items: [
+      incidenteDeHeartbeat({ id: 'hi1', heartbeat_id: 'h1', heartbeat_name: 'Backup noturno', started_at: agora }),
+      incidenteDeHeartbeat({ id: 'hi2', heartbeat_id: 'h1', heartbeat_name: 'Backup noturno', started_at: agora, resolved_at: agora, cause: 'heartbeat_failed' }),
+    ],
+  },
   'GET /channels': {
     items: [
       canal({ id: 'c1', created_at: agora }),
@@ -85,6 +98,7 @@ const troca: z.input<typeof InicioDaTroca> = {
 export const codigosNovos: z.input<typeof ConfirmacaoTotp> = {
   recovery_codes: Array.from({ length: 10 }, (_, i) => `NOVO${String(i).padStart(2, '0')}CODIGO000${i}`),
 }
+respostas['POST /heartbeats'] = { ...heartbeats[0], id: 'h1', ping_url: `https://stillon.exemplo/ping/${'t'.repeat(43)}` }
 respostas['POST /auth/totp/rotate'] = troca
 respostas['POST /auth/totp/rotate/confirm'] = codigosNovos
 

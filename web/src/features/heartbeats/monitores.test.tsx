@@ -105,6 +105,7 @@ describe('heartbeats na tabela de monitores', () => {
         return HttpResponse.json({ items: [heartbeat({ state: 'late' })] })
       }),
     )
+    r.cliente.removeQueries({ queryKey: ['heartbeats'] })
     await r.router.navigate('/')
     await waitFor(() => expect(r.cliente.getQueryData(['targets', 'summary'])).toBeDefined())
     expect(screen.queryByRole('heading', { level: 2 })).not.toBeInTheDocument()

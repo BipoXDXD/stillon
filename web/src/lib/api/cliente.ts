@@ -8,11 +8,14 @@ import {
   ConfirmacaoTotp,
   Heartbeat,
   HeartbeatComPing,
+  IncidenteDeHeartbeat,
   InicioDaTroca,
   ListaDeAlvos,
   ListaDeCanais,
+  ListaDeEventos,
   ListaDeHeartbeats,
   ListaDeIncidentes,
+  ListaDeIncidentesDeHeartbeat,
   ListaDePaginas,
   ListaDeSessoes,
   Incidente,
@@ -92,6 +95,8 @@ function consultaDoResumo({ tags, estados }: FiltroDoResumo): string {
   return s ? `?${s}` : ''
 }
 
+const LIMITE_DO_LOG = 20
+
 export type Api = ReturnType<typeof criarApi>
 
 // O prazo dos confirms do 2FA (E3 do Plano 10). O diálogo trava enquanto o
@@ -168,6 +173,15 @@ export function criarApi(sessao: Sessao, buscar: Buscar, o: OpcoesDaApi = {}) {
     apagarHeartbeat: (id: string) => pedir({ metodo: 'DELETE', caminho: `/heartbeats/${encodeURIComponent(id)}` }, null),
     rotacionarHeartbeat: (id: string) =>
       pedir({ metodo: 'POST', caminho: `/heartbeats/${encodeURIComponent(id)}/token/rotate` }, HeartbeatComPing),
+    eventosDoHeartbeat: (id: string, cursor?: string) =>
+      get(`/heartbeats/${encodeURIComponent(id)}/events${consulta({ cursor, limit: LIMITE_DO_LOG })}`, ListaDeEventos),
+    incidentesDoHeartbeat: (id: string, cursor?: string) =>
+      get(`/heartbeats/${encodeURIComponent(id)}/incidents${consulta({ cursor, limit: LIMITE_DO_LOG })}`, ListaDeIncidentesDeHeartbeat),
+    reconhecerDoHeartbeat: (id: string, incidente: string) =>
+      pedir(
+        { metodo: 'POST', caminho: `/heartbeats/${encodeURIComponent(id)}/incidents/${encodeURIComponent(incidente)}/ack` },
+        IncidenteDeHeartbeat,
+      ),
     canais: () => get('/channels', ListaDeCanais),
     criarCanal: (e: EntradaCanal) => pedir({ metodo: 'POST', caminho: '/channels', corpo: e }, Canal),
     apagarCanal: (id: string) => pedir({ metodo: 'DELETE', caminho: `/channels/${encodeURIComponent(id)}` }, null),

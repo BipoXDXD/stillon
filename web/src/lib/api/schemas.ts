@@ -151,6 +151,29 @@ export const HeartbeatComPing = Heartbeat.extend({ ping_url: z.url() })
 
 export const ListaDeHeartbeats = z.object({ items: z.array(Heartbeat), next_cursor: z.string().optional() })
 
+export const EventoDeHeartbeat = z.object({
+  id,
+  at: instante,
+  kind: z.enum(['start', 'success', 'fail']),
+  runtime_ms: z.number().nullable(),
+})
+export type EventoDeHeartbeat = z.infer<typeof EventoDeHeartbeat>
+
+export const ListaDeEventos = z.object({ items: z.array(EventoDeHeartbeat), next_cursor: z.string().optional() })
+
+export const IncidenteDeHeartbeat = z.object({
+  id,
+  heartbeat_id: id,
+  heartbeat_name: z.string(),
+  started_at: instante,
+  resolved_at: instante.nullable(),
+  cause: z.string(),
+  acknowledged_at: instante.nullable(),
+})
+export type IncidenteDeHeartbeat = z.infer<typeof IncidenteDeHeartbeat>
+
+export const ListaDeIncidentesDeHeartbeat = z.object({ items: z.array(IncidenteDeHeartbeat), next_cursor: z.string().optional() })
+
 export const Canal = z.object({
   id,
   kind: z.enum(['discord', 'email']),

@@ -17,6 +17,8 @@ import { mensagemDe, textoDaCausa } from '@/lib/api/mensagens'
 import type { Heartbeat } from '@/lib/api/schemas'
 import { dataHora } from '@/lib/format'
 import { DialogoDaUrlDePing } from './DialogoDaUrlDePing'
+import { EventosDoHeartbeat } from './EventosDoHeartbeat'
+import { IncidentesDoHeartbeat } from './IncidentesDoHeartbeat'
 import { estadoDoHeartbeat, textoDaDuracao, textoDoAgendamento, textoDoHeartbeat } from './estado'
 
 // De um detalhe a outro a rota é a mesma: a key recomeça a tela, como a do alvo.
@@ -141,6 +143,8 @@ function DetalheDoHeartbeat({ id }: { id: string }) {
           </div>
           <ErroDoFormulario>{erro}</ErroDoFormulario>
           <Sinais hb={hb} />
+          <IncidentesDoHeartbeat id={id} agora={new Date(consulta.dataUpdatedAt)} aoErrar={setErro} aoSumir={() => void sumiu()} />
+          <EventosDoHeartbeat id={id} />
           <UrlDePing aoGerar={() => setConfirmando('rotacionar')} />
 
           <Confirmar

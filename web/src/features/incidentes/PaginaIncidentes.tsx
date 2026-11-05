@@ -10,15 +10,18 @@ import {
   situacaoDoIncidente,
   type SituacaoDoIncidente,
 } from '@/components/SeloDoIncidente'
+import { SeloDeEstado } from '@/components/SeloDeEstado'
 import { Titulo } from '@/components/Titulo'
 import { useAvisar } from '@/components/ui/avisos'
 import { Botao } from '@/components/ui/botao'
 import { ErroDoFormulario } from '@/components/ui/campo'
+import { estiloDeCartao } from '@/components/ui/cartao'
 import { ControleSegmentado, type OpcaoSegmentada } from '@/components/ui/controle-segmentado'
-import { useIncidentes, useIncidentesAbertos } from '@/lib/api/consultas'
+import { estadoDoHeartbeat, textoDoHeartbeat } from '@/features/heartbeats/estado'
+import { useHeartbeats, useIncidentes, useIncidentesAbertos, useTarefasComIncidente } from '@/lib/api/consultas'
 import { naoEncontrado } from '@/lib/api/http'
 import { mensagemDe, textoDaCausa } from '@/lib/api/mensagens'
-import type { Incidente } from '@/lib/api/schemas'
+import type { Heartbeat, Incidente } from '@/lib/api/schemas'
 import { dataHora } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { agruparIncidentes, destinoDepoisDeCarregar, resumoDosAbertos } from './agrupamento'
@@ -123,10 +126,12 @@ function Grupo({ titulo, children }: { titulo: string; children: ReactNode }) {
 }
 
 // O vazio dos abertos é o estado bom (auditoria I4): check em círculo verde.
-function Vazio({ filtro }: { filtro: Filtro }) {
+function Vazio({ filtro, soDosAlvos }: { filtro: Filtro; soDosAlvos: boolean }) {
   if (filtro !== 'open') {
     return <p className="text-suave">{filtro === 'resolved' ? 'Nenhum incidente resolvido.' : 'Nenhum incidente.'}</p>
   }
+  // Com tarefa em incidente, ou sem saber das tarefas, o vazio verde mentiria.
+  if (soDosAlvos) return <p className="text-suave">Nenhum alvo com incidente aberto.</p>
   return (
     <div className="flex flex-col items-center gap-3 rounded-padrao border border-borda bg-superficie p-8 text-center sombra-nivel-1">
       <span className="inline-flex size-12 items-center justify-center rounded-full bg-no-ar-100 text-no-ar">
@@ -138,6 +143,26 @@ function Vazio({ filtro }: { filtro: Filtro }) {
   )
 }
 
+// Os incidentes de heartbeat têm rotas próprias (D3 da spec de heartbeats): a
+// lista os aponta, em vez de fingir que não existem (spec da tela, T13).
+function TarefasComIncidente({ tarefas }: { tarefas: readonly Heartbeat[] }) {
+  if (tarefas.length === 0) return null
+  return (
+    <Grupo titulo="Tarefas com incidente aberto">
+      <ul className="space-y-3">
+        {tarefas.map((hb) => (
+          <li key={hb.id} className={cn(estiloDeCartao, 'flex flex-wrap items-center gap-x-3 gap-y-2 border-l-4 border-l-fora')}>
+            <Link to={`/heartbeats/${hb.id}`} className="alvo-de-toque min-w-0 font-semibold underline-offset-4 hover:underline">
+              {hb.name}
+            </Link>
+            <SeloDeEstado estado={estadoDoHeartbeat(hb.state)} texto={textoDoHeartbeat(hb.state)} />
+          </li>
+        ))}
+      </ul>
+    </Grupo>
+  )
+}
+
 export function PaginaIncidentes() {
   const [params, setParams] = useSearchParams()
   const p = params.get('status')
@@ -146,6 +171,8 @@ export function PaginaIncidentes() {
   // A mesma consulta do contador da navegação: a frase de resumo vale em
   // qualquer filtro, sem requisição a mais.
   const abertos = useIncidentesAbertos()
+  const heartbeats = useHeartbeats()
+  const tarefas = useTarefasComIncidente()
   const api = useApi()
   const qc = useQueryClient()
   const avisar = useAvisar()
@@ -236,12 +263,13 @@ export function PaginaIncidentes() {
         }}
       />
       <ErroDoFormulario>{erro}</ErroDoFormulario>
+      {filtro !== 'resolved' && <TarefasComIncidente tarefas={tarefas} />}
       {/* D17: um poll ou um "Carregar mais" que falha mantém a lista, com o
           aviso de dados velhos; só sem dados nenhuns o erro toma a tela. */}
       <EstadoDaConsulta consulta={consulta}>
         {(d) => {
           const itens = d.pages.flatMap((pg) => pg.items)
-          if (itens.length === 0) return <Vazio filtro={filtro} />
+          if (itens.length === 0) return <Vazio filtro={filtro} soDosAlvos={tarefas.length > 0 || !heartbeats.isSuccess} />
           const grupos = agruparIncidentes(itens)
           return (
             <div className="space-y-8">

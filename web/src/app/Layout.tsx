@@ -71,7 +71,7 @@ export function Layout() {
 // leitor de tela.
 function NavegacaoPrincipal() {
   const { pathname } = useLocation()
-  const abertos = useAbertos().data
+  const abertos = useAbertos()
   const contador = abertos && abertos !== '0' ? abertos : null
   return (
     <nav
