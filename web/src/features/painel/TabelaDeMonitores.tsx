@@ -52,7 +52,7 @@ function LinhaDaTabela({ linha, agora }: { linha: LinhaDeMonitor; agora: Date })
       <td className={cn(SO_DESKTOP, CELULA, acento)}>
         <SeloDeEstado estado={linha.estado} />
       </td>
-      <th scope="row" className={cn(CELULA, acento, 'text-left font-normal lg:shadow-none')}>
+      <th scope="row" className={cn(CELULA, acento, 'text-left font-normal lg:sem-acento')}>
         <span className="flex min-h-11 items-center gap-2">
           <IconeDoEstado estado={linha.estado} className="lg:hidden" />
           <Link
