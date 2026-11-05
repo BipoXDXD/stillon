@@ -22,11 +22,11 @@ layout vem do healthchecks.io.
 | T6 | Coluna "Alvo" vira "Monitor"; "de N alvos" vira "de N monitores"; a busca vira "Buscar por nome ou tag" | Os textos passam a cobrir os dois tipos |
 | T7 | `GET /heartbeats?limit=100` em poll de 15 s, como o resumo. Uma página basta: 100 é o teto por usuário (D16). O `next_cursor` que vem com exatamente 100 é ignorado | Custo: +4 req/min, dentro do limite de 60 |
 | T8 | **`ping_url` só em estado de componente.** A resposta do `POST` e do `rotate` é lida por um schema próprio e nunca entra no cache de consultas; o `Heartbeat` não tem o campo. Sem `navigate(..., { state })`, porque o estado do router vai para `history.state`, que o navegador persiste | §Segredo |
-| T9 | A URL aparece num diálogo travado, no mesmo lugar em que foi gerada, com copiar e os exemplos de `curl`. Só fecha por "Já guardei" | Mesmo padrão dos códigos de recuperação. Recarregar perde a URL, e a saída é rotacionar |
+| T9 | A URL aparece num diálogo travado, no mesmo lugar em que foi gerada, com copiar e os exemplos de `curl`. Só fecha por "Já guardei", e o Voltar do navegador fica segurado (`useBlocker`) enquanto ela está na tela | Mesmo padrão dos códigos de recuperação. Recarregar perde a URL, e a saída é rotacionar |
 | T10 | Rotacionar pede confirmação, e pausar também, com o que muda | A URL antiga para na hora; pausar interrompe os lembretes (D13) |
 | T11 | Duração em quantidade + unidade (segundos, minutos, horas, dias), com os limites da §7 validados no cliente. A expressão cron quem valida é o servidor | Validar cron no cliente exigiria um segundo parser, que é o risco que o D17 evitou |
 | T12 | O `PATCH` manda só o que mudou. `schedule` vai inteiro, e só se mudou de valor | O servidor recalcula o prazo só com mudança real, mas um `PATCH` vazio não tem por que existir |
-| T13 | Em `/incidents` entra um aviso com os heartbeats de incidente aberto, com link ao detalhe, e o vazio verde não aparece nesse caso. O contador da aba soma os dois | D3 mantém as listas separadas, mas "Nenhum incidente aberto." com um heartbeat atrasado seria mentira |
+| T13 | Em `/incidents` entra a seção "Tarefas que pedem atenção": heartbeat `late`, `failing` ou com incidente aberto, com link ao detalhe. Nesses casos, e sem resposta dos heartbeats, o vazio (verde em Abertos, "Nenhum incidente." em Todos) vira "Nenhum alvo com incidente". O contador da aba soma pela mesma regra | D3 mantém as listas separadas. `late` e `failing` são derivados na leitura, e quem abre o incidente é o avaliador: olhar só `open_incident_id` deixaria a tela verde com o prober parado |
 
 ## A manchete
 
@@ -46,7 +46,9 @@ A manchete fala do conjunto inteiro: alvos e heartbeats. Um filtro não muda iss
 Atrasado e falhando contam como problema; pausado não, mesmo com incidente aberto, como o alvo.
 Enquanto a primeira resposta de heartbeats não chega, a tela fica no esqueleto: não saber não é
 "tudo no ar". A falha da consulta vira um aviso com "Tentar de novo", e os dados velhos ficam na
-tabela. A linha de detalhe ganha "Tarefas: 1 atrasada, 2 em dia.", e a meta, "2 de 3 tarefas em dia".
+tabela. A linha de detalhe ganha "Tarefas: 1 atrasada, 2 em dia.", e a meta, "2 de 3 tarefas em dia";
+sem a resposta das tarefas, as duas contagens saem, em vez de repetir dado velho. Com tarefas
+cadastradas, a frase do "Tudo no ar." diz "incidente de alvo": a consulta dela não vê as tarefas (D3).
 
 ## Estados
 
@@ -54,6 +56,8 @@ tabela. A linha de detalhe ganha "Tarefas: 1 atrasada, 2 em dia.", e a meta, "2 
 |---|---|---|
 | Detalhe | Carregando, erro, 404 | `EstadoDaConsulta`; sumiu num poll: volta ao painel com aviso, como o alvo |
 | Detalhe | Nunca recebeu sinal | "Aguardando o primeiro sinal" e o prazo |
+| Detalhe | Prazo vencido | "Prazo vencido", nunca "Próximo prazo"; pausado não mostra prazo |
+| Detalhe | Atrasado com prazo futuro (editado) | sem "o prazo era": o incidente segue aberto até um sinal de sucesso |
 | Log | Vazio | "Nenhum sinal recebido." |
 | Incidentes | Vazio | "Nenhum incidente." |
 | Formulário | Limite de 100 | erro do formulário |
@@ -67,7 +71,7 @@ O `ping_url` é a credencial da tarefa.
 
 | Lugar | Regra | Teste |
 |---|---|---|
-| URL, histórico | nada de caminho, query ou `history.state` | `a URL de ping não vai para o endereço, o histórico nem o armazenamento` |
+| URL, histórico | nada de caminho, query ou `history.state`, em nenhuma entrada | canário com o router sobre `window.history`, lendo `pushState` e `replaceState`, e `a11y.spec.ts` andando pelo Voltar |
 | Cache de consultas | a resposta com `ping_url` não entra; o schema `Heartbeat` descarta o campo | idem, lendo o cache inteiro |
 | `localStorage`, `sessionStorage` | nada | idem |
 | Log | nenhum `console.*` recebe a resposta; erro de contrato leva só o caminho do campo (`lerCorpo`) | idem, espionando o console |
@@ -80,10 +84,5 @@ uma tabela: tem três campos curtos e cabe em uma ou duas linhas.
 
 ## Entrega
 
-Três PRs empilhados, nesta ordem, cada um com a sabotagem dos testes novos no corpo:
-
-1. **Monitores:** esta spec, schemas, cliente, heartbeats na tabela, na manchete, nos filtros e nos
-   anúncios, e a rota do detalhe só com o que a linha leva. A manchete fica certa antes de haver
-   como cadastrar pela tela.
-2. **Cadastro:** formulário, edição, pausar, retomar, apagar, rotacionar e a URL uma vez só.
-3. **Detalhe:** log de eventos, incidentes, reconhecer, o aviso em `/incidents` e o contador.
+Um PR só, com a sabotagem dos testes novos no corpo. Três PRs empilhados foram consolidados nele
+para poupar CI: monitores, cadastro e detalhe.

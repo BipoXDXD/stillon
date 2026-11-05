@@ -19,7 +19,7 @@ import { dataHora } from '@/lib/format'
 import { DialogoDaUrlDePing } from './DialogoDaUrlDePing'
 import { EventosDoHeartbeat } from './EventosDoHeartbeat'
 import { IncidentesDoHeartbeat } from './IncidentesDoHeartbeat'
-import { estadoDoHeartbeat, textoDaDuracao, textoDoAgendamento, textoDoHeartbeat } from './estado'
+import { estadoDoHeartbeat, prazoVencido, textoDaDuracao, textoDoAgendamento, textoDoHeartbeat } from './estado'
 
 // De um detalhe a outro a rota é a mesma: a key recomeça a tela, como a do alvo.
 export function PaginaHeartbeat() {
@@ -142,7 +142,7 @@ function DetalheDoHeartbeat({ id }: { id: string }) {
             </div>
           </div>
           <ErroDoFormulario>{erro}</ErroDoFormulario>
-          <Sinais hb={hb} />
+          <Sinais hb={hb} agora={new Date(consulta.dataUpdatedAt)} />
           <IncidentesDoHeartbeat id={id} agora={new Date(consulta.dataUpdatedAt)} aoErrar={setErro} aoSumir={() => void sumiu()} />
           <EventosDoHeartbeat id={id} />
           <UrlDePing aoGerar={() => setConfirmando('rotacionar')} />
@@ -197,16 +197,25 @@ function UrlDePing({ aoGerar }: { aoGerar: () => void }) {
   )
 }
 
-function fraseDoEstado(hb: Heartbeat): string | null {
-  if (hb.state === 'late') return `${textoDaCausa('heartbeat_late')}: o prazo era ${dataHora(hb.deadline_at)}.`
+function fraseDoEstado(hb: Heartbeat, agora: Date): string | null {
+  if (hb.state === 'late') {
+    const causa = textoDaCausa('heartbeat_late')
+    return prazoVencido(hb, agora) ? `${causa}: o prazo era ${dataHora(hb.deadline_at)}.` : `${causa}. O incidente segue aberto até um sinal de sucesso.`
+  }
   if (hb.state === 'failing') return `${textoDaCausa('heartbeat_failed')}.`
   return hb.state === 'waiting' ? `Aguardando o primeiro sinal, até ${dataHora(hb.deadline_at)}.` : null
 }
 
 const quando = (iso: string | null) => (iso === null ? 'Nunca' : dataHora(iso))
 
-function Sinais({ hb }: { hb: Heartbeat }) {
-  const frase = fraseDoEstado(hb)
+// Pausado não tem prazo correndo, e prazo que passou não é "próximo".
+function Prazo({ hb, agora }: { hb: Heartbeat; agora: Date }) {
+  if (hb.state === 'paused') return null
+  return <Dado nome={prazoVencido(hb, agora) ? 'Prazo vencido' : 'Próximo prazo'} valor={dataHora(hb.deadline_at)} />
+}
+
+function Sinais({ hb, agora }: { hb: Heartbeat; agora: Date }) {
+  const frase = fraseDoEstado(hb, agora)
   return (
     <section aria-labelledby="titulo-sinais" className={`${estiloDeCartao} space-y-4`}>
       <h2 id="titulo-sinais" className="text-xl">
@@ -216,7 +225,7 @@ function Sinais({ hb }: { hb: Heartbeat }) {
       <dl className="grid gap-4 sm:grid-cols-2">
         <Dado nome="Agendamento" valor={textoDoAgendamento(hb.schedule)} />
         <Dado nome="Tolerância" valor={textoDaDuracao(hb.grace_sec)} />
-        <Dado nome="Próximo prazo" valor={dataHora(hb.deadline_at)} />
+        <Prazo hb={hb} agora={agora} />
         <Dado nome="Último sinal" valor={quando(hb.last_ping_at)} />
         <Dado nome="Último sucesso" valor={quando(hb.last_success_at)} />
         <Dado nome="Último início" valor={quando(hb.last_start_at)} />

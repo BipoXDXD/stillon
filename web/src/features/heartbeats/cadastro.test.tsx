@@ -12,8 +12,8 @@ async function cadastrar(r: Awaited<ReturnType<typeof renderizarPainel>>, nome =
   await r.usuario.click(screen.getByRole('button', { name: 'Cadastrar' }))
 }
 
-async function detalheCom(p: Parameters<typeof heartbeat>[0] = {}) {
-  const r = await renderizarPainel('/')
+async function detalheCom(p: Parameters<typeof heartbeat>[0] = {}, o: { navegador?: boolean } = {}) {
+  const r = await renderizarPainel('/', o)
   r.falsa.estado.heartbeats = [heartbeat({ id: 'h1', name: 'Backup', ...p })]
   await r.router.navigate('/heartbeats/h1')
   await screen.findByRole('heading', { level: 1, name: 'Backup' })
@@ -57,6 +57,33 @@ describe('cadastro', () => {
     expect(screen.queryByText(PING_URL)).not.toBeInTheDocument()
   })
 
+  // Sabotagem: tirar o useSegurarNavegacao → o Voltar leva a URL embora.
+  it('o Voltar não leva a URL embora, e "Já guardei" ainda navega', async () => {
+    const r = await renderizarPainel('/')
+    await r.router.navigate('/heartbeats/new')
+    await cadastrar(r)
+    await dialogo()
+    await r.router.navigate(-1)
+    await waitFor(() => expect(screen.getAllByText('Guarde a URL antes de sair: ela não aparece de novo.').length).toBeGreaterThan(0))
+    expect(r.router.state.location.pathname).toBe('/heartbeats/new')
+    expect(screen.getByRole('dialog', { name: 'Guarde a URL de ping' })).toBeInTheDocument()
+    await r.usuario.click(screen.getByRole('button', { name: 'Já guardei' }))
+    await waitFor(() => expect(r.router.state.location.pathname).toBe('/heartbeats/hb-1'))
+  })
+
+  it('o Voltar também espera a URL nova na rotação', async () => {
+    const r = await detalheCom()
+    await r.usuario.click(screen.getByRole('button', { name: 'Gerar nova URL' }))
+    await r.usuario.click(await screen.findByRole('button', { name: 'Gerar nova URL' }))
+    await dialogo()
+    await r.router.navigate(-1)
+    await waitFor(() => expect(screen.getAllByText('Guarde a URL antes de sair: ela não aparece de novo.').length).toBeGreaterThan(0))
+    expect(r.router.state.location.pathname).toBe('/heartbeats/h1')
+    await r.usuario.click(screen.getByRole('button', { name: 'Já guardei' }))
+    await r.router.navigate(-1)
+    await waitFor(() => expect(r.router.state.location.pathname).toBe('/'))
+  })
+
   it('cadastra por cron, com o fuso', async () => {
     const r = await renderizarPainel('/heartbeats/new')
     await r.usuario.type(await screen.findByLabelText('Nome'), 'Backup')
@@ -98,11 +125,14 @@ describe('cadastro', () => {
 })
 
 describe('a URL de ping é segredo', () => {
-  // Spec da tela, §Segredo. Sabotagem 1: guardar a resposta com setQueryData.
-  // Sabotagem 2: navegar com { state: { url } }. Sabotagem 3: console.info.
+  // Spec da tela, §Segredo, com o router sobre window.history: o de memória não
+  // escreve lá. pushState e replaceState mostram toda entrada do histórico, e
+  // não só a última. Sabotagens: setQueryData, { state: { url } }, a URL na
+  // query, sessionStorage, console.info.
   it.each(['cadastro', 'rotação'])('a URL de ping não vai para o endereço, o histórico, o armazenamento, o cache nem o console (%s)', async (caminho) => {
     const espioes = (['log', 'info', 'warn', 'error', 'debug'] as const).map((m) => vi.spyOn(console, m))
-    const r = caminho === 'cadastro' ? await renderizarPainel('/heartbeats/new') : await detalheCom()
+    const entradas = [vi.spyOn(window.history, 'pushState'), vi.spyOn(window.history, 'replaceState')]
+    const r = caminho === 'cadastro' ? await renderizarPainel('/heartbeats/new', { navegador: true }) : await detalheCom({}, { navegador: true })
     if (caminho === 'cadastro') {
       await cadastrar(r)
     } else {
@@ -113,9 +143,11 @@ describe('a URL de ping é segredo', () => {
     await r.usuario.click(screen.getByRole('button', { name: 'Já guardei' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
 
+    expect(entradas[0]?.mock.calls.length).toBeGreaterThan(0)
     const lugares = {
-      endereco: `${window.location.href} ${JSON.stringify(r.router.state.location)}`,
+      endereco: window.location.href,
       historico: JSON.stringify(window.history.state),
+      entradas: JSON.stringify(entradas.flatMap((s) => s.mock.calls)),
       local: JSON.stringify({ ...localStorage }),
       sessao: JSON.stringify({ ...sessionStorage }),
       cache: JSON.stringify(r.cliente.getQueryCache().getAll().map((q) => [q.queryKey, q.state.data])),

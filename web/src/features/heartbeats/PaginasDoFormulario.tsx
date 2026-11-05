@@ -1,5 +1,5 @@
 import { useQueryClient } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router'
 import { useApi } from '@/app/contexto'
 import { EstadoDaConsulta } from '@/components/EstadoDaConsulta'
@@ -20,6 +20,11 @@ export function PaginaNovoHeartbeat() {
   const avisar = useAvisar()
   const [iniciais] = useState(valoresPadrao)
   const [criado, setCriado] = useState<{ id: string; url: string } | null>(null)
+  // Navega depois de fechar: com a URL na tela, o diálogo segura a navegação.
+  const [guardado, setGuardado] = useState<string | null>(null)
+  useEffect(() => {
+    if (guardado) void navegar(`/heartbeats/${guardado}`)
+  }, [guardado, navegar])
   return (
     <>
       <Titulo aba="Novo heartbeat">Novo heartbeat</Titulo>
@@ -33,7 +38,13 @@ export function PaginaNovoHeartbeat() {
           avisar('Heartbeat cadastrado.')
         }}
       />
-      <DialogoDaUrlDePing url={criado?.url ?? null} aoFechar={() => criado && navegar(`/heartbeats/${criado.id}`)} />
+      <DialogoDaUrlDePing
+        url={criado?.url ?? null}
+        aoFechar={() => {
+          setGuardado(criado?.id ?? null)
+          setCriado(null)
+        }}
+      />
     </>
   )
 }

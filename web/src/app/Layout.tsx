@@ -6,6 +6,7 @@ import { AvisoDeContexto } from '@/components/AvisoDeContexto'
 import { Marca } from '@/components/Marca'
 import { useAvisar } from '@/components/ui/avisos'
 import { Botao } from '@/components/ui/botao'
+import { useTarefasQuePedemAtencao } from '@/features/heartbeats/tarefas-que-pedem-atencao'
 import { useAbertos, useMe } from '@/lib/api/consultas'
 import { mensagemDe } from '@/lib/api/mensagens'
 import { cn } from '@/lib/utils'
@@ -71,7 +72,7 @@ export function Layout() {
 // leitor de tela.
 function NavegacaoPrincipal() {
   const { pathname } = useLocation()
-  const abertos = useAbertos()
+  const abertos = useAbertos(useTarefasQuePedemAtencao().length)
   const contador = abertos && abertos !== '0' ? abertos : null
   return (
     <nav

@@ -1,4 +1,4 @@
-import { estadoDoHeartbeat, textoDoHeartbeat } from '@/features/heartbeats/estado'
+import { estadoDoHeartbeat, prazoVencido, textoDoHeartbeat } from '@/features/heartbeats/estado'
 import { textoDaCausa } from '@/lib/api/mensagens'
 import type { Heartbeat, HoraDoSpark, Incidente, ItemDoResumo } from '@/lib/api/schemas'
 import { estadoExibido, textoDoEstado, type EstadoExibido } from '@/lib/estado'
@@ -92,12 +92,10 @@ function situacaoDoHeartbeat(hb: Heartbeat, agora: Date): string {
   }
 }
 
-// Editar um heartbeat atrasado põe o prazo à frente sem fechar o incidente
-// (spec de heartbeats, §5): sem prazo vencido, não há duração a dizer.
+// Sem prazo vencido, não há duração a dizer.
 function textoDoAtraso(hb: Heartbeat, agora: Date): string {
-  const atraso = agora.getTime() - Date.parse(hb.deadline_at)
   const causa = textoDaCausa('heartbeat_late')
-  return atraso > 0 ? `${causa} · há ${duracao(atraso)}` : causa
+  return prazoVencido(hb, agora) ? `${causa} · há ${duracao(agora.getTime() - Date.parse(hb.deadline_at))}` : causa
 }
 
 // O número da coluna de medida: a latência do último check, no monitor HTTP.

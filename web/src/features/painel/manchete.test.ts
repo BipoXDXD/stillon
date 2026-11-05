@@ -119,12 +119,23 @@ describe('resumoEmTexto', () => {
 describe('detalheDaManchete', () => {
   it('os alvos, depois as tarefas, por gravidade e com plural', () => {
     const lista = [hb({ state: 'up' }), hb({ state: 'late' }), hb({ state: 'late' }), hb({ state: 'failing' }), hb({ state: 'paused' })]
-    expect(detalheDaManchete([alvo(), alvo({ state: 'down' })], lista)).toBe('1 fora do ar, 1 no ar. Tarefas: 1 com falha, 2 atrasadas, 1 em dia, 1 pausada.')
+    expect(detalheDaManchete([alvo(), alvo({ state: 'down' })], tarefas(...lista))).toBe('1 fora do ar, 1 no ar. Tarefas: 1 com falha, 2 atrasadas, 1 em dia, 1 pausada.')
   })
 
   it('sem tarefas, a frase de sempre; só tarefas, sem a parte dos alvos', () => {
-    expect(detalheDaManchete([alvo()], [])).toBe('1 no ar.')
-    expect(detalheDaManchete([], [hb({ state: 'waiting' })])).toBe('Tarefas: 1 aguardando.')
+    expect(detalheDaManchete([alvo()], semTarefas)).toBe('1 no ar.')
+    expect(detalheDaManchete([], tarefas(hb({ state: 'waiting' })))).toBe('Tarefas: 1 aguardando.')
+  })
+
+  // Sabotagem: contar as tarefas sem olhar `confirmadas`.
+  it('sem a resposta das tarefas, não conta com dado velho', () => {
+    expect(detalheDaManchete([alvo()], { itens: [hb()], confirmadas: false })).toBe('1 no ar.')
+  })
+
+  // Sabotagem: devolver a junção sem a guarda → um parágrafo só com ".".
+  it('sem nada a dizer, não há linha', () => {
+    expect(detalheDaManchete([], { itens: [], confirmadas: false })).toBeNull()
+    expect(detalheDaManchete([], { itens: [hb()], confirmadas: false })).toBeNull()
   })
 })
 
@@ -132,21 +143,26 @@ describe('metaDoPainel', () => {
   const as = new Date(2026, 9, 14, 14, 32)
 
   it('conta os ativos no ar sobre o total de ativos', () => {
-    expect(metaDoPainel([alvo(), alvo({ state: 'down' }), alvo({ enabled: false })], [], as)).toBe('Atualizado às 14:32 · 1 de 2 no ar')
+    expect(metaDoPainel([alvo(), alvo({ state: 'down' }), alvo({ enabled: false })], semTarefas, as)).toBe('Atualizado às 14:32 · 1 de 2 no ar')
   })
 
   it('sem ativo, não inventa um total', () => {
-    expect(metaDoPainel([alvo({ enabled: false })], [], as)).toBe('Atualizado às 14:32 · nenhum alvo ativo')
+    expect(metaDoPainel([alvo({ enabled: false })], semTarefas, as)).toBe('Atualizado às 14:32 · nenhum alvo ativo')
   })
 
   it('as tarefas ativas entram depois dos alvos', () => {
-    expect(metaDoPainel([alvo()], [hb(), hb({ state: 'late' }), hb({ state: 'paused', enabled: false })], as)).toBe(
+    expect(metaDoPainel([alvo()], tarefas(hb(), hb({ state: 'late' }), hb({ state: 'paused', enabled: false })), as)).toBe(
       'Atualizado às 14:32 · 1 de 1 no ar · 1 de 2 tarefas em dia',
     )
   })
 
   it('só tarefas: nada de "nenhum alvo ativo"', () => {
-    expect(metaDoPainel([], [hb()], as)).toBe('Atualizado às 14:32 · 1 de 1 tarefa em dia')
+    expect(metaDoPainel([], tarefas(hb()), as)).toBe('Atualizado às 14:32 · 1 de 1 tarefa em dia')
+  })
+
+  // Sabotagem: contar as tarefas sem olhar `confirmadas` → "2 de 2 tarefas em dia".
+  it('sem a resposta das tarefas, nada de "em dia"', () => {
+    expect(metaDoPainel([alvo()], { itens: [hb(), hb()], confirmadas: false }, as)).toBe('Atualizado às 14:32 · 1 de 1 no ar')
   })
 })
 
@@ -164,10 +180,16 @@ describe('último incidente resolvido', () => {
   })
 
   it('a frase: sem resposta, nada; lista vazia, "nenhum"; senão, a data do fim', () => {
-    expect(fraseDoUltimoResolvido(undefined)).toBeNull()
-    expect(fraseDoUltimoResolvido([])).toBe('Nenhum incidente registrado.')
-    expect(fraseDoUltimoResolvido([inc({ resolved_at: new Date(2026, 8, 24, 9, 12).toISOString() })])).toMatch(
+    expect(fraseDoUltimoResolvido(undefined, false)).toBeNull()
+    expect(fraseDoUltimoResolvido([], false)).toBe('Nenhum incidente registrado.')
+    expect(fraseDoUltimoResolvido([inc({ resolved_at: new Date(2026, 8, 24, 9, 12).toISOString() })], false)).toMatch(
       /^Último incidente resolvido em 24\/09\/2026,? 09:12\.$/,
     )
+  })
+
+  // A consulta só vê os alvos. Sabotagem: ignorar `comTarefas`.
+  it('com tarefas cadastradas, a frase diz que fala dos alvos', () => {
+    expect(fraseDoUltimoResolvido([], true)).toBe('Nenhum incidente de alvo registrado.')
+    expect(fraseDoUltimoResolvido([inc({ resolved_at: new Date(2026, 8, 24, 9, 12).toISOString() })], true)).toMatch(/^Último incidente de alvo resolvido em /)
   })
 })

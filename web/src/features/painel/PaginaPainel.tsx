@@ -211,7 +211,8 @@ function Manchete({ itens, tarefas, atualizadoEm }: PropsDosMonitores) {
       </div>
     )
   }
-  const detalhe = m.tipo === 'tudo-no-ar' ? fraseDoUltimoResolvido(resolvidos.data?.items) : detalheDaManchete(itens, tarefas.itens)
+  const detalhe =
+    m.tipo === 'tudo-no-ar' ? fraseDoUltimoResolvido(resolvidos.data?.items, tarefas.itens.length > 0) : detalheDaManchete(itens, tarefas)
   return (
     <div className="space-y-2">
       <div className="flex items-center gap-3">
@@ -223,7 +224,7 @@ function Manchete({ itens, tarefas, atualizadoEm }: PropsDosMonitores) {
         <h2 className="text-2xl sm:text-3xl">{textoDaManchete(m)}</h2>
       </div>
       {detalhe && <p className="text-suave">{detalhe}</p>}
-      <p className="text-meta text-apagado">{metaDoPainel(itens, tarefas.itens, atualizadoEm)}</p>
+      <p className="text-meta text-apagado">{metaDoPainel(itens, tarefas, atualizadoEm)}</p>
     </div>
   )
 }

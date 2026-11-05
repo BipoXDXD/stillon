@@ -138,16 +138,49 @@ describe('incidentes do heartbeat', () => {
 describe('tela de incidentes e contador', () => {
   const atrasado = heartbeat({ id: 'h1', name: 'Backup', state: 'late', open_incident_id: 'i1' })
 
-  // Spec da tela, T13. Sabotagem: não mostrar TarefasComIncidente.
-  it('aponta o heartbeat com incidente aberto, sem o vazio verde', async () => {
+  // Spec da tela, T13. late e failing são derivados na leitura, e quem abre o
+  // incidente é o avaliador: com ele parado, não há incidente nenhum.
+  // Sabotagem: olhar só o open_incident_id → os dois primeiros casos ficam verdes.
+  it.each([
+    ['atrasada, sem incidente', { state: 'late', open_incident_id: null }, 'Atrasado'],
+    ['falhando, sem incidente', { state: 'failing', open_incident_id: null }, 'Falhando'],
+    ['atrasada, com incidente', { state: 'late', open_incident_id: 'i1' }, 'Atrasado'],
+    ['pausada, com incidente ainda aberto', { state: 'paused', enabled: false, open_incident_id: 'i1' }, 'Pausado'],
+  ] as const)('aponta a tarefa %s, sem o vazio verde', async (_, p, selo) => {
     const r = await renderizarPainel('/incidents')
-    r.falsa.estado.heartbeats = [atrasado]
+    r.falsa.estado.heartbeats = [heartbeat({ id: 'h1', name: 'Backup', ...p })]
     await r.cliente.refetchQueries()
-    const s = await screen.findByRole('region', { name: 'Tarefas com incidente aberto' })
+    const s = await screen.findByRole('region', { name: 'Tarefas que pedem atenção' })
     expect(within(s).getByRole('link', { name: 'Backup' })).toHaveAttribute('href', '/heartbeats/h1')
-    expect(within(s).getByText('Atrasado')).toBeInTheDocument()
+    expect(within(s).getByText(selo)).toBeInTheDocument()
     expect(await screen.findByText('Nenhum alvo com incidente aberto.')).toBeInTheDocument()
     expect(screen.queryByText('Nenhum incidente aberto.')).not.toBeInTheDocument()
+    expect(await screen.findByRole('link', { name: 'Incidentes, 1 aberto' })).toBeInTheDocument()
+  })
+
+  // Sabotagem: Vazio só com soDosAlvos no filtro open.
+  it('na aba Todos, com tarefa fora, "Nenhum incidente." não nega a seção de cima', async () => {
+    const r = await renderizarPainel('/incidents?status=all')
+    r.falsa.estado.heartbeats = [atrasado]
+    await r.cliente.refetchQueries()
+    await screen.findByRole('region', { name: 'Tarefas que pedem atenção' })
+    expect(await screen.findByText('Nenhum alvo com incidente.')).toBeInTheDocument()
+    expect(screen.queryByText('Nenhum incidente.')).not.toBeInTheDocument()
+  })
+
+  it('na aba Todos, sem resposta dos heartbeats, também não', async () => {
+    const r = await renderizarPainel('/incidents?status=all')
+    r.falsa.estado.forcar.set('GET /heartbeats', { status: 500, code: 'internal_error' })
+    await r.cliente.resetQueries()
+    expect(await screen.findByText('Nenhum alvo com incidente.')).toBeInTheDocument()
+    expect(screen.queryByText('Nenhum incidente.')).not.toBeInTheDocument()
+  })
+
+  it('na aba Todos, sem tarefa fora, a frase de sempre', async () => {
+    const r = await renderizarPainel('/incidents?status=all')
+    r.falsa.estado.heartbeats = [heartbeat({ id: 'h2', name: 'Outro' })]
+    await r.cliente.refetchQueries()
+    expect(await screen.findByText('Nenhum incidente.')).toBeInTheDocument()
   })
 
   it('sem resposta dos heartbeats, o vazio verde também não aparece', async () => {
@@ -163,7 +196,7 @@ describe('tela de incidentes e contador', () => {
     r.falsa.estado.heartbeats = [heartbeat({ id: 'h2', name: 'Outro' })]
     await r.cliente.refetchQueries()
     expect(await screen.findByText('Nenhum incidente aberto.')).toBeInTheDocument()
-    expect(screen.queryByRole('region', { name: 'Tarefas com incidente aberto' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: 'Tarefas que pedem atenção' })).not.toBeInTheDocument()
   })
 
   // Sabotagem: contar só /incidents → a aba não diz nada.

@@ -1,4 +1,4 @@
-import type { Agendamento, EstadoDoHeartbeat } from '@/lib/api/schemas'
+import type { Agendamento, EstadoDoHeartbeat, Heartbeat } from '@/lib/api/schemas'
 import type { EstadoExibido } from '@/lib/estado'
 
 // O heartbeat na escala de gravidade do painel (forma, cor, ordem e filtro),
@@ -17,6 +17,19 @@ export function estadoDoHeartbeat(e: EstadoDoHeartbeat): EstadoExibido {
 
 export function textoDoHeartbeat(e: EstadoDoHeartbeat): string {
   return ESTADOS[e].texto
+}
+
+// Atrasado e falhando são derivados na leitura, e quem abre o incidente é o
+// avaliador: com ele parado, a tarefa está fora sem incidente nenhum. O
+// open_incident_id sozinho deixaria a tela verde a parada toda.
+export function pedeAtencao(hb: Pick<Heartbeat, 'state' | 'open_incident_id'>): boolean {
+  return estadoDoHeartbeat(hb.state) === 'down' || hb.open_incident_id !== null
+}
+
+// Editar um heartbeat atrasado põe o prazo à frente sem fechar o incidente
+// (spec de heartbeats, §5): um prazo futuro não venceu, mesmo no estado late.
+export function prazoVencido(hb: Pick<Heartbeat, 'deadline_at'>, agora: Date): boolean {
+  return agora.getTime() > Date.parse(hb.deadline_at)
 }
 
 export type Unidade = 'dias' | 'horas' | 'minutos' | 'segundos'

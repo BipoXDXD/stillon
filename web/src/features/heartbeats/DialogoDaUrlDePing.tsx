@@ -1,3 +1,6 @@
+import { useEffect } from 'react'
+import { useBlocker } from 'react-router'
+import { useAvisar } from '@/components/ui/avisos'
 import { Botao } from '@/components/ui/botao'
 import { useCopiar } from '@/components/ui/copiar'
 import { Dialogo } from '@/components/ui/dialogo'
@@ -8,6 +11,7 @@ const CURL = 'curl -fsS -m 10 --retry 3 -o /dev/null -X POST'
 // o servidor guarda só o hash, e ela vive no estado de quem abriu o diálogo
 // (spec da tela, T8 e T9). Só "Já guardei" fecha.
 export function DialogoDaUrlDePing({ url, aoFechar }: { url: string | null; aoFechar: () => void }) {
+  useSegurarNavegacao(url !== null)
   return (
     <Dialogo
       aberto={url !== null}
@@ -33,6 +37,17 @@ export function DialogoDaUrlDePing({ url, aoFechar }: { url: string | null; aoFe
       )}
     </Dialogo>
   )
+}
+
+// O Voltar do navegador não passa pelo diálogo, e a URL sumiria com a tela.
+function useSegurarNavegacao(ativo: boolean) {
+  const avisar = useAvisar()
+  const bloqueio = useBlocker(ativo)
+  useEffect(() => {
+    if (bloqueio.state !== 'blocked') return
+    bloqueio.reset()
+    avisar('Guarde a URL antes de sair: ela não aparece de novo.')
+  }, [bloqueio, avisar])
 }
 
 function Copiavel({ titulo, texto, rotulo }: { titulo: string; texto: string; rotulo: string }) {

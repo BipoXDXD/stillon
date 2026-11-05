@@ -29,8 +29,10 @@ export const esquemaDoHeartbeat = z
     tipo: z.enum(['period', 'cron']),
     periodoQuantidade: z.number().or(z.nan()),
     periodoUnidade: z.enum(UNIDADES),
-    expr: z.string().trim().max(MAX_EXPR, `No máximo ${MAX_EXPR} caracteres.`),
-    timezone: z.string().trim().max(MAX_FUSO, `No máximo ${MAX_FUSO} caracteres.`),
+    // Os limites destes dois moram no ramo cron: no de período os campos não
+    // estão na tela, e um erro neles travaria o envio em silêncio.
+    expr: z.string().trim(),
+    timezone: z.string().trim(),
     toleranciaQuantidade: z.number().or(z.nan()),
     toleranciaUnidade: z.enum(UNIDADES),
   })
@@ -44,7 +46,9 @@ export const esquemaDoHeartbeat = z
       return
     }
     if (v.expr === '') fora('expr', 'Informe a expressão.')
+    else if (v.expr.length > MAX_EXPR) fora('expr', `No máximo ${MAX_EXPR} caracteres.`)
     if (v.timezone === '') fora('timezone', 'Informe o fuso.')
+    else if (v.timezone.length > MAX_FUSO) fora('timezone', `No máximo ${MAX_FUSO} caracteres.`)
   })
 
 export type ValoresDoHeartbeat = z.infer<typeof esquemaDoHeartbeat>

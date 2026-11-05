@@ -117,20 +117,23 @@ function resumoDasTarefas(tarefas: readonly Heartbeat[]): string {
 }
 
 // A linha abaixo da manchete: "1 fora do ar, 5 no ar. Tarefas: 1 atrasada."
-export function detalheDaManchete(itens: readonly ItemDoResumo[], tarefas: readonly Heartbeat[]): string {
-  return `${[resumoEmTexto(itens), resumoDasTarefas(tarefas)].filter(Boolean).join('. ')}.`
+// Sem a resposta das tarefas, a contagem velha fica de fora, e sem nada a
+// dizer não há linha.
+export function detalheDaManchete(itens: readonly ItemDoResumo[], tarefas: Tarefas): string | null {
+  const partes = [resumoEmTexto(itens), tarefas.confirmadas ? resumoDasTarefas(tarefas.itens) : ''].filter(Boolean)
+  return partes.length ? `${partes.join('. ')}.` : null
 }
 
 // "Atualizado às 14:32 · 3 de 4 no ar · 2 de 3 tarefas em dia". O total é o
 // dos ativos: um pausado não deveria estar no ar. Sem nada do tipo, ele some.
-export function metaDoPainel(itens: readonly ItemDoResumo[], tarefas: readonly Heartbeat[], atualizadoEm: Date): string {
+export function metaDoPainel(itens: readonly ItemDoResumo[], tarefas: Tarefas, atualizadoEm: Date): string {
   const ativos = itens.filter((it) => it.enabled)
   const noAr = ativos.filter((it) => it.state === 'up').length
-  const tarefasAtivas = tarefas.filter((hb) => hb.enabled)
+  const tarefasAtivas = tarefas.confirmadas ? tarefas.itens.filter((hb) => hb.enabled) : []
   const emDia = tarefasAtivas.filter((hb) => hb.state === 'up').length
   const partes = [`Atualizado às ${horaMinuto(atualizadoEm.getTime())}`]
   if (ativos.length > 0) partes.push(`${noAr} de ${ativos.length} no ar`)
-  else if (tarefas.length === 0) partes.push('nenhum alvo ativo')
+  else if (tarefas.itens.length === 0) partes.push('nenhum alvo ativo')
   if (tarefasAtivas.length > 0) partes.push(`${emDia} de ${tarefasAtivas.length} ${tarefasAtivas.length === 1 ? 'tarefa' : 'tarefas'} em dia`)
   return partes.join(' · ')
 }
@@ -148,9 +151,11 @@ export function ultimoResolvido(itens: readonly Incidente[]): Resolvido | null {
 }
 
 // A frase do "Tudo no ar.". Sem resposta (carregando ou falha), nada: não
-// saber não é "nenhum incidente".
-export function fraseDoUltimoResolvido(itens: readonly Incidente[] | undefined): string | null {
+// saber não é "nenhum incidente". A consulta só vê os alvos (D3): com tarefas
+// cadastradas, a frase diz isso, em vez de negar o histórico delas.
+export function fraseDoUltimoResolvido(itens: readonly Incidente[] | undefined, comTarefas: boolean): string | null {
   if (itens === undefined) return null
   const ultimo = ultimoResolvido(itens)
-  return ultimo ? `Último incidente resolvido em ${dataHora(ultimo.resolved_at)}.` : 'Nenhum incidente registrado.'
+  const nome = comTarefas ? 'incidente de alvo' : 'incidente'
+  return ultimo ? `Último ${nome} resolvido em ${dataHora(ultimo.resolved_at)}.` : `Nenhum ${nome} registrado.`
 }

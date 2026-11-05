@@ -98,7 +98,8 @@ const troca: z.input<typeof InicioDaTroca> = {
 export const codigosNovos: z.input<typeof ConfirmacaoTotp> = {
   recovery_codes: Array.from({ length: 10 }, (_, i) => `NOVO${String(i).padStart(2, '0')}CODIGO000${i}`),
 }
-respostas['POST /heartbeats'] = { ...heartbeats[0], id: 'h1', ping_url: `https://stillon.exemplo/ping/${'t'.repeat(43)}` }
+export const TOKEN_DE_PING = 't'.repeat(43)
+respostas['POST /heartbeats'] = { ...heartbeats[0], id: 'h1', ping_url: `https://stillon.exemplo/ping/${TOKEN_DE_PING}` }
 respostas['POST /auth/totp/rotate'] = troca
 respostas['POST /auth/totp/rotate/confirm'] = codigosNovos
 

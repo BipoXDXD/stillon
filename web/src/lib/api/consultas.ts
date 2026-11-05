@@ -1,7 +1,7 @@
 import { keepPreviousData, useInfiniteQuery, useQuery } from '@tanstack/react-query'
 import { useApi } from '@/app/contexto'
 import type { FiltroDoResumo } from './cliente'
-import type { Heartbeat, Incidente, ItemDoResumo, ListaDeIncidentes } from './schemas'
+import type { Incidente, ItemDoResumo, ListaDeIncidentes } from './schemas'
 
 // As chaves e os intervalos de atualização (spec §11.4; spec do Plano 6 §3.5).
 export const chaves = {
@@ -122,8 +122,8 @@ function useConsultaDosAbertos<T>(select: (d: ListaDeIncidentes) => T) {
 
 const CONTADOR_CHEIO = 99
 
-// Mais que uma página vira "99+". Os heartbeats somam: /incidents não os traz
-// (D3), e o contador fala de todo incidente aberto (spec da tela, T13).
+// Mais que uma página vira "99+". As tarefas que pedem atenção somam: /incidents
+// não as traz (D3), e o contador não fica mudo com tarefa fora (spec da tela, T13).
 function textoDoContador(d: ListaDeIncidentes, tarefas: number): string {
   const total = d.items.length + tarefas
   return d.next_cursor || total > CONTADOR_CHEIO ? `${CONTADOR_CHEIO}+` : String(total)
@@ -133,14 +133,9 @@ function listarAbertos(d: ListaDeIncidentes): Abertos {
   return { itens: d.items, completa: d.next_cursor === undefined }
 }
 
-export function useTarefasComIncidente(): Heartbeat[] {
-  return useHeartbeats().data?.items.filter((hb) => hb.open_incident_id !== null) ?? []
-}
-
-export function useAbertos(): string | undefined {
+export function useAbertos(tarefas: number): string | undefined {
   const alvos = useConsultaDosAbertos((d) => d)
-  const tarefas = useTarefasComIncidente()
-  return alvos.data && textoDoContador(alvos.data, tarefas.length)
+  return alvos.data && textoDoContador(alvos.data, tarefas)
 }
 
 export function useIncidentesAbertos() {

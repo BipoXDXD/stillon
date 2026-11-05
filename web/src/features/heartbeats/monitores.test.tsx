@@ -34,9 +34,9 @@ describe('heartbeats na tabela de monitores', () => {
     expect(linha).not.toHaveTextContent('Fora do ar')
   })
 
-  // Critério da spec da tela: a manchete não fica verde com heartbeat fora,
-  // e o filtro não muda isso. Sabotagem: manchete só com os alvos.
-  it('a manchete fala do heartbeat atrasado mesmo com filtro que o tira da tabela', async () => {
+  // Critério da spec da tela: a manchete não fica verde com heartbeat fora.
+  // Sabotagem: manchete só com os alvos. O filtro tem o teste seguinte.
+  it('a manchete e a linha de detalhe falam da tarefa com falha', async () => {
     await painelCom({
       alvos: [{ id: 'a', name: 'API', tags: ['prod'] }],
       heartbeats: [{ id: 'h1', name: 'Backup', state: 'failing' }],
@@ -121,6 +121,15 @@ describe('heartbeats na tabela de monitores', () => {
     await screen.findByText(/Não foi possível conferir as tarefas agora/)
     expect(screen.getByRole('heading', { level: 2, name: 'Uma tarefa pede atenção.' })).toBeInTheDocument()
     expect(await nomesNaTabela()).toEqual(['Backup'])
+    expect(screen.queryByText(/tarefas? em dia/)).not.toBeInTheDocument()
+  })
+
+  it('só heartbeats e a consulta falhando: nada de parágrafo vazio', async () => {
+    const r = await renderizarPainel('/')
+    r.falsa.estado.forcar.set('GET /heartbeats', { status: 500, code: 'internal_error' })
+    await r.cliente.resetQueries()
+    const titulo = await screen.findByRole('heading', { level: 2, name: 'Não foi possível conferir as tarefas.' })
+    expect(titulo.closest('div')?.parentElement?.querySelector('p.text-suave')).toBeNull()
   })
 })
 
@@ -138,6 +147,28 @@ describe('detalhe do heartbeat', () => {
     expect(screen.getByText('cron 0 3 * * *, America/Sao_Paulo')).toBeInTheDocument()
     expect(screen.getByText('15 min')).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Painel', current: 'page' })).toBeInTheDocument()
+  })
+
+  // Editar um atrasado põe o prazo à frente e o incidente fica. O fixture vive
+  // em 2026-09: 2099 é futuro, 2020 é passado, com qualquer relógio.
+  // Sabotagem: tirar a guarda → "o prazo era" com data que não chegou.
+  it.each([
+    ['vencido', '2020-01-01T12:00:00Z', 'Prazo vencido', /o prazo era/],
+    ['futuro', '2099-01-01T12:00:00Z', 'Próximo prazo', /segue aberto até um sinal de sucesso/],
+  ])('atrasado com prazo %s', async (_, deadline_at, rotulo, frase) => {
+    const r = await renderizarPainel('/')
+    r.falsa.estado.heartbeats = [heartbeat({ id: 'h1', name: 'Backup', state: 'late', deadline_at })]
+    await r.router.navigate('/heartbeats/h1')
+    expect(await screen.findByText(rotulo)).toBeInTheDocument()
+    expect(screen.getByText(frase)).toBeInTheDocument()
+  })
+
+  it('pausado não afirma prazo nenhum', async () => {
+    const r = await renderizarPainel('/')
+    r.falsa.estado.heartbeats = [heartbeat({ id: 'h1', name: 'Backup', state: 'paused', enabled: false })]
+    await r.router.navigate('/heartbeats/h1')
+    await screen.findByText('Agendamento')
+    expect(screen.queryByText(/prazo/i)).not.toBeInTheDocument()
   })
 
   it('heartbeat que não existe mostra o erro da rota, sem quebrar', async () => {

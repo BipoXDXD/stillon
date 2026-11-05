@@ -64,6 +64,19 @@ describe('validação do formulário', () => {
     expect(paraCriacao(v).schedule).toEqual({ kind: 'cron', expr: '0 3 * * *', timezone: 'America/Sao_Paulo' })
   })
 
+  // Os campos do cron não estão na tela no ramo do período: um erro neles
+  // travaria o envio em silêncio. Sabotagem: voltar o .max para a base.
+  it('no período, expressão e fuso guardados não seguram o envio', () => {
+    expect(erros(valores({ tipo: 'period', expr: 'x'.repeat(101), timezone: 'y'.repeat(65) }))).toEqual({})
+  })
+
+  it('no cron, os limites valem', () => {
+    expect(erros(valores({ tipo: 'cron', expr: 'x'.repeat(101), timezone: 'y'.repeat(65) }))).toEqual({
+      expr: 'No máximo 100 caracteres.',
+      timezone: 'No máximo 64 caracteres.',
+    })
+  })
+
   // A expressão fica de fora de propósito: quem a julga é o servidor (T11).
   it('não julga a expressão cron', () => {
     expect(erros(valores({ tipo: 'cron', expr: 'isso não é cron', timezone: 'UTC' }))).toEqual({})

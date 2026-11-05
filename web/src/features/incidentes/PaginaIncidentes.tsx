@@ -18,7 +18,8 @@ import { ErroDoFormulario } from '@/components/ui/campo'
 import { estiloDeCartao } from '@/components/ui/cartao'
 import { ControleSegmentado, type OpcaoSegmentada } from '@/components/ui/controle-segmentado'
 import { estadoDoHeartbeat, textoDoHeartbeat } from '@/features/heartbeats/estado'
-import { useHeartbeats, useIncidentes, useIncidentesAbertos, useTarefasComIncidente } from '@/lib/api/consultas'
+import { useTarefasQuePedemAtencao } from '@/features/heartbeats/tarefas-que-pedem-atencao'
+import { useHeartbeats, useIncidentes, useIncidentesAbertos } from '@/lib/api/consultas'
 import { naoEncontrado } from '@/lib/api/http'
 import { mensagemDe, textoDaCausa } from '@/lib/api/mensagens'
 import type { Heartbeat, Incidente } from '@/lib/api/schemas'
@@ -127,11 +128,12 @@ function Grupo({ titulo, children }: { titulo: string; children: ReactNode }) {
 
 // O vazio dos abertos é o estado bom (auditoria I4): check em círculo verde.
 function Vazio({ filtro, soDosAlvos }: { filtro: Filtro; soDosAlvos: boolean }) {
-  if (filtro !== 'open') {
-    return <p className="text-suave">{filtro === 'resolved' ? 'Nenhum incidente resolvido.' : 'Nenhum incidente.'}</p>
+  if (filtro === 'resolved') return <p className="text-suave">Nenhum incidente resolvido.</p>
+  // Com tarefa fora, ou sem saber das tarefas, dizer "nenhum" mentiria.
+  if (soDosAlvos) {
+    return <p className="text-suave">{filtro === 'open' ? 'Nenhum alvo com incidente aberto.' : 'Nenhum alvo com incidente.'}</p>
   }
-  // Com tarefa em incidente, ou sem saber das tarefas, o vazio verde mentiria.
-  if (soDosAlvos) return <p className="text-suave">Nenhum alvo com incidente aberto.</p>
+  if (filtro === 'all') return <p className="text-suave">Nenhum incidente.</p>
   return (
     <div className="flex flex-col items-center gap-3 rounded-padrao border border-borda bg-superficie p-8 text-center sombra-nivel-1">
       <span className="inline-flex size-12 items-center justify-center rounded-full bg-no-ar-100 text-no-ar">
@@ -144,11 +146,11 @@ function Vazio({ filtro, soDosAlvos }: { filtro: Filtro; soDosAlvos: boolean }) 
 }
 
 // Os incidentes de heartbeat têm rotas próprias (D3 da spec de heartbeats): a
-// lista os aponta, em vez de fingir que não existem (spec da tela, T13).
-function TarefasComIncidente({ tarefas }: { tarefas: readonly Heartbeat[] }) {
+// lista aponta as tarefas fora, em vez de fingir que não existem (spec da tela, T13).
+function TarefasQuePedemAtencao({ tarefas }: { tarefas: readonly Heartbeat[] }) {
   if (tarefas.length === 0) return null
   return (
-    <Grupo titulo="Tarefas com incidente aberto">
+    <Grupo titulo="Tarefas que pedem atenção">
       <ul className="space-y-3">
         {tarefas.map((hb) => (
           <li key={hb.id} className={cn(estiloDeCartao, 'flex flex-wrap items-center gap-x-3 gap-y-2 border-l-4 border-l-fora')}>
@@ -172,7 +174,7 @@ export function PaginaIncidentes() {
   // qualquer filtro, sem requisição a mais.
   const abertos = useIncidentesAbertos()
   const heartbeats = useHeartbeats()
-  const tarefas = useTarefasComIncidente()
+  const tarefas = useTarefasQuePedemAtencao()
   const api = useApi()
   const qc = useQueryClient()
   const avisar = useAvisar()
@@ -263,7 +265,7 @@ export function PaginaIncidentes() {
         }}
       />
       <ErroDoFormulario>{erro}</ErroDoFormulario>
-      {filtro !== 'resolved' && <TarefasComIncidente tarefas={tarefas} />}
+      {filtro !== 'resolved' && <TarefasQuePedemAtencao tarefas={tarefas} />}
       {/* D17: um poll ou um "Carregar mais" que falha mantém a lista, com o
           aviso de dados velhos; só sem dados nenhuns o erro toma a tela. */}
       <EstadoDaConsulta consulta={consulta}>
