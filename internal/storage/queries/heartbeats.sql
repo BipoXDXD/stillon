@@ -42,9 +42,6 @@ DELETE FROM heartbeat_events e
 -- name: GetHeartbeat :one
 SELECT * FROM heartbeats WHERE user_id = $1 AND id = $2;
 
--- name: SetHeartbeatEnabled :exec
-UPDATE heartbeats SET enabled = $3 WHERE user_id = $1 AND id = $2;
-
 -- O log do dono, do mais novo ao mais velho. O id é UUIDv7, e o cursor é o
 -- último id da página anterior.
 -- name: ListHeartbeatEvents :many
@@ -93,3 +90,66 @@ SELECT h.id, h.user_id, h.last_success_at, x.id AS incident_id, x.started_at
 
 -- name: MarkHeartbeatIncident :exec
 UPDATE heartbeats SET last_incident_at = sqlc.arg(now)::timestamptz WHERE id = sqlc.arg(id);
+
+-- API do dono: as de cima e estas rodam sob InUserTx e filtram por user_id,
+-- como as de targets.sql.
+
+-- O teto por usuário: contar e inserir sob esta trava, como LockUserTargets.
+-- name: LockUserHeartbeats :exec
+SELECT pg_advisory_xact_lock(hashtextextended('stillon.heartbeats:' || sqlc.arg(user_id)::uuid::text, 0));
+
+-- name: CountHeartbeats :one
+SELECT count(*) FROM heartbeats WHERE user_id = $1;
+
+-- O índice único parcial garante no máximo um incidente aberto.
+-- name: GetHeartbeatView :one
+SELECT sqlc.embed(h), x.id AS open_incident_id
+  FROM heartbeats h
+  LEFT JOIN incidents x ON x.heartbeat_id = h.id AND x.resolved_at IS NULL
+ WHERE h.user_id = sqlc.arg(user_id) AND h.id = sqlc.arg(id);
+
+-- Paginação por cursor: o id é UUIDv7, e o cursor é o último id da página.
+-- name: ListHeartbeats :many
+SELECT sqlc.embed(h), x.id AS open_incident_id
+  FROM heartbeats h
+  LEFT JOIN incidents x ON x.heartbeat_id = h.id AND x.resolved_at IS NULL
+ WHERE h.user_id = sqlc.arg(user_id)
+   AND (sqlc.narg(before)::uuid IS NULL OR h.id < sqlc.narg(before)::uuid)
+ ORDER BY h.id DESC
+ LIMIT sqlc.arg(max_rows)::int;
+
+-- FOR UPDATE: o PATCH lê a linha e recalcula o prazo, e um ping no meio se
+-- perderia sem a trava.
+-- name: GetHeartbeatForUpdate :one
+SELECT * FROM heartbeats WHERE user_id = $1 AND id = $2 FOR UPDATE;
+
+-- name: UpdateHeartbeat :exec
+UPDATE heartbeats
+   SET name = sqlc.arg(name), period_sec = sqlc.narg(period_sec), cron_expr = sqlc.narg(cron_expr),
+       timezone = sqlc.narg(timezone), grace_sec = sqlc.arg(grace_sec), enabled = sqlc.arg(enabled),
+       deadline_at = sqlc.arg(deadline_at), failing_since = sqlc.narg(failing_since)
+ WHERE user_id = sqlc.arg(user_id) AND id = sqlc.arg(id);
+
+-- name: DeleteHeartbeat :execrows
+DELETE FROM heartbeats WHERE user_id = $1 AND id = $2;
+
+-- open NULL lista tudo; true só abertos; false só resolvidos.
+-- name: ListHeartbeatIncidents :many
+SELECT i.id, h.id AS heartbeat_id, h.name AS heartbeat_name, i.started_at, i.resolved_at, i.cause, i.ack_at
+  FROM incidents i
+  JOIN heartbeats h ON h.id = i.heartbeat_id
+ WHERE h.user_id = sqlc.arg(user_id)
+   AND h.id = sqlc.arg(heartbeat_id)
+   AND (sqlc.narg(open)::bool IS NULL OR (i.resolved_at IS NULL) = sqlc.narg(open)::bool)
+   AND (sqlc.narg(before)::uuid IS NULL OR i.id < sqlc.narg(before)::uuid)
+ ORDER BY i.id DESC
+ LIMIT sqlc.arg(max_rows)::int;
+
+-- Reconhecer é idempotente: o COALESCE preserva o primeiro ack.
+-- name: AckHeartbeatIncident :one
+UPDATE incidents i
+   SET ack_at = COALESCE(i.ack_at, sqlc.arg(now)::timestamptz)
+  FROM heartbeats h
+ WHERE h.id = i.heartbeat_id AND h.user_id = sqlc.arg(user_id)
+   AND h.id = sqlc.arg(heartbeat_id) AND i.id = sqlc.arg(id)
+RETURNING i.id, h.id AS heartbeat_id, h.name AS heartbeat_name, i.started_at, i.resolved_at, i.cause, i.ack_at;

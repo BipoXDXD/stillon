@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -56,6 +57,7 @@ func TestEveryRegisteredRouteDeniesByDefault(t *testing.T) {
 		if _, ok := rotasPublicas[rota]; ok {
 			continue
 		}
+		esperarVagaNoLimite(a)
 		metodo, caminho, _ := strings.Cut(rota, " ")
 		resp := chamar(t, a, metodo, preencherCuringas(caminho), "", nil)
 		corpo, err := io.ReadAll(resp.Body)
@@ -80,6 +82,7 @@ func TestEveryProtectedRouteRejectsForgedToken(t *testing.T) {
 		if _, ok := rotasPublicas[rota]; ok {
 			continue
 		}
+		esperarVagaNoLimite(a)
 		metodo, caminho, _ := strings.Cut(rota, " ")
 		resp := chamar(t, a, metodo, preencherCuringas(caminho), forjado, nil)
 		resp.Body.Close()
@@ -88,6 +91,12 @@ func TestEveryProtectedRouteRejectsForgedToken(t *testing.T) {
 		}
 	}
 }
+
+// esperarVagaNoLimite devolve um token ao limite por IP da API (120/min). A
+// enumeração sai toda do mesmo IP, e com o relógio parado passaria da rajada
+// de 30 assim que a API tivesse mais rotas que isso: o 429 esconderia o 401
+// que o teste quer ver.
+func esperarVagaNoLimite(a *api) { a.clk.Advance(time.Second) }
 
 // Toda mutação registrada da API, pública ou não (refresh e logout usam o
 // cookie, que é o que um CSRF aproveitaria), exige o X-Requested-With. Só o
@@ -100,6 +109,7 @@ func TestEveryMutationRequiresTheAntiCSRFHeader(t *testing.T) {
 		if metodo == http.MethodGet || rota == "POST /verify/{token}" || strings.HasPrefix(rota, "POST /ping/") {
 			continue
 		}
+		esperarVagaNoLimite(a)
 		req, err := http.NewRequest(metodo, a.srv.URL+preencherCuringas(caminho), strings.NewReader("{}"))
 		if err != nil {
 			t.Fatal(err)

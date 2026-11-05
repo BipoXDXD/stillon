@@ -270,10 +270,8 @@ func TestPingOnAPausedHeartbeatIsRecorded(t *testing.T) {
 	a := novoAmbiente(t)
 	ctx := context.Background()
 	id, token := a.novoHeartbeat(t)
-	err := storage.InUserTx(ctx, a.pool, a.dono, func(q *db.Queries) error {
-		return q.SetHeartbeatEnabled(ctx, db.SetHeartbeatEnabledParams{UserID: a.dono, ID: id, Enabled: false})
-	})
-	if err != nil {
+	desligado := false
+	if _, err := heartbeat.NewService(a.pool, a.clk).Update(ctx, a.dono, id, heartbeat.Patch{Enabled: &desligado}); err != nil {
 		t.Fatal(err)
 	}
 	a.pingar(t, token, heartbeat.SignalSuccess)

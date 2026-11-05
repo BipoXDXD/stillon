@@ -187,6 +187,7 @@ func run(ctx context.Context, cfg *config.Config) error {
 			Channels:    notify.NewChannelService(pool, box, clk, notify.NewDiscord(), verificador(cfg), cfg.PublicBaseURL),
 			StatusPages: statuspage.NewService(pool, clk),
 			Pings:       heartbeat.NewPingService(pool, clk),
+			Heartbeats:  heartbeat.NewService(pool, clk),
 			Clock:       clk,
 			Ready:       pool.Ping,
 		}

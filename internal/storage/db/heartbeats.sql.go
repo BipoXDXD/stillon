@@ -12,6 +12,53 @@ import (
 	"github.com/google/uuid"
 )
 
+const ackHeartbeatIncident = `-- name: AckHeartbeatIncident :one
+UPDATE incidents i
+   SET ack_at = COALESCE(i.ack_at, $1::timestamptz)
+  FROM heartbeats h
+ WHERE h.id = i.heartbeat_id AND h.user_id = $2
+   AND h.id = $3 AND i.id = $4
+RETURNING i.id, h.id AS heartbeat_id, h.name AS heartbeat_name, i.started_at, i.resolved_at, i.cause, i.ack_at
+`
+
+type AckHeartbeatIncidentParams struct {
+	Now         time.Time
+	UserID      uuid.UUID
+	HeartbeatID uuid.UUID
+	ID          uuid.UUID
+}
+
+type AckHeartbeatIncidentRow struct {
+	ID            uuid.UUID
+	HeartbeatID   uuid.UUID
+	HeartbeatName string
+	StartedAt     time.Time
+	ResolvedAt    *time.Time
+	Cause         string
+	AckAt         *time.Time
+}
+
+// Reconhecer é idempotente: o COALESCE preserva o primeiro ack.
+func (q *Queries) AckHeartbeatIncident(ctx context.Context, arg AckHeartbeatIncidentParams) (AckHeartbeatIncidentRow, error) {
+	row := q.db.QueryRow(ctx, ackHeartbeatIncident,
+		arg.Now,
+		arg.UserID,
+		arg.HeartbeatID,
+		arg.ID,
+	)
+	var i AckHeartbeatIncidentRow
+	err := row.Scan(
+		&i.ID,
+		&i.HeartbeatID,
+		&i.HeartbeatName,
+		&i.StartedAt,
+		&i.ResolvedAt,
+		&i.Cause,
+		&i.AckAt,
+	)
+	return i, err
+}
+
 const claimHeartbeatsToClose = `-- name: ClaimHeartbeatsToClose :many
 SELECT h.id, h.user_id, h.last_success_at, x.id AS incident_id, x.started_at
   FROM incidents x
@@ -121,6 +168,34 @@ func (q *Queries) ClaimHeartbeatsToOpen(ctx context.Context, arg ClaimHeartbeats
 	return items, nil
 }
 
+const countHeartbeats = `-- name: CountHeartbeats :one
+SELECT count(*) FROM heartbeats WHERE user_id = $1
+`
+
+func (q *Queries) CountHeartbeats(ctx context.Context, userID uuid.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countHeartbeats, userID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const deleteHeartbeat = `-- name: DeleteHeartbeat :execrows
+DELETE FROM heartbeats WHERE user_id = $1 AND id = $2
+`
+
+type DeleteHeartbeatParams struct {
+	UserID uuid.UUID
+	ID     uuid.UUID
+}
+
+func (q *Queries) DeleteHeartbeat(ctx context.Context, arg DeleteHeartbeatParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteHeartbeat, arg.UserID, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const getHeartbeat = `-- name: GetHeartbeat :one
 SELECT id, user_id, name, ping_token_hash, period_sec, cron_expr, timezone, grace_sec, enabled, created_at, deadline_at, last_ping_at, last_success_at, last_start_at, last_signal, failing_since, last_incident_at FROM heartbeats WHERE user_id = $1 AND id = $2
 `
@@ -151,6 +226,86 @@ func (q *Queries) GetHeartbeat(ctx context.Context, arg GetHeartbeatParams) (Hea
 		&i.LastSignal,
 		&i.FailingSince,
 		&i.LastIncidentAt,
+	)
+	return i, err
+}
+
+const getHeartbeatForUpdate = `-- name: GetHeartbeatForUpdate :one
+SELECT id, user_id, name, ping_token_hash, period_sec, cron_expr, timezone, grace_sec, enabled, created_at, deadline_at, last_ping_at, last_success_at, last_start_at, last_signal, failing_since, last_incident_at FROM heartbeats WHERE user_id = $1 AND id = $2 FOR UPDATE
+`
+
+type GetHeartbeatForUpdateParams struct {
+	UserID uuid.UUID
+	ID     uuid.UUID
+}
+
+// FOR UPDATE: o PATCH lê a linha e recalcula o prazo, e um ping no meio se
+// perderia sem a trava.
+func (q *Queries) GetHeartbeatForUpdate(ctx context.Context, arg GetHeartbeatForUpdateParams) (Heartbeat, error) {
+	row := q.db.QueryRow(ctx, getHeartbeatForUpdate, arg.UserID, arg.ID)
+	var i Heartbeat
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.Name,
+		&i.PingTokenHash,
+		&i.PeriodSec,
+		&i.CronExpr,
+		&i.Timezone,
+		&i.GraceSec,
+		&i.Enabled,
+		&i.CreatedAt,
+		&i.DeadlineAt,
+		&i.LastPingAt,
+		&i.LastSuccessAt,
+		&i.LastStartAt,
+		&i.LastSignal,
+		&i.FailingSince,
+		&i.LastIncidentAt,
+	)
+	return i, err
+}
+
+const getHeartbeatView = `-- name: GetHeartbeatView :one
+SELECT h.id, h.user_id, h.name, h.ping_token_hash, h.period_sec, h.cron_expr, h.timezone, h.grace_sec, h.enabled, h.created_at, h.deadline_at, h.last_ping_at, h.last_success_at, h.last_start_at, h.last_signal, h.failing_since, h.last_incident_at, x.id AS open_incident_id
+  FROM heartbeats h
+  LEFT JOIN incidents x ON x.heartbeat_id = h.id AND x.resolved_at IS NULL
+ WHERE h.user_id = $1 AND h.id = $2
+`
+
+type GetHeartbeatViewParams struct {
+	UserID uuid.UUID
+	ID     uuid.UUID
+}
+
+type GetHeartbeatViewRow struct {
+	Heartbeat      Heartbeat
+	OpenIncidentID *uuid.UUID
+}
+
+// O índice único parcial garante no máximo um incidente aberto.
+func (q *Queries) GetHeartbeatView(ctx context.Context, arg GetHeartbeatViewParams) (GetHeartbeatViewRow, error) {
+	row := q.db.QueryRow(ctx, getHeartbeatView, arg.UserID, arg.ID)
+	var i GetHeartbeatViewRow
+	err := row.Scan(
+		&i.Heartbeat.ID,
+		&i.Heartbeat.UserID,
+		&i.Heartbeat.Name,
+		&i.Heartbeat.PingTokenHash,
+		&i.Heartbeat.PeriodSec,
+		&i.Heartbeat.CronExpr,
+		&i.Heartbeat.Timezone,
+		&i.Heartbeat.GraceSec,
+		&i.Heartbeat.Enabled,
+		&i.Heartbeat.CreatedAt,
+		&i.Heartbeat.DeadlineAt,
+		&i.Heartbeat.LastPingAt,
+		&i.Heartbeat.LastSuccessAt,
+		&i.Heartbeat.LastStartAt,
+		&i.Heartbeat.LastSignal,
+		&i.Heartbeat.FailingSince,
+		&i.Heartbeat.LastIncidentAt,
+		&i.OpenIncidentID,
 	)
 	return i, err
 }
@@ -270,6 +425,132 @@ func (q *Queries) ListHeartbeatEvents(ctx context.Context, arg ListHeartbeatEven
 	return items, nil
 }
 
+const listHeartbeatIncidents = `-- name: ListHeartbeatIncidents :many
+SELECT i.id, h.id AS heartbeat_id, h.name AS heartbeat_name, i.started_at, i.resolved_at, i.cause, i.ack_at
+  FROM incidents i
+  JOIN heartbeats h ON h.id = i.heartbeat_id
+ WHERE h.user_id = $1
+   AND h.id = $2
+   AND ($3::bool IS NULL OR (i.resolved_at IS NULL) = $3::bool)
+   AND ($4::uuid IS NULL OR i.id < $4::uuid)
+ ORDER BY i.id DESC
+ LIMIT $5::int
+`
+
+type ListHeartbeatIncidentsParams struct {
+	UserID      uuid.UUID
+	HeartbeatID uuid.UUID
+	Open        *bool
+	Before      *uuid.UUID
+	MaxRows     int32
+}
+
+type ListHeartbeatIncidentsRow struct {
+	ID            uuid.UUID
+	HeartbeatID   uuid.UUID
+	HeartbeatName string
+	StartedAt     time.Time
+	ResolvedAt    *time.Time
+	Cause         string
+	AckAt         *time.Time
+}
+
+// open NULL lista tudo; true só abertos; false só resolvidos.
+func (q *Queries) ListHeartbeatIncidents(ctx context.Context, arg ListHeartbeatIncidentsParams) ([]ListHeartbeatIncidentsRow, error) {
+	rows, err := q.db.Query(ctx, listHeartbeatIncidents,
+		arg.UserID,
+		arg.HeartbeatID,
+		arg.Open,
+		arg.Before,
+		arg.MaxRows,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListHeartbeatIncidentsRow
+	for rows.Next() {
+		var i ListHeartbeatIncidentsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.HeartbeatID,
+			&i.HeartbeatName,
+			&i.StartedAt,
+			&i.ResolvedAt,
+			&i.Cause,
+			&i.AckAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listHeartbeats = `-- name: ListHeartbeats :many
+SELECT h.id, h.user_id, h.name, h.ping_token_hash, h.period_sec, h.cron_expr, h.timezone, h.grace_sec, h.enabled, h.created_at, h.deadline_at, h.last_ping_at, h.last_success_at, h.last_start_at, h.last_signal, h.failing_since, h.last_incident_at, x.id AS open_incident_id
+  FROM heartbeats h
+  LEFT JOIN incidents x ON x.heartbeat_id = h.id AND x.resolved_at IS NULL
+ WHERE h.user_id = $1
+   AND ($2::uuid IS NULL OR h.id < $2::uuid)
+ ORDER BY h.id DESC
+ LIMIT $3::int
+`
+
+type ListHeartbeatsParams struct {
+	UserID  uuid.UUID
+	Before  *uuid.UUID
+	MaxRows int32
+}
+
+type ListHeartbeatsRow struct {
+	Heartbeat      Heartbeat
+	OpenIncidentID *uuid.UUID
+}
+
+// Paginação por cursor: o id é UUIDv7, e o cursor é o último id da página.
+func (q *Queries) ListHeartbeats(ctx context.Context, arg ListHeartbeatsParams) ([]ListHeartbeatsRow, error) {
+	rows, err := q.db.Query(ctx, listHeartbeats, arg.UserID, arg.Before, arg.MaxRows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListHeartbeatsRow
+	for rows.Next() {
+		var i ListHeartbeatsRow
+		if err := rows.Scan(
+			&i.Heartbeat.ID,
+			&i.Heartbeat.UserID,
+			&i.Heartbeat.Name,
+			&i.Heartbeat.PingTokenHash,
+			&i.Heartbeat.PeriodSec,
+			&i.Heartbeat.CronExpr,
+			&i.Heartbeat.Timezone,
+			&i.Heartbeat.GraceSec,
+			&i.Heartbeat.Enabled,
+			&i.Heartbeat.CreatedAt,
+			&i.Heartbeat.DeadlineAt,
+			&i.Heartbeat.LastPingAt,
+			&i.Heartbeat.LastSuccessAt,
+			&i.Heartbeat.LastStartAt,
+			&i.Heartbeat.LastSignal,
+			&i.Heartbeat.FailingSince,
+			&i.Heartbeat.LastIncidentAt,
+			&i.OpenIncidentID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const lockHeartbeatForPing = `-- name: LockHeartbeatForPing :one
 SELECT id, user_id, name, ping_token_hash, period_sec, cron_expr, timezone, grace_sec, enabled, created_at, deadline_at, last_ping_at, last_success_at, last_start_at, last_signal, failing_since, last_incident_at FROM heartbeats WHERE ping_token_hash = $1 FOR UPDATE
 `
@@ -301,6 +582,19 @@ func (q *Queries) LockHeartbeatForPing(ctx context.Context, pingTokenHash []byte
 		&i.LastIncidentAt,
 	)
 	return i, err
+}
+
+const lockUserHeartbeats = `-- name: LockUserHeartbeats :exec
+
+SELECT pg_advisory_xact_lock(hashtextextended('stillon.heartbeats:' || $1::uuid::text, 0))
+`
+
+// API do dono: as de cima e estas rodam sob InUserTx e filtram por user_id,
+// como as de targets.sql.
+// O teto por usuário: contar e inserir sob esta trava, como LockUserTargets.
+func (q *Queries) LockUserHeartbeats(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, lockUserHeartbeats, userID)
+	return err
 }
 
 const markHeartbeatIncident = `-- name: MarkHeartbeatIncident :exec
@@ -370,21 +664,6 @@ func (q *Queries) SaveHeartbeatPing(ctx context.Context, arg SaveHeartbeatPingPa
 	return err
 }
 
-const setHeartbeatEnabled = `-- name: SetHeartbeatEnabled :exec
-UPDATE heartbeats SET enabled = $3 WHERE user_id = $1 AND id = $2
-`
-
-type SetHeartbeatEnabledParams struct {
-	UserID  uuid.UUID
-	ID      uuid.UUID
-	Enabled bool
-}
-
-func (q *Queries) SetHeartbeatEnabled(ctx context.Context, arg SetHeartbeatEnabledParams) error {
-	_, err := q.db.Exec(ctx, setHeartbeatEnabled, arg.UserID, arg.ID, arg.Enabled)
-	return err
-}
-
 const setHeartbeatPingHash = `-- name: SetHeartbeatPingHash :exec
 UPDATE heartbeats SET ping_token_hash = $3 WHERE user_id = $1 AND id = $2
 `
@@ -420,5 +699,42 @@ type TrimHeartbeatEventsParams struct {
 // e o índice (heartbeat_id, id DESC) resolve os dois lados.
 func (q *Queries) TrimHeartbeatEvents(ctx context.Context, arg TrimHeartbeatEventsParams) error {
 	_, err := q.db.Exec(ctx, trimHeartbeatEvents, arg.HeartbeatID, arg.MaxEvents)
+	return err
+}
+
+const updateHeartbeat = `-- name: UpdateHeartbeat :exec
+UPDATE heartbeats
+   SET name = $1, period_sec = $2, cron_expr = $3,
+       timezone = $4, grace_sec = $5, enabled = $6,
+       deadline_at = $7, failing_since = $8
+ WHERE user_id = $9 AND id = $10
+`
+
+type UpdateHeartbeatParams struct {
+	Name         string
+	PeriodSec    *int32
+	CronExpr     *string
+	Timezone     *string
+	GraceSec     int32
+	Enabled      bool
+	DeadlineAt   time.Time
+	FailingSince *time.Time
+	UserID       uuid.UUID
+	ID           uuid.UUID
+}
+
+func (q *Queries) UpdateHeartbeat(ctx context.Context, arg UpdateHeartbeatParams) error {
+	_, err := q.db.Exec(ctx, updateHeartbeat,
+		arg.Name,
+		arg.PeriodSec,
+		arg.CronExpr,
+		arg.Timezone,
+		arg.GraceSec,
+		arg.Enabled,
+		arg.DeadlineAt,
+		arg.FailingSince,
+		arg.UserID,
+		arg.ID,
+	)
 	return err
 }

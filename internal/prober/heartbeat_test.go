@@ -97,11 +97,7 @@ func (b *bancadaHB) pingar(t *testing.T, token string, sig heartbeat.Signal) {
 
 func (b *bancadaHB) pausar(t *testing.T, id uuid.UUID, ligado bool) {
 	t.Helper()
-	ctx := t.Context()
-	err := storage.InUserTx(ctx, b.pool, b.dono, func(q *db.Queries) error {
-		return q.SetHeartbeatEnabled(ctx, db.SetHeartbeatEnabledParams{UserID: b.dono, ID: id, Enabled: ligado})
-	})
-	if err != nil {
+	if _, err := heartbeat.NewService(b.pool, b.clk).Update(t.Context(), b.dono, id, heartbeat.Patch{Enabled: &ligado}); err != nil {
 		t.Fatal(err)
 	}
 }

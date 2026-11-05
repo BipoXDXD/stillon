@@ -85,6 +85,7 @@ func TestEveryResourceRouteRejectsRevokedFamily(t *testing.T) {
 		t.Fatalf("preparar página: %d", resp.StatusCode)
 	}
 	antes := recursosPersistidos(t, a)
+	hb, _ := criarHB(t, a, dono, corpoDePeriodo)
 	a.email.mu.Lock()
 	enviosAntes := len(a.email.links)
 	a.email.mu.Unlock()
@@ -120,6 +121,15 @@ func TestEveryResourceRouteRejectsRevokedFamily(t *testing.T) {
 		{"GET /api/v1/status-pages", "/api/v1/status-pages", nil},
 		{"POST /api/v1/status-pages", "/api/v1/status-pages", map[string]string{"slug": "nova-pagina", "title": "Nova"}},
 		{"PATCH /api/v1/status-pages/{id}", "/api/v1/status-pages/" + pagina.ID, map[string]bool{"published": true}},
+		{"GET /api/v1/heartbeats", "/api/v1/heartbeats", nil},
+		{"POST /api/v1/heartbeats", "/api/v1/heartbeats", corpoDePeriodo},
+		{"GET /api/v1/heartbeats/{id}", "/api/v1/heartbeats/" + hb, nil},
+		{"PATCH /api/v1/heartbeats/{id}", "/api/v1/heartbeats/" + hb, map[string]string{"name": "outro"}},
+		{"DELETE /api/v1/heartbeats/{id}", "/api/v1/heartbeats/" + hb, nil},
+		{"POST /api/v1/heartbeats/{id}/token/rotate", "/api/v1/heartbeats/" + hb + "/token/rotate", nil},
+		{"GET /api/v1/heartbeats/{id}/events", "/api/v1/heartbeats/" + hb + "/events", nil},
+		{"GET /api/v1/heartbeats/{id}/incidents", "/api/v1/heartbeats/" + hb + "/incidents", nil},
+		{"POST /api/v1/heartbeats/{id}/incidents/{incident_id}/ack", "/api/v1/heartbeats/" + hb + "/incidents/" + uuid.NewString() + "/ack", nil},
 	}
 	// A matriz não pode deixar uma rota de recurso nova sem a prova de
 	// revogação. A enumeração existente também verifica registros novos.

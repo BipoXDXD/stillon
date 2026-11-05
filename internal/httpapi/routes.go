@@ -55,7 +55,9 @@ type Deps struct {
 	StatusPages *statuspage.Service
 	// Pings recebe os sinais das tarefas em /ping/{token}.
 	Pings *heartbeat.PingService
-	Clock clock.Clock
+	// Heartbeats é o cadastro do dono.
+	Heartbeats *heartbeat.Service
+	Clock      clock.Clock
 	// Ready é o teste de prontidão de /readyz: o ping no banco em produção.
 	Ready func(context.Context) error
 	// Painel são os arquivos do painel React. Nil é o embutido no binário
@@ -89,6 +91,7 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	h := NewAuthHandlers(d.Store, d.Sessions, d.TOTP, d.Clock, cfg.JWTSecret, secureCookie, proxiesDe(cfg), provas, dispositivos)
 	th := NewTargetHandlers(d.Targets, d.Clock)
 	ih := NewIncidentHandlers(d.Incidents)
+	hb := NewHeartbeatHandlers(d.Heartbeats, cfg.PublicBaseURL)
 	ch := NewChannelHandlers(d.Channels)
 	sp := NewStatusPageHandlers(d.StatusPages, cfg.PublicBaseURL)
 	ah := NewAccountHandlers(d.Accounts, proxiesDe(cfg), secureCookie, provas)
@@ -173,6 +176,16 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 
 	mux.Handle("GET /api/v1/incidents", protegida(ih.List))
 	mux.Handle("POST /api/v1/incidents/{id}/ack", protegida(ih.Ack))
+
+	mux.Handle("GET /api/v1/heartbeats", protegida(hb.List))
+	mux.Handle("POST /api/v1/heartbeats", protegida(hb.Create))
+	mux.Handle("GET /api/v1/heartbeats/{id}", protegida(hb.Get))
+	mux.Handle("PATCH /api/v1/heartbeats/{id}", protegida(hb.Update))
+	mux.Handle("DELETE /api/v1/heartbeats/{id}", protegida(hb.Delete))
+	mux.Handle("POST /api/v1/heartbeats/{id}/token/rotate", protegida(hb.RotateToken))
+	mux.Handle("GET /api/v1/heartbeats/{id}/events", protegida(hb.Events))
+	mux.Handle("GET /api/v1/heartbeats/{id}/incidents", protegida(hb.Incidents))
+	mux.Handle("POST /api/v1/heartbeats/{id}/incidents/{incident_id}/ack", protegida(hb.AckIncident))
 
 	porEnvio := middleware.RateLimitUserEvery(ctx, d.Clock, envioACada, envioBurst)
 	comEnvio := func(fn http.HandlerFunc) http.Handler { return authn(porUsuario(porEnvio(viva(fn)))) }

@@ -129,6 +129,7 @@ func newAPICom(t *testing.T, ajustar func(*config.Config), ajustarDeps func(*htt
 		Channels:    notify.NewChannelService(pool, box, clk, discord, email, cfg.PublicBaseURL),
 		StatusPages: statuspage.NewService(pool, clk),
 		Pings:       heartbeat.NewPingService(pool, clk),
+		Heartbeats:  heartbeat.NewService(pool, clk),
 		Clock:       clk, Ready: pool.Ping,
 	}
 	if ajustarDeps != nil {
