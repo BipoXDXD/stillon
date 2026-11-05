@@ -17,6 +17,34 @@ REFERENCE = "ghcr.io/bipoxdxd/stillon@sha256:" + "c" * 64
 SOURCE = "https://github.com/BipoXDXD/stillon"
 
 
+def diretorio_executavel():
+    """Cria um diretório temporário em que um script roda de verdade.
+
+    Há runners com /run ou /tmp noexec, e a montagem não avisa ao criar o
+    arquivo: só executar prova. Sem isso o docker falso não roda e toda recusa
+    passa sem ter testado nada.
+    """
+    tentativas = []
+    for base in [tempfile.gettempdir(), "/var/tmp", str(Path.home()), str(ROOT)]:
+        try:
+            directory = Path(tempfile.mkdtemp(prefix="stillon-helper-bin-", dir=base))
+        except OSError as error:
+            tentativas.append(f"{base}: {error}")
+            continue
+        probe = directory / "sonda"
+        try:
+            probe.write_text("#!/bin/sh\nexit 0\n")
+            probe.chmod(0o755)
+            subprocess.run([str(probe)], check=True)
+        except (OSError, subprocess.CalledProcessError) as error:
+            tentativas.append(f"{base}: {error}")
+            shutil.rmtree(directory)
+            continue
+        probe.unlink()
+        return directory.resolve()
+    raise RuntimeError("nenhum diretório executável para o docker falso: " + "; ".join(tentativas))
+
+
 class ImagemBackup(unittest.TestCase):
     def setUp(self):
         # Em CI sudo usa metadados reais sob /run, sem /tmp gravável na ancestralidade.
@@ -30,8 +58,7 @@ class ImagemBackup(unittest.TestCase):
                         "deployment_uuid": "fixture", "finished_at": 1}
         self.env = {**os.environ, "FIXTURE": str(self.directory), "LEGACY": "0", "REVISION": SHA,
                     "SOURCE": SOURCE, "PRESENT": "1", "BAD_METADATA": "", "LEGACY_ID": IMAGE}
-        # O docker falso fica fora de /run: há runners que montam /run com noexec.
-        self.bin = Path(tempfile.mkdtemp(prefix="stillon-helper-bin-")).resolve()
+        self.bin = diretorio_executavel()
         self.addCleanup(shutil.rmtree, self.bin)
         docker = self.bin / "docker"
         docker.write_text("""#!/usr/bin/env python3
