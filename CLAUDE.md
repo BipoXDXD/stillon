@@ -45,56 +45,49 @@ Lições da execução guiada (2026-09-28):
 - Configuração do Mac sem segredo (ex.: `~/.ssh/config`), o Claude escreve; o dono roda o que
   pede passphrase, `sudo` ou painel.
 
-## Orientação atual (2026-10-14)
+## Orientação atual (2026-11-05)
 
-O dono migrou do Linux para o **Mac** (MacBook Air): a hospedagem e o desenvolvimento partem
-dele. Ambiente conferido em 2026-10-13 (Go, Node, Docker Desktop, GPG, ferramentas do CI); o
-PR #64 faz a suíte Go passar no macOS.
+O dono trabalha no **Mac** (MacBook Air): a hospedagem e o desenvolvimento partem dele. A suíte Go
+passa no macOS (PR #64).
 
-**O StillOn está no ar** em <https://stillon.tech> (deploy do commit `6e3b747`, certificado
-Let's Encrypt até 2027-01-12). A VPS é **compartilhada com o GoblinShift**, outro projeto do dono
-(`~/Documents/Projetos/Python/GoblinShift`): a borda em `/srv/edge` é um Caddy com TLS por
-domínio, e o Caddy do StillOn fica atrás dela
-([spec](docs/superpowers/specs/2026-10-13-vps-compartilhada-design.md),
-[plano](docs/superpowers/plans/2026-10-13-vps-compartilhada.md)). A rede `stillon` é
-`10.30.0.0/24` (a antiga, `172.30.0.0/24`, é do GoblinShift na VPS). A **Task 6 do plano está
-concluída** (6.1 a 6.7 feitos e conferidos, runbook dos blocos 3 a 9 inclusive backup, ensaio de
-restauração e reboot de teste, sem o `sudo` temporário e sem a `~/borda`); o 9.1 visto de fora
-(`nmap`) mostra só 22, 80 e 443. O runbook já traz as correções da execução real. O estado
-completo, as decisões e a armadilha do `[skip ci]` estão na
-[continuidade de 2026-10-14](docs/superpowers/reports/2026-10-14-continuacao.md).
+**O StillOn está no ar** em <https://stillon.tech>, publicado em `a552515` (PR #144; run do
+`Coolify release` verde e `readyz` 200 em 2026-11-05). **Todo merge na `main` publica sozinho** pelo workflow `Coolify release`
+([`.github/workflows/coolify.yml`](.github/workflows/coolify.yml), descrição em
+[`deploy/coolify/release/README.md`](deploy/coolify/release/README.md)): ele roda quando o `ci` de um
+push na `main` termina com sucesso, confere o SHA exato e envia as imagens à VPS, que é
+**compartilhada com outros projetos do dono** (GoblinShift, Duora). Por isso:
 
-**URGENTE, do dono: renovar a VPS no painel da Hostinger; ela expira em 2026-10-25.** Sem a
-renovação, o StillOn e o GoblinShift saem do ar.
+- **Merge é deploy.** Antes de dizer que algo está no ar, confira o run do `Coolify release` desse
+  SHA (`gh run list --workflow coolify.yml`); nunca anuncie deploy sem conferência.
+- **`[skip ci]` não publica.** Commit sem o `ci` da `main` não é publicado. Serve para
+  documentação (entra com `gh pr merge --admin`); um PR com código nunca leva `[skip ci]`.
+- O environment `production` do GitHub guarda as chaves do release (`COOLIFY_RELEASE_*`); o
+  `deploy.yml` manual antigo ainda existe e usa segredos do repositório.
+- A `main` tem ruleset (PR obrigatório e checks). Migrations vão até a 00014; a 00015 é reservada
+  à vinculação Discord.
 
-**O que mais falta, do dono:** ligar o 2FA do usuário do StillOn (adiado por decisão dele) e mover
-o login do StillOn para o Bitwarden. O healthchecks.io não tem defeito: a conta é de outro e-mail
-dele, e os alarmes (o do reboot inclusive) foram entregues lá. O backup semanal da Hostinger (7.3)
-está conferido: existem os de 2026-10-03 e 2026-10-10.
+**Confirmar com o dono: a renovação da VPS.** Ela vencia em 2026-10-25 no painel da Hostinger, e a
+data já passou; sem renovação, os projetos da VPS saem do ar. Este arquivo não sabe se foi feita.
+
+**Redesign** (direção C, "Editorial claro", Fraunces + Inter, primária índigo,
+[spec](docs/superpowers/specs/2026-10-14-redesign-painel-design.md)): concluído (PRs 1 a 8 na `main`, o
+último é o #141). Painel antigo na tag `painel-antes-do-redesign` e em
+`docs/design/painel-antes/`.
+
+**Esperam decisão do dono** (lista completa, com o que decidir em cada uma, na
+[continuidade de 2026-11-05](docs/superpowers/reports/2026-11-05-continuacao.md)): detalhes de
+design do redesign, ligar o 2FA e mover o login para o Bitwarden, D1–D3 da
+[vinculação Discord](docs/superpowers/plans/2026-10-05-vinculacao-discord.md), os segredos da VPS
+no nível do repositório, o acesso SSH a partir deste Mac, a migração para Go 1.27.3 ou mais novo (a `main` fica no 1.26.10) e o `stash@{0}` local
+(volume externo do compose). Não confundir planejamento aprovado com código pronto.
 
 O `checar-vps.sh` não roda nativo no Mac (o `stillon-entrada` fixa um `PATH` de Ubuntu e o tar do
 deploy é `amd64`): localmente, ele roda num Ubuntu descartável com o socket do Docker e
 `DOCKER_DEFAULT_PLATFORM=linux/amd64`; o bloco 9 (backup) só fecha no job `vps` do CI.
 
-**Desenvolvimento (tarde de 2026-10-14):** a `main` recebeu os lembretes de incidente (#73), o
-reforço de segurança (#77), a acessibilidade do painel e as correções da revisão de código
-(#74–#90). **Em produção desde `6e3b747` (PRs #96–#99):** migrations até a 00014 (que valida os CHECKs da
-00013) e o `compose.prod.yaml` com `stop_grace_period: 30s` já na VPS. A lista, as decisões e o
-que conferir estão na seção "Desenvolvimento na ausência do dono" da
-[continuidade de 2026-10-14](docs/superpowers/reports/2026-10-14-continuacao.md).
-
-A `main` tem ruleset (PR obrigatório e 9 checks); um PR `[skip ci]` entra com
-`gh pr merge --admin`.
-
-Esperam decisão do dono: D1–D3 da
-[vinculação Discord](docs/superpowers/plans/2026-10-05-vinculacao-discord.md) (a migration dela é
-a 00015) e o environment `production` no GitHub. As rotas de recurso exigem família de sessão
-viva: encerrar bloqueia novas requisições; ações já admitidas podem concluir. Não confundir
-planejamento aprovado com código pronto, nem anunciar deploy sem conferência.
-
-Redesign decidido: direção C, "Editorial claro" (Fraunces + Inter, primária índigo),
-[spec](docs/superpowers/specs/2026-10-14-redesign-painel-design.md); painel antigo na tag
-`painel-antes-do-redesign` e em `docs/design/painel-antes/`.
+O histórico (execução guiada na VPS, Task 6, deploys de 2026-10-14, revisões e redesign até o PR 3)
+fica em [2026-10-14](docs/superpowers/reports/2026-10-14-continuacao.md) e
+[2026-11-05](docs/superpowers/reports/2026-11-05-continuacao.md).
 
 ## Registro histórico (2026-09-28)
 
