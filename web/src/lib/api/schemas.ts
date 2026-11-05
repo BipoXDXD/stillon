@@ -145,6 +145,10 @@ export const Heartbeat = z.object({
 })
 export type Heartbeat = z.infer<typeof Heartbeat>
 
+// Só a resposta de criar e de rotacionar: ela é entregue a quem pediu e não
+// passa pelo cache de consultas.
+export const HeartbeatComPing = Heartbeat.extend({ ping_url: z.url() })
+
 export const ListaDeHeartbeats = z.object({ items: z.array(Heartbeat), next_cursor: z.string().optional() })
 
 export const Canal = z.object({

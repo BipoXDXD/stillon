@@ -3,9 +3,11 @@ import { enviar, lerCorpo, lerErro, type Buscar, type Pedido } from './http'
 import {
   Alvo,
   CadastroTotp,
+  Agendamento,
   Canal,
   ConfirmacaoTotp,
   Heartbeat,
+  HeartbeatComPing,
   InicioDaTroca,
   ListaDeAlvos,
   ListaDeCanais,
@@ -50,6 +52,10 @@ export type EntradaAlvo = {
 }
 
 export type AlteracaoAlvo = Partial<EntradaAlvo>
+
+export type EntradaHeartbeat = { name: string; schedule: Agendamento; grace_sec: number }
+
+export type AlteracaoHeartbeat = Partial<EntradaHeartbeat> & { enabled?: boolean }
 
 export type EntradaCanal = { kind: 'discord'; url: string } | { kind: 'email'; email: string }
 
@@ -156,6 +162,12 @@ export function criarApi(sessao: Sessao, buscar: Buscar, o: OpcoesDaApi = {}) {
     // Uma página de 100 é tudo: é o teto por usuário (spec da tela, T7).
     heartbeats: () => get('/heartbeats?limit=100', ListaDeHeartbeats),
     heartbeat: (id: string) => get(`/heartbeats/${encodeURIComponent(id)}`, Heartbeat),
+    criarHeartbeat: (e: EntradaHeartbeat) => pedir({ metodo: 'POST', caminho: '/heartbeats', corpo: e }, HeartbeatComPing),
+    alterarHeartbeat: (id: string, a: AlteracaoHeartbeat) =>
+      pedir({ metodo: 'PATCH', caminho: `/heartbeats/${encodeURIComponent(id)}`, corpo: a }, Heartbeat),
+    apagarHeartbeat: (id: string) => pedir({ metodo: 'DELETE', caminho: `/heartbeats/${encodeURIComponent(id)}` }, null),
+    rotacionarHeartbeat: (id: string) =>
+      pedir({ metodo: 'POST', caminho: `/heartbeats/${encodeURIComponent(id)}/token/rotate` }, HeartbeatComPing),
     canais: () => get('/channels', ListaDeCanais),
     criarCanal: (e: EntradaCanal) => pedir({ metodo: 'POST', caminho: '/channels', corpo: e }, Canal),
     apagarCanal: (id: string) => pedir({ metodo: 'DELETE', caminho: `/channels/${encodeURIComponent(id)}` }, null),

@@ -52,12 +52,17 @@ export function PaginaPainel() {
     <>
       <div className="flex flex-wrap items-center justify-between gap-4">
         <Titulo aba="Painel">Painel</Titulo>
-        <Botao asChild>
-          <Link to="/targets/new">
-            <Plus aria-hidden="true" className="size-4" />
-            Cadastrar alvo
-          </Link>
-        </Botao>
+        <div className="flex flex-wrap gap-2">
+          <Botao tipo="secundario" asChild>
+            <Link to="/heartbeats/new">Cadastrar heartbeat</Link>
+          </Botao>
+          <Botao asChild>
+            <Link to="/targets/new">
+              <Plus aria-hidden="true" className="size-4" />
+              Cadastrar alvo
+            </Link>
+          </Botao>
+        </div>
       </div>
       <AvisoDeCanais />
       <EstadoDaConsulta consulta={consulta} esqueleto={<EsqueletoDoPainel />}>

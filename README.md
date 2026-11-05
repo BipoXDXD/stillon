@@ -97,8 +97,8 @@ na VPS, siga a configuração de e-mail do [runbook de produção](docs/deploy/v
   aviso de que o alvo voltou sai do mesmo jeito.
 - **Heartbeats** para tarefas agendadas: a tarefa avisa por `POST` numa URL própria, com período e
   tolerância ou expressão cron com fuso explícito, sinais de início e falha, tempo de execução e
-  log dos últimos eventos. Sem aviso no prazo, abre incidente pelos mesmos canais. Por enquanto só
-  pela API: a tela vem depois.
+  log dos últimos eventos. Sem aviso no prazo, abre incidente pelos mesmos canais. Eles aparecem
+  na tabela de monitores do painel, junto dos alvos.
   ```sh
   curl -fsS -m 10 --retry 3 -X POST https://stillon.tech/ping/SEU-TOKEN/start
   curl -fsS -m 10 --retry 3 -X POST https://stillon.tech/ping/SEU-TOKEN       # ou /fail

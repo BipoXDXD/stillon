@@ -40,6 +40,7 @@ export const SEGREDO_NOVO = 'KRSXG5CTMVRXEZLU'
 export const CODIGOS_NOVOS = Array.from({ length: 10 }, (_, i) => `NOVO${String(i).padStart(2, '0')}CODIGO000${i}`)
 // O rotation do n-ésimo rotate (A7 do Plano 10): 32 dígitos hex, como o
 // servidor (16 bytes derivados do segredo pendente).
+export const PING_URL = 'https://stillon.exemplo/ping/CANARIO-do-token-de-ping'
 export const rotacao = (n: number) => n.toString(16).padStart(32, '0')
 
 const agora = () => new Date('2026-09-24T12:00:00Z')
@@ -347,9 +348,44 @@ export function criarApiFalsa() {
     }),
 
     rota('get', '/heartbeats', () => HttpResponse.json({ items: st.heartbeats })),
+    rota('post', '/heartbeats', ({ corpo }) => {
+      const h = {
+        id: `hb-${st.heartbeats.length + 1}`,
+        name: String(corpo.name),
+        enabled: true,
+        schedule: corpo.schedule as Entrada<typeof Heartbeat>['schedule'],
+        grace_sec: corpo.grace_sec === undefined ? 300 : Number(corpo.grace_sec),
+        state: 'waiting' as const,
+        deadline_at: agora().toISOString(),
+        last_ping_at: null,
+        last_success_at: null,
+        last_start_at: null,
+        open_incident_id: null,
+        created_at: agora().toISOString(),
+      }
+      st.heartbeats.push(h)
+      return HttpResponse.json({ ...h, ping_url: PING_URL }, { status: 201 })
+    }),
     rota('get', '/heartbeats/:id', ({ params }) => {
       const h = st.heartbeats.find((x) => x.id === params.id)
       return h ? HttpResponse.json(h) : erro(404, 'not_found')
+    }),
+    rota('patch', '/heartbeats/:id', ({ params, corpo }) => {
+      const h = st.heartbeats.find((x) => x.id === params.id)
+      if (!h) return erro(404, 'not_found')
+      Object.assign(h, corpo)
+      if (typeof corpo.enabled === 'boolean') h.state = corpo.enabled ? 'up' : 'paused'
+      return HttpResponse.json(h)
+    }),
+    rota('delete', '/heartbeats/:id', ({ params }) => {
+      if (!st.heartbeats.some((x) => x.id === params.id)) return erro(404, 'not_found')
+      st.heartbeats = st.heartbeats.filter((x) => x.id !== params.id)
+      return new HttpResponse(null, { status: 204 })
+    }),
+    rota('post', '/heartbeats/:id/token/rotate', ({ params }) => {
+      const h = st.heartbeats.find((x) => x.id === params.id)
+      if (!h) return erro(404, 'not_found')
+      return HttpResponse.json({ ...h, ping_url: `${PING_URL}-novo` })
     }),
 
     rota('get', '/channels', () => HttpResponse.json({ items: st.canais })),
