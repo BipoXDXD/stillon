@@ -1,5 +1,5 @@
 import AxeBuilder from '@axe-core/playwright'
-import type { APIRequestContext } from '@playwright/test'
+import type { APIRequestContext, APIResponse } from '@playwright/test'
 import { controlePositivo, expect, test } from './fixtures'
 
 // A página pública redesenhada (PR 7 do redesign) contra o binário de
@@ -60,37 +60,90 @@ async function entrar(request: APIRequestContext, email: string, senha: string):
   }
 }
 
+// A limpeza é uma pilha de desfazer: cada recurso entra nela logo depois de
+// existir, o último a entrar sai primeiro, e o que não chegou a existir não
+// tem o que desfazer. limpar nunca lança, e uma etapa que falha não impede as
+// seguintes: no finally, uma exceção trocaria o erro do teste pelo da limpeza.
+// O contexto é novo porque o corpo pode ficar 60 s só no navegador, o
+// IdleTimeout do servidor: a conexão ociosa do fixture request pode estar
+// fechando quando a limpeza a reaproveita, o que suspeitamos ser a origem de
+// um ECONNRESET visto numa rodada com a máquina carregada.
+type Etapa = { nome: string; fazer: (api: APIRequestContext) => Promise<APIResponse> }
+
+async function limpar(abrir: () => Promise<APIRequestContext>, etapas: readonly Etapa[]): Promise<string[]> {
+  const falhas: string[] = []
+  try {
+    const api = await abrir()
+    for (const { nome, fazer } of etapas) {
+      try {
+        const r = await fazer(api)
+        if (!r.ok()) falhas.push(`${nome}: HTTP ${r.status()}`)
+      } catch (e) {
+        falhas.push(`${nome}: ${String(e)}`)
+      }
+    }
+    await api.dispose()
+  } catch (e) {
+    falhas.push(`contexto da limpeza: ${String(e)}`)
+  }
+  return falhas
+}
+
 test('página pública: faixa, legenda, fontes sob a CSP, título longo a 400 px e os dois temas', async ({
   page,
   request,
   credenciais,
+  playwright,
+  baseURL,
 }) => {
   test.setTimeout(120_000)
   const cabecalhos = await entrar(request, credenciais.email, credenciais.senha)
-  const criado = await request.post('/api/v1/targets', {
-    headers: cabecalhos,
-    data: {
-      name: `E2E pública ${Date.now()}`,
-      url: 'https://stillon-e2e.invalid/',
-      method: 'GET',
-      interval_sec: 60,
-      timeout_ms: 5000,
-      expected_status: 200,
-    },
-  })
-  expect(criado.status(), 'criar o alvo').toBe(201)
-  const { id: alvo } = (await criado.json()) as { id: string }
-  const lista = await request.get('/api/v1/status-pages', { headers: cabecalhos })
-  expect(lista.status(), 'listar as status pages').toBe(200)
-  const original = ((await lista.json()) as { items: Pagina[] }).items[0]
-  const corpo = { title: TITULO, published: true, items: [{ target_id: alvo, display_name: NOME }] }
-  let nossa: Pagina | undefined
+  const limpeza: Etapa[] = [{ nome: 'encerrar a sessão', fazer: (api) => api.post('/api/v1/auth/logout', { headers: MUTACAO }) }]
   try {
+    const criado = await request.post('/api/v1/targets', {
+      headers: cabecalhos,
+      data: {
+        name: `E2E pública ${Date.now()}`,
+        url: 'https://stillon-e2e.invalid/',
+        method: 'GET',
+        interval_sec: 60,
+        timeout_ms: 5000,
+        expected_status: 200,
+      },
+    })
+    expect(criado.status(), 'criar o alvo').toBe(201)
+    const { id: alvo } = (await criado.json()) as { id: string }
+    limpeza.unshift({ nome: 'apagar o alvo', fazer: (api) => api.delete(`/api/v1/targets/${alvo}`, { headers: cabecalhos }) })
+
+    const lista = await request.get('/api/v1/status-pages', { headers: cabecalhos })
+    expect(lista.status(), 'listar as status pages').toBe(200)
+    const original = ((await lista.json()) as { items: Pagina[] }).items[0]
+    const corpo = { title: TITULO, published: true, items: [{ target_id: alvo, display_name: NOME }] }
+    // Antes do PATCH: um PATCH que estoura o prazo pode ter valido no servidor.
+    if (original) {
+      limpeza.unshift({
+        nome: 'restaurar a status page',
+        fazer: (api) =>
+          api.patch(`/api/v1/status-pages/${original.id}`, {
+            headers: cabecalhos,
+            data: { title: original.title, published: original.published, items: original.items },
+          }),
+      })
+    }
     const salva = original
       ? await request.patch(`/api/v1/status-pages/${original.id}`, { headers: cabecalhos, data: corpo })
       : await request.post('/api/v1/status-pages', { headers: cabecalhos, data: { ...corpo, slug: 'e2e-pagina-publica' } })
     expect(salva.status(), 'salvar a status page').toBe(original ? 200 : 201)
-    nossa = (await salva.json()) as Pagina
+    const nossa = (await salva.json()) as Pagina
+    // A API não apaga status page: a criada aqui sai do ar, vazia, e a próxima
+    // rodada a reaproveita como original.
+    if (!original) {
+      limpeza.unshift({
+        nome: 'despublicar a status page',
+        fazer: (api) =>
+          api.patch(`/api/v1/status-pages/${nossa.id}`, { headers: cabecalhos, data: { published: false, items: [] } }),
+      })
+    }
 
     await page.setViewportSize({ width: 400, height: 800 })
     for (const [tema, fundo] of [
@@ -136,15 +189,9 @@ test('página pública: faixa, legenda, fontes sob a CSP, título longo a 400 px
     const [noArLarga = 0, , , semDadosLarga = Number.NaN] = larga.legenda
     expect(Math.abs(semDadosLarga - noArLarga), '1280 px: o sem dados da legenda tem a altura do no ar').toBeLessThan(0.5)
   } finally {
-    if (original) {
-      await request.patch(`/api/v1/status-pages/${original.id}`, {
-        headers: cabecalhos,
-        data: { title: original.title, published: original.published, items: original.items },
-      })
-    } else if (nossa) {
-      await request.patch(`/api/v1/status-pages/${nossa.id}`, { headers: cabecalhos, data: { published: false, items: [] } })
-    }
-    await request.delete(`/api/v1/targets/${alvo}`, { headers: cabecalhos })
-    await request.post('/api/v1/auth/logout', { headers: MUTACAO })
+    // soft: registra a falha sem lançar. Com o corpo do teste verde, a limpeza
+    // que falhou reprova o teste; com o corpo vermelho, soma-se ao erro dele.
+    const abrir = async () => playwright.request.newContext({ baseURL, storageState: await request.storageState() })
+    expect.soft(await limpar(abrir, limpeza), 'a limpeza').toEqual([])
   }
 })
