@@ -17,7 +17,7 @@ UPDATE incidents i
    SET ack_at = COALESCE(i.ack_at, $1::timestamptz)
   FROM targets t
  WHERE t.id = i.target_id AND t.user_id = $2 AND i.id = $3
-RETURNING i.id, i.target_id, t.name AS target_name, i.started_at, i.resolved_at, i.cause, i.ack_at
+RETURNING i.id, t.id AS target_id, t.name AS target_name, i.started_at, i.resolved_at, i.cause, i.ack_at
 `
 
 type AckIncidentParams struct {
@@ -128,7 +128,7 @@ func (q *Queries) ExistingTargetIDs(ctx context.Context, ids []uuid.UUID) ([]uui
 }
 
 const getOpenIncident = `-- name: GetOpenIncident :one
-SELECT id, target_id, started_at, resolved_at, cause, ack_at, open_notified_at, close_notified_at FROM incidents WHERE target_id = $1 AND resolved_at IS NULL
+SELECT id, target_id, started_at, resolved_at, cause, ack_at, open_notified_at, close_notified_at, heartbeat_id FROM incidents WHERE target_id = $1::uuid AND resolved_at IS NULL
 `
 
 func (q *Queries) GetOpenIncident(ctx context.Context, targetID uuid.UUID) (Incident, error) {
@@ -143,6 +143,7 @@ func (q *Queries) GetOpenIncident(ctx context.Context, targetID uuid.UUID) (Inci
 		&i.AckAt,
 		&i.OpenNotifiedAt,
 		&i.CloseNotifiedAt,
+		&i.HeartbeatID,
 	)
 	return i, err
 }
@@ -175,7 +176,7 @@ func (q *Queries) ListDeliverableChannels(ctx context.Context, userID uuid.UUID)
 }
 
 const listIncidents = `-- name: ListIncidents :many
-SELECT i.id, i.target_id, t.name AS target_name, i.started_at, i.resolved_at, i.cause, i.ack_at
+SELECT i.id, t.id AS target_id, t.name AS target_name, i.started_at, i.resolved_at, i.cause, i.ack_at
   FROM incidents i
   JOIN targets t ON t.id = i.target_id
  WHERE t.user_id = $1
@@ -210,6 +211,9 @@ type ListIncidentsRow struct {
 // nada e devolve a lista vazia (reconciliação dos Planos 5–7).
 // O id é UUIDv7, gerado quando o incidente abre: ordenar por ele é ordenar
 // pela abertura, e o cursor é o último id da página anterior.
+// O JOIN deixa de fora os incidentes de heartbeat, que têm rotas próprias: o
+// painel exige target_id em cada item (D3 da spec de heartbeats). t.id, e não
+// i.target_id, porque a coluna agora aceita NULL e a saída aqui nunca é nula.
 func (q *Queries) ListIncidents(ctx context.Context, arg ListIncidentsParams) ([]ListIncidentsRow, error) {
 	rows, err := q.db.Query(ctx, listIncidents,
 		arg.UserID,
@@ -302,7 +306,8 @@ func (q *Queries) MarkOpenNotified(ctx context.Context, arg MarkOpenNotifiedPara
 }
 
 const openIncident = `-- name: OpenIncident :exec
-INSERT INTO incidents (id, target_id, started_at, cause) VALUES ($1, $2, $3, $4)
+INSERT INTO incidents (id, target_id, started_at, cause)
+VALUES ($1, $2::uuid, $3, $4)
 `
 
 type OpenIncidentParams struct {

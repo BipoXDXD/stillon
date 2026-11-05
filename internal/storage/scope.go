@@ -22,7 +22,7 @@ type Beginner interface {
 
 var (
 	ErrNoUser  = errors.New("transação de usuário sem usuário")
-	ErrNoToken = errors.New("transação de verificação sem hash de token")
+	ErrNoToken = errors.New("transação sem hash de token")
 	ErrNoSlug  = errors.New("transação pública sem slug")
 )
 
@@ -61,6 +61,17 @@ func InVerifyTx(ctx context.Context, b Beginner, tokenHash []byte, fn func(*db.Q
 		return ErrNoToken
 	}
 	return inTx(ctx, b, `SELECT set_config('app.verify_token_hash', $1, true)`, hex.EncodeToString(tokenHash), fn)
+}
+
+// InPingTx roda fn no escopo do ping público (POST /ping/{token}): a RLS
+// enxerga só a linha de heartbeats cujo ping_token_hash é tokenHash e os
+// eventos dela. Incidentes ficam de fora: quem os abre é o avaliador (D4 da
+// spec de heartbeats). É o único lugar do código que liga esse escopo.
+func InPingTx(ctx context.Context, b Beginner, tokenHash []byte, fn func(*db.Queries) error) error {
+	if len(tokenHash) != sha256.Size {
+		return ErrNoToken
+	}
+	return inTx(ctx, b, `SELECT set_config('app.ping_token_hash', $1, true)`, hex.EncodeToString(tokenHash), fn)
 }
 
 // InPublicTx roda fn no escopo público da status page (GET /p/{slug}): a
