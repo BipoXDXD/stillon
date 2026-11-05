@@ -311,7 +311,7 @@ func TestServiceSQLRecoveryComplementar(t *testing.T) {
 			}
 		}},
 		{"Summary_alvos", `ALTER TABLE targets RENAME TO targets_indisponivel_complementar`, `ALTER TABLE targets_indisponivel_complementar RENAME TO targets`, "42P01", "listar alvos do resumo: ", func(t *testing.T, a ambiente, u, id uuid.UUID, broken bool) {
-			got, err := a.svc.Summary(context.Background(), u)
+			got, err := a.svc.Summary(context.Background(), u, targets.SummaryFilter{})
 			if broken {
 				exigirPGComplementar(t, err, "42P01", "listar alvos do resumo: ")
 				if len(got) != 0 {
@@ -322,7 +322,7 @@ func TestServiceSQLRecoveryComplementar(t *testing.T) {
 			}
 		}},
 		{"Summary_marca", `ALTER TABLE check_rollup_1h RENAME TO rollup_indisponivel_complementar`, `ALTER TABLE rollup_indisponivel_complementar RENAME TO check_rollup_1h`, "42P01", "marca d'água dos rollups: ", func(t *testing.T, a ambiente, u, id uuid.UUID, broken bool) {
-			got, err := a.svc.Summary(context.Background(), u)
+			got, err := a.svc.Summary(context.Background(), u, targets.SummaryFilter{})
 			if broken {
 				exigirPGComplementar(t, err, "42P01", "marca d'água dos rollups: ")
 			} else if err != nil || len(got) != 1 || got[0].ID != id {
@@ -474,14 +474,14 @@ func TestSummaryCancellationAndRecoveryComplementar(t *testing.T) {
 		t.Helper()
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		got, err := svc.Summary(ctx, u)
+		got, err := svc.Summary(ctx, u, targets.SummaryFilter{})
 		if err != nil || len(got) != 1 || got[0].ID != id || got[0].Uptime24h == nil || *got[0].Uptime24h != 1 {
 			t.Fatalf("Summary não recuperou: %+v, %v", got, err)
 		}
 	}
 	discovery := &summaryTraceRequestComplementar{}
 	ctx, cancel := context.WithTimeout(context.WithValue(context.Background(), summaryTraceKeyComplementar{}, discovery), 10*time.Second)
-	got, err := svc.Summary(ctx, u)
+	got, err := svc.Summary(ctx, u, targets.SummaryFilter{})
 	cancel()
 	if err != nil || len(got) != 1 || got[0].ID != id {
 		t.Fatalf("controle positivo falhou: %+v, %v", got, err)
@@ -501,7 +501,7 @@ func TestSummaryCancellationAndRecoveryComplementar(t *testing.T) {
 			defer cancel()
 			request := &summaryTraceRequestComplementar{stopAfter: index + 1, cancel: cancel}
 			ctx = context.WithValue(ctx, summaryTraceKeyComplementar{}, request)
-			_, err := svc.Summary(ctx, u)
+			_, err := svc.Summary(ctx, u, targets.SummaryFilter{})
 			request.mu.Lock()
 			fired := request.fired
 			request.mu.Unlock()

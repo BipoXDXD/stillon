@@ -4,6 +4,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strconv"
 	"time"
 
@@ -35,6 +36,7 @@ type targetRequest struct {
 	DegradedThresholdMS optional[int32]   `json:"degraded_threshold_ms"`
 	Enabled             *bool             `json:"enabled"`
 	Headers             map[string]string `json:"headers"`
+	Tags                []string          `json:"tags"`
 }
 
 type targetPatchRequest struct {
@@ -47,6 +49,7 @@ type targetPatchRequest struct {
 	DegradedThresholdMS optional[int32]             `json:"degraded_threshold_ms"`
 	Enabled             *bool                       `json:"enabled"`
 	Headers             optional[map[string]string] `json:"headers"`
+	Tags                optional[[]string]          `json:"tags"`
 }
 
 // targetResponse é o DTO de saída, construído campo a campo. Não existe
@@ -63,6 +66,7 @@ type targetResponse struct {
 	DegradedThresholdMS *int32    `json:"degraded_threshold_ms"`
 	Enabled             bool      `json:"enabled"`
 	HeaderNames         []string  `json:"header_names"`
+	Tags                []string  `json:"tags"`
 	CreatedAt           time.Time `json:"created_at"`
 }
 
@@ -95,7 +99,7 @@ func toTargetResponse(t targets.Target) targetResponse {
 		ID: t.ID.String(), Name: t.Name, URL: t.URL, Method: t.Method,
 		IntervalSec: t.IntervalSec, TimeoutMS: t.TimeoutMS, ExpectedStatus: t.ExpectedStatus,
 		DegradedThresholdMS: t.DegradedThresholdMS, Enabled: t.Enabled,
-		HeaderNames: t.HeaderNames, CreatedAt: t.CreatedAt,
+		HeaderNames: t.HeaderNames, Tags: t.Tags, CreatedAt: t.CreatedAt,
 	}
 }
 
@@ -112,7 +116,7 @@ func (h *TargetHandlers) Create(w http.ResponseWriter, r *http.Request) {
 	in := targets.Input{
 		Name: req.Name, URL: req.URL, Method: req.Method,
 		IntervalSec: req.IntervalSec, TimeoutMS: req.TimeoutMS, ExpectedStatus: req.ExpectedStatus,
-		Enabled: true, Headers: req.Headers,
+		Enabled: true, Headers: req.Headers, Tags: req.Tags,
 	}
 	if req.Enabled != nil {
 		in.Enabled = *req.Enabled
@@ -224,6 +228,10 @@ func (h *TargetHandlers) Update(w http.ResponseWriter, r *http.Request) {
 	if req.Headers.Set {
 		p.SetHeaders = true
 		p.Headers = req.Headers.Value // null deixa Value nil: limpa
+	}
+	if req.Tags.Set {
+		p.SetTags = true
+		p.Tags = req.Tags.Value // null deixa Value nil: limpa
 	}
 
 	t, err := h.svc.Update(r.Context(), userID, id, p)
@@ -379,17 +387,35 @@ type targetSummaryResponse struct {
 	LastLatencyMS  *int32          `json:"last_latency_ms"`
 	Uptime24h      *float64        `json:"uptime_24h"`
 	OpenIncidentID *string         `json:"open_incident_id"`
+	Tags           []string        `json:"tags"`
 	Spark          []sparkResponse `json:"spark"`
 }
 
+// parametrosDoResumo é a allowlist de ?: um parâmetro desconhecido é 400, e
+// nunca um filtro ignorado que devolveria a lista inteira como se tivesse
+// filtrado.
+var parametrosDoResumo = []string{"tag", "state"}
+
 // Summary é GET /targets/summary: o dashboard numa chamada só (spec §11.3),
-// sem paginação (o teto de alvos por usuário é o limite).
+// sem paginação (o teto de alvos por usuário é o limite). ?tag= e ?state=
+// filtram (spec do painel denso).
 func (h *TargetHandlers) Summary(w http.ResponseWriter, r *http.Request) {
 	userID, ok := usuario(w, r)
 	if !ok {
 		return
 	}
-	resumo, err := h.svc.Summary(r.Context(), userID)
+	q := r.URL.Query()
+	for chave := range q {
+		if !slices.Contains(parametrosDoResumo, chave) {
+			campoInvalido(w, r, chave, targets.ReasonInvalid)
+			return
+		}
+	}
+	filtro, verr := targets.ParseSummaryFilter(q["tag"], q["state"])
+	if h.falhou(w, r, "filtrar resumo", validacaoOuNada(verr)) {
+		return
+	}
+	resumo, err := h.svc.Summary(r.Context(), userID, filtro)
 	if h.falhou(w, r, "resumir alvos", err) {
 		return
 	}
@@ -398,6 +424,7 @@ func (h *TargetHandlers) Summary(w http.ResponseWriter, r *http.Request) {
 		item := targetSummaryResponse{
 			ID: s.ID.String(), Name: s.Name, Enabled: s.Enabled, State: string(s.State),
 			LastCheckedAt: s.LastCheckedAt, LastLatencyMS: s.LastLatencyMS, Uptime24h: s.Uptime24h,
+			Tags:  s.Tags,
 			Spark: make([]sparkResponse, 0, len(s.Spark)),
 		}
 		if s.OpenIncidentID != nil {
@@ -410,6 +437,15 @@ func (h *TargetHandlers) Summary(w http.ResponseWriter, r *http.Request) {
 		itens = append(itens, item)
 	}
 	apierr.WriteJSON(w, http.StatusOK, map[string]any{"items": itens})
+}
+
+// validacaoOuNada evita o nil tipado: um *ValidationError nulo dentro de um
+// error não é um error nulo.
+func validacaoOuNada(verr *targets.ValidationError) error {
+	if verr == nil {
+		return nil
+	}
+	return verr
 }
 
 // pathID lê o {id} da rota. Malformado é 404 (D16): o recurso não existe de

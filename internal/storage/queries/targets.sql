@@ -141,6 +141,33 @@ SELECT c.target_id, count(*)::int AS total, (count(*) FILTER (WHERE c.status <> 
    AND c.checked_at < sqlc.arg(to_at)::timestamptz
  GROUP BY 1;
 
+-- Tags (spec do painel denso). As duas leituras saem ordenadas pela tag, e a
+-- do dono serve a lista e o resumo sem uma consulta por alvo.
+-- name: ListTargetTags :many
+SELECT tt.tag
+  FROM target_tags tt
+  JOIN targets t ON t.id = tt.target_id
+ WHERE t.user_id = sqlc.arg(user_id) AND tt.target_id = sqlc.arg(target_id)
+ ORDER BY tt.tag;
+
+-- name: ListUserTargetTags :many
+SELECT tt.target_id, tt.tag
+  FROM target_tags tt
+  JOIN targets t ON t.id = tt.target_id
+ WHERE t.user_id = sqlc.arg(user_id)
+ ORDER BY tt.target_id, tt.tag;
+
+-- name: DeleteTargetTags :exec
+DELETE FROM target_tags tt
+ USING targets t
+ WHERE t.id = tt.target_id AND t.user_id = sqlc.arg(user_id) AND tt.target_id = sqlc.arg(target_id);
+
+-- name: InsertTargetTags :exec
+INSERT INTO target_tags (target_id, tag)
+SELECT t.id, unnest(sqlc.arg(tags)::text[])
+  FROM targets t
+ WHERE t.user_id = sqlc.arg(user_id) AND t.id = sqlc.arg(target_id);
+
 -- O teto de alvos por usuário (Plano 5): contar e inserir sob esta trava.
 -- Sem ela, dois POST simultâneos passariam os dois pela contagem.
 -- name: LockUserTargets :exec

@@ -40,6 +40,22 @@ func (q *Queries) DeleteTarget(ctx context.Context, arg DeleteTargetParams) (int
 	return result.RowsAffected(), nil
 }
 
+const deleteTargetTags = `-- name: DeleteTargetTags :exec
+DELETE FROM target_tags tt
+ USING targets t
+ WHERE t.id = tt.target_id AND t.user_id = $1 AND tt.target_id = $2
+`
+
+type DeleteTargetTagsParams struct {
+	UserID   uuid.UUID
+	TargetID uuid.UUID
+}
+
+func (q *Queries) DeleteTargetTags(ctx context.Context, arg DeleteTargetTagsParams) error {
+	_, err := q.db.Exec(ctx, deleteTargetTags, arg.UserID, arg.TargetID)
+	return err
+}
+
 const getTarget = `-- name: GetTarget :one
 SELECT id, user_id, name, url, method, interval_sec, timeout_ms, expected_status, headers_enc, degraded_threshold_ms, enabled, next_run_at, created_at FROM targets WHERE user_id = $1 AND id = $2
 `
@@ -146,6 +162,24 @@ func (q *Queries) InsertTarget(ctx context.Context, arg InsertTargetParams) erro
 		arg.NextRunAt,
 		arg.CreatedAt,
 	)
+	return err
+}
+
+const insertTargetTags = `-- name: InsertTargetTags :exec
+INSERT INTO target_tags (target_id, tag)
+SELECT t.id, unnest($1::text[])
+  FROM targets t
+ WHERE t.user_id = $2 AND t.id = $3
+`
+
+type InsertTargetTagsParams struct {
+	Tags     []string
+	UserID   uuid.UUID
+	TargetID uuid.UUID
+}
+
+func (q *Queries) InsertTargetTags(ctx context.Context, arg InsertTargetTagsParams) error {
+	_, err := q.db.Exec(ctx, insertTargetTags, arg.Tags, arg.UserID, arg.TargetID)
 	return err
 }
 
@@ -471,6 +505,41 @@ func (q *Queries) ListTargetSummaries(ctx context.Context, userID uuid.UUID) ([]
 	return items, nil
 }
 
+const listTargetTags = `-- name: ListTargetTags :many
+SELECT tt.tag
+  FROM target_tags tt
+  JOIN targets t ON t.id = tt.target_id
+ WHERE t.user_id = $1 AND tt.target_id = $2
+ ORDER BY tt.tag
+`
+
+type ListTargetTagsParams struct {
+	UserID   uuid.UUID
+	TargetID uuid.UUID
+}
+
+// Tags (spec do painel denso). As duas leituras saem ordenadas pela tag, e a
+// do dono serve a lista e o resumo sem uma consulta por alvo.
+func (q *Queries) ListTargetTags(ctx context.Context, arg ListTargetTagsParams) ([]string, error) {
+	rows, err := q.db.Query(ctx, listTargetTags, arg.UserID, arg.TargetID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var tag string
+		if err := rows.Scan(&tag); err != nil {
+			return nil, err
+		}
+		items = append(items, tag)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listTargets = `-- name: ListTargets :many
 SELECT id, user_id, name, url, method, interval_sec, timeout_ms, expected_status, headers_enc, degraded_threshold_ms, enabled, next_run_at, created_at FROM targets
  WHERE user_id = $1
@@ -511,6 +580,34 @@ func (q *Queries) ListTargets(ctx context.Context, arg ListTargetsParams) ([]Tar
 			&i.NextRunAt,
 			&i.CreatedAt,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listUserTargetTags = `-- name: ListUserTargetTags :many
+SELECT tt.target_id, tt.tag
+  FROM target_tags tt
+  JOIN targets t ON t.id = tt.target_id
+ WHERE t.user_id = $1
+ ORDER BY tt.target_id, tt.tag
+`
+
+func (q *Queries) ListUserTargetTags(ctx context.Context, userID uuid.UUID) ([]TargetTag, error) {
+	rows, err := q.db.Query(ctx, listUserTargetTags, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []TargetTag
+	for rows.Next() {
+		var i TargetTag
+		if err := rows.Scan(&i.TargetID, &i.Tag); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
