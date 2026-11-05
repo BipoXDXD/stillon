@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -195,5 +196,22 @@ func TestPublicPageIsCompressedWhenTheClientAccepts(t *testing.T) {
 	// contrário, conforme quem chegou primeiro.
 	if v := r.Header.Get("Vary"); !strings.Contains(v, "Accept-Encoding") {
 		t.Errorf("sem gzip, Vary %q, queria Accept-Encoding", v)
+	}
+
+	// O HEAD passa pela mesma cadeia (GET /p/{slug} também atende HEAD) e
+	// declara o tamanho do GET sem gzip: o nonce tem tamanho fixo, então o
+	// texto puro tem o mesmo número de bytes em toda resposta.
+	req, err := http.NewRequest(http.MethodHead, a.srv.URL+"/p/comprimida", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Accept-Encoding", "identity")
+	head, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	head.Body.Close()
+	if head.StatusCode != http.StatusOK || head.Header.Get("Content-Length") != strconv.Itoa(len(b)) {
+		t.Errorf("HEAD deu %d com Content-Length %q; o GET sem gzip tem %d bytes", head.StatusCode, head.Header.Get("Content-Length"), len(b))
 	}
 }

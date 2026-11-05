@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"math"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -90,7 +91,14 @@ func (h *PublicPageHandlers) Page(w http.ResponseWriter, r *http.Request) {
 		pagina(w, http.StatusServiceUnavailable, paginaIndisponivel)
 		return
 	}
-	corpo := buf.Bytes()
+	entregar(w, r, buf.Bytes(), nonce)
+}
+
+// entregar escreve a página renderizada: os cabeçalhos dela, com o tamanho
+// do que vai no fio, e o corpo, em gzip para quem aceita. O HEAD (que a rota
+// GET também atende) leva os mesmos cabeçalhos e nenhum corpo, como o painel
+// em webui.servirArquivo.
+func entregar(w http.ResponseWriter, r *http.Request, corpo []byte, nonce string) {
 	hd := w.Header()
 	hd.Set("Content-Type", "text/html; charset=utf-8")
 	hd.Set("Content-Security-Policy", politicaDaPagina(nonce))
@@ -102,8 +110,11 @@ func (h *PublicPageHandlers) Page(w http.ResponseWriter, r *http.Request) {
 		hd.Set("Content-Encoding", "gzip")
 		corpo = comprimida(corpo)
 	}
+	hd.Set("Content-Length", strconv.Itoa(len(corpo)))
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(corpo)
+	if r.Method != http.MethodHead {
+		_, _ = w.Write(corpo)
+	}
 }
 
 // comprimida devolve o corpo em gzip. O nonce muda a cada resposta, então

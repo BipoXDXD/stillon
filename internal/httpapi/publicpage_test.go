@@ -4,10 +4,13 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -285,5 +288,43 @@ func TestLongOrganizationNameWraps(t *testing.T) {
 		if v := c.regras[sel]["overflow-wrap"]; v != "anywhere" {
 			t.Errorf("%s com overflow-wrap %q, queria anywhere", sel, v)
 		}
+	}
+}
+
+// A resposta declara o tamanho do que vai no fio, em cada codificação, e o
+// HEAD traz os mesmos cabeçalhos sem corpo (como o painel em
+// webui.servirArquivo). O corpo de entrada é o mesmo nos quatro pedidos, então
+// os tamanhos têm de bater byte a byte.
+func TestDeliveredPageDeclaresItsLengthAndHeadHasNoBody(t *testing.T) {
+	html := []byte(renderizar(t, paginaDeTeste(5, func(int) *float64 { return ptr(1) })))
+	for _, aceita := range []string{"gzip", "identity"} {
+		t.Run(aceita, func(t *testing.T) {
+			pedir := func(metodo string) *httptest.ResponseRecorder {
+				t.Helper()
+				req := httptest.NewRequest(metodo, "/p/empresa", nil)
+				req.Header.Set("Accept-Encoding", aceita)
+				rec := httptest.NewRecorder()
+				entregar(rec, req, html, "abc")
+				return rec
+			}
+			get, head := pedir(http.MethodGet), pedir(http.MethodHead)
+			if get.Code != http.StatusOK || head.Code != http.StatusOK {
+				t.Fatalf("GET %d e HEAD %d, queria 200", get.Code, head.Code)
+			}
+			if cl, quer := get.Header().Get("Content-Length"), strconv.Itoa(get.Body.Len()); cl != quer {
+				t.Errorf("GET com Content-Length %q, e o corpo tem %s bytes", cl, quer)
+			}
+			if cl := head.Header().Get("Content-Length"); cl != get.Header().Get("Content-Length") {
+				t.Errorf("HEAD com Content-Length %q, o GET com %q", cl, get.Header().Get("Content-Length"))
+			}
+			if head.Body.Len() != 0 {
+				t.Errorf("HEAD escreveu %d bytes de corpo", head.Body.Len())
+			}
+			for _, h := range []string{"Content-Type", "Content-Encoding", "Content-Security-Policy", "Cache-Control", "Vary"} {
+				if g, hd := get.Header().Get(h), head.Header().Get(h); g != hd {
+					t.Errorf("%s: GET %q, HEAD %q", h, g, hd)
+				}
+			}
+		})
 	}
 }
