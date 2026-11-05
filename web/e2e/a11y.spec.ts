@@ -726,7 +726,7 @@ for (const largura of [400, 768, 1024, 1280]) {
     await expect(page.getByRole('heading', { name: 'Dois serviços e uma tarefa pedem atenção.', level: 2 })).toBeVisible()
     await esperarOConteudo(page, '/')
     const monitores = page.getByRole('table', { name: /^Monitores/ })
-    await expect(monitores.getByRole('rowheader')).toHaveCount(32)
+    await expect(monitores.getByRole('rowheader')).toHaveCount(34)
     const alturas = await monitores
       .getByRole('row', { name: /Serviço \d+/ })
       .evaluateAll((linhas) => linhas.map((l) => l.getBoundingClientRect().height))
