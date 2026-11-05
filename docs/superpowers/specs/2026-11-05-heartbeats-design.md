@@ -139,18 +139,21 @@ incidents: target_id passa a aceitar NULL; heartbeat_id uuid NULL FK ON DELETE C
 - **Correção da 00016:** o comentário "Também serve à FK" antes de
   `incidents_one_open_per_heartbeat` está errado. Aquele índice cobre só os abertos; quem atende a
   FK é `incidents_heartbeat_idx`. A migration já foi aplicada e não muda.
-- **Pendência medida:** `ClaimHeartbeatsToOpen` usa `UNION` para a condição de prazo chegar a
-  `heartbeats_due_idx`; a de falha ainda varre a tabela. Melhor de 5 `EXPLAIN ANALYZE`, com 1% de
-  linhas vencidas e 1% em falha:
+- **`OR` mantido por medição:** `ClaimHeartbeatsToOpen` filtra com
+  `deadline_at <= now OR failing_since IS NOT NULL`, que não usa `heartbeats_due_idx`. Separar em
+  `UNION` para alcançar o índice piorou a consulta, e o que não melhora se desfaz. Melhor de 5
+  `EXPLAIN ANALYZE`, com 1% de linhas vencidas e 1% em falha:
 
   | Linhas | `OR` | `UNION` | `UNION` + índice parcial em `failing_since` |
   |---|---|---|---|
-  | 100 | 47 µs | 80 µs (seq scan: o planejador não usa índice) | 62 µs |
+  | 100 | 47 µs | 80 µs (seq scan: o planejador não usa o índice) | 62 µs |
   | 10 mil | 452 µs | 669 µs | 397 µs |
 
-  O teto é de 100 heartbeats por usuário e a consulta roda a cada 5 s. Ganhar 272 µs com 100 vezes
-  o teto não paga uma migration nem o custo de escrita do índice. Rever se o volume mudar; a próxima
-  migration tem de ser maior que a das tags (a 00018, se a 00017 entrar antes).
+  O teto é de 100 heartbeats por usuário e a consulta roda a cada 5 s. O índice parcial, 55 µs
+  melhor que o `OR` com 100 vezes o teto, não paga uma migration nem o custo de escrita.
+- **Pendência sem urgência:** `heartbeats_due_idx` ficou sem consulta que o use. Removê-lo na próxima
+  migration que passar por aqui, que tem de ser maior que a das tags (a 00018, se a 00017 entrar
+  antes). Até lá, o custo é só o de manter o índice a cada ping.
 
 ## 5. Regra de prazo
 
