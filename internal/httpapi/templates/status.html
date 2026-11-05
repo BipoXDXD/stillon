@@ -28,11 +28,13 @@ ol{display:flex;align-items:flex-end;gap:1px;height:32px;margin:12px 0 8px;paddi
 ol li{flex:1;box-sizing:border-box;height:100%;border-radius:1px;background:var(--estado-no-ar)}
 .d li{height:66%;background:var(--estado-degradado)}
 .f li{height:33%;background:var(--estado-fora)}
-.n li{background:none;border:1px solid var(--borda-controle)}
-li.g{height:100%;background:var(--estado-no-ar);border:0}
-li.d{height:66%;background:var(--estado-degradado);border:0}
-li.f{height:33%;background:var(--estado-fora);border:0}
-li.n{height:100%;background:none;border:1px solid var(--borda-controle)}
+.n li{height:12%;background:var(--borda-controle)}
+@media(min-width:40rem){.n li{height:100%;background:none;box-shadow:inset 0 0 0 1px var(--borda-controle)}}
+li.g{height:100%;background:var(--estado-no-ar);box-shadow:none}
+li.d{height:66%;background:var(--estado-degradado);box-shadow:none}
+li.f{height:33%;background:var(--estado-fora);box-shadow:none}
+li.n{height:12%;background:var(--borda-controle)}
+@media(min-width:40rem){li.n{height:100%;background:none;box-shadow:inset 0 0 0 1px var(--borda-controle)}}
 .l{display:flex;flex-wrap:wrap;gap:8px 16px;margin:16px 0 8px}
 .l>li{display:flex;align-items:center;gap:8px}
 .l ol{width:8px;height:16px;margin:0}

@@ -22,6 +22,23 @@ const FRASES = /^(Todos os sistemas funcionando|1 serviço fora do ar|Instabilid
 // antes: um 429 espera e tenta de novo, com teto.
 const RECUOS_DO_429_MS = [2_000, 4_000, 8_000, 16_000]
 
+// Alturas da barra do serviço e da legenda, em px. O alvo é novo: os dias
+// antigos da barra não têm check, e o primeiro é sempre "sem dados". A
+// legenda segue a ordem no ar, instável, fora do ar, sem dados. (A largura
+// igual dos dias, sem border, é do TestPublicPageDaysHaveTheirOwnShape: aqui
+// a barra é quase toda sem dados, e uma diferença de largura não apareceria.)
+type Medidas = { alturaDaBarra: number; semDados: number; legenda: number[] }
+
+function medir(): Medidas {
+  const barra = document.querySelector('.s ol')
+  if (!barra) throw new Error('a página não tem a barra do serviço')
+  return {
+    alturaDaBarra: barra.getBoundingClientRect().height,
+    semDados: barra.querySelector('li')?.getBoundingClientRect().height ?? Number.NaN,
+    legenda: [...document.querySelectorAll('.l > li > ol > li')].map((li) => li.getBoundingClientRect().height),
+  }
+}
+
 type Pagina = {
   id: string
   slug: string
@@ -103,7 +120,21 @@ test('página pública: faixa, legenda, fontes sob a CSP, título longo a 400 px
       const axe = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze()
       expect(axe.violations.map((v) => `${tema}: ${v.id} (${v.nodes.map((n) => n.target.join(' ')).join(', ')})`)).toEqual([])
       await controlePositivo(page, `página pública, ${tema}`)
+
+      // A 400 px cada dia tem ~2,7 px, e um contorno fecharia o miolo: o sem
+      // dados é um traço baixo, bem mais baixo que o dia no ar (WCAG 1.4.1).
+      const estreita = await page.evaluate(medir)
+      expect(estreita.semDados, `${tema}, 400 px: o dia sem dados na barra`).toBeLessThan(estreita.alturaDaBarra / 4)
+      const [noAr = 0, , , semDadosNaLegenda = Number.NaN] = estreita.legenda
+      expect(semDadosNaLegenda, `${tema}, 400 px: o sem dados da legenda`).toBeLessThan(noAr / 4)
     }
+
+    // Na tela larga, o sem dados é o contorno da spec: altura cheia.
+    await page.setViewportSize({ width: 1280, height: 800 })
+    const larga = await page.evaluate(medir)
+    expect(Math.abs(larga.semDados - larga.alturaDaBarra), '1280 px: o dia sem dados tem a altura da barra').toBeLessThan(0.5)
+    const [noArLarga = 0, , , semDadosLarga = Number.NaN] = larga.legenda
+    expect(Math.abs(semDadosLarga - noArLarga), '1280 px: o sem dados da legenda tem a altura do no ar').toBeLessThan(0.5)
   } finally {
     if (original) {
       await request.patch(`/api/v1/status-pages/${original.id}`, {

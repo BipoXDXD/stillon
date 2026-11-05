@@ -31,13 +31,19 @@ var temas = []tema{claro, escuro}
 type oklch struct{ l, c, h float64 }
 
 // cssDaPagina é o <style> do template: o texto, os tokens de cada tema (o
-// escuro já com o que herda do claro) e as regras de fora de @media e
-// @font-face, por seletor.
+// escuro já com o que herda do claro), as regras de fora de @media e
+// @font-face, por seletor, e as que só valem na tela larga
+// (@media(min-width:40rem)).
 type cssDaPagina struct {
 	texto  string
 	tokens map[tema]map[string]string
 	regras map[string]map[string]string
+	largas map[string]map[string]string
 }
+
+// telaLarga é a largura a partir da qual o dia sem dados vira contorno; o
+// e2e mede as duas formas a 400 e a 1280 px.
+const telaLarga = "@media(min-width:40rem){"
 
 var (
 	estiloRE         = regexp.MustCompile(`(?s)<style[^>]*>(.*?)</style>`)
@@ -69,10 +75,16 @@ func lerCSSDaPagina(t *testing.T) cssDaPagina {
 		texto:  texto,
 		tokens: comHeranca(declaracoesDeTokens(claros[1]), declaracoesDeTokens(escuros[1])),
 		regras: map[string]map[string]string{},
+		largas: map[string]map[string]string{},
 	}
 	juntarRegras(c.regras, blocoComChavesRE.ReplaceAllString(texto, ""))
+	for _, m := range blocoLargoRE.FindAllStringSubmatch(texto, -1) {
+		juntarRegras(c.largas, m[1])
+	}
 	return c
 }
+
+var blocoLargoRE = regexp.MustCompile(regexp.QuoteMeta(telaLarga) + `((?:[^{}]*\{[^}]*\})*)\}`)
 
 func declaracoesDeTokens(bloco string) map[string]string {
 	out := map[string]string{}
@@ -183,34 +195,66 @@ var classesDeDia = []struct{ nome, maioria, explicita string }{
 	{"sem dados", ".n li", "li.n"},
 }
 
-type forma struct{ altura, fundo, borda string }
+// forma de um dia: a altura, o preenchimento, o contorno (box-shadow interno,
+// "" sem contorno) e a borda, que nenhum dia pode ter: com flex:1, a borda
+// alarga o dia (a 400 px, 3,19 px contra 2,72 px dos outros).
+type forma struct{ altura, fundo, contorno, borda string }
 
-func (f forma) contornada() bool { return f.fundo == "none" && f.borda != "" }
+func (f forma) contornada() bool { return f.fundo == "none" && f.contorno != "" }
 
 // corDaForma é o preenchimento, ou a cor do contorno do dia sem dados.
 func (f forma) corDaForma() string {
 	if f.contornada() {
-		campos := strings.Fields(f.borda)
+		campos := strings.Fields(f.contorno)
 		return campos[len(campos)-1]
 	}
 	return f.fundo
 }
 
+// larguras: na estreita (o celular, abaixo de 40rem) cada dia tem ~2,7 px, e
+// um contorno de 1 px fecharia o miolo; lá, o sem dados é um traço baixo e
+// cheio. Na larga, ele é o contorno da spec.
+var larguras = []struct {
+	nome  string
+	larga bool
+}{{"estreita", false}, {"larga", true}}
+
 // formaDoDia aplica, em ordem, a regra base, a da maioria da <ol> e, se o dia
-// não é da maioria, a explícita. Todas têm a mesma especificidade, e vence a
+// não é da maioria, a explícita; na tela larga, cada uma seguida da sua versão
+// de @media(min-width:40rem). Todas têm a mesma especificidade, e vence a
 // última no texto (TestPublicPageDaysHaveTheirOwnShape confere a ordem).
-func (c cssDaPagina) formaDoDia(dia, barra int) forma {
+func (c cssDaPagina) formaDoDia(dia, barra int, larga bool) forma {
 	d := map[string]string{}
-	maps.Copy(d, c.regras["ol li"])
-	maps.Copy(d, c.regras[classesDeDia[barra].maioria])
+	aplicar := func(seletor string) {
+		maps.Copy(d, c.regras[seletor])
+		if larga {
+			maps.Copy(d, c.largas[seletor])
+		}
+	}
+	aplicar("ol li")
+	aplicar(classesDeDia[barra].maioria)
 	if dia != barra {
-		maps.Copy(d, c.regras[classesDeDia[dia].explicita])
+		aplicar(classesDeDia[dia].explicita)
+	}
+	contorno := d["box-shadow"]
+	if contorno == "none" {
+		contorno = ""
 	}
 	borda := d["border"]
-	if borda == "0" {
+	if borda == "0" || borda == "none" {
 		borda = ""
 	}
-	return forma{altura: d["height"], fundo: d["background"], borda: borda}
+	return forma{altura: d["height"], fundo: d["background"], contorno: contorno, borda: borda}
+}
+
+// alturaEmPorcento lê "66%"; outra unidade é erro.
+func alturaEmPorcento(t *testing.T, f forma) float64 {
+	t.Helper()
+	v, err := strconv.ParseFloat(strings.TrimSuffix(f.altura, "%"), 64)
+	if err != nil || !strings.HasSuffix(f.altura, "%") {
+		t.Fatalf("altura %q não é porcentagem", f.altura)
+	}
+	return v
 }
 
 func TestPublicPageDaysHaveTheirOwnShape(t *testing.T) {
@@ -219,33 +263,52 @@ func TestPublicPageDaysHaveTheirOwnShape(t *testing.T) {
 	for _, d := range classesDeDia {
 		if d.maioria != "" {
 			ultimaDaMaioria = max(ultimaDaMaioria, strings.Index(c.texto, "\n"+d.maioria+"{"))
+			if _, temLarga := c.largas[d.maioria]; temLarga {
+				ultimaDaMaioria = max(ultimaDaMaioria, strings.Index(c.texto, "\n"+telaLarga+d.maioria+"{"))
+			}
 		}
 		primeiraExplicita = min(primeiraExplicita, strings.Index(c.texto, "\n"+d.explicita+"{"))
 	}
 	if ultimaDaMaioria < 0 || primeiraExplicita < 0 || ultimaDaMaioria > primeiraExplicita {
-		t.Fatalf("as regras explícitas (li.g, li.d…) vêm depois das da maioria (.d li…), cada uma no começo da linha: %d, %d", ultimaDaMaioria, primeiraExplicita)
+		t.Fatalf("as regras explícitas (li.g, li.d…) vêm depois das da maioria (.d li…, inclusive as de tela larga), "+
+			"cada uma no começo da linha: %d, %d", ultimaDaMaioria, primeiraExplicita)
 	}
-	semCor := map[string]string{}
-	for i, d := range classesDeDia {
-		f := c.formaDoDia(i, i)
-		for j, barra := range classesDeDia {
-			if g := c.formaDoDia(i, j); g != f {
-				t.Errorf("dia %s numa barra de maioria %s desenha %+v, e não %+v", d.nome, barra.nome, g, f)
+	for _, l := range larguras {
+		t.Run(l.nome, func(t *testing.T) {
+			semCor := map[string]string{}
+			for i, d := range classesDeDia {
+				f := c.formaDoDia(i, i, l.larga)
+				for j, barra := range classesDeDia {
+					if g := c.formaDoDia(i, j, l.larga); g != f {
+						t.Errorf("dia %s numa barra de maioria %s desenha %+v, e não %+v", d.nome, barra.nome, g, f)
+					}
+				}
+				if f.altura == "" || f.fundo == "" {
+					t.Errorf("dia %s sem altura ou sem fundo: %+v", d.nome, f)
+				}
+				if f.borda != "" {
+					t.Errorf("dia %s com border %q: a borda alarga o dia; o contorno é box-shadow inset", d.nome, f.borda)
+				}
+				chave := f.altura + " " + strconv.FormatBool(f.contornada())
+				if outro, repetida := semCor[chave]; repetida {
+					t.Errorf("dias %s e %s têm a mesma forma (%s): a cor seria o único sinal", d.nome, outro, chave)
+				}
+				semCor[chave] = d.nome
+				if contornada := f.contornada(); contornada != (l.larga && d.nome == "sem dados") {
+					t.Errorf("dia %s: contorno = %v; só o sem dados, e só na tela larga, é só o contorno", d.nome, contornada)
+				}
 			}
-		}
-		if f.altura == "" || f.fundo == "" {
-			t.Errorf("dia %s sem altura ou sem fundo: %+v", d.nome, f)
-		}
-		chave := f.altura + " " + strconv.FormatBool(f.contornada())
-		if outro, repetida := semCor[chave]; repetida {
-			t.Errorf("dias %s e %s têm a mesma forma (%s): a cor seria o único sinal", d.nome, outro, chave)
-		}
-		semCor[chave] = d.nome
-	}
-	for i, d := range classesDeDia {
-		if contornada := c.formaDoDia(i, i).contornada(); contornada != (d.nome == "sem dados") {
-			t.Errorf("dia %s: contorno = %v; só o sem dados é só o contorno (spec do redesign, Telas 6)", d.nome, contornada)
-		}
+			if l.larga {
+				return
+			}
+			// Na estreita, o sem dados é o traço mais baixo de todos.
+			semDados := alturaEmPorcento(t, c.formaDoDia(3, 3, false))
+			for i, d := range classesDeDia[:3] {
+				if outra := alturaEmPorcento(t, c.formaDoDia(i, i, false)); semDados >= outra/2 {
+					t.Errorf("na tela estreita, o sem dados (%v%%) não é bem mais baixo que o %s (%v%%)", semDados, d.nome, outra)
+				}
+			}
+		})
 	}
 }
 
@@ -262,9 +325,11 @@ func TestPublicPageColorsAreAccessible(t *testing.T) {
 						t.Errorf("texto %s sobre o fundo da %s: %.2f:1, queria 4,5:1", sel, nomeDoFundo, r)
 					}
 				}
-				for i, d := range classesDeDia {
-					if r := contraste(cor(t, tokens, c.formaDoDia(i, i).corDaForma()), fundo); r < 3 {
-						t.Errorf("dia %s sobre o fundo da %s: %.2f:1, queria 3:1", d.nome, nomeDoFundo, r)
+				for _, l := range larguras {
+					for i, d := range classesDeDia {
+						if r := contraste(cor(t, tokens, c.formaDoDia(i, i, l.larga).corDaForma()), fundo); r < 3 {
+							t.Errorf("dia %s, tela %s, sobre o fundo da %s: %.2f:1, queria 3:1", d.nome, l.nome, nomeDoFundo, r)
+						}
 					}
 				}
 			}

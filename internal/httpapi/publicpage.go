@@ -254,8 +254,10 @@ func rotulo(s statuspage.State) string {
 
 // classeDia: no ar (sem classe, altura cheia) a partir de 99,9%, instável
 // ("d", dois terços da altura) a partir de 99%, fora do ar ("f", um terço)
-// abaixo, e sem dados ("n", só o contorno) sem check. Com checks de minuto
-// em minuto, 99,9% de um dia é 1,4 check: uma sonda perdida não pinta o dia.
+// abaixo, e sem dados ("n") sem check: um traço baixo no celular, onde o dia
+// é estreito demais para um contorno, e só o contorno na tela larga. Com
+// checks de minuto em minuto, 99,9% de um dia é 1,4 check: uma sonda perdida
+// não pinta o dia.
 func classeDia(u *float64) string {
 	switch {
 	case u == nil:
