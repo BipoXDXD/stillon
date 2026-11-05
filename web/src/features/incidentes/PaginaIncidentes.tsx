@@ -221,8 +221,6 @@ export function PaginaIncidentes() {
   )
 
   return (
-    // Um <div>, e não <section> filho direto do <main>: a regra legada
-    // "main > section" do index.css daria moldura a cada grupo.
     <div className="space-y-8">
       <div className="space-y-2">
         <Titulo aba="Incidentes">Incidentes</Titulo>

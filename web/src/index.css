@@ -126,8 +126,8 @@
 }
 
 /* static: as variáveis saem sempre no CSS, mesmo as que só o CSS deste
-   arquivo usa (o base dos títulos, o main > section). Escala de fonte da
-   spec: 12, 13, 14, 16, 18, 20, 24, 28, 36 px. O padrão do Tailwind já tem
+   arquivo usa (o base dos títulos). Escala de fonte da spec: 12, 13, 14,
+   16, 18, 20, 24, 28, 36 px. O padrão do Tailwind já tem
    12 (xs), 14 (sm), 16 (base), 18 (lg), 20 (xl), 24 (2xl) e 36 (4xl); entram
    o 13 (meta) e o 28 no lugar do 30 do text-3xl. Um raio só: 8 px. */
 @theme static {
