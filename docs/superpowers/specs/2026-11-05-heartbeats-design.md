@@ -83,8 +83,8 @@ falso e abriria incidente falso.
 
 Nada quebra, mas heartbeats ficam **sem avaliação**, e isso é o custo aceito:
 
-- Pings dão 404 pela rota do painel (`/ping/` não existe no binário antigo): `curl -f` falha na
-  tarefa do dono, sem efeito no StillOn.
+- Pings não são atendidos (`/ping/` não existe no binário antigo e cai no painel, que só serve
+  GET e HEAD): `curl -f` falha na tarefa do dono, sem efeito no StillOn.
 - Nenhum incidente de heartbeat abre ou fecha, e os abertos seguem abertos.
 - Notificação pendente de heartbeat não sai: o `ClaimDueNotifications` antigo a reivindica e o
   join a descarta, então `attempts` sobe a cada lease. Voltando à versão nova, a linha que passou
