@@ -2,6 +2,7 @@ package httpapi_test
 
 import (
 	"encoding/json"
+	"maps"
 	"net/http"
 	"slices"
 	"strings"
@@ -185,7 +186,12 @@ func TestFiltroDoResumoRecusaPorAllowlist(t *testing.T) {
 	a := newAPI(t)
 	token := tokenDe(t, a, outroUsuario(t, a))
 	cases := []struct{ nome, consulta, campo, motivo string }{
-		{"parâmetro desconhecido", "?sort=name", "sort", "invalid"},
+		{"parâmetro desconhecido", "?sort=name", "query", "invalid"},
+		// url.Query() descarta o par que não sabe ler, e estes dois devolveriam
+		// a lista inteira como se tivessem filtrado.
+		{"escape inválido", "?tag=%zz", "query", "invalid"},
+		{"ponto e vírgula", "?tag=a;tag=b", "query", "invalid"},
+		{"par inválido depois de um válido", "?state=up&tag=%zz", "query", "invalid"},
 		{"estado fora da lista", "?state=caido", "state", "invalid"},
 		{"estado com injeção", "?state=up%27%20OR%201%3D1", "state", "invalid"},
 		{"tag com NUL", "?tag=a%00b", "tag", "invalid"},
@@ -202,6 +208,66 @@ func TestFiltroDoResumoRecusaPorAllowlist(t *testing.T) {
 			}
 		})
 	}
+}
+
+// O nome do parâmetro desconhecido é entrada de quem chama: não volta no
+// corpo, ou uma chave de 8 KiB viraria um eco de 8 KiB.
+func TestParametroDesconhecidoNaoVoltaNaResposta(t *testing.T) {
+	a := newAPI(t)
+	token := tokenDe(t, a, outroUsuario(t, a))
+	chave := "CANARIO" + strings.Repeat("x", 2000)
+	status, cru := lerCru(t, a, http.MethodGet, "/api/v1/targets/summary?"+chave+"=1", token, nil)
+	if status != http.StatusBadRequest {
+		t.Fatalf("%d %s", status, cru)
+	}
+	if strings.Contains(cru, "CANARIO") {
+		t.Errorf("a chave voltou no corpo: %.200s", cru)
+	}
+}
+
+// Allowlist de saída (Secure APIs 4.6.2): as chaves de um alvo são exatamente
+// estas, no POST, no GET e na lista. Um campo novo no DTO tem de passar por aqui.
+func TestAlvoTemExatamenteAsChavesDoContrato(t *testing.T) {
+	a := newAPI(t)
+	token := tokenDe(t, a, outroUsuario(t, a))
+	queria := []string{
+		"created_at", "degraded_threshold_ms", "enabled", "expected_status", "header_names", "id",
+		"interval_sec", "method", "name", "tags", "timeout_ms", "url",
+	}
+	chaves := func(onde, cru string) {
+		t.Helper()
+		var item map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(cru), &item); err != nil {
+			t.Fatalf("%s: %v", onde, err)
+		}
+		if got := slices.Sorted(maps.Keys(item)); !slices.Equal(got, queria) {
+			t.Errorf("%s: chaves %v; queria %v", onde, got, queria)
+		}
+	}
+	status, criado := lerCru(t, a, http.MethodPost, "/api/v1/targets", token, map[string]any{
+		"name": "api", "url": "https://exemplo.com/", "tags": []string{"prod"},
+	})
+	if status != http.StatusCreated {
+		t.Fatalf("POST: %d %s", status, criado)
+	}
+	chaves("POST", criado)
+	var alvo alvoComTags
+	if err := json.Unmarshal([]byte(criado), &alvo); err != nil {
+		t.Fatal(err)
+	}
+	_, lido := lerCru(t, a, http.MethodGet, "/api/v1/targets/"+alvo.ID, token, nil)
+	chaves("GET", lido)
+	_, lista := lerCru(t, a, http.MethodGet, "/api/v1/targets", token, nil)
+	var envelope struct {
+		Items []json.RawMessage `json:"items"`
+	}
+	if err := json.Unmarshal([]byte(lista), &envelope); err != nil {
+		t.Fatal(err)
+	}
+	if len(envelope.Items) != 1 {
+		t.Fatalf("%d itens: %s", len(envelope.Items), lista)
+	}
+	chaves("lista", string(envelope.Items[0]))
 }
 
 // As tags de A não existem para B: nem nas listas, nem como filtro. O filtro
