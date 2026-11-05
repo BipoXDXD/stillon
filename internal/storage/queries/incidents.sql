@@ -16,10 +16,11 @@ UPDATE target_health
  WHERE target_id = $1;
 
 -- name: GetOpenIncident :one
-SELECT * FROM incidents WHERE target_id = $1 AND resolved_at IS NULL;
+SELECT * FROM incidents WHERE target_id = sqlc.arg(target_id)::uuid AND resolved_at IS NULL;
 
 -- name: OpenIncident :exec
-INSERT INTO incidents (id, target_id, started_at, cause) VALUES ($1, $2, $3, $4);
+INSERT INTO incidents (id, target_id, started_at, cause)
+VALUES (sqlc.arg(id), sqlc.arg(target_id)::uuid, sqlc.arg(started_at), sqlc.arg(cause));
 
 -- name: ResolveIncident :execrows
 UPDATE incidents SET resolved_at = sqlc.arg(resolved_at)::timestamptz
@@ -61,8 +62,11 @@ SELECT id FROM targets WHERE id = ANY(sqlc.arg(ids)::uuid[]);
 -- nada e devolve a lista vazia (reconciliação dos Planos 5–7).
 -- O id é UUIDv7, gerado quando o incidente abre: ordenar por ele é ordenar
 -- pela abertura, e o cursor é o último id da página anterior.
+-- O JOIN deixa de fora os incidentes de heartbeat, que têm rotas próprias: o
+-- painel exige target_id em cada item (D3 da spec de heartbeats). t.id, e não
+-- i.target_id, porque a coluna agora aceita NULL e a saída aqui nunca é nula.
 -- name: ListIncidents :many
-SELECT i.id, i.target_id, t.name AS target_name, i.started_at, i.resolved_at, i.cause, i.ack_at
+SELECT i.id, t.id AS target_id, t.name AS target_name, i.started_at, i.resolved_at, i.cause, i.ack_at
   FROM incidents i
   JOIN targets t ON t.id = i.target_id
  WHERE t.user_id = sqlc.arg(user_id)
@@ -78,4 +82,4 @@ UPDATE incidents i
    SET ack_at = COALESCE(i.ack_at, sqlc.arg(now)::timestamptz)
   FROM targets t
  WHERE t.id = i.target_id AND t.user_id = sqlc.arg(user_id) AND i.id = sqlc.arg(id)
-RETURNING i.id, i.target_id, t.name AS target_name, i.started_at, i.resolved_at, i.cause, i.ack_at;
+RETURNING i.id, t.id AS target_id, t.name AS target_name, i.started_at, i.resolved_at, i.cause, i.ack_at;

@@ -48,15 +48,44 @@ type CheckRollup1h struct {
 	Max      *int32
 }
 
+type Heartbeat struct {
+	ID             uuid.UUID
+	UserID         uuid.UUID
+	Name           string
+	PingTokenHash  []byte
+	PeriodSec      *int32
+	CronExpr       *string
+	Timezone       *string
+	GraceSec       int32
+	Enabled        bool
+	CreatedAt      time.Time
+	DeadlineAt     time.Time
+	LastPingAt     *time.Time
+	LastSuccessAt  *time.Time
+	LastStartAt    *time.Time
+	LastSignal     *string
+	FailingSince   *time.Time
+	LastIncidentAt *time.Time
+}
+
+type HeartbeatEvent struct {
+	ID          uuid.UUID
+	HeartbeatID uuid.UUID
+	At          time.Time
+	Kind        string
+	RuntimeMS   *int64
+}
+
 type Incident struct {
 	ID              uuid.UUID
-	TargetID        uuid.UUID
+	TargetID        *uuid.UUID
 	StartedAt       time.Time
 	ResolvedAt      *time.Time
 	Cause           string
 	AckAt           *time.Time
 	OpenNotifiedAt  *time.Time
 	CloseNotifiedAt *time.Time
+	HeartbeatID     *uuid.UUID
 }
 
 type NotifChannel struct {
