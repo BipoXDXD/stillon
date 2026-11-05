@@ -71,3 +71,48 @@ func TestHeartbeatLimitHoldsUnderConcurrency(t *testing.T) {
 		t.Errorf("%d heartbeats depois de dois POST simultâneos (erros: %v), queria %d", n, erros, heartbeat.MaxPerUser)
 	}
 }
+
+// Criar devolve o token uma vez: se a resposta não puder ser montada, a linha
+// não pode ficar gravada com um token que ninguém recebeu.
+func TestCreateLeavesNothingWhenTheResponseFails(t *testing.T) {
+	a := novoAmbiente(t)
+	svc := heartbeat.NewService(a.pool, a.clk)
+	ctx, cancelar := context.WithCancel(context.Background())
+	defer cancelar()
+	svc.SetDepoisDeGravar(cancelar)
+
+	_, token, err := svc.Create(ctx, a.dono, heartbeat.Input{Name: "h", Schedule: hora, Grace: tolerancia, Enabled: true})
+	if err == nil || token != "" {
+		t.Fatalf("Create = %q, %v; queria erro sem token", token, err)
+	}
+	var n int64
+	fundo := context.Background()
+	err = storage.InUserTx(fundo, a.pool, a.dono, func(q *db.Queries) error {
+		var err error
+		n, err = q.CountHeartbeats(fundo, a.dono)
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Errorf("%d heartbeats gravados sem que o token saísse", n)
+	}
+}
+
+// Rotacionar revoga o token atual: se a resposta falhar, o antigo segue valendo,
+// ou a tarefa ficaria sem token nenhum.
+func TestRotateKeepsTheOldTokenWhenTheResponseFails(t *testing.T) {
+	a := novoAmbiente(t)
+	id, antigo := a.novoHeartbeat(t)
+	svc := heartbeat.NewService(a.pool, a.clk)
+	ctx, cancelar := context.WithCancel(context.Background())
+	defer cancelar()
+	svc.SetDepoisDeGravar(cancelar)
+
+	_, novo, err := svc.RotateToken(ctx, a.dono, id)
+	if err == nil || novo != "" {
+		t.Fatalf("RotateToken = %q, %v; queria erro sem token", novo, err)
+	}
+	a.pingar(t, antigo, heartbeat.SignalSuccess)
+}

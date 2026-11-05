@@ -130,8 +130,10 @@ func abrirIncidenteDeHeartbeat(ctx context.Context, q *db.Queries, h db.ClaimHea
 }
 
 func fecharIncidenteDeHeartbeat(ctx context.Context, q *db.Queries, h db.ClaimHeartbeatsToCloseRow, now time.Time) error {
-	fim := heartbeat.ResolvedAt(h.StartedAt, h.LastSuccessAt, now)
-	if _, err := q.ResolveIncident(ctx, db.ResolveIncidentParams{ID: h.IncidentID, ResolvedAt: fim}); err != nil {
+	fim, retomada := heartbeat.Closing(h.StartedAt, h.LastSuccessAt, now)
+	if _, err := q.ResolveHeartbeatIncident(ctx, db.ResolveHeartbeatIncidentParams{
+		ID: h.IncidentID, ResolvedAt: fim, ClosedByResume: retomada,
+	}); err != nil {
 		return fmt.Errorf("resolver incidente de heartbeat: %w", err)
 	}
 	n, err := q.MarkCloseNotified(ctx, db.MarkCloseNotifiedParams{ID: h.IncidentID, Now: now})

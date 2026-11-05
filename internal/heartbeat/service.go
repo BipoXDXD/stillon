@@ -94,6 +94,9 @@ type Service struct {
 	// depoisDeContar existe para o teste de criação concorrente: roda entre a
 	// contagem e a inserção, onde os dois POST precisam se encontrar.
 	depoisDeContar func()
+	// depoisDeGravar existe para o teste da resposta: roda depois de gravar,
+	// antes de montar o que volta, ainda dentro da transação.
+	depoisDeGravar func()
 }
 
 func NewService(pool *pgxpool.Pool, clk clock.Clock) *Service {
@@ -135,6 +138,7 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, in Input) (Heart
 	}
 	params.PeriodSec, params.CronExpr, params.Timezone = scheduleColumns(in.Schedule)
 
+	var out Heartbeat
 	err = storage.InUserTx(ctx, s.pool, userID, func(q *db.Queries) error {
 		if err := q.LockUserHeartbeats(ctx, userID); err != nil {
 			return fmt.Errorf("travar heartbeats do usuário: %w", err)
@@ -149,23 +153,41 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, in Input) (Heart
 		if n >= MaxPerUser {
 			return ErrLimitReached
 		}
-		return q.InsertHeartbeat(ctx, params)
+		if err := q.InsertHeartbeat(ctx, params); err != nil {
+			return err
+		}
+		out, err = s.responseOf(ctx, q, userID, id)
+		return err
 	})
 	if err != nil {
 		return Heartbeat{}, "", err
 	}
-	h, err := s.Get(ctx, userID, id)
-	return h, token, err
+	return out, token, nil
+}
+
+// responseOf monta o que volta dentro da transação que gravou. Na criação e na
+// rotação, o token só existe no retorno: uma leitura que falhasse depois do
+// commit perderia um token que já valeria (ou que já teria revogado o anterior).
+func (s *Service) responseOf(ctx context.Context, q *db.Queries, userID, id uuid.UUID) (Heartbeat, error) {
+	if s.depoisDeGravar != nil {
+		s.depoisDeGravar()
+	}
+	return s.view(ctx, q, userID, id)
+}
+
+func (s *Service) view(ctx context.Context, q *db.Queries, userID, id uuid.UUID) (Heartbeat, error) {
+	r, err := q.GetHeartbeatView(ctx, db.GetHeartbeatViewParams{UserID: userID, ID: id})
+	if err != nil {
+		return Heartbeat{}, notFound(err)
+	}
+	return toHeartbeat(r.Heartbeat, r.OpenIncidentID, s.clk.Now())
 }
 
 func (s *Service) Get(ctx context.Context, userID, id uuid.UUID) (Heartbeat, error) {
 	var out Heartbeat
 	err := storage.InUserTx(ctx, s.pool, userID, func(q *db.Queries) error {
-		r, err := q.GetHeartbeatView(ctx, db.GetHeartbeatViewParams{UserID: userID, ID: id})
-		if err != nil {
-			return notFound(err)
-		}
-		out, err = toHeartbeat(r.Heartbeat, r.OpenIncidentID, s.clk.Now())
+		var err error
+		out, err = s.view(ctx, q, userID, id)
 		return err
 	})
 	return out, err
@@ -192,8 +214,10 @@ func (s *Service) List(ctx context.Context, userID uuid.UUID, before *uuid.UUID,
 	return out, err
 }
 
-// Update aplica o patch com a linha travada. Agendamento ou tolerância novos
-// recalculam o prazo a partir de agora; retomar também, e zera a falha (D13).
+// Update aplica o patch com a linha travada. Só valor que muda recalcula o
+// prazo, a partir de agora: reenviar o que já está gravado não adia nada.
+// Retomar também recalcula, zera a falha e registra a retomada (D13). Quem
+// fecha incidente é o avaliador, e prazo novo sozinho não fecha (§5 da spec).
 func (s *Service) Update(ctx context.Context, userID, id uuid.UUID, p Patch) (Heartbeat, error) {
 	if p.Name != nil {
 		nome, err := ValidateName(*p.Name)
@@ -232,26 +256,29 @@ func (s *Service) updateParams(h db.Heartbeat, p Patch) (db.UpdateHeartbeatParam
 	grace := time.Duration(h.GraceSec) * time.Second
 	out := db.UpdateHeartbeatParams{
 		UserID: h.UserID, ID: h.ID, Name: h.Name, Enabled: h.Enabled,
-		DeadlineAt: h.DeadlineAt, FailingSince: h.FailingSince,
+		DeadlineAt: h.DeadlineAt, FailingSince: h.FailingSince, ResumedAt: h.ResumedAt,
 	}
 	if p.Name != nil {
 		out.Name = *p.Name
 	}
-	if p.Schedule != nil {
-		sch = *p.Schedule
+	mudou := false
+	if p.Schedule != nil && !p.Schedule.Equal(sch) {
+		sch, mudou = *p.Schedule, true
 	}
-	if p.Grace != nil {
-		grace = *p.Grace
+	if p.Grace != nil && *p.Grace != grace {
+		grace, mudou = *p.Grace, true
 	}
 	if p.Enabled != nil {
 		out.Enabled = *p.Enabled
 	}
 	retomou := out.Enabled && !h.Enabled
+	now := s.clk.Now()
 	if retomou {
 		out.FailingSince = nil
+		out.ResumedAt = &now
 	}
-	if retomou || p.Schedule != nil || p.Grace != nil {
-		out.DeadlineAt = FirstDeadline(sch, grace, s.clk.Now())
+	if retomou || mudou {
+		out.DeadlineAt = FirstDeadline(sch, grace, now)
 	}
 	out.GraceSec = seconds(grace)
 	out.PeriodSec, out.CronExpr, out.Timezone = scheduleColumns(sch)
@@ -275,17 +302,22 @@ func (s *Service) Delete(ctx context.Context, userID, id uuid.UUID) error {
 // existe neste retorno (D8).
 func (s *Service) RotateToken(ctx context.Context, userID, id uuid.UUID) (Heartbeat, string, error) {
 	token, hash := NewPingToken()
+	var out Heartbeat
 	err := storage.InUserTx(ctx, s.pool, userID, func(q *db.Queries) error {
 		if _, err := q.GetHeartbeatForUpdate(ctx, db.GetHeartbeatForUpdateParams{UserID: userID, ID: id}); err != nil {
 			return notFound(err)
 		}
-		return q.SetHeartbeatPingHash(ctx, db.SetHeartbeatPingHashParams{UserID: userID, ID: id, PingTokenHash: hash})
+		if err := q.SetHeartbeatPingHash(ctx, db.SetHeartbeatPingHashParams{UserID: userID, ID: id, PingTokenHash: hash}); err != nil {
+			return fmt.Errorf("trocar o token: %w", err)
+		}
+		var err error
+		out, err = s.responseOf(ctx, q, userID, id)
+		return err
 	})
 	if err != nil {
 		return Heartbeat{}, "", err
 	}
-	h, err := s.Get(ctx, userID, id)
-	return h, token, err
+	return out, token, nil
 }
 
 // Events é o log do heartbeat, do mais novo ao mais velho.
@@ -387,19 +419,21 @@ func toHeartbeat(h db.Heartbeat, open *uuid.UUID, now time.Time) (Heartbeat, err
 	return Heartbeat{
 		ID: h.ID, Name: h.Name, Enabled: h.Enabled, Schedule: sch,
 		Grace:      time.Duration(h.GraceSec) * time.Second,
-		Status:     statusOf(h.Enabled, h.FailingSince != nil, h.DeadlineAt, h.LastPingAt != nil, now),
+		Status:     statusOf(h.Enabled, h.FailingSince != nil, open != nil, h.DeadlineAt, h.LastPingAt != nil, now),
 		DeadlineAt: h.DeadlineAt, LastPingAt: h.LastPingAt, LastSuccessAt: h.LastSuccessAt,
 		LastStartAt: h.LastStartAt, OpenIncidentID: open, CreatedAt: h.CreatedAt,
 	}, nil
 }
 
-func statusOf(enabled, failing bool, deadline time.Time, pinged bool, now time.Time) Status {
+// O incidente aberto conta como atraso mesmo com prazo futuro: editar o
+// agendamento move o prazo, e a tarefa continua devendo um sinal.
+func statusOf(enabled, failing, openIncident bool, deadline time.Time, pinged bool, now time.Time) Status {
 	switch {
 	case !enabled:
 		return StatusPaused
 	case failing:
 		return StatusFailing
-	case !deadline.After(now):
+	case openIncident, !deadline.After(now):
 		return StatusLate
 	case !pinged:
 		return StatusWaiting

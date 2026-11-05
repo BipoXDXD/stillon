@@ -319,22 +319,24 @@ func TestOpeningPrefersTheAnnouncedFailure(t *testing.T) {
 	}
 }
 
-func TestResolvedAt(t *testing.T) {
+func TestClosing(t *testing.T) {
 	inicio := agora.Add(-time.Hour)
 	antes, igual, depois := inicio.Add(-time.Minute), inicio, inicio.Add(time.Minute)
 	casos := []struct {
-		nome    string
-		sucesso *time.Time
-		want    time.Time
+		nome     string
+		sucesso  *time.Time
+		want     time.Time
+		retomada bool
 	}{
-		{"sem sucesso", nil, agora},
-		{"sucesso antigo", &antes, agora},
-		{"sucesso no início", &igual, inicio},
-		{"sucesso depois", &depois, depois},
+		{"sem sucesso", nil, agora, true},
+		{"sucesso antigo", &antes, agora, true},
+		{"sucesso no início", &igual, inicio, false},
+		{"sucesso depois", &depois, depois, false},
 	}
 	for _, c := range casos {
-		if got := heartbeat.ResolvedAt(inicio, c.sucesso, agora); !got.Equal(c.want) {
-			t.Errorf("%s: %v, queria %v", c.nome, got, c.want)
+		got, retomada := heartbeat.Closing(inicio, c.sucesso, agora)
+		if !got.Equal(c.want) || retomada != c.retomada {
+			t.Errorf("%s: %v retomada=%v, queria %v retomada=%v", c.nome, got, retomada, c.want, c.retomada)
 		}
 	}
 }

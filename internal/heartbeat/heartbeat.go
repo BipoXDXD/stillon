@@ -75,13 +75,14 @@ func Opening(deadlineAt time.Time, failingSince *time.Time) (cause string, start
 	return CauseLate, deadlineAt
 }
 
-// ResolvedAt é quando o incidente acabou: o sucesso que o resolveu. Sem
-// sucesso depois do início (o dono retomou um heartbeat pausado), é now.
-func ResolvedAt(startedAt time.Time, lastSuccessAt *time.Time, now time.Time) time.Time {
+// Closing diz quando o incidente acabou e se foi pela retomada: o sucesso que o
+// resolveu, ou now quando o dono retomou um heartbeat pausado sem sucesso
+// nenhum depois do início.
+func Closing(startedAt time.Time, lastSuccessAt *time.Time, now time.Time) (resolvedAt time.Time, byResume bool) {
 	if lastSuccessAt != nil && !lastSuccessAt.Before(startedAt) {
-		return *lastSuccessAt
+		return *lastSuccessAt, false
 	}
-	return now
+	return now, true
 }
 
 // Signal é o que a tarefa avisa. Os valores são os do CHECK de

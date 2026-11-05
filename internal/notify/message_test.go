@@ -84,6 +84,24 @@ func TestMessageForAnnouncedTaskFailure(t *testing.T) {
 	}
 }
 
+// Retomar sem sucesso encerra o incidente, mas a tarefa não voltou: o aviso não
+// pode dizer que voltou, seja qual for a causa.
+func TestMessageForResumeWithoutSuccess(t *testing.T) {
+	for _, c := range []string{"heartbeat_late", "heartbeat_failed"} {
+		ev := evAberto
+		ev.TargetName = "Backup"
+		ev.Cause = c
+		ev.Kind = incident.EventResolved
+		ev.ClosedByResume = true
+		ev.ResolvedAt = ev.StartedAt.Add(2 * time.Hour)
+		assunto, corpo := mensagem(ev)
+		if assunto != "[StillOn] Backup foi retomado" ||
+			corpo != "Backup foi retomado em 24/09/2026 14:00 UTC, sem sinal de sucesso. O incidente foi encerrado, e o prazo recomeça a contar.\n" {
+			t.Errorf("%s: %q / %q", c, assunto, corpo)
+		}
+	}
+}
+
 // Causa fora do enum não vaza para a mensagem: vira o residual.
 func TestMessageNeverEchoesAnUnknownCause(t *testing.T) {
 	ev := evAberto

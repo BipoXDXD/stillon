@@ -18,7 +18,7 @@ WITH claimed AS (
 )
 SELECT cl.id, cl.event, cl.attempts, cl.created_at,
        c.id AS channel_id, c.user_id, c.kind, c.config_enc, c.enabled, c.verified_at,
-       i.id AS incident_id, i.started_at, i.resolved_at, i.ack_at, i.cause,
+       i.id AS incident_id, i.started_at, i.resolved_at, i.ack_at, i.cause, i.closed_by_resume,
        COALESCE(cl.target_name, t.name, h.name)::text AS target_name,
        COALESCE(t.enabled, h.enabled)::bool AS target_enabled
   FROM claimed cl

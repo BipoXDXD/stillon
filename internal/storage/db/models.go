@@ -66,6 +66,7 @@ type Heartbeat struct {
 	LastSignal     *string
 	FailingSince   *time.Time
 	LastIncidentAt *time.Time
+	ResumedAt      *time.Time
 }
 
 type HeartbeatEvent struct {
@@ -86,6 +87,7 @@ type Incident struct {
 	OpenNotifiedAt  *time.Time
 	CloseNotifiedAt *time.Time
 	HeartbeatID     *uuid.UUID
+	ClosedByResume  bool
 }
 
 type NotifChannel struct {

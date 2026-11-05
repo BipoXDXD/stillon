@@ -37,7 +37,9 @@ func recursosPersistidos(t *testing.T, a *api) string {
 		(SELECT coalesce(jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text), '[]') FROM incidents t),
 		(SELECT coalesce(jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text), '[]') FROM notif_channels t),
 		(SELECT coalesce(jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text), '[]') FROM status_pages t),
-		(SELECT coalesce(jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text), '[]') FROM status_page_items t)
+		(SELECT coalesce(jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text), '[]') FROM status_page_items t),
+		(SELECT coalesce(jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text), '[]') FROM heartbeats t),
+		(SELECT coalesce(jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text), '[]') FROM heartbeat_events t)
 	)::text`).Scan(&estado)
 	if err != nil {
 		t.Fatal(err)
@@ -84,8 +86,11 @@ func TestEveryResourceRouteRejectsRevokedFamily(t *testing.T) {
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("preparar página: %d", resp.StatusCode)
 	}
+	hb, ping := criarHB(t, a, dono, corpoDePeriodo)
+	if status, _, corpo := pingar(t, a, "/ping/"+ping, nil); status != http.StatusOK {
+		t.Fatalf("preparar evento: %d %s", status, corpo)
+	}
 	antes := recursosPersistidos(t, a)
-	hb, _ := criarHB(t, a, dono, corpoDePeriodo)
 	a.email.mu.Lock()
 	enviosAntes := len(a.email.links)
 	a.email.mu.Unlock()

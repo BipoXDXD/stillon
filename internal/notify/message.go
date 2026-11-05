@@ -62,6 +62,11 @@ func mensagemDeTarefa(ev Event, desde string) (assunto, corpo string) {
 	}
 	switch ev.Kind {
 	case incident.EventResolved:
+		if ev.ClosedByResume {
+			return fmt.Sprintf("[StillOn] %s foi retomado", ev.TargetName),
+				fmt.Sprintf("%s foi retomado em %s, sem sinal de sucesso. O incidente foi encerrado, e o prazo recomeça a contar.\n",
+					ev.TargetName, ev.ResolvedAt.UTC().Format(formatoData))
+		}
 		return fmt.Sprintf("[StillOn] %s %s", ev.TargetName, volta),
 			fmt.Sprintf("%s %s em %s, depois de %s %s.\n", ev.TargetName, volta,
 				ev.ResolvedAt.UTC().Format(formatoData), duracao(ev.ResolvedAt.Sub(ev.StartedAt)), situacao)
@@ -74,6 +79,9 @@ func mensagemDeTarefa(ev Event, desde string) (assunto, corpo string) {
 	return fmt.Sprintf("[StillOn] %s está %s", ev.TargetName, situacao),
 		fmt.Sprintf("%s está %s desde %s.\nCausa: %s.\n", ev.TargetName, situacao, desde, causa(ev.Cause))
 }
+
+// Text é o assunto e o corpo do aviso, como os canais os enviam.
+func (ev Event) Text() (assunto, corpo string) { return mensagem(ev) }
 
 // causa traduz o error_kind; o que estiver fora do enum vira o residual.
 func causa(errorKind string) string {

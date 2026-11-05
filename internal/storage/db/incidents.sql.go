@@ -131,7 +131,7 @@ func (q *Queries) ExistingTargetIDs(ctx context.Context, ids []uuid.UUID) ([]uui
 }
 
 const getOpenIncident = `-- name: GetOpenIncident :one
-SELECT id, target_id, started_at, resolved_at, cause, ack_at, open_notified_at, close_notified_at, heartbeat_id FROM incidents WHERE target_id = $1::uuid AND resolved_at IS NULL
+SELECT id, target_id, started_at, resolved_at, cause, ack_at, open_notified_at, close_notified_at, heartbeat_id, closed_by_resume FROM incidents WHERE target_id = $1::uuid AND resolved_at IS NULL
 `
 
 func (q *Queries) GetOpenIncident(ctx context.Context, targetID uuid.UUID) (Incident, error) {
@@ -147,6 +147,7 @@ func (q *Queries) GetOpenIncident(ctx context.Context, targetID uuid.UUID) (Inci
 		&i.OpenNotifiedAt,
 		&i.CloseNotifiedAt,
 		&i.HeartbeatID,
+		&i.ClosedByResume,
 	)
 	return i, err
 }

@@ -27,7 +27,7 @@ WITH claimed AS (
 )
 SELECT cl.id, cl.event, cl.attempts, cl.created_at,
        c.id AS channel_id, c.user_id, c.kind, c.config_enc, c.enabled, c.verified_at,
-       i.id AS incident_id, i.started_at, i.resolved_at, i.ack_at, i.cause,
+       i.id AS incident_id, i.started_at, i.resolved_at, i.ack_at, i.cause, i.closed_by_resume,
        COALESCE(cl.target_name, t.name, h.name)::text AS target_name,
        COALESCE(t.enabled, h.enabled)::bool AS target_enabled
   FROM claimed cl
@@ -44,23 +44,24 @@ type ClaimDueNotificationsParams struct {
 }
 
 type ClaimDueNotificationsRow struct {
-	ID            uuid.UUID
-	Event         string
-	Attempts      int32
-	CreatedAt     time.Time
-	ChannelID     uuid.UUID
-	UserID        uuid.UUID
-	Kind          string
-	ConfigEnc     []byte
-	Enabled       bool
-	VerifiedAt    *time.Time
-	IncidentID    uuid.UUID
-	StartedAt     time.Time
-	ResolvedAt    *time.Time
-	AckAt         *time.Time
-	Cause         string
-	TargetName    string
-	TargetEnabled bool
+	ID             uuid.UUID
+	Event          string
+	Attempts       int32
+	CreatedAt      time.Time
+	ChannelID      uuid.UUID
+	UserID         uuid.UUID
+	Kind           string
+	ConfigEnc      []byte
+	Enabled        bool
+	VerifiedAt     *time.Time
+	IncidentID     uuid.UUID
+	StartedAt      time.Time
+	ResolvedAt     *time.Time
+	AckAt          *time.Time
+	Cause          string
+	ClosedByResume bool
+	TargetName     string
+	TargetEnabled  bool
 }
 
 // Dispatcher (spec §8). Rodam só sob InProberTx.
@@ -93,6 +94,7 @@ func (q *Queries) ClaimDueNotifications(ctx context.Context, arg ClaimDueNotific
 			&i.ResolvedAt,
 			&i.AckAt,
 			&i.Cause,
+			&i.ClosedByResume,
 			&i.TargetName,
 			&i.TargetEnabled,
 		); err != nil {

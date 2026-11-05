@@ -76,8 +76,9 @@ SELECT h.id, h.user_id, h.deadline_at, h.failing_since
  LIMIT sqlc.arg(max_rows)::int
    FOR UPDATE OF h SKIP LOCKED;
 
--- Com incidente aberto e saudável de novo. Pausado fica como está: sem
--- avaliação, como o alvo pausado sem sonda (D13).
+-- Com incidente aberto e saudável de novo, por um sucesso ou pela retomada
+-- depois do início: prazo novo, sozinho, não fecha (spec de heartbeats, §5).
+-- Pausado fica como está: sem avaliação, como o alvo pausado sem sonda (D13).
 -- name: ClaimHeartbeatsToClose :many
 SELECT h.id, h.user_id, h.last_success_at, x.id AS incident_id, x.started_at
   FROM incidents x
@@ -86,9 +87,15 @@ SELECT h.id, h.user_id, h.last_success_at, x.id AS incident_id, x.started_at
    AND h.enabled
    AND h.failing_since IS NULL
    AND h.deadline_at > sqlc.arg(now)::timestamptz
+   AND (h.last_success_at >= x.started_at OR h.resumed_at >= x.started_at)
  ORDER BY x.id
  LIMIT sqlc.arg(max_rows)::int
    FOR UPDATE OF h SKIP LOCKED;
+
+-- name: ResolveHeartbeatIncident :execrows
+UPDATE incidents
+   SET resolved_at = sqlc.arg(resolved_at)::timestamptz, closed_by_resume = sqlc.arg(closed_by_resume)
+ WHERE id = sqlc.arg(id) AND resolved_at IS NULL;
 
 -- name: MarkHeartbeatIncident :exec
 UPDATE heartbeats SET last_incident_at = sqlc.arg(now)::timestamptz WHERE id = sqlc.arg(id);
@@ -129,7 +136,8 @@ SELECT * FROM heartbeats WHERE user_id = $1 AND id = $2 FOR UPDATE;
 UPDATE heartbeats
    SET name = sqlc.arg(name), period_sec = sqlc.narg(period_sec), cron_expr = sqlc.narg(cron_expr),
        timezone = sqlc.narg(timezone), grace_sec = sqlc.arg(grace_sec), enabled = sqlc.arg(enabled),
-       deadline_at = sqlc.arg(deadline_at), failing_since = sqlc.narg(failing_since)
+       deadline_at = sqlc.arg(deadline_at), failing_since = sqlc.narg(failing_since),
+       resumed_at = sqlc.narg(resumed_at)
  WHERE user_id = sqlc.arg(user_id) AND id = sqlc.arg(id);
 
 -- name: DeleteHeartbeat :execrows

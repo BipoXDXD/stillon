@@ -398,6 +398,7 @@ func (d *Dispatcher) tentar(envios context.Context, n db.ClaimDueNotificationsRo
 	err = canal.Send(ctx, dest, Event{
 		NotificationID: n.ID, Kind: n.Event, TargetName: n.TargetName,
 		StartedAt: n.StartedAt, ResolvedAt: valorOuZero(n.ResolvedAt), QueuedAt: n.CreatedAt, Cause: n.Cause,
+		ClosedByResume: n.ClosedByResume,
 	})
 	if err == nil {
 		return desfecho{status: "sent"}

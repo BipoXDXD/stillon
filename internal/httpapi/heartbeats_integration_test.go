@@ -8,13 +8,16 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/BipoXDXD/stillon/internal/crypto"
 	"github.com/BipoXDXD/stillon/internal/heartbeat"
+	"github.com/BipoXDXD/stillon/internal/notify"
 	"github.com/BipoXDXD/stillon/internal/prober"
 	"github.com/BipoXDXD/stillon/internal/storage"
 	"github.com/BipoXDXD/stillon/internal/storage/db"
@@ -277,10 +280,120 @@ func TestPatchAppliesOnlyWhatCame(t *testing.T) {
 	}
 }
 
+// notificadorDeTeste guarda o texto de cada aviso, como os canais o enviariam.
+type notificadorDeTeste struct {
+	mu      sync.Mutex
+	assunto []string
+	corpo   []string
+}
+
+func (n *notificadorDeTeste) Kind() notify.Kind { return notify.KindDiscord }
+
+func (n *notificadorDeTeste) Send(_ context.Context, _ crypto.Secret, ev notify.Event) error {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	assunto, corpo := ev.Text()
+	n.assunto, n.corpo = append(n.assunto, assunto), append(n.corpo, corpo)
+	return nil
+}
+
+// entregar roda o dispatcher de verdade sobre a outbox.
+func entregar(t *testing.T, a *api) *notificadorDeTeste {
+	t.Helper()
+	box, err := crypto.NewBox(testMasterKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := &notificadorDeTeste{}
+	d := notify.NewDispatcher(a.pool, box, a.clk, prometheus.NewRegistry(), n)
+	if _, err := d.Dispatch(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
+// abertoComAtraso cria um heartbeat, deixa vencer e abre o incidente. Devolve
+// um token novo, porque o relógio passa da validade do anterior.
+func abertoComAtraso(t *testing.T, a *api) (dono, id, ping string) {
+	t.Helper()
+	dono = tokenDe(t, a, a.userID)
+	id, ping = criarHB(t, a, dono, corpoDePeriodo)
+	a.clk.Advance(2 * time.Hour)
+	avaliar(t, a)
+	dono = tokenDe(t, a, a.userID)
+	_, corpo := lerCru(t, a, http.MethodGet, "/api/v1/heartbeats/"+id, dono, nil)
+	if m := decodificar(t, corpo); m["open_incident_id"] == nil || m["state"] != "late" {
+		t.Fatalf("preparo: %s", corpo)
+	}
+	return dono, id, ping
+}
+
+// Reenviar o que já está gravado não muda nada: nem adia o prazo, nem fecha o
+// incidente, nem manda aviso de volta sem a tarefa ter dado sinal.
+func TestResendingTheSameScheduleKeepsTheDeadlineAndTheIncident(t *testing.T) {
+	a := newAPI(t)
+	dono, id, _ := abertoComAtraso(t, a)
+	_, antes := lerCru(t, a, http.MethodGet, "/api/v1/heartbeats/"+id, dono, nil)
+	prazo := decodificar(t, antes)["deadline_at"]
+
+	a.clk.Advance(time.Minute)
+	status, corpo := lerCru(t, a, http.MethodPatch, "/api/v1/heartbeats/"+id, dono, map[string]any{
+		"schedule": map[string]any{"kind": "period", "period_sec": 3600}, "grace_sec": 300,
+	})
+	if status != http.StatusOK {
+		t.Fatalf("PATCH: %d %s", status, corpo)
+	}
+	m := decodificar(t, corpo)
+	if m["deadline_at"] != prazo {
+		t.Errorf("reenviar os mesmos valores moveu o prazo: %v, antes %v", m["deadline_at"], prazo)
+	}
+	avaliar(t, a)
+	_, corpo = lerCru(t, a, http.MethodGet, "/api/v1/heartbeats/"+id, dono, nil)
+	if m := decodificar(t, corpo); m["open_incident_id"] == nil || m["state"] != "late" {
+		t.Errorf("o incidente não ficou aberto: %s", corpo)
+	}
+}
+
+// Mudança de verdade move o prazo, mas prazo novo não encerra alarme: o
+// incidente fica aberto até um sucesso.
+func TestChangingTheScheduleDoesNotCloseTheIncident(t *testing.T) {
+	a := newAPI(t)
+	dono, id, ping := abertoComAtraso(t, a)
+	for _, patch := range []map[string]any{
+		{"grace_sec": 600},
+		{"schedule": map[string]any{"kind": "period", "period_sec": 7200}},
+	} {
+		status, corpo := lerCru(t, a, http.MethodPatch, "/api/v1/heartbeats/"+id, dono, patch)
+		if status != http.StatusOK {
+			t.Fatalf("PATCH %v: %d %s", patch, status, corpo)
+		}
+		prazo, err := time.Parse(time.RFC3339, decodificar(t, corpo)["deadline_at"].(string))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !prazo.After(a.clk.Now()) {
+			t.Fatalf("o prazo não foi recalculado: %v", prazo)
+		}
+		avaliar(t, a)
+		_, corpo = lerCru(t, a, http.MethodGet, "/api/v1/heartbeats/"+id, dono, nil)
+		if m := decodificar(t, corpo); m["open_incident_id"] == nil || m["state"] != "late" {
+			t.Fatalf("depois de %v: %s", patch, corpo)
+		}
+	}
+	pingar(t, a, "/ping/"+ping, nil)
+	avaliar(t, a)
+	_, corpo := lerCru(t, a, http.MethodGet, "/api/v1/heartbeats/"+id, dono, nil)
+	if decodificar(t, corpo)["open_incident_id"] != nil {
+		t.Errorf("o sucesso não fechou o incidente: %s", corpo)
+	}
+}
+
 // D13: retomar zera a falha e recalcula o prazo, e o avaliador fecha o aberto.
+// O aviso diz que foi retomado, porque a tarefa não voltou: nenhum sucesso veio.
 func TestResumingClearsTheFailureAndClosesTheIncident(t *testing.T) {
 	a := newAPI(t)
 	dono := tokenDe(t, a, a.userID)
+	criarCanalDiscord(t, a, dono)
 	id, ping := criarHB(t, a, dono, corpoDePeriodo)
 	pingar(t, a, "/ping/"+ping+"/fail", nil)
 	avaliar(t, a)
@@ -298,14 +411,39 @@ func TestResumingClearsTheFailureAndClosesTheIncident(t *testing.T) {
 	a.clk.Advance(3 * time.Hour)
 	dono = tokenDe(t, a, a.userID) // o relógio avançou além da validade do token
 	_, corpo = lerCru(t, a, http.MethodPatch, "/api/v1/heartbeats/"+id, dono, map[string]any{"enabled": true})
-	m = decodificar(t, corpo)
-	if m["state"] != "waiting" && m["state"] != "up" {
+	if status := decodificar(t, corpo)["state"]; status == "failing" {
 		t.Fatalf("retomado: %s", corpo)
 	}
 	avaliar(t, a)
 	_, corpo = lerCru(t, a, http.MethodGet, "/api/v1/heartbeats/"+id, dono, nil)
-	if decodificar(t, corpo)["open_incident_id"] != nil {
-		t.Errorf("o incidente seguiu aberto: %s", corpo)
+	m = decodificar(t, corpo)
+	if m["open_incident_id"] != nil || m["state"] != "up" {
+		t.Errorf("depois de avaliar: %s", corpo)
+	}
+	// A abertura de um incidente já fechado não é enviada: sobra o fechamento.
+	avisos := entregar(t, a)
+	if len(avisos.assunto) != 1 || avisos.assunto[0] != "[StillOn] backup noturno foi retomado" {
+		t.Fatalf("avisos: %q", avisos.assunto)
+	}
+	if !strings.Contains(avisos.corpo[0], "sem sinal de sucesso") || strings.Contains(avisos.corpo[0], "voltou") {
+		t.Errorf("fechamento: %q", avisos.corpo[0])
+	}
+}
+
+// O caminho normal continua dizendo que voltou.
+func TestSuccessStillAnnouncesTheReturn(t *testing.T) {
+	a := newAPI(t)
+	dono := tokenDe(t, a, a.userID)
+	criarCanalDiscord(t, a, dono)
+	_, ping := criarHB(t, a, dono, corpoDePeriodo)
+	pingar(t, a, "/ping/"+ping+"/fail", nil)
+	avaliar(t, a)
+	a.clk.Advance(time.Minute)
+	pingar(t, a, "/ping/"+ping, nil)
+	avaliar(t, a)
+	avisos := entregar(t, a)
+	if len(avisos.assunto) != 1 || avisos.assunto[0] != "[StillOn] backup noturno voltou a funcionar" {
+		t.Fatalf("avisos: %q", avisos.assunto)
 	}
 }
 
