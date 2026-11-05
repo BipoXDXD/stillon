@@ -148,17 +148,13 @@ filtro sem uso.
 
 ## Migrations e ordem de merge
 
-A 00017 é a das tags (a 00015 fica reservada à vinculação Discord e a 00016 aos heartbeats). O
+A 00017 é a das tags (a 00016 é dos heartbeats, e a 00015 fica vaga; ver a [spec de heartbeats](2026-11-05-heartbeats-design.md)). O
 goose do projeto **aceita lacuna** de numeração, mas **não aceita migration menor que a versão já
 aplicada**. Provado em Postgres 18 com um teste descartável: 14 + 17 aplicam, e a 16 chegando
 depois falha com `detected 1 missing (out-of-order) migration lower than database version (17)`.
 Como `storage.Migrate` roda no boot, isso derruba o release.
 
-Consequências:
-
-1. **A 00016 tem de chegar à `main` antes da 00017.** O PR de tags só entra depois do de heartbeats.
-2. **Quando a 00016 for ao ar, a reserva da 00015 deixa de funcionar:** a vinculação Discord
-   precisará de um número maior, ou de `goose.WithAllowOutofOrder(true)`, decisão do dono.
+**A 00016 tem de chegar à `main` antes da 00017.** O PR de tags só entra depois do de heartbeats.
 
 ## Entrega
 
