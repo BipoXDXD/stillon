@@ -1,6 +1,7 @@
 import { mkdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import type { Page } from '@playwright/test'
+import { incidente } from '../src/test/fixtures'
 import { imitarApi } from './api-imitada'
 import { expect, test } from './fixtures'
 
@@ -11,10 +12,16 @@ import { expect, test } from './fixtures'
 // template Go renderizado com dados de exemplo (STILLON_EXEMPLO_PUBLICA,
 // gerado por TestGerarExemploDaPaginaPublica), e as fontes vêm do binário.
 // Só roda com CAPTURAR=1: as imagens vão para o repositório, não para o CI.
+// Para gerar (na raiz, com o Docker de pé):
+//   mkdir -p web/e2e/.tmp
+//   STILLON_EXEMPLO_PUBLICA="$PWD/web/e2e/.tmp/status-publica.html" go test ./internal/httpapi/ -run TestGerarExemploDaPaginaPublica
+//   cd web && npm run build
+//   CAPTURAR=1 STILLON_EXEMPLO_PUBLICA="$PWD/e2e/.tmp/status-publica.html" npx playwright test e2e/capturas.spec.ts
 test.skip(!process.env.CAPTURAR, 'capturas só com CAPTURAR=1 (PR 8 do redesign)')
 
 const DESTINO = path.resolve(import.meta.dirname, '../../docs/design/painel-depois')
 const LARGURAS = [400, 1280] as const
+const ALTURA = 900
 const TEMAS = [
   ['claro', 'light'],
   ['escuro', 'dark'],
@@ -25,6 +32,15 @@ const TEMAS = [
 type Tela = { nome: string; rota: string; preparar?: (page: Page) => Promise<unknown> }
 
 const erroDaApi = { error: { code: 'internal', message: '' }, trace_id: 't' }
+const ontem = Date.now() - 26 * 3_600_000
+const incidenteResolvidoDaApi = incidente({
+  id: 'inc-api',
+  target_id: 'a1',
+  target_name: 'API',
+  started_at: new Date(ontem).toISOString(),
+  resolved_at: new Date(ontem + 25 * 60_000).toISOString(),
+  cause: 'timeout',
+})
 
 const TELAS: Tela[] = [
   { nome: 'painel', rota: '/' },
@@ -38,7 +54,17 @@ const TELAS: Tela[] = [
     rota: '/',
     preparar: (page) => page.route('**/api/v1/targets/summary', (r) => r.fulfill({ status: 500, json: erroDaApi })),
   },
-  { nome: 'detalhe-alvo', rota: '/targets/a1' },
+  {
+    nome: 'detalhe-alvo',
+    rota: '/targets/a1',
+    // A API imitada devolve a mesma lista de incidentes a qualquer filtro, e
+    // o detalhe da API (no ar) mostraria o incidente aberto do Banco.
+    preparar: (page) =>
+      page.route(
+        (u) => u.pathname === '/api/v1/incidents' && u.searchParams.get('target_id') === 'a1',
+        (r) => r.fulfill({ status: 200, json: { items: [incidenteResolvidoDaApi] } }),
+      ),
+  },
   { nome: 'incidentes', rota: '/incidents' },
   { nome: 'canais', rota: '/channels' },
   { nome: 'status-page', rota: '/status-pages' },
@@ -65,6 +91,16 @@ async function esperarATela(page: Page) {
   })
 }
 
+// A foto da página inteira. O fullPage do Playwright estica a página sem
+// mudar a janela, e a barra de navegação fixa do celular sairia no meio do
+// conteúdo; com a janela da altura da página, ela fica no rodapé, como o
+// usuário a vê ao rolar até o fim.
+async function fotografar(page: Page, largura: number, arquivo: string) {
+  const altura = await page.evaluate(() => document.documentElement.scrollHeight)
+  await page.setViewportSize({ width: largura, height: Math.max(ALTURA, altura) })
+  await page.screenshot({ path: path.join(DESTINO, arquivo), fullPage: true, animations: 'disabled' })
+}
+
 test('capturas das telas do painel', async ({ page }) => {
   test.setTimeout(10 * 60_000)
   mkdirSync(DESTINO, { recursive: true })
@@ -75,15 +111,11 @@ test('capturas das telas do painel', async ({ page }) => {
         await imitarApi(page)
         // Registrada depois, a rota da tela vence a do imitarApi.
         await tela.preparar?.(page)
-        await page.setViewportSize({ width: largura, height: 900 })
+        await page.setViewportSize({ width: largura, height: ALTURA })
         await page.emulateMedia({ colorScheme: esquema })
         await page.goto(tela.rota)
         await esperarATela(page)
-        await page.screenshot({
-          path: path.join(DESTINO, `${tela.nome}-${largura}-${tema}.png`),
-          fullPage: true,
-          animations: 'disabled',
-        })
+        await fotografar(page, largura, `${tela.nome}-${largura}-${tema}.png`)
       }
     }
   }
@@ -100,18 +132,14 @@ test('capturas da página pública', async ({ page }) => {
   mkdirSync(DESTINO, { recursive: true })
   for (const largura of LARGURAS) {
     for (const [tema, esquema] of TEMAS) {
-      await page.setViewportSize({ width: largura, height: 900 })
+      await page.setViewportSize({ width: largura, height: ALTURA })
       await page.emulateMedia({ colorScheme: esquema })
       await page.goto('/p/exemplo')
       await expect(page.getByRole('heading', { level: 1 })).toBeVisible()
       await page.evaluate(async () => {
         await document.fonts.ready
       })
-      await page.screenshot({
-        path: path.join(DESTINO, `status-publica-${largura}-${tema}.png`),
-        fullPage: true,
-        animations: 'disabled',
-      })
+      await fotografar(page, largura, `status-publica-${largura}-${tema}.png`)
     }
   }
 })
