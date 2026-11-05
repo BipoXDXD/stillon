@@ -65,9 +65,12 @@ export function ControleSegmentado<V extends string>({ rotulo, opcoes, valor, ao
               if (!ativo) aoMudar(o.valor)
             }}
             onKeyDown={(e) => escolherPeloTeclado(e, i)}
+            // A borda marca o item ativo a 3:1 (WCAG 1.4.11): a superfície sobre
+            // o trilho dá 1,2:1, e o escuro não tem sombra. Os demais a reservam
+            // transparente, para escolher não mexer na largura.
             className={cn(
-              'min-h-11 min-w-11 rounded-padrao px-3 text-sm text-suave hover:text-texto',
-              ativo && 'bg-superficie font-semibold text-texto sombra-nivel-1',
+              'min-h-11 min-w-11 rounded-padrao border border-transparent px-3 text-sm text-suave hover:text-texto',
+              ativo && 'border-borda-controle bg-superficie font-semibold text-texto sombra-nivel-1',
             )}
           >
             {o.rotulo}

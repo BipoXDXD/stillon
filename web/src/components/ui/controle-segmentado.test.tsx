@@ -125,6 +125,18 @@ describe('ControleSegmentado', () => {
     expect(radio('1 h')).toHaveFocus()
   })
 
+  // O par de cores é do tokens.test.ts. Aqui: a borda do ativo substitui a
+  // transparente, e todo item a tem, para a largura não pular ao escolher.
+  it('só o item ativo tem a borda visível, e todos têm a mesma largura de borda', () => {
+    montar('6h')
+    expect(radio('6 h')).toHaveClass('border', 'border-borda-controle')
+    expect(radio('6 h')).not.toHaveClass('border-transparent')
+    for (const nome of ['1 h', '24 h']) {
+      expect(radio(nome)).toHaveClass('border', 'border-transparent')
+      expect(radio(nome)).not.toHaveClass('border-borda-controle')
+    }
+  })
+
   it('cada item é um alvo de toque de 44 × 44 px', () => {
     montar('6h')
     for (const r of screen.getAllByRole('radio')) expect(r).toHaveClass('min-h-11', 'min-w-11')
