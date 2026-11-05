@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/BipoXDXD/stillon/internal/auth"
+	"github.com/BipoXDXD/stillon/internal/config"
 )
 
 // O contador de provas por família das rotas autenticadas (A3 do Plano 10):
@@ -192,8 +193,12 @@ func TestWrongProofBudgetIsPerFamilyAcrossRoutes(t *testing.T) {
 // Argon2id; as outras nascem esgotadas (ou chegam com a família já derrubada)
 // e são recusadas sem verificar. Quatro respostas são invalid_credentials e o
 // resto unauthorized.
+//
+// O teto de Argon2id acompanha o orçamento: com menos vagas, a quinta prova
+// espera uma delas, e em arm64 com -race cada Argon2id passa do Argon2Wait. A
+// recusa por semáforo devolve a reserva e não é o que este teste trava.
 func TestParallelWrongProofsVerifyAtMostTheBudget(t *testing.T) {
-	a := newAPI(t)
+	a := newAPICom(t, func(cfg *config.Config) { cfg.Argon2MaxConcurrent = provasPorFamilia }, nil)
 	token := accessTokenValido(t, a)
 
 	antes := auth.Argon2Verifications()

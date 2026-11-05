@@ -15,7 +15,7 @@ vem de lá.
 
 **Critérios de sucesso**
 
-1. Cada linha de alvo tem 44 px no desktop; 30 alvos cabem em 1400 px, com a manchete.
+1. Cada linha de alvo tem 48 px no desktop; 30 alvos cabem em 1600 px, com a manchete.
 2. Um problema continua saltando aos olhos, por cor, forma e texto, e fica no topo.
 3. Em 400 px a tabela é usável, sem rolagem lateral da página.
 4. Um filtro nunca esconde um incêndio: a manchete sempre fala do conjunto inteiro.
@@ -31,8 +31,9 @@ acento de 4 px e `Minigrafico` com forma e cor. Os pares de contraste continuam 
 `tokens.test.ts`; um par novo entra lá, nos dois temas.
 
 A manchete fica, mais enxuta: é ela que dá a identidade editorial à tela densa. O alvo de toque
-fica em 44 px (`alvo-de-toque` e os testes de hit-test do `a11y.spec.ts`), por isso a linha não
-desce abaixo de 44 px. A densidade vem de uma linha por alvo e de mais colunas.
+fica em 44 px (`alvo-de-toque` e os testes de hit-test do `a11y.spec.ts`), e a linha tem 48 px: com
+44, a área de um nome encosta na do vizinho e o teste acusa. A densidade vem de uma linha por alvo e
+de mais colunas.
 
 ## O que muda
 
@@ -43,17 +44,19 @@ gravidade e depois por nome (a ordem de hoje, `agruparPorGravidade`).
 
 | Coluna | Conteúdo | ≥ 1024 px | 640 a 1023 px | < 640 px |
 |---|---|---|---|---|
-| Estado | `SeloDeEstado` | sim | só o ícone | só o ícone, junto do nome |
+| Estado | `SeloDeEstado` | sim | só o ícone, junto do nome | só o ícone, junto do nome |
 | Alvo | nome (`th scope=row`), link para o detalhe | sim | sim | sim |
 | Tags | até 3 pílulas e "+N" (PR de tags) | sim | não | não |
-| Situação | causa e duração, ou o último check; "Ver incidente" quando houver | sim | sim | em linha abaixo do nome, só nos problemas e nos sem dados |
-| Latência | último check, à direita | sim | sim | sim |
+| Situação | causa e duração, ou o último check; "Ver incidente" quando houver | sim | sim | em linha abaixo do nome, sem o link, só nos problemas, sem dados e pausados |
+| Latência | último check, à direita | sim | sim | não |
 | 24 h | uptime truncado, à direita | sim | sim | sim |
 | Últimas 24 h | `Minigrafico` | sim | sim | sim |
 
 - Linha de problema: borda de acento de 4 px na primeira célula, na cor do estado. O nome pesa 600
   em toda linha; o estado bom fica calmo, sem fundo colorido.
 - Pausado e sem dados continuam na mesma tabela, no fim, com o texto em `suave`.
+- Só o nome é link. Um link esticado sobre o `<tr>` depende de `position: relative` em linha de
+  tabela; onde isso falhar, ele cobre a tabela inteira.
 - O texto de cada estado vem das funções atuais (`detalheDoProblema`, `linhaSemDados`), para a
   frase não mudar de sentido.
 
@@ -119,7 +122,7 @@ filtro sem uso.
 
 | Estado | O que aparece |
 |---|---|
-| Carregando | esqueleto da manchete, da barra e de 8 linhas de 44 px; `aria-busy`; sem animação com `prefers-reduced-motion` |
+| Carregando | esqueleto da manchete e de 8 linhas de 48 px; `aria-busy`; sem animação com `prefers-reduced-motion` |
 | Sem alvos | a manchete de hoje, com "Cadastrar o primeiro alvo"; sem tabela nem barra de filtros |
 | Erro do resumo | `EstadoDaConsulta` de hoje, com "Tentar de novo" |
 | Erro só da consulta filtrada | a manchete e a barra ficam; no lugar da tabela, a mensagem com "Tentar de novo" |
@@ -129,9 +132,10 @@ filtro sem uso.
 
 ## Mobile (400 px)
 
-- Colunas de 640 px para baixo: Alvo (ícone do estado + nome), Latência, 24 h e Últimas 24 h, com
-  `px-2`, como a tabela "Funcionando" de hoje.
-- Linha `no ar` fica em uma altura; problema e sem dados ganham a linha de situação abaixo do nome.
+- Abaixo de 640 px: Alvo (ícone do estado + nome), 24 h e Últimas 24 h, com `px-2`. A Latência sai
+  porque espremia o nome, e o degradado já a diz na situação.
+- Linha `no ar` fica em uma altura; problema, sem dados e pausado ganham a situação abaixo do nome.
+- "Ver incidente" fica fora em 400 px: o nome leva ao detalhe, que tem a faixa do incidente.
 - Nome longo quebra dentro da célula (`overflow-wrap`), nunca alarga a página.
 - Cada grupo de filtros é uma faixa que rola de lado, dentro dela: quebrar linha empurraria a
   tabela para a segunda tela. Os botões têm 44 px, e a busca ocupa a largura inteira.
