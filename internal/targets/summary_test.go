@@ -52,7 +52,7 @@ func (a ambiente) alvo(t *testing.T, dono uuid.UUID) uuid.UUID {
 
 func resumoDe(t *testing.T, a ambiente, dono uuid.UUID) map[uuid.UUID]targets.Summary {
 	t.Helper()
-	itens, err := a.svc.Summary(context.Background(), dono)
+	itens, err := a.svc.Summary(context.Background(), dono, targets.SummaryFilter{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -251,7 +251,7 @@ func TestSummaryOrderIsTheListOrder(t *testing.T) {
 	for range 3 {
 		criados = append(criados, a.alvo(t, dono))
 	}
-	itens, err := a.svc.Summary(context.Background(), dono)
+	itens, err := a.svc.Summary(context.Background(), dono, targets.SummaryFilter{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -335,7 +335,7 @@ func TestSummaryBucketsAreUTCHoursInAnyTimeZone(t *testing.T) {
 	defer kolkata.Close()
 
 	svc := targets.NewService(kolkata, caixa(t), a.clk)
-	itens, err := svc.Summary(context.Background(), dono)
+	itens, err := svc.Summary(context.Background(), dono, targets.SummaryFilter{})
 	if err != nil {
 		t.Fatal(err)
 	}

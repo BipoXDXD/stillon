@@ -139,6 +139,11 @@ type TargetHealth struct {
 	LastCheckedAt        *time.Time
 }
 
+type TargetTag struct {
+	TargetID uuid.UUID
+	Tag      string
+}
+
 type TotpRecoveryCode struct {
 	ID        uuid.UUID
 	UserID    uuid.UUID

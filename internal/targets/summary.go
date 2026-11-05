@@ -33,6 +33,7 @@ type Summary struct {
 	// uma queda em curso aparece nele. nil sem check nenhum na janela.
 	Uptime24h      *float64
 	OpenIncidentID *uuid.UUID
+	Tags           []string
 	Spark          []SparkHour
 }
 
@@ -46,21 +47,25 @@ type SparkHour struct {
 
 type contagem struct{ total, ok int64 }
 
-// Summary monta o dashboard numa chamada só (D16 do Plano 5), em quatro
+// Summary monta o dashboard numa chamada só (D16 do Plano 5), em cinco
 // consultas na mesma transação do dono:
 //
 //  1. os alvos, com o último check e o incidente aberto;
 //  2. a marca d'água dos rollups do dono, que dá o corte;
 //  3. os rollups horários de [H−24h, corte);
 //  4. os checks brutos de [corte, H), agregados por hora com a fórmula dos
-//     rollups, e os da hora corrente [H, H+1h), só contados.
+//     rollups, e os da hora corrente [H, H+1h), só contados;
+//  5. as tags do dono.
+//
+// O filtro corre aqui, e não no SQL, porque o estado é calculado aqui
+// (targetstate); o teto de alvos por usuário limita o trabalho.
 //
 // Ler só os rollups deixaria a última hora fechada de fora por até 15 min e o
 // uptime cego à queda em curso; ler só os brutos custa ~390 ms com 100 alvos
 // (medido na spec). O corte é um valor fixo lido antes das consultas 3 e 4:
 // uma consolidação que comite entre elas não conta hora nenhuma duas vezes.
 // A regra do corte mora em rollupcut, a mesma da página pública.
-func (s *Service) Summary(ctx context.Context, userID uuid.UUID) ([]Summary, error) {
+func (s *Service) Summary(ctx context.Context, userID uuid.UUID, filtro SummaryFilter) ([]Summary, error) {
 	agora := s.clk.Now()
 	h := agora.UTC().Truncate(time.Hour)
 	inicio := h.Add(-SparkHours * time.Hour)
@@ -106,13 +111,22 @@ func (s *Service) Summary(ctx context.Context, userID uuid.UUID) ([]Summary, err
 			corrente[r.TargetID] = contagem{total: int64(r.Total), ok: int64(r.Ok)}
 		}
 
+		tags, err := tagsDoDono(ctx, q, userID)
+		if err != nil {
+			return err
+		}
+
 		out = make([]Summary, 0, len(alvos))
 		for _, a := range alvos {
 			sm := Summary{
 				ID: a.ID, Name: a.Name, Enabled: a.Enabled, OpenIncidentID: a.OpenIncidentID,
 				State: targetstate.Current(a.Enabled, time.Duration(a.IntervalSec)*time.Second,
 					a.LastStatus, a.LastCheckedAt, agora),
+				Tags:  tagsDoAlvo(tags, a.ID),
 				Spark: horas[a.ID],
+			}
+			if !filtro.accepts(sm) {
+				continue
 			}
 			if a.LastStatus != "" {
 				em := a.LastCheckedAt.UTC()
