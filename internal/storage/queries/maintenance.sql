@@ -57,6 +57,11 @@ DELETE FROM check_rollup_1h WHERE bucket < sqlc.arg(cutoff)::timestamptz;
 -- name: DeleteOldNotifications :execrows
 DELETE FROM notifications WHERE status <> 'pending' AND created_at < sqlc.arg(cutoff)::timestamptz;
 
+-- A idade do log de sinais (D15 da spec de heartbeats). O teto por heartbeat
+-- fica na transação do ping; esta cobre quem parou de pingar.
+-- name: DeleteOldHeartbeatEvents :execrows
+DELETE FROM heartbeat_events WHERE at < sqlc.arg(cutoff)::timestamptz;
+
 -- audit_log e sessions não têm RLS (D7 do Plano 2).
 -- name: DeleteOldAudit :execrows
 DELETE FROM audit_log WHERE at < sqlc.arg(cutoff)::timestamptz;

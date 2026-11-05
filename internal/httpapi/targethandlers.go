@@ -4,6 +4,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"slices"
 	"strconv"
 	"time"
@@ -393,8 +394,11 @@ type targetSummaryResponse struct {
 
 // parametrosDoResumo é a allowlist de ?: um parâmetro desconhecido é 400, e
 // nunca um filtro ignorado que devolveria a lista inteira como se tivesse
-// filtrado.
+// filtrado. Pelo mesmo motivo a query passa por url.ParseQuery: r.URL.Query()
+// descarta em silêncio o par que não sabe ler (?tag=%zz, ?tag=a;tag=b).
 var parametrosDoResumo = []string{"tag", "state"}
+
+const campoDaConsulta = "query"
 
 // Summary é GET /targets/summary: o dashboard numa chamada só (spec §11.3),
 // sem paginação (o teto de alvos por usuário é o limite). ?tag= e ?state=
@@ -404,10 +408,15 @@ func (h *TargetHandlers) Summary(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	q := r.URL.Query()
+	q, err := url.ParseQuery(r.URL.RawQuery)
+	if err != nil {
+		campoInvalido(w, r, campoDaConsulta, targets.ReasonInvalid)
+		return
+	}
 	for chave := range q {
 		if !slices.Contains(parametrosDoResumo, chave) {
-			campoInvalido(w, r, chave, targets.ReasonInvalid)
+			// Nome fixo: a chave é de quem chama e não tem limite de tamanho.
+			campoInvalido(w, r, campoDaConsulta, targets.ReasonInvalid)
 			return
 		}
 	}

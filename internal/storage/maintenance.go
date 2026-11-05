@@ -23,6 +23,8 @@ const (
 	AuditRetentionMonths   = 12
 	SessionGrace           = 7 * 24 * time.Hour
 	NotificationsRetention = 30 * 24 * time.Hour
+	// HeartbeatEventsRetention é a idade máxima de um evento de heartbeat.
+	HeartbeatEventsRetention = 30 * 24 * time.Hour
 )
 
 const (
@@ -56,12 +58,13 @@ var ErrMaintenanceInterval = errors.New("intervalo de manutenção precisa ser p
 
 // MaintenanceReport diz o que uma rodada fez, para o log.
 type MaintenanceReport struct {
-	RollupHours          int64
-	DroppedPartitions    int32
-	DeletedRollups       int64
-	DeletedNotifications int64
-	DeletedAudit         int64
-	DeletedSessions      int64
+	RollupHours            int64
+	DroppedPartitions      int32
+	DeletedRollups         int64
+	DeletedNotifications   int64
+	DeletedHeartbeatEvents int64
+	DeletedAudit           int64
+	DeletedSessions        int64
 }
 
 // Maintain é uma rodada da manutenção (spec §12): garante as partições,
@@ -157,6 +160,9 @@ func ApplyRetention(ctx context.Context, pool *pgxpool.Pool, now time.Time) (Mai
 		if r.DeletedNotifications, err = q.DeleteOldNotifications(ctx, now.Add(-NotificationsRetention)); err != nil {
 			return fmt.Errorf("apagar notificações vencidas: %w", err)
 		}
+		if r.DeletedHeartbeatEvents, err = q.DeleteOldHeartbeatEvents(ctx, now.Add(-HeartbeatEventsRetention)); err != nil {
+			return fmt.Errorf("apagar eventos de heartbeat vencidos: %w", err)
+		}
 		if r.DeletedAudit, err = q.DeleteOldAudit(ctx, now.AddDate(0, -AuditRetentionMonths, 0)); err != nil {
 			return fmt.Errorf("apagar auditoria vencida: %w", err)
 		}
@@ -200,6 +206,7 @@ func RunMaintenance(ctx context.Context, pool *pgxpool.Pool, clk clock.Clock, ev
 		nivel := slog.LevelInfo
 		atributos := []any{"rollups", r.RollupHours, "particoes_apagadas", r.DroppedPartitions,
 			"rollups_apagados", r.DeletedRollups, "notificacoes_apagadas", r.DeletedNotifications,
+			"eventos_de_heartbeat_apagados", r.DeletedHeartbeatEvents,
 			"auditoria_apagada", r.DeletedAudit, "sessoes_apagadas", r.DeletedSessions}
 		if err != nil {
 			nivel = slog.LevelError

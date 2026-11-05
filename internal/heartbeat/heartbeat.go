@@ -1,6 +1,8 @@
 // Package heartbeat guarda as regras das tarefas que avisam por ping
-// (docs/superpowers/specs/2026-11-05-heartbeats-design.md): agendamento,
-// prazo, token. O núcleo é puro: não faz I/O e não lê relógio.
+// (docs/superpowers/specs/2026-11-05-heartbeats-design.md). As regras de
+// agendamento, prazo e token (heartbeat.go, schedule.go, token.go) são puras:
+// não fazem I/O e não leem relógio. Os serviços (ping.go, service.go) aplicam
+// essas regras no banco.
 package heartbeat
 
 import (
@@ -29,9 +31,16 @@ const (
 	RepeatWindow = 10 * time.Second
 	// MaxEventsPerHeartbeat é o teto do log de sinais (D15).
 	MaxEventsPerHeartbeat = 1000
-	// EventsRetention é a idade máxima de um evento, para o heartbeat que
-	// parou de pingar e nunca alcançaria o teto (D15).
-	EventsRetention = 30 * 24 * time.Hour
+	// EarlySignalMargin é quanto antes de um disparo do cron um sinal ainda
+	// conta como daquele disparo. Um host com o relógio adiantado termina a
+	// tarefa de 3h às 02:59:59; sem a folga, o próximo disparo seria o das 3h
+	// que acabou de rodar, e o incidente falso se repetiria todo dia. Fica em
+	// MinGrace: acima disso, a folga passaria da menor tolerância aceita.
+	EarlySignalMargin = MinGrace
+	// ReopenCooldown é o intervalo mínimo entre aberturas de incidente do
+	// mesmo heartbeat (D11): um token vazado alternando falha e sucesso
+	// dispararia um aviso a cada avaliação. Atrasa a abertura, nunca a perde.
+	ReopenCooldown = 5 * time.Minute
 )
 
 // Motivos de ValidationError, no vocabulário fechado da API.
@@ -49,6 +58,31 @@ type ValidationError struct {
 
 func (e *ValidationError) Error() string {
 	return "heartbeat inválido: " + e.Field + " " + e.Reason
+}
+
+// Causas de incidente de heartbeat, no enum de incidents.cause.
+const (
+	CauseLate   = "heartbeat_late"
+	CauseFailed = "heartbeat_failed"
+)
+
+// Opening diz por que o incidente abre e desde quando: a falha avisada ganha
+// do atraso, porque é o que a tarefa disse de si mesma.
+func Opening(deadlineAt time.Time, failingSince *time.Time) (cause string, startedAt time.Time) {
+	if failingSince != nil {
+		return CauseFailed, *failingSince
+	}
+	return CauseLate, deadlineAt
+}
+
+// Closing diz quando o incidente acabou e se foi pela retomada: o sucesso que o
+// resolveu, ou now quando o dono retomou um heartbeat pausado sem sucesso
+// nenhum depois do início.
+func Closing(startedAt time.Time, lastSuccessAt *time.Time, now time.Time) (resolvedAt time.Time, byResume bool) {
+	if lastSuccessAt != nil && !lastSuccessAt.Before(startedAt) {
+		return *lastSuccessAt, false
+	}
+	return now, true
 }
 
 // Signal é o que a tarefa avisa. Os valores são os do CHECK de
@@ -117,8 +151,13 @@ func (s State) isRepeat(sig Signal, now time.Time) bool {
 }
 
 // FirstDeadline é o prazo a contar de from: o próximo instante esperado mais
-// a tolerância. Serve à criação (D12), à retomada e ao sucesso.
+// a tolerância. Serve à criação (D12), à retomada e ao sucesso. Só o cron tem
+// a folga EarlySignalMargin: no período, o próximo instante conta do próprio
+// sinal, e não há disparo marcado para confundir.
 func FirstDeadline(sch Schedule, grace time.Duration, from time.Time) time.Time {
+	if sch.IsCron() {
+		from = from.Add(EarlySignalMargin)
+	}
 	return sch.Next(from).Add(grace)
 }
 

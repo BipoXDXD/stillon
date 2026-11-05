@@ -23,7 +23,7 @@ painel; este trabalho para na API, com o contrato da §7 pronto).
 | D10 | `start` e `fail` não movem o prazo; só `success` move | Regra única: a tolerância cobre o tempo de execução. Um `start` sem `success` vira atraso no prazo normal |
 | D11 | Sem histerese: uma transição por sinal, com **intervalo mínimo de 5 min entre aberturas** do mesmo heartbeat | Um ping já é um sinal deliberado. O intervalo fecha o abuso de token vazado alternando `fail`/`success` para disparar aviso: atrasa a abertura, nunca a perde |
 | D12 | Heartbeat novo já tem prazo (`criação + período + tolerância`) | Tarefa que nunca rodou é o caso mais comum de agendamento errado, e deve avisar |
-| D13 | Pausar interrompe os lembretes, como no alvo pausado. Retomar zera a falha e recalcula o prazo a partir de agora. Ping em heartbeat pausado é aceito e registrado | O incidente aberto fecha no retorno, pelo avaliador. Recusar ping pausado quebraria a tarefa do dono sem motivo |
+| D13 | Pausar interrompe os lembretes, como no alvo pausado. Retomar zera a falha, recalcula o prazo a partir de agora e grava `resumed_at`. Ping em heartbeat pausado é aceito e registrado | O incidente aberto fecha na retomada, pelo avaliador. Recusar ping pausado quebraria a tarefa do dono sem motivo |
 | D14 | Corpo do ping é descartado e não é guardado (limite 10 KiB); nada de IP nos eventos | Dado que não é necessário não entra. Cada byte guardado de um POST público seria superfície |
 | D15 | Teto de 1000 eventos por heartbeat, aplicado na transação do ping; 30 dias de idade, aplicados na manutenção | Teto exato sem depender do job. A manutenção cobre o heartbeat que parou de pingar |
 | D16 | Limite de 100 heartbeats por usuário, sob advisory lock | Mesmo teto e mesmo mecanismo de `targets` |
@@ -136,6 +136,28 @@ incidents: target_id passa a aceitar NULL; heartbeat_id uuid NULL FK ON DELETE C
   isso, o escopo do ping alcançaria o incidente do próprio heartbeat, e o escopo público nada
   enxerga porque `heartbeats` não tem política pública.
 - Down apaga os incidentes de heartbeat, restaura o `NOT NULL` e o CHECK e remove as tabelas.
+- **Correção da 00016:** o comentário "Também serve à FK" antes de
+  `incidents_one_open_per_heartbeat` está errado. Aquele índice cobre só os abertos; quem atende a
+  FK é `incidents_heartbeat_idx`. A migration já foi aplicada e não muda.
+- **`OR` mantido por medição:** `ClaimHeartbeatsToOpen` filtra com
+  `deadline_at <= now OR failing_since IS NOT NULL`, que não usa `heartbeats_due_idx`. Separar em
+  `UNION` para alcançar o índice piorou a consulta, e o que não melhora se desfaz. Melhor de 5
+  `EXPLAIN ANALYZE`, com 1% de linhas vencidas e 1% em falha:
+
+  | Linhas | `OR` | `UNION` | `UNION` + índice parcial em `failing_since` |
+  |---|---|---|---|
+  | 100 | 47 µs | 80 µs (seq scan: o planejador não usa o índice) | 62 µs |
+  | 10 mil | 452 µs | 669 µs | 397 µs |
+
+  O teto é de 100 heartbeats por usuário e a consulta roda a cada 5 s. O índice parcial, 55 µs
+  melhor que o `OR` com 100 vezes o teto, não paga uma migration nem o custo de escrita.
+- **Pendência sem urgência:** `heartbeats_due_idx` ficou sem consulta que o use. Removê-lo na próxima
+  migration que passar por aqui, que tem de ser maior que a das tags (a 00018, se a 00017 entrar
+  antes). Até lá, o custo é só o de manter o índice a cada ping.
+
+A **00018** acrescenta `heartbeats.resumed_at` e `incidents.closed_by_resume` (§5). Tem de entrar
+depois da 00017, das tags: com a 00018 aplicada, `storage.Migrate` recusaria a 00017. Colunas
+novas não afetam o binário anterior: o sqlc expande `SELECT *` na geração.
 
 ## 5. Regra de prazo
 
@@ -145,14 +167,32 @@ Função pura em `internal/heartbeat`, sem I/O, recebendo `now`:
   last_start_at` se houver `start` aberto, e o `start` é consumido.
 - `start`: grava `last_start_at`; prazo intacto.
 - `fail`: `failing_since = coalesce(failing_since, now)`; prazo intacto.
-- `proximo(t)`: `t + period` ou o próximo disparo do cron depois de `t`, no fuso declarado.
+- `proximo(t)`: `t + period` ou o próximo disparo do cron depois de `t + 30 s`, no fuso declarado.
+  A folga (`EarlySignalMargin`, igual a `MinGrace`) existe porque um host com o relógio adiantado
+  termina a tarefa de 3h às 02:59:59: sem ela, o próximo disparo seria o das 3h que acabou de rodar,
+  com prazo às 03:05, e o incidente falso voltaria todo dia. Exemplo com `0 3 * * *` e 5 min de
+  tolerância: sucesso às 02:59:59 ou 02:59:30 dá prazo às 03:05 do dia seguinte; às 02:59:29, às
+  03:05 do mesmo dia. O período não tem folga: conta do próprio sinal, sem disparo marcado.
+  Custo: um sucesso de verdade do disparo anterior, a menos de 30 s do próximo, conta para o próximo,
+  e a falta dele aparece um ciclo depois.
 - Saudável = `failing_since IS NULL AND deadline_at > now`. Abrir: habilitado, não saudável, sem
   incidente aberto, e `last_incident_at` fora dos 5 min. Fechar: habilitado, saudável, com
-  incidente aberto.
-- `started_at`: `deadline_at` no atraso, `failing_since` na falha. `resolved_at`: o maior entre
-  `last_success_at` e `started_at`; sem `success` novo (retomada), `now`.
+  incidente aberto e com um `success` ou uma retomada depois do início dele.
+- **Prazo novo não encerra alarme.** O PATCH só recalcula o prazo se o agendamento ou a tolerância
+  mudarem de valor: reenviar o que está gravado não mexe em nada. Com mudança real, o prazo vai para
+  a frente, mas o incidente aberto fica até um `success` ou até a retomada, e o `state` segue `late`.
+  Sem isso, editar um heartbeat atrasado fecharia o incidente e avisaria que a tarefa voltou, sem
+  ping nenhum.
+- `started_at`: `deadline_at` no atraso, `failing_since` na falha. `resolved_at`: o `last_success_at`
+  que fechou; sem `success` depois do início (retomada), `now`, com `closed_by_resume` ligado. Esse
+  aviso diz que o heartbeat foi retomado, e nunca que voltou: a coluna fica no incidente porque a
+  retentativa repete o texto, e o Resend recusa a mesma chave com outro corpo.
 
 Cron recusado: fora dos 5 campos, com `TZ=`/`CRON_TZ=` ou que nunca dispara (`0 0 30 2 *`).
+
+Limites conhecidos do horário de verão, fixados em teste: a hora que não existe pula aquele dia, e a
+hora repetida dispara duas vezes (1h30 de 1/11/2026 em Nova York: 05:30 e 06:30 UTC). Quem agenda
+nela e roda uma vez só pode ter um alarme falso por ano; a saída é agendar fora dessa hora.
 
 ## 6. STRIDE do `POST /ping/{token}`
 
@@ -187,8 +227,8 @@ D9, D11 e D15, todos no banco. Hoje há uma instância de API; não há requisit
 direção segura para um monitor. O `curl --retry` respeita `Retry-After`.
 
 **Log de proxy, fora do código.** Os `Caddyfile` do repositório não têm diretiva `log`, então não
-gravam acesso. O proxy do Coolify na VPS não está no repositório: confirmar que ele não guarda o
-caminho é item operacional da §9.
+gravam acesso. O `coolify-proxy` (Traefik) da VPS não tem access log ligado: conferido na VPS em
+2026-11-05, nos argumentos e no compose. Ver §9.
 
 ## 7. Contrato
 
@@ -196,9 +236,13 @@ Público:
 
 | Rota | Efeito | Respostas |
 |---|---|---|
-| `POST /ping/{token}` | sucesso | `200 {"status":"ok"}`, `404`, `413`, `429` |
+| `POST /ping/{token}` | sucesso | `200 {"status":"ok"}`, `400`, `404`, `413`, `429` |
 | `POST /ping/{token}/start` | início | idem |
 | `POST /ping/{token}/fail` | falha | idem |
+
+`400` é o corpo que não pôde ser lido até o fim, como conexão interrompida no meio do envio; nada é
+gravado. Método diferente de POST dá `405`. Falha do lado do servidor dá `500`, ou `503` com o prazo
+vencido, no envelope de erro comum.
 
 Autenticado (`protegida`: Authn, limite por usuário, sessão viva; mutações com o cabeçalho
 anti-CSRF). Entrada estrita, com `DisallowUnknownFields`. Recurso alheio é 404.
@@ -251,5 +295,7 @@ Papéis: `--role=api` serve 3 e 5; `--role=prober` roda 4; `--role=all`, tudo.
 
 - Ajustar o `CLAUDE.md`: "a 00015 é reservada à vinculação Discord" deixa de valer (D1). Nesta
   frente ele não é editado.
-- Confirmar que o proxy do Coolify não grava o caminho das requisições: o token de ping está na
-  URL, e o de verificação de e-mail já estava.
+- Proxy do Coolify: **conferido em 2026-11-05.** O `coolify-proxy` (Traefik) não tem access log
+  ligado, nem nos argumentos nem no compose, então o caminho com o token não é gravado. Se alguém
+  ligar o access log, os tokens de ping e de verificação de e-mail passam a ir para o log: é preciso
+  filtrar o caminho antes.

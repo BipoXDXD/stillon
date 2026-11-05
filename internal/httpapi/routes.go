@@ -13,6 +13,7 @@ import (
 	"github.com/BipoXDXD/stillon/internal/auth"
 	"github.com/BipoXDXD/stillon/internal/clock"
 	"github.com/BipoXDXD/stillon/internal/config"
+	"github.com/BipoXDXD/stillon/internal/heartbeat"
 	"github.com/BipoXDXD/stillon/internal/httpapi/middleware"
 	"github.com/BipoXDXD/stillon/internal/incident/history"
 	"github.com/BipoXDXD/stillon/internal/notify"
@@ -52,7 +53,11 @@ type Deps struct {
 	Channels  *notify.ChannelService
 	// StatusPages serve o cadastro do dono e a página pública /p/{slug}.
 	StatusPages *statuspage.Service
-	Clock       clock.Clock
+	// Pings recebe os sinais das tarefas em /ping/{token}.
+	Pings *heartbeat.PingService
+	// Heartbeats é o cadastro do dono.
+	Heartbeats *heartbeat.Service
+	Clock      clock.Clock
 	// Ready é o teste de prontidão de /readyz: o ping no banco em produção.
 	Ready func(context.Context) error
 	// Painel são os arquivos do painel React. Nil é o embutido no binário
@@ -86,6 +91,7 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	h := NewAuthHandlers(d.Store, d.Sessions, d.TOTP, d.Clock, cfg.JWTSecret, secureCookie, proxiesDe(cfg), provas, dispositivos)
 	th := NewTargetHandlers(d.Targets, d.Clock)
 	ih := NewIncidentHandlers(d.Incidents)
+	hb := NewHeartbeatHandlers(d.Heartbeats, cfg.PublicBaseURL)
 	ch := NewChannelHandlers(d.Channels)
 	sp := NewStatusPageHandlers(d.StatusPages, cfg.PublicBaseURL)
 	ah := NewAccountHandlers(d.Accounts, proxiesDe(cfg), secureCookie, provas)
@@ -171,6 +177,16 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	mux.Handle("GET /api/v1/incidents", protegida(ih.List))
 	mux.Handle("POST /api/v1/incidents/{id}/ack", protegida(ih.Ack))
 
+	mux.Handle("GET /api/v1/heartbeats", protegida(hb.List))
+	mux.Handle("POST /api/v1/heartbeats", protegida(hb.Create))
+	mux.Handle("GET /api/v1/heartbeats/{id}", protegida(hb.Get))
+	mux.Handle("PATCH /api/v1/heartbeats/{id}", protegida(hb.Update))
+	mux.Handle("DELETE /api/v1/heartbeats/{id}", protegida(hb.Delete))
+	mux.Handle("POST /api/v1/heartbeats/{id}/token/rotate", protegida(hb.RotateToken))
+	mux.Handle("GET /api/v1/heartbeats/{id}/events", protegida(hb.Events))
+	mux.Handle("GET /api/v1/heartbeats/{id}/incidents", protegida(hb.Incidents))
+	mux.Handle("POST /api/v1/heartbeats/{id}/incidents/{incident_id}/ack", protegida(hb.AckIncident))
+
 	porEnvio := middleware.RateLimitUserEvery(ctx, d.Clock, envioACada, envioBurst)
 	comEnvio := func(fn http.HandlerFunc) http.Handler { return authn(porUsuario(porEnvio(viva(fn)))) }
 	mux.Handle("GET /api/v1/channels", protegida(ch.List))
@@ -227,6 +243,7 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	raiz.Handle("/readyz", handler)
 	raiz.Handle("/verify/", verificacao(ctx, cfg, d.Clock, d.Channels))
 	raiz.Handle("/p/", paginaPublica(ctx, cfg, d.Clock, d.StatusPages))
+	raiz.Handle("/ping/", pingPublico(ctx, cfg, d.Clock, d.Pings))
 	raiz.Handle("/", painel(d.Painel))
 	return raiz
 }

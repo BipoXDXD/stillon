@@ -28,6 +28,80 @@ func TestMessageForOpenedAndResolved(t *testing.T) {
 	}
 }
 
+// Tarefa não fica "fora do ar": os três avisos falam em sinal, com o motivo.
+func TestMessageForHeartbeat(t *testing.T) {
+	ev := evAberto
+	ev.TargetName = "Backup"
+	ev.Cause = "heartbeat_late"
+	assunto, corpo := mensagem(ev)
+	if assunto != "[StillOn] Backup está sem sinal" ||
+		corpo != "Backup está sem sinal desde 24/09/2026 12:00 UTC.\nCausa: o sinal não chegou no prazo.\n" {
+		t.Errorf("abertura: %q / %q", assunto, corpo)
+	}
+
+	ev.Kind = incident.EventReminder
+	ev.QueuedAt = ev.StartedAt.Add(45 * time.Minute)
+	assunto, corpo = mensagem(ev)
+	if assunto != "[StillOn] Backup continua sem sinal" || !strings.Contains(corpo, "(há 45 min)") {
+		t.Errorf("lembrete: %q / %q", assunto, corpo)
+	}
+
+	ev.Kind = incident.EventResolved
+	ev.ResolvedAt = ev.StartedAt.Add(2 * time.Hour)
+	assunto, corpo = mensagem(ev)
+	if assunto != "[StillOn] Backup voltou a dar sinal" ||
+		corpo != "Backup voltou a dar sinal em 24/09/2026 14:00 UTC, depois de 2h 00min sem sinal.\n" {
+		t.Errorf("fechamento: %q / %q", assunto, corpo)
+	}
+}
+
+// Falha avisada não é "sem sinal": a tarefa deu sinal, e ele foi ruim.
+func TestMessageForAnnouncedTaskFailure(t *testing.T) {
+	ev := evAberto
+	ev.TargetName = "Backup"
+	ev.Cause = "heartbeat_failed"
+	assunto, corpo := mensagem(ev)
+	if assunto != "[StillOn] Backup está em falha" ||
+		corpo != "Backup está em falha desde 24/09/2026 12:00 UTC.\nCausa: a tarefa avisou que falhou.\n" {
+		t.Errorf("abertura: %q / %q", assunto, corpo)
+	}
+
+	ev.Kind = incident.EventReminder
+	ev.QueuedAt = ev.StartedAt.Add(45 * time.Minute)
+	assunto, corpo = mensagem(ev)
+	if assunto != "[StillOn] Backup continua em falha" ||
+		corpo != "Backup continua em falha desde 24/09/2026 12:00 UTC (há 45 min).\nCausa: a tarefa avisou que falhou.\n"+
+			"Reconheça o incidente para parar os lembretes.\n" {
+		t.Errorf("lembrete: %q / %q", assunto, corpo)
+	}
+
+	ev.Kind = incident.EventResolved
+	ev.ResolvedAt = ev.StartedAt.Add(2 * time.Hour)
+	assunto, corpo = mensagem(ev)
+	if assunto != "[StillOn] Backup voltou a funcionar" ||
+		corpo != "Backup voltou a funcionar em 24/09/2026 14:00 UTC, depois de 2h 00min em falha.\n" {
+		t.Errorf("fechamento: %q / %q", assunto, corpo)
+	}
+}
+
+// Retomar sem sucesso encerra o incidente, mas a tarefa não voltou: o aviso não
+// pode dizer que voltou, seja qual for a causa.
+func TestMessageForResumeWithoutSuccess(t *testing.T) {
+	for _, c := range []string{"heartbeat_late", "heartbeat_failed"} {
+		ev := evAberto
+		ev.TargetName = "Backup"
+		ev.Cause = c
+		ev.Kind = incident.EventResolved
+		ev.ClosedByResume = true
+		ev.ResolvedAt = ev.StartedAt.Add(2 * time.Hour)
+		assunto, corpo := mensagem(ev)
+		if assunto != "[StillOn] Backup foi retomado" ||
+			corpo != "Backup foi retomado em 24/09/2026 14:00 UTC, sem sinal de sucesso. O incidente foi encerrado, e o prazo recomeça a contar.\n" {
+			t.Errorf("%s: %q / %q", c, assunto, corpo)
+		}
+	}
+}
+
 // Causa fora do enum não vaza para a mensagem: vira o residual.
 func TestMessageNeverEchoesAnUnknownCause(t *testing.T) {
 	ev := evAberto
