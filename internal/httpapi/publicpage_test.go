@@ -328,3 +328,63 @@ func TestDeliveredPageDeclaresItsLengthAndHeadHasNoBody(t *testing.T) {
 		})
 	}
 }
+
+// TestGerarExemploDaPaginaPublica grava a página pública com dados de
+// exemplo no arquivo de STILLON_EXEMPLO_PUBLICA (caminho absoluto), para as
+// capturas do redesign (web/e2e/capturas.spec.ts). Sem a variável, o teste
+// se declara pulado e não grava nada.
+func TestGerarExemploDaPaginaPublica(t *testing.T) {
+	destino := os.Getenv("STILLON_EXEMPLO_PUBLICA")
+	if destino == "" {
+		t.Skip("só para as capturas: STILLON_EXEMPLO_PUBLICA=<arquivo absoluto>")
+	}
+	if err := os.WriteFile(destino, []byte(renderizar(t, exemploDaPaginaPublica())), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// exemploDaPaginaPublica: dois serviços no ar (um com um dia instável), um
+// lento hoje, um fora do ar, um novo com só 10 dias de dados, e três
+// incidentes resolvidos.
+func exemploDaPaginaPublica() statuspage.View {
+	agora := time.Date(2026, 10, 14, 12, 0, 0, 0, time.UTC)
+	servicos := []struct {
+		nome     string
+		estado   statuspage.State
+		uptime   float64
+		latencia int32
+		ruins    map[int]float64
+	}{
+		{"API de pagamentos", statuspage.StateUp, 0.99991, 142, map[int]float64{41: 0.995}},
+		{"Site institucional", statuspage.StateUp, 1, 318, nil},
+		{"Painel do cliente", statuspage.StateDegraded, 0.9993, 2380, map[int]float64{88: 0.996, 89: 0.993}},
+		{"Banco de relatórios", statuspage.StateDown, 0.9921, 88, map[int]float64{17: 0.97, 89: 0.61}},
+	}
+	v := statuspage.View{Title: "Status da Loja Exemplo", GeneratedAt: agora}
+	for _, s := range servicos {
+		lat := s.latencia
+		it := statuspage.PublicItem{Name: s.nome, State: s.estado, Uptime90: ptr(s.uptime), LatencyMS: &lat}
+		for d := range it.Days {
+			it.Days[d] = statuspage.Day{Date: agora.AddDate(0, 0, d-statuspage.Days+1), Uptime: ptr(1)}
+			if u, ruim := s.ruins[d]; ruim {
+				it.Days[d].Uptime = ptr(u)
+			}
+		}
+		v.Items = append(v.Items, it)
+	}
+	novo := statuspage.PublicItem{Name: "Webhook de pedidos", State: statuspage.StateUp, Uptime90: ptr(1)}
+	for d := range novo.Days {
+		novo.Days[d].Date = agora.AddDate(0, 0, d-statuspage.Days+1)
+		if d >= statuspage.Days-10 {
+			novo.Days[d].Uptime = ptr(1)
+		}
+	}
+	v.Items = append(v.Items, novo)
+	for i, nome := range []string{"Banco de relatórios", "Painel do cliente", "API de pagamentos"} {
+		inicio := agora.Add(-time.Duration(i*9+2) * 24 * time.Hour)
+		v.Incidents = append(v.Incidents, statuspage.PublicIncident{
+			Name: nome, StartedAt: inicio, ResolvedAt: inicio.Add(time.Duration(40+i*25) * time.Minute),
+		})
+	}
+	return v
+}
