@@ -5,37 +5,13 @@ import { describe, expect, it } from 'vitest'
 // Fitness function do sistema visual do redesign (DI 2 a 4): espaçamento só
 // na escala 4/8/12/16/24/32/48/64 (classes 1, 2, 3, 4, 6, 8, 12, 16), um raio
 // (rounded-padrao) e pílulas (rounded-full), pesos 400 e 600, sombras só de
-// dois níveis (sombra-nivel-1 e -2) e cor só por token. Um arquivo entra na
-// lista quando o PR que o redesenha chega; o PR 8 troca a lista por todo o src.
-const ARQUIVOS_NO_SISTEMA = [
-  'src/app/BotaoDeTema.tsx',
-  'src/app/Layout.tsx',
-  'src/components/Marca.tsx',
-  'src/components/Minigrafico.tsx',
-  'src/components/Titulo.tsx',
-  'src/components/SeloDeEstado.tsx',
-  'src/components/SeloDoIncidente.tsx',
-  'src/components/ui/avisos.tsx',
-  'src/components/ui/botao.tsx',
-  'src/components/ui/campo.tsx',
-  'src/components/ui/cartao.ts',
-  'src/components/ui/controle-segmentado.tsx',
-  'src/components/ui/dialogo.tsx',
-  'src/features/painel/EsqueletoDoPainel.tsx',
-  'src/features/alvos/FaixaDeEstado.tsx',
-  'src/features/alvos/FormularioAlvo.tsx',
-  'src/features/alvos/GraficoDeLatencia.tsx',
-  'src/features/alvos/Indicadores.tsx',
-  'src/features/alvos/IncidentesRecentes.tsx',
-  'src/features/alvos/PaginaDetalhe.tsx',
-  'src/features/incidentes/PaginaIncidentes.tsx',
-  'src/features/painel/PaginaPainel.tsx',
-  'src/features/canais/PaginaCanais.tsx',
-  'src/features/configuracoes/PaginaConfiguracoes.tsx',
-  'src/features/login/PaginaLogin.tsx',
-  'src/features/statuspage/PaginaStatusPage.tsx',
-  'src/features/statuspage/PreviaDaPagina.tsx',
-]
+// dois níveis (sombra-nivel-1 e -2) e cor só por token. Todo o src entra no
+// sistema, menos os testes e os ajudantes de teste (src/test/): um arquivo
+// novo entra sozinho.
+const ARQUIVOS_NO_SISTEMA = readdirSync('src', { recursive: true, encoding: 'utf8' })
+  .filter((nome) => /\.tsx?$/.test(nome) && !nome.includes('.test.') && !nome.startsWith('test/'))
+  .map((nome) => `src/${nome}`)
+  .sort()
 
 const ESCALA = new Set(['0', 'auto', '1', '2', '3', '4', '6', '8', '12', '16'])
 const ESPACO = String.raw`(?:p[xytrblse]?|m[xytrblse]?|gap(?:-[xy])?|space-[xy])`
@@ -98,6 +74,23 @@ describe('o detector do sistema', () => {
 
   it("aceita o locale 'pt-BR' fora de classe", () => {
     expect(violacoes(`new Intl.DateTimeFormat('pt-BR', { hour: '2-digit' })`)).toEqual([])
+  })
+})
+
+describe('a lista do sistema', () => {
+  it('cobre as telas e os componentes', () => {
+    expect(ARQUIVOS_NO_SISTEMA).toEqual(
+      expect.arrayContaining([
+        'src/app/Layout.tsx',
+        'src/components/ui/botao.tsx',
+        'src/features/painel/PaginaPainel.tsx',
+        'src/features/incidentes/PaginaIncidentes.tsx',
+        'src/features/alvos/PaginaDetalhe.tsx',
+        'src/features/canais/PaginaCanais.tsx',
+        'src/features/login/PaginaLogin.tsx',
+      ]),
+    )
+    expect(ARQUIVOS_NO_SISTEMA.some((a) => a.includes('.test.') || a.startsWith('src/test/'))).toBe(false)
   })
 })
 

@@ -10,7 +10,7 @@ export function ErroDeRota() {
     erro instanceof TypeError && /dynamically imported module|Importing a module script failed/i.test(erro.message)
   const naoAchou = isRouteErrorResponse(erro) && erro.status === 404
   return (
-    <div role="alert" className="mx-auto mt-24 max-w-md space-y-4 p-4 text-center">
+    <div role="alert" className="mx-auto mt-16 max-w-md space-y-4 p-4 text-center">
       <h1 className="text-xl font-semibold">
         {chunk ? 'Há uma versão nova do painel' : naoAchou ? 'Página não encontrada' : 'Algo deu errado'}
       </h1>
