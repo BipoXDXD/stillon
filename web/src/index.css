@@ -149,6 +149,16 @@
   box-shadow: var(--sombra-nivel-2);
 }
 
+/* A borda de acento da linha de problema (spec do painel denso). Uma sombra
+   interna, e não border-left: a borda de um <tr> ou de uma célula num
+   border-collapse muda a largura da coluna. */
+@utility acento-fora {
+  box-shadow: inset 4px 0 0 var(--estado-fora);
+}
+@utility acento-degradado {
+  box-shadow: inset 4px 0 0 var(--estado-degradado);
+}
+
 /* Caixa alta só em rótulo de grupo pequeno, com 0,05em (DI 6). */
 @utility rotulo-de-grupo {
   font-size: var(--text-xs);

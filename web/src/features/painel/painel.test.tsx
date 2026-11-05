@@ -8,9 +8,8 @@ import { ItemDoResumo } from '@/lib/api/schemas'
 import { mapaDeEstados, transicoes } from './transicoes'
 
 const resumido = (p: Parameters<typeof itemDoResumo>[0]) => ItemDoResumo.parse(itemDoResumo(p))
-const regiao = (nome: string) => screen.getByRole('region', { name: nome })
-const cartaoDe = async (nome: string) =>
-  (await screen.findByRole('heading', { level: 3, name: nome })).closest('li') as HTMLElement
+const tabela = () => screen.findByRole('table', { name: /^Monitores/ })
+const linhaDe = async (nome: string) => within(await tabela()).findByRole('row', { name: new RegExp(nome) })
 
 describe('transicoes', () => {
   // Sabotagem prevista: anunciar todo item a cada resposta (ignorar o
@@ -36,10 +35,10 @@ describe('painel', () => {
     expect(screen.queryByText(/^Atualizado às/)).not.toBeInTheDocument()
   })
 
-  // Spec, Telas > 1: problemas primeiro, em cartões; o que funciona, em
-  // linhas com o cabeçalho uma vez só; sem dados e pausados, em texto, sem
-  // gráfico (auditoria P7). Review Focus 4 (o "Novo" nunca foi verificado).
-  it('ordena por gravidade: problemas em cartões, no ar em linhas, sem dados e pausados em texto', async () => {
+  // Spec do painel denso: uma tabela só, por gravidade e depois pelo nome,
+  // com o cabeçalho uma vez e todos os estados na mesma lista. Review Focus 4
+  // (o "Novo" nunca foi verificado). Sabotagem: não ordenar em Monitores.
+  it('mostra todos os alvos numa tabela só, por gravidade', async () => {
     const r = await renderizarPainel('/')
     r.falsa.estado.resumo = [
       itemDoResumo({ id: 'z', name: 'Zeta' }),
@@ -51,32 +50,41 @@ describe('painel', () => {
       itemDoResumo({ id: 'n', name: 'Novo', state: 'unknown', last_checked_at: null, uptime_24h: null, spark: [] }),
     ]
     await r.cliente.refetchQueries()
-    const problemas = await screen.findByRole('region', { name: 'Pedem atenção' })
-    expect(within(problemas).getAllByRole('heading', { level: 3 }).map((h) => h.textContent)).toEqual(['Banco', 'Caiu', 'Lento'])
-    expect(within(problemas).getAllByText('Fora do ar')).toHaveLength(2)
-    expect(within(problemas).getByText('Degradado')).toBeInTheDocument()
-
-    const funcionando = regiao('Funcionando')
-    expect(within(funcionando).getAllByRole('columnheader').map((c) => c.textContent)).toEqual([
+    const t = await tabela()
+    expect(within(t).getAllByRole('columnheader').map((c) => c.textContent)).toEqual([
+      'Estado',
       'Alvo',
+      'Situação',
       'Latência',
       '24 h',
       'Últimas 24 h',
     ])
-    expect(within(funcionando).getAllByRole('rowheader').map((c) => c.textContent)).toEqual(['alfa', 'Zeta'])
-    // Truncado: 0,99999 é "99,99%", nunca "100,00%".
-    expect(within(funcionando).getByRole('row', { name: /alfa/ })).toHaveTextContent('99,99%')
-
-    const semDados = regiao('Sem dados ou pausados')
-    expect(
-      within(semDados)
-        .getAllByRole('listitem')
-        .map((li) => [within(li).getByRole('link').textContent, li.querySelector('span')?.textContent]),
-    ).toEqual([
-      ['Novo', 'Sem dados · nunca verificado'],
-      ['Parado', 'Pausado'],
+    expect(within(t).getAllByRole('rowheader').map((c) => within(c).getByRole('link').textContent)).toEqual([
+      'Banco',
+      'Caiu',
+      'Lento',
+      'alfa',
+      'Zeta',
+      'Novo',
+      'Parado',
     ])
-    expect(within(semDados).queryByRole('img')).not.toBeInTheDocument()
+    expect(await linhaDe('alfa')).toHaveTextContent('99,99%')
+    expect(await linhaDe('Lento')).toHaveTextContent('2.400 ms')
+    expect(within(await linhaDe('Lento')).getAllByRole('cell')[0]).toHaveTextContent('Degradado')
+    expect(within(await linhaDe('Novo')).getAllByText('Sem dados · nunca verificado').length).toBeGreaterThan(0)
+    expect(within(await linhaDe('Parado')).getAllByText('Pausado').length).toBeGreaterThan(0)
+  })
+
+  // Cor nunca sozinha: toda linha tem o nome do estado em texto, inclusive
+  // no celular, onde a coluna Estado some e só resta o ícone junto do nome.
+  // Sabotagem: tirar o sr-only do IconeDoEstado na célula do nome.
+  it('a célula do nome carrega o estado em texto para quem não vê o selo', async () => {
+    const r = await renderizarPainel('/')
+    r.falsa.estado.resumo = [itemDoResumo({ id: 'b', name: 'Banco', state: 'down' })]
+    await r.cliente.refetchQueries()
+    const celula = within(await linhaDe('Banco')).getByRole('rowheader')
+    expect(celula).toHaveTextContent('Fora do ar')
+    expect(within(celula).getByRole('link')).toHaveAccessibleName('Banco')
   })
 
   it('a manchete conta os problemas por extenso e detalha os estados por gravidade', async () => {
@@ -149,35 +157,36 @@ describe('painel', () => {
     })
   })
 
-  it('cartão de problema: a causa e há quanto tempo do incidente aberto, e o link para ele', async () => {
+  it('linha de problema: a causa, há quanto tempo, a borda de acento e o link do incidente', async () => {
     const r = await renderizarPainel('/')
     r.falsa.estado.resumo = [
       itemDoResumo({ id: 'b', name: 'Banco', state: 'down', last_latency_ms: null, open_incident_id: 'inc-9' }),
       itemDoResumo({ id: 'l', name: 'Lento', state: 'degraded', last_latency_ms: 2400 }),
+      itemDoResumo({ id: 'a', name: 'API' }),
     ]
     r.falsa.estado.incidentes = [incidente({ id: 'inc-9', target_id: 'b', target_name: 'Banco', cause: 'conn_refused' })]
     await r.cliente.refetchQueries()
-    const banco = await cartaoDe('Banco')
-    expect(banco).toHaveClass('border-l-fora')
-    expect(await within(banco).findByText(/^Conexão recusada · há /)).toBeInTheDocument()
+    const banco = await linhaDe('Banco')
+    expect(within(banco).getAllByRole('cell')[0]).toHaveClass('acento-fora')
+    expect((await within(banco).findAllByText(/^Conexão recusada · há /)).length).toBeGreaterThan(0)
     expect(within(banco).getByRole('link', { name: 'Banco' })).toHaveAttribute('href', '/targets/b')
     expect(within(banco).getByRole('link', { name: 'Ver incidente de Banco' })).toHaveAttribute('href', '/incidents?status=open')
 
-    const lento = await cartaoDe('Lento')
-    expect(lento).toHaveClass('border-l-degradado')
-    expect(within(lento).getByText('Latência de 2.400 ms no último check')).toBeInTheDocument()
-    // "Ver detalhes" é pista visual: o cartão já leva ao detalhe.
+    const lento = await linhaDe('Lento')
+    expect(within(lento).getAllByRole('cell')[0]).toHaveClass('acento-degradado')
     expect(within(lento).getAllByRole('link').map((a) => a.getAttribute('href'))).toEqual(['/targets/l'])
-    expect(within(lento).getByText('Ver detalhes')).toHaveAttribute('aria-hidden', 'true')
+
+    // O estado bom fica calmo: sem acento (spec, O que muda).
+    expect(within(await linhaDe('API')).getAllByRole('cell')[0]).not.toHaveClass('acento-fora', 'acento-degradado')
   })
 
   // Review Focus 7.
-  it('incidente sem causa: o cartão diz que a causa não foi registrada', async () => {
+  it('incidente sem causa: a linha diz que a causa não foi registrada', async () => {
     const r = await renderizarPainel('/')
     r.falsa.estado.resumo = [itemDoResumo({ id: 'b', name: 'Banco', state: 'down', open_incident_id: 'inc-9' })]
     r.falsa.estado.incidentes = [incidente({ id: 'inc-9', target_id: 'b', target_name: 'Banco', cause: '' })]
     await r.cliente.refetchQueries()
-    expect(await within(await cartaoDe('Banco')).findByText(/^Causa não registrada · há /)).toBeInTheDocument()
+    expect((await within(await linhaDe('Banco')).findAllByText(/^Causa não registrada · há /)).length).toBeGreaterThan(0)
   })
 
   // P12. Sabotagem: tirar o esqueleto={<EsqueletoDoPainel />} da tela → o
@@ -194,7 +203,7 @@ describe('painel', () => {
     )
     void r.cliente.resetQueries({ queryKey: ['targets', 'summary'] })
     const ocupado = (await screen.findByText('Carregando…')).closest('[aria-busy="true"]') as HTMLElement
-    expect(ocupado.querySelectorAll('[aria-hidden="true"]')).toHaveLength(8)
+    expect(ocupado.querySelectorAll('[aria-hidden="true"]')).toHaveLength(10)
     soltar()
     expect(await screen.findByRole('heading', { level: 2, name: 'Nenhum serviço vigiado ainda.' })).toBeInTheDocument()
   })
