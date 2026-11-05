@@ -108,7 +108,7 @@ func TestAnotherUsersChannelIsIndistinguishableFromMissing(t *testing.T) {
 		},
 		leituras:        []string{"/api/v1/channels"},
 		listasDoIntruso: []string{"/api/v1/channels"},
-		dadosDoDono:     []string{canal, "6789"},
+		dadosDoDono:     []string{canal, "webhook …6789"},
 	})
 }
 
