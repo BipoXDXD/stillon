@@ -217,7 +217,7 @@ const TELAS: Tela[] = [
     preparar: prepararPainel,
     conferir: async (page) => {
       await expect(page.getByRole('img', { name: /Últimas 24 h: .*hora degradada.*hora fora do ar/ }).first()).toBeVisible()
-      await expect(page.getByText('Sem dados · nunca verificado')).toBeVisible()
+      await expect(page.getByText('Sem dados · nunca verificado').filter({ visible: true })).toBeVisible()
     },
   },
   {

@@ -128,16 +128,15 @@ test('login, cadastro de alvo, status, F5, detalhe, apagar, encerrar a sessão e
     //    sonda sai em ~1 s; o próprio poll do dashboard (15 s) traz o estado
     //    classificado, sem recarregar a página (recarregar em laço gastaria o
     //    burst do limite por usuário).
-    // O alvo aparece primeiro em "Sem dados ou pausados" e, classificado,
-    // passa a "Pedem atenção" (o .invalid fica fora do ar) ou a
-    // "Funcionando" (um DNS que sequestra NXDOMAIN). exact: o cartão tem
-    // também o "Ver incidente de <nome>".
+    // O alvo aparece primeiro como "Sem dados" e, classificado, passa a
+    // "Fora do ar" (o .invalid) ou a "No ar" (um DNS que sequestra NXDOMAIN).
+    // exact: a linha tem também o "Ver incidente de <nome>".
     // A aba da navegação: o detalhe também tem o "Voltar ao painel".
     await page.getByRole('navigation', { name: 'Principal' }).getByRole('link', { name: 'Painel' }).click()
     await expect(page.getByRole('link', { name: nomeDoAlvo, exact: true })).toBeVisible()
     const classificado = page
-      .getByRole('region', { name: /^(pedem atenção|funcionando)$/i })
-      .getByRole('link', { name: nomeDoAlvo, exact: true })
+      .getByRole('table', { name: /^Monitores/ })
+      .getByRole('row', { name: new RegExp(`(Fora do ar|No ar).*${nomeDoAlvo}`) })
     await expect(classificado).toBeVisible({ timeout: 30_000 })
 
     // 5. F5: continua dentro, pelo cookie de refresh.

@@ -16,6 +16,19 @@ const selos: Record<EstadoExibido, { Icone: LucideIcon; tom: TomDoSelo; cheio: b
   pausado: { Icone: Pause, tom: 'sem-dados', cheio: false },
 }
 
+// Só o ícone, para onde o selo inteiro não cabe (a tabela do painel no
+// celular). O texto continua lá para o leitor de tela: a forma diz o estado a
+// quem vê, e nunca a cor sozinha.
+export function IconeDoEstado({ estado, className }: { estado: EstadoExibido; className?: string }) {
+  const { Icone, tom, cheio } = selos[estado]
+  return (
+    <span className={cn('inline-flex shrink-0', CORES_DO_ICONE[tom], className)}>
+      <Icone aria-hidden="true" className="size-3.5" fill={cheio ? 'currentColor' : 'none'} strokeWidth={2.5} />
+      <span className="sr-only">{textoDoEstado(estado)}</span>
+    </span>
+  )
+}
+
 export function SeloDeEstado({ estado, className }: { estado: EstadoExibido; className?: string }) {
   const { Icone, tom, cheio } = selos[estado]
   return (
@@ -33,6 +46,14 @@ const TONS: Record<TomDoSelo, string> = {
   fora: 'bg-fora-100 text-fora',
   'sem-dados': 'bg-sem-dados-100 text-sem-dados',
   primaria: 'bg-primaria-100 text-primaria',
+}
+
+const CORES_DO_ICONE: Record<TomDoSelo, string> = {
+  'no-ar': 'text-no-ar',
+  degradado: 'text-degradado',
+  fora: 'text-fora',
+  'sem-dados': 'text-sem-dados',
+  primaria: 'text-primaria',
 }
 
 export type PropsDoSelo = { tom: TomDoSelo; Icone: LucideIcon; cheio?: boolean; children: ReactNode; className?: string }

@@ -389,7 +389,8 @@ for (const largura of [400, 1280]) {
     await conferir([
       ['nome do alvo', page.getByRole('link', { name: 'API', exact: true })],
       ['Configurar canais', page.getByRole('link', { name: 'Configurar canais' })],
-      ['Ver incidente', page.getByRole('link', { name: 'Ver incidente de Banco' })],
+      // No celular a coluna Situação some, e o incidente fica a um toque no detalhe do alvo.
+      ...(largura === 1280 ? ([['Ver incidente', page.getByRole('link', { name: 'Ver incidente de Banco' })]] satisfies [string, Locator][]) : []),
       ...['Painel', 'Incidentes', 'Canais', 'Status', 'Conta'].map((aba): [string, Locator] => [
         `aba ${aba}`,
         page.getByRole('navigation', { name: 'Principal' }).getByRole('link', { name: new RegExp(`^${aba}`) }),
@@ -619,27 +620,12 @@ for (const largura of [400, 1280]) {
   })
 }
 
-// Auditoria P8: o cartão de problema é clicável inteiro, não só o nome. O
-// clique no canto de baixo à direita (longe do nome e do "Ver incidente")
-// abre o detalhe. Sabotagem: tirar o before:absolute do link do nome.
-test('o cartão de problema é clicável inteiro', async ({ page }) => {
-  await imitarApi(page)
-  await page.goto('/')
-  const cartao = page.getByRole('listitem').filter({ has: page.getByRole('heading', { name: 'Banco', level: 3 }) })
-  await expect(cartao).toBeVisible()
-  const caixa = await cartao.boundingBox()
-  expect(caixa).not.toBeNull()
-  await page.mouse.click(caixa!.x + caixa!.width - 8, caixa!.y + caixa!.height - 8)
-  await expect(page).toHaveURL(/\/targets\/a3$/)
-  await controlePositivo(page, 'cartão clicável')
-})
-
 // Review Focus 3, 8 e 9 da parte 2 do plano: 32 alvos (30 no ar, um fora do
 // ar com nome de 100 caracteres sem espaço, o teto do servidor, e um
-// degradado). A página não rola de lado, e cada linha de "Funcionando" fica
-// compacta (até 48 px), para 30 alvos caberem em poucas telas. Sabotagens:
-// trocar o h-11 da linha por h-16 (64 px); pôr whitespace-nowrap no link do
-// nome do cartão (a página rola de lado no celular).
+// degradado). A página não rola de lado, e cada linha "no ar" fica compacta
+// (até 48 px), para 30 alvos caberem em poucas telas. Sabotagens: trocar o
+// h-12 da linha por h-16 (64 px); pôr whitespace-nowrap no link do nome da
+// linha (a página rola de lado no celular).
 const NOME_LONGO = 'ServicoSemEspacos'.repeat(6).slice(0, 100)
 const MUITOS_ALVOS = [
   item('a1', NOME_LONGO, 'down'),
@@ -663,13 +649,14 @@ for (const largura of [400, 1280]) {
     await page.goto('/')
     await expect(page.getByRole('heading', { name: 'Dois serviços pedem atenção.', level: 2 })).toBeVisible()
     await esperarOConteudo(page, '/')
-    const funcionando = page.getByRole('region', { name: /^funcionando$/i })
-    await expect(funcionando.getByRole('rowheader')).toHaveCount(30)
-    const alturas = await funcionando
-      .locator('tbody tr')
+    const monitores = page.getByRole('table', { name: /^Monitores/ })
+    await expect(monitores.getByRole('rowheader')).toHaveCount(32)
+    const alturas = await monitores
+      .getByRole('row', { name: /Serviço \d+/ })
       .evaluateAll((linhas) => linhas.map((l) => l.getBoundingClientRect().height))
-    expect(Math.max(...alturas), `${largura} px: a linha mais alta de "Funcionando"`).toBeLessThanOrEqual(48)
-    await expect(page.getByRole('heading', { name: NOME_LONGO, level: 3 })).toBeVisible()
+    expect(alturas).toHaveLength(30)
+    expect(Math.max(...alturas), `${largura} px: a linha "no ar" mais alta`).toBeLessThanOrEqual(48)
+    await expect(monitores.getByRole('link', { name: NOME_LONGO, exact: true })).toBeVisible()
     await semRolagemLateral(`painel ${largura}`)
     // O detalhe do alvo de nome longo, fora do ar.
     await page.route('**/api/v1/targets/a1', (route) =>
