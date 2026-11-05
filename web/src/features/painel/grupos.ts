@@ -3,15 +3,8 @@ import type { Incidente, ItemDoResumo } from '@/lib/api/schemas'
 import { estadoExibido, type EstadoExibido } from '@/lib/estado'
 import { duracao, haQuanto, milissegundos } from '@/lib/format'
 
-// A ordem do painel (spec do redesign, Telas > 1): os problemas primeiro, em
-// cartões; o que funciona, em linhas; sem dados e pausados, em texto.
+// A ordem do painel: fora do ar, degradado, no ar, sem dados e pausado.
 // Funções puras: a tela só as chama.
-export type GruposDoPainel = {
-  problemas: ItemDoResumo[]
-  funcionando: ItemDoResumo[]
-  semDadosOuPausados: ItemDoResumo[]
-}
-
 const GRAVIDADE: Record<EstadoExibido, number> = { down: 0, degraded: 1, up: 2, unknown: 3, pausado: 4 }
 
 // numeric: "Serviço 2" antes de "Serviço 10"; base: maiúscula e acento não
@@ -25,18 +18,11 @@ export function ehProblema(e: EstadoExibido): boolean {
   return e === 'down' || e === 'degraded'
 }
 
-export function agruparPorGravidade(itens: readonly ItemDoResumo[]): GruposDoPainel {
-  const ordenados = [...itens].sort(
-    (a, b) => GRAVIDADE[exibido(a)] - GRAVIDADE[exibido(b)] || PELO_NOME.compare(a.name, b.name),
-  )
-  return {
-    problemas: ordenados.filter((it) => ehProblema(exibido(it))),
-    funcionando: ordenados.filter((it) => exibido(it) === 'up'),
-    semDadosOuPausados: ordenados.filter((it) => exibido(it) === 'unknown' || exibido(it) === 'pausado'),
-  }
+export function ordenarPorGravidade(itens: readonly ItemDoResumo[]): ItemDoResumo[] {
+  return [...itens].sort((a, b) => GRAVIDADE[exibido(a)] - GRAVIDADE[exibido(b)] || PELO_NOME.compare(a.name, b.name))
 }
 
-// A linha de baixo do cartão de problema: com incidente aberto, a causa e
+// A situação de um problema: com incidente aberto, a causa e
 // há quanto tempo; sem ele, a latência (degradado) ou o último check (fora
 // do ar antes de o incidente abrir).
 export function detalheDoProblema(it: ItemDoResumo, incidente: Incidente | undefined, agora: Date): string {
