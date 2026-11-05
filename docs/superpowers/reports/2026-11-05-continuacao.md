@@ -61,7 +61,7 @@ CVE-2026-111943 (texto do #136); a `main` fica no 1.26.10, que traz a correção
 
 ## Em andamento
 
-- **Tempo do `httpapi`:** parado até haver janela calma; ver "Backlog técnico".
+- **Tempo do `httpapi`:** medido; falta escolher como reduzir. Ver "Backlog técnico".
 
 ## Decisões pendentes do dono
 
@@ -110,16 +110,17 @@ Cada item diz o que decidir. Nenhum foi decidido.
 15. **Foco do `status=all` no "Carregar mais" (#143).** Decidir o comportamento quando a lista muda.
 16. **Capturas anteriores ao contorno do #143.** As de `docs/design/painel-depois/` são do #141 e não
     mostram o contorno novo. Decidir se recaptura agora ou no próximo ajuste visual.
-17. **Acesso SSH a partir deste Mac.** Em 2026-11-05 o `~/.ssh/config` não tem `Host stillon` e o
-    `~/.stillon-vps` não existe, então nenhum comando direto na VPS roda daqui. A publicação não
-    depende disso, porque usa as chaves do GitHub. Decidir se o acesso volta (a chave `stillon-admin`
-    está no Bitwarden).
 
-### Prazo da VPS
+### VPS: fatos conferidos em 2026-11-05
 
-A VPS tinha renovação marcada no painel da Hostinger até **2026-10-25**. Este registro não sabe se
-ela foi renovada nem até quando vale, mas o site e a publicação funcionavam em 2026-11-05. O dono
-confirma no painel.
+Conferido na API da Hostinger pela sessão coordenadora; não há decisão do dono aqui.
+
+- **Produção:** `srv2070196` (Coolify), IP 2.24.193.23, `running`, paga até **2027-10-17**, sem
+  renovação automática.
+- **Antiga:** `srv2008471`, IP 179.197.70.102, cancelada de propósito, venceu em 2026-10-25 e está
+  `suspended`. Nunca houve plano de renová-la.
+- **Acesso:** `ssh stillon` entra como `root` na VPS de produção, com a mesma chave do `Host c2vps`
+  deste Mac. O usuário e a chave `stillon-admin` do runbook eram da VPS antiga.
 
 ### Itens herdados de 2026-10-14
 
@@ -148,17 +149,22 @@ dos PRs desta rodada.
 - **Testes web sob carga: melhoria parcial (#142).** A suíte aguenta carga de 15 a 20; de 35 a 50
   ainda estoura por falta de CPU. Quatro testes de `configuracoes.test.tsx` e um de
   `formulario.cobertura.test.tsx` falham sob essa carga, também na `main`.
-- **Tempo do `httpapi`: sem número válido.** O pacote levou cerca de 210 s no CI e 509 s numa rodada
-  local; sob carga passa do teto de 10 min do `go test`. A medição de 2026-11-05 foi invalidada porque
-  a carga subiu de 3 para 15 (1267,5 s, com 194 testes de topo e 107 subtestes). Precisa de 10 a 20 min
-  com carga abaixo de 8. Nada foi alterado; `test/httpapi-mais-rapido` está igual à `main`.
-  - `TestParallelWrongProofsVerifyAtMostTheBudget` falhou nessa rodada (4 Argon2id em vez de 5, com
-    um `rate_limited`). Hipótese não provada: sob `-race`, um Argon2id passa dos 2 s de `Argon2Wait`
-    e a quinta prova desiste, o que tornaria o teste instável em máquina lenta.
-  - Se o Argon2id for confirmado como o custo dominante, o custo reduzido entra por um campo em
-    `httpapi.Deps`, nulo em produção (recomendado, com teste HTTP afirmando `m=65536,t=3,p=2`), ou
-    por um setter global em `auth` (diff menor, mas expõe um controle de custo de senha). A escolha
-    fica para depois da medição. `TestLoginRehashDoesNotUndoAPasswordReset` mantém o custo real.
+- **Tempo do `httpapi`: 1063 s no MacBook Air.** Medido em 2026-11-05 em `21fdec7`, com
+  `go test -race -count=1`, carga máxima de 7,33 e nenhum container antes de começar: 194 testes de
+  topo e 107 subtestes, mediana de 3 s por teste. O CI levava cerca de 210 s. Uma medição anterior,
+  de 1267,5 s, foi descartada porque a carga subiu para 15.
+  - `TestParallelWrongProofsVerifyAtMostTheBudget` falhava sempre neste Mac com `-race` (6 em 6
+    rodadas isoladas), com qualquer carga. O `x/crypto/argon2` só tem assembly em amd64. Em arm64
+    com `-race`, um Argon2id leva 1,5 s sozinho e de 3,3 a 4,0 s com quatro simultâneos, acima dos
+    2 s de `Argon2Wait`: a quinta prova desiste. Sem `-race` leva até 0,54 s. Não afeta produção
+    (amd64, sem `-race`). A correção, em `fix/orcamento-provas-sem-prazo`, dá ao teste cinco vagas.
+  - Numa rodada do pacote inteiro o aviso `teto de Argon2id` some do log: a hipótese, não provada, é
+    que o `slog.SetDefault` de `TestCanaryInSensitiveFieldsNeverLeaks` deixa `log` apontando para o
+    buffer dele mesmo depois de restaurado.
+  - Falta medir quanto dos 1063 s é Argon2id. Se for o custo dominante, o custo reduzido entra por
+    um campo em `httpapi.Deps`, nulo em produção (recomendado, com teste HTTP afirmando
+    `m=65536,t=3,p=2`), ou por um setter global em `auth` (diff menor, mas expõe um controle de
+    custo de senha). `TestLoginRehashDoesNotUndoAPasswordReset` mantém o custo real.
 - **Lacunas do teste do backup: fechadas (#144).** Sobrou um defeito no código, abaixo.
 - **Alias legado do backup: defeito aberto, severidade média-baixa.** Em
   `deploy/vps/stillon-entrada`, `imagem_helper_aprovada` cai em `stillon:<sha>` quando não há
@@ -183,8 +189,7 @@ dos PRs desta rodada.
 
 - Quando o StillOn passou a rodar pelo Coolify na VPS, e a topologia atual da VPS. O README e o
   `compose.prod.yaml` ainda descrevem a borda Caddy em `/srv/edge`; o runbook já fala em
-  "instalação Coolify". Não dá para conectar na VPS deste Mac (decisão 17).
-- Se a VPS foi renovada (ver "Prazo da VPS").
+  "instalação Coolify". Agora dá para conferir por `ssh stillon`.
 - Se o `deploy.yml` manual segue em uso.
 
 ## Armadilhas
