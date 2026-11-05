@@ -98,7 +98,7 @@ reprovado ajusta a luminosidade, nunca o matiz.
 | Componente | Regras |
 |---|---|
 | Botão | Pirâmide (DI 4): primário índigo sólido; secundário com contorno; terciário em texto. Destrutivo é terciário até a confirmação, e só o botão do diálogo de confirmação é vermelho. Altura mínima de 44 px. |
-| Controle segmentado | Novo. Usado na janela do gráfico e no filtro de incidentes. Trilho `painel`, item ativo em superfície com sombra nível 1, área de toque de 44 px. É um `radiogroup` acessível por teclado. |
+| Controle segmentado | Novo. Usado na janela do gráfico e no filtro de incidentes. Trilho `painel`, item ativo em superfície com sombra nível 1 e borda de controle (3:1), área de toque de 44 px. É um `radiogroup` acessível por teclado. |
 | Selo de estado | Pílula com fundo 100, texto na cor do estado, ícone Lucide **e** texto (forma + cor + texto). |
 | Campo | Altura de 44 px, borda de controle 3:1, foco índigo de 3 px. |
 | Checkbox | `accent-color` da primária (DI 12). |

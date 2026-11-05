@@ -50,8 +50,6 @@ export function PaginaPainel() {
   )
 }
 
-// Um <div>, e não <section> filho direto do <main>: a regra legada
-// "main > section" do index.css daria moldura de cartão a cada grupo.
 function Alvos({ itens, atualizadoEm }: { itens: ItemDoResumo[]; atualizadoEm: Date }) {
   const grupos = agruparPorGravidade(itens)
   // A mesma consulta do contador da navegação: nenhuma requisição a mais.

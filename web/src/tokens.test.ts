@@ -1,6 +1,9 @@
 /// <reference types="node" />
 import { readFileSync } from 'node:fs'
+import { render, within } from '@testing-library/react'
+import { createElement } from 'react'
 import { describe, expect, it } from 'vitest'
+import { ControleSegmentado } from '@/components/ui/controle-segmentado'
 
 // Contraste dos tokens de cor, lidos do próprio index.css, nos dois temas
 // (spec do redesign, seção Testes). Os tokens são OKLCH: o teste converte para
@@ -117,6 +120,69 @@ describe.each(['claro', 'escuro'] as const)('contraste dos tokens, tema %s', (te
 
   it.each(COMPONENTES)('componente --%s sobre --%s chega a 3:1', (c, f) => {
     expect(par(c, f)).toBeGreaterThanOrEqual(3)
+  })
+})
+
+// O controle segmentado lido do próprio componente: as cores vêm das classes
+// que ele põe no DOM, e não de uma lista à parte, que seguiria verde com a
+// classe trocada. O item ativo se separa do trilho pela superfície, mas
+// --superficie sobre --painel dá 1,2:1 nos dois temas (e o escuro não tem
+// sombra): quem cumpre o 3:1 do estado (WCAG 1.4.11) é a borda do item.
+describe.each(['claro', 'escuro'] as const)('contraste do ControleSegmentado, tema %s', (tema) => {
+  function montar() {
+    const { container } = render(
+      createElement(ControleSegmentado<string>, {
+        rotulo: 'Filtro',
+        opcoes: [
+          { valor: 'a', rotulo: 'Ativo' },
+          { valor: 'b', rotulo: 'Inativo' },
+        ],
+        valor: 'a',
+        aoMudar: () => undefined,
+      }),
+    )
+    const tela = within(container)
+    return {
+      trilho: tela.getByRole('radiogroup'),
+      ativo: tela.getByRole('radio', { name: 'Ativo' }),
+      inativo: tela.getByRole('radio', { name: 'Inativo' }),
+    }
+  }
+
+  // "text-suave" → "suave". Só as classes do estado normal, sem variante
+  // (hover:), e só as que são cor: text-sm não é um token.
+  function tokenDaClasse(elemento: HTMLElement, prefixo: 'bg' | 'text' | 'border'): string {
+    const tokens = Array.from(elemento.classList, (c) => (c.startsWith(`${prefixo}-`) ? c.slice(prefixo.length + 1) : '')).filter((t) =>
+      TOKENS[tema].has(t),
+    )
+    expect(tokens, `a classe ${prefixo}-* de cor em "${elemento.className}"`).toHaveLength(1)
+    return tokens[0] ?? ''
+  }
+  const par = (a: string, b: string) => contraste(cor(tema, a), cor(tema, b))
+
+  it('o texto do item inativo chega a 4,5:1 sobre o trilho, também no hover', () => {
+    const { trilho, inativo } = montar()
+    expect(par(tokenDaClasse(inativo, 'text'), tokenDaClasse(trilho, 'bg'))).toBeGreaterThanOrEqual(4.5)
+    expect(inativo).toHaveClass('hover:text-texto')
+    expect(par('texto', tokenDaClasse(trilho, 'bg'))).toBeGreaterThanOrEqual(4.5)
+  })
+
+  it('o texto do item ativo chega a 4,5:1 sobre o próprio item', () => {
+    const { ativo } = montar()
+    expect(par(tokenDaClasse(ativo, 'text'), tokenDaClasse(ativo, 'bg'))).toBeGreaterThanOrEqual(4.5)
+  })
+
+  it('o limite do item ativo chega a 3:1 contra o trilho e contra o item', () => {
+    const { trilho, ativo } = montar()
+    const limite = tokenDaClasse(ativo, 'border')
+    expect(par(limite, tokenDaClasse(trilho, 'bg'))).toBeGreaterThanOrEqual(3)
+    expect(par(limite, tokenDaClasse(ativo, 'bg'))).toBeGreaterThanOrEqual(3)
+  })
+
+  it('o anel de foco chega a 3:1 sobre o trilho e sobre o item ativo', () => {
+    const { trilho, ativo } = montar()
+    expect(par('foco', tokenDaClasse(trilho, 'bg'))).toBeGreaterThanOrEqual(3)
+    expect(par('foco', tokenDaClasse(ativo, 'bg'))).toBeGreaterThanOrEqual(3)
   })
 })
 

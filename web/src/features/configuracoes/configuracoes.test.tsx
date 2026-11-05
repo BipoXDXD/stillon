@@ -1353,7 +1353,7 @@ describe('envio em voo nos diálogos do 2FA', () => {
 
 // Auditoria G3: o cartão tem a largura do conteúdo (max-w-2xl), e o
 // formulário de senha ocupa o cartão, sem o max-w-md que deixava metade dele
-// vazia. Antes, o cartão vinha do "main > section:not(…)" do index.css.
+// vazia.
 describe('configurações no sistema visual', () => {
   it('cada seção é um cartão de largura limitada, e a senha não fica espremida nele', async () => {
     await renderizarPainel('/settings')

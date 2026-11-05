@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { Incidente } from '@/lib/api/schemas'
 import { incidente } from '@/test/fixtures'
-import { agruparIncidentes, resumoDosAbertos } from './agrupamento'
+import { agruparIncidentes, destinoDepoisDeCarregar, resumoDosAbertos } from './agrupamento'
 
 const inc = (p: Parameters<typeof incidente>[0] = {}) => Incidente.parse(incidente(p))
 const ACK = '2026-09-24T11:10:00Z'
@@ -21,6 +21,32 @@ describe('agruparIncidentes', () => {
 
   it('lista vazia dá grupos vazios', () => {
     expect(agruparIncidentes([])).toEqual({ emAndamento: [], resolvidos: [] })
+  })
+})
+
+describe('destinoDepoisDeCarregar', () => {
+  const aberto = inc({ id: 'aberto' })
+  const resolvido = inc({ id: 'resolvido', resolved_at: FIM })
+  const outro = inc({ id: 'outro' })
+
+  it('o primeiro item novo na ordem da tela: os abertos vêm antes', () => {
+    expect(destinoDepoisDeCarregar([outro, resolvido, aberto], new Set(['outro']), false)).toBe('aberto')
+  })
+
+  it('ignora os que já estavam na tela', () => {
+    expect(destinoDepoisDeCarregar([aberto, resolvido], new Set(['aberto']), true)).toBe('resolvido')
+  })
+
+  it('sem item novo e sem mais páginas: o último da tela, porque o botão some', () => {
+    expect(destinoDepoisDeCarregar([resolvido, aberto], new Set(['resolvido', 'aberto']), false)).toBe('resolvido')
+  })
+
+  it('sem item novo e com mais páginas: nenhum, porque o botão fica', () => {
+    expect(destinoDepoisDeCarregar([aberto], new Set(['aberto']), true)).toBeUndefined()
+  })
+
+  it('lista vazia: nenhum', () => {
+    expect(destinoDepoisDeCarregar([], new Set(), false)).toBeUndefined()
   })
 })
 

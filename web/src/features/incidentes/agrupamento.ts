@@ -15,6 +15,21 @@ export function agruparIncidentes(itens: readonly Incidente[]): GruposDeIncident
   }
 }
 
+// Para onde vai o foco depois do "Carregar mais": o primeiro item novo, na
+// ordem da tela. Sem item novo, o último da tela se o botão sumiu (o servidor
+// manda next_cursor sempre que a página vem cheia, então a seguinte pode vir
+// vazia); com o botão ainda lá, o foco fica nele.
+export function destinoDepoisDeCarregar(
+  itens: readonly Incidente[],
+  conhecidos: ReadonlySet<string>,
+  haMaisPaginas: boolean,
+): string | undefined {
+  const { emAndamento, resolvidos } = agruparIncidentes(itens)
+  const naTela = [...emAndamento, ...resolvidos]
+  const novo = naTela.find((i) => !conhecidos.has(i.id))
+  return (novo ?? (haMaisPaginas ? undefined : naTela.at(-1)))?.id
+}
+
 // "1 em andamento, 2 reconhecidos." sobre os abertos (a consulta do
 // contador da navegação). Sem abertos, nada. Página cheia: o servidor manda
 // next_cursor sempre que ela vem cheia, então pode haver exatamente 100.

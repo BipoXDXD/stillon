@@ -1,5 +1,5 @@
 import { act, screen, waitFor, within } from '@testing-library/react'
-import { http } from 'msw'
+import { http, HttpResponse } from 'msw'
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 import { incidente } from '@/test/fixtures'
 import { renderizarPainel } from '@/test/renderizar'
@@ -46,6 +46,139 @@ describe('incidentes', () => {
     await r.usuario.click(screen.getByRole('button', { name: 'Carregar mais' }))
     await waitFor(() => expect(itens()).toHaveLength(60))
     expect(screen.queryByRole('button', { name: 'Carregar mais' })).not.toBeInTheDocument()
+  })
+
+  // WCAG 2.4.3: o botão fica ocupado enquanto a página chega e some na última;
+  // sem um destino, o foco cairia no <body> e o teclado voltaria ao topo.
+  describe('foco do "Carregar mais"', () => {
+    // Por texto, e não por papel: o getByRole calcula o nome de cada elemento
+    // dos 60 cartões, e num waitFor isso estoura o prazo com a máquina ocupada.
+    const botao = () => screen.getByText('Carregar mais', { selector: 'button' })
+    const linkDe = (nome: string) => screen.getByText(nome, { selector: 'a' })
+    const itens = () => screen.getAllByText(/Tempo esgotado/)
+
+    async function listaCom(quantos: number) {
+      const r = await renderizarPainel('/incidents?status=all')
+      r.falsa.estado.incidentes = Array.from({ length: quantos }, (_, i) =>
+        incidente({ id: `inc-${String(i).padStart(3, '0')}`, target_name: `Alvo ${i}` }),
+      )
+      await r.cliente.refetchQueries()
+      await waitFor(() => expect(itens()).toHaveLength(Math.min(quantos, 50)))
+      return r
+    }
+
+    // Segura a próxima página até o teste soltar: só os GETs com cursor, e
+    // não os do poll nem os do contador da navegação.
+    function segurarProximaPagina() {
+      let soltar = () => {}
+      const preso = new Promise<void>((ok) => {
+        soltar = ok
+      })
+      const pedidos = { total: 0 }
+      servidor.use(
+        http.get('*/api/v1/incidents', async ({ request }) => {
+          if (!new URL(request.url).searchParams.has('cursor')) return
+          pedidos.total++
+          await preso
+        }),
+      )
+      return { soltar: () => soltar(), pedidos }
+    }
+
+    it('na última página, o botão some e o foco vai ao primeiro item novo', async () => {
+      const r = await listaCom(60)
+      await r.usuario.click(botao())
+      await waitFor(() => expect(itens()).toHaveLength(60))
+      await waitFor(() => expect(linkDe('Alvo 50')).toHaveFocus())
+      expect(screen.queryByText('Carregar mais')).not.toBeInTheDocument()
+    })
+
+    it('com mais páginas, o botão fica e o foco vai ao primeiro item novo', async () => {
+      const r = await listaCom(120)
+      await r.usuario.click(botao())
+      await waitFor(() => expect(itens()).toHaveLength(100))
+      await waitFor(() => expect(linkDe('Alvo 50')).toHaveFocus())
+      expect(botao()).toBeInTheDocument()
+    })
+
+    it('funciona pelo teclado, a partir do botão', async () => {
+      const r = await listaCom(60)
+      botao().focus()
+      await r.usuario.keyboard('{Enter}')
+      await waitFor(() => expect(itens()).toHaveLength(60))
+      await waitFor(() => expect(linkDe('Alvo 50')).toHaveFocus())
+    })
+
+    // O servidor ordena por data, e a tela agrupa por situação: um aberto
+    // antigo entra no primeiro grupo, antes dos resolvidos já na tela.
+    it('o primeiro item novo é o da ordem da tela, não o da página recebida', async () => {
+      const r = await renderizarPainel('/incidents?status=all')
+      const resolvido = { resolved_at: '2026-09-24T11:30:00Z' }
+      r.falsa.estado.incidentes = [
+        ...Array.from({ length: 50 }, (_, i) => incidente({ id: `inc-${i}`, target_name: `Antigo ${i}`, ...resolvido })),
+        incidente({ id: 'inc-resolvido', target_name: 'Novo resolvido', ...resolvido }),
+        incidente({ id: 'inc-aberto', target_name: 'Novo aberto' }),
+      ]
+      await r.cliente.refetchQueries()
+      await r.usuario.click(await screen.findByText('Carregar mais', { selector: 'button' }))
+      await waitFor(() => expect(linkDe('Novo aberto')).toHaveFocus())
+    })
+
+    // O servidor manda next_cursor sempre que a página vem cheia: com
+    // exatamente 50 itens, a seguinte vem vazia e o botão some sem item novo.
+    // A API falsa não faz isso, daí o handler próprio.
+    it('se a página seguinte vier vazia, o foco fica no último item da lista', async () => {
+      const r = await renderizarPainel('/incidents?status=all')
+      const pagina = Array.from({ length: 50 }, (_, i) => incidente({ id: `inc-${i}`, target_name: `Alvo ${i}` }))
+      servidor.use(
+        http.get('*/api/v1/incidents', ({ request }) =>
+          new URL(request.url).searchParams.has('cursor')
+            ? HttpResponse.json({ items: [] })
+            : HttpResponse.json({ items: pagina, next_cursor: 'inc-49' }),
+        ),
+      )
+      await r.cliente.refetchQueries()
+      await r.usuario.click(await screen.findByText('Carregar mais', { selector: 'button' }))
+      await waitFor(() => expect(screen.queryByText('Carregar mais')).not.toBeInTheDocument())
+      await waitFor(() => expect(linkDe('Alvo 49')).toHaveFocus())
+    })
+
+    it('enquanto a página chega, o botão fica ocupado sem perder o foco nem pedir de novo', async () => {
+      const r = await listaCom(60)
+      const { soltar, pedidos } = segurarProximaPagina()
+      await r.usuario.click(botao())
+      await waitFor(() => expect(botao()).toHaveAttribute('aria-disabled', 'true'))
+      expect(botao()).toBeEnabled()
+      expect(botao()).toHaveFocus()
+      await r.usuario.click(botao())
+      soltar()
+      await waitFor(() => expect(itens()).toHaveLength(60))
+      expect(pedidos.total).toBe(1)
+      await waitFor(() => expect(linkDe('Alvo 50')).toHaveFocus())
+    })
+
+    it('uma falha mantém o foco no botão, que volta a funcionar', async () => {
+      const r = await listaCom(60)
+      r.falsa.estado.forcar.set('GET /incidents', { status: 502, code: 'unavailable' })
+      await r.usuario.click(botao())
+      expect(await screen.findByText(/Não foi possível atualizar agora/)).toBeInTheDocument()
+      expect(botao()).toHaveFocus()
+      expect(botao()).not.toHaveAttribute('aria-disabled')
+    })
+
+    it('não rouba o foco de quem foi para outro lugar enquanto a página chegava', async () => {
+      const r = await listaCom(60)
+      const { soltar } = segurarProximaPagina()
+      await r.usuario.click(botao())
+      await waitFor(() => expect(botao()).toHaveAttribute('aria-disabled', 'true'))
+      const filtro = screen.getByRole('radio', { name: 'Todos' })
+      filtro.focus()
+      soltar()
+      await waitFor(() => expect(itens()).toHaveLength(60))
+      // Um tique real: um foco atrasado chegaria depois da lista.
+      await new Promise((res) => setTimeout(res, 50))
+      expect(filtro).toHaveFocus()
+    })
   })
 
   // E10 da revisão de 2026-10-14: o poll de 30 s de uma infinite query refaz

@@ -189,8 +189,6 @@ function DetalheDoAlvo({ id }: { id: string }) {
   return (
     <EstadoDaConsulta consulta={alvo}>
       {(a) => (
-        // Um <div>, e não <section> filho direto do <main>: a regra legada
-        // "main > section" do index.css daria moldura a cada bloco.
         <div className="space-y-8">
           <div className="space-y-4">
             {/* "Painel" visível, "Voltar ao painel" no nome acessível: não
