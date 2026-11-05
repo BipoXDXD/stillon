@@ -270,6 +270,42 @@ func TestFailedHeartbeatStaysOpenUntilSuccess(t *testing.T) {
 	}
 }
 
+// O caso que dava alarme falso todo dia: host adiantado, tarefa de 3h avisando
+// às 02:59:59. O prazo tem de ser o do dia seguinte, e não 03:05 de hoje.
+func TestSuccessJustBeforeTheCronFireRaisesNoFalseIncident(t *testing.T) {
+	b := novaBancadaHB(t)
+	ctx := t.Context()
+	id := uuid.Must(uuid.NewV7())
+	token, hash := heartbeat.NewPingToken()
+	expr, fuso := "0 3 * * *", "UTC"
+	err := storage.InUserTx(ctx, b.pool, b.dono, func(q *db.Queries) error {
+		return q.InsertHeartbeat(ctx, db.InsertHeartbeatParams{
+			ID: id, UserID: b.dono, Name: "backup", PingTokenHash: hash, CronExpr: &expr, Timezone: &fuso,
+			GraceSec: 300, Enabled: true, CreatedAt: inicioHB, DeadlineAt: inicioHB.Add(24 * time.Hour),
+		})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 05/11 12:00 + 14h59min59s = 06/11 02:59:59.
+	b.clk.Advance(14*time.Hour + 59*time.Minute + 59*time.Second)
+	b.pingar(t, token, heartbeat.SignalSuccess)
+
+	// 06/11 03:05:01, um segundo depois do prazo errado.
+	b.clk.Advance(5*time.Minute + 2*time.Second)
+	if n := b.tick(t); n != 0 {
+		t.Fatalf("%d transições logo depois do disparo que a tarefa cumpriu", n)
+	}
+	if l := b.incidentes(t, id); len(l) != 0 {
+		t.Errorf("incidente falso: %+v", l)
+	}
+	// 07/11 03:05:00, o prazo certo, sem ping: agora sim é atraso.
+	b.clk.Advance(23*time.Hour + 59*time.Minute + 59*time.Second)
+	if n := b.tick(t); n != 1 {
+		t.Fatalf("%d transições no prazo seguinte, queria 1", n)
+	}
+}
+
 func TestPausedHeartbeatIsNotEvaluated(t *testing.T) {
 	b := novaBancadaHB(t)
 	id, _ := b.heartbeat(t, "backup")

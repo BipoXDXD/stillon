@@ -146,7 +146,7 @@ func (s *Scheduler) Reconcile(ctx context.Context) error {
 	defer cancel()
 	vistos := s.metrics.alvosVistos()
 	var existentes []uuid.UUID
-	var abertos int64
+	var abertos, eventos int64
 	err := storage.InProberTx(ctx, s.pool, func(q *db.Queries) error {
 		var err error
 		if len(vistos) > 0 {
@@ -154,7 +154,10 @@ func (s *Scheduler) Reconcile(ctx context.Context) error {
 				return err
 			}
 		}
-		abertos, err = q.CountOpenIncidents(ctx)
+		if abertos, err = q.CountOpenIncidents(ctx); err != nil {
+			return err
+		}
+		eventos, err = q.CountHeartbeatEvents(ctx)
 		return err
 	})
 	if err != nil {
@@ -171,6 +174,7 @@ func (s *Scheduler) Reconcile(ctx context.Context) error {
 		}
 	}
 	s.metrics.incidentsOpen.Set(float64(abertos))
+	s.metrics.heartbeatEvents.Set(float64(eventos))
 	return nil
 }
 

@@ -1,6 +1,8 @@
 // Package heartbeat guarda as regras das tarefas que avisam por ping
-// (docs/superpowers/specs/2026-11-05-heartbeats-design.md): agendamento,
-// prazo, token. O núcleo é puro: não faz I/O e não lê relógio.
+// (docs/superpowers/specs/2026-11-05-heartbeats-design.md). As regras de
+// agendamento, prazo e token (heartbeat.go, schedule.go, token.go) são puras:
+// não fazem I/O e não leem relógio. Os serviços (ping.go, service.go) aplicam
+// essas regras no banco.
 package heartbeat
 
 import (
@@ -29,6 +31,12 @@ const (
 	RepeatWindow = 10 * time.Second
 	// MaxEventsPerHeartbeat é o teto do log de sinais (D15).
 	MaxEventsPerHeartbeat = 1000
+	// EarlySignalMargin é quanto antes de um disparo do cron um sinal ainda
+	// conta como daquele disparo. Um host com o relógio adiantado termina a
+	// tarefa de 3h às 02:59:59; sem a folga, o próximo disparo seria o das 3h
+	// que acabou de rodar, e o incidente falso se repetiria todo dia. Fica em
+	// MinGrace: acima disso, a folga passaria da menor tolerância aceita.
+	EarlySignalMargin = MinGrace
 	// ReopenCooldown é o intervalo mínimo entre aberturas de incidente do
 	// mesmo heartbeat (D11): um token vazado alternando falha e sucesso
 	// dispararia um aviso a cada avaliação. Atrasa a abertura, nunca a perde.
@@ -142,8 +150,13 @@ func (s State) isRepeat(sig Signal, now time.Time) bool {
 }
 
 // FirstDeadline é o prazo a contar de from: o próximo instante esperado mais
-// a tolerância. Serve à criação (D12), à retomada e ao sucesso.
+// a tolerância. Serve à criação (D12), à retomada e ao sucesso. Só o cron tem
+// a folga EarlySignalMargin: no período, o próximo instante conta do próprio
+// sinal, e não há disparo marcado para confundir.
 func FirstDeadline(sch Schedule, grace time.Duration, from time.Time) time.Time {
+	if sch.IsCron() {
+		from = from.Add(EarlySignalMargin)
+	}
 	return sch.Next(from).Add(grace)
 }
 

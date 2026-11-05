@@ -116,7 +116,12 @@ func (q *Queries) ClaimHeartbeatsToClose(ctx context.Context, arg ClaimHeartbeat
 const claimHeartbeatsToOpen = `-- name: ClaimHeartbeatsToOpen :many
 SELECT h.id, h.user_id, h.deadline_at, h.failing_since
   FROM heartbeats h
- WHERE h.enabled
+ WHERE h.id IN (SELECT d.id FROM heartbeats d
+                 WHERE d.enabled AND d.deadline_at <= $1::timestamptz
+                UNION
+                SELECT f.id FROM heartbeats f
+                 WHERE f.enabled AND f.failing_since IS NOT NULL)
+   AND h.enabled
    AND (h.deadline_at <= $1::timestamptz OR h.failing_since IS NOT NULL)
    AND (h.last_incident_at IS NULL OR h.last_incident_at <= $2::timestamptz)
    AND NOT EXISTS (SELECT 1 FROM incidents x WHERE x.heartbeat_id = h.id AND x.resolved_at IS NULL)
@@ -143,6 +148,11 @@ type ClaimHeartbeatsToOpenRow struct {
 // índice único parcial é a garantia final de um incidente aberto por vez.
 // Sem incidente aberto, atrasado ou em falha, e fora do intervalo mínimo
 // entre aberturas (D11): quem está nele fica para um tique seguinte.
+// As duas condições ficam num UNION para que a de prazo use heartbeats_due_idx
+// (um OR não usa). O predicado se repete fora de propósito: com SKIP LOCKED, a
+// linha que um ping acabou de mudar é reconferida pelas condições da consulta
+// externa, e não pela subquery, e sem ele o sucesso recém-gravado viraria
+// incidente falso.
 func (q *Queries) ClaimHeartbeatsToOpen(ctx context.Context, arg ClaimHeartbeatsToOpenParams) ([]ClaimHeartbeatsToOpenRow, error) {
 	rows, err := q.db.Query(ctx, claimHeartbeatsToOpen, arg.Now, arg.CooldownCut, arg.MaxRows)
 	if err != nil {
@@ -166,6 +176,18 @@ func (q *Queries) ClaimHeartbeatsToOpen(ctx context.Context, arg ClaimHeartbeats
 		return nil, err
 	}
 	return items, nil
+}
+
+const countHeartbeatEvents = `-- name: CountHeartbeatEvents :one
+SELECT count(*) FROM heartbeat_events
+`
+
+// O tamanho do log, para a métrica heartbeat_events (Reconcile do sondador).
+func (q *Queries) CountHeartbeatEvents(ctx context.Context) (int64, error) {
+	row := q.db.QueryRow(ctx, countHeartbeatEvents)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
 }
 
 const countHeartbeats = `-- name: CountHeartbeats :one

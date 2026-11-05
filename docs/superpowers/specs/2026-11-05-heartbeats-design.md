@@ -136,6 +136,21 @@ incidents: target_id passa a aceitar NULL; heartbeat_id uuid NULL FK ON DELETE C
   isso, o escopo do ping alcançaria o incidente do próprio heartbeat, e o escopo público nada
   enxerga porque `heartbeats` não tem política pública.
 - Down apaga os incidentes de heartbeat, restaura o `NOT NULL` e o CHECK e remove as tabelas.
+- **Correção da 00016:** o comentário "Também serve à FK" antes de
+  `incidents_one_open_per_heartbeat` está errado. Aquele índice cobre só os abertos; quem atende a
+  FK é `incidents_heartbeat_idx`. A migration já foi aplicada e não muda.
+- **Pendência medida:** `ClaimHeartbeatsToOpen` usa `UNION` para a condição de prazo chegar a
+  `heartbeats_due_idx`; a de falha ainda varre a tabela. Melhor de 5 `EXPLAIN ANALYZE`, com 1% de
+  linhas vencidas e 1% em falha:
+
+  | Linhas | `OR` | `UNION` | `UNION` + índice parcial em `failing_since` |
+  |---|---|---|---|
+  | 100 | 47 µs | 80 µs (seq scan: o planejador não usa índice) | 62 µs |
+  | 10 mil | 452 µs | 669 µs | 397 µs |
+
+  O teto é de 100 heartbeats por usuário e a consulta roda a cada 5 s. Ganhar 272 µs com 100 vezes
+  o teto não paga uma migration nem o custo de escrita do índice. Rever se o volume mudar; a próxima
+  migration tem de ser maior que a das tags (a 00018, se a 00017 entrar antes).
 
 ## 5. Regra de prazo
 
@@ -145,7 +160,14 @@ Função pura em `internal/heartbeat`, sem I/O, recebendo `now`:
   last_start_at` se houver `start` aberto, e o `start` é consumido.
 - `start`: grava `last_start_at`; prazo intacto.
 - `fail`: `failing_since = coalesce(failing_since, now)`; prazo intacto.
-- `proximo(t)`: `t + period` ou o próximo disparo do cron depois de `t`, no fuso declarado.
+- `proximo(t)`: `t + period` ou o próximo disparo do cron depois de `t + 30 s`, no fuso declarado.
+  A folga (`EarlySignalMargin`, igual a `MinGrace`) existe porque um host com o relógio adiantado
+  termina a tarefa de 3h às 02:59:59: sem ela, o próximo disparo seria o das 3h que acabou de rodar,
+  com prazo às 03:05, e o incidente falso voltaria todo dia. Exemplo com `0 3 * * *` e 5 min de
+  tolerância: sucesso às 02:59:59 ou 02:59:30 dá prazo às 03:05 do dia seguinte; às 02:59:29, às
+  03:05 do mesmo dia. O período não tem folga: conta do próprio sinal, sem disparo marcado.
+  Custo: um sucesso de verdade do disparo anterior, a menos de 30 s do próximo, conta para o próximo,
+  e a falta dele aparece um ciclo depois.
 - Saudável = `failing_since IS NULL AND deadline_at > now`. Abrir: habilitado, não saudável, sem
   incidente aberto, e `last_incident_at` fora dos 5 min. Fechar: habilitado, saudável, com
   incidente aberto.
@@ -153,6 +175,10 @@ Função pura em `internal/heartbeat`, sem I/O, recebendo `now`:
   `last_success_at` e `started_at`; sem `success` novo (retomada), `now`.
 
 Cron recusado: fora dos 5 campos, com `TZ=`/`CRON_TZ=` ou que nunca dispara (`0 0 30 2 *`).
+
+Limites conhecidos do horário de verão, fixados em teste: a hora que não existe pula aquele dia, e a
+hora repetida dispara duas vezes (1h30 de 1/11/2026 em Nova York: 05:30 e 06:30 UTC). Quem agenda
+nela e roda uma vez só pode ter um alarme falso por ano; a saída é agendar fora dessa hora.
 
 ## 6. STRIDE do `POST /ping/{token}`
 
@@ -187,8 +213,8 @@ D9, D11 e D15, todos no banco. Hoje há uma instância de API; não há requisit
 direção segura para um monitor. O `curl --retry` respeita `Retry-After`.
 
 **Log de proxy, fora do código.** Os `Caddyfile` do repositório não têm diretiva `log`, então não
-gravam acesso. O proxy do Coolify na VPS não está no repositório: confirmar que ele não guarda o
-caminho é item operacional da §9.
+gravam acesso. O `coolify-proxy` (Traefik) da VPS não tem access log ligado: conferido na VPS em
+2026-11-05, nos argumentos e no compose. Ver §9.
 
 ## 7. Contrato
 
@@ -196,9 +222,13 @@ Público:
 
 | Rota | Efeito | Respostas |
 |---|---|---|
-| `POST /ping/{token}` | sucesso | `200 {"status":"ok"}`, `404`, `413`, `429` |
+| `POST /ping/{token}` | sucesso | `200 {"status":"ok"}`, `400`, `404`, `413`, `429` |
 | `POST /ping/{token}/start` | início | idem |
 | `POST /ping/{token}/fail` | falha | idem |
+
+`400` é o corpo que não pôde ser lido até o fim, como conexão interrompida no meio do envio; nada é
+gravado. Método diferente de POST dá `405`. Falha do lado do servidor dá `500`, ou `503` com o prazo
+vencido, no envelope de erro comum.
 
 Autenticado (`protegida`: Authn, limite por usuário, sessão viva; mutações com o cabeçalho
 anti-CSRF). Entrada estrita, com `DisallowUnknownFields`. Recurso alheio é 404.
@@ -251,5 +281,7 @@ Papéis: `--role=api` serve 3 e 5; `--role=prober` roda 4; `--role=all`, tudo.
 
 - Ajustar o `CLAUDE.md`: "a 00015 é reservada à vinculação Discord" deixa de valer (D1). Nesta
   frente ele não é editado.
-- Confirmar que o proxy do Coolify não grava o caminho das requisições: o token de ping está na
-  URL, e o de verificação de e-mail já estava.
+- Proxy do Coolify: **conferido em 2026-11-05.** O `coolify-proxy` (Traefik) não tem access log
+  ligado, nem nos argumentos nem no compose, então o caminho com o token não é gravado. Se alguém
+  ligar o access log, os tokens de ping e de verificação de e-mail passam a ir para o log: é preciso
+  filtrar o caminho antes.

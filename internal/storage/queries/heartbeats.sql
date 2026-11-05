@@ -63,10 +63,20 @@ UPDATE heartbeats SET ping_token_hash = $3 WHERE user_id = $1 AND id = $2;
 -- índice único parcial é a garantia final de um incidente aberto por vez.
 -- Sem incidente aberto, atrasado ou em falha, e fora do intervalo mínimo
 -- entre aberturas (D11): quem está nele fica para um tique seguinte.
+-- As duas condições ficam num UNION para que a de prazo use heartbeats_due_idx
+-- (um OR não usa). O predicado se repete fora de propósito: com SKIP LOCKED, a
+-- linha que um ping acabou de mudar é reconferida pelas condições da consulta
+-- externa, e não pela subquery, e sem ele o sucesso recém-gravado viraria
+-- incidente falso.
 -- name: ClaimHeartbeatsToOpen :many
 SELECT h.id, h.user_id, h.deadline_at, h.failing_since
   FROM heartbeats h
- WHERE h.enabled
+ WHERE h.id IN (SELECT d.id FROM heartbeats d
+                 WHERE d.enabled AND d.deadline_at <= sqlc.arg(now)::timestamptz
+                UNION
+                SELECT f.id FROM heartbeats f
+                 WHERE f.enabled AND f.failing_since IS NOT NULL)
+   AND h.enabled
    AND (h.deadline_at <= sqlc.arg(now)::timestamptz OR h.failing_since IS NOT NULL)
    AND (h.last_incident_at IS NULL OR h.last_incident_at <= sqlc.arg(cooldown_cut)::timestamptz)
    AND NOT EXISTS (SELECT 1 FROM incidents x WHERE x.heartbeat_id = h.id AND x.resolved_at IS NULL)
@@ -153,3 +163,7 @@ UPDATE incidents i
  WHERE h.id = i.heartbeat_id AND h.user_id = sqlc.arg(user_id)
    AND h.id = sqlc.arg(heartbeat_id) AND i.id = sqlc.arg(id)
 RETURNING i.id, h.id AS heartbeat_id, h.name AS heartbeat_name, i.started_at, i.resolved_at, i.cause, i.ack_at;
+
+-- O tamanho do log, para a métrica heartbeat_events (Reconcile do sondador).
+-- name: CountHeartbeatEvents :one
+SELECT count(*) FROM heartbeat_events;

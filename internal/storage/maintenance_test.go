@@ -237,8 +237,6 @@ func existeTabela(t *testing.T, pool *pgxpool.Pool, nome string) bool {
 	return existe
 }
 
-// Retenção (spec §12), cada item com o que sai E o que fica: sem o lado do
-// que fica, um DELETE sem WHERE passaria.
 // A idade cobre o heartbeat que parou de pingar e nunca alcançaria o teto.
 func TestRetentionDeletesOldHeartbeatEvents(t *testing.T) {
 	pool := testdb.New(t)
@@ -269,6 +267,8 @@ func TestRetentionDeletesOldHeartbeatEvents(t *testing.T) {
 	}
 }
 
+// Retenção (spec §12), cada item com o que sai E o que fica: sem o lado do
+// que fica, um DELETE sem WHERE passaria.
 func TestRetentionRemovesOnlyWhatExpired(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()

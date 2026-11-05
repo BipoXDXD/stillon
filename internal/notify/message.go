@@ -52,20 +52,27 @@ func mensagem(ev Event) (assunto, corpo string) {
 // serviço, não um backup que não rodou (D20 da spec de heartbeats).
 const prefixoDeTarefa = "heartbeat_"
 
+// causaFalhaDeTarefa é a falha avisada: a tarefa deu sinal, e o sinal foi ruim.
+const causaFalhaDeTarefa = "heartbeat_failed"
+
 func mensagemDeTarefa(ev Event, desde string) (assunto, corpo string) {
+	situacao, volta := "sem sinal", "voltou a dar sinal"
+	if ev.Cause == causaFalhaDeTarefa {
+		situacao, volta = "em falha", "voltou a funcionar"
+	}
 	switch ev.Kind {
 	case incident.EventResolved:
-		return fmt.Sprintf("[StillOn] %s voltou a dar sinal", ev.TargetName),
-			fmt.Sprintf("%s voltou a dar sinal em %s, depois de %s sem sinal.\n",
-				ev.TargetName, ev.ResolvedAt.UTC().Format(formatoData), duracao(ev.ResolvedAt.Sub(ev.StartedAt)))
+		return fmt.Sprintf("[StillOn] %s %s", ev.TargetName, volta),
+			fmt.Sprintf("%s %s em %s, depois de %s %s.\n", ev.TargetName, volta,
+				ev.ResolvedAt.UTC().Format(formatoData), duracao(ev.ResolvedAt.Sub(ev.StartedAt)), situacao)
 	case incident.EventReminder:
-		return fmt.Sprintf("[StillOn] %s continua sem sinal", ev.TargetName),
-			fmt.Sprintf("%s continua sem sinal desde %s (há %s).\nCausa: %s.\n"+
+		return fmt.Sprintf("[StillOn] %s continua %s", ev.TargetName, situacao),
+			fmt.Sprintf("%s continua %s desde %s (há %s).\nCausa: %s.\n"+
 				"Reconheça o incidente para parar os lembretes.\n",
-				ev.TargetName, desde, duracao(ev.QueuedAt.Sub(ev.StartedAt)), causa(ev.Cause))
+				ev.TargetName, situacao, desde, duracao(ev.QueuedAt.Sub(ev.StartedAt)), causa(ev.Cause))
 	}
-	return fmt.Sprintf("[StillOn] %s está sem sinal", ev.TargetName),
-		fmt.Sprintf("%s está sem sinal desde %s.\nCausa: %s.\n", ev.TargetName, desde, causa(ev.Cause))
+	return fmt.Sprintf("[StillOn] %s está %s", ev.TargetName, situacao),
+		fmt.Sprintf("%s está %s desde %s.\nCausa: %s.\n", ev.TargetName, situacao, desde, causa(ev.Cause))
 }
 
 // causa traduz o error_kind; o que estiver fora do enum vira o residual.
