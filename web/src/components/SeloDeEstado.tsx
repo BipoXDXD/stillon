@@ -16,14 +16,19 @@ const selos: Record<EstadoExibido, { Icone: LucideIcon; tom: TomDoSelo; cheio: b
   pausado: { Icone: Pause, tom: 'sem-dados', cheio: false },
 }
 
+// Só a forma, decorativa, para quem já escreve o estado ao lado.
+export function FormaDoEstado({ estado }: { estado: EstadoExibido }) {
+  const { Icone, tom, cheio } = selos[estado]
+  return <Icone aria-hidden="true" className={cn('size-3.5 shrink-0', CORES_DO_ICONE[tom])} fill={cheio ? 'currentColor' : 'none'} strokeWidth={2.5} />
+}
+
 // Só o ícone, para onde o selo inteiro não cabe (a tabela do painel no
 // celular). O texto continua lá para o leitor de tela: a forma diz o estado a
 // quem vê, e nunca a cor sozinha.
 export function IconeDoEstado({ estado, className }: { estado: EstadoExibido; className?: string }) {
-  const { Icone, tom, cheio } = selos[estado]
   return (
-    <span className={cn('inline-flex shrink-0', CORES_DO_ICONE[tom], className)}>
-      <Icone aria-hidden="true" className="size-3.5" fill={cheio ? 'currentColor' : 'none'} strokeWidth={2.5} />
+    <span className={cn('inline-flex shrink-0', className)}>
+      <FormaDoEstado estado={estado} />
       <span className="sr-only">{textoDoEstado(estado)}</span>
     </span>
   )

@@ -54,6 +54,7 @@ describe('painel', () => {
     expect(within(t).getAllByRole('columnheader').map((c) => c.textContent)).toEqual([
       'Estado',
       'Alvo',
+      'Tags',
       'Situação',
       'Latência',
       '24 h',

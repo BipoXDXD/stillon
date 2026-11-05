@@ -133,7 +133,8 @@ filtro sem uso.
   `px-2`, como a tabela "Funcionando" de hoje.
 - Linha `no ar` fica em uma altura; problema e sem dados ganham a linha de situação abaixo do nome.
 - Nome longo quebra dentro da célula (`overflow-wrap`), nunca alarga a página.
-- A barra de filtros quebra linha; os botões têm 44 px. A busca ocupa a largura inteira.
+- Cada grupo de filtros é uma faixa que rola de lado, dentro dela: quebrar linha empurraria a
+  tabela para a segunda tela. Os botões têm 44 px, e a busca ocupa a largura inteira.
 - As tags não aparecem na linha em 400 px; o filtro por tag continua lá.
 
 ## Testes

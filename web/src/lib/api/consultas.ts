@@ -1,11 +1,14 @@
 import { keepPreviousData, useInfiniteQuery, useQuery } from '@tanstack/react-query'
 import { useApi } from '@/app/contexto'
-import type { Incidente, ListaDeIncidentes } from './schemas'
+import type { FiltroDoResumo } from './cliente'
+import type { Incidente, ItemDoResumo, ListaDeIncidentes } from './schemas'
 
 // As chaves e os intervalos de atualização (spec §11.4; spec do Plano 6 §3.5).
 export const chaves = {
   me: ['me'] as const,
   resumo: ['targets', 'summary'] as const,
+  // Abaixo da chave do resumo: quem invalida o resumo invalida as duas.
+  resumoFiltrado: (f: FiltroDoResumo) => ['targets', 'summary', f.tags, f.estados] as const,
   alvos: ['targets', 'list'] as const,
   alvo: (id: string) => ['targets', id] as const,
   serie: (id: string, janela: string) => ['targets', id, 'checks', janela] as const,
@@ -32,7 +35,21 @@ export function useMe() {
 
 export function useResumo() {
   const api = useApi()
-  return useQuery({ queryKey: chaves.resumo, queryFn: api.resumo, refetchInterval: INTERVALO_DO_RESUMO_MS })
+  return useQuery({ queryKey: chaves.resumo, queryFn: () => api.resumo(), refetchInterval: INTERVALO_DO_RESUMO_MS })
+}
+
+// A tabela com filtro de tag ou estado. A consulta completa continua em poll:
+// a manchete, as contagens e a lista de tags falam do conjunto inteiro. Até a
+// resposta chegar, fica o que estava na tela (spec do painel denso, Estados).
+export function useResumoFiltrado(filtro: FiltroDoResumo, ativo: boolean, naTela: { items: ItemDoResumo[] }) {
+  const api = useApi()
+  return useQuery({
+    queryKey: chaves.resumoFiltrado(filtro),
+    queryFn: () => api.resumo(filtro),
+    refetchInterval: INTERVALO_DO_RESUMO_MS,
+    enabled: ativo,
+    placeholderData: (anterior) => anterior ?? naTela,
+  })
 }
 
 export function useAlvos() {

@@ -1,14 +1,26 @@
 import { Bell, Check, Plus } from 'lucide-react'
 import { useEffect, useRef } from 'react'
-import { Link } from 'react-router'
+import { Link, useSearchParams } from 'react-router'
 import { useAnunciar } from '@/components/Anunciador'
 import { EstadoDaConsulta } from '@/components/EstadoDaConsulta'
 import { Titulo } from '@/components/Titulo'
 import { Botao } from '@/components/ui/botao'
-import { useCanais, useIncidentesAbertos, useResolvidosRecentes, useResumo } from '@/lib/api/consultas'
+import { estiloDeCartao } from '@/components/ui/cartao'
+import { useCanais, useIncidentesAbertos, useResolvidosRecentes, useResumo, useResumoFiltrado } from '@/lib/api/consultas'
 import type { ItemDoResumo } from '@/lib/api/schemas'
+import { cn } from '@/lib/utils'
 import { avisosDosCanais } from './avisos-dos-canais'
+import { BarraDeFiltros } from './BarraDeFiltros'
 import { EsqueletoDoPainel } from './EsqueletoDoPainel'
+import {
+  casaComBusca,
+  descreverFiltros,
+  escreverFiltros,
+  lerFiltros,
+  SEM_FILTROS,
+  temFiltroDeApi,
+  type Filtros,
+} from './filtros'
 import { ordenarPorGravidade } from './grupos'
 import { linhaDoAlvo } from './linhas'
 import { fraseDoUltimoResolvido, manchete, metaDoPainel, resumoEmTexto, textoDaManchete } from './manchete'
@@ -48,18 +60,81 @@ export function PaginaPainel() {
 }
 
 function Alvos({ itens, atualizadoEm }: { itens: ItemDoResumo[]; atualizadoEm: Date }) {
+  return (
+    <div className="space-y-6">
+      {/* A manchete fala do conjunto inteiro: um filtro nunca esconde um incêndio. */}
+      <Manchete itens={itens} atualizadoEm={atualizadoEm} />
+      {itens.length > 0 && <AlvosFiltrados itens={itens} atualizadoEm={atualizadoEm} />}
+    </div>
+  )
+}
+
+function AlvosFiltrados({ itens, atualizadoEm }: { itens: ItemDoResumo[]; atualizadoEm: Date }) {
+  const [parametros, setParametros] = useSearchParams()
+  const filtros = lerFiltros(parametros)
+  const filtraNaApi = temFiltroDeApi(filtros)
+  const filtrada = useResumoFiltrado(filtros, filtraNaApi, { items: itens })
+  const aoMudar = (f: Filtros) => setParametros(escreverFiltros(f), { replace: true })
+
+  if (!filtraNaApi) {
+    const visiveis = itens.filter((it) => casaComBusca(it, filtros.busca))
+    return (
+      <>
+        <BarraDeFiltros itens={itens} filtros={filtros} quantosNaTabela={visiveis.length} aoMudar={aoMudar} />
+        <ResultadoDosFiltros itens={visiveis} filtros={filtros} atualizadoEm={atualizadoEm} aoMudar={aoMudar} />
+      </>
+    )
+  }
+  const esperando = filtrada.isPlaceholderData
+  const visiveis = filtrada.data?.items.filter((it) => casaComBusca(it, filtros.busca))
+  return (
+    <>
+      <BarraDeFiltros
+        itens={itens}
+        filtros={filtros}
+        quantosNaTabela={esperando || visiveis === undefined ? null : visiveis.length}
+        aoMudar={aoMudar}
+      />
+      <div aria-busy={esperando}>
+        <EstadoDaConsulta consulta={filtrada}>
+          {() => (
+            <ResultadoDosFiltros itens={visiveis ?? []} filtros={filtros} atualizadoEm={atualizadoEm} aoMudar={aoMudar} />
+          )}
+        </EstadoDaConsulta>
+      </div>
+    </>
+  )
+}
+
+function ResultadoDosFiltros({
+  itens,
+  filtros,
+  atualizadoEm,
+  aoMudar,
+}: {
+  itens: ItemDoResumo[]
+  filtros: Filtros
+  atualizadoEm: Date
+  aoMudar: (f: Filtros) => void
+}) {
   // A mesma consulta do contador da navegação: nenhuma requisição a mais.
   const abertos = useIncidentesAbertos()
+  if (itens.length === 0) {
+    return (
+      <div className={cn(estiloDeCartao, 'space-y-2')}>
+        <p className="font-semibold">Nenhum alvo com esses filtros.</p>
+        <p className="text-sm text-suave">{descreverFiltros(filtros)}</p>
+        <Botao tipo="secundario" tamanho="pequeno" onClick={() => aoMudar(SEM_FILTROS)}>
+          Limpar filtros
+        </Botao>
+      </div>
+    )
+  }
   const porId = new Map((abertos.data?.itens ?? []).map((i) => [i.id, i]))
   const linhas = ordenarPorGravidade(itens).map((it) =>
     linhaDoAlvo(it, it.open_incident_id ? porId.get(it.open_incident_id) : undefined, atualizadoEm),
   )
-  return (
-    <div className="space-y-6">
-      <Manchete itens={itens} atualizadoEm={atualizadoEm} />
-      {linhas.length > 0 && <TabelaDeMonitores linhas={linhas} agora={atualizadoEm} />}
-    </div>
-  )
+  return <TabelaDeMonitores linhas={linhas} agora={atualizadoEm} />
 }
 
 // A frase de estado no topo (spec do redesign, Telas > 1), em Fraunces.

@@ -68,6 +68,11 @@ const porCampo: Record<string, Record<string, string>> = {
     invalid: 'Use uma URL http:// ou https:// completa.',
   },
   headers: { forbidden: 'Há um header controlado pelo monitor (Host, Content-Length…).' },
+  tags: {
+    invalid: 'Use letras, números, hífen e sublinhado, separados por vírgula.',
+    too_long: 'Cada tag tem até 24 caracteres.',
+    out_of_range: 'Até 8 tags.',
+  },
   timeout_ms: { out_of_range: 'Entre 1000 e 30000 ms, e menor que 90% do intervalo.' },
   interval_sec: { out_of_range: 'Entre 30 segundos e 1 dia.' },
   kind: { unavailable: 'O envio de e-mail não está configurado neste servidor.' },

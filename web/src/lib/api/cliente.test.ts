@@ -39,6 +39,7 @@ describe('a regra do 401', () => {
       degraded_threshold_ms: 2000,
       enabled: true,
       header_names: [],
+      tags: [],
       created_at: '2026-09-24T12:00:00Z',
     }))
     falsa.estado.atrasoRefresh = 20

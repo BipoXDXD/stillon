@@ -115,6 +115,7 @@ com a cor, a forma e o texto do estado. Os mesmos tokens e fontes desenham a pá
 Todas as telas, a 400 e 1280 px e nos dois temas, ficam em
 [`docs/design/painel-depois/`](docs/design/painel-depois/); o visual anterior, em
 [`docs/design/painel-antes/`](docs/design/painel-antes/) e na tag `painel-antes-do-redesign`.
+A versão com cartões, anterior à tabela densa, está na tag `painel-antes-do-denso`.
 O roteiro que as gera é o `web/e2e/capturas.spec.ts` (só roda com `CAPTURAR=1`; o comando está
 no comentário do arquivo).
 

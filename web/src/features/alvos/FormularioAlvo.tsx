@@ -70,6 +70,9 @@ export function FormularioAlvo({
       <Campo rotulo="URL" erro={e.url?.message} ajuda="http:// ou https://. Endereços internos não são aceitos.">
         {(a) => <Entrada {...a} type="url" inputMode="url" {...f.register('url')} />}
       </Campo>
+      <Campo rotulo="Tags" erro={e.tagsTexto?.message} ajuda="Separadas por vírgula, até 8. Ex.: prod, api, cliente-a.">
+        {(a) => <Entrada {...a} {...f.register('tagsTexto')} />}
+      </Campo>
       <div className="grid gap-4 sm:grid-cols-3">
         <Campo rotulo="Método" erro={e.method?.message}>
           {(a) => (

@@ -18,6 +18,7 @@ export function alvo(p: Partial<z.input<typeof Alvo>> = {}): z.input<typeof Alvo
     degraded_threshold_ms: 2000,
     enabled: true,
     header_names: [],
+    tags: [],
     created_at: '2026-09-20T10:00:00Z',
     ...p,
   }
@@ -33,6 +34,7 @@ export function itemDoResumo(p: Partial<z.input<typeof ItemDoResumo>> = {}): z.i
     last_latency_ms: 123,
     uptime_24h: 0.99999,
     open_incident_id: null,
+    tags: [],
     spark: [{ bucket: '2026-09-24T10:00:00Z', total: 60, ok: 60, p50_ms: 110 }],
     ...p,
   }

@@ -13,6 +13,7 @@ type LinhaComum = {
   href: string
   estado: EstadoExibido
   situacao: string
+  tags: string[]
   uptime24h: number | null
   historico: HoraDoSpark[]
   incidenteHref: string | null
@@ -31,6 +32,7 @@ export function linhaDoAlvo(it: ItemDoResumo, incidente: Incidente | undefined, 
     href: `/targets/${it.id}`,
     estado,
     situacao: situacaoDoAlvo(it, estado, incidente, agora),
+    tags: it.tags,
     latenciaMs: it.last_latency_ms,
     uptime24h: it.uptime_24h,
     historico: it.spark,
