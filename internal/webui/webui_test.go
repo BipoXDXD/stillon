@@ -258,3 +258,15 @@ func TestTodoArquivoDoDistTemTipo(t *testing.T) {
 		t.Errorf("o dist embutido não tem index.html com o marcador (%v)", err)
 	}
 }
+
+// AceitaGzip é usada também pela página pública (internal/httpapi).
+func TestAceitaGzip(t *testing.T) {
+	for v, quer := range map[string]bool{
+		"gzip": true, "gzip, deflate, br": true, "br, GZIP": true, "gzip;q=0.5": true,
+		"gzip;q=0": false, "gzip; q=0.000": false, "br": false, "identity": false, "": false,
+	} {
+		if got := webui.AceitaGzip(v); got != quer {
+			t.Errorf("AceitaGzip(%q) = %v, queria %v", v, got, quer)
+		}
+	}
+}

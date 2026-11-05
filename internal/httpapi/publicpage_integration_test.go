@@ -1,10 +1,13 @@
 package httpapi_test
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	"io"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -71,7 +74,7 @@ func TestPublicPageRendersWithoutLeaking(t *testing.T) {
 	if resp.StatusCode != http.StatusOK || !strings.HasPrefix(resp.Header.Get("Content-Type"), "text/html") {
 		t.Fatalf("GET /p/empresa deu %d %s: %s", resp.StatusCode, resp.Header.Get("Content-Type"), corpo)
 	}
-	for _, quer := range []string{"Fora do ar", "Há serviços fora do ar.", "Banco &lt;script&gt;", "Status &lt;da&gt; Empresa"} {
+	for _, quer := range []string{"Fora do ar", "1 serviço fora do ar.", "Banco &lt;script&gt;", "Status &lt;da&gt; Empresa"} {
 		if !strings.Contains(corpo, quer) {
 			t.Errorf("a página não tem %q:\n%s", quer, corpo)
 		}
@@ -88,7 +91,8 @@ func TestPublicPageRendersWithoutLeaking(t *testing.T) {
 	csp := resp.Header.Get("Content-Security-Policy")
 	m := nonceNoStyle.FindStringSubmatch(corpo)
 	if m == nil || !strings.Contains(csp, "style-src 'nonce-"+m[1]+"'") || strings.Contains(csp, "unsafe-inline") ||
-		!strings.Contains(csp, "default-src 'none'") || strings.Contains(corpo, "<script") {
+		!strings.Contains(csp, "default-src 'none'") || !strings.Contains(csp, "font-src 'self'") ||
+		strings.Contains(corpo, "<script") {
 		t.Errorf("CSP %q não autoriza só o <style> da página (nonce %v)", csp, m)
 	}
 	if cc := resp.Header.Get("Cache-Control"); cc != "public, max-age=30" {
@@ -137,5 +141,77 @@ func TestPublicPageIsGetOnly(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusMethodNotAllowed {
 		t.Errorf("POST /p/empresa deu %d, queria 405", resp.StatusCode)
+	}
+}
+
+// A página sai em gzip para quem aceita (spec §10.1, os 10 KB), e em texto
+// puro para quem não aceita. O Vary separa as duas no cache público.
+func TestPublicPageIsCompressedWhenTheClientAccepts(t *testing.T) {
+	a := newAPI(t)
+	tok := tokenDe(t, a, a.userID)
+	resp := chamar(t, a, http.MethodPost, "/api/v1/status-pages", tok, map[string]any{"slug": "comprimida", "title": "T", "published": true})
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("criar página deu %d", resp.StatusCode)
+	}
+	pedir := func(aceita string) (*http.Response, []byte) {
+		t.Helper()
+		req, err := http.NewRequest(http.MethodGet, a.srv.URL+"/p/comprimida", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Com o cabeçalho posto à mão, o Transport não descomprime sozinho.
+		req.Header.Set("Accept-Encoding", aceita)
+		r, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer r.Body.Close()
+		b, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return r, b
+	}
+
+	r, b := pedir("gzip, br")
+	if r.Header.Get("Content-Encoding") != "gzip" || !strings.Contains(r.Header.Get("Vary"), "Accept-Encoding") {
+		t.Fatalf("Content-Encoding %q e Vary %q, queria gzip e Accept-Encoding", r.Header.Get("Content-Encoding"), r.Header.Get("Vary"))
+	}
+	zr, err := gzip.NewReader(bytes.NewReader(b))
+	if err != nil {
+		t.Fatal(err)
+	}
+	html, err := io.ReadAll(zr)
+	if err != nil || !strings.Contains(string(html), "Nenhum serviço nesta página.") {
+		t.Errorf("corpo comprimido ilegível (%v):\n%s", err, html)
+	}
+
+	r, b = pedir("identity")
+	if r.Header.Get("Content-Encoding") != "" || !strings.Contains(string(b), "Nenhum serviço nesta página.") {
+		t.Errorf("sem gzip, Content-Encoding %q e corpo:\n%s", r.Header.Get("Content-Encoding"), b)
+	}
+	// A versão sem gzip também diz que depende do Accept-Encoding: sem isso,
+	// um cache compartilhado serviria o texto puro a quem pediu gzip, ou o
+	// contrário, conforme quem chegou primeiro.
+	if v := r.Header.Get("Vary"); !strings.Contains(v, "Accept-Encoding") {
+		t.Errorf("sem gzip, Vary %q, queria Accept-Encoding", v)
+	}
+
+	// O HEAD passa pela mesma cadeia (GET /p/{slug} também atende HEAD) e
+	// declara o tamanho do GET sem gzip: o nonce tem tamanho fixo, então o
+	// texto puro tem o mesmo número de bytes em toda resposta.
+	req, err := http.NewRequest(http.MethodHead, a.srv.URL+"/p/comprimida", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Accept-Encoding", "identity")
+	head, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	head.Body.Close()
+	if head.StatusCode != http.StatusOK || head.Header.Get("Content-Length") != strconv.Itoa(len(b)) {
+		t.Errorf("HEAD deu %d com Content-Length %q; o GET sem gzip tem %d bytes", head.StatusCode, head.Header.Get("Content-Length"), len(b))
 	}
 }

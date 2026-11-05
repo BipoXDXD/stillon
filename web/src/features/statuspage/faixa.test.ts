@@ -5,9 +5,9 @@ import { z } from 'zod'
 import { EstadoAlvo } from '@/lib/api/schemas'
 import { faixaDaPagina } from './faixa'
 
-// A frase da faixa é a que a página pública vai dizer a partir do PR 7 do
-// redesign (internal/httpapi/publicpage.go). Os casos ficam num JSON só, que
-// este teste e, com o PR 7, o do Go leem: a prévia do painel e a página
+// A frase da faixa é a que a página pública diz
+// (internal/httpapi/publicpage.go). Os casos ficam num JSON só, que este
+// teste e o do Go (TestBandPhraseFollowsTheSharedCases) leem: a prévia do painel e a página
 // publicada não podem dizer coisas diferentes. strictObject: um campo novo no
 // JSON tem de entrar nos dois testes, não ser ignorado aqui.
 const Caso = z.strictObject({

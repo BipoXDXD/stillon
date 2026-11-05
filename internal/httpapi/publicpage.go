@@ -2,15 +2,16 @@ package httpapi
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"embed"
 	"errors"
 	"fmt"
 	"html/template"
-	"io"
 	"log/slog"
 	"math"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -20,11 +21,13 @@ import (
 	"github.com/BipoXDXD/stillon/internal/httpapi/middleware"
 	"github.com/BipoXDXD/stillon/internal/observability"
 	"github.com/BipoXDXD/stillon/internal/statuspage"
+	"github.com/BipoXDXD/stillon/internal/webui"
 )
 
 // A status page pública (spec §10): HTML renderizado aqui, sem JavaScript,
-// com o CSS inline autorizado por nonce. É a página que se abre quando algo
-// quebrou; ela não pode depender de bundle, hidratação nem API.
+// com o CSS inline autorizado por nonce e as fontes do próprio host
+// (/fonts/). É a página que se abre quando algo quebrou; ela não pode
+// depender de bundle, hidratação nem API.
 
 //go:embed templates/status.html
 var templatesFS embed.FS
@@ -88,13 +91,48 @@ func (h *PublicPageHandlers) Page(w http.ResponseWriter, r *http.Request) {
 		pagina(w, http.StatusServiceUnavailable, paginaIndisponivel)
 		return
 	}
+	entregar(w, r, buf.Bytes(), nonce)
+}
+
+// entregar escreve a página renderizada: os cabeçalhos dela, com o tamanho
+// do que vai no fio, e o corpo, em gzip para quem aceita. O HEAD (que a rota
+// GET também atende) leva os mesmos cabeçalhos e nenhum corpo, como o painel
+// em webui.servirArquivo.
+func entregar(w http.ResponseWriter, r *http.Request, corpo []byte, nonce string) {
 	hd := w.Header()
 	hd.Set("Content-Type", "text/html; charset=utf-8")
-	hd.Set("Content-Security-Policy", "default-src 'none'; style-src 'nonce-"+nonce+"'; "+
-		"frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
+	hd.Set("Content-Security-Policy", politicaDaPagina(nonce))
 	hd.Set("Cache-Control", cachePublico)
+	// O pior caso passa de 10 KB em texto puro; comprimido, fica perto de
+	// 2 KB (spec §10.1). Vary: o cache público guarda as duas versões.
+	hd.Add("Vary", "Accept-Encoding")
+	if webui.AceitaGzip(r.Header.Get("Accept-Encoding")) {
+		hd.Set("Content-Encoding", "gzip")
+		corpo = comprimida(corpo)
+	}
+	hd.Set("Content-Length", strconv.Itoa(len(corpo)))
 	w.WriteHeader(http.StatusOK)
-	_, _ = io.Copy(w, &buf)
+	if r.Method != http.MethodHead {
+		_, _ = w.Write(corpo)
+	}
+}
+
+// comprimida devolve o corpo em gzip. O nonce muda a cada resposta, então
+// não há o que guardar: comprime a cada vez, no nível rápido.
+func comprimida(b []byte) []byte {
+	var out bytes.Buffer
+	zw, _ := gzip.NewWriterLevel(&out, gzip.BestSpeed) // nível válido: não falha
+	_, _ = zw.Write(b)                                 // bytes.Buffer não falha
+	_ = zw.Close()
+	return out.Bytes()
+}
+
+// politicaDaPagina é a CSP da página pública: o <style> com o nonce desta
+// resposta e as fontes do próprio host (/fonts/, servidas pelo painel na
+// mesma origem). Nada de script, imagem nem conexão.
+func politicaDaPagina(nonce string) string {
+	return "default-src 'none'; style-src 'nonce-" + nonce + "'; font-src 'self'; " +
+		"frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
 }
 
 // As páginas de erro são texto fixo e saem com a CSP de /verify/ (sem
@@ -112,24 +150,30 @@ const (
 // O modelo de apresentação: só strings prontas. O template não formata,
 // não decide e não tem acesso a nada além disto.
 type paginaModelo struct {
-	Nonce, Title, Summary, Generated string
-	Items                            []itemModelo
-	Incidents                        []string
+	Nonce, Title, Generated string
+	Band                    bandModelo
+	Items                   []itemModelo
+	Incidents               []string
 }
+
+// bandModelo é a faixa de estado do topo (spec do redesign, Telas 6): a
+// frase, o detalhe com os nomes por estado e a classe da cor (o estado).
+type bandModelo struct{ State, Text, Detail string }
 
 type itemModelo struct {
 	Name, State, Label, Uptime, Latency string
 	// Bar é a classe da maioria dos dias, na <ol>; Days tem a classe só dos
 	// dias diferentes dela, e "" nos outros. Um dia sem atributo custa 4
-	// bytes, e com atributo, 14: codificar pela maioria é o que faz cinco
-	// barras de 90 dias caberem nos 10 KB (spec §10.1). "" em Bar é verde.
+	// bytes, e com atributo, 14: codificar pela maioria mantém o texto puro
+	// abaixo do teto de 16 KB e o comprimido bem abaixo dos 10 KB (spec
+	// §10.1). "" em Bar é verde.
 	Bar  string
 	Days [statuspage.Days]string
 }
 
 func apresentar(v statuspage.View, nonce string) paginaModelo {
 	m := paginaModelo{
-		Nonce: nonce, Title: v.Title, Summary: resumo(v.Items),
+		Nonce: nonce, Title: v.Title, Band: faixa(v.Items),
 		Generated: v.GeneratedAt.UTC().Format("02/01/2006 15:04"),
 		Items:     make([]itemModelo, 0, len(v.Items)),
 		Incidents: make([]string, 0, len(v.Incidents)),
@@ -152,23 +196,48 @@ func apresentar(v statuspage.View, nonce string) paginaModelo {
 	return m
 }
 
-func resumo(items []statuspage.PublicItem) string {
+// gravidade é a ordem da faixa: o primeiro estado presente dá a frase.
+var gravidade = []statuspage.State{statuspage.StateDown, statuspage.StateDegraded, statuspage.StateUnknown}
+
+// faixa diz o estado da página numa frase, pelo pior estado presente, e
+// lista os nomes por estado, do pior ao melhor, na ordem da página. Os casos
+// ficam em testdata/faixa.json, que a prévia do painel também lê.
+func faixa(items []statuspage.PublicItem) bandModelo {
 	if len(items) == 0 {
-		return "Nenhum serviço nesta página."
+		return bandModelo{State: string(statuspage.StateUnknown), Text: "Nenhum serviço nesta página."}
 	}
-	conta := map[statuspage.State]int{}
+	nomes := map[statuspage.State][]string{}
 	for _, it := range items {
-		conta[it.State]++
+		nomes[it.State] = append(nomes[it.State], it.Name)
 	}
-	switch {
-	case conta[statuspage.StateDown] > 0:
-		return "Há serviços fora do ar."
-	case conta[statuspage.StateDegraded] > 0:
-		return "Há serviços lentos."
-	case conta[statuspage.StateUnknown] > 0:
-		return "Há serviços sem dados recentes."
+	b := bandModelo{State: string(statuspage.StateUp), Text: "Todos os sistemas funcionando."}
+	var partes []string
+	for _, s := range gravidade {
+		n := nomes[s]
+		if len(n) == 0 {
+			continue
+		}
+		if len(partes) == 0 {
+			b.State, b.Text = string(s), fraseDaFaixa(s, len(n))
+		}
+		partes = append(partes, rotulo(s)+": "+strings.Join(n, ", ")+".")
 	}
-	return "Todos os serviços estão no ar."
+	b.Detail = strings.Join(partes, " ")
+	return b
+}
+
+func fraseDaFaixa(s statuspage.State, n int) string {
+	servicos := "1 serviço"
+	if n != 1 {
+		servicos = fmt.Sprintf("%d serviços", n)
+	}
+	switch s {
+	case statuspage.StateDown:
+		return servicos + " fora do ar."
+	case statuspage.StateDegraded:
+		return "Instabilidade em " + servicos + "."
+	}
+	return "Sem dados recentes de " + servicos + "."
 }
 
 func rotulo(s statuspage.State) string {
@@ -183,9 +252,12 @@ func rotulo(s statuspage.State) string {
 	return "Sem dados"
 }
 
-// classeDia: verde (sem classe) a partir de 99,9%, amarelo a partir de 99%,
-// vermelho abaixo, cinza sem check. Com checks de minuto em minuto, 99,9%
-// de um dia é 1,4 check: uma sonda perdida não pinta o dia.
+// classeDia: no ar (sem classe, altura cheia) a partir de 99,9%, instável
+// ("d", dois terços da altura) a partir de 99%, fora do ar ("f", um terço)
+// abaixo, e sem dados ("n") sem check: um traço baixo no celular, onde o dia
+// é estreito demais para um contorno, e só o contorno na tela larga. Com
+// checks de minuto em minuto, 99,9% de um dia é 1,4 check: uma sonda perdida
+// não pinta o dia.
 func classeDia(u *float64) string {
 	switch {
 	case u == nil:
