@@ -3,12 +3,13 @@ import userEvent from '@testing-library/user-event'
 import { createRef } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import { BarraDeFiltros } from './BarraDeFiltros'
-import { SEM_FILTROS, type Filtros } from './filtros'
+import { contarDoConjunto, SEM_FILTROS, type Filtros } from './filtros'
 
 function barra(busca: string, aoMudar = vi.fn<(f: Filtros) => void>()) {
   return (
     <BarraDeFiltros
       itens={[]}
+      contagem={contarDoConjunto([], [])}
       filtros={{ ...SEM_FILTROS, busca }}
       resultado={null}
       semResultado={false}
@@ -24,7 +25,7 @@ describe('campo de busca', () => {
   // e não pode apagar o "b". Sabotagem: tirar a guarda de pendentes.
   it('um valor antigo que volta da URL não apaga o que já foi digitado', async () => {
     const { rerender } = render(barra(''))
-    const campo = screen.getByRole('searchbox', { name: 'Buscar alvo ou tag' })
+    const campo = screen.getByRole('searchbox', { name: 'Buscar por nome ou tag' })
     await userEvent.type(campo, 'ab')
     rerender(barra('a'))
     expect(campo).toHaveValue('ab')
@@ -34,7 +35,7 @@ describe('campo de busca', () => {
 
   it('um valor que o campo não mandou veio de fora, e manda', async () => {
     const { rerender } = render(barra(''))
-    const campo = screen.getByRole('searchbox', { name: 'Buscar alvo ou tag' })
+    const campo = screen.getByRole('searchbox', { name: 'Buscar por nome ou tag' })
     await userEvent.type(campo, 'ab')
     rerender(barra('ab'))
     rerender(barra(''))
@@ -44,7 +45,7 @@ describe('campo de busca', () => {
   it('digitar avisa a cada tecla', async () => {
     const aoMudar = vi.fn<(f: Filtros) => void>()
     render(barra('', aoMudar))
-    await userEvent.type(screen.getByRole('searchbox', { name: 'Buscar alvo ou tag' }), 'ab')
+    await userEvent.type(screen.getByRole('searchbox', { name: 'Buscar por nome ou tag' }), 'ab')
     expect(aoMudar.mock.calls.map(([f]) => f.busca)).toEqual(['a', 'ab'])
   })
 })

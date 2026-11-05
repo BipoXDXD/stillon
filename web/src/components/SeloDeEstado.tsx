@@ -25,20 +25,22 @@ export function FormaDoEstado({ estado }: { estado: EstadoExibido }) {
 // Só o ícone, para onde o selo inteiro não cabe (a tabela do painel no
 // celular). O texto continua lá para o leitor de tela: a forma diz o estado a
 // quem vê, e nunca a cor sozinha.
-export function IconeDoEstado({ estado, className }: { estado: EstadoExibido; className?: string }) {
+export function IconeDoEstado({ estado, texto, className }: { estado: EstadoExibido; texto?: string; className?: string }) {
   return (
     <span className={cn('inline-flex shrink-0', className)}>
       <FormaDoEstado estado={estado} />
-      <span className="sr-only">{textoDoEstado(estado)}</span>
+      <span className="sr-only">{texto ?? textoDoEstado(estado)}</span>
     </span>
   )
 }
 
-export function SeloDeEstado({ estado, className }: { estado: EstadoExibido; className?: string }) {
+// `texto` troca só a palavra: o heartbeat tem a forma e a cor do estado, mas
+// não fica "fora do ar" (spec da tela, T2).
+export function SeloDeEstado({ estado, texto, className }: { estado: EstadoExibido; texto?: string; className?: string }) {
   const { Icone, tom, cheio } = selos[estado]
   return (
     <Selo tom={tom} Icone={Icone} cheio={cheio} className={className}>
-      {textoDoEstado(estado)}
+      {texto ?? textoDoEstado(estado)}
     </Selo>
   )
 }

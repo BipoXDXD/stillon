@@ -1,29 +1,34 @@
 import { describe, expect, it } from 'vitest'
 import { Incidente, ItemDoResumo } from '@/lib/api/schemas'
+import { estadoExibido } from '@/lib/estado'
 import { incidente, itemDoResumo } from '@/test/fixtures'
 import { detalheDoProblema, linhaSemDados, ordenarPorGravidade } from './grupos'
 
 const alvo = (p: Parameters<typeof itemDoResumo>[0] = {}) => ItemDoResumo.parse(itemDoResumo(p))
 const inc = (p: Parameters<typeof incidente>[0] = {}) => Incidente.parse(incidente(p))
-const nomes = (itens: { name: string }[]) => itens.map((item) => item.name)
+const nomes = (itens: { nome: string }[]) => itens.map((item) => item.nome)
+const linha = (p: Parameters<typeof itemDoResumo>[0] = {}) => {
+  const item = alvo(p)
+  return { nome: item.name, estado: estadoExibido(item.state, item.enabled) }
+}
 const agora = new Date('2026-09-24T12:00:00Z')
 
 describe('ordenarPorGravidade', () => {
   // Sabotagem: trocar a ordem de GRAVIDADE entre down e degraded.
   it('fora do ar, degradado, no ar, sem dados e pausado, nessa ordem', () => {
     const ordem = ordenarPorGravidade([
-      alvo({ id: '1', name: 'Lento', state: 'degraded' }),
-      alvo({ id: '2', name: 'Site' }),
-      alvo({ id: '3', name: 'Parado', enabled: false }),
-      alvo({ id: '4', name: 'Banco', state: 'down' }),
-      alvo({ id: '5', name: 'Novo', state: 'unknown' }),
-      alvo({ id: '6', name: 'Caiu', state: 'down' }),
+      linha({ id: '1', name: 'Lento', state: 'degraded' }),
+      linha({ id: '2', name: 'Site' }),
+      linha({ id: '3', name: 'Parado', enabled: false }),
+      linha({ id: '4', name: 'Banco', state: 'down' }),
+      linha({ id: '5', name: 'Novo', state: 'unknown' }),
+      linha({ id: '6', name: 'Caiu', state: 'down' }),
     ])
     expect(nomes(ordem)).toEqual(['Banco', 'Caiu', 'Lento', 'Site', 'Novo', 'Parado'])
   })
 
   it('pausado fica no fim, mesmo com o último estado fora do ar', () => {
-    const ordem = ordenarPorGravidade([alvo({ name: 'Parado', state: 'down', enabled: false }), alvo({ name: 'Site' })])
+    const ordem = ordenarPorGravidade([linha({ name: 'Parado', state: 'down', enabled: false }), linha({ name: 'Site' })])
     expect(nomes(ordem)).toEqual(['Site', 'Parado'])
   })
 
@@ -31,16 +36,16 @@ describe('ordenarPorGravidade', () => {
   // maiúscula não separa.
   it('dentro do mesmo estado, pelo nome: números em ordem e sem diferenciar maiúscula', () => {
     const ordem = ordenarPorGravidade([
-      alvo({ id: 'a', name: 'Serviço 10' }),
-      alvo({ id: 'b', name: 'serviço 2' }),
-      alvo({ id: 'c', name: 'Serviço 1' }),
-      alvo({ id: 'd', name: 'api' }),
+      linha({ id: 'a', name: 'Serviço 10' }),
+      linha({ id: 'b', name: 'serviço 2' }),
+      linha({ id: 'c', name: 'Serviço 1' }),
+      linha({ id: 'd', name: 'api' }),
     ])
     expect(nomes(ordem)).toEqual(['api', 'Serviço 1', 'serviço 2', 'Serviço 10'])
   })
 
   it('não altera a lista recebida', () => {
-    const itens = [alvo({ id: 'a', name: 'B' }), alvo({ id: 'b', name: 'A' })]
+    const itens = [linha({ id: 'a', name: 'B' }), linha({ id: 'b', name: 'A' })]
     ordenarPorGravidade(itens)
     expect(nomes(itens)).toEqual(['B', 'A'])
   })

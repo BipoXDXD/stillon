@@ -116,6 +116,64 @@ export type Incidente = z.infer<typeof Incidente>
 export const ListaDeIncidentes = z.object({ items: z.array(Incidente), next_cursor: z.string().optional() })
 export type ListaDeIncidentes = z.infer<typeof ListaDeIncidentes>
 
+// Os heartbeats (spec de heartbeats, §7). O incidente de heartbeat tem forma
+// própria: `GET /incidents` não os traz (D3).
+export const EstadoDoHeartbeat = z.enum(['waiting', 'up', 'late', 'failing', 'paused'])
+export type EstadoDoHeartbeat = z.infer<typeof EstadoDoHeartbeat>
+
+export const Agendamento = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('period'), period_sec: z.number() }),
+  z.object({ kind: z.literal('cron'), expr: z.string(), timezone: z.string() }),
+])
+export type Agendamento = z.infer<typeof Agendamento>
+
+// Sem ping_url, de propósito: o z.object descarta o campo, e o segredo não
+// entra no cache por este tipo (spec da tela, T8).
+export const Heartbeat = z.object({
+  id,
+  name: z.string(),
+  enabled: z.boolean(),
+  schedule: Agendamento,
+  grace_sec: z.number(),
+  state: EstadoDoHeartbeat,
+  deadline_at: instante,
+  last_ping_at: instante.nullable(),
+  last_success_at: instante.nullable(),
+  last_start_at: instante.nullable(),
+  open_incident_id: id.nullable(),
+  created_at: instante,
+})
+export type Heartbeat = z.infer<typeof Heartbeat>
+
+// Só a resposta de criar e de rotacionar: ela é entregue a quem pediu e não
+// passa pelo cache de consultas.
+export const HeartbeatComPing = Heartbeat.extend({ ping_url: z.url() })
+
+export const ListaDeHeartbeats = z.object({ items: z.array(Heartbeat), next_cursor: z.string().optional() })
+
+export const EventoDeHeartbeat = z.object({
+  id,
+  at: instante,
+  kind: z.enum(['start', 'success', 'fail']),
+  runtime_ms: z.number().nullable(),
+})
+export type EventoDeHeartbeat = z.infer<typeof EventoDeHeartbeat>
+
+export const ListaDeEventos = z.object({ items: z.array(EventoDeHeartbeat), next_cursor: z.string().optional() })
+
+export const IncidenteDeHeartbeat = z.object({
+  id,
+  heartbeat_id: id,
+  heartbeat_name: z.string(),
+  started_at: instante,
+  resolved_at: instante.nullable(),
+  cause: z.string(),
+  acknowledged_at: instante.nullable(),
+})
+export type IncidenteDeHeartbeat = z.infer<typeof IncidenteDeHeartbeat>
+
+export const ListaDeIncidentesDeHeartbeat = z.object({ items: z.array(IncidenteDeHeartbeat), next_cursor: z.string().optional() })
+
 export const Canal = z.object({
   id,
   kind: z.enum(['discord', 'email']),

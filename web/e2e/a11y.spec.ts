@@ -3,7 +3,7 @@ import type { Locator, Page } from '@playwright/test'
 import type { z } from 'zod'
 import type { Serie } from '../src/lib/api/schemas'
 import { alvo, incidente, me, pagina } from '../src/test/fixtures'
-import { agora, codigosNovos, hora, imitarApi, item, SEGREDO_NOVO } from './api-imitada'
+import { agora, codigosNovos, hora, imitarApi, item, SEGREDO_NOVO, TOKEN_DE_PING } from './api-imitada'
 import { controlePositivo, expect, test } from './fixtures'
 
 // Todas as rotas do painel, com a API respondida pelo próprio teste
@@ -20,6 +20,9 @@ const ROTAS: [string, string][] = [
   ['/targets/a1', 'API'],
   ['/targets/a1?janela=7d', 'API'],
   ['/targets/a1/edit', 'Editar alvo'],
+  ['/heartbeats/new', 'Novo heartbeat'],
+  ['/heartbeats/h1', 'Backup noturno'],
+  ['/heartbeats/h1/edit', 'Editar heartbeat'],
   ['/incidents', 'Incidentes'],
   ['/channels', 'Canais de notificação'],
   ['/status-pages', 'Status page'],
@@ -391,7 +394,7 @@ for (const largura of [400, 1280]) {
       ['Configurar canais', page.getByRole('link', { name: 'Configurar canais' })],
       ['filtro de estado', page.getByRole('group', { name: 'Estado' }).getByRole('button', { name: /^Fora do ar/ })],
       ['filtro de tag', page.getByRole('group', { name: 'Tags' }).getByRole('button', { name: /^prod/ })],
-      ['busca', page.getByRole('searchbox', { name: 'Buscar alvo ou tag' })],
+      ['busca', page.getByRole('searchbox', { name: 'Buscar por nome ou tag' })],
       // No celular a coluna Situação some, e o incidente fica a um toque no detalhe do alvo.
       ...(largura === 1280 ? ([['Ver incidente', page.getByRole('link', { name: 'Ver incidente de Banco' })]] satisfies [string, Locator][]) : []),
       ...['Painel', 'Incidentes', 'Canais', 'Status', 'Conta'].map((aba): [string, Locator] => [
@@ -549,9 +552,10 @@ for (const largura of [400, 1280]) {
     await imitarApi(page)
     await page.goto('/')
     await expect(page.getByRole('heading', { name: 'Painel', level: 1 })).toBeVisible()
-    const aba = page.getByRole('navigation', { name: 'Principal' }).getByRole('link', { name: 'Incidentes, 1 aberto' })
+    // A API imitada tem um incidente de alvo e uma tarefa atrasada: o contador soma os dois.
+    const aba = page.getByRole('navigation', { name: 'Principal' }).getByRole('link', { name: 'Incidentes, 2 abertos' })
     const texto = await aba.getByText('Incidentes', { exact: true }).boundingBox()
-    const contador = await aba.locator('[aria-hidden="true"]').filter({ hasText: /^1$/ }).boundingBox()
+    const contador = await aba.locator('[aria-hidden="true"]').filter({ hasText: /^2$/ }).boundingBox()
     expect(texto, 'texto da aba').not.toBeNull()
     expect(contador, 'contador').not.toBeNull()
     const cruzaX = texto!.x < contador!.x + contador!.width && contador!.x < texto!.x + texto!.width
@@ -634,13 +638,74 @@ for (const largura of [400, 1280]) {
       await imitarApi(page)
       await page.route('**/api/v1/targets/summary?*', (route) => route.fulfill({ status: 200, json: { items: [] } }))
       await page.goto('/?tag=prod&estado=down&busca=nada')
-      await expect(page.getByText('Nenhum alvo com esses filtros.')).toBeVisible()
+      await expect(page.getByText('Nenhum monitor com esses filtros.')).toBeVisible()
       await expect(page.getByRole('group', { name: 'Tags' }).getByRole('button', { name: /^prod/ })).toHaveAttribute('aria-pressed', 'true')
       await esperarOConteudo(page, '/')
       expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(largura)
       const axe = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze()
       expect(axe.violations.map((v) => v.id)).toEqual([])
       await controlePositivo(page, `sem resultado ${largura} ${tema}`)
+    })
+  }
+}
+
+// Spec da tela de heartbeats: o diálogo da URL de ping tem texto longo e sem
+// espaço, que quebra dentro do bloco. Sabotagem: tirar o break-all do Copiavel.
+for (const largura of [400, 1280]) {
+  for (const tema of ['claro', 'escuro'] as const) {
+    test(`heartbeats: diálogo da URL e alvos de toque, ${largura} px, tema ${tema}`, async ({ page }) => {
+      await page.setViewportSize({ width: largura, height: 900 })
+      await page.emulateMedia({ colorScheme: tema === 'escuro' ? 'dark' : 'light' })
+      await imitarApi(page)
+      await page.goto('/')
+      await page.getByRole('link', { name: 'Cadastrar heartbeat' }).click()
+      await page.getByLabel('Nome', { exact: true }).fill('Backup')
+      await page.getByRole('button', { name: 'Cadastrar', exact: true }).click()
+      const dialogo = page.getByRole('dialog', { name: 'Guarde a URL de ping' })
+      await expect(dialogo).toBeVisible()
+      expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(largura)
+      const caixa = await dialogo.boundingBox()
+      expect((caixa?.x ?? 0) + (caixa?.width ?? 0)).toBeLessThanOrEqual(largura)
+      expect(await dialogo.evaluate((d) => d.scrollWidth <= d.clientWidth), 'nada rola de lado no diálogo').toBe(true)
+      const axe = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze()
+      expect(axe.violations.map((v) => `${v.id} (${v.nodes.map((n) => n.target.join(' ')).join(', ')})`)).toEqual([])
+      await controlePositivo(page, `diálogo da URL ${largura} ${tema}`)
+      // O Voltar de verdade: o diálogo segura, e a URL continua na tela.
+      await page.goBack()
+      await expect(dialogo).toBeVisible()
+      await expect(page).toHaveURL(/\/heartbeats\/new$/)
+      await page.getByRole('button', { name: 'Já guardei' }).click()
+      await expect(page).toHaveURL(/\/heartbeats\/h1$/)
+      // A URL de ping não fica em nenhuma entrada do histórico nem no armazenamento.
+      // Sabotagem: navegar com { state: { url } } depois de "Já guardei".
+      for (let passo = 0; passo < 3; passo += 1) {
+        const lugares = await page.evaluate(() =>
+          JSON.stringify([location.href, history.state, { ...localStorage }, { ...sessionStorage }]),
+        )
+        expect(lugares).not.toContain(TOKEN_DE_PING)
+        if (passo < 2) await page.goBack()
+      }
+
+      await page.goto('/heartbeats/h1')
+      await expect(page.getByRole('heading', { name: 'Backup noturno', level: 1 })).toBeVisible()
+      await expect(page.getByRole('button', { name: /^Reconhecer o incidente/ })).toBeVisible()
+      await expect(page.getByText('levou 3 min')).toBeVisible()
+      expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(largura)
+      for (const controle of [
+        page.getByRole('link', { name: 'Editar' }),
+        page.getByRole('button', { name: 'Pausar' }),
+        page.getByRole('button', { name: 'Apagar' }),
+        page.getByRole('button', { name: /^Reconhecer o incidente/ }),
+        page.getByRole('button', { name: 'Gerar nova URL' }),
+      ]) {
+        expect(await pontosForaDoAlvo(controle)).toEqual([])
+      }
+
+      await page.goto('/incidents')
+      await expect(page.getByRole('region', { name: 'Tarefas que pedem atenção' }).getByRole('link', { name: 'Backup noturno' })).toBeVisible()
+      expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(largura)
+      const incidentes = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze()
+      expect(incidentes.violations.map((v) => v.id)).toEqual([])
     })
   }
 }
@@ -674,10 +739,10 @@ for (const largura of [400, 768, 1024, 1280]) {
     }
 
     await page.goto('/')
-    await expect(page.getByRole('heading', { name: 'Dois serviços pedem atenção.', level: 2 })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Dois serviços e uma tarefa pedem atenção.', level: 2 })).toBeVisible()
     await esperarOConteudo(page, '/')
     const monitores = page.getByRole('table', { name: /^Monitores/ })
-    await expect(monitores.getByRole('rowheader')).toHaveCount(32)
+    await expect(monitores.getByRole('rowheader')).toHaveCount(34)
     const alturas = await monitores
       .getByRole('row', { name: /Serviço \d+/ })
       .evaluateAll((linhas) => linhas.map((l) => l.getBoundingClientRect().height))

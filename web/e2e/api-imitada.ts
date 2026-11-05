@@ -1,7 +1,7 @@
 import type { Page, Route } from '@playwright/test'
 import type { z } from 'zod'
 import type { ConfirmacaoTotp, InicioDaTroca, Serie } from '../src/lib/api/schemas'
-import { alvo, canal, incidente, itemDoResumo, me, pagina, sessao } from '../src/test/fixtures'
+import { alvo, canal, eventoDeHeartbeat, heartbeat, incidente, incidenteDeHeartbeat, itemDoResumo, me, pagina, sessao } from '../src/test/fixtures'
 
 // A API do painel respondida pelo próprio teste (page.route): o a11y.spec.ts
 // e o roteiro de captura (capturas.spec.ts) veem os mesmos dados. As
@@ -40,6 +40,10 @@ const horaria: z.input<typeof Serie> = {
     { bucket: agora, total: 30, ok: 30, p50_ms: 100, p95_ms: 200, p99_ms: 250, max_ms: 300 },
   ],
 }
+const heartbeats = [
+  heartbeat({ id: 'h1', name: 'Backup noturno', state: 'late', open_incident_id: 'hi1', deadline_at: agora, last_ping_at: agora, last_success_at: agora, created_at: agora }),
+  heartbeat({ id: 'h2', name: 'Relatório', last_ping_at: agora, last_success_at: agora, deadline_at: agora, created_at: agora }),
+]
 const respostas: Record<string, unknown> = {
   'POST /auth/refresh': { access_token: 'token-de-teste', expires_in: 900 },
   'GET /me': me({ created_at: agora }),
@@ -54,6 +58,21 @@ const respostas: Record<string, unknown> = {
   'GET /targets/a1': a1,
   'GET /incidents': {
     items: [incidente({ id: 'inc-1', target_id: 'a3', target_name: 'Banco', started_at: agora, cause: 'conn_refused' })],
+  },
+  'GET /heartbeats': { items: heartbeats },
+  'GET /heartbeats/h1': heartbeats[0],
+  'GET /heartbeats/h1/events': {
+    items: [
+      eventoDeHeartbeat({ id: 'e1', at: agora, kind: 'fail' }),
+      eventoDeHeartbeat({ id: 'e2', at: agora, kind: 'success', runtime_ms: 183_000 }),
+      eventoDeHeartbeat({ id: 'e3', at: agora, kind: 'start' }),
+    ],
+  },
+  'GET /heartbeats/h1/incidents': {
+    items: [
+      incidenteDeHeartbeat({ id: 'hi1', heartbeat_id: 'h1', heartbeat_name: 'Backup noturno', started_at: agora }),
+      incidenteDeHeartbeat({ id: 'hi2', heartbeat_id: 'h1', heartbeat_name: 'Backup noturno', started_at: agora, resolved_at: agora, cause: 'heartbeat_failed' }),
+    ],
   },
   'GET /channels': {
     items: [
@@ -79,6 +98,8 @@ const troca: z.input<typeof InicioDaTroca> = {
 export const codigosNovos: z.input<typeof ConfirmacaoTotp> = {
   recovery_codes: Array.from({ length: 10 }, (_, i) => `NOVO${String(i).padStart(2, '0')}CODIGO000${i}`),
 }
+export const TOKEN_DE_PING = 't'.repeat(43)
+respostas['POST /heartbeats'] = { ...heartbeats[0], id: 'h1', ping_url: `https://stillon.exemplo/ping/${TOKEN_DE_PING}` }
 respostas['POST /auth/totp/rotate'] = troca
 respostas['POST /auth/totp/rotate/confirm'] = codigosNovos
 

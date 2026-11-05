@@ -14,6 +14,10 @@ export const chaves = {
   serie: (id: string, janela: string) => ['targets', id, 'checks', janela] as const,
   // O limite entra na chave: páginas de tamanhos diferentes não dividem o cache.
   incidentes: (filtro: string, alvo?: string, limite?: number) => ['incidents', filtro, alvo ?? '', limite ?? 0] as const,
+  heartbeats: ['heartbeats'] as const,
+  heartbeat: (id: string) => ['heartbeats', id] as const,
+  eventosDoHeartbeat: (id: string) => ['heartbeats', id, 'events'] as const,
+  incidentesDoHeartbeat: (id: string) => ['heartbeats', id, 'incidents'] as const,
   canais: ['channels'] as const,
   paginas: ['status-pages'] as const,
   sessoes: ['sessions'] as const,
@@ -85,12 +89,16 @@ export function useIncidentes(filtro: 'open' | 'resolved' | 'all', alvo?: string
       }),
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (ultima) => ultima.next_cursor,
-    // O poll de uma infinite query refaz todas as páginas carregadas, em série,
-    // e gasta o rate limit por usuário. O maxPages não serve: exige lista
-    // bidirecional, e o cursor só anda para frente. Então o poll só roda com
-    // uma página; com mais, a lista se atualiza no foco e no reconhecer.
-    refetchInterval: (q) => ((q.state.data?.pages.length ?? 0) > 1 ? false : INTERVALO_DOS_INCIDENTES_MS),
+    refetchInterval: pollSoComUmaPagina,
   })
+}
+
+// O poll de uma infinite query refaz todas as páginas carregadas, em série,
+// e gasta o rate limit por usuário. O maxPages não serve: exige lista
+// bidirecional, e o cursor só anda para frente. Então o poll só roda com
+// uma página; com mais, a lista se atualiza no foco e no reconhecer.
+function pollSoComUmaPagina(q: { state: { data?: { pages: unknown[] } } }): number | false {
+  return (q.state.data?.pages.length ?? 0) > 1 ? false : INTERVALO_DOS_INCIDENTES_MS
 }
 
 // Os incidentes abertos: uma página de até 100, o teto da rota. Uma consulta
@@ -112,17 +120,22 @@ function useConsultaDosAbertos<T>(select: (d: ListaDeIncidentes) => T) {
   })
 }
 
-// Mais que uma página vira "99+".
-function contarAbertos(d: ListaDeIncidentes): string {
-  return d.next_cursor ? '99+' : d.items.length > 99 ? '99+' : String(d.items.length)
+const CONTADOR_CHEIO = 99
+
+// Mais que uma página vira "99+". As tarefas que pedem atenção somam: /incidents
+// não as traz (D3), e o contador não fica mudo com tarefa fora (spec da tela, T13).
+function textoDoContador(d: ListaDeIncidentes, tarefas: number): string {
+  const total = d.items.length + tarefas
+  return d.next_cursor || total > CONTADOR_CHEIO ? `${CONTADOR_CHEIO}+` : String(total)
 }
 
 function listarAbertos(d: ListaDeIncidentes): Abertos {
   return { itens: d.items, completa: d.next_cursor === undefined }
 }
 
-export function useAbertos() {
-  return useConsultaDosAbertos(contarAbertos)
+export function useAbertos(tarefas: number): string | undefined {
+  const alvos = useConsultaDosAbertos((d) => d)
+  return alvos.data && textoDoContador(alvos.data, tarefas)
 }
 
 export function useIncidentesAbertos() {
@@ -144,6 +157,39 @@ export function useResolvidosRecentes(ativa: boolean) {
     queryFn: () => api.incidentes({ status: 'resolved', limit: LIMITE_DOS_RESOLVIDOS }),
     enabled: ativa,
     refetchInterval: INTERVALO_DOS_RESOLVIDOS_MS,
+  })
+}
+
+// No ritmo do resumo: a manchete fala dos dois (spec da tela, A manchete).
+export function useHeartbeats() {
+  const api = useApi()
+  return useQuery({ queryKey: chaves.heartbeats, queryFn: api.heartbeats, refetchInterval: INTERVALO_DO_RESUMO_MS })
+}
+
+export function useHeartbeat(id: string) {
+  const api = useApi()
+  return useQuery({ queryKey: chaves.heartbeat(id), queryFn: () => api.heartbeat(id), refetchInterval: INTERVALO_DO_RESUMO_MS })
+}
+
+export function useEventosDoHeartbeat(id: string) {
+  const api = useApi()
+  return useInfiniteQuery({
+    queryKey: chaves.eventosDoHeartbeat(id),
+    queryFn: ({ pageParam }) => api.eventosDoHeartbeat(id, pageParam),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (ultima) => ultima.next_cursor,
+    refetchInterval: pollSoComUmaPagina,
+  })
+}
+
+export function useIncidentesDoHeartbeat(id: string) {
+  const api = useApi()
+  return useInfiniteQuery({
+    queryKey: chaves.incidentesDoHeartbeat(id),
+    queryFn: ({ pageParam }) => api.incidentesDoHeartbeat(id, pageParam),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (ultima) => ultima.next_cursor,
+    refetchInterval: pollSoComUmaPagina,
   })
 }
 

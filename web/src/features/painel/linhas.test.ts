@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { Incidente, ItemDoResumo } from '@/lib/api/schemas'
-import { incidente, itemDoResumo } from '@/test/fixtures'
-import { linhaDoAlvo, medidaDaLinha, situacaoNaLinhaDoNome, tipoSemCaso, type LinhaDeMonitor } from './linhas'
+import { Heartbeat, Incidente, ItemDoResumo } from '@/lib/api/schemas'
+import { heartbeat, incidente, itemDoResumo } from '@/test/fixtures'
+import { ordenarPorGravidade } from './grupos'
+import { linhaDoAlvo, linhaDoHeartbeat, medidaDaLinha, situacaoNaLinhaDoNome, tipoSemCaso, type LinhaDeMonitor } from './linhas'
 
 const alvo = (p: Parameters<typeof itemDoResumo>[0] = {}) => ItemDoResumo.parse(itemDoResumo(p))
 const inc = (p: Parameters<typeof incidente>[0] = {}) => Incidente.parse(incidente(p))
+const hb = (p: Parameters<typeof heartbeat>[0] = {}) => Heartbeat.parse(heartbeat(p))
 const agora = new Date('2026-09-24T12:00:00Z')
 
 describe('linhaDoAlvo', () => {
@@ -64,6 +66,54 @@ describe('linhaDoAlvo', () => {
   })
 })
 
+describe('linhaDoHeartbeat', () => {
+  // Sabotagem: apontar o href para /targets, ou chavear só pelo id → falha.
+  it('monta a linha na mesma forma, sem medida nem histórico', () => {
+    expect(linhaDoHeartbeat(hb({ id: 'h1', name: 'Backup', last_ping_at: '2026-09-24T11:58:00Z' }), agora)).toEqual({
+      tipo: 'heartbeat',
+      chave: 'heartbeat:h1',
+      nome: 'Backup',
+      href: '/heartbeats/h1',
+      estado: 'up',
+      textoDoEstado: 'Em dia',
+      situacao: 'Sinal há 2 minutos',
+      tags: [],
+      uptime24h: null,
+      historico: [],
+      incidenteHref: null,
+    })
+  })
+
+  it.each([
+    ['atrasado', { state: 'late', deadline_at: '2026-09-24T09:29:00Z' }, 'Sem sinal no prazo · há 2 h 31 min'],
+    // Editar um atrasado põe o prazo à frente e o incidente fica (spec de
+    // heartbeats, §5). Sabotagem: tirar a guarda → "há menos de 1 min".
+    ['atrasado com prazo novo', { state: 'late', deadline_at: '2026-09-25T09:00:00Z' }, 'Sem sinal no prazo'],
+    ['falhando', { state: 'failing' }, 'A tarefa avisou falha'],
+    ['aguardando', { state: 'waiting', last_ping_at: null }, 'Aguardando o primeiro sinal'],
+    ['pausado', { state: 'paused', enabled: false }, 'Pausado'],
+    ['em dia sem sinal', { state: 'up', last_ping_at: null }, 'Nenhum sinal ainda'],
+  ] as const)('situação de %s', (_, p, texto) => {
+    expect(linhaDoHeartbeat(hb(p), agora).situacao).toBe(texto)
+  })
+
+  it('com incidente aberto, o link vai ao detalhe: a tela de incidentes não o traz (D3)', () => {
+    expect(linhaDoHeartbeat(hb({ id: 'h1', state: 'late', open_incident_id: 'i1' }), agora).incidenteHref).toBe('/heartbeats/h1')
+  })
+
+  // Spec da tela, T3: uma escala de gravidade só. Sabotagem: mapear late para
+  // unknown em estado.ts → o atrasado desce para depois do alvo no ar.
+  it('entra na ordem de gravidade junto dos alvos', () => {
+    const linhas = ordenarPorGravidade([
+      linhaDoAlvo(alvo({ id: 'a', name: 'API' }), undefined, agora),
+      linhaDoHeartbeat(hb({ id: 'h1', name: 'Backup', state: 'late' }), agora),
+      linhaDoAlvo(alvo({ id: 'b', name: 'Caiu', state: 'down' }), undefined, agora),
+      linhaDoHeartbeat(hb({ id: 'h2', name: 'Relatório', state: 'waiting' }), agora),
+    ])
+    expect(linhas.map((l) => l.nome)).toEqual(['Backup', 'Caiu', 'API', 'Relatório'])
+  })
+})
+
 describe('medidaDaLinha', () => {
   const http = (p: Parameters<typeof itemDoResumo>[0]): LinhaDeMonitor => linhaDoAlvo(alvo(p), undefined, agora)
 
@@ -71,6 +121,10 @@ describe('medidaDaLinha', () => {
   it('a medida do monitor HTTP é a latência; sem ela, o traço', () => {
     expect(medidaDaLinha(http({ last_latency_ms: 1234 }))).toBe('1.234 ms')
     expect(medidaDaLinha(http({ last_latency_ms: null }))).toBe('—')
+  })
+
+  it('o heartbeat não tem latência: o traço, sem inventar medida', () => {
+    expect(medidaDaLinha(linhaDoHeartbeat(hb(), agora))).toBe('—')
   })
 })
 
@@ -81,9 +135,9 @@ describe('switch exaustivo sobre tipo', () => {
   // Sabotagem: acrescentar um membro à união sem caso → o tsc -b recusa.
   it('um tipo fora da união falha alto em vez de virar célula vazia', () => {
     const linha = linhaDoAlvo(alvo(), undefined, agora)
-    const intrusa = { ...linha, tipo: 'heartbeat' } as unknown as LinhaDeMonitor
-    expect(() => medidaDaLinha(intrusa)).toThrow('Tipo de monitor sem caso: heartbeat')
-    // @ts-expect-error: 'http' não é never; o tipo só cabe depois de esgotar os casos.
+    const intrusa = { ...linha, tipo: 'ping' } as unknown as LinhaDeMonitor
+    expect(() => medidaDaLinha(intrusa)).toThrow('Tipo de monitor sem caso: ping')
+    // @ts-expect-error: o tipo só cabe em never depois de esgotar os casos.
     expect(() => tipoSemCaso(linha.tipo)).toThrow('Tipo de monitor sem caso: http')
   })
 })

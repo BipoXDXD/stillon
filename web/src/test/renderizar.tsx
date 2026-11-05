@@ -1,7 +1,7 @@
 import { act, render } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { StrictMode, useEffect, type ReactNode } from 'react'
-import { createMemoryRouter } from 'react-router'
+import { createBrowserRouter, createMemoryRouter } from 'react-router'
 import { RouterProvider } from 'react-router/dom'
 import { criarClienteDeConsultas, ProvedorDoPainel } from '@/app/contexto'
 import { rotas } from '@/app/rotas'
@@ -20,9 +20,11 @@ function EscopoDaFixture({ encerrar, children }: { encerrar: () => void; childre
 // falsa. logado: o navegador tem um cookie de refresh válido, e o boot entra.
 // atrasoDoBoot: quanto o refresh do boot demora (para ver o splash).
 // prazoDoConfirmMs: o prazo dos confirms do 2FA (30 s no painel).
+// navegador: o router do painel de verdade, sobre window.history; o de memória
+// não escreve lá, e um teste do histórico passaria sem testar nada.
 export async function renderizarPainel(
   rota: string,
-  o: { logado?: boolean; atrasoDoBoot?: number; prazoDoConfirmMs?: number } = {},
+  o: { logado?: boolean; atrasoDoBoot?: number; prazoDoConfirmMs?: number; navegador?: boolean } = {},
 ) {
   // Cada render é uma carga de página nova: a primeira tela não recebe foco.
   esquecerAPrimeiraTela()
@@ -43,12 +45,14 @@ export async function renderizarPainel(
     ...cliente.getDefaultOptions(),
     queries: { ...cliente.getDefaultOptions().queries, retry: false },
   })
-  const router = createMemoryRouter(rotas, { initialEntries: [rota] })
+  if (o.navegador) window.history.replaceState(null, '', rota)
+  const router = o.navegador ? createBrowserRouter(rotas) : createMemoryRouter(rotas, { initialEntries: [rota] })
   const usuario = userEvent.setup()
   const encerrar = () => {
     vida.abort(new DOMException('A fixture foi desmontada.', 'AbortError'))
     router.dispose()
     cliente.clear()
+    if (o.navegador) window.history.replaceState(null, '', '/')
   }
   const tela = render(
     // O escopo fica fora do StrictMode: o cleanup de desenvolvimento dos

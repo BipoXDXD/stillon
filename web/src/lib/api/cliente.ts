@@ -3,12 +3,19 @@ import { enviar, lerCorpo, lerErro, type Buscar, type Pedido } from './http'
 import {
   Alvo,
   CadastroTotp,
+  Agendamento,
   Canal,
   ConfirmacaoTotp,
+  Heartbeat,
+  HeartbeatComPing,
+  IncidenteDeHeartbeat,
   InicioDaTroca,
   ListaDeAlvos,
   ListaDeCanais,
+  ListaDeEventos,
+  ListaDeHeartbeats,
   ListaDeIncidentes,
+  ListaDeIncidentesDeHeartbeat,
   ListaDePaginas,
   ListaDeSessoes,
   Incidente,
@@ -49,6 +56,10 @@ export type EntradaAlvo = {
 
 export type AlteracaoAlvo = Partial<EntradaAlvo>
 
+export type EntradaHeartbeat = { name: string; schedule: Agendamento; grace_sec: number }
+
+export type AlteracaoHeartbeat = Partial<EntradaHeartbeat> & { enabled?: boolean }
+
 export type EntradaCanal = { kind: 'discord'; url: string } | { kind: 'email'; email: string }
 
 export type EntradaPagina = {
@@ -83,6 +94,8 @@ function consultaDoResumo({ tags, estados }: FiltroDoResumo): string {
   const s = q.toString()
   return s ? `?${s}` : ''
 }
+
+const LIMITE_DO_LOG = 20
 
 export type Api = ReturnType<typeof criarApi>
 
@@ -151,6 +164,24 @@ export function criarApi(sessao: Sessao, buscar: Buscar, o: OpcoesDaApi = {}) {
     reconhecer: (id: string) =>
       pedir({ metodo: 'POST', caminho: `/incidents/${encodeURIComponent(id)}/ack` }, Incidente),
 
+    // Uma página de 100 é tudo: é o teto por usuário (spec da tela, T7).
+    heartbeats: () => get('/heartbeats?limit=100', ListaDeHeartbeats),
+    heartbeat: (id: string) => get(`/heartbeats/${encodeURIComponent(id)}`, Heartbeat),
+    criarHeartbeat: (e: EntradaHeartbeat) => pedir({ metodo: 'POST', caminho: '/heartbeats', corpo: e }, HeartbeatComPing),
+    alterarHeartbeat: (id: string, a: AlteracaoHeartbeat) =>
+      pedir({ metodo: 'PATCH', caminho: `/heartbeats/${encodeURIComponent(id)}`, corpo: a }, Heartbeat),
+    apagarHeartbeat: (id: string) => pedir({ metodo: 'DELETE', caminho: `/heartbeats/${encodeURIComponent(id)}` }, null),
+    rotacionarHeartbeat: (id: string) =>
+      pedir({ metodo: 'POST', caminho: `/heartbeats/${encodeURIComponent(id)}/token/rotate` }, HeartbeatComPing),
+    eventosDoHeartbeat: (id: string, cursor?: string) =>
+      get(`/heartbeats/${encodeURIComponent(id)}/events${consulta({ cursor, limit: LIMITE_DO_LOG })}`, ListaDeEventos),
+    incidentesDoHeartbeat: (id: string, cursor?: string) =>
+      get(`/heartbeats/${encodeURIComponent(id)}/incidents${consulta({ cursor, limit: LIMITE_DO_LOG })}`, ListaDeIncidentesDeHeartbeat),
+    reconhecerDoHeartbeat: (id: string, incidente: string) =>
+      pedir(
+        { metodo: 'POST', caminho: `/heartbeats/${encodeURIComponent(id)}/incidents/${encodeURIComponent(incidente)}/ack` },
+        IncidenteDeHeartbeat,
+      ),
     canais: () => get('/channels', ListaDeCanais),
     criarCanal: (e: EntradaCanal) => pedir({ metodo: 'POST', caminho: '/channels', corpo: e }, Canal),
     apagarCanal: (id: string) => pedir({ metodo: 'DELETE', caminho: `/channels/${encodeURIComponent(id)}` }, null),

@@ -1,5 +1,16 @@
 import type { z } from 'zod'
-import type { Alvo, Canal, Incidente, ItemDoResumo, Me, PaginaDeStatus, Sessao } from '@/lib/api/schemas'
+import type {
+  Alvo,
+  Canal,
+  EventoDeHeartbeat,
+  Heartbeat,
+  Incidente,
+  IncidenteDeHeartbeat,
+  ItemDoResumo,
+  Me,
+  PaginaDeStatus,
+  Sessao,
+} from '@/lib/api/schemas'
 
 // Fixtures no formato do contrato: z.input dos schemas das respostas. Uma
 // fixture fora do contrato não compila. Os testes de tela (Vitest) e o
@@ -36,6 +47,41 @@ export function itemDoResumo(p: Partial<z.input<typeof ItemDoResumo>> = {}): z.i
     open_incident_id: null,
     tags: [],
     spark: [{ bucket: '2026-09-24T10:00:00Z', total: 60, ok: 60, p50_ms: 110 }],
+    ...p,
+  }
+}
+
+export function heartbeat(p: Partial<z.input<typeof Heartbeat>> = {}): z.input<typeof Heartbeat> {
+  return {
+    id: 'hb-1',
+    name: 'Backup noturno',
+    enabled: true,
+    schedule: { kind: 'period', period_sec: 86400 },
+    grace_sec: 900,
+    state: 'up',
+    deadline_at: '2026-09-25T03:15:00Z',
+    last_ping_at: '2026-09-24T11:58:00Z',
+    last_success_at: '2026-09-24T11:58:00Z',
+    last_start_at: null,
+    open_incident_id: null,
+    created_at: '2026-09-20T10:00:00Z',
+    ...p,
+  }
+}
+
+export function eventoDeHeartbeat(p: Partial<z.input<typeof EventoDeHeartbeat>> = {}): z.input<typeof EventoDeHeartbeat> {
+  return { id: 'ev-1', at: '2026-09-24T11:58:00Z', kind: 'success', runtime_ms: null, ...p }
+}
+
+export function incidenteDeHeartbeat(p: Partial<z.input<typeof IncidenteDeHeartbeat>> = {}): z.input<typeof IncidenteDeHeartbeat> {
+  return {
+    id: 'hi-1',
+    heartbeat_id: 'hb-1',
+    heartbeat_name: 'Backup noturno',
+    started_at: '2026-09-24T11:00:00Z',
+    resolved_at: null,
+    cause: 'heartbeat_late',
+    acknowledged_at: null,
     ...p,
   }
 }

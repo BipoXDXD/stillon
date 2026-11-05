@@ -1,6 +1,7 @@
+import { estadoDoHeartbeat } from '@/features/heartbeats/estado'
 import { ESTADOS_DO_FILTRO, type EstadoDoFiltro } from '@/lib/api/cliente'
-import type { ItemDoResumo } from '@/lib/api/schemas'
-import { estadoExibido, textoDoEstado, type EstadoExibido } from '@/lib/estado'
+import type { Heartbeat, ItemDoResumo } from '@/lib/api/schemas'
+import { contarPorEstado, estadoExibido, textoDoEstado, type EstadoExibido } from '@/lib/estado'
 import { ehTagValida, MAX_TAGS, normalizarTag } from '@/lib/tags'
 
 // Os filtros do painel moram na URL (spec do painel denso): sobrevivem ao
@@ -57,9 +58,24 @@ export function estadoDoItem(it: ItemDoResumo): EstadoDoFiltro {
 // Sem acento nem caixa: quem digita "producao" acha "produção".
 const dobrar = (s: string) => s.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase().trim()
 
-export function casaComBusca(it: ItemDoResumo, busca: string): boolean {
+export function casaComBusca(it: { name: string; tags: readonly string[] }, busca: string): boolean {
   const termo = dobrar(busca)
   return [it.name, ...it.tags].some((s) => dobrar(s).includes(termo))
+}
+
+// O heartbeat não passa pela API de filtro e não tem tag: com tag ligada, ele
+// sai da tabela. A manchete continua falando dele (spec da tela, T4).
+export function heartbeatNosFiltros(hb: Heartbeat, f: Filtros): boolean {
+  if (f.tags.length > 0) return false
+  if (f.estados.length > 0 && !f.estados.includes(estadoDoFiltro(estadoDoHeartbeat(hb.state)))) return false
+  return casaComBusca({ name: hb.name, tags: [] }, f.busca)
+}
+
+// Quantos há em cada estado no conjunto inteiro, para os botões da barra.
+export function contarDoConjunto(itens: readonly ItemDoResumo[], heartbeats: readonly Heartbeat[]): Record<EstadoExibido, number> {
+  const conta = contarPorEstado(itens)
+  for (const hb of heartbeats) conta[estadoDoHeartbeat(hb.state)] += 1
+  return conta
 }
 
 export type ContagemDeTag = { tag: string; quantos: number }

@@ -21,6 +21,7 @@ const porCodigo: Record<string, string> = {
   invalid_credentials: 'E-mail ou senha incorretos.',
   validation_failed: 'Confira os campos destacados.',
   target_limit_reached: 'Limite de 100 alvos atingido.',
+  heartbeat_limit_reached: 'Limite de 100 heartbeats atingido.',
   channel_limit_reached: 'Limite de 10 canais atingido.',
   channel_not_pending: 'O canal não está mais aguardando verificação.',
   delivery_failed: 'Não conseguimos entregar a mensagem de teste. Confira o endereço.',
@@ -73,6 +74,10 @@ const porCampo: Record<string, Record<string, string>> = {
     too_long: 'Cada tag tem até 24 caracteres.',
     out_of_range: 'Até 8 tags.',
   },
+  period_sec: { out_of_range: 'Entre 1 minuto e 31 dias.' },
+  grace_sec: { out_of_range: 'Entre 30 segundos e 7 dias.' },
+  expr: { invalid: 'Use os cinco campos, com um disparo que exista: 0 3 * * *.' },
+  timezone: { invalid: 'Use um fuso IANA, como America/Sao_Paulo.' },
   timeout_ms: { out_of_range: 'Entre 1000 e 30000 ms, e menor que 90% do intervalo.' },
   interval_sec: { out_of_range: 'Entre 30 segundos e 1 dia.' },
   kind: { unavailable: 'O envio de e-mail não está configurado neste servidor.' },
@@ -95,6 +100,8 @@ const tiposDeErro: Record<string, string> = {
   http_status: 'Status HTTP inesperado',
   body_limit: 'Resposta grande demais',
   blocked: 'Destino bloqueado (endereço interno)',
+  heartbeat_late: 'Sem sinal no prazo',
+  heartbeat_failed: 'A tarefa avisou falha',
 }
 
 export function textoDoErroDeCheck(kind: string | null, statusCode: number | null): string {

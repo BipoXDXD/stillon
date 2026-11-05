@@ -1,6 +1,6 @@
 import { textoDaCausa } from '@/lib/api/mensagens'
 import type { Incidente, ItemDoResumo } from '@/lib/api/schemas'
-import { estadoExibido, type EstadoExibido } from '@/lib/estado'
+import type { EstadoExibido } from '@/lib/estado'
 import { duracao, haQuantoAteAgora, milissegundos } from '@/lib/format'
 
 // A ordem do painel: fora do ar, degradado, no ar, sem dados e pausado.
@@ -12,14 +12,12 @@ const GRAVIDADE: Record<EstadoExibido, number> = { down: 0, degraded: 1, up: 2, 
 // entre 30.
 const PELO_NOME = new Intl.Collator('pt-BR', { sensitivity: 'base', numeric: true })
 
-const exibido = (it: ItemDoResumo) => estadoExibido(it.state, it.enabled)
-
 export function ehProblema(e: EstadoExibido): boolean {
   return e === 'down' || e === 'degraded'
 }
 
-export function ordenarPorGravidade(itens: readonly ItemDoResumo[]): ItemDoResumo[] {
-  return [...itens].sort((a, b) => GRAVIDADE[exibido(a)] - GRAVIDADE[exibido(b)] || PELO_NOME.compare(a.name, b.name))
+export function ordenarPorGravidade<T extends { estado: EstadoExibido; nome: string }>(linhas: readonly T[]): T[] {
+  return [...linhas].sort((a, b) => GRAVIDADE[a.estado] - GRAVIDADE[b.estado] || PELO_NOME.compare(a.nome, b.nome))
 }
 
 // A situação de um problema: com incidente aberto, a causa e
