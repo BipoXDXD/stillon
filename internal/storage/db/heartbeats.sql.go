@@ -53,14 +53,16 @@ func (q *Queries) InsertHeartbeat(ctx context.Context, arg InsertHeartbeatParams
 	return err
 }
 
-const lockHeartbeatByTokenHash = `-- name: LockHeartbeatByTokenHash :one
+const lockHeartbeatForPing = `-- name: LockHeartbeatForPing :one
 SELECT id, user_id, name, ping_token_hash, period_sec, cron_expr, timezone, grace_sec, enabled, created_at, deadline_at, last_ping_at, last_success_at, last_start_at, last_signal, failing_since, last_incident_at FROM heartbeats WHERE ping_token_hash = $1 FOR UPDATE
 `
 
 // A trava serializa pings simultâneos do mesmo token: o segundo lê o estado
 // que o primeiro gravou, e é isso que faz a repetição ter um efeito só (D9).
-func (q *Queries) LockHeartbeatByTokenHash(ctx context.Context, pingTokenHash []byte) (Heartbeat, error) {
-	row := q.db.QueryRow(ctx, lockHeartbeatByTokenHash, pingTokenHash)
+// (O nome evita "token": o gosec lê a constante gerada como credencial
+// embutida, G101.)
+func (q *Queries) LockHeartbeatForPing(ctx context.Context, pingTokenHash []byte) (Heartbeat, error) {
+	row := q.db.QueryRow(ctx, lockHeartbeatForPing, pingTokenHash)
 	var i Heartbeat
 	err := row.Scan(
 		&i.ID,

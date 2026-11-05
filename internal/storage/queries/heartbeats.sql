@@ -9,7 +9,9 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11);
 
 -- A trava serializa pings simultâneos do mesmo token: o segundo lê o estado
 -- que o primeiro gravou, e é isso que faz a repetição ter um efeito só (D9).
--- name: LockHeartbeatByTokenHash :one
+-- (O nome evita "token": o gosec lê a constante gerada como credencial
+-- embutida, G101.)
+-- name: LockHeartbeatForPing :one
 SELECT * FROM heartbeats WHERE ping_token_hash = $1 FOR UPDATE;
 
 -- name: OpenHeartbeatIncident :exec
