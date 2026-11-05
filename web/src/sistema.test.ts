@@ -5,37 +5,19 @@ import { describe, expect, it } from 'vitest'
 // Fitness function do sistema visual do redesign (DI 2 a 4): espaçamento só
 // na escala 4/8/12/16/24/32/48/64 (classes 1, 2, 3, 4, 6, 8, 12, 16), um raio
 // (rounded-padrao) e pílulas (rounded-full), pesos 400 e 600, sombras só de
-// dois níveis (sombra-nivel-1 e -2) e cor só por token. Um arquivo entra na
-// lista quando o PR que o redesenha chega; o PR 8 troca a lista por todo o src.
-const ARQUIVOS_NO_SISTEMA = [
-  'src/app/BotaoDeTema.tsx',
-  'src/app/Layout.tsx',
-  'src/components/Marca.tsx',
-  'src/components/Minigrafico.tsx',
-  'src/components/Titulo.tsx',
-  'src/components/SeloDeEstado.tsx',
-  'src/components/SeloDoIncidente.tsx',
-  'src/components/ui/avisos.tsx',
-  'src/components/ui/botao.tsx',
-  'src/components/ui/campo.tsx',
-  'src/components/ui/cartao.ts',
-  'src/components/ui/controle-segmentado.tsx',
-  'src/components/ui/dialogo.tsx',
-  'src/features/painel/EsqueletoDoPainel.tsx',
-  'src/features/alvos/FaixaDeEstado.tsx',
-  'src/features/alvos/FormularioAlvo.tsx',
-  'src/features/alvos/GraficoDeLatencia.tsx',
-  'src/features/alvos/Indicadores.tsx',
-  'src/features/alvos/IncidentesRecentes.tsx',
-  'src/features/alvos/PaginaDetalhe.tsx',
-  'src/features/incidentes/PaginaIncidentes.tsx',
-  'src/features/painel/PaginaPainel.tsx',
-  'src/features/canais/PaginaCanais.tsx',
-  'src/features/configuracoes/PaginaConfiguracoes.tsx',
-  'src/features/login/PaginaLogin.tsx',
-  'src/features/statuspage/PaginaStatusPage.tsx',
-  'src/features/statuspage/PreviaDaPagina.tsx',
-]
+// dois níveis (sombra-nivel-1 e -2) e cor só por token. Todo o src entra no
+// sistema, menos os testes e os ajudantes de teste (src/test/): um arquivo
+// novo entra sozinho.
+// O teste é o arquivo terminado em .test.ts(x): um "Tela.test.helpers.tsx" ou
+// uma pasta "x.test.d" não saem da lista em silêncio. Os ajudantes de teste
+// moram em src/test/, a única pasta fora do sistema.
+const ehTeste = (nome: string) => /\.test\.tsx?$/.test(nome)
+const entraNoSistema = (nome: string) => /\.(?:tsx?|jsx?|mts)$/.test(nome) && !ehTeste(nome) && !nome.startsWith('test/')
+
+const ARQUIVOS_NO_SISTEMA = readdirSync('src', { recursive: true, encoding: 'utf8' })
+  .filter(entraNoSistema)
+  .map((nome) => `src/${nome}`)
+  .sort()
 
 const ESCALA = new Set(['0', 'auto', '1', '2', '3', '4', '6', '8', '12', '16'])
 const ESPACO = String.raw`(?:p[xytrblse]?|m[xytrblse]?|gap(?:-[xy])?|space-[xy])`
@@ -68,7 +50,7 @@ const REGRAS: Regra[] = [
   { nome: 'sombra do Tailwind', padrao: /(?<![\w-])shadow(?:-\w+)?(?![\w-])/g },
   {
     nome: 'cor fora dos tokens',
-    padrao: new RegExp(String.raw`(?<![\w-])(?:bg|text|border|ring|outline|fill|stroke|accent)-(?:${CORES_DO_TAILWIND})(?![\w-])`, 'g'),
+    padrao: new RegExp(String.raw`(?<![\w-])(?:bg|text|border|ring|outline|fill|stroke|accent)-(?:${CORES_DO_TAILWIND})(?:-\d+)?(?![\w-])`, 'g'),
   },
   { nome: 'tamanho de fonte fora da escala', padrao: /(?<![\w-])text-[5-9]xl(?![\w-])/g },
 ]
@@ -82,7 +64,7 @@ function violacoes(codigo: string): string[] {
 }
 
 describe('o detector do sistema', () => {
-  it.each(['p-5', 'space-y-1.5', 'py-0.5', 'text-[0.65rem]', 'px-[13px]', 'rounded-md', 'focus:rounded', 'font-bold', 'font-medium', 'shadow-lg', 'shadow', 'bg-black/60', 'text-6xl'])(
+  it.each(['p-5', 'space-y-1.5', 'py-0.5', 'text-[0.65rem]', 'px-[13px]', 'rounded-md', 'focus:rounded', 'font-bold', 'font-medium', 'shadow-lg', 'shadow', 'bg-black/60', 'text-6xl', 'bg-red-500', 'text-gray-500', 'border-blue-200', 'ring-indigo-400', 'bg-red-500/50'])(
     'reprova %s',
     (classe) => {
       expect(violacoes(`className="${classe}"`)).not.toEqual([])
@@ -98,6 +80,34 @@ describe('o detector do sistema', () => {
 
   it("aceita o locale 'pt-BR' fora de classe", () => {
     expect(violacoes(`new Intl.DateTimeFormat('pt-BR', { hour: '2-digit' })`)).toEqual([])
+  })
+})
+
+describe('a lista do sistema', () => {
+  it.each(['features/x/Tela.tsx', 'lib/x.ts', 'lib/x.mts', 'lib/x.js', 'features/x/Tela.jsx', 'features/x/Tela.test.helpers.tsx', 'features/x/Tela.test.fixtures.ts', 'features/x.test.d/T.tsx'])(
+    'entra %s',
+    (nome) => {
+      expect(entraNoSistema(nome)).toBe(true)
+    },
+  )
+
+  it.each(['features/x/Tela.test.tsx', 'lib/x.test.ts', 'test/fixtures.ts', 'test/renderizar.tsx', 'index.css'])('fica fora %s', (nome) => {
+    expect(entraNoSistema(nome)).toBe(false)
+  })
+
+  it('cobre as telas e os componentes', () => {
+    expect(ARQUIVOS_NO_SISTEMA).toEqual(
+      expect.arrayContaining([
+        'src/app/Layout.tsx',
+        'src/components/ui/botao.tsx',
+        'src/features/painel/PaginaPainel.tsx',
+        'src/features/incidentes/PaginaIncidentes.tsx',
+        'src/features/alvos/PaginaDetalhe.tsx',
+        'src/features/canais/PaginaCanais.tsx',
+        'src/features/login/PaginaLogin.tsx',
+      ]),
+    )
+    expect(ARQUIVOS_NO_SISTEMA.some((a) => ehTeste(a) || a.startsWith('src/test/'))).toBe(false)
   })
 })
 
@@ -138,7 +148,7 @@ describe('vermelho sólido só na confirmação', () => {
   it('tipo="perigo" aparece só nos diálogos de confirmação', () => {
     const usos: Record<string, number> = {}
     for (const nome of readdirSync('src', { recursive: true, encoding: 'utf8' })) {
-      if (!nome.endsWith('.tsx') || nome.includes('.test.')) continue
+      if (!nome.endsWith('.tsx') || ehTeste(nome)) continue
       const arquivo = `src/${nome}`
       const total = (readFileSync(arquivo, 'utf8').match(PERIGO) ?? []).length
       if (total > 0) usos[arquivo] = total

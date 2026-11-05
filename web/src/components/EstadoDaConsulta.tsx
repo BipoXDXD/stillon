@@ -16,7 +16,7 @@ export function Esqueleto({ linhas = 3 }: { linhas?: number }) {
         <div
           key={i}
           aria-hidden="true"
-          className="h-16 animate-pulse rounded-lg bg-painel motion-reduce:animate-none"
+          className="h-16 animate-pulse rounded-padrao bg-painel motion-reduce:animate-none"
         />
       ))}
     </div>
@@ -48,7 +48,7 @@ export function EstadoDaConsulta<T>({
   // "dados velhos" diria que ele ainda existe.
   if (consulta.data === undefined || naoEncontrado(consulta.error)) {
     return (
-      <div role="alert" className="space-y-2 rounded-md border border-perigo p-4">
+      <div role="alert" className="space-y-2 rounded-padrao border border-perigo p-4">
         <p>{mensagemDe(consulta.error)}</p>
         {tentar}
       </div>
@@ -59,7 +59,7 @@ export function EstadoDaConsulta<T>({
       {consulta.error && (
         // <output>: a região de status (role implícito), anunciada sem o foco
         // sair do lugar. Só conteúdo de frase dentro dela, daí o <span>.
-        <output className="flex flex-wrap items-center gap-3 rounded-md border border-borda p-3 text-sm">
+        <output className="flex flex-wrap items-center gap-3 rounded-padrao border border-borda p-3 text-sm">
           <span>
             Não foi possível atualizar agora ({mensagemDe(consulta.error)}). Mostrando os dados de{' '}
             {dataHora(new Date(consulta.dataUpdatedAt).toISOString())}.

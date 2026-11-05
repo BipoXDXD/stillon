@@ -23,7 +23,7 @@ export function ExigirSessao() {
     return (
       <>
         <AvisoDeContexto />
-        <div role="alert" className="mx-auto mt-24 max-w-md space-y-4 p-4 text-center">
+        <div role="alert" className="mx-auto mt-16 max-w-md space-y-4 p-4 text-center">
           <h1 className="text-xl font-semibold">Não foi possível falar com o servidor</h1>
           <p className="text-suave">Sua sessão pode estar ativa; tente de novo em instantes.</p>
           <Botao onClick={() => void sessao.tentarDeNovo()}>Tentar de novo</Botao>
