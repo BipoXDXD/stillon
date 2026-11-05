@@ -190,4 +190,10 @@ func TestPublicPageIsCompressedWhenTheClientAccepts(t *testing.T) {
 	if r.Header.Get("Content-Encoding") != "" || !strings.Contains(string(b), "Nenhum serviço nesta página.") {
 		t.Errorf("sem gzip, Content-Encoding %q e corpo:\n%s", r.Header.Get("Content-Encoding"), b)
 	}
+	// A versão sem gzip também diz que depende do Accept-Encoding: sem isso,
+	// um cache compartilhado serviria o texto puro a quem pediu gzip, ou o
+	// contrário, conforme quem chegou primeiro.
+	if v := r.Header.Get("Vary"); !strings.Contains(v, "Accept-Encoding") {
+		t.Errorf("sem gzip, Vary %q, queria Accept-Encoding", v)
+	}
 }
