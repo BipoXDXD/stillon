@@ -44,6 +44,7 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, in Input) (Targe
 		ExpectedStatus:      cmp.Or(in.ExpectedStatus, DefaultExpectedStatus),
 		DegradedThresholdMS: in.DegradedThresholdMS,
 		Headers:             in.Headers,
+		Tags:                in.Tags,
 	}
 	if verr := validate(&f); verr != nil {
 		return Target{}, verr
@@ -77,12 +78,16 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, in Input) (Targe
 		if n >= MaxTargetsPerUser {
 			return ErrLimitReached
 		}
-		return q.InsertTarget(ctx, db.InsertTargetParams{
+		err = q.InsertTarget(ctx, db.InsertTargetParams{
 			ID: id, UserID: userID, Name: f.Name, URL: f.URL, Method: f.Method,
 			IntervalSec: f.IntervalSec, TimeoutMS: f.TimeoutMS, ExpectedStatus: f.ExpectedStatus,
 			HeadersEnc: sealed, DegradedThresholdMS: f.DegradedThresholdMS,
 			Enabled: in.Enabled, NextRunAt: now, CreatedAt: now,
 		})
+		if err != nil {
+			return err
+		}
+		return q.InsertTargetTags(ctx, db.InsertTargetTagsParams{Tags: f.Tags, UserID: userID, TargetID: id})
 	})
 	if errors.Is(err, ErrLimitReached) {
 		return Target{}, err
@@ -94,7 +99,7 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, in Input) (Targe
 		ID: id, Name: f.Name, URL: f.URL, Method: f.Method,
 		IntervalSec: f.IntervalSec, TimeoutMS: f.TimeoutMS, ExpectedStatus: f.ExpectedStatus,
 		DegradedThresholdMS: f.DegradedThresholdMS, Enabled: in.Enabled,
-		HeaderNames: headerNames(f.Headers), CreatedAt: now,
+		HeaderNames: headerNames(f.Headers), Tags: f.Tags, CreatedAt: now,
 	}, nil
 }
 
@@ -105,7 +110,10 @@ func (s *Service) Get(ctx context.Context, userID, id uuid.UUID) (Target, error)
 		if err != nil {
 			return naoAchado(err)
 		}
-		out, err = s.toTarget(row)
+		if out, err = s.toTarget(row); err != nil {
+			return err
+		}
+		out.Tags, err = lerTags(ctx, q, userID, id)
 		return err
 	})
 	return out, err
@@ -121,12 +129,17 @@ func (s *Service) List(ctx context.Context, userID uuid.UUID, before *uuid.UUID,
 		if err != nil {
 			return fmt.Errorf("listar alvos: %w", err)
 		}
+		tags, err := tagsDoDono(ctx, q, userID)
+		if err != nil {
+			return err
+		}
 		out = make([]Target, 0, len(rows))
 		for _, r := range rows {
 			t, err := s.toTarget(r)
 			if err != nil {
 				return err
 			}
+			t.Tags = tagsDoAlvo(tags, t.ID)
 			out = append(out, t)
 		}
 		return nil
@@ -148,11 +161,15 @@ func (s *Service) Update(ctx context.Context, userID, id uuid.UUID, p Patch) (Ta
 		if err != nil {
 			return err
 		}
+		tags, err := lerTags(ctx, q, userID, row.ID)
+		if err != nil {
+			return err
+		}
 
 		f := fields{
 			Name: row.Name, URL: row.URL, Method: row.Method,
 			IntervalSec: row.IntervalSec, TimeoutMS: row.TimeoutMS, ExpectedStatus: row.ExpectedStatus,
-			DegradedThresholdMS: row.DegradedThresholdMS, Headers: headers,
+			DegradedThresholdMS: row.DegradedThresholdMS, Headers: headers, Tags: tags,
 		}
 		enabled := row.Enabled
 		mudouASonda := p.apply(&f, &enabled)
@@ -185,11 +202,16 @@ func (s *Service) Update(ctx context.Context, userID, id uuid.UUID, p Patch) (Ta
 		if err != nil {
 			return fmt.Errorf("atualizar alvo: %w", err)
 		}
+		if p.SetTags {
+			if err := trocarTags(ctx, q, userID, row.ID, f.Tags); err != nil {
+				return err
+			}
+		}
 		out = Target{
 			ID: row.ID, Name: f.Name, URL: f.URL, Method: f.Method,
 			IntervalSec: f.IntervalSec, TimeoutMS: f.TimeoutMS, ExpectedStatus: f.ExpectedStatus,
 			DegradedThresholdMS: f.DegradedThresholdMS, Enabled: enabled,
-			HeaderNames: headerNames(f.Headers), CreatedAt: row.CreatedAt,
+			HeaderNames: headerNames(f.Headers), Tags: f.Tags, CreatedAt: row.CreatedAt,
 		}
 		return nil
 	})
@@ -228,6 +250,9 @@ func (p Patch) apply(f *fields, enabled *bool) bool {
 		f.Headers = p.Headers
 	} else if !SameOrigin(antes.URL, f.URL) {
 		f.Headers = nil
+	}
+	if p.SetTags {
+		f.Tags = p.Tags
 	}
 	if p.Enabled != nil {
 		*enabled = *p.Enabled

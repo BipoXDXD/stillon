@@ -28,6 +28,7 @@ type Target struct {
 	DegradedThresholdMS *int32 // nil: sem classificação degraded (spec §11.5)
 	Enabled             bool
 	HeaderNames         []string
+	Tags                []string // normalizadas e ordenadas; nunca nil
 	CreatedAt           time.Time
 }
 
@@ -46,9 +47,10 @@ type Input struct {
 	DegradedThresholdMS *int32
 	Enabled             bool
 	Headers             map[string]string
+	Tags                []string
 }
 
-// Patch muda só o que vier preenchido. Nos dois campos com Set*, "limpar" é
+// Patch muda só o que vier preenchido. Nos campos com Set*, "limpar" é
 // uma mudança legítima e diferente de "não mexer", e um ponteiro nil não
 // separaria as duas coisas.
 type Patch struct {
@@ -59,6 +61,8 @@ type Patch struct {
 	Enabled                                *bool
 	SetHeaders                             bool
 	Headers                                map[string]string
+	SetTags                                bool
+	Tags                                   []string
 }
 
 type Check struct {

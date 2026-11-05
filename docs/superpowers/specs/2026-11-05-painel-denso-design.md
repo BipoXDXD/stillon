@@ -90,7 +90,9 @@ CASCADE`, RLS `via target` igual à de `check_rollup_1h` e `CHECK` espelhando a 
 - `GET /targets/summary?tag=a&tag=b&state=down&state=degraded`:
   - `tag`: todas precisam estar no alvo (E). No máximo 8 valores, cada um pela mesma validação.
   - `state`: qualquer um serve (OU), por allowlist: `up`, `degraded`, `down`, `unknown`, `paused`.
-  - Parâmetro desconhecido, valor fora da allowlist ou acima do limite: 400 com o campo e o motivo.
+  - Valor fora da allowlist ou acima do limite: 400 com o campo e o motivo.
+  - Parâmetro desconhecido ou query malformada (`?tag=%zz`, `?tag=a;tag=b`): 400 no campo fixo `query`,
+    sem ecoar a chave.
 - Tudo roda dentro de `InUserTx` e filtra por `user_id`. Tag de outro usuário não aparece nem como
   filtro: o resultado é vazio, igual a uma tag inexistente, e não vaza existência. `PATCH` em alvo
   alheio segue 404.

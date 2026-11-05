@@ -77,6 +77,7 @@ type fields struct {
 	ExpectedStatus      int32
 	DegradedThresholdMS *int32
 	Headers             map[string]string
+	Tags                []string
 }
 
 // validate confere todos os campos e acumula todos os erros, para que o
@@ -135,6 +136,12 @@ func validate(f *fields) *ValidationError {
 		v.add("headers", motivo)
 	} else {
 		f.Headers = h
+	}
+
+	if t, motivo := normalizeTags(f.Tags); motivo != "" {
+		v.add("tags", motivo)
+	} else {
+		f.Tags = t
 	}
 
 	if len(v.Fields) == 0 {

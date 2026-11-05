@@ -32,7 +32,7 @@ func TestSummaryRouteReturnsTheContractShape(t *testing.T) {
 	}
 	item := corpo.Items[0]
 	chaves := []string{"id", "name", "enabled", "state", "last_checked_at", "last_latency_ms",
-		"uptime_24h", "open_incident_id", "spark"}
+		"uptime_24h", "open_incident_id", "tags", "spark"}
 	if len(item) != len(chaves) {
 		t.Errorf("item com %d chaves, queria %d: %s", len(item), len(chaves), cru)
 	}
