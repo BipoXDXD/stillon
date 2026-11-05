@@ -229,15 +229,17 @@ func TestCronSkipsTheHourThatDoesNotExist(t *testing.T) {
 	}
 }
 
-// 1h30 acontece duas vezes em 1/11/2026 em Nova York.
+// 1h30 acontece duas vezes em 1/11/2026 em Nova York, e a biblioteca dispara
+// nas duas: 05:30 e 06:30 UTC. Quem roda uma vez só nessa hora pode ter um
+// alarme falso por ano; é limite conhecido, na seção 5 da spec.
 func TestCronAcrossTheRepeatedHourMovesForward(t *testing.T) {
 	s := cronEm(t, "30 1 * * *", "America/New_York")
 	primeiro := s.Next(time.Date(2026, 10, 31, 12, 0, 0, 0, time.UTC))
 	if want := time.Date(2026, 11, 1, 5, 30, 0, 0, time.UTC); !primeiro.Equal(want) {
 		t.Fatalf("primeiro %v, queria %v", primeiro, want)
 	}
-	if s.Next(primeiro).Before(primeiro.Add(time.Minute)) {
-		t.Errorf("o próximo depois de %v não avançou", primeiro)
+	if got, want := s.Next(primeiro), time.Date(2026, 11, 1, 6, 30, 0, 0, time.UTC); !got.Equal(want) {
+		t.Errorf("próximo %v, queria %v", got, want)
 	}
 }
 
@@ -266,10 +268,76 @@ func TestScheduleFromRow(t *testing.T) {
 	}
 }
 
+// Host adiantado: a tarefa de 3h avisa antes das 3h. Dentro da folga, o sinal é
+// desse disparo, e o prazo vai para o do dia seguinte. As bordas são exatas.
+func TestSuccessJustBeforeTheFireCountsForThatFire(t *testing.T) {
+	sch := cronEm(t, "0 3 * * *", "UTC")
+	casos := []struct {
+		nome string
+		de   time.Time
+		want time.Time
+	}{
+		{"um segundo antes", time.Date(2026, 11, 6, 2, 59, 59, 0, time.UTC), time.Date(2026, 11, 7, 3, 5, 0, 0, time.UTC)},
+		{"na borda da folga", time.Date(2026, 11, 6, 2, 59, 30, 0, time.UTC), time.Date(2026, 11, 7, 3, 5, 0, 0, time.UTC)},
+		{"logo antes da folga", time.Date(2026, 11, 6, 2, 59, 29, 0, time.UTC), time.Date(2026, 11, 6, 3, 5, 0, 0, time.UTC)},
+		{"depois do disparo", time.Date(2026, 11, 6, 3, 0, 1, 0, time.UTC), time.Date(2026, 11, 7, 3, 5, 0, 0, time.UTC)},
+	}
+	for _, c := range casos {
+		t.Run(c.nome, func(t *testing.T) {
+			if got := heartbeat.FirstDeadline(sch, tolerancia, c.de); !got.Equal(c.want) {
+				t.Errorf("%v, queria %v", got, c.want)
+			}
+		})
+	}
+}
+
+// O período conta do próprio sinal: a folga do cron não entra.
+func TestPeriodDeadlineHasNoEarlyMargin(t *testing.T) {
+	got := heartbeat.FirstDeadline(hora, tolerancia, agora)
+	if want := time.Date(2026, 11, 5, 13, 5, 0, 0, time.UTC); !got.Equal(want) {
+		t.Errorf("%v, queria %v", got, want)
+	}
+}
+
 func TestFirstDeadlineAddsGraceToTheNextFire(t *testing.T) {
 	got := heartbeat.FirstDeadline(cronEm(t, "0 3 * * *", "UTC"), tolerancia, agora)
 	if want := time.Date(2026, 11, 6, 3, 5, 0, 0, time.UTC); !got.Equal(want) {
 		t.Errorf("%v, queria %v", got, want)
+	}
+}
+
+func TestOpeningPrefersTheAnnouncedFailure(t *testing.T) {
+	prazo := agora.Add(-time.Hour)
+	causa, desde := heartbeat.Opening(prazo, nil)
+	if causa != heartbeat.CauseLate || !desde.Equal(prazo) {
+		t.Errorf("atraso: %s desde %v", causa, desde)
+	}
+	falha := agora.Add(-2 * time.Hour)
+	causa, desde = heartbeat.Opening(prazo, &falha)
+	if causa != heartbeat.CauseFailed || !desde.Equal(falha) {
+		t.Errorf("falha: %s desde %v", causa, desde)
+	}
+}
+
+func TestClosing(t *testing.T) {
+	inicio := agora.Add(-time.Hour)
+	antes, igual, depois := inicio.Add(-time.Minute), inicio, inicio.Add(time.Minute)
+	casos := []struct {
+		nome     string
+		sucesso  *time.Time
+		want     time.Time
+		retomada bool
+	}{
+		{"sem sucesso", nil, agora, true},
+		{"sucesso antigo", &antes, agora, true},
+		{"sucesso no início", &igual, inicio, false},
+		{"sucesso depois", &depois, depois, false},
+	}
+	for _, c := range casos {
+		got, retomada := heartbeat.Closing(inicio, c.sucesso, agora)
+		if !got.Equal(c.want) || retomada != c.retomada {
+			t.Errorf("%s: %v retomada=%v, queria %v retomada=%v", c.nome, got, retomada, c.want, c.retomada)
+		}
 	}
 }
 

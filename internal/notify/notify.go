@@ -46,6 +46,9 @@ type Event struct {
 	// o envio, para a retentativa repetir o texto.
 	QueuedAt time.Time
 	Cause    string
+	// ClosedByResume é o heartbeat que o dono retomou sem nenhum sucesso: o
+	// incidente acabou, mas a tarefa não voltou.
+	ClosedByResume bool
 }
 
 // Notifier é a interface da spec §8. dest é a URL do webhook ou o endereço

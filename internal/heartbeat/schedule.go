@@ -95,6 +95,12 @@ func (s Schedule) Next(t time.Time) time.Time {
 	return s.cron.Next(t.In(s.location)).UTC()
 }
 
+// Equal diz se os dois agendamentos são o mesmo: reenviar o que já está gravado
+// não é mudança.
+func (s Schedule) Equal(o Schedule) bool {
+	return s.period == o.period && s.expr == o.expr && s.timezone == o.timezone
+}
+
 // IsCron diz qual das duas formas o agendamento tem.
 func (s Schedule) IsCron() bool { return s.cron != nil }
 

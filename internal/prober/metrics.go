@@ -14,6 +14,9 @@ type Metrics struct {
 	inflight      prometheus.Gauge
 	queueDepth    prometheus.Gauge
 	incidentsOpen prometheus.Gauge
+	// heartbeatEvents é o tamanho do log de sinais: todo acúmulo tem limpeza e
+	// uma métrica, e é esta que mostra se o teto e a retenção estão segurando.
+	heartbeatEvents prometheus.Gauge
 
 	// vistos é o conjunto de alvos com série em duration. A reconciliação o
 	// confronta com o banco para apagar as séries de alvos que sumiram.
@@ -47,9 +50,14 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			Name: "incidents_open",
 			Help: "Incidentes abertos agora, em todos os alvos.",
 		}),
+		// Também é o total do banco: agregue com max.
+		heartbeatEvents: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "heartbeat_events",
+			Help: "Linhas no log de sinais dos heartbeats.",
+		}),
 		vistos: map[uuid.UUID]struct{}{},
 	}
-	reg.MustRegister(m.duration, m.total, m.inflight, m.queueDepth, m.incidentsOpen)
+	reg.MustRegister(m.duration, m.total, m.inflight, m.queueDepth, m.incidentsOpen, m.heartbeatEvents)
 	return m
 }
 

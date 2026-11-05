@@ -19,6 +19,7 @@ import (
 	"github.com/BipoXDXD/stillon/internal/clock"
 	"github.com/BipoXDXD/stillon/internal/config"
 	"github.com/BipoXDXD/stillon/internal/crypto"
+	"github.com/BipoXDXD/stillon/internal/heartbeat"
 	"github.com/BipoXDXD/stillon/internal/httpapi"
 	"github.com/BipoXDXD/stillon/internal/incident/history"
 	"github.com/BipoXDXD/stillon/internal/notify"
@@ -165,6 +166,11 @@ func run(ctx context.Context, cfg *config.Config) error {
 		// dispatcher os entrega como qualquer outro aviso.
 		lembretes := notify.NewReminders(pool, clk, notify.DefaultPolicy())
 		g.Go(func() error { return lembretes.Run(gctx) })
+		// Quem abre e fecha incidente de heartbeat é este papel, e não quem
+		// recebe o ping: com --role=api e --role=prober separados, o ping só
+		// registra (D4 da spec de heartbeats).
+		avaliador := prober.NewHeartbeatEvaluator(pool, clk)
+		g.Go(func() error { return avaliador.Run(gctx) })
 		slog.Info("sondador ativo", "max_em_voo", prober.MaxInFlight, "email", cfg.EmailEnabled())
 	}
 
@@ -180,6 +186,8 @@ func run(ctx context.Context, cfg *config.Config) error {
 			Incidents:   history.NewService(pool, clk),
 			Channels:    notify.NewChannelService(pool, box, clk, notify.NewDiscord(), verificador(cfg), cfg.PublicBaseURL),
 			StatusPages: statuspage.NewService(pool, clk),
+			Pings:       heartbeat.NewPingService(pool, clk),
+			Heartbeats:  heartbeat.NewService(pool, clk),
 			Clock:       clk,
 			Ready:       pool.Ping,
 		}

@@ -237,6 +237,36 @@ func existeTabela(t *testing.T, pool *pgxpool.Pool, nome string) bool {
 	return existe
 }
 
+// A idade cobre o heartbeat que parou de pingar e nunca alcançaria o teto.
+func TestRetentionDeletesOldHeartbeatEvents(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+	hoje := hora(12, 0)
+	hb := novoHeartbeat(t, pool, novoUsuario(t, pool), "a")
+	vencido, noLimite := hoje.Add(-storage.HeartbeatEventsRetention-time.Second), hoje.Add(-storage.HeartbeatEventsRetention)
+	err := storage.InProberTx(ctx, pool, func(q *db.Queries) error {
+		for _, em := range []time.Time{vencido, noLimite} {
+			if err := q.InsertHeartbeatEvent(ctx, db.InsertHeartbeatEventParams{ID: novoID(), HeartbeatID: hb, At: em, Kind: "success"}); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := storage.ApplyRetention(ctx, pool, hoje)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.DeletedHeartbeatEvents != 1 {
+		t.Errorf("apagou %d eventos, queria 1", r.DeletedHeartbeatEvents)
+	}
+	if n := contarComoSondador(t, pool, `SELECT count(*) FROM heartbeat_events`); n != 1 {
+		t.Errorf("sobraram %d eventos, queria 1", n)
+	}
+}
+
 // Retenção (spec §12), cada item com o que sai E o que fica: sem o lado do
 // que fica, um DELETE sem WHERE passaria.
 func TestRetentionRemovesOnlyWhatExpired(t *testing.T) {

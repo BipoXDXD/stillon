@@ -68,7 +68,10 @@ const enqueueNotification = `-- name: EnqueueNotification :exec
 INSERT INTO notifications (id, incident_id, channel_id, event, next_attempt_at, created_at, target_name)
 VALUES ($1, $2, $3, $4,
         $5, $5,
-        (SELECT t.name FROM incidents i JOIN targets t ON t.id = i.target_id WHERE i.id = $2))
+        (SELECT COALESCE(t.name, h.name) FROM incidents i
+           LEFT JOIN targets t ON t.id = i.target_id
+           LEFT JOIN heartbeats h ON h.id = i.heartbeat_id
+          WHERE i.id = $2))
 ON CONFLICT (incident_id, channel_id, event, seq) DO NOTHING
 `
 
@@ -128,7 +131,7 @@ func (q *Queries) ExistingTargetIDs(ctx context.Context, ids []uuid.UUID) ([]uui
 }
 
 const getOpenIncident = `-- name: GetOpenIncident :one
-SELECT id, target_id, started_at, resolved_at, cause, ack_at, open_notified_at, close_notified_at, heartbeat_id FROM incidents WHERE target_id = $1::uuid AND resolved_at IS NULL
+SELECT id, target_id, started_at, resolved_at, cause, ack_at, open_notified_at, close_notified_at, heartbeat_id, closed_by_resume FROM incidents WHERE target_id = $1::uuid AND resolved_at IS NULL
 `
 
 func (q *Queries) GetOpenIncident(ctx context.Context, targetID uuid.UUID) (Incident, error) {
@@ -144,6 +147,7 @@ func (q *Queries) GetOpenIncident(ctx context.Context, targetID uuid.UUID) (Inci
 		&i.OpenNotifiedAt,
 		&i.CloseNotifiedAt,
 		&i.HeartbeatID,
+		&i.ClosedByResume,
 	)
 	return i, err
 }

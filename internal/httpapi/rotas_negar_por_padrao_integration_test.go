@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -29,12 +30,15 @@ var rotasPublicas = map[string]string{
 	"GET /verify/{token}":           "a credencial é o token no caminho, aberto pelo e-mail",
 	"POST /verify/{token}":          "a credencial é o token no caminho, aberto pelo e-mail",
 	"GET /p/{slug}":                 "a página de status é pública por definição",
+	"POST /ping/{token}":            "a credencial é o token no caminho, enviado por uma tarefa agendada",
+	"POST /ping/{token}/start":      "a credencial é o token no caminho, enviado por uma tarefa agendada",
+	"POST /ping/{token}/fail":       "a credencial é o token no caminho, enviado por uma tarefa agendada",
 }
 
 // montagens são os registros sem método da raiz de Routes: cada um entrega o
 // prefixo a uma cadeia cujas rotas, com método, a enumeração já cobre. "/" é
 // o painel, estático e público. Montagem nova entra aqui só de propósito.
-var montagens = []string{"/", "/api/", "/healthz", "/p/", "/readyz", "/verify/"}
+var montagens = []string{"/", "/api/", "/healthz", "/p/", "/ping/", "/readyz", "/verify/"}
 
 // TestEveryRegisteredRouteDeniesByDefault enumera as rotas registradas nos
 // fontes (o ServeMux não as expõe) e exige 401 unauthorized sem credencial em
@@ -53,6 +57,7 @@ func TestEveryRegisteredRouteDeniesByDefault(t *testing.T) {
 		if _, ok := rotasPublicas[rota]; ok {
 			continue
 		}
+		esperarVagaNoLimite(a)
 		metodo, caminho, _ := strings.Cut(rota, " ")
 		resp := chamar(t, a, metodo, preencherCuringas(caminho), "", nil)
 		corpo, err := io.ReadAll(resp.Body)
@@ -77,6 +82,7 @@ func TestEveryProtectedRouteRejectsForgedToken(t *testing.T) {
 		if _, ok := rotasPublicas[rota]; ok {
 			continue
 		}
+		esperarVagaNoLimite(a)
 		metodo, caminho, _ := strings.Cut(rota, " ")
 		resp := chamar(t, a, metodo, preencherCuringas(caminho), forjado, nil)
 		resp.Body.Close()
@@ -86,17 +92,24 @@ func TestEveryProtectedRouteRejectsForgedToken(t *testing.T) {
 	}
 }
 
+// esperarVagaNoLimite devolve um token ao limite por IP da API (120/min). A
+// enumeração sai toda do mesmo IP, e com o relógio parado passaria da rajada
+// de 30 assim que a API tivesse mais rotas que isso: o 429 esconderia o 401
+// que o teste quer ver.
+func esperarVagaNoLimite(a *api) { a.clk.Advance(time.Second) }
+
 // Toda mutação registrada da API, pública ou não (refresh e logout usam o
 // cookie, que é o que um CSRF aproveitaria), exige o X-Requested-With. Só o
-// POST /verify/{token} fica de fora: ele vem de um <form> HTML, sem cookie
-// nem sessão, e a credencial é o token no caminho.
+// POST /verify/{token} e o /ping/ ficam de fora: vêm de um <form> HTML e de um
+// curl, sem cookie nem sessão, e a credencial é o token no caminho.
 func TestEveryMutationRequiresTheAntiCSRFHeader(t *testing.T) {
 	a := newAPI(t)
 	for _, rota := range rotasRegistradas(t) {
 		metodo, caminho, _ := strings.Cut(rota, " ")
-		if metodo == http.MethodGet || rota == "POST /verify/{token}" {
+		if metodo == http.MethodGet || rota == "POST /verify/{token}" || strings.HasPrefix(rota, "POST /ping/") {
 			continue
 		}
+		esperarVagaNoLimite(a)
 		req, err := http.NewRequest(metodo, a.srv.URL+preencherCuringas(caminho), strings.NewReader("{}"))
 		if err != nil {
 			t.Fatal(err)

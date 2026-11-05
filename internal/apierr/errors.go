@@ -40,6 +40,7 @@ const (
 	CodeStatusPageExists   ErrorCode = "status_page_exists"
 	CodeSlugTaken          ErrorCode = "slug_taken"
 	CodeTargetLimit        ErrorCode = "target_limit_reached"
+	CodeHeartbeatLimit     ErrorCode = "heartbeat_limit_reached"
 	CodeMethodNotAllowed   ErrorCode = "method_not_allowed"
 )
 
@@ -72,7 +73,8 @@ var errorTable = map[ErrorCode]struct {
 	CodeSlugTaken:        {http.StatusConflict, "Este endereço já está em uso."},
 	// O teto de alvos por usuário (D17 do Plano 5); reconciliado no contrato
 	// dos Planos 5–7.
-	CodeTargetLimit: {http.StatusConflict, "Limite de alvos atingido."},
+	CodeTargetLimit:    {http.StatusConflict, "Limite de alvos atingido."},
+	CodeHeartbeatLimit: {http.StatusConflict, "Limite de heartbeats atingido."},
 	// O método não existe naquela rota (B5 do Plano 10). Nenhum código
 	// anterior tinha 405: o not_found mudaria o status, e o Allow do ServeMux
 	// perderia o sentido.

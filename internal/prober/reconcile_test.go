@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
+	"github.com/BipoXDXD/stillon/internal/heartbeat"
 	"github.com/BipoXDXD/stillon/internal/storage"
 	"github.com/BipoXDXD/stillon/internal/storage/db"
 )
@@ -64,6 +65,36 @@ func TestReconcileReportsOpenIncidents(t *testing.T) {
 	}
 	if v := testutil.ToFloat64(b.m.incidentsOpen); v != 2 {
 		t.Errorf("incidents_open = %v, queria 2", v)
+	}
+}
+
+// O log de sinais é um acúmulo: a métrica mostra se o teto e a retenção seguram.
+func TestReconcileReportsTheHeartbeatEventLogSize(t *testing.T) {
+	b := novaBancada(t, nil, MaxInFlight)
+	ctx := context.Background()
+	id := uuid.Must(uuid.NewV7())
+	token, hash := heartbeat.NewPingToken()
+	periodo := int32(3600)
+	err := storage.InUserTx(ctx, b.pool, b.dono, func(q *db.Queries) error {
+		return q.InsertHeartbeat(ctx, db.InsertHeartbeatParams{
+			ID: id, UserID: b.dono, Name: "backup", PingTokenHash: hash, PeriodSec: &periodo, GraceSec: 300,
+			Enabled: true, CreatedAt: b.clk.Now(), DeadlineAt: b.clk.Now().Add(time.Hour),
+		})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ping := heartbeat.NewPingService(b.pool, b.clk)
+	for _, sig := range []heartbeat.Signal{heartbeat.SignalStart, heartbeat.SignalSuccess, heartbeat.SignalFail} {
+		if err := ping.Ping(ctx, token, sig); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := b.s.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if v := testutil.ToFloat64(b.m.heartbeatEvents); v != 3 {
+		t.Errorf("heartbeat_events = %v, queria 3", v)
 	}
 }
 

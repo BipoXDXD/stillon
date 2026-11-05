@@ -282,9 +282,20 @@ func TestIncidentHasExactlyOneSubject(t *testing.T) {
 	if err := inserir(&alvo, &hb); codigoPG(err) != "23514" {
 		t.Errorf("incidente com os dois sujeitos deu %v, queria 23514", err)
 	}
-	// Sem sujeito nenhum, nenhuma política casa: a RLS recusa antes do CHECK.
-	if err := inserir(nil, nil); codigoPG(err) != "42501" && codigoPG(err) != "23514" {
-		t.Errorf("incidente sem sujeito deu %v, queria recusa", err)
+	// Pelo papel da aplicação, sem sujeito nenhum, a RLS recusa antes do CHECK.
+	if err := inserir(nil, nil); codigoPG(err) != "42501" {
+		t.Errorf("incidente sem sujeito deu %v, queria 42501 (RLS)", err)
+	}
+	// O superusuário atravessa a RLS: só assim o CHECK fala por si, e ele é a
+	// barreira contra quem não passa pelas políticas.
+	admin, err := pgx.Connect(ctx, testdb.AdminDSN(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer admin.Close(ctx)
+	_, err = admin.Exec(ctx, `INSERT INTO incidents (id, started_at, cause) VALUES ($1, now(), 'unknown')`, novoID())
+	if codigoPG(err) != "23514" {
+		t.Errorf("incidente sem sujeito, sem RLS, deu %v, queria 23514 (CHECK)", err)
 	}
 }
 
@@ -359,7 +370,27 @@ func TestHeartbeatConstraints(t *testing.T) {
 	}
 }
 
-// Apagar o heartbeat leva eventos e incidentes. Apagar o dono, idem.
+// Apagar o dono leva heartbeats, eventos e incidentes, como no heartbeat.
+func TestDeletingTheOwnerCascades(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+	dono, vizinho := novoUsuario(t, pool), novoUsuario(t, pool)
+	hb := novoHeartbeat(t, pool, dono, "a")
+	novoEvento(t, pool, hb)
+	novoIncidenteDeHeartbeat(t, pool, hb)
+	novoEvento(t, pool, novoHeartbeat(t, pool, vizinho, "b"))
+
+	if _, err := pool.Exec(ctx, `DELETE FROM users WHERE id = $1`, dono); err != nil {
+		t.Fatal(err)
+	}
+	for tabela, want := range map[string]int{"heartbeats": 1, "heartbeat_events": 1, "incidents": 0} {
+		if n := contarComoSondador(t, pool, `SELECT count(*) FROM `+tabela); n != want {
+			t.Errorf("%s ficou com %d linhas, queria %d (as do vizinho)", tabela, n, want)
+		}
+	}
+}
+
+// Apagar o heartbeat leva eventos e incidentes.
 func TestDeletingAHeartbeatCascades(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
