@@ -5,6 +5,17 @@ import type { Root } from 'react-dom/client'
 import { afterEach, expect, it, vi } from 'vitest'
 import { EMAIL } from '@/test/api-falsa'
 import { usarApiFalsa } from '@/test/ambiente'
+// O corpo do teste importa ./main: sem pré-carga, o painel inteiro seria
+// avaliado dentro do prazo do teste. A coleta não tem prazo. Ficam de fora,
+// porque são o que se testa aqui, ./lib/nonce (lê o <meta> que o teste cria)
+// e @/lib/api (abre o canal que o teste substitui).
+import '@/app/contexto'
+import '@/app/rotas'
+import '@/components/ui/avisos'
+import '@/lib/tema'
+import '@/test/aquecer-estilos'
+import 'react-router/dom'
+import './index.css'
 
 const { roots } = vi.hoisted(() => ({ roots: [] as Root[] }))
 const canais: BroadcastChannel[] = []

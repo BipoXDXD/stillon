@@ -4,6 +4,10 @@ import { alvo } from '@/test/fixtures'
 import { renderizarPainel } from '@/test/renderizar'
 import { esperarNavegacao } from '@/test/esperar-navegacao'
 import { Alvo } from '@/lib/api/schemas'
+// Pré-carrega a rota lazy na coleta, que não tem prazo: salvar leva ao
+// detalhe, e o import (Recharts) não pode gastar o prazo do teste.
+import '@/features/alvos/PaginaDetalhe'
+import '@/test/aquecer-estilos'
 import {
   apagaOsHeaders,
   esquemaAlvo,

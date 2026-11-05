@@ -2,6 +2,10 @@ import { screen, waitFor } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 import { alvo } from '@/test/fixtures'
 import { renderizarPainel } from '@/test/renderizar'
+// Pré-carrega a rota lazy na coleta, que não tem prazo: salvar leva ao
+// detalhe, e o import (Recharts) não pode correr contra o findBy nem o teste.
+import '@/features/alvos/PaginaDetalhe'
+import '@/test/aquecer-estilos'
 
 const PATCH = 'PATCH /targets/:id'
 
