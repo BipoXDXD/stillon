@@ -63,8 +63,9 @@ push na `main` termina com sucesso, confere o SHA exato e envia as imagens à VP
   documentação (entra com `gh pr merge --admin`); um PR com código nunca leva `[skip ci]`.
 - O environment `production` do GitHub guarda as chaves do release (`COOLIFY_RELEASE_*`); o
   `deploy.yml` manual antigo ainda existe e usa segredos do repositório.
-- A `main` tem ruleset (PR obrigatório e checks). Migrations vão até a 00014; a 00015 é reservada
-  à vinculação Discord.
+- A `main` tem ruleset (PR obrigatório e checks). Migrations vão até a 00018. A 00015 fica vaga para
+  sempre, porque `storage.Migrate` recusa número menor que o aplicado; a vinculação Discord pega o
+  próximo número livre ([spec de heartbeats](docs/superpowers/specs/2026-11-05-heartbeats-design.md)).
 
 **VPS (conferido na API da Hostinger em 2026-11-05).** A produção é a `srv2070196`, com Coolify, paga
 até 2027-10-17 e sem renovação automática. A anterior, `srv2008471`, foi cancelada de propósito e
