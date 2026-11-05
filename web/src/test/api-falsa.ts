@@ -4,6 +4,7 @@ import type {
   Alvo,
   Canal,
   Check,
+  Heartbeat,
   Hora,
   Incidente,
   ItemDoResumo,
@@ -96,6 +97,7 @@ export function criarApiFalsa() {
       items: Entrada<typeof Hora>[]
     },
     incidentes: [] as Entrada<typeof Incidente>[],
+    heartbeats: [] as Entrada<typeof Heartbeat>[],
     canais: [] as Entrada<typeof Canal>[],
     paginas: [] as Entrada<typeof PaginaDeStatus>[],
     sessoes: [] as Entrada<typeof Sessao>[],
@@ -342,6 +344,12 @@ export function criarApiFalsa() {
       if (!i) return erro(404, 'not_found')
       i.acknowledged_at ??= agora().toISOString()
       return HttpResponse.json(i)
+    }),
+
+    rota('get', '/heartbeats', () => HttpResponse.json({ items: st.heartbeats })),
+    rota('get', '/heartbeats/:id', ({ params }) => {
+      const h = st.heartbeats.find((x) => x.id === params.id)
+      return h ? HttpResponse.json(h) : erro(404, 'not_found')
     }),
 
     rota('get', '/channels', () => HttpResponse.json({ items: st.canais })),

@@ -1,13 +1,14 @@
 import { screen, waitFor, within } from '@testing-library/react'
 import { http, HttpResponse } from 'msw'
 import { describe, expect, it } from 'vitest'
-import { canal, incidente, itemDoResumo } from '@/test/fixtures'
+import { canal, heartbeat, incidente, itemDoResumo } from '@/test/fixtures'
 import { renderizarPainel } from '@/test/renderizar'
 import { servidor } from '@/test/setup'
-import { ItemDoResumo } from '@/lib/api/schemas'
-import { mapaDeEstados, transicoes } from './transicoes'
+import { Heartbeat, ItemDoResumo } from '@/lib/api/schemas'
+import { anunciaveis, mapaDeEstados, transicoes } from './transicoes'
 
-const resumido = (p: Parameters<typeof itemDoResumo>[0]) => ItemDoResumo.parse(itemDoResumo(p))
+const resumido = (p: Parameters<typeof itemDoResumo>[0]) => anunciaveis([ItemDoResumo.parse(itemDoResumo(p))], [])
+const tarefa = (p: Parameters<typeof heartbeat>[0]) => anunciaveis([], [Heartbeat.parse(heartbeat(p))])
 const tabela = () => screen.findByRole('table', { name: /^Monitores/ })
 const linhaDe = async (nome: string) => within(await tabela()).findByRole('row', { name: new RegExp(nome) })
 
@@ -15,14 +16,25 @@ describe('transicoes', () => {
   // Sabotagem prevista: anunciar todo item a cada resposta (ignorar o
   // "antes !== agora") → o segundo caso passa a devolver frases.
   it('só anuncia mudança: nada na primeira carga, nada sem mudança', () => {
-    const a = [resumido({ id: '1', name: 'API', state: 'up' })]
+    const a = resumido({ id: '1', name: 'API', state: 'up' })
     expect(transicoes(null, a)).toEqual([])
     expect(transicoes(mapaDeEstados(a), a)).toEqual([])
-    const b = [resumido({ id: '1', name: 'API', state: 'down' })]
+    const b = resumido({ id: '1', name: 'API', state: 'down' })
     expect(transicoes(mapaDeEstados(a), b)).toEqual(['API: fora do ar'])
     expect(transicoes(mapaDeEstados(b), a)).toEqual(['API: voltou ao ar'])
-    const pausado = [resumido({ id: '1', name: 'API', state: 'unknown', enabled: false })]
+    const pausado = resumido({ id: '1', name: 'API', state: 'unknown', enabled: false })
     expect(transicoes(mapaDeEstados(a), pausado)).toEqual(['API: pausado'])
+  })
+
+  // Uma tarefa não "volta ao ar", e atrasado e falhando têm o mesmo estado
+  // exibido. Sabotagem: comparar pelo estado → o segundo caso fica mudo.
+  it('anuncia a tarefa com a palavra dela', () => {
+    const emDia = tarefa({ id: 'h', name: 'Backup', state: 'up' })
+    const atrasado = tarefa({ id: 'h', name: 'Backup', state: 'late' })
+    const falhando = tarefa({ id: 'h', name: 'Backup', state: 'failing' })
+    expect(transicoes(mapaDeEstados(emDia), atrasado)).toEqual(['Backup: atrasado'])
+    expect(transicoes(mapaDeEstados(atrasado), falhando)).toEqual(['Backup: falhando'])
+    expect(transicoes(mapaDeEstados(atrasado), emDia)).toEqual(['Backup: em dia'])
   })
 })
 
@@ -53,7 +65,7 @@ describe('painel', () => {
     const t = await tabela()
     expect(within(t).getAllByRole('columnheader').map((c) => c.textContent)).toEqual([
       'Estado',
-      'Alvo',
+      'Monitor',
       'Tags',
       'Situação',
       'Latência',
@@ -107,7 +119,7 @@ describe('painel', () => {
     const r = await renderizarPainel('/')
     r.falsa.estado.resumo = [itemDoResumo({ enabled: false }), itemDoResumo({ id: 'b', name: 'Banco', state: 'unknown', enabled: false })]
     await r.cliente.refetchQueries()
-    expect(await screen.findByRole('heading', { level: 2, name: 'Todos os alvos estão pausados.' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { level: 2, name: 'Todos os monitores estão pausados.' })).toBeInTheDocument()
     expect(screen.getByText(/· nenhum alvo ativo$/)).toBeInTheDocument()
   })
 

@@ -5,7 +5,7 @@ import { BotaoQueSome } from '@/components/ui/botao'
 import { Entrada } from '@/components/ui/campo'
 import { ESTADOS_DO_FILTRO, type EstadoDoFiltro } from '@/lib/api/cliente'
 import type { ItemDoResumo } from '@/lib/api/schemas'
-import { contarPorEstado, textoDoEstado } from '@/lib/estado'
+import { textoDoEstado, type EstadoExibido } from '@/lib/estado'
 import { cn } from '@/lib/utils'
 import { alternar, contarTags, estadoExibidoDoFiltro, SEM_FILTROS, temFiltro, type Filtros } from './filtros'
 
@@ -15,6 +15,7 @@ import { alternar, contarTags, estadoExibidoDoFiltro, SEM_FILTROS, temFiltro, ty
 // desligá-lo. Quem some com o próprio clique manda o foco à busca.
 export function BarraDeFiltros({
   itens,
+  contagem,
   filtros,
   resultado,
   semResultado,
@@ -22,15 +23,15 @@ export function BarraDeFiltros({
   aoMudar,
 }: {
   itens: readonly ItemDoResumo[]
+  contagem: Record<EstadoExibido, number>
   filtros: Filtros
-  // "3 de 5 alvos", "Filtrando…", ou nada se a consulta falhou.
+  // "3 de 5 monitores", "Filtrando…", ou nada se a consulta falhou.
   resultado: string | null
   semResultado: boolean
   busca: RefObject<HTMLInputElement | null>
   aoMudar: (f: Filtros) => void
 }) {
-  const conta = contarPorEstado(itens)
-  const quantosDoEstado = (e: EstadoDoFiltro) => conta[estadoExibidoDoFiltro(e)]
+  const quantosDoEstado = (e: EstadoDoFiltro) => contagem[estadoExibidoDoFiltro(e)]
   const estados = ESTADOS_DO_FILTRO.filter((e) => quantosDoEstado(e) > 0 || filtros.estados.includes(e))
   const tags = contarTags(itens)
   return (
@@ -109,13 +110,13 @@ function CampoDeBusca({
   return (
     <div className="w-full sm:max-w-64">
       <label htmlFor={id} className="sr-only">
-        Buscar alvo ou tag
+        Buscar por nome ou tag
       </label>
       <Entrada
         ref={ref}
         id={id}
         type="search"
-        placeholder="Buscar alvo ou tag"
+        placeholder="Buscar por nome ou tag"
         maxLength={100}
         value={texto}
         onChange={(ev) => {

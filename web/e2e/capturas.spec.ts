@@ -302,6 +302,8 @@ test('capturas das telas do painel', async ({ page }) => {
       for (const [tema, esquema] of TEMAS) {
         await page.unrouteAll({ behavior: 'ignoreErrors' })
         await imitarApi(page)
+        // As capturas do README ainda não mostram heartbeats.
+        await page.route('**/api/v1/heartbeats?*', (r) => r.fulfill({ status: 200, json: { items: [] } }))
         // Registrada depois, a rota da tela vence a do imitarApi.
         await tela.preparar?.(page)
         await page.setViewportSize({ width: largura, height: ALTURA })

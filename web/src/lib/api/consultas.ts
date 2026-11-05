@@ -14,6 +14,8 @@ export const chaves = {
   serie: (id: string, janela: string) => ['targets', id, 'checks', janela] as const,
   // O limite entra na chave: páginas de tamanhos diferentes não dividem o cache.
   incidentes: (filtro: string, alvo?: string, limite?: number) => ['incidents', filtro, alvo ?? '', limite ?? 0] as const,
+  heartbeats: ['heartbeats'] as const,
+  heartbeat: (id: string) => ['heartbeats', id] as const,
   canais: ['channels'] as const,
   paginas: ['status-pages'] as const,
   sessoes: ['sessions'] as const,
@@ -145,6 +147,17 @@ export function useResolvidosRecentes(ativa: boolean) {
     enabled: ativa,
     refetchInterval: INTERVALO_DOS_RESOLVIDOS_MS,
   })
+}
+
+// No ritmo do resumo: a manchete fala dos dois (spec da tela, A manchete).
+export function useHeartbeats() {
+  const api = useApi()
+  return useQuery({ queryKey: chaves.heartbeats, queryFn: api.heartbeats, refetchInterval: INTERVALO_DO_RESUMO_MS })
+}
+
+export function useHeartbeat(id: string) {
+  const api = useApi()
+  return useQuery({ queryKey: chaves.heartbeat(id), queryFn: () => api.heartbeat(id), refetchInterval: INTERVALO_DO_RESUMO_MS })
 }
 
 export function useCanais() {

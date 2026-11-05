@@ -21,6 +21,7 @@ const porCodigo: Record<string, string> = {
   invalid_credentials: 'E-mail ou senha incorretos.',
   validation_failed: 'Confira os campos destacados.',
   target_limit_reached: 'Limite de 100 alvos atingido.',
+  heartbeat_limit_reached: 'Limite de 100 heartbeats atingido.',
   channel_limit_reached: 'Limite de 10 canais atingido.',
   channel_not_pending: 'O canal não está mais aguardando verificação.',
   delivery_failed: 'Não conseguimos entregar a mensagem de teste. Confira o endereço.',
@@ -95,6 +96,8 @@ const tiposDeErro: Record<string, string> = {
   http_status: 'Status HTTP inesperado',
   body_limit: 'Resposta grande demais',
   blocked: 'Destino bloqueado (endereço interno)',
+  heartbeat_late: 'Sem sinal no prazo',
+  heartbeat_failed: 'A tarefa avisou falha',
 }
 
 export function textoDoErroDeCheck(kind: string | null, statusCode: number | null): string {

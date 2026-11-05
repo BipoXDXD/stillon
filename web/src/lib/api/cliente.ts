@@ -5,9 +5,11 @@ import {
   CadastroTotp,
   Canal,
   ConfirmacaoTotp,
+  Heartbeat,
   InicioDaTroca,
   ListaDeAlvos,
   ListaDeCanais,
+  ListaDeHeartbeats,
   ListaDeIncidentes,
   ListaDePaginas,
   ListaDeSessoes,
@@ -151,6 +153,9 @@ export function criarApi(sessao: Sessao, buscar: Buscar, o: OpcoesDaApi = {}) {
     reconhecer: (id: string) =>
       pedir({ metodo: 'POST', caminho: `/incidents/${encodeURIComponent(id)}/ack` }, Incidente),
 
+    // Uma página de 100 é tudo: é o teto por usuário (spec da tela, T7).
+    heartbeats: () => get('/heartbeats?limit=100', ListaDeHeartbeats),
+    heartbeat: (id: string) => get(`/heartbeats/${encodeURIComponent(id)}`, Heartbeat),
     canais: () => get('/channels', ListaDeCanais),
     criarCanal: (e: EntradaCanal) => pedir({ metodo: 'POST', caminho: '/channels', corpo: e }, Canal),
     apagarCanal: (id: string) => pedir({ metodo: 'DELETE', caminho: `/channels/${encodeURIComponent(id)}` }, null),

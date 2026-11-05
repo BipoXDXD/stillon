@@ -28,7 +28,7 @@ export function TabelaDeMonitores({ linhas, agora }: { linhas: LinhaDeMonitor[];
         <thead>
           <tr className="text-meta text-apagado">
             <th scope="col" className={cn(SO_DESKTOP, CELULA, 'py-2 text-left font-normal')}>Estado</th>
-            <th scope="col" className={cn(CELULA, 'py-2 text-left font-normal sm:min-w-44')}>Alvo</th>
+            <th scope="col" className={cn(CELULA, 'py-2 text-left font-normal sm:min-w-44')}>Monitor</th>
             <th scope="col" className={cn(SO_DESKTOP, CELULA, 'py-2 text-left font-normal')}>Tags</th>
             <th scope="col" className={cn(DE_SM, CELULA, 'py-2 text-left font-normal')}>Situação</th>
             <th scope="col" className={cn(DE_SM, CELULA, 'py-2 text-right font-normal')}>Latência</th>
@@ -53,11 +53,11 @@ function LinhaDaTabela({ linha, agora }: { linha: LinhaDeMonitor; agora: Date })
   return (
     <tr className="h-12">
       <td className={cn(SO_DESKTOP, CELULA, acento)}>
-        <SeloDeEstado estado={linha.estado} />
+        <SeloDeEstado estado={linha.estado} texto={linha.textoDoEstado} />
       </td>
       <th scope="row" className={cn(CELULA, acento, 'text-left font-normal lg:sem-acento')}>
         <span className="flex min-h-11 items-center gap-2">
-          <IconeDoEstado estado={linha.estado} className="lg:hidden" />
+          <IconeDoEstado estado={linha.estado} texto={linha.textoDoEstado} className="lg:hidden" />
           <Link
             to={linha.href}
             className={cn('alvo-de-toque min-w-0 font-semibold underline-offset-4 hover:underline', parado && 'text-suave')}

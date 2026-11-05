@@ -1,6 +1,8 @@
-import type { HoraDoSpark, Incidente, ItemDoResumo } from '@/lib/api/schemas'
-import { estadoExibido, type EstadoExibido } from '@/lib/estado'
-import { haQuantoAteAgora, milissegundos } from '@/lib/format'
+import { estadoDoHeartbeat, textoDoHeartbeat } from '@/features/heartbeats/estado'
+import { textoDaCausa } from '@/lib/api/mensagens'
+import type { Heartbeat, HoraDoSpark, Incidente, ItemDoResumo } from '@/lib/api/schemas'
+import { estadoExibido, textoDoEstado, type EstadoExibido } from '@/lib/estado'
+import { duracao, haQuantoAteAgora, milissegundos } from '@/lib/format'
 import { detalheDoProblema, ehProblema, linhaSemDados } from './grupos'
 
 // O que a tabela de monitores desenha. Ela não conhece o item da API: um
@@ -12,6 +14,7 @@ type LinhaComum = {
   nome: string
   href: string
   estado: EstadoExibido
+  textoDoEstado: string
   situacao: string
   tags: string[]
   uptime24h: number | null
@@ -21,7 +24,9 @@ type LinhaComum = {
 
 type LinhaHttp = LinhaComum & { tipo: 'http'; latenciaMs: number | null }
 
-export type LinhaDeMonitor = LinhaHttp
+type LinhaHeartbeat = LinhaComum & { tipo: 'heartbeat' }
+
+export type LinhaDeMonitor = LinhaHttp | LinhaHeartbeat
 
 export function linhaDoAlvo(it: ItemDoResumo, incidente: Incidente | undefined, agora: Date): LinhaDeMonitor {
   const estado = estadoExibido(it.state, it.enabled)
@@ -31,6 +36,7 @@ export function linhaDoAlvo(it: ItemDoResumo, incidente: Incidente | undefined, 
     nome: it.name,
     href: `/targets/${it.id}`,
     estado,
+    textoDoEstado: textoDoEstado(estado),
     situacao: situacaoDoAlvo(it, estado, incidente, agora),
     tags: it.tags,
     latenciaMs: it.last_latency_ms,
@@ -53,14 +59,58 @@ function situacaoDoAlvo(it: ItemDoResumo, estado: EstadoExibido, incidente: Inci
   }
 }
 
+// Sem tags, sem uptime e sem as 24 horas: o heartbeat não tem nada disso, e
+// medida inventada mentiria (spec da tela, T4 e T5).
+export function linhaDoHeartbeat(hb: Heartbeat, agora: Date): LinhaDeMonitor {
+  return {
+    tipo: 'heartbeat',
+    chave: `heartbeat:${hb.id}`,
+    nome: hb.name,
+    href: `/heartbeats/${hb.id}`,
+    estado: estadoDoHeartbeat(hb.state),
+    textoDoEstado: textoDoHeartbeat(hb.state),
+    situacao: situacaoDoHeartbeat(hb, agora),
+    tags: [],
+    uptime24h: null,
+    historico: [],
+    incidenteHref: hb.open_incident_id ? `/heartbeats/${hb.id}` : null,
+  }
+}
+
+function situacaoDoHeartbeat(hb: Heartbeat, agora: Date): string {
+  switch (hb.state) {
+    case 'late':
+      return textoDoAtraso(hb, agora)
+    case 'failing':
+      return textoDaCausa('heartbeat_failed')
+    case 'up':
+      return hb.last_ping_at === null ? 'Nenhum sinal ainda' : `Sinal ${haQuantoAteAgora(hb.last_ping_at, agora)}`
+    case 'waiting':
+      return 'Aguardando o primeiro sinal'
+    case 'paused':
+      return 'Pausado'
+  }
+}
+
+// Editar um heartbeat atrasado põe o prazo à frente sem fechar o incidente
+// (spec de heartbeats, §5): sem prazo vencido, não há duração a dizer.
+function textoDoAtraso(hb: Heartbeat, agora: Date): string {
+  const atraso = agora.getTime() - Date.parse(hb.deadline_at)
+  const causa = textoDaCausa('heartbeat_late')
+  return atraso > 0 ? `${causa} · há ${duracao(atraso)}` : causa
+}
+
 // O número da coluna de medida: a latência do último check, no monitor HTTP.
 // Um tipo novo sem caso chega ao default sem virar never, e não compila.
 export function medidaDaLinha(linha: LinhaDeMonitor): string {
-  switch (linha.tipo) {
+  const { tipo } = linha
+  switch (tipo) {
     case 'http':
       return milissegundos(linha.latenciaMs)
+    case 'heartbeat':
+      return '—'
     default:
-      return tipoSemCaso(linha.tipo)
+      return tipoSemCaso(tipo)
   }
 }
 

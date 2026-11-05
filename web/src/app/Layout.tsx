@@ -15,12 +15,12 @@ import { useSessao } from './contexto'
 // As cinco abas, com os mesmos nomes no topo (desktop) e na barra inferior
 // (celular): o nome acessível não muda com a largura da tela (WCAG 3.2.4).
 // `secoes`: os caminhos (e o que vem abaixo deles) em que a aba é a atual,
-// além do próprio `para`. O detalhe, o cadastro e a edição de alvo saem do
-// Painel; a raiz "/" não entra como prefixo, ou o Painel valeria em tudo.
+// além do próprio `para`. O detalhe, o cadastro e a edição de alvo e de
+// heartbeat saem do Painel; a raiz "/" não entra como prefixo, ou o Painel valeria em tudo.
 type Aba = { para: string; texto: string; Icone: LucideIcon; secoes: string[]; contador?: boolean }
 
 const ABAS: Aba[] = [
-  { para: '/', texto: 'Painel', Icone: LayoutDashboard, secoes: ['/targets'] },
+  { para: '/', texto: 'Painel', Icone: LayoutDashboard, secoes: ['/targets', '/heartbeats'] },
   { para: '/incidents', texto: 'Incidentes', Icone: TriangleAlert, secoes: ['/incidents'], contador: true },
   { para: '/channels', texto: 'Canais', Icone: Bell, secoes: ['/channels'] },
   { para: '/status-pages', texto: 'Status', Icone: ShieldCheck, secoes: ['/status-pages'] },

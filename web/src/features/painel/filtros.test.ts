@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { ItemDoResumo } from '@/lib/api/schemas'
-import { itemDoResumo } from '@/test/fixtures'
+import { Heartbeat, ItemDoResumo } from '@/lib/api/schemas'
+import { heartbeat, itemDoResumo } from '@/test/fixtures'
 import {
   casaComBusca,
+  contarDoConjunto,
   contarTags,
   descreverFiltros,
   escreverFiltros,
+  heartbeatNosFiltros,
   lerFiltros,
   SEM_FILTROS,
   temFiltro,
@@ -14,6 +16,48 @@ import {
 } from './filtros'
 
 const alvo = (p: Parameters<typeof itemDoResumo>[0] = {}) => ItemDoResumo.parse(itemDoResumo(p))
+const hb = (p: Parameters<typeof heartbeat>[0] = {}) => Heartbeat.parse(heartbeat(p))
+
+describe('heartbeatNosFiltros', () => {
+  it('sem filtro, aparece', () => {
+    expect(heartbeatNosFiltros(hb(), SEM_FILTROS)).toBe(true)
+  })
+
+  // Spec da tela, T4. Sabotagem: não olhar as tags.
+  it('com filtro de tag, sai: heartbeat não tem tag', () => {
+    expect(heartbeatNosFiltros(hb(), { ...SEM_FILTROS, tags: ['prod'] })).toBe(false)
+  })
+
+  // O botão "Fora do ar" agrupa por gravidade (T3).
+  it.each([
+    ['late', 'down', true],
+    ['failing', 'down', true],
+    ['up', 'down', false],
+    ['waiting', 'unknown', true],
+    ['paused', 'paused', true],
+    ['paused', 'up', false],
+  ] as const)('estado %s com o filtro %s → %s', (state, estado, casa) => {
+    expect(heartbeatNosFiltros(hb({ state }), { ...SEM_FILTROS, estados: [estado] })).toBe(casa)
+  })
+
+  it('a busca olha o nome', () => {
+    expect(heartbeatNosFiltros(hb({ name: 'Relatório' }), { ...SEM_FILTROS, busca: 'relatorio' })).toBe(true)
+    expect(heartbeatNosFiltros(hb({ name: 'Relatório' }), { ...SEM_FILTROS, busca: 'backup' })).toBe(false)
+  })
+})
+
+describe('contarDoConjunto', () => {
+  // Sabotagem: contar só os alvos → o botão "Fora do ar" some com tarefa atrasada.
+  it('soma alvos e heartbeats por estado exibido', () => {
+    expect(contarDoConjunto([alvo(), alvo({ state: 'down' })], [hb({ state: 'late' }), hb({ state: 'failing' }), hb({ state: 'paused' })])).toEqual({
+      up: 1,
+      degraded: 0,
+      down: 3,
+      unknown: 0,
+      pausado: 1,
+    })
+  })
+})
 
 describe('lerFiltros', () => {
   it('lê tag, estado e busca da URL', () => {

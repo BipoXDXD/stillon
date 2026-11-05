@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { Incidente, ItemDoResumo } from '@/lib/api/schemas'
-import { incidente, itemDoResumo } from '@/test/fixtures'
+import { Heartbeat, Incidente, ItemDoResumo } from '@/lib/api/schemas'
+import { heartbeat, incidente, itemDoResumo } from '@/test/fixtures'
 import {
+  detalheDaManchete,
   fraseDoUltimoResolvido,
   manchete,
   metaDoPainel,
@@ -13,41 +14,94 @@ import {
 
 const alvo = (p: Parameters<typeof itemDoResumo>[0] = {}) => ItemDoResumo.parse(itemDoResumo(p))
 const inc = (p: Parameters<typeof incidente>[0] = {}) => Incidente.parse(incidente(p))
+const hb = (p: Parameters<typeof heartbeat>[0] = {}) => Heartbeat.parse(heartbeat(p))
+const semTarefas = { itens: [], confirmadas: true }
+const tarefas = (...itens: Heartbeat[]) => ({ itens, confirmadas: true })
 
 describe('manchete', () => {
   it('sem alvos', () => {
-    expect(manchete([])).toEqual({ tipo: 'sem-alvos' })
+    expect(manchete([], semTarefas)).toEqual({ tipo: 'sem-alvos' })
   })
 
   it('fora do ar e degradado contam como problema; pausado e sem dados, não', () => {
     const itens = [alvo({ state: 'down' }), alvo({ state: 'degraded' }), alvo({ state: 'down', enabled: false }), alvo({ state: 'unknown' }), alvo()]
-    expect(manchete(itens)).toEqual({ tipo: 'problemas', quantos: 2 })
+    expect(manchete(itens, semTarefas)).toEqual({ tipo: 'problemas', quantos: 2, tarefas: 0 })
   })
 
   it('sem problema, um ativo ainda sem dados segura o "Tudo no ar."', () => {
-    expect(manchete([alvo(), alvo({ state: 'unknown' })])).toEqual({ tipo: 'aguardando', quantos: 1 })
+    expect(manchete([alvo(), alvo({ state: 'unknown' })], semTarefas)).toEqual({ tipo: 'aguardando', quantos: 1, tarefas: 0 })
   })
 
   // Review Focus 2.
   it('todos pausados', () => {
-    expect(manchete([alvo({ enabled: false }), alvo({ state: 'unknown', enabled: false })])).toEqual({ tipo: 'todos-pausados' })
+    expect(manchete([alvo({ enabled: false }), alvo({ state: 'unknown', enabled: false })], semTarefas)).toEqual({ tipo: 'todos-pausados' })
   })
 
   it('tudo no ar: todo ativo no ar, com os pausados à parte', () => {
-    expect(manchete([alvo(), alvo({ enabled: false })])).toEqual({ tipo: 'tudo-no-ar' })
+    expect(manchete([alvo(), alvo({ enabled: false })], semTarefas)).toEqual({ tipo: 'tudo-no-ar' })
+  })
+
+  // Spec da tela, A manchete: ela não pode ficar verde com heartbeat fora.
+  // Sabotagem: contar só os alvos em problemas → "tudo-no-ar".
+  it.each(['late', 'failing'] as const)('só um heartbeat %s, com os alvos no ar, é problema', (state) => {
+    expect(manchete([alvo()], tarefas(hb({ state })))).toEqual({ tipo: 'problemas', quantos: 0, tarefas: 1 })
+  })
+
+  it('alvo e heartbeat com problema somam', () => {
+    expect(manchete([alvo({ state: 'down' })], tarefas(hb({ state: 'late' }), hb({ state: 'up' })))).toEqual({
+      tipo: 'problemas',
+      quantos: 1,
+      tarefas: 1,
+    })
+  })
+
+  it('pausado não é problema, mesmo com incidente aberto, como o alvo', () => {
+    expect(manchete([alvo()], tarefas(hb({ state: 'paused', open_incident_id: 'i1' })))).toEqual({ tipo: 'tudo-no-ar' })
+  })
+
+  it('heartbeat aguardando o primeiro sinal segura o "Tudo no ar."', () => {
+    expect(manchete([alvo()], tarefas(hb({ state: 'waiting' })))).toEqual({ tipo: 'aguardando', quantos: 0, tarefas: 1 })
+  })
+
+  it('só heartbeats, todos em dia: o painel não diz que está vazio', () => {
+    expect(manchete([], tarefas(hb()))).toEqual({ tipo: 'tudo-no-ar' })
+  })
+
+  it('tudo pausado inclui as tarefas', () => {
+    expect(manchete([alvo({ enabled: false })], tarefas(hb({ state: 'up' })))).toEqual({ tipo: 'tudo-no-ar' })
+    expect(manchete([alvo({ enabled: false })], tarefas(hb({ state: 'paused' })))).toEqual({ tipo: 'todos-pausados' })
+  })
+
+  // Não saber não é "tudo no ar". Sabotagem: ignorar `confirmadas`.
+  it('consulta de heartbeats sem resposta nunca vira "Tudo no ar."', () => {
+    expect(manchete([alvo()], { itens: [], confirmadas: false })).toEqual({ tipo: 'tarefas-sem-confirmacao' })
+    expect(manchete([], { itens: [], confirmadas: false })).toEqual({ tipo: 'tarefas-sem-confirmacao' })
+  })
+
+  it('um poll que falhou não apaga o problema já conhecido', () => {
+    expect(manchete([alvo()], { itens: [hb({ state: 'late' })], confirmadas: false })).toEqual({ tipo: 'problemas', quantos: 0, tarefas: 1 })
+    expect(manchete([alvo({ state: 'down' })], { itens: [], confirmadas: false })).toEqual({ tipo: 'problemas', quantos: 1, tarefas: 0 })
   })
 })
 
 describe('textoDaManchete', () => {
   it.each([
     [{ tipo: 'sem-alvos' }, 'Nenhum serviço vigiado ainda.'],
-    [{ tipo: 'problemas', quantos: 1 }, 'Um serviço pede atenção.'],
-    [{ tipo: 'problemas', quantos: 2 }, 'Dois serviços pedem atenção.'],
-    [{ tipo: 'problemas', quantos: 10 }, 'Dez serviços pedem atenção.'],
-    [{ tipo: 'problemas', quantos: 11 }, '11 serviços pedem atenção.'],
-    [{ tipo: 'aguardando', quantos: 1 }, 'Um serviço ainda sem dados.'],
-    [{ tipo: 'aguardando', quantos: 3 }, 'Três serviços ainda sem dados.'],
-    [{ tipo: 'todos-pausados' }, 'Todos os alvos estão pausados.'],
+    [{ tipo: 'problemas', quantos: 1, tarefas: 0 }, 'Um serviço pede atenção.'],
+    [{ tipo: 'problemas', quantos: 2, tarefas: 0 }, 'Dois serviços pedem atenção.'],
+    [{ tipo: 'problemas', quantos: 10, tarefas: 0 }, 'Dez serviços pedem atenção.'],
+    [{ tipo: 'problemas', quantos: 11, tarefas: 0 }, '11 serviços pedem atenção.'],
+    [{ tipo: 'problemas', quantos: 0, tarefas: 1 }, 'Uma tarefa pede atenção.'],
+    [{ tipo: 'problemas', quantos: 0, tarefas: 2 }, 'Duas tarefas pedem atenção.'],
+    [{ tipo: 'problemas', quantos: 0, tarefas: 3 }, 'Três tarefas pedem atenção.'],
+    [{ tipo: 'problemas', quantos: 1, tarefas: 1 }, 'Um serviço e uma tarefa pedem atenção.'],
+    [{ tipo: 'problemas', quantos: 2, tarefas: 11 }, 'Dois serviços e 11 tarefas pedem atenção.'],
+    [{ tipo: 'aguardando', quantos: 1, tarefas: 0 }, 'Um serviço ainda sem dados.'],
+    [{ tipo: 'aguardando', quantos: 3, tarefas: 0 }, 'Três serviços ainda sem dados.'],
+    [{ tipo: 'aguardando', quantos: 0, tarefas: 1 }, 'Uma tarefa ainda sem sinal.'],
+    [{ tipo: 'aguardando', quantos: 1, tarefas: 2 }, 'Um serviço ainda sem dados e duas tarefas sem sinal.'],
+    [{ tipo: 'tarefas-sem-confirmacao' }, 'Não foi possível conferir as tarefas.'],
+    [{ tipo: 'todos-pausados' }, 'Todos os monitores estão pausados.'],
     [{ tipo: 'tudo-no-ar' }, 'Tudo no ar.'],
   ] satisfies [Manchete, string][])('%j → "%s"', (m, texto) => {
     expect(textoDaManchete(m)).toBe(texto)
@@ -62,15 +116,37 @@ describe('resumoEmTexto', () => {
   })
 })
 
+describe('detalheDaManchete', () => {
+  it('os alvos, depois as tarefas, por gravidade e com plural', () => {
+    const lista = [hb({ state: 'up' }), hb({ state: 'late' }), hb({ state: 'late' }), hb({ state: 'failing' }), hb({ state: 'paused' })]
+    expect(detalheDaManchete([alvo(), alvo({ state: 'down' })], lista)).toBe('1 fora do ar, 1 no ar. Tarefas: 1 com falha, 2 atrasadas, 1 em dia, 1 pausada.')
+  })
+
+  it('sem tarefas, a frase de sempre; só tarefas, sem a parte dos alvos', () => {
+    expect(detalheDaManchete([alvo()], [])).toBe('1 no ar.')
+    expect(detalheDaManchete([], [hb({ state: 'waiting' })])).toBe('Tarefas: 1 aguardando.')
+  })
+})
+
 describe('metaDoPainel', () => {
   const as = new Date(2026, 9, 14, 14, 32)
 
   it('conta os ativos no ar sobre o total de ativos', () => {
-    expect(metaDoPainel([alvo(), alvo({ state: 'down' }), alvo({ enabled: false })], as)).toBe('Atualizado às 14:32 · 1 de 2 no ar')
+    expect(metaDoPainel([alvo(), alvo({ state: 'down' }), alvo({ enabled: false })], [], as)).toBe('Atualizado às 14:32 · 1 de 2 no ar')
   })
 
   it('sem ativo, não inventa um total', () => {
-    expect(metaDoPainel([alvo({ enabled: false })], as)).toBe('Atualizado às 14:32 · nenhum alvo ativo')
+    expect(metaDoPainel([alvo({ enabled: false })], [], as)).toBe('Atualizado às 14:32 · nenhum alvo ativo')
+  })
+
+  it('as tarefas ativas entram depois dos alvos', () => {
+    expect(metaDoPainel([alvo()], [hb(), hb({ state: 'late' }), hb({ state: 'paused', enabled: false })], as)).toBe(
+      'Atualizado às 14:32 · 1 de 1 no ar · 1 de 2 tarefas em dia',
+    )
+  })
+
+  it('só tarefas: nada de "nenhum alvo ativo"', () => {
+    expect(metaDoPainel([], [hb()], as)).toBe('Atualizado às 14:32 · 1 de 1 tarefa em dia')
   })
 })
 

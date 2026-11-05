@@ -20,6 +20,7 @@ const ROTAS: [string, string][] = [
   ['/targets/a1', 'API'],
   ['/targets/a1?janela=7d', 'API'],
   ['/targets/a1/edit', 'Editar alvo'],
+  ['/heartbeats/h1', 'Backup noturno'],
   ['/incidents', 'Incidentes'],
   ['/channels', 'Canais de notificação'],
   ['/status-pages', 'Status page'],
@@ -391,7 +392,7 @@ for (const largura of [400, 1280]) {
       ['Configurar canais', page.getByRole('link', { name: 'Configurar canais' })],
       ['filtro de estado', page.getByRole('group', { name: 'Estado' }).getByRole('button', { name: /^Fora do ar/ })],
       ['filtro de tag', page.getByRole('group', { name: 'Tags' }).getByRole('button', { name: /^prod/ })],
-      ['busca', page.getByRole('searchbox', { name: 'Buscar alvo ou tag' })],
+      ['busca', page.getByRole('searchbox', { name: 'Buscar por nome ou tag' })],
       // No celular a coluna Situação some, e o incidente fica a um toque no detalhe do alvo.
       ...(largura === 1280 ? ([['Ver incidente', page.getByRole('link', { name: 'Ver incidente de Banco' })]] satisfies [string, Locator][]) : []),
       ...['Painel', 'Incidentes', 'Canais', 'Status', 'Conta'].map((aba): [string, Locator] => [
@@ -634,7 +635,7 @@ for (const largura of [400, 1280]) {
       await imitarApi(page)
       await page.route('**/api/v1/targets/summary?*', (route) => route.fulfill({ status: 200, json: { items: [] } }))
       await page.goto('/?tag=prod&estado=down&busca=nada')
-      await expect(page.getByText('Nenhum alvo com esses filtros.')).toBeVisible()
+      await expect(page.getByText('Nenhum monitor com esses filtros.')).toBeVisible()
       await expect(page.getByRole('group', { name: 'Tags' }).getByRole('button', { name: /^prod/ })).toHaveAttribute('aria-pressed', 'true')
       await esperarOConteudo(page, '/')
       expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(largura)
@@ -674,7 +675,7 @@ for (const largura of [400, 768, 1024, 1280]) {
     }
 
     await page.goto('/')
-    await expect(page.getByRole('heading', { name: 'Dois serviços pedem atenção.', level: 2 })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Dois serviços e uma tarefa pedem atenção.', level: 2 })).toBeVisible()
     await esperarOConteudo(page, '/')
     const monitores = page.getByRole('table', { name: /^Monitores/ })
     await expect(monitores.getByRole('rowheader')).toHaveCount(32)

@@ -47,7 +47,7 @@ describe('filtros do painel', () => {
     await esperarNomes(['Banco', 'Lento', 'API'])
     expect(filtro('Tags', /^prod/)).toHaveAttribute('aria-pressed', 'true')
     expect(r.falsa.estado.consultasDoResumo).toContain('tag=prod')
-    expect(screen.getByText('3 de 5 alvos')).toBeInTheDocument()
+    expect(screen.getByText('3 de 5 monitores')).toBeInTheDocument()
   })
 
   it('tags somam em E, e estado com tag restringe', async () => {
@@ -84,14 +84,14 @@ describe('filtros do painel', () => {
   it('a busca é local, por nome e por tag, sem uma requisição por tecla', async () => {
     const r = await preparar()
     const antes = r.falsa.estado.consultasDoResumo.length
-    await userEvent.type(screen.getByRole('searchbox', { name: 'Buscar alvo ou tag' }), 'dados')
+    await userEvent.type(screen.getByRole('searchbox', { name: 'Buscar por nome ou tag' }), 'dados')
     await esperarNomes(['Banco'])
     expect(r.falsa.estado.consultasDoResumo).toHaveLength(antes)
   })
 
   it('sem resultado: diz o que está ativo, some a tabela, fica a barra e limpar devolve tudo', async () => {
     await preparar('/?tag=web&estado=down')
-    expect(await screen.findByText('Nenhum alvo com esses filtros.')).toBeInTheDocument()
+    expect(await screen.findByText('Nenhum monitor com esses filtros.')).toBeInTheDocument()
     expect(screen.getByText('Tag web · Fora do ar')).toBeInTheDocument()
     expect(screen.queryByRole('table', { name: /^Monitores/ })).not.toBeInTheDocument()
     expect(screen.getByRole('group', { name: 'Tags' })).toBeInTheDocument()
@@ -147,7 +147,7 @@ describe('filtros do painel', () => {
     soltar()
     await esperarNomes(['Site'])
     expect(screen.getByRole('table', { name: /^Monitores/ }).closest('[aria-busy]')).toHaveAttribute('aria-busy', 'false')
-    expect(screen.getByText('1 de 5 alvos')).toBeInTheDocument()
+    expect(screen.getByText('1 de 5 monitores')).toBeInTheDocument()
   })
 
   // D2 da revisão: o router aplica a URL numa transição; um campo controlado
@@ -155,7 +155,7 @@ describe('filtros do painel', () => {
   // direto da URL → o X cai no fim do termo.
   it('a busca aceita edição no meio do termo, sem o cursor pular', async () => {
     await preparar()
-    const campo = screen.getByRole<HTMLInputElement>('searchbox', { name: 'Buscar alvo ou tag' })
+    const campo = screen.getByRole<HTMLInputElement>('searchbox', { name: 'Buscar por nome ou tag' })
     await userEvent.type(campo, 'banco')
     await userEvent.type(campo, '{ArrowLeft}{ArrowLeft}Xa', { skipClick: true })
     expect(campo).toHaveValue('banXaco')
@@ -167,7 +167,7 @@ describe('filtros do painel', () => {
 
   it('digitar depressa não perde tecla', async () => {
     await preparar()
-    const campo = screen.getByRole('searchbox', { name: 'Buscar alvo ou tag' })
+    const campo = screen.getByRole('searchbox', { name: 'Buscar por nome ou tag' })
     await userEvent.setup({ delay: null }).type(campo, 'parado')
     expect(campo).toHaveValue('parado')
     await esperarNomes(['Parado'])
@@ -177,7 +177,7 @@ describe('filtros do painel', () => {
   // ressincronizar → o termo fica no campo depois de limpar.
   it('limpar os filtros esvazia o campo de busca', async () => {
     await preparar('/?busca=banco')
-    const campo = screen.getByRole('searchbox', { name: 'Buscar alvo ou tag' })
+    const campo = screen.getByRole('searchbox', { name: 'Buscar por nome ou tag' })
     expect(campo).toHaveValue('banco')
     await userEvent.click(screen.getByRole('button', { name: 'Limpar filtros' }))
     await waitFor(() => expect(campo).toHaveValue(''))
@@ -186,7 +186,7 @@ describe('filtros do painel', () => {
   // D4 da revisão: o botão clicado some, e o foco não pode cair no <body>.
   // Sabotagem: trocar BotaoQueSome por Botao.
   describe('o foco não cai no body', () => {
-    const busca = () => screen.getByRole('searchbox', { name: 'Buscar alvo ou tag' })
+    const busca = () => screen.getByRole('searchbox', { name: 'Buscar por nome ou tag' })
 
     it('ao usar "Limpar filtros" da barra', async () => {
       await preparar('/?tag=web')
@@ -198,7 +198,7 @@ describe('filtros do painel', () => {
 
     it('ao usar "Limpar filtros" do estado sem resultado', async () => {
       await preparar('/?tag=web&estado=down')
-      await screen.findByText('Nenhum alvo com esses filtros.')
+      await screen.findByText('Nenhum monitor com esses filtros.')
       await userEvent.click(screen.getByRole('button', { name: 'Limpar filtros' }))
       await esperarNomes(['Banco', 'Lento', 'API', 'Site', 'Parado'])
       expect(busca()).toHaveFocus()
