@@ -1,8 +1,10 @@
 import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { http, HttpResponse } from 'msw'
 import { describe, expect, it } from 'vitest'
 import { incidente, itemDoResumo } from '@/test/fixtures'
 import { renderizarPainel } from '@/test/renderizar'
+import { servidor } from '@/test/setup'
 
 const ITENS = [
   itemDoResumo({ id: 'b', name: 'Banco', state: 'down', tags: ['prod', 'dados'], open_incident_id: 'inc-1' }),
@@ -93,6 +95,9 @@ describe('filtros do painel', () => {
     expect(screen.getByText('Tag web · Fora do ar')).toBeInTheDocument()
     expect(screen.queryByRole('table', { name: /^Monitores/ })).not.toBeInTheDocument()
     expect(screen.getByRole('group', { name: 'Tags' })).toBeInTheDocument()
+    // Terciário (M6 da revisão, spec): nunca compete com o conteúdo.
+    expect(screen.getByRole('button', { name: 'Limpar filtros' })).not.toHaveClass('border')
+    expect(screen.getByRole('button', { name: 'Limpar filtros' })).toHaveClass('text-primaria')
     await userEvent.click(screen.getByRole('button', { name: 'Limpar filtros' }))
     await esperarNomes(['Banco', 'Lento', 'API', 'Site', 'Parado'])
     expect(screen.queryByRole('button', { name: 'Limpar filtros' })).not.toBeInTheDocument()
@@ -107,6 +112,106 @@ describe('filtros do painel', () => {
     expect(await screen.findByRole('button', { name: 'Tentar de novo' })).toBeInTheDocument()
     expect(screen.queryByRole('table', { name: /^Monitores/ })).not.toBeInTheDocument()
     expect(screen.getByRole('heading', { level: 2, name: 'Dois serviços pedem atenção.' })).toBeInTheDocument()
+  })
+
+  // D1 da revisão. O relógio da linha é o da resposta que ela mostra, não o da
+  // consulta completa. Sabotagem: passar atualizadoEm à tabela filtrada → a
+  // conta sai negativa e o limite vira "Check agora".
+  it('a tabela filtrada conta o tempo a partir da própria resposta', async () => {
+    const r = await preparar('/?tag=web')
+    await esperarNomes(['Site'])
+    r.falsa.estado.resumo = ITENS.map((item) => ({ ...item, last_checked_at: new Date(Date.now() - 5000).toISOString() }))
+    r.cliente.setQueryData(['targets', 'summary'], r.cliente.getQueryData(['targets', 'summary']), { updatedAt: Date.now() - 60_000 })
+    await r.cliente.refetchQueries({ predicate: (q) => q.queryKey.length > 2 && q.queryKey[1] === 'summary' })
+    expect((await screen.findAllByText(/^Check há \d+ segundos$/)).length).toBeGreaterThan(0)
+  })
+
+  // M3 da revisão: enquanto a resposta não chega, a tabela de antes fica, com
+  // aria-busy. Sabotagem: tirar o placeholderData → a tabela some.
+  it('trocando o filtro, a tabela anterior fica ocupada até a resposta', async () => {
+    const r = await preparar()
+    let soltar!: () => void
+    const segurado = new Promise<void>((ok) => (soltar = ok))
+    servidor.use(
+      http.get('*/api/v1/targets/summary', async ({ request }) => {
+        if (!new URL(request.url).searchParams.has('tag')) return undefined
+        await segurado
+        return HttpResponse.json({ items: r.falsa.estado.resumo.filter((item) => item.tags.includes('web')) })
+      }),
+    )
+    await userEvent.click(filtro('Tags', /^web/))
+    const tabela = await screen.findByRole('table', { name: /^Monitores/ })
+    expect(tabela.closest('[aria-busy]')).toHaveAttribute('aria-busy', 'true')
+    expect(nomesNaTabela()).toEqual(['Banco', 'Lento', 'API', 'Site', 'Parado'])
+    expect(screen.getByText('Filtrando…')).toBeInTheDocument()
+    soltar()
+    await esperarNomes(['Site'])
+    expect(screen.getByRole('table', { name: /^Monitores/ }).closest('[aria-busy]')).toHaveAttribute('aria-busy', 'false')
+    expect(screen.getByText('1 de 5 alvos')).toBeInTheDocument()
+  })
+
+  // D2 da revisão: o router aplica a URL numa transição; um campo controlado
+  // por ela perde o cursor e pode perder tecla. Sabotagem: value={valor}
+  // direto da URL → o X cai no fim do termo.
+  it('a busca aceita edição no meio do termo, sem o cursor pular', async () => {
+    await preparar()
+    const campo = screen.getByRole<HTMLInputElement>('searchbox', { name: 'Buscar alvo ou tag' })
+    await userEvent.type(campo, 'banco')
+    await userEvent.type(campo, '{ArrowLeft}{ArrowLeft}Xa', { skipClick: true })
+    expect(campo).toHaveValue('banXaco')
+    expect(campo.selectionStart).toBe(5)
+    await userEvent.type(campo, '{Backspace}{Backspace}', { skipClick: true })
+    await esperarNomes(['Banco'])
+    expect(campo).toHaveValue('banco')
+  })
+
+  it('digitar depressa não perde tecla', async () => {
+    await preparar()
+    const campo = screen.getByRole('searchbox', { name: 'Buscar alvo ou tag' })
+    await userEvent.setup({ delay: null }).type(campo, 'parado')
+    expect(campo).toHaveValue('parado')
+    await esperarNomes(['Parado'])
+  })
+
+  // O campo espelha a URL quando ela muda por fora. Sabotagem: não
+  // ressincronizar → o termo fica no campo depois de limpar.
+  it('limpar os filtros esvazia o campo de busca', async () => {
+    await preparar('/?busca=banco')
+    const campo = screen.getByRole('searchbox', { name: 'Buscar alvo ou tag' })
+    expect(campo).toHaveValue('banco')
+    await userEvent.click(screen.getByRole('button', { name: 'Limpar filtros' }))
+    await waitFor(() => expect(campo).toHaveValue(''))
+  })
+
+  // D4 da revisão: o botão clicado some, e o foco não pode cair no <body>.
+  // Sabotagem: trocar BotaoQueSome por Botao.
+  describe('o foco não cai no body', () => {
+    const busca = () => screen.getByRole('searchbox', { name: 'Buscar alvo ou tag' })
+
+    it('ao usar "Limpar filtros" da barra', async () => {
+      await preparar('/?tag=web')
+      await esperarNomes(['Site'])
+      await userEvent.click(screen.getByRole('button', { name: 'Limpar filtros' }))
+      await waitFor(() => expect(screen.queryByRole('button', { name: 'Limpar filtros' })).not.toBeInTheDocument())
+      expect(busca()).toHaveFocus()
+    })
+
+    it('ao usar "Limpar filtros" do estado sem resultado', async () => {
+      await preparar('/?tag=web&estado=down')
+      await screen.findByText('Nenhum alvo com esses filtros.')
+      await userEvent.click(screen.getByRole('button', { name: 'Limpar filtros' }))
+      await esperarNomes(['Banco', 'Lento', 'API', 'Site', 'Parado'])
+      expect(busca()).toHaveFocus()
+    })
+
+    it('ao desligar um estado com contagem zero', async () => {
+      const r = await renderizarPainel('/?estado=down')
+      r.falsa.estado.resumo = [itemDoResumo({ id: 'a', name: 'API' })]
+      await r.cliente.refetchQueries()
+      await userEvent.click(await screen.findByRole('button', { name: /^Fora do ar/ }))
+      await waitFor(() => expect(screen.queryByRole('button', { name: /^Fora do ar/ })).not.toBeInTheDocument())
+      expect(busca()).toHaveFocus()
+    })
   })
 
   it('sem nenhum alvo não há barra de filtros', async () => {

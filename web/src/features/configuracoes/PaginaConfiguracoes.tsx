@@ -2,7 +2,7 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { useQueryClient } from '@tanstack/react-query'
 import { Check } from 'lucide-react'
 import { QRCodeSVG } from 'qrcode.react'
-import { useEffect, useLayoutEffect, useRef, useState, type ComponentProps, type RefObject } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { z } from 'zod'
 import { useApi, useSessao } from '@/app/contexto'
@@ -10,7 +10,7 @@ import { EstadoDaConsulta } from '@/components/EstadoDaConsulta'
 import { Selo } from '@/components/SeloDeEstado'
 import { Titulo } from '@/components/Titulo'
 import { useAvisar } from '@/components/ui/avisos'
-import { Botao } from '@/components/ui/botao'
+import { Botao, BotaoQueSome } from '@/components/ui/botao'
 import { useCopiar } from '@/components/ui/copiar'
 import { CaixaDeMarcar, Campo, Entrada, ErroDoFormulario } from '@/components/ui/campo'
 import { estiloDeCartao } from '@/components/ui/cartao'
@@ -733,25 +733,8 @@ function Sessoes() {
 
 type Dialogo2fa = 'ativar' | 'desativar' | 'trocar'
 
-// Um botão que some quando o /me muda (E6 do Plano 10): o "Trocar
-// autenticador" clicado com o 2FA já desligado em outra aba some no /me
-// relido, e o foco, que estava nele, ia para o <body>. Se ele tinha o foco,
-// o foco vai à reserva. O efeito de layout roda na desmontagem ANTES de o
-// React tirar o <button> do DOM, com a ref ainda presa a ele.
-function BotaoQueSome({ reserva, ...props }: ComponentProps<typeof Botao> & { reserva: RefObject<HTMLElement | null> }) {
-  const eu = useRef<HTMLButtonElement>(null)
-  useLayoutEffect(() => {
-    const botao = eu.current
-    return () => {
-      // A reserva é lida na desmontagem de propósito: é o botão que está na
-      // tela nesse instante (o mesmo nó, que passou de Desativar a Ativar).
-      // oxlint-disable-next-line react-hooks/exhaustive-deps
-      if (botao && document.activeElement === botao) reserva.current?.focus()
-    }
-  }, [reserva])
-  return <Botao ref={eu} {...props} />
-}
-
+// E6 do Plano 10: o "Trocar autenticador" clicado com o 2FA já desligado em
+// outra aba some no /me relido; BotaoQueSome leva o foco à reserva.
 export function PaginaConfiguracoes() {
   const me = useMe()
   const api = useApi()

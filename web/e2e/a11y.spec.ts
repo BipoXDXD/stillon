@@ -652,13 +652,15 @@ for (const largura of [400, 1280]) {
 // h-12 da linha por h-16 (64 px); pôr whitespace-nowrap no link do nome da
 // linha (a página rola de lado no celular).
 const NOME_LONGO = 'ServicoSemEspacos'.repeat(6).slice(0, 100)
+const TAGS_LONGAS = ['tag-de-24-caracteres-aaa', 'tag-de-24-caracteres-bbb', 'tag-de-24-caracteres-ccc']
 const MUITOS_ALVOS = [
   item('a1', NOME_LONGO, 'down'),
   item('m-lento', 'Lento', 'degraded'),
-  ...Array.from({ length: 30 }, (_, i) => item(`m${i}`, `Serviço ${i + 1}`, 'up')),
+  // Três tags no tamanho máximo: a célula não pode passar de uma linha.
+  ...Array.from({ length: 30 }, (_, i) => ({ ...item(`m${i}`, `Serviço ${i + 1}`, 'up'), tags: TAGS_LONGAS })),
 ]
 
-for (const largura of [400, 1280]) {
+for (const largura of [400, 768, 1024, 1280]) {
   test(`muitos alvos e nome longo, ${largura} px`, async ({ page }) => {
     await page.setViewportSize({ width: largura, height: 900 })
     await imitarApi(page)

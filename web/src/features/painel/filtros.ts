@@ -11,6 +11,8 @@ export const SEM_FILTROS: Filtros = { tags: [], estados: [], busca: '' }
 
 const MAX_BUSCA = 100
 const TAGS_NA_LINHA = 3
+// O que cabe numa linha da célula de tags: mais que isso, a tag vai para o "+N".
+const CARACTERES_NA_LINHA = 18
 
 // A URL é entrada externa: o que a regra não aceita some, e um link velho
 // abre a tela com o que ainda vale em vez de um erro.
@@ -71,7 +73,14 @@ export function contarTags(itens: readonly ItemDoResumo[]): ContagemDeTag[] {
 }
 
 export function tagsVisiveis(tags: readonly string[]): { visiveis: string[]; resto: string[] } {
-  return { visiveis: tags.slice(0, TAGS_NA_LINHA), resto: tags.slice(TAGS_NA_LINHA) }
+  const visiveis: string[] = []
+  let caracteres = 0
+  for (const tag of tags) {
+    caracteres += [...tag].length
+    if (visiveis.length === TAGS_NA_LINHA || (visiveis.length > 0 && caracteres > CARACTERES_NA_LINHA)) break
+    visiveis.push(tag)
+  }
+  return { visiveis, resto: tags.slice(visiveis.length) }
 }
 
 // "Tags prod e api · Fora do ar ou Pausado · Busca “site”", no estado sem resultado.

@@ -1,7 +1,7 @@
 import { textoDaCausa } from '@/lib/api/mensagens'
 import type { Incidente, ItemDoResumo } from '@/lib/api/schemas'
 import { estadoExibido, type EstadoExibido } from '@/lib/estado'
-import { duracao, haQuanto, milissegundos } from '@/lib/format'
+import { duracao, haQuantoAteAgora, milissegundos } from '@/lib/format'
 
 // A ordem do painel: fora do ar, degradado, no ar, sem dados e pausado.
 // Funções puras: a tela só as chama.
@@ -32,7 +32,7 @@ export function detalheDoProblema(it: ItemDoResumo, incidente: Incidente | undef
   if (it.state === 'degraded') {
     return it.last_latency_ms === null ? 'Lento no último check' : `Latência de ${milissegundos(it.last_latency_ms)} no último check`
   }
-  return it.last_checked_at === null ? 'Nenhum check ainda' : `Último check ${haQuanto(it.last_checked_at, agora)}`
+  return it.last_checked_at === null ? 'Nenhum check ainda' : `Último check ${haQuantoAteAgora(it.last_checked_at, agora)}`
 }
 
 // Uma linha de texto por alvo, sem gráfico (auditoria P7).
@@ -40,5 +40,5 @@ export function linhaSemDados(it: ItemDoResumo, agora: Date): string {
   if (!it.enabled) return 'Pausado'
   return it.last_checked_at === null
     ? 'Sem dados · nunca verificado'
-    : `Sem dados · último check ${haQuanto(it.last_checked_at, agora)}`
+    : `Sem dados · último check ${haQuantoAteAgora(it.last_checked_at, agora)}`
 }

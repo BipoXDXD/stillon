@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { Incidente, ItemDoResumo } from '@/lib/api/schemas'
 import { incidente, itemDoResumo } from '@/test/fixtures'
-import { linhaDoAlvo, medidaDaLinha, situacaoNaLinhaDoNome, type LinhaDeMonitor } from './linhas'
+import { linhaDoAlvo, medidaDaLinha, situacaoNaLinhaDoNome, tipoSemCaso, type LinhaDeMonitor } from './linhas'
 
 const alvo = (p: Parameters<typeof itemDoResumo>[0] = {}) => ItemDoResumo.parse(itemDoResumo(p))
 const inc = (p: Parameters<typeof incidente>[0] = {}) => Incidente.parse(incidente(p))
@@ -43,6 +43,16 @@ describe('linhaDoAlvo', () => {
     expect(linha.incidenteHref).toBe('/incidents?status=open')
   })
 
+  // D1 da revisão: um instante à frente do relógio de referência não vira
+  // "Check em 3 segundos". Sabotagem: voltar a haQuanto em linhas.ts e grupos.ts.
+  it.each([
+    ['no ar', { last_checked_at: '2026-09-24T12:00:03Z' }, 'Check agora'],
+    ['fora do ar sem incidente', { state: 'down', last_checked_at: '2026-09-24T12:00:03Z' }, 'Último check agora'],
+    ['sem dados', { state: 'unknown', last_checked_at: '2026-09-24T12:00:03Z' }, 'Sem dados · último check agora'],
+  ] as const)('instante no futuro, %s', (_, p, texto) => {
+    expect(linhaDoAlvo(alvo(p), undefined, agora).situacao).toBe(texto)
+  })
+
   it.each([
     ['no ar', { last_checked_at: '2026-09-24T11:59:30Z' }, 'Check há 30 segundos'],
     ['no ar sem check', { last_checked_at: null }, 'Nenhum check ainda'],
@@ -61,6 +71,20 @@ describe('medidaDaLinha', () => {
   it('a medida do monitor HTTP é a latência; sem ela, o traço', () => {
     expect(medidaDaLinha(http({ last_latency_ms: 1234 }))).toBe('1.234 ms')
     expect(medidaDaLinha(http({ last_latency_ms: null }))).toBe('—')
+  })
+})
+
+describe('switch exaustivo sobre tipo', () => {
+  // M4 da revisão. A prova de compilação é o @ts-expect-error: um tipo ainda
+  // não tratado não cabe em never, e por isso um membro novo sem caso em
+  // medidaDaLinha não compila.
+  // Sabotagem: acrescentar um membro à união sem caso → o tsc -b recusa.
+  it('um tipo fora da união falha alto em vez de virar célula vazia', () => {
+    const linha = linhaDoAlvo(alvo(), undefined, agora)
+    const intrusa = { ...linha, tipo: 'heartbeat' } as unknown as LinhaDeMonitor
+    expect(() => medidaDaLinha(intrusa)).toThrow('Tipo de monitor sem caso: heartbeat')
+    // @ts-expect-error: 'http' não é never; o tipo só cabe depois de esgotar os casos.
+    expect(() => tipoSemCaso(linha.tipo)).toThrow('Tipo de monitor sem caso: http')
   })
 })
 

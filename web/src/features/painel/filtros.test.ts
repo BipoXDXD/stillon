@@ -109,8 +109,16 @@ describe('tagsVisiveis', () => {
     [[], [], []],
     [['a', 'b', 'c'], ['a', 'b', 'c'], []],
     [['a', 'b', 'c', 'd', 'e'], ['a', 'b', 'c'], ['d', 'e']],
+    // D5 da revisão: o orçamento de caracteres mantém a célula em uma linha.
+    [['oito-car', 'oito-car2', 'x'], ['oito-car', 'oito-car2', 'x'], []],
+    [['oito-car', 'nove-cars', 'ab'], ['oito-car', 'nove-cars'], ['ab']],
+    [['tag-longa-de-vinte-e-qua', 'outra'], ['tag-longa-de-vinte-e-qua'], ['outra']],
   ])('%j', (tags, visiveis, resto) => {
     expect(tagsVisiveis(tags)).toEqual({ visiveis, resto })
+  })
+
+  it('a primeira tag sempre aparece, por maior que seja', () => {
+    expect(tagsVisiveis(['a'.repeat(24)]).visiveis).toHaveLength(1)
   })
 })
 

@@ -46,7 +46,7 @@ gravidade e depois por nome (a ordem de hoje, `agruparPorGravidade`).
 |---|---|---|---|---|
 | Estado | `SeloDeEstado` | sim | só o ícone, junto do nome | só o ícone, junto do nome |
 | Alvo | nome (`th scope=row`), link para o detalhe | sim | sim | sim |
-| Tags | até 3 pílulas e "+N" (PR de tags) | sim | não | não |
+| Tags | até 3 pílulas, até 18 caracteres somados, e "+N"; a célula cabe na linha de 48 px | sim | não | não |
 | Situação | causa e duração, ou o último check; "Ver incidente" quando houver | sim | sim | em linha abaixo do nome, sem o link, só nos problemas, sem dados e pausados |
 | Latência | último check, à direita | sim | sim | não |
 | 24 h | uptime truncado, à direita | sim | sim | sim |
@@ -103,8 +103,11 @@ recarregar e ao botão Voltar:
 - **Estado:** botões `aria-pressed`, com ícone, texto e contagem (`Fora do ar 2`). Contagens zero
   somem, exceto a do filtro ativo.
 - **Tags:** botões `aria-pressed`, com a contagem.
-- **Busca:** campo por nome ou tag, local e instantâneo, sem uma requisição por tecla.
-- **Limpar filtros**, terciário, só com filtro ativo.
+- **Busca:** campo por nome ou tag, local e instantâneo, sem uma requisição por tecla. O texto mora
+  no campo, e a URL é o espelho: o router aplica a URL numa transição, e um campo controlado por ela
+  perderia o cursor.
+- **Limpar filtros**, terciário, só com filtro ativo. Quem some com o próprio clique manda o foco à
+  busca.
 
 Tag e estado vão à API, a pedido do brief. A consulta completa continua em poll, porque a manchete,
 as contagens e a lista de tags dependem do conjunto inteiro; com filtro ativo há uma segunda

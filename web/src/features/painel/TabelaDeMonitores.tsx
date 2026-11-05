@@ -111,5 +111,5 @@ function TagsDaLinha({ tags }: { tags: readonly string[] }) {
 }
 
 function PilulaDeTag({ children }: { children: ReactNode }) {
-  return <span className="rounded-full bg-painel px-2 text-meta text-suave">{children}</span>
+  return <span className="rounded-full bg-painel px-2 text-meta whitespace-nowrap text-suave">{children}</span>
 }
