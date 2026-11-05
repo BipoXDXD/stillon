@@ -2,6 +2,7 @@ import { z } from 'zod'
 import type { AlteracaoAlvo, EntradaAlvo } from '@/lib/api/cliente'
 import type { Alvo } from '@/lib/api/schemas'
 import { MENSAGEM_INVISIVEL, temInvisivel } from '@/lib/rotulo'
+import { ehTagValida, MAX_CARACTERES_DA_TAG, MAX_TAGS, separarTags } from '@/lib/tags'
 
 // O formulário de alvo espelha internal/targets/validate.go. O servidor é a
 // fonte da verdade: o espelho só antecipa o erro, e o 400 com fields cai no
@@ -123,8 +124,11 @@ export function esquemaDoAlvo(base?: { url: string }) {
       // servidor); substituir: a lista abaixo troca todos; remover: apaga.
       modoHeaders: z.enum(['manter', 'substituir', 'remover']),
       headers: z.array(z.object({ nome: z.string().trim(), valor: z.string() })),
+      tagsTexto: z.string(),
     })
     .superRefine((v, ctx) => {
+      const erroDasTags = erroNasTags(v.tagsTexto)
+      if (erroDasTags) ctx.addIssue({ code: 'custom', path: ['tagsTexto'], message: erroDasTags })
       // D3 do Plano 2: o jitter de −10% antecipa a próxima sonda para 90% do
       // intervalo; um timeout maior deixaria duas sondas do alvo em voo.
       // Como em validate.go, só com intervalo e timeout nas faixas: senão o
@@ -176,6 +180,13 @@ export function esquemaDoAlvo(base?: { url: string }) {
     })
 }
 
+function erroNasTags(texto: string): string | null {
+  const tags = separarTags(texto)
+  if (tags.length > MAX_TAGS) return `Até ${MAX_TAGS} tags.`
+  if (tags.some((t) => [...t].length > MAX_CARACTERES_DA_TAG)) return `Cada tag tem até ${MAX_CARACTERES_DA_TAG} caracteres.`
+  return tags.every(ehTagValida) ? null : 'Use letras, números, hífen e sublinhado, separados por vírgula.'
+}
+
 export const esquemaAlvo = esquemaDoAlvo()
 
 export type ValoresDoAlvo = z.infer<typeof esquemaAlvo>
@@ -209,6 +220,7 @@ export const valoresPadrao: ValoresDoAlvo = {
   enabled: true,
   modoHeaders: 'substituir',
   headers: [],
+  tagsTexto: '',
 }
 
 export function valoresDe(a: Alvo): ValoresDoAlvo {
@@ -226,6 +238,7 @@ export function valoresDe(a: Alvo): ValoresDoAlvo {
     enabled: a.enabled,
     modoHeaders: 'manter',
     headers: [],
+    tagsTexto: a.tags.join(', '),
   }
 }
 
@@ -254,6 +267,8 @@ export function paraCriacao(v: ValoresDoAlvo): EntradaAlvo {
   }
   if (v.lentidao !== 'padrao') e.degraded_threshold_ms = limiar(v)
   if (v.headers.length) e.headers = mapaDeHeaders(v)
+  const tags = separarTags(v.tagsTexto)
+  if (tags.length) e.tags = tags
   return e
 }
 
@@ -272,6 +287,8 @@ export function paraAlteracao(original: ValoresDoAlvo, v: ValoresDoAlvo): Altera
   if (limiar(v) !== limiar(original)) a.degraded_threshold_ms = limiar(v)
   if (v.modoHeaders === 'substituir') a.headers = mapaDeHeaders(v)
   if (v.modoHeaders === 'remover') a.headers = null
+  const tags = separarTags(v.tagsTexto)
+  if (tags.join() !== separarTags(original.tagsTexto).join()) a.tags = tags
   return a
 }
 
@@ -306,4 +323,5 @@ export const campoDoServidor: Record<string, keyof ValoresDoAlvo> = {
   expected_status: 'expected_status',
   degraded_threshold_ms: 'degraded_threshold_ms',
   headers: 'headers',
+  tags: 'tagsTexto',
 }

@@ -91,6 +91,8 @@ const SOBRE_TINTA: [string, string][] = [
   ['perigo', 'estado-fora-100'],
   ['primaria', 'primaria-100'],
   ['texto', 'primaria-100'],
+  // A contagem do botão de filtro ligado (features/painel/BarraDeFiltros).
+  ['suave', 'primaria-100'],
   ['primaria-texto', 'primaria'],
   ['perigo-texto', 'perigo'],
   // A faixa de estado do detalhe (PR 4): título em texto e detalhe em suave

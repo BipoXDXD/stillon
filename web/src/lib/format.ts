@@ -49,6 +49,12 @@ export function haQuanto(iso: string, agora: Date): string {
   return relativa.format(dias, 'day')
 }
 
+// Para quem compara com o relógio de outra resposta: um instante à frente de
+// `agora` para em "agora", e nunca vira "em 3 segundos".
+export function haQuantoAteAgora(iso: string, agora: Date): string {
+  return haQuanto(new Date(Math.min(Date.parse(iso), agora.getTime())).toISOString(), agora)
+}
+
 // Math.round(-59.5) é -59: passado e futuro arredondariam diferente.
 function arredondaSimetrico(x: number): number {
   return Math.sign(x) * Math.round(Math.abs(x))

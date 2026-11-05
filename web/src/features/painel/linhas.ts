@@ -1,18 +1,19 @@
 import type { HoraDoSpark, Incidente, ItemDoResumo } from '@/lib/api/schemas'
 import { estadoExibido, type EstadoExibido } from '@/lib/estado'
-import { haQuanto, milissegundos } from '@/lib/format'
+import { haQuantoAteAgora, milissegundos } from '@/lib/format'
 import { detalheDoProblema, ehProblema, linhaSemDados } from './grupos'
 
 // O que a tabela de monitores desenha. Ela não conhece o item da API: um
 // segundo tipo de monitor entra como outro membro desta união, com o mapeador
-// dele, sem tocar nas colunas (spec do painel denso). Sem default nos switches
-// sobre `tipo`: um membro novo sem caso não compila.
+// dele, sem tocar nas colunas (spec do painel denso). Todo switch sobre `tipo`
+// termina em tipoSemCaso: um membro novo sem caso não compila.
 type LinhaComum = {
   chave: string
   nome: string
   href: string
   estado: EstadoExibido
   situacao: string
+  tags: string[]
   uptime24h: number | null
   historico: HoraDoSpark[]
   incidenteHref: string | null
@@ -31,6 +32,7 @@ export function linhaDoAlvo(it: ItemDoResumo, incidente: Incidente | undefined, 
     href: `/targets/${it.id}`,
     estado,
     situacao: situacaoDoAlvo(it, estado, incidente, agora),
+    tags: it.tags,
     latenciaMs: it.last_latency_ms,
     uptime24h: it.uptime_24h,
     historico: it.spark,
@@ -44,7 +46,7 @@ function situacaoDoAlvo(it: ItemDoResumo, estado: EstadoExibido, incidente: Inci
     case 'degraded':
       return detalheDoProblema(it, incidente, agora)
     case 'up':
-      return it.last_checked_at === null ? 'Nenhum check ainda' : `Check ${haQuanto(it.last_checked_at, agora)}`
+      return it.last_checked_at === null ? 'Nenhum check ainda' : `Check ${haQuantoAteAgora(it.last_checked_at, agora)}`
     case 'unknown':
     case 'pausado':
       return linhaSemDados(it, agora)
@@ -52,11 +54,18 @@ function situacaoDoAlvo(it: ItemDoResumo, estado: EstadoExibido, incidente: Inci
 }
 
 // O número da coluna de medida: a latência do último check, no monitor HTTP.
+// Um tipo novo sem caso chega ao default sem virar never, e não compila.
 export function medidaDaLinha(linha: LinhaDeMonitor): string {
   switch (linha.tipo) {
     case 'http':
       return milissegundos(linha.latenciaMs)
+    default:
+      return tipoSemCaso(linha.tipo)
   }
+}
+
+export function tipoSemCaso(tipo: never): never {
+  throw new Error(`Tipo de monitor sem caso: ${String(tipo)}`)
 }
 
 // No celular a coluna Situação some: quem está bem fica em uma altura, e o

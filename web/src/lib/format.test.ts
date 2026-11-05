@@ -1,5 +1,17 @@
 import { describe, expect, it } from 'vitest'
-import { diaMes, duracao, haQuanto, horaMinuto, milissegundos, navegadorDe, plural, pontosDeCodigo, porcento } from './format'
+import { diaMes, duracao, haQuanto, haQuantoAteAgora, horaMinuto, milissegundos, navegadorDe, plural, pontosDeCodigo, porcento } from './format'
+
+describe('haQuantoAteAgora', () => {
+  const agora = new Date('2026-09-24T12:00:00Z')
+
+  it('no passado, igual a haQuanto', () => {
+    expect(haQuantoAteAgora('2026-09-24T11:59:00Z', agora)).toBe('há 1 minuto')
+  })
+
+  it('no futuro, para em agora', () => {
+    expect(haQuantoAteAgora('2026-09-24T12:00:03Z', agora)).toBe('agora')
+  })
+})
 
 describe('porcento', () => {
   it('trunca em duas casas, nunca arredonda para cima', () => {

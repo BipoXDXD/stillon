@@ -40,6 +40,7 @@ export const Alvo = z.object({
   degraded_threshold_ms: z.number().nullable(),
   enabled: z.boolean(),
   header_names: z.array(z.string()),
+  tags: z.array(z.string()),
   created_at: instante,
 })
 export type Alvo = z.infer<typeof Alvo>
@@ -66,6 +67,7 @@ export const ItemDoResumo = z.object({
   last_latency_ms: z.number().nullable(),
   uptime_24h: z.number().nullable(),
   open_incident_id: id.nullable(),
+  tags: z.array(z.string()),
   spark: z.array(HoraDoSpark),
 })
 export type ItemDoResumo = z.infer<typeof ItemDoResumo>

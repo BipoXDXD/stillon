@@ -88,6 +88,9 @@ export function criarApiFalsa() {
     corpos: new Map<string, Json[]>(),
     alvos: [] as Entrada<typeof Alvo>[],
     resumo: [] as Entrada<typeof ItemDoResumo>[],
+    // A query de cada GET /targets/summary: prova que o filtro foi à API, e
+    // que a busca não vai.
+    consultasDoResumo: [] as string[],
     serie: { resolution: 'raw', items: [] } as { resolution: 'raw'; items: Entrada<typeof Check>[] } | {
       resolution: '1h'
       items: Entrada<typeof Hora>[]
@@ -252,7 +255,21 @@ export function criarApiFalsa() {
       HttpResponse.json({ id: 'u1', email: EMAIL, totp_enabled: st.totpLigado, created_at: '2026-09-01T10:00:00Z' }),
     ),
 
-    rota('get', '/targets/summary', () => HttpResponse.json({ items: st.resumo })),
+    // O filtro do servidor (targets.SummaryFilter): tags em E, estados em OU.
+    rota('get', '/targets/summary', ({ request }) => {
+      const q = new URL(request.url).searchParams
+      st.consultasDoResumo.push(q.toString())
+      const forcado = st.forcar.get(`GET /targets/summary?${q.toString()}`)
+      if (forcado) return erro(forcado.status, forcado.code)
+      const tags = q.getAll('tag')
+      const estados = q.getAll('state')
+      const items = st.resumo.filter(
+        (it) =>
+          tags.every((t) => it.tags.includes(t)) &&
+          (estados.length === 0 || estados.includes(it.enabled ? it.state : 'paused')),
+      )
+      return HttpResponse.json({ items })
+    }),
     rota('get', '/targets', () => HttpResponse.json({ items: st.alvos })),
     rota('post', '/targets', ({ corpo }) => {
       const alvo = {
@@ -266,6 +283,7 @@ export function criarApiFalsa() {
         degraded_threshold_ms: corpo.degraded_threshold_ms === undefined ? 2000 : (corpo.degraded_threshold_ms as number | null),
         enabled: corpo.enabled !== false,
         header_names: Object.keys((corpo.headers as Json | undefined) ?? {}).sort(),
+        tags: (corpo.tags as string[] | undefined) ?? [],
         created_at: agora().toISOString(),
       }
       st.alvos.push(alvo)

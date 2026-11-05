@@ -144,11 +144,11 @@ function comSpark(
 // nunca foi sondado e um pausado.
 const resumoDoPainel = () => ({
   items: [
-    comSpark('a1', 'API', 'up', 128, horasDoSpark(120, { [HORAS_ATRAS_DA_QUEDA]: CHECKS_FORA_NA_QUEDA, [HORAS_ATRAS_DA_HORA_INSTAVEL]: 1 })),
-    comSpark('a6', 'Autenticação', 'up', 96, horasDoSpark(90)),
-    comSpark('a7', 'Fila de e-mails', 'up', 210, horasDoSpark(200, { 11: 1 })),
-    comSpark('a2', 'Site', 'degraded', 2640, horasDoSpark(900, { 3: 1, 2: 1, 1: 1 })),
-    comSpark('a3', 'Banco', 'down', null, horasDoSpark(80, { 9: 1, 1: 40 })),
+    { ...comSpark('a1', 'API', 'up', 128, horasDoSpark(120, { [HORAS_ATRAS_DA_QUEDA]: CHECKS_FORA_NA_QUEDA, [HORAS_ATRAS_DA_HORA_INSTAVEL]: 1 })), tags: ['prod', 'api'] },
+    { ...comSpark('a6', 'Autenticação', 'up', 96, horasDoSpark(90)), tags: ['prod', 'api'] },
+    { ...comSpark('a7', 'Fila de e-mails', 'up', 210, horasDoSpark(200, { 11: 1 })), tags: ['prod', 'interno'] },
+    { ...comSpark('a2', 'Site', 'degraded', 2640, horasDoSpark(900, { 3: 1, 2: 1, 1: 1 })), tags: ['prod', 'web'] },
+    { ...comSpark('a3', 'Banco', 'down', null, horasDoSpark(80, { 9: 1, 1: 40 })), tags: ['prod', 'dados', 'interno', 'cliente-a'] },
     itemDoResumo({ id: 'a4', name: 'Novo', state: 'unknown', last_checked_at: null, last_latency_ms: null, uptime_24h: null, spark: [] }),
     itemDoResumo({
       id: 'a5',

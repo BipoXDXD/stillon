@@ -389,6 +389,9 @@ for (const largura of [400, 1280]) {
     await conferir([
       ['nome do alvo', page.getByRole('link', { name: 'API', exact: true })],
       ['Configurar canais', page.getByRole('link', { name: 'Configurar canais' })],
+      ['filtro de estado', page.getByRole('group', { name: 'Estado' }).getByRole('button', { name: /^Fora do ar/ })],
+      ['filtro de tag', page.getByRole('group', { name: 'Tags' }).getByRole('button', { name: /^prod/ })],
+      ['busca', page.getByRole('searchbox', { name: 'Buscar alvo ou tag' })],
       // No celular a coluna Situação some, e o incidente fica a um toque no detalhe do alvo.
       ...(largura === 1280 ? ([['Ver incidente', page.getByRole('link', { name: 'Ver incidente de Banco' })]] satisfies [string, Locator][]) : []),
       ...['Painel', 'Incidentes', 'Canais', 'Status', 'Conta'].map((aba): [string, Locator] => [
@@ -620,6 +623,28 @@ for (const largura of [400, 1280]) {
   })
 }
 
+// Spec do painel denso, Estados: o filtro sem resultado, com o filtro ligado
+// (fundo, borda e check), passa no axe nos dois temas e não rola de lado.
+// Sabotagem: trocar o text-primaria do botão ligado por text-borda-controle.
+for (const largura of [400, 1280]) {
+  for (const tema of ['claro', 'escuro'] as const) {
+    test(`filtro sem resultado, ${largura} px, tema ${tema}`, async ({ page }) => {
+      await page.setViewportSize({ width: largura, height: 900 })
+      await page.emulateMedia({ colorScheme: tema === 'escuro' ? 'dark' : 'light' })
+      await imitarApi(page)
+      await page.route('**/api/v1/targets/summary?*', (route) => route.fulfill({ status: 200, json: { items: [] } }))
+      await page.goto('/?tag=prod&estado=down&busca=nada')
+      await expect(page.getByText('Nenhum alvo com esses filtros.')).toBeVisible()
+      await expect(page.getByRole('group', { name: 'Tags' }).getByRole('button', { name: /^prod/ })).toHaveAttribute('aria-pressed', 'true')
+      await esperarOConteudo(page, '/')
+      expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(largura)
+      const axe = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze()
+      expect(axe.violations.map((v) => v.id)).toEqual([])
+      await controlePositivo(page, `sem resultado ${largura} ${tema}`)
+    })
+  }
+}
+
 // Review Focus 3, 8 e 9 da parte 2 do plano: 32 alvos (30 no ar, um fora do
 // ar com nome de 100 caracteres sem espaço, o teto do servidor, e um
 // degradado). A página não rola de lado, e cada linha "no ar" fica compacta
@@ -627,13 +652,15 @@ for (const largura of [400, 1280]) {
 // h-12 da linha por h-16 (64 px); pôr whitespace-nowrap no link do nome da
 // linha (a página rola de lado no celular).
 const NOME_LONGO = 'ServicoSemEspacos'.repeat(6).slice(0, 100)
+const TAGS_LONGAS = ['tag-de-24-caracteres-aaa', 'tag-de-24-caracteres-bbb', 'tag-de-24-caracteres-ccc']
 const MUITOS_ALVOS = [
   item('a1', NOME_LONGO, 'down'),
   item('m-lento', 'Lento', 'degraded'),
-  ...Array.from({ length: 30 }, (_, i) => item(`m${i}`, `Serviço ${i + 1}`, 'up')),
+  // Três tags no tamanho máximo: a célula não pode passar de uma linha.
+  ...Array.from({ length: 30 }, (_, i) => ({ ...item(`m${i}`, `Serviço ${i + 1}`, 'up'), tags: TAGS_LONGAS })),
 ]
 
-for (const largura of [400, 1280]) {
+for (const largura of [400, 768, 1024, 1280]) {
   test(`muitos alvos e nome longo, ${largura} px`, async ({ page }) => {
     await page.setViewportSize({ width: largura, height: 900 })
     await imitarApi(page)

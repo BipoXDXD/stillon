@@ -120,6 +120,7 @@ test('login, cadastro de alvo, status, F5, detalhe, apagar, encerrar a sessão e
     await page.getByRole('link', { name: 'Cadastrar alvo' }).click()
     await page.getByLabel('Nome').fill(nomeDoAlvo)
     await page.getByLabel('URL').fill('https://stillon-e2e.invalid/')
+    await page.getByLabel('Tags').fill('Fluxo-E2E, fluxo-e2e')
     await page.getByRole('button', { name: 'Cadastrar' }).click()
     await expect(page.getByRole('heading', { name: nomeDoAlvo })).toBeVisible()
 
@@ -138,6 +139,14 @@ test('login, cadastro de alvo, status, F5, detalhe, apagar, encerrar a sessão e
       .getByRole('table', { name: /^Monitores/ })
       .getByRole('row', { name: new RegExp(`(Fora do ar|No ar).*${nomeDoAlvo}`) })
     await expect(classificado).toBeVisible({ timeout: 30_000 })
+
+    // O filtro contra a API de verdade: a tag normalizada aparece na barra, e
+    // filtrar por ela mantém o alvo na tabela.
+    await page.getByRole('group', { name: 'Tags' }).getByRole('button', { name: /^fluxo-e2e/ }).click()
+    await expect(page).toHaveURL(/tag=fluxo-e2e/)
+    await expect(classificado).toBeVisible()
+    await page.getByRole('button', { name: 'Limpar filtros' }).click()
+    await expect(page).not.toHaveURL(/tag=/)
 
     // 5. F5: continua dentro, pelo cookie de refresh.
     await page.reload()

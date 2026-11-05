@@ -19,7 +19,7 @@ function entrada(p: Partial<ValoresDoAlvo> = {}): ValoresDoAlvo {
     name: 'API', url: 'https://api.exemplo.com/health', method: 'GET',
     intervaloEscolhido: '60', interval_sec: 60, timeout_ms: 10000,
     expected_status: 200, lentidao: 'padrao', degraded_threshold_ms: 2000,
-    enabled: true, modoHeaders: 'substituir', headers: [], ...p,
+    enabled: true, modoHeaders: 'substituir', headers: [], tagsTexto: '', ...p,
   }
 }
 
@@ -206,12 +206,12 @@ describe('corpos e valores públicos do formulário', () => {
     const a: Alvo = {
       id: 'alvo-1', name: 'Site', url: 'https://site.exemplo.com/', method: 'HEAD',
       interval_sec: 42, timeout_ms: 2000, expected_status: 204, degraded_threshold_ms: limiar,
-      enabled: false, header_names: ['Authorization'], created_at: '2026-10-05T00:00:00Z',
+      enabled: false, header_names: ['Authorization'], tags: ['b', 'a'], created_at: '2026-10-05T00:00:00Z',
     }
     expect(valoresDe(a)).toEqual({
       name: 'Site', url: 'https://site.exemplo.com/', method: 'HEAD', intervaloEscolhido: 'outro',
       interval_sec: 42, timeout_ms: 2000, expected_status: 204, lentidao: modo,
-      degraded_threshold_ms: valor, enabled: false, modoHeaders: 'manter', headers: [],
+      degraded_threshold_ms: valor, enabled: false, modoHeaders: 'manter', headers: [], tagsTexto: 'b, a',
     })
   })
 
@@ -252,5 +252,39 @@ describe('corpos e valores públicos do formulário', () => {
     expect(apagaOsHeaders(['Authorization'], 'https://api.exemplo.com/', { url: 'https://outro.exemplo.com/', headers: {} })).toBe(false)
     expect(apagaOsHeaders([], 'https://api.exemplo.com/', { url: 'https://outro.exemplo.com/' })).toBe(false)
     expect(apagaOsHeaders(['Authorization'], 'https://api.exemplo.com/', { name: 'Outro' })).toBe(false)
+  })
+})
+
+describe('tags no formulário', () => {
+  // Espelho de internal/targets/tags_test.go. Sabotagem: tirar erroNasTags.
+  it.each([
+    ['', null],
+    ['prod, api', null],
+    ['Produção, api-v2_br', null],
+    ['a b', 'Use letras, números, hífen e sublinhado, separados por vírgula.'],
+    ['a/b', 'Use letras, números, hífen e sublinhado, separados por vírgula.'],
+    ['produc\u0327a\u0303o', 'Use letras, números, hífen e sublinhado, separados por vírgula.'],
+    ['a'.repeat(25), 'Cada tag tem até 24 caracteres.'],
+    ['a,b,c,d,e,f,g,h,i', 'Até 8 tags.'],
+  ])('"%s"', (tagsTexto, mensagem) => {
+    const r = esquemaAlvo.safeParse(entrada({ tagsTexto }))
+    expect(r.success ? null : r.error.issues[0]?.message).toBe(mensagem)
+  })
+
+  it('repetir não conta para o teto', () => {
+    expect(esquemaAlvo.safeParse(entrada({ tagsTexto: 'a,b,c,d,e,f,g,h,a,A' })).success).toBe(true)
+  })
+
+  it('a criação manda as tags normalizadas, e não manda o campo vazio', () => {
+    expect(paraCriacao(entrada({ tagsTexto: ' Prod, api,prod,, ' })).tags).toEqual(['api', 'prod'])
+    expect(paraCriacao(entrada())).not.toHaveProperty('tags')
+  })
+
+  // Sabotagem: mandar tags sempre → todo PATCH reescreveria as tags.
+  it('o PATCH só leva as tags se o conjunto mudou, e limpar é mandar lista vazia', () => {
+    const original = entrada({ tagsTexto: 'api, prod' })
+    expect(paraAlteracao(original, entrada({ tagsTexto: 'PROD,api' }))).not.toHaveProperty('tags')
+    expect(paraAlteracao(original, entrada({ tagsTexto: 'api' })).tags).toEqual(['api'])
+    expect(paraAlteracao(original, entrada({ tagsTexto: '' })).tags).toEqual([])
   })
 })

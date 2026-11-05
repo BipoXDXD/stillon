@@ -44,6 +44,7 @@ export type EntradaAlvo = {
   degraded_threshold_ms?: number | null
   enabled: boolean
   headers?: Record<string, string> | null
+  tags?: string[]
 }
 
 export type AlteracaoAlvo = Partial<EntradaAlvo>
@@ -59,11 +60,26 @@ export type EntradaPagina = {
 
 export type TrocaDeSenha = { current_password: string; new_password: string; totp_code?: string }
 
+// Os valores do ?state= do resumo: os do servidor, mais o pausado.
+export const ESTADOS_DO_FILTRO = ['down', 'degraded', 'up', 'unknown', 'paused'] as const
+export type EstadoDoFiltro = (typeof ESTADOS_DO_FILTRO)[number]
+
+export type FiltroDoResumo = { tags: readonly string[]; estados: readonly EstadoDoFiltro[] }
+
 export type FiltroIncidentes = { status?: 'open' | 'resolved'; cursor?: string; targetId?: string; limit?: number }
 
 function consulta(p: Record<string, string | number | undefined>) {
   const q = new URLSearchParams()
   for (const [k, v] of Object.entries(p)) if (v !== undefined && v !== '') q.set(k, String(v))
+  const s = q.toString()
+  return s ? `?${s}` : ''
+}
+
+// Parâmetro repetido, que o consulta() acima não faz: tag=a&tag=b.
+function consultaDoResumo({ tags, estados }: FiltroDoResumo): string {
+  const q = new URLSearchParams()
+  for (const tag of tags) q.append('tag', tag)
+  for (const estado of estados) q.append('state', estado)
   const s = q.toString()
   return s ? `?${s}` : ''
 }
@@ -114,7 +130,7 @@ export function criarApi(sessao: Sessao, buscar: Buscar, o: OpcoesDaApi = {}) {
   return {
     me: () => get('/me', Me),
 
-    resumo: () => get('/targets/summary', Resumo),
+    resumo: (filtro: FiltroDoResumo = { tags: [], estados: [] }) => get(`/targets/summary${consultaDoResumo(filtro)}`, Resumo),
     alvos: () => get('/targets?limit=100', ListaDeAlvos),
     alvo: (id: string) => get(`/targets/${encodeURIComponent(id)}`, Alvo),
     criarAlvo: (e: EntradaAlvo) => pedir({ metodo: 'POST', caminho: '/targets', corpo: e }, Alvo),

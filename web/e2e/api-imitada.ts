@@ -45,7 +45,8 @@ const respostas: Record<string, unknown> = {
   'GET /me': me({ created_at: agora }),
   'GET /targets/summary': {
     items: [
-      item('a1', 'API', 'up'), item('a2', 'Site', 'degraded'), item('a3', 'Banco', 'down'),
+      { ...item('a1', 'API', 'up'), tags: ['prod', 'api'] }, { ...item('a2', 'Site', 'degraded'), tags: ['prod'] },
+      { ...item('a3', 'Banco', 'down'), tags: ['prod', 'dados', 'backend', 'cliente-a'] },
       item('a4', 'Novo', 'unknown'), item('a5', 'Parado', 'unknown', false),
     ],
   },
