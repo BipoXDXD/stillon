@@ -56,6 +56,15 @@ func RateLimitUserEvery(ctx context.Context, clk clock.Clock, every time.Duratio
 	return rateLimit(ctx, clk, rate.Every(every), burst, porUsuario, maxBuckets)
 }
 
+// RateLimitBy limita pela chave que a rota calcula. É a camada do ping: o
+// orçamento é da tarefa, e não do IP, que várias tarefas dividem atrás de NAT.
+// Chave vazia não existe: quem chama devolve sempre uma chave, e o que não
+// identifica ninguém divide o mesmo balde.
+func RateLimitBy(ctx context.Context, clk clock.Clock, perMinute, burst int, chave func(*http.Request) string) func(http.Handler) http.Handler {
+	porChave := func(r *http.Request) (string, bool) { return chave(r), true }
+	return rateLimit(ctx, clk, porMinuto(perMinute), burst, porChave, maxBuckets)
+}
+
 func porMinuto(n int) rate.Limit { return rate.Limit(float64(n) / 60.0) }
 
 func porIP(px Proxies) chaveFn {

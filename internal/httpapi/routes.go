@@ -13,6 +13,7 @@ import (
 	"github.com/BipoXDXD/stillon/internal/auth"
 	"github.com/BipoXDXD/stillon/internal/clock"
 	"github.com/BipoXDXD/stillon/internal/config"
+	"github.com/BipoXDXD/stillon/internal/heartbeat"
 	"github.com/BipoXDXD/stillon/internal/httpapi/middleware"
 	"github.com/BipoXDXD/stillon/internal/incident/history"
 	"github.com/BipoXDXD/stillon/internal/notify"
@@ -52,7 +53,9 @@ type Deps struct {
 	Channels  *notify.ChannelService
 	// StatusPages serve o cadastro do dono e a página pública /p/{slug}.
 	StatusPages *statuspage.Service
-	Clock       clock.Clock
+	// Pings recebe os sinais das tarefas em /ping/{token}.
+	Pings *heartbeat.PingService
+	Clock clock.Clock
 	// Ready é o teste de prontidão de /readyz: o ping no banco em produção.
 	Ready func(context.Context) error
 	// Painel são os arquivos do painel React. Nil é o embutido no binário
@@ -227,6 +230,7 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	raiz.Handle("/readyz", handler)
 	raiz.Handle("/verify/", verificacao(ctx, cfg, d.Clock, d.Channels))
 	raiz.Handle("/p/", paginaPublica(ctx, cfg, d.Clock, d.StatusPages))
+	raiz.Handle("/ping/", pingPublico(ctx, cfg, d.Clock, d.Pings))
 	raiz.Handle("/", painel(d.Painel))
 	return raiz
 }

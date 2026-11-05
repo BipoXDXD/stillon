@@ -21,6 +21,7 @@ import (
 	"github.com/BipoXDXD/stillon/internal/clock"
 	"github.com/BipoXDXD/stillon/internal/config"
 	"github.com/BipoXDXD/stillon/internal/crypto"
+	"github.com/BipoXDXD/stillon/internal/heartbeat"
 	"github.com/BipoXDXD/stillon/internal/httpapi"
 	"github.com/BipoXDXD/stillon/internal/incident/history"
 	"github.com/BipoXDXD/stillon/internal/notify"
@@ -127,6 +128,7 @@ func newAPICom(t *testing.T, ajustar func(*config.Config), ajustarDeps func(*htt
 		Incidents:   history.NewService(pool, clk),
 		Channels:    notify.NewChannelService(pool, box, clk, discord, email, cfg.PublicBaseURL),
 		StatusPages: statuspage.NewService(pool, clk),
+		Pings:       heartbeat.NewPingService(pool, clk),
 		Clock:       clk, Ready: pool.Ping,
 	}
 	if ajustarDeps != nil {

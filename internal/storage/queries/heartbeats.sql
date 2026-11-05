@@ -17,3 +17,46 @@ SELECT * FROM heartbeats WHERE ping_token_hash = $1 FOR UPDATE;
 -- name: OpenHeartbeatIncident :exec
 INSERT INTO incidents (id, heartbeat_id, started_at, cause)
 VALUES (sqlc.arg(id), sqlc.arg(heartbeat_id)::uuid, sqlc.arg(started_at), sqlc.arg(cause));
+
+-- name: SaveHeartbeatPing :exec
+UPDATE heartbeats
+   SET deadline_at = sqlc.arg(deadline_at), last_ping_at = sqlc.narg(last_ping_at),
+       last_success_at = sqlc.narg(last_success_at), last_start_at = sqlc.narg(last_start_at),
+       last_signal = sqlc.narg(last_signal), failing_since = sqlc.narg(failing_since)
+ WHERE id = sqlc.arg(id);
+
+-- name: InsertHeartbeatEvent :exec
+INSERT INTO heartbeat_events (id, heartbeat_id, at, kind, runtime_ms) VALUES ($1, $2, $3, $4, $5);
+
+-- O teto do log (D15), na transação do ping: apaga do evento de posição
+-- max_events + 1, do mais novo para o mais velho, para trás. O id é UUIDv7,
+-- e o índice (heartbeat_id, id DESC) resolve os dois lados.
+-- name: TrimHeartbeatEvents :exec
+DELETE FROM heartbeat_events e
+ WHERE e.heartbeat_id = sqlc.arg(heartbeat_id)
+   AND e.id <= (SELECT o.id FROM heartbeat_events o
+                 WHERE o.heartbeat_id = sqlc.arg(heartbeat_id)
+                 ORDER BY o.id DESC
+                OFFSET sqlc.arg(max_events)::int LIMIT 1);
+
+-- name: GetHeartbeat :one
+SELECT * FROM heartbeats WHERE user_id = $1 AND id = $2;
+
+-- name: SetHeartbeatEnabled :exec
+UPDATE heartbeats SET enabled = $3 WHERE user_id = $1 AND id = $2;
+
+-- O log do dono, do mais novo ao mais velho. O id é UUIDv7, e o cursor é o
+-- último id da página anterior.
+-- name: ListHeartbeatEvents :many
+SELECT e.id, e.heartbeat_id, e.at, e.kind, e.runtime_ms
+  FROM heartbeat_events e
+  JOIN heartbeats h ON h.id = e.heartbeat_id
+ WHERE h.user_id = sqlc.arg(user_id)
+   AND e.heartbeat_id = sqlc.arg(heartbeat_id)
+   AND (sqlc.narg(before)::uuid IS NULL OR e.id < sqlc.narg(before)::uuid)
+ ORDER BY e.id DESC
+ LIMIT sqlc.arg(max_rows)::int;
+
+-- Revogar é isto: o hash antigo deixa de casar com qualquer linha (D8).
+-- name: SetHeartbeatPingHash :exec
+UPDATE heartbeats SET ping_token_hash = $3 WHERE user_id = $1 AND id = $2;
