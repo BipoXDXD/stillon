@@ -97,10 +97,26 @@ na VPS, siga a configuração de e-mail do [runbook de produção](docs/deploy/v
   aviso de que o alvo voltou sai do mesmo jeito.
 - **Página de status pública** em `/p/{slug}`, com os alvos que você escolher, uptime de 90 dias
   e os incidentes recentes.
-- **Painel** com contagens por estado, cartões de latência/uptime, avisos de canais,
-  navegação adaptada ao celular, gráfico de latência, 2FA (TOTP), sessões e troca de senha.
-  [Capturas da proposta visual](docs/superpowers/reports/2026-10-04-primeira-onda.md#painel):
-  temas claro/escuro e largura de 360 px, com dados de teste.
+- **Painel** com a frase de estado e os problemas primeiro, avisos de canais, navegação
+  adaptada ao celular, gráfico de latência, 2FA (TOTP), sessões e troca de senha.
+  Capturas na seção [Telas](#telas).
+
+## Telas
+
+O painel abre dizendo, numa frase, se algo está quebrado; os problemas vêm primeiro, em cartões
+com a cor, a forma e o texto do estado. Os mesmos tokens e fontes desenham a página pública.
+
+![Painel com dois serviços pedindo atenção, no tema claro](docs/design/painel-depois/painel-1280-claro.png)
+
+| Celular, tema escuro | Página pública |
+|---|---|
+| ![Painel no celular, tema escuro](docs/design/painel-depois/painel-400-escuro.png) | ![Página de status pública com a faixa de estado e as barras de 90 dias](docs/design/painel-depois/status-publica-1280-claro.png) |
+
+Todas as telas, a 400 e 1280 px e nos dois temas, ficam em
+[`docs/design/painel-depois/`](docs/design/painel-depois/); o visual anterior, em
+[`docs/design/painel-antes/`](docs/design/painel-antes/) e na tag `painel-antes-do-redesign`.
+O roteiro que as gera é o `web/e2e/capturas.spec.ts` (só roda com `CAPTURAR=1`; o comando está
+no comentário do arquivo).
 
 ## Arquitetura
 
