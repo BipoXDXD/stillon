@@ -28,6 +28,38 @@ func TestMessageForOpenedAndResolved(t *testing.T) {
 	}
 }
 
+// Tarefa não fica "fora do ar": os três avisos falam em sinal, com o motivo.
+func TestMessageForHeartbeat(t *testing.T) {
+	ev := evAberto
+	ev.TargetName = "Backup"
+	ev.Cause = "heartbeat_late"
+	assunto, corpo := mensagem(ev)
+	if assunto != "[StillOn] Backup está sem sinal" ||
+		corpo != "Backup está sem sinal desde 24/09/2026 12:00 UTC.\nCausa: o sinal não chegou no prazo.\n" {
+		t.Errorf("abertura: %q / %q", assunto, corpo)
+	}
+
+	ev.Cause = "heartbeat_failed"
+	if _, corpo := mensagem(ev); !strings.Contains(corpo, "Causa: a tarefa avisou que falhou.") {
+		t.Errorf("falha: %q", corpo)
+	}
+
+	ev.Kind = incident.EventReminder
+	ev.QueuedAt = ev.StartedAt.Add(45 * time.Minute)
+	assunto, corpo = mensagem(ev)
+	if assunto != "[StillOn] Backup continua sem sinal" || !strings.Contains(corpo, "(há 45 min)") {
+		t.Errorf("lembrete: %q / %q", assunto, corpo)
+	}
+
+	ev.Kind = incident.EventResolved
+	ev.ResolvedAt = ev.StartedAt.Add(2 * time.Hour)
+	assunto, corpo = mensagem(ev)
+	if assunto != "[StillOn] Backup voltou a dar sinal" ||
+		corpo != "Backup voltou a dar sinal em 24/09/2026 14:00 UTC, depois de 2h 00min sem sinal.\n" {
+		t.Errorf("fechamento: %q / %q", assunto, corpo)
+	}
+}
+
 // Causa fora do enum não vaza para a mensagem: vira o residual.
 func TestMessageNeverEchoesAnUnknownCause(t *testing.T) {
 	ev := evAberto

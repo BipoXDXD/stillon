@@ -74,6 +74,20 @@ func (q *Queries) DeleteOldAudit(ctx context.Context, cutoff time.Time) (int64, 
 	return result.RowsAffected(), nil
 }
 
+const deleteOldHeartbeatEvents = `-- name: DeleteOldHeartbeatEvents :execrows
+DELETE FROM heartbeat_events WHERE at < $1::timestamptz
+`
+
+// A idade do log de sinais (D15 da spec de heartbeats). O teto por heartbeat
+// fica na transação do ping; esta cobre quem parou de pingar.
+func (q *Queries) DeleteOldHeartbeatEvents(ctx context.Context, cutoff time.Time) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteOldHeartbeatEvents, cutoff)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const deleteOldNotifications = `-- name: DeleteOldNotifications :execrows
 DELETE FROM notifications WHERE status <> 'pending' AND created_at < $1::timestamptz
 `

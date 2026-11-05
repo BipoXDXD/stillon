@@ -60,3 +60,36 @@ SELECT e.id, e.heartbeat_id, e.at, e.kind, e.runtime_ms
 -- Revogar é isto: o hash antigo deixa de casar com qualquer linha (D8).
 -- name: SetHeartbeatPingHash :exec
 UPDATE heartbeats SET ping_token_hash = $3 WHERE user_id = $1 AND id = $2;
+
+-- Avaliador (D5): rodam sob InProberTx, com FOR UPDATE OF h SKIP LOCKED no
+-- molde de ClaimDueTargets. Dois avaliadores pegam linhas diferentes, e o
+-- índice único parcial é a garantia final de um incidente aberto por vez.
+-- Sem incidente aberto, atrasado ou em falha, e fora do intervalo mínimo
+-- entre aberturas (D11): quem está nele fica para um tique seguinte.
+-- name: ClaimHeartbeatsToOpen :many
+SELECT h.id, h.user_id, h.deadline_at, h.failing_since
+  FROM heartbeats h
+ WHERE h.enabled
+   AND (h.deadline_at <= sqlc.arg(now)::timestamptz OR h.failing_since IS NOT NULL)
+   AND (h.last_incident_at IS NULL OR h.last_incident_at <= sqlc.arg(cooldown_cut)::timestamptz)
+   AND NOT EXISTS (SELECT 1 FROM incidents x WHERE x.heartbeat_id = h.id AND x.resolved_at IS NULL)
+ ORDER BY h.deadline_at
+ LIMIT sqlc.arg(max_rows)::int
+   FOR UPDATE OF h SKIP LOCKED;
+
+-- Com incidente aberto e saudável de novo. Pausado fica como está: sem
+-- avaliação, como o alvo pausado sem sonda (D13).
+-- name: ClaimHeartbeatsToClose :many
+SELECT h.id, h.user_id, h.last_success_at, x.id AS incident_id, x.started_at
+  FROM incidents x
+  JOIN heartbeats h ON h.id = x.heartbeat_id
+ WHERE x.resolved_at IS NULL
+   AND h.enabled
+   AND h.failing_since IS NULL
+   AND h.deadline_at > sqlc.arg(now)::timestamptz
+ ORDER BY x.id
+ LIMIT sqlc.arg(max_rows)::int
+   FOR UPDATE OF h SKIP LOCKED;
+
+-- name: MarkHeartbeatIncident :exec
+UPDATE heartbeats SET last_incident_at = sqlc.arg(now)::timestamptz WHERE id = sqlc.arg(id);

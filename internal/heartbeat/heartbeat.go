@@ -29,9 +29,10 @@ const (
 	RepeatWindow = 10 * time.Second
 	// MaxEventsPerHeartbeat é o teto do log de sinais (D15).
 	MaxEventsPerHeartbeat = 1000
-	// EventsRetention é a idade máxima de um evento, para o heartbeat que
-	// parou de pingar e nunca alcançaria o teto (D15).
-	EventsRetention = 30 * 24 * time.Hour
+	// ReopenCooldown é o intervalo mínimo entre aberturas de incidente do
+	// mesmo heartbeat (D11): um token vazado alternando falha e sucesso
+	// dispararia um aviso a cada avaliação. Atrasa a abertura, nunca a perde.
+	ReopenCooldown = 5 * time.Minute
 )
 
 // Motivos de ValidationError, no vocabulário fechado da API.
@@ -49,6 +50,30 @@ type ValidationError struct {
 
 func (e *ValidationError) Error() string {
 	return "heartbeat inválido: " + e.Field + " " + e.Reason
+}
+
+// Causas de incidente de heartbeat, no enum de incidents.cause.
+const (
+	CauseLate   = "heartbeat_late"
+	CauseFailed = "heartbeat_failed"
+)
+
+// Opening diz por que o incidente abre e desde quando: a falha avisada ganha
+// do atraso, porque é o que a tarefa disse de si mesma.
+func Opening(deadlineAt time.Time, failingSince *time.Time) (cause string, startedAt time.Time) {
+	if failingSince != nil {
+		return CauseFailed, *failingSince
+	}
+	return CauseLate, deadlineAt
+}
+
+// ResolvedAt é quando o incidente acabou: o sucesso que o resolveu. Sem
+// sucesso depois do início (o dono retomou um heartbeat pausado), é now.
+func ResolvedAt(startedAt time.Time, lastSuccessAt *time.Time, now time.Time) time.Time {
+	if lastSuccessAt != nil && !lastSuccessAt.Before(startedAt) {
+		return *lastSuccessAt
+	}
+	return now
 }
 
 // Signal é o que a tarefa avisa. Os valores são os do CHECK de

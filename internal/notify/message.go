@@ -2,6 +2,7 @@ package notify
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/BipoXDXD/stillon/internal/incident"
@@ -18,6 +19,9 @@ var causas = map[string]string{
 	"body_limit":   "corpo da resposta acima do limite",
 	"blocked":      "destino bloqueado pela proteção de rede",
 	"unknown":      "erro de rede",
+	// Tarefas: o sinal é dela, e o texto não fala em erro de rede.
+	"heartbeat_late":   "o sinal não chegou no prazo",
+	"heartbeat_failed": "a tarefa avisou que falhou",
 }
 
 const formatoData = "02/01/2006 15:04 UTC"
@@ -26,6 +30,9 @@ const formatoData = "02/01/2006 15:04 UTC"
 // banco: a mesma notificação produz sempre o mesmo texto.
 func mensagem(ev Event) (assunto, corpo string) {
 	desde := ev.StartedAt.UTC().Format(formatoData)
+	if strings.HasPrefix(ev.Cause, prefixoDeTarefa) {
+		return mensagemDeTarefa(ev, desde)
+	}
 	switch ev.Kind {
 	case incident.EventResolved:
 		return fmt.Sprintf("[StillOn] %s voltou", ev.TargetName),
@@ -39,6 +46,26 @@ func mensagem(ev Event) (assunto, corpo string) {
 	}
 	return fmt.Sprintf("[StillOn] %s está fora do ar", ev.TargetName),
 		fmt.Sprintf("%s está fora do ar desde %s.\nCausa: %s.\n", ev.TargetName, desde, causa(ev.Cause))
+}
+
+// prefixoDeTarefa marca as causas de heartbeat. "Fora do ar" descreve um
+// serviço, não um backup que não rodou (D20 da spec de heartbeats).
+const prefixoDeTarefa = "heartbeat_"
+
+func mensagemDeTarefa(ev Event, desde string) (assunto, corpo string) {
+	switch ev.Kind {
+	case incident.EventResolved:
+		return fmt.Sprintf("[StillOn] %s voltou a dar sinal", ev.TargetName),
+			fmt.Sprintf("%s voltou a dar sinal em %s, depois de %s sem sinal.\n",
+				ev.TargetName, ev.ResolvedAt.UTC().Format(formatoData), duracao(ev.ResolvedAt.Sub(ev.StartedAt)))
+	case incident.EventReminder:
+		return fmt.Sprintf("[StillOn] %s continua sem sinal", ev.TargetName),
+			fmt.Sprintf("%s continua sem sinal desde %s (há %s).\nCausa: %s.\n"+
+				"Reconheça o incidente para parar os lembretes.\n",
+				ev.TargetName, desde, duracao(ev.QueuedAt.Sub(ev.StartedAt)), causa(ev.Cause))
+	}
+	return fmt.Sprintf("[StillOn] %s está sem sinal", ev.TargetName),
+		fmt.Sprintf("%s está sem sinal desde %s.\nCausa: %s.\n", ev.TargetName, desde, causa(ev.Cause))
 }
 
 // causa traduz o error_kind; o que estiver fora do enum vira o residual.

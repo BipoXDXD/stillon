@@ -273,6 +273,39 @@ func TestFirstDeadlineAddsGraceToTheNextFire(t *testing.T) {
 	}
 }
 
+func TestOpeningPrefersTheAnnouncedFailure(t *testing.T) {
+	prazo := agora.Add(-time.Hour)
+	causa, desde := heartbeat.Opening(prazo, nil)
+	if causa != heartbeat.CauseLate || !desde.Equal(prazo) {
+		t.Errorf("atraso: %s desde %v", causa, desde)
+	}
+	falha := agora.Add(-2 * time.Hour)
+	causa, desde = heartbeat.Opening(prazo, &falha)
+	if causa != heartbeat.CauseFailed || !desde.Equal(falha) {
+		t.Errorf("falha: %s desde %v", causa, desde)
+	}
+}
+
+func TestResolvedAt(t *testing.T) {
+	inicio := agora.Add(-time.Hour)
+	antes, igual, depois := inicio.Add(-time.Minute), inicio, inicio.Add(time.Minute)
+	casos := []struct {
+		nome    string
+		sucesso *time.Time
+		want    time.Time
+	}{
+		{"sem sucesso", nil, agora},
+		{"sucesso antigo", &antes, agora},
+		{"sucesso no início", &igual, inicio},
+		{"sucesso depois", &depois, depois},
+	}
+	for _, c := range casos {
+		if got := heartbeat.ResolvedAt(inicio, c.sucesso, agora); !got.Equal(c.want) {
+			t.Errorf("%s: %v, queria %v", c.nome, got, c.want)
+		}
+	}
+}
+
 func TestNewPingTokenIsRandomAnd256Bits(t *testing.T) {
 	vistos := map[string]bool{}
 	for range 100 {

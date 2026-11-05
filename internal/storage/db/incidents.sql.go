@@ -68,7 +68,10 @@ const enqueueNotification = `-- name: EnqueueNotification :exec
 INSERT INTO notifications (id, incident_id, channel_id, event, next_attempt_at, created_at, target_name)
 VALUES ($1, $2, $3, $4,
         $5, $5,
-        (SELECT t.name FROM incidents i JOIN targets t ON t.id = i.target_id WHERE i.id = $2))
+        (SELECT COALESCE(t.name, h.name) FROM incidents i
+           LEFT JOIN targets t ON t.id = i.target_id
+           LEFT JOIN heartbeats h ON h.id = i.heartbeat_id
+          WHERE i.id = $2))
 ON CONFLICT (incident_id, channel_id, event, seq) DO NOTHING
 `
 

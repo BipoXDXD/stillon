@@ -12,6 +12,115 @@ import (
 	"github.com/google/uuid"
 )
 
+const claimHeartbeatsToClose = `-- name: ClaimHeartbeatsToClose :many
+SELECT h.id, h.user_id, h.last_success_at, x.id AS incident_id, x.started_at
+  FROM incidents x
+  JOIN heartbeats h ON h.id = x.heartbeat_id
+ WHERE x.resolved_at IS NULL
+   AND h.enabled
+   AND h.failing_since IS NULL
+   AND h.deadline_at > $1::timestamptz
+ ORDER BY x.id
+ LIMIT $2::int
+   FOR UPDATE OF h SKIP LOCKED
+`
+
+type ClaimHeartbeatsToCloseParams struct {
+	Now     time.Time
+	MaxRows int32
+}
+
+type ClaimHeartbeatsToCloseRow struct {
+	ID            uuid.UUID
+	UserID        uuid.UUID
+	LastSuccessAt *time.Time
+	IncidentID    uuid.UUID
+	StartedAt     time.Time
+}
+
+// Com incidente aberto e saudável de novo. Pausado fica como está: sem
+// avaliação, como o alvo pausado sem sonda (D13).
+func (q *Queries) ClaimHeartbeatsToClose(ctx context.Context, arg ClaimHeartbeatsToCloseParams) ([]ClaimHeartbeatsToCloseRow, error) {
+	rows, err := q.db.Query(ctx, claimHeartbeatsToClose, arg.Now, arg.MaxRows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ClaimHeartbeatsToCloseRow
+	for rows.Next() {
+		var i ClaimHeartbeatsToCloseRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.LastSuccessAt,
+			&i.IncidentID,
+			&i.StartedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const claimHeartbeatsToOpen = `-- name: ClaimHeartbeatsToOpen :many
+SELECT h.id, h.user_id, h.deadline_at, h.failing_since
+  FROM heartbeats h
+ WHERE h.enabled
+   AND (h.deadline_at <= $1::timestamptz OR h.failing_since IS NOT NULL)
+   AND (h.last_incident_at IS NULL OR h.last_incident_at <= $2::timestamptz)
+   AND NOT EXISTS (SELECT 1 FROM incidents x WHERE x.heartbeat_id = h.id AND x.resolved_at IS NULL)
+ ORDER BY h.deadline_at
+ LIMIT $3::int
+   FOR UPDATE OF h SKIP LOCKED
+`
+
+type ClaimHeartbeatsToOpenParams struct {
+	Now         time.Time
+	CooldownCut time.Time
+	MaxRows     int32
+}
+
+type ClaimHeartbeatsToOpenRow struct {
+	ID           uuid.UUID
+	UserID       uuid.UUID
+	DeadlineAt   time.Time
+	FailingSince *time.Time
+}
+
+// Avaliador (D5): rodam sob InProberTx, com FOR UPDATE OF h SKIP LOCKED no
+// molde de ClaimDueTargets. Dois avaliadores pegam linhas diferentes, e o
+// índice único parcial é a garantia final de um incidente aberto por vez.
+// Sem incidente aberto, atrasado ou em falha, e fora do intervalo mínimo
+// entre aberturas (D11): quem está nele fica para um tique seguinte.
+func (q *Queries) ClaimHeartbeatsToOpen(ctx context.Context, arg ClaimHeartbeatsToOpenParams) ([]ClaimHeartbeatsToOpenRow, error) {
+	rows, err := q.db.Query(ctx, claimHeartbeatsToOpen, arg.Now, arg.CooldownCut, arg.MaxRows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ClaimHeartbeatsToOpenRow
+	for rows.Next() {
+		var i ClaimHeartbeatsToOpenRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.DeadlineAt,
+			&i.FailingSince,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getHeartbeat = `-- name: GetHeartbeat :one
 SELECT id, user_id, name, ping_token_hash, period_sec, cron_expr, timezone, grace_sec, enabled, created_at, deadline_at, last_ping_at, last_success_at, last_start_at, last_signal, failing_since, last_incident_at FROM heartbeats WHERE user_id = $1 AND id = $2
 `
@@ -192,6 +301,20 @@ func (q *Queries) LockHeartbeatForPing(ctx context.Context, pingTokenHash []byte
 		&i.LastIncidentAt,
 	)
 	return i, err
+}
+
+const markHeartbeatIncident = `-- name: MarkHeartbeatIncident :exec
+UPDATE heartbeats SET last_incident_at = $1::timestamptz WHERE id = $2
+`
+
+type MarkHeartbeatIncidentParams struct {
+	Now time.Time
+	ID  uuid.UUID
+}
+
+func (q *Queries) MarkHeartbeatIncident(ctx context.Context, arg MarkHeartbeatIncidentParams) error {
+	_, err := q.db.Exec(ctx, markHeartbeatIncident, arg.Now, arg.ID)
+	return err
 }
 
 const openHeartbeatIncident = `-- name: OpenHeartbeatIncident :exec

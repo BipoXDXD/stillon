@@ -166,6 +166,11 @@ func run(ctx context.Context, cfg *config.Config) error {
 		// dispatcher os entrega como qualquer outro aviso.
 		lembretes := notify.NewReminders(pool, clk, notify.DefaultPolicy())
 		g.Go(func() error { return lembretes.Run(gctx) })
+		// Quem abre e fecha incidente de heartbeat é este papel, e não quem
+		// recebe o ping: com --role=api e --role=prober separados, o ping só
+		// registra (D4 da spec de heartbeats).
+		avaliador := prober.NewHeartbeatEvaluator(pool, clk)
+		g.Go(func() error { return avaliador.Run(gctx) })
 		slog.Info("sondador ativo", "max_em_voo", prober.MaxInFlight, "email", cfg.EmailEnabled())
 	}
 
