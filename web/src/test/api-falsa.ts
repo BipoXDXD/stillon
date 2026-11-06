@@ -135,6 +135,9 @@ export function criarApiFalsa() {
     },
     incidentes: [] as Entrada<typeof Incidente>[],
     heartbeats: [] as Entrada<typeof Heartbeat>[],
+    // O last_signal do servidor, por heartbeat: ele não sai na resposta, e por
+    // isso fica fora do item. Sem entrada, a tarefa nunca mandou sinal.
+    ultimosSinais: new Map<string, 'start' | 'success' | 'fail'>(),
     // null responde 400 no campo expr.
     previaDoCron: ['2026-09-25T06:00:00Z', '2026-09-26T06:00:00Z'] as string[] | null,
     previasPedidas: [] as string[],
@@ -230,16 +233,29 @@ export function criarApiFalsa() {
   // ProofReservation.Succeed: as provas pedidas conferiram, a família zera.
   const provaCerta = (request: Request) => st.provasErradas.delete(familiaDe(request) ?? '')
 
-  // heartbeat.Update + statusOf na retomada: o início aberto e a falha ficam
-  // para trás, e o prazo recomeça, sempre no futuro. Sobram duas perguntas: há
-  // incidente aberto (late) e a tarefa já terminou alguma execução (up), ou não
-  // (waiting)? A falsa não guarda last_signal: um último sinal que não é o
-  // início faz o papel do finishedARun.
-  function retomar(h: Entrada<typeof Heartbeat>) {
-    const terminou = h.last_success_at !== null || (h.last_ping_at !== null && h.last_ping_at !== h.last_start_at)
-    h.last_start_at = null
-    h.deadline_at = new Date(agora().getTime() + (h.grace_sec + UMA_HORA_S) * 1000).toISOString()
-    h.state = h.open_incident_id !== null ? 'late' : terminou ? 'up' : 'waiting'
+  // finishedARun do servidor: um início sozinho não prova uma execução.
+  function terminouAlgumaExecucao(h: Entrada<typeof Heartbeat>) {
+    const sinal = st.ultimosSinais.get(h.id)
+    return h.last_success_at !== null || (sinal !== undefined && sinal !== 'start')
+  }
+
+  // statusOf do servidor. A falsa não tem failing_since: quem está em 'failing'
+  // segue falhando. A retomada não precisa zerar nada, porque parte de 'paused'.
+  function statusDe(h: Entrada<typeof Heartbeat>): Entrada<typeof Heartbeat>['state'] {
+    if (!h.enabled) return 'paused'
+    if (h.state === 'failing') return 'failing'
+    if (h.open_incident_id !== null || new Date(h.deadline_at) <= agora()) return 'late'
+    return terminouAlgumaExecucao(h) ? 'up' : 'waiting'
+  }
+
+  // FirstDeadline do servidor, com um período fixo: sempre no futuro.
+  const primeiroPrazo = (graceSec: number) => new Date(agora().getTime() + (graceSec + UMA_HORA_S) * 1000).toISOString()
+
+  // updateParams do servidor: o prazo só recomeça se o agendamento ou a
+  // tolerância mudarem de verdade.
+  function mudouOPrazo(h: Entrada<typeof Heartbeat>, corpo: Json) {
+    const outroAgendamento = corpo.schedule !== undefined && JSON.stringify(corpo.schedule) !== JSON.stringify(h.schedule)
+    return outroAgendamento || (corpo.grace_sec !== undefined && corpo.grace_sec !== h.grace_sec)
   }
 
   // Envolve um handler com as guardas do servidor. Num GET, o "corpo"
@@ -347,7 +363,7 @@ export function criarApiFalsa() {
       )
       return HttpResponse.json({ items })
     }),
-    rota('get', '/targets', () => HttpResponse.json({ items: st.alvos })),
+    rota('get', '/targets', ({ request }) => paginar(st.alvos, request)),
     rota('post', '/targets', estrita(CAMPOS_DO_ALVO, ({ corpo }) => {
       const alvo = {
         id: `alvo-${st.alvos.length + 1}`,
@@ -417,7 +433,7 @@ export function criarApiFalsa() {
       return HttpResponse.json(i)
     }),
 
-    rota('get', '/heartbeats', () => HttpResponse.json({ items: st.heartbeats })),
+    rota('get', '/heartbeats', ({ request }) => paginar(st.heartbeats, request)),
     rota('post', '/heartbeats', estrita(CAMPOS_DO_HEARTBEAT, ({ corpo }) => {
       const h = {
         id: `hb-${st.heartbeats.length + 1}`,
@@ -428,7 +444,7 @@ export function criarApiFalsa() {
         schedule: corpo.schedule as Entrada<typeof Heartbeat>['schedule'],
         grace_sec: corpo.grace_sec === undefined ? 300 : Number(corpo.grace_sec),
         state: 'waiting' as const,
-        deadline_at: agora().toISOString(),
+        deadline_at: primeiroPrazo(corpo.grace_sec === undefined ? 300 : Number(corpo.grace_sec)),
         last_ping_at: null,
         last_success_at: null,
         last_start_at: null,
@@ -453,9 +469,11 @@ export function criarApiFalsa() {
       const h = st.heartbeats.find((x) => x.id === params.id)
       if (!h) return erro(404, 'not_found')
       const retomou = corpo.enabled === true && !h.enabled
+      const recomecaOPrazo = retomou || mudouOPrazo(h, corpo)
       Object.assign(h, corpo)
-      if (retomou) retomar(h)
-      else if (corpo.enabled === false) h.state = 'paused'
+      if (retomou) h.last_start_at = null
+      if (recomecaOPrazo) h.deadline_at = primeiroPrazo(h.grace_sec)
+      h.state = statusDe(h)
       return HttpResponse.json(h)
     }, { schedule: CAMPOS_DO_AGENDAMENTO })),
     rota('delete', '/heartbeats/:id', ({ params }) => {
