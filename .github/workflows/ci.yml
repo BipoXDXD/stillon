@@ -211,6 +211,8 @@ jobs:
         run: sh deploy/ci/checar-nome.sh
       - name: vps.sh contra um ssh falso
         run: sh deploy/ci/testar-vps.sh
+      - name: snapshot do banco no backup, contra Docker falso
+        run: python3 deploy/ci/test_snapshot_banco_backup.py
 
   web:
     runs-on: ubuntu-latest

@@ -185,11 +185,17 @@ test('login, cadastro de alvo, status, F5, detalhe, apagar, encerrar a sessão e
     await expect(page.getByRole('heading', { name: 'Painel' })).toBeVisible()
     await expect(page.getByRole('link', { name: nomeDoAlvo })).toHaveCount(0)
 
-    // 8. Nada do token no storage; o cookie de refresh é invisível ao JS. (Duas
-    //    guardas: o HttpOnly é do servidor — este teste prova a propriedade.)
+    // 8. Nada do token no storage, e o cookie de refresh é invisível ao JS. O
+    //    atributo vem do jar do navegador: o document.cookie desta página nunca o
+    //    traria, com HttpOnly ou sem, porque o Path dele é só o da autenticação.
     const armazenado = await page.evaluate(() => JSON.stringify({ ...localStorage, ...sessionStorage }))
     expect(armazenado).not.toMatch(/eyJ/)
-    expect(await page.evaluate(() => document.cookie)).not.toContain('stillon_refresh')
+    const cookies = await page.context().cookies()
+    expect(cookies.find((c) => c.name === 'stillon_refresh')).toMatchObject({
+      httpOnly: true,
+      sameSite: 'Strict',
+      path: '/api/v1/auth',
+    })
 
     // 9. Zero violações de CSP no caminho todo, inclusive antes dos F5.
     await controlePositivo(page, 'o caminho até o passo 9')
