@@ -521,6 +521,36 @@ class BoundaryTests(unittest.TestCase):
         value = json.loads((collector.output/"manifesto.json").read_text())
         self.assertIn("close_timeout", value["errors"])
 
+    def test_container_registrado_durante_os_snapshots_nao_perde_o_manifesto(self):
+        collector = self.collector()
+        collector.registry[CID] = {}
+
+        def thread_presa_registra_outro(cid):
+            collector.registry[cid + "-novo"] = {}
+
+        with mock.patch.object(collector, "snapshot", side_effect=thread_presa_registra_outro):
+            collector.close(0, 0)
+        value = json.loads((collector.output/"manifesto.json").read_text())
+        self.assertEqual(value["containers"], [CID, CID + "-novo"])
+
+    def test_manifesto_e_montado_sob_a_trava(self):
+        collector = self.collector()
+        trava_livre = []
+
+        def outra_thread_tenta_a_trava(*_):
+            def tentar():
+                obtida = collector.lock.acquire(blocking=False)
+                trava_livre.append(obtida)
+                if obtida:
+                    collector.lock.release()
+            thread = threading.Thread(target=tentar)
+            thread.start()
+            thread.join(timeout=2)
+
+        with mock.patch.object(collector, "write", side_effect=outra_thread_tenta_a_trava):
+            collector.close(0, 0)
+        self.assertEqual(trava_livre, [False])
+
     def test_pipe_herdado_nao_bloqueia_finalizacao(self):
         collector = self.collector()
         read_fd, write_fd = os.pipe()
