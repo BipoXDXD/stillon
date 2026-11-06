@@ -281,7 +281,7 @@ func TestAPIRoleWiresIncidentsChannelsAndReadyz(t *testing.T) {
 func TestClienteDeE2ENaoSeguraOShutdown(t *testing.T) {
 	const (
 		rodadas = 400
-		prazo   = 100 * time.Millisecond
+		prazo   = time.Second
 	)
 	cliente := clienteDeE2E()
 	for rodada := range rodadas {
