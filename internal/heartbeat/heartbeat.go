@@ -116,7 +116,7 @@ func ParseExitCode(s string) (ExitCode, bool) {
 	if err != nil {
 		return ExitCode{}, false
 	}
-	return ExitCode{value: int16(n)}, true // #nosec G115 -- ParseUint limita a 8 bits.
+	return ExitCode{value: int16(n)}, true
 }
 
 // Signal é o sinal que o código representa: 0 é sucesso, o resto é falha.
