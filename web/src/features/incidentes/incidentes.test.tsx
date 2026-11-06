@@ -352,6 +352,15 @@ describe('incidentes', () => {
       expect(await screen.findByText('1 em andamento, 1 reconhecido.')).toBeInTheDocument()
     })
 
+    // O servidor dá next_cursor com a página cheia: com exatamente o limite, a
+    // tela não sabe se há mais. Sabotagem: a falsa só dar cursor se sobrar item.
+    it('com exatamente 100 abertos, o resumo diz "ou mais"', async () => {
+      const r = await renderizarPainel('/incidents?status=resolved')
+      r.falsa.estado.incidentes = Array.from({ length: 100 }, (_, i) => incidente({ id: `inc-${i}` }))
+      await r.cliente.refetchQueries()
+      expect(await screen.findByText('100 ou mais incidentes abertos.')).toBeInTheDocument()
+    })
+
     // I4 da auditoria: o vazio dos abertos é o estado bom. Sabotagem: voltar
     // ao parágrafo "Nenhum incidente aberto." sem o ícone.
     it('sem abertos, o vazio é positivo: check em círculo verde, sem frase de resumo', async () => {
