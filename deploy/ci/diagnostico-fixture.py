@@ -355,17 +355,22 @@ class Collector:
                 proc.stdout.close()
         else:
             self.error("pipe_not_closed")
-        for cid in self.registry:
+        # Uma thread presa segue viva aqui, e pode registrar mais um contêiner:
+        # iterar o registro sem copiar perderia o manifesto com RuntimeError.
+        with self.lock:
+            registrados = list(self.registry)
+        for cid in registrados:
             if deadline - time.monotonic() < 2:
                 self.error("close_timeout")
                 break
             self.snapshot(cid)
-        self.write("manifesto.json", {"startedAt": self.started, "finishedAt": utc(),
-                                     "testExit": test_exit, "interrupted": interrupted,
-                                     "collectorStatus": self.status, "errors": self.errors,
-                                     "ownershipMode": "session_registry" if self.allowed_sessions is not None else "exclusive_daemon" if self.exclusive else "denied",
-                                     "containers": list(self.registry), "bytesWritten": self.written,
-                                     "collectionComplete": False})
+        with self.lock:
+            self.write("manifesto.json", {"startedAt": self.started, "finishedAt": utc(),
+                                         "testExit": test_exit, "interrupted": interrupted,
+                                         "collectorStatus": self.status, "errors": self.errors,
+                                         "ownershipMode": "session_registry" if self.allowed_sessions is not None else "exclusive_daemon" if self.exclusive else "denied",
+                                         "containers": list(self.registry), "bytesWritten": self.written,
+                                         "collectionComplete": False})
 
 
 def main(argv=None):
