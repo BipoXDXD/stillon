@@ -8,7 +8,8 @@ import path from 'node:path'
 // painel embutido. Tudo em e2e/.tmp, que o .gitignore ignora.
 
 export const RAIZ = path.resolve(import.meta.dirname, '../..')
-const TMP = path.join(import.meta.dirname, '.tmp')
+// E2E_TMP: só o teste da limpeza usa, para não tocar numa rodada de verdade.
+const TMP = process.env.E2E_TMP ?? path.join(import.meta.dirname, '.tmp')
 const ESTADO = path.join(TMP, 'pilha.json')
 
 export const EMAIL = 'e2e@stillon.example'
@@ -214,10 +215,16 @@ export function desligar2FA(email: string) {
 }
 
 // É o nosso binário: o pid de uma rodada velha pode ter sido reusado por
-// outro processo. Sem /proc (macOS), não se sabe, e não se mata.
+// outro processo. O ps existe no Linux e no macOS, que não tem /proc; com o
+// pid já morto ele sai com erro, e não há o que matar. -ww: sem cortar a linha.
 function ehONossoBinario(pid: number): boolean {
+  const binario = path.join(TMP, 'stillon')
   try {
-    return readFileSync(`/proc/${pid}/cmdline`, 'utf8').split('\0')[0] === path.join(TMP, 'stillon')
+    const comando = execFileSync('ps', ['-ww', '-o', 'command=', '-p', String(pid)], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim()
+    return comando === binario || comando.startsWith(`${binario} `)
   } catch {
     return false
   }
