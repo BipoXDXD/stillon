@@ -67,9 +67,9 @@ push na `main` termina com sucesso, confere o SHA exato e envia as imagens à VP
   sempre, porque `storage.Migrate` recusa número menor que o aplicado; a vinculação Discord pega o
   próximo número livre ([spec de heartbeats](docs/superpowers/specs/2026-11-05-heartbeats-design.md)).
 
-**VPS (conferido na API da Hostinger em 2026-11-05).** A produção é a `srv2070196`, com Coolify, paga
-até 2027-10-17 e sem renovação automática. A anterior, `srv2008471`, foi cancelada de propósito e
-venceu em 2026-10-25: não perguntar sobre a renovação dela.
+**VPS (conferido na API da Hostinger em 2026-11-05).** A produção tem Coolify, está paga até
+2027-10-17 e sem renovação automática. A anterior foi cancelada de propósito e venceu em 2026-10-25:
+não perguntar sobre a renovação dela.
 
 **Redesign** (direção C, "Editorial claro", Fraunces + Inter, primária índigo,
 [spec](docs/superpowers/specs/2026-10-14-redesign-painel-design.md)): concluído (PRs 1 a 8 na `main`, o
