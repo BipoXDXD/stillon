@@ -16,6 +16,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -91,6 +92,47 @@ func New(t *testing.T) *pgxpool.Pool {
 		}
 	})
 	return pool
+}
+
+// intervaloDaConsulta é o passo do polling de EsperarBloqueados, não um prazo.
+const intervaloDaConsulta = 10 * time.Millisecond
+
+// EsperarBloqueados é a corrida entre dois eventos: n backends deste banco
+// pararem numa trava (de linha, de tabela ou advisory) e a operação que devia
+// parar terminar antes, o defeito que os testes de trava procuram. Devolve
+// true no primeiro caso e false no segundo. Não tem prazo próprio, porque prazo
+// de parede falha à toa com a máquina carregada; o limite é o t.Context(), na
+// prática o -timeout do go test.
+//
+// fim precisa de buffer: a espera olha len(fim), sem consumir, e o resultado
+// continua lá para o teste.
+func EsperarBloqueados[T any](t *testing.T, pool *pgxpool.Pool, n int, fim <-chan T) bool {
+	t.Helper()
+	if cap(fim) == 0 {
+		t.Fatal("EsperarBloqueados precisa de um canal com buffer")
+	}
+	ctx := t.Context()
+	passo := time.NewTicker(intervaloDaConsulta)
+	defer passo.Stop()
+	for {
+		var bloqueados int
+		if err := pool.QueryRow(ctx,
+			`SELECT count(*) FROM pg_stat_activity
+			  WHERE datname = current_database() AND wait_event_type = 'Lock'`).Scan(&bloqueados); err != nil {
+			t.Fatal(err)
+		}
+		if bloqueados >= n {
+			return true
+		}
+		if len(fim) > 0 {
+			return false
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		case <-passo.C:
+		}
+	}
 }
 
 // DSN é a string de conexão do papel da aplicação, para quem precisa passar

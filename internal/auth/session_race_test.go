@@ -5,11 +5,9 @@ import (
 	"errors"
 	"sync"
 	"testing"
-	"time"
-
-	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/BipoXDXD/stillon/internal/auth"
+	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 )
 
 // storeQuePausa segura a transação logo depois de LockSessionByHash, com a
@@ -38,28 +36,6 @@ func (t txQuePausa) LockSessionByHash(ctx context.Context, hash []byte) (auth.Se
 	close(t.travou)
 	<-t.solta
 	return r, err
-}
-
-// esperarAlguemBloqueado espera um backend deste banco aparecer esperando uma
-// trava (de linha ou advisory). É o que prova que a revogação chegou ao ponto
-// de conflito antes de a rotação ser solta; sem isso, o teste poderia soltar a
-// rotação cedo demais e nunca exercitar a corrida.
-func esperarAlguemBloqueado(t *testing.T, pool *pgxpool.Pool) {
-	t.Helper()
-	prazo := time.Now().Add(5 * time.Second)
-	for time.Now().Before(prazo) {
-		var n int
-		if err := pool.QueryRow(context.Background(),
-			`SELECT count(*) FROM pg_stat_activity
-			  WHERE datname = current_database() AND wait_event_type = 'Lock'`).Scan(&n); err != nil {
-			t.Fatal(err)
-		}
-		if n > 0 {
-			return
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	t.Fatal("a revogação nunca ficou esperando a rotação: o teste não exercitou a corrida")
 }
 
 // Revogar uma família enquanto ela é rotacionada não pode deixar o sucessor
@@ -103,7 +79,7 @@ func TestRevokingDuringRotationLeavesNothingAlive(t *testing.T) {
 
 			travou, solta := make(chan struct{}), make(chan struct{})
 			// soltar fecha solta uma vez só, e o t.Cleanup a chama se o teste
-			// morrer antes (o t.Fatal de esperarAlguemBloqueado): sem isso, a
+			// morrer antes (o t.Fatal logo abaixo): sem isso, a
 			// rotação ficaria parada com as travas na mão, e o fechamento do
 			// pool esperaria por ela até o timeout do go test.
 			var umaVez sync.Once
@@ -121,7 +97,11 @@ func TestRevokingDuringRotationLeavesNothingAlive(t *testing.T) {
 
 			revogacao := make(chan error, 1)
 			go func() { revogacao <- caso.revogar(ctx, mgr, antigo) }()
-			esperarAlguemBloqueado(t, pool)
+			// Só com a revogação no ponto de conflito soltar a rotação exercita
+			// a corrida.
+			if !testdb.EsperarBloqueados(t, pool, 1, revogacao) {
+				t.Fatal("a revogação terminou sem esperar a rotação: o teste não exercitou a corrida")
+			}
 			soltar()
 
 			if err := <-rotacao; err != nil {

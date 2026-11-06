@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/BipoXDXD/stillon/internal/storage/db"
+	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 	"github.com/BipoXDXD/stillon/internal/targets"
 )
 
@@ -136,13 +137,15 @@ func TestProbeWriteWaitsForAnOpenPatchAndSeesTheNewURL(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	gravou := make(chan struct{})
+	gravou := make(chan struct{}, 1)
 	go func() {
-		defer close(gravou)
+		defer func() { gravou <- struct{}{} }()
 		a := db.ClaimDueTargetsRow{ID: alvo, UserID: b.dono, URL: urlVelha, Method: "GET", IntervalSec: 60}
 		b.s.gravar(a, b.clk.Now(), Result{Status: StatusDown, ErrorKind: KindTimeout})
 	}()
-	esperarBloqueio(ctx, t, b, gravou)
+	if !testdb.EsperarBloqueados(t, b.pool, 1, gravou) {
+		t.Fatal("a gravação terminou com o PATCH aberto; deveria esperar a linha do alvo")
+	}
 
 	if err := tx.Commit(ctx); err != nil {
 		t.Fatal(err)
@@ -171,34 +174,5 @@ func TestProbeWithTheOldMethodIsDiscarded(t *testing.T) {
 
 	if n := b.falhasSeguidas(t, alvo); n != 0 {
 		t.Errorf("%d falhas seguidas; a sonda com o método velho contou", n)
-	}
-}
-
-// esperarBloqueio volta quando alguma conexão do banco de teste espera uma
-// trava de linha; falha se a gravação terminar antes disso.
-func esperarBloqueio(ctx context.Context, t *testing.T, b *bancada, gravou <-chan struct{}) {
-	t.Helper()
-	espera, parar := context.WithTimeout(ctx, esperaMaxima)
-	defer parar()
-	tick := time.NewTicker(20 * time.Millisecond)
-	defer tick.Stop()
-	for {
-		var bloqueada bool
-		if err := b.pool.QueryRow(espera, `SELECT EXISTS (
-			SELECT 1 FROM pg_stat_activity
-			 WHERE datname = current_database() AND pid <> pg_backend_pid()
-			   AND wait_event_type = 'Lock')`).Scan(&bloqueada); err != nil {
-			t.Fatalf("observar as conexões: %v", err)
-		}
-		if bloqueada {
-			return
-		}
-		select {
-		case <-gravou:
-			t.Fatal("a gravação terminou com o PATCH aberto; deveria esperar a linha do alvo")
-		case <-tick.C:
-		case <-espera.Done():
-			t.Fatal("a gravação não chegou a esperar o PATCH")
-		}
 	}
 }

@@ -10,6 +10,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 )
 
 // As provas do 2FA pelo HTTP depois do Plano 10: o código do login não
@@ -144,7 +146,7 @@ func TestSecondFactorProofDiesWithTheRotation(t *testing.T) {
 			soltar := prenderTravaDeSessoes(t, a)
 			fim := postAssincrono(t, a.srv.URL+"/api/v1/auth/totp/verify", "",
 				map[string]string{"challenge": desafio, "code": codigoDe(t, a, segredo)})
-			esperou := esperarBloqueados(t, a.pool, 1)
+			esperou := testdb.EsperarBloqueados(t, a.pool, 1, fim)
 			if caso.mudar != "" {
 				if _, err := a.pool.Exec(context.Background(), caso.mudar, a.userID); err != nil {
 					t.Fatal(err)
@@ -279,7 +281,7 @@ func TestTOTPRoutesAnswerUnauthorizedWhenTheUserVanishes(t *testing.T) {
 				t.Fatal(err)
 			}
 			fim := postAssincrono(t, a.srv.URL+"/api/v1/auth/totp/"+caso.rota, token, caso.corpo(a, segredo))
-			esperou := esperarBloqueados(t, a.pool, 1)
+			esperou := testdb.EsperarBloqueados(t, a.pool, 1, fim)
 			if _, err := tx.Exec(ctx, `DELETE FROM users WHERE id = $1`, a.userID); err != nil {
 				t.Fatal(err)
 			}

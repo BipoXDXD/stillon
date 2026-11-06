@@ -3,7 +3,6 @@ package notify
 import (
 	"context"
 	"errors"
-	"runtime"
 	"testing"
 	"time"
 
@@ -157,24 +156,6 @@ func (b *bancadaLembretes) lembretes(t *testing.T, canal uuid.UUID) []lembrete {
 	return ls
 }
 
-// esperarAlguemTravado espera até alguma sessão estar parada esperando uma
-// trava, sem sleep fixo: é o sinal de que o segundo job chegou ao UNIQUE.
-func esperarAlguemTravado(t *testing.T, pool *pgxpool.Pool) {
-	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	for {
-		var n int
-		if err := pool.QueryRow(ctx, `SELECT count(*) FROM pg_locks WHERE NOT granted`).Scan(&n); err != nil {
-			t.Fatalf("nenhuma sessão travou: %v", err)
-		}
-		if n > 0 {
-			return
-		}
-		runtime.Gosched()
-	}
-}
-
 func TestRemindersNothingBeforeDue(t *testing.T) {
 	b := novaBancadaLembretes(t)
 	discord := b.canal(t, KindDiscord, nil)
@@ -242,7 +223,10 @@ func TestRemindersConcurrentJobsEnqueueOne(t *testing.T) {
 		n, err := b.r.Tick(ctx)
 		feito <- resultado{n, err}
 	}()
-	esperarAlguemTravado(t, b.pool)
+	// Parar na trava é o sinal de que o segundo job chegou ao UNIQUE.
+	if !testdb.EsperarBloqueados(t, b.pool, 1, feito) {
+		t.Fatal("o Tick terminou sem esperar o job concorrente")
+	}
 	if err := tx.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
