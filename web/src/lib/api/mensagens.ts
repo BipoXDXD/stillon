@@ -62,6 +62,8 @@ const porMotivo: Record<string, string> = {
   unavailable: 'Indisponível neste servidor.',
 }
 
+const CARACTERE_INVISIVEL = 'Tem um caractere que não pode ser mostrado'
+
 // Mensagens específicas por campo, quando o motivo sozinho diz pouco.
 const porCampo: Record<string, Record<string, string>> = {
   url: {
@@ -74,10 +76,10 @@ const porCampo: Record<string, Record<string, string>> = {
     too_long: 'Cada tag tem até 24 caracteres.',
     out_of_range: 'Até 8 tags.',
   },
-  description: { invalid: 'Tem um caractere que não pode ser mostrado.', out_of_range: 'No máximo 1000 caracteres.' },
+  description: { invalid: `${CARACTERE_INVISIVEL}.`, out_of_range: 'No máximo 1000 caracteres.' },
   period_sec: { out_of_range: 'Entre 1 minuto e 31 dias.' },
   grace_sec: { out_of_range: 'Entre 30 segundos e 7 dias.' },
-  expr: { invalid: 'Use os cinco campos, com um disparo que exista: 0 3 * * *.' },
+  expr: { invalid: 'Use os cinco campos, com um disparo que exista: 0 3 * * *. Domingo é 0 ou SUN, não 7; de sexta a domingo, 5,6,0.' },
   timezone: { invalid: 'Use um fuso IANA, como America/Sao_Paulo.' },
   timeout_ms: { out_of_range: 'Entre 1000 e 30000 ms, e menor que 90% do intervalo.' },
   interval_sec: { out_of_range: 'Entre 30 segundos e 1 dia.' },
@@ -90,6 +92,10 @@ const porCampo: Record<string, Record<string, string>> = {
 export function mensagemDoCampo(campo: string, motivo: string): string {
   const raiz = campo.replace(/\[\d+\].*$/, '')
   return porCampo[raiz]?.[motivo] ?? porMotivo[motivo] ?? 'Valor inválido.'
+}
+
+export function mensagemDaLinhaDaDescricao(linha: number): string {
+  return `${CARACTERE_INVISIVEL} na linha ${linha}.`
 }
 
 // Os textos dos vocabulários do sondador e dos canais.

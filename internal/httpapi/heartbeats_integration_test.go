@@ -17,6 +17,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/prometheus/client_golang/prometheus"
 
+	"github.com/BipoXDXD/stillon/internal/apierr"
 	"github.com/BipoXDXD/stillon/internal/crypto"
 	"github.com/BipoXDXD/stillon/internal/heartbeat"
 	"github.com/BipoXDXD/stillon/internal/notify"
@@ -390,6 +391,45 @@ func TestPatchWithInvalidDescriptionChangesNothing(t *testing.T) {
 	}
 }
 
+// O 400 diz a linha pelo campo, no envelope de sempre, e não ecoa o texto: a
+// descrição é do dono, mas o erro passa por logs e proxies.
+func TestInvalidDescriptionNamesTheLineWithoutEchoingIt(t *testing.T) {
+	const texto = "CANARY-linha-1\n\nCANARY-linha-3\u202E"
+	querCampos := []apierr.FieldError{{Field: "description[2]", Reason: "invalid"}}
+
+	a := newAPI(t)
+	dono := tokenDe(t, a, a.userID)
+	id, _ := criarHB(t, a, dono, corpoDePeriodo)
+	corpo := maps.Clone(corpoDePeriodo)
+	corpo["description"] = texto
+	chamadas := []struct {
+		nome, metodo, rota string
+		corpo              map[string]any
+	}{
+		{"POST", http.MethodPost, "/api/v1/heartbeats", corpo},
+		{"PATCH", http.MethodPatch, "/api/v1/heartbeats/" + id, map[string]any{"description": texto}},
+	}
+	for _, c := range chamadas {
+		t.Run(c.nome, func(t *testing.T) {
+			status, resp := lerCru(t, a, c.metodo, c.rota, dono, c.corpo)
+			if strings.Contains(resp, "CANARY") {
+				t.Errorf("a resposta ecoou a descrição: %s", resp)
+			}
+			var env struct {
+				Error struct {
+					Fields []apierr.FieldError `json:"fields"`
+				} `json:"error"`
+			}
+			if err := json.Unmarshal([]byte(resp), &env); err != nil {
+				t.Fatal(err)
+			}
+			if status != http.StatusBadRequest || !slices.Equal(env.Error.Fields, querCampos) {
+				t.Errorf("%d %s, queria 400 com %v", status, resp, querCampos)
+			}
+		})
+	}
+}
+
 func TestAnotherUsersHeartbeatDescriptionStaysOut(t *testing.T) {
 	a := newAPI(t)
 	dono := tokenDe(t, a, a.userID)
@@ -651,7 +691,7 @@ func TestHeartbeatValidationBoundaries(t *testing.T) {
 		{"tolerância acima", map[string]any{"name": "a", "schedule": periodo(60), "grace_sec": 604801}, false, "grace_sec"},
 		{"descrição no teto", map[string]any{"name": "a", "schedule": periodo(60), "description": strings.Repeat("é", 1000)}, true, ""},
 		{"descrição acima do teto", map[string]any{"name": "a", "schedule": periodo(60), "description": strings.Repeat("é", 1001)}, false, "description"},
-		{"descrição com NUL", map[string]any{"name": "a", "schedule": periodo(60), "description": "a\u0000b"}, false, "description"},
+		{"descrição com NUL", map[string]any{"name": "a", "schedule": periodo(60), "description": "a\u0000b"}, false, "description[0]"},
 	}
 	a := newAPI(t)
 	for i, c := range casos {

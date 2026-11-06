@@ -54,7 +54,8 @@ const (
 )
 
 // ValidationError aponta o campo culpado. Field e Reason vêm sempre de
-// constantes do código, nunca da entrada.
+// constantes do código, nunca da entrada; o que se calcula é só o índice da
+// linha em description[i].
 type ValidationError struct {
 	Field, Reason string
 }
