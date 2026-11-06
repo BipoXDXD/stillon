@@ -194,6 +194,7 @@ dos PRs desta rodada.
 
 ## Armadilhas
 
+- **Sem redeploy do banco** até restaurar a imagem por nome: ver `deploy/coolify/README.md`.
 - `[skip ci]` no título do PR ou do commit pula o `ci` da `main` e **impede a publicação** daquele
   commit. Serve para documentação; para código, nunca.
 - O `stash` do git é compartilhado entre as worktrees: nada de `git stash` ou `pop` sem tag.
