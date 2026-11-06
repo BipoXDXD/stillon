@@ -35,6 +35,8 @@ SENHA=senha-do-teste-da-borda-2026
 # Teto de um cliente que tenta passar do balde de login (rajada de 5, um token
 # a cada 6 s): quem chega aqui sem 429 não está sendo limitado.
 TENTATIVAS_DE_LOGIN=12
+# Tentativas até o 429 de quem já estava sem saldo: uma reposta e a recusa.
+LOGINS_APOS_O_429=2
 # Pings até o 429 (rajada de 300 no balde por IP) e o lote de conferência.
 TETO_DE_PINGS=3000
 LOTE_DE_PINGS=100
@@ -141,24 +143,36 @@ B=198.51.100.12
 visto "login do cliente A" "$A" --origem "$BORDA_CF" --cf "$A"
 n=$(logins_ate_o_429 --origem "$BORDA_CF" --cf "$A")
 [ -n "$n" ] || falhar "login: o cliente A fez $TENTATIVAS_DE_LOGIN tentativas sem 429"
+# Logo depois do 429, e ainda assim com folga: o balde repõe um token a cada
+# 6 s, e um pode cair entre as duas tentativas. Um balde novo, o da borda, daria
+# a rajada inteira de 5 antes do 429.
+n=$(logins_ate_o_429 --origem "$OUTRA_BORDA_CF" --cf "$A")
+if [ -z "$n" ] || [ "$n" -gt "$LOGINS_APOS_O_429" ]; then
+	falhar "login: o cliente A por outra borda levou '$n' tentativas até o 429 (o balde é do cliente, não da borda)"
+fi
 visto "login do cliente B, com o A sem saldo na mesma borda" "$B" --origem "$BORDA_CF" --cf "$B"
-c=$(cliente login --origem "$OUTRA_BORDA_CF" --cf "$A")
-[ "$c" = 429 ] || falhar "login: o cliente A por outra borda deu $c, queria 429 (o balde é do cliente, não da borda)"
 ok "login: cada cliente tem o seu balde, atrás da mesma borda e entre bordas"
 
 # 2. Ping: o mesmo no balde por IP. A conferência é um lote, e não um envio: o
 #    balde repõe 20 tokens por segundo, e um único ping passaria de qualquer
-#    jeito logo depois do 429.
+#    jeito logo depois do 429. Pelo mesmo motivo, cada conferência começa com o
+#    balde recém-esgotado: um lote depois do outro herdaria os tokens repostos
+#    no tempo do primeiro, e o resultado dependeria da velocidade do runner.
 C=198.51.100.21
 D=198.51.100.22
 BORDA_PING=162.158.10.3
 OUTRA_BORDA_PING=172.69.39.3
-read -r enviados recusados <<<"$(cliente ping --origem "$BORDA_PING" --cf "$C" --quantos "$TETO_DE_PINGS" --parar-no-429)"
-[ "$recusados" = 1 ] || falhar "ping: o cliente C mandou $enviados sem nenhum 429"
-read -r _ recusados <<<"$(cliente ping --origem "$BORDA_PING" --cf "$D" --quantos "$LOTE_DE_PINGS")"
-[ "$recusados" = 0 ] || falhar "ping: o cliente D teve $recusados de $LOTE_DE_PINGS recusados, com o C sem saldo na mesma borda"
+esgotar_pings_de_c() {
+    local enviados recusados
+    read -r enviados recusados <<<"$(cliente ping --origem "$BORDA_PING" --cf "$C" --quantos "$TETO_DE_PINGS" --parar-no-429)"
+    [ "$recusados" = 1 ] || falhar "ping: o cliente C mandou $enviados sem nenhum 429"
+}
+esgotar_pings_de_c
 read -r _ recusados <<<"$(cliente ping --origem "$OUTRA_BORDA_PING" --cf "$C" --quantos "$LOTE_DE_PINGS")"
 [ "$recusados" -gt 0 ] || falhar "ping: o cliente C por outra borda não teve recusa (o balde é do cliente, não da borda)"
+esgotar_pings_de_c
+read -r _ recusados <<<"$(cliente ping --origem "$BORDA_PING" --cf "$D" --quantos "$LOTE_DE_PINGS")"
+[ "$recusados" = 0 ] || falhar "ping: o cliente D teve $recusados de $LOTE_DE_PINGS recusados, com o C sem saldo na mesma borda"
 ok "ping: cada cliente tem o seu balde por IP"
 
 # 3. De fora das faixas, o CF-Connecting-IP forjado não vale: conta a origem.
@@ -181,8 +195,12 @@ visto "em 2606:4700::/32" 198.51.100.33 --origem 2606:4700::10 --cf 198.51.100.3
 ok "de fora das faixas não se escolhe o IP, e a lista vale nas fronteiras"
 
 # 3b. A Cloudflare manda IPv6 quando o cliente é IPv6; o app grava a forma
-#     normalizada (minúsculas).
+#     normalizada: minúsculas, e :: só para dois grupos zerados ou mais. Os dois
+#     últimos casos casam, cada um, uma única alternativa da regex: oito grupos
+#     e o :: entre três e quatro grupos.
 visto "cliente IPv6" 2001:db8:1::77 --origem "$OUTRA_BORDA_CF" --cf 2001:DB8:1::77
+visto "cliente IPv6 de oito grupos" 2001:db8:2:3:4:5:6:7 --origem "$OUTRA_BORDA_CF" --cf 2001:db8:2:3:4:5:6:7
+visto "cliente IPv6 com :: no meio" 2001:db8:3:0:4:5:6:7 --origem "$OUTRA_BORDA_CF" --cf 2001:db8:3::4:5:6:7
 ok "cliente IPv6 chega ao app"
 
 # 4. Valor inválido ou duplicado é ignorado: conta a borda da Cloudflare, que é

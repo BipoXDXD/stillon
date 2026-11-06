@@ -6,10 +6,11 @@
 # quem conectou, nunca o que o cliente mandou.
 #
 # Este é o trecho do runbook e do checar-vps.sh. A borda de produção é a do
-# GoblinShift (docker/gateway/sites/stillon.tech.caddy): atrás da Cloudflare e
-# do Traefik, quem conecta é a Cloudflare, e o IP do cliente vem do
-# CF-Connecting-IP. Aquela cadeia tem o próprio teste, o
-# deploy/ci/checar-borda-cloudflare.sh.
+# GoblinShift (docker/gateway/sites/stillon.tech.caddy), atrás da Cloudflare e
+# do Traefik: lá quem conecta é a Cloudflare. Ler o IP do cliente do
+# CF-Connecting-IP é a correção que deploy/ci/checar-borda-cloudflare.sh prova
+# numa fixture (deploy/ci/vps/borda-cloudflare); ela só vale em produção depois
+# de aplicada naquele repositório.
 stillon.tech {
 	# O IP reservado ao Caddy do StillOn na rede edge (compose.prod.yaml).
 	reverse_proxy 172.31.0.3:80
