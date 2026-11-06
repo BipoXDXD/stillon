@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
 	"net/netip"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -43,6 +45,18 @@ var (
 	testIPHashKey = []byte("chave-de-teste-com-32-bytes-ok!!")
 	testMasterKey = []byte("chave-mestra-de-teste-32-bytes!!")
 )
+
+// hashDaFixture é o Argon2id de testPass, calculado uma vez por processo: cada
+// hash custa mais de 1 s com -race, e toda fixture repetia a mesma conta. Os
+// parâmetros são os da produção, então o login dos testes continua pagando a
+// verificação real e nenhum deles dispara o rehash por acidente.
+var hashDaFixture = sync.OnceValue(func() string {
+	hash, err := auth.HashPassword(context.Background(), testPass)
+	if err != nil {
+		panic(fmt.Errorf("hash da fixture: %w", err))
+	}
+	return hash
+})
 
 type api struct {
 	srv    *httptest.Server
@@ -85,14 +99,10 @@ func newAPICom(t *testing.T, ajustar func(*config.Config), ajustarDeps func(*htt
 	// e a hora cheia usada pelos testes de agregação e suas janelas.
 	clk := clock.NewFake(time.Now().UTC().Truncate(time.Hour))
 
-	hash, err := auth.HashPassword(context.Background(), testPass)
-	if err != nil {
-		t.Fatal(err)
-	}
 	userID := uuid.New()
 	if _, err := pool.Exec(context.Background(),
 		`INSERT INTO users (id, email, password_hash) VALUES ($1, $2, $3)`,
-		userID, testEmail, hash); err != nil {
+		userID, testEmail, hashDaFixture()); err != nil {
 		t.Fatal(err)
 	}
 

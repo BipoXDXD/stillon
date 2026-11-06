@@ -31,6 +31,22 @@ func prenderVagasDoArgon2(t *testing.T, n int) func() {
 	return soltar
 }
 
+// A fixture reaproveita um hash só, mas ele tem de continuar sendo um hash com
+// os parâmetros de produção: com um mais fraco, todo login dos testes pagaria
+// um rehash que a produção não paga, e o custo real sumiria sem ninguém ver.
+func TestFixtureHashUsesProductionParameters(t *testing.T) {
+	ok, precisaDeRehash, err := auth.VerifyPassword(t.Context(), hashDaFixture(), testPass)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Error("o hash da fixture não confere com testPass")
+	}
+	if precisaDeRehash {
+		t.Error("o hash da fixture tem parâmetros mais fracos que os de produção")
+	}
+}
+
 // A1 (Plano 10, §3.1): com o teto do Argon2id cheio, as rotas que pagam um
 // Argon2id respondem 429 rate_limited com Retry-After: 2 depois do prazo de
 // aquisição, em vez de empilhar 64 MiB por requisição até o processo morrer.
