@@ -4,6 +4,13 @@
 # .env do StillOn. TLS e o redirecionamento de http para https são da borda;
 # sem trusted_proxies na borda, o X-Forwarded-For que chega aqui é o IP de
 # quem conectou, nunca o que o cliente mandou.
+#
+# Este é o trecho do runbook e do checar-vps.sh. A borda de produção é a do
+# GoblinShift (docker/gateway/sites/stillon.tech.caddy), atrás da Cloudflare e
+# do Traefik: lá quem conecta é a Cloudflare. Ler o IP do cliente do
+# CF-Connecting-IP é a correção que deploy/ci/checar-borda-cloudflare.sh prova
+# numa fixture (deploy/ci/vps/borda-cloudflare); ela só vale em produção depois
+# de aplicada naquele repositório.
 stillon.tech {
 	# O IP reservado ao Caddy do StillOn na rede edge (compose.prod.yaml).
 	reverse_proxy 172.31.0.3:80

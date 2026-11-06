@@ -56,7 +56,7 @@ export function AreaDeTexto({ className, ...props }: ComponentProps<'textarea'>)
 }
 
 export function Selecao({ className, ...props }: ComponentProps<'select'>) {
-  return <select className={cn(estiloDeEntrada, className)} {...props} />
+  return <select className={cn(estiloDeEntrada, 'seta-da-selecao', className)} {...props} />
 }
 
 // Checkbox com o rótulo na mesma linha, que inteira é a área de toque (44 px).

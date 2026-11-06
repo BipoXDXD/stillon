@@ -1,0 +1,27 @@
+# SÓ PARA O TESTE (deploy/ci/checar-borda-cloudflare.sh). Cópia do Caddyfile da
+# borda de produção (origem no compose.yaml ao lado). A única diferença é o
+# local_certs no lugar do cert_issuer acme: o teste não pede certificado real.
+{
+ local_certs
+ servers :443 {
+  protocols h1 h2
+  listener_wrappers {
+   proxy_protocol {
+    timeout 2s
+    allow 172.16.1.6/32
+    fallback_policy reject
+   }
+   tls
+  }
+ }
+ servers {
+  protocols h1 h2
+  trusted_proxies static 172.16.1.6/32
+  trusted_proxies_strict
+  client_ip_headers X-Forwarded-For
+ }
+}
+http://goblinshift.dev, http://stillon.tech, http://www.goblinshift.dev, http://www.stillon.tech {
+ redir https://{host}{uri} 308
+}
+import /etc/caddy/conf.d/*.caddy
