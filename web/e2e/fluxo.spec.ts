@@ -118,8 +118,11 @@ test('login, cadastro de alvo, status, F5, detalhe, apagar, encerrar a sessão e
 
     // 3. Cadastrar. O alvo .invalid (RFC 2606) passa pela validação de
     //    cadastro, que não resolve DNS, e nunca resolve: sem rede externa.
+    //    O título primeiro: a navegação é uma transição, e até ela terminar o
+    //    "Nome" casaria com a busca do painel ("Buscar por nome ou tag").
     await page.getByRole('link', { name: 'Cadastrar alvo' }).click()
-    await page.getByLabel('Nome').fill(nomeDoAlvo)
+    await expect(page.getByRole('heading', { name: 'Novo alvo' })).toBeVisible()
+    await page.getByLabel('Nome', { exact: true }).fill(nomeDoAlvo)
     await page.getByLabel('URL').fill('https://stillon-e2e.invalid/')
     await page.getByLabel('Tags').fill('Fluxo-E2E, fluxo-e2e')
     await page.getByRole('button', { name: 'Cadastrar' }).click()
@@ -221,6 +224,9 @@ const ESPERA_DO_POLL_MS = 45_000
 const PRAZO_DA_JORNADA_MS = 300_000
 const URL_DE_PING = /\/ping\/[\w-]{43}$/
 const TAREFA_PEDE_ATENCAO = /\buma tarefa pedem? atenção\./i
+// Sem tarefa na manchete, a frase depende dos alvos da pilha: nenhum na própria,
+// e o example.com do seed no CI, normalmente no ar.
+const MANCHETE_SEM_TAREFA = /^(Todos os monitores estão pausados|Tudo no ar|Um serviço pede atenção)\.$/
 
 test('heartbeat: cadastro, URL, sinais reais, incidente, pausa, retomada, rotação e apagar', async ({ page, context, request, credenciais }, info) => {
   test.setTimeout(PRAZO_DA_JORNADA_MS)
@@ -248,14 +254,18 @@ test('heartbeat: cadastro, URL, sinais reais, incidente, pausa, retomada, rotaç
 
     // 2. Cadastrar: período e tolerância padrão, com o prazo longe do teste.
     await page.getByRole('link', { name: 'Cadastrar heartbeat' }).click()
-    await page.getByLabel('Nome').fill(nome)
-    await page.getByRole('button', { name: 'Cadastrar' }).click()
+    await expect(page.getByRole('heading', { name: 'Novo heartbeat' })).toBeVisible()
+    await page.getByLabel('Nome', { exact: true }).fill(nome)
+    await page.getByRole('button', { name: 'Cadastrar', exact: true }).click()
 
     // 3. Copiar a URL mostrada uma vez, pelo botão: vale o que chega à área de
     //    transferência, que é o que vai para a tarefa.
     await context.grantPermissions(['clipboard-read', 'clipboard-write'])
     const copiarUrl = async () => {
       const dialogo = page.getByRole('dialog', { name: 'Guarde a URL de ping' })
+      // Sem isto, um POST recusado só apareceria no fim do prazo do teste: o
+      // clique abaixo espera sem limite próprio.
+      await expect(dialogo).toBeVisible(noPoll)
       const copiar = dialogo.getByRole('button', { name: 'Copiar a URL de ping' })
       await copiar.click()
       await expect(copiar).toHaveText('Copiado')
@@ -298,14 +308,16 @@ test('heartbeat: cadastro, URL, sinais reais, incidente, pausa, retomada, rotaç
     await expect(linha('Falhando')).toBeVisible()
     await page.getByRole('link', { name: nome, exact: true }).click()
 
-    // 6. Pausar tira a tarefa da manchete, com o incidente ainda aberto (D13).
+    // 6. Pausar não encerra o incidente (D13): a manchete segue pedindo atenção.
     await page.getByRole('button', { name: 'Pausar' }).click()
     await page.getByRole('alertdialog').getByRole('button', { name: 'Pausar heartbeat' }).click()
     await expect(selo('Pausado')).toBeVisible()
+    //    A linha vem primeiro: ela prova que a lista já é a nova, e a manchete
+    //    nasce da mesma lista.
     await irAoPainel()
-    await expect(page.getByText(/Tarefas: 1 pausada\./)).toBeVisible(noPoll)
-    await expect(page.getByText(TAREFA_PEDE_ATENCAO)).toHaveCount(0)
-    await expect(linha('Pausado')).toBeVisible()
+    await expect(linha('Pausado')).toBeVisible(noPoll)
+    await expect(page.getByText(TAREFA_PEDE_ATENCAO)).toBeVisible()
+    await expect(page.getByText(/Tarefas: 1 pausada\./)).toBeVisible()
     await page.getByRole('link', { name: nome, exact: true }).click()
 
     // 7. Retomar zera a falha, e o avaliador fecha o incidente.
@@ -331,7 +343,17 @@ test('heartbeat: cadastro, URL, sinais reais, incidente, pausa, retomada, rotaç
     const guardado = await page.evaluate(() => JSON.stringify([localStorage, sessionStorage, history.state, document.body.innerText]))
     for (const u of [url, urlNova]) expect(guardado.includes(u.slice(u.lastIndexOf('/') + 1)), 'token no navegador').toBe(false)
 
-    // 9. Apagar: some do painel, e a URL deixa de existir.
+    // 9. Pausada sem incidente, a tarefa sai da manchete.
+    await page.getByRole('button', { name: 'Pausar' }).click()
+    await page.getByRole('alertdialog').getByRole('button', { name: 'Pausar heartbeat' }).click()
+    await expect(selo('Pausado')).toBeVisible()
+    await irAoPainel()
+    await expect(linha('Pausado')).toBeVisible(noPoll)
+    await expect(page.getByRole('heading', { level: 2, name: MANCHETE_SEM_TAREFA })).toBeVisible()
+    await expect(page.getByText(TAREFA_PEDE_ATENCAO)).toHaveCount(0)
+    await page.getByRole('link', { name: nome, exact: true }).click()
+
+    // 10. Apagar: some do painel, e a URL deixa de existir.
     await page.getByRole('button', { name: 'Apagar' }).click()
     await page.getByRole('alertdialog').getByRole('button', { name: 'Apagar heartbeat' }).click()
     await expect(page.getByRole('heading', { name: 'Painel' })).toBeVisible()
