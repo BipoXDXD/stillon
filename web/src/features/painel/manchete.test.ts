@@ -76,7 +76,16 @@ describe('manchete', () => {
   })
 
   it('o alvo pausado com incidente segue fora da conta', () => {
-    expect(manchete([alvo({ state: 'down', enabled: false }), alvo()], semTarefas)).toEqual({ tipo: 'tudo-no-ar' })
+    const pausado = alvo({ state: 'down', enabled: false, open_incident_id: 'i1' })
+    expect(manchete([pausado, alvo()], semTarefas)).toEqual({ tipo: 'tudo-no-ar' })
+  })
+
+  it('alvo fora do ar e tarefa pausada com incidente somam', () => {
+    const fora = alvo({ state: 'down', open_incident_id: 'i1' })
+    const lista = tarefas(hb({ state: 'paused', open_incident_id: 'i2' }))
+    expect(manchete([fora], lista)).toEqual({ tipo: 'problemas', quantos: 1, tarefas: 1 })
+    expect(textoDaManchete(manchete([fora], lista))).toBe('Um serviço e uma tarefa pedem atenção.')
+    expect(detalheDaManchete([fora], lista)).toBe('1 fora do ar. Tarefas: 1 pausada.')
   })
 
   it('heartbeat aguardando o primeiro sinal segura o "Tudo no ar."', () => {
