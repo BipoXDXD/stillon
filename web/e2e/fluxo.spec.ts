@@ -1,6 +1,11 @@
 import type { APIRequestContext, APIResponse, Page, Route } from '@playwright/test'
 import { controlePositivo, expect, test } from './fixtures'
 
+// Um clique não depende da cadência nem do poll: ele só espera o elemento. Sem
+// este prazo, um elemento que nunca aparece consumia o tempo inteiro do teste
+// e falhava sem dizer o passo.
+test.use({ actionTimeout: 15_000 })
+
 // O que o teste cadastra. Um passo que falha no meio deixaria o monitor para
 // trás, e contra uma pilha externa eles se acumulariam até o teto de 100
 // (reconciliação, item 4). O afterEach o procura pelo nome, pela API, e o
@@ -224,6 +229,8 @@ const ESPERA_DO_POLL_MS = 45_000
 const PRAZO_DA_JORNADA_MS = 300_000
 const URL_DE_PING = /\/ping\/[\w-]{43}$/
 const TAREFA_PEDE_ATENCAO = /\buma tarefa pedem? atenção\./i
+// Regex: o número soma os incidentes de alvo da pilha aos da tarefa.
+const ABA_COM_ABERTOS = /^Incidentes, \d+\+? abertos?$/
 // Sem tarefa na manchete, a frase depende dos alvos da pilha: nenhum na própria,
 // e o example.com do seed no CI, normalmente no ar.
 const MANCHETE_SEM_TAREFA = /^(Todos os monitores estão pausados|Tudo no ar|Um serviço pede atenção)\.$/
@@ -311,13 +318,14 @@ test('heartbeat: cadastro, URL, sinais reais, incidente, pausa, retomada, rotaç
     // 6. Pausar não encerra o incidente (D13): a manchete segue pedindo atenção.
     await page.getByRole('button', { name: 'Pausar' }).click()
     await page.getByRole('alertdialog').getByRole('button', { name: 'Pausar heartbeat' }).click()
-    await expect(selo('Pausado')).toBeVisible()
+    await expect(selo('Pausado')).toBeVisible(noPoll)
     //    A linha vem primeiro: ela prova que a lista já é a nova, e a manchete
     //    nasce da mesma lista.
     await irAoPainel()
     await expect(linha('Pausado')).toBeVisible(noPoll)
     await expect(page.getByText(TAREFA_PEDE_ATENCAO)).toBeVisible()
     await expect(page.getByText(/Tarefas: 1 pausada\./)).toBeVisible()
+    await expect(page.getByRole('navigation', { name: 'Principal' }).getByRole('link', { name: ABA_COM_ABERTOS })).toBeVisible(noPoll)
     await page.getByRole('link', { name: nome, exact: true }).click()
 
     // 7. Retomar zera a falha, e o avaliador fecha o incidente.
@@ -346,7 +354,7 @@ test('heartbeat: cadastro, URL, sinais reais, incidente, pausa, retomada, rotaç
     // 9. Pausada sem incidente, a tarefa sai da manchete.
     await page.getByRole('button', { name: 'Pausar' }).click()
     await page.getByRole('alertdialog').getByRole('button', { name: 'Pausar heartbeat' }).click()
-    await expect(selo('Pausado')).toBeVisible()
+    await expect(selo('Pausado')).toBeVisible(noPoll)
     await irAoPainel()
     await expect(linha('Pausado')).toBeVisible(noPoll)
     await expect(page.getByRole('heading', { level: 2, name: MANCHETE_SEM_TAREFA })).toBeVisible()
@@ -356,7 +364,7 @@ test('heartbeat: cadastro, URL, sinais reais, incidente, pausa, retomada, rotaç
     // 10. Apagar: some do painel, e a URL deixa de existir.
     await page.getByRole('button', { name: 'Apagar' }).click()
     await page.getByRole('alertdialog').getByRole('button', { name: 'Apagar heartbeat' }).click()
-    await expect(page.getByRole('heading', { name: 'Painel' })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Painel' })).toBeVisible(noPoll)
     await expect(page.getByRole('link', { name: nome })).toHaveCount(0)
     await postar(urlNova, 404)
     sobra = null
