@@ -32,7 +32,7 @@ concurrency:
 # o resultado do CI sem commit nenhum (D20 do Plano 7). O Dependabot atualiza.
 env:
   SQLC_VERSION: v1.31.1
-  STATICCHECK_VERSION: v0.8.1
+  STATICCHECK_VERSION: v0.8.2
   GOSEC_VERSION: v2.29.0
   GOVULNCHECK_VERSION: v1.8.0
   GITLEAKS_VERSION: v8.30.1

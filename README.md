@@ -5,7 +5,7 @@ fecha incidentes sozinho, avisa pelo Discord e por e-mail, e publica uma página
 binário Go com o painel React embutido e um Postgres. Ao vivo em <https://stillon.tech>.
 
 [![ci](https://github.com/BipoXDXD/stillon/actions/workflows/ci.yml/badge.svg)](https://github.com/BipoXDXD/stillon/actions/workflows/ci.yml)
-![Go 1.26](https://img.shields.io/badge/Go-1.26-00ADD8)
+![Go 1.27](https://img.shields.io/badge/Go-1.27-00ADD8)
 
 ## Rodar local
 
@@ -238,7 +238,7 @@ make e2e           # APAGA o banco do compose, sobe com --build, confere e roda 
 
 | Camada | Escolha |
 |---|---|
-| Backend | Go 1.26, `net/http`, pgx, sqlc, goose, `log/slog`, Prometheus |
+| Backend | Go 1.27, `net/http`, pgx, sqlc, goose, `log/slog`, Prometheus |
 | Banco | PostgreSQL 18 (compatível com o 17) |
 | Painel | React 19, TypeScript, Vite, TanStack Query, React Router, React Hook Form + Zod, Radix, Tailwind, Recharts |
 | Testes | `testing` + testcontainers, Vitest + Testing Library + MSW, Playwright + axe |

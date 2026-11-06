@@ -23,7 +23,9 @@ func TestCheckRedirectComparesCanonicalIDNAHosts(t *testing.T) {
 		nome, origem, destino string
 		limpar                bool
 	}{
-		{"sharp s muda o domínio", "https://straße.de/", "https://STRAẞE.de/", true},
+		{"sharp s e ss são domínios diferentes", "https://straße.de/", "https://strasse.de/", true},
+		{"sharp s maiúsculo é o mesmo domínio", "https://straße.de/", "https://STRAẞE.de/", false},
+		{"sigma final muda o domínio", "https://ς.example/", "https://Σ.example/", true},
 		{"Unicode e punycode do mesmo domínio", "https://straße.de/", "https://xn--strae-oqa.de/", false},
 		{"caixa do mesmo domínio IDN", "https://BÜCHER.example/", "https://bücher.example/", false},
 		{"host Unicode inválido", "https://exemplo.com/", "https://\u200d.example/", true},

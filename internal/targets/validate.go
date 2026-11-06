@@ -281,10 +281,10 @@ func validHeaderValue(s string) bool {
 //
 // O host é comparado depois de idna.Lookup.ToASCII, o perfil que o net/http
 // (e com ele o safedial) usa para discar e para o SNI (Q1 da revisão do Plano
-// 10). Com strings.ToLower, "straße.de" e "STRAẞE.de" davam a mesma origem,
-// mas o transporte disca xn--strae-oqa.de num e strasse.de no outro, que é
-// outro domínio: o PATCH mantinha os headers e o próximo check os levava ao
-// domínio novo.
+// 10). A tabela do IDNA acompanha a versão do Go: até o 1.26, "STRAẞE.de"
+// discava strasse.de, e desde o 1.27 disca o mesmo que "straße.de". Comparar
+// o texto do host erra quando o transporte disca outro domínio: o PATCH
+// mantinha os headers e o próximo check os levava ao domínio novo.
 //
 // É a regra do B1 do Plano 10: um PATCH que troca a origem sem mandar
 // headers os apaga. O painel a reimplementa com new URL(x).origin para avisar

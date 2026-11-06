@@ -195,11 +195,13 @@ func TestSameOrigin(t *testing.T) {
 		{"https://api.exemplo.com/", "", false},
 
 		// Q1 da revisão do Plano 10: o host é comparado como o net/http o
-		// disca (idna.Lookup.ToASCII). strings.ToLower dizia "mesma origem"
-		// para os dois primeiros, mas o transporte disca xn--strae-oqa.de
-		// num e strasse.de no outro, que é outro domínio registrável.
-		{"https://straße.de/", "https://STRAẞE.de/", false},
-		{"https://straẞe.de/", "https://strasse.de/x", true},
+		// disca (idna.Lookup.ToASCII). Desde o Go 1.27 (tabelas do Unicode
+		// 17), ẞ vira ß; antes virava ss. O sigma final é o caso em que a
+		// comparação de caixa do Unicode diz "mesma origem", mas o
+		// transporte disca outro domínio registrável.
+		{"https://straße.de/", "https://STRAẞE.de/", true},
+		{"https://straẞe.de/", "https://strasse.de/x", false},
+		{"https://ς.example/", "https://Σ.example/x", false},
 		{"https://straße.de/", "https://xn--strae-oqa.de/x", true},
 		{"https://BÜCHER.example/", "https://bücher.example/x", true},
 		// Um host que não converte não é a origem de ninguém, nem dele mesmo.
@@ -239,6 +241,7 @@ func TestSameOriginAgreesWithTheDialedHost(t *testing.T) {
 	pares := [][2]string{
 		{"https://straße.de/", "https://STRAẞE.de/"},
 		{"https://straẞe.de/", "https://strasse.de/"},
+		{"https://ς.example/", "https://Σ.example/"},
 		{"https://straße.de/", "https://xn--strae-oqa.de/"},
 		{"https://BÜCHER.example/", "https://bücher.example/"},
 		{"https://Ⅸ.example/", "https://ix.example/"},
