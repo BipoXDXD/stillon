@@ -96,32 +96,27 @@ const (
 	SignalFail    Signal = "fail"
 )
 
-// MaxExitCode é o maior código de saída de um processo Unix.
-const MaxExitCode = 255
-
 // ExitCode é o código de saída que a tarefa mandou no ping. O valor zero é o
 // sucesso; os outros nascem de ParseExitCode.
 type ExitCode struct {
 	value int16
 }
 
+// bitsDoExitCode é o tamanho do código de saída de um processo Unix: 0..255.
+const bitsDoExitCode = 8
+
 // ParseExitCode lê o sufixo da rota. Só a forma que o $? do shell produz é
-// aceita: zero à esquerda, sinal ou espaço são erro de quem chama, e não um
-// número a interpretar.
+// aceita: zero à esquerda é erro de quem chama, e não um número a interpretar.
+// ParseUint já recusa sinal, espaço e o que não for dígito.
 func ParseExitCode(s string) (ExitCode, bool) {
-	if s == "" || (len(s) > 1 && s[0] == '0') || len(s) > len(strconv.Itoa(MaxExitCode)) {
+	if len(s) > 1 && s[0] == '0' {
 		return ExitCode{}, false
 	}
-	for _, c := range []byte(s) {
-		if c < '0' || c > '9' {
-			return ExitCode{}, false
-		}
-	}
-	n, err := strconv.Atoi(s)
-	if err != nil || n > MaxExitCode {
+	n, err := strconv.ParseUint(s, 10, bitsDoExitCode)
+	if err != nil {
 		return ExitCode{}, false
 	}
-	return ExitCode{value: int16(n)}, true // #nosec G115 -- faixa conferida acima.
+	return ExitCode{value: int16(n)}, true
 }
 
 // Signal é o sinal que o código representa: 0 é sucesso, o resto é falha.
