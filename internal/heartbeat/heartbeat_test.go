@@ -237,7 +237,8 @@ func TestNewCronRejections(t *testing.T) {
 }
 
 // O formulário promete exatamente isto (mensagens.ts, FormularioHeartbeat.tsx):
-// o domingo é 0 ou SUN, e faixa não termina nele, nem com o nome.
+// o domingo é 0 ou SUN, e faixa que começa depois dele não pode terminar nele,
+// nem com o nome. A faixa de um dia só, que começa no domingo, passa.
 func TestCronSundaySpellings(t *testing.T) {
 	casos := []struct {
 		diaDaSemana string
@@ -250,6 +251,9 @@ func TestCronSundaySpellings(t *testing.T) {
 		{"5,6,0", true},
 		{"FRI,SAT,SUN", true},
 		{"1-6,0", true},
+		{"0-0", true},
+		{"SUN-SUN", true},
+		{"SUN-MON", true},
 		{"7", false},
 		{"5-7", false},
 		{"1-7", false},

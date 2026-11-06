@@ -132,7 +132,7 @@ export function paraAlteracao(original: ValoresDoHeartbeat, v: ValoresDoHeartbea
 // O servidor conta as linhas do texto enviado, e o envio tira as linhas em
 // branco do começo: a contagem que o dono entende é a da tela.
 export function mensagemDoHeartbeat({ field, reason }: ErroDeCampo, descricaoNaTela: string): string {
-  const indice = /^description\[(\d+)\]$/.exec(field)?.[1]
+  const indice = reason === 'invalid' ? /^description\[(\d+)\]$/.exec(field)?.[1] : undefined
   if (indice === undefined) return mensagemDoCampo(field, reason)
   const recuo = descricaoNaTela.slice(0, descricaoNaTela.length - descricaoNaTela.trimStart().length)
   return mensagemDaLinhaDaDescricao(Number(indice) + recuo.split('\n').length)

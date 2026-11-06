@@ -207,6 +207,11 @@ describe('mensagemDoHeartbeat', () => {
     expect(mensagemDoHeartbeat({ field: 'description', reason: 'out_of_range' }, '\nRoda')).toBe('No máximo 1000 caracteres.')
   })
 
+  it('índice com outro motivo não vira linha de caractere invisível', () => {
+    expect(mensagemDoHeartbeat({ field: 'description[1]', reason: 'out_of_range' }, '\nRoda')).toBe('No máximo 1000 caracteres.')
+    expect(mensagemDoHeartbeat({ field: 'description[1]', reason: 'required' }, '\nRoda')).toBe('Obrigatório.')
+  })
+
   it('índice só muda a mensagem da descrição', () => {
     expect(invalida('expr', '\nRoda')).toBe(RECUSA_DO_CRON)
     expect(invalida('tags[1]', '\nRoda')).toBe('Use letras, números, hífen e sublinhado, separados por vírgula.')

@@ -119,8 +119,9 @@ Nenhum deles segurou os PRs; cada um segue a recomendação até o dono dizer o 
 - **Descrição nos avisos.** Fica de fora: aviso sai para terceiros, e o texto pode citar máquina e
   caminho. Alternativa: mandar junto, para ler o que fazer sem abrir o painel. Recomendação: manter
   de fora; incluir depois é aditivo, e o contrário, depois de um vazamento, não adianta.
-- **Domingo como 7.** O `robfig/cron` só aceita 0 a 6 (D17), e faixa não pode terminar no domingo,
-  nem com o nome: `FRI-SUN` e `MON-SUN` são recusados como `5-7`. Alternativa: reescrever o 7 antes do
+- **Domingo como 7.** O `robfig/cron` só aceita 0 a 6 (D17), e faixa que começa depois do domingo não
+  pode terminar nele, nem com o nome: `FRI-SUN` e `MON-SUN` são recusados como `5-7`, e `SUN-SUN` e
+  `0-0` passam. Alternativa: reescrever o 7 antes do
   parser, o que pede tratar listas e faixas e é o segundo parser que o D17 evitou. Recomendação
   seguida: não reescrever. A ajuda do campo cita `0` ou `SUN`, e a recusa também cita a lista `5,6,0`,
   porque trocar `5-7` por `5-SUN` continuaria recusado. O custo é quem cola a linha do crontab ajustar
