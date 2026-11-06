@@ -2,7 +2,7 @@ import { z } from 'zod'
 import type { AlteracaoAlvo, EntradaAlvo } from '@/lib/api/cliente'
 import type { Alvo } from '@/lib/api/schemas'
 import { MENSAGEM_INVISIVEL, temInvisivel } from '@/lib/rotulo'
-import { ehTagValida, MAX_CARACTERES_DA_TAG, MAX_TAGS, separarTags } from '@/lib/tags'
+import { erroNasTags, separarTags } from '@/lib/tags'
 
 // O formulário de alvo espelha internal/targets/validate.go. O servidor é a
 // fonte da verdade: o espelho só antecipa o erro, e o 400 com fields cai no
@@ -178,13 +178,6 @@ export function esquemaDoAlvo(base?: { url: string }) {
       })
       if (total > 8192) ctx.addIssue({ code: 'custom', path: ['headers'], message: 'Os headers somam mais de 8 KiB.' })
     })
-}
-
-function erroNasTags(texto: string): string | null {
-  const tags = separarTags(texto)
-  if (tags.length > MAX_TAGS) return `Até ${MAX_TAGS} tags.`
-  if (tags.some((t) => [...t].length > MAX_CARACTERES_DA_TAG)) return `Cada tag tem até ${MAX_CARACTERES_DA_TAG} caracteres.`
-  return tags.every(ehTagValida) ? null : 'Use letras, números, hífen e sublinhado, separados por vírgula.'
 }
 
 export const esquemaAlvo = esquemaDoAlvo()

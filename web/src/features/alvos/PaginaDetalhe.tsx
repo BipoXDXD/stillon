@@ -5,6 +5,7 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router'
 import { useApi } from '@/app/contexto'
 import { EstadoDaConsulta } from '@/components/EstadoDaConsulta'
 import { SeloDeEstado } from '@/components/SeloDeEstado'
+import { ListaDeTags } from '@/components/ListaDeTags'
 import { Titulo } from '@/components/Titulo'
 import { useAvisar } from '@/components/ui/avisos'
 import { Botao } from '@/components/ui/botao'
@@ -207,15 +208,7 @@ function DetalheDoAlvo({ id }: { id: string }) {
                 <p className="text-meta break-all text-apagado">
                   {a.method} {a.url} · a cada {a.interval_sec} s
                 </p>
-                {a.tags.length > 0 && (
-                  <ul aria-label="Tags" className="flex flex-wrap gap-1">
-                    {a.tags.map((tag) => (
-                      <li key={tag} className="rounded-full bg-painel px-2 text-meta text-suave">
-                        {tag}
-                      </li>
-                    ))}
-                  </ul>
-                )}
+                <ListaDeTags tags={a.tags} />
               </div>
               <div className="flex flex-wrap gap-2">
                 <Botao tipo="secundario" asChild>

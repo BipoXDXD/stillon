@@ -4,70 +4,21 @@ import (
 	"context"
 	"fmt"
 	"slices"
-	"strings"
-	"unicode"
-	"unicode/utf8"
 
 	"github.com/google/uuid"
 
+	"github.com/BipoXDXD/stillon/internal/rotulo"
 	"github.com/BipoXDXD/stillon/internal/storage/db"
 )
 
-// Limites das tags (spec do painel denso). maxTagRunes tem par no CHECK da
-// migration 00017; o teto por alvo vale também para o filtro, em que todas as
-// tags pedidas têm de estar no alvo: pedir mais do que um alvo pode ter nunca
-// acharia nada.
-const (
-	MaxTagsPerTarget = 8
-	maxTagRunes      = 24
-)
+// MaxTagsPerTarget é o teto de rotulo.MaxTags, no vocabulário deste pacote.
+const MaxTagsPerTarget = rotulo.MaxTags
 
 // EstadoPausado é o estado de filtro do alvo desativado. O resumo diz
 // "unknown" para ele, e o painel o distingue pelo enabled.
 const EstadoPausado = "paused"
 
 var estadosDoFiltro = []string{"up", "degraded", "down", "unknown", EstadoPausado}
-
-// ParseTag devolve a tag na forma canônica, ou o motivo da recusa. A
-// allowlist barra separador, controle e caractere invisível de uma vez.
-// unicode.IsLetter não aceita o acento combinante (categoria Mn), então uma
-// palavra acentuada tem uma grafia só: a forma composta.
-func ParseTag(cru string) (string, string) {
-	tag := strings.ToLower(strings.TrimSpace(cru))
-	switch {
-	case tag == "" || !utf8.ValidString(tag):
-		return "", ReasonInvalid
-	case utf8.RuneCountInString(tag) > maxTagRunes:
-		return "", ReasonTooLong
-	case strings.ContainsFunc(tag, foraDaAllowlist):
-		return "", ReasonInvalid
-	}
-	return tag, ""
-}
-
-func foraDaAllowlist(r rune) bool {
-	return !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '-' && r != '_'
-}
-
-// normalizeTags devolve as tags canônicas, ordenadas e sem repetição; nunca
-// nil, para o JSON sair [] e não null. O teto conta o que sobra depois de
-// deduplicar.
-func normalizeTags(cruas []string) ([]string, string) {
-	tags := make([]string, 0, len(cruas))
-	for _, cru := range cruas {
-		tag, motivo := ParseTag(cru)
-		if motivo != "" {
-			return nil, motivo
-		}
-		tags = append(tags, tag)
-	}
-	slices.Sort(tags)
-	tags = slices.Compact(tags)
-	if len(tags) > MaxTagsPerTarget {
-		return nil, ReasonOutOfRange
-	}
-	return tags, ""
-}
 
 // SummaryFilter restringe o resumo. Vazio, nada é filtrado.
 type SummaryFilter struct {
@@ -84,7 +35,7 @@ func ParseSummaryFilter(tags, estados []string) (SummaryFilter, *ValidationError
 		v.add("tag", ReasonOutOfRange)
 	} else {
 		for _, cru := range tags {
-			tag, motivo := ParseTag(cru)
+			tag, motivo := rotulo.ParseTag(cru)
 			if motivo != "" {
 				v.add("tag", motivo)
 				break
