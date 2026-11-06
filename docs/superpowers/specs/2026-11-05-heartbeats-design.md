@@ -126,7 +126,8 @@ incidents: target_id passa a aceitar NULL; heartbeat_id uuid NULL FK ON DELETE C
            UNIQUE parcial: um aberto por heartbeat; índice na FK.
 ```
 
-- Índices: `heartbeats (user_id, id DESC)`, `heartbeats (deadline_at) WHERE enabled`,
+- Índices: `heartbeats (user_id, id DESC)`, `heartbeats (deadline_at) WHERE enabled` (removido na
+  00019, sem consulta que o usasse),
   `heartbeat_events (heartbeat_id, id DESC)`, e o parcial do arco.
 - Sem `kind` e sem `*_type`: as duas FKs reais mantêm integridade referencial.
 - **RLS com FORCE**, nos quatro escopos: dono (`user_id`), sondador (SELECT e UPDATE), ping (a
@@ -151,9 +152,7 @@ incidents: target_id passa a aceitar NULL; heartbeat_id uuid NULL FK ON DELETE C
 
   O teto é de 100 heartbeats por usuário e a consulta roda a cada 5 s. O índice parcial, 55 µs
   melhor que o `OR` com 100 vezes o teto, não paga uma migration nem o custo de escrita.
-- **Pendência sem urgência:** `heartbeats_due_idx` ficou sem consulta que o use. Removê-lo na próxima
-  migration que passar por aqui, que tem de ser maior que a das tags (a 00018, se a 00017 entrar
-  antes). Até lá, o custo é só o de manter o índice a cada ping.
+- `heartbeats_due_idx` ficou sem consulta que o usasse, e a 00019 o removeu.
 
 A **00018** acrescenta `heartbeats.resumed_at` e `incidents.closed_by_resume` (§5). Tem de entrar
 depois da 00017, das tags: com a 00018 aplicada, `storage.Migrate` recusaria a 00017. Colunas

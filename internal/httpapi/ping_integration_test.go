@@ -92,7 +92,6 @@ func TestPingSignalsReachTheHeartbeat(t *testing.T) {
 	}
 }
 
-// A resposta de sucesso é fixa: nada do heartbeat sai por uma rota pública.
 // O código de saída diz o sinal: 0 é sucesso, o resto é falha, e o log guarda o
 // número. É o que permite uma linha só no crontab: curl .../ping/TOKEN/$?
 func TestPingExitCodeDecidesTheSignal(t *testing.T) {
@@ -203,6 +202,7 @@ func TestPingExitCodeSharesTheTokenLimit(t *testing.T) {
 	}
 }
 
+// A resposta de sucesso é fixa: nada do heartbeat sai por uma rota pública.
 func TestPingSuccessBodyHasNoHeartbeatData(t *testing.T) {
 	a := newAPI(t)
 	_, token := novoHeartbeat(t, a)
