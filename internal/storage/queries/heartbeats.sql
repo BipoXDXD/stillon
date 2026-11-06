@@ -22,11 +22,13 @@ VALUES (sqlc.arg(id), sqlc.arg(heartbeat_id)::uuid, sqlc.arg(started_at), sqlc.a
 UPDATE heartbeats
    SET deadline_at = sqlc.arg(deadline_at), last_ping_at = sqlc.narg(last_ping_at),
        last_success_at = sqlc.narg(last_success_at), last_start_at = sqlc.narg(last_start_at),
-       last_signal = sqlc.narg(last_signal), failing_since = sqlc.narg(failing_since)
+       last_signal = sqlc.narg(last_signal), failing_since = sqlc.narg(failing_since),
+       last_runtime_ms = sqlc.narg(last_runtime_ms)
  WHERE id = sqlc.arg(id);
 
 -- name: InsertHeartbeatEvent :exec
-INSERT INTO heartbeat_events (id, heartbeat_id, at, kind, runtime_ms) VALUES ($1, $2, $3, $4, $5);
+INSERT INTO heartbeat_events (id, heartbeat_id, at, kind, runtime_ms, exit_code)
+VALUES ($1, $2, $3, $4, $5, $6);
 
 -- O teto do log (D15), na transação do ping: apaga do evento de posição
 -- max_events + 1, do mais novo para o mais velho, para trás. O id é UUIDv7,
@@ -45,7 +47,7 @@ SELECT * FROM heartbeats WHERE user_id = $1 AND id = $2;
 -- O log do dono, do mais novo ao mais velho. O id é UUIDv7, e o cursor é o
 -- último id da página anterior.
 -- name: ListHeartbeatEvents :many
-SELECT e.id, e.heartbeat_id, e.at, e.kind, e.runtime_ms
+SELECT e.id, e.heartbeat_id, e.at, e.kind, e.runtime_ms, e.exit_code
   FROM heartbeat_events e
   JOIN heartbeats h ON h.id = e.heartbeat_id
  WHERE h.user_id = sqlc.arg(user_id)
@@ -137,7 +139,7 @@ UPDATE heartbeats
    SET name = sqlc.arg(name), period_sec = sqlc.narg(period_sec), cron_expr = sqlc.narg(cron_expr),
        timezone = sqlc.narg(timezone), grace_sec = sqlc.arg(grace_sec), enabled = sqlc.arg(enabled),
        deadline_at = sqlc.arg(deadline_at), failing_since = sqlc.narg(failing_since),
-       resumed_at = sqlc.narg(resumed_at)
+       resumed_at = sqlc.narg(resumed_at), last_start_at = sqlc.narg(last_start_at)
  WHERE user_id = sqlc.arg(user_id) AND id = sqlc.arg(id);
 
 -- name: DeleteHeartbeat :execrows
@@ -167,3 +169,30 @@ RETURNING i.id, h.id AS heartbeat_id, h.name AS heartbeat_name, i.started_at, i.
 -- O tamanho do log, para a métrica heartbeat_events (Reconcile do sondador).
 -- name: CountHeartbeatEvents :one
 SELECT count(*) FROM heartbeat_events;
+
+-- Tags (paridade, PR 3). As leituras saem ordenadas pela tag, e a do dono serve
+-- a lista sem uma consulta por heartbeat, como as de targets.sql.
+-- name: ListHeartbeatTags :many
+SELECT ht.tag
+  FROM heartbeat_tags ht
+  JOIN heartbeats h ON h.id = ht.heartbeat_id
+ WHERE h.user_id = sqlc.arg(user_id) AND ht.heartbeat_id = sqlc.arg(heartbeat_id)
+ ORDER BY ht.tag;
+
+-- name: ListUserHeartbeatTags :many
+SELECT ht.heartbeat_id, ht.tag
+  FROM heartbeat_tags ht
+  JOIN heartbeats h ON h.id = ht.heartbeat_id
+ WHERE h.user_id = sqlc.arg(user_id)
+ ORDER BY ht.heartbeat_id, ht.tag;
+
+-- name: DeleteHeartbeatTags :exec
+DELETE FROM heartbeat_tags ht
+ USING heartbeats h
+ WHERE h.id = ht.heartbeat_id AND h.user_id = sqlc.arg(user_id) AND ht.heartbeat_id = sqlc.arg(heartbeat_id);
+
+-- name: InsertHeartbeatTags :exec
+INSERT INTO heartbeat_tags (heartbeat_id, tag)
+SELECT h.id, unnest(sqlc.arg(tags)::text[])
+  FROM heartbeats h
+ WHERE h.user_id = sqlc.arg(user_id) AND h.id = sqlc.arg(heartbeat_id);

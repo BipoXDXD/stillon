@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/hex"
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -367,6 +369,170 @@ func TestHeartbeatConstraints(t *testing.T) {
 				t.Errorf("deu %v, queria código %q", err, c.codigoEsperado)
 			}
 		})
+	}
+}
+
+// O código de saída diz o sinal, e o banco não aceita um que o contradiga.
+func TestHeartbeatEventExitCodeMatchesTheKind(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+	dono := novoUsuario(t, pool)
+	hb := novoHeartbeat(t, pool, dono, "backup")
+	codigo := func(v int16) *int16 { return &v }
+	casos := []struct {
+		nome, tipo     string
+		exitCode       *int16
+		codigoEsperado string
+	}{
+		{"sucesso sem código", "success", nil, ""},
+		{"falha sem código", "fail", nil, ""},
+		{"início sem código", "start", nil, ""},
+		{"sucesso com zero", "success", codigo(0), ""},
+		{"falha com 1", "fail", codigo(1), ""},
+		{"falha com 255", "fail", codigo(255), ""},
+		{"falha com zero", "fail", codigo(0), "23514"},
+		{"sucesso com 1", "success", codigo(1), "23514"},
+		{"início com zero", "start", codigo(0), "23514"},
+		{"falha com 256", "fail", codigo(256), "23514"},
+		{"falha negativa", "fail", codigo(-1), "23514"},
+	}
+	for _, c := range casos {
+		t.Run(c.nome, func(t *testing.T) {
+			err := storage.InUserTx(ctx, pool, dono, func(q *db.Queries) error {
+				return q.InsertHeartbeatEvent(ctx, db.InsertHeartbeatEventParams{
+					ID: novoID(), HeartbeatID: hb, At: agora, Kind: c.tipo, ExitCode: c.exitCode,
+				})
+			})
+			if codigoPG(err) != c.codigoEsperado {
+				t.Errorf("deu %v, queria código %q", err, c.codigoEsperado)
+			}
+		})
+	}
+}
+
+func comTagDoHeartbeat(t *testing.T, pool *pgxpool.Pool, dono, hb uuid.UUID) {
+	t.Helper()
+	ctx := context.Background()
+	err := storage.InUserTx(ctx, pool, dono, func(q *db.Queries) error {
+		return q.InsertHeartbeatTags(ctx, db.InsertHeartbeatTagsParams{Tags: []string{"prod"}, UserID: dono, HeartbeatID: hb})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+// As tags são do dono: nem B, nem o escopo do ping, que enxerga a linha do
+// heartbeat, nem o avaliador, nem o escopo público as leem.
+func TestHeartbeatTagsAreSeenOnlyByTheOwner(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+	a, b := novoUsuario(t, pool), novoUsuario(t, pool)
+	id := novoID()
+	hash := hashDe("tags")
+	periodo := int32(3600)
+	err := storage.InUserTx(ctx, pool, a, func(q *db.Queries) error {
+		return q.InsertHeartbeat(ctx, db.InsertHeartbeatParams{
+			ID: id, UserID: a, Name: "h", PingTokenHash: hash, PeriodSec: &periodo, GraceSec: 300,
+			Enabled: true, CreatedAt: agora, DeadlineAt: agora,
+		})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	comTagDoHeartbeat(t, pool, a, id)
+	novaPagina(t, pool, a, "publica", true, novoAlvo(t, pool, a, agora))
+	if n := contarPublico(t, pool, "publica", "heartbeat_tags"); n != 0 {
+		t.Errorf("o escopo público leu %d tags", n)
+	}
+
+	if n := contarComEscopo(t, pool, a, "heartbeat_tags"); n != 1 {
+		t.Fatalf("sob o escopo do dono, %d tags; queria 1 (controle)", n)
+	}
+	if n := contarComEscopo(t, pool, b, "heartbeat_tags"); n != 0 {
+		t.Errorf("sob o escopo de B, %d tags", n)
+	}
+	contar := func(q *db.Queries) (int64, error) {
+		rows, err := q.ListUserHeartbeatTags(ctx, a)
+		return int64(len(rows)), err
+	}
+	var noPing, noProber int64
+	err = storage.InPingTx(ctx, pool, hash, func(q *db.Queries) error {
+		if _, err := q.LockHeartbeatForPing(ctx, hash); err != nil {
+			return fmt.Errorf("o controle falhou, o escopo do ping não viu a linha: %w", err)
+		}
+		var err error
+		noPing, err = contar(q)
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if noPing != 0 {
+		t.Errorf("o escopo do ping leu %d tags", noPing)
+	}
+	err = storage.InProberTx(ctx, pool, func(q *db.Queries) error {
+		var err error
+		noProber, err = contar(q)
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if noProber != 0 {
+		t.Errorf("o avaliador leu %d tags", noProber)
+	}
+}
+
+// B não insere tag no heartbeat de A, mesmo sem o filtro da query.
+func TestAnotherUserCannotInsertHeartbeatTags(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+	a, b := novoUsuario(t, pool), novoUsuario(t, pool)
+	hb := novoHeartbeat(t, pool, a, "backup")
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, `SELECT set_config('app.user_id', $1, true)`, b.String()); err != nil {
+		t.Fatal(err)
+	}
+	_, err = tx.Exec(ctx, `INSERT INTO heartbeat_tags (heartbeat_id, tag) VALUES ($1, 'invadida')`, hb)
+	if codigoPG(err) != "42501" {
+		t.Errorf("B inserir tag deu %v, queria 42501", err)
+	}
+}
+
+func TestHeartbeatTagCheckRefusesWhatTheCodeWouldNot(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+	dono := novoUsuario(t, pool)
+	hb := novoHeartbeat(t, pool, dono, "backup")
+	for _, tag := range []string{"", "a b", "a,b", "a\nb", strings.Repeat("a", 25)} {
+		err := storage.InUserTx(ctx, pool, dono, func(q *db.Queries) error {
+			return q.InsertHeartbeatTags(ctx, db.InsertHeartbeatTagsParams{Tags: []string{tag}, UserID: dono, HeartbeatID: hb})
+		})
+		if codigoPG(err) != "23514" {
+			t.Errorf("tag %q: %v; queria 23514", tag, err)
+		}
+	}
+}
+
+func TestDeletingAHeartbeatTakesItsTags(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+	dono := novoUsuario(t, pool)
+	hb := novoHeartbeat(t, pool, dono, "backup")
+	comTagDoHeartbeat(t, pool, dono, hb)
+	err := storage.InUserTx(ctx, pool, dono, func(q *db.Queries) error {
+		_, err := q.DeleteHeartbeat(ctx, db.DeleteHeartbeatParams{UserID: dono, ID: hb})
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := contarComEscopo(t, pool, dono, "heartbeat_tags"); n != 0 {
+		t.Errorf("sobraram %d tags", n)
 	}
 }
 

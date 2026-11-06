@@ -30,10 +30,22 @@ func NewPingService(pool *pgxpool.Pool, clk clock.Clock) *PingService {
 	return &PingService{pool: pool, clk: clk}
 }
 
-// Ping aplica sig ao heartbeat do token. A linha travada serializa pings
-// simultâneos: o segundo lê o que o primeiro gravou, e a repetição tem um
-// efeito só, entre instâncias também (D9).
+// Ping aplica sig ao heartbeat do token.
 func (s *PingService) Ping(ctx context.Context, token string, sig Signal) error {
+	return s.aplicar(ctx, token, sig, nil)
+}
+
+// PingExit aplica o sinal que o código de saída representa, e o log guarda o
+// número.
+func (s *PingService) PingExit(ctx context.Context, token string, code ExitCode) error {
+	valor := code.Value()
+	return s.aplicar(ctx, token, code.Signal(), &valor)
+}
+
+// aplicar trava a linha, e isso serializa pings simultâneos: o segundo lê o que
+// o primeiro gravou, e a repetição tem um efeito só, entre instâncias também
+// (D9).
+func (s *PingService) aplicar(ctx context.Context, token string, sig Signal, code *int16) error {
 	hash, ok := HashPingToken(token)
 	if !ok {
 		return ErrUnknownToken
@@ -46,11 +58,11 @@ func (s *PingService) Ping(ctx context.Context, token string, sig Signal) error 
 		if err != nil {
 			return fmt.Errorf("travar heartbeat: %w", err)
 		}
-		return s.registrar(ctx, q, h, sig)
+		return s.registrar(ctx, q, h, sig, code)
 	})
 }
 
-func (s *PingService) registrar(ctx context.Context, q *db.Queries, h db.Heartbeat, sig Signal) error {
+func (s *PingService) registrar(ctx context.Context, q *db.Queries, h db.Heartbeat, sig Signal, code *int16) error {
 	sch, err := ScheduleFromRow(h.PeriodSec, h.CronExpr, h.Timezone)
 	if err != nil {
 		return fmt.Errorf("agendamento do heartbeat %s: %w", h.ID, err)
@@ -68,7 +80,7 @@ func (s *PingService) registrar(ctx context.Context, q *db.Queries, h db.Heartbe
 		return fmt.Errorf("gerar id de evento: %w", err)
 	}
 	if err := q.InsertHeartbeatEvent(ctx, db.InsertHeartbeatEventParams{
-		ID: id, HeartbeatID: h.ID, At: ev.At, Kind: string(ev.Kind), RuntimeMS: ev.RuntimeMS,
+		ID: id, HeartbeatID: h.ID, At: ev.At, Kind: string(ev.Kind), RuntimeMS: ev.RuntimeMS, ExitCode: code,
 	}); err != nil {
 		return fmt.Errorf("gravar evento: %w", err)
 	}
@@ -83,7 +95,7 @@ func stateOf(h db.Heartbeat) State {
 	s := State{
 		DeadlineAt: h.DeadlineAt, LastPingAt: valueOrZero(h.LastPingAt),
 		LastSuccessAt: valueOrZero(h.LastSuccessAt), LastStartAt: valueOrZero(h.LastStartAt),
-		FailingSince: valueOrZero(h.FailingSince),
+		FailingSince: valueOrZero(h.FailingSince), LastRuntimeMS: h.LastRuntimeMS,
 	}
 	if h.LastSignal != nil {
 		s.LastSignal = Signal(*h.LastSignal)
@@ -96,7 +108,7 @@ func pingParams(id uuid.UUID, s State) db.SaveHeartbeatPingParams {
 	return db.SaveHeartbeatPingParams{
 		ID: id, DeadlineAt: s.DeadlineAt, LastPingAt: nilIfZero(s.LastPingAt),
 		LastSuccessAt: nilIfZero(s.LastSuccessAt), LastStartAt: nilIfZero(s.LastStartAt),
-		LastSignal: &sinal, FailingSince: nilIfZero(s.FailingSince),
+		LastSignal: &sinal, FailingSince: nilIfZero(s.FailingSince), LastRuntimeMS: s.LastRuntimeMS,
 	}
 }
 

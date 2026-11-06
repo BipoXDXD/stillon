@@ -126,7 +126,8 @@ incidents: target_id passa a aceitar NULL; heartbeat_id uuid NULL FK ON DELETE C
            UNIQUE parcial: um aberto por heartbeat; índice na FK.
 ```
 
-- Índices: `heartbeats (user_id, id DESC)`, `heartbeats (deadline_at) WHERE enabled`,
+- Índices: `heartbeats (user_id, id DESC)`, `heartbeats (deadline_at) WHERE enabled` (removido na
+  00019, sem consulta que o usasse),
   `heartbeat_events (heartbeat_id, id DESC)`, e o parcial do arco.
 - Sem `kind` e sem `*_type`: as duas FKs reais mantêm integridade referencial.
 - **RLS com FORCE**, nos quatro escopos: dono (`user_id`), sondador (SELECT e UPDATE), ping (a
@@ -151,9 +152,7 @@ incidents: target_id passa a aceitar NULL; heartbeat_id uuid NULL FK ON DELETE C
 
   O teto é de 100 heartbeats por usuário e a consulta roda a cada 5 s. O índice parcial, 55 µs
   melhor que o `OR` com 100 vezes o teto, não paga uma migration nem o custo de escrita.
-- **Pendência sem urgência:** `heartbeats_due_idx` ficou sem consulta que o use. Removê-lo na próxima
-  migration que passar por aqui, que tem de ser maior que a das tags (a 00018, se a 00017 entrar
-  antes). Até lá, o custo é só o de manter o índice a cada ping.
+- `heartbeats_due_idx` ficou sem consulta que o usasse, e a 00019 o removeu.
 
 A **00018** acrescenta `heartbeats.resumed_at` e `incidents.closed_by_resume` (§5). Tem de entrar
 depois da 00017, das tags: com a 00018 aplicada, `storage.Migrate` recusaria a 00017. Colunas
@@ -166,7 +165,12 @@ Função pura em `internal/heartbeat`, sem I/O, recebendo `now`:
 - `success`: `deadline_at = proximo(now) + grace`; zera `failing_since`; `runtime_ms = now -
   last_start_at` se houver `start` aberto, e o `start` é consumido.
 - `start`: grava `last_start_at`; prazo intacto.
-- `fail`: `failing_since = coalesce(failing_since, now)`; prazo intacto.
+- `fail`: `failing_since = coalesce(failing_since, now)`; prazo intacto; `runtime_ms` e consumo do
+  `start`, como no `success`.
+- `waiting` é nunca ter terminado uma execução, com `success` ou `fail`: um `start` sozinho não tira
+  desse estado.
+- A retomada apaga o `start` aberto: ele é de antes da pausa, e mediria a pausa como execução.
+- `success` e `fail` gravam `last_runtime_ms`: a duração medida, ou `NULL` sem `start` aberto.
 - `proximo(t)`: `t + period` ou o próximo disparo do cron depois de `t + 30 s`, no fuso declarado.
   A folga (`EarlySignalMargin`, igual a `MinGrace`) existe porque um host com o relógio adiantado
   termina a tarefa de 3h às 02:59:59: sem ela, o próximo disparo seria o das 3h que acabou de rodar,
@@ -239,6 +243,7 @@ Público:
 | `POST /ping/{token}` | sucesso | `200 {"status":"ok"}`, `400`, `404`, `413`, `429` |
 | `POST /ping/{token}/start` | início | idem |
 | `POST /ping/{token}/fail` | falha | idem |
+| `POST /ping/{token}/{exit_code}` | `0` é sucesso, `1..255` é falha, com o número no log; fora disso, `404` | idem |
 
 `400` é o corpo que não pôde ser lido até o fim, como conexão interrompida no meio do envio; nada é
 gravado. Método diferente de POST dá `405`. Falha do lado do servidor dá `500`, ou `503` com o prazo
@@ -251,8 +256,9 @@ anti-CSRF). Entrada estrita, com `DisallowUnknownFields`. Recurso alheio é 404.
 |---|---|
 | `GET /api/v1/heartbeats?cursor=&limit=` | lista, teto 100 |
 | `POST /api/v1/heartbeats` | cria; devolve `ping_url` **uma vez** |
+| `GET /api/v1/heartbeats/cron-preview?expr=&timezone=` | próximos 5 disparos, sem gravar: `{ "next_runs": ["…"] }` |
 | `GET /api/v1/heartbeats/{id}` | detalhe |
-| `PATCH /api/v1/heartbeats/{id}` | `name`, agendamento, `grace_sec`, `enabled` |
+| `PATCH /api/v1/heartbeats/{id}` | `name`, `tags`, agendamento, `grace_sec`, `enabled` |
 | `DELETE /api/v1/heartbeats/{id}` | apaga, com eventos e incidentes |
 | `POST /api/v1/heartbeats/{id}/token/rotate` | revoga e devolve `ping_url` novo, uma vez |
 | `GET /api/v1/heartbeats/{id}/events?cursor=&limit=` | log, do mais novo ao mais velho |
@@ -261,14 +267,14 @@ anti-CSRF). Entrada estrita, com `DisallowUnknownFields`. Recurso alheio é 404.
 
 ```jsonc
 // heartbeat: conjunto exato de chaves
-{ "id": "…", "name": "Backup noturno", "enabled": true,
+{ "id": "…", "name": "Backup noturno", "tags": ["prod"], "enabled": true,
   "schedule": { "kind": "period", "period_sec": 86400 },
   // ou { "kind": "cron", "expr": "0 3 * * *", "timezone": "America/Sao_Paulo" }
   "grace_sec": 900, "state": "waiting|up|late|failing|paused",
   "deadline_at": "…", "last_ping_at": null, "last_success_at": null,
-  "last_start_at": null, "open_incident_id": null, "created_at": "…" }
+  "last_start_at": null, "last_runtime_ms": null, "open_incident_id": null, "created_at": "…" }
 // create e rotate: o mesmo objeto + "ping_url"
-// evento: { "id": "…", "at": "…", "kind": "start|success|fail", "runtime_ms": 1234 }
+// evento: { "id": "…", "at": "…", "kind": "start|success|fail", "runtime_ms": 1234, "exit_code": 3 }
 // incidente: { "id", "heartbeat_id", "heartbeat_name", "started_at", "resolved_at",
 //              "cause": "heartbeat_late|heartbeat_failed", "acknowledged_at" }
 ```

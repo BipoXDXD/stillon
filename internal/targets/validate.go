@@ -138,7 +138,7 @@ func validate(f *fields) *ValidationError {
 		f.Headers = h
 	}
 
-	if t, motivo := normalizeTags(f.Tags); motivo != "" {
+	if t, motivo := rotulo.NormalizeTags(f.Tags); motivo != "" {
 		v.add("tags", motivo)
 	} else {
 		f.Tags = t

@@ -3,9 +3,12 @@ import { useApi } from '@/app/contexto'
 import type { FiltroDoResumo } from './cliente'
 import type { Incidente, ItemDoResumo, ListaDeIncidentes } from './schemas'
 
+const MS_DA_PREVIA = 60_000
+
 // As chaves e os intervalos de atualização (spec §11.4; spec do Plano 6 §3.5).
 export const chaves = {
   me: ['me'] as const,
+  previaDoCron: (expr: string, timezone: string) => ['previa-do-cron', expr, timezone] as const,
   resumo: ['targets', 'summary'] as const,
   // Abaixo da chave do resumo: quem invalida o resumo invalida as duas.
   resumoFiltrado: (f: FiltroDoResumo) => ['targets', 'summary', f.tags, f.estados] as const,
@@ -169,6 +172,19 @@ export function useHeartbeats() {
 export function useHeartbeat(id: string) {
   const api = useApi()
   return useQuery({ queryKey: chaves.heartbeat(id), queryFn: () => api.heartbeat(id), refetchInterval: INTERVALO_DO_RESUMO_MS })
+}
+
+// Sem retry: 400 é a resposta para quem ainda está digitando. A expressão não
+// muda de resposta na escala de um minuto, e o cache poupa o vaivém do campo.
+export function usePreviaDoCron(expr: string, timezone: string) {
+  const api = useApi()
+  return useQuery({
+    queryKey: chaves.previaDoCron(expr, timezone),
+    queryFn: () => api.previaDoCron(expr, timezone),
+    enabled: expr !== '' && timezone !== '',
+    retry: false,
+    staleTime: MS_DA_PREVIA,
+  })
 }
 
 export function useEventosDoHeartbeat(id: string) {

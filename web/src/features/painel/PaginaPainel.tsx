@@ -144,6 +144,7 @@ function MonitoresFiltrados({ itens, tarefas, atualizadoEm }: PropsDosMonitores)
     <>
       <BarraDeFiltros
         itens={itens}
+        heartbeats={tarefas.itens}
         contagem={contarDoConjunto(itens, tarefas.itens)}
         filtros={filtros}
         resultado={resultado}

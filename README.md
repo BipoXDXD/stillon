@@ -96,12 +96,14 @@ na VPS, siga a configuração de e-mail do [runbook de produção](docs/deploy/v
   primeiras 6 h; depois, a cada 6 h e 24 h). Reconhecer no painel interrompe os lembretes; o
   aviso de que o alvo voltou sai do mesmo jeito.
 - **Heartbeats** para tarefas agendadas: a tarefa avisa por `POST` numa URL própria, com período e
-  tolerância ou expressão cron com fuso explícito, sinais de início e falha, tempo de execução e
-  log dos últimos eventos. Sem aviso no prazo, abre incidente pelos mesmos canais. Eles aparecem
-  na tabela de monitores do painel, junto dos alvos.
+  tolerância ou expressão cron com fuso explícito, sinais de início e falha, código de saída, tempo
+  de execução, tags e log dos últimos eventos. O cadastro mostra os próximos disparos do cron antes
+  de salvar. Sem aviso no prazo, abre incidente pelos mesmos canais. Eles aparecem na tabela de
+  monitores do painel, junto dos alvos, com a última duração, a execução em curso e os mesmos filtros.
   ```sh
   curl -fsS -m 10 --retry 3 -X POST https://stillon.tech/ping/SEU-TOKEN/start
   curl -fsS -m 10 --retry 3 -X POST https://stillon.tech/ping/SEU-TOKEN       # ou /fail
+  backup.sh; curl -fsS -m 10 --retry 3 -X POST https://stillon.tech/ping/SEU-TOKEN/$?   # 0 é sucesso, o resto é falha
   ```
 - **Página de status pública** em `/p/{slug}`, com os alvos que você escolher, uptime de 90 dias
   e os incidentes recentes.
@@ -111,10 +113,15 @@ na VPS, siga a configuração de e-mail do [runbook de produção](docs/deploy/v
 
 ## Telas
 
-O painel abre dizendo, numa frase, se algo está quebrado; os problemas vêm primeiro, em cartões
-com a cor, a forma e o texto do estado. Os mesmos tokens e fontes desenham a página pública.
+O painel abre dizendo, numa frase, se algo está quebrado. Alvos e tarefas dividem uma tabela densa,
+com os problemas primeiro e a cor, a forma e o texto do estado; tags, estado e busca filtram os dois.
+Os mesmos tokens e fontes desenham a página pública.
 
-![Painel com dois serviços pedindo atenção, no tema claro](docs/design/painel-depois/painel-1280-claro.png)
+![Painel com serviços e uma tarefa pedindo atenção, no tema claro](docs/design/painel-depois/painel-1280-claro.png)
+
+| Filtro por tag | Tarefa: agendamento, duração e log |
+|---|---|
+| ![Painel filtrado pela tag dados, com um alvo e uma tarefa](docs/design/painel-depois/painel-filtrado-1280-claro.png) | ![Detalhe de um heartbeat atrasado, com o log e os códigos de saída](docs/design/painel-depois/detalhe-heartbeat-1280-claro.png) |
 
 | Celular, tema escuro | Página pública |
 |---|---|

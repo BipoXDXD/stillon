@@ -9,6 +9,7 @@ function barra(busca: string, aoMudar = vi.fn<(f: Filtros) => void>()) {
   return (
     <BarraDeFiltros
       itens={[]}
+      heartbeats={[]}
       contagem={contarDoConjunto([], [])}
       filtros={{ ...SEM_FILTROS, busca }}
       resultado={null}

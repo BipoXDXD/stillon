@@ -132,6 +132,7 @@ export type Agendamento = z.infer<typeof Agendamento>
 export const Heartbeat = z.object({
   id,
   name: z.string(),
+  tags: z.array(z.string()),
   enabled: z.boolean(),
   schedule: Agendamento,
   grace_sec: z.number(),
@@ -140,6 +141,7 @@ export const Heartbeat = z.object({
   last_ping_at: instante.nullable(),
   last_success_at: instante.nullable(),
   last_start_at: instante.nullable(),
+  last_runtime_ms: z.number().nullable(),
   open_incident_id: id.nullable(),
   created_at: instante,
 })
@@ -151,11 +153,14 @@ export const HeartbeatComPing = Heartbeat.extend({ ping_url: z.url() })
 
 export const ListaDeHeartbeats = z.object({ items: z.array(Heartbeat), next_cursor: z.string().optional() })
 
+export const PreviaDoCron = z.object({ next_runs: z.array(instante) })
+
 export const EventoDeHeartbeat = z.object({
   id,
   at: instante,
   kind: z.enum(['start', 'success', 'fail']),
   runtime_ms: z.number().nullable(),
+  exit_code: z.number().nullable(),
 })
 export type EventoDeHeartbeat = z.infer<typeof EventoDeHeartbeat>
 

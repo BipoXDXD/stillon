@@ -101,6 +101,9 @@ export function criarApiFalsa() {
     },
     incidentes: [] as Entrada<typeof Incidente>[],
     heartbeats: [] as Entrada<typeof Heartbeat>[],
+    // null responde 400 no campo expr.
+    previaDoCron: ['2026-09-25T06:00:00Z', '2026-09-26T06:00:00Z'] as string[] | null,
+    previasPedidas: [] as string[],
     eventos: [] as Entrada<typeof EventoDeHeartbeat>[],
     incidentesDeHeartbeat: [] as Entrada<typeof IncidenteDeHeartbeat>[],
     canais: [] as Entrada<typeof Canal>[],
@@ -366,6 +369,7 @@ export function criarApiFalsa() {
       const h = {
         id: `hb-${st.heartbeats.length + 1}`,
         name: String(corpo.name),
+        tags: (corpo.tags as string[] | undefined) ?? [],
         enabled: true,
         schedule: corpo.schedule as Entrada<typeof Heartbeat>['schedule'],
         grace_sec: corpo.grace_sec === undefined ? 300 : Number(corpo.grace_sec),
@@ -374,11 +378,18 @@ export function criarApiFalsa() {
         last_ping_at: null,
         last_success_at: null,
         last_start_at: null,
+        last_runtime_ms: null,
         open_incident_id: null,
         created_at: agora().toISOString(),
       }
       st.heartbeats.push(h)
       return HttpResponse.json({ ...h, ping_url: PING_URL }, { status: 201 })
+    }),
+    rota('get', '/heartbeats/cron-preview', ({ request }) => {
+      st.previasPedidas.push(new URL(request.url).search)
+      return st.previaDoCron === null
+        ? erro(400, 'validation_failed', [{ field: 'expr', reason: 'invalid' }])
+        : HttpResponse.json({ next_runs: st.previaDoCron })
     }),
     rota('get', '/heartbeats/:id', ({ params }) => {
       const h = st.heartbeats.find((x) => x.id === params.id)

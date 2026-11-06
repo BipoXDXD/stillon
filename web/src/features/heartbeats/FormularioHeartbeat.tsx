@@ -8,6 +8,7 @@ import { ApiError } from '@/lib/api/http'
 import { mensagemDe, mensagemDoCampo } from '@/lib/api/mensagens'
 import { cn } from '@/lib/utils'
 import { campoDoServidor, esquemaDoHeartbeat, type ValoresDoHeartbeat } from './esquema'
+import { PreviaDoCron } from './PreviaDoCron'
 
 // Sugestões do campo de fuso: o navegador conhece a lista IANA, e o servidor
 // continua julgando o que vier digitado.
@@ -27,6 +28,8 @@ export function FormularioHeartbeat({
   const [erroGeral, setErroGeral] = useState<string | null>(null)
   const e = f.formState.errors
   const tipo = useWatch({ control: f.control, name: 'tipo' })
+  const expr = useWatch({ control: f.control, name: 'expr' })
+  const timezone = useWatch({ control: f.control, name: 'timezone' })
   const numero = { valueAsNumber: true } as const
 
   async function enviar(v: ValoresDoHeartbeat) {
@@ -54,6 +57,9 @@ export function FormularioHeartbeat({
       <ErroDoFormulario>{erroGeral}</ErroDoFormulario>
       <Campo rotulo="Nome" erro={e.name?.message}>
         {(a) => <Entrada {...a} {...f.register('name')} />}
+      </Campo>
+      <Campo rotulo="Tags" erro={e.tagsTexto?.message} ajuda="Separadas por vírgula, até 8. Ex.: prod, backup.">
+        {(a) => <Entrada {...a} {...f.register('tagsTexto')} />}
       </Campo>
       <fieldset>
         <legend className="mb-2 text-sm font-semibold">Agendamento</legend>
@@ -87,6 +93,7 @@ export function FormularioHeartbeat({
               <option key={nome} value={nome}>{nome}</option>
             ))}
           </datalist>
+          <PreviaDoCron expr={expr} timezone={timezone} />
         </div>
       )}
       <CampoDeDuracao

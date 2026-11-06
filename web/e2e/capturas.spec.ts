@@ -3,7 +3,7 @@ import path from 'node:path'
 import type { Page } from '@playwright/test'
 import type { z } from 'zod'
 import type { Check, Hora, HoraDoSpark, Serie } from '../src/lib/api/schemas'
-import { alvo, incidente, itemDoResumo, pagina } from '../src/test/fixtures'
+import { alvo, eventoDeHeartbeat, heartbeat, incidente, incidenteDeHeartbeat, itemDoResumo, pagina } from '../src/test/fixtures'
 import { imitarApi } from './api-imitada'
 import { expect, test } from './fixtures'
 
@@ -163,6 +163,68 @@ const resumoDoPainel = () => ({
   ],
 })
 
+const MINUTO_MS = 60_000
+const DIA_S = 86_400
+const DIA_MS = DIA_S * 1000
+const TOLERANCIA_DA_FIXTURE_MS = 15 * MINUTO_MS
+
+// O backup roda uma vez por dia. O prazo venceu há 42 minutos: o último sucesso
+// foi um período e uma tolerância antes dele.
+const ultimoSucessoDoBackup = () => Date.now() - 42 * MINUTO_MS - TOLERANCIA_DA_FIXTURE_MS - DIA_MS
+
+// Uma tarefa de cada situação: o backup perdeu o prazo, o relatório terminou
+// com a duração medida, a limpeza está rodando e o resumo foi pausado.
+const heartbeatsDoPainel = () => [
+  heartbeat({
+    id: 'h1',
+    name: 'Backup noturno',
+    tags: ['prod', 'dados'],
+    state: 'late',
+    deadline_at: iso(Date.now() - 42 * MINUTO_MS),
+    open_incident_id: 'hi1',
+    last_ping_at: iso(ultimoSucessoDoBackup()),
+    last_success_at: iso(ultimoSucessoDoBackup()),
+    last_runtime_ms: 183_000,
+    created_at: iso(Date.now() - 30 * DIA_S * 1000),
+  }),
+  heartbeat({
+    id: 'h2',
+    name: 'Relatório diário',
+    tags: ['financeiro'],
+    last_ping_at: iso(Date.now() - 3 * MINUTO_MS),
+    last_success_at: iso(Date.now() - 3 * MINUTO_MS),
+    last_runtime_ms: 12_000,
+    deadline_at: iso(Date.now() + DIA_S * 1000),
+    created_at: iso(Date.now() - 30 * DIA_S * 1000),
+  }),
+  heartbeat({
+    id: 'h3',
+    name: 'Limpeza de arquivos',
+    tags: ['prod'],
+    last_ping_at: iso(Date.now() - 2 * MINUTO_MS),
+    last_start_at: iso(Date.now() - 2 * MINUTO_MS),
+    last_success_at: iso(Date.now() - DIA_S * 1000),
+    deadline_at: iso(Date.now() + DIA_S * 1000),
+    created_at: iso(Date.now() - 30 * DIA_S * 1000),
+  }),
+  heartbeat({
+    id: 'h4',
+    name: 'Resumo semanal',
+    enabled: false,
+    state: 'paused',
+    deadline_at: iso(Date.now() + DIA_S * 1000),
+    created_at: iso(Date.now() - 30 * DIA_S * 1000),
+  }),
+]
+
+// O log do backup: a noite que falhou, com o código de saída, e a anterior.
+const eventosDoBackup = () => [
+  eventoDeHeartbeat({ id: 'e1', at: iso(ultimoSucessoDoBackup()), kind: 'success', runtime_ms: 183_000, exit_code: 0 }),
+  eventoDeHeartbeat({ id: 'e2', at: iso(ultimoSucessoDoBackup() - 3 * MINUTO_MS), kind: 'start' }),
+  eventoDeHeartbeat({ id: 'e3', at: iso(ultimoSucessoDoBackup() - DIA_MS), kind: 'fail', runtime_ms: 41_000, exit_code: 3 }),
+  eventoDeHeartbeat({ id: 'e4', at: iso(ultimoSucessoDoBackup() - DIA_MS - MINUTO_MS), kind: 'start' }),
+]
+
 const incidenteDoBanco = () =>
   incidente({ id: 'inc-1', target_id: 'a3', target_name: 'Banco', started_at: iso(horaCheia(0) - 20 * 60_000), cause: 'conn_refused' })
 
@@ -184,6 +246,28 @@ const emIncidentes = (u: URL) => u.pathname === '/api/v1/incidents'
 async function prepararPainel(page: Page) {
   await page.route('**/api/v1/targets/summary', (r) => r.fulfill({ status: 200, json: resumoDoPainel() }))
   await page.route(emIncidentes, (r) => r.fulfill({ status: 200, json: { items: [incidenteDoBanco()] } }))
+}
+
+const emSumario = (u: URL) => u.pathname === '/api/v1/targets/summary' && u.search !== ''
+
+async function prepararPainelFiltrado(page: Page) {
+  await prepararPainel(page)
+  const comATag = resumoDoPainel().items.filter((it) => it.tags.includes('dados'))
+  await page.route(emSumario, (r) => r.fulfill({ status: 200, json: { items: comATag } }))
+}
+
+async function prepararDetalheDoHeartbeat(page: Page) {
+  const backup = heartbeatsDoPainel()[0]
+  await page.route('**/api/v1/heartbeats/h1', (r) => r.fulfill({ status: 200, json: backup }))
+  await page.route('**/api/v1/heartbeats/h1/events*', (r) => r.fulfill({ status: 200, json: { items: eventosDoBackup() } }))
+  await page.route('**/api/v1/heartbeats/h1/incidents*', (r) =>
+    r.fulfill({
+      status: 200,
+      json: {
+        items: [incidenteDeHeartbeat({ id: 'hi1', heartbeat_id: 'h1', heartbeat_name: 'Backup noturno', started_at: backup?.deadline_at })],
+      },
+    }),
+  )
 }
 
 async function prepararDetalhe(page: Page) {
@@ -218,6 +302,26 @@ const TELAS: Tela[] = [
     conferir: async (page) => {
       await expect(page.getByRole('img', { name: /Últimas 24 h: .*hora degradada.*hora fora do ar/ }).first()).toBeVisible()
       await expect(page.getByText('Sem dados · nunca verificado').filter({ visible: true })).toBeVisible()
+      await expect(page.getByRole('link', { name: 'Backup noturno', exact: true })).toBeVisible()
+    },
+  },
+  {
+    nome: 'painel-filtrado',
+    rota: '/?tag=dados',
+    preparar: prepararPainelFiltrado,
+    conferir: async (page) => {
+      await expect(page.getByRole('link', { name: 'Backup noturno', exact: true })).toBeVisible()
+      await expect(page.getByRole('link', { name: 'Banco', exact: true })).toBeVisible()
+      await expect(page.getByRole('link', { name: 'Relatório diário' })).toHaveCount(0)
+    },
+  },
+  {
+    nome: 'detalhe-heartbeat',
+    rota: '/heartbeats/h1',
+    preparar: prepararDetalheDoHeartbeat,
+    conferir: async (page) => {
+      await expect(page.getByText('código de saída 3')).toBeVisible()
+      await expect(page.getByText('Última duração', { exact: true })).toBeVisible()
     },
   },
   {
@@ -225,6 +329,7 @@ const TELAS: Tela[] = [
     rota: '/',
     preparar: async (page) => {
       await page.route('**/api/v1/targets/summary', (r) => r.fulfill({ status: 200, json: { items: [] } }))
+      await page.route('**/api/v1/heartbeats?*', (r) => r.fulfill({ status: 200, json: { items: [] } }))
       await page.route(emIncidentes, (r) => r.fulfill({ status: 200, json: { items: [] } }))
     },
     conferir: async (page) => {
@@ -302,8 +407,7 @@ test('capturas das telas do painel', async ({ page }) => {
       for (const [tema, esquema] of TEMAS) {
         await page.unrouteAll({ behavior: 'ignoreErrors' })
         await imitarApi(page)
-        // As capturas do README ainda não mostram heartbeats.
-        await page.route('**/api/v1/heartbeats?*', (r) => r.fulfill({ status: 200, json: { items: [] } }))
+        await page.route('**/api/v1/heartbeats?*', (r) => r.fulfill({ status: 200, json: { items: heartbeatsDoPainel() } }))
         // Registrada depois, a rota da tela vence a do imitarApi.
         await tela.preparar?.(page)
         await page.setViewportSize({ width: largura, height: ALTURA })

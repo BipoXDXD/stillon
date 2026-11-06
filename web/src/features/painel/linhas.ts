@@ -1,4 +1,4 @@
-import { estadoDoHeartbeat, prazoVencido, textoDoHeartbeat } from '@/features/heartbeats/estado'
+import { estadoDoHeartbeat, inicioEmCurso, prazoVencido, tempoDeExecucao, textoDaEspera, textoDoHeartbeat } from '@/features/heartbeats/estado'
 import { textoDaCausa } from '@/lib/api/mensagens'
 import type { Heartbeat, HoraDoSpark, Incidente, ItemDoResumo } from '@/lib/api/schemas'
 import { estadoExibido, textoDoEstado, type EstadoExibido } from '@/lib/estado'
@@ -59,8 +59,8 @@ function situacaoDoAlvo(it: ItemDoResumo, estado: EstadoExibido, incidente: Inci
   }
 }
 
-// Sem tags, sem uptime e sem as 24 horas: o heartbeat não tem nada disso, e
-// medida inventada mentiria (spec da tela, T4 e T5).
+// Sem uptime e sem as 24 horas: o heartbeat não tem nada disso, e medida
+// inventada mentiria (spec da tela, T5).
 export function linhaDoHeartbeat(hb: Heartbeat, agora: Date): LinhaDeMonitor {
   return {
     tipo: 'heartbeat',
@@ -70,7 +70,7 @@ export function linhaDoHeartbeat(hb: Heartbeat, agora: Date): LinhaDeMonitor {
     estado: estadoDoHeartbeat(hb.state),
     textoDoEstado: textoDoHeartbeat(hb.state),
     situacao: situacaoDoHeartbeat(hb, agora),
-    tags: [],
+    tags: hb.tags,
     uptime24h: null,
     historico: [],
     incidenteHref: hb.open_incident_id ? `/heartbeats/${hb.id}` : null,
@@ -84,12 +84,25 @@ function situacaoDoHeartbeat(hb: Heartbeat, agora: Date): string {
     case 'failing':
       return textoDaCausa('heartbeat_failed')
     case 'up':
-      return hb.last_ping_at === null ? 'Nenhum sinal ainda' : `Sinal ${haQuantoAteAgora(hb.last_ping_at, agora)}`
+      return textoEmDia(hb, agora)
     case 'waiting':
-      return 'Aguardando o primeiro sinal'
+      return textoDeExecucao(hb, agora) ?? textoDaEspera(hb)
     case 'paused':
       return 'Pausado'
   }
+}
+
+function textoDeExecucao(hb: Heartbeat, agora: Date): string | null {
+  const inicio = inicioEmCurso(hb)
+  return inicio === null ? null : `Em execução, começou ${haQuantoAteAgora(inicio, agora)}`
+}
+
+function textoEmDia(hb: Heartbeat, agora: Date): string {
+  const emExecucao = textoDeExecucao(hb, agora)
+  if (emExecucao !== null) return emExecucao
+  if (hb.last_ping_at === null) return 'Nenhum sinal ainda'
+  const sinal = `Sinal ${haQuantoAteAgora(hb.last_ping_at, agora)}`
+  return hb.last_runtime_ms === null ? sinal : `${sinal} · levou ${tempoDeExecucao(hb.last_runtime_ms)}`
 }
 
 // Sem prazo vencido, não há duração a dizer.

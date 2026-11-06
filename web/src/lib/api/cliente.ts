@@ -22,6 +22,7 @@ import {
   Me,
   PaginaDeStatus,
   Resumo,
+  PreviaDoCron,
   Serie,
 } from './schemas'
 import type { Sessao } from './sessao'
@@ -56,7 +57,7 @@ export type EntradaAlvo = {
 
 export type AlteracaoAlvo = Partial<EntradaAlvo>
 
-export type EntradaHeartbeat = { name: string; schedule: Agendamento; grace_sec: number }
+export type EntradaHeartbeat = { name: string; schedule: Agendamento; grace_sec: number; tags?: string[] }
 
 export type AlteracaoHeartbeat = Partial<EntradaHeartbeat> & { enabled?: boolean }
 
@@ -167,6 +168,7 @@ export function criarApi(sessao: Sessao, buscar: Buscar, o: OpcoesDaApi = {}) {
     // Uma página de 100 é tudo: é o teto por usuário (spec da tela, T7).
     heartbeats: () => get('/heartbeats?limit=100', ListaDeHeartbeats),
     heartbeat: (id: string) => get(`/heartbeats/${encodeURIComponent(id)}`, Heartbeat),
+    previaDoCron: (expr: string, timezone: string) => get(`/heartbeats/cron-preview${consulta({ expr, timezone })}`, PreviaDoCron),
     criarHeartbeat: (e: EntradaHeartbeat) => pedir({ metodo: 'POST', caminho: '/heartbeats', corpo: e }, HeartbeatComPing),
     alterarHeartbeat: (id: string, a: AlteracaoHeartbeat) =>
       pedir({ metodo: 'PATCH', caminho: `/heartbeats/${encodeURIComponent(id)}`, corpo: a }, Heartbeat),

@@ -3,6 +3,7 @@ package heartbeat_test
 import (
 	"encoding/base64"
 	"errors"
+	"slices"
 	"testing"
 	"time"
 
@@ -80,6 +81,48 @@ func TestRuntimeComesFromTheOpenStartAndConsumesIt(t *testing.T) {
 	_, ev = aplicar(s, heartbeat.SignalSuccess, agora.Add(time.Hour))
 	if ev.RuntimeMS != nil {
 		t.Errorf("segundo sucesso herdou tempo de execução: %d", *ev.RuntimeMS)
+	}
+}
+
+// A execução que falha também é medida, e o início dela não fica aberto para o
+// próximo sucesso medir duas execuções como uma.
+func TestFailClosesTheRunToo(t *testing.T) {
+	s, _ := aplicar(heartbeat.State{}, heartbeat.SignalStart, agora)
+	s, ev := aplicar(s, heartbeat.SignalFail, agora.Add(30*time.Second))
+	if ev.RuntimeMS == nil || *ev.RuntimeMS != 30000 {
+		t.Fatalf("tempo de execução %v, queria 30000", ev.RuntimeMS)
+	}
+	if !s.LastStartAt.IsZero() {
+		t.Errorf("o início não foi consumido: %v", s.LastStartAt)
+	}
+	if s.LastRuntimeMS == nil || *s.LastRuntimeMS != 30000 {
+		t.Errorf("última duração %v, queria 30000", s.LastRuntimeMS)
+	}
+	_, ev = aplicar(s, heartbeat.SignalSuccess, agora.Add(time.Hour))
+	if ev.RuntimeMS != nil {
+		t.Errorf("sucesso sem início herdou %d ms", *ev.RuntimeMS)
+	}
+}
+
+func TestLastRuntimeFollowsTheLastClosedRun(t *testing.T) {
+	s, _ := aplicar(heartbeat.State{}, heartbeat.SignalStart, agora)
+	s, _ = aplicar(s, heartbeat.SignalSuccess, agora.Add(90*time.Second))
+	if s.LastRuntimeMS == nil || *s.LastRuntimeMS != 90000 {
+		t.Fatalf("última duração %v, queria 90000", s.LastRuntimeMS)
+	}
+	// O início sozinho não apaga a medida: a execução anterior segue a última
+	// encerrada.
+	s, _ = aplicar(s, heartbeat.SignalStart, agora.Add(time.Hour))
+	if s.LastRuntimeMS == nil {
+		t.Fatal("o início apagou a última duração")
+	}
+	s, _ = aplicar(s, heartbeat.SignalSuccess, agora.Add(time.Hour+5*time.Second))
+	if s.LastRuntimeMS == nil || *s.LastRuntimeMS != 5000 {
+		t.Fatalf("última duração %v, queria 5000", s.LastRuntimeMS)
+	}
+	s, _ = aplicar(s, heartbeat.SignalSuccess, agora.Add(2*time.Hour))
+	if s.LastRuntimeMS != nil {
+		t.Errorf("execução sem início ficou com %d ms", *s.LastRuntimeMS)
 	}
 }
 
@@ -369,5 +412,80 @@ func TestHashPingToken(t *testing.T) {
 		if _, ok := heartbeat.HashPingToken(malformado); ok {
 			t.Errorf("%q passou como token", malformado)
 		}
+	}
+}
+
+func TestNextRunsFollowTheScheduleInItsTimezone(t *testing.T) {
+	sch, err := heartbeat.NewCron("30 3 * * 1", "America/Sao_Paulo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Quinta, 24/9/2026, 12:00 UTC. Às 3h30 de segunda em São Paulo são 6h30 UTC.
+	got := sch.NextRuns(time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC), 3)
+	want := []time.Time{
+		time.Date(2026, 9, 28, 6, 30, 0, 0, time.UTC),
+		time.Date(2026, 10, 5, 6, 30, 0, 0, time.UTC),
+		time.Date(2026, 10, 12, 6, 30, 0, 0, time.UTC),
+	}
+	if !slices.EqualFunc(got, want, time.Time.Equal) {
+		t.Errorf("disparos %v, queria %v", got, want)
+	}
+}
+
+// 29/2 de 2096 é o último antes de 2104: a próxima procura esgota os cinco anos.
+func TestNextRunsStopWhenTheNextIsOutOfReach(t *testing.T) {
+	sch, err := heartbeat.NewCron("0 0 29 2 *", "UTC")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := sch.NextRuns(time.Date(2097, 1, 1, 0, 0, 0, 0, time.UTC), 3); len(got) != 0 {
+		t.Errorf("disparos %v, queria nenhum: instante zero seria data inventada", got)
+	}
+}
+
+func TestParseExitCode(t *testing.T) {
+	casos := []struct {
+		cru   string
+		ok    bool
+		sinal heartbeat.Signal
+		valor int16
+	}{
+		{"0", true, heartbeat.SignalSuccess, 0},
+		{"1", true, heartbeat.SignalFail, 1},
+		{"9", true, heartbeat.SignalFail, 9},
+		{"10", true, heartbeat.SignalFail, 10},
+		{"254", true, heartbeat.SignalFail, 254},
+		{"255", true, heartbeat.SignalFail, 255},
+		{"256", false, "", 0},
+		{"300", false, "", 0},
+		{"1000", false, "", 0},
+		{"", false, "", 0},
+		{"-1", false, "", 0},
+		{"+1", false, "", 0},
+		{"00", false, "", 0},
+		{"01", false, "", 0},
+		{"007", false, "", 0},
+		{"1.5", false, "", 0},
+		{"0x1", false, "", 0},
+		{"1e2", false, "", 0},
+		{"abc", false, "", 0},
+		{" 1", false, "", 0},
+		{"1\n", false, "", 0},
+		{"\u0661", false, "", 0}, // dígito não ASCII
+		{"99999999999999999999", false, "", 0},
+	}
+	for _, c := range casos {
+		t.Run(c.cru, func(t *testing.T) {
+			got, ok := heartbeat.ParseExitCode(c.cru)
+			if ok != c.ok {
+				t.Fatalf("ok = %v, queria %v", ok, c.ok)
+			}
+			if !ok {
+				return
+			}
+			if got.Signal() != c.sinal || got.Value() != c.valor {
+				t.Errorf("deu %s/%d, queria %s/%d", got.Signal(), got.Value(), c.sinal, c.valor)
+			}
+		})
 	}
 }

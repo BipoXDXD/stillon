@@ -22,6 +22,9 @@ const (
 	// MaxPerUser é o teto de heartbeats por usuário, o mesmo de alvos (D16).
 	MaxPerUser int64 = 100
 
+	// PreviewRuns é quantos disparos a prévia do cron mostra.
+	PreviewRuns = 5
+
 	DefaultPageSize int32 = 50
 	MaxPageSize     int32 = 100
 )
@@ -48,6 +51,7 @@ const (
 type Heartbeat struct {
 	ID             uuid.UUID
 	Name           string
+	Tags           []string
 	Enabled        bool
 	Schedule       Schedule
 	Grace          time.Duration
@@ -56,6 +60,7 @@ type Heartbeat struct {
 	LastPingAt     *time.Time
 	LastSuccessAt  *time.Time
 	LastStartAt    *time.Time
+	LastRuntimeMS  *int64
 	OpenIncidentID *uuid.UUID
 	CreatedAt      time.Time
 }
@@ -63,13 +68,17 @@ type Heartbeat struct {
 // Input é o cadastro. O agendamento já chega validado (NewPeriod, NewCron).
 type Input struct {
 	Name     string
+	Tags     []string
 	Schedule Schedule
 	Grace    time.Duration
 	Enabled  bool
 }
 
-// Patch: nil é "não mexa".
+// Patch: nil é "não mexa". Tags não seguem a regra: nil e vazio limpam, e quem
+// diz se elas vieram é SetTags.
 type Patch struct {
+	SetTags  bool
+	Tags     []string
 	Name     *string
 	Schedule *Schedule
 	Grace    *time.Duration
@@ -117,6 +126,16 @@ func ValidateName(name string) (string, error) {
 	return name, nil
 }
 
+// CronPreview são os próximos disparos de uma expressão ainda não gravada. Passa
+// pela mesma validação do cadastro, e não toca no banco.
+func (s *Service) CronPreview(expr, timezone string) ([]time.Time, error) {
+	sch, err := NewCron(expr, timezone)
+	if err != nil {
+		return nil, err
+	}
+	return sch.NextRuns(s.clk.Now(), PreviewRuns), nil
+}
+
 // Create grava o heartbeat e devolve o token, que só existe neste retorno.
 func (s *Service) Create(ctx context.Context, userID uuid.UUID, in Input) (Heartbeat, string, error) {
 	nome, err := ValidateName(in.Name)
@@ -124,6 +143,10 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, in Input) (Heart
 		return Heartbeat{}, "", err
 	}
 	if err := ValidateGrace(in.Grace); err != nil {
+		return Heartbeat{}, "", err
+	}
+	tags, err := normalizeTags(in.Tags)
+	if err != nil {
 		return Heartbeat{}, "", err
 	}
 	id, err := uuid.NewV7()
@@ -156,6 +179,9 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, in Input) (Heart
 		if err := q.InsertHeartbeat(ctx, params); err != nil {
 			return err
 		}
+		if err := q.InsertHeartbeatTags(ctx, db.InsertHeartbeatTagsParams{Tags: tags, UserID: userID, HeartbeatID: id}); err != nil {
+			return fmt.Errorf("gravar tags do heartbeat: %w", err)
+		}
 		out, err = s.responseOf(ctx, q, userID, id)
 		return err
 	})
@@ -163,6 +189,14 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, in Input) (Heart
 		return Heartbeat{}, "", err
 	}
 	return out, token, nil
+}
+
+func normalizeTags(cruas []string) ([]string, error) {
+	tags, motivo := rotulo.NormalizeTags(cruas)
+	if motivo != "" {
+		return nil, &ValidationError{Field: "tags", Reason: motivo}
+	}
+	return tags, nil
 }
 
 // responseOf monta o que volta dentro da transação que gravou. Na criação e na
@@ -180,7 +214,18 @@ func (s *Service) view(ctx context.Context, q *db.Queries, userID, id uuid.UUID)
 	if err != nil {
 		return Heartbeat{}, notFound(err)
 	}
-	return toHeartbeat(r.Heartbeat, r.OpenIncidentID, s.clk.Now())
+	out, err := toHeartbeat(r.Heartbeat, r.OpenIncidentID, s.clk.Now())
+	if err != nil {
+		return Heartbeat{}, err
+	}
+	out.Tags, err = q.ListHeartbeatTags(ctx, db.ListHeartbeatTagsParams{UserID: userID, HeartbeatID: id})
+	if err != nil {
+		return Heartbeat{}, fmt.Errorf("ler tags do heartbeat: %w", err)
+	}
+	if out.Tags == nil {
+		out.Tags = []string{}
+	}
+	return out, nil
 }
 
 func (s *Service) Get(ctx context.Context, userID, id uuid.UUID) (Heartbeat, error) {
@@ -200,12 +245,23 @@ func (s *Service) List(ctx context.Context, userID uuid.UUID, before *uuid.UUID,
 		if err != nil {
 			return fmt.Errorf("listar heartbeats: %w", err)
 		}
+		tags, err := q.ListUserHeartbeatTags(ctx, userID)
+		if err != nil {
+			return fmt.Errorf("ler tags do dono: %w", err)
+		}
+		porHeartbeat := make(map[uuid.UUID][]string, len(rows))
+		for _, t := range tags {
+			porHeartbeat[t.HeartbeatID] = append(porHeartbeat[t.HeartbeatID], t.Tag)
+		}
 		out = make([]Heartbeat, 0, len(rows))
 		now := s.clk.Now()
 		for _, r := range rows {
 			h, err := toHeartbeat(r.Heartbeat, r.OpenIncidentID, now)
 			if err != nil {
 				return err
+			}
+			if t, ok := porHeartbeat[h.ID]; ok {
+				h.Tags = t
 			}
 			out = append(out, h)
 		}
@@ -231,6 +287,13 @@ func (s *Service) Update(ctx context.Context, userID, id uuid.UUID, p Patch) (He
 			return Heartbeat{}, err
 		}
 	}
+	if p.SetTags {
+		tags, err := normalizeTags(p.Tags)
+		if err != nil {
+			return Heartbeat{}, err
+		}
+		p.Tags = tags
+	}
 	err := storage.InUserTx(ctx, s.pool, userID, func(q *db.Queries) error {
 		h, err := q.GetHeartbeatForUpdate(ctx, db.GetHeartbeatForUpdateParams{UserID: userID, ID: id})
 		if err != nil {
@@ -240,12 +303,28 @@ func (s *Service) Update(ctx context.Context, userID, id uuid.UUID, p Patch) (He
 		if err != nil {
 			return err
 		}
-		return q.UpdateHeartbeat(ctx, params)
+		if err := q.UpdateHeartbeat(ctx, params); err != nil {
+			return err
+		}
+		if !p.SetTags {
+			return nil
+		}
+		return replaceTags(ctx, q, userID, id, p.Tags)
 	})
 	if err != nil {
 		return Heartbeat{}, err
 	}
 	return s.Get(ctx, userID, id)
+}
+
+func replaceTags(ctx context.Context, q *db.Queries, userID, id uuid.UUID, tags []string) error {
+	if err := q.DeleteHeartbeatTags(ctx, db.DeleteHeartbeatTagsParams{UserID: userID, HeartbeatID: id}); err != nil {
+		return fmt.Errorf("apagar tags do heartbeat: %w", err)
+	}
+	if err := q.InsertHeartbeatTags(ctx, db.InsertHeartbeatTagsParams{Tags: tags, UserID: userID, HeartbeatID: id}); err != nil {
+		return fmt.Errorf("gravar tags do heartbeat: %w", err)
+	}
+	return nil
 }
 
 func (s *Service) updateParams(h db.Heartbeat, p Patch) (db.UpdateHeartbeatParams, error) {
@@ -257,6 +336,7 @@ func (s *Service) updateParams(h db.Heartbeat, p Patch) (db.UpdateHeartbeatParam
 	out := db.UpdateHeartbeatParams{
 		UserID: h.UserID, ID: h.ID, Name: h.Name, Enabled: h.Enabled,
 		DeadlineAt: h.DeadlineAt, FailingSince: h.FailingSince, ResumedAt: h.ResumedAt,
+		LastStartAt: h.LastStartAt,
 	}
 	if p.Name != nil {
 		out.Name = *p.Name
@@ -274,6 +354,9 @@ func (s *Service) updateParams(h db.Heartbeat, p Patch) (db.UpdateHeartbeatParam
 	retomou := out.Enabled && !h.Enabled
 	now := s.clk.Now()
 	if retomou {
+		// O início aberto é de antes da pausa: mantê-lo mediria a pausa inteira
+		// como execução no próximo sinal.
+		out.LastStartAt = nil
 		out.FailingSince = nil
 		out.ResumedAt = &now
 	}
@@ -417,17 +500,24 @@ func toHeartbeat(h db.Heartbeat, open *uuid.UUID, now time.Time) (Heartbeat, err
 		return Heartbeat{}, fmt.Errorf("agendamento do heartbeat %s: %w", h.ID, err)
 	}
 	return Heartbeat{
-		ID: h.ID, Name: h.Name, Enabled: h.Enabled, Schedule: sch,
+		ID: h.ID, Name: h.Name, Tags: []string{}, Enabled: h.Enabled, Schedule: sch,
 		Grace:      time.Duration(h.GraceSec) * time.Second,
-		Status:     statusOf(h.Enabled, h.FailingSince != nil, open != nil, h.DeadlineAt, h.LastPingAt != nil, now),
+		Status:     statusOf(h.Enabled, h.FailingSince != nil, open != nil, h.DeadlineAt, finishedARun(h), now),
 		DeadlineAt: h.DeadlineAt, LastPingAt: h.LastPingAt, LastSuccessAt: h.LastSuccessAt,
-		LastStartAt: h.LastStartAt, OpenIncidentID: open, CreatedAt: h.CreatedAt,
+		LastStartAt: h.LastStartAt, LastRuntimeMS: h.LastRuntimeMS, OpenIncidentID: open, CreatedAt: h.CreatedAt,
 	}, nil
+}
+
+// finishedARun diz se a tarefa já terminou alguma execução, bem ou mal. Um início
+// sozinho não prova nada: a tarefa nova pode morrer logo depois dele, e ficaria
+// "em dia" até o prazo.
+func finishedARun(h db.Heartbeat) bool {
+	return h.LastSuccessAt != nil || (h.LastSignal != nil && Signal(*h.LastSignal) != SignalStart)
 }
 
 // O incidente aberto conta como atraso mesmo com prazo futuro: editar o
 // agendamento move o prazo, e a tarefa continua devendo um sinal.
-func statusOf(enabled, failing, openIncident bool, deadline time.Time, pinged bool, now time.Time) Status {
+func statusOf(enabled, failing, openIncident bool, deadline time.Time, finished bool, now time.Time) Status {
 	switch {
 	case !enabled:
 		return StatusPaused
@@ -435,7 +525,7 @@ func statusOf(enabled, failing, openIncident bool, deadline time.Time, pinged bo
 		return StatusFailing
 	case openIncident, !deadline.After(now):
 		return StatusLate
-	case !pinged:
+	case !finished:
 		return StatusWaiting
 	}
 	return StatusUp

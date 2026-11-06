@@ -6,6 +6,7 @@
 package heartbeat
 
 import (
+	"strconv"
 	"time"
 	_ "time/tzdata" // o cron depende do fuso declarado, não do tzdata da imagem (D18)
 )
@@ -95,6 +96,40 @@ const (
 	SignalFail    Signal = "fail"
 )
 
+// ExitCode é o código de saída que a tarefa mandou no ping. O valor zero é o
+// sucesso; os outros nascem de ParseExitCode.
+type ExitCode struct {
+	value int16
+}
+
+// bitsDoExitCode é o tamanho do código de saída de um processo Unix: 0..255.
+const bitsDoExitCode = 8
+
+// ParseExitCode lê o sufixo da rota. Só a forma que o $? do shell produz é
+// aceita: zero à esquerda é erro de quem chama, e não um número a interpretar.
+// ParseUint já recusa sinal, espaço e o que não for dígito.
+func ParseExitCode(s string) (ExitCode, bool) {
+	if len(s) > 1 && s[0] == '0' {
+		return ExitCode{}, false
+	}
+	n, err := strconv.ParseUint(s, 10, bitsDoExitCode)
+	if err != nil {
+		return ExitCode{}, false
+	}
+	return ExitCode{value: int16(n)}, true
+}
+
+// Signal é o sinal que o código representa: 0 é sucesso, o resto é falha.
+func (c ExitCode) Signal() Signal {
+	if c.value == 0 {
+		return SignalSuccess
+	}
+	return SignalFail
+}
+
+// Value é o número, em 0..255.
+func (c ExitCode) Value() int16 { return c.value }
+
 // State é a parte da linha que os sinais mudam. Instante zero é "nunca".
 type State struct {
 	DeadlineAt    time.Time
@@ -103,10 +138,13 @@ type State struct {
 	LastStartAt   time.Time
 	LastSignal    Signal
 	FailingSince  time.Time
+	// LastRuntimeMS é a duração da última execução encerrada; nil se ela não
+	// foi medida.
+	LastRuntimeMS *int64
 }
 
-// Event é a linha que um sinal deixa no log. Runtime só existe num sucesso
-// com início aberto.
+// Event é a linha que um sinal deixa no log. Runtime só existe num sucesso ou
+// numa falha com início aberto.
 type Event struct {
 	At        time.Time
 	Kind      Signal
@@ -128,20 +166,30 @@ func (s State) Apply(sig Signal, now time.Time, sch Schedule, grace time.Duratio
 	case SignalStart:
 		s.LastStartAt = now
 	case SignalFail:
+		ev.RuntimeMS = s.closeRun(now)
 		if s.FailingSince.IsZero() {
 			s.FailingSince = now
 		}
 	case SignalSuccess:
-		if !s.LastStartAt.IsZero() {
-			ms := max(now.Sub(s.LastStartAt).Milliseconds(), 0)
-			ev.RuntimeMS = &ms
-		}
-		s.LastStartAt = time.Time{}
+		ev.RuntimeMS = s.closeRun(now)
 		s.FailingSince = time.Time{}
 		s.LastSuccessAt = now
 		s.DeadlineAt = FirstDeadline(sch, grace, now)
 	}
 	return s, ev
+}
+
+// closeRun encerra a execução: mede a partir do início aberto, se houver, e o
+// consome. Sem início, a última execução fica sem medida: repetir a duração da
+// anterior diria algo sobre uma execução que ninguém mediu.
+func (s *State) closeRun(now time.Time) *int64 {
+	s.LastRuntimeMS = nil
+	if !s.LastStartAt.IsZero() {
+		ms := max(now.Sub(s.LastStartAt).Milliseconds(), 0)
+		s.LastRuntimeMS = &ms
+	}
+	s.LastStartAt = time.Time{}
+	return s.LastRuntimeMS
 }
 
 // isRepeat vale para o intervalo negativo também: com relógios de instâncias

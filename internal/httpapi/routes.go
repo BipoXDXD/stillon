@@ -179,6 +179,7 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 
 	mux.Handle("GET /api/v1/heartbeats", protegida(hb.List))
 	mux.Handle("POST /api/v1/heartbeats", protegida(hb.Create))
+	mux.Handle("GET /api/v1/heartbeats/cron-preview", protegida(hb.CronPreview))
 	mux.Handle("GET /api/v1/heartbeats/{id}", protegida(hb.Get))
 	mux.Handle("PATCH /api/v1/heartbeats/{id}", protegida(hb.Update))
 	mux.Handle("DELETE /api/v1/heartbeats/{id}", protegida(hb.Delete))

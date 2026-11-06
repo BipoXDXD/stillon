@@ -55,6 +55,7 @@ export function heartbeat(p: Partial<z.input<typeof Heartbeat>> = {}): z.input<t
   return {
     id: 'hb-1',
     name: 'Backup noturno',
+    tags: [],
     enabled: true,
     schedule: { kind: 'period', period_sec: 86400 },
     grace_sec: 900,
@@ -63,6 +64,7 @@ export function heartbeat(p: Partial<z.input<typeof Heartbeat>> = {}): z.input<t
     last_ping_at: '2026-09-24T11:58:00Z',
     last_success_at: '2026-09-24T11:58:00Z',
     last_start_at: null,
+    last_runtime_ms: null,
     open_incident_id: null,
     created_at: '2026-09-20T10:00:00Z',
     ...p,
@@ -70,7 +72,7 @@ export function heartbeat(p: Partial<z.input<typeof Heartbeat>> = {}): z.input<t
 }
 
 export function eventoDeHeartbeat(p: Partial<z.input<typeof EventoDeHeartbeat>> = {}): z.input<typeof EventoDeHeartbeat> {
-  return { id: 'ev-1', at: '2026-09-24T11:58:00Z', kind: 'success', runtime_ms: null, ...p }
+  return { id: 'ev-1', at: '2026-09-24T11:58:00Z', kind: 'success', runtime_ms: null, exit_code: null, ...p }
 }
 
 export function incidenteDeHeartbeat(p: Partial<z.input<typeof IncidenteDeHeartbeat>> = {}): z.input<typeof IncidenteDeHeartbeat> {

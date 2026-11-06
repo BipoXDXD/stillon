@@ -23,9 +23,15 @@ describe('heartbeatNosFiltros', () => {
     expect(heartbeatNosFiltros(hb(), SEM_FILTROS)).toBe(true)
   })
 
-  // Spec da tela, T4. Sabotagem: não olhar as tags.
-  it('com filtro de tag, sai: heartbeat não tem tag', () => {
+  it('com filtro de tag, sai quem não tem a tag', () => {
     expect(heartbeatNosFiltros(hb(), { ...SEM_FILTROS, tags: ['prod'] })).toBe(false)
+    expect(heartbeatNosFiltros(hb({ tags: ['web'] }), { ...SEM_FILTROS, tags: ['prod'] })).toBe(false)
+  })
+
+  it('com filtro de tag, fica quem tem todas as pedidas', () => {
+    expect(heartbeatNosFiltros(hb({ tags: ['prod', 'dados'] }), { ...SEM_FILTROS, tags: ['prod'] })).toBe(true)
+    expect(heartbeatNosFiltros(hb({ tags: ['prod', 'dados'] }), { ...SEM_FILTROS, tags: ['prod', 'dados'] })).toBe(true)
+    expect(heartbeatNosFiltros(hb({ tags: ['prod'] }), { ...SEM_FILTROS, tags: ['prod', 'dados'] })).toBe(false)
   })
 
   // O botão "Fora do ar" agrupa por gravidade (T3).
@@ -38,6 +44,10 @@ describe('heartbeatNosFiltros', () => {
     ['paused', 'up', false],
   ] as const)('estado %s com o filtro %s → %s', (state, estado, casa) => {
     expect(heartbeatNosFiltros(hb({ state }), { ...SEM_FILTROS, estados: [estado] })).toBe(casa)
+  })
+
+  it('a busca olha a tag também', () => {
+    expect(heartbeatNosFiltros(hb({ name: 'Relatório', tags: ['financeiro'] }), { ...SEM_FILTROS, busca: 'financ' })).toBe(true)
   })
 
   it('a busca olha o nome', () => {

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -16,6 +17,9 @@ import (
 	"github.com/BipoXDXD/stillon/internal/storage"
 	"github.com/BipoXDXD/stillon/internal/storage/db"
 )
+
+// pingPorTokenRajada é a rajada do balde por token, em pinghandlers.go.
+const pingPorTokenRajada = 10
 
 // novoHeartbeat cria direto no banco: a API de cadastro é o PR seguinte.
 func novoHeartbeat(t *testing.T, a *api) (uuid.UUID, string) {
@@ -57,17 +61,22 @@ func pingar(t *testing.T, a *api, caminho string, corpo io.Reader) (int, http.He
 
 func contarEventos(t *testing.T, a *api, id uuid.UUID) int {
 	t.Helper()
+	return len(eventosDoHeartbeat(t, a, id))
+}
+
+func eventosDoHeartbeat(t *testing.T, a *api, id uuid.UUID) []db.HeartbeatEvent {
+	t.Helper()
 	ctx := context.Background()
-	var n int
+	var ev []db.HeartbeatEvent
 	err := storage.InUserTx(ctx, a.pool, a.userID, func(q *db.Queries) error {
-		ev, err := q.ListHeartbeatEvents(ctx, db.ListHeartbeatEventsParams{UserID: a.userID, HeartbeatID: id, MaxRows: 100})
-		n = len(ev)
+		var err error
+		ev, err = q.ListHeartbeatEvents(ctx, db.ListHeartbeatEventsParams{UserID: a.userID, HeartbeatID: id, MaxRows: 100})
 		return err
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	return n
+	return ev
 }
 
 func TestPingSignalsReachTheHeartbeat(t *testing.T) {
@@ -79,6 +88,116 @@ func TestPingSignalsReachTheHeartbeat(t *testing.T) {
 		}
 		if n := contarEventos(t, a, id); n != i+1 {
 			t.Fatalf("depois de %q: %d eventos, queria %d", sufixo, n, i+1)
+		}
+	}
+}
+
+// O código de saída diz o sinal: 0 é sucesso, o resto é falha, e o log guarda o
+// número. É o que permite uma linha só no crontab: curl .../ping/TOKEN/$?
+func TestPingExitCodeDecidesTheSignal(t *testing.T) {
+	casos := []struct {
+		caminho string
+		tipo    heartbeat.Signal
+		codigo  int16
+	}{
+		{"/0", heartbeat.SignalSuccess, 0},
+		{"/1", heartbeat.SignalFail, 1},
+		{"/255", heartbeat.SignalFail, 255},
+	}
+	for _, c := range casos {
+		t.Run(c.caminho, func(t *testing.T) {
+			a := newAPI(t)
+			id, token := novoHeartbeat(t, a)
+			if status, _, corpo := pingar(t, a, "/ping/"+token+c.caminho, nil); status != http.StatusOK || !strings.Contains(corpo, `"ok"`) {
+				t.Fatalf("POST %s: %d %s", c.caminho, status, corpo)
+			}
+			ev := eventosDoHeartbeat(t, a, id)
+			if len(ev) != 1 || ev[0].Kind != string(c.tipo) || ev[0].ExitCode == nil || *ev[0].ExitCode != c.codigo {
+				t.Fatalf("evento %+v, queria %s com código %d", ev, c.tipo, c.codigo)
+			}
+		})
+	}
+}
+
+// Os sufixos sem número continuam sem código no log.
+func TestPingWithoutExitCodeRecordsNone(t *testing.T) {
+	a := newAPI(t)
+	id, token := novoHeartbeat(t, a)
+	for _, sufixo := range []string{"/start", "", "/fail"} {
+		if status, _, corpo := pingar(t, a, "/ping/"+token+sufixo, nil); status != http.StatusOK {
+			t.Fatalf("POST %s: %d %s", sufixo, status, corpo)
+		}
+	}
+	for _, e := range eventosDoHeartbeat(t, a, id) {
+		if e.ExitCode != nil {
+			t.Errorf("evento %s com código %d", e.Kind, *e.ExitCode)
+		}
+	}
+}
+
+// Código fora de 0..255 responde como token desconhecido e não grava nada: a
+// rota nova não ensina nada sobre o token a quem a sonda. Número não canônico é
+// fora: o $? do shell nunca tem zero à esquerda nem sinal.
+func TestPingInvalidExitCodeAnswersLikeUnknownToken(t *testing.T) {
+	a := newAPI(t)
+	id, token := novoHeartbeat(t, a)
+	desconhecido, _ := heartbeat.NewPingToken()
+	stRef, _, corpoRef := pingar(t, a, "/ping/"+desconhecido, nil)
+	if stRef != http.StatusNotFound {
+		t.Fatalf("referência deu %d: %s", stRef, corpoRef)
+	}
+	// A lista cabe na rajada do balde por token.
+	for _, sufixo := range []string{"256", "-1", "%2B1", "007", "1.5", "0x1", "abc", "%00", "99999999999999999999"} {
+		st, _, corpo := pingar(t, a, "/ping/"+token+"/"+sufixo, nil)
+		if st != stRef || semTrace(t, corpo) != semTrace(t, corpoRef) {
+			t.Errorf("/%s deu %d %s; o token desconhecido, %d %s", sufixo, st, corpo, stRef, corpoRef)
+		}
+	}
+	if n := contarEventos(t, a, id); n != 0 {
+		t.Errorf("código inválido gravou %d eventos", n)
+	}
+}
+
+// Código válido com token desconhecido responde igual aos outros: o número não
+// é um atalho para descobrir se a URL existe.
+func TestPingExitCodeWithUnknownTokenAnswersTheSame(t *testing.T) {
+	a := newAPI(t)
+	desconhecido, _ := heartbeat.NewPingToken()
+	stRef, _, corpoRef := pingar(t, a, "/ping/"+desconhecido, nil)
+	st, _, corpo := pingar(t, a, "/ping/"+desconhecido+"/3", nil)
+	if st != stRef || semTrace(t, corpo) != semTrace(t, corpoRef) {
+		t.Errorf("com código deu %d %s; sem, %d %s", st, corpo, stRef, corpoRef)
+	}
+}
+
+// A repetição do D9 vale pelo sinal: um retry do curl não duplica a linha, mesmo
+// que o número mude.
+func TestPingRepeatedExitCodeHasOneEffect(t *testing.T) {
+	a := newAPI(t)
+	id, token := novoHeartbeat(t, a)
+	for _, codigo := range []string{"/2", "/2", "/3"} {
+		if status, _, corpo := pingar(t, a, "/ping/"+token+codigo, nil); status != http.StatusOK {
+			t.Fatalf("POST %s: %d %s", codigo, status, corpo)
+		}
+	}
+	if ev := eventosDoHeartbeat(t, a, id); len(ev) != 1 || *ev[0].ExitCode != 2 {
+		t.Errorf("eventos %+v, queria só o primeiro", ev)
+	}
+}
+
+// O código divide o balde do token com as outras rotas: um token vazado não
+// ganha um limite novo para cada número.
+func TestPingExitCodeSharesTheTokenLimit(t *testing.T) {
+	a := newAPI(t)
+	_, token := novoHeartbeat(t, a)
+	for i := range pingPorTokenRajada {
+		if status, _, corpo := pingar(t, a, "/ping/"+token+"/"+strconv.Itoa(i+1), nil); status != http.StatusOK {
+			t.Fatalf("tentativa %d: %d %s", i, status, corpo)
+		}
+	}
+	for _, caminho := range []string{"/ping/" + token + "/200", "/ping/" + token} {
+		if status, _, corpo := pingar(t, a, caminho, nil); status != http.StatusTooManyRequests {
+			t.Errorf("%s deu %d %s, queria 429", caminho, status, corpo)
 		}
 	}
 }
@@ -142,12 +261,17 @@ func TestPingNeverLogsTheToken(t *testing.T) {
 	desconhecido, _ := heartbeat.NewPingToken()
 
 	pingar(t, a, "/ping/"+token, nil)
+	pingar(t, a, "/ping/"+token+"/3", nil)
+	pingar(t, a, "/ping/"+token+"/abc", nil)
 	pingar(t, a, "/ping/"+desconhecido, nil)
 
 	// Falha interna: o banco fechado faz o Ping devolver erro.
 	a.pool.Close()
 	if status, _, corpo := pingar(t, a, "/ping/"+token, nil); status != http.StatusInternalServerError {
 		t.Fatalf("com o banco fechado: %d %s", status, corpo)
+	}
+	if status, _, corpo := pingar(t, a, "/ping/"+token+"/3", nil); status != http.StatusInternalServerError {
+		t.Fatalf("com o banco fechado, com código: %d %s", status, corpo)
 	}
 	if strings.Contains(log.String(), token) || strings.Contains(log.String(), desconhecido) {
 		t.Fatalf("token no log: %s", log.String())
@@ -251,18 +375,20 @@ func TestPingChainServesOnlyPing(t *testing.T) {
 	a := newAPI(t)
 	id, token := novoHeartbeat(t, a)
 
-	for _, metodo := range []string{http.MethodGet, http.MethodHead, http.MethodPut, http.MethodDelete} {
-		req, err := http.NewRequest(metodo, a.srv.URL+"/ping/"+token, nil)
-		if err != nil {
-			t.Fatal(err)
-		}
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			t.Fatal(err)
-		}
-		resp.Body.Close()
-		if resp.StatusCode != http.StatusMethodNotAllowed {
-			t.Errorf("%s deu %d, queria 405", metodo, resp.StatusCode)
+	for _, sufixo := range []string{"", "/0"} {
+		for _, metodo := range []string{http.MethodGet, http.MethodHead, http.MethodPut, http.MethodDelete} {
+			req, err := http.NewRequest(metodo, a.srv.URL+"/ping/"+token+sufixo, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			resp.Body.Close()
+			if resp.StatusCode != http.StatusMethodNotAllowed {
+				t.Errorf("%s %s deu %d, queria 405", metodo, sufixo, resp.StatusCode)
+			}
 		}
 	}
 	if status, _, corpo := pingar(t, a, "/ping/"+token+"/outra", nil); status != http.StatusNotFound {

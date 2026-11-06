@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"net/http"
+	"net/url"
 	"slices"
 	"sort"
 	"strings"
@@ -121,8 +123,8 @@ func TestHeartbeatResponseHasExactKeys(t *testing.T) {
 	a := newAPI(t)
 	dono := tokenDe(t, a, a.userID)
 	id, _ := criarHB(t, a, dono, corpoDePeriodo)
-	base := []string{"created_at", "deadline_at", "enabled", "grace_sec", "id", "last_ping_at", "last_start_at",
-		"last_success_at", "name", "open_incident_id", "schedule", "state"}
+	base := []string{"created_at", "deadline_at", "enabled", "grace_sec", "id", "last_ping_at", "last_runtime_ms", "last_start_at",
+		"last_success_at", "name", "open_incident_id", "schedule", "state", "tags"}
 
 	_, corpo := lerCru(t, a, http.MethodGet, "/api/v1/heartbeats/"+id, dono, nil)
 	m := decodificar(t, corpo)
@@ -142,8 +144,297 @@ func TestHeartbeatResponseHasExactKeys(t *testing.T) {
 	pingar(t, a, "/ping/"+tokenDaURL(t, corpo), nil)
 	_, corpo = lerCru(t, a, http.MethodGet, "/api/v1/heartbeats/"+id+"/events", dono, nil)
 	ev := decodificar(t, corpo)["items"].([]any)
-	if len(ev) != 1 || !slices.Equal(chavesDe(ev[0].(map[string]any)), []string{"at", "id", "kind", "runtime_ms"}) {
+	if len(ev) != 1 || !slices.Equal(chavesDe(ev[0].(map[string]any)), []string{"at", "exit_code", "id", "kind", "runtime_ms"}) {
 		t.Errorf("evento: %s", corpo)
+	}
+}
+
+// A lista e o detalhe trazem a última duração, e o início fica visível enquanto
+// a execução corre.
+func TestListAndDetailShowTheLastRuntime(t *testing.T) {
+	a := newAPI(t)
+	dono := tokenDe(t, a, a.userID)
+	id, token := criarHB(t, a, dono, corpoDePeriodo)
+	pingar(t, a, "/ping/"+token+"/start", nil)
+	a.clk.Advance(90 * time.Second)
+
+	_, corpo := lerCru(t, a, http.MethodGet, "/api/v1/heartbeats/"+id, dono, nil)
+	h := decodificar(t, corpo)
+	if h["last_start_at"] == nil || h["last_runtime_ms"] != nil {
+		t.Errorf("em execução: %s", corpo)
+	}
+	pingar(t, a, "/ping/"+token, nil)
+
+	_, corpo = lerCru(t, a, http.MethodGet, "/api/v1/heartbeats?limit=100", dono, nil)
+	h = decodificar(t, corpo)["items"].([]any)[0].(map[string]any)
+	if h["last_start_at"] != nil || h["last_runtime_ms"] != float64(90000) {
+		t.Errorf("depois do sucesso: %s", corpo)
+	}
+}
+
+func tagsDe(t *testing.T, corpo string) []any {
+	t.Helper()
+	tags, ok := decodificar(t, corpo)["tags"].([]any)
+	if !ok {
+		t.Fatalf("sem lista de tags: %s", corpo)
+	}
+	return tags
+}
+
+// Criar, ler, listar e editar. A forma canônica é a mesma dos alvos.
+func TestHeartbeatTagsRoundTrip(t *testing.T) {
+	a := newAPI(t)
+	dono := tokenDe(t, a, a.userID)
+	corpo := maps.Clone(corpoDePeriodo)
+	corpo["tags"] = []string{"Prod", " prod ", "dados"}
+	id, _ := criarHB(t, a, dono, corpo)
+
+	_, lido := lerCru(t, a, http.MethodGet, "/api/v1/heartbeats/"+id, dono, nil)
+	if got := tagsDe(t, lido); !slices.Equal(got, []any{"dados", "prod"}) {
+		t.Errorf("detalhe: %v", got)
+	}
+	_, lista := lerCru(t, a, http.MethodGet, "/api/v1/heartbeats?limit=100", dono, nil)
+	item := decodificar(t, lista)["items"].([]any)[0].(map[string]any)
+	if got := item["tags"].([]any); !slices.Equal(got, []any{"dados", "prod"}) {
+		t.Errorf("lista: %v", got)
+	}
+}
+
+// Sem tags é lista vazia, nunca null: o schema do painel recusaria o null.
+func TestHeartbeatWithoutTagsHasAnEmptyList(t *testing.T) {
+	a := newAPI(t)
+	dono := tokenDe(t, a, a.userID)
+	id, _ := criarHB(t, a, dono, corpoDePeriodo)
+	for _, caminho := range []string{"/api/v1/heartbeats/" + id, "/api/v1/heartbeats?limit=100"} {
+		_, corpo := lerCru(t, a, http.MethodGet, caminho, dono, nil)
+		if strings.Contains(corpo, `"tags":null`) || !strings.Contains(corpo, `"tags":[]`) {
+			t.Errorf("%s: %s", caminho, corpo)
+		}
+	}
+}
+
+// Ausente não mexe; lista troca; [] e null limpam.
+func TestPatchOfHeartbeatTags(t *testing.T) {
+	a := newAPI(t)
+	dono := tokenDe(t, a, a.userID)
+	corpo := maps.Clone(corpoDePeriodo)
+	corpo["tags"] = []string{"prod"}
+	id, _ := criarHB(t, a, dono, corpo)
+	vizinho, _ := criarHB(t, a, dono, corpo)
+	t.Cleanup(func() {
+		_, lido := lerCru(t, a, http.MethodGet, "/api/v1/heartbeats/"+vizinho, dono, nil)
+		if got := tagsDe(t, lido); !slices.Equal(got, []any{"prod"}) {
+			t.Errorf("as tags do vizinho mudaram: %v", got)
+		}
+	})
+
+	casos := []struct {
+		nome  string
+		corpo map[string]any
+		tags  []any
+	}{
+		{"ausente não mexe", map[string]any{"name": "outro"}, []any{"prod"}},
+		{"lista troca", map[string]any{"tags": []string{"api", "web"}}, []any{"api", "web"}},
+		{"vazia limpa", map[string]any{"tags": []string{}}, []any{}},
+		{"volta", map[string]any{"tags": []string{"prod"}}, []any{"prod"}},
+		{"null limpa", map[string]any{"tags": nil}, []any{}},
+	}
+	for _, c := range casos {
+		status, resp := lerCru(t, a, http.MethodPatch, "/api/v1/heartbeats/"+id, dono, c.corpo)
+		if status != http.StatusOK {
+			t.Fatalf("%s: %d %s", c.nome, status, resp)
+		}
+		if got := tagsDe(t, resp); !slices.Equal(got, c.tags) {
+			t.Errorf("%s: %v, queria %v", c.nome, got, c.tags)
+		}
+	}
+}
+
+func TestHeartbeatTagsAreValidatedLikeTargetTags(t *testing.T) {
+	a := newAPI(t)
+	dono := tokenDe(t, a, a.userID)
+	id, _ := criarHB(t, a, dono, corpoDePeriodo)
+	casos := []struct {
+		nome, motivo string
+		tags         []string
+	}{
+		{"com espaço", "invalid", []string{"a b"}},
+		{"com vírgula", "invalid", []string{"a,b"}},
+		{"NUL", "invalid", []string{"a\x00b"}},
+		{"injeção", "invalid", []string{"';DROP--"}},
+		{"25 caracteres", "too_long", []string{strings.Repeat("a", 25)}},
+		{"nove tags", "out_of_range", []string{"a", "b", "c", "d", "e", "f", "g", "h", "i"}},
+	}
+	for _, c := range casos {
+		t.Run(c.nome, func(t *testing.T) {
+			criar := maps.Clone(corpoDePeriodo)
+			criar["tags"] = c.tags
+			status, corpo := lerCru(t, a, http.MethodPost, "/api/v1/heartbeats", dono, criar)
+			if status != http.StatusBadRequest || !strings.Contains(corpo, `"tags"`) || !strings.Contains(corpo, c.motivo) {
+				t.Errorf("POST: %d %s", status, corpo)
+			}
+			status, corpo = lerCru(t, a, http.MethodPatch, "/api/v1/heartbeats/"+id, dono, map[string]any{"tags": c.tags})
+			if status != http.StatusBadRequest || !strings.Contains(corpo, c.motivo) {
+				t.Errorf("PATCH: %d %s", status, corpo)
+			}
+		})
+	}
+	_, corpo := lerCru(t, a, http.MethodGet, "/api/v1/heartbeats?limit=100", dono, nil)
+	if itens := decodificar(t, corpo)["items"].([]any); len(itens) != 1 || len(itens[0].(map[string]any)["tags"].([]any)) != 0 {
+		t.Errorf("tag inválida deixou rastro: %s", corpo)
+	}
+}
+
+// B não vê as tags de A nem as altera, e o PATCH dele é o 404 de sempre.
+func TestAnotherUsersHeartbeatTagsStayOut(t *testing.T) {
+	a := newAPI(t)
+	dono := tokenDe(t, a, a.userID)
+	corpo := maps.Clone(corpoDePeriodo)
+	corpo["tags"] = []string{"segredo-de-a"}
+	id, _ := criarHB(t, a, dono, corpo)
+	outro := tokenDe(t, a, outroUsuario(t, a))
+
+	status, resp := lerCru(t, a, http.MethodPatch, "/api/v1/heartbeats/"+id, outro, map[string]any{"tags": []string{"invadida"}})
+	if status != http.StatusNotFound || strings.Contains(resp, "segredo-de-a") {
+		t.Errorf("PATCH de B: %d %s", status, resp)
+	}
+	_, lista := lerCru(t, a, http.MethodGet, "/api/v1/heartbeats?limit=100", outro, nil)
+	if strings.Contains(lista, "segredo-de-a") {
+		t.Errorf("lista de B: %s", lista)
+	}
+	_, lido := lerCru(t, a, http.MethodGet, "/api/v1/heartbeats/"+id, dono, nil)
+	if got := tagsDe(t, lido); !slices.Equal(got, []any{"segredo-de-a"}) {
+		t.Errorf("as tags de A mudaram: %v", got)
+	}
+}
+
+func previaDoCron(t *testing.T, a *api, sessao string, consulta url.Values) (int, string) {
+	t.Helper()
+	return lerCru(t, a, http.MethodGet, "/api/v1/heartbeats/cron-preview?"+consulta.Encode(), sessao, nil)
+}
+
+// Cinco disparos em sequência, no fuso declarado: 3h em São Paulo são 6h UTC, e
+// a resposta tem só a chave do contrato.
+func TestCronPreviewListsTheNextRunsInTheTimezone(t *testing.T) {
+	a := newAPI(t)
+	sessao := tokenDe(t, a, a.userID)
+	status, corpo := previaDoCron(t, a, sessao, url.Values{"expr": {"0 3 * * *"}, "timezone": {"America/Sao_Paulo"}})
+	if status != http.StatusOK {
+		t.Fatalf("%d %s", status, corpo)
+	}
+	m := decodificar(t, corpo)
+	if got := chavesDe(m); !slices.Equal(got, []string{"next_runs"}) {
+		t.Errorf("chaves %v", got)
+	}
+	runs := m["next_runs"].([]any)
+	if len(runs) != 5 {
+		t.Fatalf("%d disparos: %s", len(runs), corpo)
+	}
+	agora := a.clk.Now()
+	var anterior time.Time
+	for i, r := range runs {
+		quando, err := time.Parse(time.RFC3339, r.(string))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if h, m := quando.UTC().Hour(), quando.UTC().Minute(); h != 6 || m != 0 {
+			t.Errorf("disparo %d: %v, queria 06:00 UTC", i, quando)
+		}
+		if !quando.After(agora) || (i > 0 && quando.Sub(anterior) != 24*time.Hour) {
+			t.Errorf("disparo %d fora de sequência: %v depois de %v (agora %v)", i, quando, anterior, agora)
+		}
+		anterior = quando
+	}
+}
+
+func TestCronPreviewRefusesWhatTheFormWouldRefuse(t *testing.T) {
+	a := newAPI(t)
+	sessao := tokenDe(t, a, a.userID)
+	sp := "America/Sao_Paulo"
+	casos := []struct {
+		nome, expr, fuso, campo string
+	}{
+		{"sem expressão", "", sp, "expr"},
+		{"sem fuso", "0 3 * * *", "", "timezone"},
+		{"seis campos", "0 0 3 * * *", sp, "expr"},
+		{"lixo", "isso não é cron", sp, "expr"},
+		{"passo zero", "*/0 * * * *", sp, "expr"},
+		{"nunca dispara", "0 0 30 2 *", sp, "expr"},
+		{"fuso dentro da expressão", "CRON_TZ=UTC 0 3 * * *", sp, "expr"},
+		{"expressão longa", strings.Repeat("1", 101), sp, "expr"},
+		{"NUL", "0 3 * * *\x00", sp, "expr"},
+		{"fuso inexistente", "0 3 * * *", "Marte/Olympus", "timezone"},
+		{"fuso da máquina", "0 3 * * *", "Local", "timezone"},
+		{"fuso com caminho", "0 3 * * *", "../../etc/passwd", "timezone"},
+	}
+	for _, c := range casos {
+		t.Run(c.nome, func(t *testing.T) {
+			esperarVagaNoLimite(a)
+			status, corpo := previaDoCron(t, a, sessao, url.Values{"expr": {c.expr}, "timezone": {c.fuso}})
+			if status != http.StatusBadRequest || !strings.Contains(corpo, `"field":"`+c.campo+`"`) {
+				t.Errorf("%d %s, queria 400 em %s", status, corpo, c.campo)
+			}
+		})
+	}
+}
+
+// Parâmetro desconhecido ou repetido é 400 no campo fixo, sem ecoar a chave.
+func TestCronPreviewQueryIsStrict(t *testing.T) {
+	a := newAPI(t)
+	sessao := tokenDe(t, a, a.userID)
+	valida := "expr=0+3+*+*+*&timezone=UTC"
+	for _, consulta := range []string{valida + "&CANARIO=1", valida + "&expr=1+*+*+*+*", "expr=%zz&timezone=UTC", "expr=a;timezone=UTC"} {
+		esperarVagaNoLimite(a)
+		status, corpo := lerCru(t, a, http.MethodGet, "/api/v1/heartbeats/cron-preview?"+consulta, sessao, nil)
+		if status != http.StatusBadRequest || !strings.Contains(corpo, `"field":"query"`) || strings.Contains(corpo, "CANARIO") {
+			t.Errorf("%s: %d %s", consulta, status, corpo)
+		}
+	}
+}
+
+// A prévia não cria nada, nem conta no teto.
+func TestCronPreviewCreatesNothing(t *testing.T) {
+	a := newAPI(t)
+	sessao := tokenDe(t, a, a.userID)
+	if status, corpo := previaDoCron(t, a, sessao, url.Values{"expr": {"0 3 * * *"}, "timezone": {"UTC"}}); status != http.StatusOK {
+		t.Fatalf("%d %s", status, corpo)
+	}
+	_, corpo := lerCru(t, a, http.MethodGet, "/api/v1/heartbeats", sessao, nil)
+	if itens := decodificar(t, corpo)["items"].([]any); len(itens) != 0 {
+		t.Errorf("a prévia gravou: %s", corpo)
+	}
+}
+
+// Sem sessão, 401. Isto não prova o registro da rota nem o Authn: o curinga {id}
+// também responde 401, e o handler recusa sem usuário. Quem prova os dois é
+// TestCronPreviewListsTheNextRunsInTheTimezone, que dá 200 com sessão válida.
+func TestCronPreviewWithoutSessionIs401(t *testing.T) {
+	a := newAPI(t)
+	status, corpo := lerCru(t, a, http.MethodGet, "/api/v1/heartbeats/cron-preview?expr=0+3+*+*+*&timezone=UTC", "", nil)
+	if status != http.StatusUnauthorized {
+		t.Errorf("%d %s", status, corpo)
+	}
+}
+
+// O log mostra o código de quem o mandou, e null nos demais.
+func TestEventListShowsTheExitCode(t *testing.T) {
+	a := newAPI(t)
+	dono := tokenDe(t, a, a.userID)
+	id, token := criarHB(t, a, dono, corpoDePeriodo)
+	pingar(t, a, "/ping/"+token+"/start", nil)
+	pingar(t, a, "/ping/"+token+"/3", nil)
+
+	_, corpo := lerCru(t, a, http.MethodGet, "/api/v1/heartbeats/"+id+"/events", dono, nil)
+	ev := decodificar(t, corpo)["items"].([]any)
+	if len(ev) != 2 {
+		t.Fatalf("eventos: %s", corpo)
+	}
+	falha, inicio := ev[0].(map[string]any), ev[1].(map[string]any)
+	if falha["kind"] != "fail" || falha["exit_code"] != float64(3) {
+		t.Errorf("falha: %v", falha)
+	}
+	if v, ok := inicio["exit_code"]; !ok || v != nil {
+		t.Errorf("início: %v", inicio)
 	}
 }
 
@@ -466,6 +757,81 @@ func TestStateFollowsTheClockAndTheSignals(t *testing.T) {
 	dono = tokenDe(t, a, a.userID) // o relógio avançou além da validade do token
 	if e := estado(); e != "late" {
 		t.Errorf("no prazo: %v", e)
+	}
+}
+
+// A tarefa nova que manda /start e morre não fica "em dia": segue aguardando, e
+// o prazo a pega. Quem tira de waiting é o primeiro sucesso.
+func TestStartAloneKeepsTheHeartbeatWaiting(t *testing.T) {
+	a := newAPI(t)
+	dono := tokenDe(t, a, a.userID)
+	id, ping := criarHB(t, a, dono, corpoDePeriodo)
+	if status, _, corpo := pingar(t, a, "/ping/"+ping+"/start", nil); status != http.StatusOK {
+		t.Fatalf("%d %s", status, corpo)
+	}
+	_, corpo := lerCru(t, a, http.MethodGet, "/api/v1/heartbeats/"+id, dono, nil)
+	m := decodificar(t, corpo)
+	if m["state"] != "waiting" || m["last_start_at"] == nil || m["last_ping_at"] == nil {
+		t.Errorf("depois do início: %s", corpo)
+	}
+	a.clk.Advance(time.Hour + 5*time.Minute)
+	dono = tokenDe(t, a, a.userID) // o relógio avançou além da validade do token
+	_, corpo = lerCru(t, a, http.MethodGet, "/api/v1/heartbeats/"+id, dono, nil)
+	if e := decodificar(t, corpo)["state"]; e != "late" {
+		t.Errorf("no prazo: %s", corpo)
+	}
+}
+
+// O início descartado na retomada não vira execução terminada: segue aguardando.
+func TestDiscardedStartKeepsTheHeartbeatWaiting(t *testing.T) {
+	a := newAPI(t)
+	dono := tokenDe(t, a, a.userID)
+	id, ping := criarHB(t, a, dono, corpoDePeriodo)
+	pingar(t, a, "/ping/"+ping+"/start", nil)
+	lerCru(t, a, http.MethodPatch, "/api/v1/heartbeats/"+id, dono, map[string]any{"enabled": false})
+	_, corpo := lerCru(t, a, http.MethodPatch, "/api/v1/heartbeats/"+id, dono, map[string]any{"enabled": true})
+	m := decodificar(t, corpo)
+	if m["state"] != "waiting" || m["last_start_at"] != nil {
+		t.Errorf("depois de retomar: %s", corpo)
+	}
+}
+
+// O início de antes da pausa não vira execução de três dias.
+func TestResumingDiscardsTheOpenStart(t *testing.T) {
+	a := newAPI(t)
+	dono := tokenDe(t, a, a.userID)
+	id, ping := criarHB(t, a, dono, corpoDePeriodo)
+	pingar(t, a, "/ping/"+ping, nil)
+	pingar(t, a, "/ping/"+ping+"/start", nil)
+	lerCru(t, a, http.MethodPatch, "/api/v1/heartbeats/"+id, dono, map[string]any{"enabled": false})
+
+	a.clk.Advance(72 * time.Hour)
+	dono = tokenDe(t, a, a.userID)
+	_, corpo := lerCru(t, a, http.MethodGet, "/api/v1/heartbeats/"+id, dono, nil)
+	if decodificar(t, corpo)["last_start_at"] == nil {
+		t.Fatalf("o controle falhou: pausar não deveria apagar o início: %s", corpo)
+	}
+	status, corpo := lerCru(t, a, http.MethodPatch, "/api/v1/heartbeats/"+id, dono, map[string]any{"enabled": true})
+	if status != http.StatusOK || decodificar(t, corpo)["last_start_at"] != nil {
+		t.Fatalf("depois de retomar: %d %s", status, corpo)
+	}
+
+	pingar(t, a, "/ping/"+ping, nil)
+	_, corpo = lerCru(t, a, http.MethodGet, "/api/v1/heartbeats/"+id, dono, nil)
+	if m := decodificar(t, corpo); m["last_runtime_ms"] != nil {
+		t.Errorf("a pausa virou duração: %s", corpo)
+	}
+}
+
+// Só a retomada descarta: editar o nome com a execução em curso não mexe nela.
+func TestEditingKeepsTheOpenStart(t *testing.T) {
+	a := newAPI(t)
+	dono := tokenDe(t, a, a.userID)
+	id, ping := criarHB(t, a, dono, corpoDePeriodo)
+	pingar(t, a, "/ping/"+ping+"/start", nil)
+	_, corpo := lerCru(t, a, http.MethodPatch, "/api/v1/heartbeats/"+id, dono, map[string]any{"name": "outro"})
+	if decodificar(t, corpo)["last_start_at"] == nil {
+		t.Errorf("editar apagou o início: %s", corpo)
 	}
 }
 

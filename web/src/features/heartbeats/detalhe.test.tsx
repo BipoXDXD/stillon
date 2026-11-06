@@ -2,14 +2,17 @@ import { screen, waitFor, within } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 import { eventoDeHeartbeat, heartbeat, incidente, incidenteDeHeartbeat } from '@/test/fixtures'
 import { renderizarPainel } from '@/test/renderizar'
-import { tempoDeExecucao } from './EventosDoHeartbeat'
+import { tempoDeExecucao } from './estado'
 
-async function detalheCom(p: {
+type ComListas = {
   eventos?: Parameters<typeof eventoDeHeartbeat>[0][]
   incidentes?: Parameters<typeof incidenteDeHeartbeat>[0][]
-} = {}) {
+}
+
+async function detalheCom(p: ComListas & Parameters<typeof heartbeat>[0] = {}) {
   const r = await renderizarPainel('/')
-  r.falsa.estado.heartbeats = [heartbeat({ id: 'h1', name: 'Backup' })]
+  const { eventos: _eventos, incidentes: _incidentes, ...doHeartbeat } = p
+  r.falsa.estado.heartbeats = [heartbeat({ id: 'h1', name: 'Backup', ...doHeartbeat })]
   r.falsa.estado.eventos = (p.eventos ?? []).map(eventoDeHeartbeat)
   r.falsa.estado.incidentesDeHeartbeat = (p.incidentes ?? []).map((i) => incidenteDeHeartbeat({ heartbeat_id: 'h1', ...i }))
   await r.router.navigate('/heartbeats/h1')
@@ -29,6 +32,47 @@ describe('tempoDeExecucao', () => {
     [3_780_000, '1 h 3 min'],
   ])('%i ms → %s', (ms, texto) => {
     expect(tempoDeExecucao(ms)).toBe(texto)
+  })
+})
+
+describe('tempo de execução no detalhe', () => {
+  // Zero é medida: um `||` no lugar do `=== null` diria "Não medida".
+  it('mostra a última duração, inclusive a de zero ms', async () => {
+    await detalheCom({ last_runtime_ms: 0 })
+    const s = await secao('Agendamento e sinais')
+    expect(within(s).getByText('Última duração').nextElementSibling).toHaveTextContent('0 ms')
+  })
+
+  it('sem medida, diz isso, e não fala em execução parada', async () => {
+    await detalheCom()
+    const s = await secao('Agendamento e sinais')
+    expect(within(s).getByText('Última duração').nextElementSibling).toHaveTextContent('Não medida')
+    expect(within(s).queryByText('Em execução desde')).not.toBeInTheDocument()
+  })
+
+  it('o detalhe mostra as tags', async () => {
+    await detalheCom({ tags: ['prod', 'dados'] })
+    expect(within(screen.getByRole('list', { name: 'Tags' })).getAllByRole('listitem').map((l) => l.textContent)).toEqual(['prod', 'dados'])
+  })
+
+  // A mesma regra da lista: inicioEmCurso nas duas telas.
+  it.each(['paused', 'late', 'failing'] as const)('%s com início aberto não fala em execução', async (state) => {
+    await detalheCom({ state, enabled: state !== 'paused', last_start_at: '2026-09-21T11:50:00Z' })
+    const s = await secao('Agendamento e sinais')
+    expect(within(s).queryByText('Em execução desde')).not.toBeInTheDocument()
+  })
+
+  it('tarefa nova com início: aguarda o primeiro sucesso e mostra a execução', async () => {
+    await detalheCom({ state: 'waiting', last_ping_at: '2026-09-24T11:50:00Z', last_start_at: '2026-09-24T11:50:00Z', last_success_at: null })
+    const s = await secao('Agendamento e sinais')
+    expect(within(s).getByText(/^Aguardando o primeiro sucesso, até /)).toBeInTheDocument()
+    expect(within(s).getByText('Em execução desde')).toBeInTheDocument()
+  })
+
+  it('com início aberto, mostra desde quando', async () => {
+    await detalheCom({ last_start_at: '2026-09-24T11:50:00Z' })
+    const s = await secao('Agendamento e sinais')
+    expect(within(s).getByText('Em execução desde')).toBeInTheDocument()
   })
 })
 
@@ -52,6 +96,20 @@ describe('log de eventos', () => {
     expect(linhas.map((l) => within(l).getByText(/^(Início|Sucesso|Falha)$/).textContent)).toEqual(['Sucesso', 'Início', 'Falha'])
     expect(linhas[0]).toHaveTextContent('levou 3 min')
     expect(linhas[1]).not.toHaveTextContent('levou')
+    expect(linhas[0]).not.toHaveTextContent('código de saída')
+  })
+
+  // Zero é um código de verdade: um `&&` no lugar do `!== null` o esconderia.
+  it('mostra o código de saída quando a tarefa mandou, inclusive o zero', async () => {
+    await detalheCom({
+      eventos: [
+        { id: 'e1', kind: 'fail', exit_code: 3 },
+        { id: 'e2', kind: 'success', exit_code: 0 },
+      ],
+    })
+    const linhas = await within(await secao('Log de eventos')).findAllByRole('listitem')
+    expect(linhas[0]).toHaveTextContent('código de saída 3')
+    expect(linhas[1]).toHaveTextContent('código de saída 0')
   })
 
   // Sabotagem: não passar o cursor → a mesma página duas vezes.

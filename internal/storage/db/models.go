@@ -67,6 +67,7 @@ type Heartbeat struct {
 	FailingSince   *time.Time
 	LastIncidentAt *time.Time
 	ResumedAt      *time.Time
+	LastRuntimeMS  *int64
 }
 
 type HeartbeatEvent struct {
@@ -75,6 +76,12 @@ type HeartbeatEvent struct {
 	At          time.Time
 	Kind        string
 	RuntimeMS   *int64
+	ExitCode    *int16
+}
+
+type HeartbeatTag struct {
+	HeartbeatID uuid.UUID
+	Tag         string
 }
 
 type Incident struct {

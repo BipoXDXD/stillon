@@ -4,6 +4,8 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -39,16 +41,18 @@ type scheduleDTO struct {
 
 type heartbeatRequest struct {
 	Name     string       `json:"name"`
+	Tags     []string     `json:"tags"`
 	Schedule *scheduleDTO `json:"schedule"`
 	GraceSec *int32       `json:"grace_sec"`
 	Enabled  *bool        `json:"enabled"`
 }
 
 type heartbeatPatchRequest struct {
-	Name     *string      `json:"name"`
-	Schedule *scheduleDTO `json:"schedule"`
-	GraceSec *int32       `json:"grace_sec"`
-	Enabled  *bool        `json:"enabled"`
+	Name     *string            `json:"name"`
+	Tags     optional[[]string] `json:"tags"`
+	Schedule *scheduleDTO       `json:"schedule"`
+	GraceSec *int32             `json:"grace_sec"`
+	Enabled  *bool              `json:"enabled"`
 }
 
 // heartbeatResponse é construído campo a campo. Não existe campo para o hash,
@@ -56,6 +60,7 @@ type heartbeatPatchRequest struct {
 type heartbeatResponse struct {
 	ID             string      `json:"id"`
 	Name           string      `json:"name"`
+	Tags           []string    `json:"tags"`
 	Enabled        bool        `json:"enabled"`
 	Schedule       scheduleDTO `json:"schedule"`
 	GraceSec       int64       `json:"grace_sec"`
@@ -64,6 +69,7 @@ type heartbeatResponse struct {
 	LastPingAt     *time.Time  `json:"last_ping_at"`
 	LastSuccessAt  *time.Time  `json:"last_success_at"`
 	LastStartAt    *time.Time  `json:"last_start_at"`
+	LastRuntimeMS  *int64      `json:"last_runtime_ms"`
 	OpenIncidentID *string     `json:"open_incident_id"`
 	CreatedAt      time.Time   `json:"created_at"`
 }
@@ -85,6 +91,7 @@ type heartbeatEventResponse struct {
 	At        time.Time `json:"at"`
 	Kind      string    `json:"kind"`
 	RuntimeMS *int64    `json:"runtime_ms"`
+	ExitCode  *int16    `json:"exit_code"`
 }
 
 type heartbeatEventListResponse struct {
@@ -109,9 +116,9 @@ type heartbeatIncidentListResponse struct {
 
 func toHeartbeatResponse(h heartbeat.Heartbeat) heartbeatResponse {
 	r := heartbeatResponse{
-		ID: h.ID.String(), Name: h.Name, Enabled: h.Enabled, GraceSec: int64(h.Grace / time.Second),
+		ID: h.ID.String(), Name: h.Name, Tags: h.Tags, Enabled: h.Enabled, GraceSec: int64(h.Grace / time.Second),
 		State: string(h.Status), DeadlineAt: h.DeadlineAt, LastPingAt: h.LastPingAt,
-		LastSuccessAt: h.LastSuccessAt, LastStartAt: h.LastStartAt, CreatedAt: h.CreatedAt,
+		LastSuccessAt: h.LastSuccessAt, LastStartAt: h.LastStartAt, LastRuntimeMS: h.LastRuntimeMS, CreatedAt: h.CreatedAt,
 		Schedule: toScheduleDTO(h.Schedule),
 	}
 	if h.OpenIncidentID != nil {
@@ -171,7 +178,7 @@ func (h *HeartbeatHandlers) Create(w http.ResponseWriter, r *http.Request) {
 	if h.falhou(w, r, "validar heartbeat", err) {
 		return
 	}
-	in := heartbeat.Input{Name: req.Name, Schedule: sch, Grace: heartbeat.DefaultGrace, Enabled: true}
+	in := heartbeat.Input{Name: req.Name, Tags: req.Tags, Schedule: sch, Grace: heartbeat.DefaultGrace, Enabled: true}
 	if req.GraceSec != nil {
 		in.Grace = time.Duration(*req.GraceSec) * time.Second
 	}
@@ -208,6 +215,39 @@ func (h *HeartbeatHandlers) List(w http.ResponseWriter, r *http.Request) {
 	apierr.WriteJSON(w, http.StatusOK, resp)
 }
 
+type cronPreviewResponse struct {
+	NextRuns []time.Time `json:"next_runs"`
+}
+
+// parametrosDaPrevia são os únicos aceitos, uma vez cada: parâmetro desconhecido
+// ou repetido é 400, como no resumo (parametrosDoResumo).
+var parametrosDaPrevia = []string{"expr", "timezone"}
+
+// CronPreview é GET /heartbeats/cron-preview: quem julga a expressão é o
+// servidor (T11), e o formulário mostra o que ele calculou. Sem estado e sem
+// recurso: nada de dono a filtrar, mas a rota é autenticada como as outras.
+func (h *HeartbeatHandlers) CronPreview(w http.ResponseWriter, r *http.Request) {
+	if _, ok := usuario(w, r); !ok {
+		return
+	}
+	q, err := url.ParseQuery(r.URL.RawQuery)
+	if err != nil {
+		campoInvalido(w, r, campoDaConsulta, heartbeat.ReasonInvalid)
+		return
+	}
+	for chave, valores := range q {
+		if !slices.Contains(parametrosDaPrevia, chave) || len(valores) != 1 {
+			campoInvalido(w, r, campoDaConsulta, heartbeat.ReasonInvalid)
+			return
+		}
+	}
+	proximos, err := h.svc.CronPreview(q.Get("expr"), q.Get("timezone"))
+	if h.falhou(w, r, "calcular prévia do cron", err) {
+		return
+	}
+	apierr.WriteJSON(w, http.StatusOK, cronPreviewResponse{NextRuns: proximos})
+}
+
 func (h *HeartbeatHandlers) Get(w http.ResponseWriter, r *http.Request) {
 	userID, id, ok := donoEID(w, r)
 	if !ok {
@@ -229,7 +269,7 @@ func (h *HeartbeatHandlers) Update(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	p := heartbeat.Patch{Name: req.Name, Enabled: req.Enabled}
+	p := heartbeat.Patch{SetTags: req.Tags.Set, Tags: req.Tags.Value, Name: req.Name, Enabled: req.Enabled}
 	if req.Schedule != nil {
 		sch, err := req.Schedule.schedule()
 		if h.falhou(w, r, "validar heartbeat", err) {
@@ -286,7 +326,7 @@ func (h *HeartbeatHandlers) Events(w http.ResponseWriter, r *http.Request) {
 	}
 	resp := heartbeatEventListResponse{Items: make([]heartbeatEventResponse, 0, len(items))}
 	for _, e := range items {
-		resp.Items = append(resp.Items, heartbeatEventResponse{ID: e.ID.String(), At: e.At, Kind: e.Kind, RuntimeMS: e.RuntimeMS})
+		resp.Items = append(resp.Items, heartbeatEventResponse{ID: e.ID.String(), At: e.At, Kind: e.Kind, RuntimeMS: e.RuntimeMS, ExitCode: e.ExitCode})
 	}
 	if len(items) == int(limite) {
 		resp.NextCursor = items[len(items)-1].ID.String()
