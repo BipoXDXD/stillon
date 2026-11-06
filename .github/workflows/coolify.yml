@@ -14,7 +14,7 @@ on:
   pull_request:
     paths:
       - .github/workflows/coolify.yml
-      - .github/workflows/publish-images.yml
+      - .github/workflows/ci.yml
       - deploy/coolify/release/**
 
 permissions:
