@@ -159,7 +159,7 @@ describe('painel', () => {
     it('se a consulta dos resolvidos falha, não diz "nenhum"', async () => {
       const r = await renderizarPainel('/')
       r.falsa.estado.resumo = [itemDoResumo()]
-      r.falsa.estado.forcar.set('GET /incidents', { status: 502, code: 'unavailable' })
+      r.falsa.estado.forcar.set('GET /incidents', { status: 503, code: 'unavailable' })
       await r.cliente.refetchQueries()
       await screen.findByRole('heading', { level: 2, name: 'Tudo no ar.' })
       await waitFor(() =>
@@ -242,7 +242,7 @@ describe('painel', () => {
     r.falsa.estado.resumo = [itemDoResumo({ id: 'a', name: 'API' })]
     await r.cliente.refetchQueries()
     await screen.findByRole('link', { name: 'API' })
-    r.falsa.estado.forcar.set('GET /targets/summary', { status: 502, code: 'unavailable' })
+    r.falsa.estado.forcar.set('GET /targets/summary', { status: 503, code: 'unavailable' })
     await r.cliente.refetchQueries({ queryKey: ['targets', 'summary'] })
     expect(await screen.findByText(/Não foi possível atualizar agora/)).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'API' })).toBeInTheDocument()
@@ -312,7 +312,7 @@ describe('avisos de canais', () => {
     const r = await renderizarPainel('/')
     r.falsa.estado.resumo = [itemDoResumo()]
     await r.cliente.refetchQueries()
-    r.falsa.estado.forcar.set('GET /channels', { status: 502, code: 'unavailable' })
+    r.falsa.estado.forcar.set('GET /channels', { status: 503, code: 'unavailable' })
     await r.cliente.refetchQueries({ queryKey: ['channels'] })
     expect(await screen.findByText('Não foi possível conferir os canais de notificação agora.')).toBeInTheDocument()
     expect(screen.queryByText('Nenhum canal de notificação cadastrado. Os incidentes não enviam avisos.')).not.toBeInTheDocument()

@@ -107,7 +107,7 @@ describe('filtros do painel', () => {
   // pareceria um filtro que não filtra.
   it('se a consulta filtrada falha, a manchete fica e a tabela vira o erro com nova tentativa', async () => {
     const r = await preparar()
-    r.falsa.estado.forcar.set('GET /targets/summary?tag=web', { status: 502, code: 'unavailable' })
+    r.falsa.estado.forcar.set('GET /targets/summary?tag=web', { status: 503, code: 'unavailable' })
     await userEvent.click(filtro('Tags', /^web/))
     expect(await screen.findByRole('button', { name: 'Tentar de novo' })).toBeInTheDocument()
     expect(screen.queryByRole('table', { name: /^Monitores/ })).not.toBeInTheDocument()

@@ -1,7 +1,10 @@
+/// <reference types="node" />
+import { readFileSync } from 'node:fs'
+import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { usarApiFalsa } from './ambiente'
-import { TOTP_OK } from './api-falsa'
-import { alvo, heartbeat, incidente, pagina } from './fixtures'
+import { ERROS_DO_SERVIDOR, TOTP_OK } from './api-falsa'
+import { alvo, canal, heartbeat, incidente, itemDoResumo, pagina } from './fixtures'
 
 // A API falsa é o contrato dos testes de tela: quando ela diverge do servidor,
 // a tela passa num estado que não existe. Estes testes fixam o que ela imita.
@@ -334,5 +337,126 @@ describe('entrada estrita (decodeJSON do servidor)', () => {
     const falsa = apiComRecursos()
     await pedir('PATCH', '/heartbeats/h1', { name: 'Novo', extra: 1 })
     expect(falsa.estado.heartbeats[0]?.name).toBe('Backup noturno')
+  })
+})
+
+describe('erros que só o servidor sabe dar', () => {
+  it('a segunda status page é conflito, e a primeira fica', async () => {
+    const falsa = apiLogada()
+    falsa.estado.paginas = [pagina({ slug: 'primeira' })]
+    const resposta = await pedir('POST', '/status-pages', { slug: 'outra', title: 'Outra', published: false, items: [] })
+    expect(resposta.status).toBe(409)
+    expect(await resposta.json()).toMatchObject({ error: { code: 'status_page_exists' } })
+    expect(falsa.estado.paginas.map((p) => p.slug)).toEqual(['primeira'])
+  })
+
+  it.each(['pending', 'expired'] as const)('reenviar verificação de e-mail %s funciona', async (status) => {
+    const falsa = apiLogada()
+    falsa.estado.canais = [canal({ id: 'c1', kind: 'email', status })]
+    expect((await pedir('POST', '/channels/c1/verify/resend')).status).toBe(204)
+  })
+
+  it.each([
+    ['e-mail já verificado', { kind: 'email', status: 'verified' }],
+    ['e-mail verificado que passou a falhar', { kind: 'email', status: 'failing' }],
+    ['discord', { kind: 'discord', status: 'pending' }],
+  ] as const)('reenviar verificação de %s é conflito', async (_nome, p) => {
+    const falsa = apiLogada()
+    falsa.estado.canais = [canal({ id: 'c1', ...p })]
+    const resposta = await pedir('POST', '/channels/c1/verify/resend')
+    expect(resposta.status).toBe(409)
+    expect(await resposta.json()).toMatchObject({ error: { code: 'channel_not_pending' } })
+  })
+})
+
+describe('PATCH com name null (a validação do nome no servidor)', () => {
+  it.each([
+    ['alvo', '/targets/x1', 'alvos' as const, () => alvo({ id: 'x1', name: 'antes' })],
+    ['heartbeat', '/heartbeats/x1', 'heartbeats' as const, () => heartbeat({ id: 'x1', name: 'antes' })],
+  ])('%s responde 400 e não grava nada', async (_nome, caminho, colecao, criar) => {
+    const falsa = apiLogada()
+    falsa.estado[colecao] = [criar() as never]
+    const resposta = await pedir('PATCH', caminho, { name: null, enabled: false })
+    expect(resposta.status).toBe(400)
+    expect(await resposta.json()).toMatchObject({
+      error: { code: 'validation_failed', fields: [{ field: 'name', reason: 'required' }] },
+    })
+    expect(falsa.estado[colecao][0]).toMatchObject({ name: 'antes', enabled: true })
+  })
+})
+
+describe('filtro do resumo (ParseSummaryFilter do servidor)', () => {
+  function apiComResumo() {
+    const falsa = apiLogada()
+    falsa.estado.resumo = [
+      itemDoResumo({ id: 'a1', tags: ['web'], state: 'up' }),
+      itemDoResumo({ id: 'a2', tags: ['banco'], state: 'down' }),
+    ]
+  }
+
+  it('normaliza a tag como o servidor', async () => {
+    apiComResumo()
+    const corpo = (await (await pedir('GET', '/targets/summary?tag=%20WEB%20')).json()) as { items: { id: string }[] }
+    expect(corpo.items.map((i) => i.id)).toEqual(['a1'])
+  })
+
+  it.each([
+    ['tag com separador', 'tag=a,b', 'tag', 'invalid'],
+    ['tag com número que não é dígito', 'tag=a%C2%B2', 'tag', 'invalid'],
+    ['tag vazia', 'tag=', 'tag', 'invalid'],
+    ['tag no limite + 1', `tag=${'a'.repeat(25)}`, 'tag', 'too_long'],
+    ['tags demais', Array.from({ length: 9 }, (_, i) => `tag=t${i}`).join('&'), 'tag', 'out_of_range'],
+    ['estado inválido', 'state=late', 'state', 'invalid'],
+    ['estados demais', Array.from({ length: 6 }, () => 'state=up').join('&'), 'state', 'out_of_range'],
+    ['parâmetro desconhecido', 'cor=azul', 'query', 'invalid'],
+  ])('%s é 400', async (_nome, consulta, field, reason) => {
+    apiComResumo()
+    const resposta = await pedir('GET', `/targets/summary?${consulta}`)
+    expect(resposta.status).toBe(400)
+    expect(await resposta.json()).toMatchObject({ error: { code: 'validation_failed', fields: [{ field, reason }] } })
+  })
+
+  it('tag com dígito de outra escrita passa', async () => {
+    apiComResumo()
+    expect((await pedir('GET', '/targets/summary?tag=a%D9%A3')).status).toBe(200)
+  })
+
+  it('tag no limite passa', async () => {
+    apiComResumo()
+    expect((await pedir('GET', `/targets/summary?tag=${'a'.repeat(24)}`)).status).toBe(200)
+  })
+})
+
+describe('tabela de erros (errorTable do servidor)', () => {
+  const STATUS: Record<string, number> = {
+    StatusBadRequest: 400,
+    StatusUnauthorized: 401,
+    StatusForbidden: 403,
+    StatusNotFound: 404,
+    StatusMethodNotAllowed: 405,
+    StatusConflict: 409,
+    StatusRequestEntityTooLarge: 413,
+    StatusTooManyRequests: 429,
+    StatusInternalServerError: 500,
+    StatusBadGateway: 502,
+    StatusServiceUnavailable: 503,
+  }
+
+  it('é a de internal/apierr/errors.go', () => {
+    const go = readFileSync(path.resolve(import.meta.dirname, '../../../internal/apierr/errors.go'), 'utf8')
+    const codigos = new Map([...go.matchAll(/(Code\w+)\s+ErrorCode = "(\w+)"/g)].map((m) => [m[1]!, m[2]!]))
+    const tabela = [...go.matchAll(/(Code\w+):\s+\{http\.(Status\w+),/g)].map((m) => [codigos.get(m[1]!), STATUS[m[2]!]])
+    expect(tabela.length).toBeGreaterThan(0)
+    expect(Object.fromEntries(tabela)).toEqual(ERROS_DO_SERVIDOR)
+  })
+
+  it('forcar só aceita o par que o servidor emite', () => {
+    const falsa = apiLogada()
+    falsa.estado.forcar.set('GET /targets', { status: 503, code: 'unavailable' })
+    // @ts-expect-error o servidor dá unavailable com 503, nunca com 502
+    falsa.estado.forcar.set('GET /targets', { status: 502, code: 'unavailable' })
+    // @ts-expect-error o código é internal_error
+    falsa.estado.forcar.set('GET /targets', { status: 500, code: 'internal' })
+    expect(falsa.estado.forcar.size).toBe(1)
   })
 })
