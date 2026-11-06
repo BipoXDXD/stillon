@@ -6,9 +6,11 @@ Nada de marca, texto, ícone ou layout vem de lá.
 
 Fonte: as páginas públicas da documentação lidas em 2026-11-05 (`docs/`, `monitoring_cron_jobs`,
 `http_api`, `measuring_script_run_time`, `attaching_logs`, `configuring_checks`, `badges`, `api`,
-`signaling_failures`). A página da API de gestão foi lida em parte. Ordenação do painel, prévia do
-cron e exportação **não constam dessas páginas**: entram aqui como exemplos do pedido, avaliados
-pelo que valem para o StillOn, e não como afirmação sobre o outro produto.
+`signaling_failures`). Em 2026-11-06 a leitura foi refeita em 19 páginas, com a API de gestão
+inteira: os fatos e as URLs estão em "Fatos da documentação", abaixo. Ordenação do painel, prévia do
+cron no cadastro e exportação **continuam sem constar**: seguem como exemplos do pedido, avaliados
+pelo que valem para o StillOn, e não como afirmação sobre o outro produto. O que a documentação não
+diz não vira fato: as páginas mostram a interface em imagens, e o texto cobre só parte dela.
 
 ## Tabela de lacunas
 
@@ -18,12 +20,13 @@ decisão registrada). A ordem dos "fazer" é a do mais útil ao menos útil, com
 | Recurso | Situação no StillOn | Decisão |
 |---|---|---|
 | Sinais de sucesso, início e falha | tem (`/ping/{token}`, `/start`, `/fail`) | nada a fazer |
-| Código de saída no ping (`/ping/{token}/$?`) | falta | **fazer, PR 1.** Uma linha só no crontab cobre sucesso e falha, e o código vai para o log |
-| Última duração na lista e no detalhe | parcial: só no log | **fazer, PR 2.** É o que mostra uma tarefa ficando lenta sem abrir o detalhe |
-| Duração da execução que falhou | falta: só o sucesso mede | **fazer, PR 2.** Mesmo recurso: a execução que falha é a que mais interessa medir |
-| Indicador de execução em andamento | parcial: `last_start_at` só no detalhe | **fazer, PR 2.** Mesmo recurso, com o início consumido também na falha |
-| Tags em heartbeats | falta: com filtro de tag, o heartbeat some (T4) | **fazer, PR 3.** Fecha a principal diferença entre as duas metades da tabela |
-| Prévia dos próximos disparos do cron | falta | **fazer, PR 4.** Cron e fuso errados são o erro mais caro de cadastro, e só aparecem no primeiro alarme falso |
+| Código de saída no ping (`/ping/{token}/$?`) | tem | **feito, PR 1.** Uma linha só no crontab cobre sucesso e falha, e o código vai para o log |
+| Última duração na lista e no detalhe | tem | **feito, PR 2.** É o que mostra uma tarefa ficando lenta sem abrir o detalhe |
+| Duração da execução que falhou | tem | **feito, PR 2.** Mesmo recurso: a execução que falha é a que mais interessa medir |
+| Indicador de execução em andamento | tem | **feito, PR 2.** Mesmo recurso, com o início consumido também na falha |
+| Tags em heartbeats | tem | **feito, PR 3.** Fecha a principal diferença entre as duas metades da tabela |
+| Prévia dos próximos disparos do cron | tem | **feito, PR 4.** Cron e fuso errados são o erro mais caro de cadastro, e só aparecem no primeiro alarme falso |
+| Descrição da tarefa | tem, depois do PR 5 | **feito, PR 5.** Não estava nesta tabela. Sem corpo no log (D14), é o único lugar para dizer onde a tarefa roda e o que fazer quando falha. Ver "Descrição" abaixo |
 | Ordenação da tabela | tem, depois do corte: gravidade, nome, menor tempo no ar e maior latência | **feito.** Ver "Ordenação" abaixo |
 | Corpo do ping guardado com limite | diferente (D14) | **decisão do dono**, abaixo |
 | GET e HEAD no ping | diferente (D6) | **decisão do dono**, abaixo |
@@ -33,18 +36,55 @@ decisão registrada). A ordem dos "fazer" é a do mais útil ao menos útil, com
 | ID de execução (`rid`) para tarefas concorrentes | falta | **não fazer.** Exige guardar várias execuções abertas por heartbeat. Sem pedido real; a alternativa é um heartbeat por tarefa |
 | Atraso medido desde o início (`start` abre o prazo) | diferente (D10) | **não fazer.** A tolerância cobre o tempo de execução, e só o sucesso move o prazo: uma regra só |
 | Selo "dentro da tolerância" | falta: `up` até o prazo com tolerância | **não fazer agora.** Selo novo é decisão de design; ver a lista de design abaixo |
-| Pausa que ignora pings, ping que retoma | diferente (D13) | **não fazer.** Ping pausado é registrado e não retoma: retomar é um ato do dono |
-| Exportação | parcial: `GET /heartbeats` e `/events` já entregam JSON | **não fazer.** Sem equipe nem migração à vista, um botão a mais não paga a superfície |
+| Pausa que ignora pings, ping que retoma | diferente (D13) | **não fazer.** Ping pausado é registrado e não retoma: retomar é um ato do dono. Lá o padrão é o ping retomar, e o nosso comportamento é a opção `manual_resume` |
+| Exportação | parcial: `GET /heartbeats` e `/events` já entregam JSON | **não fazer.** Confirmado: a documentação não cita botão nem arquivo, só a API em JSON, como aqui. Sem equipe nem migração à vista, um botão a mais não paga a superfície |
 | Expressões `OnCalendar` do systemd | falta | **não fazer.** Segundo parser e segundo formato para o mesmo problema; 5 campos cobrem o caso (D17) |
-| Identificador por slug, criação automática no ping | falta | **não fazer.** A URL com 256 bits é a credencial (D7); um nome previsível enfraquece o modelo e não há ganho sem provisionamento em massa |
+| Identificador por slug, criação automática no ping | falta | **não fazer.** A URL com 256 bits é a credencial (D7); um nome previsível enfraquece o modelo e não há ganho sem provisionamento em massa. Lá o slug depende de uma chave de ping do projeto, que aqui não existe |
+| Domingo como 7 no cron | diferente: `0 3 * * 7` e `5-7` são recusados; `0`, `SUN` e `MON-FRI` passam (medido no `NewCron`) | **decisão de design**, abaixo. A falha aparece na prévia, na hora do cadastro, e não como alarme falso |
+| Limite de 72 h entre início e fim para mostrar a duração | diferente: mede qualquer intervalo | **não fazer.** Toda execução com `/start` sobrescreve o início anterior, e cortar esconderia a tarefa longa, que é a que mais interessa medir |
+| Período e tolerância até 365 dias | diferente: período até 31 dias, tolerância até 7 dias | **não fazer.** O que roda mais raro que um mês cabe no cron, que não tem esse teto |
+| IP, user-agent e método por evento | falta | **não fazer.** D14 já recusou IP nos eventos: dado desnecessário de um POST público |
+| Relatório periódico por e-mail | falta | **não fazer.** Os incidentes por heartbeat já dão o histórico, e um e-mail recorrente é um envio novo a operar, com descadastro. Sem pedido real |
+| Métricas Prometheus por heartbeat | falta | **não fazer.** Exigiria uma chave somente leitura, a mesma autenticação nova recusada na API de gestão |
 | API de gestão com chave própria | falta | **não fazer.** Autenticação nova; a API do painel já existe, com sessão |
-| Clonar heartbeat | falta | **não fazer.** Cadastrar custa quatro campos |
+| Clonar heartbeat | falta | **não fazer agora.** Com a descrição, são cinco campos, ainda poucos para um teto de 100 heartbeats. Se houver pedido, o desenho é o de lá: copia tudo menos a URL e o log. Ver a lista de design abaixo |
 | Ping por e-mail | falta | **fora do escopo:** integração nova |
 | Integrações por heartbeat | falta: os avisos usam os canais do dono | **fora do escopo:** integração nova |
 | Histórico de transições (`flips`) | tem, em outra forma: incidentes e log | nada a fazer |
 | Lembretes enquanto está com problema | tem | nada a fazer |
 | Densidade da lista, filtros e busca | tem (spec do painel denso) | nada a fazer |
 | Retenção do log | tem: 1000 eventos, 30 dias (D15) | nada a fazer |
+
+## Fatos da documentação
+
+Lidos em 2026-11-06, sempre em `https://healthchecks.io`. Paráfrases, e nada daqui é decisão: as
+decisões estão na tabela.
+
+| Assunto | Fato | Fonte |
+|---|---|---|
+| Ordenação | Nenhuma página a cita, e a listagem da API só filtra por `slug` e `tag` | `/docs/api/`, `/faq/` |
+| Prévia do cron | O cadastro não cita prévia. Há um testador de expressões na página de referência, fora do check. A API devolve `next_ping` | `/docs/cron/`, `/docs/configuring_checks/`, `/docs/api/` |
+| Sintaxe do cron | Cinco campos; dia da semana de 0 a 7, com 0 e 7 como domingo; nomes `JAN-DEC` e `MON-SUN`. A página não diz como dia do mês e dia da semana se combinam | `/docs/cron/` |
+| Exportação | Nenhuma página a cita. A API lê checks, pings e flips em JSON, e o evento tem download do corpo | `/docs/api/`, `/docs/attaching_logs/` |
+| Clonagem | Botão no detalhe. Copia nome, tags, descrição, agendamento, filtros e integrações; a cópia tem outra URL e log vazio | `/docs/cloning_checks/` |
+| Descrição | Texto livre, até 10.000 caracteres pela API. A página sugere registrar o papel da tarefa e o que fazer na falha. Não diz onde o texto aparece, nem se vai nos avisos, nem se tem formatação | `/docs/configuring_checks/`, `/docs/api/` |
+| API de gestão | Chave por projeto, de escrita ou só leitura. CRUD de checks, pausa, retomada, pings, corpo do ping, flips, integrações, badges e status | `/docs/api/` |
+| Duração na API | Sai por ping (`duration`). O objeto do check não tem última duração | `/docs/api/` |
+| Faixas | `timeout` e `grace` de 60 s a 365 dias, com padrões de 1 dia e 1 hora | `/docs/api/` |
+| Semântica do atraso | No período, fica atrasado depois do prazo e cai depois da tolerância. No cron, o atraso começa no horário previsto | `/docs/configuring_checks/` |
+| Estados | `new`, `up`, `grace` (na tela, "Late"), `down` e `paused`. Em execução não é estado: é o booleano `started` e uma animação sob o ícone | `/docs/`, `/docs/api/` |
+| Medição | Do início ao sucesso ou à falha seguinte, só se estiverem a menos de 72 h. Início sem sucesso dentro da tolerância derruba o check | `/docs/measuring_script_run_time/` |
+| `rid` | Pareia início e fim em execuções concorrentes, mas só a mais recente tem o tempo vigiado | `/docs/measuring_script_run_time/` |
+| Método HTTP | Por padrão aceita HEAD, GET e POST. A opção "só POST" existe para evitar bots de prévia de link, o motivo do D6 | `/docs/configuring_checks/` |
+| Pausa | Por padrão, o ping retoma. `manual_resume` mantém a pausa | `/docs/configuring_checks/` |
+| Filtro de corpo | Palavras-chave nos primeiros 100 kB; sem casar, o ping é ignorado, ou vira falha se configurado | `/docs/configuring_checks/` |
+| Log por evento | A API devolve tipo, data, esquema, IP, método, user-agent, `rid` e duração. Contas gratuitas leem 100 pings, e pagas, 1000 | `/docs/api/` |
+| Taxa | Mais de 5 pings por minuto no mesmo check podem ser descartados | `/docs/http_api/` |
+| Flips | Mudanças de estado, com filtro de tempo. Retenção do mês atual e dos dois anteriores | `/docs/api/` |
+| Relatórios | Por e-mail, com quedas e tempo fora por mês. As páginas divergem na frequência: uma cita mensal e semanal, outra também diária | `/docs/configuring_notifications/`, `/docs/projects_teams/` |
+| Prometheus | Rota por projeto com chave só leitura: estado por check e por tag e totais. Sem métrica de duração | `/docs/configuring_prometheus/` |
+| Slug | Rota com chave de ping do projeto. Slug duplicado responde 409. `create=1` cria o check no ping | `/docs/slug_urls/`, `/docs/autoprovisioning/` |
+| Badge | Por projeto, tag ou check, em SVG, JSON e Shields, com dois ou três estados | `/docs/badges/`, `/docs/api/` |
 
 ## Decisões do dono, à parte
 
@@ -68,6 +108,23 @@ hoje só mostra alvos. Se houver pedido, o caminho barato é levar heartbeats à
 ## Pontos de design, à parte
 
 Nenhum deles segurou os PRs; cada um segue a recomendação até o dono dizer o contrário.
+
+- **Onde a descrição aparece.** Foi para o cabeçalho do detalhe, abaixo das ações, em texto normal,
+  com as quebras de linha. Alternativa: um cartão próprio. Recomendação: manter, porque no incidente
+  ela é a primeira coisa a ler; o custo é empurrar a página para baixo quando o texto é longo.
+- **Descrição na lista.** Ela não aparece na tabela, só no detalhe, mas a API a devolve nas 100
+  linhas. Alternativa: tirá-la da lista, com um tipo de resposta a mais. Recomendação: manter, porque
+  o teto é 1000 caracteres e o caso comum é uma frase ou nenhuma; o custo é um corpo maior no poll de
+  15 s de quem preencher tudo.
+- **Descrição nos avisos.** Fica de fora: aviso sai para terceiros, e o texto pode citar máquina e
+  caminho. Alternativa: mandar junto, para ler o que fazer sem abrir o painel. Recomendação: manter
+  de fora; incluir depois é aditivo, e o contrário, depois de um vazamento, não adianta.
+- **Domingo como 7.** O `robfig/cron` só aceita 0 a 6 (D17). Alternativa: reescrever o 7 antes do
+  parser, o que pede tratar listas e faixas (`5-7`) e é o segundo parser que o D17 evitou.
+  Recomendação: não reescrever, e citar `0` ou `SUN` na ajuda do campo e na mensagem de erro. O custo
+  é quem cola a linha do crontab ajustar um caractere.
+- **Clonar heartbeat.** Recomendação: não fazer sem pedido. Se o cadastro em série virar rotina, o
+  caminho barato é só no painel: abrir o formulário preenchido, sem rota nova.
 
 - **Onde a última duração aparece.** Foi para a coluna Situação ("Sinal há 3 min · levou 12 s"), e a
   coluna Latência segue com `—` (T5). Alternativa: renomear a coluna para "Medida" e pôr a duração
@@ -144,6 +201,29 @@ cliente é o risco que o D17 evitou, e a prévia não trava o envio. O formulár
 | **I** Chave da consulta ecoada | campo fixo `query` | `TestCronPreviewQueryIsStrict` |
 | **I** Fuso como caminho de arquivo | `time.LoadLocation` recusa `..`; caso de teste com caminho | `TestCronPreviewRefusesWhatTheFormWouldRefuse` |
 | **D** Muitas consultas | limite por usuário da cadeia `protegida`, o mesmo das outras rotas, e 400 ms de espera no painel | `espera a digitação parar: não é uma consulta por tecla` |
+
+## Descrição (PR 5)
+
+`description` é texto puro de até 1000 caracteres, com quebra de linha, gravado em
+`heartbeats.description` (00022). Sem descrição é `""`, nunca `null`, nas leituras. Segue o contrato
+das tags: no `PATCH`, ausente não mexe, e `""` e `null` limpam. Mudar o texto não recalcula o prazo.
+A validação é a do nome, linha a linha, e só quebra de linha e tab passam entre os controles; o
+retorno de carro é recusado, porque o navegador já o normaliza. Aparece no detalhe e no formulário,
+não na tabela e não nos avisos. O teto de 1000 cobre um pequeno roteiro, sem o peso dos 10.000 de lá
+no poll da lista. Sem rota nova: quem escreve e quem lê é o dono, pela API de sessão.
+
+| Ameaça | Mitigação | Teste |
+|---|---|---|
+| **I** Texto de A lido por B | a RLS de `heartbeats` e o filtro por `user_id` já valem para a coluna | `TestAnotherUsersHeartbeatDescriptionStaysOut` |
+| **T** B alterar o texto de A | `PATCH` alheio é 404, e o texto fica intacto | `TestAnotherUsersHeartbeatDescriptionStaysOut` |
+| **T** Lixo gravado por fora da validação | CHECK de tamanho, em caracteres; NUL o Postgres já não guarda | `TestHeartbeatDescriptionCheckRefusesWhatTheCodeWouldNot` |
+| **T** Marcação virar código na tela | o React escapa, e a tela não usa HTML cru | `marcação na descrição aparece como texto` |
+| **T** Entrada ruim virar 500 ou gravar parte | validada antes de abrir a transação, com o `PATCH` inteiro recusado | `TestPatchWithInvalidDescriptionChangesNothing`, `TestValidateDescription`, `TestHeartbeatValidationBoundaries` |
+| **I** Texto sair para terceiros ou pelo ping | o aviso leva só o nome, e o ping responde sem dados | `TestHeartbeatDescriptionStaysOutOfThePingAndTheNotices` |
+| **D** Texto sem teto | 1000 caracteres, recusados antes do banco | `TestValidateDescription` |
+
+O dono pode escrever um segredo ali, como em qualquer campo livre, e ele iria para o backup do banco.
+A ajuda do formulário não pede dado sensível, e o CHECK não tem como detectar isso.
 
 ## Ordenação
 

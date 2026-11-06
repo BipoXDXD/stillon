@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -485,6 +486,36 @@ func TestParseExitCode(t *testing.T) {
 			}
 			if got.Signal() != c.sinal || got.Value() != c.valor {
 				t.Errorf("deu %s/%d, queria %s/%d", got.Signal(), got.Value(), c.sinal, c.valor)
+			}
+		})
+	}
+}
+
+func TestValidateDescription(t *testing.T) {
+	teto := strings.Repeat("é", heartbeat.MaxDescriptionLength)
+	casos := []struct {
+		nome, entrada, quer, motivo string
+	}{
+		{nome: "vazia é sem descrição", entrada: "", quer: ""},
+		{nome: "só espaço vira vazia", entrada: " \n\t ", quer: ""},
+		{nome: "limpa as pontas", entrada: "  roda no nas\n", quer: "roda no nas"},
+		{nome: "mantém quebra de linha e tab", entrada: "linha 1\n\tlinha 2", quer: "linha 1\n\tlinha 2"},
+		{nome: "emoji composto passa", entrada: "dono \U0001F469\u200D\U0001F4BB", quer: "dono \U0001F469\u200D\U0001F4BB"},
+		{nome: "no teto, em caracteres", entrada: teto, quer: teto},
+		{nome: "acima do teto", entrada: teto + "é", motivo: heartbeat.ReasonOutOfRange},
+		{nome: "NUL", entrada: "a\x00b", motivo: heartbeat.ReasonInvalid},
+		{nome: "retorno de carro", entrada: "a\r\nb", motivo: heartbeat.ReasonInvalid},
+		{nome: "inversão bidi na segunda linha", entrada: "a\n\u202Eb", motivo: heartbeat.ReasonInvalid},
+	}
+	for _, c := range casos {
+		t.Run(c.nome, func(t *testing.T) {
+			got, err := heartbeat.ValidateDescription(c.entrada)
+			var verr *heartbeat.ValidationError
+			switch {
+			case c.motivo == "" && (err != nil || got != c.quer):
+				t.Errorf("devolveu %q, %v; queria %q", got, err, c.quer)
+			case c.motivo != "" && (!errors.As(err, &verr) || verr.Field != "description" || verr.Reason != c.motivo):
+				t.Errorf("erro %v; queria description %s", err, c.motivo)
 			}
 		})
 	}

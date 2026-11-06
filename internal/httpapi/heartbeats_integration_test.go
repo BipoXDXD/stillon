@@ -123,7 +123,7 @@ func TestHeartbeatResponseHasExactKeys(t *testing.T) {
 	a := newAPI(t)
 	dono := tokenDe(t, a, a.userID)
 	id, _ := criarHB(t, a, dono, corpoDePeriodo)
-	base := []string{"created_at", "deadline_at", "enabled", "grace_sec", "id", "last_ping_at", "last_runtime_ms", "last_start_at",
+	base := []string{"created_at", "deadline_at", "description", "enabled", "grace_sec", "id", "last_ping_at", "last_runtime_ms", "last_start_at",
 		"last_success_at", "name", "open_incident_id", "schedule", "state", "tags"}
 
 	_, corpo := lerCru(t, a, http.MethodGet, "/api/v1/heartbeats/"+id, dono, nil)
@@ -305,6 +305,138 @@ func TestAnotherUsersHeartbeatTagsStayOut(t *testing.T) {
 	_, lido := lerCru(t, a, http.MethodGet, "/api/v1/heartbeats/"+id, dono, nil)
 	if got := tagsDe(t, lido); !slices.Equal(got, []any{"segredo-de-a"}) {
 		t.Errorf("as tags de A mudaram: %v", got)
+	}
+}
+
+func descricaoDe(t *testing.T, corpo string) any {
+	t.Helper()
+	return decodificar(t, corpo)["description"]
+}
+
+// A descrição sai igual nas três leituras, com a quebra de linha, e sem ela o
+// campo é "", nunca null: o painel não tem dois jeitos de dizer "sem descrição".
+func TestHeartbeatDescriptionRoundTrip(t *testing.T) {
+	a := newAPI(t)
+	dono := tokenDe(t, a, a.userID)
+	texto := "Roda no NAS.\nSe falhar: ver /var/log/backup.log"
+	corpo := maps.Clone(corpoDePeriodo)
+	corpo["description"] = "  " + texto + "\n"
+	status, criado := lerCru(t, a, http.MethodPost, "/api/v1/heartbeats", dono, corpo)
+	if status != http.StatusCreated || descricaoDe(t, criado) != texto {
+		t.Fatalf("criar: %d %s", status, criado)
+	}
+	id := decodificar(t, criado)["id"].(string)
+	if _, lido := lerCru(t, a, http.MethodGet, "/api/v1/heartbeats/"+id, dono, nil); descricaoDe(t, lido) != texto {
+		t.Errorf("detalhe: %s", lido)
+	}
+	_, lista := lerCru(t, a, http.MethodGet, "/api/v1/heartbeats", dono, nil)
+	if got := decodificar(t, lista)["items"].([]any)[0].(map[string]any)["description"]; got != texto {
+		t.Errorf("lista: %s", lista)
+	}
+
+	sem, _ := criarHB(t, a, dono, corpoDePeriodo)
+	if _, lido := lerCru(t, a, http.MethodGet, "/api/v1/heartbeats/"+sem, dono, nil); descricaoDe(t, lido) != "" {
+		t.Errorf("sem descrição: %s", lido)
+	}
+}
+
+// Ausente não mexe; texto troca; "" e null limpam. Mudar a descrição não mexe
+// no prazo: é anotação, e não agendamento.
+func TestPatchOfHeartbeatDescription(t *testing.T) {
+	a := newAPI(t)
+	dono := tokenDe(t, a, a.userID)
+	corpo := maps.Clone(corpoDePeriodo)
+	corpo["description"] = "antes"
+	id, _ := criarHB(t, a, dono, corpo)
+	_, inicial := lerCru(t, a, http.MethodGet, "/api/v1/heartbeats/"+id, dono, nil)
+	prazo := decodificar(t, inicial)["deadline_at"]
+	a.clk.Advance(time.Minute)
+
+	passos := []struct {
+		nome  string
+		corpo map[string]any
+		quer  string
+	}{
+		{"ausente não mexe", map[string]any{"name": "novo"}, "antes"},
+		{"texto troca", map[string]any{"description": "depois"}, "depois"},
+		{"vazio limpa", map[string]any{"description": ""}, ""},
+		{"texto de novo", map[string]any{"description": "outra"}, "outra"},
+		{"null limpa", map[string]any{"description": nil}, ""},
+	}
+	for _, p := range passos {
+		status, resp := lerCru(t, a, http.MethodPatch, "/api/v1/heartbeats/"+id, dono, p.corpo)
+		m := decodificar(t, resp)
+		if status != http.StatusOK || m["description"] != p.quer || m["deadline_at"] != prazo {
+			t.Errorf("%s: %d %s", p.nome, status, resp)
+		}
+	}
+}
+
+func TestPatchWithInvalidDescriptionChangesNothing(t *testing.T) {
+	a := newAPI(t)
+	dono := tokenDe(t, a, a.userID)
+	corpo := maps.Clone(corpoDePeriodo)
+	corpo["description"] = "antes"
+	id, _ := criarHB(t, a, dono, corpo)
+	_, antes := lerCru(t, a, http.MethodGet, "/api/v1/heartbeats/"+id, dono, nil)
+	for _, invalida := range []any{strings.Repeat("a", 1001), "a\u0000b", "'; DROP TABLE heartbeats; --\u202E", 123} {
+		status, resp := lerCru(t, a, http.MethodPatch, "/api/v1/heartbeats/"+id, dono, map[string]any{"description": invalida, "name": "invadido"})
+		if status != http.StatusBadRequest {
+			t.Errorf("%v: %d %s", invalida, status, resp)
+		}
+	}
+	if _, depois := lerCru(t, a, http.MethodGet, "/api/v1/heartbeats/"+id, dono, nil); depois != antes {
+		t.Errorf("o heartbeat mudou:\n%s\n%s", antes, depois)
+	}
+}
+
+func TestAnotherUsersHeartbeatDescriptionStaysOut(t *testing.T) {
+	a := newAPI(t)
+	dono := tokenDe(t, a, a.userID)
+	corpo := maps.Clone(corpoDePeriodo)
+	corpo["description"] = "segredo-de-a"
+	id, _ := criarHB(t, a, dono, corpo)
+	outro := tokenDe(t, a, outroUsuario(t, a))
+
+	status, resp := lerCru(t, a, http.MethodPatch, "/api/v1/heartbeats/"+id, outro, map[string]any{"description": "invadida"})
+	if status != http.StatusNotFound || strings.Contains(resp, "segredo-de-a") {
+		t.Errorf("PATCH de B: %d %s", status, resp)
+	}
+	status, resp = lerCru(t, a, http.MethodGet, "/api/v1/heartbeats/"+id, outro, nil)
+	if status != http.StatusNotFound || strings.Contains(resp, "segredo-de-a") {
+		t.Errorf("GET de B: %d %s", status, resp)
+	}
+	if _, lista := lerCru(t, a, http.MethodGet, "/api/v1/heartbeats?limit=100", outro, nil); strings.Contains(lista, "segredo-de-a") {
+		t.Errorf("lista de B: %s", lista)
+	}
+	if _, lido := lerCru(t, a, http.MethodGet, "/api/v1/heartbeats/"+id, dono, nil); descricaoDe(t, lido) != "segredo-de-a" {
+		t.Errorf("a descrição de A mudou: %s", lido)
+	}
+}
+
+// Aviso sai para terceiros (e-mail, webhook), e a descrição pode citar máquina e
+// caminho: ela fica no painel. O ping público também não a devolve.
+func TestHeartbeatDescriptionStaysOutOfThePingAndTheNotices(t *testing.T) {
+	a := newAPI(t)
+	dono := tokenDe(t, a, a.userID)
+	criarCanalDiscord(t, a, dono)
+	corpo := maps.Clone(corpoDePeriodo)
+	corpo["description"] = "CANARY-descricao"
+	_, ping := criarHB(t, a, dono, corpo)
+	_, _, resposta := pingar(t, a, "/ping/"+ping+"/fail", nil)
+	if strings.Contains(resposta, "CANARY") {
+		t.Errorf("resposta do ping: %s", resposta)
+	}
+	avaliar(t, a)
+	a.clk.Advance(time.Minute)
+	pingar(t, a, "/ping/"+ping, nil)
+	avaliar(t, a)
+	avisos := entregar(t, a)
+	if len(avisos.corpo) == 0 {
+		t.Fatal("nenhum aviso entregue: o teste não provaria nada")
+	}
+	if texto := strings.Join(append(avisos.assunto, avisos.corpo...), "\n"); strings.Contains(texto, "CANARY") {
+		t.Errorf("aviso com a descrição: %s", texto)
 	}
 }
 
@@ -517,6 +649,9 @@ func TestHeartbeatValidationBoundaries(t *testing.T) {
 		{"tolerância no piso", map[string]any{"name": "a", "schedule": periodo(60), "grace_sec": 30}, true, ""},
 		{"tolerância no teto", map[string]any{"name": "a", "schedule": periodo(60), "grace_sec": 604800}, true, ""},
 		{"tolerância acima", map[string]any{"name": "a", "schedule": periodo(60), "grace_sec": 604801}, false, "grace_sec"},
+		{"descrição no teto", map[string]any{"name": "a", "schedule": periodo(60), "description": strings.Repeat("é", 1000)}, true, ""},
+		{"descrição acima do teto", map[string]any{"name": "a", "schedule": periodo(60), "description": strings.Repeat("é", 1001)}, false, "description"},
+		{"descrição com NUL", map[string]any{"name": "a", "schedule": periodo(60), "description": "a\u0000b"}, false, "description"},
 	}
 	a := newAPI(t)
 	for i, c := range casos {

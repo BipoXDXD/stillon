@@ -258,7 +258,7 @@ anti-CSRF). Entrada estrita, com `DisallowUnknownFields`. Recurso alheio é 404.
 | `POST /api/v1/heartbeats` | cria; devolve `ping_url` **uma vez** |
 | `GET /api/v1/heartbeats/cron-preview?expr=&timezone=` | próximos 5 disparos, sem gravar: `{ "next_runs": ["…"] }` |
 | `GET /api/v1/heartbeats/{id}` | detalhe |
-| `PATCH /api/v1/heartbeats/{id}` | `name`, `tags`, agendamento, `grace_sec`, `enabled` |
+| `PATCH /api/v1/heartbeats/{id}` | `name`, `description`, `tags`, agendamento, `grace_sec`, `enabled` |
 | `DELETE /api/v1/heartbeats/{id}` | apaga, com eventos e incidentes |
 | `POST /api/v1/heartbeats/{id}/token/rotate` | revoga e devolve `ping_url` novo, uma vez |
 | `GET /api/v1/heartbeats/{id}/events?cursor=&limit=` | log, do mais novo ao mais velho |
@@ -267,7 +267,7 @@ anti-CSRF). Entrada estrita, com `DisallowUnknownFields`. Recurso alheio é 404.
 
 ```jsonc
 // heartbeat: conjunto exato de chaves
-{ "id": "…", "name": "Backup noturno", "tags": ["prod"], "enabled": true,
+{ "id": "…", "name": "Backup noturno", "description": "", "tags": ["prod"], "enabled": true,
   "schedule": { "kind": "period", "period_sec": 86400 },
   // ou { "kind": "cron", "expr": "0 3 * * *", "timezone": "America/Sao_Paulo" }
   "grace_sec": 900, "state": "waiting|up|late|failing|paused",

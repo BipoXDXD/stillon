@@ -15,6 +15,7 @@ const LIMITES = {
   tolerancia: { min: 30, max: 604_800, texto: 'Entre 30 segundos e 7 dias.' },
 }
 const MAX_NOME = 100
+const MAX_DESCRICAO = 1000
 const MAX_EXPR = 100
 const MAX_FUSO = 64
 const GRACE_PADRAO_SEC = 300
@@ -27,6 +28,10 @@ export const esquemaDoHeartbeat = z
       .trim()
       .min(1, 'Informe um nome.')
       .refine((s) => pontosDeCodigo(s) <= MAX_NOME, `No máximo ${MAX_NOME} caracteres.`),
+    description: z
+      .string()
+      .trim()
+      .refine((s) => pontosDeCodigo(s) <= MAX_DESCRICAO, `No máximo ${MAX_DESCRICAO} caracteres.`),
     tagsTexto: z.string(),
     tipo: z.enum(['period', 'cron']),
     periodoQuantidade: z.number().or(z.nan()),
@@ -70,6 +75,7 @@ export function valoresPadrao(): ValoresDoHeartbeat {
   const tolerancia = partirDuracao(GRACE_PADRAO_SEC)
   return {
     name: '',
+    description: '',
     tagsTexto: '',
     tipo: 'period',
     periodoQuantidade: periodo.quantidade,
@@ -83,7 +89,7 @@ export function valoresPadrao(): ValoresDoHeartbeat {
 
 export function valoresDe(hb: Heartbeat): ValoresDoHeartbeat {
   const tolerancia = partirDuracao(hb.grace_sec)
-  const base = { ...valoresPadrao(), name: hb.name, tagsTexto: hb.tags.join(', '), toleranciaQuantidade: tolerancia.quantidade, toleranciaUnidade: tolerancia.unidade }
+  const base = { ...valoresPadrao(), name: hb.name, description: hb.description, tagsTexto: hb.tags.join(', '), toleranciaQuantidade: tolerancia.quantidade, toleranciaUnidade: tolerancia.unidade }
   if (hb.schedule.kind === 'cron') return { ...base, tipo: 'cron', expr: hb.schedule.expr, timezone: hb.schedule.timezone }
   const periodo = partirDuracao(hb.schedule.period_sec)
   return { ...base, tipo: 'period', periodoQuantidade: periodo.quantidade, periodoUnidade: periodo.unidade }
@@ -99,7 +105,13 @@ const graceDe = (v: ValoresDoHeartbeat) => emSegundos(v.toleranciaQuantidade, v.
 
 export function paraCriacao(v: ValoresDoHeartbeat): EntradaHeartbeat {
   const tags = separarTags(v.tagsTexto)
-  return { name: v.name, schedule: agendamento(v), grace_sec: graceDe(v), ...(tags.length > 0 && { tags }) }
+  return {
+    name: v.name,
+    schedule: agendamento(v),
+    grace_sec: graceDe(v),
+    ...(tags.length > 0 && { tags }),
+    ...(v.description !== '' && { description: v.description }),
+  }
 }
 
 // Só o que mudou de valor (spec da tela, T12): "1 dia" e "24 horas" são o mesmo
@@ -107,6 +119,7 @@ export function paraCriacao(v: ValoresDoHeartbeat): EntradaHeartbeat {
 export function paraAlteracao(original: ValoresDoHeartbeat, v: ValoresDoHeartbeat): AlteracaoHeartbeat {
   const a: AlteracaoHeartbeat = {}
   if (v.name !== original.name) a.name = v.name
+  if (v.description !== original.description) a.description = v.description
   const tags = separarTags(v.tagsTexto)
   if (tags.join() !== separarTags(original.tagsTexto).join()) a.tags = tags
   if (JSON.stringify(agendamento(v)) !== JSON.stringify(agendamento(original))) a.schedule = agendamento(v)
@@ -117,6 +130,7 @@ export function paraAlteracao(original: ValoresDoHeartbeat, v: ValoresDoHeartbea
 // O campo do formulário que recebe o erro de cada campo do servidor.
 export const campoDoServidor: Partial<Record<string, keyof ValoresDoHeartbeat>> = {
   name: 'name',
+  description: 'description',
   tags: 'tagsTexto',
   period_sec: 'periodoQuantidade',
   expr: 'expr',

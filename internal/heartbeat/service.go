@@ -51,6 +51,7 @@ const (
 type Heartbeat struct {
 	ID             uuid.UUID
 	Name           string
+	Description    string
 	Tags           []string
 	Enabled        bool
 	Schedule       Schedule
@@ -67,22 +68,24 @@ type Heartbeat struct {
 
 // Input é o cadastro. O agendamento já chega validado (NewPeriod, NewCron).
 type Input struct {
-	Name     string
-	Tags     []string
-	Schedule Schedule
-	Grace    time.Duration
-	Enabled  bool
+	Name        string
+	Description string
+	Tags        []string
+	Schedule    Schedule
+	Grace       time.Duration
+	Enabled     bool
 }
 
 // Patch: nil é "não mexa". Tags não seguem a regra: nil e vazio limpam, e quem
 // diz se elas vieram é SetTags.
 type Patch struct {
-	SetTags  bool
-	Tags     []string
-	Name     *string
-	Schedule *Schedule
-	Grace    *time.Duration
-	Enabled  *bool
+	SetTags     bool
+	Tags        []string
+	Name        *string
+	Description *string
+	Schedule    *Schedule
+	Grace       *time.Duration
+	Enabled     *bool
 }
 
 // Incident é um incidente de heartbeat na visão do dono.
@@ -126,6 +129,22 @@ func ValidateName(name string) (string, error) {
 	return name, nil
 }
 
+// ValidateDescription devolve a descrição limpa; "" é "sem descrição". É texto
+// de várias linhas, e por isso as regras de ValidateName valem linha a linha:
+// quebra de linha e tab são os únicos controles que um texto colado precisa.
+func ValidateDescription(description string) (string, error) {
+	description = strings.TrimSpace(description)
+	if utf8.RuneCountInString(description) > MaxDescriptionLength {
+		return "", &ValidationError{Field: "description", Reason: ReasonOutOfRange}
+	}
+	for linha := range strings.Lines(strings.ReplaceAll(description, "\t", " ")) {
+		if rotulo.TemInvisivel(strings.TrimSuffix(linha, "\n")) {
+			return "", &ValidationError{Field: "description", Reason: ReasonInvalid}
+		}
+	}
+	return description, nil
+}
+
 // CronPreview são os próximos disparos de uma expressão ainda não gravada. Passa
 // pela mesma validação do cadastro, e não toca no banco.
 func (s *Service) CronPreview(expr, timezone string) ([]time.Time, error) {
@@ -139,6 +158,10 @@ func (s *Service) CronPreview(expr, timezone string) ([]time.Time, error) {
 // Create grava o heartbeat e devolve o token, que só existe neste retorno.
 func (s *Service) Create(ctx context.Context, userID uuid.UUID, in Input) (Heartbeat, string, error) {
 	nome, err := ValidateName(in.Name)
+	if err != nil {
+		return Heartbeat{}, "", err
+	}
+	descricao, err := ValidateDescription(in.Description)
 	if err != nil {
 		return Heartbeat{}, "", err
 	}
@@ -156,7 +179,7 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, in Input) (Heart
 	token, hash := NewPingToken()
 	now := s.clk.Now()
 	params := db.InsertHeartbeatParams{
-		ID: id, UserID: userID, Name: nome, PingTokenHash: hash, GraceSec: seconds(in.Grace),
+		ID: id, UserID: userID, Name: nome, Description: descricao, PingTokenHash: hash, GraceSec: seconds(in.Grace),
 		Enabled: in.Enabled, CreatedAt: now, DeadlineAt: FirstDeadline(in.Schedule, in.Grace, now),
 	}
 	params.PeriodSec, params.CronExpr, params.Timezone = scheduleColumns(in.Schedule)
@@ -282,6 +305,13 @@ func (s *Service) Update(ctx context.Context, userID, id uuid.UUID, p Patch) (He
 		}
 		p.Name = &nome
 	}
+	if p.Description != nil {
+		descricao, err := ValidateDescription(*p.Description)
+		if err != nil {
+			return Heartbeat{}, err
+		}
+		p.Description = &descricao
+	}
 	if p.Grace != nil {
 		if err := ValidateGrace(*p.Grace); err != nil {
 			return Heartbeat{}, err
@@ -334,12 +364,15 @@ func (s *Service) updateParams(h db.Heartbeat, p Patch) (db.UpdateHeartbeatParam
 	}
 	grace := time.Duration(h.GraceSec) * time.Second
 	out := db.UpdateHeartbeatParams{
-		UserID: h.UserID, ID: h.ID, Name: h.Name, Enabled: h.Enabled,
+		UserID: h.UserID, ID: h.ID, Name: h.Name, Description: h.Description, Enabled: h.Enabled,
 		DeadlineAt: h.DeadlineAt, FailingSince: h.FailingSince, ResumedAt: h.ResumedAt,
 		LastStartAt: h.LastStartAt,
 	}
 	if p.Name != nil {
 		out.Name = *p.Name
+	}
+	if p.Description != nil {
+		out.Description = *p.Description
 	}
 	mudou := false
 	if p.Schedule != nil && !p.Schedule.Equal(sch) {
@@ -500,7 +533,7 @@ func toHeartbeat(h db.Heartbeat, open *uuid.UUID, now time.Time) (Heartbeat, err
 		return Heartbeat{}, fmt.Errorf("agendamento do heartbeat %s: %w", h.ID, err)
 	}
 	return Heartbeat{
-		ID: h.ID, Name: h.Name, Tags: []string{}, Enabled: h.Enabled, Schedule: sch,
+		ID: h.ID, Name: h.Name, Description: h.Description, Tags: []string{}, Enabled: h.Enabled, Schedule: sch,
 		Grace:      time.Duration(h.GraceSec) * time.Second,
 		Status:     statusOf(h.Enabled, h.FailingSince != nil, open != nil, h.DeadlineAt, finishedARun(h), now),
 		DeadlineAt: h.DeadlineAt, LastPingAt: h.LastPingAt, LastSuccessAt: h.LastSuccessAt,

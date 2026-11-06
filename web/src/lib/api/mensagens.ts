@@ -74,6 +74,7 @@ const porCampo: Record<string, Record<string, string>> = {
     too_long: 'Cada tag tem até 24 caracteres.',
     out_of_range: 'Até 8 tags.',
   },
+  description: { invalid: 'Tem um caractere que não pode ser mostrado.', out_of_range: 'No máximo 1000 caracteres.' },
   period_sec: { out_of_range: 'Entre 1 minuto e 31 dias.' },
   grace_sec: { out_of_range: 'Entre 30 segundos e 7 dias.' },
   expr: { invalid: 'Use os cinco campos, com um disparo que exista: 0 3 * * *.' },

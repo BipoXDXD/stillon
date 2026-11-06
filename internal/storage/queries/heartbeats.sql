@@ -4,8 +4,8 @@
 
 -- name: InsertHeartbeat :exec
 INSERT INTO heartbeats (id, user_id, name, ping_token_hash, period_sec, cron_expr, timezone,
-                        grace_sec, enabled, created_at, deadline_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11);
+                        grace_sec, enabled, created_at, deadline_at, description)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12);
 
 -- A trava serializa pings simultâneos do mesmo token: o segundo lê o estado
 -- que o primeiro gravou, e é isso que faz a repetição ter um efeito só (D9).
@@ -136,7 +136,8 @@ SELECT * FROM heartbeats WHERE user_id = $1 AND id = $2 FOR UPDATE;
 
 -- name: UpdateHeartbeat :exec
 UPDATE heartbeats
-   SET name = sqlc.arg(name), period_sec = sqlc.narg(period_sec), cron_expr = sqlc.narg(cron_expr),
+   SET name = sqlc.arg(name), description = sqlc.arg(description),
+       period_sec = sqlc.narg(period_sec), cron_expr = sqlc.narg(cron_expr),
        timezone = sqlc.narg(timezone), grace_sec = sqlc.arg(grace_sec), enabled = sqlc.arg(enabled),
        deadline_at = sqlc.arg(deadline_at), failing_since = sqlc.narg(failing_since),
        resumed_at = sqlc.narg(resumed_at), last_start_at = sqlc.narg(last_start_at)

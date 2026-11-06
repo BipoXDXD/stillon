@@ -25,6 +25,8 @@ const (
 	MaxNameLength     = 100
 	MaxCronLength     = 100
 	MaxTimezoneLength = 64
+	// MaxDescriptionLength é em caracteres, como o CHECK da migration 00022.
+	MaxDescriptionLength = 1000
 
 	// RepeatWindow é por quanto tempo um sinal igual ao último é repetição
 	// (D9): o curl --retry de uma tarefa cabe nela, e um período, que é de

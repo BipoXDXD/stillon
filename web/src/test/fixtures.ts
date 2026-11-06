@@ -55,6 +55,7 @@ export function heartbeat(p: Partial<z.input<typeof Heartbeat>> = {}): z.input<t
   return {
     id: 'hb-1',
     name: 'Backup noturno',
+    description: '',
     tags: [],
     enabled: true,
     schedule: { kind: 'period', period_sec: 86400 },

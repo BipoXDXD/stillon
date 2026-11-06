@@ -51,6 +51,10 @@ export function Entrada({ className, ...props }: ComponentProps<'input'>) {
   return <input className={cn(estiloDeEntrada, className)} {...props} />
 }
 
+export function AreaDeTexto({ className, ...props }: ComponentProps<'textarea'>) {
+  return <textarea rows={4} className={cn(estiloDeEntrada, 'resize-y', className)} {...props} />
+}
+
 export function Selecao({ className, ...props }: ComponentProps<'select'>) {
   return <select className={cn(estiloDeEntrada, className)} {...props} />
 }

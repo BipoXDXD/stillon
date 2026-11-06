@@ -134,6 +134,21 @@ describe('cadastro', () => {
     })
   })
 
+  it('cadastra com a descrição, e o erro do servidor volta ao campo', async () => {
+    const r = await renderizarPainel('/heartbeats/new')
+    r.falsa.estado.forcar.set('POST /heartbeats', { status: 400, code: 'validation_failed', fields: [{ field: 'description', reason: 'invalid' }] })
+    await r.usuario.type(await screen.findByLabelText('Nome'), 'Backup')
+    await r.usuario.type(screen.getByLabelText('Descrição'), 'Roda no NAS{enter}Ver o log')
+    await r.usuario.click(screen.getByRole('button', { name: 'Cadastrar' }))
+    expect(await screen.findByText('Tem um caractere que não pode ser mostrado.')).toBeInTheDocument()
+    expect(screen.getByLabelText('Descrição')).toHaveAttribute('aria-invalid', 'true')
+
+    r.falsa.estado.forcar.clear()
+    await r.usuario.click(screen.getByRole('button', { name: 'Cadastrar' }))
+    await dialogo()
+    expect(r.falsa.corpos('POST /heartbeats').at(-1)).toMatchObject({ description: 'Roda no NAS\nVer o log' })
+  })
+
   it('cadastra por cron, com o fuso', async () => {
     const r = await renderizarPainel('/heartbeats/new')
     await r.usuario.type(await screen.findByLabelText('Nome'), 'Backup')
@@ -227,6 +242,19 @@ describe('edição', () => {
     await r.usuario.click(screen.getByRole('button', { name: 'Salvar' }))
     await screen.findByRole('heading', { level: 1, name: 'Backup 2' })
     expect(r.falsa.corpos('PATCH /heartbeats/:id')).toEqual([{ name: 'Backup 2' }])
+  })
+})
+
+describe('edição da descrição', () => {
+  it('apagar o texto limpa a descrição, e o detalhe para de mostrá-la', async () => {
+    const r = await detalheCom({ description: 'Roda no NAS' })
+    expect(screen.getByText('Roda no NAS')).toBeInTheDocument()
+    await r.usuario.click(screen.getByRole('link', { name: 'Editar' }))
+    await r.usuario.clear(await screen.findByLabelText('Descrição'))
+    await r.usuario.click(screen.getByRole('button', { name: 'Salvar' }))
+    await screen.findByRole('heading', { level: 1, name: 'Backup' })
+    expect(r.falsa.corpos('PATCH /heartbeats/:id')).toEqual([{ description: '' }])
+    await waitFor(() => expect(screen.queryByText('Roda no NAS')).not.toBeInTheDocument())
   })
 })
 

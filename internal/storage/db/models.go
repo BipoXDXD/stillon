@@ -68,6 +68,7 @@ type Heartbeat struct {
 	LastIncidentAt *time.Time
 	ResumedAt      *time.Time
 	LastRuntimeMS  *int64
+	Description    string
 }
 
 type HeartbeatEvent struct {

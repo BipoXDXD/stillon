@@ -369,6 +369,7 @@ export function criarApiFalsa() {
       const h = {
         id: `hb-${st.heartbeats.length + 1}`,
         name: String(corpo.name),
+        description: (corpo.description as string | undefined) ?? '',
         tags: (corpo.tags as string[] | undefined) ?? [],
         enabled: true,
         schedule: corpo.schedule as Entrada<typeof Heartbeat>['schedule'],
