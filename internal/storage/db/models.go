@@ -75,6 +75,7 @@ type HeartbeatEvent struct {
 	At          time.Time
 	Kind        string
 	RuntimeMS   *int64
+	ExitCode    *int16
 }
 
 type Incident struct {

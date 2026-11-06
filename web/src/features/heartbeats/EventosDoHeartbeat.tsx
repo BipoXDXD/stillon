@@ -71,6 +71,7 @@ function Evento({ evento }: { evento: EventoDeHeartbeat }) {
       </Selo>
       <span className="text-sm">{dataHora(evento.at)}</span>
       {evento.runtime_ms !== null && <span className="text-meta text-suave">levou {tempoDeExecucao(evento.runtime_ms)}</span>}
+      {evento.exit_code !== null && <span className="text-meta text-suave">código de saída {evento.exit_code}</span>}
     </li>
   )
 }

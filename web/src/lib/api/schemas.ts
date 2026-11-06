@@ -156,6 +156,7 @@ export const EventoDeHeartbeat = z.object({
   at: instante,
   kind: z.enum(['start', 'success', 'fail']),
   runtime_ms: z.number().nullable(),
+  exit_code: z.number().nullable(),
 })
 export type EventoDeHeartbeat = z.infer<typeof EventoDeHeartbeat>
 

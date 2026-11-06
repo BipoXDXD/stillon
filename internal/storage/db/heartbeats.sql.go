@@ -371,7 +371,8 @@ func (q *Queries) InsertHeartbeat(ctx context.Context, arg InsertHeartbeatParams
 }
 
 const insertHeartbeatEvent = `-- name: InsertHeartbeatEvent :exec
-INSERT INTO heartbeat_events (id, heartbeat_id, at, kind, runtime_ms) VALUES ($1, $2, $3, $4, $5)
+INSERT INTO heartbeat_events (id, heartbeat_id, at, kind, runtime_ms, exit_code)
+VALUES ($1, $2, $3, $4, $5, $6)
 `
 
 type InsertHeartbeatEventParams struct {
@@ -380,6 +381,7 @@ type InsertHeartbeatEventParams struct {
 	At          time.Time
 	Kind        string
 	RuntimeMS   *int64
+	ExitCode    *int16
 }
 
 func (q *Queries) InsertHeartbeatEvent(ctx context.Context, arg InsertHeartbeatEventParams) error {
@@ -389,12 +391,13 @@ func (q *Queries) InsertHeartbeatEvent(ctx context.Context, arg InsertHeartbeatE
 		arg.At,
 		arg.Kind,
 		arg.RuntimeMS,
+		arg.ExitCode,
 	)
 	return err
 }
 
 const listHeartbeatEvents = `-- name: ListHeartbeatEvents :many
-SELECT e.id, e.heartbeat_id, e.at, e.kind, e.runtime_ms
+SELECT e.id, e.heartbeat_id, e.at, e.kind, e.runtime_ms, e.exit_code
   FROM heartbeat_events e
   JOIN heartbeats h ON h.id = e.heartbeat_id
  WHERE h.user_id = $1
@@ -433,6 +436,7 @@ func (q *Queries) ListHeartbeatEvents(ctx context.Context, arg ListHeartbeatEven
 			&i.At,
 			&i.Kind,
 			&i.RuntimeMS,
+			&i.ExitCode,
 		); err != nil {
 			return nil, err
 		}

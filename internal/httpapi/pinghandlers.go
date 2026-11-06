@@ -50,25 +50,41 @@ func NewPingHandlers(svc *heartbeat.PingService) *PingHandlers {
 
 func (h *PingHandlers) sinal(sig heartbeat.Signal) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// Drena antes do banco: corpo acima do teto não tem efeito nenhum.
-		if _, err := io.Copy(io.Discard, r.Body); err != nil {
-			var grande *http.MaxBytesError
-			if errors.As(err, &grande) {
-				apierr.WriteError(w, r, apierr.CodePayloadTooLarge)
-				return
-			}
-			apierr.WriteError(w, r, apierr.CodeValidation)
+		h.responder(w, r, func() error { return h.svc.Ping(r.Context(), r.PathValue("token"), sig) })
+	}
+}
+
+// codigoDeSaida atende /ping/{token}/{exit_code}. Número inválido é igual a
+// token desconhecido: a rota não diz a quem a sonda se a URL existe.
+func (h *PingHandlers) codigoDeSaida(w http.ResponseWriter, r *http.Request) {
+	h.responder(w, r, func() error {
+		code, ok := heartbeat.ParseExitCode(r.PathValue("exit_code"))
+		if !ok {
+			return heartbeat.ErrUnknownToken
+		}
+		return h.svc.PingExit(r.Context(), r.PathValue("token"), code)
+	})
+}
+
+func (h *PingHandlers) responder(w http.ResponseWriter, r *http.Request, registrar func() error) {
+	// Drena antes do banco: corpo acima do teto não tem efeito nenhum.
+	if _, err := io.Copy(io.Discard, r.Body); err != nil {
+		var grande *http.MaxBytesError
+		if errors.As(err, &grande) {
+			apierr.WriteError(w, r, apierr.CodePayloadTooLarge)
 			return
 		}
-		switch err := h.svc.Ping(r.Context(), r.PathValue("token"), sig); {
-		case err == nil:
-			apierr.WriteJSON(w, http.StatusOK, pingOK)
-		case errors.Is(err, heartbeat.ErrUnknownToken):
-			apierr.WriteError(w, r, apierr.CodeNotFound)
-		default:
-			slog.Error("registrar ping", "erro", err, "trace_id", observability.TraceID(r.Context()))
-			apierr.WriteError(w, r, apierr.CodeInternal)
-		}
+		apierr.WriteError(w, r, apierr.CodeValidation)
+		return
+	}
+	switch err := registrar(); {
+	case err == nil:
+		apierr.WriteJSON(w, http.StatusOK, pingOK)
+	case errors.Is(err, heartbeat.ErrUnknownToken):
+		apierr.WriteError(w, r, apierr.CodeNotFound)
+	default:
+		slog.Error("registrar ping", "erro", err, "trace_id", observability.TraceID(r.Context()))
+		apierr.WriteError(w, r, apierr.CodeInternal)
 	}
 }
 
@@ -86,6 +102,8 @@ func pingPublico(ctx context.Context, cfg *config.Config, clk clock.Clock, svc *
 	mux.Handle("POST /ping/{token}", rota(heartbeat.SignalSuccess))
 	mux.Handle("POST /ping/{token}/start", rota(heartbeat.SignalStart))
 	mux.Handle("POST /ping/{token}/fail", rota(heartbeat.SignalFail))
+	// Os sufixos literais de cima vencem este curinga, no ServeMux.
+	mux.Handle("POST /ping/{token}/{exit_code}", porToken(http.HandlerFunc(ph.codigoDeSaida)))
 
 	h := comEnvelope(mux)
 	h = middleware.BodyLimit(pingBodyBytes)(h)

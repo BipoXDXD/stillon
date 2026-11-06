@@ -371,3 +371,50 @@ func TestHashPingToken(t *testing.T) {
 		}
 	}
 }
+
+func TestParseExitCode(t *testing.T) {
+	casos := []struct {
+		cru   string
+		ok    bool
+		sinal heartbeat.Signal
+		valor int16
+	}{
+		{"0", true, heartbeat.SignalSuccess, 0},
+		{"1", true, heartbeat.SignalFail, 1},
+		{"9", true, heartbeat.SignalFail, 9},
+		{"10", true, heartbeat.SignalFail, 10},
+		{"254", true, heartbeat.SignalFail, 254},
+		{"255", true, heartbeat.SignalFail, 255},
+		{"256", false, "", 0},
+		{"300", false, "", 0},
+		{"1000", false, "", 0},
+		{"", false, "", 0},
+		{"-1", false, "", 0},
+		{"+1", false, "", 0},
+		{"00", false, "", 0},
+		{"01", false, "", 0},
+		{"007", false, "", 0},
+		{"1.5", false, "", 0},
+		{"0x1", false, "", 0},
+		{"1e2", false, "", 0},
+		{"abc", false, "", 0},
+		{" 1", false, "", 0},
+		{"1\n", false, "", 0},
+		{"\u0661", false, "", 0}, // dígito não ASCII
+		{"99999999999999999999", false, "", 0},
+	}
+	for _, c := range casos {
+		t.Run(c.cru, func(t *testing.T) {
+			got, ok := heartbeat.ParseExitCode(c.cru)
+			if ok != c.ok {
+				t.Fatalf("ok = %v, queria %v", ok, c.ok)
+			}
+			if !ok {
+				return
+			}
+			if got.Signal() != c.sinal || got.Value() != c.valor {
+				t.Errorf("deu %s/%d, queria %s/%d", got.Signal(), got.Value(), c.sinal, c.valor)
+			}
+		})
+	}
+}

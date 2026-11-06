@@ -239,6 +239,7 @@ Público:
 | `POST /ping/{token}` | sucesso | `200 {"status":"ok"}`, `400`, `404`, `413`, `429` |
 | `POST /ping/{token}/start` | início | idem |
 | `POST /ping/{token}/fail` | falha | idem |
+| `POST /ping/{token}/{exit_code}` | `0` é sucesso, `1..255` é falha, com o número no log; fora disso, `404` | idem |
 
 `400` é o corpo que não pôde ser lido até o fim, como conexão interrompida no meio do envio; nada é
 gravado. Método diferente de POST dá `405`. Falha do lado do servidor dá `500`, ou `503` com o prazo
@@ -268,7 +269,7 @@ anti-CSRF). Entrada estrita, com `DisallowUnknownFields`. Recurso alheio é 404.
   "deadline_at": "…", "last_ping_at": null, "last_success_at": null,
   "last_start_at": null, "open_incident_id": null, "created_at": "…" }
 // create e rotate: o mesmo objeto + "ping_url"
-// evento: { "id": "…", "at": "…", "kind": "start|success|fail", "runtime_ms": 1234 }
+// evento: { "id": "…", "at": "…", "kind": "start|success|fail", "runtime_ms": 1234, "exit_code": 3 }
 // incidente: { "id", "heartbeat_id", "heartbeat_name", "started_at", "resolved_at",
 //              "cause": "heartbeat_late|heartbeat_failed", "acknowledged_at" }
 ```

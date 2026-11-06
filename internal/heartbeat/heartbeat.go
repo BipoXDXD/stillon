@@ -6,6 +6,7 @@
 package heartbeat
 
 import (
+	"strconv"
 	"time"
 	_ "time/tzdata" // o cron depende do fuso declarado, não do tzdata da imagem (D18)
 )
@@ -94,6 +95,45 @@ const (
 	SignalSuccess Signal = "success"
 	SignalFail    Signal = "fail"
 )
+
+// MaxExitCode é o maior código de saída de um processo Unix.
+const MaxExitCode = 255
+
+// ExitCode é o código de saída que a tarefa mandou no ping. O valor zero é o
+// sucesso; os outros nascem de ParseExitCode.
+type ExitCode struct {
+	value int16
+}
+
+// ParseExitCode lê o sufixo da rota. Só a forma que o $? do shell produz é
+// aceita: zero à esquerda, sinal ou espaço são erro de quem chama, e não um
+// número a interpretar.
+func ParseExitCode(s string) (ExitCode, bool) {
+	if s == "" || (len(s) > 1 && s[0] == '0') || len(s) > len(strconv.Itoa(MaxExitCode)) {
+		return ExitCode{}, false
+	}
+	for _, c := range []byte(s) {
+		if c < '0' || c > '9' {
+			return ExitCode{}, false
+		}
+	}
+	n, err := strconv.Atoi(s)
+	if err != nil || n > MaxExitCode {
+		return ExitCode{}, false
+	}
+	return ExitCode{value: int16(n)}, true // #nosec G115 -- faixa conferida acima.
+}
+
+// Signal é o sinal que o código representa: 0 é sucesso, o resto é falha.
+func (c ExitCode) Signal() Signal {
+	if c.value == 0 {
+		return SignalSuccess
+	}
+	return SignalFail
+}
+
+// Value é o número, em 0..255.
+func (c ExitCode) Value() int16 { return c.value }
 
 // State é a parte da linha que os sinais mudam. Instante zero é "nunca".
 type State struct {

@@ -371,6 +371,44 @@ func TestHeartbeatConstraints(t *testing.T) {
 }
 
 // Apagar o dono leva heartbeats, eventos e incidentes, como no heartbeat.
+// O código de saída diz o sinal, e o banco não aceita um que o contradiga.
+func TestHeartbeatEventExitCodeMatchesTheKind(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+	dono := novoUsuario(t, pool)
+	hb := novoHeartbeat(t, pool, dono, "backup")
+	codigo := func(v int16) *int16 { return &v }
+	casos := []struct {
+		nome, tipo     string
+		exitCode       *int16
+		codigoEsperado string
+	}{
+		{"sucesso sem código", "success", nil, ""},
+		{"falha sem código", "fail", nil, ""},
+		{"início sem código", "start", nil, ""},
+		{"sucesso com zero", "success", codigo(0), ""},
+		{"falha com 1", "fail", codigo(1), ""},
+		{"falha com 255", "fail", codigo(255), ""},
+		{"falha com zero", "fail", codigo(0), "23514"},
+		{"sucesso com 1", "success", codigo(1), "23514"},
+		{"início com zero", "start", codigo(0), "23514"},
+		{"falha com 256", "fail", codigo(256), "23514"},
+		{"falha negativa", "fail", codigo(-1), "23514"},
+	}
+	for _, c := range casos {
+		t.Run(c.nome, func(t *testing.T) {
+			err := storage.InUserTx(ctx, pool, dono, func(q *db.Queries) error {
+				return q.InsertHeartbeatEvent(ctx, db.InsertHeartbeatEventParams{
+					ID: novoID(), HeartbeatID: hb, At: agora, Kind: c.tipo, ExitCode: c.exitCode,
+				})
+			})
+			if codigoPG(err) != c.codigoEsperado {
+				t.Errorf("deu %v, queria código %q", err, c.codigoEsperado)
+			}
+		})
+	}
+}
+
 func TestDeletingTheOwnerCascades(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()

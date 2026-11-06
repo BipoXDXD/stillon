@@ -28,6 +28,11 @@ export function DialogoDaUrlDePing({ url, aoFechar }: { url: string | null; aoFe
             <Copiavel titulo="Ao terminar bem" texto={`${CURL} ${url}`} rotulo="Copiar o exemplo de sucesso" />
             <Copiavel titulo="Ao começar (opcional, mede o tempo de execução)" texto={`${CURL} ${url}/start`} rotulo="Copiar o exemplo de início" />
             <Copiavel titulo="Ao dar erro (abre incidente)" texto={`${CURL} ${url}/fail`} rotulo="Copiar o exemplo de falha" />
+            <Copiavel
+              titulo="Numa linha só, depois da tarefa: 0 é sucesso, o resto é falha"
+              texto={`${CURL} ${url}/$?`}
+              rotulo="Copiar o exemplo com o código de saída"
+            />
           </div>
           <p className="text-sm text-suave">Só POST: um GET responde 405, para que prévia de link e scanner não contem como sinal.</p>
           <div className="flex justify-end">

@@ -21,18 +21,19 @@ import (
 // rotas registradas que respondem sem access token. Rota nova entra aqui só
 // de propósito, com o porquê.
 var rotasPublicas = map[string]string{
-	"POST /api/v1/auth/login":       "é onde a sessão nasce",
-	"POST /api/v1/auth/refresh":     "a credencial é o cookie de refresh, não o access token",
-	"POST /api/v1/auth/logout":      "encerra pelo cookie de refresh; sem ele, não há o que encerrar",
-	"POST /api/v1/auth/totp/verify": "a credencial é o desafio do login, antes de haver sessão",
-	"GET /healthz":                  "liveness do orquestrador",
-	"GET /readyz":                   "readiness do orquestrador",
-	"GET /verify/{token}":           "a credencial é o token no caminho, aberto pelo e-mail",
-	"POST /verify/{token}":          "a credencial é o token no caminho, aberto pelo e-mail",
-	"GET /p/{slug}":                 "a página de status é pública por definição",
-	"POST /ping/{token}":            "a credencial é o token no caminho, enviado por uma tarefa agendada",
-	"POST /ping/{token}/start":      "a credencial é o token no caminho, enviado por uma tarefa agendada",
-	"POST /ping/{token}/fail":       "a credencial é o token no caminho, enviado por uma tarefa agendada",
+	"POST /api/v1/auth/login":        "é onde a sessão nasce",
+	"POST /api/v1/auth/refresh":      "a credencial é o cookie de refresh, não o access token",
+	"POST /api/v1/auth/logout":       "encerra pelo cookie de refresh; sem ele, não há o que encerrar",
+	"POST /api/v1/auth/totp/verify":  "a credencial é o desafio do login, antes de haver sessão",
+	"GET /healthz":                   "liveness do orquestrador",
+	"GET /readyz":                    "readiness do orquestrador",
+	"GET /verify/{token}":            "a credencial é o token no caminho, aberto pelo e-mail",
+	"POST /verify/{token}":           "a credencial é o token no caminho, aberto pelo e-mail",
+	"GET /p/{slug}":                  "a página de status é pública por definição",
+	"POST /ping/{token}":             "a credencial é o token no caminho, enviado por uma tarefa agendada",
+	"POST /ping/{token}/start":       "a credencial é o token no caminho, enviado por uma tarefa agendada",
+	"POST /ping/{token}/fail":        "a credencial é o token no caminho, enviado por uma tarefa agendada",
+	"POST /ping/{token}/{exit_code}": "a credencial é o token no caminho, enviado por uma tarefa agendada",
 }
 
 // montagens são os registros sem método da raiz de Routes: cada um entrega o

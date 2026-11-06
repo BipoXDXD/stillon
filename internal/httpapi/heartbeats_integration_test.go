@@ -142,8 +142,30 @@ func TestHeartbeatResponseHasExactKeys(t *testing.T) {
 	pingar(t, a, "/ping/"+tokenDaURL(t, corpo), nil)
 	_, corpo = lerCru(t, a, http.MethodGet, "/api/v1/heartbeats/"+id+"/events", dono, nil)
 	ev := decodificar(t, corpo)["items"].([]any)
-	if len(ev) != 1 || !slices.Equal(chavesDe(ev[0].(map[string]any)), []string{"at", "id", "kind", "runtime_ms"}) {
+	if len(ev) != 1 || !slices.Equal(chavesDe(ev[0].(map[string]any)), []string{"at", "exit_code", "id", "kind", "runtime_ms"}) {
 		t.Errorf("evento: %s", corpo)
+	}
+}
+
+// O log mostra o código de quem o mandou, e null nos demais.
+func TestEventListShowsTheExitCode(t *testing.T) {
+	a := newAPI(t)
+	dono := tokenDe(t, a, a.userID)
+	id, token := criarHB(t, a, dono, corpoDePeriodo)
+	pingar(t, a, "/ping/"+token+"/start", nil)
+	pingar(t, a, "/ping/"+token+"/3", nil)
+
+	_, corpo := lerCru(t, a, http.MethodGet, "/api/v1/heartbeats/"+id+"/events", dono, nil)
+	ev := decodificar(t, corpo)["items"].([]any)
+	if len(ev) != 2 {
+		t.Fatalf("eventos: %s", corpo)
+	}
+	falha, inicio := ev[0].(map[string]any), ev[1].(map[string]any)
+	if falha["kind"] != "fail" || falha["exit_code"] != float64(3) {
+		t.Errorf("falha: %v", falha)
+	}
+	if v, ok := inicio["exit_code"]; !ok || v != nil {
+		t.Errorf("início: %v", inicio)
 	}
 }
 

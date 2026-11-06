@@ -26,7 +26,8 @@ UPDATE heartbeats
  WHERE id = sqlc.arg(id);
 
 -- name: InsertHeartbeatEvent :exec
-INSERT INTO heartbeat_events (id, heartbeat_id, at, kind, runtime_ms) VALUES ($1, $2, $3, $4, $5);
+INSERT INTO heartbeat_events (id, heartbeat_id, at, kind, runtime_ms, exit_code)
+VALUES ($1, $2, $3, $4, $5, $6);
 
 -- O teto do log (D15), na transação do ping: apaga do evento de posição
 -- max_events + 1, do mais novo para o mais velho, para trás. O id é UUIDv7,
@@ -45,7 +46,7 @@ SELECT * FROM heartbeats WHERE user_id = $1 AND id = $2;
 -- O log do dono, do mais novo ao mais velho. O id é UUIDv7, e o cursor é o
 -- último id da página anterior.
 -- name: ListHeartbeatEvents :many
-SELECT e.id, e.heartbeat_id, e.at, e.kind, e.runtime_ms
+SELECT e.id, e.heartbeat_id, e.at, e.kind, e.runtime_ms, e.exit_code
   FROM heartbeat_events e
   JOIN heartbeats h ON h.id = e.heartbeat_id
  WHERE h.user_id = sqlc.arg(user_id)

@@ -52,6 +52,20 @@ describe('log de eventos', () => {
     expect(linhas.map((l) => within(l).getByText(/^(Início|Sucesso|Falha)$/).textContent)).toEqual(['Sucesso', 'Início', 'Falha'])
     expect(linhas[0]).toHaveTextContent('levou 3 min')
     expect(linhas[1]).not.toHaveTextContent('levou')
+    expect(linhas[0]).not.toHaveTextContent('código de saída')
+  })
+
+  // Zero é um código de verdade: um `&&` no lugar do `!== null` o esconderia.
+  it('mostra o código de saída quando a tarefa mandou, inclusive o zero', async () => {
+    await detalheCom({
+      eventos: [
+        { id: 'e1', kind: 'fail', exit_code: 3 },
+        { id: 'e2', kind: 'success', exit_code: 0 },
+      ],
+    })
+    const linhas = await within(await secao('Log de eventos')).findAllByRole('listitem')
+    expect(linhas[0]).toHaveTextContent('código de saída 3')
+    expect(linhas[1]).toHaveTextContent('código de saída 0')
   })
 
   // Sabotagem: não passar o cursor → a mesma página duas vezes.

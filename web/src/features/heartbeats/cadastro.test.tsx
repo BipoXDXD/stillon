@@ -27,7 +27,7 @@ describe('cadastro', () => {
   })
 
   // Sabotagem: mandar period_sec em minutos, ou não mostrar o diálogo.
-  it('cadastra pelo período e mostra a URL com os três exemplos por POST', async () => {
+  it('cadastra pelo período e mostra a URL com os exemplos por POST', async () => {
     const r = await renderizarPainel('/heartbeats/new')
     await r.usuario.type(await screen.findByLabelText('Nome'), 'Backup')
     await r.usuario.clear(screen.getByLabelText('Período'))
@@ -42,6 +42,7 @@ describe('cadastro', () => {
     expect(within(d).getByText(`curl -fsS -m 10 --retry 3 -o /dev/null -X POST ${PING_URL}`)).toBeInTheDocument()
     expect(within(d).getByText(`curl -fsS -m 10 --retry 3 -o /dev/null -X POST ${PING_URL}/start`)).toBeInTheDocument()
     expect(within(d).getByText(`curl -fsS -m 10 --retry 3 -o /dev/null -X POST ${PING_URL}/fail`)).toBeInTheDocument()
+    expect(within(d).getByText(`curl -fsS -m 10 --retry 3 -o /dev/null -X POST ${PING_URL}/$?`)).toBeInTheDocument()
   })
 
   // Esc e o clique fora não fecham: a URL não volta. Sabotagem: aoMudar fechando, sem o `travado`.

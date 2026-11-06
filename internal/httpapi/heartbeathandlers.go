@@ -85,6 +85,7 @@ type heartbeatEventResponse struct {
 	At        time.Time `json:"at"`
 	Kind      string    `json:"kind"`
 	RuntimeMS *int64    `json:"runtime_ms"`
+	ExitCode  *int16    `json:"exit_code"`
 }
 
 type heartbeatEventListResponse struct {
@@ -286,7 +287,7 @@ func (h *HeartbeatHandlers) Events(w http.ResponseWriter, r *http.Request) {
 	}
 	resp := heartbeatEventListResponse{Items: make([]heartbeatEventResponse, 0, len(items))}
 	for _, e := range items {
-		resp.Items = append(resp.Items, heartbeatEventResponse{ID: e.ID.String(), At: e.At, Kind: e.Kind, RuntimeMS: e.RuntimeMS})
+		resp.Items = append(resp.Items, heartbeatEventResponse{ID: e.ID.String(), At: e.At, Kind: e.Kind, RuntimeMS: e.RuntimeMS, ExitCode: e.ExitCode})
 	}
 	if len(items) == int(limite) {
 		resp.NextCursor = items[len(items)-1].ID.String()

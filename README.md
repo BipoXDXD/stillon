@@ -102,6 +102,7 @@ na VPS, siga a configuração de e-mail do [runbook de produção](docs/deploy/v
   ```sh
   curl -fsS -m 10 --retry 3 -X POST https://stillon.tech/ping/SEU-TOKEN/start
   curl -fsS -m 10 --retry 3 -X POST https://stillon.tech/ping/SEU-TOKEN       # ou /fail
+  backup.sh; curl -fsS -m 10 --retry 3 -X POST https://stillon.tech/ping/SEU-TOKEN/$?   # 0 é sucesso, o resto é falha
   ```
 - **Página de status pública** em `/p/{slug}`, com os alvos que você escolher, uptime de 90 dias
   e os incidentes recentes.
