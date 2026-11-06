@@ -63,14 +63,15 @@ describe('heartbeats na tabela de monitores', () => {
       ],
       heartbeats: [{ id: 'h1', name: 'Atualização', tags: [] }],
     })
-    const manchete = await screen.findByRole('heading', { level: 2, name: 'Um serviço pede atenção.' })
+    await screen.findByRole('heading', { level: 2, name: 'Um serviço pede atenção.' })
     expect(await nomesNaTabela()).toEqual(['Banco', 'API', 'Atualização'])
 
     await r.usuario.selectOptions(screen.getByLabelText('Ordenar por'), 'Nome')
 
-    await waitFor(async () => expect(await nomesNaTabela()).toEqual(['API', 'Atualização', 'Banco']))
+    await waitFor(() => expect(screen.getByLabelText('Ordenar por')).toHaveValue('nome'))
+    expect(await nomesNaTabela()).toEqual(['API', 'Atualização', 'Banco'])
     expect(r.router.state.location.search).toBe('?ordem=nome')
-    expect(manchete).toHaveTextContent('Um serviço pede atenção.')
+    expect(screen.getByRole('heading', { level: 2, name: 'Um serviço pede atenção.' })).toBeInTheDocument()
   })
 
   it('a ordem da URL vale ao abrir, e sobrevive a filtrar e a limpar', async () => {
@@ -93,7 +94,8 @@ describe('heartbeats na tabela de monitores', () => {
   it('escolher a ordem não mostra "Limpar filtros": ordem não é filtro', async () => {
     const r = await painelCom({ alvos: [{ id: 'a', name: 'API' }] })
     await r.usuario.selectOptions(await screen.findByLabelText('Ordenar por'), 'Nome')
-    await waitFor(() => expect(r.router.state.location.search).toBe('?ordem=nome'))
+    await waitFor(() => expect(screen.getByLabelText('Ordenar por')).toHaveValue('nome'))
+    expect(r.router.state.location.search).toBe('?ordem=nome')
     const barra = screen.getByRole('region', { name: 'Filtros' })
     expect(within(barra).queryByRole('button', { name: 'Limpar filtros' })).not.toBeInTheDocument()
   })

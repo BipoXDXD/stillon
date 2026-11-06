@@ -23,18 +23,20 @@ function tarefa(nome: string, estado: LinhaDeMonitor['estado']): LinhaDeMonitor 
 }
 
 const linhas = [
-  http('Site', 'up', 0.9, 300),
+  http('Site', 'up', 0.9, 3000),
   tarefa('Backup', 'down'),
   http('API', 'up', 0.99, 120),
   http('Banco', 'down', 0.5, null),
   http('Fila', 'degraded', 0.9, 2400),
+  http('Novo', 'unknown', null, null),
+  tarefa('Relatório', 'up'),
 ]
 
 const nomes = (l: readonly LinhaDeMonitor[]) => l.map((x) => x.nome)
 
 describe('ordenarLinhas', () => {
   it('gravidade: os problemas primeiro, e o nome desempata', () => {
-    expect(nomes(ordenarLinhas(linhas, 'gravidade'))).toEqual(['Backup', 'Banco', 'Fila', 'API', 'Site'])
+    expect(nomes(ordenarLinhas(linhas, 'gravidade'))).toEqual(['Backup', 'Banco', 'Fila', 'API', 'Relatório', 'Site', 'Novo'])
   })
 
   it('nome: alfabética, com número em ordem de número', () => {
@@ -42,18 +44,25 @@ describe('ordenarLinhas', () => {
     expect(nomes(ordenarLinhas(l, 'nome'))).toEqual(['API', 'Serviço 2', 'Serviço 10'])
   })
 
-  // Sem uptime vai para o fim, e o empate em 0,9 fica com o mais grave.
-  it('menor tempo no ar: do pior ao melhor, com quem não mede no fim', () => {
-    expect(nomes(ordenarLinhas(linhas, 'menor-uptime'))).toEqual(['Banco', 'Fila', 'Site', 'API', 'Backup'])
+  // A tarefa atrasada não tem uptime e vem na frente; o empate em 0,9 fica com o
+  // mais grave; quem não mede e está bem vai para o fim.
+  it('menor tempo no ar: problema sem medida, do pior ao melhor, e o resto no fim', () => {
+    expect(nomes(ordenarLinhas(linhas, 'menor-uptime'))).toEqual(['Backup', 'Banco', 'Fila', 'Site', 'API', 'Relatório', 'Novo'])
   })
 
-  // Sabotagem: tirar o sentido -1 → do menor ao maior.
-  it('maior latência: da maior à menor, com quem não mede no fim', () => {
-    expect(nomes(ordenarLinhas(linhas, 'maior-latencia'))).toEqual(['Fila', 'Site', 'API', 'Backup', 'Banco'])
+  // A API devolve latência nula quando o último check foi down: Banco não pode
+  // ir para o fim por estar fora do ar. Sabotagem: tirar o sentido -1.
+  it('maior latência: problema sem medida, da maior à menor, e o resto no fim', () => {
+    expect(nomes(ordenarLinhas(linhas, 'maior-latencia'))).toEqual(['Backup', 'Banco', 'Site', 'Fila', 'API', 'Relatório', 'Novo'])
+  })
+
+  it('degradado sem medida também vem na frente', () => {
+    const l = [http('Lento', 'up', 1, 900), http('Site', 'degraded', 1, null), http('Novo', 'unknown', null, null)]
+    expect(nomes(ordenarLinhas(l, 'maior-latencia'))).toEqual(['Site', 'Lento', 'Novo'])
   })
 
   it.each(ORDENS)('%s não esconde nem repete linha', (ordem) => {
-    expect(nomes(ordenarLinhas(linhas, ordem)).sort()).toEqual(['API', 'Backup', 'Banco', 'Fila', 'Site'])
+    expect(nomes(ordenarLinhas(linhas, ordem)).sort()).toEqual(['API', 'Backup', 'Banco', 'Fila', 'Novo', 'Relatório', 'Site'])
   })
 
   it('não mexe na lista recebida', () => {

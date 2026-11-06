@@ -150,8 +150,16 @@ cliente é o risco que o D17 evitou, e a prévia não trava o envio. O formulár
 Um seletor na barra de filtros, com a ordem em `?ordem=`. A gravidade segue como padrão e não vai à
 URL, e valor desconhecido abre nela. Ordem não é filtro: não esconde linha, não conta para "Limpar
 filtros" e sobrevive a ele. A manchete não muda com a ordem, e a linha de problema mantém o acento em
-qualquer posição. Quem não tem a medida (a tarefa não tem latência nem uptime) vai para o fim nas
-duas direções, e o empate fica com o mais grave.
+qualquer posição. O empate fica com o mais grave.
+
+Nas ordens por medida, a falta dela não diz a mesma coisa para todos: a API devolve latência nula
+quando o último check foi `down`, e a tarefa não tem uptime.
+
+| Faixa | Quem | Ordem dentro da faixa |
+|---|---|---|
+| 1 | Sem a medida, com problema (fora do ar, degradado, atrasada, falhando) | gravidade e nome |
+| 2 | Com a medida | maior latência, ou menor tempo no ar |
+| 3 | Sem a medida, sem problema | gravidade e nome |
 
 ## Migrations
 

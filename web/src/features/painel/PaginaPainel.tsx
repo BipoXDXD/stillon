@@ -119,7 +119,9 @@ function MonitoresFiltrados({ itens, tarefas, atualizadoEm }: PropsDosMonitores)
   const filtrada = useResumoFiltrado(filtros, filtraNaApi, { items: itens })
   // A ordem acompanha os dois: mudar um filtro, ou limpar todos, não a desfaz.
   const aoMudar = (f: Filtros) => setParametros(comOrdem(escreverFiltros(f), ordem), { replace: true })
-  const aoOrdenar = (o: Ordem) => setParametros(comOrdem(escreverFiltros(filtros), o), { replace: true })
+  // flushSync: o seletor é controlado pela URL, e numa transição ele voltaria ao
+  // valor antigo até ela terminar.
+  const aoOrdenar = (o: Ordem) => setParametros(comOrdem(escreverFiltros(filtros), o), { replace: true, flushSync: true })
 
   const esperando = filtraNaApi && filtrada.isPlaceholderData
   const base = filtraNaApi ? filtrada.data?.items : itens
