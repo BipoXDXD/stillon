@@ -1,9 +1,11 @@
 import { screen, waitFor, within } from '@testing-library/react'
+import { http, HttpResponse } from 'msw'
 import { describe, expect, it, vi } from 'vitest'
 import { PING_URL } from '@/test/api-falsa'
 import { heartbeat } from '@/test/fixtures'
 import { renderizarPainel } from '@/test/renderizar'
 import { ESPERA_DA_PREVIA_MS } from './PreviaDoCron'
+import { servidor } from '@/test/setup'
 
 const dialogo = () => screen.findByRole('dialog', { name: 'Guarde a URL de ping' })
 const CANARIO = 'CANARIO-do-token-de-ping'
@@ -242,6 +244,34 @@ describe('ações do detalhe', () => {
     await r.usuario.click(screen.getByRole('button', { name: 'Retomar' }))
     await screen.findByRole('button', { name: 'Pausar' })
     expect(r.falsa.corpos('PATCH /heartbeats/:id')).toEqual([{ enabled: false }, { enabled: true }])
+  })
+
+  // A ação só termina depois de atualizar a tela, e a confirmação aberta nesse
+  // intervalo é outra: quem terminou não pode fechá-la. Achado no e2e real.
+  it('a retomada que termina não fecha a confirmação aberta depois dela', async () => {
+    const r = await detalheCom({ enabled: false, state: 'paused' })
+    let soltar = () => {}
+    const atualizacao = new Promise<void>((resolve) => {
+      soltar = resolve
+    })
+    servidor.use(
+      http.get('*/api/v1/heartbeats/h1/events', async () => {
+        await atualizacao
+        return HttpResponse.json({ items: [], next_cursor: null })
+      }),
+    )
+    await r.usuario.click(screen.getByRole('button', { name: 'Retomar' }))
+    await waitFor(() => expect(r.falsa.chamadas('PATCH /heartbeats/:id')).toBe(1))
+
+    await r.usuario.click(screen.getByRole('button', { name: 'Gerar nova URL' }))
+    const confirmacao = await screen.findByRole('alertdialog', { name: 'Gerar uma nova URL de ping?' })
+    soltar()
+    expect((await screen.findAllByText('Heartbeat retomado.')).length).toBeGreaterThan(0)
+
+    await waitFor(() => expect(within(confirmacao).getByRole('button', { name: 'Gerar nova URL' })).toBeEnabled())
+    expect(screen.getByRole('alertdialog', { name: 'Gerar uma nova URL de ping?' })).toBeInTheDocument()
+    await r.usuario.click(within(confirmacao).getByRole('button', { name: 'Gerar nova URL' }))
+    expect(await dialogo()).toBeInTheDocument()
   })
 
   it('apagar confirma, volta ao painel e tira o heartbeat da lista', async () => {

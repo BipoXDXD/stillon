@@ -66,8 +66,10 @@ function DetalheDoHeartbeat({ id }: { id: string }) {
     if (sumiuNoPoll) aoSumirNoPoll(sumiuNoPoll)
   }, [sumiuNoPoll])
 
-  // Uma ação de cada vez: o estado segura o clique duplo e o Confirmar.
-  async function executar(acao: () => Promise<void>) {
+  // Uma ação de cada vez: o estado segura o clique duplo e o Confirmar. Ao
+  // terminar, ela fecha só a própria confirmação: a ação espera a tela
+  // atualizar, e nesse intervalo a pessoa pode ter aberto outra.
+  async function executar(acao: () => Promise<void>, confirmacao: Confirmacao) {
     if (ocupado) return
     setOcupado(true)
     setErro(null)
@@ -78,7 +80,7 @@ function DetalheDoHeartbeat({ id }: { id: string }) {
       else setErro(mensagemDe(e))
     } finally {
       setOcupado(false)
-      setConfirmando(null)
+      setConfirmando((aberta) => (aberta === confirmacao ? null : aberta))
     }
   }
 
@@ -87,19 +89,19 @@ function DetalheDoHeartbeat({ id }: { id: string }) {
       await api.alterarHeartbeat(id, { enabled: ativo })
       await qc.invalidateQueries({ queryKey: chaves.heartbeats })
       avisar(ativo ? 'Heartbeat retomado.' : 'Heartbeat pausado.')
-    })
+    }, 'pausar')
 
   const apagar = () =>
     executar(async () => {
       await api.apagarHeartbeat(id)
       await sair('Heartbeat apagado.')
-    })
+    }, 'apagar')
 
   const rotacionar = () =>
     executar(async () => {
       const { ping_url: url } = await api.rotacionarHeartbeat(id)
       setUrlNova(url)
-    })
+    }, 'rotacionar')
 
   return (
     <EstadoDaConsulta consulta={consulta}>
