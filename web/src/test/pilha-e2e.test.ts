@@ -1,6 +1,6 @@
 /// <reference types="node" />
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process'
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -20,6 +20,7 @@ beforeEach(async () => {
   tmp = mkdtempSync(path.join(tmpdir(), 'pilha-'))
   vivos = []
   vi.stubEnv('E2E_TMP', tmp)
+  vi.stubEnv('PATH', `${path.join(tmp, 'bin')}:${process.env.PATH}`)
   vi.resetModules()
   pilha = await import('../../e2e/pilha')
 })
@@ -42,6 +43,15 @@ function iniciar(nome: string) {
   const p = spawn(sleepReal, ['60'], { stdio: 'ignore', argv0: path.join(tmp, nome) })
   vivos.push(p)
   return p
+}
+
+// O docker da limpeza: registra os argumentos e faz o que o teste mandar.
+function dockerFalso(comportamento: string) {
+  const bin = path.join(tmp, 'bin')
+  mkdirSync(bin, { recursive: true })
+  const script = path.join(bin, 'docker')
+  writeFileSync(script, `#!/bin/sh\necho "$*" >>"${tmp}/docker.log"\n${comportamento}\n`)
+  chmodSync(script, 0o755)
 }
 
 const sinalDeSaida = (p: ChildProcess) =>
@@ -89,5 +99,63 @@ describe('uma rodada morta no meio', () => {
 
     expect(matar).not.toHaveBeenCalled()
     expect(existsSync(registro())).toBe(false)
+  })
+})
+
+describe('o container da rodada', () => {
+  const REGISTRO = { container: 'c-da-rodada' }
+
+  it('sai e o registro vai junto', () => {
+    dockerFalso('exit 0')
+    registrar(REGISTRO)
+
+    pilha.derrubar()
+
+    expect(readFileSync(path.join(tmp, 'docker.log'), 'utf8')).toBe('rm -f c-da-rodada\n')
+    expect(existsSync(registro())).toBe(false)
+  })
+
+  it('que já saiu não é erro', () => {
+    const avisar = vi.spyOn(console, 'error')
+    dockerFalso('echo "Error response from daemon: No such container: c-da-rodada" >&2; exit 1')
+    registrar(REGISTRO)
+
+    pilha.derrubar()
+
+    expect(existsSync(registro())).toBe(false)
+    expect(avisar).not.toHaveBeenCalled()
+  })
+
+  it('com o Docker parado fica no registro, e o aviso diz qual é', () => {
+    const avisar = vi.spyOn(console, 'error').mockImplementation(() => {})
+    dockerFalso('echo "Cannot connect to the Docker daemon" >&2; exit 1')
+    registrar(REGISTRO)
+
+    pilha.derrubar()
+
+    expect(existsSync(registro())).toBe(true)
+    expect(avisar).toHaveBeenCalledWith(expect.stringMatching(/c-da-rodada.*Cannot connect to the Docker daemon/s))
+  })
+
+  it('com o Docker pendurado o prazo vence e fica no registro', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    dockerFalso('exec sleep 30')
+    registrar(REGISTRO)
+    vi.stubEnv('E2E_PRAZO_DOCKER_MS', '300')
+    vi.resetModules()
+    const comPrazoCurto: Pilha = await import('../../e2e/pilha')
+
+    comPrazoCurto.derrubar()
+
+    expect(existsSync(registro())).toBe(true)
+  })
+
+  it('órfão de uma rodada velha impede subir outra por cima do registro', () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    dockerFalso('echo "Cannot connect to the Docker daemon" >&2; exit 1')
+    registrar(REGISTRO)
+
+    expect(() => pilha.limparPilhaVelha()).toThrow(/rodada anterior/)
+    expect(existsSync(registro())).toBe(true)
   })
 })
