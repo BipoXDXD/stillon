@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { PING_URL } from '@/test/api-falsa'
 import { heartbeat } from '@/test/fixtures'
 import { renderizarPainel } from '@/test/renderizar'
+import { ESPERA_DA_PREVIA_MS } from './PreviaDoCron'
 
 const dialogo = () => screen.findByRole('dialog', { name: 'Guarde a URL de ping' })
 const CANARIO = 'CANARIO-do-token-de-ping'
@@ -83,6 +84,52 @@ describe('cadastro', () => {
     await r.usuario.click(screen.getByRole('button', { name: 'Já guardei' }))
     await r.router.navigate(-1)
     await waitFor(() => expect(r.router.state.location.pathname).toBe('/'))
+  })
+
+  describe('prévia do cron', () => {
+    async function comCron(r: Awaited<ReturnType<typeof renderizarPainel>>, expr: string) {
+      await r.usuario.click(screen.getByRole('radio', { name: 'Expressão cron' }))
+      const campo = screen.getByLabelText('Fuso')
+      await r.usuario.clear(campo)
+      await r.usuario.type(campo, 'America/Sao_Paulo')
+      await r.usuario.type(screen.getByLabelText('Expressão'), expr)
+    }
+
+    // Às 6h UTC são 3h em São Paulo. Sabotagem: formatar sem timeZone → 06:00 na CI.
+    it('mostra os próximos disparos no fuso declarado', async () => {
+      const r = await renderizarPainel('/heartbeats/new')
+      await comCron(r, '0 3 * * *')
+      expect(await screen.findByText('Próximos disparos, em America/Sao_Paulo')).toBeInTheDocument()
+      expect(screen.getByText('25/09/2026, 03:00')).toBeInTheDocument()
+      expect(screen.getByText('26/09/2026, 03:00')).toBeInTheDocument()
+    })
+
+    // Sabotagem: sem a espera, uma consulta por tecla (9 aqui).
+    it('espera a digitação parar: não é uma consulta por tecla', async () => {
+      const r = await renderizarPainel('/heartbeats/new')
+      await comCron(r, '0 3 * * *')
+      await screen.findByText('Próximos disparos, em America/Sao_Paulo')
+      expect(r.falsa.estado.previasPedidas.filter((q) => q.includes('expr=')).length).toBeLessThanOrEqual(2)
+      expect(r.falsa.estado.previasPedidas.at(-1)).toBe('?expr=0+3+*+*+*&timezone=America%2FSao_Paulo')
+    })
+
+    // A prévia não trava: quem julga é o servidor, no envio (T11).
+    it('expressão recusada mostra o motivo e não impede o envio', async () => {
+      const r = await renderizarPainel('/heartbeats/new')
+      r.falsa.estado.previaDoCron = null
+      await r.usuario.type(screen.getByLabelText('Nome'), 'Backup')
+      await comCron(r, 'lixo')
+      expect(await screen.findByText('Use os cinco campos, com um disparo que exista: 0 3 * * *.')).toBeInTheDocument()
+      expect(screen.queryByText('Próximos disparos, em America/Sao_Paulo')).not.toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Cadastrar' })).toBeEnabled()
+    })
+
+    it('sem expressão, nada de prévia nem de consulta', async () => {
+      const r = await renderizarPainel('/heartbeats/new')
+      await r.usuario.click(screen.getByRole('radio', { name: 'Expressão cron' }))
+      await new Promise((resolver) => setTimeout(resolver, ESPERA_DA_PREVIA_MS + 50))
+      expect(r.falsa.estado.previasPedidas).toEqual([])
+    })
   })
 
   it('cadastra por cron, com o fuso', async () => {

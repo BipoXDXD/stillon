@@ -153,6 +153,8 @@ export const HeartbeatComPing = Heartbeat.extend({ ping_url: z.url() })
 
 export const ListaDeHeartbeats = z.object({ items: z.array(Heartbeat), next_cursor: z.string().optional() })
 
+export const PreviaDoCron = z.object({ next_runs: z.array(instante) })
+
 export const EventoDeHeartbeat = z.object({
   id,
   at: instante,

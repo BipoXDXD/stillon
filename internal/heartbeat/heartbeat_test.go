@@ -3,6 +3,7 @@ package heartbeat_test
 import (
 	"encoding/base64"
 	"errors"
+	"slices"
 	"testing"
 	"time"
 
@@ -411,6 +412,34 @@ func TestHashPingToken(t *testing.T) {
 		if _, ok := heartbeat.HashPingToken(malformado); ok {
 			t.Errorf("%q passou como token", malformado)
 		}
+	}
+}
+
+func TestNextRunsFollowTheScheduleInItsTimezone(t *testing.T) {
+	sch, err := heartbeat.NewCron("30 3 * * 1", "America/Sao_Paulo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Quinta, 24/9/2026, 12:00 UTC. Às 3h30 de segunda em São Paulo são 6h30 UTC.
+	got := sch.NextRuns(time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC), 3)
+	want := []time.Time{
+		time.Date(2026, 9, 28, 6, 30, 0, 0, time.UTC),
+		time.Date(2026, 10, 5, 6, 30, 0, 0, time.UTC),
+		time.Date(2026, 10, 12, 6, 30, 0, 0, time.UTC),
+	}
+	if !slices.EqualFunc(got, want, time.Time.Equal) {
+		t.Errorf("disparos %v, queria %v", got, want)
+	}
+}
+
+// 29/2 de 2096 é o último antes de 2104: a próxima procura esgota os cinco anos.
+func TestNextRunsStopWhenTheNextIsOutOfReach(t *testing.T) {
+	sch, err := heartbeat.NewCron("0 0 29 2 *", "UTC")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := sch.NextRuns(time.Date(2097, 1, 1, 0, 0, 0, 0, time.UTC), 3); len(got) != 0 {
+		t.Errorf("disparos %v, queria nenhum: instante zero seria data inventada", got)
 	}
 }
 

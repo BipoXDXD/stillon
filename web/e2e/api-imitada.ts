@@ -60,6 +60,7 @@ const respostas: Record<string, unknown> = {
     items: [incidente({ id: 'inc-1', target_id: 'a3', target_name: 'Banco', started_at: agora, cause: 'conn_refused' })],
   },
   'GET /heartbeats': { items: heartbeats },
+  'GET /heartbeats/cron-preview': { next_runs: [agora] },
   'GET /heartbeats/h1': heartbeats[0],
   'GET /heartbeats/h1/events': {
     items: [

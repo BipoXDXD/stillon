@@ -125,6 +125,21 @@ para os dois tipos, e a contagem de cada tag soma alvos e heartbeats.
 | **T** Lixo gravado por fora da validação | CHECK espelha a validação | `TestHeartbeatTagCheckRefusesWhatTheCodeWouldNot` |
 | **D** Tags sem teto | até 8 por heartbeat, recusado antes do banco | `TestHeartbeatTagsAreValidatedLikeTargetTags` |
 
+## Prévia do cron (PR 4)
+
+`GET /api/v1/heartbeats/cron-preview?expr=&timezone=` devolve os 5 próximos disparos, com a validação
+do cadastro. Sem migration e sem banco. Quem julga continua sendo o servidor (T11): um parser no
+cliente é o risco que o D17 evitou, e a prévia não trava o envio. O formulário consulta depois de
+400 ms sem digitar e mostra as datas no fuso declarado, que é o da máquina da tarefa.
+
+| Ameaça | Mitigação | Teste |
+|---|---|---|
+| **S** Rota sem sessão | `protegida`, como as demais | `TestCronPreviewWithoutSessionIs401`, `TestEveryRegisteredRouteDeniesByDefault` |
+| **T** Entrada ruim virar 500 | mesma validação de `NewCron`, com tamanho conferido antes do parser | `TestCronPreviewRefusesWhatTheFormWouldRefuse` |
+| **I** Chave da consulta ecoada | campo fixo `query` | `TestCronPreviewQueryIsStrict` |
+| **I** Fuso como caminho de arquivo | `time.LoadLocation` recusa `..`; caso de teste com caminho | `TestCronPreviewRefusesWhatTheFormWouldRefuse` |
+| **D** Muitas consultas | limite por usuário da cadeia `protegida`, o mesmo das outras rotas, e 400 ms de espera no painel | `espera a digitação parar: não é uma consulta por tecla` |
+
 ## Migrations
 
 Cada PR que precisa de migration leva o próximo número livre, e por isso os PRs são empilhados e

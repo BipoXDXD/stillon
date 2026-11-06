@@ -22,6 +22,9 @@ const (
 	// MaxPerUser é o teto de heartbeats por usuário, o mesmo de alvos (D16).
 	MaxPerUser int64 = 100
 
+	// PreviewRuns é quantos disparos a prévia do cron mostra.
+	PreviewRuns = 5
+
 	DefaultPageSize int32 = 50
 	MaxPageSize     int32 = 100
 )
@@ -121,6 +124,16 @@ func ValidateName(name string) (string, error) {
 		return "", &ValidationError{Field: "name", Reason: ReasonInvalid}
 	}
 	return name, nil
+}
+
+// CronPreview são os próximos disparos de uma expressão ainda não gravada. Passa
+// pela mesma validação do cadastro, e não toca no banco.
+func (s *Service) CronPreview(expr, timezone string) ([]time.Time, error) {
+	sch, err := NewCron(expr, timezone)
+	if err != nil {
+		return nil, err
+	}
+	return sch.NextRuns(s.clk.Now(), PreviewRuns), nil
 }
 
 // Create grava o heartbeat e devolve o token, que só existe neste retorno.

@@ -254,6 +254,7 @@ anti-CSRF). Entrada estrita, com `DisallowUnknownFields`. Recurso alheio é 404.
 |---|---|
 | `GET /api/v1/heartbeats?cursor=&limit=` | lista, teto 100 |
 | `POST /api/v1/heartbeats` | cria; devolve `ping_url` **uma vez** |
+| `GET /api/v1/heartbeats/cron-preview?expr=&timezone=` | próximos 5 disparos, sem gravar: `{ "next_runs": ["…"] }` |
 | `GET /api/v1/heartbeats/{id}` | detalhe |
 | `PATCH /api/v1/heartbeats/{id}` | `name`, `tags`, agendamento, `grace_sec`, `enabled` |
 | `DELETE /api/v1/heartbeats/{id}` | apaga, com eventos e incidentes |

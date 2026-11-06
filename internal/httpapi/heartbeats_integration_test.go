@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"maps"
 	"net/http"
+	"net/url"
 	"slices"
 	"sort"
 	"strings"
@@ -304,6 +305,112 @@ func TestAnotherUsersHeartbeatTagsStayOut(t *testing.T) {
 	_, lido := lerCru(t, a, http.MethodGet, "/api/v1/heartbeats/"+id, dono, nil)
 	if got := tagsDe(t, lido); !slices.Equal(got, []any{"segredo-de-a"}) {
 		t.Errorf("as tags de A mudaram: %v", got)
+	}
+}
+
+func previaDoCron(t *testing.T, a *api, sessao string, consulta url.Values) (int, string) {
+	t.Helper()
+	return lerCru(t, a, http.MethodGet, "/api/v1/heartbeats/cron-preview?"+consulta.Encode(), sessao, nil)
+}
+
+// Cinco disparos em sequência, no fuso declarado: 3h em São Paulo são 6h UTC, e
+// a resposta tem só a chave do contrato.
+func TestCronPreviewListsTheNextRunsInTheTimezone(t *testing.T) {
+	a := newAPI(t)
+	sessao := tokenDe(t, a, a.userID)
+	status, corpo := previaDoCron(t, a, sessao, url.Values{"expr": {"0 3 * * *"}, "timezone": {"America/Sao_Paulo"}})
+	if status != http.StatusOK {
+		t.Fatalf("%d %s", status, corpo)
+	}
+	m := decodificar(t, corpo)
+	if got := chavesDe(m); !slices.Equal(got, []string{"next_runs"}) {
+		t.Errorf("chaves %v", got)
+	}
+	runs := m["next_runs"].([]any)
+	if len(runs) != 5 {
+		t.Fatalf("%d disparos: %s", len(runs), corpo)
+	}
+	agora := a.clk.Now()
+	var anterior time.Time
+	for i, r := range runs {
+		quando, err := time.Parse(time.RFC3339, r.(string))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if h, m := quando.UTC().Hour(), quando.UTC().Minute(); h != 6 || m != 0 {
+			t.Errorf("disparo %d: %v, queria 06:00 UTC", i, quando)
+		}
+		if !quando.After(agora) || (i > 0 && quando.Sub(anterior) != 24*time.Hour) {
+			t.Errorf("disparo %d fora de sequência: %v depois de %v (agora %v)", i, quando, anterior, agora)
+		}
+		anterior = quando
+	}
+}
+
+func TestCronPreviewRefusesWhatTheFormWouldRefuse(t *testing.T) {
+	a := newAPI(t)
+	sessao := tokenDe(t, a, a.userID)
+	sp := "America/Sao_Paulo"
+	casos := []struct {
+		nome, expr, fuso, campo string
+	}{
+		{"sem expressão", "", sp, "expr"},
+		{"sem fuso", "0 3 * * *", "", "timezone"},
+		{"seis campos", "0 0 3 * * *", sp, "expr"},
+		{"lixo", "isso não é cron", sp, "expr"},
+		{"passo zero", "*/0 * * * *", sp, "expr"},
+		{"nunca dispara", "0 0 30 2 *", sp, "expr"},
+		{"fuso dentro da expressão", "CRON_TZ=UTC 0 3 * * *", sp, "expr"},
+		{"expressão longa", strings.Repeat("1", 101), sp, "expr"},
+		{"NUL", "0 3 * * *\x00", sp, "expr"},
+		{"fuso inexistente", "0 3 * * *", "Marte/Olympus", "timezone"},
+		{"fuso da máquina", "0 3 * * *", "Local", "timezone"},
+		{"fuso com caminho", "0 3 * * *", "../../etc/passwd", "timezone"},
+	}
+	for _, c := range casos {
+		t.Run(c.nome, func(t *testing.T) {
+			esperarVagaNoLimite(a)
+			status, corpo := previaDoCron(t, a, sessao, url.Values{"expr": {c.expr}, "timezone": {c.fuso}})
+			if status != http.StatusBadRequest || !strings.Contains(corpo, `"field":"`+c.campo+`"`) {
+				t.Errorf("%d %s, queria 400 em %s", status, corpo, c.campo)
+			}
+		})
+	}
+}
+
+// Parâmetro desconhecido ou repetido é 400 no campo fixo, sem ecoar a chave.
+func TestCronPreviewQueryIsStrict(t *testing.T) {
+	a := newAPI(t)
+	sessao := tokenDe(t, a, a.userID)
+	valida := "expr=0+3+*+*+*&timezone=UTC"
+	for _, consulta := range []string{valida + "&CANARIO=1", valida + "&expr=1+*+*+*+*", "expr=%zz&timezone=UTC", "expr=a;timezone=UTC"} {
+		esperarVagaNoLimite(a)
+		status, corpo := lerCru(t, a, http.MethodGet, "/api/v1/heartbeats/cron-preview?"+consulta, sessao, nil)
+		if status != http.StatusBadRequest || !strings.Contains(corpo, `"field":"query"`) || strings.Contains(corpo, "CANARIO") {
+			t.Errorf("%s: %d %s", consulta, status, corpo)
+		}
+	}
+}
+
+// A prévia não cria nada, nem conta no teto.
+func TestCronPreviewCreatesNothing(t *testing.T) {
+	a := newAPI(t)
+	sessao := tokenDe(t, a, a.userID)
+	if status, corpo := previaDoCron(t, a, sessao, url.Values{"expr": {"0 3 * * *"}, "timezone": {"UTC"}}); status != http.StatusOK {
+		t.Fatalf("%d %s", status, corpo)
+	}
+	_, corpo := lerCru(t, a, http.MethodGet, "/api/v1/heartbeats", sessao, nil)
+	if itens := decodificar(t, corpo)["items"].([]any); len(itens) != 0 {
+		t.Errorf("a prévia gravou: %s", corpo)
+	}
+}
+
+// O curinga {id} não engole a rota: sem o registro literal, seria 404.
+func TestCronPreviewWithoutSessionIs401(t *testing.T) {
+	a := newAPI(t)
+	status, corpo := lerCru(t, a, http.MethodGet, "/api/v1/heartbeats/cron-preview?expr=0+3+*+*+*&timezone=UTC", "", nil)
+	if status != http.StatusUnauthorized {
+		t.Errorf("%d %s", status, corpo)
 	}
 }
 

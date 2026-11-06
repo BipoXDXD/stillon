@@ -4,6 +4,8 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -211,6 +213,39 @@ func (h *HeartbeatHandlers) List(w http.ResponseWriter, r *http.Request) {
 		resp.NextCursor = items[len(items)-1].ID.String()
 	}
 	apierr.WriteJSON(w, http.StatusOK, resp)
+}
+
+type cronPreviewResponse struct {
+	NextRuns []time.Time `json:"next_runs"`
+}
+
+// parametrosDaPrevia são os únicos aceitos, uma vez cada: parâmetro desconhecido
+// ou repetido é 400, como no resumo (parametrosDoResumo).
+var parametrosDaPrevia = []string{"expr", "timezone"}
+
+// CronPreview é GET /heartbeats/cron-preview: quem julga a expressão é o
+// servidor (T11), e o formulário mostra o que ele calculou. Sem estado e sem
+// recurso: nada de dono a filtrar, mas a rota é autenticada como as outras.
+func (h *HeartbeatHandlers) CronPreview(w http.ResponseWriter, r *http.Request) {
+	if _, ok := usuario(w, r); !ok {
+		return
+	}
+	q, err := url.ParseQuery(r.URL.RawQuery)
+	if err != nil {
+		campoInvalido(w, r, campoDaConsulta, heartbeat.ReasonInvalid)
+		return
+	}
+	for chave, valores := range q {
+		if !slices.Contains(parametrosDaPrevia, chave) || len(valores) != 1 {
+			campoInvalido(w, r, campoDaConsulta, heartbeat.ReasonInvalid)
+			return
+		}
+	}
+	proximos, err := h.svc.CronPreview(q.Get("expr"), q.Get("timezone"))
+	if h.falhou(w, r, "calcular prévia do cron", err) {
+		return
+	}
+	apierr.WriteJSON(w, http.StatusOK, cronPreviewResponse{NextRuns: proximos})
 }
 
 func (h *HeartbeatHandlers) Get(w http.ResponseWriter, r *http.Request) {

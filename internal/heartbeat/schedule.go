@@ -95,6 +95,21 @@ func (s Schedule) Next(t time.Time) time.Time {
 	return s.cron.Next(t.In(s.location)).UTC()
 }
 
+// NextRuns são até n disparos depois de t. Menos que n só quando o próximo fica
+// além dos cinco anos que a biblioteca procura: Next devolve o instante zero, e
+// mostrá-lo seria inventar uma data.
+func (s Schedule) NextRuns(t time.Time, n int) []time.Time {
+	out := make([]time.Time, 0, n)
+	for len(out) < n {
+		t = s.Next(t)
+		if t.IsZero() {
+			break
+		}
+		out = append(out, t)
+	}
+	return out
+}
+
 // Equal diz se os dois agendamentos são o mesmo: reenviar o que já está gravado
 // não é mudança.
 func (s Schedule) Equal(o Schedule) bool {
