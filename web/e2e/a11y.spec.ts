@@ -395,6 +395,7 @@ for (const largura of [400, 1280]) {
       ['filtro de estado', page.getByRole('group', { name: 'Estado' }).getByRole('button', { name: /^Fora do ar/ })],
       ['filtro de tag', page.getByRole('group', { name: 'Tags' }).getByRole('button', { name: /^prod/ })],
       ['busca', page.getByRole('searchbox', { name: 'Buscar por nome ou tag' })],
+      ['ordenar por', page.getByRole('combobox', { name: 'Ordenar por' })],
       // No celular a coluna Situação some, e o incidente fica a um toque no detalhe do alvo.
       ...(largura === 1280 ? ([['Ver incidente', page.getByRole('link', { name: 'Ver incidente de Banco' })]] satisfies [string, Locator][]) : []),
       ...['Painel', 'Incidentes', 'Canais', 'Status', 'Conta'].map((aba): [string, Locator] => [
@@ -403,6 +404,13 @@ for (const largura of [400, 1280]) {
       ]),
     ])
     expect(await controlesEncobertos(page), `${largura} px: painel`).toEqual([])
+    await page.goto('/?estado=down&ordem=nome')
+    await esperarOConteudo(page, '/')
+    await expect(page.getByRole('combobox', { name: 'Ordenar por' })).toHaveValue('nome')
+    await expect(page.getByRole('group', { name: 'Estado' }).getByRole('button', { name: /^Fora do ar/ })).toHaveAttribute('aria-pressed', 'true')
+    await conferir([['ordenar por, com filtro', page.getByRole('combobox', { name: 'Ordenar por' })]])
+    expect(await page.evaluate(() => document.documentElement.scrollWidth), `${largura} px: rolagem lateral`).toBe(largura)
+    expect(await controlesEncobertos(page), `${largura} px: painel filtrado e ordenado`).toEqual([])
     await page.goto('/targets/a1')
     await expect(page.getByRole('heading', { name: 'API', level: 1 })).toBeVisible()
     await esperarOConteudo(page, '/targets/a1')

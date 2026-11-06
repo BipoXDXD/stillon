@@ -114,7 +114,8 @@ na VPS, siga a configuração de e-mail do [runbook de produção](docs/deploy/v
 ## Telas
 
 O painel abre dizendo, numa frase, se algo está quebrado. Alvos e tarefas dividem uma tabela densa,
-com os problemas primeiro e a cor, a forma e o texto do estado; tags, estado e busca filtram os dois.
+com os problemas primeiro e a cor, a forma e o texto do estado; tags, estado e busca filtram os dois,
+e a ordem pode mudar para nome, menor tempo no ar ou maior latência.
 Os mesmos tokens e fontes desenham a página pública.
 
 ![Painel com serviços e uma tarefa pedindo atenção, no tema claro](docs/design/painel-depois/painel-1280-claro.png)

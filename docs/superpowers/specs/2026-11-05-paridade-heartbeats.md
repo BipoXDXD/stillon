@@ -24,7 +24,7 @@ decisão registrada). A ordem dos "fazer" é a do mais útil ao menos útil, com
 | Indicador de execução em andamento | parcial: `last_start_at` só no detalhe | **fazer, PR 2.** Mesmo recurso, com o início consumido também na falha |
 | Tags em heartbeats | falta: com filtro de tag, o heartbeat some (T4) | **fazer, PR 3.** Fecha a principal diferença entre as duas metades da tabela |
 | Prévia dos próximos disparos do cron | falta | **fazer, PR 4.** Cron e fuso errados são o erro mais caro de cadastro, e só aparecem no primeiro alarme falso |
-| Ordenação da tabela | falta: gravidade e nome, fixos | **fazer, depois do corte.** Útil, mas a ordem por gravidade já responde à pergunta do painel; fica para a próxima rodada |
+| Ordenação da tabela | tem, depois do corte: gravidade, nome, menor tempo no ar e maior latência | **feito.** Ver "Ordenação" abaixo |
 | Corpo do ping guardado com limite | diferente (D14) | **decisão do dono**, abaixo |
 | GET e HEAD no ping | diferente (D6) | **decisão do dono**, abaixo |
 | Badge de estado | falta | **não fazer.** Superfície pública nova com segredo próprio, e a página de status já publica o estado dos alvos. Ver abaixo |
@@ -76,8 +76,6 @@ Nenhum deles segurou os PRs; cada um segue a recomendação até o dono dizer o 
 - **Selo "dentro da tolerância".** Hoje a tarefa fica "Em dia" até vencer a tolerância. Um selo
   intermediário anteciparia o problema, mas põe um sexto estado na escala de gravidade. Recomendação:
   não ter, porque a escala única é o que faz o problema saltar aos olhos.
-- **Ordenação.** Quando entrar, clique no cabeçalho ou seletor acima da tabela? Recomendação:
-  seletor, com a ordem na URL, porque a tabela esconde colunas por largura.
 
 ## Código de saída (PR 1)
 
@@ -146,6 +144,22 @@ cliente é o risco que o D17 evitou, e a prévia não trava o envio. O formulár
 | **I** Chave da consulta ecoada | campo fixo `query` | `TestCronPreviewQueryIsStrict` |
 | **I** Fuso como caminho de arquivo | `time.LoadLocation` recusa `..`; caso de teste com caminho | `TestCronPreviewRefusesWhatTheFormWouldRefuse` |
 | **D** Muitas consultas | limite por usuário da cadeia `protegida`, o mesmo das outras rotas, e 400 ms de espera no painel | `espera a digitação parar: não é uma consulta por tecla` |
+
+## Ordenação
+
+Um seletor na barra de filtros, com a ordem em `?ordem=`. A gravidade segue como padrão e não vai à
+URL, e valor desconhecido abre nela. Ordem não é filtro: não esconde linha, não conta para "Limpar
+filtros" e sobrevive a ele. A manchete não muda com a ordem, e a linha de problema mantém o acento em
+qualquer posição. O empate fica com o mais grave.
+
+Nas ordens por medida, a falta dela não diz a mesma coisa para todos: a API devolve latência nula
+quando o último check foi `down`, e a tarefa não tem uptime.
+
+| Faixa | Quem | Ordem dentro da faixa |
+|---|---|---|
+| 1 | Sem a medida, com problema (fora do ar, degradado, atrasada, falhando) | gravidade e nome |
+| 2 | Com a medida | maior latência, ou menor tempo no ar |
+| 3 | Sem a medida, sem problema | gravidade e nome |
 
 ## Migrations
 

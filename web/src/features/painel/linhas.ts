@@ -125,6 +125,19 @@ export function medidaDaLinha(linha: LinhaDeMonitor): string {
   }
 }
 
+// A latência como número, para ordenar: null é quem não tem a medida.
+export function latenciaDaLinha(linha: LinhaDeMonitor): number | null {
+  const { tipo } = linha
+  switch (tipo) {
+    case 'http':
+      return linha.latenciaMs
+    case 'heartbeat':
+      return null
+    default:
+      return tipoSemCaso(tipo)
+  }
+}
+
 export function tipoSemCaso(tipo: never): never {
   throw new Error(`Tipo de monitor sem caso: ${String(tipo)}`)
 }

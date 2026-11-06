@@ -54,6 +54,52 @@ describe('heartbeats na tabela de monitores', () => {
     expect(screen.queryByRole('link', { name: 'API' })).not.toBeInTheDocument()
   })
 
+  // Só a posição muda: Banco, fora do ar, continua na tabela e na manchete.
+  it('ordenar por nome muda a tabela, vai à URL e não mexe na manchete', async () => {
+    const r = await painelCom({
+      alvos: [
+        { id: 'a', name: 'API' },
+        { id: 'b', name: 'Banco', state: 'down' },
+      ],
+      heartbeats: [{ id: 'h1', name: 'Atualização', tags: [] }],
+    })
+    await screen.findByRole('heading', { level: 2, name: 'Um serviço pede atenção.' })
+    expect(await nomesNaTabela()).toEqual(['Banco', 'API', 'Atualização'])
+
+    await r.usuario.selectOptions(screen.getByLabelText('Ordenar por'), 'Nome')
+
+    await waitFor(() => expect(screen.getByLabelText('Ordenar por')).toHaveValue('nome'))
+    expect(await nomesNaTabela()).toEqual(['API', 'Atualização', 'Banco'])
+    expect(r.router.state.location.search).toBe('?ordem=nome')
+    expect(screen.getByRole('heading', { level: 2, name: 'Um serviço pede atenção.' })).toBeInTheDocument()
+  })
+
+  it('a ordem da URL vale ao abrir, e sobrevive a filtrar e a limpar', async () => {
+    const r = await renderizarPainel('/?ordem=nome')
+    r.falsa.estado.resumo = [
+      itemDoResumo({ id: 'b', name: 'Banco', state: 'down', tags: ['prod'] }),
+      itemDoResumo({ id: 'a', name: 'API', tags: ['prod'] }),
+    ]
+    await r.cliente.refetchQueries()
+    await waitFor(async () => expect(await nomesNaTabela()).toEqual(['API', 'Banco']))
+    expect(screen.getByLabelText('Ordenar por')).toHaveValue('nome')
+
+    const barra = await screen.findByRole('region', { name: 'Filtros' })
+    await r.usuario.click(within(barra).getByRole('button', { name: /prod/ }))
+    await waitFor(() => expect(r.router.state.location.search).toBe('?tag=prod&ordem=nome'))
+    await r.usuario.click(await within(barra).findByRole('button', { name: 'Limpar filtros' }))
+    await waitFor(() => expect(r.router.state.location.search).toBe('?ordem=nome'))
+  })
+
+  it('escolher a ordem não mostra "Limpar filtros": ordem não é filtro', async () => {
+    const r = await painelCom({ alvos: [{ id: 'a', name: 'API' }] })
+    await r.usuario.selectOptions(await screen.findByLabelText('Ordenar por'), 'Nome')
+    await waitFor(() => expect(screen.getByLabelText('Ordenar por')).toHaveValue('nome'))
+    expect(r.router.state.location.search).toBe('?ordem=nome')
+    const barra = screen.getByRole('region', { name: 'Filtros' })
+    expect(within(barra).queryByRole('button', { name: 'Limpar filtros' })).not.toBeInTheDocument()
+  })
+
   it('filtro de tag tira o heartbeat sem a tag da tabela, e a manchete fica', async () => {
     const r = await renderizarPainel('/?tag=prod')
     r.falsa.estado.resumo = [itemDoResumo({ id: 'a', name: 'API', tags: ['prod'] })]

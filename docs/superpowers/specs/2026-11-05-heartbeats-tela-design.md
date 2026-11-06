@@ -37,7 +37,7 @@ A manchete fala do conjunto inteiro: alvos e heartbeats. Um filtro não muda iss
 | Só heartbeat com problema | "Uma tarefa pede atenção." / "Duas tarefas pedem atenção." |
 | Alvo e heartbeat com problema | "Um serviço e uma tarefa pedem atenção." |
 | Só alvo com problema | a de hoje: "Um serviço pede atenção." |
-| Sem problema, heartbeat aguardando o primeiro sinal | "Uma tarefa ainda sem sinal." (junto de alvo: "Um serviço ainda sem dados e uma tarefa sem sinal.") |
+| Sem problema, heartbeat que nunca terminou uma execução | "Uma tarefa ainda sem execução concluída." (junto de alvo: "Um serviço ainda sem dados e uma tarefa sem execução concluída."). "Sem sinal" foi trocado porque a tarefa pode já ter mandado `/start` |
 | Consulta de heartbeats falhou, sem problema conhecido | **"Não foi possível conferir as tarefas."** Nunca "Tudo no ar." |
 | Tudo pausado | "Todos os monitores estão pausados." |
 | Tudo bem | "Tudo no ar." |

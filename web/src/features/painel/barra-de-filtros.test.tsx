@@ -12,10 +12,12 @@ function barra(busca: string, aoMudar = vi.fn<(f: Filtros) => void>()) {
       heartbeats={[]}
       contagem={contarDoConjunto([], [])}
       filtros={{ ...SEM_FILTROS, busca }}
+      ordem="gravidade"
       resultado={null}
       semResultado={false}
       busca={createRef()}
       aoMudar={aoMudar}
+      aoOrdenar={vi.fn<() => void>()}
     />
   )
 }

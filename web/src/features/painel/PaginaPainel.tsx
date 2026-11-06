@@ -24,9 +24,9 @@ import {
   temFiltroDeApi,
   type Filtros,
 } from './filtros'
-import { ordenarPorGravidade } from './grupos'
 import { linhaDoAlvo, linhaDoHeartbeat } from './linhas'
 import { detalheDaManchete, fraseDoUltimoResolvido, manchete, metaDoPainel, textoDaManchete, type Tarefas } from './manchete'
+import { comOrdem, lerOrdem, ordenarLinhas, type Ordem } from './ordem'
 import { TabelaDeMonitores } from './TabelaDeMonitores'
 import { anunciaveis, mapaDeEstados, transicoes } from './transicoes'
 
@@ -114,9 +114,14 @@ function MonitoresFiltrados({ itens, tarefas, atualizadoEm }: PropsDosMonitores)
   const [parametros, setParametros] = useSearchParams()
   const busca = useRef<HTMLInputElement>(null)
   const filtros = lerFiltros(parametros)
+  const ordem = lerOrdem(parametros)
   const filtraNaApi = temFiltroDeApi(filtros)
   const filtrada = useResumoFiltrado(filtros, filtraNaApi, { items: itens })
-  const aoMudar = (f: Filtros) => setParametros(escreverFiltros(f), { replace: true })
+  // A ordem acompanha os dois: mudar um filtro, ou limpar todos, não a desfaz.
+  const aoMudar = (f: Filtros) => setParametros(comOrdem(escreverFiltros(f), ordem), { replace: true })
+  // flushSync: o seletor é controlado pela URL, e numa transição ele voltaria ao
+  // valor antigo até ela terminar.
+  const aoOrdenar = (o: Ordem) => setParametros(comOrdem(escreverFiltros(filtros), o), { replace: true, flushSync: true })
 
   const esperando = filtraNaApi && filtrada.isPlaceholderData
   const base = filtraNaApi ? filtrada.data?.items : itens
@@ -135,6 +140,7 @@ function MonitoresFiltrados({ itens, tarefas, atualizadoEm }: PropsDosMonitores)
       itens={lista}
       heartbeats={tarefasVisiveis}
       filtros={filtros}
+      ordem={ordem}
       atualizadoEm={agora}
       reserva={busca}
       aoMudar={aoMudar}
@@ -147,10 +153,12 @@ function MonitoresFiltrados({ itens, tarefas, atualizadoEm }: PropsDosMonitores)
         heartbeats={tarefas.itens}
         contagem={contarDoConjunto(itens, tarefas.itens)}
         filtros={filtros}
+        ordem={ordem}
         resultado={resultado}
         semResultado={!esperando && visiveis?.length === 0 && tarefasVisiveis.length === 0}
         busca={busca}
         aoMudar={aoMudar}
+        aoOrdenar={aoOrdenar}
       />
       <div aria-busy={esperando}>
         {filtraNaApi ? <EstadoDaConsulta consulta={filtrada}>{() => tabela(visiveis ?? [])}</EstadoDaConsulta> : tabela(visiveis ?? [])}
@@ -163,6 +171,7 @@ function ResultadoDosFiltros({
   itens,
   heartbeats,
   filtros,
+  ordem,
   atualizadoEm,
   reserva,
   aoMudar,
@@ -170,6 +179,7 @@ function ResultadoDosFiltros({
   itens: ItemDoResumo[]
   heartbeats: readonly Heartbeat[]
   filtros: Filtros
+  ordem: Ordem
   atualizadoEm: Date
   reserva: RefObject<HTMLElement | null>
   aoMudar: (f: Filtros) => void
@@ -188,10 +198,13 @@ function ResultadoDosFiltros({
     )
   }
   const porId = new Map((abertos.data?.itens ?? []).map((i) => [i.id, i]))
-  const linhas = ordenarPorGravidade([
-    ...itens.map((it) => linhaDoAlvo(it, it.open_incident_id ? porId.get(it.open_incident_id) : undefined, atualizadoEm)),
-    ...heartbeats.map((hb) => linhaDoHeartbeat(hb, atualizadoEm)),
-  ])
+  const linhas = ordenarLinhas(
+    [
+      ...itens.map((it) => linhaDoAlvo(it, it.open_incident_id ? porId.get(it.open_incident_id) : undefined, atualizadoEm)),
+      ...heartbeats.map((hb) => linhaDoHeartbeat(hb, atualizadoEm)),
+    ],
+    ordem,
+  )
   return <TabelaDeMonitores linhas={linhas} agora={atualizadoEm} />
 }
 
