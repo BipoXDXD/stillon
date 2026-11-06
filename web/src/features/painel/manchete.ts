@@ -1,4 +1,4 @@
-import { estadoDoHeartbeat } from '@/features/heartbeats/estado'
+import { estadoDoHeartbeat, pedeAtencao } from '@/features/heartbeats/estado'
 import type { EstadoDoHeartbeat, Heartbeat, Incidente, ItemDoResumo } from '@/lib/api/schemas'
 import { contarPorEstado, estadoExibido, type EstadoExibido } from '@/lib/estado'
 import { dataHora, horaMinuto, plural } from '@/lib/format'
@@ -22,12 +22,13 @@ export type Tarefas = { itens: readonly Heartbeat[]; confirmadas: boolean }
 // A manchete fala do conjunto inteiro, alvos e tarefas (spec da tela, A
 // manchete). "Tudo no ar." só quando todo ativo está bem e a resposta das
 // tarefas chegou: um ativo ainda sem dados não está "no ar", e os pausados
-// não contam.
+// não contam, salvo a tarefa pausada com incidente aberto (D13), que pede
+// atenção como em /incidents.
 export function manchete(itens: readonly ItemDoResumo[], tarefas: Tarefas): Manchete {
   const alvos = itens.map((it) => estadoExibido(it.state, it.enabled))
   const dasTarefas = tarefas.itens.map((hb) => estadoDoHeartbeat(hb.state))
   const quantos = alvos.filter(ehProblema).length
-  const tarefasComProblema = dasTarefas.filter(ehProblema).length
+  const tarefasComProblema = tarefas.itens.filter(pedeAtencao).length
   if (quantos + tarefasComProblema > 0) return { tipo: 'problemas', quantos, tarefas: tarefasComProblema }
   if (!tarefas.confirmadas) return { tipo: 'tarefas-sem-confirmacao' }
   const todos = [...alvos, ...dasTarefas]
