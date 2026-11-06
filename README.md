@@ -309,17 +309,15 @@ sistema e no painel da Hostinger, atualizações de segurança automáticas.
 - **Imagem:** ~7,6 MB comprimida. A de produção sai do mesmo código e das mesmas bases fixadas
   por digest que o E2E testou, mas é construída de novo no `publish` (amd64 e arm64) e
   **reescaneada** pelo Trivy antes de ganhar as tags `:<sha do commit>` e `:latest`.
-- **Deploy:** sempre manual (Actions → deploy → Run workflow), só da `main` e só de um commit
-  que está nela, com o **SHA do commit** como entrada. O job resolve a tag `:<sha>` (que só existe
-  depois do reescaneamento) no digest, baixa a imagem linux/amd64 por esse digest e a entrega por
-  SSH a um usuário `deploy` cuja chave só roda
-  [`stillon-entrada`](deploy/vps/stillon-entrada): ele confere o ID da imagem, troca a versão,
-  espera o healthcheck e **volta sozinho à anterior** se a nova não ficar saudável; se a conexão
-  cair no meio, o deploy (ou o rollback) termina na própria VPS, que guarda o log de cada deploy e
-  backup em `/opt/stillon/entrada.log`. A chave do
-  servidor é fixada num secret (nada de `StrictHostKeyChecking=no`). Não há environment com
-  revisor (decisão pendente do dono): a `main` exige PR e 9 checks, e o deploy é disparado por
-  quem tem acesso de escrita ao repositório (hoje, só o dono).
+- **Deploy:** todo merge na `main` publica sozinho. Quando o `ci` de um push na `main` termina com
+  sucesso, o workflow `Coolify release` confere o SHA exato e os gates, envia as imagens por SSH a
+  uma entrada restrita na VPS e atualiza a imagem do recurso no Coolify
+  ([detalhes](deploy/coolify/release/README.md)). O release só troca imagens: a configuração dos
+  contêineres fica no commit de infraestrutura fixado no Coolify. Commit com `[skip ci]` não publica.
+  O environment `production` aceita só a `main` e não tem revisor (decisão pendente do dono): a `main`
+  exige PR e checks, e publicar depende de quem tem acesso de escrita ao repositório (hoje, só o dono).
+  O `deploy.yml` manual, por SHA e pela [`stillon-entrada`](deploy/vps/stillon-entrada), é o caminho
+  anterior e ainda está no repositório.
 - **Backup:** dump lógico diário, feito na VPS e restaurado num banco descartável e conferido
   (dono das tabelas, RLS com `FORCE`, contagens, partições) antes de sair **já cifrado** com
   `age` (a chave privada fica só com o dono) para um artifact de 30 dias. Uma checagem que falha

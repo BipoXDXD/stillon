@@ -1,5 +1,12 @@
 # StillOn numa VPS da Hostinger: do zero ao ar, e a operação
 
+> **Aviso: este runbook descreve a produção anterior.** Hoje o StillOn roda no Coolify, e todo merge
+> na `main` publica sozinho. Caminhos como `/opt/stillon` e `/srv/edge`, o `vc` e o deploy manual são
+> da instalação antiga. Não rode estes comandos na produção atual, em especial os que recriam ou
+> apagam banco e volume. Para a produção de hoje, veja
+> [`deploy/coolify/README.md`](../../deploy/coolify/README.md) e
+> [`deploy/coolify/release/README.md`](../../deploy/coolify/release/README.md).
+
 Runbook **manual**, escrito para quem **nunca usou VPS nem SSH**. Nada aqui roda sozinho: cada
 passo é feito por você, na ordem, e só se passa ao seguinte depois da verificação do passo
 ("**Confira**"). Se uma verificação não der o que o texto diz, pare ali: seguir com um passo
@@ -4081,7 +4088,7 @@ senha nova duas vezes, sem eco; encerra todas as sessões).
 | Ensaio de restauração | Automático em cada `backup`; à mão a cada trimestre (passo 7.2) | Diário e trimestral |
 | Cópia local | Baixe um artifact por mês para o seu computador (ou um disco externo): os do GitHub somem em 30 dias | Mensal |
 | Disco | O `backup` avisa acima de 70% e **falha** acima de 85% (o dump do dia ainda é guardado; o job fica vermelho no fim). O disco é o da VPS: `df -h /var/lib/docker` na VPS. Para liberar: logs e imagens velhas (`sudo docker image prune` só depois de conferir `sudo docker image ls`; o script já guarda só 3 versões do app); se for o banco crescendo, o plano maior da Hostinger | Quando avisar |
-| Upgrade menor (18.x) | PR do Dependabot em `deploy/vps/db/Dockerfile`. O mesmo digest está em mais lugares, que sobem juntos no mesmo PR (`deploy/vps/db/Dockerfile`, `compose.yaml`, `.github/workflows/ci.yml`, `internal/storage/testdb` e `deploy/vps/compose.prod.yaml`; o Dependabot já muda o do compose de produção junto). Depois do merge, recopie o `compose.prod.yaml` (seção acima) e `vc up -d db` (10–30 s fora). O backup passa a usar a imagem nova sozinho | Quando o Dependabot abrir |
+| Upgrade menor (18.x) | PR do Dependabot em `deploy/vps/db/Dockerfile`. O mesmo digest está em mais lugares, que sobem juntos no mesmo PR (`deploy/vps/db/Dockerfile`, `compose.yaml`, `.github/workflows/ci.yml`, `internal/storage/testdb` e `deploy/vps/compose.prod.yaml`; o Dependabot já muda o do compose de produção junto). **Na produção atual, não recrie o `db` depois do merge:** o compose usa `pull_policy: never` e a imagem em uso está sem nome, então a recriação falha. Siga [`deploy/coolify/README.md`](../../deploy/coolify/README.md#imagem-do-banco-não-fazer-redeploy-do-db-antes-de-restaurá-la). Na instalação anterior, o passo era recopiar o `compose.prod.yaml` (seção acima) e rodar `vc up -d db` (10–30 s fora) | Quando o Dependabot abrir |
 | Upgrade maior (18 → 19) | **Não** vem por PR: o `dependabot.yml` ignora versão maior de `postgres`. Dump e restauração num volume novo (abaixo) | ~1 vez por ano |
 
 #### Upgrade maior do Postgres

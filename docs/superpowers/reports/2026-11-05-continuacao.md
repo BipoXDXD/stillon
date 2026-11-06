@@ -115,9 +115,9 @@ Cada item diz o que decidir. Nenhum foi decidido.
 
 Conferido na API da Hostinger pela sessão coordenadora; não há decisão do dono aqui.
 
-- **Produção:** `srv2070196` (Coolify), IP 2.24.193.23, `running`, paga até **2027-10-17**, sem
+- **Produção:** a VPS atual (Coolify), `running`, paga até **2027-10-17**, sem
   renovação automática.
-- **Antiga:** `srv2008471`, IP 179.197.70.102, cancelada de propósito, venceu em 2026-10-25 e está
+- **Antiga:** a VPS anterior, cancelada de propósito, venceu em 2026-10-25 e está
   `suspended`. Nunca houve plano de renová-la.
 - **Acesso:** `ssh stillon` entra como `root` na VPS de produção, com a mesma chave do `Host c2vps`
   deste Mac. O usuário e a chave `stillon-admin` do runbook eram da VPS antiga.
