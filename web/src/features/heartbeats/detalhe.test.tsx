@@ -35,6 +35,28 @@ describe('tempoDeExecucao', () => {
   })
 })
 
+describe('descrição no detalhe', () => {
+  // Sabotagem: tirar o whitespace-pre-wrap → as linhas viram uma só na tela.
+  it('mostra o texto com as quebras de linha', async () => {
+    await detalheCom({ description: 'Roda no NAS.\nSe falhar, ver o log.' })
+    const p = screen.getByText(/Roda no NAS/)
+    expect(p.textContent).toBe('Roda no NAS.\nSe falhar, ver o log.')
+    expect(p).toHaveClass('whitespace-pre-wrap')
+  })
+
+  // HTML no texto é texto: quem escreveu é o dono, mas nada ali vira marcação.
+  it('marcação na descrição aparece como texto', async () => {
+    await detalheCom({ description: '<img src=x onerror=alert(1)>' })
+    expect(screen.getByText('<img src=x onerror=alert(1)>')).toBeInTheDocument()
+    expect(document.querySelector('img[src="x"]')).toBeNull()
+  })
+
+  it('sem descrição, não sobra parágrafo vazio', async () => {
+    await detalheCom()
+    expect(document.querySelector('p.whitespace-pre-wrap')).toBeNull()
+  })
+})
+
 describe('tempo de execução no detalhe', () => {
   // Zero é medida: um `||` no lugar do `=== null` diria "Não medida".
   it('mostra a última duração, inclusive a de zero ms', async () => {

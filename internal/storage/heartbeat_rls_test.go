@@ -518,6 +518,28 @@ func TestHeartbeatTagCheckRefusesWhatTheCodeWouldNot(t *testing.T) {
 	}
 }
 
+// O teto da validação vale também por fora dela, em caracteres, e não em bytes.
+func TestHeartbeatDescriptionCheckRefusesWhatTheCodeWouldNot(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+	dono := novoUsuario(t, pool)
+	periodo := int32(3600)
+	inserir := func(nome, descricao string) error {
+		return storage.InUserTx(ctx, pool, dono, func(q *db.Queries) error {
+			return q.InsertHeartbeat(ctx, db.InsertHeartbeatParams{
+				ID: novoID(), UserID: dono, Name: nome, PingTokenHash: hashDe(nome), PeriodSec: &periodo,
+				GraceSec: 300, Enabled: true, CreatedAt: agora, DeadlineAt: agora.Add(time.Hour), Description: descricao,
+			})
+		})
+	}
+	if err := inserir("no teto", strings.Repeat("é", 1000)); err != nil {
+		t.Errorf("no teto: %v", err)
+	}
+	if err := inserir("acima", strings.Repeat("é", 1001)); codigoPG(err) != "23514" {
+		t.Errorf("acima do teto: %v; queria 23514", err)
+	}
+}
+
 func TestDeletingAHeartbeatTakesItsTags(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()

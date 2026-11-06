@@ -113,6 +113,33 @@ describe('tags no formulário', () => {
   })
 })
 
+describe('descrição no formulário', () => {
+  it('o limite é em caracteres, como no servidor: 1000 emojis cabem', () => {
+    expect(erros(valores({ description: '🙂'.repeat(1000) }))).toEqual({})
+    expect(erros(valores({ description: '🙂'.repeat(1001) }))).toEqual({ description: 'No máximo 1000 caracteres.' })
+  })
+
+  it('sem descrição, o POST não leva o campo', () => {
+    expect(paraCriacao(esquemaDoHeartbeat.parse(valores({ description: '  ' })))).not.toHaveProperty('description')
+  })
+
+  it('com descrição, leva o texto limpo e com as quebras de linha', () => {
+    expect(paraCriacao(esquemaDoHeartbeat.parse(valores({ description: ' linha 1\nlinha 2\n' }))).description).toBe('linha 1\nlinha 2')
+  })
+
+  it('valoresDe preenche o campo, e sem mudança nada vai no PATCH', () => {
+    const original = valoresDe(hb({ description: 'roda no nas' }))
+    expect(original.description).toBe('roda no nas')
+    expect(paraAlteracao(original, { ...original })).toEqual({})
+  })
+
+  // Sabotagem: tratar vazio como "sem mudança" → não dá para apagar a descrição.
+  it('limpar o campo manda o texto vazio', () => {
+    const original = valoresDe(hb({ description: 'roda no nas' }))
+    expect(paraAlteracao(original, { ...original, description: '' })).toEqual({ description: '' })
+  })
+})
+
 describe('valoresDe', () => {
   it('período: a maior unidade exata', () => {
     expect(valoresDe(hb({ schedule: { kind: 'period', period_sec: 5400 }, grace_sec: 3600 }))).toMatchObject({

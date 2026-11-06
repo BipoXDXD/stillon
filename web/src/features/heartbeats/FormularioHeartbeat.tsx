@@ -3,7 +3,7 @@ import { useState } from 'react'
 import { useForm, useWatch, type UseFormRegisterReturn } from 'react-hook-form'
 import { Botao } from '@/components/ui/botao'
 import { estiloDeCartao } from '@/components/ui/cartao'
-import { Campo, Entrada, ErroDoFormulario, Opcao, Selecao } from '@/components/ui/campo'
+import { AreaDeTexto, Campo, Entrada, ErroDoFormulario, Opcao, Selecao } from '@/components/ui/campo'
 import { ApiError } from '@/lib/api/http'
 import { mensagemDe, mensagemDoCampo } from '@/lib/api/mensagens'
 import { cn } from '@/lib/utils'
@@ -60,6 +60,13 @@ export function FormularioHeartbeat({
       </Campo>
       <Campo rotulo="Tags" erro={e.tagsTexto?.message} ajuda="Separadas por vírgula, até 8. Ex.: prod, backup.">
         {(a) => <Entrada {...a} {...f.register('tagsTexto')} />}
+      </Campo>
+      <Campo
+        rotulo="Descrição"
+        erro={e.description?.message}
+        ajuda="Opcional, até 1000 caracteres. O que a tarefa faz, onde roda e o que fazer quando falhar. Aparece só no detalhe, nunca nos avisos."
+      >
+        {(a) => <AreaDeTexto {...a} {...f.register('description')} />}
       </Campo>
       <fieldset>
         <legend className="mb-2 text-sm font-semibold">Agendamento</legend>

@@ -144,6 +144,7 @@ function DetalheDoHeartbeat({ id }: { id: string }) {
                 </Botao>
               </div>
             </div>
+            {hb.description !== '' && <p className="max-w-prose break-words whitespace-pre-wrap">{hb.description}</p>}
           </div>
           <ErroDoFormulario>{erro}</ErroDoFormulario>
           <Sinais hb={hb} agora={new Date(consulta.dataUpdatedAt)} />
