@@ -49,7 +49,7 @@ type heartbeatRequest struct {
 }
 
 type heartbeatPatchRequest struct {
-	Name        *string            `json:"name"`
+	Name        optional[string]   `json:"name"`
 	Description optional[string]   `json:"description"`
 	Tags        optional[[]string] `json:"tags"`
 	Schedule    *scheduleDTO       `json:"schedule"`
@@ -272,7 +272,7 @@ func (h *HeartbeatHandlers) Update(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	p := heartbeat.Patch{SetTags: req.Tags.Set, Tags: req.Tags.Value, Name: req.Name, Enabled: req.Enabled}
+	p := heartbeat.Patch{SetTags: req.Tags.Set, Tags: req.Tags.Value, Name: req.Name.ponteiro(), Enabled: req.Enabled}
 	// Como nas tags, null limpa: Value fica vazio.
 	if req.Description.Set {
 		p.Description = &req.Description.Value

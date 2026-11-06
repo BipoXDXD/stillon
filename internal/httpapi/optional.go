@@ -24,3 +24,13 @@ func (o *optional[T]) UnmarshalJSON(b []byte) error {
 	}
 	return json.Unmarshal(b, &o.Value)
 }
+
+// ponteiro é nil só com o campo ausente. Com null aponta para o zero de T, e
+// a validação do domínio recusa: é assim que o null de um campo obrigatório
+// vira o mesmo 400 do valor vazio, em vez de sumir como "ausente".
+func (o optional[T]) ponteiro() *T {
+	if !o.Set {
+		return nil
+	}
+	return &o.Value
+}
