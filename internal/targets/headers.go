@@ -2,6 +2,7 @@ package targets
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"slices"
@@ -42,9 +43,20 @@ func OpenHeaders(box *crypto.Box, targetID uuid.UUID, sealed []byte) (map[string
 	}
 	var h map[string]string
 	if err := json.Unmarshal(plain.Reveal(), &h); err != nil {
-		return nil, fmt.Errorf("ler headers do alvo: %w", err)
+		return nil, fmt.Errorf("ler headers do alvo: %w", semConteudoDecifrado(err))
 	}
 	return h, nil
+}
+
+// semConteudoDecifrado tira do erro o nome do header: desde o Go 1.27,
+// UnmarshalTypeError.Field traz a chave do mapa, e quem chama OpenHeaders
+// registra o erro no log.
+func semConteudoDecifrado(err error) error {
+	var tipoErrado *json.UnmarshalTypeError
+	if errors.As(err, &tipoErrado) {
+		tipoErrado.Field = ""
+	}
+	return err
 }
 
 func headersAAD(id uuid.UUID) []byte { return crypto.AAD("targets", "headers_enc", id) }
