@@ -89,7 +89,7 @@ export type ErroForcado = {
 // internal/targets/tags.go.
 const MAX_TAGS = 8
 const MAX_LETRAS_DA_TAG = 24
-const TAG_VALIDA = /^[\p{L}\p{N}_-]+$/u
+const TAG_VALIDA = /^[\p{L}\p{Nd}_-]+$/u
 const ESTADOS_DO_FILTRO = ['up', 'degraded', 'down', 'unknown', 'paused']
 
 // Os DTOs de entrada do servidor (decodeJSON recusa o que não estiver aqui).
@@ -279,6 +279,9 @@ export function criarApiFalsa() {
     return { recusados, tags: lidas.flatMap((l) => l.tag ?? []) }
   }
 
+  // O null do nome vira o valor vazio, e a validação do domínio o recusa.
+  const nomeNulo = (corpo: Json) => corpo.name === null
+
   // A família do access token da requisição.
   const familiaDe = (request: Request) =>
     st.acessos.get(request.headers.get('Authorization')?.replace(/^Bearer /, '') ?? '')
@@ -461,6 +464,7 @@ export function criarApiFalsa() {
     rota('patch', '/targets/:id', estrita(CAMPOS_DO_ALVO, ({ params, corpo }) => {
       const a = st.alvos.find((x) => x.id === params.id)
       if (!a) return erro(404, 'not_found')
+      if (nomeNulo(corpo)) return erro(400, 'validation_failed', [{ field: 'name', reason: 'required' }])
       const { headers, ...resto } = corpo
       // B1 do Plano 10: trocar a origem da URL (esquema, host ou porta) sem
       // mandar headers apaga os headers; só o caminho, não.
@@ -538,6 +542,7 @@ export function criarApiFalsa() {
       return h ? HttpResponse.json(h) : erro(404, 'not_found')
     }),
     rota('patch', '/heartbeats/:id', estrita(CAMPOS_DO_HEARTBEAT, ({ params, corpo }) => {
+      if (nomeNulo(corpo)) return erro(400, 'validation_failed', [{ field: 'name', reason: 'required' }])
       const h = st.heartbeats.find((x) => x.id === params.id)
       if (!h) return erro(404, 'not_found')
       const retomou = corpo.enabled === true && !h.enabled
@@ -599,7 +604,9 @@ export function criarApiFalsa() {
     rota('post', '/channels/:id/verify/resend', ({ params }) => {
       const c = st.canais.find((x) => x.id === params.id)
       if (!c) return erro(404, 'not_found')
-      if (c.kind !== 'email' || c.status !== 'pending') return erro(409, 'channel_not_pending')
+      // ResendVerification: só e-mail ainda não verificado. O expired é um deles:
+      // o token venceu, e reenviar é o conserto. O failing já foi verificado.
+      if (c.kind !== 'email' || c.status === 'verified' || c.status === 'failing') return erro(409, 'channel_not_pending')
       return new HttpResponse(null, { status: 204 })
     }),
     // ChannelHandlers.SetEnabled (spec do Plano 9 §3.3): o corpo é lido

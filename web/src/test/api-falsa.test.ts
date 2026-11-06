@@ -350,14 +350,15 @@ describe('erros que só o servidor sabe dar', () => {
     expect(falsa.estado.paginas.map((p) => p.slug)).toEqual(['primeira'])
   })
 
-  it('reenviar verificação de canal de e-mail pendente funciona', async () => {
+  it.each(['pending', 'expired'] as const)('reenviar verificação de e-mail %s funciona', async (status) => {
     const falsa = apiLogada()
-    falsa.estado.canais = [canal({ id: 'c1', kind: 'email', status: 'pending' })]
+    falsa.estado.canais = [canal({ id: 'c1', kind: 'email', status })]
     expect((await pedir('POST', '/channels/c1/verify/resend')).status).toBe(204)
   })
 
   it.each([
     ['e-mail já verificado', { kind: 'email', status: 'verified' }],
+    ['e-mail verificado que passou a falhar', { kind: 'email', status: 'failing' }],
     ['discord', { kind: 'discord', status: 'pending' }],
   ] as const)('reenviar verificação de %s é conflito', async (_nome, p) => {
     const falsa = apiLogada()
@@ -365,6 +366,22 @@ describe('erros que só o servidor sabe dar', () => {
     const resposta = await pedir('POST', '/channels/c1/verify/resend')
     expect(resposta.status).toBe(409)
     expect(await resposta.json()).toMatchObject({ error: { code: 'channel_not_pending' } })
+  })
+})
+
+describe('PATCH com name null (a validação do nome no servidor)', () => {
+  it.each([
+    ['alvo', '/targets/x1', 'alvos' as const, () => alvo({ id: 'x1', name: 'antes' })],
+    ['heartbeat', '/heartbeats/x1', 'heartbeats' as const, () => heartbeat({ id: 'x1', name: 'antes' })],
+  ])('%s responde 400 e não grava nada', async (_nome, caminho, colecao, criar) => {
+    const falsa = apiLogada()
+    falsa.estado[colecao] = [criar() as never]
+    const resposta = await pedir('PATCH', caminho, { name: null, enabled: false })
+    expect(resposta.status).toBe(400)
+    expect(await resposta.json()).toMatchObject({
+      error: { code: 'validation_failed', fields: [{ field: 'name', reason: 'required' }] },
+    })
+    expect(falsa.estado[colecao][0]).toMatchObject({ name: 'antes', enabled: true })
   })
 })
 
@@ -385,6 +402,7 @@ describe('filtro do resumo (ParseSummaryFilter do servidor)', () => {
 
   it.each([
     ['tag com separador', 'tag=a,b', 'tag', 'invalid'],
+    ['tag com número que não é dígito', 'tag=a%C2%B2', 'tag', 'invalid'],
     ['tag vazia', 'tag=', 'tag', 'invalid'],
     ['tag no limite + 1', `tag=${'a'.repeat(25)}`, 'tag', 'too_long'],
     ['tags demais', Array.from({ length: 9 }, (_, i) => `tag=t${i}`).join('&'), 'tag', 'out_of_range'],
@@ -396,6 +414,11 @@ describe('filtro do resumo (ParseSummaryFilter do servidor)', () => {
     const resposta = await pedir('GET', `/targets/summary?${consulta}`)
     expect(resposta.status).toBe(400)
     expect(await resposta.json()).toMatchObject({ error: { code: 'validation_failed', fields: [{ field, reason }] } })
+  })
+
+  it('tag com dígito de outra escrita passa', async () => {
+    apiComResumo()
+    expect((await pedir('GET', '/targets/summary?tag=a%D9%A3')).status).toBe(200)
   })
 
   it('tag no limite passa', async () => {
