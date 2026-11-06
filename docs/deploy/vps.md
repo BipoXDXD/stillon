@@ -4504,8 +4504,8 @@ Registro: o repositório ficou público em 2026-10-14, e o pacote do GHCR segue 
 > **privado** (item 4): por isso o `docker login` do 7.2 segue necessário.
 
 O repositório era **privado por decisão do dono**. A lista abaixo é o que se fazia no dia de
-abrir. O item 6 (`environment` com revisor) ainda não foi adotado: os workflows não usam
-`environment`.
+abrir. O item 6 (`environment` com revisor) ainda não foi adotado no `deploy.yml` nem no
+`backup.yml` deste runbook. O `coolify.yml` e o `revalidar-backup.yml` usam `environment`.
 
 1. Varredura do histórico inteiro: `gitleaks git . --redact -v` (o job `secrets` do CI já faz
    isso em todo PR). O falso positivo conhecido está no `.gitleaksignore`, com o motivo.

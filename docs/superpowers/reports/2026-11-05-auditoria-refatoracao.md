@@ -235,6 +235,38 @@ porque tiram duas provas em que o projeto confia.
 | F16 | Baixa | `README.md:391`†, `docs/deploy/vps.md:4485`†, `:163` e mais 6† | `IMAGE_TAG` não existe; "os workflows não usam `environment`", e `coolify.yml:91` usa; `~/Projetos/Go/StillOn` falha no Mac do dono | Corrigir no bloco do F4 | P | B | `checar-docs.sh` |
 | F17 | Baixa | `deploy/ci/diagnostico-fixture.py:358`† | `close()` itera `registry` sem trava com a thread viva; `RuntimeError` perde o `manifesto.json` | `list()` sob a trava | P | B | `close()` com thread presa |
 
+### Estado dos defeitos (2026-11-06)
+
+Base: `main` em `bd8d01e`, conferida com `gh pr list`, `git log` e leitura do código. **Mesclado** quer
+dizer na `main`. **Em PR** quer dizer aberto, sem merge: ainda não está publicado.
+
+| Id | Estado | PR | Conferência |
+|---|---|---|---|
+| F1 | Corrigido, falta a primeira prova agendada | #181 (`2be6b8e`) | `deploy/backup/revalidar_restauro.py` pagina e nomeia a lista vazia. `gh run list --workflow revalidar-backup.yml` ainda vazio |
+| F2 | Parcial | #180, #182, #184, #186, #191 | A cadeia tem teste (`deploy/ci/checar-borda-cloudflare.sh`) e o modelo de ameaça cita a terminação de TLS. A D10 segue com o dono |
+| F3 | Sem correção | | O README cita a dependência do commit de infraestrutura desde o #189 |
+| F4 | Parcial | #186, #189 | README e aviso no topo do `vps.md`. Mover o runbook depende da D7 |
+| F5 | Resolvido, mesclado | #186 (`136d573`) | O "upgrade menor" aponta para `deploy/coolify/README.md` |
+| F6 | Resolvido, mesclado | #185 (`bfdc00d`) | `ci.yml:217` roda `test_snapshot_banco_backup.py` |
+| F7 | Resolvido, mesclado | #185 | `web/e2e/fluxo.spec.ts:194` lê `context().cookies()` |
+| F8 | Resolvido, mesclado | #185, #188 (`a4d04af`) | `statusDe` na API falsa, com `ultimosSinais` |
+| F9 | Resolvido, mesclado | #185 | `GET /incidents` usa `paginar` |
+| F10 | Resolvido, mesclado | #185 | `estrita` nas rotas com corpo |
+| F11 | Em PR | #196 | Teste de contrato contra `internal/apierr/errors.go` |
+| F12 | Em PR | #194 | Só `name`, em alvos e heartbeats. Os demais campos estão na decisão D12 |
+| F13 | Em PR | #192 | `checar-workflows.sh` recusa filtro `paths` inexistente |
+| F14 | Em PR | #195 | `ps` no lugar de `/proc` |
+| F15 | Em PR | #195 | Mesmo PR do F14: mesma função e mesmo teste |
+| F16 | Resolvido com este registro | #189 | `IMAGE_TAG` saiu do README, e este PR corrige a frase sobre `environment` no `vps.md`. O caminho `~/Projetos` tem a nota "Caminho do clone" no topo do runbook |
+| F17 | Em PR | #193 | Cópia do registro sob a trava |
+
+Decisões: a D9 ficou na opção (a), e a D11 virou o aviso do `revalidar-backup.yml`, ambas no #181. A D10
+segue com o dono. Dos smells, o N46 andou no #179 (edição, tags e descrição na pilha real); `/ping/{token}/{n}`,
+cron e prévia seguem fora.
+
+Sem item nesta auditoria: #177 (domingo do cron), #178 (esta seção), #183 (WebKit) e #187 (texto do
+`CLAUDE.md`). O #190 (Go 1.27.3) segue aberto.
+
 ### Os runs vermelhos do `ci`
 
 Os 4 que a auditoria não abriu, e os 3 que vieram depois. Nenhum afeta a `main`.
@@ -355,6 +387,12 @@ de faixas e aceitar um terceiro que termina TLS. A (b) tira esse terceiro, e per
 
 **D11. Reação a backup sem prova.** O `ci` protege o código; nada avisa o dono quando a revalidação falha.
 Recomendo que a falha entre no vigia, ou num check da `main`. Depende da D9.
+
+**D12. `null` nos demais campos obrigatórios de PATCH.** O #194 trata só `name`. Em `url`, `method`,
+`interval_sec`, `timeout_ms`, `expected_status`, `enabled`, `schedule`, `grace_sec`, `slug`, `title`,
+`published` e `items`, `null` ainda vale como campo ausente. (a) responder 400 em todos, com a mesma
+`optional[T]`; (b) deixar como está. **Recomendo (a)**, que é a regra do PATCH. O custo é mudar o
+contrato para quem chama a API por fora do painel.
 
 ### O que ficou sem auditar nesta passada
 
