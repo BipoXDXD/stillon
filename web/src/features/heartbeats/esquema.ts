@@ -1,5 +1,7 @@
 import { z } from 'zod'
 import type { AlteracaoHeartbeat, EntradaHeartbeat } from '@/lib/api/cliente'
+import type { ErroDeCampo } from '@/lib/api/http'
+import { mensagemDaLinhaDaDescricao, mensagemDoCampo } from '@/lib/api/mensagens'
 import type { Agendamento, Heartbeat } from '@/lib/api/schemas'
 import { fuso, pontosDeCodigo } from '@/lib/format'
 import { erroNasTags, separarTags } from '@/lib/tags'
@@ -125,6 +127,15 @@ export function paraAlteracao(original: ValoresDoHeartbeat, v: ValoresDoHeartbea
   if (JSON.stringify(agendamento(v)) !== JSON.stringify(agendamento(original))) a.schedule = agendamento(v)
   if (graceDe(v) !== graceDe(original)) a.grace_sec = graceDe(v)
   return a
+}
+
+// O servidor conta as linhas do texto enviado, e o envio tira as linhas em
+// branco do começo: a contagem que o dono entende é a da tela.
+export function mensagemDoHeartbeat({ field, reason }: ErroDeCampo, descricaoNaTela: string): string {
+  const indice = /^description\[(\d+)\]$/.exec(field)?.[1]
+  if (indice === undefined) return mensagemDoCampo(field, reason)
+  const recuo = descricaoNaTela.slice(0, descricaoNaTela.length - descricaoNaTela.trimStart().length)
+  return mensagemDaLinhaDaDescricao(Number(indice) + recuo.split('\n').length)
 }
 
 // O campo do formulário que recebe o erro de cada campo do servidor.

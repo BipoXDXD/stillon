@@ -236,6 +236,42 @@ func TestNewCronRejections(t *testing.T) {
 	}
 }
 
+// O formulário promete exatamente isto (mensagens.ts, FormularioHeartbeat.tsx):
+// o domingo é 0 ou SUN, e faixa não termina nele, nem com o nome.
+func TestCronSundaySpellings(t *testing.T) {
+	casos := []struct {
+		diaDaSemana string
+		aceita      bool
+	}{
+		{"0", true},
+		{"SUN", true},
+		{"sun", true},
+		{"MON-FRI", true},
+		{"5,6,0", true},
+		{"FRI,SAT,SUN", true},
+		{"1-6,0", true},
+		{"7", false},
+		{"5-7", false},
+		{"1-7", false},
+		{"0,7", false},
+		{"5-0", false},
+		{"FRI-SUN", false},
+		{"MON-SUN", false},
+	}
+	for _, c := range casos {
+		t.Run(c.diaDaSemana, func(t *testing.T) {
+			_, err := heartbeat.NewCron("0 3 * * "+c.diaDaSemana, "UTC")
+			var ve *heartbeat.ValidationError
+			switch {
+			case c.aceita && err != nil:
+				t.Errorf("recusou: %v", err)
+			case !c.aceita && (!errors.As(err, &ve) || ve.Field != "expr" || ve.Reason != heartbeat.ReasonInvalid):
+				t.Errorf("erro %v, queria expr invalid", err)
+			}
+		})
+	}
+}
+
 func cronEm(t *testing.T, expr, tz string) heartbeat.Schedule {
 	t.Helper()
 	s, err := heartbeat.NewCron(expr, tz)
@@ -494,7 +530,7 @@ func TestParseExitCode(t *testing.T) {
 func TestValidateDescription(t *testing.T) {
 	teto := strings.Repeat("é", heartbeat.MaxDescriptionLength)
 	casos := []struct {
-		nome, entrada, quer, motivo string
+		nome, entrada, quer, motivo, campo string
 	}{
 		{nome: "vazia é sem descrição", entrada: "", quer: ""},
 		{nome: "só espaço vira vazia", entrada: " \n\t ", quer: ""},
@@ -502,10 +538,14 @@ func TestValidateDescription(t *testing.T) {
 		{nome: "mantém quebra de linha e tab", entrada: "linha 1\n\tlinha 2", quer: "linha 1\n\tlinha 2"},
 		{nome: "emoji composto passa", entrada: "dono \U0001F469\u200D\U0001F4BB", quer: "dono \U0001F469\u200D\U0001F4BB"},
 		{nome: "no teto, em caracteres", entrada: teto, quer: teto},
-		{nome: "acima do teto", entrada: teto + "é", motivo: heartbeat.ReasonOutOfRange},
-		{nome: "NUL", entrada: "a\x00b", motivo: heartbeat.ReasonInvalid},
-		{nome: "retorno de carro", entrada: "a\r\nb", motivo: heartbeat.ReasonInvalid},
-		{nome: "inversão bidi na segunda linha", entrada: "a\n\u202Eb", motivo: heartbeat.ReasonInvalid},
+		{nome: "acima do teto", entrada: teto + "é", motivo: heartbeat.ReasonOutOfRange, campo: "description"},
+		{nome: "NUL", entrada: "a\x00b", motivo: heartbeat.ReasonInvalid, campo: "description[0]"},
+		{nome: "retorno de carro", entrada: "a\r\nb", motivo: heartbeat.ReasonInvalid, campo: "description[0]"},
+		{nome: "inversão bidi na segunda linha", entrada: "a\n\u202Eb", motivo: heartbeat.ReasonInvalid, campo: "description[1]"},
+		{nome: "linha em branco conta", entrada: "a\n\n\u202Eb", motivo: heartbeat.ReasonInvalid, campo: "description[2]"},
+		{nome: "aponta a primeira de duas", entrada: "a\n\u202Eb\n\u202Ec", motivo: heartbeat.ReasonInvalid, campo: "description[1]"},
+		{nome: "conta as linhas do texto recebido", entrada: "\n \n\u202Eb", motivo: heartbeat.ReasonInvalid, campo: "description[2]"},
+		{nome: "última linha, sem quebra no fim", entrada: "a\nb\n\u202Ec", motivo: heartbeat.ReasonInvalid, campo: "description[2]"},
 	}
 	for _, c := range casos {
 		t.Run(c.nome, func(t *testing.T) {
@@ -514,8 +554,8 @@ func TestValidateDescription(t *testing.T) {
 			switch {
 			case c.motivo == "" && (err != nil || got != c.quer):
 				t.Errorf("devolveu %q, %v; queria %q", got, err, c.quer)
-			case c.motivo != "" && (!errors.As(err, &verr) || verr.Field != "description" || verr.Reason != c.motivo):
-				t.Errorf("erro %v; queria description %s", err, c.motivo)
+			case c.motivo != "" && (!errors.As(err, &verr) || verr.Field != c.campo || verr.Reason != c.motivo):
+				t.Errorf("erro %v; queria %s %s", err, c.campo, c.motivo)
 			}
 		})
 	}

@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import { Heartbeat } from '@/lib/api/schemas'
 import { heartbeat } from '@/test/fixtures'
-import { esquemaDoHeartbeat, paraAlteracao, paraCriacao, valoresDe, valoresPadrao, type ValoresDoHeartbeat } from './esquema'
+import { esquemaDoHeartbeat, mensagemDoHeartbeat, paraAlteracao, paraCriacao, valoresDe, valoresPadrao, type ValoresDoHeartbeat } from './esquema'
 
+const RECUSA_DO_CRON = 'Use os cinco campos, com um disparo que exista: 0 3 * * *. Domingo é 0 ou SUN, não 7; de sexta a domingo, 5,6,0.'
 const valores = (p: Partial<ValoresDoHeartbeat> = {}): ValoresDoHeartbeat => ({ ...valoresPadrao(), name: 'Backup', ...p })
 const hb = (p: Parameters<typeof heartbeat>[0] = {}) => Heartbeat.parse(heartbeat(p))
 const erros = (v: ValoresDoHeartbeat) => {
@@ -182,5 +183,32 @@ describe('paraAlteracao', () => {
     expect(paraAlteracao(base, { ...base, tipo: 'cron', expr: '0 3 * * *', timezone: 'UTC' })).toEqual({
       schedule: { kind: 'cron', expr: '0 3 * * *', timezone: 'UTC' },
     })
+  })
+})
+
+describe('mensagemDoHeartbeat', () => {
+  const invalida = (field: string, tela: string) => mensagemDoHeartbeat({ field, reason: 'invalid' }, tela)
+
+  it('conta as linhas a partir de 1', () => {
+    expect(invalida('description[0]', 'a')).toBe('Tem um caractere que não pode ser mostrado na linha 1.')
+    expect(invalida('description[4]', 'a')).toBe('Tem um caractere que não pode ser mostrado na linha 5.')
+  })
+
+  it('soma as linhas em branco do começo, que o envio tira', () => {
+    expect(invalida('description[1]', '\n \n\tRoda\nb')).toBe('Tem um caractere que não pode ser mostrado na linha 4.')
+  })
+
+  it('espaço no começo da primeira linha não é linha', () => {
+    expect(invalida('description[0]', '   Roda')).toBe('Tem um caractere que não pode ser mostrado na linha 1.')
+  })
+
+  it('sem linha, a mensagem do campo fica como está', () => {
+    expect(invalida('description', '\nRoda')).toBe('Tem um caractere que não pode ser mostrado.')
+    expect(mensagemDoHeartbeat({ field: 'description', reason: 'out_of_range' }, '\nRoda')).toBe('No máximo 1000 caracteres.')
+  })
+
+  it('índice só muda a mensagem da descrição', () => {
+    expect(invalida('expr', '\nRoda')).toBe(RECUSA_DO_CRON)
+    expect(invalida('tags[1]', '\nRoda')).toBe('Use letras, números, hífen e sublinhado, separados por vírgula.')
   })
 })
