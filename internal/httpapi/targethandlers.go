@@ -41,7 +41,7 @@ type targetRequest struct {
 }
 
 type targetPatchRequest struct {
-	Name                *string                     `json:"name"`
+	Name                optional[string]            `json:"name"`
 	URL                 *string                     `json:"url"`
 	Method              *string                     `json:"method"`
 	IntervalSec         *int32                      `json:"interval_sec"`
@@ -215,7 +215,7 @@ func (h *TargetHandlers) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	p := targets.Patch{
-		Name: req.Name, URL: req.URL, Method: req.Method,
+		Name: req.Name.ponteiro(), URL: req.URL, Method: req.Method,
 		IntervalSec: req.IntervalSec, TimeoutMS: req.TimeoutMS, ExpectedStatus: req.ExpectedStatus,
 		Enabled: req.Enabled,
 	}
