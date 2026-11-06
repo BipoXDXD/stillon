@@ -147,8 +147,9 @@ n=$(logins_ate_o_429 --origem "$BORDA_CF" --cf "$A")
 # 6 s, e um pode cair entre as duas tentativas. Um balde novo, o da borda, daria
 # a rajada inteira de 5 antes do 429.
 n=$(logins_ate_o_429 --origem "$OUTRA_BORDA_CF" --cf "$A")
-[ -n "$n" ] && [ "$n" -le "$LOGINS_APOS_O_429" ] ||
-    falhar "login: o cliente A por outra borda levou '$n' tentativas até o 429 (o balde é do cliente, não da borda)"
+if [ -z "$n" ] || [ "$n" -gt "$LOGINS_APOS_O_429" ]; then
+	falhar "login: o cliente A por outra borda levou '$n' tentativas até o 429 (o balde é do cliente, não da borda)"
+fi
 visto "login do cliente B, com o A sem saldo na mesma borda" "$B" --origem "$BORDA_CF" --cf "$B"
 ok "login: cada cliente tem o seu balde, atrás da mesma borda e entre bordas"
 
