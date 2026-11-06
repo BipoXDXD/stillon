@@ -139,7 +139,7 @@ UPDATE heartbeats
    SET name = sqlc.arg(name), period_sec = sqlc.narg(period_sec), cron_expr = sqlc.narg(cron_expr),
        timezone = sqlc.narg(timezone), grace_sec = sqlc.arg(grace_sec), enabled = sqlc.arg(enabled),
        deadline_at = sqlc.arg(deadline_at), failing_since = sqlc.narg(failing_since),
-       resumed_at = sqlc.narg(resumed_at)
+       resumed_at = sqlc.narg(resumed_at), last_start_at = sqlc.narg(last_start_at)
  WHERE user_id = sqlc.arg(user_id) AND id = sqlc.arg(id);
 
 -- name: DeleteHeartbeat :execrows

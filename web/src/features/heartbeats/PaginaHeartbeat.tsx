@@ -19,7 +19,7 @@ import { dataHora } from '@/lib/format'
 import { DialogoDaUrlDePing } from './DialogoDaUrlDePing'
 import { EventosDoHeartbeat } from './EventosDoHeartbeat'
 import { IncidentesDoHeartbeat } from './IncidentesDoHeartbeat'
-import { estadoDoHeartbeat, prazoVencido, tempoDeExecucao, textoDaDuracao, textoDoAgendamento, textoDoHeartbeat } from './estado'
+import { estadoDoHeartbeat, inicioEmCurso, prazoVencido, tempoDeExecucao, textoDaDuracao, textoDaEspera, textoDoAgendamento, textoDoHeartbeat } from './estado'
 
 // De um detalhe a outro a rota é a mesma: a key recomeça a tela, como a do alvo.
 export function PaginaHeartbeat() {
@@ -203,7 +203,7 @@ function fraseDoEstado(hb: Heartbeat, agora: Date): string | null {
     return prazoVencido(hb, agora) ? `${causa}: o prazo era ${dataHora(hb.deadline_at)}.` : `${causa}. O incidente segue aberto até um sinal de sucesso.`
   }
   if (hb.state === 'failing') return `${textoDaCausa('heartbeat_failed')}.`
-  return hb.state === 'waiting' ? `Aguardando o primeiro sinal, até ${dataHora(hb.deadline_at)}.` : null
+  return hb.state === 'waiting' ? `${textoDaEspera(hb)}, até ${dataHora(hb.deadline_at)}.` : null
 }
 
 const quando = (iso: string | null) => (iso === null ? 'Nunca' : dataHora(iso))
@@ -216,6 +216,7 @@ function Prazo({ hb, agora }: { hb: Heartbeat; agora: Date }) {
 
 function Sinais({ hb, agora }: { hb: Heartbeat; agora: Date }) {
   const frase = fraseDoEstado(hb, agora)
+  const inicio = inicioEmCurso(hb)
   return (
     <section aria-labelledby="titulo-sinais" className={`${estiloDeCartao} space-y-4`}>
       <h2 id="titulo-sinais" className="text-xl">
@@ -229,7 +230,7 @@ function Sinais({ hb, agora }: { hb: Heartbeat; agora: Date }) {
         <Dado nome="Último sinal" valor={quando(hb.last_ping_at)} />
         <Dado nome="Último sucesso" valor={quando(hb.last_success_at)} />
         <Dado nome="Última duração" valor={hb.last_runtime_ms === null ? 'Não medida' : tempoDeExecucao(hb.last_runtime_ms)} />
-        {hb.last_start_at !== null && <Dado nome="Em execução desde" valor={dataHora(hb.last_start_at)} />}
+        {inicio !== null && <Dado nome="Em execução desde" valor={dataHora(inicio)} />}
       </dl>
     </section>
   )

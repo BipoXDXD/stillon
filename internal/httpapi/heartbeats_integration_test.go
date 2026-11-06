@@ -514,6 +514,81 @@ func TestStateFollowsTheClockAndTheSignals(t *testing.T) {
 	}
 }
 
+// A tarefa nova que manda /start e morre não fica "em dia": segue aguardando, e
+// o prazo a pega. Quem tira de waiting é o primeiro sucesso.
+func TestStartAloneKeepsTheHeartbeatWaiting(t *testing.T) {
+	a := newAPI(t)
+	dono := tokenDe(t, a, a.userID)
+	id, ping := criarHB(t, a, dono, corpoDePeriodo)
+	if status, _, corpo := pingar(t, a, "/ping/"+ping+"/start", nil); status != http.StatusOK {
+		t.Fatalf("%d %s", status, corpo)
+	}
+	_, corpo := lerCru(t, a, http.MethodGet, "/api/v1/heartbeats/"+id, dono, nil)
+	m := decodificar(t, corpo)
+	if m["state"] != "waiting" || m["last_start_at"] == nil || m["last_ping_at"] == nil {
+		t.Errorf("depois do início: %s", corpo)
+	}
+	a.clk.Advance(time.Hour + 5*time.Minute)
+	dono = tokenDe(t, a, a.userID) // o relógio avançou além da validade do token
+	_, corpo = lerCru(t, a, http.MethodGet, "/api/v1/heartbeats/"+id, dono, nil)
+	if e := decodificar(t, corpo)["state"]; e != "late" {
+		t.Errorf("no prazo: %s", corpo)
+	}
+}
+
+// O início descartado na retomada não vira execução terminada: segue aguardando.
+func TestDiscardedStartKeepsTheHeartbeatWaiting(t *testing.T) {
+	a := newAPI(t)
+	dono := tokenDe(t, a, a.userID)
+	id, ping := criarHB(t, a, dono, corpoDePeriodo)
+	pingar(t, a, "/ping/"+ping+"/start", nil)
+	lerCru(t, a, http.MethodPatch, "/api/v1/heartbeats/"+id, dono, map[string]any{"enabled": false})
+	_, corpo := lerCru(t, a, http.MethodPatch, "/api/v1/heartbeats/"+id, dono, map[string]any{"enabled": true})
+	m := decodificar(t, corpo)
+	if m["state"] != "waiting" || m["last_start_at"] != nil {
+		t.Errorf("depois de retomar: %s", corpo)
+	}
+}
+
+// O início de antes da pausa não vira execução de três dias.
+func TestResumingDiscardsTheOpenStart(t *testing.T) {
+	a := newAPI(t)
+	dono := tokenDe(t, a, a.userID)
+	id, ping := criarHB(t, a, dono, corpoDePeriodo)
+	pingar(t, a, "/ping/"+ping, nil)
+	pingar(t, a, "/ping/"+ping+"/start", nil)
+	lerCru(t, a, http.MethodPatch, "/api/v1/heartbeats/"+id, dono, map[string]any{"enabled": false})
+
+	a.clk.Advance(72 * time.Hour)
+	dono = tokenDe(t, a, a.userID)
+	_, corpo := lerCru(t, a, http.MethodGet, "/api/v1/heartbeats/"+id, dono, nil)
+	if decodificar(t, corpo)["last_start_at"] == nil {
+		t.Fatalf("o controle falhou: pausar não deveria apagar o início: %s", corpo)
+	}
+	status, corpo := lerCru(t, a, http.MethodPatch, "/api/v1/heartbeats/"+id, dono, map[string]any{"enabled": true})
+	if status != http.StatusOK || decodificar(t, corpo)["last_start_at"] != nil {
+		t.Fatalf("depois de retomar: %d %s", status, corpo)
+	}
+
+	pingar(t, a, "/ping/"+ping, nil)
+	_, corpo = lerCru(t, a, http.MethodGet, "/api/v1/heartbeats/"+id, dono, nil)
+	if m := decodificar(t, corpo); m["last_runtime_ms"] != nil {
+		t.Errorf("a pausa virou duração: %s", corpo)
+	}
+}
+
+// Só a retomada descarta: editar o nome com a execução em curso não mexe nela.
+func TestEditingKeepsTheOpenStart(t *testing.T) {
+	a := newAPI(t)
+	dono := tokenDe(t, a, a.userID)
+	id, ping := criarHB(t, a, dono, corpoDePeriodo)
+	pingar(t, a, "/ping/"+ping+"/start", nil)
+	_, corpo := lerCru(t, a, http.MethodPatch, "/api/v1/heartbeats/"+id, dono, map[string]any{"name": "outro"})
+	if decodificar(t, corpo)["last_start_at"] == nil {
+		t.Errorf("editar apagou o início: %s", corpo)
+	}
+}
+
 func TestRotateRevokesTheOldToken(t *testing.T) {
 	a := newAPI(t)
 	dono := tokenDe(t, a, a.userID)

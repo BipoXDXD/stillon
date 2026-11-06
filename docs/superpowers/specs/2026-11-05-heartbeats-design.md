@@ -167,6 +167,9 @@ Função pura em `internal/heartbeat`, sem I/O, recebendo `now`:
 - `start`: grava `last_start_at`; prazo intacto.
 - `fail`: `failing_since = coalesce(failing_since, now)`; prazo intacto; `runtime_ms` e consumo do
   `start`, como no `success`.
+- `waiting` é nunca ter terminado uma execução, com `success` ou `fail`: um `start` sozinho não tira
+  desse estado.
+- A retomada apaga o `start` aberto: ele é de antes da pausa, e mediria a pausa como execução.
 - `success` e `fail` gravam `last_runtime_ms`: a duração medida, ou `NULL` sem `start` aberto.
 - `proximo(t)`: `t + period` ou o próximo disparo do cron depois de `t + 30 s`, no fuso declarado.
   A folga (`EarlySignalMargin`, igual a `MinGrace`) existe porque um host com o relógio adiantado

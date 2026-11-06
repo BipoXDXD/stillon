@@ -1,4 +1,4 @@
-import { estadoDoHeartbeat, prazoVencido, tempoDeExecucao, textoDoHeartbeat } from '@/features/heartbeats/estado'
+import { estadoDoHeartbeat, inicioEmCurso, prazoVencido, tempoDeExecucao, textoDaEspera, textoDoHeartbeat } from '@/features/heartbeats/estado'
 import { textoDaCausa } from '@/lib/api/mensagens'
 import type { Heartbeat, HoraDoSpark, Incidente, ItemDoResumo } from '@/lib/api/schemas'
 import { estadoExibido, textoDoEstado, type EstadoExibido } from '@/lib/estado'
@@ -86,18 +86,20 @@ function situacaoDoHeartbeat(hb: Heartbeat, agora: Date): string {
     case 'up':
       return textoEmDia(hb, agora)
     case 'waiting':
-      return hb.last_start_at === null ? 'Aguardando o primeiro sinal' : emExecucao(hb.last_start_at, agora)
+      return textoDeExecucao(hb, agora) ?? textoDaEspera(hb)
     case 'paused':
       return 'Pausado'
   }
 }
 
-function emExecucao(inicio: string, agora: Date): string {
-  return `Em execução, começou ${haQuantoAteAgora(inicio, agora)}`
+function textoDeExecucao(hb: Heartbeat, agora: Date): string | null {
+  const inicio = inicioEmCurso(hb)
+  return inicio === null ? null : `Em execução, começou ${haQuantoAteAgora(inicio, agora)}`
 }
 
 function textoEmDia(hb: Heartbeat, agora: Date): string {
-  if (hb.last_start_at !== null) return emExecucao(hb.last_start_at, agora)
+  const emExecucao = textoDeExecucao(hb, agora)
+  if (emExecucao !== null) return emExecucao
   if (hb.last_ping_at === null) return 'Nenhum sinal ainda'
   const sinal = `Sinal ${haQuantoAteAgora(hb.last_ping_at, agora)}`
   return hb.last_runtime_ms === null ? sinal : `${sinal} · levou ${tempoDeExecucao(hb.last_runtime_ms)}`

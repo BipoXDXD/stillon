@@ -106,9 +106,16 @@ comum. A falha agora encerra a execução como o sucesso: mede e consome o iníc
 que falhou ficaria "em execução" até o próximo sinal. Sucesso ou falha sem início deixam a duração
 `NULL`: repetir a anterior falaria de uma execução que ninguém mediu.
 
-`last_start_at` diferente de `NULL` passa a significar "em execução". O detalhe trocou "Último
-início" por "Em execução desde", que só aparece nesse caso, porque o início consumido virava
-"Nunca". Sem superfície nova: nenhuma rota, e o dado sai só para o dono.
+A lista e o detalhe mostram "em execução" pela mesma regra: `last_start_at` diferente de `NULL` em
+`up` ou `waiting`. Atrasada, falhando ou pausada, a tarefa diz isso, e não que está rodando. O
+detalhe trocou "Último início" por "Em execução desde", porque o início consumido virava "Nunca".
+Sem superfície nova: nenhuma rota, e o dado sai só para o dono.
+
+Dois acertos de regra saíram daqui. `waiting` passou a ser nunca ter terminado uma execução, com
+sucesso ou falha, em vez de nunca ter pingado: a tarefa nova que manda `/start` e morre ficava "Em
+dia" até o prazo. A retomada apaga o início aberto: sem isso, ele sobrevivia à pausa e virava uma
+execução de dias. Com o início descartado, a tarefa nova segue em `waiting`, com o texto "Aguardando
+o primeiro sucesso".
 
 ## Migrations
 

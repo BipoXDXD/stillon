@@ -760,8 +760,8 @@ UPDATE heartbeats
    SET name = $1, period_sec = $2, cron_expr = $3,
        timezone = $4, grace_sec = $5, enabled = $6,
        deadline_at = $7, failing_since = $8,
-       resumed_at = $9
- WHERE user_id = $10 AND id = $11
+       resumed_at = $9, last_start_at = $10
+ WHERE user_id = $11 AND id = $12
 `
 
 type UpdateHeartbeatParams struct {
@@ -774,6 +774,7 @@ type UpdateHeartbeatParams struct {
 	DeadlineAt   time.Time
 	FailingSince *time.Time
 	ResumedAt    *time.Time
+	LastStartAt  *time.Time
 	UserID       uuid.UUID
 	ID           uuid.UUID
 }
@@ -789,6 +790,7 @@ func (q *Queries) UpdateHeartbeat(ctx context.Context, arg UpdateHeartbeatParams
 		arg.DeadlineAt,
 		arg.FailingSince,
 		arg.ResumedAt,
+		arg.LastStartAt,
 		arg.UserID,
 		arg.ID,
 	)

@@ -4,12 +4,12 @@ import { eventoDeHeartbeat, heartbeat, incidente, incidenteDeHeartbeat } from '@
 import { renderizarPainel } from '@/test/renderizar'
 import { tempoDeExecucao } from './estado'
 
-async function detalheCom(p: {
+type ComListas = {
   eventos?: Parameters<typeof eventoDeHeartbeat>[0][]
   incidentes?: Parameters<typeof incidenteDeHeartbeat>[0][]
-  last_runtime_ms?: number
-  last_start_at?: string
-} = {}) {
+}
+
+async function detalheCom(p: ComListas & Parameters<typeof heartbeat>[0] = {}) {
   const r = await renderizarPainel('/')
   const { eventos: _eventos, incidentes: _incidentes, ...doHeartbeat } = p
   r.falsa.estado.heartbeats = [heartbeat({ id: 'h1', name: 'Backup', ...doHeartbeat })]
@@ -48,6 +48,20 @@ describe('tempo de execução no detalhe', () => {
     const s = await secao('Agendamento e sinais')
     expect(within(s).getByText('Última duração').nextElementSibling).toHaveTextContent('Não medida')
     expect(within(s).queryByText('Em execução desde')).not.toBeInTheDocument()
+  })
+
+  // A mesma regra da lista: inicioEmCurso nas duas telas.
+  it.each(['paused', 'late', 'failing'] as const)('%s com início aberto não fala em execução', async (state) => {
+    await detalheCom({ state, enabled: state !== 'paused', last_start_at: '2026-09-21T11:50:00Z' })
+    const s = await secao('Agendamento e sinais')
+    expect(within(s).queryByText('Em execução desde')).not.toBeInTheDocument()
+  })
+
+  it('tarefa nova com início: aguarda o primeiro sucesso e mostra a execução', async () => {
+    await detalheCom({ state: 'waiting', last_ping_at: '2026-09-24T11:50:00Z', last_start_at: '2026-09-24T11:50:00Z', last_success_at: null })
+    const s = await secao('Agendamento e sinais')
+    expect(within(s).getByText(/^Aguardando o primeiro sucesso, até /)).toBeInTheDocument()
+    expect(within(s).getByText('Em execução desde')).toBeInTheDocument()
   })
 
   it('com início aberto, mostra desde quando', async () => {
