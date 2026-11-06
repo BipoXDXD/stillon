@@ -189,3 +189,175 @@ custo é o N11, e o contrato `target_name` de `/incidents` fica como está.
 - Só por métrica, sem leitura linha a linha: `internal/crypto`, `observability`, `webui`, `prober/safedial`, `incident/history`, `auth/session.go`, `token.go`, `dispositivo.go`, `httpapi/middleware` e `backup/backup.go`.
 - Sem auditoria: qualidade interna dos testes além das esperas, `web/e2e`, CSS, `web/src/test/api-falsa.ts`, `scripts/`, `docs/deploy/`, e scripts Python de `deploy/ci`.
 - Plano de migração de cada item: as ondas dão ordem e rede, não o passo a passo.
+
+## Auditoria complementar (2026-11-06)
+
+Base: `main` em `27b1005`. Cobre o que a lista acima deixou de fora e o que entrou de #165 a #176. O PR
+#177, aberto, trata o domingo do cron e não foi auditado. Só auditoria: nenhum código mudou, e nenhuma
+suíte rodou. A `/security-review` não foi usada: ela revisa um diff, e aqui não há diff de código.
+
+**Separação.** Defeito real (`F…`) tem cenário concreto. Smell (`N…`) não quebra nada hoje. Legenda de
+custo e risco igual à do início. O sinal † marca item de leitura delegada que não reconferi linha a
+linha; o resto foi lido por mim, e cada fato de produção vem de comando citado.
+
+### Fatos de produção medidos
+
+| Fato | Prova | Por que importa |
+|---|---|---|
+| A **Cloudflare** está na frente de `stillon.tech` | `curl -I https://stillon.tech/` devolve `server: cloudflare`, `cf-ray` (GRU), `cf-cache-status: DYNAMIC` e dois `via: 1.1 Caddy` | `git grep -i cloudflare` só acha `CF-Connecting-IP`: README, specs e runbooks não citam a Cloudflare |
+| O ping público atravessa a Cloudflare sem desafio | `POST /ping/<token inexistente>` responde 404 em JSON do app | D6 e o `curl -f` da tarefa seguem valendo; descarta o bloqueio por bot, hoje |
+| Backups diários existem | artifact `stillon-backup-42233497757`, de 2026-11-06 14:23, 30 dias de validade | Não há perda de dados à vista |
+| A revalidação de restauro falha desde 2026-11-04 | runs `41879675778` e `42021172944`; o último verde é `41739202525`, de 2026-11-03 | Ver F1 |
+| O agendamento do backup deriva | marcado para 06:17 UTC, rodou 14:23 em 11-06 e 06:35 em 10-30 | Atraso do GitHub; ver N22 |
+
+### Defeitos reais
+
+Nenhum defeito provado de segurança ou de perda de dados **nos dados de hoje**. F1 e F2 ficam no topo
+porque tiram duas provas em que o projeto confia.
+
+| Id | Gravidade | Local | Cenário | Correção | Custo | Risco | Teste que protege |
+|---|---|---|---|---|---|---|---|
+| F1 | Alta | branch `audit/forwarding-review-20261023`, `deploy/backup/restore-stored-audit.py:25-27` | A API lista só os 100 artifacts mais novos, e o repositório tem 963. Entre o backup de 11-05 14:46 e a tentativa de 11-06 05:43 nasceram ao menos 290 artifacts de CI, então nenhum `stillon-backup-*` entra na página e `max([])` dá `ValueError`. Com o `main` ativo, a falha se repete a cada PR grande. A prova recorrente de que o backup restaura parou há 3 dias, e o dono não foi avisado | **Substitute Algorithm**: `?name=` por artifact ou paginação; mesmo critério de idade. Decidir D9 antes | P | B | Rodar com mais de 100 artifacts novos; caso de lista vazia com erro nomeado |
+| F2 | Alta (risco), impacto não confirmado | `deploy/coolify/app.json:13,25`, `deploy/vps/Caddyfile:17-19,34`, `README.md:178,184`, `specs/2026-11-05-heartbeats-design.md:§6,§9` | A cadeia real é cliente → Cloudflare → Caddy → Caddy → app. O app só vê o que o último Caddy calculou, e o repositório não diz o que o primeiro faz com o IP da Cloudflare. Se ele não a tratar como proxy confiável, todo cliente da mesma borda divide o balde de login (10/min), e `ip_hash` grava a Cloudflare. **Não confirmado:** falta ver a configuração do primeiro Caddy. Confirmado: o modelo de ameaça está incompleto. Spec e README tratam o caminho como sem log, e a Cloudflare termina TLS, logo vê token de ping, token de verificação, senha e cookie em claro | Ler a configuração do primeiro salto; decidir D10; documentar a cadeia e refazer o STRIDE do ping | P para conferir, M para corrigir | M | Dois clientes de origens diferentes em buckets distintos; canário de IP em `sessions` |
+| F3 | Média | `deploy/vps/Caddyfile`, `deploy/coolify/app.json:101`, `deploy/coolify/README.md` | O Coolify fixa o commit de infraestrutura, e o release só troca imagens. Um PR que corrija o Caddyfile, mesmo por segurança, passa no CI e não chega à produção, sem aviso | **Move File** para `deploy/coolify/` e passo explícito no checklist; ou um check que compare o commit fixado | M | A | Teste que falhe com commit de infraestrutura atrás do Caddyfile |
+| F4 | Média | `README.md:44-48,85,239,311`, `docs/deploy/vps.md`, `docs/deploy/mac.md:6-8` | `README.md:311` diz "Deploy: sempre manual", e merge publica sozinho. O `vps.md` descreve a produção anterior inteira, sem banner; o `CLAUDE.md` manda guiar por ele; há `dropdb` em `:4241`† e `docker volume rm` em `:4157`† | Banner "legado", **Move File** para `docs/deploy/legado/` e runbook Coolify curto. Depende de D7 | M | B | `checar-docs.sh` que exija o banner e cite o Coolify no README |
+| F5 | Média | `docs/deploy/vps.md:4084`† | O "upgrade menor" manda recriar o `db`. Em produção a imagem está sem tag, e `pull_policy: never` faz o recreate falhar (`deploy/coolify/README.md`) | Nota no runbook e item no checklist | P | M | Revisão; `checar-docs.sh` |
+| F6 | Média | `deploy/ci/test_snapshot_banco_backup.py` | Nenhum Makefile ou workflow o chama (`grep` no repositório; o `discover` usa `-p test_docker_build.py`). Os 6 testes do snapshot do backup não protegem nada | Ligar ao job `workflows`, ou apagar com a D7 | P | B | Sabotar `snapshot_banco_backup` e ver falhar |
+| F7 | Média | `web/e2e/fluxo.spec.ts:188-192` | O cookie tem `Path=/api/v1/auth` (`authhandlers.go:323`): `document.cookie` numa página do painel nunca o traz, com `HttpOnly` ou sem. O comentário "este teste prova a propriedade" é falso. O código está certo; a garantia não | `context.cookies()` conferindo `httpOnly`, `sameSite` e `path` | P | B | `HttpOnly: false` sabotado tem de quebrar a spec |
+| F8 | Média | `web/src/test/api-falsa.ts:399-403` | O PATCH de `enabled` devolve `state: 'up'`. O servidor devolve `waiting` em quem nunca concluiu e `late` com incidente aberto (`heartbeat/service.go:553`). Teste de tela de "retomar" passa num estado que não existe | Espelhar `statusOf` | P | B | Retomar tarefa `waiting` e tarefa com incidente |
+| F9 | Média | `web/src/test/api-falsa.ts:357` × `incidenthandlers.go` | A falsa só dá `next_cursor` se sobra item; o servidor dá com a página cheia. Com exatos 100 abertos, a tela real diz "100 ou mais" e a falsa, "100" | `cheia = pagina.length === limite` | P | B | Tela com exatamente `limit` itens |
+| F10 | Média | `web/src/test/api-falsa.ts:294-308,368-386,399-405`, entre outras† | Só o `PATCH /channels` imita a entrada estrita. As demais usam `Object.assign(h, corpo)`: cliente que mande campo que o servidor recusa com 400 passa nos testes de tela. É mitigado pelos `toEqual` do corpo | **Extract Function** `exigirCampos(corpo, permitidos)` por rota | M | B | `criarAlvo({...x, extra: 1})` falha na falsa |
+| F11 | Baixa | `web/src/test/api-falsa.ts:486`, `:454-456`, `:279-292`, `:121-126`† | `POST /status-pages` substitui (real: 409). Reenviar verificação de canal já verificado dá 204 (real: 409). O filtro de tag não normaliza, nem recusa `state` inválido. `forcar` aceita par status e código que o servidor não emite | Tabela tipada de erros copiada de `apierr/errors.go`, e os casos | P | B | Um teste de contrato por caso |
+| F12 | Baixa | `heartbeathandlers.go:52,275`, `targethandlers.go:44` | `PATCH {"name": null}` responde 200 e não muda nada. A regra do dono separa `null` de ausente, e `description` e `tags` já seguem `optional[T]` | `optional[string]` e 400 em `null` | P | B | PATCH com `name: null` dá 400, banco intacto |
+| F13 | Baixa | `.github/workflows/coolify.yml:17` | O filtro cita `publish-images.yml`, que não existe; a publicação está no `ci.yml`. Mudança nela não dispara a checagem do release | Corrigir o caminho | P | B | `actionlint` não pega: revisão |
+| F14 | Baixa | `web/e2e/pilha.ts:218-224` | No macOS não há `/proc`, então o binário de uma rodada interrompida nunca é morto (o comentário assume isso) e fica com a porta aberta. O Mac é a máquina do dono | `ps -p <pid> -o command=` | P | B | `kill -9` no runner, nova rodada, `pgrep` vazio |
+| F15 | Baixa | `web/e2e/pilha.ts:238-245`, `:73`, `:107`† | `docker rm -f` engole todo erro, e `rmSync` apaga o registro; `docker run` e `exec` sem prazo. Docker parado deixa container órfão sem rastro | Ignorar só "No such container", manter `pilha.json`, `timeout` | P | B | `derrubar` com docker falso que falha |
+| F16 | Baixa | `README.md:391`†, `docs/deploy/vps.md:4485`†, `:163` e mais 6† | `IMAGE_TAG` não existe; "os workflows não usam `environment`", e `coolify.yml:91` usa; `~/Projetos/Go/StillOn` falha no Mac do dono | Corrigir no bloco do F4 | P | B | `checar-docs.sh` |
+| F17 | Baixa | `deploy/ci/diagnostico-fixture.py:358`† | `close()` itera `registry` sem trava com a thread viva; `RuntimeError` perde o `manifesto.json` | `list()` sob a trava | P | B | `close()` com thread presa |
+
+### Os runs vermelhos do `ci`
+
+Os 4 que a auditoria não abriu, e os 3 que vieram depois. Nenhum afeta a `main`.
+
+| Run | Branch | Job | Causa lida no log | Estado |
+|---|---|---|---|---|
+| `41902225671` | `chore/deps-131-135` | `workflows` | `testar-imagem-backup.py`: docker falso em `/run` no runner; 3 falhas e 1 erro | Corrigido em #138 |
+| `42083765701` | `feat/heartbeats-dominio` | `lint` | gosec G101 na constante gerada `lockHeartbeatByTokenHash` | Query renomeada (`heartbeats.sql:12-13`) |
+| `42083765701` | idem | `test` no 18 | `TestAnotherUsersChannelIs…`: canário `"6789"` casou com um id aleatório, falso alarme | Corrigido em #150 (`"webhook …6789"`) |
+| `42085051717` | `denso/tabela` | `web` | `sistema.test.ts` barrou `shadow-none`: a fitness function funcionou | Corrigido no PR |
+| `42123955566` | `feat/heartbeats-detalhe` | `e2e` | `a11y.spec.ts:550` esperava `Incidentes, 1 aberto`; a soma com tarefas mudou o nome da aba | Corrigido no PR; a spec hoje afirma 2 |
+| `42134824502`, `42135648582` | heartbeats | `lint` | gosec G109 em `heartbeat.go:124`, `Atoi` convertido | `ParseUint` |
+| `42139393822` | `test/e2e-jornada-heartbeats` | `e2e` | `Tarefas: 1 pausada` sumiu por 45 s: não é prazo. A causa provável é a tarefa pausada com incidente, corrigida por `0ae5353` no mesmo PR (inferência: a ordem dos commits casa, e o passo não foi reproduzido) | O #175 ainda ampliou prazos; ver N38 |
+
+Padrão: nenhum foi flaky de infraestrutura. Vários são teste barrando defeito real antes do merge.
+
+### Pacotes lidos linha a linha
+
+**Sem defeito:** `internal/crypto`, `prober/safedial`, `webui`, `incident/detector`, `auth/session.go`,
+`token.go`, `dispositivo.go`, `backup/backup.go` e os middlewares. As travas, a ordem de cancelamento e
+as recusas conferem com os comentários. SSRF: o IP público da própria VPS passa no `AllowIP`, sem
+importância enquanto o único usuário é o dono, criado pela CLI.
+
+| Id | Local | Smell | Refactoring | Custo | Risco | Rede |
+|---|---|---|---|---|---|---|
+| N22 | `.github/workflows/backup.yml:14` | Hidden Dependency: o relógio do `schedule` do GitHub atrasa até 8 h, e a política de 26 h do F1 fica no limite | Disparo por relógio próprio, ou alargar a política com motivo escrito | P | B | Run agendado medido por uma semana |
+| N23 | `backup/backup.go:25,397` | Incomplete Data: `Reference` confere usuários e alvos; heartbeats, tags e eventos ficam fora da aceitação do restauro | **Add Field** `Heartbeats`, no protocolo `v2`, com o script do restauro junto | M | M | Restauro real com heartbeat; `backup_test` |
+| N24 | `backup/backup.go:36,385` | Long Line (mais de 300 colunas) | **Reformatar**; o `gofmt` aceita, mas ninguém lê | P | B | Compilador |
+| N25 | `incident/history/history.go:72-75,94-97` | Duplicated Code | **Extract Function** `toIncident` | P | B | `history_test` |
+| N26 | `httpapi/middleware/recover.go:21-36` | `http.ErrAbortHandler` é engolido, e `WriteError` escreve depois de resposta parcial. Sem chamador hoje | Repassar o abort e pular o envelope depois do `WriteHeader` | P | B | Teste de panic depois do `Write` |
+| N27 | `clientip.go:15-25,38-44,81`, `TestRateLimitSeparatesClientsBehindFly` | Comments que mentem: citam o Fly e o Caddy como produção. Aumenta o R2.13. O modo `CLIENT_IP_HEADER` não tem consumidor† | **Rename**; o resto depende de D10 | P a M | M | `clientip_test` |
+| N28 | `observability/metrics.go:1`, `trace.go:1`, `app.json:22` | Dois doc comments de pacote; `METRICS_ADDR=off`, então fila, outbox e DLQ não têm métrica lida em produção | Unificar o texto. Métrica é decisão, não refactoring | P | B | Nenhuma |
+| N29 | `auth/token.go:90-91` | Comments: "o painel ainda não foi publicado" | Apagar. Aumenta o R2.13 | P | B | Nenhuma |
+| N30 | `auth/dispositivo.go:186-190` | Contador em memória zera a cada merge, e merge é deploy; varredura O(n) sob trava | Aceitar: n é pequeno, o bloqueio da conta segue no banco. Registrar | P | B | Nenhuma |
+| N31 | `incident/detector.go:58` | Global Data exportado e mutável | `func Default()`; pouco ganho, fazer ao tocar | P | B | `detector_test` |
+
+### Heartbeats, painel denso e alinhamento
+
+As regras de prazo, abertura, fechamento, retomada, cooldown, RLS e token batem com a spec nos cenários
+que percorri: atraso, falha, pausa com ping, retomada com e sem sucesso, dois avaliadores e corrida com
+PATCH. Nenhum defeito de domínio.
+
+| Id | Local | Smell ou desalinhamento | Refactoring | Custo | Risco | Rede |
+|---|---|---|---|---|---|---|
+| N32 | `heartbeat/service.go:281-285`, `ping.go:66` | Poison Row: uma linha que a validação futura recuse (`ScheduleFromRow`) derruba a lista inteira e todo ping dela. Hoje não há linha assim | Pular e logar na lista, ou manter a validação de leitura mais larga que a de escrita | P | M | Linha inválida não derruba as outras |
+| N33 | `storage/queries/heartbeats.sql:68-69` | Comments: citam `heartbeats_due_idx`, removido na 00019 | Reescrever | P | B | Nenhuma; `sqlc generate` |
+| N34 | `heartbeathandlers.go:236-246` × `:414` | Inconsistent Validation: a prévia recusa parâmetro desconhecido, `paginaDe` aceita | Decidir no R2.12a; recusar nas listas é mudança de contrato | P | M | `heartbeats_integration_test` |
+| N35 | `specs/2026-11-05-heartbeats-design.md:§6,§9` | A checagem de access log foi no Traefik, e `app.json:63,109` tem `traefik.enable=false`; a resposta mostra Caddy e Cloudflare | Corrigir junto do F2 | P | B | Nenhuma |
+| N36 | `specs/2026-11-05-painel-denso-design.md:134` | "Nenhum alvo com esses filtros." e colunas "Alvo": a tela diz "monitor" (T6) | Atualizar a spec | P | B | Nenhuma; `[skip ci]` |
+| N37 | `lib/api/consultas.ts:31`, `routes.go:158`, `web/e2e/fluxo.spec.ts:76-83,381-449` | Requisito implícito: o painel soma polls de 15 s por tela, o limite é 60/min com rajada 20, e o e2e só parou de levar 429 cadenciando o navegador a 1 req/s†. **Não confirmado** com usuário real | Medir requisições por navegação antes de mexer | P | M | Contador de requisições no e2e |
+
+### Qualidade interna dos testes
+
+**Go, medido:** 22 `time.Sleep` em 14 arquivos, zero mock de banco, zero `t.Parallel` no repositório
+inteiro, 3 candidatos sem assert (conferidos: usam helpers, ou o não-pânico é o comportamento). A base é
+boa: banco real, nome que diz o comportamento, sabotagem exigida. Os itens abaixo são o que sobra.
+
+| Id | Local | Smell | Refactoring | Custo | Risco | Rede |
+|---|---|---|---|---|---|---|
+| N38 | `web/e2e/fluxo.spec.ts:228,244,321-328`† | Sleepy Test: `ESPERA_DO_POLL_MS` em espera que não é de poll; `:327` segue com o prazo padrão | **Replace Wait with Event** (`waitForResponse`) e nome certo | P | B | `--repeat-each=5` |
+| N39 | `cmd/stillon/heartbeat_e2e_test.go:134` | Negative assert depois de 6 s fixos: "o papel api não abriu incidente" passa se a máquina atrasar | Provar que um tique rodou (métrica ou marca) antes de negar | P | B | Sabotar `--role=api` abrindo incidente |
+| N40 | `httpapi/sessions_integration_test.go:223`, `statuspage/service_test.go:356`, `cmd/stillon/statuspage_e2e_test.go:100-123`, `incident_e2e_test.go:257` | Sleep em vez de `Clock` ou condição. Aumenta o R0.5 | Triagem do R0.5 | M | B | `-count=20` |
+| N41 | `internal/httpapi/plano5_routes_test.go`, 7 `*_complementar_test.go`, `prober/spec_log_test.go`; 74 arquivos de teste citam Plano, Task ou R*n* | Mysterious Name: nome pela história, não pelo comportamento | **Rename** e **Move Function** ao tocar. Aumenta o R2.13 | M | B | Mesmos testes |
+| N42 | `httpapi/idor_integration_test.go:111` | Fragile Test: canário por substring já deu falso alarme (`42083765701`) | `CANARY-<uuid>`, como manda a regra de log | P | B | Sabotar o handler |
+| N43 | `heartbeats_integration_test.go` (1169 linhas), `auth_integration_test.go` (1207) | Large Class | **Move Function** por assunto, depois do N1 | M | B | Suíte |
+| N44 | `web/e2e/fluxo.spec.ts:233,328`† | Weak Assertion: `ABA_COM_ABERTOS` aceita qualquer contagem, e o comentário diz que confere a soma | Número exato na pilha própria | P | B | `useTarefasQuePedemAtencao` sabotado |
+| N45 | `web/e2e/fluxo.spec.ts:16-39`, `pagina-publica.spec.ts:23,50-61`, `fluxo.spec.ts:85-90`, `troca.spec.ts:25-32`† | Duplicated Code, Sleepy Test: laço de 429 copiado, comentário "sem Retry-After" falso (`ratelimit.go:171`), 42 s de pausa fixa | **Extract Function** `e2e/limite.ts`, que obedece o `Retry-After` | P | B | Fake com 429 |
+| N46 | `web/e2e/fluxo.spec.ts:263-304`† | Lacuna: a pilha real não exercita `/ping/{token}/{n}`, cron, prévia, tags nem descrição | Acrescentar à jornada | M | B | A própria jornada |
+| N47 | `web/e2e/abas.spec.ts:62-64`, `troca.spec.ts:28`† | Conditional Test Logic: pulam em silêncio; a conferência de reúso nunca roda no CI | Anotar o pulo, ou ler a auditoria pelo compose | P | B | Run do CI mostra a anotação |
+| N48 | `playwright.config.ts`, `ci.yml`† | Sem artefato de falha: `--trace off` protege a senha, e nada o substitui. O padrão local grava a senha contra pilha externa | `screenshot: 'only-on-failure'`; `trace` condicionado | P | B | Falha forçada gera o artefato |
+| N49 | `web/e2e/a11y.spec.ts` (908 linhas), `capturas.spec.ts`, `api-imitada.ts:47-107`† | Large Class, Duplicated Code: preâmbulo em uns 12 testes, login em 3 arquivos; `capturas` é script sem assert, sempre "skipped"; terceira cópia do contrato | **Extract Function** `e2e/passos.ts`; **Move File** das capturas | M | B | a11y verde |
+| N50 | `pagina-publica.spec.ts:33,38,149-160`, `fluxo.spec.ts:170`, `a11y.spec.ts:44,270-279`† | Fragile Test: classes de uma letra do template, internos do Recharts, `oklch` literal | `data-testid` ou ARIA | M | B | Specs |
+| N51 | `web/src/sistema.test.ts:121-133`, `tokens.test.ts:13`, `sistema.test.ts:163-168`† | `toContain` casa comentário; `acento-fora`, `acento-degradado` e `sem-acento` fora do contrato: a barra de acento some sem teste. Teste histórico do PR 6 | Ampliar a lista; apagar o histórico | P | B | Remover o `@utility` e ver falhar |
+| N52 | `web/src/index.css:230-237`, `:51,113`, `tokens.test.ts:99`† | Dead Code (`prefers-reduced-motion` quase sem alvo), Speculative Generality (`--realce` só apelida `--primaria`), contraste do `apagado` sobre tons 100 fora do teste | Cobrir ou apagar; **Inline** do token | P | B | `tokens.test` |
+| N53 | `cadastro.test.tsx:132`, 8 `setTimeout(res, 50)`, `monitores.test.tsx:187`, 11 `.length).toBeGreaterThan(0)`† | Sleepy Test, assert vácuo ou redundante | Fake timers; `toHaveLength(n)` | M | B | Sabotagem pontual |
+| N54 | `api-falsa.ts:293,367`, `cadastro.test.tsx:18`, `detalhe.test.tsx:12`† | Sem paginação em `/targets` e `/heartbeats`; montagem repetida | **Extract Function** `montarDetalhe`, `montarPainel` | P | B | Tela com 101 itens |
+
+### Deploy, scripts e CI
+
+`scripts/docker-build.sh` não tem defeito†. Variáveis de ambiente e caminhos dos runbooks batem com o
+código†.
+
+| Id | Local | Smell | Refactoring | Custo | Risco | Rede |
+|---|---|---|---|---|---|---|
+| N55 | `deploy/coolify/{app,database}.json` × `compose.prod.yaml`, `compose_test.go:42-62`† | Duplicated Code: o digest do Postgres no `database.json` e o do Caddy no `app.json` não entram no teste; o Dependabot atualiza um lado e o CI fica verde | Ampliar o teste; `TRUSTED_PROXIES` × Caddyfile junto | P | B | Sabotar o digest |
+| N56 | `stillon-entrada:308,688-696`, `deploy.yml`† | Falta de guarda: o verbo `deploy` não recusa um host Coolify e usa os mesmos nomes. **Não confirmado** para onde `VPS_HOST` aponta | Guard Clause por `current.json`, ou a D7 | P | M | Saída não zero antes de qualquer `docker` |
+| N57 | `deploy/ci/test_docker_build.py:105,117,139-151`, `testar-imagem-backup.py:131`† | Weak Assertion: recusa só por código não zero; `docker info` quebrado também passa | Exigir código e mensagem | P | B | Tirar a recusa de `--push` e ver falhar |
+| N58 | `Makefile:9`, `ci.yml:133`, `test_docker_build.py:161`† | Divergent Change: o contrato do docker roda nas duas pernas do Postgres e no `make test`, e baixa `moby/buildkit` por digest manual | `make test-docker-build`, uma perna só | P | B | Job `test` |
+| N59 | `deploy/ci/diagnostico-fixture.py:18,216`, `testar-diagnostico-fixture.py:24-45,176,186`, `test_snapshot_banco_backup.py:17,42-43`, `test_*` × `testar-*`† | Shotgun Surgery (versões do Postgres no regex), Attribute Outside Init, Speculative Generality, Global Data no import, nomes que escondem o F6 | Limpeza em um PR; rodar tudo por `deploy/ci/rodar-testes.sh` | P | B | Os próprios testes |
+| N60 | `scripts/docker-build.sh:109-112`, `Makefile:55-59`† | Speculative Generality: modo `publish` sem chamador; `oci` exige builder sem dizer | Remover, ou testar contra `registry:2` | P | B | `test_docker_build` |
+| N61 | `app.json:15-23,71`, `database.json:16-18`† | Misleading Message: `:?defina X no /opt/stillon/.env`, e as variáveis moram no Coolify | Trocar o texto; muda o commit de infraestrutura | P | B | Nenhuma |
+| N62 | `stillon-entrada:478,521`, `ci.yml:443`† | Divergent Change: o backup vivo mora no arquivo a aposentar, e o `publish` depende do job `vps`. Reforça a ordem da D7 | **Extract Module** antes de apagar | G | A | `testar-imagem-backup.py` |
+
+### Ordem sugerida
+
+F1 e a conferência do F2 antes de tudo: os dois custam menos de 2 h. Depois F6, F7, F8 e F9, que dão
+rede real à Onda 5. O bloco F3, F4, F5 e F16 anda com a D7. Os `N` entram nas ondas que tocam os mesmos
+arquivos; N38 a N54 podem ser uma onda própria de testes, depois da Onda 0.
+
+### Decisões novas para o dono
+
+**D9. Onde mora a revalidação de restauro.** (a) trazê-la para a `main`, com aviso de falha; (b) mantê-la
+na branch `audit/forwarding-review-20261023` e só corrigir a paginação; (c) aposentá-la e ensaiar à mão.
+**Recomendo (a).** Hoje ela roda de uma branch que ninguém olha, por isso a falha durou 3 dias em
+silêncio. O custo é levar para a `main` um script denso, e revisá-lo inteiro.
+
+**D10. O papel da Cloudflare na cadeia.** (a) assumi-la: o primeiro Caddy confia só nas faixas dela, e o
+acesso direto à origem é fechado; (b) tirar o proxy dela e ficar só com DNS; (c) manter como está e aceitar
+balde compartilhado. **Recomendo (a)**, depois de conferir o F2, com o STRIDE refeito. Custa manter a lista
+de faixas e aceitar um terceiro que termina TLS. A (b) tira esse terceiro, e perde o que ela absorve.
+
+**D11. Reação a backup sem prova.** O `ci` protege o código; nada avisa o dono quando a revalidação falha.
+Recomendo que a falha entre no vigia, ou num check da `main`. Depende da D9.
+
+### O que ficou sem auditar nesta passada
+
+- Nada rodou: suítes, Playwright, Docker. F7 e F14 são leitura, sem execução.
+- A configuração do primeiro Caddy e o estado da VPS: não entrei nela, e por isso o F2, o N37 e o N56 estão
+  marcados como não confirmados. Na VPS: `docker network inspect edge` e o `Caddyfile` em `/srv/edge`, se ele ainda existir.
+- `docs/deploy/vps.md`: lido em trechos; os blocos 1, 2, 4.1 a 4.7, 5, 6, 7.2, 7.3 e 8 só por `grep`†.
+- `deploy/coolify/release/receiver.py`: fora, pelo descarte registrado. `deploy/backup/` (fora do `backup.go`) e
+  o restante do `stillon-entrada` e do `checar-vps.sh`: só os trechos citados.
+- `capturas.spec.ts`, `renderizar.test.tsx`, `esperar-navegacao.test.tsx`, `fontes.test.ts`, `filtros.test.ts`,
+  `grupos.test.ts`, `ordem.test.ts`, `esquema.test.ts` e `cliente.test.ts`: não lidos.
+- Testes Go: métrica e amostra, não leitura integral de 38 mil linhas.
+- O código de #177 e a duração real dos e2e.
