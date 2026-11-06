@@ -27,7 +27,7 @@ decisão registrada). A ordem dos "fazer" é a do mais útil ao menos útil, com
 | Ordenação da tabela | falta: gravidade e nome, fixos | **fazer, depois do corte.** Útil, mas a ordem por gravidade já responde à pergunta do painel; fica para a próxima rodada |
 | Corpo do ping guardado com limite | diferente (D14) | **decisão do dono**, abaixo |
 | GET e HEAD no ping | diferente (D6) | **decisão do dono**, abaixo |
-| Badge de estado | falta | **não fazer.** Superfície pública nova com segredo próprio, e a página de status já publica o estado. Ver abaixo |
+| Badge de estado | falta | **não fazer.** Superfície pública nova com segredo próprio, e a página de status já publica o estado dos alvos. Ver abaixo |
 | Sinal de log, sem mudar o estado (`/log`) | falta | **não fazer.** Sem corpo (D14), o evento só diria "algo aconteceu". Reavaliar junto de D14 |
 | Filtro por palavra-chave no corpo | falta | **não fazer.** Depende de D14, e um `if` na tarefa com `/fail` resolve |
 | ID de execução (`rid`) para tarefas concorrentes | falta | **não fazer.** Exige guardar várias execuções abertas por heartbeat. Sem pedido real; a alternativa é um heartbeat por tarefa |

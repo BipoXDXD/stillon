@@ -370,7 +370,6 @@ func TestHeartbeatConstraints(t *testing.T) {
 	}
 }
 
-// Apagar o dono leva heartbeats, eventos e incidentes, como no heartbeat.
 // O código de saída diz o sinal, e o banco não aceita um que o contradiga.
 func TestHeartbeatEventExitCodeMatchesTheKind(t *testing.T) {
 	pool := testdb.New(t)
@@ -409,6 +408,7 @@ func TestHeartbeatEventExitCodeMatchesTheKind(t *testing.T) {
 	}
 }
 
+// Apagar o dono leva heartbeats, eventos e incidentes, como no heartbeat.
 func TestDeletingTheOwnerCascades(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
