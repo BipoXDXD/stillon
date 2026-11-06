@@ -298,6 +298,20 @@ for caminho in /.github/CODEOWNERS /.github/workflows/ /.github/workflows/revali
     grep -Eq "^${caminho}[[:space:]]+@" "$DONOS" 2>/dev/null || falhar "$DONOS: sem dono para $caminho"
 done
 
+# Um filtro paths que cita arquivo inexistente nunca dispara, e o actionlint não
+# vê: o check daquele arquivo some em silêncio. Só os caminhos exatos: glob e
+# negação não apontam para um arquivo.
+caminhos_exatos() {
+    awk '/^ +paths(-ignore)?:[[:space:]]*$/ { d = 1; next }
+        d && /^ +- / { sub(/^ +- /, ""); sub(/[[:space:]]+#.*$/, ""); gsub(/["\047]/, ""); print; next }
+        d { d = 0 }' "$1" | grep -Ev '[]*?[!+]' || true
+}
+for f in "$WF"/*.yml; do
+    for caminho in $(caminhos_exatos "$f"); do
+        [ -e "$caminho" ] || falhar "$f: o filtro paths cita $caminho, que não existe"
+    done
+done
+
 if [ "$falhas" -gt 0 ]; then
     echo "$falhas falha(s) nos workflows" >&2
     exit 1
