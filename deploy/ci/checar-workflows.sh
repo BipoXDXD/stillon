@@ -263,15 +263,17 @@ perms=$(printf '%s\n' "$job_restore" | sed -n '/^    permissions:/,/^    [a-z]/p
 perms=$(printf '%s\n' "$job_avisar" | sed -n '/^    permissions:/,/^    [a-z]/p' | grep -E '^      ' | tr -d ' ' | sort | tr '\n' ' ')
 [ "$perms" = "contents:read issues:write " ] || falhar "$REVALIDAR: avisar com permissions \"$perms\""
 # Toda forma de chegar aos secrets, não só secrets.NOME: toJSON(secrets),
-# secrets['X'] e secrets: inherit também entregam a chave.
+# secrets['X'] e secrets: inherit também entregam a chave. As expressões do
+# Actions não diferenciam maiúsculas, e o GitHub lê .yml e .yaml.
 sem_comentario() { grep -Ev '^[[:space:]]*#' "$@"; }
+todos_os_workflows() { find "$WF" -type f \( -iname '*.yml' -o -iname '*.yaml' \) -exec cat {} +; }
 CITACAO_DA_CHAVE='^ +AGE_IDENTITY: \$\{\{ secrets\.STILLON_BACKUP_AGE_IDENTITY \}\}$'
-if sem_comentario "$REVALIDAR" | grep -E '\bsecrets\b' | grep -Ev "$CITACAO_DA_CHAVE" >&2; then
+if sem_comentario "$REVALIDAR" | grep -iE '\bsecrets\b' | grep -Ev "$CITACAO_DA_CHAVE" >&2; then
     falhar "$REVALIDAR: acesso a secrets fora da citação única da chave do age (acima)"
 fi
 n=$(printf '%s\n' "$job_restore" | sem_comentario | grep -Ec "$CITACAO_DA_CHAVE" || true)
 [ "$n" = 1 ] || falhar "$REVALIDAR: a chave do age aparece $n vez(es) no job restore, queria uma"
-if printf '%s\n' "$job_avisar" | sem_comentario | grep -Eq '\bsecrets\b'; then
+if printf '%s\n' "$job_avisar" | sem_comentario | grep -iEq '\bsecrets\b'; then
     falhar "$REVALIDAR: o job avisar escreve em issues e não pode ver segredo"
 fi
 if printf '%s\n' "$job_avisar" | sem_comentario | grep -Eq '^[[:space:]]*environment:'; then
@@ -279,8 +281,10 @@ if printf '%s\n' "$job_avisar" | sem_comentario | grep -Eq '^[[:space:]]*environ
 fi
 # Quem cita o environment da chave pode ler a chave: só o job restore cita.
 AMBIENTE_DA_CHAVE=forwarding-audit-restore-20261023
-n=$(sem_comentario -h "$WF"/*.yml | grep -c "$AMBIENTE_DA_CHAVE" || true)
+n=$(todos_os_workflows | sem_comentario | grep -ic "$AMBIENTE_DA_CHAVE" || true)
 [ "$n" = 1 ] || falhar "$WF: $AMBIENTE_DA_CHAVE citado $n vez(es), queria uma"
+n=$(todos_os_workflows | sem_comentario | grep -ic 'STILLON_BACKUP_AGE_IDENTITY' || true)
+[ "$n" = 1 ] || falhar "$WF: a chave do age citada $n vez(es), queria uma"
 printf '%s\n' "$job_restore" | grep -qx "    environment: $AMBIENTE_DA_CHAVE" ||
     falhar "$REVALIDAR: o job restore não está no environment da chave"
 printf '%s\n' "$job_avisar" | grep -q "needs\\.restore\\.result != 'skipped'" ||
@@ -289,7 +293,8 @@ if grep -En '(^|[^.])\bssh[[:space:]]|deploy/ci/vps\.sh|secrets\.VPS' "$REVALIDA
     falhar "$REVALIDAR: o ensaio não fala com a VPS"
 fi
 DONOS=.github/CODEOWNERS
-for caminho in /.github/workflows/revalidar-backup.yml /deploy/backup/ /deploy/ci/checar-workflows.sh; do
+for caminho in /.github/CODEOWNERS /.github/workflows/ /.github/workflows/revalidar-backup.yml \
+    /deploy/backup/ /deploy/ci/checar-workflows.sh; do
     grep -Eq "^${caminho}[[:space:]]+@" "$DONOS" 2>/dev/null || falhar "$DONOS: sem dono para $caminho"
 done
 
