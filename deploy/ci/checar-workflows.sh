@@ -262,12 +262,27 @@ perms=$(printf '%s\n' "$job_restore" | sed -n '/^    permissions:/,/^    [a-z]/p
 [ "$perms" = "actions:read contents:read " ] || falhar "$REVALIDAR: restore com permissions \"$perms\", queria só leitura"
 perms=$(printf '%s\n' "$job_avisar" | sed -n '/^    permissions:/,/^    [a-z]/p' | grep -E '^      ' | tr -d ' ' | sort | tr '\n' ' ')
 [ "$perms" = "contents:read issues:write " ] || falhar "$REVALIDAR: avisar com permissions \"$perms\""
-segredos=$(grep -Eo 'secrets\.[A-Za-z_]+' "$REVALIDAR" | sort -u | tr '\n' ' ')
-[ "$segredos" = "secrets.STILLON_BACKUP_AGE_IDENTITY " ] || falhar "$REVALIDAR: secrets \"$segredos\", queria só a chave do age"
-printf '%s\n' "$job_restore" | grep -q 'secrets\.STILLON_BACKUP_AGE_IDENTITY' || falhar "$REVALIDAR: a chave do age saiu do job restore"
-if printf '%s\n' "$job_avisar" | grep -q 'secrets\.'; then
+# Toda forma de chegar aos secrets, não só secrets.NOME: toJSON(secrets),
+# secrets['X'] e secrets: inherit também entregam a chave.
+sem_comentario() { grep -Ev '^[[:space:]]*#' "$@"; }
+CITACAO_DA_CHAVE='^ +AGE_IDENTITY: \$\{\{ secrets\.STILLON_BACKUP_AGE_IDENTITY \}\}$'
+if sem_comentario "$REVALIDAR" | grep -E '\bsecrets\b' | grep -Ev "$CITACAO_DA_CHAVE" >&2; then
+    falhar "$REVALIDAR: acesso a secrets fora da citação única da chave do age (acima)"
+fi
+n=$(printf '%s\n' "$job_restore" | sem_comentario | grep -Ec "$CITACAO_DA_CHAVE" || true)
+[ "$n" = 1 ] || falhar "$REVALIDAR: a chave do age aparece $n vez(es) no job restore, queria uma"
+if printf '%s\n' "$job_avisar" | sem_comentario | grep -Eq '\bsecrets\b'; then
     falhar "$REVALIDAR: o job avisar escreve em issues e não pode ver segredo"
 fi
+if printf '%s\n' "$job_avisar" | sem_comentario | grep -Eq '^[[:space:]]*environment:'; then
+    falhar "$REVALIDAR: o job avisar escreve em issues e não pode entrar num environment"
+fi
+# Quem cita o environment da chave pode ler a chave: só o job restore cita.
+AMBIENTE_DA_CHAVE=forwarding-audit-restore-20261023
+n=$(sem_comentario -h "$WF"/*.yml | grep -c "$AMBIENTE_DA_CHAVE" || true)
+[ "$n" = 1 ] || falhar "$WF: $AMBIENTE_DA_CHAVE citado $n vez(es), queria uma"
+printf '%s\n' "$job_restore" | grep -qx "    environment: $AMBIENTE_DA_CHAVE" ||
+    falhar "$REVALIDAR: o job restore não está no environment da chave"
 printf '%s\n' "$job_avisar" | grep -q "needs\\.restore\\.result != 'skipped'" ||
     falhar "$REVALIDAR: o aviso tem de rodar também quando o restore falha"
 if grep -En '(^|[^.])\bssh[[:space:]]|deploy/ci/vps\.sh|secrets\.VPS' "$REVALIDAR" >&2; then

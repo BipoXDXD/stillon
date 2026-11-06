@@ -8,11 +8,14 @@ import json
 from pathlib import Path
 import sys
 import unittest
+import urllib.request
 from urllib.parse import parse_qs, urlparse
 import zipfile
 
 
 AGORA = datetime.datetime(2026, 11, 6, 16, 0, tzinfo=datetime.timezone.utc)
+REPOSITORIO = 1384500257
+FORK = 999
 
 
 def carregar(nome):
@@ -28,13 +31,13 @@ ensaio = carregar("revalidar_restauro")
 aviso = carregar("avisar_revalidacao")
 
 
-def artifact(nome="stillon-backup-1", criado="2026-11-06T14:23:51Z", ramo="main", expirado=False):
+def artifact(nome="stillon-backup-1", criado="2026-11-06T14:23:51Z", ramo="main", expirado=False, origem=REPOSITORIO):
     return {
         "id": 7,
         "name": nome,
         "expired": expirado,
         "created_at": criado,
-        "workflow_run": {"id": 1, "head_branch": ramo},
+        "workflow_run": {"id": 1, "head_branch": ramo, "repository_id": REPOSITORIO, "head_repository_id": origem},
     }
 
 
@@ -109,6 +112,39 @@ class TesteEscolha(unittest.TestCase):
             ensaio.escolher_backup(recusados)
 
 
+    def test_fork_com_branch_main_nao_entra_mesmo_sendo_o_mais_novo(self):
+        # head_branch é só um nome: um fork pode ter a sua própria main.
+        nosso = artifact("stillon-backup-1", "2026-11-05T14:46:11Z")
+        do_fork = artifact("stillon-backup-2", "2026-11-06T14:23:51Z", origem=FORK)
+        self.assertEqual(ensaio.escolher_backup([do_fork, nosso]), nosso)
+
+    def test_so_o_fork_e_o_mesmo_que_nao_ter_backup(self):
+        with self.assertRaisesRegex(RuntimeError, "^no_stored_backup$"):
+            ensaio.escolher_backup([artifact(origem=FORK)])
+
+    def test_sem_repositorio_de_origem_nao_conta_como_nosso(self):
+        for campos in ({}, {"head_branch": "main"}, {"head_branch": "main", "repository_id": REPOSITORIO}):
+            with self.subTest(campos=campos):
+                with self.assertRaisesRegex(RuntimeError, "^no_stored_backup$"):
+                    ensaio.escolher_backup([{**artifact(), "workflow_run": campos}])
+
+    def test_ids_ausentes_nos_dois_lados_nao_conferem(self):
+        sem_ids = {"head_branch": "main", "repository_id": None, "head_repository_id": None}
+        with self.assertRaisesRegex(RuntimeError, "^no_stored_backup$"):
+            ensaio.escolher_backup([{**artifact(), "workflow_run": sem_ids}])
+
+    def test_workflow_run_nulo_nao_derruba_a_escolha(self):
+        # O run de um artifact antigo pode ter sumido: a API devolve null.
+        nosso = artifact()
+        self.assertEqual(ensaio.escolher_backup([{**artifact("stillon-backup-2"), "workflow_run": None}, nosso]), nosso)
+
+    def test_sem_workflow_run_nao_derruba_a_escolha(self):
+        sem_run = artifact("stillon-backup-2")
+        del sem_run["workflow_run"]
+        nosso = artifact()
+        self.assertEqual(ensaio.escolher_backup([sem_run, nosso]), nosso)
+
+
 class TesteIdade(unittest.TestCase):
     def conferir(self, criado):
         return ensaio.conferir_idade(artifact(criado=criado), AGORA)
@@ -132,10 +168,29 @@ class TesteIdade(unittest.TestCase):
 
 
 class TesteOrigem(unittest.TestCase):
-    BOM = {"conclusion": "success", "head_branch": "main", "path": ".github/workflows/backup.yml"}
+    BOM = {
+        "conclusion": "success",
+        "event": "schedule",
+        "head_branch": "main",
+        "path": ".github/workflows/backup.yml",
+    }
 
     def test_aceita_o_run_de_backup_da_main(self):
         ensaio.conferir_origem(self.BOM)
+
+    def test_aceita_o_disparo_manual(self):
+        ensaio.conferir_origem({**self.BOM, "event": "workflow_dispatch"})
+
+    def test_recusa_evento_que_um_pr_consegue_provocar(self):
+        for evento in ("pull_request", "pull_request_target", "push", "workflow_run", ""):
+            with self.subTest(evento=evento):
+                with self.assertRaisesRegex(RuntimeError, "^untrusted_backup_run$"):
+                    ensaio.conferir_origem({**self.BOM, "event": evento})
+
+    def test_recusa_run_sem_evento(self):
+        sem_evento = {k: v for k, v in self.BOM.items() if k != "event"}
+        with self.assertRaisesRegex(RuntimeError, "^untrusted_backup_run$"):
+            ensaio.conferir_origem(sem_evento)
 
     def test_recusa_qualquer_campo_divergente(self):
         for campo, valor in (
@@ -205,6 +260,32 @@ class TesteMetadados(unittest.TestCase):
         jobs = [{"id": 2, "name": "backup", "conclusion": "failure"}]
         with self.assertRaisesRegex(RuntimeError, "^backup_job_missing$"):
             ensaio.job_do_backup(jobs)
+
+
+class TesteRedirecionamento(unittest.TestCase):
+    ORIGEM = "https://api.github.com/repos/x/actions/artifacts/1/zip"
+
+    def redirecionar(self, destino):
+        pedido = urllib.request.Request(self.ORIGEM, headers={"Authorization": "Bearer segredo", "User-Agent": "x"})
+        return ensaio.RedirecionamentoSeguro().redirect_request(pedido, None, 302, "Found", {}, destino)
+
+    def test_fora_da_api_o_token_nao_vai_junto(self):
+        novo = self.redirecionar("https://blob.exemplo.net/arquivo.zip")
+        self.assertFalse(novo.has_header("Authorization"))
+        self.assertEqual(novo.full_url, "https://blob.exemplo.net/arquivo.zip")
+
+    def test_o_resto_do_pedido_continua(self):
+        self.assertEqual(self.redirecionar("https://blob.exemplo.net/a").get_header("User-agent"), "x")
+
+    def test_subdominio_parecido_nao_conta_como_a_api(self):
+        self.assertFalse(self.redirecionar("https://api.github.com.exemplo.net/a").has_header("Authorization"))
+
+    def test_dentro_da_api_o_token_continua(self):
+        self.assertTrue(self.redirecionar("https://api.github.com/outro").has_header("Authorization"))
+
+    def test_recusa_redirecionamento_sem_https(self):
+        with self.assertRaisesRegex(RuntimeError, "^insecure_redirect$"):
+            self.redirecionar("http://api.github.com/outro")
 
 
 URL = "https://github.com/BipoXDXD/stillon/actions/runs/1"

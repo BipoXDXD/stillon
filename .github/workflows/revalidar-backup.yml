@@ -3,9 +3,11 @@ name: revalidar-backup
 # e o confere com deploy/backup/verificar.sql. Não fala com a VPS. Falhar aqui
 # significa que falta prova de que o backup volta, mesmo com o `backup` verde.
 #
-# A chave privada do age mora num secret do environment abaixo, que só aceita
-# a main: ela nunca chega a um PR. O nome vem da revalidação que nasceu na
-# branch de auditoria; um environment novo exigiria recadastrar a chave.
+# A chave privada do age mora num secret do environment abaixo, que tem de
+# aceitar a main. PR nenhum a lê, mas o que entra na main pode lê-la: ela exige
+# PR e checks, sem aprovador, e um merge com --admin pula os checks. O nome vem
+# da revalidação que nasceu na branch de auditoria; um environment novo exigiria
+# recadastrar a chave.
 #
 # Horário: o `backup` agendado para 06:17 UTC chega a rodar até umas 16:15 UTC.
 # Às 22:47 UTC o backup do dia já existe, e a política de 26 h do script também

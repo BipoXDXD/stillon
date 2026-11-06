@@ -36,6 +36,9 @@ TETO_DE_PAGINAS = 100
 IDADE_MAXIMA_S = 26 * 3600
 PREFIXO_DO_BACKUP = "stillon-backup-"
 WORKFLOW_DO_BACKUP = ".github/workflows/backup.yml"
+# Os gatilhos do backup.yml. Um pull_request de fork roda o mesmo caminho, com
+# conteúdo alheio, e guarda artifact neste repositório.
+EVENTOS_DO_BACKUP = {"schedule", "workflow_dispatch"}
 ROTULO = "io.stillon.audit"
 VALOR_DO_ROTULO = "github-stored-restore"
 ESPERA_DO_BANCO_S = 60
@@ -95,10 +98,16 @@ def escolher_backup(artifacts):
 
 
 def e_backup_da_main(artifact):
+    # head_branch é só um nome: um fork com a sua própria main passaria por ele.
+    # A API devolve workflow_run null quando o run já não existe.
+    run = artifact.get("workflow_run") or {}
+    repositorio = run.get("repository_id")
     return (
         not artifact["expired"]
         and artifact["name"].startswith(PREFIXO_DO_BACKUP)
-        and artifact.get("workflow_run", {}).get("head_branch") == "main"
+        and run.get("head_branch") == "main"
+        and repositorio is not None
+        and run.get("head_repository_id") == repositorio
     )
 
 
@@ -114,7 +123,13 @@ def conferir_idade(artifact, agora):
 
 
 def conferir_origem(run):
-    if run["conclusion"] != "success" or run["head_branch"] != "main" or run["path"] != WORKFLOW_DO_BACKUP:
+    confiavel = (
+        run["conclusion"] == "success"
+        and run["head_branch"] == "main"
+        and run["path"] == WORKFLOW_DO_BACKUP
+        and run.get("event") in EVENTOS_DO_BACKUP
+    )
+    if not confiavel:
         raise RuntimeError("untrusted_backup_run")
 
 
