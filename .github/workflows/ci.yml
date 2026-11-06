@@ -203,6 +203,8 @@ jobs:
             deploy/vps/initdb.sh deploy/backup/backup.sh
       - name: checagens dos workflows
         run: sh deploy/ci/checar-workflows.sh
+      - name: ensaio de restauração e aviso, sem rede
+        run: python3 -m unittest discover -s deploy/ci -p test_revalidar_backup.py -v
       - name: collector das fixtures contra Docker falso
         run: python3 deploy/ci/testar-diagnostico-fixture.py
       - name: imagem aprovada do backup e metadados root reais

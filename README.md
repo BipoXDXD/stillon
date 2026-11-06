@@ -331,7 +331,11 @@ dono.
   "Decisões de segurança").
 - **Backup:** dump lógico diário, feito na VPS e restaurado num banco descartável e conferido
   (dono das tabelas, RLS com `FORCE`, contagens, partições) antes de sair **já cifrado** com
-  `age` (a chave privada fica só com o dono) para um artifact de 30 dias. Uma checagem que falha
+  `age` (a chave privada fica com o dono e num secret de environment, fora da VPS) para um
+  artifact de 30 dias. O ensaio diário do [`revalidar-backup`](.github/workflows/revalidar-backup.yml)
+  restaura o artifact guardado num Postgres sem rede. Ele depende de o environment da chave aceitar
+  a `main`: esse environment tem de aceitá-la, e até lá o ensaio falha. Quando falha, abre uma issue
+  para o dono, que fecha sozinha quando o ensaio volta a passar. Uma checagem que falha
   sai com código 3; disco acima de 85% sai com 4 (o dump é guardado mesmo assim, e o job fica
   vermelho). Referência e dump usam snapshot comum; a fase supervisionada tem orçamento de
   600 s, além da graça de encerramento. Isso não limita todo o restauro nem substitui PITR.

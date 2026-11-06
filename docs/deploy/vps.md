@@ -3030,6 +3030,21 @@ houve backup naquele dia, e o GitHub não manda e-mail por isso. A causa usual �
 **Confira:** o passo 5 funcionou. Anote a data do ensaio no gerenciador: ele se repete a cada
 trimestre (bloco 10).
 
+### Ensaio automático: `revalidar-backup`
+
+O workflow [`revalidar-backup`](../../.github/workflows/revalidar-backup.yml) repete todo dia, sem
+você, a parte do ensaio que não precisa da VPS: baixa o artifact mais recente e restaura num
+Postgres sem rede, com [`revalidar_restauro.py`](../../deploy/backup/revalidar_restauro.py). Ele não
+substitui o ensaio trimestral acima, que testa também a sua cópia da chave.
+
+Para isso, a chave privada do `age` está também no secret `STILLON_BACKUP_AGE_IDENTITY`, no
+environment `forwarding-audit-restore-20261023`. Esse environment tem de aceitar a `main`; se não
+aceitar, o job falha sem ver a chave. Trocar a chave do `age` exige atualizar esse secret.
+
+Quando o ensaio falha, abre uma issue com o título "Ensaio de restauração do backup falhou",
+atribuída a você, e o job fica vermelho. Falhas seguintes viram comentário nela, e o primeiro ensaio
+verde a fecha. A causa está no log do run, como um código curto (por exemplo, `no_stored_backup`).
+
 ### 7.3 A segunda camada: backup semanal da Hostinger
 
 **Confira** no painel, **Backups & Monitoring → Snapshots & Backups**, que os backups automáticos
@@ -4482,7 +4497,7 @@ Registro: o repositório ficou público em 2026-10-14, e o pacote do GHCR segue 
 > **Atualização (2026-10-14):** o repositório **já ficou público**, e os itens 1 a 8 abaixo valem
 > como lista do que isso mudou. A decisão do dono sobre o item 7: **os artifacts do backup ficam
 > públicos**, porque são cifrados com o `age` e a confidencialidade depende só da chave privada,
-> que só o dono tem. Custo aceito: tamanho, data e frequência do dump, e as contagens do log do
+> que fica com o dono e no secret do ensaio automático (bloco 7). Custo aceito: tamanho, data e frequência do dump, e as contagens do log do
 > `backup` (versão do schema, usuários, alvos, disco), ficam à vista de qualquer conta do GitHub.
 > Alternativas, se isso incomodar: voltar o repositório para privado (com custo de minutos de
 > Actions) ou reduzir o `retention-days`. O pacote do GHCR tem visibilidade própria e continua

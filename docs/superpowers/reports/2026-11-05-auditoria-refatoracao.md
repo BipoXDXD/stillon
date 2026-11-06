@@ -341,6 +341,13 @@ na branch `audit/forwarding-review-20261023` e só corrigir a paginação; (c) a
 **Recomendo (a).** Hoje ela roda de uma branch que ninguém olha, por isso a falha durou 3 dias em
 silêncio. O custo é levar para a `main` um script denso, e revisá-lo inteiro.
 
+**Registro (2026-11-06): decidida a opção (a), no PR #181.** Com a ampliação do environment para a
+`main`, o controle de acesso à chave privada do `age` passa a ser **a revisão do merge**: o que entra
+na `main` pode lê-la. Hoje essa revisão não é uma barreira técnica. A `main` exige PR e 9 checks, com
+0 aprovações, sem revisão de code owner, e um merge com `--admin` pula os checks. O `CODEOWNERS` do
+PR só marca os donos, e o repositório tem um único colaborador. A janela entre ampliar o environment
+e tirar dele a branch de auditoria, que não tem ruleset, é o momento mais exposto.
+
 **D10. O papel da Cloudflare na cadeia.** (a) assumi-la: o primeiro Caddy confia só nas faixas dela, e o
 acesso direto à origem é fechado; (b) tirar o proxy dela e ficar só com DNS; (c) manter como está e aceitar
 balde compartilhado. **Recomendo (a)**, depois de conferir o F2, com o STRIDE refeito. Custa manter a lista
