@@ -22,8 +22,9 @@ function pedir(metodo: string, caminho: string, corpo?: unknown) {
 }
 
 describe('retomar um heartbeat (statusOf do servidor)', () => {
-  async function retomar(p: Parameters<typeof heartbeat>[0]) {
+  async function retomar(p: Parameters<typeof heartbeat>[0], ultimoSinal?: 'start' | 'success' | 'fail') {
     const falsa = apiLogada()
+    if (ultimoSinal) falsa.estado.ultimosSinais.set('h1', ultimoSinal)
     falsa.estado.heartbeats = [heartbeat({ id: 'h1', enabled: false, state: 'paused', ...p })]
     const resposta = await pedir('PATCH', '/heartbeats/h1', { enabled: true })
     expect(resposta.status).toBe(200)
@@ -38,12 +39,34 @@ describe('retomar um heartbeat (statusOf do servidor)', () => {
 
   it('só com o sinal de início fica aguardando', async () => {
     const instante = '2026-09-24T11:00:00Z'
-    const h = await retomar({ ...nuncaTerminou, last_ping_at: instante, last_start_at: instante })
+    const h = await retomar({ ...nuncaTerminou, last_ping_at: instante, last_start_at: instante }, 'start')
     expect(h.state).toBe('waiting')
   })
 
+  it('o início aberto esquecido na retomada não vira execução terminada', async () => {
+    const instante = '2026-09-24T11:00:00Z'
+    const falsa = apiLogada()
+    falsa.estado.ultimosSinais.set('h1', 'start')
+    falsa.estado.heartbeats = [
+      heartbeat({ id: 'h1', enabled: false, state: 'paused', ...nuncaTerminou, last_ping_at: instante, last_start_at: instante }),
+    ]
+    await pedir('PATCH', '/heartbeats/h1', { enabled: true })
+    await pedir('PATCH', '/heartbeats/h1', { enabled: false })
+    const resposta = await pedir('PATCH', '/heartbeats/h1', { enabled: true })
+    expect(await resposta.json()).toMatchObject({ state: 'waiting', last_start_at: null })
+  })
+
   it('com um sinal de falha já terminou uma execução', async () => {
-    expect((await retomar({ ...nuncaTerminou, last_ping_at: '2026-09-24T11:00:00Z' })).state).toBe('up')
+    expect((await retomar({ ...nuncaTerminou, last_ping_at: '2026-09-24T11:00:00Z' }, 'fail')).state).toBe('up')
+  })
+
+  it('um sucesso antigo vale mesmo com o início por último', async () => {
+    expect((await retomar({}, 'start')).state).toBe('up')
+  })
+
+  it('o last_signal fica no servidor: não sai na resposta', async () => {
+    const h = await retomar({}, 'success')
+    expect(h).not.toHaveProperty('last_signal')
   })
 
   it('com um sucesso fica em dia', async () => {
@@ -83,6 +106,121 @@ describe('retomar um heartbeat (statusOf do servidor)', () => {
     falsa.estado.heartbeats = [heartbeat({ id: 'h1', enabled: false, state: 'paused' })]
     const resposta = await pedir('PATCH', '/heartbeats/h1', { name: 'Novo' })
     expect(await resposta.json()).toMatchObject({ name: 'Novo', state: 'paused' })
+  })
+})
+
+describe('o estado depois de um PATCH (statusOf do servidor)', () => {
+  const PRAZO_PASSADO = '2026-09-24T11:00:00Z'
+
+  async function renomear(p: Parameters<typeof heartbeat>[0], corpo: object = { name: 'Novo' }) {
+    const falsa = apiLogada()
+    falsa.estado.heartbeats = [heartbeat({ id: 'h1', ...p })]
+    const resposta = await pedir('PATCH', '/heartbeats/h1', corpo)
+    expect(resposta.status).toBe(200)
+    return resposta.json() as Promise<ReturnType<typeof heartbeat>>
+  }
+
+  it('renomear não apaga a falha', async () => {
+    expect((await renomear({ state: 'failing', deadline_at: PRAZO_PASSADO })).state).toBe('failing')
+  })
+
+  it('prazo vencido é atraso, seja qual for o estado guardado', async () => {
+    expect((await renomear({ state: 'up', deadline_at: PRAZO_PASSADO })).state).toBe('late')
+  })
+
+  it('o prazo que vence exatamente agora já é atraso (!deadline.After(now))', async () => {
+    expect((await renomear({ state: 'up', deadline_at: '2026-09-24T12:00:00Z' })).state).toBe('late')
+  })
+
+  it('o incidente aberto é atraso mesmo com prazo futuro', async () => {
+    expect((await renomear({ state: 'up', open_incident_id: 'inc-1' })).state).toBe('late')
+  })
+
+  it('quem nunca terminou segue aguardando', async () => {
+    const h = await renomear({ state: 'waiting', last_ping_at: null, last_success_at: null })
+    expect(h.state).toBe('waiting')
+  })
+
+  it('editar o agendamento de quem atrasou move o prazo e tira o atraso', async () => {
+    const h = await renomear({ state: 'late', deadline_at: PRAZO_PASSADO }, { schedule: { kind: 'period', period_sec: 7200 } })
+    expect(h.state).toBe('up')
+    expect(new Date(h.deadline_at).getTime()).toBeGreaterThan(new Date('2026-09-24T12:00:00Z').getTime())
+  })
+
+  it('editar a tolerância também move o prazo', async () => {
+    expect((await renomear({ state: 'late', deadline_at: PRAZO_PASSADO }, { grace_sec: 60 })).state).toBe('up')
+  })
+
+  it('reenviar o mesmo agendamento não move o prazo', async () => {
+    const h = await renomear(
+      { state: 'late', deadline_at: PRAZO_PASSADO },
+      { schedule: { kind: 'period', period_sec: 86400 }, grace_sec: 900 },
+    )
+    expect(h).toMatchObject({ state: 'late', deadline_at: PRAZO_PASSADO })
+  })
+
+  it('o mesmo agendamento com as chaves em outra ordem não move o prazo', async () => {
+    const h = await renomear(
+      { state: 'late', deadline_at: PRAZO_PASSADO, schedule: { kind: 'cron', expr: '0 6 * * *', timezone: 'UTC' } },
+      { schedule: { timezone: 'UTC', expr: '0 6 * * *', kind: 'cron' } },
+    )
+    expect(h).toMatchObject({ state: 'late', deadline_at: PRAZO_PASSADO })
+  })
+
+  const CRON = { kind: 'cron', expr: '0 6 * * *', timezone: 'UTC' } as const
+
+  it.each([
+    ['period_sec', { kind: 'period', period_sec: 86400 }, { kind: 'period', period_sec: 7200 }],
+    ['expr', CRON, { ...CRON, expr: '0 7 * * *' }],
+    ['timezone', CRON, { ...CRON, timezone: 'America/Sao_Paulo' }],
+    ['kind', { kind: 'period', period_sec: 86400 }, { kind: 'cron', period_sec: 86400 }],
+  ] as const)('mudar só %s move o prazo', async (_campo, schedule, novo) => {
+    const h = await renomear({ state: 'late', deadline_at: PRAZO_PASSADO, schedule }, { schedule: novo })
+    expect(h.state).toBe('up')
+    expect(h.deadline_at).not.toBe(PRAZO_PASSADO)
+  })
+
+  it('a tarefa recém-criada fica aguardando depois de editada', async () => {
+    apiLogada()
+    const criada = await pedir('POST', '/heartbeats', { name: 'Nova', schedule: { kind: 'period', period_sec: 3600 } })
+    const { id } = (await criada.json()) as { id: string }
+    const resposta = await pedir('PATCH', `/heartbeats/${id}`, { name: 'Nova editada' })
+    expect(await resposta.json()).toMatchObject({ state: 'waiting' })
+  })
+})
+
+describe.each([
+  ['/targets', 'alvos' as const, (id: string) => alvo({ id })],
+  ['/heartbeats', 'heartbeats' as const, (id: string) => heartbeat({ id })],
+])('paginação de %s (o servidor dá next_cursor com a página cheia)', (rota, colecao, criar) => {
+  async function listar(consulta: string) {
+    const resposta = await pedir('GET', `${rota}${consulta}`)
+    expect(resposta.status).toBe(200)
+    return (await resposta.json()) as { items: { id: string }[]; next_cursor?: string }
+  }
+
+  function comItens(quantidade: number) {
+    const falsa = apiLogada()
+    const itens = Array.from({ length: quantidade }, (_, i) => criar(`i-${i + 1}`))
+    if (colecao === 'alvos') falsa.estado.alvos = itens as ReturnType<typeof alvo>[]
+    else falsa.estado.heartbeats = itens as ReturnType<typeof heartbeat>[]
+  }
+
+  it('respeita o limit e aponta o cursor quando a página vem cheia', async () => {
+    comItens(3)
+    const primeira = await listar('?limit=2')
+    expect(primeira.items.map((i) => i.id)).toEqual(['i-1', 'i-2'])
+    expect(primeira.next_cursor).toBe('i-2')
+  })
+
+  it('a página seguinte começa depois do cursor', async () => {
+    comItens(3)
+    expect((await listar('?limit=2&cursor=i-2')).items.map((i) => i.id)).toEqual(['i-3'])
+  })
+
+  it('página incompleta não traz next_cursor', async () => {
+    comItens(1)
+    expect(await listar('?limit=2')).not.toHaveProperty('next_cursor')
   })
 })
 

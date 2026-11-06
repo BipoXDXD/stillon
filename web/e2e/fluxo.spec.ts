@@ -10,7 +10,8 @@ test.use({ actionTimeout: 15_000 })
 // trás, e contra uma pilha externa eles se acumulariam até o teto de 100
 // (reconciliação, item 4). O afterEach o procura pelo nome, pela API, e o
 // apaga; no caminho feliz o próprio teste já o apagou, e a busca não acha nada.
-type Sobra = { rota: 'targets' | 'heartbeats'; nome: string }
+// São vários nomes enquanto o teste não souber qual deles o servidor guardou.
+type Sobra = { rota: 'targets' | 'heartbeats'; nomes: string[] }
 let sobra: Sobra | null = null
 
 // Os limitadores (ver abaixo) respondem 429 sem Retry-After. A limpeza roda
@@ -42,8 +43,8 @@ let nomeEmLimpeza = ''
 
 // Um login só: o token dele serve à lista e a todos os DELETE (o balde do
 // login é o mais apertado, 5 de burst por IP).
-async function apagarPeloNome(request: APIRequestContext, email: string, senha: string, { rota, nome }: Sobra) {
-  nomeEmLimpeza = nome
+async function apagarPeloNome(request: APIRequestContext, email: string, senha: string, { rota, nomes }: Sobra) {
+  nomeEmLimpeza = nomes.join('" ou "')
   const mutacao = { 'X-Requested-With': 'stillon' }
   const login = await comRecuo('o login', () =>
     request.post('/api/v1/auth/login', { headers: mutacao, data: { email, password: senha } }),
@@ -55,14 +56,14 @@ async function apagarPeloNome(request: APIRequestContext, email: string, senha: 
     const lista = await comRecuo(`a lista de ${rota}`, () => request.get(`/api/v1/${rota}?limit=100`, { headers: autorizado }))
     expect(lista.status(), 'lista da limpeza').toBe(200)
     const { items } = (await lista.json()) as { items: { id: string; name: string }[] }
-    const sobras = items.filter((a) => a.name === nome)
+    const sobras = items.filter((a) => nomes.includes(a.name))
     for (const a of sobras) {
       const r = await comRecuo(`o DELETE de ${a.id}`, () =>
         request.delete(`/api/v1/${rota}/${a.id}`, { headers: { ...autorizado, ...mutacao } }),
       )
       expect([204, 404], `apagar ${a.id}`).toContain(r.status())
     }
-    console.log(`limpeza do E2E: ${sobras.length} item(ns) "${nome}" apagado(s) de ${rota}`)
+    console.log(`limpeza do E2E: ${sobras.length} item(ns) "${nomeEmLimpeza}" apagado(s) de ${rota}`)
   } finally {
     // O cookie de refresh do login da limpeza ficou no contexto do request:
     // o logout encerra essa sessão também. Com recuo: um 429 aqui deixaria a
@@ -103,7 +104,7 @@ test('login, cadastro de alvo, status, F5, detalhe, apagar, encerrar a sessão e
   const encerrar = await cadenciarRecursos(page, performance.now() + info.timeout)
   try {
     const nomeDoAlvo = `E2E ${Date.now()}`
-    sobra = { rota: 'targets', nome: nomeDoAlvo }
+    sobra = { rota: 'targets', nomes: [nomeDoAlvo] }
 
     // 1. Sem sessão: o splash e depois o login; nunca o painel piscando.
     await page.goto('/')
@@ -246,7 +247,7 @@ test('heartbeat: cadastro, URL, sinais reais, incidente, pausa, retomada, rotaç
   const encerrar = await cadenciarRecursos(page, performance.now() + info.timeout)
   try {
     const nome = `Tarefa E2E ${Date.now()}`
-    sobra = { rota: 'heartbeats', nome }
+    sobra = { rota: 'heartbeats', nomes: [nome] }
     const noPoll = { timeout: ESPERA_DO_POLL_MS }
     const irAoPainel = () => page.getByRole('navigation', { name: 'Principal' }).getByRole('link', { name: 'Painel' }).click()
     const selo = (texto: string) => page.getByText(texto, { exact: true })
@@ -390,7 +391,7 @@ test('heartbeat: editar, reconhecer o incidente e o sucesso que o fecha', async 
   try {
     const nome = `Tarefa E2E ${Date.now()}`
     const nomeNovo = `${nome} editada`
-    sobra = { rota: 'heartbeats', nome }
+    sobra = { rota: 'heartbeats', nomes: [nome] }
     const noPoll = { timeout: ESPERA_DO_POLL_MS }
     const selo = (texto: string) => page.getByText(texto, { exact: true })
     const log = page.getByRole('region', { name: 'Log de eventos' }).getByRole('listitem')
@@ -422,13 +423,16 @@ test('heartbeat: editar, reconhecer o incidente e o sucesso que o fecha', async 
     await expect(page.getByRole('heading', { name: 'Editar heartbeat' })).toBeVisible()
     await expect(page.getByLabel('Nome', { exact: true })).toHaveValue(nome)
     await page.getByLabel('Nome', { exact: true }).fill(nomeNovo)
-    sobra = { rota: 'heartbeats', nome: nomeNovo }
     await page.getByLabel('Tags').fill('Fluxo-E2E')
     await page.getByLabel('Descrição').fill('Copia o banco para o armazenamento frio.')
     await page.getByLabel('Período', { exact: true }).fill('2')
     await page.getByLabel('Unidade de período').selectOption('horas')
+    // Do clique até o título, o teste não sabe se o PATCH entrou: uma falha nesse
+    // trecho deixaria a tarefa com qualquer um dos dois nomes.
+    sobra = { rota: 'heartbeats', nomes: [nome, nomeNovo] }
     await page.getByRole('button', { name: 'Salvar' }).click()
     await expect(page.getByRole('heading', { name: nomeNovo })).toBeVisible()
+    sobra = { rota: 'heartbeats', nomes: [nomeNovo] }
     await page.reload()
     await expect(page.getByRole('heading', { name: nomeNovo })).toBeVisible()
     await expect(page.getByText('Copia o banco para o armazenamento frio.')).toBeVisible()
@@ -454,6 +458,12 @@ test('heartbeat: editar, reconhecer o incidente e o sucesso que o fecha', async 
     await expect(incidente.getByText(/^Reconhecido em .* · lembretes parados$/)).toBeVisible()
     await expect(reconhecer).toHaveCount(0)
     await expect(page.getByRole('heading', { name: 'Incidentes' })).toBeFocused()
+    await expect(selo('Falhando')).toBeVisible()
+    // Até aqui o selo pode ser o da leitura de antes do reconhecimento. O F5 lê
+    // de novo do servidor, e só depois dele o selo prova que a tarefa segue
+    // falhando com o incidente reconhecido.
+    await page.reload()
+    await expect(incidente.getByText('Reconhecido', { exact: true })).toBeVisible(noPoll)
     await expect(selo('Falhando')).toBeVisible()
 
     // 6. O sucesso fecha o incidente reconhecido e guarda o reconhecimento,
