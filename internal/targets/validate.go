@@ -162,7 +162,7 @@ func checkURL(raw string) string {
 		return ReasonTooLong
 	}
 	u, err := safedial.ValidateURL(raw)
-	if err != nil {
+	if err != nil || safedial.DestinoMudouNoGo127(raw) {
 		return ReasonInvalid
 	}
 	host := strings.TrimSuffix(strings.ToLower(u.Hostname()), ".")

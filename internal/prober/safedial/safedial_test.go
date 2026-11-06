@@ -205,3 +205,32 @@ func TestAllowIPRejectsTheZeroAddress(t *testing.T) {
 		t.Errorf("erro = %v, queria ErrBlocked", err)
 	}
 }
+
+func TestDestinoMudouNoGo127(t *testing.T) {
+	for _, caso := range []struct {
+		nome, url string
+		mudou     bool
+	}{
+		{"ẞ no host", "https://STRAẞE.de/", true},
+		{"ẞ minúsculo no resto", "https://straẞe.de/", true},
+		{"ẞ em subdomínio", "https://ẞ.exemplo.com/", true},
+		{"ẞ com porta", "https://straẞe.de:8443/", true},
+		{"ẞ percent-encoded", "https://stra%E1%BA%9Ee.de/", true},
+		{"espaço em volta", "  https://straẞe.de/  ", true},
+		{"ß não mudou", "https://straße.de/", false},
+		{"ss não mudou", "https://strasse.de/", false},
+		{"punycode não mudou", "https://xn--strae-oqa.de/", false},
+		{"sigma não mudou", "https://ς.example/", false},
+		{"ẞ no caminho", "https://exemplo.com/ẞ", false},
+		{"ẞ na consulta", "https://exemplo.com/?q=ẞ", false},
+		{"ẞ no fragmento", "https://exemplo.com/#ẞ", false},
+		{"vazia", "", false},
+		{"ilegível", "://quebrada", false},
+	} {
+		t.Run(caso.nome, func(t *testing.T) {
+			if got := safedial.DestinoMudouNoGo127(caso.url); got != caso.mudou {
+				t.Errorf("DestinoMudouNoGo127(%q) = %v, queria %v", caso.url, got, caso.mudou)
+			}
+		})
+	}
+}

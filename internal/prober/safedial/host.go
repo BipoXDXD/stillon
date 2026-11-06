@@ -1,6 +1,7 @@
 package safedial
 
 import (
+	"net/url"
 	"strings"
 	"unicode/utf8"
 
@@ -22,6 +23,19 @@ func DialedHost(host string) (string, bool) {
 		}
 	}
 	return strings.ToLower(host), true
+}
+
+// DestinoMudouNoGo127 diz se o host da URL discava outro domínio até o Go
+// 1.26: a tabela do IDNA passou do Unicode 15 ao 17, e ẞ deixou de virar ss
+// para virar ß (straẞe.de ia a strasse.de e agora iria a xn--strae-oqa.de).
+// Uma URL gravada assim trocaria de destino sem que o dono soubesse, levando
+// os headers. Comparar as duas tabelas em todos os code points dá ẞ como o
+// único caractere aceito por ambas com resultado diferente.
+//
+// Olha o host já decodificado: url.Parse aceita %E1%BA%9E nele.
+func DestinoMudouNoGo127(raw string) bool {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	return err == nil && strings.ContainsRune(u.Hostname(), 'ẞ')
 }
 
 // IsSingleLabel diz se o host é um nome de rótulo único, sem ponto (db,

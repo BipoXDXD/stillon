@@ -278,6 +278,17 @@ func (s *Scheduler) Stop(grace time.Duration) {
 }
 
 func (s *Scheduler) sondar(a db.ClaimDueTargetsRow, checkedAt time.Time) {
+	// Antes de abrir os headers: este alvo não vai à rede. Grava down, e não
+	// só o log, para o dono ver que o monitoramento parou. A URL fica fora do
+	// log, como em toda parte.
+	if safedial.DestinoMudouNoGo127(a.URL) {
+		slog.Warn("alvo recusado: o host passaria a discar outro domínio", "target_id", a.ID)
+		res := Result{Status: StatusDown, ErrorKind: KindBlocked}
+		s.metrics.observe(a.ID, res)
+		s.gravar(a, checkedAt, res)
+		return
+	}
+
 	spec, err := s.especificar(a)
 	if err != nil {
 		// Headers que não abrem são defeito NOSSO (chave trocada, linha
