@@ -5,21 +5,14 @@ import { Selo, type TomDoSelo } from '@/components/SeloDeEstado'
 import { BotaoQueSome } from '@/components/ui/botao'
 import { useEventosDoHeartbeat } from '@/lib/api/consultas'
 import type { EventoDeHeartbeat } from '@/lib/api/schemas'
-import { dataHora, duracao } from '@/lib/format'
+import { dataHora } from '@/lib/format'
+import { tempoDeExecucao } from './estado'
 
 // Forma + cor + texto, como os outros selos.
 const TIPOS: Record<EventoDeHeartbeat['kind'], { texto: string; tom: TomDoSelo; Icone: LucideIcon }> = {
   start: { texto: 'Início', tom: 'primaria', Icone: Play },
   success: { texto: 'Sucesso', tom: 'no-ar', Icone: Check },
   fail: { texto: 'Falha', tom: 'fora', Icone: X },
-}
-
-const MS_POR_SEGUNDO = 1000
-const MS_POR_MINUTO = 60_000
-
-export function tempoDeExecucao(ms: number): string {
-  if (ms < MS_POR_SEGUNDO) return `${ms} ms`
-  return ms < MS_POR_MINUTO ? `${Math.round(ms / MS_POR_SEGUNDO)} s` : duracao(ms)
 }
 
 export function EventosDoHeartbeat({ id }: { id: string }) {

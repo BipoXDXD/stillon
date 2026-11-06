@@ -63,6 +63,7 @@ export function heartbeat(p: Partial<z.input<typeof Heartbeat>> = {}): z.input<t
     last_ping_at: '2026-09-24T11:58:00Z',
     last_success_at: '2026-09-24T11:58:00Z',
     last_start_at: null,
+    last_runtime_ms: null,
     open_incident_id: null,
     created_at: '2026-09-20T10:00:00Z',
     ...p,

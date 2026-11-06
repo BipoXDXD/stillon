@@ -83,6 +83,48 @@ func TestRuntimeComesFromTheOpenStartAndConsumesIt(t *testing.T) {
 	}
 }
 
+// A execução que falha também é medida, e o início dela não fica aberto para o
+// próximo sucesso medir duas execuções como uma.
+func TestFailClosesTheRunToo(t *testing.T) {
+	s, _ := aplicar(heartbeat.State{}, heartbeat.SignalStart, agora)
+	s, ev := aplicar(s, heartbeat.SignalFail, agora.Add(30*time.Second))
+	if ev.RuntimeMS == nil || *ev.RuntimeMS != 30000 {
+		t.Fatalf("tempo de execução %v, queria 30000", ev.RuntimeMS)
+	}
+	if !s.LastStartAt.IsZero() {
+		t.Errorf("o início não foi consumido: %v", s.LastStartAt)
+	}
+	if s.LastRuntimeMS == nil || *s.LastRuntimeMS != 30000 {
+		t.Errorf("última duração %v, queria 30000", s.LastRuntimeMS)
+	}
+	_, ev = aplicar(s, heartbeat.SignalSuccess, agora.Add(time.Hour))
+	if ev.RuntimeMS != nil {
+		t.Errorf("sucesso sem início herdou %d ms", *ev.RuntimeMS)
+	}
+}
+
+func TestLastRuntimeFollowsTheLastClosedRun(t *testing.T) {
+	s, _ := aplicar(heartbeat.State{}, heartbeat.SignalStart, agora)
+	s, _ = aplicar(s, heartbeat.SignalSuccess, agora.Add(90*time.Second))
+	if s.LastRuntimeMS == nil || *s.LastRuntimeMS != 90000 {
+		t.Fatalf("última duração %v, queria 90000", s.LastRuntimeMS)
+	}
+	// O início sozinho não apaga a medida: a execução anterior segue a última
+	// encerrada.
+	s, _ = aplicar(s, heartbeat.SignalStart, agora.Add(time.Hour))
+	if s.LastRuntimeMS == nil {
+		t.Fatal("o início apagou a última duração")
+	}
+	s, _ = aplicar(s, heartbeat.SignalSuccess, agora.Add(time.Hour+5*time.Second))
+	if s.LastRuntimeMS == nil || *s.LastRuntimeMS != 5000 {
+		t.Fatalf("última duração %v, queria 5000", s.LastRuntimeMS)
+	}
+	s, _ = aplicar(s, heartbeat.SignalSuccess, agora.Add(2*time.Hour))
+	if s.LastRuntimeMS != nil {
+		t.Errorf("execução sem início ficou com %d ms", *s.LastRuntimeMS)
+	}
+}
+
 // Relógio de outra instância atrás do início não vira duração negativa, que o
 // CHECK de runtime_ms recusaria e perderia o ping.
 func TestRuntimeIsNeverNegative(t *testing.T) {

@@ -19,7 +19,7 @@ import { dataHora } from '@/lib/format'
 import { DialogoDaUrlDePing } from './DialogoDaUrlDePing'
 import { EventosDoHeartbeat } from './EventosDoHeartbeat'
 import { IncidentesDoHeartbeat } from './IncidentesDoHeartbeat'
-import { estadoDoHeartbeat, prazoVencido, textoDaDuracao, textoDoAgendamento, textoDoHeartbeat } from './estado'
+import { estadoDoHeartbeat, prazoVencido, tempoDeExecucao, textoDaDuracao, textoDoAgendamento, textoDoHeartbeat } from './estado'
 
 // De um detalhe a outro a rota é a mesma: a key recomeça a tela, como a do alvo.
 export function PaginaHeartbeat() {
@@ -228,7 +228,8 @@ function Sinais({ hb, agora }: { hb: Heartbeat; agora: Date }) {
         <Prazo hb={hb} agora={agora} />
         <Dado nome="Último sinal" valor={quando(hb.last_ping_at)} />
         <Dado nome="Último sucesso" valor={quando(hb.last_success_at)} />
-        <Dado nome="Último início" valor={quando(hb.last_start_at)} />
+        <Dado nome="Última duração" valor={hb.last_runtime_ms === null ? 'Não medida' : tempoDeExecucao(hb.last_runtime_ms)} />
+        {hb.last_start_at !== null && <Dado nome="Em execução desde" valor={dataHora(hb.last_start_at)} />}
       </dl>
     </section>
   )

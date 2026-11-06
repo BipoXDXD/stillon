@@ -121,7 +121,7 @@ func TestHeartbeatResponseHasExactKeys(t *testing.T) {
 	a := newAPI(t)
 	dono := tokenDe(t, a, a.userID)
 	id, _ := criarHB(t, a, dono, corpoDePeriodo)
-	base := []string{"created_at", "deadline_at", "enabled", "grace_sec", "id", "last_ping_at", "last_start_at",
+	base := []string{"created_at", "deadline_at", "enabled", "grace_sec", "id", "last_ping_at", "last_runtime_ms", "last_start_at",
 		"last_success_at", "name", "open_incident_id", "schedule", "state"}
 
 	_, corpo := lerCru(t, a, http.MethodGet, "/api/v1/heartbeats/"+id, dono, nil)
@@ -144,6 +144,29 @@ func TestHeartbeatResponseHasExactKeys(t *testing.T) {
 	ev := decodificar(t, corpo)["items"].([]any)
 	if len(ev) != 1 || !slices.Equal(chavesDe(ev[0].(map[string]any)), []string{"at", "exit_code", "id", "kind", "runtime_ms"}) {
 		t.Errorf("evento: %s", corpo)
+	}
+}
+
+// A lista e o detalhe trazem a última duração, e o início fica visível enquanto
+// a execução corre.
+func TestListAndDetailShowTheLastRuntime(t *testing.T) {
+	a := newAPI(t)
+	dono := tokenDe(t, a, a.userID)
+	id, token := criarHB(t, a, dono, corpoDePeriodo)
+	pingar(t, a, "/ping/"+token+"/start", nil)
+	a.clk.Advance(90 * time.Second)
+
+	_, corpo := lerCru(t, a, http.MethodGet, "/api/v1/heartbeats/"+id, dono, nil)
+	h := decodificar(t, corpo)
+	if h["last_start_at"] == nil || h["last_runtime_ms"] != nil {
+		t.Errorf("em execução: %s", corpo)
+	}
+	pingar(t, a, "/ping/"+token, nil)
+
+	_, corpo = lerCru(t, a, http.MethodGet, "/api/v1/heartbeats?limit=100", dono, nil)
+	h = decodificar(t, corpo)["items"].([]any)[0].(map[string]any)
+	if h["last_start_at"] != nil || h["last_runtime_ms"] != float64(90000) {
+		t.Errorf("depois do sucesso: %s", corpo)
 	}
 }
 

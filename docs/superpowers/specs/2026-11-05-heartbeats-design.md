@@ -166,7 +166,9 @@ Função pura em `internal/heartbeat`, sem I/O, recebendo `now`:
 - `success`: `deadline_at = proximo(now) + grace`; zera `failing_since`; `runtime_ms = now -
   last_start_at` se houver `start` aberto, e o `start` é consumido.
 - `start`: grava `last_start_at`; prazo intacto.
-- `fail`: `failing_since = coalesce(failing_since, now)`; prazo intacto.
+- `fail`: `failing_since = coalesce(failing_since, now)`; prazo intacto; `runtime_ms` e consumo do
+  `start`, como no `success`.
+- `success` e `fail` gravam `last_runtime_ms`: a duração medida, ou `NULL` sem `start` aberto.
 - `proximo(t)`: `t + period` ou o próximo disparo do cron depois de `t + 30 s`, no fuso declarado.
   A folga (`EarlySignalMargin`, igual a `MinGrace`) existe porque um host com o relógio adiantado
   termina a tarefa de 3h às 02:59:59: sem ela, o próximo disparo seria o das 3h que acabou de rodar,
@@ -267,7 +269,7 @@ anti-CSRF). Entrada estrita, com `DisallowUnknownFields`. Recurso alheio é 404.
   // ou { "kind": "cron", "expr": "0 3 * * *", "timezone": "America/Sao_Paulo" }
   "grace_sec": 900, "state": "waiting|up|late|failing|paused",
   "deadline_at": "…", "last_ping_at": null, "last_success_at": null,
-  "last_start_at": null, "open_incident_id": null, "created_at": "…" }
+  "last_start_at": null, "last_runtime_ms": null, "open_incident_id": null, "created_at": "…" }
 // create e rotate: o mesmo objeto + "ping_url"
 // evento: { "id": "…", "at": "…", "kind": "start|success|fail", "runtime_ms": 1234, "exit_code": 3 }
 // incidente: { "id", "heartbeat_id", "heartbeat_name", "started_at", "resolved_at",

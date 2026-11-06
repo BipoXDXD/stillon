@@ -98,6 +98,18 @@ teste de lá, porque a rota passa pela mesma cadeia e pelo mesmo `InPingTx`:
 | **D** Retry duplicando o log | a repetição do D9 vale pelo sinal | `TestPingRepeatedExitCodeHasOneEffect` |
 | **E** Rota pública além do ping | allowlist explícita | `TestEveryRegisteredRouteDeniesByDefault` (entrada nova em `rotasPublicas`), `TestPingChainServesOnlyPing` (405 também com código) |
 
+## Última duração (PR 2)
+
+`last_runtime_ms` fica na linha de `heartbeats` (00020), ao lado de `last_ping_at`. Derivar do log
+exigiria varrer até 1000 eventos por heartbeat a cada 15 s em quem nunca manda `/start`, que é o caso
+comum. A falha agora encerra a execução como o sucesso: mede e consome o início. Sem isso, a tarefa
+que falhou ficaria "em execução" até o próximo sinal. Sucesso ou falha sem início deixam a duração
+`NULL`: repetir a anterior falaria de uma execução que ninguém mediu.
+
+`last_start_at` diferente de `NULL` passa a significar "em execução". O detalhe trocou "Último
+início" por "Em execução desde", que só aparece nesse caso, porque o início consumido virava
+"Nunca". Sem superfície nova: nenhuma rota, e o dado sai só para o dono.
+
 ## Migrations
 
 Cada PR que precisa de migration leva o próximo número livre, e por isso os PRs são empilhados e

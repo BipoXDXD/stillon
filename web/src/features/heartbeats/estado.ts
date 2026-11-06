@@ -1,5 +1,6 @@
 import type { Agendamento, EstadoDoHeartbeat, Heartbeat } from '@/lib/api/schemas'
 import type { EstadoExibido } from '@/lib/estado'
+import { duracao } from '@/lib/format'
 
 // O heartbeat na escala de gravidade do painel (forma, cor, ordem e filtro),
 // com palavra própria: uma tarefa não fica "fora do ar" (spec da tela, T2 e T3).
@@ -30,6 +31,14 @@ export function pedeAtencao(hb: Pick<Heartbeat, 'state' | 'open_incident_id'>): 
 // (spec de heartbeats, §5): um prazo futuro não venceu, mesmo no estado late.
 export function prazoVencido(hb: Pick<Heartbeat, 'deadline_at'>, agora: Date): boolean {
   return agora.getTime() > Date.parse(hb.deadline_at)
+}
+
+const MS_POR_SEGUNDO = 1000
+const MS_POR_MINUTO = 60_000
+
+export function tempoDeExecucao(ms: number): string {
+  if (ms < MS_POR_SEGUNDO) return `${ms} ms`
+  return ms < MS_POR_MINUTO ? `${Math.round(ms / MS_POR_SEGUNDO)} s` : duracao(ms)
 }
 
 export type Unidade = 'dias' | 'horas' | 'minutos' | 'segundos'

@@ -91,6 +91,11 @@ describe('linhaDoHeartbeat', () => {
     ['atrasado com prazo novo', { state: 'late', deadline_at: '2026-09-25T09:00:00Z' }, 'Sem sinal no prazo'],
     ['falhando', { state: 'failing' }, 'A tarefa avisou falha'],
     ['aguardando', { state: 'waiting', last_ping_at: null }, 'Aguardando o primeiro sinal'],
+    ['aguardando, com a primeira execução em curso', { state: 'waiting', last_start_at: '2026-09-24T11:58:00Z' }, 'Em execução, começou há 2 minutos'],
+    ['em dia, com duração', { state: 'up', last_runtime_ms: 12_000 }, 'Sinal há 2 minutos · levou 12 s'],
+    ['em dia, com duração zero', { state: 'up', last_runtime_ms: 0 }, 'Sinal há 2 minutos · levou 0 ms'],
+    ['em dia, com execução em curso', { state: 'up', last_start_at: '2026-09-24T11:58:00Z', last_runtime_ms: 12_000 }, 'Em execução, começou há 2 minutos'],
+    ['atrasado com início aberto não diz que está em execução', { state: 'late', last_start_at: '2026-09-24T11:58:00Z', deadline_at: '2026-09-24T11:59:00Z' }, 'Sem sinal no prazo · há 1 min'],
     ['pausado', { state: 'paused', enabled: false }, 'Pausado'],
     ['em dia sem sinal', { state: 'up', last_ping_at: null }, 'Nenhum sinal ainda'],
   ] as const)('situação de %s', (_, p, texto) => {

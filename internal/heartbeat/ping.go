@@ -95,7 +95,7 @@ func stateOf(h db.Heartbeat) State {
 	s := State{
 		DeadlineAt: h.DeadlineAt, LastPingAt: valueOrZero(h.LastPingAt),
 		LastSuccessAt: valueOrZero(h.LastSuccessAt), LastStartAt: valueOrZero(h.LastStartAt),
-		FailingSince: valueOrZero(h.FailingSince),
+		FailingSince: valueOrZero(h.FailingSince), LastRuntimeMS: h.LastRuntimeMS,
 	}
 	if h.LastSignal != nil {
 		s.LastSignal = Signal(*h.LastSignal)
@@ -108,7 +108,7 @@ func pingParams(id uuid.UUID, s State) db.SaveHeartbeatPingParams {
 	return db.SaveHeartbeatPingParams{
 		ID: id, DeadlineAt: s.DeadlineAt, LastPingAt: nilIfZero(s.LastPingAt),
 		LastSuccessAt: nilIfZero(s.LastSuccessAt), LastStartAt: nilIfZero(s.LastStartAt),
-		LastSignal: &sinal, FailingSince: nilIfZero(s.FailingSince),
+		LastSignal: &sinal, FailingSince: nilIfZero(s.FailingSince), LastRuntimeMS: s.LastRuntimeMS,
 	}
 }
 

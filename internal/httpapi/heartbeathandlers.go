@@ -64,6 +64,7 @@ type heartbeatResponse struct {
 	LastPingAt     *time.Time  `json:"last_ping_at"`
 	LastSuccessAt  *time.Time  `json:"last_success_at"`
 	LastStartAt    *time.Time  `json:"last_start_at"`
+	LastRuntimeMS  *int64      `json:"last_runtime_ms"`
 	OpenIncidentID *string     `json:"open_incident_id"`
 	CreatedAt      time.Time   `json:"created_at"`
 }
@@ -112,7 +113,7 @@ func toHeartbeatResponse(h heartbeat.Heartbeat) heartbeatResponse {
 	r := heartbeatResponse{
 		ID: h.ID.String(), Name: h.Name, Enabled: h.Enabled, GraceSec: int64(h.Grace / time.Second),
 		State: string(h.Status), DeadlineAt: h.DeadlineAt, LastPingAt: h.LastPingAt,
-		LastSuccessAt: h.LastSuccessAt, LastStartAt: h.LastStartAt, CreatedAt: h.CreatedAt,
+		LastSuccessAt: h.LastSuccessAt, LastStartAt: h.LastStartAt, LastRuntimeMS: h.LastRuntimeMS, CreatedAt: h.CreatedAt,
 		Schedule: toScheduleDTO(h.Schedule),
 	}
 	if h.OpenIncidentID != nil {

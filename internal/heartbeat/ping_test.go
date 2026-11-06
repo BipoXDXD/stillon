@@ -108,6 +108,9 @@ func TestPingRecordsTheEvent(t *testing.T) {
 	if h.LastStartAt != nil || h.LastSuccessAt == nil || *h.LastSignal != "success" {
 		t.Errorf("linha depois do sucesso: %+v", h)
 	}
+	if h.LastRuntimeMS == nil || *h.LastRuntimeMS != 90000 {
+		t.Errorf("última duração: %v", h.LastRuntimeMS)
+	}
 	ev := a.eventos(t, id)
 	if len(ev) != 2 {
 		t.Fatalf("%d eventos, queria 2", len(ev))

@@ -143,10 +143,13 @@ type State struct {
 	LastStartAt   time.Time
 	LastSignal    Signal
 	FailingSince  time.Time
+	// LastRuntimeMS é a duração da última execução encerrada; nil se ela não
+	// foi medida.
+	LastRuntimeMS *int64
 }
 
-// Event é a linha que um sinal deixa no log. Runtime só existe num sucesso
-// com início aberto.
+// Event é a linha que um sinal deixa no log. Runtime só existe num sucesso ou
+// numa falha com início aberto.
 type Event struct {
 	At        time.Time
 	Kind      Signal
@@ -168,20 +171,30 @@ func (s State) Apply(sig Signal, now time.Time, sch Schedule, grace time.Duratio
 	case SignalStart:
 		s.LastStartAt = now
 	case SignalFail:
+		ev.RuntimeMS = s.closeRun(now)
 		if s.FailingSince.IsZero() {
 			s.FailingSince = now
 		}
 	case SignalSuccess:
-		if !s.LastStartAt.IsZero() {
-			ms := max(now.Sub(s.LastStartAt).Milliseconds(), 0)
-			ev.RuntimeMS = &ms
-		}
-		s.LastStartAt = time.Time{}
+		ev.RuntimeMS = s.closeRun(now)
 		s.FailingSince = time.Time{}
 		s.LastSuccessAt = now
 		s.DeadlineAt = FirstDeadline(sch, grace, now)
 	}
 	return s, ev
+}
+
+// closeRun encerra a execução: mede a partir do início aberto, se houver, e o
+// consome. Sem início, a última execução fica sem medida: repetir a duração da
+// anterior diria algo sobre uma execução que ninguém mediu.
+func (s *State) closeRun(now time.Time) *int64 {
+	s.LastRuntimeMS = nil
+	if !s.LastStartAt.IsZero() {
+		ms := max(now.Sub(s.LastStartAt).Milliseconds(), 0)
+		s.LastRuntimeMS = &ms
+	}
+	s.LastStartAt = time.Time{}
+	return s.LastRuntimeMS
 }
 
 // isRepeat vale para o intervalo negativo também: com relógios de instâncias

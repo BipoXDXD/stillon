@@ -2,14 +2,17 @@ import { screen, waitFor, within } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 import { eventoDeHeartbeat, heartbeat, incidente, incidenteDeHeartbeat } from '@/test/fixtures'
 import { renderizarPainel } from '@/test/renderizar'
-import { tempoDeExecucao } from './EventosDoHeartbeat'
+import { tempoDeExecucao } from './estado'
 
 async function detalheCom(p: {
   eventos?: Parameters<typeof eventoDeHeartbeat>[0][]
   incidentes?: Parameters<typeof incidenteDeHeartbeat>[0][]
+  last_runtime_ms?: number
+  last_start_at?: string
 } = {}) {
   const r = await renderizarPainel('/')
-  r.falsa.estado.heartbeats = [heartbeat({ id: 'h1', name: 'Backup' })]
+  const { eventos: _eventos, incidentes: _incidentes, ...doHeartbeat } = p
+  r.falsa.estado.heartbeats = [heartbeat({ id: 'h1', name: 'Backup', ...doHeartbeat })]
   r.falsa.estado.eventos = (p.eventos ?? []).map(eventoDeHeartbeat)
   r.falsa.estado.incidentesDeHeartbeat = (p.incidentes ?? []).map((i) => incidenteDeHeartbeat({ heartbeat_id: 'h1', ...i }))
   await r.router.navigate('/heartbeats/h1')
@@ -29,6 +32,28 @@ describe('tempoDeExecucao', () => {
     [3_780_000, '1 h 3 min'],
   ])('%i ms → %s', (ms, texto) => {
     expect(tempoDeExecucao(ms)).toBe(texto)
+  })
+})
+
+describe('tempo de execução no detalhe', () => {
+  // Zero é medida: um `||` no lugar do `=== null` diria "Não medida".
+  it('mostra a última duração, inclusive a de zero ms', async () => {
+    await detalheCom({ last_runtime_ms: 0 })
+    const s = await secao('Agendamento e sinais')
+    expect(within(s).getByText('Última duração').nextElementSibling).toHaveTextContent('0 ms')
+  })
+
+  it('sem medida, diz isso, e não fala em execução parada', async () => {
+    await detalheCom()
+    const s = await secao('Agendamento e sinais')
+    expect(within(s).getByText('Última duração').nextElementSibling).toHaveTextContent('Não medida')
+    expect(within(s).queryByText('Em execução desde')).not.toBeInTheDocument()
+  })
+
+  it('com início aberto, mostra desde quando', async () => {
+    await detalheCom({ last_start_at: '2026-09-24T11:50:00Z' })
+    const s = await secao('Agendamento e sinais')
+    expect(within(s).getByText('Em execução desde')).toBeInTheDocument()
   })
 })
 

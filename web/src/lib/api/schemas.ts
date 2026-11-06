@@ -140,6 +140,7 @@ export const Heartbeat = z.object({
   last_ping_at: instante.nullable(),
   last_success_at: instante.nullable(),
   last_start_at: instante.nullable(),
+  last_runtime_ms: z.number().nullable(),
   open_incident_id: id.nullable(),
   created_at: instante,
 })

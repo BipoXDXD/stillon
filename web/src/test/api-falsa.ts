@@ -374,6 +374,7 @@ export function criarApiFalsa() {
         last_ping_at: null,
         last_success_at: null,
         last_start_at: null,
+        last_runtime_ms: null,
         open_incident_id: null,
         created_at: agora().toISOString(),
       }

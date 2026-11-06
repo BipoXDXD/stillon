@@ -56,6 +56,7 @@ type Heartbeat struct {
 	LastPingAt     *time.Time
 	LastSuccessAt  *time.Time
 	LastStartAt    *time.Time
+	LastRuntimeMS  *int64
 	OpenIncidentID *uuid.UUID
 	CreatedAt      time.Time
 }
@@ -421,7 +422,7 @@ func toHeartbeat(h db.Heartbeat, open *uuid.UUID, now time.Time) (Heartbeat, err
 		Grace:      time.Duration(h.GraceSec) * time.Second,
 		Status:     statusOf(h.Enabled, h.FailingSince != nil, open != nil, h.DeadlineAt, h.LastPingAt != nil, now),
 		DeadlineAt: h.DeadlineAt, LastPingAt: h.LastPingAt, LastSuccessAt: h.LastSuccessAt,
-		LastStartAt: h.LastStartAt, OpenIncidentID: open, CreatedAt: h.CreatedAt,
+		LastStartAt: h.LastStartAt, LastRuntimeMS: h.LastRuntimeMS, OpenIncidentID: open, CreatedAt: h.CreatedAt,
 	}, nil
 }
 

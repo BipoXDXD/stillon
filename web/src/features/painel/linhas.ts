@@ -1,4 +1,4 @@
-import { estadoDoHeartbeat, prazoVencido, textoDoHeartbeat } from '@/features/heartbeats/estado'
+import { estadoDoHeartbeat, prazoVencido, tempoDeExecucao, textoDoHeartbeat } from '@/features/heartbeats/estado'
 import { textoDaCausa } from '@/lib/api/mensagens'
 import type { Heartbeat, HoraDoSpark, Incidente, ItemDoResumo } from '@/lib/api/schemas'
 import { estadoExibido, textoDoEstado, type EstadoExibido } from '@/lib/estado'
@@ -84,12 +84,23 @@ function situacaoDoHeartbeat(hb: Heartbeat, agora: Date): string {
     case 'failing':
       return textoDaCausa('heartbeat_failed')
     case 'up':
-      return hb.last_ping_at === null ? 'Nenhum sinal ainda' : `Sinal ${haQuantoAteAgora(hb.last_ping_at, agora)}`
+      return textoEmDia(hb, agora)
     case 'waiting':
-      return 'Aguardando o primeiro sinal'
+      return hb.last_start_at === null ? 'Aguardando o primeiro sinal' : emExecucao(hb.last_start_at, agora)
     case 'paused':
       return 'Pausado'
   }
+}
+
+function emExecucao(inicio: string, agora: Date): string {
+  return `Em execução, começou ${haQuantoAteAgora(inicio, agora)}`
+}
+
+function textoEmDia(hb: Heartbeat, agora: Date): string {
+  if (hb.last_start_at !== null) return emExecucao(hb.last_start_at, agora)
+  if (hb.last_ping_at === null) return 'Nenhum sinal ainda'
+  const sinal = `Sinal ${haQuantoAteAgora(hb.last_ping_at, agora)}`
+  return hb.last_runtime_ms === null ? sinal : `${sinal} · levou ${tempoDeExecucao(hb.last_runtime_ms)}`
 }
 
 // Sem prazo vencido, não há duração a dizer.

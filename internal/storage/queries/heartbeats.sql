@@ -22,7 +22,8 @@ VALUES (sqlc.arg(id), sqlc.arg(heartbeat_id)::uuid, sqlc.arg(started_at), sqlc.a
 UPDATE heartbeats
    SET deadline_at = sqlc.arg(deadline_at), last_ping_at = sqlc.narg(last_ping_at),
        last_success_at = sqlc.narg(last_success_at), last_start_at = sqlc.narg(last_start_at),
-       last_signal = sqlc.narg(last_signal), failing_since = sqlc.narg(failing_since)
+       last_signal = sqlc.narg(last_signal), failing_since = sqlc.narg(failing_since),
+       last_runtime_ms = sqlc.narg(last_runtime_ms)
  WHERE id = sqlc.arg(id);
 
 -- name: InsertHeartbeatEvent :exec
