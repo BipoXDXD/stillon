@@ -215,7 +215,7 @@ Dado: o token, que é a credencial; os instantes dos sinais. Sem PII.
 | **T** Forjar incidente pelo ping | política nomeia dono e sondador; o ping nem tenta | `TestPingScopeCannotTouchIncidents` |
 | **R** Negar um sinal | aceito: o evento tem instante e tipo, sem origem (D14). Quem tem o token pode pingar; rotacionar é a resposta | `TestPingRecordsTheEvent` |
 | **I** Token em log | log usa `r.Pattern`, nunca o caminho; nenhum `slog` do pacote recebe o token | `TestPingNeverLogsTheToken` (canário, inclusive em erro e panic) |
-| **I** Token lido na borda | **em aberto (D10).** A Cloudflare termina o TLS e vê o caminho em claro, logo o token. Nada no código reduz isso; rotacionar o token é a resposta depois de uma suspeita | Nenhum: a borda está fora do alcance dos testes do repositório |
+| **I** Token lido na borda | **em aberto (D10 da auditoria).** A Cloudflare termina o TLS e vê o caminho em claro, logo o token. Nada no código reduz isso; rotacionar o token é a resposta depois de uma suspeita | Nenhum: a borda está fora do alcance dos testes do repositório |
 | **I** Descobrir se a URL existe | inexistente, revogada e malformada: mesmo status e mesmo corpo | `TestPingUnknownAndRevokedTokensAnswerTheSame` |
 | **I** Vazar dados na resposta | sucesso devolve corpo fixo, sem nome nem estado | `TestPingSuccessBodyHasNoHeartbeatData` |
 | **D** Enxurrada por IP, sem penalizar NAT | balde por IP folgado (1200/min, rajada 300: 100 tarefas no mesmo minuto, com início e fim, passam) | `TestPingIPLimitAdmitsManyHeartbeatsBehindOneAddress` |
