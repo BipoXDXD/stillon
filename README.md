@@ -321,7 +321,10 @@ sistema e no painel da Hostinger, atualizações de segurança automáticas.
   quem tem acesso de escrita ao repositório (hoje, só o dono).
 - **Backup:** dump lógico diário, feito na VPS e restaurado num banco descartável e conferido
   (dono das tabelas, RLS com `FORCE`, contagens, partições) antes de sair **já cifrado** com
-  `age` (a chave privada fica só com o dono) para um artifact de 30 dias. Uma checagem que falha
+  `age` (a chave privada fica com o dono e num secret de environment, fora da VPS) para um
+  artifact de 30 dias. Todo dia, o [`revalidar-backup`](.github/workflows/revalidar-backup.yml)
+  restaura o artifact guardado num Postgres sem rede; se falhar, abre uma issue para o dono, que
+  fecha sozinha quando o ensaio volta a passar. Uma checagem que falha
   sai com código 3; disco acima de 85% sai com 4 (o dump é guardado mesmo assim, e o job fica
   vermelho). Referência e dump usam snapshot comum; a fase supervisionada tem orçamento de
   600 s, além da graça de encerramento. Isso não limita todo o restauro nem substitui PITR.

@@ -1,0 +1,72 @@
+name: revalidar-backup
+# Ensaio diário: restaura o artifact cifrado mais recente num Postgres sem rede
+# e o confere com deploy/backup/verificar.sql. Não fala com a VPS. Falhar aqui
+# significa que falta prova de que o backup volta, mesmo com o `backup` verde.
+#
+# A chave privada do age mora num secret do environment abaixo, que só aceita
+# a main: ela nunca chega a um PR. O nome vem da revalidação que nasceu na
+# branch de auditoria; um environment novo exigiria recadastrar a chave.
+#
+# Horário: o `backup` agendado para 06:17 UTC chega a rodar até umas 16:15 UTC.
+# Às 22:47 UTC o backup do dia já existe, e a política de 26 h do script também
+# acusa o dia em que ele não rodou.
+on:
+  schedule:
+    - cron: '47 22 * * *'
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: revalidar-backup
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  restore:
+    name: restaurar o backup guardado
+    if: vars.BACKUP_ENABLED == '1' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    environment: forwarding-audit-restore-20261023
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: instalar o age
+        run: sudo apt-get update -q && sudo apt-get install -yq age
+      - name: restaurar num Postgres isolado
+        env:
+          GH_TOKEN: ${{ github.token }}
+          AGE_IDENTITY: ${{ secrets.STILLON_BACKUP_AGE_IDENTITY }}
+        run: python3 deploy/backup/revalidar_restauro.py
+
+  # Job separado: quem escreve em issues não vê a chave, e quem vê a chave só
+  # lê. Roda também quando o job acima nem começa (environment recusado).
+  avisar:
+    name: avisar o resultado
+    needs: restore
+    if: ${{ !cancelled() && needs.restore.result != 'skipped' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: deploy/backup
+          persist-credentials: false
+      - name: abrir ou fechar a issue do ensaio
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RESULTADO: ${{ needs.restore.result }}
+          URL_DO_RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: python3 deploy/backup/avisar_revalidacao.py

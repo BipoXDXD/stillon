@@ -14,6 +14,7 @@ cd "$RAIZ"
 WF=.github/workflows
 DEPLOY=$WF/deploy.yml
 BACKUP=$WF/backup.yml
+REVALIDAR=$WF/revalidar-backup.yml
 falhas=0
 falhar() { echo "FALHOU: $*" >&2; falhas=$((falhas + 1)); }
 # Os laços com pipe rodam num subshell: as falhas de dentro deles vão como
@@ -241,6 +242,36 @@ if git grep -nIiE "$FLY_ERE" -- . ':(exclude)docs/superpowers/**' ':(exclude)dep
 fi
 if git grep -nIE 'FLY_[A-Z]' -- . ':(exclude)docs/superpowers/**' ':(exclude)deploy/ci/checar-workflows.sh' >&2; then
     falhar "variável ou secret do Fly.io (acima)"
+fi
+
+# 7. Revalidação do backup: só agendada ou à mão, nunca em PR; sem permissão no
+#    nível do workflow; a chave do age só no job que restaura, e esse job só
+#    lê; o job que escreve em issues não vê segredo nenhum.
+gatilhos=$(sed -n '/^on:/,/^[a-z]/p' "$REVALIDAR" | grep -E '^  [a-z_]+:' | tr -d ' :' | tr '\n' ' ')
+[ "$gatilhos" = "schedule workflow_dispatch " ] ||
+    falhar "$REVALIDAR: gatilhos \"$gatilhos\", queria schedule e workflow_dispatch"
+tem "$REVALIDAR" '^permissions: \{\}$' "o workflow tem de começar sem permissão nenhuma"
+tem "$REVALIDAR" '^  cancel-in-progress: false$' "um ensaio não é cancelado no meio"
+tem "$REVALIDAR" "^    if: vars\\.BACKUP_ENABLED == '1' && github\\.ref == 'refs/heads/main'\$" \
+    "o ensaio não está preso à main e ao BACKUP_ENABLED=1"
+# job <nome>: o texto de um job, até o próximo.
+job() { awk -v nome="  $1:" '$0 == nome { d = 1; print; next } d && /^  [a-z]/ { exit } d' "$REVALIDAR"; }
+job_restore=$(job restore)
+job_avisar=$(job avisar)
+perms=$(printf '%s\n' "$job_restore" | sed -n '/^    permissions:/,/^    [a-z]/p' | grep -E '^      ' | tr -d ' ' | sort | tr '\n' ' ')
+[ "$perms" = "actions:read contents:read " ] || falhar "$REVALIDAR: restore com permissions \"$perms\", queria só leitura"
+perms=$(printf '%s\n' "$job_avisar" | sed -n '/^    permissions:/,/^    [a-z]/p' | grep -E '^      ' | tr -d ' ' | sort | tr '\n' ' ')
+[ "$perms" = "contents:read issues:write " ] || falhar "$REVALIDAR: avisar com permissions \"$perms\""
+segredos=$(grep -Eo 'secrets\.[A-Za-z_]+' "$REVALIDAR" | sort -u | tr '\n' ' ')
+[ "$segredos" = "secrets.STILLON_BACKUP_AGE_IDENTITY " ] || falhar "$REVALIDAR: secrets \"$segredos\", queria só a chave do age"
+printf '%s\n' "$job_restore" | grep -q 'secrets\.STILLON_BACKUP_AGE_IDENTITY' || falhar "$REVALIDAR: a chave do age saiu do job restore"
+if printf '%s\n' "$job_avisar" | grep -q 'secrets\.'; then
+    falhar "$REVALIDAR: o job avisar escreve em issues e não pode ver segredo"
+fi
+printf '%s\n' "$job_avisar" | grep -q "needs\\.restore\\.result != 'skipped'" ||
+    falhar "$REVALIDAR: o aviso tem de rodar também quando o restore falha"
+if grep -En '(^|[^.])\bssh[[:space:]]|deploy/ci/vps\.sh|secrets\.VPS' "$REVALIDAR" >&2; then
+    falhar "$REVALIDAR: o ensaio não fala com a VPS"
 fi
 
 if [ "$falhas" -gt 0 ]; then
