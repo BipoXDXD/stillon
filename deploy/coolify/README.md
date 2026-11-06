@@ -11,3 +11,20 @@ Segredos de interpolação são configurados como variáveis privadas no Coolify
 Manter backups e restauração verificada antes de atualizar uma versão. Não apontar tráfego para a origem com dados antigos após o destino aceitar escritas. Uma reversão precisa primeiro preservar e transferir o estado novo.
 
 Todo serviço tem teto de CPU (`cpus`) e de memória (`mem_limit`): a VPS tem 2 vCPUs divididas com outros projetos. Os valores e o porquê de cada um estão comentados no `deploy/vps/compose.prod.yaml`, que usa os mesmos tetos; o `TestProductionComposeLimitsEveryService` exige os dois em todo serviço. Como o Coolify fixa o commit de infraestrutura, um teto novo só chega aos containers depois que esse commit é atualizado no recurso e o recurso é publicado de novo.
+
+## Imagem do banco: não fazer redeploy do `db` antes de restaurá-la
+
+Em 2026-11-06, a imagem de `stillon-db-1` estava em disco, sem tag nem digest:
+`postgres:18-alpine@sha256:77f58511…` respondia `No such image` por nome. O compose do banco usa
+`pull_policy: never`, então qualquer ação que recrie esse container falha, como no incidente do
+GoblinShift de 2026-11-05. O release não recria o banco: ele só atualiza o recurso do app. Reboot e
+restart preservam o container, e o cleanup do Coolify não remove imagem de container existente.
+
+Para restaurar, fora do cleanup das 00:00 às 06:30 UTC e sem reserva da VPS:
+
+1. Confirmar no registro, sem baixar, que o digest existe e é de manifesto, e não um ID local.
+2. Fazer `docker pull` pelo digest exato, sem recriar o container.
+3. Conferir com `docker image inspect` que o ID não mudou e que `stillon-db-1` segue de pé.
+
+Se o digest não existir ou o ID mudar, pare. Um redeploy do banco precisa do pull na mesma sessão da
+publicação.
