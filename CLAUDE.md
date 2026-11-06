@@ -63,7 +63,7 @@ push na `main` termina com sucesso, confere o SHA exato e envia as imagens à VP
   documentação (entra com `gh pr merge --admin`); um PR com código nunca leva `[skip ci]`.
 - O environment `production` do GitHub guarda as chaves do release (`COOLIFY_RELEASE_*`); o
   `deploy.yml` manual antigo ainda existe e usa segredos do repositório.
-- A `main` tem ruleset (PR obrigatório e checks). Migrations vão até a 00018. A 00015 fica vaga para
+- A `main` tem ruleset (PR obrigatório e checks). Migrations vão até a 00022. A 00015 fica vaga para
   sempre, porque `storage.Migrate` recusa número menor que o aplicado; a vinculação Discord pega o
   próximo número livre ([spec de heartbeats](docs/superpowers/specs/2026-11-05-heartbeats-design.md)).
 
