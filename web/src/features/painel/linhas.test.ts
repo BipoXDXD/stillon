@@ -90,11 +90,20 @@ describe('linhaDoHeartbeat', () => {
     // heartbeats, §5). Sabotagem: tirar a guarda → "há menos de 1 min".
     ['atrasado com prazo novo', { state: 'late', deadline_at: '2026-09-25T09:00:00Z' }, 'Sem sinal no prazo'],
     ['falhando', { state: 'failing' }, 'A tarefa avisou falha'],
-    ['aguardando', { state: 'waiting', last_ping_at: null }, 'Aguardando o primeiro sinal'],
-    ['aguardando, com a primeira execução em curso', { state: 'waiting', last_start_at: '2026-09-24T11:58:00Z' }, 'Em execução, começou há 2 minutos'],
+    ['aguardando', { state: 'waiting', last_ping_at: null, last_success_at: null }, 'Aguardando o primeiro sinal'],
+    // O que o servidor devolve depois de um /start numa tarefa nova.
+    [
+      'aguardando, com a primeira execução em curso',
+      { state: 'waiting', last_ping_at: '2026-09-24T11:58:00Z', last_start_at: '2026-09-24T11:58:00Z', last_success_at: null },
+      'Em execução, começou há 2 minutos',
+    ],
+    // A retomada descartou o início: já houve sinal, e nenhuma execução terminou.
+    ['aguardando com o início descartado', { state: 'waiting', last_ping_at: '2026-09-24T11:58:00Z', last_success_at: null }, 'Aguardando o primeiro sucesso'],
     ['em dia, com duração', { state: 'up', last_runtime_ms: 12_000 }, 'Sinal há 2 minutos · levou 12 s'],
     ['em dia, com duração zero', { state: 'up', last_runtime_ms: 0 }, 'Sinal há 2 minutos · levou 0 ms'],
     ['em dia, com execução em curso', { state: 'up', last_start_at: '2026-09-24T11:58:00Z', last_runtime_ms: 12_000 }, 'Em execução, começou há 2 minutos'],
+    ['falhando com início aberto não diz que está em execução', { state: 'failing', last_start_at: '2026-09-24T11:58:00Z' }, 'A tarefa avisou falha'],
+    ['pausado com início aberto não diz que está em execução', { state: 'paused', enabled: false, last_start_at: '2026-09-21T11:58:00Z' }, 'Pausado'],
     ['atrasado com início aberto não diz que está em execução', { state: 'late', last_start_at: '2026-09-24T11:58:00Z', deadline_at: '2026-09-24T11:59:00Z' }, 'Sem sinal no prazo · há 1 min'],
     ['pausado', { state: 'paused', enabled: false }, 'Pausado'],
     ['em dia sem sinal', { state: 'up', last_ping_at: null }, 'Nenhum sinal ainda'],

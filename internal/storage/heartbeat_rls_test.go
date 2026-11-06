@@ -372,7 +372,6 @@ func TestHeartbeatConstraints(t *testing.T) {
 	}
 }
 
-// Apagar o dono leva heartbeats, eventos e incidentes, como no heartbeat.
 // O código de saída diz o sinal, e o banco não aceita um que o contradiga.
 func TestHeartbeatEventExitCodeMatchesTheKind(t *testing.T) {
 	pool := testdb.New(t)
@@ -441,6 +440,10 @@ func TestHeartbeatTagsAreSeenOnlyByTheOwner(t *testing.T) {
 		t.Fatal(err)
 	}
 	comTagDoHeartbeat(t, pool, a, id)
+	novaPagina(t, pool, a, "publica", true, novoAlvo(t, pool, a, agora))
+	if n := contarPublico(t, pool, "publica", "heartbeat_tags"); n != 0 {
+		t.Errorf("o escopo público leu %d tags", n)
+	}
 
 	if n := contarComEscopo(t, pool, a, "heartbeat_tags"); n != 1 {
 		t.Fatalf("sob o escopo do dono, %d tags; queria 1 (controle)", n)
@@ -533,6 +536,7 @@ func TestDeletingAHeartbeatTakesItsTags(t *testing.T) {
 	}
 }
 
+// Apagar o dono leva heartbeats, eventos e incidentes, como no heartbeat.
 func TestDeletingTheOwnerCascades(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()

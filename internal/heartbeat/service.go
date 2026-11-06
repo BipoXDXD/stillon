@@ -336,6 +336,7 @@ func (s *Service) updateParams(h db.Heartbeat, p Patch) (db.UpdateHeartbeatParam
 	out := db.UpdateHeartbeatParams{
 		UserID: h.UserID, ID: h.ID, Name: h.Name, Enabled: h.Enabled,
 		DeadlineAt: h.DeadlineAt, FailingSince: h.FailingSince, ResumedAt: h.ResumedAt,
+		LastStartAt: h.LastStartAt,
 	}
 	if p.Name != nil {
 		out.Name = *p.Name
@@ -353,6 +354,9 @@ func (s *Service) updateParams(h db.Heartbeat, p Patch) (db.UpdateHeartbeatParam
 	retomou := out.Enabled && !h.Enabled
 	now := s.clk.Now()
 	if retomou {
+		// O início aberto é de antes da pausa: mantê-lo mediria a pausa inteira
+		// como execução no próximo sinal.
+		out.LastStartAt = nil
 		out.FailingSince = nil
 		out.ResumedAt = &now
 	}
@@ -498,15 +502,22 @@ func toHeartbeat(h db.Heartbeat, open *uuid.UUID, now time.Time) (Heartbeat, err
 	return Heartbeat{
 		ID: h.ID, Name: h.Name, Tags: []string{}, Enabled: h.Enabled, Schedule: sch,
 		Grace:      time.Duration(h.GraceSec) * time.Second,
-		Status:     statusOf(h.Enabled, h.FailingSince != nil, open != nil, h.DeadlineAt, h.LastPingAt != nil, now),
+		Status:     statusOf(h.Enabled, h.FailingSince != nil, open != nil, h.DeadlineAt, finishedARun(h), now),
 		DeadlineAt: h.DeadlineAt, LastPingAt: h.LastPingAt, LastSuccessAt: h.LastSuccessAt,
 		LastStartAt: h.LastStartAt, LastRuntimeMS: h.LastRuntimeMS, OpenIncidentID: open, CreatedAt: h.CreatedAt,
 	}, nil
 }
 
+// finishedARun diz se a tarefa já terminou alguma execução, bem ou mal. Um início
+// sozinho não prova nada: a tarefa nova pode morrer logo depois dele, e ficaria
+// "em dia" até o prazo.
+func finishedARun(h db.Heartbeat) bool {
+	return h.LastSuccessAt != nil || (h.LastSignal != nil && Signal(*h.LastSignal) != SignalStart)
+}
+
 // O incidente aberto conta como atraso mesmo com prazo futuro: editar o
 // agendamento move o prazo, e a tarefa continua devendo um sinal.
-func statusOf(enabled, failing, openIncident bool, deadline time.Time, pinged bool, now time.Time) Status {
+func statusOf(enabled, failing, openIncident bool, deadline time.Time, finished bool, now time.Time) Status {
 	switch {
 	case !enabled:
 		return StatusPaused
@@ -514,7 +525,7 @@ func statusOf(enabled, failing, openIncident bool, deadline time.Time, pinged bo
 		return StatusFailing
 	case openIncident, !deadline.After(now):
 		return StatusLate
-	case !pinged:
+	case !finished:
 		return StatusWaiting
 	}
 	return StatusUp

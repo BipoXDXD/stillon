@@ -33,6 +33,17 @@ export function prazoVencido(hb: Pick<Heartbeat, 'deadline_at'>, agora: Date): b
   return agora.getTime() > Date.parse(hb.deadline_at)
 }
 
+// O início da execução em curso. Atrasada, falhando ou pausada, o estado é o que
+// importa, e um início aberto ali é de uma execução que não terminou.
+export function inicioEmCurso(hb: Pick<Heartbeat, 'state' | 'last_start_at'>): string | null {
+  return hb.state === 'up' || hb.state === 'waiting' ? hb.last_start_at : null
+}
+
+// waiting é nunca ter terminado uma execução: pode já ter havido um início.
+export function textoDaEspera(hb: Pick<Heartbeat, 'last_ping_at'>): string {
+  return hb.last_ping_at === null ? 'Aguardando o primeiro sinal' : 'Aguardando o primeiro sucesso'
+}
+
 const MS_POR_SEGUNDO = 1000
 const MS_POR_MINUTO = 60_000
 
