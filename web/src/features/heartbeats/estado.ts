@@ -22,7 +22,9 @@ export function textoDoHeartbeat(e: EstadoDoHeartbeat): string {
 
 // Atrasado e falhando são derivados na leitura, e quem abre o incidente é o
 // avaliador: com ele parado, a tarefa está fora sem incidente nenhum. O
-// open_incident_id sozinho deixaria a tela verde a parada toda.
+// open_incident_id sozinho deixaria a tela verde a parada toda. Ele entra pela
+// tarefa pausada: pausar não encerra o incidente (D13). Vale para a manchete e
+// para /incidents.
 export function pedeAtencao(hb: Pick<Heartbeat, 'state' | 'open_incident_id'>): boolean {
   return estadoDoHeartbeat(hb.state) === 'down' || hb.open_incident_id !== null
 }

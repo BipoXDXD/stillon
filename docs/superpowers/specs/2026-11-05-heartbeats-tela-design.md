@@ -34,7 +34,7 @@ A manchete fala do conjunto inteiro: alvos e heartbeats. Um filtro não muda iss
 
 | Situação | Manchete |
 |---|---|
-| Só heartbeat com problema | "Uma tarefa pede atenção." / "Duas tarefas pedem atenção." |
+| Só heartbeat com problema, ou pausado com incidente aberto | "Uma tarefa pede atenção." / "Duas tarefas pedem atenção." |
 | Alvo e heartbeat com problema | "Um serviço e uma tarefa pedem atenção." |
 | Só alvo com problema | a de hoje: "Um serviço pede atenção." |
 | Sem problema, heartbeat que nunca terminou uma execução | "Uma tarefa ainda sem execução concluída." (junto de alvo: "Um serviço ainda sem dados e uma tarefa sem execução concluída."). "Sem sinal" foi trocado porque a tarefa pode já ter mandado `/start` |
@@ -43,7 +43,9 @@ A manchete fala do conjunto inteiro: alvos e heartbeats. Um filtro não muda iss
 | Tudo bem | "Tudo no ar." |
 | Nada cadastrado | a de hoje, só se a consulta de heartbeats respondeu |
 
-Atrasado e falhando contam como problema; pausado não, mesmo com incidente aberto, como o alvo.
+Atrasado e falhando contam como problema. Heartbeat pausado conta só com incidente aberto, que segue
+aberto até a retomada (D13), pela mesma regra de T13; sem incidente, não conta. O alvo pausado segue
+fora da conta, mesmo com incidente aberto.
 Enquanto a primeira resposta de heartbeats não chega, a tela fica no esqueleto: não saber não é
 "tudo no ar". A falha da consulta vira um aviso com "Tentar de novo", e os dados velhos ficam na
 tabela. A linha de detalhe ganha "Tarefas: 1 atrasada, 2 em dia.", e a meta, "2 de 3 tarefas em dia";

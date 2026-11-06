@@ -55,8 +55,28 @@ describe('manchete', () => {
     })
   })
 
-  it('pausado não é problema, mesmo com incidente aberto, como o alvo', () => {
-    expect(manchete([alvo()], tarefas(hb({ state: 'paused', open_incident_id: 'i1' })))).toEqual({ tipo: 'tudo-no-ar' })
+  // Pausar não encerra o incidente (D13): ele segue aberto até a retomada, e o
+  // verde esconderia isso. É a mesma regra da seção de /incidents (T13).
+  it('heartbeat pausado com incidente aberto pede atenção, com os alvos no ar', () => {
+    expect(manchete([alvo()], tarefas(hb({ state: 'paused', open_incident_id: 'i1' })))).toEqual({
+      tipo: 'problemas',
+      quantos: 0,
+      tarefas: 1,
+    })
+  })
+
+  it('heartbeat pausado sem incidente não pede atenção', () => {
+    expect(manchete([alvo()], tarefas(hb({ state: 'paused' })))).toEqual({ tipo: 'tudo-no-ar' })
+  })
+
+  it('pausado com incidente aparece na linha de detalhe', () => {
+    const lista = tarefas(hb({ state: 'paused', open_incident_id: 'i1' }))
+    expect(textoDaManchete(manchete([alvo()], lista))).toBe('Uma tarefa pede atenção.')
+    expect(detalheDaManchete([alvo()], lista)).toBe('1 no ar. Tarefas: 1 pausada.')
+  })
+
+  it('o alvo pausado com incidente segue fora da conta', () => {
+    expect(manchete([alvo({ state: 'down', enabled: false }), alvo()], semTarefas)).toEqual({ tipo: 'tudo-no-ar' })
   })
 
   it('heartbeat aguardando o primeiro sinal segura o "Tudo no ar."', () => {

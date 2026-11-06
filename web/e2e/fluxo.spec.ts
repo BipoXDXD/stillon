@@ -1,12 +1,12 @@
 import type { APIRequestContext, APIResponse, Page, Route } from '@playwright/test'
 import { controlePositivo, expect, test } from './fixtures'
 
-// O alvo que o teste cadastra. Um passo que falha no meio deixaria o alvo
-// para trás, e contra uma pilha externa eles se acumulariam até o teto de
-// 100 alvos (reconciliação, item 4). O afterEach o procura pelo nome, pela
-// API, e o apaga; no caminho feliz o próprio teste já o apagou (passo 7), e
-// a busca não acha nada.
-let nomeDoAlvo = ''
+// O que o teste cadastra. Um passo que falha no meio deixaria o monitor para
+// trás, e contra uma pilha externa eles se acumulariam até o teto de 100
+// (reconciliação, item 4). O afterEach o procura pelo nome, pela API, e o
+// apaga; no caminho feliz o próprio teste já o apagou, e a busca não acha nada.
+type Sobra = { rota: 'targets' | 'heartbeats'; nome: string }
+let sobra: Sobra | null = null
 
 // Os limitadores (ver abaixo) respondem 429 sem Retry-After. A limpeza roda
 // depois do fluxo, que gastou os baldes: um 429 aqui é o limite, não o
@@ -25,7 +25,7 @@ async function comRecuo(oque: string, fazer: () => Promise<APIResponse>): Promis
       // Esgotado: falha com o motivo claro, sem se passar por outro erro.
       throw new Error(
         `limpeza do E2E: ${oque} ainda em 429 depois de ${RECUOS_DO_429_MS.length} novas tentativas ` +
-          `(${RECUOS_DO_429_MS.reduce((a, b) => a + b, 0) / 1000} s de recuo); o alvo "${nomeDoAlvoEmLimpeza}" pode ter ficado para trás`,
+          `(${RECUOS_DO_429_MS.reduce((a, b) => a + b, 0) / 1000} s de recuo); "${nomeEmLimpeza}" pode ter ficado para trás`,
       )
     }
     console.log(`limpeza do E2E: ${oque} deu 429; nova tentativa em ${espera / 1000} s`)
@@ -33,12 +33,12 @@ async function comRecuo(oque: string, fazer: () => Promise<APIResponse>): Promis
   }
 }
 
-let nomeDoAlvoEmLimpeza = ''
+let nomeEmLimpeza = ''
 
 // Um login só: o token dele serve à lista e a todos os DELETE (o balde do
 // login é o mais apertado, 5 de burst por IP).
-async function apagarPeloNome(request: APIRequestContext, email: string, senha: string, nome: string) {
-  nomeDoAlvoEmLimpeza = nome
+async function apagarPeloNome(request: APIRequestContext, email: string, senha: string, { rota, nome }: Sobra) {
+  nomeEmLimpeza = nome
   const mutacao = { 'X-Requested-With': 'stillon' }
   const login = await comRecuo('o login', () =>
     request.post('/api/v1/auth/login', { headers: mutacao, data: { email, password: senha } }),
@@ -47,17 +47,17 @@ async function apagarPeloNome(request: APIRequestContext, email: string, senha: 
   const { access_token: token } = (await login.json()) as { access_token: string }
   const autorizado = { Authorization: `Bearer ${token}` }
   try {
-    const lista = await comRecuo('a lista de alvos', () => request.get('/api/v1/targets?limit=100', { headers: autorizado }))
+    const lista = await comRecuo(`a lista de ${rota}`, () => request.get(`/api/v1/${rota}?limit=100`, { headers: autorizado }))
     expect(lista.status(), 'lista da limpeza').toBe(200)
     const { items } = (await lista.json()) as { items: { id: string; name: string }[] }
     const sobras = items.filter((a) => a.name === nome)
     for (const a of sobras) {
       const r = await comRecuo(`o DELETE de ${a.id}`, () =>
-        request.delete(`/api/v1/targets/${a.id}`, { headers: { ...autorizado, ...mutacao } }),
+        request.delete(`/api/v1/${rota}/${a.id}`, { headers: { ...autorizado, ...mutacao } }),
       )
       expect([204, 404], `apagar ${a.id}`).toContain(r.status())
     }
-    console.log(`limpeza do E2E: ${sobras.length} alvo(s) "${nome}" apagado(s)`)
+    console.log(`limpeza do E2E: ${sobras.length} item(ns) "${nome}" apagado(s) de ${rota}`)
   } finally {
     // O cookie de refresh do login da limpeza ficou no contexto do request:
     // o logout encerra essa sessão também. Com recuo: um 429 aqui deixaria a
@@ -85,10 +85,10 @@ test.beforeAll(async () => {
 })
 
 test.afterEach(async ({ request, credenciais }) => {
-  if (!nomeDoAlvo) return
-  const nome = nomeDoAlvo
-  nomeDoAlvo = ''
-  await apagarPeloNome(request, credenciais.email, credenciais.senha, nome)
+  if (!sobra) return
+  const resto = sobra
+  sobra = null
+  await apagarPeloNome(request, credenciais.email, credenciais.senha, resto)
 })
 
 // O fluxo crítico da spec §14: login → cadastrar alvo → ver status. Mais o
@@ -97,7 +97,8 @@ test.afterEach(async ({ request, credenciais }) => {
 test('login, cadastro de alvo, status, F5, detalhe, apagar, encerrar a sessão e sair', async ({ page, credenciais }, info) => {
   const encerrar = await cadenciarRecursos(page, performance.now() + info.timeout)
   try {
-    nomeDoAlvo = `E2E ${Date.now()}`
+    const nomeDoAlvo = `E2E ${Date.now()}`
+    sobra = { rota: 'targets', nome: nomeDoAlvo }
 
     // 1. Sem sessão: o splash e depois o login; nunca o painel piscando.
     await page.goto('/')
@@ -117,8 +118,11 @@ test('login, cadastro de alvo, status, F5, detalhe, apagar, encerrar a sessão e
 
     // 3. Cadastrar. O alvo .invalid (RFC 2606) passa pela validação de
     //    cadastro, que não resolve DNS, e nunca resolve: sem rede externa.
+    //    O título primeiro: a navegação é uma transição, e até ela terminar o
+    //    "Nome" casaria com a busca do painel ("Buscar por nome ou tag").
     await page.getByRole('link', { name: 'Cadastrar alvo' }).click()
-    await page.getByLabel('Nome').fill(nomeDoAlvo)
+    await expect(page.getByRole('heading', { name: 'Novo alvo' })).toBeVisible()
+    await page.getByLabel('Nome', { exact: true }).fill(nomeDoAlvo)
     await page.getByLabel('URL').fill('https://stillon-e2e.invalid/')
     await page.getByLabel('Tags').fill('Fluxo-E2E, fluxo-e2e')
     await page.getByRole('button', { name: 'Cadastrar' }).click()
@@ -205,6 +209,159 @@ test('login, cadastro de alvo, status, F5, detalhe, apagar, encerrar a sessão e
     await page.reload()
     await expect(page.getByRole('heading', { name: 'Entrar no StillOn' })).toBeVisible()
     await controlePositivo(page, 'o fim do fluxo')
+  } finally {
+    await encerrar()
+  }
+})
+
+// A jornada da tarefa, contra a pilha real: o sinal sai por HTTP, sem cookie,
+// como sai de um cron, e o painel só descobre pelo próprio poll (15 a 30 s,
+// mais os turnos da cadência e os 5 s do avaliador). Daí o prazo de cada
+// espera e o do teste. O atraso por relógio fica de fora: o menor prazo real é
+// de 90 s (60 de período, 30 de tolerância), e a pilha não tem relógio
+// controlável; quem o cobre são os testes Go do avaliador.
+const ESPERA_DO_POLL_MS = 45_000
+const PRAZO_DA_JORNADA_MS = 300_000
+const URL_DE_PING = /\/ping\/[\w-]{43}$/
+const TAREFA_PEDE_ATENCAO = /\buma tarefa pedem? atenção\./i
+// Sem tarefa na manchete, a frase depende dos alvos da pilha: nenhum na própria,
+// e o example.com do seed no CI, normalmente no ar.
+const MANCHETE_SEM_TAREFA = /^(Todos os monitores estão pausados|Tudo no ar|Um serviço pede atenção)\.$/
+
+test('heartbeat: cadastro, URL, sinais reais, incidente, pausa, retomada, rotação e apagar', async ({ page, context, request, credenciais }, info) => {
+  test.setTimeout(PRAZO_DA_JORNADA_MS)
+  const encerrar = await cadenciarRecursos(page, performance.now() + info.timeout)
+  try {
+    const nome = `Tarefa E2E ${Date.now()}`
+    sobra = { rota: 'heartbeats', nome }
+    const noPoll = { timeout: ESPERA_DO_POLL_MS }
+    const irAoPainel = () => page.getByRole('navigation', { name: 'Principal' }).getByRole('link', { name: 'Painel' }).click()
+    const selo = (texto: string) => page.getByText(texto, { exact: true })
+    const log = page.getByRole('region', { name: 'Log de eventos' }).getByRole('listitem')
+    const incidentes = page.getByRole('region', { name: 'Incidentes' }).getByRole('listitem')
+    const linha = (estado: string) =>
+      page.getByRole('table', { name: /^Monitores/ }).getByRole('row', { name: new RegExp(`${estado}.*${nome}`) })
+    // O título da asserção não leva a URL: ela é a credencial, mesmo a de teste.
+    const postar = async (destino: string, status: number) =>
+      expect((await request.post(destino)).status(), `POST em ${new URL(destino).pathname.replace(/[\w-]{43}/, '…')}`).toBe(status)
+
+    // 1. Entrar.
+    await page.goto('/')
+    await page.getByLabel('E-mail').fill(credenciais.email)
+    await page.getByLabel('Senha').fill(credenciais.senha)
+    await page.getByRole('button', { name: 'Entrar' }).click()
+    await expect(page.getByRole('heading', { name: 'Painel' })).toBeVisible()
+
+    // 2. Cadastrar: período e tolerância padrão, com o prazo longe do teste.
+    await page.getByRole('link', { name: 'Cadastrar heartbeat' }).click()
+    await expect(page.getByRole('heading', { name: 'Novo heartbeat' })).toBeVisible()
+    await page.getByLabel('Nome', { exact: true }).fill(nome)
+    await page.getByRole('button', { name: 'Cadastrar', exact: true }).click()
+
+    // 3. Copiar a URL mostrada uma vez, pelo botão: vale o que chega à área de
+    //    transferência, que é o que vai para a tarefa.
+    await context.grantPermissions(['clipboard-read', 'clipboard-write'])
+    const copiarUrl = async () => {
+      const dialogo = page.getByRole('dialog', { name: 'Guarde a URL de ping' })
+      // Sem isto, um POST recusado só apareceria no fim do prazo do teste: o
+      // clique abaixo espera sem limite próprio.
+      await expect(dialogo).toBeVisible(noPoll)
+      const copiar = dialogo.getByRole('button', { name: 'Copiar a URL de ping' })
+      await copiar.click()
+      await expect(copiar).toHaveText('Copiado')
+      const copiada = await page.evaluate(() => navigator.clipboard.readText())
+      expect(URL_DE_PING.test(copiada), 'formato da URL de ping').toBe(true)
+      await dialogo.getByRole('button', { name: 'Já guardei' }).click()
+      await expect(dialogo).toHaveCount(0)
+      return copiada
+    }
+    const url = await copiarUrl()
+
+    // Só POST (D6): um GET não conta, e a tarefa segue aguardando.
+    await expect(page.getByRole('heading', { name: nome })).toBeVisible()
+    await expect(selo('Aguardando')).toBeVisible()
+    expect((await request.get(url)).status()).toBe(405)
+    await expect(page.getByText('Nenhum sinal recebido.')).toBeVisible()
+
+    // 4. Início e sucesso de verdade: estado e log mudam sem recarregar.
+    await postar(`${url}/start`, 200)
+    await postar(url, 200)
+    await expect(selo('Em dia')).toBeVisible(noPoll)
+    await expect(log).toHaveCount(2, noPoll)
+    await expect(log.nth(0)).toContainText('Sucesso')
+    await expect(log.nth(0)).toContainText(/levou \d+ (ms|s)/)
+    await expect(log.nth(1)).toContainText('Início')
+    await expect(page.getByText('Nenhum incidente.')).toBeVisible()
+
+    // 5. Falha: o selo vem da leitura, e o incidente, do avaliador.
+    await postar(`${url}/fail`, 200)
+    await expect(selo('Falhando')).toBeVisible(noPoll)
+    await expect(incidentes.filter({ hasText: 'A tarefa avisou falha' }).getByText('Em andamento')).toBeVisible(noPoll)
+    await expect(log).toHaveCount(3, noPoll)
+    await expect(log.nth(0)).toContainText('Falha')
+
+    // A manchete fala da tarefa. Regex: a pilha do CI tem os alvos do seed, e
+    // a frase pode ser "Um serviço e uma tarefa pedem atenção."
+    await irAoPainel()
+    await expect(page.getByText(TAREFA_PEDE_ATENCAO)).toBeVisible(noPoll)
+    await expect(page.getByText(/Tarefas: 1 com falha\./)).toBeVisible()
+    await expect(linha('Falhando')).toBeVisible()
+    await page.getByRole('link', { name: nome, exact: true }).click()
+
+    // 6. Pausar não encerra o incidente (D13): a manchete segue pedindo atenção.
+    await page.getByRole('button', { name: 'Pausar' }).click()
+    await page.getByRole('alertdialog').getByRole('button', { name: 'Pausar heartbeat' }).click()
+    await expect(selo('Pausado')).toBeVisible()
+    //    A linha vem primeiro: ela prova que a lista já é a nova, e a manchete
+    //    nasce da mesma lista.
+    await irAoPainel()
+    await expect(linha('Pausado')).toBeVisible(noPoll)
+    await expect(page.getByText(TAREFA_PEDE_ATENCAO)).toBeVisible()
+    await expect(page.getByText(/Tarefas: 1 pausada\./)).toBeVisible()
+    await page.getByRole('link', { name: nome, exact: true }).click()
+
+    // 7. Retomar zera a falha, e o avaliador fecha o incidente.
+    await page.getByRole('button', { name: 'Retomar' }).click()
+    await expect(selo('Em dia')).toBeVisible(noPoll)
+    await expect(incidentes.getByText('Resolvido')).toBeVisible(noPoll)
+    await expect(incidentes.getByText('Em andamento')).toHaveCount(0)
+
+    // 8. Rotacionar: a URL antiga morre na hora, e a nova fala com o mesmo
+    //    heartbeat (o sucesso entra no mesmo log).
+    await page.getByRole('button', { name: 'Gerar nova URL' }).click()
+    await page.getByRole('alertdialog').getByRole('button', { name: 'Gerar nova URL' }).click()
+    const urlNova = await copiarUrl()
+    expect(urlNova === url, 'a rotação troca a URL').toBe(false)
+    await postar(url, 404)
+    await postar(`${url}/start`, 404)
+    await postar(`${url}/fail`, 404)
+    await postar(urlNova, 200)
+    await expect(log).toHaveCount(4, noPoll)
+    await expect(log.nth(0)).toContainText('Sucesso')
+
+    // A credencial não ficou em lugar nenhum do navegador (spec da tela, T8).
+    const guardado = await page.evaluate(() => JSON.stringify([localStorage, sessionStorage, history.state, document.body.innerText]))
+    for (const u of [url, urlNova]) expect(guardado.includes(u.slice(u.lastIndexOf('/') + 1)), 'token no navegador').toBe(false)
+
+    // 9. Pausada sem incidente, a tarefa sai da manchete.
+    await page.getByRole('button', { name: 'Pausar' }).click()
+    await page.getByRole('alertdialog').getByRole('button', { name: 'Pausar heartbeat' }).click()
+    await expect(selo('Pausado')).toBeVisible()
+    await irAoPainel()
+    await expect(linha('Pausado')).toBeVisible(noPoll)
+    await expect(page.getByRole('heading', { level: 2, name: MANCHETE_SEM_TAREFA })).toBeVisible()
+    await expect(page.getByText(TAREFA_PEDE_ATENCAO)).toHaveCount(0)
+    await page.getByRole('link', { name: nome, exact: true }).click()
+
+    // 10. Apagar: some do painel, e a URL deixa de existir.
+    await page.getByRole('button', { name: 'Apagar' }).click()
+    await page.getByRole('alertdialog').getByRole('button', { name: 'Apagar heartbeat' }).click()
+    await expect(page.getByRole('heading', { name: 'Painel' })).toBeVisible()
+    await expect(page.getByRole('link', { name: nome })).toHaveCount(0)
+    await postar(urlNova, 404)
+    sobra = null
+
+    await controlePositivo(page, 'o fim da jornada do heartbeat')
   } finally {
     await encerrar()
   }
