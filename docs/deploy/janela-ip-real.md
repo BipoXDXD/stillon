@@ -7,8 +7,7 @@ ficam no [ADR 041 do GoblinShift](https://github.com/BipoXDXD/GoblinShift/blob/m
 e no plano interno. Este arquivo é público: não cite endereço da origem, regra de rede nem segredo,
 nem aqui nem no PR.
 
-**O problema.** Hoje a borda manda ao StillOn o IP da Cloudflare. Login, ping, limite global e
-`ip_hash` contam a borda, e não o cliente.
+**O objetivo.** Login, ping, limite global e `ip_hash` contam o cliente.
 
 ## Horários (UTC)
 
