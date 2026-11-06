@@ -59,8 +59,8 @@ function situacaoDoAlvo(it: ItemDoResumo, estado: EstadoExibido, incidente: Inci
   }
 }
 
-// Sem tags, sem uptime e sem as 24 horas: o heartbeat não tem nada disso, e
-// medida inventada mentiria (spec da tela, T4 e T5).
+// Sem uptime e sem as 24 horas: o heartbeat não tem nada disso, e medida
+// inventada mentiria (spec da tela, T5).
 export function linhaDoHeartbeat(hb: Heartbeat, agora: Date): LinhaDeMonitor {
   return {
     tipo: 'heartbeat',
@@ -70,7 +70,7 @@ export function linhaDoHeartbeat(hb: Heartbeat, agora: Date): LinhaDeMonitor {
     estado: estadoDoHeartbeat(hb.state),
     textoDoEstado: textoDoHeartbeat(hb.state),
     situacao: situacaoDoHeartbeat(hb, agora),
-    tags: [],
+    tags: hb.tags,
     uptime24h: null,
     historico: [],
     incidenteHref: hb.open_incident_id ? `/heartbeats/${hb.id}` : null,

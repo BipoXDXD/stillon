@@ -63,12 +63,12 @@ export function casaComBusca(it: { name: string; tags: readonly string[] }, busc
   return [it.name, ...it.tags].some((s) => dobrar(s).includes(termo))
 }
 
-// O heartbeat não passa pela API de filtro e não tem tag: com tag ligada, ele
-// sai da tabela. A manchete continua falando dele (spec da tela, T4).
+// O heartbeat não passa pela API de filtro: a regra é a mesma, aqui. Todas as
+// tags pedidas têm de estar nele, como no alvo.
 export function heartbeatNosFiltros(hb: Heartbeat, f: Filtros): boolean {
-  if (f.tags.length > 0) return false
+  if (!f.tags.every((tag) => hb.tags.includes(tag))) return false
   if (f.estados.length > 0 && !f.estados.includes(estadoDoFiltro(estadoDoHeartbeat(hb.state)))) return false
-  return casaComBusca({ name: hb.name, tags: [] }, f.busca)
+  return casaComBusca(hb, f.busca)
 }
 
 // Quantos há em cada estado no conjunto inteiro, para os botões da barra.
@@ -80,7 +80,7 @@ export function contarDoConjunto(itens: readonly ItemDoResumo[], heartbeats: rea
 
 export type ContagemDeTag = { tag: string; quantos: number }
 
-export function contarTags(itens: readonly ItemDoResumo[]): ContagemDeTag[] {
+export function contarTags(itens: readonly { tags: readonly string[] }[]): ContagemDeTag[] {
   const conta = new Map<string, number>()
   for (const it of itens) for (const tag of it.tags) conta.set(tag, (conta.get(tag) ?? 0) + 1)
   return [...conta]

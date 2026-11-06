@@ -4,6 +4,7 @@ import { useEffect, useEffectEvent, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router'
 import { useApi } from '@/app/contexto'
 import { EstadoDaConsulta } from '@/components/EstadoDaConsulta'
+import { ListaDeTags } from '@/components/ListaDeTags'
 import { SeloDeEstado } from '@/components/SeloDeEstado'
 import { Titulo } from '@/components/Titulo'
 import { useAvisar } from '@/components/ui/avisos'
@@ -117,6 +118,7 @@ function DetalheDoHeartbeat({ id }: { id: string }) {
               <div className="min-w-0 space-y-2">
                 <Titulo aba={hb.name}>{hb.name}</Titulo>
                 <SeloDeEstado estado={estadoDoHeartbeat(hb.state)} texto={textoDoHeartbeat(hb.state)} />
+                <ListaDeTags tags={hb.tags} />
               </div>
               <div className="flex flex-wrap gap-2">
                 <Botao tipo="secundario" asChild>

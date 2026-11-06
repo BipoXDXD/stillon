@@ -4,7 +4,7 @@ import { FormaDoEstado } from '@/components/SeloDeEstado'
 import { BotaoQueSome } from '@/components/ui/botao'
 import { Entrada } from '@/components/ui/campo'
 import { ESTADOS_DO_FILTRO, type EstadoDoFiltro } from '@/lib/api/cliente'
-import type { ItemDoResumo } from '@/lib/api/schemas'
+import type { Heartbeat, ItemDoResumo } from '@/lib/api/schemas'
 import { textoDoEstado, type EstadoExibido } from '@/lib/estado'
 import { cn } from '@/lib/utils'
 import { alternar, contarTags, estadoExibidoDoFiltro, SEM_FILTROS, temFiltro, type Filtros } from './filtros'
@@ -15,6 +15,7 @@ import { alternar, contarTags, estadoExibidoDoFiltro, SEM_FILTROS, temFiltro, ty
 // desligá-lo. Quem some com o próprio clique manda o foco à busca.
 export function BarraDeFiltros({
   itens,
+  heartbeats,
   contagem,
   filtros,
   resultado,
@@ -23,6 +24,7 @@ export function BarraDeFiltros({
   aoMudar,
 }: {
   itens: readonly ItemDoResumo[]
+  heartbeats: readonly Heartbeat[]
   contagem: Record<EstadoExibido, number>
   filtros: Filtros
   // "3 de 5 monitores", "Filtrando…", ou nada se a consulta falhou.
@@ -33,7 +35,7 @@ export function BarraDeFiltros({
 }) {
   const quantosDoEstado = (e: EstadoDoFiltro) => contagem[estadoExibidoDoFiltro(e)]
   const estados = ESTADOS_DO_FILTRO.filter((e) => quantosDoEstado(e) > 0 || filtros.estados.includes(e))
-  const tags = contarTags(itens)
+  const tags = contarTags([...itens, ...heartbeats])
   return (
     <section aria-label="Filtros" className="space-y-3">
       <div className="flex flex-wrap items-center gap-x-4 gap-y-3">

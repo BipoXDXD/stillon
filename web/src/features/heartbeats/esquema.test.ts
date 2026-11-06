@@ -83,6 +83,36 @@ describe('validação do formulário', () => {
   })
 })
 
+describe('tags no formulário', () => {
+  it('sem tags, o POST não leva o campo', () => {
+    expect(paraCriacao(valores())).not.toHaveProperty('tags')
+  })
+
+  it('com tags, leva a forma canônica', () => {
+    expect(paraCriacao(valores({ tagsTexto: 'Prod, dados, prod' })).tags).toEqual(['dados', 'prod'])
+  })
+
+  it.each([
+    ['nove tags', 'a,b,c,d,e,f,g,h,i', 'Até 8 tags.'],
+    ['longa demais', 'a'.repeat(25), 'Cada tag tem até 24 caracteres.'],
+    ['caractere fora da regra', 'a b', 'Use letras, números, hífen e sublinhado, separados por vírgula.'],
+  ])('recusa %s', (_, tagsTexto, mensagem) => {
+    expect(erros(valores({ tagsTexto }))).toEqual({ tagsTexto: mensagem })
+  })
+
+  it('valoresDe preenche o campo, e sem mudança nada vai no PATCH', () => {
+    const original = valoresDe(hb({ tags: ['dados', 'prod'] }))
+    expect(original.tagsTexto).toBe('dados, prod')
+    expect(paraAlteracao(original, { ...original, tagsTexto: 'prod, dados' })).toEqual({})
+  })
+
+  // Sabotagem: tratar lista vazia como "sem mudança" → não dá para tirar a última tag.
+  it('limpar o campo manda a lista vazia', () => {
+    const original = valoresDe(hb({ tags: ['prod'] }))
+    expect(paraAlteracao(original, { ...original, tagsTexto: '' })).toEqual({ tags: [] })
+  })
+})
+
 describe('valoresDe', () => {
   it('período: a maior unidade exata', () => {
     expect(valoresDe(hb({ schedule: { kind: 'period', period_sec: 5400 }, grace_sec: 3600 }))).toMatchObject({

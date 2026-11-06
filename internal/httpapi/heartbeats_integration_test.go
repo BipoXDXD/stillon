@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"net/http"
 	"slices"
 	"sort"
@@ -122,7 +123,7 @@ func TestHeartbeatResponseHasExactKeys(t *testing.T) {
 	dono := tokenDe(t, a, a.userID)
 	id, _ := criarHB(t, a, dono, corpoDePeriodo)
 	base := []string{"created_at", "deadline_at", "enabled", "grace_sec", "id", "last_ping_at", "last_runtime_ms", "last_start_at",
-		"last_success_at", "name", "open_incident_id", "schedule", "state"}
+		"last_success_at", "name", "open_incident_id", "schedule", "state", "tags"}
 
 	_, corpo := lerCru(t, a, http.MethodGet, "/api/v1/heartbeats/"+id, dono, nil)
 	m := decodificar(t, corpo)
@@ -167,6 +168,142 @@ func TestListAndDetailShowTheLastRuntime(t *testing.T) {
 	h = decodificar(t, corpo)["items"].([]any)[0].(map[string]any)
 	if h["last_start_at"] != nil || h["last_runtime_ms"] != float64(90000) {
 		t.Errorf("depois do sucesso: %s", corpo)
+	}
+}
+
+func tagsDe(t *testing.T, corpo string) []any {
+	t.Helper()
+	tags, ok := decodificar(t, corpo)["tags"].([]any)
+	if !ok {
+		t.Fatalf("sem lista de tags: %s", corpo)
+	}
+	return tags
+}
+
+// Criar, ler, listar e editar. A forma canônica é a mesma dos alvos.
+func TestHeartbeatTagsRoundTrip(t *testing.T) {
+	a := newAPI(t)
+	dono := tokenDe(t, a, a.userID)
+	corpo := maps.Clone(corpoDePeriodo)
+	corpo["tags"] = []string{"Prod", " prod ", "dados"}
+	id, _ := criarHB(t, a, dono, corpo)
+
+	_, lido := lerCru(t, a, http.MethodGet, "/api/v1/heartbeats/"+id, dono, nil)
+	if got := tagsDe(t, lido); !slices.Equal(got, []any{"dados", "prod"}) {
+		t.Errorf("detalhe: %v", got)
+	}
+	_, lista := lerCru(t, a, http.MethodGet, "/api/v1/heartbeats?limit=100", dono, nil)
+	item := decodificar(t, lista)["items"].([]any)[0].(map[string]any)
+	if got := item["tags"].([]any); !slices.Equal(got, []any{"dados", "prod"}) {
+		t.Errorf("lista: %v", got)
+	}
+}
+
+// Sem tags é lista vazia, nunca null: o schema do painel recusaria o null.
+func TestHeartbeatWithoutTagsHasAnEmptyList(t *testing.T) {
+	a := newAPI(t)
+	dono := tokenDe(t, a, a.userID)
+	id, _ := criarHB(t, a, dono, corpoDePeriodo)
+	for _, caminho := range []string{"/api/v1/heartbeats/" + id, "/api/v1/heartbeats?limit=100"} {
+		_, corpo := lerCru(t, a, http.MethodGet, caminho, dono, nil)
+		if strings.Contains(corpo, `"tags":null`) || !strings.Contains(corpo, `"tags":[]`) {
+			t.Errorf("%s: %s", caminho, corpo)
+		}
+	}
+}
+
+// Ausente não mexe; lista troca; [] e null limpam.
+func TestPatchOfHeartbeatTags(t *testing.T) {
+	a := newAPI(t)
+	dono := tokenDe(t, a, a.userID)
+	corpo := maps.Clone(corpoDePeriodo)
+	corpo["tags"] = []string{"prod"}
+	id, _ := criarHB(t, a, dono, corpo)
+	vizinho, _ := criarHB(t, a, dono, corpo)
+	t.Cleanup(func() {
+		_, lido := lerCru(t, a, http.MethodGet, "/api/v1/heartbeats/"+vizinho, dono, nil)
+		if got := tagsDe(t, lido); !slices.Equal(got, []any{"prod"}) {
+			t.Errorf("as tags do vizinho mudaram: %v", got)
+		}
+	})
+
+	casos := []struct {
+		nome  string
+		corpo map[string]any
+		tags  []any
+	}{
+		{"ausente não mexe", map[string]any{"name": "outro"}, []any{"prod"}},
+		{"lista troca", map[string]any{"tags": []string{"api", "web"}}, []any{"api", "web"}},
+		{"vazia limpa", map[string]any{"tags": []string{}}, []any{}},
+		{"volta", map[string]any{"tags": []string{"prod"}}, []any{"prod"}},
+		{"null limpa", map[string]any{"tags": nil}, []any{}},
+	}
+	for _, c := range casos {
+		status, resp := lerCru(t, a, http.MethodPatch, "/api/v1/heartbeats/"+id, dono, c.corpo)
+		if status != http.StatusOK {
+			t.Fatalf("%s: %d %s", c.nome, status, resp)
+		}
+		if got := tagsDe(t, resp); !slices.Equal(got, c.tags) {
+			t.Errorf("%s: %v, queria %v", c.nome, got, c.tags)
+		}
+	}
+}
+
+func TestHeartbeatTagsAreValidatedLikeTargetTags(t *testing.T) {
+	a := newAPI(t)
+	dono := tokenDe(t, a, a.userID)
+	id, _ := criarHB(t, a, dono, corpoDePeriodo)
+	casos := []struct {
+		nome, motivo string
+		tags         []string
+	}{
+		{"com espaço", "invalid", []string{"a b"}},
+		{"com vírgula", "invalid", []string{"a,b"}},
+		{"NUL", "invalid", []string{"a\x00b"}},
+		{"injeção", "invalid", []string{"';DROP--"}},
+		{"25 caracteres", "too_long", []string{strings.Repeat("a", 25)}},
+		{"nove tags", "out_of_range", []string{"a", "b", "c", "d", "e", "f", "g", "h", "i"}},
+	}
+	for _, c := range casos {
+		t.Run(c.nome, func(t *testing.T) {
+			criar := maps.Clone(corpoDePeriodo)
+			criar["tags"] = c.tags
+			status, corpo := lerCru(t, a, http.MethodPost, "/api/v1/heartbeats", dono, criar)
+			if status != http.StatusBadRequest || !strings.Contains(corpo, `"tags"`) || !strings.Contains(corpo, c.motivo) {
+				t.Errorf("POST: %d %s", status, corpo)
+			}
+			status, corpo = lerCru(t, a, http.MethodPatch, "/api/v1/heartbeats/"+id, dono, map[string]any{"tags": c.tags})
+			if status != http.StatusBadRequest || !strings.Contains(corpo, c.motivo) {
+				t.Errorf("PATCH: %d %s", status, corpo)
+			}
+		})
+	}
+	_, corpo := lerCru(t, a, http.MethodGet, "/api/v1/heartbeats?limit=100", dono, nil)
+	if itens := decodificar(t, corpo)["items"].([]any); len(itens) != 1 || len(itens[0].(map[string]any)["tags"].([]any)) != 0 {
+		t.Errorf("tag inválida deixou rastro: %s", corpo)
+	}
+}
+
+// B não vê as tags de A nem as altera, e o PATCH dele é o 404 de sempre.
+func TestAnotherUsersHeartbeatTagsStayOut(t *testing.T) {
+	a := newAPI(t)
+	dono := tokenDe(t, a, a.userID)
+	corpo := maps.Clone(corpoDePeriodo)
+	corpo["tags"] = []string{"segredo-de-a"}
+	id, _ := criarHB(t, a, dono, corpo)
+	outro := tokenDe(t, a, outroUsuario(t, a))
+
+	status, resp := lerCru(t, a, http.MethodPatch, "/api/v1/heartbeats/"+id, outro, map[string]any{"tags": []string{"invadida"}})
+	if status != http.StatusNotFound || strings.Contains(resp, "segredo-de-a") {
+		t.Errorf("PATCH de B: %d %s", status, resp)
+	}
+	_, lista := lerCru(t, a, http.MethodGet, "/api/v1/heartbeats?limit=100", outro, nil)
+	if strings.Contains(lista, "segredo-de-a") {
+		t.Errorf("lista de B: %s", lista)
+	}
+	_, lido := lerCru(t, a, http.MethodGet, "/api/v1/heartbeats/"+id, dono, nil)
+	if got := tagsDe(t, lido); !slices.Equal(got, []any{"segredo-de-a"}) {
+		t.Errorf("as tags de A mudaram: %v", got)
 	}
 }
 

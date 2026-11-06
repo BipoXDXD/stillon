@@ -9,6 +9,7 @@ async function detalheCom(p: {
   incidentes?: Parameters<typeof incidenteDeHeartbeat>[0][]
   last_runtime_ms?: number
   last_start_at?: string
+  tags?: string[]
 } = {}) {
   const r = await renderizarPainel('/')
   const { eventos: _eventos, incidentes: _incidentes, ...doHeartbeat } = p
@@ -48,6 +49,11 @@ describe('tempo de execução no detalhe', () => {
     const s = await secao('Agendamento e sinais')
     expect(within(s).getByText('Última duração').nextElementSibling).toHaveTextContent('Não medida')
     expect(within(s).queryByText('Em execução desde')).not.toBeInTheDocument()
+  })
+
+  it('o detalhe mostra as tags', async () => {
+    await detalheCom({ tags: ['prod', 'dados'] })
+    expect(within(screen.getByRole('list', { name: 'Tags' })).getAllByRole('listitem').map((l) => l.textContent)).toEqual(['prod', 'dados'])
   })
 
   it('com início aberto, mostra desde quando', async () => {

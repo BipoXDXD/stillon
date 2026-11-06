@@ -79,6 +79,11 @@ type HeartbeatEvent struct {
 	ExitCode    *int16
 }
 
+type HeartbeatTag struct {
+	HeartbeatID uuid.UUID
+	Tag         string
+}
+
 type Incident struct {
 	ID              uuid.UUID
 	TargetID        *uuid.UUID

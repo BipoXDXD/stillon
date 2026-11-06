@@ -110,6 +110,21 @@ que falhou ficaria "em execução" até o próximo sinal. Sucesso ou falha sem i
 início" por "Em execução desde", que só aparece nesse caso, porque o início consumido virava
 "Nunca". Sem superfície nova: nenhuma rota, e o dado sai só para o dono.
 
+## Tags em heartbeats (PR 3)
+
+Mesmas regras e mesmo contrato das tags de alvo: até 8, 1 a 24 caracteres, allowlist, e no `PATCH`
+ausente não mexe, `[]` e `null` limpam. A regra saiu de `internal/targets` para `internal/rotulo`, e
+as duas validações são a mesma função. Substitui T4: heartbeat aparece com filtro de tag, e o filtro
+continua no cliente, porque a rota não filtra e as 100 linhas já estão na tela. O filtro de tag vale
+para os dois tipos, e a contagem de cada tag soma alvos e heartbeats.
+
+| Ameaça | Mitigação | Teste |
+|---|---|---|
+| **I** Tag de A lida por B ou pelo escopo do ping | a política de `heartbeat_tags` nomeia o dono, e as queries filtram por `user_id` | `TestHeartbeatTagsAreSeenOnlyByTheOwner`, `TestAnotherUsersHeartbeatTagsStayOut` |
+| **T** B gravar tag no heartbeat de A | `WITH CHECK` e filtro por dono; o `PATCH` alheio é 404 | `TestAnotherUserCannotInsertHeartbeatTags`, `TestAnotherUsersHeartbeatTagsStayOut` |
+| **T** Lixo gravado por fora da validação | CHECK espelha a validação | `TestHeartbeatTagCheckRefusesWhatTheCodeWouldNot` |
+| **D** Tags sem teto | até 8 por heartbeat, recusado antes do banco | `TestHeartbeatTagsAreValidatedLikeTargetTags` |
+
 ## Migrations
 
 Cada PR que precisa de migration leva o próximo número livre, e por isso os PRs são empilhados e

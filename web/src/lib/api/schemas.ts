@@ -132,6 +132,7 @@ export type Agendamento = z.infer<typeof Agendamento>
 export const Heartbeat = z.object({
   id,
   name: z.string(),
+  tags: z.array(z.string()),
   enabled: z.boolean(),
   schedule: Agendamento,
   grace_sec: z.number(),

@@ -2,6 +2,7 @@ import { z } from 'zod'
 import type { AlteracaoHeartbeat, EntradaHeartbeat } from '@/lib/api/cliente'
 import type { Agendamento, Heartbeat } from '@/lib/api/schemas'
 import { fuso, pontosDeCodigo } from '@/lib/format'
+import { erroNasTags, separarTags } from '@/lib/tags'
 import { partirDuracao, SEGUNDOS_DA_UNIDADE, type Unidade } from './estado'
 
 // O formulário do heartbeat, com os limites da §7 da spec. A expressão cron
@@ -26,6 +27,7 @@ export const esquemaDoHeartbeat = z
       .trim()
       .min(1, 'Informe um nome.')
       .refine((s) => pontosDeCodigo(s) <= MAX_NOME, `No máximo ${MAX_NOME} caracteres.`),
+    tagsTexto: z.string(),
     tipo: z.enum(['period', 'cron']),
     periodoQuantidade: z.number().or(z.nan()),
     periodoUnidade: z.enum(UNIDADES),
@@ -38,6 +40,8 @@ export const esquemaDoHeartbeat = z
   })
   .superRefine((v, ctx) => {
     const fora = (campo: string, mensagem: string) => ctx.addIssue({ code: 'custom', path: [campo], message: mensagem })
+    const erroDasTags = erroNasTags(v.tagsTexto)
+    if (erroDasTags) fora('tagsTexto', erroDasTags)
     if (!dentroDe(emSegundos(v.toleranciaQuantidade, v.toleranciaUnidade), LIMITES.tolerancia)) {
       fora('toleranciaQuantidade', LIMITES.tolerancia.texto)
     }
@@ -66,6 +70,7 @@ export function valoresPadrao(): ValoresDoHeartbeat {
   const tolerancia = partirDuracao(GRACE_PADRAO_SEC)
   return {
     name: '',
+    tagsTexto: '',
     tipo: 'period',
     periodoQuantidade: periodo.quantidade,
     periodoUnidade: periodo.unidade,
@@ -78,7 +83,7 @@ export function valoresPadrao(): ValoresDoHeartbeat {
 
 export function valoresDe(hb: Heartbeat): ValoresDoHeartbeat {
   const tolerancia = partirDuracao(hb.grace_sec)
-  const base = { ...valoresPadrao(), name: hb.name, toleranciaQuantidade: tolerancia.quantidade, toleranciaUnidade: tolerancia.unidade }
+  const base = { ...valoresPadrao(), name: hb.name, tagsTexto: hb.tags.join(', '), toleranciaQuantidade: tolerancia.quantidade, toleranciaUnidade: tolerancia.unidade }
   if (hb.schedule.kind === 'cron') return { ...base, tipo: 'cron', expr: hb.schedule.expr, timezone: hb.schedule.timezone }
   const periodo = partirDuracao(hb.schedule.period_sec)
   return { ...base, tipo: 'period', periodoQuantidade: periodo.quantidade, periodoUnidade: periodo.unidade }
@@ -93,7 +98,8 @@ function agendamento(v: ValoresDoHeartbeat): Agendamento {
 const graceDe = (v: ValoresDoHeartbeat) => emSegundos(v.toleranciaQuantidade, v.toleranciaUnidade)
 
 export function paraCriacao(v: ValoresDoHeartbeat): EntradaHeartbeat {
-  return { name: v.name, schedule: agendamento(v), grace_sec: graceDe(v) }
+  const tags = separarTags(v.tagsTexto)
+  return { name: v.name, schedule: agendamento(v), grace_sec: graceDe(v), ...(tags.length > 0 && { tags }) }
 }
 
 // Só o que mudou de valor (spec da tela, T12): "1 dia" e "24 horas" são o mesmo
@@ -101,6 +107,8 @@ export function paraCriacao(v: ValoresDoHeartbeat): EntradaHeartbeat {
 export function paraAlteracao(original: ValoresDoHeartbeat, v: ValoresDoHeartbeat): AlteracaoHeartbeat {
   const a: AlteracaoHeartbeat = {}
   if (v.name !== original.name) a.name = v.name
+  const tags = separarTags(v.tagsTexto)
+  if (tags.join() !== separarTags(original.tagsTexto).join()) a.tags = tags
   if (JSON.stringify(agendamento(v)) !== JSON.stringify(agendamento(original))) a.schedule = agendamento(v)
   if (graceDe(v) !== graceDe(original)) a.grace_sec = graceDe(v)
   return a
@@ -109,6 +117,7 @@ export function paraAlteracao(original: ValoresDoHeartbeat, v: ValoresDoHeartbea
 // O campo do formulário que recebe o erro de cada campo do servidor.
 export const campoDoServidor: Partial<Record<string, keyof ValoresDoHeartbeat>> = {
   name: 'name',
+  tags: 'tagsTexto',
   period_sec: 'periodoQuantidade',
   expr: 'expr',
   timezone: 'timezone',

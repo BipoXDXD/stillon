@@ -45,7 +45,16 @@ describe('heartbeats na tabela de monitores', () => {
     expect(screen.getByText('1 no ar. Tarefas: 1 com falha.')).toBeInTheDocument()
   })
 
-  it('filtro de tag tira o heartbeat da tabela, e a manchete fica', async () => {
+  // Sabotagem: contar só os alvos → a tag que só o heartbeat tem não vira botão.
+  it('a tag que só o heartbeat tem vira filtro, e o filtro acha ele', async () => {
+    const r = await painelCom({ alvos: [{ id: 'a', name: 'API', tags: ['prod'] }], heartbeats: [{ id: 'h1', name: 'Backup', tags: ['dados'] }] })
+    const barra = await screen.findByRole('region', { name: 'Filtros' })
+    await r.usuario.click(await within(barra).findByRole('button', { name: /dados/ }))
+    expect(await screen.findByRole('link', { name: 'Backup' })).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'API' })).not.toBeInTheDocument()
+  })
+
+  it('filtro de tag tira o heartbeat sem a tag da tabela, e a manchete fica', async () => {
     const r = await renderizarPainel('/?tag=prod')
     r.falsa.estado.resumo = [itemDoResumo({ id: 'a', name: 'API', tags: ['prod'] })]
     r.falsa.estado.heartbeats = [heartbeat({ id: 'h1', name: 'Backup', state: 'late' })]

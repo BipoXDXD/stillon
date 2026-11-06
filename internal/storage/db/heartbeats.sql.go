@@ -212,6 +212,22 @@ func (q *Queries) DeleteHeartbeat(ctx context.Context, arg DeleteHeartbeatParams
 	return result.RowsAffected(), nil
 }
 
+const deleteHeartbeatTags = `-- name: DeleteHeartbeatTags :exec
+DELETE FROM heartbeat_tags ht
+ USING heartbeats h
+ WHERE h.id = ht.heartbeat_id AND h.user_id = $1 AND ht.heartbeat_id = $2
+`
+
+type DeleteHeartbeatTagsParams struct {
+	UserID      uuid.UUID
+	HeartbeatID uuid.UUID
+}
+
+func (q *Queries) DeleteHeartbeatTags(ctx context.Context, arg DeleteHeartbeatTagsParams) error {
+	_, err := q.db.Exec(ctx, deleteHeartbeatTags, arg.UserID, arg.HeartbeatID)
+	return err
+}
+
 const getHeartbeat = `-- name: GetHeartbeat :one
 SELECT id, user_id, name, ping_token_hash, period_sec, cron_expr, timezone, grace_sec, enabled, created_at, deadline_at, last_ping_at, last_success_at, last_start_at, last_signal, failing_since, last_incident_at, resumed_at, last_runtime_ms FROM heartbeats WHERE user_id = $1 AND id = $2
 `
@@ -399,6 +415,24 @@ func (q *Queries) InsertHeartbeatEvent(ctx context.Context, arg InsertHeartbeatE
 	return err
 }
 
+const insertHeartbeatTags = `-- name: InsertHeartbeatTags :exec
+INSERT INTO heartbeat_tags (heartbeat_id, tag)
+SELECT h.id, unnest($1::text[])
+  FROM heartbeats h
+ WHERE h.user_id = $2 AND h.id = $3
+`
+
+type InsertHeartbeatTagsParams struct {
+	Tags        []string
+	UserID      uuid.UUID
+	HeartbeatID uuid.UUID
+}
+
+func (q *Queries) InsertHeartbeatTags(ctx context.Context, arg InsertHeartbeatTagsParams) error {
+	_, err := q.db.Exec(ctx, insertHeartbeatTags, arg.Tags, arg.UserID, arg.HeartbeatID)
+	return err
+}
+
 const listHeartbeatEvents = `-- name: ListHeartbeatEvents :many
 SELECT e.id, e.heartbeat_id, e.at, e.kind, e.runtime_ms, e.exit_code
   FROM heartbeat_events e
@@ -516,6 +550,41 @@ func (q *Queries) ListHeartbeatIncidents(ctx context.Context, arg ListHeartbeatI
 	return items, nil
 }
 
+const listHeartbeatTags = `-- name: ListHeartbeatTags :many
+SELECT ht.tag
+  FROM heartbeat_tags ht
+  JOIN heartbeats h ON h.id = ht.heartbeat_id
+ WHERE h.user_id = $1 AND ht.heartbeat_id = $2
+ ORDER BY ht.tag
+`
+
+type ListHeartbeatTagsParams struct {
+	UserID      uuid.UUID
+	HeartbeatID uuid.UUID
+}
+
+// Tags (paridade, PR 3). As leituras saem ordenadas pela tag, e a do dono serve
+// a lista sem uma consulta por heartbeat, como as de targets.sql.
+func (q *Queries) ListHeartbeatTags(ctx context.Context, arg ListHeartbeatTagsParams) ([]string, error) {
+	rows, err := q.db.Query(ctx, listHeartbeatTags, arg.UserID, arg.HeartbeatID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var tag string
+		if err := rows.Scan(&tag); err != nil {
+			return nil, err
+		}
+		items = append(items, tag)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listHeartbeats = `-- name: ListHeartbeats :many
 SELECT h.id, h.user_id, h.name, h.ping_token_hash, h.period_sec, h.cron_expr, h.timezone, h.grace_sec, h.enabled, h.created_at, h.deadline_at, h.last_ping_at, h.last_success_at, h.last_start_at, h.last_signal, h.failing_since, h.last_incident_at, h.resumed_at, h.last_runtime_ms, x.id AS open_incident_id
   FROM heartbeats h
@@ -569,6 +638,34 @@ func (q *Queries) ListHeartbeats(ctx context.Context, arg ListHeartbeatsParams) 
 			&i.Heartbeat.LastRuntimeMS,
 			&i.OpenIncidentID,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listUserHeartbeatTags = `-- name: ListUserHeartbeatTags :many
+SELECT ht.heartbeat_id, ht.tag
+  FROM heartbeat_tags ht
+  JOIN heartbeats h ON h.id = ht.heartbeat_id
+ WHERE h.user_id = $1
+ ORDER BY ht.heartbeat_id, ht.tag
+`
+
+func (q *Queries) ListUserHeartbeatTags(ctx context.Context, userID uuid.UUID) ([]HeartbeatTag, error) {
+	rows, err := q.db.Query(ctx, listUserHeartbeatTags, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []HeartbeatTag
+	for rows.Next() {
+		var i HeartbeatTag
+		if err := rows.Scan(&i.HeartbeatID, &i.Tag); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

@@ -128,6 +128,10 @@ describe('medidaDaLinha', () => {
     expect(medidaDaLinha(http({ last_latency_ms: null }))).toBe('—')
   })
 
+  it('a linha do heartbeat traz as tags dele', () => {
+    expect(linhaDoHeartbeat(hb({ tags: ['prod', 'dados'] }), agora).tags).toEqual(['prod', 'dados'])
+  })
+
   it('o heartbeat não tem latência: o traço, sem inventar medida', () => {
     expect(medidaDaLinha(linhaDoHeartbeat(hb(), agora))).toBe('—')
   })

@@ -39,16 +39,18 @@ type scheduleDTO struct {
 
 type heartbeatRequest struct {
 	Name     string       `json:"name"`
+	Tags     []string     `json:"tags"`
 	Schedule *scheduleDTO `json:"schedule"`
 	GraceSec *int32       `json:"grace_sec"`
 	Enabled  *bool        `json:"enabled"`
 }
 
 type heartbeatPatchRequest struct {
-	Name     *string      `json:"name"`
-	Schedule *scheduleDTO `json:"schedule"`
-	GraceSec *int32       `json:"grace_sec"`
-	Enabled  *bool        `json:"enabled"`
+	Name     *string            `json:"name"`
+	Tags     optional[[]string] `json:"tags"`
+	Schedule *scheduleDTO       `json:"schedule"`
+	GraceSec *int32             `json:"grace_sec"`
+	Enabled  *bool              `json:"enabled"`
 }
 
 // heartbeatResponse é construído campo a campo. Não existe campo para o hash,
@@ -56,6 +58,7 @@ type heartbeatPatchRequest struct {
 type heartbeatResponse struct {
 	ID             string      `json:"id"`
 	Name           string      `json:"name"`
+	Tags           []string    `json:"tags"`
 	Enabled        bool        `json:"enabled"`
 	Schedule       scheduleDTO `json:"schedule"`
 	GraceSec       int64       `json:"grace_sec"`
@@ -111,7 +114,7 @@ type heartbeatIncidentListResponse struct {
 
 func toHeartbeatResponse(h heartbeat.Heartbeat) heartbeatResponse {
 	r := heartbeatResponse{
-		ID: h.ID.String(), Name: h.Name, Enabled: h.Enabled, GraceSec: int64(h.Grace / time.Second),
+		ID: h.ID.String(), Name: h.Name, Tags: h.Tags, Enabled: h.Enabled, GraceSec: int64(h.Grace / time.Second),
 		State: string(h.Status), DeadlineAt: h.DeadlineAt, LastPingAt: h.LastPingAt,
 		LastSuccessAt: h.LastSuccessAt, LastStartAt: h.LastStartAt, LastRuntimeMS: h.LastRuntimeMS, CreatedAt: h.CreatedAt,
 		Schedule: toScheduleDTO(h.Schedule),
@@ -173,7 +176,7 @@ func (h *HeartbeatHandlers) Create(w http.ResponseWriter, r *http.Request) {
 	if h.falhou(w, r, "validar heartbeat", err) {
 		return
 	}
-	in := heartbeat.Input{Name: req.Name, Schedule: sch, Grace: heartbeat.DefaultGrace, Enabled: true}
+	in := heartbeat.Input{Name: req.Name, Tags: req.Tags, Schedule: sch, Grace: heartbeat.DefaultGrace, Enabled: true}
 	if req.GraceSec != nil {
 		in.Grace = time.Duration(*req.GraceSec) * time.Second
 	}
@@ -231,7 +234,7 @@ func (h *HeartbeatHandlers) Update(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	p := heartbeat.Patch{Name: req.Name, Enabled: req.Enabled}
+	p := heartbeat.Patch{SetTags: req.Tags.Set, Tags: req.Tags.Value, Name: req.Name, Enabled: req.Enabled}
 	if req.Schedule != nil {
 		sch, err := req.Schedule.schedule()
 		if h.falhou(w, r, "validar heartbeat", err) {

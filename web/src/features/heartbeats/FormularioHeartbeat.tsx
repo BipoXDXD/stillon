@@ -55,6 +55,9 @@ export function FormularioHeartbeat({
       <Campo rotulo="Nome" erro={e.name?.message}>
         {(a) => <Entrada {...a} {...f.register('name')} />}
       </Campo>
+      <Campo rotulo="Tags" erro={e.tagsTexto?.message} ajuda="Separadas por vírgula, até 8. Ex.: prod, backup.">
+        {(a) => <Entrada {...a} {...f.register('tagsTexto')} />}
+      </Campo>
       <fieldset>
         <legend className="mb-2 text-sm font-semibold">Agendamento</legend>
         <div className="flex flex-wrap gap-x-6">
