@@ -1,4 +1,4 @@
-import { execFileSync, spawn } from 'node:child_process'
+import { execFileSync, spawn, type ExecFileSyncOptions } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import { createServer } from 'node:net'
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
@@ -8,8 +8,13 @@ import path from 'node:path'
 // painel embutido. Tudo em e2e/.tmp, que o .gitignore ignora.
 
 export const RAIZ = path.resolve(import.meta.dirname, '../..')
-const TMP = path.join(import.meta.dirname, '.tmp')
+// E2E_TMP: só o teste da limpeza usa, para não tocar numa rodada de verdade.
+const TMP = process.env.E2E_TMP ?? path.join(import.meta.dirname, '.tmp')
 const ESTADO = path.join(TMP, 'pilha.json')
+// Um Docker pendurado não pode segurar a rodada para sempre. Só o `docker run`
+// tem um prazo próprio, porque pode ter de baixar a imagem.
+const PRAZO_DOCKER_MS = Number(process.env.E2E_PRAZO_DOCKER_MS ?? 30_000)
+const PRAZO_DOCKER_RUN_MS = 5 * 60_000
 
 export const EMAIL = 'e2e@stillon.example'
 // A política de senha nova do Plano 5: de 15 a 128 code points.
@@ -20,6 +25,10 @@ export const SENHA = 'uma senha de teste bem comprida'
 type Estado = { container: string; pid: number; databaseURL?: string }
 
 const chave = () => randomBytes(32).toString('base64')
+
+function docker(args: string[], opcoes: Pick<ExecFileSyncOptions, 'stdio' | 'timeout'> = {}): string {
+  return execFileSync('docker', args, { encoding: 'utf8', timeout: PRAZO_DOCKER_MS, ...opcoes })
+}
 
 function portaLivre(): Promise<number> {
   return new Promise((ok, falha) => {
@@ -51,10 +60,12 @@ async function esperar(o: {
 
 // Uma rodada morta no meio (Ctrl+C, kill) não roda o globalTeardown, e o
 // container e o binário dela ficam de pé. A próxima rodada os derruba antes
-// de subir os seus — só pelos ids que a rodada velha gravou em pilha.json.
+// de subir os seus — só pelos ids que a rodada velha gravou em pilha.json. Se
+// o container dela não sair, subir outra agora apagaria o único rastro dele.
 export function limparPilhaVelha() {
   if (!existsSync(ESTADO)) return
   derrubar({ soSeForONosso: true })
+  if (existsSync(ESTADO)) throw new Error(`E2E: a rodada anterior não foi derrubada; veja ${ESTADO}`)
 }
 
 export async function subir(): Promise<{ baseURL: string }> {
@@ -70,8 +81,7 @@ export async function subir(): Promise<{ baseURL: string }> {
     env: { ...process.env, GOFLAGS: '-buildvcs=false' },
   })
 
-  const container = execFileSync(
-    'docker',
+  const container = docker(
     [
       // A porta do banco só no loopback, numa porta livre que o Docker escolhe
       // ("-P" publicaria em 0.0.0.0, para a rede toda).
@@ -80,7 +90,7 @@ export async function subir(): Promise<{ baseURL: string }> {
       '-v', `${path.join(import.meta.dirname, 'init.sql')}:/docker-entrypoint-initdb.d/init.sql:ro`,
       'postgres:18-alpine',
     ],
-    { encoding: 'utf8' },
+    { timeout: PRAZO_DOCKER_RUN_MS },
   ).trim()
   const estado: Estado = { container, pid: 0 }
   writeFileSync(ESTADO, JSON.stringify(estado))
@@ -104,16 +114,14 @@ async function terminarDeSubir(container: string, binario: string, estado: Estad
     ms: 60_000,
     tentar: () => {
       try {
-        execFileSync('docker', ['exec', container, 'pg_isready', '-h', '127.0.0.1', '-U', 'stillon', '-d', 'stillon'], {
-          stdio: 'ignore',
-        })
+        docker(['exec', container, 'pg_isready', '-h', '127.0.0.1', '-U', 'stillon', '-d', 'stillon'], { stdio: 'ignore' })
         return true
       } catch {
         return false
       }
     },
   })
-  const portaDoBanco = execFileSync('docker', ['port', container, '5432/tcp'], { encoding: 'utf8' })
+  const portaDoBanco = docker(['port', container, '5432/tcp'])
     .split('\n')[0]!
     .split(':')
     .pop()!
@@ -170,11 +178,9 @@ export function contarAuditoria(acao: string): number | null {
   if (!process.env.E2E_PILHA_PROPRIA || !existsSync(ESTADO)) return null
   if (!/^[a-z_.]+$/.test(acao)) throw new Error(`E2E: ação inválida: ${acao}`)
   const e = JSON.parse(readFileSync(ESTADO, 'utf8')) as Estado
-  const saida = execFileSync(
-    'docker',
+  const saida = docker(
     ['exec', e.container, 'psql', '-U', 'postgres', '-d', 'stillon', '-tAc',
       `SELECT count(*) FROM audit_log WHERE action = '${acao}'`],
-    { encoding: 'utf8' },
   )
   return Number(saida.trim())
 }
@@ -214,17 +220,38 @@ export function desligar2FA(email: string) {
 }
 
 // É o nosso binário: o pid de uma rodada velha pode ter sido reusado por
-// outro processo. Sem /proc (macOS), não se sabe, e não se mata.
+// outro processo. O ps existe no Linux e no macOS, que não tem /proc; com o
+// pid já morto ele sai com erro, e não há o que matar. -ww: sem cortar a linha.
 function ehONossoBinario(pid: number): boolean {
+  const binario = path.join(TMP, 'stillon')
   try {
-    return readFileSync(`/proc/${pid}/cmdline`, 'utf8').split('\0')[0] === path.join(TMP, 'stillon')
+    const comando = execFileSync('ps', ['-ww', '-o', 'command=', '-p', String(pid)], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim()
+    return comando === binario || comando.startsWith(`${binario} `)
   } catch {
     return false
   }
 }
 
+// Remove o container. O que já saiu (o --rm o apaga quando para) não é falha;
+// o resto é: um Docker parado deixa o container de pé.
+function removerContainer(id: string): boolean {
+  try {
+    docker(['rm', '-f', id], { stdio: ['ignore', 'ignore', 'pipe'] })
+    return true
+  } catch (e) {
+    const detalhe = (e as { stderr?: string }).stderr || String(e)
+    if (detalhe.includes('No such container')) return true
+    console.error(`E2E: o container ${id} ficou de pé: ${detalhe}`)
+    return false
+  }
+}
+
 // Derruba só o que pilha.json registrou, e apaga o registro: uma rodada
-// seguinte não tenta derrubar de novo ids que já não são nossos.
+// seguinte não tenta derrubar de novo ids que já não são nossos. Sem conseguir
+// remover o container, o registro fica: é o rastro dele.
 export function derrubar(o: { soSeForONosso?: boolean } = {}) {
   if (!existsSync(ESTADO)) return
   const e = JSON.parse(readFileSync(ESTADO, 'utf8')) as Estado
@@ -235,12 +262,6 @@ export function derrubar(o: { soSeForONosso?: boolean } = {}) {
       // já tinha saído
     }
   }
-  if (e.container) {
-    try {
-      execFileSync('docker', ['rm', '-f', e.container], { stdio: 'ignore' })
-    } catch {
-      // já tinha saído (o --rm o apaga quando para)
-    }
-  }
+  if (e.container && !removerContainer(e.container)) return
   rmSync(ESTADO, { force: true })
 }
