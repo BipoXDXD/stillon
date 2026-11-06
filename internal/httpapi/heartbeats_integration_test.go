@@ -405,7 +405,9 @@ func TestCronPreviewCreatesNothing(t *testing.T) {
 	}
 }
 
-// O curinga {id} não engole a rota: sem o registro literal, seria 404.
+// Sem sessão, 401. Isto não prova o registro da rota nem o Authn: o curinga {id}
+// também responde 401, e o handler recusa sem usuário. Quem prova os dois é
+// TestCronPreviewListsTheNextRunsInTheTimezone, que dá 200 com sessão válida.
 func TestCronPreviewWithoutSessionIs401(t *testing.T) {
 	a := newAPI(t)
 	status, corpo := lerCru(t, a, http.MethodGet, "/api/v1/heartbeats/cron-preview?expr=0+3+*+*+*&timezone=UTC", "", nil)

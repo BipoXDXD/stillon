@@ -141,7 +141,7 @@ cliente é o risco que o D17 evitou, e a prévia não trava o envio. O formulár
 
 | Ameaça | Mitigação | Teste |
 |---|---|---|
-| **S** Rota sem sessão | `protegida`, como as demais | `TestCronPreviewWithoutSessionIs401`, `TestEveryRegisteredRouteDeniesByDefault` |
+| **S** Rota sem sessão | `protegida`, como as demais | `TestCronPreviewWithoutSessionIs401`, `TestEveryRegisteredRouteDeniesByDefault`, `TestEveryResourceRouteRejectsRevokedFamily` |
 | **T** Entrada ruim virar 500 | mesma validação de `NewCron`, com tamanho conferido antes do parser | `TestCronPreviewRefusesWhatTheFormWouldRefuse` |
 | **I** Chave da consulta ecoada | campo fixo `query` | `TestCronPreviewQueryIsStrict` |
 | **I** Fuso como caminho de arquivo | `time.LoadLocation` recusa `..`; caso de teste com caminho | `TestCronPreviewRefusesWhatTheFormWouldRefuse` |
