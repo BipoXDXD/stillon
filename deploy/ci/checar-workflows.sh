@@ -288,6 +288,10 @@ printf '%s\n' "$job_avisar" | grep -q "needs\\.restore\\.result != 'skipped'" ||
 if grep -En '(^|[^.])\bssh[[:space:]]|deploy/ci/vps\.sh|secrets\.VPS' "$REVALIDAR" >&2; then
     falhar "$REVALIDAR: o ensaio não fala com a VPS"
 fi
+DONOS=.github/CODEOWNERS
+for caminho in /.github/workflows/revalidar-backup.yml /deploy/backup/ /deploy/ci/checar-workflows.sh; do
+    grep -Eq "^${caminho}[[:space:]]+@" "$DONOS" 2>/dev/null || falhar "$DONOS: sem dono para $caminho"
+done
 
 if [ "$falhas" -gt 0 ]; then
     echo "$falhas falha(s) nos workflows" >&2
