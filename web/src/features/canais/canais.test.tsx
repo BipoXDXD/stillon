@@ -2,6 +2,7 @@ import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { http } from 'msw'
 import { describe, expect, it } from 'vitest'
 import { dataHora } from '@/lib/format'
+import type { ErroForcado } from '@/test/api-falsa'
 import { canal } from '@/test/fixtures'
 import { renderizarPainel } from '@/test/renderizar'
 import { servidor } from '@/test/setup'
@@ -126,7 +127,7 @@ describe('canais', () => {
     await r.usuario.click(await screen.findByRole('button', { name: 'Novo canal' }))
     const dialogo = await screen.findByRole('dialog')
     await r.usuario.type(within(dialogo).getByLabelText('URL do webhook'), 'https://discord.com/api/webhooks/1/abc')
-    const casos: [{ status: number; code: string; fields?: { field: string; reason: string }[] }, string][] = [
+    const casos: [ErroForcado, string][] = [
       [{ status: 409, code: 'channel_limit_reached' }, 'Limite de 10 canais atingido.'],
       [{ status: 429, code: 'rate_limited' }, 'Limite de envios atingido (1 a cada 6 minutos): tente de novo em alguns minutos.'],
       [
@@ -201,7 +202,7 @@ describe('canais', () => {
     r.falsa.estado.canais = [canal({ kind: 'email', hint: 'd***@exemplo.com', status: 'pending' })]
     await r.cliente.refetchQueries()
     const botao = await screen.findByRole('button', { name: 'Reenviar verificação do canal d***@exemplo.com' })
-    const casos: [{ status: number; code: string; fields?: { field: string; reason: string }[] }, string][] = [
+    const casos: [ErroForcado, string][] = [
       [{ status: 429, code: 'rate_limited' }, 'Limite de envios atingido (1 a cada 6 minutos): tente de novo em alguns minutos.'],
       [
         { status: 400, code: 'validation_failed', fields: [{ field: 'kind', reason: 'unavailable' }] },

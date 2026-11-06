@@ -177,7 +177,7 @@ describe('detalhe', () => {
     await r.cliente.refetchQueries()
     const secao = await screen.findByRole('region', { name: 'Incidentes recentes' })
     await waitFor(() => expect(within(secao).getAllByRole('listitem')).toHaveLength(1))
-    r.falsa.estado.forcar.set('GET /incidents', { status: 500, code: 'internal' })
+    r.falsa.estado.forcar.set('GET /incidents', { status: 500, code: 'internal_error' })
     await r.cliente.refetchQueries({ queryKey: ['incidents'] })
     expect(await within(secao).findByText(/Não foi possível atualizar agora/)).toBeInTheDocument()
     expect(within(secao).getAllByRole('listitem')).toHaveLength(1)
@@ -241,7 +241,7 @@ describe('detalhe', () => {
     const r = await renderizarPainel('/targets/alvo-1')
     r.falsa.estado.alvos = [alvo({ id: 'alvo-1', name: 'Site A' }), alvo({ id: 'alvo-2', name: 'Site B' })]
     await r.cliente.refetchQueries()
-    r.falsa.estado.forcar.set('PATCH /targets/:id', { status: 500, code: 'internal' })
+    r.falsa.estado.forcar.set('PATCH /targets/:id', { status: 500, code: 'internal_error' })
     await r.usuario.click(await screen.findByRole('button', { name: 'Pausar' }))
     expect(await screen.findByRole('alert')).toBeInTheDocument()
     await r.router.navigate('/targets/alvo-2')
@@ -429,7 +429,7 @@ describe('detalhe', () => {
       r.falsa.estado.resumo = [itemDoResumo({ state: 'down', open_incident_id: 'inc-1' })]
       r.falsa.estado.incidentes = [incidente()]
       await r.cliente.refetchQueries()
-      r.falsa.estado.forcar.set('POST /incidents/:id/ack', { status: 502, code: 'unavailable' })
+      r.falsa.estado.forcar.set('POST /incidents/:id/ack', { status: 503, code: 'unavailable' })
       await r.usuario.click(await screen.findByRole('button', { name: 'Reconhecer' }))
       expect(await screen.findByRole('alert')).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Reconhecer' })).toBeInTheDocument()

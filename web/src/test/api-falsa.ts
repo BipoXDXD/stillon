@@ -56,6 +56,42 @@ export const LIMITE_DE_PROVAS = 5
 
 const UMA_HORA_S = 3600
 
+// A errorTable de internal/apierr/errors.go: código e status andam juntos, e o
+// teste de contrato a compara com o Go.
+export const ERROS_DO_SERVIDOR = {
+  invalid_credentials: 401,
+  invalid_session: 401,
+  unauthorized: 401,
+  not_found: 404,
+  validation_failed: 400,
+  rate_limited: 429,
+  payload_too_large: 413,
+  forbidden: 403,
+  internal_error: 500,
+  unavailable: 503,
+  channel_limit_reached: 409,
+  channel_not_pending: 409,
+  delivery_failed: 502,
+  status_page_exists: 409,
+  slug_taken: 409,
+  target_limit_reached: 409,
+  heartbeat_limit_reached: 409,
+  method_not_allowed: 405,
+} as const
+
+type ErrosDoServidor = typeof ERROS_DO_SERVIDOR
+type CampoComErro = { field: string; reason: string }
+export type ErroForcado = {
+  [C in keyof ErrosDoServidor]: { status: ErrosDoServidor[C]; code: C; fields?: CampoComErro[] }
+}[keyof ErrosDoServidor]
+
+// rotulo.MaxTags, maxTagRunes e a allowlist de ParseTag; estadosDoFiltro de
+// internal/targets/tags.go.
+const MAX_TAGS = 8
+const MAX_LETRAS_DA_TAG = 24
+const TAG_VALIDA = /^[\p{L}\p{N}_-]+$/u
+const ESTADOS_DO_FILTRO = ['up', 'degraded', 'down', 'unknown', 'paused']
+
 // Os DTOs de entrada do servidor (decodeJSON recusa o que não estiver aqui).
 // Criar e editar aceitam os mesmos nomes em cada recurso.
 const CAMPOS_DO_ALVO = [
@@ -147,7 +183,7 @@ export function criarApiFalsa() {
     paginas: [] as Entrada<typeof PaginaDeStatus>[],
     sessoes: [] as Entrada<typeof Sessao>[],
     // Respostas forçadas por rota ("POST /targets" → 409 etc.).
-    forcar: new Map<string, { status: number; code: string; fields?: { field: string; reason: string }[] }>(),
+    forcar: new Map<string, ErroForcado>(),
   }
 
   function contar(chave: string, corpo?: Json) {
@@ -155,11 +191,16 @@ export function criarApiFalsa() {
     if (corpo) st.corpos.set(chave, [...(st.corpos.get(chave) ?? []), corpo])
   }
 
-  function erro(status: number, code: string, fields?: { field: string; reason: string }[]) {
+  function responderErro({ status, code, fields }: { status: number; code: string; fields?: CampoComErro[] }) {
     return HttpResponse.json(
       { error: { code, message: 'mensagem do servidor', ...(fields ? { fields } : {}) }, trace_id: 'trace-falso' },
       { status },
     )
+  }
+
+  // O tipo só deixa escrever o par que o servidor emite.
+  function erro<C extends keyof ErrosDoServidor>(status: ErrosDoServidor[C], code: C, fields?: CampoComErro[]) {
+    return responderErro({ status, code, fields })
   }
 
   // Como as rotas de lista do servidor: next_cursor quando a página vem cheia.
@@ -214,6 +255,30 @@ export function criarApiFalsa() {
     }
   }
 
+  // ParseTag do servidor: a tag canônica, ou o motivo da recusa.
+  function lerTag(crua: string) {
+    const tag = crua.trim().toLowerCase()
+    if ([...tag].length > MAX_LETRAS_DA_TAG) return { motivo: 'too_long' }
+    return TAG_VALIDA.test(tag) ? { tag } : { motivo: 'invalid' }
+  }
+
+  // ParseSummaryFilter do servidor, mais a recusa de parâmetro desconhecido
+  // do handler. Devolve os campos recusados e as tags canônicas.
+  function lerFiltroDoResumo(q: URLSearchParams) {
+    if ([...q.keys()].some((nome) => nome !== 'tag' && nome !== 'state')) {
+      return { recusados: [{ field: 'query', reason: 'invalid' }], tags: [] }
+    }
+    const recusados: CampoComErro[] = []
+    const lidas = q.getAll('tag').map(lerTag)
+    const estados = q.getAll('state')
+    const motivoDaTag = lidas.find((l) => l.motivo)?.motivo
+    if (lidas.length > MAX_TAGS) recusados.push({ field: 'tag', reason: 'out_of_range' })
+    else if (motivoDaTag) recusados.push({ field: 'tag', reason: motivoDaTag })
+    if (estados.length > ESTADOS_DO_FILTRO.length) recusados.push({ field: 'state', reason: 'out_of_range' })
+    else if (estados.some((e) => !ESTADOS_DO_FILTRO.includes(e))) recusados.push({ field: 'state', reason: 'invalid' })
+    return { recusados, tags: lidas.flatMap((l) => l.tag ?? []) }
+  }
+
   // A família do access token da requisição.
   const familiaDe = (request: Request) =>
     st.acessos.get(request.headers.get('Authorization')?.replace(/^Bearer /, '') ?? '')
@@ -225,7 +290,7 @@ export function criarApiFalsa() {
     const f = familiaDe(request) ?? ''
     const n = (st.provasErradas.get(f) ?? 0) + 1
     st.provasErradas.set(f, n)
-    if (n < LIMITE_DE_PROVAS) return erro(status, code)
+    if (n < LIMITE_DE_PROVAS) return responderErro({ status, code })
     if (f === st.familia) st.familiaRevogada = true
     return erro(401, 'unauthorized')
   }
@@ -286,7 +351,7 @@ export function criarApiFalsa() {
         if (st.familiaRevogada) return erro(401, 'unauthorized')
       }
       const f = st.forcar.get(chave)
-      if (f) return erro(f.status, f.code, f.fields)
+      if (f) return responderErro(f)
       return fn({ request, params: params as Record<string, string>, corpo })
     })
   }
@@ -359,8 +424,9 @@ export function criarApiFalsa() {
       const q = new URL(request.url).searchParams
       st.consultasDoResumo.push(q.toString())
       const forcado = st.forcar.get(`GET /targets/summary?${q.toString()}`)
-      if (forcado) return erro(forcado.status, forcado.code)
-      const tags = q.getAll('tag')
+      if (forcado) return responderErro(forcado)
+      const { recusados, tags } = lerFiltroDoResumo(q)
+      if (recusados.length > 0) return erro(400, 'validation_failed', recusados)
       const estados = q.getAll('state')
       const items = st.resumo.filter(
         (it) =>
@@ -530,9 +596,12 @@ export function criarApiFalsa() {
       st.canais = st.canais.filter((c) => c.id !== params.id)
       return new HttpResponse(null, { status: 204 })
     }),
-    rota('post', '/channels/:id/verify/resend', ({ params }) =>
-      st.canais.some((c) => c.id === params.id) ? new HttpResponse(null, { status: 204 }) : erro(404, 'not_found'),
-    ),
+    rota('post', '/channels/:id/verify/resend', ({ params }) => {
+      const c = st.canais.find((x) => x.id === params.id)
+      if (!c) return erro(404, 'not_found')
+      if (c.kind !== 'email' || c.status !== 'pending') return erro(409, 'channel_not_pending')
+      return new HttpResponse(null, { status: 204 })
+    }),
     // ChannelHandlers.SetEnabled (spec do Plano 9 §3.3): o corpo é lido
     // ANTES de procurar o canal. Campo desconhecido é 400 sem fields
     // (decodeJSONStrict: o nome vem do cliente e não ecoa); sem enabled é
@@ -553,6 +622,7 @@ export function criarApiFalsa() {
 
     rota('get', '/status-pages', () => HttpResponse.json({ items: st.paginas })),
     rota('post', '/status-pages', estrita(CAMPOS_DA_PAGINA, ({ corpo }) => {
+      if (st.paginas.length > 0) return erro(409, 'status_page_exists')
       const p = {
         id: 'pagina-1',
         slug: String(corpo.slug),

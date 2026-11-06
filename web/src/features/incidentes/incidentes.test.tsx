@@ -159,7 +159,7 @@ describe('incidentes', () => {
 
     it('uma falha mantém o foco no botão, que volta a funcionar', async () => {
       const r = await listaCom(60)
-      r.falsa.estado.forcar.set('GET /incidents', { status: 502, code: 'unavailable' })
+      r.falsa.estado.forcar.set('GET /incidents', { status: 503, code: 'unavailable' })
       await r.usuario.click(botao())
       expect(await screen.findByText(/Não foi possível atualizar agora/)).toBeInTheDocument()
       expect(botao()).toHaveFocus()
@@ -250,7 +250,7 @@ describe('incidentes', () => {
     await r.cliente.refetchQueries()
     const itens = () => screen.getAllByRole('listitem').filter((li) => li.textContent?.includes('Tempo esgotado'))
     await waitFor(() => expect(itens()).toHaveLength(50))
-    r.falsa.estado.forcar.set('GET /incidents', { status: 502, code: 'unavailable' })
+    r.falsa.estado.forcar.set('GET /incidents', { status: 503, code: 'unavailable' })
     await r.usuario.click(screen.getByRole('button', { name: 'Carregar mais' }))
     expect(await screen.findByText(/Não foi possível atualizar agora/)).toBeInTheDocument()
     expect(itens()).toHaveLength(50)
@@ -261,7 +261,7 @@ describe('incidentes', () => {
     const r = await renderizarPainel('/incidents')
     r.falsa.estado.incidentes = [incidente()]
     await r.cliente.refetchQueries()
-    r.falsa.estado.forcar.set('POST /incidents/:id/ack', { status: 502, code: 'unavailable' })
+    r.falsa.estado.forcar.set('POST /incidents/:id/ack', { status: 503, code: 'unavailable' })
     const antes = r.falsa.chamadas('GET /incidents')
     await r.usuario.click(await screen.findByRole('button', { name: 'Reconhecer o incidente de API' }))
     const erro = await screen.findByRole('alert')
