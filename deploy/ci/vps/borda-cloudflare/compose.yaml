@@ -1,0 +1,59 @@
+# SÓ PARA O TESTE (deploy/ci/checar-borda-cloudflare.sh). NUNCA vai para a VPS.
+#
+# A borda real da produção, que não mora neste repositório. Origem:
+# BipoXDXD/GoblinShift, commit dc76bf5f1e4a92fb09f7192092b9dcbf542aad62:
+#   Caddyfile                 docker/gateway/Caddyfile (troca só o emissor)
+#   sites/cloudflare-ips.conf docker/gateway/sites/cloudflare-ips.conf (igual)
+#   image                     deploy/coolify/gateway.json
+#
+# sites/stillon.tech.caddy é a correção que este teste prova: nasceu aqui e
+# deve ir para docker/gateway/sites/ daquele repositório sem mudar um byte.
+# Se a borda de produção mudar, atualize estes arquivos: nada os compara.
+#
+# O serviço cliente faz o papel do Traefik do Coolify: tem o IP do `allow` do
+# proxy_protocol, e só ele fala com a borda. Nenhuma porta vai para o host.
+name: stillon-teste-cloudflare-borda
+
+services:
+  proxy:
+    image: caddy:2@sha256:0c994536bddb66445885237f1a5dcc1916bccea922661c76b4e9fc24061f9b52
+    init: true
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./sites:/etc/caddy/conf.d:ro
+    networks:
+      edge:
+        ipv4_address: 172.31.0.2
+      coolify:
+        ipv4_address: 172.16.1.2
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:2019/config/"]
+      interval: 1s
+      timeout: 3s
+      retries: 30
+
+  cliente:
+    image: python:3.14.10-slim-trixie@sha256:930e1abba7c4e8f96ed93e8012c35d174d7732752731bbd5e8e757d7ec6f3966
+    init: true
+    command: ["sleep", "infinity"]
+    volumes:
+      - ./cliente.py:/cliente.py:ro
+    networks:
+      coolify:
+        ipv4_address: 172.16.1.6
+
+networks:
+  edge:
+    # O nome e a sub-rede do contrato: o deploy/vps/compose.prod.yaml usa esta
+    # rede como externa, e o Caddy do StillOn confia em 172.31.0.2.
+    name: edge
+    ipam:
+      config:
+        - subnet: 172.31.0.0/24
+          ip_range: 172.31.0.128/25
+  coolify:
+    name: stillon-teste-coolify
+    ipam:
+      config:
+        - subnet: 172.16.1.0/24
+          ip_range: 172.16.1.128/25
