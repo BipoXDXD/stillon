@@ -27,7 +27,7 @@ decisão registrada). A ordem dos "fazer" é a do mais útil ao menos útil, com
 | Ordenação da tabela | falta: gravidade e nome, fixos | **fazer, depois do corte.** Útil, mas a ordem por gravidade já responde à pergunta do painel; fica para a próxima rodada |
 | Corpo do ping guardado com limite | diferente (D14) | **decisão do dono**, abaixo |
 | GET e HEAD no ping | diferente (D6) | **decisão do dono**, abaixo |
-| Badge de estado | falta | **não fazer.** Superfície pública nova com segredo próprio, e a página de status já publica o estado. Ver abaixo |
+| Badge de estado | falta | **não fazer.** Superfície pública nova com segredo próprio, e a página de status já publica o estado dos alvos. Ver abaixo |
 | Sinal de log, sem mudar o estado (`/log`) | falta | **não fazer.** Sem corpo (D14), o evento só diria "algo aconteceu". Reavaliar junto de D14 |
 | Filtro por palavra-chave no corpo | falta | **não fazer.** Depende de D14, e um `if` na tarefa com `/fail` resolve |
 | ID de execução (`rid`) para tarefas concorrentes | falta | **não fazer.** Exige guardar várias execuções abertas por heartbeat. Sem pedido real; a alternativa é um heartbeat por tarefa |
@@ -106,9 +106,16 @@ comum. A falha agora encerra a execução como o sucesso: mede e consome o iníc
 que falhou ficaria "em execução" até o próximo sinal. Sucesso ou falha sem início deixam a duração
 `NULL`: repetir a anterior falaria de uma execução que ninguém mediu.
 
-`last_start_at` diferente de `NULL` passa a significar "em execução". O detalhe trocou "Último
-início" por "Em execução desde", que só aparece nesse caso, porque o início consumido virava
-"Nunca". Sem superfície nova: nenhuma rota, e o dado sai só para o dono.
+A lista e o detalhe mostram "em execução" pela mesma regra: `last_start_at` diferente de `NULL` em
+`up` ou `waiting`. Atrasada, falhando ou pausada, a tarefa diz isso, e não que está rodando. O
+detalhe trocou "Último início" por "Em execução desde", porque o início consumido virava "Nunca".
+Sem superfície nova: nenhuma rota, e o dado sai só para o dono.
+
+Dois acertos de regra saíram daqui. `waiting` passou a ser nunca ter terminado uma execução, com
+sucesso ou falha, em vez de nunca ter pingado: a tarefa nova que manda `/start` e morre ficava "Em
+dia" até o prazo. A retomada apaga o início aberto: sem isso, ele sobrevivia à pausa e virava uma
+execução de dias. Com o início descartado, a tarefa nova segue em `waiting`, com o texto "Aguardando
+o primeiro sucesso".
 
 ## Tags em heartbeats (PR 3)
 
