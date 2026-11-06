@@ -62,10 +62,12 @@ function sujeito(quantos: number, tarefas: number): string {
   return `${servicos(quantos)} e ${primeiraMinuscula(nomeDasTarefas(tarefas))}`
 }
 
+// A tarefa em espera nunca terminou uma execução, mas pode já ter mandado o
+// início: "sem sinal" negaria o que a tabela e o detalhe dizem dela.
 function fraseDeEspera(quantos: number, tarefas: number): string {
   if (tarefas === 0) return `${servicos(quantos)} ainda sem dados.`
-  if (quantos === 0) return `${nomeDasTarefas(tarefas)} ainda sem sinal.`
-  return `${servicos(quantos)} ainda sem dados e ${primeiraMinuscula(nomeDasTarefas(tarefas))} sem sinal.`
+  if (quantos === 0) return `${nomeDasTarefas(tarefas)} ainda sem execução concluída.`
+  return `${servicos(quantos)} ainda sem dados e ${primeiraMinuscula(nomeDasTarefas(tarefas))} sem execução concluída.`
 }
 
 // Sem default: um tipo novo de Manchete sem caso aqui não compila.

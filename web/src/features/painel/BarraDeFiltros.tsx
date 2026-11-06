@@ -2,12 +2,13 @@ import { Check } from 'lucide-react'
 import { useEffect, useId, useRef, useState, type ReactNode, type RefObject } from 'react'
 import { FormaDoEstado } from '@/components/SeloDeEstado'
 import { BotaoQueSome } from '@/components/ui/botao'
-import { Entrada } from '@/components/ui/campo'
+import { Entrada, Selecao } from '@/components/ui/campo'
 import { ESTADOS_DO_FILTRO, type EstadoDoFiltro } from '@/lib/api/cliente'
 import type { Heartbeat, ItemDoResumo } from '@/lib/api/schemas'
 import { textoDoEstado, type EstadoExibido } from '@/lib/estado'
 import { cn } from '@/lib/utils'
 import { alternar, contarTags, estadoExibidoDoFiltro, SEM_FILTROS, temFiltro, type Filtros } from './filtros'
+import { ORDEM_PADRAO, ORDENS, TEXTO_DA_ORDEM, type Ordem } from './ordem'
 
 // A barra acima da tabela. As contagens vêm do conjunto inteiro, nunca do
 // filtrado: o botão "Fora do ar 2" continua lá com qualquer filtro ligado. Um
@@ -18,20 +19,24 @@ export function BarraDeFiltros({
   heartbeats,
   contagem,
   filtros,
+  ordem,
   resultado,
   semResultado,
   busca,
   aoMudar,
+  aoOrdenar,
 }: {
   itens: readonly ItemDoResumo[]
   heartbeats: readonly Heartbeat[]
   contagem: Record<EstadoExibido, number>
   filtros: Filtros
+  ordem: Ordem
   // "3 de 5 monitores", "Filtrando…", ou nada se a consulta falhou.
   resultado: string | null
   semResultado: boolean
   busca: RefObject<HTMLInputElement | null>
   aoMudar: (f: Filtros) => void
+  aoOrdenar: (o: Ordem) => void
 }) {
   const quantosDoEstado = (e: EstadoDoFiltro) => contagem[estadoExibidoDoFiltro(e)]
   const estados = ESTADOS_DO_FILTRO.filter((e) => quantosDoEstado(e) > 0 || filtros.estados.includes(e))
@@ -55,21 +60,25 @@ export function BarraDeFiltros({
           ))}
         </Grupo>
       </div>
-      {tags.length > 0 && (
-        <Grupo nome="Tags">
-          {tags.map(({ tag, quantos }) => (
-            <BotaoDeFiltro
-              key={tag}
-              ligado={filtros.tags.includes(tag)}
-              quantos={quantos}
-              reserva={busca}
-              aoClicar={() => aoMudar({ ...filtros, tags: alternar(filtros.tags, tag) })}
-            >
-              {tag}
-            </BotaoDeFiltro>
-          ))}
-        </Grupo>
-      )}
+      {/* Na faixa das tags: uma linha só para a ordem custaria a altura que a tabela densa poupa. */}
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        {tags.length > 0 && (
+          <Grupo nome="Tags">
+            {tags.map(({ tag, quantos }) => (
+              <BotaoDeFiltro
+                key={tag}
+                ligado={filtros.tags.includes(tag)}
+                quantos={quantos}
+                reserva={busca}
+                aoClicar={() => aoMudar({ ...filtros, tags: alternar(filtros.tags, tag) })}
+              >
+                {tag}
+              </BotaoDeFiltro>
+            ))}
+          </Grupo>
+        )}
+        <SeletorDeOrdem ordem={ordem} aoOrdenar={aoOrdenar} />
+      </div>
       {temFiltro(filtros) && (
         <div className="flex flex-wrap items-center gap-3">
           <output className="text-meta text-suave">{resultado}</output>
@@ -81,6 +90,31 @@ export function BarraDeFiltros({
         </div>
       )}
     </section>
+  )
+}
+
+// Um seletor, e não clique no cabeçalho: a tabela esconde colunas por largura, e
+// a ordem precisa existir em qualquer tela (spec de paridade).
+function SeletorDeOrdem({ ordem, aoOrdenar }: { ordem: Ordem; aoOrdenar: (o: Ordem) => void }) {
+  const id = useId()
+  return (
+    <div className="flex items-center gap-2 lg:ml-auto">
+      <label htmlFor={id} className="text-sm whitespace-nowrap text-suave">
+        Ordenar por
+      </label>
+      <Selecao
+        id={id}
+        className="w-auto"
+        value={ordem}
+        onChange={(ev) => aoOrdenar(ORDENS.find((o) => o === ev.target.value) ?? ORDEM_PADRAO)}
+      >
+        {ORDENS.map((o) => (
+          <option key={o} value={o}>
+            {TEXTO_DA_ORDEM[o]}
+          </option>
+        ))}
+      </Selecao>
+    </div>
   )
 }
 
