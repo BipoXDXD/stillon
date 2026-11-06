@@ -58,6 +58,7 @@ class ConexaoPelaBorda(http.client.HTTPConnection):
         bruto = socket.create_connection((self.host, self.port), self.timeout)
         bruto.sendall(cabecalho_proxy_v2(self._origem))
         contexto = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        contexto.minimum_version = ssl.TLSVersion.TLSv1_2
         # O certificado é o da CA interna de um contêiner descartável, e o
         # teste é sobre o IP do cliente: o TLS só precisa existir.
         contexto.check_hostname = False
