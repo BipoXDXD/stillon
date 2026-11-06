@@ -291,6 +291,8 @@ describe('avisos de canais', () => {
     await r.cliente.refetchQueries()
     expect(await screen.findByText('Nenhum canal de notificação cadastrado. Os incidentes não enviam avisos.')).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Configurar canais' })).toHaveAttribute('href', '/channels')
+    // O WebKit arredonda a largura do inline-block para baixo e quebrava em duas linhas.
+    expect(screen.getByRole('link', { name: 'Configurar canais' })).toHaveClass('whitespace-nowrap')
     expect(screen.getByRole('link', { name: 'API' })).toBeInTheDocument()
   })
 

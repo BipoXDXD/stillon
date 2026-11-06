@@ -197,6 +197,21 @@ input[type='radio'] {
   accent-color: var(--primaria);
 }
 
+/* Com a aparência nativa, o WebKit do macOS ignora o min-height e a seleção
+   fica com 22 px. A seta vem de gradientes porque a CSP (img-src 'self')
+   barra SVG em data:, e currentColor a leva junto para o tema escuro. */
+.seta-da-selecao {
+  appearance: none;
+  padding-right: 2rem;
+  background-image:
+    linear-gradient(45deg, transparent 50%, currentColor 50%), linear-gradient(135deg, currentColor 50%, transparent 50%);
+  background-position:
+    calc(100% - 1rem) center,
+    calc(100% - 0.75rem) center;
+  background-size: 0.25rem 0.25rem;
+  background-repeat: no-repeat;
+}
+
 /* Área de toque de 44 px (WCAG 2.5.5; o mínimo AA do 2.5.8 é 24) para
    link de texto, sem mudar o layout: o pseudo-elemento, centrado no link,
    cresce a área clicável e não ocupa espaço. e2e/a11y.spec.ts mede. */
