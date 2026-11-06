@@ -14,6 +14,7 @@ cd "$RAIZ"
 WF=.github/workflows
 DEPLOY=$WF/deploy.yml
 BACKUP=$WF/backup.yml
+REVALIDAR=$WF/revalidar-backup.yml
 falhas=0
 falhar() { echo "FALHOU: $*" >&2; falhas=$((falhas + 1)); }
 # Os laços com pipe rodam num subshell: as falhas de dentro deles vão como
@@ -242,6 +243,60 @@ fi
 if git grep -nIE 'FLY_[A-Z]' -- . ':(exclude)docs/superpowers/**' ':(exclude)deploy/ci/checar-workflows.sh' >&2; then
     falhar "variável ou secret do Fly.io (acima)"
 fi
+
+# 7. Revalidação do backup: só agendada ou à mão, nunca em PR; sem permissão no
+#    nível do workflow; a chave do age só no job que restaura, e esse job só
+#    lê; o job que escreve em issues não vê segredo nenhum.
+gatilhos=$(sed -n '/^on:/,/^[a-z]/p' "$REVALIDAR" | grep -E '^  [a-z_]+:' | tr -d ' :' | tr '\n' ' ')
+[ "$gatilhos" = "schedule workflow_dispatch " ] ||
+    falhar "$REVALIDAR: gatilhos \"$gatilhos\", queria schedule e workflow_dispatch"
+tem "$REVALIDAR" '^permissions: \{\}$' "o workflow tem de começar sem permissão nenhuma"
+tem "$REVALIDAR" '^  cancel-in-progress: false$' "um ensaio não é cancelado no meio"
+tem "$REVALIDAR" "^    if: vars\\.BACKUP_ENABLED == '1' && github\\.ref == 'refs/heads/main'\$" \
+    "o ensaio não está preso à main e ao BACKUP_ENABLED=1"
+# job <nome>: o texto de um job, até o próximo.
+job() { awk -v nome="  $1:" '$0 == nome { d = 1; print; next } d && /^  [a-z]/ { exit } d' "$REVALIDAR"; }
+job_restore=$(job restore)
+job_avisar=$(job avisar)
+perms=$(printf '%s\n' "$job_restore" | sed -n '/^    permissions:/,/^    [a-z]/p' | grep -E '^      ' | tr -d ' ' | sort | tr '\n' ' ')
+[ "$perms" = "actions:read contents:read " ] || falhar "$REVALIDAR: restore com permissions \"$perms\", queria só leitura"
+perms=$(printf '%s\n' "$job_avisar" | sed -n '/^    permissions:/,/^    [a-z]/p' | grep -E '^      ' | tr -d ' ' | sort | tr '\n' ' ')
+[ "$perms" = "contents:read issues:write " ] || falhar "$REVALIDAR: avisar com permissions \"$perms\""
+# Toda forma de chegar aos secrets, não só secrets.NOME: toJSON(secrets),
+# secrets['X'] e secrets: inherit também entregam a chave. As expressões do
+# Actions não diferenciam maiúsculas, e o GitHub lê .yml e .yaml.
+sem_comentario() { grep -Ev '^[[:space:]]*#' "$@"; }
+todos_os_workflows() { find "$WF" -type f \( -iname '*.yml' -o -iname '*.yaml' \) -exec cat {} +; }
+CITACAO_DA_CHAVE='^ +AGE_IDENTITY: \$\{\{ secrets\.STILLON_BACKUP_AGE_IDENTITY \}\}$'
+if sem_comentario "$REVALIDAR" | grep -iE '\bsecrets\b' | grep -Ev "$CITACAO_DA_CHAVE" >&2; then
+    falhar "$REVALIDAR: acesso a secrets fora da citação única da chave do age (acima)"
+fi
+n=$(printf '%s\n' "$job_restore" | sem_comentario | grep -Ec "$CITACAO_DA_CHAVE" || true)
+[ "$n" = 1 ] || falhar "$REVALIDAR: a chave do age aparece $n vez(es) no job restore, queria uma"
+if printf '%s\n' "$job_avisar" | sem_comentario | grep -iEq '\bsecrets\b'; then
+    falhar "$REVALIDAR: o job avisar escreve em issues e não pode ver segredo"
+fi
+if printf '%s\n' "$job_avisar" | sem_comentario | grep -Eq '^[[:space:]]*environment:'; then
+    falhar "$REVALIDAR: o job avisar escreve em issues e não pode entrar num environment"
+fi
+# Quem cita o environment da chave pode ler a chave: só o job restore cita.
+AMBIENTE_DA_CHAVE=forwarding-audit-restore-20261023
+n=$(todos_os_workflows | sem_comentario | grep -ic "$AMBIENTE_DA_CHAVE" || true)
+[ "$n" = 1 ] || falhar "$WF: $AMBIENTE_DA_CHAVE citado $n vez(es), queria uma"
+n=$(todos_os_workflows | sem_comentario | grep -ic 'STILLON_BACKUP_AGE_IDENTITY' || true)
+[ "$n" = 1 ] || falhar "$WF: a chave do age citada $n vez(es), queria uma"
+printf '%s\n' "$job_restore" | grep -qx "    environment: $AMBIENTE_DA_CHAVE" ||
+    falhar "$REVALIDAR: o job restore não está no environment da chave"
+printf '%s\n' "$job_avisar" | grep -q "needs\\.restore\\.result != 'skipped'" ||
+    falhar "$REVALIDAR: o aviso tem de rodar também quando o restore falha"
+if grep -En '(^|[^.])\bssh[[:space:]]|deploy/ci/vps\.sh|secrets\.VPS' "$REVALIDAR" >&2; then
+    falhar "$REVALIDAR: o ensaio não fala com a VPS"
+fi
+DONOS=.github/CODEOWNERS
+for caminho in /.github/CODEOWNERS /.github/workflows/ /.github/workflows/revalidar-backup.yml \
+    /deploy/backup/ /deploy/ci/checar-workflows.sh; do
+    grep -Eq "^${caminho}[[:space:]]+@" "$DONOS" 2>/dev/null || falhar "$DONOS: sem dono para $caminho"
+done
 
 if [ "$falhas" -gt 0 ]; then
     echo "$falhas falha(s) nos workflows" >&2

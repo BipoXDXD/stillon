@@ -4,7 +4,11 @@ name: backup
 # o verbo `backup` do stillon-entrada roda o deploy/backup/backup.sh num
 # Postgres descartável, cifra com a chave PÚBLICA do age que mora na VPS
 # (/opt/stillon/age-recipient) e manda só o cifrado pela saída padrão. A
-# chave privada fica com o dono, fora do GitHub e da VPS.
+# chave privada nunca chega à VPS nem a este workflow: fica com o dono e num
+# secret de environment que só o revalidar-backup.yml usa. O ensaio diário
+# depende disso: o environment tem de aceitar a main, e até lá o ensaio falha.
+# Depois, o que entra na main pode ler a chave: ela exige PR e checks, mas
+# nenhum aprovador, e um merge com --admin pula os checks.
 #
 # Desligado até o dono ligar: o job só roda com a variável de repositório
 # BACKUP_ENABLED=1 (runbook docs/deploy/vps.md). Antes disso, o agendamento

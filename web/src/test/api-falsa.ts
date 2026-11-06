@@ -31,6 +31,9 @@ type Json = Record<string, unknown>
 
 type Entrada<T extends z.ZodType> = z.input<T>
 
+type Contexto = { request: Request; params: Record<string, string>; corpo: Json }
+type Tratador = (a: Contexto) => Response | Promise<Response>
+
 export const EMAIL = 'dono@exemplo.com'
 export const SENHA = 'uma senha bem comprida'
 export const TOTP_OK = '123456'
@@ -51,7 +54,38 @@ const agora = () => new Date('2026-09-24T12:00:00Z')
 // de sessão a derruba (A3 do Plano 10).
 export const LIMITE_DE_PROVAS = 5
 
+const UMA_HORA_S = 3600
+
+// Os DTOs de entrada do servidor (decodeJSON recusa o que não estiver aqui).
+// Criar e editar aceitam os mesmos nomes em cada recurso.
+const CAMPOS_DO_ALVO = [
+  'name',
+  'url',
+  'method',
+  'interval_sec',
+  'timeout_ms',
+  'expected_status',
+  'degraded_threshold_ms',
+  'enabled',
+  'headers',
+  'tags',
+]
+const CAMPOS_DO_HEARTBEAT = ['name', 'description', 'tags', 'schedule', 'grace_sec', 'enabled']
+const CAMPOS_DO_AGENDAMENTO = ['kind', 'period_sec', 'expr', 'timezone']
+const CAMPOS_DA_PAGINA = ['slug', 'title', 'published', 'items']
+const CAMPOS_DO_ITEM_DA_PAGINA = ['target_id', 'display_name']
+const PROVAS_DO_2FA = ['password', 'code', 'recovery_code']
+
 export type ApiFalsa = ReturnType<typeof criarApiFalsa>
+
+// Fora de um objeto (ausente, null) não há nome a recusar; o servidor trata o
+// tipo errado à parte.
+function temCampoAlheio(valor: unknown, permitidos: string[]) {
+  const objetos: unknown[] = Array.isArray(valor) ? valor : [valor]
+  return objetos.some(
+    (o) => typeof o === 'object' && o !== null && Object.keys(o).some((nome) => !permitidos.includes(nome)),
+  )
+}
 
 export function criarApiFalsa() {
   const st = {
@@ -101,6 +135,9 @@ export function criarApiFalsa() {
     },
     incidentes: [] as Entrada<typeof Incidente>[],
     heartbeats: [] as Entrada<typeof Heartbeat>[],
+    // O last_signal do servidor, por heartbeat: ele não sai na resposta, e por
+    // isso fica fora do item. Sem entrada, a tarefa nunca mandou sinal.
+    ultimosSinais: new Map<string, 'start' | 'success' | 'fail'>(),
     // null responde 400 no campo expr.
     previaDoCron: ['2026-09-25T06:00:00Z', '2026-09-26T06:00:00Z'] as string[] | null,
     previasPedidas: [] as string[],
@@ -166,6 +203,17 @@ export function criarApiFalsa() {
     return true
   }
 
+  // decodeJSON: campo desconhecido, também em objeto aninhado, é 400 sem fields.
+  // Sem isto, um cliente que mandasse um nome errado passaria nos testes de tela.
+  function estrita(permitidos: string[], fn: Tratador, aninhados: Record<string, string[]> = {}): Tratador {
+    return (a) => {
+      const recusado =
+        temCampoAlheio(a.corpo, permitidos) ||
+        Object.entries(aninhados).some(([campo, nomes]) => temCampoAlheio(a.corpo[campo], nomes))
+      return recusado ? erro(400, 'validation_failed') : fn(a)
+    }
+  }
+
   // A família do access token da requisição.
   const familiaDe = (request: Request) =>
     st.acessos.get(request.headers.get('Authorization')?.replace(/^Bearer /, '') ?? '')
@@ -185,12 +233,43 @@ export function criarApiFalsa() {
   // ProofReservation.Succeed: as provas pedidas conferiram, a família zera.
   const provaCerta = (request: Request) => st.provasErradas.delete(familiaDe(request) ?? '')
 
+  // finishedARun do servidor: um início sozinho não prova uma execução.
+  function terminouAlgumaExecucao(h: Entrada<typeof Heartbeat>) {
+    const sinal = st.ultimosSinais.get(h.id)
+    return h.last_success_at !== null || (sinal !== undefined && sinal !== 'start')
+  }
+
+  // statusOf do servidor. A falsa não tem failing_since: quem está em 'failing'
+  // segue falhando. A retomada não precisa zerar nada, porque parte de 'paused'.
+  function statusDe(h: Entrada<typeof Heartbeat>): Entrada<typeof Heartbeat>['state'] {
+    if (!h.enabled) return 'paused'
+    if (h.state === 'failing') return 'failing'
+    if (h.open_incident_id !== null || new Date(h.deadline_at) <= agora()) return 'late'
+    return terminouAlgumaExecucao(h) ? 'up' : 'waiting'
+  }
+
+  // FirstDeadline do servidor, com um período fixo: sempre no futuro.
+  const primeiroPrazo = (graceSec: number) => new Date(agora().getTime() + (graceSec + UMA_HORA_S) * 1000).toISOString()
+
+  // Schedule.Equal do servidor: campo a campo, para a ordem das chaves do corpo
+  // não contar como mudança.
+  function mesmoAgendamento(a: Json, b: Json) {
+    return a.kind === b.kind && a.period_sec === b.period_sec && a.expr === b.expr && a.timezone === b.timezone
+  }
+
+  // updateParams do servidor: o prazo só recomeça se o agendamento ou a
+  // tolerância mudarem de verdade.
+  function mudouOPrazo(h: Entrada<typeof Heartbeat>, corpo: Json) {
+    const outroAgendamento = corpo.schedule !== undefined && !mesmoAgendamento(corpo.schedule as Json, h.schedule)
+    return outroAgendamento || (corpo.grace_sec !== undefined && corpo.grace_sec !== h.grace_sec)
+  }
+
   // Envolve um handler com as guardas do servidor. Num GET, o "corpo"
   // guardado é a query string (os testes da série leem o window).
   function rota(
     metodo: 'get' | 'post' | 'patch' | 'delete',
     caminho: string,
-    fn: (a: { request: Request; params: Record<string, string>; corpo: Json }) => Response | Promise<Response>,
+    fn: Tratador,
     protegida = true,
   ): HttpHandler {
     return http[metodo](`*/api/v1${caminho}`, async ({ request, params }) => {
@@ -216,7 +295,7 @@ export function criarApiFalsa() {
     rota(
       'post',
       '/auth/login',
-      ({ corpo }) => {
+      estrita(['email', 'password'], ({ corpo }) => {
         // Conta bloqueada: o mesmo 401 genérico, sem olhar a senha (o cookie
         // de dispositivo, que a dispensaria, não está nesta falsa).
         if (st.contaBloqueada) return erro(401, 'invalid_credentials')
@@ -226,13 +305,13 @@ export function criarApiFalsa() {
           return HttpResponse.json({ totp_required: true, challenge: 'desafio-1' })
         }
         return abrirSessao()
-      },
+      }),
       false,
     ),
     rota(
       'post',
       '/auth/totp/verify',
-      ({ corpo }) => {
+      estrita(['challenge', 'code'], ({ corpo }) => {
         if (corpo.challenge !== 'desafio-1') return erro(401, 'unauthorized')
         // Task 11 do Plano 5: a senha mudou depois do desafio → a senha
         // verificada é velha, e o verify responde invalid_credentials.
@@ -240,7 +319,7 @@ export function criarApiFalsa() {
         if (st.contaBloqueada) return erro(401, 'invalid_credentials')
         if (!provaDoFator(String(corpo.code ?? ''))) return erro(401, 'invalid_credentials')
         return abrirSessao()
-      },
+      }),
       false,
     ),
     rota(
@@ -290,8 +369,8 @@ export function criarApiFalsa() {
       )
       return HttpResponse.json({ items })
     }),
-    rota('get', '/targets', () => HttpResponse.json({ items: st.alvos })),
-    rota('post', '/targets', ({ corpo }) => {
+    rota('get', '/targets', ({ request }) => paginar(st.alvos, request)),
+    rota('post', '/targets', estrita(CAMPOS_DO_ALVO, ({ corpo }) => {
       const alvo = {
         id: `alvo-${st.alvos.length + 1}`,
         name: String(corpo.name),
@@ -308,12 +387,12 @@ export function criarApiFalsa() {
       }
       st.alvos.push(alvo)
       return HttpResponse.json(alvo, { status: 201 })
-    }),
+    })),
     rota('get', '/targets/:id', ({ params }) => {
       const a = st.alvos.find((x) => x.id === params.id)
       return a ? HttpResponse.json(a) : erro(404, 'not_found')
     }),
-    rota('patch', '/targets/:id', ({ params, corpo }) => {
+    rota('patch', '/targets/:id', estrita(CAMPOS_DO_ALVO, ({ params, corpo }) => {
       const a = st.alvos.find((x) => x.id === params.id)
       if (!a) return erro(404, 'not_found')
       const { headers, ...resto } = corpo
@@ -325,7 +404,7 @@ export function criarApiFalsa() {
       if (headers !== undefined) a.header_names = Object.keys((headers as Json | null) ?? {}).sort()
       else if (outraOrigem) a.header_names = []
       return HttpResponse.json(a)
-    }),
+    })),
     rota('delete', '/targets/:id', ({ params }) => {
       // Como o servidor (TargetHandlers.Delete): alvo que não existe é 404.
       if (!st.alvos.some((x) => x.id === params.id)) return erro(404, 'not_found')
@@ -351,11 +430,7 @@ export function criarApiFalsa() {
       if (q.get('status') === 'open') itens = itens.filter((i) => i.resolved_at === null)
       if (q.get('status') === 'resolved') itens = itens.filter((i) => i.resolved_at !== null)
       if (q.get('target_id')) itens = itens.filter((i) => i.target_id === q.get('target_id'))
-      const limite = Number(q.get('limit') ?? 50)
-      const inicio = q.get('cursor') ? itens.findIndex((i) => i.id === q.get('cursor')) + 1 : 0
-      const pagina = itens.slice(inicio, inicio + limite)
-      const cheia = pagina.length === limite && inicio + limite < itens.length
-      return HttpResponse.json({ items: pagina, ...(cheia ? { next_cursor: pagina[pagina.length - 1]!.id } : {}) })
+      return paginar(itens, request)
     }),
     rota('post', '/incidents/:id/ack', ({ params }) => {
       const i = st.incidentes.find((x) => x.id === params.id)
@@ -364,8 +439,8 @@ export function criarApiFalsa() {
       return HttpResponse.json(i)
     }),
 
-    rota('get', '/heartbeats', () => HttpResponse.json({ items: st.heartbeats })),
-    rota('post', '/heartbeats', ({ corpo }) => {
+    rota('get', '/heartbeats', ({ request }) => paginar(st.heartbeats, request)),
+    rota('post', '/heartbeats', estrita(CAMPOS_DO_HEARTBEAT, ({ corpo }) => {
       const h = {
         id: `hb-${st.heartbeats.length + 1}`,
         name: String(corpo.name),
@@ -375,7 +450,7 @@ export function criarApiFalsa() {
         schedule: corpo.schedule as Entrada<typeof Heartbeat>['schedule'],
         grace_sec: corpo.grace_sec === undefined ? 300 : Number(corpo.grace_sec),
         state: 'waiting' as const,
-        deadline_at: agora().toISOString(),
+        deadline_at: primeiroPrazo(corpo.grace_sec === undefined ? 300 : Number(corpo.grace_sec)),
         last_ping_at: null,
         last_success_at: null,
         last_start_at: null,
@@ -385,7 +460,7 @@ export function criarApiFalsa() {
       }
       st.heartbeats.push(h)
       return HttpResponse.json({ ...h, ping_url: PING_URL }, { status: 201 })
-    }),
+    }, { schedule: CAMPOS_DO_AGENDAMENTO })),
     rota('get', '/heartbeats/cron-preview', ({ request }) => {
       st.previasPedidas.push(new URL(request.url).search)
       return st.previaDoCron === null
@@ -396,13 +471,17 @@ export function criarApiFalsa() {
       const h = st.heartbeats.find((x) => x.id === params.id)
       return h ? HttpResponse.json(h) : erro(404, 'not_found')
     }),
-    rota('patch', '/heartbeats/:id', ({ params, corpo }) => {
+    rota('patch', '/heartbeats/:id', estrita(CAMPOS_DO_HEARTBEAT, ({ params, corpo }) => {
       const h = st.heartbeats.find((x) => x.id === params.id)
       if (!h) return erro(404, 'not_found')
+      const retomou = corpo.enabled === true && !h.enabled
+      const recomecaOPrazo = retomou || mudouOPrazo(h, corpo)
       Object.assign(h, corpo)
-      if (typeof corpo.enabled === 'boolean') h.state = corpo.enabled ? 'up' : 'paused'
+      if (retomou) h.last_start_at = null
+      if (recomecaOPrazo) h.deadline_at = primeiroPrazo(h.grace_sec)
+      h.state = statusDe(h)
       return HttpResponse.json(h)
-    }),
+    }, { schedule: CAMPOS_DO_AGENDAMENTO })),
     rota('delete', '/heartbeats/:id', ({ params }) => {
       if (!st.heartbeats.some((x) => x.id === params.id)) return erro(404, 'not_found')
       st.heartbeats = st.heartbeats.filter((x) => x.id !== params.id)
@@ -430,7 +509,7 @@ export function criarApiFalsa() {
     }),
 
     rota('get', '/channels', () => HttpResponse.json({ items: st.canais })),
-    rota('post', '/channels', ({ corpo }) => {
+    rota('post', '/channels', estrita(['kind', 'url', 'email'], ({ corpo }) => {
       const email = corpo.kind === 'email'
       const c = {
         id: `canal-${st.canais.length + 1}`,
@@ -444,7 +523,7 @@ export function criarApiFalsa() {
       }
       st.canais.push(c)
       return HttpResponse.json(c, { status: 201 })
-    }),
+    })),
     // ChannelHandlers.Delete e Resend: canal que não existe é 404.
     rota('delete', '/channels/:id', ({ params }) => {
       if (!st.canais.some((c) => c.id === params.id)) return erro(404, 'not_found')
@@ -473,7 +552,7 @@ export function criarApiFalsa() {
     }),
 
     rota('get', '/status-pages', () => HttpResponse.json({ items: st.paginas })),
-    rota('post', '/status-pages', ({ corpo }) => {
+    rota('post', '/status-pages', estrita(CAMPOS_DA_PAGINA, ({ corpo }) => {
       const p = {
         id: 'pagina-1',
         slug: String(corpo.slug),
@@ -485,14 +564,14 @@ export function criarApiFalsa() {
       }
       st.paginas = [p]
       return HttpResponse.json(p, { status: 201 })
-    }),
-    rota('patch', '/status-pages/:id', ({ params, corpo }) => {
+    }, { items: CAMPOS_DO_ITEM_DA_PAGINA })),
+    rota('patch', '/status-pages/:id', estrita(CAMPOS_DA_PAGINA, ({ params, corpo }) => {
       const p = st.paginas.find((x) => x.id === params.id)
       if (!p) return erro(404, 'not_found')
       Object.assign(p, corpo)
       p.public_url = `http://localhost:5173/p/${p.slug}`
       return HttpResponse.json(p)
-    }),
+    }, { items: CAMPOS_DO_ITEM_DA_PAGINA })),
 
     rota('get', '/sessions', () => HttpResponse.json({ items: st.sessoes })),
     rota('delete', '/sessions/:id', ({ params }) => {
@@ -509,7 +588,7 @@ export function criarApiFalsa() {
     // account.ChangePassword: a política da senha nova vem ANTES da senha
     // atual (e do código, que então não é gasto).
     // A prova errada conta na família (a política não: a reserva volta).
-    rota('post', '/auth/password', ({ request, corpo }) => {
+    rota('post', '/auth/password', estrita(['current_password', 'new_password', 'totp_code'], ({ request, corpo }) => {
       const n = [...String(corpo.new_password)].length
       if (n < 15) return erro(400, 'validation_failed', [{ field: 'new_password', reason: 'too_short' }])
       if (corpo.current_password !== SENHA) return provaErrada(request, 401, 'invalid_credentials')
@@ -528,8 +607,8 @@ export function criarApiFalsa() {
       st.troca = null
       st.desafioValido = false
       return new HttpResponse(null, { status: 204 })
-    }),
-    rota('post', '/auth/totp/enroll', ({ request, corpo }) => {
+    })),
+    rota('post', '/auth/totp/enroll', estrita(['password'], ({ request, corpo }) => {
       if (corpo.password !== SENHA) return provaErrada(request, 401, 'invalid_credentials')
       // Com o 2FA ligado, a senha certa NÃO zera a família (C1 da revisão do
       // Plano 10): 403, e a reserva volta. Só o cadastro feito zera.
@@ -537,14 +616,14 @@ export function criarApiFalsa() {
       provaCerta(request)
       st.totpPendente = true
       return HttpResponse.json({ otpauth_uri: 'otpauth://totp/StillOn:dono%40exemplo.com?secret=JBSWY3DPEHPK3PXP&issuer=StillOn' })
-    }),
+    })),
     // TOTP.Confirm com o 2FA já ligado é 403 forbidden ANTES de olhar o
     // código (C1 da revisão do Plano 10): o mesmo 403 para o certo e o
     // errado, sem contar nem zerar a família. Com o cadastro pendente, o
     // código errado é prova errada, 400 validation_failed, e conta (A3 do
     // Plano 10, que fechou o S5). Sem cadastro não há código a errar: 400
     // sem contar.
-    rota('post', '/auth/totp/confirm', ({ request, corpo }) => {
+    rota('post', '/auth/totp/confirm', estrita(['code'], ({ request, corpo }) => {
       if (st.totpLigado) return erro(403, 'forbidden')
       if (!st.totpPendente) return erro(400, 'validation_failed')
       if (corpo.code !== TOTP_OK) return provaErrada(request, 400, 'validation_failed')
@@ -552,8 +631,8 @@ export function criarApiFalsa() {
       st.totpLigado = true
       st.totpPendente = false
       return HttpResponse.json({ recovery_codes: ['AAAABBBBCCCCDDDD', 'EEEEFFFFGGGGHHHH'] })
-    }),
-    rota('post', '/auth/totp/disable', ({ request, corpo }) => {
+    })),
+    rota('post', '/auth/totp/disable', estrita(PROVAS_DO_2FA, ({ request, corpo }) => {
       // D24 do Plano 5: senha ou código errado é invalid_credentials;
       // unauthorized fica só para o token recusado (e para a 5ª prova errada
       // da família). Com o 2FA desligado, o Disable devolve
@@ -567,14 +646,14 @@ export function criarApiFalsa() {
       // O disable apaga a troca pendente (spec do Plano 9 §3.2).
       st.troca = null
       return new HttpResponse(null, { status: 204 })
-    }),
+    })),
     // Spec do Plano 9 §3.2: as provas do disable (senha e código do app ou
     // de recuperação). 2FA desligado é 403; prova errada é
     // invalid_credentials (D24 do Plano 5). O código de recuperação fica
     // gasto mesmo que a troca não seja confirmada.
     // TOTPRotate: a senha (senhaConfere) antes de tudo; depois, 2FA
     // desligado é 403, e só então a prova do fator.
-    rota('post', '/auth/totp/rotate', ({ request, corpo }) => {
+    rota('post', '/auth/totp/rotate', estrita(PROVAS_DO_2FA, ({ request, corpo }) => {
       if (corpo.password !== SENHA) return provaErrada(request, 401, 'invalid_credentials')
       // 403 sem contar e sem zerar: a reserva volta (Release).
       if (!st.totpLigado) return erro(403, 'forbidden')
@@ -590,12 +669,12 @@ export function criarApiFalsa() {
         otpauth_uri: `otpauth://totp/StillOn:dono%40exemplo.com?secret=${SEGREDO_NOVO}&issuer=StillOn`,
         rotation: st.troca.rotation,
       })
-    }),
+    })),
     // Sem troca pendente, ou com o rotation de um pendente que outro rotate
     // já substituiu (A7 do Plano 10), é 403, sem contar falha; código errado
     // é 401 e o pendente fica. O sucesso encerra as OUTRAS sessões e entrega
     // 10 códigos novos.
-    rota('post', '/auth/totp/rotate/confirm', ({ request, corpo }) => {
+    rota('post', '/auth/totp/rotate/confirm', estrita(['code', 'rotation'], ({ request, corpo }) => {
       // O pendente de outra família é, para esta, "nenhuma troca". Um
       // pendente posto à mão pelo teste (sem família) vale para qualquer uma.
       const deOutra = st.troca?.familia !== undefined && st.troca.familia !== familiaDe(request)
@@ -606,7 +685,7 @@ export function criarApiFalsa() {
       st.troca = null
       st.sessoes = st.sessoes.filter((s) => s.current)
       return HttpResponse.json({ recovery_codes: CODIGOS_NOVOS })
-    }),
+    })),
   ]
 
   return {

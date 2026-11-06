@@ -1,0 +1,7 @@
+# O que lê a chave privada do age ou decide quem a lê. Este arquivo só marca o
+# dono: não bloqueia merge sem uma regra de ruleset que exija a revisão dele.
+/.github/CODEOWNERS @BipoXDXD
+/.github/workflows/ @BipoXDXD
+/.github/workflows/revalidar-backup.yml @BipoXDXD
+/deploy/backup/ @BipoXDXD
+/deploy/ci/checar-workflows.sh @BipoXDXD

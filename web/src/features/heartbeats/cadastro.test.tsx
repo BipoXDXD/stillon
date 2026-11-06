@@ -293,6 +293,22 @@ describe('ações do detalhe', () => {
     expect(r.falsa.corpos('PATCH /heartbeats/:id')).toEqual([{ enabled: false }, { enabled: true }])
   })
 
+  // O estado depois de retomar vem do servidor (statusOf). Sabotagem: a API
+  // falsa devolver sempre 'up', como antes.
+  it('retomar quem nunca terminou uma execução mostra Aguardando', async () => {
+    const r = await detalheCom({ enabled: false, state: 'paused', last_ping_at: null, last_success_at: null })
+    await r.usuario.click(screen.getByRole('button', { name: 'Retomar' }))
+    await screen.findByRole('button', { name: 'Pausar' })
+    expect(screen.getByText('Aguardando')).toBeInTheDocument()
+  })
+
+  it('retomar com incidente aberto mostra Atrasado', async () => {
+    const r = await detalheCom({ enabled: false, state: 'paused', open_incident_id: 'inc-1' })
+    await r.usuario.click(screen.getByRole('button', { name: 'Retomar' }))
+    await screen.findByRole('button', { name: 'Pausar' })
+    expect(screen.getByText('Atrasado')).toBeInTheDocument()
+  })
+
   // A ação só termina depois de atualizar a tela, e a confirmação aberta nesse
   // intervalo é outra: quem terminou não pode fechá-la. Achado no e2e real.
   it('a retomada que termina não fecha a confirmação aberta depois dela', async () => {
