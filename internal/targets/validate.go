@@ -78,6 +78,11 @@ type fields struct {
 	DegradedThresholdMS *int32
 	Headers             map[string]string
 	Tags                []string
+
+	// urlGravada é a URL que a linha já tem, vazia no cadastro. Um alvo
+	// gravado antes da recusa de DestinoMudouNoGo127 continua administrável:
+	// o dono pausa e renomeia, e quem o barra é a sondagem.
+	urlGravada string
 }
 
 // validate confere todos os campos e acumula todos os erros, para que o
@@ -97,7 +102,11 @@ func validate(f *fields) *ValidationError {
 	}
 
 	f.URL = strings.TrimSpace(f.URL)
-	if motivo := checkURL(f.URL); motivo != "" {
+	motivo := checkURL(f.URL)
+	if motivo == "" && f.URL != f.urlGravada && safedial.DestinoMudouNoGo127(f.URL) {
+		motivo = ReasonInvalid
+	}
+	if motivo != "" {
 		v.add("url", motivo)
 	}
 
@@ -162,7 +171,7 @@ func checkURL(raw string) string {
 		return ReasonTooLong
 	}
 	u, err := safedial.ValidateURL(raw)
-	if err != nil || safedial.DestinoMudouNoGo127(raw) {
+	if err != nil {
 		return ReasonInvalid
 	}
 	host := strings.TrimSuffix(strings.ToLower(u.Hostname()), ".")
@@ -298,6 +307,15 @@ func SameOrigin(a, b string) bool {
 	}
 	ob, ok := origem(b)
 	return ok && oa == ob
+}
+
+// mudouDeDestino diz se os headers ficam para trás numa troca de URL. O
+// SameOrigin compara pela tabela do IDNA de hoje; uma URL gravada que
+// DestinoMudouNoGo127 aponta discava outro domínio, então qualquer troca dela
+// leva os headers a um destino que nunca os recebeu.
+func mudouDeDestino(antes, depois string) bool {
+	return !SameOrigin(antes, depois) ||
+		(safedial.DestinoMudouNoGo127(antes) && strings.TrimSpace(antes) != strings.TrimSpace(depois))
 }
 
 func origem(s string) (string, bool) {

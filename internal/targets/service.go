@@ -170,6 +170,7 @@ func (s *Service) Update(ctx context.Context, userID, id uuid.UUID, p Patch) (Ta
 			Name: row.Name, URL: row.URL, Method: row.Method,
 			IntervalSec: row.IntervalSec, TimeoutMS: row.TimeoutMS, ExpectedStatus: row.ExpectedStatus,
 			DegradedThresholdMS: row.DegradedThresholdMS, Headers: headers, Tags: tags,
+			urlGravada: row.URL,
 		}
 		enabled := row.Enabled
 		mudouASonda := p.apply(&f, &enabled)
@@ -248,7 +249,7 @@ func (p Patch) apply(f *fields, enabled *bool) bool {
 	}
 	if p.SetHeaders {
 		f.Headers = p.Headers
-	} else if !SameOrigin(antes.URL, f.URL) {
+	} else if mudouDeDestino(antes.URL, f.URL) {
 		f.Headers = nil
 	}
 	if p.SetTags {
