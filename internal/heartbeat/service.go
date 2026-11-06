@@ -131,18 +131,22 @@ func ValidateName(name string) (string, error) {
 
 // ValidateDescription devolve a descrição limpa; "" é "sem descrição". É texto
 // de várias linhas, e por isso as regras de ValidateName valem linha a linha:
-// quebra de linha e tab são os únicos controles que um texto colado precisa.
+// quebra de linha e tab são os únicos controles que um texto colado precisa. O
+// erro de caractere aponta a linha em description[i], contada desde 0 no texto
+// recebido, como items[i] na página de status.
 func ValidateDescription(description string) (string, error) {
-	description = strings.TrimSpace(description)
-	if utf8.RuneCountInString(description) > MaxDescriptionLength {
+	limpa := strings.TrimSpace(description)
+	if utf8.RuneCountInString(limpa) > MaxDescriptionLength {
 		return "", &ValidationError{Field: "description", Reason: ReasonOutOfRange}
 	}
-	for linha := range strings.Lines(strings.ReplaceAll(description, "\t", " ")) {
+	indice := strings.Count(description[:strings.Index(description, limpa)], "\n")
+	for linha := range strings.Lines(strings.ReplaceAll(limpa, "\t", " ")) {
 		if rotulo.TemInvisivel(strings.TrimSuffix(linha, "\n")) {
-			return "", &ValidationError{Field: "description", Reason: ReasonInvalid}
+			return "", &ValidationError{Field: fmt.Sprintf("description[%d]", indice), Reason: ReasonInvalid}
 		}
+		indice++
 	}
-	return description, nil
+	return limpa, nil
 }
 
 // CronPreview são os próximos disparos de uma expressão ainda não gravada. Passa

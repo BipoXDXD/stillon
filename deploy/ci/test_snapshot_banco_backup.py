@@ -136,6 +136,9 @@ class SnapshotGuardTests(unittest.TestCase):
                 after[field] = value
                 failures, output = compare(BASE, after)
                 self.assertEqual(failures, 1)
+                # A mensagem prova a validação: sem ela, a diferença para BASE
+                # também daria uma falha, e o caso passaria sem testar nada.
+                self.assertIn("indisponível ou inválido", output)
                 self.assertNotIn("PRIVATE_SENTINEL", output)
         failures, output = compare(BASE, BASE, provider_status=1)
         self.assertEqual(failures, 1)

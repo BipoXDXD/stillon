@@ -105,6 +105,7 @@ limitados por D11. Esperado: quem ficou sem avaliação aparece atrasado.
 heartbeats (
   id uuid PK, user_id uuid FK users ON DELETE CASCADE,
   name text 1..100,
+  description text NOT NULL DEFAULT '', até 1000 caracteres,  -- 00022
   ping_token_hash bytea UNIQUE, octet_length 32,
   period_sec int NULL, 60..2678400,
   cron_expr text NULL, 1..100,  timezone text NULL, 1..64,
@@ -112,6 +113,7 @@ heartbeats (
   enabled bool, created_at timestamptz,
   deadline_at timestamptz NOT NULL,   -- quando o silêncio vira atraso
   last_ping_at, last_success_at, last_start_at timestamptz NULL,
+  last_runtime_ms bigint NULL >= 0,   -- 00020: duração da última execução medida
   last_signal text NULL ('start','success','fail'),
   failing_since timestamptz NULL,     -- fail recebido e ainda sem success
   last_incident_at timestamptz NULL,  -- base do intervalo de D11
@@ -200,8 +202,8 @@ nela e roda uma vez só pode ter um alarme falso por ano; a saída é agendar fo
 
 ## 6. STRIDE do `POST /ping/{token}`
 
-Fluxo: tarefa → (TLS) → proxy → cadeia própria sem cookie, sem CORS e sem cabeçalho anti-CSRF →
-limite por IP → limite por token → hash → `InPingTx`.
+Fluxo: tarefa → (TLS) → Cloudflare, que termina o TLS → proxy → cadeia própria sem cookie, sem CORS
+e sem cabeçalho anti-CSRF → limite por IP → limite por token → hash → `InPingTx`.
 Dado: o token, que é a credencial; os instantes dos sinais. Sem PII.
 
 | Ameaça | Mitigação | Teste |
@@ -213,6 +215,7 @@ Dado: o token, que é a credencial; os instantes dos sinais. Sem PII.
 | **T** Forjar incidente pelo ping | política nomeia dono e sondador; o ping nem tenta | `TestPingScopeCannotTouchIncidents` |
 | **R** Negar um sinal | aceito: o evento tem instante e tipo, sem origem (D14). Quem tem o token pode pingar; rotacionar é a resposta | `TestPingRecordsTheEvent` |
 | **I** Token em log | log usa `r.Pattern`, nunca o caminho; nenhum `slog` do pacote recebe o token | `TestPingNeverLogsTheToken` (canário, inclusive em erro e panic) |
+| **I** Token lido na borda | **em aberto (D10 da auditoria).** A Cloudflare termina o TLS e vê o caminho em claro, logo o token. Nada no código reduz isso; rotacionar o token é a resposta depois de uma suspeita | Nenhum: a borda está fora do alcance dos testes do repositório |
 | **I** Descobrir se a URL existe | inexistente, revogada e malformada: mesmo status e mesmo corpo | `TestPingUnknownAndRevokedTokensAnswerTheSame` |
 | **I** Vazar dados na resposta | sucesso devolve corpo fixo, sem nome nem estado | `TestPingSuccessBodyHasNoHeartbeatData` |
 | **D** Enxurrada por IP, sem penalizar NAT | balde por IP folgado (1200/min, rajada 300: 100 tarefas no mesmo minuto, com início e fim, passam) | `TestPingIPLimitAdmitsManyHeartbeatsBehindOneAddress` |
@@ -232,7 +235,8 @@ direção segura para um monitor. O `curl --retry` respeita `Retry-After`.
 
 **Log de proxy, fora do código.** Os `Caddyfile` do repositório não têm diretiva `log`, então não
 gravam acesso. O `coolify-proxy` (Traefik) da VPS não tem access log ligado: conferido na VPS em
-2026-11-05, nos argumentos e no compose. Ver §9.
+2026-11-05, nos argumentos e no compose. Ver §9. Essa conferência vale só para os saltos da VPS: a
+Cloudflare vem antes deles, e o que ela retém não foi conferido.
 
 ## 7. Contrato
 
@@ -305,3 +309,5 @@ Papéis: `--role=api` serve 3 e 5; `--role=prober` roda 4; `--role=all`, tudo.
   ligado, nem nos argumentos nem no compose, então o caminho com o token não é gravado. Se alguém
   ligar o access log, os tokens de ping e de verificação de e-mail passam a ir para o log: é preciso
   filtrar o caminho antes.
+- Cloudflare: o "sem log no caminho" acima não a inclui. O papel dela na cadeia é a D10 da
+  [auditoria](../reports/2026-11-05-auditoria-refatoracao.md), ainda sem decisão.

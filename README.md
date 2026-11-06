@@ -45,7 +45,9 @@ no primeiro `up`: `DEMO_TARGETS_EXTRA="https://seu.site/ https://outro.site/" do
   `reverse_proxy app:8080`) e com a `PUBLIC_BASE_URL` ainda local, o seed e o boot aceitam, o
   usuário de demonstração nasce, e qualquer um entra com a senha pública. O app não confere o
   `Host` recebido. Para hospedar, use o compose de produção de [`deploy/vps/`](deploy/vps/), sem
-  o `seed` e sem nenhuma chave ou senha do repositório, pelo [runbook](docs/deploy/vps.md).
+  o `seed` e sem nenhuma chave ou senha do repositório. A produção de hoje o publica pelo Coolify
+  (seção [Deploy e operação](#deploy-e-operação)); o [runbook](docs/deploy/vps.md) descreve a
+  instalação anterior e abre com um aviso.
 
 `docker compose down` para; `docker compose down -v` apaga o banco também.
 
@@ -81,13 +83,14 @@ docker compose up -d --no-deps --wait app
 ```
 
 Depois, cadastre o canal de e-mail no painel. Na demonstração, o link recebido usa
-`localhost` e deve ser aberto no mesmo computador que executa o StillOn. Para avisos
-na VPS, siga a configuração de e-mail do [runbook de produção](docs/deploy/vps.md).
+`localhost` e deve ser aberto no mesmo computador que executa o StillOn. Em produção, as duas
+variáveis são segredos de interpolação do recurso no Coolify, nunca arquivos do repositório
+([`deploy/coolify/README.md`](deploy/coolify/README.md)).
 
 ## O que faz
 
 - **Sonda** alvos HTTP (GET, HEAD ou POST) de 30 s a 24 h, com headers cifrados, status
-  esperado e limite de latência para "degradado".
+  esperado, limite de latência para "degradado" e até 8 tags para agrupar e filtrar.
 - **Incidentes** abrem depois de falhas seguidas e fecham depois de sucessos seguidos, com
   histórico por alvo.
 - **Notificações** pelo Discord e por e-mail (Resend), com entrega confiável: saem de uma fila
@@ -105,11 +108,12 @@ na VPS, siga a configuração de e-mail do [runbook de produção](docs/deploy/v
   curl -fsS -m 10 --retry 3 -X POST https://stillon.tech/ping/SEU-TOKEN       # ou /fail
   backup.sh; curl -fsS -m 10 --retry 3 -X POST https://stillon.tech/ping/SEU-TOKEN/$?   # 0 é sucesso, o resto é falha
   ```
-- **Página de status pública** em `/p/{slug}`, com os alvos que você escolher, uptime de 90 dias
-  e os incidentes recentes.
-- **Painel** com a frase de estado e os problemas primeiro, avisos de canais, navegação
-  adaptada ao celular, gráfico de latência, 2FA (TOTP), sessões e troca de senha.
-  Capturas na seção [Telas](#telas).
+- **Página de status pública** em `/p/{slug}`, com os alvos que você escolher (tarefas de
+  heartbeat não entram), uptime de 90 dias e os incidentes recentes.
+- **Painel** com a frase de estado e os problemas primeiro, uma tabela só para alvos e tarefas
+  com filtros por tag, estado e busca e ordem por gravidade, nome, menor tempo no ar ou maior
+  latência (filtros e ordem ficam na URL), avisos de canais, navegação adaptada ao celular,
+  gráfico de latência, 2FA (TOTP), sessões e troca de senha. Capturas na seção [Telas](#telas).
 
 ## Telas
 
@@ -175,15 +179,17 @@ Kafka, porque o volume de um monitor destes cabe com folga no banco que já exis
 | Chaves de demonstração do compose aceitas no boot só com `PUBLIC_BASE_URL` `http` em `localhost` ou IP de loopback; `https` recusado sempre, em qualquer host; URL malformada ou com usuário e senha recusada | [`config.go`](internal/config/config.go) | [`config_test.go`](internal/config/config_test.go) (`TestLoadRejectsDemoKeysOverHTTPS`, `TestLoadRejectsDemoKeysOnANonLoopbackHost`, `TestLoadAcceptsDemoKeysOnLoopback`, `TestLoadRejectsMalformedPublicBaseURL`), [`compose_test.go`](internal/config/compose_test.go) (`TestComposeUsesTheDemoKeys`) |
 | Ping de heartbeat com token de 256 bits guardado só como SHA-256; inexistente, revogado e malformado respondem igual; o escopo do ping enxerga só a linha do token e nenhum incidente; o token nunca vai para log; limite por IP folgado para NAT e limite por token; repetição sem efeito; o binário anterior ignora as linhas de heartbeat num rollback | [`pinghandlers.go`](internal/httpapi/pinghandlers.go), [`00016_heartbeats.sql`](internal/storage/migrations/00016_heartbeats.sql), [spec](docs/superpowers/specs/2026-11-05-heartbeats-design.md) | [`ping_integration_test.go`](internal/httpapi/ping_integration_test.go), [`heartbeat_rls_test.go`](internal/storage/heartbeat_rls_test.go), [`heartbeat_rollback_test.go`](internal/storage/heartbeat_rollback_test.go) (`TestOlderBinaryIgnoresHeartbeatRows`) |
 | Status page com DTO próprio: nada interno chega à página pública | [`public.go`](internal/statuspage/public.go) | [`public_test.go`](internal/statuspage/public_test.go) (`TestPublicViewHasNoInternalFields`) |
-| IP real do cliente atrás do proxy, com falha **fechada**: o `X-Forwarded-For` (ou o cabeçalho de `CLIENT_IP_HEADER`) só vale vindo de `TRUSTED_PROXIES`, e um prefixo `/0` ali é recusado no boot. `CLIENT_IP_HEADER` só serve atrás de proxy que **substitui** esse cabeçalho; atrás do Caddy da produção ele fica **vazio**, o `TRUSTED_PROXIES` é o IP fixo do Caddy na rede do compose, e vale o último salto do `X-Forwarded-For`, com todas as linhas lidas juntas. O Caddy remove `X-Real-IP`, `Fly-Client-IP` e `CF-Connecting-IP` vindos do cliente. Com `PUBLIC_BASE_URL` https, um `X-Forwarded-For` de fora de `TRUSTED_PROXIES` vira aviso no log (um por minuto, com o `remote_addr`) | [`clientip.go`](internal/httpapi/middleware/clientip.go) | [`clientip_test.go`](internal/httpapi/middleware/clientip_test.go) (`TestRateLimitSeparatesClientsBehindFly`, `TestClientIPJoinsEveryForwardedForLine`), `TestSessionsBehindFlyRecordDistinctOrigins`, `TestForwardedForFromOutsideTheListWarnsInProduction`, [`config_test.go`](internal/config/config_test.go) (`TestLoadRejectsAZeroBitTrustedProxy`) |
+| IP real do cliente atrás do proxy, com falha **fechada**: o `X-Forwarded-For` (ou o cabeçalho de `CLIENT_IP_HEADER`) só vale vindo de `TRUSTED_PROXIES`, e um prefixo `/0` ali é recusado no boot. `CLIENT_IP_HEADER` só serve atrás de proxy que **substitui** esse cabeçalho; atrás do Caddy da produção ele fica **vazio**, o `TRUSTED_PROXIES` é o IP fixo do Caddy na rede do compose, e vale o último salto do `X-Forwarded-For`, com todas as linhas lidas juntas. O Caddy remove `X-Real-IP`, `Fly-Client-IP` e `CF-Connecting-IP` vindos do cliente. Com `PUBLIC_BASE_URL` https, um `X-Forwarded-For` de fora de `TRUSTED_PROXIES` vira aviso no log (um por minuto, com o `remote_addr`). Atrás da Cloudflare, o IP do cliente vem do `CF-Connecting-IP`, aceito só de conexões nas faixas dela | [`clientip.go`](internal/httpapi/middleware/clientip.go) | [`clientip_test.go`](internal/httpapi/middleware/clientip_test.go) (`TestRateLimitSeparatesClientsBehindFly`, `TestClientIPJoinsEveryForwardedForLine`), `TestSessionsBehindFlyRecordDistinctOrigins`, `TestForwardedForFromOutsideTheListWarnsInProduction`, [`config_test.go`](internal/config/config_test.go) (`TestLoadRejectsAZeroBitTrustedProxy`) |
 | Argon2id com teto de concorrência: toda verificação e todo hash (inclusive o do e-mail inexistente) passam por um semáforo de `min(NumCPU, 4)` vagas (`ARGON2_MAX_CONCURRENT`, 1–64); sem vaga em 2 s, `429 rate_limited` com `Retry-After: 2`, em vez de o processo morrer sem memória | [`argon2.go`](internal/auth/argon2.go) | [`argon2_test.go`](internal/auth/argon2_test.go) (`TestEveryArgon2PathWaitsForASlot`), [`argon2_integration_test.go`](internal/httpapi/argon2_integration_test.go) (`TestSaturatedArgon2AnswersRateLimited`) |
 | Na troca de senha, o hash novo termina antes de consumir TOTP/recovery: saturação desse hash devolve 429 e preserva o código | [`account.go`](internal/account/account.go) | [`account_test.go`](internal/account/account_test.go) (`TestChangePasswordKeepsRecoveryCodeWhenTheNewHashIsRateLimited`) |
 | API e verificação propagam prazo de trabalho de 15 s, abaixo do timeout de escrita: SQL e espera no pool são cancelados; erro interno por prazo vencido usa `503 unavailable` com trace. A projeção pública preserva seu worker compartilhado de até 5 s | [`deadline.go`](internal/httpapi/middleware/deadline.go), [`routes.go`](internal/httpapi/routes.go) | [`deadline_integration_test.go`](internal/httpapi/deadline_integration_test.go) (travas e pool reais; nenhuma criação após vencer) |
 | Bloqueio de conta atômico (a tentativa é reservada **antes** do Argon2 ou do TOTP: N requisições paralelas gastam N tentativas) e sem negação de serviço ao dono: um login completo deixa o cookie de dispositivo `stillon_dispositivo`, e quem o apresenta não é barrado pelo bloqueio que um anônimo provocou; nas rotas autenticadas, a 5ª prova errada revoga a família da sessão | [`user.go`](internal/auth/user.go), [`dispositivo.go`](internal/auth/dispositivo.go), [`provas.go`](internal/auth/provas.go), [`provas.go` (httpapi)](internal/httpapi/provas.go) | [`user_test.go`](internal/auth/user_test.go) (`TestConcurrentReservationsStopAtTheThreshold`), [`dispositivo_integration_test.go`](internal/httpapi/dispositivo_integration_test.go) (`TestParallelLoginGuessesStopAtTheLock`, `TestDeviceCookieLetsTheOwnerInPastTheAccountLock`), [`dispositivo_revogacao_integration_test.go`](internal/httpapi/dispositivo_revogacao_integration_test.go) (`TestDeviceCookieDiesWithTheCredentials`), [`provas_familia_integration_test.go`](internal/httpapi/provas_familia_integration_test.go) (`TestFifthWrongProofDropsTheFamily`) |
 | O `seed` do compose recusa `PUBLIC_BASE_URL` fora de `http` em loopback, antes de chamar o binário. Isso **não** protege um servidor: atrás de um proxy e com a URL ainda local, ele roda e o usuário de demonstração nasce. O `compose.yaml` é só para a máquina local; para hospedar, o compose de produção de `deploy/vps/`, sem o `seed` | [`seed.sh`](deploy/compose/seed.sh) | [`seed_test.go`](internal/config/seed_test.go) (`TestSeedRefusesOutsideLoopback`), [`compose_test.go`](internal/config/compose_test.go) (`TestComposeHeaderSaysItIsLocalOnly`) |
-| Produção atrás da borda do host (Caddy em `/srv/edge`, dividida com outro projeto): o StillOn não publica porta nenhuma; o Caddy do StillOn só confia no `X-Forwarded-For` da borda (IP fixo, modo estrito), fala com o app pelo IP fixo e só aceita o domínio, direto ou pela borda; `X-Real-IP`, `Fly-Client-IP` e `CF-Connecting-IP` mandados pelo cliente são removidos; o banco não aceita conexão de fora da rede do compose; rede sem IPv6 | [`compose.prod.yaml`](deploy/vps/compose.prod.yaml), [`Caddyfile`](deploy/vps/Caddyfile), [`stillon.caddy`](deploy/vps/edge/stillon.caddy) | [`checar-vps.sh`](deploy/ci/checar-vps.sh) (job `vps` do CI: o compose de produção atrás de uma borda de teste igual ao contrato; blocos 1 a 7, inclusive um vizinho na rede da borda forjando IP, chamado `app` ou mandando outro `Host`) |
-| Deploy por uma chave SSH que só roda um script: verbo desconhecido, SHA malformado, imagem divergente e o SHA no ar (ou o anterior) já etiquetado com outra imagem recusados; rollback automático se a versão nova não ficar saudável; o backup só devolve texto cifrado | [`stillon-entrada`](deploy/vps/stillon-entrada) | [`checar-vps.sh`](deploy/ci/checar-vps.sh), blocos 2, 8 (recusas, imagem divergente, rollback, store, `sudoers`) e 9 (backup) |
-| SSH real com chave restrita e sudoers de produção: pedido, códigos e bytes nos dois sentidos; host key divergente, PTY e comando arbitrário recusados. Entrada remota simulada; não substitui o deploy guiado | [`testar-ssh-real.sh`](deploy/ci/testar-ssh-real.sh), [`ssh/`](deploy/ci/ssh/) | `bash deploy/ci/testar-ssh-real.sh` (contêineres e chaves efêmeros, RED/restauração/GREEN) |
+| Produção com a Cloudflare e o proxy do Coolify na frente: o StillOn não publica porta nenhuma; o Caddy do StillOn só confia no `X-Forwarded-For` do proxy da frente (IP fixo, modo estrito), fala com o app pelo IP fixo e só aceita o domínio, direto ou pelo proxy; `X-Real-IP`, `Fly-Client-IP` e `CF-Connecting-IP` mandados pelo cliente são removidos; o banco não aceita conexão de fora da rede do compose; rede sem IPv6 | [`compose.prod.yaml`](deploy/vps/compose.prod.yaml), [`Caddyfile`](deploy/vps/Caddyfile), [`app.json`](deploy/coolify/app.json), [`database.json`](deploy/coolify/database.json) | [`checar-vps.sh`](deploy/ci/checar-vps.sh) (job `vps` do CI: o compose de produção atrás de uma borda de teste igual ao contrato; blocos 1 a 7, inclusive um vizinho na rede da borda forjando IP, chamado `app` ou mandando outro `Host`) e [`checar-borda-cloudflare.sh`](deploy/ci/checar-borda-cloudflare.sh) (mesmo job: uma cadeia de teste com a Cloudflare simulada; cada cliente tem o seu balde de login e de ping, e o `CF-Connecting-IP` forjado, inválido ou duplicado não vale) |
+| **Limite conhecido:** a Cloudflare fica na frente de `stillon.tech` e termina o TLS, então vê em claro o que passa por ali, por exemplo: senha no login, cookies de sessão, tokens de ping e de verificação. As proteções acima valem daí em diante, não antes dela. O proxy da frente a trata como proxy confiável só nas faixas oficiais dela; o que ela vê em claro não muda | [STRIDE do ping](docs/superpowers/specs/2026-11-05-heartbeats-design.md), D10 da [auditoria](docs/superpowers/reports/2026-11-05-auditoria-refatoracao.md) | Nenhum: a borda não é testável daqui |
+| Release pelo Coolify: só publica o SHA de um push na `main` cujo `ci` terminou com sucesso, com todos os jobs obrigatórios (commit `[skip ci]` não publica); imagens em OCI por SSH, com digest e plataforma conferidos, para uma entrada restrita ao projeto; o receptor verifica a propriedade e a imagem em execução e só registra sucesso após saúde real; a chave fica no environment `production`, que aceita só a `main` | [`coolify.yml`](.github/workflows/coolify.yml), [`gate.py`](deploy/coolify/release/gate.py), [`receiver.py`](deploy/coolify/release/receiver.py) | [`test_gate.py`](deploy/coolify/release/test_gate.py), [`test_receiver.py`](deploy/coolify/release/test_receiver.py) (rodam no `coolify.yml` em todo PR que mexe nele ou em `deploy/coolify/release/`) |
+| Caminho anterior (o `deploy.yml`, hoje desativado no GitHub): deploy por uma chave SSH que só roda um script: verbo desconhecido, SHA malformado, imagem divergente e o SHA no ar (ou o anterior) já etiquetado com outra imagem recusados; rollback automático se a versão nova não ficar saudável; o backup só devolve texto cifrado | [`stillon-entrada`](deploy/vps/stillon-entrada) | [`checar-vps.sh`](deploy/ci/checar-vps.sh), blocos 2, 8 (recusas, imagem divergente, rollback, store, `sudoers`) e 9 (backup) |
+| Caminho anterior: SSH real com chave restrita e sudoers de produção: pedido, códigos e bytes nos dois sentidos; host key divergente, PTY e comando arbitrário recusados. Entrada remota simulada; não substitui o deploy guiado | [`testar-ssh-real.sh`](deploy/ci/testar-ssh-real.sh), [`ssh/`](deploy/ci/ssh/) | `bash deploy/ci/testar-ssh-real.sh` (contêineres e chaves efêmeros, RED/restauração/GREEN) |
 | Senhas do PostgreSQL fora de argv no initdb e backup; psql cita os literais importados do ambiente. Instalação npm sem hooks no Dockerfile e CI | [`initdb.sh`](deploy/vps/initdb.sh), [`backup.sh`](deploy/backup/backup.sh), [`Dockerfile`](Dockerfile) | [`scripts_test.go`](internal/config/scripts_test.go), build real com `npm ci --ignore-scripts` |
 | Backup usa o mesmo snapshot para referência e dump; supervisor coleta clientes, limita a execução e recusa parâmetros que alterem suas proteções. Helper copiado da imagem app por ID imutável, executado sem root/capabilities no PG descartável | [`backup/`](internal/backup/), [`backup.sh`](deploy/backup/backup.sh), [`stillon-entrada`](deploy/vps/stillon-entrada) | [`backup_snapshot_test.go`](internal/config/backup_snapshot_test.go) (Postgres real, concorrência, SCRAM, RLS e interrupções), [`checar-vps.sh`](deploy/ci/checar-vps.sh) (distribuição, recuperação e terceiros preservados) |
 | Mutação exige valor literal `stillon` no header customizado; valor é contrato público e nome segue a semântica HTTP. GET/HEAD/OPTIONS permanecem permitidos | [`csrf.go`](internal/httpapi/middleware/csrf.go) | [`middleware_test.go`](internal/httpapi/middleware/middleware_test.go), [`auth_integration_test.go`](internal/httpapi/auth_integration_test.go) (403 na guarda e controle 401 do login real) |
@@ -236,7 +242,7 @@ make e2e           # APAGA o banco do compose, sobe com --build, confere e roda 
 | Banco | PostgreSQL 18 (compatível com o 17) |
 | Painel | React 19, TypeScript, Vite, TanStack Query, React Router, React Hook Form + Zod, Radix, Tailwind, Recharts |
 | Testes | `testing` + testcontainers, Vitest + Testing Library + MSW, Playwright + axe |
-| Entrega | Docker (distroless), GitHub Actions, GHCR, uma VPS (Hostinger) com Caddy |
+| Entrega | Docker (distroless), GitHub Actions, GHCR, Coolify numa VPS (Hostinger), Caddy, Cloudflare na frente |
 
 ## Desenvolvimento
 
@@ -294,31 +300,35 @@ O que mudou no Plano 10 (spec do Plano 10, §4):
 
 ## Deploy e operação
 
-Uma VPS na Hostinger (Ubuntu 24.04), com três contêineres num compose de produção
-([`deploy/vps/compose.prod.yaml`](deploy/vps/compose.prod.yaml)), atrás da borda do host: um
-Caddy em `/srv/edge`, dividido com outro projeto, que faz o HTTPS automático e é o único que
-publica porta (80 e 443) ([spec](docs/superpowers/specs/2026-10-13-vps-compartilhada-design.md)).
-Os três contêineres do StillOn não publicam porta: o **Caddy** do projeto, só HTTP e só para o
-domínio, o único na rede da borda; o **binário** (`--role=all`); e o **Postgres 18** com a imagem
-oficial fixada por digest, só na rede interna. Os
-segredos ficam num `.env` do root na própria VPS, gerados lá, com cópia no gerenciador de senhas do
-dono. A VPS vem endurecida pelo runbook: SSH só por chave e sem root, `fail2ban`, firewall no
-sistema e no painel da Hostinger, atualizações de segurança automáticas.
+Uma VPS na Hostinger, gerida pelo Coolify e dividida com outros projetos do dono.
+Na frente de `stillon.tech` ficam a Cloudflare e o proxy do Coolify. O StillOn tem três contêineres:
+o **Caddy** do projeto (só HTTP e só para o domínio), o **binário** (`--role=all`) e o **Postgres 18**,
+com a imagem oficial fixada por digest. Nenhum publica porta: só o Caddy fica na rede do proxy, e o
+app e o banco ficam na rede interna.
+Aplicação e banco são dois recursos do Coolify, para que publicar o app não pare o banco
+([`app.json`](deploy/coolify/app.json), [`database.json`](deploy/coolify/database.json) e a
+[nota sobre o Coolify](deploy/coolify/README.md)); o
+[`compose.prod.yaml`](deploy/vps/compose.prod.yaml) é a definição equivalente num arquivo só, que
+o job `vps` do CI exercita.
+Os segredos são variáveis privadas do recurso no Coolify, com cópia no gerenciador de senhas do
+dono.
 
 - **Imagem:** ~7,6 MB comprimida. A de produção sai do mesmo código e das mesmas bases fixadas
   por digest que o E2E testou, mas é construída de novo no `publish` (amd64 e arm64) e
   **reescaneada** pelo Trivy antes de ganhar as tags `:<sha do commit>` e `:latest`.
-- **Deploy:** sempre manual (Actions → deploy → Run workflow), só da `main` e só de um commit
-  que está nela, com o **SHA do commit** como entrada. O job resolve a tag `:<sha>` (que só existe
-  depois do reescaneamento) no digest, baixa a imagem linux/amd64 por esse digest e a entrega por
-  SSH a um usuário `deploy` cuja chave só roda
-  [`stillon-entrada`](deploy/vps/stillon-entrada): ele confere o ID da imagem, troca a versão,
-  espera o healthcheck e **volta sozinho à anterior** se a nova não ficar saudável; se a conexão
-  cair no meio, o deploy (ou o rollback) termina na própria VPS, que guarda o log de cada deploy e
-  backup em `/opt/stillon/entrada.log`. A chave do
-  servidor é fixada num secret (nada de `StrictHostKeyChecking=no`). Não há environment com
-  revisor (decisão pendente do dono): a `main` exige PR e 9 checks, e o deploy é disparado por
-  quem tem acesso de escrita ao repositório (hoje, só o dono).
+- **Deploy:** todo merge na `main` publica sozinho. Quando o `ci` de um push na `main` termina com
+  sucesso, o workflow `Coolify release` confere o SHA exato e os gates, envia as imagens por SSH a
+  uma entrada restrita na VPS e atualiza a imagem do recurso no Coolify
+  ([detalhes](deploy/coolify/release/README.md)). O release só troca imagens: a configuração dos
+  contêineres fica no commit de infraestrutura fixado no Coolify, então uma mudança em
+  `deploy/vps/Caddyfile` ou nos tetos de recurso só chega à produção quando esse commit é
+  atualizado no recurso. Commit com `[skip ci]` não publica: é o caminho da documentação. O
+  environment `production` aceita só a `main` e não tem revisor (decisão pendente do dono): a `main`
+  exige PR e checks, e publicar depende de quem tem acesso de escrita ao repositório (hoje, só o
+  dono). O `deploy.yml` manual, por SHA e pela [`stillon-entrada`](deploy/vps/stillon-entrada),
+  era o caminho anterior: o arquivo segue no repositório, mas o workflow está desativado.
+- **Cloudflare:** ela termina o TLS e vê em claro o que passa por ali (veja o limite conhecido em
+  "Decisões de segurança").
 - **Backup:** dump lógico diário, feito na VPS e restaurado num banco descartável e conferido
   (dono das tabelas, RLS com `FORCE`, contagens, partições) antes de sair **já cifrado** com
   `age` (a chave privada fica com o dono e num secret de environment, fora da VPS) para um
@@ -332,12 +342,16 @@ sistema e no painel da Hostinger, atualizações de segurança automáticas.
   Atualizar imagem e scripts juntos: imagem sem o protocolo novo é recusada antes da origem.
   [Provas locais e limites](docs/superpowers/reports/2026-10-04-segunda-onda.md).
   Por cima, o backup semanal da Hostinger.
-- **Vigia externo:** um timer na VPS consulta o `/healthz` público a cada minuto e pinga o
-  healthchecks.io, que avisa o dono por e-mail se o site cair ou a VPS sumir: o StillOn não
-  consegue avisar da própria queda.
+- **Vigia externo:** um timer da VPS ([`stillon-vigia`](deploy/vps/stillon-vigia.timer)) consulta o
+  `/healthz` público a cada minuto e pinga o healthchecks.io, que avisa o dono por e-mail se o
+  site cair ou a VPS sumir: o StillOn não consegue avisar da própria queda. Como o pedido passa
+  pela Cloudflare, um problema entre ela e a origem aparece como queda.
 
-Runbook, do "VPS recém-criada" ao "no ar com 2FA, e-mail, backup e vigia", e a operação:
-[`docs/deploy/vps.md`](docs/deploy/vps.md).
+Operação: [`deploy/coolify/README.md`](deploy/coolify/README.md) (publicação, banco e limites de
+recurso) e [`deploy/coolify/release/README.md`](deploy/coolify/release/README.md) (o release). O
+[`docs/deploy/vps.md`](docs/deploy/vps.md) é o runbook manual da **instalação anterior**, do "VPS
+recém-criada" ao "no ar com 2FA, e-mail, backup e vigia": não rode os comandos dele na produção
+atual.
 
 ## O que ficou de fora, e por quê
 
@@ -392,7 +406,7 @@ Use `make image` para construir e verificar imagens **nativas do daemon Docker a
 O comando ignora uma seleção antiga em `DOCKER_DEFAULT_PLATFORM`; não fixa o projeto em AMD64 ou ARM64.
 
 `make image-release` exporta arquivos em `.docker-artifacts/` com **linux/amd64 e linux/arm64**,
-sem carregar uma imagem estrangeira sobre a tag local. `IMAGE_TAG=...` escolhe a tag dos artefatos (StillOn usa `VERSION=...`).
+sem carregar uma imagem estrangeira sobre a tag local. `VERSION=...` escolhe a tag dos artefatos.
 
 Para builds personalizados, use `scripts/docker-build.sh local -f CAMINHO -t IMAGEM CONTEXTO`.
 Para publicar quando autorizado, use `scripts/docker-build.sh publish -f CAMINHO -t REGISTRY/IMAGEM CONTEXTO`;

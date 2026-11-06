@@ -185,11 +185,17 @@ test('login, cadastro de alvo, status, F5, detalhe, apagar, encerrar a sessão e
     await expect(page.getByRole('heading', { name: 'Painel' })).toBeVisible()
     await expect(page.getByRole('link', { name: nomeDoAlvo })).toHaveCount(0)
 
-    // 8. Nada do token no storage; o cookie de refresh é invisível ao JS. (Duas
-    //    guardas: o HttpOnly é do servidor — este teste prova a propriedade.)
+    // 8. Nada do token no storage, e o cookie de refresh é invisível ao JS. O
+    //    atributo vem do jar do navegador: o document.cookie desta página nunca o
+    //    traria, com HttpOnly ou sem, porque o Path dele é só o da autenticação.
     const armazenado = await page.evaluate(() => JSON.stringify({ ...localStorage, ...sessionStorage }))
     expect(armazenado).not.toMatch(/eyJ/)
-    expect(await page.evaluate(() => document.cookie)).not.toContain('stillon_refresh')
+    const cookies = await page.context().cookies()
+    expect(cookies.find((c) => c.name === 'stillon_refresh')).toMatchObject({
+      httpOnly: true,
+      sameSite: 'Strict',
+      path: '/api/v1/auth',
+    })
 
     // 9. Zero violações de CSP no caminho todo, inclusive antes dos F5.
     await controlePositivo(page, 'o caminho até o passo 9')
@@ -370,6 +376,103 @@ test('heartbeat: cadastro, URL, sinais reais, incidente, pausa, retomada, rotaç
     sobra = null
 
     await controlePositivo(page, 'o fim da jornada do heartbeat')
+  } finally {
+    await encerrar()
+  }
+})
+
+// O resto da tela da tarefa: editar sem perder a URL, reconhecer sem resolver e
+// o sucesso que fecha o incidente reconhecido. A URL sai do texto do diálogo, e
+// não da área de transferência, para a jornada valer fora do Chromium.
+test('heartbeat: editar, reconhecer o incidente e o sucesso que o fecha', async ({ page, request, credenciais }, info) => {
+  test.setTimeout(PRAZO_DA_JORNADA_MS)
+  const encerrar = await cadenciarRecursos(page, performance.now() + info.timeout)
+  try {
+    const nome = `Tarefa E2E ${Date.now()}`
+    const nomeNovo = `${nome} editada`
+    sobra = { rota: 'heartbeats', nome }
+    const noPoll = { timeout: ESPERA_DO_POLL_MS }
+    const selo = (texto: string) => page.getByText(texto, { exact: true })
+    const log = page.getByRole('region', { name: 'Log de eventos' }).getByRole('listitem')
+    const incidente = page.getByRole('region', { name: 'Incidentes' }).getByRole('listitem').filter({ hasText: 'A tarefa avisou falha' })
+    const reconhecer = incidente.getByRole('button', { name: /^Reconhecer o incidente de / })
+    const postar = async (destino: string) =>
+      expect((await request.post(destino)).status(), `POST em ${new URL(destino).pathname.replace(/[\w-]{43}/, '…')}`).toBe(200)
+
+    // 1. Entrar e cadastrar, com a URL lida do diálogo.
+    await page.goto('/')
+    await page.getByLabel('E-mail').fill(credenciais.email)
+    await page.getByLabel('Senha').fill(credenciais.senha)
+    await page.getByRole('button', { name: 'Entrar' }).click()
+    await expect(page.getByRole('heading', { name: 'Painel' })).toBeVisible()
+    await page.getByRole('link', { name: 'Cadastrar heartbeat' }).click()
+    await expect(page.getByRole('heading', { name: 'Novo heartbeat' })).toBeVisible()
+    await page.getByLabel('Nome', { exact: true }).fill(nome)
+    await page.getByRole('button', { name: 'Cadastrar', exact: true }).click()
+    const dialogo = page.getByRole('dialog', { name: 'Guarde a URL de ping' })
+    await expect(dialogo).toBeVisible(noPoll)
+    const url = (await dialogo.locator('code').first().textContent()) ?? ''
+    expect(URL_DE_PING.test(url), 'formato da URL de ping').toBe(true)
+    await dialogo.getByRole('button', { name: 'Já guardei' }).click()
+    await expect(page.getByRole('heading', { name: nome })).toBeVisible()
+
+    // 2. Editar: o formulário abre com o que está gravado, e a tela volta com o
+    //    que mudou. O F5 prova que veio do servidor, e não do cache da consulta.
+    await page.getByRole('link', { name: 'Editar' }).click()
+    await expect(page.getByRole('heading', { name: 'Editar heartbeat' })).toBeVisible()
+    await expect(page.getByLabel('Nome', { exact: true })).toHaveValue(nome)
+    await page.getByLabel('Nome', { exact: true }).fill(nomeNovo)
+    sobra = { rota: 'heartbeats', nome: nomeNovo }
+    await page.getByLabel('Tags').fill('Fluxo-E2E')
+    await page.getByLabel('Descrição').fill('Copia o banco para o armazenamento frio.')
+    await page.getByLabel('Período', { exact: true }).fill('2')
+    await page.getByLabel('Unidade de período').selectOption('horas')
+    await page.getByRole('button', { name: 'Salvar' }).click()
+    await expect(page.getByRole('heading', { name: nomeNovo })).toBeVisible()
+    await page.reload()
+    await expect(page.getByRole('heading', { name: nomeNovo })).toBeVisible()
+    await expect(page.getByText('Copia o banco para o armazenamento frio.')).toBeVisible()
+    await expect(page.getByText('fluxo-e2e', { exact: true })).toBeVisible()
+    await expect(page.getByText('a cada 2 h', { exact: true })).toBeVisible()
+
+    // 3. A edição não troca a URL: o sinal dela cai neste mesmo heartbeat.
+    await postar(url)
+    await expect(selo('Em dia')).toBeVisible(noPoll)
+    await expect(log).toHaveCount(1, noPoll)
+
+    // 4. Falha: o incidente abre pelo avaliador, à espera de reconhecimento.
+    await postar(`${url}/fail`)
+    await expect(selo('Falhando')).toBeVisible(noPoll)
+    await expect(incidente.getByText('Em andamento')).toBeVisible(noPoll)
+
+    // 5. Reconhecer para os lembretes e não resolve: o incidente segue aberto, a
+    //    tarefa segue falhando, e o foco do botão que sumiu vai para o título.
+    await expect(page.getByText('Reconhecer interrompe os lembretes; não resolve o incidente.')).toBeVisible()
+    await reconhecer.focus()
+    await page.keyboard.press('Enter')
+    await expect(incidente.getByText('Reconhecido', { exact: true })).toBeVisible(noPoll)
+    await expect(incidente.getByText(/^Reconhecido em .* · lembretes parados$/)).toBeVisible()
+    await expect(reconhecer).toHaveCount(0)
+    await expect(page.getByRole('heading', { name: 'Incidentes' })).toBeFocused()
+    await expect(selo('Falhando')).toBeVisible()
+
+    // 6. O sucesso fecha o incidente reconhecido e guarda o reconhecimento,
+    //    agora sem a promessa de lembretes parados.
+    await postar(url)
+    await expect(selo('Em dia')).toBeVisible(noPoll)
+    await expect(incidente.getByText('Resolvido')).toBeVisible(noPoll)
+    await expect(incidente.getByText(/^Reconhecido em /)).toBeVisible()
+    await expect(incidente.getByText(/lembretes parados/)).toHaveCount(0)
+    await expect(log).toHaveCount(3, noPoll)
+    await expect(log.nth(0)).toContainText('Sucesso')
+
+    // 7. Apagar: o teto do E2E é o de 100 tarefas por conta.
+    await page.getByRole('button', { name: 'Apagar' }).click()
+    await page.getByRole('alertdialog').getByRole('button', { name: 'Apagar heartbeat' }).click()
+    await expect(page.getByRole('heading', { name: 'Painel' })).toBeVisible(noPoll)
+    sobra = null
+
+    await controlePositivo(page, 'o fim da jornada de edição do heartbeat')
   } finally {
     await encerrar()
   }

@@ -9,6 +9,7 @@ import { servidor } from '@/test/setup'
 
 const dialogo = () => screen.findByRole('dialog', { name: 'Guarde a URL de ping' })
 const CANARIO = 'CANARIO-do-token-de-ping'
+const RECUSA_DO_CRON = 'Use os cinco campos, com um disparo que exista: 0 3 * * *. Domingo é 0 ou SUN, não 7; de sexta a domingo, 5,6,0.'
 
 async function cadastrar(r: Awaited<ReturnType<typeof renderizarPainel>>, nome = 'Backup') {
   await r.usuario.type(await screen.findByLabelText('Nome'), nome)
@@ -88,6 +89,12 @@ describe('cadastro', () => {
     await waitFor(() => expect(r.router.state.location.pathname).toBe('/'))
   })
 
+  it('a ajuda do cron diz como escrever o domingo', async () => {
+    const r = await renderizarPainel('/heartbeats/new')
+    await r.usuario.click(await screen.findByRole('radio', { name: 'Expressão cron' }))
+    expect(screen.getByLabelText('Expressão')).toHaveAccessibleDescription('Cinco campos: minuto, hora, dia, mês e dia da semana. Domingo é 0 ou SUN, não 7.')
+  })
+
   describe('prévia do cron', () => {
     async function comCron(r: Awaited<ReturnType<typeof renderizarPainel>>, expr: string) {
       await r.usuario.click(screen.getByRole('radio', { name: 'Expressão cron' }))
@@ -121,7 +128,7 @@ describe('cadastro', () => {
       r.falsa.estado.previaDoCron = null
       await r.usuario.type(screen.getByLabelText('Nome'), 'Backup')
       await comCron(r, 'lixo')
-      expect(await screen.findByText('Use os cinco campos, com um disparo que exista: 0 3 * * *.')).toBeInTheDocument()
+      expect(await screen.findByText(RECUSA_DO_CRON)).toBeInTheDocument()
       expect(screen.queryByText('Próximos disparos, em America/Sao_Paulo')).not.toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Cadastrar' })).toBeEnabled()
     })
@@ -136,17 +143,29 @@ describe('cadastro', () => {
 
   it('cadastra com a descrição, e o erro do servidor volta ao campo', async () => {
     const r = await renderizarPainel('/heartbeats/new')
-    r.falsa.estado.forcar.set('POST /heartbeats', { status: 400, code: 'validation_failed', fields: [{ field: 'description', reason: 'invalid' }] })
+    r.falsa.estado.forcar.set('POST /heartbeats', { status: 400, code: 'validation_failed', fields: [{ field: 'description[1]', reason: 'invalid' }] })
     await r.usuario.type(await screen.findByLabelText('Nome'), 'Backup')
     await r.usuario.type(screen.getByLabelText('Descrição'), 'Roda no NAS{enter}Ver o log')
     await r.usuario.click(screen.getByRole('button', { name: 'Cadastrar' }))
-    expect(await screen.findByText('Tem um caractere que não pode ser mostrado.')).toBeInTheDocument()
+    expect(await screen.findByText('Tem um caractere que não pode ser mostrado na linha 2.')).toBeInTheDocument()
     expect(screen.getByLabelText('Descrição')).toHaveAttribute('aria-invalid', 'true')
 
     r.falsa.estado.forcar.clear()
     await r.usuario.click(screen.getByRole('button', { name: 'Cadastrar' }))
     await dialogo()
     expect(r.falsa.corpos('POST /heartbeats').at(-1)).toMatchObject({ description: 'Roda no NAS\nVer o log' })
+  })
+
+  // O envio tira as linhas em branco do começo, e a linha certa é a da tela.
+  // Sabotagem: somar só o 1 do índice → "linha 1", que na tela está em branco.
+  it('a linha do erro é a que o dono vê, mesmo com linhas em branco no começo', async () => {
+    const r = await renderizarPainel('/heartbeats/new')
+    r.falsa.estado.forcar.set('POST /heartbeats', { status: 400, code: 'validation_failed', fields: [{ field: 'description[0]', reason: 'invalid' }] })
+    await r.usuario.type(await screen.findByLabelText('Nome'), 'Backup')
+    await r.usuario.type(screen.getByLabelText('Descrição'), '{enter}{enter}Roda no NAS')
+    await r.usuario.click(screen.getByRole('button', { name: 'Cadastrar' }))
+    expect(await screen.findByText('Tem um caractere que não pode ser mostrado na linha 3.')).toBeInTheDocument()
+    expect(r.falsa.corpos('POST /heartbeats').at(-1)).toMatchObject({ description: 'Roda no NAS' })
   })
 
   it('cadastra por cron, com o fuso', async () => {
@@ -169,7 +188,7 @@ describe('cadastro', () => {
     await r.usuario.click(screen.getByRole('radio', { name: 'Expressão cron' }))
     await r.usuario.type(screen.getByLabelText('Expressão'), 'isso não é cron')
     await r.usuario.click(screen.getByRole('button', { name: 'Cadastrar' }))
-    expect(await screen.findByText('Use os cinco campos, com um disparo que exista: 0 3 * * *.')).toBeInTheDocument()
+    expect(await screen.findByText(RECUSA_DO_CRON)).toBeInTheDocument()
     expect(screen.getByLabelText('Expressão')).toHaveAttribute('aria-invalid', 'true')
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
@@ -272,6 +291,22 @@ describe('ações do detalhe', () => {
     await r.usuario.click(screen.getByRole('button', { name: 'Retomar' }))
     await screen.findByRole('button', { name: 'Pausar' })
     expect(r.falsa.corpos('PATCH /heartbeats/:id')).toEqual([{ enabled: false }, { enabled: true }])
+  })
+
+  // O estado depois de retomar vem do servidor (statusOf). Sabotagem: a API
+  // falsa devolver sempre 'up', como antes.
+  it('retomar quem nunca terminou uma execução mostra Aguardando', async () => {
+    const r = await detalheCom({ enabled: false, state: 'paused', last_ping_at: null, last_success_at: null })
+    await r.usuario.click(screen.getByRole('button', { name: 'Retomar' }))
+    await screen.findByRole('button', { name: 'Pausar' })
+    expect(screen.getByText('Aguardando')).toBeInTheDocument()
+  })
+
+  it('retomar com incidente aberto mostra Atrasado', async () => {
+    const r = await detalheCom({ enabled: false, state: 'paused', open_incident_id: 'inc-1' })
+    await r.usuario.click(screen.getByRole('button', { name: 'Retomar' }))
+    await screen.findByRole('button', { name: 'Pausar' })
+    expect(screen.getByText('Atrasado')).toBeInTheDocument()
   })
 
   // A ação só termina depois de atualizar a tela, e a confirmação aberta nesse

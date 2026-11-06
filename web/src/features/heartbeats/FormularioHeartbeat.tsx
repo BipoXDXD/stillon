@@ -5,9 +5,9 @@ import { Botao } from '@/components/ui/botao'
 import { estiloDeCartao } from '@/components/ui/cartao'
 import { AreaDeTexto, Campo, Entrada, ErroDoFormulario, Opcao, Selecao } from '@/components/ui/campo'
 import { ApiError } from '@/lib/api/http'
-import { mensagemDe, mensagemDoCampo } from '@/lib/api/mensagens'
+import { mensagemDe } from '@/lib/api/mensagens'
 import { cn } from '@/lib/utils'
-import { campoDoServidor, esquemaDoHeartbeat, type ValoresDoHeartbeat } from './esquema'
+import { campoDoServidor, esquemaDoHeartbeat, mensagemDoHeartbeat, type ValoresDoHeartbeat } from './esquema'
 import { PreviaDoCron } from './PreviaDoCron'
 
 // Sugestões do campo de fuso: o navegador conhece a lista IANA, e o servidor
@@ -45,8 +45,8 @@ export function FormularioHeartbeat({
   function errosNosCampos(err: unknown): boolean {
     if (!(err instanceof ApiError)) return false
     const conhecidos = err.fields.flatMap((fe) => {
-      const campo = campoDoServidor[fe.field]
-      return campo ? [{ campo, mensagem: mensagemDoCampo(fe.field, fe.reason) }] : []
+      const campo = campoDoServidor[fe.field.replace(/\[.*$/, '')]
+      return campo ? [{ campo, mensagem: mensagemDoHeartbeat(fe, f.getValues('description')) }] : []
     })
     conhecidos.forEach(({ campo, mensagem }, i) => f.setError(campo, { message: mensagem }, { shouldFocus: i === 0 }))
     return conhecidos.length > 0
@@ -89,7 +89,7 @@ export function FormularioHeartbeat({
         />
       ) : (
         <div className="grid gap-4 sm:grid-cols-2">
-          <Campo rotulo="Expressão" erro={e.expr?.message} ajuda="Cinco campos: minuto, hora, dia, mês e dia da semana.">
+          <Campo rotulo="Expressão" erro={e.expr?.message} ajuda="Cinco campos: minuto, hora, dia, mês e dia da semana. Domingo é 0 ou SUN, não 7.">
             {(a) => <Entrada {...a} spellCheck={false} placeholder="0 3 * * *" {...f.register('expr')} />}
           </Campo>
           <Campo rotulo="Fuso" erro={e.timezone?.message} ajuda="Nome IANA, como America/Sao_Paulo.">
