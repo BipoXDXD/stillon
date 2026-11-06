@@ -106,12 +106,13 @@ func TestAPIRoleRecordsPingsButDoesNotEvaluate(t *testing.T) {
 	fim := make(chan error, 1)
 	go func() { fim <- run(runCtx, cfg) }()
 
+	cliente := clienteDeE2E()
 	pedir := func(metodo, caminho string) int {
 		req, err := http.NewRequest(metodo, "http://"+addr+caminho, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := cliente.Do(req)
 		if err != nil {
 			return 0
 		}

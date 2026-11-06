@@ -5,6 +5,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -129,6 +130,11 @@ func portaLivre(t *testing.T) string {
 	return addr
 }
 
+// clienteDeE2E fala com o processo em teste sem reaproveitar conexão.
+func clienteDeE2E() *http.Client {
+	return &http.Client{Transport: &http.Transport{DisableKeepAlives: true}}
+}
+
 func lerMetricas(t *testing.T, addr string) string {
 	t.Helper()
 	resp, err := http.Get("http://" + addr + "/metrics")
@@ -235,13 +241,14 @@ func TestAPIRoleWiresIncidentsChannelsAndReadyz(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	cliente := clienteDeE2E()
 	pedir := func(caminho string) int {
 		req, err := http.NewRequest(http.MethodGet, "http://"+addr+caminho, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
 		req.Header.Set("Authorization", "Bearer "+tok)
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := cliente.Do(req)
 		if err != nil {
 			return 0
 		}
@@ -264,5 +271,37 @@ func TestAPIRoleWiresIncidentsChannelsAndReadyz(t *testing.T) {
 	cancel()
 	if err := <-fim; err != nil {
 		t.Errorf("run encerrou com erro: %v", err)
+	}
+}
+
+// Desde o Go 1.27, fechar um corpo sem ler o drena em segundo plano, e a
+// requisição seguinte pode discar uma conexão que sobra sem uso. O servidor a
+// vê em StateNew, e o Shutdown a espera por 5 s, além do ShutdownGrace dos
+// testes. A corrida é rara, por isso as rodadas.
+func TestClienteDeE2ENaoSeguraOShutdown(t *testing.T) {
+	const (
+		rodadas = 400
+		prazo   = 100 * time.Millisecond
+	)
+	cliente := clienteDeE2E()
+	for rodada := range rodadas {
+		srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte(`{"status":"ok"}`))
+		}))
+		srv.Start()
+		for range 4 {
+			resp, err := cliente.Get(srv.URL)
+			if err != nil {
+				t.Fatal(err)
+			}
+			resp.Body.Close()
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), prazo)
+		err := srv.Config.Shutdown(ctx)
+		cancel()
+		srv.Close()
+		if err != nil {
+			t.Fatalf("rodada %d: Shutdown: %v", rodada, err)
+		}
 	}
 }
