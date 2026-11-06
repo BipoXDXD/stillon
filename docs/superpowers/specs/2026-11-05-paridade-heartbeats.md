@@ -40,7 +40,7 @@ decisão registrada). A ordem dos "fazer" é a do mais útil ao menos útil, com
 | Exportação | parcial: `GET /heartbeats` e `/events` já entregam JSON | **não fazer.** Confirmado: a documentação não cita botão nem arquivo, só a API em JSON, como aqui. Sem equipe nem migração à vista, um botão a mais não paga a superfície |
 | Expressões `OnCalendar` do systemd | falta | **não fazer.** Segundo parser e segundo formato para o mesmo problema; 5 campos cobrem o caso (D17) |
 | Identificador por slug, criação automática no ping | falta | **não fazer.** A URL com 256 bits é a credencial (D7); um nome previsível enfraquece o modelo e não há ganho sem provisionamento em massa. Lá o slug depende de uma chave de ping do projeto, que aqui não existe |
-| Domingo como 7 no cron | diferente: `0 3 * * 7` e `5-7` são recusados; `0`, `SUN` e `MON-FRI` passam (medido no `NewCron`) | **decisão de design**, abaixo. A falha aparece na prévia, na hora do cadastro, e não como alarme falso |
+| Domingo como 7 no cron | diferente: `0 3 * * 7`, `5-7` e `FRI-SUN` são recusados; `0`, `SUN`, `MON-FRI` e `5,6,0` passam (medido no `NewCron`) | **feito na ajuda e na mensagem**, sem reescrever a expressão. Ver a lista de design abaixo |
 | Limite de 72 h entre início e fim para mostrar a duração | diferente: mede qualquer intervalo | **não fazer.** Toda execução com `/start` sobrescreve o início anterior, e cortar esconderia a tarefa longa, que é a que mais interessa medir |
 | Período e tolerância até 365 dias | diferente: período até 31 dias, tolerância até 7 dias | **não fazer.** O que roda mais raro que um mês cabe no cron, que não tem esse teto |
 | IP, user-agent e método por evento | falta | **não fazer.** D14 já recusou IP nos eventos: dado desnecessário de um POST público |
@@ -119,10 +119,12 @@ Nenhum deles segurou os PRs; cada um segue a recomendação até o dono dizer o 
 - **Descrição nos avisos.** Fica de fora: aviso sai para terceiros, e o texto pode citar máquina e
   caminho. Alternativa: mandar junto, para ler o que fazer sem abrir o painel. Recomendação: manter
   de fora; incluir depois é aditivo, e o contrário, depois de um vazamento, não adianta.
-- **Domingo como 7.** O `robfig/cron` só aceita 0 a 6 (D17). Alternativa: reescrever o 7 antes do
-  parser, o que pede tratar listas e faixas (`5-7`) e é o segundo parser que o D17 evitou.
-  Recomendação: não reescrever, e citar `0` ou `SUN` na ajuda do campo e na mensagem de erro. O custo
-  é quem cola a linha do crontab ajustar um caractere.
+- **Domingo como 7.** O `robfig/cron` só aceita 0 a 6 (D17), e faixa não pode terminar no domingo,
+  nem com o nome: `FRI-SUN` e `MON-SUN` são recusados como `5-7`. Alternativa: reescrever o 7 antes do
+  parser, o que pede tratar listas e faixas e é o segundo parser que o D17 evitou. Recomendação
+  seguida: não reescrever. A ajuda do campo cita `0` ou `SUN`, e a recusa também cita a lista `5,6,0`,
+  porque trocar `5-7` por `5-SUN` continuaria recusado. O custo é quem cola a linha do crontab ajustar
+  a expressão.
 - **Clonar heartbeat.** Recomendação: não fazer sem pedido. Se o cadastro em série virar rotina, o
   caminho barato é só no painel: abrir o formulário preenchido, sem rota nova.
 
@@ -208,7 +210,11 @@ cliente é o risco que o D17 evitou, e a prévia não trava o envio. O formulár
 `heartbeats.description` (00022). Sem descrição é `""`, nunca `null`, nas leituras. Segue o contrato
 das tags: no `PATCH`, ausente não mexe, e `""` e `null` limpam. Mudar o texto não recalcula o prazo.
 A validação é a do nome, linha a linha, e só quebra de linha e tab passam entre os controles; o
-retorno de carro é recusado, porque o navegador já o normaliza. Aparece no detalhe e no formulário,
+retorno de carro é recusado, porque o navegador já o normaliza. A recusa de caractere aponta a linha
+em `description[i]`, contada desde 0 no texto recebido, a mesma forma de `items[i]` na página de
+status: o envelope segue `{field, reason}`, e o cliente não repete a regra de caracteres. O painel
+soma as linhas em branco que o envio tira do começo, e mostra a linha da tela, contada desde 1.
+Aparece no detalhe e no formulário,
 não na tabela e não nos avisos. O teto de 1000 cobre um pequeno roteiro, sem o peso dos 10.000 de lá
 no poll da lista. Sem rota nova: quem escreve e quem lê é o dono, pela API de sessão.
 
@@ -221,6 +227,7 @@ no poll da lista. Sem rota nova: quem escreve e quem lê é o dono, pela API de 
 | **T** Entrada ruim virar 500 ou gravar parte | validada antes de abrir a transação, com o `PATCH` inteiro recusado | `TestPatchWithInvalidDescriptionChangesNothing`, `TestValidateDescription`, `TestHeartbeatValidationBoundaries` |
 | **I** Texto sair para terceiros ou pelo ping | o aviso leva só o nome, e o ping responde sem dados | `TestHeartbeatDescriptionStaysOutOfThePingAndTheNotices` |
 | **D** Texto sem teto | 1000 caracteres, recusados antes do banco | `TestValidateDescription` |
+| **I** Recusa ecoar o texto | a resposta leva só o índice da linha | `TestInvalidDescriptionNamesTheLineWithoutEchoingIt` |
 
 O dono pode escrever um segredo ali, como em qualquer campo livre, e ele iria para o backup do banco.
 A ajuda do formulário não pede dado sensível, e o CHECK não tem como detectar isso.

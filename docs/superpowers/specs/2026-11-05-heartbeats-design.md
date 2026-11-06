@@ -105,6 +105,7 @@ limitados por D11. Esperado: quem ficou sem avaliação aparece atrasado.
 heartbeats (
   id uuid PK, user_id uuid FK users ON DELETE CASCADE,
   name text 1..100,
+  description text NOT NULL DEFAULT '', até 1000 caracteres,  -- 00022
   ping_token_hash bytea UNIQUE, octet_length 32,
   period_sec int NULL, 60..2678400,
   cron_expr text NULL, 1..100,  timezone text NULL, 1..64,
@@ -112,6 +113,7 @@ heartbeats (
   enabled bool, created_at timestamptz,
   deadline_at timestamptz NOT NULL,   -- quando o silêncio vira atraso
   last_ping_at, last_success_at, last_start_at timestamptz NULL,
+  last_runtime_ms bigint NULL >= 0,   -- 00020: duração da última execução medida
   last_signal text NULL ('start','success','fail'),
   failing_since timestamptz NULL,     -- fail recebido e ainda sem success
   last_incident_at timestamptz NULL,  -- base do intervalo de D11
