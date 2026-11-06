@@ -251,10 +251,16 @@ export function criarApiFalsa() {
   // FirstDeadline do servidor, com um período fixo: sempre no futuro.
   const primeiroPrazo = (graceSec: number) => new Date(agora().getTime() + (graceSec + UMA_HORA_S) * 1000).toISOString()
 
+  // Schedule.Equal do servidor: campo a campo, para a ordem das chaves do corpo
+  // não contar como mudança.
+  function mesmoAgendamento(a: Json, b: Json) {
+    return a.kind === b.kind && a.period_sec === b.period_sec && a.expr === b.expr && a.timezone === b.timezone
+  }
+
   // updateParams do servidor: o prazo só recomeça se o agendamento ou a
   // tolerância mudarem de verdade.
   function mudouOPrazo(h: Entrada<typeof Heartbeat>, corpo: Json) {
-    const outroAgendamento = corpo.schedule !== undefined && JSON.stringify(corpo.schedule) !== JSON.stringify(h.schedule)
+    const outroAgendamento = corpo.schedule !== undefined && !mesmoAgendamento(corpo.schedule as Json, h.schedule)
     return outroAgendamento || (corpo.grace_sec !== undefined && corpo.grace_sec !== h.grace_sec)
   }
 

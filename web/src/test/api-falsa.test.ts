@@ -159,6 +159,27 @@ describe('o estado depois de um PATCH (statusOf do servidor)', () => {
     expect(h).toMatchObject({ state: 'late', deadline_at: PRAZO_PASSADO })
   })
 
+  it('o mesmo agendamento com as chaves em outra ordem não move o prazo', async () => {
+    const h = await renomear(
+      { state: 'late', deadline_at: PRAZO_PASSADO, schedule: { kind: 'cron', expr: '0 6 * * *', timezone: 'UTC' } },
+      { schedule: { timezone: 'UTC', expr: '0 6 * * *', kind: 'cron' } },
+    )
+    expect(h).toMatchObject({ state: 'late', deadline_at: PRAZO_PASSADO })
+  })
+
+  const CRON = { kind: 'cron', expr: '0 6 * * *', timezone: 'UTC' } as const
+
+  it.each([
+    ['period_sec', { kind: 'period', period_sec: 86400 }, { kind: 'period', period_sec: 7200 }],
+    ['expr', CRON, { ...CRON, expr: '0 7 * * *' }],
+    ['timezone', CRON, { ...CRON, timezone: 'America/Sao_Paulo' }],
+    ['kind', { kind: 'period', period_sec: 86400 }, { kind: 'cron', period_sec: 86400 }],
+  ] as const)('mudar só %s move o prazo', async (_campo, schedule, novo) => {
+    const h = await renomear({ state: 'late', deadline_at: PRAZO_PASSADO, schedule }, { schedule: novo })
+    expect(h.state).toBe('up')
+    expect(h.deadline_at).not.toBe(PRAZO_PASSADO)
+  })
+
   it('a tarefa recém-criada fica aguardando depois de editada', async () => {
     apiLogada()
     const criada = await pedir('POST', '/heartbeats', { name: 'Nova', schedule: { kind: 'period', period_sec: 3600 } })

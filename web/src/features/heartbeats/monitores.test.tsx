@@ -179,6 +179,18 @@ describe('heartbeats na tabela de monitores', () => {
     expect(screen.queryByText(/tarefas? em dia/)).not.toBeInTheDocument()
   })
 
+  // O painel pede 100 e mostra o que veio: com a página exatamente cheia, o
+  // servidor manda next_cursor e nada busca a página seguinte.
+  // Sabotagem: seguir o next_cursor em api.heartbeats → sai um GET com cursor.
+  it('com exatamente 100 tarefas, mostra as 100 e ignora o next_cursor', async () => {
+    const r = await painelCom({ heartbeats: Array.from({ length: 100 }, (_, i) => ({ id: `h-${i + 1}`, name: `Tarefa ${i + 1}` })) })
+    await waitFor(async () => expect(await nomesNaTabela()).toHaveLength(100))
+    expect(r.cliente.getQueryData<{ next_cursor?: string }>(['heartbeats'])?.next_cursor).toBe('h-100')
+    const consultas = r.falsa.estado.corpos.get('GET /heartbeats') ?? []
+    expect(consultas.length).toBeGreaterThan(0)
+    for (const consulta of consultas) expect(consulta).toEqual({ limit: '100' })
+  })
+
   it('só heartbeats e a consulta falhando: nada de parágrafo vazio', async () => {
     const r = await renderizarPainel('/')
     r.falsa.estado.forcar.set('GET /heartbeats', { status: 500, code: 'internal_error' })
