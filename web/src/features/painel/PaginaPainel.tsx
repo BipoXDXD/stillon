@@ -255,7 +255,7 @@ function AvisoDeCanais() {
         {frases.map((frase) => (
           <p key={frase}>{frase}</p>
         ))}
-        <Link to="/channels" className="alvo-de-toque inline-block font-semibold text-primaria underline underline-offset-4">
+        <Link to="/channels" className="alvo-de-toque inline-block font-semibold whitespace-nowrap text-primaria underline underline-offset-4">
           Configurar canais
         </Link>
       </div>

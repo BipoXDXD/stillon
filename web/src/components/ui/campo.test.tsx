@@ -1,3 +1,5 @@
+/// <reference types="node" />
+import { readFileSync } from 'node:fs'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { createRef } from 'react'
@@ -41,6 +43,20 @@ describe('Campo', () => {
     for (const controle of [screen.getByRole('textbox', { name: 'URL' }), screen.getByRole('combobox', { name: 'Método' })]) {
       expect(controle).toHaveClass('min-h-11', 'text-base', 'border-borda-controle')
     }
+  })
+
+  // Com a aparência nativa, o WebKit do macOS troca o min-height por 18 px e a
+  // seleção fica com 22 px: fora do alvo de toque, e menor que a entrada ao lado.
+  it('a seleção abre mão da aparência nativa, e o CSS desenha a seta', () => {
+    render(
+      <Selecao aria-label="Método">
+        <option>GET</option>
+      </Selecao>,
+    )
+    expect(screen.getByRole('combobox', { name: 'Método' })).toHaveClass('seta-da-selecao')
+    const regra = /\.seta-da-selecao\s*\{[^}]*\}/.exec(readFileSync('src/index.css', 'utf8'))?.[0]
+    expect(regra).toContain('appearance: none')
+    expect(regra).toContain('background-image')
   })
 })
 
