@@ -2,15 +2,15 @@ import { situacaoDoIncidente } from '@/components/SeloDoIncidente'
 import type { Incidente } from '@/lib/api/schemas'
 
 // A tela de incidentes (spec do redesign, Telas > 3) em funções puras: os
-// grupos "Em andamento" e "Resolvidos recentes" e a frase de resumo.
+// grupos "Abertos" e "Resolvidos recentes" e a frase de resumo.
 
-export type GruposDeIncidentes = { emAndamento: Incidente[]; resolvidos: Incidente[] }
+export type GruposDeIncidentes = { abertos: Incidente[]; resolvidos: Incidente[] }
 
-// "Em andamento" é todo incidente aberto, reconhecido ou não: reconhecer
+// "Abertos" é todo incidente sem resolução, reconhecido ou não: reconhecer
 // para os lembretes, não resolve.
 export function agruparIncidentes(itens: readonly Incidente[]): GruposDeIncidentes {
   return {
-    emAndamento: itens.filter((i) => i.resolved_at === null),
+    abertos: itens.filter((i) => i.resolved_at === null),
     resolvidos: itens.filter((i) => i.resolved_at !== null),
   }
 }
@@ -24,8 +24,8 @@ export function destinoDepoisDeCarregar(
   conhecidos: ReadonlySet<string>,
   haMaisPaginas: boolean,
 ): string | undefined {
-  const { emAndamento, resolvidos } = agruparIncidentes(itens)
-  const naTela = [...emAndamento, ...resolvidos]
+  const { abertos, resolvidos } = agruparIncidentes(itens)
+  const naTela = [...abertos, ...resolvidos]
   const novo = naTela.find((i) => !conhecidos.has(i.id))
   return (novo ?? (haMaisPaginas ? undefined : naTela.at(-1)))?.id
 }

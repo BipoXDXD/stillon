@@ -275,14 +275,14 @@ export function PaginaIncidentes() {
           const grupos = agruparIncidentes(itens)
           return (
             <div className="space-y-8">
-              {grupos.emAndamento.some((i) => i.acknowledged_at === null) && (
+              {grupos.abertos.some((i) => i.acknowledged_at === null) && (
                 <p id={ID_AJUDA_ACK} className="text-sm text-suave">
                   Reconhecer interrompe os lembretes; não resolve o incidente.
                 </p>
               )}
-              {grupos.emAndamento.length > 0 && (
-                <Grupo titulo="Em andamento">
-                  <ul className="space-y-3">{grupos.emAndamento.map(cartao)}</ul>
+              {grupos.abertos.length > 0 && (
+                <Grupo titulo="Abertos">
+                  <ul className="space-y-3">{grupos.abertos.map(cartao)}</ul>
                 </Grupo>
               )}
               {grupos.resolvidos.length > 0 && (

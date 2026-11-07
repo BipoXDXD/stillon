@@ -147,7 +147,8 @@ reprovado ajusta a luminosidade, nunca o matiz.
 
 - Título, frase de resumo ("1 em andamento, 1 reconhecido"), o texto de ajuda do ack e o filtro no
   controle segmentado (Abertos, Resolvidos, Todos).
-- Grupos "Em andamento" e "Resolvidos recentes".
+- Grupos "Abertos" e "Resolvidos recentes". "Abertos" tem os reconhecidos também. "Em andamento", no
+  selo e no resumo, é só o aberto sem reconhecimento.
 - Cartão aberto com borda vermelha e botão Reconhecer. Reconhecido com borda índigo e "lembretes
   parados". Resolvido sem borda, com o nome apagado.
 - Vazio, que é o estado bom: ícone de check e "Nenhum incidente aberto" com tratamento positivo
