@@ -282,6 +282,14 @@ tem as convenções). Todo erro, inclusive rota ou método inexistente sob `/api
   sensível a caixa. O valor é público; a defesa contra CSRF depende também de
   CORS/preflight e cookies. Outro valor recebe 403.
 
+- Nos `PATCH` de alvo, heartbeat e página de status, campo ausente fica como está. `null` em campo
+  obrigatório é `400 validation_failed`, com cada campo em `fields` como `required`, sem gravar nada,
+  nem o que veio junto, e antes de procurar o recurso: `name`, `url`, `method`, `interval_sec`,
+  `timeout_ms`, `expected_status`, `enabled`, `schedule`, `grace_sec`, `slug`, `title`, `published` e
+  `items`. Até 2026-11, `null` nesses campos valia como ausente (`name` mudou no #194). `null` limpa
+  `tags`, `description` e `headers`, e em `degraded_threshold_ms` desliga a classificação `degraded`.
+  No `PATCH /channels/{id}`, `enabled: null` é `400` com `invalid`.
+
 O que mudou no Plano 10 (spec do Plano 10, §4):
 
 | Rota | Antes | Agora |

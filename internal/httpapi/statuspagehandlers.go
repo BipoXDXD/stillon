@@ -39,10 +39,10 @@ type statusPageRequest struct {
 }
 
 type statusPagePatchRequest struct {
-	Slug      *string               `json:"slug"`
-	Title     *string               `json:"title"`
-	Published *bool                 `json:"published"`
-	Items     *[]statusPageItemJSON `json:"items"`
+	Slug      optional[string]               `json:"slug"`
+	Title     optional[string]               `json:"title"`
+	Published optional[bool]                 `json:"published"`
+	Items     optional[[]statusPageItemJSON] `json:"items"`
 }
 
 type statusPageResponse struct {
@@ -124,9 +124,15 @@ func (h *StatusPageHandlers) Update(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	patch := statuspage.Patch{Slug: req.Slug, Title: req.Title, Published: req.Published}
-	if req.Items != nil {
-		itens := paraItens(*req.Items)
+	if recusouNulo(w, r, []campoDoPatch{
+		{"slug", req.Slug.Null}, {"title", req.Title.Null},
+		{"published", req.Published.Null}, {"items", req.Items.Null},
+	}) {
+		return
+	}
+	patch := statuspage.Patch{Slug: req.Slug.ponteiro(), Title: req.Title.ponteiro(), Published: req.Published.ponteiro()}
+	if req.Items.Set {
+		itens := paraItens(req.Items.Value)
 		patch.Items = &itens
 	}
 	p, err := h.svc.Update(r.Context(), userID, id, patch)

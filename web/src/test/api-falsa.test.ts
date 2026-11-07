@@ -369,19 +369,72 @@ describe('erros que só o servidor sabe dar', () => {
   })
 })
 
-describe('PATCH com name null (a validação do nome no servidor)', () => {
+// Como optional.go e recusouNulo no servidor: em campo obrigatório, null é 400,
+// antes de procurar o recurso e sem gravar nada.
+describe('PATCH com null em campo obrigatório', () => {
+  const campos = (...nomes: string[]) => nomes.map((field) => ({ field, reason: 'required' }))
+  const recursos = [
+    {
+      caminho: '/targets/x1',
+      colecao: 'alvos' as const,
+      criar: () => alvo({ id: 'x1', name: 'antes', tags: ['t'] }),
+      obrigatorios: ['name', 'url', 'method', 'interval_sec', 'timeout_ms', 'expected_status', 'enabled'],
+      junto: { tags: [] },
+    },
+    {
+      caminho: '/heartbeats/x1',
+      colecao: 'heartbeats' as const,
+      criar: () => heartbeat({ id: 'x1', name: 'antes', tags: ['t'] }),
+      obrigatorios: ['name', 'schedule', 'grace_sec', 'enabled'],
+      junto: { tags: [] },
+    },
+    {
+      caminho: '/status-pages/x1',
+      colecao: 'paginas' as const,
+      criar: () => pagina({ id: 'x1', slug: 'antes', published: true }),
+      obrigatorios: ['slug', 'title', 'published', 'items'],
+      junto: { title: 'Depois' },
+    },
+  ]
+
+  it.each(recursos.flatMap((r) => r.obrigatorios.map((campo) => [r.colecao, campo, r] as const)))(
+    '%s: %s responde 400 e não grava nada',
+    async (colecao, campo, r) => {
+      const falsa = apiLogada()
+      falsa.estado[colecao] = [r.criar() as never]
+      const antes = structuredClone(falsa.estado[colecao])
+      const resposta = await pedir('PATCH', r.caminho, { ...r.junto, [campo]: null })
+      expect(resposta.status).toBe(400)
+      expect(await resposta.json()).toMatchObject({ error: { code: 'validation_failed', fields: campos(campo) } })
+      expect(falsa.estado[colecao]).toEqual(antes)
+    },
+  )
+
+  it.each(recursos.map((r) => [r.colecao, r] as const))('%s: lista todos os null, na ordem do servidor', async (colecao, r) => {
+    const falsa = apiLogada()
+    falsa.estado[colecao] = [r.criar() as never]
+    const corpo = Object.fromEntries(r.obrigatorios.map((c) => [c, null]))
+    const resposta = await pedir('PATCH', r.caminho, corpo)
+    expect(await resposta.json()).toMatchObject({ error: { fields: campos(...r.obrigatorios) } })
+  })
+
+  it.each(recursos.map((r) => [r.colecao, r] as const))('%s: recusa antes de procurar o recurso', async (_colecao, r) => {
+    apiLogada()
+    const resposta = await pedir('PATCH', r.caminho, { [r.obrigatorios[0] as string]: null })
+    expect(resposta.status).toBe(400)
+  })
+
+  // Sabotagem: pôr tags, description ou headers na lista de obrigatórios.
   it.each([
-    ['alvo', '/targets/x1', 'alvos' as const, () => alvo({ id: 'x1', name: 'antes' })],
-    ['heartbeat', '/heartbeats/x1', 'heartbeats' as const, () => heartbeat({ id: 'x1', name: 'antes' })],
-  ])('%s responde 400 e não grava nada', async (_nome, caminho, colecao, criar) => {
+    { caminho: '/targets/x1', colecao: 'alvos' as const, criar: () => alvo({ id: 'x1' }), campo: 'tags' },
+    { caminho: '/targets/x1', colecao: 'alvos' as const, criar: () => alvo({ id: 'x1' }), campo: 'headers' },
+    { caminho: '/targets/x1', colecao: 'alvos' as const, criar: () => alvo({ id: 'x1' }), campo: 'degraded_threshold_ms' },
+    { caminho: '/heartbeats/x1', colecao: 'heartbeats' as const, criar: () => heartbeat({ id: 'x1' }), campo: 'tags' },
+    { caminho: '/heartbeats/x1', colecao: 'heartbeats' as const, criar: () => heartbeat({ id: 'x1' }), campo: 'description' },
+  ])('$colecao: null em $campo continua valendo', async ({ caminho, colecao, criar, campo }) => {
     const falsa = apiLogada()
     falsa.estado[colecao] = [criar() as never]
-    const resposta = await pedir('PATCH', caminho, { name: null, enabled: false })
-    expect(resposta.status).toBe(400)
-    expect(await resposta.json()).toMatchObject({
-      error: { code: 'validation_failed', fields: [{ field: 'name', reason: 'required' }] },
-    })
-    expect(falsa.estado[colecao][0]).toMatchObject({ name: 'antes', enabled: true })
+    expect((await pedir('PATCH', caminho, { [campo]: null })).status).toBe(200)
   })
 })
 
