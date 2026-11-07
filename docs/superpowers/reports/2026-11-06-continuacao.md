@@ -8,19 +8,21 @@ não deu para conferir está em "Não confirmado".
 
 ## Estado real
 
-- **`main` em `3c285e0`** (#187). Os três últimos merges, #182, #186 e #187, são só documentação,
-  com `[skip ci]`, então não foram publicados.
-- **Publicado: `49bbcd3`** (#183). `ci` e `Coolify release` verdes nesse SHA, com o release às
-  17:03 UTC. `https://stillon.tech/readyz` respondeu 200 de novo na segunda passada, e `curl -I`
-  mostrou `server: cloudflare`. O `ci` de `158b32c` (#179) foi cancelado pelo push seguinte, e o de
-  `49bbcd3` cobre os dois. Nenhum `Coolify release` desde então.
+Atualizado em 2026-11-07.
+
+- **Publicado: `15f3d79`** (#199). `ci` e `Coolify release` verdes nesse SHA, com `gates` e `deploy`
+  executados, e `https://stillon.tech/readyz` em 200.
+- **Go:** fica em 1.26.10, por decisão do dono. O #190 (1.27.3) foi fechado sem merge, e a branch
+  `chore/go-1.27.3` é mantida. Se um `govulncheck` futuro exigir versão mais nova, a decisão volta ao
+  dono.
+- **Uso:** a produção tem uma conta e nenhum alvo, heartbeat ou sessão recente. O StillOn está no ar sem
+  monitorar nada até o dono cadastrar o que quer acompanhar.
 - **Migrations:** a última é a 00022.
-- **Issues abertas:** nenhuma.
+- **Ensaio de restauro:** roda na `main` desde o #181. O aviso foi provado: os runs de 2026-11-06 e 07
+  falharam como previsto, e a issue #198 está aberta. O restauro real segue sem prova.
 - **Environments:** cinco. `production` aceita só a `main`, sem revisor nem espera. Os quatro
-  `forwarding-audit-*-20261023` são do ensaio da cadeia antiga; conferi a política de dois
-  (`restore` e `now`) e ambos aceitam só `audit/forwarding-review-20261023`.
-- **Workflows:** o `deploy` (manual, antigo) está `disabled_manually`. O `backup` roda por agenda; o
-  último run agendado foi verde, às 14:23 UTC.
+  `forwarding-audit-*-20261023` são do ensaio; o de restauro ainda aceita só a branch antiga.
+- **Workflows:** o `deploy` (manual, antigo) está `disabled_manually`.
 
 ## PRs #146 a #188
 
@@ -70,9 +72,8 @@ segunda passada.
 
 ## Pendências
 
-- **#181 sem a ampliação do environment.** Nenhum dos passos pós-merge foi feito. O PR segue
-  `BLOCKED`, com os checks verdes e 7 commits atrás da `main`; não apurei a causa. Até incluir a `main` na política de
-  `forwarding-audit-restore-20261023`, o ensaio agendado falha e abre a issue, como o PR prevê.
+- **Ampliação do environment do ensaio.** Depende do sim direto do dono. Sem ela, o ensaio falha todo dia e
+  comenta na issue #198.
 - **#184** (ajustes do #180): `CLEAN`, checks verdes, sem merge. `sites/stillon.tech.caddy` não muda.
   Está 5 commits atrás da `main` e mesmo assim `CLEAN`.
 - **#185** (F6 a F10): `BLOCKED`, checks verdes, sem merge, 6 commits atrás da `main`, sem pedido de
