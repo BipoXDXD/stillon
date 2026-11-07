@@ -112,9 +112,11 @@ desvincular e é apagada quando a remoção se confirma. As duas chaves únicas 
 reserva: enquanto a linha existe, nem o DiscordID nem o usuário entram em outro vínculo.
 
 Tentativas e vínculos usam FORCE RLS e escopo do dono. Callback recebe escopo mínimo
-para localizar apenas a tentativa pela prova dupla. O worker tem escopo próprio, que lê,
-atualiza e apaga `discord_links` e apaga tentativas vencidas, sem criar vínculo e sem ver
-outras tabelas. Não ampliar os escopos de notificação, prober ou verificação de e-mail.
+para localizar apenas a tentativa pela prova dupla e reservá-la (lê e atualiza a linha da
+tentativa, e só ela). O worker tem escopo próprio, que lê, atualiza e apaga `discord_links` e
+lê e apaga tentativas vencidas, sem criar vínculo nem tentativa e sem ver outras tabelas. O
+SELECT é necessário: com FORCE RLS, um `DELETE ... WHERE` só enxerga as linhas que a política
+de SELECT deixa ver, e sem ela apagaria zero linhas, sem erro. Não ampliar os escopos de notificação, prober ou verificação de e-mail.
 Auditoria e mudança de `desired` são gravadas na mesma transação, sem segredos; a
 confirmação e a remoção do cargo também geram auditoria, com o IP nulo.
 
@@ -124,13 +126,17 @@ transação aberta; outra instância com a lock pula a rodada, e a queda do proc
 a lock. Rodadas não se sobrepõem, e por isso não há claim por linha. A rodada lê um lote
 limitado de linhas vencidas e não pausadas, em transação curta. Nenhuma transação
 permanece aberta durante chamadas HTTP. Timeout do cliente externo é limitado; espera de
-retry ocorre no agendamento, nunca dormindo no handler.
+retry ocorre no agendamento, nunca dormindo no handler. A rodada tem prazo total de 60 s: ao
+estourar, sai do lote e solta a lock, e as linhas restantes, já vencidas, ficam para a rodada
+seguinte.
 
 Para cada linha o worker lê o membro, decide, aplica no máximo um efeito e relê:
 
 - `desired=present`: membro ausente vira `awaiting_member`; triagem pendente vira
   `awaiting_screening`; nos dois casos nada fica agendado até a nova verificação
   explícita. Com o cargo já presente, confirma sem PUT. Sem ele, faz PUT do cargo e relê.
+  Confirmar zera `next_attempt_at`, o contador e o erro: uma linha confirmada não é relida
+  a cada rodada, e só a verificação explícita a agenda de novo.
 - `desired=absent`: membro ausente ou cargo já fora bastam. Se não, faz DELETE do cargo e
   relê. Confirmada a ausência, a linha é apagada.
 
@@ -148,7 +154,10 @@ minutos e de qualquer Retry-After maior; a pausa guarda esse prazo em `next_atte
 Cliques não zeram backoff de trabalho ativo, não antecipam o prazo e não duplicam
 operações, porque só alteram uma linha que já existe. Uma retomada elegível abre novo
 orçamento de dez tentativas e preserva a auditoria anterior. 401/403 e cargo inválido
-pausam imediatamente para correção operacional.
+pausam imediatamente para correção operacional. Um 404 do Discord só se interpreta pelo código
+do corpo JSON: `10007` (membro desconhecido) é o caso normal de quem não entrou e não é falha;
+`10004` (guild) e `10011` (cargo) são configuração inválida e pausam; qualquer outro 404 é
+resposta inválida.
 
 Desvincular grava `desired=absent`, cancela tentativas abertas do dono, limpa pausa e
 contador e agenda a remoção sem antecipar um prazo já informado pelo provedor. Repetir o
@@ -158,8 +167,8 @@ Não existe atomicidade entre Discord e Postgres: estados incertos continuam pen
 até reconciliação, inclusive após queda do worker. A FK do dono em `discord_links` é
 RESTRICT: nenhum CASCADE apaga a linha antes de retirar um cargo concedido, e uma
 exclusão de conta futura terá de esperar a remoção; não acrescentar exclusão pública de
-conta nesta fase. Tentativas consumidas ou expiradas são limpas 24 horas após a
-expiração, pelo próprio worker. Com a função desligada, linhas pendentes ficam paradas e
+conta nesta fase. Tentativas, consumidas ou não, são limpas pelo próprio worker quando
+`expires_at < now - 24 h`. Com a função desligada, linhas pendentes ficam paradas e
 retomam quando ela voltar.
 
 Risco residual aceito: um PUT que o Discord aplique depois de a linha ter sido apagada
