@@ -115,6 +115,9 @@ Esperado: da mesma rede e da mesma família de IP, o prefixo se repete entre as 
 Cloudflare trocando de borda. IPv4 e IPv6 do mesmo Mac dão hashes diferentes, e isso é normal. Uma
 sessão só não prova nada. O hash não vai para texto público.
 
+O painel estava sem uso recente em 2026-11-07, então não há sessão de comparação: o dono precisa entrar
+antes da conferência, ao menos duas vezes, e de redes diferentes para provar a diferença entre clientes.
+
 ## O que observar
 
 Nos 30 min depois de cada fase e numa leitura em 24 h.
