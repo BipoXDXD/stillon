@@ -262,7 +262,7 @@ anti-CSRF). Entrada estrita, com `DisallowUnknownFields`. Recurso alheio é 404.
 | `POST /api/v1/heartbeats` | cria; devolve `ping_url` **uma vez** |
 | `GET /api/v1/heartbeats/cron-preview?expr=&timezone=` | próximos 5 disparos, sem gravar: `{ "next_runs": ["…"] }` |
 | `GET /api/v1/heartbeats/{id}` | detalhe |
-| `PATCH /api/v1/heartbeats/{id}` | `name`, `description`, `tags`, agendamento, `grace_sec`, `enabled` |
+| `PATCH /api/v1/heartbeats/{id}` | `name`, `description`, `tags`, agendamento, `grace_sec`, `enabled`; `null` limpa `description` e `tags` e é `400` nos demais |
 | `DELETE /api/v1/heartbeats/{id}` | apaga, com eventos e incidentes |
 | `POST /api/v1/heartbeats/{id}/token/rotate` | revoga e devolve `ping_url` novo, uma vez |
 | `GET /api/v1/heartbeats/{id}/events?cursor=&limit=` | log, do mais novo ao mais velho |

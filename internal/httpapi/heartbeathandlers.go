@@ -49,12 +49,12 @@ type heartbeatRequest struct {
 }
 
 type heartbeatPatchRequest struct {
-	Name        optional[string]   `json:"name"`
-	Description optional[string]   `json:"description"`
-	Tags        optional[[]string] `json:"tags"`
-	Schedule    *scheduleDTO       `json:"schedule"`
-	GraceSec    *int32             `json:"grace_sec"`
-	Enabled     *bool              `json:"enabled"`
+	Name        optional[string]      `json:"name"`
+	Description optional[string]      `json:"description"`
+	Tags        optional[[]string]    `json:"tags"`
+	Schedule    optional[scheduleDTO] `json:"schedule"`
+	GraceSec    optional[int32]       `json:"grace_sec"`
+	Enabled     optional[bool]        `json:"enabled"`
 }
 
 // heartbeatResponse é construído campo a campo. Não existe campo para o hash,
@@ -272,20 +272,26 @@ func (h *HeartbeatHandlers) Update(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	p := heartbeat.Patch{SetTags: req.Tags.Set, Tags: req.Tags.Value, Name: req.Name.ponteiro(), Enabled: req.Enabled}
+	if recusouNulo(w, r, []campoDoPatch{
+		{"name", req.Name.Null}, {"schedule", req.Schedule.Null},
+		{"grace_sec", req.GraceSec.Null}, {"enabled", req.Enabled.Null},
+	}) {
+		return
+	}
+	p := heartbeat.Patch{SetTags: req.Tags.Set, Tags: req.Tags.Value, Name: req.Name.ponteiro(), Enabled: req.Enabled.ponteiro()}
 	// Como nas tags, null limpa: Value fica vazio.
 	if req.Description.Set {
 		p.Description = &req.Description.Value
 	}
-	if req.Schedule != nil {
-		sch, err := req.Schedule.schedule()
+	if req.Schedule.Set {
+		sch, err := req.Schedule.Value.schedule()
 		if h.falhou(w, r, "validar heartbeat", err) {
 			return
 		}
 		p.Schedule = &sch
 	}
-	if req.GraceSec != nil {
-		grace := time.Duration(*req.GraceSec) * time.Second
+	if req.GraceSec.Set {
+		grace := time.Duration(req.GraceSec.Value) * time.Second
 		p.Grace = &grace
 	}
 	item, err := h.svc.Update(r.Context(), userID, id, p)

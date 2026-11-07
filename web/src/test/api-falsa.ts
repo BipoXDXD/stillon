@@ -110,6 +110,11 @@ const CAMPOS_DO_HEARTBEAT = ['name', 'description', 'tags', 'schedule', 'grace_s
 const CAMPOS_DO_AGENDAMENTO = ['kind', 'period_sec', 'expr', 'timezone']
 const CAMPOS_DA_PAGINA = ['slug', 'title', 'published', 'items']
 const CAMPOS_DO_ITEM_DA_PAGINA = ['target_id', 'display_name']
+// Os campos do PATCH em que null é 400, na ordem de recusouNulo no servidor. Nos
+// outros (tags, description, headers, degraded_threshold_ms), null limpa.
+const OBRIGATORIOS_DO_ALVO = ['name', 'url', 'method', 'interval_sec', 'timeout_ms', 'expected_status', 'enabled']
+const OBRIGATORIOS_DO_HEARTBEAT = ['name', 'schedule', 'grace_sec', 'enabled']
+const OBRIGATORIOS_DA_PAGINA = ['slug', 'title', 'published', 'items']
 const PROVAS_DO_2FA = ['password', 'code', 'recovery_code']
 
 export type ApiFalsa = ReturnType<typeof criarApiFalsa>
@@ -279,8 +284,11 @@ export function criarApiFalsa() {
     return { recusados, tags: lidas.flatMap((l) => l.tag ?? []) }
   }
 
-  // O null do nome vira o valor vazio, e a validação do domínio o recusa.
-  const nomeNulo = (corpo: Json) => corpo.name === null
+  // recusouNulo: o 400 vem antes de procurar o recurso e lista todos os null.
+  function recusaDeNulos(corpo: Json, obrigatorios: string[]) {
+    const fields = obrigatorios.filter((c) => corpo[c] === null).map((field) => ({ field, reason: 'required' }))
+    return fields.length > 0 ? erro(400, 'validation_failed', fields) : null
+  }
 
   // A família do access token da requisição.
   const familiaDe = (request: Request) =>
@@ -462,9 +470,10 @@ export function criarApiFalsa() {
       return a ? HttpResponse.json(a) : erro(404, 'not_found')
     }),
     rota('patch', '/targets/:id', estrita(CAMPOS_DO_ALVO, ({ params, corpo }) => {
+      const recusa = recusaDeNulos(corpo, OBRIGATORIOS_DO_ALVO)
+      if (recusa) return recusa
       const a = st.alvos.find((x) => x.id === params.id)
       if (!a) return erro(404, 'not_found')
-      if (nomeNulo(corpo)) return erro(400, 'validation_failed', [{ field: 'name', reason: 'required' }])
       const { headers, ...resto } = corpo
       // B1 do Plano 10: trocar a origem da URL (esquema, host ou porta) sem
       // mandar headers apaga os headers; só o caminho, não.
@@ -542,7 +551,8 @@ export function criarApiFalsa() {
       return h ? HttpResponse.json(h) : erro(404, 'not_found')
     }),
     rota('patch', '/heartbeats/:id', estrita(CAMPOS_DO_HEARTBEAT, ({ params, corpo }) => {
-      if (nomeNulo(corpo)) return erro(400, 'validation_failed', [{ field: 'name', reason: 'required' }])
+      const recusa = recusaDeNulos(corpo, OBRIGATORIOS_DO_HEARTBEAT)
+      if (recusa) return recusa
       const h = st.heartbeats.find((x) => x.id === params.id)
       if (!h) return erro(404, 'not_found')
       const retomou = corpo.enabled === true && !h.enabled
@@ -643,6 +653,8 @@ export function criarApiFalsa() {
       return HttpResponse.json(p, { status: 201 })
     }, { items: CAMPOS_DO_ITEM_DA_PAGINA })),
     rota('patch', '/status-pages/:id', estrita(CAMPOS_DA_PAGINA, ({ params, corpo }) => {
+      const recusa = recusaDeNulos(corpo, OBRIGATORIOS_DA_PAGINA)
+      if (recusa) return recusa
       const p = st.paginas.find((x) => x.id === params.id)
       if (!p) return erro(404, 'not_found')
       Object.assign(p, corpo)

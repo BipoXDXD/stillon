@@ -558,6 +558,13 @@ O `code` é contrato para o cliente; a `message` é texto para humano; o detalhe
 fica apenas no log, correlacionado pelo `trace_id`. Erro de banco jamais atravessa
 a fronteira HTTP.
 
+**`PATCH`: ausente, `null` e valor são três coisas.** Ausente não mexe. `null` em campo
+obrigatório é `400 validation_failed` com `required` em cada campo, antes de procurar o
+recurso e sem gravar nada: `name`, `url`, `method`, `interval_sec`, `timeout_ms`,
+`expected_status`, `enabled`, `schedule`, `grace_sec`, `slug`, `title`, `published` e
+`items`. `null` limpa `tags`, `description` e `headers`, e em `degraded_threshold_ms`
+desliga a classificação (seção 11.5).
+
 **`resolution` é decidida pelo servidor.** Janela ≤ 48h lê de `checks`; acima
 disso, de `check_rollup_1h`. O cliente pede um intervalo de tempo, não uma tabela.
 

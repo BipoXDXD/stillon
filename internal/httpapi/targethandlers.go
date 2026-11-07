@@ -42,13 +42,13 @@ type targetRequest struct {
 
 type targetPatchRequest struct {
 	Name                optional[string]            `json:"name"`
-	URL                 *string                     `json:"url"`
-	Method              *string                     `json:"method"`
-	IntervalSec         *int32                      `json:"interval_sec"`
-	TimeoutMS           *int32                      `json:"timeout_ms"`
-	ExpectedStatus      *int32                      `json:"expected_status"`
+	URL                 optional[string]            `json:"url"`
+	Method              optional[string]            `json:"method"`
+	IntervalSec         optional[int32]             `json:"interval_sec"`
+	TimeoutMS           optional[int32]             `json:"timeout_ms"`
+	ExpectedStatus      optional[int32]             `json:"expected_status"`
 	DegradedThresholdMS optional[int32]             `json:"degraded_threshold_ms"`
-	Enabled             *bool                       `json:"enabled"`
+	Enabled             optional[bool]              `json:"enabled"`
 	Headers             optional[map[string]string] `json:"headers"`
 	Tags                optional[[]string]          `json:"tags"`
 }
@@ -213,11 +213,18 @@ func (h *TargetHandlers) Update(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
+	if recusouNulo(w, r, []campoDoPatch{
+		{"name", req.Name.Null}, {"url", req.URL.Null}, {"method", req.Method.Null},
+		{"interval_sec", req.IntervalSec.Null}, {"timeout_ms", req.TimeoutMS.Null},
+		{"expected_status", req.ExpectedStatus.Null}, {"enabled", req.Enabled.Null},
+	}) {
+		return
+	}
 
 	p := targets.Patch{
-		Name: req.Name.ponteiro(), URL: req.URL, Method: req.Method,
-		IntervalSec: req.IntervalSec, TimeoutMS: req.TimeoutMS, ExpectedStatus: req.ExpectedStatus,
-		Enabled: req.Enabled,
+		Name: req.Name.ponteiro(), URL: req.URL.ponteiro(), Method: req.Method.ponteiro(),
+		IntervalSec: req.IntervalSec.ponteiro(), TimeoutMS: req.TimeoutMS.ponteiro(),
+		ExpectedStatus: req.ExpectedStatus.ponteiro(), Enabled: req.Enabled.ponteiro(),
 	}
 	if req.DegradedThresholdMS.Set {
 		p.SetDegradedThreshold = true
