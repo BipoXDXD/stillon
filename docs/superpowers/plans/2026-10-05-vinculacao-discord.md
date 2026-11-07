@@ -203,6 +203,8 @@ Construtores: `discordapi.NewClient(clientID string, clientSecret, botToken cryp
 e `NewService(pool *pgxpool.Pool, cfg Options, api API, clk clock.Clock, ipKey []byte) *LinkService`.
 `ipKey` é o `cfg.IPHashKey`; como `auth.NewManager` (`session.go:77`), o construtor entra em panic
 com chave de menos de 32 bytes, para o erro aparecer na partida e não no primeiro callback.
+`TestNewServiceRecusaChaveCurta` prova o panic com `nil` e com 31 bytes e a aceitação de 32;
+sabotar removendo a checagem e ver o teste falhar.
 `Options` contém Enabled, ClientID, GuildID, RoleID, RedirectURL e `InviteURL InviteURL`; nenhum
 segredo. `crypto.Secret` (`internal/crypto/secret.go`) já se redige sozinho em log.
 
@@ -213,7 +215,13 @@ allowlist e `TestEveryRegisteredRouteDeniesByDefault` enumeram rotas pelos fonte
 `unavailable` vence qualquer linha: com `Enabled=false`, `Get` devolve `Status{Enabled: false,
 State: unavailable}` antes de ler o banco, mesmo havendo vínculo gravado, e `Begin`, `Check` e
 `Unlink` devolvem `ErrUnavailable` sem tocar em nada (o handler o traduz em
-`apierr.CodeUnavailable`, 503, sem iniciar OAuth). As linhas ficam como estão e retomam quando a
+`apierr.CodeUnavailable`, 503, sem iniciar OAuth). `Complete` entra na mesma lista, e com um
+motivo a mais: o callback é rota pública, e uma tentativa criada antes de a função ser desligada
+vale por até cinco minutos, então um callback legítimo pode chegar com `api` nil. `Complete`
+devolve `ErrUnavailable` **antes** de tocar no banco ou em `api`, e o handler do callback
+responde com o 303 fixo para `/settings`, sem query, como nos outros retornos; a tentativa não é
+consumida e expira sozinha. Teste `TestCallbackComFuncaoDesligadaNaoTocaBancoNemApi` (ver
+Tarefa 3). As linhas ficam como estão e retomam quando a
 função volta.
 
 **Forma do JSON.** As chaves são `snake_case`, como o resto da API (`new_password`), e são
@@ -290,7 +298,7 @@ RETURNING id, user_id, family_id, expires_at;
 testes, `internal/config/compose_test.go`, `.env.example`, `compose.yaml` e
 `deploy/coolify/app.json` (bloco `environment` do serviço `app`, em ordem alfabética), pelo coordenador.
 
-**Consome:** `crypto.Secret`; **produz:** `NewClient(clientID string, clientSecret, botToken crypto.Secret) *HTTPClient`.
+**Consome:** `crypto.Secret` (o `main` o aplica aos `string` da `Config`); **produz:** `NewClient(clientID string, clientSecret, botToken crypto.Secret) *HTTPClient`.
 Produção usa exclusivamente origem HTTPS fixa do Discord. Transporte/URL de teste são
 injetados apenas por constructor privado no mesmo pacote dos testes.
 
@@ -301,9 +309,9 @@ injetados apenas por constructor privado no mesmo pacote dos testes.
 - [ ] Desabilitar redirects no cliente e limitar corpo de resposta a 64 KiB e chamada a cinco segundos. `Failure.Error` contém só categoria segura; não incluir corpo, token, code, verifier, URL de webhook ou header Authorization.
 - [ ] Exercitar 401, 403, 429, 5xx, JSON inválido, corpo excessivo e timeout depois de registrar efeito, e o 404 distinguido pelo código do corpo (ver "Contratos compartilhados"), **nos três endpoints** (membro, PUT e DELETE do cargo): `10007` vira membro ausente (`Member{Exists: false}` na leitura, `FailureNotFound` no PUT/DELETE), `10004` e `10011` viram `FailureConfig`, e 404 com outro código ou sem JSON vira `FailureInvalidResponse`. Caso 429 deve produzir `Failure{Kind: FailureRateLimited, RetryAfter: ...}` a partir da indicação válida do provedor, limitada a 24 horas.
 - [ ] Configuração, em `internal/config/config.go`:
-  - os seis campos da spec (`DISCORD_OAUTH_CLIENT_ID`, `DISCORD_OAUTH_CLIENT_SECRET`, `DISCORD_BOT_TOKEN`, `DISCORD_GUILD_ID`, `DISCORD_VERIFIED_ROLE_ID`, `DISCORD_INVITE_URL`), mais `DISCORD_ALLOW_INSECURE_LOOPBACK`; client secret e token do bot como `crypto.Secret`;
+  - os seis campos da spec (`DISCORD_OAUTH_CLIENT_ID`, `DISCORD_OAUTH_CLIENT_SECRET`, `DISCORD_BOT_TOKEN`, `DISCORD_GUILD_ID`, `DISCORD_VERIFIED_ROLE_ID`, `DISCORD_INVITE_URL`), mais `DISCORD_ALLOW_INSECURE_LOOPBACK`; client secret e token do bot como `string`, no padrão de `ResendAPIKey` (`config.go:109`); o `main` aplica `crypto.Secret(cfg.DiscordOAuthClientSecret)` e `crypto.Secret(cfg.DiscordBotToken)` ao chamar `NewClient`, como faz com `crypto.Secret(cfg.ResendAPIKey)` (`main.go:206`);
   - todos ausentes: função desligada; parcial: erro de inicialização sem valores, no padrão do par `RESEND_API_KEY`/`EMAIL_FROM` (`config.go:314`);
-  - `DISCORD_ALLOW_INSECURE_LOOPBACK=true` exige `PUBLIC_BASE_URL` local (`hostLocal`, `config.go:380`); com https ou host remoto, o boot recusa;
+  - `DISCORD_ALLOW_INSECURE_LOOPBACK=true` exige `PUBLIC_BASE_URL` local (`hostLocal`, `config.go:380`); com https ou host remoto, o boot recusa. Teste de tabela `TestConfigDiscordLoopbackRecusaHTTPSEHostRemoto`, em `config_test.go`: https com a flag, http em host remoto com a flag e IP remoto com a flag são recusados; http em `localhost` e em `127.0.0.1` com a flag são aceitos. Sabotar trocando `hostLocal` por `true` e ver o boot aceitar o host remoto;
   - função ligada (as seis definidas) com `PUBLIC_BASE_URL` que não seja https e **sem** a flag de loopback também recusa o boot: o cookie sairia sem `Secure` e o redirect deixaria de ser o https cadastrado no portal. Vale para http remoto, para http em localhost e para `PUBLIC_BASE_URL` vazia (sem ela o callback não tem como ser derivado). Teste de tabela `TestConfigDiscordLigadoExigeHTTPSOuLoopbackExplicito`, em `config_test.go`, com os três casos recusados e dois aceitos (https; http em localhost com a flag); sabotar removendo a checagem e ver o boot aceitar o http remoto;
   - `Config.DiscordEnabled()` (as seis definidas), no padrão de `EmailEnabled()`; `Config` guarda `DiscordInviteURL` como `string`, porque `internal/config` só importa a biblioteca padrão e não deve passar a importar `discordlink`;
   - `Config.LogValue` redige o client secret e o token do bot como `[REDACTED]`, com teste que registra a `Config` e procura um canário nos dois campos;
@@ -371,6 +379,7 @@ http.SetCookie(w, &http.Cookie{
   - o conjunto de chaves do JSON do GET é exatamente o esperado (`statusDTO`), e `Start.Verifier` não aparece no JSON do início;
   - `redirect_uri` enviado ao provedor é o fixo derivado de `PUBLIC_BASE_URL`, mesmo com o cabeçalho `Host` adulterado;
   - erro no callback (provedor recusa, code inválido) devolve resposta cujo **corpo** não tem as palavras `discord` nem `token` nem o corpo do provedor (o canário do cenário (b) acima é o corpo do provedor). A regra vale para o corpo: os cabeçalhos carregam o nome do cookie (`stillon_discord_oauth`) e o caminho do callback na limpeza do cookie, e o `Location` é só `/settings`.
+- [ ] Callback com a função desligada: `TestCallbackComFuncaoDesligadaNaoTocaBancoNemApi`. Criar uma tentativa válida com um serviço ligado, montar sobre o mesmo pool um `LinkService` com `Enabled=false` e `api` nil, e chamar `Complete` e o handler do callback com o state e o cookie dessa tentativa. Afirmar `ErrUnavailable` no serviço; 303 com `Location: /settings` e sem query no handler; nenhum panic; a tentativa intacta (`consumed_at` nulo), nenhum vínculo e nenhuma auditoria nova. Sabotar tirando a guarda `Enabled` de `Complete`: o `api` nil derruba o teste com panic, e com um `api` falso ele falha porque a tentativa é consumida.
 - [ ] Testar status HTTP/JSON, integração desligada, CSRF, ausência de sessão, 409 com vínculo existente e redirecionamento fixo. Sabotar vínculo da família, comparação de cookie e limpeza de query; registrar RED/GREEN. Rodar `sh deploy/ci/checar-nome.sh`. Commit `feat(discord): vincular identidade à sessão autenticada`.
 
 ### Tarefa 4: reconciliação do cargo e desvinculação
@@ -379,7 +388,8 @@ http.SetCookie(w, &http.Cookie{
 `internal/httpapi/discord_dono_integration_test.go`; ampliar queries em
 `discord_links.sql`; o coordenador conecta o ciclo de vida em `cmd/stillon/main.go`.
 
-**Produz:** `NewWorker(pool *pgxpool.Pool, api API, cfg Options, clk clock.Clock) *Worker`,
+**Produz:** `NewWorker(pool *pgxpool.Pool, api API, clk clock.Clock) *Worker` (sem `Options`: o worker
+age só com o que está na linha, ver o passo da guild e do cargo, e nada nele lê a configuração),
 `Run(context.Context) error` e `RunOnce(context.Context) error`. Run usa ticker de dez
 segundos e encerra no contexto da API. Em `cmd/stillon/main.go` o worker entra **dentro do
 bloco `if cfg.Role.RunsAPI()`** (linha 177) com `g.Go(func() error { return worker.Run(gctx) })`,
@@ -387,10 +397,10 @@ e só quando a integração está ligada; o `RunMaintenance` (que roda no bloco 
 158) não é tocado. A produção roda `--role=all`, e o filtro vale do mesmo jeito.
 
 - [ ] Escrever testes com banco real e cliente controlado para ausência de membro, triagem pendente, concessão, cargo já presente, remoção, membro ausente na remoção, timeout ambíguo e `desired` alterado com PUT em voo.
-- [ ] O worker age com a guild e o cargo **gravados na linha** (`guild_id`, `role_id`), nunca com os de `Options`: nem a remoção, que é o caso que a spec fixa, nem a concessão ou a leitura do membro. Teste com a configuração alterada depois do vínculo: vincular com guild e cargo A, montar o `Worker` com `Options` de guild e cargo B, desvincular e rodar; o cliente controlado tem de receber o DELETE com os ids de A e nenhuma chamada com os de B. Sabotar trocando a linha por `cfg.GuildID`/`cfg.RoleID` e ver o teste falhar.
+- [ ] O worker age com a guild e o cargo **gravados na linha** (`guild_id`, `role_id`), nunca com os da configuração: nem a remoção, que é o caso que a spec fixa, nem a concessão ou a leitura do membro. O `Worker` não recebe `Options`, então o teste põe a configuração nova do lado do serviço: vincular com guild e cargo A, montar o `LinkService` com `Options` de guild e cargo B (a configuração alterada depois do vínculo), desvincular e rodar o worker; o cliente controlado tem de receber o DELETE com os ids de A e nenhuma chamada com os de B. Sabotar fazendo o worker usar uma guild e um cargo fixos diferentes dos da linha e ver o teste falhar.
 - [ ] Rodada: tomar `pg_try_advisory_lock` numa conexão dedicada do pool, sem transação; se outra instância a tem, encerrar sem erro. A `TryLockRollups` da manutenção é de transação e não serve aqui, porque a rodada faz HTTP. Soltar a lock e devolver a conexão ao fim; se o unlock falhar, fechar a conexão. Testar duas rodadas simultâneas: só uma chama o cliente.
 - [ ] Ler o lote em `InDiscordWorkerTx`, em transação curta: até 25 linhas com `next_attempt_at <= now` e `paused_at IS NULL`, por `next_attempt_at`. Para cada linha, fora de transação, aplicar a decisão da spec (ler membro, no máximo um efeito, reler) e gravar o resultado em nova transação com `WHERE id = $1 AND desired = $2`. Zero linhas afetadas não é erro: `Unlink` já agendou a linha, e a rodada seguinte reconcilia.
-- [ ] Prazo total por rodada: `prazoDaRodada = 60 * time.Second`, um campo do `Worker` que o teste sobrescreve por um valor curto, aplicado com `context.WithTimeout` sobre o contexto de cada rodada. Sem ele, 25 linhas com duas chamadas de cinco segundos cada seguram a lock por mais de quatro minutos. Ao estourar, a rodada sai do lote, solta a lock e devolve a conexão; as linhas não processadas ficam como estão (`next_attempt_at` já vencido) e entram na rodada seguinte, e um efeito aplicado sem gravação se resolve na leitura dessa rodada, sem repetir. Teste: cliente controlado lento, `prazoDaRodada` curto, lote de várias linhas; só parte delas é tocada, a lock é solta e a segunda rodada termina o resto. Sabotar tirando o `WithTimeout` e ver o lote inteiro ser processado.
+- [ ] Prazo total por rodada: `prazoDaRodada = 60 * time.Second`, um campo do `Worker` que o teste sobrescreve por um valor curto, aplicado com `context.WithTimeout` sobre o contexto de cada rodada. Sem ele, 25 linhas com três chamadas no caminho do efeito (ler o membro, PUT ou DELETE, reler), de até cinco segundos cada, seguram a lock por até 375 s, mais de seis minutos. Ao estourar, a rodada sai do lote, solta a lock e devolve a conexão; as linhas não processadas ficam como estão (`next_attempt_at` já vencido) e entram na rodada seguinte, e um efeito aplicado sem gravação se resolve na leitura dessa rodada, sem repetir. Teste: cliente controlado lento, `prazoDaRodada` curto, lote de várias linhas; só parte delas é tocada, a lock é solta e a segunda rodada termina o resto. Sabotar tirando o `WithTimeout` e ver o lote inteiro ser processado.
 - [ ] Teste de corrida: PUT bloqueado em barreira, `Unlink` commita, PUT termina. A gravação não confirma, e a rodada seguinte faz DELETE e apaga a linha. Sabotar tirando `desired` do `WHERE` e ver o cargo ficar confirmado.
 - [ ] Consultar membro antes de concessão; pending impede concessão. Após efeito incerto, manter pendente: a leitura da rodada seguinte confirma sem repetir o efeito. Nunca modificar outros cargos ou ingressar/expulsar usuário. `awaiting_*` zera `next_attempt_at`: só `Check` agenda de novo. A **confirmação** (`observed='present'` com `desired='present'`) também zera `next_attempt_at`, `attempts` e `last_failure` e grava `confirmed_at`: uma linha confirmada não é relida a cada rodada de dez segundos; só `Check` a agenda de novo. Teste "duas rodadas seguidas fazem um só GET de membro": linha que confirma na primeira rodada; na segunda, o cliente controlado conta zero chamadas novas. Sabotar deixando o `next_attempt_at` intacto na confirmação e ver o segundo GET.
 - [ ] Implementar scheduler puro `nextAttempt(now time.Time, attempt int, providerWait time.Duration) time.Time`; atraso exponencial com teto local de quinze minutos, aumentado pelo prazo externo quando maior. A fórmula é `now + max(min(15 min, 10 s × 2^(attempt−1)), providerWait)`, com `attempt < 1` tratado como 1 e o deslocamento limitado para não estourar. `attempt` é o número da falha que acabou de acontecer (o contador já incrementado). Sem jitter: uma rodada só roda por vez, sob a lock. Teste de tabela, que cobre o crescimento e o teto:
