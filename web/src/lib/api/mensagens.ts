@@ -106,7 +106,7 @@ const tiposDeErro: Record<string, string> = {
   conn_refused: 'Conexão recusada',
   http_status: 'Status HTTP inesperado',
   body_limit: 'Resposta grande demais',
-  blocked: 'Destino bloqueado (endereço interno)',
+  blocked: 'Destino bloqueado pela proteção de rede',
   heartbeat_late: 'Sem sinal no prazo',
   heartbeat_failed: 'A tarefa avisou falha',
 }
