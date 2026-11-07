@@ -98,6 +98,28 @@ func TestCreateRejectsInvalidInput(t *testing.T) {
 	}
 }
 
+// O alvo com ẞ nunca nasce pelo Create: a exceção de URL já gravada é do Update.
+func TestCreateRefusesASharpSURLWithoutWritingARow(t *testing.T) {
+	a := novoAmbiente(t)
+	dono := a.usuario(t)
+	in := entrada()
+	in.URL = "https://STRAẞE.de/"
+
+	_, err := a.svc.Create(context.Background(), dono, in)
+
+	var verr *targets.ValidationError
+	if !errors.As(err, &verr) || len(verr.Fields) != 1 || verr.Fields[0].Field != "url" {
+		t.Errorf("erro = %v, queria ValidationError em url", err)
+	}
+	var linhas int
+	if err := a.admin.QueryRow(context.Background(), `SELECT count(*) FROM targets WHERE user_id = $1`, dono).Scan(&linhas); err != nil {
+		t.Fatal(err)
+	}
+	if linhas != 0 {
+		t.Errorf("%d linhas gravadas, queria nenhuma", linhas)
+	}
+}
+
 func TestAnotherUsersTargetIsNotFound(t *testing.T) {
 	a := novoAmbiente(t)
 	ctx := context.Background()
