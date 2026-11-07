@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -570,6 +571,93 @@ func TestProbeUsesDecryptedHeaders(t *testing.T) {
 		}
 	case <-time.After(esperaMaxima):
 		t.Fatal("a sonda não chegou ao servidor")
+	}
+}
+
+// transporteContador anota cada requisição que chegaria à rede.
+type transporteContador struct {
+	mu       sync.Mutex
+	recebido []*http.Request
+}
+
+func (c *transporteContador) RoundTrip(r *http.Request) (*http.Response, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.recebido = append(c.recebido, r)
+	return &http.Response{StatusCode: http.StatusOK, Body: http.NoBody, Request: r}, nil
+}
+
+func (c *transporteContador) requisicoes() []*http.Request {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return slices.Clone(c.recebido)
+}
+
+// O domínio de uma URL gravada com ẞ depende da tabela do IDNA: o alvo não
+// pode trocar de destino em silêncio numa atualização, levando os headers.
+// Nada de rede, e o dono vê o alvo fora.
+func TestTargetWithUnstableHostIsRefusedBeforeDialing(t *testing.T) {
+	const (
+		nomeSecreto  = "X-Canario-Nome"
+		valorSecreto = "canario-valor-8f3a"
+	)
+	for _, caso := range []struct{ nome, url, trecho string }{
+		{"ẞ no host", "https://cliente-STRAẞE.de/saude", "cliente-STRA"},
+		{"ẞ percent-encoded", "https://cliente-stra%E1%BA%9Ee.de/saude", "cliente-stra"},
+	} {
+		t.Run(caso.nome, func(t *testing.T) {
+			log := capturarLog(t)
+			transporte := &transporteContador{}
+			b := novaBancada(t, &http.Client{Transport: transporte}, MaxInFlight)
+			alvo := b.alvo(t, caso.url, func(p *db.InsertTargetParams) {
+				enc, err := targets.SealHeaders(b.box, p.ID, map[string]string{nomeSecreto: valorSecreto})
+				if err != nil {
+					t.Fatal(err)
+				}
+				p.HeadersEnc = enc
+			})
+
+			if _, err := b.s.Tick(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			b.s.Stop(esperaMaxima)
+
+			if got := transporte.requisicoes(); len(got) != 0 {
+				t.Fatalf("a sonda foi à rede: %d requisições, primeira para %s", len(got), got[0].URL.Host)
+			}
+			rows := b.checks(t, alvo)
+			if len(rows) != 1 || rows[0].Status != "down" || rows[0].ErrorKind == nil || *rows[0].ErrorKind != "blocked" {
+				t.Errorf("checks = %+v, queria um down/blocked", rows)
+			}
+			registro := log.String()
+			if !strings.Contains(registro, alvo.String()) {
+				t.Errorf("o log não identifica o alvo: %s", registro)
+			}
+			for _, proibido := range []string{caso.trecho, "xn--", nomeSecreto, valorSecreto} {
+				if strings.Contains(registro, proibido) {
+					t.Errorf("o log traz %q: %s", proibido, registro)
+				}
+			}
+		})
+	}
+}
+
+// A recusa é só do ẞ: ß, com ou sem headers, continua sondando.
+func TestTargetWithSharpSKeepsProbing(t *testing.T) {
+	transporte := &transporteContador{}
+	b := novaBancada(t, &http.Client{Transport: transporte}, MaxInFlight)
+	alvo := b.alvo(t, "https://straße.de/", nil)
+
+	if _, err := b.s.Tick(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	b.s.Stop(esperaMaxima)
+
+	if got := transporte.requisicoes(); len(got) != 1 {
+		t.Fatalf("%d requisições, queria 1", len(got))
+	}
+	if rows := b.checks(t, alvo); len(rows) != 1 || rows[0].Status != "up" {
+		t.Errorf("checks = %+v, queria um up", rows)
 	}
 }
 

@@ -78,6 +78,11 @@ type fields struct {
 	DegradedThresholdMS *int32
 	Headers             map[string]string
 	Tags                []string
+
+	// urlGravada é a URL que a linha já tem, vazia no cadastro. Um alvo
+	// gravado antes da recusa de HostInstavelNoIDNA continua administrável: o
+	// dono pausa e renomeia, e quem o barra é a sondagem.
+	urlGravada string
 }
 
 // validate confere todos os campos e acumula todos os erros, para que o
@@ -97,7 +102,11 @@ func validate(f *fields) *ValidationError {
 	}
 
 	f.URL = strings.TrimSpace(f.URL)
-	if motivo := checkURL(f.URL); motivo != "" {
+	motivo := checkURL(f.URL)
+	if motivo == "" && f.URL != f.urlGravada && safedial.HostInstavelNoIDNA(f.URL) {
+		motivo = ReasonInvalid
+	}
+	if motivo != "" {
 		v.add("url", motivo)
 	}
 
@@ -298,6 +307,15 @@ func SameOrigin(a, b string) bool {
 	}
 	ob, ok := origem(b)
 	return ok && oa == ob
+}
+
+// mudouDeDestino diz se os headers ficam para trás numa troca de URL. O
+// SameOrigin compara pela tabela do IDNA do binário, e o domínio de uma URL
+// gravada que HostInstavelNoIDNA aponta depende dela: qualquer troca dessa URL
+// pode levar os headers a um destino que nunca os recebeu.
+func mudouDeDestino(antes, depois string) bool {
+	return !SameOrigin(antes, depois) ||
+		(safedial.HostInstavelNoIDNA(antes) && strings.TrimSpace(antes) != strings.TrimSpace(depois))
 }
 
 func origem(s string) (string, bool) {

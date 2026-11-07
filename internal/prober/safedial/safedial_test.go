@@ -205,3 +205,32 @@ func TestAllowIPRejectsTheZeroAddress(t *testing.T) {
 		t.Errorf("erro = %v, queria ErrBlocked", err)
 	}
 }
+
+func TestHostInstavelNoIDNA(t *testing.T) {
+	for _, caso := range []struct {
+		nome, url string
+		instavel  bool
+	}{
+		{"ẞ no host", "https://STRAẞE.de/", true},
+		{"ẞ minúsculo no resto", "https://straẞe.de/", true},
+		{"ẞ em subdomínio", "https://ẞ.exemplo.com/", true},
+		{"ẞ com porta", "https://straẞe.de:8443/", true},
+		{"ẞ percent-encoded", "https://stra%E1%BA%9Ee.de/", true},
+		{"espaço em volta", "  https://straẞe.de/  ", true},
+		{"ß é estável", "https://straße.de/", false},
+		{"ss é estável", "https://strasse.de/", false},
+		{"punycode é estável", "https://xn--strae-oqa.de/", false},
+		{"sigma é estável", "https://ς.example/", false},
+		{"ẞ no caminho", "https://exemplo.com/ẞ", false},
+		{"ẞ na consulta", "https://exemplo.com/?q=ẞ", false},
+		{"ẞ no fragmento", "https://exemplo.com/#ẞ", false},
+		{"vazia", "", false},
+		{"ilegível", "://quebrada", false},
+	} {
+		t.Run(caso.nome, func(t *testing.T) {
+			if got := safedial.HostInstavelNoIDNA(caso.url); got != caso.instavel {
+				t.Errorf("HostInstavelNoIDNA(%q) = %v, queria %v", caso.url, got, caso.instavel)
+			}
+		})
+	}
+}
