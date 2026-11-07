@@ -577,3 +577,140 @@ func TestUpdateOfURLKeepsTheOpenIncidentAndOtherTargets(t *testing.T) {
 		t.Errorf("a histerese de outro alvo do dono mudou: %s", h)
 	}
 }
+
+// alvoGravadoComSharpS põe na linha, sem passar pela validação, uma URL cujo
+// domínio depende da tabela do IDNA.
+func (a ambiente) alvoGravadoComSharpS(t *testing.T, dono uuid.UUID, url string) targets.Target {
+	t.Helper()
+	alvo, err := a.svc.Create(context.Background(), dono, entrada())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.admin.Exec(context.Background(), `UPDATE targets SET url = $2 WHERE id = $1`, alvo.ID, url); err != nil {
+		t.Fatal(err)
+	}
+	return alvo
+}
+
+// O dono ainda administra o alvo que o sondador recusa: pausar e renomear não
+// tocam na URL. Quem a recusa é a sondagem, e os headers ficam.
+func TestUpdateOfAStoredSharpSTargetLeavesTheURLAlone(t *testing.T) {
+	const gravada = "https://STRAẞE.de/saude"
+	nome, pausado, mesma, mesmaComEspaco := "Novo nome", false, gravada, "  "+gravada+"  "
+	for _, caso := range []struct {
+		nome  string
+		patch targets.Patch
+	}{
+		{"pausar", targets.Patch{Enabled: &pausado}},
+		{"renomear", targets.Patch{Name: &nome}},
+		{"reenviar a mesma URL", targets.Patch{URL: &mesma}},
+		{"reenviar a mesma URL com espaços", targets.Patch{URL: &mesmaComEspaco}},
+	} {
+		t.Run(caso.nome, func(t *testing.T) {
+			a := novoAmbiente(t)
+			ctx := context.Background()
+			dono := a.usuario(t)
+			alvo := a.alvoGravadoComSharpS(t, dono, gravada)
+
+			got, err := a.svc.Update(ctx, dono, alvo.ID, caso.patch)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.URL != gravada {
+				t.Errorf("url = %q", got.URL)
+			}
+			if len(got.HeaderNames) != 1 || a.headersGravados(t, alvo.ID)["Authorization"] != "Bearer segredo-do-cliente" {
+				t.Errorf("os headers mudaram: %v", got.HeaderNames)
+			}
+		})
+	}
+
+	t.Run("pausar vale", func(t *testing.T) {
+		a := novoAmbiente(t)
+		dono := a.usuario(t)
+		alvo := a.alvoGravadoComSharpS(t, dono, gravada)
+		got, err := a.svc.Update(context.Background(), dono, alvo.ID, targets.Patch{Enabled: &pausado})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Enabled {
+			t.Error("o alvo continuou ativo")
+		}
+	})
+}
+
+// O SameOrigin compara pela tabela do IDNA do binário, e o domínio de uma URL
+// com ẞ depende dela: em qualquer troca, ele daria "mesma origem" para um dos
+// destinos abaixo. Os headers não vão junto em nenhum dos dois.
+func TestEditingAStoredSharpSURLDropsTheHeaders(t *testing.T) {
+	for _, caso := range []struct{ nome, gravada, nova string }{
+		{"ẞ para ß", "https://STRAẞE.de/saude", "https://straße.de/saude"},
+		{"percent-encoded para ß", "https://stra%E1%BA%9Ee.de/saude", "https://straße.de/saude"},
+		{"com espaços", "https://STRAẞE.de/saude", "  https://straße.de/saude  "},
+		{"para ss", "https://STRAẞE.de/saude", "https://strasse.de/saude"},
+	} {
+		t.Run(caso.nome, func(t *testing.T) {
+			a := novoAmbiente(t)
+			dono := a.usuario(t)
+			alvo := a.alvoGravadoComSharpS(t, dono, caso.gravada)
+
+			got, err := a.svc.Update(context.Background(), dono, alvo.ID, targets.Patch{URL: &caso.nova})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(got.HeaderNames) != 0 {
+				t.Errorf("header_names = %v, queria vazio", got.HeaderNames)
+			}
+			if h := a.headersGravados(t, alvo.ID); len(h) != 0 {
+				t.Errorf("headers gravados = %v, queria nenhum", h)
+			}
+		})
+	}
+
+	t.Run("headers no mesmo PATCH valem", func(t *testing.T) {
+		a := novoAmbiente(t)
+		dono := a.usuario(t)
+		alvo := a.alvoGravadoComSharpS(t, dono, "https://STRAẞE.de/saude")
+		nova := "https://straße.de/saude"
+		got, err := a.svc.Update(context.Background(), dono, alvo.ID, targets.Patch{
+			URL: &nova, SetHeaders: true, Headers: map[string]string{"X-Nova": "redigitado"},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got.HeaderNames) != 1 || a.headersGravados(t, alvo.ID)["X-Nova"] != "redigitado" {
+			t.Errorf("os headers do PATCH não valeram: %v", got.HeaderNames)
+		}
+	})
+}
+
+// A exceção é só para a URL que já estava lá: gravar ẞ continua proibido.
+func TestUpdateCannotWriteASharpSURL(t *testing.T) {
+	outra := "https://outro-STRAẞE.de/"
+	cifrada := "https://outro-stra%E1%BA%9Ee.de/"
+	caminho := "https://STRAẞE.de/outro-caminho"
+	for _, caso := range []struct {
+		nome, gravada string
+		nova          *string
+	}{
+		{"de URL comum", "https://api.exemplo.com/health", &outra},
+		{"de URL comum, percent-encoded", "https://api.exemplo.com/health", &cifrada},
+		{"de outro ẞ", "https://STRAẞE.de/saude", &outra},
+		{"outro caminho do mesmo host", "https://STRAẞE.de/saude", &caminho},
+	} {
+		t.Run(caso.nome, func(t *testing.T) {
+			a := novoAmbiente(t)
+			dono := a.usuario(t)
+			alvo := a.alvoGravadoComSharpS(t, dono, caso.gravada)
+
+			_, err := a.svc.Update(context.Background(), dono, alvo.ID, targets.Patch{URL: caso.nova})
+			var verr *targets.ValidationError
+			if !errors.As(err, &verr) || verr.Fields[0].Field != "url" || verr.Fields[0].Reason != targets.ReasonInvalid {
+				t.Fatalf("erro = %v, queria ValidationError em url", err)
+			}
+			if h := a.headersGravados(t, alvo.ID); len(h) != 1 {
+				t.Errorf("a recusa mexeu nos headers: %v", h)
+			}
+		})
+	}
+}

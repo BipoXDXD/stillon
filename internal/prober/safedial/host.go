@@ -1,6 +1,7 @@
 package safedial
 
 import (
+	"net/url"
 	"strings"
 	"unicode/utf8"
 
@@ -22,6 +23,20 @@ func DialedHost(host string) (string, bool) {
 		}
 	}
 	return strings.ToLower(host), true
+}
+
+// HostInstavelNoIDNA protege contra a mudança da tabela do IDNA: ẞ vira ss na
+// do Unicode 15, a que o projeto usa hoje, e ß na do 17 (straẞe.de vai a
+// strasse.de numa e a xn--strae-oqa.de na outra). A tabela acompanha a versão
+// do Go, então uma URL gravada assim trocaria de destino numa atualização, sem
+// que o dono soubesse, levando os headers. Comparar as duas tabelas em todos
+// os code points dá ẞ como o único caractere aceito por ambas com resultado
+// diferente.
+//
+// Olha o host já decodificado: url.Parse aceita %E1%BA%9E nele.
+func HostInstavelNoIDNA(raw string) bool {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	return err == nil && strings.ContainsRune(u.Hostname(), 'ẞ')
 }
 
 // IsSingleLabel diz se o host é um nome de rótulo único, sem ponto (db,
