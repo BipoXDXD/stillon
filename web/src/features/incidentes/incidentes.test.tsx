@@ -370,7 +370,9 @@ describe('incidentes', () => {
       expect(screen.queryByText(/em andamento[,.]/)).not.toBeInTheDocument()
     })
 
-    it('em Todos, os grupos separam em andamento e resolvidos, e cada cartão mostra a situação', async () => {
+    // "Em andamento" é a situação do aberto sem reconhecimento (o selo e o
+    // resumo). O grupo tem os reconhecidos também, e por isso é "Abertos".
+    it('em Todos, os grupos separam abertos e resolvidos, e cada cartão mostra a situação', async () => {
       const r = await renderizarPainel('/incidents?status=all')
       r.falsa.estado.incidentes = [
         incidente({ id: 'a', target_name: 'API' }),
@@ -378,18 +380,19 @@ describe('incidentes', () => {
         incidente({ id: 'c', target_name: 'Banco', resolved_at: '2026-09-24T11:30:00Z' }),
       ]
       await r.cliente.refetchQueries()
-      const andamento = await screen.findByRole('region', { name: 'Em andamento' })
+      const abertos = await screen.findByRole('region', { name: 'Abertos' })
+      expect(screen.queryByRole('region', { name: 'Em andamento' })).not.toBeInTheDocument()
       const resolvidos = screen.getByRole('region', { name: 'Resolvidos recentes' })
       const cartao = (regiao: HTMLElement, nome: string) => within(regiao).getByRole('link', { name: nome }).closest('li') as HTMLElement
-      expect(within(andamento).getAllByRole('listitem')).toHaveLength(2)
+      expect(within(abertos).getAllByRole('listitem')).toHaveLength(2)
 
-      expect(cartao(andamento, 'API')).toHaveClass('border-l-fora')
-      expect(within(cartao(andamento, 'API')).getByText('Em andamento')).toBeInTheDocument()
-      expect(within(cartao(andamento, 'API')).getByRole('button', { name: 'Reconhecer o incidente de API' })).toBeInTheDocument()
+      expect(cartao(abertos, 'API')).toHaveClass('border-l-fora')
+      expect(within(cartao(abertos, 'API')).getByText('Em andamento')).toBeInTheDocument()
+      expect(within(cartao(abertos, 'API')).getByRole('button', { name: 'Reconhecer o incidente de API' })).toBeInTheDocument()
 
-      expect(cartao(andamento, 'Site')).toHaveClass('border-l-primaria')
-      expect(within(cartao(andamento, 'Site')).getByText(/· lembretes parados$/)).toBeInTheDocument()
-      expect(within(cartao(andamento, 'Site')).queryByRole('button')).not.toBeInTheDocument()
+      expect(cartao(abertos, 'Site')).toHaveClass('border-l-primaria')
+      expect(within(cartao(abertos, 'Site')).getByText(/· lembretes parados$/)).toBeInTheDocument()
+      expect(within(cartao(abertos, 'Site')).queryByRole('button')).not.toBeInTheDocument()
 
       // A borda de 4 px também no resolvido, na cor da borda: sem ela, o texto
       // começaria 3 px à esquerda dos cartões abertos.

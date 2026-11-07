@@ -8,19 +8,19 @@ const ACK = '2026-09-24T11:10:00Z'
 const FIM = '2026-09-24T11:30:00Z'
 
 describe('agruparIncidentes', () => {
-  it('em andamento (reconhecidos inclusive) e resolvidos, na ordem da rota', () => {
+  it('abertos (reconhecidos inclusive) e resolvidos, na ordem da rota', () => {
     const g = agruparIncidentes([
       inc({ id: 'a' }),
       inc({ id: 'b', resolved_at: FIM }),
       inc({ id: 'c', acknowledged_at: ACK }),
       inc({ id: 'd', resolved_at: FIM, acknowledged_at: ACK }),
     ])
-    expect(g.emAndamento.map((i) => i.id)).toEqual(['a', 'c'])
+    expect(g.abertos.map((i) => i.id)).toEqual(['a', 'c'])
     expect(g.resolvidos.map((i) => i.id)).toEqual(['b', 'd'])
   })
 
   it('lista vazia dá grupos vazios', () => {
-    expect(agruparIncidentes([])).toEqual({ emAndamento: [], resolvidos: [] })
+    expect(agruparIncidentes([])).toEqual({ abertos: [], resolvidos: [] })
   })
 })
 
