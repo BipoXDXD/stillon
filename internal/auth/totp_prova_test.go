@@ -14,6 +14,7 @@ import (
 
 	"github.com/BipoXDXD/stillon/internal/auth"
 	"github.com/BipoXDXD/stillon/internal/clock"
+	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 )
 
 // As provas do 2FA depois do Plano 10: amarradas ao segredo que as validou
@@ -112,7 +113,7 @@ func TestDisableTakesTheUserLockFirst(t *testing.T) {
 	fim := make(chan error, 1)
 	go func() { fim <- svc.Disable(ctx, userID, codigos[0], inicioDaTroca) }()
 
-	esperou := esperarTravaAdvisory(t, pool)
+	esperou := testdb.EsperarBloqueados(t, pool, 1, fim)
 	livre := codigoLivre(t, pool, userID)
 	soltar()
 	err := <-fim
@@ -277,23 +278,6 @@ func prenderTravaDoUsuario(t *testing.T, pool *pgxpool.Pool, userID uuid.UUID) f
 		t.Fatal(err)
 	}
 	return soltar
-}
-
-// esperarTravaAdvisory espera alguém parar numa advisory lock deste banco.
-func esperarTravaAdvisory(t *testing.T, pool *pgxpool.Pool) bool {
-	t.Helper()
-	for prazo := time.Now().Add(5 * time.Second); time.Now().Before(prazo); time.Sleep(10 * time.Millisecond) {
-		var n int
-		if err := pool.QueryRow(context.Background(),
-			`SELECT count(*) FROM pg_stat_activity
-			  WHERE datname = current_database() AND wait_event_type = 'Lock' AND wait_event = 'advisory'`).Scan(&n); err != nil {
-			t.Fatal(err)
-		}
-		if n > 0 {
-			return true
-		}
-	}
-	return false
 }
 
 // codigoLivre diz se nenhum código de recuperação do usuário está travado por

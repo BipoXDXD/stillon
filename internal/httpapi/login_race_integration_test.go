@@ -11,12 +11,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pquerna/otp/totp"
 
 	"github.com/BipoXDXD/stillon/internal/account"
 	"github.com/BipoXDXD/stillon/internal/auth"
 	"github.com/BipoXDXD/stillon/internal/httpapi"
+	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 )
 
 // Um login que verificou a senha ANTIGA não pode deixar uma sessão viva
@@ -99,26 +99,6 @@ func familiasVivas(t *testing.T, a *api) int {
 	return n
 }
 
-// esperarBloqueados espera n backends deste banco esperando uma trava (de
-// linha, de transação ou advisory). Devolve false se não chegarem em 5 s.
-func esperarBloqueados(t *testing.T, pool *pgxpool.Pool, n int) bool {
-	t.Helper()
-	prazo := time.Now().Add(5 * time.Second)
-	for time.Now().Before(prazo) {
-		var m int
-		if err := pool.QueryRow(context.Background(),
-			`SELECT count(*) FROM pg_stat_activity
-			  WHERE datname = current_database() AND wait_event_type = 'Lock'`).Scan(&m); err != nil {
-			t.Fatal(err)
-		}
-		if m >= n {
-			return true
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	return false
-}
-
 // travarLinhaDoUsuario segura a linha de users com FOR UPDATE numa transação
 // do teste: todo UPDATE nela espera. Devolve a função que solta (idempotente;
 // o t.Cleanup solta se o teste morrer antes, para nada ficar pendurado).
@@ -179,12 +159,12 @@ func TestLoginRacingAPasswordResetThatCommitsFirst(t *testing.T) {
 			soltar := travarLinhaDoUsuario(t, a)
 			fimRedef := make(chan error, 1)
 			go func() { fimRedef <- redefinir() }()
-			if !esperarBloqueados(t, a.pool, 1) {
-				t.Fatal("a redefinição não chegou ao UPDATE do hash")
+			if !testdb.EsperarBloqueados(t, a.pool, 1, fimRedef) {
+				t.Fatal("a redefinição terminou sem chegar à trava no UPDATE do hash")
 			}
 			_, fimLogin := loginAssincrono(t, a)
-			if !esperarBloqueados(t, a.pool, 2) {
-				t.Fatal("o login não chegou ao UPDATE de antes da sessão")
+			if !testdb.EsperarBloqueados(t, a.pool, 2, fimLogin) {
+				t.Fatal("o login terminou sem chegar à trava no UPDATE de antes da sessão")
 			}
 			soltar()
 
@@ -267,7 +247,7 @@ func TestLoginRacingAPasswordResetThatCommitsSecond(t *testing.T) {
 			}
 			fimRedef := make(chan error, 1)
 			go func() { fimRedef <- redefinir() }()
-			esperou := esperarBloqueados(t, a.pool, 1)
+			esperou := testdb.EsperarBloqueados(t, a.pool, 1, fimRedef)
 			soltar()
 
 			resp := respostaDoLogin(t, fimLogin)
@@ -318,12 +298,12 @@ func TestLoginRehashDoesNotUndoAPasswordReset(t *testing.T) {
 		_, err := svc.ResetPassword(context.Background(), testEmail, senhaNova)
 		fimRedef <- err
 	}()
-	if !esperarBloqueados(t, a.pool, 1) {
-		t.Fatal("o set-password não chegou ao UPDATE do hash")
+	if !testdb.EsperarBloqueados(t, a.pool, 1, fimRedef) {
+		t.Fatal("o set-password terminou sem chegar à trava no UPDATE do hash")
 	}
 	_, fimLogin := loginAssincrono(t, a)
-	if !esperarBloqueados(t, a.pool, 2) {
-		t.Fatal("o login não chegou ao UPDATE do rehash")
+	if !testdb.EsperarBloqueados(t, a.pool, 2, fimLogin) {
+		t.Fatal("o login terminou sem chegar à trava no UPDATE do rehash")
 	}
 	soltar()
 

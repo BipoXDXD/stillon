@@ -18,6 +18,7 @@ import (
 	"github.com/BipoXDXD/stillon/internal/auth"
 	"github.com/BipoXDXD/stillon/internal/config"
 	"github.com/BipoXDXD/stillon/internal/httpapi"
+	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 )
 
 // O login e o /totp/verify depois do Plano 10: a tentativa é reservada antes
@@ -359,8 +360,10 @@ func dispararContraALinhaTravada(t *testing.T, a *api, n int, fazer func() (*htt
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	codigos := map[string]int{}
+	fim := make(chan struct{}, n)
 	for range n {
 		wg.Go(func() {
+			defer func() { fim <- struct{}{} }()
 			resp, err := fazer()
 			if err != nil {
 				t.Error(err)
@@ -374,7 +377,7 @@ func dispararContraALinhaTravada(t *testing.T, a *api, n int, fazer func() (*htt
 			mu.Unlock()
 		})
 	}
-	chegaram := esperarBloqueados(t, a.pool, n)
+	chegaram := testdb.EsperarBloqueados(t, a.pool, n, fim)
 	soltar()
 	wg.Wait()
 	if !chegaram {

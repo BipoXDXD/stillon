@@ -123,6 +123,11 @@ printf 'stillon-backup-snapshot-v1|1|1|0\n'
 }
 
 func TestBackupValidatesSnapshotManifestAndExit(t *testing.T) {
+	// O teto só acusa um script travado: nenhuma asserção depende dele. Por
+	// isso é um só para os 11 casos, e não um prazo por caso, que num helper
+	// travado se somaria até o -timeout do go test.
+	teto, cancel := context.WithTimeout(t.Context(), 60*time.Second)
+	defer cancel()
 	valid := "stillon-backup-snapshot-v1|1|1|0\n"
 	for _, c := range []struct {
 		name, stdout string
@@ -152,11 +157,15 @@ func TestBackupValidatesSnapshotManifestAndExit(t *testing.T) {
 			}
 			body += "printf '%s' '" + strings.ReplaceAll(c.stdout, "'", "'\"'\"'") + "'\nexit " + fmt.Sprint(c.exit) + "\n"
 			writeScript(t, helper, body)
-			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-			defer cancel()
-			cmd := exec.CommandContext(ctx, "sh", backupScriptWithHelper(t, dir, helper))
+			cmd := exec.CommandContext(teto, "sh", backupScriptWithHelper(t, dir, helper))
+			// Matar o sh não fecha a saída que o helper herdou: sem isto, um
+			// helper travado seguraria o CombinedOutput depois do teto.
+			cmd.WaitDelay = time.Second
 			cmd.Env = append(os.Environ(), "PATH="+dir+":"+os.Getenv("PATH"), "ORIGEM_URL=postgres://stillon_backup:senha-publica@127.0.0.1:5432/stillon?sslmode=disable", "PGHOST=127.0.0.1", "PGPASSWORD=restauro-publico", "SAIDA="+filepath.Join(dir, "dump"))
 			out, err := cmd.CombinedOutput()
+			if teto.Err() != nil {
+				t.Fatalf("o script travou: %v\n%s", teto.Err(), out)
+			}
 			code := 0
 			if err != nil {
 				if exit, ok := err.(*exec.ExitError); ok {
