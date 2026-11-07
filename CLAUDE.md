@@ -80,7 +80,7 @@ não perguntar sobre a renovação dela.
 [continuidade de 2026-11-05](docs/superpowers/reports/2026-11-05-continuacao.md)): detalhes de
 design do redesign, ligar o 2FA e mover o login para o Bitwarden, D1–D3 da
 [vinculação Discord](docs/superpowers/plans/2026-10-05-vinculacao-discord.md), os segredos da VPS
-no nível do repositório, o acesso SSH a partir deste Mac, a migração para Go 1.27.3 ou mais novo (a `main` fica no 1.26.10) e o `stash@{0}` local
+no nível do repositório, o acesso SSH a partir deste Mac e o `stash@{0}` local
 (volume externo do compose). Não confundir planejamento aprovado com código pronto.
 
 O `checar-vps.sh` não roda nativo no Mac (o `stillon-entrada` fixa um `PATH` de Ubuntu e o tar do
