@@ -233,7 +233,7 @@ func iniciar(t *testing.T) {
 // por digest (D29 do Plano 7); a CI escolhe a versão por TEST_POSTGRES_IMAGE.
 // O Dependabot não atualiza esta string: mantenha-a igual ao digest de
 // deploy/vps/db/Dockerfile e atualize as duas juntas (e a matriz do ci.yml).
-const imagemPadrao = "postgres:18-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873"
+const imagemPadrao = "postgres:18-alpine@sha256:123b17998ccaf47e53b502e8c6a1e79afd8f579c6f3eec83c563da026f957395"
 
 func imagem() string {
 	if v := os.Getenv("TEST_POSTGRES_IMAGE"); v != "" {
