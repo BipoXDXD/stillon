@@ -275,6 +275,39 @@ var janelasDaSerie = map[string]time.Duration{
 	"90d": 90 * 24 * time.Hour,
 }
 
+// lerIntervalo lê a janela [from, to) de GET /targets/{id}/checks. Sem to, é
+// agora; sem from nem window, são as 24 h antes do to. Devolve o nome do
+// primeiro campo inválido, na ordem to, window, from, ou "" se a janela vale.
+func lerIntervalo(q url.Values, agora time.Time) (from, to time.Time, invalido string) {
+	to = agora
+	if s := q.Get("to"); s != "" {
+		v, err := time.Parse(time.RFC3339, s)
+		if err != nil {
+			return time.Time{}, time.Time{}, "to"
+		}
+		to = v
+	}
+	from = to.Add(-24 * time.Hour)
+	// B6 (Plano 10): com window, o servidor calcula o from, e o gráfico não
+	// depende do relógio do navegador. window e from juntos seriam duas
+	// respostas para a mesma pergunta.
+	if q.Has("window") {
+		janela, ok := janelasDaSerie[q.Get("window")]
+		if !ok || q.Has("from") {
+			return time.Time{}, time.Time{}, "window"
+		}
+		from = to.Add(-janela)
+	}
+	if s := q.Get("from"); s != "" {
+		v, err := time.Parse(time.RFC3339, s)
+		if err != nil {
+			return time.Time{}, time.Time{}, "from"
+		}
+		from = v
+	}
+	return from, to, ""
+}
+
 func (h *TargetHandlers) Checks(w http.ResponseWriter, r *http.Request) {
 	userID, ok := usuario(w, r)
 	if !ok {
@@ -284,36 +317,10 @@ func (h *TargetHandlers) Checks(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	q := r.URL.Query()
-
-	to := h.clk.Now()
-	if s := q.Get("to"); s != "" {
-		v, err := time.Parse(time.RFC3339, s)
-		if err != nil {
-			campoInvalido(w, r, "to", targets.ReasonInvalid)
-			return
-		}
-		to = v
-	}
-	from := to.Add(-24 * time.Hour)
-	// B6 (Plano 10): com window, o servidor calcula o from, e o gráfico não
-	// depende do relógio do navegador. window e from juntos seriam duas
-	// respostas para a mesma pergunta.
-	if q.Has("window") {
-		janela, ok := janelasDaSerie[q.Get("window")]
-		if !ok || q.Has("from") {
-			campoInvalido(w, r, "window", targets.ReasonInvalid)
-			return
-		}
-		from = to.Add(-janela)
-	}
-	if s := q.Get("from"); s != "" {
-		v, err := time.Parse(time.RFC3339, s)
-		if err != nil {
-			campoInvalido(w, r, "from", targets.ReasonInvalid)
-			return
-		}
-		from = v
+	from, to, invalido := lerIntervalo(r.URL.Query(), h.clk.Now())
+	if invalido != "" {
+		campoInvalido(w, r, invalido, targets.ReasonInvalid)
+		return
 	}
 
 	serie, err := h.svc.Checks(r.Context(), userID, id, from, to)
