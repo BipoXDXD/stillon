@@ -70,7 +70,7 @@
       "environment": {
         "STILLON_DOMINIO": "${STILLON_DOMINIO:?defina STILLON_DOMINIO no /opt/stillon/.env}"
       },
-      "image": "caddy:2@sha256:0c994536bddb66445885237f1a5dcc1916bccea922661c76b4e9fc24061f9b52",
+      "image": "caddy:2@sha256:b060aafbec4f8f5404c80273c8d8758248f157920d0a0cdd5cb5656a527f6ec5",
       "logging": {
         "driver": "json-file",
         "options": {
