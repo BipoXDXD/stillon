@@ -470,6 +470,10 @@ class TesteIsolamento(unittest.TestCase):
         with mock.patch.object(ensaio.subprocess, "run", side_effect=respostas) as rodar, mock.patch.object(ensaio.time, "sleep"):
             ensaio.esperar_banco("stillon-ensaio-x")
         self.assertEqual(rodar.call_count, 2)
+        comando = rodar.call_args.args[0]
+        self.assertIn("pg_isready", comando)
+        # Por TCP: durante o init, o socket já responde e o banco ainda vai reiniciar.
+        self.assertEqual(comando[comando.index("-h") + 1], "127.0.0.1")
 
     def test_banco_que_nao_fica_pronto_vira_erro_nomeado(self):
         with mock.patch.object(ensaio.subprocess, "run", return_value=mock.Mock(returncode=1)), mock.patch.object(ensaio.time, "sleep"):
@@ -489,10 +493,10 @@ class TesteRestauro(unittest.TestCase):
         self.addCleanup(os.chdir, anterior)
         self.chamadas = []
 
-    def restaurar(self, falhar_em=None):
+    def restaurar(self, falhar=lambda argumentos: False):
         def rodar(argumentos, entrada=None, tempo=90):
             self.chamadas.append((argumentos, entrada))
-            if falhar_em in argumentos:
+            if falhar(argumentos):
                 raise RuntimeError("isolated_step_failed")
             if argumentos[:2] == ["docker", "inspect"]:
                 return ensaio.VALOR_DO_ROTULO.encode()
@@ -500,6 +504,8 @@ class TesteRestauro(unittest.TestCase):
 
         def esperar(nome):
             self.chamadas.append((["esperar"], None))
+            if falhar(["esperar"]):
+                raise RuntimeError("isolated_database_not_ready")
 
         with mock.patch.object(ensaio, "rodar", side_effect=rodar), mock.patch.object(ensaio, "esperar_banco", side_effect=esperar):
             ensaio.restaurar_isolado(self.CLARO, "16", "3", "12")
@@ -509,8 +515,10 @@ class TesteRestauro(unittest.TestCase):
 
     def test_baixa_a_imagem_fixada_antes_de_subir_o_banco(self):
         self.restaurar()
+        self.assertRegex(ensaio.IMAGEM, r"@sha256:[0-9a-f]{64}$")
         self.assertEqual(self.chamadas[0][0], ["docker", "pull", ensaio.IMAGEM])
         self.assertEqual(self.chamadas[1][0][:2], ["docker", "run"])
+        self.assertIn(ensaio.IMAGEM, self.chamadas[1][0])
 
     def test_cria_o_papel_comum_e_o_banco_dele_depois_de_o_banco_ficar_pronto(self):
         self.restaurar()
@@ -524,7 +532,7 @@ class TesteRestauro(unittest.TestCase):
     def test_restaura_o_dump_no_banco_da_aplicacao_parando_no_primeiro_erro(self):
         self.restaurar()
         argumentos, entrada = self.chamada_com("pg_restore")
-        self.assertEqual(argumentos[-2:], ["-d", "stillon"])
+        self.assertEqual(argumentos[argumentos.index("-d") + 1], "stillon")
         self.assertIn("--exit-on-error", argumentos)
         self.assertEqual(entrada, self.CLARO)
 
@@ -537,10 +545,19 @@ class TesteRestauro(unittest.TestCase):
                 self.assertIn(variavel, argumentos)
         self.assertEqual(entrada, Path("deploy/backup/verificar.sql").read_bytes())
 
-    def test_remove_o_banco_tambem_quando_o_restauro_falha(self):
-        with self.assertRaisesRegex(RuntimeError, "^isolated_step_failed$"):
-            self.restaurar(falhar_em="pg_restore")
-        self.assertEqual(self.chamadas[-1][0][:3], ["docker", "rm", "-f"])
+    def test_remove_o_banco_quando_qualquer_etapa_falha(self):
+        etapas = {
+            "banco que não fica pronto": lambda a: a == ["esperar"],
+            "criar o papel": lambda a: "psql" in a and "versao=16" not in a,
+            "restaurar": lambda a: "pg_restore" in a,
+            "conferir": lambda a: "versao=16" in a,
+        }
+        for nome, falhar in etapas.items():
+            with self.subTest(etapa=nome):
+                self.chamadas = []
+                with self.assertRaises(RuntimeError):
+                    self.restaurar(falhar=falhar)
+                self.assertEqual(self.chamadas[-1][0][:3], ["docker", "rm", "-f"])
 
 
 class TesteEnsaioInteiro(unittest.TestCase):
@@ -554,12 +571,14 @@ class TesteEnsaioInteiro(unittest.TestCase):
         self.addCleanup(temporario.cleanup)
         self.runner_temp = temporario.name
         self.restaurados = []
+        self.decifrados = []
         self.modo_da_pasta = None
 
     def obter(self, caminho, bruto=False):
         base = f"repos/{ensaio.REPO}/actions/"
+        caminho, _, _ = caminho.partition("?")
         respostas = {
-            base + "artifacts?per_page=100&page=1": {"artifacts": [self.artifact]},
+            base + "artifacts": {"artifacts": [self.artifact]},
             base + "runs/1": self.run,
             base + "artifacts/7/zip": self.arquivo,
             base + "runs/1/jobs": {"jobs": [{"id": 50, "name": "backup", "conclusion": "success"}]},
@@ -568,6 +587,7 @@ class TesteEnsaioInteiro(unittest.TestCase):
         return respostas[caminho]
 
     def decifrar(self, cifrado, identidade, pasta):
+        self.decifrados.append((cifrado, identidade))
         self.modo_da_pasta = pasta.stat().st_mode & 0o777
         return b"PGDMP claro"
 
@@ -576,7 +596,7 @@ class TesteEnsaioInteiro(unittest.TestCase):
         saida = io.StringIO()
         with (
             mock.patch.dict(os.environ, ambiente),
-            mock.patch.object(ensaio, "criar_obter", return_value=self.obter),
+            mock.patch.object(ensaio, "criar_obter", return_value=self.obter) as self.criar_obter,
             mock.patch.object(ensaio, "agora_utc", return_value=AGORA),
             mock.patch.object(ensaio, "decifrar", side_effect=self.decifrar),
             mock.patch.object(ensaio, "restaurar_isolado", side_effect=lambda *a: self.restaurados.append(a)),
@@ -591,9 +611,25 @@ class TesteEnsaioInteiro(unittest.TestCase):
     def test_restaura_com_os_numeros_do_log_do_mesmo_run(self):
         resultado = self.rodar_main()
         self.assertEqual(self.restaurados, [(b"PGDMP claro", "16", "3", "12")])
-        self.assertIs(resultado["stored_restore_verified"], True)
-        self.assertEqual(resultado["artifact_id"], 7)
-        self.assertEqual(resultado["backup_run"], 1)
+        self.assertEqual(
+            resultado,
+            {
+                "stored_restore_verified": True,
+                "artifact_id": 7,
+                "backup_run": 1,
+                "backup_age_hours": 1.6,
+                "snapshot_schema": 16,
+                "minimum_users": 3,
+                "minimum_targets": 12,
+                "isolation": "GitHub-hosted runner, PostgreSQL network none, no production mounts",
+                "checked_at_utc": "2026-11-06T16:00:00+00:00",
+            },
+        )
+
+    def test_decifra_o_artifact_com_a_chave_do_ambiente(self):
+        self.rodar_main()
+        self.criar_obter.assert_called_once_with("token")
+        self.assertEqual(self.decifrados, [(b"age-encryption.org/v1\nconteudo", "chave")])
 
     def test_os_segredos_saem_do_ambiente(self):
         self.rodar_main()
@@ -610,12 +646,14 @@ class TesteEnsaioInteiro(unittest.TestCase):
             self.rodar_main()
         self.assertEqual(self.restaurados, [])
         self.assertIsNone(self.modo_da_pasta)
+        self.assertEqual(os.listdir(self.runner_temp), [])
 
     def test_backup_velho_nao_chega_a_decifrar(self):
         self.artifact["created_at"] = "2026-11-01T14:23:51Z"
         with self.assertRaisesRegex(RuntimeError, "^backup_age_outside_policy$"):
             self.rodar_main()
         self.assertIsNone(self.modo_da_pasta)
+        self.assertEqual(os.listdir(self.runner_temp), [])
 
 
 URL = "https://github.com/BipoXDXD/stillon/actions/runs/1"
