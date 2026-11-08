@@ -2,8 +2,10 @@
 //
 // A spec (§14) proíbe mock de banco: RLS, SKIP LOCKED e violação de
 // constraint são invisíveis contra um mock, e são justamente o que precisa de
-// teste. O contêiner sobe uma vez por execução de pacote; cada teste recebe o
-// banco restaurado ao estado pós-migration via snapshot.
+// teste. O contêiner sobe uma vez por execução de pacote. Com New, cada teste
+// recebe o banco compartilhado, restaurado ao estado pós-migration via
+// snapshot (testes em série). Com NovoBanco, cada teste recebe um banco só
+// dele, copiado de um modelo migrado, e pode rodar com t.Parallel().
 package testdb
 
 import (
@@ -40,6 +42,14 @@ const (
 	// produção (D8).
 	appUser = "stillon_app"
 	appPass = "stillon_app"
+
+	// modelo é a cópia do banco recém-migrado de onde NovoBanco tira cada
+	// banco de teste. Ninguém se conecta a ele: CREATE DATABASE ... TEMPLATE
+	// recusa um modelo com sessão aberta.
+	modelo = "stillon_modelo"
+
+	// bancoDeManutencao recebe as conexões de quem cria e apaga bancos.
+	bancoDeManutencao = "postgres"
 )
 
 var (
@@ -49,7 +59,13 @@ var (
 	appDSN    string
 	startErr  error
 	vazios    atomic.Int64
+	bancos    atomic.Int64
+	// dsnsPorTeste liga o teste que pediu NovoBanco às conexões do banco
+	// dele, para DSN e AdminDSN apontarem para o mesmo banco que o pool.
+	dsnsPorTeste sync.Map // *testing.T → dsnsDoBanco
 )
+
+type dsnsDoBanco struct{ app, admin string }
 
 // Cada pacote de go test é um processo, mas o Testcontainers deriva a sessão
 // pelo pai compartilhado. Um Ryuk recriado por outro pacote pode então recolher
@@ -134,9 +150,14 @@ func EsperarBloqueados[T any](t *testing.T, pool *pgxpool.Pool, n int, fim <-cha
 // pelo caminho de boot (storage.Migrate, run) em vez de receber um pool
 // pronto. Chame New antes no mesmo teste: é o cleanup de New que restaura o
 // snapshot quando o teste termina.
+//
+// Num teste que pediu NovoBanco, é a do banco desse teste.
 func DSN(t *testing.T) string {
 	t.Helper()
 	iniciar(t)
+	if d, ok := dsnsPorTeste.Load(t); ok {
+		return d.(dsnsDoBanco).app
+	}
 	return appDSN
 }
 
@@ -168,10 +189,86 @@ func LockTable(t *testing.T, pool *pgxpool.Pool, table string) {
 // AdminDSN é a conexão como superusuário. Serve para provar que o boot
 // RECUSA esse papel e para ler o banco "por fora" da RLS, como faria quem
 // tivesse um dump.
+//
+// Num teste que pediu NovoBanco, é a do banco desse teste.
 func AdminDSN(t *testing.T) string {
 	t.Helper()
 	iniciar(t)
+	if d, ok := dsnsPorTeste.Load(t); ok {
+		return d.(dsnsDoBanco).admin
+	}
 	return adminDSN
+}
+
+// NovoBanco devolve um pool ligado a um banco só deste teste, migrado e sem
+// dados, como o papel da aplicação, e apaga o banco no fim do teste. Ao
+// contrário de New, nada é compartilhado com outro teste, e por isso quem o
+// usa pode chamar t.Parallel().
+//
+// O banco é uma cópia do modelo (CREATE DATABASE ... TEMPLATE), tirado logo
+// depois das migrations: copiar custa o mesmo que o Restore de New, que
+// também apaga e recria um banco a cada teste.
+func NovoBanco(t *testing.T) *pgxpool.Pool {
+	t.Helper()
+	iniciar(t)
+	ctx := context.Background()
+
+	// O nome cru vai nas URLs; o sanitizado, entre aspas, no SQL. Os dois
+	// saem da mesma leitura do contador, como em EmptyDatabase.
+	cru := fmt.Sprintf("stillon_teste_%d", bancos.Add(1))
+	nome := pgx.Identifier{cru}.Sanitize()
+	comoAdmin(t, func(admin *pgx.Conn) error {
+		// #nosec G201 -- nome vem de pgx.Identifier.Sanitize sobre um contador; nada vem de fora.
+		_, err := admin.Exec(ctx, fmt.Sprintf(`CREATE DATABASE %s TEMPLATE %s OWNER %s`,
+			nome, pgx.Identifier{modelo}.Sanitize(), appUser))
+		return err
+	}, "criar o banco do teste")
+
+	dsns := dsnsDoBanco{app: trocarBanco(t, appDSN, cru), admin: trocarBanco(t, adminDSN, cru)}
+	pool, err := storage.NewPool(ctx, dsns.app)
+	if err != nil {
+		t.Fatalf("conectar ao banco do teste: %v", err)
+	}
+	dsnsPorTeste.Store(t, dsns)
+	t.Cleanup(func() {
+		pool.Close()
+		dsnsPorTeste.Delete(t)
+		// FORCE derruba as conexões que o próprio teste abriu por fora do
+		// pool (DSN, AdminDSN) e esqueceu abertas.
+		comoAdmin(t, func(admin *pgx.Conn) error {
+			// #nosec G201 -- mesmo identificador sanitizado acima.
+			_, err := admin.Exec(context.Background(), fmt.Sprintf(`DROP DATABASE IF EXISTS %s WITH (FORCE)`, nome))
+			return err
+		}, "apagar o banco do teste")
+	})
+	return pool
+}
+
+// comoAdmin roda fazer numa conexão de superusuário ao banco de manutenção
+// (postgres), aberta e fechada só para isso. Nunca ao stillon_test: o Restore
+// de New o apaga, e uma sessão nele travaria o DROP.
+func comoAdmin(t *testing.T, fazer func(*pgx.Conn) error, oque string) {
+	t.Helper()
+	ctx := context.Background()
+	admin, err := pgx.Connect(ctx, trocarBanco(t, adminDSN, bancoDeManutencao))
+	if err != nil {
+		t.Fatalf("%s: conectar como admin: %v", oque, err)
+	}
+	defer admin.Close(ctx)
+	if err := fazer(admin); err != nil {
+		t.Fatalf("%s: %v", oque, err)
+	}
+}
+
+// trocarBanco devolve dsn apontando para o banco nome.
+func trocarBanco(t *testing.T, dsn, nome string) string {
+	t.Helper()
+	u, err := url.Parse(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	u.Path = "/" + nome
+	return u.String()
 }
 
 // EmptyDatabase cria um banco novo, vazio e NÃO migrado, cujo dono é o
@@ -278,7 +375,32 @@ func start() {
 	if startErr = storage.Migrate(ctx, appDSN); startErr != nil {
 		return
 	}
-	startErr = container.Snapshot(ctx)
+	if startErr = container.Snapshot(ctx); startErr != nil {
+		return
+	}
+	startErr = criarModelo(ctx)
+}
+
+// criarModelo copia o banco recém-migrado (sem sessões abertas depois do
+// Snapshot) para o modelo de NovoBanco. É uma cópia própria, e não o modelo
+// interno do Snapshot, cujo nome é detalhe do testcontainers.
+func criarModelo(ctx context.Context) error {
+	u, err := url.Parse(adminDSN)
+	if err != nil {
+		return err
+	}
+	// Conectado ao próprio stillon_test, ele não serviria de modelo: o
+	// CREATE DATABASE recusa uma origem com sessão aberta.
+	u.Path = "/" + bancoDeManutencao
+	conn, err := pgx.Connect(ctx, u.String())
+	if err != nil {
+		return fmt.Errorf("conectar como admin: %w", err)
+	}
+	defer conn.Close(ctx)
+	if _, err := conn.Exec(ctx, `CREATE DATABASE `+modelo+` TEMPLATE `+dbName+` OWNER `+appUser); err != nil {
+		return fmt.Errorf("criar o modelo dos bancos de teste: %w", err)
+	}
+	return nil
 }
 
 func criarPapelDaAplicacao(ctx context.Context) error {
