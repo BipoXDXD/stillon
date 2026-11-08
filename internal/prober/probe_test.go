@@ -61,6 +61,18 @@ func TestProbeExpectedStatusOtherThan200(t *testing.T) {
 	}
 }
 
+// Um status ABAIXO do esperado também é falha: 200 não satisfaz quem espera
+// 204. Os outros testes só usam status acima do esperado (500 contra 200).
+func TestProbeStatusBelowTheExpectedIsDown(t *testing.T) {
+	srv, client := servidor(t, func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
+	s := especificacao(srv.URL)
+	s.ExpectedStatus = http.StatusNoContent
+	res := Probe(t.Context(), client, s)
+	if res.Status != StatusDown || res.ErrorKind != KindHTTPStatus || res.StatusCode != 200 {
+		t.Errorf("res = %+v, queria down/http_status/200", res)
+	}
+}
+
 // Spec §11.5: sucesso lento é degraded; limiar zero desliga a classificação.
 func TestProbeDegradedAboveThreshold(t *testing.T) {
 	srv, client := servidor(t, func(w http.ResponseWriter, r *http.Request) {
@@ -69,8 +81,8 @@ func TestProbeDegradedAboveThreshold(t *testing.T) {
 	})
 	s := especificacao(srv.URL)
 	s.DegradedThreshold = 50 * time.Millisecond
-	if res := Probe(t.Context(), client, s); res.Status != StatusDegraded || res.ErrorKind != "" {
-		t.Errorf("com limiar de 50ms: %+v, queria degraded sem erro", res)
+	if res := Probe(t.Context(), client, s); res.Status != StatusDegraded || res.ErrorKind != "" || res.StatusCode != 200 {
+		t.Errorf("com limiar de 50ms: %+v, queria degraded sem erro e com status 200", res)
 	}
 	s.DegradedThreshold = 0
 	if res := Probe(t.Context(), client, s); res.Status != StatusUp {
@@ -99,6 +111,25 @@ func TestProbeTimeoutWaitingForHeaders(t *testing.T) {
 	}
 }
 
+// A falha sem resposta também grava a latência: o tempo que a sonda esperou,
+// que no timeout é ao menos o prazo, e não zero.
+func TestProbeFailureWithoutResponseRecordsTheLatency(t *testing.T) {
+	parar := make(chan struct{})
+	srv, client := servidor(t, func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-r.Context().Done():
+		case <-parar:
+		}
+	})
+	t.Cleanup(func() { close(parar) })
+
+	s := especificacao(srv.URL)
+	s.Timeout = 200 * time.Millisecond
+	if res := Probe(t.Context(), client, s); res.Latency < s.Timeout {
+		t.Errorf("latência = %s, queria ao menos o prazo de %s", res.Latency, s.Timeout)
+	}
+}
+
 // O prazo vale também para o corpo: um servidor que manda o cabeçalho e
 // para prenderia a sonda para sempre.
 func TestProbeTimeoutWhileReadingBody(t *testing.T) {
@@ -115,8 +146,9 @@ func TestProbeTimeoutWhileReadingBody(t *testing.T) {
 
 	s := especificacao(srv.URL)
 	s.Timeout = 200 * time.Millisecond
-	if res := Probe(t.Context(), client, s); res.Status != StatusDown || res.ErrorKind != KindTimeout {
-		t.Errorf("res = %+v, queria down/timeout", res)
+	// O cabeçalho chegou: o status lido vai junto com a falha do corpo.
+	if res := Probe(t.Context(), client, s); res.Status != StatusDown || res.ErrorKind != KindTimeout || res.StatusCode != 200 {
+		t.Errorf("res = %+v, queria down/timeout/200", res)
 	}
 }
 

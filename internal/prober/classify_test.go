@@ -36,6 +36,12 @@ func TestClassify(t *testing.T) {
 		{"certificado desconhecido", embrulhar(&tls.CertificateVerificationError{Err: x509.UnknownAuthorityError{}}), KindTLS},
 		{"cabeçalho TLS inválido", embrulhar(tls.RecordHeaderError{Msg: "first record does not look like a TLS handshake"}), KindTLS},
 		{"hostname errado no certificado", embrulhar(x509.HostnameError{Host: "x"}), KindTLS},
+		// Cada tipo de TLS sozinho: o caso "certificado desconhecido" acima
+		// passa por dois deles ao mesmo tempo, e um esconderia a falta do outro.
+		{"falha de verificação sem causa conhecida", embrulhar(&tls.CertificateVerificationError{Err: errors.New("outra")}), KindTLS},
+		{"autoridade desconhecida, sem o envelope", embrulhar(x509.UnknownAuthorityError{}), KindTLS},
+		{"alerta TLS", embrulhar(tls.AlertError(40)), KindTLS},
+		{"certificado inválido", embrulhar(x509.CertificateInvalidError{Reason: x509.Expired}), KindTLS},
 		{"conexão cortada no meio", embrulhar(io.ErrUnexpectedEOF), KindUnknown},
 		{"reset", embrulhar(&net.OpError{Op: "read", Err: os.NewSyscallError("read", syscall.ECONNRESET)}), KindUnknown},
 		{"qualquer outro", errors.New("??"), KindUnknown},
