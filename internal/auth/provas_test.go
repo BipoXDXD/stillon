@@ -160,3 +160,58 @@ func TestFamilyProofsOldReservationCannotRefundANewBudget(t *testing.T) {
 		t.Error("a reserva antiga devolveu uma vaga da conta nova ainda em voo")
 	}
 }
+
+// On point de familiaParada: com exatamente 24 h sem reserva, a família fica.
+func TestFamilyProofsKeepAFamilyIdleForExactlyTheLimit(t *testing.T) {
+	clk := clock.NewFake(time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC))
+	provas := auth.NewFamilyProofs(clk)
+	provas.Reserve(uuid.New())
+	clk.Advance(24 * time.Hour)
+	provas.Reserve(uuid.New())
+	if got := provas.Len(); got != 2 {
+		t.Errorf("%d famílias, queria 2", got)
+	}
+}
+
+// Um sucesso zera a família: as provas que estavam em voo não contam mais.
+func TestFamilyProofsInFlightFailuresAfterASuccessDoNotCount(t *testing.T) {
+	provas := auth.NewFamilyProofs(clock.NewFake(time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)))
+	familia := uuid.New()
+	emVoo := make([]*auth.ProofReservation, 0, auth.FamilyProofLimit)
+	for range auth.FamilyProofLimit {
+		emVoo = append(emVoo, provas.Reserve(familia))
+	}
+	provas.Reserve(familia).Succeed()
+	for i, r := range emVoo {
+		if r.Fail() {
+			t.Errorf("a falha em voo %d derrubou a família depois do sucesso", i+1)
+		}
+	}
+}
+
+// O sucesso de uma reserva antiga não zera a conta que nasceu depois dela.
+func TestFamilyProofsOldSuccessDoesNotResetANewCount(t *testing.T) {
+	provas := auth.NewFamilyProofs(clock.NewFake(time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)))
+	familia := uuid.New()
+	velha := provas.Reserve(familia)
+	provas.Reserve(familia).Succeed()
+	for range auth.FamilyProofLimit - 1 {
+		provas.Reserve(familia).Fail()
+	}
+	velha.Succeed()
+	if !provas.Reserve(familia).Fail() {
+		t.Error("a falha do limite não derrubou a família: o sucesso antigo zerou a conta nova")
+	}
+}
+
+// Reserva devolvida não aproxima a família do esgotamento.
+func TestFamilyProofsReleasedReservationsDoNotExhaust(t *testing.T) {
+	provas := auth.NewFamilyProofs(clock.NewFake(time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)))
+	familia := uuid.New()
+	for range auth.FamilyProofLimit + 1 {
+		provas.Reserve(familia).Release()
+	}
+	if provas.Reserve(familia).Exhausted() {
+		t.Error("reservas devolvidas esgotaram a família")
+	}
+}

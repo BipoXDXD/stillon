@@ -243,3 +243,14 @@ func TestValidateNewPasswordCountsCodePoints(t *testing.T) {
 		})
 	}
 }
+
+// O caminho do e-mail inexistente paga um Argon2id de verdade.
+func TestVerifyDummyPaysOneVerification(t *testing.T) {
+	antes := auth.Argon2Verifications()
+	if err := auth.VerifyDummy(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := auth.Argon2Verifications() - antes; got != 1 {
+		t.Errorf("%d verificações, queria 1", got)
+	}
+}

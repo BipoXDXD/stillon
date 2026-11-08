@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"errors"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -531,4 +532,94 @@ func TestRevokingAnUnknownTokenStaysSilent(t *testing.T) {
 	if err := mgr.Revoke(context.Background(), "token-que-nunca-existiu"); err != nil {
 		t.Errorf("revogar token desconhecido devolveu %v, queria nil", err)
 	}
+}
+
+// A prova de segundo fator sem segredo não vale para quem não tem 2FA: nil e
+// nil são iguais para bytes.Equal, e a sessão sairia sem fator nenhum.
+func TestSecondFactorProofWithoutASecretIsStale(t *testing.T) {
+	mgr, _, _, userID := setup(t)
+	_, _, err := mgr.IssueAfterSecondFactor(context.Background(), userID, carimbo, auth.SecondFactorProof{}, meta)
+	if !errors.Is(err, auth.ErrStaleSecondFactor) {
+		t.Errorf("erro = %v, queria ErrStaleSecondFactor", err)
+	}
+}
+
+// On point do vencimento: no instante exato de expires_at o refresh ainda vale.
+func TestRefreshStillRotatesAtTheExactExpiry(t *testing.T) {
+	mgr, _, clk, userID := setup(t)
+	ctx := context.Background()
+	tok, _, err := mgr.Issue(ctx, userID, carimbo, meta)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clk.Advance(auth.RefreshTTL)
+	if _, _, err := mgr.Rotate(ctx, tok, meta); err != nil {
+		t.Errorf("rotação no instante do vencimento: %v", err)
+	}
+}
+
+type txQueRegistra struct {
+	txFalsa
+	ordem *[]string
+}
+
+func (t txQueRegistra) anotar(passo string) { *t.ordem = append(*t.ordem, passo) }
+
+func (t txQueRegistra) LockUserSessions(context.Context, uuid.UUID) error {
+	t.anotar("trava do usuário")
+	return nil
+}
+
+func (t txQueRegistra) UserPasswordHash(ctx context.Context, id uuid.UUID) (string, error) {
+	t.anotar("lê o hash")
+	return t.txFalsa.UserPasswordHash(ctx, id)
+}
+
+func (t txQueRegistra) SessionUserByHash(ctx context.Context, h []byte) (uuid.UUID, error) {
+	t.anotar("acha o usuário")
+	return t.txFalsa.SessionUserByHash(ctx, h)
+}
+
+func (t txQueRegistra) LockSessionByHash(ctx context.Context, h []byte) (auth.SessionRow, error) {
+	t.anotar("trava a linha")
+	return t.txFalsa.LockSessionByHash(ctx, h)
+}
+
+// confereOrdem exige que os dois passos tenham acontecido, nessa ordem.
+func confereOrdem(t *testing.T, ordem []string, primeiro, depois string) {
+	t.Helper()
+	i, j := slices.Index(ordem, primeiro), slices.Index(ordem, depois)
+	if i < 0 || j < 0 || i > j {
+		t.Errorf("ordem = %v; queria %q antes de %q", ordem, primeiro, depois)
+	}
+}
+
+type storeDeTx struct{ tx auth.Tx }
+
+func (s storeDeTx) InTx(ctx context.Context, fn func(context.Context, auth.Tx) error) error {
+	return fn(ctx, s.tx)
+}
+
+// A trava do usuário vem antes da leitura do hash: é ela que fecha a corrida
+// com uma redefinição de senha (D1 do Plano 5).
+func TestIssueLocksTheUserBeforeReadingTheHash(t *testing.T) {
+	agora := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
+	var ordem []string
+	mgr := auth.NewManager(storeDeTx{txQueRegistra{txFalsa{usadaEm: agora}, &ordem}}, clock.NewFake(agora), ipKey)
+	if _, _, err := mgr.Issue(context.Background(), uuid.New(), carimbo, meta); err != nil {
+		t.Fatal(err)
+	}
+	confereOrdem(t, ordem, "trava do usuário", "lê o hash")
+}
+
+// Quem muda sessões pega a trava do usuário antes da trava da linha.
+func TestRotateLocksTheUserBeforeTheRow(t *testing.T) {
+	agora := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
+	var ordem []string
+	mgr := auth.NewManager(storeDeTx{txQueRegistra{txFalsa{usadaEm: agora}, &ordem}}, clock.NewFake(agora), ipKey)
+	// A sessão falsa já foi usada: o Rotate termina em reúso, depois das travas.
+	if _, _, err := mgr.Rotate(context.Background(), "qualquer", meta); !errors.Is(err, auth.ErrTokenReuse) {
+		t.Fatalf("erro = %v, queria ErrTokenReuse", err)
+	}
+	confereOrdem(t, ordem, "trava do usuário", "trava a linha")
 }
