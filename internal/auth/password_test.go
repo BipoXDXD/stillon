@@ -83,18 +83,49 @@ func TestVerifyFlagsWeakerParametersForRehash(t *testing.T) {
 	}
 }
 
+// Cada eixo abaixo do padrão (m=65536, t=3, p=2) pede rehash sozinho, com os
+// outros dois no padrão. O teste acima baixa os três juntos, e a regra que
+// esquecesse um deles passaria por ele.
+func TestVerifyFlagsEachWeakerAxisForRehash(t *testing.T) {
+	for _, tc := range []struct {
+		nome    string
+		memoria uint32
+		tempo   uint32
+		threads uint8
+	}{
+		{"memória", 32 * 1024, 3, 2},
+		{"iterações", 64 * 1024, 2, 2},
+		{"threads", 64 * 1024, 3, 1},
+	} {
+		t.Run(tc.nome, func(t *testing.T) {
+			h, err := auth.HashPasswordWith(senha, []byte("saltsaltsaltsalt"), tc.memoria, tc.tempo, tc.threads)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ok, needsRehash, err := auth.VerifyPassword(context.Background(), h, senha)
+			if err != nil || !ok {
+				t.Fatalf("ok = %v, err = %v; queria a senha aceita", ok, err)
+			}
+			if !needsRehash {
+				t.Errorf("%s abaixo do padrão deveria pedir rehash", tc.nome)
+			}
+		})
+	}
+}
+
 func TestVerifyRejectsMalformedHash(t *testing.T) {
 	cases := map[string]string{
-		"vazio":                "",
-		"sem cifrão":           "argon2id",
-		"algoritmo errado":     "$argon2i$v=19$m=65536,t=3,p=2$c2FsdA$aGFzaA",
-		"versão errada":        "$argon2id$v=18$m=65536,t=3,p=2$c2FsdA$aGFzaA",
-		"parâmetros ilegíveis": "$argon2id$v=19$m=abc,t=3,p=2$c2FsdA$aGFzaA",
-		"salt não é base64":    "$argon2id$v=19$m=65536,t=3,p=2$!!!$aGFzaA",
-		"hash não é base64":    "$argon2id$v=19$m=65536,t=3,p=2$c2FsdA$!!!",
-		"salt vazio":           "$argon2id$v=19$m=65536,t=3,p=2$$aGFzaA",
-		"hash vazio":           "$argon2id$v=19$m=65536,t=3,p=2$c2FsdA$",
-		"campos a menos":       "$argon2id$v=19$m=65536,t=3,p=2$c2FsdA",
+		"vazio":                  "",
+		"sem cifrão":             "argon2id",
+		"algoritmo errado":       "$argon2i$v=19$m=65536,t=3,p=2$c2FsdA$aGFzaA",
+		"versão errada":          "$argon2id$v=18$m=65536,t=3,p=2$c2FsdA$aGFzaA",
+		"parâmetros ilegíveis":   "$argon2id$v=19$m=abc,t=3,p=2$c2FsdA$aGFzaA",
+		"salt não é base64":      "$argon2id$v=19$m=65536,t=3,p=2$!!!$aGFzaA",
+		"hash não é base64":      "$argon2id$v=19$m=65536,t=3,p=2$c2FsdA$!!!",
+		"salt vazio":             "$argon2id$v=19$m=65536,t=3,p=2$$aGFzaA",
+		"hash vazio":             "$argon2id$v=19$m=65536,t=3,p=2$c2FsdA$",
+		"campos a menos":         "$argon2id$v=19$m=65536,t=3,p=2$c2FsdA",
+		"texto antes do prefixo": "x$argon2id$v=19$m=65536,t=3,p=2$c2FsdA$aGFzaA",
 	}
 
 	for nome, h := range cases {
