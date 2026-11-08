@@ -16,10 +16,14 @@ const MUTACAO = { 'X-Requested-With': 'stillon' }
 // A mesma pausa do fluxo.spec.ts: os baldes do login (5 de burst por IP) e o
 // por usuário, que as specs anteriores gastaram, enchem de novo.
 const RECARGA_DOS_BALDES_MS = 21_000
-// Um 429 do login (o balde do IP é dividido com o painel) espera e tenta de
-// novo, com teto; qualquer outro status cai na asserção.
-const RECUOS_DO_429_MS = [2_000, 4_000, 8_000, 16_000]
+// Um 429 do login ou da troca de senha (o balde do IP é dividido com o painel)
+// espera o Retry-After e envia de novo, com teto; o segundo a mais é a folga
+// para a ficha já ter voltado quando o reenvio chegar.
+const ENVIOS_NO_LIMITE = 6
+const RETRY_AFTER_PADRAO_S = 6
 const espera = (ms: number) => new Promise((ok) => setTimeout(ok, ms))
+const esperarORetryAfter = (r: { headers(): Record<string, string> }) =>
+  espera((Number(r.headers()['retry-after'] ?? RETRY_AFTER_PADRAO_S) + 1) * 1000)
 
 test.beforeAll(async () => {
   test.setTimeout(RECARGA_DOS_BALDES_MS + 10_000)
@@ -57,25 +61,22 @@ test.afterEach(async ({ playwright, baseURL, credenciais }) => {
 })
 
 async function entrarPelaApi(api: APIRequestContext, email: string, senha: string): Promise<Record<string, string>> {
-  for (let i = 0; ; i++) {
+  for (let envio = 1; ; envio++) {
     const r = await api.post('/api/v1/auth/login', { headers: MUTACAO, data: { email, password: senha } })
-    const recuo = RECUOS_DO_429_MS[i]
-    if (r.status() !== 429 || recuo === undefined) {
+    if (r.status() !== 429 || envio === ENVIOS_NO_LIMITE) {
       expect(r.status(), 'login pela API').toBe(200)
       const { access_token: token } = (await r.json()) as { access_token: string }
       return { Authorization: `Bearer ${token}`, ...MUTACAO }
     }
-    await espera(recuo)
+    await esperarORetryAfter(r)
   }
 }
 
 // O login e a troca de senha dividem o balde do login (5 de burst por IP, 1
-// ficha a cada 6 s), e esta spec passa dele. Um 429 dessas rotas espera o
-// Retry-After e envia de novo, com teto; qualquer outro status segue, e o
-// resultado na tela cai na asserção de quem chamou. Vale a resposta, e não o
-// texto: o aviso do 429 anterior continua na tela até a resposta seguinte.
-const ENVIOS_NO_LIMITE = 6
-
+// ficha a cada 6 s), e esta spec passa dele. Qualquer status que não seja 429
+// segue, e o resultado na tela cai na asserção de quem chamou. Vale a resposta,
+// e não o texto: o aviso do 429 anterior continua na tela até a resposta
+// seguinte.
 async function enviarNoLimite(page: Page, rota: string, enviar: () => Promise<void>, esperado: Locator) {
   for (let i = 0; i < ENVIOS_NO_LIMITE; i++) {
     const resposta = page.waitForResponse((r) => new URL(r.url()).pathname === rota && r.request().method() === 'POST')
@@ -85,7 +86,7 @@ async function enviarNoLimite(page: Page, rota: string, enviar: () => Promise<vo
       await expect(esperado).toBeVisible()
       return
     }
-    await espera((Number(r.headers()['retry-after'] ?? 6) + 1) * 1000)
+    await esperarORetryAfter(r)
   }
   throw new Error(`${rota}: ainda em 429 depois de ${ENVIOS_NO_LIMITE} envios`)
 }
@@ -139,7 +140,7 @@ test('status page pelo painel: publicar com um alvo, abrir a página pública e 
     const lista = await request.get('/api/v1/status-pages', { headers: cabecalhos })
     expect(lista.status(), 'listar as status pages').toBe(200)
     const original = ((await lista.json()) as { items: Pagina[] }).items[0]
-    desfazer.push({
+    desfazer.unshift({
       nome: 'restaurar a status page',
       fazer: async (a, c) => {
         const atual = ((await (await a.get('/api/v1/status-pages', { headers: c })).json()) as { items: Pagina[] }).items[0]

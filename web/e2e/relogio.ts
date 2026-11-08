@@ -13,7 +13,7 @@ import type { Page } from '@playwright/test'
 // seguem no relógio real. Fora das esperas o relógio anda no ritmo normal, e
 // timers curtos de interface (o "Copiado" de 2 s, os avisos) não encurtam.
 //
-// 4×: com a cadência de uma requisição por segundo do fluxo.spec.ts, a tela da
+// 4×: com a cadência de uma requisição por segundo (cadencia.ts), a tela da
 // tarefa pede ~0,5 por segundo (heartbeat a cada 3,75 s, eventos e incidentes
 // a cada 7,5 s) e o painel ~0,7; acima disso a fila da cadência cresceria.
 export const ACELERACAO = 4
