@@ -18,7 +18,7 @@ nem aqui nem no PR.
 | Ter 10/11, 11:10 | Congelamento: sem merge na `main` dos três repositórios | Merge parado, inclusive de documentação |
 | Ter 10/11, 11:20 | Fase 2: site do StillOn por `reload` | Sem queda esperada |
 | Ter 10/11, 11:35 | Fase 3: o gateway é recriado | Queda de 4 a 6 s (estimativa) |
-| Ter 10/11, 13:10 | Fim previsto do congelamento | Merge liberado |
+| Qua 11/11, 14:00 | Fim previsto do congelamento | Merge liberado |
 | Qui 12/11 | Reserva, no mesmo horário | Repete a tabela |
 
 Se a Fase 2 ou a Fase 3 falhar, a sessão para e as fases seguintes não acontecem.
