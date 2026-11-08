@@ -283,7 +283,7 @@ func TestRateLimitIPv6SeparaBlocosDe64(t *testing.T) {
 		segunda int
 		baldes  int
 	}{
-		{"mesmo /64 divide o balde", [2]string{"[2001:db8:1:2:aaaa::1]:1", "[2001:db8:1:2:bbbb::2]:1"}, http.StatusTooManyRequests, 1},
+		{"mesmo /64 divide o balde", [2]string{"[2001:db8:1:2::1]:1", "[2001:db8:1:2:8000::1]:1"}, http.StatusTooManyRequests, 1},
 		{"outro /64 no mesmo /48 não divide", [2]string{"[2001:db8:1:2::1]:1", "[2001:db8:1:3::1]:1"}, http.StatusOK, 2},
 	}
 	for _, c := range cases {
