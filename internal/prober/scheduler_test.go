@@ -681,7 +681,7 @@ func TestRefusedTargetIsRecordedEvenWithUnreadableHeaders(t *testing.T) {
 	}
 }
 
-// A recusa é só do ẞ: ß, com ou sem headers, continua sondando.
+// A recusa é só do ẞ: ß continua sondando.
 func TestTargetWithSharpSKeepsProbing(t *testing.T) {
 	transporte := &transporteContador{}
 	b := novaBancada(t, &http.Client{Transport: transporte}, MaxInFlight)
