@@ -177,3 +177,20 @@ func TestDeviceAttempts(t *testing.T) {
 		}
 	}
 }
+
+// O dispositivo parado há mais de um dia sai do contador: o mapa não cresce.
+func TestDeviceAttemptsForgetIdleDevices(t *testing.T) {
+	clk := clock.NewFake(time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC))
+	dispositivos := auth.NewDevices([]byte("chave-mestra-de-teste-32-bytes!!"), clk)
+	ctx := context.Background()
+	if _, err := dispositivos.Attempts(auth.DeviceID{1}).Reserve(ctx); err != nil {
+		t.Fatal(err)
+	}
+	clk.Advance(24*time.Hour + time.Second)
+	if _, err := dispositivos.Attempts(auth.DeviceID{2}).Reserve(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := dispositivos.Len(); got != 1 {
+		t.Errorf("%d dispositivos, queria 1", got)
+	}
+}

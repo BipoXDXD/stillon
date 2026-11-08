@@ -715,3 +715,38 @@ func TestStartRotationIsAudited(t *testing.T) {
 		t.Errorf("%d eventos totp.rotation_started depois de dois rotates, queria 2", n)
 	}
 }
+
+// Quem provou o fator atual na troca de autenticador zera o bloqueio da conta,
+// no início e na confirmação.
+func TestRotationClearsTheAccountLock(t *testing.T) {
+	travar := func(t *testing.T, pool *pgxpool.Pool, userID uuid.UUID) {
+		t.Helper()
+		if _, err := pool.Exec(context.Background(), `UPDATE users SET failed_attempts = 3, locked_until = $2 WHERE id = $1`,
+			userID, inicioDaTroca.Add(time.Hour)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	conferir := func(t *testing.T, pool *pgxpool.Pool, userID uuid.UUID) {
+		t.Helper()
+		if tentativas, ate := lerTravas(t, pool, userID); tentativas != 0 || ate != nil {
+			t.Errorf("failed_attempts = %d, locked_until = %v; queria 0 e nil", tentativas, ate)
+		}
+	}
+	t.Run("início", func(t *testing.T) {
+		svc, pool, userID := setupTOTP(t)
+		travar(t, pool, userID)
+		iniciarTroca(t, svc, pool, userID, familiaViva(t, pool, userID, inicioDaTroca))
+		conferir(t, pool, userID)
+	})
+	t.Run("confirmação", func(t *testing.T) {
+		svc, pool, userID := setupTOTP(t)
+		familia := familiaViva(t, pool, userID, inicioDaTroca)
+		novo := iniciarTroca(t, svc, pool, userID, familia)
+		travar(t, pool, userID)
+		em := inicioDaTroca.Add(time.Minute)
+		if _, err := svc.ConfirmRotation(context.Background(), userID, familia, rotacaoAtual(t, pool, userID), codigoEm(t, novo, em), em); err != nil {
+			t.Fatal(err)
+		}
+		conferir(t, pool, userID)
+	})
+}

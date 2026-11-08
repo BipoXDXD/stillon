@@ -764,3 +764,69 @@ func codigoErradoDe(t *testing.T, secret string, em time.Time) string {
 	}
 	return "000000"
 }
+
+// A janela de skew é de um período para cada lado: dois já ficam de fora.
+func TestVerifyRejectsACodeTwoPeriodsAway(t *testing.T) {
+	const secret = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"
+	now := time.Date(2026, 9, 22, 12, 0, 15, 0, time.UTC)
+	for nome, deslocamento := range map[string]time.Duration{"atrás": -time.Minute, "à frente": time.Minute} {
+		t.Run(nome, func(t *testing.T) {
+			svc, pool, userID := setupTOTP(t)
+			gravarSegredoTOTP(t, pool, userID, secret)
+			codigo, err := totp.GenerateCode(secret, now.Add(deslocamento))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := svc.Verify(context.Background(), userID, codigo, now); !errors.Is(err, auth.ErrTOTPInvalid) {
+				t.Errorf("erro = %v, queria ErrTOTPInvalid", err)
+			}
+		})
+	}
+}
+
+// Desligar o 2FA leva junto os códigos de recuperação.
+func TestDisableRemovesTheRecoveryCodes(t *testing.T) {
+	svc, pool, userID := setupTOTP(t)
+	ctx := context.Background()
+	now := time.Date(2026, 9, 22, 12, 0, 15, 0, time.UTC)
+	uri, err := svc.Enroll(ctx, userID, "pessoa@exemplo.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	secret := secretFromURI(t, uri)
+	codigo, err := totp.GenerateCode(secret, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Confirm(ctx, userID, codigo, now); err != nil {
+		t.Fatal(err)
+	}
+	depois := now.Add(time.Minute)
+	codigo, err = totp.GenerateCode(secret, depois)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Disable(ctx, userID, codigo, depois); err != nil {
+		t.Fatal(err)
+	}
+	var restantes int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM totp_recovery_codes WHERE user_id = $1`, userID).Scan(&restantes); err != nil {
+		t.Fatal(err)
+	}
+	if restantes != 0 {
+		t.Errorf("%d códigos de recuperação sobraram, queria 0", restantes)
+	}
+}
+
+// Linha confirmada sem segredo é conta sem segundo fator, e não erro interno.
+func TestDisableTreatsAConfirmationWithoutASecretAsNotEnrolled(t *testing.T) {
+	svc, pool, userID := setupTOTP(t)
+	ctx := context.Background()
+	now := time.Date(2026, 9, 22, 12, 0, 15, 0, time.UTC)
+	if _, err := pool.Exec(ctx, `UPDATE users SET totp_confirmed_at = $2 WHERE id = $1`, userID, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Disable(ctx, userID, "000000", now); !errors.Is(err, auth.ErrTOTPNotEnrolled) {
+		t.Errorf("erro = %v, queria ErrTOTPNotEnrolled", err)
+	}
+}
