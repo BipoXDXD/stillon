@@ -52,9 +52,13 @@ conferir está em "Não confirmado".
   corrigido junto com a janela.
 - **Comparação do `.caddy` em produção com o do repositório:** proposta para o repositório do
   GoblinShift. O StillOn não guarda cópia desse arquivo.
-- **Triagem de alertas de segurança** (Dependabot, code scanning, segredos, `govulncheck` e
-  `npm audit`): em andamento. A correção que mexer em código passa por revisão e entra na fila de
-  releases.
+- **Triagem de segurança de 2026-11-08** sobre `3980e61`:
+  - Dependabot, code scanning, secret scanning e `npm audit` (produção e dev) estão sem nada aberto.
+  - O `govulncheck` não acusa vulnerabilidade atingível; a stdlib do Go 1.26.10 está limpa.
+  - Fica um aviso fora do caminho do código: GO-2026-5932, no `golang.org/x/crypto/openpgp`, que
+    nunca é importado (do módulo, só o `argon2` é usado).
+  - A correção existe apenas como pseudo-versão do `x/crypto`. O bump espera uma versão estável,
+    para não publicar dependência que não é release.
 
 ## Não confirmado
 
