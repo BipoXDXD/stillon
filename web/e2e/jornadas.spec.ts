@@ -91,9 +91,14 @@ async function enviarNoLimite(page: Page, rota: string, enviar: () => Promise<vo
 }
 
 async function enviarLogin(page: Page, email: string, senha: string, esperado: Locator) {
-  await page.getByLabel('E-mail').fill(email)
-  await page.getByLabel('Senha').fill(senha)
-  await enviarNoLimite(page, '/api/v1/auth/login', () => page.getByRole('button', { name: 'Entrar' }).click(), esperado)
+  // Preenche a cada envio: a tela limpa a senha depois de uma recusa, e o
+  // reenvio com o campo vazio pararia na validação, sem sair POST nenhum.
+  const enviar = async () => {
+    await page.getByLabel('E-mail').fill(email)
+    await page.getByLabel('Senha').fill(senha)
+    await page.getByRole('button', { name: 'Entrar' }).click()
+  }
+  await enviarNoLimite(page, '/api/v1/auth/login', enviar, esperado)
 }
 
 async function entrarPeloPainel(page: Page, email: string, senha: string) {
