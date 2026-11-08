@@ -157,6 +157,9 @@ func TestNormalizeEmail(t *testing.T) {
 		"a@b.com, c@d.com":                  "",
 		"":                                  "",
 		strings.Repeat("a", 250) + "@x.com": "",
+		// A fronteira de maxEmail (254): on point aceito, off point recusado.
+		strings.Repeat("a", 248) + "@x.com": strings.Repeat("a", 248) + "@x.com",
+		strings.Repeat("a", 249) + "@x.com": "",
 	} {
 		got, ok := NormalizeEmail(in)
 		if (quer == "") == ok || got != quer {
