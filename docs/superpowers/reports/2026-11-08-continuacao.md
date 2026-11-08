@@ -16,7 +16,7 @@ conferir está em "Não confirmado".
   direto do dono. O `revalidar-backup` passou na execução manual de 2026-11-07 (run 42339253780) e
   na agendada de 2026-11-08 (run 42435949023). A issue #198 está fechada. O environment ainda aceita
   a branch antiga do ensaio, e retirá-la depende de sim direto do dono.
-- **PRs abertos:** nenhum. Os #181, #184, #185 e #188, pendentes no registro anterior, entraram em
+- **PRs abertos:** só o deste registro. Os #181, #184, #185 e #188, pendentes no registro anterior, entraram em
   2026-11-06.
 - **Migrations:** a última é a 00022, e a vinculação Discord usará a 00023.
 - **Go:** fica em 1.26.10, por decisão do dono.
@@ -45,20 +45,12 @@ conferir está em "Não confirmado".
 
 ## Próximos passos
 
-- **Janela de IP real** ([`docs/deploy/janela-ip-real.md`](../../deploy/janela-ip-real.md)): o
-  calendário do registro anterior segue. O StillOn não publica nada durante a janela. A mudança no
-  site acontece no repositório do GoblinShift, que é o dono do `stillon.tech.caddy` em produção. O
-  comentário de `deploy/vps/edge/stillon.caddy` ainda cita o caminho antigo desse arquivo e será
-  corrigido junto com a janela.
-- **Comparação do `.caddy` em produção com o do repositório:** proposta para o repositório do
-  GoblinShift. O StillOn não guarda cópia desse arquivo.
-- **Triagem de segurança de 2026-11-08** sobre `3980e61`:
-  - Dependabot, code scanning, secret scanning e `npm audit` (produção e dev) estão sem nada aberto.
-  - O `govulncheck` não acusa vulnerabilidade atingível; a stdlib do Go 1.26.10 está limpa.
-  - Fica um aviso fora do caminho do código: GO-2026-5932, no `golang.org/x/crypto/openpgp`, que
-    nunca é importado (do módulo, só o `argon2` é usado).
-  - A correção existe apenas como pseudo-versão do `x/crypto`. O bump espera uma versão estável,
-    para não publicar dependência que não é release.
+- **Janela de IP real:** segue o calendário do registro anterior e de
+  [`docs/deploy/janela-ip-real.md`](../../deploy/janela-ip-real.md). O StillOn não publica nada
+  durante a janela.
+- **Triagem de segurança de 2026-11-08** sobre `3980e61`: Dependabot, code scanning, secret
+  scanning e `npm audit` (produção e dev) sem nada aberto. O `govulncheck` não acusa vulnerabilidade
+  atingível, e a stdlib do Go 1.26.10 está limpa.
 
 ## Não confirmado
 
