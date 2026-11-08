@@ -161,15 +161,29 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - id: go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           cache: false
+      # Compilar o gitleaks levava ~27 s de um job de ~40 s. Guarda-se só o
+      # binário, pela versão do env e a do Go: trocar qualquer uma das duas
+      # compila de novo. Um PR lê o cache da main, mas o que ele grava fica
+      # no escopo do próprio PR (regra do GitHub), como os do setup-go.
+      - id: cache-gitleaks
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/stillon-ferramentas/gitleaks
+          key: ferramenta-gitleaks-${{ env.GITLEAKS_VERSION }}-go${{ steps.go.outputs.go-version }}-${{ runner.os }}-${{ runner.arch }}
+      - name: instalar gitleaks
+        if: steps.cache-gitleaks.outputs.cache-hit != 'true'
+        run: GOBIN="$HOME/.cache/stillon-ferramentas/gitleaks" go install "github.com/zricethezav/gitleaks/v8@${GITLEAKS_VERSION}"
 
       - name: gitleaks
         run: |
-          go install "github.com/zricethezav/gitleaks/v8@${GITLEAKS_VERSION}"
-          gitleaks git . --config .gitleaks.toml --redact --no-banner --verbose
+          gitleaks="$HOME/.cache/stillon-ferramentas/gitleaks/gitleaks"
+          "$gitleaks" version
+          "$gitleaks" git . --config .gitleaks.toml --redact --no-banner --verbose
 
   workflows:
     # Os workflows não rodam fora do GitHub, e o deploy e o backup só rodam
@@ -183,15 +197,27 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - id: go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           cache: false
+      # Só o binário, pela versão do env e a do Go (como o gitleaks do job
+      # secrets).
+      - id: cache-actionlint
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/stillon-ferramentas/actionlint
+          key: ferramenta-actionlint-${{ env.ACTIONLINT_VERSION }}-go${{ steps.go.outputs.go-version }}-${{ runner.os }}-${{ runner.arch }}
+      - name: instalar actionlint
+        if: steps.cache-actionlint.outputs.cache-hit != 'true'
+        run: GOBIN="$HOME/.cache/stillon-ferramentas/actionlint" go install "github.com/rhysd/actionlint/cmd/actionlint@${ACTIONLINT_VERSION}"
       - name: actionlint
         # O shellcheck vem na imagem do runner; sem ele, o actionlint pularia
         # os `run:` em silêncio, e por isso o passo seguinte o chama direto.
         run: |
-          go install "github.com/rhysd/actionlint/cmd/actionlint@${ACTIONLINT_VERSION}"
+          export PATH="$HOME/.cache/stillon-ferramentas/actionlint:$PATH"
+          actionlint -version
           python3 deploy/coolify/release/lint_workflows.py
       - name: shellcheck dos scripts de deploy
         # Na severidade padrão (até "info"), sem .shellcheckrc: um A && B || C
@@ -422,13 +448,27 @@ jobs:
           name: imagens
           path: ${{ runner.temp }}
       - run: gunzip -c "$RUNNER_TEMP/imagens.tar.gz" | docker load
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - id: go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           cache: false
+      # Só os dois binários, pela versão do env e a do Go (como o gitleaks do
+      # job secrets).
+      - id: cache-age
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/stillon-ferramentas/age
+          key: ferramenta-age-${{ env.AGE_VERSION }}-go${{ steps.go.outputs.go-version }}-${{ runner.os }}-${{ runner.arch }}
       - name: age
         # A mesma versão do backup.yml: o teste cifra e decifra o backup.
-        run: go install "filippo.io/age/cmd/age@${AGE_VERSION}" "filippo.io/age/cmd/age-keygen@${AGE_VERSION}"
+        if: steps.cache-age.outputs.cache-hit != 'true'
+        run: GOBIN="$HOME/.cache/stillon-ferramentas/age" go install "filippo.io/age/cmd/age@${AGE_VERSION}" "filippo.io/age/cmd/age-keygen@${AGE_VERSION}"
+      - name: age no PATH
+        # Os scripts abaixo chamam age e age-keygen pelo nome.
+        run: |
+          echo "$HOME/.cache/stillon-ferramentas/age" >> "$GITHUB_PATH"
+          "$HOME/.cache/stillon-ferramentas/age/age" --version
       - name: vigia externo (vigia.sh e as unidades do systemd)
         run: bash deploy/ci/checar-vigia.sh
       - name: checagens da VPS
