@@ -198,25 +198,44 @@ export function contarAuditoria(acao: string): number | null {
 // DATABASE_URL. Devolve false quando não há como (outra pilha externa): quem
 // chama pula o teste.
 export function podeDesligar2FA(): boolean {
-  return Boolean((process.env.E2E_PILHA_PROPRIA && existsSync(ESTADO)) || process.env.E2E_COMPOSE_SERVICE)
+  return podeRodarCli()
 }
 
 export function desligar2FA(email: string) {
+  rodarCli(['user', 'reset-2fa', '--email', email])
+}
+
+// redefinirSenha roda `stillon user set-password` para o e-mail, com a senha
+// pelo stdin (D16 do Plano 5). É a rede de segurança da troca de senha do
+// jornadas.spec.ts: o teste troca a senha do único usuário, e uma falha no
+// meio deixaria a senha nova para as specs seguintes.
+export function podeRedefinirSenha(): boolean {
+  return podeRodarCli()
+}
+
+export function redefinirSenha(email: string, senha: string) {
+  rodarCli(['user', 'set-password', '--email', email], `${senha}\n`)
+}
+
+function podeRodarCli(): boolean {
+  return Boolean((process.env.E2E_PILHA_PROPRIA && existsSync(ESTADO)) || process.env.E2E_COMPOSE_SERVICE)
+}
+
+function rodarCli(args: string[], entrada?: string) {
+  const stdio: ExecFileSyncOptions['stdio'] = [entrada === undefined ? 'ignore' : 'pipe', 'inherit', 'inherit']
   if (process.env.E2E_PILHA_PROPRIA && existsSync(ESTADO)) {
     const e = JSON.parse(readFileSync(ESTADO, 'utf8')) as Estado
     if (!e.databaseURL) throw new Error('E2E: pilha.json sem a DATABASE_URL')
-    execFileSync(path.join(TMP, 'stillon'), ['user', 'reset-2fa', '--email', email], {
+    execFileSync(path.join(TMP, 'stillon'), args, {
       env: { ...process.env, DATABASE_URL: e.databaseURL },
-      stdio: ['ignore', 'inherit', 'inherit'],
+      input: entrada,
+      stdio,
     })
     return
   }
   const servico = process.env.E2E_COMPOSE_SERVICE
-  if (!servico) throw new Error('E2E: sem pilha própria nem E2E_COMPOSE_SERVICE, não há como desligar o 2FA')
-  execFileSync('docker', ['compose', 'exec', '-T', servico, '/stillon', 'user', 'reset-2fa', '--email', email], {
-    cwd: RAIZ,
-    stdio: ['ignore', 'inherit', 'inherit'],
-  })
+  if (!servico) throw new Error(`E2E: sem pilha própria nem E2E_COMPOSE_SERVICE, não há como rodar o CLI (${args.slice(0, 2).join(' ')})`)
+  execFileSync('docker', ['compose', 'exec', '-T', servico, '/stillon', ...args], { cwd: RAIZ, input: entrada, stdio })
 }
 
 // É o nosso binário: o pid de uma rodada velha pode ter sido reusado por
