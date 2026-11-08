@@ -166,6 +166,27 @@ func TestSummarySparkLeavesP50NilForARawHourWithoutSuccess(t *testing.T) {
 	}
 }
 
+// O spark guarda o p50 da hora bruta. A linha traz também p95, p99 e max, e
+// três sucessos com latências diferentes separam o p50 (20) dos outros (90).
+func TestSummarySparkTakesTheP50OfARawHour(t *testing.T) {
+	a := novoAmbiente(t)
+	h := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
+	a.clk.Advance(h.Add(time.Minute).Sub(a.clk.Now()))
+	dono := a.usuario(t)
+	alvo := a.alvo(t, dono)
+	a.gravarCheck(t, alvo, h.Add(-50*time.Minute), "up", 10) // 11:10
+	a.gravarCheck(t, alvo, h.Add(-40*time.Minute), "up", 20) // 11:20
+	a.gravarCheck(t, alvo, h.Add(-30*time.Minute), "up", 90) // 11:30
+
+	s := resumoDe(t, a, dono)[alvo]
+	if len(s.Spark) != 1 {
+		t.Fatalf("spark = %+v; queria só a hora das 11:00", s.Spark)
+	}
+	if hora := s.Spark[0]; hora.Total != 3 || hora.OK != 3 || hora.P50 == nil || *hora.P50 != 20 {
+		t.Errorf("11:00 = %+v (p50 %v); queria 3 checks, 3 ok, p50 20", hora, hora.P50)
+	}
+}
+
 // Uma queda na hora corrente derruba o uptime na hora: é por isso que a hora
 // corrente entra nele.
 func TestSummaryUptimeSeesAnOngoingOutage(t *testing.T) {
