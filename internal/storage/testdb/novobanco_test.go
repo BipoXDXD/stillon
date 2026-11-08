@@ -89,3 +89,16 @@ func TestNovoBancoSomeNoFimDoTeste(t *testing.T) {
 		t.Fatalf("o banco %q ficou depois do teste", nome)
 	}
 }
+
+// Os pools dos testes em paralelo cabem no contêiner: com o padrão do
+// Postgres (100), uma máquina de 10 núcleos ou mais esgotaria as conexões.
+func TestContainerAguentaOsPoolsEmParalelo(t *testing.T) {
+	ctx := context.Background()
+	var valor string
+	if err := NovoBanco(t).QueryRow(ctx, `SHOW max_connections`).Scan(&valor); err != nil {
+		t.Fatal(err)
+	}
+	if valor != "400" {
+		t.Fatalf("max_connections = %s, queria 400", valor)
+	}
+}

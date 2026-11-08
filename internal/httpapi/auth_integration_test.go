@@ -113,6 +113,10 @@ func newAPICom(t *testing.T, ajustar func(*config.Config), ajustarDeps func(*htt
 		JWTSecret:  testJWTSecret,
 		IPHashKey:  testIPHashKey,
 		MasterKey:  testMasterKey,
+		// O semáforo do Argon2id é do processo, e com o teto padrão os testes em
+		// paralelo disputariam as vagas até um 429 falso. Quem testa o teto
+		// define o próprio no ajuste, e roda em série.
+		Argon2MaxConcurrent: auth.MaxArgon2Concurrent,
 	}
 	if ajustar != nil {
 		ajustar(cfg)
@@ -436,8 +440,10 @@ func TestLoginDoesNotRevealWhetherAccountExists(t *testing.T) {
 // A trava conta verificações Argon2id (auth.Argon2Verifications), e não mede
 // relógio: a versão com tempo oscilava sob carga no CI (Task 11). A
 // propriedade é a mesma — cada caminho de falha paga exatamente um Argon2id.
+//
+// Em série: o contador é do processo, e um login de outro teste em paralelo
+// entraria na diferença.
 func TestLoginSpendsTheSameCPUWhetherOrNotTheAccountExists(t *testing.T) {
-	t.Parallel()
 	a := newAPI(t)
 	c := clientWithJar(t)
 

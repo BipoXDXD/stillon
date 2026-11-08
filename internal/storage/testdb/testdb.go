@@ -50,6 +50,12 @@ const (
 
 	// bancoDeManutencao recebe as conexões de quem cria e apaga bancos.
 	bancoDeManutencao = "postgres"
+
+	// maxConexoes é o max_connections do contêiner. Cada banco de teste abre
+	// um pool de até 10 conexões (storage.NewPool), e o go test roda até
+	// GOMAXPROCS testes em paralelo: o padrão do Postgres, 100, acabaria em
+	// máquinas com 10 núcleos ou mais. 400 cobre até 39.
+	maxConexoes = "400"
 )
 
 var (
@@ -151,7 +157,9 @@ func EsperarBloqueados[T any](t *testing.T, pool *pgxpool.Pool, n int, fim <-cha
 // pronto. Chame New antes no mesmo teste: é o cleanup de New que restaura o
 // snapshot quando o teste termina.
 //
-// Num teste que pediu NovoBanco, é a do banco desse teste.
+// Num teste que pediu NovoBanco, é a do banco desse teste. A busca é pelo t
+// exato: num subteste, que é outro *testing.T, a chamada cai no banco
+// compartilhado. Passe o t de quem chamou NovoBanco.
 func DSN(t *testing.T) string {
 	t.Helper()
 	iniciar(t)
@@ -190,7 +198,9 @@ func LockTable(t *testing.T, pool *pgxpool.Pool, table string) {
 // RECUSA esse papel e para ler o banco "por fora" da RLS, como faria quem
 // tivesse um dump.
 //
-// Num teste que pediu NovoBanco, é a do banco desse teste.
+// Num teste que pediu NovoBanco, é a do banco desse teste. A busca é pelo t
+// exato: num subteste, que é outro *testing.T, a chamada cai no banco
+// compartilhado. Passe o t de quem chamou NovoBanco.
 func AdminDSN(t *testing.T) string {
 	t.Helper()
 	iniciar(t)
@@ -349,6 +359,7 @@ func start() {
 		tcpostgres.WithPassword(adminPass),
 		tcpostgres.WithSQLDriver("pgx"), // exigido por Snapshot/Restore
 		tcpostgres.BasicWaitStrategies(),
+		testcontainers.WithCmdArgs("-c", "max_connections="+maxConexoes),
 	)
 	if startErr != nil {
 		return
