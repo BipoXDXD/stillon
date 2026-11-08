@@ -1,0 +1,143 @@
+name: memoria
+# Mede se os tetos de memória aguentam: o e2e e um exercício de carga, com o app
+# atrás de um Caddy, em cada configuração, mais de uma vez. Só roda quando a
+# própria medição muda.
+on:
+  pull_request:
+    paths:
+      - .github/workflows/memoria.yml
+      - deploy/ci/memoria/**
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: memoria-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  IMAGEM: ghcr.io/bipoxdxd/stillon
+
+jobs:
+  imagem:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          target: runtime
+          platforms: linux/amd64
+          load: true
+          tags: ${{ env.IMAGEM }}:ci
+          build-args: VERSION=${{ github.sha }}
+          cache-from: type=gha,scope=imagem
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          target: tools
+          platforms: linux/amd64
+          load: true
+          tags: ${{ env.IMAGEM }}:ci-tools
+          build-args: VERSION=${{ github.sha }}
+          cache-from: type=gha,scope=imagem
+      - name: exportar
+        run: docker save "$IMAGEM:ci" "$IMAGEM:ci-tools" | gzip -1 > "$RUNNER_TEMP/imagens.tar.gz"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: imagens-memoria
+          path: ${{ runner.temp }}/imagens.tar.gz
+          retention-days: 1
+          if-no-files-found: error
+
+  medir:
+    needs: imagem
+    strategy:
+      fail-fast: false
+      matrix:
+        config:
+          - nome: 384MiB
+            go: 384MiB
+            app: 512m
+            caddy: 128m
+          - nome: 768MiB
+            go: 768MiB
+            app: 1g
+            caddy: 256m
+        rodada: [1, 2]
+    name: medir (${{ matrix.config.nome }}, rodada ${{ matrix.rodada }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      STILLON_TAG: ci
+      COMPOSE_FILE: compose.yaml:deploy/ci/memoria/compose.yaml
+      MEM_GO: ${{ matrix.config.go }}
+      MEM_APP: ${{ matrix.config.app }}
+      MEM_CADDY: ${{ matrix.config.caddy }}
+      UP_ARGS: --no-build --pull never --wait-timeout 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: imagens-memoria
+          path: ${{ runner.temp }}
+      - run: gunzip -c "$RUNNER_TEMP/imagens.tar.gz" | docker load
+      - name: imagem do Caddy, a mesma da produção
+        run: |
+          imagem=$(sed -n 's/^ *image: \(caddy:.*\)$/\1/p' deploy/vps/compose.prod.yaml)
+          test -n "$imagem"
+          echo "CADDY_IMAGEM=$imagem" >> "$GITHUB_ENV"
+      - name: puxar o que não vem no artifact
+        run: docker compose pull db caddy
+      - name: amostrar a memória em segundo plano
+        run: nohup sh deploy/ci/memoria/amostrar.sh "$RUNNER_TEMP/amostras.txt" > /dev/null 2>&1 &
+      - name: compose
+        run: sh deploy/ci/checar-compose.sh
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: playwright
+        id: playwright
+        continue-on-error: true
+        working-directory: web
+        env:
+          E2E_BASE_URL: http://127.0.0.1:8080
+          E2E_EMAIL: demo@stillon.local
+          E2E_PASSWORD: demo-stillon-2026
+          E2E_COMPOSE_SERVICE: app
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npx playwright install --with-deps chromium
+          npx playwright test --trace off
+      - name: carga (alvos, sondas e logins)
+        continue-on-error: true
+        run: python3 deploy/ci/memoria/carga.py "$RUNNER_TEMP/carga.txt"
+      - name: coletar pico, OOM e reinícios
+        if: ${{ !cancelled() }}
+        env:
+          RESULTADO_PLAYWRIGHT: ${{ steps.playwright.outcome }}
+        run: python3 deploy/ci/memoria/coletar.py "$RUNNER_TEMP/amostras.txt" "$RUNNER_TEMP/carga.txt" "$RESULTADO_PLAYWRIGHT"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: ${{ !cancelled() }}
+        with:
+          name: memoria-${{ matrix.config.nome }}-${{ matrix.rodada }}
+          path: |
+            ${{ runner.temp }}/amostras.txt
+            ${{ runner.temp }}/carga.txt
+          if-no-files-found: warn
+          retention-days: 7
+      - name: derrubar
+        if: always()
+        run: docker compose down -v
