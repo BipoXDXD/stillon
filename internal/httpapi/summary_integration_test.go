@@ -11,6 +11,7 @@ import (
 // id "summary"; o item tem exatamente as chaves do contrato, os nulos saem
 // null e o spark sai [] (nunca null), e nada de URL nem header.
 func TestSummaryRouteReturnsTheContractShape(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	tok := tokenDe(t, a, a.userID)
 	criado := chamar(t, a, http.MethodPost, "/api/v1/targets", tok, alvoValido)

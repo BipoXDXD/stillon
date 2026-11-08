@@ -10,6 +10,7 @@ import (
 // em produção (PUBLIC_BASE_URL https). Em desenvolvimento seria ruído: o
 // compose e o Vite não têm proxy na lista.
 func TestProxiesWarnAboutForwardedForOnlyOverHTTPS(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct {
 		base string
 		quer bool

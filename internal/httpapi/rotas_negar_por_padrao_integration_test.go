@@ -46,6 +46,7 @@ var montagens = []string{"/", "/api/", "/healthz", "/p/", "/ping/", "/readyz", "
 // toda rota fora da allowlist. Uma rota nova esquecida sem Authn, e sem a
 // guarda do handler, falha aqui.
 func TestEveryRegisteredRouteDeniesByDefault(t *testing.T) {
+	t.Parallel()
 	rotas := rotasRegistradas(t)
 	for publica := range rotasPublicas {
 		if !slices.Contains(rotas, publica) {
@@ -75,6 +76,7 @@ func TestEveryRegisteredRouteDeniesByDefault(t *testing.T) {
 // Com um access token inválido (assinado com outra chave), o resultado é o
 // mesmo: a rota não confia em token que não emitiu.
 func TestEveryProtectedRouteRejectsForgedToken(t *testing.T) {
+	t.Parallel()
 	forjado := "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9." +
 		"eyJzdWIiOiIwMDAwMDAwMC0wMDAwLTAwMDAtMDAwMC0wMDAwMDAwMDAwMDAiLCJleHAiOjQxMDI0NDQ4MDB9." +
 		"c2VtLWFzc2luYXR1cmEtdmFsaWRh"
@@ -104,6 +106,7 @@ func esperarVagaNoLimite(a *api) { a.clk.Advance(time.Second) }
 // POST /verify/{token} e o /ping/ ficam de fora: vêm de um <form> HTML e de um
 // curl, sem cookie nem sessão, e a credencial é o token no caminho.
 func TestEveryMutationRequiresTheAntiCSRFHeader(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	for _, rota := range rotasRegistradas(t) {
 		metodo, caminho, _ := strings.Cut(rota, " ")

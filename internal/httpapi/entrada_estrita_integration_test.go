@@ -45,6 +45,7 @@ func codigoDoEnvelope(t *testing.T, corpo string) string {
 // As rotas de autenticação também recusam campo desconhecido: o DTO é
 // estrito em toda a API, e não só nas rotas de recurso.
 func TestAuthRoutesRejectUnknownFields(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	_, token := entrar(t, a)
 	for _, r := range []struct {
@@ -69,6 +70,7 @@ func TestAuthRoutesRejectUnknownFields(t *testing.T) {
 // Depois do objeto JSON não pode vir mais nada: um segundo objeto que o
 // decoder ignorasse seria lido de outro jeito por um proxy ou WAF na frente.
 func TestBodyWithTrailingDataIsRejected(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	tok := tokenDe(t, a, a.userID)
 	valido := `{"name":"api","url":"https://exemplo.com/"}`
@@ -97,6 +99,7 @@ func TestBodyWithTrailingDataIsRejected(t *testing.T) {
 // recusa NUL em text, e isso virava 500): a resposta é a de conta
 // inexistente, com o mesmo código.
 func TestLoginWithControlCharInEmailLooksLikeUnknownAccount(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	for _, email := range []string{`pessoa\u0000@exemplo.com`, `pessoa\u0007@exemplo.com`, strings.Repeat("a", 300) + "@exemplo.com"} {
 		status, corpo := enviarCru(t, a, http.MethodPost, "/api/v1/auth/login", "",

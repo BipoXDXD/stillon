@@ -79,6 +79,7 @@ func canaisDe(t *testing.T, a *api, token string) []canalJSON {
 }
 
 func TestDiscordChannelFlow(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	tok := tokenDe(t, a, a.userID)
 
@@ -108,6 +109,7 @@ func TestDiscordChannelFlow(t *testing.T) {
 // Pendência do Plano 3: o canal que falhou de vez aparece como failing, com
 // o motivo e a hora; antes da falha, os dois campos são null.
 func TestFailingChannelShowsTheLastError(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	ctx := context.Background()
 	tok := tokenDe(t, a, a.userID)
@@ -142,6 +144,7 @@ func TestFailingChannelShowsTheLastError(t *testing.T) {
 // O caminho do navegador: o GET mostra o botão e NÃO verifica; o POST do
 // formulário, sem X-Requested-With, verifica.
 func TestEmailVerificationThroughTheBrowser(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	tok := tokenDe(t, a, a.userID)
 	resp := chamar(t, a, http.MethodPost, "/api/v1/channels", tok, map[string]string{"kind": "email", "email": "pessoa@exemplo.com"})
@@ -189,6 +192,7 @@ func TestEmailVerificationThroughTheBrowser(t *testing.T) {
 }
 
 func TestUnknownVerifyTokenIs404(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	for _, token := range []string{"nao-existe", strings.Repeat("A", 43)} {
 		get, err := http.Get(a.srv.URL + "/verify/" + token)
@@ -208,6 +212,7 @@ func TestUnknownVerifyTokenIs404(t *testing.T) {
 }
 
 func TestChannelErrorsMapToCodes(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	tok := tokenDe(t, a, a.userID)
 
@@ -240,6 +245,7 @@ func TestChannelErrorsMapToCodes(t *testing.T) {
 }
 
 func TestChannelLimitIs409(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	ctx := context.Background()
 	agora := a.clk.Now()
@@ -267,6 +273,7 @@ func TestChannelLimitIs409(t *testing.T) {
 // O serviço sem Resend recusa o e-mail na validação, antes de tocar no
 // banco: por isso o pool nil. Se a ordem mudar, o teste cai com panic, alto.
 func TestEmailChannelIsUnavailableWithoutResend(t *testing.T) {
+	t.Parallel()
 	a := newAPICom(t, nil, func(d *httpapi.Deps) {
 		d.Channels = notify.NewChannelService(nil, nil, d.Clock, &discordFalso{}, nil, "")
 	})
@@ -280,6 +287,7 @@ func TestEmailChannelIsUnavailableWithoutResend(t *testing.T) {
 }
 
 func TestAnotherUsersChannelIs404(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	var criado canalJSON
 	lerCorpo(t, chamar(t, a, http.MethodPost, "/api/v1/channels", tokenDe(t, a, a.userID),
@@ -305,6 +313,7 @@ func TestAnotherUsersChannelIs404(t *testing.T) {
 // de 5 envios, e a sexta tentativa leva 429 mesmo com o limite por minuto
 // (burst 20) folgado. Listar não gasta desse balde.
 func TestChannelSendsHaveTheirOwnRateLimit(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	tok := tokenDe(t, a, a.userID)
 	for i := 1; i <= 5; i++ {
@@ -323,6 +332,7 @@ func TestChannelSendsHaveTheirOwnRateLimit(t *testing.T) {
 }
 
 func TestChannelRoutesRequireAuthentication(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	id := uuid.NewString()
 	for _, r := range []struct{ metodo, caminho string }{
@@ -342,6 +352,7 @@ func TestChannelRoutesRequireAuthentication(t *testing.T) {
 
 // O relógio da API é falso; o link vence pelo relógio dela.
 func TestExpiredVerifyLinkIs404(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	chamar(t, a, http.MethodPost, "/api/v1/channels", tokenDe(t, a, a.userID),
 		map[string]string{"kind": "email", "email": "p@x.com"}).Body.Close()

@@ -35,6 +35,7 @@ func paginasDe(t *testing.T, a *api, tok string) []paginaJSON {
 }
 
 func TestStatusPageFlow(t *testing.T) {
+	t.Parallel()
 	a := newAPIWith(t, nil)
 	tok := tokenDe(t, a, a.userID)
 	if ps := paginasDe(t, a, tok); len(ps) != 0 {
@@ -96,6 +97,7 @@ func TestStatusPageFlow(t *testing.T) {
 }
 
 func TestStatusPageValidationPointsAtTheItem(t *testing.T) {
+	t.Parallel()
 	a := newAPIWith(t, nil)
 	tok := tokenDe(t, a, a.userID)
 	var alvo alvoJSON
@@ -147,6 +149,7 @@ func TestStatusPageValidationPointsAtTheItem(t *testing.T) {
 // responde 401 quando não acha o usuário no contexto. Quem pega a rota sem
 // authn é TestStatusPageFlow, em que o dono passa a receber 401.
 func TestStatusPageRoutesRequireAuthentication(t *testing.T) {
+	t.Parallel()
 	a := newAPIWith(t, nil)
 	for _, r := range []struct{ metodo, caminho string }{
 		{http.MethodGet, "/api/v1/status-pages"},

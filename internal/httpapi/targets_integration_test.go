@@ -108,6 +108,7 @@ var alvoValido = map[string]any{
 }
 
 func TestTargetCRUDFlow(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	tok := tokenDe(t, a, a.userID)
 
@@ -151,6 +152,7 @@ func TestTargetCRUDFlow(t *testing.T) {
 
 // Spec §5.5: recurso de outro usuário é 404, nunca 403, em toda rota.
 func TestAnotherUsersTargetIs404OnEveryRoute(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	dono := tokenDe(t, a, a.userID)
 	intruso := tokenDe(t, a, outroUsuario(t, a))
@@ -188,6 +190,7 @@ func TestAnotherUsersTargetIs404OnEveryRoute(t *testing.T) {
 // Todas as seis rotas, e não só a lista: uma rota nova montada com
 // mux.Handle direto, sem protegida(), ficaria aberta sem teste nenhum ver.
 func TestTargetRoutesRequireAuthentication(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	id := uuid.NewString()
 	for _, r := range []struct{ metodo, caminho string }{
@@ -209,6 +212,7 @@ func TestTargetRoutesRequireAuthentication(t *testing.T) {
 // Dívida do Plano 2: as bordas das consultas via HTTP. Cada valor
 // malformado aponta o campo e o motivo certos.
 func TestTargetQueriesRejectMalformedValues(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	tok := tokenDe(t, a, a.userID)
 	var criado alvoJSON
@@ -235,6 +239,7 @@ func TestTargetQueriesRejectMalformedValues(t *testing.T) {
 
 // A janela é [from, to): o check em from entra, o check em to não.
 func TestChecksWindowIsHalfOpen(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	ctx := context.Background()
 	tok := tokenDe(t, a, a.userID)
@@ -265,6 +270,7 @@ func TestChecksWindowIsHalfOpen(t *testing.T) {
 }
 
 func TestValidationErrorNamesTheFieldsWithoutEchoingInput(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	resp := chamar(t, a, http.MethodPost, "/api/v1/targets", tokenDe(t, a, a.userID), map[string]any{
 		"name": "x", "url": "http://127.0.0.1:6379/", "interval_sec": 10,
@@ -298,6 +304,7 @@ func TestValidationErrorNamesTheFieldsWithoutEchoingInput(t *testing.T) {
 
 // degraded_threshold_ms: ausente → 2000, null → desativado, número → valor.
 func TestDegradedThresholdAbsentNullAndValue(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	tok := tokenDe(t, a, a.userID)
 
@@ -355,6 +362,7 @@ func TestDegradedThresholdAbsentNullAndValue(t *testing.T) {
 // PATCH de headers: {...} substitui o conjunto inteiro, null limpa. Nas duas
 // respostas só podem aparecer nomes, nunca valores (D5).
 func TestPatchHeadersReplacesAndClears(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	tok := tokenDe(t, a, a.userID)
 	valores := []string{"segredo-do-cliente", "outro-segredo", "valor-do-tenant"}
@@ -396,6 +404,7 @@ func TestPatchHeadersReplacesAndClears(t *testing.T) {
 }
 
 func TestUnknownFieldIsRejected(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	resp := chamar(t, a, http.MethodPost, "/api/v1/targets", tokenDe(t, a, a.userID), map[string]any{
 		"name": "x", "url": "https://exemplo.com", "intervalsec": 30,
@@ -407,6 +416,7 @@ func TestUnknownFieldIsRejected(t *testing.T) {
 }
 
 func TestMalformedIDIs404(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	resp := chamar(t, a, http.MethodGet, "/api/v1/targets/nao-e-uuid", tokenDe(t, a, a.userID), nil)
 	resp.Body.Close()
@@ -416,6 +426,7 @@ func TestMalformedIDIs404(t *testing.T) {
 }
 
 func TestListPaginatesWithNextCursor(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	tok := tokenDe(t, a, a.userID)
 	for range 3 {
@@ -447,6 +458,7 @@ func TestListPaginatesWithNextCursor(t *testing.T) {
 }
 
 func TestChecksEndpoint(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	ctx := context.Background()
 	tok := tokenDe(t, a, a.userID)
@@ -538,6 +550,7 @@ func TestChecksEndpoint(t *testing.T) {
 // continua passando. O limite por usuário (burst 20) é mais apertado que o
 // por IP (burst 30) justamente para que este teste distinga os dois.
 func TestPerUserRateLimit(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	tokA := tokenDe(t, a, a.userID)
 	tokB := tokenDe(t, a, outroUsuario(t, a))
@@ -574,6 +587,7 @@ func TestPerUserRateLimit(t *testing.T) {
 // O 101º alvo é 409 target_limit_reached (D17 do Plano 5, reconciliado no
 // contrato); o painel mapeia o código no formulário.
 func TestTargetLimitIs409(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	tok := tokenDe(t, a, a.userID)
 	ctx := context.Background()
@@ -620,6 +634,7 @@ func TestTargetLimitIs409(t *testing.T) {
 // servidor (ou o to pedido). Só as janelas do painel valem; window junto com
 // from é ambíguo e recusado.
 func TestChecksWindowIsComputedByTheServer(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	ctx := context.Background()
 	tok := tokenDe(t, a, a.userID)
@@ -695,6 +710,7 @@ func TestChecksWindowIsComputedByTheServer(t *testing.T) {
 // B1 (Plano 10), pelo contrato: PATCH com url de outra origem e sem headers
 // responde header_names vazio.
 func TestPatchToAnotherOriginDropsTheHeaders(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	tok := tokenDe(t, a, a.userID)
 	var criado alvoJSON
@@ -710,6 +726,7 @@ func TestPatchToAnotherOriginDropsTheHeaders(t *testing.T) {
 
 // C2 (Plano 10): 1xx e 3xx em expected_status são 400 no POST e no PATCH.
 func TestExpectedStatusOutsideTheReachableRangesIs400(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	tok := tokenDe(t, a, a.userID)
 	var criado alvoJSON

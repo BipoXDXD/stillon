@@ -66,6 +66,7 @@ func exigirJWTNaoExpirado(t *testing.T, a *api, token string) {
 // Cada requisição começa depois do DELETE de sessão ter respondido 204; não
 // há promessa de interromper uma mutação que já tenha passado pela guarda.
 func TestEveryResourceRouteRejectsRevokedFamily(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	token, _, familia := familiaComRefresh(t, a)
 	dono := accessTokenValido(t, a)
@@ -178,6 +179,7 @@ func TestEveryResourceRouteRejectsRevokedFamily(t *testing.T) {
 // Os emissores já revogam as famílias. A nova guarda deve observar essas
 // revogações, em vez de aceitar o access token até o exp original.
 func TestResourceAccessStopsAfterEachRevocationCause(t *testing.T) {
+	t.Parallel()
 	for _, causa := range []string{"logout", "troca de senha", "set-password", "reset-2fa", "reúso de refresh", "quinta prova errada"} {
 		t.Run(causa, func(t *testing.T) {
 			a := newAPI(t)
@@ -243,6 +245,7 @@ func TestResourceAccessStopsAfterEachRevocationCause(t *testing.T) {
 }
 
 func TestResourceRoutesRejectAbsentExpiredOrAnotherUsersFamily(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	_, _, vencida := familiaComRefresh(t, a)
 	if _, err := a.pool.Exec(context.Background(), `UPDATE sessions SET expires_at=$2 WHERE family_id=$1`, vencida, a.clk.Now().Add(-time.Second)); err != nil {
@@ -273,6 +276,7 @@ func TestResourceRoutesRejectAbsentExpiredOrAnotherUsersFamily(t *testing.T) {
 // Rotação do refresh mantém a família: seu access token anterior ainda é
 // legítimo. Rejeitar uma linha usada em vez da família quebraria o painel.
 func TestResourceRoutesKeepRotatedFamilyAuthorized(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	token, refresh, familia := familiaComRefresh(t, a)
 	_, atual, err := gerente(a).Rotate(context.Background(), refresh, auth.Meta{IP: "203.0.113.9"})
@@ -290,6 +294,7 @@ func TestResourceRoutesKeepRotatedFamilyAuthorized(t *testing.T) {
 // continuam ligados a um banco real acessível. Um fallback permissivo daria
 // 200/201 e modificaria recursos, em vez de 500 sem efeito.
 func TestResourceRoutesFailClosedWhenSessionDatabaseFails(t *testing.T) {
+	t.Parallel()
 	var sessoes *pgxpool.Pool
 	a := newAPICom(t, nil, func(d *httpapi.Deps) {
 		var err error
@@ -319,6 +324,7 @@ func TestResourceRoutesFailClosedWhenSessionDatabaseFails(t *testing.T) {
 }
 
 func TestResourceSessionGuardKeepsExistingRateLimits(t *testing.T) {
+	t.Parallel()
 	for _, modo := range []string{"usuário", "envio"} {
 		t.Run(modo, func(t *testing.T) {
 			a := newAPI(t)

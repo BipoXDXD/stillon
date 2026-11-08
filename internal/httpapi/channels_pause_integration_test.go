@@ -70,6 +70,7 @@ func chaves(m map[string]any) []string {
 // PATCH pausa e retoma; a resposta tem o formato de um item de GET /channels,
 // e o GET reflete. Mudar para o valor que já está é 200 sem efeito.
 func TestPatchChannelPausesAndResumes(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	tok := tokenDe(t, a, a.userID)
 	id := criarCanalDiscord(t, a, tok)
@@ -105,6 +106,7 @@ func TestPatchChannelPausesAndResumes(t *testing.T) {
 // Canal alheio, inexistente ou com id malformado é 404, e o canal alheio não
 // muda. A perna positiva é o dono pausando o mesmo canal.
 func TestPatchAnotherUsersChannelIs404(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	tok := tokenDe(t, a, a.userID)
 	id := criarCanalDiscord(t, a, tok)
@@ -133,6 +135,7 @@ func TestPatchAnotherUsersChannelIs404(t *testing.T) {
 // desconhecido nunca ecoa). Nenhuma recusa muda o canal; a perna positiva é o
 // corpo certo no fim.
 func TestPatchChannelRejectsBadBodies(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	tok := tokenDe(t, a, a.userID)
 	id := criarCanalDiscord(t, a, tok)
@@ -185,6 +188,7 @@ func TestPatchChannelRejectsBadBodies(t *testing.T) {
 // A rota fica atrás de protegida, e não do balde de envio (5 de uma vez): ela
 // não manda mensagem para fora. Seis PATCHes seguidos passam.
 func TestPatchChannelIsNotASendRoute(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	tok := tokenDe(t, a, a.userID)
 	id := criarCanalDiscord(t, a, tok) // gasta 1 do balde de envio
@@ -220,6 +224,7 @@ func (e *entregadorFalso) quantos() int {
 // PATCH, o aviso pendente é cancelado no envio; retomado pelo PATCH, o
 // seguinte sai. O que foi cancelado não volta.
 func TestPausedChannelDropsThroughTheRoute(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	ctx := context.Background()
 	tok := tokenDe(t, a, a.userID)

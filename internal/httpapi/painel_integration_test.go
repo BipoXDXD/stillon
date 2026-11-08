@@ -28,6 +28,7 @@ func comPainel(d *httpapi.Deps) {
 // o arquivo de rotas sem trava (lição de teste do projeto); este teste
 // existe para que tirar uma linha da raiz fique vermelho.
 func TestCadaPrefixoCaiNaCadeiaCerta(t *testing.T) {
+	t.Parallel()
 	a := newAPICom(t, func(c *config.Config) { c.PublicBaseURL = "https://stillon.example" }, comPainel)
 
 	casos := []struct {
@@ -89,6 +90,7 @@ func TestCadaPrefixoCaiNaCadeiaCerta(t *testing.T) {
 // arquivo. E a API continua exigindo o cabeçalho nas mutações, agora
 // montada em /api/.
 func TestAMutacaoDaAPIContinuaExigindoOCabecalho(t *testing.T) {
+	t.Parallel()
 	a := newAPICom(t, nil, comPainel)
 	resp, err := http.Post(a.srv.URL+"/api/v1/auth/logout", "application/json", nil)
 	if err != nil {

@@ -106,6 +106,7 @@ func conferirRecusa(t *testing.T, status int, resp string, querCampos []apierr.F
 // Null em campo obrigatório não é "campo ausente": é pedir um recurso sem o
 // campo. O 400 diz qual, e nada é gravado, nem o que veio junto.
 func TestPatchWithNullInRequiredFieldIsRefusedAndChangesNothing(t *testing.T) {
+	t.Parallel()
 	for _, r := range recursosDePatch {
 		for _, campo := range r.obrigatorios {
 			t.Run(r.nome+"/"+campo, func(t *testing.T) {
@@ -126,6 +127,7 @@ func TestPatchWithNullInRequiredFieldIsRefusedAndChangesNothing(t *testing.T) {
 
 // Corrigir um campo por vez não custa uma ida ao servidor por campo.
 func TestPatchWithSeveralNullsReportsThemAll(t *testing.T) {
+	t.Parallel()
 	for _, r := range recursosDePatch {
 		t.Run(r.nome, func(t *testing.T) {
 			a := newAPI(t)
@@ -149,6 +151,7 @@ func TestPatchWithSeveralNullsReportsThemAll(t *testing.T) {
 // A recusa vem antes de buscar o recurso: é a mesma para o alheio e para o
 // inexistente, e não conta qual dos dois é.
 func TestPatchWithNullDoesNotRevealWhetherTheResourceExists(t *testing.T) {
+	t.Parallel()
 	for _, r := range recursosDePatch {
 		t.Run(r.nome, func(t *testing.T) {
 			a := newAPI(t)
@@ -173,6 +176,7 @@ func TestPatchWithNullDoesNotRevealWhetherTheResourceExists(t *testing.T) {
 // schedule e items, que têm campos próprios, um nome errado continua sendo 400.
 // O mesmo corpo sem o nome errado dá 200: a recusa é por causa dele.
 func TestPatchKeepsRejectingUnknownFieldsInsideOptionalObjects(t *testing.T) {
+	t.Parallel()
 	casos := []struct {
 		recurso recursoDePatch
 		corpo   func(t *testing.T, a *api, dono string, interno map[string]any) map[string]any

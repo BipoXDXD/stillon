@@ -17,6 +17,7 @@ import (
 // A guarda deve recusar wiring incompleto mesmo fora do Recover de Routes.
 // Tirar a checagem de serviço ausente causa panic e torna o teste vermelho.
 func TestLiveSessionGuardMissingAccountServiceFailsClosed(t *testing.T) {
+	t.Parallel()
 	agora := time.Date(2026, 10, 24, 12, 0, 0, 0, time.UTC)
 	chave := []byte("segredo-publico-de-teste-32bytes!!")
 	token, err := auth.NewAccessToken(chave, uuid.New(), uuid.New(), agora)

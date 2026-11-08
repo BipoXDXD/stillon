@@ -13,6 +13,7 @@ import (
 // respondia "404 page not found" e "Method Not Allowed" em texto puro, e o
 // painel via "Resposta inesperada do servidor".
 func TestUnknownAPIRouteAndMethodAnswerWithTheEnvelope(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	tok := tokenDe(t, a, a.userID)
 	alvo := "/api/v1/targets/" + uuid.NewString()

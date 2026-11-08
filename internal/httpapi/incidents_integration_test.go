@@ -70,6 +70,7 @@ func incidentesDe(t *testing.T, a *api, token string, n int) (alvo string, ids [
 }
 
 func TestIncidentListFiltersAndAck(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	tok := tokenDe(t, a, a.userID)
 	alvo, ids := incidentesDe(t, a, tok, 2)
@@ -104,6 +105,7 @@ func TestIncidentListFiltersAndAck(t *testing.T) {
 }
 
 func TestIncidentListRejectsBadQueries(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	tok := tokenDe(t, a, a.userID)
 	for consulta, quer := range map[string]apierr.FieldError{
@@ -132,6 +134,7 @@ func TestIncidentListRejectsBadQueries(t *testing.T) {
 // registrada (Task 11) tira o filtro E troca o InUserTx pelo InProberTx, e
 // os incidentes do outro usuário aparecem.
 func TestIncidentListFiltersByTarget(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	tok := tokenDe(t, a, a.userID)
 	alvo, ids := incidentesDe(t, a, tok, 2)
@@ -156,6 +159,7 @@ func TestIncidentListFiltersByTarget(t *testing.T) {
 }
 
 func TestIncidentListPaginates(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	tok := tokenDe(t, a, a.userID)
 	_, ids := incidentesDe(t, a, tok, 3)
@@ -176,6 +180,7 @@ func TestIncidentListPaginates(t *testing.T) {
 // o que sobrou de X. O outro alvo do mesmo dono tem incidentes mais antigos
 // que o cursor, e uma segunda página que esquecesse o target_id os traria.
 func TestIncidentListPaginatesWithinTheTarget(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	tok := tokenDe(t, a, a.userID)
 	incidentesDe(t, a, tok, 2) // o outro alvo, antes: ids menores que os de X
@@ -195,6 +200,7 @@ func TestIncidentListPaginatesWithinTheTarget(t *testing.T) {
 }
 
 func TestAnotherUsersIncidentIs404(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	_, ids := incidentesDe(t, a, tokenDe(t, a, a.userID), 1)
 	intruso := tokenDe(t, a, outroUsuario(t, a))
@@ -217,6 +223,7 @@ func TestAnotherUsersIncidentIs404(t *testing.T) {
 }
 
 func TestIncidentRoutesRequireAuthentication(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	for _, r := range []struct{ metodo, caminho string }{
 		{http.MethodGet, "/api/v1/incidents"},
@@ -233,6 +240,7 @@ func TestIncidentRoutesRequireAuthentication(t *testing.T) {
 // Cada caso sobe a própria API num subteste: o cleanup do subteste restaura
 // o banco, e o usuário fixo de newAPI pode ser criado de novo.
 func TestReadyzChecksTheDatabase(t *testing.T) {
+	t.Parallel()
 	t.Run("banco no ar", func(t *testing.T) {
 		readyzDeve(t, newAPI(t), http.StatusOK)
 	})

@@ -51,6 +51,7 @@ func nomesDoResumo(t *testing.T, a *api, token, consulta string) []string {
 }
 
 func TestTagsSaemNormalizadasEmTodaLeitura(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	token := tokenDe(t, a, outroUsuario(t, a))
 	alvo := criarAlvoComTags(t, a, token, "api", "Prod", " prod ", "Backend")
@@ -80,6 +81,7 @@ func TestTagsSaemNormalizadasEmTodaLeitura(t *testing.T) {
 
 // Sem tags é [], nunca null: o painel valida o campo como lista.
 func TestAlvoSemTagsSaiComListaVazia(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	token := tokenDe(t, a, outroUsuario(t, a))
 	status, cru := lerCru(t, a, http.MethodPost, "/api/v1/targets", token, map[string]any{
@@ -96,6 +98,7 @@ func TestAlvoSemTagsSaiComListaVazia(t *testing.T) {
 
 // PATCH distingue ausente de null: ausente não mexe; null e [] limpam.
 func TestPatchDeTags(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	token := tokenDe(t, a, outroUsuario(t, a))
 	alvo := criarAlvoComTags(t, a, token, "api", "prod")
@@ -125,6 +128,7 @@ func TestPatchDeTags(t *testing.T) {
 
 // Tag inválida é 400, nunca 500, e não muda nada.
 func TestTagsInvalidasNaEscrita(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	token := tokenDe(t, a, outroUsuario(t, a))
 	alvo := criarAlvoComTags(t, a, token, "api", "prod")
@@ -150,6 +154,7 @@ func TestTagsInvalidasNaEscrita(t *testing.T) {
 }
 
 func TestFiltroDoResumoPorTagEEstado(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	token := tokenDe(t, a, outroUsuario(t, a))
 	criarAlvoComTags(t, a, token, "a", "prod", "api")
@@ -183,6 +188,7 @@ func TestFiltroDoResumoPorTagEEstado(t *testing.T) {
 }
 
 func TestFiltroDoResumoRecusaPorAllowlist(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	token := tokenDe(t, a, outroUsuario(t, a))
 	cases := []struct{ nome, consulta, campo, motivo string }{
@@ -213,6 +219,7 @@ func TestFiltroDoResumoRecusaPorAllowlist(t *testing.T) {
 // O nome do parâmetro desconhecido é entrada de quem chama: não volta no
 // corpo, ou uma chave de 8 KiB viraria um eco de 8 KiB.
 func TestParametroDesconhecidoNaoVoltaNaResposta(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	token := tokenDe(t, a, outroUsuario(t, a))
 	chave := "CANARIO" + strings.Repeat("x", 2000)
@@ -228,6 +235,7 @@ func TestParametroDesconhecidoNaoVoltaNaResposta(t *testing.T) {
 // Allowlist de saída (Secure APIs 4.6.2): as chaves de um alvo são exatamente
 // estas, no POST, no GET e na lista. Um campo novo no DTO tem de passar por aqui.
 func TestAlvoTemExatamenteAsChavesDoContrato(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	token := tokenDe(t, a, outroUsuario(t, a))
 	queria := []string{
@@ -274,6 +282,7 @@ func TestAlvoTemExatamenteAsChavesDoContrato(t *testing.T) {
 // pela tag de A tem de ser idêntico ao de uma tag que ninguém usa, ou a
 // resposta diria que a tag existe em outra conta.
 func TestUsuarioBNaoVeTagsDeA(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	tokenA := tokenDe(t, a, outroUsuario(t, a))
 	tokenB := tokenDe(t, a, outroUsuario(t, a))
@@ -297,6 +306,7 @@ func TestUsuarioBNaoVeTagsDeA(t *testing.T) {
 // PATCH de tags em alvo alheio é 404, igual a um id inexistente, e as tags do
 // dono ficam como estavam.
 func TestPatchDeTagsEmAlvoAlheioE404(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	tokenA := tokenDe(t, a, outroUsuario(t, a))
 	tokenB := tokenDe(t, a, outroUsuario(t, a))

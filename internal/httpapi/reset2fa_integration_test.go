@@ -27,6 +27,7 @@ func resetarPeloCLI(t *testing.T, a *api) {
 // token, sem desafio. A perna oposta (com o 2FA ligado, o login pede o
 // desafio) é a do começo.
 func TestLoginAfterReset2FANeedsOnlyThePassword(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	cadastrarTOTP(t, a, clientWithJar(t))
 	desafioAtual(t, a, clientWithJar(t)) // com o 2FA ligado, há desafio
@@ -54,6 +55,7 @@ func TestLoginAfterReset2FANeedsOnlyThePassword(t *testing.T) {
 // (o reset encerrou a que iniciou), seria 403 mesmo sem a limpeza: quem prova
 // a limpeza é o temPendente, que confere o segredo E a família.
 func TestReset2FADropsThePendingRotation(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	velho := cadastrarTOTP(t, a, clientWithJar(t))
 	token := accessTokenValido(t, a)

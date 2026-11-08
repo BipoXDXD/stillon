@@ -37,6 +37,7 @@ var nonceNoStyle = regexp.MustCompile(`<style nonce="([^"]+)">`)
 // Spec §5.6 e §10: a página pública sai sem autenticação, só com o que a
 // tabela da §5.6 permite, e com a CSP estrita autorizando o CSS pelo nonce.
 func TestPublicPageRendersWithoutLeaking(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	ctx := context.Background()
 	tok := tokenDe(t, a, a.userID)
@@ -109,6 +110,7 @@ func TestPublicPageRendersWithoutLeaking(t *testing.T) {
 // Rascunho e inexistente dão a mesma resposta, byte a byte: o público não
 // descobre quais slugs existem. E o 404 não fica em cache.
 func TestPublicPage404IsTheSameForDraftAndMissing(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	tok := tokenDe(t, a, a.userID)
 	resp := chamar(t, a, http.MethodPost, "/api/v1/status-pages", tok, map[string]any{"slug": "rascunho", "title": "T"})
@@ -133,6 +135,7 @@ func TestPublicPage404IsTheSameForDraftAndMissing(t *testing.T) {
 // A página é só GET. E ela é pública de verdade: não pede token nem o
 // cabeçalho anti-CSRF da API.
 func TestPublicPageIsGetOnly(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	resp, err := http.Post(a.srv.URL+"/p/empresa", "text/plain", strings.NewReader("x"))
 	if err != nil {
@@ -147,6 +150,7 @@ func TestPublicPageIsGetOnly(t *testing.T) {
 // A página sai em gzip para quem aceita (spec §10.1, os 10 KB), e em texto
 // puro para quem não aceita. O Vary separa as duas no cache público.
 func TestPublicPageIsCompressedWhenTheClientAccepts(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	tok := tokenDe(t, a, a.userID)
 	resp := chamar(t, a, http.MethodPost, "/api/v1/status-pages", tok, map[string]any{"slug": "comprimida", "title": "T", "published": true})

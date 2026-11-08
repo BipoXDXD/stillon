@@ -135,6 +135,7 @@ func codigosDeRecuperacao(t *testing.T, a *api, _ *http.Client) []string {
 // Prova a propriedade que importa: com TOTP ativo, senha correta sozinha não
 // entrega sessão nenhuma.
 func TestLoginWithTOTPRequiresSecondFactor(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	c := clientWithJar(t)
 	secret := cadastrarTOTP(t, a, c)
@@ -228,6 +229,7 @@ func TestLoginWithTOTPRequiresSecondFactor(t *testing.T) {
 // segundo fator de quem já está logado sem nunca ter digitado um código — e,
 // pior, o desvio do login seria contornável por quem tivesse um token antigo.
 func TestAccessTokenIsNotAcceptedAsTOTPChallenge(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	c := clientWithJar(t)
 	secret := cadastrarTOTP(t, a, c)
@@ -272,6 +274,7 @@ func TestAccessTokenIsNotAcceptedAsTOTPChallenge(t *testing.T) {
 // O código de recuperação é a saída de quem perdeu o celular, e vale uma vez
 // só — percorrido pelo HTTP inteiro, que é por onde o usuário passa.
 func TestRecoveryCodeClosesLoginOnlyOnce(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	c := clientWithJar(t)
 
@@ -383,6 +386,7 @@ func desafioAtual(t *testing.T, a *api, c *http.Client) string {
 // É o bypass que importa: o atacante com um access token ROUBADO chamaria
 // enroll, o segundo fator cairia, e a senha voltaria a bastar sozinha.
 func TestEnrollIsForbiddenAfterTOTPIsConfirmed(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	c := clientWithJar(t)
 	cadastrarTOTP(t, a, c)
@@ -428,6 +432,7 @@ func TestEnrollIsForbiddenAfterTOTPIsConfirmed(t *testing.T) {
 // Sem isso, quem já tem a senha chuta os seis dígitos indefinidamente: o
 // limite de /totp/verify é por IP, e várias origens passam por cima dele.
 func TestFailedSecondFactorLocksTheAccount(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	// c é um navegador SEM o cookie de dispositivo (A3 do Plano 10): o do
 	// cadastro o recebeu no login completo, e as falhas dele não contariam na
@@ -482,6 +487,7 @@ func TestFailedSecondFactorLocksTheAccount(t *testing.T) {
 // "as falhas contam" passaria numa implementação que nunca zera e trancaria a
 // conta de quem acerta.
 func TestSuccessfulSecondFactorClearsTheFailureCount(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	// c é um navegador SEM o cookie de dispositivo (A3 do Plano 10): o do
 	// cadastro o recebeu no login completo, e as falhas dele não contariam na
@@ -520,6 +526,7 @@ func TestSuccessfulSecondFactorClearsTheFailureCount(t *testing.T) {
 // ativo: seria um botão de destravar entre um chute de seis dígitos e o
 // próximo, e o bloqueio do R40 nunca chegaria ao limiar.
 func TestLoggingInAgainDoesNotClearSecondFactorFailures(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	// c é um navegador SEM o cookie de dispositivo (A3 do Plano 10): o do
 	// cadastro o recebeu no login completo, e as falhas dele não contariam na
@@ -552,6 +559,7 @@ func TestLoggingInAgainDoesNotClearSecondFactorFailures(t *testing.T) {
 // chegasse ao código certo depois de trancar a conta entraria assim mesmo, e o
 // ResetFailures do sucesso ainda destravaria a conta para ele.
 func TestSecondFactorIsRefusedWhileTheAccountIsLocked(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	// c é um navegador SEM o cookie de dispositivo (A3 do Plano 10): o do
 	// cadastro o recebeu no login completo, e as falhas dele não contariam na
@@ -616,6 +624,7 @@ func segredoGravado(t *testing.T, a *api) bool {
 // removeu o caminho de volta, o sequestro é permanente e os códigos de
 // recuperação saem no mesmo passo, para o atacante.
 func TestEnrollRequiresThePassword(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	token := accessTokenValido(t, a)
 
@@ -648,6 +657,7 @@ func falhasDeLogin(t *testing.T, a *api) int {
 // deixa de valer nas rotas que exigem a sessão viva. O dono não é trancado: a
 // conta não conta nada, e o login com a senha certa entra.
 func TestEnrollWrongPasswordCountsInTheFamily(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	roubado := accessTokenValido(t, a)
 
@@ -684,6 +694,7 @@ func TestEnrollWrongPasswordCountsInTheFamily(t *testing.T) {
 // enroll chega ao 403 do fator já ativo, e o disable desliga — antes, os dois
 // eram 401 invalid_credentials enquanto um anônimo mantivesse o login travado.
 func TestSecondFactorRoutesIgnoreTheAccountLock(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	c := clientWithJar(t)
 	segredo := cadastrarTOTP(t, a, c)
@@ -721,6 +732,7 @@ func TestSecondFactorRoutesIgnoreTheAccountLock(t *testing.T) {
 // errado viraria renovação e logout. O token recusado continua unauthorized:
 // é essa perna que prova que o código não é o mesmo para tudo.
 func TestSecondFactorRoutesAnswerInvalidCredentials(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	c := clientWithJar(t)
 	segredo := cadastrarTOTP(t, a, c)
@@ -767,6 +779,7 @@ func TestSecondFactorRoutesAnswerInvalidCredentials(t *testing.T) {
 // TestStolenAccessTokenCannotEnableTheSecondFactor percorre o sequestro
 // inteiro: tudo que o atacante tem é um access token válido da vítima.
 func TestStolenAccessTokenCannotEnableTheSecondFactor(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	roubado := accessTokenValido(t, a)
 
@@ -835,6 +848,7 @@ func desativar(t *testing.T, a *api, token string, corpo map[string]string) int 
 // posse do fator. Só a senha rebaixaria o 2FA a nada; só o código deixaria a
 // sessão roubada desligá-lo, que é exatamente o bypass do R38.
 func TestDisableRequiresPasswordAndPossession(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	c := clientWithJar(t)
 	segredo := cadastrarTOTP(t, a, c)
@@ -904,6 +918,7 @@ func TestDisableRequiresPasswordAndPossession(t *testing.T) {
 // TestDisableAcceptsARecoveryCode é o caso que motiva a rota existir: quem
 // perdeu o telefone não tem código do app, e sem isto ficaria trancado.
 func TestDisableAcceptsARecoveryCode(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	c := clientWithJar(t)
 	cadastrarTOTP(t, a, c)

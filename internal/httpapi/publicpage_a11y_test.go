@@ -258,6 +258,7 @@ func alturaEmPorcento(t *testing.T, f forma) float64 {
 }
 
 func TestPublicPageDaysHaveTheirOwnShape(t *testing.T) {
+	t.Parallel()
 	c := lerCSSDaPagina(t)
 	ultimaDaMaioria, primeiraExplicita := -1, len(c.texto)
 	for _, d := range classesDeDia {
@@ -313,6 +314,7 @@ func TestPublicPageDaysHaveTheirOwnShape(t *testing.T) {
 }
 
 func TestPublicPageColorsAreAccessible(t *testing.T) {
+	t.Parallel()
 	c := lerCSSDaPagina(t)
 	for _, tm := range temas {
 		t.Run(string(tm), func(t *testing.T) {
@@ -346,6 +348,7 @@ func TestPublicPageColorsAreAccessible(t *testing.T) {
 // temas. Um token do template que não existe no index.css, ou com outro
 // valor, quebra aqui.
 func TestPublicPageUsesThePanelTokens(t *testing.T) {
+	t.Parallel()
 	c := lerCSSDaPagina(t)
 	painel := lerTokensDoPainel(t)
 	for _, tm := range temas {
@@ -383,6 +386,7 @@ func lerTokensDoPainel(t *testing.T) map[tema]map[string]string {
 // Review Focus 4: o template só aponta fontes do próprio host, que é o que
 // o font-src 'self' da politicaDaPagina libera.
 func TestTemplateFontsComeFromTheOwnHost(t *testing.T) {
+	t.Parallel()
 	c := lerCSSDaPagina(t)
 	urls := regexp.MustCompile(`url\(([^)]*)\)`).FindAllStringSubmatch(c.texto, -1)
 	if len(urls) != 2 {
@@ -399,6 +403,7 @@ func TestTemplateFontsComeFromTheOwnHost(t *testing.T) {
 // branco = 21:1; #767676, o cinza mais claro com 4,5:1 sobre branco, é
 // oklch(0.5658 0 0); o vermelho sRGB puro tem luminância 0,2126.
 func TestContrastFormulaMatchesReference(t *testing.T) {
+	t.Parallel()
 	branco := oklch{1, 0, 0}
 	if r := contraste(oklch{0, 0, 0}, branco); math.Abs(r-21) > 1e-6 {
 		t.Errorf("preto x branco = %.4f, queria 21", r)

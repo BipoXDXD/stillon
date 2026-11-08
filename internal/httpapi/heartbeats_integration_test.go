@@ -73,6 +73,7 @@ func avaliar(t *testing.T, a *api) {
 }
 
 func TestCreateHeartbeatReturnsThePingURLOnce(t *testing.T) {
+	t.Parallel()
 	a := newAPIWith(t, nil)
 	dono := tokenDe(t, a, a.userID)
 	status, corpo := lerCru(t, a, http.MethodPost, "/api/v1/heartbeats", dono, corpoDePeriodo)
@@ -95,6 +96,7 @@ func TestCreateHeartbeatReturnsThePingURLOnce(t *testing.T) {
 
 // O token sai uma vez e não fica no banco: só o SHA-256 dele.
 func TestCreateStoresOnlyTheTokenHash(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	ctx := context.Background()
 	_, token := criarHB(t, a, tokenDe(t, a, a.userID), corpoDePeriodo)
@@ -121,6 +123,7 @@ func TestCreateStoresOnlyTheTokenHash(t *testing.T) {
 }
 
 func TestHeartbeatResponseHasExactKeys(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	dono := tokenDe(t, a, a.userID)
 	id, _ := criarHB(t, a, dono, corpoDePeriodo)
@@ -153,6 +156,7 @@ func TestHeartbeatResponseHasExactKeys(t *testing.T) {
 // A lista e o detalhe trazem a última duração, e o início fica visível enquanto
 // a execução corre.
 func TestListAndDetailShowTheLastRuntime(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	dono := tokenDe(t, a, a.userID)
 	id, token := criarHB(t, a, dono, corpoDePeriodo)
@@ -184,6 +188,7 @@ func tagsDe(t *testing.T, corpo string) []any {
 
 // Criar, ler, listar e editar. A forma canônica é a mesma dos alvos.
 func TestHeartbeatTagsRoundTrip(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	dono := tokenDe(t, a, a.userID)
 	corpo := maps.Clone(corpoDePeriodo)
@@ -203,6 +208,7 @@ func TestHeartbeatTagsRoundTrip(t *testing.T) {
 
 // Sem tags é lista vazia, nunca null: o schema do painel recusaria o null.
 func TestHeartbeatWithoutTagsHasAnEmptyList(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	dono := tokenDe(t, a, a.userID)
 	id, _ := criarHB(t, a, dono, corpoDePeriodo)
@@ -216,6 +222,7 @@ func TestHeartbeatWithoutTagsHasAnEmptyList(t *testing.T) {
 
 // Ausente não mexe; lista troca; [] e null limpam.
 func TestPatchOfHeartbeatTags(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	dono := tokenDe(t, a, a.userID)
 	corpo := maps.Clone(corpoDePeriodo)
@@ -252,6 +259,7 @@ func TestPatchOfHeartbeatTags(t *testing.T) {
 }
 
 func TestHeartbeatTagsAreValidatedLikeTargetTags(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	dono := tokenDe(t, a, a.userID)
 	id, _ := criarHB(t, a, dono, corpoDePeriodo)
@@ -288,6 +296,7 @@ func TestHeartbeatTagsAreValidatedLikeTargetTags(t *testing.T) {
 
 // B não vê as tags de A nem as altera, e o PATCH dele é o 404 de sempre.
 func TestAnotherUsersHeartbeatTagsStayOut(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	dono := tokenDe(t, a, a.userID)
 	corpo := maps.Clone(corpoDePeriodo)
@@ -317,6 +326,7 @@ func descricaoDe(t *testing.T, corpo string) any {
 // A descrição sai igual nas três leituras, com a quebra de linha, e sem ela o
 // campo é "", nunca null: o painel não tem dois jeitos de dizer "sem descrição".
 func TestHeartbeatDescriptionRoundTrip(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	dono := tokenDe(t, a, a.userID)
 	texto := "Roda no NAS.\nSe falhar: ver /var/log/backup.log"
@@ -344,6 +354,7 @@ func TestHeartbeatDescriptionRoundTrip(t *testing.T) {
 // Ausente não mexe; texto troca; "" e null limpam. Mudar a descrição não mexe
 // no prazo: é anotação, e não agendamento.
 func TestPatchOfHeartbeatDescription(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	dono := tokenDe(t, a, a.userID)
 	corpo := maps.Clone(corpoDePeriodo)
@@ -374,6 +385,7 @@ func TestPatchOfHeartbeatDescription(t *testing.T) {
 }
 
 func TestPatchWithInvalidDescriptionChangesNothing(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	dono := tokenDe(t, a, a.userID)
 	corpo := maps.Clone(corpoDePeriodo)
@@ -394,6 +406,7 @@ func TestPatchWithInvalidDescriptionChangesNothing(t *testing.T) {
 // O 400 diz a linha pelo campo, no envelope de sempre, e não ecoa o texto: a
 // descrição é do dono, mas o erro passa por logs e proxies.
 func TestInvalidDescriptionNamesTheLineWithoutEchoingIt(t *testing.T) {
+	t.Parallel()
 	const texto = "CANARY-linha-1\n\nCANARY-linha-3\u202E"
 	querCampos := []apierr.FieldError{{Field: "description[2]", Reason: "invalid"}}
 
@@ -431,6 +444,7 @@ func TestInvalidDescriptionNamesTheLineWithoutEchoingIt(t *testing.T) {
 }
 
 func TestAnotherUsersHeartbeatDescriptionStaysOut(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	dono := tokenDe(t, a, a.userID)
 	corpo := maps.Clone(corpoDePeriodo)
@@ -457,6 +471,7 @@ func TestAnotherUsersHeartbeatDescriptionStaysOut(t *testing.T) {
 // Aviso sai para terceiros (e-mail, webhook), e a descrição pode citar máquina e
 // caminho: ela fica no painel. O ping público também não a devolve.
 func TestHeartbeatDescriptionStaysOutOfThePingAndTheNotices(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	dono := tokenDe(t, a, a.userID)
 	criarCanalDiscord(t, a, dono)
@@ -488,6 +503,7 @@ func previaDoCron(t *testing.T, a *api, sessao string, consulta url.Values) (int
 // Cinco disparos em sequência, no fuso declarado: 3h em São Paulo são 6h UTC, e
 // a resposta tem só a chave do contrato.
 func TestCronPreviewListsTheNextRunsInTheTimezone(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	sessao := tokenDe(t, a, a.userID)
 	status, corpo := previaDoCron(t, a, sessao, url.Values{"expr": {"0 3 * * *"}, "timezone": {"America/Sao_Paulo"}})
@@ -520,6 +536,7 @@ func TestCronPreviewListsTheNextRunsInTheTimezone(t *testing.T) {
 }
 
 func TestCronPreviewRefusesWhatTheFormWouldRefuse(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	sessao := tokenDe(t, a, a.userID)
 	sp := "America/Sao_Paulo"
@@ -552,6 +569,7 @@ func TestCronPreviewRefusesWhatTheFormWouldRefuse(t *testing.T) {
 
 // Parâmetro desconhecido ou repetido é 400 no campo fixo, sem ecoar a chave.
 func TestCronPreviewQueryIsStrict(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	sessao := tokenDe(t, a, a.userID)
 	valida := "expr=0+3+*+*+*&timezone=UTC"
@@ -566,6 +584,7 @@ func TestCronPreviewQueryIsStrict(t *testing.T) {
 
 // A prévia não cria nada, nem conta no teto.
 func TestCronPreviewCreatesNothing(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	sessao := tokenDe(t, a, a.userID)
 	if status, corpo := previaDoCron(t, a, sessao, url.Values{"expr": {"0 3 * * *"}, "timezone": {"UTC"}}); status != http.StatusOK {
@@ -581,6 +600,7 @@ func TestCronPreviewCreatesNothing(t *testing.T) {
 // também responde 401, e o handler recusa sem usuário. Quem prova os dois é
 // TestCronPreviewListsTheNextRunsInTheTimezone, que dá 200 com sessão válida.
 func TestCronPreviewWithoutSessionIs401(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	status, corpo := lerCru(t, a, http.MethodGet, "/api/v1/heartbeats/cron-preview?expr=0+3+*+*+*&timezone=UTC", "", nil)
 	if status != http.StatusUnauthorized {
@@ -590,6 +610,7 @@ func TestCronPreviewWithoutSessionIs401(t *testing.T) {
 
 // O log mostra o código de quem o mandou, e null nos demais.
 func TestEventListShowsTheExitCode(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	dono := tokenDe(t, a, a.userID)
 	id, token := criarHB(t, a, dono, corpoDePeriodo)
@@ -621,6 +642,7 @@ func tokenDaURL(t *testing.T, corpo string) string {
 }
 
 func TestCronHeartbeatRoundTrip(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	dono := tokenDe(t, a, a.userID)
 	id, _ := criarHB(t, a, dono, map[string]any{
@@ -639,6 +661,7 @@ func TestCronHeartbeatRoundTrip(t *testing.T) {
 
 // Campo que o cliente não define é 400, e o banco não muda.
 func TestHeartbeatEntryIsStrict(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	dono := tokenDe(t, a, a.userID)
 	id, _ := criarHB(t, a, dono, corpoDePeriodo)
@@ -663,6 +686,7 @@ func TestHeartbeatEntryIsStrict(t *testing.T) {
 }
 
 func TestHeartbeatValidationBoundaries(t *testing.T) {
+	t.Parallel()
 	periodo := func(s int) map[string]any { return map[string]any{"kind": "period", "period_sec": s} }
 	casos := []struct {
 		nome  string
@@ -714,6 +738,7 @@ func TestHeartbeatValidationBoundaries(t *testing.T) {
 
 // Campo ausente não muda nada; o que veio muda.
 func TestPatchAppliesOnlyWhatCame(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	dono := tokenDe(t, a, a.userID)
 	id, _ := criarHB(t, a, dono, corpoDePeriodo)
@@ -797,6 +822,7 @@ func abertoComAtraso(t *testing.T, a *api) (dono, id, ping string) {
 // Reenviar o que já está gravado não muda nada: nem adia o prazo, nem fecha o
 // incidente, nem manda aviso de volta sem a tarefa ter dado sinal.
 func TestResendingTheSameScheduleKeepsTheDeadlineAndTheIncident(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	dono, id, _ := abertoComAtraso(t, a)
 	_, antes := lerCru(t, a, http.MethodGet, "/api/v1/heartbeats/"+id, dono, nil)
@@ -823,6 +849,7 @@ func TestResendingTheSameScheduleKeepsTheDeadlineAndTheIncident(t *testing.T) {
 // Mudança de verdade move o prazo, mas prazo novo não encerra alarme: o
 // incidente fica aberto até um sucesso.
 func TestChangingTheScheduleDoesNotCloseTheIncident(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	dono, id, ping := abertoComAtraso(t, a)
 	for _, patch := range []map[string]any{
@@ -857,6 +884,7 @@ func TestChangingTheScheduleDoesNotCloseTheIncident(t *testing.T) {
 // D13: retomar zera a falha e recalcula o prazo, e o avaliador fecha o aberto.
 // O aviso diz que foi retomado, porque a tarefa não voltou: nenhum sucesso veio.
 func TestResumingClearsTheFailureAndClosesTheIncident(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	dono := tokenDe(t, a, a.userID)
 	criarCanalDiscord(t, a, dono)
@@ -898,6 +926,7 @@ func TestResumingClearsTheFailureAndClosesTheIncident(t *testing.T) {
 
 // O caminho normal continua dizendo que voltou.
 func TestSuccessStillAnnouncesTheReturn(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	dono := tokenDe(t, a, a.userID)
 	criarCanalDiscord(t, a, dono)
@@ -914,6 +943,7 @@ func TestSuccessStillAnnouncesTheReturn(t *testing.T) {
 }
 
 func TestStateFollowsTheClockAndTheSignals(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	dono := tokenDe(t, a, a.userID)
 	id, ping := criarHB(t, a, dono, corpoDePeriodo)
@@ -938,6 +968,7 @@ func TestStateFollowsTheClockAndTheSignals(t *testing.T) {
 // A tarefa nova que manda /start e morre não fica "em dia": segue aguardando, e
 // o prazo a pega. Quem tira de waiting é o primeiro sucesso.
 func TestStartAloneKeepsTheHeartbeatWaiting(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	dono := tokenDe(t, a, a.userID)
 	id, ping := criarHB(t, a, dono, corpoDePeriodo)
@@ -959,6 +990,7 @@ func TestStartAloneKeepsTheHeartbeatWaiting(t *testing.T) {
 
 // O início descartado na retomada não vira execução terminada: segue aguardando.
 func TestDiscardedStartKeepsTheHeartbeatWaiting(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	dono := tokenDe(t, a, a.userID)
 	id, ping := criarHB(t, a, dono, corpoDePeriodo)
@@ -973,6 +1005,7 @@ func TestDiscardedStartKeepsTheHeartbeatWaiting(t *testing.T) {
 
 // O início de antes da pausa não vira execução de três dias.
 func TestResumingDiscardsTheOpenStart(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	dono := tokenDe(t, a, a.userID)
 	id, ping := criarHB(t, a, dono, corpoDePeriodo)
@@ -1000,6 +1033,7 @@ func TestResumingDiscardsTheOpenStart(t *testing.T) {
 
 // Só a retomada descarta: editar o nome com a execução em curso não mexe nela.
 func TestEditingKeepsTheOpenStart(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	dono := tokenDe(t, a, a.userID)
 	id, ping := criarHB(t, a, dono, corpoDePeriodo)
@@ -1011,6 +1045,7 @@ func TestEditingKeepsTheOpenStart(t *testing.T) {
 }
 
 func TestRotateRevokesTheOldToken(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	dono := tokenDe(t, a, a.userID)
 	id, antigo := criarHB(t, a, dono, corpoDePeriodo)
@@ -1034,6 +1069,7 @@ func TestRotateRevokesTheOldToken(t *testing.T) {
 }
 
 func TestDeletingAHeartbeatRevokesItsToken(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	dono := tokenDe(t, a, a.userID)
 	id, ping := criarHB(t, a, dono, corpoDePeriodo)
@@ -1049,6 +1085,7 @@ func TestDeletingAHeartbeatRevokesItsToken(t *testing.T) {
 }
 
 func TestAnotherUsersHeartbeatIsIndistinguishableFromMissing(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	dono := tokenDe(t, a, a.userID)
 	id, ping := criarHB(t, a, dono, corpoDePeriodo)
@@ -1082,6 +1119,7 @@ func TestAnotherUsersHeartbeatIsIndistinguishableFromMissing(t *testing.T) {
 // O ack exige que o incidente seja daquele heartbeat: id de incidente de outro
 // heartbeat do mesmo dono não passa por este caminho.
 func TestAckIsScopedToTheHeartbeatAndIdempotent(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	dono := tokenDe(t, a, a.userID)
 	id, ping := criarHB(t, a, dono, corpoDePeriodo)
@@ -1124,6 +1162,7 @@ func TestAckIsScopedToTheHeartbeatAndIdempotent(t *testing.T) {
 // D3: os incidentes de heartbeat não entram em /incidents, cujo contrato exige
 // target_id em todo item: o painel de hoje recusaria a lista inteira.
 func TestIncidentsListStaysOnlyWithTargets(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	dono := tokenDe(t, a, a.userID)
 	_, ping := criarHB(t, a, dono, corpoDePeriodo)
@@ -1139,6 +1178,7 @@ func TestIncidentsListStaysOnlyWithTargets(t *testing.T) {
 }
 
 func TestHeartbeatListPagesByCursor(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	dono := tokenDe(t, a, a.userID)
 	ids := map[string]bool{}
@@ -1184,6 +1224,7 @@ func encherHeartbeats(t *testing.T, a *api, n int64) {
 }
 
 func TestHeartbeatLimitPerUser(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	dono := tokenDe(t, a, a.userID)
 	encherHeartbeats(t, a, heartbeat.MaxPerUser-1)
@@ -1198,6 +1239,7 @@ func TestHeartbeatLimitPerUser(t *testing.T) {
 
 // Criar e rotacionar devolvem o token, e nenhum dos dois o escreve no log.
 func TestHeartbeatTokenNeverReachesTheLog(t *testing.T) {
+	t.Parallel()
 	log := capturarLog(t)
 	a := newAPI(t)
 	dono := tokenDe(t, a, a.userID)

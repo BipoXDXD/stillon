@@ -78,6 +78,7 @@ func conferirSemDadosDoDono(t *testing.T, onde, corpo string, dados []string) {
 }
 
 func TestAnotherUsersTargetIsIndistinguishableFromMissing(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	dono := tokenDe(t, a, a.userID)
 	alvo, _ := incidentesDe(t, a, dono, 0)
@@ -96,6 +97,7 @@ func TestAnotherUsersTargetIsIndistinguishableFromMissing(t *testing.T) {
 }
 
 func TestAnotherUsersChannelIsIndistinguishableFromMissing(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	dono := tokenDe(t, a, a.userID)
 	canal := criarCanalDiscord(t, a, dono)
@@ -113,6 +115,7 @@ func TestAnotherUsersChannelIsIndistinguishableFromMissing(t *testing.T) {
 }
 
 func TestAnotherUsersIncidentIsIndistinguishableFromMissing(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	dono := tokenDe(t, a, a.userID)
 	alvo, incidentes := incidentesDe(t, a, dono, 1)
@@ -128,6 +131,7 @@ func TestAnotherUsersIncidentIsIndistinguishableFromMissing(t *testing.T) {
 }
 
 func TestAnotherUsersStatusPageIsIndistinguishableFromMissing(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	dono := tokenDe(t, a, a.userID)
 	alvo, _ := incidentesDe(t, a, dono, 0)
@@ -158,6 +162,7 @@ func TestAnotherUsersStatusPageIsIndistinguishableFromMissing(t *testing.T) {
 // não diz se o alvo existe: o alvo alheio e um id inexistente dão o mesmo
 // erro. Sem isso, a página pública vazaria o estado do alvo alheio.
 func TestStatusPageRefusesAnotherUsersTargetLikeAMissingOne(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	alvoDoDono, _ := incidentesDe(t, a, tokenDe(t, a, a.userID), 0)
 	intruso := tokenDe(t, a, outroUsuario(t, a))

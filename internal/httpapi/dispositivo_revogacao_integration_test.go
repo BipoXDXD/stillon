@@ -22,6 +22,7 @@ import (
 // de novo, o mesmo cookie não tira mais o login do bloqueio, nem com a senha
 // certa.
 func TestDeviceCookieDiesWithTheCredentials(t *testing.T) {
+	t.Parallel()
 	casos := []struct {
 		nome string
 		// com2FA: o cookie é cunhado num login completo com o 2FA ligado (o

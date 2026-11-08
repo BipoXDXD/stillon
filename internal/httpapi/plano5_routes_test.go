@@ -18,6 +18,7 @@ import (
 // teste verde, e o comentário existe para ninguém achar que ele trava o
 // Authn sozinho.
 func TestPlano5RoutesRequireAuthentication(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	for _, r := range []struct{ metodo, caminho string }{
 		{http.MethodGet, "/api/v1/me"},
@@ -38,6 +39,7 @@ func TestPlano5RoutesRequireAuthentication(t *testing.T) {
 // As mutações novas exigem X-Requested-With (spec §5.3) e o corpo passa pelo
 // limite de 1 MiB, como todas as da API.
 func TestPlano5MutationsPassThroughTheChain(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	_, token := entrar(t, a)
 	for _, r := range []struct{ metodo, caminho string }{

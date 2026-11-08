@@ -95,6 +95,7 @@ func ids(itens []sessaoItem) []string {
 // Só famílias vivas: a revogada, a vencida e a de outro usuário não aparecem;
 // só a do token é current.
 func TestListSessionsShowsOnlyLiveFamilies(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	_, token := entrar(t, a)
 	atual := familiaDe(t, token, a)
@@ -144,6 +145,7 @@ func TestListSessionsShowsOnlyLiveFamilies(t *testing.T) {
 // Nada de IP, hash, vencimento nem id de linha: as chaves são exatamente as do
 // contrato, e os bytes gravados de ip_hash e token_hash não aparecem.
 func TestListSessionsNeverExposesIPOrHash(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	_, token := entrar(t, a)
 
@@ -198,6 +200,7 @@ func TestListSessionsNeverExposesIPOrHash(t *testing.T) {
 // verde; a sabotagem registrada (Task 11) tira o filtro E faz a dedupe ficar
 // com a linha mais velha, e o last_used_at da renovada sai errado.
 func TestListSessionsOrderAndTimes(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	c, token := entrar(t, a)
 	primeira := familiaDe(t, token, a)
@@ -241,6 +244,7 @@ func TestListSessionsOrderAndTimes(t *testing.T) {
 
 // O user agent é cortado em 256 code points, sem partir caractere.
 func TestListSessionsTruncatesUserAgent(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	_, token := entrar(t, a)
 	if _, _, err := gerente(a).Issue(context.Background(), a.userID, carimboDe(t, a, a.userID),
@@ -259,6 +263,7 @@ func TestListSessionsTruncatesUserAgent(t *testing.T) {
 
 // Sessão de outro usuário é 404, e continua viva: a prova é o refresh dela.
 func TestRevokeSessionOfAnotherUserIs404(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	_, token := entrar(t, a)
 	mgr := gerente(a)
@@ -283,6 +288,7 @@ func TestRevokeSessionOfAnotherUserIs404(t *testing.T) {
 }
 
 func TestRevokeSessionTwiceIs404(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	_, token := entrar(t, a)
 	doOutroAparelho, s, err := gerente(a).Issue(context.Background(), a.userID, carimboDe(t, a, a.userID), auth.Meta{IP: "203.0.113.9"})
@@ -323,6 +329,7 @@ func TestRevokeSessionTwiceIs404(t *testing.T) {
 // Encerrar a própria sessão é o logout daquela família: 204 e o cookie de
 // refresh apagado (Path=/api/v1/auth, vindo de /api/v1/sessions).
 func TestRevokeCurrentSessionClearsCookie(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	c, token := entrar(t, a)
 
@@ -341,6 +348,7 @@ func TestRevokeCurrentSessionClearsCookie(t *testing.T) {
 }
 
 func TestRevokeOtherSessionKeepsCookie(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	_, token := entrar(t, a)
 	_, s, err := gerente(a).Issue(context.Background(), a.userID, carimboDe(t, a, a.userID), auth.Meta{IP: "203.0.113.9"})
@@ -368,6 +376,7 @@ func TestRevokeOtherSessionKeepsCookie(t *testing.T) {
 // sessaoViva. A sabotagem registrada (Task 11) tira os dois de GET /sessions,
 // e ele fica vermelho (200).
 func TestSessionRoutesRejectDeadFamily(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	c, token := entrar(t, a)
 	mgr := gerente(a)

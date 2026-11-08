@@ -116,6 +116,7 @@ func lerMe(t *testing.T, a *api, token string) conta {
 // totp_enabled é o fator CONFIRMADO: o cadastro iniciado e não confirmado não
 // liga nada, e é essa a perna que distingue as duas colunas.
 func TestMeReturnsTheAccount(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	_, token := entrar(t, a)
 
@@ -146,6 +147,7 @@ func TestMeReturnsTheAccount(t *testing.T) {
 // primeiro continua renovando; os outros dois não; a sessão de outro usuário
 // não é tocada.
 func TestChangePasswordKeepsCurrentRevokesOthers(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	atual, token := entrar(t, a)
 	b, _ := entrar(t, a)
@@ -189,6 +191,7 @@ func TestChangePasswordKeepsCurrentRevokesOthers(t *testing.T) {
 }
 
 func TestChangePasswordWrongCurrent(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	_, token := entrar(t, a)
 	outro, _ := entrar(t, a)
@@ -216,6 +219,7 @@ func TestChangePasswordWrongCurrent(t *testing.T) {
 // min tirava do dono, junto, a troca de senha pelo painel. A troca com as
 // provas certas passa e zera o bloqueio, como sempre zerou (SwapUserHash).
 func TestChangePasswordIgnoresTheAccountLock(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	_, token := entrar(t, a)
 	bloquearConta(t, a)
@@ -238,6 +242,7 @@ func TestChangePasswordIgnoresTheAccountLock(t *testing.T) {
 // código errado é o 401 genérico. A falha conta na família (A3 do Plano 10), e
 // não no bloqueio da conta.
 func TestChangePasswordRequiresTOTP(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	c := clientWithJar(t)
 	segredo := cadastrarTOTP(t, a, c)
@@ -279,6 +284,7 @@ func TestChangePasswordRequiresTOTP(t *testing.T) {
 
 // O código de recuperação vale no lugar do código do app, e é consumido.
 func TestChangePasswordAcceptsARecoveryCode(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	c := clientWithJar(t)
 	cadastrarTOTP(t, a, c)
@@ -307,6 +313,7 @@ func TestChangePasswordAcceptsARecoveryCode(t *testing.T) {
 // A política vem antes de tudo: com a senha nova fora dela, a senha atual
 // (aqui, errada) nem é verificada, e nenhuma falha é contada.
 func TestChangePasswordPolicy(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	_, token := entrar(t, a)
 
@@ -346,6 +353,7 @@ func TestChangePasswordPolicy(t *testing.T) {
 // a trava. Sabotar só uma deixa o teste verde; a segunda tem prova própria em
 // TestChangePasswordRechecksTheFamilyUnderTheLock (internal/account).
 func TestChangePasswordDeadFamily(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	c, token := entrar(t, a)
 	sair := post(t, c, a.srv.URL+"/api/v1/auth/logout", nil)
@@ -375,6 +383,7 @@ func TestChangePasswordDeadFamily(t *testing.T) {
 // teste, por mais lenta que a máquina esteja. Avançar 6 s (o limite é 10 por
 // minuto) devolve exatamente uma.
 func TestChangePasswordSharesTheLoginLimiter(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	loginFalho := func() int {
 		resp := login(t, a, clientWithJar(t), "ninguem@exemplo.com", testPass)

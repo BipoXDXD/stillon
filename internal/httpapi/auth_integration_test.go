@@ -92,7 +92,9 @@ func newAPIWith(t *testing.T, ajustar func(*config.Config)) *api {
 // teste que precisa trocar uma delas (o ping de /readyz, por exemplo).
 func newAPICom(t *testing.T, ajustar func(*config.Config), ajustarDeps func(*httpapi.Deps)) *api {
 	t.Helper()
-	pool := testdb.New(t)
+	// Um banco só deste teste: é o que deixa os testes do pacote rodarem com
+	// t.Parallel() (os de estado global ou concorrência ficam em série).
+	pool := testdb.NovoBanco(t)
 	// O cookiejar do cliente usa o relógio real para avaliar Expires. Uma
 	// data fixa faz os cookies de refresh nascerem vencidos após 30 dias.
 	// Ancoramos a fixture na hora UTC atual, mantendo o relógio controlável
@@ -246,6 +248,7 @@ func postComToken(t *testing.T, c *http.Client, url, token string, body any) *ht
 }
 
 func TestFullAuthFlow(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	c := clientWithJar(t)
 
@@ -353,6 +356,7 @@ func accessDe(t *testing.T, resp *http.Response) string {
 // D2 do Plano 5), no login e em cada refresh. É o que GET /sessions usa para
 // marcar a sessão atual.
 func TestAccessTokenCarriesTheSessionFamily(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	c := clientWithJar(t)
 	ctx := context.Background()
@@ -398,6 +402,7 @@ func TestAccessTokenCarriesTheSessionFamily(t *testing.T) {
 // exige 200 e um access token para a credencial correta; os dois juntos é que
 // prendem o comportamento.
 func TestLoginDoesNotRevealWhetherAccountExists(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	c := clientWithJar(t)
 
@@ -432,6 +437,7 @@ func TestLoginDoesNotRevealWhetherAccountExists(t *testing.T) {
 // relógio: a versão com tempo oscilava sob carga no CI (Task 11). A
 // propriedade é a mesma — cada caminho de falha paga exatamente um Argon2id.
 func TestLoginSpendsTheSameCPUWhetherOrNotTheAccountExists(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	c := clientWithJar(t)
 
@@ -476,6 +482,7 @@ func bloquearConta(t *testing.T, a *api) {
 // Conta bloqueada recusa até a senha correta, e volta a aceitar quando o
 // bloqueio expira.
 func TestLockedAccountIsRejectedUntilTheLockExpires(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	c := clientWithJar(t)
 	bloquearConta(t, a)
@@ -507,6 +514,7 @@ func TestLockedAccountIsRejectedUntilTheLockExpires(t *testing.T) {
 // igualado — por isso o caminho de bloqueio devolve exatamente o mesmo
 // status e o mesmo corpo de um e-mail que nunca existiu.
 func TestLockedAccountIsIndistinguishableFromUnknownAccount(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	c := clientWithJar(t)
 	bloquearConta(t, a)
@@ -556,6 +564,7 @@ func sessoesDoUsuario(t *testing.T, a *api) (total, revogadas int) {
 // resposta sozinha não distingue "recusou" de "revogou de verdade". Foi
 // exatamente essa distinção que escondeu o bug do Rotate na Task 6.
 func TestReusedRefreshCookieRevokesTheWholeFamily(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	c := clientWithJar(t)
 
@@ -638,6 +647,7 @@ func TestReusedRefreshCookieRevokesTheWholeFamily(t *testing.T) {
 // rota: o Path é /api/v1/auth e a rota é /api/v1/auth/refresh, então o cookie
 // de uma sessão real chega — é o que a segunda metade deste teste prova.
 func TestRefreshWithoutCookieIsRejected(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 
 	semCookie := post(t, clientWithJar(t), a.srv.URL+"/api/v1/auth/refresh", nil)
@@ -665,6 +675,7 @@ func TestRefreshWithoutCookieIsRejected(t *testing.T) {
 
 // Um refresh forjado é recusado sem revelar nada além de sessão inválida.
 func TestRefreshWithUnknownCookieIsRejected(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 
 	req, err := http.NewRequest(http.MethodPost, a.srv.URL+"/api/v1/auth/refresh", nil)
@@ -691,6 +702,7 @@ func TestRefreshWithUnknownCookieIsRejected(t *testing.T) {
 // o teste confere o código do envelope (ambos os outros devolveriam
 // "forbidden") e exige que um token válido passe pela mesma rota.
 func TestProtectedRouteRequiresToken(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 
 	semToken, err := http.Get(a.srv.URL + "/api/v1/me")
@@ -741,6 +753,7 @@ func statusComToken(t *testing.T, a *api, token string) int {
 // 403 (vira 401 de credencial inválida), o que descarta que o 403 seja uma
 // propriedade da rota ou de outra camada.
 func TestMutationWithoutCustomHeaderIsRejected(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	body, err := json.Marshal(map[string]string{"email": testEmail, "password": "errada"})
 	if err != nil {
@@ -789,6 +802,7 @@ func TestMutationWithoutCustomHeaderIsRejected(t *testing.T) {
 // nos testes é proposital, para o cookiejar funcionar. Em https ele precisa
 // ser Secure, senão o refresh trafega em claro num downgrade de protocolo.
 func TestRefreshCookieIsSecureWhenPublicBaseURLIsHTTPS(t *testing.T) {
+	t.Parallel()
 	a := newAPIWith(t, func(cfg *config.Config) {
 		cfg.PublicBaseURL = "https://stillon.example"
 	})
@@ -811,6 +825,7 @@ func TestRefreshCookieIsSecureWhenPublicBaseURLIsHTTPS(t *testing.T) {
 // O esquema de uma URL não diferencia maiúsculas: PUBLIC_BASE_URL com
 // "HTTPS://" é produção, e o cookie tem de sair Secure do mesmo jeito.
 func TestRefreshCookieIsSecureWhenPublicBaseURLIsUppercaseHTTPS(t *testing.T) {
+	t.Parallel()
 	a := newAPIWith(t, func(cfg *config.Config) {
 		cfg.PublicBaseURL = "HTTPS://stillon.example"
 	})
@@ -841,6 +856,7 @@ func TestRefreshCookieIsSecureWhenPublicBaseURLIsUppercaseHTTPS(t *testing.T) {
 // mais externa o 429 do RateLimit — o primeiro middleware depois de
 // RequestID que responde sozinho.
 func TestEveryErrorEnvelopeCarriesTheTraceID(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 
 	conferir := func(nome string, resp *http.Response) {
@@ -901,6 +917,7 @@ func TestEveryErrorEnvelopeCarriesTheTraceID(t *testing.T) {
 // o MESMO hash — e linha já gravada com o hash do proxy não é recuperável.
 // É a única correção desta leva que fica mais cara a cada dia em produção.
 func TestSessionsBehindATrustedProxyRecordDistinctOrigins(t *testing.T) {
+	t.Parallel()
 	a := newAPIWith(t, func(cfg *config.Config) {
 		cfg.TrustedProxies = []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")}
 	})
@@ -945,6 +962,7 @@ func TestSessionsBehindATrustedProxyRecordDistinctOrigins(t *testing.T) {
 // todos, e o cliente vem em Fly-Client-IP. Passa pelo wiring inteiro:
 // config → Routes → AuthHandlers → ClientIP.
 func TestSessionsBehindFlyRecordDistinctOrigins(t *testing.T) {
+	t.Parallel()
 	a := newAPIWith(t, func(cfg *config.Config) {
 		cfg.TrustedProxies = []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")}
 		cfg.ClientIPHeader = "Fly-Client-IP"
@@ -990,6 +1008,7 @@ func TestSessionsBehindFlyRecordDistinctOrigins(t *testing.T) {
 // também gravam ip_hash, na auditoria. Cada grupo de handlers recebe os
 // proxies do Routes por um caminho próprio; o teste do login não trava este.
 func TestPasswordChangeBehindFlyAuditsTheClient(t *testing.T) {
+	t.Parallel()
 	a := newAPIWith(t, func(cfg *config.Config) {
 		cfg.TrustedProxies = []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")}
 		cfg.ClientIPHeader = "Fly-Client-IP"
@@ -1035,6 +1054,7 @@ func TestPasswordChangeBehindFlyAuditsTheClient(t *testing.T) {
 // linhas de routes.go deixava a suíte inteira verde e tirava CSP, HSTS e o
 // MaxBytesReader do servidor real.
 func TestTheMiddlewareChainIsActuallyWired(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 
 	t.Run("SecurityHeaders", func(t *testing.T) {
@@ -1123,6 +1143,7 @@ func TestTheMiddlewareChainIsActuallyWired(t *testing.T) {
 // Por isso o CORS ficou dividido: cabeçalhos por fora, atalho do OPTIONS por
 // dentro do limitador.
 func TestPreflightIsRateLimitedButKeepsItsCORSHeaders(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 
 	preflight := func() *http.Response {
@@ -1165,6 +1186,7 @@ func TestPreflightIsRateLimitedButKeepsItsCORSHeaders(t *testing.T) {
 
 // Item 26: a resposta que carrega credencial não deve ser guardada.
 func TestResponsesAreNotCacheable(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	c := clientWithJar(t)
 
@@ -1179,6 +1201,7 @@ func TestResponsesAreNotCacheable(t *testing.T) {
 // barrada pelo MaxBytesReader; o que faltava era o cliente conseguir
 // distinguir "seus dados são inválidos" de "seu corpo é grande demais".
 func TestOversizedBodyIsAPayloadTooLarge(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 
 	gigante := bytes.NewReader(bytes.Repeat([]byte("a"), (1<<20)+1))
@@ -1206,6 +1229,7 @@ func TestOversizedBodyIsAPayloadTooLarge(t *testing.T) {
 // Item 28: o autocompletar do celular costuma acrescentar um espaço à
 // direita do e-mail. citext cobre a caixa, não o espaço.
 func TestLoginToleratesSurroundingWhitespaceInTheEmail(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	c := clientWithJar(t)
 

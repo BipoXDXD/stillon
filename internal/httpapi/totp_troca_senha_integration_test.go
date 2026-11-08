@@ -16,6 +16,7 @@ import (
 // o 2FA. O pendente cai na mesma transação que troca o hash. A perna positiva
 // ("nenhuma") é o mesmo cenário sem a troca de senha: o confirm passa.
 func TestPasswordChangeKillsAPendingRotation(t *testing.T) {
+	t.Parallel()
 	for _, caso := range []struct {
 		nome   string
 		status int

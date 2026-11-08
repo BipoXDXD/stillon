@@ -26,6 +26,7 @@ func verificar(t *testing.T, a *api, c *http.Client, segredo, desafio string) *h
 // TOTP novo a cada período, abria uma sessão por período durante os cinco
 // minutos de validade.
 func TestTOTPChallengeOpensOnlyOneSession(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	c := clientWithJar(t)
 	segredo := cadastrarTOTP(t, a, c)
@@ -66,6 +67,7 @@ func TestTOTPChallengeOpensOnlyOneSession(t *testing.T) {
 // Consumir um desafio invalida os MAIS ANTIGOS ainda abertos; o inverso, o
 // mais antigo primeiro e o mais novo depois, funciona (spec do Plano 8, §3.1).
 func TestNewerTOTPChallengeRetiresTheOlderOne(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	c := clientWithJar(t)
 	segredo := cadastrarTOTP(t, a, c)
@@ -108,6 +110,7 @@ func TestNewerTOTPChallengeRetiresTheOlderOne(t *testing.T) {
 // chega ao verify como qualquer desafio inválido: 401 unauthorized, que o
 // painel trata voltando ao passo da senha, e nunca um 500.
 func TestTOTPChallengeFromBeforeTheMarkIsRefusedAsExpired(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	c := clientWithJar(t)
 	segredo := cadastrarTOTP(t, a, c)
@@ -146,6 +149,7 @@ func TestTOTPChallengeFromBeforeTheMarkIsRefusedAsExpired(t *testing.T) {
 // nova já entrou) e a resposta do verify perdida na rede, com o reenvio do
 // mesmo desafio e o próximo código.
 func TestSpentTOTPChallengeDoesNotBurnARecoveryCode(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	c := clientWithJar(t)
 	segredo := cadastrarTOTP(t, a, c)

@@ -60,6 +60,7 @@ func renderizar(t *testing.T, v statuspage.View) string {
 // compressão, o teto de 16 KB pega uma regressão grande para o cliente que
 // não aceita gzip.
 func TestPublicPageFitsInTenKilobytes(t *testing.T) {
+	t.Parallel()
 	valores := []*float64{nil, ptr(1), ptr(0.995), ptr(0.5)} // n, verde, d, f
 	espalhado := func(i int) *float64 { return valores[i%4] }
 	pior := renderizar(t, paginaDeTeste(5, espalhado))
@@ -85,6 +86,7 @@ func ptr(v float64) *float64 { return &v }
 // A barra sai pela maioria e reconstrói cada dia: a classe efetiva de um
 // dia é a dele, ou a da <ol> quando ele não tem.
 func TestBarEncodesByMajority(t *testing.T) {
+	t.Parallel()
 	var dias [statuspage.Days]statuspage.Day
 	for i := range dias {
 		dias[i].Uptime = ptr(0.995) // amarelo
@@ -104,6 +106,7 @@ func TestBarEncodesByMajority(t *testing.T) {
 }
 
 func TestPresentationRules(t *testing.T) {
+	t.Parallel()
 	f := func(v float64) *float64 { return &v }
 	for _, c := range []struct {
 		u    *float64
@@ -132,6 +135,7 @@ func TestPresentationRules(t *testing.T) {
 // painel (web/src/features/statuspage/faixa.test.ts) também lê: a página
 // publicada e a prévia dizem a mesma coisa.
 func TestBandPhraseFollowsTheSharedCases(t *testing.T) {
+	t.Parallel()
 	b, err := os.ReadFile(filepath.Join("testdata", "faixa.json"))
 	if err != nil {
 		t.Fatal(err)
@@ -171,6 +175,7 @@ func TestBandPhraseFollowsTheSharedCases(t *testing.T) {
 // inteira é conferida, para uma diretiva a mais (script, imagem, outro host)
 // também quebrar o teste.
 func TestPublicPagePolicyOpensOnlyTheOwnFonts(t *testing.T) {
+	t.Parallel()
 	const quer = "default-src 'none'; style-src 'nonce-abc'; font-src 'self'; " +
 		"frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
 	if got := politicaDaPagina("abc"); got != quer {
@@ -226,6 +231,7 @@ func contem(t *testing.T, html string, trechos ...string) {
 // do estado de cada dia. Sabotagem: em classeDia, troque o "d" pelo "f" →
 // o segundo dia sai "f", e a lista de dias não confere.
 func TestTemplateRendersBandLegendAndDayClasses(t *testing.T) {
+	t.Parallel()
 	it := statuspage.PublicItem{Name: "API", State: statuspage.StateDegraded, Uptime90: ptr(0.9991)}
 	for d := range it.Days {
 		it.Days[d].Uptime = ptr(1)
@@ -249,6 +255,7 @@ func TestTemplateRendersBandLegendAndDayClasses(t *testing.T) {
 // Review Focus 1: sem itens, a faixa diz isso, e não há lista, legenda nem
 // a nota das barras; o histórico continua.
 func TestPublicPageWithoutItems(t *testing.T) {
+	t.Parallel()
 	html := renderizar(t, statuspage.View{Title: "Empresa"})
 	contem(t, html,
 		`<div class="b unknown"><strong>Nenhum serviço nesta página.</strong></div>`,
@@ -264,6 +271,7 @@ func TestPublicPageWithoutItems(t *testing.T) {
 // Review Focus 2: um serviço sem nenhum check em 90 dias é a barra inteira
 // em contorno, com o uptime e o selo dizendo "sem dados".
 func TestComponentWithoutDataIn90Days(t *testing.T) {
+	t.Parallel()
 	novo := statuspage.PublicItem{Name: "Novo", State: statuspage.StateUnknown}
 	html := renderizar(t, statuspage.View{Title: "Empresa", Items: []statuspage.PublicItem{novo}})
 	contem(t, html,
@@ -277,6 +285,7 @@ func TestComponentWithoutDataIn90Days(t *testing.T) {
 // Review Focus 3: o maior título que o servidor aceita, sem espaço, quebra em
 // qualquer ponto, e o nome do serviço e o detalhe da faixa também.
 func TestLongOrganizationNameWraps(t *testing.T) {
+	t.Parallel()
 	titulo := strings.Repeat("Organizacao", 9) + "X"
 	if n := utf8.RuneCountInString(titulo); n != 100 {
 		t.Fatalf("título de %d runas, queria 100 (o teto do servidor)", n)
@@ -296,6 +305,7 @@ func TestLongOrganizationNameWraps(t *testing.T) {
 // webui.servirArquivo). O corpo de entrada é o mesmo nos quatro pedidos, então
 // os tamanhos têm de bater byte a byte.
 func TestDeliveredPageDeclaresItsLengthAndHeadHasNoBody(t *testing.T) {
+	t.Parallel()
 	html := []byte(renderizar(t, paginaDeTeste(5, func(int) *float64 { return ptr(1) })))
 	for _, aceita := range []string{"gzip", "identity"} {
 		t.Run(aceita, func(t *testing.T) {
@@ -334,6 +344,7 @@ func TestDeliveredPageDeclaresItsLengthAndHeadHasNoBody(t *testing.T) {
 // capturas do redesign (web/e2e/capturas.spec.ts). Sem a variável, o teste
 // se declara pulado e não grava nada.
 func TestGerarExemploDaPaginaPublica(t *testing.T) {
+	t.Parallel()
 	destino := os.Getenv("STILLON_EXEMPLO_PUBLICA")
 	if destino == "" {
 		t.Skip("só para as capturas: STILLON_EXEMPLO_PUBLICA=<arquivo absoluto>")
@@ -346,6 +357,7 @@ func TestGerarExemploDaPaginaPublica(t *testing.T) {
 // O exemplo das capturas não se contradiz: cada incidente listado derruba o
 // dia dele na barra, na medida da duração.
 func TestExemploDaPaginaPublicaBateComOsIncidentes(t *testing.T) {
+	t.Parallel()
 	const tolerancia = 0.001
 	v := exemploDaPaginaPublica()
 	for _, inc := range v.Incidents {

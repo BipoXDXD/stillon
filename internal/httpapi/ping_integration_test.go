@@ -80,6 +80,7 @@ func eventosDoHeartbeat(t *testing.T, a *api, id uuid.UUID) []db.HeartbeatEvent 
 }
 
 func TestPingSignalsReachTheHeartbeat(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	id, token := novoHeartbeat(t, a)
 	for i, sufixo := range []string{"/start", "", "/fail"} {
@@ -95,6 +96,7 @@ func TestPingSignalsReachTheHeartbeat(t *testing.T) {
 // O código de saída diz o sinal: 0 é sucesso, o resto é falha, e o log guarda o
 // número. É o que permite uma linha só no crontab: curl .../ping/TOKEN/$?
 func TestPingExitCodeDecidesTheSignal(t *testing.T) {
+	t.Parallel()
 	casos := []struct {
 		caminho string
 		tipo    heartbeat.Signal
@@ -121,6 +123,7 @@ func TestPingExitCodeDecidesTheSignal(t *testing.T) {
 
 // Os sufixos sem número continuam sem código no log.
 func TestPingWithoutExitCodeRecordsNone(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	id, token := novoHeartbeat(t, a)
 	for _, sufixo := range []string{"/start", "", "/fail"} {
@@ -139,6 +142,7 @@ func TestPingWithoutExitCodeRecordsNone(t *testing.T) {
 // rota nova não ensina nada sobre o token a quem a sonda. Número não canônico é
 // fora: o $? do shell nunca tem zero à esquerda nem sinal.
 func TestPingInvalidExitCodeAnswersLikeUnknownToken(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	id, token := novoHeartbeat(t, a)
 	desconhecido, _ := heartbeat.NewPingToken()
@@ -161,6 +165,7 @@ func TestPingInvalidExitCodeAnswersLikeUnknownToken(t *testing.T) {
 // Código válido com token desconhecido responde igual aos outros: o número não
 // é um atalho para descobrir se a URL existe.
 func TestPingExitCodeWithUnknownTokenAnswersTheSame(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	desconhecido, _ := heartbeat.NewPingToken()
 	stRef, _, corpoRef := pingar(t, a, "/ping/"+desconhecido, nil)
@@ -173,6 +178,7 @@ func TestPingExitCodeWithUnknownTokenAnswersTheSame(t *testing.T) {
 // A repetição do D9 vale pelo sinal: um retry do curl não duplica a linha, mesmo
 // que o número mude.
 func TestPingRepeatedExitCodeHasOneEffect(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	id, token := novoHeartbeat(t, a)
 	for _, codigo := range []string{"/2", "/2", "/3"} {
@@ -188,6 +194,7 @@ func TestPingRepeatedExitCodeHasOneEffect(t *testing.T) {
 // O código divide o balde do token com as outras rotas: um token vazado não
 // ganha um limite novo para cada número.
 func TestPingExitCodeSharesTheTokenLimit(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	_, token := novoHeartbeat(t, a)
 	for i := range pingPorTokenRajada {
@@ -204,6 +211,7 @@ func TestPingExitCodeSharesTheTokenLimit(t *testing.T) {
 
 // A resposta de sucesso é fixa: nada do heartbeat sai por uma rota pública.
 func TestPingSuccessBodyHasNoHeartbeatData(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	_, token := novoHeartbeat(t, a)
 	status, _, corpo := pingar(t, a, "/ping/"+token, nil)
@@ -225,6 +233,7 @@ func TestPingSuccessBodyHasNoHeartbeatData(t *testing.T) {
 // Inexistente, revogado e malformado respondem igual, e o revogado não grava.
 // A revogação é a troca do hash que o token/rotate fará.
 func TestPingUnknownAndRevokedTokensAnswerTheSame(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	ctx := context.Background()
 	id, revogado := novoHeartbeat(t, a)
@@ -255,6 +264,7 @@ func TestPingUnknownAndRevokedTokensAnswerTheSame(t *testing.T) {
 // O caminho é a credencial: nem o token do ping que deu certo, nem o de um
 // ping que falhou por dentro, nem o de um panic aparecem no log.
 func TestPingNeverLogsTheToken(t *testing.T) {
+	t.Parallel()
 	log := capturarLog(t)
 	a := newAPI(t)
 	_, token := novoHeartbeat(t, a)
@@ -282,6 +292,7 @@ func TestPingNeverLogsTheToken(t *testing.T) {
 }
 
 func TestPingPanicNeverLogsTheToken(t *testing.T) {
+	t.Parallel()
 	log := capturarLog(t)
 	// Sem serviço, o handler entra em panic, e o Recover é quem loga.
 	a := newAPICom(t, nil, func(d *httpapi.Deps) { d.Pings = nil })
@@ -301,6 +312,7 @@ func TestPingPanicNeverLogsTheToken(t *testing.T) {
 // 300 sinais passam. O 429 aqui seria alarme falso. O que vem depois é barrado:
 // o limite existe. O relógio está parado, então nenhum token volta.
 func TestPingIPLimitAdmitsManyHeartbeatsBehindOneAddress(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	var tokens []string
 	for range 100 {
@@ -322,6 +334,7 @@ func TestPingIPLimitAdmitsManyHeartbeatsBehindOneAddress(t *testing.T) {
 
 // Um token em laço esgota o balde dele, e o vizinho no mesmo IP segue.
 func TestPingPerTokenLimitAnswers429WithRetryAfter(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	id, token := novoHeartbeat(t, a)
 	_, vizinho := novoHeartbeat(t, a)
@@ -349,6 +362,7 @@ func TestPingPerTokenLimitAnswers429WithRetryAfter(t *testing.T) {
 }
 
 func TestPingRejectsOversizedBody(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	id, token := novoHeartbeat(t, a)
 
@@ -372,6 +386,7 @@ func TestPingRejectsOversizedBody(t *testing.T) {
 
 // A cadeia só tem os três sinais: nada de GET, nada de subcaminho, nada de CORS.
 func TestPingChainServesOnlyPing(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	id, token := novoHeartbeat(t, a)
 

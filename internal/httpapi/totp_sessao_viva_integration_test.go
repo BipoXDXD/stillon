@@ -17,6 +17,7 @@ import (
 // não confirma, não desliga nem troca o 2FA. Morta é 401 unauthorized (D24), antes de
 // olhar senha ou código.
 func TestTOTPRoutesRejectADeadFamily(t *testing.T) {
+	t.Parallel()
 	a := newAPI(t)
 	c, token := entrar(t, a)
 	sair := post(t, c, a.srv.URL+"/api/v1/auth/logout", nil)
@@ -54,6 +55,7 @@ func TestTOTPRoutesRejectADeadFamily(t *testing.T) {
 // internal/account). Sabotar só o segredo pendente deixa este teste verde; a
 // sabotagem registrada (Task 11) tira as duas, e o 2FA do invasor liga.
 func TestIntruderCannotConfirmTOTPAfterThePasswordChanges(t *testing.T) {
+	t.Parallel()
 	for _, r := range []string{"troca de senha", "set-password"} {
 		t.Run(r, func(t *testing.T) {
 			a := newAPI(t)
