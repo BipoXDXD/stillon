@@ -258,8 +258,10 @@ class TesteArquivo(unittest.TestCase):
         with zipfile.ZipFile(saida, "w", zipfile.ZIP_DEFLATED) as z:
             z.writestr("stillon.dump.age", bytes(ensaio.TETO_DE_RESPOSTA + 1))
         arquivo = saida.getvalue()
-        with self.assertRaisesRegex(RuntimeError, "^unexpected_archive$"):
-            ensaio.ler_cifrado(arquivo, com_digest(arquivo))
+        with mock.patch.object(zipfile.ZipFile, "read", autospec=True) as ler:
+            with self.assertRaisesRegex(RuntimeError, "^unexpected_archive$"):
+                ensaio.ler_cifrado(arquivo, com_digest(arquivo))
+        ler.assert_not_called()
 
 
 class TesteMetadados(unittest.TestCase):
@@ -330,7 +332,9 @@ class TesteObter(unittest.TestCase):
 
 
 class TesteIsolamento(unittest.TestCase):
-    """Os passos que tocam age e Docker, com rodar() falso: nada sai do processo."""
+    """Os passos que tocam age e Docker. Só o teste do próprio rodar() abre um
+    subprocesso (o Python atual); nos outros, rodar() é falso e age e Docker não
+    são chamados."""
 
     def test_passo_que_falha_vira_erro_nomeado(self):
         with self.assertRaisesRegex(RuntimeError, "^isolated_step_failed$"):
@@ -346,6 +350,13 @@ class TesteIsolamento(unittest.TestCase):
         with tempfile.TemporaryDirectory() as pasta:
             with mock.patch.object(ensaio, "rodar", return_value=b"PGDMP..."):
                 ensaio.decifrar(b"age-encryption.org/v1\n", "AGE-SECRET-KEY-FALSA", Path(pasta))
+            self.assertFalse((Path(pasta) / "identity").exists())
+
+    def test_a_identidade_sai_do_disco_mesmo_quando_o_age_falha(self):
+        with tempfile.TemporaryDirectory() as pasta:
+            with mock.patch.object(ensaio, "rodar", side_effect=RuntimeError("isolated_step_failed")):
+                with self.assertRaisesRegex(RuntimeError, "^isolated_step_failed$"):
+                    ensaio.decifrar(b"age-encryption.org/v1\n", "AGE-SECRET-KEY-FALSA", Path(pasta))
             self.assertFalse((Path(pasta) / "identity").exists())
 
     def test_nao_remove_container_sem_o_rotulo_do_ensaio(self):

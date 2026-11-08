@@ -87,8 +87,13 @@ func TestSourceEnvironmentRoundsTheConnectTimeoutUp(t *testing.T) {
 		{1500 * time.Millisecond, "PGCONNECT_TIMEOUT=2"},
 		{2 * time.Second, "PGCONNECT_TIMEOUT=2"},
 	} {
-		env := sourceEnv(nil, "s", "a", "o", tc.prazo)
-		if got := env[len(env)-1]; got != tc.quer {
+		got := ""
+		for _, item := range sourceEnv(nil, "s", "a", "o", tc.prazo) {
+			if strings.HasPrefix(item, "PGCONNECT_TIMEOUT=") {
+				got = item
+			}
+		}
+		if got != tc.quer {
 			t.Errorf("prazo %s: %q, queria %q", tc.prazo, got, tc.quer)
 		}
 	}
