@@ -355,3 +355,13 @@ func TestRLSOrFKErrorWithTheTargetAliveIsLogged(t *testing.T) {
 		})
 	}
 }
+
+// Depois de uma lacuna, os dois contadores recomeçam, e não só o de falhas.
+func TestLongGapAlsoRestartsTheSuccessStreak(t *testing.T) {
+	ultimo := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
+	antes := incident.State{ConsecutiveSuccesses: 2, StreakSince: ultimo, LastCheckedAt: ultimo, Open: true}
+	depois := recomecarAposLacuna(antes, ultimo.Add(time.Hour), 60)
+	if depois.ConsecutiveSuccesses != 0 || !depois.Open {
+		t.Errorf("estado = %+v; queria 0 sucessos e o incidente ainda aberto", depois)
+	}
+}

@@ -111,8 +111,8 @@ func TestProbeTimeoutWaitingForHeaders(t *testing.T) {
 	}
 }
 
-// A falha sem resposta também grava a latência: o tempo que a sonda esperou,
-// que no timeout é ao menos o prazo, e não zero.
+// A falha sem resposta também grava a latência, e não zero. A folga de meio
+// prazo existe porque o prazo começa a contar antes de a medição começar.
 func TestProbeFailureWithoutResponseRecordsTheLatency(t *testing.T) {
 	parar := make(chan struct{})
 	srv, client := servidor(t, func(w http.ResponseWriter, r *http.Request) {
@@ -125,8 +125,8 @@ func TestProbeFailureWithoutResponseRecordsTheLatency(t *testing.T) {
 
 	s := especificacao(srv.URL)
 	s.Timeout = 200 * time.Millisecond
-	if res := Probe(t.Context(), client, s); res.Latency < s.Timeout {
-		t.Errorf("latência = %s, queria ao menos o prazo de %s", res.Latency, s.Timeout)
+	if res := Probe(t.Context(), client, s); res.Latency < s.Timeout/2 {
+		t.Errorf("latência = %s, queria ao menos metade do prazo de %s", res.Latency, s.Timeout)
 	}
 }
 

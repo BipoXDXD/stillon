@@ -30,6 +30,7 @@ func TestClassify(t *testing.T) {
 		{"redirecionamento recusado", embrulhar(fmt.Errorf("%w: mais de 3 redirecionamentos", safedial.ErrRedirect)), KindUnknown},
 		{"prazo no cabeçalho", embrulhar(context.DeadlineExceeded), KindTimeout},
 		{"prazo no corpo, sem url.Error", context.DeadlineExceeded, KindTimeout},
+		{"prazo atrás de outro embrulho", embrulhar(fmt.Errorf("ler: %w", context.DeadlineExceeded)), KindTimeout},
 		{"DNS inexistente", embrulhar(&net.DNSError{Err: "no such host", Name: "x.invalid", IsNotFound: true}), KindDNS},
 		{"DNS que demorou", embrulhar(&net.DNSError{Err: "i/o timeout", Name: "x", IsTimeout: true}), KindTimeout},
 		{"conexão recusada", embrulhar(&net.OpError{Op: "dial", Err: os.NewSyscallError("connect", syscall.ECONNREFUSED)}), KindConnRefused},
