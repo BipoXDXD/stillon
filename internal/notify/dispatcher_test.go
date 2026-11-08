@@ -840,3 +840,23 @@ func (b *bancada) comoSondador(t *testing.T, sql string, args ...any) {
 		t.Fatal(err)
 	}
 }
+
+// Quem parou o canal falhou de vez, sem próxima tentativa: a adiada calcula o
+// próprio backoff, em vez de voltar para a fila no instante zero.
+func TestDeferredBehindADefinitiveFailureUsesItsOwnBackoff(t *testing.T) {
+	b := novaBancada(t, nil)
+	ids := b.apagao(t, 2)
+	b.comoSondador(t, `UPDATE notifications SET attempts = $1 WHERE id = $2`, int32(MaxAttempts-1), ids[0])
+	b.canal.respostas = []error{&SendError{Reason: ReasonNetwork}}
+
+	b.despachar(t, 2)
+
+	if l := b.estado(t, ids[0]); l.Status != "failed" {
+		t.Fatalf("quem parou o canal: %+v; queria failed", l)
+	}
+	l := b.estado(t, ids[1])
+	if l.Status != "pending" || l.Attempts != 1 || l.Erro == nil || *l.Erro != "network" ||
+		!l.Proxima.Equal(b.clk.Now().Add(30*time.Second)) {
+		t.Errorf("adiada: %+v; queria pendente, 1 tentativa, network, próxima em 30s", l)
+	}
+}

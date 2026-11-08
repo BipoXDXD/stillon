@@ -114,8 +114,12 @@ func TestMessageNeverEchoesAnUnknownCause(t *testing.T) {
 func TestDuration(t *testing.T) {
 	for d, quer := range map[time.Duration]string{
 		30 * time.Second:               "menos de um minuto",
+		time.Minute - time.Second:      "menos de um minuto",
+		time.Minute:                    "1 min",
 		7*time.Minute + 59*time.Second: "7 min",
 		time.Hour:                      "1h 00min",
+		24*time.Hour - time.Minute:     "23h 59min",
+		24 * time.Hour:                 "1d 0h",
 		26*time.Hour + 30*time.Minute:  "1d 2h",
 	} {
 		if got := duracao(d); got != quer {
@@ -157,6 +161,9 @@ func TestNormalizeEmail(t *testing.T) {
 		"a@b.com, c@d.com":                  "",
 		"":                                  "",
 		strings.Repeat("a", 250) + "@x.com": "",
+		// A fronteira de maxEmail (254): on point aceito, off point recusado.
+		strings.Repeat("a", 248) + "@x.com": strings.Repeat("a", 248) + "@x.com",
+		strings.Repeat("a", 249) + "@x.com": "",
 	} {
 		got, ok := NormalizeEmail(in)
 		if (quer == "") == ok || got != quer {
@@ -185,5 +192,27 @@ func TestMessageForReminder(t *testing.T) {
 		corpo != "API de pagamentos continua fora do ar desde 24/09/2026 12:00 UTC (há 6h 30min).\n"+
 			"Causa: tempo esgotado.\nReconheça o incidente no painel para parar os lembretes.\n" {
 		t.Errorf("lembrete: %q / %q", assunto, corpo)
+	}
+}
+
+func TestHintEdgeCases(t *testing.T) {
+	for _, tc := range []struct {
+		nome    string
+		tipo    Kind
+		destino string
+		quer    string
+	}{
+		{"id de quatro dígitos sai inteiro", KindDiscord, "https://discord.com/api/webhooks/1234/segredo", "webhook …1234"},
+		{"id de cinco dígitos perde o primeiro", KindDiscord, "https://discord.com/api/webhooks/12345/segredo", "webhook …2345"},
+		{"barra no fim não vira parte do caminho", KindDiscord, "https://discord.com/api/webhooks/123456/segredo/", "webhook …3456"},
+		{"destino sem barra", KindDiscord, "invalido", "webhook"},
+		{"e-mail sem parte local", KindEmail, "@exemplo.com", "e-mail"},
+		{"e-mail sem arroba", KindEmail, "sem-arroba", "e-mail"},
+	} {
+		t.Run(tc.nome, func(t *testing.T) {
+			if got := hint(tc.tipo, crypto.Secret(tc.destino)); got != tc.quer {
+				t.Errorf("hint = %q, queria %q", got, tc.quer)
+			}
+		})
 	}
 }
