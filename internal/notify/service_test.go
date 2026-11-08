@@ -12,6 +12,8 @@ import (
 
 	"github.com/BipoXDXD/stillon/internal/clock"
 	"github.com/BipoXDXD/stillon/internal/crypto"
+	"github.com/BipoXDXD/stillon/internal/storage"
+	"github.com/BipoXDXD/stillon/internal/storage/db"
 	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 )
 
@@ -419,5 +421,73 @@ func TestUnreadableChannelDoesNotBreakTheList(t *testing.T) {
 	cs := b.listar(t, b.dono)
 	if len(cs) != 1 || cs[0].Hint != "" || cs[0].Status != StatusVerified {
 		t.Errorf("listagem com linha ilegível = %+v", cs)
+	}
+}
+
+// Só o token de 32 bytes (43 caracteres em base64url) tem hash.
+func TestTokenHashAcceptsOnlyTheExactLength(t *testing.T) {
+	for _, tc := range []struct {
+		nome       string
+		caracteres int
+		quer       bool
+	}{
+		{"31 bytes", 42, false},
+		{"32 bytes", 43, true},
+		{"33 bytes", 44, false},
+	} {
+		t.Run(tc.nome, func(t *testing.T) {
+			if _, ok := hashDoToken(strings.Repeat("A", tc.caracteres)); ok != tc.quer {
+				t.Errorf("hashDoToken = %v, queria %v", ok, tc.quer)
+			}
+		})
+	}
+}
+
+func TestFailingAfterSuccess(t *testing.T) {
+	cedo := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
+	tarde := cedo.Add(time.Minute)
+	for _, tc := range []struct {
+		nome           string
+		falha, sucesso *time.Time
+		quer           bool
+	}{
+		{"sem falha", nil, &cedo, false},
+		{"falha sem nenhum sucesso", &cedo, nil, true},
+		{"falha depois do sucesso", &tarde, &cedo, true},
+		{"sucesso depois da falha", &cedo, &tarde, false},
+		{"mesmo instante: o sucesso vale", &cedo, &cedo, false},
+	} {
+		t.Run(tc.nome, func(t *testing.T) {
+			if got := falhandoDepoisDoSucesso(tc.falha, tc.sucesso); got != tc.quer {
+				t.Errorf("falhandoDepoisDoSucesso = %v, queria %v", got, tc.quer)
+			}
+		})
+	}
+}
+
+// Canal Discord sem verificação não é "e-mail pendente": o reenvio recusa e
+// não manda link nenhum para a URL do webhook.
+func TestResendRefusesAnUnverifiedDiscordChannel(t *testing.T) {
+	b := novaBancadaCanais(t, true)
+	ctx := context.Background()
+	id := uuid.Must(uuid.NewV7())
+	sealed, err := sealConfig(b.svc.box, id, webhookValido)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = storage.InUserTx(ctx, b.svc.pool, b.dono, func(q *db.Queries) error {
+		return q.InsertChannel(ctx, db.InsertChannelParams{
+			ID: id, UserID: b.dono, Kind: string(KindDiscord), ConfigEnc: sealed, CreatedAt: b.clk.Now(),
+		})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := b.svc.ResendVerification(ctx, b.dono, id); !errors.Is(err, ErrNotPending) {
+		t.Errorf("erro = %v, queria ErrNotPending", err)
+	}
+	if len(b.email.enderecos) != 0 {
+		t.Errorf("mandou link para %d destinos, queria nenhum", len(b.email.enderecos))
 	}
 }

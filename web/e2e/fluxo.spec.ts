@@ -1,5 +1,7 @@
-import type { APIRequestContext, APIResponse, Page, Route } from '@playwright/test'
+import type { APIRequestContext, APIResponse } from '@playwright/test'
+import { cadenciarRecursos } from './cadencia'
 import { controlePositivo, expect, test } from './fixtures'
+import { instalarRelogio, noRitmoDoPoll } from './relogio'
 
 // Um clique não depende da cadência nem do poll: ele só espera o elemento. Sem
 // este prazo, um elemento que nunca aparece consumia o tempo inteiro do teste
@@ -14,7 +16,7 @@ test.use({ actionTimeout: 15_000 })
 type Sobra = { rota: 'targets' | 'heartbeats'; nomes: string[] }
 let sobra: Sobra | null = null
 
-// Os limitadores (ver abaixo) respondem 429 sem Retry-After. A limpeza roda
+// Os limitadores (ver abaixo) respondem 429; o Retry-After não é lido aqui. A limpeza roda
 // depois do fluxo, que gastou os baldes: um 429 aqui é o limite, não o
 // produto. Espera com recuo limitado (2+4+8+16 s = 30 s, o bastante para o
 // balde do login, 1 ficha a cada 6 s, e o por usuário, 1 por segundo) e tenta
@@ -249,6 +251,10 @@ test('heartbeat: cadastro, URL, sinais reais, incidente, pausa, retomada, rotaç
     const nome = `Tarefa E2E ${Date.now()}`
     sobra = { rota: 'heartbeats', nomes: [nome] }
     const noPoll = { timeout: ESPERA_DO_POLL_MS }
+    // A espera pelo poll anda com o relógio do navegador acelerado (relogio.ts);
+    // o prazo de cada uma (noPoll) segue em tempo real.
+    const pollar = <T>(espera: () => Promise<T>) => noRitmoDoPoll(page, espera)
+    await instalarRelogio(page)
     const irAoPainel = () => page.getByRole('navigation', { name: 'Principal' }).getByRole('link', { name: 'Painel' }).click()
     const selo = (texto: string) => page.getByText(texto, { exact: true })
     const log = page.getByRole('region', { name: 'Log de eventos' }).getByRole('listitem')
@@ -300,8 +306,8 @@ test('heartbeat: cadastro, URL, sinais reais, incidente, pausa, retomada, rotaç
     // 4. Início e sucesso de verdade: estado e log mudam sem recarregar.
     await postar(`${url}/start`, 200)
     await postar(url, 200)
-    await expect(selo('Em dia')).toBeVisible(noPoll)
-    await expect(log).toHaveCount(2, noPoll)
+    await pollar(() => expect(selo('Em dia')).toBeVisible(noPoll))
+    await pollar(() => expect(log).toHaveCount(2, noPoll))
     await expect(log.nth(0)).toContainText('Sucesso')
     await expect(log.nth(0)).toContainText(/levou \d+ (ms|s)/)
     await expect(log.nth(1)).toContainText('Início')
@@ -309,15 +315,15 @@ test('heartbeat: cadastro, URL, sinais reais, incidente, pausa, retomada, rotaç
 
     // 5. Falha: o selo vem da leitura, e o incidente, do avaliador.
     await postar(`${url}/fail`, 200)
-    await expect(selo('Falhando')).toBeVisible(noPoll)
-    await expect(incidentes.filter({ hasText: 'A tarefa avisou falha' }).getByText('Em andamento')).toBeVisible(noPoll)
-    await expect(log).toHaveCount(3, noPoll)
+    await pollar(() => expect(selo('Falhando')).toBeVisible(noPoll))
+    await pollar(() => expect(incidentes.filter({ hasText: 'A tarefa avisou falha' }).getByText('Em andamento')).toBeVisible(noPoll))
+    await pollar(() => expect(log).toHaveCount(3, noPoll))
     await expect(log.nth(0)).toContainText('Falha')
 
     // A manchete fala da tarefa. Regex: a pilha do CI tem os alvos do seed, e
     // a frase pode ser "Um serviço e uma tarefa pedem atenção."
     await irAoPainel()
-    await expect(page.getByText(TAREFA_PEDE_ATENCAO)).toBeVisible(noPoll)
+    await pollar(() => expect(page.getByText(TAREFA_PEDE_ATENCAO)).toBeVisible(noPoll))
     await expect(page.getByText(/Tarefas: 1 com falha\./)).toBeVisible()
     await expect(linha('Falhando')).toBeVisible()
     await page.getByRole('link', { name: nome, exact: true }).click()
@@ -325,20 +331,20 @@ test('heartbeat: cadastro, URL, sinais reais, incidente, pausa, retomada, rotaç
     // 6. Pausar não encerra o incidente (D13): a manchete segue pedindo atenção.
     await page.getByRole('button', { name: 'Pausar' }).click()
     await page.getByRole('alertdialog').getByRole('button', { name: 'Pausar heartbeat' }).click()
-    await expect(selo('Pausado')).toBeVisible(noPoll)
+    await pollar(() => expect(selo('Pausado')).toBeVisible(noPoll))
     //    A linha vem primeiro: ela prova que a lista já é a nova, e a manchete
     //    nasce da mesma lista.
     await irAoPainel()
-    await expect(linha('Pausado')).toBeVisible(noPoll)
+    await pollar(() => expect(linha('Pausado')).toBeVisible(noPoll))
     await expect(page.getByText(TAREFA_PEDE_ATENCAO)).toBeVisible()
     await expect(page.getByText(/Tarefas: 1 pausada\./)).toBeVisible()
-    await expect(page.getByRole('navigation', { name: 'Principal' }).getByRole('link', { name: ABA_COM_ABERTOS })).toBeVisible(noPoll)
+    await pollar(() => expect(page.getByRole('navigation', { name: 'Principal' }).getByRole('link', { name: ABA_COM_ABERTOS })).toBeVisible(noPoll))
     await page.getByRole('link', { name: nome, exact: true }).click()
 
     // 7. Retomar zera a falha, e o avaliador fecha o incidente.
     await page.getByRole('button', { name: 'Retomar' }).click()
-    await expect(selo('Em dia')).toBeVisible(noPoll)
-    await expect(incidentes.getByText('Resolvido')).toBeVisible(noPoll)
+    await pollar(() => expect(selo('Em dia')).toBeVisible(noPoll))
+    await pollar(() => expect(incidentes.getByText('Resolvido')).toBeVisible(noPoll))
     await expect(incidentes.getByText('Em andamento')).toHaveCount(0)
 
     // 8. Rotacionar: a URL antiga morre na hora, e a nova fala com o mesmo
@@ -351,7 +357,7 @@ test('heartbeat: cadastro, URL, sinais reais, incidente, pausa, retomada, rotaç
     await postar(`${url}/start`, 404)
     await postar(`${url}/fail`, 404)
     await postar(urlNova, 200)
-    await expect(log).toHaveCount(4, noPoll)
+    await pollar(() => expect(log).toHaveCount(4, noPoll))
     await expect(log.nth(0)).toContainText('Sucesso')
 
     // A credencial não ficou em lugar nenhum do navegador (spec da tela, T8).
@@ -361,9 +367,9 @@ test('heartbeat: cadastro, URL, sinais reais, incidente, pausa, retomada, rotaç
     // 9. Pausada sem incidente, a tarefa sai da manchete.
     await page.getByRole('button', { name: 'Pausar' }).click()
     await page.getByRole('alertdialog').getByRole('button', { name: 'Pausar heartbeat' }).click()
-    await expect(selo('Pausado')).toBeVisible(noPoll)
+    await pollar(() => expect(selo('Pausado')).toBeVisible(noPoll))
     await irAoPainel()
-    await expect(linha('Pausado')).toBeVisible(noPoll)
+    await pollar(() => expect(linha('Pausado')).toBeVisible(noPoll))
     await expect(page.getByRole('heading', { level: 2, name: MANCHETE_SEM_TAREFA })).toBeVisible()
     await expect(page.getByText(TAREFA_PEDE_ATENCAO)).toHaveCount(0)
     await page.getByRole('link', { name: nome, exact: true }).click()
@@ -393,6 +399,10 @@ test('heartbeat: editar, reconhecer o incidente e o sucesso que o fecha', async 
     const nomeNovo = `${nome} editada`
     sobra = { rota: 'heartbeats', nomes: [nome] }
     const noPoll = { timeout: ESPERA_DO_POLL_MS }
+    // A espera pelo poll anda com o relógio do navegador acelerado (relogio.ts);
+    // o prazo de cada uma (noPoll) segue em tempo real.
+    const pollar = <T>(espera: () => Promise<T>) => noRitmoDoPoll(page, espera)
+    await instalarRelogio(page)
     const selo = (texto: string) => page.getByText(texto, { exact: true })
     const log = page.getByRole('region', { name: 'Log de eventos' }).getByRole('listitem')
     const incidente = page.getByRole('region', { name: 'Incidentes' }).getByRole('listitem').filter({ hasText: 'A tarefa avisou falha' })
@@ -441,20 +451,20 @@ test('heartbeat: editar, reconhecer o incidente e o sucesso que o fecha', async 
 
     // 3. A edição não troca a URL: o sinal dela cai neste mesmo heartbeat.
     await postar(url)
-    await expect(selo('Em dia')).toBeVisible(noPoll)
-    await expect(log).toHaveCount(1, noPoll)
+    await pollar(() => expect(selo('Em dia')).toBeVisible(noPoll))
+    await pollar(() => expect(log).toHaveCount(1, noPoll))
 
     // 4. Falha: o incidente abre pelo avaliador, à espera de reconhecimento.
     await postar(`${url}/fail`)
-    await expect(selo('Falhando')).toBeVisible(noPoll)
-    await expect(incidente.getByText('Em andamento')).toBeVisible(noPoll)
+    await pollar(() => expect(selo('Falhando')).toBeVisible(noPoll))
+    await pollar(() => expect(incidente.getByText('Em andamento')).toBeVisible(noPoll))
 
     // 5. Reconhecer para os lembretes e não resolve: o incidente segue aberto, a
     //    tarefa segue falhando, e o foco do botão que sumiu vai para o título.
     await expect(page.getByText('Reconhecer interrompe os lembretes; não resolve o incidente.')).toBeVisible()
     await reconhecer.focus()
     await page.keyboard.press('Enter')
-    await expect(incidente.getByText('Reconhecido', { exact: true })).toBeVisible(noPoll)
+    await pollar(() => expect(incidente.getByText('Reconhecido', { exact: true })).toBeVisible(noPoll))
     await expect(incidente.getByText(/^Reconhecido em .* · lembretes parados$/)).toBeVisible()
     await expect(reconhecer).toHaveCount(0)
     await expect(page.getByRole('heading', { name: 'Incidentes' })).toBeFocused()
@@ -463,17 +473,17 @@ test('heartbeat: editar, reconhecer o incidente e o sucesso que o fecha', async 
     // de novo do servidor, e só depois dele o selo prova que a tarefa segue
     // falhando com o incidente reconhecido.
     await page.reload()
-    await expect(incidente.getByText('Reconhecido', { exact: true })).toBeVisible(noPoll)
+    await pollar(() => expect(incidente.getByText('Reconhecido', { exact: true })).toBeVisible(noPoll))
     await expect(selo('Falhando')).toBeVisible()
 
     // 6. O sucesso fecha o incidente reconhecido e guarda o reconhecimento,
     //    agora sem a promessa de lembretes parados.
     await postar(url)
-    await expect(selo('Em dia')).toBeVisible(noPoll)
-    await expect(incidente.getByText('Resolvido')).toBeVisible(noPoll)
+    await pollar(() => expect(selo('Em dia')).toBeVisible(noPoll))
+    await pollar(() => expect(incidente.getByText('Resolvido')).toBeVisible(noPoll))
     await expect(incidente.getByText(/^Reconhecido em /)).toBeVisible()
     await expect(incidente.getByText(/lembretes parados/)).toHaveCount(0)
-    await expect(log).toHaveCount(3, noPoll)
+    await pollar(() => expect(log).toHaveCount(3, noPoll))
     await expect(log.nth(0)).toContainText('Sucesso')
 
     // 7. Apagar: o teto do E2E é o de 100 tarefas por conta.
@@ -487,79 +497,6 @@ test('heartbeat: editar, reconhecer o incidente e o sucesso que o fecha', async 
     await encerrar()
   }
 })
-
-// Uma ficha por segundo é o contrato público de RateLimitUser(60, 20).
-// Reservar os turnos antes de aguardar evita que GETs paralelos formem um lote.
-// Auth/refresh seguem nativos; nenhuma resposta, mutação ou falha é repetida.
-async function cadenciarRecursos(page: Page, prazo: number) {
-  const padrao = /\/api\/v1\/(?!auth(?:\/|$))/
-  let proximo = 0
-  let fila = Promise.resolve()
-  let encerrada = false
-  const esperas = new Map<ReturnType<typeof setTimeout>, () => void>()
-  const pendentes = new Set<Promise<void>>()
-  const erros: unknown[] = []
-
-  async function executar(route: Route) {
-    const agora = performance.now()
-    const turno = Math.max(agora, proximo)
-    proximo = turno + 1_000
-    if (!encerrada && turno >= prazo) {
-      await route.abort('timedout')
-      throw new Error('cadência do E2E: recurso não cabe no prazo original do teste')
-    }
-    while (performance.now() < turno) {
-      if (encerrada) break
-      await new Promise<void>((ok) => {
-        const timer = setTimeout(() => {
-          esperas.delete(timer)
-          ok()
-        }, Math.ceil(turno - performance.now()))
-        esperas.set(timer, ok)
-      })
-    }
-    if (!encerrada && performance.now() >= prazo) {
-      await route.abort('timedout')
-      throw new Error('cadência do E2E: prazo original do teste esgotado')
-    }
-    try {
-      if (encerrada) await route.abort('aborted')
-      else await route.continue()
-    } catch (erro) {
-      // F5/navegação pode cancelar uma requisição durante seu turno. Somente
-      // o cancelamento confirmado pelo navegador é esperado; o resto falha.
-      if (!route.request().failure()) throw erro
-    } finally {
-      // Um timer atrasado não libera os turnos seguintes em lote.
-      proximo = Math.max(proximo, performance.now() + 1_000)
-    }
-  }
-
-  async function encaminhar(route: Route) {
-    // A cadeia reserva a ordem antes de qualquer await e despacha um recurso
-    // por vez, inclusive se o event loop atrasar um timer. Erros são guardados
-    // abaixo e tornam o teste vermelho ao encerrar; não viram novas tentativas.
-    const trabalho = fila.then(() => executar(route))
-    fila = trabalho.then(() => {}, () => {})
-    pendentes.add(trabalho)
-    try { await trabalho } catch (erro) { erros.push(erro) }
-    finally { pendentes.delete(trabalho) }
-  }
-  await page.route(padrao, encaminhar)
-  return async () => {
-    encerrada = true
-    for (const [timer, ok] of esperas) {
-      clearTimeout(timer)
-      ok()
-    }
-    esperas.clear()
-    // Remover a rota antes de concluir os handlers faria o navegador tratar
-    // pedidos ainda enfileirados; primeiro conclui os abortos, sem timers.
-    await Promise.allSettled(pendentes)
-    await page.unroute(padrao, encaminhar)
-    if (erros.length) throw erros[0]
-  }
-}
 
 test('a cadência das rotas protegidas preserva o 401 real e evita disparo em lote', async ({ page }, info) => {
   await page.goto('/login')

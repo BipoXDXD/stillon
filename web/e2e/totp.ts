@@ -35,18 +35,25 @@ const passoAgora = () => Math.floor(Date.now() / 1000 / PERIODO_S)
 // Os timesteps já entregues por este autenticador (para todas as chaves).
 let ultimoPasso = -1
 
-// O código de agora, num timestep que nenhum código anterior usou. Com
-// menos de 3 s para o fim do timestep, espera o próximo: o código poderia
-// vencer entre a digitação e o servidor (o servidor aceita um passo de
-// folga, mas o próximo código também cairia no mesmo passo).
+// Um código de um timestep que nenhum código anterior usou, sem esperar o
+// relógio quando a folga do servidor permite. O servidor aceita o passo
+// anterior, o atual e o SEGUINTE (skew 1, internal/auth/totp.go: o celular um
+// pouco adiantado) e gasta o passo de cada código aceito. Um autenticador que
+// só desse o passo atual faria cada código depois do primeiro esperar a virada
+// de 30 s; aqui, quando o atual já foi usado (ou está a menos de 3 s do fim e
+// poderia vencer entre a digitação e o servidor), sai o código do passo
+// seguinte, que o servidor ainda aceita por 30 s ou mais. Só espera quando o
+// seguinte também já foi usado. Cada código continua de um passo novo: o
+// servidor recusaria um repetido, e é essa recusa que os testes Go cobrem.
 export async function codigoNovo(chave: string): Promise<string> {
   for (;;) {
     const agoraMs = Date.now()
     const passo = passoAgora()
     const restaMs = (passo + 1) * PERIODO_S * 1000 - agoraMs
-    if (passo > ultimoPasso && restaMs > 3_000) {
-      ultimoPasso = passo
-      return codigoDoPasso(chave, passo)
+    const candidato = passo > ultimoPasso && restaMs > 3_000 ? passo : passo + 1
+    if (candidato > ultimoPasso) {
+      ultimoPasso = candidato
+      return codigoDoPasso(chave, candidato)
     }
     await new Promise((ok) => setTimeout(ok, restaMs + 100))
   }
