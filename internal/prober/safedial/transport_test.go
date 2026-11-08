@@ -335,8 +335,10 @@ func TestTransportCapsTheResponseHeaders(t *testing.T) {
 	}
 }
 
-// O context já cancelado faz o dial parar antes de qualquer pacote: nenhum
-// caso depende de DNS nem de rede. O nome de rótulo único é recusado antes da
+// Com o context já cancelado, o dial desiste antes de conectar, e nenhum caso
+// depende da resposta do DNS. O nome com domínio usa .invalid (RFC 2606): o Go
+// pode iniciar a consulta em segundo plano antes de ver o cancelamento, e ela
+// não pode sair com um domínio real. O nome de rótulo único é recusado antes da
 // resolução, e o IP literal não passa por essa regra: um IPv6 não tem ponto, e
 // quem o decide é o ControlContext.
 func TestDialContextAppliesTheSingleLabelRuleOnlyToNames(t *testing.T) {
@@ -346,7 +348,7 @@ func TestDialContextAppliesTheSingleLabelRuleOnlyToNames(t *testing.T) {
 	}{
 		{"rótulo único", "intranet:80", safedial.ErrBlocked},
 		{"rótulo único com ponto final", "intranet.:80", safedial.ErrBlocked},
-		{"nome com domínio", "exemplo.com:80", context.Canceled},
+		{"nome com domínio", "stillon-e2e.invalid:80", context.Canceled},
 		{"IPv4 literal", "8.8.8.8:80", context.Canceled},
 		{"IPv6 literal", "[2606:4700:4700::1111]:443", context.Canceled},
 	}
