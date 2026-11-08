@@ -53,7 +53,8 @@ test('ativar o 2FA, trocar de autenticador com o rotation, entrar com o app novo
   page,
   credenciais,
 }) => {
-  // Cinco códigos novos: até cinco timesteps de 30 s de espera.
+  // Cinco códigos de passos novos: com a folga do servidor (totp.ts), até três
+  // viradas de 30 s de espera, e o prazo de antes cobre as cinco.
   test.setTimeout(240_000)
   const email = credenciais.email
 
