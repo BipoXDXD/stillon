@@ -108,8 +108,8 @@ func TestCreateRefusesASharpSURLWithoutWritingARow(t *testing.T) {
 	_, err := a.svc.Create(context.Background(), dono, in)
 
 	var verr *targets.ValidationError
-	if !errors.As(err, &verr) || len(verr.Fields) != 1 || verr.Fields[0].Field != "url" {
-		t.Errorf("erro = %v, queria ValidationError em url", err)
+	if !errors.As(err, &verr) || len(verr.Fields) != 1 || verr.Fields[0].Field != "url" || verr.Fields[0].Reason != targets.ReasonInvalid {
+		t.Errorf("erro = %v, queria ValidationError invalid em url", err)
 	}
 	var linhas int
 	if err := a.admin.QueryRow(context.Background(), `SELECT count(*) FROM targets WHERE user_id = $1`, dono).Scan(&linhas); err != nil {
