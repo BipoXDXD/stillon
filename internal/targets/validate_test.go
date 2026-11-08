@@ -42,6 +42,7 @@ func TestValidate(t *testing.T) {
 		{"url com credencial", func(f *fields) { f.URL = "https://u:p@exemplo.com" }, "url", ReasonInvalid},
 		{"url com ẞ no host", func(f *fields) { f.URL = "https://STRAẞE.de/" }, "url", ReasonInvalid},
 		{"url com ẞ percent-encoded", func(f *fields) { f.URL = "https://stra%E1%BA%9Ee.de/" }, "url", ReasonInvalid},
+		{"url com ẞ já longa demais", func(f *fields) { f.URL = "https://straẞe.de/" + strings.Repeat("a", 2048) }, "url", ReasonTooLong},
 		{"url longa demais", func(f *fields) { f.URL = "https://exemplo.com/" + strings.Repeat("a", 2048) }, "url", ReasonTooLong},
 		{"url loopback literal", func(f *fields) { f.URL = "http://127.0.0.1:8080/" }, "url", ReasonForbidden},
 		{"url loopback IPv6", func(f *fields) { f.URL = "http://[::1]/" }, "url", ReasonForbidden},

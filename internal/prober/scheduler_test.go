@@ -642,7 +642,46 @@ func TestTargetWithUnstableHostIsRefusedBeforeDialing(t *testing.T) {
 	}
 }
 
-// A recusa é só do ẞ: ß, com ou sem headers, continua sondando.
+// A sonda recusada conta nas métricas como qualquer outra.
+func TestRefusedTargetIsObservedInMetrics(t *testing.T) {
+	b := novaBancada(t, &http.Client{Transport: &transporteContador{}}, MaxInFlight)
+	alvo := b.alvo(t, "https://STRAẞE.de/saude", nil)
+
+	if _, err := b.s.Tick(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	b.s.Stop(esperaMaxima)
+
+	if vistos := b.m.alvosVistos(); !slices.Contains(vistos, alvo) {
+		t.Errorf("alvos vistos = %v; a sonda recusada de %s não foi observada", vistos, alvo)
+	}
+}
+
+// A guarda vem antes de abrir os headers: com ela depois, headers ilegíveis
+// sairiam pelo caminho do defeito nosso, sem check, e o dono não veria o alvo
+// fora.
+func TestRefusedTargetIsRecordedEvenWithUnreadableHeaders(t *testing.T) {
+	transporte := &transporteContador{}
+	b := novaBancada(t, &http.Client{Transport: transporte}, MaxInFlight)
+	alvo := b.alvo(t, "https://STRAẞE.de/saude", func(p *db.InsertTargetParams) {
+		p.HeadersEnc = []byte("headers que não abrem")
+	})
+
+	if _, err := b.s.Tick(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	b.s.Stop(esperaMaxima)
+
+	if got := transporte.requisicoes(); len(got) != 0 {
+		t.Fatalf("a sonda foi à rede: %d requisições, primeira para %s", len(got), got[0].URL.Host)
+	}
+	rows := b.checks(t, alvo)
+	if len(rows) != 1 || rows[0].Status != "down" || rows[0].ErrorKind == nil || *rows[0].ErrorKind != "blocked" {
+		t.Errorf("checks = %+v, queria um down/blocked", rows)
+	}
+}
+
+// A recusa é só do ẞ: ß continua sondando.
 func TestTargetWithSharpSKeepsProbing(t *testing.T) {
 	transporte := &transporteContador{}
 	b := novaBancada(t, &http.Client{Transport: transporte}, MaxInFlight)

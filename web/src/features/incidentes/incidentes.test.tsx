@@ -370,6 +370,16 @@ describe('incidentes', () => {
       expect(screen.queryByText(/em andamento[,.]/)).not.toBeInTheDocument()
     })
 
+    // A ajuda explica o botão Reconhecer: sem nenhum botão na tela, ela sobra.
+    // Sabotagem: trocar a condição por abertos.length > 0.
+    it('só com abertos reconhecidos, o parágrafo de ajuda não aparece', async () => {
+      const r = await renderizarPainel('/incidents')
+      r.falsa.estado.incidentes = [incidente({ acknowledged_at: '2026-09-24T11:10:00Z' })]
+      await r.cliente.refetchQueries()
+      expect(await screen.findByText(/Reconhecido em/)).toBeInTheDocument()
+      expect(screen.queryByText(/Reconhecer interrompe os lembretes/)).not.toBeInTheDocument()
+    })
+
     // "Em andamento" é a situação do aberto sem reconhecimento (o selo e o
     // resumo). O grupo tem os reconhecidos também, e por isso é "Abertos".
     it('em Todos, os grupos separam abertos e resolvidos, e cada cartão mostra a situação', async () => {
