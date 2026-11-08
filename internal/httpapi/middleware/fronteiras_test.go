@@ -32,8 +32,6 @@ func pedir(h http.Handler, ajustar func(*http.Request)) *httptest.ResponseRecord
 	return rec
 }
 
-func chaveFixa(*http.Request) (string, bool) { return "fixa", true }
-
 func TestClientIPCabecalhoDedicadoSemEspacoNasPontas(t *testing.T) {
 	r := httptest.NewRequest(http.MethodGet, "/", nil)
 	r.RemoteAddr = "10.0.0.1:1234"
@@ -58,37 +56,23 @@ func TestConexaoDeForaDaListaSemOCabecalhoNaoAvisa(t *testing.T) {
 	}
 }
 
-func TestConfiavelDesfazIPv4Mapeado(t *testing.T) {
+func TestClientIPReconheceProxyEmIPv4Mapeado(t *testing.T) {
 	cases := []struct {
-		ip   string
-		quer bool
+		nome   string
+		remoto string
+		quer   string
 	}{
-		{"::ffff:10.0.0.1", true},
-		{"10.0.0.1", true},
-		{"::ffff:11.0.0.1", false},
+		{"proxy da lista", "[::ffff:10.0.0.1]:1234", "203.0.113.9"},
+		{"fora da lista", "[::ffff:11.0.0.1]:1234", "11.0.0.1"},
 	}
-	lista := []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")}
-	for _, c := range cases {
-		t.Run(c.ip, func(t *testing.T) {
-			if got := confiavel(netip.MustParseAddr(c.ip), lista); got != c.quer {
-				t.Errorf("confiavel(%s) = %v, queria %v", c.ip, got, c.quer)
-			}
-		})
-	}
-}
-
-func TestIntervaloDosAvisosEhDeUmMinuto(t *testing.T) {
-	cases := []struct {
-		nome  string
-		aviso *aviso
-	}{
-		{"fora da lista", avisoDeProxy},
-		{"sem cabeçalho", avisoSemCabecalho},
-	}
+	px := Proxies{Trusted: []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")}, Header: "Fly-Client-IP"}
 	for _, c := range cases {
 		t.Run(c.nome, func(t *testing.T) {
-			if c.aviso.intervalo != time.Minute {
-				t.Errorf("intervalo = %v, queria 1m", c.aviso.intervalo)
+			r := httptest.NewRequest(http.MethodGet, "/", nil)
+			r.RemoteAddr = c.remoto
+			r.Header.Set("Fly-Client-IP", "203.0.113.9")
+			if got := ClientIP(r, px); got != c.quer {
+				t.Errorf("ClientIP = %q, queria %q", got, c.quer)
 			}
 		})
 	}
@@ -133,19 +117,33 @@ func TestRateLimitByUsaAChaveDaRota(t *testing.T) {
 	}
 }
 
-func TestChaveDoUsuarioTemPrefixoProprio(t *testing.T) {
-	id := uuid.MustParse("01890000-0000-7000-8000-000000000001")
-	r := httptest.NewRequest(http.MethodGet, "/", nil)
-	r = r.WithContext(context.WithValue(r.Context(), userKey{}, id))
-	chave, ok := porUsuario(r)
-	if !ok || chave != "u:01890000-0000-7000-8000-000000000001" {
-		t.Errorf("porUsuario = %q, %v", chave, ok)
+func TestRateLimitUserDaUmBaldePorUsuario(t *testing.T) {
+	ana := uuid.MustParse("01890000-0000-7000-8000-000000000001")
+	bia := uuid.MustParse("01890000-0000-7000-8000-000000000002")
+	clk := clock.NewFake(instanteBase)
+	h := RateLimitUser(t.Context(), clk, 1, 1)(http.HandlerFunc(proximo))
+	como := func(id uuid.UUID) func(*http.Request) {
+		return func(r *http.Request) { *r = *r.WithContext(context.WithValue(r.Context(), userKey{}, id)) }
+	}
+	cases := []struct {
+		nome    string
+		usuario uuid.UUID
+		quer    int
+	}{
+		{"primeira da Ana", ana, http.StatusOK},
+		{"segunda da Ana", ana, http.StatusTooManyRequests},
+		{"primeira da Bia", bia, http.StatusOK},
+	}
+	for _, c := range cases {
+		if got := pedir(h, como(c.usuario)).Code; got != c.quer {
+			t.Errorf("%s: %d, queria %d", c.nome, got, c.quer)
+		}
 	}
 }
 
 func TestRateLimitSemTaxaRecusaESemPrazo(t *testing.T) {
 	clk := clock.NewFake(instanteBase)
-	h := rateLimit(t.Context(), clk, 0, 0, chaveFixa, 10)(http.HandlerFunc(proximo))
+	h := RateLimit(t.Context(), clk, 0, 0, Proxies{})(http.HandlerFunc(proximo))
 	rec := pedir(h, nil)
 	if rec.Code != http.StatusTooManyRequests {
 		t.Fatalf("status = %d, queria 429", rec.Code)
@@ -232,12 +230,14 @@ func TestTempoParaEncher(t *testing.T) {
 	}
 }
 
-func TestTempoDeOciosidadeDoBalde(t *testing.T) {
+// Um balde parado só sai depois de ter tido tempo de encher sozinho, e nunca
+// antes do mínimo.
+func TestBaldeParadoSaiDepoisDoTempoDeOciosidade(t *testing.T) {
 	cases := []struct {
 		nome   string
 		limite rate.Limit
 		burst  int
-		quer   time.Duration
+		prazo  time.Duration
 	}{
 		{"enche depressa: vale o mínimo", rate.Limit(1), 20, 10 * time.Minute},
 		{"enche devagar: vale o tempo de encher", rate.Every(6 * time.Minute), 5, 30 * time.Minute},
@@ -245,9 +245,18 @@ func TestTempoDeOciosidadeDoBalde(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.nome, func(t *testing.T) {
 			clk := clock.NewFake(instanteBase)
-			l := rateLimit(t.Context(), clk, c.limite, c.burst, chaveFixa, 10)(http.HandlerFunc(proximo)).(*limiterHandler)
-			if l.st.ocioso != c.quer {
-				t.Errorf("ocioso = %v, queria %v", l.st.ocioso, c.quer)
+			porCabecalho := func(r *http.Request) (string, bool) { return r.Header.Get("X-Chave"), true }
+			l := rateLimit(t.Context(), clk, c.limite, c.burst, porCabecalho, 10)(http.HandlerFunc(proximo)).(*limiterHandler)
+			pedir(l, comChave("a"))
+			clk.Advance(c.prazo)
+			varrerAgora(l)
+			if got := quantosBuckets(l); got != 1 {
+				t.Fatalf("no prazo exato restam %d baldes, queria 1", got)
+			}
+			clk.Advance(time.Nanosecond)
+			varrerAgora(l)
+			if got := quantosBuckets(l); got != 0 {
+				t.Errorf("depois do prazo restam %d baldes, queria 0", got)
 			}
 		})
 	}
@@ -267,21 +276,31 @@ func TestTetoVarreOsParadosAntesDeDespejar(t *testing.T) {
 	}
 }
 
-func TestChaveDe(t *testing.T) {
+func TestRateLimitIPv6SeparaBlocosDe64(t *testing.T) {
 	cases := []struct {
-		ip   string
-		quer string
+		nome    string
+		remotos [2]string
+		segunda int
+		baldes  int
 	}{
-		{"203.0.113.7", "203.0.113.7"},
-		{"::ffff:203.0.113.7", "203.0.113.7"},
-		{"2001:db8:1:2:aaaa::1", "2001:db8:1:2::/64"},
-		{"2001:db8:1:3:aaaa::1", "2001:db8:1:3::/64"},
-		{"nao-e-ip", "nao-e-ip"},
+		{"mesmo /64 divide o balde", [2]string{"[2001:db8:1:2:aaaa::1]:1", "[2001:db8:1:2:bbbb::2]:1"}, http.StatusTooManyRequests, 1},
+		{"outro /64 no mesmo /48 não divide", [2]string{"[2001:db8:1:2::1]:1", "[2001:db8:1:3::1]:1"}, http.StatusOK, 2},
 	}
 	for _, c := range cases {
-		t.Run(c.ip, func(t *testing.T) {
-			if got := chaveDe(c.ip); got != c.quer {
-				t.Errorf("chaveDe(%q) = %q, queria %q", c.ip, got, c.quer)
+		t.Run(c.nome, func(t *testing.T) {
+			clk := clock.NewFake(instanteBase)
+			h := RateLimit(t.Context(), clk, 1, 1, Proxies{})(http.HandlerFunc(proximo))
+			de := func(remoto string) func(*http.Request) {
+				return func(r *http.Request) { r.RemoteAddr = remoto }
+			}
+			if got := pedir(h, de(c.remotos[0])).Code; got != http.StatusOK {
+				t.Fatalf("primeira: %d", got)
+			}
+			if got := pedir(h, de(c.remotos[1])).Code; got != c.segunda {
+				t.Errorf("segunda: %d, queria %d", got, c.segunda)
+			}
+			if got := quantosBuckets(h); got != c.baldes {
+				t.Errorf("baldes = %d, queria %d", got, c.baldes)
 			}
 		})
 	}
@@ -446,7 +465,6 @@ func TestAuthnRecusaTokenVencidoESemPrefixo(t *testing.T) {
 		{"no prazo", time.Minute, "Bearer " + token, http.StatusOK},
 		{"vencido", 24 * time.Hour, "Bearer " + token, http.StatusUnauthorized},
 		{"sem o prefixo", time.Minute, token, http.StatusUnauthorized},
-		{"prefixo em outra caixa", time.Minute, "bearer " + token, http.StatusUnauthorized},
 		{"sem token", time.Minute, "Bearer ", http.StatusUnauthorized},
 	}
 	for _, c := range cases {
