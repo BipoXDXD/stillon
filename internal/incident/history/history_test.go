@@ -198,3 +198,49 @@ func TestListFiltersByTarget(t *testing.T) {
 		t.Errorf("sem filtro: %d incidentes, %v; queria 2", len(todos), err)
 	}
 }
+
+// List e Ack devolvem o incidente com todos os campos da linha. O teste
+// prende a conversão de cada consulta, campo a campo, para que as duas não
+// divirjam.
+func TestListAndAckReturnEveryFieldOfTheIncident(t *testing.T) {
+	b := novaBancada(t)
+	ctx := context.Background()
+	dono := b.usuario(t)
+	alvo := b.alvo(t, dono, "API")
+	inc := b.incidente(t, alvo, true)
+	fim := agora.Add(10 * time.Minute)
+	quer := history.Incident{
+		ID: inc, TargetID: alvo, TargetName: "API", StartedAt: agora,
+		ResolvedAt: &fim, Cause: "dns", AckAt: &agora,
+	}
+
+	reconhecido, err := b.svc.Ack(ctx, dono, inc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !mesmoIncidente(reconhecido, quer) {
+		t.Errorf("Ack = %+v, queria %+v", reconhecido, quer)
+	}
+	lista, err := b.svc.List(ctx, dono, history.Filter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(lista) != 1 || !mesmoIncidente(lista[0], quer) {
+		t.Errorf("List = %+v, queria só %+v", lista, quer)
+	}
+}
+
+// mesmoIncidente compara os instantes por Equal: o pgx devolve o fuso local
+// do processo, e o teste fala em UTC.
+func mesmoIncidente(a, b history.Incident) bool {
+	return a.ID == b.ID && a.TargetID == b.TargetID && a.TargetName == b.TargetName &&
+		a.StartedAt.Equal(b.StartedAt) && mesmoInstante(a.ResolvedAt, b.ResolvedAt) &&
+		a.Cause == b.Cause && mesmoInstante(a.AckAt, b.AckAt)
+}
+
+func mesmoInstante(a, b *time.Time) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return a.Equal(*b)
+}
