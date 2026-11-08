@@ -76,13 +76,14 @@ func TestRedirectFromInvalidIDNAOriginDropsTargetHeaders(t *testing.T) {
 	next.Header.Set("Authorization", "Bearer sentinela")
 	next.Header.Set("Cookie", "sessao=sentinela")
 	next.Header.Set("X-Token", "sentinela")
+	next.Header.Set("Referer", "https://exemplo.com/origem?token=sentinela")
 	next.Header.Set("User-Agent", "identificacao-do-alvo")
 
 	client := safedial.NewClient(time.Second)
 	if err := client.CheckRedirect(next, []*http.Request{origin}); err != nil {
 		t.Fatalf("callback de redirect: %v", err)
 	}
-	for _, name := range []string{"Authorization", "Cookie", "X-Token"} {
+	for _, name := range []string{"Authorization", "Cookie", "X-Token", "Referer"} {
 		if value := next.Header.Get(name); value != "" {
 			t.Errorf("%s acompanhou a origem inválida: %q", name, value)
 		}
