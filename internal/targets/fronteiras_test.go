@@ -15,7 +15,7 @@ func TestValidateAceitaOsLimitesExatos(t *testing.T) {
 		nome  string
 		mexer func(*fields)
 	}{
-		{"intervalo 30", func(f *fields) { f.IntervalSec = 30; f.TimeoutMS = 1000 }},
+		{"intervalo 30", func(f *fields) { f.IntervalSec = 30 }},
 		{"intervalo 86400", func(f *fields) { f.IntervalSec = 86400 }},
 		{"timeout 1000", func(f *fields) { f.TimeoutMS = 1000 }},
 		{"timeout 30000", func(f *fields) { f.TimeoutMS = 30000 }},
@@ -315,6 +315,9 @@ func TestPatchApply(t *testing.T) {
 			if f.Name != "Novo" {
 				t.Errorf("Name = %q", f.Name)
 			}
+			if !maps.Equal(f.Headers, headers) {
+				t.Errorf("Headers = %v, queria %v: sem URL no PATCH, ficam intactos", f.Headers, headers)
+			}
 		}},
 		{"URL na mesma origem mantém os headers", Patch{URL: ptr("https://a.exemplo.com/y")}, true, func(t *testing.T, f fields, _ bool) {
 			if f.URL != "https://a.exemplo.com/y" || !maps.Equal(f.Headers, headers) {
@@ -361,9 +364,19 @@ func TestPatchApply(t *testing.T) {
 				t.Errorf("ExpectedStatus = %d", f.ExpectedStatus)
 			}
 		}},
+		{"definir o limiar não muda o sondado", Patch{SetDegradedThreshold: true, DegradedThresholdMS: ptr[int32](3000)}, false, func(t *testing.T, f fields, _ bool) {
+			if f.DegradedThresholdMS == nil || *f.DegradedThresholdMS != 3000 {
+				t.Errorf("DegradedThresholdMS = %v, queria 3000", f.DegradedThresholdMS)
+			}
+		}},
 		{"limpar o limiar não muda o sondado", Patch{SetDegradedThreshold: true}, false, func(t *testing.T, f fields, _ bool) {
 			if f.DegradedThresholdMS != nil {
 				t.Errorf("DegradedThresholdMS = %v, queria nil", *f.DegradedThresholdMS)
+			}
+		}},
+		{"definir as tags não muda o sondado", Patch{SetTags: true, Tags: []string{"nova"}}, false, func(t *testing.T, f fields, _ bool) {
+			if !slices.Equal(f.Tags, []string{"nova"}) {
+				t.Errorf("Tags = %v, queria [nova]", f.Tags)
 			}
 		}},
 		{"limpar as tags não muda o sondado", Patch{SetTags: true}, false, func(t *testing.T, f fields, _ bool) {
