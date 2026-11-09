@@ -72,13 +72,16 @@ export function criarSessao(o: Opcoes) {
   let token: string | null = null
   let estado: Estado = 'verificando'
   let motivo: Motivo | null = null
-  let emVoo: Promise<string | null> | null = null
+  let emVoo: { epoca: number; promessa: Promise<string | null> } | null = null
   let boot: Promise<void> | null = null
   // epoca muda a cada login e a cada fim de sessão. Um refresh que saiu
   // numa época e voltou em outra não mexe no token: sem isto, sair (ou
   // encerrar a sessão aqui) com um refresh em voo ressuscitava o token
   // quando a resposta chegasse.
   let epoca = 0
+  // Conta os logins de outras abas: comparando antes e depois, o boot sabe se
+  // algum chegou enquanto o refresh dele voava.
+  let iniciadasOuvidas = 0
   const ouvintes = new Set<() => void>()
 
   function mudou() {
@@ -126,10 +129,14 @@ export function criarSessao(o: Opcoes) {
     if (token !== null && token !== usado) return Promise.resolve(token)
     if (usado !== null && token === null) return Promise.resolve(null)
     const minha = epoca
-    emVoo ??= travar(TRAVA, () => renovarAgora(minha)).finally(() => {
-      emVoo = null
+    // O refresh em voo de outra época devolveria o que aquela época deixou,
+    // não a resposta desta: o novo vai para a fila da trava, atrás dele.
+    if (emVoo?.epoca === minha) return emVoo.promessa
+    const promessa = travar(TRAVA, () => renovarAgora(minha)).finally(() => {
+      if (emVoo?.promessa === promessa) emVoo = null
     })
-    return emVoo
+    emVoo = { epoca: minha, promessa }
+    return promessa
   }
 
   function aceitar(novo: string) {
@@ -159,19 +166,26 @@ export function criarSessao(o: Opcoes) {
   function iniciar(): Promise<void> {
     boot ??= (async () => {
       const minha = epoca
-      let novo: Estado
-      try {
-        const t = await renovar(null)
-        novo = t ? 'autenticado' : 'anonimo'
-      } catch {
-        novo = 'offline'
-      }
+      const ouvidas = iniciadasOuvidas
+      let novo = await estadoPeloCookie()
+      // Outra aba entrou com o refresh em voo: o 401 pode ser de antes de o
+      // cookie existir, e só um refresh novo diz se há sessão. Fica aqui
+      // dentro, em "verificando": passar por "anonimo" mandaria a aba ao /login.
+      if (novo === 'anonimo' && minha === epoca && ouvidas !== iniciadasOuvidas) novo = await estadoPeloCookie()
       // Outra época: a sessão mudou durante o boot (encerrada em outra aba,
       // ou um login nesta), e vale o estado que essa mudança deixou.
       if (minha === epoca) estado = novo
       mudou()
     })()
     return boot
+  }
+
+  async function estadoPeloCookie(): Promise<Estado> {
+    try {
+      return (await renovar(null)) ? 'autenticado' : 'anonimo'
+    } catch {
+      return 'offline'
+    }
   }
 
   function tentarDeNovo(): Promise<void> {
@@ -187,8 +201,11 @@ export function criarSessao(o: Opcoes) {
     // outra aba entraria numa sessão que o dono acabou de encerrar. A época
     // nova descarta a resposta dele, e o boot termina anônimo.
     if (a?.tipo === 'encerrada' && (estado === 'autenticado' || estado === 'verificando')) encerrar('outra-aba')
-    // Outra aba entrou: uma aba parada no /login entra junto, pelo cookie.
-    if (a?.tipo === 'iniciada' && estado === 'anonimo') void tentarDeNovo()
+    if (a?.tipo === 'iniciada') {
+      iniciadasOuvidas++
+      // Outra aba entrou: uma aba parada no /login entra junto, pelo cookie.
+      if (estado === 'anonimo') void tentarDeNovo()
+    }
   })
 
   async function entrar(email: string, senha: string): Promise<ResultadoLogin> {
