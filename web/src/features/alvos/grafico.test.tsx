@@ -1,7 +1,13 @@
 import { render, screen } from '@testing-library/react'
 import { cloneElement, isValidElement, type ReactNode } from 'react'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { TooltipProps } from 'recharts'
 import { GraficoDeLatencia } from './GraficoDeLatencia'
+
+// O jsdom não passa o ponteiro sobre o gráfico: um teste abre o tooltip no
+// primeiro ponto pelo defaultIndex. undefined nos demais, em que os nomes da
+// legenda apareceriam em dobro.
+const tooltip = vi.hoisted(() => ({ indiceAberto: undefined as number | undefined }))
 
 // O jsdom não mede nada: o ResponsiveContainer ficaria com largura 0, e o
 // Recharts não desenha o <svg>. Aqui ele passa um tamanho fixo ao gráfico.
@@ -9,11 +15,37 @@ vi.mock('recharts', async (original) => {
   const r = await original<typeof import('recharts')>()
   return {
     ...r,
+    Tooltip: (props: TooltipProps) => <r.Tooltip {...props} defaultIndex={tooltip.indiceAberto} />,
     ResponsiveContainer: ({ children }: { children: ReactNode }) =>
       isValidElement<{ width?: number; height?: number }>(children)
         ? cloneElement(children, { width: 600, height: 300 })
         : null,
   }
+})
+
+afterEach(() => {
+  tooltip.indiceAberto = undefined
+})
+
+// O Recharts pinta cada item do tooltip com a cor da série, e a faixa p50–p95
+// tem stroke none: o item saía em --grafico-faixa (primária 100), a 1,16:1
+// sobre a superfície. Sabotagem: tirar o itemStyle do Tooltip.
+it('todo item do tooltip usa a cor de texto, e não a da série', () => {
+  tooltip.indiceAberto = 0
+  const { container } = render(
+    <GraficoDeLatencia
+      serie={{
+        resolution: '1h',
+        items: [
+          { bucket: '2026-10-14T06:00:00Z', total: 60, ok: 60, p50_ms: 110, p95_ms: 300, p99_ms: 400, max_ms: 500 },
+          { bucket: '2026-10-14T07:00:00Z', total: 60, ok: 60, p50_ms: 120, p95_ms: 320, p99_ms: 400, max_ms: 500 },
+        ],
+      }}
+    />,
+  )
+  const itens = Array.from(container.querySelectorAll<HTMLElement>('.recharts-tooltip-item'))
+  expect(itens.map((i) => i.querySelector('.recharts-tooltip-item-name')?.textContent)).toEqual(['Mediana', 'p50–p95'])
+  expect(itens.map((i) => i.style.color)).toEqual(['var(--texto)', 'var(--texto)'])
 })
 
 // Revisão final: o nome e a descrição estavam no <figure>, e o que recebe o

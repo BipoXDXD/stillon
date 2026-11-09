@@ -68,6 +68,68 @@ describe('detalhe', () => {
     expect(screen.getByRole('radio', { name: '7 dias' })).toBeChecked()
   })
 
+  // Sem resposta do resumo, o dataUpdatedAt dele é 0: com esse relógio, um
+  // incidente aberto há horas aparecia "há menos de 1 min". Sabotagem: passar
+  // a IncidentesRecentes o relógio do resumo.
+  it('sem o resumo, o tempo do incidente aberto vem da consulta dos incidentes', async () => {
+    const r = await renderizarPainel('/targets/alvo-1')
+    r.falsa.estado.alvos = [alvo()]
+    r.falsa.estado.incidentes = [incidente({ started_at: new Date(Date.now() - 2 * 3_600_000).toISOString() })]
+    await r.cliente.refetchQueries()
+    servidor.use(
+      http.get('*/api/v1/targets/summary', () =>
+        HttpResponse.json({ error: { code: 'internal', message: 'falhou' }, trace_id: 't' }, { status: 500 }),
+      ),
+    )
+    await r.cliente.resetQueries({ queryKey: ['targets', 'summary'], exact: true })
+    const secao = await screen.findByRole('region', { name: 'Incidentes recentes' })
+    expect(await within(secao).findByText(/há 2 h 0 min/)).toBeInTheDocument()
+  })
+
+  // "nunca" afirma que o alvo não tem check; sem o resumo, o painel só não
+  // sabe. Sabotagem: tratar o item ausente como last_checked_at nulo.
+  it('sem o resumo, o indicador de último check não diz "nunca"', async () => {
+    const r = await renderizarPainel('/targets/alvo-1')
+    r.falsa.estado.alvos = [alvo()]
+    await r.cliente.refetchQueries()
+    servidor.use(
+      http.get('*/api/v1/targets/summary', () =>
+        HttpResponse.json({ error: { code: 'internal', message: 'falhou' }, trace_id: 't' }, { status: 500 }),
+      ),
+    )
+    await r.cliente.resetQueries({ queryKey: ['targets', 'summary'], exact: true })
+    const indicador = (await screen.findByText('Último check')).parentElement
+    expect(indicador).toHaveTextContent('—')
+    expect(indicador).not.toHaveTextContent('nunca')
+  })
+
+  // A opacidade num bloco leva junto o texto dele: --suave a 60% dá 2,85:1 no
+  // claro e 3,5:1 no escuro, abaixo do 4,5:1, e estes números não são um
+  // controle inativo. Sabotagem: devolver o opacity-60 ao bloco da série.
+  it('trocando de janela, os números antigos ficam na tela sem opacidade sobre o texto', async () => {
+    const r = await renderizarPainel('/targets/alvo-1')
+    r.falsa.estado.alvos = [alvo()]
+    r.falsa.estado.serie = {
+      resolution: 'raw',
+      items: [{ checked_at: '2026-09-24T11:00:00Z', status: 'up', latency_ms: 100, status_code: 200, error_kind: null }],
+    }
+    await r.cliente.refetchQueries()
+    expect(await screen.findByText(/Mediana 100 ms/)).toBeInTheDocument()
+    const p = portao()
+    servidor.use(
+      http.get('*/api/v1/targets/:id/checks', async () => {
+        await p.aberto
+        return undefined
+      }),
+    )
+    await r.usuario.click(screen.getByRole('radio', { name: '6 h' }))
+    const carregando = await screen.findByText('Carregando…')
+    expect(screen.getByText(/Mediana 100 ms/)).toBeInTheDocument()
+    expect(carregando.closest('[class*="opacity-"]')).toBeNull()
+    p.soltar()
+    await waitFor(() => expect(screen.queryByText('Carregando…')).not.toBeInTheDocument())
+  })
+
   it('apagar pede confirmação e volta ao painel', async () => {
     const r = await renderizarPainel('/targets/alvo-1')
     r.falsa.estado.alvos = [alvo()]

@@ -49,6 +49,10 @@ export function emMilissegundos(ms: number | null): ValorDoIndicador {
   return ms === null ? SEM_VALOR : { valor: Math.round(ms).toLocaleString('pt-BR'), unidade: 'ms' }
 }
 
-export function ultimoCheck(iso: string | null, agora: Date): ValorDoIndicador {
+// Sem o item (o resumo não respondeu), o painel não sabe: "nunca" é só para o
+// alvo que está no resumo e ainda não teve check.
+export function ultimoCheck(item: Pick<ItemDoResumo, 'last_checked_at'> | undefined, agora: Date): ValorDoIndicador {
+  if (item === undefined) return SEM_VALOR
+  const iso = item.last_checked_at
   return iso === null ? { valor: '—', unidade: 'nunca' } : { valor: horaMinuto(iso), unidade: haQuanto(iso, agora) }
 }

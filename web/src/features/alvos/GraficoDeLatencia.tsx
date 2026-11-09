@@ -75,6 +75,9 @@ export function GraficoDeLatencia({ serie, descritoPor }: { serie: Serie; descri
             <Tooltip
               labelFormatter={(t) => dataHora(new Date(Number(t)).toISOString())}
               contentStyle={{ background: 'var(--superficie)', borderColor: 'var(--borda)', color: 'var(--texto)' }}
+              // Sem isto, cada item sai na cor da série, e a faixa p50–p95 (tom
+              // 100) fica ilegível sobre a superfície.
+              itemStyle={{ color: 'var(--texto)' }}
             />
             {faixas.map((f) => (
               <ReferenceArea

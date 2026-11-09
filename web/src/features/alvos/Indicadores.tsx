@@ -16,7 +16,7 @@ export function Indicadores({ alvoId, item, agora }: { alvoId: string; item: Ite
       <Indicador rotulo="No ar em 24 h" {...emPorcento(item?.uptime_24h ?? null)} />
       <Indicador rotulo="No ar em 30 dias" {...emPorcento(mes.data ? resumir(mes.data).uptime : null)} />
       <Indicador rotulo="Latência mediana (24 h)" {...emMilissegundos(dia.data ? resumir(dia.data).mediana : null)} />
-      <Indicador rotulo="Último check" {...ultimoCheck(item?.last_checked_at ?? null, agora)} />
+      <Indicador rotulo="Último check" {...ultimoCheck(item, agora)} />
     </dl>
   )
 }

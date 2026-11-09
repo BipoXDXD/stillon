@@ -66,10 +66,14 @@ describe('valores dos indicadores', () => {
   })
 
   it('último check: a hora e há quanto tempo; nunca verificado, traço', () => {
-    expect(ultimoCheck(new Date(2026, 8, 24, 11, 59).toISOString(), new Date(2026, 8, 24, 12, 0))).toEqual({
+    expect(ultimoCheck({ last_checked_at: new Date(2026, 8, 24, 11, 59).toISOString() }, new Date(2026, 8, 24, 12, 0))).toEqual({
       valor: '11:59',
       unidade: 'há 1 minuto',
     })
-    expect(ultimoCheck(null, agora)).toEqual({ valor: '—', unidade: 'nunca' })
+    expect(ultimoCheck({ last_checked_at: null }, agora)).toEqual({ valor: '—', unidade: 'nunca' })
+  })
+
+  it('último check sem o item do resumo: traço, sem afirmar "nunca"', () => {
+    expect(ultimoCheck(undefined, agora)).toEqual({ valor: '—', unidade: '' })
   })
 })
