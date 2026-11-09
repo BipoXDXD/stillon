@@ -1779,6 +1779,8 @@ nem o próprio `deploy` pode trocar a chave.
 `restrict,command="sudo /usr/local/sbin/stillon-entrada" ssh-ed25519 AAAA` e terminando em
 `stillon-deploy-github`.
 
+> **Na publicação pelo Coolify, a chave do backup não aponta para o `stillon-entrada`.** O `command=` dela e o `sudoers` apontam para o `stillon-backup-entrada` ([`deploy/coolify/release/stillon-backup-entrada.sh`](../../deploy/coolify/release/stillon-backup-entrada.sh)), o único script liberado. Ele aceita só o comando `backup`, recusa enquanto houver publicação pendente (`pending.json`) e então chama o `stillon-entrada`. Os passos acima descrevem a trilha manual antiga.
+
 **Confira** (no seu computador), que a chave **só** faz o que deve:
 
 **1/5 · Mac.** Rode só este e espere a saída:
