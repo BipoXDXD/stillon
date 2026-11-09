@@ -135,11 +135,12 @@ describe('o tooltip', () => {
       { bucket: new Date(2026, 9, 14, 7).toISOString(), total: 60, ok: 60, p50_ms: 120, p95_ms: 320, p99_ms: 400, max_ms: 500 },
     ],
   }
-  const aberto = (c: HTMLElement) => {
+  const janelaDoTooltip = (c: HTMLElement) => {
     const janela = c.querySelector<HTMLElement>('.recharts-tooltip-wrapper')
     if (janela === null) throw new Error('o tooltip não abriu')
-    return within(janela)
+    return janela
   }
+  const aberto = (c: HTMLElement) => within(janelaDoTooltip(c))
 
   // A cor fica só na amostra: a faixa p50–p95 sairia a 1,16:1 sobre a
   // superfície, e o padrão do Recharts não tem amostra nem unidade.
@@ -173,14 +174,28 @@ describe('o tooltip', () => {
     expect(aberto(container).getByText('300 ms')).toBeInTheDocument()
   })
 
-  it('no check bruto: a latência, e traço no check fora do ar', () => {
-    tooltip.indiceAberto = 1
-    const { container } = render(
-      <GraficoDeLatencia serie={{ resolution: 'raw', items: [check(0, 'up', 100), check(1, 'down', 10000), check(2, 'up', 120)] }} />,
-    )
+  const umaQueda = { resolution: 'raw' as const, items: [check(0, 'up', 100), check(1, 'down', 10000), check(2, 'up', 120)] }
+
+  // Sabotagem: tirar a latência dos checks que responderam.
+  it('no check que respondeu, o tooltip mostra a latência', () => {
+    tooltip.indiceAberto = 0
+    const { container } = render(<GraficoDeLatencia serie={umaQueda} />)
     const t = aberto(container)
+    expect(t.getByText('Latência')).toBeVisible()
     expect(t.getByText('Latência')).toHaveClass('text-suave')
-    expect(t.getByText('—')).toHaveClass('font-semibold')
+    expect(t.getByText('100 ms')).toBeVisible()
+    expect(t.getByText('100 ms')).toHaveClass('font-semibold')
+  })
+
+  // O ponto sem latência sai do payload do Recharts, que esconde a janela: o
+  // conteúdo fica no DOM, mas ninguém o vê. Sabotagem: filterNull={false} no
+  // Tooltip → a janela aparece.
+  it('no check fora do ar, não há tooltip à vista, e a faixa hachurada mostra a queda', () => {
+    tooltip.indiceAberto = 1
+    const { container } = render(<GraficoDeLatencia serie={umaQueda} />)
+    expect(janelaDoTooltip(container)).not.toBeVisible()
+    expect(container.querySelectorAll('.recharts-reference-area-rect')).toHaveLength(1)
+    expect(screen.getByText('Fora do ar')).toBeVisible()
   })
 })
 
