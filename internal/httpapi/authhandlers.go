@@ -425,8 +425,7 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, dst any) bool {
 			return true
 		}
 	}
-	var tooLarge *http.MaxBytesError
-	if errors.As(err, &tooLarge) {
+	if corpoAcimaDoTeto(err) {
 		apierr.WriteError(w, r, apierr.CodePayloadTooLarge)
 		return false
 	}
@@ -437,10 +436,16 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, dst any) bool {
 	// o limite; quando estoura, o tamanho é a causa mais útil de relatar
 	// — mandar 400 faria o cliente procurar um defeito nos dados que o
 	// servidor sequer chegou a ler.
-	if _, drenar := io.Copy(io.Discard, r.Body); errors.As(drenar, &tooLarge) {
+	if _, drenar := io.Copy(io.Discard, r.Body); corpoAcimaDoTeto(drenar) {
 		apierr.WriteError(w, r, apierr.CodePayloadTooLarge)
 		return false
 	}
 	apierr.WriteError(w, r, apierr.CodeValidation)
 	return false
+}
+
+// corpoAcimaDoTeto diz se err é o estouro de um http.MaxBytesReader.
+func corpoAcimaDoTeto(err error) bool {
+	var acima *http.MaxBytesError
+	return errors.As(err, &acima)
 }
