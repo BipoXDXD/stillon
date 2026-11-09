@@ -209,11 +209,13 @@ func TestListAndAckReturnEveryFieldOfTheIncident(t *testing.T) {
 	alvo := b.alvo(t, dono, "API")
 	inc := b.incidente(t, alvo, true)
 	fim := agora.Add(10 * time.Minute)
+	reconhecidoEm := agora.Add(time.Hour)
 	quer := history.Incident{
 		ID: inc, TargetID: alvo, TargetName: "API", StartedAt: agora,
-		ResolvedAt: &fim, Cause: "dns", AckAt: &agora,
+		ResolvedAt: &fim, Cause: "dns", AckAt: &reconhecidoEm,
 	}
 
+	b.clk.Advance(time.Hour)
 	reconhecido, err := b.svc.Ack(ctx, dono, inc)
 	if err != nil {
 		t.Fatal(err)
