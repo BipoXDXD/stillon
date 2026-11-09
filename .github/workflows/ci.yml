@@ -229,6 +229,8 @@ jobs:
             deploy/vps/initdb.sh deploy/backup/backup.sh
       - name: checagens dos workflows
         run: sh deploy/ci/checar-workflows.sh
+      - name: testes do checar-workflows
+        run: python3 -m unittest discover -s deploy/ci -p test_checar_workflows.py -v
       - name: ensaio de restauração e aviso, sem rede
         run: python3 -m unittest discover -s deploy/ci -p test_revalidar_backup.py -v
       - name: collector das fixtures contra Docker falso
