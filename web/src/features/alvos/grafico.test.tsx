@@ -53,8 +53,19 @@ const horas = (quantidade: number) => ({
   })),
 })
 
+const horasSem = (quantidade: number, semP95: (i: number) => boolean, semMediana: (i: number) => boolean) => ({
+  resolution: '1h' as const,
+  items: horas(quantidade).items.map((h, i) => ({
+    ...h,
+    p50_ms: semMediana(i) ? null : h.p50_ms,
+    p95_ms: semP95(i) ? null : h.p95_ms,
+  })),
+})
+
 const curvasDeLinha = (c: HTMLElement) => Array.from(c.querySelectorAll('path.recharts-line-curve'))
 const verticesDe = (curva: Element | undefined) => (curva?.getAttribute('d')?.match(/[ML]/g) ?? []).length
+const tracosDoP95 = (c: HTMLElement) => curvasDeLinha(c).filter((curva) => curva.getAttribute('stroke-dasharray') === '4 3')
+const subcaminhos = (curvas: Element[]) => curvas.reduce((n, curva) => n + (curva.getAttribute('d')?.match(/M/g) ?? []).length, 0)
 
 describe('o p95 da faixa', () => {
   // Contorno na Area desenha as duas bordas (p50 e p95), e a de baixo suja a
@@ -79,6 +90,23 @@ describe('o p95 da faixa', () => {
     expect(verticesDe(mediana)).toBe(300)
     expect(verticesDe(p95)).toBeLessThan(150)
     expect(p95?.getAttribute('d')?.match(/M/g)).toHaveLength(1)
+  })
+
+  // Com o traço reduzido, os dois lados de um buraco ficavam ligados, e a faixa
+  // e a mediana mostravam o buraco. Sabotagem: não abrir trecho novo no grupo
+  // sem p95 → um subcaminho só.
+  it('com o traço reduzido, o p95 interrompe no buraco, como a mediana', () => {
+    const noBuraco = (i: number) => i >= 100 && i < 140
+    const { container } = render(<GraficoDeLatencia serie={horasSem(300, noBuraco, noBuraco)} />)
+    expect(subcaminhos(tracosDoP95(container))).toBe(2)
+    const mediana = curvasDeLinha(container).at(-1)
+    expect(subcaminhos(mediana ? [mediana] : [])).toBe(2)
+  })
+
+  // Sabotagem: interromper em qualquer hora sem p95 → vários subcaminhos.
+  it('com o traço reduzido, hora isolada sem p95 não interrompe o traço', () => {
+    const { container } = render(<GraficoDeLatencia serie={horasSem(300, (i) => i % 7 === 3, () => false)} />)
+    expect(subcaminhos(tracosDoP95(container))).toBe(1)
   })
 
   // Sabotagem: reduzir sempre.
