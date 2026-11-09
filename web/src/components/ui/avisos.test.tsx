@@ -99,14 +99,26 @@ describe('o acúmulo de erros', () => {
     expect(regiao().queryByText('Erro 2')).not.toBeInTheDocument()
     expect(regiao().getByText('Erro 3')).toBeInTheDocument()
     expect(regiao().getByText('Erro 5')).toBeInTheDocument()
-    expect(regiao().getByText('e mais 2')).toBeInTheDocument()
+    expect(screen.getByText('e mais 2')).toBeInTheDocument()
+  })
+
+  // A linha nascia dentro da lista, antes do toast seguinte, e ficava no meio
+  // da pilha. Sabotagem: devolver a linha para dentro da região.
+  it('"e mais N" vem sempre depois dos 3 visíveis', () => {
+    const { avisar } = montar()
+    for (const n of [1, 2, 3, 4, 5]) avisar(`Erro ${n}`, 'erro')
+    const mais = screen.getByText('e mais 2')
+    for (const n of [3, 4, 5]) {
+      const visivel = regiao().getByText(`Erro ${n}`)
+      expect(visivel.compareDocumentPosition(mais) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    }
   })
 
   it('com 3 erros, não há "e mais"', () => {
     const { avisar } = montar()
     for (const n of [1, 2, 3]) avisar(`Erro ${n}`, 'erro')
     expect(dispensar()).toHaveLength(3)
-    expect(regiao().queryByText(/^e mais/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/^e mais/)).not.toBeInTheDocument()
   })
 
   it('dispensar um traz o próximo da fila', async () => {
@@ -117,13 +129,13 @@ describe('o acúmulo de erros', () => {
     if (primeiro === undefined) throw new Error('sem botão de dispensar')
     await usuario.click(primeiro)
     await waitFor(() => expect(regiao().getByText('Erro 1')).toBeInTheDocument())
-    expect(regiao().queryByText(/^e mais/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/^e mais/)).not.toBeInTheDocument()
   })
 
   // Rolar: a pilha nunca empurra um "X" para fora da tela.
   it('a região tem nome em português e rola', () => {
     montar()
-    expect(screen.getByRole('region', { name: 'Avisos (F8)' }).querySelector('ol')).toHaveClass('max-h-[calc(100dvh-5rem)]', 'overflow-y-auto')
+    expect(screen.getByRole('region', { name: 'Avisos (F8)' }).querySelector('ol')).toHaveClass('max-h-[calc(100dvh-9rem)]', 'overflow-y-auto')
   })
 })
 

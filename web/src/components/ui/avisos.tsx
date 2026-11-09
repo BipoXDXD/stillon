@@ -85,14 +85,17 @@ export function ProvedorDeAvisos({ children }: { children: ReactNode }) {
           </Toast.Root>
         ))}
       {/* bottom-16 no celular: o aviso fica acima da barra inferior fixa. A
-          altura máxima e a rolagem mantêm todo "X" alcançável. */}
-      <Toast.Viewport
-        ref={regiao}
-        label="Avisos ({hotkey})"
-        className="fixed right-4 bottom-16 z-50 flex max-h-[calc(100dvh-5rem)] w-80 max-w-[calc(100vw-2rem)] flex-col gap-2 overflow-y-auto lg:bottom-4"
-      >
-        {escondidos > 0 && <li className="rounded-padrao border border-borda bg-superficie p-3 text-sm text-suave sombra-nivel-2">e mais {escondidos}</li>}
-      </Toast.Viewport>
+          altura máxima e a rolagem mantêm todo "X" alcançável; ela desconta a
+          linha do "e mais N", que fica fora da lista porque os toasts entram
+          nela por portal, na ordem em que nascem. */}
+      <div className="fixed right-4 bottom-16 z-50 flex w-80 max-w-[calc(100vw-2rem)] flex-col gap-2 lg:bottom-4">
+        <Toast.Viewport
+          ref={regiao}
+          label="Avisos ({hotkey})"
+          className="flex max-h-[calc(100dvh-9rem)] flex-col gap-2 overflow-y-auto"
+        />
+        {escondidos > 0 && <p className="rounded-padrao border border-borda bg-superficie p-3 text-sm text-suave sombra-nivel-2">e mais {escondidos}</p>}
+      </div>
     </Toast.Provider>
   )
 }
