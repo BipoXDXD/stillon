@@ -200,7 +200,8 @@ func discarConjunto(ctx context.Context, ips []netip.Addr, discar discarIP) (net
 		case resultados <- resultadoDoDial{conn: conn, err: err}:
 		case <-retornou:
 			if conn != nil {
-				conn.Close()
+				// A corrida já tem vencedor: falhar ao fechar a conexão perdedora não muda o resultado.
+				_ = conn.Close()
 			}
 		}
 	}
