@@ -14,7 +14,7 @@ Todo serviço tem teto de CPU (`cpus`) e de memória (`mem_limit`): a VPS tem 2 
 
 ## Atualizar o digest de uma imagem
 
-O Dependabot só atualiza `deploy/vps/compose.prod.yaml`. Em todo PR dele que troque o digest do Caddy ou do Postgres, leve o mesmo digest, à mão, a `app.json` (Caddy) ou `database.json` (Postgres) antes do merge. Publicar a troca é um passo separado: a imagem tem de estar importada no host, e o commit de infraestrutura, atualizado no recurso.
+O Dependabot atualiza os arquivos Compose (`compose.yaml` e `deploy/vps/compose.prod.yaml`), mas não enxerga os manifestos daqui. Em todo PR dele que troque o digest do Caddy ou do Postgres, leve o mesmo digest, à mão, a `app.json` (Caddy) ou `database.json` (Postgres) antes do merge. Publicar a troca é um passo separado: a imagem tem de estar importada no host, e o commit de infraestrutura, atualizado no recurso.
 
 ## Imagem do banco: não fazer redeploy do `db` antes de restaurá-la
 
