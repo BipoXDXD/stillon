@@ -3,13 +3,14 @@ import type { ValorDoIndicador } from './estado-do-alvo'
 export type LinhaDoIndicador = { rotulo: string; valor: ValorDoIndicador }
 
 // Os quatro KPIs do detalhe (spec do redesign, Telas > 2). min-h: as quatro
-// formas têm a altura da mais alta, a que traz o motivo, e nada pula quando
-// uma vira outra.
+// formas têm a altura da mais alta, e nada pula quando uma vira outra. No
+// celular, o rótulo ou o motivo pode quebrar em duas linhas, daí os 128 px;
+// da largura sm em diante, cada um cabe em uma linha.
 export function Indicadores({ linhas }: { linhas: readonly LinhaDoIndicador[] }) {
   return (
     <dl className="grid grid-cols-2 gap-4 lg:grid-cols-4">
       {linhas.map((l) => (
-        <div key={l.rotulo} className="min-h-28 min-w-0 space-y-1 rounded-padrao border border-borda bg-superficie p-4 sombra-nivel-1">
+        <div key={l.rotulo} className="min-h-32 min-w-0 space-y-1 sm:min-h-28 rounded-padrao border border-borda bg-superficie p-4 sombra-nivel-1">
           <dt className="text-meta text-suave">{l.rotulo}</dt>
           <dd>
             <ConteudoDoIndicador valor={l.valor} />

@@ -22,7 +22,7 @@ import { dataHora, fuso, milissegundos, porcento } from '@/lib/format'
 import { GraficoDeLatencia } from './GraficoDeLatencia'
 import { IncidentesRecentes } from './IncidentesRecentes'
 import { ehJanela, JANELAS, resumir, type Janela } from './serie'
-import { TopoDoDetalhe } from './TopoDoDetalhe'
+import { janelaCobertaPeloAviso, TopoDoDetalhe } from './TopoDoDetalhe'
 
 const NOMES: Record<Janela, string> = { '1h': '1 h', '6h': '6 h', '24h': '24 h', '7d': '7 dias', '30d': '30 dias', '90d': '90 dias' }
 const OPCOES_DE_JANELA: readonly OpcaoSegmentada<Janela>[] = (Object.keys(JANELAS) as Janela[]).map((j) => ({
@@ -259,7 +259,7 @@ function DetalheDoAlvo({ id }: { id: string }) {
             <p data-testid="troca-de-janela" className="min-h-5 text-sm text-suave">
               {sinalDaTroca}
             </p>
-            <EstadoDaConsulta consulta={serie}>
+            <EstadoDaConsulta consulta={serie} refeitaNoAviso={janelaCobertaPeloAviso(janela)}>
               {(s) => (
                 // Trocando de janela, os números da janela anterior ficam na
                 // tela (keepPreviousData) até a nova chegar. Opacidade no bloco

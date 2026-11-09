@@ -8,7 +8,15 @@ import type { Incidente } from '@/lib/api/schemas'
 import { emMilissegundos, emPorcento, indicadorDaConsulta, textoDoAviso, ultimoCheck } from './estado-do-alvo'
 import { FaixaDeEstado } from './FaixaDeEstado'
 import { Indicadores, type LinhaDoIndicador } from './Indicadores'
-import { resumir } from './serie'
+import { resumir, type Janela } from './serie'
+
+const JANELA_DO_DIA: Janela = '24h'
+const JANELA_DO_MES: Janela = '30d'
+
+// A janela do gráfico é uma destas consultas? Então o botão dela é o do aviso.
+export function janelaCobertaPeloAviso(janela: Janela): boolean {
+  return janela === JANELA_DO_DIA || janela === JANELA_DO_MES
+}
 
 type Props = {
   id: string
@@ -22,8 +30,8 @@ type Props = {
 // (os dados por hora atrasam até ~1h15).
 export function TopoDoDetalhe({ id, incidentes, aoSumir, aoErrar }: Props) {
   const resumo = useResumo()
-  const dia = useSerie(id, '24h')
-  const mes = useSerie(id, '30d')
+  const dia = useSerie(id, JANELA_DO_DIA)
+  const mes = useSerie(id, JANELA_DO_MES)
   const item = resumo.data?.items.find((x) => x.id === id)
   const agora = new Date(resumo.dataUpdatedAt)
 

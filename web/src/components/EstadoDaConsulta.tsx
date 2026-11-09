@@ -32,11 +32,14 @@ export function Esqueleto({ linhas = 3 }: { linhas?: number }) {
 export function EstadoDaConsulta<T>({
   consulta,
   esqueleto,
+  refeitaNoAviso = false,
   children,
 }: {
   consulta: Pick<UseQueryResult<T>, 'data' | 'error' | 'isPending' | 'refetch' | 'dataUpdatedAt'>
   // O esqueleto que imita a tela; sem ele, blocos genéricos.
   esqueleto?: ReactNode
+  // Outro aviso da tela já tem o botão que refaz esta consulta: aqui, só o erro.
+  refeitaNoAviso?: boolean
   children: (dados: T) => ReactNode
 }) {
   const semRede = useSemRede()
@@ -45,7 +48,7 @@ export function EstadoDaConsulta<T>({
     if (semRede) return <p className="rounded-padrao border border-borda p-4 text-sm">Esta tela carrega quando a conexão voltar.</p>
     return esqueleto ?? <Esqueleto />
   }
-  const tentar = (
+  const tentar = !refeitaNoAviso && (
     <BotaoQueSome tipo="secundario" tamanho="pequeno" reserva={TITULO_DA_TELA} onClick={() => void consulta.refetch()}>
       Tentar de novo
     </BotaoQueSome>

@@ -411,6 +411,80 @@ describe('detalhe', () => {
     expect(document.activeElement).not.toBe(document.body)
   })
 
+  // Um só botão de refazer, no aviso do topo, quando ele já cobre a consulta
+  // do gráfico. Sabotagem: tirar o refeitaNoAviso do gráfico, ou ligá-lo sempre.
+  describe('um só Tentar de novo', () => {
+    const AVISO = 'Não foi possível atualizar todos os indicadores.'
+    const erroDaSerie = () => HttpResponse.json({ error: { code: 'internal', message: 'falhou' }, trace_id: 't' }, { status: 500 })
+
+    async function detalheCarregado(rota: string) {
+      const r = await renderizarPainel(rota)
+      r.falsa.estado.alvos = [alvo()]
+      r.falsa.estado.resumo = [itemDoResumo()]
+      r.cliente.setQueryData(['targets', 'summary'], { items: [ItemDoResumo.parse(itemDoResumo())] })
+      await r.cliente.refetchQueries({ queryKey: ['targets', 'alvo-1'], exact: true })
+      await screen.findByRole('region', { name: 'No ar' }, { timeout: 3000 })
+      await waitFor(() => expect(screen.queryByText('Carregando os indicadores…')).not.toBeInTheDocument())
+      await screen.findByText(/^Mediana.*nesta janela/, {}, { timeout: 3000 })
+      return r
+    }
+
+    function falharJanela(janela: string) {
+      servidor.use(
+        http.get('*/api/v1/targets/:id/checks', ({ request }) =>
+          new URL(request.url).searchParams.get('window') === janela ? erroDaSerie() : undefined,
+        ),
+      )
+    }
+
+    const botoes = () => screen.getAllByRole('button', { name: 'Tentar de novo' })
+
+    it.each([
+      { nome: 'a de 24 h, aberta no gráfico', rota: '/targets/alvo-1', janela: '24h' },
+      { nome: 'a de 30 dias, aberta no gráfico', rota: '/targets/alvo-1?janela=30d', janela: '30d' },
+    ])('falhou $nome: o gráfico mostra o erro sem botão próprio', async ({ rota, janela }) => {
+      const r = await detalheCarregado(rota)
+      falharJanela(janela)
+      await r.cliente.resetQueries({ queryKey: ['targets', 'alvo-1', 'checks', janela], exact: true })
+      const aviso = await screen.findByRole('region', { name: AVISO }, { timeout: 3000 })
+      const latencia = screen.getByRole('region', { name: 'Latência' })
+      expect(await within(latencia).findByRole('alert')).toBeInTheDocument()
+      expect(botoes()).toHaveLength(1)
+      expect(aviso).toContainElement(botoes()[0] ?? null)
+    })
+
+    it('falhou só a de 30 dias, com o gráfico em 24 h: um botão, no aviso', async () => {
+      const r = await detalheCarregado('/targets/alvo-1')
+      falharJanela('30d')
+      await r.cliente.resetQueries({ queryKey: ['targets', 'alvo-1', 'checks', '30d'], exact: true })
+      const aviso = await screen.findByRole('region', { name: AVISO }, { timeout: 3000 })
+      expect(within(screen.getByRole('region', { name: 'Latência' })).queryByRole('alert')).not.toBeInTheDocument()
+      expect(botoes()).toHaveLength(1)
+      expect(aviso).toContainElement(botoes()[0] ?? null)
+    })
+
+    it('poll da 24 h falhou com dados na tela: a nota do gráfico fica sem botão', async () => {
+      const r = await detalheCarregado('/targets/alvo-1')
+      falharJanela('24h')
+      await r.cliente.refetchQueries({ queryKey: ['targets', 'alvo-1', 'checks', '24h'], exact: true })
+      await screen.findByRole('region', { name: AVISO }, { timeout: 3000 })
+      expect(await within(screen.getByRole('region', { name: 'Latência' })).findByText(/Mostrando os dados de/)).toBeInTheDocument()
+      expect(botoes()).toHaveLength(1)
+    })
+
+    // O aviso do topo só cobre 24 h e 30 dias: outra janela refaz no gráfico.
+    it('falhou a de 7 dias: sem aviso no topo, o botão fica no gráfico', async () => {
+      const r = await detalheCarregado('/targets/alvo-1?janela=7d')
+      falharJanela('7d')
+      await r.cliente.resetQueries({ queryKey: ['targets', 'alvo-1', 'checks', '7d'], exact: true })
+      const latencia = screen.getByRole('region', { name: 'Latência' })
+      expect(await within(latencia).findByRole('alert')).toBeInTheDocument()
+      expect(screen.queryByRole('region', { name: AVISO })).not.toBeInTheDocument()
+      expect(botoes()).toHaveLength(1)
+      expect(latencia).toContainElement(botoes()[0] ?? null)
+    })
+  })
+
   describe('resumo e indicadores sem resposta', () => {
     const erro500: ErroForcado = { status: 500, code: 'internal_error' }
     const valor = (rotulo: string) => screen.getByText(rotulo).nextElementSibling
@@ -504,7 +578,11 @@ describe('detalhe', () => {
       await waitFor(() => expect(valor(rotulo)).toHaveTextContent('Indisponível'))
       expect(valor(rotulo)?.firstElementChild).toHaveClass('text-lg', 'leading-9', 'font-semibold', 'text-suave')
       // A mesma altura nas quatro formas: nada pula quando uma vira outra.
-      expect(valor(rotulo)?.parentElement).toHaveClass('min-h-28')
+      // No celular, o cartão comporta rótulo ou motivo em duas linhas. Só o
+      // navegador mede a quebra real; aqui fica presa a reserva de altura.
+      for (const rotuloDoCartao of ['No ar em 24 h', 'No ar em 30 dias', 'Latência mediana (24 h)', 'Último check']) {
+        expect(valor(rotuloDoCartao)?.parentElement).toHaveClass('min-h-32', 'sm:min-h-28')
+      }
       expect(within(regiao).getAllByRole('button')).toHaveLength(1)
       const dasSeries = (janela: string) => r.falsa.corpos('GET /targets/:id/checks').filter((c) => c.window === janela).length
       const pedidos = () => ({ resumo: r.falsa.chamadas('GET /targets/summary'), '24h': dasSeries('24h'), '30d': dasSeries('30d') })
