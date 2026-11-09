@@ -30,6 +30,13 @@ func TestLerIntervalo(t *testing.T) {
 			to:    time.Date(2026, 9, 20, 10, 0, 0, 0, time.UTC),
 		},
 		{
+			nome:  "to explícito sem from nem window: as 24 h antes do to",
+			query: "to=2026-09-20T10:00:00Z",
+			from:  time.Date(2026, 9, 19, 10, 0, 0, 0, time.UTC),
+			to:    time.Date(2026, 9, 20, 10, 0, 0, 0, time.UTC),
+		},
+		{nome: "window junto com from vazio", query: "window=1h&from=", invalido: "window"},
+		{
 			nome:  "from explícito, to no agora",
 			query: "from=2026-09-22T09:00:00Z",
 			from:  time.Date(2026, 9, 22, 9, 0, 0, 0, time.UTC),
