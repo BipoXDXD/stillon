@@ -468,43 +468,51 @@ describe('detalhe', () => {
       expect(valor('No ar em 24 h')?.querySelector('[aria-hidden="true"]')).toHaveClass('animate-pulse', 'motion-reduce:animate-none')
       p.soltar()
       await leitura
+      // Nada em voo no fim: com as buscas da montagem abortadas na desmontagem,
+      // uma requisição do teste seguinte escapava da API falsa.
+      await waitFor(() => expect(screen.queryByText('Carregando os indicadores…')).not.toBeInTheDocument())
     })
 
-    // A série de 30 dias vem de outra consulta. Sabotagem: refazer todas as
-    // consultas (o resumo seria relido) ou só olhar o erro do resumo.
-    it('só a série de 30 dias falhou: o cartão diz Indisponível, um aviso só, e o botão refaz o que falhou', async () => {
+    // Os KPIs vêm de três consultas, e o aviso e o botão valem para cada uma.
+    // Sabotagem: tirar dia.isError (ou mes.isError) do aviso, tirar uma das
+    // consultas da lista das que falharam, ou refazer sempre as três.
+    const SERIE = 'Não foi possível atualizar todos os indicadores.'
+    it.each([
+      { nome: 'o resumo', pedido: 'resumo', chave: ['targets', 'summary'], aviso: 'Não foi possível saber o estado deste alvo.', rotulo: 'No ar em 24 h' },
+      { nome: 'a série de 24 h', pedido: '24h', chave: ['targets', 'alvo-1', 'checks', '24h'], aviso: SERIE, rotulo: 'Latência mediana (24 h)' },
+      { nome: 'a série de 30 dias', pedido: '30d', chave: ['targets', 'alvo-1', 'checks', '30d'], aviso: SERIE, rotulo: 'No ar em 30 dias' },
+    ] as const)('só $nome falhou: o cartão diz Indisponível, um aviso só, e o botão refaz só ela', async ({ pedido, chave, aviso: textoDoAviso, rotulo }) => {
       let falhar = true
       const r = await renderizarPainel('/targets/alvo-1')
       r.falsa.estado.alvos = [alvo()]
       r.falsa.estado.resumo = [itemDoResumo()]
-      // O resumo já em cache: este teste é sobre a série, e ele não refaz o GET.
+      // O resumo já em cache: nenhuma busca dele corre junto com a montagem.
       r.cliente.setQueryData(['targets', 'summary'], { items: [ItemDoResumo.parse(itemDoResumo())] })
       await r.cliente.refetchQueries({ queryKey: ['targets', 'alvo-1'], exact: true })
       await screen.findByRole('region', { name: 'No ar' }, { timeout: 3000 })
+      // As duas séries já responderam: nenhuma busca delas fica em voo.
+      await waitFor(() => expect(screen.queryByText('Carregando os indicadores…')).not.toBeInTheDocument())
+      const ehAConsulta = (url: URL) => (pedido === 'resumo' ? url.pathname.endsWith('/targets/summary') : url.searchParams.get('window') === pedido)
       servidor.use(
-        http.get('*/api/v1/targets/:id/checks', ({ request }) => {
-          if (falhar && new URL(request.url).searchParams.get('window') === '30d') {
-            return HttpResponse.json({ error: { code: 'internal', message: 'falhou' }, trace_id: 't' }, { status: 500 })
-          }
-          return undefined
+        http.get('*/api/v1/targets/*', ({ request }) => {
+          if (!falhar || !ehAConsulta(new URL(request.url))) return undefined
+          return HttpResponse.json({ error: { code: 'internal', message: 'falhou' }, trace_id: 't' }, { status: 500 })
         }),
       )
-      await r.cliente.resetQueries({ queryKey: ['targets', 'alvo-1', 'checks', '30d'], exact: true })
-      const aviso = await screen.findByRole('region', { name: 'Não foi possível atualizar todos os indicadores.' }, { timeout: 3000 })
-      await waitFor(() => expect(valor('No ar em 30 dias')).toHaveTextContent('Indisponível'))
-      expect(valor('No ar em 30 dias')?.firstElementChild).toHaveClass('text-lg', 'leading-9', 'font-semibold', 'text-suave')
+      await r.cliente.resetQueries({ queryKey: chave, exact: true })
+      const regiao = await screen.findByRole('region', { name: textoDoAviso }, { timeout: 3000 })
+      await waitFor(() => expect(valor(rotulo)).toHaveTextContent('Indisponível'))
+      expect(valor(rotulo)?.firstElementChild).toHaveClass('text-lg', 'leading-9', 'font-semibold', 'text-suave')
       // A mesma altura nas quatro formas: nada pula quando uma vira outra.
-      expect(valor('No ar em 30 dias')?.parentElement).toHaveClass('min-h-28')
-      expect(valor('No ar em 24 h')?.parentElement).toHaveClass('min-h-28')
-      expect(within(aviso).getAllByRole('button')).toHaveLength(1)
-      const resumosAntes = r.falsa.chamadas('GET /targets/summary')
-      const pedidosDe30d = () => r.falsa.corpos('GET /targets/:id/checks').filter((c) => c.window === '30d').length
-      const antes = pedidosDe30d()
+      expect(valor(rotulo)?.parentElement).toHaveClass('min-h-28')
+      expect(within(regiao).getAllByRole('button')).toHaveLength(1)
+      const dasSeries = (janela: string) => r.falsa.corpos('GET /targets/:id/checks').filter((c) => c.window === janela).length
+      const pedidos = () => ({ resumo: r.falsa.chamadas('GET /targets/summary'), '24h': dasSeries('24h'), '30d': dasSeries('30d') })
+      const antes = pedidos()
       falhar = false
-      await r.usuario.click(within(aviso).getByRole('button', { name: 'Tentar de novo' }))
-      await waitFor(() => expect(screen.queryByRole('region', { name: 'Não foi possível atualizar todos os indicadores.' })).not.toBeInTheDocument())
-      expect(pedidosDe30d()).toBe(antes + 1)
-      expect(r.falsa.chamadas('GET /targets/summary')).toBe(resumosAntes)
+      await r.usuario.click(within(regiao).getByRole('button', { name: 'Tentar de novo' }))
+      await waitFor(() => expect(pedidos()).toEqual({ ...antes, [pedido]: antes[pedido] + 1 }))
+      await waitFor(() => expect(screen.queryByRole('region', { name: textoDoAviso })).not.toBeInTheDocument())
       // O botão sumiu com o foco nele: o foco vai ao título da tela.
       await waitFor(() => expect(screen.getByRole('heading', { name: 'API', level: 1 })).toHaveFocus())
     })
