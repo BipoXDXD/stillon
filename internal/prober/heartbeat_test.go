@@ -510,3 +510,72 @@ func TestHeartbeatIncidentFlowsThroughTheOutbox(t *testing.T) {
 		t.Errorf("avisos: %s", avisos)
 	}
 }
+
+// O incidente de atraso começa no prazo vencido, mesmo quando o avaliador só o
+// vê bem depois.
+func TestLateIncidentStartsAtTheDeadlineAndNotAtTheTick(t *testing.T) {
+	b := novaBancadaHB(t)
+	id, _ := b.heartbeat(t, "backup")
+	b.clk.Advance(2 * prazoHB)
+	if n := b.tick(t); n != 1 {
+		t.Fatalf("%d transições, queria a abertura", n)
+	}
+	l := b.incidentes(t, id)
+	if len(l) != 1 || !l[0].Inicio.Equal(inicioHB.Add(prazoHB)) {
+		t.Errorf("incidentes: %+v; queria início em %v", l, inicioHB.Add(prazoHB))
+	}
+}
+
+// encerradoPorRetomada lê closed_by_resume do único incidente do heartbeat.
+func (b *bancadaHB) encerradoPorRetomada(t *testing.T, id uuid.UUID) bool {
+	t.Helper()
+	ctx := context.Background()
+	tx, err := b.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `SELECT set_config('app.scope', 'prober', true)`); err != nil {
+		t.Fatal(err)
+	}
+	var retomada bool
+	if err := tx.QueryRow(ctx, `SELECT closed_by_resume FROM incidents WHERE heartbeat_id = $1`, id).Scan(&retomada); err != nil {
+		t.Fatal(err)
+	}
+	return retomada
+}
+
+// Um sucesso fecha o incidente sem a marca de retomada.
+func TestSuccessIsNotRecordedAsClosedByResume(t *testing.T) {
+	b := novaBancadaHB(t)
+	id, token := b.heartbeat(t, "backup")
+	b.clk.Advance(2 * time.Hour)
+	b.tick(t)
+	b.pingar(t, token, heartbeat.SignalSuccess)
+	b.clk.Advance(time.Second)
+	if n := b.tick(t); n != 1 {
+		t.Fatalf("%d transições, queria o fechamento", n)
+	}
+	if b.encerradoPorRetomada(t, id) {
+		t.Error("closed_by_resume verdadeiro num fechamento por sucesso")
+	}
+}
+
+// O dono retomou sem nenhum sucesso: o incidente acaba com a marca, e é ela
+// que escolhe o texto do aviso.
+func TestResumeWithoutSuccessIsRecordedAsClosedByResume(t *testing.T) {
+	b := novaBancadaHB(t)
+	id, _ := b.heartbeat(t, "backup")
+	b.clk.Advance(2 * time.Hour)
+	b.tick(t)
+	b.pausar(t, id, false)
+	b.clk.Advance(time.Minute)
+	b.pausar(t, id, true)
+	b.clk.Advance(time.Second)
+	if n := b.tick(t); n != 1 {
+		t.Fatalf("%d transições, queria o fechamento", n)
+	}
+	if !b.encerradoPorRetomada(t, id) {
+		t.Error("closed_by_resume falso num fechamento por retomada")
+	}
+}

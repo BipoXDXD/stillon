@@ -69,10 +69,7 @@ func (s *Service) List(ctx context.Context, userID uuid.UUID, f Filter) ([]Incid
 		}
 		out = make([]Incident, 0, len(rows))
 		for _, r := range rows {
-			out = append(out, Incident{
-				ID: r.ID, TargetID: r.TargetID, TargetName: r.TargetName, StartedAt: r.StartedAt,
-				ResolvedAt: r.ResolvedAt, Cause: r.Cause, AckAt: r.AckAt,
-			})
+			out = append(out, toIncident(r))
 		}
 		return nil
 	})
@@ -91,11 +88,19 @@ func (s *Service) Ack(ctx context.Context, userID, id uuid.UUID) (Incident, erro
 		if err != nil {
 			return fmt.Errorf("reconhecer incidente: %w", err)
 		}
-		out = Incident{
-			ID: r.ID, TargetID: r.TargetID, TargetName: r.TargetName, StartedAt: r.StartedAt,
-			ResolvedAt: r.ResolvedAt, Cause: r.Cause, AckAt: r.AckAt,
-		}
+		out = toIncident(db.ListIncidentsRow(r))
 		return nil
 	})
 	return out, err
+}
+
+// toIncident converte uma linha do histórico. O sqlc gera um tipo por
+// consulta, e ListIncidents e AckIncident devolvem as mesmas colunas: o Ack
+// converte a sua linha para esta, e o compilador recusa a conversão no dia em
+// que as colunas divergirem.
+func toIncident(r db.ListIncidentsRow) Incident {
+	return Incident{
+		ID: r.ID, TargetID: r.TargetID, TargetName: r.TargetName, StartedAt: r.StartedAt,
+		ResolvedAt: r.ResolvedAt, Cause: r.Cause, AckAt: r.AckAt,
+	}
 }

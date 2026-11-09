@@ -138,6 +138,7 @@ func TestValidateURL(t *testing.T) {
 		{"https://", false, "sem host"},
 		{"exemplo.com", false, "sem esquema"},
 		{"https://user:senha@exemplo.com/", false, "credencial na URL vaza em log"},
+		{"  https://exemplo.com/health\n", true, "espaço em volta é colagem, não URL inválida"},
 	}
 
 	for _, c := range cases {
@@ -230,6 +231,112 @@ func TestHostInstavelNoIDNA(t *testing.T) {
 		t.Run(caso.nome, func(t *testing.T) {
 			if got := safedial.HostInstavelNoIDNA(caso.url); got != caso.instavel {
 				t.Errorf("HostInstavelNoIDNA(%q) = %v, queria %v", caso.url, got, caso.instavel)
+			}
+		})
+	}
+}
+
+// As duas pontas de cada faixa, e os vizinhos de fora. O TestAllowIP morde cada
+// faixa num endereço só, em geral perto do início: estreitar a máscara deixaria
+// a outra metade da faixa passar sem teste nenhum perceber. Faixas contidas em
+// outra (::/128, ::1/128, o broadcast) não entram: quem as cobre está aqui.
+//
+// fora só lista endereços públicos: IPv4 de uso geral e IPv6 em 2000::/3. Os
+// vizinhos das faixas IPv6 fora dessa região são espaço reservado, e travá-los
+// como alcançáveis impediria bloquear mais.
+func TestAllowIPCoversBothEndsOfEveryRange(t *testing.T) {
+	cases := []struct {
+		faixa, primeiro, ultimo string
+		fora                    []string
+	}{
+		{"0.0.0.0/8", "0.0.0.0", "0.255.255.255", []string{"1.0.0.0"}},
+		{"10.0.0.0/8", "10.0.0.0", "10.255.255.255", []string{"9.255.255.255", "11.0.0.0"}},
+		{"100.64.0.0/10", "100.64.0.0", "100.127.255.255", []string{"100.63.255.255", "100.128.0.0"}},
+		{"127.0.0.0/8", "127.0.0.0", "127.255.255.255", []string{"126.255.255.255", "128.0.0.0"}},
+		{"169.254.0.0/16", "169.254.0.0", "169.254.255.255", []string{"169.253.255.255", "169.255.0.0"}},
+		{"172.16.0.0/12", "172.16.0.0", "172.31.255.255", []string{"172.15.255.255", "172.32.0.0"}},
+		{"192.0.0.0/24", "192.0.0.0", "192.0.0.255", []string{"191.255.255.255", "192.0.1.0"}},
+		{"192.0.2.0/24", "192.0.2.0", "192.0.2.255", []string{"192.0.1.255", "192.0.3.0"}},
+		{"192.168.0.0/16", "192.168.0.0", "192.168.255.255", []string{"192.167.255.255", "192.169.0.0"}},
+		{"192.88.99.0/24", "192.88.99.0", "192.88.99.255", []string{"192.88.98.255", "192.88.100.0"}},
+		{"198.18.0.0/15", "198.18.0.0", "198.19.255.255", []string{"198.17.255.255", "198.20.0.0"}},
+		{"198.51.100.0/24", "198.51.100.0", "198.51.100.255", []string{"198.51.99.255", "198.51.101.0"}},
+		{"203.0.113.0/24", "203.0.113.0", "203.0.113.255", []string{"203.0.112.255", "203.0.114.0"}},
+		{"224.0.0.0/4", "224.0.0.0", "239.255.255.255", []string{"223.255.255.255"}},
+		{"240.0.0.0/4", "240.0.0.0", "255.255.255.254", nil},
+		{"::/96", "::", "::ffff:ffff", nil},
+		{"::ffff:0:0:0/96", "::ffff:0:0:0", "::ffff:0:ffff:ffff", nil},
+		{"fc00::/7", "fc00::", "fdff:ffff:ffff:ffff:ffff:ffff:ffff:ffff", nil},
+		{"fe80::/10", "fe80::", "febf:ffff:ffff:ffff:ffff:ffff:ffff:ffff", nil},
+		{"fec0::/10", "fec0::", "feff:ffff:ffff:ffff:ffff:ffff:ffff:ffff", nil},
+		{"ff00::/8", "ff00::", "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff", nil},
+		{"64:ff9b::/96", "64:ff9b::", "64:ff9b::ffff:ffff", nil},
+		{"64:ff9b:1::/48", "64:ff9b:1::", "64:ff9b:1:ffff:ffff:ffff:ffff:ffff", nil},
+		{"2002::/16", "2002::", "2002:ffff:ffff:ffff:ffff:ffff:ffff:ffff", []string{"2001:ffff:ffff:ffff:ffff:ffff:ffff:ffff", "2003::"}},
+		{"2001::/32", "2001::", "2001:0:ffff:ffff:ffff:ffff:ffff:ffff", []string{"2000:ffff:ffff:ffff:ffff:ffff:ffff:ffff", "2001:1::"}},
+		{"2001:db8::/32", "2001:db8::", "2001:db8:ffff:ffff:ffff:ffff:ffff:ffff", []string{"2001:db7:ffff:ffff:ffff:ffff:ffff:ffff", "2001:db9::"}},
+		{"100::/64", "100::", "100::ffff:ffff:ffff:ffff", nil},
+	}
+
+	for _, c := range cases {
+		t.Run(c.faixa, func(t *testing.T) {
+			for _, ip := range []string{c.primeiro, c.ultimo} {
+				if err := safedial.AllowIP(netip.MustParseAddr(ip)); !errors.Is(err, safedial.ErrBlocked) {
+					t.Errorf("AllowIP(%s) = %v, queria ErrBlocked", ip, err)
+				}
+			}
+			for _, ip := range c.fora {
+				if err := safedial.AllowIP(netip.MustParseAddr(ip)); err != nil {
+					t.Errorf("AllowIP(%s) = %v, queria liberado: está fora de %s", ip, err, c.faixa)
+				}
+			}
+		})
+	}
+}
+
+// Host inválido volta sem conversão e com false: o chamador trata como destino
+// desconhecido, e dois inválidos nunca contam como o mesmo host. O ẞ fica de
+// fora de propósito: o resultado dele muda com a tabela do IDNA.
+func TestDialedHost(t *testing.T) {
+	cases := []struct {
+		nome, host, quer string
+		ok               bool
+	}{
+		{"ASCII em minúsculas", "exemplo.com", "exemplo.com", true},
+		{"ASCII em maiúsculas", "EXEMPLO.com", "exemplo.com", true},
+		{"punycode em maiúsculas", "XN--STRAE-OQA.de", "xn--strae-oqa.de", true},
+		{"Unicode vira punycode", "straße.de", "xn--strae-oqa.de", true},
+		{"caixa no Unicode", "BÜCHER.example", "xn--bcher-kva.example", true},
+		{"joiner de largura zero é recusado", "\u200d.example", "", false},
+	}
+	for _, c := range cases {
+		t.Run(c.nome, func(t *testing.T) {
+			got, ok := safedial.DialedHost(c.host)
+			if got != c.quer || ok != c.ok {
+				t.Errorf("DialedHost(%q) = (%q, %v), queria (%q, %v)", c.host, got, ok, c.quer, c.ok)
+			}
+		})
+	}
+}
+
+func TestIsSingleLabel(t *testing.T) {
+	cases := []struct {
+		host  string
+		unico bool
+	}{
+		{"db", true},
+		{"localhost", true},
+		{"db.", true},
+		{"db..", true},
+		{"", true},
+		{"exemplo.com", false},
+		{"exemplo.com.", false},
+		{"a.b.c", false},
+	}
+	for _, c := range cases {
+		t.Run(c.host, func(t *testing.T) {
+			if got := safedial.IsSingleLabel(c.host); got != c.unico {
+				t.Errorf("IsSingleLabel(%q) = %v, queria %v", c.host, got, c.unico)
 			}
 		})
 	}

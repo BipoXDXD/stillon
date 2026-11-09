@@ -13,6 +13,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"sync"
@@ -23,6 +24,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/testcontainers/testcontainers-go"
+	tcexec "github.com/testcontainers/testcontainers-go/exec"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 
 	"github.com/BipoXDXD/stillon/internal/storage"
@@ -279,6 +281,30 @@ func trocarBanco(t *testing.T, dsn, nome string) string {
 	}
 	u.Path = "/" + nome
 	return u.String()
+}
+
+// Psql roda script com o psql de dentro do contêiner, como superusuário, no
+// banco de teste, e devolve o código de saída e a saída combinada. É para o que
+// só o psql faz: metacomandos, variáveis e o código de saída.
+func Psql(t *testing.T, script []byte, args ...string) (int, string) {
+	t.Helper()
+	iniciar(t)
+	ctx := context.Background()
+	const caminho = "/tmp/stillon-teste.sql"
+	if err := container.CopyToContainer(ctx, script, caminho, 0o644); err != nil {
+		t.Fatalf("copiar o script para o contêiner: %v", err)
+	}
+	comando := append([]string{"psql", "--no-psqlrc", "-X", "-q", "-U", adminUser, "-d", dbName}, args...)
+	comando = append(comando, "-f", caminho)
+	codigo, leitor, err := container.Exec(ctx, comando, tcexec.Multiplexed())
+	if err != nil {
+		t.Fatalf("rodar o psql: %v", err)
+	}
+	saida, err := io.ReadAll(leitor)
+	if err != nil {
+		t.Fatalf("ler a saída do psql: %v", err)
+	}
+	return codigo, string(saida)
 }
 
 // EmptyDatabase cria um banco novo, vazio e NÃO migrado, cujo dono é o

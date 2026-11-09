@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -319,6 +320,7 @@ func TestSendTimesOutWithTheContext(t *testing.T) {
 func TestRetryAfter(t *testing.T) {
 	for v, quer := range map[string]time.Duration{
 		"3":                             3 * time.Second,
+		" 3 ":                           3 * time.Second,
 		"0.25":                          250 * time.Millisecond,
 		"":                              0,
 		"-1":                            0,
@@ -350,5 +352,77 @@ func TestDiscordReminderHasTheOpenedColor(t *testing.T) {
 	}
 	if !strings.HasPrefix(corpo.Content, "🔴 API de pagamentos continua fora do ar") {
 		t.Errorf("conteúdo = %q", corpo.Content)
+	}
+}
+
+// Só o fechamento sai em verde.
+func TestDiscordResolvedHasTheResolvedColor(t *testing.T) {
+	srv, client, pedidos := provedor(t, status(http.StatusOK))
+	d := &Discord{client: client, validate: aceitarQualquer}
+	ev := evAberto
+	ev.Kind = incident.EventResolved
+	ev.ResolvedAt = ev.StartedAt.Add(time.Hour)
+
+	if err := d.Send(context.Background(), crypto.Secret(srv.URL+"/api/webhooks/1/tok"), ev); err != nil {
+		t.Fatal(err)
+	}
+	var corpo discordPayload
+	if err := json.Unmarshal(receber(t, pedidos).Corpo, &corpo); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(corpo.Content, "🟢 ") {
+		t.Errorf("conteúdo = %q", corpo.Content)
+	}
+}
+
+func TestResponseClassificationBoundaries(t *testing.T) {
+	for _, tc := range []struct {
+		status     int
+		motivo     Reason
+		permanente bool
+	}{
+		{199, ReasonRejected, true},
+		{200, "", false},
+		{299, "", false},
+		{300, ReasonRejected, true},
+		{429, ReasonRateLimited, false},
+		{499, ReasonRejected, true},
+		{500, ReasonServerError, false},
+	} {
+		t.Run(fmt.Sprint(tc.status), func(t *testing.T) {
+			err := classificarResposta(&http.Response{StatusCode: tc.status, Header: http.Header{}})
+			if tc.motivo == "" {
+				if err != nil {
+					t.Fatalf("erro = %v, queria entregue", err)
+				}
+				return
+			}
+			var se *SendError
+			if !errors.As(err, &se) || se.Reason != tc.motivo || se.Permanent != tc.permanente {
+				t.Errorf("erro = %v, queria %s (permanente: %v)", err, tc.motivo, tc.permanente)
+			}
+		})
+	}
+}
+
+func TestErrorClassification(t *testing.T) {
+	for _, tc := range []struct {
+		nome       string
+		err        error
+		motivo     Reason
+		permanente bool
+	}{
+		{"destino bloqueado", fmt.Errorf("x: %w", safedial.ErrBlocked), ReasonInvalidChannel, true},
+		{"URL inválida", fmt.Errorf("x: %w", safedial.ErrInvalidURL), ReasonInvalidChannel, true},
+		{"redirecionamento recusado", fmt.Errorf("x: %w", safedial.ErrRedirect), ReasonInvalidChannel, true},
+		{"prazo", fmt.Errorf("x: %w", context.DeadlineExceeded), ReasonTimeout, false},
+		{"rede", errors.New("reset"), ReasonNetwork, false},
+	} {
+		t.Run(tc.nome, func(t *testing.T) {
+			var se *SendError
+			if err := classificarErro(tc.err); !errors.As(err, &se) || se.Reason != tc.motivo || se.Permanent != tc.permanente {
+				t.Errorf("erro = %v, queria %s (permanente: %v)", err, tc.motivo, tc.permanente)
+			}
+		})
 	}
 }

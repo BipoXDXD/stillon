@@ -359,7 +359,7 @@ func serieHoraria(ctx context.Context, q *db.Queries, userID, id uuid.UUID, from
 
 // horaBruta converte uma hora agregada dos checks brutos. Sem sucesso na hora
 // (ok = 0), a consulta devolve as latências como 0; aqui elas viram nil, como
-// no rollup.
+// no rollup. A série do detalhe e o spark do resumo passam por aqui.
 func horaBruta(r db.ListRawHoursRow) Rollup {
 	hora := Rollup{Bucket: r.Bucket.UTC(), Total: r.Total, OK: r.Ok}
 	if r.Ok > 0 {

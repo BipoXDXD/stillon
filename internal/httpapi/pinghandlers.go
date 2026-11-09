@@ -69,8 +69,7 @@ func (h *PingHandlers) codigoDeSaida(w http.ResponseWriter, r *http.Request) {
 func (h *PingHandlers) responder(w http.ResponseWriter, r *http.Request, registrar func() error) {
 	// Drena antes do banco: corpo acima do teto não tem efeito nenhum.
 	if _, err := io.Copy(io.Discard, r.Body); err != nil {
-		var grande *http.MaxBytesError
-		if errors.As(err, &grande) {
+		if corpoAcimaDoTeto(err) {
 			apierr.WriteError(w, r, apierr.CodePayloadTooLarge)
 			return
 		}

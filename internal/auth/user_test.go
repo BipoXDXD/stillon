@@ -3,6 +3,7 @@ package auth_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -61,7 +62,7 @@ func TestByEmailReturnsErrNotFoundForUnknownEmail(t *testing.T) {
 // reservar é ReserveAttempt com o teste parando no erro.
 func reservar(t *testing.T, store *auth.PGStore, userID uuid.UUID, at time.Time) bool {
 	t.Helper()
-	ok, err := store.ReserveAttempt(context.Background(), userID, at)
+	ok, err := store.ReserveAttempt(context.Background(), userID, nil, at)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,7 +123,7 @@ func TestConcurrentReservationsStopAtTheThreshold(t *testing.T) {
 	var wg sync.WaitGroup
 	for range 12 {
 		wg.Go(func() {
-			ok, err := store.ReserveAttempt(context.Background(), userID, clk.Now())
+			ok, err := store.ReserveAttempt(context.Background(), userID, nil, clk.Now())
 			if err != nil {
 				t.Error(err)
 				return
@@ -330,7 +331,7 @@ func TestCheckPassword(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	conta := auth.AccountAttempts(store, userID, clk.Now())
+	conta := auth.AccountAttempts(store, userID, nil, clk.Now())
 
 	ok, _, err := auth.CheckPassword(ctx, conta, u, senha)
 	if err != nil || !ok {
@@ -361,5 +362,59 @@ func TestCheckPassword(t *testing.T) {
 	}
 	if n := auth.Argon2Verifications() - antes; n != 1 {
 		t.Errorf("conta bloqueada: %d Argon2id, queria 1 (o dummy): o bloqueio se anunciaria pelo tempo", n)
+	}
+}
+
+// On point: no instante de locked_until a conta já não está bloqueada.
+func TestIsLockedEndsAtTheExactDeadline(t *testing.T) {
+	agora := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
+	if (auth.User{LockedUntil: &agora}).IsLocked(agora) {
+		t.Error("o bloqueio ainda valia no instante do vencimento")
+	}
+}
+
+// No instante do vencimento, a reserva é concedida e a contagem recomeça: as
+// duas metades do UPDATE usam a mesma fronteira.
+func TestReserveAttemptAtTheExactLockExpiryRestartsTheCount(t *testing.T) {
+	_, pool, clk, userID := setup(t)
+	store := auth.NewPGStore(pool)
+	agora := clk.Now()
+	for range auth.LockThreshold {
+		reservar(t, store, userID, agora)
+	}
+	if !reservar(t, store, userID, agora.Add(auth.LockDuration)) {
+		t.Fatal("a reserva no instante do vencimento foi recusada")
+	}
+	if tentativas, ate := lerTravas(t, pool, userID); tentativas != 1 || ate != nil {
+		t.Errorf("failed_attempts = %d, locked_until = %v; queria 1 e nil", tentativas, ate)
+	}
+}
+
+// O ByEmail acha quem está dentro do limite de 254 bytes e responde como conta
+// inexistente, sem erro de banco, ao que nem poderia ser um e-mail.
+func TestByEmailLimits(t *testing.T) {
+	_, pool, _, _ := setup(t)
+	ctx := context.Background()
+	store := auth.NewPGStore(pool)
+	cabe := strings.Repeat("a", 248) + "@x.com"
+	passa := strings.Repeat("b", 249) + "@x.com"
+	var idQueCabe uuid.UUID
+	for _, email := range []string{cabe, passa} {
+		id := uuid.New()
+		if email == cabe {
+			idQueCabe = id
+		}
+		if _, err := pool.Exec(ctx, `INSERT INTO users (id, email, password_hash) VALUES ($1, $2, 'x')`, id, email); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if u, err := store.ByEmail(ctx, cabe); err != nil || u.ID != idQueCabe {
+		t.Errorf("254 bytes: %v, %v; queria o usuário", u.ID, err)
+	}
+	for nome, email := range map[string]string{"255 bytes": passa, "NUL": "a\x00@x.com"} {
+		if _, err := store.ByEmail(ctx, email); !errors.Is(err, auth.ErrNotFound) {
+			t.Errorf("%s: erro = %v, queria ErrNotFound", nome, err)
+		}
 	}
 }

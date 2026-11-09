@@ -1,8 +1,8 @@
-import { describe, expect, it, vi } from 'vitest'
-import { EMAIL, RECUPERACAO_OK, SENHA, TOTP_OK } from '@/test/api-falsa'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { EMAIL, RECUPERACAO_OK, SENHA, TOTP_OK, type ErroForcado } from '@/test/api-falsa'
 import { buscarDoTeste, novaSessao, travaFalsa, usarApiFalsa } from '@/test/ambiente'
-import { ApiError } from './http'
-import type { Canal, Travar } from './sessao'
+import { ApiError, type Buscar } from './http'
+import type { Canal, Estado, Travar } from './sessao'
 
 // Dois BroadcastChannel do mesmo nome, como duas abas. O nome é novo a cada
 // chamada: as sessões de um teste continuam vivas depois dele, e num nome
@@ -45,6 +45,33 @@ async function ateASentinela(a: Canal, recebidos: unknown[]) {
   return recebidos.slice(0, -1)
 }
 
+// Segura a RESPOSTA do refresh: o servidor já decidiu, e a aba só sabe quando
+// o teste soltar. Depois de soltar, os refreshes seguintes passam direto, a
+// não ser que esperaDoSegundo segure também a resposta do segundo.
+function refreshSegurado(esperaDoSegundo?: Promise<void>) {
+  let soltar!: () => void
+  const portao = new Promise<void>((r) => (soltar = r))
+  let marcarVolta!: () => void
+  const voltou = new Promise<void>((r) => (marcarVolta = r))
+  let marcarVoltaDoSegundo!: () => void
+  const voltouOSegundo = new Promise<void>((r) => (marcarVoltaDoSegundo = r))
+  let refreshes = 0
+  const buscar = async (entrada: string, init: RequestInit) => {
+    const r = await buscarDoTeste(entrada, init)
+    if (!entrada.endsWith('/auth/refresh')) return r
+    refreshes++
+    if (refreshes === 1) {
+      marcarVolta()
+      await portao
+    } else if (esperaDoSegundo) {
+      marcarVoltaDoSegundo()
+      await esperaDoSegundo
+    }
+    return r
+  }
+  return { buscar, voltou, voltouOSegundo, soltar: () => soltar() }
+}
+
 describe('boot', () => {
   it('com o cookie de refresh, entra sem pedir a senha', async () => {
     const falsa = usarApiFalsa()
@@ -79,8 +106,8 @@ describe('boot', () => {
   // O StrictMode monta os efeitos duas vezes; o boot é uma promessa só.
   // Duas guardas cobrem esta propriedade: o boot único e o single-flight de
   // renovar(). O teste prova a propriedade, não cada guarda: a sabotagem
-  // que o deixa vermelho é tirar as duas ("boot ??=" → "boot =" e
-  // "emVoo ??=" → "emVoo ="); tirar só uma fica verde.
+  // que o deixa vermelho é tirar as duas ("boot ??=" → "boot =" e o
+  // "if (emVoo?.epoca === minha) return" de renovar()); tirar só uma fica verde.
   it('chamado duas vezes, renova uma vez só', async () => {
     const falsa = usarApiFalsa()
     falsa.logado()
@@ -263,6 +290,229 @@ describe('várias abas', () => {
     expect(aba2.sessao.motivo()).toBe('outra-aba')
   })
 
+  // Sabotagem prevista: tirar a linha do "iniciada" no ouvinte do canal → a
+  // aba fica anônima, parada no login.
+  it('"iniciada" de outra aba: a aba anônima entra junto, pelo cookie', async () => {
+    const falsa = usarApiFalsa()
+    const [a, b] = canais()
+    const aba1 = novaSessao({ canal: a })
+    const aba2 = novaSessao({ canal: b })
+    await aba2.sessao.iniciar()
+    expect(aba2.sessao.estado()).toBe('anonimo')
+    await aba1.sessao.entrar(EMAIL, SENHA)
+    await vi.waitFor(() => expect(aba2.sessao.estado()).toBe('autenticado'))
+    expect(aba2.sessao.token()).not.toBeNull()
+    // Um do boot, sem cookie, e um do aviso.
+    expect(falsa.chamadas('POST /auth/refresh')).toBe(2)
+    expect(falsa.estado.familiaRevogada).toBe(false)
+  })
+
+  // Só a aba anônima reage. Uma aba autenticada que passasse por "verificando"
+  // desmontaria o Layout e perderia o formulário pela metade. Sabotagem
+  // prevista: tirar o "&& estado === 'anonimo'" do "iniciada".
+  it('"iniciada" de outra aba: a aba autenticada não renova nem passa por verificando', async () => {
+    const falsa = usarApiFalsa()
+    falsa.logado()
+    const [a, b] = canais()
+    const recebidos: unknown[] = []
+    b.addEventListener('message', (e) => recebidos.push(e.data))
+    const aba1 = novaSessao({ canal: a })
+    const aba2 = novaSessao({ canal: b })
+    await aba2.sessao.iniciar()
+    const tokenAntes = aba2.sessao.token()
+    const estados: Estado[] = []
+    aba2.sessao.assinar(() => estados.push(aba2.sessao.estado()))
+    await aba1.sessao.entrar(EMAIL, SENHA)
+    expect(await ateASentinela(a, recebidos)).toEqual([{ tipo: 'iniciada' }])
+    expect(estados).toEqual([])
+    expect(falsa.chamadas('POST /auth/refresh')).toBe(1)
+    expect(aba2.sessao.token()).toBe(tokenAntes)
+    expect(aba2.sessao.estado()).toBe('autenticado')
+  })
+
+  // A outra fronteira da condição: quem sai do "offline" é o "Tentar de novo".
+  // Sabotagem prevista: trocar por "estado !== 'autenticado'" → sai um refresh.
+  it('"iniciada" de outra aba: a aba offline continua offline, sem renovar', async () => {
+    const falsa = usarApiFalsa()
+    falsa.estado.forcar.set('POST /auth/refresh', { status: 503, code: 'unavailable' })
+    const [a, b] = canais()
+    const recebidos: unknown[] = []
+    b.addEventListener('message', (e) => recebidos.push(e.data))
+    const aba1 = novaSessao({ canal: a })
+    const aba2 = novaSessao({ canal: b })
+    await aba2.sessao.iniciar()
+    expect(aba2.sessao.estado()).toBe('offline')
+    falsa.estado.forcar.delete('POST /auth/refresh')
+    await aba1.sessao.entrar(EMAIL, SENHA)
+    expect(await ateASentinela(a, recebidos)).toEqual([{ tipo: 'iniciada' }])
+    expect(aba2.sessao.estado()).toBe('offline')
+    expect(falsa.chamadas('POST /auth/refresh')).toBe(1)
+  })
+
+  // A terceira fronteira da condição: o boot em voo já vai decidir pelo cookie,
+  // e um segundo refresh seria reúso. O buscar segura a RESPOSTA do refresh até
+  // o aviso chegar. Sabotagem prevista: trocar por
+  // "(estado === 'anonimo' || estado === 'verificando')" → sai outro refresh.
+  it('"iniciada" de outra aba: a aba ainda no boot termina o boot, sem renovar de novo', async () => {
+    const falsa = usarApiFalsa()
+    falsa.logado()
+    const [a, b] = canais()
+    const recebidos: unknown[] = []
+    b.addEventListener('message', (e) => recebidos.push(e.data))
+    let soltar!: () => void
+    const portao = new Promise<void>((r) => (soltar = r))
+    let refreshVoltou = false
+    const buscar = async (entrada: string, init: RequestInit) => {
+      const r = await buscarDoTeste(entrada, init)
+      if (entrada.endsWith('/auth/refresh')) {
+        refreshVoltou = true
+        await portao
+      }
+      return r
+    }
+    const aba1 = novaSessao({ canal: a })
+    const aba2 = novaSessao({ canal: b, buscar })
+    const estados: Estado[] = []
+    aba2.sessao.assinar(() => estados.push(aba2.sessao.estado()))
+    const boot = aba2.sessao.iniciar()
+    await vi.waitFor(() => expect(refreshVoltou).toBe(true))
+    expect(aba2.sessao.estado()).toBe('verificando')
+    await aba1.sessao.entrar(EMAIL, SENHA)
+    expect(await ateASentinela(a, recebidos)).toEqual([{ tipo: 'iniciada' }])
+    soltar()
+    await boot
+    expect(falsa.chamadas('POST /auth/refresh')).toBe(1)
+    expect(falsa.estado.familiaRevogada).toBe(false)
+    expect(estados).toEqual(['autenticado'])
+    expect(aba2.sessao.token()).not.toBeNull()
+  })
+
+  // O refresh do boot saiu antes de o cookie existir, e a outra aba entrou
+  // enquanto a resposta voltava: o 401 dele já não diz nada sobre o cookie.
+  describe('"iniciada" com a resposta do refresh do boot a caminho', () => {
+    async function bootComLoginNoMeio({
+      primeiroRefresh,
+      refresh = refreshSegurado(),
+    }: { primeiroRefresh?: ErroForcado; refresh?: ReturnType<typeof refreshSegurado> } = {}) {
+      const falsa = usarApiFalsa()
+      if (primeiroRefresh) falsa.estado.forcar.set('POST /auth/refresh', primeiroRefresh)
+      const [a, b] = canais()
+      const recebidos: unknown[] = []
+      b.addEventListener('message', (e) => recebidos.push(e.data))
+      const aba1 = novaSessao({ canal: a, buscar: logoutSemRede })
+      const aba2 = novaSessao({ canal: b, buscar: refresh.buscar, travar: travaFalsa() })
+      const estados: Estado[] = []
+      aba2.sessao.assinar(() => estados.push(aba2.sessao.estado()))
+      const boot = aba2.sessao.iniciar()
+      await refresh.voltou
+      expect(aba2.sessao.estado()).toBe('verificando')
+      await aba1.sessao.entrar(EMAIL, SENHA)
+      expect(await ateASentinela(a, recebidos)).toEqual([{ tipo: 'iniciada' }])
+      // A sentinela velha no fim da lista faria a próxima espera voltar na hora.
+      recebidos.length = 0
+      return { falsa, a, recebidos, aba1, aba2, estados, boot, soltar: refresh.soltar }
+    }
+
+    // Sem passar por "anonimo": a rota protegida mandaria a aba ao /login.
+    // Sabotagem prevista: em iniciar(), tirar o segundo refresh → um refresh
+    // só, e a aba termina anônima.
+    it('a aba entra pelo cookie, sem passar por anônimo', async () => {
+      const { falsa, aba2, estados, boot, soltar } = await bootComLoginNoMeio()
+      soltar()
+      await boot
+      expect(falsa.chamadas('POST /auth/refresh')).toBe(2)
+      expect(falsa.estado.familiaRevogada).toBe(false)
+      expect(estados).toEqual(['autenticado'])
+      expect(aba2.sessao.token()).not.toBeNull()
+    })
+
+    // Só o 401 fica em dúvida. Um boot que termina offline segue a regra da aba
+    // offline: quem sai dali é o "Tentar de novo". Sabotagem prevista: tirar o
+    // "novo === 'anonimo'" da condição do segundo refresh → sai outro refresh.
+    it('boot que termina offline continua offline, sem renovar de novo', async () => {
+      const { falsa, aba2, estados, boot, soltar } = await bootComLoginNoMeio({
+        primeiroRefresh: { status: 503, code: 'unavailable' },
+      })
+      falsa.estado.forcar.delete('POST /auth/refresh')
+      soltar()
+      await boot
+      expect(falsa.chamadas('POST /auth/refresh')).toBe(1)
+      expect(estados).toEqual(['offline'])
+      expect(aba2.sessao.token()).toBeNull()
+    })
+
+    // Sabotagem prevista: fazer o segundo refresh chamar renovar(null) direto,
+    // fora do estadoPeloCookie → o 503 rejeita o boot, em vez de terminar offline.
+    it.each<{ erro: ErroForcado; fim: Estado }>([
+      { erro: { status: 401, code: 'invalid_session' }, fim: 'anonimo' },
+      { erro: { status: 503, code: 'unavailable' }, fim: 'offline' },
+    ])('o segundo refresh decide: $erro.status termina $fim', async ({ erro, fim }) => {
+      const { falsa, aba2, estados, boot, soltar } = await bootComLoginNoMeio()
+      falsa.estado.forcar.set('POST /auth/refresh', erro)
+      soltar()
+      await boot
+      expect(falsa.chamadas('POST /auth/refresh')).toBe(2)
+      expect(estados).toEqual([fim])
+      expect(aba2.sessao.token()).toBeNull()
+    })
+
+    // O logout não chegou ao servidor, e o cookie continua valendo: um segundo
+    // refresh ressuscitaria a sessão que o dono acabou de encerrar. Sabotagem
+    // prevista: tirar o "minha === epoca" da condição do segundo refresh.
+    it('"encerrada" logo depois: a época nova cancela o segundo refresh', async () => {
+      const { falsa, a, recebidos, aba1, aba2, boot, soltar } = await bootComLoginNoMeio()
+      await aba1.sessao.sair()
+      await ateASentinela(a, recebidos)
+      soltar()
+      await boot
+      expect(falsa.chamadas('POST /auth/refresh')).toBe(1)
+      expect(aba2.sessao.token()).toBeNull()
+      expect(aba2.sessao.estado()).toBe('anonimo')
+      expect(aba2.sessao.motivo()).toBe('outra-aba')
+    })
+
+    // O logout e o login novo cruzam com o refresh em voo: o "iniciada" move a
+    // aba, já anônima, para um boot novo, e a resposta do refresh antigo é de
+    // outra época. Sabotagem prevista: em renovar(), voltar a reaproveitar o
+    // emVoo de qualquer época → um refresh só, e a aba termina anônima.
+    it('"encerrada" e "iniciada": o boot novo faz o próprio refresh e entra', async () => {
+      const { falsa, a, recebidos, aba1, aba2, boot, soltar } = await bootComLoginNoMeio()
+      await aba1.sessao.sair()
+      await aba1.sessao.entrar(EMAIL, SENHA)
+      await ateASentinela(a, recebidos)
+      expect(aba2.sessao.estado()).toBe('verificando')
+      soltar()
+      await boot
+      await aba2.sessao.iniciar()
+      expect(falsa.chamadas('POST /auth/refresh')).toBe(2)
+      expect(falsa.estado.familiaRevogada).toBe(false)
+      expect(aba2.sessao.estado()).toBe('autenticado')
+      expect(aba2.sessao.token()).not.toBeNull()
+    })
+
+    // Sabotagem prevista: no .finally de renovar(), limpar o emVoo sem conferir
+    // a promessa → o fim do refresh antigo apaga o novo, e sai um terceiro.
+    it('o fim do refresh da época antiga não apaga o refresh em voo da nova', async () => {
+      let abrirOSegundo!: () => void
+      const esperaDoSegundo = new Promise<void>((r) => (abrirOSegundo = r))
+      const refresh = refreshSegurado(esperaDoSegundo)
+      const { falsa, a, recebidos, aba1, aba2, boot, soltar } = await bootComLoginNoMeio({ refresh })
+      await aba1.sessao.sair()
+      await aba1.sessao.entrar(EMAIL, SENHA)
+      await ateASentinela(a, recebidos)
+      soltar()
+      await boot
+      await refresh.voltouOSegundo
+      const carona = aba2.sessao.renovar(null)
+      abrirOSegundo()
+      await aba2.sessao.iniciar()
+      await carona
+      expect(falsa.chamadas('POST /auth/refresh')).toBe(2)
+      expect(falsa.estado.familiaRevogada).toBe(false)
+      expect(aba2.sessao.estado()).toBe('autenticado')
+    })
+  })
+
   it('o canal nunca leva o token', async () => {
     const falsa = usarApiFalsa()
     falsa.logado()
@@ -345,6 +595,67 @@ describe('erros de rede', () => {
     falsa.estado.forcar.set('POST /auth/refresh', { status: 500, code: 'internal_error' })
     await expect(sessao.renovar(sessao.token())).rejects.toBeInstanceOf(ApiError)
     expect(sessao.estado()).toBe('autenticado')
+  })
+})
+
+describe('o prazo do refresh', () => {
+  const PRAZO_CURTO_MS = 50
+  const PRAZO_PADRAO_MS = 10_000
+
+  // Imita o fetch: só rejeita quando o sinal aborta. Sem sinal, nunca termina.
+  const refreshParado = (_entrada: string, init: RequestInit) =>
+    new Promise<Response>((_, rejeitar) => {
+      init.signal?.addEventListener('abort', () => rejeitar(init.signal?.reason))
+    })
+
+  // O AbortSignal.timeout é do ambiente de execução e tem relógio próprio,
+  // fora do alcance do relógio falso. Só ele é trocado: o mesmo erro, no
+  // setTimeout falso. O prazo de verdade passa pelo fetch no teste do logout.
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    vi.spyOn(AbortSignal, 'timeout').mockImplementation((ms) => {
+      const controle = new AbortController()
+      setTimeout(() => controle.abort(new DOMException('The operation timed out.', 'TimeoutError')), ms)
+      return controle.signal
+    })
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.restoreAllMocks()
+  })
+
+  // Sabotagem prevista: tirar o "sinal: AbortSignal.timeout(prazoMs)" do
+  // refresh → a sessão fica em "verificando", e o splash não sai da tela. O
+  // caso padrão também pega trocar o 10_000.
+  it.each([
+    { prazoMs: PRAZO_CURTO_MS, prazo: PRAZO_CURTO_MS },
+    { prazoMs: undefined, prazo: PRAZO_PADRAO_MS },
+  ])('refresh que nunca responde: o boot termina offline em $prazo ms, nem antes', async ({ prazoMs, prazo }) => {
+    const { sessao } = novaSessao({ buscar: refreshParado, travar: travaFalsa(), prazoMs })
+    void sessao.iniciar()
+    await vi.advanceTimersByTimeAsync(prazo - 1)
+    expect(sessao.estado()).toBe('verificando')
+    await vi.advanceTimersByTimeAsync(1)
+    expect(sessao.estado()).toBe('offline')
+    expect(sessao.token()).toBeNull()
+  })
+
+  // A trava é de todas as abas: um refresh parado não pode segurá-la. A outra
+  // aba responde aqui mesmo, porque a API falsa também espera no setTimeout, e
+  // ele está parado. Sabotagem: a mesma, e a outra aba nunca entra na trava.
+  it('o prazo vencido solta a trava, e a outra aba entra nela', async () => {
+    const travar = travaFalsa()
+    const buscarDaOutraAba = vi.fn<Buscar>(async () => new Response(null, { status: 401 }))
+    const aba1 = novaSessao({ buscar: refreshParado, travar, prazoMs: PRAZO_CURTO_MS })
+    const aba2 = novaSessao({ buscar: buscarDaOutraAba, travar, prazoMs: PRAZO_CURTO_MS })
+    void aba1.sessao.iniciar()
+    void aba2.sessao.iniciar()
+    await vi.advanceTimersByTimeAsync(PRAZO_CURTO_MS - 1)
+    expect(buscarDaOutraAba).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(1)
+    expect(buscarDaOutraAba).toHaveBeenCalledTimes(1)
+    expect(aba2.sessao.estado()).toBe('anonimo')
   })
 })
 

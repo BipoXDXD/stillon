@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Serie } from '@/lib/api/schemas'
-import { ehJanela, faixasForaDoAr, latenciasDaSerie, pontosBrutos, pontosHorarios, resumir } from './serie'
+import { comP95Reduzido, ehJanela, faixasForaDoAr, latenciasDaSerie, pontosBrutos, pontosHorarios, pontosPorGrupoDoP95, resumir, trechosDoP95 } from './serie'
 
 const check = (min: number, status: 'up' | 'degraded' | 'down', latency_ms: number) => ({
   checked_at: new Date(Date.UTC(2026, 8, 24, 12, min)).toISOString(),
@@ -37,9 +37,83 @@ describe('série horária', () => {
       { bucket: '2026-09-24T11:00:00Z', total: 60, ok: 0, p50_ms: null, p95_ms: null, p99_ms: null, max_ms: null },
     ]
     const p = pontosHorarios(itens)
-    expect(p[0]).toMatchObject({ p50: 100, faixa: [100, 300], uptime: 1 })
-    expect(p[1]).toMatchObject({ p50: null, faixa: null, uptime: 0 })
+    expect(p[0]).toMatchObject({ p50: 100, p95: 300, faixa: [100, 300], uptime: 1 })
+    expect(p[1]).toMatchObject({ p50: null, p95: null, faixa: null, uptime: 0 })
     expect(resumir({ resolution: '1h', items: itens })).toEqual({ mediana: 100, p95: 300, uptime: 0.5, amostras: 120 })
+  })
+})
+
+// Acima de 1 ponto a cada 6 px, o tracejado do p95 vira massa e vence a linha
+// da mediana.
+describe('redução do p95', () => {
+  it.each([
+    ['exatamente 1 ponto a cada 6 px: sem redução', 100, 600, 1],
+    ['um ponto a mais: grupos de 2', 101, 600, 2],
+    ['90 dias num gráfico largo', 2160, 1000, 13],
+    ['série curta', 2, 600, 1],
+    ['gráfico ainda sem medida', 2160, 0, 1],
+    ['nenhum ponto', 0, 600, 1],
+  ])('%s', (_caso, pontos, largura, porGrupo) => {
+    expect(pontosPorGrupoDoP95(pontos, largura)).toBe(porGrupo)
+  })
+
+  const ponto = (p95: number | null, t: number) => ({ t, p50: 5, p95, faixa: null, uptime: 1 })
+  const p95s = (valores: (number | null)[], porGrupo: number) =>
+    comP95Reduzido(
+      valores.map((v, i) => ponto(v, i)),
+      porGrupo,
+    ).map((p) => p.p95)
+
+  it('deixa só a mediana de cada grupo, no ponto do meio', () => {
+    expect(p95s([10, 30, 20, 40, 60, 50], 3)).toEqual([null, 20, null, null, 50, null])
+  })
+
+  it('não toca nos outros campos: a faixa e a mediana seguem exatas', () => {
+    const entrada = [ponto(10, 0), ponto(30, 1), ponto(20, 2)]
+    expect(comP95Reduzido(entrada, 3).map((p) => ({ t: p.t, p50: p.p50 }))).toEqual([
+      { t: 0, p50: 5 },
+      { t: 1, p50: 5 },
+      { t: 2, p50: 5 },
+    ])
+    expect(entrada.map((p) => p.p95)).toEqual([10, 30, 20])
+  })
+
+  it('hora sem p95 fica fora da mediana do grupo; grupo sem nenhum, sem ponto', () => {
+    expect(p95s([null, 30, null], 3)).toEqual([null, 30, null])
+    expect(p95s([null, null, null], 3)).toEqual([null, null, null])
+  })
+
+  it('o último grupo pode ser menor', () => {
+    expect(p95s([10, 20, 30, 40], 3)).toEqual([null, 20, null, 40])
+  })
+
+  it('grupos de 1 devolvem o p95 exato', () => {
+    expect(p95s([10, null, 30], 1)).toEqual([10, null, 30])
+  })
+
+  const reduzidos = (valores: (number | null)[], porGrupo: number) =>
+    comP95Reduzido(
+      valores.map((v, i) => ponto(v, i)),
+      porGrupo,
+    )
+
+  it('o grupo sem nenhum p95 separa o traço em dois trechos', () => {
+    const pontos = reduzidos([10, 30, 20, null, null, null, 40, 60, 50], 3)
+    expect(pontos.map((p) => p.p95DoTrecho)).toEqual([{}, { 0: 20 }, {}, {}, {}, {}, {}, { 1: 50 }, {}])
+    expect(trechosDoP95(pontos)).toEqual([0, 1])
+  })
+
+  it('hora sem p95 num grupo com valor não separa o traço', () => {
+    expect(trechosDoP95(reduzidos([null, 30, null, 40, null, 50], 3))).toEqual([0])
+  })
+
+  it('sem nenhum p95, não há trecho', () => {
+    expect(trechosDoP95(reduzidos([null, null, null], 3))).toEqual([])
+    expect(trechosDoP95([])).toEqual([])
+  })
+
+  it('em grupos de 1, a hora sem p95 também separa', () => {
+    expect(trechosDoP95(reduzidos([10, null, 30], 1))).toEqual([0, 1])
   })
 })
 

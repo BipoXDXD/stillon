@@ -5,7 +5,7 @@ export function NaoEncontrada() {
   return (
     <div className="space-y-4">
       <Titulo aba="Página não encontrada">Página não encontrada</Titulo>
-      <Link to="/" className="text-realce underline">
+      <Link to="/" className="alvo-de-toque text-realce underline">
         Voltar ao painel
       </Link>
     </div>
