@@ -45,10 +45,11 @@ export function Botao({ className, tipo, tamanho, asChild = false, type, ...prop
   )
 }
 
-// A reserva de quem não tem um elemento melhor por perto: o <h1> da tela.
+// A reserva de quem não tem um elemento melhor por perto: o <h1> da tela ou,
+// se ele só vem com os dados e eles ainda não chegaram, o <main>.
 export const TITULO_DA_TELA: RefObject<HTMLElement | null> = {
   get current() {
-    return document.querySelector<HTMLElement>('main h1')
+    return document.querySelector<HTMLElement>('main h1') ?? document.querySelector<HTMLElement>('main')
   },
 }
 

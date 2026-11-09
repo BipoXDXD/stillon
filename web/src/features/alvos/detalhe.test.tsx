@@ -389,6 +389,28 @@ describe('detalhe', () => {
     expect(screen.getByText('Último check').nextElementSibling).toHaveTextContent('Sem dadosNenhum check ainda')
   })
 
+  // Com a consulta de verdade: o refetch sem dados passa por pending, e o <h1>
+  // do detalhe só existe depois dos dados. Sabotagem: tirar o tabIndex do <main>
+  // no Layout → o foco cai no <body> enquanto carrega.
+  it('Tentar de novo sem dados: enquanto carrega, o foco fica no <main>', async () => {
+    const r = await renderizarPainel('/targets/alvo-1')
+    const botao = await screen.findByRole('button', { name: 'Tentar de novo' })
+    r.falsa.estado.alvos = [alvo()]
+    const p = portao()
+    servidor.use(
+      http.get('*/api/v1/targets/:id', async ({ params }) => {
+        if (params.id === 'alvo-1') await p.aberto
+        return undefined
+      }),
+    )
+    await r.usuario.click(botao)
+    await waitFor(() => expect(screen.getByRole('main')).toHaveFocus())
+    expect(screen.queryByRole('heading', { level: 1 })).not.toBeInTheDocument()
+    p.soltar()
+    await screen.findByRole('heading', { name: 'API', level: 1 })
+    expect(document.activeElement).not.toBe(document.body)
+  })
+
   describe('resumo e indicadores sem resposta', () => {
     const erro500: ErroForcado = { status: 500, code: 'internal_error' }
     const valor = (rotulo: string) => screen.getByText(rotulo).nextElementSibling

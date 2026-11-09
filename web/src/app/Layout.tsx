@@ -72,7 +72,9 @@ export function Layout() {
       </header>
       {/* pb-16 no celular: o fim do conteúdo fica acima da barra inferior
           fixa (53 px). */}
-      <main id="conteudo" className="mx-auto min-w-0 max-w-6xl space-y-8 px-4 pt-8 pb-16 sm:px-6 lg:pt-12 lg:pb-12">
+      {/* tabIndex -1: a última reserva de foco, para quando o que tinha o foco
+          some e a tela ainda não tem <h1>. */}
+      <main id="conteudo" tabIndex={-1} className="mx-auto min-w-0 max-w-6xl space-y-8 px-4 pt-8 pb-16 outline-none sm:px-6 lg:pt-12 lg:pb-12">
         <Outlet />
       </main>
     </ProvedorDeAnuncios>

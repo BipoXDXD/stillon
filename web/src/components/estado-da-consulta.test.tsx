@@ -72,9 +72,29 @@ it.each([
   await waitFor(() => expect(screen.getByRole('heading', { name: 'A tela' })).toHaveFocus())
 })
 
-// O detalhe traz o <h1> nos próprios dados: ele nasce no mesmo commit em que
-// o botão sai. Sabotagem: ler a reserva na hora da desmontagem, sem esperar o
-// fim do commit → o <h1> ainda não existe, e o foco cai no <body>.
+// O caminho real sem dados: o refetch põe a consulta em pending, e o esqueleto
+// toma o lugar do botão antes de o <h1> existir. Sabotagem: tirar o <main> da
+// reserva → o foco cai no <body> já no pending.
+it('erro → pending → dados: sem <h1> na tela, o foco fica no <main>', async () => {
+  const pendente = { data: undefined, error: null, isPending: true, refetch: naoUsado, dataUpdatedAt: 0 }
+  const tela = (consulta: typeof carregou | typeof falhou | typeof pendente) => (
+    <main tabIndex={-1}>
+      <EstadoDaConsulta consulta={consulta}>{(d) => <p>{d}</p>}</EstadoDaConsulta>
+    </main>
+  )
+  const { rerender } = render(tela(falhou))
+  screen.getByRole('button', { name: 'Tentar de novo' }).focus()
+  rerender(tela(pendente))
+  expect(screen.queryByRole('button', { name: 'Tentar de novo' })).not.toBeInTheDocument()
+  await waitFor(() => expect(screen.getByRole('main')).toHaveFocus())
+  rerender(tela(carregou))
+  expect(screen.getByText('os dados')).toBeInTheDocument()
+  expect(screen.getByRole('main')).toHaveFocus()
+})
+
+// Sem passar por pending (os dados chegam ao cache por outro caminho), o <h1>
+// nasce no mesmo commit em que o botão sai. Sabotagem: ler a reserva na hora
+// da desmontagem, sem esperar o fim do commit → o <h1> ainda não existe.
 it('o título que nasce junto com os dados também recebe o foco', async () => {
   const tela = (consulta: typeof carregou | typeof falhou) => (
     <main>
