@@ -145,7 +145,7 @@ describe('espera por uma rota sob demanda', () => {
     const filete = await screen.findByTestId('filete-de-carga', {}, { timeout: 3000 })
     expect(filete).toHaveClass('h-0.5', 'bg-primaria', 'motion-reduce:animate-none', 'fixed', 'top-0')
     expect(filete).toHaveAttribute('aria-hidden', 'true')
-    await waitFor(() => expect(screen.getByTestId('anuncios')).toHaveTextContent('Carregando…'), { timeout: 3000 })
+    await waitFor(() => expect(screen.getByTestId('anuncios')).toHaveTextContent('Carregando a tela…'), { timeout: 3000 })
     soltar()
     await waitFor(() => expect(screen.queryByTestId('filete-de-carga')).not.toBeInTheDocument())
   })

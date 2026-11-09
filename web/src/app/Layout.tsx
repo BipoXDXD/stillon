@@ -88,7 +88,7 @@ function SinalDeCargaDeRota() {
   const avisarEspera = useAposUmTempo(carregando, ESPERA_ANTES_DE_ANUNCIAR_MS)
   const anunciar = useAnunciar()
   useEffect(() => {
-    if (avisarEspera) anunciar('Carregando…')
+    if (avisarEspera) anunciar('Carregando a tela…')
   }, [avisarEspera, anunciar])
   if (!mostrarFilete) return null
   return (
