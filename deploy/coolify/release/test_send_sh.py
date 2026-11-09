@@ -13,6 +13,7 @@ import unittest
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 RELEASE_DIR = Path(__file__).resolve().parent
 SEND_SH = RELEASE_DIR / "send.sh"
@@ -43,12 +44,13 @@ ATTESTATION = {
 }
 SINGLE_MANIFEST = '{"schemaVersion":2,"config":{},"layers":[]}'
 
-TOKEN_CANARY = "CANARY-env-value-5e1f"
-KEY_FILE_CANARY = "CANARY-key-file-9b2c"
+TOKEN_CANARY = "CANARY-" + uuid4().hex
+KEY_FILE_CANARY = "CANARY-" + uuid4().hex
 KEY_PATH_CANARY = "CANARY-key-path-3d7a"
 
 JQ_HAS = 'has("manifests")'
 FAILURE = 73
+MINIMUM_BASH_MAJOR = 4
 
 
 def index(*entries: dict[str, Any]) -> str:
@@ -60,6 +62,24 @@ def real_tool(name: str) -> str:
     if path is None:
         raise RuntimeError(name + " is required to run send.sh for real")
     return path
+
+
+def require_modern_bash() -> None:
+    """An error, never a skip: a skipped suite would turn CI green without running send.sh."""
+    bash = real_tool("bash")
+    done = subprocess.run(
+        [bash, "-c", 'printf %s "${BASH_VERSINFO[0]}"'],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=True,
+    )
+    major = int(done.stdout)
+    if major < MINIMUM_BASH_MAJOR:
+        raise RuntimeError(
+            f"send.sh needs bash {MINIMUM_BASH_MAJOR} or newer, but {bash} is bash {major}; "
+            "put a modern bash first on PATH"
+        )
 
 
 @dataclass(frozen=True)
@@ -261,6 +281,7 @@ class Bench:
 class SendShTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
+        require_modern_bash()
         directory = tempfile.TemporaryDirectory()
         cls.addClassCleanup(directory.cleanup)
         cls.bin_directory = Path(directory.name).resolve()
