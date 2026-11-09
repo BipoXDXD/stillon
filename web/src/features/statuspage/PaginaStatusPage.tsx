@@ -3,6 +3,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
 import { useFieldArray, useForm, useWatch } from 'react-hook-form'
 import { ArrowDown, ArrowUp } from 'lucide-react'
+import { Link } from 'react-router'
 import { z } from 'zod'
 import { useApi } from '@/app/contexto'
 import { EstadoDaConsulta } from '@/components/EstadoDaConsulta'
@@ -161,7 +162,21 @@ function Formulario({ pagina, alvos }: { pagina: PaginaDeStatus | null; alvos: A
       <CaixaDeMarcar {...f.register('published')}>Publicada (visível para qualquer pessoa com o link)</CaixaDeMarcar>
 
       <fieldset ref={lista} className="space-y-3">
-        <legend className="text-sm font-semibold">Alvos na página ({itens.fields.length} de {MAX_ITENS})</legend>
+        <legend className="text-sm font-semibold">
+          Alvos na página{itens.fields.length > 0 && ` (${itens.fields.length} de ${MAX_ITENS})`}
+        </legend>
+        {alvos.length === 0 && itens.fields.length === 0 && (
+          // Nova aba, porque salvar um alvo leva ao detalhe dele e não há volta
+          // para cá: o que já foi digitado neste formulário fica como está.
+          <div className="space-y-2">
+            <p className="text-sm text-suave">Você ainda não tem alvos para mostrar nesta página.</p>
+            <Botao tipo="secundario" tamanho="pequeno" asChild>
+              <Link to="/targets/new" target="_blank" rel="noopener">
+                Cadastrar primeiro alvo (abre em nova aba)
+              </Link>
+            </Botao>
+          </div>
+        )}
         {itens.fields.map((it, i) => (
           <div key={it.id} className="grid grid-cols-1 items-end gap-3 sm:grid-cols-[minmax(0,1fr)_auto] rounded-padrao border border-borda p-3">
             <Campo
