@@ -1,4 +1,5 @@
-import { keepPreviousData, useInfiniteQuery, useQuery } from '@tanstack/react-query'
+import { keepPreviousData, onlineManager, useInfiniteQuery, useQuery } from '@tanstack/react-query'
+import { useSyncExternalStore } from 'react'
 import { useApi } from '@/app/contexto'
 import type { FiltroDoResumo } from './cliente'
 import type { Incidente, ItemDoResumo, ListaDeIncidentes } from './schemas'
@@ -34,6 +35,14 @@ const INTERVALO_DO_ALVO_MS = 60_000
 const INTERVALO_DA_SERIE_MS = 60_000
 const INTERVALO_DOS_CANAIS_MS = 60_000
 const INTERVALO_DOS_RESOLVIDOS_MS = 60_000
+
+const estaSemRede = () => !onlineManager.isOnline()
+
+// Sem rede o React Query pausa as consultas em vez de falhar: nenhum erro
+// nasce, e quem só olha a consulta acha que o que está na tela é atual.
+export function useSemRede(): boolean {
+  return useSyncExternalStore(onlineManager.subscribe, estaSemRede)
+}
 
 export function useMe() {
   const api = useApi()

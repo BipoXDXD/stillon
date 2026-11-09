@@ -13,6 +13,7 @@ export type Manchete =
   | { tipo: 'tarefas-sem-confirmacao' }
   | { tipo: 'todos-pausados' }
   | { tipo: 'tudo-no-ar' }
+  | { tipo: 'sem-rede' }
 
 // As tarefas que o painel conhece. confirmadas é false quando a consulta de
 // heartbeats falhou: não saber não é "tudo no ar". Sempre obrigatório na
@@ -38,6 +39,12 @@ export function manchete(itens: readonly ItemDoResumo[], tarefas: Tarefas): Manc
   if (semDados + semSinal > 0) return { tipo: 'aguardando', quantos: semDados, tarefas: semSinal }
   if (todos.every((e) => e === 'pausado')) return { tipo: 'todos-pausados' }
   return { tipo: 'tudo-no-ar' }
+}
+
+// Sem rede, o estado atual é desconhecido, e nenhuma manchete pode afirmá-lo.
+// O problema já conhecido fica à vista, como quando as tarefas não chegam.
+export function mancheteSemRede(m: Manchete): Manchete {
+  return m.tipo === 'problemas' ? m : { tipo: 'sem-rede' }
 }
 
 // Até dez por extenso, como numa manchete de jornal; depois, o número.
@@ -86,6 +93,8 @@ export function textoDaManchete(m: Manchete): string {
       return 'Todos os monitores estão pausados.'
     case 'tudo-no-ar':
       return 'Tudo no ar.'
+    case 'sem-rede':
+      return 'Sem conexão para conferir os monitores.'
   }
 }
 

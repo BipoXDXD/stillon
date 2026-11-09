@@ -847,7 +847,7 @@ describe('troca de autenticador', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
     // O anúncio aria-live do Radix repete o texto fora do viewport;
     // contamos os toasts reais, inclusive depois da próxima releitura.
-    const notificacoes = within(screen.getByRole('region', { name: 'Notifications (F8)' }))
+    const notificacoes = within(screen.getByRole('region', { name: 'Avisos (F8)' }))
     const avisos = await notificacoes.findAllByText(/A verificação em duas etapas já está desativada\./)
     expect(avisos).toHaveLength(1)
     expect(avisos[0]?.textContent?.includes('O código de recuperação usado foi gasto')).toBe(gasto)
