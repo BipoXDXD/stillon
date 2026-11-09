@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 	"unicode"
@@ -11,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/BipoXDXD/stillon/internal/observability"
 	"github.com/BipoXDXD/stillon/internal/storage/db"
 )
 
@@ -19,6 +21,9 @@ import (
 const (
 	LockThreshold = 5
 	LockDuration  = 15 * time.Minute
+
+	// acaoContaBloqueada é a ação de audit_log do bloqueio da conta.
+	acaoContaBloqueada = "user.locked"
 )
 
 type User struct {
@@ -92,19 +97,21 @@ type Attempts interface {
 }
 
 // AccountAttempts é o bloqueio da conta (spec §5.2) como Attempts: users,
-// com o relógio do instante do login.
-func AccountAttempts(users UserStore, userID uuid.UUID, now time.Time) Attempts {
-	return contaAttempts{users: users, userID: userID, now: now}
+// com o relógio do instante do login e o ip_hash de quem tenta, que a
+// auditoria grava se esta tentativa travar a conta.
+func AccountAttempts(users UserStore, userID uuid.UUID, ipHash []byte, now time.Time) Attempts {
+	return contaAttempts{users: users, userID: userID, ipHash: ipHash, now: now}
 }
 
 type contaAttempts struct {
 	users  UserStore
 	userID uuid.UUID
+	ipHash []byte
 	now    time.Time
 }
 
 func (c contaAttempts) Reserve(ctx context.Context) (bool, error) {
-	return c.users.ReserveAttempt(ctx, c.userID, c.now)
+	return c.users.ReserveAttempt(ctx, c.userID, c.ipHash, c.now)
 }
 
 func (c contaAttempts) Refund(ctx context.Context) error {
@@ -157,8 +164,9 @@ type UserStore interface {
 	ByEmail(ctx context.Context, email string) (User, error)
 	ByID(ctx context.Context, userID uuid.UUID) (User, error)
 	// ReserveAttempt reserva uma tentativa de credencial no bloqueio da
-	// conta; false quando a conta está bloqueada em at (nada reservado).
-	ReserveAttempt(ctx context.Context, userID uuid.UUID, at time.Time) (bool, error)
+	// conta; false quando a conta está bloqueada em at (nada reservado). A
+	// reserva que trava a conta audita o bloqueio com ipHash.
+	ReserveAttempt(ctx context.Context, userID uuid.UUID, ipHash []byte, at time.Time) (bool, error)
 	// RefundAttempt devolve uma reserva de uma prova certa num passo
 	// intermediário do login (ver Attempts).
 	RefundAttempt(ctx context.Context, userID uuid.UUID) error
@@ -221,8 +229,23 @@ func (s *PGStore) ByEmail(ctx context.Context, email string) (User, error) {
 // Ambos os CASE enxergam a linha ANTES do UPDATE, que é o que permite decidir
 // as duas colunas a partir do mesmo estado. (Pressupõe LockThreshold >= 2: com
 // limiar 1, a contagem reiniciada nunca voltaria a travar no mesmo UPDATE.)
-func (s *PGStore) ReserveAttempt(ctx context.Context, userID uuid.UUID, at time.Time) (bool, error) {
-	tag, err := s.pool.Exec(ctx, `
+//
+// A reserva que trava grava o evento de auditoria na mesma transação do
+// UPDATE: se a gravação falhar, a trava não fica. O bloqueio não se anuncia a quem
+// tenta (R34), então esse evento e a linha de log são o único rastro dele. O
+// evento registra a trava aplicada, mesmo quando a quinta tentativa estava
+// certa e quem chama a desfaz logo depois: quatro erros seguidos de um acerto
+// também é sinal que vale guardar. Essa trava desfeita pode se repetir a cada
+// login com o contador parado abaixo do limiar, por isso a mesma conta grava
+// no máximo um evento por LockDuration (insertLockAudit).
+//
+// Depois do UPDATE, locked_until preenchido significa que foi ESTA reserva que
+// travou: o WHERE só deixa passar conta sem trava ou com trava vencida, e o
+// CASE apaga a vencida.
+func (s *PGStore) ReserveAttempt(ctx context.Context, userID uuid.UUID, ipHash []byte, at time.Time) (bool, error) {
+	var travou bool
+	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		if err := tx.QueryRow(ctx, `
 		UPDATE users
 		   SET failed_attempts = CASE
 		           WHEN locked_until IS NOT NULL AND locked_until <= $3 THEN 1
@@ -233,12 +256,27 @@ func (s *PGStore) ReserveAttempt(ctx context.Context, userID uuid.UUID, at time.
 		           WHEN failed_attempts + 1 >= $2 THEN $4
 		           ELSE locked_until
 		       END
-		 WHERE id = $1 AND (locked_until IS NULL OR locked_until <= $3)`,
-		userID, LockThreshold, at, at.Add(LockDuration))
+		 WHERE id = $1 AND (locked_until IS NULL OR locked_until <= $3)
+		RETURNING locked_until IS NOT NULL`,
+			userID, LockThreshold, at, at.Add(LockDuration)).Scan(&travou); err != nil {
+			return err
+		}
+		if !travou {
+			return nil
+		}
+		return insertLockAudit(ctx, tx, userID, ipHash, at)
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
 	if err != nil {
 		return false, fmt.Errorf("reservar tentativa de login: %w", err)
 	}
-	return tag.RowsAffected() == 1, nil
+	if travou {
+		slog.Warn("conta bloqueada por tentativas de login",
+			"user_id", userID, "trace_id", observability.TraceID(ctx))
+	}
+	return true, nil
 }
 
 // RefundAttempt devolve UMA reserva: a de uma senha certa com o segundo fator
