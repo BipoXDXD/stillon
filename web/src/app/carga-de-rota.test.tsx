@@ -152,6 +152,24 @@ describe('espera por uma rota sob demanda', () => {
   })
 })
 
+describe('chunk que falha com rede', () => {
+  // Pelas rotas de verdade: uma troca de ramo no boundary, ou tirar o boundary
+  // da rota que envolve as lazy, só apareceria aqui. Sabotagem: semRede sem
+  // olhar a rede, ou tirar o ErrorBoundary dessa rota.
+  it('diz que há uma versão nova, dentro do Layout, e oferece recarregar', async () => {
+    vi.mocked(carregarConfiguracoes).mockImplementation(async () => {
+      throw new TypeError('Failed to fetch dynamically imported module: /assets/PaginaConfiguracoes-velho.js')
+    })
+    const r = await renderizarPainel('/channels')
+    const navegacao = await screen.findByRole('navigation', { name: 'Principal' })
+    await r.usuario.click(await aba('Conta'))
+    expect(await screen.findByRole('heading', { name: 'Há uma versão nova do painel' })).toBeInTheDocument()
+    expect(navegacao).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Recarregar' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Tentar de novo' })).not.toBeInTheDocument()
+  })
+})
+
 describe('rota sob demanda sem rede', () => {
   afterEach(() => onlineManager.setOnline(true))
 
