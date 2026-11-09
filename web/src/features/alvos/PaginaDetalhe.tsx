@@ -3,6 +3,7 @@ import { ArrowLeft } from 'lucide-react'
 import { useEffect, useEffectEvent, useId, useRef, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router'
 import { useApi } from '@/app/contexto'
+import { useAnunciar } from '@/components/Anunciador'
 import { EstadoDaConsulta } from '@/components/EstadoDaConsulta'
 import { SeloDeEstado } from '@/components/SeloDeEstado'
 import { ListaDeTags } from '@/components/ListaDeTags'
@@ -16,6 +17,7 @@ import { useAlvo, useIncidentes, useSerie } from '@/lib/api/consultas'
 import { naoEncontrado } from '@/lib/api/http'
 import { mensagemDe, textoDoErroDeCheck } from '@/lib/api/mensagens'
 import type { Serie } from '@/lib/api/schemas'
+import { ATRASO_DO_SINAL_MS, useAposUmTempo } from '@/lib/atraso'
 import { dataHora, fuso, milissegundos, porcento } from '@/lib/format'
 import { GraficoDeLatencia } from './GraficoDeLatencia'
 import { IncidentesRecentes } from './IncidentesRecentes'
@@ -121,6 +123,17 @@ function DetalheDoAlvo({ id }: { id: string }) {
   const [ocupado, setOcupado] = useState(false)
   const [erro, setErro] = useState<string | null>(null)
   const idDoResumo = useId()
+  const anunciar = useAnunciar()
+
+  // O keepPreviousData não diz de que janela são os números na tela: é a
+  // última que chegou de verdade.
+  const [janelaNaTela, setJanelaNaTela] = useState(janela)
+  if (serie.isSuccess && !serie.isPlaceholderData && janelaNaTela !== janela) setJanelaNaTela(janela)
+  const esperaLonga = useAposUmTempo(serie.isPlaceholderData, ATRASO_DO_SINAL_MS)
+  const sinalDaTroca = esperaLonga ? `Ainda em ${NOMES[janelaNaTela]}, carregando ${NOMES[janela]}…` : ''
+  useEffect(() => {
+    if (sinalDaTroca) anunciar(sinalDaTroca)
+  }, [sinalDaTroca, anunciar])
 
   // Sai primeiro, e só então tira do cache o que era do alvo: com a tela
   // ainda montada, invalidar (ou remover) refaria o GET /targets/:id, e o 404
@@ -241,13 +254,17 @@ function DetalheDoAlvo({ id }: { id: string }) {
                 aoMudar={(j) => setParams({ janela: j }, { replace: true })}
               />
             </div>
+            {/* Depois do seletor e com a linha reservada: nada se mexe logo
+                após o toque. Fora do aria-busy, que silenciaria o texto. */}
+            <p data-testid="troca-de-janela" className="min-h-5 text-sm text-suave">
+              {sinalDaTroca}
+            </p>
             <EstadoDaConsulta consulta={serie}>
               {(s) => (
                 // Trocando de janela, os números da janela anterior ficam na
-                // tela (keepPreviousData) até a nova chegar, marcados como velhos
-                // pelo "Carregando…". Opacidade no bloco reprovaria o contraste do texto.
+                // tela (keepPreviousData) até a nova chegar. Opacidade no bloco
+                // reprovaria o contraste do texto.
                 <div className="space-y-3" aria-busy={serie.isPlaceholderData}>
-                  {serie.isPlaceholderData && <p className="text-sm text-suave">Carregando…</p>}
                   <Resumo id={idDoResumo} serie={s} />
                   <p className="text-sm text-suave">
                     {s.resolution === '1h'

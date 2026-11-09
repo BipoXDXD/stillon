@@ -107,8 +107,11 @@ describe('detalhe', () => {
 
   // A opacidade num bloco leva junto o texto dele: --suave a 60% dá 2,85:1 no
   // claro e 3,5:1 no escuro, abaixo do 4,5:1, e estes números não são um
-  // controle inativo. Sabotagem: devolver o opacity-60 ao bloco da série.
-  it('trocando de janela, os números antigos ficam na tela sem opacidade sobre o texto', async () => {
+  // controle inativo. O sinal é texto, depois do seletor, numa linha que já
+  // existia: no celular, antes do seletor ele o empurraria logo após o toque.
+  // Sabotagem: devolver o opacity-60 ao bloco da série, ou mudar o texto para
+  // antes do seletor, ou tirar o anúncio.
+  it('trocando de janela, os números ficam e o texto diz qual janela está na tela', async () => {
     const r = await renderizarPainel('/targets/alvo-1')
     r.falsa.estado.alvos = [alvo()]
     r.falsa.estado.serie = {
@@ -117,6 +120,9 @@ describe('detalhe', () => {
     }
     await r.cliente.refetchQueries()
     expect(await screen.findByText(/Mediana 100 ms/)).toBeInTheDocument()
+    const linha = screen.getByTestId('troca-de-janela')
+    expect(linha).toHaveClass('min-h-5')
+    expect(linha).toBeEmptyDOMElement()
     const p = portao()
     servidor.use(
       http.get('*/api/v1/targets/:id/checks', async () => {
@@ -125,11 +131,16 @@ describe('detalhe', () => {
       }),
     )
     await r.usuario.click(screen.getByRole('radio', { name: '6 h' }))
-    const carregando = await screen.findByText('Carregando…')
+    const sinal = await screen.findByText('Ainda em 24 h, carregando 6 h…')
+    expect(sinal).toBe(linha)
     expect(screen.getByText(/Mediana 100 ms/)).toBeInTheDocument()
-    expect(carregando.closest('[class*="opacity-"]')).toBeNull()
+    expect(sinal.closest('[class*="opacity-"]')).toBeNull()
+    expect(sinal.closest('[aria-busy="true"]')).toBeNull()
+    const seletor = screen.getByRole('radiogroup', { name: 'Janela do gráfico' })
+    expect(seletor.compareDocumentPosition(sinal) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    await waitFor(() => expect(screen.getByTestId('anuncios')).toHaveTextContent('Ainda em 24 h, carregando 6 h…'))
     p.soltar()
-    await waitFor(() => expect(screen.queryByText('Carregando…')).not.toBeInTheDocument())
+    await waitFor(() => expect(linha).toBeEmptyDOMElement())
   })
 
   it('apagar pede confirmação e volta ao painel', async () => {
@@ -270,8 +281,7 @@ describe('detalhe', () => {
     )
     await r.usuario.click(screen.getByRole('radio', { name: '7 dias' }))
     const latencia = screen.getByRole('region', { name: 'Latência' })
-    await waitFor(() => expect(within(latencia).getByText('Carregando…')).toBeInTheDocument())
-    expect(within(latencia).getByText(/Mediana 100 ms/).closest('[aria-busy]')).toHaveAttribute('aria-busy', 'true')
+    await waitFor(() => expect(within(latencia).getByText(/Mediana 100 ms/).closest('[aria-busy]')).toHaveAttribute('aria-busy', 'true'))
     p.soltar()
     expect(await within(latencia).findByText(/Resolução por hora/)).toBeInTheDocument()
     expect(within(latencia).queryByText('Carregando…')).not.toBeInTheDocument()
@@ -455,7 +465,7 @@ describe('detalhe', () => {
       )
       await r.cliente.refetchQueries({ queryKey: ['targets', 'alvo-1'], exact: true })
       await r.cliente.resetQueries({ queryKey: ['targets', 'alvo-1', 'checks', '30d'], exact: true })
-      const aviso = await screen.findByRole('region', { name: 'Não foi possível atualizar todos os indicadores.' })
+      const aviso = await screen.findByRole('region', { name: 'Não foi possível atualizar todos os indicadores.' }, { timeout: 3000 })
       await waitFor(() => expect(valor('No ar em 30 dias')).toHaveTextContent('Indisponível'))
       expect(valor('No ar em 30 dias')?.firstElementChild).toHaveClass('text-lg', 'leading-9', 'font-semibold', 'text-suave')
       expect(within(aviso).getAllByRole('button')).toHaveLength(1)
