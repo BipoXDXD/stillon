@@ -208,17 +208,15 @@ func (s *Scheduler) Tick(ctx context.Context) (int, error) {
 			s.sem.Release(int64(vagas))
 			return 0, fmt.Errorf("reivindicar alvos: %w", err)
 		}
-		// Guarda do semáforo. O LIMIT da reivindicação vive numa subquery
-		// (IN (… LIMIT … FOR UPDATE SKIP LOCKED)), e o Postgres não promete
-		// avaliá-la uma vez só: num nested loop ela pode ser reexecutada e
-		// devolver mais linhas que vagas. Sem este corte, a sobra ficaria
+		// Guarda do semáforo. A CTE MATERIALIZED da reivindicação já impede
+		// um lote maior que vagas; este corte fica porque o custo de errar
+		// é derrubar o processo. Sem ele, a sobra ficaria
 		// negativa, nada voltaria ao semáforo e cada goroutine faria
 		// Release(1) de uma vaga que nunca foi tomada: o teto de 64 seria
 		// furado e viria o panic "semaphore: released more than held", que
 		// derruba o processo (em --role=all, a API junto). Os excedentes já
 		// tiveram o next_run_at empurrado pela reivindicação, então só perdem
-		// um intervalo. Não há teste comportamental: o Postgres não produz
-		// esse plano sob demanda.
+		// um intervalo.
 		if len(alvos) > int(vagas) {
 			slog.Error("reivindicação devolveu mais alvos que vagas; os excedentes ficam para o próximo intervalo",
 				"vagas", vagas, "alvos", len(alvos))
