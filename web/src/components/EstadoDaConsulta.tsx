@@ -1,5 +1,6 @@
 import type { UseQueryResult } from '@tanstack/react-query'
 import type { ReactNode } from 'react'
+import { useSemRede } from '@/lib/api/consultas'
 import { naoEncontrado } from '@/lib/api/http'
 import { mensagemDe } from '@/lib/api/mensagens'
 import { dataHora } from '@/lib/format'
@@ -38,7 +39,12 @@ export function EstadoDaConsulta<T>({
   esqueleto?: ReactNode
   children: (dados: T) => ReactNode
 }) {
-  if (consulta.isPending) return esqueleto ?? <Esqueleto />
+  const semRede = useSemRede()
+  if (consulta.isPending) {
+    // Sem rede, a consulta fica pausada e o esqueleto não terminaria.
+    if (semRede) return <p className="rounded-padrao border border-borda p-4 text-sm">Esta tela carrega quando a conexão voltar.</p>
+    return esqueleto ?? <Esqueleto />
+  }
   const tentar = (
     <Botao tipo="secundario" tamanho="pequeno" onClick={() => void consulta.refetch()}>
       Tentar de novo

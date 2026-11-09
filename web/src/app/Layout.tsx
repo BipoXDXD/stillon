@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { Link, Outlet, useLocation } from 'react-router'
 import { ProvedorDeAnuncios } from '@/components/Anunciador'
 import { AvisoDeContexto } from '@/components/AvisoDeContexto'
+import { AvisoDeRede } from '@/components/AvisoDeRede'
 import { Marca } from '@/components/Marca'
 import { useAvisar } from '@/components/ui/avisos'
 import { Botao } from '@/components/ui/botao'
@@ -43,6 +44,7 @@ export function Layout() {
         Pular para o conteúdo
       </a>
       <AvisoDeContexto />
+      <AvisoDeRede />
       <header className="border-b border-borda bg-superficie">
         <div className="mx-auto flex min-h-16 max-w-6xl items-center gap-4 px-4 sm:px-6 lg:gap-8">
           <Marca />

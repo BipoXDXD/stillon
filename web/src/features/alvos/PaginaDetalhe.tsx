@@ -17,7 +17,6 @@ import { naoEncontrado } from '@/lib/api/http'
 import { mensagemDe, textoDoErroDeCheck } from '@/lib/api/mensagens'
 import type { Serie } from '@/lib/api/schemas'
 import { dataHora, fuso, milissegundos, porcento } from '@/lib/format'
-import { cn } from '@/lib/utils'
 import { FaixaDeEstado } from './FaixaDeEstado'
 import { GraficoDeLatencia } from './GraficoDeLatencia'
 import { IncidentesRecentes } from './IncidentesRecentes'
@@ -253,8 +252,9 @@ function DetalheDoAlvo({ id }: { id: string }) {
             <EstadoDaConsulta consulta={serie}>
               {(s) => (
                 // Trocando de janela, os números da janela anterior ficam na
-                // tela (keepPreviousData) até a nova chegar: marcados como velhos.
-                <div className={cn('space-y-3', serie.isPlaceholderData && 'opacity-60')} aria-busy={serie.isPlaceholderData}>
+                // tela (keepPreviousData) até a nova chegar, marcados como velhos
+                // pelo "Carregando…". Opacidade no bloco reprovaria o contraste do texto.
+                <div className="space-y-3" aria-busy={serie.isPlaceholderData}>
                   {serie.isPlaceholderData && <p className="text-sm text-suave">Carregando…</p>}
                   <Resumo id={idDoResumo} serie={s} />
                   <p className="text-sm text-suave">
@@ -279,7 +279,8 @@ function DetalheDoAlvo({ id }: { id: string }) {
             </EstadoDaConsulta>
           </section>
 
-          <IncidentesRecentes consulta={incidentes} agora={agora} />
+          {/* O relógio da própria lista: o do resumo é 0 enquanto ele não responde. */}
+          <IncidentesRecentes consulta={incidentes} agora={new Date(incidentes.dataUpdatedAt)} />
 
           <Confirmar
             aberto={apagando}
