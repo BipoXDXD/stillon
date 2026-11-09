@@ -369,6 +369,10 @@ func (s *Scheduler) gravar(a db.ClaimDueTargetsRow, em time.Time, res Result) {
 		// O dono trocou a URL ou o método com a sonda em voo (E2 da revisão
 		// de 2026-10-14). Não é erro: o resultado é de outro serviço.
 		slog.Info("sonda descartada: o alvo mudou de URL ou método durante a sonda", "target_id", a.ID)
+	case errors.Is(err, errAlvoPausado):
+		// Um alvo pausado não abre incidente: sem sonda, nada o fecharia, e o
+		// aviso chegaria depois de o dono dizer que não quer monitorar.
+		slog.Info("sonda descartada: o alvo foi pausado durante a sonda", "target_id", a.ID)
 	case errors.Is(err, errAlvoSumido):
 		// Review Focus 3 do Plano 2, visto pela trava do alvo.
 		s.metrics.forget(a.ID)
@@ -393,15 +397,16 @@ func (s *Scheduler) gravar(a db.ClaimDueTargetsRow, em time.Time, res Result) {
 }
 
 var (
-	errSondaVelha = errors.New("o alvo mudou de URL ou método durante a sonda")
-	errAlvoSumido = errors.New("o alvo foi apagado durante a sonda")
+	errSondaVelha  = errors.New("o alvo mudou de URL ou método durante a sonda")
+	errAlvoPausado = errors.New("o alvo foi pausado durante a sonda")
+	errAlvoSumido  = errors.New("o alvo foi apagado durante a sonda")
 )
 
-// conferirSonda é o fencing da gravação: trava a linha do alvo e confere se a
-// URL e o método ainda são os da reivindicação. Um PATCH aberto é esperado, e
-// o que vale é o que ele gravou. Uma troca de ida e volta (A, B, A) passa:
-// a sonda foi de fato sobre a URL atual, e a histerese zerada recomeça por
-// um resultado dela.
+// conferirSonda é o fencing da gravação: trava a linha do alvo e confere se
+// ele segue ligado e se a URL e o método ainda são os da reivindicação. Um
+// PATCH aberto é esperado, e o que vale é o que ele gravou. Uma troca de ida e
+// volta (A, B, A) passa: a sonda foi de fato sobre a URL atual, e a histerese
+// zerada recomeça por um resultado dela.
 func conferirSonda(ctx context.Context, q *db.Queries, a db.ClaimDueTargetsRow) error {
 	atual, err := q.LockTargetProbeSpec(ctx, a.ID)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -409,6 +414,9 @@ func conferirSonda(ctx context.Context, q *db.Queries, a db.ClaimDueTargetsRow) 
 	}
 	if err != nil {
 		return fmt.Errorf("conferir a URL do alvo: %w", err)
+	}
+	if !atual.Enabled {
+		return errAlvoPausado
 	}
 	if atual.URL != a.URL || atual.Method != a.Method {
 		return errSondaVelha

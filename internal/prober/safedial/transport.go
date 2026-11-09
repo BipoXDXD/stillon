@@ -1,7 +1,9 @@
 package safedial
 
 import (
+	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -30,26 +32,42 @@ const UserAgent = "StillOn/1.0 (+monitor de disponibilidade)"
 // dele, a requisição falha e a sonda sai down (unknown).
 const maxResponseHeaderBytes = 64 << 10
 
+// atrasoDaReserva é a vantagem da família preferida sobre a outra. É o valor
+// padrão do FallbackDelay do net.Dialer.
+const atrasoDaReserva = 300 * time.Millisecond
+
+// familiasNaCorrida são IPv4 e IPv6.
+const familiasNaCorrida = 2
+
+var errSemEndereco = errors.New("nenhum endereço para discar")
+
 // NewTransport devolve um http.Transport que se recusa a conectar em
 // endereços internos.
 //
-// A validação acontece dentro de ControlContext, que o Go chama depois de
-// criar o socket e antes de discar, recebendo o endereço já resolvido.
+// Um nome é resolvido uma única vez, aqui, e basta um endereço interno na
+// resposta para o nome inteiro ser recusado: um nome que mistura interno e
+// externo é suspeito, e nenhum dos dois é contatado.
 //
 // Validar a URL antes de discar não bastaria: quem controla o DNS do domínio
 // faz rebinding — a resolução da validação devolve um IP público e a da
-// conexão devolve um privado. A janela entre as duas resoluções é o bug, e
-// validar no ControlContext a fecha, porque ali o endereço é exatamente o que
-// será conectado.
+// conexão devolve um privado. A janela entre as duas resoluções é o bug. Ela
+// se fecha discando por IP o conjunto já validado, sem resolver de novo.
+//
+// O ControlContext, que o Go chama depois de criar o socket e antes de discar,
+// continua validando cada endereço. É a segunda barreira para os nomes e a
+// única para o IP literal.
 func NewTransport() *http.Transport { return newTransport(nil) }
 
 func newTransport(allowed []netip.AddrPort) *http.Transport {
+	permitir := func(address string) error {
+		if liberado(address, allowed) {
+			return nil
+		}
+		return AllowAddr(address)
+	}
 	dialer := &net.Dialer{
-		ControlContext: func(ctx context.Context, network, address string, _ syscall.RawConn) error {
-			if liberado(address, allowed) {
-				return nil
-			}
-			return AllowAddr(address)
+		ControlContext: func(_ context.Context, _, address string, _ syscall.RawConn) error {
+			return permitir(address)
 		},
 	}
 
@@ -58,7 +76,17 @@ func newTransport(allowed []netip.AddrPort) *http.Transport {
 			if err := allowHostName(address); err != nil {
 				return nil, err
 			}
-			return dialer.DialContext(ctx, network, address)
+			host, port, ehNome := nomeEPorta(address)
+			if !ehNome {
+				return dialer.DialContext(ctx, network, address)
+			}
+			ips, err := resolverEValidar(ctx, host, port, permitir)
+			if err != nil {
+				return nil, err
+			}
+			return discarConjunto(ctx, ips, func(ctx context.Context, ip netip.Addr) (net.Conn, error) {
+				return dialer.DialContext(ctx, network, net.JoinHostPort(ip.String(), port))
+			})
 		},
 
 		// Sem proxy: HTTP_PROXY no ambiente faria toda requisição passar por
@@ -112,6 +140,116 @@ func allowHostName(address string) error {
 		return fmt.Errorf("%w: host de rótulo único %q", ErrBlocked, host)
 	}
 	return nil
+}
+
+// nomeEPorta separa host e porta de address e diz se o host é um nome. IP
+// literal e endereço ilegível ficam com o próprio dialer.
+func nomeEPorta(address string) (host, port string, ehNome bool) {
+	host, port, err := net.SplitHostPort(address)
+	if err != nil {
+		return "", "", false
+	}
+	_, err = netip.ParseAddr(host)
+	return host, port, err != nil
+}
+
+// resolverEValidar faz a única resolução do nome e recusa o conjunto inteiro
+// se um endereço não puder ser alcançado. O que devolve é o que será discado.
+func resolverEValidar(ctx context.Context, host, port string, permitir func(address string) error) ([]netip.Addr, error) {
+	ips, err := net.DefaultResolver.LookupNetIP(ctx, "ip", host)
+	if err != nil {
+		return nil, err
+	}
+	for _, ip := range ips {
+		if err := permitir(net.JoinHostPort(ip.String(), port)); err != nil {
+			return nil, fmt.Errorf("nome %q recusado por inteiro: %w", host, err)
+		}
+	}
+	return ips, nil
+}
+
+// discarIP abre a conexão para um endereço já validado.
+type discarIP func(ctx context.Context, ip netip.Addr) (net.Conn, error)
+
+type resultadoDoDial struct {
+	conn net.Conn
+	err  error
+}
+
+// discarConjunto faz com o conjunto validado o que o net.Dialer faria com o
+// nome (Happy Eyeballs, RFC 6555): a família do primeiro endereço larga na
+// frente, e a outra entra depois de atrasoDaReserva ou assim que a primeira
+// falhar. O prazo por fases não serve aqui: o http.Transport tira o deadline
+// do context do dial, e uma família com pacotes descartados consumiria a sonda
+// inteira, derrubando um alvo que responde na outra.
+func discarConjunto(ctx context.Context, ips []netip.Addr, discar discarIP) (net.Conn, error) {
+	primarios, reservas := separarPorFamilia(ips)
+	if len(reservas) == 0 {
+		return discarEmSerie(ctx, primarios, discar)
+	}
+
+	ctx, desistir := context.WithCancel(ctx)
+	defer desistir()
+	retornou := make(chan struct{})
+	defer close(retornou)
+
+	resultados := make(chan resultadoDoDial)
+	correr := func(familia []netip.Addr) {
+		conn, err := discarEmSerie(ctx, familia, discar)
+		select {
+		case resultados <- resultadoDoDial{conn: conn, err: err}:
+		case <-retornou:
+			if conn != nil {
+				conn.Close()
+			}
+		}
+	}
+
+	go correr(primarios)
+	largada := time.AfterFunc(atrasoDaReserva, func() { correr(reservas) })
+	defer largada.Stop()
+
+	var primeiroErro error
+	for range familiasNaCorrida {
+		r := <-resultados
+		if r.err == nil {
+			return r.conn, nil
+		}
+		primeiroErro = cmp.Or(primeiroErro, r.err)
+		if largada.Stop() {
+			go correr(reservas)
+		}
+	}
+	return nil, primeiroErro
+}
+
+// separarPorFamilia mantém a ordem do resolver dentro de cada família.
+func separarPorFamilia(ips []netip.Addr) (primarios, reservas []netip.Addr) {
+	for _, ip := range ips {
+		if ip.Is4() == ips[0].Is4() {
+			primarios = append(primarios, ip)
+		} else {
+			reservas = append(reservas, ip)
+		}
+	}
+	return primarios, reservas
+}
+
+// discarEmSerie tenta um endereço de cada vez e, se todos falharem, devolve o
+// erro do primeiro. Sem endereço, o erro impede o par nil, nil, que o
+// http.Transport não saberia tratar.
+func discarEmSerie(ctx context.Context, ips []netip.Addr, discar discarIP) (net.Conn, error) {
+	falha := errSemEndereco
+	for i, ip := range ips {
+		conn, err := discar(ctx, ip)
+		if err == nil {
+			return conn, nil
+		}
+		if i == 0 {
+			falha = err
+		}
+	}
+	return nil, falha
 }
 
 // liberado diz se address está na lista de exceções exatas. O Unmap iguala

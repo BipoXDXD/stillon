@@ -43,6 +43,7 @@ SELECT ensure_checks_partition(sqlc.arg(month)::date);
 -- FOR KEY SHARE espera o FOR UPDATE do PATCH (targets.GetTargetForUpdate) e,
 -- depois do commit dele, devolve a linha nova. É a mesma trava que a FK do
 -- INSERT em checks já pegaria, então não cria disputa nova com a
--- reivindicação. Sem linha: o alvo foi apagado.
+-- reivindicação. Sem linha: o alvo foi apagado. O enabled vem no SELECT, e não
+-- no WHERE, porque sem linha a pausa se confundiria com o alvo apagado.
 -- name: LockTargetProbeSpec :one
-SELECT url, method FROM targets WHERE id = $1 FOR KEY SHARE;
+SELECT url, method, enabled FROM targets WHERE id = $1 FOR KEY SHARE;
