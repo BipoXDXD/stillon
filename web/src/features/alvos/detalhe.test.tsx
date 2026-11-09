@@ -1,6 +1,7 @@
 import { act, screen, waitFor, within } from '@testing-library/react'
 import { http, HttpResponse } from 'msw'
 import { describe, expect, it } from 'vitest'
+import { ItemDoResumo } from '@/lib/api/schemas'
 import { horaMinuto } from '@/lib/format'
 import type { ErroForcado } from '@/test/api-falsa'
 import { alvo, incidente, itemDoResumo } from '@/test/fixtures'
@@ -133,8 +134,7 @@ describe('detalhe', () => {
     await r.usuario.click(screen.getByRole('radio', { name: '6 h' }))
     const sinal = await screen.findByText('Ainda em 24 h, carregando 6 h…')
     expect(sinal).toBe(linha)
-    expect(screen.getByText(/Mediana 100 ms/)).toBeInTheDocument()
-    expect(sinal.closest('[class*="opacity-"]')).toBeNull()
+    expect(screen.getByText(/Mediana 100 ms/).closest('[class*="opacity-"]')).toBeNull()
     expect(sinal.closest('[aria-busy="true"]')).toBeNull()
     const seletor = screen.getByRole('radiogroup', { name: 'Janela do gráfico' })
     expect(seletor.compareDocumentPosition(sinal) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
@@ -455,6 +455,10 @@ describe('detalhe', () => {
       const r = await renderizarPainel('/targets/alvo-1')
       r.falsa.estado.alvos = [alvo()]
       r.falsa.estado.resumo = [itemDoResumo()]
+      // O resumo já em cache: este teste é sobre a série, e ele não refaz o GET.
+      r.cliente.setQueryData(['targets', 'summary'], { items: [ItemDoResumo.parse(itemDoResumo())] })
+      await r.cliente.refetchQueries({ queryKey: ['targets', 'alvo-1'], exact: true })
+      await screen.findByRole('region', { name: 'No ar' }, { timeout: 3000 })
       servidor.use(
         http.get('*/api/v1/targets/:id/checks', ({ request }) => {
           if (falhar && new URL(request.url).searchParams.get('window') === '30d') {
@@ -463,11 +467,13 @@ describe('detalhe', () => {
           return undefined
         }),
       )
-      await r.cliente.refetchQueries({ queryKey: ['targets', 'alvo-1'], exact: true })
       await r.cliente.resetQueries({ queryKey: ['targets', 'alvo-1', 'checks', '30d'], exact: true })
       const aviso = await screen.findByRole('region', { name: 'Não foi possível atualizar todos os indicadores.' }, { timeout: 3000 })
       await waitFor(() => expect(valor('No ar em 30 dias')).toHaveTextContent('Indisponível'))
       expect(valor('No ar em 30 dias')?.firstElementChild).toHaveClass('text-lg', 'leading-9', 'font-semibold', 'text-suave')
+      // A mesma altura nas quatro formas: nada pula quando uma vira outra.
+      expect(valor('No ar em 30 dias')?.parentElement).toHaveClass('min-h-28')
+      expect(valor('No ar em 24 h')?.parentElement).toHaveClass('min-h-28')
       expect(within(aviso).getAllByRole('button')).toHaveLength(1)
       const resumosAntes = r.falsa.chamadas('GET /targets/summary')
       const pedidosDe30d = () => r.falsa.corpos('GET /targets/:id/checks').filter((c) => c.window === '30d').length
