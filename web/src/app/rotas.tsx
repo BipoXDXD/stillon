@@ -8,7 +8,7 @@ import { PaginaPainel } from '@/features/painel/PaginaPainel'
 import { PaginaEditarAlvo, PaginaNovoAlvo } from '@/features/alvos/PaginasDoFormulario'
 import { PaginaStatusPage } from '@/features/statuspage/PaginaStatusPage'
 import { ErroDeRota } from './ErroDeRota'
-import { ExigirSessao } from './ExigirSessao'
+import { ExigirSessao, SplashDoPainel } from './ExigirSessao'
 import { Layout } from './Layout'
 import { NaoEncontrada } from './NaoEncontrada'
 
@@ -19,6 +19,8 @@ export const rotas: RouteObject[] = [
   {
     Component: ExigirSessao,
     ErrorBoundary: ErroDeRota,
+    // Na carga direta de uma rota lazy, o que aparece até o chunk chegar.
+    HydrateFallback: SplashDoPainel,
     children: [
       {
         Component: Layout,
