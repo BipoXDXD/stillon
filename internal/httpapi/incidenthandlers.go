@@ -46,6 +46,8 @@ func toIncidentResponse(i history.Incident) incidentResponse {
 	}
 }
 
+var parametrosDaListaDeIncidentes = []string{"status", "target_id", "cursor", "limit"}
+
 // List é GET /incidents?status=open|resolved&target_id=&cursor=&limit=
 // (spec §9; target_id é do Plano 5).
 func (h *IncidentHandlers) List(w http.ResponseWriter, r *http.Request) {
@@ -53,7 +55,10 @@ func (h *IncidentHandlers) List(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	q := r.URL.Query()
+	q, ok := consultaPermitida(w, r, parametrosDaListaDeIncidentes)
+	if !ok {
+		return
+	}
 	f := history.Filter{Limit: history.DefaultPageSize}
 
 	switch q.Get("status") {

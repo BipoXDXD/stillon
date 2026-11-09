@@ -1,6 +1,7 @@
 package auth_test
 
 import (
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -276,5 +277,38 @@ func TestChallengeAndAccessTokensAreNotInterchangeable(t *testing.T) {
 	}
 	if _, err := auth.ParseChallengeToken(jwtSecret, acesso, now); err == nil {
 		t.Error("um access token comum foi aceito como desafio: o segundo fator seria dispensável")
+	}
+}
+
+func assinar(t *testing.T, claims jwt.MapClaims) string {
+	t.Helper()
+	raw, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(jwtSecret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return raw
+}
+
+// O token é válido em tudo, menos na audience: sem a checagem, o token de
+// outro propósito valeria como credencial completa.
+func TestAccessTokenWithAudienceIsRejected(t *testing.T) {
+	now := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
+	raw := assinar(t, jwt.MapClaims{
+		"sub": uuid.NewString(), "sid": uuid.NewString(), "exp": now.Add(time.Minute).Unix(), "aud": "outro-proposito",
+	})
+	if _, err := auth.ParseAccessToken(jwtSecret, raw, now); !errors.Is(err, auth.ErrInvalidToken) {
+		t.Errorf("erro = %v, queria ErrInvalidToken", err)
+	}
+}
+
+// O desafio tem instante de emissão e falta só o carimbo: é o carimbo que
+// recusa, e não a checagem do instante.
+func TestChallengeTokenWithAnIssueInstantStillRequiresTheStamp(t *testing.T) {
+	now := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
+	raw := assinar(t, jwt.MapClaims{
+		"sub": uuid.NewString(), "aud": []string{"totp-challenge"}, "exp": now.Add(time.Minute).Unix(), "cat": now.UnixMicro(),
+	})
+	if _, err := auth.ParseChallengeToken(jwtSecret, raw, now); !errors.Is(err, auth.ErrInvalidToken) {
+		t.Errorf("erro = %v, queria ErrInvalidToken", err)
 	}
 }

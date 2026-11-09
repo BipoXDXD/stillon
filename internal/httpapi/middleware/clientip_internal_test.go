@@ -18,8 +18,8 @@ func capturarAvisos(t *testing.T, agora *time.Time) *bytes.Buffer {
 	var log bytes.Buffer
 	antigoLog, antigoAviso, antigoSem := slog.Default(), avisoDeProxy, avisoSemCabecalho
 	slog.SetDefault(slog.New(slog.NewTextHandler(&log, nil)))
-	avisoDeProxy = &aviso{agora: func() time.Time { return *agora }, intervalo: time.Minute}
-	avisoSemCabecalho = &aviso{agora: func() time.Time { return *agora }, intervalo: time.Minute}
+	avisoDeProxy = &aviso{agora: func() time.Time { return *agora }, intervalo: antigoAviso.intervalo}
+	avisoSemCabecalho = &aviso{agora: func() time.Time { return *agora }, intervalo: antigoSem.intervalo}
 	t.Cleanup(func() { slog.SetDefault(antigoLog); avisoDeProxy, avisoSemCabecalho = antigoAviso, antigoSem })
 	return &log
 }
@@ -47,7 +47,13 @@ func TestUntrustedHeaderWarnsAtMostOncePerMinute(t *testing.T) {
 		t.Errorf("o aviso não traz o remote_addr, que é o que falta para configurar: %s", log.String())
 	}
 
-	agora = agora.Add(time.Minute)
+	agora = agora.Add(59 * time.Second)
+	pedir()
+	if n := strings.Count(log.String(), "cabeçalho de IP do cliente ignorado"); n != 1 {
+		t.Fatalf("%d avisos antes de completar um minuto, queria 1", n)
+	}
+
+	agora = agora.Add(time.Second)
 	pedir()
 	if n := strings.Count(log.String(), "cabeçalho de IP do cliente ignorado"); n != 2 {
 		t.Errorf("%d avisos depois de um minuto, queria 2", n)
@@ -123,7 +129,13 @@ func TestTrustedPeerWithoutAUsableHeaderWarnsAtMostOncePerMinute(t *testing.T) {
 		t.Errorf("o aviso repete o valor do cabeçalho: %s", log.String())
 	}
 
-	agora = agora.Add(time.Minute)
+	agora = agora.Add(59 * time.Second)
+	pedir("")
+	if n := strings.Count(log.String(), frase); n != 1 {
+		t.Fatalf("%d avisos antes de completar um minuto, queria 1: %s", n, log.String())
+	}
+
+	agora = agora.Add(time.Second)
 	pedir("")
 	if n := strings.Count(log.String(), frase); n != 2 {
 		t.Errorf("%d avisos depois de um minuto, queria 2", n)

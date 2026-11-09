@@ -1,0 +1,210 @@
+[
+  {
+    "caso": "discord verificado, nunca falhou",
+    "resposta": {
+      "id": "01900000-0000-7000-8000-000000000001",
+      "kind": "discord",
+      "hint": "webhook …6789",
+      "status": "verified",
+      "enabled": true,
+      "created_at": "2026-10-24T12:00:00Z",
+      "last_error": null,
+      "last_failure_at": null
+    }
+  },
+  {
+    "caso": "discord falhando, com motivo e hora",
+    "resposta": {
+      "id": "01900000-0000-7000-8000-000000000001",
+      "kind": "discord",
+      "hint": "webhook …6789",
+      "status": "failing",
+      "enabled": true,
+      "created_at": "2026-10-24T12:00:00Z",
+      "last_error": "rejected",
+      "last_failure_at": "2026-10-25T03:04:05.678Z"
+    }
+  },
+  {
+    "caso": "discord pausado, voltou a entregar depois da falha",
+    "resposta": {
+      "id": "01900000-0000-7000-8000-000000000001",
+      "kind": "discord",
+      "hint": "webhook …6789",
+      "status": "verified",
+      "enabled": false,
+      "created_at": "2026-10-24T12:00:00Z",
+      "last_error": "rejected",
+      "last_failure_at": "2026-10-25T03:04:05.678Z"
+    }
+  },
+  {
+    "caso": "discord com destino ilegível, sem hint",
+    "resposta": {
+      "id": "01900000-0000-7000-8000-000000000001",
+      "kind": "discord",
+      "hint": "",
+      "status": "verified",
+      "enabled": true,
+      "created_at": "2026-10-24T12:00:00Z",
+      "last_error": null,
+      "last_failure_at": null
+    }
+  },
+  {
+    "caso": "discord com falha sem motivo gravado",
+    "resposta": {
+      "id": "01900000-0000-7000-8000-000000000001",
+      "kind": "discord",
+      "hint": "webhook …6789",
+      "status": "failing",
+      "enabled": true,
+      "created_at": "2026-10-24T12:00:00Z",
+      "last_error": "",
+      "last_failure_at": "2026-10-25T03:04:05.678Z"
+    }
+  },
+  {
+    "caso": "e-mail verificado, nunca falhou",
+    "resposta": {
+      "id": "01900000-0000-7000-8000-000000000002",
+      "kind": "email",
+      "hint": "p***@exemplo.com",
+      "status": "verified",
+      "enabled": true,
+      "created_at": "2026-10-24T12:00:00Z",
+      "last_error": null,
+      "last_failure_at": null
+    }
+  },
+  {
+    "caso": "e-mail pendente",
+    "resposta": {
+      "id": "01900000-0000-7000-8000-000000000002",
+      "kind": "email",
+      "hint": "p***@exemplo.com",
+      "status": "pending",
+      "enabled": true,
+      "created_at": "2026-10-24T12:00:00Z",
+      "last_error": null,
+      "last_failure_at": null
+    }
+  },
+  {
+    "caso": "e-mail expirado",
+    "resposta": {
+      "id": "01900000-0000-7000-8000-000000000002",
+      "kind": "email",
+      "hint": "p***@exemplo.com",
+      "status": "expired",
+      "enabled": true,
+      "created_at": "2026-10-24T12:00:00Z",
+      "last_error": null,
+      "last_failure_at": null
+    }
+  },
+  {
+    "caso": "e-mail falhando, com motivo e hora",
+    "resposta": {
+      "id": "01900000-0000-7000-8000-000000000002",
+      "kind": "email",
+      "hint": "p***@exemplo.com",
+      "status": "failing",
+      "enabled": true,
+      "created_at": "2026-10-24T12:00:00Z",
+      "last_error": "rejected",
+      "last_failure_at": "2026-10-25T03:04:05.678Z"
+    }
+  },
+  {
+    "caso": "discord falhando por timeout",
+    "resposta": {
+      "id": "01900000-0000-7000-8000-000000000001",
+      "kind": "discord",
+      "hint": "webhook …6789",
+      "status": "failing",
+      "enabled": true,
+      "created_at": "2026-10-24T12:00:00Z",
+      "last_error": "timeout",
+      "last_failure_at": "2026-10-25T03:04:05.678Z"
+    }
+  },
+  {
+    "caso": "discord falhando por network",
+    "resposta": {
+      "id": "01900000-0000-7000-8000-000000000001",
+      "kind": "discord",
+      "hint": "webhook …6789",
+      "status": "failing",
+      "enabled": true,
+      "created_at": "2026-10-24T12:00:00Z",
+      "last_error": "network",
+      "last_failure_at": "2026-10-25T03:04:05.678Z"
+    }
+  },
+  {
+    "caso": "discord falhando por rate_limited",
+    "resposta": {
+      "id": "01900000-0000-7000-8000-000000000001",
+      "kind": "discord",
+      "hint": "webhook …6789",
+      "status": "failing",
+      "enabled": true,
+      "created_at": "2026-10-24T12:00:00Z",
+      "last_error": "rate_limited",
+      "last_failure_at": "2026-10-25T03:04:05.678Z"
+    }
+  },
+  {
+    "caso": "discord falhando por rejected",
+    "resposta": {
+      "id": "01900000-0000-7000-8000-000000000001",
+      "kind": "discord",
+      "hint": "webhook …6789",
+      "status": "failing",
+      "enabled": true,
+      "created_at": "2026-10-24T12:00:00Z",
+      "last_error": "rejected",
+      "last_failure_at": "2026-10-25T03:04:05.678Z"
+    }
+  },
+  {
+    "caso": "discord falhando por server_error",
+    "resposta": {
+      "id": "01900000-0000-7000-8000-000000000001",
+      "kind": "discord",
+      "hint": "webhook …6789",
+      "status": "failing",
+      "enabled": true,
+      "created_at": "2026-10-24T12:00:00Z",
+      "last_error": "server_error",
+      "last_failure_at": "2026-10-25T03:04:05.678Z"
+    }
+  },
+  {
+    "caso": "discord falhando por invalid_channel",
+    "resposta": {
+      "id": "01900000-0000-7000-8000-000000000001",
+      "kind": "discord",
+      "hint": "webhook …6789",
+      "status": "failing",
+      "enabled": true,
+      "created_at": "2026-10-24T12:00:00Z",
+      "last_error": "invalid_channel",
+      "last_failure_at": "2026-10-25T03:04:05.678Z"
+    }
+  },
+  {
+    "caso": "discord falhando por unknown",
+    "resposta": {
+      "id": "01900000-0000-7000-8000-000000000001",
+      "kind": "discord",
+      "hint": "webhook …6789",
+      "status": "failing",
+      "enabled": true,
+      "created_at": "2026-10-24T12:00:00Z",
+      "last_error": "unknown",
+      "last_failure_at": "2026-10-25T03:04:05.678Z"
+    }
+  }
+]

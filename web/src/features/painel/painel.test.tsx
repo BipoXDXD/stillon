@@ -1,9 +1,11 @@
-import { screen, waitFor, within } from '@testing-library/react'
+import { onlineManager } from '@tanstack/react-query'
+import { act, screen, waitFor, within } from '@testing-library/react'
 import { http, HttpResponse } from 'msw'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 import { canal, heartbeat, incidente, itemDoResumo } from '@/test/fixtures'
 import { renderizarPainel } from '@/test/renderizar'
 import { servidor } from '@/test/setup'
+import { chaves } from '@/lib/api/consultas'
 import { Heartbeat, ItemDoResumo } from '@/lib/api/schemas'
 import { anunciaveis, mapaDeEstados, transicoes } from './transicoes'
 
@@ -327,5 +329,124 @@ describe('avisos de canais', () => {
     await r.cliente.refetchQueries()
     expect(await screen.findByText('1 canal está falhando na entrega.')).toBeInTheDocument()
     expect(screen.queryByText('Nenhum canal verificado está ativo para receber avisos.')).not.toBeInTheDocument()
+  })
+})
+
+// Sem rede o React Query pausa as consultas sem erro: nenhum aviso de falha
+// nasce, e a tela ficaria parada com cara de atual.
+describe('queda de rede', () => {
+  const ficarSemRede = () => act(() => onlineManager.setOnline(false))
+  const voltarARede = () => act(() => onlineManager.setOnline(true))
+  const avisoDeRede = () => screen.queryByText('Sem conexão com a internet.')
+  const umQuadro = () => act(() => new Promise<void>((pronto) => requestAnimationFrame(() => pronto())))
+  const tudoNoAr = () => screen.queryByRole('heading', { level: 2, name: 'Tudo no ar.' })
+  const mancheteDeRede = { level: 2, name: 'Sem conexão para conferir os monitores.' }
+
+  afterEach(() => onlineManager.setOnline(true))
+
+  // Sabotagem: em Manchete, não trocar pela mancheteSemRede → "Tudo no ar."
+  // continua; tirar o <AvisoDeRede /> do Layout → o aviso não aparece.
+  it('com tudo verde, troca "Tudo no ar." pelo aviso e mantém os dados na tela', async () => {
+    const r = await renderizarPainel('/')
+    r.falsa.estado.resumo = [itemDoResumo({ id: 'a', name: 'API' })]
+    await r.cliente.refetchQueries()
+    await screen.findByRole('heading', { level: 2, name: 'Tudo no ar.' })
+
+    ficarSemRede()
+    // O poll vencido: a consulta pausa, sem erro.
+    act(() => void r.cliente.refetchQueries())
+
+    expect(tudoNoAr()).not.toBeInTheDocument()
+    expect(screen.getByRole('heading', mancheteDeRede)).toBeInTheDocument()
+    expect(screen.queryByText('1 no ar.')).not.toBeInTheDocument()
+    expect(avisoDeRede()).toBeInTheDocument()
+    expect(await linhaDe('API')).toBeInTheDocument()
+  })
+
+  // A resposta anterior é recente (staleTime), e mesmo assim se consulta.
+  // Sabotagem: tirar o refetchOnReconnect: 'always' → a manchete fica em
+  // "Tudo no ar." até o próximo poll.
+  it('ao voltar a rede, o aviso some e os dados são consultados de novo', async () => {
+    const r = await renderizarPainel('/')
+    r.falsa.estado.resumo = [itemDoResumo({ id: 'a', name: 'API' })]
+    await r.cliente.refetchQueries()
+    await screen.findByRole('heading', { level: 2, name: 'Tudo no ar.' })
+    ficarSemRede()
+    r.falsa.estado.resumo = [itemDoResumo({ id: 'a', name: 'API', state: 'down' })]
+
+    voltarARede()
+
+    expect(await screen.findByRole('heading', { level: 2, name: 'Um serviço pede atenção.' })).toBeInTheDocument()
+    expect(avisoDeRede()).not.toBeInTheDocument()
+  })
+
+  // Região viva que já nasce preenchida muitas vezes não é lida: o anúncio vai
+  // pela região que fica sempre montada, e só na mudança. Sabotagens: tirar o
+  // anunciar; tirar as dependências do efeito (o novo e-mail redesenha o Layout);
+  // anunciar também com a rede de volta; voltar o aviso visível a <output>.
+  it('anuncia a queda na região aria-live, uma vez por queda', async () => {
+    const r = await renderizarPainel('/')
+    r.falsa.estado.resumo = [itemDoResumo({ id: 'a', name: 'API' })]
+    await r.cliente.refetchQueries()
+    await screen.findByRole('heading', { level: 2, name: 'Tudo no ar.' })
+    const anuncios = screen.getByTestId('anuncios')
+    let lidos = 0
+    const observador = new MutationObserver(() => {
+      if (anuncios.textContent.includes('Sem conexão com a internet.')) lidos += 1
+    })
+    observador.observe(anuncios, { childList: true, characterData: true, subtree: true })
+
+    ficarSemRede()
+    await waitFor(() => expect(lidos).toBe(1))
+    expect(avisoDeRede()?.closest('output')).toBeNull()
+
+    act(() => {
+      r.cliente.setQueryData(chaves.me, (me: { email: string } | undefined) => me && { ...me, email: 'outra@exemplo.com' })
+    })
+    await screen.findByText('outra@exemplo.com')
+    await umQuadro()
+    await umQuadro()
+    await umQuadro()
+    expect(lidos).toBe(1)
+
+    voltarARede()
+    await umQuadro()
+    await umQuadro()
+    expect(lidos).toBe(1)
+
+    ficarSemRede()
+    await waitFor(() => expect(lidos).toBe(2))
+    observador.disconnect()
+  })
+
+  // Sabotagem: em EstadoDaConsulta, devolver sempre o esqueleto no isPending.
+  it('sem dados guardados, avisa em vez do esqueleto sem fim, e carrega quando a rede volta', async () => {
+    onlineManager.setOnline(false)
+    const r = await renderizarPainel('/')
+    r.falsa.estado.resumo = [itemDoResumo({ id: 'a', name: 'API' })]
+
+    expect(await screen.findByText('Esta tela carrega quando a conexão voltar.')).toBeInTheDocument()
+    expect(screen.queryByText('Carregando…')).not.toBeInTheDocument()
+    expect(avisoDeRede()).toBeInTheDocument()
+
+    voltarARede()
+
+    expect(await linhaDe('API')).toBeInTheDocument()
+    expect(screen.queryByText('Esta tela carrega quando a conexão voltar.')).not.toBeInTheDocument()
+  })
+
+  // Sabotagem: em PaginaPainel, voltar a "heartbeats.isPending ?" sem olhar a
+  // rede → o esqueleto fica, e a linha de API não aparece.
+  it('com os alvos guardados e as tarefas por chegar, mostra os alvos sem esqueleto', async () => {
+    onlineManager.setOnline(false)
+    const r = await renderizarPainel('/')
+
+    act(() => {
+      r.cliente.setQueryData(chaves.resumo, { items: [ItemDoResumo.parse(itemDoResumo({ id: 'a', name: 'API' }))] })
+    })
+
+    expect(await linhaDe('API')).toBeInTheDocument()
+    expect(screen.queryByText('Carregando…')).not.toBeInTheDocument()
+    expect(tudoNoAr()).not.toBeInTheDocument()
   })
 })

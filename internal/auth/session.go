@@ -81,6 +81,12 @@ func NewManager(store Store, clk clock.Clock, ipKey []byte) *Manager {
 	return &Manager{store: store, clk: clk, ipKey: ipKey}
 }
 
+// IPHash é o ip_hash da origem de meta, com a mesma chave das sessões: é o que
+// correlaciona as linhas de audit_log e de sessions de uma mesma origem.
+func (m *Manager) IPHash(meta Meta) []byte {
+	return crypto.HashIP(m.ipKey, meta.IP)
+}
+
 // PasswordStamp é o carimbo de um hash de senha: o SHA-256 dele, em base64url.
 // É o que Issue recebe como prova de que a senha foi verificada, e o que o
 // desafio do segundo fator carrega entre a senha e o código. O hash em si não

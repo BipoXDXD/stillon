@@ -86,7 +86,7 @@ function observarAbort(signal: AbortSignal) {
 }
 
 it('espera o destino idle após o POST e limpa observadores com eventos reais', async ({ signal }) => {
-  const rota = rotas[1]?.children?.[0]?.children?.find((r) => r.path === 'targets/:id')
+  const rota = rotas[1]?.children?.[0]?.children?.flatMap((r) => r.children ?? []).find((r) => r.path === 'targets/:id')
   if (!rota || typeof rota.lazy !== 'function') throw new Error('lazy real do detalhe ausente')
   const original = rota.lazy
   const post = portao()

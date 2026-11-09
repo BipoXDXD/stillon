@@ -1,9 +1,10 @@
 import type { UseQueryResult } from '@tanstack/react-query'
 import type { ReactNode } from 'react'
+import { useSemRede } from '@/lib/api/consultas'
 import { naoEncontrado } from '@/lib/api/http'
 import { mensagemDe } from '@/lib/api/mensagens'
 import { dataHora } from '@/lib/format'
-import { Botao } from './ui/botao'
+import { BotaoQueSome, TITULO_DA_TELA } from './ui/botao'
 
 // O esqueleto da spec §4: blocos no lugar do conteúdo, nunca um spinner
 // solto. A animação para com prefers-reduced-motion (motion-reduce, e a regra
@@ -31,18 +32,26 @@ export function Esqueleto({ linhas = 3 }: { linhas?: number }) {
 export function EstadoDaConsulta<T>({
   consulta,
   esqueleto,
+  refeitaNoAviso = false,
   children,
 }: {
   consulta: Pick<UseQueryResult<T>, 'data' | 'error' | 'isPending' | 'refetch' | 'dataUpdatedAt'>
   // O esqueleto que imita a tela; sem ele, blocos genéricos.
   esqueleto?: ReactNode
+  // Outro aviso da tela já tem o botão que refaz esta consulta: aqui, só o erro.
+  refeitaNoAviso?: boolean
   children: (dados: T) => ReactNode
 }) {
-  if (consulta.isPending) return esqueleto ?? <Esqueleto />
-  const tentar = (
-    <Botao tipo="secundario" tamanho="pequeno" onClick={() => void consulta.refetch()}>
+  const semRede = useSemRede()
+  if (consulta.isPending) {
+    // Sem rede, a consulta fica pausada e o esqueleto não terminaria.
+    if (semRede) return <p className="rounded-padrao border border-borda p-4 text-sm">Esta tela carrega quando a conexão voltar.</p>
+    return esqueleto ?? <Esqueleto />
+  }
+  const tentar = !refeitaNoAviso && (
+    <BotaoQueSome tipo="secundario" tamanho="pequeno" reserva={TITULO_DA_TELA} onClick={() => void consulta.refetch()}>
       Tentar de novo
-    </Botao>
+    </BotaoQueSome>
   )
   // 404 é terminal: o que estava na tela não existe mais, e mostrá-lo como
   // "dados velhos" diria que ele ainda existe.
