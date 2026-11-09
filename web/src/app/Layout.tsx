@@ -14,7 +14,7 @@ import { ATRASO_DO_SINAL_MS, useAposUmTempo } from '@/lib/atraso'
 import { cn } from '@/lib/utils'
 import { BotaoDeTema } from './BotaoDeTema'
 import { useSessao } from './contexto'
-import { aoApontarPreCarregar, carregarConfiguracoes, carregarDetalhe, preCarregar, quandoOcioso } from './rotas-sob-demanda'
+import { aoApontarPreCarregar, carregarConfiguracoes, carregarDetalhe, preCarregarEmOcioso } from './rotas-sob-demanda'
 
 // As cinco abas, com os mesmos nomes no topo (desktop) e na barra inferior
 // (celular): o nome acessível não muda com a largura da tela (WCAG 3.2.4).
@@ -39,14 +39,7 @@ function ehAAtual(aba: Aba, caminho: string): boolean {
 
 export function Layout() {
   const me = useMe()
-  useEffect(
-    () =>
-      quandoOcioso(() => {
-        preCarregar(carregarDetalhe)
-        preCarregar(carregarConfiguracoes)
-      }),
-    [],
-  )
+  useEffect(() => preCarregarEmOcioso(carregarDetalhe, carregarConfiguracoes), [])
   return (
     <ProvedorDeAnuncios>
       <SinalDeCargaDeRota />

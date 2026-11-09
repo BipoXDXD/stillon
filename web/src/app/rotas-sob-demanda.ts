@@ -18,7 +18,22 @@ export function aoApontarPreCarregar(carregar: () => Promise<unknown>) {
   return { onPointerEnter: pedir, onFocus: pedir }
 }
 
-// Hover e foco não existem no toque: em ocioso, o chunk vem sem pedir.
+// Network Information API, fora do lib.dom: só Chromium a expõe.
+declare global {
+  interface Navigator {
+    readonly connection?: { readonly saveData?: boolean }
+  }
+}
+
+// Hover e foco não existem no toque: em ocioso, o chunk vem sem pedir. Com a
+// economia de dados ligada, só o que a pessoa aponta é baixado.
+export function preCarregarEmOcioso(...cargas: (() => Promise<unknown>)[]): () => void {
+  if (navigator.connection?.saveData === true) return () => undefined
+  return quandoOcioso(() => {
+    for (const carga of cargas) preCarregar(carga)
+  })
+}
+
 export function quandoOcioso(fazer: () => void): () => void {
   if (typeof window.requestIdleCallback === 'function') {
     const id = window.requestIdleCallback(fazer)
