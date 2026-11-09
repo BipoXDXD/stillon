@@ -1,39 +1,54 @@
-import { useSerie } from '@/lib/api/consultas'
-import type { ItemDoResumo } from '@/lib/api/schemas'
-import { emMilissegundos, emPorcento, ultimoCheck, type ValorDoIndicador } from './estado-do-alvo'
-import { resumir } from './serie'
+import type { ValorDoIndicador } from './estado-do-alvo'
 
-// Os quatro KPIs do detalhe (spec do redesign, Telas > 2), em Inter 600 de
-// 28 px com a unidade em 13 px. "No ar em 24 h" e "Último check" vêm do
-// resumo; "No ar em 30 dias", da janela horária de 30 dias (os dados por
-// hora atrasam até ~1h15); a mediana, da janela de 24 h, a mesma consulta
-// da janela padrão do gráfico.
-export function Indicadores({ alvoId, item, agora }: { alvoId: string; item: ItemDoResumo | undefined; agora: Date }) {
-  const dia = useSerie(alvoId, '24h')
-  const mes = useSerie(alvoId, '30d')
+export type LinhaDoIndicador = { rotulo: string; valor: ValorDoIndicador }
+
+// Os quatro KPIs do detalhe (spec do redesign, Telas > 2). min-h: as quatro
+// formas têm a altura da mais alta, a que traz o motivo, e nada pula quando
+// uma vira outra.
+export function Indicadores({ linhas }: { linhas: readonly LinhaDoIndicador[] }) {
   return (
     <dl className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-      <Indicador rotulo="No ar em 24 h" {...emPorcento(item?.uptime_24h ?? null)} />
-      <Indicador rotulo="No ar em 30 dias" {...emPorcento(mes.data ? resumir(mes.data).uptime : null)} />
-      <Indicador rotulo="Latência mediana (24 h)" {...emMilissegundos(dia.data ? resumir(dia.data).mediana : null)} />
-      <Indicador rotulo="Último check" {...ultimoCheck(item, agora)} />
+      {linhas.map((l) => (
+        <div key={l.rotulo} className="min-h-28 min-w-0 space-y-1 rounded-padrao border border-borda bg-superficie p-4 sombra-nivel-1">
+          <dt className="text-meta text-suave">{l.rotulo}</dt>
+          <dd>
+            <ConteudoDoIndicador valor={l.valor} />
+          </dd>
+        </div>
+      ))}
     </dl>
   )
 }
 
-function Indicador({ rotulo, valor, unidade }: ValorDoIndicador & { rotulo: string }) {
-  return (
-    <div className="min-w-0 space-y-1 rounded-padrao border border-borda bg-superficie p-4 sombra-nivel-1">
-      <dt className="text-meta text-suave">{rotulo}</dt>
-      <dd>
-        <span className="text-3xl font-semibold">{valor}</span>
-        {unidade && (
-          <>
-            {' '}
-            <span className="text-meta font-normal text-suave">{unidade}</span>
-          </>
-        )}
-      </dd>
-    </div>
-  )
+// Texto em 18 px: "Indisponível" a 28 px quebra no meio da palavra num cartão
+// de celular. leading-9 é a altura da linha do número, para a forma não pular.
+const TEXTO_NO_LUGAR_DO_NUMERO = 'text-lg leading-9 font-semibold text-suave'
+
+function ConteudoDoIndicador({ valor }: { valor: ValorDoIndicador }) {
+  switch (valor.forma) {
+    case 'valor':
+      return (
+        <>
+          <span className="text-3xl font-semibold">{valor.valor}</span>
+          {valor.unidade && (
+            <>
+              {' '}
+              <span className="text-meta font-normal text-suave">{valor.unidade}</span>
+            </>
+          )}
+        </>
+      )
+    case 'carregando':
+      // O leitor de tela ouve um "carregando" só, o do grupo.
+      return <div aria-hidden="true" className="h-9 w-20 animate-pulse rounded-padrao bg-painel motion-reduce:animate-none" />
+    case 'indisponivel':
+      return <span className={TEXTO_NO_LUGAR_DO_NUMERO}>Indisponível</span>
+    case 'sem-dados':
+      return (
+        <>
+          <span className={`block ${TEXTO_NO_LUGAR_DO_NUMERO}`}>Sem dados</span>
+          <span className="block text-meta text-suave">{valor.motivo}</span>
+        </>
+      )
+  }
 }

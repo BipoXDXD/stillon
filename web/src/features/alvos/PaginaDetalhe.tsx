@@ -12,16 +12,15 @@ import { Botao } from '@/components/ui/botao'
 import { ErroDoFormulario } from '@/components/ui/campo'
 import { ControleSegmentado, type OpcaoSegmentada } from '@/components/ui/controle-segmentado'
 import { Confirmar } from '@/components/ui/dialogo'
-import { useAlvo, useIncidentes, useResumo, useSerie } from '@/lib/api/consultas'
+import { useAlvo, useIncidentes, useSerie } from '@/lib/api/consultas'
 import { naoEncontrado } from '@/lib/api/http'
 import { mensagemDe, textoDoErroDeCheck } from '@/lib/api/mensagens'
 import type { Serie } from '@/lib/api/schemas'
 import { dataHora, fuso, milissegundos, porcento } from '@/lib/format'
-import { FaixaDeEstado } from './FaixaDeEstado'
 import { GraficoDeLatencia } from './GraficoDeLatencia'
 import { IncidentesRecentes } from './IncidentesRecentes'
-import { Indicadores } from './Indicadores'
 import { ehJanela, JANELAS, resumir, type Janela } from './serie'
+import { TopoDoDetalhe } from './TopoDoDetalhe'
 
 const NOMES: Record<Janela, string> = { '1h': '1 h', '6h': '6 h', '24h': '24 h', '7d': '7 dias', '30d': '30 dias', '90d': '90 dias' }
 const OPCOES_DE_JANELA: readonly OpcaoSegmentada<Janela>[] = (Object.keys(JANELAS) as Janela[]).map((j) => ({
@@ -115,15 +114,12 @@ function DetalheDoAlvo({ id }: { id: string }) {
   const navegar = useNavigate()
   const avisar = useAvisar()
   const alvo = useAlvo(id)
-  const resumo = useResumo()
   const serie = useSerie(id, janela)
   // Os incidentes recentes do alvo: a lista do fim da tela e o aberto da faixa.
   const incidentes = useIncidentes('all', id, 10)
   const [apagando, setApagando] = useState(false)
   const [ocupado, setOcupado] = useState(false)
   const [erro, setErro] = useState<string | null>(null)
-  const noResumo = resumo.data?.items.find((x) => x.id === id)
-  const agora = new Date(resumo.dataUpdatedAt)
   const idDoResumo = useId()
 
   // Sai primeiro, e só então tira do cache o que era do alvo: com a tela
@@ -223,16 +219,12 @@ function DetalheDoAlvo({ id }: { id: string }) {
             </div>
           </div>
           <ErroDoFormulario>{erro}</ErroDoFormulario>
-          {noResumo && (
-            <FaixaDeEstado
-              item={noResumo}
-              incidentes={incidentes.data?.pages.flatMap((p) => p.items) ?? []}
-              agora={agora}
-              aoSumir={() => void sumiu()}
-              aoErrar={setErro}
-            />
-          )}
-          <Indicadores alvoId={id} item={noResumo} agora={agora} />
+          <TopoDoDetalhe
+            id={id}
+            incidentes={incidentes.data?.pages.flatMap((p) => p.items) ?? []}
+            aoSumir={() => void sumiu()}
+            aoErrar={setErro}
+          />
 
           <section
             className="space-y-4 rounded-padrao border border-borda bg-superficie p-4 sombra-nivel-1 sm:p-6"

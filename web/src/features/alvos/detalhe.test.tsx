@@ -1,6 +1,8 @@
 import { act, screen, waitFor, within } from '@testing-library/react'
 import { http, HttpResponse } from 'msw'
 import { describe, expect, it } from 'vitest'
+import { horaMinuto } from '@/lib/format'
+import type { ErroForcado } from '@/test/api-falsa'
 import { alvo, incidente, itemDoResumo } from '@/test/fixtures'
 import { renderizarPainel } from '@/test/renderizar'
 import { servidor } from '@/test/setup'
@@ -99,7 +101,7 @@ describe('detalhe', () => {
     )
     await r.cliente.resetQueries({ queryKey: ['targets', 'summary'], exact: true })
     const indicador = (await screen.findByText('Último check')).parentElement
-    expect(indicador).toHaveTextContent('—')
+    await waitFor(() => expect(indicador).toHaveTextContent('Indisponível'))
     expect(indicador).not.toHaveTextContent('nunca')
   })
 
@@ -366,15 +368,108 @@ describe('detalhe', () => {
     expect(valor('Último check')).toHaveTextContent(/^11:59 há /)
   })
 
-  // Review Focus 4: sem check nenhum, traço e "nunca".
-  it('alvo sem nenhum check: os indicadores mostram traço, e o último check diz "nunca"', async () => {
+  // Sem check nenhum, a resposta veio e não há número: "Sem dados" e o motivo.
+  it('alvo sem nenhum check: os indicadores dizem "Sem dados" e o motivo', async () => {
     const r = await renderizarPainel('/targets/alvo-1')
     r.falsa.estado.alvos = [alvo()]
     r.falsa.estado.resumo = [itemDoResumo({ state: 'unknown', last_checked_at: null, uptime_24h: null, spark: [] })]
     await r.cliente.refetchQueries()
     await screen.findByRole('region', { name: 'Sem dados' })
-    expect(screen.getByText('No ar em 24 h').nextElementSibling).toHaveTextContent('—')
-    expect(screen.getByText('Último check').nextElementSibling).toHaveTextContent('— nunca')
+    expect(screen.getByText('No ar em 24 h').nextElementSibling).toHaveTextContent('Sem dadosSem checks em 24 h')
+    expect(screen.getByText('Último check').nextElementSibling).toHaveTextContent('Sem dadosNenhum check ainda')
+  })
+
+  describe('resumo e indicadores sem resposta', () => {
+    const erro500: ErroForcado = { status: 500, code: 'internal_error' }
+    const valor = (rotulo: string) => screen.getByText(rotulo).nextElementSibling
+
+    // Sabotagem: reaproveitar o aviso das tarefas (border-perigo) ou voltar ao
+    // "noResumo && <Faixa>", sem aviso nenhum.
+    it('o resumo falhou de vez: aviso neutro no lugar da faixa, anunciado, com o botão na coluna do texto', async () => {
+      const r = await renderizarPainel('/targets/alvo-1')
+      r.falsa.estado.alvos = [alvo()]
+      await r.cliente.refetchQueries({ queryKey: ['targets', 'alvo-1'], exact: true })
+      r.falsa.estado.forcar.set('GET /targets/summary', erro500)
+      await r.cliente.resetQueries({ queryKey: ['targets', 'summary'], exact: true })
+      const aviso = await screen.findByRole('region', { name: 'Não foi possível saber o estado deste alvo.' })
+      expect(aviso).toHaveClass('bg-sem-dados-100')
+      expect(aviso).not.toHaveClass('flex-wrap')
+      expect(aviso.className).not.toMatch(/border/)
+      expect(aviso.querySelector('svg')).toHaveAttribute('aria-hidden', 'true')
+      const botao = within(aviso).getByRole('button', { name: 'Tentar de novo' })
+      expect(botao.parentElement).toContainElement(within(aviso).getByRole('heading'))
+      expect(screen.queryByRole('region', { name: 'No ar' })).not.toBeInTheDocument()
+      await waitFor(() => expect(screen.getByTestId('anuncios')).toHaveTextContent('Não foi possível saber o estado deste alvo.'))
+    })
+
+    // O pior caso de um monitor: o poll falha e a faixa segue dizendo "No ar".
+    // Sabotagem: mostrar o aviso só com o resumo sem dados.
+    it('o poll do resumo falhou: a faixa fica, com a hora do dado que ela mostra', async () => {
+      const r = await renderizarPainel('/targets/alvo-1')
+      r.falsa.estado.alvos = [alvo()]
+      r.falsa.estado.resumo = [itemDoResumo()]
+      await r.cliente.refetchQueries()
+      await screen.findByRole('region', { name: 'No ar' })
+      const hora = horaMinuto(new Date(r.cliente.getQueryState(['targets', 'summary'])?.dataUpdatedAt ?? 0).toISOString())
+      r.falsa.estado.forcar.set('GET /targets/summary', erro500)
+      await r.cliente.refetchQueries({ queryKey: ['targets', 'summary'], exact: true })
+      const texto = `Não foi possível atualizar; mostrando dados de ${hora}.`
+      expect(await screen.findByRole('region', { name: texto })).toBeInTheDocument()
+      expect(screen.getByRole('region', { name: 'No ar' })).toBeInTheDocument()
+    })
+
+    it('carregando o resumo: esqueleto da faixa, e um único aviso de carregando para o leitor de tela', async () => {
+      const r = await renderizarPainel('/targets/alvo-1')
+      r.falsa.estado.alvos = [alvo()]
+      await r.cliente.refetchQueries({ queryKey: ['targets', 'alvo-1'], exact: true })
+      const p = portao()
+      servidor.use(
+        http.get('*/api/v1/targets/summary', async () => {
+          await p.aberto
+          return undefined
+        }),
+      )
+      const leitura = r.cliente.resetQueries({ queryKey: ['targets', 'summary'], exact: true })
+      await waitFor(() => expect(screen.getByTestId('esqueleto-da-faixa')).toBeInTheDocument())
+      expect(screen.getAllByText('Carregando os indicadores…')).toHaveLength(1)
+      expect(valor('No ar em 24 h')).toHaveTextContent('')
+      expect(valor('No ar em 24 h')?.querySelector('[aria-hidden="true"]')).toHaveClass('animate-pulse', 'motion-reduce:animate-none')
+      p.soltar()
+      await leitura
+    })
+
+    // A série de 30 dias vem de outra consulta. Sabotagem: refazer todas as
+    // consultas (o resumo seria relido) ou só olhar o erro do resumo.
+    it('só a série de 30 dias falhou: o cartão diz Indisponível, um aviso só, e o botão refaz o que falhou', async () => {
+      let falhar = true
+      const r = await renderizarPainel('/targets/alvo-1')
+      r.falsa.estado.alvos = [alvo()]
+      r.falsa.estado.resumo = [itemDoResumo()]
+      servidor.use(
+        http.get('*/api/v1/targets/:id/checks', ({ request }) => {
+          if (falhar && new URL(request.url).searchParams.get('window') === '30d') {
+            return HttpResponse.json({ error: { code: 'internal', message: 'falhou' }, trace_id: 't' }, { status: 500 })
+          }
+          return undefined
+        }),
+      )
+      await r.cliente.refetchQueries({ queryKey: ['targets', 'alvo-1'], exact: true })
+      await r.cliente.resetQueries({ queryKey: ['targets', 'alvo-1', 'checks', '30d'], exact: true })
+      const aviso = await screen.findByRole('region', { name: 'Não foi possível atualizar todos os indicadores.' })
+      await waitFor(() => expect(valor('No ar em 30 dias')).toHaveTextContent('Indisponível'))
+      expect(valor('No ar em 30 dias')?.firstElementChild).toHaveClass('text-lg', 'leading-9', 'font-semibold', 'text-suave')
+      expect(within(aviso).getAllByRole('button')).toHaveLength(1)
+      const resumosAntes = r.falsa.chamadas('GET /targets/summary')
+      const pedidosDe30d = () => r.falsa.corpos('GET /targets/:id/checks').filter((c) => c.window === '30d').length
+      const antes = pedidosDe30d()
+      falhar = false
+      await r.usuario.click(within(aviso).getByRole('button', { name: 'Tentar de novo' }))
+      await waitFor(() => expect(screen.queryByRole('region', { name: 'Não foi possível atualizar todos os indicadores.' })).not.toBeInTheDocument())
+      expect(pedidosDe30d()).toBe(antes + 1)
+      expect(r.falsa.chamadas('GET /targets/summary')).toBe(resumosAntes)
+      // O botão sumiu com o foco nele: o foco vai ao título da tela.
+      await waitFor(() => expect(screen.getByRole('heading', { name: 'API', level: 1 })).toHaveFocus())
+    })
   })
 
   // Review Focus 5. Sabotagem: tirar o ramo "s.items.length === 0" → a
