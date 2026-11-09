@@ -188,7 +188,7 @@ func (h *AuthHandlers) tentativas(r *http.Request, user auth.User, now time.Time
 			return h.dispositivos.Attempts(id)
 		}
 	}
-	return auth.AccountAttempts(h.users, user.ID, now)
+	return auth.AccountAttempts(h.users, user.ID, h.sessions.IPHash(h.meta(r)), now)
 }
 
 // devolverTentativa devolve a reserva de uma prova certa que não terminou o

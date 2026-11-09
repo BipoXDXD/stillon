@@ -62,7 +62,7 @@ func TestByEmailReturnsErrNotFoundForUnknownEmail(t *testing.T) {
 // reservar é ReserveAttempt com o teste parando no erro.
 func reservar(t *testing.T, store *auth.PGStore, userID uuid.UUID, at time.Time) bool {
 	t.Helper()
-	ok, err := store.ReserveAttempt(context.Background(), userID, at)
+	ok, err := store.ReserveAttempt(context.Background(), userID, nil, at)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +123,7 @@ func TestConcurrentReservationsStopAtTheThreshold(t *testing.T) {
 	var wg sync.WaitGroup
 	for range 12 {
 		wg.Go(func() {
-			ok, err := store.ReserveAttempt(context.Background(), userID, clk.Now())
+			ok, err := store.ReserveAttempt(context.Background(), userID, nil, clk.Now())
 			if err != nil {
 				t.Error(err)
 				return
@@ -331,7 +331,7 @@ func TestCheckPassword(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	conta := auth.AccountAttempts(store, userID, clk.Now())
+	conta := auth.AccountAttempts(store, userID, nil, clk.Now())
 
 	ok, _, err := auth.CheckPassword(ctx, conta, u, senha)
 	if err != nil || !ok {
