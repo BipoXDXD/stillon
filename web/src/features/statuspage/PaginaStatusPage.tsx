@@ -112,12 +112,12 @@ function Formulario({ pagina, alvos }: { pagina: PaginaDeStatus | null; alvos: A
       } else if (naoEncontrado(err)) {
         // M3: a página sumiu entre carregar e salvar. Como no 409 abaixo, o
         // aviso vai pelo toast: a recarga remonta o formulário.
-        avisar('A status page já tinha sido apagada, talvez em outra aba.', 'erro')
+        avisar('A status page já tinha sido apagada, talvez em outra aba.')
         await qc.invalidateQueries({ queryKey: ['status-pages'] })
       } else if (err instanceof ApiError && err.code === 'status_page_exists') {
         // Corrida entre abas: a recarga troca a `key` do formulário e o
         // remonta, então o aviso sai pelo toast, que sobrevive à troca.
-        avisar('Já existe uma status page; recarregamos a que está salva.', 'erro')
+        avisar('Já existe uma status page; recarregamos a que está salva.')
         await qc.invalidateQueries({ queryKey: ['status-pages'] })
       } else if (err instanceof ApiError && err.fields.length) {
         for (const fe of err.fields) {

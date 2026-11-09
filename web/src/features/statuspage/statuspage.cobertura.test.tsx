@@ -194,7 +194,7 @@ describe('status page: contratos públicos complementares', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('Valor inválido.')
     r.falsa.estado.forcar.delete(PATCH)
     await r.usuario.click(screen.getByRole('button', { name: 'Salvar' }))
-    const avisos = within(screen.getByRole('region', { name: 'Notifications (F8)' }))
+    const avisos = within(screen.getByRole('region', { name: 'Avisos (F8)' }))
     expect(await avisos.findByText('Status page salva. A página pública muda em até 30 segundos.')).toBeInTheDocument()
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
@@ -299,7 +299,7 @@ describe('status page: contratos públicos complementares', () => {
     } finally {
       p.soltar()
     }
-    const avisos = within(screen.getByRole('region', { name: 'Notifications (F8)' }))
+    const avisos = within(screen.getByRole('region', { name: 'Avisos (F8)' }))
     expect(await avisos.findByText('Status page salva. A página pública muda em até 30 segundos.')).toBeInTheDocument()
     expect(screen.queryByLabelText('Título')).not.toBeInTheDocument()
   })
