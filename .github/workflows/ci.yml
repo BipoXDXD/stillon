@@ -245,6 +245,10 @@ jobs:
         run: python3 deploy/ci/test_snapshot_banco_backup.py
       - name: ramos finais da entrada, com binários falsos
         run: python3 -m unittest discover -s deploy/ci -p test_entrada_ramos_finais.py -v
+      - name: contrato do recibo entre o receptor e o stillon-entrada
+        # O paths do coolify.yml não inclui o stillon-entrada: sem este passo,
+        # um PR que mexe só nele quebraria o contrato depois do merge.
+        run: python3 deploy/coolify/release/test_contrato_recibo_backup.py -v
 
   web:
     runs-on: ubuntu-latest
