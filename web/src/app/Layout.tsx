@@ -1,7 +1,7 @@
 import { Bell, LayoutDashboard, LogOut, Settings, ShieldCheck, TriangleAlert, type LucideIcon } from 'lucide-react'
-import { useState } from 'react'
-import { Link, Outlet, useLocation } from 'react-router'
-import { ProvedorDeAnuncios } from '@/components/Anunciador'
+import { useEffect, useState } from 'react'
+import { Link, Outlet, useLocation, useNavigation } from 'react-router'
+import { ProvedorDeAnuncios, useAnunciar } from '@/components/Anunciador'
 import { AvisoDeContexto } from '@/components/AvisoDeContexto'
 import { AvisoDeRede } from '@/components/AvisoDeRede'
 import { Marca } from '@/components/Marca'
@@ -10,24 +10,28 @@ import { Botao } from '@/components/ui/botao'
 import { useTarefasQuePedemAtencao } from '@/features/heartbeats/tarefas-que-pedem-atencao'
 import { useAbertos, useMe } from '@/lib/api/consultas'
 import { mensagemDe } from '@/lib/api/mensagens'
+import { ATRASO_DO_SINAL_MS, useAposUmTempo } from '@/lib/atraso'
 import { cn } from '@/lib/utils'
 import { BotaoDeTema } from './BotaoDeTema'
 import { useSessao } from './contexto'
+import { aoApontarPreCarregar, carregarConfiguracoes, carregarDetalhe, preCarregar, quandoOcioso } from './rotas-sob-demanda'
 
 // As cinco abas, com os mesmos nomes no topo (desktop) e na barra inferior
 // (celular): o nome acessível não muda com a largura da tela (WCAG 3.2.4).
 // `secoes`: os caminhos (e o que vem abaixo deles) em que a aba é a atual,
 // além do próprio `para`. O detalhe, o cadastro e a edição de alvo e de
 // heartbeat saem do Painel; a raiz "/" não entra como prefixo, ou o Painel valeria em tudo.
-type Aba = { para: string; texto: string; Icone: LucideIcon; secoes: string[]; contador?: boolean }
+type Aba = { para: string; texto: string; Icone: LucideIcon; secoes: string[]; contador?: boolean; preCarga?: () => Promise<unknown> }
 
 const ABAS: Aba[] = [
   { para: '/', texto: 'Painel', Icone: LayoutDashboard, secoes: ['/targets', '/heartbeats'] },
   { para: '/incidents', texto: 'Incidentes', Icone: TriangleAlert, secoes: ['/incidents'], contador: true },
   { para: '/channels', texto: 'Canais', Icone: Bell, secoes: ['/channels'] },
   { para: '/status-pages', texto: 'Status', Icone: ShieldCheck, secoes: ['/status-pages'] },
-  { para: '/settings', texto: 'Conta', Icone: Settings, secoes: ['/settings'] },
+  { para: '/settings', texto: 'Conta', Icone: Settings, secoes: ['/settings'], preCarga: carregarConfiguracoes },
 ]
+
+const ESPERA_ANTES_DE_ANUNCIAR_MS = 1000
 
 function ehAAtual(aba: Aba, caminho: string): boolean {
   return caminho === aba.para || aba.secoes.some((s) => caminho === s || caminho.startsWith(`${s}/`))
@@ -35,8 +39,17 @@ function ehAAtual(aba: Aba, caminho: string): boolean {
 
 export function Layout() {
   const me = useMe()
+  useEffect(
+    () =>
+      quandoOcioso(() => {
+        preCarregar(carregarDetalhe)
+        preCarregar(carregarConfiguracoes)
+      }),
+    [],
+  )
   return (
     <ProvedorDeAnuncios>
+      <SinalDeCargaDeRota />
       <a
         href="#conteudo"
         className="sr-only focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:z-50 focus:rounded-padrao focus:bg-superficie focus:p-2"
@@ -66,6 +79,27 @@ export function Layout() {
   )
 }
 
+// A navegação espera o chunk de uma rota sob demanda com a tela antiga
+// parada. Abaixo de 300 ms, nada aparece; o leitor de tela só ouve se a espera
+// passar de 1 s. aria-hidden: o filete é só desenho.
+function SinalDeCargaDeRota() {
+  const carregando = useNavigation().state === 'loading'
+  const mostrarFilete = useAposUmTempo(carregando, ATRASO_DO_SINAL_MS)
+  const avisarEspera = useAposUmTempo(carregando, ESPERA_ANTES_DE_ANUNCIAR_MS)
+  const anunciar = useAnunciar()
+  useEffect(() => {
+    if (avisarEspera) anunciar('Carregando…')
+  }, [avisarEspera, anunciar])
+  if (!mostrarFilete) return null
+  return (
+    <div
+      aria-hidden="true"
+      data-testid="filete-de-carga"
+      className="fixed inset-x-0 top-0 z-50 h-0.5 animate-pulse bg-primaria motion-reduce:animate-none"
+    />
+  )
+}
+
 // No celular a navegação é a barra inferior fixa, de 5 abas de 44 px
 // (auditoria L1: antes, ~265 px de menu vinham antes do conteúdo); a partir
 // de lg (1024 px) ela volta ao fluxo do cabeçalho. Um <nav> só nos dois
@@ -74,6 +108,9 @@ export function Layout() {
 // leitor de tela.
 function NavegacaoPrincipal() {
   const { pathname } = useLocation()
+  // O destino da navegação em voo: o clique marca o item na hora, enquanto o
+  // aria-current segue dizendo em que tela a pessoa ainda está.
+  const destino = useNavigation().location?.pathname ?? pathname
   const abertos = useAbertos(useTarefasQuePedemAtencao().length)
   const contador = abertos && abertos !== '0' ? abertos : null
   return (
@@ -84,10 +121,12 @@ function NavegacaoPrincipal() {
       <ul className="grid grid-cols-5 gap-1 lg:flex">
         {ABAS.map((aba) => {
           const atual = ehAAtual(aba, pathname)
+          const marcada = ehAAtual(aba, destino)
           return (
             <li key={aba.para}>
               <Link
                 to={aba.para}
+                {...(aba.preCarga && aoApontarPreCarregar(aba.preCarga))}
                 aria-current={atual ? 'page' : undefined}
                 aria-label={
                   aba.contador && contador ? `${aba.texto}, ${contador} ${contador === '1' ? 'aberto' : 'abertos'}` : undefined
@@ -95,7 +134,7 @@ function NavegacaoPrincipal() {
                 className={cn(
                   'flex min-h-11 flex-col items-center justify-center gap-1 rounded-padrao px-2 text-xs text-suave hover:text-texto',
                   'lg:flex-row lg:gap-2 lg:px-3 lg:text-sm',
-                  atual && 'bg-primaria-100 font-semibold text-primaria hover:text-primaria',
+                  marcada && 'bg-primaria-100 font-semibold text-primaria hover:text-primaria',
                 )}
               >
                 {/* No celular, o contador fica na linha do ícone, ao lado
