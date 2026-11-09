@@ -150,8 +150,8 @@ func conferirErroInternoGenerico(t *testing.T, w *httptest.ResponseRecorder) {
 	}
 }
 
-// Responder "credenciais inválidas" esconderia a causa e ainda contaria a
-// tentativa: é o cenário da restauração com a chave errada.
+// Responder "credenciais inválidas" esconderia a causa da falha interna e
+// ainda contaria a tentativa.
 func TestTOTPVerifyInternalFailureAnswersAGeneric500(t *testing.T) {
 	c := novoCenarioDoSegundoFator(t)
 
@@ -182,7 +182,7 @@ func TestTOTPDisableInternalFailureAnswersAGeneric500(t *testing.T) {
 func TestTOTPDisableInternalFailuresDoNotCountAsWrongProofs(t *testing.T) {
 	c := novoCenarioDoSegundoFator(t)
 
-	const falhasSeguidas = 5
+	const falhasSeguidas = auth.FamilyProofLimit
 	for range falhasSeguidas {
 		if w := c.desligarFator(t); w.Code != http.StatusInternalServerError {
 			t.Fatalf("status = %d, queria 500: %s", w.Code, w.Body.String())
