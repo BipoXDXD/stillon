@@ -28,10 +28,6 @@ export const rotas: RouteObject[] = [
         children: [
           { index: true, Component: PaginaPainel },
           { path: 'targets/new', Component: PaginaNovoAlvo },
-          {
-            path: 'targets/:id',
-            lazy: async () => ({ Component: (await carregarDetalhe()).PaginaDetalhe }),
-          },
           { path: 'targets/:id/edit', Component: PaginaEditarAlvo },
           { path: 'heartbeats/new', Component: PaginaNovoHeartbeat },
           { path: 'heartbeats/:id', Component: PaginaHeartbeat },
@@ -40,8 +36,20 @@ export const rotas: RouteObject[] = [
           { path: 'channels', Component: PaginaCanais },
           { path: 'status-pages', Component: PaginaStatusPage },
           {
-            path: 'settings',
-            lazy: async () => ({ Component: (await carregarConfiguracoes()).PaginaConfiguracoes }),
+            // O chunk que falha fica dentro do Layout. O boundary vem numa rota
+            // acima da lazy: nela mesma, a rota ainda sem módulo faria o router
+            // cortar a árvore no HydrateFallback, e a tela ficaria em branco.
+            ErrorBoundary: ErroDeRota,
+            children: [
+              {
+                path: 'targets/:id',
+                lazy: async () => ({ Component: (await carregarDetalhe()).PaginaDetalhe }),
+              },
+              {
+                path: 'settings',
+                lazy: async () => ({ Component: (await carregarConfiguracoes()).PaginaConfiguracoes }),
+              },
+            ],
           },
           { path: '*', Component: NaoEncontrada },
         ],

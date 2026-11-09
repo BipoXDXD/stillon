@@ -1,20 +1,35 @@
-import { isRouteErrorResponse, useRouteError } from 'react-router'
+import { onlineManager } from '@tanstack/react-query'
+import { isRouteErrorResponse, useRevalidator, useRouteError } from 'react-router'
 import { Botao } from '@/components/ui/botao'
 
-// Uma falha de import() dinâmico quase sempre é "houve deploy e o chunk
-// antigo sumiu": o handler Go responde 404 para asset ausente (e não o
-// index), e aqui o painel oferece recarregar em vez de ficar em branco.
+// Com rede, uma falha de import() dinâmico quase sempre é "houve deploy e o
+// chunk antigo sumiu": o handler Go responde 404 para asset ausente (e não o
+// index), e aqui o painel oferece recarregar em vez de ficar em branco. Sem
+// rede, recarregar levaria à página de erro do navegador: o revalidate repete
+// só o import da rota.
 export function ErroDeRota() {
   const erro = useRouteError()
+  const { revalidate } = useRevalidator()
   const chunk =
     erro instanceof TypeError && /dynamically imported module|Importing a module script failed/i.test(erro.message)
+  const semRede = chunk && !onlineManager.isOnline()
   const naoAchou = isRouteErrorResponse(erro) && erro.status === 404
   return (
     <div role="alert" className="mx-auto mt-16 max-w-md space-y-4 p-4 text-center">
       <h1 className="text-xl font-semibold">
-        {chunk ? 'Há uma versão nova do painel' : naoAchou ? 'Página não encontrada' : 'Algo deu errado'}
+        {semRede
+          ? 'Esta tela depende da conexão'
+          : chunk
+            ? 'Há uma versão nova do painel'
+            : naoAchou
+              ? 'Página não encontrada'
+              : 'Algo deu errado'}
       </h1>
-      <Botao onClick={() => window.location.reload()}>Recarregar</Botao>
+      {semRede ? (
+        <Botao onClick={() => void revalidate()}>Tentar de novo</Botao>
+      ) : (
+        <Botao onClick={() => window.location.reload()}>Recarregar</Botao>
+      )}
     </div>
   )
 }

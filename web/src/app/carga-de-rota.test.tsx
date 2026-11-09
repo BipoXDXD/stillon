@@ -1,4 +1,5 @@
-import { fireEvent, screen, waitFor, within } from '@testing-library/react'
+import { onlineManager } from '@tanstack/react-query'
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { alvo, incidente, itemDoResumo } from '@/test/fixtures'
 import { renderizarPainel } from '@/test/renderizar'
@@ -148,5 +149,31 @@ describe('espera por uma rota sob demanda', () => {
     await waitFor(() => expect(screen.getByTestId('anuncios')).toHaveTextContent('Carregando a tela…'), { timeout: 3000 })
     soltar()
     await waitFor(() => expect(screen.queryByTestId('filete-de-carga')).not.toBeInTheDocument())
+  })
+})
+
+describe('rota sob demanda sem rede', () => {
+  afterEach(() => onlineManager.setOnline(true))
+
+  // Sabotagem: tirar o ErrorBoundary da rota que envolve as lazy; o boundary
+  // do ExigirSessao desmonta o Layout.
+  it('o erro fica dentro do Layout, e tentar de novo traz a tela', async () => {
+    let chunkChega = false
+    vi.mocked(carregarConfiguracoes).mockImplementation(async () => {
+      if (!chunkChega) throw new TypeError('Failed to fetch dynamically imported module: /assets/PaginaConfiguracoes.js')
+      return import('@/features/configuracoes/PaginaConfiguracoes')
+    })
+    const r = await renderizarPainel('/channels')
+    const navegacao = await screen.findByRole('navigation', { name: 'Principal' })
+    act(() => onlineManager.setOnline(false))
+    await r.usuario.click(await aba('Conta'))
+    expect(await screen.findByRole('heading', { name: 'Esta tela depende da conexão' })).toBeInTheDocument()
+    expect(navegacao).toBeInTheDocument()
+    chunkChega = true
+    act(() => onlineManager.setOnline(true))
+    await r.usuario.click(screen.getByRole('button', { name: 'Tentar de novo' }))
+    await waitFor(() => expect(screen.queryByRole('heading', { name: 'Esta tela depende da conexão' })).not.toBeInTheDocument())
+    expect(navegacao).toBeInTheDocument()
+    expect(await aba('Conta')).toHaveAttribute('aria-current', 'page')
   })
 })
