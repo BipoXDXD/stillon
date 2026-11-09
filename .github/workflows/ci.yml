@@ -243,6 +243,8 @@ jobs:
         run: sh deploy/ci/testar-vps.sh
       - name: snapshot do banco no backup, contra Docker falso
         run: python3 deploy/ci/test_snapshot_banco_backup.py
+      - name: ramos finais da entrada, com binários falsos
+        run: python3 -m unittest discover -s deploy/ci -p test_entrada_ramos_finais.py -v
 
   web:
     runs-on: ubuntu-latest
