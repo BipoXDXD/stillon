@@ -1,6 +1,6 @@
 import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { useEffect } from 'react'
+import { useEffect, type ReactNode } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ProvedorDoPainel } from '@/app/contexto'
 import { novaSessao, usarApiFalsa } from '@/test/ambiente'
@@ -8,7 +8,13 @@ import { ProvedorDeAvisos, useAvisar } from './avisos'
 
 type Avisar = ReturnType<typeof useAvisar>
 
-function montar() {
+const TELA_COM_TITULO = (
+  <main>
+    <h1 tabIndex={-1}>A tela</h1>
+  </main>
+)
+
+function montar(corpo: ReactNode = TELA_COM_TITULO) {
   const falsa = usarApiFalsa()
   falsa.logado()
   const { sessao, api } = novaSessao()
@@ -20,11 +26,7 @@ function montar() {
     useEffect(() => {
       avisar = doProvedor
     }, [doProvedor])
-    return (
-      <main>
-        <h1 tabIndex={-1}>A tela</h1>
-      </main>
-    )
+    return corpo
   }
   render(
     <ProvedorDoPainel sessao={sessao} api={api}>
@@ -151,6 +153,19 @@ describe('o foco ao dispensar', () => {
     x.focus()
     await usuario.keyboard('{Enter}')
     await waitFor(() => expect(screen.getByRole('heading', { name: 'A tela' })).toHaveFocus())
+  })
+
+  // Tela ainda carregando, sem <h1>. Sabotagem: procurar só o <h1> → o foco
+  // fica no <ol> vazio da região.
+  it('sem título na tela, o último dispensado devolve o foco ao <main>', async () => {
+    const usuario = userEvent.setup()
+    const { avisar } = montar(<main tabIndex={-1}>Carregando</main>)
+    avisar('Erro 1', 'erro')
+    const [x] = dispensar()
+    if (x === undefined) throw new Error('sem botão de dispensar')
+    x.focus()
+    await usuario.keyboard('{Enter}')
+    await waitFor(() => expect(screen.getByRole('main')).toHaveFocus())
   })
 
   it('sobrando outro erro, o foco vai ao "X" dele', async () => {

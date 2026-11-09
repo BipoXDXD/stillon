@@ -2,6 +2,7 @@ import { CircleAlert, X } from 'lucide-react'
 import { Toast } from 'radix-ui'
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react'
 import { useSessao } from '@/app/contexto'
+import { TITULO_DA_TELA } from './botao'
 
 // Avisos passageiros ("Alvo salvo"). Radix Toast, e não o sonner: o sonner
 // injeta um <style> sem suporte a nonce, que a CSP do painel bloqueia (o
@@ -43,7 +44,7 @@ export function ProvedorDeAvisos({ children }: { children: ReactNode }) {
     if (!devolverFoco.current) return
     devolverFoco.current = false
     const proximo = Array.from(regiao.current?.querySelectorAll<HTMLElement>('[data-dispensar]') ?? []).at(-1)
-    const destino = proximo ?? document.querySelector<HTMLElement>('main h1')
+    const destino = proximo ?? TITULO_DA_TELA.current
     destino?.focus()
   })
 
