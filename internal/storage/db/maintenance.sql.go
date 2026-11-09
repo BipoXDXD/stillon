@@ -89,10 +89,25 @@ func (q *Queries) DeleteOldHeartbeatEvents(ctx context.Context, cutoff time.Time
 }
 
 const deleteOldNotifications = `-- name: DeleteOldNotifications :execrows
-DELETE FROM notifications WHERE status <> 'pending' AND created_at < $1::timestamptz
+DELETE FROM notifications n
+ WHERE n.status <> 'pending' AND n.created_at < $1::timestamptz
+   AND NOT EXISTS (
+        SELECT 1 FROM incidents i
+         WHERE i.id = n.incident_id
+           AND i.resolved_at IS NULL AND i.ack_at IS NULL AND i.open_notified_at IS NOT NULL
+           AND NOT EXISTS (
+                SELECT 1 FROM notifications mais_nova
+                 WHERE mais_nova.incident_id = n.incident_id
+                   AND mais_nova.channel_id = n.channel_id
+                   AND mais_nova.created_at > n.created_at))
 `
 
-// Entregues, falhas e canceladas; pendente nunca sai por idade.
+// Entregues, falhas e canceladas; pendente nunca sai por idade. Fica também a
+// linha mais nova de cada par (incidente, canal) que ainda pode receber lembrete:
+// ela é a base e o último seq de ListReminderCandidates, e um canal ou alvo
+// pausado não gera linha nova por mais de 30 dias. O filtro não olha a pausa de
+// propósito: a retenção pode rodar entre a retomada e o tique seguinte. Uma
+// linha por par de incidente aberto é o teto do que sobra; ao fechar, ela sai.
 func (q *Queries) DeleteOldNotifications(ctx context.Context, cutoff time.Time) (int64, error) {
 	result, err := q.db.Exec(ctx, deleteOldNotifications, cutoff)
 	if err != nil {

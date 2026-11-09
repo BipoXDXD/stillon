@@ -160,7 +160,10 @@ func (h *TargetHandlers) List(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	q := r.URL.Query()
+	q, ok := consultaPermitida(w, r, parametrosDaPagina)
+	if !ok {
+		return
+	}
 
 	limit := targets.DefaultPageSize
 	if s := q.Get("limit"); s != "" {
@@ -275,6 +278,39 @@ var janelasDaSerie = map[string]time.Duration{
 	"90d": 90 * 24 * time.Hour,
 }
 
+// lerIntervalo lê a janela [from, to) de GET /targets/{id}/checks. Sem to, é
+// agora; sem from nem window, são as 24 h antes do to. Devolve o nome do
+// primeiro campo inválido, na ordem to, window, from, ou "" se a janela vale.
+func lerIntervalo(q url.Values, agora time.Time) (from, to time.Time, invalido string) {
+	to = agora
+	if s := q.Get("to"); s != "" {
+		v, err := time.Parse(time.RFC3339, s)
+		if err != nil {
+			return time.Time{}, time.Time{}, "to"
+		}
+		to = v
+	}
+	from = to.Add(-24 * time.Hour)
+	// B6 (Plano 10): com window, o servidor calcula o from, e o gráfico não
+	// depende do relógio do navegador. window e from juntos seriam duas
+	// respostas para a mesma pergunta.
+	if q.Has("window") {
+		janela, ok := janelasDaSerie[q.Get("window")]
+		if !ok || q.Has("from") {
+			return time.Time{}, time.Time{}, "window"
+		}
+		from = to.Add(-janela)
+	}
+	if s := q.Get("from"); s != "" {
+		v, err := time.Parse(time.RFC3339, s)
+		if err != nil {
+			return time.Time{}, time.Time{}, "from"
+		}
+		from = v
+	}
+	return from, to, ""
+}
+
 func (h *TargetHandlers) Checks(w http.ResponseWriter, r *http.Request) {
 	userID, ok := usuario(w, r)
 	if !ok {
@@ -284,36 +320,10 @@ func (h *TargetHandlers) Checks(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	q := r.URL.Query()
-
-	to := h.clk.Now()
-	if s := q.Get("to"); s != "" {
-		v, err := time.Parse(time.RFC3339, s)
-		if err != nil {
-			campoInvalido(w, r, "to", targets.ReasonInvalid)
-			return
-		}
-		to = v
-	}
-	from := to.Add(-24 * time.Hour)
-	// B6 (Plano 10): com window, o servidor calcula o from, e o gráfico não
-	// depende do relógio do navegador. window e from juntos seriam duas
-	// respostas para a mesma pergunta.
-	if q.Has("window") {
-		janela, ok := janelasDaSerie[q.Get("window")]
-		if !ok || q.Has("from") {
-			campoInvalido(w, r, "window", targets.ReasonInvalid)
-			return
-		}
-		from = to.Add(-janela)
-	}
-	if s := q.Get("from"); s != "" {
-		v, err := time.Parse(time.RFC3339, s)
-		if err != nil {
-			campoInvalido(w, r, "from", targets.ReasonInvalid)
-			return
-		}
-		from = v
+	from, to, invalido := lerIntervalo(r.URL.Query(), h.clk.Now())
+	if invalido != "" {
+		campoInvalido(w, r, invalido, targets.ReasonInvalid)
+		return
 	}
 
 	serie, err := h.svc.Checks(r.Context(), userID, id, from, to)
@@ -399,11 +409,10 @@ type targetSummaryResponse struct {
 	Spark          []sparkResponse `json:"spark"`
 }
 
-// parametrosDoResumo é a allowlist de ?: um parâmetro desconhecido é 400, e
-// nunca um filtro ignorado que devolveria a lista inteira como se tivesse
-// filtrado. Pelo mesmo motivo a query passa por url.ParseQuery: r.URL.Query()
-// descarta em silêncio o par que não sabe ler (?tag=%zz, ?tag=a;tag=b).
-var parametrosDoResumo = []string{"tag", "state"}
+var (
+	parametrosDoResumo = []string{"tag", "state"}
+	parametrosDaPagina = []string{"limit", "cursor"}
+)
 
 const campoDaConsulta = "query"
 
@@ -415,17 +424,9 @@ func (h *TargetHandlers) Summary(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	q, err := url.ParseQuery(r.URL.RawQuery)
-	if err != nil {
-		campoInvalido(w, r, campoDaConsulta, targets.ReasonInvalid)
+	q, ok := consultaPermitida(w, r, parametrosDoResumo)
+	if !ok {
 		return
-	}
-	for chave := range q {
-		if !slices.Contains(parametrosDoResumo, chave) {
-			// Nome fixo: a chave é de quem chama e não tem limite de tamanho.
-			campoInvalido(w, r, campoDaConsulta, targets.ReasonInvalid)
-			return
-		}
 	}
 	filtro, verr := targets.ParseSummaryFilter(q["tag"], q["state"])
 	if h.falhou(w, r, "filtrar resumo", validacaoOuNada(verr)) {
@@ -453,6 +454,28 @@ func (h *TargetHandlers) Summary(w http.ResponseWriter, r *http.Request) {
 		itens = append(itens, item)
 	}
 	apierr.WriteJSON(w, http.StatusOK, map[string]any{"items": itens})
+}
+
+// consultaPermitida lê a query com a allowlist da rota: um parâmetro
+// desconhecido é 400, e nunca um filtro ignorado que devolveria a lista
+// inteira como se tivesse filtrado. Pelo mesmo motivo ela passa por
+// url.ParseQuery: r.URL.Query() descarta em silêncio o par que não sabe ler
+// (?tag=%zz, ?tag=a;tag=b). Parâmetro repetido é aceito, e quem usa q.Get fica
+// com o primeiro valor.
+func consultaPermitida(w http.ResponseWriter, r *http.Request, permitidos []string) (url.Values, bool) {
+	q, err := url.ParseQuery(r.URL.RawQuery)
+	if err != nil {
+		campoInvalido(w, r, campoDaConsulta, targets.ReasonInvalid)
+		return nil, false
+	}
+	for chave := range q {
+		if !slices.Contains(permitidos, chave) {
+			// Nome fixo: a chave é de quem chama e não tem limite de tamanho.
+			campoInvalido(w, r, campoDaConsulta, targets.ReasonInvalid)
+			return nil, false
+		}
+	}
+	return q, true
 }
 
 // validacaoOuNada evita o nil tipado: um *ValidationError nulo dentro de um

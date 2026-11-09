@@ -466,28 +466,33 @@ func (d *Dispatcher) persistir(gravacoes context.Context, n db.ClaimDueNotificat
 			})
 		case "cancelled":
 			return q.CloseNotification(ctx, db.CloseNotificationParams{ID: n.ID, Status: "cancelled", LastError: motivo})
-		}
-		if err := q.CloseNotification(ctx, db.CloseNotificationParams{ID: n.ID, Status: "failed", LastError: motivo}); err != nil {
-			return err
-		}
-		// O canal passa a "failing" até a próxima entrega que der certo
-		// (pendência do Plano 3: antes, a falha só ia para a auditoria). A
-		// falha do próprio StillOn não é culpa do canal.
-		if !f.doSistema {
-			if err := q.MarkChannelFailure(ctx, db.MarkChannelFailureParams{ChannelID: n.ChannelID, Now: d.clk.Now(), LastError: motivo}); err != nil {
+		case "failed":
+			if err := q.CloseNotification(ctx, db.CloseNotificationParams{ID: n.ID, Status: "failed", LastError: motivo}); err != nil {
 				return err
 			}
+			// O canal passa a "failing" até a próxima entrega que der certo
+			// (pendência do Plano 3: antes, a falha só ia para a auditoria). A
+			// falha do próprio StillOn não é culpa do canal.
+			if !f.doSistema {
+				if err := q.MarkChannelFailure(ctx, db.MarkChannelFailureParams{ChannelID: n.ChannelID, Now: d.clk.Now(), LastError: motivo}); err != nil {
+					return err
+				}
+			}
+			// Falha definitiva vai para a trilha de auditoria (spec §8).
+			id, err := uuid.NewV7()
+			if err != nil {
+				return err
+			}
+			entidade := "notif_channel"
+			return q.InsertAudit(ctx, db.InsertAuditParams{
+				ID: id, UserID: &n.UserID, Action: "notification.failed",
+				Entity: &entidade, EntityID: &n.ChannelID, At: d.clk.Now(),
+			})
+		default:
+			// Erro do StillOn, e não do canal: a notificação fica como a
+			// reivindicação a deixou, e quem chama persistir registra o erro.
+			return fmt.Errorf("desfecho com status desconhecido: %q", f.status)
 		}
-		// Falha definitiva vai para a trilha de auditoria (spec §8).
-		id, err := uuid.NewV7()
-		if err != nil {
-			return err
-		}
-		entidade := "notif_channel"
-		return q.InsertAudit(ctx, db.InsertAuditParams{
-			ID: id, UserID: &n.UserID, Action: "notification.failed",
-			Entity: &entidade, EntityID: &n.ChannelID, At: d.clk.Now(),
-		})
 	})
 }
 

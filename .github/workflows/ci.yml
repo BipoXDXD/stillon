@@ -229,6 +229,8 @@ jobs:
             deploy/vps/initdb.sh deploy/backup/backup.sh
       - name: checagens dos workflows
         run: sh deploy/ci/checar-workflows.sh
+      - name: testes do checar-workflows
+        run: python3 -m unittest discover -s deploy/ci -p test_checar_workflows.py -v
       - name: ensaio de restauração e aviso, sem rede
         run: python3 -m unittest discover -s deploy/ci -p test_revalidar_backup.py -v
       - name: collector das fixtures contra Docker falso
@@ -241,6 +243,12 @@ jobs:
         run: sh deploy/ci/testar-vps.sh
       - name: snapshot do banco no backup, contra Docker falso
         run: python3 deploy/ci/test_snapshot_banco_backup.py
+      - name: ramos finais da entrada, com binários falsos
+        run: python3 -m unittest discover -s deploy/ci -p test_entrada_ramos_finais.py -v
+      - name: contrato do recibo entre o receptor e o stillon-entrada
+        # O paths do coolify.yml não inclui o stillon-entrada: sem este passo,
+        # um PR que mexe só nele quebraria o contrato depois do merge.
+        run: python3 deploy/coolify/release/test_contrato_recibo_backup.py -v
 
   web:
     runs-on: ubuntu-latest

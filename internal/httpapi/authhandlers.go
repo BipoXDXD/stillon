@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -187,7 +188,7 @@ func (h *AuthHandlers) tentativas(r *http.Request, user auth.User, now time.Time
 			return h.dispositivos.Attempts(id)
 		}
 	}
-	return auth.AccountAttempts(h.users, user.ID, now)
+	return auth.AccountAttempts(h.users, user.ID, h.sessions.IPHash(h.meta(r)), now)
 }
 
 // devolverTentativa devolve a reserva de uma prova certa que não terminou o
@@ -376,7 +377,15 @@ func apagarCookieDeRefresh(w http.ResponseWriter, secure bool) {
 // contrário do rate limit, esse dano não tem volta: linha já gravada com o
 // hash errado não se recupera.
 func (h *AuthHandlers) meta(r *http.Request) auth.Meta {
-	return auth.Meta{IP: middleware.ClientIP(r, h.proxies), UserAgent: r.UserAgent()}
+	return auth.Meta{IP: middleware.ClientIP(r, h.proxies), UserAgent: userAgentGravavel(r.UserAgent())}
+}
+
+// userAgentGravavel deixa o cabeçalho aceitável para a coluna text, que recusa
+// byte fora de UTF-8 e NUL. O valor é só informativo, então não justifica
+// recusar um login: o trecho ilegível vira U+FFFD e o resto se mantém.
+func userAgentGravavel(userAgent string) string {
+	const substituto = "�"
+	return strings.ReplaceAll(strings.ToValidUTF8(userAgent, substituto), "\x00", substituto)
 }
 
 // internal registra o erro real e devolve ao cliente apenas o envelope
@@ -425,8 +434,7 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, dst any) bool {
 			return true
 		}
 	}
-	var tooLarge *http.MaxBytesError
-	if errors.As(err, &tooLarge) {
+	if corpoAcimaDoTeto(err) {
 		apierr.WriteError(w, r, apierr.CodePayloadTooLarge)
 		return false
 	}
@@ -437,10 +445,16 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, dst any) bool {
 	// o limite; quando estoura, o tamanho é a causa mais útil de relatar
 	// — mandar 400 faria o cliente procurar um defeito nos dados que o
 	// servidor sequer chegou a ler.
-	if _, drenar := io.Copy(io.Discard, r.Body); errors.As(drenar, &tooLarge) {
+	if _, drenar := io.Copy(io.Discard, r.Body); corpoAcimaDoTeto(drenar) {
 		apierr.WriteError(w, r, apierr.CodePayloadTooLarge)
 		return false
 	}
 	apierr.WriteError(w, r, apierr.CodeValidation)
 	return false
+}
+
+// corpoAcimaDoTeto diz se err é o estouro de um http.MaxBytesReader.
+func corpoAcimaDoTeto(err error) bool {
+	var acima *http.MaxBytesError
+	return errors.As(err, &acima)
 }

@@ -40,11 +40,22 @@ for f in deploy/ci/*.sh; do
 done
 # codigo <arquivo...>: as linhas que não são só comentário, com arquivo e número.
 codigo() { grep -nH '' "$@" | grep -Ev '^[^:]+:[0-9]+:[[:space:]]*#'; }
+# achar_proibido <regex> <scripts...>: mostra os achados nos workflows e no código
+# dos scripts, e dá sucesso se houver algum. Cada busca conta por si: numa lista
+# "{ A; B | C; }", só o último pipeline decidiria o status.
+achar_proibido() {
+    padrao=$1
+    shift
+    achou=1
+    if grep -EniH "$padrao" "$WF"/*.yml >&2; then achou=0; fi
+    if codigo "$@" | grep -Ei "$padrao" >&2; then achou=0; fi
+    return "$achou"
+}
 DESLIGADO_ERE='StrictHostKeyChecking[[:space:]=]+"?(no|off|accept-new)|UserKnownHostsFile[[:space:]=]+"?/dev/null'
-if { grep -EniH "$DESLIGADO_ERE" "$WF"/*.yml; codigo "$@" | grep -Ei "$DESLIGADO_ERE"; } >&2; then
+if achar_proibido "$DESLIGADO_ERE" "$@"; then
     falhar "StrictHostKeyChecking desligado ou known_hosts vazio (acima): a host key vem do secret VPS_HOST_KEY"
 fi
-if { grep -EniH 'ssh-keyscan' "$WF"/*.yml; codigo "$@" | grep -Ei 'ssh-keyscan'; } >&2; then
+if achar_proibido 'ssh-keyscan' "$@"; then
     falhar "ssh-keyscan (acima): a host key vem do secret VPS_HOST_KEY, nunca da rede"
 fi
 # O ssh usa o PRIMEIRO valor de cada opção: um "-o StrictHostKeyChecking=
@@ -254,8 +265,9 @@ tem "$REVALIDAR" '^permissions: \{\}$' "o workflow tem de começar sem permissã
 tem "$REVALIDAR" '^  cancel-in-progress: false$' "um ensaio não é cancelado no meio"
 tem "$REVALIDAR" "^    if: vars\\.BACKUP_ENABLED == '1' && github\\.ref == 'refs/heads/main'\$" \
     "o ensaio não está preso à main e ao BACKUP_ENABLED=1"
-# job <nome>: o texto de um job, até o próximo.
-job() { awk -v nome="  $1:" '$0 == nome { d = 1; print; next } d && /^  [a-z]/ { exit } d' "$REVALIDAR"; }
+# job_de <arquivo> <nome>: o texto de um job, até o próximo.
+job_de() { awk -v nome="  $2:" '$0 == nome { d = 1; print; next } d && /^  [a-z]/ { exit } d' "$1"; }
+job() { job_de "$REVALIDAR" "$1"; }
 job_restore=$(job restore)
 job_avisar=$(job avisar)
 perms=$(printf '%s\n' "$job_restore" | sed -n '/^    permissions:/,/^    [a-z]/p' | grep -E '^      ' | tr -d ' ' | sort | tr '\n' ' ')
@@ -310,6 +322,68 @@ for f in "$WF"/*.yml; do
     for caminho in $(caminhos_exatos "$f"); do
         [ -e "$caminho" ] || falhar "$f: o filtro paths cita $caminho, que não existe"
     done
+done
+
+# 8. Release do Coolify: todo merge na main publica, então o que decide se uma
+#    publicação sai fica preso aqui: de onde ela dispara, quem pode publicar,
+#    com que permissão e de onde vem a host key. As varreduras 1 e 2 já cobrem
+#    host key desligada e action sem SHA neste arquivo.
+COOLIFY=$WF/coolify.yml
+gatilhos=$(sed -n '/^on:/,/^[a-z]/p' "$COOLIFY" | grep -E '^  [a-z_]+:' | tr -d ' :' | tr '\n' ' ')
+[ "$gatilhos" = "workflow_run workflow_dispatch pull_request " ] ||
+    falhar "$COOLIFY: gatilhos \"$gatilhos\", queria workflow_run, workflow_dispatch e pull_request"
+tem "$COOLIFY" '^    workflows: \[ci\]$' "o workflow_run não vem só do ci"
+tem "$COOLIFY" '^    branches: \[main\]$' "o workflow_run não está preso à main"
+nao_tem "$COOLIFY" ':[[:space:]]*write' "permissão de escrita (acima): o release só lê"
+perms=$(sed -n '/^permissions:/,/^[a-z]/p' "$COOLIFY" | grep -E '^  ' | tr -d ' ' | sort | tr '\n' ' ')
+[ "$perms" = "contents:read " ] || falhar "$COOLIFY: permissions \"$perms\", queria só contents: read"
+job_gates=$(job_de "$COOLIFY" gates)
+job_deploy=$(job_de "$COOLIFY" deploy)
+permissoes_do_job() {
+    printf '%s\n' "$1" | sed -n '/^    permissions:/,/^    [a-z]/p' | grep -E '^      ' | tr -d ' ' | sort | tr '\n' ' '
+}
+perms=$(permissoes_do_job "$job_gates")
+[ "$perms" = "actions:read contents:read " ] || falhar "$COOLIFY: gates com permissions \"$perms\""
+perms=$(permissoes_do_job "$job_deploy")
+[ "$perms" = "actions:read contents:read packages:read " ] || falhar "$COOLIFY: deploy com permissions \"$perms\""
+# O job gates é o que decide publicar: cada condição do if conta, e a
+# comparação é do texto inteiro.
+IF_DO_GATE="    if: >-
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'workflow_dispatch' ||
+       (github.event_name == 'workflow_run' &&
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.event == 'push' &&
+        github.event.workflow_run.head_branch == 'main' &&
+        github.event.workflow_run.head_repository.full_name == github.repository))"
+if_gate=$(printf '%s\n' "$job_gates" | sed -n '/^    if: >-$/,/^    runs-on:/p' | sed '$d')
+[ "$if_gate" = "$IF_DO_GATE" ] || falhar "$COOLIFY: o if do job gates mudou; se a mudança for de propósito, atualize IF_DO_GATE neste script"
+linha_no_job() { printf '%s\n' "$1" | grep -qxF -- "$2" || falhar "$COOLIFY: $3"; }
+linha_no_job "$job_gates" '          ref: main' "o job gates não lê a main: o gate.py viria do commit a publicar"
+# shellcheck disable=SC2016 # o $KNOWN_HOSTS e o ${{ }} são texto do workflow
+for par in \
+    "    if: needs.gates.outputs.eligible == 'true'|o deploy não depende de eligible" \
+    '    needs: gates|o deploy não espera o job gates' \
+    '    environment: production|o deploy não está no environment production' \
+    '          ref: ${{ needs.gates.outputs.commit }}|o deploy não faz checkout do commit aprovado' \
+    "        if: steps.latest.outputs.eligible == 'true'|a publicação não depende da última conferência" \
+    '          KNOWN_HOSTS: ${{ secrets.COOLIFY_RELEASE_KNOWN_HOSTS }}|o known_hosts não vem do secret' \
+    '          test -n "$SSH_KEY" && test -n "$KNOWN_HOSTS" && test -n "$TARGET"|o deploy não recusa known_hosts vazio' \
+    "          printf '%s\\n' \"\$KNOWN_HOSTS\" > \"\$RUNNER_TEMP/release-ssh/known_hosts\"|o known_hosts do secret não é gravado" \
+    '          DEPLOY_KNOWN_HOSTS: ${{ runner.temp }}/release-ssh/known_hosts|o send.sh não recebe o known_hosts gravado'; do
+    linha_no_job "$job_deploy" "${par%%|*}" "${par#*|}"
+done
+n=$(sem_comentario "$COOLIFY" | grep -Ec '^[[:space:]]*environment:' || true)
+[ "$n" = 1 ] || falhar "$COOLIFY: environment citado $n vez(es), queria uma"
+# Só as duas citações da publicação, e só no job deploy.
+CITACOES_DO_RELEASE='^ +(SSH_KEY: \$\{\{ secrets\.COOLIFY_RELEASE_SSH_KEY \}\}|KNOWN_HOSTS: \$\{\{ secrets\.COOLIFY_RELEASE_KNOWN_HOSTS \}\})$'
+if sem_comentario "$COOLIFY" | grep -iE '\bsecrets\b' | grep -Ev "$CITACOES_DO_RELEASE" >&2; then
+    falhar "$COOLIFY: acesso a secrets fora das citações da publicação (acima)"
+fi
+for j in release-tools gates; do
+    if job_de "$COOLIFY" "$j" | sem_comentario | grep -iEq '\bsecrets\b'; then
+        falhar "$COOLIFY: o job $j não pode ver segredo"
+    fi
 done
 
 if [ "$falhas" -gt 0 ]; then

@@ -860,3 +860,50 @@ func TestDeferredBehindADefinitiveFailureUsesItsOwnBackoff(t *testing.T) {
 		t.Errorf("adiada: %+v; queria pendente, 1 tentativa, network, próxima em 30s", l)
 	}
 }
+
+// Um status fora de sent, pending, cancelled e failed é erro do StillOn, e
+// quem pagaria seria o canal: persistir devolve o erro, com o status, sem
+// fechar a notificação nem pôr em failing um canal que vinha entregando. Ela
+// fica como a reivindicação a deixou e volta quando o lease vencer. Quem chama
+// persistir registra o erro no log.
+//
+// A chamada é direta porque Dispatch não deixa o valor entrar: o status nasce
+// de literais em dispatcher.go, e um Notifier só devolve erro.
+func TestUnknownOutcomeStatusFailsLoudAndLeavesNotificationAndChannelUntouched(t *testing.T) {
+	for _, tc := range []struct{ nome, status string }{
+		{"erro de grafia", "canceled"},
+		{"valor zero", ""},
+	} {
+		t.Run(tc.nome, func(t *testing.T) {
+			b := novaBancada(t, nil)
+			b.enfileirar(t, incident.EventOpened)
+			b.despachar(t, 1)
+			if c := b.canalVisto(t); c.Status != StatusVerified || !c.LastFailureAt.IsZero() {
+				t.Fatalf("canal antes do status desconhecido: %+v; queria verified, sem falha", c)
+			}
+
+			b.clk.Advance(time.Minute)
+			id := b.enfileirar(t, incident.EventResolved)
+			ctx := context.Background()
+			lote, err := b.d.reivindicar(ctx)
+			if err != nil || len(lote) != 1 {
+				t.Fatalf("reivindicar = %v, %v; queria 1 notificação", lote, err)
+			}
+
+			err = b.d.persistir(ctx, lote[0], desfecho{status: tc.status})
+			if err == nil || !strings.Contains(err.Error(), fmt.Sprintf("%q", tc.status)) {
+				t.Fatalf("persistir = %v; queria erro citando o status %q", err, tc.status)
+			}
+
+			if l := b.estado(t, id); l.Status != "pending" || l.Attempts != 1 || l.Erro != nil || l.Enviada != nil {
+				t.Errorf("notificação: %+v; queria pending, 1 tentativa, sem erro e sem envio", l)
+			}
+			if c := b.canalVisto(t); c.Status != StatusVerified || c.LastError != "" || !c.LastFailureAt.IsZero() {
+				t.Errorf("canal: %+v; queria verified, sem motivo e sem falha", c)
+			}
+			if n := b.auditorias(t); n != 0 {
+				t.Errorf("%d entradas de auditoria, queria 0", n)
+			}
+		})
+	}
+}

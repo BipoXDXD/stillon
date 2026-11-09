@@ -220,6 +220,9 @@ describe('status page', () => {
     expect(await screen.findByRole('button', { name: 'Salvar' })).toBeInTheDocument()
     expect(screen.getByLabelText('Título')).toHaveValue('Minha salva')
     expect(screen.getAllByText('Já existe uma status page; recarregamos a que está salva.').length).toBeGreaterThan(0)
+    // Informa, e não é erro: não fica preso na tela à espera de um "X".
+    // Sabotagem: marcar o aviso como erro.
+    expect(screen.queryByRole('button', { name: 'Dispensar aviso' })).not.toBeInTheDocument()
   })
 
   it('editar manda no PATCH a lista inteira, reordenada e sem o item tirado', async () => {
@@ -290,6 +293,7 @@ describe('status page', () => {
     ).toBeInTheDocument()
     expect(await screen.findByRole('button', { name: 'Criar status page' })).toBeInTheDocument()
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Dispensar aviso' })).not.toBeInTheDocument()
   })
 
   // Como o I1: "Descer" (ou "Subir") que leva o item à ponta ficava
