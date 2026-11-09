@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -376,7 +377,15 @@ func apagarCookieDeRefresh(w http.ResponseWriter, secure bool) {
 // contrário do rate limit, esse dano não tem volta: linha já gravada com o
 // hash errado não se recupera.
 func (h *AuthHandlers) meta(r *http.Request) auth.Meta {
-	return auth.Meta{IP: middleware.ClientIP(r, h.proxies), UserAgent: r.UserAgent()}
+	return auth.Meta{IP: middleware.ClientIP(r, h.proxies), UserAgent: userAgentGravavel(r.UserAgent())}
+}
+
+// userAgentGravavel deixa o cabeçalho aceitável para a coluna text, que recusa
+// byte fora de UTF-8 e NUL. O valor é só informativo, então não justifica
+// recusar um login: o trecho ilegível vira U+FFFD e o resto se mantém.
+func userAgentGravavel(userAgent string) string {
+	const substituto = "�"
+	return strings.ReplaceAll(strings.ToValidUTF8(userAgent, substituto), "\x00", substituto)
 }
 
 // internal registra o erro real e devolve ao cliente apenas o envelope
