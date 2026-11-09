@@ -7,7 +7,9 @@ import io
 import json
 from pathlib import Path
 import sys
+import tempfile
 import unittest
+from unittest import mock
 import urllib.request
 from urllib.parse import parse_qs, urlparse
 import zipfile
@@ -242,6 +244,25 @@ class TesteArquivo(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "^not_age$"):
             ensaio.ler_cifrado(arquivo, com_digest(arquivo))
 
+    def test_entrada_de_diretorio_nao_conta_como_arquivo(self):
+        saida = io.BytesIO()
+        with zipfile.ZipFile(saida, "w") as z:
+            z.writestr("pasta/", b"")
+            z.writestr("pasta/stillon.dump.age", self.CIFRADO)
+        arquivo = saida.getvalue()
+        self.assertEqual(ensaio.ler_cifrado(arquivo, com_digest(arquivo)), self.CIFRADO)
+
+    def test_recusa_arquivo_acima_do_teto_sem_descompactar(self):
+        # Zeros comprimem para quase nada: o zip é pequeno, a entrada declarada não.
+        saida = io.BytesIO()
+        with zipfile.ZipFile(saida, "w", zipfile.ZIP_DEFLATED) as z:
+            z.writestr("stillon.dump.age", bytes(ensaio.TETO_DE_RESPOSTA + 1))
+        arquivo = saida.getvalue()
+        with mock.patch.object(zipfile.ZipFile, "read", autospec=True) as ler:
+            with self.assertRaisesRegex(RuntimeError, "^unexpected_archive$"):
+                ensaio.ler_cifrado(arquivo, com_digest(arquivo))
+        ler.assert_not_called()
+
 
 class TesteMetadados(unittest.TestCase):
     def test_le_o_que_o_backup_escreveu_no_log(self):
@@ -280,12 +301,79 @@ class TesteRedirecionamento(unittest.TestCase):
     def test_subdominio_parecido_nao_conta_como_a_api(self):
         self.assertFalse(self.redirecionar("https://api.github.com.exemplo.net/a").has_header("Authorization"))
 
+    def test_outro_host_do_github_nao_recebe_o_token(self):
+        # Só a API recebe o token, e não qualquer host sob github.com.
+        self.assertFalse(self.redirecionar("https://uploads.github.com/a").has_header("Authorization"))
+
     def test_dentro_da_api_o_token_continua(self):
         self.assertTrue(self.redirecionar("https://api.github.com/outro").has_header("Authorization"))
 
     def test_recusa_redirecionamento_sem_https(self):
         with self.assertRaisesRegex(RuntimeError, "^insecure_redirect$"):
             self.redirecionar("http://api.github.com/outro")
+
+
+class RespostaFalsa(io.BytesIO):
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *erro):
+        self.close()
+
+
+class TesteObter(unittest.TestCase):
+    def test_recusa_resposta_acima_do_teto(self):
+        abridor = mock.Mock()
+        abridor.open.return_value = RespostaFalsa(b"x" * (ensaio.TETO_DE_RESPOSTA + 1))
+        with mock.patch.object(ensaio.urllib.request, "build_opener", return_value=abridor):
+            obter = ensaio.criar_obter("token")
+            with self.assertRaisesRegex(RuntimeError, "^response_too_large$"):
+                obter("repos/x", True)
+
+
+class TesteIsolamento(unittest.TestCase):
+    """Os passos que tocam age e Docker. Só o teste do próprio rodar() abre um
+    subprocesso (o Python atual); nos outros, rodar() é falso e age e Docker não
+    são chamados."""
+
+    def test_passo_que_falha_vira_erro_nomeado(self):
+        with self.assertRaisesRegex(RuntimeError, "^isolated_step_failed$"):
+            ensaio.rodar([sys.executable, "-c", "raise SystemExit(3)"])
+
+    def test_recusa_o_que_nao_e_dump_do_postgres(self):
+        with tempfile.TemporaryDirectory() as pasta:
+            with mock.patch.object(ensaio, "rodar", return_value=b"texto qualquer"):
+                with self.assertRaisesRegex(RuntimeError, "^invalid_dump$"):
+                    ensaio.decifrar(b"age-encryption.org/v1\n", "AGE-SECRET-KEY-FALSA", Path(pasta))
+
+    def test_a_identidade_nao_fica_no_disco_depois_de_decifrar(self):
+        with tempfile.TemporaryDirectory() as pasta:
+            with mock.patch.object(ensaio, "rodar", return_value=b"PGDMP..."):
+                ensaio.decifrar(b"age-encryption.org/v1\n", "AGE-SECRET-KEY-FALSA", Path(pasta))
+            self.assertFalse((Path(pasta) / "identity").exists())
+
+    def test_a_identidade_sai_do_disco_mesmo_quando_o_age_falha(self):
+        with tempfile.TemporaryDirectory() as pasta:
+            with mock.patch.object(ensaio, "rodar", side_effect=RuntimeError("isolated_step_failed")):
+                with self.assertRaisesRegex(RuntimeError, "^isolated_step_failed$"):
+                    ensaio.decifrar(b"age-encryption.org/v1\n", "AGE-SECRET-KEY-FALSA", Path(pasta))
+            self.assertFalse((Path(pasta) / "identity").exists())
+
+    def test_nao_remove_container_sem_o_rotulo_do_ensaio(self):
+        chamadas = []
+
+        def rodar(argumentos):
+            chamadas.append(argumentos)
+            return b"outro-valor\n"
+
+        with mock.patch.object(ensaio, "rodar", side_effect=rodar):
+            with self.assertRaisesRegex(RuntimeError, "^cleanup_label_mismatch$"):
+                ensaio.remover_banco("stillon-ensaio-x")
+        self.assertEqual([a[:2] for a in chamadas], [["docker", "inspect"]])
+
+    def test_o_banco_do_ensaio_sobe_sem_rede(self):
+        argumentos = ensaio.argumentos_do_banco("stillon-ensaio-x")
+        self.assertEqual(argumentos[argumentos.index("--network") + 1], "none")
 
 
 URL = "https://github.com/BipoXDXD/stillon/actions/runs/1"
@@ -351,6 +439,16 @@ class TesteAviso(unittest.TestCase):
         gh = self.registrar("success", [issue(9)])
         self.assertEqual(gh.verbos(), ["close"])
         self.assertEqual(gh.chamada("close")[2], "9")
+
+    def test_sucesso_fecha_todas_as_issues_do_aviso(self):
+        gh = self.registrar("success", [issue(9), issue(12)])
+        self.assertEqual([a[2] for a in gh.chamadas if a[1] == "close"], ["9", "12"])
+
+    def test_a_consulta_pede_as_abertas_ate_o_teto(self):
+        # O padrão do gh é 30 issues: com mais abertas, o aviso nosso podia ficar de fora.
+        consulta = self.registrar("failure").chamada("list")
+        self.assertEqual(consulta[consulta.index("--state") + 1], "open")
+        self.assertEqual(consulta[consulta.index("--limit") + 1], "200")
 
     def test_sucesso_sem_issue_nao_faz_nada(self):
         self.assertEqual(self.registrar("success").verbos(), [])

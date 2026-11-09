@@ -3,6 +3,7 @@ import { CircleCheck } from 'lucide-react'
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { Link, useSearchParams } from 'react-router'
 import { useApi } from '@/app/contexto'
+import { aoApontarPreCarregar, carregarDetalhe } from '@/app/rotas-sob-demanda'
 import { EstadoDaConsulta } from '@/components/EstadoDaConsulta'
 import {
   periodoDoIncidente,
@@ -77,6 +78,7 @@ function Cartao({
               // O foco vem para cá depois do "Carregar mais".
               id={`incidente-${i.id}`}
               to={`/targets/${i.target_id}`}
+              {...aoApontarPreCarregar(carregarDetalhe)}
               className={cn('alvo-de-toque underline-offset-4 hover:underline', situacao === 'resolvido' && 'text-apagado')}
             >
               {i.target_name}

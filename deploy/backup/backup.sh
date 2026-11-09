@@ -15,7 +15,7 @@
 #
 # Códigos: 0 = dump restaurado e conferido; 3 = uma checagem da cópia falhou
 # (o dump não serve); 4 = dump restaurado e conferido, MAS o disco de produção
-# passou de 85%: o dump é bom e deve ser guardado, e quem chama falha depois.
+# chegou a 85% ou mais: o dump é bom e deve ser guardado, e quem chama falha depois.
 # Qualquer outro código (1 do pg_dump, por exemplo) = não houve backup.
 #
 # O dump só é dado como bom depois de restaurado e conferido. Texto claro
@@ -181,7 +181,7 @@ if [ -n "${VOLUME_BYTES:-}" ]; then
     if [ "$pct" -ge 85 ]; then
         # O backup acima já está conferido; 4 (e não 3) diz a quem chama que
         # ele deve ser cifrado e guardado mesmo assim.
-        echo "ERRO: acima de 85%: libere espaço ou aumente o disco" >&2
+        echo "ERRO: 85% ou mais: libere espaço ou aumente o disco" >&2
         exit 4
     elif [ "$pct" -ge 70 ]; then
         echo "AVISO: acima de 70% do volume"

@@ -53,9 +53,24 @@ SELECT drop_checks_partitions_before(sqlc.arg(cutoff)::timestamptz)::int;
 -- name: DeleteOldRollups :execrows
 DELETE FROM check_rollup_1h WHERE bucket < sqlc.arg(cutoff)::timestamptz;
 
--- Entregues, falhas e canceladas; pendente nunca sai por idade.
+-- Entregues, falhas e canceladas; pendente nunca sai por idade. Fica também a
+-- linha mais nova de cada par (incidente, canal) que ainda pode receber lembrete:
+-- ela é a base e o último seq de ListReminderCandidates, e um canal ou alvo
+-- pausado não gera linha nova por mais de 30 dias. O filtro não olha a pausa de
+-- propósito: a retenção pode rodar entre a retomada e o tique seguinte. Uma
+-- linha por par de incidente aberto é o teto do que sobra; ao fechar, ela sai.
 -- name: DeleteOldNotifications :execrows
-DELETE FROM notifications WHERE status <> 'pending' AND created_at < sqlc.arg(cutoff)::timestamptz;
+DELETE FROM notifications n
+ WHERE n.status <> 'pending' AND n.created_at < sqlc.arg(cutoff)::timestamptz
+   AND NOT EXISTS (
+        SELECT 1 FROM incidents i
+         WHERE i.id = n.incident_id
+           AND i.resolved_at IS NULL AND i.ack_at IS NULL AND i.open_notified_at IS NOT NULL
+           AND NOT EXISTS (
+                SELECT 1 FROM notifications mais_nova
+                 WHERE mais_nova.incident_id = n.incident_id
+                   AND mais_nova.channel_id = n.channel_id
+                   AND mais_nova.created_at > n.created_at));
 
 -- A idade do log de sinais (D15 da spec de heartbeats). O teto por heartbeat
 -- fica na transação do ping; esta cobre quem parou de pingar.

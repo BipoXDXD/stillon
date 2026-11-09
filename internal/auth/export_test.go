@@ -31,3 +31,11 @@ func RotacaoDe(pendente []byte) string { return rotacaoDe(pendente) }
 func (s *TOTP) ConsumirTimestep(ctx context.Context, userID uuid.UUID, step int64, sealed []byte) error {
 	return s.consumirTimestep(ctx, userID, step, sealed)
 }
+
+// Len diz quantos dispositivos o contador acompanha, para observar a varredura
+// dos parados.
+func (d *Devices) Len() int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return len(d.contas)
+}

@@ -4,9 +4,9 @@ import { Link, useSearchParams } from 'react-router'
 import { useAnunciar } from '@/components/Anunciador'
 import { EstadoDaConsulta } from '@/components/EstadoDaConsulta'
 import { Titulo } from '@/components/Titulo'
-import { Botao, BotaoQueSome } from '@/components/ui/botao'
+import { Botao, BotaoQueSome, TITULO_DA_TELA } from '@/components/ui/botao'
 import { estiloDeCartao } from '@/components/ui/cartao'
-import { useCanais, useHeartbeats, useIncidentesAbertos, useResolvidosRecentes, useResumo, useResumoFiltrado } from '@/lib/api/consultas'
+import { useCanais, useHeartbeats, useIncidentesAbertos, useResolvidosRecentes, useResumo, useResumoFiltrado, useSemRede } from '@/lib/api/consultas'
 import { mensagemDe } from '@/lib/api/mensagens'
 import type { Heartbeat, ItemDoResumo } from '@/lib/api/schemas'
 import { cn } from '@/lib/utils'
@@ -25,7 +25,7 @@ import {
   type Filtros,
 } from './filtros'
 import { linhaDoAlvo, linhaDoHeartbeat } from './linhas'
-import { detalheDaManchete, fraseDoUltimoResolvido, manchete, metaDoPainel, textoDaManchete, type Tarefas } from './manchete'
+import { detalheDaManchete, fraseDoUltimoResolvido, manchete, mancheteSemRede, metaDoPainel, textoDaManchete, type Tarefas } from './manchete'
 import { comOrdem, lerOrdem, ordenarLinhas, type Ordem } from './ordem'
 import { TabelaDeMonitores } from './TabelaDeMonitores'
 import { anunciaveis, mapaDeEstados, transicoes } from './transicoes'
@@ -33,6 +33,7 @@ import { anunciaveis, mapaDeEstados, transicoes } from './transicoes'
 export function PaginaPainel() {
   const consulta = useResumo()
   const heartbeats = useHeartbeats()
+  const semRede = useSemRede()
   const anunciar = useAnunciar()
   const anterior = useRef<ReturnType<typeof mapaDeEstados> | null>(null)
   const itens = consulta.data?.items
@@ -68,8 +69,9 @@ export function PaginaPainel() {
       <EstadoDaConsulta consulta={consulta} esqueleto={<EsqueletoDoPainel />}>
         {(d) =>
           // Até a primeira resposta das tarefas, o esqueleto: a manchete não
-          // fala do que ainda não sabe.
-          heartbeats.isPending ? (
+          // fala do que ainda não sabe. Sem rede essa resposta não vem, e a
+          // manchete já diz que não dá para conferir.
+          heartbeats.isPending && !semRede ? (
             <EsqueletoDoPainel />
           ) : (
             <>
@@ -91,9 +93,9 @@ function AvisoDasTarefas({ erro, aoTentar }: { erro: unknown; aoTentar: () => vo
   return (
     <output className="flex flex-wrap items-center gap-3 rounded-padrao border border-perigo p-3 text-sm">
       <span>Não foi possível conferir as tarefas agora ({mensagemDe(erro)}).</span>
-      <Botao tipo="secundario" tamanho="pequeno" onClick={aoTentar}>
+      <BotaoQueSome tipo="secundario" tamanho="pequeno" reserva={TITULO_DA_TELA} onClick={aoTentar}>
         Tentar de novo
-      </Botao>
+      </BotaoQueSome>
     </output>
   )
 }
@@ -210,7 +212,8 @@ function ResultadoDosFiltros({
 
 // A frase de estado no topo (spec do redesign, Telas > 1), em Fraunces.
 function Manchete({ itens, tarefas, atualizadoEm }: PropsDosMonitores) {
-  const m = manchete(itens, tarefas)
+  const conhecida = manchete(itens, tarefas)
+  const m = useSemRede() ? mancheteSemRede(conhecida) : conhecida
   const resolvidos = useResolvidosRecentes(m.tipo === 'tudo-no-ar')
   if (m.tipo === 'sem-alvos') {
     return (
@@ -237,7 +240,7 @@ function Manchete({ itens, tarefas, atualizadoEm }: PropsDosMonitores) {
         )}
         <h2 className="text-2xl sm:text-3xl">{textoDaManchete(m)}</h2>
       </div>
-      {detalhe && <p className="text-suave">{detalhe}</p>}
+      {detalhe && m.tipo !== 'sem-rede' && <p className="text-suave">{detalhe}</p>}
       <p className="text-meta text-apagado">{metaDoPainel(itens, tarefas, atualizadoEm)}</p>
     </div>
   )

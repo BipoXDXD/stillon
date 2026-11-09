@@ -1,6 +1,7 @@
 package safedial_test
 
 import (
+	"context"
 	"errors"
 	"io"
 	"net"
@@ -27,6 +28,7 @@ func TestCheckRedirectComparesCanonicalIDNAHosts(t *testing.T) {
 		{"Unicode e punycode do mesmo domínio", "https://straße.de/", "https://xn--strae-oqa.de/", false},
 		{"caixa do mesmo domínio IDN", "https://BÜCHER.example/", "https://bücher.example/", false},
 		{"host Unicode inválido", "https://exemplo.com/", "https://\u200d.example/", true},
+		{"dois hosts inválidos não são o mesmo destino", "https://\u200d.example/", "https://\u200d.example/x", true},
 	} {
 		t.Run(caso.nome, func(t *testing.T) {
 			origem, err := url.Parse(caso.origem)
@@ -330,5 +332,39 @@ func TestTransportLeavesTheDeadlineToTheContext(t *testing.T) {
 func TestTransportCapsTheResponseHeaders(t *testing.T) {
 	if got := safedial.NewTransport().MaxResponseHeaderBytes; got != 64<<10 {
 		t.Errorf("MaxResponseHeaderBytes = %d, queria %d (64 KiB)", got, 64<<10)
+	}
+}
+
+// Com o context já cancelado, o dial desiste antes de conectar, e nenhum caso
+// depende da resposta do DNS. O nome com domínio usa .invalid (RFC 2606): o Go
+// pode iniciar a consulta em segundo plano antes de ver o cancelamento, e ela
+// não pode sair com um domínio real. O nome de rótulo único é recusado antes da
+// resolução, e o IP literal não passa por essa regra: um IPv6 não tem ponto, e
+// quem o decide é o ControlContext.
+func TestDialContextAppliesTheSingleLabelRuleOnlyToNames(t *testing.T) {
+	cases := []struct {
+		nome, endereco string
+		quer           error
+	}{
+		{"rótulo único", "intranet:80", safedial.ErrBlocked},
+		{"rótulo único com ponto final", "intranet.:80", safedial.ErrBlocked},
+		{"nome com domínio", "stillon-e2e.invalid:80", context.Canceled},
+		{"IPv4 literal", "8.8.8.8:80", context.Canceled},
+		{"IPv6 literal", "[2606:4700:4700::1111]:443", context.Canceled},
+	}
+	transport := safedial.NewClient(0).Transport.(*http.Transport)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	for _, c := range cases {
+		t.Run(c.nome, func(t *testing.T) {
+			conn, err := transport.DialContext(ctx, "tcp", c.endereco)
+			if conn != nil {
+				conn.Close()
+				t.Fatal("a conexão abriu com o context cancelado")
+			}
+			if !errors.Is(err, c.quer) {
+				t.Errorf("DialContext(%s) = %v, queria %v", c.endereco, err, c.quer)
+			}
+		})
 	}
 }

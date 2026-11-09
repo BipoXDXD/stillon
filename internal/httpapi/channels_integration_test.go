@@ -4,9 +4,11 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
+	"testing/iotest"
 	"time"
 
 	"github.com/google/uuid"
@@ -186,6 +188,69 @@ func TestEmailVerificationThroughTheBrowser(t *testing.T) {
 	if cs := canaisDe(t, a, tok); cs[0].Status != "verified" {
 		t.Errorf("depois do POST, status = %s", cs[0].Status)
 	}
+}
+
+// corpoAcimaDoTetoDeVerify é um byte a mais que o teto de 1 KiB do formulário.
+const corpoAcimaDoTetoDeVerify = 1<<10 + 1
+
+// criarCanalPendente cadastra um e-mail e devolve a sessão do dono e o token
+// recebido no link de verificação.
+func criarCanalPendente(t *testing.T, a *api) (sessao, tokenVerificacao string) {
+	t.Helper()
+	sessao = tokenDe(t, a, a.userID)
+	resp := chamar(t, a, http.MethodPost, "/api/v1/channels", sessao, map[string]string{"kind": "email", "email": "pessoa@exemplo.com"})
+	var criado canalJSON
+	lerCorpo(t, resp, &criado)
+	if resp.StatusCode != http.StatusCreated || criado.Status != "pending" {
+		t.Fatalf("POST deu %d: %+v", resp.StatusCode, criado)
+	}
+	return sessao, a.email.token(t)
+}
+
+func confirmarComCorpo(a *api, tokenVerificacao string, corpo io.Reader) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(http.MethodPost, "/verify/"+tokenVerificacao, corpo)
+	rec := httptest.NewRecorder()
+	a.srv.Config.Handler.ServeHTTP(rec, req)
+	return rec
+}
+
+func exigirStatusDoCanal(t *testing.T, a *api, sessao, quer string) {
+	t.Helper()
+	if cs := canaisDe(t, a, sessao); len(cs) != 1 || cs[0].Status != quer {
+		t.Errorf("canais = %+v, queria um só com status %s", cs, quer)
+	}
+}
+
+// O corpo é recusado antes do banco: o token continua valendo para o envio
+// legítimo que vier depois.
+func TestVerifyBodyOverCeilingKeepsTokenUsable(t *testing.T) {
+	a := newAPI(t)
+	sessao, token := criarCanalPendente(t, a)
+
+	recusado := confirmarComCorpo(a, token, strings.NewReader(strings.Repeat("x", corpoAcimaDoTetoDeVerify)))
+	if recusado.Code != http.StatusRequestEntityTooLarge {
+		t.Errorf("corpo acima do teto deu %d, queria 413", recusado.Code)
+	}
+	exigirStatusDoCanal(t, a, sessao, "pending")
+
+	aceito := confirmarComCorpo(a, token, nil)
+	if aceito.Code != http.StatusOK {
+		t.Errorf("POST sem corpo excedente deu %d, queria 200", aceito.Code)
+	}
+	exigirStatusDoCanal(t, a, sessao, "verified")
+}
+
+// Corpo que falha no meio da leitura (conexão cortada, chunked truncado) não
+// é corpo grande: responde 400 e não confirma.
+func TestVerifyBodyReadFailureIs400AndConfirmsNothing(t *testing.T) {
+	a := newAPI(t)
+	sessao, token := criarCanalPendente(t, a)
+
+	rec := confirmarComCorpo(a, token, iotest.ErrReader(io.ErrUnexpectedEOF))
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("falha de leitura deu %d, queria 400", rec.Code)
+	}
+	exigirStatusDoCanal(t, a, sessao, "pending")
 }
 
 func TestUnknownVerifyTokenIs404(t *testing.T) {

@@ -160,7 +160,10 @@ func (h *TargetHandlers) List(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	q := r.URL.Query()
+	q, ok := consultaPermitida(w, r, parametrosDaPagina)
+	if !ok {
+		return
+	}
 
 	limit := targets.DefaultPageSize
 	if s := q.Get("limit"); s != "" {
@@ -406,11 +409,10 @@ type targetSummaryResponse struct {
 	Spark          []sparkResponse `json:"spark"`
 }
 
-// parametrosDoResumo é a allowlist de ?: um parâmetro desconhecido é 400, e
-// nunca um filtro ignorado que devolveria a lista inteira como se tivesse
-// filtrado. Pelo mesmo motivo a query passa por url.ParseQuery: r.URL.Query()
-// descarta em silêncio o par que não sabe ler (?tag=%zz, ?tag=a;tag=b).
-var parametrosDoResumo = []string{"tag", "state"}
+var (
+	parametrosDoResumo = []string{"tag", "state"}
+	parametrosDaPagina = []string{"limit", "cursor"}
+)
 
 const campoDaConsulta = "query"
 
@@ -422,17 +424,9 @@ func (h *TargetHandlers) Summary(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	q, err := url.ParseQuery(r.URL.RawQuery)
-	if err != nil {
-		campoInvalido(w, r, campoDaConsulta, targets.ReasonInvalid)
+	q, ok := consultaPermitida(w, r, parametrosDoResumo)
+	if !ok {
 		return
-	}
-	for chave := range q {
-		if !slices.Contains(parametrosDoResumo, chave) {
-			// Nome fixo: a chave é de quem chama e não tem limite de tamanho.
-			campoInvalido(w, r, campoDaConsulta, targets.ReasonInvalid)
-			return
-		}
 	}
 	filtro, verr := targets.ParseSummaryFilter(q["tag"], q["state"])
 	if h.falhou(w, r, "filtrar resumo", validacaoOuNada(verr)) {
@@ -460,6 +454,28 @@ func (h *TargetHandlers) Summary(w http.ResponseWriter, r *http.Request) {
 		itens = append(itens, item)
 	}
 	apierr.WriteJSON(w, http.StatusOK, map[string]any{"items": itens})
+}
+
+// consultaPermitida lê a query com a allowlist da rota: um parâmetro
+// desconhecido é 400, e nunca um filtro ignorado que devolveria a lista
+// inteira como se tivesse filtrado. Pelo mesmo motivo ela passa por
+// url.ParseQuery: r.URL.Query() descarta em silêncio o par que não sabe ler
+// (?tag=%zz, ?tag=a;tag=b). Parâmetro repetido é aceito, e quem usa q.Get fica
+// com o primeiro valor.
+func consultaPermitida(w http.ResponseWriter, r *http.Request, permitidos []string) (url.Values, bool) {
+	q, err := url.ParseQuery(r.URL.RawQuery)
+	if err != nil {
+		campoInvalido(w, r, campoDaConsulta, targets.ReasonInvalid)
+		return nil, false
+	}
+	for chave := range q {
+		if !slices.Contains(permitidos, chave) {
+			// Nome fixo: a chave é de quem chama e não tem limite de tamanho.
+			campoInvalido(w, r, campoDaConsulta, targets.ReasonInvalid)
+			return nil, false
+		}
+	}
+	return q, true
 }
 
 // validacaoOuNada evita o nil tipado: um *ValidationError nulo dentro de um

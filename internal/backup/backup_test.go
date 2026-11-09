@@ -31,6 +31,15 @@ func TestURIRejectsSecretsAndPolicyOverrides(t *testing.T) {
 	}
 }
 
+// Usuário vazio e fragmento passam pelo url.Parse; a recusa é da validação.
+func TestURIRejectsEmptyUserAndFragment(t *testing.T) {
+	for _, uri := range []string{"postgresql://@localhost/stillon", "postgresql://backup@localhost/stillon#frag"} {
+		if err := validateURI(uri); err == nil {
+			t.Errorf("URI inválida aceita: %q", uri)
+		}
+	}
+}
+
 func TestURIKeepsLibpqParameters(t *testing.T) {
 	for _, uri := range []string{"postgresql://backup@localhost/stillon?sslmode=disable&gssencmode=disable", "postgres://backup@localhost/stillon?target_session_attrs=read-write", "postgresql://backup@/stillon?host=%2Fvar%2Frun%2Fpostgresql", "postgresql://back%75p@localhost/stillon?sslmode=require&channel_binding=prefer"} {
 		if err := validateURI(uri); err != nil {
@@ -48,6 +57,99 @@ func TestReferenceRejectsPartialNullOverflowAndExtraFields(t *testing.T) {
 	_, ref, err := parseReference("00000003-0000001A-1|21|0|4\n")
 	if err != nil || ref != (Reference{21, 0, 4}) {
 		t.Fatalf("referência correta: %+v %v", ref, err)
+	}
+}
+
+// Cada linha abaixo seria aceita sem a regra que o nome diz: o ParseInt aceita
+// "+1", e o regex sem âncoras acha o snapshot no meio do lixo.
+func TestReferenceRejectsSignsLongLinesAndUnanchoredIDs(t *testing.T) {
+	for nome, line := range map[string]string{
+		"sinal de mais":      "00000003-0000001A-1|+1|2|3\n",
+		"lixo antes do id":   "x00000003-0000001A-1|1|2|3\n",
+		"lixo depois do id":  "00000003-0000001A-1x|1|2|3\n",
+		"linha acima de 512": strings.Repeat("0", 500) + "3-0000001A-1|1|2|3\n",
+	} {
+		t.Run(nome, func(t *testing.T) {
+			if _, _, err := parseReference(line); err == nil {
+				t.Errorf("referência inválida aceita: %q", line)
+			}
+		})
+	}
+}
+
+// PGCONNECT_TIMEOUT arredonda para cima, com piso de 1: zero desligaria o prazo.
+func TestSourceEnvironmentRoundsTheConnectTimeoutUp(t *testing.T) {
+	for _, tc := range []struct {
+		prazo time.Duration
+		quer  string
+	}{
+		{0, "PGCONNECT_TIMEOUT=1"},
+		{1500 * time.Millisecond, "PGCONNECT_TIMEOUT=2"},
+		{2 * time.Second, "PGCONNECT_TIMEOUT=2"},
+	} {
+		got := ""
+		for _, item := range sourceEnv(nil, "s", "a", "o", tc.prazo) {
+			if strings.HasPrefix(item, "PGCONNECT_TIMEOUT=") {
+				got = item
+			}
+		}
+		if got != tc.quer {
+			t.Errorf("prazo %s: %q, queria %q", tc.prazo, got, tc.quer)
+		}
+	}
+}
+
+// Variável PG em minúsculas também fica de fora: o filtro não depende da caixa.
+func TestSourceEnvironmentDropsLowercasePGVariables(t *testing.T) {
+	env := sourceEnv([]string{"PATH=/fixed", "pgservice=external"}, "s", "a", "o", time.Second)
+	for _, item := range env {
+		if strings.HasPrefix(item, "pgservice=") {
+			t.Fatalf("ambiente herdou %q", item)
+		}
+	}
+}
+
+func TestInputRejectsEmptyOrNULPassword(t *testing.T) {
+	for _, senha := range []string{"", "a\x00b"} {
+		if err := validarEntrada("postgresql://backup@localhost/stillon", senha, "/tmp/saida"); err == nil {
+			t.Errorf("senha %q aceita", senha)
+		}
+	}
+}
+
+// Contexto já cancelado volta antes de tudo, com a causa, e sem criar a saída.
+func TestCanceledContextFailsBeforeCreatingTheOutput(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	saida := filepath.Join(t.TempDir(), "dump")
+	o := defaultOptions()
+	o.protectParent = false
+	if _, err := run(ctx, "postgresql://backup@localhost/stillon", "source-secret", saida, o); !errors.Is(err, context.Canceled) {
+		t.Fatalf("erro = %v, queria context.Canceled", err)
+	}
+	if _, err := os.Stat(saida); !os.IsNotExist(err) {
+		t.Fatal("contexto cancelado criou a saída")
+	}
+}
+
+// Os prazos vão ao Postgres em milissegundos, com piso de 1 ms: zero desligaria
+// o prazo (statement_timeout=0 é "sem limite").
+func TestMillisecondsHasAFloorOfOne(t *testing.T) {
+	for _, tc := range []struct {
+		d    time.Duration
+		quer int64
+	}{{0, 1}, {500 * time.Microsecond, 1}, {1500 * time.Microsecond, 1}, {2 * time.Second, 2000}} {
+		if got := milissegundos(tc.d); got != tc.quer {
+			t.Errorf("milissegundos(%s) = %d, queria %d", tc.d, got, tc.quer)
+		}
+	}
+}
+
+func TestExporterOptionsCarryEveryTimeout(t *testing.T) {
+	o := defaultOptions()
+	quer := "-c transaction_timeout=600000 -c idle_in_transaction_session_timeout=600000 -c statement_timeout=30000 -c lock_timeout=10000 -c client_connection_check_interval=1000"
+	if got := opcoesDoExportador(o); got != quer {
+		t.Errorf("opções = %q\nqueria   %q", got, quer)
 	}
 }
 
@@ -75,6 +177,7 @@ var falhaEsperada = map[string]string{
 	"extra-output":      "fechamento do exportador inválido",
 	"exporter-error":    "exportador não encerrou corretamente",
 	"remaining-session": "checagem das sessões interrompida",
+	"dirty-clear":       "checagem das sessões inválida",
 	"blocked-read":      "protocolo da origem interrompido ou excessivo",
 	"closed-stdout":     "exportador não encerrou corretamente",
 }
@@ -83,7 +186,7 @@ func TestSupervisorDoesNotAcceptFailedOrUnclosedClients(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("supervisor exige Linux")
 	}
-	for _, mode := range []string{"good", "bad-reference", "overflow", "sql-error", "dump-error", "extra-output", "exporter-error", "remaining-session", "blocked-read", "closed-stdout"} {
+	for _, mode := range []string{"good", "bad-reference", "overflow", "sql-error", "dump-error", "extra-output", "exporter-error", "remaining-session", "dirty-clear", "blocked-read", "closed-stdout"} {
 		t.Run(mode, func(t *testing.T) {
 			dir := t.TempDir()
 			psql, dump := clientesFalsos(t, dir)
@@ -131,7 +234,9 @@ func clientesFalsos(t *testing.T, dir string) (psql, dump string) {
 	dump = filepath.Join(dir, "pg_dump")
 	script := `#!/bin/sh
 if [ -n "${PGHOST:-}" ] || [ "${PGPASSWORD:-}" != "source-secret" ]; then exit 9; fi
+if [ -n "${BACKUP_LOG:-}" ]; then printf 'psql %s\n' "$*" >> "$BACKUP_LOG"; fi
 while IFS= read -r line; do
+if [ -n "${BACKUP_LOG:-}" ]; then printf 'stdin %s\n' "$line" >> "$BACKUP_LOG"; fi
 case "$line" in
  *pg_export_snapshot*)
   case "$BACKUP_TEST_MODE" in
@@ -141,7 +246,7 @@ case "$line" in
    blocked-read) :;;
    *) printf '00000003-0000001A-1|21|2|3\n';;
   esac;;
- *pg_stat_clear_snapshot*) printf '\n';;
+ *pg_stat_clear_snapshot*) if [ "$BACKUP_TEST_MODE" = dirty-clear ]; then printf 'x\n'; else printf '\n'; fi;;
  *pg_stat_activity*) if [ "$BACKUP_TEST_MODE" = remaining-session ]; then printf '1\n'; else printf '0\n'; fi;;
  ROLLBACK*) if [ "$BACKUP_TEST_MODE" = extra-output ]; then printf 'extra\n'; fi;;
  '\q') if [ "$BACKUP_TEST_MODE" = closed-stdout ]; then trap '' TERM; exec 1>&-; exec sleep 60; fi; if [ "$BACKUP_TEST_MODE" = exporter-error ]; then exit 3; fi;exit 0;;
@@ -152,7 +257,7 @@ exit 0
 	if err := os.WriteFile(psql, []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
-	dumpScript := "#!/bin/sh\ncase \"$BACKUP_TEST_MODE\" in\n dump-error) exit 1;;\n dump-timeout) exec sleep 5;;\nesac\nexit 0\n"
+	dumpScript := "#!/bin/sh\nif [ -n \"${BACKUP_LOG:-}\" ]; then printf 'pg_dump %s\\n' \"$*\" >> \"$BACKUP_LOG\"; fi\ncase \"$BACKUP_TEST_MODE\" in\n dump-error) exit 1;;\n dump-timeout) exec sleep 5;;\nesac\nexit 0\n"
 	if err := os.WriteFile(dump, []byte(dumpScript), 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -302,5 +407,127 @@ func TestProtocolRejectsOversizedPrefixWithoutWaitingForEOF(t *testing.T) {
 			t.Fatal("cleanup após cancelamento ficou preso")
 		}
 		t.Fatal("prefixo excessivo esperou newline/EOF")
+	}
+}
+
+// rodarBom roda o supervisor com os clientes falsos no modo bom, registrando
+// em log os argumentos e a entrada de cada cliente. depois roda logo após a
+// referência, antes do dump (o gancho afterReference).
+func rodarBom(t *testing.T, depois func(saida string) error) (log []string, saida string, err error) {
+	t.Helper()
+	dir := t.TempDir()
+	psql, dump := clientesFalsos(t, dir)
+	arquivoLog := filepath.Join(dir, "log")
+	t.Setenv("BACKUP_TEST_MODE", "good")
+	t.Setenv("BACKUP_LOG", arquivoLog)
+	saida = filepath.Join(dir, "dump")
+	o := opcoesDeTeste(psql, dump)
+	if depois != nil {
+		o.afterReference = func(context.Context, Reference) error { return depois(saida) }
+	}
+	_, err = run(context.Background(), "postgresql://backup@localhost/stillon", "source-secret", saida, o)
+	texto, lerErr := os.ReadFile(arquivoLog)
+	if lerErr != nil {
+		t.Fatal(lerErr)
+	}
+	return strings.Split(strings.TrimSuffix(string(texto), "\n"), "\n"), saida, err
+}
+
+func linhaQueComeca(log []string, prefixo string) string {
+	for _, l := range log {
+		if strings.HasPrefix(l, prefixo) {
+			return l
+		}
+	}
+	return ""
+}
+
+// O pg_dump lê o snapshot exportado, com prazo de lock; o psql para no
+// primeiro erro e nunca pede senha no terminal.
+func TestClientsReceiveTheSnapshotAndSafetyArguments(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("supervisor exige Linux")
+	}
+	log, _, err := rodarBom(t, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dump, psql := linhaQueComeca(log, "pg_dump "), linhaQueComeca(log, "psql ")
+	for _, arg := range []string{"--snapshot=00000003-0000001A-1", "--lock-wait-timeout=10000", "--no-password"} {
+		if !strings.Contains(dump, " "+arg+" ") {
+			t.Errorf("pg_dump sem %s: %q", arg, dump)
+		}
+	}
+	for _, arg := range []string{"--no-password", "ON_ERROR_STOP=1"} {
+		if !strings.Contains(psql, " "+arg+" ") {
+			t.Errorf("psql sem %s: %q", arg, psql)
+		}
+	}
+}
+
+// A referência sai de uma transação REPEATABLE READ somente leitura, e a
+// contagem de sessões da execução não conta a própria conexão do exportador.
+func TestExporterQueriesPinTheSnapshotAndSkipItsOwnSession(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("supervisor exige Linux")
+	}
+	log, _, err := rodarBom(t, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := linhaQueComeca(log, "stdin BEGIN"); got != "stdin BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY;" {
+		t.Errorf("abertura da transação = %q", got)
+	}
+	if got := linhaQueComeca(log, "stdin SELECT count(*) FROM pg_stat_activity"); !strings.HasSuffix(got, " AND pid<>pg_backend_pid();") {
+		t.Errorf("contagem de sessões = %q, queria excluir a própria conexão", got)
+	}
+}
+
+// Um erro do gancho depois da referência para tudo antes do dump.
+func TestAfterReferenceErrorStopsBeforeTheDump(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("supervisor exige Linux")
+	}
+	log, saida, err := rodarBom(t, func(string) error { return errors.New("parar") })
+	if err == nil || !strings.HasPrefix(err.Error(), "preparação interrompida") {
+		t.Fatalf("erro = %v, queria a preparação interrompida", err)
+	}
+	if linhaQueComeca(log, "pg_dump ") != "" {
+		t.Error("o dump rodou depois do erro do gancho")
+	}
+	if _, e := os.Stat(saida); !os.IsNotExist(e) {
+		t.Error("falha deixou artefato próprio")
+	}
+}
+
+// A saída com a permissão alterada durante a execução não é aceita.
+func TestOutputWithChangedPermissionIsRejected(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("supervisor exige Linux")
+	}
+	_, _, err := rodarBom(t, func(saida string) error { return os.Chmod(saida, 0644) })
+	if err == nil || !strings.HasPrefix(err.Error(), "saída da execução foi substituída ou alterada") {
+		t.Fatalf("erro = %v, queria a saída recusada", err)
+	}
+}
+
+// A saída trocada por outro arquivo durante a execução não é aceita, e o
+// descarte não apaga o arquivo que não é desta execução. O original é
+// renomeado, e não apagado, para que o substituto não reaproveite o inode.
+func TestReplacedOutputIsRejectedAndTheImpostorKept(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("supervisor exige Linux")
+	}
+	_, saida, err := rodarBom(t, func(saida string) error {
+		if err := os.Rename(saida, saida+".original"); err != nil {
+			return err
+		}
+		return os.WriteFile(saida, []byte("alheio"), 0600)
+	})
+	if err == nil || !strings.HasPrefix(err.Error(), "saída da execução foi substituída ou alterada") {
+		t.Fatalf("erro = %v, queria a saída recusada", err)
+	}
+	if got, e := os.ReadFile(saida); e != nil || string(got) != "alheio" {
+		t.Fatalf("o descarte mexeu no arquivo alheio: %q %v", got, e)
 	}
 }
