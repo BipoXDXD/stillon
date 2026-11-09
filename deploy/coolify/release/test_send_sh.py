@@ -421,7 +421,9 @@ class SendShTests(unittest.TestCase):
     # Defect: a jq failure inside the `if` reads as "not an index" instead of stopping the release.
     def test_manifest_that_jq_cannot_read_stops_before_publishing(self) -> None:
         # Real jq here: its exit status for each of these varies by version, so only "not 0".
-        for manifest in ("", "[]", '"s"', "this is not json"):
+        index_first = '{"manifests": []}\n{"schemaVersion": 2}'
+        single_first = '{"schemaVersion": 2}\n{"manifests": []}'
+        for manifest in ("", "[]", '"s"', "null", index_first, single_first, "this is not json"):
             with self.subTest(manifest=manifest):
                 bench = self.bench()
                 bench.reply_manifest(manifest)
