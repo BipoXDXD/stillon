@@ -80,6 +80,56 @@ describe('pré-carga do chunk', () => {
   })
 })
 
+describe('pré-carga com economia de dados', () => {
+  const economia = (saveData: boolean) => Object.defineProperty(navigator, 'connection', { value: { saveData }, configurable: true })
+  const ociosoImediato = () =>
+    vi.spyOn(window, 'requestIdleCallback').mockImplementation((fn) => {
+      fn({ didTimeout: false, timeRemaining: () => 50 })
+      return 1
+    })
+
+  afterEach(() => {
+    Reflect.deleteProperty(navigator, 'connection')
+  })
+
+  // Sabotagem: tirar a checagem do saveData.
+  it('ligada, nenhum chunk chega em ocioso', async () => {
+    economia(true)
+    const ocioso = ociosoImediato()
+    await renderizarPainel('/channels')
+    await screen.findByRole('navigation', { name: 'Principal' })
+    expect(ocioso).not.toHaveBeenCalled()
+    expect(carregarDetalhe).not.toHaveBeenCalled()
+    expect(carregarConfiguracoes).not.toHaveBeenCalled()
+  })
+
+  // Sabotagem: não pré-carregar em ocioso em nenhum caso, ou inverter a checagem.
+  it('desligada, os dois chunks chegam em ocioso', async () => {
+    economia(false)
+    ociosoImediato()
+    await renderizarPainel('/channels')
+    await screen.findByRole('navigation', { name: 'Principal' })
+    expect(carregarDetalhe).toHaveBeenCalled()
+    expect(carregarConfiguracoes).toHaveBeenCalled()
+  })
+
+  // Sabotagem: levar a checagem do saveData para o preCarregar.
+  it('ligada, passar o ponteiro na aba ainda pede o chunk', async () => {
+    economia(true)
+    const r = await renderizarPainel('/channels')
+    await r.usuario.hover(await aba('Conta'))
+    expect(carregarConfiguracoes).toHaveBeenCalledTimes(1)
+  })
+
+  // Sabotagem: levar a checagem do saveData para o preCarregar.
+  it('ligada, focar a aba ainda pede o chunk', async () => {
+    economia(true)
+    await renderizarPainel('/channels')
+    fireEvent.focus(await aba('Conta'))
+    expect(carregarConfiguracoes).toHaveBeenCalledTimes(1)
+  })
+})
+
 describe('quandoOcioso', () => {
   it('usa o requestIdleCallback, e cancela por ele', () => {
     const pedir = vi.spyOn(window, 'requestIdleCallback').mockReturnValue(7)

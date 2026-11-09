@@ -57,16 +57,33 @@ export function pontosPorGrupoDoP95(pontos: number, larguraPx: number): number {
   return Math.max(1, Math.ceil((pontos * PX_POR_PONTO_DO_P95) / larguraPx))
 }
 
+// p95DoTrecho: o valor do ponto, na chave do trecho do traço a que ele pertence.
+export type PontoDoTraco = PontoHorario & { p95DoTrecho: Record<number, number> }
+
 // Só o traço fica aproximado: a faixa, a mediana, o tooltip e a tabela seguem
 // com o p95 exato de cada hora.
-export function comP95Reduzido(pontos: readonly PontoHorario[], porGrupo: number): PontoHorario[] {
-  if (porGrupo <= 1) return [...pontos]
+//
+// O Recharts liga todos os nulos de uma série ou nenhum, e aqui eles são de
+// dois tipos: as horas entre os pontos do traço, que têm de ser ligadas, e o
+// grupo sem nenhum p95, a lacuna real. Cada lacuna abre um trecho novo, e cada
+// trecho é uma Line que liga só os próprios pontos.
+export function comP95Reduzido(pontos: readonly PontoHorario[], porGrupo: number): PontoDoTraco[] {
+  let trecho = 0
   return pontos.map((p, i) => {
     const inicio = i - (i % porGrupo)
     const grupo = pontos.slice(inicio, inicio + porGrupo)
-    const ehODoMeio = i === inicio + Math.floor(grupo.length / 2)
-    return { ...p, p95: ehODoMeio ? medianaDoP95(grupo) : null }
+    if (i !== inicio + Math.floor(grupo.length / 2)) return { ...p, p95: null, p95DoTrecho: {} }
+    const p95 = medianaDoP95(grupo)
+    if (p95 === null) {
+      trecho += 1
+      return { ...p, p95, p95DoTrecho: {} }
+    }
+    return { ...p, p95, p95DoTrecho: { [trecho]: p95 } }
   })
+}
+
+export function trechosDoP95(pontos: readonly PontoDoTraco[]): number[] {
+  return [...new Set(pontos.flatMap((p) => Object.keys(p.p95DoTrecho).map(Number)))]
 }
 
 function medianaDoP95(grupo: readonly PontoHorario[]): number | null {

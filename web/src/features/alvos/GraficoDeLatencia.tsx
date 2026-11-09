@@ -11,6 +11,7 @@ import {
   pontosBrutos,
   pontosHorarios,
   pontosPorGrupoDoP95,
+  trechosDoP95,
   type PontoBruto,
   type PontoHorario,
 } from './serie'
@@ -51,7 +52,8 @@ export function GraficoDeLatencia({ serie, descritoPor }: { serie: Serie; descri
   const descricao = [descritoPor, pico ? idDoPico : undefined].filter(Boolean).join(' ') || undefined
   const larguraDoY = larguraDoEixo(`${escala.teto} ms`)
   const porGrupo = pontosPorGrupoDoP95(pontosDaHora.length, largura - larguraDoY - MARGEM.right - MARGEM.left)
-  const dados: (PontoBruto | PontoHorario)[] = horaria ? comP95Reduzido(pontosDaHora, porGrupo) : pontosDoCheck
+  const dadosDaHora = comP95Reduzido(pontosDaHora, porGrupo)
+  const dados: (PontoBruto | PontoHorario)[] = horaria ? dadosDaHora : pontosDoCheck
   return (
     <div className="space-y-3">
       {/* O nome e a descrição ficam no <svg> do Recharts, que é o que recebe
@@ -110,17 +112,20 @@ export function GraficoDeLatencia({ serie, descritoPor }: { serie: Serie; descri
                     que a torna visível. Na Area, o contorno desenharia as
                     duas bordas; a mediana vem por último, por cima. */}
                 <Area dataKey="faixa" name="p50–p95" stroke="none" fill="var(--grafico-faixa)" isAnimationActive={false} />
-                <Line
-                  dataKey="p95"
-                  name="p95"
-                  stroke="var(--borda-controle)"
-                  strokeWidth={1.5}
-                  strokeDasharray={TRACO_DO_P95}
-                  dot={false}
-                  connectNulls={porGrupo > 1}
-                  tooltipType="none"
-                  isAnimationActive={false}
-                />
+                {trechosDoP95(dadosDaHora).map((trecho) => (
+                  <Line
+                    key={trecho}
+                    dataKey={`p95DoTrecho.${trecho}`}
+                    name="p95"
+                    stroke="var(--borda-controle)"
+                    strokeWidth={1.5}
+                    strokeDasharray={TRACO_DO_P95}
+                    dot={false}
+                    connectNulls
+                    tooltipType="none"
+                    isAnimationActive={false}
+                  />
+                ))}
                 <Line dataKey="p50" name="Mediana" stroke="var(--grafico-linha)" strokeWidth={2} dot={false} isAnimationActive={false} />
               </>
             ) : (

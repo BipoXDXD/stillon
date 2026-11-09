@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Serie } from '@/lib/api/schemas'
-import { comP95Reduzido, ehJanela, faixasForaDoAr, latenciasDaSerie, pontosBrutos, pontosHorarios, pontosPorGrupoDoP95, resumir } from './serie'
+import { comP95Reduzido, ehJanela, faixasForaDoAr, latenciasDaSerie, pontosBrutos, pontosHorarios, pontosPorGrupoDoP95, resumir, trechosDoP95 } from './serie'
 
 const check = (min: number, status: 'up' | 'degraded' | 'down', latency_ms: number) => ({
   checked_at: new Date(Date.UTC(2026, 8, 24, 12, min)).toISOString(),
@@ -89,6 +89,31 @@ describe('redução do p95', () => {
 
   it('grupos de 1 devolvem o p95 exato', () => {
     expect(p95s([10, null, 30], 1)).toEqual([10, null, 30])
+  })
+
+  const reduzidos = (valores: (number | null)[], porGrupo: number) =>
+    comP95Reduzido(
+      valores.map((v, i) => ponto(v, i)),
+      porGrupo,
+    )
+
+  it('o grupo sem nenhum p95 separa o traço em dois trechos', () => {
+    const pontos = reduzidos([10, 30, 20, null, null, null, 40, 60, 50], 3)
+    expect(pontos.map((p) => p.p95DoTrecho)).toEqual([{}, { 0: 20 }, {}, {}, {}, {}, {}, { 1: 50 }, {}])
+    expect(trechosDoP95(pontos)).toEqual([0, 1])
+  })
+
+  it('hora sem p95 num grupo com valor não separa o traço', () => {
+    expect(trechosDoP95(reduzidos([null, 30, null, 40, null, 50], 3))).toEqual([0])
+  })
+
+  it('sem nenhum p95, não há trecho', () => {
+    expect(trechosDoP95(reduzidos([null, null, null], 3))).toEqual([])
+    expect(trechosDoP95([])).toEqual([])
+  })
+
+  it('em grupos de 1, a hora sem p95 também separa', () => {
+    expect(trechosDoP95(reduzidos([10, null, 30], 1))).toEqual([0, 1])
   })
 })
 

@@ -53,8 +53,19 @@ const horas = (quantidade: number) => ({
   })),
 })
 
+const horasSem = (quantidade: number, semP95: (i: number) => boolean, semMediana: (i: number) => boolean) => ({
+  resolution: '1h' as const,
+  items: horas(quantidade).items.map((h, i) => ({
+    ...h,
+    p50_ms: semMediana(i) ? null : h.p50_ms,
+    p95_ms: semP95(i) ? null : h.p95_ms,
+  })),
+})
+
 const curvasDeLinha = (c: HTMLElement) => Array.from(c.querySelectorAll('path.recharts-line-curve'))
 const verticesDe = (curva: Element | undefined) => (curva?.getAttribute('d')?.match(/[ML]/g) ?? []).length
+const tracosDoP95 = (c: HTMLElement) => curvasDeLinha(c).filter((curva) => curva.getAttribute('stroke-dasharray') === '4 3')
+const subcaminhos = (curvas: Element[]) => curvas.reduce((n, curva) => n + (curva.getAttribute('d')?.match(/M/g) ?? []).length, 0)
 
 describe('o p95 da faixa', () => {
   // Contorno na Area desenha as duas bordas (p50 e p95), e a de baixo suja a
@@ -79,6 +90,23 @@ describe('o p95 da faixa', () => {
     expect(verticesDe(mediana)).toBe(300)
     expect(verticesDe(p95)).toBeLessThan(150)
     expect(p95?.getAttribute('d')?.match(/M/g)).toHaveLength(1)
+  })
+
+  // Com o traço reduzido, os dois lados de um buraco ficavam ligados, e a faixa
+  // e a mediana mostravam o buraco. Sabotagem: não abrir trecho novo no grupo
+  // sem p95 → um subcaminho só.
+  it('com o traço reduzido, o p95 interrompe no buraco, como a mediana', () => {
+    const noBuraco = (i: number) => i >= 100 && i < 140
+    const { container } = render(<GraficoDeLatencia serie={horasSem(300, noBuraco, noBuraco)} />)
+    expect(subcaminhos(tracosDoP95(container))).toBe(2)
+    const mediana = curvasDeLinha(container).at(-1)
+    expect(subcaminhos(mediana ? [mediana] : [])).toBe(2)
+  })
+
+  // Sabotagem: interromper em qualquer hora sem p95 → vários subcaminhos.
+  it('com o traço reduzido, hora isolada sem p95 não interrompe o traço', () => {
+    const { container } = render(<GraficoDeLatencia serie={horasSem(300, (i) => i % 7 === 3, () => false)} />)
+    expect(subcaminhos(tracosDoP95(container))).toBe(1)
   })
 
   // Sabotagem: reduzir sempre.
@@ -107,11 +135,12 @@ describe('o tooltip', () => {
       { bucket: new Date(2026, 9, 14, 7).toISOString(), total: 60, ok: 60, p50_ms: 120, p95_ms: 320, p99_ms: 400, max_ms: 500 },
     ],
   }
-  const aberto = (c: HTMLElement) => {
+  const janelaDoTooltip = (c: HTMLElement) => {
     const janela = c.querySelector<HTMLElement>('.recharts-tooltip-wrapper')
     if (janela === null) throw new Error('o tooltip não abriu')
-    return within(janela)
+    return janela
   }
+  const aberto = (c: HTMLElement) => within(janelaDoTooltip(c))
 
   // A cor fica só na amostra: a faixa p50–p95 sairia a 1,16:1 sobre a
   // superfície, e o padrão do Recharts não tem amostra nem unidade.
@@ -145,14 +174,28 @@ describe('o tooltip', () => {
     expect(aberto(container).getByText('300 ms')).toBeInTheDocument()
   })
 
-  it('no check bruto: a latência, e traço no check fora do ar', () => {
-    tooltip.indiceAberto = 1
-    const { container } = render(
-      <GraficoDeLatencia serie={{ resolution: 'raw', items: [check(0, 'up', 100), check(1, 'down', 10000), check(2, 'up', 120)] }} />,
-    )
+  const umaQueda = { resolution: 'raw' as const, items: [check(0, 'up', 100), check(1, 'down', 10000), check(2, 'up', 120)] }
+
+  // Sabotagem: tirar a latência dos checks que responderam.
+  it('no check que respondeu, o tooltip mostra a latência', () => {
+    tooltip.indiceAberto = 0
+    const { container } = render(<GraficoDeLatencia serie={umaQueda} />)
     const t = aberto(container)
+    expect(t.getByText('Latência')).toBeVisible()
     expect(t.getByText('Latência')).toHaveClass('text-suave')
-    expect(t.getByText('—')).toHaveClass('font-semibold')
+    expect(t.getByText('100 ms')).toBeVisible()
+    expect(t.getByText('100 ms')).toHaveClass('font-semibold')
+  })
+
+  // O ponto sem latência sai do payload do Recharts, que esconde a janela: o
+  // conteúdo fica no DOM, mas ninguém o vê. Sabotagem: filterNull={false} no
+  // Tooltip → a janela aparece.
+  it('no check fora do ar, não há tooltip à vista, e a faixa hachurada mostra a queda', () => {
+    tooltip.indiceAberto = 1
+    const { container } = render(<GraficoDeLatencia serie={umaQueda} />)
+    expect(janelaDoTooltip(container)).not.toBeVisible()
+    expect(container.querySelectorAll('.recharts-reference-area-rect')).toHaveLength(1)
+    expect(screen.getByText('Fora do ar')).toBeVisible()
   })
 })
 
