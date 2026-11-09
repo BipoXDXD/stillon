@@ -399,17 +399,23 @@ class SendShTests(unittest.TestCase):
 
     # Defect: a jq failure inside the `if` reads as "not an index" instead of stopping the release.
     def test_manifest_that_jq_cannot_read_stops_before_publishing(self) -> None:
-        bench = self.bench()
-        bench.reply_manifest("this is not json")
-        run = bench.run()
-        self.assertNotEqual(run.code, 0, run.calls)
-        self.assertFalse(run.ssh_called, run.calls)
+        # Real jq here: its exit status for each of these varies by version, so only "not 0".
+        for manifest in ("", "[]", '"s"', "this is not json"):
+            with self.subTest(manifest=manifest):
+                bench = self.bench()
+                bench.reply_manifest(manifest)
+                run = bench.run()
+                self.assertNotEqual(run.code, 0, run.calls)
+                self.assertFalse(run.ssh_called, run.calls)
+                self.assertIsNone(run.payload)
+                self.assertEqual(run.leftovers, [])
 
     # Defect: same `if`, with jq itself crashing.
     def test_jq_crash_while_classifying_the_manifest_stops_before_publishing(self) -> None:
         run = self.bench().run(fail=(JQ_HAS, FAILURE))
-        self.assertNotEqual(run.code, 0, run.calls)
-        self.assertFalse(run.ssh_called, run.calls)
+        self.assert_nothing_sent(run, FAILURE)
+        self.assertNotIn("crane digest", run.effects())
+        self.assertNotIn("crane pull", run.effects())
 
     def test_effects_happen_in_contract_order_and_ssh_is_the_last_delivery_step(self) -> None:
         run = self.bench().run()
