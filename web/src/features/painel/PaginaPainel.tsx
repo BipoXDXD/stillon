@@ -4,7 +4,7 @@ import { Link, useSearchParams } from 'react-router'
 import { useAnunciar } from '@/components/Anunciador'
 import { EstadoDaConsulta } from '@/components/EstadoDaConsulta'
 import { Titulo } from '@/components/Titulo'
-import { Botao, BotaoQueSome } from '@/components/ui/botao'
+import { Botao, BotaoQueSome, TITULO_DA_TELA } from '@/components/ui/botao'
 import { estiloDeCartao } from '@/components/ui/cartao'
 import { useCanais, useHeartbeats, useIncidentesAbertos, useResolvidosRecentes, useResumo, useResumoFiltrado, useSemRede } from '@/lib/api/consultas'
 import { mensagemDe } from '@/lib/api/mensagens'
@@ -93,9 +93,9 @@ function AvisoDasTarefas({ erro, aoTentar }: { erro: unknown; aoTentar: () => vo
   return (
     <output className="flex flex-wrap items-center gap-3 rounded-padrao border border-perigo p-3 text-sm">
       <span>Não foi possível conferir as tarefas agora ({mensagemDe(erro)}).</span>
-      <Botao tipo="secundario" tamanho="pequeno" onClick={aoTentar}>
+      <BotaoQueSome tipo="secundario" tamanho="pequeno" reserva={TITULO_DA_TELA} onClick={aoTentar}>
         Tentar de novo
-      </Botao>
+      </BotaoQueSome>
     </output>
   )
 }
