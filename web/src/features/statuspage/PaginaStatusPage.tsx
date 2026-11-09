@@ -9,7 +9,7 @@ import { useApi } from '@/app/contexto'
 import { EstadoDaConsulta } from '@/components/EstadoDaConsulta'
 import { Titulo } from '@/components/Titulo'
 import { useAvisar } from '@/components/ui/avisos'
-import { Botao } from '@/components/ui/botao'
+import { Botao, BotaoQueSome } from '@/components/ui/botao'
 import { estiloDeCartao } from '@/components/ui/cartao'
 import { useCopiar } from '@/components/ui/copiar'
 import { CaixaDeMarcar, Campo, Entrada, ErroDoFormulario, Selecao } from '@/components/ui/campo'
@@ -86,6 +86,7 @@ function Formulario({ pagina, alvos }: { pagina: PaginaDeStatus | null; alvos: A
   // seletor de acrescentar, ou ao título da tela. Um efeito a cada render:
   // o que o pede é o render da remoção.
   const lista = useRef<HTMLFieldSetElement>(null)
+  const seletorDeAlvo = useRef<HTMLSelectElement>(null)
   const focarDepoisDeTirar = useRef<number | null>(null)
   useEffect(() => {
     const i = focarDepoisDeTirar.current
@@ -170,11 +171,13 @@ function Formulario({ pagina, alvos }: { pagina: PaginaDeStatus | null; alvos: A
           // para cá: o que já foi digitado neste formulário fica como está.
           <div className="space-y-2">
             <p className="text-sm text-suave">Você ainda não tem alvos para mostrar nesta página.</p>
-            <Botao tipo="secundario" tamanho="pequeno" asChild>
+            {/* Na volta da nova aba, o alvo novo chega e o link some: o foco
+                vai ao seletor, que nasce no mesmo commit. */}
+            <BotaoQueSome tipo="secundario" tamanho="pequeno" asChild reserva={seletorDeAlvo}>
               <Link to="/targets/new" target="_blank" rel="noopener">
                 Cadastrar primeiro alvo (abre em nova aba)
               </Link>
-            </Botao>
+            </BotaoQueSome>
           </div>
         )}
         {itens.fields.map((it, i) => (
@@ -238,7 +241,7 @@ function Formulario({ pagina, alvos }: { pagina: PaginaDeStatus | null; alvos: A
           <div className="flex flex-wrap items-end gap-2">
             <Campo rotulo="Acrescentar alvo">
               {(a) => (
-                <Selecao {...a} value={escolhido} onChange={(ev) => setEscolhido(ev.target.value)}>
+                <Selecao {...a} ref={seletorDeAlvo} value={escolhido} onChange={(ev) => setEscolhido(ev.target.value)}>
                   <option value="">Escolha…</option>
                   {livres.map((al) => (
                     <option key={al.id} value={al.id}>

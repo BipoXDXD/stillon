@@ -47,6 +47,18 @@ describe('status page sem alvos', () => {
     expect(within(grupo).queryByText(/de 20/)).not.toBeInTheDocument()
   })
 
+  // Ao voltar da nova aba, o alvo novo chega pelo refetch do foco da janela, e
+  // o link focado some. Sabotagem: tirar a reserva do link → o foco cai no <body>.
+  it('o link que some ao chegar o primeiro alvo leva o foco ao seletor', async () => {
+    const r = await montar({ alvos: [] })
+    screen.getByRole('link', { name: 'Cadastrar primeiro alvo (abre em nova aba)' }).focus()
+    r.falsa.estado.alvos = [alvo()]
+    await r.cliente.refetchQueries({ queryKey: ['targets', 'list'] })
+    expect(await screen.findByLabelText('Acrescentar alvo')).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /Cadastrar primeiro alvo/ })).not.toBeInTheDocument()
+    await waitFor(() => expect(screen.getByLabelText('Acrescentar alvo')).toHaveFocus())
+  })
+
   // Sabotagem: mostrar o link pelo tamanho da lista de itens.
   it('com alvo cadastrado e nenhum escolhido: sem contador, com o seletor e sem o link', async () => {
     await montar({ alvos: [alvo()] })
