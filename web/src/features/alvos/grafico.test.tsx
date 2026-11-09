@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
 import { cloneElement, isValidElement, useEffect, type ReactNode } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { TooltipProps } from 'recharts'
@@ -7,7 +7,7 @@ import { GraficoDeLatencia } from './GraficoDeLatencia'
 // O jsdom não passa o ponteiro sobre o gráfico: um teste abre o tooltip no
 // primeiro ponto pelo defaultIndex. undefined nos demais, em que os nomes da
 // legenda apareceriam em dobro.
-const tooltip = vi.hoisted(() => ({ indiceAberto: undefined as number | undefined }))
+const tooltip = vi.hoisted(() => ({ indiceAberto: undefined as number | undefined, itens: [] as unknown[] }))
 const LARGURA_DO_GRAFICO = 600
 
 // O jsdom não mede nada: o ResponsiveContainer ficaria com largura 0, e o
@@ -17,7 +17,16 @@ vi.mock('recharts', async (original) => {
   const r = await original<typeof import('recharts')>()
   return {
     ...r,
-    Tooltip: (props: TooltipProps) => <r.Tooltip {...props} defaultIndex={tooltip.indiceAberto} />,
+    Tooltip: ({ content, ...props }: TooltipProps) => (
+      <r.Tooltip
+        {...props}
+        defaultIndex={tooltip.indiceAberto}
+        content={(p) => {
+          tooltip.itens = p.payload.map((item) => ({ name: item.name, type: item.type }))
+          return isValidElement<object>(content) ? cloneElement(content, p) : null
+        }}
+      />
+    ),
     ResponsiveContainer: ({ children, onResize }: { children: ReactNode; onResize?: (largura: number, altura: number) => void }) => {
       useEffect(() => onResize?.(LARGURA_DO_GRAFICO, 300), [onResize])
       return isValidElement<{ width?: number; height?: number }>(children)
@@ -90,25 +99,61 @@ describe('o p95 da faixa', () => {
   })
 })
 
-// O Recharts pinta cada item do tooltip com a cor da série, e a faixa p50–p95
-// tem stroke none: o item saía em --grafico-faixa (primária 100), a 1,16:1
-// sobre a superfície. Sabotagem: tirar o itemStyle do Tooltip.
-it('todo item do tooltip usa a cor de texto, e não a da série', () => {
-  tooltip.indiceAberto = 0
-  const { container } = render(
-    <GraficoDeLatencia
-      serie={{
-        resolution: '1h',
-        items: [
-          { bucket: '2026-10-14T06:00:00Z', total: 60, ok: 60, p50_ms: 110, p95_ms: 300, p99_ms: 400, max_ms: 500 },
-          { bucket: '2026-10-14T07:00:00Z', total: 60, ok: 60, p50_ms: 120, p95_ms: 320, p99_ms: 400, max_ms: 500 },
-        ],
-      }}
-    />,
-  )
-  const itens = Array.from(container.querySelectorAll<HTMLElement>('.recharts-tooltip-item'))
-  expect(itens.map((i) => i.querySelector('.recharts-tooltip-item-name')?.textContent)).toEqual(['Mediana', 'p50–p95'])
-  expect(itens.map((i) => i.style.color)).toEqual(['var(--texto)', 'var(--texto)'])
+describe('o tooltip', () => {
+  const duasHoras = {
+    resolution: '1h' as const,
+    items: [
+      { bucket: new Date(2026, 9, 14, 6).toISOString(), total: 60, ok: 60, p50_ms: 110, p95_ms: 300, p99_ms: 400, max_ms: 500 },
+      { bucket: new Date(2026, 9, 14, 7).toISOString(), total: 60, ok: 60, p50_ms: 120, p95_ms: 320, p99_ms: 400, max_ms: 500 },
+    ],
+  }
+  const aberto = (c: HTMLElement) => {
+    const janela = c.querySelector<HTMLElement>('.recharts-tooltip-wrapper')
+    if (janela === null) throw new Error('o tooltip não abriu')
+    return within(janela)
+  }
+
+  // A cor fica só na amostra: a faixa p50–p95 sairia a 1,16:1 sobre a
+  // superfície, e o padrão do Recharts não tem amostra nem unidade.
+  // Sabotagem: voltar ao tooltip padrão, ou pintar o valor com a cor da série.
+  it('na hora: Mediana e p95 em texto neutro, com unidade e amostra', () => {
+    tooltip.indiceAberto = 0
+    const { container } = render(<GraficoDeLatencia serie={duasHoras} />)
+    const t = aberto(container)
+    expect(t.getByText(/14\/10\/2026/)).toHaveClass('text-suave')
+    expect(t.getByText('Mediana')).toHaveClass('text-suave')
+    expect(t.getByText('110 ms')).toHaveClass('font-semibold')
+    expect(t.getByText('110 ms').className).not.toMatch(/primaria|grafico/)
+    expect(t.getByText('300 ms')).toHaveClass('font-semibold')
+    expect(t.getByText('Mediana').parentElement?.querySelector('[aria-hidden="true"]')).toHaveClass('bg-primaria')
+    expect(t.getByText('p95').parentElement?.querySelector('svg line')).toHaveAttribute('stroke-dasharray', '4 3')
+  })
+
+  // A Line do p95 é só desenho: quem a mostra no tooltip é o conteúdo próprio,
+  // uma vez. Sabotagem: tirar o tooltipType da Line do p95.
+  it('a Line do p95 fica marcada como fora do tooltip', () => {
+    tooltip.indiceAberto = 0
+    render(<GraficoDeLatencia serie={duasHoras} />)
+    expect(tooltip.itens).toContainEqual({ name: 'p95', type: 'none' })
+  })
+
+  // O traço pode estar reduzido, e o tooltip não. Sabotagem: ler o ponto dos
+  // dados desenhados → o p95 da hora aberta vira "—".
+  it('com o traço reduzido, o tooltip segue com o p95 exato da hora', () => {
+    tooltip.indiceAberto = 0
+    const { container } = render(<GraficoDeLatencia serie={horas(300)} />)
+    expect(aberto(container).getByText('300 ms')).toBeInTheDocument()
+  })
+
+  it('no check bruto: a latência, e traço no check fora do ar', () => {
+    tooltip.indiceAberto = 1
+    const { container } = render(
+      <GraficoDeLatencia serie={{ resolution: 'raw', items: [check(0, 'up', 100), check(1, 'down', 10000), check(2, 'up', 120)] }} />,
+    )
+    const t = aberto(container)
+    expect(t.getByText('Latência')).toHaveClass('text-suave')
+    expect(t.getByText('—')).toHaveClass('font-semibold')
+  })
 })
 
 // Revisão final: o nome e a descrição estavam no <figure>, e o que recebe o

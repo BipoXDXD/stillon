@@ -1,7 +1,7 @@
-import { useId, useState } from 'react'
+import { useId, useState, type ReactNode } from 'react'
 import { Area, CartesianGrid, ComposedChart, Line, ReferenceArea, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import type { Serie } from '@/lib/api/schemas'
-import { dataHora, diaMes, horaMinuto } from '@/lib/format'
+import { dataHora, diaMes, horaMinuto, milissegundos } from '@/lib/format'
 import { larguraDoEixo } from './eixo'
 import { dominioX, escalaRobusta, marcasDoEixoY, textoDoPico, ticksDoEixoX } from './escala'
 import {
@@ -90,13 +90,9 @@ export function GraficoDeLatencia({ serie, descritoPor }: { serie: Serie; descri
               unit=" ms"
               width={larguraDoY}
             />
-            <Tooltip
-              labelFormatter={(t) => dataHora(new Date(Number(t)).toISOString())}
-              contentStyle={{ background: 'var(--superficie)', borderColor: 'var(--borda)', color: 'var(--texto)' }}
-              // Sem isto, cada item sai na cor da série, e a faixa p50–p95 (tom
-              // 100) fica ilegível sobre a superfície.
-              itemStyle={{ color: 'var(--texto)' }}
-            />
+            {/* Pelo instante, nos pontos sem redução: o traço do p95 pode estar
+                reduzido, e o tooltip diz o valor exato daquela hora. */}
+            <Tooltip content={<ConteudoDoTooltip pontos={pontos} />} />
             {faixas.map((f) => (
               <ReferenceArea
                 key={f.de}
@@ -151,6 +147,41 @@ export function GraficoDeLatencia({ serie, descritoPor }: { serie: Serie; descri
   )
 }
 
+// Texto em cor neutra e a cor só na amostra da série: pintada com a cor da
+// série, a faixa p50–p95 (tom 100) fica ilegível sobre a superfície. O label
+// vem do Recharts, que clona o elemento: é o instante do ponto sob o cursor.
+function ConteudoDoTooltip({ pontos, label }: { pontos: readonly (PontoBruto | PontoHorario)[]; label?: string | number }) {
+  const ponto = pontos.find((p) => p.t === Number(label))
+  if (ponto === undefined) return null
+  return (
+    <div className="min-w-44 space-y-1 rounded-padrao border border-borda bg-superficie p-3 text-sm sombra-nivel-2">
+      <p className="text-meta text-suave">{dataHora(new Date(ponto.t).toISOString())}</p>
+      {'p50' in ponto ? (
+        <>
+          <LinhaDoTooltip amostra={<AmostraDaLinha />} nome="Mediana" ms={ponto.p50} />
+          <LinhaDoTooltip amostra={<AmostraDoP95 />} nome="p95" ms={ponto.p95} />
+        </>
+      ) : (
+        <LinhaDoTooltip amostra={<AmostraDaLinha />} nome="Latência" ms={ponto.latencia} />
+      )}
+    </div>
+  )
+}
+
+function LinhaDoTooltip({ amostra, nome, ms }: { amostra: ReactNode; nome: string; ms: number | null }) {
+  return (
+    <p className="flex items-center gap-2">
+      {amostra}
+      <span className="text-suave">{nome}</span>
+      <span className="ml-auto font-semibold">{milissegundos(ms)}</span>
+    </p>
+  )
+}
+
+function AmostraDaLinha() {
+  return <span aria-hidden="true" className="h-1 w-4 shrink-0 rounded-full bg-primaria" />
+}
+
 // A faixa com a opacidade que o Recharts dá à Area (0,6), e o traço do p95: a
 // amostra tem de parecer o que está no gráfico.
 function AmostraDoP95() {
@@ -168,7 +199,7 @@ function Legenda({ horaria, comFalhas, idDaHachura }: { horaria: boolean; comFal
   return (
     <ul className="flex flex-wrap gap-x-4 gap-y-2 text-meta text-suave">
       <li className="flex items-center gap-2">
-        <span aria-hidden="true" className="h-1 w-4 rounded-full bg-primaria" />
+        <AmostraDaLinha />
         {horaria ? 'Mediana' : 'Latência'}
       </li>
       {horaria && (
