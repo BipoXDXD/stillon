@@ -24,7 +24,7 @@ export function ehJanela(v: string | null): v is Janela {
 }
 
 export type PontoBruto = { t: number; latencia: number | null; fora: number | null }
-export type PontoHorario = { t: number; p50: number | null; faixa: [number, number] | null; uptime: number | null }
+export type PontoHorario = { t: number; p50: number | null; p95: number | null; faixa: [number, number] | null; uptime: number | null }
 
 // A latência de um check "down" é o tempo até o timeout ou a recusa, não a
 // do serviço (D23 do Plano 5): ela não entra na linha; o check vira uma
@@ -41,9 +41,37 @@ export function pontosHorarios(itens: Hora[]): PontoHorario[] {
   return itens.map((h) => ({
     t: new Date(h.bucket).getTime(),
     p50: h.p50_ms,
+    p95: h.p95_ms,
     faixa: h.p50_ms !== null && h.p95_ms !== null ? [h.p50_ms, h.p95_ms] : null,
     uptime: h.total ? h.ok / h.total : null,
   }))
+}
+
+// Mais denso que 1 ponto a cada 6 px, o tracejado do p95 vira massa e pesa mais
+// que a mediana.
+const PX_POR_PONTO_DO_P95 = 6
+
+// Quantas horas viram um ponto do traço. Sem medida, 1: nada a reduzir ainda.
+export function pontosPorGrupoDoP95(pontos: number, larguraPx: number): number {
+  if (larguraPx <= 0) return 1
+  return Math.max(1, Math.ceil((pontos * PX_POR_PONTO_DO_P95) / larguraPx))
+}
+
+// Só o traço fica aproximado: a faixa, a mediana, o tooltip e a tabela seguem
+// com o p95 exato de cada hora.
+export function comP95Reduzido(pontos: readonly PontoHorario[], porGrupo: number): PontoHorario[] {
+  if (porGrupo <= 1) return [...pontos]
+  return pontos.map((p, i) => {
+    const inicio = i - (i % porGrupo)
+    const grupo = pontos.slice(inicio, inicio + porGrupo)
+    const ehODoMeio = i === inicio + Math.floor(grupo.length / 2)
+    return { ...p, p95: ehODoMeio ? medianaDoP95(grupo) : null }
+  })
+}
+
+function medianaDoP95(grupo: readonly PontoHorario[]): number | null {
+  const valores = grupo.map((p) => p.p95).filter((v): v is number => v !== null).sort((a, b) => a - b)
+  return percentil(valores, 0.5)
 }
 
 function percentil(ordenados: number[], p: number): number | null {
