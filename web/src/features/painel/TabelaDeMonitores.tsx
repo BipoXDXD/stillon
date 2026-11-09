@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 import { Link } from 'react-router'
+import { aoApontarPreCarregar, carregarDetalhe } from '@/app/rotas-sob-demanda'
 import { Minigrafico } from '@/components/Minigrafico'
 import { IconeDoEstado, SeloDeEstado } from '@/components/SeloDeEstado'
 import type { EstadoExibido } from '@/lib/estado'
@@ -60,6 +61,7 @@ function LinhaDaTabela({ linha, agora }: { linha: LinhaDeMonitor; agora: Date })
           <IconeDoEstado estado={linha.estado} texto={linha.textoDoEstado} className="lg:hidden" />
           <Link
             to={linha.href}
+            {...(linha.tipo === 'http' && aoApontarPreCarregar(carregarDetalhe))}
             className={cn('alvo-de-toque min-w-0 font-semibold underline-offset-4 hover:underline', parado && 'text-suave')}
           >
             {linha.nome}

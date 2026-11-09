@@ -11,9 +11,10 @@ import { ErroDeRota } from './ErroDeRota'
 import { ExigirSessao, SplashDoPainel } from './ExigirSessao'
 import { Layout } from './Layout'
 import { NaoEncontrada } from './NaoEncontrada'
+import { carregarConfiguracoes, carregarDetalhe } from './rotas-sob-demanda'
 
-// As rotas da spec §11.3. O detalhe do alvo (Recharts, quase metade do
-// bundle) e as configurações (QR code) chegam sob demanda.
+// As rotas da spec §11.3. O detalhe do alvo e as configurações chegam sob
+// demanda.
 export const rotas: RouteObject[] = [
   { path: '/login', Component: PaginaLogin, ErrorBoundary: ErroDeRota },
   {
@@ -27,10 +28,6 @@ export const rotas: RouteObject[] = [
         children: [
           { index: true, Component: PaginaPainel },
           { path: 'targets/new', Component: PaginaNovoAlvo },
-          {
-            path: 'targets/:id',
-            lazy: async () => ({ Component: (await import('@/features/alvos/PaginaDetalhe')).PaginaDetalhe }),
-          },
           { path: 'targets/:id/edit', Component: PaginaEditarAlvo },
           { path: 'heartbeats/new', Component: PaginaNovoHeartbeat },
           { path: 'heartbeats/:id', Component: PaginaHeartbeat },
@@ -39,10 +36,20 @@ export const rotas: RouteObject[] = [
           { path: 'channels', Component: PaginaCanais },
           { path: 'status-pages', Component: PaginaStatusPage },
           {
-            path: 'settings',
-            lazy: async () => ({
-              Component: (await import('@/features/configuracoes/PaginaConfiguracoes')).PaginaConfiguracoes,
-            }),
+            // O chunk que falha fica dentro do Layout. O boundary vem numa rota
+            // acima da lazy: nela mesma, a rota ainda sem módulo faria o router
+            // cortar a árvore no HydrateFallback, e a tela ficaria em branco.
+            ErrorBoundary: ErroDeRota,
+            children: [
+              {
+                path: 'targets/:id',
+                lazy: async () => ({ Component: (await carregarDetalhe()).PaginaDetalhe }),
+              },
+              {
+                path: 'settings',
+                lazy: async () => ({ Component: (await carregarConfiguracoes()).PaginaConfiguracoes }),
+              },
+            ],
           },
           { path: '*', Component: NaoEncontrada },
         ],

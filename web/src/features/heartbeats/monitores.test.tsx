@@ -143,6 +143,8 @@ describe('heartbeats na tabela de monitores', () => {
     r.falsa.estado.heartbeats = [heartbeat({ id: 'h1', name: 'Backup', state: 'late' })]
     await r.usuario.click(screen.getByRole('button', { name: 'Tentar de novo' }))
     await screen.findByRole('heading', { level: 2, name: 'Uma tarefa pede atenção.' })
+    // Sabotagem: trocar BotaoQueSome por Botao no aviso das tarefas.
+    await waitFor(() => expect(screen.getByRole('heading', { level: 1, name: 'Painel' })).toHaveFocus())
   })
 
   // A resposta das tarefas pode vir depois da do resumo, e nesse intervalo o

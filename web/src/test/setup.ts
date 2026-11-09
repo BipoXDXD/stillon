@@ -23,6 +23,10 @@ class ResizeObserverFalso {
   disconnect() {}
 }
 globalThis.ResizeObserver ??= ResizeObserverFalso as unknown as typeof ResizeObserver
+// Sem a pré-carga em ocioso nos testes: um import() ainda em voo no fim do
+// teste derruba o ambiente. Quem testa a pré-carga troca por um espião.
+window.requestIdleCallback ??= () => 0
+window.cancelIdleCallback ??= () => {}
 Element.prototype.scrollIntoView ??= function () {}
 Element.prototype.hasPointerCapture ??= () => false
 Element.prototype.releasePointerCapture ??= function () {}

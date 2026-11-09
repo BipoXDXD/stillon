@@ -22,15 +22,84 @@ function onClickDoReact(el: HTMLElement): () => void {
   return () => onClick()
 }
 
+// Com a lista ainda carregando, o "Novo canal" é o do topo; quando ela chega
+// vazia, ele dá lugar ao do bloco. Clica depois de a lista chegar.
+async function clicarNovoCanal(r: Awaited<ReturnType<typeof renderizarPainel>>) {
+  await waitFor(() => expect(screen.queryByText('Carregando…')).not.toBeInTheDocument())
+  await r.usuario.click(screen.getByRole('button', { name: 'Novo canal' }))
+}
+
 // Abre o diálogo, escolhe e-mail e manda o endereço.
 async function cadastrarEmail(r: Awaited<ReturnType<typeof renderizarPainel>>, email: string) {
-  await r.usuario.click(await screen.findByRole('button', { name: 'Novo canal' }))
+  await clicarNovoCanal(r)
   const dialogo = await screen.findByRole('dialog')
   await r.usuario.click(within(dialogo).getByLabelText('E-mail', { selector: 'input[type=radio]' }))
   await r.usuario.type(within(dialogo).getByLabelText('E-mail', { selector: 'input[type=email]' }), email)
   await r.usuario.click(within(dialogo).getByRole('button', { name: 'Cadastrar canal' }))
   return dialogo
 }
+
+describe('canais: lista vazia', () => {
+  const titulo = () => screen.getByRole('heading', { name: 'Canais de notificação', level: 1 })
+
+  // Uma ação primária só. Sabotagem: manter o botão do topo com a lista
+  // vazia, ou tirar o ícone do bloco.
+  it('ícone, frase e botão primário no bloco, sem o "Novo canal" do topo', async () => {
+    const r = await renderizarPainel('/channels')
+    await r.cliente.refetchQueries()
+    const frase = await screen.findByText(/Nenhum canal/)
+    const bloco = frase.parentElement
+    if (bloco === null) throw new Error('a frase está solta')
+    expect(screen.getAllByRole('button', { name: 'Novo canal' })).toHaveLength(1)
+    expect(within(bloco).getByRole('button', { name: 'Novo canal' })).toHaveClass('bg-primaria')
+    expect(bloco.querySelector('svg')).toHaveAttribute('aria-hidden', 'true')
+  })
+
+  // Vazio é o que o servidor disse: carregando ou com erro, ainda não se
+  // sabe. Sabotagem: esconder o botão do topo sem olhar os dados.
+  it('com erro na consulta, o botão do topo continua', async () => {
+    const r = await renderizarPainel('/channels')
+    r.falsa.estado.forcar.set('GET /channels', { status: 500, code: 'internal_error' })
+    await r.cliente.resetQueries({ queryKey: ['channels'] })
+    await screen.findByRole('alert')
+    expect(screen.getByRole('button', { name: 'Novo canal' })).toBeInTheDocument()
+  })
+
+  it('com canal na lista, o botão fica no topo e o bloco some', async () => {
+    const r = await renderizarPainel('/channels')
+    r.falsa.estado.canais = [canal()]
+    await r.cliente.refetchQueries()
+    await screen.findByText('Verificado')
+    expect(screen.getAllByRole('button', { name: 'Novo canal' })).toHaveLength(1)
+    expect(screen.queryByText(/Nenhum canal/)).not.toBeInTheDocument()
+  })
+
+  // O botão do topo some quando a lista esvazia. Sabotagem: Botao no lugar do
+  // BotaoQueSome → o foco cai no <body>.
+  it('o botão do topo que some com o foco leva o foco ao título', async () => {
+    const r = await renderizarPainel('/channels')
+    r.falsa.estado.canais = [canal()]
+    await r.cliente.refetchQueries()
+    await screen.findByText('Verificado')
+    screen.getByRole('button', { name: 'Novo canal' }).focus()
+    r.falsa.estado.canais = []
+    await r.cliente.refetchQueries({ queryKey: ['channels'] })
+    await screen.findByText(/Nenhum canal/)
+    await waitFor(() => expect(titulo()).toHaveFocus())
+  })
+
+  // Sabotagem: Botao no lugar do BotaoQueSome no bloco vazio.
+  it('o botão do bloco que some com o foco leva o foco ao título', async () => {
+    const r = await renderizarPainel('/channels')
+    await r.cliente.refetchQueries()
+    await screen.findByText(/Nenhum canal/)
+    screen.getByRole('button', { name: 'Novo canal' }).focus()
+    r.falsa.estado.canais = [canal()]
+    await r.cliente.refetchQueries({ queryKey: ['channels'] })
+    await screen.findByText('Verificado')
+    await waitFor(() => expect(titulo()).toHaveFocus())
+  })
+})
 
 describe('canais', () => {
   it('mostra cada estado em texto, e a falha com motivo e data', async () => {
@@ -60,7 +129,7 @@ describe('canais', () => {
 
   it('cadastrar Discord verifica com a mensagem de teste', async () => {
     const r = await renderizarPainel('/channels')
-    await r.usuario.click(await screen.findByRole('button', { name: 'Novo canal' }))
+    await clicarNovoCanal(r)
     const dialogo = await screen.findByRole('dialog')
     expect(within(dialogo).getByText(/Webhook de canal de fórum não é aceito/)).toBeInTheDocument()
     await r.usuario.type(within(dialogo).getByLabelText('URL do webhook'), 'https://discord.com/api/webhooks/1/abc')
@@ -73,7 +142,7 @@ describe('canais', () => {
   it('entrega que falha e e-mail não configurado viram texto claro', async () => {
     const r = await renderizarPainel('/channels')
     r.falsa.estado.forcar.set('POST /channels', { status: 502, code: 'delivery_failed' })
-    await r.usuario.click(await screen.findByRole('button', { name: 'Novo canal' }))
+    await clicarNovoCanal(r)
     const dialogo = await screen.findByRole('dialog')
     await r.usuario.type(within(dialogo).getByLabelText('URL do webhook'), 'https://discord.com/api/webhooks/1/abc')
     await r.usuario.click(within(dialogo).getByRole('button', { name: 'Cadastrar canal' }))
@@ -124,7 +193,7 @@ describe('canais', () => {
 
   it('criar: limite de canais, limite de envios e URL de webhook inválida viram texto', async () => {
     const r = await renderizarPainel('/channels')
-    await r.usuario.click(await screen.findByRole('button', { name: 'Novo canal' }))
+    await clicarNovoCanal(r)
     const dialogo = await screen.findByRole('dialog')
     await r.usuario.type(within(dialogo).getByLabelText('URL do webhook'), 'https://discord.com/api/webhooks/1/abc')
     const casos: [ErroForcado, string][] = [

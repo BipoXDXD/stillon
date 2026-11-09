@@ -34,25 +34,51 @@ export function faixaDoEstado(item: ItemDoResumo, aberto: Incidente | null, agor
   }
 }
 
-// O número grande e a unidade à parte (spec: Inter 600 de 28 px, unidade
-// em 13 px).
-export type ValorDoIndicador = { valor: string; unidade: string }
+// As quatro formas de um KPI. O número grande e a unidade à parte (spec: Inter
+// 600 de 28 px, unidade em 13 px); sem número, a forma diz por quê: ainda não
+// veio, a consulta falhou, ou a resposta veio e não há o que medir.
+export type ValorDoIndicador =
+  | { forma: 'valor'; valor: string; unidade: string }
+  | { forma: 'carregando' }
+  | { forma: 'indisponivel' }
+  | { forma: 'sem-dados'; motivo: string }
 
-const SEM_VALOR: ValorDoIndicador = { valor: '—', unidade: '' }
+const semDados = (motivo: string): ValorDoIndicador => ({ forma: 'sem-dados', motivo })
 
 // Pelo porcento(), que trunca: "100,00" nunca esconde uma falha.
-export function emPorcento(fracao: number | null): ValorDoIndicador {
-  return fracao === null ? SEM_VALOR : { valor: porcento(fracao).slice(0, -1), unidade: '%' }
+export function emPorcento(fracao: number | null, motivo: string): ValorDoIndicador {
+  return fracao === null ? semDados(motivo) : { forma: 'valor', valor: porcento(fracao).slice(0, -1), unidade: '%' }
 }
 
-export function emMilissegundos(ms: number | null): ValorDoIndicador {
-  return ms === null ? SEM_VALOR : { valor: Math.round(ms).toLocaleString('pt-BR'), unidade: 'ms' }
+export function emMilissegundos(ms: number | null, motivo: string): ValorDoIndicador {
+  return ms === null ? semDados(motivo) : { forma: 'valor', valor: Math.round(ms).toLocaleString('pt-BR'), unidade: 'ms' }
 }
 
-// Sem o item (o resumo não respondeu), o painel não sabe: "nunca" é só para o
-// alvo que está no resumo e ainda não teve check.
+// Sem o item, o painel não sabe: "nenhum check" é só para o alvo que está no
+// resumo e ainda não teve check.
 export function ultimoCheck(item: Pick<ItemDoResumo, 'last_checked_at'> | undefined, agora: Date): ValorDoIndicador {
-  if (item === undefined) return SEM_VALOR
+  if (item === undefined) return semDados('Aguardando o resumo')
   const iso = item.last_checked_at
-  return iso === null ? { valor: '—', unidade: 'nunca' } : { valor: horaMinuto(iso), unidade: haQuanto(iso, agora) }
+  return iso === null ? semDados('Nenhum check ainda') : { forma: 'valor', valor: horaMinuto(iso), unidade: haQuanto(iso, agora) }
+}
+
+// isLoading é a primeira busca em andamento. Sem dados e sem busca, a consulta
+// falhou ou está pausada sem rede: em nenhum dos dois o esqueleto terminaria.
+export function indicadorDaConsulta<T>(
+  consulta: { data: T | undefined; isLoading: boolean },
+  ler: (dados: T) => ValorDoIndicador,
+): ValorDoIndicador {
+  if (consulta.data !== undefined) return ler(consulta.data)
+  return consulta.isLoading ? { forma: 'carregando' } : { forma: 'indisponivel' }
+}
+
+// Um aviso só para as três consultas do topo. O resumo vem primeiro: é ele que
+// diz se o alvo está no ar. Com dado guardado, a faixa continua afirmando um
+// estado, e o aviso diz de quando ele é.
+export function textoDoAviso(resumo: { data: unknown; isError: boolean; dataUpdatedAt: number }, seriesFalharam: boolean): string | null {
+  if (resumo.isError) {
+    if (resumo.data === undefined) return 'Não foi possível saber o estado deste alvo.'
+    return `Não foi possível atualizar; mostrando dados de ${horaMinuto(new Date(resumo.dataUpdatedAt).toISOString())}.`
+  }
+  return seriesFalharam ? 'Não foi possível atualizar todos os indicadores.' : null
 }
