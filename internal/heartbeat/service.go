@@ -193,32 +193,39 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, in Input) (Heart
 
 	var out Heartbeat
 	err = storage.InUserTx(ctx, s.pool, userID, func(q *db.Queries) error {
-		if err := q.LockUserHeartbeats(ctx, userID); err != nil {
-			return fmt.Errorf("travar heartbeats do usuário: %w", err)
-		}
-		n, err := q.CountHeartbeats(ctx, userID)
-		if err != nil {
-			return fmt.Errorf("contar heartbeats: %w", err)
-		}
-		if s.depoisDeContar != nil {
-			s.depoisDeContar()
-		}
-		if n >= MaxPerUser {
-			return ErrLimitReached
-		}
-		if err := q.InsertHeartbeat(ctx, params); err != nil {
-			return err
-		}
-		if err := q.InsertHeartbeatTags(ctx, db.InsertHeartbeatTagsParams{Tags: tags, UserID: userID, HeartbeatID: id}); err != nil {
-			return fmt.Errorf("gravar tags do heartbeat: %w", err)
-		}
-		out, err = s.responseOf(ctx, q, userID, id)
+		var err error
+		out, err = s.inserir(ctx, q, userID, params, tags)
 		return err
 	})
 	if err != nil {
 		return Heartbeat{}, "", err
 	}
 	return out, token, nil
+}
+
+// inserir grava o heartbeat dentro do limite por usuário. A trava vem antes da
+// contagem: sem ela, dois pedidos simultâneos contariam 99 e gravariam 101.
+func (s *Service) inserir(ctx context.Context, q *db.Queries, userID uuid.UUID, params db.InsertHeartbeatParams, tags []string) (Heartbeat, error) {
+	if err := q.LockUserHeartbeats(ctx, userID); err != nil {
+		return Heartbeat{}, fmt.Errorf("travar heartbeats do usuário: %w", err)
+	}
+	n, err := q.CountHeartbeats(ctx, userID)
+	if err != nil {
+		return Heartbeat{}, fmt.Errorf("contar heartbeats: %w", err)
+	}
+	if s.depoisDeContar != nil {
+		s.depoisDeContar()
+	}
+	if n >= MaxPerUser {
+		return Heartbeat{}, ErrLimitReached
+	}
+	if err := q.InsertHeartbeat(ctx, params); err != nil {
+		return Heartbeat{}, err
+	}
+	if err := q.InsertHeartbeatTags(ctx, db.InsertHeartbeatTagsParams{Tags: tags, UserID: userID, HeartbeatID: params.ID}); err != nil {
+		return Heartbeat{}, fmt.Errorf("gravar tags do heartbeat: %w", err)
+	}
+	return s.responseOf(ctx, q, userID, params.ID)
 }
 
 func normalizeTags(cruas []string) ([]string, error) {
