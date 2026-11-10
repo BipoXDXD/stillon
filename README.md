@@ -103,6 +103,13 @@ variáveis são segredos de interpolação do recurso no Coolify, nunca arquivos
   de execução, tags e log dos últimos eventos. O cadastro mostra os próximos disparos do cron antes
   de salvar. Sem aviso no prazo, abre incidente pelos mesmos canais. Eles aparecem na tabela de
   monitores do painel, junto dos alvos, com a última duração, a execução em curso e os mesmos filtros.
+  Período e tolerância vão até 365 dias, e a descrição até 10000 caracteres. A tarefa pode ser
+  duplicada (`POST /api/v1/heartbeats/{id}/clone`): a cópia ganha o nome com " (cópia)" e sai sem
+  token, eventos, estado nem incidentes da original; a URL de ping nova aparece uma vez só, a cópia
+  conta no limite da conta, e um agendamento que esta versão não entende responde 409. O log de
+  eventos pode ser limpo (`POST /api/v1/heartbeats/{id}/events/clear`, 204), com registro em
+  `audit_log` e sem mexer no prazo nem nos sinais. O diálogo da URL traz exemplos prontos para curl,
+  crontab, wget, Python e PowerShell, todos com `POST`.
   ```sh
   curl -fsS -m 10 --retry 3 -X POST https://stillon.tech/ping/SEU-TOKEN/start
   curl -fsS -m 10 --retry 3 -X POST https://stillon.tech/ping/SEU-TOKEN       # ou /fail
