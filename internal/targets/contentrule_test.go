@@ -131,8 +131,21 @@ func TestValidateContentRule(t *testing.T) {
 // Se normalizeHeaders recusa os headers, os nomes seguem na caixa do dono, e
 // a recusa da regra com Range ainda tem de valer.
 func TestValidateContentRuleSeesRangeInRefusedHeaders(t *testing.T) {
+	exigirRecusaComHeadersRecusados(t, "rAnGe", "bytes=0-1023")
+}
+
+// Idem para o Accept-Encoding: com os headers aceitos, a canonização de
+// normalizeHeaders esconderia a comparação sem caixa.
+func TestValidateContentRuleSeesAcceptEncodingInRefusedHeaders(t *testing.T) {
+	exigirRecusaComHeadersRecusados(t, "aCcEpT-eNcOdInG", "gzip")
+}
+
+// exigirRecusaComHeadersRecusados soma ao header do dono um valor longo demais,
+// que faz normalizeHeaders recusar tudo, e exige content_rule forbidden.
+func exigirRecusaComHeadersRecusados(t *testing.T, nome, valor string) {
+	t.Helper()
 	f := valido()
-	f.Headers = map[string]string{"rAnGe": "bytes=0-1023", "x-longo": strings.Repeat("a", maxHeaderValueBytes+1)}
+	f.Headers = map[string]string{nome: valor, "x-longo": strings.Repeat("a", maxHeaderValueBytes+1)}
 	f.ContentRule = regra(ContentContains, "ok", "")
 	err := validate(&f)
 	if err == nil || !slices.Contains(err.Fields, FieldError{Field: "content_rule", Reason: ReasonForbidden}) {
