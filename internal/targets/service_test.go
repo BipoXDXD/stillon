@@ -13,6 +13,7 @@ import (
 
 	"github.com/BipoXDXD/stillon/internal/clock"
 	"github.com/BipoXDXD/stillon/internal/storage"
+	"github.com/BipoXDXD/stillon/internal/storage/db"
 	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 	"github.com/BipoXDXD/stillon/internal/targets"
 )
@@ -734,5 +735,77 @@ func TestUpdateCannotWriteASharpSURL(t *testing.T) {
 				t.Errorf("a recusa mexeu nos headers: %v", h)
 			}
 		})
+	}
+}
+
+// gravarValidade grava a linha de target_tls do alvo como o sondador grava:
+// no escopo dele, o único que a escreve em produção.
+func (a ambiente) gravarValidade(t *testing.T, id uuid.UUID, notAfter, observedAt time.Time) {
+	t.Helper()
+	ctx := context.Background()
+	err := storage.InProberTx(ctx, a.pool, func(q *db.Queries) error {
+		return q.SaveTargetTLS(ctx, db.SaveTargetTLSParams{TargetID: id, NotAfter: notAfter, ObservedAt: observedAt})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+// temValidade olha target_tls por fora da RLS, como um dump.
+func (a ambiente) temValidade(t *testing.T, id uuid.UUID) bool {
+	t.Helper()
+	var n int
+	if err := a.admin.QueryRow(context.Background(), `SELECT count(*) FROM target_tls WHERE target_id = $1`, id).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n == 1
+}
+
+// A validade é do certificado do host cadastrado. Mudar só o caminho mantém a
+// leitura; outro host é outro certificado, e a leitura do anterior sumiria só
+// na próxima sonda se o PATCH não a apagasse.
+func TestPatchToAnotherHostForgetsTheCertificate(t *testing.T) {
+	a := novoAmbiente(t)
+	ctx := context.Background()
+	dono := a.usuario(t)
+	alvo, err := a.svc.Create(ctx, dono, entrada())
+	if err != nil {
+		t.Fatal(err)
+	}
+	notAfter := time.Date(2026, 12, 1, 0, 0, 0, 0, time.UTC)
+	observedAt := time.Date(2026, 9, 22, 11, 0, 0, 0, time.UTC)
+	a.gravarValidade(t, alvo.ID, notAfter, observedAt)
+
+	caminho := "https://api.exemplo.com/v2/health"
+	got, err := a.svc.Update(ctx, dono, alvo.ID, targets.Patch{URL: &caminho})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !a.temValidade(t, alvo.ID) {
+		t.Error("mudar só o caminho apagou a validade")
+	}
+	if got.TLS == nil || !got.TLS.NotAfter.Equal(notAfter) || !got.TLS.ObservedAt.Equal(observedAt) {
+		t.Errorf("TLS devolvido = %+v, queria not_after %v e observed_at %v", got.TLS, notAfter, observedAt)
+	}
+
+	// Outro host com o PATCH recusado: nada muda, nem a validade.
+	outro := "https://outro.exemplo.com/health"
+	timeoutInvalido := int32(0)
+	if _, err := a.svc.Update(ctx, dono, alvo.ID, targets.Patch{URL: &outro, TimeoutMS: &timeoutInvalido}); err == nil {
+		t.Fatal("PATCH com timeout_ms 0 passou")
+	}
+	if !a.temValidade(t, alvo.ID) {
+		t.Error("o PATCH recusado apagou a validade")
+	}
+
+	got, err = a.svc.Update(ctx, dono, alvo.ID, targets.Patch{URL: &outro})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.temValidade(t, alvo.ID) {
+		t.Error("outro host manteve a validade do certificado anterior")
+	}
+	if got.TLS != nil {
+		t.Errorf("TLS devolvido = %+v, queria nil depois de trocar de host", got.TLS)
 	}
 }

@@ -172,6 +172,7 @@ type Target struct {
 	Enabled             bool
 	NextRunAt           time.Time
 	CreatedAt           time.Time
+	TlsWarn             bool
 }
 
 type TargetHealth struct {
@@ -180,6 +181,12 @@ type TargetHealth struct {
 	ConsecutiveSuccesses int32
 	StreakSince          *time.Time
 	LastCheckedAt        *time.Time
+}
+
+type TargetTLS struct {
+	TargetID   uuid.UUID
+	NotAfter   time.Time
+	ObservedAt time.Time
 }
 
 type TargetTag struct {
