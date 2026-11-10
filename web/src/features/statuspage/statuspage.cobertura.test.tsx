@@ -33,6 +33,47 @@ function comItem() {
   return pagina({ items: [{ target_id: 'alvo-1', display_name: 'API pública' }] })
 }
 
+describe('status page sem alvos', () => {
+  // Salvar um alvo leva ao detalhe dele, e não há volta para cá: a nova aba é
+  // o que preserva o que já foi digitado. Sabotagem: tirar o target="_blank".
+  it('sem alvo cadastrado, frase e link em nova aba, sem o contador', async () => {
+    await montar({ alvos: [] })
+    const grupo = screen.getByRole('group', { name: 'Alvos na página' })
+    expect(within(grupo).getByText('Você ainda não tem alvos para mostrar nesta página.')).toBeInTheDocument()
+    const link = within(grupo).getByRole('link', { name: 'Cadastrar primeiro alvo (abre em nova aba)' })
+    expect(link).toHaveAttribute('href', '/targets/new')
+    expect(link).toHaveAttribute('target', '_blank')
+    expect(link).toHaveAttribute('rel', 'noopener')
+    expect(within(grupo).queryByText(/de 20/)).not.toBeInTheDocument()
+  })
+
+  // Ao voltar da nova aba, o alvo novo chega pelo refetch do foco da janela, e
+  // o link focado some. Sabotagem: tirar a reserva do link → o foco cai no <body>.
+  it('o link que some ao chegar o primeiro alvo leva o foco ao seletor', async () => {
+    const r = await montar({ alvos: [] })
+    screen.getByRole('link', { name: 'Cadastrar primeiro alvo (abre em nova aba)' }).focus()
+    r.falsa.estado.alvos = [alvo()]
+    await r.cliente.refetchQueries({ queryKey: ['targets', 'list'] })
+    expect(await screen.findByLabelText('Acrescentar alvo')).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /Cadastrar primeiro alvo/ })).not.toBeInTheDocument()
+    await waitFor(() => expect(screen.getByLabelText('Acrescentar alvo')).toHaveFocus())
+  })
+
+  // Sabotagem: mostrar o link pelo tamanho da lista de itens.
+  it('com alvo cadastrado e nenhum escolhido: sem contador, com o seletor e sem o link', async () => {
+    await montar({ alvos: [alvo()] })
+    expect(screen.getByRole('group', { name: 'Alvos na página' })).toBeInTheDocument()
+    expect(screen.getByLabelText('Acrescentar alvo')).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /Cadastrar primeiro alvo/ })).not.toBeInTheDocument()
+  })
+
+  // Fronteira: um item na lista traz o contador de volta.
+  it('com um alvo escolhido, o contador volta', async () => {
+    await montar({ pagina: comItem() })
+    expect(screen.getByRole('group', { name: 'Alvos na página (1 de 20)' })).toBeInTheDocument()
+  })
+})
+
 describe('status page: contratos públicos complementares', () => {
   it('a sugestão trunca sem deixar hífen final e não transforma título sem letras em endereço', () => {
     expect(sugerirSlug('a'.repeat(39) + ' b')).toBe('a'.repeat(39))
@@ -165,7 +206,7 @@ describe('status page: contratos públicos complementares', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('Valor inválido.')
     r.falsa.estado.forcar.delete(PATCH)
     await r.usuario.click(screen.getByRole('button', { name: 'Salvar' }))
-    const avisos = within(screen.getByRole('region', { name: 'Notifications (F8)' }))
+    const avisos = within(screen.getByRole('region', { name: 'Avisos (F8)' }))
     expect(await avisos.findByText('Status page salva. A página pública muda em até 30 segundos.')).toBeInTheDocument()
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
@@ -263,14 +304,14 @@ describe('status page: contratos públicos complementares', () => {
       await r.usuario.click(screen.getByRole('button', { name: 'Salvar' }))
       expect(screen.getByRole('button', { name: 'Salvar' })).toBeDisabled()
       await r.usuario.click(screen.getByRole('button', { name: 'Tirar item da página' }))
-      expect(screen.getByRole('group', { name: 'Alvos na página (0 de 20)' })).toBeInTheDocument()
+      expect(screen.getByRole('group', { name: 'Alvos na página' })).toBeInTheDocument()
       await r.usuario.click(screen.getByRole('link', { name: 'Canais' }))
       expect(await screen.findByRole('heading', { name: 'Canais de notificação', level: 1 })).toBeInTheDocument()
       expect(screen.queryByLabelText('Título')).not.toBeInTheDocument()
     } finally {
       p.soltar()
     }
-    const avisos = within(screen.getByRole('region', { name: 'Notifications (F8)' }))
+    const avisos = within(screen.getByRole('region', { name: 'Avisos (F8)' }))
     expect(await avisos.findByText('Status page salva. A página pública muda em até 30 segundos.')).toBeInTheDocument()
     expect(screen.queryByLabelText('Título')).not.toBeInTheDocument()
   })

@@ -200,7 +200,11 @@ func (h *HeartbeatHandlers) List(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	limite, cursor, ok := paginaDe(w, r)
+	q, ok := consultaPermitida(w, r, parametrosDaPagina)
+	if !ok {
+		return
+	}
+	limite, cursor, ok := paginaDe(w, r, q)
 	if !ok {
 		return
 	}
@@ -329,7 +333,11 @@ func (h *HeartbeatHandlers) Events(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	limite, cursor, ok := paginaDe(w, r)
+	q, ok := consultaPermitida(w, r, parametrosDaPagina)
+	if !ok {
+		return
+	}
+	limite, cursor, ok := paginaDe(w, r, q)
 	if !ok {
 		return
 	}
@@ -347,17 +355,23 @@ func (h *HeartbeatHandlers) Events(w http.ResponseWriter, r *http.Request) {
 	apierr.WriteJSON(w, http.StatusOK, resp)
 }
 
+var parametrosDosIncidentesDoHeartbeat = []string{"limit", "cursor", "status"}
+
 func (h *HeartbeatHandlers) Incidents(w http.ResponseWriter, r *http.Request) {
 	userID, id, ok := donoEID(w, r)
 	if !ok {
 		return
 	}
-	limite, cursor, ok := paginaDe(w, r)
+	q, ok := consultaPermitida(w, r, parametrosDosIncidentesDoHeartbeat)
+	if !ok {
+		return
+	}
+	limite, cursor, ok := paginaDe(w, r, q)
 	if !ok {
 		return
 	}
 	var aberto *bool
-	switch r.URL.Query().Get("status") {
+	switch q.Get("status") {
 	case "":
 	case "open":
 		v := true
@@ -417,8 +431,7 @@ func donoEID(w http.ResponseWriter, r *http.Request) (uuid.UUID, uuid.UUID, bool
 
 // paginaDe lê limit e cursor. Fora da faixa ou malformado é 400, nunca o
 // padrão em silêncio.
-func paginaDe(w http.ResponseWriter, r *http.Request) (int32, *uuid.UUID, bool) {
-	q := r.URL.Query()
+func paginaDe(w http.ResponseWriter, r *http.Request, q url.Values) (int32, *uuid.UUID, bool) {
 	limite := heartbeat.DefaultPageSize
 	if s := q.Get("limit"); s != "" {
 		n, err := strconv.ParseInt(s, 10, 32)

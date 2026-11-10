@@ -1,19 +1,202 @@
-import { render, screen } from '@testing-library/react'
-import { cloneElement, isValidElement, type ReactNode } from 'react'
-import { describe, expect, it, vi } from 'vitest'
+import { render, screen, within } from '@testing-library/react'
+import { cloneElement, isValidElement, useEffect, type ReactNode } from 'react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { TooltipProps } from 'recharts'
 import { GraficoDeLatencia } from './GraficoDeLatencia'
 
+// O jsdom não passa o ponteiro sobre o gráfico: um teste abre o tooltip no
+// primeiro ponto pelo defaultIndex. undefined nos demais, em que os nomes da
+// legenda apareceriam em dobro.
+const tooltip = vi.hoisted(() => ({ indiceAberto: undefined as number | undefined, itens: [] as unknown[] }))
+const LARGURA_DO_GRAFICO = 600
+
 // O jsdom não mede nada: o ResponsiveContainer ficaria com largura 0, e o
-// Recharts não desenha o <svg>. Aqui ele passa um tamanho fixo ao gráfico.
+// Recharts não desenha o <svg>. Aqui ele passa um tamanho fixo ao gráfico e
+// avisa a medida, como o de verdade.
 vi.mock('recharts', async (original) => {
   const r = await original<typeof import('recharts')>()
   return {
     ...r,
-    ResponsiveContainer: ({ children }: { children: ReactNode }) =>
-      isValidElement<{ width?: number; height?: number }>(children)
-        ? cloneElement(children, { width: 600, height: 300 })
-        : null,
+    Tooltip: ({ content, ...props }: TooltipProps) => (
+      <r.Tooltip
+        {...props}
+        defaultIndex={tooltip.indiceAberto}
+        content={(p) => {
+          tooltip.itens = p.payload.map((item) => ({ name: item.name, type: item.type }))
+          return isValidElement<object>(content) ? cloneElement(content, p) : null
+        }}
+      />
+    ),
+    ResponsiveContainer: ({ children, onResize }: { children: ReactNode; onResize?: (largura: number, altura: number) => void }) => {
+      useEffect(() => onResize?.(LARGURA_DO_GRAFICO, 300), [onResize])
+      return isValidElement<{ width?: number; height?: number }>(children)
+        ? cloneElement(children, { width: LARGURA_DO_GRAFICO, height: 300 })
+        : null
+    },
   }
+})
+
+afterEach(() => {
+  tooltip.indiceAberto = undefined
+})
+
+const horas = (quantidade: number) => ({
+  resolution: '1h' as const,
+  items: Array.from({ length: quantidade }, (_, i) => ({
+    bucket: new Date(Date.UTC(2026, 9, 1, i)).toISOString(),
+    total: 60,
+    ok: 60,
+    p50_ms: 100,
+    p95_ms: 300 + i,
+    p99_ms: 400 + i,
+    max_ms: 500 + i,
+  })),
+})
+
+const horasSem = (quantidade: number, semP95: (i: number) => boolean, semMediana: (i: number) => boolean) => ({
+  resolution: '1h' as const,
+  items: horas(quantidade).items.map((h, i) => ({
+    ...h,
+    p50_ms: semMediana(i) ? null : h.p50_ms,
+    p95_ms: semP95(i) ? null : h.p95_ms,
+  })),
+})
+
+const curvasDeLinha = (c: HTMLElement) => Array.from(c.querySelectorAll('path.recharts-line-curve'))
+const verticesDe = (curva: Element | undefined) => (curva?.getAttribute('d')?.match(/[ML]/g) ?? []).length
+const tracosDoP95 = (c: HTMLElement) => curvasDeLinha(c).filter((curva) => curva.getAttribute('stroke-dasharray') === '4 3')
+const subcaminhos = (curvas: Element[]) => curvas.reduce((n, curva) => n + (curva.getAttribute('d')?.match(/M/g) ?? []).length, 0)
+
+describe('o p95 da faixa', () => {
+  // Contorno na Area desenha as duas bordas (p50 e p95), e a de baixo suja a
+  // mediana. Sabotagem: pôr stroke na Area, ou tirar a Line do p95.
+  it('só o p95 é tracejado, a Area não tem contorno, e a mediana fica por cima', () => {
+    const { container } = render(<GraficoDeLatencia serie={horas(4)} />)
+    for (const curva of container.querySelectorAll('.recharts-area-curve')) expect(curva).toHaveAttribute('stroke', 'none')
+    const [p95, mediana] = curvasDeLinha(container)
+    expect(curvasDeLinha(container)).toHaveLength(2)
+    expect(p95).toHaveAttribute('stroke', 'var(--borda-controle)')
+    expect(p95).toHaveAttribute('stroke-width', '1.5')
+    expect(p95).toHaveAttribute('stroke-dasharray', '4 3')
+    expect(mediana).toHaveAttribute('stroke', 'var(--grafico-linha)')
+    const area = container.querySelector('.recharts-area')
+    expect(area?.compareDocumentPosition(p95 ?? container) ?? 0).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+  })
+
+  // Sabotagem: desligar a redução → os 299 vértices voltam.
+  it('acima de 1 ponto a cada 6 px, o p95 é reduzido e a mediana segue inteira', () => {
+    const { container } = render(<GraficoDeLatencia serie={horas(300)} />)
+    const [p95, mediana] = curvasDeLinha(container)
+    expect(verticesDe(mediana)).toBe(300)
+    expect(verticesDe(p95)).toBeLessThan(150)
+    expect(p95?.getAttribute('d')?.match(/M/g)).toHaveLength(1)
+  })
+
+  // Com o traço reduzido, os dois lados de um buraco ficavam ligados, e a faixa
+  // e a mediana mostravam o buraco. Sabotagem: não abrir trecho novo no grupo
+  // sem p95 → um subcaminho só.
+  it('com o traço reduzido, o p95 interrompe no buraco, como a mediana', () => {
+    const noBuraco = (i: number) => i >= 100 && i < 140
+    const { container } = render(<GraficoDeLatencia serie={horasSem(300, noBuraco, noBuraco)} />)
+    expect(subcaminhos(tracosDoP95(container))).toBe(2)
+    const mediana = curvasDeLinha(container).at(-1)
+    expect(subcaminhos(mediana ? [mediana] : [])).toBe(2)
+  })
+
+  // Sabotagem: interromper em qualquer hora sem p95 → vários subcaminhos.
+  it('com o traço reduzido, hora isolada sem p95 não interrompe o traço', () => {
+    const { container } = render(<GraficoDeLatencia serie={horasSem(300, (i) => i % 7 === 3, () => false)} />)
+    expect(subcaminhos(tracosDoP95(container))).toBe(1)
+  })
+
+  // Sabotagem: reduzir sempre.
+  it('com folga de largura, o p95 fica exato hora a hora', () => {
+    const { container } = render(<GraficoDeLatencia serie={horas(20)} />)
+    const [p95] = curvasDeLinha(container)
+    expect(verticesDe(p95)).toBe(20)
+  })
+
+  // Sabotagem: voltar à bolinha cheia da legenda.
+  it('a amostra da legenda mostra a faixa com a opacidade do gráfico e o traço do p95', () => {
+    render(<GraficoDeLatencia serie={horas(4)} />)
+    const amostra = screen.getByText('p50–p95').querySelector('svg')
+    expect(amostra?.querySelector('rect')).toHaveAttribute('fill', 'var(--grafico-faixa)')
+    expect(amostra?.querySelector('rect')).toHaveAttribute('fill-opacity', '0.6')
+    expect(amostra?.querySelector('line')).toHaveAttribute('stroke', 'var(--borda-controle)')
+    expect(amostra?.querySelector('line')).toHaveAttribute('stroke-dasharray', '4 3')
+  })
+})
+
+describe('o tooltip', () => {
+  const duasHoras = {
+    resolution: '1h' as const,
+    items: [
+      { bucket: new Date(2026, 9, 14, 6).toISOString(), total: 60, ok: 60, p50_ms: 110, p95_ms: 300, p99_ms: 400, max_ms: 500 },
+      { bucket: new Date(2026, 9, 14, 7).toISOString(), total: 60, ok: 60, p50_ms: 120, p95_ms: 320, p99_ms: 400, max_ms: 500 },
+    ],
+  }
+  const janelaDoTooltip = (c: HTMLElement) => {
+    const janela = c.querySelector<HTMLElement>('.recharts-tooltip-wrapper')
+    if (janela === null) throw new Error('o tooltip não abriu')
+    return janela
+  }
+  const aberto = (c: HTMLElement) => within(janelaDoTooltip(c))
+
+  // A cor fica só na amostra: a faixa p50–p95 sairia a 1,16:1 sobre a
+  // superfície, e o padrão do Recharts não tem amostra nem unidade.
+  // Sabotagem: voltar ao tooltip padrão, ou pintar o valor com a cor da série.
+  it('na hora: Mediana e p95 em texto neutro, com unidade e amostra', () => {
+    tooltip.indiceAberto = 0
+    const { container } = render(<GraficoDeLatencia serie={duasHoras} />)
+    const t = aberto(container)
+    expect(t.getByText(/14\/10\/2026/)).toHaveClass('text-suave')
+    expect(t.getByText('Mediana')).toHaveClass('text-suave')
+    expect(t.getByText('110 ms')).toHaveClass('font-semibold')
+    expect(t.getByText('110 ms').className).not.toMatch(/primaria|grafico/)
+    expect(t.getByText('300 ms')).toHaveClass('font-semibold')
+    expect(t.getByText('Mediana').parentElement?.querySelector('[aria-hidden="true"]')).toHaveClass('bg-primaria')
+    expect(t.getByText('p95').parentElement?.querySelector('svg line')).toHaveAttribute('stroke-dasharray', '4 3')
+  })
+
+  // A Line do p95 é só desenho: quem a mostra no tooltip é o conteúdo próprio,
+  // uma vez. Sabotagem: tirar o tooltipType da Line do p95.
+  it('a Line do p95 fica marcada como fora do tooltip', () => {
+    tooltip.indiceAberto = 0
+    render(<GraficoDeLatencia serie={duasHoras} />)
+    expect(tooltip.itens).toContainEqual({ name: 'p95', type: 'none' })
+  })
+
+  // O traço pode estar reduzido, e o tooltip não. Sabotagem: ler o ponto dos
+  // dados desenhados → o p95 da hora aberta vira "—".
+  it('com o traço reduzido, o tooltip segue com o p95 exato da hora', () => {
+    tooltip.indiceAberto = 0
+    const { container } = render(<GraficoDeLatencia serie={horas(300)} />)
+    expect(aberto(container).getByText('300 ms')).toBeInTheDocument()
+  })
+
+  const umaQueda = { resolution: 'raw' as const, items: [check(0, 'up', 100), check(1, 'down', 10000), check(2, 'up', 120)] }
+
+  // Sabotagem: tirar a latência dos checks que responderam.
+  it('no check que respondeu, o tooltip mostra a latência', () => {
+    tooltip.indiceAberto = 0
+    const { container } = render(<GraficoDeLatencia serie={umaQueda} />)
+    const t = aberto(container)
+    expect(t.getByText('Latência')).toBeVisible()
+    expect(t.getByText('Latência')).toHaveClass('text-suave')
+    expect(t.getByText('100 ms')).toBeVisible()
+    expect(t.getByText('100 ms')).toHaveClass('font-semibold')
+  })
+
+  // O ponto sem latência sai do payload do Recharts, que esconde a janela: o
+  // conteúdo fica no DOM, mas ninguém o vê. Sabotagem: filterNull={false} no
+  // Tooltip → a janela aparece.
+  it('no check fora do ar, não há tooltip à vista, e a faixa hachurada mostra a queda', () => {
+    tooltip.indiceAberto = 1
+    const { container } = render(<GraficoDeLatencia serie={umaQueda} />)
+    expect(janelaDoTooltip(container)).not.toBeVisible()
+    expect(container.querySelectorAll('.recharts-reference-area-rect')).toHaveLength(1)
+    expect(screen.getByText('Fora do ar')).toBeVisible()
+  })
 })
 
 // Revisão final: o nome e a descrição estavam no <figure>, e o que recebe o

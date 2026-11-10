@@ -95,12 +95,8 @@ func (s *Service) Summary(ctx context.Context, userID uuid.UUID, filtro SummaryF
 			return fmt.Errorf("checks do resumo: %w", err)
 		}
 		for _, r := range brutos {
-			hora := SparkHour{Bucket: r.Bucket.UTC(), Total: r.Total, OK: r.Ok}
-			if r.Ok > 0 {
-				p50 := r.P50
-				hora.P50 = &p50
-			}
-			horas[r.TargetID] = append(horas[r.TargetID], hora)
+			hora := horaBruta(r)
+			horas[r.TargetID] = append(horas[r.TargetID], SparkHour{Bucket: hora.Bucket, Total: hora.Total, OK: hora.OK, P50: hora.P50})
 		}
 		correntes, err := q.ListSummaryCurrentHour(ctx, db.ListSummaryCurrentHourParams{UserID: userID, FromAt: h, ToAt: h.Add(time.Hour)})
 		if err != nil {

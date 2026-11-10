@@ -35,22 +35,29 @@ func TestComposeUsesTheDemoKeys(t *testing.T) {
 	}
 }
 
-// O Postgres de produção, do compose, da perna 18 do CI e dos testes tem de
-// ser o MESMO digest (D29 do Plano 7). O Dependabot atualiza o
-// deploy/vps/db/Dockerfile, o deploy/vps/compose.prod.yaml e o compose.yaml;
-// as outras duas strings são a mão, e este teste pega a que ficou para trás.
+// O Postgres de produção, do compose, da perna 18 do CI, dos testes e do ensaio
+// de restauração tem de ser o MESMO digest (D29 do Plano 7). O Dependabot
+// atualiza o deploy/vps/db/Dockerfile, o deploy/vps/compose.prod.yaml e o
+// compose.yaml; as outras strings são a mão, e este teste pega a que ficou para
+// trás. Compara os digests entre si, sem fixar o valor: a troca de versão não
+// passa por aqui.
 func TestPostgres18DigestIsTheSameEverywhere(t *testing.T) {
-	digest18 := regexp.MustCompile(`postgres:18-alpine@sha256:[0-9a-f]{64}`)
+	comTag := regexp.MustCompile(`^postgres:18-alpine@sha256:[0-9a-f]{64}$`)
+	soDigest := regexp.MustCompile(`^postgres@sha256:[0-9a-f]{64}$`)
 	fontes := []struct {
 		arquivo string
 		// regex com um grupo que isola a linha onde o digest 18 deve estar.
 		linha *regexp.Regexp
+		// a forma que a imagem tem de ter nesse arquivo.
+		forma *regexp.Regexp
 	}{
-		{"../../deploy/vps/db/Dockerfile", regexp.MustCompile(`(?m)^FROM (\S+)$`)},
-		{"../../deploy/vps/compose.prod.yaml", regexp.MustCompile(`(?m)^\s+image: (postgres:\S+)$`)},
-		{"../../compose.yaml", regexp.MustCompile(`(?m)^\s+image: (postgres:\S+)$`)},
-		{"../../.github/workflows/ci.yml", regexp.MustCompile(`(?m)^\s+image: (postgres:18\S*)$`)},
-		{"../storage/testdb/testdb.go", regexp.MustCompile(`(?m)^const imagemPadrao = "([^"]+)"$`)},
+		{"../../deploy/vps/db/Dockerfile", regexp.MustCompile(`(?m)^FROM (\S+)$`), comTag},
+		{"../../deploy/vps/compose.prod.yaml", regexp.MustCompile(`(?m)^\s+image: (postgres:\S+)$`), comTag},
+		{"../../compose.yaml", regexp.MustCompile(`(?m)^\s+image: (postgres:\S+)$`), comTag},
+		{"../../.github/workflows/ci.yml", regexp.MustCompile(`(?m)^\s+image: (postgres:18\S*)$`), comTag},
+		{"../storage/testdb/testdb.go", regexp.MustCompile(`(?m)^const imagemPadrao = "([^"]+)"$`), comTag},
+		{"../../deploy/coolify/database.json", regexp.MustCompile(`(?m)^\s+"image": "(postgres:[^"]+)",$`), comTag},
+		{"../../deploy/backup/revalidar_restauro.py", regexp.MustCompile(`(?m)^IMAGEM = "([^"]+)"$`), soDigest},
 	}
 	var referencia, origem string
 	for _, f := range fontes {
@@ -64,14 +71,15 @@ func TestPostgres18DigestIsTheSameEverywhere(t *testing.T) {
 			continue
 		}
 		img := string(ms[0][1])
-		if !digest18.MatchString(img) || digest18.FindString(img) != img {
-			t.Errorf("%s: %q não é postgres:18-alpine por digest", f.arquivo, img)
+		if !f.forma.MatchString(img) {
+			t.Errorf("%s: %q não é a imagem do Postgres 18 por digest", f.arquivo, img)
 			continue
 		}
+		_, digest, _ := strings.Cut(img, "@")
 		if referencia == "" {
-			referencia, origem = img, f.arquivo
-		} else if img != referencia {
-			t.Errorf("%s usa %s, mas %s usa %s: atualize os cinco juntos", f.arquivo, img, origem, referencia)
+			referencia, origem = digest, f.arquivo
+		} else if digest != referencia {
+			t.Errorf("%s usa %s, mas %s usa %s: atualize os sete juntos", f.arquivo, digest, origem, referencia)
 		}
 	}
 }

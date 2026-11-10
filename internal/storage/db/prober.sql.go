@@ -14,15 +14,17 @@ import (
 
 const claimDueTargets = `-- name: ClaimDueTargets :many
 
+WITH lote AS MATERIALIZED (
+    SELECT id FROM targets
+     WHERE enabled AND next_run_at <= $1::timestamptz
+     ORDER BY next_run_at
+     LIMIT $2::int
+       FOR UPDATE SKIP LOCKED
+)
 UPDATE targets t
    SET next_run_at = $1::timestamptz
        + make_interval(secs => t.interval_sec * (0.9 + random() * 0.2))
- WHERE t.id IN (
-       SELECT id FROM targets
-        WHERE enabled AND next_run_at <= $1::timestamptz
-        ORDER BY next_run_at
-        LIMIT $2::int
-          FOR UPDATE SKIP LOCKED)
+ WHERE t.id IN (SELECT id FROM lote)
 RETURNING t.id, t.user_id, t.url, t.method, t.timeout_ms, t.expected_status,
           t.headers_enc, t.degraded_threshold_ms, t.interval_sec
 `
@@ -56,6 +58,10 @@ type ClaimDueTargetsRow struct {
 // user_id volta porque a avaliação de incidente enfileira as notificações
 // nos canais do dono (Plano 3); interval_sec, porque a histerese recomeça
 // depois de uma lacuna longa entre checks.
+//
+// O lote fica numa CTE MATERIALIZED, que roda uma vez só. Numa subconsulta
+// dentro do IN, um nested loop pode reexecutá-la a cada linha de fora, e o
+// LIMIT deixaria de limitar o lote (TestClaimDueTargetsRespectsTheLimitInAnyPlan).
 func (q *Queries) ClaimDueTargets(ctx context.Context, arg ClaimDueTargetsParams) ([]ClaimDueTargetsRow, error) {
 	rows, err := q.db.Query(ctx, claimDueTargets, arg.Now, arg.MaxRows)
 	if err != nil {
@@ -136,12 +142,13 @@ func (q *Queries) InsertCheck(ctx context.Context, arg InsertCheckParams) error 
 }
 
 const lockTargetProbeSpec = `-- name: LockTargetProbeSpec :one
-SELECT url, method FROM targets WHERE id = $1 FOR KEY SHARE
+SELECT url, method, enabled FROM targets WHERE id = $1 FOR KEY SHARE
 `
 
 type LockTargetProbeSpecRow struct {
-	URL    string
-	Method string
+	URL     string
+	Method  string
+	Enabled bool
 }
 
 // Fencing da gravação (E2 da revisão de 2026-10-14). A sonda leva a URL e o
@@ -152,10 +159,11 @@ type LockTargetProbeSpecRow struct {
 // FOR KEY SHARE espera o FOR UPDATE do PATCH (targets.GetTargetForUpdate) e,
 // depois do commit dele, devolve a linha nova. É a mesma trava que a FK do
 // INSERT em checks já pegaria, então não cria disputa nova com a
-// reivindicação. Sem linha: o alvo foi apagado.
+// reivindicação. Sem linha: o alvo foi apagado. O enabled vem no SELECT, e não
+// no WHERE, porque sem linha a pausa se confundiria com o alvo apagado.
 func (q *Queries) LockTargetProbeSpec(ctx context.Context, id uuid.UUID) (LockTargetProbeSpecRow, error) {
 	row := q.db.QueryRow(ctx, lockTargetProbeSpec, id)
 	var i LockTargetProbeSpecRow
-	err := row.Scan(&i.URL, &i.Method)
+	err := row.Scan(&i.URL, &i.Method, &i.Enabled)
 	return i, err
 }

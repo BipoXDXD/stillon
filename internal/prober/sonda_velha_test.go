@@ -157,6 +157,94 @@ func TestProbeWriteWaitsForAnOpenPatchAndSeesTheNewURL(t *testing.T) {
 	}
 }
 
+// conferirSemRastroDaSonda afirma que a terceira falha, a que abriria o
+// incidente, não deixou nada além das duas semeadas.
+func (b *bancada) conferirSemRastroDaSonda(t *testing.T, alvo uuid.UUID) {
+	t.Helper()
+	if n := b.falhasSeguidas(t, alvo); n != 2 {
+		t.Errorf("%d falhas seguidas; queria as 2 semeadas, sem a da sonda em voo", n)
+	}
+	if c := b.checks(t, alvo); len(c) != 2 {
+		t.Errorf("%d checks no histórico; queria só os 2 semeados", len(c))
+	}
+	if inc := b.incidentes(t); len(inc) != 0 {
+		t.Errorf("incidentes = %+v; queria nenhum", inc)
+	}
+	if avisos := b.notificacoes(t); len(avisos) != 0 {
+		t.Errorf("notificações = %+v; queria nenhuma", avisos)
+	}
+}
+
+// O dono pausa um alvo que começou a falhar, com a sonda da terceira falha em
+// voo. Um alvo pausado não abre incidente: sem sonda, nada o fecharia, e o
+// aviso chegaria depois de o dono já ter dito que não quer monitorar.
+func TestPauseWithProbeInFlightDiscardsTheResult(t *testing.T) {
+	client, chegou, liberar := clienteSegurado()
+	b := novaBancada(t, client, MaxInFlight)
+	b.canal(t, true, true)
+	alvo := b.alvo(t, urlVelha, nil)
+	b.semearFalhas(t, alvo)
+
+	if n, err := b.s.Tick(context.Background()); err != nil || n != 1 {
+		t.Fatalf("Tick = %d, %v; queria uma sonda", n, err)
+	}
+	esperar(t, chegou, "a sonda entrar em voo")
+
+	pausado := false
+	svc := targets.NewService(b.pool, b.box, b.clk)
+	if _, err := svc.Update(context.Background(), b.dono, alvo, targets.Patch{Enabled: &pausado}); err != nil {
+		t.Fatal(err)
+	}
+	close(liberar)
+	b.s.Stop(esperaMaxima)
+
+	b.conferirSemRastroDaSonda(t, alvo)
+}
+
+// A gravação que começa com a pausa ainda aberta espera o commit e enxerga o
+// alvo pausado. Sem a trava da linha, ela leria enabled verdadeiro antes do
+// commit e abriria o incidente logo depois dele.
+func TestPauseWithProbeInFlightIsAwaitedByTheWrite(t *testing.T) {
+	b := novaBancada(t, nil, MaxInFlight)
+	b.canal(t, true, true)
+	alvo := b.alvo(t, urlVelha, nil)
+	b.semearFalhas(t, alvo)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	tx, err := b.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(context.Background())
+	if _, err := tx.Exec(ctx, `SELECT set_config('app.user_id', $1, true)`, b.dono.String()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.New(tx).GetTargetForUpdate(ctx, db.GetTargetForUpdateParams{UserID: b.dono, ID: alvo}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, `UPDATE targets SET enabled = false WHERE id = $1`, alvo); err != nil {
+		t.Fatal(err)
+	}
+
+	gravou := make(chan struct{}, 1)
+	go func() {
+		defer func() { gravou <- struct{}{} }()
+		a := db.ClaimDueTargetsRow{ID: alvo, UserID: b.dono, URL: urlVelha, Method: http.MethodGet, IntervalSec: 60}
+		b.s.gravar(a, b.clk.Now(), Result{Status: StatusDown, ErrorKind: KindTimeout})
+	}()
+	if !testdb.EsperarBloqueados(t, b.pool, 1, gravou) {
+		t.Fatal("a gravação terminou com a pausa aberta; deveria esperar a linha do alvo")
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	esperar(t, gravou, "a gravação terminar depois do commit da pausa")
+
+	b.conferirSemRastroDaSonda(t, alvo)
+}
+
 // Trocar só o método também é outro serviço (C4 do Plano 10): a sonda com o
 // método velho é descartada como a da URL velha.
 func TestProbeWithTheOldMethodIsDiscarded(t *testing.T) {

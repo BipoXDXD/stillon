@@ -2,14 +2,14 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { useQueryClient } from '@tanstack/react-query'
 import { useRef, useState } from 'react'
 import { useForm, useWatch } from 'react-hook-form'
-import { CircleCheck, CircleX, Clock, Pause, TimerOff, type LucideIcon } from 'lucide-react'
+import { Bell, CircleCheck, CircleX, Clock, Pause, TimerOff, type LucideIcon } from 'lucide-react'
 import { z } from 'zod'
 import { useApi } from '@/app/contexto'
 import { EstadoDaConsulta } from '@/components/EstadoDaConsulta'
 import { Selo, type TomDoSelo } from '@/components/SeloDeEstado'
 import { Titulo } from '@/components/Titulo'
 import { useAvisar } from '@/components/ui/avisos'
-import { Botao } from '@/components/ui/botao'
+import { Botao, BotaoQueSome, TITULO_DA_TELA } from '@/components/ui/botao'
 import { Campo, Entrada, ErroDoFormulario, Opcao } from '@/components/ui/campo'
 import { estiloDeCartao } from '@/components/ui/cartao'
 import { Confirmar, Dialogo } from '@/components/ui/dialogo'
@@ -249,13 +249,27 @@ export function PaginaCanais() {
     <>
       <div className="flex flex-wrap items-center justify-between gap-4">
         <Titulo aba="Canais">Canais de notificação</Titulo>
-        <Botao onClick={() => setCriando(true)}>Novo canal</Botao>
+        {/* Vazio é o que o servidor respondeu: carregando ou com erro, o botão
+            fica. Com a lista vazia, a ação primária é a do bloco. */}
+        {consulta.data?.items.length !== 0 && (
+          <BotaoQueSome reserva={TITULO_DA_TELA} onClick={() => setCriando(true)}>
+            Novo canal
+          </BotaoQueSome>
+        )}
       </div>
       <ErroDoFormulario>{erro}</ErroDoFormulario>
       <EstadoDaConsulta consulta={consulta}>
         {(d) =>
           d.items.length === 0 ? (
-            <p className="text-suave">Nenhum canal. Sem canal verificado, os incidentes não notificam ninguém.</p>
+            <div className={cn(estiloDeCartao, 'flex flex-col items-center gap-4 text-center')}>
+              <span className="inline-flex size-12 items-center justify-center rounded-full bg-primaria-100 text-primaria">
+                <Bell aria-hidden="true" className="size-6" />
+              </span>
+              <p className="text-suave">Nenhum canal. Sem canal verificado, os incidentes não notificam ninguém.</p>
+              <BotaoQueSome reserva={TITULO_DA_TELA} onClick={() => setCriando(true)}>
+                Novo canal
+              </BotaoQueSome>
+            </div>
           ) : (
             <ul className="space-y-3">
               {d.items.map((c) => (
