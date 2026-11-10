@@ -86,8 +86,12 @@ const CONTROLE = /\p{Cc}/u
 const ESCAPE_INVALIDO = /~(?![01])/
 
 export const REGRA_COM_HEAD = 'Com HEAD a resposta não tem corpo. Escolha GET ou POST para verificar o conteúdo.'
-const REGRA_COM_ACCEPT_ENCODING =
-  'Remova o header Accept-Encoding para verificar o conteúdo: a resposta viria comprimida.'
+// Headers do dono que estragam o corpo conferido (nome em minúsculas), com o
+// texto que cada um mostra no seletor da regra.
+const HEADERS_SEM_REGRA: readonly (readonly [string, string])[] = [
+  ['accept-encoding', 'Remova o header Accept-Encoding para verificar o conteúdo: a resposta viria comprimida.'],
+  ['range', 'Remova o header Range para verificar o conteúdo: a resposta viria cortada.'],
+]
 
 function erroDoTextoDaRegra(s: string): string | null {
   if (s === '') return 'Obrigatório.'
@@ -109,7 +113,7 @@ function erroDoPonteiro(p: string): string | null {
 // como http://0x7f.1/, não pode travar a edição nem a pausa do alvo), e
 // "Substituir todos" sem nenhuma linha não vira headers: {} (que apagaria
 // todos em silêncio; para isso existe "Remover todos"). Os nomes dos headers
-// guardados antecipam o Accept-Encoding que "Manter como está" conservaria.
+// guardados antecipam o Accept-Encoding ou o Range que "Manter como está" conservaria.
 export function esquemaDoAlvo(base?: { url: string; nomesDeHeaders?: readonly string[] }) {
   return z
     .object({
@@ -227,8 +231,6 @@ type CamposDaRegra = {
   ponteiroDaRegra: string
 }
 
-const ehAcceptEncoding = (nome: string) => nome.toLowerCase() === 'accept-encoding'
-
 // Os headers com que a sonda vai sair: os da lista ao substituir, os
 // guardados ao manter, nenhum ao remover.
 function headersQueFicam(v: CamposDaRegra, guardados: readonly string[]): readonly string[] {
@@ -241,8 +243,9 @@ function headersQueFicam(v: CamposDaRegra, guardados: readonly string[]): readon
 // estado, escondida, e não vai no envio (I1 da revisão).
 function validarRegra(v: CamposDaRegra, guardados: readonly string[], ctx: z.RefinementCtx<CamposDaRegra>) {
   if (v.modoDaRegra === 'desligada' || v.method === 'HEAD') return
-  if (headersQueFicam(v, guardados).some(ehAcceptEncoding)) {
-    ctx.addIssue({ code: 'custom', path: ['modoDaRegra'], message: REGRA_COM_ACCEPT_ENCODING })
+  const nomes = headersQueFicam(v, guardados).map((n) => n.toLowerCase())
+  for (const [proibido, mensagem] of HEADERS_SEM_REGRA) {
+    if (nomes.includes(proibido)) ctx.addIssue({ code: 'custom', path: ['modoDaRegra'], message: mensagem })
   }
   const erroDoValor = erroDoTextoDaRegra(v.valorDaRegra)
   if (erroDoValor) ctx.addIssue({ code: 'custom', path: ['valorDaRegra'], message: erroDoValor })

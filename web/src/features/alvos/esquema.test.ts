@@ -393,6 +393,24 @@ describe('regra de conteúdo', () => {
     expect(erros(ligada({ headers, modoHeaders: 'manter' }))).toEqual([])
   })
 
+  it.each(['Range', 'RANGE', 'range'])('com o header %s a regra é recusada', (nome) => {
+    const headers = [{ nome, valor: 'bytes=0-99' }]
+    expect(erros(ligada({ headers }))).toEqual([
+      ['modoDaRegra', 'Remova o header Range para verificar o conteúdo: a resposta viria cortada.'],
+    ])
+    expect(erros(entrada({ headers }))).toEqual([])
+    expect(erros(ligada({ headers, modoHeaders: 'manter' }))).toEqual([])
+  })
+
+  it('na edição, um Range guardado recusa a regra enquanto os headers são mantidos', () => {
+    const base = { url: 'https://api.exemplo.com/health', nomesDeHeaders: ['X-A', 'range'] }
+    const r = esquemaDoAlvo(base).safeParse(ligada({ modoHeaders: 'manter' }))
+    expect(r.success ? [] : r.error.issues.map((e) => [e.path.join('.'), e.message])).toEqual([
+      ['modoDaRegra', 'Remova o header Range para verificar o conteúdo: a resposta viria cortada.'],
+    ])
+    expect(esquemaDoAlvo(base).safeParse(ligada({ modoHeaders: 'remover' })).success).toBe(true)
+  })
+
   // "Manter como está" não manda headers, mas a edição conhece os nomes
   // guardados: um Accept-Encoding antigo já é acusado no cliente.
   it('na edição, um Accept-Encoding guardado recusa a regra enquanto os headers são mantidos', () => {

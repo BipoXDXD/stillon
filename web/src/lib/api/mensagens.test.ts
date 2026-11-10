@@ -40,7 +40,7 @@ describe('regra de conteúdo', () => {
   })
 
   it.each([
-    ['content_rule', 'forbidden', 'Para verificar o conteúdo, use GET ou POST e tire o header Accept-Encoding.'],
+    ['content_rule', 'forbidden', 'Para verificar o conteúdo, use GET ou POST e tire os headers Accept-Encoding e Range.'],
     ['content_rule.value', 'too_long', 'Até 256 caracteres.'],
     ['content_rule.value', 'invalid', 'Sem tab, quebra de linha ou outro caractere de controle.'],
     ['content_rule.json_pointer', 'too_long', 'Até 256 caracteres.'],

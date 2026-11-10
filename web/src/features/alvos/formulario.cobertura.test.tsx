@@ -69,6 +69,7 @@ describe('formulário de alvo: regra de conteúdo em "Avançado"', () => {
   const TEXTO_DO_HEAD = 'Com HEAD a resposta não tem corpo. Escolha GET ou POST para verificar o conteúdo.'
   const TEXTO_DO_ACCEPT =
     'Remova o header Accept-Encoding para verificar o conteúdo: a resposta viria comprimida.'
+  const TEXTO_DO_RANGE = 'Remova o header Range para verificar o conteúdo: a resposta viria cortada.'
   const COM_REGRA = { content_rule: { mode: 'contains' as const, value: 'ok', json_pointer: null } }
 
   async function montarCriacao() {
@@ -232,6 +233,38 @@ describe('formulário de alvo: regra de conteúdo em "Avançado"', () => {
     expect(r.falsa.corpos('POST /targets')).toEqual([])
   })
 
+  it.each(['range', 'RANGE'])('com o header %s, o envio acusa o seletor e abre "Avançado"', async (nome) => {
+    const r = await montarCriacao()
+    await r.usuario.click(screen.getByRole('button', { name: 'Adicionar header' }))
+    await r.usuario.type(await screen.findByLabelText('Nome do header 1'), nome)
+    await r.usuario.type(screen.getByLabelText('Valor do header 1'), 'bytes=0-99')
+    await r.usuario.click(screen.getByText('Avançado'))
+    await r.usuario.selectOptions(screen.getByLabelText(VERIFICACAO), 'Contém')
+    await r.usuario.type(screen.getByLabelText(DEVE_APARECER), 'ok')
+    await r.usuario.click(screen.getByText('Avançado'))
+    expect(avancado()).not.toHaveAttribute('open')
+    await r.usuario.click(screen.getByRole('button', { name: 'Cadastrar' }))
+    const seletor = screen.getByLabelText(VERIFICACAO)
+    await waitFor(() => expect(seletor).toHaveFocus())
+    expect(avancado()).toHaveAttribute('open')
+    expect(seletor).toHaveAttribute('aria-invalid', 'true')
+    expect(seletor).toHaveAccessibleDescription(expect.stringContaining(TEXTO_DO_RANGE))
+    expect(screen.getByLabelText('Nome do header 1')).toHaveValue(nome)
+    expect(r.falsa.corpos('POST /targets')).toEqual([])
+  })
+
+  it('na edição, um Range guardado acusa o seletor antes do PATCH', async () => {
+    const r = await montarEdicaoCom({ header_names: ['Range'] })
+    await r.usuario.click(screen.getByText('Avançado'))
+    await r.usuario.selectOptions(screen.getByLabelText(VERIFICACAO), 'Contém')
+    await r.usuario.type(screen.getByLabelText(DEVE_APARECER), 'ok')
+    await r.usuario.click(screen.getByRole('button', { name: 'Salvar' }))
+    const seletor = screen.getByLabelText(VERIFICACAO)
+    await waitFor(() => expect(seletor).toHaveAttribute('aria-invalid', 'true'))
+    expect(seletor).toHaveAccessibleDescription(expect.stringContaining(TEXTO_DO_RANGE))
+    expect(r.falsa.corpos(PATCH)).toEqual([])
+  })
+
   // M5 da revisão: com "Manter como está", o Accept-Encoding guardado já é
   // acusado no cliente, pelos nomes que a edição conhece.
   it('na edição, um Accept-Encoding guardado acusa o seletor antes do PATCH', async () => {
@@ -288,7 +321,7 @@ describe('formulário de alvo: regra de conteúdo em "Avançado"', () => {
     const seletor = screen.getByLabelText(VERIFICACAO)
     await waitFor(() => expect(seletor).toHaveAttribute('aria-invalid', 'true'))
     expect(seletor).toHaveAccessibleDescription(
-      expect.stringContaining('Para verificar o conteúdo, use GET ou POST e tire o header Accept-Encoding.'),
+      expect.stringContaining('Para verificar o conteúdo, use GET ou POST e tire os headers Accept-Encoding e Range.'),
     )
     expect(avancado()).toHaveAttribute('open')
     expect(seletor).toHaveFocus()
