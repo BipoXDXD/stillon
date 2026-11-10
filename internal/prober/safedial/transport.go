@@ -56,10 +56,15 @@ var errSemEndereco = errors.New("nenhum endereço para discar")
 // O ControlContext, que o Go chama depois de criar o socket e antes de discar,
 // continua validando cada endereço. É a segunda barreira para os nomes e a
 // única para o IP literal.
-func NewTransport() *http.Transport { return newTransport(nil) }
+func NewTransport() *http.Transport { return newTransport(nil, nil) }
 
-func newTransport(allowed []netip.AddrPort) *http.Transport {
+func newTransport(allowed []netip.AddrPort, hospedagem []netip.Prefix) *http.Transport {
+	// A lista da hospedagem vem antes da exceção de teste: o IP da própria
+	// máquina nunca é alvo, nem quando um teste o libera pela porta.
 	permitir := func(address string) error {
+		if err := recusarHospedagem(address, hospedagem); err != nil {
+			return err
+		}
 		if liberado(address, allowed) {
 			return nil
 		}
@@ -253,6 +258,29 @@ func discarEmSerie(ctx context.Context, ips []netip.Addr, discar discarIP) (net.
 	return nil, falha
 }
 
+// recusarHospedagem recusa address quando o IP cai numa faixa da própria
+// hospedagem (PROBE_BLOCKED_CIDRS). A VPS é dividida com outros projetos, e
+// as portas deles no IP público não são privadas para a lista fixa: sem esta
+// conferência, um alvo cadastrado alcançaria cada uma delas (L1 do STRIDE do
+// #255). O Unmap faz o ::ffff:a.b.c.d cair no CIDR v4. Endereço ilegível fica
+// com o AllowAddr, que o recusa.
+func recusarHospedagem(address string, hospedagem []netip.Prefix) error {
+	if len(hospedagem) == 0 {
+		return nil
+	}
+	ap, err := netip.ParseAddrPort(address)
+	if err != nil {
+		return nil
+	}
+	ip := ap.Addr().Unmap()
+	for _, p := range hospedagem {
+		if p.Contains(ip) {
+			return fmt.Errorf("%w: %s pertence a %s", ErrBlocked, ip, p)
+		}
+	}
+	return nil
+}
+
 // liberado diz se address está na lista de exceções exatas. O Unmap iguala
 // 127.0.0.1 e ::ffff:127.0.0.1, que o sistema pode entregar em qualquer das
 // duas formas.
@@ -270,7 +298,14 @@ func liberado(address string, allowed []netip.AddrPort) bool {
 // NewClient monta o cliente completo, com limite de redirecionamentos e
 // revalidação de esquema a cada salto. timeout 0 deixa o prazo por conta do
 // context da requisição, que é como o sondador trabalha.
-func NewClient(timeout time.Duration) *http.Client { return newClient(timeout, nil) }
+func NewClient(timeout time.Duration) *http.Client { return newClient(timeout, nil, nil) }
+
+// NewClientBlocking é NewClient com as faixas da própria hospedagem somadas à
+// lista fixa de bloqueio. A recusa é igual à das outras faixas: ErrBlocked,
+// que a sonda registra como blocked. Sem faixas, é o NewClient.
+func NewClientBlocking(timeout time.Duration, hospedagem []netip.Prefix) *http.Client {
+	return newClient(timeout, nil, hospedagem)
+}
 
 // NewClientAllowing é NewClient com exceções EXATAS de IP:porta, que passam
 // pelo dial mesmo estando na lista de bloqueio.
@@ -285,6 +320,11 @@ func NewClient(timeout time.Duration) *http.Client { return newClient(timeout, n
 // produção chama esta função, e o panic garante que ela não vire, por
 // engano, liberação de rede interna.
 func NewClientAllowing(timeout time.Duration, allowed ...netip.AddrPort) *http.Client {
+	return newClient(timeout, normalizarLiberados(allowed), nil)
+}
+
+// normalizarLiberados entra em panic com endereço que não seja loopback (D15).
+func normalizarLiberados(allowed []netip.AddrPort) []netip.AddrPort {
 	norm := make([]netip.AddrPort, 0, len(allowed))
 	for _, ap := range allowed {
 		a := ap.Addr().Unmap()
@@ -293,12 +333,12 @@ func NewClientAllowing(timeout time.Duration, allowed ...netip.AddrPort) *http.C
 		}
 		norm = append(norm, netip.AddrPortFrom(a, ap.Port()))
 	}
-	return newClient(timeout, norm)
+	return norm
 }
 
-func newClient(timeout time.Duration, allowed []netip.AddrPort) *http.Client {
+func newClient(timeout time.Duration, allowed []netip.AddrPort, hospedagem []netip.Prefix) *http.Client {
 	return &http.Client{
-		Transport: newTransport(allowed),
+		Transport: newTransport(allowed, hospedagem),
 		Timeout:   timeout,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			// net/http já inclui a requisição original em via, então a

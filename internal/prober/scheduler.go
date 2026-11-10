@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"math"
 	"net/http"
+	"net/netip"
 	"sync"
 	"time"
 
@@ -86,9 +87,10 @@ type Scheduler struct {
 
 // New monta o agendador com o cliente de produção, guardado pelo safedial.
 // Não há como passar outro cliente por aqui: TestNewUsesTheSSRFGuardedClient
-// trava isso.
-func New(pool *pgxpool.Pool, box *crypto.Box, clk clock.Clock, m *Metrics) *Scheduler {
-	return newScheduler(pool, box, clk, m, safedial.NewClient(0), MaxInFlight)
+// trava isso. hospedagem são as faixas da própria máquina
+// (PROBE_BLOCKED_CIDRS), recusadas como as da lista fixa.
+func New(pool *pgxpool.Pool, box *crypto.Box, clk clock.Clock, m *Metrics, hospedagem []netip.Prefix) *Scheduler {
+	return newScheduler(pool, box, clk, m, safedial.NewClientBlocking(0, hospedagem), MaxInFlight)
 }
 
 func newScheduler(pool *pgxpool.Pool, box *crypto.Box, clk clock.Clock, m *Metrics, client *http.Client, max int32) *Scheduler {
