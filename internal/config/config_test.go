@@ -19,7 +19,6 @@ func validEnv() map[string]string {
 		"IP_HASH_KEY":     k,
 		// PUBLIC_BASE_URL https é produção, e produção que sonda exige a
 		// lista da hospedagem. 192.0.2.10 é de documentação (RFC 5737).
-		"PROBE_BLOCKED_CIDRS": "192.0.2.10",
 	}
 }
 

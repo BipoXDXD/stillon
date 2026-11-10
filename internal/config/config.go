@@ -106,7 +106,8 @@ type Config struct {
 
 	// ProbeBlockedCIDRs são as faixas da própria hospedagem que a sonda
 	// recusa, além da lista fixa do safedial (PROBE_BLOCKED_CIDRS). A VPS é
-	// dividida com outros projetos, e o IP público dela não é privado.
+	// dividida com outros projetos, e o IP público dela não é privado. Vazia
+	// não derruba o boot (o sondador avisa); o fail-closed vem com o #255.
 	ProbeBlockedCIDRs []netip.Prefix
 
 	// E-mail pelo Resend (spec §8). A chave é do operador; vazia, o canal
@@ -369,14 +370,6 @@ func Load(getenv func(string) string) (*Config, error) {
 					"gere uma com `openssl rand -base64 32`", k.nome))
 			}
 		}
-	}
-
-	// Em produção, a sonda sem a lista alcançaria as portas dos outros
-	// projetos da VPS pelo IP público (L1 do STRIDE do #255). O papel api
-	// não sonda.
-	if emProducao(cfg.PublicBaseURL) && role.RunsProber() && len(cfg.ProbeBlockedCIDRs) == 0 {
-		errs = append(errs, errors.New("PROBE_BLOCKED_CIDRS é obrigatória em produção quando o processo sonda: "+
-			"liste os IPs públicos da própria hospedagem (v4 e v6), para a sonda não alcançar as portas dos outros projetos da VPS"))
 	}
 
 	switch lvl := strings.ToLower(opt("LOG_LEVEL", "info")); lvl {

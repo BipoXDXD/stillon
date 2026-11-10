@@ -70,26 +70,20 @@ func TestLoadRejectsABadProbeBlockedCIDR(t *testing.T) {
 	}
 }
 
-// Em produção (a mesma regra das chaves de demo: PUBLIC_BASE_URL https, ou
-// com host fora do loopback) o processo que sonda não sobe sem a lista. Em
-// dev, a lista vazia continua permitida. O papel api não sonda e não precisa
-// dela.
-func TestProbeBlockedCIDRsIsRequiredInProduction(t *testing.T) {
+// Lista ausente ou vazia não derruba o boot, nem em produção: o fail-closed
+// vem com o #255. Quem avisa é o sondador, ao nascer (TestListaDaHospedagem*
+// no pacote prober).
+func TestProducaoSobeComAListaDaHospedagemVazia(t *testing.T) {
 	cases := []struct {
 		nome      string
 		publicURL string
 		role      string
 		valor     string
-		erro      bool
 	}{
-		{nome: "https sem a variável", publicURL: "https://stillon.example", erro: true},
-		{nome: "https com a variável só de vírgulas", publicURL: "https://stillon.example", valor: " , ", erro: true},
-		{nome: "http fora do loopback sem a variável", publicURL: "http://stillon.example", erro: true},
-		{nome: "papel prober em produção sem a variável", publicURL: "https://stillon.example", role: "prober", erro: true},
-		{nome: "papel api em produção sem a variável", publicURL: "https://stillon.example", role: "api"},
-		{nome: "https com a variável", publicURL: "https://stillon.example", valor: "192.0.2.10"},
+		{nome: "https sem a variável", publicURL: "https://stillon.example"},
+		{nome: "http fora do loopback sem a variável", publicURL: "http://stillon.example"},
+		{nome: "papel prober em produção sem a variável", publicURL: "https://stillon.example", role: "prober"},
 		{nome: "dev em localhost sem a variável", publicURL: "http://localhost:8080"},
-		{nome: "dev em 127.0.0.1 sem a variável", publicURL: "http://127.0.0.1:8080"},
 	}
 	for _, c := range cases {
 		t.Run(c.nome, func(t *testing.T) {
@@ -98,20 +92,11 @@ func TestProbeBlockedCIDRsIsRequiredInProduction(t *testing.T) {
 			env["ROLE"] = c.role
 			env["PROBE_BLOCKED_CIDRS"] = c.valor
 			cfg, err := Load(getenvFrom(env))
-			if !c.erro {
-				if err != nil {
-					t.Fatalf("Load: %v", err)
-				}
-				if c.valor == "" && len(cfg.ProbeBlockedCIDRs) != 0 {
-					t.Errorf("ProbeBlockedCIDRs = %v, queria vazio", cfg.ProbeBlockedCIDRs)
-				}
-				return
+			if err != nil {
+				t.Fatalf("Load com a lista vazia: %v", err)
 			}
-			if err == nil {
-				t.Fatal("o boot passou sem PROBE_BLOCKED_CIDRS em produção")
-			}
-			if !strings.Contains(err.Error(), "PROBE_BLOCKED_CIDRS") {
-				t.Errorf("erro = %v, queria citar PROBE_BLOCKED_CIDRS", err)
+			if len(cfg.ProbeBlockedCIDRs) != 0 {
+				t.Errorf("ProbeBlockedCIDRs = %v, queria vazio", cfg.ProbeBlockedCIDRs)
 			}
 		})
 	}

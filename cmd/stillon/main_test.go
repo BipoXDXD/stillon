@@ -258,7 +258,6 @@ func TestDispatcherFitsTheShutdownGrace(t *testing.T) {
 	env := map[string]string{
 		"DATABASE_URL": "postgres://localhost/stillon", "PUBLIC_BASE_URL": "https://stillon.example",
 		"CORS_ORIGIN": "https://app.stillon.example", "MASTER_KEY": k, "JWT_SECRET": k, "IP_HASH_KEY": k,
-		"PROBE_BLOCKED_CIDRS": "192.0.2.10",
 	}
 	cfg, err := config.Load(func(chave string) string { return env[chave] })
 	if err != nil {
