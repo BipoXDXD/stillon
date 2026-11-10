@@ -933,6 +933,31 @@ func TestCompressedInputStopsAtItsOwnLimit(t *testing.T) {
 	}
 }
 
+// O maior cabeçalho gzip que o Go aceita (FEXTRA de 65 535 bytes, FNAME e
+// FCOMMENT de 511) cabe no teto comprimido: a regra julga o corpo que vem
+// depois dele.
+func TestLargestGzipHeaderFitsTheCompressedLimit(t *testing.T) {
+	var buf bytes.Buffer
+	zw := gzip.NewWriter(&buf)
+	zw.Extra = bytes.Repeat([]byte("e"), 65535)
+	zw.Name = strings.Repeat("n", 511)
+	zw.Comment = strings.Repeat("c", 511)
+	if _, err := zw.Write([]byte("ok")); err != nil {
+		t.Fatal(err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	srv, client := servidor(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Encoding", "gzip")
+		_, _ = w.Write(buf.Bytes())
+	})
+	res := Probe(t.Context(), client, comRegra(srv.URL, targets.ContentContains, "ok"))
+	if res.Status != StatusUp || res.ErrorKind != "" || res.StatusCode != http.StatusOK {
+		t.Errorf("res = %+v, queria up/200", res)
+	}
+}
+
 // 100 MiB de zeros comprimidos cabem em ~100 KiB.
 var bombaGzip = sync.OnceValue(func() []byte {
 	var buf bytes.Buffer

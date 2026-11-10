@@ -99,13 +99,13 @@ func lerCorpoDaRegra(resp *http.Response) (corpo []byte, cortado, ilegivel bool,
 		corpo, cortado, err = lerCorpo(leitor)
 		return corpo, cortado, false, err
 	case umGzip:
+		// O maior cabeçalho gzip que o Go aceita (FEXTRA de 64 KiB, FNAME e
+		// FCOMMENT de até 512 B) cabe no teto comprimido, então o erro daqui
+		// nunca é o do teto.
 		zr, err := gzip.NewReader(leitor)
 		if errors.Is(err, gzip.ErrHeader) {
 			// Declara gzip e não é: a causa é a codificação.
 			return drenarIlegivel(leitor)
-		}
-		if errors.Is(err, errTetoComprimido) {
-			return nil, true, false, nil
 		}
 		if err != nil {
 			return nil, false, false, err
