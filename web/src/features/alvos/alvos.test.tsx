@@ -141,6 +141,48 @@ describe('cadastrar', () => {
     expect(url).toHaveAccessibleDescription(/Endereços internos/)
   })
 
+  // Bloco 2, item 8: formulário único, com o raro em "Avançado", recolhido.
+  const avancado = () => screen.getByText('Avançado').closest('details')
+
+  it('"Avançado" começa recolhido, com o comum à vista', async () => {
+    await renderizarPainel('/targets/new')
+    expect(await screen.findByLabelText('Nome')).toBeInTheDocument()
+    expect(avancado()).not.toHaveAttribute('open')
+    expect(avancado()).toContainElement(screen.getByLabelText('Timeout (ms)'))
+    expect(avancado()).not.toContainElement(screen.getByLabelText('Intervalo'))
+  })
+
+  // Um erro escondido não se corrige. Sabotagem: tirar o "|| erroNoAvancado(e)"
+  // do avancadoVisivel.
+  it('erro num campo avançado abre a seção e leva o foco a ele', async () => {
+    const r = await renderizarPainel('/targets/new')
+    await preencher(r.usuario)
+    const timeout = screen.getByLabelText('Timeout (ms)')
+    await r.usuario.clear(timeout)
+    await r.usuario.type(timeout, '50')
+    await r.usuario.click(screen.getByRole('button', { name: 'Cadastrar' }))
+    await waitFor(() => expect(avancado()).toHaveAttribute('open'))
+    expect(timeout).toHaveAttribute('aria-invalid', 'true')
+    expect(timeout).toHaveFocus()
+    expect(r.falsa.corpos('POST /targets')).toHaveLength(0)
+  })
+
+  // O mesmo para o erro que o servidor aponta. Sabotagem: a mesma.
+  it('o 400 do servidor num campo avançado abre a seção', async () => {
+    const r = await renderizarPainel('/targets/new')
+    r.falsa.estado.forcar.set('POST /targets', {
+      status: 400,
+      code: 'validation_failed',
+      fields: [{ field: 'expected_status', reason: 'out_of_range' }],
+    })
+    await preencher(r.usuario)
+    await r.usuario.click(screen.getByRole('button', { name: 'Cadastrar' }))
+    const status = screen.getByLabelText('Status HTTP esperado')
+    await waitFor(() => expect(status).toHaveAttribute('aria-invalid', 'true'))
+    expect(avancado()).toHaveAttribute('open')
+    expect(status).toHaveFocus()
+  })
+
   it('o teto de 100 alvos (Plano 5, D24) aparece como erro do formulário', async () => {
     const r = await renderizarPainel('/targets/new')
     r.falsa.estado.forcar.set('POST /targets', { status: 409, code: 'target_limit_reached' })
