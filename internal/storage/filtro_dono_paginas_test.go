@@ -43,20 +43,25 @@ func TestUpdateStatusPageFiltersOwnerWithoutRLS(t *testing.T) {
 		}
 		return n
 	}
-	slugDeA := func() string {
+	paginaDeA := func() db.StatusPage {
 		t.Helper()
 		p, err := q.GetStatusPage(ctx, a)
 		if err != nil {
 			t.Fatal(err)
 		}
-		return p.Slug
+		return p
 	}
+	original := paginaDeA()
 
-	if n := atualizar(b, "de-b"); n != 0 || slugDeA() != "pagina-a" {
-		t.Errorf("B alterou a página de A sem RLS: %d linhas, slug %q", n, slugDeA())
+	if n := atualizar(b, "de-b"); n != 0 {
+		t.Errorf("B alterou %d páginas de A sem RLS, queria 0", n)
 	}
-	if n := atualizar(a, "nova-a"); n != 1 || slugDeA() != "nova-a" {
-		t.Errorf("A alterou a própria página: %d linhas, slug %q; queria 1 e nova-a", n, slugDeA())
+	if p := paginaDeA(); p != original {
+		t.Errorf("depois do UPDATE de B sem RLS, a página de A ficou %+v, queria %+v", p, original)
+	}
+	n := atualizar(a, "nova-a")
+	if p := paginaDeA(); n != 1 || p.Slug != "nova-a" || p.Title != "Outro" || p.Published {
+		t.Errorf("A alterou a própria página: %d linhas, %+v; queria 1 com nova-a, Outro e não publicada", n, p)
 	}
 }
 

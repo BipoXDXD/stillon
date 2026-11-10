@@ -21,9 +21,11 @@ import (
 // superusuário, que atravessa a RLS, para que só o filtro por dono na própria
 // SQL separe A de B (spec §5.5: as duas barreiras são independentes).
 
-// conexaoSemRLS abre uma conexão de superusuário. Chame testdb.New antes: o
-// Close daqui roda primeiro (Cleanup é LIFO), e o snapshot só volta com o
-// banco sem conexões.
+// conexaoSemRLS abre uma conexão que atravessa a RLS. Chame testdb.New antes:
+// o Close daqui roda primeiro (Cleanup é LIFO), e o snapshot só volta com o
+// banco sem conexões. Se o papel não atravessar a RLS, o teste falha: sem
+// isso, os testes deste espelho ficariam verdes só pela política, sem testar
+// o WHERE.
 func conexaoSemRLS(t *testing.T) *pgx.Conn {
 	t.Helper()
 	ctx := context.Background()
@@ -36,6 +38,14 @@ func conexaoSemRLS(t *testing.T) *pgx.Conn {
 			t.Errorf("fechar a conexão de superusuário: %v", err)
 		}
 	})
+	var atravessaRLS bool
+	if err := conn.QueryRow(ctx,
+		`SELECT rolsuper OR rolbypassrls FROM pg_roles WHERE rolname = current_user`).Scan(&atravessaRLS); err != nil {
+		t.Fatalf("ler os atributos do papel: %v", err)
+	}
+	if !atravessaRLS {
+		t.Fatal("o papel de AdminDSN não tem rolsuper nem rolbypassrls: a RLS mascararia a falta do filtro por dono")
+	}
 	return conn
 }
 
@@ -45,11 +55,15 @@ func queriesSemRLS(t *testing.T) *db.Queries {
 	return db.New(conexaoSemRLS(t))
 }
 
-// exigirNenhumaLinha falha se a leitura de B achou a linha de A.
+// exigirNenhumaLinha falha se a leitura de B achou a linha de A, ou se ela
+// falhou por outro motivo, que não prova nada sobre o filtro.
 func exigirNenhumaLinha(t *testing.T, err error, leitura string) {
 	t.Helper()
-	if !errors.Is(err, pgx.ErrNoRows) {
-		t.Errorf("%s: B achou o recurso de A sem RLS (err = %v), queria pgx.ErrNoRows", leitura, err)
+	switch {
+	case err == nil:
+		t.Errorf("%s: B achou o recurso de A sem RLS, queria pgx.ErrNoRows", leitura)
+	case !errors.Is(err, pgx.ErrNoRows):
+		t.Errorf("%s: erro inesperado %v, queria pgx.ErrNoRows", leitura, err)
 	}
 }
 
@@ -166,29 +180,26 @@ func TestUpdateTargetFiltersOwnerWithoutRLS(t *testing.T) {
 	a, b := novoUsuario(t, pool), novoUsuario(t, pool)
 	alvoA := novoAlvo(t, pool, a, agora)
 	q := queriesSemRLS(t)
-	nomeDoAlvo := func() string {
+	alvoDeA := func() db.Target {
 		t.Helper()
 		alvo, err := q.GetTarget(ctx, db.GetTargetParams{UserID: a, ID: alvoA})
 		if err != nil {
 			t.Fatal(err)
 		}
-		return alvo.Name
+		return alvo
 	}
-	original, err := q.GetTarget(ctx, db.GetTargetParams{UserID: a, ID: alvoA})
-	if err != nil {
-		t.Fatal(err)
-	}
+	original := alvoDeA()
 
 	if err := q.UpdateTarget(ctx, atualizacaoDoAlvo(original, b, "de B")); err != nil {
 		t.Fatal(err)
 	}
-	if nome := nomeDoAlvo(); nome != "alvo" {
-		t.Errorf("B renomeou o alvo de A sem RLS para %q", nome)
+	if nome := alvoDeA().Name; nome != original.Name {
+		t.Errorf("B renomeou o alvo de A sem RLS para %q, queria %q", nome, original.Name)
 	}
 	if err := q.UpdateTarget(ctx, atualizacaoDoAlvo(original, a, "novo")); err != nil {
 		t.Fatal(err)
 	}
-	if nome := nomeDoAlvo(); nome != "novo" {
+	if nome := alvoDeA().Name; nome != "novo" {
 		t.Errorf("A renomeou o próprio alvo e ficou %q, queria \"novo\"", nome)
 	}
 }

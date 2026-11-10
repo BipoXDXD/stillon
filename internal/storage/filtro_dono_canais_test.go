@@ -68,15 +68,15 @@ func TestSetChannelEnabledFiltersOwnerWithoutRLS(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n != 0 || !canalDe(t, q, a, canalA).Enabled {
-		t.Errorf("B pausou o canal de A sem RLS: %d linhas, enabled = %v", n, canalDe(t, q, a, canalA).Enabled)
+	if ligado := canalDe(t, q, a, canalA).Enabled; n != 0 || !ligado {
+		t.Errorf("B pausou o canal de A sem RLS: %d linhas, enabled = %v", n, ligado)
 	}
 	n, err = q.SetChannelEnabled(ctx, db.SetChannelEnabledParams{Enabled: false, UserID: a, ID: canalA})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n != 1 || canalDe(t, q, a, canalA).Enabled {
-		t.Errorf("A pausou o próprio canal: %d linhas, enabled = %v; queria 1 e false", n, canalDe(t, q, a, canalA).Enabled)
+	if ligado := canalDe(t, q, a, canalA).Enabled; n != 1 || ligado {
+		t.Errorf("A pausou o próprio canal: %d linhas, enabled = %v; queria 1 e false", n, ligado)
 	}
 }
 

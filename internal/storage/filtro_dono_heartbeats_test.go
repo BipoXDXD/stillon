@@ -96,8 +96,8 @@ func TestUpdateHeartbeatFiltersOwnerWithoutRLS(t *testing.T) {
 	if err := q.UpdateHeartbeat(ctx, atualizacaoDoHeartbeat(original, b, "de B")); err != nil {
 		t.Fatal(err)
 	}
-	if nome := heartbeatDe(t, q, a, hbA).Name; nome != "a" {
-		t.Errorf("B renomeou o heartbeat de A sem RLS para %q", nome)
+	if nome := heartbeatDe(t, q, a, hbA).Name; nome != original.Name {
+		t.Errorf("B renomeou o heartbeat de A sem RLS para %q, queria %q", nome, original.Name)
 	}
 	if err := q.UpdateHeartbeat(ctx, atualizacaoDoHeartbeat(original, a, "novo")); err != nil {
 		t.Fatal(err)
@@ -113,11 +113,12 @@ func TestSetHeartbeatPingHashFiltersOwnerWithoutRLS(t *testing.T) {
 	a, b := novoUsuario(t, pool), novoUsuario(t, pool)
 	hbA := novoHeartbeat(t, pool, a, "a")
 	q := queriesSemRLS(t)
+	original := heartbeatDe(t, q, a, hbA).PingTokenHash
 
 	if err := q.SetHeartbeatPingHash(ctx, db.SetHeartbeatPingHashParams{UserID: b, ID: hbA, PingTokenHash: hashDe("de-b")}); err != nil {
 		t.Fatal(err)
 	}
-	if h := heartbeatDe(t, q, a, hbA).PingTokenHash; !bytes.Equal(h, hashDe("a")) {
+	if h := heartbeatDe(t, q, a, hbA).PingTokenHash; !bytes.Equal(h, original) {
 		t.Error("B trocou o token do heartbeat de A sem RLS")
 	}
 	if err := q.SetHeartbeatPingHash(ctx, db.SetHeartbeatPingHashParams{UserID: a, ID: hbA, PingTokenHash: hashDe("novo")}); err != nil {
