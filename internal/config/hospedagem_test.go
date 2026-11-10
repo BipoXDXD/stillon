@@ -54,11 +54,30 @@ func TestLoadRejectsABadProbeBlockedCIDR(t *testing.T) {
 		// Um /0 recusaria todo alvo.
 		"0.0.0.0/0",
 		"::/0",
-		// Item vazio ou com espaço em volta é erro, e não lista vazia.
+		// Item vazio é erro, e não lista vazia.
 		",,,",
 		",",
 		"192.0.2.10,,2001:db8::/48",
 		"192.0.2.10,",
+	} {
+		t.Run(valor, func(t *testing.T) {
+			env := validEnv()
+			env["PROBE_BLOCKED_CIDRS"] = valor
+			_, err := Load(getenvFrom(env))
+			if err == nil {
+				t.Fatalf("PROBE_BLOCKED_CIDRS=%q passou, queria erro", valor)
+			}
+			if !strings.Contains(err.Error(), "PROBE_BLOCKED_CIDRS") {
+				t.Errorf("erro = %v, queria citar PROBE_BLOCKED_CIDRS", err)
+			}
+		})
+	}
+}
+
+// Espaço em volta de um item também é recusado pelo netip, mas a mensagem
+// própria diz o conserto a quem digita a variável no Coolify.
+func TestLoadRejectsSpaceAroundAProbeBlockedCIDR(t *testing.T) {
+	for _, valor := range []string{
 		" 192.0.2.10",
 		"192.0.2.10 ",
 		"192.0.2.10, 2001:db8::/48",
@@ -71,8 +90,8 @@ func TestLoadRejectsABadProbeBlockedCIDR(t *testing.T) {
 			if err == nil {
 				t.Fatalf("PROBE_BLOCKED_CIDRS=%q passou, queria erro", valor)
 			}
-			if !strings.Contains(err.Error(), "PROBE_BLOCKED_CIDRS") {
-				t.Errorf("erro = %v, queria citar PROBE_BLOCKED_CIDRS", err)
+			if !strings.Contains(err.Error(), "PROBE_BLOCKED_CIDRS") || !strings.Contains(err.Error(), "tem espaço em volta") {
+				t.Errorf("erro = %v, queria citar PROBE_BLOCKED_CIDRS e \"tem espaço em volta\"", err)
 			}
 		})
 	}
