@@ -44,14 +44,15 @@ func contarHeartbeatsDe(t *testing.T, a *api, userID uuid.UUID) int64 {
 }
 
 // A cópia leva a configuração (nome com sufixo, descrição, tags, agendamento,
-// tolerância, enabled) e nasce sem nada do que o original viveu: token,
-// eventos, last_*, falha, incidentes e retomada ficam para trás.
+// tolerância, enabled, ping_resumes) e nasce sem nada do que o original viveu:
+// token, eventos, last_*, falha, incidentes e retomada ficam para trás.
 func TestCloneCopiesTheConfigurationAndNotTheState(t *testing.T) {
 	a := newAPI(t)
 	dono := tokenDe(t, a, a.userID)
 	original, tokenOriginal := criarHB(t, a, dono, map[string]any{
 		"name": "backup noturno", "description": "roda às 3h no servidor de dados", "tags": []string{"prod", "backup"},
 		"schedule": map[string]any{"kind": "period", "period_sec": 31536000}, "grace_sec": 600,
+		"ping_resumes": true,
 	})
 	for _, sufixo := range []string{"/start", "", "/fail"} {
 		if status, _, corpo := pingar(t, a, "/ping/"+tokenOriginal+sufixo, nil); status != http.StatusOK {
@@ -100,6 +101,9 @@ func TestCloneCopiesTheConfigurationAndNotTheState(t *testing.T) {
 	if copia["grace_sec"] != float64(600) || copia["enabled"] != false || copia["state"] != "paused" {
 		t.Errorf("tolerância %v, enabled %v, estado %v", copia["grace_sec"], copia["enabled"], copia["state"])
 	}
+	if copia["ping_resumes"] != true {
+		t.Errorf("ping_resumes %v, queria true como no original", copia["ping_resumes"])
+	}
 	for _, campo := range []string{"last_ping_at", "last_success_at", "last_start_at", "last_runtime_ms", "open_incident_id"} {
 		if v, ok := copia[campo]; !ok || v != nil {
 			t.Errorf("%s = %v, queria null", campo, v)
@@ -144,7 +148,7 @@ func TestCloneResponseHasExactKeys(t *testing.T) {
 	dono := tokenDe(t, a, a.userID)
 	original, _ := criarHB(t, a, dono, corpoDePeriodo)
 	base := []string{"created_at", "deadline_at", "description", "enabled", "grace_sec", "id", "last_ping_at", "last_runtime_ms", "last_start_at",
-		"last_success_at", "name", "open_incident_id", "schedule", "state", "tags"}
+		"last_success_at", "name", "open_incident_id", "ping_resumes", "schedule", "state", "tags"}
 	comURL := append(slices.Clone(base), "ping_url")
 	sort.Strings(comURL)
 
@@ -516,5 +520,190 @@ func TestClearEventsKeepsTheLogWhenTheAuditFails(t *testing.T) {
 	}
 	if n := contarEventos(t, a, uuid.MustParse(id)); n != 2 {
 		t.Errorf("%d eventos depois da falha, queria 2", n)
+	}
+}
+
+// Sinalizar agora pelo painel (SP1, PR 3).
+
+// pingNow chama o "sinalizar agora" do painel e exige 200.
+func pingNow(t *testing.T, a *api, token, id string, corpo any) map[string]any {
+	t.Helper()
+	status, resp := lerCru(t, a, http.MethodPost, "/api/v1/heartbeats/"+id+"/ping-now", token, corpo)
+	if status != http.StatusOK {
+		t.Fatalf("ping-now deu %d: %s", status, resp)
+	}
+	return decodificar(t, resp)
+}
+
+// eventosPelaAPI é o log que o painel lê, do mais novo ao mais velho.
+func eventosPelaAPI(t *testing.T, a *api, token, id string) []map[string]any {
+	t.Helper()
+	status, corpo := lerCru(t, a, http.MethodGet, "/api/v1/heartbeats/"+id+"/events", token, nil)
+	if status != http.StatusOK {
+		t.Fatalf("eventos: %d %s", status, corpo)
+	}
+	itens := decodificar(t, corpo)["items"].([]any)
+	out := make([]map[string]any, 0, len(itens))
+	for _, item := range itens {
+		out = append(out, item.(map[string]any))
+	}
+	return out
+}
+
+func instanteDe(t *testing.T, m map[string]any, campo string) time.Time {
+	t.Helper()
+	texto, ok := m[campo].(string)
+	if !ok {
+		t.Fatalf("%s = %v, queria um instante", campo, m[campo])
+	}
+	at, err := time.Parse(time.RFC3339Nano, texto)
+	if err != nil {
+		t.Fatalf("%s = %q: %v", campo, texto, err)
+	}
+	return at
+}
+
+func incidentesDoHeartbeat(t *testing.T, a *api, token, id, status string) int {
+	t.Helper()
+	st, corpo := lerCru(t, a, http.MethodGet, "/api/v1/heartbeats/"+id+"/incidents?status="+status, token, nil)
+	if st != http.StatusOK {
+		t.Fatalf("incidentes %s: %d %s", status, st, corpo)
+	}
+	return len(decodificar(t, corpo)["items"].([]any))
+}
+
+// R2 da §10: o sinal manual não se confunde com a tarefa. Ele vale como um
+// sucesso (prazo novo, e o avaliador fecha o atraso no tique seguinte), mas o
+// log o marca como do painel.
+func TestPingNowIsMarkedAsPanel(t *testing.T) {
+	a := newAPI(t)
+	id, _ := criarHB(t, a, tokenDe(t, a, a.userID), corpoDePeriodo)
+	a.clk.Advance(66 * time.Minute) // passa do prazo: 3600 s de período + 300 s de tolerância
+	avaliar(t, a)
+	dono := tokenDe(t, a, a.userID) // o relógio avançou além da validade do token
+	if n := incidentesDoHeartbeat(t, a, dono, id, "open"); n != 1 {
+		t.Fatalf("%d incidentes abertos antes do ping-now, queria 1", n)
+	}
+
+	agora := a.clk.Now()
+	hb := pingNow(t, a, dono, id, nil)
+
+	if _, ok := hb["ping_url"]; ok {
+		t.Errorf("ping-now devolveu ping_url: %v", hb)
+	}
+	if got := instanteDe(t, hb, "last_success_at"); !got.Equal(agora) {
+		t.Errorf("last_success_at = %v, queria %v", got, agora)
+	}
+	if got, queria := instanteDe(t, hb, "deadline_at"), agora.Add(65*time.Minute); !got.Equal(queria) {
+		t.Errorf("deadline_at = %v, queria %v", got, queria)
+	}
+	eventos := eventosPelaAPI(t, a, dono, id)
+	if len(eventos) == 0 {
+		t.Fatal("nenhum evento depois do ping-now")
+	}
+	ultimo := eventos[0]
+	if ultimo["kind"] != "success" || ultimo["source"] != "panel" || ultimo["run_id"] != nil {
+		t.Errorf("último evento %v, queria success, panel e run_id null", ultimo)
+	}
+	if _, ok := ultimo["run_id"]; !ok {
+		t.Errorf("o evento não trouxe run_id: %v", ultimo)
+	}
+
+	avaliar(t, a)
+	if n := incidentesDoHeartbeat(t, a, dono, id, "open"); n != 0 {
+		t.Errorf("%d incidentes abertos depois do tique, queria 0", n)
+	}
+	if n := incidentesDoHeartbeat(t, a, dono, id, "resolved"); n != 1 {
+		t.Errorf("%d incidentes resolvidos depois do tique, queria 1", n)
+	}
+}
+
+// O ping-now passa pela janela de repetição do ping: o segundo clique em 5 s
+// responde 200, mas não grava outro evento.
+func TestPingNowTwiceInTheWindowRecordsOnce(t *testing.T) {
+	a := newAPI(t)
+	dono := tokenDe(t, a, a.userID)
+	id, _ := criarHB(t, a, dono, corpoDePeriodo)
+
+	pingNow(t, a, dono, id, nil)
+	a.clk.Advance(5 * time.Second)
+	pingNow(t, a, dono, id, nil)
+
+	if n := len(eventosPelaAPI(t, a, dono, id)); n != 1 {
+		t.Errorf("%d eventos, queria 1", n)
+	}
+}
+
+// Linha de uma versão posterior: o ping-now registra, e o prazo gravado por
+// ela fica como estava, como no ping.
+func TestPingNowOnUnknownScheduleKeepsTheDeadline(t *testing.T) {
+	a := newAPI(t)
+	semChecksDeAgendamento(t, a.pool)
+	id, _ := heartbeatDesconhecidoHTTP(t, a)
+	dono := tokenDe(t, a, a.userID)
+
+	pingNow(t, a, dono, id.String(), nil)
+
+	if h := linhaDoHeartbeat(t, a, id); !h.DeadlineAt.Equal(prazoGravado) {
+		t.Errorf("o prazo virou %v, queria %v", h.DeadlineAt, prazoGravado)
+	}
+	eventos := eventosPelaAPI(t, a, dono, id.String())
+	if len(eventos) != 1 || eventos[0]["kind"] != "success" || eventos[0]["source"] != "panel" {
+		t.Errorf("eventos %v, queria um success do painel", eventos)
+	}
+}
+
+// O corpo não escolhe nada: o ping-now é sempre um sucesso do painel.
+func TestPingNowIgnoresTheBody(t *testing.T) {
+	a := newAPI(t)
+	dono := tokenDe(t, a, a.userID)
+	id, _ := criarHB(t, a, dono, corpoDePeriodo)
+
+	pingNow(t, a, dono, id, map[string]any{"source": "ping", "kind": "fail"})
+
+	eventos := eventosPelaAPI(t, a, dono, id)
+	if len(eventos) != 1 || eventos[0]["kind"] != "success" || eventos[0]["source"] != "panel" {
+		t.Errorf("eventos %v, queria um success do painel", eventos)
+	}
+}
+
+// O ping-now é um sucesso como o do ping: numa tarefa pausada, retoma só com
+// ping_resumes ligado, e a retomada recalcula o prazo a partir do clique.
+func TestPingNowResumesWhenPingResumesIsOn(t *testing.T) {
+	for _, c := range []struct {
+		nome        string
+		pingResumes bool
+	}{{"ligado", true}, {"desligado", false}} {
+		t.Run(c.nome, func(t *testing.T) {
+			a := newAPI(t)
+			dono := tokenDe(t, a, a.userID)
+			id, _ := criarHB(t, a, dono, corpoDePeriodo)
+			caminho := "/api/v1/heartbeats/" + id
+			pausa := map[string]any{"enabled": false, "ping_resumes": c.pingResumes}
+			if status, corpo := lerCru(t, a, http.MethodPatch, caminho, dono, pausa); status != http.StatusOK {
+				t.Fatalf("pausar: %d %s", status, corpo)
+			}
+			a.clk.Advance(10 * time.Minute)
+			agora := a.clk.Now()
+
+			hb := pingNow(t, a, dono, id, nil)
+
+			h := linhaDoHeartbeat(t, a, uuid.MustParse(id))
+			if !c.pingResumes {
+				if hb["enabled"] != false || h.Enabled || h.ResumedAt != nil {
+					t.Errorf("retomou sem ping_resumes: enabled %v/%v, resumed_at %s", hb["enabled"], h.Enabled, valorDe(h.ResumedAt))
+				}
+				return
+			}
+			if hb["enabled"] != true || !h.Enabled {
+				t.Errorf("enabled %v/%v, queria true", hb["enabled"], h.Enabled)
+			}
+			if h.ResumedAt == nil || !h.ResumedAt.Equal(agora) {
+				t.Errorf("resumed_at %s, queria %v", valorDe(h.ResumedAt), agora)
+			}
+			if got, queria := instanteDe(t, hb, "deadline_at"), agora.Add(65*time.Minute); !got.Equal(queria) {
+				t.Errorf("deadline_at = %v, queria %v", got, queria)
+			}
+		})
 	}
 }

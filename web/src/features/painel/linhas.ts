@@ -1,4 +1,4 @@
-import { estadoDoHeartbeat, inicioEmCurso, prazoVencido, tempoDeExecucao, textoDaEspera, textoDoHeartbeat } from '@/features/heartbeats/estado'
+import { estadoDoHeartbeat, inicioEmCurso, prazoVencido, tempoDeExecucao, textoDaEspera, textoDaTolerancia, textoDoHeartbeat } from '@/features/heartbeats/estado'
 import { textoDaCausa } from '@/lib/api/mensagens'
 import type { Heartbeat, HoraDoSpark, Incidente, ItemDoResumo } from '@/lib/api/schemas'
 import { estadoExibido, textoDoEstado, type EstadoExibido } from '@/lib/estado'
@@ -86,6 +86,8 @@ function situacaoDoHeartbeat(hb: Heartbeat, agora: Date): string {
       return textoDaCausa('heartbeat_failed')
     case 'up':
       return textoEmDia(hb, agora)
+    case 'grace':
+      return textoDaTolerancia(hb)
     case 'waiting':
       return textoDeExecucao(hb, agora) ?? textoDaEspera(hb)
     case 'paused':

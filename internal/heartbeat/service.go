@@ -47,7 +47,10 @@ const (
 	StatusFailing Status = "failing"
 	StatusLate    Status = "late"
 	StatusWaiting Status = "waiting"
-	StatusUp      Status = "up"
+	// StatusGrace é a janela de tolerância antes do prazo: o sinal ainda não
+	// veio, mas não está atrasado. Não pede atenção.
+	StatusGrace Status = "grace"
+	StatusUp    Status = "up"
 )
 
 // Heartbeat é o que sai do domínio. Não tem campo para o token nem para o
@@ -68,6 +71,9 @@ type Heartbeat struct {
 	LastRuntimeMS  *int64
 	OpenIncidentID *uuid.UUID
 	CreatedAt      time.Time
+	// PingResumes: um sucesso, pela URL de ping ou pelo sinalizar agora, retoma
+	// o heartbeat pausado.
+	PingResumes bool
 }
 
 // Input é o cadastro. O agendamento já chega validado (NewPeriod, NewCron).
@@ -78,6 +84,7 @@ type Input struct {
 	Schedule    Schedule
 	Grace       time.Duration
 	Enabled     bool
+	PingResumes bool
 }
 
 // Patch: nil é "não mexa". Tags não seguem a regra: nil e vazio limpam, e quem
@@ -90,6 +97,7 @@ type Patch struct {
 	Schedule    *Schedule
 	Grace       *time.Duration
 	Enabled     *bool
+	PingResumes *bool
 }
 
 // Incident é um incidente de heartbeat na visão do dono.
@@ -189,6 +197,7 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, in Input) (Heart
 	params := db.InsertHeartbeatParams{
 		ID: id, UserID: userID, Name: nome, Description: descricao, PingTokenHash: hash, GraceSec: seconds(in.Grace),
 		Enabled: in.Enabled, CreatedAt: now, DeadlineAt: FirstDeadline(in.Schedule, in.Grace, now),
+		PingResumes: in.PingResumes,
 	}
 	params.PeriodSec, params.CronExpr, params.Timezone = scheduleColumns(in.Schedule)
 
@@ -280,7 +289,7 @@ func (s *Service) cloneParams(original db.Heartbeat, id uuid.UUID, hash []byte) 
 	params := db.InsertHeartbeatParams{
 		ID: id, UserID: original.UserID, Name: cloneName(original.Name), Description: original.Description,
 		PingTokenHash: hash, GraceSec: original.GraceSec, Enabled: original.Enabled, CreatedAt: now,
-		DeadlineAt: FirstDeadline(sch, grace, now),
+		DeadlineAt: FirstDeadline(sch, grace, now), PingResumes: original.PingResumes,
 	}
 	params.PeriodSec, params.CronExpr, params.Timezone = scheduleColumns(sch)
 	return params, nil
@@ -462,7 +471,11 @@ func (s *Service) updateParams(h db.Heartbeat, p Patch) (db.UpdateHeartbeatParam
 	out := db.UpdateHeartbeatParams{
 		UserID: h.UserID, ID: h.ID, Name: h.Name, Description: h.Description, Enabled: h.Enabled,
 		DeadlineAt: h.DeadlineAt, FailingSince: h.FailingSince, ResumedAt: h.ResumedAt,
-		LastStartAt: h.LastStartAt,
+		LastStartAt: h.LastStartAt, PingResumes: h.PingResumes,
+	}
+	// Só uma preferência: não mexe no prazo.
+	if p.PingResumes != nil {
+		out.PingResumes = *p.PingResumes
 	}
 	if p.Name != nil {
 		out.Name = *p.Name
@@ -565,6 +578,31 @@ func (s *Service) RotateToken(ctx context.Context, userID, id uuid.UUID) (Heartb
 	return out, token, nil
 }
 
+// PingNow é o "sinalizar agora" do painel: um sucesso no escopo do dono, pelo
+// mesmo caminho do ping (janela de repetição e retomada inclusas), marcado com
+// a origem panel para não se confundir com a tarefa (R2 da spec). Pelo mesmo
+// motivo, não encerra a execução aberta: o início e a duração são da tarefa.
+func (s *Service) PingNow(ctx context.Context, userID, id uuid.UUID) (Heartbeat, error) {
+	var out Heartbeat
+	err := storage.InUserTx(ctx, s.pool, userID, func(q *db.Queries) error {
+		// A trava serializa com o ping: sem ela, um ping concorrente leria a
+		// linha antiga e um dos dois se perderia, como no PATCH.
+		h, err := q.GetHeartbeatForUpdate(ctx, db.GetHeartbeatForUpdateParams{UserID: userID, ID: id})
+		if err != nil {
+			return notFound(err)
+		}
+		if err := registrarSinal(ctx, q, h, sinalRecebido{sig: SignalSuccess, source: SourcePanel}, s.clk.Now()); err != nil {
+			return err
+		}
+		out, err = s.view(ctx, q, userID, id)
+		return err
+	})
+	if err != nil {
+		return Heartbeat{}, err
+	}
+	return out, nil
+}
+
 // Events é o log do heartbeat, do mais novo ao mais velho.
 func (s *Service) Events(ctx context.Context, userID, id uuid.UUID, before *uuid.UUID, limit int32) ([]db.HeartbeatEvent, error) {
 	var out []db.HeartbeatEvent
@@ -664,10 +702,15 @@ func toHeartbeat(h db.Heartbeat, open *uuid.UUID, now time.Time) (Heartbeat, err
 	}
 	return Heartbeat{
 		ID: h.ID, Name: h.Name, Description: h.Description, Tags: []string{}, Enabled: h.Enabled, Schedule: sch,
-		Grace:      time.Duration(h.GraceSec) * time.Second,
-		Status:     statusOf(h.Enabled, h.FailingSince != nil, open != nil, sch.IsKnown(), h.DeadlineAt, finishedARun(h), now),
+		Grace: time.Duration(h.GraceSec) * time.Second,
+		Status: statusOf(statusFacts{
+			Enabled: h.Enabled, Failing: h.FailingSince != nil, OpenIncident: open != nil,
+			KnownSchedule: sch.IsKnown(), FinishedARun: finishedARun(h), RunOpen: h.LastStartAt != nil,
+			Deadline: h.DeadlineAt, Grace: time.Duration(h.GraceSec) * time.Second,
+		}, now),
 		DeadlineAt: h.DeadlineAt, LastPingAt: h.LastPingAt, LastSuccessAt: h.LastSuccessAt,
 		LastStartAt: h.LastStartAt, LastRuntimeMS: h.LastRuntimeMS, OpenIncidentID: open, CreatedAt: h.CreatedAt,
+		PingResumes: h.PingResumes,
 	}, nil
 }
 
@@ -678,20 +721,36 @@ func finishedARun(h db.Heartbeat) bool {
 	return h.LastSuccessAt != nil || (h.LastSignal != nil && Signal(*h.LastSignal) != SignalStart)
 }
 
+// statusFacts são os fatos da linha de que o estado derivado depende.
+type statusFacts struct {
+	Enabled, Failing, OpenIncident, KnownSchedule, FinishedARun, RunOpen bool
+	Deadline                                                             time.Time
+	Grace                                                                time.Duration
+}
+
 // O incidente aberto conta como atraso mesmo com prazo futuro: editar o
 // agendamento move o prazo, e a tarefa continua devendo um sinal. Com
 // agendamento desconhecido (linha de uma versão posterior) o prazo gravado não
 // é confiável, e só o incidente aberto torna o estado atrasado.
-func statusOf(enabled, failing, openIncident, knownSchedule bool, deadline time.Time, finished bool, now time.Time) Status {
+func statusOf(f statusFacts, now time.Time) Status {
 	switch {
-	case !enabled:
+	case !f.Enabled:
 		return StatusPaused
-	case failing:
+	case f.Failing:
 		return StatusFailing
-	case openIncident, knownSchedule && !deadline.After(now):
+	case f.OpenIncident, f.KnownSchedule && !f.Deadline.After(now):
 		return StatusLate
-	case !finished:
+	case !f.FinishedARun:
 		return StatusWaiting
+	case f.inGrace(now):
+		return StatusGrace
 	}
 	return StatusUp
+}
+
+// inGrace diz se now cai na tolerância antes do prazo, [prazo - tolerância,
+// prazo). Com agendamento desconhecido o prazo não é confiável, e com execução
+// aberta a tarefa está trabalhando: nos dois casos não há o que tolerar.
+func (f statusFacts) inGrace(now time.Time) bool {
+	return f.KnownSchedule && !f.RunOpen && !now.Before(f.Deadline.Add(-f.Grace)) && now.Before(f.Deadline)
 }

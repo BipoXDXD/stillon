@@ -84,6 +84,7 @@ func TestIDMalformadoE404EmTodaRotaComID(t *testing.T) {
 		"DELETE /heartbeats/{id}":                           batidas.Delete,
 		"POST /heartbeats/{id}/token/rotate":                batidas.RotateToken,
 		"POST /heartbeats/{id}/clone":                       batidas.Clone,
+		"POST /heartbeats/{id}/ping-now":                    batidas.PingNow,
 		"GET /heartbeats/{id}/events":                       batidas.Events,
 		"POST /heartbeats/{id}/events/clear":                batidas.ClearEvents,
 		"GET /heartbeats/{id}/incidents":                    batidas.Incidents,

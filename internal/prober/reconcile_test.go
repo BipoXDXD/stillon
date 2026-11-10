@@ -86,7 +86,7 @@ func TestReconcileReportsTheHeartbeatEventLogSize(t *testing.T) {
 	}
 	ping := heartbeat.NewPingService(b.pool, b.clk)
 	for _, sig := range []heartbeat.Signal{heartbeat.SignalStart, heartbeat.SignalSuccess, heartbeat.SignalFail} {
-		if err := ping.Ping(ctx, token, sig); err != nil {
+		if err := ping.Ping(ctx, token, sig, nil); err != nil {
 			t.Fatal(err)
 		}
 	}

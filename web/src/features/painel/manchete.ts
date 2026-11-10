@@ -119,17 +119,19 @@ export function resumoEmTexto(itens: readonly ItemDoResumo[]): string {
   return ORDEM.flatMap(([e, um, varios]) => (conta[e] ? [plural(conta[e], um, varios)] : [])).join(', ')
 }
 
-const ORDEM_DAS_TAREFAS: readonly [EstadoDoHeartbeat, string, string][] = [
-  ['failing', 'com falha', 'com falha'],
-  ['late', 'atrasada', 'atrasadas'],
-  ['up', 'em dia', 'em dia'],
-  ['waiting', 'aguardando', 'aguardando'],
-  ['paused', 'pausada', 'pausadas'],
-  ['unknown', 'em estado desconhecido', 'em estado desconhecido'],
-]
+// Na ordem de exibição. Record: um estado novo sem frase aqui não compila.
+const ORDEM_DAS_TAREFAS: Record<EstadoDoHeartbeat, readonly [string, string]> = {
+  failing: ['com falha', 'com falha'],
+  late: ['atrasada', 'atrasadas'],
+  grace: ['em tolerância', 'em tolerância'],
+  up: ['em dia', 'em dia'],
+  waiting: ['aguardando', 'aguardando'],
+  paused: ['pausada', 'pausadas'],
+  unknown: ['em estado desconhecido', 'em estado desconhecido'],
+}
 
 function resumoDasTarefas(tarefas: readonly Heartbeat[]): string {
-  const frases = ORDEM_DAS_TAREFAS.flatMap(([e, um, varios]) => {
+  const frases = Object.entries(ORDEM_DAS_TAREFAS).flatMap(([e, [um, varios]]) => {
     const n = tarefas.filter((hb) => hb.state === e).length
     return n ? [plural(n, um, varios)] : []
   })

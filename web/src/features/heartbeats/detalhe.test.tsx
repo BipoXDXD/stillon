@@ -282,6 +282,24 @@ describe('tela de incidentes e contador', () => {
     expect(screen.queryByRole('region', { name: 'Tarefas que pedem atenção' })).not.toBeInTheDocument()
   })
 
+  // Sabotagem: deixar log como "Outro sinal", ou tirar a origem e a execução da linha.
+  it('o registro tem selo próprio, e a linha diz a execução e o que veio do painel', async () => {
+    await detalheCom({
+      eventos: [
+        { id: 'e1', kind: 'log', run_id: '0b3f6c2e-9a1d-4e7f-8c55-1234567890ab' },
+        { id: 'e2', kind: 'success', source: 'panel' },
+      ],
+    })
+    const linhas = await within(await secao('Log de eventos')).findAllByRole('listitem')
+    expect(linhas.map((l) => within(l).getByText(/^(Registro|Sucesso)$/).textContent)).toEqual(['Registro', 'Sucesso'])
+    const [registro, sucesso] = linhas
+    if (registro === undefined || sucesso === undefined) throw new Error('o log não tem as duas linhas')
+    expect(within(registro).getByText('execução 0b3f6c2e')).toBeInTheDocument()
+    expect(registro).not.toHaveTextContent('pelo painel')
+    expect(within(sucesso).getByText('pelo painel')).toBeInTheDocument()
+    expect(sucesso).not.toHaveTextContent('execução')
+  })
+
   // Sabotagem: contar só /incidents → a aba não diz nada.
   it('o contador da aba soma alvos e heartbeats', async () => {
     const r = await renderizarPainel('/')
@@ -289,6 +307,108 @@ describe('tela de incidentes e contador', () => {
     r.falsa.estado.heartbeats = [atrasado]
     await r.cliente.refetchQueries()
     expect(await screen.findByRole('link', { name: 'Incidentes, 2 abertos' })).toBeInTheDocument()
+  })
+})
+
+describe('em tolerância no detalhe', () => {
+  // Sabotagens: tirar o ramo grace do fraseDoEstado → a frase some; tirar o
+  // ramo grace do Prazo → "Próximo prazo" com a hora do alarme.
+  it('mostra o selo, a hora do alarme e nenhuma palavra de alerta', async () => {
+    await detalheCom({ state: 'grace', deadline_at: '2099-01-01T12:00:00Z' })
+    expect(screen.getByText('Em tolerância')).toBeInTheDocument()
+    const s = await secao('Agendamento e sinais')
+    expect(within(s).getByText(/^Sem sinal desde o prazo esperado; o alarme sai às 01\/01\/2099,? \d{2}:\d{2}\.$/)).toBeInTheDocument()
+    expect(within(s).getByText('Alarme').nextElementSibling).toHaveTextContent(/^01\/01\/2099,? \d{2}:\d{2}$/)
+    expect(within(s).queryByText(/Próximo prazo|Prazo vencido/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Atrasado|Falhando|Fora do ar|Estado desconhecido/)).not.toBeInTheDocument()
+  })
+})
+
+// Segura uma rota da API falsa até soltar: o que a tela mostra no intervalo.
+function portao() {
+  let soltar = () => {}
+  const aberto = new Promise<void>((resolve) => {
+    soltar = resolve
+  })
+  return { aberto, soltar }
+}
+
+describe('sinalizar agora', () => {
+  const AVISO = 'Sinal de sucesso enviado.'
+  const avisou = async () => expect((await screen.findAllByText(AVISO)).length).toBeGreaterThan(0)
+
+  // Sabotagem: não invalidar os eventos → o log fica em "Nenhum sinal recebido.".
+  it('chama a rota, avisa e o log mostra o sinal do painel', async () => {
+    const r = await detalheCom()
+    const s = await secao('Log de eventos')
+    await within(s).findByText('Nenhum sinal recebido.')
+    await r.usuario.click(screen.getByRole('button', { name: 'Sinalizar agora' }))
+    await avisou()
+    expect(r.falsa.chamadas('POST /heartbeats/:id/ping-now')).toBe(1)
+    const linha = await within(s).findByRole('listitem')
+    expect(within(linha).getByText('Sucesso')).toBeInTheDocument()
+    expect(within(linha).getByText('pelo painel')).toBeInTheDocument()
+  })
+
+  // Atraso só por prazo: a rota devolve "Em dia", e entre o clique e o refetch
+  // a tela não volta a dizer "Atrasado". Sabotagem: tirar o setQueryData.
+  it('atraso por prazo: mostra o estado devolvido pela rota antes do refetch', async () => {
+    const r = await detalheCom({ state: 'late', open_incident_id: null, deadline_at: '2026-09-24T11:00:00Z' })
+    expect(screen.getByText('Atrasado')).toBeInTheDocument()
+    const p = portao()
+    servidor.use(
+      http.get('*/api/v1/heartbeats/h1', async () => {
+        await p.aberto
+        return undefined
+      }),
+    )
+    await r.usuario.click(screen.getByRole('button', { name: 'Sinalizar agora' }))
+    await avisou()
+    expect(screen.queryByText('Atrasado')).not.toBeInTheDocument()
+    expect(screen.getByText('Em dia')).toBeInTheDocument()
+    p.soltar()
+    await waitFor(() => expect(r.cliente.isFetching()).toBe(0))
+    expect(screen.queryByText('Atrasado')).not.toBeInTheDocument()
+  })
+
+  // O sinal não fecha o incidente (statusOf do servidor: incidente aberto é
+  // late). Sabotagem: a API falsa zerar o open_incident_id → "Em dia".
+  it('com incidente aberto, o sinal registra e a tarefa continua Atrasado', async () => {
+    const r = await detalheCom({ state: 'late', open_incident_id: 'i1', deadline_at: '2026-09-24T11:00:00Z' })
+    await r.usuario.click(screen.getByRole('button', { name: 'Sinalizar agora' }))
+    await avisou()
+    await waitFor(() => expect(r.cliente.isFetching()).toBe(0))
+    expect(screen.getByText('Atrasado')).toBeInTheDocument()
+    expect(screen.queryByText('Em dia')).not.toBeInTheDocument()
+  })
+
+  // Sabotagem: tirar a guarda do ocupado → dois sinais.
+  it('fica ocupado enquanto a rota responde, sem duplo clique', async () => {
+    const r = await detalheCom()
+    const p = portao()
+    servidor.use(
+      http.post('*/api/v1/heartbeats/h1/ping-now', async () => {
+        await p.aberto
+        return undefined
+      }),
+    )
+    const botao = screen.getByRole('button', { name: 'Sinalizar agora' })
+    await r.usuario.click(botao)
+    expect(botao).toHaveAttribute('aria-disabled', 'true')
+    await r.usuario.click(botao)
+    p.soltar()
+    await avisou()
+    expect(r.falsa.chamadas('POST /heartbeats/:id/ping-now')).toBe(1)
+    await waitFor(() => expect(botao).not.toHaveAttribute('aria-disabled'))
+  })
+
+  it('erro fica na tela, e o heartbeat também', async () => {
+    const r = await detalheCom()
+    r.falsa.estado.forcar.set('POST /heartbeats/:id/ping-now', { status: 500, code: 'internal_error' })
+    await r.usuario.click(screen.getByRole('button', { name: 'Sinalizar agora' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('Erro interno do servidor.')
+    expect(screen.queryByText(AVISO)).not.toBeInTheDocument()
+    expect(screen.getByRole('heading', { level: 1, name: 'Backup' })).toBeInTheDocument()
   })
 })
 
@@ -334,7 +454,7 @@ describe('heartbeat de versão posterior', () => {
   it('evento de tipo novo aparece como "Outro sinal" e não derruba o log', async () => {
     await detalheCom({
       eventos: [
-        { id: 'e1', kind: 'log' },
+        { id: 'e1', kind: 'futuro' },
         { id: 'e2', kind: 'success' },
       ],
     })
@@ -344,7 +464,7 @@ describe('heartbeat de versão posterior', () => {
 
   // Sabotagem: tirar o 'unknown' de EstadoDoHeartbeat → o detalhe vira erro.
   it('estado novo aparece como "Estado desconhecido", sem palavra de alerta', async () => {
-    await detalheCom({ state: 'grace' })
+    await detalheCom({ state: 'futuro' })
     expect(screen.getByText('Estado desconhecido')).toBeInTheDocument()
     expect(screen.queryByText(/Atrasado|Falhando|Fora do ar/)).not.toBeInTheDocument()
   })

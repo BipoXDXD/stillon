@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"time"
 	_ "time/tzdata" // o cron depende do fuso declarado, não do tzdata da imagem (D18)
+
+	"github.com/google/uuid"
 )
 
 // Faixas que a validação aplica. Cada uma tem par num CHECK das migrations
@@ -101,7 +103,28 @@ const (
 	SignalStart   Signal = "start"
 	SignalSuccess Signal = "success"
 	SignalFail    Signal = "fail"
+	// SignalLog só registra: não mexe em último sinal, prazo nem execução (B4).
+	SignalLog Signal = "log"
 )
+
+// Source diz de onde veio o sinal, nos valores do CHECK de
+// heartbeat_events.source.
+type Source string
+
+const (
+	SourcePing  Source = "ping"
+	SourcePanel Source = "panel"
+)
+
+// Run identifica a execução que mandou o sinal (B7). Sem ID, o sinal vale como
+// antes do rid. StartAt é o início de mesmo rid lido do log, ou nil; só faz
+// sentido com ID. Manual é o sucesso do sinalizar agora: ele não é a tarefa
+// (R2), então não encerra a execução aberta nem leva a duração dela.
+type Run struct {
+	ID      *uuid.UUID
+	StartAt *time.Time
+	Manual  bool
+}
 
 // ExitCode é o código de saída que a tarefa mandou no ping. O valor zero é o
 // sucesso; os outros nascem de ParseExitCode.
@@ -148,6 +171,8 @@ type State struct {
 	// LastRuntimeMS é a duração da última execução encerrada; nil se ela não
 	// foi medida.
 	LastRuntimeMS *int64
+	// LastRunID é o rid do último sinal que mudou o estado; nil sem rid.
+	LastRunID *uuid.UUID
 }
 
 // Event é a linha que um sinal deixa no log. Runtime só existe num sucesso ou
@@ -156,29 +181,36 @@ type Event struct {
 	At        time.Time
 	Kind      Signal
 	RuntimeMS *int64
+	RunID     *uuid.UUID
 }
 
 // Apply aplica um sinal ao estado (seção 5 da spec). Devolve o estado novo e
 // o evento a gravar; sem evento, o sinal foi repetição e nada muda.
 //
 // Só o sucesso move o prazo (D10): a tolerância cobre o tempo de execução, e
-// um início sem sucesso vira atraso no prazo normal.
-func (s State) Apply(sig Signal, now time.Time, sch Schedule, grace time.Duration) (State, *Event) {
-	if s.isRepeat(sig, now) {
+// um início sem sucesso vira atraso no prazo normal. O log nunca é repetição:
+// cada linha que a tarefa manda é uma linha que ela quer ver.
+func (s State) Apply(sig Signal, now time.Time, run Run, sch Schedule, grace time.Duration) (State, *Event) {
+	ev := &Event{At: now, Kind: sig, RunID: run.ID}
+	if sig == SignalLog {
+		return s, ev
+	}
+	if s.isRepeat(sig, now, run.ID) {
 		return s, nil
 	}
-	s.LastPingAt, s.LastSignal = now, sig
-	ev := &Event{At: now, Kind: sig}
+	s.LastPingAt, s.LastSignal, s.LastRunID = now, sig, run.ID
 	switch sig {
 	case SignalStart:
 		s.LastStartAt = now
 	case SignalFail:
-		ev.RuntimeMS = s.closeRun(now)
+		ev.RuntimeMS = s.closeRun(now, run)
 		if s.FailingSince.IsZero() {
 			s.FailingSince = now
 		}
 	case SignalSuccess:
-		ev.RuntimeMS = s.closeRun(now)
+		if !run.Manual {
+			ev.RuntimeMS = s.closeRun(now, run)
+		}
 		s.FailingSince = time.Time{}
 		s.LastSuccessAt = now
 		// Num agendamento que esta versão não conhece não há próximo instante
@@ -190,23 +222,58 @@ func (s State) Apply(sig Signal, now time.Time, sch Schedule, grace time.Duratio
 	return s, ev
 }
 
-// closeRun encerra a execução: mede a partir do início aberto, se houver, e o
-// consome. Sem início, a última execução fica sem medida: repetir a duração da
-// anterior diria algo sobre uma execução que ninguém mediu.
-func (s *State) closeRun(now time.Time) *int64 {
+// closeRun encerra a execução e devolve a duração dela. Sem início, a última
+// execução fica sem medida: repetir a duração da anterior diria algo sobre uma
+// execução que ninguém mediu.
+//
+// Sem rid, mede do início aberto e o consome. Com rid, mede do início de mesmo
+// rid e só consome o aberto quando ele é esse início: o aberto pode ser de
+// outra execução sobreposta, que ainda vai terminar.
+func (s *State) closeRun(now time.Time, run Run) *int64 {
+	if run.ID == nil {
+		started := s.LastStartAt
+		s.LastStartAt = time.Time{}
+		return s.measure(started, now)
+	}
+	if run.StartAt == nil {
+		return s.measure(time.Time{}, now)
+	}
+	if run.StartAt.Equal(s.LastStartAt) {
+		s.LastStartAt = time.Time{}
+	}
+	return s.measure(*run.StartAt, now)
+}
+
+// measure grava como última duração a de started até now, ou nil se started é
+// "nunca".
+func (s *State) measure(started, now time.Time) *int64 {
 	s.LastRuntimeMS = nil
-	if !s.LastStartAt.IsZero() {
-		ms := max(now.Sub(s.LastStartAt).Milliseconds(), 0)
+	if !started.IsZero() {
+		ms := max(now.Sub(started).Milliseconds(), 0)
 		s.LastRuntimeMS = &ms
 	}
-	s.LastStartAt = time.Time{}
 	return s.LastRuntimeMS
 }
 
 // isRepeat vale para o intervalo negativo também: com relógios de instâncias
-// diferentes, now pode cair um pouco antes do último ping.
-func (s State) isRepeat(sig Signal, now time.Time) bool {
-	return s.LastSignal == sig && now.Sub(s.LastPingAt) < RepeatWindow
+// diferentes, now pode cair um pouco antes do último ping. Sinais de rid
+// diferentes são execuções diferentes, nunca repetição (B7).
+func (s State) isRepeat(sig Signal, now time.Time, runID *uuid.UUID) bool {
+	return s.LastSignal == sig && sameRun(s.LastRunID, runID) && now.Sub(s.LastPingAt) < RepeatWindow
+}
+
+func sameRun(a, b *uuid.UUID) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return *a == *b
+}
+
+// ResumedByPing diz se o sinal retoma um heartbeat pausado: só o sucesso, pela
+// URL de ping ou pelo sinalizar agora, e só quando o dono deixou a retomada
+// por ping ligada.
+func ResumedByPing(sig Signal, enabled, pingResumes bool) bool {
+	return sig == SignalSuccess && !enabled && pingResumes
 }
 
 // FirstDeadline é o prazo a contar de from: o próximo instante esperado mais

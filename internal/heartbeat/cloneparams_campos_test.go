@@ -9,12 +9,14 @@ import (
 )
 
 // Alarme para quem mexe em InsertHeartbeatParams: todo campo da struct tem de
-// estar numa das listas abaixo, e só numa. Um campo novo (como o PingResumes
-// que o PR 3 da SP1 traz) faz este teste falhar até alguém decidir se
-// cloneParams o copia do original ou o gera de propósito para a cópia.
+// estar numa das listas abaixo, e só numa. Um campo novo faz este teste falhar
+// até alguém decidir se cloneParams o copia do original ou o gera de propósito
+// para a cópia.
 var (
+	// PingResumes é configuração, como Enabled: a cópia retoma por ping se a
+	// original retomava.
 	camposCopiadosNoClone = []string{
-		"UserID", "Name", "Description", "PeriodSec", "CronExpr", "Timezone", "GraceSec", "Enabled",
+		"UserID", "Name", "Description", "PeriodSec", "CronExpr", "Timezone", "GraceSec", "Enabled", "PingResumes",
 	}
 	// A cópia nasce como uma criação: id, token e instantes são dela.
 	camposNaoCopiadosDePropositoNoClone = []string{
