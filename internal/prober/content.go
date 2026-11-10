@@ -77,6 +77,30 @@ func lerCorpoDaRegra(resp *http.Response) (corpo []byte, cortado, ilegivel bool,
 	return drenarIlegivel(leitor)
 }
 
+// drenarSemRegra lê até 64 KiB do corpo de um alvo sem regra, só pela
+// latência e pelos erros de leitura: corpo maior que o limite não é falha
+// (D2). Com exatamente um gzip, o teto vale sobre o descomprimido, como
+// quando o transporte do Go descomprimia (antes do PR 5): drenar o gzip cru
+// leria da rede até 3× mais numa página grande. Um gzip que não abre é erro de
+// leitura, e a sonda sai unknown, como saía com o descompressor do transporte.
+// Qualquer outra codificação é drenada crua, como o transporte fazia.
+func drenarSemRegra(resp *http.Response) error {
+	if codificacaoDoCorpo(resp.Header) != umGzip {
+		_, err := io.Copy(io.Discard, io.LimitReader(resp.Body, safedial.MaxBodyBytes))
+		return err
+	}
+	zr, err := gzip.NewReader(resp.Body)
+	if errors.Is(err, io.EOF) {
+		return nil // corpo vazio: não há o que descomprimir
+	}
+	if err != nil {
+		return err
+	}
+	defer zr.Close()
+	_, err = io.Copy(io.Discard, io.LimitReader(zr, safedial.MaxBodyBytes))
+	return err
+}
+
 // drenarIlegivel lê até o teto um corpo que a regra não julga: a latência e o
 // erro de leitura (prazo, conexão caída) valem como nos outros casos.
 func drenarIlegivel(r io.Reader) (corpo []byte, cortado, ilegivel bool, err error) {

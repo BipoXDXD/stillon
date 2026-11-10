@@ -3,7 +3,6 @@ package prober
 
 import (
 	"context"
-	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptrace"
@@ -111,7 +110,8 @@ func sondar(ctx context.Context, client *http.Client, s Spec) Result {
 	// O transporte não pede gzip (safedial.DisableCompression): quem pede é a
 	// sonda, para não baixar o corpo cru. Com regra, ela o descomprime ela
 	// mesma (lerCorpoDaRegra), e o cadastro recusa o Accept-Encoding do
-	// dono; sem regra, o corpo só é drenado, e o do dono, se houver, vale.
+	// dono; sem regra, o corpo só é drenado (drenarSemRegra), e o do dono, se
+	// houver, vale.
 	req.Header.Set("Accept-Encoding", safedial.AcceptEncodingDaSonda)
 	for nome, valor := range s.Headers {
 		if s.Content != nil && http.CanonicalHeaderKey(nome) == "Accept-Encoding" {
@@ -135,9 +135,7 @@ func sondar(ctx context.Context, client *http.Client, s Spec) Result {
 	if s.Content != nil {
 		corpo, cortado, ilegivel, err = lerCorpoDaRegra(resp)
 	} else {
-		// Sem regra, corpo maior que o limite não é falha (D2): lê-se até
-		// 64 KiB e fecha.
-		_, err = io.Copy(io.Discard, io.LimitReader(resp.Body, safedial.MaxBodyBytes))
+		err = drenarSemRegra(resp)
 	}
 	latencia := time.Since(inicio)
 	if err != nil {

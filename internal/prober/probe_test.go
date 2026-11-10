@@ -5,6 +5,9 @@ import (
 	"compress/gzip"
 	"crypto/tls"
 	"crypto/x509"
+	"fmt"
+	"io"
+	"math/rand/v2"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -449,6 +452,22 @@ func TestOwnersAcceptEncodingWithoutRuleIsKept(t *testing.T) {
 	}
 }
 
+// Com regra, o descompressor é o nosso e só lê gzip: o Accept-Encoding do
+// dono é ignorado e o servidor recebe só o da sonda. O cadastro já o recusa;
+// isto é a defesa para um alvo que chegue aqui sem passar por ele.
+func TestOwnersAcceptEncodingWithRuleIsIgnored(t *testing.T) {
+	recebido := make(chan []string, 1)
+	srv, client := servidor(t, func(w http.ResponseWriter, r *http.Request) {
+		recebido <- r.Header.Values("Accept-Encoding")
+	})
+	s := comRegra(srv.URL, targets.ContentNotContains, "erro")
+	s.Headers = map[string]string{"accept-encoding": "br"}
+	Probe(t.Context(), client, s)
+	if got := <-recebido; !slices.Equal(got, []string{"gzip"}) {
+		t.Errorf("Accept-Encoding recebido = %q, queria [gzip]", got)
+	}
+}
+
 func TestProbeConnectionRefused(t *testing.T) {
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -720,6 +739,94 @@ func TestProbeWithoutRuleIgnoresTheBody(t *testing.T) {
 	})
 	if res := Probe(t.Context(), client, especificacao(srv.URL)); res.Status != StatusUp || res.ErrorKind != "" {
 		t.Errorf("res = %+v, queria up sem erro", res)
+	}
+}
+
+// htmlGrande é uma página de ~286 KiB que comprime pela metade: linhas de 64
+// dígitos hexadecimais sorteados com semente fixa. Cada dígito carrega 4 bits
+// de entropia num byte, então nenhum gzip a comprime abaixo de metade; 64 KiB
+// de HTML pedem pelo menos 32 KiB comprimidos (a página inteira passa de
+// 140 KiB comprimida).
+var htmlGrande = sync.OnceValue(func() []byte {
+	sorteio := rand.New(rand.NewPCG(1, 2))
+	var b bytes.Buffer
+	b.WriteString("<!doctype html><html><body><pre>\n")
+	for b.Len() < 286<<10 {
+		fmt.Fprintf(&b, "%016x%016x%016x%016x\n", sorteio.Uint64(), sorteio.Uint64(), sorteio.Uint64(), sorteio.Uint64())
+	}
+	b.WriteString("</pre></body></html>\n")
+	return b.Bytes()
+})
+
+// transporteContado conta os bytes que a sonda consome do corpo da resposta,
+// ainda comprimido, porque o transporte não descomprime (DisableCompression).
+type transporteContado struct {
+	base  http.RoundTripper
+	corpo *contador
+}
+
+func (tc *transporteContado) RoundTrip(r *http.Request) (*http.Response, error) {
+	resp, err := tc.base.RoundTrip(r)
+	if err != nil {
+		return nil, err
+	}
+	tc.corpo.fonte = resp.Body
+	resp.Body = struct {
+		io.Reader
+		io.Closer
+	}{tc.corpo, resp.Body}
+	return resp, nil
+}
+
+// Sem regra, o teto de 64 KiB vale sobre o corpo descomprimido, como antes do
+// PR 5, quando o transporte do Go descomprimia: numa página grande, a sonda
+// lê da rede só o gzip desses 64 KiB, e não 64 KiB de gzip (3× o tráfego numa
+// home de 300 KiB). O teto do teste: 64 KiB de hexadecimal pedem 32 KiB
+// comprimidos, mais os 4 KiB do bufio do gzip.Reader; 40 KiB dá folga e fica
+// bem longe dos 64 KiB de quem drena o gzip cru.
+func TestProbeWithoutRuleDrainsTheDecompressedLimit(t *testing.T) {
+	comprimido := gzipar(t, htmlGrande())
+	srv, client := servidor(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Encoding", "gzip")
+		_, _ = w.Write(comprimido)
+	})
+	corpo := &contador{}
+	contado := *client
+	contado.Transport = &transporteContado{base: client.Transport, corpo: corpo}
+	if res := Probe(t.Context(), &contado, especificacao(srv.URL)); res.Status != StatusUp || res.ErrorKind != "" {
+		t.Fatalf("res = %+v, queria up sem erro", res)
+	}
+	const piso, teto = 31 << 10, 40 << 10
+	if corpo.lidos < piso || corpo.lidos > teto {
+		t.Errorf("%d bytes comprimidos lidos de %d, queria entre %d e %d", corpo.lidos, len(comprimido), piso, teto)
+	}
+}
+
+// Sem regra, um gzip que não abre dá o mesmo resultado de antes do PR 5, quando
+// o erro vinha do descompressor do transporte: down/unknown. Corpo vazio com
+// Content-Encoding: gzip não tem o que descomprimir e segue up.
+func TestProbeWithoutRuleAndABrokenGzipIsUnknownAsBefore(t *testing.T) {
+	casos := []struct {
+		nome  string
+		corpo []byte
+		quer  Status
+		tipo  ErrorKind
+	}{
+		{"cabeçalho que não é gzip", []byte("isto não é gzip"), StatusDown, KindUnknown},
+		{"gzip cortado no meio", gzipar(t, htmlGrande())[:8<<10], StatusDown, KindUnknown},
+		{"corpo vazio", nil, StatusUp, ""},
+	}
+	for _, c := range casos {
+		t.Run(c.nome, func(t *testing.T) {
+			srv, client := servidor(t, func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Encoding", "gzip")
+				_, _ = w.Write(c.corpo)
+			})
+			res := Probe(t.Context(), client, especificacao(srv.URL))
+			if res.Status != c.quer || res.ErrorKind != c.tipo || res.StatusCode != http.StatusOK {
+				t.Errorf("res = %+v, queria %s/%q/200", res, c.quer, c.tipo)
+			}
+		})
 	}
 }
 

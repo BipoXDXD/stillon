@@ -107,8 +107,9 @@ func newTransport(permitir func(address string) error, dialer *net.Dialer) *http
 		// O transporte não pede nem desfaz gzip por conta própria: ele decide
 		// pela primeira linha de Content-Encoding e apaga todas. Quem pede é
 		// a sonda (AcceptEncodingDaSonda, que atravessa limparHeaders); com
-		// regra ela descomprime (prober.lerCorpoDaRegra), sem regra drena o
-		// corpo comprimido. Discord e Resend não pedem e recebem identity.
+		// regra ela descomprime e julga (prober.lerCorpoDaRegra), sem regra
+		// descomprime e drena (prober.drenarSemRegra), com o teto sobre o
+		// descomprimido nos dois. Discord e Resend não pedem e recebem identity.
 		DisableCompression: true,
 
 		// C1 (Plano 10): o padrão do net/http é 10 MiB de cabeçalho por
