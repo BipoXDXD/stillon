@@ -3,7 +3,6 @@ package httpapi_test
 import (
 	"context"
 	"errors"
-	"io"
 	"net/http"
 	"strings"
 	"sync/atomic"
@@ -101,20 +100,9 @@ func provarRollbackDaRotacao(t *testing.T, a *api, armar func() (desarmar func()
 	antes := fotoDasSessoes(t, a)
 	desarmar := armar()
 
-	falha := post(t, c, a.srv.URL+"/api/v1/auth/refresh", nil)
-	defer falha.Body.Close()
-	corpo, err := io.ReadAll(falha.Body)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if falha.StatusCode != http.StatusInternalServerError {
-		t.Fatalf("refresh com a rotação quebrada: %d, queria 500: %s", falha.StatusCode, corpo)
-	}
+	corpo := conferirErroInternoGenerico(t, post(t, c, a.srv.URL+"/api/v1/auth/refresh", nil))
 	if strings.Contains(string(corpo), canarioDaRotacao) {
 		t.Errorf("o corpo trouxe o erro real: %s", corpo)
-	}
-	if ck := refreshCookie(falha); ck != nil {
-		t.Errorf("a falha mexeu no cookie de refresh: %+v", ck)
 	}
 	if depois := fotoDasSessoes(t, a); depois != antes {
 		t.Errorf("a rotação que falhou deixou rastro em sessions:\nantes:  %s\ndepois: %s", antes, depois)

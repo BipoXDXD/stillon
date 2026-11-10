@@ -23,6 +23,12 @@ const verificacoesConcorrentes = 8
 // quantas foram aceitas e quantas recusadas com ErrTOTPInvalid.
 func disputarCodigo(t *testing.T, pool *pgxpool.Pool, travar string, userID uuid.UUID, verificar func() error) (aceitas, recusadas int) {
 	t.Helper()
+	// Sem conexão para a trava e a espera, as verificações ficariam na fila do
+	// pool e o teste só pararia no -timeout.
+	if limite := pool.Config().MaxConns; limite < verificacoesConcorrentes+2 {
+		t.Fatalf("o pool tem %d conexões; a disputa precisa de %d (%d verificações, a trava e a espera)",
+			limite, verificacoesConcorrentes+2, verificacoesConcorrentes)
+	}
 	ctx := context.Background()
 	trava, err := pool.Begin(ctx)
 	if err != nil {

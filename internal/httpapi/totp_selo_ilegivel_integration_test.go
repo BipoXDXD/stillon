@@ -57,9 +57,10 @@ func gravarSeloAtivo(t *testing.T, a *api, selo []byte) {
 	}
 }
 
-// conferirErroInternoGenerico lê e fecha a resposta. A mensagem literal é a da
-// tabela de erros; a lista pega o detalhe que chegasse em outro campo.
-func conferirErroInternoGenerico(t *testing.T, resp *http.Response) {
+// conferirErroInternoGenerico lê e fecha a resposta e devolve o corpo, para
+// quem procura nele um detalhe próprio. A mensagem literal é a da tabela de
+// erros; a lista pega o detalhe que chegasse em outro campo.
+func conferirErroInternoGenerico(t *testing.T, resp *http.Response) []byte {
 	t.Helper()
 	defer resp.Body.Close()
 	corpo, err := io.ReadAll(resp.Body)
@@ -84,6 +85,7 @@ func conferirErroInternoGenerico(t *testing.T, resp *http.Response) {
 	if ck := refreshCookie(resp); ck != nil {
 		t.Errorf("a falha interna mexeu no cookie de refresh: %+v", ck)
 	}
+	return corpo
 }
 
 func desafioFoiConsumido(t *testing.T, a *api) bool {
