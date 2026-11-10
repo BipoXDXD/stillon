@@ -883,7 +883,7 @@ func TestEveryErrorEnvelopeCarriesTheTraceID(t *testing.T) {
 	// Mais externo: o 429 sai do RateLimit global, antes de qualquer outra
 	// coisa da cadeia rodar.
 	var limitado *http.Response
-	for i := 0; i < 200 && limitado == nil; i++ {
+	for range 200 {
 		resp, err := http.Get(a.srv.URL + "/healthz")
 		if err != nil {
 			t.Fatal(err)
