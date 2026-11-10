@@ -20,6 +20,10 @@ import (
 // próprio, logo nem raiz de teste nem InsecureSkipVerify. A CA de teste entra
 // só no transporte montado pelo próprio teste. Sabotagem: TLSClientConfig com
 // InsecureSkipVerify em newTransport reprova este teste.
+//
+// Ele olha o transporte antes do primeiro RoundTrip, e não pode ser movido
+// para depois de uma requisição: no primeiro uso, o ForceAttemptHTTP2 cria um
+// TLSClientConfig vazio, e o nil deixaria de valer.
 func TestProductionClientKeepsDefaultVerification(t *testing.T) {
 	client := safedial.NewClient(0)
 	transport, ok := client.Transport.(*http.Transport)

@@ -1,13 +1,17 @@
 package prober
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/BipoXDXD/stillon/internal/prober/safedial"
 )
 
 // Estes testes trocam o net.DefaultResolver (resolverDeTeste) e por isso não
@@ -141,9 +145,10 @@ func TestProbeAcceptsTheTrailingDot(t *testing.T) {
 	conferirValidade(t, res, intermediarioAte)
 }
 
-// Em HTTP/2 o handshake também passa pelo trace. O salto para o mesmo host
-// abre uma segunda conexão (sem keep-alive), discada em outra goroutine: é o
-// caso em que o coletor recebe handshakes concorrentes ao Probe.
+// Em HTTP/2 o trace também dispara, e em cada salto: o redirect para o mesmo
+// host abre uma segunda conexão (sem keep-alive) e as duas passam pelo
+// coletor. Os saltos são sequenciais; a concorrência com o Probe é provada por
+// TestHandshakeFinishedAfterProbeReturnsIsNotARace.
 func TestTLSHandshakeObservedOverHTTP2(t *testing.T) {
 	resolverDeTeste(t, "127.0.0.1")
 	protocolos := make(chan int, 2)
@@ -186,6 +191,81 @@ func TestUnverifiedCertificateRecordsNothing(t *testing.T) {
 		t.Fatalf("res = %+v, queria down/tls", res)
 	}
 	conferirValidade(t, res, time.Time{})
+}
+
+// T3 ponta a ponta: um handshake que conclui sem verificar (InsecureSkipVerify,
+// só neste teste) traz PeerCertificates e nenhuma VerifiedChains, e não pode
+// virar leitura. Sabotagem: cair em PeerCertificates quando VerifiedChains
+// vem vazio.
+func TestPresentedButUnverifiedCertificateRecordsNothing(t *testing.T) {
+	resolverDeTeste(t, "127.0.0.1")
+	srv, _ := servidorTLS(t, hostSonda, folhaAte, false, responder200)
+	client := safedial.NewClientAllowing(0, enderecoDe(t, srv))
+	transport, ok := client.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("transporte de produção = %T, queria *http.Transport", client.Transport)
+	}
+	transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} // #nosec G402 -- T3: handshake sem verificação, só no teste
+	t.Cleanup(transport.CloseIdleConnections)
+
+	res := Probe(t.Context(), client, especificacao(urlDe(t, "https", hostSonda, srv)))
+
+	conferirUp(t, res)
+	conferirValidade(t, res, time.Time{})
+}
+
+// O transporte disca com context.WithoutCancel: a discagem sobrevive ao
+// client.Do que desistiu e chama o trace depois de o Probe ter lido o coletor.
+// O servidor segura o handshake até o prazo do context da sonda; vencido, o
+// Probe volta por timeout e, em paralelo, o handshake termina e o cliente
+// fecha a conexão (sem keep-alive). Sabotagem: tirar o mutex do coletor faz o
+// -race acusar este teste.
+//
+// A liberação vem do prazo do context, e não de um close feito por este teste
+// depois do Probe: o detector conta toda leitura e escrita de socket como
+// sincronização, e um close posterior à leitura do coletor ordenaria, pelo
+// socket, o append depois dela, escondendo a corrida.
+func TestHandshakeFinishedAfterProbeReturnsIsNotARace(t *testing.T) {
+	const prazoDaSonda = 50 * time.Millisecond
+	resolverDeTeste(t, "127.0.0.1")
+	raiz, cert := cadeiaDeTeste(t, hostSonda, folhaAte, intermediarioAte)
+	ctx, cancel := context.WithTimeout(t.Context(), prazoDaSonda)
+	t.Cleanup(cancel)
+	fechada := make(chan struct{}, 1)
+
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(responder200))
+	srv.TLS = &tls.Config{
+		Certificates: []tls.Certificate{cert},
+		GetConfigForClient: func(*tls.ClientHelloInfo) (*tls.Config, error) {
+			<-ctx.Done()
+			return nil, nil
+		},
+	}
+	srv.Config.ConnState = func(_ net.Conn, estado http.ConnState) {
+		if estado == http.StateClosed {
+			select {
+			case fechada <- struct{}{}:
+			default:
+			}
+		}
+	}
+	srv.StartTLS()
+	t.Cleanup(srv.Close)
+	client := clienteComRaiz(t, raiz, enderecoDe(t, srv))
+
+	res := Probe(ctx, client, especificacao(urlDe(t, "https", hostSonda, srv)))
+
+	if res.Status != StatusDown || res.ErrorKind != KindTimeout {
+		t.Fatalf("res = %+v, queria down/timeout", res)
+	}
+	conferirValidade(t, res, time.Time{})
+
+	const prazoDoFechamento = 5 * time.Second
+	select {
+	case <-fechada:
+	case <-time.After(prazoDoFechamento):
+		t.Fatal("o servidor não viu a conexão fechar depois do handshake liberado")
+	}
 }
 
 // Down por status ainda passou por um handshake verificado: a validade vale.
