@@ -51,13 +51,16 @@ func TestAckIncidentFiltersOwnerWithoutRLS(t *testing.T) {
 }
 
 // O filtro target_id de ListIncidents com um alvo alheio: o comentário da
-// query promete lista vazia, e sem RLS só o user_id do WHERE cumpre.
+// query promete lista vazia, e sem RLS só o user_id do WHERE cumpre. O
+// segundo alvo de A, com incidente próprio, prova que o filtro por alvo também
+// age: sem ele, A leria os dois incidentes.
 func TestListIncidentsByTargetFiltersOwnerWithoutRLS(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
 	a, b := novoUsuario(t, pool), novoUsuario(t, pool)
 	alvoA := novoAlvo(t, pool, a, agora)
 	incidente := novoIncidente(t, pool, alvoA)
+	novoIncidente(t, pool, novoAlvo(t, pool, a, agora))
 	q := queriesSemRLS(t)
 	listar := func(dono uuid.UUID) []db.ListIncidentsRow {
 		t.Helper()
