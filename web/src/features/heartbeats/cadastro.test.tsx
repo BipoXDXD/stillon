@@ -49,6 +49,58 @@ describe('cadastro', () => {
     expect(within(d).getByText(`curl -fsS -m 10 --retry 3 -o /dev/null -X POST ${PING_URL}/$?`)).toBeInTheDocument()
   })
 
+  describe('exemplos de uso da URL', () => {
+    const ABAS = ['curl', 'crontab', 'wget', 'Python', 'PowerShell']
+    const EXEMPLOS = [
+      ['crontab', `0 3 * * * /usr/local/bin/backup.sh && curl -fsS -m 10 --retry 3 -o /dev/null -X POST ${PING_URL}`],
+      ['wget', `wget -q -T 10 -t 3 -O /dev/null --method=POST ${PING_URL}`],
+      ['Python', `urllib.request.urlopen(urllib.request.Request("${PING_URL}", method="POST"), timeout=10)`],
+      ['PowerShell', `Invoke-RestMethod -Method Post -TimeoutSec 10 -Uri ${PING_URL}`],
+    ] as const
+
+    const abaDe = (d: HTMLElement, nome: string) => within(d).getByRole('button', { name: nome })
+
+    // Sabotagens: um texto diferente do literal, o Copiar com outro texto, a aba
+    // sem aria-pressed ou sem trocar o exemplo.
+    it.each(EXEMPLOS)('a aba %s mostra o exemplo com a URL e o copia como está', async (aba, texto) => {
+      const r = await renderizarPainel('/heartbeats/new')
+      await cadastrar(r)
+      const d = await dialogo()
+      expect(abaDe(d, aba)).toHaveAttribute('aria-pressed', 'false')
+      await r.usuario.click(abaDe(d, aba))
+      expect(abaDe(d, aba)).toHaveAttribute('aria-pressed', 'true')
+      expect(abaDe(d, 'curl')).toHaveAttribute('aria-pressed', 'false')
+      const exemplo = within(d).getByText(texto)
+      expect(exemplo.tagName).toBe('CODE')
+      expect(within(d).queryByText(`curl -fsS -m 10 --retry 3 -o /dev/null -X POST ${PING_URL}/start`)).not.toBeInTheDocument()
+      await r.usuario.click(within(d).getByRole('button', { name: `Copiar o exemplo de ${aba}` }))
+      expect(await navigator.clipboard.readText()).toBe(exemplo.textContent)
+      expect(await navigator.clipboard.readText()).toBe(texto)
+    })
+
+    // D6: só POST. A frase sobre o GET continua, e é a única menção a ele.
+    // Sabotagem: wget sem --method=POST, ou um exemplo por GET.
+    it('nenhum exemplo usa GET, e a frase "Só POST" continua', async () => {
+      const r = await renderizarPainel('/heartbeats/new')
+      await cadastrar(r)
+      const d = await dialogo()
+      expect(abaDe(d, 'curl')).toHaveAttribute('aria-pressed', 'true')
+      const vistos: string[] = []
+      for (const aba of ABAS) {
+        await r.usuario.click(abaDe(d, aba))
+        for (const codigo of d.querySelectorAll('code')) vistos.push(codigo.textContent ?? '')
+      }
+      const exemplos = vistos.filter((t) => t !== PING_URL)
+      expect(exemplos).toHaveLength(8)
+      for (const t of exemplos) {
+        expect(t).not.toMatch(/\bGET\b/)
+        expect(t).toMatch(/POST|Post/)
+      }
+      expect(exemplos.find((t) => t.startsWith('wget'))).toContain('--method=POST')
+      expect(within(d).getByText('Só POST: um GET responde 405, para que prévia de link e scanner não contem como sinal.')).toBeInTheDocument()
+    })
+  })
+
   // Esc e o clique fora não fecham: a URL não volta. Sabotagem: aoMudar fechando, sem o `travado`.
   it('só "Já guardei" fecha, e leva ao detalhe', async () => {
     const r = await renderizarPainel('/heartbeats/new')
