@@ -23,10 +23,11 @@ ALTER TABLE targets
                AND content_value !~ '[\u0001-\u001f\u007f-\u009f]'),
     -- Forma RFC 6901: "~" só como ~0 ou ~1. Um ponteiro que o sondador não lê
     -- deixaria o alvo parado no último estado, sem check e sem aviso (L4 do
-    -- STRIDE do #255).
+    -- STRIDE do #255). Sem controle, como o valor e o cadastro.
     ADD COLUMN content_json_pointer text
         CHECK (char_length(content_json_pointer) BETWEEN 1 AND 256 AND left(content_json_pointer, 1) = '/'
-               AND content_json_pointer !~ '~([^01]|$)');
+               AND content_json_pointer !~ '~([^01]|$)'
+               AND content_json_pointer !~ '[\u0001-\u001f\u007f-\u009f]');
 
 -- Tudo ou nada. Precisa ser CASE: com (content_mode IS NULL) = (... IS NULL)
 -- o ponteiro de um contains passaria, e com '=' sobre NULL o CHECK daria NULL,

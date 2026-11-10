@@ -60,6 +60,8 @@ func TestContentRuleChecksAcceptOnlyWholeRules(t *testing.T) {
 		{"ponteiro_com_escapes_validos", "GET", regraDeConteudo{ptrTexto("json_equals"), ptrTexto(`"ok"`), ptrTexto("/a~0b/c~1d/")}, false},
 		{"ponteiro_com_til_2", "GET", regraDeConteudo{ptrTexto("json_equals"), ptrTexto(`"ok"`), ptrTexto("/a~2")}, true},
 		{"ponteiro_com_til_no_fim", "GET", regraDeConteudo{ptrTexto("json_equals"), ptrTexto(`"ok"`), ptrTexto("/a~")}, true},
+		{"ponteiro_com_controle_01", "GET", regraDeConteudo{ptrTexto("json_equals"), ptrTexto(`"ok"`), ptrTexto("/a\x01b")}, true},
+		{"ponteiro_com_controle_c1", "GET", regraDeConteudo{ptrTexto("json_equals"), ptrTexto(`"ok"`), ptrTexto("/a\u0085b")}, true},
 		{"valor_com_acento", "GET", regraDeConteudo{ptrTexto("contains"), ptrTexto("ação"), nil}, false},
 		{"valor_com_controle_01", "GET", regraDeConteudo{ptrTexto("contains"), ptrTexto("a\x01b"), nil}, true},
 		{"valor_com_tab", "GET", regraDeConteudo{ptrTexto("contains"), ptrTexto("a\tb"), nil}, true},
