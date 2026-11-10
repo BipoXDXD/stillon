@@ -159,7 +159,7 @@ function ConteudoDoTooltip({ pontos, label }: { pontos: readonly (PontoBruto | P
   const ponto = pontos.find((p) => p.t === Number(label))
   if (ponto === undefined) return null
   return (
-    <div className="min-w-44 space-y-1 rounded-padrao border border-borda bg-superficie p-3 text-sm sombra-nivel-2">
+    <div className="min-w-44 space-y-1 rounded-padrao border border-borda bg-superficie-elevada p-3 text-sm sombra-nivel-2">
       <p className="text-meta text-suave">{dataHora(new Date(ponto.t).toISOString())}</p>
       {'p50' in ponto ? (
         <>
