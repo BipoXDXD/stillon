@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor, within } from '@testing-library/react'
+import { act, screen, waitFor, within } from '@testing-library/react'
 import { http, HttpResponse } from 'msw'
 import { describe, expect, it } from 'vitest'
 import { Alvo, ItemDoResumo } from '@/lib/api/schemas'
@@ -7,7 +7,6 @@ import type { ErroForcado } from '@/test/api-falsa'
 import { alvo, incidente, itemDoResumo } from '@/test/fixtures'
 import { renderizarPainel } from '@/test/renderizar'
 import { servidor } from '@/test/setup'
-import { CertificadoDoAlvo } from './CertificadoDoAlvo'
 
 // Uma resposta segurada até o teste soltar.
 function portao() {
@@ -810,22 +809,6 @@ describe('certificado do alvo', () => {
   it('HTTP sem leitura: não se aplica', async () => {
     const linha = await abrir(alvo({ url: 'http://api.exemplo.com/health', tls: null }))
     expect(linha).toHaveTextContent('Certificado: não se aplica a este endereço.')
-  })
-
-  // Dentro da tela o alvo já chegou; o componente cobre a consulta inteira.
-  it('a consulta falhou sem dados: "indisponível", sem acusar o alvo', () => {
-    render(<CertificadoDoAlvo consulta={{ data: undefined, isLoading: false, dataUpdatedAt: 0 }} />)
-    const linha = screen.getByTestId('certificado')
-    expect(linha).toHaveTextContent('Certificado: indisponível.')
-    expect(linha.className).not.toMatch(/perigo/)
-    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
-  })
-
-  it('carregando: esqueleto de uma linha, sem texto', () => {
-    render(<CertificadoDoAlvo consulta={{ data: undefined, isLoading: true, dataUpdatedAt: 0 }} />)
-    const esqueleto = screen.getByTestId('esqueleto-do-certificado')
-    expect(esqueleto).toHaveClass('animate-pulse', 'motion-reduce:animate-none')
-    expect(screen.queryByTestId('certificado')).not.toBeInTheDocument()
   })
 
   it('o parse aceita tls null e recusa tls sem observed_at', () => {

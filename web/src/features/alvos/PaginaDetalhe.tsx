@@ -239,7 +239,7 @@ function DetalheDoAlvo({ id }: { id: string }) {
             aoSumir={() => void sumiu()}
             aoErrar={setErro}
           />
-          <CertificadoDoAlvo consulta={alvo} />
+          <CertificadoDoAlvo alvo={a} agora={new Date(alvo.dataUpdatedAt)} />
 
           <section
             className="space-y-4 rounded-padrao border border-borda bg-superficie p-4 sombra-nivel-1 sm:p-6"

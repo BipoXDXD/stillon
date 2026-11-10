@@ -21,10 +21,8 @@ export function certificadoSeAplica(url: string): boolean {
   return protocol === 'https:' && !hostname.startsWith('[') && !IPV4.test(hostname)
 }
 
-export type FormaDoCertificado = 'valido' | 'vencido' | 'aguardando' | 'nao-se-aplica' | 'indisponivel'
+export type FormaDoCertificado = 'valido' | 'vencido' | 'aguardando' | 'nao-se-aplica'
 export type Certificado = { forma: FormaDoCertificado; texto: string }
-
-export const CERTIFICADO_INDISPONIVEL: Certificado = { forma: 'indisponivel', texto: 'Certificado: indisponível.' }
 
 // Com leitura, a validade vale mesmo que a URL tenha mudado: a API apaga a
 // leitura quando a origem muda, então a que chega é do host cadastrado.
