@@ -76,54 +76,171 @@ func reprovadoOuCortado(cortado bool) ErrorKind {
 // false e null literais. O corpo inteiro tem de ser UM valor JSON; JSON
 // inválido, ponteiro ausente, objeto ou array devolvem ok = false.
 //
-// A descida decodifica só o nível do caminho, guardando os filhos crus
-// (Ruling do benchmark, §11): a árvore inteira de um JSON de 64 KiB custava
-// cerca de 1 MiB por sonda. Quem valida o JSON é o json.Unmarshal de cada
-// nível, que também recusa lixo depois do valor; por isso o ponteiro nunca é
-// vazio (ParseJSONPointer o recusa), e o corpo inteiro passa pelo primeiro.
+// O corpo é validado uma vez (json.Valid, sem alocar) e a descida o percorre
+// numa passada só, sem copiar: os irmãos fora do caminho são pulados byte a
+// byte. Com a árvore inteira, ou com um Unmarshal por nível, um ponteiro de
+// 128 tokens custava megabytes por sonda (portão do §11).
 func escalarNoPonteiro(corpo []byte, ponteiro []string) (string, bool) {
-	atual := bytes.TrimSpace(corpo)
-	if len(atual) == 0 || len(ponteiro) == 0 {
+	if !json.Valid(corpo) {
 		return "", false
 	}
-	for _, token := range ponteiro {
-		var ok bool
-		if atual, ok = filho(atual, token); !ok {
-			return "", false
-		}
+	c := cursor{b: corpo}
+	c.espacos()
+	valor, ok := c.descer(ponteiro)
+	if !ok {
+		return "", false
 	}
-	return formaDeTexto(atual)
+	return formaDeTexto(valor)
 }
 
-// filho segue um token do ponteiro. Em objeto, vale a última chave repetida,
-// como no encoding/json. Em array, o token só vale como índice RFC 6901: "0"
-// ou dígitos sem zero à esquerda; "-" (depois do último), sinal e zero à
-// esquerda não apontam nada. Escalar não tem filho.
-func filho(valor []byte, token string) ([]byte, bool) {
-	switch valor[0] {
-	case '{':
-		var objeto map[string]json.RawMessage
-		if err := json.Unmarshal(valor, &objeto); err != nil {
-			return nil, false
-		}
-		v, ok := objeto[token]
-		return v, ok
-	case '[':
-		i, ok := indiceDoArray(token)
-		if !ok {
-			return nil, false
-		}
-		var lista []json.RawMessage
-		if err := json.Unmarshal(valor, &lista); err != nil || i >= len(lista) {
-			return nil, false
-		}
-		return lista[i], true
+// cursor anda sobre um JSON que json.Valid já aceitou: por isso não confere
+// sintaxe, só a estrutura que precisa para pular valores.
+type cursor struct {
+	b []byte
+	i int
+}
+
+// descer consome o valor que começa em c.i e devolve o pedaço que o ponteiro
+// aponta dentro dele. Num objeto, todos os membros são lidos, e vale a última
+// chave repetida, como no encoding/json: um caminho achado antes é trocado
+// pelo da repetição, mesmo que ela não o tenha.
+func (c *cursor) descer(ponteiro []string) ([]byte, bool) {
+	if len(ponteiro) == 0 {
+		inicio := c.i
+		c.pular()
+		return c.b[inicio:c.i], true
 	}
+	switch c.b[c.i] {
+	case '{':
+		return c.descerNoObjeto(ponteiro)
+	case '[':
+		return c.descerNoArray(ponteiro)
+	}
+	c.pular() // escalar não tem filho
 	return nil, false
 }
 
-// formaDeTexto recebe um valor JSON já validado pelo Unmarshal do nível de
-// cima, sem espaço em volta.
+func (c *cursor) descerNoObjeto(ponteiro []string) (achado []byte, ok bool) {
+	c.i++ // {
+	for c.espacos(); c.b[c.i] != '}'; c.espacos() {
+		chave := c.lerString()
+		c.espacos()
+		c.i++ // :
+		c.espacos()
+		if chaveIgual(chave, ponteiro[0]) {
+			achado, ok = c.descer(ponteiro[1:])
+		} else {
+			c.pular()
+		}
+		c.depoisDoMembro()
+	}
+	c.i++ // }
+	return achado, ok
+}
+
+func (c *cursor) descerNoArray(ponteiro []string) (achado []byte, ok bool) {
+	alvo, indiceValido := indiceDoArray(ponteiro[0])
+	c.i++ // [
+	for n := 0; ; n++ {
+		if c.espacos(); c.b[c.i] == ']' {
+			break
+		}
+		if indiceValido && n == alvo {
+			achado, ok = c.descer(ponteiro[1:])
+		} else {
+			c.pular()
+		}
+		c.depoisDoMembro()
+	}
+	c.i++ // ]
+	return achado, ok
+}
+
+// depoisDoMembro passa os espaços e a vírgula que separam membros.
+func (c *cursor) depoisDoMembro() {
+	c.espacos()
+	if c.b[c.i] == ',' {
+		c.i++
+	}
+}
+
+func (c *cursor) espacos() {
+	for c.i < len(c.b) {
+		switch c.b[c.i] {
+		case ' ', '\t', '\n', '\r':
+			c.i++
+		default:
+			return
+		}
+	}
+}
+
+// pular passa um valor inteiro, contando a profundidade de { e [ e ignorando
+// o que está dentro de strings.
+func (c *cursor) pular() {
+	switch c.b[c.i] {
+	case '"':
+		c.lerString()
+	case '{', '[':
+		profundidade := 0
+		for {
+			switch c.b[c.i] {
+			case '"':
+				c.lerString()
+				continue
+			case '{', '[':
+				profundidade++
+			case '}', ']':
+				profundidade--
+			}
+			c.i++
+			if profundidade == 0 {
+				return
+			}
+		}
+	default: // número, true, false ou null
+		for c.i < len(c.b) && !fimDeLiteral(c.b[c.i]) {
+			c.i++
+		}
+	}
+}
+
+func fimDeLiteral(b byte) bool {
+	switch b {
+	case ',', '}', ']', ' ', '\t', '\n', '\r':
+		return true
+	}
+	return false
+}
+
+// lerString passa uma string e a devolve com as aspas, ainda escapada.
+func (c *cursor) lerString() []byte {
+	inicio := c.i
+	for c.i++; c.b[c.i] != '"'; c.i++ {
+		if c.b[c.i] == '\\' {
+			c.i++
+		}
+	}
+	c.i++
+	return c.b[inicio:c.i]
+}
+
+// chaveIgual compara a chave crua com o token já decodificado do ponteiro.
+// Sem barra invertida, a chave crua é a própria chave e a comparação não
+// aloca; com escape, ela é decodificada antes.
+func chaveIgual(crua []byte, token string) bool {
+	miolo := crua[1 : len(crua)-1]
+	if bytes.IndexByte(miolo, '\\') < 0 {
+		return string(miolo) == token
+	}
+	var chave string
+	if err := json.Unmarshal(crua, &chave); err != nil {
+		return false
+	}
+	return chave == token
+}
+
+// formaDeTexto recebe um valor JSON já validado, sem espaço em volta.
 func formaDeTexto(valor []byte) (string, bool) {
 	switch valor[0] {
 	case '{', '[':
