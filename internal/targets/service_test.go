@@ -982,3 +982,50 @@ func TestRuleChangeResetsHealthAndProbesNow(t *testing.T) {
 		t.Errorf("next_run_at = %v, queria %v", proximo.UTC(), agora)
 	}
 }
+
+// A regra é comparada pelo valor: reenviar a mesma regra (outro ponteiro, como
+// chega de cada PATCH decodificado) ou trocar só o nome não é outro critério de
+// saúde, e a histerese e o agendamento ficam como estavam.
+func TestSameRuleOrOtherFieldKeepsTheHysteresis(t *testing.T) {
+	nome := "Outro nome"
+	casos := map[string]targets.Patch{
+		"só o nome":      {Name: &nome},
+		"a mesma regra":  {SetContentRule: true, ContentRule: regraDeStatus()},
+		"nome e a regra": {Name: &nome, SetContentRule: true, ContentRule: regraDeStatus()},
+	}
+	for caso, p := range casos {
+		t.Run(caso, func(t *testing.T) {
+			a := novoAmbiente(t)
+			ctx := context.Background()
+			dono := a.usuario(t)
+			in := entrada()
+			in.ContentRule = regraDeStatus()
+			alvo, err := a.svc.Create(ctx, dono, in)
+			if err != nil {
+				t.Fatal(err)
+			}
+			a.clk.Advance(10 * time.Minute)
+			desde, ultimo := a.clk.Now().Add(-2*time.Minute), a.clk.Now().Add(-time.Minute)
+			a.saude(t, alvo.ID, desde, ultimo)
+			agendado := a.clk.Now().Add(50 * time.Second)
+			if _, err := a.admin.Exec(ctx, `UPDATE targets SET next_run_at = $2 WHERE id = $1`, alvo.ID, agendado); err != nil {
+				t.Fatal(err)
+			}
+
+			if _, err := a.svc.Update(ctx, dono, alvo.ID, p); err != nil {
+				t.Fatal(err)
+			}
+
+			if h := a.lerSaude(t, alvo.ID); h.falhas != 2 || h.desde == nil || !h.desde.Equal(desde) {
+				t.Errorf("histerese = %s, queria 2 falhas desde %v", h, desde)
+			}
+			var proximo time.Time
+			if err := a.admin.QueryRow(ctx, `SELECT next_run_at FROM targets WHERE id = $1`, alvo.ID).Scan(&proximo); err != nil {
+				t.Fatal(err)
+			}
+			if !proximo.Equal(agendado) {
+				t.Errorf("next_run_at = %v, queria %v intacto", proximo.UTC(), agendado)
+			}
+		})
+	}
+}
