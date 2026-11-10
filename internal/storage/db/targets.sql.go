@@ -75,7 +75,7 @@ func (q *Queries) DeleteTargetTags(ctx context.Context, arg DeleteTargetTagsPara
 }
 
 const getTarget = `-- name: GetTarget :one
-SELECT id, user_id, name, url, method, interval_sec, timeout_ms, expected_status, headers_enc, degraded_threshold_ms, enabled, next_run_at, created_at, tls_warn FROM targets WHERE user_id = $1 AND id = $2
+SELECT id, user_id, name, url, method, interval_sec, timeout_ms, expected_status, headers_enc, degraded_threshold_ms, enabled, next_run_at, created_at, tls_warn, content_mode, content_value, content_json_pointer FROM targets WHERE user_id = $1 AND id = $2
 `
 
 type GetTargetParams struct {
@@ -101,12 +101,15 @@ func (q *Queries) GetTarget(ctx context.Context, arg GetTargetParams) (Target, e
 		&i.NextRunAt,
 		&i.CreatedAt,
 		&i.TlsWarn,
+		&i.ContentMode,
+		&i.ContentValue,
+		&i.ContentJsonPointer,
 	)
 	return i, err
 }
 
 const getTargetForUpdate = `-- name: GetTargetForUpdate :one
-SELECT id, user_id, name, url, method, interval_sec, timeout_ms, expected_status, headers_enc, degraded_threshold_ms, enabled, next_run_at, created_at, tls_warn FROM targets WHERE user_id = $1 AND id = $2 FOR UPDATE
+SELECT id, user_id, name, url, method, interval_sec, timeout_ms, expected_status, headers_enc, degraded_threshold_ms, enabled, next_run_at, created_at, tls_warn, content_mode, content_value, content_json_pointer FROM targets WHERE user_id = $1 AND id = $2 FOR UPDATE
 `
 
 type GetTargetForUpdateParams struct {
@@ -135,6 +138,9 @@ func (q *Queries) GetTargetForUpdate(ctx context.Context, arg GetTargetForUpdate
 		&i.NextRunAt,
 		&i.CreatedAt,
 		&i.TlsWarn,
+		&i.ContentMode,
+		&i.ContentValue,
+		&i.ContentJsonPointer,
 	)
 	return i, err
 }
@@ -620,7 +626,7 @@ func (q *Queries) ListTargetTags(ctx context.Context, arg ListTargetTagsParams) 
 }
 
 const listTargets = `-- name: ListTargets :many
-SELECT id, user_id, name, url, method, interval_sec, timeout_ms, expected_status, headers_enc, degraded_threshold_ms, enabled, next_run_at, created_at, tls_warn FROM targets
+SELECT id, user_id, name, url, method, interval_sec, timeout_ms, expected_status, headers_enc, degraded_threshold_ms, enabled, next_run_at, created_at, tls_warn, content_mode, content_value, content_json_pointer FROM targets
  WHERE user_id = $1
    AND ($2::uuid IS NULL OR id < $2::uuid)
  ORDER BY id DESC
@@ -659,6 +665,9 @@ func (q *Queries) ListTargets(ctx context.Context, arg ListTargetsParams) ([]Tar
 			&i.NextRunAt,
 			&i.CreatedAt,
 			&i.TlsWarn,
+			&i.ContentMode,
+			&i.ContentValue,
+			&i.ContentJsonPointer,
 		); err != nil {
 			return nil, err
 		}

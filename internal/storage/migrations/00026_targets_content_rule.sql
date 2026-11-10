@@ -1,0 +1,84 @@
+-- +goose Up
+-- Regra de conteúdo do alvo HTTP (sp1-conteudo): contains, not_contains ou
+-- json_equals num ponteiro RFC 6901. As três colunas são anuláveis e sem
+-- default: o binário anterior não as cita e segue inserindo alvos sem regra.
+--
+-- lock_timeout de 5 s (Ruling): a migration roda no boot, sob o tráfego do
+-- sondador. Sem prazo, o ALTER esperaria atrás de uma leitura longa e
+-- enfileiraria todo INSERT de checks atrás do seu ACCESS EXCLUSIVE. Com 5 s,
+-- o pior caso é um tique do sondador atrasado; um prazo curto (abaixo de
+-- 500 ms) aumentaria a chance de o boot cair com 55P03 no deploy, e uma
+-- falha de release para tudo e exige intervenção manual. Se a trava não vier,
+-- a transação desfaz tudo, goose_db_version não muda e o próximo boot tenta
+-- de novo.
+SET LOCAL lock_timeout = '5s';
+
+ALTER TABLE targets
+    ADD COLUMN content_mode text
+        CHECK (content_mode IN ('contains', 'not_contains', 'json_equals')),
+    ADD COLUMN content_value text
+        CHECK (char_length(content_value) BETWEEN 1 AND 256),
+    ADD COLUMN content_json_pointer text
+        CHECK (char_length(content_json_pointer) BETWEEN 1 AND 256 AND left(content_json_pointer, 1) = '/');
+
+-- Tudo ou nada. Precisa ser CASE: com (content_mode IS NULL) = (... IS NULL)
+-- o ponteiro de um contains passaria, e com '=' sobre NULL o CHECK daria NULL,
+-- que o Postgres aceita.
+ALTER TABLE targets
+    ADD CONSTRAINT targets_content_rule_shape CHECK (CASE
+        WHEN content_mode IS NULL THEN content_value IS NULL AND content_json_pointer IS NULL
+        WHEN content_mode = 'json_equals' THEN content_value IS NOT NULL AND content_json_pointer IS NOT NULL
+        ELSE content_value IS NOT NULL AND content_json_pointer IS NULL END),
+    -- HEAD não tem corpo: a regra nunca casaria.
+    ADD CONSTRAINT targets_content_rule_not_head CHECK (content_mode IS NULL OR method <> 'HEAD');
+
+-- Portão da Task 1 (FORMA B), medido em PG 18 com 17.568.000 checks: trocar a
+-- constraint validada (forma A) segurou ACCESS EXCLUSIVE durante a varredura,
+-- com ALTER de 2,549 s e INSERT do sondador parado 2,523 s; NOT VALID (forma
+-- B) levou 41 ms, com o maior INSERT em 32 ms. PG 17 e 18 propagam o NOT
+-- VALID às partições existentes e às criadas depois (convalidated = false).
+-- Sem VALIDATE (Ruling): as linhas antigas já obedecem à lista anterior, que é
+-- mais estrita; um VALIDATE futuro levou 1,876 s sem bloquear INSERTs.
+ALTER TABLE checks
+    DROP CONSTRAINT checks_error_kind_check,
+    ADD CONSTRAINT checks_error_kind_check
+        CHECK (error_kind IN ('timeout', 'dns', 'tls', 'conn_refused', 'http_status', 'body_limit',
+                              'blocked', 'unknown', 'content_mismatch')) NOT VALID;
+
+-- incidents é pequena: a troca validada direta não pesa.
+ALTER TABLE incidents
+    DROP CONSTRAINT incidents_cause_check,
+    ADD CONSTRAINT incidents_cause_check
+        CHECK (cause IN ('timeout', 'dns', 'tls', 'conn_refused', 'http_status', 'body_limit',
+                         'blocked', 'unknown', 'heartbeat_late', 'heartbeat_failed', 'content_mismatch'));
+
+-- +goose Down
+-- Resíduo do rollback: content_mismatch vira 'unknown' (o binário anterior não
+-- conhece outro motivo) e não volta na subida; as regras dos alvos se perdem
+-- com as colunas. O UPDATE de checks varre a tabela inteira (não há índice em
+-- error_kind), o que só acontece em quem desce de propósito.
+SET LOCAL lock_timeout = '5s';
+-- Roda com o papel da aplicação, sujeito à RLS: sem o escopo do sondador, os
+-- UPDATEs não enxergariam linha nenhuma, e o CHECK antigo de incidents falharia.
+SELECT set_config('app.scope', 'prober', true);
+UPDATE checks SET error_kind = 'unknown' WHERE error_kind = 'content_mismatch';
+UPDATE incidents SET cause = 'unknown' WHERE cause = 'content_mismatch';
+
+ALTER TABLE checks
+    DROP CONSTRAINT checks_error_kind_check,
+    ADD CONSTRAINT checks_error_kind_check
+        CHECK (error_kind IN ('timeout', 'dns', 'tls', 'conn_refused', 'http_status', 'body_limit',
+                              'blocked', 'unknown')) NOT VALID;
+
+ALTER TABLE incidents
+    DROP CONSTRAINT incidents_cause_check,
+    ADD CONSTRAINT incidents_cause_check
+        CHECK (cause IN ('timeout', 'dns', 'tls', 'conn_refused', 'http_status', 'body_limit',
+                         'blocked', 'unknown', 'heartbeat_late', 'heartbeat_failed'));
+
+ALTER TABLE targets
+    DROP CONSTRAINT targets_content_rule_not_head,
+    DROP CONSTRAINT targets_content_rule_shape,
+    DROP COLUMN content_json_pointer,
+    DROP COLUMN content_value,
+    DROP COLUMN content_mode;
