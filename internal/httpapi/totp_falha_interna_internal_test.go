@@ -159,7 +159,7 @@ func TestTOTPVerifyInternalFailureAnswersAGeneric500(t *testing.T) {
 }
 
 // O código nem chegou a ser julgado: a reserva volta, senão o dono tranca a
-// própria conta na quinta tentativa de um defeito que não é dele.
+// própria conta ao atingir o limite de tentativas com um defeito que não é dele.
 func TestTOTPVerifyInternalFailureRefundsTheReservedAttempt(t *testing.T) {
 	c := novoCenarioDoSegundoFator(t)
 
@@ -177,8 +177,8 @@ func TestTOTPDisableInternalFailureAnswersAGeneric500(t *testing.T) {
 	conferirErroInternoGenerico(t, c.desligarFator(t))
 }
 
-// Falha interna não é prova errada: contada, cinco erros do servidor
-// derrubariam a sessão do dono.
+// Falha interna não é prova errada: contados, erros do servidor até o limite de
+// provas da família derrubariam a sessão do dono.
 func TestTOTPDisableInternalFailuresDoNotCountAsWrongProofs(t *testing.T) {
 	c := novoCenarioDoSegundoFator(t)
 
