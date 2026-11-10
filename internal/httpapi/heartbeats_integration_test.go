@@ -125,7 +125,7 @@ func TestHeartbeatResponseHasExactKeys(t *testing.T) {
 	dono := tokenDe(t, a, a.userID)
 	id, _ := criarHB(t, a, dono, corpoDePeriodo)
 	base := []string{"created_at", "deadline_at", "description", "enabled", "grace_sec", "id", "last_ping_at", "last_runtime_ms", "last_start_at",
-		"last_success_at", "name", "open_incident_id", "schedule", "state", "tags"}
+		"last_success_at", "name", "open_incident_id", "ping_resumes", "schedule", "state", "tags"}
 
 	_, corpo := lerCru(t, a, http.MethodGet, "/api/v1/heartbeats/"+id, dono, nil)
 	m := decodificar(t, corpo)
@@ -141,12 +141,128 @@ func TestHeartbeatResponseHasExactKeys(t *testing.T) {
 	if got := chavesDe(decodificar(t, corpo)); !slices.Equal(got, comURL) {
 		t.Errorf("rotação: %v", got)
 	}
+}
 
-	pingar(t, a, "/ping/"+tokenDaURL(t, corpo), nil)
-	_, corpo = lerCru(t, a, http.MethodGet, "/api/v1/heartbeats/"+id+"/events", dono, nil)
+// O evento sai com o mesmo conjunto de chaves com e sem rid: run_id ausente é
+// null, e não some.
+func TestHeartbeatEventHasExactKeys(t *testing.T) {
+	a := newAPI(t)
+	dono := tokenDe(t, a, a.userID)
+	id, ping := criarHB(t, a, dono, corpoDePeriodo)
+	pingar(t, a, "/ping/"+ping+"?rid="+ridValido, nil)
+	pingar(t, a, "/ping/"+ping, nil)
+
+	_, corpo := lerCru(t, a, http.MethodGet, "/api/v1/heartbeats/"+id+"/events", dono, nil)
 	ev := decodificar(t, corpo)["items"].([]any)
-	if len(ev) != 1 || !slices.Equal(chavesDe(ev[0].(map[string]any)), []string{"at", "exit_code", "id", "kind", "runtime_ms"}) {
-		t.Errorf("evento: %s", corpo)
+	if len(ev) != 2 {
+		t.Fatalf("eventos: %s", corpo)
+	}
+	quer := []string{"at", "exit_code", "id", "kind", "run_id", "runtime_ms", "source"}
+	for i, e := range ev {
+		if got := chavesDe(e.(map[string]any)); !slices.Equal(got, quer) {
+			t.Errorf("evento %d: chaves %v, queria %v", i, got, quer)
+		}
+	}
+}
+
+// O rid volta como o servidor o guardou, em minúsculas; sem rid, run_id é null.
+// A origem do sinal pela URL de ping é "ping".
+func TestEventListShowsRunIDAndSource(t *testing.T) {
+	a := newAPI(t)
+	dono := tokenDe(t, a, a.userID)
+	id, ping := criarHB(t, a, dono, corpoDePeriodo)
+	pingar(t, a, "/ping/"+ping+"/start?rid="+strings.ToUpper(ridValido), nil)
+	pingar(t, a, "/ping/"+ping, nil)
+
+	_, corpo := lerCru(t, a, http.MethodGet, "/api/v1/heartbeats/"+id+"/events", dono, nil)
+	ev := decodificar(t, corpo)["items"].([]any)
+	if len(ev) != 2 {
+		t.Fatalf("eventos: %s", corpo)
+	}
+	semRID, comRID := ev[0].(map[string]any), ev[1].(map[string]any)
+	if comRID["run_id"] != "0195f3c2-8a4b-7c1d-9e2f-3a4b5c6d7e8f" || comRID["source"] != "ping" {
+		t.Errorf("com rid: %v", comRID)
+	}
+	if v, ok := semRID["run_id"]; !ok || v != nil || semRID["source"] != "ping" {
+		t.Errorf("sem rid: %v", semRID)
+	}
+}
+
+func pingResumesDe(t *testing.T, corpo string) any {
+	t.Helper()
+	return decodificar(t, corpo)["ping_resumes"]
+}
+
+// ping_resumes nasce false, vem no cadastro e muda no PATCH sem mexer no prazo.
+// null e tipo errado são 400, e nada muda.
+func TestPingResumesRoundTrip(t *testing.T) {
+	a := newAPI(t)
+	dono := tokenDe(t, a, a.userID)
+	semCampo, _ := criarHB(t, a, dono, corpoDePeriodo)
+	_, corpo := lerCru(t, a, http.MethodGet, "/api/v1/heartbeats/"+semCampo, dono, nil)
+	if v := pingResumesDe(t, corpo); v != false {
+		t.Errorf("sem o campo: %v", v)
+	}
+
+	comCampo := maps.Clone(corpoDePeriodo)
+	comCampo["ping_resumes"] = true
+	id, _ := criarHB(t, a, dono, comCampo)
+	_, antes := lerCru(t, a, http.MethodGet, "/api/v1/heartbeats/"+id, dono, nil)
+	if v := pingResumesDe(t, antes); v != true {
+		t.Fatalf("com true: %v", v)
+	}
+	prazo := decodificar(t, antes)["deadline_at"]
+
+	a.clk.Advance(time.Minute)
+	caminho := "/api/v1/heartbeats/" + id
+	// Tipo errado é recusado pelo decoder, sem nomear o campo, como nos demais.
+	for _, c := range []struct {
+		nome  string
+		valor any
+		marca string
+	}{{"null", nil, `"field":"ping_resumes"`}, {"texto", "sim", `"validation_failed"`}} {
+		status, resp := lerCru(t, a, http.MethodPatch, caminho, dono, map[string]any{"ping_resumes": c.valor})
+		if status != http.StatusBadRequest || !strings.Contains(resp, c.marca) {
+			t.Errorf("PATCH %s: %d %s, queria 400 com %s", c.nome, status, resp, c.marca)
+		}
+		if _, depois := lerCru(t, a, http.MethodGet, caminho, dono, nil); depois != antes {
+			t.Errorf("PATCH %s mudou o heartbeat:\n%s\n%s", c.nome, antes, depois)
+		}
+	}
+
+	status, corpo := lerCru(t, a, http.MethodPatch, caminho, dono, map[string]any{"ping_resumes": false})
+	m := decodificar(t, corpo)
+	if status != http.StatusOK || m["ping_resumes"] != false || m["deadline_at"] != prazo {
+		t.Errorf("PATCH false: %d %s, queria false com prazo %v", status, corpo, prazo)
+	}
+	_, corpo = lerCru(t, a, http.MethodGet, caminho, dono, nil)
+	if v := pingResumesDe(t, corpo); v != false {
+		t.Errorf("leitura depois do PATCH: %v", v)
+	}
+}
+
+// Período de 1 h e tolerância de 10 min: o prazo é t0+1h10min, e a tolerância
+// é [t0+1h, t0+1h10min).
+func TestStateShowsGraceInsideTheWindow(t *testing.T) {
+	a := newAPI(t)
+	dono := tokenDe(t, a, a.userID)
+	id, ping := criarHB(t, a, dono, map[string]any{
+		"name": "backup", "schedule": map[string]any{"kind": "period", "period_sec": 3600}, "grace_sec": 600,
+	})
+	pingar(t, a, "/ping/"+ping, nil)
+	estado := func() any {
+		t.Helper()
+		dono = tokenDe(t, a, a.userID) // o relógio avança além da validade do token
+		_, corpo := lerCru(t, a, http.MethodGet, "/api/v1/heartbeats/"+id, dono, nil)
+		return decodificar(t, corpo)["state"]
+	}
+	a.clk.Advance(time.Hour + time.Minute)
+	if e := estado(); e != "grace" {
+		t.Errorf("em t0+1h1min: %v, queria grace", e)
+	}
+	a.clk.Advance(9 * time.Minute)
+	if e := estado(); e != "late" {
+		t.Errorf("em t0+1h10min: %v, queria late", e)
 	}
 }
 

@@ -44,14 +44,15 @@ func contarHeartbeatsDe(t *testing.T, a *api, userID uuid.UUID) int64 {
 }
 
 // A cópia leva a configuração (nome com sufixo, descrição, tags, agendamento,
-// tolerância, enabled) e nasce sem nada do que o original viveu: token,
-// eventos, last_*, falha, incidentes e retomada ficam para trás.
+// tolerância, enabled, ping_resumes) e nasce sem nada do que o original viveu:
+// token, eventos, last_*, falha, incidentes e retomada ficam para trás.
 func TestCloneCopiesTheConfigurationAndNotTheState(t *testing.T) {
 	a := newAPI(t)
 	dono := tokenDe(t, a, a.userID)
 	original, tokenOriginal := criarHB(t, a, dono, map[string]any{
 		"name": "backup noturno", "description": "roda às 3h no servidor de dados", "tags": []string{"prod", "backup"},
 		"schedule": map[string]any{"kind": "period", "period_sec": 31536000}, "grace_sec": 600,
+		"ping_resumes": true,
 	})
 	for _, sufixo := range []string{"/start", "", "/fail"} {
 		if status, _, corpo := pingar(t, a, "/ping/"+tokenOriginal+sufixo, nil); status != http.StatusOK {
@@ -100,6 +101,9 @@ func TestCloneCopiesTheConfigurationAndNotTheState(t *testing.T) {
 	if copia["grace_sec"] != float64(600) || copia["enabled"] != false || copia["state"] != "paused" {
 		t.Errorf("tolerância %v, enabled %v, estado %v", copia["grace_sec"], copia["enabled"], copia["state"])
 	}
+	if copia["ping_resumes"] != true {
+		t.Errorf("ping_resumes %v, queria true como no original", copia["ping_resumes"])
+	}
 	for _, campo := range []string{"last_ping_at", "last_success_at", "last_start_at", "last_runtime_ms", "open_incident_id"} {
 		if v, ok := copia[campo]; !ok || v != nil {
 			t.Errorf("%s = %v, queria null", campo, v)
@@ -144,7 +148,7 @@ func TestCloneResponseHasExactKeys(t *testing.T) {
 	dono := tokenDe(t, a, a.userID)
 	original, _ := criarHB(t, a, dono, corpoDePeriodo)
 	base := []string{"created_at", "deadline_at", "description", "enabled", "grace_sec", "id", "last_ping_at", "last_runtime_ms", "last_start_at",
-		"last_success_at", "name", "open_incident_id", "schedule", "state", "tags"}
+		"last_success_at", "name", "open_incident_id", "ping_resumes", "schedule", "state", "tags"}
 	comURL := append(slices.Clone(base), "ping_url")
 	sort.Strings(comURL)
 

@@ -409,8 +409,8 @@ func (q *Queries) GetRunStartAt(ctx context.Context, arg GetRunStartAtParams) (t
 const insertHeartbeat = `-- name: InsertHeartbeat :exec
 
 INSERT INTO heartbeats (id, user_id, name, ping_token_hash, period_sec, cron_expr, timezone,
-                        grace_sec, enabled, created_at, deadline_at, description)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                        grace_sec, enabled, created_at, deadline_at, description, ping_resumes)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 `
 
 type InsertHeartbeatParams struct {
@@ -426,6 +426,7 @@ type InsertHeartbeatParams struct {
 	CreatedAt     time.Time
 	DeadlineAt    time.Time
 	Description   string
+	PingResumes   bool
 }
 
 // Heartbeats (docs/superpowers/specs/2026-11-05-heartbeats-design.md). As do
@@ -445,6 +446,7 @@ func (q *Queries) InsertHeartbeat(ctx context.Context, arg InsertHeartbeatParams
 		arg.CreatedAt,
 		arg.DeadlineAt,
 		arg.Description,
+		arg.PingResumes,
 	)
 	return err
 }
@@ -937,8 +939,9 @@ UPDATE heartbeats
        period_sec = $3, cron_expr = $4,
        timezone = $5, grace_sec = $6, enabled = $7,
        deadline_at = $8, failing_since = $9,
-       resumed_at = $10, last_start_at = $11
- WHERE user_id = $12 AND id = $13
+       resumed_at = $10, last_start_at = $11,
+       ping_resumes = $12
+ WHERE user_id = $13 AND id = $14
 `
 
 type UpdateHeartbeatParams struct {
@@ -953,6 +956,7 @@ type UpdateHeartbeatParams struct {
 	FailingSince *time.Time
 	ResumedAt    *time.Time
 	LastStartAt  *time.Time
+	PingResumes  bool
 	UserID       uuid.UUID
 	ID           uuid.UUID
 }
@@ -970,6 +974,7 @@ func (q *Queries) UpdateHeartbeat(ctx context.Context, arg UpdateHeartbeatParams
 		arg.FailingSince,
 		arg.ResumedAt,
 		arg.LastStartAt,
+		arg.PingResumes,
 		arg.UserID,
 		arg.ID,
 	)
