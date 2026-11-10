@@ -90,7 +90,7 @@ func (b *bancadaHB) tick(t *testing.T) int {
 
 func (b *bancadaHB) pingar(t *testing.T, token string, sig heartbeat.Signal) {
 	t.Helper()
-	if err := b.pg.Ping(t.Context(), token, sig); err != nil {
+	if err := b.pg.Ping(t.Context(), token, sig, nil); err != nil {
 		t.Fatal(err)
 	}
 }

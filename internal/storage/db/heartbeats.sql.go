@@ -384,6 +384,28 @@ func (q *Queries) GetHeartbeatView(ctx context.Context, arg GetHeartbeatViewPara
 	return i, err
 }
 
+const getRunStartAt = `-- name: GetRunStartAt :one
+SELECT at FROM heartbeat_events
+ WHERE heartbeat_id = $1 AND run_id = $2 AND kind = 'start'
+ ORDER BY id DESC
+ LIMIT 1
+`
+
+type GetRunStartAtParams struct {
+	HeartbeatID uuid.UUID
+	RunID       *uuid.UUID
+}
+
+// O início de uma execução com rid é o start mais recente de mesmo rid; o
+// índice heartbeat_events_run_idx resolve a busca. Sem linha, o início nunca
+// veio ou o teto do log o aparou.
+func (q *Queries) GetRunStartAt(ctx context.Context, arg GetRunStartAtParams) (time.Time, error) {
+	row := q.db.QueryRow(ctx, getRunStartAt, arg.HeartbeatID, arg.RunID)
+	var at time.Time
+	err := row.Scan(&at)
+	return at, err
+}
+
 const insertHeartbeat = `-- name: InsertHeartbeat :exec
 
 INSERT INTO heartbeats (id, user_id, name, ping_token_hash, period_sec, cron_expr, timezone,
@@ -428,8 +450,8 @@ func (q *Queries) InsertHeartbeat(ctx context.Context, arg InsertHeartbeatParams
 }
 
 const insertHeartbeatEvent = `-- name: InsertHeartbeatEvent :exec
-INSERT INTO heartbeat_events (id, heartbeat_id, at, kind, runtime_ms, exit_code)
-VALUES ($1, $2, $3, $4, $5, $6)
+INSERT INTO heartbeat_events (id, heartbeat_id, at, kind, runtime_ms, exit_code, run_id, source)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 `
 
 type InsertHeartbeatEventParams struct {
@@ -439,6 +461,8 @@ type InsertHeartbeatEventParams struct {
 	Kind        string
 	RuntimeMS   *int64
 	ExitCode    *int16
+	RunID       *uuid.UUID
+	Source      string
 }
 
 func (q *Queries) InsertHeartbeatEvent(ctx context.Context, arg InsertHeartbeatEventParams) error {
@@ -449,6 +473,8 @@ func (q *Queries) InsertHeartbeatEvent(ctx context.Context, arg InsertHeartbeatE
 		arg.Kind,
 		arg.RuntimeMS,
 		arg.ExitCode,
+		arg.RunID,
+		arg.Source,
 	)
 	return err
 }
@@ -472,7 +498,7 @@ func (q *Queries) InsertHeartbeatTags(ctx context.Context, arg InsertHeartbeatTa
 }
 
 const listHeartbeatEvents = `-- name: ListHeartbeatEvents :many
-SELECT e.id, e.heartbeat_id, e.at, e.kind, e.runtime_ms, e.exit_code
+SELECT e.id, e.heartbeat_id, e.at, e.kind, e.runtime_ms, e.exit_code, e.run_id, e.source
   FROM heartbeat_events e
   JOIN heartbeats h ON h.id = e.heartbeat_id
  WHERE h.user_id = $1
@@ -489,18 +515,9 @@ type ListHeartbeatEventsParams struct {
 	MaxRows     int32
 }
 
-type ListHeartbeatEventsRow struct {
-	ID          uuid.UUID
-	HeartbeatID uuid.UUID
-	At          time.Time
-	Kind        string
-	RuntimeMS   *int64
-	ExitCode    *int16
-}
-
 // O log do dono, do mais novo ao mais velho. O id é UUIDv7, e o cursor é o
 // último id da página anterior.
-func (q *Queries) ListHeartbeatEvents(ctx context.Context, arg ListHeartbeatEventsParams) ([]ListHeartbeatEventsRow, error) {
+func (q *Queries) ListHeartbeatEvents(ctx context.Context, arg ListHeartbeatEventsParams) ([]HeartbeatEvent, error) {
 	rows, err := q.db.Query(ctx, listHeartbeatEvents,
 		arg.UserID,
 		arg.HeartbeatID,
@@ -511,9 +528,9 @@ func (q *Queries) ListHeartbeatEvents(ctx context.Context, arg ListHeartbeatEven
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ListHeartbeatEventsRow
+	var items []HeartbeatEvent
 	for rows.Next() {
-		var i ListHeartbeatEventsRow
+		var i HeartbeatEvent
 		if err := rows.Scan(
 			&i.ID,
 			&i.HeartbeatID,
@@ -521,6 +538,8 @@ func (q *Queries) ListHeartbeatEvents(ctx context.Context, arg ListHeartbeatEven
 			&i.Kind,
 			&i.RuntimeMS,
 			&i.ExitCode,
+			&i.RunID,
+			&i.Source,
 		); err != nil {
 			return nil, err
 		}
@@ -838,8 +857,9 @@ UPDATE heartbeats
    SET deadline_at = $1, last_ping_at = $2,
        last_success_at = $3, last_start_at = $4,
        last_signal = $5, failing_since = $6,
-       last_runtime_ms = $7
- WHERE id = $8
+       last_runtime_ms = $7, last_run_id = $8,
+       enabled = $9, resumed_at = $10
+ WHERE id = $11
 `
 
 type SaveHeartbeatPingParams struct {
@@ -850,6 +870,9 @@ type SaveHeartbeatPingParams struct {
 	LastSignal    *string
 	FailingSince  *time.Time
 	LastRuntimeMS *int64
+	LastRunID     *uuid.UUID
+	Enabled       bool
+	ResumedAt     *time.Time
 	ID            uuid.UUID
 }
 
@@ -862,6 +885,9 @@ func (q *Queries) SaveHeartbeatPing(ctx context.Context, arg SaveHeartbeatPingPa
 		arg.LastSignal,
 		arg.FailingSince,
 		arg.LastRuntimeMS,
+		arg.LastRunID,
+		arg.Enabled,
+		arg.ResumedAt,
 		arg.ID,
 	)
 	return err

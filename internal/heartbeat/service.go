@@ -569,8 +569,8 @@ func (s *Service) RotateToken(ctx context.Context, userID, id uuid.UUID) (Heartb
 }
 
 // Events é o log do heartbeat, do mais novo ao mais velho.
-func (s *Service) Events(ctx context.Context, userID, id uuid.UUID, before *uuid.UUID, limit int32) ([]db.ListHeartbeatEventsRow, error) {
-	var out []db.ListHeartbeatEventsRow
+func (s *Service) Events(ctx context.Context, userID, id uuid.UUID, before *uuid.UUID, limit int32) ([]db.HeartbeatEvent, error) {
+	var out []db.HeartbeatEvent
 	err := storage.InUserTx(ctx, s.pool, userID, func(q *db.Queries) error {
 		if err := exists(ctx, q, userID, id); err != nil {
 			return err

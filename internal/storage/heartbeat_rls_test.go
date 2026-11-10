@@ -400,7 +400,7 @@ func TestHeartbeatEventExitCodeMatchesTheKind(t *testing.T) {
 		t.Run(c.nome, func(t *testing.T) {
 			err := storage.InUserTx(ctx, pool, dono, func(q *db.Queries) error {
 				return q.InsertHeartbeatEvent(ctx, db.InsertHeartbeatEventParams{
-					ID: novoID(), HeartbeatID: hb, At: agora, Kind: c.tipo, ExitCode: c.exitCode,
+					ID: novoID(), HeartbeatID: hb, At: agora, Kind: c.tipo, ExitCode: c.exitCode, Source: "ping",
 				})
 			})
 			if codigoPG(err) != c.codigoEsperado {

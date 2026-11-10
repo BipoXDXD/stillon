@@ -50,7 +50,7 @@ func NewPingHandlers(svc *heartbeat.PingService) *PingHandlers {
 
 func (h *PingHandlers) sinal(sig heartbeat.Signal) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		h.responder(w, r, func() error { return h.svc.Ping(r.Context(), r.PathValue("token"), sig) })
+		h.responder(w, r, func() error { return h.svc.Ping(r.Context(), r.PathValue("token"), sig, nil) })
 	}
 }
 
@@ -62,7 +62,7 @@ func (h *PingHandlers) codigoDeSaida(w http.ResponseWriter, r *http.Request) {
 		if !ok {
 			return heartbeat.ErrUnknownToken
 		}
-		return h.svc.PingExit(r.Context(), r.PathValue("token"), code)
+		return h.svc.PingExit(r.Context(), r.PathValue("token"), code, nil)
 	})
 }
 
