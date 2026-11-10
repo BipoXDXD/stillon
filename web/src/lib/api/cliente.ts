@@ -24,6 +24,7 @@ import {
   Resumo,
   PreviaDoCron,
   Serie,
+  type RegraDeConteudo,
 } from './schemas'
 import type { Sessao } from './sessao'
 
@@ -59,7 +60,7 @@ export type EntradaAlvo = {
 
 // json_pointer só vai com json_equals: nos outros modos o servidor o recusa.
 export type EntradaRegra =
-  | { mode: 'contains' | 'not_contains'; value: string }
+  | { mode: Exclude<RegraDeConteudo['mode'], 'json_equals'>; value: string }
   | { mode: 'json_equals'; value: string; json_pointer: string }
 
 export type AlteracaoAlvo = Partial<EntradaAlvo>

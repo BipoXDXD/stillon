@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import type { AlteracaoAlvo, EntradaAlvo, EntradaRegra } from '@/lib/api/cliente'
 import { CONTROLE_NA_REGRA, LIMITE_DA_REGRA } from '@/lib/api/mensagens'
-import type { Alvo } from '@/lib/api/schemas'
+import { RegraDeConteudo, type Alvo } from '@/lib/api/schemas'
 import { MENSAGEM_INVISIVEL, temInvisivel } from '@/lib/rotulo'
 import { erroNasTags, separarTags } from '@/lib/tags'
 
@@ -76,7 +76,9 @@ function urlPermitida(raw: string): string | null {
 // A regra de conteúdo espelha internal/targets/contentrule.go. O limite é em
 // caracteres como o servidor os conta (runas, o char_length do banco): um
 // emoji vale 1, e não os 2 do .length em UTF-16 (L9 do STRIDE).
-export const MODOS_DA_REGRA = ['desligada', 'contains', 'not_contains', 'json_equals'] as const
+// Os modos vêm do schema da resposta; "desligada" é só do formulário (a
+// ausência de regra, que vai como null).
+const modoDaRegra = z.enum(['desligada', ...RegraDeConteudo.shape.mode.options])
 const MAX_DA_REGRA = 256
 // unicode.IsControl do Go é a categoria Cc.
 const CONTROLE = /\p{Cc}/u
@@ -98,7 +100,7 @@ function erroDoPonteiro(p: string): string | null {
   const erro = erroDoTextoDaRegra(p)
   if (erro) return erro
   if (!p.startsWith('/')) return 'Comece com /, como /status.'
-  if (ESCAPE_INVALIDO.test(p)) return 'Use ~0 para ~ e ~1 para /.'
+  if (ESCAPE_INVALIDO.test(p)) return 'No ponteiro, escreva ~1 para uma barra e ~0 para um til.'
   return null
 }
 
@@ -106,8 +108,9 @@ function erroDoPonteiro(p: string): string | null {
 // não passa de novo pelo espelho (um host não canônico que o servidor aceitou,
 // como http://0x7f.1/, não pode travar a edição nem a pausa do alvo), e
 // "Substituir todos" sem nenhuma linha não vira headers: {} (que apagaria
-// todos em silêncio; para isso existe "Remover todos").
-export function esquemaDoAlvo(base?: { url: string }) {
+// todos em silêncio; para isso existe "Remover todos"). Os nomes dos headers
+// guardados antecipam o Accept-Encoding que "Manter como está" conservaria.
+export function esquemaDoAlvo(base?: { url: string; nomesDeHeaders?: readonly string[] }) {
   return z
     .object({
       name: z
@@ -156,12 +159,12 @@ export function esquemaDoAlvo(base?: { url: string }) {
       headers: z.array(z.object({ nome: z.string().trim(), valor: z.string() })),
       tagsTexto: z.string(),
       // O valor não perde espaços: o servidor compara os bytes como vieram.
-      modoDaRegra: z.enum(MODOS_DA_REGRA),
+      modoDaRegra,
       valorDaRegra: z.string(),
       ponteiroDaRegra: z.string(),
     })
     .superRefine((v, ctx) => {
-      validarRegra(v, ctx)
+      validarRegra(v, base?.nomesDeHeaders ?? [], ctx)
       const erroDasTags = erroNasTags(v.tagsTexto)
       if (erroDasTags) ctx.addIssue({ code: 'custom', path: ['tagsTexto'], message: erroDasTags })
       // D3 do Plano 2: o jitter de −10% antecipa a próxima sonda para 90% do
@@ -219,21 +222,26 @@ type CamposDaRegra = {
   method: string
   modoHeaders: string
   headers: { nome: string }[]
-  modoDaRegra: (typeof MODOS_DA_REGRA)[number]
+  modoDaRegra: z.infer<typeof modoDaRegra>
   valorDaRegra: string
   ponteiroDaRegra: string
 }
 
-// Desligada, nada da regra é validado: valor e ponteiro escondidos não podem
-// travar o envio. O Accept-Encoding só é conferido quando os headers vão no
-// corpo ("Manter como está" não os mostra; aí quem recusa é o servidor).
-function validarRegra(v: CamposDaRegra, ctx: z.RefinementCtx<CamposDaRegra>) {
-  if (v.modoDaRegra === 'desligada') return
-  const comAcceptEncoding =
-    v.modoHeaders === 'substituir' && v.headers.some((h) => h.nome.toLowerCase() === 'accept-encoding')
-  if (v.method === 'HEAD') {
-    ctx.addIssue({ code: 'custom', path: ['modoDaRegra'], message: REGRA_COM_HEAD })
-  } else if (comAcceptEncoding) {
+const ehAcceptEncoding = (nome: string) => nome.toLowerCase() === 'accept-encoding'
+
+// Os headers com que a sonda vai sair: os da lista ao substituir, os
+// guardados ao manter, nenhum ao remover.
+function headersQueFicam(v: CamposDaRegra, guardados: readonly string[]): readonly string[] {
+  if (v.modoHeaders === 'substituir') return v.headers.map((h) => h.nome)
+  if (v.modoHeaders === 'manter') return guardados
+  return []
+}
+
+// Desligada ou com HEAD, nada da regra é validado: com HEAD ela fica no
+// estado, escondida, e não vai no envio (I1 da revisão).
+function validarRegra(v: CamposDaRegra, guardados: readonly string[], ctx: z.RefinementCtx<CamposDaRegra>) {
+  if (v.modoDaRegra === 'desligada' || v.method === 'HEAD') return
+  if (headersQueFicam(v, guardados).some(ehAcceptEncoding)) {
     ctx.addIssue({ code: 'custom', path: ['modoDaRegra'], message: REGRA_COM_ACCEPT_ENCODING })
   }
   const erroDoValor = erroDoTextoDaRegra(v.valorDaRegra)
@@ -310,7 +318,9 @@ function limiar(v: ValoresDoAlvo): number | null | undefined {
   return 2000
 }
 
+// Com HEAD não há corpo para conferir: a regra guardada no estado não vale.
 function regraDe(v: ValoresDoAlvo): EntradaRegra | null {
+  if (v.method === 'HEAD') return null
   switch (v.modoDaRegra) {
     case 'desligada':
       return null
@@ -371,7 +381,8 @@ export function paraAlteracao(original: ValoresDoAlvo, v: ValoresDoAlvo): Altera
   if (v.modoHeaders === 'remover') a.headers = null
   const tags = separarTags(v.tagsTexto)
   if (tags.join() !== separarTags(original.tagsTexto).join()) a.tags = tags
-  // Desligar a regra é mandar null; ausente, o servidor a mantém.
+  // Desligar a regra (ou trocar para HEAD) é mandar null; ausente, o
+  // servidor a mantém.
   const regra = regraDe(v)
   if (!mesmaRegra(regra, regraDe(original))) a.content_rule = regra
   return a

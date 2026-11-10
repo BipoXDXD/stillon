@@ -92,11 +92,11 @@ const porCampo: Record<string, Record<string, string>> = {
   email: { invalid: 'E-mail inválido.' },
   slug: { invalid: 'De 3 a 40 caracteres: letras minúsculas, números e hífens, sem hífen nas pontas.' },
   new_password: { too_short: 'Mínimo de 15 caracteres.', too_long: 'Máximo de 128 caracteres.' },
-  content_rule: { forbidden: 'Com HEAD ou com o header Accept-Encoding, o conteúdo não pode ser verificado.' },
+  content_rule: { forbidden: 'Para verificar o conteúdo, use GET ou POST e tire o header Accept-Encoding.' },
   'content_rule.value': { too_long: LIMITE_DA_REGRA, invalid: CONTROLE_NA_REGRA },
   'content_rule.json_pointer': {
     too_long: LIMITE_DA_REGRA,
-    invalid: 'Comece com /, como /status. Use ~0 para ~ e ~1 para /.',
+    invalid: 'Comece com /, como /status, sem tab ou quebra de linha. No ponteiro, escreva ~1 para uma barra e ~0 para um til.',
   },
 }
 

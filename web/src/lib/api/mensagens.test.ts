@@ -40,11 +40,11 @@ describe('regra de conteúdo', () => {
   })
 
   it.each([
-    ['content_rule', 'forbidden', 'Com HEAD ou com o header Accept-Encoding, o conteúdo não pode ser verificado.'],
+    ['content_rule', 'forbidden', 'Para verificar o conteúdo, use GET ou POST e tire o header Accept-Encoding.'],
     ['content_rule.value', 'too_long', 'Até 256 caracteres.'],
     ['content_rule.value', 'invalid', 'Sem tab, quebra de linha ou outro caractere de controle.'],
     ['content_rule.json_pointer', 'too_long', 'Até 256 caracteres.'],
-    ['content_rule.json_pointer', 'invalid', 'Comece com /, como /status. Use ~0 para ~ e ~1 para /.'],
+    ['content_rule.json_pointer', 'invalid', 'Comece com /, como /status, sem tab ou quebra de linha. No ponteiro, escreva ~1 para uma barra e ~0 para um til.'],
     ['content_rule.value', 'required', 'Obrigatório.'],
   ])('%s %s vira texto próprio', (campo, motivo, texto) => {
     expect(mensagemDoCampo(campo, motivo)).toBe(texto)

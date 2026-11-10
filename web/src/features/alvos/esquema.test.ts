@@ -357,19 +357,30 @@ describe('regra de conteúdo', () => {
     ['de 256 emojis', '/' + '🙂'.repeat(255), []],
     ['vazio', '', [['ponteiroDaRegra', 'Obrigatório.']]],
     ['sem barra', 'status', [['ponteiroDaRegra', 'Comece com /, como /status.']]],
-    ['com ~2', '/a~2', [['ponteiroDaRegra', 'Use ~0 para ~ e ~1 para /.']]],
-    ['com ~ no fim', '/a~', [['ponteiroDaRegra', 'Use ~0 para ~ e ~1 para /.']]],
+    ['com ~2', '/a~2', [['ponteiroDaRegra', 'No ponteiro, escreva ~1 para uma barra e ~0 para um til.']]],
+    ['com ~ no fim', '/a~', [['ponteiroDaRegra', 'No ponteiro, escreva ~1 para uma barra e ~0 para um til.']]],
     ['de 257 emojis', '/' + '🙂'.repeat(256), [['ponteiroDaRegra', 'Até 256 caracteres.']]],
     ['com tab', '/a\tb', [['ponteiroDaRegra', 'Sem tab, quebra de linha ou outro caractere de controle.']]],
   ])('ponteiro %s', (_caso, ponteiroDaRegra, esperado) => {
     expect(erros(ligada({ modoDaRegra: 'json_equals', ponteiroDaRegra }))).toEqual(esperado)
   })
 
-  it('com HEAD a regra é recusada no seletor', () => {
-    expect(erros(ligada({ method: 'HEAD' }))).toEqual([
-      ['modoDaRegra', 'Com HEAD a resposta não tem corpo. Escolha GET ou POST para verificar o conteúdo.'],
-    ])
-    expect(erros(entrada({ method: 'HEAD' }))).toEqual([])
+  // I1 da revisão: HEAD não apaga a regra do estado, só a ignora. Salvar com
+  // HEAD manda null (o servidor recusa regra com HEAD); o vaivém HEAD → GET
+  // não muda nada.
+  it('com HEAD a regra é ignorada: não valida, não vai na criação', () => {
+    expect(erros(ligada({ method: 'HEAD', valorDaRegra: '' }))).toEqual([])
+    expect(paraCriacao(ligada({ method: 'HEAD' }))).not.toHaveProperty('content_rule')
+  })
+
+  it('salvar com HEAD um alvo que tinha regra manda content_rule: null', () => {
+    const original = ligada({ modoHeaders: 'manter' })
+    expect(paraAlteracao(original, { ...original, method: 'HEAD' })).toEqual({ method: 'HEAD', content_rule: null })
+  })
+
+  it('um alvo HEAD sem regra, salvo com HEAD, não manda content_rule', () => {
+    const original = entrada({ method: 'HEAD', modoHeaders: 'manter' })
+    expect(paraAlteracao(original, { ...original, modoDaRegra: 'contains', valorDaRegra: 'ok' })).toEqual({})
   })
 
   it.each(['Accept-Encoding', 'ACCEPT-ENCODING', 'accept-encoding'])('com o header %s a regra é recusada', (nome) => {
@@ -380,6 +391,20 @@ describe('regra de conteúdo', () => {
     expect(erros(entrada({ headers }))).toEqual([])
     // "Manter como está" não manda headers: quem confere é o servidor.
     expect(erros(ligada({ headers, modoHeaders: 'manter' }))).toEqual([])
+  })
+
+  // "Manter como está" não manda headers, mas a edição conhece os nomes
+  // guardados: um Accept-Encoding antigo já é acusado no cliente.
+  it('na edição, um Accept-Encoding guardado recusa a regra enquanto os headers são mantidos', () => {
+    const base = { url: 'https://api.exemplo.com/health', nomesDeHeaders: ['X-A', 'Accept-Encoding'] }
+    const r = esquemaDoAlvo(base).safeParse(ligada({ modoHeaders: 'manter' }))
+    expect(r.success ? [] : r.error.issues.map((e) => [e.path.join('.'), e.message])).toEqual([
+      ['modoDaRegra', 'Remova o header Accept-Encoding para verificar o conteúdo: a resposta viria comprimida.'],
+    ])
+    expect(esquemaDoAlvo(base).safeParse(ligada({ modoHeaders: 'remover' })).success).toBe(true)
+    expect(esquemaDoAlvo(base).safeParse(entrada({ modoHeaders: 'manter' })).success).toBe(true)
+    const semAccept = { url: base.url, nomesDeHeaders: ['X-A'] }
+    expect(esquemaDoAlvo(semAccept).safeParse(ligada({ modoHeaders: 'manter' })).success).toBe(true)
   })
 
   it('valoresDe lê a regra do alvo', () => {
