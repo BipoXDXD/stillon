@@ -350,10 +350,10 @@ describe('sinalizar agora', () => {
     expect(within(linha).getByText('pelo painel')).toBeInTheDocument()
   })
 
-  // A resposta da rota já é o heartbeat novo: entre o clique e o refetch, a
-  // tela não volta a dizer "Atrasado". Sabotagem: tirar o setQueryData.
-  it('mostra o estado devolvido pela rota antes do refetch', async () => {
-    const r = await detalheCom({ state: 'late', open_incident_id: 'i1', deadline_at: '2026-09-24T11:00:00Z' })
+  // Atraso só por prazo: a rota devolve "Em dia", e entre o clique e o refetch
+  // a tela não volta a dizer "Atrasado". Sabotagem: tirar o setQueryData.
+  it('atraso por prazo: mostra o estado devolvido pela rota antes do refetch', async () => {
+    const r = await detalheCom({ state: 'late', open_incident_id: null, deadline_at: '2026-09-24T11:00:00Z' })
     expect(screen.getByText('Atrasado')).toBeInTheDocument()
     const p = portao()
     servidor.use(
@@ -369,6 +369,17 @@ describe('sinalizar agora', () => {
     p.soltar()
     await waitFor(() => expect(r.cliente.isFetching()).toBe(0))
     expect(screen.queryByText('Atrasado')).not.toBeInTheDocument()
+  })
+
+  // O sinal não fecha o incidente (statusOf do servidor: incidente aberto é
+  // late). Sabotagem: a API falsa zerar o open_incident_id → "Em dia".
+  it('com incidente aberto, o sinal registra e a tarefa continua Atrasado', async () => {
+    const r = await detalheCom({ state: 'late', open_incident_id: 'i1', deadline_at: '2026-09-24T11:00:00Z' })
+    await r.usuario.click(screen.getByRole('button', { name: 'Sinalizar agora' }))
+    await avisou()
+    await waitFor(() => expect(r.cliente.isFetching()).toBe(0))
+    expect(screen.getByText('Atrasado')).toBeInTheDocument()
+    expect(screen.queryByText('Em dia')).not.toBeInTheDocument()
   })
 
   // Sabotagem: tirar a guarda do ocupado → dois sinais.

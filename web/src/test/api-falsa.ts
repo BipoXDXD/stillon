@@ -620,7 +620,8 @@ export function criarApiFalsa() {
       return new HttpResponse(null, { status: 204 })
     }),
     // PingNow do servidor: um sucesso com source 'panel'. O log ganha a linha,
-    // o incidente aberto fecha, o prazo recomeça e o sucesso tira o failing.
+    // o prazo recomeça e o sucesso tira o failing. O incidente aberto fica
+    // (registrarSinal não mexe nele), e com ele o statusDe segue em late.
     rota('post', '/heartbeats/:id/ping-now', ({ params }) => {
       const h = st.heartbeats.find((x) => x.id === params.id)
       if (!h) return erro(404, 'not_found')
@@ -634,7 +635,6 @@ export function criarApiFalsa() {
         last_ping_at: quando,
         last_success_at: quando,
         last_start_at: null,
-        open_incident_id: null,
         deadline_at: primeiroPrazo(h.grace_sec),
         state: 'up',
       })

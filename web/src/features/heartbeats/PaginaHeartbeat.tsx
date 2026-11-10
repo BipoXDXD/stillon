@@ -139,15 +139,17 @@ function DetalheDoHeartbeat({ id }: { id: string }) {
     setUrlNova(null)
   }
 
-  // A resposta já é o heartbeat novo: ela entra no cache antes do refetch, e a
-  // tela não volta a dizer "Atrasado" no intervalo. Os refetches não seguram o
-  // botão, porque a tela já mostra o que o servidor gravou.
+  // A resposta já é o heartbeat novo: ela entra no cache antes do refetch, e
+  // um atraso só por prazo não volta a dizer "Atrasado" no intervalo. Com
+  // incidente aberto a resposta segue late: o sinal não fecha o incidente.
+  // Os refetches não seguram o botão, porque a tela já mostra o que o servidor
+  // gravou.
   const sinalizar = () =>
     executar(async () => {
       const atualizado = await api.sinalizarAgora(id)
       qc.setQueryData(chaves.heartbeat(id), atualizado)
       void qc.invalidateQueries({ queryKey: chaves.heartbeats, exact: true })
-      // Sem exact: o detalhe, o log e os incidentes (o sucesso fecha o aberto).
+      // Sem exact: o detalhe, o log e os incidentes.
       void qc.invalidateQueries({ queryKey: chaves.heartbeat(id) })
       avisar('Sinal de sucesso registrado.')
     }, null)
