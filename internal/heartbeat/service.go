@@ -579,7 +579,8 @@ func (s *Service) RotateToken(ctx context.Context, userID, id uuid.UUID) (Heartb
 
 // PingNow é o "sinalizar agora" do painel: um sucesso no escopo do dono, pelo
 // mesmo caminho do ping (janela de repetição e retomada inclusas), marcado com
-// a origem panel para não se confundir com a tarefa (R2 da spec).
+// a origem panel para não se confundir com a tarefa (R2 da spec). Pelo mesmo
+// motivo, não encerra a execução aberta: o início e a duração são da tarefa.
 func (s *Service) PingNow(ctx context.Context, userID, id uuid.UUID) (Heartbeat, error) {
 	var out Heartbeat
 	err := storage.InUserTx(ctx, s.pool, userID, func(q *db.Queries) error {

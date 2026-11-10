@@ -96,9 +96,9 @@ func registrarSinal(ctx context.Context, q *db.Queries, h db.Heartbeat, s sinalR
 }
 
 // execucaoDoSinal lê do log o início de mesmo rid, que só o término de uma
-// execução identificada usa.
+// execução identificada usa. O sinal do painel é manual: não encerra execução.
 func execucaoDoSinal(ctx context.Context, q *db.Queries, heartbeatID uuid.UUID, s sinalRecebido) (Run, error) {
-	run := Run{ID: s.runID}
+	run := Run{ID: s.runID, Manual: s.source == SourcePanel}
 	encerra := s.sig == SignalSuccess || s.sig == SignalFail
 	if s.runID == nil || !encerra {
 		return run, nil

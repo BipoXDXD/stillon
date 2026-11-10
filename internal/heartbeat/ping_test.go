@@ -256,9 +256,9 @@ func TestConcurrentPingNowAndPingHaveOneEffect(t *testing.T) {
 	}
 }
 
-// Com um /fail simultâneo, a execução aberta fecha uma vez só e o estado final
-// é o do último evento do log: a falha não some por baixo de um ping-now que
-// leu a linha de antes dela.
+// Com um /fail simultâneo, a execução aberta fecha uma vez só, e quem a fecha é
+// a falha da tarefa, nunca o ping-now; o estado final é o do último evento do
+// log: a falha não some por baixo de um ping-now que leu a linha de antes dela.
 func TestConcurrentPingNowAndFailKeepTheFailure(t *testing.T) {
 	a := novoAmbiente(t)
 	painel := heartbeat.NewService(a.pool, a.clk)
@@ -286,8 +286,8 @@ func TestConcurrentPingNowAndFailKeepTheFailure(t *testing.T) {
 	for _, e := range ev {
 		if e.RuntimeMS != nil {
 			medidos++
-			if *e.RuntimeMS != 60000 {
-				t.Errorf("duração %d ms, queria 60000", *e.RuntimeMS)
+			if *e.RuntimeMS != 60000 || e.Source != "ping" || e.Kind != "fail" {
+				t.Errorf("evento medido %+v, queria a falha da tarefa com 60000 ms", e)
 			}
 		}
 		if e.Kind == "fail" {
@@ -295,7 +295,7 @@ func TestConcurrentPingNowAndFailKeepTheFailure(t *testing.T) {
 		}
 	}
 	if medidos != 1 {
-		t.Errorf("%d eventos fecharam a execução, queria 1: %+v", medidos, ev)
+		t.Errorf("%d eventos fecharam a execução, queria 1 (a primeira falha): %+v", medidos, ev)
 	}
 	if falhas == 0 {
 		t.Errorf("a falha sumiu do log: %+v", ev)
@@ -307,6 +307,43 @@ func TestConcurrentPingNowAndFailKeepTheFailure(t *testing.T) {
 	}
 	if falhando := h.FailingSince != nil; falhando != (ultimo == "fail") {
 		t.Errorf("failing_since %s com o último evento %s", valor(h.FailingSince), ultimo)
+	}
+}
+
+// O sinal do painel não é a tarefa (R2): com a execução aberta, ele não a
+// encerra nem leva a duração dela; quem fecha é o sucesso da própria tarefa.
+func TestPingNowDoesNotCloseTheOpenRun(t *testing.T) {
+	a := novoAmbiente(t)
+	painel := heartbeat.NewService(a.pool, a.clk)
+	id, token := a.novoHeartbeat(t)
+	inicio := a.clk.Now()
+	a.pingar(t, token, heartbeat.SignalStart)
+	a.clk.Advance(time.Minute)
+	if _, err := painel.PingNow(context.Background(), a.dono, id); err != nil {
+		t.Fatal(err)
+	}
+
+	ev := a.eventos(t, id)
+	if ev[0].Source != "panel" || ev[0].RuntimeMS != nil {
+		t.Errorf("evento do painel %+v, queria source panel sem runtime_ms", ev[0])
+	}
+	h := a.linha(t, id)
+	if !mesmoInstante(h.LastStartAt, &inicio) {
+		t.Errorf("last_start_at %s depois do painel, queria %v", valor(h.LastStartAt), inicio)
+	}
+	if h.LastRuntimeMS != nil {
+		t.Errorf("last_runtime_ms %d depois do painel, queria NULL", *h.LastRuntimeMS)
+	}
+
+	a.clk.Advance(time.Minute)
+	a.pingar(t, token, heartbeat.SignalSuccess)
+	ev = a.eventos(t, id)
+	if ev[0].Source != "ping" || ev[0].RuntimeMS == nil || *ev[0].RuntimeMS != 120000 {
+		t.Errorf("sucesso da tarefa %+v, queria source ping com runtime_ms 120000", ev[0])
+	}
+	h = a.linha(t, id)
+	if h.LastStartAt != nil || h.LastRuntimeMS == nil || *h.LastRuntimeMS != 120000 {
+		t.Errorf("last_start_at %s, last_runtime_ms %s; queria NULL e 120000", valor(h.LastStartAt), valor(h.LastRuntimeMS))
 	}
 }
 

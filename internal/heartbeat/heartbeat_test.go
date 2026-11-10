@@ -88,6 +88,26 @@ func TestRuntimeComesFromTheOpenStartAndConsumesIt(t *testing.T) {
 	}
 }
 
+// O sucesso manual (o sinalizar agora do painel) move o prazo, mas não encerra
+// a execução aberta: o início e a última duração ficam para a tarefa.
+func TestManualSuccessKeepsTheOpenRun(t *testing.T) {
+	anterior := int64(5000)
+	s := heartbeat.State{LastStartAt: agora, LastRuntimeMS: &anterior}
+	s, ev := s.Apply(heartbeat.SignalSuccess, agora.Add(time.Minute), heartbeat.Run{Manual: true}, hora, tolerancia)
+	if ev.RuntimeMS != nil {
+		t.Errorf("o sucesso manual mediu %d ms, queria nil", *ev.RuntimeMS)
+	}
+	if !s.LastStartAt.Equal(agora) {
+		t.Errorf("last_start_at %v, queria %v", s.LastStartAt, agora)
+	}
+	if s.LastRuntimeMS == nil || *s.LastRuntimeMS != anterior {
+		t.Errorf("last_runtime_ms %v, queria %d", s.LastRuntimeMS, anterior)
+	}
+	if !s.LastSuccessAt.Equal(agora.Add(time.Minute)) {
+		t.Errorf("last_success_at %v, queria %v", s.LastSuccessAt, agora.Add(time.Minute))
+	}
+}
+
 // A execução que falha também é medida, e o início dela não fica aberto para o
 // próximo sucesso medir duas execuções como uma.
 func TestFailClosesTheRunToo(t *testing.T) {

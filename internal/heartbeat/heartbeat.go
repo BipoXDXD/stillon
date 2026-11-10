@@ -118,10 +118,12 @@ const (
 
 // Run identifica a execução que mandou o sinal (B7). Sem ID, o sinal vale como
 // antes do rid. StartAt é o início de mesmo rid lido do log, ou nil; só faz
-// sentido com ID.
+// sentido com ID. Manual é o sucesso do sinalizar agora: ele não é a tarefa
+// (R2), então não encerra a execução aberta nem leva a duração dela.
 type Run struct {
 	ID      *uuid.UUID
 	StartAt *time.Time
+	Manual  bool
 }
 
 // ExitCode é o código de saída que a tarefa mandou no ping. O valor zero é o
@@ -206,7 +208,9 @@ func (s State) Apply(sig Signal, now time.Time, run Run, sch Schedule, grace tim
 			s.FailingSince = now
 		}
 	case SignalSuccess:
-		ev.RuntimeMS = s.closeRun(now, run)
+		if !run.Manual {
+			ev.RuntimeMS = s.closeRun(now, run)
+		}
 		s.FailingSince = time.Time{}
 		s.LastSuccessAt = now
 		// Num agendamento que esta versão não conhece não há próximo instante
