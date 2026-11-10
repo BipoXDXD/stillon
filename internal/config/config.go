@@ -358,7 +358,7 @@ func Load(getenv func(string) string) (*Config, error) {
 			"colapsam num valor único para todos os clientes")
 	}
 
-	// Fail-closed (L1 do STRIDE do #255): sem a lista, a sonda alcança as
+	// Fail-closed: sem a lista, a sonda alcança as
 	// portas dos vizinhos da VPS. Lê o valor cru: um item inválido já tem o
 	// erro dele, e "ausente" ao lado esconderia o erro de digitação.
 	if exigeListaDaHospedagem(cfg.PublicBaseURL, cfg.Role) && getenv("PROBE_BLOCKED_CIDRS") == "" {

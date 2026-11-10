@@ -67,8 +67,13 @@ func TestLoadRejectsABadProbeBlockedCIDR(t *testing.T) {
 			if err == nil {
 				t.Fatalf("PROBE_BLOCKED_CIDRS=%q passou, queria erro", valor)
 			}
-			if !strings.Contains(err.Error(), "PROBE_BLOCKED_CIDRS") {
-				t.Errorf("erro = %v, queria citar PROBE_BLOCKED_CIDRS", err)
+			// O validEnv é produção que sonda: a mensagem de lista ausente também
+			// cita a variável, então só o prefixo do item prova o erro do item.
+			if !strings.Contains(err.Error(), "PROBE_BLOCKED_CIDRS: \"") {
+				t.Errorf("erro = %v, queria o erro do item (PROBE_BLOCKED_CIDRS: \"…\")", err)
+			}
+			if strings.Contains(err.Error(), "variável obrigatória ausente") {
+				t.Errorf("erro = %v, não queria a mensagem de lista ausente", err)
 			}
 		})
 	}
@@ -98,7 +103,7 @@ func TestLoadRejectsSpaceAroundAProbeBlockedCIDR(t *testing.T) {
 }
 
 // Em produção, nos papéis que sondam, a lista ausente ou vazia derruba o
-// boot com uma mensagem só (L1 do STRIDE do #255).
+// boot com uma mensagem só.
 func TestProducaoQueSondaExigeAListaDaHospedagem(t *testing.T) {
 	cases := []struct {
 		nome      string
@@ -109,6 +114,11 @@ func TestProducaoQueSondaExigeAListaDaHospedagem(t *testing.T) {
 		{nome: "https sem a variável", publicURL: "https://stillon.example", apagar: true},
 		{nome: "https com a variável vazia", publicURL: "https://stillon.example"},
 		{nome: "http fora do loopback sem a variável", publicURL: "http://stillon.example", apagar: true},
+		// Hosts que parecem locais e não são: a regra herda o emProducao das
+		// chaves de demo, e estes casos travam a herança.
+		{nome: "http em 0.0.0.0 sem a variável", publicURL: "http://0.0.0.0:8080", apagar: true},
+		{nome: "http em 127.0.0.1.nip.io sem a variável", publicURL: "http://127.0.0.1.nip.io", apagar: true},
+		{nome: "http em localhost.exemplo.com sem a variável", publicURL: "http://localhost.exemplo.com", apagar: true},
 		{nome: "papel prober em produção sem a variável", publicURL: "https://stillon.example", role: "prober", apagar: true},
 		{nome: "papel all explícito, vazia", publicURL: "https://stillon.example", role: "all"},
 	}
