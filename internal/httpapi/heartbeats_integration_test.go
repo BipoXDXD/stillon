@@ -256,11 +256,19 @@ func TestStateShowsGraceInsideTheWindow(t *testing.T) {
 		_, corpo := lerCru(t, a, http.MethodGet, "/api/v1/heartbeats/"+id, dono, nil)
 		return decodificar(t, corpo)["state"]
 	}
-	a.clk.Advance(time.Hour + time.Minute)
-	if e := estado(); e != "grace" {
-		t.Errorf("em t0+1h1min: %v, queria grace", e)
+	a.clk.Advance(time.Hour - time.Second)
+	if e := estado(); e != "up" {
+		t.Errorf("em t0+1h-1s: %v, queria up", e)
 	}
-	a.clk.Advance(9 * time.Minute)
+	a.clk.Advance(time.Second)
+	if e := estado(); e != "grace" {
+		t.Errorf("em t0+1h: %v, queria grace", e)
+	}
+	a.clk.Advance(10*time.Minute - time.Second)
+	if e := estado(); e != "grace" {
+		t.Errorf("em t0+1h10min-1s: %v, queria grace", e)
+	}
+	a.clk.Advance(time.Second)
 	if e := estado(); e != "late" {
 		t.Errorf("em t0+1h10min: %v, queria late", e)
 	}
