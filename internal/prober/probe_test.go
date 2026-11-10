@@ -680,16 +680,3 @@ func TestContentRuleRedirectToInternalIsBlocked(t *testing.T) {
 		t.Errorf("res = %+v, queria down/blocked", res)
 	}
 }
-
-// I1 (forma): o corpo não tem por onde sair de Probe. Um campo novo em Result
-// precisa entrar nesta lista de propósito.
-func TestResultHasNoRoomForTheBody(t *testing.T) {
-	tipo := reflect.TypeFor[Result]()
-	var campos []string
-	for i := range tipo.NumField() {
-		campos = append(campos, tipo.Field(i).Name)
-	}
-	if quer := []string{"Status", "Latency", "StatusCode", "ErrorKind"}; !slices.Equal(campos, quer) {
-		t.Errorf("campos de Result = %v, queria %v", campos, quer)
-	}
-}

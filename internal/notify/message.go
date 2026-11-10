@@ -11,14 +11,15 @@ import (
 // causas traduz o error_kind para quem lê o alerta. É o enum, e nunca a
 // mensagem crua do erro, que não é persistida (spec §4.2).
 var causas = map[string]string{
-	"timeout":      "tempo esgotado",
-	"dns":          "falha de DNS",
-	"tls":          "erro de TLS",
-	"conn_refused": "conexão recusada",
-	"http_status":  "status HTTP diferente do esperado",
-	"body_limit":   "corpo da resposta acima do limite",
-	"blocked":      "destino bloqueado pela proteção de rede",
-	"unknown":      "erro de rede",
+	"timeout":          "tempo esgotado",
+	"dns":              "falha de DNS",
+	"tls":              "erro de TLS",
+	"conn_refused":     "conexão recusada",
+	"http_status":      "status HTTP diferente do esperado",
+	"content_mismatch": "conteúdo da resposta diferente do esperado",
+	"body_limit":       "resposta grande demais para conferir o conteúdo",
+	"blocked":          "destino bloqueado pela proteção de rede",
+	"unknown":          "erro de rede",
 	// Tarefas: o sinal é dela, e o texto não fala em erro de rede.
 	"heartbeat_late":   "o sinal não chegou no prazo",
 	"heartbeat_failed": "a tarefa avisou que falhou",

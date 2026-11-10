@@ -5,10 +5,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"math"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -17,9 +19,11 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
 	"github.com/BipoXDXD/stillon/internal/clock"
@@ -39,6 +43,7 @@ type bancada struct {
 	clk  *clock.Fake
 	box  *crypto.Box
 	m    *Metrics
+	reg  *prometheus.Registry
 	dono uuid.UUID
 }
 
@@ -62,7 +67,8 @@ func novaBancada(t *testing.T, client *http.Client, vagas int32) *bancada {
 		t.Fatal(err)
 	}
 
-	m := NewMetrics(prometheus.NewRegistry())
+	reg := prometheus.NewRegistry()
+	m := NewMetrics(reg)
 	var s *Scheduler
 	if client == nil {
 		s = New(pool, box, clk, m)
@@ -72,7 +78,7 @@ func novaBancada(t *testing.T, client *http.Client, vagas int32) *bancada {
 	// Registrado depois do testdb.New: cleanups rodam em ordem inversa, então
 	// as sondas terminam antes de o banco ser restaurado.
 	t.Cleanup(func() { s.Stop(esperaMaxima) })
-	return &bancada{s: s, pool: pool, clk: clk, box: box, m: m, dono: dono}
+	return &bancada{s: s, pool: pool, clk: clk, box: box, m: m, reg: reg, dono: dono}
 }
 
 func (b *bancada) alvo(t *testing.T, url string, mexer func(*db.InsertTargetParams)) uuid.UUID {
@@ -761,22 +767,40 @@ func TestProbePanicIsLoggedAndReturnsTheSlot(t *testing.T) {
 	}
 }
 
-// A linha reivindicada vira a Spec da sonda com as unidades certas.
+// A linha reivindicada vira a Spec da sonda com as unidades certas, e a regra
+// de conteúdo com o ponteiro já decodificado em tokens.
 func TestSpecComesFromTheClaimedRow(t *testing.T) {
 	limiar := int32(250)
+	texto := func(s string) *string { return &s }
 	for _, tc := range []struct {
-		nome   string
-		limiar *int32
-		quer   time.Duration
+		nome                  string
+		limiar                *int32
+		quer                  time.Duration
+		modo, valor, ponteiro *string
+		querRegra             *RegraDaSonda
 	}{
-		{"com limiar", &limiar, 250 * time.Millisecond},
-		{"sem limiar", nil, 0},
+		{nome: "com limiar", limiar: &limiar, quer: 250 * time.Millisecond},
+		{nome: "sem limiar"},
+		{
+			nome: "contains", modo: texto("contains"), valor: texto("tudo certo"),
+			querRegra: &RegraDaSonda{Mode: targets.ContentContains, Value: []byte("tudo certo")},
+		},
+		{
+			nome: "not_contains", modo: texto("not_contains"), valor: texto("erro"),
+			querRegra: &RegraDaSonda{Mode: targets.ContentNotContains, Value: []byte("erro")},
+		},
+		{
+			nome: "json_equals com escapes no ponteiro", modo: texto("json_equals"), valor: texto("ok"),
+			ponteiro:  texto("/a~1b/m~0n/0"),
+			querRegra: &RegraDaSonda{Mode: targets.ContentJSONEquals, Value: []byte("ok"), Pointer: []string{"a/b", "m~n", "0"}},
+		},
 	} {
 		t.Run(tc.nome, func(t *testing.T) {
 			s := &Scheduler{}
 			spec, err := s.especificar(db.ClaimDueTargetsRow{
 				ID: uuid.New(), URL: "https://exemplo.com", Method: http.MethodHead,
 				TimeoutMS: 1500, ExpectedStatus: 204, DegradedThresholdMS: tc.limiar,
+				ContentMode: tc.modo, ContentValue: tc.valor, ContentJsonPointer: tc.ponteiro,
 			})
 			if err != nil {
 				t.Fatal(err)
@@ -785,7 +809,23 @@ func TestSpecComesFromTheClaimedRow(t *testing.T) {
 				spec.ExpectedStatus != 204 || spec.DegradedThreshold != tc.quer || spec.Headers != nil {
 				t.Errorf("spec = %+v, queria limiar de %s", spec, tc.quer)
 			}
+			if !reflect.DeepEqual(spec.Content, tc.querRegra) {
+				t.Errorf("regra = %+v, queria %+v", spec.Content, tc.querRegra)
+			}
 		})
+	}
+}
+
+// Um ponteiro que não abre é defeito nosso, como os headers que não abrem: a
+// sonda não sai e nada é gravado, em vez de um down que acusaria o alvo.
+func TestSpecWithAnUnreadablePointerFails(t *testing.T) {
+	modo, valor, ponteiro := "json_equals", "ok", "/a~2"
+	s := &Scheduler{}
+	if _, err := s.especificar(db.ClaimDueTargetsRow{
+		ID: uuid.New(), URL: "https://exemplo.com", Method: http.MethodGet,
+		ContentMode: &modo, ContentValue: &valor, ContentJsonPointer: &ponteiro,
+	}); err == nil {
+		t.Error("especificar aceitou o ponteiro /a~2")
 	}
 }
 
@@ -839,4 +879,76 @@ func TestCheckWithoutResponseHasNoStatusCode(t *testing.T) {
 	if len(rows) != 1 || rows[0].StatusCode != nil {
 		t.Fatalf("checks = %+v; queria um, sem status_code", rows)
 	}
+}
+
+// I1 da spec do PR 5. O corpo da resposta e o valor da regra são texto de
+// terceiros e do dono: nenhum dos dois sai da sonda. Depois de três falhas
+// por content_mismatch, com incidente aberto e aviso enfileirado, nenhum
+// canário aparece no banco do sondador (checks, incidents, notifications), no
+// log nem no /metrics.
+func TestProbeBodyCanaryNeverLeaves(t *testing.T) {
+	log := capturarLog(t)
+	canarioDoCorpo := "CANARY-" + uuid.NewString()
+	canarioDaRegra := "CANARY-" + uuid.NewString()
+	srv, client := servidorLiberado(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, canarioDoCorpo)
+	})
+	b := novaBancada(t, client, MaxInFlight)
+	b.canal(t, true, true)
+	valor := "outra coisa " + canarioDaRegra
+	alvo := b.alvo(t, srv.URL, func(p *db.InsertTargetParams) {
+		modo := string(targets.ContentContains)
+		p.ContentMode, p.ContentValue = &modo, &valor
+	})
+	for range 3 {
+		b.rodada(t)
+	}
+	b.s.Stop(esperaMaxima)
+
+	rows := b.checks(t, alvo)
+	if len(rows) != 3 || rows[0].ErrorKind == nil || *rows[0].ErrorKind != "content_mismatch" {
+		t.Fatalf("checks = %+v; queria três content_mismatch", rows)
+	}
+	var linhas []string
+	b.comoDono(t, func(tx pgx.Tx) {
+		for _, tabela := range []string{"checks", "incidents", "notifications"} {
+			var n int
+			var texto string
+			err := tx.QueryRow(context.Background(),
+				`SELECT count(*), coalesce(string_agg(row_to_json(t)::text, E'\n'), '') FROM `+tabela+` t`).Scan(&n, &texto)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if n == 0 {
+				t.Fatalf("nenhuma linha em %s: o teste não olharia nada", tabela)
+			}
+			linhas = append(linhas, texto)
+		}
+	})
+
+	metricas := textoDoMetrics(t, b.reg)
+	for _, canario := range []string{canarioDoCorpo, canarioDaRegra} {
+		for i, tabela := range []string{"checks", "incidents", "notifications"} {
+			if strings.Contains(linhas[i], canario) {
+				t.Errorf("o canário %s chegou a %s:\n%s", canario, tabela, linhas[i])
+			}
+		}
+		if strings.Contains(log.String(), canario) {
+			t.Errorf("o canário %s chegou ao log:\n%s", canario, log)
+		}
+		if strings.Contains(metricas, canario) {
+			t.Errorf("o canário %s chegou ao /metrics", canario)
+		}
+	}
+}
+
+// textoDoMetrics devolve o texto que o /metrics serviria com o registro dado.
+func textoDoMetrics(t *testing.T, reg *prometheus.Registry) string {
+	t.Helper()
+	w := httptest.NewRecorder()
+	promhttp.HandlerFor(reg, promhttp.HandlerOpts{}).ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "probe_total") {
+		t.Fatalf("/metrics = %d, sem as séries do sondador:\n%s", w.Code, w.Body)
+	}
+	return w.Body.String()
 }
