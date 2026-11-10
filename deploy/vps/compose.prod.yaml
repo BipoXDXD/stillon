@@ -53,10 +53,10 @@ services:
         ipv4_address: 172.31.0.3
     # Tetos na VPS de 2 vCPUs dividida com outros projetos. O Caddy só
     # repassa à borda (pico medido de 23 MiB): 128 MiB. CPU no teto da VPS
-    # (2), e não um quarto: o contêiner no ar ainda não tem teto de CPU, e
-    # um quarto, aplicado junto com a troca do digest, estrangularia o
-    # proxy sem ensaio (decisão D1, opção A). O teto de memória é o que
-    # protege os vizinhos. TestProductionComposeLimitsEveryService.
+    # (2), e não um quarto: um quarto de CPU nunca foi ensaiado com o proxy
+    # sob carga e poderia estrangulá-lo (decisão D1, opção A). Por isso o
+    # que protege os vizinhos é o teto de memória, não o de CPU.
+    # TestProductionComposeLimitsEveryService.
     cpus: 2
     mem_limit: 128m
     # Sem NET_RAW, o Caddy não forja ARP nem pacote cru na rede edge, dividida
@@ -112,12 +112,10 @@ services:
     networks:
       stillon:
         ipv4_address: 10.30.0.3
-    # CPU no teto da VPS (2), e não meia: o contêiner no ar ainda não tem
-    # teto de CPU, e meia CPU, aplicada junto com a troca do digest do Caddy
-    # e a queda de 1 GiB para 512 MiB, estrangularia o Argon2id do login
-    # (~120 ms com CPU livre, perto do dobro em meia CPU) sem ensaio
-    # (decisão D1, opção A). Memória: pico medido de 13 MiB sem login; o
-    # teto é o GOMEMLIMIT acima mais a folga.
+    # CPU no teto da VPS (2), e não meia: meia CPU estrangularia o Argon2id
+    # do login (~120 ms com CPU livre, perto do dobro em meia CPU) e nunca
+    # foi ensaiada (decisão D1, opção A). Memória: pico medido de 13 MiB
+    # sem login; o teto é o GOMEMLIMIT acima mais a folga.
     cpus: 2
     mem_limit: 512m
     cap_drop: [ALL]
