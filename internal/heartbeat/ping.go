@@ -147,12 +147,14 @@ func stateOf(h db.Heartbeat) State {
 }
 
 // pingParams monta a gravação do estado. A retomada por ping (ResumedByPing)
-// liga a tarefa e marca resumed_at; sem ela, os dois ficam como estavam.
+// liga a tarefa, marca resumed_at e, como a retomada manual, descarta o início
+// aberto de antes da pausa; sem ela, os três ficam como estavam.
 func pingParams(h db.Heartbeat, s State, sig Signal, now time.Time) db.SaveHeartbeatPingParams {
 	sinal := string(s.LastSignal)
 	enabled, resumedAt := h.Enabled, h.ResumedAt
 	if ResumedByPing(sig, h.Enabled, h.PingResumes) {
 		enabled, resumedAt = true, &now
+		s.LastStartAt = time.Time{}
 	}
 	return db.SaveHeartbeatPingParams{
 		ID: h.ID, DeadlineAt: s.DeadlineAt, LastPingAt: nilIfZero(s.LastPingAt),

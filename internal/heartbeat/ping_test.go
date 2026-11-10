@@ -723,6 +723,26 @@ func TestPingResumesOnSuccess(t *testing.T) {
 	}
 }
 
+// A retomada por ping descarta o início de antes da pausa, como a retomada
+// manual: um sucesso de outro rid não o consome, e ele ficaria "em execução".
+func TestPingResumeDropsTheStartFromBeforeThePause(t *testing.T) {
+	a := novoAmbiente(t)
+	id, token := a.novoHeartbeat(t)
+	a.pingar(t, token, heartbeat.SignalStart)
+	a.comoDono(t, `UPDATE heartbeats SET enabled = false, ping_resumes = true WHERE id = $1`, id)
+
+	a.clk.Advance(time.Minute)
+	ridB := uuid.MustParse("0195f3c2-8a4b-7c1d-9e2f-00000000000b")
+	a.pingarRun(t, token, heartbeat.SignalSuccess, &ridB)
+	h := a.linha(t, id)
+	if !h.Enabled {
+		t.Fatal("o sucesso não retomou")
+	}
+	if h.LastStartAt != nil {
+		t.Errorf("last_start_at %v depois da retomada, queria nulo", *h.LastStartAt)
+	}
+}
+
 // O rid da linha volta do banco para a guarda da repetição: o mesmo sucesso de
 // mesmo rid em 5 s é repetição, e o de outro rid é outra execução.
 func TestRepeatComparesTheStoredRunID(t *testing.T) {
