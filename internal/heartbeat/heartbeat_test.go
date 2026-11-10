@@ -717,6 +717,7 @@ func TestCloneName(t *testing.T) {
 		{"93 caracteres perdem um", strings.Repeat("a", 93), strings.Repeat("a", 92) + " (cópia)"},
 		{"multibyte corta por caractere", strings.Repeat("é", 99), strings.Repeat("é", 92) + " (cópia)"},
 		{"espaço deixado pelo corte sai", strings.Repeat("a", 91) + " b...", strings.Repeat("a", 91) + " (cópia)"},
+		{"ZWJ deixado pelo corte sai", strings.Repeat("a", 90) + "x\u200Dyz", strings.Repeat("a", 90) + "x (cópia)"},
 	}
 	for _, c := range casos {
 		t.Run(c.nome, func(t *testing.T) {
@@ -726,6 +727,9 @@ func TestCloneName(t *testing.T) {
 			}
 			if n := utf8.RuneCountInString(got); n > heartbeat.MaxNameLength {
 				t.Errorf("%d caracteres, acima de %d", n, heartbeat.MaxNameLength)
+			}
+			if _, err := heartbeat.ValidateName(got); err != nil {
+				t.Errorf("o nome da cópia %q não passa no cadastro: %v", got, err)
 			}
 		})
 	}

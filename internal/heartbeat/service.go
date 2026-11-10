@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/google/uuid"
@@ -286,14 +287,19 @@ func (s *Service) cloneParams(original db.Heartbeat, id uuid.UUID, hash []byte) 
 }
 
 // cloneName põe o sufixo e corta o nome, por caractere, para a cópia caber em
-// MaxNameLength. O espaço que o corte deixa no fim sai, para não dobrar o do
-// sufixo.
+// MaxNameLength. O que o corte deixa no fim e não se sustenta sozinho sai:
+// espaço (dobraria o do sufixo), formatação invisível como ZWJ e marca
+// combinante, que ValidateName recusaria no próximo PATCH com o mesmo nome.
 func cloneName(name string) string {
 	caben := MaxNameLength - utf8.RuneCountInString(CloneSuffix)
 	if runas := []rune(name); len(runas) > caben {
 		name = string(runas[:caben])
 	}
-	return strings.TrimRight(name, " ") + CloneSuffix
+	return strings.TrimRightFunc(name, soltoNoFim) + CloneSuffix
+}
+
+func soltoNoFim(r rune) bool {
+	return unicode.IsSpace(r) || unicode.Is(unicode.Cf, r) || unicode.In(r, unicode.Mn, unicode.Me)
 }
 
 func normalizeTags(cruas []string) ([]string, error) {
