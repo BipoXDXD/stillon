@@ -113,8 +113,10 @@ func validateContentRule(f *fields, v *ValidationError) {
 	}
 	// HEAD não traz corpo, e a regra julgaria outra coisa. Com regra, o
 	// Accept-Encoding é da sonda, que só lê gzip e o descomprime ela mesma; o
-	// do dono seria ignorado, e recusá-lo deixa isso claro no cadastro.
-	if f.Method == http.MethodHead || temAcceptEncoding(f.Headers) {
+	// do dono seria ignorado, e recusá-lo deixa isso claro no cadastro. Com o
+	// Range do dono, a regra julgaria só uma fatia, e a fatia de um gzip nem
+	// abre.
+	if f.Method == http.MethodHead || temHeader(f.Headers, "Accept-Encoding") || temHeader(f.Headers, "Range") {
 		v.add("content_rule", ReasonForbidden)
 	}
 }
@@ -153,11 +155,11 @@ func checkContentText(s string, max int) string {
 	return ""
 }
 
-// temAcceptEncoding olha os nomes sem diferença de caixa: se normalizeHeaders
-// recusou os headers, eles ainda estão como o dono os escreveu.
-func temAcceptEncoding(h map[string]string) bool {
+// temHeader olha os nomes sem diferença de caixa: se normalizeHeaders recusou
+// os headers, eles ainda estão como o dono os escreveu.
+func temHeader(h map[string]string, procurado string) bool {
 	for nome := range h {
-		if strings.EqualFold(nome, "Accept-Encoding") {
+		if strings.EqualFold(nome, procurado) {
 			return true
 		}
 	}

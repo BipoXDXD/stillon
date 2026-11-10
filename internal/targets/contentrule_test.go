@@ -93,7 +93,14 @@ func TestValidateContentRule(t *testing.T) {
 			f.Headers = map[string]string{"accept-encoding": "gzip"}
 			f.ContentRule = regra(ContentContains, "ok", "")
 		}, "content_rule", ReasonForbidden},
+		{"header range do dono com regra", func(f *fields) {
+			f.Headers = map[string]string{"rAnGe": "bytes=0-1023"}
+			f.ContentRule = regra(ContentContains, "ok", "")
+		}, "content_rule", ReasonForbidden},
 		{"método HEAD sem regra", func(f *fields) { f.Method = "HEAD" }, "", ""},
+		{"header range sem regra", func(f *fields) {
+			f.Headers = map[string]string{"range": "bytes=0-1023"}
+		}, "", ""},
 		{"header accept-encoding sem regra", func(f *fields) {
 			f.Headers = map[string]string{"accept-encoding": "gzip"}
 		}, "", ""},
@@ -118,6 +125,18 @@ func TestValidateContentRule(t *testing.T) {
 				t.Errorf("erros = %+v, queria %+v", err.Fields, want)
 			}
 		})
+	}
+}
+
+// Se normalizeHeaders recusa os headers, os nomes seguem na caixa do dono, e
+// a recusa da regra com Range ainda tem de valer.
+func TestValidateContentRuleSeesRangeInRefusedHeaders(t *testing.T) {
+	f := valido()
+	f.Headers = map[string]string{"rAnGe": "bytes=0-1023", "x-longo": strings.Repeat("a", maxHeaderValueBytes+1)}
+	f.ContentRule = regra(ContentContains, "ok", "")
+	err := validate(&f)
+	if err == nil || !slices.Contains(err.Fields, FieldError{Field: "content_rule", Reason: ReasonForbidden}) {
+		t.Errorf("erro = %+v, queria content_rule forbidden entre os erros", err)
 	}
 }
 

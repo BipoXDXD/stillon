@@ -947,6 +947,30 @@ func TestPatchAddingAcceptEncodingWithRuleIsRefused(t *testing.T) {
 	}
 }
 
+// Com o Range do dono, a regra julgaria só uma fatia do corpo, e a fatia de um
+// gzip nem abre.
+func TestPatchAddingRangeWithRuleIsRefused(t *testing.T) {
+	a := novoAmbiente(t)
+	ctx := context.Background()
+	dono := a.usuario(t)
+	in := entrada()
+	in.ContentRule = regraDeStatus()
+	alvo, err := a.svc.Create(ctx, dono, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = a.svc.Update(ctx, dono, alvo.ID, targets.Patch{
+		SetHeaders: true, Headers: map[string]string{"Range": "bytes=0-1023"},
+	})
+	if !temErroDeCampo(err, "content_rule", targets.ReasonForbidden) {
+		t.Errorf("erro = %v, queria ValidationError content_rule forbidden", err)
+	}
+	if h := a.headersGravados(t, alvo.ID); len(h) != 1 || h["Authorization"] != "Bearer segredo-do-cliente" {
+		t.Errorf("headers gravados = %v, queria só o Authorization original", h)
+	}
+}
+
 // Outra regra é outro critério de saúde: as falhas pela regra antiga não somam
 // com as da nova, e a sonda sai já, como em qualquer mudança do que é sondado.
 func TestRuleChangeResetsHealthAndProbesNow(t *testing.T) {

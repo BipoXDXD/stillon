@@ -113,9 +113,10 @@ func sondar(ctx context.Context, client *http.Client, s Spec) Result {
 	// O transporte não pede gzip (safedial.DisableCompression): quem pede é a
 	// sonda, para não baixar o corpo cru. Com regra, ela sempre pede e o
 	// descomprime ela mesma (lerCorpoDaRegra); o cadastro recusa o
-	// Accept-Encoding do dono. Sem regra, ela repete a guarda do transporte do
-	// Go: só pede (e só descomprime) se o dono não negociou a codificação nem
-	// pediu uma fatia, porque a fatia de um gzip não abre sozinha.
+	// Accept-Encoding e o Range do dono. Sem regra, ela repete a guarda do
+	// transporte do Go: só pede (e só descomprime) se o dono não negociou a
+	// codificação nem pediu uma fatia, porque a fatia de um gzip não abre
+	// sozinha.
 	sondaPedeGzip := s.Content != nil || !donoNegociaCorpo(req.Header)
 	if sondaPedeGzip {
 		req.Header.Set("Accept-Encoding", safedial.AcceptEncodingDaSonda)
