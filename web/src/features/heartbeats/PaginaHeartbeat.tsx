@@ -151,7 +151,7 @@ function DetalheDoHeartbeat({ id }: { id: string }) {
       void qc.invalidateQueries({ queryKey: chaves.heartbeats, exact: true })
       // Sem exact: o detalhe, o log e os incidentes.
       void qc.invalidateQueries({ queryKey: chaves.heartbeat(id) })
-      avisar('Sinal de sucesso registrado.')
+      avisar('Sinal de sucesso enviado.')
     }, null)
 
   return (

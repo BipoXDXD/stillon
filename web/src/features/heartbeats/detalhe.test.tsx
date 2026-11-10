@@ -334,7 +334,7 @@ function portao() {
 }
 
 describe('sinalizar agora', () => {
-  const AVISO = 'Sinal de sucesso registrado.'
+  const AVISO = 'Sinal de sucesso enviado.'
   const avisou = async () => expect((await screen.findAllByText(AVISO)).length).toBeGreaterThan(0)
 
   // Sabotagem: não invalidar os eventos → o log fica em "Nenhum sinal recebido.".
