@@ -19,11 +19,16 @@ describe('diasRestantes', () => {
 })
 
 describe('certificadoSeAplica', () => {
-  it('HTTPS com nome de host: sim', () => {
-    expect(certificadoSeAplica('https://exemplo.com')).toBe(true)
+  it.each(['https://exemplo.com', 'https://exemplo.com.', 'https://exemplo.com:8443'])('%s: sim', (url) => {
+    expect(certificadoSeAplica(url)).toBe(true)
   })
 
   it.each(['http://exemplo.com', 'https://203.0.113.5', 'https://[2001:db8::1]', 'nao é url'])('%s: não', (url) => {
+    expect(certificadoSeAplica(url)).toBe(false)
+  })
+
+  // O URL normaliza estas formas para IPv4: 1.2.3.4, 127.0.0.1 e 127.0.0.1.
+  it.each(['https://1.2.3.4.', 'https://2130706433', 'https://0x7f.1'])('%s, IPv4 disfarçado: não', (url) => {
     expect(certificadoSeAplica(url)).toBe(false)
   })
 })
