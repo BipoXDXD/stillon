@@ -124,24 +124,29 @@ function DetalheDoHeartbeat({ id }: { id: string }) {
                 <ListaDeTags tags={hb.tags} />
               </div>
               <div className="flex flex-wrap gap-2">
+                {/* Num agendamento de versão posterior, todo PATCH é 409
+                    schedule_unsupported: editar, pausar e retomar ficam de fora.
+                    Apagar e gerar nova URL seguem. */}
                 {comoEditavel(hb) !== null && (
-                  <Botao tipo="secundario" asChild>
-                    <Link to={`/heartbeats/${id}/edit`}>Editar</Link>
-                  </Botao>
+                  <>
+                    <Botao tipo="secundario" asChild>
+                      <Link to={`/heartbeats/${id}/edit`}>Editar</Link>
+                    </Botao>
+                    {/* Um botão só, que muda de texto: o foco devolvido pelo
+                        Confirmar ("Pausar") cai no mesmo elemento, agora "Retomar". */}
+                    <Botao
+                      tipo="terciario"
+                      aria-disabled={ocupado || undefined}
+                      onClick={() => {
+                        if (ocupado) return
+                        if (hb.enabled) setConfirmando('pausar')
+                        else void alternar(true)
+                      }}
+                    >
+                      {hb.enabled ? 'Pausar' : 'Retomar'}
+                    </Botao>
+                  </>
                 )}
-                {/* Um botão só, que muda de texto: o foco devolvido pelo
-                    Confirmar ("Pausar") cai no mesmo elemento, agora "Retomar". */}
-                <Botao
-                  tipo="terciario"
-                  aria-disabled={ocupado || undefined}
-                  onClick={() => {
-                    if (ocupado) return
-                    if (hb.enabled) setConfirmando('pausar')
-                    else void alternar(true)
-                  }}
-                >
-                  {hb.enabled ? 'Pausar' : 'Retomar'}
-                </Botao>
                 <Botao tipo="terciario" onClick={() => setConfirmando('apagar')}>
                   Apagar
                 </Botao>
@@ -216,9 +221,14 @@ function fraseDoEstado(hb: Heartbeat, agora: Date): string | null {
 
 const quando = (iso: string | null) => (iso === null ? 'Nunca' : dataHora(iso))
 
+const PRAZO_NAO_ACOMPANHADO = 'Prazo não acompanhado nesta versão'
+
 // Pausado não tem prazo correndo, e prazo que passou não é "próximo".
+// Num agendamento de versão posterior o servidor não move o prazo: a data
+// guardada não diz quando a tarefa deveria sinalizar.
 function Prazo({ hb, agora }: { hb: Heartbeat; agora: Date }) {
   if (hb.state === 'paused') return null
+  if (hb.schedule.kind === 'unknown') return <Dado nome="Prazo" valor={PRAZO_NAO_ACOMPANHADO} />
   return <Dado nome={prazoVencido(hb, agora) ? 'Prazo vencido' : 'Próximo prazo'} valor={dataHora(hb.deadline_at)} />
 }
 

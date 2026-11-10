@@ -121,7 +121,9 @@ export type ListaDeIncidentes = z.infer<typeof ListaDeIncidentes>
 // Um valor que uma versão posterior do servidor criou (SP1, piso de rollback)
 // vira 'unknown': uma aba aberta antes do deploy não pode falhar no parse da
 // lista inteira por um estado ou tipo de sinal que ela não conhece. Só texto:
-// outro tipo continua erro de contrato.
+// outro tipo continua erro de contrato. Aceitar qualquer texto é de propósito:
+// o custo é que um erro de digitação do servidor vira "Estado desconhecido" (ou
+// "Outro sinal") na tela, em vez de falhar alto como erro de contrato.
 const desconhecido = z.string().transform((): 'unknown' => 'unknown')
 
 export const EstadoDoHeartbeat = z.union([z.enum(['waiting', 'up', 'late', 'failing', 'paused']), desconhecido])

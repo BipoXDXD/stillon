@@ -334,12 +334,32 @@ describe('heartbeat de versão posterior', () => {
     expect(screen.queryByText(/Atrasado|Falhando|Fora do ar/)).not.toBeInTheDocument()
   })
 
-  // O PATCH numa linha de agendamento desconhecido é 409 schedule_unsupported.
-  it('pausar recusado com schedule_unsupported mostra a mensagem do código', async () => {
+  // Todo PATCH nessa linha é 409 schedule_unsupported: pausar e retomar
+  // falhariam sempre. Sabotagem: o botão fora da condição.
+  it.each([
+    ['ativo', { enabled: true, state: 'up' }],
+    ['pausado', { enabled: false, state: 'paused' }],
+  ] as const)('agendamento desconhecido %s não oferece Pausar nem Retomar', async (_, p) => {
+    await detalheCom({ schedule: { kind: 'unknown' }, ...p })
+    expect(screen.queryByRole('button', { name: 'Pausar' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Retomar' })).not.toBeInTheDocument()
+  })
+
+  it('agendamento desconhecido ainda pode ser apagado', async () => {
     const r = await detalheCom({ schedule: { kind: 'unknown' } })
-    r.falsa.estado.forcar.set('PATCH /heartbeats/:id', { status: 409, code: 'schedule_unsupported' })
-    await r.usuario.click(screen.getByRole('button', { name: 'Pausar' }))
-    await r.usuario.click(await screen.findByRole('button', { name: 'Pausar heartbeat' }))
-    expect(await screen.findByRole('alert')).toHaveTextContent('Este agendamento não pode ser editado nesta versão.')
+    await r.usuario.click(screen.getByRole('button', { name: 'Apagar' }))
+    await r.usuario.click(await screen.findByRole('button', { name: 'Apagar heartbeat' }))
+    await waitFor(() => expect(r.router.state.location.pathname).toBe('/'))
+    expect(r.falsa.chamadas('DELETE /heartbeats/:id')).toBe(1)
+    expect(r.falsa.estado.heartbeats).toEqual([])
+  })
+
+  // O servidor não move o prazo dessa linha: a data guardada mentiria.
+  // Sabotagem: tirar o ramo unknown do Prazo → "Próximo prazo" com a data.
+  it('agendamento desconhecido não afirma prazo', async () => {
+    await detalheCom({ schedule: { kind: 'unknown' }, deadline_at: '2099-01-01T12:00:00Z' })
+    const s = await secao('Agendamento e sinais')
+    expect(within(s).getByText('Prazo').nextElementSibling).toHaveTextContent('Prazo não acompanhado nesta versão')
+    expect(within(s).queryByText(/Próximo prazo|Prazo vencido/)).not.toBeInTheDocument()
   })
 })
