@@ -130,14 +130,31 @@ export const EstadoDoHeartbeat = z.union([z.enum(['waiting', 'up', 'late', 'fail
 export type EstadoDoHeartbeat = z.infer<typeof EstadoDoHeartbeat>
 
 // 'unknown' é a linha de um agendamento que esta versão não sabe ler: o
-// servidor manda só o kind, e o PATCH nela é 409 schedule_unsupported.
+// servidor manda só o kind, e o PATCH nela é 409 schedule_unsupported. Um
+// servidor posterior pode mandar o kind novo, e o painel trata igual.
 const PorPeriodo = z.object({ kind: z.literal('period'), period_sec: z.number() })
 const PorCron = z.object({ kind: z.literal('cron'), expr: z.string(), timezone: z.string() })
 
 export const AgendamentoEditavel = z.discriminatedUnion('kind', [PorPeriodo, PorCron])
 export type AgendamentoEditavel = z.infer<typeof AgendamentoEditavel>
 
-export const Agendamento = z.discriminatedUnion('kind', [PorPeriodo, PorCron, z.object({ kind: z.literal('unknown') })])
+// Um kind texto que esta versão não conhece (o 'oncalendar' de uma versão
+// posterior) vira { kind: 'unknown' } antes da união, como o servidor faz com a
+// linha que não sabe ler; period e cron conhecidos continuam exigindo os campos.
+const KINDS_CONHECIDOS: readonly string[] = ['period', 'cron', 'unknown']
+
+function normalizarKindDesconhecido(valor: unknown): unknown {
+  if (typeof valor !== 'object' || valor === null || !('kind' in valor)) {
+    return valor
+  }
+  const { kind } = valor
+  return typeof kind === 'string' && !KINDS_CONHECIDOS.includes(kind) ? { kind: 'unknown' } : valor
+}
+
+export const Agendamento = z.preprocess(
+  normalizarKindDesconhecido,
+  z.discriminatedUnion('kind', [PorPeriodo, PorCron, z.object({ kind: z.literal('unknown') })]),
+)
 export type Agendamento = z.infer<typeof Agendamento>
 
 // Sem ping_url, de propósito: o z.object descarta o campo, e o segredo não

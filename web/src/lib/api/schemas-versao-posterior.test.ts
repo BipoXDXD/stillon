@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { mensagemDe } from './mensagens'
 import { ApiError } from './http'
-import { Agendamento, EstadoDoHeartbeat, EventoDeHeartbeat } from './schemas'
+import { Agendamento, EstadoDoHeartbeat, EventoDeHeartbeat, ListaDeHeartbeats } from './schemas'
+import { heartbeat } from '@/test/fixtures'
 
 // O painel tolera o que uma versão posterior do servidor devolve (SP1, piso de
 // rollback), sem afrouxar a forma do que já conhece.
@@ -18,8 +19,19 @@ describe('Agendamento', () => {
     expect(Agendamento.safeParse({ kind: 'cron', expr: '0 3 * * *' }).success).toBe(false)
   })
 
-  it('outro kind fora do vocabulário continua falhando', () => {
-    expect(Agendamento.safeParse({ kind: 'interval', period_sec: 60 }).success).toBe(false)
+  it('kind de uma versão posterior vira unknown, só com a chave kind', () => {
+    expect(Agendamento.parse({ kind: 'oncalendar', spec: 'daily' })).toEqual({ kind: 'unknown' })
+  })
+
+  it('kind que não é texto continua falhando', () => {
+    expect(Agendamento.safeParse({ kind: 3 }).success).toBe(false)
+  })
+
+  it('a lista com um agendamento de versão posterior não derruba o parse', () => {
+    const lista = ListaDeHeartbeats.parse({
+      items: [heartbeat({ id: 'hb-1' }), heartbeat({ id: 'hb-2', schedule: { kind: 'oncalendar', spec: 'daily' } })],
+    })
+    expect(lista.items.map((h) => h.schedule)).toEqual([{ kind: 'period', period_sec: 86400 }, { kind: 'unknown' }])
   })
 })
 
