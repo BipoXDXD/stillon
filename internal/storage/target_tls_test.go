@@ -108,6 +108,60 @@ func TestTargetTLSFollowsOwnerOrProber(t *testing.T) {
 	}
 }
 
+// O dono lê e apaga a validade do próprio alvo, mas não a escreve: só o
+// sondador grava not_after. Senão um bug numa rota de usuário deixaria o dono
+// escolher quando o aviso de vencimento dispara.
+func TestOwnerCannotWriteTheirOwnTargetTLS(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+	dono := novoUsuario(t, pool)
+	alvo, alvoSemLinha := novoAlvo(t, pool, dono, agora), novoAlvo(t, pool, dono, agora)
+	novaValidadeTLS(t, pool, alvo)
+	forjada := validadeTLS.Add(365 * 24 * time.Hour)
+
+	// O upsert do sondador, no escopo do dono, sobre a linha existente.
+	err := storage.InUserTx(ctx, pool, dono, func(q *db.Queries) error {
+		return q.SaveTargetTLS(ctx, db.SaveTargetTLSParams{TargetID: alvo, NotAfter: forjada, ObservedAt: agora})
+	})
+	if codigoPG(err) != "42501" {
+		t.Errorf("o dono regravou a validade do próprio alvo: erro %v, queria 42501", err)
+	}
+	// O mesmo upsert num alvo do dono ainda sem linha.
+	err = storage.InUserTx(ctx, pool, dono, func(q *db.Queries) error {
+		return q.SaveTargetTLS(ctx, db.SaveTargetTLSParams{TargetID: alvoSemLinha, NotAfter: forjada, ObservedAt: agora})
+	})
+	if codigoPG(err) != "42501" {
+		t.Errorf("o dono inseriu a validade do próprio alvo: erro %v, queria 42501", err)
+	}
+	// UPDATE direto: sem política de UPDATE para o dono, a linha fica invisível
+	// ao comando e nada muda.
+	if n := linhasAfetadas(t, pool, "app.user_id", dono.String(),
+		`UPDATE target_tls SET not_after = $1 WHERE target_id = $2`, forjada, alvo); n != 0 {
+		t.Errorf("o UPDATE do dono tocou %d linhas do próprio alvo", n)
+	}
+
+	// Relidas pelo superusuário, por fora da RLS.
+	admin, err := pgx.Connect(ctx, testdb.AdminDSN(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer admin.Close(ctx)
+	var guardada time.Time
+	if err := admin.QueryRow(ctx, `SELECT not_after FROM target_tls WHERE target_id = $1`, alvo).Scan(&guardada); err != nil {
+		t.Fatal(err)
+	}
+	if !guardada.Equal(validadeTLS) {
+		t.Errorf("a validade do alvo ficou %v, queria a do sondador, %v", guardada, validadeTLS)
+	}
+	var linhas int
+	if err := admin.QueryRow(ctx, `SELECT count(*) FROM target_tls WHERE target_id = $1`, alvoSemLinha).Scan(&linhas); err != nil {
+		t.Fatal(err)
+	}
+	if linhas != 0 {
+		t.Errorf("o alvo sem leitura ganhou %d linhas no escopo do dono", linhas)
+	}
+}
+
 // As consultas do dono (targets.sql) filtram por user_id além da RLS, e cada
 // barreira vale sozinha, como nas tags. Aqui, o filtro sozinho: sob o escopo
 // de A, a política deixa A ver a própria validade, e só o WHERE barra o pedido
