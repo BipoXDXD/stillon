@@ -106,7 +106,7 @@ pasta); este PR depende dele (mesmos `Result`, `Spec` e `ClaimDueTargets`).
     vence antes); duas cadeias, uma com intermediário `t0+30d` e outra com `t0+60d`, folha `t0+90d` → `t0+60d` (a cadeia
     alternativa válida vale); cadeia só com a folha → a folha.
   - `TestHostDoCertificado`: `https://Exemplo.COM/x` → `exemplo.com`; `https://exemplo.com./` → `exemplo.com`;
-    `https://ação.com.br/` → `xn--ao-hia9b.com.br` (conferir o literal com `idna.Lookup` uma vez e fixar);
+    `https://ação.com.br/` → `xn--ao-siap.com.br` (conferido com `idna.Lookup` em 10/11);
     `https://203.0.113.5/`, `https://[2001:db8::1]/` → `false`.
   - `TestValidadeDoHost`: estado com `ServerName "exemplo.com"` e cadeia `t0+30d` + estado de `"outro.com"` com `t0+5d` →
     `t0+30d` (redirect para terceiro não conta); `ServerName "exemplo.com."` → casa; `ServerName ""` (IP) → `false`; dois
