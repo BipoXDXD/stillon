@@ -117,7 +117,7 @@ for (const tema of ['claro', 'escuro'] as const) {
     // de anúncio oculta por um instante, e um getByText na página inteira
     // acharia os dois (o modo estrito do Playwright recusa, conforme o tempo).
     await expect(
-      page.getByRole('region', { name: /Notifications/ }).getByText('Autenticador trocado. As outras sessões foram encerradas.'),
+      page.getByRole('region', { name: /Avisos/ }).getByText('Autenticador trocado. As outras sessões foram encerradas.'),
     ).toBeVisible()
     await controlePositivo(page, 'depois da troca')
   })

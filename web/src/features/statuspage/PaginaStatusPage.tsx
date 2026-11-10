@@ -3,12 +3,13 @@ import { useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
 import { useFieldArray, useForm, useWatch } from 'react-hook-form'
 import { ArrowDown, ArrowUp } from 'lucide-react'
+import { Link } from 'react-router'
 import { z } from 'zod'
 import { useApi } from '@/app/contexto'
 import { EstadoDaConsulta } from '@/components/EstadoDaConsulta'
 import { Titulo } from '@/components/Titulo'
 import { useAvisar } from '@/components/ui/avisos'
-import { Botao } from '@/components/ui/botao'
+import { Botao, BotaoQueSome } from '@/components/ui/botao'
 import { estiloDeCartao } from '@/components/ui/cartao'
 import { useCopiar } from '@/components/ui/copiar'
 import { CaixaDeMarcar, Campo, Entrada, ErroDoFormulario, Selecao } from '@/components/ui/campo'
@@ -85,6 +86,7 @@ function Formulario({ pagina, alvos }: { pagina: PaginaDeStatus | null; alvos: A
   // seletor de acrescentar, ou ao título da tela. Um efeito a cada render:
   // o que o pede é o render da remoção.
   const lista = useRef<HTMLFieldSetElement>(null)
+  const seletorDeAlvo = useRef<HTMLSelectElement>(null)
   const focarDepoisDeTirar = useRef<number | null>(null)
   useEffect(() => {
     const i = focarDepoisDeTirar.current
@@ -111,12 +113,12 @@ function Formulario({ pagina, alvos }: { pagina: PaginaDeStatus | null; alvos: A
       } else if (naoEncontrado(err)) {
         // M3: a página sumiu entre carregar e salvar. Como no 409 abaixo, o
         // aviso vai pelo toast: a recarga remonta o formulário.
-        avisar('A status page já tinha sido apagada, talvez em outra aba.', 'erro')
+        avisar('A status page já tinha sido apagada, talvez em outra aba.')
         await qc.invalidateQueries({ queryKey: ['status-pages'] })
       } else if (err instanceof ApiError && err.code === 'status_page_exists') {
         // Corrida entre abas: a recarga troca a `key` do formulário e o
         // remonta, então o aviso sai pelo toast, que sobrevive à troca.
-        avisar('Já existe uma status page; recarregamos a que está salva.', 'erro')
+        avisar('Já existe uma status page; recarregamos a que está salva.')
         await qc.invalidateQueries({ queryKey: ['status-pages'] })
       } else if (err instanceof ApiError && err.fields.length) {
         for (const fe of err.fields) {
@@ -161,7 +163,23 @@ function Formulario({ pagina, alvos }: { pagina: PaginaDeStatus | null; alvos: A
       <CaixaDeMarcar {...f.register('published')}>Publicada (visível para qualquer pessoa com o link)</CaixaDeMarcar>
 
       <fieldset ref={lista} className="space-y-3">
-        <legend className="text-sm font-semibold">Alvos na página ({itens.fields.length} de {MAX_ITENS})</legend>
+        <legend className="text-sm font-semibold">
+          Alvos na página{itens.fields.length > 0 && ` (${itens.fields.length} de ${MAX_ITENS})`}
+        </legend>
+        {alvos.length === 0 && itens.fields.length === 0 && (
+          // Nova aba, porque salvar um alvo leva ao detalhe dele e não há volta
+          // para cá: o que já foi digitado neste formulário fica como está.
+          <div className="space-y-2">
+            <p className="text-sm text-suave">Você ainda não tem alvos para mostrar nesta página.</p>
+            {/* Na volta da nova aba, o alvo novo chega e o link some: o foco
+                vai ao seletor, que nasce no mesmo commit. */}
+            <BotaoQueSome tipo="secundario" tamanho="pequeno" asChild reserva={seletorDeAlvo}>
+              <Link to="/targets/new" target="_blank" rel="noopener">
+                Cadastrar primeiro alvo (abre em nova aba)
+              </Link>
+            </BotaoQueSome>
+          </div>
+        )}
         {itens.fields.map((it, i) => (
           <div key={it.id} className="grid grid-cols-1 items-end gap-3 sm:grid-cols-[minmax(0,1fr)_auto] rounded-padrao border border-borda p-3">
             <Campo
@@ -223,7 +241,7 @@ function Formulario({ pagina, alvos }: { pagina: PaginaDeStatus | null; alvos: A
           <div className="flex flex-wrap items-end gap-2">
             <Campo rotulo="Acrescentar alvo">
               {(a) => (
-                <Selecao {...a} value={escolhido} onChange={(ev) => setEscolhido(ev.target.value)}>
+                <Selecao {...a} ref={seletorDeAlvo} value={escolhido} onChange={(ev) => setEscolhido(ev.target.value)}>
                   <option value="">Escolha…</option>
                   {livres.map((al) => (
                     <option key={al.id} value={al.id}>

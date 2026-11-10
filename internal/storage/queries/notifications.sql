@@ -4,16 +4,19 @@
 -- empurra next_attempt_at para lease_until e conta a tentativa na mesma
 -- instrução que trava as linhas, e o commit acontece antes do envio. A
 -- CTE devolve, na mesma ida ao banco, tudo o que o envio precisa.
+--
+-- O lote fica numa CTE MATERIALIZED pelo mesmo motivo de ClaimDueTargets.
 -- name: ClaimDueNotifications :many
-WITH claimed AS (
+WITH lote AS MATERIALIZED (
+    SELECT id FROM notifications
+     WHERE status = 'pending' AND next_attempt_at <= sqlc.arg(now)::timestamptz
+     ORDER BY next_attempt_at
+     LIMIT sqlc.arg(max_rows)::int
+       FOR UPDATE SKIP LOCKED
+), claimed AS (
     UPDATE notifications n
        SET next_attempt_at = sqlc.arg(lease_until)::timestamptz, attempts = n.attempts + 1
-     WHERE n.id IN (
-           SELECT id FROM notifications
-            WHERE status = 'pending' AND next_attempt_at <= sqlc.arg(now)::timestamptz
-            ORDER BY next_attempt_at
-            LIMIT sqlc.arg(max_rows)::int
-              FOR UPDATE SKIP LOCKED)
+     WHERE n.id IN (SELECT id FROM lote)
     RETURNING n.id, n.incident_id, n.channel_id, n.event, n.attempts, n.created_at, n.target_name
 )
 SELECT cl.id, cl.event, cl.attempts, cl.created_at,

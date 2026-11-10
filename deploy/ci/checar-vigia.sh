@@ -23,20 +23,49 @@ cat > "$T/bin/curl" <<'EOF'
 # O último argumento é a URL; os outros, as opções.
 for url; do :; done
 echo "$*" >> "$REGISTRO"
+
+com_fail=0
+saida=/dev/stdout
+while [ "$#" -gt 1 ]; do
+    case "$1" in
+        --fail) com_fail=1 ;;
+        --no-fail) com_fail=0 ;;
+        -o) shift; saida=$1 ;;
+        --*) ;;
+        -*f*) com_fail=1 ;;
+    esac
+    shift
+done
+
+# "ok" (200), "falha" (sem resposta HTTP) ou um código HTTP: SAUDE vale para o
+# /healthz e PING para os pings.
 case "$url" in
-    */healthz) [ "${SAUDE:-ok}" = ok ] ;;
-    *) exit 0 ;;
+    */healthz) saude=${SAUDE:-ok} ;;
+    *) saude=${PING:-ok} ;;
 esac
+case "$saude" in
+    ok) status=200 ;;
+    falha) exit 1 ;;
+    *) status=$saude ;;
+esac
+
+# Como o curl real (man curl, --fail e EXIT CODES): com -f, resposta 400 ou
+# maior sai 22 e sem corpo; sem -f, o erro HTTP é um download como outro.
+if [ "$status" -ge 400 ] && [ "$com_fail" = 1 ]; then
+    exit 22
+fi
+echo "corpo da resposta" > "$saida"
 EOF
 chmod +x "$T/bin/curl"
 
 HC=https://hc-ping.com/0000-teste
-# roda <cenário de saúde> <conteúdo do vigia.env>; devolve o código do vigia.
+# roda <cenário de saúde> <conteúdo do vigia.env> [cenário dos pings];
+# devolve o código do vigia.
 roda() {
     local c=0
     printf '%s\n' "$2" > "$T/cred/stillon-vigia"
     : > "$T/registro"
-    env -i PATH="$T/bin:/usr/bin:/bin" CREDENTIALS_DIRECTORY="$T/cred" REGISTRO="$T/registro" SAUDE="$1" \
+    env -i PATH="$T/bin:/usr/bin:/bin" CREDENTIALS_DIRECTORY="$T/cred" REGISTRO="$T/registro" SAUDE="$1" PING="${3:-ok}" \
         sh "$VIGIA" 2> "$T/erro" || c=$?
     echo "$c"
 }
@@ -138,6 +167,48 @@ teto=$(sed -n 's/^TimeoutStartSec=//p' "$S")
 if [ -z "$pior" ] || [ "$pior" = sem-prazo ] || [ -z "$teto" ] || [ "$pior" -gt "$teto" ] || [ "$teto" -ge 60 ]; then
     falhar "pior caso do vigia: ${pior} s, TimeoutStartSec=${teto:-nenhum} (tem de caber, e abaixo de 60 s)"
 fi
+
+# 10. O próprio curl falso segue o -f do curl real: é dele que dependem o 11 e
+#     o 12. 400 e 399 são os dois lados da fronteira documentada no manual.
+# falso <status HTTP> <opções do curl>; escreve "<código de saída>:<corpo>".
+falso() {
+    local status=$1 c=0 corpo
+    shift
+    corpo=$(env REGISTRO="$T/registro" SAUDE="$status" "$T/bin/curl" "$@" https://stillon.example/healthz) || c=$?
+    echo "$c:$corpo"
+}
+# confere_falso <esperado> <status HTTP> <opções do curl>
+confere_falso() {
+    local esperado=$1 obtido
+    shift
+    obtido=$(falso "$@")
+    [ "$obtido" = "$esperado" ] || falhar "curl falso com $*: esperava '$esperado', veio '$obtido'"
+}
+CORPO="corpo da resposta"
+confere_falso "22:" 502 -fsS
+confere_falso "22:" 502 --fail
+confere_falso "22:" 400 -f
+confere_falso "0:$CORPO" 399 -f
+confere_falso "0:$CORPO" 200 -fsS
+confere_falso "0:$CORPO" 502 -sS
+confere_falso "0:$CORPO" 502 --fail-early
+confere_falso "0:$CORPO" 502 -f --no-fail
+
+# 11. O vigia conta o código HTTP do /healthz: 502 (a borda de pé, o app
+#     parado) é queda, e 200 é site no ar.
+c=$(roda 502 "$ENV_OK")
+[ "$c" != 0 ] || falhar "HTTP 502: o vigia saiu 0"
+[ "$(urls)" = "https://stillon.example/healthz $HC/fail " ] || falhar "HTTP 502: pediu '$(urls)'"
+
+c=$(roda 200 "$ENV_OK")
+[ "$c" = 0 ] || falhar "HTTP 200: o vigia saiu $c"
+[ "$(urls)" = "https://stillon.example/healthz $HC " ] || falhar "HTTP 200: pediu '$(urls)'"
+
+# 12. Site no ar e ping recusado com erro HTTP (check apagado, URL errada): o
+#     ping não chegou, e o vigia não pode contar como enviado.
+c=$(roda 200 "$ENV_OK" 404)
+[ "$c" != 0 ] || falhar "ping com HTTP 404: o vigia saiu 0"
+[ "$(urls)" = "https://stillon.example/healthz $HC " ] || falhar "ping com HTTP 404: pediu '$(urls)'"
 
 [ "$falhas" = 0 ] || exit 1
 echo "vigia conferido"

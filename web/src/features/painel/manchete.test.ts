@@ -5,6 +5,7 @@ import {
   detalheDaManchete,
   fraseDoUltimoResolvido,
   manchete,
+  mancheteSemRede,
   metaDoPainel,
   resumoEmTexto,
   textoDaManchete,
@@ -17,6 +18,31 @@ const inc = (p: Parameters<typeof incidente>[0] = {}) => Incidente.parse(inciden
 const hb = (p: Parameters<typeof heartbeat>[0] = {}) => Heartbeat.parse(heartbeat(p))
 const semTarefas = { itens: [], confirmadas: true }
 const tarefas = (...itens: Heartbeat[]) => ({ itens, confirmadas: true })
+
+describe('mancheteSemRede', () => {
+  // Sem rede não se sabe o estado atual: nenhuma frase pode afirmá-lo.
+  // Sabotagem: devolver a manchete recebida.
+  it.each<Manchete>([
+    { tipo: 'tudo-no-ar' },
+    { tipo: 'sem-alvos' },
+    { tipo: 'todos-pausados' },
+    { tipo: 'tarefas-sem-confirmacao' },
+    { tipo: 'aguardando', quantos: 1, tarefas: 0 },
+  ])('troca $tipo pelo aviso de queda de rede', (m) => {
+    expect(mancheteSemRede(m)).toEqual({ tipo: 'sem-rede' })
+  })
+
+  // O problema já conhecido continua à vista, como em tarefas-sem-confirmacao.
+  // Sabotagem: devolver sempre sem-rede.
+  it('mantém o problema já conhecido', () => {
+    const problemas: Manchete = { tipo: 'problemas', quantos: 1, tarefas: 0 }
+    expect(mancheteSemRede(problemas)).toEqual(problemas)
+  })
+
+  it('o texto diz que não dá para conferir', () => {
+    expect(textoDaManchete({ tipo: 'sem-rede' })).toBe('Sem conexão para conferir os monitores.')
+  })
+})
 
 describe('manchete', () => {
   it('sem alvos', () => {
