@@ -1,11 +1,15 @@
 import { describe, expect, it } from 'vitest'
 import { Heartbeat } from '@/lib/api/schemas'
 import { heartbeat } from '@/test/fixtures'
-import { esquemaDoHeartbeat, mensagemDoHeartbeat, paraAlteracao, paraCriacao, valoresDe, valoresPadrao, type ValoresDoHeartbeat } from './esquema'
+import { comoEditavel, esquemaDoHeartbeat, mensagemDoHeartbeat, paraAlteracao, paraCriacao, valoresDe, valoresPadrao, type ValoresDoHeartbeat } from './esquema'
 
 const RECUSA_DO_CRON = 'Use os cinco campos, com um disparo que exista: 0 3 * * *. Domingo é 0 ou SUN, não 7; de sexta a domingo, 5,6,0.'
 const valores = (p: Partial<ValoresDoHeartbeat> = {}): ValoresDoHeartbeat => ({ ...valoresPadrao(), name: 'Backup', ...p })
-const hb = (p: Parameters<typeof heartbeat>[0] = {}) => Heartbeat.parse(heartbeat(p))
+const hb = (p: Parameters<typeof heartbeat>[0] = {}) => {
+  const editavel = comoEditavel(Heartbeat.parse(heartbeat(p)))
+  if (editavel === null) throw new Error('fixture com agendamento que o formulário não edita')
+  return editavel
+}
 const erros = (v: ValoresDoHeartbeat) => {
   const r = esquemaDoHeartbeat.safeParse(v)
   return r.success ? {} : Object.fromEntries(r.error.issues.map((i) => [i.path.join('.'), i.message]))
@@ -33,26 +37,26 @@ describe('validação do formulário', () => {
     [59, 'segundos', false],
     [60, 'segundos', true],
     [1, 'minutos', true],
-    [31, 'dias', true],
-    [2678401, 'segundos', false],
-    [32, 'dias', false],
+    [365, 'dias', true],
+    [31536001, 'segundos', false],
+    [366, 'dias', false],
     [1.5, 'minutos', true],
     [60.5, 'segundos', false],
     [Number.NaN, 'minutos', false],
   ] as const)('período de %d %s → %s', (periodoQuantidade, periodoUnidade, valido) => {
     const e = erros(valores({ periodoQuantidade, periodoUnidade }))
-    expect(e.periodoQuantidade).toBe(valido ? undefined : 'Entre 1 minuto e 31 dias.')
+    expect(e.periodoQuantidade).toBe(valido ? undefined : 'Entre 1 minuto e 365 dias.')
   })
 
   it.each([
     [29, 'segundos', false],
     [30, 'segundos', true],
-    [7, 'dias', true],
-    [604801, 'segundos', false],
+    [365, 'dias', true],
+    [31536001, 'segundos', false],
     [Number.NaN, 'minutos', false],
   ] as const)('tolerância de %d %s → %s', (toleranciaQuantidade, toleranciaUnidade, valido) => {
     const e = erros(valores({ toleranciaQuantidade, toleranciaUnidade }))
-    expect(e.toleranciaQuantidade).toBe(valido ? undefined : 'Entre 30 segundos e 7 dias.')
+    expect(e.toleranciaQuantidade).toBe(valido ? undefined : 'Entre 30 segundos e 365 dias.')
   })
 
   it('cron exige a expressão e o fuso, sem olhar o período', () => {
@@ -115,9 +119,14 @@ describe('tags no formulário', () => {
 })
 
 describe('descrição no formulário', () => {
-  it('o limite é em caracteres, como no servidor: 1000 emojis cabem', () => {
-    expect(erros(valores({ description: '🙂'.repeat(1000) }))).toEqual({})
-    expect(erros(valores({ description: '🙂'.repeat(1001) }))).toEqual({ description: 'No máximo 1000 caracteres.' })
+  // "é" ocupa 2 bytes: contar bytes recusaria os 10000.
+  it('o limite é em caracteres, como no servidor: 10000 "é" cabem', () => {
+    expect(erros(valores({ description: 'é'.repeat(10000) }))).toEqual({})
+    expect(erros(valores({ description: 'é'.repeat(10001) }))).toEqual({ description: 'No máximo 10000 caracteres.' })
+  })
+
+  it('emojis também contam um a um', () => {
+    expect(erros(valores({ description: '🙂'.repeat(10000) }))).toEqual({})
   })
 
   it('sem descrição, o POST não leva o campo', () => {
@@ -204,11 +213,19 @@ describe('mensagemDoHeartbeat', () => {
 
   it('sem linha, a mensagem do campo fica como está', () => {
     expect(invalida('description', '\nRoda')).toBe('Tem um caractere que não pode ser mostrado.')
-    expect(mensagemDoHeartbeat({ field: 'description', reason: 'out_of_range' }, '\nRoda')).toBe('No máximo 1000 caracteres.')
+    expect(mensagemDoHeartbeat({ field: 'description', reason: 'out_of_range' }, '\nRoda')).toBe('No máximo 10000 caracteres.')
+  })
+
+  // A recusa do servidor diz as mesmas faixas da tela.
+  it.each([
+    ['period_sec', 'Entre 1 minuto e 365 dias.'],
+    ['grace_sec', 'Entre 30 segundos e 365 dias.'],
+  ])('fora da faixa em %s', (field, mensagem) => {
+    expect(mensagemDoHeartbeat({ field, reason: 'out_of_range' }, '')).toBe(mensagem)
   })
 
   it('índice com outro motivo não vira linha de caractere invisível', () => {
-    expect(mensagemDoHeartbeat({ field: 'description[1]', reason: 'out_of_range' }, '\nRoda')).toBe('No máximo 1000 caracteres.')
+    expect(mensagemDoHeartbeat({ field: 'description[1]', reason: 'out_of_range' }, '\nRoda')).toBe('No máximo 10000 caracteres.')
     expect(mensagemDoHeartbeat({ field: 'description[1]', reason: 'required' }, '\nRoda')).toBe('Obrigatório.')
   })
 

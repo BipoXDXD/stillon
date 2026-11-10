@@ -3,6 +3,7 @@ import { textoDaCausa } from '@/lib/api/mensagens'
 import type { Heartbeat, HoraDoSpark, Incidente, ItemDoResumo } from '@/lib/api/schemas'
 import { estadoExibido, textoDoEstado, type EstadoExibido } from '@/lib/estado'
 import { duracao, haQuantoAteAgora, milissegundos } from '@/lib/format'
+import { assertUnreachable } from '@/lib/utils'
 import { detalheDoProblema, ehProblema, linhaSemDados } from './grupos'
 
 // O que a tabela de monitores desenha. Ela não conhece o item da API: um
@@ -89,6 +90,10 @@ function situacaoDoHeartbeat(hb: Heartbeat, agora: Date): string {
       return textoDeExecucao(hb, agora) ?? textoDaEspera(hb)
     case 'paused':
       return 'Pausado'
+    case 'unknown':
+      return textoDoHeartbeat(hb.state)
+    default:
+      return assertUnreachable(hb.state)
   }
 }
 

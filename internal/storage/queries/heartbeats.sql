@@ -67,11 +67,16 @@ UPDATE heartbeats SET ping_token_hash = $3 WHERE user_id = $1 AND id = $2;
 -- entre aberturas (D11): quem está nele fica para um tique seguinte.
 -- O OR não usa heartbeats_due_idx, e fica assim por medição: separar em UNION
 -- piorou a consulta (spec de heartbeats, §4).
+-- Sem período e sem cron, a linha é de uma versão posterior com agendamento que
+-- este binário não conhece: o prazo dela não é confiável e não abre atraso, mas
+-- a falha avisada abre.
 -- name: ClaimHeartbeatsToOpen :many
 SELECT h.id, h.user_id, h.deadline_at, h.failing_since
   FROM heartbeats h
  WHERE h.enabled
-   AND (h.deadline_at <= sqlc.arg(now)::timestamptz OR h.failing_since IS NOT NULL)
+   AND (h.failing_since IS NOT NULL
+        OR (h.deadline_at <= sqlc.arg(now)::timestamptz
+            AND (h.period_sec IS NOT NULL OR h.cron_expr IS NOT NULL)))
    AND (h.last_incident_at IS NULL OR h.last_incident_at <= sqlc.arg(cooldown_cut)::timestamptz)
    AND NOT EXISTS (SELECT 1 FROM incidents x WHERE x.heartbeat_id = h.id AND x.resolved_at IS NULL)
  ORDER BY h.deadline_at
@@ -81,6 +86,8 @@ SELECT h.id, h.user_id, h.deadline_at, h.failing_since
 -- Com incidente aberto e saudável de novo, por um sucesso ou pela retomada
 -- depois do início: prazo novo, sozinho, não fecha (spec de heartbeats, §5).
 -- Pausado fica como está: sem avaliação, como o alvo pausado sem sonda (D13).
+-- Agendamento desconhecido (sem período e sem cron) não tem prazo confiável, e o
+-- sucesso basta: o ping nessa linha nunca move o prazo.
 -- name: ClaimHeartbeatsToClose :many
 SELECT h.id, h.user_id, h.last_success_at, x.id AS incident_id, x.started_at
   FROM incidents x
@@ -88,7 +95,7 @@ SELECT h.id, h.user_id, h.last_success_at, x.id AS incident_id, x.started_at
  WHERE x.resolved_at IS NULL
    AND h.enabled
    AND h.failing_since IS NULL
-   AND h.deadline_at > sqlc.arg(now)::timestamptz
+   AND (h.deadline_at > sqlc.arg(now)::timestamptz OR (h.period_sec IS NULL AND h.cron_expr IS NULL))
    AND (h.last_success_at >= x.started_at OR h.resumed_at >= x.started_at)
  ORDER BY x.id
  LIMIT sqlc.arg(max_rows)::int
@@ -145,6 +152,12 @@ UPDATE heartbeats
 
 -- name: DeleteHeartbeat :execrows
 DELETE FROM heartbeats WHERE user_id = $1 AND id = $2;
+
+-- Limpar o log (SP1): só os eventos; last_*, prazo e incidentes ficam.
+-- name: DeleteHeartbeatEvents :execrows
+DELETE FROM heartbeat_events e
+ USING heartbeats h
+ WHERE h.id = e.heartbeat_id AND h.user_id = sqlc.arg(user_id) AND e.heartbeat_id = sqlc.arg(heartbeat_id);
 
 -- open NULL lista tudo; true só abertos; false só resolvidos.
 -- name: ListHeartbeatIncidents :many

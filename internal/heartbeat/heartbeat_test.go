@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/BipoXDXD/stillon/internal/crypto"
 	"github.com/BipoXDXD/stillon/internal/heartbeat"
@@ -180,6 +181,7 @@ func TestPeriodRange(t *testing.T) {
 		{0, false}, {-time.Minute, false},
 		{heartbeat.MinPeriod - time.Second, false}, {heartbeat.MinPeriod, true},
 		{heartbeat.MaxPeriod, true}, {heartbeat.MaxPeriod + time.Second, false},
+		{365 * 24 * time.Hour, true}, {365*24*time.Hour + time.Second, false},
 	}
 	for _, c := range casos {
 		_, err := heartbeat.NewPeriod(c.d)
@@ -200,6 +202,7 @@ func TestGraceRange(t *testing.T) {
 	}{
 		{0, false}, {heartbeat.MinGrace - time.Second, false}, {heartbeat.MinGrace, true},
 		{heartbeat.MaxGrace, true}, {heartbeat.MaxGrace + time.Second, false},
+		{365 * 24 * time.Hour, true}, {365*24*time.Hour + time.Second, false},
 	}
 	for _, c := range casos {
 		if err := heartbeat.ValidateGrace(c.d); (err == nil) != c.ok {
@@ -344,11 +347,147 @@ func TestScheduleFromRow(t *testing.T) {
 	if err != nil || !s.IsCron() || s.CronExpr() != expr || s.Timezone() != fuso {
 		t.Fatalf("cron: %+v, %v", s, err)
 	}
-	if _, err := heartbeat.ScheduleFromRow(nil, nil, nil); err == nil {
-		t.Fatal("linha sem agendamento passou")
-	}
 	if _, err := heartbeat.ScheduleFromRow(nil, &expr, nil); err == nil {
 		t.Fatal("cron sem fuso passou")
+	}
+}
+
+// Piso de rollback: uma versão futura pode gravar período acima da faixa de
+// cadastro, e esta versão precisa ler a linha mesmo assim.
+func TestScheduleFromRowAcceptsPeriodAboveRegistrationRange(t *testing.T) {
+	periodo := int32(31536000)
+	s, err := heartbeat.ScheduleFromRow(&periodo, nil, nil)
+	if err != nil {
+		t.Fatalf("365 dias: %v", err)
+	}
+	if !s.IsKnown() || s.Period() != 365*24*time.Hour {
+		t.Fatalf("365 dias: conhecido=%v período=%v", s.IsKnown(), s.Period())
+	}
+	t0 := time.Date(2026, 11, 10, 0, 0, 0, 0, time.UTC)
+	if got, want := s.Next(t0), time.Date(2027, 11, 10, 0, 0, 0, 0, time.UTC); !got.Equal(want) {
+		t.Errorf("Next %v, queria %v", got, want)
+	}
+}
+
+func TestScheduleFromRowRejectsNonPositivePeriod(t *testing.T) {
+	for _, p := range []int32{0, -60} {
+		_, err := heartbeat.ScheduleFromRow(&p, nil, nil)
+		var ve *heartbeat.ValidationError
+		if !errors.As(err, &ve) || ve.Field != "period_sec" || ve.Reason != heartbeat.ReasonOutOfRange {
+			t.Errorf("período %d: erro %v, queria period_sec/out_of_range", p, err)
+		}
+	}
+}
+
+// Período e cron nulos é a forma que esta versão não conhece: lê sem erro e
+// marca como desconhecida, com ou sem fuso gravado.
+func TestScheduleFromRowWithoutPeriodOrCronIsUnknown(t *testing.T) {
+	fuso := "America/Sao_Paulo"
+	for _, tz := range []*string{nil, &fuso} {
+		s, err := heartbeat.ScheduleFromRow(nil, nil, tz)
+		if err != nil {
+			t.Fatalf("fuso %v: %v", tz, err)
+		}
+		if s.IsKnown() || s.IsCron() {
+			t.Errorf("fuso %v: conhecido=%v cron=%v, queria desconhecido", tz, s.IsKnown(), s.IsCron())
+		}
+	}
+}
+
+func TestScheduleFromRowCronWithoutTimezoneStillFails(t *testing.T) {
+	expr := "0 3 * * *"
+	if _, err := heartbeat.ScheduleFromRow(nil, &expr, nil); err == nil {
+		t.Fatal("cron sem fuso passou")
+	}
+}
+
+// A leitura ficou sem teto, mas o cadastro não: a faixa continua no NewPeriod,
+// e um segundo acima dos 365 dias é recusado.
+func TestNewPeriodStillEnforcesRegistrationRange(t *testing.T) {
+	_, err := heartbeat.NewPeriod(365*24*time.Hour + time.Second)
+	var ve *heartbeat.ValidationError
+	if !errors.As(err, &ve) || ve.Field != "period_sec" || ve.Reason != heartbeat.ReasonOutOfRange {
+		t.Fatalf("erro %v, queria period_sec/out_of_range", err)
+	}
+}
+
+// Next num agendamento desconhecido é bug de quem chama: não há próximo
+// instante a inventar, e um prazo errado gravado seria pior que a queda.
+func TestNextOnUnknownSchedulePanics(t *testing.T) {
+	s, err := heartbeat.ScheduleFromRow(nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if recover() == nil {
+			t.Error("Next em agendamento desconhecido não entrou em pânico")
+		}
+	}()
+	s.Next(time.Date(2026, 11, 10, 0, 0, 0, 0, time.UTC))
+}
+
+// Piso de rollback: numa linha que esta versão não sabe agendar, o sinal fica
+// registrado como em qualquer outra, mas o prazo gravado não se move.
+func TestApplyOnUnknownScheduleKeepsDeadline(t *testing.T) {
+	desconhecido, err := heartbeat.ScheduleFromRow(nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prazo := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	em := time.Date(2026, 11, 10, 10, 0, 0, 0, time.UTC)
+	inicioAnterior := time.Date(2026, 11, 10, 9, 59, 0, 0, time.UTC)
+	falhandoDesde := time.Date(2026, 11, 10, 9, 0, 0, 0, time.UTC)
+	casos := []struct {
+		nome          string
+		antes         heartbeat.State
+		sig           heartbeat.Signal
+		sucesso       time.Time
+		falhandoDesde time.Time
+	}{
+		{nome: "início", antes: heartbeat.State{DeadlineAt: prazo}, sig: heartbeat.SignalStart},
+		{nome: "falha", antes: heartbeat.State{DeadlineAt: prazo}, sig: heartbeat.SignalFail, falhandoDesde: em},
+		{
+			nome: "sucesso limpa a falha", sig: heartbeat.SignalSuccess, sucesso: em,
+			antes: heartbeat.State{DeadlineAt: prazo, FailingSince: falhandoDesde},
+		},
+		{
+			nome: "sucesso depois de início", sig: heartbeat.SignalSuccess, sucesso: em,
+			antes: heartbeat.State{
+				DeadlineAt: prazo, LastStartAt: inicioAnterior, LastPingAt: inicioAnterior,
+				LastSignal: heartbeat.SignalStart,
+			},
+		},
+	}
+	for _, c := range casos {
+		t.Run(c.nome, func(t *testing.T) {
+			s, ev := c.antes.Apply(c.sig, em, desconhecido, tolerancia)
+			if !s.DeadlineAt.Equal(time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)) {
+				t.Errorf("prazo %v, queria 2026-11-10T12:00:00Z", s.DeadlineAt)
+			}
+			if !s.LastPingAt.Equal(em) || s.LastSignal != c.sig {
+				t.Errorf("último ping %v/%s, queria %v/%s", s.LastPingAt, s.LastSignal, em, c.sig)
+			}
+			if !s.LastSuccessAt.Equal(c.sucesso) {
+				t.Errorf("último sucesso %v, queria %v", s.LastSuccessAt, c.sucesso)
+			}
+			if !s.FailingSince.Equal(c.falhandoDesde) {
+				t.Errorf("falhando desde %v, queria %v", s.FailingSince, c.falhandoDesde)
+			}
+			if ev == nil || ev.Kind != c.sig || !ev.At.Equal(em) {
+				t.Errorf("evento %+v, queria %s em %v", ev, c.sig, em)
+			}
+		})
+	}
+}
+
+func TestEqualTellsUnknownApart(t *testing.T) {
+	a, _ := heartbeat.ScheduleFromRow(nil, nil, nil)
+	b, _ := heartbeat.ScheduleFromRow(nil, nil, nil)
+	if !a.Equal(b) {
+		t.Error("dois desconhecidos deram diferentes")
+	}
+	if a.Equal(heartbeat.Schedule{}) || (heartbeat.Schedule{}).Equal(a) {
+		t.Error("desconhecido deu igual ao valor zero")
 	}
 }
 
@@ -543,6 +682,9 @@ func TestValidateDescription(t *testing.T) {
 		{nome: "emoji composto passa", entrada: "dono \U0001F469\u200D\U0001F4BB", quer: "dono \U0001F469\u200D\U0001F4BB"},
 		{nome: "no teto, em caracteres", entrada: teto, quer: teto},
 		{nome: "acima do teto", entrada: teto + "é", motivo: heartbeat.ReasonOutOfRange, campo: "description"},
+		{nome: "10000 caracteres de dois bytes", entrada: strings.Repeat("é", 10000), quer: strings.Repeat("é", 10000)},
+		{nome: "10000 emojis de quatro bytes", entrada: strings.Repeat("😀", 10000), quer: strings.Repeat("😀", 10000)},
+		{nome: "10001 caracteres", entrada: strings.Repeat("é", 10001), motivo: heartbeat.ReasonOutOfRange, campo: "description"},
 		{nome: "NUL", entrada: "a\x00b", motivo: heartbeat.ReasonInvalid, campo: "description[0]"},
 		{nome: "retorno de carro", entrada: "a\r\nb", motivo: heartbeat.ReasonInvalid, campo: "description[0]"},
 		{nome: "inversão bidi na segunda linha", entrada: "a\n\u202Eb", motivo: heartbeat.ReasonInvalid, campo: "description[1]"},
@@ -557,9 +699,40 @@ func TestValidateDescription(t *testing.T) {
 			var verr *heartbeat.ValidationError
 			switch {
 			case c.motivo == "" && (err != nil || got != c.quer):
-				t.Errorf("devolveu %q, %v; queria %q", got, err, c.quer)
+				t.Errorf("devolveu %.40q (%d bytes), %v; queria %.40q (%d bytes)", got, len(got), err, c.quer, len(c.quer))
 			case c.motivo != "" && (!errors.As(err, &verr) || verr.Field != c.campo || verr.Reason != c.motivo):
 				t.Errorf("erro %v; queria %s %s", err, c.campo, c.motivo)
+			}
+		})
+	}
+}
+
+// O nome da cópia cabe nos 100 caracteres do cadastro, contados em caracteres:
+// cortar por byte deixaria um nome multibyte curto demais (ou partiria um
+// caractere ao meio).
+func TestCloneName(t *testing.T) {
+	casos := []struct{ nome, entrada, quer string }{
+		{"curto ganha o sufixo", "backup", "backup (cópia)"},
+		{"no teto corta para caber", strings.Repeat("a", 100), strings.Repeat("a", 92) + " (cópia)"},
+		{"92 caracteres cabem sem corte", strings.Repeat("a", 92), strings.Repeat("a", 92) + " (cópia)"},
+		{"93 caracteres perdem um", strings.Repeat("a", 93), strings.Repeat("a", 92) + " (cópia)"},
+		{"multibyte corta por caractere", strings.Repeat("é", 99), strings.Repeat("é", 92) + " (cópia)"},
+		{"espaço deixado pelo corte sai", strings.Repeat("a", 91) + " b...", strings.Repeat("a", 91) + " (cópia)"},
+		{"combinante no fim sem corte fica", "Cafe\u0301", "Cafe\u0301 (cópia)"},
+		{"seletor de variação sem corte fica", "Backup \u2764\uFE0F", "Backup \u2764\uFE0F (cópia)"},
+		{"ZWJ deixado pelo corte sai", strings.Repeat("a", 90) + "x\u200Dyz", strings.Repeat("a", 90) + "x (cópia)"},
+	}
+	for _, c := range casos {
+		t.Run(c.nome, func(t *testing.T) {
+			got := heartbeat.CloneName(c.entrada)
+			if got != c.quer {
+				t.Errorf("CloneName(%.20q…) = %q, queria %q", c.entrada, got, c.quer)
+			}
+			if n := utf8.RuneCountInString(got); n > heartbeat.MaxNameLength {
+				t.Errorf("%d caracteres, acima de %d", n, heartbeat.MaxNameLength)
+			}
+			if _, err := heartbeat.ValidateName(got); err != nil {
+				t.Errorf("o nome da cópia %q não passa no cadastro: %v", got, err)
 			}
 		})
 	}

@@ -10,6 +10,7 @@ describe('estado do heartbeat na tela', () => {
     ['failing', 'down', 'Falhando'],
     ['waiting', 'unknown', 'Aguardando'],
     ['paused', 'pausado', 'Pausado'],
+    ['unknown', 'unknown', 'Estado desconhecido'],
   ] satisfies [EstadoDoHeartbeat, EstadoExibido, string][])('%s tem a gravidade de %s e se chama %s', (estado, exibido, texto) => {
     expect(estadoDoHeartbeat(estado)).toBe(exibido)
     expect(textoDoHeartbeat(estado)).toBe(texto)
@@ -41,6 +42,7 @@ describe('textoDaDuracao', () => {
     [86400, '1 dia'],
     [172800, '2 dias'],
     [2678400, '31 dias'],
+    [31536000, '365 dias'],
   ])('%i s → %s', (s, texto) => {
     expect(textoDaDuracao(s)).toBe(texto)
   })
@@ -53,5 +55,9 @@ describe('textoDoAgendamento', () => {
 
   it('cron, com o fuso escrito', () => {
     expect(textoDoAgendamento({ kind: 'cron', expr: '0 3 * * *', timezone: 'America/Sao_Paulo' })).toBe('cron 0 3 * * *, America/Sao_Paulo')
+  })
+
+  it('agendamento de versão posterior diz que não é suportado', () => {
+    expect(textoDoAgendamento({ kind: 'unknown' })).toBe('Agendamento não suportado nesta versão')
   })
 })

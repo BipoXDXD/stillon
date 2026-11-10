@@ -21,6 +21,9 @@ import (
 const (
 	scheduleKindPeriod = "period"
 	scheduleKindCron   = "cron"
+	// scheduleKindUnknown só sai, nunca entra: é a linha gravada por uma
+	// versão posterior, num agendamento que esta não conhece.
+	scheduleKindUnknown = "unknown"
 )
 
 type HeartbeatHandlers struct {
@@ -132,10 +135,14 @@ func toHeartbeatResponse(h heartbeat.Heartbeat) heartbeatResponse {
 }
 
 func toScheduleDTO(s heartbeat.Schedule) scheduleDTO {
+	if !s.IsKnown() {
+		return scheduleDTO{Kind: scheduleKindUnknown}
+	}
 	if s.IsCron() {
 		return scheduleDTO{Kind: scheduleKindCron, Expr: s.CronExpr(), Timezone: s.Timezone()}
 	}
-	periodo := int32(s.Period() / time.Second) // #nosec G115 -- até 31 dias, validado em NewPeriod.
+	// #nosec G115 -- o valor nasce de um int32 (period_sec): a volta para int32 não transborda.
+	periodo := int32(s.Period() / time.Second)
 	return scheduleDTO{Kind: scheduleKindPeriod, PeriodSec: &periodo}
 }
 
@@ -328,6 +335,33 @@ func (h *HeartbeatHandlers) RotateToken(w http.ResponseWriter, r *http.Request) 
 	apierr.WriteJSON(w, http.StatusOK, heartbeatWithURLResponse{toHeartbeatResponse(item), h.pingURL(token)})
 }
 
+// Clone é POST /heartbeats/{id}/clone. Como a rotação, ignora o corpo: nada que
+// o cliente mande muda o que a cópia leva.
+func (h *HeartbeatHandlers) Clone(w http.ResponseWriter, r *http.Request) {
+	userID, id, ok := donoEID(w, r)
+	if !ok {
+		return
+	}
+	copia, token, err := h.svc.Clone(r.Context(), userID, id)
+	if h.falhou(w, r, "duplicar heartbeat", err) {
+		return
+	}
+	apierr.WriteJSON(w, http.StatusCreated, heartbeatWithURLResponse{toHeartbeatResponse(copia), h.pingURL(token)})
+}
+
+// ClearEvents é POST /heartbeats/{id}/events/clear. Ignora o corpo: limpar
+// apaga o log inteiro, e nada que o cliente mande escolhe o que sai.
+func (h *HeartbeatHandlers) ClearEvents(w http.ResponseWriter, r *http.Request) {
+	userID, id, ok := donoEID(w, r)
+	if !ok {
+		return
+	}
+	if h.falhou(w, r, "limpar eventos do heartbeat", h.svc.ClearEvents(r.Context(), userID, id)) {
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (h *HeartbeatHandlers) Events(w http.ResponseWriter, r *http.Request) {
 	userID, id, ok := donoEID(w, r)
 	if !ok {
@@ -467,6 +501,8 @@ func (h *HeartbeatHandlers) falhou(w http.ResponseWriter, r *http.Request, op st
 		apierr.WriteError(w, r, apierr.CodeNotFound)
 	case errors.Is(err, heartbeat.ErrLimitReached):
 		apierr.WriteError(w, r, apierr.CodeHeartbeatLimit)
+	case errors.Is(err, heartbeat.ErrScheduleUnsupported):
+		apierr.WriteError(w, r, apierr.CodeScheduleUnsupported)
 	case errors.As(err, &verr):
 		campoInvalido(w, r, verr.Field, verr.Reason)
 	default:
