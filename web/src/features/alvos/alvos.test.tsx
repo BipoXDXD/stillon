@@ -153,8 +153,8 @@ describe('cadastrar', () => {
     expect(avancado()).not.toContainElement(screen.getByLabelText('Intervalo'))
   })
 
-  // Um erro escondido não se corrige. Sabotagem: tirar o "|| erroNoAvancado(e)"
-  // do avancadoVisivel.
+  // Um erro escondido não se corrige. Sabotagem: tirar o abrirOAvancadoComErro
+  // do handleSubmit.
   it('erro num campo avançado abre a seção e leva o foco a ele', async () => {
     const r = await renderizarPainel('/targets/new')
     await preencher(r.usuario)
@@ -168,7 +168,8 @@ describe('cadastrar', () => {
     expect(r.falsa.corpos('POST /targets')).toHaveLength(0)
   })
 
-  // O mesmo para o erro que o servidor aponta. Sabotagem: a mesma.
+  // O mesmo para o erro que o servidor aponta. Sabotagem: tirar o
+  // setAvancadoAberto(true) do caminho do 400.
   it('o 400 do servidor num campo avançado abre a seção', async () => {
     const r = await renderizarPainel('/targets/new')
     r.falsa.estado.forcar.set('POST /targets', {
@@ -182,6 +183,55 @@ describe('cadastrar', () => {
     await waitFor(() => expect(status).toHaveAttribute('aria-invalid', 'true'))
     expect(avancado()).toHaveAttribute('open')
     expect(status).toHaveFocus()
+  })
+
+  // WCAG 3.3.1 e 2.4.3: quem fecha o "Avançado" com o erro dentro e reenvia não
+  // pode ficar com o envio falhando em silêncio. Sabotagem: voltar ao
+  // open={avancadoAberto || erroNoAvancado(e)}, que não reabre (a prop segue
+  // true e o React não toca no open que o usuário mudou).
+  async function fecharOAvancado(usuario: Awaited<ReturnType<typeof renderizarPainel>>['usuario']) {
+    await usuario.click(screen.getByText('Avançado'))
+    await waitFor(() => expect(avancado()).not.toHaveAttribute('open'))
+  }
+  const mensagemDoErro = (campo: HTMLElement) => document.getElementById(`${campo.id}-erro`)
+
+  it('fechar o "Avançado" com erro e reenviar reabre a seção e foca o campo', async () => {
+    const r = await renderizarPainel('/targets/new')
+    await preencher(r.usuario)
+    const timeout = screen.getByLabelText('Timeout (ms)')
+    await r.usuario.clear(timeout)
+    await r.usuario.type(timeout, '50')
+    const cadastrar = screen.getByRole('button', { name: 'Cadastrar' })
+    await r.usuario.click(cadastrar)
+    await waitFor(() => expect(avancado()).toHaveAttribute('open'))
+    await fecharOAvancado(r.usuario)
+    await r.usuario.click(cadastrar)
+    await waitFor(() => expect(avancado()).toHaveAttribute('open'))
+    expect(timeout).toHaveFocus()
+    expect(mensagemDoErro(timeout)).toHaveTextContent('Mínimo de 1000 ms.')
+    expect(mensagemDoErro(timeout)).toBeVisible()
+    expect(r.falsa.corpos('POST /targets')).toHaveLength(0)
+  })
+
+  it('fechar o "Avançado" com o erro do 400 e reenviar reabre a seção e foca o campo', async () => {
+    const r = await renderizarPainel('/targets/new')
+    r.falsa.estado.forcar.set('POST /targets', {
+      status: 400,
+      code: 'validation_failed',
+      fields: [{ field: 'expected_status', reason: 'out_of_range' }],
+    })
+    await preencher(r.usuario)
+    const cadastrar = screen.getByRole('button', { name: 'Cadastrar' })
+    await r.usuario.click(cadastrar)
+    const status = screen.getByLabelText('Status HTTP esperado')
+    await waitFor(() => expect(status).toHaveAttribute('aria-invalid', 'true'))
+    await fecharOAvancado(r.usuario)
+    await r.usuario.click(cadastrar)
+    await waitFor(() => expect(r.falsa.corpos('POST /targets')).toHaveLength(2))
+    await waitFor(() => expect(avancado()).toHaveAttribute('open'))
+    expect(status).toHaveFocus()
+    expect(status).toHaveAttribute('aria-invalid', 'true')
+    expect(mensagemDoErro(status)).toBeVisible()
   })
 
   it('o teto de 100 alvos (Plano 5, D24) aparece como erro do formulário', async () => {

@@ -916,7 +916,8 @@ test('celular de 400 px: a prévia da status page com nome de exibição longo',
 // Um campo num <details> fechado não recebe foco no navegador (no jsdom,
 // recebe: o teste de unidade não prova isto). Um erro num campo do "Avançado",
 // do navegador ou do servidor, abre a seção e leva o foco ao campo.
-// Sabotagem: tirar o "|| erroNoAvancado(e)" do avancadoVisivel.
+// Sabotagem: tirar o abrirOAvancadoComErro do handleSubmit, ou o
+// setAvancadoAberto(true) do caminho do 400.
 test('erro num campo do "Avançado" abre a seção e foca o campo', async ({ page }) => {
   await imitarApi(page)
   const avancado = page.locator('details', { has: page.locator('summary', { hasText: 'Avançado' }) })
@@ -958,4 +959,58 @@ test('erro num campo do "Avançado" abre a seção e foca o campo', async ({ pag
   await expect(avancado).toHaveAttribute('open')
   await expect(status).toBeFocused()
   await controlePositivo(page, 'erro no "Avançado"')
+})
+
+// WCAG 3.3.1 e 2.4.3: fechar o "Avançado" com o erro dentro e reenviar não
+// pode falhar em silêncio; a seção reabre, o campo recebe o foco e a mensagem
+// fica à vista. Sabotagem: voltar ao open={avancadoAberto || erroNoAvancado(e)}.
+test('fechar o "Avançado" com erro e reenviar reabre a seção e foca o campo', async ({ page }) => {
+  await imitarApi(page)
+  const summary = page.locator('summary', { hasText: 'Avançado' })
+  const avancado = page.locator('details', { has: summary })
+  const cadastrar = page.getByRole('button', { name: 'Cadastrar', exact: true })
+  const preencher = async () => {
+    await page.goto('/targets/new')
+    await expect(page.getByRole('heading', { name: 'Novo alvo', level: 1 })).toBeVisible()
+    await page.getByLabel('Nome', { exact: true }).fill('API nova')
+    await page.getByLabel('URL', { exact: true }).fill('https://api.exemplo.com/health')
+  }
+
+  // Erro do navegador: o timeout inválido.
+  await preencher()
+  await summary.click()
+  const timeout = page.getByLabel('Timeout (ms)')
+  await timeout.fill('50')
+  await cadastrar.click()
+  await expect(timeout).toHaveAttribute('aria-invalid', 'true')
+  await summary.click()
+  await expect(avancado).not.toHaveAttribute('open')
+  await cadastrar.click()
+  await expect(avancado).toHaveAttribute('open')
+  await expect(timeout).toBeFocused()
+  await expect(page.getByText('Mínimo de 1000 ms.')).toBeVisible()
+
+  // Erro do servidor: o 400 aponta o status esperado nos dois envios.
+  await page.route('**/api/v1/targets', (route) =>
+    route.request().method() === 'POST'
+      ? route.fulfill({
+          status: 400,
+          json: {
+            error: { code: 'validation_failed', message: '', fields: [{ field: 'expected_status', reason: 'out_of_range' }] },
+            trace_id: 't',
+          },
+        })
+      : route.fallback(),
+  )
+  await preencher()
+  await cadastrar.click()
+  const status = page.getByLabel('Status HTTP esperado')
+  await expect(status).toHaveAttribute('aria-invalid', 'true')
+  await summary.click()
+  await expect(avancado).not.toHaveAttribute('open')
+  await cadastrar.click()
+  await expect(avancado).toHaveAttribute('open')
+  await expect(status).toBeFocused()
+  await expect(page.getByText('Fora do intervalo permitido.')).toBeVisible()
+  await controlePositivo(page, 'erro no "Avançado" depois de fechar')
 })

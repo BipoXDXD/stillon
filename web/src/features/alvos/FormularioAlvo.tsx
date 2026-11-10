@@ -19,6 +19,10 @@ function erroNoAvancado(erros: FieldErrors<ValoresDoAlvo>): boolean {
   return CAMPOS_AVANCADOS.some((campo) => erros[campo] !== undefined)
 }
 
+function ehCampoAvancado(campo: keyof ValoresDoAlvo): boolean {
+  return CAMPOS_AVANCADOS.some((avancado) => avancado === campo)
+}
+
 export function FormularioAlvo({
   iniciais,
   nomesDeHeaders,
@@ -38,9 +42,12 @@ export function FormularioAlvo({
   const headers = useFieldArray({ control: f.control, name: 'headers' })
   const [erroGeral, setErroGeral] = useState<string | null>(null)
   // Na edição, um alvo com o raro fora do padrão já abre com ele à vista.
+  // O <details> é controlado de verdade: a prop open só segue este estado, e o
+  // toggle o sincroniza com o que o usuário faz. Derivar open do erro deixava a
+  // prop presa em true depois que o usuário fechava a seção, e o React não a
+  // reabria no reenvio.
   const [avancadoAberto, setAvancadoAberto] = useState(() => avancadoPersonalizado(iniciais, nomesDeHeaders ?? []))
   const e = f.formState.errors
-  const avancadoVisivel = avancadoAberto || erroNoAvancado(e)
   const lentidao = useWatch({ control: f.control, name: 'lentidao' })
   const modoHeaders = useWatch({ control: f.control, name: 'modoHeaders' })
   const intervaloEscolhido = useWatch({ control: f.control, name: 'intervaloEscolhido' })
@@ -64,6 +71,7 @@ export function FormularioAlvo({
             const campo = campoDoServidor[fe.field.replace(/\[.*$/, '')]
             if (!campo) continue
             f.setError(campo, { message: mensagemDoCampo(fe.field, fe.reason) })
+            if (ehCampoAvancado(campo)) setAvancadoAberto(true)
             primeiro ??= campo
           }
         })
@@ -79,14 +87,18 @@ export function FormularioAlvo({
     }
   }
 
+  // Num erro de validação, o react-hook-form chama isto e só depois foca o
+  // primeiro campo com erro: o flushSync abre o "Avançado" antes do foco.
+  function abrirOAvancadoComErro(erros: FieldErrors<ValoresDoAlvo>) {
+    if (erroNoAvancado(erros)) flushSync(() => setAvancadoAberto(true))
+  }
+
   const numero = { valueAsNumber: true } as const
   return (
     <form
       noValidate
       className={cn(estiloDeCartao, 'max-w-2xl space-y-6')}
-      // Num erro de validação, o erro abre o "Avançado" no render seguinte, e
-      // o react-hook-form repete o foco num setTimeout, que já o acha à vista.
-      onSubmit={f.handleSubmit(enviar)}
+      onSubmit={f.handleSubmit(enviar, abrirOAvancadoComErro)}
     >
       <ErroDoFormulario>{erroGeral}</ErroDoFormulario>
       <Campo rotulo="Nome" erro={e.name?.message}>
@@ -133,7 +145,7 @@ export function FormularioAlvo({
       {/* <details>: o navegador cuida de abrir e fechar pelo teclado, e o
           leitor de tela diz se está aberto. */}
       <details
-        open={avancadoVisivel}
+        open={avancadoAberto}
         onToggle={(ev) => setAvancadoAberto(ev.currentTarget.open)}
         className="rounded-padrao border border-borda p-4"
       >
