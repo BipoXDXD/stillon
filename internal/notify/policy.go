@@ -1,9 +1,6 @@
 package notify
 
-import (
-	"fmt"
-	"time"
-)
+import "time"
 
 // A política de lembretes aprovada pelo dono em 2026-10-05
 // (docs/superpowers/specs/2026-10-14-lembretes-design.md).
@@ -28,7 +25,9 @@ type cadence struct {
 // valor, sem relógio nem banco: a regra de negócio fica num lugar só.
 type Policy struct {
 	longBandAge time.Duration
-	cadences    map[Kind]cadence
+	// cadences tem uma chave por tipo de canal conhecido; valor nil é um tipo
+	// que não recebe lembrete.
+	cadences map[Kind]*cadence
 }
 
 // DefaultPolicy é a tabela aprovada: Discord a cada 30 min e e-mail a cada
@@ -36,7 +35,7 @@ type Policy struct {
 func DefaultPolicy() Policy {
 	return Policy{
 		longBandAge: reminderLongBandAge,
-		cadences: map[Kind]cadence{
+		cadences: map[Kind]*cadence{
 			KindDiscord: {short: discordShortInterval, long: discordLongInterval},
 			KindEmail:   {short: emailShortInterval, long: emailLongInterval},
 		},
@@ -46,16 +45,23 @@ func DefaultPolicy() Policy {
 // NextReminder devolve quando vence o lembrete seguinte ao aviso de base (a
 // abertura ou o último lembrete do par incidente-canal), enfileirado em
 // baseAt. A faixa vem da idade do incidente na base, então a troca para o
-// intervalo longo acontece no lembrete que cai depois das 6 h. Um kind sem
-// cadência é erro: o CHECK de notif_channels.kind não deixaria isso chegar
-// aqui, e quem chama não deve inventar um intervalo.
-func (p Policy) NextReminder(kind Kind, startedAt, baseAt time.Time) (time.Time, error) {
-	c, ok := p.cadences[kind]
-	if !ok {
-		return time.Time{}, fmt.Errorf("política de lembretes: canal de tipo %q sem cadência", kind)
+// intervalo longo acontece no lembrete que cai depois das 6 h. ok é false
+// quando o tipo não tem lembrete: tipo conhecido sem cadência ou tipo que esta
+// versão não conhece (gravado por uma versão mais nova antes de um rollback).
+// Nenhum dos dois é erro: quem chama pula o par e segue com os outros.
+func (p Policy) NextReminder(kind Kind, startedAt, baseAt time.Time) (vence time.Time, ok bool) {
+	c := p.cadences[kind]
+	if c == nil {
+		return time.Time{}, false
 	}
 	if baseAt.Sub(startedAt) < p.longBandAge {
-		return baseAt.Add(c.short), nil
+		return baseAt.Add(c.short), true
 	}
-	return baseAt.Add(c.long), nil
+	return baseAt.Add(c.long), true
+}
+
+// knows diz se o tipo de canal é desta versão, com ou sem lembrete.
+func (p Policy) knows(kind Kind) bool {
+	_, ok := p.cadences[kind]
+	return ok
 }

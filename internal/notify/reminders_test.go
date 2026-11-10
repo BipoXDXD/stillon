@@ -488,3 +488,28 @@ func TestRemindersTickGivesUpAtTheDeadline(t *testing.T) {
 		t.Fatal("Tick seguiu travado depois do prazo")
 	}
 }
+
+// Depois de um rollback, a tabela pode ter um canal de tipo que esta versão
+// não conhece. O par dele não tem lembrete, mas os outros canais da mesma
+// página continuam lembrando: um erro ali abortaria a página inteira a cada
+// tique. O CHECK de kind é afrouxado como superusuário para simular "schema
+// novo, binário velho".
+func TestKindDesconhecidoNaoParaOsLembretes(t *testing.T) {
+	b := novaBancadaLembretes(t)
+	if _, err := b.pool.Exec(context.Background(),
+		`ALTER TABLE notif_channels DROP CONSTRAINT notif_channels_kind_check`); err != nil {
+		t.Fatal(err)
+	}
+	// O desconhecido nasce antes: na ordem (incident_id, channel_id) da
+	// página, ele vem primeiro.
+	futuro := b.canal(t, Kind("futuro"), nil)
+	discord := b.canal(t, KindDiscord, nil)
+
+	b.avancarETicar(t, discordShortInterval, 1)
+	if ls := b.lembretes(t, discord); len(ls) != 1 || ls[0].Seq != 1 {
+		t.Errorf("lembretes do Discord = %+v; queria um, seq 1", ls)
+	}
+	if ls := b.lembretes(t, futuro); len(ls) != 0 {
+		t.Errorf("lembretes do tipo desconhecido = %+v; queria nenhum", ls)
+	}
+}
