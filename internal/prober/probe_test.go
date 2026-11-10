@@ -665,6 +665,47 @@ func TestGzipBombStopsAtLimit(t *testing.T) {
 	}
 }
 
+// T5 do STRIDE: o transporte só descomprime o gzip que ele mesmo pediu. Outro
+// Content-Encoding chega cru, e julgar bytes comprimidos daria up falso no
+// not_contains. A regra não conclui nada sobre esse corpo: body_limit. O gzip
+// em outra caixa o transporte descomprime, e identity não comprime: os dois
+// seguem julgados.
+func TestUnsolicitedContentEncodingIsInconclusive(t *testing.T) {
+	var gzipado bytes.Buffer
+	zw := gzip.NewWriter(&gzipado)
+	if _, err := zw.Write([]byte("tudo certo")); err != nil {
+		t.Fatal(err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	casos := []struct {
+		nome, encoding string
+		corpo          []byte
+		quer           Status
+		tipo           ErrorKind
+	}{
+		{"br", "br", []byte("tudo certo"), StatusDown, KindBodyLimit},
+		{"zstd", "zstd", []byte("tudo certo"), StatusDown, KindBodyLimit},
+		{"deflate", "deflate", []byte("tudo certo"), StatusDown, KindBodyLimit},
+		{"gzip duas vezes", "gzip, gzip", []byte("tudo certo"), StatusDown, KindBodyLimit},
+		{"GZIP descomprimido", "GZIP", gzipado.Bytes(), StatusUp, ""},
+		{"identity", "identity", []byte("tudo certo"), StatusUp, ""},
+	}
+	for _, c := range casos {
+		t.Run(c.nome, func(t *testing.T) {
+			srv, client := servidor(t, func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Encoding", c.encoding)
+				_, _ = w.Write(c.corpo)
+			})
+			res := Probe(t.Context(), client, comRegra(srv.URL, targets.ContentNotContains, "erro"))
+			if res.Status != c.quer || res.ErrorKind != c.tipo || res.StatusCode != http.StatusOK {
+				t.Errorf("res = %+v, queria %s/%q/200", res, c.quer, c.tipo)
+			}
+		})
+	}
+}
+
 // I2: a regra não troca o cliente. O salto para outra porta do 127.0.0.1, não
 // liberada, continua bloqueado pelo safedial.
 func TestContentRuleRedirectToInternalIsBlocked(t *testing.T) {

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptrace"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/BipoXDXD/stillon/internal/prober/safedial"
@@ -139,7 +140,11 @@ func sondar(ctx context.Context, client *http.Client, s Spec) Result {
 		return Result{Status: StatusDown, Latency: latencia, StatusCode: resp.StatusCode, ErrorKind: KindHTTPStatus}
 	}
 	if s.Content != nil {
-		if kind := avaliarConteudo(*s.Content, corpo, cortado); kind != "" {
+		kind := KindBodyLimit
+		if !corpoAindaCodificado(resp) {
+			kind = avaliarConteudo(*s.Content, corpo, cortado)
+		}
+		if kind != "" {
 			return Result{Status: StatusDown, Latency: latencia, StatusCode: resp.StatusCode, ErrorKind: kind}
 		}
 	}
@@ -177,4 +182,23 @@ func clienteDaSonda(modelo *http.Client) (*http.Client, func()) {
 	client := *modelo
 	client.Transport = proprio
 	return &client, proprio.CloseIdleConnections
+}
+
+// corpoAindaCodificado diz se o corpo chegou numa codificação que o transporte
+// não desfez. Ele só descomprime o gzip que ele mesmo pediu; br, zstd,
+// deflate ou "gzip, gzip" chegam como bytes comprimidos, e a regra julgaria
+// outra coisa (T5 do STRIDE): not_contains daria up falso.
+func corpoAindaCodificado(resp *http.Response) bool {
+	if resp.Uncompressed {
+		return false
+	}
+	for _, valor := range resp.Header.Values("Content-Encoding") {
+		for codificacao := range strings.SplitSeq(valor, ",") {
+			codificacao = strings.TrimSpace(codificacao)
+			if codificacao != "" && !strings.EqualFold(codificacao, "identity") {
+				return true
+			}
+		}
+	}
+	return false
 }

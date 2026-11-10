@@ -24,8 +24,9 @@ const (
 	KindConnRefused ErrorKind = "conn_refused"
 	KindHTTPStatus  ErrorKind = "http_status"
 	// KindBodyLimit só sai com regra de conteúdo: o corpo passou de 64 KiB
-	// sem que a regra chegasse a uma conclusão (spec §5.3). Sem regra, corpo
-	// grande é lido até 64 KiB e descartado, e não é falha (D2).
+	// sem que a regra chegasse a uma conclusão (spec §5.3), ou chegou numa
+	// codificação que o transporte não desfez. Sem regra, corpo grande é
+	// lido até 64 KiB e descartado, e não é falha (D2).
 	KindBodyLimit ErrorKind = "body_limit"
 	KindBlocked   ErrorKind = "blocked"
 	// KindContentMismatch é a regra de conteúdo reprovada (spec §5.3).
