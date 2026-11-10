@@ -190,6 +190,35 @@ func TestPatchByOtherUserOnUnknownScheduleIsNotFound(t *testing.T) {
 	}
 }
 
+// Duplicar segue a mesma regra do PATCH: para quem não é dono, a linha
+// desconhecida é 404, e não o 409 que confirmaria que ela existe.
+func TestCloneByOtherUserOnUnknownScheduleIsNotFound(t *testing.T) {
+	a := newAPI(t)
+	semChecksDeAgendamento(t, a.pool)
+	id, _ := heartbeatDesconhecidoHTTP(t, a)
+	outro := outroUsuario(t, a)
+	intruso := tokenDe(t, a, outro)
+
+	a.clk.Advance(time.Minute)
+	status, corpo := clonar(t, a, intruso, id.String(), nil)
+	if status != http.StatusNotFound || !strings.Contains(corpo, `"code":"not_found"`) ||
+		strings.Contains(corpo, "schedule_unsupported") || strings.Contains(corpo, id.String()) {
+		t.Errorf("duplicar alheio: %d %s, queria 404 not_found sem schedule_unsupported nem o id", status, corpo)
+	}
+	if n := contarHeartbeatsDe(t, a, outro); n != 0 {
+		t.Errorf("o intruso ficou com %d heartbeats, queria 0", n)
+	}
+	if n := contarHeartbeats(t, a); n != 1 {
+		t.Errorf("o dono ficou com %d heartbeats, queria 1", n)
+	}
+	h := linhaDoHeartbeat(t, a, id)
+	if h.Name != "backup noturno" || !h.Enabled || !h.DeadlineAt.Equal(prazoGravado) ||
+		h.PeriodSec != nil || h.CronExpr != nil {
+		t.Errorf("duplicar alheio mudou a linha: nome %q, enabled %v, prazo %v, período %s, cron %s",
+			h.Name, h.Enabled, h.DeadlineAt, valorDe(h.PeriodSec), valorDe(h.CronExpr))
+	}
+}
+
 func TestDeleteAndRotateStillWorkOnUnknownSchedule(t *testing.T) {
 	a := newAPI(t)
 	semChecksDeAgendamento(t, a.pool)

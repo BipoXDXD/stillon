@@ -1257,4 +1257,13 @@ func TestHeartbeatTokenNeverReachesTheLog(t *testing.T) {
 	if strings.Contains(log.String(), ping) || strings.Contains(log.String(), tokenDaURL(t, corpo)) {
 		t.Fatalf("token no log: %s", log.String())
 	}
+	// Duplicar é a terceira rota que emite token de ping.
+	status, copia := lerCru(t, a, http.MethodPost, "/api/v1/heartbeats/"+id+"/clone", dono, nil)
+	if status != http.StatusCreated {
+		t.Fatalf("duplicar deu %d: %s", status, copia)
+	}
+	url, _ := decodificar(t, copia)["ping_url"].(string)
+	if strings.Contains(log.String(), url) || strings.Contains(log.String(), tokenDaURL(t, copia)) {
+		t.Fatalf("token da cópia no log: %s", log.String())
+	}
 }
