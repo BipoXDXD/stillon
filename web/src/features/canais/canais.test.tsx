@@ -1,6 +1,7 @@
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { http } from 'msw'
 import { describe, expect, it } from 'vitest'
+import { Canal } from '@/lib/api/schemas'
 import { dataHora } from '@/lib/format'
 import type { ErroForcado } from '@/test/api-falsa'
 import { canal } from '@/test/fixtures'
@@ -613,4 +614,43 @@ it('Pausar não abre confirmação enquanto o Retomar do mesmo canal está em vo
   await waitFor(() => expect(screen.getByRole('button', { name: 'Pausar o canal discord.com/…/abcd' })).not.toHaveAttribute('aria-disabled'))
   await r.usuario.click(screen.getByRole('button', { name: 'Pausar o canal discord.com/…/abcd' }))
   expect(await screen.findByRole('alertdialog')).toBeInTheDocument()
+})
+
+// Piso de rollback (SP2): uma versão posterior do servidor cria canais de
+// tipos que esta não conhece. A lista não pode cair no parse por causa deles.
+describe('canais: tipo desconhecido', () => {
+  // Sabotagem: voltar o kind ao z.enum puro → a lista inteira vira erro; tirar
+  // o kind da condição do Reenviar → o botão aparece na linha genérica.
+  it('lista com tipo desconhecido mostra linha genérica', async () => {
+    const r = await renderizarPainel('/channels')
+    // As chaves a mais vêm da versão posterior; o parse as descarta.
+    const webhook = {
+      ...canal({ id: 'c2', kind: 'webhook', hint: 'Ops', status: 'pending' }),
+      name: 'Ops',
+      rev: 1,
+      send_down: true,
+      send_up: true,
+    }
+    r.falsa.estado.canais = [canal(), webhook]
+    await r.cliente.refetchQueries()
+    const outra = (await screen.findByText('Ops')).closest('li')
+    const discord = screen.getByText('discord.com/…/abcd').closest('li')
+    if (outra === null || discord === null) throw new Error('a linha do canal não está numa <li>')
+    expect(discord).toHaveTextContent(/^Discord discord\.com\/…\/abcd/)
+    expect(outra).toHaveTextContent(/^Outro tipo Ops/)
+    // Reenviar a verificação só existe para e-mail; pausar e apagar não
+    // dependem do tipo no servidor e continuam na linha.
+    expect(within(outra).queryByRole('button', { name: /^Reenviar verificação/ })).not.toBeInTheDocument()
+    expect(within(outra).getByRole('button', { name: 'Pausar o canal Ops' })).toBeInTheDocument()
+    expect(within(outra).getByRole('button', { name: 'Apagar o canal Ops' })).toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  // Tolerar tipo novo não afrouxa a forma: sem kind, ou kind que não é
+  // texto, continua erro de contrato.
+  it('parse de kind ausente continua falhando', () => {
+    const { kind: _semKind, ...semKind } = canal()
+    expect(Canal.safeParse(semKind).success).toBe(false)
+    expect(Canal.safeParse({ ...canal(), kind: 3 }).success).toBe(false)
+  })
 })

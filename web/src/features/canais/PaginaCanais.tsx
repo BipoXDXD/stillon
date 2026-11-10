@@ -18,7 +18,22 @@ import { ApiError } from '@/lib/api/http'
 import { mensagemDe, mensagemDoCampo, textoDoErroDeCanal } from '@/lib/api/mensagens'
 import type { Canal } from '@/lib/api/schemas'
 import { dataHora } from '@/lib/format'
-import { cn } from '@/lib/utils'
+import { assertUnreachable, cn } from '@/lib/utils'
+
+// 'desconhecido' é um tipo que uma versão posterior do servidor criou: a linha
+// aparece, sem as ações que só fazem sentido para um tipo conhecido.
+function rotuloDoTipo(kind: Canal['kind']): string {
+  switch (kind) {
+    case 'discord':
+      return 'Discord'
+    case 'email':
+      return 'E-mail'
+    case 'desconhecido':
+      return 'Outro tipo'
+    default:
+      return assertUnreachable(kind)
+  }
+}
 
 // Estado da verificação com forma, cor e texto (auditoria C2, S9).
 const estados: Record<Canal['status'], { texto: string; Icone: LucideIcon; tom: TomDoSelo }> = {
@@ -276,7 +291,7 @@ export function PaginaCanais() {
                 <li key={c.id} className={cn(estiloDeCartao, 'flex flex-wrap items-center justify-between gap-4')}>
                   <div className="min-w-0 space-y-2 break-words">
                     <p className="font-semibold">
-                      {c.kind === 'discord' ? 'Discord' : 'E-mail'} <span className="font-normal text-suave">{c.hint}</span>
+                      {rotuloDoTipo(c.kind)} <span className="font-normal text-suave">{c.hint}</span>
                     </p>
                     <EstadoDoCanal canal={c} />
                     {c.last_error && c.last_failure_at && (
@@ -287,7 +302,7 @@ export function PaginaCanais() {
                     )}
                   </div>
                   <div className="flex flex-wrap gap-2">
-                    {(c.status === 'pending' || c.status === 'expired') && (
+                    {c.kind !== 'desconhecido' && (c.status === 'pending' || c.status === 'expired') && (
                       <Botao
                         tipo="secundario"
                         tamanho="pequeno"
