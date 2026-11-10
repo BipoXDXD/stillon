@@ -63,9 +63,13 @@ it('Tentar de novo mostra splash e recupera o destino original quando a rede vol
     expect(requisicoes.quantidade()).toBe(2)
     await portao.recebido
     expect(r.sessao.estado()).toBe('verificando')
-    expect(screen.getByText('Carregando o StillOn…')).toBeInTheDocument()
+    // O texto de carregamento é um status; o <main>, que recebe o foco, não
+    // fica aria-busy (o leitor de tela calaria o que está nele). Sabotagem:
+    // voltar o aria-busy ao <main>, ou o texto a um <p> sem papel.
+    expect(screen.getByRole('status')).toHaveTextContent('Carregando o StillOn…')
     // O botão sumiu com o clique: o foco fica no splash, e não no <body>.
     expect(screen.getByRole('main')).toHaveFocus()
+    expect(screen.getByRole('main')).not.toHaveAttribute('aria-busy')
     expect(screen.queryByRole('heading', { name: 'Entrar no StillOn' })).not.toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: 'Novo alvo' })).not.toBeInTheDocument()
     expect(r.router.state.location.pathname).toBe('/targets/new')
@@ -104,7 +108,11 @@ it('nova falha de rede mantém a sessão offline e oferece outra tentativa', asy
     portao.abrir()
     await act(() => r!.sessao.iniciar())
     expect(r.sessao.estado()).toBe('offline')
-    expect(screen.getByRole('alert')).toHaveTextContent('Sua sessão pode estar ativa; tente de novo em instantes.')
+    // O alerta é só a mensagem: envolver o <h1> focado faria o título ser
+    // lido duas vezes. Sabotagem: o role="alert" de volta no <div>.
+    const alerta = screen.getByRole('alert')
+    expect(alerta).toHaveTextContent('Sua sessão pode estar ativa; tente de novo em instantes.')
+    expect(alerta).not.toContainElement(screen.getByRole('heading', { name: 'Não foi possível falar com o servidor' }))
     expect(screen.getByRole('button', { name: 'Tentar de novo' })).toBeEnabled()
     expect(screen.getByRole('heading', { name: 'Não foi possível falar com o servidor' })).toHaveFocus()
     expect(screen.queryByRole('heading', { name: 'Entrar no StillOn' })).not.toBeInTheDocument()
@@ -122,6 +130,9 @@ it('nova falha de rede mantém a sessão offline e oferece outra tentativa', asy
   }
 })
 
+// O foco no <h1> do login vem da reserva do splash: o Titulo do login é a
+// primeira tela da carga e não se foca sozinho. Sabotagem conferida: tirar o
+// useReservaDeFoco do SplashDoPainel derruba este teste.
 it('retry com 401 do servidor leva ao login preservando pathname e query no next', async () => {
   const requisicoes = observarRefresh()
   let r: Awaited<ReturnType<typeof renderizarPainel>> | undefined

@@ -14,8 +14,10 @@ export function SplashDoPainel() {
   return (
     <>
       <AvisoDeContexto />
-      <main ref={eu} tabIndex={-1} className="grid min-h-screen place-items-center outline-none" aria-busy="true">
-        <p className="text-suave">Carregando o StillOn…</p>
+      {/* Sem aria-busy no <main>: ele recebe o foco, e o leitor de tela
+          calaria o que está nele. O texto é um status (<output>). */}
+      <main ref={eu} tabIndex={-1} className="grid min-h-screen place-items-center outline-none">
+        <output className="text-suave">Carregando o StillOn…</output>
       </main>
     </>
   )
@@ -33,13 +35,17 @@ export function ExigirSessao() {
       <>
         <AvisoDeContexto />
         <main className="mx-auto mt-16 max-w-md p-4">
-          <div role="alert" className="space-y-4 text-center">
+          <div className="space-y-4 text-center">
             {/* tabIndex -1: a reserva do foco quando o splash da nova tentativa some
                 e a rede falhou de novo. */}
             <h1 tabIndex={-1} className="text-xl font-semibold outline-none">
               Não foi possível falar com o servidor
             </h1>
-            <p className="text-suave">Sua sessão pode estar ativa; tente de novo em instantes.</p>
+            {/* O alerta é só a mensagem: envolvendo o <h1> focado, o título
+                seria lido duas vezes. */}
+            <p role="alert" className="text-suave">
+              Sua sessão pode estar ativa; tente de novo em instantes.
+            </p>
             <BotaoQueSome reserva={TITULO_DA_TELA} onClick={() => void sessao.tentarDeNovo()}>
               Tentar de novo
             </BotaoQueSome>
