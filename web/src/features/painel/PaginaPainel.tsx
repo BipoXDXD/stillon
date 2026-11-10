@@ -25,9 +25,9 @@ import {
   type Filtros,
 } from './filtros'
 import { separarEmZonas } from './grupos'
-import { linhaDoAlvo, linhaDoHeartbeat } from './linhas'
+import { buscaDaLista, linhasDaLista } from './lista'
 import { detalheDaManchete, fraseDoUltimoResolvido, manchete, mancheteSemRede, metaDoPainel, textoDaManchete, type Tarefas } from './manchete'
-import { comOrdem, lerOrdem, ordenarLinhas, type Ordem } from './ordem'
+import { comOrdem, lerOrdem, type Ordem } from './ordem'
 import { TabelaDeMonitores } from './TabelaDeMonitores'
 import { anunciaveis, mapaDeEstados, transicoes } from './transicoes'
 
@@ -201,15 +201,17 @@ function ResultadoDosFiltros({
     )
   }
   const porId = new Map((abertos.data?.itens ?? []).map((i) => [i.id, i]))
-  const linhas = ordenarLinhas(
-    [
-      ...itens.map((it) => linhaDoAlvo(it, it.open_incident_id ? porId.get(it.open_incident_id) : undefined, atualizadoEm)),
-      ...heartbeats.map((hb) => linhaDoHeartbeat(hb, atualizadoEm)),
-    ],
-    ordem,
+  const linhas = linhasDaLista({ itens, heartbeats }, filtros, ordem, atualizadoEm, (it) =>
+    it.open_incident_id ? porId.get(it.open_incident_id) : undefined,
   )
   // As zonas só fazem sentido na ordem por gravidade; nas outras, um bloco só.
-  return <TabelaDeMonitores blocos={ordem === 'gravidade' ? separarEmZonas(linhas) : [linhas]} agora={atualizadoEm} />
+  return (
+    <TabelaDeMonitores
+      blocos={ordem === 'gravidade' ? separarEmZonas(linhas) : [{ zona: null, linhas }]}
+      daLista={buscaDaLista(comOrdem(escreverFiltros(filtros), ordem))}
+      agora={atualizadoEm}
+    />
+  )
 }
 
 // A frase de estado no topo (spec do redesign, Telas > 1), em Fraunces.

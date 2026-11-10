@@ -33,15 +33,23 @@ export function zonaDoEstado(e: EstadoExibido): Zona {
   return e === 'up' ? 'no-ar' : 'parado'
 }
 
+export const TEXTO_DA_ZONA: Record<Zona, string> = {
+  problema: 'Com problema',
+  'no-ar': 'No ar',
+  parado: 'Sem dados ou pausados',
+}
+
+export type BlocoDaLista<T> = { zona: Zona; linhas: T[] }
+
 // Corta a lista, na ordem dada, em blocos seguidos da mesma zona. Na ordem
 // por gravidade, um bloco por zona; não reordena nada.
-export function separarEmZonas<T extends { estado: EstadoExibido }>(linhas: readonly T[]): T[][] {
-  const blocos: T[][] = []
+export function separarEmZonas<T extends { estado: EstadoExibido }>(linhas: readonly T[]): BlocoDaLista<T>[] {
+  const blocos: BlocoDaLista<T>[] = []
   for (const linha of linhas) {
+    const zona = zonaDoEstado(linha.estado)
     const bloco = blocos.at(-1)
-    const primeira = bloco?.[0]
-    if (bloco && primeira && zonaDoEstado(primeira.estado) === zonaDoEstado(linha.estado)) bloco.push(linha)
-    else blocos.push([linha])
+    if (bloco?.zona === zona) bloco.linhas.push(linha)
+    else blocos.push({ zona, linhas: [linha] })
   }
   return blocos
 }

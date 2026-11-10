@@ -233,7 +233,9 @@ describe('filtros do painel', () => {
     const r = await renderizarPainel('/')
     r.falsa.estado.resumo = [itemDoResumo({ tags: ['a', 'b', 'c', 'd', 'e'] })]
     await r.cliente.refetchQueries()
-    const celula = within(await screen.findByRole('table', { name: /^Monitores/ })).getAllByRole('cell')[1]
+    // A linha do monitor, e não a do título da seção, que também tem célula.
+    const linha = within(await screen.findByRole('table', { name: /^Monitores/ })).getByRole('row', { name: /API/ })
+    const celula = within(linha).getAllByRole('cell')[1]
     expect(celula).toHaveTextContent('abc+2')
     expect(within(celula as HTMLElement).getByText('mais d, e')).toHaveClass('sr-only')
   })

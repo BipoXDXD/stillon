@@ -7,7 +7,7 @@ import type { EstadoExibido } from '@/lib/estado'
 import { porcento } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { tagsVisiveis } from './filtros'
-import { zonaDoEstado, type Zona } from './grupos'
+import { TEXTO_DA_ZONA, zonaDoEstado, type Zona } from './grupos'
 import { medidaDaLinha, situacaoNaLinhaDoNome, type LinhaDeMonitor } from './linhas'
 
 // A tabela do painel denso: uma linha de 48 px por monitor (56 no problema;
@@ -30,10 +30,16 @@ const ZONAS: Record<Zona, { linha: string; nome: string; medida: string }> = {
   parado: { linha: 'h-12', nome: 'font-normal text-suave', medida: 'text-suave' },
 }
 
+const COLUNAS = 7
+
 // blocos: a lista já ordenada, cortada em blocos (as zonas, na ordem por
-// gravidade). Cada bloco é um <tbody>, e o vão entre eles é uma faixa da cor
-// do fundo, como se fossem cartões separados.
-export function TabelaDeMonitores({ blocos, agora }: { blocos: readonly (readonly LinhaDeMonitor[])[]; agora: Date }) {
+// gravidade, cada uma com o seu título; nas outras ordens, um bloco sem
+// zona). Cada bloco é um <tbody>, e o vão entre eles é uma faixa da cor do
+// fundo, como se fossem cartões separados. daLista: os filtros e a ordem na
+// URL, que o link do detalhe leva junto para o Anterior/Próximo de lá.
+type Props = { blocos: readonly { zona: Zona | null; linhas: readonly LinhaDeMonitor[] }[]; daLista: string; agora: Date }
+
+export function TabelaDeMonitores({ blocos, daLista, agora }: Props) {
   return (
     <div className="rounded-padrao border border-borda bg-superficie sombra-nivel-1">
       <table className="w-full text-sm">
@@ -51,10 +57,22 @@ export function TabelaDeMonitores({ blocos, agora }: { blocos: readonly (readonl
             <th scope="col" className={cn(CELULA, 'py-2 text-left font-normal')}>Últimas 24 h</th>
           </tr>
         </thead>
-        {blocos.map((linhas, i) => (
-          <tbody key={linhas[0]?.chave ?? i} className={cn('divide-y divide-borda', i === 0 ? 'border-t border-borda' : 'border-t-8 border-fundo')}>
+        {blocos.map(({ zona, linhas }, i) => (
+          <tbody key={zona ?? i} className={cn('divide-y divide-borda', i === 0 ? 'border-t border-borda' : 'border-t-8 border-fundo')}>
+            {zona && (
+              // Um <h3> numa célula, e não um <th scope="rowgroup">: o leitor
+              // de tela pula de seção pelos títulos, e a contagem de cabeçalhos
+              // de linha segue um por monitor.
+              <tr>
+                <td colSpan={COLUNAS} className={cn(CELULA, 'pt-4 pb-2')}>
+                  <h3 className="rotulo-de-grupo font-sans text-apagado">
+                    {TEXTO_DA_ZONA[zona]} · {linhas.length}
+                  </h3>
+                </td>
+              </tr>
+            )}
             {linhas.map((linha) => (
-              <LinhaDaTabela key={linha.chave} linha={linha} agora={agora} />
+              <LinhaDaTabela key={linha.chave} linha={linha} daLista={daLista} agora={agora} />
             ))}
           </tbody>
         ))}
@@ -63,7 +81,7 @@ export function TabelaDeMonitores({ blocos, agora }: { blocos: readonly (readonl
   )
 }
 
-function LinhaDaTabela({ linha, agora }: { linha: LinhaDeMonitor; agora: Date }) {
+function LinhaDaTabela({ linha, daLista, agora }: { linha: LinhaDeMonitor; daLista: string; agora: Date }) {
   const acento = ACENTOS[linha.estado]
   const situacaoAbaixo = situacaoNaLinhaDoNome(linha)
   const zona = ZONAS[zonaDoEstado(linha.estado)]
@@ -76,7 +94,7 @@ function LinhaDaTabela({ linha, agora }: { linha: LinhaDeMonitor; agora: Date })
         <span className="flex min-h-11 items-center gap-2">
           <IconeDoEstado estado={linha.estado} texto={linha.textoDoEstado} className="lg:hidden" />
           <Link
-            to={linha.href}
+            to={{ pathname: linha.href, search: daLista }}
             {...(linha.tipo === 'http' && aoApontarPreCarregar(carregarDetalhe))}
             className={cn('alvo-de-toque min-w-0 underline-offset-4 hover:underline', zona.nome)}
           >

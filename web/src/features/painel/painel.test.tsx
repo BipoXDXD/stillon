@@ -109,6 +109,12 @@ describe('painel', () => {
       ['Parado'],
     ])
     expect(blocos.slice(1).every((b) => b.classList.contains('border-t-8'))).toBe(true)
+    // Cada bloco é uma seção com título e contagem (item 3).
+    expect(blocos.map((b) => within(b).getByRole('heading', { level: 3 }).textContent)).toEqual([
+      'Com problema · 1',
+      'No ar · 1',
+      'Sem dados ou pausados · 1',
+    ])
     expect(within(await linhaDe('Banco')).getByRole('link', { name: 'Banco' })).toHaveClass('font-semibold')
     const site = await linhaDe('Site')
     expect(within(site).getByRole('link', { name: 'Site' })).not.toHaveClass('font-semibold')
@@ -125,6 +131,9 @@ describe('painel', () => {
     ]
     await r.cliente.refetchQueries()
     expect(within(await tabela()).getAllByRole('rowgroup')).toHaveLength(2)
+    expect(within(await tabela()).queryByRole('heading')).not.toBeInTheDocument()
+    // O link do detalhe leva a lista (a ordem) junto, para o Anterior/Próximo.
+    expect(within(await linhaDe('Site')).getByRole('link', { name: 'Site' })).toHaveAttribute('href', '/targets/s?ordem=nome')
   })
 
   // Cor nunca sozinha: toda linha tem o nome do estado em texto, inclusive

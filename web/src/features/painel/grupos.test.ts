@@ -111,7 +111,7 @@ describe('zonas da lista', () => {
 
   it('uma zona só vira um bloco', () => {
     const blocos = separarEmZonas([linha({ name: 'A' }), linha({ name: 'B' })])
-    expect(blocos.map(nomes)).toEqual([['A', 'B']])
+    expect(blocos.map((b) => [b.zona, nomes(b.linhas)])).toEqual([['no-ar', ['A', 'B']]])
   })
 
   // Sabotagem: um bloco por estado (down e degraded separados), ou reordenar.
@@ -123,12 +123,16 @@ describe('zonas da lista', () => {
       linha({ id: '4', name: 'Banco', state: 'down' }),
       linha({ id: '5', name: 'Novo', state: 'unknown' }),
     ])
-    expect(separarEmZonas(ordem).map(nomes)).toEqual([['Banco', 'Lento'], ['Site'], ['Novo', 'Parado']])
+    expect(separarEmZonas(ordem).map((b) => [b.zona, nomes(b.linhas)])).toEqual([
+      ['problema', ['Banco', 'Lento']],
+      ['no-ar', ['Site']],
+      ['parado', ['Novo', 'Parado']],
+    ])
   })
 
   // Fora da ordem por gravidade, a mesma zona pode voltar: blocos seguidos.
   it('zona que volta depois de outra abre outro bloco', () => {
     const blocos = separarEmZonas([linha({ name: 'A' }), linha({ name: 'B', state: 'down' }), linha({ name: 'C' })])
-    expect(blocos.map(nomes)).toEqual([['A'], ['B'], ['C']])
+    expect(blocos.map((b) => nomes(b.linhas))).toEqual([['A'], ['B'], ['C']])
   })
 })
