@@ -39,8 +39,8 @@ merge".
 - **Erros de validação**, no vocabulário de `targets/validate.go`: `content_rule.mode` `invalid`; `content_rule.value`
   `required`, `too_long` ou `invalid` (NUL e controle, inclusive tab e quebra de linha, pela §7.2); `content_rule.json_pointer`
   `required` (modo JSON sem ponteiro), `invalid` (não começa em `/`, escape que não é `~0` nem `~1`, ponteiro em modo que
-  não é JSON) ou `too_long`. Conflito com HEAD ou com o header `Accept-Encoding` do dono: campo `content_rule`, motivo
-  `forbidden`, venha a mudança da regra, do método ou dos headers.
+  não é JSON) ou `too_long`. Conflito com HEAD ou com os headers `Accept-Encoding` ou `Range` do dono: campo
+  `content_rule`, motivo `forbidden` (400 `validation_failed`), venha a mudança da regra, do método ou dos headers.
 - **Semântica de `json_equals`:** o corpo inteiro precisa ser **um** valor JSON (lixo depois dele é JSON inválido);
   JSON inválido, ponteiro ausente, objeto ou array: `content_mismatch`. A forma de texto de um escalar: string = o valor
   decodificado; número = o token como escrito no corpo (`json.Number`, então `1.0` não é `1`); `true`, `false`, `null`
@@ -48,6 +48,10 @@ merge".
 - **Content-Encoding com regra:** a sonda pede `Accept-Encoding: gzip` e descomprime ela mesma só quando todas as linhas
   do header somam exatamente um `gzip` (`identity` não conta); qualquer outra codificação é `content_encoding`. O
   transporte do `safedial` tem `DisableCompression`. Corpo vazio é julgado pela regra com qualquer codificação.
+- **Content-Encoding sem regra:** a sonda também pede `Accept-Encoding: gzip` e descomprime ela mesma, só para drenar,
+  a menos que o dono tenha mandado `Accept-Encoding` ou `Range` (a guarda do transporte do Go); aí o corpo é drenado cru.
+- **Dois tetos quando a sonda descomprime:** 64 KiB sobre o descomprimido e 128 KiB (`tetoComprimido`) sobre os bytes
+  comprimidos lidos. Com regra, bater em qualquer um sem conclusão é `body_limit`; sem regra, a drenagem só para ali.
 - **`contains` e `not_contains` comparam bytes UTF-8**, sem conversão de charset, sobre o corpo do último salto.
 - **`Spec.LogValue` mostra o modo da regra, nunca o valor nem o ponteiro** (podem ser texto do dono que ele não quer em log).
 - **Resíduo de rollback aceito:** o binário anterior ignora a regra (sonda só pelo status), mostra `content_mismatch` e `content_encoding` como
@@ -63,11 +67,12 @@ merge".
   merge**; a `00015` é vaga para sempre. Testes acham a versão por `versaoDaMigration(t, "targets_content_rule")` (helper do
   PR 2; se ele ainda não estiver na `main`, criá-lo igual em `internal/storage/helpers_test.go`).
 - Toda descida com dado começa por `SELECT set_config('app.scope', 'prober', true)`.
-- Leitura de corpo: só com regra, até `safedial.MaxBodyBytes + 1` (65537) bytes, sobre o corpo já descomprimido. Sem
-  regra, o laço atual (`io.Copy(io.Discard, io.LimitReader(..., MaxBodyBytes))`) não muda.
+- Leitura de corpo: só com regra, até `safedial.MaxBodyBytes + 1` (65537) bytes, sobre o corpo já descomprimido, e até
+  128 KiB comprimidos. Sem regra, o corpo segue só drenado até 64 KiB, descomprimido pela sonda quando ela pediu o gzip;
+  o resultado não muda.
 - Ordem em `Probe`: erro de transporte → status esperado (`http_status`) → regra → limiar de lentidão.
 - Valor de 1 a 256 caracteres; ponteiro de 1 a 256 caracteres, começando em `/` (§7.2). Regra recusada com método HEAD e
-  com header `Accept-Encoding` do dono.
+  com os headers `Accept-Encoding` e `Range` do dono.
 - Só o resultado sai de `Probe`: `Result` não ganha campo de corpo; nada do corpo vai a banco, log, métrica, aviso ou API.
 - Alheio ou inexistente: 404 igual, corpo sem dado do dono, alvo intacto. Entrada por DTO estrito (`DisallowUnknownFields`
   vale também dentro de `content_rule`).

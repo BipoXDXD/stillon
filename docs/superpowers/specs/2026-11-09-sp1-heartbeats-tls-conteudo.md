@@ -219,7 +219,14 @@ pausar. Custo: `Probe` cresce; a decisão fica em funções puras (`avaliarConte
 | `not_contains` | O valor não aparece e o corpo coube em 64 KiB | |
 | `json_equals` | O escalar no ponteiro RFC 6901 tem a forma de texto informada | Objeto ou array: não passa |
 
-- A leitura vai até 64 KiB + 1 byte, e só quando há regra. Sem regra, nada muda (corpo grande segue não sendo falha).
+- A leitura vai até 64 KiB + 1 byte, e só quando há regra. Sem regra, o resultado não muda: o corpo é drenado até 64 KiB e
+  descartado, e corpo grande segue não sendo falha.
+- O transporte não pede gzip (`DisableCompression` no safedial): quem pede é a sonda, com `Accept-Encoding: gzip`, e quem
+  descomprime é ela. Com regra, sempre. Sem regra, só quando o dono não mandou `Accept-Encoding` nem `Range`, a mesma guarda
+  do transporte do Go; com um deles, o corpo é drenado cru, como antes.
+- Dois tetos quando a sonda descomprime: 64 KiB sobre o corpo descomprimido (contra bomba de gzip) e 128 KiB sobre os bytes
+  comprimidos lidos (um gzip que quase não gera saída seria lido até o prazo). Com regra, bater em qualquer um sem conclusão
+  é `body_limit`; sem regra, a drenagem só para ali.
 - Status esperado é avaliado antes; status errado continua `http_status`.
 - Regra reprovada: down com a causa nova `content_mismatch`.
 - Corpo comprimido num formato que a sonda não lê (tudo que não for exatamente um `gzip`, somando as linhas de
@@ -227,7 +234,9 @@ pausar. Custo: `Probe` cresce; a decisão fica em funções puras (`avaliarConte
 - Corpo cortado sem conclusão, ou JSON cortado: down com `body_limit`, que já está no enum e nunca foi emitido. Inconclusivo
   nunca vira `up`.
 - Só o resultado sai de `Probe`. O corpo não vai a banco, log, métrica, aviso ou resposta de API.
-- Regra recusada no cadastro com método HEAD ou com header `Accept-Encoding` do dono (o transporte não descomprimiria).
+- Regra recusada no cadastro (400 `validation_failed`, `content_rule` `forbidden`) com método HEAD, com header
+  `Accept-Encoding` do dono (a sonda só lê o gzip que ela mesma pede) ou com header `Range` do dono (a regra julgaria só uma
+  fatia, e a fatia de um gzip nem abre).
 - `conferirSonda` passa a comparar também a regra: sonda em voo com regra antiga é descartada.
 
 ## 6. Modelo de dados e migrations
