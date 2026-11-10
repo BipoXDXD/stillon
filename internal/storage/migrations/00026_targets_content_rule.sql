@@ -63,11 +63,11 @@ ALTER TABLE incidents
 
 -- +goose Down
 -- Resíduo do rollback: content_mismatch e content_encoding viram 'unknown' (o
--- binário anterior não conhece outro motivo) e não volta na subida; as regras dos alvos se perdem
--- com as colunas. O UPDATE de checks varre a tabela inteira (não há índice em
--- error_kind), o que só acontece em quem desce de propósito. O esquema não
--- volta byte a byte: checks_error_kind_check fica NOT VALID, e a 00004 o
--- criou validado.
+-- binário anterior não conhece outro motivo) e não voltam na subida; as
+-- regras dos alvos se perdem com as colunas. O UPDATE de checks varre a
+-- tabela inteira (não há índice em error_kind), o que só acontece em quem
+-- desce de propósito. O esquema não volta byte a byte:
+-- checks_error_kind_check fica NOT VALID, e a 00004 o criou validado.
 --
 -- Piso sem Down (o binário anterior sobre este esquema): ele não conhece a
 -- regra, então um PATCH que troque o método de um alvo com regra para HEAD
