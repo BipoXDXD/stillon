@@ -10,6 +10,7 @@ import { mensagemDoCampo, textoDaCausa, textoDoErroDeCheck } from './mensagens'
 // "Falha", o mesmo que um valor fora do enum.
 const CAUSAS = z
   .array(z.string().min(1))
+  .min(1)
   .parse(JSON.parse(readFileSync(resolve(import.meta.dirname, '../../../../internal/notify/testdata/causas.json'), 'utf8')))
 const SEM_TEXTO = textoDoErroDeCheck('fora_do_enum', null)
 

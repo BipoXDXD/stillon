@@ -80,30 +80,58 @@ func errorKindsDoSondador(t *testing.T) []string {
 	return valores
 }
 
-// errorKindsDoBloco só lê a forma X ErrorKind = "a", a de classify.go. Outra
-// forma derruba o teste, em vez de deixar a constante de fora.
+// errorKindsDoBloco lê as duas formas de declarar um ErrorKind com literal:
+// X ErrorKind = "a" (a de classify.go) e X = ErrorKind("a"). Qualquer outra
+// constante ErrorKind (valor que não é literal de texto, ou spec sem valor que
+// repete a anterior) derruba o teste, em vez de ficar de fora da lista. Uma
+// constante sem tipo, como X = "a", não é ErrorKind para o Go e não entra.
 func errorKindsDoBloco(t *testing.T, bloco *ast.GenDecl) []string {
 	t.Helper()
 	var valores []string
+	anteriorEhErrorKind := false
 	for _, spec := range bloco.Specs {
 		declaracao, ok := spec.(*ast.ValueSpec)
 		if !ok {
 			continue
 		}
-		if tipo, ok := declaracao.Type.(*ast.Ident); !ok || tipo.Name != "ErrorKind" {
+		if declaracao.Type == nil && len(declaracao.Values) == 0 {
+			if anteriorEhErrorKind {
+				t.Fatalf("constante ErrorKind sem valor próprio em %v", declaracao.Names)
+			}
 			continue
 		}
+		tipada := ehIdentErrorKind(declaracao.Type)
+		anteriorEhErrorKind = tipada
 		for _, expr := range declaracao.Values {
-			literal, ok := expr.(*ast.BasicLit)
-			if !ok || literal.Kind != token.STRING {
-				t.Fatalf("constante ErrorKind sem literal de texto em %v", declaracao.Names)
+			if conversao, ok := expr.(*ast.CallExpr); ok && ehIdentErrorKind(conversao.Fun) {
+				anteriorEhErrorKind = true
+				if len(conversao.Args) != 1 {
+					t.Fatalf("conversão ErrorKind inesperada em %v", declaracao.Names)
+				}
+				expr = conversao.Args[0]
+			} else if !tipada {
+				continue
 			}
-			texto, err := strconv.Unquote(literal.Value)
-			if err != nil {
-				t.Fatal(err)
-			}
-			valores = append(valores, texto)
+			valores = append(valores, textoDoLiteral(t, expr, declaracao.Names))
 		}
 	}
 	return valores
+}
+
+func ehIdentErrorKind(expr ast.Expr) bool {
+	ident, ok := expr.(*ast.Ident)
+	return ok && ident.Name == "ErrorKind"
+}
+
+func textoDoLiteral(t *testing.T, expr ast.Expr, nomes []*ast.Ident) string {
+	t.Helper()
+	literal, ok := expr.(*ast.BasicLit)
+	if !ok || literal.Kind != token.STRING {
+		t.Fatalf("constante ErrorKind sem literal de texto em %v", nomes)
+	}
+	texto, err := strconv.Unquote(literal.Value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return texto
 }
