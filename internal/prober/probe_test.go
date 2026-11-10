@@ -178,6 +178,34 @@ func TestProbeTimeoutWhileReadingBody(t *testing.T) {
 	}
 }
 
+// D1c do STRIDE: com regra, o corpo é lido por lerCorpo, e não pelo
+// io.Copy de cima. O pedaço que chegou antes de o prazo vencer já tem o valor
+// procurado: se o erro da leitura fosse ignorado, a sonda daria up, e se o
+// corpo truncado fosse julgado, content_mismatch no not_contains.
+func TestProbeTimeoutWhileReadingBodyWithRule(t *testing.T) {
+	for _, modo := range []targets.ContentMode{targets.ContentContains, targets.ContentNotContains} {
+		t.Run(string(modo), func(t *testing.T) {
+			parar := make(chan struct{})
+			srv, client := servidor(t, func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte("tudo ok"))
+				w.(http.Flusher).Flush()
+				select {
+				case <-r.Context().Done():
+				case <-parar:
+				}
+			})
+			t.Cleanup(func() { close(parar) })
+
+			s := comRegra(srv.URL, modo, "ok")
+			s.Timeout = 200 * time.Millisecond
+			if res := Probe(t.Context(), client, s); res.Status != StatusDown || res.ErrorKind != KindTimeout || res.StatusCode != 200 {
+				t.Errorf("res = %+v, queria down/timeout/200", res)
+			}
+		})
+	}
+}
+
 // D2 e spec §5.1: um corpo sem fim é lido até 64 KiB e descartado, e a sonda
 // termina bem. Sem o limite, ela leria até o prazo estourar e daria timeout.
 func TestProbeCapsAnEndlessBodyWithoutFailing(t *testing.T) {
