@@ -344,11 +344,92 @@ func TestScheduleFromRow(t *testing.T) {
 	if err != nil || !s.IsCron() || s.CronExpr() != expr || s.Timezone() != fuso {
 		t.Fatalf("cron: %+v, %v", s, err)
 	}
-	if _, err := heartbeat.ScheduleFromRow(nil, nil, nil); err == nil {
-		t.Fatal("linha sem agendamento passou")
-	}
 	if _, err := heartbeat.ScheduleFromRow(nil, &expr, nil); err == nil {
 		t.Fatal("cron sem fuso passou")
+	}
+}
+
+// Piso de rollback: uma versão futura pode gravar período acima da faixa de
+// cadastro, e esta versão precisa ler a linha mesmo assim.
+func TestScheduleFromRowAcceptsPeriodAboveRegistrationRange(t *testing.T) {
+	periodo := int32(31536000)
+	s, err := heartbeat.ScheduleFromRow(&periodo, nil, nil)
+	if err != nil {
+		t.Fatalf("365 dias: %v", err)
+	}
+	if !s.IsKnown() || s.Period() != 365*24*time.Hour {
+		t.Fatalf("365 dias: conhecido=%v período=%v", s.IsKnown(), s.Period())
+	}
+	t0 := time.Date(2026, 11, 10, 0, 0, 0, 0, time.UTC)
+	if got, want := s.Next(t0), time.Date(2027, 11, 10, 0, 0, 0, 0, time.UTC); !got.Equal(want) {
+		t.Errorf("Next %v, queria %v", got, want)
+	}
+}
+
+func TestScheduleFromRowRejectsNonPositivePeriod(t *testing.T) {
+	for _, p := range []int32{0, -60} {
+		_, err := heartbeat.ScheduleFromRow(&p, nil, nil)
+		var ve *heartbeat.ValidationError
+		if !errors.As(err, &ve) || ve.Field != "period_sec" || ve.Reason != heartbeat.ReasonOutOfRange {
+			t.Errorf("período %d: erro %v, queria period_sec/out_of_range", p, err)
+		}
+	}
+}
+
+// Período e cron nulos é a forma que esta versão não conhece: lê sem erro e
+// marca como desconhecida, com ou sem fuso gravado.
+func TestScheduleFromRowWithoutPeriodOrCronIsUnknown(t *testing.T) {
+	fuso := "America/Sao_Paulo"
+	for _, tz := range []*string{nil, &fuso} {
+		s, err := heartbeat.ScheduleFromRow(nil, nil, tz)
+		if err != nil {
+			t.Fatalf("fuso %v: %v", tz, err)
+		}
+		if s.IsKnown() || s.IsCron() {
+			t.Errorf("fuso %v: conhecido=%v cron=%v, queria desconhecido", tz, s.IsKnown(), s.IsCron())
+		}
+	}
+}
+
+func TestScheduleFromRowCronWithoutTimezoneStillFails(t *testing.T) {
+	expr := "0 3 * * *"
+	if _, err := heartbeat.ScheduleFromRow(nil, &expr, nil); err == nil {
+		t.Fatal("cron sem fuso passou")
+	}
+}
+
+// A leitura ficou sem teto, mas o cadastro não: a faixa continua no NewPeriod.
+func TestNewPeriodStillEnforcesRegistrationRange(t *testing.T) {
+	_, err := heartbeat.NewPeriod(31*24*time.Hour + time.Second)
+	var ve *heartbeat.ValidationError
+	if !errors.As(err, &ve) || ve.Field != "period_sec" || ve.Reason != heartbeat.ReasonOutOfRange {
+		t.Fatalf("erro %v, queria period_sec/out_of_range", err)
+	}
+}
+
+// Next num agendamento desconhecido é bug de quem chama: não há próximo
+// instante a inventar, e um prazo errado gravado seria pior que a queda.
+func TestNextOnUnknownSchedulePanics(t *testing.T) {
+	s, err := heartbeat.ScheduleFromRow(nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if recover() == nil {
+			t.Error("Next em agendamento desconhecido não entrou em pânico")
+		}
+	}()
+	s.Next(time.Date(2026, 11, 10, 0, 0, 0, 0, time.UTC))
+}
+
+func TestEqualTellsUnknownApart(t *testing.T) {
+	a, _ := heartbeat.ScheduleFromRow(nil, nil, nil)
+	b, _ := heartbeat.ScheduleFromRow(nil, nil, nil)
+	if !a.Equal(b) {
+		t.Error("dois desconhecidos deram diferentes")
+	}
+	if a.Equal(heartbeat.Schedule{}) || (heartbeat.Schedule{}).Equal(a) {
+		t.Error("desconhecido deu igual ao valor zero")
 	}
 }
 
