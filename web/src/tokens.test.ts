@@ -4,6 +4,7 @@ import { render, within } from '@testing-library/react'
 import { createElement } from 'react'
 import { describe, expect, it } from 'vitest'
 import { ControleSegmentado } from '@/components/ui/controle-segmentado'
+import { VISUAL_DA_FAIXA } from '@/features/alvos/FaixaDeEstado'
 
 // Contraste dos tokens de cor, lidos do próprio index.css, nos dois temas
 // (spec do redesign, seção Testes). Os tokens são OKLCH: o teste converte para
@@ -196,6 +197,21 @@ describe.each(['claro', 'escuro'] as const)('contraste do ControleSegmentado, te
 describe.each(['claro', 'escuro'] as const)('escala dos estados, tema %s', (tema) => {
   it.each(TONS_100)('o 700 de --%s tem o mesmo matiz', (fundo) => {
     expect(cor(tema, fundo.replace(/-100$/, '-700')).h).toBe(cor(tema, fundo).h)
+  })
+})
+
+// A faixa de estado do detalhe lida da própria tabela do componente: o texto
+// secundário é do mesmo matiz que o fundo, com 4,5:1. Uma classe trocada por
+// text-suave reprova aqui (o cinza não tem o matiz do fundo).
+describe.each(['claro', 'escuro'] as const)('a faixa de estado, tema %s', (tema) => {
+  const token = (classe: string, prefixo: 'bg' | 'text') => classe.slice(prefixo.length + 1)
+  const doTema = (nome: string) => (nome.startsWith('estado-') || TOKENS[tema].has(nome) ? nome : `estado-${nome}`)
+
+  it.each(Object.entries(VISUAL_DA_FAIXA))('%s: o texto secundário é do matiz do fundo, com 4,5:1', (_, visual) => {
+    const fundo = cor(tema, doTema(token(visual.fundo, 'bg')))
+    const texto = cor(tema, doTema(token(visual.secundario, 'text')))
+    expect(texto.h).toBe(fundo.h)
+    expect(contraste(texto, fundo)).toBeGreaterThanOrEqual(4.5)
   })
 })
 

@@ -328,6 +328,18 @@ describe('detalhe', () => {
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 
+  // Bloco 2, item 1: o texto secundário da faixa é o 700 do matiz do estado,
+  // e não o cinza suave. Sabotagem: voltar o detalhe da faixa a text-suave.
+  it('o texto secundário da faixa é do matiz do estado', async () => {
+    const r = await renderizarPainel('/targets/alvo-1')
+    r.falsa.estado.alvos = [alvo()]
+    r.falsa.estado.resumo = [itemDoResumo({ state: 'down', enabled: false })]
+    await r.cliente.refetchQueries()
+    const detalhe = await screen.findByText('Os checks estão parados. Retome para voltar a vigiar.')
+    expect(detalhe).toHaveClass('text-sem-dados-700')
+    expect(detalhe).not.toHaveClass('text-suave')
+  })
+
   it('janela desconhecida na URL cai nas 24 h, sem quebrar', async () => {
     const r = await renderizarPainel('/targets/alvo-1?janela=toString')
     r.falsa.estado.alvos = [alvo()]
