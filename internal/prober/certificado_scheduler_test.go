@@ -206,21 +206,42 @@ func TestDiscardedProbeDoesNotTouchTargetTLS(t *testing.T) {
 // Minor 6 da revisão de segurança do #246. Com o certificado já vencido (ou
 // trocado por um inválido), a sonda sai down/tls sem leitura: o check entra
 // no histórico, e a linha guardada fica intacta, com o not_after anterior,
-// que o painel mostra como "venceu em". Sabotagem: tirar o retorno antecipado
-// de gravar para CertNotAfter zero faz a gravação tentar guardar a validade
-// zero.
+// que o painel mostra como "venceu em". A validade guardada (1º de setembro)
+// já passou no relógio da bancada (22 de setembro, 12h). Sabotagens: tirar o
+// retorno antecipado de gravar para CertNotAfter zero faz a gravação tentar
+// guardar a validade zero; gravar o check com outro error_kind ou outro
+// checked_at passa a ser pego; reescrever o observed_at da linha quando a
+// validade guardada já passou ("renovar a observação do vencido") também.
 func TestTLSFailureKeepsTheStoredCertificate(t *testing.T) {
+	vencidaEm := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	falhaEm := time.Date(2026, 9, 22, 12, 1, 0, 0, time.UTC)
 	b := novaBancada(t, nil, MaxInFlight)
 	alvo := b.alvo(t, urlVelha, nil)
 	a := b.linhaDoAlvo(alvo)
 	t0 := b.clk.Now()
+	if !vencidaEm.Before(t0) {
+		t.Fatalf("a validade guardada (%v) deveria ter passado no relógio da bancada (%v)", vencidaEm, t0)
+	}
 
-	b.s.gravar(a, t0, comCertificado(validadeA))
+	b.s.gravar(a, t0, comCertificado(vencidaEm))
 	antes := b.exigirLinhaTLS(t, alvo)
+	if !antes.NotAfter.Equal(vencidaEm) {
+		t.Fatalf("not_after = %v antes da falha; queria %v", antes.NotAfter, vencidaEm)
+	}
 	b.s.gravar(a, t0.Add(time.Minute), Result{Status: StatusDown, ErrorKind: KindTLS})
 
-	if c := b.checks(t, alvo); len(c) != 2 {
+	c := b.checks(t, alvo)
+	if len(c) != 2 {
 		t.Fatalf("%d checks no histórico; queria 2, com o down/tls", len(c))
+	}
+	novo := c[1]
+	kind := "<nulo>"
+	if novo.ErrorKind != nil {
+		kind = *novo.ErrorKind
+	}
+	if !novo.CheckedAt.Equal(falhaEm) || novo.Status != "down" || kind != "tls" || novo.StatusCode != nil {
+		t.Errorf("check novo = {CheckedAt:%v Status:%q ErrorKind:%q StatusCode:%v}; queria %v, down, tls e sem código",
+			novo.CheckedAt, novo.Status, kind, novo.StatusCode, falhaEm)
 	}
 	depois := b.exigirLinhaTLS(t, alvo)
 	if !depois.NotAfter.Equal(antes.NotAfter) || !depois.ObservedAt.Equal(antes.ObservedAt) || depois.Xmin != antes.Xmin {
