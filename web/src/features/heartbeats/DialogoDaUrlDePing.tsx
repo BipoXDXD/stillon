@@ -9,7 +9,7 @@ import { cn } from '@/lib/utils'
 
 const CURL = 'curl -fsS -m 10 --retry 3 -o /dev/null -X POST'
 
-type Exemplo = { titulo: string; texto: string; rotulo: string }
+type Exemplo = { titulo: string; texto: string; rotulo: string; nota?: string }
 
 // Todo exemplo manda POST (D6): um GET responde 405.
 const EXEMPLOS = {
@@ -21,6 +21,19 @@ const EXEMPLOS = {
       titulo: 'Numa linha só, depois da tarefa: 0 é sucesso, o resto é falha',
       texto: `${CURL} ${url}/$?`,
       rotulo: 'Copiar o exemplo com o código de saída',
+    },
+    // Entre aspas: sem elas, o `?` da URL é glob no zsh.
+    {
+      titulo: 'Com run id (execuções sobrepostas)',
+      texto: `RID=$(uuidgen); ${CURL} "${url}/start?rid=$RID"; tarefa.sh; ${CURL} "${url}/$??rid=$RID"`,
+      rotulo: 'Copiar o exemplo com run id',
+    },
+    // O corpo é descartado (D14 ainda não decidida): o exemplo não promete guardá-lo.
+    {
+      titulo: 'Registrar uma linha, sem mexer no prazo',
+      texto: `${CURL} --data-binary @- "${url}/log"`,
+      rotulo: 'Copiar o exemplo de registro',
+      nota: 'O conteúdo não é guardado.',
     },
   ],
   crontab: (url) => [
@@ -120,7 +133,7 @@ function useSegurarNavegacao(ativo: boolean) {
   }, [bloqueio, avisar])
 }
 
-function Copiavel({ titulo, texto, rotulo }: { titulo: string; texto: string; rotulo: string }) {
+function Copiavel({ titulo, texto, rotulo, nota }: { titulo: string; texto: string; rotulo: string; nota?: string }) {
   const { copiado, copiar } = useCopiar({ ok: 'Copiado.', falha: 'Não foi possível copiar: selecione o texto e copie à mão.' })
   return (
     <div className="space-y-1">
@@ -131,6 +144,7 @@ function Copiavel({ titulo, texto, rotulo }: { titulo: string; texto: string; ro
           {copiado ? 'Copiado' : 'Copiar'}
         </Botao>
       </div>
+      {nota !== undefined && <p className="text-meta text-suave">{nota}</p>}
     </div>
   )
 }

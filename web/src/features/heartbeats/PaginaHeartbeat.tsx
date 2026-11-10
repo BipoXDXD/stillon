@@ -139,6 +139,19 @@ function DetalheDoHeartbeat({ id }: { id: string }) {
     setUrlNova(null)
   }
 
+  // A resposta já é o heartbeat novo: ela entra no cache antes do refetch, e a
+  // tela não volta a dizer "Atrasado" no intervalo. Os refetches não seguram o
+  // botão, porque a tela já mostra o que o servidor gravou.
+  const sinalizar = () =>
+    executar(async () => {
+      const atualizado = await api.sinalizarAgora(id)
+      qc.setQueryData(chaves.heartbeat(id), atualizado)
+      void qc.invalidateQueries({ queryKey: chaves.heartbeats, exact: true })
+      // Sem exact: o detalhe, o log e os incidentes (o sucesso fecha o aberto).
+      void qc.invalidateQueries({ queryKey: chaves.heartbeat(id) })
+      avisar('Sinal de sucesso registrado.')
+    }, null)
+
   return (
     <EstadoDaConsulta consulta={consulta}>
       {(hb) => (
@@ -159,6 +172,9 @@ function DetalheDoHeartbeat({ id }: { id: string }) {
                 <ListaDeTags tags={hb.tags} />
               </div>
               <div className="flex flex-wrap gap-2">
+                <Botao tipo="secundario" aria-disabled={ocupado || undefined} onClick={() => void sinalizar()}>
+                  Sinalizar agora
+                </Botao>
                 {/* Num agendamento de versão posterior, todo PATCH e o clone são
                     409 schedule_unsupported: editar, duplicar, pausar e retomar
                     ficam de fora. Apagar, limpar e gerar nova URL seguem. */}

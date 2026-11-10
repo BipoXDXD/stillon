@@ -91,7 +91,8 @@ describe('cadastro', () => {
         for (const codigo of d.querySelectorAll('code')) vistos.push(codigo.textContent ?? '')
       }
       const exemplos = vistos.filter((t) => t !== PING_URL)
-      expect(exemplos).toHaveLength(8)
+      // curl tem 6 (com o run id e o registro), e as outras abas, 1 cada.
+      expect(exemplos).toHaveLength(10)
       for (const t of exemplos) {
         expect(t).not.toMatch(/\bGET\b/)
         expect(t).toMatch(/POST|Post/)
@@ -99,6 +100,24 @@ describe('cadastro', () => {
       expect(exemplos.find((t) => t.startsWith('wget'))).toContain('--method=POST')
       expect(within(d).getByText('Só POST: um GET responde 405, para que prévia de link e scanner não contem como sinal.')).toBeInTheDocument()
     })
+  })
+
+  // As aspas são parte do exemplo: sem elas, o `?` é glob no zsh.
+  // Sabotagem: tirar as aspas, ou prometer guardar o corpo do /log.
+  it('mostra os exemplos de run id e de registro', async () => {
+    const r = await renderizarPainel('/heartbeats/new')
+    await cadastrar(r)
+    const d = await dialogo()
+    const curl = 'curl -fsS -m 10 --retry 3 -o /dev/null -X POST'
+    expect(within(d).getByText('Com run id (execuções sobrepostas)')).toBeInTheDocument()
+    expect(
+      within(d).getByText(`RID=$(uuidgen); ${curl} "${PING_URL}/start?rid=$RID"; tarefa.sh; ${curl} "${PING_URL}/$??rid=$RID"`),
+    ).toBeInTheDocument()
+    expect(within(d).getByText('Registrar uma linha, sem mexer no prazo')).toBeInTheDocument()
+    expect(within(d).getByText(`${curl} --data-binary @- "${PING_URL}/log"`)).toBeInTheDocument()
+    expect(within(d).getByText('O conteúdo não é guardado.')).toBeInTheDocument()
+    expect(within(d).getByRole('button', { name: 'Copiar o exemplo com run id' })).toBeInTheDocument()
+    expect(within(d).getByRole('button', { name: 'Copiar o exemplo de registro' })).toBeInTheDocument()
   })
 
   // Esc e o clique fora não fecham: a URL não volta. Sabotagem: aoMudar fechando, sem o `travado`.

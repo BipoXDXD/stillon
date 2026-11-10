@@ -619,6 +619,28 @@ export function criarApiFalsa() {
       st.eventos = []
       return new HttpResponse(null, { status: 204 })
     }),
+    // PingNow do servidor: um sucesso com source 'panel'. O log ganha a linha,
+    // o incidente aberto fecha, o prazo recomeça e o sucesso tira o failing.
+    rota('post', '/heartbeats/:id/ping-now', ({ params }) => {
+      const h = st.heartbeats.find((x) => x.id === params.id)
+      if (!h) return erro(404, 'not_found')
+      const quando = agora().toISOString()
+      st.eventos = [
+        { id: `ev-painel-${st.eventos.length + 1}`, at: quando, kind: 'success', runtime_ms: null, exit_code: null, run_id: null, source: 'panel' },
+        ...st.eventos,
+      ]
+      st.ultimosSinais.set(h.id, 'success')
+      Object.assign(h, {
+        last_ping_at: quando,
+        last_success_at: quando,
+        last_start_at: null,
+        open_incident_id: null,
+        deadline_at: primeiroPrazo(h.grace_sec),
+        state: 'up',
+      })
+      h.state = statusDe(h)
+      return HttpResponse.json(h)
+    }),
     rota('post', '/heartbeats/:id/token/rotate', ({ params }) => {
       const h = st.heartbeats.find((x) => x.id === params.id)
       if (!h) return erro(404, 'not_found')

@@ -186,6 +186,9 @@ export function criarApi(sessao: Sessao, buscar: Buscar, o: OpcoesDaApi = {}) {
       pedir({ metodo: 'POST', caminho: `/heartbeats/${encodeURIComponent(id)}/clone` }, HeartbeatComPing),
     limparEventosDoHeartbeat: (id: string) =>
       pedir({ metodo: 'POST', caminho: `/heartbeats/${encodeURIComponent(id)}/events/clear` }, null),
+    // Um sucesso pelo painel; a resposta é o heartbeat já atualizado.
+    sinalizarAgora: (id: string) =>
+      pedir({ metodo: 'POST', caminho: `/heartbeats/${encodeURIComponent(id)}/ping-now` }, Heartbeat),
     eventosDoHeartbeat: (id: string, cursor?: string) =>
       get(`/heartbeats/${encodeURIComponent(id)}/events${consulta({ cursor, limit: LIMITE_DO_LOG })}`, ListaDeEventos),
     incidentesDoHeartbeat: (id: string, cursor?: string) =>
