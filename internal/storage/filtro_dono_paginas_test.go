@@ -4,6 +4,7 @@ import (
 	"context"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -25,6 +26,15 @@ func itensDaPagina(t *testing.T, q *db.Queries, dono, pagina uuid.UUID) []uuid.U
 		alvos = append(alvos, i.TargetID)
 	}
 	return alvos
+}
+
+// mesmaPagina compara campo a campo, com CreatedAt por Equal: a documentação de
+// time desaconselha == entre instantes, que também compara Location e relógio
+// monotônico.
+func mesmaPagina(x, y db.StatusPage) bool {
+	criadasJuntas := x.CreatedAt.Equal(y.CreatedAt)
+	x.CreatedAt, y.CreatedAt = time.Time{}, time.Time{}
+	return criadasJuntas && x == y
 }
 
 func TestUpdateStatusPageFiltersOwnerWithoutRLS(t *testing.T) {
@@ -56,7 +66,7 @@ func TestUpdateStatusPageFiltersOwnerWithoutRLS(t *testing.T) {
 	if n := atualizar(b, "de-b"); n != 0 {
 		t.Errorf("B alterou %d páginas de A sem RLS, queria 0", n)
 	}
-	if p := paginaDeA(); p != original {
+	if p := paginaDeA(); !mesmaPagina(p, original) {
 		t.Errorf("depois do UPDATE de B sem RLS, a página de A ficou %+v, queria %+v", p, original)
 	}
 	n := atualizar(a, "nova-a")
