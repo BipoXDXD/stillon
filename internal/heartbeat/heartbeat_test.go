@@ -422,6 +422,60 @@ func TestNextOnUnknownSchedulePanics(t *testing.T) {
 	s.Next(time.Date(2026, 11, 10, 0, 0, 0, 0, time.UTC))
 }
 
+// Piso de rollback: numa linha que esta versão não sabe agendar, o sinal fica
+// registrado como em qualquer outra, mas o prazo gravado não se move.
+func TestApplyOnUnknownScheduleKeepsDeadline(t *testing.T) {
+	desconhecido, err := heartbeat.ScheduleFromRow(nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prazo := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	em := time.Date(2026, 11, 10, 10, 0, 0, 0, time.UTC)
+	inicioAnterior := time.Date(2026, 11, 10, 9, 59, 0, 0, time.UTC)
+	falhandoDesde := time.Date(2026, 11, 10, 9, 0, 0, 0, time.UTC)
+	casos := []struct {
+		nome          string
+		antes         heartbeat.State
+		sig           heartbeat.Signal
+		sucesso       time.Time
+		falhandoDesde time.Time
+	}{
+		{nome: "início", antes: heartbeat.State{DeadlineAt: prazo}, sig: heartbeat.SignalStart},
+		{nome: "falha", antes: heartbeat.State{DeadlineAt: prazo}, sig: heartbeat.SignalFail, falhandoDesde: em},
+		{
+			nome: "sucesso limpa a falha", sig: heartbeat.SignalSuccess, sucesso: em,
+			antes: heartbeat.State{DeadlineAt: prazo, FailingSince: falhandoDesde},
+		},
+		{
+			nome: "sucesso depois de início", sig: heartbeat.SignalSuccess, sucesso: em,
+			antes: heartbeat.State{
+				DeadlineAt: prazo, LastStartAt: inicioAnterior, LastPingAt: inicioAnterior,
+				LastSignal: heartbeat.SignalStart,
+			},
+		},
+	}
+	for _, c := range casos {
+		t.Run(c.nome, func(t *testing.T) {
+			s, ev := c.antes.Apply(c.sig, em, desconhecido, tolerancia)
+			if !s.DeadlineAt.Equal(time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)) {
+				t.Errorf("prazo %v, queria 2026-11-10T12:00:00Z", s.DeadlineAt)
+			}
+			if !s.LastPingAt.Equal(em) || s.LastSignal != c.sig {
+				t.Errorf("último ping %v/%s, queria %v/%s", s.LastPingAt, s.LastSignal, em, c.sig)
+			}
+			if !s.LastSuccessAt.Equal(c.sucesso) {
+				t.Errorf("último sucesso %v, queria %v", s.LastSuccessAt, c.sucesso)
+			}
+			if !s.FailingSince.Equal(c.falhandoDesde) {
+				t.Errorf("falhando desde %v, queria %v", s.FailingSince, c.falhandoDesde)
+			}
+			if ev == nil || ev.Kind != c.sig || !ev.At.Equal(em) {
+				t.Errorf("evento %+v, queria %s em %v", ev, c.sig, em)
+			}
+		})
+	}
+}
+
 func TestEqualTellsUnknownApart(t *testing.T) {
 	a, _ := heartbeat.ScheduleFromRow(nil, nil, nil)
 	b, _ := heartbeat.ScheduleFromRow(nil, nil, nil)
