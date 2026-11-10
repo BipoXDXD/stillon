@@ -57,7 +57,7 @@ func paginaPublica(ctx context.Context, cfg *config.Config, clk clock.Clock, svc
 	h = middleware.RateLimit(ctx, clk, publicPorMinuto, publicBurst, proxiesDe(cfg))(h)
 	h = middleware.SecurityHeaders(h)
 	h = middleware.Recover(h)
-	h = middleware.Deadline(requestTimeout)(h)
+	h = middleware.Deadline(cfg.RequestTimeout)(h)
 	h = middleware.RequestID(h)
 	return h
 }

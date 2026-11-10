@@ -25,10 +25,6 @@ import (
 // maxBodyBytes cobre com folga qualquer payload legítimo desta API.
 const maxBodyBytes = 1 << 20 // 1 MiB
 
-// Termina o trabalho no banco antes do WriteTimeout de 30s, deixando
-// margem para responder com o envelope de erro. ReadTimeout só limita I/O.
-const requestTimeout = 15 * time.Second
-
 // As rotas que mandam mensagem para fora (criar canal, reenviar
 // verificação) ganham um balde próprio por usuário: um envio a cada 6
 // minutos, 5 de uma vez. Dá 10 por hora depois do burst (spec §5.8).
@@ -70,6 +66,11 @@ type Deps struct {
 // ctx é o contexto de vida do servidor: ele encerra as goroutines de
 // varredura dos rate limiters no shutdown, em vez de deixá-las vazar (R32).
 func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
+	// O prazo vem do config.Load (15 s). Zero deixaria toda requisição vencida
+	// na largada: um Config montado sem ele é defeito do código.
+	if cfg.RequestTimeout <= 0 {
+		panic("httpapi: Config sem RequestTimeout")
+	}
 	// Sem https não há como marcar o cookie como Secure: o navegador
 	// simplesmente não o guardaria, e o desenvolvimento local pararia. Em
 	// produção PUBLIC_BASE_URL é https, e o refresh nunca trafega em claro.
@@ -234,7 +235,7 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	handler = middleware.CORS(cfg.CORSOrigin)(handler)
 	handler = middleware.SecurityHeaders(handler)
 	handler = middleware.Recover(handler)
-	handler = middleware.Deadline(requestTimeout)(handler)
+	handler = middleware.Deadline(cfg.RequestTimeout)(handler)
 	handler = middleware.RequestID(handler)
 
 	// A raiz separa as cadeias pelo prefixo, e o ServeMux escolhe sempre o
@@ -328,7 +329,7 @@ func verificacao(ctx context.Context, cfg *config.Config, clk clock.Clock, svc *
 	h = middleware.RateLimit(ctx, clk, 20, 10, proxiesDe(cfg))(h)
 	h = middleware.SecurityHeaders(h)
 	h = middleware.Recover(h)
-	h = middleware.Deadline(requestTimeout)(h)
+	h = middleware.Deadline(cfg.RequestTimeout)(h)
 	h = middleware.RequestID(h)
 	return h
 }

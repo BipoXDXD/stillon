@@ -75,6 +75,12 @@ type api struct {
 	rotacao string
 }
 
+// prazoDeTesteSobCarga substitui os 15 s de produção nos testes de
+// integração. Com -race e a máquina carregada, um Argon2id de produção chegou
+// a 4,5 s, e a troca de senha paga dois em série antes das consultas: os 15 s
+// estouravam em 503. O teste que mede o prazo de produção pede os 15 s.
+const prazoDeTesteSobCarga = 60 * time.Second
+
 func newAPI(t *testing.T) *api {
 	t.Helper()
 	return newAPIWith(t, nil)
@@ -107,10 +113,11 @@ func newAPICom(t *testing.T, ajustar func(*config.Config), ajustarDeps func(*htt
 	}
 
 	cfg := &config.Config{
-		CORSOrigin: "https://app.exemplo.com",
-		JWTSecret:  testJWTSecret,
-		IPHashKey:  testIPHashKey,
-		MasterKey:  testMasterKey,
+		CORSOrigin:     "https://app.exemplo.com",
+		JWTSecret:      testJWTSecret,
+		IPHashKey:      testIPHashKey,
+		MasterKey:      testMasterKey,
+		RequestTimeout: prazoDeTesteSobCarga,
 	}
 	if ajustar != nil {
 		ajustar(cfg)
