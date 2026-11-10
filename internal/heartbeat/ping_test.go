@@ -706,13 +706,16 @@ func TestPingResumesOnSuccess(t *testing.T) {
 		t.Errorf("prazo %v, queria %v", h.DeadlineAt, want)
 	}
 
+	// Pausada de novo, a repetição dentro da janela não retoma: sem a janela,
+	// este segundo sucesso religaria a tarefa.
+	a.comoDono(t, `UPDATE heartbeats SET enabled = false WHERE id = $1`, id)
 	a.clk.Advance(5 * time.Second)
 	a.pingar(t, token, heartbeat.SignalSuccess)
 	if n := len(a.eventos(t, id)); n != 2 {
 		t.Errorf("a repetição gravou: %d eventos, queria 2", n)
 	}
-	if h := a.linha(t, id); h.ResumedAt == nil || !h.ResumedAt.Equal(retomadaEm) {
-		t.Errorf("a repetição mudou resumed_at para %v", h.ResumedAt)
+	if h := a.linha(t, id); h.Enabled || h.ResumedAt == nil || !h.ResumedAt.Equal(retomadaEm) {
+		t.Errorf("a repetição retomou: enabled %t, resumed_at %v", h.Enabled, h.ResumedAt)
 	}
 
 	semRetomada, token2 := a.novoHeartbeat(t)
@@ -720,6 +723,24 @@ func TestPingResumesOnSuccess(t *testing.T) {
 	a.pingar(t, token2, heartbeat.SignalSuccess)
 	if h := a.linha(t, semRetomada); h.Enabled || h.ResumedAt != nil {
 		t.Errorf("sem ping_resumes: enabled %t, resumed_at %v", h.Enabled, h.ResumedAt)
+	}
+}
+
+// Ruling da Task 4: num agendamento que esta versão não conhece, o sucesso com
+// ping_resumes religa a tarefa e deixa o prazo gravado como está.
+func TestPingResumesOnUnknownSchedule(t *testing.T) {
+	a := novoAmbiente(t)
+	semChecksDeAgendamento(t, a.pool)
+	id, token := a.heartbeatDesconhecido(t)
+	a.comoDono(t, `UPDATE heartbeats SET enabled = false, ping_resumes = true WHERE id = $1`, id)
+
+	a.pingar(t, token, heartbeat.SignalSuccess)
+	h := a.linha(t, id)
+	if !h.Enabled || h.ResumedAt == nil || !h.ResumedAt.Equal(agora) {
+		t.Errorf("enabled %t, resumed_at %v; queria religada em %v", h.Enabled, h.ResumedAt, agora)
+	}
+	if want := agora.Add(-2 * time.Hour); !h.DeadlineAt.Equal(want) {
+		t.Errorf("prazo %v, queria o gravado %v", h.DeadlineAt, want)
 	}
 }
 
