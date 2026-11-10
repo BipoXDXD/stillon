@@ -183,15 +183,15 @@ type TargetHealth struct {
 	LastCheckedAt        *time.Time
 }
 
-type TargetTag struct {
-	TargetID uuid.UUID
-	Tag      string
-}
-
-type TargetTl struct {
+type TargetTLS struct {
 	TargetID   uuid.UUID
 	NotAfter   time.Time
 	ObservedAt time.Time
+}
+
+type TargetTag struct {
+	TargetID uuid.UUID
+	Tag      string
 }
 
 type TotpRecoveryCode struct {
