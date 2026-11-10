@@ -59,8 +59,12 @@ var (
 		time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC),
 	}
 	emParticaoAntiga = time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC)
-	mesCriadoDepois  = time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC)
-	emParticaoNova   = time.Date(2027, 1, 15, 12, 0, 0, 0, time.UTC)
+	// O sondador simulado grava num instante fixo: com o relógio real, o
+	// INSERT cairia fora das partições criadas aqui (não há DEFAULT) assim que
+	// o mês virasse. Passado, porque a guarda recusa checked_at no futuro.
+	emParticaoDoSondador = time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)
+	mesCriadoDepois      = time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC)
+	emParticaoNova       = time.Date(2027, 1, 15, 12, 0, 0, 0, time.UTC)
 )
 
 type medicaoDoPortao struct {
@@ -70,7 +74,6 @@ type medicaoDoPortao struct {
 	maiorInsertAlter time.Duration
 	validate         time.Duration
 	maiorInsertValid time.Duration
-	falhasDoSondador int
 	aceitacao        string
 }
 
@@ -85,10 +88,10 @@ func TestPortaoTrocaDoCheckEmChecks(t *testing.T) {
 	} {
 		t.Run("forma"+forma.nome, func(t *testing.T) {
 			m := medirForma(t, linhas, forma.nome, forma.notValid)
-			t.Logf("| forma | V | ALTER | maior INSERT no ALTER | VALIDATE | maior INSERT no VALIDATE | falhas do sondador | aceitação |")
-			t.Logf("| %s | %d | %s | %s | %s | %s | %d | %s |",
+			t.Logf("| forma | V | ALTER | maior INSERT no ALTER | VALIDATE | maior INSERT no VALIDATE | aceitação |")
+			t.Logf("| %s | %d | %s | %s | %s | %s | %s |",
 				m.forma, m.linhas, m.alter.Round(time.Millisecond), m.maiorInsertAlter.Round(time.Millisecond),
-				duracaoOuTraco(m.validate), duracaoOuTraco(m.maiorInsertValid), m.falhasDoSondador, m.aceitacao)
+				duracaoOuTraco(m.validate), duracaoOuTraco(m.maiorInsertValid), m.aceitacao)
 		})
 	}
 }
@@ -110,6 +113,12 @@ func medirForma(t *testing.T, linhas int64, forma string, notValid bool) medicao
 	t.Helper()
 	ctx := context.Background()
 	pool := testdb.New(t)
+	// O snapshot já vem com a migration da regra de conteúdo, que faz a troca
+	// medida aqui: o portão parte do esquema anterior a ela. O cleanup de New
+	// restaura o snapshot no fim.
+	if err := storage.MigrateDownTo(ctx, testdb.DSN(t), versaoDaMigration(t, sufixoRegraDeConteudo)-1); err != nil {
+		t.Fatalf("descer para antes da regra de conteúdo: %v", err)
+	}
 	admin := conectarAdminSemGatilhos(t)
 
 	dono := novoUsuario(t, pool)
@@ -133,7 +142,7 @@ func medirForma(t *testing.T, linhas int64, forma string, notValid bool) medicao
 	}
 
 	m := medicaoDoPortao{forma: forma, linhas: linhas}
-	m.alter, m.maiorInsertAlter, m.falhasDoSondador = enquantoOSondadorGrava(t, pool, alvos[1], func() error {
+	m.alter, m.maiorInsertAlter = enquantoOSondadorGrava(t, pool, alvos[1], func() error {
 		return trocarRestricao(t, notValid)
 	})
 
@@ -147,11 +156,9 @@ func medirForma(t *testing.T, linhas int64, forma string, notValid bool) medicao
 		exigirAceitacao(t, admin, alvos[0], emParticaoNova, "partição criada depois")
 		exigirRetencaoFuncionando(t, pool)
 
-		var falhas int
-		m.validate, m.maiorInsertValid, falhas = enquantoOSondadorGrava(t, pool, alvos[1], func() error {
+		m.validate, m.maiorInsertValid = enquantoOSondadorGrava(t, pool, alvos[1], func() error {
 			return validarRestricao(t)
 		})
-		m.falhasDoSondador += falhas
 	}
 	m.aceitacao = "ok"
 	return m
@@ -220,9 +227,10 @@ func confirmarNomeDaRestricao(t *testing.T, pool *pgxpool.Pool) {
 }
 
 // enquantoOSondadorGrava roda op com uma goroutine gravando um check a cada
-// 10 ms pelo mesmo caminho do sondador, e devolve a duração de op, a maior
-// latência de um INSERT na janela e quantos INSERTs falharam.
-func enquantoOSondadorGrava(t *testing.T, pool *pgxpool.Pool, alvo uuid.UUID, op func() error) (time.Duration, time.Duration, int) {
+// 10 ms pelo mesmo caminho do sondador, e devolve a duração de op e a maior
+// latência de um INSERT na janela. Um INSERT que falha reprova o portão: a
+// latência de uma gravação que não aconteceu não mede o sondador.
+func enquantoOSondadorGrava(t *testing.T, pool *pgxpool.Pool, alvo uuid.UUID, op func() error) (time.Duration, time.Duration) {
 	t.Helper()
 	parar := make(chan struct{})
 	var (
@@ -264,7 +272,10 @@ func enquantoOSondadorGrava(t *testing.T, pool *pgxpool.Pool, alvo uuid.UUID, op
 	if gravou == 0 {
 		t.Fatal("o sondador simulado não gravou nada na janela")
 	}
-	return duracao, maior, falhas
+	if falhas > 0 {
+		t.Fatalf("%d de %d INSERTs do sondador simulado falharam na janela", falhas, gravou)
+	}
+	return duracao, maior
 }
 
 func gravarComoSondador(pool *pgxpool.Pool, alvo uuid.UUID) (time.Duration, error) {
@@ -274,7 +285,7 @@ func gravarComoSondador(pool *pgxpool.Pool, alvo uuid.UUID) (time.Duration, erro
 	inicio := time.Now()
 	err := storage.InProberTx(ctx, pool, func(q *db.Queries) error {
 		return q.InsertCheck(ctx, db.InsertCheckParams{
-			ID: uuid.Must(uuid.NewV7()), TargetID: alvo, CheckedAt: time.Now().UTC(),
+			ID: uuid.Must(uuid.NewV7()), TargetID: alvo, CheckedAt: emParticaoDoSondador,
 			Status: "up", LatencyMS: 12, StatusCode: &code,
 		})
 	})
