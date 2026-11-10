@@ -288,3 +288,86 @@ describe('tela de incidentes e contador', () => {
     expect(await screen.findByRole('link', { name: 'Incidentes, 2 abertos' })).toBeInTheDocument()
   })
 })
+
+// Dados de uma versão posterior do servidor (SP1, piso de rollback): o painel
+// antigo mostra a linha, sem quebrar o parse e sem oferecer edição.
+describe('heartbeat de versão posterior', () => {
+  // Sabotagem: tirar o ramo unknown do Agendamento → o detalhe não carrega.
+  it('agendamento desconhecido: diz que não é suportado e não oferece Editar', async () => {
+    await detalheCom({ schedule: { kind: 'unknown' } })
+    const s = await secao('Agendamento e sinais')
+    expect(within(s).getByText('Agendamento').nextElementSibling).toHaveTextContent('Agendamento não suportado nesta versão')
+    expect(screen.queryByRole('link', { name: 'Editar' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Apagar' })).toBeInTheDocument()
+  })
+
+  it('agendamento conhecido continua com Editar', async () => {
+    await detalheCom()
+    expect(screen.getByRole('link', { name: 'Editar' })).toHaveAttribute('href', '/heartbeats/h1/edit')
+  })
+
+  it('a rota de edição de um agendamento desconhecido não monta o formulário', async () => {
+    const r = await renderizarPainel('/')
+    r.falsa.estado.heartbeats = [heartbeat({ id: 'h1', name: 'Backup', schedule: { kind: 'unknown' } })]
+    await r.router.navigate('/heartbeats/h1/edit')
+    expect(await screen.findByText('Agendamento não suportado nesta versão.')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Salvar' })).not.toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Voltar ao heartbeat' })).toHaveAttribute('href', '/heartbeats/h1')
+  })
+
+  // Sabotagem: tirar o 'unknown' de EventoDeHeartbeat.kind → o log inteiro vira erro.
+  it('evento de tipo novo aparece como "Outro sinal" e não derruba o log', async () => {
+    await detalheCom({
+      eventos: [
+        { id: 'e1', kind: 'log' },
+        { id: 'e2', kind: 'success' },
+      ],
+    })
+    const linhas = await within(await secao('Log de eventos')).findAllByRole('listitem')
+    expect(linhas.map((l) => within(l).getByText(/^(Outro sinal|Sucesso)$/).textContent)).toEqual(['Outro sinal', 'Sucesso'])
+  })
+
+  // Sabotagem: tirar o 'unknown' de EstadoDoHeartbeat → o detalhe vira erro.
+  it('estado novo aparece como "Estado desconhecido", sem palavra de alerta', async () => {
+    await detalheCom({ state: 'grace' })
+    expect(screen.getByText('Estado desconhecido')).toBeInTheDocument()
+    expect(screen.queryByText(/Atrasado|Falhando|Fora do ar/)).not.toBeInTheDocument()
+  })
+
+  // Todo PATCH nessa linha é 409 schedule_unsupported: pausar e retomar
+  // falhariam sempre. Sabotagem: o botão fora da condição.
+  it.each([
+    ['ativo', { enabled: true, state: 'up' }],
+    ['pausado', { enabled: false, state: 'paused' }],
+  ] as const)('agendamento desconhecido %s não oferece Pausar nem Retomar', async (_, p) => {
+    await detalheCom({ schedule: { kind: 'unknown' }, ...p })
+    expect(screen.queryByRole('button', { name: 'Pausar' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Retomar' })).not.toBeInTheDocument()
+  })
+
+  it('agendamento desconhecido ainda pode ser apagado', async () => {
+    const r = await detalheCom({ schedule: { kind: 'unknown' } })
+    await r.usuario.click(screen.getByRole('button', { name: 'Apagar' }))
+    await r.usuario.click(await screen.findByRole('button', { name: 'Apagar heartbeat' }))
+    await waitFor(() => expect(r.router.state.location.pathname).toBe('/'))
+    expect(r.falsa.chamadas('DELETE /heartbeats/:id')).toBe(1)
+    expect(r.falsa.estado.heartbeats).toEqual([])
+  })
+
+  // O servidor não move o prazo dessa linha: a data guardada mentiria.
+  // Sabotagem: tirar o ramo unknown do Prazo → "Próximo prazo" com a data.
+  it('agendamento desconhecido não afirma prazo', async () => {
+    await detalheCom({ schedule: { kind: 'unknown' }, deadline_at: '2099-01-01T12:00:00Z' })
+    const s = await secao('Agendamento e sinais')
+    expect(within(s).getByText('Prazo').nextElementSibling).toHaveTextContent('Prazo não acompanhado nesta versão')
+    expect(within(s).queryByText(/Próximo prazo|Prazo vencido/)).not.toBeInTheDocument()
+  })
+
+  // Sabotagem: tirar o ramo unknown do fraseDoEstado → ", até <data>" volta.
+  it('agendamento desconhecido esperando não promete data', async () => {
+    await detalheCom({ schedule: { kind: 'unknown' }, state: 'waiting', last_ping_at: null, deadline_at: '2099-01-01T12:00:00Z' })
+    const s = await secao('Agendamento e sinais')
+    expect(within(s).getByText('Aguardando o primeiro sinal.')).toBeInTheDocument()
+    expect(within(s).queryByText(/Aguardando o primeiro sinal, até /)).not.toBeInTheDocument()
+  })
+})

@@ -17,6 +17,11 @@ const claimDueNotifications = `-- name: ClaimDueNotifications :many
 WITH lote AS MATERIALIZED (
     SELECT id FROM notifications
      WHERE status = 'pending' AND next_attempt_at <= $1::timestamptz
+       -- Piso de rollback (SP1, §12): uma versão futura grava aviso de
+       -- certificado sem incidente. Contá-lo aqui o faria sumir no JOIN com
+       -- incidents e somar tentativas até fechar como failed sem ter saído.
+       -- O PR 7 da SP1 remove o filtro ao trocar o JOIN por LEFT JOIN.
+       AND incident_id IS NOT NULL
      ORDER BY next_attempt_at
      LIMIT $2::int
        FOR UPDATE SKIP LOCKED

@@ -293,6 +293,12 @@ tem as convenções). Todo erro, inclusive rota ou método inexistente sob `/api
   `items`. Até 2026-11, `null` nesses campos valia como ausente (`name` mudou no #194). `null` limpa
   `tags`, `description` e `headers`, e em `degraded_threshold_ms` desliga a classificação `degraded`.
   No `PATCH /channels/{id}`, `enabled: null` é `400` com `invalid`.
+- Piso de rollback dos heartbeats: esta versão tolera linhas gravadas por uma versão posterior com
+  um agendamento que ela não entende. Na saída, o heartbeat vem com `"schedule": {"kind": "unknown"}`,
+  sem outros campos; o `PATCH` é recusado com `409 schedule_unsupported`, sem gravar nada (`DELETE`
+  e rotação de token seguem); o ping é aceito e registrado sem mexer no prazo; e o avaliador ignora
+  o prazo dessas linhas. A falha avisada (`/fail` ou código de saída diferente de zero) continua
+  abrindo o incidente `heartbeat_failed`, e o sucesso seguinte o fecha.
 
 O que mudou no Plano 10 (spec do Plano 10, §4):
 

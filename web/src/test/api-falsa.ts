@@ -13,6 +13,7 @@ import type {
   PaginaDeStatus,
   Sessao,
 } from '@/lib/api/schemas'
+import { Agendamento } from '@/lib/api/schemas'
 
 // Uma API falsa, com estado, para o MSW. Ela imita as GUARDAS do servidor, e
 // não só as respostas felizes; sem isso, os testes de cliente passariam
@@ -77,6 +78,7 @@ export const ERROS_DO_SERVIDOR = {
   target_limit_reached: 409,
   heartbeat_limit_reached: 409,
   method_not_allowed: 405,
+  schedule_unsupported: 409,
 } as const
 
 type ErrosDoServidor = typeof ERROS_DO_SERVIDOR
@@ -336,7 +338,10 @@ export function criarApiFalsa() {
   // updateParams do servidor: o prazo só recomeça se o agendamento ou a
   // tolerância mudarem de verdade.
   function mudouOPrazo(h: Entrada<typeof Heartbeat>, corpo: Json) {
-    const outroAgendamento = corpo.schedule !== undefined && !mesmoAgendamento(corpo.schedule as Json, h.schedule)
+    // A entrada do Agendamento é unknown (o preprocess do kind de versão
+    // posterior); o parse devolve a forma que o servidor compararia.
+    const atual: Json = { ...Agendamento.parse(h.schedule) }
+    const outroAgendamento = corpo.schedule !== undefined && !mesmoAgendamento(corpo.schedule as Json, atual)
     return outroAgendamento || (corpo.grace_sec !== undefined && corpo.grace_sec !== h.grace_sec)
   }
 

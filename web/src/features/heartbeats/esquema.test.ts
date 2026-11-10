@@ -1,11 +1,15 @@
 import { describe, expect, it } from 'vitest'
 import { Heartbeat } from '@/lib/api/schemas'
 import { heartbeat } from '@/test/fixtures'
-import { esquemaDoHeartbeat, mensagemDoHeartbeat, paraAlteracao, paraCriacao, valoresDe, valoresPadrao, type ValoresDoHeartbeat } from './esquema'
+import { comoEditavel, esquemaDoHeartbeat, mensagemDoHeartbeat, paraAlteracao, paraCriacao, valoresDe, valoresPadrao, type ValoresDoHeartbeat } from './esquema'
 
 const RECUSA_DO_CRON = 'Use os cinco campos, com um disparo que exista: 0 3 * * *. Domingo é 0 ou SUN, não 7; de sexta a domingo, 5,6,0.'
 const valores = (p: Partial<ValoresDoHeartbeat> = {}): ValoresDoHeartbeat => ({ ...valoresPadrao(), name: 'Backup', ...p })
-const hb = (p: Parameters<typeof heartbeat>[0] = {}) => Heartbeat.parse(heartbeat(p))
+const hb = (p: Parameters<typeof heartbeat>[0] = {}) => {
+  const editavel = comoEditavel(Heartbeat.parse(heartbeat(p)))
+  if (editavel === null) throw new Error('fixture com agendamento que o formulário não edita')
+  return editavel
+}
 const erros = (v: ValoresDoHeartbeat) => {
   const r = esquemaDoHeartbeat.safeParse(v)
   return r.success ? {} : Object.fromEntries(r.error.issues.map((i) => [i.path.join('.'), i.message]))

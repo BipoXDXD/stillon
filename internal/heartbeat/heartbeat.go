@@ -177,7 +177,11 @@ func (s State) Apply(sig Signal, now time.Time, sch Schedule, grace time.Duratio
 		ev.RuntimeMS = s.closeRun(now)
 		s.FailingSince = time.Time{}
 		s.LastSuccessAt = now
-		s.DeadlineAt = FirstDeadline(sch, grace, now)
+		// Num agendamento que esta versão não conhece não há próximo instante
+		// a calcular: o prazo gravado fica como está até a versão que o conhece.
+		if sch.IsKnown() {
+			s.DeadlineAt = FirstDeadline(sch, grace, now)
+		}
 	}
 	return s, ev
 }
