@@ -32,6 +32,9 @@ const (
 var (
 	ErrNotFound     = errors.New("heartbeat não encontrado")
 	ErrLimitReached = errors.New("limite de heartbeats atingido")
+	// ErrScheduleUnsupported recusa editar a linha cujo agendamento veio de
+	// uma versão posterior: esta não saberia regravá-lo nem recalcular o prazo.
+	ErrScheduleUnsupported = errors.New("agendamento não suportado nesta versão")
 )
 
 // Status é o que o painel mostra, derivado do estado e do relógio: nada disto
@@ -365,6 +368,12 @@ func (s *Service) updateParams(h db.Heartbeat, p Patch) (db.UpdateHeartbeatParam
 	sch, err := ScheduleFromRow(h.PeriodSec, h.CronExpr, h.Timezone)
 	if err != nil {
 		return db.UpdateHeartbeatParams{}, fmt.Errorf("agendamento do heartbeat %s: %w", h.ID, err)
+	}
+	// Antes de qualquer cálculo: scheduleColumns gravaria período zero no
+	// lugar do agendamento que esta versão não conhece, e FirstDeadline não
+	// sabe calculá-lo.
+	if !sch.IsKnown() {
+		return db.UpdateHeartbeatParams{}, ErrScheduleUnsupported
 	}
 	grace := time.Duration(h.GraceSec) * time.Second
 	out := db.UpdateHeartbeatParams{

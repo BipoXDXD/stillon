@@ -21,6 +21,9 @@ import (
 const (
 	scheduleKindPeriod = "period"
 	scheduleKindCron   = "cron"
+	// scheduleKindUnknown só sai, nunca entra: é a linha gravada por uma
+	// versão posterior, num agendamento que esta não conhece.
+	scheduleKindUnknown = "unknown"
 )
 
 type HeartbeatHandlers struct {
@@ -132,10 +135,14 @@ func toHeartbeatResponse(h heartbeat.Heartbeat) heartbeatResponse {
 }
 
 func toScheduleDTO(s heartbeat.Schedule) scheduleDTO {
+	if !s.IsKnown() {
+		return scheduleDTO{Kind: scheduleKindUnknown}
+	}
 	if s.IsCron() {
 		return scheduleDTO{Kind: scheduleKindCron, Expr: s.CronExpr(), Timezone: s.Timezone()}
 	}
-	periodo := int32(s.Period() / time.Second) // #nosec G115 -- até 31 dias, validado em NewPeriod.
+	// #nosec G115 -- o período lido do banco não tem teto, mas nasce de period_sec, um int32: a volta para int32 não transborda.
+	periodo := int32(s.Period() / time.Second)
 	return scheduleDTO{Kind: scheduleKindPeriod, PeriodSec: &periodo}
 }
 
@@ -467,6 +474,8 @@ func (h *HeartbeatHandlers) falhou(w http.ResponseWriter, r *http.Request, op st
 		apierr.WriteError(w, r, apierr.CodeNotFound)
 	case errors.Is(err, heartbeat.ErrLimitReached):
 		apierr.WriteError(w, r, apierr.CodeHeartbeatLimit)
+	case errors.Is(err, heartbeat.ErrScheduleUnsupported):
+		apierr.WriteError(w, r, apierr.CodeScheduleUnsupported)
 	case errors.As(err, &verr):
 		campoInvalido(w, r, verr.Field, verr.Reason)
 	default:
