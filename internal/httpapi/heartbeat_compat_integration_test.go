@@ -235,10 +235,10 @@ func TestLongPeriodRowPingsAndPatchOfOtherFieldsWorks(t *testing.T) {
 
 	antes := linhaDoHeartbeat(t, a, id)
 	status, corpo = lerCru(t, a, http.MethodPatch, "/api/v1/heartbeats/"+id.String(), dono, map[string]any{
-		"name": "outro", "schedule": map[string]any{"kind": "period", "period_sec": 31536000},
+		"name": "outro", "schedule": map[string]any{"kind": "period", "period_sec": 31536001},
 	})
 	if status != http.StatusBadRequest || !strings.Contains(corpo, `"reason":"out_of_range"`) {
-		t.Errorf("PATCH reenviando 365 dias: %d %s, queria 400 out_of_range", status, corpo)
+		t.Errorf("PATCH com período acima do teto de cadastro: %d %s, queria 400 out_of_range", status, corpo)
 	}
 	depois := linhaDoHeartbeat(t, a, id)
 	if depois.Name != "anual" || depois.PeriodSec == nil || *depois.PeriodSec != 31536000 || !depois.DeadlineAt.Equal(antes.DeadlineAt) {

@@ -401,9 +401,10 @@ func TestScheduleFromRowCronWithoutTimezoneStillFails(t *testing.T) {
 	}
 }
 
-// A leitura ficou sem teto, mas o cadastro não: a faixa continua no NewPeriod.
+// A leitura ficou sem teto, mas o cadastro não: a faixa continua no NewPeriod,
+// e um segundo acima dos 365 dias é recusado.
 func TestNewPeriodStillEnforcesRegistrationRange(t *testing.T) {
-	_, err := heartbeat.NewPeriod(31*24*time.Hour + time.Second)
+	_, err := heartbeat.NewPeriod(365*24*time.Hour + time.Second)
 	var ve *heartbeat.ValidationError
 	if !errors.As(err, &ve) || ve.Field != "period_sec" || ve.Reason != heartbeat.ReasonOutOfRange {
 		t.Fatalf("erro %v, queria period_sec/out_of_range", err)

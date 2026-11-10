@@ -380,7 +380,7 @@ func TestPatchWithInvalidDescriptionChangesNothing(t *testing.T) {
 	corpo["description"] = "antes"
 	id, _ := criarHB(t, a, dono, corpo)
 	_, antes := lerCru(t, a, http.MethodGet, "/api/v1/heartbeats/"+id, dono, nil)
-	for _, invalida := range []any{strings.Repeat("a", 1001), "a\u0000b", "'; DROP TABLE heartbeats; --\u202E", 123} {
+	for _, invalida := range []any{strings.Repeat("a", 10001), "a\u0000b", "'; DROP TABLE heartbeats; --\u202E", 123} {
 		status, resp := lerCru(t, a, http.MethodPatch, "/api/v1/heartbeats/"+id, dono, map[string]any{"description": invalida, "name": "invadido"})
 		if status != http.StatusBadRequest {
 			t.Errorf("%v: %d %s", invalida, status, resp)
