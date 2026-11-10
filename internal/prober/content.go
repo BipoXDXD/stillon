@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"strconv"
+	"unicode/utf8"
 
 	"github.com/BipoXDXD/stillon/internal/prober/safedial"
 	"github.com/BipoXDXD/stillon/internal/targets"
@@ -226,11 +227,12 @@ func (c *cursor) lerString() []byte {
 }
 
 // chaveIgual compara a chave crua com o token já decodificado do ponteiro.
-// Sem barra invertida, a chave crua é a própria chave e a comparação não
-// aloca; com escape, ela é decodificada antes.
+// Sem barra invertida e em UTF-8 válido, a chave crua é a própria chave e a
+// comparação não aloca; com escape ou com byte inválido, ela é decodificada
+// antes, porque o encoding/json troca cada byte inválido por U+FFFD.
 func chaveIgual(crua []byte, token string) bool {
 	miolo := crua[1 : len(crua)-1]
-	if bytes.IndexByte(miolo, '\\') < 0 {
+	if bytes.IndexByte(miolo, '\\') < 0 && utf8.Valid(miolo) {
 		return string(miolo) == token
 	}
 	var chave string

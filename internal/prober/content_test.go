@@ -49,6 +49,7 @@ func TestAvaliarConteudo(t *testing.T) {
 		{"json chave com barra (token já decodificado)", json("1", "a/b"), `{"a/b":1}`, false, ""},
 		{"json chave com escape no corpo", json("1", "a/b"), `{"a\/b":1}`, false, ""},
 		{"json chave escapada repetida: vale a última", json("2", "ab"), `{"ab":1,"a\u0062":2}`, false, ""},
+		{"json chave com UTF-8 inválido vira U+FFFD", json("1", "\uFFFD"), "{\"\xff\":1}", false, ""},
 		{"json forma de texto: string \"1\" passa como 1", json("1", "n"), `{"n":"1"}`, false, ""},
 		{"json forma de texto: string \"null\" passa como null", json("null", "a"), `{"a":"null"}`, false, ""},
 		{"json última repetida sem o caminho", json("ok", "a", "b"), `{"a":{"b":"ok"},"a":1}`, false, KindContentMismatch},
@@ -268,6 +269,7 @@ func FuzzEscalarNoPonteiro(f *testing.F) {
 		{`{"a":1} {"a":2}`, "a"},
 		{`{"a":tru}`, "a"},
 		{`[[[[[[]]]]]]`, "0/0"},
+		{"{\"\xff\":1}", "\uFFFD"},
 	} {
 		f.Add([]byte(s.corpo), s.ponteiro)
 	}
