@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -297,4 +298,104 @@ func TestDownByStatusStillReadsTheCertificate(t *testing.T) {
 		t.Fatalf("res = %+v, queria down/http_status/500", res)
 	}
 	conferirValidade(t, res, intermediarioAte)
+}
+
+// Minor 6 da revisão de segurança do #246. Os dois certificados que o dono vai
+// ver no aviso (vencido e emitido para outro nome) falham a verificação no
+// handshake: a sonda sai down/tls e não há leitura. Sabotagem: no coletor,
+// guardar os UnverifiedCertificates do CertificateVerificationError com o host
+// do GetConn como ServerName ("mostrar a data do vencido") faz os dois casos
+// lerem uma validade.
+func TestInvalidCertificateRecordsNothing(t *testing.T) {
+	vencidaEm := agoraDoTLS.Add(-24 * time.Hour)
+	casos := []struct {
+		nome, hostDoCertificado string
+		folhaAte                time.Time
+	}{
+		{nome: "vencido", hostDoCertificado: hostSonda, folhaAte: vencidaEm},
+		{nome: "emitido para outro nome", hostDoCertificado: hostOutro, folhaAte: folhaAte},
+	}
+	for _, c := range casos {
+		t.Run(c.nome, func(t *testing.T) {
+			resolverDeTeste(t, "127.0.0.1")
+			srv, raiz := servidorTLS(t, c.hostDoCertificado, c.folhaAte, false, responder200)
+			client := clienteComRaiz(t, raiz, enderecoDe(t, srv))
+
+			res := Probe(t.Context(), client, especificacao(urlDe(t, "https", hostSonda, srv)))
+
+			if res.Status != StatusDown || res.ErrorKind != KindTLS {
+				t.Fatalf("res = %+v, queria down/tls", res)
+			}
+			conferirValidade(t, res, time.Time{})
+		})
+	}
+}
+
+// ouvinteContado conta as conexões que o servidor aceitou. A discagem do
+// cliente só termina depois do Accept, então a contagem lida depois do Probe
+// já inclui toda conexão que a sonda abriu.
+type ouvinteContado struct {
+	net.Listener
+	aceitas atomic.Int32
+}
+
+func (o *ouvinteContado) Accept() (net.Conn, error) {
+	conn, err := o.Listener.Accept()
+	if err == nil {
+		o.aceitas.Add(1)
+	}
+	return conn, err
+}
+
+// servidorTLSContado é o servidorTLS com o ouvinte que conta conexões.
+func servidorTLSContado(t *testing.T, host string) (*httptest.Server, *x509.Certificate, *ouvinteContado) {
+	t.Helper()
+	raiz, cert := cadeiaDeTeste(t, host, folhaAte, intermediarioAte)
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(responder200))
+	ouvinte := &ouvinteContado{Listener: srv.Listener}
+	srv.Listener = ouvinte
+	srv.TLS = &tls.Config{Certificates: []tls.Certificate{cert}}
+	srv.StartTLS()
+	t.Cleanup(srv.Close)
+	return srv, raiz, ouvinte
+}
+
+// Minor 5 da revisão de segurança do #246. A leitura do certificado vem do
+// handshake que o transporte do safedial já faz, e de nenhuma outra conexão:
+// um destino que a lista fixa bloqueia (aqui, o loopback não liberado) não
+// recebe conexão nem gera leitura, e um destino liberado recebe exatamente a
+// conexão da sonda. Sabotagem: depois da sonda, discar o host com
+// tls.DialWithDialer e o TLSClientConfig do transporte para ler o certificado
+// "de verdade" (a abordagem B da spec) faz o bloqueado ler a validade e o
+// liberado receber duas conexões.
+func TestCertificateIsReadOnlyThroughTheSafedialConnection(t *testing.T) {
+	t.Run("destino bloqueado não gera leitura", func(t *testing.T) {
+		resolverDeTeste(t, "127.0.0.1")
+		srv, raiz, ouvinte := servidorTLSContado(t, hostSonda)
+		client := clienteComRaiz(t, raiz) // nenhum endereço liberado
+
+		res := Probe(t.Context(), client, especificacao(urlDe(t, "https", hostSonda, srv)))
+
+		if res.Status != StatusDown || res.ErrorKind != KindBlocked {
+			t.Fatalf("res = %+v, queria down/blocked", res)
+		}
+		conferirValidade(t, res, time.Time{})
+		if n := ouvinte.aceitas.Load(); n != 0 {
+			t.Errorf("o servidor bloqueado aceitou %d conexões; queria nenhuma", n)
+		}
+	})
+
+	t.Run("destino liberado recebe só a conexão da sonda", func(t *testing.T) {
+		resolverDeTeste(t, "127.0.0.1")
+		srv, raiz, ouvinte := servidorTLSContado(t, hostSonda)
+		client := clienteComRaiz(t, raiz, enderecoDe(t, srv))
+
+		res := Probe(t.Context(), client, especificacao(urlDe(t, "https", hostSonda, srv)))
+
+		conferirUp(t, res)
+		conferirValidade(t, res, intermediarioAte)
+		if n := ouvinte.aceitas.Load(); n != 1 {
+			t.Errorf("o servidor aceitou %d conexões; queria 1, a da sonda", n)
+		}
+	})
 }
