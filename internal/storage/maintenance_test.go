@@ -246,7 +246,7 @@ func TestRetentionDeletesOldHeartbeatEvents(t *testing.T) {
 	vencido, noLimite := hoje.Add(-storage.HeartbeatEventsRetention-time.Second), hoje.Add(-storage.HeartbeatEventsRetention)
 	err := storage.InProberTx(ctx, pool, func(q *db.Queries) error {
 		for _, em := range []time.Time{vencido, noLimite} {
-			if err := q.InsertHeartbeatEvent(ctx, db.InsertHeartbeatEventParams{ID: novoID(), HeartbeatID: hb, At: em, Kind: "success"}); err != nil {
+			if err := q.InsertHeartbeatEvent(ctx, db.InsertHeartbeatEventParams{ID: novoID(), HeartbeatID: hb, At: em, Kind: "success", Source: "ping"}); err != nil {
 				return err
 			}
 		}

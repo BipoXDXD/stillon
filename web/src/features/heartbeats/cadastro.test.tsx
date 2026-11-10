@@ -91,7 +91,8 @@ describe('cadastro', () => {
         for (const codigo of d.querySelectorAll('code')) vistos.push(codigo.textContent ?? '')
       }
       const exemplos = vistos.filter((t) => t !== PING_URL)
-      expect(exemplos).toHaveLength(8)
+      // curl tem 6 (com o run id e o registro), e as outras abas, 1 cada.
+      expect(exemplos).toHaveLength(10)
       for (const t of exemplos) {
         expect(t).not.toMatch(/\bGET\b/)
         expect(t).toMatch(/POST|Post/)
@@ -99,6 +100,24 @@ describe('cadastro', () => {
       expect(exemplos.find((t) => t.startsWith('wget'))).toContain('--method=POST')
       expect(within(d).getByText('Só POST: um GET responde 405, para que prévia de link e scanner não contem como sinal.')).toBeInTheDocument()
     })
+  })
+
+  // As aspas são parte do exemplo: sem elas, o `?` é glob no zsh.
+  // Sabotagem: tirar as aspas, ou prometer guardar o corpo do /log.
+  it('mostra os exemplos de run id e de registro', async () => {
+    const r = await renderizarPainel('/heartbeats/new')
+    await cadastrar(r)
+    const d = await dialogo()
+    const curl = 'curl -fsS -m 10 --retry 3 -o /dev/null -X POST'
+    expect(within(d).getByText('Com run id (execuções sobrepostas)')).toBeInTheDocument()
+    expect(
+      within(d).getByText(`RID=$(uuidgen); ${curl} "${PING_URL}/start?rid=$RID"; tarefa.sh; ${curl} "${PING_URL}/$??rid=$RID"`),
+    ).toBeInTheDocument()
+    expect(within(d).getByText('Registrar uma linha, sem mexer no prazo')).toBeInTheDocument()
+    expect(within(d).getByText(`${curl} --data-binary @- "${PING_URL}/log"`)).toBeInTheDocument()
+    expect(within(d).getByText('O conteúdo não é guardado.')).toBeInTheDocument()
+    expect(within(d).getByRole('button', { name: 'Copiar o exemplo com run id' })).toBeInTheDocument()
+    expect(within(d).getByRole('button', { name: 'Copiar o exemplo de registro' })).toBeInTheDocument()
   })
 
   // Esc e o clique fora não fecham: a URL não volta. Sabotagem: aoMudar fechando, sem o `travado`.
@@ -291,6 +310,65 @@ describe('a URL de ping é segredo', () => {
       console: JSON.stringify(espioes.flatMap((s) => s.mock.calls)),
     }
     for (const [lugar, conteudo] of Object.entries(lugares)) expect(`${lugar}: ${conteudo}`).not.toContain(CANARIO)
+  })
+})
+
+const RETOMAR = 'Retomar sozinho quando chegar um sucesso'
+
+function avancado(): HTMLDetailsElement {
+  const d = screen.getByText('Avançado').closest('details')
+  if (d === null) throw new Error('o formulário não tem o Avançado')
+  return d
+}
+
+describe('retomada por ping no Avançado', () => {
+  // Sabotagem: details com open fixo → começa aberto.
+  it('na criação, o Avançado começa fechado, e marcar a caixa manda ping_resumes', async () => {
+    const r = await renderizarPainel('/heartbeats/new')
+    await r.usuario.type(await screen.findByLabelText('Nome'), 'Backup')
+    expect(avancado().open).toBe(false)
+    await r.usuario.click(screen.getByText('Avançado'))
+    expect(avancado().open).toBe(true)
+    const caixa = screen.getByRole('checkbox', { name: RETOMAR })
+    expect(caixa).not.toBeChecked()
+    expect(caixa).toHaveAccessibleDescription('Uma tarefa pausada volta a ser vigiada no primeiro sinal de sucesso.')
+    await r.usuario.click(caixa)
+    await r.usuario.click(screen.getByRole('button', { name: 'Cadastrar' }))
+    await dialogo()
+    expect(r.falsa.corpos('POST /heartbeats')).toEqual([
+      { name: 'Backup', schedule: { kind: 'period', period_sec: 86400 }, grace_sec: 300, ping_resumes: true },
+    ])
+  })
+
+  // Sabotagem: open só pelo estado inicial → o erro fica escondido no fechado.
+  it('o erro do servidor no campo abre o Avançado e marca a caixa', async () => {
+    const r = await renderizarPainel('/heartbeats/new')
+    r.falsa.estado.forcar.set('POST /heartbeats', { status: 400, code: 'validation_failed', fields: [{ field: 'ping_resumes', reason: 'invalid' }] })
+    await cadastrar(r)
+    expect(await screen.findByText('Valor inválido.')).toBeInTheDocument()
+    expect(avancado().open).toBe(true)
+    expect(screen.getByRole('checkbox', { name: RETOMAR })).toHaveAttribute('aria-invalid', 'true')
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  // Sabotagem: open fixo em false → quem ligou não vê a opção ligada.
+  it('na edição de quem retoma por ping, o Avançado começa aberto, e desmarcar manda false', async () => {
+    const r = await detalheCom({ ping_resumes: true })
+    await r.usuario.click(screen.getByRole('link', { name: 'Editar' }))
+    const caixa = await screen.findByRole('checkbox', { name: RETOMAR })
+    expect(avancado().open).toBe(true)
+    expect(caixa).toBeChecked()
+    await r.usuario.click(caixa)
+    await r.usuario.click(screen.getByRole('button', { name: 'Salvar' }))
+    await screen.findByRole('heading', { level: 1, name: 'Backup' })
+    expect(r.falsa.corpos('PATCH /heartbeats/:id')).toEqual([{ ping_resumes: false }])
+  })
+
+  it('na edição de quem não retoma, o Avançado começa fechado', async () => {
+    const r = await detalheCom({ ping_resumes: false })
+    await r.usuario.click(screen.getByRole('link', { name: 'Editar' }))
+    await screen.findByLabelText('Nome')
+    expect(avancado().open).toBe(false)
   })
 })
 

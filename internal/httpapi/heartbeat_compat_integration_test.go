@@ -152,6 +152,7 @@ func TestPatchOnUnknownScheduleConflicts(t *testing.T) {
 		{"name": "nome novo"},
 		{"enabled": false},
 		{"schedule": map[string]any{"kind": "period", "period_sec": 3600}},
+		{"ping_resumes": true},
 	}
 	for _, patch := range patches {
 		a.clk.Advance(time.Minute)
@@ -161,9 +162,9 @@ func TestPatchOnUnknownScheduleConflicts(t *testing.T) {
 		}
 		h := linhaDoHeartbeat(t, a, id)
 		if h.Name != "backup noturno" || !h.Enabled || !h.DeadlineAt.Equal(prazoGravado) ||
-			h.PeriodSec != nil || h.CronExpr != nil {
-			t.Errorf("PATCH %v gravou: nome %q, enabled %v, prazo %v, período %s, cron %s",
-				patch, h.Name, h.Enabled, h.DeadlineAt, valorDe(h.PeriodSec), valorDe(h.CronExpr))
+			h.PeriodSec != nil || h.CronExpr != nil || h.PingResumes {
+			t.Errorf("PATCH %v gravou: nome %q, enabled %v, prazo %v, período %s, cron %s, ping_resumes %v",
+				patch, h.Name, h.Enabled, h.DeadlineAt, valorDe(h.PeriodSec), valorDe(h.CronExpr), h.PingResumes)
 		}
 	}
 }

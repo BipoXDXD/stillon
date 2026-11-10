@@ -16,6 +16,25 @@ import (
 	"github.com/BipoXDXD/stillon/internal/prober/safedial"
 )
 
+// A produção verifica o TLS com as raízes do sistema: nenhum TLSClientConfig
+// próprio, logo nem raiz de teste nem InsecureSkipVerify. A CA de teste entra
+// só no transporte montado pelo próprio teste. Sabotagem: TLSClientConfig com
+// InsecureSkipVerify em newTransport reprova este teste.
+//
+// Ele olha o transporte antes do primeiro RoundTrip, e não pode ser movido
+// para depois de uma requisição: no primeiro uso, o ForceAttemptHTTP2 cria um
+// TLSClientConfig vazio, e o nil deixaria de valer.
+func TestProductionClientKeepsDefaultVerification(t *testing.T) {
+	client := safedial.NewClient(0)
+	transport, ok := client.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("transporte de produção = %T, queria *http.Transport", client.Transport)
+	}
+	if transport.TLSClientConfig != nil {
+		t.Errorf("TLSClientConfig = %+v, queria nil (verificação padrão)", transport.TLSClientConfig)
+	}
+}
+
 // A comparação acompanha o host que net/http disca, não o case folding do
 // Unicode cru. Sabotagem: substituir a canonicalização por strings.EqualFold.
 func TestCheckRedirectComparesCanonicalIDNAHosts(t *testing.T) {

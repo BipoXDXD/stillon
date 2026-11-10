@@ -109,15 +109,16 @@ const CAMPOS_DO_ALVO = [
   'enabled',
   'headers',
   'tags',
+  'tls_warn',
 ]
-const CAMPOS_DO_HEARTBEAT = ['name', 'description', 'tags', 'schedule', 'grace_sec', 'enabled']
+const CAMPOS_DO_HEARTBEAT = ['name', 'description', 'tags', 'schedule', 'grace_sec', 'enabled', 'ping_resumes']
 const CAMPOS_DO_AGENDAMENTO = ['kind', 'period_sec', 'expr', 'timezone']
 const CAMPOS_DA_PAGINA = ['slug', 'title', 'published', 'items']
 const CAMPOS_DO_ITEM_DA_PAGINA = ['target_id', 'display_name']
 // Os campos do PATCH em que null é 400, na ordem de recusouNulo no servidor. Nos
 // outros (tags, description, headers, degraded_threshold_ms), null limpa.
-const OBRIGATORIOS_DO_ALVO = ['name', 'url', 'method', 'interval_sec', 'timeout_ms', 'expected_status', 'enabled']
-const OBRIGATORIOS_DO_HEARTBEAT = ['name', 'schedule', 'grace_sec', 'enabled']
+const OBRIGATORIOS_DO_ALVO = ['name', 'url', 'method', 'interval_sec', 'timeout_ms', 'expected_status', 'enabled', 'tls_warn']
+const OBRIGATORIOS_DO_HEARTBEAT = ['name', 'schedule', 'grace_sec', 'enabled', 'ping_resumes']
 const OBRIGATORIOS_DA_PAGINA = ['slug', 'title', 'published', 'items']
 const PROVAS_DO_2FA = ['password', 'code', 'recovery_code']
 
@@ -467,6 +468,10 @@ export function criarApiFalsa() {
         enabled: corpo.enabled !== false,
         header_names: Object.keys((corpo.headers as Json | undefined) ?? {}).sort(),
         tags: (corpo.tags as string[] | undefined) ?? [],
+        // Como o servidor: o aviso de certificado nasce ligado, e a leitura
+        // só existe depois da primeira sonda.
+        tls_warn: corpo.tls_warn !== false,
+        tls: null,
         created_at: agora().toISOString(),
       }
       st.alvos.push(alvo)
@@ -489,6 +494,9 @@ export function criarApiFalsa() {
       Object.assign(a, resto)
       if (headers !== undefined) a.header_names = Object.keys((headers as Json | null) ?? {}).sort()
       else if (outraOrigem) a.header_names = []
+      // Como mudouDeDestino no servidor: outra origem é outro certificado, e a
+      // leitura do anterior sai junto.
+      if (outraOrigem) a.tls = null
       return HttpResponse.json(a)
     })),
     rota('delete', '/targets/:id', ({ params }) => {
@@ -535,6 +543,7 @@ export function criarApiFalsa() {
         enabled: true,
         schedule: corpo.schedule as Entrada<typeof Heartbeat>['schedule'],
         grace_sec: corpo.grace_sec === undefined ? 300 : Number(corpo.grace_sec),
+        ping_resumes: corpo.ping_resumes === true,
         state: 'waiting' as const,
         deadline_at: primeiroPrazo(corpo.grace_sec === undefined ? 300 : Number(corpo.grace_sec)),
         last_ping_at: null,
@@ -617,6 +626,28 @@ export function criarApiFalsa() {
       if (!st.heartbeats.some((x) => x.id === params.id)) return erro(404, 'not_found')
       st.eventos = []
       return new HttpResponse(null, { status: 204 })
+    }),
+    // PingNow do servidor: um sucesso com source 'panel'. O log ganha a linha,
+    // o prazo recomeça e o sucesso tira o failing. O incidente aberto fica
+    // (registrarSinal não mexe nele), e com ele o statusDe segue em late.
+    rota('post', '/heartbeats/:id/ping-now', ({ params }) => {
+      const h = st.heartbeats.find((x) => x.id === params.id)
+      if (!h) return erro(404, 'not_found')
+      const quando = agora().toISOString()
+      st.eventos = [
+        { id: `ev-painel-${st.eventos.length + 1}`, at: quando, kind: 'success', runtime_ms: null, exit_code: null, run_id: null, source: 'panel' },
+        ...st.eventos,
+      ]
+      st.ultimosSinais.set(h.id, 'success')
+      Object.assign(h, {
+        last_ping_at: quando,
+        last_success_at: quando,
+        last_start_at: null,
+        deadline_at: primeiroPrazo(h.grace_sec),
+        state: 'up',
+      })
+      h.state = statusDe(h)
+      return HttpResponse.json(h)
     }),
     rota('post', '/heartbeats/:id/token/rotate', ({ params }) => {
       const h = st.heartbeats.find((x) => x.id === params.id)

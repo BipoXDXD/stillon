@@ -378,7 +378,7 @@ describe('PATCH com null em campo obrigatório', () => {
       caminho: '/targets/x1',
       colecao: 'alvos' as const,
       criar: () => alvo({ id: 'x1', name: 'antes', tags: ['t'] }),
-      obrigatorios: ['name', 'url', 'method', 'interval_sec', 'timeout_ms', 'expected_status', 'enabled'],
+      obrigatorios: ['name', 'url', 'method', 'interval_sec', 'timeout_ms', 'expected_status', 'enabled', 'tls_warn'],
       junto: { tags: [] },
     },
     {
@@ -435,6 +435,38 @@ describe('PATCH com null em campo obrigatório', () => {
     const falsa = apiLogada()
     falsa.estado[colecao] = [criar() as never]
     expect((await pedir('PATCH', caminho, { [campo]: null })).status).toBe(200)
+  })
+})
+
+// O certificado do alvo (Tarefa 6 do PR 6): tls_warn nasce ligado, tls nasce
+// null, e outra origem apaga a leitura do anterior, como mudouDeDestino.
+describe('certificado do alvo (targethandlers do servidor)', () => {
+  const leitura = { not_after: '2026-12-01T00:00:00Z', observed_at: '2026-11-10T00:00:00Z' }
+  const novo = { name: 'n', url: 'https://exemplo.com/', method: 'GET', interval_sec: 60, timeout_ms: 1000, expected_status: 200 }
+
+  it('POST sem tls_warn nasce ligado e sem leitura', async () => {
+    apiLogada()
+    expect(await (await pedir('POST', '/targets', novo)).json()).toMatchObject({ tls_warn: true, tls: null })
+  })
+
+  it('POST com tls_warn false grava false', async () => {
+    apiLogada()
+    expect(await (await pedir('POST', '/targets', { ...novo, tls_warn: false })).json()).toMatchObject({ tls_warn: false })
+  })
+
+  it('tls é só de saída: no POST é campo desconhecido', async () => {
+    apiLogada()
+    expect((await pedir('POST', '/targets', { ...novo, tls: leitura })).status).toBe(400)
+  })
+
+  it.each([
+    { url: 'https://api.exemplo.com/outro', tls: leitura },
+    { url: 'https://outro.exemplo.com/health', tls: null },
+    { url: 'http://api.exemplo.com/health', tls: null },
+  ])('PATCH para $url deixa tls $tls', async ({ url, tls }) => {
+    const falsa = apiLogada()
+    falsa.estado.alvos = [alvo({ id: 'x1', tls: leitura })]
+    expect(await (await pedir('PATCH', '/targets/x1', { url })).json()).toMatchObject({ tls })
   })
 })
 

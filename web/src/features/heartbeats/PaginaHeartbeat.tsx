@@ -17,11 +17,12 @@ import { mensagemDe, textoDaCausa } from '@/lib/api/mensagens'
 import type { Heartbeat } from '@/lib/api/schemas'
 import { dataHora } from '@/lib/format'
 import { NavegacaoDaLista } from '@/features/painel/NavegacaoDaLista'
+import { assertUnreachable } from '@/lib/utils'
 import { DialogoDaUrlDePing } from './DialogoDaUrlDePing'
 import { comoEditavel } from './esquema'
 import { EventosDoHeartbeat } from './EventosDoHeartbeat'
 import { IncidentesDoHeartbeat } from './IncidentesDoHeartbeat'
-import { estadoDoHeartbeat, inicioEmCurso, prazoVencido, tempoDeExecucao, textoDaDuracao, textoDaEspera, textoDoAgendamento, textoDoHeartbeat } from './estado'
+import { estadoDoHeartbeat, inicioEmCurso, prazoVencido, tempoDeExecucao, textoDaDuracao, textoDaEspera, textoDaTolerancia, textoDoAgendamento, textoDoHeartbeat } from './estado'
 
 // De um detalhe a outro a rota é a mesma: a key recomeça a tela, como a do alvo.
 export function PaginaHeartbeat() {
@@ -138,6 +139,21 @@ function DetalheDoHeartbeat({ id }: { id: string }) {
     setUrlNova(null)
   }
 
+  // A resposta já é o heartbeat novo: ela entra no cache antes do refetch, e
+  // um atraso só por prazo não volta a dizer "Atrasado" no intervalo. Com
+  // incidente aberto a resposta segue late: o sinal não fecha o incidente.
+  // Os refetches não seguram o botão, porque a tela já mostra o que o servidor
+  // gravou.
+  const sinalizar = () =>
+    executar(async () => {
+      const atualizado = await api.sinalizarAgora(id)
+      qc.setQueryData(chaves.heartbeat(id), atualizado)
+      void qc.invalidateQueries({ queryKey: chaves.heartbeats, exact: true })
+      // Sem exact: o detalhe, o log e os incidentes.
+      void qc.invalidateQueries({ queryKey: chaves.heartbeat(id) })
+      avisar('Sinal de sucesso enviado.')
+    }, null)
+
   return (
     <EstadoDaConsulta consulta={consulta}>
       {(hb) => (
@@ -151,6 +167,9 @@ function DetalheDoHeartbeat({ id }: { id: string }) {
                 <ListaDeTags tags={hb.tags} />
               </div>
               <div className="flex flex-wrap gap-2">
+                <Botao tipo="secundario" aria-disabled={ocupado || undefined} onClick={() => void sinalizar()}>
+                  Sinalizar agora
+                </Botao>
                 {/* Num agendamento de versão posterior, todo PATCH e o clone são
                     409 schedule_unsupported: editar, duplicar, pausar e retomar
                     ficam de fora. Apagar, limpar e gerar nova URL seguem. */}
@@ -255,14 +274,28 @@ function UrlDePing({ aoGerar }: { aoGerar: () => void }) {
 }
 
 function fraseDoEstado(hb: Heartbeat, agora: Date): string | null {
-  if (hb.state === 'late') {
-    const causa = textoDaCausa('heartbeat_late')
-    return prazoVencido(hb, agora) ? `${causa}: o prazo era ${dataHora(hb.deadline_at)}.` : `${causa}. O incidente segue aberto até um sinal de sucesso.`
+  switch (hb.state) {
+    case 'late':
+      return fraseDoAtraso(hb, agora)
+    case 'failing':
+      return `${textoDaCausa('heartbeat_failed')}.`
+    case 'grace':
+      return textoDaTolerancia(hb)
+    case 'waiting':
+      // Num agendamento de versão posterior a data guardada não é prazo (Prazo).
+      return hb.schedule.kind === 'unknown' ? `${textoDaEspera(hb)}.` : `${textoDaEspera(hb)}, até ${dataHora(hb.deadline_at)}.`
+    case 'up':
+    case 'paused':
+    case 'unknown':
+      return null
+    default:
+      return assertUnreachable(hb.state)
   }
-  if (hb.state === 'failing') return `${textoDaCausa('heartbeat_failed')}.`
-  if (hb.state !== 'waiting') return null
-  // Num agendamento de versão posterior a data guardada não é prazo (Prazo).
-  return hb.schedule.kind === 'unknown' ? `${textoDaEspera(hb)}.` : `${textoDaEspera(hb)}, até ${dataHora(hb.deadline_at)}.`
+}
+
+function fraseDoAtraso(hb: Heartbeat, agora: Date): string {
+  const causa = textoDaCausa('heartbeat_late')
+  return prazoVencido(hb, agora) ? `${causa}: o prazo era ${dataHora(hb.deadline_at)}.` : `${causa}. O incidente segue aberto até um sinal de sucesso.`
 }
 
 const quando = (iso: string | null) => (iso === null ? 'Nunca' : dataHora(iso))
@@ -275,6 +308,8 @@ const PRAZO_NAO_ACOMPANHADO = 'Prazo não acompanhado nesta versão'
 function Prazo({ hb, agora }: { hb: Heartbeat; agora: Date }) {
   if (hb.state === 'paused') return null
   if (hb.schedule.kind === 'unknown') return <Dado nome="Prazo" valor={PRAZO_NAO_ACOMPANHADO} />
+  // Em tolerância o prazo esperado já passou, e a data guardada é a do alarme.
+  if (hb.state === 'grace') return <Dado nome="Alarme" valor={dataHora(hb.deadline_at)} />
   return <Dado nome={prazoVencido(hb, agora) ? 'Prazo vencido' : 'Próximo prazo'} valor={dataHora(hb.deadline_at)} />
 }
 

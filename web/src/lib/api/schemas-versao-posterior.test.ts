@@ -36,14 +36,14 @@ describe('Agendamento', () => {
 })
 
 describe('EventoDeHeartbeat.kind', () => {
-  const evento = { id: 'ev-1', at: '2026-09-24T11:58:00Z', runtime_ms: null, exit_code: null }
+  const evento = { id: 'ev-1', at: '2026-09-24T11:58:00Z', runtime_ms: null, exit_code: null, run_id: null, source: 'ping' }
 
-  it.each(['start', 'success', 'fail'])('%s fica como veio', (kind) => {
+  it.each(['start', 'success', 'fail', 'log'])('%s fica como veio', (kind) => {
     expect(EventoDeHeartbeat.parse({ ...evento, kind }).kind).toBe(kind)
   })
 
   it('tipo desconhecido vira unknown', () => {
-    expect(EventoDeHeartbeat.parse({ ...evento, kind: 'log' }).kind).toBe('unknown')
+    expect(EventoDeHeartbeat.parse({ ...evento, kind: 'futuro' }).kind).toBe('unknown')
   })
 
   it('kind que não é texto continua falhando', () => {
@@ -51,13 +51,49 @@ describe('EventoDeHeartbeat.kind', () => {
   })
 })
 
+// Ao contrário do kind, a origem e a execução são enums e formas estritas
+// (spec §8): uma origem nova é mudança de contrato, não tolerância.
+describe('EventoDeHeartbeat: origem e execução', () => {
+  const evento = { id: 'ev-1', at: '2026-09-24T11:58:00Z', kind: 'log', runtime_ms: null, exit_code: null }
+
+  it.each(['ping', 'panel'])('origem %s fica como veio', (source) => {
+    expect(EventoDeHeartbeat.parse({ ...evento, run_id: null, source }).source).toBe(source)
+  })
+
+  // Sabotagem: source como z.string() → o parse passa.
+  it('origem fora do enum falha', () => {
+    expect(EventoDeHeartbeat.safeParse({ ...evento, run_id: null, source: 'cron' }).success).toBe(false)
+  })
+
+  it('sem origem falha', () => {
+    expect(EventoDeHeartbeat.safeParse({ ...evento, run_id: null }).success).toBe(false)
+  })
+
+  it('execução canônica fica como veio, e null também', () => {
+    const rid = '0b3f6c2e-9a1d-4e7f-8c55-1234567890ab'
+    expect(EventoDeHeartbeat.parse({ ...evento, run_id: rid, source: 'ping' }).run_id).toBe(rid)
+    expect(EventoDeHeartbeat.parse({ ...evento, run_id: null, source: 'ping' }).run_id).toBeNull()
+  })
+
+  // O servidor aceita qualquer hex 8-4-4-4-12, sem exigir versão nem variante.
+  it('execução sem versão de UUID passa', () => {
+    const rid = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+    expect(EventoDeHeartbeat.parse({ ...evento, run_id: rid, source: 'ping' }).run_id).toBe(rid)
+  })
+
+  // Sabotagem: run_id como z.string() → o parse passa.
+  it('execução fora da forma canônica falha', () => {
+    expect(EventoDeHeartbeat.safeParse({ ...evento, run_id: 'abc', source: 'ping' }).success).toBe(false)
+  })
+})
+
 describe('EstadoDoHeartbeat', () => {
-  it.each(['waiting', 'up', 'late', 'failing', 'paused'])('%s fica como veio', (estado) => {
+  it.each(['waiting', 'up', 'late', 'failing', 'paused', 'grace'])('%s fica como veio', (estado) => {
     expect(EstadoDoHeartbeat.parse(estado)).toBe(estado)
   })
 
   it('estado desconhecido vira unknown', () => {
-    expect(EstadoDoHeartbeat.parse('grace')).toBe('unknown')
+    expect(EstadoDoHeartbeat.parse('futuro')).toBe('unknown')
   })
 
   it('estado que não é texto continua falhando', () => {

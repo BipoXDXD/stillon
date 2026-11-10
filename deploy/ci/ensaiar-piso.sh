@@ -1,8 +1,9 @@
 #!/bin/sh
-# Ensaio do piso de rollback (SP1, PR 2): o binário publicado do PR 1 tem de
-# ler e operar as linhas que o schema novo das faixas permite (período e
-# tolerância de até 365 dias, descrição de até 10000 caracteres). Uso, da raiz
-# do repositório:
+# Ensaio do piso de rollback (SP1, PR 2 e PR 3): o binário publicado do PR 1
+# tem de ler e operar as linhas que o schema novo permite. Do PR 2: período e
+# tolerância de até 365 dias, descrição de até 10000 caracteres. Do PR 3:
+# eventos `log`, com run_id e source, last_run_id e ping_resumes, que o piso
+# não conhece e não pode apagar ao gravar. Uso, da raiz do repositório:
 #
 #   STILLON_TAG=<tag-do-branch> docker compose build
 #   sh deploy/ci/ensaiar-piso.sh <tag-do-piso> <tag-do-branch>
@@ -49,6 +50,8 @@ EMAIL=demo@stillon.local
 SENHA=demo-stillon-2026
 # 365 dias, o novo teto de período e de tolerância (migration heartbeat_limits).
 UM_ANO=31536000
+# O run id dos pings do ensaio. Fixo, porque o banco nasce vazio a cada ensaio.
+RID=3f6b2c1e-8d4a-4f0b-9c7e-5a1d2e3f4b5c
 
 TMP=$(mktemp -d)
 CORPO=$TMP/corpo.json
@@ -144,6 +147,29 @@ COPIA=$(jq -r '.id' "$CORPO") || falhar "a cópia não devolveu JSON"
 codigo=$(api POST "/api/v1/heartbeats/$COPIA/events/clear") || falhar "a API não respondeu em $BASE"
 [ "$codigo" = 204 ] || falhar "limpar os eventos da cópia deu $codigo"
 
+# pingar URL [MOTIVO]: POST na URL de ping, que tem de dar 200.
+pingar() {
+    codigo=$(curl -s -o "$CORPO" -w '%{http_code}' -X POST "$1") || falhar "a ping_url não respondeu"
+    [ "$codigo" = 200 ] || falhar "${2:-POST em $1} deu $codigo"
+}
+
+# Do PR 3: uma execução com run id e um log no meio, um sinalizar agora e uma
+# tarefa pausada com ping_resumes, que o piso não pode desligar.
+passo "1b. branch $BRANCH: run id, log, sinalizar agora e ping_resumes"
+pingar "$PING_URL/start?rid=$RID" "POST no /start com rid"
+pingar "$PING_URL/log" "POST no /log"
+pingar "$PING_URL?rid=$RID" "POST de sucesso com rid"
+codigo=$(api POST "/api/v1/heartbeats/$ID/ping-now") || falhar "a API não respondeu em $BASE"
+[ "$codigo" = 200 ] || falhar "sinalizar agora deu $codigo"
+codigo=$(api POST /api/v1/heartbeats \
+    '{"name":"ensaio do piso, pausada","schedule":{"kind":"period","period_sec":3600},"grace_sec":60,"ping_resumes":true}') ||
+    falhar "a API não respondeu em $BASE"
+[ "$codigo" = 201 ] || falhar "criar a tarefa com ping_resumes deu $codigo"
+PAUSADA=$(jq -r '.id' "$CORPO") || falhar "a criação não devolveu JSON"
+codigo=$(api PATCH "/api/v1/heartbeats/$PAUSADA" '{"enabled":false}') || falhar "a API não respondeu em $BASE"
+[ "$codigo" = 200 ] || falhar "pausar a tarefa com ping_resumes deu $codigo"
+[ "$(jq -r '.state' "$CORPO")" = paused ] || falhar "a tarefa com ping_resumes não ficou pausada"
+
 # 2. O rollback: só o app volta ao piso, sobre o mesmo banco.
 passo "2. piso $PISO: troca só o app"
 trocar_app "$PISO"
@@ -151,7 +177,7 @@ entrar
 
 # 3. O piso lê e opera as linhas novas, e recusa gravar acima das suas faixas
 #    sem rebaixar o que já está no banco.
-passo "3. piso $PISO: lista, ping e PATCH"
+passo "3. piso $PISO: lista, eventos, ping e PATCH"
 codigo=$(api GET /api/v1/heartbeats) || falhar "a API não respondeu em $BASE"
 [ "$codigo" = 200 ] || falhar "GET /api/v1/heartbeats no piso deu $codigo"
 anuais=$(jq --argjson s "$UM_ANO" --arg a "$ID" --arg b "$COPIA" \
@@ -159,13 +185,21 @@ anuais=$(jq --argjson s "$UM_ANO" --arg a "$ID" --arg b "$COPIA" \
     falhar "a lista do piso não veio em JSON"
 [ "$anuais" = 2 ] || falhar "a lista do piso trouxe $anuais das 2 tarefas com period_sec $UM_ANO"
 
-codigo=$(curl -s -o "$CORPO" -w '%{http_code}' -X POST "$PING_URL") ||
-    falhar "a ping_url não respondeu"
-[ "$codigo" = 200 ] || falhar "POST na ping_url no piso deu $codigo"
+codigo=$(api GET "/api/v1/heartbeats/$ID/events") || falhar "a API não respondeu em $BASE"
+[ "$codigo" = 200 ] || falhar "GET dos eventos no piso deu $codigo"
+logs=$(jq '[.items[] | select(.kind == "log")] | length' "$CORPO") ||
+    falhar "os eventos do piso não vieram em JSON"
+[ "$logs" -ge 1 ] || falhar "os eventos do piso não trazem o evento log gravado pelo branch"
+
+pingar "$PING_URL" "POST na ping_url no piso"
 
 codigo=$(api PATCH "/api/v1/heartbeats/$ID" '{"name":"ensaio do piso, renomeada"}') ||
     falhar "a API não respondeu em $BASE"
 [ "$codigo" = 200 ] || falhar "PATCH de name no piso deu $codigo"
+# O UPDATE do piso não lista ping_resumes: renomear a pausada não pode zerá-lo.
+codigo=$(api PATCH "/api/v1/heartbeats/$PAUSADA" '{"name":"ensaio do piso, pausada e renomeada"}') ||
+    falhar "a API não respondeu em $BASE"
+[ "$codigo" = 200 ] || falhar "PATCH de name da tarefa pausada no piso deu $codigo"
 
 codigo=$(api PATCH "/api/v1/heartbeats/$ID" \
     "{\"schedule\":{\"kind\":\"period\",\"period_sec\":$UM_ANO}}") ||
@@ -184,5 +218,10 @@ codigo=$(api GET "/api/v1/heartbeats/$ID") || falhar "a API não respondeu em $B
 [ "$codigo" = 200 ] || falhar "GET da tarefa de volta ao branch deu $codigo"
 [ "$(jq -r '.schedule.period_sec' "$CORPO")" = "$UM_ANO" ] ||
     falhar "de volta ao branch, a tarefa perdeu o period_sec $UM_ANO"
+codigo=$(api GET "/api/v1/heartbeats/$PAUSADA") || falhar "a API não respondeu em $BASE"
+[ "$codigo" = 200 ] || falhar "GET da tarefa pausada de volta ao branch deu $codigo"
+[ "$(jq -r '.state' "$CORPO")" = paused ] || falhar "de volta ao branch, a tarefa pausada não está mais pausada"
+[ "$(jq -r '.ping_resumes' "$CORPO")" = true ] ||
+    falhar "de volta ao branch, a tarefa pausada perdeu o ping_resumes true"
 
 echo "piso $PISO ensaiado sobre o schema de $BRANCH"

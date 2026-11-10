@@ -19,6 +19,7 @@ import type { Serie } from '@/lib/api/schemas'
 import { ATRASO_DO_SINAL_MS, useAposUmTempo } from '@/lib/atraso'
 import { dataHora, fuso, milissegundos, porcento } from '@/lib/format'
 import { NavegacaoDaLista } from '@/features/painel/NavegacaoDaLista'
+import { CertificadoDoAlvo } from './CertificadoDoAlvo'
 import { GraficoDeLatencia } from './GraficoDeLatencia'
 import { IncidentesRecentes } from './IncidentesRecentes'
 import { ehJanela, JANELAS, resumir, type Janela } from './serie'
@@ -229,6 +230,7 @@ function DetalheDoAlvo({ id }: { id: string }) {
             aoSumir={() => void sumiu()}
             aoErrar={setErro}
           />
+          <CertificadoDoAlvo alvo={a} agora={new Date(alvo.dataUpdatedAt)} />
 
           <section
             className="space-y-4 rounded-padrao border border-borda bg-superficie p-4 sombra-nivel-1 sm:p-6"

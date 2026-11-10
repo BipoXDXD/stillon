@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { Heartbeat } from '@/lib/api/schemas'
 import { heartbeat } from '@/test/fixtures'
-import { comoEditavel, esquemaDoHeartbeat, mensagemDoHeartbeat, paraAlteracao, paraCriacao, valoresDe, valoresPadrao, type ValoresDoHeartbeat } from './esquema'
+import { campoDoServidor, comoEditavel, esquemaDoHeartbeat, mensagemDoHeartbeat, paraAlteracao, paraCriacao, valoresDe, valoresPadrao, type ValoresDoHeartbeat } from './esquema'
 
 const RECUSA_DO_CRON = 'Use os cinco campos, com um disparo que exista: 0 3 * * *. Domingo é 0 ou SUN, não 7; de sexta a domingo, 5,6,0.'
 const valores = (p: Partial<ValoresDoHeartbeat> = {}): ValoresDoHeartbeat => ({ ...valoresPadrao(), name: 'Backup', ...p })
@@ -192,6 +192,44 @@ describe('paraAlteracao', () => {
     expect(paraAlteracao(base, { ...base, tipo: 'cron', expr: '0 3 * * *', timezone: 'UTC' })).toEqual({
       schedule: { kind: 'cron', expr: '0 3 * * *', timezone: 'UTC' },
     })
+  })
+})
+
+describe('retomada por ping no formulário', () => {
+  it('começa desligada', () => {
+    expect(valoresPadrao().pingResumes).toBe(false)
+  })
+
+  // Sabotagem: mandar ping_resumes sempre → o POST padrão leva false.
+  it('desligada, o POST não leva o campo', () => {
+    expect(paraCriacao(valores())).not.toHaveProperty('ping_resumes')
+  })
+
+  it('ligada, o POST leva true', () => {
+    expect(paraCriacao(valores({ pingResumes: true })).ping_resumes).toBe(true)
+  })
+
+  it('valoresDe lê o que o servidor guardou', () => {
+    expect(valoresDe(hb({ ping_resumes: true })).pingResumes).toBe(true)
+    expect(valoresDe(hb({ ping_resumes: false })).pingResumes).toBe(false)
+  })
+
+  // Sabotagem: comparar com o padrão em vez do original → desligar não vai.
+  it.each([
+    [false, true],
+    [true, false],
+  ])('de %s para %s, o PATCH leva só o campo', (antes, depois) => {
+    const original = valoresDe(hb({ ping_resumes: antes }))
+    expect(paraAlteracao(original, { ...original, pingResumes: depois })).toEqual({ ping_resumes: depois })
+  })
+
+  it('sem mudança, nada no PATCH', () => {
+    const original = valoresDe(hb({ ping_resumes: true }))
+    expect(paraAlteracao(original, { ...original })).toEqual({})
+  })
+
+  it('o erro do servidor no campo vai para a caixa', () => {
+    expect(campoDoServidor.ping_resumes).toBe('pingResumes')
   })
 })
 

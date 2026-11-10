@@ -91,6 +91,11 @@ variáveis são segredos de interpolação do recurso no Coolify, nunca arquivos
 
 - **Sonda** alvos HTTP (GET, HEAD ou POST) de 30 s a 24 h, com headers cifrados, status
   esperado, limite de latência para "degradado" e até 8 tags para agrupar e filtrar.
+- **Certificado** do host cadastrado: o detalhe do alvo mostra a validade ("Certificado válido até
+  …, em N dias", ou a data em que venceu), "não se aplica" para `http` ou IP literal e "aguardando a
+  primeira sonda" antes da primeira leitura. Atrás de um balanceador com réplicas de certificados
+  diferentes, a sonda guarda o pior certificado visto. Na API do alvo, `tls` traz `not_after` e
+  `observed_at` (ou `null` sem leitura), e `tls_warn` é aceito no cadastro e no `PATCH` (padrão `true`).
 - **Incidentes** abrem depois de falhas seguidas e fecham depois de sucessos seguidos, com
   histórico por alvo.
 - **Notificações** pelo Discord e por e-mail (Resend), com entrega confiável: saem de uma fila
@@ -101,15 +106,20 @@ variáveis são segredos de interpolação do recurso no Coolify, nunca arquivos
 - **Heartbeats** para tarefas agendadas: a tarefa avisa por `POST` numa URL própria, com período e
   tolerância ou expressão cron com fuso explícito, sinais de início e falha, código de saída, tempo
   de execução, tags e log dos últimos eventos. O cadastro mostra os próximos disparos do cron antes
-  de salvar. Sem aviso no prazo, abre incidente pelos mesmos canais. Eles aparecem na tabela de
-  monitores do painel, junto dos alvos, com a última duração, a execução em curso e os mesmos filtros.
-  Período e tolerância vão até 365 dias, e a descrição até 10000 caracteres. A tarefa pode ser
-  duplicada (`POST /api/v1/heartbeats/{id}/clone`): a cópia ganha o nome com " (cópia)" e sai sem
-  token, eventos, estado nem incidentes da original; a URL de ping nova aparece uma vez só, a cópia
-  conta no limite da conta, e um agendamento que esta versão não entende responde 409. O log de
-  eventos pode ser limpo (`POST /api/v1/heartbeats/{id}/events/clear`, 204), com registro em
-  `audit_log` e sem mexer no prazo nem nos sinais. O diálogo da URL traz exemplos prontos para curl,
-  crontab, wget, Python e PowerShell, todos com `POST`.
+  de salvar. Sem aviso no prazo, abre incidente pelos mesmos canais. Passada a hora esperada, a
+  tarefa fica **em tolerância** e o alarme só sai ao fim dela. O sufixo `/log` registra uma linha
+  sem mexer no prazo (o conteúdo enviado não é guardado), e `?rid=` com um UUID identifica cada
+  execução quando duas se sobrepõem. Com `ping_resumes` ligado, o primeiro sucesso religa uma
+  tarefa pausada; o painel tem "Sinalizar agora" para registrar um sucesso à mão. Eles aparecem
+  na tabela de monitores do painel, junto dos alvos, com a última duração, a execução em curso e
+  os mesmos filtros. Período e tolerância vão até 365 dias, e a descrição até 10000 caracteres. A
+  tarefa pode ser duplicada (`POST /api/v1/heartbeats/{id}/clone`): a cópia ganha o nome com
+  " (cópia)" e sai sem token, eventos, estado nem incidentes da original; a URL de ping nova
+  aparece uma vez só, a cópia conta no limite da conta, e um agendamento que esta versão não
+  entende responde 409. O log de eventos pode ser limpo (`POST /api/v1/heartbeats/{id}/events/clear`,
+  204), com registro em `audit_log` e sem mexer no prazo nem nos sinais. O diálogo da URL traz
+  exemplos prontos para curl (com run id e `/log`), crontab, wget, Python e PowerShell, todos com
+  `POST`.
   ```sh
   curl -fsS -m 10 --retry 3 -X POST https://stillon.tech/ping/SEU-TOKEN/start
   curl -fsS -m 10 --retry 3 -X POST https://stillon.tech/ping/SEU-TOKEN       # ou /fail

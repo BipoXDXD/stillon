@@ -133,6 +133,7 @@ func TestEveryResourceRouteRejectsRevokedFamily(t *testing.T) {
 		{"DELETE /api/v1/heartbeats/{id}", "/api/v1/heartbeats/" + hb, nil},
 		{"POST /api/v1/heartbeats/{id}/token/rotate", "/api/v1/heartbeats/" + hb + "/token/rotate", nil},
 		{"POST /api/v1/heartbeats/{id}/clone", "/api/v1/heartbeats/" + hb + "/clone", nil},
+		{"POST /api/v1/heartbeats/{id}/ping-now", "/api/v1/heartbeats/" + hb + "/ping-now", nil},
 		{"GET /api/v1/heartbeats/cron-preview", "/api/v1/heartbeats/cron-preview?expr=0+3+*+*+*&timezone=UTC", nil},
 		{"GET /api/v1/heartbeats/{id}/events", "/api/v1/heartbeats/" + hb + "/events", nil},
 		{"POST /api/v1/heartbeats/{id}/events/clear", "/api/v1/heartbeats/" + hb + "/events/clear", nil},
