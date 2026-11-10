@@ -335,6 +335,20 @@ func (h *HeartbeatHandlers) RotateToken(w http.ResponseWriter, r *http.Request) 
 	apierr.WriteJSON(w, http.StatusOK, heartbeatWithURLResponse{toHeartbeatResponse(item), h.pingURL(token)})
 }
 
+// Clone é POST /heartbeats/{id}/clone. Como a rotação, ignora o corpo: nada que
+// o cliente mande muda o que a cópia leva.
+func (h *HeartbeatHandlers) Clone(w http.ResponseWriter, r *http.Request) {
+	userID, id, ok := donoEID(w, r)
+	if !ok {
+		return
+	}
+	copia, token, err := h.svc.Clone(r.Context(), userID, id)
+	if h.falhou(w, r, "duplicar heartbeat", err) {
+		return
+	}
+	apierr.WriteJSON(w, http.StatusCreated, heartbeatWithURLResponse{toHeartbeatResponse(copia), h.pingURL(token)})
+}
+
 func (h *HeartbeatHandlers) Events(w http.ResponseWriter, r *http.Request) {
 	userID, id, ok := donoEID(w, r)
 	if !ok {

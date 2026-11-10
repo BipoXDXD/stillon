@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/BipoXDXD/stillon/internal/crypto"
 	"github.com/BipoXDXD/stillon/internal/heartbeat"
@@ -700,6 +701,31 @@ func TestValidateDescription(t *testing.T) {
 				t.Errorf("devolveu %.40q (%d bytes), %v; queria %.40q (%d bytes)", got, len(got), err, c.quer, len(c.quer))
 			case c.motivo != "" && (!errors.As(err, &verr) || verr.Field != c.campo || verr.Reason != c.motivo):
 				t.Errorf("erro %v; queria %s %s", err, c.campo, c.motivo)
+			}
+		})
+	}
+}
+
+// O nome da cópia cabe nos 100 caracteres do cadastro, contados em caracteres:
+// cortar por byte deixaria um nome multibyte curto demais (ou partiria um
+// caractere ao meio).
+func TestCloneName(t *testing.T) {
+	casos := []struct{ nome, entrada, quer string }{
+		{"curto ganha o sufixo", "backup", "backup (cópia)"},
+		{"no teto corta para caber", strings.Repeat("a", 100), strings.Repeat("a", 92) + " (cópia)"},
+		{"92 caracteres cabem sem corte", strings.Repeat("a", 92), strings.Repeat("a", 92) + " (cópia)"},
+		{"93 caracteres perdem um", strings.Repeat("a", 93), strings.Repeat("a", 92) + " (cópia)"},
+		{"multibyte corta por caractere", strings.Repeat("é", 99), strings.Repeat("é", 92) + " (cópia)"},
+		{"espaço deixado pelo corte sai", strings.Repeat("a", 91) + " b...", strings.Repeat("a", 91) + " (cópia)"},
+	}
+	for _, c := range casos {
+		t.Run(c.nome, func(t *testing.T) {
+			got := heartbeat.CloneName(c.entrada)
+			if got != c.quer {
+				t.Errorf("CloneName(%.20q…) = %q, queria %q", c.entrada, got, c.quer)
+			}
+			if n := utf8.RuneCountInString(got); n > heartbeat.MaxNameLength {
+				t.Errorf("%d caracteres, acima de %d", n, heartbeat.MaxNameLength)
 			}
 		})
 	}

@@ -228,6 +228,74 @@ func (s *Service) inserir(ctx context.Context, q *db.Queries, userID uuid.UUID, 
 	return s.responseOf(ctx, q, userID, params.ID)
 }
 
+// CloneSuffix marca o nome da cópia.
+const CloneSuffix = " (cópia)"
+
+// Clone grava uma tarefa nova com a configuração do original (nome com o
+// sufixo, descrição, tags, agendamento, tolerância e enabled) e devolve o token
+// novo, que só existe neste retorno. Não copia token, eventos, last_*, falha,
+// incidentes nem a retomada: a cópia nasce como uma criação, e conta no limite.
+func (s *Service) Clone(ctx context.Context, userID, id uuid.UUID) (Heartbeat, string, error) {
+	novoID, err := uuid.NewV7()
+	if err != nil {
+		return Heartbeat{}, "", fmt.Errorf("gerar id de heartbeat: %w", err)
+	}
+	token, hash := NewPingToken()
+	var out Heartbeat
+	err = storage.InUserTx(ctx, s.pool, userID, func(q *db.Queries) error {
+		original, err := q.GetHeartbeat(ctx, db.GetHeartbeatParams{UserID: userID, ID: id})
+		if err != nil {
+			return notFound(err)
+		}
+		params, err := s.cloneParams(original, novoID, hash)
+		if err != nil {
+			return err
+		}
+		tags, err := q.ListHeartbeatTags(ctx, db.ListHeartbeatTagsParams{UserID: userID, HeartbeatID: id})
+		if err != nil {
+			return fmt.Errorf("ler tags do heartbeat: %w", err)
+		}
+		out, err = s.inserir(ctx, q, userID, params, tags)
+		return err
+	})
+	if err != nil {
+		return Heartbeat{}, "", err
+	}
+	return out, token, nil
+}
+
+func (s *Service) cloneParams(original db.Heartbeat, id uuid.UUID, hash []byte) (db.InsertHeartbeatParams, error) {
+	sch, err := ScheduleFromRow(original.PeriodSec, original.CronExpr, original.Timezone)
+	if err != nil {
+		return db.InsertHeartbeatParams{}, fmt.Errorf("agendamento do heartbeat %s: %w", original.ID, err)
+	}
+	// A cópia regrava o agendamento por scheduleColumns, que não conhece o de
+	// uma versão posterior, e FirstDeadline não saberia calcular o prazo.
+	if !sch.IsKnown() {
+		return db.InsertHeartbeatParams{}, ErrScheduleUnsupported
+	}
+	grace := time.Duration(original.GraceSec) * time.Second
+	now := s.clk.Now()
+	params := db.InsertHeartbeatParams{
+		ID: id, UserID: original.UserID, Name: cloneName(original.Name), Description: original.Description,
+		PingTokenHash: hash, GraceSec: original.GraceSec, Enabled: original.Enabled, CreatedAt: now,
+		DeadlineAt: FirstDeadline(sch, grace, now),
+	}
+	params.PeriodSec, params.CronExpr, params.Timezone = scheduleColumns(sch)
+	return params, nil
+}
+
+// cloneName põe o sufixo e corta o nome, por caractere, para a cópia caber em
+// MaxNameLength. O espaço que o corte deixa no fim sai, para não dobrar o do
+// sufixo.
+func cloneName(name string) string {
+	caben := MaxNameLength - utf8.RuneCountInString(CloneSuffix)
+	if runas := []rune(name); len(runas) > caben {
+		name = string(runas[:caben])
+	}
+	return strings.TrimRight(name, " ") + CloneSuffix
+}
+
 func normalizeTags(cruas []string) ([]string, error) {
 	tags, motivo := rotulo.NormalizeTags(cruas)
 	if motivo != "" {
