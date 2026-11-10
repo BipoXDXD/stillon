@@ -219,6 +219,26 @@ func (q *Queries) DeleteHeartbeat(ctx context.Context, arg DeleteHeartbeatParams
 	return result.RowsAffected(), nil
 }
 
+const deleteHeartbeatEvents = `-- name: DeleteHeartbeatEvents :execrows
+DELETE FROM heartbeat_events e
+ USING heartbeats h
+ WHERE h.id = e.heartbeat_id AND h.user_id = $1 AND e.heartbeat_id = $2
+`
+
+type DeleteHeartbeatEventsParams struct {
+	UserID      uuid.UUID
+	HeartbeatID uuid.UUID
+}
+
+// Limpar o log (SP1): só os eventos; last_*, prazo e incidentes ficam.
+func (q *Queries) DeleteHeartbeatEvents(ctx context.Context, arg DeleteHeartbeatEventsParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteHeartbeatEvents, arg.UserID, arg.HeartbeatID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const deleteHeartbeatTags = `-- name: DeleteHeartbeatTags :exec
 DELETE FROM heartbeat_tags ht
  USING heartbeats h

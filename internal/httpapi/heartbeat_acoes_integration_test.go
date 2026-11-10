@@ -3,6 +3,7 @@ package httpapi_test
 import (
 	"context"
 	"net/http"
+	"reflect"
 	"slices"
 	"sort"
 	"strings"
@@ -15,7 +16,7 @@ import (
 	"github.com/BipoXDXD/stillon/internal/storage/db"
 )
 
-// Ações sobre uma tarefa que já existe (SP1, PR 2): duplicar.
+// Ações sobre uma tarefa que já existe (SP1, PR 2): duplicar e limpar o log.
 
 func clonar(t *testing.T, a *api, token, id string, corpo any) (int, string) {
 	t.Helper()
@@ -228,5 +229,287 @@ func TestCloneIgnoresTheBody(t *testing.T) {
 	_, lista := lerCru(t, a, http.MethodGet, "/api/v1/heartbeats", tokenDe(t, a, outro), nil)
 	if strings.Contains(lista, id) || strings.Contains(lista, "backup noturno") {
 		t.Errorf("a cópia foi para o usuário do corpo: %s", lista)
+	}
+}
+
+// Limpar o log (SP1, PR 2, Task 4).
+
+func limpar(t *testing.T, a *api, token, id string, corpo any) (int, string) {
+	t.Helper()
+	return lerCru(t, a, http.MethodPost, "/api/v1/heartbeats/"+id+"/events/clear", token, corpo)
+}
+
+// pingarOK manda os sinais em ordem, como o curl da tarefa. Sinais iguais em
+// seguida, dentro de heartbeat.RepeatWindow, viram um evento só.
+func pingarOK(t *testing.T, a *api, token string, sufixos ...string) {
+	t.Helper()
+	for _, sufixo := range sufixos {
+		if status, _, corpo := pingar(t, a, "/ping/"+token+sufixo, nil); status != http.StatusOK {
+			t.Fatalf("ping %q: %d %s", sufixo, status, corpo)
+		}
+	}
+}
+
+// registroDeLimpeza é uma linha de audit_log da limpeza do log.
+type registroDeLimpeza struct {
+	userID, entityID *uuid.UUID
+	entity           *string
+	semIP            bool
+	at               time.Time
+}
+
+// registrosDeLimpeza lê audit_log direto: a tabela não tem RLS nem rota.
+func registrosDeLimpeza(t *testing.T, a *api) []registroDeLimpeza {
+	t.Helper()
+	rows, err := a.pool.Query(context.Background(),
+		`SELECT user_id, entity, entity_id, ip_hash IS NULL, at FROM audit_log
+		  WHERE action = 'heartbeat.events_cleared' ORDER BY at, id`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var out []registroDeLimpeza
+	for rows.Next() {
+		var r registroDeLimpeza
+		if err := rows.Scan(&r.userID, &r.entity, &r.entityID, &r.semIP, &r.at); err != nil {
+			t.Fatal(err)
+		}
+		out = append(out, r)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+// conferirUmRegistro exige exatamente a linha de auditoria de quem limpou o
+// log de id, no instante dado e sem hash de IP.
+func conferirUmRegistro(t *testing.T, a *api, id string, quando time.Time) {
+	t.Helper()
+	registros := registrosDeLimpeza(t, a)
+	if len(registros) != 1 {
+		t.Fatalf("%d linhas de auditoria, queria 1", len(registros))
+	}
+	r := registros[0]
+	if r.userID == nil || *r.userID != a.userID {
+		t.Errorf("user_id %s, queria %s", valorDe(r.userID), a.userID)
+	}
+	if r.entity == nil || *r.entity != "heartbeat" {
+		t.Errorf("entity %s, queria heartbeat", valorDe(r.entity))
+	}
+	if r.entityID == nil || r.entityID.String() != id {
+		t.Errorf("entity_id %s, queria %s", valorDe(r.entityID), id)
+	}
+	if !r.semIP {
+		t.Error("a auditoria gravou hash de IP")
+	}
+	if !r.at.Equal(quando) {
+		t.Errorf("at %s, queria %s", r.at, quando)
+	}
+}
+
+func TestClearEventsWritesAudit(t *testing.T) {
+	a := newAPI(t)
+	dono := tokenDe(t, a, a.userID)
+	id, ping := criarHB(t, a, dono, corpoDePeriodo)
+	pingarOK(t, a, ping, "/start", "", "/fail")
+	if n := contarEventos(t, a, uuid.MustParse(id)); n != 3 {
+		t.Fatalf("%d eventos antes de limpar, queria 3", n)
+	}
+	a.clk.Advance(time.Minute)
+	quando := a.clk.Now()
+
+	status, corpo := limpar(t, a, dono, id, nil)
+	if status != http.StatusNoContent || corpo != "" {
+		t.Fatalf("limpar: %d %q, queria 204 sem corpo", status, corpo)
+	}
+	status, corpo = lerCru(t, a, http.MethodGet, "/api/v1/heartbeats/"+id+"/events", dono, nil)
+	if status != http.StatusOK {
+		t.Fatalf("GET events: %d %s", status, corpo)
+	}
+	if itens := decodificar(t, corpo)["items"].([]any); len(itens) != 0 {
+		t.Errorf("o log ficou com %d eventos: %s", len(itens), corpo)
+	}
+	conferirUmRegistro(t, a, id, quando)
+}
+
+// Limpar mexe só no log: os sinais, o prazo, a falha e o incidente aberto
+// ficam exatamente como estavam (spec §7.2).
+func TestClearEventsKeepsTheSignalsAndTheDeadline(t *testing.T) {
+	a := newAPI(t)
+	dono := tokenDe(t, a, a.userID)
+	id, ping := criarHB(t, a, dono, corpoDePeriodo)
+	hb := uuid.MustParse(id)
+	pingarOK(t, a, ping, "/start", "", "/fail")
+	avaliar(t, a)
+	ultimoPing := time.Date(2026, time.March, 4, 1, 2, 3, 0, time.UTC)
+	ultimoSucesso := time.Date(2026, time.March, 4, 0, 59, 0, 0, time.UTC)
+	comoDonoSQL(t, a, `UPDATE heartbeats SET last_ping_at = $2, last_success_at = $3, last_runtime_ms = 4321, deadline_at = $4
+		WHERE id = $1`, hb, ultimoPing, ultimoSucesso, prazoGravado)
+	_, corpo := lerCru(t, a, http.MethodGet, "/api/v1/heartbeats/"+id, dono, nil)
+	incidente, ok := decodificar(t, corpo)["open_incident_id"].(string)
+	if !ok {
+		t.Fatalf("a tarefa precisa de um incidente aberto: %s", corpo)
+	}
+	linhaAntes := linhaDoHeartbeat(t, a, hb)
+
+	if status, corpo := limpar(t, a, dono, id, nil); status != http.StatusNoContent {
+		t.Fatalf("limpar: %d %s", status, corpo)
+	}
+
+	_, corpo = lerCru(t, a, http.MethodGet, "/api/v1/heartbeats/"+id, dono, nil)
+	depois := decodificar(t, corpo)
+	for campo, quer := range map[string]time.Time{"last_ping_at": ultimoPing, "last_success_at": ultimoSucesso, "deadline_at": prazoGravado} {
+		texto, _ := depois[campo].(string)
+		got, err := time.Parse(time.RFC3339Nano, texto)
+		if err != nil || !got.Equal(quer) {
+			t.Errorf("%s = %v, queria %s", campo, depois[campo], quer)
+		}
+	}
+	if depois["last_runtime_ms"] != float64(4321) {
+		t.Errorf("last_runtime_ms = %v, queria 4321", depois["last_runtime_ms"])
+	}
+	if depois["open_incident_id"] != incidente {
+		t.Errorf("open_incident_id = %v, queria %s", depois["open_incident_id"], incidente)
+	}
+	if linhaDepois := linhaDoHeartbeat(t, a, hb); !reflect.DeepEqual(linhaDepois, linhaAntes) {
+		t.Errorf("a linha da tarefa mudou:\nantes  %+v\ndepois %+v", linhaAntes, linhaDepois)
+	}
+	_, corpo = lerCru(t, a, http.MethodGet, "/api/v1/heartbeats/"+id+"/incidents?status=open", dono, nil)
+	abertos := decodificar(t, corpo)["items"].([]any)
+	if len(abertos) != 1 || abertos[0].(map[string]any)["id"] != incidente {
+		t.Errorf("incidentes abertos depois de limpar: %s", corpo)
+	}
+	if n := contarEventos(t, a, hb); n != 0 {
+		t.Errorf("%d eventos depois de limpar, queria 0", n)
+	}
+}
+
+// O pedido de limpar aconteceu mesmo com o log vazio, e fica registrado.
+func TestClearEventsOnAnEmptyLogIsStillNoContent(t *testing.T) {
+	a := newAPI(t)
+	dono := tokenDe(t, a, a.userID)
+	id, _ := criarHB(t, a, dono, corpoDePeriodo)
+	if n := contarEventos(t, a, uuid.MustParse(id)); n != 0 {
+		t.Fatalf("%d eventos numa tarefa nova", n)
+	}
+
+	status, corpo := limpar(t, a, dono, id, nil)
+	if status != http.StatusNoContent || corpo != "" {
+		t.Fatalf("limpar o log vazio: %d %q, queria 204 sem corpo", status, corpo)
+	}
+	conferirUmRegistro(t, a, id, a.clk.Now())
+}
+
+// O log recomeça do zero: o primeiro ping depois de limpar é o único evento.
+func TestPingAfterClearRecordsOneEvent(t *testing.T) {
+	a := newAPI(t)
+	dono := tokenDe(t, a, a.userID)
+	id, ping := criarHB(t, a, dono, corpoDePeriodo)
+	pingarOK(t, a, ping, "/start", "")
+	if status, corpo := limpar(t, a, dono, id, nil); status != http.StatusNoContent {
+		t.Fatalf("limpar: %d %s", status, corpo)
+	}
+	a.clk.Advance(time.Minute)
+	instante := a.clk.Now()
+
+	pingarOK(t, a, ping, "")
+
+	eventos := eventosDoHeartbeat(t, a, uuid.MustParse(id))
+	if len(eventos) != 1 {
+		t.Fatalf("%d eventos depois do ping, queria 1", len(eventos))
+	}
+	if eventos[0].Kind != "success" || !eventos[0].At.Equal(instante) {
+		t.Errorf("evento %s em %s, queria success em %s", eventos[0].Kind, eventos[0].At, instante)
+	}
+	_, corpo := lerCru(t, a, http.MethodGet, "/api/v1/heartbeats/"+id, dono, nil)
+	texto, _ := decodificar(t, corpo)["last_ping_at"].(string)
+	if got, err := time.Parse(time.RFC3339Nano, texto); err != nil || !got.Equal(instante) {
+		t.Errorf("last_ping_at = %q, queria %s", texto, instante)
+	}
+}
+
+// A tarefa alheia é 404 sem dado do dono, e o log dele fica inteiro, sem
+// auditoria em nome de ninguém.
+func TestClearEventsOfAnotherUserIsNotFound(t *testing.T) {
+	a := newAPI(t)
+	dono := tokenDe(t, a, a.userID)
+	id, ping := criarHB(t, a, dono, corpoDePeriodo)
+	pingarOK(t, a, ping, "/start", "")
+	intruso := tokenDe(t, a, outroUsuario(t, a))
+
+	status, corpo := limpar(t, a, intruso, id, nil)
+	if status != http.StatusNotFound {
+		t.Errorf("limpar a tarefa alheia: %d %s, queria 404", status, corpo)
+	}
+	conferirSemDadosDoDono(t, "limpar a tarefa alheia", corpo, []string{id, "backup noturno"})
+	if n := contarEventos(t, a, uuid.MustParse(id)); n != 2 {
+		t.Errorf("o dono ficou com %d eventos, queria 2", n)
+	}
+	if registros := registrosDeLimpeza(t, a); len(registros) != 0 {
+		t.Errorf("%d linhas de auditoria depois da recusa, queria 0", len(registros))
+	}
+}
+
+// Nenhum campo do corpo escolhe o que sai: o log da tarefa da rota sai
+// inteiro, e o da tarefa nomeada no corpo fica.
+func TestClearEventsIgnoresTheBody(t *testing.T) {
+	a := newAPI(t)
+	dono := tokenDe(t, a, a.userID)
+	id, ping := criarHB(t, a, dono, corpoDePeriodo)
+	outra, pingDaOutra := criarHB(t, a, dono, corpoDePeriodo)
+	pingarOK(t, a, ping, "/start", "", "/fail")
+	pingarOK(t, a, pingDaOutra, "/start", "")
+
+	status, corpo := limpar(t, a, dono, id, map[string]any{"heartbeat_id": outra, "keep": 2, "before": uuid.NewString()})
+	if status != http.StatusNoContent {
+		t.Fatalf("limpar com corpo: %d %s", status, corpo)
+	}
+	if n := contarEventos(t, a, uuid.MustParse(id)); n != 0 {
+		t.Errorf("a tarefa da rota ficou com %d eventos, queria 0", n)
+	}
+	if n := contarEventos(t, a, uuid.MustParse(outra)); n != 2 {
+		t.Errorf("a tarefa do corpo ficou com %d eventos, queria 2", n)
+	}
+}
+
+// Limpar não regrava o agendamento nem recalcula o prazo, então a linha de uma
+// versão posterior também se limpa, e o prazo dela fica.
+func TestClearEventsWorksOnUnknownSchedule(t *testing.T) {
+	a := newAPI(t)
+	semChecksDeAgendamento(t, a.pool)
+	id, ping := heartbeatDesconhecidoHTTP(t, a)
+	dono := tokenDe(t, a, a.userID)
+	pingarOK(t, a, ping, "")
+	if n := contarEventos(t, a, id); n != 1 {
+		t.Fatalf("%d eventos antes de limpar, queria 1", n)
+	}
+
+	if status, corpo := limpar(t, a, dono, id.String(), nil); status != http.StatusNoContent {
+		t.Fatalf("limpar agendamento desconhecido: %d %s", status, corpo)
+	}
+	if n := contarEventos(t, a, id); n != 0 {
+		t.Errorf("%d eventos depois de limpar, queria 0", n)
+	}
+	if linha := linhaDoHeartbeat(t, a, id); !linha.DeadlineAt.Equal(prazoGravado) || linha.PeriodSec != nil || linha.CronExpr != nil {
+		t.Errorf("limpar mexeu no agendamento: prazo %s, período %s, cron %s",
+			linha.DeadlineAt, valorDe(linha.PeriodSec), valorDe(linha.CronExpr))
+	}
+}
+
+// Log apagado sem rastro não existe: se a auditoria falha no banco, os eventos
+// voltam com o rollback.
+func TestClearEventsKeepsTheLogWhenTheAuditFails(t *testing.T) {
+	a := newAPI(t)
+	dono := tokenDe(t, a, a.userID)
+	id, ping := criarHB(t, a, dono, corpoDePeriodo)
+	pingarOK(t, a, ping, "/start", "")
+	recusarAuditoria(t, a)
+
+	if status, corpo := limpar(t, a, dono, id, nil); status != http.StatusInternalServerError {
+		t.Errorf("limpar com a auditoria fora: %d %s, queria 500", status, corpo)
+	}
+	if n := contarEventos(t, a, uuid.MustParse(id)); n != 2 {
+		t.Errorf("%d eventos depois da falha, queria 2", n)
 	}
 }

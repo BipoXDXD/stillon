@@ -510,6 +510,39 @@ func (s *Service) Delete(ctx context.Context, userID, id uuid.UUID) error {
 	})
 }
 
+const (
+	// AuditEventsCleared é a ação que limpar o log grava em audit_log.
+	AuditEventsCleared = "heartbeat.events_cleared"
+	auditEntity        = "heartbeat"
+)
+
+// ClearEvents apaga o log de eventos do heartbeat e deixa o rastro em
+// audit_log, na mesma transação: não existe log apagado sem auditoria. Só os
+// eventos saem; last_*, prazo e incidentes ficam (spec §7.2). O log já vazio
+// também é auditado, porque o pedido aconteceu. Agendamento desconhecido não
+// impede: nada aqui regrava o agendamento nem recalcula o prazo.
+func (s *Service) ClearEvents(ctx context.Context, userID, id uuid.UUID) error {
+	auditID, err := uuid.NewV7()
+	if err != nil {
+		return fmt.Errorf("gerar id de auditoria: %w", err)
+	}
+	entity := auditEntity
+	return storage.InUserTx(ctx, s.pool, userID, func(q *db.Queries) error {
+		if err := exists(ctx, q, userID, id); err != nil {
+			return err
+		}
+		if _, err := q.DeleteHeartbeatEvents(ctx, db.DeleteHeartbeatEventsParams{UserID: userID, HeartbeatID: id}); err != nil {
+			return fmt.Errorf("apagar eventos: %w", err)
+		}
+		if err := q.InsertAuditEntry(ctx, db.InsertAuditEntryParams{
+			ID: auditID, UserID: &userID, Action: AuditEventsCleared, Entity: &entity, EntityID: &id, At: s.clk.Now(),
+		}); err != nil {
+			return fmt.Errorf("auditar %s: %w", AuditEventsCleared, err)
+		}
+		return nil
+	})
+}
+
 // RotateToken revoga o token atual trocando o hash, e devolve o novo, que só
 // existe neste retorno (D8).
 func (s *Service) RotateToken(ctx context.Context, userID, id uuid.UUID) (Heartbeat, string, error) {

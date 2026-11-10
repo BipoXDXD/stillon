@@ -186,6 +186,7 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	mux.Handle("POST /api/v1/heartbeats/{id}/token/rotate", protegida(hb.RotateToken))
 	mux.Handle("POST /api/v1/heartbeats/{id}/clone", protegida(hb.Clone))
 	mux.Handle("GET /api/v1/heartbeats/{id}/events", protegida(hb.Events))
+	mux.Handle("POST /api/v1/heartbeats/{id}/events/clear", protegida(hb.ClearEvents))
 	mux.Handle("GET /api/v1/heartbeats/{id}/incidents", protegida(hb.Incidents))
 	mux.Handle("POST /api/v1/heartbeats/{id}/incidents/{incident_id}/ack", protegida(hb.AckIncident))
 

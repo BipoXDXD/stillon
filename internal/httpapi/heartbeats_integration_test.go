@@ -1085,6 +1085,7 @@ func TestAnotherUsersHeartbeatIsIndistinguishableFromMissing(t *testing.T) {
 			{metodo: http.MethodGet, molde: molde + "/incidents", id: id},
 			{metodo: http.MethodPost, molde: molde + "/token/rotate", id: id},
 			{metodo: http.MethodPost, molde: molde + "/clone", id: id},
+			{metodo: http.MethodPost, molde: molde + "/events/clear", id: id},
 			{metodo: http.MethodPost, molde: molde + "/incidents/" + incidente + "/ack", id: id},
 			{metodo: http.MethodDelete, molde: molde, id: id},
 		},
