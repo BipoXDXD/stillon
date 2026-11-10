@@ -3,6 +3,7 @@ package prober
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -252,8 +253,9 @@ func TestTLSFailureKeepsTheStoredCertificate(t *testing.T) {
 // Minor 4 da revisão de segurança do #246. O PATCH troca a URL para outro host
 // com uma sonda da URL velha em voo: o PATCH apaga a leitura do host antigo, e
 // a sonda velha, que termina depois, não pode recriá-la para o alvo.
-// Sabotagem: tirar a comparação de URL de conferirSonda faz a sonda velha
-// gravar a validade do host antigo.
+// Sabotagens: tirar a comparação de URL de conferirSonda faz a sonda velha
+// gravar a validade do host antigo; trocar o errSondaVelha por outro erro
+// também deixa a tabela vazia, e só o log e o check pegam.
 func TestOldHostProbeDoesNotRecreateTargetTLS(t *testing.T) {
 	b := novaBancada(t, nil, MaxInFlight)
 	alvo := b.alvo(t, urlVelha, nil)
@@ -271,23 +273,45 @@ func TestOldHostProbeDoesNotRecreateTargetTLS(t *testing.T) {
 		t.Fatalf("target_tls = %+v depois do PATCH; o PATCH deveria apagar a leitura do host antigo", l)
 	}
 
+	log := capturarLog(t)
 	b.s.gravar(a, t0.Add(time.Minute), comCertificado(validadeA))
 
 	if l, ok := b.linhaTLS(t, alvo); ok {
 		t.Errorf("target_tls = %+v; a sonda do host antigo gravou a validade dele para o alvo", l)
+	}
+	exigirDescartePelaCerca(t, b, log, alvo, 1)
+}
+
+// exigirDescartePelaCerca afirma que a gravação da sonda velha foi descartada
+// pelo fencing (errSondaVelha), e não por outra falha da transação, que também
+// deixaria target_tls vazia: o rollback levou o check dela, sobrando só os
+// checks anteriores, e o log é o do descarte, sem erro.
+func exigirDescartePelaCerca(t *testing.T, b *bancada, log *logSeguro, alvo uuid.UUID, checksAntes int) {
+	t.Helper()
+	if c := b.checks(t, alvo); len(c) != checksAntes {
+		t.Errorf("%d checks no histórico; queria %d, sem o da sonda do host antigo", len(c), checksAntes)
+	}
+	s := log.String()
+	if !strings.Contains(s, "sonda descartada: o alvo mudou de URL ou método durante a sonda") ||
+		!strings.Contains(s, alvo.String()) || strings.Contains(s, "level=ERROR") {
+		t.Errorf("log = %q; queria só o descarte da sonda velha do alvo %s, sem erro", s, alvo)
 	}
 }
 
 // A gravação da sonda velha que começa com o PATCH ainda aberto espera a
 // trava do alvo (FOR UPDATE do PATCH contra o FOR KEY SHARE da cerca) e, depois
 // do commit, enxerga a URL nova e não grava a leitura do host antigo.
-// Sabotagem: a mesma do teste anterior.
+// Sabotagens: as mesmas do teste anterior.
+//
+// Sem prazo de parede na transação do PATCH: ela fica aberta enquanto o
+// EsperarBloqueados consulta, e um prazo fixo vence à toa com a máquina
+// carregada. O limite é o -timeout do go test, como no EsperarBloqueados.
 func TestOldHostProbeWaitsForAnOpenPatchAndLeavesNoCertificate(t *testing.T) {
 	b := novaBancada(t, nil, MaxInFlight)
 	alvo := b.alvo(t, urlVelha, nil)
 	a := b.linhaDoAlvo(alvo)
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
+	ctx := t.Context()
+	log := capturarLog(t)
 
 	tx, err := b.pool.Begin(ctx)
 	if err != nil {
@@ -325,4 +349,5 @@ func TestOldHostProbeWaitsForAnOpenPatchAndLeavesNoCertificate(t *testing.T) {
 	if l, ok := b.linhaTLS(t, alvo); ok {
 		t.Errorf("target_tls = %+v; a sonda do host antigo gravou depois do commit do PATCH", l)
 	}
+	exigirDescartePelaCerca(t, b, log, alvo, 0)
 }
