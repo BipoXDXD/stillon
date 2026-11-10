@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"net/http/httptrace"
 	"slices"
-	"strings"
 	"time"
 
 	"github.com/BipoXDXD/stillon/internal/prober/safedial"
@@ -112,6 +111,11 @@ func sondar(ctx context.Context, client *http.Client, s Spec) Result {
 	for nome, valor := range s.Headers {
 		req.Header.Set(nome, valor)
 	}
+	if s.Content != nil {
+		// O cadastro recusa Accept-Encoding do dono quando há regra: este é
+		// da sonda, que descomprime o gzip ela mesma (lerCorpoDaRegra).
+		req.Header.Set("Accept-Encoding", "gzip")
+	}
 
 	inicio := time.Now()
 	resp, err := client.Do(req)
@@ -121,11 +125,12 @@ func sondar(ctx context.Context, client *http.Client, s Spec) Result {
 	defer resp.Body.Close()
 
 	var (
-		corpo   []byte
-		cortado bool
+		corpo    []byte
+		cortado  bool
+		ilegivel bool
 	)
 	if s.Content != nil {
-		corpo, cortado, err = lerCorpo(resp.Body)
+		corpo, cortado, ilegivel, err = lerCorpoDaRegra(resp)
 	} else {
 		// Sem regra, corpo maior que o limite não é falha (D2): lê-se até
 		// 64 KiB e fecha.
@@ -141,7 +146,7 @@ func sondar(ctx context.Context, client *http.Client, s Spec) Result {
 	}
 	if s.Content != nil {
 		kind := KindContentEncoding
-		if !corpoAindaCodificado(resp) {
+		if !ilegivel {
 			kind = avaliarConteudo(*s.Content, corpo, cortado)
 		}
 		if kind != "" {
@@ -182,24 +187,4 @@ func clienteDaSonda(modelo *http.Client) (*http.Client, func()) {
 	client := *modelo
 	client.Transport = proprio
 	return &client, proprio.CloseIdleConnections
-}
-
-// corpoAindaCodificado diz se o corpo chegou numa codificação que o transporte
-// não desfez. Ele só descomprime o gzip que ele mesmo pediu; br, zstd,
-// deflate ou "gzip, gzip" chegam como bytes comprimidos, e a regra julgaria
-// outra coisa (T5 do STRIDE): not_contains daria up falso. A sonda sai
-// content_encoding, que nunca é up.
-func corpoAindaCodificado(resp *http.Response) bool {
-	if resp.Uncompressed {
-		return false
-	}
-	for _, valor := range resp.Header.Values("Content-Encoding") {
-		for codificacao := range strings.SplitSeq(valor, ",") {
-			codificacao = strings.TrimSpace(codificacao)
-			if codificacao != "" && !strings.EqualFold(codificacao, "identity") {
-				return true
-			}
-		}
-	}
-	return false
 }

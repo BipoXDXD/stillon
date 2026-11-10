@@ -1,10 +1,15 @@
 package prober
 
 import (
+	"bufio"
 	"bytes"
+	"compress/gzip"
 	"encoding/json"
+	"errors"
 	"io"
+	"net/http"
 	"strconv"
+	"strings"
 	"unicode"
 	"unicode/utf16"
 	"unicode/utf8"
@@ -34,6 +39,69 @@ func lerCorpo(r io.Reader) (corpo []byte, cortado bool, err error) {
 		return corpo[:safedial.MaxBodyBytes], true, nil
 	}
 	return corpo, false, nil
+}
+
+// lerCorpoDaRegra lê o corpo que a regra vai julgar. Só um corpo sem
+// codificação ou com exatamente um gzip, somando todas as linhas de
+// Content-Encoding, tem leitura; o resto devolve ilegivel, e a sonda sai
+// content_encoding (T5 do STRIDE). O gzip é desfeito aqui, e não pelo
+// transporte, que decide só pela primeira linha: com "gzip" e "br" em duas
+// linhas, ele desfazia uma camada e apagava as duas. O teto de lerCorpo vale
+// sobre o descomprimido. Corpo vazio não tem o que estar comprimido, e é
+// julgado como vazio com qualquer codificação.
+func lerCorpoDaRegra(resp *http.Response) (corpo []byte, cortado, ilegivel bool, err error) {
+	leitor := bufio.NewReader(resp.Body)
+	if _, err := leitor.Peek(1); errors.Is(err, io.EOF) {
+		return nil, false, false, nil
+	} else if err != nil {
+		return nil, false, false, err
+	}
+	switch codificacaoDoCorpo(resp.Header) {
+	case semCodificacao:
+		corpo, cortado, err = lerCorpo(leitor)
+		return corpo, cortado, false, err
+	case umGzip:
+		zr, err := gzip.NewReader(leitor)
+		if err != nil {
+			return nil, false, false, err
+		}
+		defer zr.Close()
+		corpo, cortado, err = lerCorpo(zr)
+		return corpo, cortado, false, err
+	}
+	// Lido até o teto mesmo assim: a latência e o erro de leitura (prazo,
+	// conexão caída) valem como nos outros casos.
+	_, _, err = lerCorpo(leitor)
+	return nil, false, true, err
+}
+
+type codificacao int
+
+const (
+	semCodificacao codificacao = iota
+	umGzip
+	outraCodificacao
+)
+
+// codificacaoDoCorpo soma os tokens de todas as linhas de Content-Encoding.
+// identity é a ausência de codificação e não conta.
+func codificacaoDoCorpo(h http.Header) codificacao {
+	var tokens []string
+	for _, linha := range h.Values("Content-Encoding") {
+		for token := range strings.SplitSeq(linha, ",") {
+			token = strings.TrimSpace(token)
+			if token != "" && !strings.EqualFold(token, "identity") {
+				tokens = append(tokens, token)
+			}
+		}
+	}
+	switch {
+	case len(tokens) == 0:
+		return semCodificacao
+	case len(tokens) == 1 && strings.EqualFold(tokens[0], "gzip"):
+		return umGzip
+	}
+	return outraCodificacao
 }
 
 // avaliarConteudo julga o corpo pela regra e devolve "" quando ela passa.

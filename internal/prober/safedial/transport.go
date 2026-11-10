@@ -104,6 +104,13 @@ func newTransport(permitir func(address string) error, dialer *net.Dialer) *http
 
 		ForceAttemptHTTP2: true,
 
+		// O transporte não pede nem desfaz gzip por conta própria: ele decide
+		// pela primeira linha de Content-Encoding e apaga todas, e num
+		// redirect para outro host, em que os headers da sonda são limpos,
+		// voltaria a pedir. A regra de conteúdo pede e descomprime ela mesma
+		// (prober.lerCorpoDaRegra); sem regra, o corpo é descartado.
+		DisableCompression: true,
+
 		// C1 (Plano 10): o padrão do net/http é 10 MiB de cabeçalho por
 		// resposta, e o HTTP/2 herda este número. Com 64 sondas em voo, um
 		// alvo hostil segurava ~660 MiB de heap. Nenhum alvo legítimo de

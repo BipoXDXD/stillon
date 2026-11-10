@@ -693,38 +693,55 @@ func TestGzipBombStopsAtLimit(t *testing.T) {
 	}
 }
 
-// T5 do STRIDE: o transporte só descomprime o gzip que ele mesmo pediu. Outro
-// Content-Encoding chega cru, e julgar bytes comprimidos daria up falso no
-// not_contains. A regra não conclui nada sobre esse corpo: content_encoding,
-// e não body_limit, que diria ao dono "resposta grande demais". O gzip
-// em outra caixa o transporte descomprime, e identity não comprime: os dois
-// seguem julgados.
-func TestUnsolicitedContentEncodingIsInconclusive(t *testing.T) {
-	var gzipado bytes.Buffer
-	zw := gzip.NewWriter(&gzipado)
-	if _, err := zw.Write([]byte("tudo certo")); err != nil {
+// gzipar comprime b uma vez.
+func gzipar(t *testing.T, b []byte) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	zw := gzip.NewWriter(&buf)
+	if _, err := zw.Write(b); err != nil {
 		t.Fatal(err)
 	}
 	if err := zw.Close(); err != nil {
 		t.Fatal(err)
 	}
+	return buf.Bytes()
+}
+
+// T5 do STRIDE: com regra, a sonda só lê um corpo sem codificação ou com
+// exatamente um gzip, somando todas as linhas de Content-Encoding (RFC 9110
+// §5.3: duas linhas valem "gzip, gzip"). O resto não tem o que a regra julgue:
+// content_encoding, e não body_limit, que diria ao dono "resposta grande
+// demais". Julgar bytes ainda comprimidos daria up falso no not_contains, e o
+// corpo de erro vai comprimido duas vezes justamente para que uma camada só
+// desfeita ainda esconda a palavra.
+func TestUnsolicitedContentEncodingIsInconclusive(t *testing.T) {
+	certo := []byte("tudo certo")
+	comErro := []byte("deu erro aqui")
 	casos := []struct {
-		nome, encoding string
-		corpo          []byte
-		quer           Status
-		tipo           ErrorKind
+		nome      string
+		encodings []string
+		corpo     []byte
+		quer      Status
+		tipo      ErrorKind
 	}{
-		{"br", "br", []byte("tudo certo"), StatusDown, KindContentEncoding},
-		{"zstd", "zstd", []byte("tudo certo"), StatusDown, KindContentEncoding},
-		{"deflate", "deflate", []byte("tudo certo"), StatusDown, KindContentEncoding},
-		{"gzip duas vezes", "gzip, gzip", []byte("tudo certo"), StatusDown, KindContentEncoding},
-		{"GZIP descomprimido", "GZIP", gzipado.Bytes(), StatusUp, ""},
-		{"identity", "identity", []byte("tudo certo"), StatusUp, ""},
+		{"br", []string{"br"}, certo, StatusDown, KindContentEncoding},
+		{"zstd", []string{"zstd"}, certo, StatusDown, KindContentEncoding},
+		{"deflate", []string{"deflate"}, certo, StatusDown, KindContentEncoding},
+		{"gzip duas vezes", []string{"gzip, gzip"}, gzipar(t, gzipar(t, comErro)), StatusDown, KindContentEncoding},
+		{"gzip em duas linhas", []string{"gzip", "gzip"}, gzipar(t, gzipar(t, comErro)), StatusDown, KindContentEncoding},
+		{"gzip e br em duas linhas", []string{"gzip", "br"}, gzipar(t, gzipar(t, comErro)), StatusDown, KindContentEncoding},
+		{"gzip único passa", []string{"gzip"}, gzipar(t, certo), StatusUp, ""},
+		{"gzip único é julgado", []string{"gzip"}, gzipar(t, comErro), StatusDown, KindContentMismatch},
+		{"GZIP em outra caixa", []string{"GZIP"}, gzipar(t, certo), StatusUp, ""},
+		{"gzip com identity", []string{"identity", "gzip"}, gzipar(t, certo), StatusUp, ""},
+		{"identity", []string{"identity"}, certo, StatusUp, ""},
 	}
 	for _, c := range casos {
 		t.Run(c.nome, func(t *testing.T) {
 			srv, client := servidor(t, func(w http.ResponseWriter, r *http.Request) {
-				w.Header().Set("Content-Encoding", c.encoding)
+				for _, e := range c.encodings {
+					w.Header().Add("Content-Encoding", e)
+				}
 				_, _ = w.Write(c.corpo)
 			})
 			res := Probe(t.Context(), client, comRegra(srv.URL, targets.ContentNotContains, "erro"))
@@ -732,6 +749,57 @@ func TestUnsolicitedContentEncodingIsInconclusive(t *testing.T) {
 				t.Errorf("res = %+v, queria %s/%q/200", res, c.quer, c.tipo)
 			}
 		})
+	}
+}
+
+// O mesmo depois de um redirect para outro host. Nesse salto o safedial
+// limpa os headers do alvo, inclusive o Accept-Encoding da sonda; se o
+// transporte pedisse gzip por conta própria, ele desfaria uma camada e
+// apagaria as linhas de Content-Encoding antes de a sonda vê-las.
+func TestContentEncodingAfterARedirectToAnotherHost(t *testing.T) {
+	duasVezes := gzipar(t, gzipar(t, []byte("deu erro aqui")))
+	destino := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Add("Content-Encoding", "gzip")
+		w.Header().Add("Content-Encoding", "gzip")
+		_, _ = w.Write(duasVezes)
+	}))
+	t.Cleanup(destino.Close)
+	origem := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, destino.URL, http.StatusFound)
+	}))
+	t.Cleanup(origem.Close)
+	client := safedial.NewClientAllowing(0, enderecoDe(t, origem), enderecoDe(t, destino))
+
+	res := Probe(t.Context(), client, comRegra(origem.URL, targets.ContentNotContains, "erro"))
+	if res.Status != StatusDown || res.ErrorKind != KindContentEncoding || res.StatusCode != http.StatusOK {
+		t.Errorf("res = %+v, queria down/content_encoding/200", res)
+	}
+}
+
+// Corpo vazio não tem o que estar comprimido: com qualquer Content-Encoding,
+// a regra julga o vazio, como julgaria sem o header.
+func TestEmptyBodyWithContentEncodingIsJudged(t *testing.T) {
+	casos := []struct {
+		nome string
+		modo targets.ContentMode
+		quer Status
+		tipo ErrorKind
+	}{
+		{"not_contains passa", targets.ContentNotContains, StatusUp, ""},
+		{"contains reprova", targets.ContentContains, StatusDown, KindContentMismatch},
+	}
+	for _, c := range casos {
+		for _, encoding := range []string{"br", "gzip"} {
+			t.Run(c.nome+" com "+encoding, func(t *testing.T) {
+				srv, client := servidor(t, func(w http.ResponseWriter, r *http.Request) {
+					w.Header().Set("Content-Encoding", encoding)
+				})
+				res := Probe(t.Context(), client, comRegra(srv.URL, c.modo, "erro"))
+				if res.Status != c.quer || res.ErrorKind != c.tipo || res.StatusCode != http.StatusOK {
+					t.Errorf("res = %+v, queria %s/%q/200", res, c.quer, c.tipo)
+				}
+			})
+		}
 	}
 }
 
