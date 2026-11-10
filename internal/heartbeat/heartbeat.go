@@ -269,8 +269,9 @@ func sameRun(a, b *uuid.UUID) bool {
 	return *a == *b
 }
 
-// ResumedByPing diz se o sinal retoma um heartbeat pausado: só o sucesso, e só
-// quando o dono deixou a retomada por ping ligada.
+// ResumedByPing diz se o sinal retoma um heartbeat pausado: só o sucesso, pela
+// URL de ping ou pelo sinalizar agora, e só quando o dono deixou a retomada
+// por ping ligada.
 func ResumedByPing(sig Signal, enabled, pingResumes bool) bool {
 	return sig == SignalSuccess && !enabled && pingResumes
 }

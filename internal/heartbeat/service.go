@@ -71,7 +71,8 @@ type Heartbeat struct {
 	LastRuntimeMS  *int64
 	OpenIncidentID *uuid.UUID
 	CreatedAt      time.Time
-	// PingResumes: um sucesso pela URL de ping retoma o heartbeat pausado.
+	// PingResumes: um sucesso, pela URL de ping ou pelo sinalizar agora, retoma
+	// o heartbeat pausado.
 	PingResumes bool
 }
 
