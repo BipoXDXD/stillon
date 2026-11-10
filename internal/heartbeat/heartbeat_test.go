@@ -9,6 +9,8 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/google/uuid"
+
 	"github.com/BipoXDXD/stillon/internal/crypto"
 	"github.com/BipoXDXD/stillon/internal/heartbeat"
 )
@@ -29,7 +31,7 @@ func mustPeriod(d time.Duration) heartbeat.Schedule {
 }
 
 func aplicar(s heartbeat.State, sig heartbeat.Signal, em time.Time) (heartbeat.State, *heartbeat.Event) {
-	return s.Apply(sig, em, hora, tolerancia)
+	return s.Apply(sig, em, heartbeat.Run{}, hora, tolerancia)
 }
 
 func TestSuccessMovesTheDeadlineByPeriodPlusGrace(t *testing.T) {
@@ -460,7 +462,7 @@ func TestApplyOnUnknownScheduleKeepsDeadline(t *testing.T) {
 	}
 	for _, c := range casos {
 		t.Run(c.nome, func(t *testing.T) {
-			s, ev := c.antes.Apply(c.sig, em, desconhecido, tolerancia)
+			s, ev := c.antes.Apply(c.sig, em, heartbeat.Run{}, desconhecido, tolerancia)
 			if !s.DeadlineAt.Equal(time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)) {
 				t.Errorf("prazo %v, queria 2026-11-10T12:00:00Z", s.DeadlineAt)
 			}
@@ -735,5 +737,163 @@ func TestCloneName(t *testing.T) {
 				t.Errorf("o nome da cópia %q não passa no cadastro: %v", got, err)
 			}
 		})
+	}
+}
+
+var (
+	t0   = time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	ridA = uuid.MustParse("0193a1b2-0000-7000-8000-00000000000a")
+	ridB = uuid.MustParse("0193a1b2-0000-7000-8000-00000000000b")
+)
+
+func comRid(s heartbeat.State, sig heartbeat.Signal, em time.Time, run heartbeat.Run) (heartbeat.State, *heartbeat.Event) {
+	return s.Apply(sig, em, run, hora, tolerancia)
+}
+
+func ptr[T any](v T) *T { return &v }
+
+// /log registra o evento e não mexe em último sinal, prazo nem execução.
+func TestLogChangesNothingButTheEvent(t *testing.T) {
+	antes := heartbeat.State{
+		DeadlineAt:    time.Date(2026, 11, 10, 13, 5, 0, 0, time.UTC),
+		LastPingAt:    time.Date(2026, 11, 10, 11, 59, 0, 0, time.UTC),
+		LastSuccessAt: time.Date(2026, 11, 10, 11, 0, 0, 0, time.UTC),
+		LastStartAt:   time.Date(2026, 11, 10, 11, 58, 0, 0, time.UTC),
+		LastSignal:    heartbeat.SignalSuccess,
+		FailingSince:  time.Date(2026, 11, 10, 10, 0, 0, 0, time.UTC),
+		LastRuntimeMS: ptr(int64(1234)),
+		LastRunID:     ptr(ridB),
+	}
+	s, ev := comRid(antes, heartbeat.SignalLog, t0, heartbeat.Run{ID: ptr(ridA)})
+	if s != antes {
+		t.Errorf("log mudou o estado: %+v", s)
+	}
+	if ev == nil || !ev.At.Equal(time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)) || ev.Kind != heartbeat.SignalLog ||
+		ev.RuntimeMS != nil || ev.RunID == nil || *ev.RunID != ridA {
+		t.Fatalf("evento %+v, queria log em t0 com ridA", ev)
+	}
+	s, ev = comRid(s, heartbeat.SignalLog, t0.Add(time.Second), heartbeat.Run{})
+	if ev == nil || ev.Kind != heartbeat.SignalLog || ev.RunID != nil {
+		t.Errorf("segundo log em 1 s: evento %+v, queria outro log sem rid", ev)
+	}
+	if s != antes {
+		t.Errorf("segundo log mudou o estado: %+v", s)
+	}
+}
+
+func TestRepeatComparesTheRunID(t *testing.T) {
+	casos := []struct {
+		nome            string
+		primeiro, outro *uuid.UUID
+		repeticao       bool
+	}{
+		{"mesmo rid", ptr(ridA), ptr(ridA), true},
+		{"rids distintos", ptr(ridA), ptr(ridB), false},
+		{"sem rid e com rid", nil, ptr(ridA), false},
+		{"com rid e sem rid", ptr(ridA), nil, false},
+		{"sem rid nos dois", nil, nil, true},
+	}
+	for _, c := range casos {
+		t.Run(c.nome, func(t *testing.T) {
+			s, _ := comRid(heartbeat.State{}, heartbeat.SignalSuccess, t0, heartbeat.Run{ID: c.primeiro})
+			_, ev := comRid(s, heartbeat.SignalSuccess, t0.Add(5*time.Second), heartbeat.Run{ID: c.outro})
+			if (ev == nil) != c.repeticao {
+				t.Fatalf("evento %+v, repetição esperada=%v", ev, c.repeticao)
+			}
+		})
+	}
+}
+
+func TestOverlappingRunsMeasureTheirOwnStart(t *testing.T) {
+	s, _ := comRid(heartbeat.State{}, heartbeat.SignalStart, t0, heartbeat.Run{ID: ptr(ridA)})
+	s, _ = comRid(s, heartbeat.SignalStart, t0.Add(10*time.Minute), heartbeat.Run{ID: ptr(ridB)})
+	s, ev := comRid(s, heartbeat.SignalSuccess, t0.Add(30*time.Minute), heartbeat.Run{ID: ptr(ridA), StartAt: ptr(t0)})
+	if ev == nil || ev.RuntimeMS == nil || *ev.RuntimeMS != 1800000 {
+		t.Fatalf("duração de A %+v, queria 1800000", ev)
+	}
+	if !s.LastStartAt.Equal(time.Date(2026, 11, 10, 12, 10, 0, 0, time.UTC)) {
+		t.Errorf("início aberto %v, queria o de B (12:10)", s.LastStartAt)
+	}
+	s, ev = comRid(s, heartbeat.SignalSuccess, t0.Add(40*time.Minute),
+		heartbeat.Run{ID: ptr(ridB), StartAt: ptr(t0.Add(10 * time.Minute))})
+	if ev == nil || ev.RuntimeMS == nil || *ev.RuntimeMS != 1800000 {
+		t.Fatalf("duração de B %+v, queria 1800000", ev)
+	}
+	if !s.LastStartAt.IsZero() {
+		t.Errorf("o início de B não foi consumido: %v", s.LastStartAt)
+	}
+	if s.LastRuntimeMS == nil || *s.LastRuntimeMS != 1800000 {
+		t.Errorf("última duração %v, queria 1800000", s.LastRuntimeMS)
+	}
+}
+
+func TestRunWithoutStartInTheLogHasNoRuntime(t *testing.T) {
+	aberto := time.Date(2026, 11, 10, 11, 50, 0, 0, time.UTC)
+	antes := heartbeat.State{
+		DeadlineAt: time.Date(2026, 11, 10, 12, 30, 0, 0, time.UTC), LastStartAt: aberto,
+		LastPingAt: aberto, LastSignal: heartbeat.SignalStart, LastRuntimeMS: ptr(int64(5000)),
+	}
+	s, ev := comRid(antes, heartbeat.SignalSuccess, t0, heartbeat.Run{ID: ptr(ridA)})
+	if ev == nil || ev.RuntimeMS != nil {
+		t.Fatalf("evento %+v, queria sucesso sem duração", ev)
+	}
+	if s.LastRuntimeMS != nil {
+		t.Errorf("última duração %d, queria nil", *s.LastRuntimeMS)
+	}
+	if !s.LastStartAt.Equal(time.Date(2026, 11, 10, 11, 50, 0, 0, time.UTC)) {
+		t.Errorf("início aberto %v, queria 11:50 intacto", s.LastStartAt)
+	}
+	if !s.DeadlineAt.Equal(time.Date(2026, 11, 10, 13, 5, 0, 0, time.UTC)) {
+		t.Errorf("prazo %v, queria 13:05", s.DeadlineAt)
+	}
+}
+
+func TestLastRunIDFollowsTheLastStateChangingSignal(t *testing.T) {
+	s, _ := comRid(heartbeat.State{}, heartbeat.SignalStart, t0, heartbeat.Run{ID: ptr(ridA)})
+	if s.LastRunID == nil || *s.LastRunID != ridA {
+		t.Fatalf("último rid %v, queria A", s.LastRunID)
+	}
+	s, _ = comRid(s, heartbeat.SignalLog, t0.Add(time.Minute), heartbeat.Run{ID: ptr(ridB)})
+	if s.LastRunID == nil || *s.LastRunID != ridA {
+		t.Fatalf("log mudou o último rid para %v", s.LastRunID)
+	}
+	s, _ = comRid(s, heartbeat.SignalFail, t0.Add(2*time.Minute), heartbeat.Run{})
+	if s.LastRunID != nil {
+		t.Errorf("falha sem rid deixou o último rid em %v", *s.LastRunID)
+	}
+}
+
+// Só o sucesso de um heartbeat pausado com retomada por ping o retoma.
+func TestResumedByPing(t *testing.T) {
+	const (
+		start   = heartbeat.SignalStart
+		success = heartbeat.SignalSuccess
+		fail    = heartbeat.SignalFail
+		log     = heartbeat.SignalLog
+	)
+	casos := []struct {
+		sig                  heartbeat.Signal
+		enabled, pingResumes bool
+		want                 bool
+	}{
+		{success, false, true, true},
+		{success, false, false, false},
+		{success, true, true, false},
+		{success, true, false, false},
+		{start, false, true, false},
+		{start, false, false, false},
+		{start, true, true, false},
+		{fail, false, true, false},
+		{fail, false, false, false},
+		{fail, true, true, false},
+		{log, false, true, false},
+		{log, false, false, false},
+		{log, true, true, false},
+	}
+	for _, c := range casos {
+		if got := heartbeat.ResumedByPing(c.sig, c.enabled, c.pingResumes); got != c.want {
+			t.Errorf("ResumedByPing(%s, enabled=%v, pingResumes=%v) = %v, queria %v",
+				c.sig, c.enabled, c.pingResumes, got, c.want)
+		}
 	}
 }

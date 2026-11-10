@@ -68,7 +68,7 @@ func (s *PingService) registrar(ctx context.Context, q *db.Queries, h db.Heartbe
 		return fmt.Errorf("agendamento do heartbeat %s: %w", h.ID, err)
 	}
 	grace := time.Duration(h.GraceSec) * time.Second
-	estado, ev := stateOf(h).Apply(sig, s.clk.Now(), sch, grace)
+	estado, ev := stateOf(h).Apply(sig, s.clk.Now(), Run{}, sch, grace)
 	if ev == nil {
 		return nil
 	}
