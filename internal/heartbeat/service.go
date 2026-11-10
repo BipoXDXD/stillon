@@ -32,6 +32,9 @@ const (
 var (
 	ErrNotFound     = errors.New("heartbeat não encontrado")
 	ErrLimitReached = errors.New("limite de heartbeats atingido")
+	// ErrScheduleUnsupported recusa editar a linha cujo agendamento veio de
+	// uma versão posterior: esta não saberia regravá-lo nem recalcular o prazo.
+	ErrScheduleUnsupported = errors.New("agendamento não suportado nesta versão")
 )
 
 // Status é o que o painel mostra, derivado do estado e do relógio: nada disto
@@ -366,6 +369,12 @@ func (s *Service) updateParams(h db.Heartbeat, p Patch) (db.UpdateHeartbeatParam
 	if err != nil {
 		return db.UpdateHeartbeatParams{}, fmt.Errorf("agendamento do heartbeat %s: %w", h.ID, err)
 	}
+	// Antes de qualquer cálculo: scheduleColumns gravaria período zero no
+	// lugar do agendamento que esta versão não conhece, e FirstDeadline não
+	// sabe calculá-lo.
+	if !sch.IsKnown() {
+		return db.UpdateHeartbeatParams{}, ErrScheduleUnsupported
+	}
 	grace := time.Duration(h.GraceSec) * time.Second
 	out := db.UpdateHeartbeatParams{
 		UserID: h.UserID, ID: h.ID, Name: h.Name, Description: h.Description, Enabled: h.Enabled,
@@ -539,7 +548,7 @@ func toHeartbeat(h db.Heartbeat, open *uuid.UUID, now time.Time) (Heartbeat, err
 	return Heartbeat{
 		ID: h.ID, Name: h.Name, Description: h.Description, Tags: []string{}, Enabled: h.Enabled, Schedule: sch,
 		Grace:      time.Duration(h.GraceSec) * time.Second,
-		Status:     statusOf(h.Enabled, h.FailingSince != nil, open != nil, h.DeadlineAt, finishedARun(h), now),
+		Status:     statusOf(h.Enabled, h.FailingSince != nil, open != nil, sch.IsKnown(), h.DeadlineAt, finishedARun(h), now),
 		DeadlineAt: h.DeadlineAt, LastPingAt: h.LastPingAt, LastSuccessAt: h.LastSuccessAt,
 		LastStartAt: h.LastStartAt, LastRuntimeMS: h.LastRuntimeMS, OpenIncidentID: open, CreatedAt: h.CreatedAt,
 	}, nil
@@ -553,14 +562,16 @@ func finishedARun(h db.Heartbeat) bool {
 }
 
 // O incidente aberto conta como atraso mesmo com prazo futuro: editar o
-// agendamento move o prazo, e a tarefa continua devendo um sinal.
-func statusOf(enabled, failing, openIncident bool, deadline time.Time, finished bool, now time.Time) Status {
+// agendamento move o prazo, e a tarefa continua devendo um sinal. Com
+// agendamento desconhecido (linha de uma versão posterior) o prazo gravado não
+// é confiável, e só o incidente aberto torna o estado atrasado.
+func statusOf(enabled, failing, openIncident, knownSchedule bool, deadline time.Time, finished bool, now time.Time) Status {
 	switch {
 	case !enabled:
 		return StatusPaused
 	case failing:
 		return StatusFailing
-	case openIncident, !deadline.After(now):
+	case openIncident, knownSchedule && !deadline.After(now):
 		return StatusLate
 	case !finished:
 		return StatusWaiting

@@ -66,7 +66,7 @@ SELECT h.id, h.user_id, h.last_success_at, x.id AS incident_id, x.started_at
  WHERE x.resolved_at IS NULL
    AND h.enabled
    AND h.failing_since IS NULL
-   AND h.deadline_at > $1::timestamptz
+   AND (h.deadline_at > $1::timestamptz OR (h.period_sec IS NULL AND h.cron_expr IS NULL))
    AND (h.last_success_at >= x.started_at OR h.resumed_at >= x.started_at)
  ORDER BY x.id
  LIMIT $2::int
@@ -89,6 +89,8 @@ type ClaimHeartbeatsToCloseRow struct {
 // Com incidente aberto e saudável de novo, por um sucesso ou pela retomada
 // depois do início: prazo novo, sozinho, não fecha (spec de heartbeats, §5).
 // Pausado fica como está: sem avaliação, como o alvo pausado sem sonda (D13).
+// Agendamento desconhecido (sem período e sem cron) não tem prazo confiável, e o
+// sucesso basta: o ping nessa linha nunca move o prazo.
 func (q *Queries) ClaimHeartbeatsToClose(ctx context.Context, arg ClaimHeartbeatsToCloseParams) ([]ClaimHeartbeatsToCloseRow, error) {
 	rows, err := q.db.Query(ctx, claimHeartbeatsToClose, arg.Now, arg.MaxRows)
 	if err != nil {
@@ -119,7 +121,9 @@ const claimHeartbeatsToOpen = `-- name: ClaimHeartbeatsToOpen :many
 SELECT h.id, h.user_id, h.deadline_at, h.failing_since
   FROM heartbeats h
  WHERE h.enabled
-   AND (h.deadline_at <= $1::timestamptz OR h.failing_since IS NOT NULL)
+   AND (h.failing_since IS NOT NULL
+        OR (h.deadline_at <= $1::timestamptz
+            AND (h.period_sec IS NOT NULL OR h.cron_expr IS NOT NULL)))
    AND (h.last_incident_at IS NULL OR h.last_incident_at <= $2::timestamptz)
    AND NOT EXISTS (SELECT 1 FROM incidents x WHERE x.heartbeat_id = h.id AND x.resolved_at IS NULL)
  ORDER BY h.deadline_at
@@ -147,6 +151,9 @@ type ClaimHeartbeatsToOpenRow struct {
 // entre aberturas (D11): quem está nele fica para um tique seguinte.
 // O OR não usa heartbeats_due_idx, e fica assim por medição: separar em UNION
 // piorou a consulta (spec de heartbeats, §4).
+// Sem período e sem cron, a linha é de uma versão posterior com agendamento que
+// este binário não conhece: o prazo dela não é confiável e não abre atraso, mas
+// a falha avisada abre.
 func (q *Queries) ClaimHeartbeatsToOpen(ctx context.Context, arg ClaimHeartbeatsToOpenParams) ([]ClaimHeartbeatsToOpenRow, error) {
 	rows, err := q.db.Query(ctx, claimHeartbeatsToOpen, arg.Now, arg.CooldownCut, arg.MaxRows)
 	if err != nil {

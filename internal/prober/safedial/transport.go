@@ -36,6 +36,11 @@ const maxResponseHeaderBytes = 64 << 10
 // padrão do FallbackDelay do net.Dialer.
 const atrasoDaReserva = 300 * time.Millisecond
 
+// MaxProbeTimeout é o maior prazo que uma sonda pode ter (timeout_ms vai até
+// 30000). Os limites de fase do transporte são iguais a ele: nunca cortam uma
+// sonda antes do prazo dela e só alcançam o trabalho que ela já abandonou.
+const MaxProbeTimeout = 30 * time.Second
+
 // familiasNaCorrida são IPv4 e IPv6.
 const familiasNaCorrida = 2
 
@@ -56,9 +61,11 @@ var errSemEndereco = errors.New("nenhum endereço para discar")
 // O ControlContext, que o Go chama depois de criar o socket e antes de discar,
 // continua validando cada endereço. É a segunda barreira para os nomes e a
 // única para o IP literal.
-func NewTransport() *http.Transport { return newTransport(nil, nil) }
+func NewTransport() *http.Transport { return transportPara(nil, nil) }
 
-func newTransport(allowed []netip.AddrPort, hospedagem []netip.Prefix) *http.Transport {
+// transportPara monta o transporte que só alcança os endereços públicos fora
+// das faixas de hospedagem e as exceções exatas de allowed.
+func transportPara(allowed []netip.AddrPort, hospedagem []netip.Prefix) *http.Transport {
 	// A lista da hospedagem vem antes da exceção de teste: o IP da própria
 	// máquina nunca é alvo, nem quando um teste o libera pela porta.
 	permitir := func(address string) error {
@@ -70,28 +77,23 @@ func newTransport(allowed []netip.AddrPort, hospedagem []netip.Prefix) *http.Tra
 		}
 		return AllowAddr(address)
 	}
-	dialer := &net.Dialer{
-		ControlContext: func(_ context.Context, _, address string, _ syscall.RawConn) error {
-			return permitir(address)
-		},
-	}
+	return newTransport(permitir, novoDialer(permitir))
+}
 
+// newTransport recebe o dialer pronto para que o teste confira, pelo que o
+// dialer vê, o prazo que o transporte de fato aplica.
+func newTransport(permitir func(address string) error, dialer *net.Dialer) *http.Transport {
 	return &http.Transport{
+		// O net/http disca com context.WithoutCancel (Go 1.23+): o prazo da
+		// sonda não chega aqui. MaxProbeTimeout é o prazo ÚNICO da resolução
+		// e de todas as tentativas, inclusive as de discarConjunto, que
+		// tenta um IP depois do outro; um Timeout no Dialer valeria por
+		// tentativa e se multiplicaria pelo número de IPs. Igual ao maior
+		// prazo de sonda, nunca corta uma sonda viva.
 		DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
-			if err := allowHostName(address); err != nil {
-				return nil, err
-			}
-			host, port, ehNome := nomeEPorta(address)
-			if !ehNome {
-				return dialer.DialContext(ctx, network, address)
-			}
-			ips, err := resolverEValidar(ctx, host, port, permitir)
-			if err != nil {
-				return nil, err
-			}
-			return discarConjunto(ctx, ips, func(ctx context.Context, ip netip.Addr) (net.Conn, error) {
-				return dialer.DialContext(ctx, network, net.JoinHostPort(ip.String(), port))
-			})
+			ctx, cancel := context.WithTimeout(ctx, MaxProbeTimeout)
+			defer cancel()
+			return discarEndereco(ctx, dialer, permitir, network, address)
 		},
 
 		// Sem proxy: HTTP_PROXY no ambiente faria toda requisição passar por
@@ -113,18 +115,50 @@ func newTransport(allowed []netip.AddrPort, hospedagem []netip.Prefix) *http.Tra
 		// monitoramento, nem o Discord ou o Resend, manda mais que isto.
 		MaxResponseHeaderBytes: maxResponseHeaderBytes,
 
-		// Sem Timeout no Dialer, sem TLSHandshakeTimeout, sem
-		// ResponseHeaderTimeout: propositalmente nenhum limite por fase. O
-		// prazo é só o do context da requisição (Probe faz
-		// context.WithTimeout(ctx, s.Timeout); timeout_ms vai até 30000). Um
-		// limite de fase fixo cortaria ANTES do timeout_ms configurado — por
-		// exemplo, um alvo com timeout_ms=20000 cujo servidor manda o
-		// cabeçalho aos 12s seria marcado "down" aos 10s, um falso negativo.
-		// A ausência não é testável observando o dialer: NewTransport()
-		// devolve um *http.Transport comum, e o campo Timeout do
-		// net.Dialer embutido no DialContext não é inspecionável de fora do
-		// pacote net. TestTransportLeavesTheDeadlineToTheContext trava só os
-		// dois campos do próprio http.Transport.
+		// O prazo da sonda é o do context da requisição (Probe faz
+		// context.WithTimeout(ctx, s.Timeout)). Nenhum limite de fase pode
+		// cortar antes dele: um alvo com timeout_ms=20000 que manda o
+		// cabeçalho aos 12s seria "down" aos 10s, um falso negativo. Por isso
+		// não há ResponseHeaderTimeout.
+		//
+		// Mas o net/http disca com context.WithoutCancel (Go 1.23+): o dial
+		// e o handshake que a sonda abandonou não veem o prazo dela. O Probe
+		// os cancela com CloseIdleConnections, efeito que a documentação não
+		// promete; o teto abaixo e o prazo único do DialContext são a defesa
+		// se isso mudar. Iguais ao maior prazo de sonda, não cortam
+		// nenhuma sonda viva. TestTransportLeavesTheDeadlineToTheContext e
+		// TestTransportBoundsTheAbandonedHandshake travam o valor.
+		TLSHandshakeTimeout: MaxProbeTimeout,
+	}
+}
+
+// discarEndereco resolve o nome uma única vez e disca o conjunto validado; IP literal
+// vai direto ao dialer.
+func discarEndereco(ctx context.Context, dialer *net.Dialer, permitir func(address string) error, network, address string) (net.Conn, error) {
+	if err := allowHostName(address); err != nil {
+		return nil, err
+	}
+	host, port, ehNome := nomeEPorta(address)
+	if !ehNome {
+		return dialer.DialContext(ctx, network, address)
+	}
+	ips, err := resolverEValidar(ctx, host, port, permitir)
+	if err != nil {
+		return nil, err
+	}
+	return discarConjunto(ctx, ips, func(ctx context.Context, ip netip.Addr) (net.Conn, error) {
+		return dialer.DialContext(ctx, network, net.JoinHostPort(ip.String(), port))
+	})
+}
+
+// novoDialer valida cada endereço no ControlContext, que o Go chama depois de
+// criar o socket e antes de discar. O prazo do dial vem do context (ver
+// DialContext em newTransport).
+func novoDialer(permitir func(address string) error) *net.Dialer {
+	return &net.Dialer{
+		ControlContext: func(_ context.Context, _, address string, _ syscall.RawConn) error {
+			return permitir(address)
+		},
 	}
 }
 
@@ -343,7 +377,7 @@ func normalizarLiberados(allowed []netip.AddrPort) []netip.AddrPort {
 
 func newClient(timeout time.Duration, allowed []netip.AddrPort, hospedagem []netip.Prefix) *http.Client {
 	return &http.Client{
-		Transport: newTransport(allowed, hospedagem),
+		Transport: transportPara(allowed, hospedagem),
 		Timeout:   timeout,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			// net/http já inclui a requisição original em via, então a

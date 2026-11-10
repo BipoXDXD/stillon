@@ -1,4 +1,4 @@
-import { Check, Play, X, type LucideIcon } from 'lucide-react'
+import { Check, CircleDashed, Play, X, type LucideIcon } from 'lucide-react'
 import { useRef } from 'react'
 import { EstadoDaConsulta } from '@/components/EstadoDaConsulta'
 import { Selo, type TomDoSelo } from '@/components/SeloDeEstado'
@@ -13,6 +13,8 @@ const TIPOS: Record<EventoDeHeartbeat['kind'], { texto: string; tom: TomDoSelo; 
   start: { texto: 'Início', tom: 'primaria', Icone: Play },
   success: { texto: 'Sucesso', tom: 'no-ar', Icone: Check },
   fail: { texto: 'Falha', tom: 'fora', Icone: X },
+  // Um tipo de sinal de versão posterior do servidor: neutro, como o "Sem dados".
+  unknown: { texto: 'Outro sinal', tom: 'sem-dados', Icone: CircleDashed },
 }
 
 export function EventosDoHeartbeat({ id }: { id: string }) {

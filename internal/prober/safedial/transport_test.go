@@ -310,17 +310,27 @@ func TestTransportIgnoresEnvironmentProxy(t *testing.T) {
 	}
 }
 
-// O prazo de uma sonda é só o do context (Probe faz
-// context.WithTimeout(ctx, s.Timeout)); nenhum timeout de fase no Transport
-// pode cortar antes disso, ou um alvo com timeout_ms alto e resposta lenta
-// viraria "down" cedo demais. Ver o comentário em newTransport.
+// O prazo de uma sonda é o do context (Probe faz context.WithTimeout(ctx,
+// s.Timeout)); nenhum limite de fase no Transport pode cortar antes do maior
+// timeout_ms válido, ou um alvo com timeout_ms alto e resposta lenta viraria
+// "down" cedo demais. Ver o comentário em newTransport.
 func TestTransportLeavesTheDeadlineToTheContext(t *testing.T) {
 	tr := safedial.NewTransport()
 	if tr.ResponseHeaderTimeout != 0 {
-		t.Errorf("ResponseHeaderTimeout = %v, queria 0: o prazo fica só com o context", tr.ResponseHeaderTimeout)
+		t.Errorf("ResponseHeaderTimeout = %v, queria 0: o prazo do cabeçalho fica só com o context", tr.ResponseHeaderTimeout)
 	}
-	if tr.TLSHandshakeTimeout != 0 {
-		t.Errorf("TLSHandshakeTimeout = %v, queria 0: o prazo fica só com o context", tr.TLSHandshakeTimeout)
+	if tr.TLSHandshakeTimeout != 0 && tr.TLSHandshakeTimeout < safedial.MaxProbeTimeout {
+		t.Errorf("TLSHandshakeTimeout = %v, corta antes do maior prazo de sonda (%v)", tr.TLSHandshakeTimeout, safedial.MaxProbeTimeout)
+	}
+}
+
+// O net/http disca com um context sem cancelamento, e o handshake que a
+// sonda abandonou só para no TLSHandshakeTimeout. Zero é sem teto: um alvo
+// mudo prenderia socket e goroutines para sempre se o CloseIdleConnections
+// do Probe deixar de cancelar o dial (efeito não documentado do net/http).
+func TestTransportBoundsTheAbandonedHandshake(t *testing.T) {
+	if got := safedial.NewTransport().TLSHandshakeTimeout; got != safedial.MaxProbeTimeout {
+		t.Errorf("TLSHandshakeTimeout = %v, queria %v", got, safedial.MaxProbeTimeout)
 	}
 }
 
