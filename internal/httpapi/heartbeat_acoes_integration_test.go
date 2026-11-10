@@ -666,3 +666,44 @@ func TestPingNowIgnoresTheBody(t *testing.T) {
 		t.Errorf("eventos %v, queria um success do painel", eventos)
 	}
 }
+
+// O ping-now é um sucesso como o do ping: numa tarefa pausada, retoma só com
+// ping_resumes ligado, e a retomada recalcula o prazo a partir do clique.
+func TestPingNowResumesWhenPingResumesIsOn(t *testing.T) {
+	for _, c := range []struct {
+		nome        string
+		pingResumes bool
+	}{{"ligado", true}, {"desligado", false}} {
+		t.Run(c.nome, func(t *testing.T) {
+			a := newAPI(t)
+			dono := tokenDe(t, a, a.userID)
+			id, _ := criarHB(t, a, dono, corpoDePeriodo)
+			caminho := "/api/v1/heartbeats/" + id
+			pausa := map[string]any{"enabled": false, "ping_resumes": c.pingResumes}
+			if status, corpo := lerCru(t, a, http.MethodPatch, caminho, dono, pausa); status != http.StatusOK {
+				t.Fatalf("pausar: %d %s", status, corpo)
+			}
+			a.clk.Advance(10 * time.Minute)
+			agora := a.clk.Now()
+
+			hb := pingNow(t, a, dono, id, nil)
+
+			h := linhaDoHeartbeat(t, a, uuid.MustParse(id))
+			if !c.pingResumes {
+				if hb["enabled"] != false || h.Enabled || h.ResumedAt != nil {
+					t.Errorf("retomou sem ping_resumes: enabled %v/%v, resumed_at %s", hb["enabled"], h.Enabled, valorDe(h.ResumedAt))
+				}
+				return
+			}
+			if hb["enabled"] != true || !h.Enabled {
+				t.Errorf("enabled %v/%v, queria true", hb["enabled"], h.Enabled)
+			}
+			if h.ResumedAt == nil || !h.ResumedAt.Equal(agora) {
+				t.Errorf("resumed_at %s, queria %v", valorDe(h.ResumedAt), agora)
+			}
+			if got, queria := instanteDe(t, hb, "deadline_at"), agora.Add(65*time.Minute); !got.Equal(queria) {
+				t.Errorf("deadline_at = %v, queria %v", got, queria)
+			}
+		})
+	}
+}

@@ -199,6 +199,124 @@ func TestConcurrentPingsHaveOneEffect(t *testing.T) {
 	}
 }
 
+// largarJuntos solta as funções numa largada comum e devolve os erros.
+func largarJuntos(fns ...func() error) []error {
+	var wg sync.WaitGroup
+	erros := make(chan error, len(fns))
+	largada := make(chan struct{})
+	for _, fn := range fns {
+		wg.Go(func() {
+			<-largada
+			erros <- fn()
+		})
+	}
+	close(largada)
+	wg.Wait()
+	close(erros)
+	var out []error
+	for err := range erros {
+		if err != nil {
+			out = append(out, err)
+		}
+	}
+	return out
+}
+
+// O ping-now trava a linha como o ping: sem o FOR UPDATE, os cliques leem a
+// linha de antes dos pings e cada um grava o seu evento.
+func TestConcurrentPingNowAndPingHaveOneEffect(t *testing.T) {
+	a := novoAmbiente(t)
+	painel := heartbeat.NewService(a.pool, a.clk)
+	id, token := a.novoHeartbeat(t)
+
+	const n = 8
+	var fns []func() error
+	for range n {
+		fns = append(fns,
+			func() error {
+				_, err := painel.PingNow(context.Background(), a.dono, id)
+				return err
+			},
+			func() error { return a.svc.Ping(context.Background(), token, heartbeat.SignalSuccess, nil) },
+		)
+	}
+	for _, err := range largarJuntos(fns...) {
+		t.Error(err)
+	}
+
+	if ev := a.eventos(t, id); len(ev) != 1 || ev[0].Kind != "success" {
+		t.Errorf("eventos %+v de %d sinais simultâneos, queria um success", ev, 2*n)
+	}
+	h := a.linha(t, id)
+	if h.LastSignal == nil || *h.LastSignal != "success" || !mesmoInstante(h.LastSuccessAt, &agora) {
+		t.Errorf("last_signal %s, last_success_at %s; queria success em %v", valor(h.LastSignal), valor(h.LastSuccessAt), agora)
+	}
+	if !h.DeadlineAt.Equal(agora.Add(65 * time.Minute)) {
+		t.Errorf("prazo %v, queria %v", h.DeadlineAt, agora.Add(65*time.Minute))
+	}
+}
+
+// Com um /fail simultâneo, a execução aberta fecha uma vez só e o estado final
+// é o do último evento do log: a falha não some por baixo de um ping-now que
+// leu a linha de antes dela.
+func TestConcurrentPingNowAndFailKeepTheFailure(t *testing.T) {
+	a := novoAmbiente(t)
+	painel := heartbeat.NewService(a.pool, a.clk)
+	id, token := a.novoHeartbeat(t)
+	a.pingar(t, token, heartbeat.SignalStart)
+	a.clk.Advance(time.Minute)
+
+	const n = 8
+	var fns []func() error
+	for range n {
+		fns = append(fns,
+			func() error {
+				_, err := painel.PingNow(context.Background(), a.dono, id)
+				return err
+			},
+			func() error { return a.svc.Ping(context.Background(), token, heartbeat.SignalFail, nil) },
+		)
+	}
+	for _, err := range largarJuntos(fns...) {
+		t.Error(err)
+	}
+
+	ev := a.eventos(t, id)
+	var medidos, falhas int
+	for _, e := range ev {
+		if e.RuntimeMS != nil {
+			medidos++
+			if *e.RuntimeMS != 60000 {
+				t.Errorf("duração %d ms, queria 60000", *e.RuntimeMS)
+			}
+		}
+		if e.Kind == "fail" {
+			falhas++
+		}
+	}
+	if medidos != 1 {
+		t.Errorf("%d eventos fecharam a execução, queria 1: %+v", medidos, ev)
+	}
+	if falhas == 0 {
+		t.Errorf("a falha sumiu do log: %+v", ev)
+	}
+	h := a.linha(t, id)
+	ultimo := ev[0].Kind
+	if h.LastSignal == nil || *h.LastSignal != ultimo {
+		t.Errorf("last_signal %s, e o último evento é %s", valor(h.LastSignal), ultimo)
+	}
+	if falhando := h.FailingSince != nil; falhando != (ultimo == "fail") {
+		t.Errorf("failing_since %s com o último evento %s", valor(h.FailingSince), ultimo)
+	}
+}
+
+func valor[T any](p *T) string {
+	if p == nil {
+		return "NULL"
+	}
+	return fmt.Sprint(*p)
+}
+
 // O teto vale na transação do ping, e o que sai é o mais velho.
 func TestEventsStayUnderTheCap(t *testing.T) {
 	a := novoAmbiente(t)
