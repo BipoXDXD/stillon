@@ -56,13 +56,30 @@ ALTER TABLE incidents
 -- Resíduo do rollback: content_mismatch vira 'unknown' (o binário anterior não
 -- conhece outro motivo) e não volta na subida; as regras dos alvos se perdem
 -- com as colunas. O UPDATE de checks varre a tabela inteira (não há índice em
--- error_kind), o que só acontece em quem desce de propósito.
+-- error_kind), o que só acontece em quem desce de propósito. O esquema não
+-- volta byte a byte: checks_error_kind_check fica NOT VALID, e a 00004 o
+-- criou validado.
+--
+-- Piso sem Down (o binário anterior sobre este esquema): ele não conhece a
+-- regra, então um PATCH que troque o método de um alvo com regra para HEAD
+-- bate em targets_content_rule_not_head (23514), e o binário anterior
+-- provavelmente responde 500.
 SET LOCAL lock_timeout = '5s';
 -- Roda com o papel da aplicação, sujeito à RLS: sem o escopo do sondador, os
 -- UPDATEs não enxergariam linha nenhuma, e o CHECK antigo de incidents falharia.
 SELECT set_config('app.scope', 'prober', true);
 UPDATE checks SET error_kind = 'unknown' WHERE error_kind = 'content_mismatch';
 UPDATE incidents SET cause = 'unknown' WHERE cause = 'content_mismatch';
+
+-- targets antes de checks, como no Up e no sondador (FOR KEY SHARE no alvo,
+-- depois INSERT em checks). Na ordem inversa, um sondador que já segura o alvo
+-- e espera checks formaria um deadlock com este ALTER.
+ALTER TABLE targets
+    DROP CONSTRAINT targets_content_rule_not_head,
+    DROP CONSTRAINT targets_content_rule_shape,
+    DROP COLUMN content_json_pointer,
+    DROP COLUMN content_value,
+    DROP COLUMN content_mode;
 
 ALTER TABLE checks
     DROP CONSTRAINT checks_error_kind_check,
@@ -75,10 +92,3 @@ ALTER TABLE incidents
     ADD CONSTRAINT incidents_cause_check
         CHECK (cause IN ('timeout', 'dns', 'tls', 'conn_refused', 'http_status', 'body_limit',
                          'blocked', 'unknown', 'heartbeat_late', 'heartbeat_failed'));
-
-ALTER TABLE targets
-    DROP CONSTRAINT targets_content_rule_not_head,
-    DROP CONSTRAINT targets_content_rule_shape,
-    DROP COLUMN content_json_pointer,
-    DROP COLUMN content_value,
-    DROP COLUMN content_mode;

@@ -48,7 +48,14 @@ func TestContentRuleChecksAcceptOnlyWholeRules(t *testing.T) {
 		{"contains_com_ponteiro", "GET", regraDeConteudo{ptrTexto("contains"), ptrTexto("ok"), ptrTexto("/a")}, true},
 		{"json_equals_sem_ponteiro", "GET", regraDeConteudo{ptrTexto("json_equals"), ptrTexto(`"ok"`), nil}, true},
 		{"ponteiro_sem_barra", "GET", regraDeConteudo{ptrTexto("json_equals"), ptrTexto(`"ok"`), ptrTexto("a")}, true},
+		{"not_contains_com_valor", "GET", regraDeConteudo{ptrTexto("not_contains"), ptrTexto("erro"), nil}, false},
+		{"modo_desconhecido", "GET", regraDeConteudo{ptrTexto("regex"), ptrTexto("ok"), nil}, true},
+		{"valor_de_256", "GET", regraDeConteudo{ptrTexto("contains"), ptrTexto(strings.Repeat("a", 256)), nil}, false},
 		{"valor_de_257", "GET", regraDeConteudo{ptrTexto("contains"), ptrTexto(strings.Repeat("a", 257)), nil}, true},
+		{"valor_vazio", "GET", regraDeConteudo{ptrTexto("contains"), ptrTexto(""), nil}, true},
+		{"ponteiro_de_256", "GET", regraDeConteudo{ptrTexto("json_equals"), ptrTexto(`"ok"`), ptrTexto("/" + strings.Repeat("a", 255))}, false},
+		{"ponteiro_de_257", "GET", regraDeConteudo{ptrTexto("json_equals"), ptrTexto(`"ok"`), ptrTexto("/" + strings.Repeat("a", 256))}, true},
+		{"ponteiro_vazio", "GET", regraDeConteudo{ptrTexto("json_equals"), ptrTexto(`"ok"`), ptrTexto("")}, true},
 		{"regra_em_head", "HEAD", regraDeConteudo{ptrTexto("contains"), ptrTexto("ok"), nil}, true},
 	} {
 		t.Run(tc.nome, func(t *testing.T) {
@@ -105,6 +112,9 @@ func TestContentRuleDownConvertsAndRestores(t *testing.T) {
 		t.Fatalf("alvo com regra: %v", err)
 	}
 	alvo := novoAlvo(t, pool, dono, agora)
+	// Sem incidente aberto: recebe a tentativa de content_mismatch depois do
+	// down, que no outro alvo bateria no índice do incidente aberto.
+	alvoSemIncidente := novoAlvo(t, pool, dono, agora)
 	checkID := novoID()
 	if err := gravarCheckDownComID(ctx, pool, checkID, alvo, "content_mismatch"); err != nil {
 		t.Fatalf("check content_mismatch: %v", err)
@@ -148,6 +158,9 @@ func TestContentRuleDownConvertsAndRestores(t *testing.T) {
 	if err := gravarCheckDown(ctx, pool, alvo, "content_mismatch"); !violaCheck(err) {
 		t.Errorf("content_mismatch depois do down: erro = %v, queria check_violation (23514)", err)
 	}
+	if _, err := abrirIncidenteCom(ctx, pool, alvoSemIncidente, "content_mismatch"); !violaCheck(err) {
+		t.Errorf("incidente content_mismatch depois do down: erro = %v, queria check_violation (23514)", err)
+	}
 
 	if err := storage.MigrateUpTo(ctx, dsn, versao); err != nil {
 		t.Fatalf("subir de novo a %d: %v", versao, err)
@@ -182,8 +195,13 @@ func TestFloorBinaryBootsOnContentRule(t *testing.T) {
 	}
 }
 
-// prazoDaMigrationTravada é folga sobre o lock_timeout de 5 s da migration.
-const prazoDaMigrationTravada = 8 * time.Second
+// A migration desiste entre os dois limites: o teto é folga sobre o
+// lock_timeout de 5 s, e o piso fixa o Ruling contra um prazo curto, que
+// derrubaria o boot com 55P03 a cada leitura longa.
+const (
+	pisoDaMigrationTravada = 4 * time.Second
+	tetoDaMigrationTravada = 8 * time.Second
+)
 
 // Um sondador no meio de uma gravação segura as tabelas que a migration
 // altera. A migration desiste com lock_timeout em vez de enfileirar todo o
@@ -230,8 +248,8 @@ func TestContentRuleMigrationGivesUpOnLockTimeout(t *testing.T) {
 	if !errors.As(err, &pgErr) || pgErr.Code != "55P03" {
 		t.Fatalf("migration com a trava do sondador: erro = %v, queria lock_not_available (55P03)", err)
 	}
-	if gasto >= prazoDaMigrationTravada {
-		t.Errorf("a migration desistiu em %v, queria menos de %v", gasto, prazoDaMigrationTravada)
+	if gasto < pisoDaMigrationTravada || gasto >= tetoDaMigrationTravada {
+		t.Errorf("a migration desistiu em %v, queria entre %v e %v", gasto, pisoDaMigrationTravada, tetoDaMigrationTravada)
 	}
 	if depois := versaoDoBanco(t, pool); depois != antes {
 		t.Errorf("goose_db_version foi de %d para %d na migration que desistiu", antes, depois)
@@ -242,6 +260,56 @@ func TestContentRuleMigrationGivesUpOnLockTimeout(t *testing.T) {
 	}
 	if err := storage.MigrateUpTo(ctx, dsn, versao); err != nil {
 		t.Fatalf("migration depois de liberada a trava: %v", err)
+	}
+}
+
+// O Down trava as tabelas na ordem do sondador, targets antes de checks. Um
+// sondador que já segura o alvo (LockTargetProbeSpec) e grava o check depois
+// só espera o Down; na ordem inversa, os dois se esperariam e o Postgres
+// abortaria um deles com 40P01.
+func TestContentRuleDownLocksTargetsBeforeChecks(t *testing.T) {
+	ctx := context.Background()
+	versao := versaoDaMigration(t, sufixoRegraDeConteudo)
+	dsn := testdb.EmptyDatabase(t)
+	if err := storage.Migrate(ctx, dsn); err != nil {
+		t.Fatal(err)
+	}
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	particaoDeAgora(t, pool)
+	dono := novoUsuario(t, pool)
+	alvo := novoAlvo(t, pool, dono, agora)
+
+	sondador, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sondador.Rollback(ctx)
+	if _, err := sondador.Exec(ctx, `SELECT set_config('app.scope', 'prober', true)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.New(sondador).LockTargetProbeSpec(ctx, alvo); err != nil {
+		t.Fatal(err)
+	}
+
+	desceu := make(chan error, 1)
+	go func() { desceu <- storage.MigrateDownTo(ctx, dsn, versao-1) }()
+	if !testdb.EsperarBloqueados(t, pool, 1, desceu) {
+		t.Fatalf("o Down não esperou a trava do sondador: %v", <-desceu)
+	}
+
+	if _, err := sondador.Exec(ctx, `INSERT INTO checks (id, target_id, checked_at, status, latency_ms, error_kind)
+		VALUES ($1, $2, $3, 'down', 1, 'timeout')`, novoID(), alvo, agora); err != nil {
+		t.Errorf("INSERT do sondador com o Down na fila: %v", err)
+	}
+	if err := sondador.Commit(ctx); err != nil {
+		t.Errorf("commit do sondador: %v", err)
+	}
+	if err := <-desceu; err != nil {
+		t.Errorf("Down com o sondador gravando: %v", err)
 	}
 }
 
