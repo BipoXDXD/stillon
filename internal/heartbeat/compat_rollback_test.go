@@ -7,9 +7,11 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/BipoXDXD/stillon/internal/heartbeat"
+	"github.com/BipoXDXD/stillon/internal/prober"
 )
 
 // Piso de rollback: este binário precisa ler linhas gravadas por uma versão
@@ -135,5 +137,97 @@ func TestUnknownScheduleStatusIgnoresDeadline(t *testing.T) {
 				t.Errorf("prazo %v mudou, esperava %v", h.DeadlineAt, agora.Add(-2*time.Hour))
 			}
 		})
+	}
+}
+
+type incidenteRollback struct {
+	Causa     string
+	Resolvido bool
+}
+
+// avaliar roda um tique do avaliador real, o mesmo ponto de entrada do sondador.
+func (a ambiente) avaliar(t *testing.T) {
+	t.Helper()
+	if _, err := prober.NewHeartbeatEvaluator(a.pool, a.clk).Tick(context.Background()); err != nil {
+		t.Fatalf("tique do avaliador: %v", err)
+	}
+}
+
+// incidentes lê no escopo do sondador, sem passar pelo código testado.
+func (a ambiente) incidentes(t *testing.T, id uuid.UUID) []incidenteRollback {
+	t.Helper()
+	ctx := context.Background()
+	tx, err := a.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `SELECT set_config('app.scope', 'prober', true)`); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := tx.Query(ctx, `SELECT cause, resolved_at IS NOT NULL FROM incidents WHERE heartbeat_id = $1 ORDER BY id`, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lista, err := pgx.CollectRows(rows, pgx.RowToStructByPos[incidenteRollback])
+	if err != nil {
+		t.Fatal(err)
+	}
+	return lista
+}
+
+func TestEvaluatorDoesNotOpenLateForUnknownSchedule(t *testing.T) {
+	a := novoAmbiente(t)
+	semChecksDeAgendamento(t, a.pool)
+	id, _ := a.heartbeatDesconhecido(t)
+
+	a.avaliar(t)
+
+	if got := a.incidentes(t, id); len(got) != 0 {
+		t.Errorf("incidentes %+v, esperava nenhum: o prazo de agendamento desconhecido não vale", got)
+	}
+}
+
+func TestEvaluatorStillOpensFailedForUnknownSchedule(t *testing.T) {
+	a := novoAmbiente(t)
+	semChecksDeAgendamento(t, a.pool)
+	id, token := a.heartbeatDesconhecido(t)
+	a.pingar(t, token, heartbeat.SignalFail)
+
+	a.avaliar(t)
+	if got := a.incidentes(t, id); len(got) != 1 || got[0] != (incidenteRollback{Causa: "heartbeat_failed"}) {
+		t.Fatalf("depois da falha: incidentes %+v, esperava um heartbeat_failed aberto", got)
+	}
+
+	a.clk.Advance(time.Minute)
+	a.pingar(t, token, heartbeat.SignalSuccess)
+	a.avaliar(t)
+	if got := a.incidentes(t, id); len(got) != 1 || got[0] != (incidenteRollback{Causa: "heartbeat_failed", Resolvido: true}) {
+		t.Errorf("depois do sucesso: incidentes %+v, esperava o heartbeat_failed resolvido", got)
+	}
+}
+
+// O incidente de atraso foi aberto quando o agendamento ainda era conhecido; a
+// linha passa a desconhecida (versão posterior) e o prazo fica no passado.
+func TestEvaluatorClosesLateIncidentOfUnknownScheduleAfterSuccess(t *testing.T) {
+	a := novoAmbiente(t)
+	semChecksDeAgendamento(t, a.pool)
+	id, token := a.novoHeartbeat(t)
+	a.clk.Advance(2 * time.Hour)
+	a.avaliar(t)
+	if got := a.incidentes(t, id); len(got) != 1 || got[0] != (incidenteRollback{Causa: "heartbeat_late"}) {
+		t.Fatalf("antes: incidentes %+v, esperava um heartbeat_late aberto", got)
+	}
+	a.comoDono(t, `UPDATE heartbeats SET period_sec = NULL WHERE id = $1`, id)
+
+	a.clk.Advance(time.Minute)
+	a.pingar(t, token, heartbeat.SignalSuccess)
+	a.avaliar(t)
+
+	if got := a.incidentes(t, id); len(got) != 1 || got[0] != (incidenteRollback{Causa: "heartbeat_late", Resolvido: true}) {
+		t.Errorf("depois do sucesso: incidentes %+v, esperava o heartbeat_late resolvido", got)
+	}
+	if h := a.linha(t, id); !h.DeadlineAt.Equal(agora.Add(time.Hour)) {
+		t.Errorf("prazo %v, esperava o antigo %v ainda no passado", h.DeadlineAt, agora.Add(time.Hour))
 	}
 }
