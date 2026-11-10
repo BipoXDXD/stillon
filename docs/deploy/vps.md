@@ -3756,7 +3756,9 @@ Os três arquivos de versão, na VPS, são legíveis sem `sudo` (`0644`: não s�
 
 Rode o mesmo workflow com o SHA anterior (`cat /opt/stillon/versao-anterior` na VPS). Só é
 seguro se as migrations da versão nova forem **aditivas**: o `goose` não roda `Down` sozinho, e o
-rollback automático do script também não desfaz migration.
+rollback automático do script também não desfaz migration. Nunca rode `goose down` para voltar
+a versão que trouxe a `target_tls` (#246): o rollback dela é só de binário, porque o binário
+anterior funciona no schema novo e o `Down` apaga a escolha `tls_warn = false` de cada dono.
 
 **Se sair 3 com `stillon:<sha> já existe com outra imagem`:** uma tag `v*` publicada depois
 daquele deploy **moveu** a tag `:<sha>` do GHCR para o digest do build da tag (mesmo código, outro
