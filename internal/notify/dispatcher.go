@@ -193,6 +193,7 @@ func (d *Dispatcher) reivindicar(ctx context.Context) ([]db.ClaimDueNotification
 		var err error
 		lote, err = q.ClaimDueNotifications(ctx, db.ClaimDueNotificationsParams{
 			Now: now, LeaseUntil: now.Add(lease), MaxRows: maxConcurrentSends,
+			Kinds: kindsParaReivindicar(), Events: eventosConhecidos,
 		})
 		return err
 	})

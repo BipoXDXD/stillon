@@ -15,19 +15,25 @@ import (
 const claimDueNotifications = `-- name: ClaimDueNotifications :many
 
 WITH lote AS MATERIALIZED (
-    SELECT id FROM notifications
-     WHERE status = 'pending' AND next_attempt_at <= $1::timestamptz
+    SELECT n.id FROM notifications n
+      JOIN notif_channels c ON c.id = n.channel_id
+     WHERE n.status = 'pending' AND n.next_attempt_at <= $1::timestamptz
        -- Piso de rollback (SP1, §12): uma versão futura grava aviso de
        -- certificado sem incidente. Contá-lo aqui o faria sumir no JOIN com
        -- incidents e somar tentativas até fechar como failed sem ter saído.
        -- O PR 7 da SP1 remove o filtro ao trocar o JOIN por LEFT JOIN.
-       AND incident_id IS NOT NULL
-     ORDER BY next_attempt_at
-     LIMIT $2::int
-       FOR UPDATE SKIP LOCKED
+       AND n.incident_id IS NOT NULL
+       -- Piso de rollback (SP2, D-13=a): tipo de canal ou evento que este
+       -- binário não sabe entregar fica pending, sem gastar tentativa. As
+       -- listas vêm de notify.kindsConhecidos e notify.eventosConhecidos.
+       AND c.kind = ANY($2::text[])
+       AND n.event = ANY($3::text[])
+     ORDER BY n.next_attempt_at
+     LIMIT $4::int
+       FOR UPDATE OF n SKIP LOCKED
 ), claimed AS (
     UPDATE notifications n
-       SET next_attempt_at = $3::timestamptz, attempts = n.attempts + 1
+       SET next_attempt_at = $5::timestamptz, attempts = n.attempts + 1
      WHERE n.id IN (SELECT id FROM lote)
     RETURNING n.id, n.incident_id, n.channel_id, n.event, n.attempts, n.created_at, n.target_name
 )
@@ -45,6 +51,8 @@ SELECT cl.id, cl.event, cl.attempts, cl.created_at,
 
 type ClaimDueNotificationsParams struct {
 	Now        time.Time
+	Kinds      []string
+	Events     []string
 	MaxRows    int32
 	LeaseUntil time.Time
 }
@@ -78,7 +86,13 @@ type ClaimDueNotificationsRow struct {
 //
 // O lote fica numa CTE MATERIALIZED pelo mesmo motivo de ClaimDueTargets.
 func (q *Queries) ClaimDueNotifications(ctx context.Context, arg ClaimDueNotificationsParams) ([]ClaimDueNotificationsRow, error) {
-	rows, err := q.db.Query(ctx, claimDueNotifications, arg.Now, arg.MaxRows, arg.LeaseUntil)
+	rows, err := q.db.Query(ctx, claimDueNotifications,
+		arg.Now,
+		arg.Kinds,
+		arg.Events,
+		arg.MaxRows,
+		arg.LeaseUntil,
+	)
 	if err != nil {
 		return nil, err
 	}

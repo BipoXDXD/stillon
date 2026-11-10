@@ -8,16 +8,22 @@
 -- O lote fica numa CTE MATERIALIZED pelo mesmo motivo de ClaimDueTargets.
 -- name: ClaimDueNotifications :many
 WITH lote AS MATERIALIZED (
-    SELECT id FROM notifications
-     WHERE status = 'pending' AND next_attempt_at <= sqlc.arg(now)::timestamptz
+    SELECT n.id FROM notifications n
+      JOIN notif_channels c ON c.id = n.channel_id
+     WHERE n.status = 'pending' AND n.next_attempt_at <= sqlc.arg(now)::timestamptz
        -- Piso de rollback (SP1, §12): uma versão futura grava aviso de
        -- certificado sem incidente. Contá-lo aqui o faria sumir no JOIN com
        -- incidents e somar tentativas até fechar como failed sem ter saído.
        -- O PR 7 da SP1 remove o filtro ao trocar o JOIN por LEFT JOIN.
-       AND incident_id IS NOT NULL
-     ORDER BY next_attempt_at
+       AND n.incident_id IS NOT NULL
+       -- Piso de rollback (SP2, D-13=a): tipo de canal ou evento que este
+       -- binário não sabe entregar fica pending, sem gastar tentativa. As
+       -- listas vêm de notify.kindsConhecidos e notify.eventosConhecidos.
+       AND c.kind = ANY(sqlc.arg(kinds)::text[])
+       AND n.event = ANY(sqlc.arg(events)::text[])
+     ORDER BY n.next_attempt_at
      LIMIT sqlc.arg(max_rows)::int
-       FOR UPDATE SKIP LOCKED
+       FOR UPDATE OF n SKIP LOCKED
 ), claimed AS (
     UPDATE notifications n
        SET next_attempt_at = sqlc.arg(lease_until)::timestamptz, attempts = n.attempts + 1

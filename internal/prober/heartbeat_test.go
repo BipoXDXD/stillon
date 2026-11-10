@@ -482,6 +482,7 @@ func TestHeartbeatIncidentFlowsThroughTheOutbox(t *testing.T) {
 		var err error
 		entregaveis, err = q.ClaimDueNotifications(ctx, db.ClaimDueNotificationsParams{
 			Now: b.clk.Now(), LeaseUntil: b.clk.Now().Add(time.Minute), MaxRows: 10,
+			Kinds: []string{"discord", "email"}, Events: []string{"opened", "resolved", "reminder"},
 		})
 		return err
 	})
