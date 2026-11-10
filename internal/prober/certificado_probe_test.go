@@ -225,18 +225,23 @@ func TestPresentedButUnverifiedCertificateRecordsNothing(t *testing.T) {
 // depois do Probe: o detector conta toda leitura e escrita de socket como
 // sincronização, e um close posterior à leitura do coletor ordenaria, pelo
 // socket, o append depois dela, escondendo a corrida.
+//
+// O prazo começa imediatamente antes do Probe, e o servidor recebe o context
+// por canal: começar antes da montagem do servidor e do cliente deixaria o
+// prazo vencer antes da discagem, sem handshake a observar.
 func TestHandshakeFinishedAfterProbeReturnsIsNotARace(t *testing.T) {
 	const prazoDaSonda = 50 * time.Millisecond
 	resolverDeTeste(t, "127.0.0.1")
 	raiz, cert := cadeiaDeTeste(t, hostSonda, folhaAte, intermediarioAte)
-	ctx, cancel := context.WithTimeout(t.Context(), prazoDaSonda)
-	t.Cleanup(cancel)
+	contextoDaSonda := make(chan context.Context, 1)
 	fechada := make(chan struct{}, 1)
 
 	srv := httptest.NewUnstartedServer(http.HandlerFunc(responder200))
 	srv.TLS = &tls.Config{
 		Certificates: []tls.Certificate{cert},
 		GetConfigForClient: func(*tls.ClientHelloInfo) (*tls.Config, error) {
+			ctx := <-contextoDaSonda
+			contextoDaSonda <- ctx // devolve, se outra conexão chegar
 			<-ctx.Done()
 			return nil, nil
 		},
@@ -252,13 +257,23 @@ func TestHandshakeFinishedAfterProbeReturnsIsNotARace(t *testing.T) {
 	srv.StartTLS()
 	t.Cleanup(srv.Close)
 	client := clienteComRaiz(t, raiz, enderecoDe(t, srv))
+	url := urlDe(t, "https", hostSonda, srv)
 
-	res := Probe(ctx, client, especificacao(urlDe(t, "https", hostSonda, srv)))
+	ctx, cancel := context.WithTimeout(t.Context(), prazoDaSonda)
+	t.Cleanup(cancel)
+	contextoDaSonda <- ctx
+	res := Probe(ctx, client, especificacao(url))
 
 	if res.Status != StatusDown || res.ErrorKind != KindTimeout {
 		t.Fatalf("res = %+v, queria down/timeout", res)
 	}
-	conferirValidade(t, res, time.Time{})
+	// As duas saídas são corretas: zero quando o Probe lê o coletor antes de o
+	// handshake terminar (o caso comum), a validade quando, num runner
+	// saturado, o handshake termina primeiro. A prova da corrida é do -race,
+	// que não depende desta asserção.
+	if !res.CertNotAfter.IsZero() && !res.CertNotAfter.Equal(intermediarioAte) {
+		t.Errorf("CertNotAfter = %v, queria zero ou %v", res.CertNotAfter, intermediarioAte)
+	}
 
 	const prazoDoFechamento = 5 * time.Second
 	select {
