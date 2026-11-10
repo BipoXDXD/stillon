@@ -679,18 +679,19 @@ func TestHeartbeatValidationBoundaries(t *testing.T) {
 		{"período sem valor", map[string]any{"name": "a", "schedule": map[string]any{"kind": "period"}}, false, "period_sec"},
 		{"período abaixo", map[string]any{"name": "a", "schedule": periodo(59)}, false, "period_sec"},
 		{"período no piso", map[string]any{"name": "a", "schedule": periodo(60)}, true, ""},
-		{"período no teto", map[string]any{"name": "a", "schedule": periodo(2678400)}, true, ""},
-		{"período acima", map[string]any{"name": "a", "schedule": periodo(2678401)}, false, "period_sec"},
+		{"período no teto", map[string]any{"name": "a", "schedule": periodo(31536000)}, true, ""},
+		{"período acima", map[string]any{"name": "a", "schedule": periodo(31536001)}, false, "period_sec"},
 		{"período com expr", map[string]any{"name": "a", "schedule": map[string]any{"kind": "period", "period_sec": 60, "expr": "* * * * *"}}, false, "schedule"},
 		{"cron com período", map[string]any{"name": "a", "schedule": map[string]any{"kind": "cron", "period_sec": 60, "expr": "* * * * *", "timezone": "UTC"}}, false, "schedule"},
 		{"cron sem fuso", map[string]any{"name": "a", "schedule": map[string]any{"kind": "cron", "expr": "* * * * *"}}, false, "timezone"},
 		{"cron inválido", map[string]any{"name": "a", "schedule": map[string]any{"kind": "cron", "expr": "nunca", "timezone": "UTC"}}, false, "expr"},
 		{"tolerância abaixo", map[string]any{"name": "a", "schedule": periodo(60), "grace_sec": 29}, false, "grace_sec"},
 		{"tolerância no piso", map[string]any{"name": "a", "schedule": periodo(60), "grace_sec": 30}, true, ""},
-		{"tolerância no teto", map[string]any{"name": "a", "schedule": periodo(60), "grace_sec": 604800}, true, ""},
-		{"tolerância acima", map[string]any{"name": "a", "schedule": periodo(60), "grace_sec": 604801}, false, "grace_sec"},
-		{"descrição no teto", map[string]any{"name": "a", "schedule": periodo(60), "description": strings.Repeat("é", 1000)}, true, ""},
-		{"descrição acima do teto", map[string]any{"name": "a", "schedule": periodo(60), "description": strings.Repeat("é", 1001)}, false, "description"},
+		{"tolerância no teto", map[string]any{"name": "a", "schedule": periodo(60), "grace_sec": 31536000}, true, ""},
+		{"tolerância acima", map[string]any{"name": "a", "schedule": periodo(60), "grace_sec": 31536001}, false, "grace_sec"},
+		{"descrição no teto", map[string]any{"name": "a", "schedule": periodo(60), "description": strings.Repeat("é", 10000)}, true, ""},
+		{"descrição acima do teto", map[string]any{"name": "a", "schedule": periodo(60), "description": strings.Repeat("é", 10001)}, false, "description"},
+		{"descrição de emojis no teto", map[string]any{"name": "a", "schedule": periodo(60), "description": strings.Repeat("😀", 10000)}, true, ""},
 		{"descrição com NUL", map[string]any{"name": "a", "schedule": periodo(60), "description": "a\u0000b"}, false, "description[0]"},
 	}
 	a := newAPI(t)
@@ -710,6 +711,23 @@ func TestHeartbeatValidationBoundaries(t *testing.T) {
 			}
 		})
 	}
+	t.Run("PATCH para o período no teto recalcula o prazo", func(t *testing.T) {
+		dono := tokenDe(t, a, outroUsuario(t, a))
+		id, _ := criarHB(t, a, dono, corpoDePeriodo)
+		status, corpo := lerCru(t, a, http.MethodPatch, "/api/v1/heartbeats/"+id, dono, map[string]any{
+			"schedule": periodo(31536000),
+		})
+		if status != http.StatusOK {
+			t.Fatalf("PATCH: %d %s", status, corpo)
+		}
+		prazo, err := time.Parse(time.RFC3339, decodificar(t, corpo)["deadline_at"].(string))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want := a.clk.Now().Add(31536000*time.Second + 300*time.Second); !prazo.Equal(want) {
+			t.Errorf("prazo %v, queria %v", prazo, want)
+		}
+	})
 }
 
 // Campo ausente não muda nada; o que veio muda.

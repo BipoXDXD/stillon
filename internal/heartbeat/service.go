@@ -528,7 +528,8 @@ func pageSize(limit int32) int32 {
 	return limit
 }
 
-// seconds cabe em int32: as faixas validadas vão até 31 dias.
+// seconds cabe em int32: as faixas validadas vão até 365 dias (31536000 s,
+// CHECKs da migration 00023_heartbeat_limits), longe de 2^31-1.
 func seconds(d time.Duration) int32 { return int32(d / time.Second) } // #nosec G115 -- faixa validada (ValidateGrace, NewPeriod).
 
 func scheduleColumns(s Schedule) (period *int32, expr, timezone *string) {

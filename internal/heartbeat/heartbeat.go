@@ -11,22 +11,25 @@ import (
 	_ "time/tzdata" // o cron depende do fuso declarado, não do tzdata da imagem (D18)
 )
 
-// Faixas que a validação aplica. Cada uma tem par num CHECK da migration
-// 00016: a validação devolve o campo culpado, e o CHECK garante que nenhum
-// caminho grave lixo.
+// Faixas que a validação aplica. Cada uma tem par num CHECK das migrations
+// (a 00016, e a 00023_heartbeat_limits para período, tolerância e
+// descrição): a validação devolve o campo culpado, e o CHECK garante que
+// nenhum caminho grave lixo.
+// MinPeriod e MinGrace não mudam: EarlySignalMargin depende deles.
 const (
 	MinPeriod = time.Minute
-	MaxPeriod = 31 * 24 * time.Hour
+	MaxPeriod = 365 * 24 * time.Hour
 	MinGrace  = 30 * time.Second
-	MaxGrace  = 7 * 24 * time.Hour
+	MaxGrace  = 365 * 24 * time.Hour
 	// DefaultGrace é a tolerância de quem não informa uma.
 	DefaultGrace = 5 * time.Minute
 
 	MaxNameLength     = 100
 	MaxCronLength     = 100
 	MaxTimezoneLength = 64
-	// MaxDescriptionLength é em caracteres, como o CHECK da migration 00022.
-	MaxDescriptionLength = 1000
+	// MaxDescriptionLength é em caracteres, como o CHECK da migration
+	// 00023_heartbeat_limits.
+	MaxDescriptionLength = 10000
 
 	// RepeatWindow é por quanto tempo um sinal igual ao último é repetição
 	// (D9): o curl --retry de uma tarefa cabe nela, e um período, que é de

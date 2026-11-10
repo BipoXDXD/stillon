@@ -180,6 +180,7 @@ func TestPeriodRange(t *testing.T) {
 		{0, false}, {-time.Minute, false},
 		{heartbeat.MinPeriod - time.Second, false}, {heartbeat.MinPeriod, true},
 		{heartbeat.MaxPeriod, true}, {heartbeat.MaxPeriod + time.Second, false},
+		{365 * 24 * time.Hour, true}, {365*24*time.Hour + time.Second, false},
 	}
 	for _, c := range casos {
 		_, err := heartbeat.NewPeriod(c.d)
@@ -200,6 +201,7 @@ func TestGraceRange(t *testing.T) {
 	}{
 		{0, false}, {heartbeat.MinGrace - time.Second, false}, {heartbeat.MinGrace, true},
 		{heartbeat.MaxGrace, true}, {heartbeat.MaxGrace + time.Second, false},
+		{365 * 24 * time.Hour, true}, {365*24*time.Hour + time.Second, false},
 	}
 	for _, c := range casos {
 		if err := heartbeat.ValidateGrace(c.d); (err == nil) != c.ok {
@@ -678,6 +680,9 @@ func TestValidateDescription(t *testing.T) {
 		{nome: "emoji composto passa", entrada: "dono \U0001F469\u200D\U0001F4BB", quer: "dono \U0001F469\u200D\U0001F4BB"},
 		{nome: "no teto, em caracteres", entrada: teto, quer: teto},
 		{nome: "acima do teto", entrada: teto + "é", motivo: heartbeat.ReasonOutOfRange, campo: "description"},
+		{nome: "10000 caracteres de dois bytes", entrada: strings.Repeat("é", 10000), quer: strings.Repeat("é", 10000)},
+		{nome: "10000 emojis de quatro bytes", entrada: strings.Repeat("😀", 10000), quer: strings.Repeat("😀", 10000)},
+		{nome: "10001 caracteres", entrada: strings.Repeat("é", 10001), motivo: heartbeat.ReasonOutOfRange, campo: "description"},
 		{nome: "NUL", entrada: "a\x00b", motivo: heartbeat.ReasonInvalid, campo: "description[0]"},
 		{nome: "retorno de carro", entrada: "a\r\nb", motivo: heartbeat.ReasonInvalid, campo: "description[0]"},
 		{nome: "inversão bidi na segunda linha", entrada: "a\n\u202Eb", motivo: heartbeat.ReasonInvalid, campo: "description[1]"},
@@ -692,7 +697,7 @@ func TestValidateDescription(t *testing.T) {
 			var verr *heartbeat.ValidationError
 			switch {
 			case c.motivo == "" && (err != nil || got != c.quer):
-				t.Errorf("devolveu %q, %v; queria %q", got, err, c.quer)
+				t.Errorf("devolveu %.40q (%d bytes), %v; queria %.40q (%d bytes)", got, len(got), err, c.quer, len(c.quer))
 			case c.motivo != "" && (!errors.As(err, &verr) || verr.Field != c.campo || verr.Reason != c.motivo):
 				t.Errorf("erro %v; queria %s %s", err, c.campo, c.motivo)
 			}

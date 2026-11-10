@@ -141,7 +141,7 @@ func toScheduleDTO(s heartbeat.Schedule) scheduleDTO {
 	if s.IsCron() {
 		return scheduleDTO{Kind: scheduleKindCron, Expr: s.CronExpr(), Timezone: s.Timezone()}
 	}
-	// #nosec G115 -- o período lido do banco não tem teto, mas nasce de period_sec, um int32: a volta para int32 não transborda.
+	// #nosec G115 -- o período lido do banco nasce de period_sec, um int32 que o CHECK da 00023_heartbeat_limits limita a 31536000: a volta para int32 não transborda.
 	periodo := int32(s.Period() / time.Second)
 	return scheduleDTO{Kind: scheduleKindPeriod, PeriodSec: &periodo}
 }
