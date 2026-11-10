@@ -8,17 +8,15 @@ import { Botao, BotaoQueSome, TITULO_DA_TELA } from '@/components/ui/botao'
 import { estiloDeCartao } from '@/components/ui/cartao'
 import { useCanais, useHeartbeats, useIncidentesAbertos, useResolvidosRecentes, useResumo, useResumoFiltrado, useSemRede } from '@/lib/api/consultas'
 import { mensagemDe } from '@/lib/api/mensagens'
-import type { Heartbeat, ItemDoResumo } from '@/lib/api/schemas'
+import type { ItemDoResumo } from '@/lib/api/schemas'
 import { cn } from '@/lib/utils'
 import { avisosDosCanais } from './avisos-dos-canais'
 import { BarraDeFiltros } from './BarraDeFiltros'
 import { EsqueletoDoPainel } from './EsqueletoDoPainel'
 import {
-  casaComBusca,
   contarDoConjunto,
   descreverFiltros,
   escreverFiltros,
-  heartbeatNosFiltros,
   lerFiltros,
   SEM_FILTROS,
   temFiltroDeApi,
@@ -26,6 +24,7 @@ import {
 } from './filtros'
 import { separarEmZonas } from './grupos'
 import { buscaDaLista, linhasDaLista } from './lista'
+import type { LinhaDeMonitor } from './linhas'
 import { detalheDaManchete, fraseDoUltimoResolvido, manchete, mancheteSemRede, metaDoPainel, textoDaManchete, type Tarefas } from './manchete'
 import { comOrdem, lerOrdem, type Ordem } from './ordem'
 import { TabelaDeMonitores } from './TabelaDeMonitores'
@@ -126,22 +125,30 @@ function MonitoresFiltrados({ itens, tarefas, atualizadoEm }: PropsDosMonitores)
   // valor antigo até ela terminar.
   const aoOrdenar = (o: Ordem) => setParametros(comOrdem(escreverFiltros(filtros), o), { replace: true, flushSync: true })
 
+  // A mesma consulta do contador da navegação: nenhuma requisição a mais.
+  const abertos = useIncidentesAbertos()
+
   const esperando = filtraNaApi && filtrada.isPlaceholderData
   const base = filtraNaApi ? filtrada.data?.items : itens
-  const visiveis = base?.filter((it) => casaComBusca(it, filtros.busca))
-  const tarefasVisiveis = tarefas.itens.filter((hb) => heartbeatNosFiltros(hb, filtros))
   const total = itens.length + tarefas.itens.length
   // O relógio da tabela é o da resposta que ela mostra. Enquanto o placeholder
   // está na tela, ela ainda mostra a consulta completa.
   const agora = filtraNaApi && !esperando ? new Date(filtrada.dataUpdatedAt) : atualizadoEm
+  const porId = new Map((abertos.data?.itens ?? []).map((i) => [i.id, i]))
+  // A busca e os filtros dos heartbeats valem uma vez só, em linhasDaLista: a
+  // contagem e a tabela leem as mesmas linhas.
+  const linhas =
+    base &&
+    linhasDaLista({ itens: base, heartbeats: tarefas.itens }, filtros, ordem, agora, (it) =>
+      it.open_incident_id ? porId.get(it.open_incident_id) : undefined,
+    )
   const resultado = (() => {
     if (esperando) return 'Filtrando…'
-    return visiveis ? `${visiveis.length + tarefasVisiveis.length} de ${total} monitores` : null
+    return linhas ? `${linhas.length} de ${total} monitores` : null
   })()
-  const tabela = (lista: ItemDoResumo[]) => (
+  const tabela = (lista: LinhaDeMonitor[]) => (
     <ResultadoDosFiltros
-      itens={lista}
-      heartbeats={tarefasVisiveis}
+      linhas={lista}
       filtros={filtros}
       ordem={ordem}
       atualizadoEm={agora}
@@ -158,38 +165,34 @@ function MonitoresFiltrados({ itens, tarefas, atualizadoEm }: PropsDosMonitores)
         filtros={filtros}
         ordem={ordem}
         resultado={resultado}
-        semResultado={!esperando && visiveis?.length === 0 && tarefasVisiveis.length === 0}
+        semResultado={!esperando && linhas?.length === 0}
         busca={busca}
         aoMudar={aoMudar}
         aoOrdenar={aoOrdenar}
       />
       <div aria-busy={esperando}>
-        {filtraNaApi ? <EstadoDaConsulta consulta={filtrada}>{() => tabela(visiveis ?? [])}</EstadoDaConsulta> : tabela(visiveis ?? [])}
+        {filtraNaApi ? <EstadoDaConsulta consulta={filtrada}>{() => tabela(linhas ?? [])}</EstadoDaConsulta> : tabela(linhas ?? [])}
       </div>
     </>
   )
 }
 
 function ResultadoDosFiltros({
-  itens,
-  heartbeats,
+  linhas,
   filtros,
   ordem,
   atualizadoEm,
   reserva,
   aoMudar,
 }: {
-  itens: ItemDoResumo[]
-  heartbeats: readonly Heartbeat[]
+  linhas: LinhaDeMonitor[]
   filtros: Filtros
   ordem: Ordem
   atualizadoEm: Date
   reserva: RefObject<HTMLElement | null>
   aoMudar: (f: Filtros) => void
 }) {
-  // A mesma consulta do contador da navegação: nenhuma requisição a mais.
-  const abertos = useIncidentesAbertos()
-  if (itens.length + heartbeats.length === 0) {
+  if (linhas.length === 0) {
     return (
       <div className={cn(estiloDeCartao, 'space-y-2')}>
         <p className="font-semibold">Nenhum monitor com esses filtros.</p>
@@ -200,10 +203,6 @@ function ResultadoDosFiltros({
       </div>
     )
   }
-  const porId = new Map((abertos.data?.itens ?? []).map((i) => [i.id, i]))
-  const linhas = linhasDaLista({ itens, heartbeats }, filtros, ordem, atualizadoEm, (it) =>
-    it.open_incident_id ? porId.get(it.open_incident_id) : undefined,
-  )
   // As zonas só fazem sentido na ordem por gravidade; nas outras, um bloco só.
   return (
     <TabelaDeMonitores

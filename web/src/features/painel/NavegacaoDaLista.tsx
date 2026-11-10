@@ -53,7 +53,9 @@ function useLinhasDaLista(parametros: URLSearchParams): LinhaDeMonitor[] | null 
   const heartbeats = useHeartbeats()
   const filtraNaApi = temFiltroDeApi(filtros)
   const filtrada = useResumoFiltrado(filtros, filtraNaApi, { items: [] })
-  const itens = filtraNaApi ? (filtrada.isPlaceholderData ? undefined : filtrada.data?.items) : resumo.data?.items
+  // Os itens e o relógio vêm da mesma consulta, como na tabela do painel.
+  const fonte = filtraNaApi ? filtrada : resumo
+  const itens = filtraNaApi && filtrada.isPlaceholderData ? undefined : fonte.data?.items
   if (!itens || !heartbeats.data) return null
-  return linhasDaLista({ itens, heartbeats: heartbeats.data.items }, filtros, lerOrdem(parametros), new Date(resumo.dataUpdatedAt))
+  return linhasDaLista({ itens, heartbeats: heartbeats.data.items }, filtros, lerOrdem(parametros), new Date(fonte.dataUpdatedAt))
 }
