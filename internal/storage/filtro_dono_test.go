@@ -3,11 +3,13 @@ package storage_test
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/BipoXDXD/stillon/internal/storage"
 	"github.com/BipoXDXD/stillon/internal/storage/db"
@@ -19,10 +21,10 @@ import (
 // superusuário, que atravessa a RLS, para que só o filtro por dono na própria
 // SQL separe A de B (spec §5.5: as duas barreiras são independentes).
 
-// queriesSemRLS devolve as queries numa conexão de superusuário. Chame
-// testdb.New antes: o Close daqui roda primeiro (Cleanup é LIFO), e o
-// snapshot só volta com o banco sem conexões.
-func queriesSemRLS(t *testing.T) *db.Queries {
+// conexaoSemRLS abre uma conexão de superusuário. Chame testdb.New antes: o
+// Close daqui roda primeiro (Cleanup é LIFO), e o snapshot só volta com o
+// banco sem conexões.
+func conexaoSemRLS(t *testing.T) *pgx.Conn {
 	t.Helper()
 	ctx := context.Background()
 	conn, err := pgx.Connect(ctx, testdb.AdminDSN(t))
@@ -34,7 +36,21 @@ func queriesSemRLS(t *testing.T) *db.Queries {
 			t.Errorf("fechar a conexão de superusuário: %v", err)
 		}
 	})
-	return db.New(conn)
+	return conn
+}
+
+// queriesSemRLS devolve as queries geradas numa conexão de superusuário.
+func queriesSemRLS(t *testing.T) *db.Queries {
+	t.Helper()
+	return db.New(conexaoSemRLS(t))
+}
+
+// exigirNenhumaLinha falha se a leitura de B achou a linha de A.
+func exigirNenhumaLinha(t *testing.T, err error, leitura string) {
+	t.Helper()
+	if !errors.Is(err, pgx.ErrNoRows) {
+		t.Errorf("%s: B achou o recurso de A sem RLS (err = %v), queria pgx.ErrNoRows", leitura, err)
+	}
 }
 
 func TestGetTargetFiltersOwnerWithoutRLS(t *testing.T) {
@@ -44,9 +60,8 @@ func TestGetTargetFiltersOwnerWithoutRLS(t *testing.T) {
 	alvoA := novoAlvo(t, pool, a, agora)
 	q := queriesSemRLS(t)
 
-	if _, err := q.GetTarget(ctx, db.GetTargetParams{UserID: b, ID: alvoA}); !errors.Is(err, pgx.ErrNoRows) {
-		t.Errorf("B leu o alvo de A sem RLS: err = %v, queria pgx.ErrNoRows", err)
-	}
+	_, err := q.GetTarget(ctx, db.GetTargetParams{UserID: b, ID: alvoA})
+	exigirNenhumaLinha(t, err, "GetTarget")
 	alvo, err := q.GetTarget(ctx, db.GetTargetParams{UserID: a, ID: alvoA})
 	if err != nil {
 		t.Fatalf("A lendo o próprio alvo: %v", err)
@@ -132,5 +147,163 @@ func TestListChecksFiltersOwnerWithoutRLS(t *testing.T) {
 	}
 	if len(deA) != 1 || !deA[0].CheckedAt.Equal(agora) || deA[0].Status != "up" {
 		t.Errorf("A leu %v, queria um check up em %s", deA, agora)
+	}
+}
+
+// atualizacaoDoAlvo copia o alvo com outro nome, para o UPDATE de quem chama.
+func atualizacaoDoAlvo(alvo db.Target, dono uuid.UUID, nome string) db.UpdateTargetParams {
+	return db.UpdateTargetParams{
+		UserID: dono, ID: alvo.ID, Name: nome, URL: alvo.URL, Method: alvo.Method,
+		IntervalSec: alvo.IntervalSec, TimeoutMS: alvo.TimeoutMS, ExpectedStatus: alvo.ExpectedStatus,
+		HeadersEnc: alvo.HeadersEnc, DegradedThresholdMS: alvo.DegradedThresholdMS,
+		Enabled: alvo.Enabled, NextRunAt: alvo.NextRunAt,
+	}
+}
+
+func TestUpdateTargetFiltersOwnerWithoutRLS(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+	a, b := novoUsuario(t, pool), novoUsuario(t, pool)
+	alvoA := novoAlvo(t, pool, a, agora)
+	q := queriesSemRLS(t)
+	nomeDoAlvo := func() string {
+		t.Helper()
+		alvo, err := q.GetTarget(ctx, db.GetTargetParams{UserID: a, ID: alvoA})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return alvo.Name
+	}
+	original, err := q.GetTarget(ctx, db.GetTargetParams{UserID: a, ID: alvoA})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := q.UpdateTarget(ctx, atualizacaoDoAlvo(original, b, "de B")); err != nil {
+		t.Fatal(err)
+	}
+	if nome := nomeDoAlvo(); nome != "alvo" {
+		t.Errorf("B renomeou o alvo de A sem RLS para %q", nome)
+	}
+	if err := q.UpdateTarget(ctx, atualizacaoDoAlvo(original, a, "novo")); err != nil {
+		t.Fatal(err)
+	}
+	if nome := nomeDoAlvo(); nome != "novo" {
+		t.Errorf("A renomeou o próprio alvo e ficou %q, queria \"novo\"", nome)
+	}
+}
+
+func TestResetTargetHealthFiltersOwnerWithoutRLS(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+	a, b := novoUsuario(t, pool), novoUsuario(t, pool)
+	alvoA := novoAlvo(t, pool, a, agora)
+	conn := conexaoSemRLS(t)
+	q := db.New(conn)
+	if _, err := conn.Exec(ctx, `INSERT INTO target_health (target_id, consecutive_failures, streak_since)
+		VALUES ($1, 3, $2)`, alvoA, agora); err != nil {
+		t.Fatal(err)
+	}
+	falhas := func() int {
+		t.Helper()
+		var n int
+		if err := conn.QueryRow(ctx, `SELECT consecutive_failures FROM target_health WHERE target_id = $1`, alvoA).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+
+	if err := q.ResetTargetHealth(ctx, db.ResetTargetHealthParams{TargetID: alvoA, UserID: b}); err != nil {
+		t.Fatal(err)
+	}
+	if n := falhas(); n != 3 {
+		t.Errorf("B zerou a histerese do alvo de A sem RLS: %d falhas, queria 3", n)
+	}
+	if err := q.ResetTargetHealth(ctx, db.ResetTargetHealthParams{TargetID: alvoA, UserID: a}); err != nil {
+		t.Fatal(err)
+	}
+	if n := falhas(); n != 0 {
+		t.Errorf("A zerou a própria histerese e ficaram %d falhas, queria 0", n)
+	}
+}
+
+// comTagDoAlvo dá ao alvo de A a tag "prod", pelo caminho normal (com RLS).
+func comTagDoAlvo(t *testing.T, pool *pgxpool.Pool, dono, alvo uuid.UUID) {
+	t.Helper()
+	ctx := context.Background()
+	err := storage.InUserTx(ctx, pool, dono, func(q *db.Queries) error {
+		return q.InsertTargetTags(ctx, db.InsertTargetTagsParams{Tags: []string{"prod"}, UserID: dono, TargetID: alvo})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+// tagsDoAlvo lê as tags do alvo como o dono, sem RLS.
+func tagsDoAlvo(t *testing.T, q *db.Queries, dono, alvo uuid.UUID) []string {
+	t.Helper()
+	tags, err := q.ListTargetTags(context.Background(), db.ListTargetTagsParams{UserID: dono, TargetID: alvo})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return tags
+}
+
+func TestListTargetTagsFiltersOwnerWithoutRLS(t *testing.T) {
+	pool := testdb.New(t)
+	a, b := novoUsuario(t, pool), novoUsuario(t, pool)
+	alvoA := novoAlvo(t, pool, a, agora)
+	comTagDoAlvo(t, pool, a, alvoA)
+	q := queriesSemRLS(t)
+
+	if tags := tagsDoAlvo(t, q, b, alvoA); len(tags) != 0 {
+		t.Errorf("B leu as tags %v do alvo de A sem RLS", tags)
+	}
+	if tags := tagsDoAlvo(t, q, a, alvoA); !slices.Equal(tags, []string{"prod"}) {
+		t.Errorf("A leu %v, queria [prod]", tags)
+	}
+}
+
+func TestDeleteTargetTagsFiltersOwnerWithoutRLS(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+	a, b := novoUsuario(t, pool), novoUsuario(t, pool)
+	alvoA := novoAlvo(t, pool, a, agora)
+	comTagDoAlvo(t, pool, a, alvoA)
+	q := queriesSemRLS(t)
+
+	if err := q.DeleteTargetTags(ctx, db.DeleteTargetTagsParams{UserID: b, TargetID: alvoA}); err != nil {
+		t.Fatal(err)
+	}
+	if tags := tagsDoAlvo(t, q, a, alvoA); !slices.Equal(tags, []string{"prod"}) {
+		t.Errorf("depois do DELETE de B sem RLS, o alvo de A ficou com %v, queria [prod]", tags)
+	}
+	if err := q.DeleteTargetTags(ctx, db.DeleteTargetTagsParams{UserID: a, TargetID: alvoA}); err != nil {
+		t.Fatal(err)
+	}
+	if tags := tagsDoAlvo(t, q, a, alvoA); len(tags) != 0 {
+		t.Errorf("A apagou as próprias tags e sobrou %v", tags)
+	}
+}
+
+func TestInsertTargetTagsFiltersOwnerWithoutRLS(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+	a, b := novoUsuario(t, pool), novoUsuario(t, pool)
+	alvoA := novoAlvo(t, pool, a, agora)
+	comTagDoAlvo(t, pool, a, alvoA)
+	q := queriesSemRLS(t)
+
+	if err := q.InsertTargetTags(ctx, db.InsertTargetTagsParams{Tags: []string{"intrusa"}, UserID: b, TargetID: alvoA}); err != nil {
+		t.Fatal(err)
+	}
+	if tags := tagsDoAlvo(t, q, a, alvoA); !slices.Equal(tags, []string{"prod"}) {
+		t.Errorf("B pôs tag no alvo de A sem RLS: %v, queria [prod]", tags)
+	}
+	if err := q.InsertTargetTags(ctx, db.InsertTargetTagsParams{Tags: []string{"api"}, UserID: a, TargetID: alvoA}); err != nil {
+		t.Fatal(err)
+	}
+	if tags := tagsDoAlvo(t, q, a, alvoA); !slices.Equal(tags, []string{"api", "prod"}) {
+		t.Errorf("A pôs a tag api e ficou %v, queria [api prod]", tags)
 	}
 }
