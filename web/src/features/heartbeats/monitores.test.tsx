@@ -247,6 +247,34 @@ describe('detalhe do heartbeat', () => {
   })
 })
 
+describe('heartbeat em tolerância na lista', () => {
+  // Ruling do plano: degradado que não pede atenção. Sabotagens: mapear grace
+  // para down → a manchete pede atenção; tirar grace da ordem das tarefas → a
+  // linha de detalhe não conta a tarefa.
+  it('a linha diz "Em tolerância", e a manchete não pede atenção', async () => {
+    await painelCom({
+      alvos: [{ id: 'a', name: 'API' }],
+      heartbeats: [{ id: 'h1', name: 'Backup', state: 'grace', deadline_at: '2099-01-01T12:00:00Z' }],
+    })
+    expect(await screen.findByRole('heading', { level: 2, name: 'Tudo no ar.' })).toBeInTheDocument()
+    const linha = within(await tabela()).getByRole('row', { name: /Backup/ })
+    expect(within(linha).getAllByRole('cell')[0]).toHaveTextContent('Em tolerância')
+    expect(linha).toHaveTextContent(/o alarme sai às 01\/01\/2099/)
+    expect(screen.getByText('1 no ar. Tarefas: 1 em tolerância.')).toBeInTheDocument()
+  })
+
+  // Sabotagem: mapear grace para up → o filtro Degradado não a alcança.
+  it('o filtro de degradado a alcança e a conta', async () => {
+    const r = await renderizarPainel('/?estado=degraded')
+    r.falsa.estado.resumo = [itemDoResumo({ id: 'a', name: 'API' })]
+    r.falsa.estado.heartbeats = [heartbeat({ id: 'h1', name: 'Backup', state: 'grace' })]
+    await r.cliente.refetchQueries()
+    const botao = await within(await screen.findByRole('group', { name: 'Estado' })).findByRole('button', { name: /^Degradado/ })
+    expect(botao).toHaveTextContent('Degradado1')
+    expect(await nomesNaTabela()).toEqual(['Backup'])
+  })
+})
+
 describe('heartbeat de versão posterior na lista', () => {
   // Sabotagem: tirar o ramo unknown do Agendamento → a consulta inteira falha
   // e a tabela não mostra nem o heartbeat conhecido.
@@ -265,7 +293,7 @@ describe('heartbeat de versão posterior na lista', () => {
   it('estado novo: a linha diz "Estado desconhecido" e a manchete diz isso', async () => {
     await painelCom({
       alvos: [{ id: 'a', name: 'API' }],
-      heartbeats: [{ id: 'h1', name: 'Backup', state: 'grace' }],
+      heartbeats: [{ id: 'h1', name: 'Backup', state: 'futuro' }],
     })
     expect(await screen.findByRole('heading', { level: 2, name: 'Uma tarefa em estado desconhecido.' })).toBeInTheDocument()
     const linha = within(await tabela()).getByRole('row', { name: /Backup/ })

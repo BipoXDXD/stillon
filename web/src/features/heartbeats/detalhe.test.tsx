@@ -282,6 +282,22 @@ describe('tela de incidentes e contador', () => {
     expect(screen.queryByRole('region', { name: 'Tarefas que pedem atenção' })).not.toBeInTheDocument()
   })
 
+  // Sabotagem: deixar log como "Outro sinal", ou tirar a origem e a execução da linha.
+  it('o registro tem selo próprio, e a linha diz a execução e o que veio do painel', async () => {
+    await detalheCom({
+      eventos: [
+        { id: 'e1', kind: 'log', run_id: '0b3f6c2e-9a1d-4e7f-8c55-1234567890ab' },
+        { id: 'e2', kind: 'success', source: 'panel' },
+      ],
+    })
+    const linhas = await within(await secao('Log de eventos')).findAllByRole('listitem')
+    expect(linhas.map((l) => within(l).getByText(/^(Registro|Sucesso)$/).textContent)).toEqual(['Registro', 'Sucesso'])
+    expect(within(linhas[0]).getByText('execução 0b3f6c2e')).toBeInTheDocument()
+    expect(linhas[0]).not.toHaveTextContent('pelo painel')
+    expect(within(linhas[1]).getByText('pelo painel')).toBeInTheDocument()
+    expect(linhas[1]).not.toHaveTextContent('execução')
+  })
+
   // Sabotagem: contar só /incidents → a aba não diz nada.
   it('o contador da aba soma alvos e heartbeats', async () => {
     const r = await renderizarPainel('/')
@@ -289,6 +305,17 @@ describe('tela de incidentes e contador', () => {
     r.falsa.estado.heartbeats = [atrasado]
     await r.cliente.refetchQueries()
     expect(await screen.findByRole('link', { name: 'Incidentes, 2 abertos' })).toBeInTheDocument()
+  })
+})
+
+describe('em tolerância no detalhe', () => {
+  // Sabotagem: tirar o ramo grace do fraseDoEstado → a frase some.
+  it('mostra o selo, a hora do alarme e nenhuma palavra de alerta', async () => {
+    await detalheCom({ state: 'grace', deadline_at: '2099-01-01T12:00:00Z' })
+    expect(screen.getByText('Em tolerância')).toBeInTheDocument()
+    const s = await secao('Agendamento e sinais')
+    expect(within(s).getByText(/^Sem sinal desde o prazo esperado; o alarme sai às 01\/01\/2099,? \d{2}:\d{2}\.$/)).toBeInTheDocument()
+    expect(screen.queryByText(/Atrasado|Falhando|Fora do ar|Estado desconhecido/)).not.toBeInTheDocument()
   })
 })
 
@@ -334,7 +361,7 @@ describe('heartbeat de versão posterior', () => {
   it('evento de tipo novo aparece como "Outro sinal" e não derruba o log', async () => {
     await detalheCom({
       eventos: [
-        { id: 'e1', kind: 'log' },
+        { id: 'e1', kind: 'futuro' },
         { id: 'e2', kind: 'success' },
       ],
     })
@@ -344,7 +371,7 @@ describe('heartbeat de versão posterior', () => {
 
   // Sabotagem: tirar o 'unknown' de EstadoDoHeartbeat → o detalhe vira erro.
   it('estado novo aparece como "Estado desconhecido", sem palavra de alerta', async () => {
-    await detalheCom({ state: 'grace' })
+    await detalheCom({ state: 'futuro' })
     expect(screen.getByText('Estado desconhecido')).toBeInTheDocument()
     expect(screen.queryByText(/Atrasado|Falhando|Fora do ar/)).not.toBeInTheDocument()
   })

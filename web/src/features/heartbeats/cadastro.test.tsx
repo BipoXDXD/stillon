@@ -294,6 +294,65 @@ describe('a URL de ping é segredo', () => {
   })
 })
 
+const RETOMAR = 'Retomar sozinho quando chegar um sucesso'
+
+function avancado(): HTMLDetailsElement {
+  const d = screen.getByText('Avançado').closest('details')
+  if (d === null) throw new Error('o formulário não tem o Avançado')
+  return d
+}
+
+describe('retomada por ping no Avançado', () => {
+  // Sabotagem: details com open fixo → começa aberto.
+  it('na criação, o Avançado começa fechado, e marcar a caixa manda ping_resumes', async () => {
+    const r = await renderizarPainel('/heartbeats/new')
+    await r.usuario.type(await screen.findByLabelText('Nome'), 'Backup')
+    expect(avancado().open).toBe(false)
+    await r.usuario.click(screen.getByText('Avançado'))
+    expect(avancado().open).toBe(true)
+    const caixa = screen.getByRole('checkbox', { name: RETOMAR })
+    expect(caixa).not.toBeChecked()
+    expect(caixa).toHaveAccessibleDescription('Uma tarefa pausada volta a ser vigiada no primeiro sinal de sucesso.')
+    await r.usuario.click(caixa)
+    await r.usuario.click(screen.getByRole('button', { name: 'Cadastrar' }))
+    await dialogo()
+    expect(r.falsa.corpos('POST /heartbeats')).toEqual([
+      { name: 'Backup', schedule: { kind: 'period', period_sec: 86400 }, grace_sec: 300, ping_resumes: true },
+    ])
+  })
+
+  // Sabotagem: open só pelo estado inicial → o erro fica escondido no fechado.
+  it('o erro do servidor no campo abre o Avançado e marca a caixa', async () => {
+    const r = await renderizarPainel('/heartbeats/new')
+    r.falsa.estado.forcar.set('POST /heartbeats', { status: 400, code: 'validation_failed', fields: [{ field: 'ping_resumes', reason: 'invalid' }] })
+    await cadastrar(r)
+    expect(await screen.findByText('Valor inválido.')).toBeInTheDocument()
+    expect(avancado().open).toBe(true)
+    expect(screen.getByRole('checkbox', { name: RETOMAR })).toHaveAttribute('aria-invalid', 'true')
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  // Sabotagem: open fixo em false → quem ligou não vê a opção ligada.
+  it('na edição de quem retoma por ping, o Avançado começa aberto, e desmarcar manda false', async () => {
+    const r = await detalheCom({ ping_resumes: true })
+    await r.usuario.click(screen.getByRole('link', { name: 'Editar' }))
+    const caixa = await screen.findByRole('checkbox', { name: RETOMAR })
+    expect(avancado().open).toBe(true)
+    expect(caixa).toBeChecked()
+    await r.usuario.click(caixa)
+    await r.usuario.click(screen.getByRole('button', { name: 'Salvar' }))
+    await screen.findByRole('heading', { level: 1, name: 'Backup' })
+    expect(r.falsa.corpos('PATCH /heartbeats/:id')).toEqual([{ ping_resumes: false }])
+  })
+
+  it('na edição de quem não retoma, o Avançado começa fechado', async () => {
+    const r = await detalheCom({ ping_resumes: false })
+    await r.usuario.click(screen.getByRole('link', { name: 'Editar' }))
+    await screen.findByLabelText('Nome')
+    expect(avancado().open).toBe(false)
+  })
+})
+
 describe('edição', () => {
   it('sem mudança, nenhum PATCH', async () => {
     const r = await detalheCom()

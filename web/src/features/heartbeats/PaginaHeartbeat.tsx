@@ -17,6 +17,7 @@ import { naoEncontrado } from '@/lib/api/http'
 import { mensagemDe, textoDaCausa } from '@/lib/api/mensagens'
 import type { Heartbeat } from '@/lib/api/schemas'
 import { dataHora } from '@/lib/format'
+import { assertUnreachable } from '@/lib/utils'
 import { DialogoDaUrlDePing } from './DialogoDaUrlDePing'
 import { comoEditavel } from './esquema'
 import { EventosDoHeartbeat } from './EventosDoHeartbeat'
@@ -262,14 +263,29 @@ function UrlDePing({ aoGerar }: { aoGerar: () => void }) {
 }
 
 function fraseDoEstado(hb: Heartbeat, agora: Date): string | null {
-  if (hb.state === 'late') {
-    const causa = textoDaCausa('heartbeat_late')
-    return prazoVencido(hb, agora) ? `${causa}: o prazo era ${dataHora(hb.deadline_at)}.` : `${causa}. O incidente segue aberto até um sinal de sucesso.`
+  switch (hb.state) {
+    case 'late':
+      return fraseDoAtraso(hb, agora)
+    case 'failing':
+      return `${textoDaCausa('heartbeat_failed')}.`
+    case 'grace':
+      // Em tolerância o prazo esperado já passou: o deadline_at é a hora do alarme.
+      return `Sem sinal desde o prazo esperado; o alarme sai às ${dataHora(hb.deadline_at)}.`
+    case 'waiting':
+      // Num agendamento de versão posterior a data guardada não é prazo (Prazo).
+      return hb.schedule.kind === 'unknown' ? `${textoDaEspera(hb)}.` : `${textoDaEspera(hb)}, até ${dataHora(hb.deadline_at)}.`
+    case 'up':
+    case 'paused':
+    case 'unknown':
+      return null
+    default:
+      return assertUnreachable(hb.state)
   }
-  if (hb.state === 'failing') return `${textoDaCausa('heartbeat_failed')}.`
-  if (hb.state !== 'waiting') return null
-  // Num agendamento de versão posterior a data guardada não é prazo (Prazo).
-  return hb.schedule.kind === 'unknown' ? `${textoDaEspera(hb)}.` : `${textoDaEspera(hb)}, até ${dataHora(hb.deadline_at)}.`
+}
+
+function fraseDoAtraso(hb: Heartbeat, agora: Date): string {
+  const causa = textoDaCausa('heartbeat_late')
+  return prazoVencido(hb, agora) ? `${causa}: o prazo era ${dataHora(hb.deadline_at)}.` : `${causa}. O incidente segue aberto até um sinal de sucesso.`
 }
 
 const quando = (iso: string | null) => (iso === null ? 'Nunca' : dataHora(iso))

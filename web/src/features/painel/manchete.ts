@@ -122,6 +122,7 @@ export function resumoEmTexto(itens: readonly ItemDoResumo[]): string {
 const ORDEM_DAS_TAREFAS: readonly [EstadoDoHeartbeat, string, string][] = [
   ['failing', 'com falha', 'com falha'],
   ['late', 'atrasada', 'atrasadas'],
+  ['grace', 'em tolerância', 'em tolerância'],
   ['up', 'em dia', 'em dia'],
   ['waiting', 'aguardando', 'aguardando'],
   ['paused', 'pausada', 'pausadas'],

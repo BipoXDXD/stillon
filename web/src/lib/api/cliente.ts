@@ -57,7 +57,14 @@ export type EntradaAlvo = {
 
 export type AlteracaoAlvo = Partial<EntradaAlvo>
 
-export type EntradaHeartbeat = { name: string; schedule: AgendamentoEditavel; grace_sec: number; tags?: string[]; description?: string }
+export type EntradaHeartbeat = {
+  name: string
+  schedule: AgendamentoEditavel
+  grace_sec: number
+  tags?: string[]
+  description?: string
+  ping_resumes?: boolean
+}
 
 export type AlteracaoHeartbeat = Partial<EntradaHeartbeat> & { enabled?: boolean }
 

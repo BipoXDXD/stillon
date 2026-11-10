@@ -7,6 +7,9 @@ import { assertUnreachable } from '@/lib/utils'
 // com palavra própria: uma tarefa não fica "fora do ar" (spec da tela, T2 e T3).
 const ESTADOS: Record<EstadoDoHeartbeat, { exibido: EstadoExibido; texto: string }> = {
   up: { exibido: 'up', texto: 'Em dia' },
+  // Passou do prazo e o alarme ainda não saiu: degradado, que não pede atenção
+  // (Ruling do plano da SP1, PR 3).
+  grace: { exibido: 'degraded', texto: 'Em tolerância' },
   late: { exibido: 'down', texto: 'Atrasado' },
   failing: { exibido: 'down', texto: 'Falhando' },
   waiting: { exibido: 'unknown', texto: 'Aguardando' },

@@ -110,14 +110,14 @@ const CAMPOS_DO_ALVO = [
   'headers',
   'tags',
 ]
-const CAMPOS_DO_HEARTBEAT = ['name', 'description', 'tags', 'schedule', 'grace_sec', 'enabled']
+const CAMPOS_DO_HEARTBEAT = ['name', 'description', 'tags', 'schedule', 'grace_sec', 'enabled', 'ping_resumes']
 const CAMPOS_DO_AGENDAMENTO = ['kind', 'period_sec', 'expr', 'timezone']
 const CAMPOS_DA_PAGINA = ['slug', 'title', 'published', 'items']
 const CAMPOS_DO_ITEM_DA_PAGINA = ['target_id', 'display_name']
 // Os campos do PATCH em que null é 400, na ordem de recusouNulo no servidor. Nos
 // outros (tags, description, headers, degraded_threshold_ms), null limpa.
 const OBRIGATORIOS_DO_ALVO = ['name', 'url', 'method', 'interval_sec', 'timeout_ms', 'expected_status', 'enabled']
-const OBRIGATORIOS_DO_HEARTBEAT = ['name', 'schedule', 'grace_sec', 'enabled']
+const OBRIGATORIOS_DO_HEARTBEAT = ['name', 'schedule', 'grace_sec', 'enabled', 'ping_resumes']
 const OBRIGATORIOS_DA_PAGINA = ['slug', 'title', 'published', 'items']
 const PROVAS_DO_2FA = ['password', 'code', 'recovery_code']
 
@@ -535,6 +535,7 @@ export function criarApiFalsa() {
         enabled: true,
         schedule: corpo.schedule as Entrada<typeof Heartbeat>['schedule'],
         grace_sec: corpo.grace_sec === undefined ? 300 : Number(corpo.grace_sec),
+        ping_resumes: corpo.ping_resumes === true,
         state: 'waiting' as const,
         deadline_at: primeiroPrazo(corpo.grace_sec === undefined ? 300 : Number(corpo.grace_sec)),
         last_ping_at: null,
