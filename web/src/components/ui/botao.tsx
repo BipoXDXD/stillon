@@ -19,7 +19,10 @@ const variantes = cva(
       tipo: {
         primario: 'bg-primaria text-primaria-texto hover:bg-primaria/90',
         secundario: 'border border-borda-controle bg-superficie text-texto hover:bg-painel',
-        terciario: 'text-primaria hover:bg-primaria-100',
+        // Sublinhado (PUI): sem fundo nem borda, é o que diz "isto é clicável".
+        // Com ícone (o "X" de dispensar, um "+") o ícone já diz, e o traço só
+        // pesaria numa ação que é rebaixada de propósito.
+        terciario: 'text-primaria underline underline-offset-4 hover:bg-primaria-100 has-[svg]:no-underline',
         perigo: 'bg-perigo text-perigo-texto hover:bg-perigo/90',
       } satisfies Record<TipoDeBotao, string>,
       tamanho: {

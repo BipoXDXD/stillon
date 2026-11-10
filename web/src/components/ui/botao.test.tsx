@@ -20,6 +20,19 @@ describe('Botao', () => {
     expect(screen.getByRole('button', { name: 'Ação' })).toHaveClass(classe)
   })
 
+  // Bloco 2, item 7 (PUI): o terciário, que não tem fundo nem borda, é
+  // sublinhado; com ícone, não. Os outros têm a forma e não levam traço.
+  // Sabotagem: tirar o underline do terciário, ou o has-[svg]:no-underline.
+  it('o terciário é sublinhado, menos quando tem ícone', () => {
+    render(<Botao tipo="terciario">Apagar</Botao>)
+    expect(screen.getByRole('button', { name: 'Apagar' })).toHaveClass('underline', 'underline-offset-4', 'has-[svg]:no-underline')
+  })
+
+  it.each(['primario', 'secundario', 'perigo'] as const)('o tipo %s não é sublinhado', (tipo) => {
+    render(<Botao tipo={tipo}>Ação</Botao>)
+    expect(screen.getByRole('button', { name: 'Ação' })).not.toHaveClass('underline')
+  })
+
   it.each(['primario', 'secundario', 'terciario'] as const)('o tipo %s não usa o vermelho', (tipo) => {
     render(<Botao tipo={tipo}>Ação</Botao>)
     expect(screen.getByRole('button', { name: 'Ação' }).className).not.toMatch(/perigo/)
