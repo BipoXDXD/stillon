@@ -41,6 +41,10 @@ export const Alvo = z.object({
   enabled: z.boolean(),
   header_names: z.array(z.string()),
   tags: z.array(z.string()),
+  // O aviso de certificado (o interruptor entra no painel no PR 7) e a última
+  // leitura da validade; null enquanto nenhuma sonda leu o certificado.
+  tls_warn: z.boolean(),
+  tls: z.object({ not_after: instante, observed_at: instante }).nullable(),
   created_at: instante,
 })
 export type Alvo = z.infer<typeof Alvo>
