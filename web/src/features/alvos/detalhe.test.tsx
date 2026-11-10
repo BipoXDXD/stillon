@@ -367,7 +367,42 @@ describe('detalhe', () => {
     r.falsa.estado.resumo = [itemDoResumo({ id: 'alvo-1', name: 'API' }), itemDoResumo({ id: 'alvo-2', name: 'Banco' })]
     await r.cliente.refetchQueries()
     const nav = await screen.findByRole('navigation', { name: 'Lista de monitores' })
-    await waitFor(() => expect(within(nav).getAllByRole('link')).toHaveLength(1))
+    // Controle positivo: a lista da URL chegou à volta, e as consultas
+    // responderam; só então a ausência dos vizinhos prova alguma coisa.
+    expect(within(nav).getByRole('link', { name: 'Voltar ao painel' })).toHaveAttribute('href', '/?busca=banco')
+    await waitFor(() => expect(r.cliente.isFetching()).toBe(0))
+    expect(within(nav).getAllByRole('link')).toHaveLength(1)
+  })
+
+  // Com tag ou estado na URL, a lista vem da consulta filtrada na API, não do
+  // resumo inteiro. Sabotagem: em useLinhasDaLista, usar sempre
+  // resumo.data?.items → API ganha o vizinho Banco no primeiro, e Avião vira o
+  // Próximo no segundo.
+  it('filtro de estado na URL: alvo fora da lista filtrada fica só com a volta', async () => {
+    const r = await renderizarPainel('/targets/alvo-1?estado=down')
+    r.falsa.estado.alvos = [alvo()]
+    r.falsa.estado.resumo = [itemDoResumo({ id: 'alvo-1', name: 'API' }), itemDoResumo({ id: 'alvo-2', name: 'Banco', state: 'down' })]
+    await r.cliente.refetchQueries()
+    const nav = await screen.findByRole('navigation', { name: 'Lista de monitores' })
+    expect(within(nav).getByRole('link', { name: 'Voltar ao painel' })).toHaveAttribute('href', '/?estado=down')
+    await waitFor(() => expect(r.falsa.estado.consultasDoResumo).toContain('state=down'))
+    await waitFor(() => expect(r.cliente.isFetching()).toBe(0))
+    expect(within(nav).getAllByRole('link')).toHaveLength(1)
+  })
+
+  it('filtro de estado na URL: Anterior e Próximo vêm da lista filtrada', async () => {
+    const r = await renderizarPainel('/targets/alvo-1?estado=down&ordem=nome')
+    r.falsa.estado.alvos = [alvo()]
+    r.falsa.estado.resumo = [
+      itemDoResumo({ id: 'alvo-0', name: 'Alfa', state: 'down' }),
+      itemDoResumo({ id: 'alvo-1', name: 'API', state: 'down' }),
+      itemDoResumo({ id: 'alvo-9', name: 'Avião' }),
+      itemDoResumo({ id: 'alvo-2', name: 'Banco', state: 'down' }),
+    ]
+    await r.cliente.refetchQueries()
+    const nav = await screen.findByRole('navigation', { name: 'Lista de monitores' })
+    expect(await within(nav).findByRole('link', { name: 'Anterior: Alfa' })).toHaveAttribute('href', '/targets/alvo-0?estado=down&ordem=nome')
+    expect(within(nav).getByRole('link', { name: 'Próximo: Banco' })).toHaveAttribute('href', '/targets/alvo-2?estado=down&ordem=nome')
   })
 
   // Sabotagem: voltar ao setParams({ janela }), que apaga a lista da URL.
