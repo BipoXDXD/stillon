@@ -8,3 +8,8 @@ var CloneName = cloneName
 
 // SetDepoisDeGravar expõe o gancho dos testes da resposta.
 func (s *Service) SetDepoisDeGravar(fn func()) { s.depoisDeGravar = fn }
+
+// StatusOf e StatusFacts expõem o estado derivado aos testes de fronteira.
+var StatusOf = statusOf
+
+type StatusFacts = statusFacts

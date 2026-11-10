@@ -47,7 +47,10 @@ const (
 	StatusFailing Status = "failing"
 	StatusLate    Status = "late"
 	StatusWaiting Status = "waiting"
-	StatusUp      Status = "up"
+	// StatusGrace é a janela de tolerância antes do prazo: o sinal ainda não
+	// veio, mas não está atrasado. Não pede atenção.
+	StatusGrace Status = "grace"
+	StatusUp    Status = "up"
 )
 
 // Heartbeat é o que sai do domínio. Não tem campo para o token nem para o
@@ -667,7 +670,8 @@ func toHeartbeat(h db.Heartbeat, open *uuid.UUID, now time.Time) (Heartbeat, err
 		Grace: time.Duration(h.GraceSec) * time.Second,
 		Status: statusOf(statusFacts{
 			Enabled: h.Enabled, Failing: h.FailingSince != nil, OpenIncident: open != nil,
-			KnownSchedule: sch.IsKnown(), FinishedARun: finishedARun(h), Deadline: h.DeadlineAt,
+			KnownSchedule: sch.IsKnown(), FinishedARun: finishedARun(h), RunOpen: h.LastStartAt != nil,
+			Deadline: h.DeadlineAt, Grace: time.Duration(h.GraceSec) * time.Second,
 		}, now),
 		DeadlineAt: h.DeadlineAt, LastPingAt: h.LastPingAt, LastSuccessAt: h.LastSuccessAt,
 		LastStartAt: h.LastStartAt, LastRuntimeMS: h.LastRuntimeMS, OpenIncidentID: open, CreatedAt: h.CreatedAt,
@@ -683,8 +687,9 @@ func finishedARun(h db.Heartbeat) bool {
 
 // statusFacts são os fatos da linha de que o estado derivado depende.
 type statusFacts struct {
-	Enabled, Failing, OpenIncident, KnownSchedule, FinishedARun bool
-	Deadline                                                    time.Time
+	Enabled, Failing, OpenIncident, KnownSchedule, FinishedARun, RunOpen bool
+	Deadline                                                             time.Time
+	Grace                                                                time.Duration
 }
 
 // O incidente aberto conta como atraso mesmo com prazo futuro: editar o
@@ -701,6 +706,15 @@ func statusOf(f statusFacts, now time.Time) Status {
 		return StatusLate
 	case !f.FinishedARun:
 		return StatusWaiting
+	case f.inGrace(now):
+		return StatusGrace
 	}
 	return StatusUp
+}
+
+// inGrace diz se now cai na tolerância antes do prazo, [prazo - tolerância,
+// prazo). Com agendamento desconhecido o prazo não é confiável, e com execução
+// aberta a tarefa está trabalhando: nos dois casos não há o que tolerar.
+func (f statusFacts) inGrace(now time.Time) bool {
+	return f.KnownSchedule && !f.RunOpen && !now.Before(f.Deadline.Add(-f.Grace))
 }

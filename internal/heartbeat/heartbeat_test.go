@@ -480,6 +480,23 @@ func TestApplyOnUnknownScheduleKeepsDeadline(t *testing.T) {
 			}
 		})
 	}
+	// O log não mexe em nada nem com o agendamento desconhecido: só o evento.
+	t.Run("log", func(t *testing.T) {
+		antes := heartbeat.State{
+			DeadlineAt:   time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC),
+			LastPingAt:   time.Date(2026, 11, 10, 9, 59, 0, 0, time.UTC),
+			LastSignal:   heartbeat.SignalStart,
+			FailingSince: time.Date(2026, 11, 10, 9, 0, 0, 0, time.UTC),
+			LastStartAt:  time.Date(2026, 11, 10, 9, 59, 0, 0, time.UTC),
+		}
+		s, ev := antes.Apply(heartbeat.SignalLog, em, heartbeat.Run{}, desconhecido, tolerancia)
+		if s != antes {
+			t.Errorf("log mudou o estado: %+v", s)
+		}
+		if ev == nil || ev.Kind != heartbeat.SignalLog || !ev.At.Equal(time.Date(2026, 11, 10, 10, 0, 0, 0, time.UTC)) {
+			t.Errorf("evento %+v, queria log em 2026-11-10T10:00:00Z", ev)
+		}
+	})
 }
 
 func TestEqualTellsUnknownApart(t *testing.T) {
@@ -895,5 +912,44 @@ func TestResumedByPing(t *testing.T) {
 			t.Errorf("ResumedByPing(%s, enabled=%v, pingResumes=%v) = %v, queria %v",
 				c.sig, c.enabled, c.pingResumes, got, c.want)
 		}
+	}
+}
+
+// "Em tolerância" é a janela [prazo - tolerância, prazo): começa no instante
+// exato e termina quando o atraso começa (A9).
+func TestGraceStateBoundaries(t *testing.T) {
+	emDia := func() heartbeat.StatusFacts {
+		return heartbeat.StatusFacts{
+			Enabled: true, KnownSchedule: true, FinishedARun: true,
+			Deadline: time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC), Grace: 5 * time.Minute,
+		}
+	}
+	dentro := time.Date(2026, 11, 10, 11, 57, 0, 0, time.UTC)
+	casos := []struct {
+		nome   string
+		fatos  func(*heartbeat.StatusFacts)
+		agora  time.Time
+		estado heartbeat.Status
+	}{
+		{"início exato da tolerância", nil, time.Date(2026, 11, 10, 11, 55, 0, 0, time.UTC), heartbeat.StatusGrace},
+		{"um instante antes", nil, time.Date(2026, 11, 10, 11, 54, 59, 999999999, time.UTC), heartbeat.StatusUp},
+		{"no prazo", nil, time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC), heartbeat.StatusLate},
+		{"execução aberta", func(f *heartbeat.StatusFacts) { f.RunOpen = true }, dentro, heartbeat.StatusUp},
+		{"nunca terminou", func(f *heartbeat.StatusFacts) { f.FinishedARun = false }, dentro, heartbeat.StatusWaiting},
+		{"agendamento desconhecido", func(f *heartbeat.StatusFacts) { f.KnownSchedule = false }, dentro, heartbeat.StatusUp},
+		{"pausado", func(f *heartbeat.StatusFacts) { f.Enabled = false }, dentro, heartbeat.StatusPaused},
+		{"falhando", func(f *heartbeat.StatusFacts) { f.Failing = true }, dentro, heartbeat.StatusFailing},
+		{"incidente aberto", func(f *heartbeat.StatusFacts) { f.OpenIncident = true }, dentro, heartbeat.StatusLate},
+	}
+	for _, c := range casos {
+		t.Run(c.nome, func(t *testing.T) {
+			f := emDia()
+			if c.fatos != nil {
+				c.fatos(&f)
+			}
+			if got := heartbeat.StatusOf(f, c.agora); got != c.estado {
+				t.Errorf("estado %q, queria %q", got, c.estado)
+			}
+		})
 	}
 }
