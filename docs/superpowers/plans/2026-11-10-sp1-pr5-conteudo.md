@@ -355,8 +355,12 @@ merge".
 - [ ] **Step 2:** `flock -o ... go test -run 'ContentRule|AnotherUsersTarget|AlvoTemExatamente' ./internal/httpapi` → FAIL.
 - [ ] **Step 3: implementar** no molde de `degraded_threshold_ms` (ausente/null/valor) e de `recusouNulo` para os campos
   que não aceitam null.
-- [ ] **Step 4:** PASS. Sabotagens: tirar o filtro de dono de `GetTargetForUpdate` → o 404 vira 200; acrescentar campo ao
-  DTO de saída → chaves exatas quebram.
+- [ ] **Step 4:** PASS. Sabotagens: acrescentar campo ao DTO de saída → chaves exatas quebram. O filtro de dono não se
+  prova pelo HTTP: sem o `user_id` de `GetTargetForUpdate` o 404 continua 404, porque a RLS de `InUserTx` é a segunda
+  barreira (spec §5.5). Quem o prova é `TestTargetQueriesFilterByOwnerWithoutRLS` (`internal/storage`): conexão de
+  superusuário e `db.New`, B chama `GetTargetForUpdate`, `UpdateTarget` e `ResetTargetHealth` sobre o alvo de A →
+  nenhuma linha, alvo e histerese de A intactos. Tirar o filtro de cada uma das três (uma por vez, com `make generate`,
+  mantendo o parâmetro nomeado, ex.: `(user_id = $1 OR true)`) → vermelho.
 - [ ] **Step 5:** commit `feat(httpapi): regra de conteúdo no cadastro do alvo`.
 
 ### Task 8: painel — formulário "Avançado" e texto da causa
