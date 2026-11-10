@@ -17,12 +17,9 @@ import (
 	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 )
 
-// A migration de target_tls e o arquivo dela. A numeração final depende da
-// ordem de merge dos PRs da SP1: se mudar, mude só aqui.
-const (
-	versaoTargetTLS  int64 = 23
-	arquivoTargetTLS       = "00023"
-)
+// A migration de target_tls, achada pelo nome: o número é o próximo livre na
+// hora do merge.
+const sufixoTargetTLS = "target_tls"
 
 var validadeTLS = time.Date(2026, 12, 1, 0, 0, 0, 0, time.UTC)
 
@@ -219,7 +216,7 @@ func TestTargetTLSDownAndUp(t *testing.T) {
 		t.Fatalf("desligar tls_warn tocou %d linhas", n)
 	}
 
-	if err := storage.MigrateDownTo(ctx, dsn, versaoTargetTLS-1); err != nil {
+	if err := storage.MigrateDownTo(ctx, dsn, versaoDaMigration(t, sufixoTargetTLS)-1); err != nil {
 		t.Fatalf("down da target_tls: %v", err)
 	}
 	var tabela *string
@@ -233,7 +230,7 @@ func TestTargetTLSDownAndUp(t *testing.T) {
 		t.Errorf("targets.tls_warn continuou existindo depois do down")
 	}
 
-	if err := storage.MigrateUpTo(ctx, dsn, versaoTargetTLS); err != nil {
+	if err := storage.MigrateUpTo(ctx, dsn, versaoDaMigration(t, sufixoTargetTLS)); err != nil {
 		t.Fatalf("subir de novo depois do down: %v", err)
 	}
 	var avisar bool
@@ -262,10 +259,10 @@ func TestFloorBinaryBootsOnTargetTLS(t *testing.T) {
 	if err := conn.QueryRowContext(ctx, `SELECT max(version_id) FROM goose_db_version`).Scan(&versao); err != nil {
 		t.Fatal(err)
 	}
-	if versao < versaoTargetTLS {
+	if versao < versaoDaMigration(t, sufixoTargetTLS) {
 		t.Fatalf("o schema novo parou na %d, antes da target_tls", versao)
 	}
-	anterior, err := goose.NewProvider(goose.DialectPostgres, conn, migrationsAte(t, arquivoTargetTLS))
+	anterior, err := goose.NewProvider(goose.DialectPostgres, conn, migrationsAte(t, arquivoDaMigration(t, sufixoTargetTLS)))
 	if err != nil {
 		t.Fatal(err)
 	}

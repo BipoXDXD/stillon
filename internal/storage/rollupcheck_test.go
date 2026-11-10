@@ -128,7 +128,7 @@ func TestRollupLatencyChecksAreValidated(t *testing.T) {
 
 // novoAlvoNoEsquemaDa00013 cria o alvo com SQL escrito à mão: InsertTarget é
 // gerado do esquema atual e cita colunas que a 00013 ainda não tem
-// (tls_warn, da 00023).
+// (tls_warn, da migration da target_tls).
 func novoAlvoNoEsquemaDa00013(t *testing.T, pool *pgxpool.Pool, dono uuid.UUID, proximo time.Time) uuid.UUID {
 	t.Helper()
 	id := uuid.Must(uuid.NewV7())
