@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"io"
 	"strconv"
+	"unicode"
+	"unicode/utf16"
 	"unicode/utf8"
 
 	"github.com/BipoXDXD/stillon/internal/prober/safedial"
@@ -227,19 +229,75 @@ func (c *cursor) lerString() []byte {
 }
 
 // chaveIgual compara a chave crua com o token já decodificado do ponteiro.
-// Sem barra invertida e em UTF-8 válido, a chave crua é a própria chave e a
-// comparação não aloca; com escape ou com byte inválido, ela é decodificada
-// antes, porque o encoding/json troca cada byte inválido por U+FFFD.
+// Sem barra invertida e em UTF-8 válido, a chave crua é a própria chave. Fora
+// desse atalho, ela é decodificada runa a runa contra o token, sem alocar: um
+// json.Unmarshal por chave passava de 1 MiB num corpo de 64 KiB (D2c).
 func chaveIgual(crua []byte, token string) bool {
 	miolo := crua[1 : len(crua)-1]
 	if bytes.IndexByte(miolo, '\\') < 0 && utf8.Valid(miolo) {
 		return string(miolo) == token
 	}
-	var chave string
-	if err := json.Unmarshal(crua, &chave); err != nil {
-		return false
+	var runa [utf8.UTFMax]byte
+	for len(miolo) > 0 {
+		r, lidos := proximaRunaDaString(miolo)
+		miolo = miolo[lidos:]
+		n := utf8.EncodeRune(runa[:], r)
+		if len(token) < n || token[:n] != string(runa[:n]) {
+			return false
+		}
+		token = token[n:]
 	}
-	return chave == token
+	return token == ""
+}
+
+// proximaRunaDaString decodifica a primeira runa do miolo de uma string JSON
+// que json.Valid já aceitou, como o encoding/json faz: par substituto
+// inválido e byte de UTF-8 inválido viram U+FFFD.
+func proximaRunaDaString(s []byte) (r rune, lidos int) {
+	if s[0] != '\\' {
+		return utf8.DecodeRune(s)
+	}
+	switch s[1] {
+	case 'b':
+		return '\b', 2
+	case 'f':
+		return '\f', 2
+	case 'n':
+		return '\n', 2
+	case 'r':
+		return '\r', 2
+	case 't':
+		return '\t', 2
+	case 'u':
+		r = hex4(s[2:6])
+		if !utf16.IsSurrogate(r) {
+			return r, 6
+		}
+		if len(s) >= 12 && s[6] == '\\' && s[7] == 'u' {
+			if par := utf16.DecodeRune(r, hex4(s[8:12])); par != unicode.ReplacementChar {
+				return par, 12
+			}
+		}
+		return unicode.ReplacementChar, 6
+	}
+	return rune(s[1]), 2 // ", \ ou /
+}
+
+// hex4 lê os quatro dígitos de um \uXXXX já validado.
+func hex4(s []byte) rune {
+	var r rune
+	for _, c := range s[:4] {
+		switch {
+		case c <= '9':
+			c -= '0'
+		case c <= 'F':
+			c -= 'A' - 10
+		default:
+			c -= 'a' - 10
+		}
+		r = r<<4 | rune(c)
+	}
+	return r
 }
 
 // formaDeTexto recebe um valor JSON já validado, sem espaço em volta.

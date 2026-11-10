@@ -50,6 +50,13 @@ func TestAvaliarConteudo(t *testing.T) {
 		{"json chave com escape no corpo", json("1", "a/b"), `{"a\/b":1}`, false, ""},
 		{"json chave escapada repetida: vale a última", json("2", "ab"), `{"ab":1,"a\u0062":2}`, false, ""},
 		{"json chave com UTF-8 inválido vira U+FFFD", json("1", "\uFFFD"), "{\"\xff\":1}", false, ""},
+		{"json chave com par substituto", json("1", "\U0001F600"), `{"\ud83d\ude00":1}`, false, ""},
+		{"json chave com substituto sozinho vira U+FFFD", json("1", "\uFFFDA"), `{"\ud800\u0041":1}`, false, ""},
+		{"json chave com substituto no fim vira U+FFFD", json("1", "a\uFFFD"), `{"a\udc00":1}`, false, ""},
+		{"json chave com escapes de controle", json("1", "a\tb\n\b\f\r\"\\"), `{"a\tb\n\b\f\r\"\\":1}`, false, ""},
+		{"json chave escapada com outra letra", json("1", "ab"), `{"a\u0063":1}`, false, KindContentMismatch},
+		{"json chave escapada mais curta que o token", json("1", "abc"), `{"a\u0062":1}`, false, KindContentMismatch},
+		{"json chave escapada mais longa que o token", json("1", "a"), `{"a\u0062":1}`, false, KindContentMismatch},
 		{"json forma de texto: string \"1\" passa como 1", json("1", "n"), `{"n":"1"}`, false, ""},
 		{"json forma de texto: string \"null\" passa como null", json("null", "a"), `{"a":"null"}`, false, ""},
 		{"json última repetida sem o caminho", json("ok", "a", "b"), `{"a":{"b":"ok"},"a":1}`, false, KindContentMismatch},
@@ -78,6 +85,24 @@ func TestAvaliarConteudo(t *testing.T) {
 				t.Errorf("avaliarConteudo = %q, queria %q", got, c.quer)
 			}
 		})
+	}
+}
+
+// D2c do STRIDE: comparar uma chave fora do atalho não aloca. Com um
+// json.Unmarshal por chave, um corpo de 64 KiB alocava mais de 1 MiB.
+func TestChaveIgualDoesNotAllocate(t *testing.T) {
+	casos := []struct{ crua, token string }{
+		{`"a\/b"`, "a/b"},
+		{`"a\u0062"`, "ab"},
+		{`"\ud83d\ude00"`, "\U0001F600"},
+		{"\"\xff\"", "\uFFFD"},
+		{`"a\u0062"`, "outra"},
+	}
+	for _, c := range casos {
+		crua := []byte(c.crua)
+		if allocs := testing.AllocsPerRun(100, func() { chaveIgual(crua, c.token) }); allocs != 0 {
+			t.Errorf("chaveIgual(%q, %q) alocou %v vezes, queria 0", c.crua, c.token, allocs)
+		}
 	}
 }
 
@@ -127,9 +152,47 @@ func corpoJSONFundo(tb testing.TB) ([]byte, RegraDaSonda) {
 	return []byte(corpo), RegraDaSonda{Mode: targets.ContentJSONEquals, Value: []byte("ok"), Pointer: ponteiro}
 }
 
+// corpoJSONDeChaves enche 64 KiB com chaves curtas na forma de chave(i), e o
+// ponteiro aponta a última, já decodificada por token(i). É o pior caso de
+// chaveIgual: cada chave cai fora do atalho sem barra e em UTF-8 válido.
+func corpoJSONDeChaves(tb testing.TB, chave, token func(int) string) ([]byte, RegraDaSonda) {
+	tb.Helper()
+	var corpo strings.Builder
+	corpo.WriteString("{")
+	i := 0
+	for ; corpo.Len() < 64<<10-64; i++ {
+		fmt.Fprintf(&corpo, `"%s":0,`, chave(i))
+	}
+	fmt.Fprintf(&corpo, `"%s":"ok"`, chave(i))
+	for corpo.Len() < 64<<10-1 {
+		corpo.WriteString(" ")
+	}
+	corpo.WriteString("}")
+	if corpo.Len() != 64<<10 {
+		tb.Fatalf("corpo de chaves com %d bytes, queria 65536", corpo.Len())
+	}
+	return []byte(corpo.String()), RegraDaSonda{Mode: targets.ContentJSONEquals, Value: []byte("ok"), Pointer: []string{token(i)}}
+}
+
+// D2c do STRIDE: chaves com escape, que o encoding/json decodificaria uma a uma.
+func corpoJSONChavesEscapadas(tb testing.TB) ([]byte, RegraDaSonda) {
+	return corpoJSONDeChaves(tb,
+		func(i int) string { return fmt.Sprintf(`a\/%05d`, i) },
+		func(i int) string { return fmt.Sprintf("a/%05d", i) })
+}
+
+// D2c do STRIDE: chaves com um byte de UTF-8 inválido, que vira U+FFFD.
+func corpoJSONChavesUTF8Invalido(tb testing.TB) ([]byte, RegraDaSonda) {
+	return corpoJSONDeChaves(tb,
+		func(i int) string { return fmt.Sprintf("\xff%05d", i) },
+		func(i int) string { return fmt.Sprintf("\uFFFD%05d", i) })
+}
+
 var corposJSONDoPortao = map[string]func(testing.TB) ([]byte, RegraDaSonda){
-	"largo": corpoJSONLargo,
-	"fundo": corpoJSONFundo,
+	"largo":                 corpoJSONLargo,
+	"fundo":                 corpoJSONFundo,
+	"chaves escapadas":      corpoJSONChavesEscapadas,
+	"chaves UTF-8 inválido": corpoJSONChavesUTF8Invalido,
 }
 
 // O portão de memória como teste, para não depender de alguém ler o
@@ -158,7 +221,7 @@ func TestAvaliarConteudoJSONStaysUnderTheMemoryCap(t *testing.T) {
 
 // O mesmo portão medido com -benchmem, para o corpo do PR.
 func BenchmarkAvaliarConteudoJSON64KiB(b *testing.B) {
-	for _, nome := range []string{"largo", "fundo"} {
+	for _, nome := range []string{"largo", "fundo", "chaves escapadas", "chaves UTF-8 inválido"} {
 		b.Run(nome, func(b *testing.B) {
 			corpo, regra := corposJSONDoPortao[nome](b)
 			b.SetBytes(int64(len(corpo)))
@@ -270,6 +333,9 @@ func FuzzEscalarNoPonteiro(f *testing.F) {
 		{`{"a":tru}`, "a"},
 		{`[[[[[[]]]]]]`, "0/0"},
 		{"{\"\xff\":1}", "\uFFFD"},
+		{`{"\ud83d\ude00":1,"\ud800\u0041":2,"a\udc00":3}`, "\uFFFDA"},
+		{`{"\ud83d\ude00":1}`, "\U0001F600"},
+		{`{"a\u0062\t":1}`, "ab\t"},
 	} {
 		f.Add([]byte(s.corpo), s.ponteiro)
 	}
