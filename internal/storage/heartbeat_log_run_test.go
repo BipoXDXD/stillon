@@ -180,9 +180,10 @@ func TestLogRunMigrationDownRemovesLogsAndColumns(t *testing.T) {
 	}
 }
 
-// O boot do binário do PR 1 roda as migrations dele num banco que já tem a +1:
-// tem de ser um no-op, ou o rollback nem sobe.
-func TestFloorBinaryBootsOnLogRun(t *testing.T) {
+// O boot do binário anterior (as migrations até a véspera desta, hoje o PR 2)
+// num banco que já tem a +1 tem de ser um no-op, ou o rollback nem sobe. O
+// piso do PR 1 sobre o schema completo é o TestFloorBinaryBootsOnHeartbeatLimits.
+func TestPreviousBinaryBootsOnLogRun(t *testing.T) {
 	ctx := context.Background()
 	versao := versaoDaMigration(t, migrationLogRun)
 	dsn := testdb.EmptyDatabase(t)
