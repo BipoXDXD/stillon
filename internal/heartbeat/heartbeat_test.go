@@ -717,6 +717,8 @@ func TestCloneName(t *testing.T) {
 		{"93 caracteres perdem um", strings.Repeat("a", 93), strings.Repeat("a", 92) + " (cópia)"},
 		{"multibyte corta por caractere", strings.Repeat("é", 99), strings.Repeat("é", 92) + " (cópia)"},
 		{"espaço deixado pelo corte sai", strings.Repeat("a", 91) + " b...", strings.Repeat("a", 91) + " (cópia)"},
+		{"combinante no fim sem corte fica", "Cafe\u0301", "Cafe\u0301 (cópia)"},
+		{"seletor de variação sem corte fica", "Backup \u2764\uFE0F", "Backup \u2764\uFE0F (cópia)"},
 		{"ZWJ deixado pelo corte sai", strings.Repeat("a", 90) + "x\u200Dyz", strings.Repeat("a", 90) + "x (cópia)"},
 	}
 	for _, c := range casos {

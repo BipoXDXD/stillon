@@ -287,15 +287,17 @@ func (s *Service) cloneParams(original db.Heartbeat, id uuid.UUID, hash []byte) 
 }
 
 // cloneName põe o sufixo e corta o nome, por caractere, para a cópia caber em
-// MaxNameLength. O que o corte deixa no fim e não se sustenta sozinho sai:
-// espaço (dobraria o do sufixo), formatação invisível como ZWJ e marca
-// combinante, que ValidateName recusaria no próximo PATCH com o mesmo nome.
+// MaxNameLength. Só o corte deixa sobra no fim, e ela sai: espaço (dobraria o
+// do sufixo), formatação como o ZWJ (Cf, que ValidateName recusaria no próximo
+// PATCH com o mesmo nome) e marca combinante órfã do caractere-base cortado. O
+// nome que cabe inteiro fica como está: já veio limpo do cadastro, e o
+// combinante no fim dele é legítimo ("Café" decomposto, "❤️").
 func cloneName(name string) string {
 	caben := MaxNameLength - utf8.RuneCountInString(CloneSuffix)
 	if runas := []rune(name); len(runas) > caben {
-		name = string(runas[:caben])
+		name = strings.TrimRightFunc(string(runas[:caben]), soltoNoFim)
 	}
-	return strings.TrimRightFunc(name, soltoNoFim) + CloneSuffix
+	return name + CloneSuffix
 }
 
 func soltoNoFim(r rune) bool {
