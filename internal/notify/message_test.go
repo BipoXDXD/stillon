@@ -107,7 +107,7 @@ func TestMessageForContentRuleCauses(t *testing.T) {
 	for causa, quer := range map[string]string{
 		"content_mismatch": "Causa: conteúdo da resposta diferente do esperado.\n",
 		"body_limit":       "Causa: resposta grande demais para conferir o conteúdo.\n",
-		"content_encoding": "Causa: a resposta veio compactada num formato que o StillOn não lê.\n",
+		"content_encoding": "Causa: a resposta veio comprimida num formato que o StillOn não lê.\n",
 	} {
 		t.Run(causa, func(t *testing.T) {
 			ev := evAberto

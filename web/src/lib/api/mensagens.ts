@@ -119,7 +119,7 @@ const tiposDeErro: Record<string, string> = {
   // Só sai com regra de conteúdo: o corpo passou do que o sondador lê.
   body_limit: 'Resposta grande demais para conferir o conteúdo',
   content_mismatch: 'Conteúdo diferente do esperado',
-  content_encoding: 'Resposta compactada num formato que o StillOn não lê',
+  content_encoding: 'Resposta comprimida num formato que o StillOn não lê',
   blocked: 'Destino bloqueado pela proteção de rede',
   heartbeat_late: 'Sem sinal no prazo',
   heartbeat_failed: 'A tarefa avisou falha',

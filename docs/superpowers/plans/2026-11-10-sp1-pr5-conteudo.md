@@ -312,7 +312,7 @@ merge".
   `especificar` trata como "preparar sonda" falhou, sem gravar down); `type regraGravada struct { modo, valor, ponteiro
   string }` comparável com `==`, montada das duas linhas em `conferirSonda`.
 - Textos: `causas["content_mismatch"] = "conteúdo da resposta diferente do esperado"`;
-  `causas["content_encoding"] = "a resposta veio compactada num formato que o StillOn não lê"`; `causas["body_limit"] = "resposta
+  `causas["content_encoding"] = "a resposta veio comprimida num formato que o StillOn não lê"`; `causas["body_limit"] = "resposta
   grande demais para conferir o conteúdo"`.
 
 - [ ] **Step 1: testes que falham.**
@@ -386,7 +386,7 @@ merge".
   conteúdo."; com `Accept-Encoding`: "Remova o header Accept-Encoding para verificar o conteúdo: a resposta viria
   comprimida."; erros "Obrigatório.", "Até 256 caracteres.", "Comece com /, como /status.";
   `tiposDeErro.content_mismatch = 'Conteúdo diferente do esperado'`,
-  `tiposDeErro.content_encoding = 'Resposta compactada num formato que o StillOn não lê'`, `tiposDeErro.body_limit = 'Resposta grande demais para conferir o conteúdo'`.
+  `tiposDeErro.content_encoding = 'Resposta comprimida num formato que o StillOn não lê'`, `tiposDeErro.body_limit = 'Resposta grande demais para conferir o conteúdo'`.
 
 - [ ] **Step 1: testes que falham.**
   - `esquema.test.ts`: regra desligada não manda `content_rule` na criação; `contains` sem valor → "Obrigatório."; 257

@@ -16,9 +16,9 @@ describe('textoDaCausa', () => {
 
 describe('textoDoErroDeCheck', () => {
   // Um br ou zstd que o sondador não pediu não é "resposta grande demais".
-  it('content_encoding diz que a resposta veio compactada', () => {
+  it('content_encoding diz que a resposta veio comprimida', () => {
     expect(textoDoErroDeCheck('content_encoding', null)).toBe(
-      'Resposta compactada num formato que o StillOn não lê',
+      'Resposta comprimida num formato que o StillOn não lê',
     )
   })
 
