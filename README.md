@@ -297,7 +297,8 @@ tem as convenções). Todo erro, inclusive rota ou método inexistente sob `/api
   um agendamento que ela não entende. Na saída, o heartbeat vem com `"schedule": {"kind": "unknown"}`,
   sem outros campos; o `PATCH` é recusado com `409 schedule_unsupported`, sem gravar nada (`DELETE`
   e rotação de token seguem); o ping é aceito e registrado sem mexer no prazo; e o avaliador ignora
-  o prazo dessas linhas.
+  o prazo dessas linhas. A falha avisada (`/fail` ou código de saída diferente de zero) continua
+  abrindo o incidente `heartbeat_failed`, e o sucesso seguinte o fecha.
 
 O que mudou no Plano 10 (spec do Plano 10, §4):
 
