@@ -44,7 +44,12 @@ function LinhaDoCertificado({ certificado }: { certificado: Certificado }) {
   const destaque = certificado.forma === 'vencido' ? 'font-semibold text-texto' : 'text-suave'
   return (
     <p data-testid="certificado" className={`flex items-start gap-2 text-sm ${destaque}`}>
-      <Icone aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
+      {/* Uma caixa da altura da linha do text-sm (20 px) centra o ícone na
+          primeira linha, também quando o texto quebra no celular, sem margem
+          fora da escala. */}
+      <span className="flex h-5 shrink-0 items-center">
+        <Icone aria-hidden="true" className="size-4" />
+      </span>
       <span>{certificado.texto}</span>
     </p>
   )
