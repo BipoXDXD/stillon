@@ -161,13 +161,14 @@ func lerRunID(rawQuery string) (*uuid.UUID, bool) {
 }
 
 // runIDCanonico aceita só os 36 caracteres do uuid, sem escape, chaves nem
-// prefixo; a caixa é livre.
+// prefixo; a caixa é livre. O uuid nulo fica de fora: um script que o gere por
+// engano juntaria todas as execuções num rid só.
 func runIDCanonico(valor string) (uuid.UUID, bool) {
 	if len(valor) != tamanhoDoRunID {
 		return uuid.Nil, false
 	}
 	id, err := uuid.Parse(valor)
-	if err != nil || !strings.EqualFold(valor, id.String()) {
+	if err != nil || id == uuid.Nil || !strings.EqualFold(valor, id.String()) {
 		return uuid.Nil, false
 	}
 	return id, true

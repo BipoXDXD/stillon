@@ -29,6 +29,7 @@ func TestLerRunID(t *testing.T) {
 		{"rid com chaves", "rid=%7B" + valido + "%7D", nil, false},
 		{"rid com chaves literais", "rid={" + valido + "}", nil, false},
 		{"rid urn", "rid=urn:uuid:" + valido, nil, false},
+		{"rid nulo", "rid=00000000-0000-0000-0000-000000000000", nil, false},
 		{"rid de 32 hex", "rid=0195f3c28a4b7c1d9e2f3a4b5c6d7e8f", nil, false},
 		{"rid repetido diferente", "rid=a&rid=b", nil, false},
 		{"rid válido repetido", "rid=" + valido + "&rid=" + valido, nil, false},
