@@ -1186,10 +1186,12 @@ func TestAnotherUsersHeartbeatIsIndistinguishableFromMissing(t *testing.T) {
 	a := newAPI(t)
 	dono := tokenDe(t, a, a.userID)
 	id, ping := criarHB(t, a, dono, corpoDePeriodo)
+	ultimoPing := a.clk.Now()
 	pingar(t, a, "/ping/"+ping+"/fail", nil)
 	avaliar(t, a)
 	_, corpo := lerCru(t, a, http.MethodGet, "/api/v1/heartbeats/"+id+"/incidents", dono, nil)
 	incidente := decodificar(t, corpo)["items"].([]any)[0].(map[string]any)["id"].(string)
+	eventosAntes := len(eventosPelaAPI(t, a, dono, id))
 
 	intruso := outroUsuario(t, a)
 	molde := "/api/v1/heartbeats/%s"
@@ -1203,6 +1205,7 @@ func TestAnotherUsersHeartbeatIsIndistinguishableFromMissing(t *testing.T) {
 			{metodo: http.MethodPost, molde: molde + "/token/rotate", id: id},
 			{metodo: http.MethodPost, molde: molde + "/clone", id: id},
 			{metodo: http.MethodPost, molde: molde + "/events/clear", id: id},
+			{metodo: http.MethodPost, molde: molde + "/ping-now", id: id},
 			{metodo: http.MethodPost, molde: molde + "/incidents/" + incidente + "/ack", id: id},
 			{metodo: http.MethodDelete, molde: molde, id: id},
 		},
@@ -1212,6 +1215,13 @@ func TestAnotherUsersHeartbeatIsIndistinguishableFromMissing(t *testing.T) {
 		dadosDoDono:     []string{id, "backup noturno"},
 	})
 	conferirDuplicarELimparSemEfeito(t, a, uuid.MustParse(id), intruso)
+	// O ping-now alheio não grava nada no heartbeat do dono.
+	if h := linhaDoHeartbeat(t, a, uuid.MustParse(id)); h.LastPingAt == nil || !h.LastPingAt.Equal(ultimoPing) {
+		t.Errorf("last_ping_at do dono = %s, queria %s", valorDe(h.LastPingAt), ultimoPing)
+	}
+	if n := len(eventosPelaAPI(t, a, dono, id)); n != eventosAntes {
+		t.Errorf("%d eventos depois do intruso, queria %d", n, eventosAntes)
+	}
 	if status, _, corpo := pingar(t, a, "/ping/"+ping, nil); status != http.StatusOK {
 		t.Errorf("o token do dono parou: %d %s", status, corpo)
 	}

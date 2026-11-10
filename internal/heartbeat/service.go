@@ -577,6 +577,30 @@ func (s *Service) RotateToken(ctx context.Context, userID, id uuid.UUID) (Heartb
 	return out, token, nil
 }
 
+// PingNow é o "sinalizar agora" do painel: um sucesso no escopo do dono, pelo
+// mesmo caminho do ping (janela de repetição e retomada inclusas), marcado com
+// a origem panel para não se confundir com a tarefa (R2 da spec).
+func (s *Service) PingNow(ctx context.Context, userID, id uuid.UUID) (Heartbeat, error) {
+	var out Heartbeat
+	err := storage.InUserTx(ctx, s.pool, userID, func(q *db.Queries) error {
+		// A trava serializa com o ping: sem ela, um ping concorrente leria a
+		// linha antiga e um dos dois se perderia, como no PATCH.
+		h, err := q.GetHeartbeatForUpdate(ctx, db.GetHeartbeatForUpdateParams{UserID: userID, ID: id})
+		if err != nil {
+			return notFound(err)
+		}
+		if err := registrarSinal(ctx, q, h, sinalRecebido{sig: SignalSuccess, source: SourcePanel}, s.clk.Now()); err != nil {
+			return err
+		}
+		out, err = s.view(ctx, q, userID, id)
+		return err
+	})
+	if err != nil {
+		return Heartbeat{}, err
+	}
+	return out, nil
+}
+
 // Events é o log do heartbeat, do mais novo ao mais velho.
 func (s *Service) Events(ctx context.Context, userID, id uuid.UUID, before *uuid.UUID, limit int32) ([]db.HeartbeatEvent, error) {
 	var out []db.HeartbeatEvent

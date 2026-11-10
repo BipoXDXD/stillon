@@ -522,3 +522,147 @@ func TestClearEventsKeepsTheLogWhenTheAuditFails(t *testing.T) {
 		t.Errorf("%d eventos depois da falha, queria 2", n)
 	}
 }
+
+// Sinalizar agora pelo painel (SP1, PR 3).
+
+// pingNow chama o "sinalizar agora" do painel e exige 200.
+func pingNow(t *testing.T, a *api, token, id string, corpo any) map[string]any {
+	t.Helper()
+	status, resp := lerCru(t, a, http.MethodPost, "/api/v1/heartbeats/"+id+"/ping-now", token, corpo)
+	if status != http.StatusOK {
+		t.Fatalf("ping-now deu %d: %s", status, resp)
+	}
+	return decodificar(t, resp)
+}
+
+// eventosPelaAPI é o log que o painel lê, do mais novo ao mais velho.
+func eventosPelaAPI(t *testing.T, a *api, token, id string) []map[string]any {
+	t.Helper()
+	status, corpo := lerCru(t, a, http.MethodGet, "/api/v1/heartbeats/"+id+"/events", token, nil)
+	if status != http.StatusOK {
+		t.Fatalf("eventos: %d %s", status, corpo)
+	}
+	itens := decodificar(t, corpo)["items"].([]any)
+	out := make([]map[string]any, 0, len(itens))
+	for _, item := range itens {
+		out = append(out, item.(map[string]any))
+	}
+	return out
+}
+
+func instanteDe(t *testing.T, m map[string]any, campo string) time.Time {
+	t.Helper()
+	texto, ok := m[campo].(string)
+	if !ok {
+		t.Fatalf("%s = %v, queria um instante", campo, m[campo])
+	}
+	at, err := time.Parse(time.RFC3339Nano, texto)
+	if err != nil {
+		t.Fatalf("%s = %q: %v", campo, texto, err)
+	}
+	return at
+}
+
+func incidentesDoHeartbeat(t *testing.T, a *api, token, id, status string) int {
+	t.Helper()
+	st, corpo := lerCru(t, a, http.MethodGet, "/api/v1/heartbeats/"+id+"/incidents?status="+status, token, nil)
+	if st != http.StatusOK {
+		t.Fatalf("incidentes %s: %d %s", status, st, corpo)
+	}
+	return len(decodificar(t, corpo)["items"].([]any))
+}
+
+// R2 da §10: o sinal manual não se confunde com a tarefa. Ele vale como um
+// sucesso (prazo novo, e o avaliador fecha o atraso no tique seguinte), mas o
+// log o marca como do painel.
+func TestPingNowIsMarkedAsPanel(t *testing.T) {
+	a := newAPI(t)
+	id, _ := criarHB(t, a, tokenDe(t, a, a.userID), corpoDePeriodo)
+	a.clk.Advance(66 * time.Minute) // passa do prazo: 3600 s de período + 300 s de tolerância
+	avaliar(t, a)
+	dono := tokenDe(t, a, a.userID) // o relógio avançou além da validade do token
+	if n := incidentesDoHeartbeat(t, a, dono, id, "open"); n != 1 {
+		t.Fatalf("%d incidentes abertos antes do ping-now, queria 1", n)
+	}
+
+	agora := a.clk.Now()
+	hb := pingNow(t, a, dono, id, nil)
+
+	if _, ok := hb["ping_url"]; ok {
+		t.Errorf("ping-now devolveu ping_url: %v", hb)
+	}
+	if got := instanteDe(t, hb, "last_success_at"); !got.Equal(agora) {
+		t.Errorf("last_success_at = %v, queria %v", got, agora)
+	}
+	if got, queria := instanteDe(t, hb, "deadline_at"), agora.Add(65*time.Minute); !got.Equal(queria) {
+		t.Errorf("deadline_at = %v, queria %v", got, queria)
+	}
+	eventos := eventosPelaAPI(t, a, dono, id)
+	if len(eventos) == 0 {
+		t.Fatal("nenhum evento depois do ping-now")
+	}
+	ultimo := eventos[0]
+	if ultimo["kind"] != "success" || ultimo["source"] != "panel" || ultimo["run_id"] != nil {
+		t.Errorf("último evento %v, queria success, panel e run_id null", ultimo)
+	}
+	if _, ok := ultimo["run_id"]; !ok {
+		t.Errorf("o evento não trouxe run_id: %v", ultimo)
+	}
+
+	avaliar(t, a)
+	if n := incidentesDoHeartbeat(t, a, dono, id, "open"); n != 0 {
+		t.Errorf("%d incidentes abertos depois do tique, queria 0", n)
+	}
+	if n := incidentesDoHeartbeat(t, a, dono, id, "resolved"); n != 1 {
+		t.Errorf("%d incidentes resolvidos depois do tique, queria 1", n)
+	}
+}
+
+// O ping-now passa pela janela de repetição do ping: o segundo clique em 5 s
+// responde 200, mas não grava outro evento.
+func TestPingNowTwiceInTheWindowRecordsOnce(t *testing.T) {
+	a := newAPI(t)
+	dono := tokenDe(t, a, a.userID)
+	id, _ := criarHB(t, a, dono, corpoDePeriodo)
+
+	pingNow(t, a, dono, id, nil)
+	a.clk.Advance(5 * time.Second)
+	pingNow(t, a, dono, id, nil)
+
+	if n := len(eventosPelaAPI(t, a, dono, id)); n != 1 {
+		t.Errorf("%d eventos, queria 1", n)
+	}
+}
+
+// Linha de uma versão posterior: o ping-now registra, e o prazo gravado por
+// ela fica como estava, como no ping.
+func TestPingNowOnUnknownScheduleKeepsTheDeadline(t *testing.T) {
+	a := newAPI(t)
+	semChecksDeAgendamento(t, a.pool)
+	id, _ := heartbeatDesconhecidoHTTP(t, a)
+	dono := tokenDe(t, a, a.userID)
+
+	pingNow(t, a, dono, id.String(), nil)
+
+	if h := linhaDoHeartbeat(t, a, id); !h.DeadlineAt.Equal(prazoGravado) {
+		t.Errorf("o prazo virou %v, queria %v", h.DeadlineAt, prazoGravado)
+	}
+	eventos := eventosPelaAPI(t, a, dono, id.String())
+	if len(eventos) != 1 || eventos[0]["kind"] != "success" || eventos[0]["source"] != "panel" {
+		t.Errorf("eventos %v, queria um success do painel", eventos)
+	}
+}
+
+// O corpo não escolhe nada: o ping-now é sempre um sucesso do painel.
+func TestPingNowIgnoresTheBody(t *testing.T) {
+	a := newAPI(t)
+	dono := tokenDe(t, a, a.userID)
+	id, _ := criarHB(t, a, dono, corpoDePeriodo)
+
+	pingNow(t, a, dono, id, map[string]any{"source": "ping", "kind": "fail"})
+
+	eventos := eventosPelaAPI(t, a, dono, id)
+	if len(eventos) != 1 || eventos[0]["kind"] != "success" || eventos[0]["source"] != "panel" {
+		t.Errorf("eventos %v, queria um success do painel", eventos)
+	}
+}

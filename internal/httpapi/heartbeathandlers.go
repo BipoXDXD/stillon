@@ -360,6 +360,20 @@ func (h *HeartbeatHandlers) Clone(w http.ResponseWriter, r *http.Request) {
 	apierr.WriteJSON(w, http.StatusCreated, heartbeatWithURLResponse{toHeartbeatResponse(copia), h.pingURL(token)})
 }
 
+// PingNow é POST /heartbeats/{id}/ping-now. O corpo não é lido: o sinal é
+// sempre um sucesso do painel, e nada do que o cliente mandar muda isso.
+func (h *HeartbeatHandlers) PingNow(w http.ResponseWriter, r *http.Request) {
+	userID, id, ok := donoEID(w, r)
+	if !ok {
+		return
+	}
+	item, err := h.svc.PingNow(r.Context(), userID, id)
+	if h.falhou(w, r, "sinalizar agora", err) {
+		return
+	}
+	apierr.WriteJSON(w, http.StatusOK, toHeartbeatResponse(item))
+}
+
 // ClearEvents é POST /heartbeats/{id}/events/clear. Ignora o corpo: limpar
 // apaga o log inteiro, e nada que o cliente mande escolhe o que sai.
 func (h *HeartbeatHandlers) ClearEvents(w http.ResponseWriter, r *http.Request) {
