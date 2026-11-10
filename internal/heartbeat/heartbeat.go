@@ -12,10 +12,11 @@ import (
 )
 
 // Faixas que a validação aplica. Cada uma tem par num CHECK das migrations
-// (a 00016, e a 00023_heartbeat_limits para período, tolerância e
+// (a 00016, e a migration heartbeat_limits para período, tolerância e
 // descrição): a validação devolve o campo culpado, e o CHECK garante que
 // nenhum caminho grave lixo.
-// MinPeriod e MinGrace não mudam: EarlySignalMargin depende deles.
+// MinPeriod e MinGrace não mudam: MinGrace sustenta EarlySignalMargin;
+// MinPeriod sustenta RepeatWindow.
 const (
 	MinPeriod = time.Minute
 	MaxPeriod = 365 * 24 * time.Hour
@@ -28,7 +29,7 @@ const (
 	MaxCronLength     = 100
 	MaxTimezoneLength = 64
 	// MaxDescriptionLength é em caracteres, como o CHECK da migration
-	// 00023_heartbeat_limits.
+	// heartbeat_limits.
 	MaxDescriptionLength = 10000
 
 	// RepeatWindow é por quanto tempo um sinal igual ao último é repetição
