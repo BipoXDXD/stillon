@@ -215,6 +215,25 @@ describe.each(['claro', 'escuro'] as const)('a faixa de estado, tema %s', (tema)
   })
 })
 
+// As camadas de uma sombra: "0 1px 3px oklch(... / 0.1)" → desfoque e alfa.
+function camadas(sombra: string): { desfoque: number; alfa: number }[] {
+  return Array.from(sombra.matchAll(/-?\d+(?:px)?\s+-?\d+(?:px)?\s+(\d+)px\s+oklch\([^/]+\/\s*([\d.]+)\)/g), (m) => ({
+    desfoque: Number(m[1]),
+    alfa: Number(m[2]),
+  }))
+}
+
+describe('sombras do tema claro', () => {
+  // RUI, sombra em duas partes: no nível 1, a camada pequena (de desfoque
+  // menor) é a mais escura e marca a borda de baixo. Sabotagem: inverter os
+  // alfas, como era antes.
+  it('no nível 1, a camada pequena é mais escura que a grande', () => {
+    const [grande, pequena] = [...camadas(TOKENS.claro.get('sombra-nivel-1') ?? '')].sort((a, b) => b.desfoque - a.desfoque)
+    expect(grande && pequena).toBeTruthy()
+    expect(pequena?.alfa ?? 0).toBeGreaterThan(grande?.alfa ?? 0)
+  })
+})
+
 describe('tokens do index.css', () => {
   it('as cores dos dois temas são OKLCH, sem hex', () => {
     expect(bloco(':root')).not.toMatch(/#[0-9a-f]{3,8}\b/i)

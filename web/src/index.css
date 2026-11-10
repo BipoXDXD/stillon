@@ -72,9 +72,14 @@
   --grafico-linha: var(--primaria);
   --grafico-faixa: var(--primaria-100);
   --sobreposicao: oklch(0.22 0.015 60 / 0.6);
-  /* Duas camadas (DI 9): uma grande e suave, outra pequena e escura. */
-  --sombra-nivel-1: 0 1px 3px oklch(0.22 0.015 60 / 0.12), 0 1px 2px oklch(0.22 0.015 60 / 0.08);
+  /* Duas camadas (DI 9; RUI, "two-part shadows"): uma grande e suave, outra
+     pequena e escura, que marca a borda de baixo. No nível 1 a pequena é a
+     mais escura; no 2, a grande domina. */
+  --sombra-nivel-1: 0 1px 3px oklch(0.22 0.015 60 / 0.1), 0 1px 2px oklch(0.22 0.015 60 / 0.2);
   --sombra-nivel-2: 0 12px 24px oklch(0.22 0.015 60 / 0.14), 0 4px 8px oklch(0.22 0.015 60 / 0.08);
+  /* Baixo-relevo (RUI): a sombra interna no alto do trilho de um seletor,
+     como se ele fosse cavado na superfície. */
+  --sombra-interna: inset 0 1px 2px oklch(0.22 0.015 60 / 0.12);
 }
 
 /* O escuro não usa sombra: a superfície mais clara que o fundo faz o papel,
@@ -109,6 +114,7 @@
   --sobreposicao: oklch(0 0 0 / 0.6);
   --sombra-nivel-1: 0 0 transparent;
   --sombra-nivel-2: 0 0 transparent;
+  --sombra-interna: inset 0 0 transparent;
 }
 
 @theme inline {
@@ -164,6 +170,11 @@
 }
 @utility sombra-nivel-2 {
   box-shadow: var(--sombra-nivel-2);
+}
+/* O trilho do seletor, rebaixado. No escuro, o painel mais escuro que o
+   fundo já faz o papel. */
+@utility sombra-interna {
+  box-shadow: var(--sombra-interna);
 }
 
 /* A borda de acento da linha de problema (spec do painel denso). Uma sombra

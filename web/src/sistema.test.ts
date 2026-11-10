@@ -126,6 +126,7 @@ describe('o index.css publica a escala e os utilitários', () => {
     '--radius-padrao: 0.5rem;',
     '@utility sombra-nivel-1 {',
     '@utility sombra-nivel-2 {',
+    '@utility sombra-interna {',
     '@utility rotulo-de-grupo {',
   ])('%s', (trecho) => {
     expect(css).toContain(trecho)
