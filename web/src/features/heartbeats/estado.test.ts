@@ -42,6 +42,7 @@ describe('textoDaDuracao', () => {
     [86400, '1 dia'],
     [172800, '2 dias'],
     [2678400, '31 dias'],
+    [31536000, '365 dias'],
   ])('%i s → %s', (s, texto) => {
     expect(textoDaDuracao(s)).toBe(texto)
   })

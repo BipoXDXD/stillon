@@ -93,6 +93,8 @@ const MAX_TAGS = 8
 const MAX_LETRAS_DA_TAG = 24
 const TAG_VALIDA = /^[\p{L}\p{Nd}_-]+$/u
 const ESTADOS_DO_FILTRO = ['up', 'degraded', 'down', 'unknown', 'paused']
+const MAX_NOME_DO_HEARTBEAT = 100
+const SUFIXO_DA_COPIA = ' (cópia)'
 
 // Os DTOs de entrada do servidor (decodeJSON recusa o que não estiver aqui).
 // Criar e editar aceitam os mesmos nomes em cada recurso.
@@ -587,6 +589,34 @@ export function criarApiFalsa() {
       if (!i) return erro(404, 'not_found')
       i.acknowledged_at ??= agora().toISOString()
       return HttpResponse.json(i)
+    }),
+    // O clone do servidor: sem token, eventos, last_* nem incidentes; o nome
+    // cortado para o sufixo caber em 100 caracteres (Rulings do PR 2 da SP1).
+    rota('post', '/heartbeats/:id/clone', ({ params }) => {
+      const h = st.heartbeats.find((x) => x.id === params.id)
+      if (!h) return erro(404, 'not_found')
+      if (Agendamento.parse(h.schedule).kind === 'unknown') return erro(409, 'schedule_unsupported')
+      const copia = {
+        ...h,
+        id: `hb-${st.heartbeats.length + 1}`,
+        name: `${Array.from(h.name).slice(0, MAX_NOME_DO_HEARTBEAT - SUFIXO_DA_COPIA.length).join('')}${SUFIXO_DA_COPIA}`,
+        state: h.enabled ? ('waiting' as const) : ('paused' as const),
+        deadline_at: primeiroPrazo(h.grace_sec),
+        last_ping_at: null,
+        last_success_at: null,
+        last_start_at: null,
+        last_runtime_ms: null,
+        open_incident_id: null,
+        created_at: agora().toISOString(),
+      }
+      st.heartbeats.push(copia)
+      return HttpResponse.json({ ...copia, ping_url: `${PING_URL}-copia` }, { status: 201 })
+    }),
+    // Limpar o que já está vazio também é 204.
+    rota('post', '/heartbeats/:id/events/clear', ({ params }) => {
+      if (!st.heartbeats.some((x) => x.id === params.id)) return erro(404, 'not_found')
+      st.eventos = []
+      return new HttpResponse(null, { status: 204 })
     }),
     rota('post', '/heartbeats/:id/token/rotate', ({ params }) => {
       const h = st.heartbeats.find((x) => x.id === params.id)

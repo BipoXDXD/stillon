@@ -153,6 +153,12 @@ UPDATE heartbeats
 -- name: DeleteHeartbeat :execrows
 DELETE FROM heartbeats WHERE user_id = $1 AND id = $2;
 
+-- Limpar o log (SP1): só os eventos; last_*, prazo e incidentes ficam.
+-- name: DeleteHeartbeatEvents :execrows
+DELETE FROM heartbeat_events e
+ USING heartbeats h
+ WHERE h.id = e.heartbeat_id AND h.user_id = sqlc.arg(user_id) AND e.heartbeat_id = sqlc.arg(heartbeat_id);
+
 -- open NULL lista tudo; true só abertos; false só resolvidos.
 -- name: ListHeartbeatIncidents :many
 SELECT i.id, h.id AS heartbeat_id, h.name AS heartbeat_name, i.started_at, i.resolved_at, i.cause, i.ack_at

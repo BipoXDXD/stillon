@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/BipoXDXD/stillon/internal/crypto"
 	"github.com/BipoXDXD/stillon/internal/heartbeat"
@@ -180,6 +181,7 @@ func TestPeriodRange(t *testing.T) {
 		{0, false}, {-time.Minute, false},
 		{heartbeat.MinPeriod - time.Second, false}, {heartbeat.MinPeriod, true},
 		{heartbeat.MaxPeriod, true}, {heartbeat.MaxPeriod + time.Second, false},
+		{365 * 24 * time.Hour, true}, {365*24*time.Hour + time.Second, false},
 	}
 	for _, c := range casos {
 		_, err := heartbeat.NewPeriod(c.d)
@@ -200,6 +202,7 @@ func TestGraceRange(t *testing.T) {
 	}{
 		{0, false}, {heartbeat.MinGrace - time.Second, false}, {heartbeat.MinGrace, true},
 		{heartbeat.MaxGrace, true}, {heartbeat.MaxGrace + time.Second, false},
+		{365 * 24 * time.Hour, true}, {365*24*time.Hour + time.Second, false},
 	}
 	for _, c := range casos {
 		if err := heartbeat.ValidateGrace(c.d); (err == nil) != c.ok {
@@ -398,9 +401,10 @@ func TestScheduleFromRowCronWithoutTimezoneStillFails(t *testing.T) {
 	}
 }
 
-// A leitura ficou sem teto, mas o cadastro não: a faixa continua no NewPeriod.
+// A leitura ficou sem teto, mas o cadastro não: a faixa continua no NewPeriod,
+// e um segundo acima dos 365 dias é recusado.
 func TestNewPeriodStillEnforcesRegistrationRange(t *testing.T) {
-	_, err := heartbeat.NewPeriod(31*24*time.Hour + time.Second)
+	_, err := heartbeat.NewPeriod(365*24*time.Hour + time.Second)
 	var ve *heartbeat.ValidationError
 	if !errors.As(err, &ve) || ve.Field != "period_sec" || ve.Reason != heartbeat.ReasonOutOfRange {
 		t.Fatalf("erro %v, queria period_sec/out_of_range", err)
@@ -678,6 +682,9 @@ func TestValidateDescription(t *testing.T) {
 		{nome: "emoji composto passa", entrada: "dono \U0001F469\u200D\U0001F4BB", quer: "dono \U0001F469\u200D\U0001F4BB"},
 		{nome: "no teto, em caracteres", entrada: teto, quer: teto},
 		{nome: "acima do teto", entrada: teto + "é", motivo: heartbeat.ReasonOutOfRange, campo: "description"},
+		{nome: "10000 caracteres de dois bytes", entrada: strings.Repeat("é", 10000), quer: strings.Repeat("é", 10000)},
+		{nome: "10000 emojis de quatro bytes", entrada: strings.Repeat("😀", 10000), quer: strings.Repeat("😀", 10000)},
+		{nome: "10001 caracteres", entrada: strings.Repeat("é", 10001), motivo: heartbeat.ReasonOutOfRange, campo: "description"},
 		{nome: "NUL", entrada: "a\x00b", motivo: heartbeat.ReasonInvalid, campo: "description[0]"},
 		{nome: "retorno de carro", entrada: "a\r\nb", motivo: heartbeat.ReasonInvalid, campo: "description[0]"},
 		{nome: "inversão bidi na segunda linha", entrada: "a\n\u202Eb", motivo: heartbeat.ReasonInvalid, campo: "description[1]"},
@@ -692,9 +699,40 @@ func TestValidateDescription(t *testing.T) {
 			var verr *heartbeat.ValidationError
 			switch {
 			case c.motivo == "" && (err != nil || got != c.quer):
-				t.Errorf("devolveu %q, %v; queria %q", got, err, c.quer)
+				t.Errorf("devolveu %.40q (%d bytes), %v; queria %.40q (%d bytes)", got, len(got), err, c.quer, len(c.quer))
 			case c.motivo != "" && (!errors.As(err, &verr) || verr.Field != c.campo || verr.Reason != c.motivo):
 				t.Errorf("erro %v; queria %s %s", err, c.campo, c.motivo)
+			}
+		})
+	}
+}
+
+// O nome da cópia cabe nos 100 caracteres do cadastro, contados em caracteres:
+// cortar por byte deixaria um nome multibyte curto demais (ou partiria um
+// caractere ao meio).
+func TestCloneName(t *testing.T) {
+	casos := []struct{ nome, entrada, quer string }{
+		{"curto ganha o sufixo", "backup", "backup (cópia)"},
+		{"no teto corta para caber", strings.Repeat("a", 100), strings.Repeat("a", 92) + " (cópia)"},
+		{"92 caracteres cabem sem corte", strings.Repeat("a", 92), strings.Repeat("a", 92) + " (cópia)"},
+		{"93 caracteres perdem um", strings.Repeat("a", 93), strings.Repeat("a", 92) + " (cópia)"},
+		{"multibyte corta por caractere", strings.Repeat("é", 99), strings.Repeat("é", 92) + " (cópia)"},
+		{"espaço deixado pelo corte sai", strings.Repeat("a", 91) + " b...", strings.Repeat("a", 91) + " (cópia)"},
+		{"combinante no fim sem corte fica", "Cafe\u0301", "Cafe\u0301 (cópia)"},
+		{"seletor de variação sem corte fica", "Backup \u2764\uFE0F", "Backup \u2764\uFE0F (cópia)"},
+		{"ZWJ deixado pelo corte sai", strings.Repeat("a", 90) + "x\u200Dyz", strings.Repeat("a", 90) + "x (cópia)"},
+	}
+	for _, c := range casos {
+		t.Run(c.nome, func(t *testing.T) {
+			got := heartbeat.CloneName(c.entrada)
+			if got != c.quer {
+				t.Errorf("CloneName(%.20q…) = %q, queria %q", c.entrada, got, c.quer)
+			}
+			if n := utf8.RuneCountInString(got); n > heartbeat.MaxNameLength {
+				t.Errorf("%d caracteres, acima de %d", n, heartbeat.MaxNameLength)
+			}
+			if _, err := heartbeat.ValidateName(got); err != nil {
+				t.Errorf("o nome da cópia %q não passa no cadastro: %v", got, err)
 			}
 		})
 	}

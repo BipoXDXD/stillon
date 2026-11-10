@@ -64,7 +64,7 @@ export function FormularioHeartbeat({
       <Campo
         rotulo="Descrição"
         erro={e.description?.message}
-        ajuda="Opcional, até 1000 caracteres. O que a tarefa faz, onde roda e o que fazer quando falhar. Aparece só no detalhe, nunca nos avisos."
+        ajuda="Opcional, até 10000 caracteres. O que a tarefa faz, onde roda e o que fazer quando falhar. Aparece só no detalhe, nunca nos avisos."
       >
         {(a) => <AreaDeTexto {...a} {...f.register('description')} />}
       </Campo>
@@ -82,7 +82,7 @@ export function FormularioHeartbeat({
       {tipo === 'period' ? (
         <CampoDeDuracao
           rotulo="Período"
-          ajuda="De 1 minuto a 31 dias."
+          ajuda="De 1 minuto a 365 dias."
           erro={e.periodoQuantidade?.message}
           quantidade={f.register('periodoQuantidade', numero)}
           unidade={f.register('periodoUnidade')}
@@ -105,7 +105,7 @@ export function FormularioHeartbeat({
       )}
       <CampoDeDuracao
         rotulo="Tolerância"
-        ajuda="Folga depois do prazo antes de abrir incidente, de 30 segundos a 7 dias. Ela cobre o tempo de execução da tarefa."
+        ajuda="Folga depois do prazo antes de abrir incidente, de 30 segundos a 365 dias. Ela cobre o tempo de execução da tarefa."
         erro={e.toleranciaQuantidade?.message}
         quantidade={f.register('toleranciaQuantidade', numero)}
         unidade={f.register('toleranciaUnidade')}

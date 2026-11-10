@@ -12,7 +12,7 @@ import { Botao } from '@/components/ui/botao'
 import { ErroDoFormulario } from '@/components/ui/campo'
 import { estiloDeCartao } from '@/components/ui/cartao'
 import { Confirmar } from '@/components/ui/dialogo'
-import { chaves, useHeartbeat } from '@/lib/api/consultas'
+import { chaves, useEventosDoHeartbeat, useHeartbeat } from '@/lib/api/consultas'
 import { naoEncontrado } from '@/lib/api/http'
 import { mensagemDe, textoDaCausa } from '@/lib/api/mensagens'
 import type { Heartbeat } from '@/lib/api/schemas'
@@ -29,7 +29,10 @@ export function PaginaHeartbeat() {
   return <DetalheDoHeartbeat key={id} id={id} />
 }
 
-type Confirmacao = 'pausar' | 'apagar' | 'rotacionar'
+type Confirmacao = 'pausar' | 'apagar' | 'rotacionar' | 'limpar'
+
+// A URL de ping no diálogo: a nova desta tarefa, ou a da cópia que acabou de nascer.
+type UrlNova = { url: string; copia: string | null }
 
 function DetalheDoHeartbeat({ id }: { id: string }) {
   const api = useApi()
@@ -37,11 +40,19 @@ function DetalheDoHeartbeat({ id }: { id: string }) {
   const navegar = useNavigate()
   const avisar = useAvisar()
   const consulta = useHeartbeat(id)
+  // A mesma chave do log: o botão de limpar some quando ele está vazio.
+  const eventos = useEventosDoHeartbeat(id)
+  const temEventos = (eventos.data?.pages[0]?.items.length ?? 0) > 0
   const [confirmando, setConfirmando] = useState<Confirmacao | null>(null)
   const [ocupado, setOcupado] = useState(false)
   const [erro, setErro] = useState<string | null>(null)
   // Só aqui, no estado da tela (spec da tela, T8).
-  const [urlNova, setUrlNova] = useState<string | null>(null)
+  const [urlNova, setUrlNova] = useState<UrlNova | null>(null)
+  // Vai à cópia depois de fechar: com a URL na tela, o diálogo segura a navegação.
+  const [copiaGuardada, setCopiaGuardada] = useState<string | null>(null)
+  useEffect(() => {
+    if (copiaGuardada !== null) void navegar(`/heartbeats/${copiaGuardada}`)
+  }, [copiaGuardada, navegar])
 
   // Sai primeiro e só então mexe no cache: com a tela montada, invalidar
   // refaria o GET e o 404 piscaria (o mesmo cuidado do detalhe do alvo).
@@ -70,7 +81,7 @@ function DetalheDoHeartbeat({ id }: { id: string }) {
   // Uma ação de cada vez: o estado segura o clique duplo e o Confirmar. Ao
   // terminar, ela fecha só a própria confirmação: a ação espera a tela
   // atualizar, e nesse intervalo a pessoa pode ter aberto outra.
-  async function executar(acao: () => Promise<void>, confirmacao: Confirmacao) {
+  async function executar(acao: () => Promise<void>, confirmacao: Confirmacao | null) {
     if (ocupado) return
     setOcupado(true)
     setErro(null)
@@ -101,8 +112,31 @@ function DetalheDoHeartbeat({ id }: { id: string }) {
   const rotacionar = () =>
     executar(async () => {
       const { ping_url: url } = await api.rotacionarHeartbeat(id)
-      setUrlNova(url)
+      setUrlNova({ url, copia: null })
     }, 'rotacionar')
+
+  const duplicar = () =>
+    executar(async () => {
+      const { id: copia, ping_url: url } = await api.duplicarHeartbeat(id)
+      setUrlNova({ url, copia })
+      await qc.invalidateQueries({ queryKey: chaves.heartbeats })
+    }, null)
+
+  const limpar = () =>
+    executar(async () => {
+      await api.limparEventosDoHeartbeat(id)
+      await qc.invalidateQueries({ queryKey: chaves.eventosDoHeartbeat(id) })
+      avisar('Eventos apagados.')
+    }, 'limpar')
+
+  function fecharUrl() {
+    const copia = urlNova?.copia ?? null
+    if (copia !== null) {
+      avisar('Cópia criada.')
+      setCopiaGuardada(copia)
+    }
+    setUrlNova(null)
+  }
 
   return (
     <EstadoDaConsulta consulta={consulta}>
@@ -124,13 +158,16 @@ function DetalheDoHeartbeat({ id }: { id: string }) {
                 <ListaDeTags tags={hb.tags} />
               </div>
               <div className="flex flex-wrap gap-2">
-                {/* Num agendamento de versão posterior, todo PATCH é 409
-                    schedule_unsupported: editar, pausar e retomar ficam de fora.
-                    Apagar e gerar nova URL seguem. */}
+                {/* Num agendamento de versão posterior, todo PATCH e o clone são
+                    409 schedule_unsupported: editar, duplicar, pausar e retomar
+                    ficam de fora. Apagar, limpar e gerar nova URL seguem. */}
                 {comoEditavel(hb) !== null && (
                   <>
                     <Botao tipo="secundario" asChild>
                       <Link to={`/heartbeats/${id}/edit`}>Editar</Link>
+                    </Botao>
+                    <Botao tipo="secundario" aria-disabled={ocupado || undefined} onClick={() => void duplicar()}>
+                      Duplicar
                     </Botao>
                     {/* Um botão só, que muda de texto: o foco devolvido pelo
                         Confirmar ("Pausar") cai no mesmo elemento, agora "Retomar". */}
@@ -146,6 +183,11 @@ function DetalheDoHeartbeat({ id }: { id: string }) {
                       {hb.enabled ? 'Pausar' : 'Retomar'}
                     </Botao>
                   </>
+                )}
+                {temEventos && (
+                  <Botao tipo="terciario" onClick={() => setConfirmando('limpar')}>
+                    Limpar eventos
+                  </Botao>
                 )}
                 <Botao tipo="terciario" onClick={() => setConfirmando('apagar')}>
                   Apagar
@@ -187,7 +229,16 @@ function DetalheDoHeartbeat({ id }: { id: string }) {
             ocupado={ocupado}
             aoConfirmar={() => void rotacionar()}
           />
-          <DialogoDaUrlDePing url={urlNova} aoFechar={() => setUrlNova(null)} />
+          <Confirmar
+            aberto={confirmando === 'limpar'}
+            aoMudar={(v) => !v && setConfirmando(null)}
+            titulo="Limpar o log de eventos?"
+            descricao="Os sinais registrados somem. O estado, o prazo e os incidentes continuam."
+            acao="Limpar eventos"
+            ocupado={ocupado}
+            aoConfirmar={() => void limpar()}
+          />
+          <DialogoDaUrlDePing url={urlNova?.url ?? null} aoFechar={fecharUrl} />
         </div>
       )}
     </EstadoDaConsulta>

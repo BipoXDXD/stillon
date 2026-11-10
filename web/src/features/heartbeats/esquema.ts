@@ -14,11 +14,11 @@ import { partirDuracao, SEGUNDOS_DA_UNIDADE, type Unidade } from './estado'
 const UNIDADES = ['dias', 'horas', 'minutos', 'segundos'] as const
 
 const LIMITES = {
-  periodo: { min: 60, max: 2_678_400, texto: 'Entre 1 minuto e 31 dias.' },
-  tolerancia: { min: 30, max: 604_800, texto: 'Entre 30 segundos e 7 dias.' },
+  periodo: { min: 60, max: 31_536_000, texto: 'Entre 1 minuto e 365 dias.' },
+  tolerancia: { min: 30, max: 31_536_000, texto: 'Entre 30 segundos e 365 dias.' },
 }
 const MAX_NOME = 100
-const MAX_DESCRICAO = 1000
+const MAX_DESCRICAO = 10_000
 const MAX_EXPR = 100
 const MAX_FUSO = 64
 const GRACE_PADRAO_SEC = 300

@@ -141,7 +141,7 @@ func toScheduleDTO(s heartbeat.Schedule) scheduleDTO {
 	if s.IsCron() {
 		return scheduleDTO{Kind: scheduleKindCron, Expr: s.CronExpr(), Timezone: s.Timezone()}
 	}
-	// #nosec G115 -- o período lido do banco não tem teto, mas nasce de period_sec, um int32: a volta para int32 não transborda.
+	// #nosec G115 -- o valor nasce de um int32 (period_sec): a volta para int32 não transborda.
 	periodo := int32(s.Period() / time.Second)
 	return scheduleDTO{Kind: scheduleKindPeriod, PeriodSec: &periodo}
 }
@@ -333,6 +333,33 @@ func (h *HeartbeatHandlers) RotateToken(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	apierr.WriteJSON(w, http.StatusOK, heartbeatWithURLResponse{toHeartbeatResponse(item), h.pingURL(token)})
+}
+
+// Clone é POST /heartbeats/{id}/clone. Como a rotação, ignora o corpo: nada que
+// o cliente mande muda o que a cópia leva.
+func (h *HeartbeatHandlers) Clone(w http.ResponseWriter, r *http.Request) {
+	userID, id, ok := donoEID(w, r)
+	if !ok {
+		return
+	}
+	copia, token, err := h.svc.Clone(r.Context(), userID, id)
+	if h.falhou(w, r, "duplicar heartbeat", err) {
+		return
+	}
+	apierr.WriteJSON(w, http.StatusCreated, heartbeatWithURLResponse{toHeartbeatResponse(copia), h.pingURL(token)})
+}
+
+// ClearEvents é POST /heartbeats/{id}/events/clear. Ignora o corpo: limpar
+// apaga o log inteiro, e nada que o cliente mande escolhe o que sai.
+func (h *HeartbeatHandlers) ClearEvents(w http.ResponseWriter, r *http.Request) {
+	userID, id, ok := donoEID(w, r)
+	if !ok {
+		return
+	}
+	if h.falhou(w, r, "limpar eventos do heartbeat", h.svc.ClearEvents(r.Context(), userID, id)) {
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *HeartbeatHandlers) Events(w http.ResponseWriter, r *http.Request) {
