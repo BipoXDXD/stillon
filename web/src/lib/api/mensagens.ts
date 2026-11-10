@@ -66,6 +66,9 @@ const porMotivo: Record<string, string> = {
 
 const CARACTERE_INVISIVEL = 'Tem um caractere que não pode ser mostrado'
 
+export const LIMITE_DA_REGRA = 'Até 256 caracteres.'
+export const CONTROLE_NA_REGRA = 'Sem tab, quebra de linha ou outro caractere de controle.'
+
 // Mensagens específicas por campo, quando o motivo sozinho diz pouco.
 const porCampo: Record<string, Record<string, string>> = {
   url: {
@@ -89,6 +92,12 @@ const porCampo: Record<string, Record<string, string>> = {
   email: { invalid: 'E-mail inválido.' },
   slug: { invalid: 'De 3 a 40 caracteres: letras minúsculas, números e hífens, sem hífen nas pontas.' },
   new_password: { too_short: 'Mínimo de 15 caracteres.', too_long: 'Máximo de 128 caracteres.' },
+  content_rule: { forbidden: 'Com HEAD ou com o header Accept-Encoding, o conteúdo não pode ser verificado.' },
+  'content_rule.value': { too_long: LIMITE_DA_REGRA, invalid: CONTROLE_NA_REGRA },
+  'content_rule.json_pointer': {
+    too_long: LIMITE_DA_REGRA,
+    invalid: 'Comece com /, como /status. Use ~0 para ~ e ~1 para /.',
+  },
 }
 
 export function mensagemDoCampo(campo: string, motivo: string): string {
@@ -107,7 +116,9 @@ const tiposDeErro: Record<string, string> = {
   tls: 'Erro de TLS',
   conn_refused: 'Conexão recusada',
   http_status: 'Status HTTP inesperado',
-  body_limit: 'Resposta grande demais',
+  // Só sai com regra de conteúdo: o corpo passou do que o sondador lê.
+  body_limit: 'Resposta grande demais para conferir o conteúdo',
+  content_mismatch: 'Conteúdo diferente do esperado',
   content_encoding: 'Resposta compactada num formato que o StillOn não lê',
   blocked: 'Destino bloqueado pela proteção de rede',
   heartbeat_late: 'Sem sinal no prazo',

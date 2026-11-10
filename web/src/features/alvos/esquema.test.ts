@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { Alvo } from '@/lib/api/schemas'
 import {
   apagaOsHeaders,
+  campoDoServidor,
   escolhaDoIntervalo,
   esquemaAlvo,
   esquemaDoAlvo,
@@ -19,7 +20,8 @@ function entrada(p: Partial<ValoresDoAlvo> = {}): ValoresDoAlvo {
     name: 'API', url: 'https://api.exemplo.com/health', method: 'GET',
     intervaloEscolhido: '60', interval_sec: 60, timeout_ms: 10000,
     expected_status: 200, lentidao: 'padrao', degraded_threshold_ms: 2000,
-    enabled: true, modoHeaders: 'substituir', headers: [], tagsTexto: '', ...p,
+    enabled: true, modoHeaders: 'substituir', headers: [], tagsTexto: '',
+    modoDaRegra: 'desligada', valorDaRegra: '', ponteiroDaRegra: '', ...p,
   }
 }
 
@@ -207,12 +209,14 @@ describe('corpos e valores públicos do formulário', () => {
       id: 'alvo-1', name: 'Site', url: 'https://site.exemplo.com/', method: 'HEAD',
       interval_sec: 42, timeout_ms: 2000, expected_status: 204, degraded_threshold_ms: limiar,
       enabled: false, header_names: ['Authorization'], tags: ['b', 'a'], tls_warn: true, tls: null,
+      content_rule: null,
       created_at: '2026-10-05T00:00:00Z',
     }
     expect(valoresDe(a)).toEqual({
       name: 'Site', url: 'https://site.exemplo.com/', method: 'HEAD', intervaloEscolhido: 'outro',
       interval_sec: 42, timeout_ms: 2000, expected_status: 204, lentidao: modo,
       degraded_threshold_ms: valor, enabled: false, modoHeaders: 'manter', headers: [], tagsTexto: 'b, a',
+      modoDaRegra: 'desligada', valorDaRegra: '', ponteiroDaRegra: '',
     })
   })
 
@@ -287,5 +291,144 @@ describe('tags no formulário', () => {
     expect(paraAlteracao(original, entrada({ tagsTexto: 'PROD,api' }))).not.toHaveProperty('tags')
     expect(paraAlteracao(original, entrada({ tagsTexto: 'api' })).tags).toEqual(['api'])
     expect(paraAlteracao(original, entrada({ tagsTexto: '' })).tags).toEqual([])
+  })
+})
+
+describe('regra de conteúdo', () => {
+  const ligada = (p: Partial<ValoresDoAlvo> = {}) => entrada({ modoDaRegra: 'contains', valorDaRegra: 'ok', ...p })
+
+  function erros(v: ValoresDoAlvo) {
+    const r = esquemaAlvo.safeParse(v)
+    return r.success ? [] : r.error.issues.map((e) => [e.path.join('.'), e.message])
+  }
+
+  it('desligada não manda content_rule na criação', () => {
+    expect(paraCriacao(entrada())).not.toHaveProperty('content_rule')
+  })
+
+  it('ligada manda modo e valor; só json_equals manda o ponteiro', () => {
+    expect(paraCriacao(ligada({ ponteiroDaRegra: '/sobra' })).content_rule).toEqual({ mode: 'contains', value: 'ok' })
+    expect(paraCriacao(ligada({ modoDaRegra: 'not_contains', valorDaRegra: 'erro' })).content_rule).toEqual({
+      mode: 'not_contains', value: 'erro',
+    })
+    expect(
+      paraCriacao(ligada({ modoDaRegra: 'json_equals', valorDaRegra: 'up', ponteiroDaRegra: '/status' })).content_rule,
+    ).toEqual({ mode: 'json_equals', value: 'up', json_pointer: '/status' })
+  })
+
+  // O servidor compara bytes: os espaços das pontas fazem parte do valor.
+  it('o valor não perde os espaços das pontas', () => {
+    expect(esquemaAlvo.parse(ligada({ valorDaRegra: '  ok  ' })).valorDaRegra).toBe('  ok  ')
+    expect(paraCriacao(ligada({ valorDaRegra: '  ok  ' })).content_rule).toEqual({ mode: 'contains', value: '  ok  ' })
+  })
+
+  it('desligada não valida o valor nem o ponteiro escondidos', () => {
+    expect(erros(entrada({ valorDaRegra: 'x'.repeat(300), ponteiroDaRegra: 'sem barra' }))).toEqual([])
+  })
+
+  it('ligada sem valor é "Obrigatório."', () => {
+    expect(erros(ligada({ valorDaRegra: '' }))).toEqual([['valorDaRegra', 'Obrigatório.']])
+  })
+
+  // L9 do STRIDE: o servidor conta runas (char_length), não unidades UTF-16.
+  it.each([
+    ['256 letras', 'a'.repeat(256), []],
+    ['257 letras', 'a'.repeat(257), [['valorDaRegra', 'Até 256 caracteres.']]],
+    ['256 emojis', '🙂'.repeat(256), []],
+    ['257 emojis', '🙂'.repeat(257), [['valorDaRegra', 'Até 256 caracteres.']]],
+  ])('valor com %s', (_caso, valorDaRegra, esperado) => {
+    expect(erros(ligada({ valorDaRegra }))).toEqual(esperado)
+  })
+
+  it.each([['tab', 'a\tb'], ['quebra de linha', 'a\nb'], ['NUL', 'a\u0000b'], ['DEL', 'a\u007fb']])(
+    'valor com %s é recusado',
+    (_caso, valorDaRegra) => {
+      expect(erros(ligada({ valorDaRegra }))).toEqual([
+        ['valorDaRegra', 'Sem tab, quebra de linha ou outro caractere de controle.'],
+      ])
+    },
+  )
+
+  it.each([
+    ['/status', '/status', []],
+    ['só a barra', '/', []],
+    ['com índice', '/itens/0/nome', []],
+    ['com escapes', '/a~0b~1c', []],
+    ['de 256 emojis', '/' + '🙂'.repeat(255), []],
+    ['vazio', '', [['ponteiroDaRegra', 'Obrigatório.']]],
+    ['sem barra', 'status', [['ponteiroDaRegra', 'Comece com /, como /status.']]],
+    ['com ~2', '/a~2', [['ponteiroDaRegra', 'Use ~0 para ~ e ~1 para /.']]],
+    ['com ~ no fim', '/a~', [['ponteiroDaRegra', 'Use ~0 para ~ e ~1 para /.']]],
+    ['de 257 emojis', '/' + '🙂'.repeat(256), [['ponteiroDaRegra', 'Até 256 caracteres.']]],
+    ['com tab', '/a\tb', [['ponteiroDaRegra', 'Sem tab, quebra de linha ou outro caractere de controle.']]],
+  ])('ponteiro %s', (_caso, ponteiroDaRegra, esperado) => {
+    expect(erros(ligada({ modoDaRegra: 'json_equals', ponteiroDaRegra }))).toEqual(esperado)
+  })
+
+  it('com HEAD a regra é recusada no seletor', () => {
+    expect(erros(ligada({ method: 'HEAD' }))).toEqual([
+      ['modoDaRegra', 'Com HEAD a resposta não tem corpo. Escolha GET ou POST para verificar o conteúdo.'],
+    ])
+    expect(erros(entrada({ method: 'HEAD' }))).toEqual([])
+  })
+
+  it.each(['Accept-Encoding', 'ACCEPT-ENCODING', 'accept-encoding'])('com o header %s a regra é recusada', (nome) => {
+    const headers = [{ nome, valor: 'gzip' }]
+    expect(erros(ligada({ headers }))).toEqual([
+      ['modoDaRegra', 'Remova o header Accept-Encoding para verificar o conteúdo: a resposta viria comprimida.'],
+    ])
+    expect(erros(entrada({ headers }))).toEqual([])
+    // "Manter como está" não manda headers: quem confere é o servidor.
+    expect(erros(ligada({ headers, modoHeaders: 'manter' }))).toEqual([])
+  })
+
+  it('valoresDe lê a regra do alvo', () => {
+    const a: Alvo = {
+      id: 'alvo-1', name: 'Site', url: 'https://site.exemplo.com/', method: 'GET',
+      interval_sec: 60, timeout_ms: 2000, expected_status: 200, degraded_threshold_ms: 2000,
+      enabled: true, header_names: [], tags: [], created_at: '2026-10-05T00:00:00Z',
+      content_rule: { mode: 'json_equals', value: 'up', json_pointer: '/status' },
+    }
+    expect(valoresDe(a)).toMatchObject({ modoDaRegra: 'json_equals', valorDaRegra: 'up', ponteiroDaRegra: '/status' })
+    expect(valoresDe({ ...a, content_rule: { mode: 'contains', value: 'ok', json_pointer: null } })).toMatchObject({
+      modoDaRegra: 'contains', valorDaRegra: 'ok', ponteiroDaRegra: '',
+    })
+  })
+
+  // Sabotagem: tirar o null de paraAlteracao → a regra nunca é limpa.
+  it('PATCH de regra para desligada manda content_rule: null', () => {
+    expect(paraAlteracao(ligada({ modoHeaders: 'manter' }), entrada({ modoHeaders: 'manter' }))).toEqual({ content_rule: null })
+  })
+
+  it('PATCH sem mudança na regra não manda o campo', () => {
+    const original = ligada({ modoHeaders: 'manter' })
+    expect(paraAlteracao(original, { ...original })).toEqual({})
+    // Fora de json_equals o ponteiro não faz parte da regra.
+    expect(paraAlteracao(original, { ...original, ponteiroDaRegra: '/outro' })).toEqual({})
+    const desligada = entrada({ modoHeaders: 'manter' })
+    expect(paraAlteracao(desligada, { ...desligada, valorDaRegra: 'rascunho' })).toEqual({})
+  })
+
+  it('PATCH com a regra mudada manda a regra inteira', () => {
+    const original = ligada({ modoHeaders: 'manter' })
+    expect(paraAlteracao(original, { ...original, valorDaRegra: 'novo' })).toEqual({
+      content_rule: { mode: 'contains', value: 'novo' },
+    })
+    expect(paraAlteracao(original, { ...original, modoDaRegra: 'json_equals', ponteiroDaRegra: '/s' })).toEqual({
+      content_rule: { mode: 'json_equals', value: 'ok', json_pointer: '/s' },
+    })
+    const desligada = entrada({ modoHeaders: 'manter' })
+    expect(paraAlteracao(desligada, { ...desligada, modoDaRegra: 'not_contains', valorDaRegra: 'erro' })).toEqual({
+      content_rule: { mode: 'not_contains', value: 'erro' },
+    })
+  })
+
+  it.each([
+    ['content_rule', 'modoDaRegra'],
+    ['content_rule.mode', 'modoDaRegra'],
+    ['content_rule.value', 'valorDaRegra'],
+    ['content_rule.json_pointer', 'ponteiroDaRegra'],
+  ])('o erro %s do servidor cai em %s', (campo, noFormulario) => {
+    expect(campoDoServidor[campo]).toBe(noFormulario)
   })
 })

@@ -660,6 +660,16 @@ describe('detalhe', () => {
       expect(r.falsa.chamadas('POST /incidents/:id/ack')).toBe(1)
     })
 
+    it('incidente aberto pela regra de conteúdo diz a causa em texto', async () => {
+      const r = await renderizarPainel('/targets/alvo-1')
+      r.falsa.estado.alvos = [alvo({ content_rule: { mode: 'contains', value: 'ok', json_pointer: null } })]
+      r.falsa.estado.resumo = [itemDoResumo({ state: 'down', open_incident_id: 'inc-1' })]
+      r.falsa.estado.incidentes = [incidente({ cause: 'content_mismatch' })]
+      await r.cliente.refetchQueries()
+      const faixa = await screen.findByRole('region', { name: /^Fora do ar há / })
+      expect(within(faixa).getByText(/^Conteúdo diferente do esperado · desde /)).toBeInTheDocument()
+    })
+
     it('sem incidente aberto, a faixa diz o estado e o último check, sem Reconhecer', async () => {
       const r = await renderizarPainel('/targets/alvo-1')
       r.falsa.estado.alvos = [alvo()]

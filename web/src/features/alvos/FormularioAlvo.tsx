@@ -1,13 +1,16 @@
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useState } from 'react'
+import { flushSync } from 'react-dom'
 import { useFieldArray, useForm, useWatch } from 'react-hook-form'
 import { Botao } from '@/components/ui/botao'
 import { estiloDeCartao } from '@/components/ui/cartao'
 import { CaixaDeMarcar, Campo, Entrada, ErroDoFormulario, Opcao, Selecao } from '@/components/ui/campo'
 import { ApiError } from '@/lib/api/http'
 import { mensagemDe, mensagemDoCampo } from '@/lib/api/mensagens'
-import { campoDoServidor, esquemaDoAlvo, INTERVALOS, OUTRO, type ValoresDoAlvo } from './esquema'
+import { campoDoServidor, esquemaDoAlvo, INTERVALOS, OUTRO, REGRA_COM_HEAD, type ValoresDoAlvo } from './esquema'
 import { cn } from '@/lib/utils'
+
+const CAMPOS_DA_REGRA: readonly string[] = ['modoDaRegra', 'valorDaRegra', 'ponteiroDaRegra']
 
 export function FormularioAlvo({
   iniciais,
@@ -31,9 +34,19 @@ export function FormularioAlvo({
   const lentidao = useWatch({ control: f.control, name: 'lentidao' })
   const modoHeaders = useWatch({ control: f.control, name: 'modoHeaders' })
   const intervaloEscolhido = useWatch({ control: f.control, name: 'intervaloEscolhido' })
+  const metodo = useWatch({ control: f.control, name: 'method' })
+  const modoDaRegra = useWatch({ control: f.control, name: 'modoDaRegra' })
+  // "Avançado" começa aberto só se o alvo já tem regra.
+  const [avancadoAberto, setAvancadoAberto] = useState(iniciais.modoDaRegra !== 'desligada')
   // Um erro da lista de headers inteira: com linhas registradas, o resolver o
   // põe em headers.root; sem nenhuma, em headers.
   const erroDosHeaders = e.headers?.message ?? e.headers?.root?.message
+
+  // O foco não entra num <details> fechado: com erro na regra, a seção abre
+  // (já no DOM, por isso o flushSync) antes de o foco ir ao campo culpado.
+  function abrirSeErroNaRegra(campos: readonly string[]) {
+    if (campos.some((c) => CAMPOS_DA_REGRA.includes(c))) flushSync(() => setAvancadoAberto(true))
+  }
 
   async function enviar(v: ValoresDoAlvo) {
     setErroGeral(null)
@@ -42,6 +55,7 @@ export function FormularioAlvo({
     } catch (err) {
       // O 400 com fields vai para o campo certo; o resto, para o topo.
       if (err instanceof ApiError && err.fields.length) {
+        abrirSeErroNaRegra(err.fields.map((fe) => campoDoServidor[fe.field.replace(/\[.*$/, '')] ?? ''))
         let algum = false
         for (const fe of err.fields) {
           const campo = campoDoServidor[fe.field.replace(/\[.*$/, '')]
@@ -62,7 +76,7 @@ export function FormularioAlvo({
 
   const numero = { valueAsNumber: true } as const
   return (
-    <form noValidate className={cn(estiloDeCartao, 'max-w-2xl space-y-6')} onSubmit={f.handleSubmit(enviar)}>
+    <form noValidate className={cn(estiloDeCartao, 'max-w-2xl space-y-6')} onSubmit={f.handleSubmit(enviar, (erros) => abrirSeErroNaRegra(Object.keys(erros)))}>
       <ErroDoFormulario>{erroGeral}</ErroDoFormulario>
       <Campo rotulo="Nome" erro={e.name?.message}>
         {(a) => <Entrada {...a} {...f.register('name')} />}
@@ -76,7 +90,16 @@ export function FormularioAlvo({
       <div className="grid gap-4 sm:grid-cols-3">
         <Campo rotulo="Método" erro={e.method?.message}>
           {(a) => (
-            <Selecao {...a} {...f.register('method')}>
+            <Selecao
+              {...a}
+              {...f.register('method', {
+                // Com HEAD não há corpo: a regra desliga, e o seletor dela
+                // fica travado com a explicação.
+                onChange: (ev: { target: { value: string } }) => {
+                  if (ev.target.value === 'HEAD') f.setValue('modoDaRegra', 'desligada')
+                },
+              })}
+            >
               <option value="GET">GET</option>
               <option value="HEAD">HEAD</option>
               <option value="POST">POST</option>
@@ -192,6 +215,48 @@ export function FormularioAlvo({
           </div>
         )}
       </fieldset>
+
+      <details
+        open={avancadoAberto}
+        onToggle={(ev) => setAvancadoAberto(ev.currentTarget.open)}
+        className="rounded-padrao border border-borda"
+      >
+        <summary className="flex min-h-11 cursor-pointer items-center px-4 text-sm font-semibold">Avançado</summary>
+        <fieldset className="space-y-4 px-4 pb-4">
+          <legend className="text-sm font-semibold">Verificar o conteúdo da resposta</legend>
+          <p className="text-sm text-suave">
+            Não use segredo na regra: o valor fica guardado sem cifra, no banco e no backup.
+          </p>
+          <Campo
+            rotulo="Verificação"
+            erro={e.modoDaRegra?.message}
+            ajuda={metodo === 'HEAD' ? REGRA_COM_HEAD : 'Compara bytes em UTF-8 nos primeiros 64 KiB da resposta.'}
+          >
+            {(a) => (
+              <Selecao {...a} disabled={metodo === 'HEAD'} {...f.register('modoDaRegra')}>
+                <option value="desligada">Desligada</option>
+                <option value="contains">Contém</option>
+                <option value="not_contains">Não contém</option>
+                <option value="json_equals">JSON igual a</option>
+              </Selecao>
+            )}
+          </Campo>
+          {modoDaRegra !== 'desligada' && (
+            <Campo rotulo="Valor esperado" erro={e.valorDaRegra?.message}>
+              {(a) => <Entrada {...a} {...f.register('valorDaRegra')} />}
+            </Campo>
+          )}
+          {modoDaRegra === 'json_equals' && (
+            <Campo
+              rotulo="Ponteiro JSON"
+              erro={e.ponteiroDaRegra?.message}
+              ajuda="Números são comparados como escritos no JSON."
+            >
+              {(a) => <Entrada {...a} placeholder="/status" {...f.register('ponteiroDaRegra')} />}
+            </Campo>
+          )}
+        </fieldset>
+      </details>
 
       <Botao type="submit" disabled={f.formState.isSubmitting}>
         {rotuloDoBotao}

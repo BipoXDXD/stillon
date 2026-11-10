@@ -32,6 +32,7 @@ export function alvo(p: Partial<z.input<typeof Alvo>> = {}): z.input<typeof Alvo
     tags: [],
     tls_warn: true,
     tls: null,
+    content_rule: null,
     created_at: '2026-09-20T10:00:00Z',
     ...p,
   }

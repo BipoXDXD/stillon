@@ -1,5 +1,6 @@
 import { z } from 'zod'
-import type { AlteracaoAlvo, EntradaAlvo } from '@/lib/api/cliente'
+import type { AlteracaoAlvo, EntradaAlvo, EntradaRegra } from '@/lib/api/cliente'
+import { CONTROLE_NA_REGRA, LIMITE_DA_REGRA } from '@/lib/api/mensagens'
 import type { Alvo } from '@/lib/api/schemas'
 import { MENSAGEM_INVISIVEL, temInvisivel } from '@/lib/rotulo'
 import { erroNasTags, separarTags } from '@/lib/tags'
@@ -72,6 +73,35 @@ function urlPermitida(raw: string): string | null {
   return null
 }
 
+// A regra de conteúdo espelha internal/targets/contentrule.go. O limite é em
+// caracteres como o servidor os conta (runas, o char_length do banco): um
+// emoji vale 1, e não os 2 do .length em UTF-16 (L9 do STRIDE).
+export const MODOS_DA_REGRA = ['desligada', 'contains', 'not_contains', 'json_equals'] as const
+const MAX_DA_REGRA = 256
+// unicode.IsControl do Go é a categoria Cc.
+const CONTROLE = /\p{Cc}/u
+// RFC 6901: depois de ~, só 0 ou 1.
+const ESCAPE_INVALIDO = /~(?![01])/
+
+export const REGRA_COM_HEAD = 'Com HEAD a resposta não tem corpo. Escolha GET ou POST para verificar o conteúdo.'
+const REGRA_COM_ACCEPT_ENCODING =
+  'Remova o header Accept-Encoding para verificar o conteúdo: a resposta viria comprimida.'
+
+function erroDoTextoDaRegra(s: string): string | null {
+  if (s === '') return 'Obrigatório.'
+  if ([...s].length > MAX_DA_REGRA) return LIMITE_DA_REGRA
+  if (CONTROLE.test(s)) return CONTROLE_NA_REGRA
+  return null
+}
+
+function erroDoPonteiro(p: string): string | null {
+  const erro = erroDoTextoDaRegra(p)
+  if (erro) return erro
+  if (!p.startsWith('/')) return 'Comece com /, como /status.'
+  if (ESCAPE_INVALIDO.test(p)) return 'Use ~0 para ~ e ~1 para /.'
+  return null
+}
+
 // Na edição, a base é o alvo como veio do servidor: a URL que ele já guardou
 // não passa de novo pelo espelho (um host não canônico que o servidor aceitou,
 // como http://0x7f.1/, não pode travar a edição nem a pausa do alvo), e
@@ -125,8 +155,13 @@ export function esquemaDoAlvo(base?: { url: string }) {
       modoHeaders: z.enum(['manter', 'substituir', 'remover']),
       headers: z.array(z.object({ nome: z.string().trim(), valor: z.string() })),
       tagsTexto: z.string(),
+      // O valor não perde espaços: o servidor compara os bytes como vieram.
+      modoDaRegra: z.enum(MODOS_DA_REGRA),
+      valorDaRegra: z.string(),
+      ponteiroDaRegra: z.string(),
     })
     .superRefine((v, ctx) => {
+      validarRegra(v, ctx)
       const erroDasTags = erroNasTags(v.tagsTexto)
       if (erroDasTags) ctx.addIssue({ code: 'custom', path: ['tagsTexto'], message: erroDasTags })
       // D3 do Plano 2: o jitter de −10% antecipa a próxima sonda para 90% do
@@ -180,6 +215,34 @@ export function esquemaDoAlvo(base?: { url: string }) {
     })
 }
 
+type CamposDaRegra = {
+  method: string
+  modoHeaders: string
+  headers: { nome: string }[]
+  modoDaRegra: (typeof MODOS_DA_REGRA)[number]
+  valorDaRegra: string
+  ponteiroDaRegra: string
+}
+
+// Desligada, nada da regra é validado: valor e ponteiro escondidos não podem
+// travar o envio. O Accept-Encoding só é conferido quando os headers vão no
+// corpo ("Manter como está" não os mostra; aí quem recusa é o servidor).
+function validarRegra(v: CamposDaRegra, ctx: z.RefinementCtx<CamposDaRegra>) {
+  if (v.modoDaRegra === 'desligada') return
+  const comAcceptEncoding =
+    v.modoHeaders === 'substituir' && v.headers.some((h) => h.nome.toLowerCase() === 'accept-encoding')
+  if (v.method === 'HEAD') {
+    ctx.addIssue({ code: 'custom', path: ['modoDaRegra'], message: REGRA_COM_HEAD })
+  } else if (comAcceptEncoding) {
+    ctx.addIssue({ code: 'custom', path: ['modoDaRegra'], message: REGRA_COM_ACCEPT_ENCODING })
+  }
+  const erroDoValor = erroDoTextoDaRegra(v.valorDaRegra)
+  if (erroDoValor) ctx.addIssue({ code: 'custom', path: ['valorDaRegra'], message: erroDoValor })
+  if (v.modoDaRegra !== 'json_equals') return
+  const erroDoPonteiroDaRegra = erroDoPonteiro(v.ponteiroDaRegra)
+  if (erroDoPonteiroDaRegra) ctx.addIssue({ code: 'custom', path: ['ponteiroDaRegra'], message: erroDoPonteiroDaRegra })
+}
+
 export const esquemaAlvo = esquemaDoAlvo()
 
 export type ValoresDoAlvo = z.infer<typeof esquemaAlvo>
@@ -214,6 +277,9 @@ export const valoresPadrao: ValoresDoAlvo = {
   modoHeaders: 'substituir',
   headers: [],
   tagsTexto: '',
+  modoDaRegra: 'desligada',
+  valorDaRegra: '',
+  ponteiroDaRegra: '',
 }
 
 export function valoresDe(a: Alvo): ValoresDoAlvo {
@@ -232,6 +298,9 @@ export function valoresDe(a: Alvo): ValoresDoAlvo {
     modoHeaders: 'manter',
     headers: [],
     tagsTexto: a.tags.join(', '),
+    modoDaRegra: a.content_rule?.mode ?? 'desligada',
+    valorDaRegra: a.content_rule?.value ?? '',
+    ponteiroDaRegra: a.content_rule?.json_pointer ?? '',
   }
 }
 
@@ -239,6 +308,24 @@ function limiar(v: ValoresDoAlvo): number | null | undefined {
   if (v.lentidao === 'desativado') return null
   if (v.lentidao === 'personalizado') return v.degraded_threshold_ms
   return 2000
+}
+
+function regraDe(v: ValoresDoAlvo): EntradaRegra | null {
+  switch (v.modoDaRegra) {
+    case 'desligada':
+      return null
+    case 'json_equals':
+      return { mode: v.modoDaRegra, value: v.valorDaRegra, json_pointer: v.ponteiroDaRegra }
+    default:
+      return { mode: v.modoDaRegra, value: v.valorDaRegra }
+  }
+}
+
+const ponteiroDe = (r: EntradaRegra) => (r.mode === 'json_equals' ? r.json_pointer : null)
+
+function mesmaRegra(a: EntradaRegra | null, b: EntradaRegra | null): boolean {
+  if (a === null || b === null) return a === b
+  return a.mode === b.mode && a.value === b.value && ponteiroDe(a) === ponteiroDe(b)
 }
 
 function mapaDeHeaders(v: ValoresDoAlvo): Record<string, string> {
@@ -262,6 +349,8 @@ export function paraCriacao(v: ValoresDoAlvo): EntradaAlvo {
   if (v.headers.length) e.headers = mapaDeHeaders(v)
   const tags = separarTags(v.tagsTexto)
   if (tags.length) e.tags = tags
+  const regra = regraDe(v)
+  if (regra) e.content_rule = regra
   return e
 }
 
@@ -282,6 +371,9 @@ export function paraAlteracao(original: ValoresDoAlvo, v: ValoresDoAlvo): Altera
   if (v.modoHeaders === 'remover') a.headers = null
   const tags = separarTags(v.tagsTexto)
   if (tags.join() !== separarTags(original.tagsTexto).join()) a.tags = tags
+  // Desligar a regra é mandar null; ausente, o servidor a mantém.
+  const regra = regraDe(v)
+  if (!mesmaRegra(regra, regraDe(original))) a.content_rule = regra
   return a
 }
 
@@ -317,4 +409,8 @@ export const campoDoServidor: Record<string, keyof ValoresDoAlvo> = {
   degraded_threshold_ms: 'degraded_threshold_ms',
   headers: 'headers',
   tags: 'tagsTexto',
+  content_rule: 'modoDaRegra',
+  'content_rule.mode': 'modoDaRegra',
+  'content_rule.value': 'valorDaRegra',
+  'content_rule.json_pointer': 'ponteiroDaRegra',
 }
