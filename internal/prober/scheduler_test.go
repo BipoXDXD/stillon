@@ -896,10 +896,7 @@ func TestProbeBodyCanaryNeverLeaves(t *testing.T) {
 	b := novaBancada(t, client, MaxInFlight)
 	b.canal(t, true, true)
 	valor := "outra coisa " + canarioDaRegra
-	alvo := b.alvo(t, srv.URL, func(p *db.InsertTargetParams) {
-		modo := string(targets.ContentContains)
-		p.ContentMode, p.ContentValue = &modo, &valor
-	})
+	alvo := b.alvo(t, srv.URL, alvoComContains(valor))
 	for range 3 {
 		b.rodada(t)
 	}

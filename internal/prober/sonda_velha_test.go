@@ -331,7 +331,6 @@ func TestRuleChangeClosesTheOpenIncidentOnlyWithNewRuleSuccesses(t *testing.T) {
 	chegou, liberar := make(chan struct{}), make(chan struct{})
 	var liberou sync.Once
 	soltar := func() { liberou.Do(func() { close(liberar) }) }
-	t.Cleanup(soltar) // um Fatal no meio não deixa a sonda presa
 	var segurar atomic.Bool
 	var corpo atomic.Pointer[string]
 	fora := "xyz" // sem "a" nem "b"
@@ -349,6 +348,9 @@ func TestRuleChangeClosesTheOpenIncidentOnlyWithNewRuleSuccesses(t *testing.T) {
 		}, nil
 	})}
 	b := novaBancada(t, client, MaxInFlight)
+	// Depois da bancada: cleanups rodam em ordem inversa, e a sonda presa
+	// precisa ser solta antes do Stop e da restauração do banco.
+	t.Cleanup(soltar)
 	b.canal(t, true, true)
 	alvo := b.alvo(t, urlVelha, alvoComContains("a"))
 	for range 3 {

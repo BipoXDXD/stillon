@@ -496,7 +496,7 @@ func conferirSonda(ctx context.Context, q *db.Queries, a db.ClaimDueTargetsRow) 
 		return errAlvoSumido
 	}
 	if err != nil {
-		return fmt.Errorf("conferir a URL do alvo: %w", err)
+		return fmt.Errorf("conferir o alvo da sonda: %w", err)
 	}
 	if !atual.Enabled {
 		return errAlvoPausado
