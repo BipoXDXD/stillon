@@ -38,6 +38,10 @@ done
 COMPOSE_PROJECT_NAME=stillon-ensaio-piso
 STILLON_PORT=${STILLON_PORT:-18089}
 export COMPOSE_PROJECT_NAME STILLON_PORT
+# O compose lê estas do ambiente e, na falta, do .env da raiz, onde o dono guarda
+# a chave real do Resend. Vazias no ambiente, elas vencem o .env: o ensaio não
+# envia e-mail nem sonda URLs de fora.
+export RESEND_API_KEY='' EMAIL_FROM='' DEMO_TARGETS_EXTRA=''
 BASE=http://127.0.0.1:$STILLON_PORT
 # O usuário de demonstração do seed (deploy/compose/seed.sh), o mesmo do
 # checar-compose.sh. A senha é pública no compose.yaml.
