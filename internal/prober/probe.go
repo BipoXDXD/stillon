@@ -107,17 +107,18 @@ func sondar(ctx context.Context, client *http.Client, s Spec) Result {
 		return Result{Status: StatusDown, ErrorKind: KindUnknown}
 	}
 	req.Header.Set("User-Agent", userAgent)
-	// O transporte não pede gzip (safedial.DisableCompression): quem pede é a
-	// sonda, para não baixar o corpo cru. Com regra, ela o descomprime ela
-	// mesma (lerCorpoDaRegra), e o cadastro recusa o Accept-Encoding do
-	// dono; sem regra, o corpo só é drenado (drenarSemRegra), e o do dono, se
-	// houver, vale.
-	req.Header.Set("Accept-Encoding", safedial.AcceptEncodingDaSonda)
 	for nome, valor := range s.Headers {
-		if s.Content != nil && http.CanonicalHeaderKey(nome) == "Accept-Encoding" {
-			continue
-		}
 		req.Header.Set(nome, valor)
+	}
+	// O transporte não pede gzip (safedial.DisableCompression): quem pede é a
+	// sonda, para não baixar o corpo cru. Com regra, ela sempre pede e o
+	// descomprime ela mesma (lerCorpoDaRegra); o cadastro recusa o
+	// Accept-Encoding do dono. Sem regra, ela repete a guarda do transporte do
+	// Go: só pede (e só descomprime) se o dono não negociou a codificação nem
+	// pediu uma fatia, porque a fatia de um gzip não abre sozinha.
+	sondaPedeGzip := s.Content != nil || !donoNegociaCorpo(req.Header)
+	if sondaPedeGzip {
+		req.Header.Set("Accept-Encoding", safedial.AcceptEncodingDaSonda)
 	}
 
 	inicio := time.Now()
@@ -132,10 +133,13 @@ func sondar(ctx context.Context, client *http.Client, s Spec) Result {
 		cortado  bool
 		ilegivel bool
 	)
-	if s.Content != nil {
+	switch {
+	case s.Content != nil:
 		corpo, cortado, ilegivel, err = lerCorpoDaRegra(resp)
-	} else {
+	case sondaPedeGzip:
 		err = drenarSemRegra(resp)
+	default:
+		err = drenarCru(resp.Body)
 	}
 	latencia := time.Since(inicio)
 	if err != nil {
@@ -188,4 +192,11 @@ func clienteDaSonda(modelo *http.Client) (*http.Client, func()) {
 	client := *modelo
 	client.Transport = proprio
 	return &client, proprio.CloseIdleConnections
+}
+
+// donoNegociaCorpo diz se os headers do dono já decidem a forma do corpo: com
+// Accept-Encoding ou Range dele, o transporte do Go não pedia gzip nem
+// descomprimia, e a sonda sem regra faz o mesmo.
+func donoNegociaCorpo(h http.Header) bool {
+	return h.Get("Accept-Encoding") != "" || h.Get("Range") != ""
 }

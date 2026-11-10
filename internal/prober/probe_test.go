@@ -830,6 +830,58 @@ func TestProbeWithoutRuleAndABrokenGzipIsUnknownAsBefore(t *testing.T) {
 	}
 }
 
+// Sem regra e com Range do dono, a sonda não descomprime, como o transporte do
+// Go antes do PR 5: a fatia de um gzip não abre sozinha. Um servidor que honra
+// o Range sobre a representação comprimida (estático pré-comprimido, CDN) tem
+// de seguir up.
+func TestProbeWithoutRuleAndOwnersRangeOverGzipIsUp(t *testing.T) {
+	comprimido := gzipar(t, htmlGrande())
+	srv, client := servidor(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Encoding", "gzip")
+		w.Header().Set("Content-Range", fmt.Sprintf("bytes 0-1023/%d", len(comprimido)))
+		w.WriteHeader(http.StatusPartialContent)
+		_, _ = w.Write(comprimido[:1024])
+	})
+	s := especificacao(srv.URL)
+	s.ExpectedStatus = http.StatusPartialContent
+	s.Headers = map[string]string{"Range": "bytes=0-1023"}
+	res := Probe(t.Context(), client, s)
+	if res.Status != StatusUp || res.ErrorKind != "" || res.StatusCode != http.StatusPartialContent {
+		t.Errorf("res = %+v, queria up/206", res)
+	}
+}
+
+// Sem regra e com Range do dono, a sonda não acrescenta o Accept-Encoding dela:
+// o servidor responde a fatia em identity, como antes do PR 5.
+func TestProbeWithoutRuleAndOwnersRangeDoesNotAskForGzip(t *testing.T) {
+	recebido := make(chan []string, 1)
+	srv, client := servidor(t, func(w http.ResponseWriter, r *http.Request) {
+		recebido <- r.Header.Values("Accept-Encoding")
+	})
+	s := especificacao(srv.URL)
+	s.Headers = map[string]string{"range": "bytes=0-1023"}
+	Probe(t.Context(), client, s)
+	if got := <-recebido; len(got) != 0 {
+		t.Errorf("Accept-Encoding recebido = %q, queria nenhum", got)
+	}
+}
+
+// Sem regra e com Accept-Encoding do dono, a sonda drena o corpo cru, como o
+// transporte do Go antes do PR 5: um servidor que ignora o pedido e manda um
+// gzip que não abre segue up.
+func TestProbeWithoutRuleAndOwnersAcceptEncodingDrainsRaw(t *testing.T) {
+	srv, client := servidor(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Encoding", "gzip")
+		_, _ = w.Write([]byte("isto não é gzip"))
+	})
+	s := especificacao(srv.URL)
+	s.Headers = map[string]string{"Accept-Encoding": "br"}
+	res := Probe(t.Context(), client, s)
+	if res.Status != StatusUp || res.ErrorKind != "" || res.StatusCode != http.StatusOK {
+		t.Errorf("res = %+v, queria up/200", res)
+	}
+}
+
 // 100 MiB de zeros comprimidos cabem em ~100 KiB.
 var bombaGzip = sync.OnceValue(func() []byte {
 	var buf bytes.Buffer
