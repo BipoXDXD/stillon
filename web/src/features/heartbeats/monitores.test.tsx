@@ -246,3 +246,29 @@ describe('detalhe do heartbeat', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('Não encontrado.')
   })
 })
+
+describe('heartbeat de versão posterior na lista', () => {
+  // Sabotagem: tirar o ramo unknown do Agendamento → a consulta inteira falha
+  // e a tabela não mostra nem o heartbeat conhecido.
+  it('agendamento desconhecido: a linha aparece', async () => {
+    await painelCom({
+      heartbeats: [
+        { id: 'h1', name: 'Backup', schedule: { kind: 'unknown' } },
+        { id: 'h2', name: 'Relatório' },
+      ],
+    })
+    expect((await nomesNaTabela()).sort()).toEqual(['Backup', 'Relatório'])
+  })
+
+  // Sabotagem: mapear o estado desconhecido para 'down' → a manchete pede atenção.
+  it('estado novo: a linha diz "Estado desconhecido" e a manchete não pede atenção', async () => {
+    await painelCom({
+      alvos: [{ id: 'a', name: 'API' }],
+      heartbeats: [{ id: 'h1', name: 'Backup', state: 'grace' }],
+    })
+    const linha = within(await tabela()).getByRole('row', { name: /Backup/ })
+    expect(within(linha).getAllByRole('cell')[0]).toHaveTextContent('Estado desconhecido')
+    expect(screen.queryByRole('heading', { level: 2, name: /pede atenção/ })).not.toBeInTheDocument()
+    expect(screen.getByText('1 no ar. Tarefas: 1 em estado desconhecido.')).toBeInTheDocument()
+  })
+})

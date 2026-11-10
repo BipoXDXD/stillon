@@ -77,6 +77,7 @@ export const ERROS_DO_SERVIDOR = {
   target_limit_reached: 409,
   heartbeat_limit_reached: 409,
   method_not_allowed: 405,
+  schedule_unsupported: 409,
 } as const
 
 type ErrosDoServidor = typeof ERROS_DO_SERVIDOR

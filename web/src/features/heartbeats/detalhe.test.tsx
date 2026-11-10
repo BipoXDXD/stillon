@@ -288,3 +288,58 @@ describe('tela de incidentes e contador', () => {
     expect(await screen.findByRole('link', { name: 'Incidentes, 2 abertos' })).toBeInTheDocument()
   })
 })
+
+// Dados de uma versão posterior do servidor (SP1, piso de rollback): o painel
+// antigo mostra a linha, sem quebrar o parse e sem oferecer edição.
+describe('heartbeat de versão posterior', () => {
+  // Sabotagem: tirar o ramo unknown do Agendamento → o detalhe não carrega.
+  it('agendamento desconhecido: diz que não é suportado e não oferece Editar', async () => {
+    await detalheCom({ schedule: { kind: 'unknown' } })
+    const s = await secao('Agendamento e sinais')
+    expect(within(s).getByText('Agendamento').nextElementSibling).toHaveTextContent('Agendamento não suportado nesta versão')
+    expect(screen.queryByRole('link', { name: 'Editar' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Apagar' })).toBeInTheDocument()
+  })
+
+  it('agendamento conhecido continua com Editar', async () => {
+    await detalheCom()
+    expect(screen.getByRole('link', { name: 'Editar' })).toHaveAttribute('href', '/heartbeats/h1/edit')
+  })
+
+  it('a rota de edição de um agendamento desconhecido não monta o formulário', async () => {
+    const r = await renderizarPainel('/')
+    r.falsa.estado.heartbeats = [heartbeat({ id: 'h1', name: 'Backup', schedule: { kind: 'unknown' } })]
+    await r.router.navigate('/heartbeats/h1/edit')
+    expect(await screen.findByText('Agendamento não suportado nesta versão.')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Salvar' })).not.toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Voltar ao heartbeat' })).toHaveAttribute('href', '/heartbeats/h1')
+  })
+
+  // Sabotagem: tirar o 'unknown' de EventoDeHeartbeat.kind → o log inteiro vira erro.
+  it('evento de tipo novo aparece como "Outro sinal" e não derruba o log', async () => {
+    await detalheCom({
+      eventos: [
+        { id: 'e1', kind: 'log' },
+        { id: 'e2', kind: 'success' },
+      ],
+    })
+    const linhas = await within(await secao('Log de eventos')).findAllByRole('listitem')
+    expect(linhas.map((l) => within(l).getByText(/^(Outro sinal|Sucesso)$/).textContent)).toEqual(['Outro sinal', 'Sucesso'])
+  })
+
+  // Sabotagem: tirar o 'unknown' de EstadoDoHeartbeat → o detalhe vira erro.
+  it('estado novo aparece como "Estado desconhecido", sem palavra de alerta', async () => {
+    await detalheCom({ state: 'grace' })
+    expect(screen.getByText('Estado desconhecido')).toBeInTheDocument()
+    expect(screen.queryByText(/Atrasado|Falhando|Fora do ar/)).not.toBeInTheDocument()
+  })
+
+  // O PATCH numa linha de agendamento desconhecido é 409 schedule_unsupported.
+  it('pausar recusado com schedule_unsupported mostra a mensagem do código', async () => {
+    const r = await detalheCom({ schedule: { kind: 'unknown' } })
+    r.falsa.estado.forcar.set('PATCH /heartbeats/:id', { status: 409, code: 'schedule_unsupported' })
+    await r.usuario.click(screen.getByRole('button', { name: 'Pausar' }))
+    await r.usuario.click(await screen.findByRole('button', { name: 'Pausar heartbeat' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('Este agendamento não pode ser editado nesta versão.')
+  })
+})

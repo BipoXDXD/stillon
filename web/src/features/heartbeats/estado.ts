@@ -1,6 +1,7 @@
 import type { Agendamento, EstadoDoHeartbeat, Heartbeat } from '@/lib/api/schemas'
 import type { EstadoExibido } from '@/lib/estado'
 import { duracao } from '@/lib/format'
+import { assertUnreachable } from '@/lib/utils'
 
 // O heartbeat na escala de gravidade do painel (forma, cor, ordem e filtro),
 // com palavra própria: uma tarefa não fica "fora do ar" (spec da tela, T2 e T3).
@@ -10,6 +11,8 @@ const ESTADOS: Record<EstadoDoHeartbeat, { exibido: EstadoExibido; texto: string
   failing: { exibido: 'down', texto: 'Falhando' },
   waiting: { exibido: 'unknown', texto: 'Aguardando' },
   paused: { exibido: 'pausado', texto: 'Pausado' },
+  // Um estado de versão posterior do servidor: neutro, sem cor de alerta.
+  unknown: { exibido: 'unknown', texto: 'Estado desconhecido' },
 }
 
 export function estadoDoHeartbeat(e: EstadoDoHeartbeat): EstadoExibido {
@@ -73,6 +76,17 @@ export function textoDaDuracao(segundos: number): string {
   return `${quantidade} ${quantidade === 1 && unidade === 'dias' ? 'dia' : ABREVIADA[unidade]}`
 }
 
+export const AGENDAMENTO_NAO_SUPORTADO = 'Agendamento não suportado nesta versão'
+
 export function textoDoAgendamento(a: Agendamento): string {
-  return a.kind === 'period' ? `a cada ${textoDaDuracao(a.period_sec)}` : `cron ${a.expr}, ${a.timezone}`
+  switch (a.kind) {
+    case 'period':
+      return `a cada ${textoDaDuracao(a.period_sec)}`
+    case 'cron':
+      return `cron ${a.expr}, ${a.timezone}`
+    case 'unknown':
+      return AGENDAMENTO_NAO_SUPORTADO
+    default:
+      return assertUnreachable(a)
+  }
 }

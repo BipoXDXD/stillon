@@ -118,6 +118,7 @@ const ORDEM_DAS_TAREFAS: readonly [EstadoDoHeartbeat, string, string][] = [
   ['up', 'em dia', 'em dia'],
   ['waiting', 'aguardando', 'aguardando'],
   ['paused', 'pausada', 'pausadas'],
+  ['unknown', 'em estado desconhecido', 'em estado desconhecido'],
 ]
 
 function resumoDasTarefas(tarefas: readonly Heartbeat[]): string {

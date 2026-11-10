@@ -18,6 +18,7 @@ import { mensagemDe, textoDaCausa } from '@/lib/api/mensagens'
 import type { Heartbeat } from '@/lib/api/schemas'
 import { dataHora } from '@/lib/format'
 import { DialogoDaUrlDePing } from './DialogoDaUrlDePing'
+import { comoEditavel } from './esquema'
 import { EventosDoHeartbeat } from './EventosDoHeartbeat'
 import { IncidentesDoHeartbeat } from './IncidentesDoHeartbeat'
 import { estadoDoHeartbeat, inicioEmCurso, prazoVencido, tempoDeExecucao, textoDaDuracao, textoDaEspera, textoDoAgendamento, textoDoHeartbeat } from './estado'
@@ -123,9 +124,11 @@ function DetalheDoHeartbeat({ id }: { id: string }) {
                 <ListaDeTags tags={hb.tags} />
               </div>
               <div className="flex flex-wrap gap-2">
-                <Botao tipo="secundario" asChild>
-                  <Link to={`/heartbeats/${id}/edit`}>Editar</Link>
-                </Botao>
+                {comoEditavel(hb) !== null && (
+                  <Botao tipo="secundario" asChild>
+                    <Link to={`/heartbeats/${id}/edit`}>Editar</Link>
+                  </Botao>
+                )}
                 {/* Um botão só, que muda de texto: o foco devolvido pelo
                     Confirmar ("Pausar") cai no mesmo elemento, agora "Retomar". */}
                 <Botao
