@@ -192,3 +192,60 @@ func TestValidadeDoHost(t *testing.T) {
 		})
 	}
 }
+
+func TestSubstituirValidade(t *testing.T) {
+	a := time.Date(2026, 12, 1, 0, 0, 0, 0, time.UTC)
+	b := time.Date(2027, 2, 1, 0, 0, 0, 0, time.UTC)
+	agora := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	const umMinuto = 60 * time.Second
+	antes := func(d time.Duration) time.Time { return agora.Add(-d) }
+
+	cases := []struct {
+		nome      string
+		guardada  *validadeGuardada
+		lida      time.Time
+		intervalo time.Duration
+		quer      validadeGuardada
+		gravar    bool
+	}{
+		{"sem guardada grava a lida", nil, a, umMinuto, validadeGuardada{a, agora}, true},
+		{"menor substitui na hora", &validadeGuardada{b, antes(time.Minute)}, a, umMinuto, validadeGuardada{a, agora}, true},
+		{"igual vista há 1 h não renova", &validadeGuardada{a, antes(time.Hour)}, a, umMinuto, validadeGuardada{a, antes(time.Hour)}, false},
+		{"igual vista há 1 h + 1 s renova", &validadeGuardada{a, antes(time.Hour + time.Second)}, a, umMinuto, validadeGuardada{a, agora}, true},
+		{"maior dentro da janela de 6 h", &validadeGuardada{a, antes(6 * time.Hour)}, b, umMinuto, validadeGuardada{a, antes(6 * time.Hour)}, false},
+		{"maior depois da janela de 6 h", &validadeGuardada{a, antes(6*time.Hour + time.Second)}, b, umMinuto, validadeGuardada{b, agora}, true},
+		{"intervalo de 3 h: janela de 9 h ainda aberta", &validadeGuardada{a, antes(6*time.Hour + time.Second)}, b, 10800 * time.Second, validadeGuardada{a, antes(6*time.Hour + time.Second)}, false},
+		{"intervalo de 3 h: janela de 9 h vencida", &validadeGuardada{a, antes(9*time.Hour + time.Second)}, b, 10800 * time.Second, validadeGuardada{b, agora}, true},
+		{"intervalo de 24 h: janela de 72 h no limite", &validadeGuardada{a, antes(72 * time.Hour)}, b, 86400 * time.Second, validadeGuardada{a, antes(72 * time.Hour)}, false},
+		{"intervalo de 24 h: janela de 72 h vencida", &validadeGuardada{a, antes(72*time.Hour + time.Second)}, b, 86400 * time.Second, validadeGuardada{b, agora}, true},
+	}
+	for _, c := range cases {
+		t.Run(c.nome, func(t *testing.T) {
+			got, gravar := substituirValidade(c.guardada, c.lida, agora, c.intervalo)
+			if !got.NotAfter.Equal(c.quer.NotAfter) || !got.ObservedAt.Equal(c.quer.ObservedAt) || gravar != c.gravar {
+				t.Errorf("substituirValidade = (%+v, %v), queria (%+v, %v)", got, gravar, c.quer, c.gravar)
+			}
+		})
+	}
+}
+
+// Um balanceador com certificados diferentes por réplica alterna as leituras.
+// A guardada fica no pior (A) e nenhuma leitura grava.
+func TestSubstituirValidadeComBalanceadorAlternando(t *testing.T) {
+	a := time.Date(2026, 12, 1, 0, 0, 0, 0, time.UTC)
+	b := time.Date(2027, 2, 1, 0, 0, 0, 0, time.UTC)
+	agora := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	guardada := validadeGuardada{a, agora.Add(-10 * time.Minute)}
+
+	for i, lida := range []time.Time{b, a, b, a} {
+		em := agora.Add(time.Duration(i) * time.Minute)
+		nova, gravar := substituirValidade(&guardada, lida, em, 60*time.Second)
+		if gravar {
+			t.Fatalf("leitura %d (%v em %v) gravou %+v", i, lida, em, nova)
+		}
+		guardada = nova
+	}
+	if !guardada.NotAfter.Equal(a) || !guardada.ObservedAt.Equal(agora.Add(-10*time.Minute)) {
+		t.Errorf("guardada = %+v, queria {%v %v}", guardada, a, agora.Add(-10*time.Minute))
+	}
+}

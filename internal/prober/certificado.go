@@ -84,3 +84,50 @@ func nomeComparavel(host string) (string, bool) {
 	}
 	return strings.TrimSuffix(nome, "."), true
 }
+
+const (
+	// renovarVistoApos é a idade a partir da qual uma leitura igual à guardada
+	// renova observed_at; antes disso, gravar a cada sonda só gastaria escrita.
+	renovarVistoApos = time.Hour
+	// janelaMinimaDeTroca e fatorDaJanelaDeTroca dão quanto tempo a validade
+	// guardada precisa ficar sem ser vista para uma maior a substituir:
+	// max(6 h, 3 x intervalo do alvo). Num balanceador com réplicas de
+	// certificados diferentes, o pior continua sendo visto e fica guardado.
+	janelaMinimaDeTroca  = 6 * time.Hour
+	fatorDaJanelaDeTroca = 3
+)
+
+// validadeGuardada é o pior certificado visto do alvo e quando foi visto.
+type validadeGuardada struct {
+	NotAfter, ObservedAt time.Time
+}
+
+// substituirValidade aplica a regra do pior certificado à leitura feita em
+// em. Devolve a validade a guardar e se ela precisa ser gravada; sem gravar,
+// devolve a guardada inalterada. Leitura menor substitui na hora; igual só
+// renova observed_at depois de renovarVistoApos; maior só substitui quando a
+// guardada ficou sem ser vista por mais que a janela de troca.
+func substituirValidade(guardada *validadeGuardada, lida, em time.Time, intervalo time.Duration) (validadeGuardada, bool) {
+	nova := validadeGuardada{NotAfter: lida, ObservedAt: em}
+	if guardada == nil {
+		return nova, true
+	}
+	semSerVista := em.Sub(guardada.ObservedAt)
+	switch {
+	case lida.Before(guardada.NotAfter):
+		return nova, true
+	case lida.Equal(guardada.NotAfter):
+		if semSerVista > renovarVistoApos {
+			return nova, true
+		}
+	default:
+		if semSerVista > janelaDeTroca(intervalo) {
+			return nova, true
+		}
+	}
+	return *guardada, false
+}
+
+func janelaDeTroca(intervalo time.Duration) time.Duration {
+	return max(janelaMinimaDeTroca, fatorDaJanelaDeTroca*intervalo)
+}
