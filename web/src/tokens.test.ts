@@ -234,6 +234,19 @@ describe('sombras do tema claro', () => {
   })
 })
 
+// O fundo rebaixado do controle segmentado (bg-painel sombra-interna): o
+// teste do componente só vê a classe; aqui, que o claro tem mesmo uma sombra
+// interna visível. Sabotagem: --sombra-interna do :root como a do .dark
+// (inset 0 0 transparent).
+describe('sombra interna do tema claro', () => {
+  it('é inset, com alfa maior que zero', () => {
+    const sombra = TOKENS.claro.get('sombra-interna') ?? ''
+    expect(sombra).toMatch(/^inset\s/)
+    const alfa = /oklch\([^/]+\/\s*([\d.]+)\)/.exec(sombra)?.[1]
+    expect(Number(alfa ?? 0)).toBeGreaterThan(0)
+  })
+})
+
 // Três níveis de superfície no escuro, e um quarto acima do cartão: painel
 // (rebaixado), fundo, superfície (cartão) e a elevada (diálogo, aviso,
 // tooltip), cada um mais claro que o de baixo (PUI). No claro a elevada é a
