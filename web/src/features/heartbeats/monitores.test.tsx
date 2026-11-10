@@ -248,9 +248,10 @@ describe('detalhe do heartbeat', () => {
 })
 
 describe('heartbeat em tolerância na lista', () => {
-  // Ruling do plano: degradado que não pede atenção. Sabotagens: mapear grace
-  // para down → a manchete pede atenção; tirar grace da ordem das tarefas → a
-  // linha de detalhe não conta a tarefa.
+  // Ruling do plano: degradado que não pede atenção. Com "Tudo no ar." o
+  // parágrafo de baixo é o do último incidente, não "Tarefas: …"; quem diz que
+  // a tarefa não está em dia é a meta. Sabotagens: mapear grace para down → a
+  // manchete pede atenção; contar grace como em dia na metaDoPainel → "1 de 1".
   it('a linha diz "Em tolerância", e a manchete não pede atenção', async () => {
     await painelCom({
       alvos: [{ id: 'a', name: 'API' }],
@@ -260,7 +261,8 @@ describe('heartbeat em tolerância na lista', () => {
     const linha = within(await tabela()).getByRole('row', { name: /Backup/ })
     expect(within(linha).getAllByRole('cell')[0]).toHaveTextContent('Em tolerância')
     expect(linha).toHaveTextContent(/Sem sinal desde o prazo esperado; o alarme sai às 01\/01\/2099/)
-    expect(screen.getByText('1 no ar. Tarefas: 1 em tolerância.')).toBeInTheDocument()
+    expect(screen.getByText(/ · 1 de 1 no ar · 0 de 1 tarefa em dia$/)).toBeInTheDocument()
+    expect(screen.queryByText(/Tarefas:/)).not.toBeInTheDocument()
   })
 
   // Sabotagem: mapear grace para up → o filtro Degradado não a alcança.
