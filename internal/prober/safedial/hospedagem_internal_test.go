@@ -29,6 +29,12 @@ func TestRecusarHospedagem(t *testing.T) {
 		// O mapeado é o v4 vestido de v6: sem o Unmap, ele não casa com a /25.
 		{nome: "v4 mapeado em v6", endereco: "[::ffff:192.0.2.10]:443", recusa: true, faixaNoEr: "192.0.2.0/25"},
 		{nome: "v4 mapeado fora da faixa", endereco: "[::ffff:192.0.2.200]:443"},
+		// Zona e endereço ilegível são recusados aqui, fora de qualquer
+		// faixa, sem contar com o AllowAddr que vem depois no permitir.
+		{nome: "v6 com zona fora da faixa", endereco: "[2001:db8:2::5%eth0]:443", recusa: true, faixaNoEr: "zona IPv6"},
+		{nome: "v6 com zona dentro da faixa", endereco: "[2001:db8:1::5%eth0]:443", recusa: true, faixaNoEr: "zona IPv6"},
+		{nome: "mapeado com zona", endereco: "[::ffff:192.0.2.200%eth0]:443", recusa: true, faixaNoEr: "zona IPv6"},
+		{nome: "endereço ilegível", endereco: "alvo.example:443", recusa: true, faixaNoEr: "ilegível"},
 	}
 	for _, c := range cases {
 		t.Run(c.nome, func(t *testing.T) {

@@ -191,15 +191,16 @@ func Load(getenv func(string) string) (*Config, error) {
 	}
 
 	// PROBE_BLOCKED_CIDRS: IPs ou CIDRs da própria hospedagem, v4 ou v6,
-	// separados por vírgula. Um item inválido derruba o boot: uma lista lida
-	// pela metade deixaria a hospedagem aberta sem aviso.
+	// separados por vírgula, sem espaço nem item vazio. Um item inválido
+	// derruba o boot: uma lista lida pela metade deixaria a hospedagem aberta
+	// sem aviso, e ",,," lida como vazia esconderia o erro de digitação.
 	hospedagem := func(name string) []netip.Prefix {
+		valor := getenv(name)
+		if valor == "" {
+			return nil
+		}
 		var out []netip.Prefix
-		for _, parte := range strings.Split(getenv(name), ",") {
-			parte = strings.TrimSpace(parte)
-			if parte == "" {
-				continue
-			}
+		for _, parte := range strings.Split(valor, ",") {
 			p, err := faixaDaHospedagem(parte)
 			if err != nil {
 				errs = append(errs, fmt.Errorf("%s: %q %w", name, parte, err))
@@ -412,6 +413,12 @@ func emProducao(publicBaseURL string) bool {
 // mesmo motivo, um CIDR escrito como v6 mapeado é recusado, porque nunca
 // casaria. O erro completa a frase "<variável>: <item> ...".
 func faixaDaHospedagem(s string) (netip.Prefix, error) {
+	switch {
+	case s == "":
+		return netip.Prefix{}, errors.New("é um item vazio entre vírgulas")
+	case s != strings.TrimSpace(s):
+		return netip.Prefix{}, errors.New("tem espaço em volta; separe os itens só por vírgula")
+	}
 	if strings.Contains(s, "/") {
 		p, err := netip.ParsePrefix(s)
 		if err != nil {
@@ -419,6 +426,11 @@ func faixaDaHospedagem(s string) (netip.Prefix, error) {
 		}
 		if p.Addr().Is4In6() {
 			return netip.Prefix{}, errors.New("é um CIDR IPv4 escrito como IPv6 mapeado; use a forma IPv4")
+		}
+		// Como no TRUSTED_PROXIES: um /0 recusaria todo alvo, e todos os
+		// monitores cairiam em down/blocked por um erro de digitação.
+		if p.Bits() == 0 {
+			return netip.Prefix{}, errors.New("é um prefixo /0, que recusaria todo alvo; liste só a hospedagem")
 		}
 		return p.Masked(), nil
 	}

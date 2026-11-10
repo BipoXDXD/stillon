@@ -16,7 +16,6 @@ func TestLoadParsesProbeBlockedCIDRs(t *testing.T) {
 		{"192.0.2.10", []string{"192.0.2.10/32"}},
 		{"2001:db8::5", []string{"2001:db8::5/128"}},
 		{"192.0.2.0/24,2001:db8::/32", []string{"192.0.2.0/24", "2001:db8::/32"}},
-		{" 192.0.2.10 , , 2001:db8::/48 ", []string{"192.0.2.10/32", "2001:db8::/48"}},
 		{"192.0.2.77/24", []string{"192.0.2.0/24"}},
 		{"::ffff:192.0.2.10", []string{"192.0.2.10/32"}},
 	}
@@ -52,12 +51,21 @@ func TestLoadRejectsABadProbeBlockedCIDR(t *testing.T) {
 		// mapeado nunca casaria, e a hospedagem ficaria aberta em silêncio.
 		"::ffff:192.0.2.0/120",
 		"192.0.2.10,lixo",
+		// Um /0 recusaria todo alvo.
+		"0.0.0.0/0",
+		"::/0",
+		// Item vazio ou com espaço em volta é erro, e não lista vazia.
+		",,,",
+		",",
+		"192.0.2.10,,2001:db8::/48",
+		"192.0.2.10,",
+		" 192.0.2.10",
+		"192.0.2.10 ",
+		"192.0.2.10, 2001:db8::/48",
+		" ",
 	} {
 		t.Run(valor, func(t *testing.T) {
-			// Em dev, para que o erro seja o do item, e não o da lista
-			// vazia em produção.
 			env := validEnv()
-			env["PUBLIC_BASE_URL"] = "http://localhost:8080"
 			env["PROBE_BLOCKED_CIDRS"] = valor
 			_, err := Load(getenvFrom(env))
 			if err == nil {

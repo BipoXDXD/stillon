@@ -262,15 +262,20 @@ func discarEmSerie(ctx context.Context, ips []netip.Addr, discar discarIP) (net.
 // hospedagem (PROBE_BLOCKED_CIDRS). A VPS é dividida com outros projetos, e
 // as portas deles no IP público não são privadas para a lista fixa: sem esta
 // conferência, um alvo cadastrado alcançaria cada uma delas (L1 do STRIDE do
-// #255). O Unmap faz o ::ffff:a.b.c.d cair no CIDR v4. Endereço ilegível fica
-// com o AllowAddr, que o recusa.
+// #255). O Unmap faz o ::ffff:a.b.c.d cair no CIDR v4. Endereço ilegível ou
+// com zona IPv6 é recusado aqui mesmo, sem contar com o AllowAddr que vem
+// depois no permitir: o Contains é falso para IP com zona, e o Unmap a
+// descarta, então aprovar dependeria da ordem das conferências.
 func recusarHospedagem(address string, hospedagem []netip.Prefix) error {
 	if len(hospedagem) == 0 {
 		return nil
 	}
 	ap, err := netip.ParseAddrPort(address)
 	if err != nil {
-		return nil
+		return fmt.Errorf("%w: endereço ilegível %q", ErrBlocked, address)
+	}
+	if ap.Addr().Zone() != "" {
+		return fmt.Errorf("%w: zona IPv6 em %s", ErrBlocked, address)
 	}
 	ip := ap.Addr().Unmap()
 	for _, p := range hospedagem {

@@ -78,6 +78,25 @@ func TestNomeQueResolveParaOIPDaHospedagemERecusado(t *testing.T) {
 	}
 }
 
+// Com várias respostas, um IP da hospedagem recusa o nome inteiro: o ::1,
+// liberado pela porta, também não recebe conexão. Sem isso, o Happy Eyeballs
+// largaria pelo endereço aceito e esconderia a hospedagem atrás dele.
+func TestNomeComUmaRespostaDaHospedagemERecusadoPorInteiro(t *testing.T) {
+	for _, ordem := range [][]string{{"127.0.0.1", "::1"}, {"::1", "127.0.0.1"}} {
+		t.Run(strings.Join(ordem, "+"), func(t *testing.T) {
+			resolverEntrega(t, ordem...)
+			porta, conexoes := doisLoopbacksContando(t)
+			client := safedial.NewClientAllowingBlocking(prazoDaSonda, hospedagemV4, enderecosNaPorta(porta, "127.0.0.1", "::1")...)
+
+			exigirBloqueio(t, client, urlDoNome(porta), "127.0.0.1/32")
+
+			if n := conexoes(); n != 0 {
+				t.Errorf("os loopbacks receberam %d conexões, queria 0", n)
+			}
+		})
+	}
+}
+
 // O salto passa pelo mesmo dial. O redirecionador escuta no ::1, fora da
 // faixa; o destino, no 127.0.0.1, dentro dela. Os dois estão liberados pela
 // porta: quem recusa o salto é só a lista da hospedagem.
@@ -113,15 +132,15 @@ func TestRedirectParaOIPDaHospedagemERecusado(t *testing.T) {
 	}
 }
 
-// O host octal não chega a conectar, e quem impede é o resolver puro do Go,
-// o da imagem de produção (CGO_ENABLED=0): netip não lê octal, então
-// 0300.0000.0002.0353 é tratado como nome, e um nome só de dígitos e pontos
-// não é nome de domínio para o Go (isDomainName): "no such host", sem consulta
-// ao DNS, error_kind dns. Uma libc (o resolver padrão no macOS) lê o octal e
-// devolve 192.0.2.235; aí o IP passa pelo dial validado como qualquer nome
-// resolvido (TestNomeQueResolveParaOIPDaHospedagemERecusado). O resolver falso
-// responde o IP da hospedagem a qualquer nome: se o Go um dia consultar o DNS
-// com este host, a lista tem de recusar a resposta.
+// O host octal não chega a conectar, e quem age aqui é o resolver puro do Go
+// (o da imagem de produção, CGO_ENABLED=0), não uma regra nossa: netip não lê
+// octal, então 0300.0000.0002.0353 vira nome, e um nome só de dígitos e
+// pontos não é nome de domínio para o Go (isDomainName). A resposta é "no
+// such host" sem consulta ao DNS, e a sonda grava error_kind dns. O teste
+// fixa esse comportamento da stdlib: se o Go passar a consultar ou a ler o
+// octal, ele fica vermelho e a defesa precisa ser revista. Uma libc (o
+// resolver padrão do macOS) lê o octal; aí o IP passa pelo dial validado como
+// qualquer nome resolvido (TestNomeQueResolveParaOIPDaHospedagemERecusado).
 func TestHostOctalNaoChegaAConectar(t *testing.T) {
 	porta, conexoes := servidorInterno(t, "127.0.0.1")
 	consultas := resolverQualquerNome(t, "127.0.0.1")
@@ -133,18 +152,15 @@ func TestHostOctalNaoChegaAConectar(t *testing.T) {
 		resp.Body.Close()
 		t.Fatalf("GET %s conectou (status %d)", alvo, resp.StatusCode)
 	}
-	consultou := len(consultas.nomes()) > 0
-	if consultou && !(errors.Is(err, safedial.ErrBlocked) && strings.Contains(err.Error(), "127.0.0.1/32")) {
-		t.Errorf("o DNS respondeu o IP da hospedagem e o erro = %v, queria ErrBlocked citando 127.0.0.1/32", err)
+	var dnsErr *net.DNSError
+	if !errors.As(err, &dnsErr) || !dnsErr.IsNotFound {
+		t.Errorf("erro = %v, queria o \"no such host\" do resolver do Go", err)
 	}
-	if !consultou {
-		var dnsErr *net.DNSError
-		if !errors.As(err, &dnsErr) || !dnsErr.IsNotFound {
-			t.Errorf("erro = %v, queria o \"no such host\" do resolver do Go", err)
-		}
+	if got := consultas.nomes(); len(got) != 0 {
+		t.Errorf("consultas ao DNS = %v, queria nenhuma", got)
 	}
 	if n := conexoes.Load(); n != 0 {
-		t.Errorf("o IP da hospedagem recebeu %d conexões, queria 0", n)
+		t.Errorf("o servidor recebeu %d conexões, queria 0", n)
 	}
 }
 
