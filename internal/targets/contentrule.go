@@ -96,7 +96,11 @@ func validateContentRule(f *fields, v *ValidationError) {
 		return
 	}
 	modoValido := r.Mode == ContentContains || r.Mode == ContentNotContains || r.Mode == ContentJSONEquals
-	if !modoValido {
+	switch {
+	case r.Mode == "":
+		// "mode": null ou ausente na API: obrigatório, como o valor vazio.
+		v.add("content_rule.mode", ReasonRequired)
+	case !modoValido:
 		v.add("content_rule.mode", ReasonInvalid)
 	}
 	if motivo := checkContentText(r.Value, maxContentValueRunes); motivo != "" {

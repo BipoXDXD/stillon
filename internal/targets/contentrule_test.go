@@ -59,6 +59,8 @@ func TestValidateContentRule(t *testing.T) {
 		{"not_contains com valor", func(f *fields) { f.ContentRule = regra(ContentNotContains, "erro", "") }, "", ""},
 		{"json_equals com ponteiro", func(f *fields) { f.ContentRule = regra(ContentJSONEquals, "ok", "/status") }, "", ""},
 		{"modo desconhecido", func(f *fields) { f.ContentRule = regra("regex", "ok", "") }, "content_rule.mode", ReasonInvalid},
+		// Vazio é o "mode": null (ou ausente) da API: obrigatório, como o valor.
+		{"modo vazio", func(f *fields) { f.ContentRule = regra("", "ok", "") }, "content_rule.mode", ReasonRequired},
 		{"valor vazio", func(f *fields) { f.ContentRule = regra(ContentContains, "", "") }, "content_rule.value", ReasonRequired},
 		{"valor com 256 caracteres de 2 bytes", func(f *fields) {
 			f.ContentRule = regra(ContentContains, strings.Repeat("é", 256), "")

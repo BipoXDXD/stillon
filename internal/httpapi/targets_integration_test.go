@@ -1067,6 +1067,17 @@ func TestContentRuleValidationNamesTheField(t *testing.T) {
 		}, apierr.FieldError{Field: "content_rule", Reason: "forbidden"}},
 		{"valor com NUL", regra(canario + "\u0000"), apierr.FieldError{Field: "content_rule.value", Reason: "invalid"}},
 		{"257 caracteres", regra(canario + strings.Repeat("é", 257-len(canario))), apierr.FieldError{Field: "content_rule.value", Reason: "too_long"}},
+		// null em campo obrigatório é required, para mode como para value.
+		{"mode null", map[string]any{
+			"content_rule": map[string]any{"mode": nil, "value": canario},
+		}, apierr.FieldError{Field: "content_rule.mode", Reason: "required"}},
+		{"value null", map[string]any{
+			"content_rule": map[string]any{"mode": "contains", "value": nil},
+		}, apierr.FieldError{Field: "content_rule.value", Reason: "required"}},
+		// O ponteiro só existe em json_equals: sobrando, é recusado, não ignorado.
+		{"json_pointer com contains", map[string]any{
+			"content_rule": map[string]any{"mode": "contains", "value": canario, "json_pointer": "/status"},
+		}, apierr.FieldError{Field: "content_rule.json_pointer", Reason: "invalid"}},
 	} {
 		status, env, cru := criar(c.extra)
 		if status != http.StatusBadRequest || env.Error.Code != "validation_failed" ||
