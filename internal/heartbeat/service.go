@@ -751,5 +751,5 @@ func statusOf(f statusFacts, now time.Time) Status {
 // prazo). Com agendamento desconhecido o prazo não é confiável, e com execução
 // aberta a tarefa está trabalhando: nos dois casos não há o que tolerar.
 func (f statusFacts) inGrace(now time.Time) bool {
-	return f.KnownSchedule && !f.RunOpen && !now.Before(f.Deadline.Add(-f.Grace))
+	return f.KnownSchedule && !f.RunOpen && !now.Before(f.Deadline.Add(-f.Grace)) && now.Before(f.Deadline)
 }

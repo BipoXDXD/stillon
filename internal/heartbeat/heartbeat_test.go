@@ -937,6 +937,19 @@ func TestResumedByPing(t *testing.T) {
 
 // "Em tolerância" é a janela [prazo - tolerância, prazo): começa no instante
 // exato e termina quando o atraso começa (A9).
+// A janela é [prazo - tolerância, prazo) por si só, sem depender de o caso
+// late vir antes no switch de statusOf.
+func TestGraceWindowEndsAtTheDeadline(t *testing.T) {
+	prazo := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	f := heartbeat.StatusFacts{Enabled: true, KnownSchedule: true, FinishedARun: true, Deadline: prazo, Grace: 5 * time.Minute}
+	if !f.InGrace(prazo.Add(-time.Nanosecond)) {
+		t.Error("um instante antes do prazo ficou fora da tolerância")
+	}
+	if f.InGrace(prazo) {
+		t.Error("o prazo ficou dentro da tolerância")
+	}
+}
+
 func TestGraceStateBoundaries(t *testing.T) {
 	emDia := func() heartbeat.StatusFacts {
 		return heartbeat.StatusFacts{

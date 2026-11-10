@@ -1,5 +1,7 @@
 package heartbeat
 
+import "time"
+
 // SetDepoisDeContar expõe o gancho do teste de criação concorrente.
 func (s *Service) SetDepoisDeContar(fn func()) { s.depoisDeContar = fn }
 
@@ -13,3 +15,7 @@ func (s *Service) SetDepoisDeGravar(fn func()) { s.depoisDeGravar = fn }
 var StatusOf = statusOf
 
 type StatusFacts = statusFacts
+
+// InGrace expõe a janela de tolerância sozinha, sem a ordem do switch de
+// statusOf.
+func (f statusFacts) InGrace(now time.Time) bool { return f.inGrace(now) }
