@@ -222,6 +222,8 @@ pausar. Custo: `Probe` cresce; a decisão fica em funções puras (`avaliarConte
 - A leitura vai até 64 KiB + 1 byte, e só quando há regra. Sem regra, nada muda (corpo grande segue não sendo falha).
 - Status esperado é avaliado antes; status errado continua `http_status`.
 - Regra reprovada: down com a causa nova `content_mismatch`.
+- Corpo comprimido num formato que a sonda não lê (tudo que não for exatamente um `gzip`, somando as linhas de
+  `Content-Encoding`): down com a causa nova `content_encoding`. Inconclusivo, nunca `up`.
 - Corpo cortado sem conclusão, ou JSON cortado: down com `body_limit`, que já está no enum e nunca foi emitido. Inconclusivo
   nunca vira `up`.
 - Só o resultado sai de `Probe`. O corpo não vai a banco, log, métrica, aviso ou resposta de API.
@@ -238,7 +240,7 @@ Números relativos, na ordem dos PRs da seção 12: `+0` é o próximo livre no 
 |---|---|---|
 | +0 `heartbeat_limits` | CHECKs de `period_sec`, `grace_sec` (até 31536000) e `description` (até 10000) | `LEAST` e `left` para as faixas antigas, depois CHECKs antigos |
 | +1 `heartbeat_events_log_run` | `kind` aceita `log`; `run_id uuid`, `source text NOT NULL DEFAULT 'ping' CHECK (source IN ('ping','panel'))`; índice `(heartbeat_id, run_id, id DESC) WHERE run_id IS NOT NULL`; `heartbeats.last_run_id`, `ping_resumes` | `DELETE` de eventos `log`; remove índice e colunas; CHECK antigo |
-| +2 `targets_content_rule` | `targets.content_mode`, `content_value`, `content_json_pointer`, com CHECK de tudo ou nada e de método diferente de HEAD; `content_mismatch` em `checks.error_kind` e `incidents.cause` | `content_mismatch` vira `unknown`; CHECKs antigos; remove colunas |
+| +2 `targets_content_rule` | `targets.content_mode`, `content_value`, `content_json_pointer`, com CHECK de tudo ou nada e de método diferente de HEAD; `content_mismatch` e `content_encoding` em `checks.error_kind` e `incidents.cause` | `content_mismatch` e `content_encoding` viram `unknown`; CHECKs antigos; remove colunas |
 | +3 `target_tls` | `targets.tls_warn bool NOT NULL DEFAULT true`; `target_tls(target_id PK FK targets ON DELETE CASCADE, not_after, observed_at)`; `tls_alerts(id, target_id FK targets ON DELETE CASCADE, not_after, stage_days, created_at, UNIQUE)` | Roda depois da descida da +4, que já soltou a FK: `DROP TABLE tls_alerts` e `target_tls`; remove `targets.tls_warn` |
 | +4 `notifications_tls_arc` | `incident_id` anulável; `tls_alert_id` FK `tls_alerts ON DELETE CASCADE`; `CHECK (num_nonnulls(incident_id, tls_alert_id) = 1)`; `UNIQUE (tls_alert_id, channel_id) WHERE tls_alert_id IS NOT NULL`; `event` aceita `tls_expiring`. Consultas em 5.2, "Entrega do aviso" | `DELETE` das linhas TLS; remove o `UNIQUE`, o CHECK `num_nonnulls` e a coluna `tls_alert_id`; `SET NOT NULL` em `incident_id`; CHECK antigo de `event` |
 | +5 `ping_keys` | `ping_keys(user_id PK FK users ON DELETE CASCADE, key_hash bytea UNIQUE CHECK 32 bytes, allow_create bool, created_at, rotated_at)`; `heartbeats.slug` com `UNIQUE (user_id, slug) WHERE slug IS NOT NULL` | Remove políticas, coluna e `DROP TABLE` |
@@ -337,7 +339,7 @@ dispensar, botão habilitado com erro ao enviar, alvo de toque de 44 px, cor nun
 | Chave de ping (Configurações) | Estado, rotacionar com confirmação, permitir criação | "Nenhuma chave" e botão primário "Gerar chave" | Esqueleto | Aviso neutro; valor novo só no diálogo |
 | Diálogo da URL | Abas token e slug, exemplos de `curl`, `rid`, `/log` | Slug sem chave: link para Configurações | Não se aplica | Não se aplica |
 | Alvo: formulário | Regra de conteúdo em "Avançado", aviso de TLS | Regra desligada por padrão | Não se aplica | Campo culpado; HEAD explica por que a regra não cabe |
-| Alvo: detalhe | "Certificado válido até …, em N dias"; texto da causa `content_mismatch` | `http`: "não se aplica"; sem leitura: "Aguardando a primeira sonda" | Esqueleto do indicador | "Indisponível", sem acusar o alvo |
+| Alvo: detalhe | "Certificado válido até …, em N dias"; textos das causas `content_mismatch` e `content_encoding` | `http`: "não se aplica"; sem leitura: "Aguardando a primeira sonda" | Esqueleto do indicador | "Indisponível", sem acusar o alvo |
 
 `schemas.ts` tem enums estritos: a tolerância a `kind` desconhecido e a `schedule.kind = 'unknown'` entra no primeiro PR. A
 tarefa nesse estado aparece com "Agendamento não suportado nesta versão", sem edição.
@@ -490,6 +492,6 @@ final.
 - Todos os números da seção 11.
 - `TLSHandshakeDone` com HTTP/2 e transporte próprio: esperado que dispare em cada salto; provar em teste.
 - `NOT VALID` em CHECK de tabela particionada e tempo da troca em `checks` (portão no PR 5).
-- Texto de `content_mismatch` no binário anterior (`causa()` com causa desconhecida).
+- Texto de `content_mismatch` e `content_encoding` no binário anterior (`causa()` com causa desconhecida).
 - Diferenças de horário de verão entre OnCalendar e o `robfig/cron`.
 - Regra de estágios 14/7/3: proposta minha, diverge do levantamento.

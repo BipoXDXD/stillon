@@ -4,13 +4,13 @@
 > superpowers:executing-plans, tarefa por tarefa. Os passos usam `- [ ]`.
 
 **Objetivo:** o dono cadastra, num alvo, uma regra de conteúdo (`contains`, `not_contains` ou `json_equals` com ponteiro
-RFC 6901); a sonda lê até 64 KiB + 1 byte só quando há regra e sai down com `content_mismatch` (regra reprovada) ou
-`body_limit` (corpo cortado sem conclusão). O corpo nunca sai de `Probe`.
+RFC 6901); a sonda lê até 64 KiB + 1 byte só quando há regra e sai down com `content_mismatch` (regra reprovada),
+`content_encoding` (corpo comprimido num formato que ela não lê) ou `body_limit` (corpo cortado sem conclusão). O corpo nunca sai de `Probe`.
 
 **Arquitetura:** abordagem A da spec: a regra sai da requisição que a sonda já faz, pelo mesmo cliente `safedial`. O tipo
 `targets.ContentRule` nasce no domínio do alvo (validação e ponteiro); a decisão fica numa função pura do sondador,
 `avaliarConteudo`. A regra entra na cerca `conferirSonda`. A migration "+2 `targets_content_rule`" acrescenta três colunas
-em `targets` e o valor `content_mismatch` aos CHECKs de `checks.error_kind` e `incidents.cause`, na forma que o portão de
+em `targets` e os valores `content_mismatch` e `content_encoding` aos CHECKs de `checks.error_kind` e `incidents.cause`, na forma que o portão de
 lock (Task 1) escolher.
 
 **Stack:** Go 1.26.10, pgx v5, sqlc, goose, Postgres 18 (17 também, na matriz do CI) via testcontainers; React + Zod +
@@ -45,9 +45,12 @@ merge".
   JSON inválido, ponteiro ausente, objeto ou array: `content_mismatch`. A forma de texto de um escalar: string = o valor
   decodificado; número = o token como escrito no corpo (`json.Number`, então `1.0` não é `1`); `true`, `false`, `null`
   literais. Chave duplicada: vale a última (comportamento do `encoding/json`), registrado em teste.
+- **Content-Encoding com regra:** a sonda pede `Accept-Encoding: gzip` e descomprime ela mesma só quando todas as linhas
+  do header somam exatamente um `gzip` (`identity` não conta); qualquer outra codificação é `content_encoding`. O
+  transporte do `safedial` tem `DisableCompression`. Corpo vazio é julgado pela regra com qualquer codificação.
 - **`contains` e `not_contains` comparam bytes UTF-8**, sem conversão de charset, sobre o corpo do último salto.
 - **`Spec.LogValue` mostra o modo da regra, nunca o valor nem o ponteiro** (podem ser texto do dono que ele não quer em log).
-- **Resíduo de rollback aceito:** o binário anterior ignora a regra (sonda só pelo status), mostra `content_mismatch` como
+- **Resíduo de rollback aceito:** o binário anterior ignora a regra (sonda só pelo status), mostra `content_mismatch` e `content_encoding` como
   "erro de rede" no aviso (`notify.causa` cai no residual) e "Falha" no painel (`tiposDeErro[kind] ?? 'Falha'`), e um PATCH
   dele que troque o método para HEAD num alvo com regra dá 500 (23514 do CHECK `targets_content_rule_not_head`).
 - **Benchmark da regra JSON é portão** (§11): acima de 400 KiB por operação (64 sondas × 400 KiB ≈ 25 MiB, a estimativa da
@@ -105,7 +108,7 @@ merge".
   `ANALYZE checks`. Confirmar o nome da constraint: `SELECT conname FROM pg_constraint WHERE conrelid = 'checks'::regclass
   AND contype = 'c'` contém `checks_error_kind_check`. Medir, cada forma num banco novo com o mesmo volume:
   - **Forma A:** uma transação com `SET LOCAL lock_timeout = '5s'` e `ALTER TABLE checks DROP CONSTRAINT
-    checks_error_kind_check, ADD CONSTRAINT checks_error_kind_check CHECK (error_kind IN (<lista atual>, 'content_mismatch'))`.
+    checks_error_kind_check, ADD CONSTRAINT checks_error_kind_check CHECK (error_kind IN (<lista atual>, 'content_mismatch', 'content_encoding'))`.
   - **Forma B:** o mesmo `ALTER` com `NOT VALID` no `ADD`; depois, em outra transação, `VALIDATE CONSTRAINT` (só para
     medir; a migration não o terá, pelo Ruling).
   - Em cada forma, uma goroutine grava 1 check a cada 10 ms por `storage.InProberTx` + `q.InsertCheck` durante o `ALTER`
@@ -129,7 +132,7 @@ merge".
   2. Senão, **forma A** se a maior latência de INSERT durante o `ALTER` fica **abaixo de 2 s** com `V` (folga sobre o
      `PersistTimeout` e o `tickTimeout`, ambos de 5 s, para nenhuma gravação do sondador expirar).
   3. Senão, **parar** e levar ao dono, com os números, as opções: migration `-- +goose NO TRANSACTION` com `VALIDATE`
-     separado; janela de manutenção com o sondador parado; manter `content_mismatch` só em `incidents` e gravar o check como
+     separado; janela de manutenção com o sondador parado; manter `content_mismatch` e `content_encoding` só em `incidents` e gravar o check como
      `unknown`. Recomendação e custo no bottom line.
 - [ ] **Step 5:** registrar a tabela de números e a forma escolhida no corpo do PR. Commit
   `test(storage): portão da troca do CHECK de error_kind em checks`.
@@ -176,16 +179,16 @@ merge".
 - Consome: a forma escolhida na Task 1; `versaoDaMigration`; `migrationsAte` (de `heartbeat_rollback_test.go`).
 - Produz: colunas `targets.content_mode`, `content_value`, `content_json_pointer` (anuláveis, sem default); constraints
   `targets_content_rule_shape` e `targets_content_rule_not_head`; `checks_error_kind_check` e `incidents_cause_check` com
-  `'content_mismatch'` a mais (mesmos nomes).
+  `'content_mismatch'` e `'content_encoding'` a mais (mesmos nomes).
 
 - [ ] **Step 1: testes que falham** (`content_rule_migration_test.go`, `testdb`):
   - `TestContentRuleChecksAcceptOnlyWholeRules`: INSERT direto no escopo do dono: sem regra → ok; `contains` + valor → ok;
     `json_equals` + valor + `/a` → ok; modo sem valor, valor sem modo, `contains` com ponteiro, `json_equals` sem ponteiro,
     ponteiro `"a"`, valor de 257 caracteres, regra com método HEAD → `23514`.
   - `TestContentMismatchIsAcceptedInChecksAndIncidents`: check `down`/`content_mismatch` e incidente com causa
-    `content_mismatch` → ok; `error_kind = 'xyz'` → `23514`.
+    `content_mismatch` → ok, e o mesmo com `content_encoding`; `error_kind = 'xyz'` → `23514`.
   - `TestContentRuleDownConvertsAndRestores`: `EmptyDatabase` → `Migrate`; um alvo com regra `contains`, um check
-    `content_mismatch`, um incidente `content_mismatch`. `MigrateDownTo(versão - 1)`: o check e o incidente ficam com
+    `content_mismatch`, um incidente `content_encoding`. `MigrateDownTo(versão - 1)`: o check e o incidente ficam com
     `unknown`; as três colunas e as duas constraints somem; INSERT de check `content_mismatch` → `23514`.
     `MigrateUpTo(versão)` → sem erro.
   - `TestFloorBinaryBootsOnContentRule`: `Migrate`, depois `goose.NewProvider` com `migrationsAte(t, "<arquivo anterior à +2>")`
@@ -209,8 +212,8 @@ merge".
   ```
 
   Depois, `checks_error_kind_check` na forma da Task 1 e `incidents_cause_check` direto (tabela pequena), cada lista igual à
-  atual (ler com `pg_get_constraintdef` antes de escrever) mais `'content_mismatch'`. Down: `set_config`; `UPDATE checks SET
-  error_kind = 'unknown' WHERE error_kind = 'content_mismatch'`; o mesmo em `incidents.cause`; CHECKs antigos na mesma forma
+  atual (ler com `pg_get_constraintdef` antes de escrever) mais `'content_mismatch'` e `'content_encoding'`. Down: `set_config`;
+  `UPDATE checks SET error_kind = 'unknown' WHERE error_kind IN ('content_mismatch', 'content_encoding')`; o mesmo em `incidents.cause`; CHECKs antigos na mesma forma
   do Up; `DROP CONSTRAINT` das duas de `targets`; `DROP COLUMN` das três. Comentário no topo: a decisão da Task 1 com os
   números, o Ruling do `NOT VALID` (se B) e do `lock_timeout`, e o resíduo de rollback.
 - [ ] **Step 4:** PASS. Sabotagens: tirar o `set_config` do Down → o `ADD CONSTRAINT` antigo falha com a linha
@@ -254,7 +257,7 @@ merge".
 
 **Interfaces:**
 - Consome: `targets.ContentMode`, `targets.ParseJSONPointer`.
-- Produz: `const KindContentMismatch ErrorKind = "content_mismatch"`;
+- Produz: `const KindContentMismatch ErrorKind = "content_mismatch"`; `const KindContentEncoding ErrorKind = "content_encoding"`;
   `type RegraDaSonda struct { Mode targets.ContentMode; Value []byte; Pointer []string }`; `Spec.Content *RegraDaSonda`
   (nil = sem regra); `func avaliarConteudo(r RegraDaSonda, corpo []byte, cortado bool) ErrorKind` ("" = passa);
   `func lerCorpo(r io.Reader) (corpo []byte, cortado bool, err error)` (lê até `MaxBodyBytes + 1`, devolve no máximo
@@ -308,7 +311,8 @@ merge".
 - Produz: `func regraDaSonda(mode, value, pointer *string) (*RegraDaSonda, error)` (erro só com ponteiro ilegível, que
   `especificar` trata como "preparar sonda" falhou, sem gravar down); `type regraGravada struct { modo, valor, ponteiro
   string }` comparável com `==`, montada das duas linhas em `conferirSonda`.
-- Textos: `causas["content_mismatch"] = "conteúdo da resposta diferente do esperado"`; `causas["body_limit"] = "resposta
+- Textos: `causas["content_mismatch"] = "conteúdo da resposta diferente do esperado"`;
+  `causas["content_encoding"] = "a resposta veio compactada num formato que o StillOn não lê"`; `causas["body_limit"] = "resposta
   grande demais para conferir o conteúdo"`.
 
 - [ ] **Step 1: testes que falham.**
@@ -381,7 +385,8 @@ merge".
   comparados como escritos no JSON."; com HEAD: "Com HEAD a resposta não tem corpo. Escolha GET ou POST para verificar o
   conteúdo."; com `Accept-Encoding`: "Remova o header Accept-Encoding para verificar o conteúdo: a resposta viria
   comprimida."; erros "Obrigatório.", "Até 256 caracteres.", "Comece com /, como /status.";
-  `tiposDeErro.content_mismatch = 'Conteúdo diferente do esperado'`, `tiposDeErro.body_limit = 'Resposta grande demais para conferir o conteúdo'`.
+  `tiposDeErro.content_mismatch = 'Conteúdo diferente do esperado'`,
+  `tiposDeErro.content_encoding = 'Resposta compactada num formato que o StillOn não lê'`, `tiposDeErro.body_limit = 'Resposta grande demais para conferir o conteúdo'`.
 
 - [ ] **Step 1: testes que falham.**
   - `esquema.test.ts`: regra desligada não manda `content_rule` na criação; `contains` sem valor → "Obrigatório."; 257
@@ -406,7 +411,7 @@ pelo PR 2, um cenário a mais).
 
 - [ ] README atualizado, sem citar TLS (PR 6).
 - [ ] Cenário no `ensaiar-piso.sh`: com o branch, criar alvo com regra e gravar pelo `sql` um check e um incidente
-  `content_mismatch`; com a tag publicada anterior, `GET /api/v1/targets`, `/targets/summary`, `/targets/{id}/checks` e
+  `content_mismatch` e outros `content_encoding`; com a tag publicada anterior, `GET /api/v1/targets`, `/targets/summary`, `/targets/{id}/checks` e
   `/incidents` → 200. Rodar uma vez, sob flock, e colar a saída no PR (não entra no CI).
 - [ ] `go build ./... && go vet ./... && make test` (sob flock, bateria acima de 50%; senão, só o CI).
 - [ ] `sh deploy/ci/checar-nome.sh`; `npx tsc --noEmit`, lint e `npx vitest run` no `web/`.
