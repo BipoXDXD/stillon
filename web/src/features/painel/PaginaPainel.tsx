@@ -24,6 +24,7 @@ import {
   temFiltroDeApi,
   type Filtros,
 } from './filtros'
+import { separarEmZonas } from './grupos'
 import { linhaDoAlvo, linhaDoHeartbeat } from './linhas'
 import { detalheDaManchete, fraseDoUltimoResolvido, manchete, mancheteSemRede, metaDoPainel, textoDaManchete, type Tarefas } from './manchete'
 import { comOrdem, lerOrdem, ordenarLinhas, type Ordem } from './ordem'
@@ -207,7 +208,8 @@ function ResultadoDosFiltros({
     ],
     ordem,
   )
-  return <TabelaDeMonitores linhas={linhas} agora={atualizadoEm} />
+  // As zonas só fazem sentido na ordem por gravidade; nas outras, um bloco só.
+  return <TabelaDeMonitores blocos={ordem === 'gravidade' ? separarEmZonas(linhas) : [linhas]} agora={atualizadoEm} />
 }
 
 // A frase de estado no topo (spec do redesign, Telas > 1), em Fraunces.

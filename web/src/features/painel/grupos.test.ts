@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { Incidente, ItemDoResumo } from '@/lib/api/schemas'
 import { estadoExibido } from '@/lib/estado'
 import { incidente, itemDoResumo } from '@/test/fixtures'
-import { detalheDoProblema, linhaSemDados, ordenarPorGravidade } from './grupos'
+import { detalheDoProblema, linhaSemDados, ordenarPorGravidade, separarEmZonas, zonaDoEstado } from './grupos'
 
 const alvo = (p: Parameters<typeof itemDoResumo>[0] = {}) => ItemDoResumo.parse(itemDoResumo(p))
 const inc = (p: Parameters<typeof incidente>[0] = {}) => Incidente.parse(incidente(p))
@@ -90,5 +90,45 @@ describe('linhaSemDados', () => {
     [{ state: 'unknown', last_checked_at: '2026-09-24T11:55:00Z' }, 'Sem dados · último check há 5 minutos'],
   ] as const)('%j → "%s"', (p, texto) => {
     expect(linhaSemDados(alvo(p), agora)).toBe(texto)
+  })
+})
+
+describe('zonas da lista', () => {
+  // Sabotagem: degradado fora da zona de problema.
+  it.each([
+    ['down', 'problema'],
+    ['degraded', 'problema'],
+    ['up', 'no-ar'],
+    ['unknown', 'parado'],
+    ['pausado', 'parado'],
+  ] as const)('%s fica na zona %s', (estado, zona) => {
+    expect(zonaDoEstado(estado)).toBe(zona)
+  })
+
+  it('lista vazia não tem bloco', () => {
+    expect(separarEmZonas([])).toEqual([])
+  })
+
+  it('uma zona só vira um bloco', () => {
+    const blocos = separarEmZonas([linha({ name: 'A' }), linha({ name: 'B' })])
+    expect(blocos.map(nomes)).toEqual([['A', 'B']])
+  })
+
+  // Sabotagem: um bloco por estado (down e degraded separados), ou reordenar.
+  it('corta a ordem por gravidade em problema, no ar e parado, sem reordenar', () => {
+    const ordem = ordenarPorGravidade([
+      linha({ id: '1', name: 'Lento', state: 'degraded' }),
+      linha({ id: '2', name: 'Site' }),
+      linha({ id: '3', name: 'Parado', enabled: false }),
+      linha({ id: '4', name: 'Banco', state: 'down' }),
+      linha({ id: '5', name: 'Novo', state: 'unknown' }),
+    ])
+    expect(separarEmZonas(ordem).map(nomes)).toEqual([['Banco', 'Lento'], ['Site'], ['Novo', 'Parado']])
+  })
+
+  // Fora da ordem por gravidade, a mesma zona pode voltar: blocos seguidos.
+  it('zona que volta depois de outra abre outro bloco', () => {
+    const blocos = separarEmZonas([linha({ name: 'A' }), linha({ name: 'B', state: 'down' }), linha({ name: 'C' })])
+    expect(blocos.map(nomes)).toEqual([['A'], ['B'], ['C']])
   })
 })

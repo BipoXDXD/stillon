@@ -24,6 +24,28 @@ export function ordenarPorGravidade<T extends { estado: EstadoExibido; nome: str
   return [...linhas].sort((a, b) => GRAVIDADE[a.estado] - GRAVIDADE[b.estado] || compararNomes(a.nome, b.nome))
 }
 
+// As três zonas da lista (RUI, densidade): o problema pede atenção e tem
+// mais espaço; quem está no ar e quem está parado ficam rebaixados.
+export type Zona = 'problema' | 'no-ar' | 'parado'
+
+export function zonaDoEstado(e: EstadoExibido): Zona {
+  if (ehProblema(e)) return 'problema'
+  return e === 'up' ? 'no-ar' : 'parado'
+}
+
+// Corta a lista, na ordem dada, em blocos seguidos da mesma zona. Na ordem
+// por gravidade, um bloco por zona; não reordena nada.
+export function separarEmZonas<T extends { estado: EstadoExibido }>(linhas: readonly T[]): T[][] {
+  const blocos: T[][] = []
+  for (const linha of linhas) {
+    const bloco = blocos.at(-1)
+    const primeira = bloco?.[0]
+    if (bloco && primeira && zonaDoEstado(primeira.estado) === zonaDoEstado(linha.estado)) bloco.push(linha)
+    else blocos.push([linha])
+  }
+  return blocos
+}
+
 // A situação de um problema: com incidente aberto, a causa e
 // há quanto tempo; sem ele, a latência (degradado) ou o último check (fora
 // do ar antes de o incidente abrir).

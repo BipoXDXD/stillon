@@ -90,6 +90,43 @@ describe('painel', () => {
     expect(within(await linhaDe('Parado')).getAllByText('Pausado').length).toBeGreaterThan(0)
   })
 
+  // Três zonas (problema, no ar, parado), cada uma no seu <tbody>, separadas
+  // por um vão; o problema em destaque e o resto rebaixado. Sabotagem: um
+  // <tbody> só, ou o nome em 600 em toda linha.
+  it('separa problema, no ar e parado em blocos e rebaixa quem está bem', async () => {
+    const r = await renderizarPainel('/')
+    r.falsa.estado.resumo = [
+      itemDoResumo({ id: 's', name: 'Site', uptime_24h: 0.99 }),
+      itemDoResumo({ id: 'b', name: 'Banco', state: 'down', last_latency_ms: null }),
+      itemDoResumo({ id: 'p', name: 'Parado', state: 'unknown', enabled: false }),
+    ]
+    await r.cliente.refetchQueries()
+    const t = await tabela()
+    const blocos = within(t).getAllByRole('rowgroup').slice(1)
+    expect(blocos.map((b) => within(b).getAllByRole('rowheader').map((c) => within(c).getByRole('link').textContent))).toEqual([
+      ['Banco'],
+      ['Site'],
+      ['Parado'],
+    ])
+    expect(blocos.slice(1).every((b) => b.classList.contains('border-t-8'))).toBe(true)
+    expect(within(await linhaDe('Banco')).getByRole('link', { name: 'Banco' })).toHaveClass('font-semibold')
+    const site = await linhaDe('Site')
+    expect(within(site).getByRole('link', { name: 'Site' })).not.toHaveClass('font-semibold')
+    expect(within(site).getByText('99,00%')).toHaveClass('text-suave')
+    expect(within(await linhaDe('Parado')).getByRole('link', { name: 'Parado' })).toHaveClass('text-suave')
+  })
+
+  // Fora da ordem por gravidade não há zona a separar: um bloco só.
+  it('na ordem por nome, a tabela fica num bloco só', async () => {
+    const r = await renderizarPainel('/?ordem=nome')
+    r.falsa.estado.resumo = [
+      itemDoResumo({ id: 's', name: 'Site' }),
+      itemDoResumo({ id: 'b', name: 'Banco', state: 'down', last_latency_ms: null }),
+    ]
+    await r.cliente.refetchQueries()
+    expect(within(await tabela()).getAllByRole('rowgroup')).toHaveLength(2)
+  })
+
   // Cor nunca sozinha: toda linha tem o nome do estado em texto, inclusive
   // no celular, onde a coluna Estado some e só resta o ícone junto do nome.
   // Sabotagem: tirar o sr-only do IconeDoEstado na célula do nome.
