@@ -362,4 +362,12 @@ describe('heartbeat de versão posterior', () => {
     expect(within(s).getByText('Prazo').nextElementSibling).toHaveTextContent('Prazo não acompanhado nesta versão')
     expect(within(s).queryByText(/Próximo prazo|Prazo vencido/)).not.toBeInTheDocument()
   })
+
+  // Sabotagem: tirar o ramo unknown do fraseDoEstado → ", até <data>" volta.
+  it('agendamento desconhecido esperando não promete data', async () => {
+    await detalheCom({ schedule: { kind: 'unknown' }, state: 'waiting', last_ping_at: null, deadline_at: '2099-01-01T12:00:00Z' })
+    const s = await secao('Agendamento e sinais')
+    expect(within(s).getByText('Aguardando o primeiro sinal.')).toBeInTheDocument()
+    expect(within(s).queryByText(/Aguardando o primeiro sinal, até /)).not.toBeInTheDocument()
+  })
 })

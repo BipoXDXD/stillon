@@ -216,7 +216,9 @@ function fraseDoEstado(hb: Heartbeat, agora: Date): string | null {
     return prazoVencido(hb, agora) ? `${causa}: o prazo era ${dataHora(hb.deadline_at)}.` : `${causa}. O incidente segue aberto até um sinal de sucesso.`
   }
   if (hb.state === 'failing') return `${textoDaCausa('heartbeat_failed')}.`
-  return hb.state === 'waiting' ? `${textoDaEspera(hb)}, até ${dataHora(hb.deadline_at)}.` : null
+  if (hb.state !== 'waiting') return null
+  // Num agendamento de versão posterior a data guardada não é prazo (Prazo).
+  return hb.schedule.kind === 'unknown' ? `${textoDaEspera(hb)}.` : `${textoDaEspera(hb)}, até ${dataHora(hb.deadline_at)}.`
 }
 
 const quando = (iso: string | null) => (iso === null ? 'Nunca' : dataHora(iso))
