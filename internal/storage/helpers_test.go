@@ -2,6 +2,9 @@ package storage_test
 
 import (
 	"context"
+	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -133,3 +136,30 @@ func novaNotificacao(t *testing.T, pool *pgxpool.Pool, incidente, canal uuid.UUI
 }
 
 func novoID() uuid.UUID { return uuid.Must(uuid.NewV7()) }
+
+// arquivoDaMigration acha migrations/*_<sufixo>.sql pelo nome, e não pelo
+// número: a numeração é a do próximo número livre na hora do merge, e um
+// número fixo no teste quebraria a cada renumeração.
+func arquivoDaMigration(t *testing.T, sufixo string) string {
+	t.Helper()
+	achados, err := filepath.Glob("migrations/*_" + sufixo + ".sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(achados) != 1 {
+		t.Fatalf("migration *_%s.sql: achei %v, queria exatamente uma", sufixo, achados)
+	}
+	return filepath.Base(achados[0])
+}
+
+// versaoDaMigration devolve o número da migration *_<sufixo>.sql.
+func versaoDaMigration(t *testing.T, sufixo string) int64 {
+	t.Helper()
+	nome := arquivoDaMigration(t, sufixo)
+	numero, _, _ := strings.Cut(nome, "_")
+	versao, err := strconv.ParseInt(numero, 10, 64)
+	if err != nil {
+		t.Fatalf("migration %s sem número no começo: %v", nome, err)
+	}
+	return versao
+}

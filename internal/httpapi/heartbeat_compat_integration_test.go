@@ -152,6 +152,7 @@ func TestPatchOnUnknownScheduleConflicts(t *testing.T) {
 		{"name": "nome novo"},
 		{"enabled": false},
 		{"schedule": map[string]any{"kind": "period", "period_sec": 3600}},
+		{"ping_resumes": true},
 	}
 	for _, patch := range patches {
 		a.clk.Advance(time.Minute)
@@ -161,9 +162,9 @@ func TestPatchOnUnknownScheduleConflicts(t *testing.T) {
 		}
 		h := linhaDoHeartbeat(t, a, id)
 		if h.Name != "backup noturno" || !h.Enabled || !h.DeadlineAt.Equal(prazoGravado) ||
-			h.PeriodSec != nil || h.CronExpr != nil {
-			t.Errorf("PATCH %v gravou: nome %q, enabled %v, prazo %v, período %s, cron %s",
-				patch, h.Name, h.Enabled, h.DeadlineAt, valorDe(h.PeriodSec), valorDe(h.CronExpr))
+			h.PeriodSec != nil || h.CronExpr != nil || h.PingResumes {
+			t.Errorf("PATCH %v gravou: nome %q, enabled %v, prazo %v, período %s, cron %s, ping_resumes %v",
+				patch, h.Name, h.Enabled, h.DeadlineAt, valorDe(h.PeriodSec), valorDe(h.CronExpr), h.PingResumes)
 		}
 	}
 }
@@ -186,6 +187,35 @@ func TestPatchByOtherUserOnUnknownScheduleIsNotFound(t *testing.T) {
 	if h.Name != "backup noturno" || !h.Enabled || !h.DeadlineAt.Equal(prazoGravado) ||
 		h.PeriodSec != nil || h.CronExpr != nil {
 		t.Errorf("PATCH alheio gravou: nome %q, enabled %v, prazo %v, período %s, cron %s",
+			h.Name, h.Enabled, h.DeadlineAt, valorDe(h.PeriodSec), valorDe(h.CronExpr))
+	}
+}
+
+// Duplicar segue a mesma regra do PATCH: para quem não é dono, a linha
+// desconhecida é 404, e não o 409 que confirmaria que ela existe.
+func TestCloneByOtherUserOnUnknownScheduleIsNotFound(t *testing.T) {
+	a := newAPI(t)
+	semChecksDeAgendamento(t, a.pool)
+	id, _ := heartbeatDesconhecidoHTTP(t, a)
+	outro := outroUsuario(t, a)
+	intruso := tokenDe(t, a, outro)
+
+	a.clk.Advance(time.Minute)
+	status, corpo := clonar(t, a, intruso, id.String(), nil)
+	if status != http.StatusNotFound || !strings.Contains(corpo, `"code":"not_found"`) ||
+		strings.Contains(corpo, "schedule_unsupported") || strings.Contains(corpo, id.String()) {
+		t.Errorf("duplicar alheio: %d %s, queria 404 not_found sem schedule_unsupported nem o id", status, corpo)
+	}
+	if n := contarHeartbeatsDe(t, a, outro); n != 0 {
+		t.Errorf("o intruso ficou com %d heartbeats, queria 0", n)
+	}
+	if n := contarHeartbeats(t, a); n != 1 {
+		t.Errorf("o dono ficou com %d heartbeats, queria 1", n)
+	}
+	h := linhaDoHeartbeat(t, a, id)
+	if h.Name != "backup noturno" || !h.Enabled || !h.DeadlineAt.Equal(prazoGravado) ||
+		h.PeriodSec != nil || h.CronExpr != nil {
+		t.Errorf("duplicar alheio mudou a linha: nome %q, enabled %v, prazo %v, período %s, cron %s",
 			h.Name, h.Enabled, h.DeadlineAt, valorDe(h.PeriodSec), valorDe(h.CronExpr))
 	}
 }
@@ -235,10 +265,10 @@ func TestLongPeriodRowPingsAndPatchOfOtherFieldsWorks(t *testing.T) {
 
 	antes := linhaDoHeartbeat(t, a, id)
 	status, corpo = lerCru(t, a, http.MethodPatch, "/api/v1/heartbeats/"+id.String(), dono, map[string]any{
-		"name": "outro", "schedule": map[string]any{"kind": "period", "period_sec": 31536000},
+		"name": "outro", "schedule": map[string]any{"kind": "period", "period_sec": 31536001},
 	})
 	if status != http.StatusBadRequest || !strings.Contains(corpo, `"reason":"out_of_range"`) {
-		t.Errorf("PATCH reenviando 365 dias: %d %s, queria 400 out_of_range", status, corpo)
+		t.Errorf("PATCH com período acima do teto de cadastro: %d %s, queria 400 out_of_range", status, corpo)
 	}
 	depois := linhaDoHeartbeat(t, a, id)
 	if depois.Name != "anual" || depois.PeriodSec == nil || *depois.PeriodSec != 31536000 || !depois.DeadlineAt.Equal(antes.DeadlineAt) {

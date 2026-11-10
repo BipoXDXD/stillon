@@ -1,9 +1,10 @@
 import { zodResolver } from '@hookform/resolvers/zod'
-import { useState } from 'react'
-import { useForm, useWatch, type UseFormRegisterReturn } from 'react-hook-form'
+import { useId, useState, type ReactNode } from 'react'
+import { flushSync } from 'react-dom'
+import { useForm, useWatch, type FieldError, type UseFormRegisterReturn } from 'react-hook-form'
 import { Botao } from '@/components/ui/botao'
 import { estiloDeCartao } from '@/components/ui/cartao'
-import { AreaDeTexto, Campo, Entrada, ErroDoFormulario, Opcao, Selecao } from '@/components/ui/campo'
+import { AreaDeTexto, CaixaDeMarcar, Campo, Entrada, ErroDoFormulario, Opcao, Selecao } from '@/components/ui/campo'
 import { ApiError } from '@/lib/api/http'
 import { mensagemDe } from '@/lib/api/mensagens'
 import { cn } from '@/lib/utils'
@@ -26,6 +27,8 @@ export function FormularioHeartbeat({
 }) {
   const f = useForm<ValoresDoHeartbeat>({ resolver: zodResolver(esquemaDoHeartbeat), defaultValues: iniciais })
   const [erroGeral, setErroGeral] = useState<string | null>(null)
+  // Quem já ligou uma opção do Avançado a vê ao editar.
+  const [avancadoAberto, setAvancadoAberto] = useState(iniciais.pingResumes)
   const e = f.formState.errors
   const tipo = useWatch({ control: f.control, name: 'tipo' })
   const expr = useWatch({ control: f.control, name: 'expr' })
@@ -48,6 +51,9 @@ export function FormularioHeartbeat({
       const campo = campoDoServidor[fe.field.replace(/\[.*$/, '')]
       return campo ? [{ campo, mensagem: mensagemDoHeartbeat(fe, f.getValues('description')) }] : []
     })
+    // O erro dentro do Avançado fechado ficaria escondido, e o foco do setError
+    // não chega a um campo ali: abre antes de marcar.
+    if (conhecidos.some(({ campo }) => campo === 'pingResumes')) flushSync(() => setAvancadoAberto(true))
     conhecidos.forEach(({ campo, mensagem }, i) => f.setError(campo, { message: mensagem }, { shouldFocus: i === 0 }))
     return conhecidos.length > 0
   }
@@ -64,7 +70,7 @@ export function FormularioHeartbeat({
       <Campo
         rotulo="Descrição"
         erro={e.description?.message}
-        ajuda="Opcional, até 1000 caracteres. O que a tarefa faz, onde roda e o que fazer quando falhar. Aparece só no detalhe, nunca nos avisos."
+        ajuda="Opcional, até 10000 caracteres. O que a tarefa faz, onde roda e o que fazer quando falhar. Aparece só no detalhe, nunca nos avisos."
       >
         {(a) => <AreaDeTexto {...a} {...f.register('description')} />}
       </Campo>
@@ -82,7 +88,7 @@ export function FormularioHeartbeat({
       {tipo === 'period' ? (
         <CampoDeDuracao
           rotulo="Período"
-          ajuda="De 1 minuto a 31 dias."
+          ajuda="De 1 minuto a 365 dias."
           erro={e.periodoQuantidade?.message}
           quantidade={f.register('periodoQuantidade', numero)}
           unidade={f.register('periodoUnidade')}
@@ -105,11 +111,14 @@ export function FormularioHeartbeat({
       )}
       <CampoDeDuracao
         rotulo="Tolerância"
-        ajuda="Folga depois do prazo antes de abrir incidente, de 30 segundos a 7 dias. Ela cobre o tempo de execução da tarefa."
+        ajuda="Folga depois do prazo antes de abrir incidente, de 30 segundos a 365 dias. Ela cobre o tempo de execução da tarefa."
         erro={e.toleranciaQuantidade?.message}
         quantidade={f.register('toleranciaQuantidade', numero)}
         unidade={f.register('toleranciaUnidade')}
       />
+      <Avancado aberto={avancadoAberto} aoAlternar={setAvancadoAberto}>
+        <CampoDeRetomada erro={e.pingResumes} registro={f.register('pingResumes')} />
+      </Avancado>
       <Botao type="submit" disabled={f.formState.isSubmitting}>
         {rotuloDoBotao}
       </Botao>
@@ -144,5 +153,38 @@ function CampoDeDuracao({
         </div>
       )}
     </Campo>
+  )
+}
+
+// O summary tem 48 px, não 44: com o conteúdo logo abaixo, a medição do alvo de
+// toque no e2e caía no vizinho.
+function Avancado({ aberto, aoAlternar, children }: { aberto: boolean; aoAlternar: (aberto: boolean) => void; children: ReactNode }) {
+  return (
+    <details open={aberto} onToggle={(ev) => aoAlternar(ev.currentTarget.open)}>
+      <summary className="min-h-12 cursor-pointer py-3 text-sm leading-6 font-semibold">Avançado</summary>
+      <div className="pt-2">{children}</div>
+    </details>
+  )
+}
+
+function CampoDeRetomada({ erro, registro }: { erro?: FieldError; registro: UseFormRegisterReturn }) {
+  const id = useId()
+  const idAjuda = `${id}-ajuda`
+  const idErro = `${id}-erro`
+  const mensagem = erro?.message
+  return (
+    <div className="space-y-2">
+      <CaixaDeMarcar aria-describedby={mensagem ? `${idAjuda} ${idErro}` : idAjuda} aria-invalid={mensagem ? true : undefined} {...registro}>
+        Retomar sozinho quando chegar um sucesso
+      </CaixaDeMarcar>
+      <p id={idAjuda} className="text-sm text-suave">
+        Uma tarefa pausada volta a ser vigiada no primeiro sinal de sucesso.
+      </p>
+      {mensagem && (
+        <p id={idErro} className="text-sm text-perigo">
+          {mensagem}
+        </p>
+      )}
+    </div>
   )
 }

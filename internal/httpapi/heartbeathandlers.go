@@ -49,6 +49,7 @@ type heartbeatRequest struct {
 	Schedule    *scheduleDTO `json:"schedule"`
 	GraceSec    *int32       `json:"grace_sec"`
 	Enabled     *bool        `json:"enabled"`
+	PingResumes *bool        `json:"ping_resumes"`
 }
 
 type heartbeatPatchRequest struct {
@@ -58,6 +59,7 @@ type heartbeatPatchRequest struct {
 	Schedule    optional[scheduleDTO] `json:"schedule"`
 	GraceSec    optional[int32]       `json:"grace_sec"`
 	Enabled     optional[bool]        `json:"enabled"`
+	PingResumes optional[bool]        `json:"ping_resumes"`
 }
 
 // heartbeatResponse é construído campo a campo. Não existe campo para o hash,
@@ -78,6 +80,7 @@ type heartbeatResponse struct {
 	LastRuntimeMS  *int64      `json:"last_runtime_ms"`
 	OpenIncidentID *string     `json:"open_incident_id"`
 	CreatedAt      time.Time   `json:"created_at"`
+	PingResumes    bool        `json:"ping_resumes"`
 }
 
 // heartbeatWithURLResponse é a única saída com a URL de ping, que leva o
@@ -98,6 +101,8 @@ type heartbeatEventResponse struct {
 	Kind      string    `json:"kind"`
 	RuntimeMS *int64    `json:"runtime_ms"`
 	ExitCode  *int16    `json:"exit_code"`
+	RunID     *string   `json:"run_id"`
+	Source    string    `json:"source"`
 }
 
 type heartbeatEventListResponse struct {
@@ -125,7 +130,7 @@ func toHeartbeatResponse(h heartbeat.Heartbeat) heartbeatResponse {
 		ID: h.ID.String(), Name: h.Name, Description: h.Description, Tags: h.Tags, Enabled: h.Enabled, GraceSec: int64(h.Grace / time.Second),
 		State: string(h.Status), DeadlineAt: h.DeadlineAt, LastPingAt: h.LastPingAt,
 		LastSuccessAt: h.LastSuccessAt, LastStartAt: h.LastStartAt, LastRuntimeMS: h.LastRuntimeMS, CreatedAt: h.CreatedAt,
-		Schedule: toScheduleDTO(h.Schedule),
+		Schedule: toScheduleDTO(h.Schedule), PingResumes: h.PingResumes,
 	}
 	if h.OpenIncidentID != nil {
 		id := h.OpenIncidentID.String()
@@ -141,7 +146,7 @@ func toScheduleDTO(s heartbeat.Schedule) scheduleDTO {
 	if s.IsCron() {
 		return scheduleDTO{Kind: scheduleKindCron, Expr: s.CronExpr(), Timezone: s.Timezone()}
 	}
-	// #nosec G115 -- o período lido do banco não tem teto, mas nasce de period_sec, um int32: a volta para int32 não transborda.
+	// #nosec G115 -- o valor nasce de um int32 (period_sec): a volta para int32 não transborda.
 	periodo := int32(s.Period() / time.Second)
 	return scheduleDTO{Kind: scheduleKindPeriod, PeriodSec: &periodo}
 }
@@ -194,6 +199,9 @@ func (h *HeartbeatHandlers) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Enabled != nil {
 		in.Enabled = *req.Enabled
+	}
+	if req.PingResumes != nil {
+		in.PingResumes = *req.PingResumes
 	}
 	criado, token, err := h.svc.Create(r.Context(), userID, in)
 	if h.falhou(w, r, "criar heartbeat", err) {
@@ -286,10 +294,13 @@ func (h *HeartbeatHandlers) Update(w http.ResponseWriter, r *http.Request) {
 	if recusouNulo(w, r, []campoDoPatch{
 		{"name", req.Name.Null}, {"schedule", req.Schedule.Null},
 		{"grace_sec", req.GraceSec.Null}, {"enabled", req.Enabled.Null},
+		{"ping_resumes", req.PingResumes.Null},
 	}) {
 		return
 	}
-	p := heartbeat.Patch{SetTags: req.Tags.Set, Tags: req.Tags.Value, Name: req.Name.ponteiro(), Enabled: req.Enabled.ponteiro()}
+	p := heartbeat.Patch{SetTags: req.Tags.Set, Tags: req.Tags.Value, Name: req.Name.ponteiro(), Enabled: req.Enabled.ponteiro(),
+		PingResumes: req.PingResumes.ponteiro(),
+	}
 	// Como nas tags, null limpa: Value fica vazio.
 	if req.Description.Set {
 		p.Description = &req.Description.Value
@@ -335,6 +346,47 @@ func (h *HeartbeatHandlers) RotateToken(w http.ResponseWriter, r *http.Request) 
 	apierr.WriteJSON(w, http.StatusOK, heartbeatWithURLResponse{toHeartbeatResponse(item), h.pingURL(token)})
 }
 
+// Clone é POST /heartbeats/{id}/clone. Como a rotação, ignora o corpo: nada que
+// o cliente mande muda o que a cópia leva.
+func (h *HeartbeatHandlers) Clone(w http.ResponseWriter, r *http.Request) {
+	userID, id, ok := donoEID(w, r)
+	if !ok {
+		return
+	}
+	copia, token, err := h.svc.Clone(r.Context(), userID, id)
+	if h.falhou(w, r, "duplicar heartbeat", err) {
+		return
+	}
+	apierr.WriteJSON(w, http.StatusCreated, heartbeatWithURLResponse{toHeartbeatResponse(copia), h.pingURL(token)})
+}
+
+// PingNow é POST /heartbeats/{id}/ping-now. O corpo não é lido: o sinal é
+// sempre um sucesso do painel, e nada do que o cliente mandar muda isso.
+func (h *HeartbeatHandlers) PingNow(w http.ResponseWriter, r *http.Request) {
+	userID, id, ok := donoEID(w, r)
+	if !ok {
+		return
+	}
+	item, err := h.svc.PingNow(r.Context(), userID, id)
+	if h.falhou(w, r, "sinalizar agora", err) {
+		return
+	}
+	apierr.WriteJSON(w, http.StatusOK, toHeartbeatResponse(item))
+}
+
+// ClearEvents é POST /heartbeats/{id}/events/clear. Ignora o corpo: limpar
+// apaga o log inteiro, e nada que o cliente mande escolhe o que sai.
+func (h *HeartbeatHandlers) ClearEvents(w http.ResponseWriter, r *http.Request) {
+	userID, id, ok := donoEID(w, r)
+	if !ok {
+		return
+	}
+	if h.falhou(w, r, "limpar eventos do heartbeat", h.svc.ClearEvents(r.Context(), userID, id)) {
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (h *HeartbeatHandlers) Events(w http.ResponseWriter, r *http.Request) {
 	userID, id, ok := donoEID(w, r)
 	if !ok {
@@ -354,7 +406,15 @@ func (h *HeartbeatHandlers) Events(w http.ResponseWriter, r *http.Request) {
 	}
 	resp := heartbeatEventListResponse{Items: make([]heartbeatEventResponse, 0, len(items))}
 	for _, e := range items {
-		resp.Items = append(resp.Items, heartbeatEventResponse{ID: e.ID.String(), At: e.At, Kind: e.Kind, RuntimeMS: e.RuntimeMS, ExitCode: e.ExitCode})
+		// Campo a campo: a linha do banco não sai inteira (allowlist de saída).
+		ev := heartbeatEventResponse{
+			ID: e.ID.String(), At: e.At, Kind: e.Kind, RuntimeMS: e.RuntimeMS, ExitCode: e.ExitCode, Source: e.Source,
+		}
+		if e.RunID != nil {
+			id := e.RunID.String()
+			ev.RunID = &id
+		}
+		resp.Items = append(resp.Items, ev)
 	}
 	if len(items) == int(limite) {
 		resp.NextCursor = items[len(items)-1].ID.String()

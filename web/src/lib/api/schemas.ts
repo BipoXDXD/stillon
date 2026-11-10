@@ -41,6 +41,10 @@ export const Alvo = z.object({
   enabled: z.boolean(),
   header_names: z.array(z.string()),
   tags: z.array(z.string()),
+  // O aviso de certificado (o interruptor entra no painel no PR 7) e a última
+  // leitura da validade; null enquanto nenhuma sonda leu o certificado.
+  tls_warn: z.boolean(),
+  tls: z.object({ not_after: instante, observed_at: instante }).nullable(),
   created_at: instante,
 })
 export type Alvo = z.infer<typeof Alvo>
@@ -126,7 +130,7 @@ export type ListaDeIncidentes = z.infer<typeof ListaDeIncidentes>
 // "Outro sinal") na tela, em vez de falhar alto como erro de contrato.
 const desconhecido = z.string().transform((): 'unknown' => 'unknown')
 
-export const EstadoDoHeartbeat = z.union([z.enum(['waiting', 'up', 'late', 'failing', 'paused']), desconhecido])
+export const EstadoDoHeartbeat = z.union([z.enum(['waiting', 'up', 'grace', 'late', 'failing', 'paused']), desconhecido])
 export type EstadoDoHeartbeat = z.infer<typeof EstadoDoHeartbeat>
 
 // 'unknown' é a linha de um agendamento que esta versão não sabe ler: o
@@ -167,6 +171,7 @@ export const Heartbeat = z.object({
   enabled: z.boolean(),
   schedule: Agendamento,
   grace_sec: z.number(),
+  ping_resumes: z.boolean(),
   state: EstadoDoHeartbeat,
   deadline_at: instante,
   last_ping_at: instante.nullable(),
@@ -186,12 +191,17 @@ export const ListaDeHeartbeats = z.object({ items: z.array(Heartbeat), next_curs
 
 export const PreviaDoCron = z.object({ next_runs: z.array(instante) })
 
+// O rid que a tarefa mandou: o servidor aceita qualquer hex 8-4-4-4-12, sem
+// exigir versão nem variante de UUID, e o guarda em minúsculas. A origem é enum
+// estrito, ao contrário do kind: uma origem nova é mudança de contrato (spec §8).
 export const EventoDeHeartbeat = z.object({
   id,
   at: instante,
-  kind: z.union([z.enum(['start', 'success', 'fail']), desconhecido]),
+  kind: z.union([z.enum(['start', 'success', 'fail', 'log']), desconhecido]),
   runtime_ms: z.number().nullable(),
   exit_code: z.number().nullable(),
+  run_id: z.guid().nullable(),
+  source: z.enum(['ping', 'panel']),
 })
 export type EventoDeHeartbeat = z.infer<typeof EventoDeHeartbeat>
 
