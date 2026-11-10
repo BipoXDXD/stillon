@@ -175,6 +175,10 @@ export function criarApi(sessao: Sessao, buscar: Buscar, o: OpcoesDaApi = {}) {
     apagarHeartbeat: (id: string) => pedir({ metodo: 'DELETE', caminho: `/heartbeats/${encodeURIComponent(id)}` }, null),
     rotacionarHeartbeat: (id: string) =>
       pedir({ metodo: 'POST', caminho: `/heartbeats/${encodeURIComponent(id)}/token/rotate` }, HeartbeatComPing),
+    duplicarHeartbeat: (id: string) =>
+      pedir({ metodo: 'POST', caminho: `/heartbeats/${encodeURIComponent(id)}/clone` }, HeartbeatComPing),
+    limparEventosDoHeartbeat: (id: string) =>
+      pedir({ metodo: 'POST', caminho: `/heartbeats/${encodeURIComponent(id)}/events/clear` }, null),
     eventosDoHeartbeat: (id: string, cursor?: string) =>
       get(`/heartbeats/${encodeURIComponent(id)}/events${consulta({ cursor, limit: LIMITE_DO_LOG })}`, ListaDeEventos),
     incidentesDoHeartbeat: (id: string, cursor?: string) =>
