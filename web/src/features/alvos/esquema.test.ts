@@ -430,6 +430,7 @@ describe('regra de conteúdo', () => {
       id: 'alvo-1', name: 'Site', url: 'https://site.exemplo.com/', method: 'GET',
       interval_sec: 60, timeout_ms: 2000, expected_status: 200, degraded_threshold_ms: 2000,
       enabled: true, header_names: [], tags: [], created_at: '2026-10-05T00:00:00Z',
+      tls_warn: true, tls: null,
       content_rule: { mode: 'json_equals', value: 'up', json_pointer: '/status' },
     }
     expect(valoresDe(a)).toMatchObject({ modoDaRegra: 'json_equals', valorDaRegra: 'up', ponteiroDaRegra: '/status' })
