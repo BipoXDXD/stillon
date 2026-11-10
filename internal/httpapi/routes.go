@@ -66,10 +66,11 @@ type Deps struct {
 // ctx é o contexto de vida do servidor: ele encerra as goroutines de
 // varredura dos rate limiters no shutdown, em vez de deixá-las vazar (R32).
 func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
-	// O prazo vem do config.Load (15 s). Zero deixaria toda requisição vencida
-	// na largada: um Config montado sem ele é defeito do código.
+	// O prazo vem do config.Load (15 s). Zero ou negativo deixaria toda
+	// requisição vencida na largada: um Config montado sem ele é defeito do
+	// código.
 	if cfg.RequestTimeout <= 0 {
-		panic("httpapi: Config sem RequestTimeout")
+		panic("httpapi: Config sem RequestTimeout positivo; monte o Config pelo config.Load ou defina RequestTimeout")
 	}
 	// Sem https não há como marcar o cookie como Secure: o navegador
 	// simplesmente não o guardaria, e o desenvolvimento local pararia. Em
@@ -247,7 +248,7 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	raiz.Handle("/healthz", handler)
 	raiz.Handle("/readyz", handler)
 	raiz.Handle("/verify/", verificacao(ctx, cfg, d.Clock, d.Channels))
-	raiz.Handle("/p/", paginaPublica(ctx, cfg, d.Clock, d.StatusPages))
+	raiz.Handle("/p/", paginaPublica(ctx, cfg, d.Clock, (&PublicPageHandlers{svc: d.StatusPages}).Page))
 	raiz.Handle("/ping/", pingPublico(ctx, cfg, d.Clock, d.Pings))
 	raiz.Handle("/", painel(d.Painel))
 	return raiz

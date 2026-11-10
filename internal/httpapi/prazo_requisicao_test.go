@@ -2,13 +2,19 @@ package httpapi_test
 
 import (
 	"context"
+	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/BipoXDXD/stillon/internal/clock"
 	"github.com/BipoXDXD/stillon/internal/config"
+	"github.com/BipoXDXD/stillon/internal/crypto"
 	"github.com/BipoXDXD/stillon/internal/httpapi"
 	"github.com/BipoXDXD/stillon/internal/notify"
 	"github.com/BipoXDXD/stillon/internal/statuspage"
@@ -60,13 +66,98 @@ func TestRoutesAplicaOPrazoDaConfiguracao(t *testing.T) {
 	}
 }
 
-// Um Config montado sem prazo deixaria toda requisição vencida na largada:
-// é defeito do código, e Routes recusa na montagem em vez de servir 503.
+// Um Config montado sem prazo (ou com prazo negativo) deixaria toda
+// requisição vencida na largada: é defeito do código, e Routes recusa na
+// montagem, dizendo como corrigir, em vez de servir 503.
 func TestRoutesRecusaConfigSemPrazo(t *testing.T) {
-	defer func() {
-		if recover() == nil {
-			t.Fatal("Routes aceitou Config sem RequestTimeout")
+	for _, prazo := range []time.Duration{0, -time.Nanosecond} {
+		t.Run(prazo.String(), func(t *testing.T) {
+			defer func() {
+				motivo, _ := recover().(string)
+				if !strings.Contains(motivo, "RequestTimeout") || !strings.Contains(motivo, "config.Load") {
+					t.Fatalf("Routes com prazo %v: panic %q, queria um que mande montar o Config pelo config.Load", prazo, motivo)
+				}
+			}()
+			rotasSemBanco(t, configSemBanco(prazo), nil)
+		})
+	}
+}
+
+// bancoMudo aceita a conexão TCP e nunca responde: o pgx fica esperando a
+// resposta do startup até o contexto vencer. É o banco preso, sem Docker.
+func bancoMudo(t *testing.T) *pgxpool.Pool {
+	t.Helper()
+	escuta, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	conexoes := make(chan net.Conn, 16)
+	t.Cleanup(func() {
+		_ = escuta.Close()
+		for {
+			select {
+			case c := <-conexoes:
+				_ = c.Close()
+			default:
+				return
+			}
+		}
+	})
+	go func() {
+		for {
+			conexao, err := escuta.Accept()
+			if err != nil {
+				return
+			}
+			select {
+			case conexoes <- conexao:
+			default:
+				_ = conexao.Close()
+			}
 		}
 	}()
-	rotasSemBanco(t, configSemBanco(0), nil)
+	pool, err := pgxpool.New(context.Background(), fmt.Sprintf(
+		"postgres://stillon:x@%s/stillon?sslmode=disable", escuta.Addr()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+	return pool
+}
+
+// A cadeia de /verify/ tem o próprio Deadline, fora da cadeia da API. Com o
+// banco preso, ela só responde quando o prazo vence: com 100 ms na
+// configuração, a resposta chega bem antes dos 15 s de produção. A de /p/
+// tem teste próprio (publicpage_prazo_test.go): a consulta dela não vê o
+// prazo da requisição.
+func TestVerifyAplicaOPrazoDaConfiguracao(t *testing.T) {
+	const prazo = 100 * time.Millisecond
+	cfg := configSemBanco(prazo)
+	pool := bancoMudo(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	clk := clock.NewFake(time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC))
+	box, err := crypto.NewBox(cfg.MasterKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rotas := httpapi.Routes(ctx, cfg, httpapi.Deps{
+		Channels:    notify.NewChannelService(pool, box, clk, &discordFalso{}, &carteiroFalso{}, cfg.PublicBaseURL),
+		StatusPages: statuspage.NewService(nil, clk),
+		Clock:       clk,
+	})
+	for _, rota := range []struct{ metodo, caminho string }{
+		{http.MethodGet, "/verify/" + strings.Repeat("A", 43)},
+		{http.MethodPost, "/verify/" + strings.Repeat("A", 43)},
+	} {
+		t.Run(rota.metodo+" "+rota.caminho, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			inicio := time.Now()
+			rotas.ServeHTTP(w, httptest.NewRequest(rota.metodo, rota.caminho, nil))
+			gasto := time.Since(inicio)
+			if w.Code != http.StatusServiceUnavailable || gasto > 3*time.Second {
+				t.Fatalf("status=%d em %v, queria 503 logo depois de %v", w.Code, gasto, prazo)
+			}
+		})
+	}
 }

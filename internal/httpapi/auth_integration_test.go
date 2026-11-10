@@ -78,7 +78,14 @@ type api struct {
 // prazoDeTesteSobCarga substitui os 15 s de produção nos testes de
 // integração. Com -race e a máquina carregada, um Argon2id de produção chegou
 // a 4,5 s, e a troca de senha paga dois em série antes das consultas: os 15 s
-// estouravam em 503. O teste que mede o prazo de produção pede os 15 s.
+// estouravam em 503.
+//
+// O custo: com 60 s, um fluxo com Argon2id que passe a gastar mais de 15 s
+// já não falha aqui, e estes testes deixam de provar que ele cabe no
+// orçamento de produção (hoje um hash leva ~120 ms sem -race). Os 15 s
+// continuam provados por TestDeadlineCancelaSQLEEsperaDoPool, que os pede
+// explicitamente e mede a resposta entre 14 e 18 s, e o valor de produção por
+// config.TestRequestTimeoutDeProducaoEh15s.
 const prazoDeTesteSobCarga = 60 * time.Second
 
 func newAPI(t *testing.T) *api {
