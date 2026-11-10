@@ -646,6 +646,43 @@ describe('canais: tipo desconhecido', () => {
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 
+  // O rollback real: o servidor desta versão não sabe ler o destino de um tipo
+  // que não conhece e devolve hint vazio. Sem um nome de apoio, dois canais
+  // assim ficariam com o mesmo "Apagar o canal ", e daria para apagar o errado.
+  // Sabotagem: voltar ao hint cru → nomes iguais e espaço duplo no diálogo.
+  it('sem hint, cada canal de tipo desconhecido tem nome próprio, sem espaço duplo', async () => {
+    const r = await renderizarPainel('/channels')
+    const antes = '2026-09-20T10:00:00Z'
+    const depois = '2026-09-21T15:30:00Z'
+    const nomeAntes = `criado em ${dataHora(antes)}`
+    const nomeDepois = `criado em ${dataHora(depois)}`
+    r.falsa.estado.canais = [
+      canal({ id: 'c1', kind: 'webhook', hint: '', created_at: antes }),
+      canal({ id: 'c2', kind: 'webhook', hint: '', created_at: depois }),
+    ]
+    await r.cliente.refetchQueries()
+    expect(await screen.findByText(nomeAntes)).toBeInTheDocument()
+    expect(screen.getByText(nomeDepois)).toBeInTheDocument()
+    const nomes = screen.getAllByRole('button', { name: /^(Pausar|Apagar) o canal/ }).map((b) => b.getAttribute('aria-label'))
+    expect(nomes).toEqual([
+      `Pausar o canal ${nomeAntes}`,
+      `Apagar o canal ${nomeAntes}`,
+      `Pausar o canal ${nomeDepois}`,
+      `Apagar o canal ${nomeDepois}`,
+    ])
+
+    await r.usuario.click(screen.getByRole('button', { name: `Apagar o canal ${nomeDepois}` }))
+    const confirmar = await screen.findByRole('alertdialog')
+    expect(confirmar.textContent).toContain(`O canal ${nomeDepois} deixa de receber os alertas.`)
+    expect(confirmar.textContent).not.toMatch(/ {2}/)
+    await r.usuario.click(within(confirmar).getByRole('button', { name: 'Cancelar' }))
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument())
+
+    await r.usuario.click(screen.getByRole('button', { name: `Pausar o canal ${nomeAntes}` }))
+    await r.usuario.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Pausar canal' }))
+    expect((await screen.findAllByText(`Canal ${nomeAntes} pausado.`))[0]).toBeInTheDocument()
+  })
+
   // Tolerar tipo novo não afrouxa a forma: sem kind, ou kind que não é
   // texto, continua erro de contrato.
   it('parse de kind ausente continua falhando', () => {
