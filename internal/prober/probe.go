@@ -71,6 +71,8 @@ type Result struct {
 // medida pelo relógio monotônico real, e não pelo relógio injetado, porque
 // o relógio falso dos testes não anda durante a sonda (D11).
 func Probe(ctx context.Context, client *http.Client, s Spec) Result {
+	client, liberar := clienteDaSonda(client)
+	defer liberar()
 	ctx, cancel := context.WithTimeout(ctx, s.Timeout)
 	defer cancel()
 
@@ -88,14 +90,6 @@ func Probe(ctx context.Context, client *http.Client, s Spec) Result {
 	inicio := time.Now()
 	resp, err := client.Do(req)
 	if err != nil {
-		// Desde o Go 1.23 o getConn disca com context.WithoutCancel: o prazo
-		// desta sonda não chega ao dial, e o dial que ela abandonou segue
-		// vivo (num handshake TLS mudo, para sempre, com socket e goroutines).
-		// CloseIdleConnections cancela os dials que ninguém mais espera; sem
-		// keep-alive, não há conexão ociosa útil a perder. Esse efeito não
-		// está na documentação do net/http, por isso o safedial também põe
-		// teto no dial e no handshake.
-		client.CloseIdleConnections()
 		return Result{Status: StatusDown, Latency: time.Since(inicio), ErrorKind: Classify(err)}
 	}
 	defer resp.Body.Close()
@@ -114,4 +108,32 @@ func Probe(ctx context.Context, client *http.Client, s Spec) Result {
 		return Result{Status: StatusDegraded, Latency: latencia, StatusCode: resp.StatusCode}
 	}
 	return Result{Status: StatusUp, Latency: latencia, StatusCode: resp.StatusCode}
+}
+
+// clienteDaSonda devolve uma cópia de modelo com um transporte só desta sonda,
+// e a função que o encerra.
+//
+// Desde o Go 1.23 o net/http disca com context.WithoutCancel: o prazo da
+// sonda não chega ao dial, e o dial que ela abandona segue vivo (num handshake
+// TLS mudo, para sempre, com socket e goroutines). CloseIdleConnections
+// cancela os dials que ninguém mais espera, efeito que a documentação não
+// promete; por isso o safedial também põe teto no dial e no handshake.
+//
+// O transporte é da sonda, e não compartilhado, porque CloseIdleConnections
+// num transporte comum fecharia a conexão HTTP/2 que outra sonda acabou de
+// abrir e ainda não usou (o net/http a põe no pool antes do primeiro stream):
+// essa sonda discaria de novo, com latência dobrada. O Clone monta pool HTTP/2
+// próprio e mantém a configuração TLS do modelo.
+//
+// Um RoundTripper que não seja *http.Transport (só em testes) é usado como
+// está: não há o que clonar.
+func clienteDaSonda(modelo *http.Client) (*http.Client, func()) {
+	base, ok := modelo.Transport.(*http.Transport)
+	if !ok {
+		return modelo, func() {}
+	}
+	proprio := base.Clone()
+	client := *modelo
+	client.Transport = proprio
+	return &client, proprio.CloseIdleConnections
 }

@@ -1,7 +1,11 @@
 package prober
 
 import (
+	"crypto/tls"
+	"crypto/x509"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"net/netip"
 	"runtime"
 	"sync"
@@ -101,8 +105,80 @@ func TestProbeLiberaConexaoDeHandshakeMudo(t *testing.T) {
 	wg.Wait()
 
 	if !esperarAte(2*time.Second, func() bool { return m.abertas.Load() == 0 }) {
-		t.Errorf("depois de %d sondas e 2 s, %d conexões seguem abertas no alvo (goroutines: %d antes, %d depois)",
-			sondas, m.abertas.Load(), antes, runtime.NumGoroutine())
+		t.Errorf("depois de %d sondas e 2 s, %d conexões seguem abertas no alvo", sondas, m.abertas.Load())
 	}
-	t.Logf("conexões abertas no alvo: %d; goroutines: %d antes, %d depois", m.abertas.Load(), antes, runtime.NumGoroutine())
+	// Cada sonda presa deixava duas goroutines no cliente (dial e handshake).
+	// A folga cobre goroutines do runtime e do testing que vêm e vão.
+	if !esperarAte(2*time.Second, func() bool { return runtime.NumGoroutine() <= antes+folgaDeGoroutines }) {
+		t.Errorf("depois de %d sondas e 2 s, goroutines: %d antes, %d depois", sondas, antes, runtime.NumGoroutine())
+	}
+}
+
+const folgaDeGoroutines = 2
+
+// Um alvo mudo não pode atrapalhar a sonda de outro alvo. Um transporte
+// compartilhado com CloseIdleConnections a cada falha fechava a conexão
+// HTTP/2 que outra sonda acabara de abrir e ainda não usara (o net/http a
+// põe no pool antes do primeiro stream): a sonda saudável discava de novo,
+// com latência dobrada. Cada sonda saudável deve abrir exatamente uma conexão.
+func TestProbeMudoNaoAtrapalhaSondaHTTP2Saudavel(t *testing.T) {
+	const sondasSaudaveis = 1000
+	const sondadoresDoMudo = 8
+
+	var conexoes atomic.Int64
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.ProtoMajor != 2 {
+			t.Errorf("servidor recebeu HTTP/%d, queria HTTP/2", r.ProtoMajor)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	srv.EnableHTTP2 = true
+	srv.Config.ConnState = func(_ net.Conn, estado http.ConnState) {
+		if estado == http.StateNew {
+			conexoes.Add(1)
+		}
+	}
+	srv.StartTLS()
+	t.Cleanup(srv.Close)
+
+	m := novoMudo(t)
+	mudo := netip.MustParseAddrPort(m.l.Addr().String())
+	client := safedial.NewClientAllowing(0, enderecoDe(t, srv), mudo)
+	transport, ok := client.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("transporte de produção = %T, queria *http.Transport", client.Transport)
+	}
+	raizes := x509.NewCertPool()
+	raizes.AddCert(srv.Certificate())
+	transport.TLSClientConfig = &tls.Config{RootCAs: raizes}
+	t.Cleanup(transport.CloseIdleConnections)
+
+	especMudo := especificacao("https://" + mudo.String() + "/")
+	especMudo.Timeout = 5 * time.Millisecond
+	parar := make(chan struct{})
+	var wg sync.WaitGroup
+	for range sondadoresDoMudo {
+		wg.Go(func() {
+			for {
+				select {
+				case <-parar:
+					return
+				default:
+					Probe(t.Context(), client, especMudo)
+				}
+			}
+		})
+	}
+
+	for i := range sondasSaudaveis {
+		if res := Probe(t.Context(), client, especificacao(srv.URL)); res.Status != StatusUp {
+			t.Errorf("sonda saudável %d: res = %+v, queria up", i, res)
+		}
+	}
+	close(parar)
+	wg.Wait()
+
+	if got := conexoes.Load(); got != sondasSaudaveis {
+		t.Errorf("%d sondas saudáveis abriram %d conexões, queria uma por sonda", sondasSaudaveis, got)
+	}
 }
