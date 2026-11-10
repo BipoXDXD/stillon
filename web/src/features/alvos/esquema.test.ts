@@ -402,6 +402,19 @@ describe('regra de conteúdo', () => {
     expect(erros(ligada({ headers, modoHeaders: 'manter' }))).toEqual([])
   })
 
+  // Os dois headers juntos dão os dois erros no seletor, na ordem da tabela;
+  // a UI mostra só o primeiro.
+  it('com Accept-Encoding e Range juntos a regra é recusada pelos dois', () => {
+    const headers = [
+      { nome: 'Range', valor: 'bytes=0-99' },
+      { nome: 'Accept-Encoding', valor: 'gzip' },
+    ]
+    expect(erros(ligada({ headers }))).toEqual([
+      ['modoDaRegra', 'Remova o header Accept-Encoding para verificar o conteúdo: a resposta viria comprimida.'],
+      ['modoDaRegra', 'Remova o header Range para verificar o conteúdo: a resposta viria cortada.'],
+    ])
+  })
+
   it('na edição, um Range guardado recusa a regra enquanto os headers são mantidos', () => {
     const base = { url: 'https://api.exemplo.com/health', nomesDeHeaders: ['X-A', 'range'] }
     const r = esquemaDoAlvo(base).safeParse(ligada({ modoHeaders: 'manter' }))

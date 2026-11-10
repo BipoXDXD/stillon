@@ -86,9 +86,10 @@ const CONTROLE = /\p{Cc}/u
 const ESCAPE_INVALIDO = /~(?![01])/
 
 export const REGRA_COM_HEAD = 'Com HEAD a resposta não tem corpo. Escolha GET ou POST para verificar o conteúdo.'
-// Headers do dono que estragam o corpo conferido (nome em minúsculas), com o
-// texto que cada um mostra no seletor da regra.
-const HEADERS_SEM_REGRA: readonly (readonly [string, string])[] = [
+// Headers do dono que estragam o corpo conferido, com o texto que cada um
+// mostra no seletor da regra. O nome fica em minúsculas, porque a comparação
+// é com os nomes já baixados; o tipo recusa outra caixa.
+const HEADERS_SEM_REGRA: readonly (readonly [Lowercase<string>, string])[] = [
   ['accept-encoding', 'Remova o header Accept-Encoding para verificar o conteúdo: a resposta viria comprimida.'],
   ['range', 'Remova o header Range para verificar o conteúdo: a resposta viria cortada.'],
 ]

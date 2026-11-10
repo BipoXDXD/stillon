@@ -253,14 +253,18 @@ describe('formulário de alvo: regra de conteúdo em "Avançado"', () => {
     expect(r.falsa.corpos('POST /targets')).toEqual([])
   })
 
-  it('na edição, um Range guardado acusa o seletor antes do PATCH', async () => {
+  it('na edição, um Range guardado acusa o seletor e abre "Avançado" antes do PATCH', async () => {
     const r = await montarEdicaoCom({ header_names: ['Range'] })
     await r.usuario.click(screen.getByText('Avançado'))
     await r.usuario.selectOptions(screen.getByLabelText(VERIFICACAO), 'Contém')
     await r.usuario.type(screen.getByLabelText(DEVE_APARECER), 'ok')
+    await r.usuario.click(screen.getByText('Avançado'))
+    expect(avancado()).not.toHaveAttribute('open')
     await r.usuario.click(screen.getByRole('button', { name: 'Salvar' }))
     const seletor = screen.getByLabelText(VERIFICACAO)
-    await waitFor(() => expect(seletor).toHaveAttribute('aria-invalid', 'true'))
+    await waitFor(() => expect(seletor).toHaveFocus())
+    expect(avancado()).toHaveAttribute('open')
+    expect(seletor).toHaveAttribute('aria-invalid', 'true')
     expect(seletor).toHaveAccessibleDescription(expect.stringContaining(TEXTO_DO_RANGE))
     expect(r.falsa.corpos(PATCH)).toEqual([])
   })
