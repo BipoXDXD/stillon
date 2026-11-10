@@ -51,18 +51,19 @@ ALTER TABLE checks
     DROP CONSTRAINT checks_error_kind_check,
     ADD CONSTRAINT checks_error_kind_check
         CHECK (error_kind IN ('timeout', 'dns', 'tls', 'conn_refused', 'http_status', 'body_limit',
-                              'blocked', 'unknown', 'content_mismatch')) NOT VALID;
+                              'blocked', 'unknown', 'content_mismatch', 'content_encoding')) NOT VALID;
 
 -- incidents é pequena: a troca validada direta não pesa.
 ALTER TABLE incidents
     DROP CONSTRAINT incidents_cause_check,
     ADD CONSTRAINT incidents_cause_check
         CHECK (cause IN ('timeout', 'dns', 'tls', 'conn_refused', 'http_status', 'body_limit',
-                         'blocked', 'unknown', 'heartbeat_late', 'heartbeat_failed', 'content_mismatch'));
+                         'blocked', 'unknown', 'heartbeat_late', 'heartbeat_failed', 'content_mismatch',
+                         'content_encoding'));
 
 -- +goose Down
--- Resíduo do rollback: content_mismatch vira 'unknown' (o binário anterior não
--- conhece outro motivo) e não volta na subida; as regras dos alvos se perdem
+-- Resíduo do rollback: content_mismatch e content_encoding viram 'unknown' (o
+-- binário anterior não conhece outro motivo) e não volta na subida; as regras dos alvos se perdem
 -- com as colunas. O UPDATE de checks varre a tabela inteira (não há índice em
 -- error_kind), o que só acontece em quem desce de propósito. O esquema não
 -- volta byte a byte: checks_error_kind_check fica NOT VALID, e a 00004 o
@@ -76,8 +77,8 @@ SET LOCAL lock_timeout = '5s';
 -- Roda com o papel da aplicação, sujeito à RLS: sem o escopo do sondador, os
 -- UPDATEs não enxergariam linha nenhuma, e o CHECK antigo de incidents falharia.
 SELECT set_config('app.scope', 'prober', true);
-UPDATE checks SET error_kind = 'unknown' WHERE error_kind = 'content_mismatch';
-UPDATE incidents SET cause = 'unknown' WHERE cause = 'content_mismatch';
+UPDATE checks SET error_kind = 'unknown' WHERE error_kind IN ('content_mismatch', 'content_encoding');
+UPDATE incidents SET cause = 'unknown' WHERE cause IN ('content_mismatch', 'content_encoding');
 
 -- targets antes de checks, como no Up e no sondador (FOR KEY SHARE no alvo,
 -- depois INSERT em checks). Na ordem inversa, um sondador que já segura o alvo

@@ -695,7 +695,8 @@ func TestGzipBombStopsAtLimit(t *testing.T) {
 
 // T5 do STRIDE: o transporte só descomprime o gzip que ele mesmo pediu. Outro
 // Content-Encoding chega cru, e julgar bytes comprimidos daria up falso no
-// not_contains. A regra não conclui nada sobre esse corpo: body_limit. O gzip
+// not_contains. A regra não conclui nada sobre esse corpo: content_encoding,
+// e não body_limit, que diria ao dono "resposta grande demais". O gzip
 // em outra caixa o transporte descomprime, e identity não comprime: os dois
 // seguem julgados.
 func TestUnsolicitedContentEncodingIsInconclusive(t *testing.T) {
@@ -713,10 +714,10 @@ func TestUnsolicitedContentEncodingIsInconclusive(t *testing.T) {
 		quer           Status
 		tipo           ErrorKind
 	}{
-		{"br", "br", []byte("tudo certo"), StatusDown, KindBodyLimit},
-		{"zstd", "zstd", []byte("tudo certo"), StatusDown, KindBodyLimit},
-		{"deflate", "deflate", []byte("tudo certo"), StatusDown, KindBodyLimit},
-		{"gzip duas vezes", "gzip, gzip", []byte("tudo certo"), StatusDown, KindBodyLimit},
+		{"br", "br", []byte("tudo certo"), StatusDown, KindContentEncoding},
+		{"zstd", "zstd", []byte("tudo certo"), StatusDown, KindContentEncoding},
+		{"deflate", "deflate", []byte("tudo certo"), StatusDown, KindContentEncoding},
+		{"gzip duas vezes", "gzip, gzip", []byte("tudo certo"), StatusDown, KindContentEncoding},
 		{"GZIP descomprimido", "GZIP", gzipado.Bytes(), StatusUp, ""},
 		{"identity", "identity", []byte("tudo certo"), StatusUp, ""},
 	}

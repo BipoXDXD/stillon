@@ -80,8 +80,8 @@ func TestContentRuleChecksAcceptOnlyWholeRules(t *testing.T) {
 	}
 }
 
-// content_mismatch é motivo de check em queda e causa de incidente; o enum
-// continua fechado para o resto.
+// content_mismatch e content_encoding são motivos de check em queda e causas
+// de incidente; o enum continua fechado para o resto.
 func TestContentMismatchIsAcceptedInChecksAndIncidents(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
@@ -89,11 +89,15 @@ func TestContentMismatchIsAcceptedInChecksAndIncidents(t *testing.T) {
 	dono := novoUsuario(t, pool)
 	alvo := novoAlvo(t, pool, dono, agora)
 
-	if err := gravarCheckDown(ctx, pool, alvo, "content_mismatch"); err != nil {
-		t.Errorf("check content_mismatch recusado: %v", err)
-	}
-	if _, err := abrirIncidenteCom(ctx, pool, alvo, "content_mismatch"); err != nil {
-		t.Errorf("incidente content_mismatch recusado: %v", err)
+	for _, motivo := range []string{"content_mismatch", "content_encoding"} {
+		// Um alvo por motivo: só cabe um incidente aberto por alvo.
+		alvoDoMotivo := novoAlvo(t, pool, dono, agora)
+		if err := gravarCheckDown(ctx, pool, alvoDoMotivo, motivo); err != nil {
+			t.Errorf("check %s recusado: %v", motivo, err)
+		}
+		if _, err := abrirIncidenteCom(ctx, pool, alvoDoMotivo, motivo); err != nil {
+			t.Errorf("incidente %s recusado: %v", motivo, err)
+		}
 	}
 	if err := gravarCheckDown(ctx, pool, alvo, "xyz"); !violaCheck(err) {
 		t.Errorf("error_kind 'xyz': erro = %v, queria check_violation (23514)", err)
@@ -133,14 +137,29 @@ func TestContentRuleDownConvertsAndRestores(t *testing.T) {
 	if err != nil {
 		t.Fatalf("incidente content_mismatch: %v", err)
 	}
+	alvoDoEncoding := novoAlvo(t, pool, dono, agora)
+	checkDoEncoding := novoID()
+	if err := gravarCheckDownComID(ctx, pool, checkDoEncoding, alvoDoEncoding, "content_encoding"); err != nil {
+		t.Fatalf("check content_encoding: %v", err)
+	}
+	incidenteDoEncoding, err := abrirIncidenteCom(ctx, pool, alvoDoEncoding, "content_encoding")
+	if err != nil {
+		t.Fatalf("incidente content_encoding: %v", err)
+	}
 
 	if err := storage.MigrateDownTo(ctx, dsn, versao-1); err != nil {
 		t.Fatalf("down da %d: %v", versao, err)
 	}
 
-	var motivo, causa string
+	var motivo, causa, motivoDoEncoding, causaDoEncoding string
 	err = emEscopo(t, pool, "app.scope", "prober", func(tx pgx.Tx) error {
 		if err := tx.QueryRow(ctx, `SELECT error_kind FROM checks WHERE id = $1`, checkID).Scan(&motivo); err != nil {
+			return err
+		}
+		if err := tx.QueryRow(ctx, `SELECT error_kind FROM checks WHERE id = $1`, checkDoEncoding).Scan(&motivoDoEncoding); err != nil {
+			return err
+		}
+		if err := tx.QueryRow(ctx, `SELECT cause FROM incidents WHERE id = $1`, incidenteDoEncoding).Scan(&causaDoEncoding); err != nil {
 			return err
 		}
 		return tx.QueryRow(ctx, `SELECT cause FROM incidents WHERE id = $1`, incidente).Scan(&causa)
@@ -148,8 +167,9 @@ func TestContentRuleDownConvertsAndRestores(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ler check e incidente depois do down: %v", err)
 	}
-	if motivo != "unknown" || causa != "unknown" {
-		t.Errorf("depois do down: check %q e incidente %q, queria os dois 'unknown'", motivo, causa)
+	if motivo != "unknown" || causa != "unknown" || motivoDoEncoding != "unknown" || causaDoEncoding != "unknown" {
+		t.Errorf("depois do down: checks %q e %q, incidentes %q e %q, queria todos 'unknown'",
+			motivo, motivoDoEncoding, causa, causaDoEncoding)
 	}
 
 	var colunas, restricoes int

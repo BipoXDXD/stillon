@@ -18,6 +18,7 @@ var causas = map[string]string{
 	"http_status":      "status HTTP diferente do esperado",
 	"content_mismatch": "conteúdo da resposta diferente do esperado",
 	"body_limit":       "resposta grande demais para conferir o conteúdo",
+	"content_encoding": "a resposta veio compactada num formato que o StillOn não lê",
 	"blocked":          "destino bloqueado pela proteção de rede",
 	"unknown":          "erro de rede",
 	// Tarefas: o sinal é dela, e o texto não fala em erro de rede.

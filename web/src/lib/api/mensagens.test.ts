@@ -15,6 +15,13 @@ describe('textoDaCausa', () => {
 })
 
 describe('textoDoErroDeCheck', () => {
+  // Um br ou zstd que o sondador não pediu não é "resposta grande demais".
+  it('content_encoding diz que a resposta veio compactada', () => {
+    expect(textoDoErroDeCheck('content_encoding', null)).toBe(
+      'Resposta compactada num formato que o StillOn não lê',
+    )
+  })
+
   // blocked cobre mais que endereço interno: o sondador também recusa um host
   // que passaria a discar outro domínio.
   it('blocked não afirma um motivo só', () => {
