@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -73,7 +74,7 @@ func TestRollupLatencyMigrationKeepsOldRowsAndGuardsNewOnes(t *testing.T) {
 	}
 	defer pool.Close()
 	dono := novoUsuario(t, pool)
-	alvo := novoAlvo(t, pool, dono, agora)
+	alvo := novoAlvoNoEsquemaDa00013(t, pool, dono, agora)
 	if err := inserirRollup(t, pool, dono, alvo, agora, 2, ptr(20), ptr(10), nil, ptr(5)); err != nil {
 		t.Fatalf("linha antiga, gravada antes da 00013: %v", err)
 	}
@@ -119,10 +120,30 @@ func TestRollupLatencyChecksAreValidated(t *testing.T) {
 		t.Errorf("CHECKs de latência validados depois do down da 00014 = %d, queria 0 (NOT VALID)", got)
 	}
 	dono := novoUsuario(t, pool)
-	alvo := novoAlvo(t, pool, dono, agora)
+	alvo := novoAlvoNoEsquemaDa00013(t, pool, dono, agora)
 	if err := inserirRollup(t, pool, dono, alvo, agora, 2, ptr(20), ptr(10), nil, ptr(5)); !violaCheck(err) {
 		t.Errorf("rollup incoerente depois do down da 00014: erro = %v, queria check_violation (23514)", err)
 	}
+}
+
+// novoAlvoNoEsquemaDa00013 cria o alvo com SQL escrito à mão: InsertTarget é
+// gerado do esquema atual e cita colunas que a 00013 ainda não tem
+// (tls_warn, da 00023).
+func novoAlvoNoEsquemaDa00013(t *testing.T, pool *pgxpool.Pool, dono uuid.UUID, proximo time.Time) uuid.UUID {
+	t.Helper()
+	id := uuid.Must(uuid.NewV7())
+	err := emEscopo(t, pool, "app.user_id", dono.String(), func(tx pgx.Tx) error {
+		_, err := tx.Exec(context.Background(),
+			`INSERT INTO targets (id, user_id, name, url, method, interval_sec, timeout_ms,
+			                      expected_status, enabled, next_run_at, created_at)
+			 VALUES ($1, $2, 'alvo', 'https://exemplo.com', 'GET', 60, 5000, 200, true, $3, $4)`,
+			id, dono, proximo, agora)
+		return err
+	})
+	if err != nil {
+		t.Fatalf("criar alvo: %v", err)
+	}
+	return id
 }
 
 func checksValidados(t *testing.T, pool *pgxpool.Pool) int {

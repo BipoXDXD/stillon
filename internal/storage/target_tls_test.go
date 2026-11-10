@@ -3,6 +3,7 @@ package storage_test
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"testing"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/pressly/goose/v3"
 
 	"github.com/BipoXDXD/stillon/internal/storage"
+	"github.com/BipoXDXD/stillon/internal/storage/db"
 	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 )
 
@@ -106,6 +108,46 @@ func TestTargetTLSFollowsOwnerOrProber(t *testing.T) {
 
 	if n := contarSemEscopo(t, pool, "target_tls"); n != 0 {
 		t.Errorf("sem escopo nenhum, target_tls mostrou %d linhas", n)
+	}
+}
+
+// As consultas do dono (targets.sql) filtram por user_id além da RLS, e cada
+// barreira vale sozinha, como nas tags. Aqui, o filtro sozinho: sob o escopo
+// de A, a política deixa A ver a própria validade, e só o WHERE barra o pedido
+// feito em nome de B.
+func TestTargetTLSOwnerQueriesFilterByTheOwner(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+	a, b := novoUsuario(t, pool), novoUsuario(t, pool)
+	alvoA := novoAlvo(t, pool, a, agora)
+	novaValidadeTLS(t, pool, alvoA)
+
+	err := storage.InUserTx(ctx, pool, a, func(q *db.Queries) error {
+		if _, err := q.GetTargetTLSOfOwner(ctx, db.GetTargetTLSOfOwnerParams{UserID: b, TargetID: alvoA}); !errors.Is(err, pgx.ErrNoRows) {
+			t.Errorf("ler a validade de A em nome de B deu %v, queria ErrNoRows", err)
+		}
+		deB, err := q.ListTargetTLSOfOwner(ctx, b)
+		if err != nil {
+			return err
+		}
+		if len(deB) != 0 {
+			t.Errorf("listar as validades em nome de B devolveu %d linhas de A", len(deB))
+		}
+		if err := q.DeleteTargetTLSOfOwner(ctx, db.DeleteTargetTLSOfOwnerParams{UserID: b, TargetID: alvoA}); err != nil {
+			return err
+		}
+		// Controle: em nome do dono, a mesma linha aparece.
+		doDono, err := q.ListTargetTLSOfOwner(ctx, a)
+		if err != nil {
+			return err
+		}
+		if len(doDono) != 1 || doDono[0].TargetID != alvoA {
+			t.Errorf("em nome de A, as validades foram %v; queria a do alvo de A", doDono)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 }
 
