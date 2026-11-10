@@ -44,6 +44,10 @@
   color-scheme: light;
   --fundo: oklch(0.98 0.008 85);
   --superficie: oklch(1 0 0);
+  /* O que flutua acima do cartão (diálogo, aviso, tooltip). No claro, a
+     sombra de nível 2 já o separa; no escuro, que não tem sombra, é um tom
+     mais claro que o cartão (PUI: superfície mais alta, mais clara). */
+  --superficie-elevada: var(--superficie);
   --painel: oklch(0.95 0.01 80);
   --texto: oklch(0.22 0.015 60);
   --suave: oklch(0.45 0.015 60);
@@ -90,6 +94,9 @@
   color-scheme: dark;
   --fundo: oklch(0.2 0.01 60);
   --superficie: oklch(0.25 0.01 60);
+  /* 0.28: o mais claro em que o apagado (4,5:1) e a borda de controle (3:1)
+     ainda passam; src/tokens.test.ts confere. */
+  --superficie-elevada: oklch(0.28 0.01 60);
   --painel: oklch(0.16 0.01 60);
   --texto: oklch(0.93 0.01 80);
   --suave: oklch(0.75 0.012 70);
@@ -120,6 +127,7 @@
 @theme inline {
   --color-fundo: var(--fundo);
   --color-superficie: var(--superficie);
+  --color-superficie-elevada: var(--superficie-elevada);
   --color-painel: var(--painel);
   --color-texto: var(--texto);
   --color-suave: var(--suave);

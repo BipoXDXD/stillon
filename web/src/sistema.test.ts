@@ -167,3 +167,29 @@ describe('CSS legado removido pelo PR 6', () => {
     expect(css).not.toContain(seletor)
   })
 })
+
+// Bloco 2, item 6: o que flutua acima do cartão (sombra de nível 2: diálogo,
+// aviso, tooltip) fica na superfície elevada, que no escuro é mais clara que
+// o cartão. O login não flutua sobre nada: o cartão dele é a tela inteira.
+// Sabotagem: voltar o diálogo para bg-superficie.
+describe('o que flutua fica na superfície elevada', () => {
+  const FORA_DA_REGRA = new Set(['src/features/login/PaginaLogin.tsx'])
+  const classesComSombra2 = (codigo: string) =>
+    Array.from(codigo.matchAll(/['"`]([^'"`]*\bsombra-nivel-2\b[^'"`]*)['"`]/g), (m) => m[1] ?? '')
+
+  it('toda classe com sombra-nivel-2 usa bg-superficie-elevada', () => {
+    const achados = ARQUIVOS_NO_SISTEMA.filter((a) => !FORA_DA_REGRA.has(a)).flatMap((arquivo) =>
+      classesComSombra2(readFileSync(arquivo, 'utf8'))
+        .filter((classes) => !/\bbg-superficie-elevada\b/.test(classes))
+        .map((classes) => `${arquivo}: ${classes}`),
+    )
+    expect(achados).toEqual([])
+  })
+
+  it('a regra acha os três que flutuam', () => {
+    const arquivos = ARQUIVOS_NO_SISTEMA.filter((a) => classesComSombra2(readFileSync(a, 'utf8')).length > 0)
+    expect(arquivos).toEqual(
+      expect.arrayContaining(['src/components/ui/dialogo.tsx', 'src/components/ui/avisos.tsx', 'src/features/alvos/GraficoDeLatencia.tsx']),
+    )
+  })
+})

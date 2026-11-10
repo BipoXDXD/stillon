@@ -77,7 +77,7 @@ function contraste(a: Oklch, b: Oklch): number {
   return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05)
 }
 
-const FUNDOS = ['fundo', 'superficie', 'painel']
+const FUNDOS = ['fundo', 'superficie', 'superficie-elevada', 'painel']
 // Texto e ícones: AA de texto (4,5:1) sobre todo fundo do painel.
 const TEXTOS = ['texto', 'suave', 'apagado', 'primaria', 'realce', 'perigo', 'estado-no-ar', 'estado-degradado', 'estado-fora', 'estado-sem-dados']
 // Texto sobre fundo tintado: o selo de estado sobre o tom 100, o item ativo
@@ -231,6 +231,20 @@ describe('sombras do tema claro', () => {
     const [grande, pequena] = [...camadas(TOKENS.claro.get('sombra-nivel-1') ?? '')].sort((a, b) => b.desfoque - a.desfoque)
     expect(grande && pequena).toBeTruthy()
     expect(pequena?.alfa ?? 0).toBeGreaterThan(grande?.alfa ?? 0)
+  })
+})
+
+// Três níveis de superfície no escuro, e um quarto acima do cartão: painel
+// (rebaixado), fundo, superfície (cartão) e a elevada (diálogo, aviso,
+// tooltip), cada um mais claro que o de baixo (PUI). No claro a elevada é a
+// própria superfície, e a sombra separa. Sabotagem: a elevada igual ao cartão
+// no escuro.
+describe('níveis de superfície', () => {
+  it('no escuro, cada nível é mais claro que o de baixo', () => {
+    const l = (nome: string) => cor('escuro', nome).l
+    expect(l('painel')).toBeLessThan(l('fundo'))
+    expect(l('fundo')).toBeLessThan(l('superficie'))
+    expect(l('superficie')).toBeLessThan(l('superficie-elevada'))
   })
 })
 
