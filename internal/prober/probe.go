@@ -123,7 +123,9 @@ func Probe(ctx context.Context, client *http.Client, s Spec) Result {
 // num transporte comum fecharia a conexão HTTP/2 que outra sonda acabou de
 // abrir e ainda não usou (o net/http a põe no pool antes do primeiro stream):
 // essa sonda discaria de novo, com latência dobrada. O Clone monta pool HTTP/2
-// próprio e mantém a configuração TLS do modelo.
+// próprio e mantém a configuração TLS do modelo. Na primeira chamada, ele
+// também liga o HTTP/2 no próprio modelo (nextProtoOnce), o que é inofensivo:
+// o modelo nunca disca.
 //
 // Um RoundTripper que não seja *http.Transport (só em testes) é usado como
 // está: não há o que clonar.

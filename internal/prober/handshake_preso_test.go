@@ -50,6 +50,13 @@ func (m *mudo) aceitar() {
 		m.mu.Unlock()
 		go func() {
 			defer m.abertas.Add(-1)
+			// O cliente fechou: fechar aqui libera o descritor do lado do
+			// alvo, que no teste de HTTP/2 recebe milhares de conexões. O
+			// alvo continua mudo; só nunca responde. Linger 0 fecha com RST,
+			// e o socket do cliente não fica em TIME_WAIT: milhares por
+			// segundo esgotariam as portas efêmeras e derrubariam a sonda
+			// saudável por falta de porta, não pelo defeito testado.
+			defer fecharSemTimeWait(c)
 			buf := make([]byte, 4096)
 			for {
 				if _, err := c.Read(buf); err != nil {
@@ -58,6 +65,14 @@ func (m *mudo) aceitar() {
 			}
 		}()
 	}
+}
+
+func fecharSemTimeWait(c net.Conn) {
+	if tcp, ok := c.(*net.TCPConn); ok {
+		// Sem linger, Close ainda fecha; o erro só tiraria o RST.
+		_ = tcp.SetLinger(0)
+	}
+	c.Close()
 }
 
 func (m *mudo) fechar() {
@@ -122,8 +137,8 @@ const folgaDeGoroutines = 2
 // põe no pool antes do primeiro stream): a sonda saudável discava de novo,
 // com latência dobrada. Cada sonda saudável deve abrir exatamente uma conexão.
 func TestProbeMudoNaoAtrapalhaSondaHTTP2Saudavel(t *testing.T) {
-	const sondasSaudaveis = 1000
-	const sondadoresDoMudo = 8
+	const sondasSaudaveis = 600
+	const sondadoresDoMudo = 16
 
 	var conexoes atomic.Int64
 	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
