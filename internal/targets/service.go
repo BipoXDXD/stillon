@@ -279,12 +279,16 @@ func (p Patch) apply(f *fields, enabled *bool) bool {
 	if p.SetTags {
 		f.Tags = p.Tags
 	}
+	if p.SetContentRule {
+		f.ContentRule = p.ContentRule
+	}
 	if p.Enabled != nil {
 		*enabled = *p.Enabled
 	}
 	return f.URL != antes.URL || f.Method != antes.Method ||
 		f.IntervalSec != antes.IntervalSec || f.TimeoutMS != antes.TimeoutMS ||
-		f.ExpectedStatus != antes.ExpectedStatus || p.SetHeaders
+		f.ExpectedStatus != antes.ExpectedStatus || p.SetHeaders ||
+		!mesmaRegra(f.ContentRule, antes.ContentRule)
 }
 
 func (s *Service) Delete(ctx context.Context, userID, id uuid.UUID) error {
