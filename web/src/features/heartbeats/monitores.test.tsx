@@ -259,7 +259,7 @@ describe('heartbeat em tolerância na lista', () => {
     expect(await screen.findByRole('heading', { level: 2, name: 'Tudo no ar.' })).toBeInTheDocument()
     const linha = within(await tabela()).getByRole('row', { name: /Backup/ })
     expect(within(linha).getAllByRole('cell')[0]).toHaveTextContent('Em tolerância')
-    expect(linha).toHaveTextContent(/o alarme sai às 01\/01\/2099/)
+    expect(linha).toHaveTextContent(/Sem sinal desde o prazo esperado; o alarme sai às 01\/01\/2099/)
     expect(screen.getByText('1 no ar. Tarefas: 1 em tolerância.')).toBeInTheDocument()
   })
 

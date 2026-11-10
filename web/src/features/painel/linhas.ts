@@ -1,8 +1,8 @@
-import { estadoDoHeartbeat, inicioEmCurso, prazoVencido, tempoDeExecucao, textoDaEspera, textoDoHeartbeat } from '@/features/heartbeats/estado'
+import { estadoDoHeartbeat, inicioEmCurso, prazoVencido, tempoDeExecucao, textoDaEspera, textoDaTolerancia, textoDoHeartbeat } from '@/features/heartbeats/estado'
 import { textoDaCausa } from '@/lib/api/mensagens'
 import type { Heartbeat, HoraDoSpark, Incidente, ItemDoResumo } from '@/lib/api/schemas'
 import { estadoExibido, textoDoEstado, type EstadoExibido } from '@/lib/estado'
-import { dataHora, duracao, haQuantoAteAgora, milissegundos } from '@/lib/format'
+import { duracao, haQuantoAteAgora, milissegundos } from '@/lib/format'
 import { assertUnreachable } from '@/lib/utils'
 import { detalheDoProblema, ehProblema, linhaSemDados } from './grupos'
 
@@ -87,7 +87,7 @@ function situacaoDoHeartbeat(hb: Heartbeat, agora: Date): string {
     case 'up':
       return textoEmDia(hb, agora)
     case 'grace':
-      return `Sem sinal no prazo · o alarme sai às ${dataHora(hb.deadline_at)}`
+      return textoDaTolerancia(hb)
     case 'waiting':
       return textoDeExecucao(hb, agora) ?? textoDaEspera(hb)
     case 'paused':

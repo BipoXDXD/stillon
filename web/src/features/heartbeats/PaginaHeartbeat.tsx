@@ -22,7 +22,7 @@ import { DialogoDaUrlDePing } from './DialogoDaUrlDePing'
 import { comoEditavel } from './esquema'
 import { EventosDoHeartbeat } from './EventosDoHeartbeat'
 import { IncidentesDoHeartbeat } from './IncidentesDoHeartbeat'
-import { estadoDoHeartbeat, inicioEmCurso, prazoVencido, tempoDeExecucao, textoDaDuracao, textoDaEspera, textoDoAgendamento, textoDoHeartbeat } from './estado'
+import { estadoDoHeartbeat, inicioEmCurso, prazoVencido, tempoDeExecucao, textoDaDuracao, textoDaEspera, textoDaTolerancia, textoDoAgendamento, textoDoHeartbeat } from './estado'
 
 // De um detalhe a outro a rota é a mesma: a key recomeça a tela, como a do alvo.
 export function PaginaHeartbeat() {
@@ -269,8 +269,7 @@ function fraseDoEstado(hb: Heartbeat, agora: Date): string | null {
     case 'failing':
       return `${textoDaCausa('heartbeat_failed')}.`
     case 'grace':
-      // Em tolerância o prazo esperado já passou: o deadline_at é a hora do alarme.
-      return `Sem sinal desde o prazo esperado; o alarme sai às ${dataHora(hb.deadline_at)}.`
+      return textoDaTolerancia(hb)
     case 'waiting':
       // Num agendamento de versão posterior a data guardada não é prazo (Prazo).
       return hb.schedule.kind === 'unknown' ? `${textoDaEspera(hb)}.` : `${textoDaEspera(hb)}, até ${dataHora(hb.deadline_at)}.`
@@ -298,6 +297,8 @@ const PRAZO_NAO_ACOMPANHADO = 'Prazo não acompanhado nesta versão'
 function Prazo({ hb, agora }: { hb: Heartbeat; agora: Date }) {
   if (hb.state === 'paused') return null
   if (hb.schedule.kind === 'unknown') return <Dado nome="Prazo" valor={PRAZO_NAO_ACOMPANHADO} />
+  // Em tolerância o prazo esperado já passou, e a data guardada é a do alarme.
+  if (hb.state === 'grace') return <Dado nome="Alarme" valor={dataHora(hb.deadline_at)} />
   return <Dado nome={prazoVencido(hb, agora) ? 'Prazo vencido' : 'Próximo prazo'} valor={dataHora(hb.deadline_at)} />
 }
 

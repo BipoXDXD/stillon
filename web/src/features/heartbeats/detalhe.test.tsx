@@ -292,10 +292,12 @@ describe('tela de incidentes e contador', () => {
     })
     const linhas = await within(await secao('Log de eventos')).findAllByRole('listitem')
     expect(linhas.map((l) => within(l).getByText(/^(Registro|Sucesso)$/).textContent)).toEqual(['Registro', 'Sucesso'])
-    expect(within(linhas[0]).getByText('execução 0b3f6c2e')).toBeInTheDocument()
-    expect(linhas[0]).not.toHaveTextContent('pelo painel')
-    expect(within(linhas[1]).getByText('pelo painel')).toBeInTheDocument()
-    expect(linhas[1]).not.toHaveTextContent('execução')
+    const [registro, sucesso] = linhas
+    if (registro === undefined || sucesso === undefined) throw new Error('o log não tem as duas linhas')
+    expect(within(registro).getByText('execução 0b3f6c2e')).toBeInTheDocument()
+    expect(registro).not.toHaveTextContent('pelo painel')
+    expect(within(sucesso).getByText('pelo painel')).toBeInTheDocument()
+    expect(sucesso).not.toHaveTextContent('execução')
   })
 
   // Sabotagem: contar só /incidents → a aba não diz nada.
@@ -309,12 +311,15 @@ describe('tela de incidentes e contador', () => {
 })
 
 describe('em tolerância no detalhe', () => {
-  // Sabotagem: tirar o ramo grace do fraseDoEstado → a frase some.
+  // Sabotagens: tirar o ramo grace do fraseDoEstado → a frase some; tirar o
+  // ramo grace do Prazo → "Próximo prazo" com a hora do alarme.
   it('mostra o selo, a hora do alarme e nenhuma palavra de alerta', async () => {
     await detalheCom({ state: 'grace', deadline_at: '2099-01-01T12:00:00Z' })
     expect(screen.getByText('Em tolerância')).toBeInTheDocument()
     const s = await secao('Agendamento e sinais')
     expect(within(s).getByText(/^Sem sinal desde o prazo esperado; o alarme sai às 01\/01\/2099,? \d{2}:\d{2}\.$/)).toBeInTheDocument()
+    expect(within(s).getByText('Alarme').nextElementSibling).toHaveTextContent(/^01\/01\/2099,? \d{2}:\d{2}$/)
+    expect(within(s).queryByText(/Próximo prazo|Prazo vencido/)).not.toBeInTheDocument()
     expect(screen.queryByText(/Atrasado|Falhando|Fora do ar|Estado desconhecido/)).not.toBeInTheDocument()
   })
 })
