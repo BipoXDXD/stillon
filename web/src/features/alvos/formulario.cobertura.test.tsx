@@ -246,6 +246,22 @@ describe('formulário de alvo: regra de conteúdo em "Avançado"', () => {
     expect(r.falsa.corpos(PATCH)).toEqual([])
   })
 
+  // N1 da re-revisão: com HEAD a regra não vale, então o erro dela não fica
+  // no seletor travado.
+  it('trocar para HEAD tira o erro já mostrado no seletor da regra', async () => {
+    const r = await montarEdicaoCom({ header_names: ['Accept-Encoding'] })
+    await r.usuario.click(screen.getByText('Avançado'))
+    await r.usuario.selectOptions(screen.getByLabelText(VERIFICACAO), 'Contém')
+    await r.usuario.type(screen.getByLabelText(DEVE_APARECER), 'ok')
+    await r.usuario.click(screen.getByRole('button', { name: 'Salvar' }))
+    await waitFor(() => expect(screen.getByLabelText(VERIFICACAO)).toHaveAttribute('aria-invalid', 'true'))
+    await r.usuario.selectOptions(screen.getByLabelText('Método'), 'HEAD')
+    const travado = screen.getByLabelText(VERIFICACAO)
+    expect(travado).toBeDisabled()
+    expect(travado).not.toHaveAttribute('aria-invalid', 'true')
+    expect(screen.queryByText(TEXTO_DO_ACCEPT, { exact: false })).not.toBeInTheDocument()
+  })
+
   it('o erro da regra no envio abre "Avançado" e leva o foco ao campo', async () => {
     const r = await montarCriacao()
     await r.usuario.click(screen.getByText('Avançado'))

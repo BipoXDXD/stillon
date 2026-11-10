@@ -1,5 +1,5 @@
 import { zodResolver } from '@hookform/resolvers/zod'
-import { useState } from 'react'
+import { type ChangeEvent, useState } from 'react'
 import { flushSync } from 'react-dom'
 import { useFieldArray, useForm, useWatch } from 'react-hook-form'
 import { Botao } from '@/components/ui/botao'
@@ -109,7 +109,12 @@ export function FormularioAlvo({
           {(a) => (
             <Selecao
               {...a}
-              {...f.register('method')}
+              {...f.register('method', {
+                // Com HEAD a regra não vale: um erro dela não fica no seletor travado.
+                onChange: (ev: ChangeEvent<HTMLSelectElement>) => {
+                  if (ev.target.value === 'HEAD') f.clearErrors(CAMPOS_DA_REGRA)
+                },
+              })}
             >
               <option value="GET">GET</option>
               <option value="HEAD">HEAD</option>
