@@ -71,10 +71,8 @@ func TestIncidentFlowsFromProbeToAuditedNotification(t *testing.T) {
 	}
 
 	metricas := portaLivre(t)
-	cfg := &config.Config{
-		Role: config.RoleProber, DatabaseURL: testdb.DSN(t), MetricsAddr: metricas,
-		MasterKey: chave, ShutdownGrace: 2 * time.Second,
-	}
+	cfg := configDeTeste(t, config.RoleProber, testdb.DSN(t))
+	cfg.MetricsAddr, cfg.ShutdownGrace = metricas, 2*time.Second
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	fim := make(chan error, 1)
@@ -214,11 +212,8 @@ func TestAPIRoleWiresIncidentsChannelsAndReadyz(t *testing.T) {
 		t.Fatal(err)
 	}
 	addr := portaLivre(t)
-	cfg := &config.Config{
-		Role: config.RoleAPI, DatabaseURL: testdb.DSN(t), HTTPAddr: addr,
-		PublicBaseURL: "http://localhost", CORSOrigin: "http://localhost:5173",
-		MasterKey: chave, JWTSecret: chave, IPHashKey: chave, ShutdownGrace: time.Second,
-	}
+	cfg := configDeTeste(t, config.RoleAPI, testdb.DSN(t))
+	cfg.HTTPAddr, cfg.ShutdownGrace = addr, time.Second
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	fim := make(chan error, 1)

@@ -69,10 +69,8 @@ const (
 func TestProberRoleEvaluatesHeartbeats(t *testing.T) {
 	pool := testdb.New(t)
 	id, _ := heartbeatVencido(t, pool)
-	cfg := &config.Config{
-		Role: config.RoleProber, DatabaseURL: testdb.DSN(t), MetricsAddr: portaLivre(t),
-		MasterKey: chave, ShutdownGrace: time.Second,
-	}
+	cfg := configDeTeste(t, config.RoleProber, testdb.DSN(t))
+	cfg.MetricsAddr, cfg.ShutdownGrace = portaLivre(t), time.Second
 	runCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	fim := make(chan error, 1)
@@ -96,11 +94,8 @@ func TestAPIRoleRecordsPingsButDoesNotEvaluate(t *testing.T) {
 	pool := testdb.New(t)
 	id, token := heartbeatVencido(t, pool)
 	addr := portaLivre(t)
-	cfg := &config.Config{
-		Role: config.RoleAPI, DatabaseURL: testdb.DSN(t), HTTPAddr: addr,
-		PublicBaseURL: "http://localhost", CORSOrigin: "http://localhost:5173",
-		MasterKey: chave, JWTSecret: chave, IPHashKey: chave, ShutdownGrace: time.Second,
-	}
+	cfg := configDeTeste(t, config.RoleAPI, testdb.DSN(t))
+	cfg.HTTPAddr, cfg.ShutdownGrace = addr, time.Second
 	runCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	fim := make(chan error, 1)

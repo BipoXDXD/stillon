@@ -65,11 +65,8 @@ func TestAllRoleConsolidatesAndServesThePublicPage(t *testing.T) {
 	}
 
 	addr := portaLivre(t)
-	cfg := &config.Config{
-		Role: config.RoleAll, DatabaseURL: testdb.DSN(t), HTTPAddr: addr, MetricsAddr: portaLivre(t),
-		PublicBaseURL: "http://localhost", CORSOrigin: "http://localhost:5173",
-		MasterKey: chave, JWTSecret: chave, IPHashKey: chave, ShutdownGrace: 2 * time.Second,
-	}
+	cfg := configDeTeste(t, config.RoleAll, testdb.DSN(t))
+	cfg.HTTPAddr, cfg.MetricsAddr, cfg.ShutdownGrace = addr, portaLivre(t), 2*time.Second
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	fim := make(chan error, 1)
