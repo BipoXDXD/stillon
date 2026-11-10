@@ -88,6 +88,14 @@ func Probe(ctx context.Context, client *http.Client, s Spec) Result {
 	inicio := time.Now()
 	resp, err := client.Do(req)
 	if err != nil {
+		// Desde o Go 1.23 o getConn disca com context.WithoutCancel: o prazo
+		// desta sonda não chega ao dial, e o dial que ela abandonou segue
+		// vivo (num handshake TLS mudo, para sempre, com socket e goroutines).
+		// CloseIdleConnections cancela os dials que ninguém mais espera; sem
+		// keep-alive, não há conexão ociosa útil a perder. Esse efeito não
+		// está na documentação do net/http, por isso o safedial também põe
+		// teto no dial e no handshake.
+		client.CloseIdleConnections()
 		return Result{Status: StatusDown, Latency: time.Since(inicio), ErrorKind: Classify(err)}
 	}
 	defer resp.Body.Close()
