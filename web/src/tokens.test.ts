@@ -98,6 +98,9 @@ const SOBRE_TINTA: [string, string][] = [
   // A faixa de estado do detalhe (PR 4): título em texto e detalhe em suave
   // sobre o tom 100. O apagado não entra: no escuro fica em 4,1:1.
   ...['texto', 'suave'].flatMap((t) => TONS_100.map((f): [string, string] => [t, f])),
+  // O tom 700 é o texto do mesmo matiz sobre o tom 100 (RUI, texto sobre fundo
+  // colorido), no lugar do cinza suave.
+  ...TONS_100.map((f): [string, string] => [f.replace(/-100$/, '-700'), f]),
 ]
 // Componentes de UI (1.4.11, 3:1): o limite dos controles, o anel de foco
 // (também sobre o item ativo da navegação) e o fundo do botão primário.
@@ -185,6 +188,14 @@ describe.each(['claro', 'escuro'] as const)('contraste do ControleSegmentado, te
     const { trilho, ativo } = montar()
     expect(par('foco', tokenDaClasse(trilho, 'bg'))).toBeGreaterThanOrEqual(3)
     expect(par('foco', tokenDaClasse(ativo, 'bg'))).toBeGreaterThanOrEqual(3)
+  })
+})
+
+// Os tons de um estado formam uma escala: o 700 é do mesmo matiz que o 100
+// sobre o qual fica, e não um cinza. Matiz igual, em graus.
+describe.each(['claro', 'escuro'] as const)('escala dos estados, tema %s', (tema) => {
+  it.each(TONS_100)('o 700 de --%s tem o mesmo matiz', (fundo) => {
+    expect(cor(tema, fundo.replace(/-100$/, '-700')).h).toBe(cor(tema, fundo).h)
   })
 })
 

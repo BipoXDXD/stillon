@@ -34,7 +34,12 @@
    campos e botões (WCAG 1.4.11). src/tokens.test.ts converte para sRGB e
    confere o contraste de cada par (4,5:1 texto, 3:1 componente e foco) nos
    dois temas: um par reprovado ajusta a luminosidade, nunca o matiz. O
-   apagado do claro saiu de 0.58 (spec) para 0.53, que passa sobre o fundo. */
+   apagado do claro saiu de 0.58 (spec) para 0.53, que passa sobre o fundo.
+   Cada estado tem três tons: o 100 (fundo tintado), a base (selo, ícone,
+   gráfico) e o 700, o texto do mesmo matiz sobre o 100 (RUI: sobre fundo
+   colorido, nada de cinza). Só os tons com uso: 200 e 300 entram quando
+   houver o que pintar com eles. No escuro a escala se inverte: o 100 é
+   escuro, e o 700, claro. */
 :root {
   color-scheme: light;
   --fundo: oklch(0.98 0.008 85);
@@ -54,12 +59,16 @@
   --perigo-texto: oklch(1 0 0);
   --estado-no-ar: oklch(0.48 0.11 150);
   --estado-no-ar-100: oklch(0.96 0.03 150);
+  --estado-no-ar-700: oklch(0.38 0.09 150);
   --estado-degradado: oklch(0.52 0.12 70);
   --estado-degradado-100: oklch(0.97 0.035 85);
+  --estado-degradado-700: oklch(0.38 0.08 85);
   --estado-fora: oklch(0.5 0.17 30);
   --estado-fora-100: oklch(0.96 0.025 30);
+  --estado-fora-700: oklch(0.38 0.13 30);
   --estado-sem-dados: var(--suave);
   --estado-sem-dados-100: var(--painel);
+  --estado-sem-dados-700: oklch(0.38 0.015 80);
   --grafico-linha: var(--primaria);
   --grafico-faixa: var(--primaria-100);
   --sobreposicao: oklch(0.22 0.015 60 / 0.6);
@@ -88,11 +97,15 @@
   --perigo-texto: oklch(0.2 0.03 30);
   --estado-no-ar: oklch(0.78 0.13 150);
   --estado-no-ar-100: oklch(0.3 0.05 150);
+  --estado-no-ar-700: oklch(0.85 0.08 150);
   --estado-degradado: oklch(0.82 0.13 80);
   --estado-degradado-100: oklch(0.31 0.05 80);
+  --estado-degradado-700: oklch(0.86 0.08 80);
   --estado-fora: oklch(0.72 0.17 30);
   --estado-fora-100: oklch(0.3 0.06 30);
+  --estado-fora-700: oklch(0.85 0.08 30);
   --estado-sem-dados-100: oklch(0.3 0.01 60);
+  --estado-sem-dados-700: oklch(0.85 0.012 60);
   --sobreposicao: oklch(0 0 0 / 0.6);
   --sombra-nivel-1: 0 0 transparent;
   --sombra-nivel-2: 0 0 transparent;
@@ -116,12 +129,16 @@
   --color-perigo-texto: var(--perigo-texto);
   --color-no-ar: var(--estado-no-ar);
   --color-no-ar-100: var(--estado-no-ar-100);
+  --color-no-ar-700: var(--estado-no-ar-700);
   --color-degradado: var(--estado-degradado);
   --color-degradado-100: var(--estado-degradado-100);
+  --color-degradado-700: var(--estado-degradado-700);
   --color-fora: var(--estado-fora);
   --color-fora-100: var(--estado-fora-100);
+  --color-fora-700: var(--estado-fora-700);
   --color-sem-dados: var(--estado-sem-dados);
   --color-sem-dados-100: var(--estado-sem-dados-100);
+  --color-sem-dados-700: var(--estado-sem-dados-700);
   --color-sobreposicao: var(--sobreposicao);
 }
 
