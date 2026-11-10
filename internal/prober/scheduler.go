@@ -331,20 +331,18 @@ func (s *Scheduler) especificar(a db.ClaimDueTargetsRow) (Spec, error) {
 	return spec, nil
 }
 
-// regraDaSonda monta a regra a partir das três colunas de targets; modo nulo
-// é alvo sem regra. O cadastro e o CHECK de targets só deixam gravar ponteiro
-// que ParseJSONPointer aceita, então o erro é defeito nosso, e quem chama o
-// trata como os headers que não abrem: log, sem gravar down.
+// regraDaSonda prepara para a sonda a regra das três colunas de targets; sem
+// regra, nil. O cadastro e o CHECK de targets só deixam gravar ponteiro que
+// ParseJSONPointer aceita, então o erro é defeito nosso, e quem chama o trata
+// como os headers que não abrem: log, sem gravar down.
 func regraDaSonda(mode, value, pointer *string) (*RegraDaSonda, error) {
-	if mode == nil {
+	regra := targets.RuleFromColumns(mode, value, pointer)
+	if regra == nil {
 		return nil, nil
 	}
-	r := &RegraDaSonda{Mode: targets.ContentMode(*mode)}
-	if value != nil {
-		r.Value = []byte(*value)
-	}
-	if pointer != nil {
-		tokens, err := targets.ParseJSONPointer(*pointer)
+	r := &RegraDaSonda{Mode: regra.Mode, Value: []byte(regra.Value)}
+	if regra.JSONPointer != "" {
+		tokens, err := targets.ParseJSONPointer(regra.JSONPointer)
 		if err != nil {
 			return nil, fmt.Errorf("ler o ponteiro JSON da regra: %w", err)
 		}
@@ -467,24 +465,6 @@ var (
 	errAlvoSumido  = errors.New("o alvo foi apagado durante a sonda")
 )
 
-// regraGravada é a regra de conteúdo como as colunas a guardam, comparável
-// com ==. Nulo vira "": os CHECKs de targets não deixam nenhuma das três
-// colunas vazia, então "" só pode ser nulo.
-type regraGravada struct {
-	modo, valor, ponteiro string
-}
-
-func novaRegraGravada(mode, value, pointer *string) regraGravada {
-	return regraGravada{modo: textoOuVazio(mode), valor: textoOuVazio(value), ponteiro: textoOuVazio(pointer)}
-}
-
-func textoOuVazio(s *string) string {
-	if s == nil {
-		return ""
-	}
-	return *s
-}
-
 // conferirSonda é o fencing da gravação: trava a linha do alvo e confere se
 // ele segue ligado e se a URL, o método e a regra de conteúdo ainda são os da
 // reivindicação. Um PATCH aberto é esperado, e o que vale é o que ele gravou.
@@ -501,9 +481,9 @@ func conferirSonda(ctx context.Context, q *db.Queries, a db.ClaimDueTargetsRow) 
 	if !atual.Enabled {
 		return errAlvoPausado
 	}
-	regraDaReivindicacao := novaRegraGravada(a.ContentMode, a.ContentValue, a.ContentJsonPointer)
-	regraAtual := novaRegraGravada(atual.ContentMode, atual.ContentValue, atual.ContentJsonPointer)
-	if atual.URL != a.URL || atual.Method != a.Method || regraAtual != regraDaReivindicacao {
+	regraDaReivindicacao := targets.RuleFromColumns(a.ContentMode, a.ContentValue, a.ContentJsonPointer)
+	regraAtual := targets.RuleFromColumns(atual.ContentMode, atual.ContentValue, atual.ContentJsonPointer)
+	if atual.URL != a.URL || atual.Method != a.Method || !regraAtual.Equal(regraDaReivindicacao) {
 		return errSondaVelha
 	}
 	return nil

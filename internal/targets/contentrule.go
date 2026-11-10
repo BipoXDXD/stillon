@@ -166,18 +166,20 @@ func temHeader(h map[string]string, procurado string) bool {
 	return false
 }
 
-// mesmaRegra compara duas regras, com nil igual só a nil.
-func mesmaRegra(a, b *ContentRule) bool {
-	if a == nil || b == nil {
-		return a == b
+// Equal compara duas regras, com nil igual só a nil. O fencing do sondador a
+// usa para saber se a regra mudou com a sonda em voo.
+func (r *ContentRule) Equal(o *ContentRule) bool {
+	if r == nil || o == nil {
+		return r == o
 	}
-	return *a == *b
+	return *r == *o
 }
 
-// regraDaLinha monta a regra a partir das três colunas de targets. Modo nulo é
-// alvo sem regra; o CHECK targets_content_rule_shape garante que o valor
-// existe quando o modo existe, e que o ponteiro só existe em json_equals.
-func regraDaLinha(mode, value, pointer *string) *ContentRule {
+// RuleFromColumns monta a regra a partir das três colunas de targets, para o
+// cadastro e para o sondador. Modo nulo é alvo sem regra; o CHECK
+// targets_content_rule_shape garante que o valor existe quando o modo existe,
+// e que o ponteiro só existe em json_equals.
+func RuleFromColumns(mode, value, pointer *string) *ContentRule {
 	if mode == nil {
 		return nil
 	}
@@ -191,7 +193,7 @@ func regraDaLinha(mode, value, pointer *string) *ContentRule {
 	return r
 }
 
-// colunasDaRegra é o inverso de regraDaLinha: sem regra, as três colunas
+// colunasDaRegra é o inverso de RuleFromColumns: sem regra, as três colunas
 // nulas; ponteiro vazio vira nulo, como o CHECK exige fora de json_equals.
 func colunasDaRegra(r *ContentRule) (mode, value, pointer *string) {
 	if r == nil {

@@ -181,7 +181,7 @@ func (s *Service) Update(ctx context.Context, userID, id uuid.UUID, p Patch) (Ta
 			Name: row.Name, URL: row.URL, Method: row.Method,
 			IntervalSec: row.IntervalSec, TimeoutMS: row.TimeoutMS, ExpectedStatus: row.ExpectedStatus,
 			DegradedThresholdMS: row.DegradedThresholdMS, Headers: headers, Tags: tags,
-			ContentRule: regraDaLinha(row.ContentMode, row.ContentValue, row.ContentJsonPointer),
+			ContentRule: RuleFromColumns(row.ContentMode, row.ContentValue, row.ContentJsonPointer),
 			urlGravada:  row.URL,
 		}
 		regraGravada := f.ContentRule
@@ -197,7 +197,7 @@ func (s *Service) Update(ctx context.Context, userID, id uuid.UUID, p Patch) (Ta
 		// C4 (Plano 10): outra URL ou outro método é outro serviço, e outra
 		// regra é outro critério de saúde. As falhas do anterior não somam com
 		// as do novo; o incidente aberto fica e fecha pelos sucessos do novo.
-		if f.URL != row.URL || f.Method != row.Method || !mesmaRegra(f.ContentRule, regraGravada) {
+		if f.URL != row.URL || f.Method != row.Method || !f.ContentRule.Equal(regraGravada) {
 			if err := q.ResetTargetHealth(ctx, db.ResetTargetHealthParams{UserID: userID, TargetID: row.ID}); err != nil {
 				return fmt.Errorf("zerar histerese do alvo: %w", err)
 			}
@@ -296,7 +296,7 @@ func (p Patch) apply(f *fields, enabled *bool) bool {
 	return f.URL != antes.URL || f.Method != antes.Method ||
 		f.IntervalSec != antes.IntervalSec || f.TimeoutMS != antes.TimeoutMS ||
 		f.ExpectedStatus != antes.ExpectedStatus || p.SetHeaders ||
-		!mesmaRegra(f.ContentRule, antes.ContentRule)
+		!f.ContentRule.Equal(antes.ContentRule)
 }
 
 func (s *Service) Delete(ctx context.Context, userID, id uuid.UUID) error {
@@ -421,7 +421,7 @@ func (s *Service) toTarget(row db.Target) (Target, error) {
 		IntervalSec: row.IntervalSec, TimeoutMS: row.TimeoutMS, ExpectedStatus: row.ExpectedStatus,
 		DegradedThresholdMS: row.DegradedThresholdMS, Enabled: row.Enabled, TLSWarn: row.TlsWarn,
 		HeaderNames: headerNames(h), CreatedAt: row.CreatedAt,
-		ContentRule: regraDaLinha(row.ContentMode, row.ContentValue, row.ContentJsonPointer),
+		ContentRule: RuleFromColumns(row.ContentMode, row.ContentValue, row.ContentJsonPointer),
 	}, nil
 }
 

@@ -217,7 +217,7 @@ func TestColunasDaRegraIdaEVolta(t *testing.T) {
 		if r != nil && (ponteiro == nil) != (r.Mode != ContentJSONEquals) {
 			t.Errorf("%s: ponteiro nulo = %v, queria nulo só fora de json_equals", r.Mode, ponteiro == nil)
 		}
-		if volta := regraDaLinha(modo, valor, ponteiro); !regrasIguais(volta, r) {
+		if volta := RuleFromColumns(modo, valor, ponteiro); !regrasIguais(volta, r) {
 			t.Errorf("ida e volta de %+v devolveu %+v", r, volta)
 		}
 	}
