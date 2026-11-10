@@ -882,6 +882,57 @@ func TestProbeWithoutRuleAndOwnersAcceptEncodingDrainsRaw(t *testing.T) {
 	}
 }
 
+// membrosGzipVazios é ~1 MiB de membros gzip sem conteúdo: o gzip.Reader os lê
+// um atrás do outro (multistream) e não produz um byte de saída, então o teto
+// sobre o descomprimido nunca chega.
+var membrosGzipVazios = sync.OnceValue(func() []byte {
+	var membro bytes.Buffer
+	zw := gzip.NewWriter(&membro)
+	if err := zw.Close(); err != nil {
+		panic(err)
+	}
+	return bytes.Repeat(membro.Bytes(), (1<<20)/membro.Len())
+})
+
+// M1 da revisão de segurança: um gzip que não gera saída fazia a sonda ler a
+// rede até o prazo. O teto de bytes comprimidos é 128 KiB, com e sem regra.
+// Sem regra, atingi-lo é só parar de drenar (D2): up. Com regra, o corpo não
+// foi lido inteiro, e o veredito é o do corpo cortado: body_limit.
+func TestCompressedInputStopsAtItsOwnLimit(t *testing.T) {
+	const tetoComprimido = 128 << 10
+	casos := []struct {
+		nome  string
+		regra bool
+		quer  Status
+		tipo  ErrorKind
+	}{
+		{"sem regra", false, StatusUp, ""},
+		{"com regra", true, StatusDown, KindBodyLimit},
+	}
+	for _, c := range casos {
+		t.Run(c.nome, func(t *testing.T) {
+			srv, client := servidor(t, func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Encoding", "gzip")
+				_, _ = w.Write(membrosGzipVazios())
+			})
+			corpo := &contador{}
+			contado := *client
+			contado.Transport = &transporteContado{base: client.Transport, corpo: corpo}
+			s := especificacao(srv.URL)
+			if c.regra {
+				s = comRegra(srv.URL, targets.ContentNotContains, "erro")
+			}
+			res := Probe(t.Context(), &contado, s)
+			if res.Status != c.quer || res.ErrorKind != c.tipo || res.StatusCode != http.StatusOK {
+				t.Errorf("res = %+v, queria %s/%q/200", res, c.quer, c.tipo)
+			}
+			if corpo.lidos != tetoComprimido {
+				t.Errorf("%d bytes comprimidos lidos de %d, queria exatamente %d", corpo.lidos, len(membrosGzipVazios()), tetoComprimido)
+			}
+		})
+	}
+}
+
 // 100 MiB de zeros comprimidos cabem em ~100 KiB.
 var bombaGzip = sync.OnceValue(func() []byte {
 	var buf bytes.Buffer

@@ -29,16 +29,53 @@ type RegraDaSonda struct {
 
 // lerCorpo lê até MaxBodyBytes + 1 bytes: o byte a mais só diz que o corpo
 // passou do teto, e nunca é julgado. O leitor já é o corpo descomprimido,
-// então o teto vale também contra bomba de gzip (D1).
+// então o teto vale também contra bomba de gzip (D1). Bater no teto
+// comprimido antes também é corpo cortado: ele não foi lido inteiro.
 func lerCorpo(r io.Reader) (corpo []byte, cortado bool, err error) {
 	corpo, err = io.ReadAll(io.LimitReader(r, safedial.MaxBodyBytes+1))
-	if err != nil {
+	cortado = errors.Is(err, errTetoComprimido)
+	if err != nil && !cortado {
 		return nil, false, err
 	}
 	if len(corpo) > safedial.MaxBodyBytes {
 		return corpo[:safedial.MaxBodyBytes], true, nil
 	}
-	return corpo, false, nil
+	return corpo, cortado, nil
+}
+
+// tetoComprimido limita os bytes lidos da rede quando a sonda descomprime (M1
+// da revisão de segurança): o teto de lerCorpo vale sobre a saída, e um gzip
+// que não gera saída (membros vazios, um atrás do outro) seria lido até o
+// prazo. O deflate honesto nunca cresce mais que os 5 bytes de cada bloco
+// stored de 64 KiB, então 64 KiB de saída pedem pouco mais que 64 KiB de
+// entrada; o dobro dá folga para cabeçalhos e para o bufio do gzip.Reader.
+const tetoComprimido = 2 * safedial.MaxBodyBytes
+
+// errTetoComprimido diz que o corpo comprimido passou de tetoComprimido.
+var errTetoComprimido = errors.New("prober: corpo comprimido passou do teto")
+
+// leitorComTeto entrega até restante bytes e depois errTetoComprimido. Não é
+// um io.LimitReader porque o EOF dele, no fim de um membro, pareceria o fim
+// do gzip: quem lê precisa saber que parou pelo teto.
+type leitorComTeto struct {
+	r        io.Reader
+	restante int64
+}
+
+func comTetoComprimido(r io.Reader) *leitorComTeto {
+	return &leitorComTeto{r: r, restante: tetoComprimido}
+}
+
+func (l *leitorComTeto) Read(p []byte) (int, error) {
+	if l.restante <= 0 {
+		return 0, errTetoComprimido
+	}
+	if int64(len(p)) > l.restante {
+		p = p[:l.restante]
+	}
+	n, err := l.r.Read(p)
+	l.restante -= int64(n)
+	return n, err
 }
 
 // lerCorpoDaRegra lê o corpo que a regra vai julgar. Só um corpo sem
@@ -50,7 +87,7 @@ func lerCorpo(r io.Reader) (corpo []byte, cortado bool, err error) {
 // sobre o descomprimido. Corpo vazio não tem o que estar comprimido, e é
 // julgado como vazio com qualquer codificação.
 func lerCorpoDaRegra(resp *http.Response) (corpo []byte, cortado, ilegivel bool, err error) {
-	leitor := bufio.NewReader(resp.Body)
+	leitor := bufio.NewReader(comTetoComprimido(resp.Body))
 	if _, err := leitor.Peek(1); err != nil {
 		if errors.Is(err, io.EOF) {
 			return nil, false, false, nil
@@ -66,6 +103,9 @@ func lerCorpoDaRegra(resp *http.Response) (corpo []byte, cortado, ilegivel bool,
 		if errors.Is(err, gzip.ErrHeader) {
 			// Declara gzip e não é: a causa é a codificação.
 			return drenarIlegivel(leitor)
+		}
+		if errors.Is(err, errTetoComprimido) {
+			return nil, true, false, nil
 		}
 		if err != nil {
 			return nil, false, false, err
@@ -83,20 +123,23 @@ func lerCorpoDaRegra(resp *http.Response) (corpo []byte, cortado, ilegivel bool,
 // quando o transporte do Go descomprimia (antes do PR 5): drenar o gzip cru
 // leria da rede até 3× mais numa página grande. Um gzip que não abre é erro de
 // leitura, e a sonda sai unknown, como saía com o descompressor do transporte.
+// Bater no teto comprimido é só parar de drenar.
 // Qualquer outra codificação é drenada crua, como o transporte fazia.
 func drenarSemRegra(resp *http.Response) error {
 	if codificacaoDoCorpo(resp.Header) != umGzip {
 		return drenarCru(resp.Body)
 	}
-	zr, err := gzip.NewReader(resp.Body)
+	zr, err := gzip.NewReader(comTetoComprimido(resp.Body))
 	if errors.Is(err, io.EOF) {
 		return nil // corpo vazio: não há o que descomprimir
 	}
-	if err != nil {
-		return err
+	if err == nil {
+		defer zr.Close()
+		_, err = io.Copy(io.Discard, io.LimitReader(zr, safedial.MaxBodyBytes))
 	}
-	defer zr.Close()
-	_, err = io.Copy(io.Discard, io.LimitReader(zr, safedial.MaxBodyBytes))
+	if errors.Is(err, errTetoComprimido) {
+		return nil // drenou o bastante, como no teto descomprimido (D2)
+	}
 	return err
 }
 
