@@ -51,9 +51,10 @@ func lerCorpo(r io.Reader) (corpo []byte, cortado bool, err error) {
 // julgado como vazio com qualquer codificação.
 func lerCorpoDaRegra(resp *http.Response) (corpo []byte, cortado, ilegivel bool, err error) {
 	leitor := bufio.NewReader(resp.Body)
-	if _, err := leitor.Peek(1); errors.Is(err, io.EOF) {
-		return nil, false, false, nil
-	} else if err != nil {
+	if _, err := leitor.Peek(1); err != nil {
+		if errors.Is(err, io.EOF) {
+			return nil, false, false, nil
+		}
 		return nil, false, false, err
 	}
 	switch codificacaoDoCorpo(resp.Header) {
@@ -62,6 +63,10 @@ func lerCorpoDaRegra(resp *http.Response) (corpo []byte, cortado, ilegivel bool,
 		return corpo, cortado, false, err
 	case umGzip:
 		zr, err := gzip.NewReader(leitor)
+		if errors.Is(err, gzip.ErrHeader) {
+			// Declara gzip e não é: a causa é a codificação.
+			return drenarIlegivel(leitor)
+		}
 		if err != nil {
 			return nil, false, false, err
 		}
@@ -69,9 +74,13 @@ func lerCorpoDaRegra(resp *http.Response) (corpo []byte, cortado, ilegivel bool,
 		corpo, cortado, err = lerCorpo(zr)
 		return corpo, cortado, false, err
 	}
-	// Lido até o teto mesmo assim: a latência e o erro de leitura (prazo,
-	// conexão caída) valem como nos outros casos.
-	_, _, err = lerCorpo(leitor)
+	return drenarIlegivel(leitor)
+}
+
+// drenarIlegivel lê até o teto um corpo que a regra não julga: a latência e o
+// erro de leitura (prazo, conexão caída) valem como nos outros casos.
+func drenarIlegivel(r io.Reader) (corpo []byte, cortado, ilegivel bool, err error) {
+	_, _, err = lerCorpo(r)
 	return nil, false, true, err
 }
 

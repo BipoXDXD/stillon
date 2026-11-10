@@ -5,10 +5,12 @@ import (
 	stdjson "encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"runtime"
 	"strings"
 	"testing"
 
+	"github.com/BipoXDXD/stillon/internal/prober/safedial"
 	"github.com/BipoXDXD/stillon/internal/targets"
 )
 
@@ -246,6 +248,40 @@ func (c *contador) Read(p []byte) (int, error) {
 	n, err := c.fonte.Read(p)
 	c.lidos += n
 	return n, err
+}
+
+// D1 com a descompressão nossa: a bomba de gzip (100 MiB de zeros em uns
+// 100 KiB) para no teto de 64 KiB descomprimidos, e só o começo dela é lido.
+// Inflar tudo e cortar depois devolveria o mesmo corpo, mas consumiria a bomba
+// inteira: a contagem de bytes lidos é o que pega isso.
+func TestLerCorpoDaRegraCapsTheDecompressedBody(t *testing.T) {
+	bomba := bombaGzip()
+	fonte := &contador{fonte: bytes.NewReader(bomba)}
+	resp := &http.Response{
+		Header: http.Header{"Content-Encoding": {"gzip"}},
+		Body:   io.NopCloser(fonte),
+	}
+	corpo, cortado, ilegivel, err := lerCorpoDaRegra(resp)
+	if err != nil || ilegivel || !cortado || len(corpo) != safedial.MaxBodyBytes {
+		t.Fatalf("len(corpo) %d, cortado %v, ilegivel %v, err %v; queria %d, true, false, nil",
+			len(corpo), cortado, ilegivel, err, safedial.MaxBodyBytes)
+	}
+	const tetoComprimido = 16 << 10
+	if fonte.lidos > tetoComprimido {
+		t.Errorf("%d bytes comprimidos lidos de %d, queria no máximo %d", fonte.lidos, len(bomba), tetoComprimido)
+	}
+}
+
+// Corpo que declara gzip e não é gzip: a regra não tem o que julgar, e a
+// causa é a codificação, não um erro de rede.
+func TestLerCorpoDaRegraWithAnInvalidGzipHeaderIsUnreadable(t *testing.T) {
+	resp := &http.Response{
+		Header: http.Header{"Content-Encoding": {"gzip"}},
+		Body:   io.NopCloser(strings.NewReader("isto não é gzip")),
+	}
+	if _, _, ilegivel, err := lerCorpoDaRegra(resp); err != nil || !ilegivel {
+		t.Errorf("ilegivel %v, err %v; queria true, nil", ilegivel, err)
+	}
 }
 
 func TestLerCorpoReadsAtMostOneByteOverTheLimit(t *testing.T) {

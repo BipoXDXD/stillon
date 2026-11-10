@@ -108,13 +108,16 @@ func sondar(ctx context.Context, client *http.Client, s Spec) Result {
 		return Result{Status: StatusDown, ErrorKind: KindUnknown}
 	}
 	req.Header.Set("User-Agent", userAgent)
+	// O transporte não pede gzip (safedial.DisableCompression): quem pede é a
+	// sonda, para não baixar o corpo cru. Com regra, ela o descomprime ela
+	// mesma (lerCorpoDaRegra), e o cadastro recusa o Accept-Encoding do
+	// dono; sem regra, o corpo só é drenado, e o do dono, se houver, vale.
+	req.Header.Set("Accept-Encoding", safedial.AcceptEncodingDaSonda)
 	for nome, valor := range s.Headers {
+		if s.Content != nil && http.CanonicalHeaderKey(nome) == "Accept-Encoding" {
+			continue
+		}
 		req.Header.Set(nome, valor)
-	}
-	if s.Content != nil {
-		// O cadastro recusa Accept-Encoding do dono quando há regra: este é
-		// da sonda, que descomprime o gzip ela mesma (lerCorpoDaRegra).
-		req.Header.Set("Accept-Encoding", "gzip")
 	}
 
 	inicio := time.Now()

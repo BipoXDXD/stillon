@@ -111,8 +111,9 @@ func validateContentRule(f *fields, v *ValidationError) {
 			v.add("content_rule.json_pointer", motivo)
 		}
 	}
-	// HEAD não traz corpo, e com o Accept-Encoding do dono o transporte
-	// entrega o corpo comprimido: nos dois casos a regra julgaria outra coisa.
+	// HEAD não traz corpo, e a regra julgaria outra coisa. Com regra, o
+	// Accept-Encoding é da sonda, que só lê gzip e o descomprime ela mesma; o
+	// do dono seria ignorado, e recusá-lo deixa isso claro no cadastro.
 	if f.Method == http.MethodHead || temAcceptEncoding(f.Headers) {
 		v.add("content_rule", ReasonForbidden)
 	}

@@ -379,6 +379,76 @@ func TestProbeSendsConfiguredHeadersAndUserAgent(t *testing.T) {
 	}
 }
 
+// Toda sonda pede gzip ela mesma, com ou sem regra e em qualquer salto: o
+// transporte do safedial não pede mais (DisableCompression), e sem o header a
+// sonda sem regra baixaria seus 64 KiB crus, com mais banda e mais latência
+// medida do que antes.
+func TestEveryProbeAsksForGzip(t *testing.T) {
+	casos := []struct {
+		nome     string
+		regra    bool
+		redirect string // "", "mesmo host" ou "outro host"
+	}{
+		{"sem regra", false, ""},
+		{"com regra", true, ""},
+		{"sem regra, redirect no mesmo host", false, "mesmo host"},
+		{"sem regra, redirect para outro host", false, "outro host"},
+		{"com regra, redirect para outro host", true, "outro host"},
+	}
+	for _, c := range casos {
+		t.Run(c.nome, func(t *testing.T) {
+			recebido := make(chan []string, 1)
+			destino := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/inicio" {
+					http.Redirect(w, r, "/fim", http.StatusFound)
+					return
+				}
+				recebido <- r.Header.Values("Accept-Encoding")
+			}))
+			t.Cleanup(destino.Close)
+			url := destino.URL
+			permitidos := []netip.AddrPort{enderecoDe(t, destino)}
+			switch c.redirect {
+			case "mesmo host":
+				url += "/inicio"
+			case "outro host":
+				origem := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					http.Redirect(w, r, destino.URL+"/fim", http.StatusFound)
+				}))
+				t.Cleanup(origem.Close)
+				url = origem.URL
+				permitidos = append(permitidos, enderecoDe(t, origem))
+			}
+			s := especificacao(url)
+			if c.regra {
+				s = comRegra(url, targets.ContentNotContains, "erro")
+			}
+			res := Probe(t.Context(), safedial.NewClientAllowing(0, permitidos...), s)
+			if res.Status != StatusUp {
+				t.Fatalf("res = %+v, queria up", res)
+			}
+			if got := <-recebido; !slices.Equal(got, []string{"gzip"}) {
+				t.Errorf("Accept-Encoding recebido = %q, queria [gzip]", got)
+			}
+		})
+	}
+}
+
+// Sem regra, o Accept-Encoding do dono vale como antes: a sonda só drena o
+// corpo, e trocá-lo mudaria o que o dono escolheu testar.
+func TestOwnersAcceptEncodingWithoutRuleIsKept(t *testing.T) {
+	recebido := make(chan []string, 1)
+	srv, client := servidor(t, func(w http.ResponseWriter, r *http.Request) {
+		recebido <- r.Header.Values("Accept-Encoding")
+	})
+	s := especificacao(srv.URL)
+	s.Headers = map[string]string{"Accept-Encoding": "br"}
+	Probe(t.Context(), client, s)
+	if got := <-recebido; !slices.Equal(got, []string{"br"}) {
+		t.Errorf("Accept-Encoding recebido = %q, queria [br]", got)
+	}
+}
+
 func TestProbeConnectionRefused(t *testing.T) {
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -669,8 +739,10 @@ var bombaGzip = sync.OnceValue(func() []byte {
 	return buf.Bytes()
 })
 
-// D1: o teto vale sobre o corpo DESCOMPRIMIDO. O transporte pede gzip sozinho
-// e descomprime de forma transparente; sem o teto, a sonda inflaria 100 MiB.
+// D1: o teto vale sobre o corpo DESCOMPRIMIDO. A sonda pede gzip e o
+// descomprime ela mesma; sem o teto, inflaria 100 MiB. Este teste olha o
+// resultado de ponta a ponta; o que prova que a bomba não é inflada inteira é
+// TestLerCorpoDaRegraCapsTheDecompressedBody, que conta os bytes consumidos.
 func TestGzipBombStopsAtLimit(t *testing.T) {
 	bomba := bombaGzip()
 	srv, client := servidor(t, func(w http.ResponseWriter, r *http.Request) {
@@ -735,6 +807,7 @@ func TestUnsolicitedContentEncodingIsInconclusive(t *testing.T) {
 		{"GZIP em outra caixa", []string{"GZIP"}, gzipar(t, certo), StatusUp, ""},
 		{"gzip com identity", []string{"identity", "gzip"}, gzipar(t, certo), StatusUp, ""},
 		{"identity", []string{"identity"}, certo, StatusUp, ""},
+		{"gzip que não é gzip", []string{"gzip"}, certo, StatusDown, KindContentEncoding},
 	}
 	for _, c := range casos {
 		t.Run(c.nome, func(t *testing.T) {

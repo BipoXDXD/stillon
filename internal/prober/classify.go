@@ -31,8 +31,8 @@ const (
 	// KindContentMismatch é a regra de conteúdo reprovada (spec §5.3).
 	KindContentMismatch ErrorKind = "content_mismatch"
 	// KindContentEncoding também só sai com regra: o corpo chegou numa
-	// codificação que o transporte não desfaz (br, zstd, deflate, "gzip,
-	// gzip"), e a regra não tem o que julgar.
+	// codificação que a sonda não lê (tudo que não for um único gzip válido:
+	// br, zstd, deflate, "gzip, gzip"), e a regra não tem o que julgar.
 	KindContentEncoding ErrorKind = "content_encoding"
 	// KindUnknown é o residual (D1): reset, EOF no meio da resposta, erro de
 	// protocolo. Sem ele, cada um teria de fingir ser outra coisa.
