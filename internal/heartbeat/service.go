@@ -664,8 +664,11 @@ func toHeartbeat(h db.Heartbeat, open *uuid.UUID, now time.Time) (Heartbeat, err
 	}
 	return Heartbeat{
 		ID: h.ID, Name: h.Name, Description: h.Description, Tags: []string{}, Enabled: h.Enabled, Schedule: sch,
-		Grace:      time.Duration(h.GraceSec) * time.Second,
-		Status:     statusOf(h.Enabled, h.FailingSince != nil, open != nil, sch.IsKnown(), h.DeadlineAt, finishedARun(h), now),
+		Grace: time.Duration(h.GraceSec) * time.Second,
+		Status: statusOf(statusFacts{
+			Enabled: h.Enabled, Failing: h.FailingSince != nil, OpenIncident: open != nil,
+			KnownSchedule: sch.IsKnown(), FinishedARun: finishedARun(h), Deadline: h.DeadlineAt,
+		}, now),
 		DeadlineAt: h.DeadlineAt, LastPingAt: h.LastPingAt, LastSuccessAt: h.LastSuccessAt,
 		LastStartAt: h.LastStartAt, LastRuntimeMS: h.LastRuntimeMS, OpenIncidentID: open, CreatedAt: h.CreatedAt,
 	}, nil
@@ -678,19 +681,25 @@ func finishedARun(h db.Heartbeat) bool {
 	return h.LastSuccessAt != nil || (h.LastSignal != nil && Signal(*h.LastSignal) != SignalStart)
 }
 
+// statusFacts são os fatos da linha de que o estado derivado depende.
+type statusFacts struct {
+	Enabled, Failing, OpenIncident, KnownSchedule, FinishedARun bool
+	Deadline                                                    time.Time
+}
+
 // O incidente aberto conta como atraso mesmo com prazo futuro: editar o
 // agendamento move o prazo, e a tarefa continua devendo um sinal. Com
 // agendamento desconhecido (linha de uma versão posterior) o prazo gravado não
 // é confiável, e só o incidente aberto torna o estado atrasado.
-func statusOf(enabled, failing, openIncident, knownSchedule bool, deadline time.Time, finished bool, now time.Time) Status {
+func statusOf(f statusFacts, now time.Time) Status {
 	switch {
-	case !enabled:
+	case !f.Enabled:
 		return StatusPaused
-	case failing:
+	case f.Failing:
 		return StatusFailing
-	case openIncident, knownSchedule && !deadline.After(now):
+	case f.OpenIncident, f.KnownSchedule && !f.Deadline.After(now):
 		return StatusLate
-	case !finished:
+	case !f.FinishedARun:
 		return StatusWaiting
 	}
 	return StatusUp
