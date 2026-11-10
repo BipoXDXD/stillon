@@ -1,0 +1,34 @@
+-- +goose Up
+-- Se o dono quer o aviso de certificado perto de vencer. Ligado por padrão:
+-- certificado vencido derruba o site do mesmo jeito que o servidor fora do ar.
+-- O binário anterior não cita a coluna e segue inserindo com o padrão.
+ALTER TABLE targets ADD COLUMN tls_warn bool NOT NULL DEFAULT true;
+
+-- A validade efetiva do pior certificado visto no host cadastrado, uma linha
+-- por alvo. Só o sondador a grava; a regra de substituição é a de
+-- prober/certificado.go.
+CREATE TABLE target_tls (
+    target_id   uuid PRIMARY KEY REFERENCES targets(id) ON DELETE CASCADE,
+    not_after   timestamptz NOT NULL,
+    observed_at timestamptz NOT NULL
+);
+
+-- Nomeia o dono e o sondador, como incidents_via_heartbeat, em vez de delegar
+-- só ao alvo, como target_health: targets_public_select mostra os alvos da
+-- status page ao escopo público, e a validade do certificado não faz parte da
+-- página.
+ALTER TABLE target_tls ENABLE ROW LEVEL SECURITY;
+ALTER TABLE target_tls FORCE ROW LEVEL SECURITY;
+CREATE POLICY target_tls_owner_or_prober ON target_tls
+    USING (EXISTS (SELECT 1 FROM targets t WHERE t.id = target_tls.target_id
+                      AND (t.user_id = NULLIF(current_setting('app.user_id', true), '')::uuid
+                           OR current_setting('app.scope', true) = 'prober')))
+    WITH CHECK (EXISTS (SELECT 1 FROM targets t WHERE t.id = target_tls.target_id
+                      AND (t.user_id = NULLIF(current_setting('app.user_id', true), '')::uuid
+                           OR current_setting('app.scope', true) = 'prober')));
+
+-- +goose Down
+-- Sem dado a converter: a tabela e a coluna somem inteiras, e o escopo do
+-- sondador não é preciso.
+DROP TABLE target_tls;
+ALTER TABLE targets DROP COLUMN tls_warn;

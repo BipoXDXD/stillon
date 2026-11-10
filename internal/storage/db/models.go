@@ -172,6 +172,7 @@ type Target struct {
 	Enabled             bool
 	NextRunAt           time.Time
 	CreatedAt           time.Time
+	TlsWarn             bool
 }
 
 type TargetHealth struct {
@@ -185,6 +186,12 @@ type TargetHealth struct {
 type TargetTag struct {
 	TargetID uuid.UUID
 	Tag      string
+}
+
+type TargetTl struct {
+	TargetID   uuid.UUID
+	NotAfter   time.Time
+	ObservedAt time.Time
 }
 
 type TotpRecoveryCode struct {
