@@ -1,5 +1,25 @@
+/// <reference types="node" />
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { z } from 'zod'
 import { mensagemDoCampo, textoDaCausa, textoDoErroDeCheck } from './mensagens'
+
+// A lista de causas que o Go confere contra os prober.ErrorKind e as causas de
+// tarefa (internal/notify/causas_test.go). Um kind sem texto aqui cairia em
+// "Falha", o mesmo que um valor fora do enum.
+const CAUSAS = z
+  .array(z.string().min(1))
+  .parse(JSON.parse(readFileSync(resolve(import.meta.dirname, '../../../../internal/notify/testdata/causas.json'), 'utf8')))
+const SEM_TEXTO = textoDoErroDeCheck('fora_do_enum', null)
+
+describe('as causas que o Go conhece', () => {
+  // unknown é o residual: na tela ele é a mesma "Falha" de um valor que não
+  // está no enum.
+  it.each(CAUSAS.filter((c) => c !== 'unknown'))('%s tem texto próprio', (causa) => {
+    expect(textoDoErroDeCheck(causa, null)).not.toBe(SEM_TEXTO)
+  })
+})
 
 // Review Focus 7: um incidente sem causa não pode virar um espaço em branco
 // entre dois "·" na tela.
