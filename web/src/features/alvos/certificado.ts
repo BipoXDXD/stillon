@@ -27,7 +27,7 @@ export type Certificado = { forma: FormaDoCertificado; texto: string }
 export const CERTIFICADO_INDISPONIVEL: Certificado = { forma: 'indisponivel', texto: 'Certificado: indisponível.' }
 
 // Com leitura, a validade vale mesmo que a URL tenha mudado: a API apaga a
-// leitura quando o host muda, então a que chega é do host cadastrado.
+// leitura quando a origem muda, então a que chega é do host cadastrado.
 export function certificadoDoAlvo(alvo: Pick<Alvo, 'url' | 'tls'>, agora: Date): Certificado {
   if (alvo.tls === null) {
     return certificadoSeAplica(alvo.url)

@@ -118,7 +118,7 @@ func TestBalancerAlternationDoesNotRewriteTheRow(t *testing.T) {
 	}
 }
 
-// Foco 1: o certificado renovado substitui o guardado quando o antigo fica
+// O certificado renovado substitui o guardado quando o antigo fica
 // sem ser visto por mais que max(6 h, 3 x intervalo).
 func TestRenewalReplacesAfterTheWindow(t *testing.T) {
 	b := novaBancada(t, nil, MaxInFlight)

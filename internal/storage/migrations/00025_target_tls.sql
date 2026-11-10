@@ -5,8 +5,8 @@
 ALTER TABLE targets ADD COLUMN tls_warn bool NOT NULL DEFAULT true;
 
 -- A validade efetiva do pior certificado visto no host cadastrado, uma linha
--- por alvo. Só o sondador a grava; a regra de substituição é a de
--- prober/certificado.go.
+-- por alvo. Em produção, só o sondador insere e atualiza; o dono apaga quando
+-- a origem muda. A regra de substituição é a de prober/certificado.go.
 CREATE TABLE target_tls (
     target_id   uuid PRIMARY KEY REFERENCES targets(id) ON DELETE CASCADE,
     not_after   timestamptz NOT NULL,

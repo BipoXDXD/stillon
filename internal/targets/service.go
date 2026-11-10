@@ -215,8 +215,8 @@ func (s *Service) Update(ctx context.Context, userID, id uuid.UUID, p Patch) (Ta
 		if err != nil {
 			return fmt.Errorf("atualizar alvo: %w", err)
 		}
-		// Foco 2 (spec §5.2): outro host é outro certificado. A validade do
-		// anterior sai junto com a troca, e não só na próxima sonda.
+		// Outra origem (esquema, host ou porta) é outro certificado: a leitura
+		// anterior sai junto com a troca.
 		if mudouDeDestino(row.URL, f.URL) {
 			err := q.DeleteTargetTLSOfOwner(ctx, db.DeleteTargetTLSOfOwnerParams{UserID: userID, TargetID: row.ID})
 			if err != nil {

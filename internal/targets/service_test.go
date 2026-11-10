@@ -761,9 +761,9 @@ func (a ambiente) temValidade(t *testing.T, id uuid.UUID) bool {
 	return n == 1
 }
 
-// Foco 2 (spec §5.2): a validade é do certificado do host cadastrado. Mudar só
-// o caminho mantém a leitura; outro host é outro certificado, e a leitura do
-// anterior sumiria só na próxima sonda se o PATCH não a apagasse.
+// A validade é do certificado do host cadastrado. Mudar só o caminho mantém a
+// leitura; outro host é outro certificado, e a leitura do anterior sumiria só
+// na próxima sonda se o PATCH não a apagasse.
 func TestPatchToAnotherHostForgetsTheCertificate(t *testing.T) {
 	a := novoAmbiente(t)
 	ctx := context.Background()
