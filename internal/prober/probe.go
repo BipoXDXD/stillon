@@ -31,6 +31,7 @@ type Spec struct {
 	ExpectedStatus    int
 	DegradedThreshold time.Duration // 0: sem classificação degraded
 	Headers           map[string]string
+	Content           *RegraDaSonda // nil: sem regra de conteúdo
 }
 
 // LogValue mostra os NOMES dos headers e nunca os valores (Plano 8). Os
@@ -38,21 +39,26 @@ type Spec struct {
 // (Authorization, X-Api-Key); sem isto, um slog.Any("spec", spec) gravaria
 // essa credencial no log. A proteção é do tipo, não da disciplina, como no
 // crypto.Secret e no config.Config. A URL sai como está: o dono já a vê na
-// API, e credenciais na URL são recusadas no cadastro.
+// API, e credenciais na URL são recusadas no cadastro. Da regra de conteúdo
+// sai só o modo: o valor e o ponteiro são texto do dono.
 func (s Spec) LogValue() slog.Value {
 	nomes := make([]string, 0, len(s.Headers))
 	for nome := range s.Headers {
 		nomes = append(nomes, nome)
 	}
 	slices.Sort(nomes)
-	return slog.GroupValue(
+	attrs := []slog.Attr{
 		slog.String("url", s.URL),
 		slog.String("method", s.Method),
 		slog.Duration("timeout", s.Timeout),
 		slog.Int("expected_status", s.ExpectedStatus),
 		slog.Duration("degraded_threshold", s.DegradedThreshold),
 		slog.Any("headers", nomes),
-	)
+	}
+	if s.Content != nil {
+		attrs = append(attrs, slog.String("content_mode", string(s.Content.Mode)))
+	}
+	return slog.GroupValue(attrs...)
 }
 
 // Result é o que sai de uma sonda. Não tem campo para mensagem de erro, e é
@@ -72,7 +78,9 @@ type Result struct {
 // um resultado, e o resultado é o produto.
 //
 // O prazo é do context, e vale para cabeçalho E corpo. A latência vai do
-// envio ao fim da leitura do corpo, limitada a 64 KiB (spec §5.1). Ela é
+// envio ao fim da leitura do corpo, limitada a 64 KiB (spec §5.1), com a
+// regra de conteúdo ou sem ela. A ordem é transporte, status, regra e
+// lentidão: status errado segue http_status com qualquer corpo. A latência é
 // medida pelo relógio monotônico real, e não pelo relógio injetado, porque
 // o relógio falso dos testes não anda durante a sonda (D11).
 //
@@ -111,8 +119,17 @@ func sondar(ctx context.Context, client *http.Client, s Spec) Result {
 	}
 	defer resp.Body.Close()
 
-	// Corpo maior que o limite não é falha (D2): lê-se até 64 KiB e fecha.
-	_, err = io.Copy(io.Discard, io.LimitReader(resp.Body, safedial.MaxBodyBytes))
+	var (
+		corpo   []byte
+		cortado bool
+	)
+	if s.Content != nil {
+		corpo, cortado, err = lerCorpo(resp.Body)
+	} else {
+		// Sem regra, corpo maior que o limite não é falha (D2): lê-se até
+		// 64 KiB e fecha.
+		_, err = io.Copy(io.Discard, io.LimitReader(resp.Body, safedial.MaxBodyBytes))
+	}
 	latencia := time.Since(inicio)
 	if err != nil {
 		return Result{Status: StatusDown, Latency: latencia, StatusCode: resp.StatusCode, ErrorKind: Classify(err)}
@@ -120,6 +137,11 @@ func sondar(ctx context.Context, client *http.Client, s Spec) Result {
 
 	if resp.StatusCode != s.ExpectedStatus {
 		return Result{Status: StatusDown, Latency: latencia, StatusCode: resp.StatusCode, ErrorKind: KindHTTPStatus}
+	}
+	if s.Content != nil {
+		if kind := avaliarConteudo(*s.Content, corpo, cortado); kind != "" {
+			return Result{Status: StatusDown, Latency: latencia, StatusCode: resp.StatusCode, ErrorKind: kind}
+		}
 	}
 	if s.DegradedThreshold > 0 && latencia > s.DegradedThreshold {
 		return Result{Status: StatusDegraded, Latency: latencia, StatusCode: resp.StatusCode}
