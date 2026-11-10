@@ -29,19 +29,31 @@ func novoUsuario(t *testing.T, pool *pgxpool.Pool) uuid.UUID {
 	return id
 }
 
+// novoAlvo grava só as colunas que targets tem desde a 00004, e não pelo
+// InsertTarget gerado: os testes de migration o chamam com o banco parado numa
+// versão antiga, sem as colunas que vieram depois (a regra de conteúdo, por
+// exemplo). O escopo é o mesmo de storage.InUserTx, sob a RLS.
 func novoAlvo(t *testing.T, pool *pgxpool.Pool, dono uuid.UUID, proximo time.Time) uuid.UUID {
 	t.Helper()
 	id := uuid.Must(uuid.NewV7())
 	ctx := context.Background()
-	err := storage.InUserTx(ctx, pool, dono, func(q *db.Queries) error {
-		return q.InsertTarget(ctx, db.InsertTargetParams{
-			ID: id, UserID: dono, Name: "alvo", URL: "https://exemplo.com",
-			Method: "GET", IntervalSec: 60, TimeoutMS: 5000, ExpectedStatus: 200,
-			Enabled: true, NextRunAt: proximo, CreatedAt: agora,
-		})
-	})
+	tx, err := pool.Begin(ctx)
 	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `SELECT set_config('app.user_id', $1, true)`, dono.String()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO targets (id, user_id, name, url, method, interval_sec, timeout_ms,
+		                     expected_status, enabled, next_run_at, created_at)
+		VALUES ($1, $2, 'alvo', 'https://exemplo.com', 'GET', 60, 5000, 200, true, $3, $4)`,
+		id, dono, proximo, agora); err != nil {
 		t.Fatalf("criar alvo: %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
 	}
 	return id
 }

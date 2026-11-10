@@ -166,3 +166,25 @@ func regrasIguais(a, b *ContentRule) bool {
 	}
 	return *a == *b
 }
+
+// Fora de json_equals o ponteiro precisa sair nulo: o CHECK
+// targets_content_rule_shape recusa ponteiro em contains e not_contains.
+func TestColunasDaRegraIdaEVolta(t *testing.T) {
+	for _, r := range []*ContentRule{
+		nil,
+		regra(ContentContains, "ok", ""),
+		regra(ContentNotContains, "erro", ""),
+		regra(ContentJSONEquals, `"ok"`, "/status"),
+	} {
+		modo, valor, ponteiro := colunasDaRegra(r)
+		if r == nil && (modo != nil || valor != nil || ponteiro != nil) {
+			t.Errorf("sem regra: colunas %v %v %v, queria as três nulas", modo, valor, ponteiro)
+		}
+		if r != nil && (ponteiro == nil) != (r.Mode != ContentJSONEquals) {
+			t.Errorf("%s: ponteiro nulo = %v, queria nulo só fora de json_equals", r.Mode, ponteiro == nil)
+		}
+		if volta := regraDaLinha(modo, valor, ponteiro); !regrasIguais(volta, r) {
+			t.Errorf("ida e volta de %+v devolveu %+v", r, volta)
+		}
+	}
+}

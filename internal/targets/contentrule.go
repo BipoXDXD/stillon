@@ -166,3 +166,34 @@ func mesmaRegra(a, b *ContentRule) bool {
 	}
 	return *a == *b
 }
+
+// regraDaLinha monta a regra a partir das três colunas de targets. Modo nulo é
+// alvo sem regra; o CHECK targets_content_rule_shape garante que o valor
+// existe quando o modo existe, e que o ponteiro só existe em json_equals.
+func regraDaLinha(mode, value, pointer *string) *ContentRule {
+	if mode == nil {
+		return nil
+	}
+	r := &ContentRule{Mode: ContentMode(*mode)}
+	if value != nil {
+		r.Value = *value
+	}
+	if pointer != nil {
+		r.JSONPointer = *pointer
+	}
+	return r
+}
+
+// colunasDaRegra é o inverso de regraDaLinha: sem regra, as três colunas
+// nulas; ponteiro vazio vira nulo, como o CHECK exige fora de json_equals.
+func colunasDaRegra(r *ContentRule) (mode, value, pointer *string) {
+	if r == nil {
+		return nil, nil, nil
+	}
+	m, v := string(r.Mode), r.Value
+	if r.JSONPointer != "" {
+		p := r.JSONPointer
+		pointer = &p
+	}
+	return &m, &v, pointer
+}
