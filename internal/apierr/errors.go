@@ -24,24 +24,25 @@ type ErrorCode string
 
 const (
 	// #nosec G101 -- o regex do gosec bate no NOME da constante ("Credentials"); o valor é um código de erro da API, não um segredo.
-	CodeInvalidCredentials ErrorCode = "invalid_credentials"
-	CodeInvalidSession     ErrorCode = "invalid_session"
-	CodeUnauthorized       ErrorCode = "unauthorized"
-	CodeNotFound           ErrorCode = "not_found"
-	CodeValidation         ErrorCode = "validation_failed"
-	CodeRateLimited        ErrorCode = "rate_limited"
-	CodePayloadTooLarge    ErrorCode = "payload_too_large"
-	CodeForbidden          ErrorCode = "forbidden"
-	CodeInternal           ErrorCode = "internal_error"
-	CodeUnavailable        ErrorCode = "unavailable"
-	CodeChannelLimit       ErrorCode = "channel_limit_reached"
-	CodeChannelNotPending  ErrorCode = "channel_not_pending"
-	CodeDeliveryFailed     ErrorCode = "delivery_failed"
-	CodeStatusPageExists   ErrorCode = "status_page_exists"
-	CodeSlugTaken          ErrorCode = "slug_taken"
-	CodeTargetLimit        ErrorCode = "target_limit_reached"
-	CodeHeartbeatLimit     ErrorCode = "heartbeat_limit_reached"
-	CodeMethodNotAllowed   ErrorCode = "method_not_allowed"
+	CodeInvalidCredentials  ErrorCode = "invalid_credentials"
+	CodeInvalidSession      ErrorCode = "invalid_session"
+	CodeUnauthorized        ErrorCode = "unauthorized"
+	CodeNotFound            ErrorCode = "not_found"
+	CodeValidation          ErrorCode = "validation_failed"
+	CodeRateLimited         ErrorCode = "rate_limited"
+	CodePayloadTooLarge     ErrorCode = "payload_too_large"
+	CodeForbidden           ErrorCode = "forbidden"
+	CodeInternal            ErrorCode = "internal_error"
+	CodeUnavailable         ErrorCode = "unavailable"
+	CodeChannelLimit        ErrorCode = "channel_limit_reached"
+	CodeChannelNotPending   ErrorCode = "channel_not_pending"
+	CodeDeliveryFailed      ErrorCode = "delivery_failed"
+	CodeStatusPageExists    ErrorCode = "status_page_exists"
+	CodeSlugTaken           ErrorCode = "slug_taken"
+	CodeTargetLimit         ErrorCode = "target_limit_reached"
+	CodeHeartbeatLimit      ErrorCode = "heartbeat_limit_reached"
+	CodeMethodNotAllowed    ErrorCode = "method_not_allowed"
+	CodeScheduleUnsupported ErrorCode = "schedule_unsupported"
 )
 
 // A mensagem vem sempre desta tabela, nunca do erro subjacente.
@@ -79,6 +80,9 @@ var errorTable = map[ErrorCode]struct {
 	// anterior tinha 405: o not_found mudaria o status, e o Allow do ServeMux
 	// perderia o sentido.
 	CodeMethodNotAllowed: {http.StatusMethodNotAllowed, "Método não permitido nesta rota."},
+	// O heartbeat foi gravado por uma versão posterior, com um agendamento que
+	// esta não sabe editar: conflito com o estado do recurso, não pedido inválido.
+	CodeScheduleUnsupported: {http.StatusConflict, "Agendamento não suportado nesta versão."},
 }
 
 // FieldError aponta o campo culpado de um 400 (D14). Field e Reason vêm de

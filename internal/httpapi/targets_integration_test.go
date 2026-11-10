@@ -158,30 +158,193 @@ func TestAnotherUsersTargetIs404OnEveryRoute(t *testing.T) {
 	resp := chamar(t, a, http.MethodPost, "/api/v1/targets", dono, alvoValido)
 	var criado alvoJSON
 	lerCorpo(t, resp, &criado)
+	gravarValidadeTLS(t, a, criado.ID)
 
-	for _, c := range []struct{ metodo, caminho string }{
-		{http.MethodGet, "/api/v1/targets/" + criado.ID},
-		{http.MethodPatch, "/api/v1/targets/" + criado.ID},
-		{http.MethodDelete, "/api/v1/targets/" + criado.ID},
-		{http.MethodGet, "/api/v1/targets/" + criado.ID + "/checks"},
+	for _, c := range []struct {
+		metodo, caminho string
+		corpo           any
+	}{
+		{http.MethodGet, "/api/v1/targets/" + criado.ID, nil},
+		{http.MethodPatch, "/api/v1/targets/" + criado.ID, map[string]any{"name": "roubado"}},
+		{http.MethodPatch, "/api/v1/targets/" + criado.ID, map[string]any{"tls_warn": false}},
+		{http.MethodDelete, "/api/v1/targets/" + criado.ID, nil},
+		{http.MethodGet, "/api/v1/targets/" + criado.ID + "/checks", nil},
 	} {
-		var corpo any
-		if c.metodo == http.MethodPatch {
-			corpo = map[string]any{"name": "roubado"}
+		status, cru := lerCru(t, a, c.metodo, c.caminho, intruso, c.corpo)
+		var env envelopeComCampos
+		if err := json.Unmarshal([]byte(cru), &env); err != nil {
+			t.Fatalf("%s %s: %v\n%s", c.metodo, c.caminho, err, cru)
 		}
-		resp := chamar(t, a, c.metodo, c.caminho, intruso, corpo)
-		env := decodeEnvelope(t, resp)
-		resp.Body.Close()
-		if resp.StatusCode != http.StatusNotFound || env.Error.Code != "not_found" {
-			t.Errorf("%s %s pelo intruso deu %d/%s, queria 404/not_found", c.metodo, c.caminho, resp.StatusCode, env.Error.Code)
+		if status != http.StatusNotFound || env.Error.Code != "not_found" {
+			t.Errorf("%s %s pelo intruso deu %d/%s, queria 404/not_found", c.metodo, c.caminho, status, env.Error.Code)
 		}
+		conferirSemDadosDoDono(t, c.metodo+" "+c.caminho, cru, []string{"API", "api.exemplo.com", notAfterTLS, "not_after"})
+	}
+	_, lista := lerCru(t, a, http.MethodGet, "/api/v1/targets", intruso, nil)
+	conferirSemDadosDoDono(t, "GET /api/v1/targets", lista, []string{criado.ID, notAfterTLS, "not_after"})
+
+	_, cru := lerCru(t, a, http.MethodGet, "/api/v1/targets/"+criado.ID, dono, nil)
+	var intacto struct {
+		Name    string `json:"name"`
+		TLSWarn bool   `json:"tls_warn"`
+	}
+	if err := json.Unmarshal([]byte(cru), &intacto); err != nil {
+		t.Fatal(err)
+	}
+	if intacto.Name != "API" || !intacto.TLSWarn {
+		t.Errorf("o alvo do dono mudou: %s", cru)
+	}
+}
+
+// notAfterTLS e observedAtTLS são a validade que gravarValidadeTLS grava, como
+// a API as escreve.
+const (
+	notAfterTLS   = "2026-12-01T00:00:00Z"
+	observedAtTLS = "2026-09-22T11:30:00Z"
+)
+
+// gravarValidadeTLS grava a linha de target_tls do alvo como o sondador grava:
+// no escopo dele, o único que a escreve em produção.
+func gravarValidadeTLS(t *testing.T, a *api, alvoID string) {
+	t.Helper()
+	ctx := context.Background()
+	p := db.SaveTargetTLSParams{
+		TargetID:   uuid.MustParse(alvoID),
+		NotAfter:   time.Date(2026, 12, 1, 0, 0, 0, 0, time.UTC),
+		ObservedAt: time.Date(2026, 9, 22, 11, 30, 0, 0, time.UTC),
+	}
+	if err := storage.InProberTx(ctx, a.pool, func(q *db.Queries) error { return q.SaveTargetTLS(ctx, p) }); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Spec §7.2: a validade gravada pelo sondador sai no alvo, no GET e na lista;
+// sem leitura, "tls" é null, e não ausente.
+func TestTargetShowsTheCertificateReading(t *testing.T) {
+	a := newAPI(t)
+	tok := tokenDe(t, a, a.userID)
+	var lido, semLeitura alvoJSON
+	lerCorpo(t, chamar(t, a, http.MethodPost, "/api/v1/targets", tok, alvoValido), &lido)
+	lerCorpo(t, chamar(t, a, http.MethodPost, "/api/v1/targets", tok, alvoValido), &semLeitura)
+	gravarValidadeTLS(t, a, lido.ID)
+
+	queria := `"tls":{"not_after":"` + notAfterTLS + `","observed_at":"` + observedAtTLS + `"}`
+	_, cru := lerCru(t, a, http.MethodGet, "/api/v1/targets/"+lido.ID, tok, nil)
+	if !strings.Contains(cru, queria) {
+		t.Errorf("GET: queria %s em %s", queria, cru)
+	}
+	_, cru = lerCru(t, a, http.MethodGet, "/api/v1/targets/"+semLeitura.ID, tok, nil)
+	if !strings.Contains(cru, `"tls":null`) {
+		t.Errorf("GET sem leitura: queria \"tls\":null em %s", cru)
 	}
 
-	resp = chamar(t, a, http.MethodGet, "/api/v1/targets/"+criado.ID, dono, nil)
-	var intacto alvoJSON
-	lerCorpo(t, resp, &intacto)
-	if intacto.Name != "API" {
-		t.Errorf("o alvo do dono mudou para %q", intacto.Name)
+	_, lista := lerCru(t, a, http.MethodGet, "/api/v1/targets", tok, nil)
+	var envelope struct {
+		Items []json.RawMessage `json:"items"`
+	}
+	if err := json.Unmarshal([]byte(lista), &envelope); err != nil {
+		t.Fatal(err)
+	}
+	porID := map[string]string{}
+	for _, item := range envelope.Items {
+		var id struct {
+			ID string `json:"id"`
+		}
+		if err := json.Unmarshal(item, &id); err != nil {
+			t.Fatal(err)
+		}
+		porID[id.ID] = string(item)
+	}
+	if !strings.Contains(porID[lido.ID], queria) {
+		t.Errorf("lista: queria %s em %s", queria, porID[lido.ID])
+	}
+	if !strings.Contains(porID[semLeitura.ID], `"tls":null`) {
+		t.Errorf("lista sem leitura: queria \"tls\":null em %s", porID[semLeitura.ID])
+	}
+}
+
+// tls_warn é ligado por padrão (spec §5.2), muda pelo PATCH e nunca vira null.
+// tls é só de saída: o DTO estrito o recusa na entrada como campo desconhecido.
+func TestTLSWarnDefaultsAndPatch(t *testing.T) {
+	a := newAPI(t)
+	tok := tokenDe(t, a, outroUsuario(t, a))
+	tlsWarn := func(onde, cru string) bool {
+		t.Helper()
+		var v struct {
+			TLSWarn *bool `json:"tls_warn"`
+		}
+		if err := json.Unmarshal([]byte(cru), &v); err != nil || v.TLSWarn == nil {
+			t.Fatalf("%s: sem tls_warn (%v): %s", onde, err, cru)
+		}
+		return *v.TLSWarn
+	}
+	criar := func(corpo map[string]any) (int, string, string) {
+		t.Helper()
+		status, cru := lerCru(t, a, http.MethodPost, "/api/v1/targets", tok, corpo)
+		var id struct {
+			ID string `json:"id"`
+		}
+		_ = json.Unmarshal([]byte(cru), &id) // o corpo de erro não tem id
+		return status, cru, id.ID
+	}
+
+	status, cru, padrao := criar(map[string]any{"name": "padrao", "url": "https://exemplo.com/"})
+	if status != http.StatusCreated || !tlsWarn("POST sem tls_warn", cru) {
+		t.Errorf("POST sem tls_warn: %d %s; queria 201 com true", status, cru)
+	}
+	status, cru, desligado := criar(map[string]any{"name": "desligado", "url": "https://exemplo.com/", "tls_warn": false})
+	if status != http.StatusCreated || tlsWarn("POST com false", cru) {
+		t.Errorf("POST com false: %d %s; queria 201 com false", status, cru)
+	}
+	_, cru = lerCru(t, a, http.MethodGet, "/api/v1/targets/"+desligado, tok, nil)
+	if tlsWarn("GET depois do POST com false", cru) {
+		t.Errorf("tls_warn false não foi gravado: %s", cru)
+	}
+
+	status, cru = lerCru(t, a, http.MethodPatch, "/api/v1/targets/"+desligado, tok, map[string]any{"tls_warn": true})
+	if status != http.StatusOK || !tlsWarn("PATCH true", cru) {
+		t.Errorf("PATCH true: %d %s", status, cru)
+	}
+	status, cru = lerCru(t, a, http.MethodPatch, "/api/v1/targets/"+padrao, tok, map[string]any{"name": "outro nome"})
+	if status != http.StatusOK || !tlsWarn("PATCH sem tls_warn", cru) {
+		t.Errorf("PATCH sem tls_warn mexeu no interruptor: %d %s", status, cru)
+	}
+	status, cru = lerCru(t, a, http.MethodPatch, "/api/v1/targets/"+padrao, tok, map[string]any{"tls_warn": false})
+	if status != http.StatusOK || tlsWarn("PATCH false", cru) {
+		t.Errorf("PATCH false: %d %s", status, cru)
+	}
+
+	var env envelopeComCampos
+	status, cru = lerCru(t, a, http.MethodPatch, "/api/v1/targets/"+desligado, tok, map[string]any{"tls_warn": nil})
+	if err := json.Unmarshal([]byte(cru), &env); err != nil {
+		t.Fatal(err)
+	}
+	if status != http.StatusBadRequest || len(env.Error.Fields) != 1 || env.Error.Fields[0].Field != "tls_warn" {
+		t.Errorf("PATCH tls_warn null: %d %s; queria 400 em tls_warn", status, cru)
+	}
+	for _, corpo := range []map[string]any{{"tls_warn": "sim"}, {"tls_warn": 1}} {
+		if status, cru := lerCru(t, a, http.MethodPatch, "/api/v1/targets/"+desligado, tok, corpo); status != http.StatusBadRequest {
+			t.Errorf("PATCH %v: %d %s; queria 400", corpo, status, cru)
+		}
+	}
+	_, cru = lerCru(t, a, http.MethodGet, "/api/v1/targets/"+desligado, tok, nil)
+	if !tlsWarn("GET depois dos PATCH recusados", cru) {
+		t.Errorf("um PATCH recusado mudou tls_warn: %s", cru)
+	}
+
+	if status, cru, _ := criar(map[string]any{"name": "sim", "url": "https://exemplo.com/", "tls_warn": "sim"}); status != http.StatusBadRequest {
+		t.Errorf("POST tls_warn \"sim\": %d %s; queria 400", status, cru)
+	}
+	tls := map[string]any{"not_after": notAfterTLS, "observed_at": observedAtTLS}
+	if status, cru, _ := criar(map[string]any{"name": "forjado", "url": "https://exemplo.com/", "tls": tls}); status != http.StatusBadRequest {
+		t.Errorf("POST com tls: %d %s; queria 400", status, cru)
+	}
+	if status, cru := lerCru(t, a, http.MethodPatch, "/api/v1/targets/"+padrao, tok, map[string]any{"tls": tls}); status != http.StatusBadRequest {
+		t.Errorf("PATCH com tls: %d %s; queria 400", status, cru)
+	}
+	_, lista := lerCru(t, a, http.MethodGet, "/api/v1/targets", tok, nil)
+	if strings.Contains(lista, "forjado") || strings.Contains(lista, `"name":"sim"`) || strings.Contains(lista, notAfterTLS) {
+		t.Errorf("um POST recusado criou alvo ou gravou validade: %s", lista)
 	}
 }
 

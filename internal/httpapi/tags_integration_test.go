@@ -232,7 +232,7 @@ func TestAlvoTemExatamenteAsChavesDoContrato(t *testing.T) {
 	token := tokenDe(t, a, outroUsuario(t, a))
 	queria := []string{
 		"created_at", "degraded_threshold_ms", "enabled", "expected_status", "header_names", "id",
-		"interval_sec", "method", "name", "tags", "timeout_ms", "url",
+		"interval_sec", "method", "name", "tags", "timeout_ms", "tls", "tls_warn", "url",
 	}
 	chaves := func(onde, cru string) {
 		t.Helper()
@@ -268,6 +268,20 @@ func TestAlvoTemExatamenteAsChavesDoContrato(t *testing.T) {
 		t.Fatalf("%d itens: %s", len(envelope.Items), lista)
 	}
 	chaves("lista", string(envelope.Items[0]))
+
+	// Com leitura do sondador, tls é um objeto com exatamente duas chaves.
+	gravarValidadeTLS(t, a, alvo.ID)
+	_, lido = lerCru(t, a, http.MethodGet, "/api/v1/targets/"+alvo.ID, token, nil)
+	chaves("GET com leitura", lido)
+	var comLeitura struct {
+		TLS map[string]json.RawMessage `json:"tls"`
+	}
+	if err := json.Unmarshal([]byte(lido), &comLeitura); err != nil {
+		t.Fatal(err)
+	}
+	if got := slices.Sorted(maps.Keys(comLeitura.TLS)); !slices.Equal(got, []string{"not_after", "observed_at"}) {
+		t.Errorf("chaves de tls: %v; queria [not_after observed_at]", got)
+	}
 }
 
 // As tags de A não existem para B: nem nas listas, nem como filtro. O filtro
