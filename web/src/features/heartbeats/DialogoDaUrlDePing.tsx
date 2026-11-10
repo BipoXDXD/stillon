@@ -39,8 +39,8 @@ const EXEMPLOS = {
   ],
   Python: (url) => [
     {
-      titulo: 'Python 3, depois de import urllib.request',
-      texto: `urllib.request.urlopen(urllib.request.Request("${url}", method="POST"), timeout=10)`,
+      titulo: 'Python 3, numa linha do shell, só com a biblioteca padrão',
+      texto: `python3 -c 'import urllib.request; urllib.request.urlopen(urllib.request.Request("${url}", method="POST"), timeout=10)'`,
       rotulo: 'Copiar o exemplo de Python',
     },
   ],

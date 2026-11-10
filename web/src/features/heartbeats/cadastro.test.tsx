@@ -54,7 +54,7 @@ describe('cadastro', () => {
     const EXEMPLOS = [
       ['crontab', `0 3 * * * /usr/local/bin/backup.sh && curl -fsS -m 10 --retry 3 -o /dev/null -X POST ${PING_URL}`],
       ['wget', `wget -q -T 10 -t 3 -O /dev/null --method=POST ${PING_URL}`],
-      ['Python', `urllib.request.urlopen(urllib.request.Request("${PING_URL}", method="POST"), timeout=10)`],
+      ['Python', `python3 -c 'import urllib.request; urllib.request.urlopen(urllib.request.Request("${PING_URL}", method="POST"), timeout=10)'`],
       ['PowerShell', `Invoke-RestMethod -Method Post -TimeoutSec 10 -Uri ${PING_URL}`],
     ] as const
 
