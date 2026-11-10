@@ -16,10 +16,17 @@ SET LOCAL lock_timeout = '5s';
 ALTER TABLE targets
     ADD COLUMN content_mode text
         CHECK (content_mode IN ('contains', 'not_contains', 'json_equals')),
+    -- Sem caractere de controle (C0, DEL e C1), como o cadastro: é o mesmo
+    -- conjunto do unicode.IsControl do Go.
     ADD COLUMN content_value text
-        CHECK (char_length(content_value) BETWEEN 1 AND 256),
+        CHECK (char_length(content_value) BETWEEN 1 AND 256
+               AND content_value !~ '[\u0001-\u001f\u007f-\u009f]'),
+    -- Forma RFC 6901: "~" só como ~0 ou ~1. Um ponteiro que o sondador não lê
+    -- deixaria o alvo parado no último estado, sem check e sem aviso (L4 do
+    -- STRIDE do #255).
     ADD COLUMN content_json_pointer text
-        CHECK (char_length(content_json_pointer) BETWEEN 1 AND 256 AND left(content_json_pointer, 1) = '/');
+        CHECK (char_length(content_json_pointer) BETWEEN 1 AND 256 AND left(content_json_pointer, 1) = '/'
+               AND content_json_pointer !~ '~([^01]|$)');
 
 -- Tudo ou nada. Precisa ser CASE: com (content_mode IS NULL) = (... IS NULL)
 -- o ponteiro de um contains passaria, e com '=' sobre NULL o CHECK daria NULL,

@@ -57,6 +57,14 @@ func TestContentRuleChecksAcceptOnlyWholeRules(t *testing.T) {
 		{"ponteiro_de_257", "GET", regraDeConteudo{ptrTexto("json_equals"), ptrTexto(`"ok"`), ptrTexto("/" + strings.Repeat("a", 256))}, true},
 		{"ponteiro_vazio", "GET", regraDeConteudo{ptrTexto("json_equals"), ptrTexto(`"ok"`), ptrTexto("")}, true},
 		{"regra_em_head", "HEAD", regraDeConteudo{ptrTexto("contains"), ptrTexto("ok"), nil}, true},
+		{"ponteiro_com_escapes_validos", "GET", regraDeConteudo{ptrTexto("json_equals"), ptrTexto(`"ok"`), ptrTexto("/a~0b/c~1d/")}, false},
+		{"ponteiro_com_til_2", "GET", regraDeConteudo{ptrTexto("json_equals"), ptrTexto(`"ok"`), ptrTexto("/a~2")}, true},
+		{"ponteiro_com_til_no_fim", "GET", regraDeConteudo{ptrTexto("json_equals"), ptrTexto(`"ok"`), ptrTexto("/a~")}, true},
+		{"valor_com_acento", "GET", regraDeConteudo{ptrTexto("contains"), ptrTexto("ação"), nil}, false},
+		{"valor_com_controle_01", "GET", regraDeConteudo{ptrTexto("contains"), ptrTexto("a\x01b"), nil}, true},
+		{"valor_com_tab", "GET", regraDeConteudo{ptrTexto("contains"), ptrTexto("a\tb"), nil}, true},
+		{"valor_com_del", "GET", regraDeConteudo{ptrTexto("contains"), ptrTexto("a\x7fb"), nil}, true},
+		{"valor_com_controle_c1", "GET", regraDeConteudo{ptrTexto("contains"), ptrTexto("a\u0085b"), nil}, true},
 	} {
 		t.Run(tc.nome, func(t *testing.T) {
 			err := inserirAlvoComRegra(t, pool, dono, tc.metodo, tc.regra)
