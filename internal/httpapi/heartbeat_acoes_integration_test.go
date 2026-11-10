@@ -25,11 +25,16 @@ func clonar(t *testing.T, a *api, token, id string, corpo any) (int, string) {
 
 func contarHeartbeats(t *testing.T, a *api) int64 {
 	t.Helper()
+	return contarHeartbeatsDe(t, a, a.userID)
+}
+
+func contarHeartbeatsDe(t *testing.T, a *api, userID uuid.UUID) int64 {
+	t.Helper()
 	ctx := context.Background()
 	var n int64
-	err := storage.InUserTx(ctx, a.pool, a.userID, func(q *db.Queries) error {
+	err := storage.InUserTx(ctx, a.pool, userID, func(q *db.Queries) error {
 		var err error
-		n, err = q.CountHeartbeats(ctx, a.userID)
+		n, err = q.CountHeartbeats(ctx, userID)
 		return err
 	})
 	if err != nil {

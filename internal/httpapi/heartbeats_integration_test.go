@@ -1075,9 +1075,10 @@ func TestAnotherUsersHeartbeatIsIndistinguishableFromMissing(t *testing.T) {
 	_, corpo := lerCru(t, a, http.MethodGet, "/api/v1/heartbeats/"+id+"/incidents", dono, nil)
 	incidente := decodificar(t, corpo)["items"].([]any)[0].(map[string]any)["id"].(string)
 
+	intruso := outroUsuario(t, a)
 	molde := "/api/v1/heartbeats/%s"
 	conferirIDOR(t, a, cenarioIDOR{
-		dono: dono, intruso: tokenDe(t, a, outroUsuario(t, a)),
+		dono: dono, intruso: tokenDe(t, a, intruso),
 		rotas: []rotaAlheia{
 			{metodo: http.MethodGet, molde: molde, id: id},
 			{metodo: http.MethodPatch, molde: molde, id: id, corpo: map[string]any{"name": "roubado"}},
@@ -1094,8 +1095,38 @@ func TestAnotherUsersHeartbeatIsIndistinguishableFromMissing(t *testing.T) {
 		listasDoIntruso: []string{"/api/v1/heartbeats"},
 		dadosDoDono:     []string{id, "backup noturno"},
 	})
+	conferirDuplicarELimparSemEfeito(t, a, uuid.MustParse(id), intruso)
 	if status, _, corpo := pingar(t, a, "/ping/"+ping, nil); status != http.StatusOK {
 		t.Errorf("o token do dono parou: %d %s", status, corpo)
+	}
+}
+
+// conferirDuplicarELimparSemEfeito olha o banco depois do intruso, e não só a
+// resposta: duplicar não criou cópia para ninguém, limpar não apagou o log do
+// dono (o único evento, o fail do cenário) e nada foi auditado em nome do
+// intruso sobre a tarefa do dono.
+func conferirDuplicarELimparSemEfeito(t *testing.T, a *api, id, intruso uuid.UUID) {
+	t.Helper()
+	if n := contarHeartbeatsDe(t, a, intruso); n != 0 {
+		t.Errorf("o intruso ficou com %d heartbeats, queria 0", n)
+	}
+	if n := contarHeartbeatsDe(t, a, a.userID); n != 1 {
+		t.Errorf("o dono ficou com %d heartbeats, queria 1", n)
+	}
+	var tipos []string
+	for _, e := range eventosDoHeartbeat(t, a, id) {
+		tipos = append(tipos, e.Kind)
+	}
+	if !slices.Equal(tipos, []string{"fail"}) {
+		t.Errorf("eventos do dono: %v, queria [fail]", tipos)
+	}
+	var auditados int
+	if err := a.pool.QueryRow(context.Background(),
+		`SELECT count(*) FROM audit_log WHERE entity_id = $1 AND user_id = $2`, id, intruso).Scan(&auditados); err != nil {
+		t.Fatal(err)
+	}
+	if auditados != 0 {
+		t.Errorf("%d linhas de auditoria do intruso sobre a tarefa do dono, queria 0", auditados)
 	}
 }
 

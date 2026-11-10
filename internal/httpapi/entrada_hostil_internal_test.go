@@ -93,7 +93,8 @@ func TestIDMalformadoE404EmTodaRotaComID(t *testing.T) {
 		"POST /channels/{id}/verify/resend":                 canais.Resend,
 		"PATCH /status-pages/{id}":                          paginas.Update,
 	}
-	ids := []string{"nao-e-uuid", "", "a\x00b", "' OR 1=1--", strings.Repeat("a", 4096)}
+	// "\x00" é o %00 depois de o roteador decodificar o caminho.
+	ids := []string{"nao-e-uuid", "", "\x00", "a\x00b", "' OR 1=1--", strings.Repeat("a", 4096)}
 	for rota, h := range rotas {
 		t.Run(rota, func(t *testing.T) {
 			for _, id := range ids {
