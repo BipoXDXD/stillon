@@ -107,15 +107,16 @@ func TestHeartbeatLimitsDownConvertsAndRestoresTheOldChecks(t *testing.T) {
 
 	longo, normal := int32(tetoNovo), int32(3600)
 	expr := "0 3 * * *"
-	prazoLonga := time.Date(2027, 9, 6, 0, 0, 0, 0, time.UTC)
+	// Um ano à frente: a descida tem de trazê-lo para dentro dos tetos antigos.
+	daquiAUmAno := time.Now().UTC().AddDate(1, 0, 0).Truncate(time.Second)
 	prazoCron := time.Date(2026, 11, 20, 0, 0, 0, 0, time.UTC)
 	// Prazo já próximo (no passado): reduzir o período não pode adiá-lo.
 	prazoPerto := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
-	var idLonga, idCron, idNormal, idPerto uuid.UUID
+	var idLonga, idCron, idNormal, idPerto, idToleraLonga uuid.UUID
 	err = emEscopo(t, pool, "app.user_id", dono.String(), func(tx pgx.Tx) error {
 		var err error
 		if idLonga, err = inserirLinha(ctx, tx, dono, linhaDeHeartbeat{periodo: &longo, grace: tetoNovo,
-			descricao: strings.Repeat("é", descricaoNovaMax), prazo: prazoLonga}); err != nil {
+			descricao: strings.Repeat("é", descricaoNovaMax), prazo: daquiAUmAno}); err != nil {
 			return err
 		}
 		if idCron, err = inserirLinha(ctx, tx, dono, linhaDeHeartbeat{cron: &expr, grace: 1209600,
@@ -126,7 +127,12 @@ func TestHeartbeatLimitsDownConvertsAndRestoresTheOldChecks(t *testing.T) {
 			descricao: "backup", prazo: prazoCron}); err != nil {
 			return err
 		}
-		idPerto, err = inserirLinha(ctx, tx, dono, linhaDeHeartbeat{periodo: &longo, grace: 300, prazo: prazoPerto})
+		if idPerto, err = inserirLinha(ctx, tx, dono, linhaDeHeartbeat{periodo: &longo, grace: 300,
+			prazo: prazoPerto}); err != nil {
+			return err
+		}
+		idToleraLonga, err = inserirLinha(ctx, tx, dono, linhaDeHeartbeat{periodo: &normal, grace: tetoNovo,
+			prazo: daquiAUmAno})
 		return err
 	})
 	if err != nil {
@@ -134,25 +140,27 @@ func TestHeartbeatLimitsDownConvertsAndRestoresTheOldChecks(t *testing.T) {
 	}
 
 	if err := storage.MigrateDownTo(ctx, dsn, versao-1); err != nil {
-		t.Fatalf("descer a %d: %v", versao, err)
+		t.Fatalf("descer a %d: %v", versao-1, err)
 	}
 
 	type lida struct {
-		periodo     int32 // 0 é "sem período" (cron)
-		grace       int32
-		caracteres  int
-		prazo       time.Time
-		prazoDentro bool
+		periodo       int32 // 0 é "sem período" (cron)
+		grace         int32
+		caracteres    int
+		prazo         time.Time
+		prazoNaJanela bool
 	}
-	ler := func(id uuid.UUID) lida {
+	// ler confere também se o prazo caiu em [now() + segundos - 1 min, now() + segundos]:
+	// os dois lados, para que nem "um ano à frente" nem "agora" passem.
+	ler := func(id uuid.UUID, segundos int32) lida {
 		t.Helper()
 		var l lida
 		err := emEscopo(t, pool, "app.scope", "prober", func(tx pgx.Tx) error {
-			// 3283200 s = 31 d de período + 7 d de tolerância, os tetos antigos.
 			return tx.QueryRow(ctx, `SELECT COALESCE(period_sec, 0), grace_sec, char_length(description), deadline_at,
-				deadline_at <= now() + make_interval(secs => 3283200)
-				FROM heartbeats WHERE id = $1`, id).
-				Scan(&l.periodo, &l.grace, &l.caracteres, &l.prazo, &l.prazoDentro)
+				deadline_at BETWEEN now() + make_interval(secs => $2::int) - interval '1 minute'
+				                AND now() + make_interval(secs => $2::int)
+				FROM heartbeats WHERE id = $1`, id, segundos).
+				Scan(&l.periodo, &l.grace, &l.caracteres, &l.prazo, &l.prazoNaJanela)
 		})
 		if err != nil {
 			t.Fatalf("ler %s depois da descida: %v", id, err)
@@ -160,21 +168,27 @@ func TestHeartbeatLimitsDownConvertsAndRestoresTheOldChecks(t *testing.T) {
 		return l
 	}
 
-	if l := ler(idLonga); l.periodo != tetoAntigoPeriodo || l.grace != tetoAntigoTolera ||
-		l.caracteres != descricaoAntigaMax || !l.prazoDentro {
-		t.Errorf("linha longa ficou período %d, tolerância %d, %d caracteres, prazo %s (dentro de 38 d: %v); "+
-			"queria 2678400, 604800, 1000 e prazo em até 38 d", l.periodo, l.grace, l.caracteres, l.prazo, l.prazoDentro)
+	// 3283200 s = 31 d de período + 7 d de tolerância, os tetos antigos.
+	if l := ler(idLonga, 3283200); l.periodo != tetoAntigoPeriodo || l.grace != tetoAntigoTolera ||
+		l.caracteres != descricaoAntigaMax || !l.prazoNaJanela {
+		t.Errorf("linha longa ficou período %d, tolerância %d, %d caracteres, prazo %s (em now()+38 d: %v); "+
+			"queria 2678400, 604800, 1000 e prazo em now()+38 d", l.periodo, l.grace, l.caracteres, l.prazo, l.prazoNaJanela)
 	}
-	if l := ler(idCron); l.periodo != 0 || l.grace != tetoAntigoTolera || !l.prazo.Equal(prazoCron) {
+	// 608400 s = 1 h de período + 7 d de tolerância.
+	if l := ler(idToleraLonga, 608400); l.periodo != 3600 || l.grace != tetoAntigoTolera || !l.prazoNaJanela {
+		t.Errorf("linha de tolerância longa ficou período %d, tolerância %d, prazo %s (em now()+608400 s: %v); "+
+			"queria 3600, 604800 e prazo em now()+608400 s", l.periodo, l.grace, l.prazo, l.prazoNaJanela)
+	}
+	if l := ler(idCron, 0); l.periodo != 0 || l.grace != tetoAntigoTolera || !l.prazo.Equal(prazoCron) {
 		t.Errorf("linha cron ficou período %d, tolerância %d, prazo %s; queria sem período, 604800 e %s",
 			l.periodo, l.grace, l.prazo, prazoCron)
 	}
-	if l := ler(idNormal); l.periodo != 3600 || l.grace != 300 || l.caracteres != len("backup") ||
+	if l := ler(idNormal, 0); l.periodo != 3600 || l.grace != 300 || l.caracteres != len("backup") ||
 		!l.prazo.Equal(prazoCron) {
 		t.Errorf("linha normal mudou: período %d, tolerância %d, %d caracteres, prazo %s",
 			l.periodo, l.grace, l.caracteres, l.prazo)
 	}
-	if l := ler(idPerto); l.periodo != tetoAntigoPeriodo || !l.prazo.Equal(prazoPerto) {
+	if l := ler(idPerto, 0); l.periodo != tetoAntigoPeriodo || !l.prazo.Equal(prazoPerto) {
 		t.Errorf("linha longa de prazo próximo ficou período %d, prazo %s; queria 2678400 e %s",
 			l.periodo, l.prazo, prazoPerto)
 	}
