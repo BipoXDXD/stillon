@@ -36,6 +36,11 @@ const maxResponseHeaderBytes = 64 << 10
 // padrão do FallbackDelay do net.Dialer.
 const atrasoDaReserva = 300 * time.Millisecond
 
+// MaxProbeTimeout é o maior prazo que uma sonda pode ter (timeout_ms vai até
+// 30000). Os limites de fase do transporte são iguais a ele: nunca cortam uma
+// sonda antes do prazo dela e só alcançam o trabalho que ela já abandonou.
+const MaxProbeTimeout = 30 * time.Second
+
 // familiasNaCorrida são IPv4 e IPv6.
 const familiasNaCorrida = 2
 
@@ -65,11 +70,7 @@ func newTransport(allowed []netip.AddrPort) *http.Transport {
 		}
 		return AllowAddr(address)
 	}
-	dialer := &net.Dialer{
-		ControlContext: func(_ context.Context, _, address string, _ syscall.RawConn) error {
-			return permitir(address)
-		},
-	}
+	dialer := novoDialer(permitir)
 
 	return &http.Transport{
 		DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
@@ -108,18 +109,32 @@ func newTransport(allowed []netip.AddrPort) *http.Transport {
 		// monitoramento, nem o Discord ou o Resend, manda mais que isto.
 		MaxResponseHeaderBytes: maxResponseHeaderBytes,
 
-		// Sem Timeout no Dialer, sem TLSHandshakeTimeout, sem
-		// ResponseHeaderTimeout: propositalmente nenhum limite por fase. O
-		// prazo é só o do context da requisição (Probe faz
-		// context.WithTimeout(ctx, s.Timeout); timeout_ms vai até 30000). Um
-		// limite de fase fixo cortaria ANTES do timeout_ms configurado — por
-		// exemplo, um alvo com timeout_ms=20000 cujo servidor manda o
-		// cabeçalho aos 12s seria marcado "down" aos 10s, um falso negativo.
-		// A ausência não é testável observando o dialer: NewTransport()
-		// devolve um *http.Transport comum, e o campo Timeout do
-		// net.Dialer embutido no DialContext não é inspecionável de fora do
-		// pacote net. TestTransportLeavesTheDeadlineToTheContext trava só os
-		// dois campos do próprio http.Transport.
+		// O prazo da sonda é o do context da requisição (Probe faz
+		// context.WithTimeout(ctx, s.Timeout)). Nenhum limite de fase pode
+		// cortar antes dele: um alvo com timeout_ms=20000 que manda o
+		// cabeçalho aos 12s seria "down" aos 10s, um falso negativo. Por isso
+		// não há ResponseHeaderTimeout.
+		//
+		// Mas o net/http disca com context.WithoutCancel (Go 1.23+): o dial
+		// e o handshake que a sonda abandonou não veem o prazo dela. O Probe
+		// os cancela com CloseIdleConnections, efeito que a documentação não
+		// promete; o teto abaixo e o Timeout do Dialer (novoDialer) são a
+		// defesa se isso mudar. Iguais ao maior prazo de sonda, não cortam
+		// nenhuma sonda viva. TestTransportLeavesTheDeadlineToTheContext e
+		// TestTransportBoundsTheAbandonedHandshake travam o valor.
+		TLSHandshakeTimeout: MaxProbeTimeout,
+	}
+}
+
+// novoDialer valida cada endereço no ControlContext, que o Go chama depois de
+// criar o socket e antes de discar. O Timeout só alcança o dial que a sonda já
+// abandonou (ver TLSHandshakeTimeout em newTransport).
+func novoDialer(permitir func(address string) error) *net.Dialer {
+	return &net.Dialer{
+		Timeout: MaxProbeTimeout,
+		ControlContext: func(_ context.Context, _, address string, _ syscall.RawConn) error {
+			return permitir(address)
+		},
 	}
 }
 

@@ -203,3 +203,12 @@ func TestDiscarConjuntoFechaAConexaoDeQuemPerdeu(t *testing.T) {
 		}
 	})
 }
+
+// O dial também roda num context sem cancelamento: sem Timeout no Dialer, um
+// alvo que descarta o SYN prende o dial até o timeout de connect do sistema.
+// O teto é o maior prazo de sonda, para não cortar antes de nenhum timeout_ms.
+func TestDialerBoundsTheAbandonedDial(t *testing.T) {
+	if got := novoDialer(nil).Timeout; got != MaxProbeTimeout {
+		t.Errorf("Dialer.Timeout = %v, queria %v", got, MaxProbeTimeout)
+	}
+}
