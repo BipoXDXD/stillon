@@ -23,7 +23,7 @@ const ROTULO_DO_VALOR = {
 const AJUDA_DO_VALOR = {
   contains: AVISO_DE_SEGREDO,
   not_contains: AVISO_DE_SEGREDO,
-  json_equals: `Números são comparados como escritos no JSON. ${AVISO_DE_SEGREDO}`,
+  json_equals: `Compara o texto do valor, sem olhar o tipo: 1 e "1" são iguais. Números são comparados como escritos no JSON. ${AVISO_DE_SEGREDO}`,
 } as const
 
 // O campo do formulário de um campo do 400 (headers[2].nome vira headers).

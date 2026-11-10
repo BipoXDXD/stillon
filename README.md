@@ -93,9 +93,11 @@ variáveis são segredos de interpolação do recurso no Coolify, nunca arquivos
   esperado, limite de latência para "degradado" e até 8 tags para agrupar e filtrar.
   Opcionalmente, uma **regra de conteúdo** (`content_rule`) julga os primeiros 64 KiB do corpo:
   `contains` e `not_contains` procuram um texto, e `json_equals` compara o escalar apontado por um
-  ponteiro JSON (RFC 6901, como `/status`) com um valor. Regra reprovada é a causa
+  ponteiro JSON (RFC 6901, como `/status`) com um valor. O `json_equals` compara o texto do
+  valor, sem olhar o tipo: `1` e `"1"`, `true` e `"true"` são iguais. Regra reprovada é a causa
   `content_mismatch`; corpo numa codificação que o sondador não desfaz (br, zstd, deflate) é
-  `content_encoding`; e corpo acima de 64 KiB sem conclusão é `body_limit`. A regra não aceita o
+  `content_encoding`; e corpo acima de 64 KiB, ou acima de 128 KiB ainda comprimido, sem
+  conclusão é `body_limit`. A regra não aceita o
   método HEAD (não há corpo) nem os headers `Accept-Encoding` e `Range` do dono (o corpo chegaria
   comprimido ou cortado).
 - **Certificado** do host cadastrado: o detalhe do alvo mostra a validade ("Certificado válido até

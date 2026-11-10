@@ -143,6 +143,10 @@ describe('formulário de alvo: regra de conteúdo em "Avançado"', () => {
     expect(screen.getByLabelText('Valor esperado')).toHaveAccessibleDescription(
       expect.stringContaining('Números são comparados como escritos no JSON.'),
     )
+    // M6 da revisão intermediária: json_equals não distingue 1 de "1".
+    expect(screen.getByLabelText('Valor esperado')).toHaveAccessibleDescription(
+      expect.stringContaining('sem olhar o tipo: 1 e "1" são iguais.'),
+    )
     expect(screen.getByLabelText('Ponteiro JSON')).not.toHaveAccessibleDescription(expect.stringContaining('Números'))
   })
 
