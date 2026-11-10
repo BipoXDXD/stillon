@@ -3,13 +3,56 @@ package prober
 import (
 	"crypto/tls"
 	"crypto/x509"
+	"net/http/httptrace"
 	"net/netip"
 	"net/url"
+	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/BipoXDXD/stillon/internal/prober/safedial"
 )
+
+// coletorDeHandshakes devolve um trace que guarda o estado de cada handshake
+// TLS concluído sem erro, e a função que lê o que foi guardado. O trace é
+// chamado na goroutine de discagem do transporte, não na do Probe; o mutex
+// faz a leitura não depender de o transporte sincronizar essa goroutine com o
+// fim do client.Do (uma discagem pode sobreviver a um client.Do que desistiu).
+func coletorDeHandshakes() (*httptrace.ClientTrace, func() []tls.ConnectionState) {
+	var mu sync.Mutex
+	var estados []tls.ConnectionState
+	trace := &httptrace.ClientTrace{
+		TLSHandshakeDone: func(estado tls.ConnectionState, err error) {
+			if err != nil {
+				return
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			estados = append(estados, estado)
+		},
+	}
+	coletados := func() []tls.ConnectionState {
+		mu.Lock()
+		defer mu.Unlock()
+		return slices.Clone(estados)
+	}
+	return trace, coletados
+}
+
+// validadeLida é a validade do certificado do host de rawURL entre os
+// handshakes observados; zero quando não há leitura.
+func validadeLida(rawURL string, estados []tls.ConnectionState) time.Time {
+	host, ok := hostDoCertificado(rawURL)
+	if !ok {
+		return time.Time{}
+	}
+	validade, achou := validadeDoHost(host, estados)
+	if !achou {
+		return time.Time{}
+	}
+	return validade
+}
 
 // hostDoCertificado devolve o host cujo certificado a sonda avalia: o host da
 // URL canonicalizado como o net/http o disca, sem o ponto final, que o cliente
@@ -30,13 +73,20 @@ func hostDoCertificado(rawURL string) (string, bool) {
 // do host cadastrado. Handshake de outro host (redirect para terceiro) não
 // conta: o aviso seria sobre o certificado alheio.
 func validadeDoHost(host string, estados []tls.ConnectionState) (time.Time, bool) {
+	nome, ok := nomeComparavel(host)
+	if !ok {
+		return time.Time{}, false
+	}
 	var menor time.Time
 	achou := false
 	for _, estado := range estados {
-		if !ehDoHost(host, estado) {
+		if !ehDoHost(nome, estado) {
 			continue
 		}
 		validade := validadeEfetiva(estado.VerifiedChains)
+		if validade.IsZero() {
+			continue // só cadeias vazias: nada verificado a ler
+		}
 		if !achou || validade.Before(menor) {
 			menor = validade
 			achou = true
@@ -45,12 +95,13 @@ func validadeDoHost(host string, estados []tls.ConnectionState) (time.Time, bool
 	return menor, achou
 }
 
-func ehDoHost(host string, estado tls.ConnectionState) bool {
+// ehDoHost compara com nome já passado por nomeComparavel.
+func ehDoHost(nome string, estado tls.ConnectionState) bool {
 	if estado.ServerName == "" || len(estado.VerifiedChains) == 0 {
 		return false
 	}
-	nome, ok := nomeComparavel(estado.ServerName)
-	return ok && nome == strings.TrimSuffix(host, ".")
+	doHandshake, ok := nomeComparavel(estado.ServerName)
+	return ok && doHandshake == nome
 }
 
 // validadeEfetiva é o maior, entre as cadeias verificadas, do menor NotAfter

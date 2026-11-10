@@ -182,6 +182,13 @@ func TestValidadeDoHost(t *testing.T) {
 			func(t *testing.T) []tls.ConnectionState { return nil },
 			time.Time{}, false,
 		},
+		{
+			"cadeias verificadas todas vazias não valem",
+			func(t *testing.T) []tls.ConnectionState {
+				return []tls.ConnectionState{{ServerName: "exemplo.com", VerifiedChains: [][]*x509.Certificate{{}}}}
+			},
+			time.Time{}, false,
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.nome, func(t *testing.T) {
@@ -190,6 +197,15 @@ func TestValidadeDoHost(t *testing.T) {
 				t.Errorf("validadeDoHost = (%v, %v), queria (%v, %v)", got, ok, c.quer, c.ok)
 			}
 		})
+	}
+}
+
+// O host cadastrado é canonicalizado como o ServerName, sem depender de quem
+// chama já tê-lo canonicalizado.
+func TestValidadeDoHostCanonicalizesTheRegisteredHost(t *testing.T) {
+	got, ok := validadeDoHost("Exemplo.COM.", []tls.ConnectionState{estadoTLS(t, "exemplo.com", dias(30))})
+	if !got.Equal(dias(30)) || !ok {
+		t.Errorf("validadeDoHost = (%v, %v), queria (%v, true)", got, ok, dias(30))
 	}
 }
 
