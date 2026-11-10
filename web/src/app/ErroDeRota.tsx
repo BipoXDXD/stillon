@@ -1,12 +1,13 @@
 import { onlineManager } from '@tanstack/react-query'
 import { isRouteErrorResponse, useRevalidator, useRouteError } from 'react-router'
-import { Botao } from '@/components/ui/botao'
+import { Botao, BotaoQueSome, TITULO_DA_TELA } from '@/components/ui/botao'
 
 // Com rede, uma falha de import() dinâmico quase sempre é "houve deploy e o
 // chunk antigo sumiu": o handler Go responde 404 para asset ausente (e não o
 // index), e aqui o painel oferece recarregar em vez de ficar em branco. Sem
 // rede, recarregar levaria à página de erro do navegador: o revalidate repete
-// só o import da rota.
+// só o import da rota; quando ele dá certo, esta tela some com o botão, e o
+// foco vai ao título da tela que chegou.
 export function ErroDeRota() {
   const erro = useRouteError()
   const { revalidate } = useRevalidator()
@@ -26,7 +27,9 @@ export function ErroDeRota() {
               : 'Algo deu errado'}
       </h1>
       {semRede ? (
-        <Botao onClick={() => void revalidate()}>Tentar de novo</Botao>
+        <BotaoQueSome reserva={TITULO_DA_TELA} onClick={() => void revalidate()}>
+          Tentar de novo
+        </BotaoQueSome>
       ) : (
         <Botao onClick={() => window.location.reload()}>Recarregar</Botao>
       )}
