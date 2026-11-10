@@ -168,6 +168,28 @@ func TestPatchOnUnknownScheduleConflicts(t *testing.T) {
 	}
 }
 
+// O 409 schedule_unsupported não pode vazar a existência da linha alheia: para
+// quem não é dono, a linha desconhecida é 404 como qualquer outra.
+func TestPatchByOtherUserOnUnknownScheduleIsNotFound(t *testing.T) {
+	a := newAPI(t)
+	semChecksDeAgendamento(t, a.pool)
+	id, _ := heartbeatDesconhecidoHTTP(t, a)
+	intruso := tokenDe(t, a, outroUsuario(t, a))
+
+	a.clk.Advance(time.Minute)
+	status, corpo := lerCru(t, a, http.MethodPatch, "/api/v1/heartbeats/"+id.String(), intruso, map[string]any{"name": "x"})
+	if status != http.StatusNotFound || !strings.Contains(corpo, `"code":"not_found"`) ||
+		strings.Contains(corpo, "schedule_unsupported") {
+		t.Errorf("PATCH alheio: %d %s, queria 404 not_found sem schedule_unsupported", status, corpo)
+	}
+	h := linhaDoHeartbeat(t, a, id)
+	if h.Name != "backup noturno" || !h.Enabled || !h.DeadlineAt.Equal(prazoGravado) ||
+		h.PeriodSec != nil || h.CronExpr != nil {
+		t.Errorf("PATCH alheio gravou: nome %q, enabled %v, prazo %v, período %s, cron %s",
+			h.Name, h.Enabled, h.DeadlineAt, valorDe(h.PeriodSec), valorDe(h.CronExpr))
+	}
+}
+
 func TestDeleteAndRotateStillWorkOnUnknownSchedule(t *testing.T) {
 	a := newAPI(t)
 	semChecksDeAgendamento(t, a.pool)
