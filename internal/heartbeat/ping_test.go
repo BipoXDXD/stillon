@@ -69,10 +69,10 @@ func (a ambiente) linha(t *testing.T, id uuid.UUID) db.Heartbeat {
 	return h
 }
 
-func (a ambiente) eventos(t *testing.T, id uuid.UUID) []db.HeartbeatEvent {
+func (a ambiente) eventos(t *testing.T, id uuid.UUID) []db.ListHeartbeatEventsRow {
 	t.Helper()
 	ctx := context.Background()
-	var ev []db.HeartbeatEvent
+	var ev []db.ListHeartbeatEventsRow
 	err := storage.InUserTx(ctx, a.pool, a.dono, func(q *db.Queries) error {
 		var err error
 		ev, err = q.ListHeartbeatEvents(ctx, db.ListHeartbeatEventsParams{UserID: a.dono, HeartbeatID: id, MaxRows: 5000})

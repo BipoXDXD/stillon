@@ -64,10 +64,10 @@ func contarEventos(t *testing.T, a *api, id uuid.UUID) int {
 	return len(eventosDoHeartbeat(t, a, id))
 }
 
-func eventosDoHeartbeat(t *testing.T, a *api, id uuid.UUID) []db.HeartbeatEvent {
+func eventosDoHeartbeat(t *testing.T, a *api, id uuid.UUID) []db.ListHeartbeatEventsRow {
 	t.Helper()
 	ctx := context.Background()
-	var ev []db.HeartbeatEvent
+	var ev []db.ListHeartbeatEventsRow
 	err := storage.InUserTx(ctx, a.pool, a.userID, func(q *db.Queries) error {
 		var err error
 		ev, err = q.ListHeartbeatEvents(ctx, db.ListHeartbeatEventsParams{UserID: a.userID, HeartbeatID: id, MaxRows: 100})

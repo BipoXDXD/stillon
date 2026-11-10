@@ -256,7 +256,7 @@ func (q *Queries) DeleteHeartbeatTags(ctx context.Context, arg DeleteHeartbeatTa
 }
 
 const getHeartbeat = `-- name: GetHeartbeat :one
-SELECT id, user_id, name, ping_token_hash, period_sec, cron_expr, timezone, grace_sec, enabled, created_at, deadline_at, last_ping_at, last_success_at, last_start_at, last_signal, failing_since, last_incident_at, resumed_at, last_runtime_ms, description FROM heartbeats WHERE user_id = $1 AND id = $2
+SELECT id, user_id, name, ping_token_hash, period_sec, cron_expr, timezone, grace_sec, enabled, created_at, deadline_at, last_ping_at, last_success_at, last_start_at, last_signal, failing_since, last_incident_at, resumed_at, last_runtime_ms, description, last_run_id, ping_resumes FROM heartbeats WHERE user_id = $1 AND id = $2
 `
 
 type GetHeartbeatParams struct {
@@ -288,12 +288,14 @@ func (q *Queries) GetHeartbeat(ctx context.Context, arg GetHeartbeatParams) (Hea
 		&i.ResumedAt,
 		&i.LastRuntimeMS,
 		&i.Description,
+		&i.LastRunID,
+		&i.PingResumes,
 	)
 	return i, err
 }
 
 const getHeartbeatForUpdate = `-- name: GetHeartbeatForUpdate :one
-SELECT id, user_id, name, ping_token_hash, period_sec, cron_expr, timezone, grace_sec, enabled, created_at, deadline_at, last_ping_at, last_success_at, last_start_at, last_signal, failing_since, last_incident_at, resumed_at, last_runtime_ms, description FROM heartbeats WHERE user_id = $1 AND id = $2 FOR UPDATE
+SELECT id, user_id, name, ping_token_hash, period_sec, cron_expr, timezone, grace_sec, enabled, created_at, deadline_at, last_ping_at, last_success_at, last_start_at, last_signal, failing_since, last_incident_at, resumed_at, last_runtime_ms, description, last_run_id, ping_resumes FROM heartbeats WHERE user_id = $1 AND id = $2 FOR UPDATE
 `
 
 type GetHeartbeatForUpdateParams struct {
@@ -327,12 +329,14 @@ func (q *Queries) GetHeartbeatForUpdate(ctx context.Context, arg GetHeartbeatFor
 		&i.ResumedAt,
 		&i.LastRuntimeMS,
 		&i.Description,
+		&i.LastRunID,
+		&i.PingResumes,
 	)
 	return i, err
 }
 
 const getHeartbeatView = `-- name: GetHeartbeatView :one
-SELECT h.id, h.user_id, h.name, h.ping_token_hash, h.period_sec, h.cron_expr, h.timezone, h.grace_sec, h.enabled, h.created_at, h.deadline_at, h.last_ping_at, h.last_success_at, h.last_start_at, h.last_signal, h.failing_since, h.last_incident_at, h.resumed_at, h.last_runtime_ms, h.description, x.id AS open_incident_id
+SELECT h.id, h.user_id, h.name, h.ping_token_hash, h.period_sec, h.cron_expr, h.timezone, h.grace_sec, h.enabled, h.created_at, h.deadline_at, h.last_ping_at, h.last_success_at, h.last_start_at, h.last_signal, h.failing_since, h.last_incident_at, h.resumed_at, h.last_runtime_ms, h.description, h.last_run_id, h.ping_resumes, x.id AS open_incident_id
   FROM heartbeats h
   LEFT JOIN incidents x ON x.heartbeat_id = h.id AND x.resolved_at IS NULL
  WHERE h.user_id = $1 AND h.id = $2
@@ -373,6 +377,8 @@ func (q *Queries) GetHeartbeatView(ctx context.Context, arg GetHeartbeatViewPara
 		&i.Heartbeat.ResumedAt,
 		&i.Heartbeat.LastRuntimeMS,
 		&i.Heartbeat.Description,
+		&i.Heartbeat.LastRunID,
+		&i.Heartbeat.PingResumes,
 		&i.OpenIncidentID,
 	)
 	return i, err
@@ -483,9 +489,18 @@ type ListHeartbeatEventsParams struct {
 	MaxRows     int32
 }
 
+type ListHeartbeatEventsRow struct {
+	ID          uuid.UUID
+	HeartbeatID uuid.UUID
+	At          time.Time
+	Kind        string
+	RuntimeMS   *int64
+	ExitCode    *int16
+}
+
 // O log do dono, do mais novo ao mais velho. O id é UUIDv7, e o cursor é o
 // último id da página anterior.
-func (q *Queries) ListHeartbeatEvents(ctx context.Context, arg ListHeartbeatEventsParams) ([]HeartbeatEvent, error) {
+func (q *Queries) ListHeartbeatEvents(ctx context.Context, arg ListHeartbeatEventsParams) ([]ListHeartbeatEventsRow, error) {
 	rows, err := q.db.Query(ctx, listHeartbeatEvents,
 		arg.UserID,
 		arg.HeartbeatID,
@@ -496,9 +511,9 @@ func (q *Queries) ListHeartbeatEvents(ctx context.Context, arg ListHeartbeatEven
 		return nil, err
 	}
 	defer rows.Close()
-	var items []HeartbeatEvent
+	var items []ListHeartbeatEventsRow
 	for rows.Next() {
-		var i HeartbeatEvent
+		var i ListHeartbeatEventsRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.HeartbeatID,
@@ -618,7 +633,7 @@ func (q *Queries) ListHeartbeatTags(ctx context.Context, arg ListHeartbeatTagsPa
 }
 
 const listHeartbeats = `-- name: ListHeartbeats :many
-SELECT h.id, h.user_id, h.name, h.ping_token_hash, h.period_sec, h.cron_expr, h.timezone, h.grace_sec, h.enabled, h.created_at, h.deadline_at, h.last_ping_at, h.last_success_at, h.last_start_at, h.last_signal, h.failing_since, h.last_incident_at, h.resumed_at, h.last_runtime_ms, h.description, x.id AS open_incident_id
+SELECT h.id, h.user_id, h.name, h.ping_token_hash, h.period_sec, h.cron_expr, h.timezone, h.grace_sec, h.enabled, h.created_at, h.deadline_at, h.last_ping_at, h.last_success_at, h.last_start_at, h.last_signal, h.failing_since, h.last_incident_at, h.resumed_at, h.last_runtime_ms, h.description, h.last_run_id, h.ping_resumes, x.id AS open_incident_id
   FROM heartbeats h
   LEFT JOIN incidents x ON x.heartbeat_id = h.id AND x.resolved_at IS NULL
  WHERE h.user_id = $1
@@ -669,6 +684,8 @@ func (q *Queries) ListHeartbeats(ctx context.Context, arg ListHeartbeatsParams) 
 			&i.Heartbeat.ResumedAt,
 			&i.Heartbeat.LastRuntimeMS,
 			&i.Heartbeat.Description,
+			&i.Heartbeat.LastRunID,
+			&i.Heartbeat.PingResumes,
 			&i.OpenIncidentID,
 		); err != nil {
 			return nil, err
@@ -710,7 +727,7 @@ func (q *Queries) ListUserHeartbeatTags(ctx context.Context, userID uuid.UUID) (
 }
 
 const lockHeartbeatForPing = `-- name: LockHeartbeatForPing :one
-SELECT id, user_id, name, ping_token_hash, period_sec, cron_expr, timezone, grace_sec, enabled, created_at, deadline_at, last_ping_at, last_success_at, last_start_at, last_signal, failing_since, last_incident_at, resumed_at, last_runtime_ms, description FROM heartbeats WHERE ping_token_hash = $1 FOR UPDATE
+SELECT id, user_id, name, ping_token_hash, period_sec, cron_expr, timezone, grace_sec, enabled, created_at, deadline_at, last_ping_at, last_success_at, last_start_at, last_signal, failing_since, last_incident_at, resumed_at, last_runtime_ms, description, last_run_id, ping_resumes FROM heartbeats WHERE ping_token_hash = $1 FOR UPDATE
 `
 
 // A trava serializa pings simultâneos do mesmo token: o segundo lê o estado
@@ -741,6 +758,8 @@ func (q *Queries) LockHeartbeatForPing(ctx context.Context, pingTokenHash []byte
 		&i.ResumedAt,
 		&i.LastRuntimeMS,
 		&i.Description,
+		&i.LastRunID,
+		&i.PingResumes,
 	)
 	return i, err
 }
