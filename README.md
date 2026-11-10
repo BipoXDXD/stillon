@@ -91,6 +91,11 @@ variáveis são segredos de interpolação do recurso no Coolify, nunca arquivos
 
 - **Sonda** alvos HTTP (GET, HEAD ou POST) de 30 s a 24 h, com headers cifrados, status
   esperado, limite de latência para "degradado" e até 8 tags para agrupar e filtrar.
+- **Certificado** do host cadastrado: o detalhe do alvo mostra a validade ("Certificado válido até
+  …, em N dias", ou a data em que venceu), "não se aplica" para `http` ou IP literal e "aguardando a
+  primeira sonda" antes da primeira leitura. Atrás de um balanceador com réplicas de certificados
+  diferentes, a sonda guarda o pior certificado visto. Na API do alvo, `tls` traz `not_after` e
+  `observed_at` (ou `null` sem leitura), e `tls_warn` é aceito no cadastro e no `PATCH` (padrão `true`).
 - **Incidentes** abrem depois de falhas seguidas e fecham depois de sucessos seguidos, com
   histórico por alvo.
 - **Notificações** pelo Discord e por e-mail (Resend), com entrega confiável: saem de uma fila
