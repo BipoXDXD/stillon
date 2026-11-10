@@ -137,7 +137,10 @@ export function FormularioAlvo({
         onToggle={(ev) => setAvancadoAberto(ev.currentTarget.open)}
         className="rounded-padrao border border-borda p-4"
       >
-        <summary className="flex min-h-11 cursor-pointer items-center font-semibold">
+        {/* min-h-12, e não 11: com a seção aberta, o conteúdo encosta no
+            summary, e o hit-test do Chromium arredonda o ponto da borda de
+            baixo (a 21,5 px do centro) para o pixel do conteúdo. */}
+        <summary className="flex min-h-12 cursor-pointer items-center font-semibold">
           Avançado
           <span className="ml-2 text-sm font-normal text-suave">método, timeout, status, lentidão e headers</span>
         </summary>
