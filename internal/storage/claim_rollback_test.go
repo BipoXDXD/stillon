@@ -33,7 +33,9 @@ func TestClaimSkipsNotificationWithoutIncident(t *testing.T) {
 	err := storage.InProberTx(ctx, pool, func(q *db.Queries) error {
 		var err error
 		lote, err = q.ClaimDueNotifications(ctx, db.ClaimDueNotificationsParams{
-			Now: agora, LeaseUntil: agora.Add(time.Minute), MaxRows: 10,
+			// Um lugar só: o aviso sem incidente vence antes (11:59), então
+			// sem o filtro ele ocuparia a vaga e o lote voltaria vazio.
+			Now: agora, LeaseUntil: agora.Add(time.Minute), MaxRows: 1,
 		})
 		return err
 	})
