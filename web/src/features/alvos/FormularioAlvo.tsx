@@ -7,7 +7,7 @@ import { estiloDeCartao } from '@/components/ui/cartao'
 import { CaixaDeMarcar, Campo, Entrada, ErroDoFormulario, Opcao, Selecao } from '@/components/ui/campo'
 import { ApiError } from '@/lib/api/http'
 import { mensagemDe, mensagemDoCampo } from '@/lib/api/mensagens'
-import { campoDoServidor, esquemaDoAlvo, INTERVALOS, OUTRO, type ValoresDoAlvo } from './esquema'
+import { avancadoPersonalizado, campoDoServidor, esquemaDoAlvo, INTERVALOS, OUTRO, type ValoresDoAlvo } from './esquema'
 import { cn } from '@/lib/utils'
 
 // O que fica em "Avançado" (DI, formulário único com o raro recolhido): o
@@ -37,7 +37,8 @@ export function FormularioAlvo({
   const f = useForm<ValoresDoAlvo>({ resolver: zodResolver(esquema), defaultValues: iniciais })
   const headers = useFieldArray({ control: f.control, name: 'headers' })
   const [erroGeral, setErroGeral] = useState<string | null>(null)
-  const [avancadoAberto, setAvancadoAberto] = useState(false)
+  // Na edição, um alvo com o raro fora do padrão já abre com ele à vista.
+  const [avancadoAberto, setAvancadoAberto] = useState(() => avancadoPersonalizado(iniciais, nomesDeHeaders ?? []))
   const e = f.formState.errors
   const avancadoVisivel = avancadoAberto || erroNoAvancado(e)
   const lentidao = useWatch({ control: f.control, name: 'lentidao' })

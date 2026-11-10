@@ -10,6 +10,7 @@ import '@/features/alvos/PaginaDetalhe'
 import '@/test/aquecer-estilos'
 import {
   apagaOsHeaders,
+  avancadoPersonalizado,
   esquemaAlvo,
   esquemaDoAlvo,
   paraAlteracao,
@@ -189,6 +190,45 @@ describe('cadastrar', () => {
     await preencher(r.usuario)
     await r.usuario.click(screen.getByRole('button', { name: 'Cadastrar' }))
     expect(await screen.findByRole('alert')).toHaveTextContent('Limite de 100 alvos atingido.')
+  })
+})
+
+// Decisão da revisão: na edição, um alvo com o "Avançado" fora do padrão já
+// mostra a seção aberta; escondido, o valor raro passaria despercebido.
+// Sabotagem: avancadoPersonalizado devolvendo sempre false.
+describe('"Avançado" na edição', () => {
+  const base = () => valoresDe(Alvo.parse(alvo()))
+
+  it('com tudo no padrão e sem headers, fica recolhido', () => {
+    expect(avancadoPersonalizado(base(), [])).toBe(false)
+  })
+
+  it.each([
+    ['método', { method: 'POST' as const }],
+    ['timeout', { timeout_ms: 5000 }],
+    ['status esperado', { expected_status: 204 }],
+    ['lentidão personalizada', { lentidao: 'personalizado' as const, degraded_threshold_ms: 500 }],
+    ['lentidão desativada', { lentidao: 'desativado' as const }],
+  ])('%s fora do padrão abre', (_, mudanca) => {
+    expect(avancadoPersonalizado({ ...base(), ...mudanca }, [])).toBe(true)
+  })
+
+  it('headers definidos abrem', () => {
+    expect(avancadoPersonalizado(base(), ['Authorization'])).toBe(true)
+  })
+
+  it('a tela de edição de um alvo com POST abre o "Avançado"; a de um alvo padrão, não', async () => {
+    const r = await renderizarPainel('/targets/alvo-1/edit')
+    r.falsa.estado.alvos = [
+      alvo({ id: 'alvo-1', method: 'POST' }),
+      alvo({ id: 'alvo-2', name: 'Padrão', url: 'https://b.exemplo.com/' }),
+    ]
+    await r.cliente.refetchQueries()
+    await waitFor(() => expect(screen.getByLabelText('Método')).toHaveValue('POST'))
+    expect(screen.getByText('Avançado').closest('details')).toHaveAttribute('open')
+    await r.router.navigate('/targets/alvo-2/edit')
+    await waitFor(() => expect(screen.getByLabelText('Nome')).toHaveValue('Padrão'))
+    expect(screen.getByText('Avançado').closest('details')).not.toHaveAttribute('open')
   })
 })
 

@@ -235,6 +235,18 @@ export function valoresDe(a: Alvo): ValoresDoAlvo {
   }
 }
 
+// Na edição, um "Avançado" fora do padrão (ou com headers guardados) começa
+// aberto: recolhido, o valor raro do alvo passaria despercebido.
+export function avancadoPersonalizado(v: ValoresDoAlvo, nomesDeHeaders: readonly string[]): boolean {
+  return (
+    v.method !== valoresPadrao.method ||
+    v.timeout_ms !== valoresPadrao.timeout_ms ||
+    v.expected_status !== valoresPadrao.expected_status ||
+    v.lentidao !== valoresPadrao.lentidao ||
+    nomesDeHeaders.length > 0
+  )
+}
+
 function limiar(v: ValoresDoAlvo): number | null | undefined {
   if (v.lentidao === 'desativado') return null
   if (v.lentidao === 'personalizado') return v.degraded_threshold_ms
