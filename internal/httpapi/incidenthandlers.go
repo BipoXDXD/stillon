@@ -4,7 +4,6 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
-	"strconv"
 	"time"
 
 	"github.com/google/uuid"
@@ -59,7 +58,7 @@ func (h *IncidentHandlers) List(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	f := history.Filter{Limit: history.DefaultPageSize}
+	var f history.Filter
 
 	switch q.Get("status") {
 	case "":
@@ -72,26 +71,11 @@ func (h *IncidentHandlers) List(w http.ResponseWriter, r *http.Request) {
 		campoInvalido(w, r, "status", targets.ReasonInvalid)
 		return
 	}
-	if s := q.Get("limit"); s != "" {
-		n, err := strconv.ParseInt(s, 10, 32)
-		if err != nil {
-			campoInvalido(w, r, "limit", targets.ReasonInvalid)
-			return
-		}
-		if n < 1 || n > int64(history.MaxPageSize) {
-			campoInvalido(w, r, "limit", targets.ReasonOutOfRange)
-			return
-		}
-		f.Limit = int32(n)
+	limite, cursor, ok := paginaDe(w, r, q, history.DefaultPageSize, history.MaxPageSize)
+	if !ok {
+		return
 	}
-	if s := q.Get("cursor"); s != "" {
-		c, err := uuid.Parse(s)
-		if err != nil {
-			campoInvalido(w, r, "cursor", targets.ReasonInvalid)
-			return
-		}
-		f.Before = &c
-	}
+	f.Limit, f.Before = limite, cursor
 	// target_id malformado é 400, como o cursor: é parâmetro de consulta, e
 	// não o recurso do caminho (que seria 404).
 	if s := q.Get("target_id"); s != "" {
