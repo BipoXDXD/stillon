@@ -131,6 +131,7 @@ jobs:
         # todas as sessões próprias e nunca para/remove contêineres.
         run: |
           python3 -m unittest discover -s deploy/ci -p test_docker_build.py -v
+          python3 -m unittest discover -s deploy/ci -p test_ensaiar_piso_env.py -v
           python3 deploy/ci/diagnostico-fixture.py \
             --output "$RUNNER_TEMP/fixture-diagnostic" --daemon-exclusivo -- \
             go test -race -count=1 -coverprofile=coverage.out ./...

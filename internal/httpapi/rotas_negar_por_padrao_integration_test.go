@@ -33,6 +33,7 @@ var rotasPublicas = map[string]string{
 	"POST /ping/{token}":             "a credencial é o token no caminho, enviado por uma tarefa agendada",
 	"POST /ping/{token}/start":       "a credencial é o token no caminho, enviado por uma tarefa agendada",
 	"POST /ping/{token}/fail":        "a credencial é o token no caminho, enviado por uma tarefa agendada",
+	"POST /ping/{token}/log":         "a credencial é o token no caminho, enviado por uma tarefa agendada",
 	"POST /ping/{token}/{exit_code}": "a credencial é o token no caminho, enviado por uma tarefa agendada",
 }
 

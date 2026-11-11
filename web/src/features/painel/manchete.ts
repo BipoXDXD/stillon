@@ -10,6 +10,7 @@ export type Manchete =
   | { tipo: 'sem-alvos' }
   | { tipo: 'problemas'; quantos: number; tarefas: number }
   | { tipo: 'aguardando'; quantos: number; tarefas: number }
+  | { tipo: 'estado-desconhecido'; tarefas: number }
   | { tipo: 'tarefas-sem-confirmacao' }
   | { tipo: 'todos-pausados' }
   | { tipo: 'tudo-no-ar' }
@@ -35,8 +36,12 @@ export function manchete(itens: readonly ItemDoResumo[], tarefas: Tarefas): Manc
   const todos = [...alvos, ...dasTarefas]
   if (todos.length === 0) return { tipo: 'sem-alvos' }
   const semDados = alvos.filter((e) => e === 'unknown').length
-  const semSinal = dasTarefas.filter((e) => e === 'unknown').length
+  const semSinal = tarefas.itens.filter((hb) => hb.state === 'waiting').length
   if (semDados + semSinal > 0) return { tipo: 'aguardando', quantos: semDados, tarefas: semSinal }
+  // Um estado de versão posterior do servidor: o painel não sabe se está bem,
+  // e não pode dizer "Tudo no ar." nem "sem execução concluída".
+  const desconhecidas = tarefas.itens.filter((hb) => hb.state === 'unknown').length
+  if (desconhecidas > 0) return { tipo: 'estado-desconhecido', tarefas: desconhecidas }
   if (todos.every((e) => e === 'pausado')) return { tipo: 'todos-pausados' }
   return { tipo: 'tudo-no-ar' }
 }
@@ -87,6 +92,8 @@ export function textoDaManchete(m: Manchete): string {
       return `${sujeito(m.quantos, m.tarefas)} ${m.quantos + m.tarefas === 1 ? 'pede' : 'pedem'} atenção.`
     case 'aguardando':
       return fraseDeEspera(m.quantos, m.tarefas)
+    case 'estado-desconhecido':
+      return `${nomeDasTarefas(m.tarefas)} em estado desconhecido.`
     case 'tarefas-sem-confirmacao':
       return 'Não foi possível conferir as tarefas.'
     case 'todos-pausados':
@@ -112,16 +119,19 @@ export function resumoEmTexto(itens: readonly ItemDoResumo[]): string {
   return ORDEM.flatMap(([e, um, varios]) => (conta[e] ? [plural(conta[e], um, varios)] : [])).join(', ')
 }
 
-const ORDEM_DAS_TAREFAS: readonly [EstadoDoHeartbeat, string, string][] = [
-  ['failing', 'com falha', 'com falha'],
-  ['late', 'atrasada', 'atrasadas'],
-  ['up', 'em dia', 'em dia'],
-  ['waiting', 'aguardando', 'aguardando'],
-  ['paused', 'pausada', 'pausadas'],
-]
+// Na ordem de exibição. Record: um estado novo sem frase aqui não compila.
+const ORDEM_DAS_TAREFAS: Record<EstadoDoHeartbeat, readonly [string, string]> = {
+  failing: ['com falha', 'com falha'],
+  late: ['atrasada', 'atrasadas'],
+  grace: ['em tolerância', 'em tolerância'],
+  up: ['em dia', 'em dia'],
+  waiting: ['aguardando', 'aguardando'],
+  paused: ['pausada', 'pausadas'],
+  unknown: ['em estado desconhecido', 'em estado desconhecido'],
+}
 
 function resumoDasTarefas(tarefas: readonly Heartbeat[]): string {
-  const frases = ORDEM_DAS_TAREFAS.flatMap(([e, um, varios]) => {
+  const frases = Object.entries(ORDEM_DAS_TAREFAS).flatMap(([e, [um, varios]]) => {
     const n = tarefas.filter((hb) => hb.state === e).length
     return n ? [plural(n, um, varios)] : []
   })

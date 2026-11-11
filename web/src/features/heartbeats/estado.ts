@@ -1,15 +1,21 @@
 import type { Agendamento, EstadoDoHeartbeat, Heartbeat } from '@/lib/api/schemas'
 import type { EstadoExibido } from '@/lib/estado'
-import { duracao } from '@/lib/format'
+import { dataHora, duracao } from '@/lib/format'
+import { assertUnreachable } from '@/lib/utils'
 
 // O heartbeat na escala de gravidade do painel (forma, cor, ordem e filtro),
 // com palavra própria: uma tarefa não fica "fora do ar" (spec da tela, T2 e T3).
 const ESTADOS: Record<EstadoDoHeartbeat, { exibido: EstadoExibido; texto: string }> = {
   up: { exibido: 'up', texto: 'Em dia' },
+  // Passou do prazo e o alarme ainda não saiu: degradado, que não pede atenção
+  // (Ruling do plano da SP1, PR 3).
+  grace: { exibido: 'degraded', texto: 'Em tolerância' },
   late: { exibido: 'down', texto: 'Atrasado' },
   failing: { exibido: 'down', texto: 'Falhando' },
   waiting: { exibido: 'unknown', texto: 'Aguardando' },
   paused: { exibido: 'pausado', texto: 'Pausado' },
+  // Um estado de versão posterior do servidor: neutro, sem cor de alerta.
+  unknown: { exibido: 'unknown', texto: 'Estado desconhecido' },
 }
 
 export function estadoDoHeartbeat(e: EstadoDoHeartbeat): EstadoExibido {
@@ -39,6 +45,12 @@ export function prazoVencido(hb: Pick<Heartbeat, 'deadline_at'>, agora: Date): b
 // importa, e um início aberto ali é de uma execução que não terminou.
 export function inicioEmCurso(hb: Pick<Heartbeat, 'state' | 'last_start_at'>): string | null {
   return hb.state === 'up' || hb.state === 'waiting' ? hb.last_start_at : null
+}
+
+// Em tolerância o prazo esperado já passou e o deadline_at é a hora do alarme.
+// A mesma frase no detalhe e na linha da tabela.
+export function textoDaTolerancia(hb: Pick<Heartbeat, 'deadline_at'>): string {
+  return `Sem sinal desde o prazo esperado; o alarme sai às ${dataHora(hb.deadline_at)}.`
 }
 
 // waiting é nunca ter terminado uma execução: pode já ter havido um início.
@@ -73,6 +85,17 @@ export function textoDaDuracao(segundos: number): string {
   return `${quantidade} ${quantidade === 1 && unidade === 'dias' ? 'dia' : ABREVIADA[unidade]}`
 }
 
+export const AGENDAMENTO_NAO_SUPORTADO = 'Agendamento não suportado nesta versão'
+
 export function textoDoAgendamento(a: Agendamento): string {
-  return a.kind === 'period' ? `a cada ${textoDaDuracao(a.period_sec)}` : `cron ${a.expr}, ${a.timezone}`
+  switch (a.kind) {
+    case 'period':
+      return `a cada ${textoDaDuracao(a.period_sec)}`
+    case 'cron':
+      return `cron ${a.expr}, ${a.timezone}`
+    case 'unknown':
+      return AGENDAMENTO_NAO_SUPORTADO
+    default:
+      return assertUnreachable(a)
+  }
 }

@@ -3,6 +3,7 @@ package heartbeat_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -86,7 +87,7 @@ func (a ambiente) eventos(t *testing.T, id uuid.UUID) []db.HeartbeatEvent {
 
 func (a ambiente) pingar(t *testing.T, token string, sig heartbeat.Signal) {
 	t.Helper()
-	if err := a.svc.Ping(context.Background(), token, sig); err != nil {
+	if err := a.svc.Ping(context.Background(), token, sig, nil); err != nil {
 		t.Fatalf("ping %s: %v", sig, err)
 	}
 }
@@ -141,7 +142,7 @@ func TestPingOfAnUnknownOrMalformedTokenIsTheSameError(t *testing.T) {
 	a := novoAmbiente(t)
 	desconhecido, _ := heartbeat.NewPingToken()
 	for _, token := range []string{desconhecido, "", "curto"} {
-		if err := a.svc.Ping(context.Background(), token, heartbeat.SignalSuccess); !errors.Is(err, heartbeat.ErrUnknownToken) {
+		if err := a.svc.Ping(context.Background(), token, heartbeat.SignalSuccess, nil); !errors.Is(err, heartbeat.ErrUnknownToken) {
 			t.Errorf("token %q deu %v", token, err)
 		}
 	}
@@ -182,7 +183,7 @@ func TestConcurrentPingsHaveOneEffect(t *testing.T) {
 	for range n {
 		wg.Go(func() {
 			<-largada
-			erros <- a.svc.Ping(context.Background(), token, heartbeat.SignalSuccess)
+			erros <- a.svc.Ping(context.Background(), token, heartbeat.SignalSuccess, nil)
 		})
 	}
 	close(largada)
@@ -198,6 +199,161 @@ func TestConcurrentPingsHaveOneEffect(t *testing.T) {
 	}
 }
 
+// largarJuntos solta as funções numa largada comum e devolve os erros.
+func largarJuntos(fns ...func() error) []error {
+	var wg sync.WaitGroup
+	erros := make(chan error, len(fns))
+	largada := make(chan struct{})
+	for _, fn := range fns {
+		wg.Go(func() {
+			<-largada
+			erros <- fn()
+		})
+	}
+	close(largada)
+	wg.Wait()
+	close(erros)
+	var out []error
+	for err := range erros {
+		if err != nil {
+			out = append(out, err)
+		}
+	}
+	return out
+}
+
+// O ping-now trava a linha como o ping: sem o FOR UPDATE, os cliques leem a
+// linha de antes dos pings e cada um grava o seu evento.
+func TestConcurrentPingNowAndPingHaveOneEffect(t *testing.T) {
+	a := novoAmbiente(t)
+	painel := heartbeat.NewService(a.pool, a.clk)
+	id, token := a.novoHeartbeat(t)
+
+	const n = 8
+	var fns []func() error
+	for range n {
+		fns = append(fns,
+			func() error {
+				_, err := painel.PingNow(context.Background(), a.dono, id)
+				return err
+			},
+			func() error { return a.svc.Ping(context.Background(), token, heartbeat.SignalSuccess, nil) },
+		)
+	}
+	for _, err := range largarJuntos(fns...) {
+		t.Error(err)
+	}
+
+	if ev := a.eventos(t, id); len(ev) != 1 || ev[0].Kind != "success" {
+		t.Errorf("eventos %+v de %d sinais simultâneos, queria um success", ev, 2*n)
+	}
+	h := a.linha(t, id)
+	if h.LastSignal == nil || *h.LastSignal != "success" || !mesmoInstante(h.LastSuccessAt, &agora) {
+		t.Errorf("last_signal %s, last_success_at %s; queria success em %v", valor(h.LastSignal), valor(h.LastSuccessAt), agora)
+	}
+	if !h.DeadlineAt.Equal(agora.Add(65 * time.Minute)) {
+		t.Errorf("prazo %v, queria %v", h.DeadlineAt, agora.Add(65*time.Minute))
+	}
+}
+
+// Com um /fail simultâneo, a execução aberta fecha uma vez só, e quem a fecha é
+// a falha da tarefa, nunca o ping-now; o estado final é o do último evento do
+// log: a falha não some por baixo de um ping-now que leu a linha de antes dela.
+func TestConcurrentPingNowAndFailKeepTheFailure(t *testing.T) {
+	a := novoAmbiente(t)
+	painel := heartbeat.NewService(a.pool, a.clk)
+	id, token := a.novoHeartbeat(t)
+	a.pingar(t, token, heartbeat.SignalStart)
+	a.clk.Advance(time.Minute)
+
+	const n = 8
+	var fns []func() error
+	for range n {
+		fns = append(fns,
+			func() error {
+				_, err := painel.PingNow(context.Background(), a.dono, id)
+				return err
+			},
+			func() error { return a.svc.Ping(context.Background(), token, heartbeat.SignalFail, nil) },
+		)
+	}
+	for _, err := range largarJuntos(fns...) {
+		t.Error(err)
+	}
+
+	ev := a.eventos(t, id)
+	var medidos, falhas int
+	for _, e := range ev {
+		if e.RuntimeMS != nil {
+			medidos++
+			if *e.RuntimeMS != 60000 || e.Source != "ping" || e.Kind != "fail" {
+				t.Errorf("evento medido %+v, queria a falha da tarefa com 60000 ms", e)
+			}
+		}
+		if e.Kind == "fail" {
+			falhas++
+		}
+	}
+	if medidos != 1 {
+		t.Errorf("%d eventos fecharam a execução, queria 1 (a primeira falha): %+v", medidos, ev)
+	}
+	if falhas == 0 {
+		t.Errorf("a falha sumiu do log: %+v", ev)
+	}
+	h := a.linha(t, id)
+	ultimo := ev[0].Kind
+	if h.LastSignal == nil || *h.LastSignal != ultimo {
+		t.Errorf("last_signal %s, e o último evento é %s", valor(h.LastSignal), ultimo)
+	}
+	if falhando := h.FailingSince != nil; falhando != (ultimo == "fail") {
+		t.Errorf("failing_since %s com o último evento %s", valor(h.FailingSince), ultimo)
+	}
+}
+
+// O sinal do painel não é a tarefa (R2): com a execução aberta, ele não a
+// encerra nem leva a duração dela; quem fecha é o sucesso da própria tarefa.
+func TestPingNowDoesNotCloseTheOpenRun(t *testing.T) {
+	a := novoAmbiente(t)
+	painel := heartbeat.NewService(a.pool, a.clk)
+	id, token := a.novoHeartbeat(t)
+	inicio := a.clk.Now()
+	a.pingar(t, token, heartbeat.SignalStart)
+	a.clk.Advance(time.Minute)
+	if _, err := painel.PingNow(context.Background(), a.dono, id); err != nil {
+		t.Fatal(err)
+	}
+
+	ev := a.eventos(t, id)
+	if ev[0].Source != "panel" || ev[0].RuntimeMS != nil {
+		t.Errorf("evento do painel %+v, queria source panel sem runtime_ms", ev[0])
+	}
+	h := a.linha(t, id)
+	if !mesmoInstante(h.LastStartAt, &inicio) {
+		t.Errorf("last_start_at %s depois do painel, queria %v", valor(h.LastStartAt), inicio)
+	}
+	if h.LastRuntimeMS != nil {
+		t.Errorf("last_runtime_ms %d depois do painel, queria NULL", *h.LastRuntimeMS)
+	}
+
+	a.clk.Advance(time.Minute)
+	a.pingar(t, token, heartbeat.SignalSuccess)
+	ev = a.eventos(t, id)
+	if ev[0].Source != "ping" || ev[0].RuntimeMS == nil || *ev[0].RuntimeMS != 120000 {
+		t.Errorf("sucesso da tarefa %+v, queria source ping com runtime_ms 120000", ev[0])
+	}
+	h = a.linha(t, id)
+	if h.LastStartAt != nil || h.LastRuntimeMS == nil || *h.LastRuntimeMS != 120000 {
+		t.Errorf("last_start_at %s, last_runtime_ms %s; queria NULL e 120000", valor(h.LastStartAt), valor(h.LastRuntimeMS))
+	}
+}
+
+func valor[T any](p *T) string {
+	if p == nil {
+		return "NULL"
+	}
+	return fmt.Sprint(*p)
+}
+
 // O teto vale na transação do ping, e o que sai é o mais velho.
 func TestEventsStayUnderTheCap(t *testing.T) {
 	a := novoAmbiente(t)
@@ -206,7 +362,7 @@ func TestEventsStayUnderTheCap(t *testing.T) {
 	err := storage.InUserTx(ctx, a.pool, a.dono, func(q *db.Queries) error {
 		for range heartbeat.MaxEventsPerHeartbeat {
 			err := q.InsertHeartbeatEvent(ctx, db.InsertHeartbeatEventParams{
-				ID: uuid.Must(uuid.NewV7()), HeartbeatID: id, At: agora, Kind: "start",
+				ID: uuid.Must(uuid.NewV7()), HeartbeatID: id, At: agora, Kind: "start", Source: "ping",
 			})
 			if err != nil {
 				return err
@@ -242,7 +398,7 @@ func TestEventCapIsPerHeartbeat(t *testing.T) {
 	cheio, token := a.novoHeartbeat(t)
 	inserir := func(q *db.Queries, id uuid.UUID) error {
 		return q.InsertHeartbeatEvent(ctx, db.InsertHeartbeatEventParams{
-			ID: uuid.Must(uuid.NewV7()), HeartbeatID: id, At: agora, Kind: "start",
+			ID: uuid.Must(uuid.NewV7()), HeartbeatID: id, At: agora, Kind: "start", Source: "ping",
 		})
 	}
 	err := storage.InUserTx(ctx, a.pool, a.dono, func(q *db.Queries) error {
@@ -280,5 +436,352 @@ func TestPingOnAPausedHeartbeatIsRecorded(t *testing.T) {
 	a.pingar(t, token, heartbeat.SignalSuccess)
 	if n := len(a.eventos(t, id)); n != 1 {
 		t.Errorf("%d eventos, queria 1", n)
+	}
+}
+
+func (a ambiente) pingarRun(t *testing.T, token string, sig heartbeat.Signal, rid *uuid.UUID) {
+	t.Helper()
+	if err := a.svc.Ping(context.Background(), token, sig, rid); err != nil {
+		t.Fatalf("ping %s: %v", sig, err)
+	}
+}
+
+func eventosDoTipo(ev []db.HeartbeatEvent, kind string) []db.HeartbeatEvent {
+	var out []db.HeartbeatEvent
+	for _, e := range ev {
+		if e.Kind == kind {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// O log só registra: prazo, último sinal, último ping e rid da linha ficam como
+// o sucesso de antes os deixou.
+func TestLogKeepsDeadlineAndLastSignal(t *testing.T) {
+	a := novoAmbiente(t)
+	id, token := a.novoHeartbeat(t)
+	ridSucesso := uuid.MustParse("0195f3c2-8a4b-7c1d-9e2f-3a4b5c6d7e8f")
+	ridLog := uuid.MustParse("0195f3c2-8a4b-7c1d-9e2f-000000000002")
+	a.pingarRun(t, token, heartbeat.SignalSuccess, &ridSucesso)
+
+	a.clk.Advance(2 * time.Minute)
+	a.pingarRun(t, token, heartbeat.SignalLog, &ridLog)
+
+	h := a.linha(t, id)
+	if want := agora.Add(time.Hour + 5*time.Minute); !h.DeadlineAt.Equal(want) {
+		t.Errorf("prazo %v, queria %v", h.DeadlineAt, want)
+	}
+	if h.LastSignal == nil || *h.LastSignal != "success" {
+		t.Errorf("last_signal %v, queria success", h.LastSignal)
+	}
+	if h.LastPingAt == nil || !h.LastPingAt.Equal(agora) {
+		t.Errorf("last_ping_at %v, queria %v", h.LastPingAt, agora)
+	}
+	if h.LastRunID == nil || *h.LastRunID != ridSucesso {
+		t.Errorf("last_run_id %v, queria %v", h.LastRunID, ridSucesso)
+	}
+	logs := eventosDoTipo(a.eventos(t, id), "log")
+	if len(logs) != 1 {
+		t.Fatalf("%d eventos log, queria 1", len(logs))
+	}
+	if logs[0].Source != "ping" || !logs[0].At.Equal(agora.Add(2*time.Minute)) {
+		t.Errorf("evento log: %+v", logs[0])
+	}
+	if logs[0].RunID == nil || *logs[0].RunID != ridLog {
+		t.Errorf("run_id do log %v, queria %v", logs[0].RunID, ridLog)
+	}
+}
+
+// O log divide o teto com os outros sinais: entra um, sai o mais velho.
+func TestLogSharesTheEventCap(t *testing.T) {
+	a := novoAmbiente(t)
+	ctx := context.Background()
+	id, token := a.novoHeartbeat(t)
+	err := storage.InUserTx(ctx, a.pool, a.dono, func(q *db.Queries) error {
+		for range heartbeat.MaxEventsPerHeartbeat {
+			err := q.InsertHeartbeatEvent(ctx, db.InsertHeartbeatEventParams{
+				ID: uuid.Must(uuid.NewV7()), HeartbeatID: id, At: agora, Kind: "start", Source: "ping",
+			})
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	maisVelho := a.eventos(t, id)[heartbeat.MaxEventsPerHeartbeat-1].ID
+
+	a.pingarRun(t, token, heartbeat.SignalLog, nil)
+
+	ev := a.eventos(t, id)
+	if len(ev) != 1000 {
+		t.Fatalf("%d eventos, queria 1000", len(ev))
+	}
+	if ev[0].Kind != "log" {
+		t.Errorf("o evento novo saiu: %+v", ev[0])
+	}
+	if ev[len(ev)-1].ID == maisVelho {
+		t.Error("o evento mais velho ficou")
+	}
+}
+
+// O log é aceito em qualquer heartbeat e não mexe em pausa, falha nem prazo,
+// nem quando o dono ligou a retomada por ping: só o sucesso retoma.
+func TestLogOnPausedFailingAndUnknownHeartbeats(t *testing.T) {
+	a := novoAmbiente(t)
+	semChecksDeAgendamento(t, a.pool)
+	falhandoDesde := agora.Add(-30 * time.Minute)
+	casos := []struct {
+		nome         string
+		preparar     func(t *testing.T) (uuid.UUID, string)
+		enabled      bool
+		failingSince *time.Time
+		prazo        time.Time
+	}{
+		{"pausado", func(t *testing.T) (uuid.UUID, string) {
+			id, token := a.novoHeartbeat(t)
+			a.comoDono(t, `UPDATE heartbeats SET enabled = false WHERE id = $1`, id)
+			return id, token
+		}, false, nil, agora.Add(time.Hour)},
+		{"em falha", func(t *testing.T) (uuid.UUID, string) {
+			id, token := a.novoHeartbeat(t)
+			a.comoDono(t, `UPDATE heartbeats SET failing_since = $2 WHERE id = $1`, id, falhandoDesde)
+			return id, token
+		}, true, &falhandoDesde, agora.Add(time.Hour)},
+		{"agendamento desconhecido", a.heartbeatDesconhecido, true, nil, agora.Add(-2 * time.Hour)},
+	}
+	for _, retoma := range []bool{false, true} {
+		for _, c := range casos {
+			t.Run(fmt.Sprintf("%s, ping_resumes=%t", c.nome, retoma), func(t *testing.T) {
+				id, token := c.preparar(t)
+				a.comoDono(t, `UPDATE heartbeats SET ping_resumes = $2 WHERE id = $1`, id, retoma)
+
+				if err := a.svc.Ping(context.Background(), token, heartbeat.SignalLog, nil); err != nil {
+					t.Fatalf("log: %v", err)
+				}
+
+				if n := len(a.eventos(t, id)); n != 1 {
+					t.Errorf("%d eventos, queria 1", n)
+				}
+				h := a.linha(t, id)
+				if h.Enabled != c.enabled {
+					t.Errorf("enabled %t, queria %t", h.Enabled, c.enabled)
+				}
+				if !mesmoInstante(h.FailingSince, c.failingSince) {
+					t.Errorf("failing_since %v, queria %v", h.FailingSince, c.failingSince)
+				}
+				if !h.DeadlineAt.Equal(c.prazo) {
+					t.Errorf("prazo %v, queria %v", h.DeadlineAt, c.prazo)
+				}
+				if h.ResumedAt != nil {
+					t.Errorf("resumed_at %v, queria nulo", h.ResumedAt)
+				}
+			})
+		}
+	}
+}
+
+func mesmoInstante(a, b *time.Time) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return a.Equal(*b)
+}
+
+// Duas execuções sobrepostas: cada término mede do início do próprio rid, e
+// não do início aberto da linha nem de outro evento de mesmo rid.
+func TestRunIDDurationsFromTheLog(t *testing.T) {
+	a := novoAmbiente(t)
+	id, token := a.novoHeartbeat(t)
+	ridA := uuid.MustParse("0195f3c2-8a4b-7c1d-9e2f-00000000000a")
+	ridB := uuid.MustParse("0195f3c2-8a4b-7c1d-9e2f-00000000000b")
+
+	a.pingarRun(t, token, heartbeat.SignalStart, &ridA)
+	a.clk.Advance(5 * time.Minute)
+	a.pingarRun(t, token, heartbeat.SignalStart, &ridB)
+	a.clk.Advance(5 * time.Minute)
+	a.pingarRun(t, token, heartbeat.SignalLog, &ridA)
+	a.clk.Advance(10 * time.Minute)
+	a.pingarRun(t, token, heartbeat.SignalSuccess, &ridA) // agora + 20 min
+	a.clk.Advance(15 * time.Minute)
+	a.pingarRun(t, token, heartbeat.SignalSuccess, &ridB) // 30 min desde o início de B
+
+	ev := a.eventos(t, id)
+	if len(ev) != 5 {
+		t.Fatalf("%d eventos, queria 5", len(ev))
+	}
+	esperados := []struct {
+		kind    string
+		rid     uuid.UUID
+		runtime *int64
+	}{
+		{"success", ridB, ptr(int64(1800000))},
+		{"success", ridA, ptr(int64(1200000))},
+		{"log", ridA, nil},
+		{"start", ridB, nil},
+		{"start", ridA, nil},
+	}
+	for i, e := range esperados {
+		got := ev[i]
+		if got.Kind != e.kind || got.RunID == nil || *got.RunID != e.rid {
+			t.Errorf("evento %d: %s %v, queria %s %v", i, got.Kind, got.RunID, e.kind, e.rid)
+		}
+		if !mesmoNumero(got.RuntimeMS, e.runtime) {
+			t.Errorf("evento %d: runtime_ms %s, queria %s", i, numero(got.RuntimeMS), numero(e.runtime))
+		}
+	}
+	if h := a.linha(t, id); h.LastStartAt != nil {
+		t.Errorf("last_start_at %v: o término de B devia consumir o início aberto", h.LastStartAt)
+	}
+}
+
+func numero(p *int64) string {
+	if p == nil {
+		return "nulo"
+	}
+	return fmt.Sprint(*p)
+}
+
+func mesmoNumero(a, b *int64) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return *a == *b
+}
+
+// O teto aparou o início: o sucesso grava sem duração, sem erro, e a execução
+// aberta da linha fica como estava.
+func TestSuccessWhoseStartWasTrimmed(t *testing.T) {
+	a := novoAmbiente(t)
+	id, token := a.novoHeartbeat(t)
+	ridA := uuid.MustParse("0195f3c2-8a4b-7c1d-9e2f-00000000000a")
+	a.pingarRun(t, token, heartbeat.SignalStart, &ridA)
+	for range heartbeat.MaxEventsPerHeartbeat {
+		a.pingarRun(t, token, heartbeat.SignalLog, nil)
+	}
+	a.clk.Advance(20 * time.Minute)
+
+	if err := a.svc.Ping(context.Background(), token, heartbeat.SignalSuccess, &ridA); err != nil {
+		t.Fatalf("sucesso: %v", err)
+	}
+
+	ev := a.eventos(t, id)
+	if ev[0].Kind != "success" || ev[0].RuntimeMS != nil {
+		t.Errorf("sucesso: %s, runtime_ms %s, queria sem duração", ev[0].Kind, numero(ev[0].RuntimeMS))
+	}
+	h := a.linha(t, id)
+	if h.LastStartAt == nil || !h.LastStartAt.Equal(agora) {
+		t.Errorf("last_start_at %v, queria %v intacto", h.LastStartAt, agora)
+	}
+	if h.LastRuntimeMS != nil {
+		t.Errorf("last_runtime_ms %v, queria nulo", *h.LastRuntimeMS)
+	}
+}
+
+// Só o sucesso retoma, só com ping_resumes, e a repetição não retoma de novo.
+func TestPingResumesOnSuccess(t *testing.T) {
+	a := novoAmbiente(t)
+	id, token := a.novoHeartbeat(t)
+	a.comoDono(t, `UPDATE heartbeats SET enabled = false, ping_resumes = true WHERE id = $1`, id)
+
+	a.pingar(t, token, heartbeat.SignalStart)
+	if h := a.linha(t, id); h.Enabled || h.ResumedAt != nil {
+		t.Fatalf("o início retomou: enabled %t, resumed_at %v", h.Enabled, h.ResumedAt)
+	}
+
+	a.clk.Advance(time.Minute)
+	a.pingar(t, token, heartbeat.SignalSuccess)
+	retomadaEm := agora.Add(time.Minute)
+	h := a.linha(t, id)
+	if !h.Enabled {
+		t.Error("o sucesso não retomou")
+	}
+	if h.ResumedAt == nil || !h.ResumedAt.Equal(retomadaEm) {
+		t.Errorf("resumed_at %v, queria %v", h.ResumedAt, retomadaEm)
+	}
+	if want := agora.Add(time.Minute + time.Hour + 5*time.Minute); !h.DeadlineAt.Equal(want) {
+		t.Errorf("prazo %v, queria %v", h.DeadlineAt, want)
+	}
+
+	// Pausada de novo, a repetição dentro da janela não retoma: sem a janela,
+	// este segundo sucesso religaria a tarefa.
+	a.comoDono(t, `UPDATE heartbeats SET enabled = false WHERE id = $1`, id)
+	a.clk.Advance(5 * time.Second)
+	a.pingar(t, token, heartbeat.SignalSuccess)
+	if n := len(a.eventos(t, id)); n != 2 {
+		t.Errorf("a repetição gravou: %d eventos, queria 2", n)
+	}
+	if h := a.linha(t, id); h.Enabled || h.ResumedAt == nil || !h.ResumedAt.Equal(retomadaEm) {
+		t.Errorf("a repetição retomou: enabled %t, resumed_at %v", h.Enabled, h.ResumedAt)
+	}
+
+	semRetomada, token2 := a.novoHeartbeat(t)
+	a.comoDono(t, `UPDATE heartbeats SET enabled = false WHERE id = $1`, semRetomada)
+	a.pingar(t, token2, heartbeat.SignalSuccess)
+	if h := a.linha(t, semRetomada); h.Enabled || h.ResumedAt != nil {
+		t.Errorf("sem ping_resumes: enabled %t, resumed_at %v", h.Enabled, h.ResumedAt)
+	}
+}
+
+// Ruling da Task 4: num agendamento que esta versão não conhece, o sucesso com
+// ping_resumes religa a tarefa e deixa o prazo gravado como está.
+func TestPingResumesOnUnknownSchedule(t *testing.T) {
+	a := novoAmbiente(t)
+	semChecksDeAgendamento(t, a.pool)
+	id, token := a.heartbeatDesconhecido(t)
+	a.comoDono(t, `UPDATE heartbeats SET enabled = false, ping_resumes = true WHERE id = $1`, id)
+
+	a.pingar(t, token, heartbeat.SignalSuccess)
+	h := a.linha(t, id)
+	if !h.Enabled || h.ResumedAt == nil || !h.ResumedAt.Equal(agora) {
+		t.Errorf("enabled %t, resumed_at %v; queria religada em %v", h.Enabled, h.ResumedAt, agora)
+	}
+	if want := agora.Add(-2 * time.Hour); !h.DeadlineAt.Equal(want) {
+		t.Errorf("prazo %v, queria o gravado %v", h.DeadlineAt, want)
+	}
+}
+
+// A retomada por ping descarta o início de antes da pausa, como a retomada
+// manual: um sucesso de outro rid não o consome, e ele ficaria "em execução".
+func TestPingResumeDropsTheStartFromBeforeThePause(t *testing.T) {
+	a := novoAmbiente(t)
+	id, token := a.novoHeartbeat(t)
+	a.pingar(t, token, heartbeat.SignalStart)
+	a.comoDono(t, `UPDATE heartbeats SET enabled = false, ping_resumes = true WHERE id = $1`, id)
+
+	a.clk.Advance(time.Minute)
+	ridB := uuid.MustParse("0195f3c2-8a4b-7c1d-9e2f-00000000000b")
+	a.pingarRun(t, token, heartbeat.SignalSuccess, &ridB)
+	h := a.linha(t, id)
+	if !h.Enabled {
+		t.Fatal("o sucesso não retomou")
+	}
+	if h.LastStartAt != nil {
+		t.Errorf("last_start_at %v depois da retomada, queria nulo", *h.LastStartAt)
+	}
+}
+
+// O rid da linha volta do banco para a guarda da repetição: o mesmo sucesso de
+// mesmo rid em 5 s é repetição, e o de outro rid é outra execução.
+func TestRepeatComparesTheStoredRunID(t *testing.T) {
+	a := novoAmbiente(t)
+	id, token := a.novoHeartbeat(t)
+	ridA := uuid.MustParse("0195f3c2-8a4b-7c1d-9e2f-00000000000a")
+	ridB := uuid.MustParse("0195f3c2-8a4b-7c1d-9e2f-00000000000b")
+
+	a.pingarRun(t, token, heartbeat.SignalSuccess, &ridA)
+	a.clk.Advance(5 * time.Second)
+	a.pingarRun(t, token, heartbeat.SignalSuccess, &ridA)
+	if n := len(a.eventos(t, id)); n != 1 {
+		t.Errorf("mesmo rid em 5 s: %d eventos, queria 1", n)
+	}
+
+	a.clk.Advance(time.Second)
+	a.pingarRun(t, token, heartbeat.SignalSuccess, &ridB)
+	if n := len(a.eventos(t, id)); n != 2 {
+		t.Errorf("outro rid: %d eventos, queria 2", n)
 	}
 }
