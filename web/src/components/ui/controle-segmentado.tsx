@@ -44,7 +44,7 @@ export function ControleSegmentado<V extends string>({ rotulo, opcoes, valor, ao
   }
 
   return (
-    <div role="radiogroup" aria-label={rotulo} className={cn('inline-flex flex-wrap gap-1 rounded-padrao bg-painel p-1', className)}>
+    <div role="radiogroup" aria-label={rotulo} className={cn('inline-flex flex-wrap gap-1 rounded-padrao bg-painel p-1 sombra-interna', className)}>
       {opcoes.map((o, i) => {
         const ativo = i === marcado
         return (

@@ -328,6 +328,18 @@ describe('detalhe', () => {
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 
+  // Bloco 2, item 1: o texto secundário da faixa é o 700 do matiz do estado,
+  // e não o cinza suave. Sabotagem: voltar o detalhe da faixa a text-suave.
+  it('o texto secundário da faixa é do matiz do estado', async () => {
+    const r = await renderizarPainel('/targets/alvo-1')
+    r.falsa.estado.alvos = [alvo()]
+    r.falsa.estado.resumo = [itemDoResumo({ state: 'down', enabled: false })]
+    await r.cliente.refetchQueries()
+    const detalhe = await screen.findByText('Os checks estão parados. Retome para voltar a vigiar.')
+    expect(detalhe).toHaveClass('text-sem-dados-700')
+    expect(detalhe).not.toHaveClass('text-suave')
+  })
+
   it('janela desconhecida na URL cai nas 24 h, sem quebrar', async () => {
     const r = await renderizarPainel('/targets/alvo-1?janela=toString')
     r.falsa.estado.alvos = [alvo()]
@@ -731,6 +743,23 @@ describe('detalhe', () => {
       await waitFor(() => expect(feito).toHaveFocus())
       expect(within(faixa).queryByRole('button', { name: 'Reconhecer' })).not.toBeInTheDocument()
       expect(r.falsa.chamadas('POST /incidents/:id/ack')).toBe(1)
+    })
+
+    // RUI, texto sobre fundo colorido: o secundário da faixa (a ajuda do
+    // Reconhecer e o "Reconhecido") é o 700 do matiz do fundo, não o cinza.
+    // O tokens.test confere a tabela; este, que os parágrafos a usam.
+    // Sabotagem: trocar o secundario desses dois <p> por text-suave.
+    it('com incidente aberto, a ajuda e o "Reconhecido" usam o 700 do matiz da faixa', async () => {
+      const r = await renderizarPainel('/targets/alvo-1')
+      r.falsa.estado.alvos = [alvo()]
+      r.falsa.estado.resumo = [itemDoResumo({ state: 'down', open_incident_id: 'inc-1' })]
+      r.falsa.estado.incidentes = [incidente({ cause: 'conn_refused' })]
+      await r.cliente.refetchQueries()
+      const faixa = await screen.findByRole('region', { name: /^Fora do ar há / })
+      expect(faixa).toHaveClass('bg-fora-100')
+      expect(within(faixa).getByText('Reconhecer interrompe os lembretes; não resolve o incidente.')).toHaveClass('text-fora-700')
+      await r.usuario.click(within(faixa).getByRole('button', { name: 'Reconhecer' }))
+      expect(await within(faixa).findByText(/lembretes parados desde/)).toHaveClass('text-fora-700')
     })
 
     it('incidente aberto pela regra de conteúdo diz a causa em texto', async () => {

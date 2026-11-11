@@ -4,6 +4,7 @@ import { render, within } from '@testing-library/react'
 import { createElement } from 'react'
 import { describe, expect, it } from 'vitest'
 import { ControleSegmentado } from '@/components/ui/controle-segmentado'
+import { VISUAL_DA_FAIXA } from '@/features/alvos/FaixaDeEstado'
 
 // Contraste dos tokens de cor, lidos do próprio index.css, nos dois temas
 // (spec do redesign, seção Testes). Os tokens são OKLCH: o teste converte para
@@ -76,7 +77,7 @@ function contraste(a: Oklch, b: Oklch): number {
   return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05)
 }
 
-const FUNDOS = ['fundo', 'superficie', 'painel']
+const FUNDOS = ['fundo', 'superficie', 'superficie-elevada', 'painel']
 // Texto e ícones: AA de texto (4,5:1) sobre todo fundo do painel.
 const TEXTOS = ['texto', 'suave', 'apagado', 'primaria', 'realce', 'perigo', 'estado-no-ar', 'estado-degradado', 'estado-fora', 'estado-sem-dados']
 // Texto sobre fundo tintado: o selo de estado sobre o tom 100, o item ativo
@@ -98,6 +99,9 @@ const SOBRE_TINTA: [string, string][] = [
   // A faixa de estado do detalhe (PR 4): título em texto e detalhe em suave
   // sobre o tom 100. O apagado não entra: no escuro fica em 4,1:1.
   ...['texto', 'suave'].flatMap((t) => TONS_100.map((f): [string, string] => [t, f])),
+  // O tom 700 é o texto do mesmo matiz sobre o tom 100 (RUI, texto sobre fundo
+  // colorido), no lugar do cinza suave.
+  ...TONS_100.map((f): [string, string] => [f.replace(/-100$/, '-700'), f]),
 ]
 // Componentes de UI (1.4.11, 3:1): o limite dos controles, o anel de foco
 // (também sobre o item ativo da navegação) e o fundo do botão primário.
@@ -185,6 +189,75 @@ describe.each(['claro', 'escuro'] as const)('contraste do ControleSegmentado, te
     const { trilho, ativo } = montar()
     expect(par('foco', tokenDaClasse(trilho, 'bg'))).toBeGreaterThanOrEqual(3)
     expect(par('foco', tokenDaClasse(ativo, 'bg'))).toBeGreaterThanOrEqual(3)
+  })
+})
+
+// Os tons de um estado formam uma escala: o 700 é do mesmo matiz que o 100
+// sobre o qual fica, e não um cinza. Matiz igual, em graus.
+describe.each(['claro', 'escuro'] as const)('escala dos estados, tema %s', (tema) => {
+  it.each(TONS_100)('o 700 de --%s tem o mesmo matiz', (fundo) => {
+    expect(cor(tema, fundo.replace(/-100$/, '-700')).h).toBe(cor(tema, fundo).h)
+  })
+})
+
+// A faixa de estado do detalhe lida da própria tabela do componente: o texto
+// secundário é do mesmo matiz que o fundo, com 4,5:1. Uma classe trocada por
+// text-suave reprova aqui (o cinza não tem o matiz do fundo).
+describe.each(['claro', 'escuro'] as const)('a faixa de estado, tema %s', (tema) => {
+  const token = (classe: string, prefixo: 'bg' | 'text') => classe.slice(prefixo.length + 1)
+  const doTema = (nome: string) => (nome.startsWith('estado-') || TOKENS[tema].has(nome) ? nome : `estado-${nome}`)
+
+  it.each(Object.entries(VISUAL_DA_FAIXA))('%s: o texto secundário é do matiz do fundo, com 4,5:1', (_, visual) => {
+    const fundo = cor(tema, doTema(token(visual.fundo, 'bg')))
+    const texto = cor(tema, doTema(token(visual.secundario, 'text')))
+    expect(texto.h).toBe(fundo.h)
+    expect(contraste(texto, fundo)).toBeGreaterThanOrEqual(4.5)
+  })
+})
+
+// As camadas de uma sombra: "0 1px 3px oklch(... / 0.1)" → desfoque e alfa.
+function camadas(sombra: string): { desfoque: number; alfa: number }[] {
+  return Array.from(sombra.matchAll(/-?\d+(?:px)?\s+-?\d+(?:px)?\s+(\d+)px\s+oklch\([^/]+\/\s*([\d.]+)\)/g), (m) => ({
+    desfoque: Number(m[1]),
+    alfa: Number(m[2]),
+  }))
+}
+
+describe('sombras do tema claro', () => {
+  // RUI, sombra em duas partes: no nível 1, a camada pequena (de desfoque
+  // menor) é a mais escura e marca a borda de baixo. Sabotagem: inverter os
+  // alfas, como era antes.
+  it('no nível 1, a camada pequena é mais escura que a grande', () => {
+    const [grande, pequena] = [...camadas(TOKENS.claro.get('sombra-nivel-1') ?? '')].sort((a, b) => b.desfoque - a.desfoque)
+    expect(grande && pequena).toBeTruthy()
+    expect(pequena?.alfa ?? 0).toBeGreaterThan(grande?.alfa ?? 0)
+  })
+})
+
+// O fundo rebaixado do controle segmentado (bg-painel sombra-interna): o
+// teste do componente só vê a classe; aqui, que o claro tem mesmo uma sombra
+// interna visível. Sabotagem: --sombra-interna do :root como a do .dark
+// (inset 0 0 transparent).
+describe('sombra interna do tema claro', () => {
+  it('é inset, com alfa maior que zero', () => {
+    const sombra = TOKENS.claro.get('sombra-interna') ?? ''
+    expect(sombra).toMatch(/^inset\s/)
+    const alfa = /oklch\([^/]+\/\s*([\d.]+)\)/.exec(sombra)?.[1]
+    expect(Number(alfa ?? 0)).toBeGreaterThan(0)
+  })
+})
+
+// Três níveis de superfície no escuro, e um quarto acima do cartão: painel
+// (rebaixado), fundo, superfície (cartão) e a elevada (diálogo, aviso,
+// tooltip), cada um mais claro que o de baixo (PUI). No claro a elevada é a
+// própria superfície, e a sombra separa. Sabotagem: a elevada igual ao cartão
+// no escuro.
+describe('níveis de superfície', () => {
+  it('no escuro, cada nível é mais claro que o de baixo', () => {
+    const l = (nome: string) => cor('escuro', nome).l
+    expect(l('painel')).toBeLessThan(l('fundo'))
+    expect(l('fundo')).toBeLessThan(l('superficie'))
+    expect(l('superficie')).toBeLessThan(l('superficie-elevada'))
   })
 })
 
