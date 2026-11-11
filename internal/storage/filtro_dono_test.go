@@ -318,3 +318,32 @@ func TestInsertTargetTagsFiltersOwnerWithoutRLS(t *testing.T) {
 		t.Errorf("A pôs a tag api e ficou %v, queria [api prod]", tags)
 	}
 }
+
+func TestGetTargetForUpdateFiltersOwnerWithoutRLS(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+	a, b := novoUsuario(t, pool), novoUsuario(t, pool)
+	alvoA := novoAlvo(t, pool, a, agora)
+	conn, outra := conexaoSemRLS(t), conexaoSemRLS(t)
+	tx, err := conn.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	q := db.New(tx)
+
+	_, err = q.GetTargetForUpdate(ctx, db.GetTargetForUpdateParams{UserID: b, ID: alvoA})
+	exigirNenhumaLinha(t, err, "GetTargetForUpdate")
+	// A transação de B segue aberta: se ela tivesse travado a linha de A, o
+	// NOWAIT de outra conexão falharia na hora.
+	if _, err := outra.Exec(ctx, `SELECT 1 FROM targets WHERE id = $1 FOR UPDATE NOWAIT`, alvoA); err != nil {
+		t.Errorf("a linha do alvo de A ficou travada pela leitura de B: %v", err)
+	}
+	alvo, err := q.GetTargetForUpdate(ctx, db.GetTargetForUpdateParams{UserID: a, ID: alvoA})
+	if err != nil {
+		t.Fatalf("A travando o próprio alvo: %v", err)
+	}
+	if alvo.ID != alvoA || alvo.UserID != a {
+		t.Errorf("A travou id %s do dono %s, queria %s de %s", alvo.ID, alvo.UserID, alvoA, a)
+	}
+}

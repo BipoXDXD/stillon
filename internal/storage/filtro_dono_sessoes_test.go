@@ -64,3 +64,27 @@ func TestRevokeFamilyOfUserFiltersOwnerWithoutRLS(t *testing.T) {
 		t.Errorf("A revogou a própria família e revoked_at ficou %v, queria %s", em, agora)
 	}
 }
+
+func TestFamilyIsLiveFiltersOwnerWithoutRLS(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+	a, b := novoUsuario(t, pool), novoUsuario(t, pool)
+	conn := conexaoSemRLS(t)
+	q := db.New(conn)
+	_, familia := novaSessaoViva(t, conn, a)
+	viva := func(dono uuid.UUID) bool {
+		t.Helper()
+		ok, err := q.FamilyIsLive(ctx, db.FamilyIsLiveParams{UserID: dono, FamilyID: familia, Now: agora})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return ok
+	}
+
+	if viva(b) {
+		t.Error("B viu viva a família de A, queria false")
+	}
+	if !viva(a) {
+		t.Error("A não viu viva a própria família, queria true")
+	}
+}
