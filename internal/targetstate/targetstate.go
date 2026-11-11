@@ -17,8 +17,9 @@ const (
 )
 
 // StaleIntervals: o último check mais velho que isto, em intervalos do alvo,
-// não diz mais nada sobre o presente. É o mesmo 3 da lacuna da histerese
-// (Plano 3) e o D15 do Plano 4. O limite é inclusivo.
+// não diz mais nada sobre o presente. A lacuna da histerese do sondador usa
+// esta mesma constante, e por isso há um só lugar para mudar. O limite é
+// inclusivo.
 const StaleIntervals = 3
 
 // Current é o estado do último check, se ele ainda é recente. lastStatus
