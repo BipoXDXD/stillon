@@ -5,7 +5,7 @@ import { useForm, useWatch, type FieldError, type UseFormRegisterReturn } from '
 import { Botao } from '@/components/ui/botao'
 import { estiloDeCartao } from '@/components/ui/cartao'
 import { AreaDeTexto, CaixaDeMarcar, Campo, Entrada, ErroDoFormulario, Opcao, Selecao } from '@/components/ui/campo'
-import { ApiError } from '@/lib/api/http'
+import { errosDosCampos } from '@/lib/api/erros-de-campo'
 import { mensagemDe } from '@/lib/api/mensagens'
 import { cn } from '@/lib/utils'
 import { campoDoServidor, esquemaDoHeartbeat, mensagemDoHeartbeat, type ValoresDoHeartbeat } from './esquema'
@@ -46,10 +46,9 @@ export function FormularioHeartbeat({
 
   // O 400 com fields vai para o campo certo; o resto, para o topo.
   function errosNosCampos(err: unknown): boolean {
-    if (!(err instanceof ApiError)) return false
-    const conhecidos = err.fields.flatMap((fe) => {
+    const conhecidos = errosDosCampos(err, (fe) => {
       const campo = campoDoServidor[fe.field.replace(/\[.*$/, '')]
-      return campo ? [{ campo, mensagem: mensagemDoHeartbeat(fe, f.getValues('description')) }] : []
+      return campo && { campo, mensagem: mensagemDoHeartbeat(fe, f.getValues('description')) }
     })
     // O erro dentro do Avançado fechado ficaria escondido, e o foco do setError
     // não chega a um campo ali: abre antes de marcar.

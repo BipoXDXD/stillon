@@ -1,12 +1,11 @@
-import { useQueryClient } from '@tanstack/react-query'
-import { useRef, useState } from 'react'
+import { useRef } from 'react'
 import { useApi } from '@/app/contexto'
 import { EstadoDaConsulta } from '@/components/EstadoDaConsulta'
 import { periodoDoIncidente, SeloDoIncidente, situacaoDoIncidente } from '@/components/SeloDoIncidente'
 import { BotaoQueSome } from '@/components/ui/botao'
+import { useReconhecer } from '@/features/incidentes/reconhecer'
 import { chaves, useIncidentesDoHeartbeat } from '@/lib/api/consultas'
-import { naoEncontrado } from '@/lib/api/http'
-import { mensagemDe, textoDaCausa } from '@/lib/api/mensagens'
+import { textoDaCausa } from '@/lib/api/mensagens'
 import type { IncidenteDeHeartbeat } from '@/lib/api/schemas'
 import { dataHora } from '@/lib/format'
 
@@ -25,30 +24,16 @@ export function IncidentesDoHeartbeat({
   aoSumir: () => void
 }) {
   const api = useApi()
-  const qc = useQueryClient()
   const consulta = useIncidentesDoHeartbeat(id)
   const titulo = useRef<HTMLHeadingElement>(null)
-  const [reconhecendo, setReconhecendo] = useState<ReadonlySet<string>>(new Set())
 
-  async function reconhecer(incidente: string) {
-    if (reconhecendo.has(incidente)) return
-    aoErrar(null)
-    setReconhecendo((s) => new Set(s).add(incidente))
-    try {
-      await api.reconhecerDoHeartbeat(id, incidente)
-    } catch (e) {
-      if (naoEncontrado(e)) aoSumir()
-      else aoErrar(mensagemDe(e))
-    } finally {
-      // Mesmo depois de uma falha: o ack pode ter chegado ao servidor.
-      await qc.invalidateQueries({ queryKey: chaves.incidentesDoHeartbeat(id) })
-      setReconhecendo((s) => {
-        const n = new Set(s)
-        n.delete(incidente)
-        return n
-      })
-    }
-  }
+  const { reconhecendo, reconhecer } = useReconhecer({
+    enviar: (incidente) => api.reconhecerDoHeartbeat(id, incidente),
+    consulta: chaves.incidentesDoHeartbeat(id),
+    aoNaoEncontrar: aoSumir,
+    aoErrar,
+    ignorarEmAndamento: true,
+  })
 
   return (
     <section className="space-y-3" aria-labelledby="titulo-incidentes-heartbeat">

@@ -114,6 +114,16 @@ func familyIsLive(ctx context.Context, q *db.Queries, userID, familyID uuid.UUID
 	return vivo, nil
 }
 
+// travarFamiliaViva toma a trava de sessões do usuário e SÓ ENTÃO confere
+// a família: conferir antes da trava deixaria uma revogação concorrente passar
+// entre a leitura e a escrita. Quem chama escolhe o erro de "família morta".
+func travarFamiliaViva(ctx context.Context, q *db.Queries, userID, familyID uuid.UUID, now time.Time) (bool, error) {
+	if err := q.LockUserSessions(ctx, userID); err != nil {
+		return false, fmt.Errorf("travar sessões: %w", err)
+	}
+	return familyIsLive(ctx, q, userID, familyID, now)
+}
+
 // ChangePasswordInput é o corpo de POST /auth/password.
 type ChangePasswordInput struct {
 	Current  string
@@ -179,40 +189,48 @@ func (s *Service) ChangePassword(ctx context.Context, userID, familyID uuid.UUID
 		return err
 	}
 
+	if err := s.provarSegundoFator(ctx, userID, in.TOTPCode, now); err != nil {
+		return err
+	}
+
+	return s.gravarTroca(ctx, userID, familyID, u.PasswordHash, hash, crypto.HashIP(s.ipKey, meta.IP), now)
+}
+
+// provarSegundoFator é o passo 5 de ChangePassword: sem 2FA ligado não há o
+// que provar. O Verify consome o timestep (ou o código de recuperação) fora da
+// transação de gravarTroca: se ela desistir, quem tentar de novo espera o
+// próximo código de 30 s.
+func (s *Service) provarSegundoFator(ctx context.Context, userID uuid.UUID, code string, now time.Time) error {
 	ligado, err := s.totp.IsEnabled(ctx, userID)
 	if err != nil {
 		return err
 	}
-	if ligado {
-		// O Verify consome o timestep (ou o código de recuperação) fora da
-		// transação abaixo: se ela desistir, quem tentar de novo espera o
-		// próximo código de 30 s.
-		err := s.totp.Verify(ctx, userID, in.TOTPCode, now)
-		if errors.Is(err, auth.ErrTOTPInvalid) || errors.Is(err, auth.ErrTOTPNotEnrolled) {
-			return ErrInvalidCredentials
-		}
-		if err != nil {
-			return err
-		}
+	if !ligado {
+		return nil
 	}
+	err = s.totp.Verify(ctx, userID, code, now)
+	if errors.Is(err, auth.ErrTOTPInvalid) || errors.Is(err, auth.ErrTOTPNotEnrolled) {
+		return ErrInvalidCredentials
+	}
+	return err
+}
 
-	ipHash := crypto.HashIP(s.ipKey, meta.IP)
-
+// gravarTroca é o passo 6 de ChangePassword: a trava do usuário, a família
+// viva de novo, o CAS do hash, as OUTRAS famílias revogadas e a auditoria, numa
+// transação só.
+func (s *Service) gravarTroca(ctx context.Context, userID, familyID uuid.UUID, hashAntigo, hashNovo string, ipHash []byte, now time.Time) error {
 	return s.inTx(ctx, func(q *db.Queries) error {
-		if err := q.LockUserSessions(ctx, userID); err != nil {
-			return fmt.Errorf("travar sessões: %w", err)
-		}
 		// A família pode ter caído entre o passo 2 e a trava (um DELETE
 		// /sessions de outro aparelho, a detecção de reúso). Então nada muda:
 		// o 204 sempre quer dizer "trocada e a atual continua viva".
-		vivo, err := familyIsLive(ctx, q, userID, familyID, now)
+		vivo, err := travarFamiliaViva(ctx, q, userID, familyID, now)
 		if err != nil {
 			return err
 		}
 		if !vivo {
 			return ErrSessionGone
 		}
-		n, err := q.SwapUserHash(ctx, db.SwapUserHashParams{ID: userID, NewHash: hash, OldHash: u.PasswordHash})
+		n, err := q.SwapUserHash(ctx, db.SwapUserHashParams{ID: userID, NewHash: hashNovo, OldHash: hashAntigo})
 		if err != nil {
 			return fmt.Errorf("gravar senha: %w", err)
 		}
@@ -501,10 +519,7 @@ func (s *Service) revogarFamilia(ctx context.Context, userID, familyID uuid.UUID
 	return s.inTx(ctx, func(q *db.Queries) error {
 		// A trava do usuário antes de tocar em sessions (D1): sem ela, uma
 		// rotação em curso da família deixaria o sucessor vivo.
-		if err := q.LockUserSessions(ctx, userID); err != nil {
-			return fmt.Errorf("travar sessões: %w", err)
-		}
-		vivo, err := familyIsLive(ctx, q, userID, familyID, now)
+		vivo, err := travarFamiliaViva(ctx, q, userID, familyID, now)
 		if err != nil {
 			return err
 		}

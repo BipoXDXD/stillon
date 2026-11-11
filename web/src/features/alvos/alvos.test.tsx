@@ -142,6 +142,27 @@ describe('cadastrar', () => {
     expect(url).toHaveAccessibleDescription(/Endereços internos/)
   })
 
+  // O servidor manda url antes de name; o foco vai ao primeiro da lista, não ao
+  // primeiro da tela. Sabotagem: focar o último erro em vez do primeiro.
+  it('o 400 com dois campos marca os dois e foca o primeiro, na ordem do servidor', async () => {
+    const r = await renderizarPainel('/targets/new')
+    r.falsa.estado.forcar.set('POST /targets', {
+      status: 400,
+      code: 'validation_failed',
+      fields: [
+        { field: 'url', reason: 'forbidden' },
+        { field: 'name', reason: 'too_long' },
+      ],
+    })
+    await preencher(r.usuario)
+    await r.usuario.click(screen.getByRole('button', { name: 'Cadastrar' }))
+    const url = screen.getByLabelText('URL')
+    const nome = screen.getByLabelText('Nome')
+    await waitFor(() => expect(url).toHaveAttribute('aria-invalid', 'true'))
+    expect(nome).toHaveAttribute('aria-invalid', 'true')
+    expect(url).toHaveFocus()
+  })
+
   // Bloco 2, item 8: formulário único, com o raro em "Avançado", recolhido.
   const avancado = () => screen.getByText('Avançado').closest('details')
 
