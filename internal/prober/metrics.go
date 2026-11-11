@@ -17,6 +17,8 @@ type Metrics struct {
 	// heartbeatEvents é o tamanho do log de sinais: todo acúmulo tem limpeza e
 	// uma métrica, e é esta que mostra se o teto e a retenção estão segurando.
 	heartbeatEvents prometheus.Gauge
+	// blockedCIDRs é o tamanho de PROBE_BLOCKED_CIDRS; 0 é a lista vazia.
+	blockedCIDRs prometheus.Gauge
 
 	// vistos é o conjunto de alvos com série em duration. A reconciliação o
 	// confronta com o banco para apagar as séries de alvos que sumiram.
@@ -55,9 +57,13 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			Name: "heartbeat_events",
 			Help: "Linhas no log de sinais dos heartbeats.",
 		}),
+		blockedCIDRs: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "probe_blocked_cidrs",
+			Help: "Faixas da própria hospedagem que a sonda recusa (PROBE_BLOCKED_CIDRS); 0 é a lista vazia.",
+		}),
 		vistos: map[uuid.UUID]struct{}{},
 	}
-	reg.MustRegister(m.duration, m.total, m.inflight, m.queueDepth, m.incidentsOpen, m.heartbeatEvents)
+	reg.MustRegister(m.duration, m.total, m.inflight, m.queueDepth, m.incidentsOpen, m.heartbeatEvents, m.blockedCIDRs)
 	return m
 }
 

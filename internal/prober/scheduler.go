@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"math"
 	"net/http"
+	"net/netip"
 	"sync"
 	"time"
 
@@ -88,11 +89,24 @@ type Scheduler struct {
 	depoisDeLerValidade func()
 }
 
+// avisoListaDaHospedagemVazia é a mensagem estável do aviso de boot, para
+// busca e alerta no log.
+const avisoListaDaHospedagemVazia = "lista da hospedagem vazia: a sonda alcança o IP público da própria máquina"
+
 // New monta o agendador com o cliente de produção, guardado pelo safedial.
 // Não há como passar outro cliente por aqui: TestNewUsesTheSSRFGuardedClient
-// trava isso.
-func New(pool *pgxpool.Pool, box *crypto.Box, clk clock.Clock, m *Metrics) *Scheduler {
-	return newScheduler(pool, box, clk, m, safedial.NewClient(0), MaxInFlight)
+// trava isso. hospedagem são as faixas da própria máquina
+// (PROBE_BLOCKED_CIDRS), recusadas como as da lista fixa.
+//
+// A lista vazia não impede o sondador de subir (o fail-closed vem com o
+// #255): ela vira um aviso, uma vez por processo, e o gauge
+// probe_blocked_cidrs em 0. New só é chamado no boot dos papéis que sondam.
+func New(pool *pgxpool.Pool, box *crypto.Box, clk clock.Clock, m *Metrics, hospedagem []netip.Prefix) *Scheduler {
+	m.blockedCIDRs.Set(float64(len(hospedagem)))
+	if len(hospedagem) == 0 {
+		slog.Warn(avisoListaDaHospedagemVazia, "var", "PROBE_BLOCKED_CIDRS")
+	}
+	return newScheduler(pool, box, clk, m, safedial.NewClientBlocking(0, hospedagem), MaxInFlight)
 }
 
 func newScheduler(pool *pgxpool.Pool, box *crypto.Box, clk clock.Clock, m *Metrics, client *http.Client, max int32) *Scheduler {

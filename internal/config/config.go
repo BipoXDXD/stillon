@@ -104,6 +104,12 @@ type Config struct {
 	// min(NumCPU, 4).
 	Argon2MaxConcurrent int
 
+	// ProbeBlockedCIDRs são as faixas da própria hospedagem que a sonda
+	// recusa, além da lista fixa do safedial (PROBE_BLOCKED_CIDRS). A VPS é
+	// dividida com outros projetos, e o IP público dela não é privado. Vazia
+	// não derruba o boot (o sondador avisa); o fail-closed vem com o #255.
+	ProbeBlockedCIDRs []netip.Prefix
+
 	// E-mail pelo Resend (spec §8). A chave é do operador; vazia, o canal
 	// de e-mail fica indisponível.
 	ResendAPIKey string
@@ -177,6 +183,27 @@ func Load(getenv func(string) string) (*Config, error) {
 			// existe para evitar. Para medir o proxy, use o /32 ou o /128.
 			if p.Bits() == 0 {
 				errs = append(errs, fmt.Errorf("%s: %q é um prefixo /0, que confiaria no cabeçalho de qualquer origem; liste só os proxies", name, parte))
+				continue
+			}
+			out = append(out, p)
+		}
+		return out
+	}
+
+	// PROBE_BLOCKED_CIDRS: IPs ou CIDRs da própria hospedagem, v4 ou v6,
+	// separados por vírgula, sem espaço nem item vazio. Um item inválido
+	// derruba o boot: uma lista lida pela metade deixaria a hospedagem aberta
+	// sem aviso, e ",,," lida como vazia esconderia o erro de digitação.
+	hospedagem := func(name string) []netip.Prefix {
+		valor := getenv(name)
+		if valor == "" {
+			return nil
+		}
+		var out []netip.Prefix
+		for _, parte := range strings.Split(valor, ",") {
+			p, err := faixaDaHospedagem(parte)
+			if err != nil {
+				errs = append(errs, fmt.Errorf("%s: %q %w", name, parte, err))
 				continue
 			}
 			out = append(out, p)
@@ -300,6 +327,7 @@ func Load(getenv func(string) string) (*Config, error) {
 		IPHashKey:           key("IP_HASH_KEY"),
 		TrustedProxies:      proxies("TRUSTED_PROXIES"),
 		ClientIPHeader:      clientIPHeader("CLIENT_IP_HEADER"),
+		ProbeBlockedCIDRs:   hospedagem("PROBE_BLOCKED_CIDRS"),
 		ShutdownGrace:       shutdownGrace,
 		Argon2MaxConcurrent: argon2("ARGON2_MAX_CONCURRENT"),
 		ResendAPIKey:        strings.TrimSpace(getenv("RESEND_API_KEY")),
@@ -332,7 +360,7 @@ func Load(getenv func(string) string) (*Config, error) {
 	// As chaves de demo só valem numa máquina local (http e host de
 	// loopback). Um compose copiado para um servidor com http e um host de
 	// verdade, ou 0.0.0.0, também é produção.
-	if cfg.PublicBaseURL != "" && (EhHTTPS(cfg.PublicBaseURL) || !hostLocal(cfg.PublicBaseURL)) {
+	if emProducao(cfg.PublicBaseURL) {
 		for _, k := range []struct {
 			nome  string
 			valor []byte
@@ -371,6 +399,47 @@ func Load(getenv func(string) string) (*Config, error) {
 func EhHTTPS(s string) bool {
 	u, err := url.Parse(strings.TrimSpace(s))
 	return err == nil && strings.EqualFold(u.Scheme, "https")
+}
+
+// emProducao é a regra única de produção do boot: PUBLIC_BASE_URL https, ou
+// http com host fora do loopback (um compose copiado para um servidor também
+// é produção). Vazia é a PUBLIC_BASE_URL que já falhou, e não decide nada.
+func emProducao(publicBaseURL string) bool {
+	return publicBaseURL != "" && (EhHTTPS(publicBaseURL) || !hostLocal(publicBaseURL))
+}
+
+// faixaDaHospedagem lê um item de PROBE_BLOCKED_CIDRS. O IP solto vira /32 ou
+// /128, e o v4 mapeado vira v4: o safedial compara o IP já com Unmap. Pelo
+// mesmo motivo, um CIDR escrito como v6 mapeado é recusado, porque nunca
+// casaria. O erro completa a frase "<variável>: <item> ...".
+func faixaDaHospedagem(s string) (netip.Prefix, error) {
+	switch {
+	case s == "":
+		return netip.Prefix{}, errors.New("é um item vazio entre vírgulas")
+	case s != strings.TrimSpace(s):
+		return netip.Prefix{}, errors.New("tem espaço em volta; separe os itens só por vírgula")
+	}
+	if strings.Contains(s, "/") {
+		p, err := netip.ParsePrefix(s)
+		if err != nil {
+			return netip.Prefix{}, errors.New("não é um CIDR válido")
+		}
+		if p.Addr().Is4In6() {
+			return netip.Prefix{}, errors.New("é um CIDR IPv4 escrito como IPv6 mapeado; use a forma IPv4")
+		}
+		// Como no TRUSTED_PROXIES: um /0 recusaria todo alvo, e todos os
+		// monitores cairiam em down/blocked por um erro de digitação.
+		if p.Bits() == 0 {
+			return netip.Prefix{}, errors.New("é um prefixo /0, que recusaria todo alvo; liste só a hospedagem")
+		}
+		return p.Masked(), nil
+	}
+	ip, err := netip.ParseAddr(s)
+	if err != nil || ip.Zone() != "" {
+		return netip.Prefix{}, errors.New("não é um IP nem um CIDR válido")
+	}
+	ip = ip.Unmap()
+	return netip.PrefixFrom(ip, ip.BitLen()), nil
 }
 
 // hostLocal diz se o host da URL é localhost ou um IP de loopback
@@ -453,6 +522,7 @@ func (c *Config) LogValue() slog.Value {
 		slog.String("public_base_url", c.PublicBaseURL),
 		slog.String("cors_origin", c.CORSOrigin),
 		slog.String("client_ip_header", c.ClientIPHeader),
+		slog.Int("probe_blocked_cidrs", len(c.ProbeBlockedCIDRs)),
 		slog.String("log_level", c.LogLevel.String()),
 		slog.String("database_url", "[REDACTED]"),
 		slog.String("master_key", "[REDACTED]"),
