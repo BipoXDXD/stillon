@@ -229,7 +229,7 @@ func (h *HeartbeatHandlers) List(w http.ResponseWriter, r *http.Request) {
 	for _, i := range items {
 		resp.Items = append(resp.Items, toHeartbeatResponse(i))
 	}
-	resp.NextCursor = proximoCursor(items, limite, func(h heartbeat.Heartbeat) uuid.UUID { return h.ID })
+	resp.NextCursor = proximoCursor(items, limite, func(hb heartbeat.Heartbeat) uuid.UUID { return hb.ID })
 	apierr.WriteJSON(w, http.StatusOK, resp)
 }
 

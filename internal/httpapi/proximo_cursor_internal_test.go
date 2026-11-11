@@ -27,6 +27,7 @@ func TestProximoCursor(t *testing.T) {
 		{"incompleta", cheia[:1], 2, ""},
 		{"exatamente o limite", cheia, 2, b.String()},
 		{"limite 1 com um item", cheia[:1], 1, a.String()},
+		{"mais itens que o limite", cheia, 1, ""},
 	}
 	for _, c := range casos {
 		t.Run(c.nome, func(t *testing.T) {
