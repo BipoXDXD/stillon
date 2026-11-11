@@ -5,6 +5,7 @@ import { useFieldArray, useForm, useWatch, type FieldErrors } from 'react-hook-f
 import { Botao } from '@/components/ui/botao'
 import { estiloDeCartao } from '@/components/ui/cartao'
 import { CaixaDeMarcar, Campo, Entrada, ErroDoFormulario, Opcao, Selecao } from '@/components/ui/campo'
+import { errosDosCampos } from '@/lib/api/erros-de-campo'
 import { ApiError } from '@/lib/api/http'
 import { mensagemDe, mensagemDoCampo } from '@/lib/api/mensagens'
 import {
@@ -111,27 +112,26 @@ export function FormularioAlvo({
         return
       }
       // O 400 com fields vai para o campo certo; o resto, para o topo.
-      if (err instanceof ApiError && err.fields.length) {
-        let primeiro: keyof ValoresDoAlvo | null = null
+      const erros = errosDosCampos(err, (fe) => {
+        const campo = campoDoErro(fe.field)
+        return campo && { campo, mensagem: mensagemDoCampo(fe.field, fe.reason) }
+      })
+      const primeiro = erros[0]?.campo
+      if (primeiro) {
         // flushSync: um erro avançado abre o "Avançado" já neste commit, e o
         // foco, logo depois, acha o campo à vista (num <details> fechado, o
         // navegador não o foca).
         flushSync(() => {
-          for (const fe of err.fields) {
-            const campo = campoDoErro(fe.field)
-            if (!campo) continue
-            f.setError(campo, { message: mensagemDoCampo(fe.field, fe.reason) })
+          for (const { campo, mensagem } of erros) {
+            f.setError(campo, { message: mensagem })
             if (ehCampoAvancado(campo)) setAvancadoAberto(true)
-            primeiro ??= campo
           }
         })
-        if (primeiro) {
-          // Com um intervalo da lista, o campo em segundos não está na tela:
-          // o erro aparece (e o foco vai) no seletor.
-          const noSeletor = primeiro === 'interval_sec' && f.getValues('intervaloEscolhido') !== OUTRO
-          f.setFocus(noSeletor ? 'intervaloEscolhido' : primeiro)
-          return
-        }
+        // Com um intervalo da lista, o campo em segundos não está na tela:
+        // o erro aparece (e o foco vai) no seletor.
+        const noSeletor = primeiro === 'interval_sec' && f.getValues('intervaloEscolhido') !== OUTRO
+        f.setFocus(noSeletor ? 'intervaloEscolhido' : primeiro)
+        return
       }
       setErroGeral(mensagemDe(err))
     }
