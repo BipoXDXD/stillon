@@ -45,14 +45,19 @@ export function useReconhecer({
       else aoErrar(mensagemDe(e))
     } finally {
       // Mesmo depois de uma falha: o ack pode ter chegado ao servidor.
-      await qc.invalidateQueries({ queryKey: consulta })
-      aoTerminar?.(id)
-      emVoo.current.delete(id)
-      setReconhecendo((s) => {
-        const n = new Set(s)
-        n.delete(id)
-        return n
-      })
+      try {
+        await qc.invalidateQueries({ queryKey: consulta })
+        aoTerminar?.(id)
+      } finally {
+        // Mesmo se o refetch ou o aoTerminar lançarem: id preso no ref
+        // bloquearia o botão para sempre.
+        emVoo.current.delete(id)
+        setReconhecendo((s) => {
+          const n = new Set(s)
+          n.delete(id)
+          return n
+        })
+      }
     }
   }
 
