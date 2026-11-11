@@ -428,7 +428,24 @@ jobs:
         # abaixo o levaria junto.
         run: |
           npm ci --ignore-scripts --no-audit --no-fund
-          npx playwright install --with-deps chromium
+          # O --with-deps passa pelo apt, e o runner já passou horas sem
+          # resolver os hosts *.ubuntu.com (o resto da rede respondia): o
+          # apt-get update só avisa e o install sai 100. Sem DNS para o espelho
+          # do runner, o apt começa direto num espelho fora de ubuntu.com, porque
+          # cada tentativa contra um nome que não resolve gastava ~10 min do prazo
+          # do job. Com DNS, uma falha também leva à troca.
+          trocar_espelho() {
+            sudo sed -i -E 's#https?://[a-z.]*ubuntu\.com/ubuntu/#http://mirrors.edge.kernel.org/ubuntu/#g' \
+              /etc/apt/apt-mirrors.txt /etc/apt/sources.list.d/*.sources 2>/dev/null || true
+          }
+          timeout 10 getent hosts azure.archive.ubuntu.com >/dev/null || trocar_espelho
+          echo 'Acquire::Retries "5";' | sudo tee /etc/apt/apt.conf.d/80-retries >/dev/null
+          for tentativa in 1 2 3; do
+            npx playwright install --with-deps chromium && break
+            [ "$tentativa" = 3 ] && exit 1
+            trocar_espelho
+            sleep $((30 * tentativa))
+          done
           npx playwright test --trace off
 
       - name: logs do compose
