@@ -125,6 +125,12 @@ jobs:
           # flags, então dividem a chave; o cache delas é equivalente.
           cache-dependency-path: go.sum
 
+      - name: buscar o commit de infraestrutura fixado
+        # O checkout é raso; o TestOAppDesteCommitSobeNaInfraestruturaFixada lê
+        # o app.json do commit fixado no recurso do Coolify (ação 2 do
+        # postmortem de 2026-11-10). O repositório é público: dispensa token.
+        run: git fetch --no-tags --depth=1 origin "$(cat deploy/coolify/infra-fixada)"
+
       - name: test
         # VM/daemon local exclusivo deste job: só este comando cria fixtures.
         # Não compartilhar a sessão TC entre pacotes; o collector acompanha
