@@ -11,6 +11,7 @@ import http.server
 import importlib.util
 import io
 import json
+import subprocess
 import sys
 import tempfile
 import threading
@@ -21,6 +22,27 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[2]
 CARGA = ROOT / "deploy/ci/memoria/carga.py"
 ALVOS = 3
+CONSTANTES_CURTAS = {"ALVOS": ALVOS, "ESPERA_INICIAL_S": 0, "DURACAO_S": 0.3,
+                     "PAUSA_DA_API_S": 0.01, "PAUSA_ENTRE_RAJADAS_S": 0.05}
+
+# Roda o carga.py como o CI: importa o módulo, encurta as constantes e executa
+# o próprio bloco `if __name__ == '__main__'` do arquivo, para que o código de
+# saída do processo venha do ponto de entrada real.
+PONTO_DE_ENTRADA = r"""
+import ast, importlib.util, json, sys
+caminho, base, constantes = sys.argv[1], sys.argv[2], json.loads(sys.argv[3])
+spec = importlib.util.spec_from_file_location("carga", caminho)
+modulo = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(modulo)
+modulo.BASE = base
+for nome, valor in constantes.items():
+    setattr(modulo, nome, valor)
+arvore = ast.parse(open(caminho).read())
+bloco = [n for n in arvore.body if isinstance(n, ast.If) and "__main__" in ast.unparse(n.test)]
+sys.argv = [caminho] + sys.argv[4:]
+modulo.__name__ = "__main__"
+exec(compile(ast.Module(body=bloco, type_ignores=[]), caminho, "exec"), modulo.__dict__)
+"""
 
 
 def carregar_carga():
@@ -92,9 +114,8 @@ class Carga(unittest.TestCase):
         self.addCleanup(self.servidor.desligar)
         self.carga = carregar_carga()
         porta = self.servidor.server_address[1]
-        for nome, valor in (("BASE", f"http://127.0.0.1:{porta}"), ("ALVOS", ALVOS),
-                            ("ESPERA_INICIAL_S", 0), ("DURACAO_S", 0.3),
-                            ("PAUSA_DA_API_S", 0.01), ("PAUSA_ENTRE_RAJADAS_S", 0.05)):
+        self.base = f"http://127.0.0.1:{porta}"
+        for nome, valor in {"BASE": self.base, **CONSTANTES_CURTAS}.items():
             self.assertTrue(hasattr(self.carga, nome), nome)
             setattr(self.carga, nome, valor)
         self.arquivo = Path(tempfile.mkdtemp(prefix="carga-")) / "carga.txt"
@@ -119,6 +140,30 @@ class Carga(unittest.TestCase):
         codigo, erro = self.rodar()
         self.assertEqual(codigo, 0, erro)
         self.assertIn(f"cadastro 201: {ALVOS}", self.arquivo.read_text())
+
+    def rodar_processo(self):
+        return subprocess.run(
+            [sys.executable, "-I", "-c", PONTO_DE_ENTRADA, str(CARGA), self.base,
+             json.dumps(CONSTANTES_CURTAS), str(self.arquivo)],
+            capture_output=True, text=True, check=False, timeout=60)
+
+    def test_processo_feliz_sai_zero(self):
+        resultado = self.rodar_processo()
+        self.assertEqual(resultado.returncode, 0, resultado.stderr)
+
+    def test_processo_com_cadastro_sem_201_sai_um(self):
+        self.servidor.status_cadastro = 400
+        resultado = self.rodar_processo()
+        self.assertEqual(resultado.returncode, 1, resultado.stderr)
+        self.assertIn(f"cadastro 201 em 0 de {ALVOS}", resultado.stderr)
+
+    def test_resumo_401_falha(self):
+        self.servidor.status_resumo = 401
+        self.assertFalhou("4xx no resumo: resumo 401")
+
+    def test_resumo_429_falha(self):
+        self.servidor.status_resumo = 429
+        self.assertFalhou("4xx no resumo: resumo 429")
 
     def test_cadastro_sem_201_falha(self):
         self.servidor.status_cadastro = 400

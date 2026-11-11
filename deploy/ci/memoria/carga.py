@@ -6,7 +6,8 @@ resolução, sem tocar em site de terceiros) e, por alguns minutos, lê o resumo
 no ritmo que o limitador por usuário aceita e dispara rajadas de login, cada
 uma pagando um Argon2id. O resultado vai para o stdout e para o arquivo do
 primeiro argumento. Sai 1 se algum cadastro não receber 201, se aparecer
-qualquer 5xx ou se o app deixar de responder: a medição não vale sem a carga.
+qualquer 5xx, se o resumo receber 4xx ou se o app deixar de
+responder: a medição não vale sem a carga.
 """
 import collections
 import concurrent.futures
@@ -97,6 +98,12 @@ def e_5xx(chave):
     return status.isdigit() and status.startswith('5')
 
 
+def e_4xx_do_resumo(chave):
+    """401 (token vencido) ou 429 (limite) no resumo: o app quase não trabalhou."""
+    rotulo, _, status = chave.rpartition(' ')
+    return rotulo == 'resumo' and status.isdigit() and status.startswith('4')
+
+
 def falhas_da_carga(contagem):
     falhas = []
     if contagem['cadastro 201'] != ALVOS:
@@ -104,6 +111,9 @@ def falhas_da_carga(contagem):
     respostas_5xx = sorted(c for c in contagem if e_5xx(c))
     if respostas_5xx:
         falhas.append('5xx: ' + ', '.join(respostas_5xx))
+    resumo_4xx = sorted(c for c in contagem if e_4xx_do_resumo(c))
+    if resumo_4xx:
+        falhas.append('4xx no resumo: ' + ', '.join(resumo_4xx))
     sem_resposta = sorted(c for c in contagem if c.endswith(SEM_RESPOSTA) or c.startswith('thread '))
     if sem_resposta:
         falhas.append('sem resposta: ' + ', '.join(sem_resposta))
