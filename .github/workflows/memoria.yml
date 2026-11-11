@@ -1,8 +1,10 @@
 name: memoria
 # Mede se os tetos de memória aguentam: o e2e e um exercício de carga, com o app
-# atrás de um Caddy, em cada configuração, mais de uma vez. Só roda quando a
-# própria medição muda.
+# atrás de um Caddy, em cada configuração, mais de uma vez. Roda sozinho quando a
+# própria medição muda; antes de mexer nos tetos de produção, dispare à mão
+# (workflow_dispatch), porque mudança no app não o aciona.
 on:
+  workflow_dispatch:
   pull_request:
     paths:
       - .github/workflows/memoria.yml
