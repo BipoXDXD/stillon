@@ -204,7 +204,7 @@ func TestChangePasswordWrongCurrent(t *testing.T) {
 	// A senha errada conta no contador da família, e não no bloqueio da conta:
 	// quem chuta a senha com a sessão não tranca o dono.
 	if n := falhasDeLogin(t, a); n != 0 {
-		t.Errorf("%d falhas no bloqueio da conta, queria 0 (A3)", n)
+		t.Errorf("%d falhas no bloqueio da conta, queria 0", n)
 	}
 	if !renova(t, a, outro) {
 		t.Error("a troca recusada revogou as outras sessões")
@@ -260,7 +260,7 @@ func TestChangePasswordRequiresTOTP(t *testing.T) {
 		t.Fatal("a senha mudou sem o segundo fator")
 	}
 	if n := falhasDeLogin(t, a); n != 0 {
-		t.Errorf("%d falhas no bloqueio da conta, queria 0 (A3)", n)
+		t.Errorf("%d falhas no bloqueio da conta, queria 0", n)
 	}
 
 	code, err := totp.GenerateCode(segredo, a.clk.Now())

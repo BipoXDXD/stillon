@@ -140,9 +140,10 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	mux.Handle("POST /api/v1/auth/totp/rotate", authn(viva(http.HandlerFunc(h.TOTPRotate))))
 	mux.Handle("POST /api/v1/auth/totp/rotate/confirm", authn(viva(http.HandlerFunc(h.TOTPRotateConfirm))))
 	// Verify não passa por authn: o usuário ainda não tem sessão, só o
-	// desafio. O limitador cobre o lugar do bloqueio por conta, que aqui não
-	// se aplica — a senha já foi acertada, o que resta é adivinhar seis
-	// dígitos.
+	// desafio. O limitador por IP vem de fora; o bloqueio da conta vale aqui, no
+	// handler: o código errado entra no mesmo contador do login (h.tentativas),
+	// porque só o limite por IP não segura quem chuta os seis dígitos de várias
+	// origens.
 	mux.Handle("POST /api/v1/auth/totp/verify",
 		middleware.RateLimit(ctx, d.Clock, 20, 5, proxiesDe(cfg))(http.HandlerFunc(h.TOTPVerify)))
 

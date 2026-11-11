@@ -162,7 +162,7 @@ func TestRotateRefusesWrongProofsAndCountsThem(t *testing.T) {
 		}
 	}
 	if n := falhasDeLogin(t, a); n != 0 {
-		t.Errorf("%d falhas no bloqueio da conta, queria 0 (A3)", n)
+		t.Errorf("%d falhas no bloqueio da conta, queria 0", n)
 	}
 	if temPendente(t, a) {
 		t.Error("um rotate recusado gravou o segredo pendente")
@@ -274,7 +274,7 @@ func TestRotateConfirmWrongCodeKeepsThePending(t *testing.T) {
 		t.Errorf("confirm com o app antigo: %d %s, queria 401 invalid_credentials", st, codigo)
 	}
 	if n := falhasDeLogin(t, a); n != 0 {
-		t.Errorf("%d falhas no bloqueio da conta, queria 0 (A3)", n)
+		t.Errorf("%d falhas no bloqueio da conta, queria 0", n)
 	}
 	if !temPendente(t, a) {
 		t.Fatal("o confirm recusado apagou o pendente")
