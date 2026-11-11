@@ -433,8 +433,8 @@ func (s *Scheduler) gravar(a db.ClaimDueTargetsRow, em time.Time, res Result) {
 			}
 		}
 	case pareceAlvoSumido(err) && s.alvoApagado(ctx, a.ID):
-		// O dono apagou o alvo com a sonda em
-		// voo. Não é erro, é o dono tendo mudado de ideia.
+		// O dono apagou o alvo com a sonda em voo.
+		// Não é erro, é o dono tendo mudado de ideia.
 		s.metrics.forget(a.ID)
 	default:
 		// Com o alvo vivo, o 42501 ou o 23503 veio de outra tabela (um canal

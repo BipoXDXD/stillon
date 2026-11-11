@@ -449,8 +449,8 @@ func TestRotateReturnsCommitErrorInsteadOfReuse(t *testing.T) {
 
 // O refresh token nunca pode chegar em claro ao banco (spec §5.2). Hoje a
 // propriedade sobreviveria por acidente — gravar em claro e buscar em claro
-// continua funcionando —, então ela precisa de trava própria, do
-// mesmo jeito que o ip_hash.
+// continua funcionando —, então ela precisa de trava própria, do mesmo
+// jeito que o ip_hash.
 func TestTokenIsStoredHashed(t *testing.T) {
 	mgr, pool, _, userID := setup(t)
 	ctx := context.Background()

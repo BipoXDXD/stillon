@@ -550,8 +550,7 @@ func (s *Service) inTx(ctx context.Context, fn func(*db.Queries) error) error {
 }
 
 // audit grava na mesma transação da mudança: não existe mudança sem rastro, nem
-// rastro de mudança que não aconteceu (a mesma razão de ativar o 2FA deixar
-// rastro).
+// rastro de mudança que não aconteceu.
 func audit(ctx context.Context, q *db.Queries, userID uuid.UUID, action string, entity *string, entityID *uuid.UUID, ipHash []byte, at time.Time) error {
 	id, err := uuid.NewV7()
 	if err != nil {

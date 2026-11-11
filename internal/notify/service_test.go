@@ -321,10 +321,10 @@ func TestChannelLimitIsCheckedBeforeSending(t *testing.T) {
 }
 
 // A segunda conferência do limite, a da gravação, é serializada pela trava
-// na linha do usuário (LockUser). O código já tinha a trava, e faltava
-// esta prova. Com
-// nove canais, duas criações simultâneas se encontram depois da contagem: sem
-// a trava, as duas contam nove e gravam, e o usuário fica com onze.
+// na linha do usuário (LockUser). O código já tinha a trava, e faltava esta
+// prova. Com nove canais, duas criações simultâneas se encontram depois da
+// contagem: sem a trava, as duas contam nove e gravam, e o usuário fica com
+// onze.
 func TestConcurrentCreatesDoNotPassTheChannelLimit(t *testing.T) {
 	b := novaBancadaCanais(t, true)
 	ctx := context.Background()

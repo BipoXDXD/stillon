@@ -63,7 +63,8 @@ func corpo(t *testing.T, r *http.Response) string {
 
 var nonceDaCSP = regexp.MustCompile(`style-src 'self' 'nonce-([A-Za-z0-9_-]{22})'`)
 
-// O roteamento do painel, caso a caso.
+// A tabela de rotas do painel (status, tipo e cache por método e caminho),
+// caso a caso.
 func TestRoteamentoDoPainel(t *testing.T) {
 	h := webui.New(distDeTeste())
 	casos := []struct {

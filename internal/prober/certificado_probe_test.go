@@ -214,7 +214,7 @@ func TestPresentedButUnverifiedCertificateRecordsNothing(t *testing.T) {
 	if !ok {
 		t.Fatalf("transporte de produção = %T, queria *http.Transport", client.Transport)
 	}
-	transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} // #nosec G402 -- T3: handshake sem verificação, só no teste
+	transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} // #nosec G402 -- handshake sem verificação, só no teste
 	t.Cleanup(transport.CloseIdleConnections)
 
 	res := Probe(t.Context(), client, especificacao(urlDe(t, "https", hostSonda, srv)))

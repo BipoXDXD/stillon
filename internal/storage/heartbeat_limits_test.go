@@ -207,7 +207,7 @@ func TestHeartbeatLimitsDownConvertsAndRestoresTheOldChecks(t *testing.T) {
 	}
 }
 
-// O piso de rollback (o binário anterior) sobe sobre o schema com as faixas
+// O binário do piso de rollback sobe sobre o schema com as faixas
 // novas: as migrations dele já estão aplicadas, e o boot é um no-op.
 func TestFloorBinaryBootsOnHeartbeatLimits(t *testing.T) {
 	ctx := context.Background()

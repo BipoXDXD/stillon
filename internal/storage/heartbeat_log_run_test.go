@@ -21,9 +21,10 @@ import (
 
 const migrationLogRun = "heartbeat_events_log_run"
 
-// O SQL do binário anterior (o piso de rollback), copiado do pacote db daquela
-// versão. Não atualize junto com as queries: a imagem anterior não muda, e é
-// ela que volta a gravar sobre o schema novo num rollback.
+// O SQL do binário do piso de rollback (a imagem anterior às migrations de
+// heartbeat), copiado do pacote db daquela versão. Não atualize junto com as
+// queries: a imagem anterior não muda, e é ela que volta a gravar sobre o
+// schema novo num rollback.
 const (
 	pisoInsertHeartbeatEvent = `INSERT INTO heartbeat_events (id, heartbeat_id, at, kind, runtime_ms, exit_code)
 VALUES ($1, $2, $3, $4, $5, $6)`
@@ -36,7 +37,7 @@ VALUES ($1, $2, $3, $4, $5, $6)`
  WHERE id = $8`
 )
 
-// O binário anterior não cita as colunas novas: os DEFAULTs têm de fazer o
+// O binário do piso não cita as colunas novas: os DEFAULTs têm de fazer o
 // INSERT dele gravar um sinal de ping sem execução, e o UPDATE dele não pode
 // apagar o que o binário novo gravou. Os CHECKs seguem valendo para o que é
 // novo.

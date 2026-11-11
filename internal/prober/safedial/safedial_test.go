@@ -188,10 +188,10 @@ func TestAllowAddrRejectsNonLiteralHost(t *testing.T) {
 //
 // Sem ela, um netip.Addr zerado não casa com prefixo nenhum da tabela e
 // AllowIP devolve nil — ou seja, PERMITE. A guarda é o que separa "endereço
-// que não parseou" de "liberado". Hoje nenhum consumidor chega aqui com Addr
-// inválido (o safedial ainda não tem consumidor), mas o prober
-// vai passar endereços vindos de resolução de DNS, e aí a guarda é a única
-// coisa entre um erro de resolução e uma requisição para onde não devia.
+// que não parseou" de "liberado". Hoje nenhum chamador passa um Addr
+// inválido, mas o prober entrega endereços vindos da resolução de DNS, e aí
+// a guarda é a única coisa entre um erro de resolução e uma requisição para
+// onde não devia.
 //
 // O caso não cabe na tabela acima porque ela parte de strings, e não existe
 // string que produza um Addr inválido: o zero value só se obtém direto.

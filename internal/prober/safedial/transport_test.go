@@ -270,8 +270,7 @@ func enderecoDe(t *testing.T, srv *httptest.Server) netip.AddrPort {
 }
 
 // Controle positivo: sem ele, todo teste abaixo que espera bloqueio passaria
-// também se NewClientAllowing não liberasse nada. Seria um teste que passa sem
-// testar nada.
+// também se NewClientAllowing não liberasse nada.
 func TestAllowedAddressIsReachable(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)

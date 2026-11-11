@@ -209,7 +209,7 @@ func TestProbeTimeoutWhileReadingBodyWithRule(t *testing.T) {
 	}
 }
 
-// Um corpo sem fim é lido até 64 KiB e descartado, e a sonda
+// Spec §5.1: um corpo sem fim é lido até 64 KiB e descartado, e a sonda
 // termina bem. Sem o limite, ela leria até o prazo estourar e daria timeout.
 func TestProbeCapsAnEndlessBodyWithoutFailing(t *testing.T) {
 	srv, client := servidor(t, func(w http.ResponseWriter, r *http.Request) {

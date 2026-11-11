@@ -160,7 +160,8 @@ func TestRuntimeIsNeverNegative(t *testing.T) {
 	}
 }
 
-// A janela de repetição, nas duas bordas.
+// Um sucesso repetido dentro de RepeatWindow não gera evento nem muda o
+// estado; a partir da borda da janela é um sucesso novo. Testa as duas bordas.
 func TestRepeatWindowBoundaries(t *testing.T) {
 	base, _ := aplicar(heartbeat.State{}, heartbeat.SignalSuccess, agora)
 	casos := []struct {
