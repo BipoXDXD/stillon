@@ -399,8 +399,7 @@ func (h *AuthHandlers) internal(w http.ResponseWriter, r *http.Request, op strin
 		argon2Ocupado(w, r, op)
 		return
 	}
-	slog.Error(op, "erro", err, "trace_id", observability.TraceID(r.Context()))
-	apierr.WriteError(w, r, apierr.CodeInternal)
+	erroInterno(w, r, op, err)
 }
 
 // argon2Ocupado é a resposta de quando o teto de Argon2id simultâneos ficou

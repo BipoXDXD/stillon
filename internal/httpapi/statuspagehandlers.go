@@ -2,7 +2,6 @@ package httpapi
 
 import (
 	"errors"
-	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -10,7 +9,6 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/BipoXDXD/stillon/internal/apierr"
-	"github.com/BipoXDXD/stillon/internal/observability"
 	"github.com/BipoXDXD/stillon/internal/statuspage"
 )
 
@@ -163,8 +161,7 @@ func (h *StatusPageHandlers) falhou(w http.ResponseWriter, r *http.Request, op s
 	case errors.Is(err, statuspage.ErrSlugTaken):
 		apierr.WriteError(w, r, apierr.CodeSlugTaken)
 	default:
-		slog.Error(op, "erro", err, "trace_id", observability.TraceID(r.Context()))
-		apierr.WriteError(w, r, apierr.CodeInternal)
+		erroInterno(w, r, op, err)
 	}
 	return true
 }

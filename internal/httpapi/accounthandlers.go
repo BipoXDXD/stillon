@@ -2,7 +2,6 @@ package httpapi
 
 import (
 	"errors"
-	"log/slog"
 	"net/http"
 	"time"
 
@@ -12,7 +11,6 @@ import (
 	"github.com/BipoXDXD/stillon/internal/apierr"
 	"github.com/BipoXDXD/stillon/internal/auth"
 	"github.com/BipoXDXD/stillon/internal/httpapi/middleware"
-	"github.com/BipoXDXD/stillon/internal/observability"
 )
 
 // AccountHandlers são as rotas da conta do dono (Plano 5): GET /me, POST
@@ -223,6 +221,5 @@ func (h *AccountHandlers) internal(w http.ResponseWriter, r *http.Request, op st
 		argon2Ocupado(w, r, op)
 		return
 	}
-	slog.Error(op, "erro", err, "trace_id", observability.TraceID(r.Context()))
-	apierr.WriteError(w, r, apierr.CodeInternal)
+	erroInterno(w, r, op, err)
 }
