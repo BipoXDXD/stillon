@@ -100,6 +100,30 @@ se a imagem chegar antes do commit de infraestrutura.
 - A falha travou a fila da VPS inteira,
   e a reconciliação depende de um passo administrativo manual.
 
+## Achado posterior: cancelamento que não impediu a publicação (release do #262)
+
+Às 22:58 o guarda local da sessão do StillOn cancelou a release do #262
+(run 42942692734, tentativa 1), registrando "deploy não iniciado",
+porque havia outra release ativa na VPS.
+O job `deploy` tinha começado às 22:58:27 e já estava no passo de publicação.
+O cancelamento parou o runner, mas não o receptor:
+o host publicou `fc1e772` às 22:59 (`current.json` gravado, deployment terminado, `readyz` 200).
+O efeito foi o contrário do que o guarda registrou,
+e por sorte a publicação era a esperada.
+A reexecução das 23:13 foi recusada na entrada (`BlockingIOError`, `host.lock` ocupado)
+sem gravar estado.
+
+Causa, confirmada no log do guarda: ele lia "status do run" e "status do deploy"
+separados por espaço e zerava o segundo quando os dois eram iguais.
+Com os dois `in_progress`, o deploy ficou vazio, e vazio era tratado como "não iniciado".
+Corrigido às 23:20: campos separados por `|`, e o guarda só cancela
+com o job `deploy` explicitamente `queued`, `waiting` ou `pending`;
+ausente na resposta conta como desconhecido e não cancela.
+
+Lição geral: cancelar o run depois que o passo de publicação começou
+não desfaz nada no host. Um guarda só pode cancelar antes desse passo,
+e "não sei" nunca vale como "não começou".
+
 ## Ações
 
 | # | Ação | Dono | Prazo |
@@ -109,3 +133,4 @@ se a imagem chegar antes do commit de infraestrutura.
 | 3 | Revisar os roteiros de passo do dono para a ordem da ação 1 (começando pelo `task10-4-passo-do-dono.md` e pelo plano da Task 10), com o Passo 7 antes do merge quando o código exigir variável nova, e corrigir o Caso A do rollback, que ainda diz que a queda só acontece se a variável sumir do recurso. | Coordenação | 2026-11-14 |
 | 4 | Reconciliar os dois `pending.json` pelo `ISOLATION.md` e destravar a fila da VPS. | Coordenação (administrativo) | Concluída em 2026-11-10 às 22:19; intents arquivados em `/var/lib/coolify-release/audit/2026-11-11-stillon-3003d54/` (data em UTC). |
 | 5 | Análise em formato ADR, com opções e trade-offs, de como uma release falha de um projeto deixa de travar a fila da VPS inteira, sem mudar o receptor nesta ação. O `ISOLATION.md` proíbe limpeza automática e bypass: toda opção mantém a reconciliação administrativa e o fail-closed. Hipótese inicial: bloquear só o projeto que falhou, com o intent comum como cerca. Até a decisão, o risco fica aceito: falha rara (1 release com intents presos em ~220 releases registradas no histórico do host: 62 StillOn, 157 Duora+GoblinShift); o bloqueio é fail-closed e protege as outras apps; a reconciliação está documentada (`ISOLATION.md` §Reconciliação) e foi executada em ~15 min em 10/11; a vigia de `readyz` e os guardas das sessões detectam a fila parada. Trocar isso por limpeza automática violaria o `ISOLATION.md`. | Coordenação (análise delegada ao StillOn) | 2026-11-21 |
+| 6 | Guardas de release das sessões: cancelar só com prova de que o passo de publicação não começou (job `deploy` explicitamente na fila, ou o passo anterior à publicação ainda sem conclusão); estado ausente ou ilegível nunca cancela. Corrigido no guarda do StillOn em 10/11; conferir os guardas das outras sessões que cancelam runs (o do Duora cancela quando o status do `deploy` vem vazio) e registrar a regra junto do `deploy/coolify/release/README.md`. | Claude (sessão do StillOn); guardas das outras sessões com a Coordenação | 2026-11-14 |
