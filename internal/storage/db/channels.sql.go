@@ -136,7 +136,7 @@ type GetChannelViewRow struct {
 }
 
 // Um canal no formato da listagem (ListChannels), para a resposta do PATCH
-// /channels/{id} (Plano 9, §3.3).
+// /channels/{id}.
 func (q *Queries) GetChannelView(ctx context.Context, arg GetChannelViewParams) (GetChannelViewRow, error) {
 	row := q.db.QueryRow(ctx, getChannelView, arg.UserID, arg.ID)
 	var i GetChannelViewRow
@@ -249,7 +249,7 @@ SELECT id FROM users WHERE id = $1 FOR UPDATE
 // user_id; as duas do fim rodam sob InVerifyTx.
 // Serializa as criações de canal do mesmo usuário, para que o limite de
 // canais valha também contra duas requisições simultâneas. users não tem
-// RLS (D7 do Plano 2).
+// RLS.
 func (q *Queries) LockUser(ctx context.Context, id uuid.UUID) error {
 	_, err := q.db.Exec(ctx, lockUser, id)
 	return err
@@ -294,7 +294,7 @@ type SetChannelEnabledParams struct {
 	ID      uuid.UUID
 }
 
-// Pausar e retomar (Plano 9, §3.3). O despacho lê enabled na hora do envio
+// Pausar e retomar. O despacho lê enabled na hora do envio
 // (semEnvio): pausado, o aviso é cancelado, e retomar não o reenvia. Gravar o
 // valor que já está afeta a linha do mesmo jeito: a rota é idempotente.
 func (q *Queries) SetChannelEnabled(ctx context.Context, arg SetChannelEnabledParams) (int64, error) {

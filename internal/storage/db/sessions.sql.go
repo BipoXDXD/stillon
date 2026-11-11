@@ -80,7 +80,7 @@ const lockUserSessions = `-- name: LockUserSessions :exec
 SELECT pg_advisory_xact_lock(hashtextextended('stillon.sessions:' || $1::uuid::text, 0))
 `
 
-// Serializa as mutações de sessão de um usuário (D1 do Plano 5). É de
+// Serializa as mutações de sessão de um usuário. É de
 // TRANSAÇÃO: sai sozinha no commit ou no rollback. Toda transação que mexe em
 // linhas de sessions a pega ANTES de qualquer trava de linha, e é isso que
 // impede o ciclo (deadlock) entre rotação e revogação.
@@ -103,7 +103,7 @@ type RevokeAllFamiliesParams struct {
 
 // As revogações por usuário (set-password, troca de senha, DELETE
 // /sessions/{id}) marcam só a linha VIVA de cada família: não usada e não
-// vencida (Task 11 do Plano 5). É ela que Rotate aceita; uma linha já
+// vencida. É ela que Rotate aceita; uma linha já
 // rotacionada apresentada de novo é reúso, que Rotate confere ANTES da
 // revogação, com ou sem revoked_at. Marcar também as linhas mortas não
 // protegia nada e disputava as mesmas linhas, em outra ordem, com a
@@ -167,11 +167,11 @@ const sessionUserByHash = `-- name: SessionUserByHash :one
 SELECT user_id FROM sessions WHERE token_hash = $1
 `
 
-// Sessões (spec §5.2). sessions não tem RLS (D7 do Plano 2): login e refresh
+// Sessões (spec §5.2). sessions não tem RLS: login e refresh
 // a consultam por e-mail e por hash, antes de existir usuário na transação.
 // Toda query daqui que parte de um usuário filtra por user_id.
 // O dono de um refresh, lido SEM trava: serve só para saber qual trava de
-// usuário pegar antes de travar a linha (D1 do Plano 5).
+// usuário pegar antes de travar a linha.
 func (q *Queries) SessionUserByHash(ctx context.Context, tokenHash []byte) (uuid.UUID, error) {
 	row := q.db.QueryRow(ctx, sessionUserByHash, tokenHash)
 	var user_id uuid.UUID

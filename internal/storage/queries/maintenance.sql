@@ -24,14 +24,13 @@ ON CONFLICT (target_id, bucket) DO UPDATE
 -- A marca d'água: a hora mais recente já consolidada ANTES de before (a hora
 -- corrente). Um rollup gravado no futuro (relógio adiantado) não conta: com
 -- ele, a marca real ficava escondida, e uma parada de mais de 2 h perdia as
--- horas antes dela (M1 da revisão do Plano 10). Sem rollup nenhum antes de
+-- horas antes dela. Sem rollup nenhum antes de
 -- before, devolve a época Unix.
 -- name: LatestRollupBucketBefore :one
 SELECT coalesce(max(bucket), 'epoch'::timestamptz)::timestamptz FROM check_rollup_1h
  WHERE bucket < sqlc.arg(before)::timestamptz;
 
--- Uma consolidação por vez entre todas as instâncias (E3 da revisão de
--- 2026-10-14): o upsert é idempotente, mas dois em paralelo travam as mesmas
+-- Uma consolidação por vez entre todas as instâncias: o upsert é idempotente, mas dois em paralelo travam as mesmas
 -- linhas em ordens diferentes (deadlock 40P01). A trava é de transação e
 -- não espera: quem não a pega pula a rodada, e a próxima tenta de novo.
 -- name: TryLockRollups :one
@@ -72,19 +71,19 @@ DELETE FROM notifications n
                    AND mais_nova.channel_id = n.channel_id
                    AND mais_nova.created_at > n.created_at));
 
--- A idade do log de sinais (D15 da spec de heartbeats). O teto por heartbeat
+-- A idade do log de sinais (spec de heartbeats). O teto por heartbeat
 -- fica na transação do ping; esta cobre quem parou de pingar.
 -- name: DeleteOldHeartbeatEvents :execrows
 DELETE FROM heartbeat_events WHERE at < sqlc.arg(cutoff)::timestamptz;
 
--- audit_log e sessions não têm RLS (D7 do Plano 2).
+-- audit_log e sessions não têm RLS.
 -- name: DeleteOldAudit :execrows
 DELETE FROM audit_log WHERE at < sqlc.arg(cutoff)::timestamptz;
 
 -- name: DeleteExpiredSessions :execrows
 DELETE FROM sessions WHERE expires_at < sqlc.arg(cutoff)::timestamptz;
 
--- D6 do Plano 2: GET /targets/{id}/checks acima de 48h lê daqui. Roda sob
+-- GET /targets/{id}/checks acima de 48h lê daqui. Roda sob
 -- InUserTx e filtra por user_id, como ListChecks.
 -- name: ListRollups :many
 SELECT r.bucket, r.total, r.ok, r.p50, r.p95, r.p99, r.max

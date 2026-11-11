@@ -18,12 +18,12 @@ WITH lote AS MATERIALIZED (
     SELECT n.id FROM notifications n
       JOIN notif_channels c ON c.id = n.channel_id
      WHERE n.status = 'pending' AND n.next_attempt_at <= $1::timestamptz
-       -- Piso de rollback (SP1, §12): uma versão futura grava aviso de
+       -- Piso de rollback: uma versão futura grava aviso de
        -- certificado sem incidente. Contá-lo aqui o faria sumir no JOIN com
        -- incidents e somar tentativas até fechar como failed sem ter saído.
-       -- O PR 7 da SP1 remove o filtro ao trocar o JOIN por LEFT JOIN.
+       -- O filtro sai quando o JOIN com incidents virar LEFT JOIN.
        AND n.incident_id IS NOT NULL
-       -- Piso de rollback (SP2, D-13=a): tipo de canal ou evento que este
+       -- Piso de rollback: tipo de canal ou evento que este
        -- binário não sabe entregar fica pending, sem gastar tentativa. As
        -- listas vêm de notify.kindsConhecidos e notify.eventosConhecidos.
        AND c.kind = ANY($2::text[])
@@ -195,7 +195,7 @@ type InsertAuditParams struct {
 }
 
 // Falha definitiva vai para a trilha de auditoria (spec §8). audit_log não
-// tem RLS (D7 do Plano 2).
+// tem RLS.
 func (q *Queries) InsertAudit(ctx context.Context, arg InsertAuditParams) error {
 	_, err := q.db.Exec(ctx, insertAudit,
 		arg.ID,
@@ -306,7 +306,7 @@ type MarkChannelSuccessParams struct {
 	Now       time.Time
 }
 
-// Saúde do canal (Plano 4): o último sucesso e a última falha definitiva.
+// Saúde do canal: o último sucesso e a última falha definitiva.
 func (q *Queries) MarkChannelSuccess(ctx context.Context, arg MarkChannelSuccessParams) error {
 	_, err := q.db.Exec(ctx, markChannelSuccess, arg.ChannelID, arg.Now)
 	return err
@@ -342,7 +342,7 @@ type RetryNotificationParams struct {
 }
 
 // refund devolve a tentativa que a reivindicação contou: um 429 é o
-// provedor pedindo espera, não uma falha do envio (Plano 4, apagão em massa).
+// provedor pedindo espera, não uma falha do envio (caso típico: um apagão em massa).
 func (q *Queries) RetryNotification(ctx context.Context, arg RetryNotificationParams) error {
 	_, err := q.db.Exec(ctx, retryNotification,
 		arg.NextAttemptAt,

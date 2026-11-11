@@ -65,7 +65,7 @@ const deleteOldAudit = `-- name: DeleteOldAudit :execrows
 DELETE FROM audit_log WHERE at < $1::timestamptz
 `
 
-// audit_log e sessions não têm RLS (D7 do Plano 2).
+// audit_log e sessions não têm RLS.
 func (q *Queries) DeleteOldAudit(ctx context.Context, cutoff time.Time) (int64, error) {
 	result, err := q.db.Exec(ctx, deleteOldAudit, cutoff)
 	if err != nil {
@@ -78,7 +78,7 @@ const deleteOldHeartbeatEvents = `-- name: DeleteOldHeartbeatEvents :execrows
 DELETE FROM heartbeat_events WHERE at < $1::timestamptz
 `
 
-// A idade do log de sinais (D15 da spec de heartbeats). O teto por heartbeat
+// A idade do log de sinais (spec de heartbeats). O teto por heartbeat
 // fica na transação do ping; esta cobre quem parou de pingar.
 func (q *Queries) DeleteOldHeartbeatEvents(ctx context.Context, cutoff time.Time) (int64, error) {
 	result, err := q.db.Exec(ctx, deleteOldHeartbeatEvents, cutoff)
@@ -147,7 +147,7 @@ SELECT coalesce(max(bucket), 'epoch'::timestamptz)::timestamptz FROM check_rollu
 // A marca d'água: a hora mais recente já consolidada ANTES de before (a hora
 // corrente). Um rollup gravado no futuro (relógio adiantado) não conta: com
 // ele, a marca real ficava escondida, e uma parada de mais de 2 h perdia as
-// horas antes dela (M1 da revisão do Plano 10). Sem rollup nenhum antes de
+// horas antes dela. Sem rollup nenhum antes de
 // before, devolve a época Unix.
 func (q *Queries) LatestRollupBucketBefore(ctx context.Context, before time.Time) (time.Time, error) {
 	row := q.db.QueryRow(ctx, latestRollupBucketBefore, before)
@@ -184,7 +184,7 @@ type ListRollupsRow struct {
 	Max    *int32
 }
 
-// D6 do Plano 2: GET /targets/{id}/checks acima de 48h lê daqui. Roda sob
+// GET /targets/{id}/checks acima de 48h lê daqui. Roda sob
 // InUserTx e filtra por user_id, como ListChecks.
 func (q *Queries) ListRollups(ctx context.Context, arg ListRollupsParams) ([]ListRollupsRow, error) {
 	rows, err := q.db.Query(ctx, listRollups,
@@ -245,8 +245,7 @@ const tryLockRollups = `-- name: TryLockRollups :one
 SELECT pg_try_advisory_xact_lock(hashtextextended($1::text, 0)) AS acquired
 `
 
-// Uma consolidação por vez entre todas as instâncias (E3 da revisão de
-// 2026-10-14): o upsert é idempotente, mas dois em paralelo travam as mesmas
+// Uma consolidação por vez entre todas as instâncias: o upsert é idempotente, mas dois em paralelo travam as mesmas
 // linhas em ordens diferentes (deadlock 40P01). A trava é de transação e
 // não espera: quem não a pega pula a rodada, e a próxima tenta de novo.
 func (q *Queries) TryLockRollups(ctx context.Context, key string) (bool, error) {

@@ -5,7 +5,7 @@
 SELECT id, user_id, slug, title, published, created_at FROM status_pages WHERE user_id = $1;
 
 -- A trava do PATCH: sem ela, dois PATCH simultâneos leem a mesma versão, e
--- o segundo regrava os campos que o primeiro mudou (achado da revisão).
+-- o segundo regrava os campos que o primeiro mudou.
 -- name: LockStatusPage :one
 SELECT id FROM status_pages WHERE user_id = $1 FOR UPDATE;
 
@@ -77,7 +77,7 @@ SELECT coalesce(max(r.bucket), 'epoch'::timestamptz)::timestamptz
 -- Uptime diário (UTC) dos alvos da página: os rollups de [since, cut) mais
 -- os checks brutos de [cut, until), no corte do pacote rollupcut (o mesmo do
 -- dashboard). Sem os brutos, a página ficava até ~1h15 atrasada e cega à
--- queda em curso (C4 da revisão).
+-- queda em curso.
 -- name: ListPublicDailyUptime :many
 SELECT u.target_id,
        to_timestamp(floor(extract(epoch FROM u.at) / 86400) * 86400)::timestamptz AS day,
@@ -118,7 +118,7 @@ SELECT h.target_id, (sum(h.p50::bigint * h.ok) / nullif(sum(h.ok), 0))::int AS p
 -- Incidentes resolvidos dos alvos da página que tocam a janela [since,
 -- agora): resolvidos depois de since, mesmo que tenham começado antes. Filtrar
 -- pelo início deixava sem explicação o dia vermelho da queda que atravessa o
--- começo da barra (C9). Só o nome de exibição, o início e o fim; a causa não
+-- começo da barra. Só o nome de exibição, o início e o fim; a causa não
 -- sai (spec §5.6).
 -- name: ListPublicIncidents :many
 SELECT i.display_name, x.started_at, x.resolved_at::timestamptz AS resolved_at
