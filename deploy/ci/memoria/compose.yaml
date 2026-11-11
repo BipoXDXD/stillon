@@ -1,0 +1,23 @@
+# Sobreposição do compose.yaml para medir memória no CI (workflow memoria): o
+# app atrás de um Caddy, com os tetos de CPU da produção e os de memória que o
+# job escolhe. Só o CI usa; a produção segue no deploy/vps/compose.prod.yaml.
+services:
+  app:
+    ports: !reset []
+    environment:
+      GOMEMLIMIT: ${MEM_GO:?defina MEM_GO}
+    cpus: 0.5
+    mem_limit: ${MEM_APP:?defina MEM_APP}
+
+  caddy:
+    image: ${CADDY_IMAGEM:?defina CADDY_IMAGEM}
+    volumes:
+      - ./deploy/ci/memoria/Caddyfile:/etc/caddy/Caddyfile:ro
+    ports:
+      - "127.0.0.1:${STILLON_PORT:-8080}:80"
+    cpus: 0.25
+    mem_limit: ${MEM_CADDY:?defina MEM_CADDY}
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_healthy
