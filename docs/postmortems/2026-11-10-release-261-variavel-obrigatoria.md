@@ -35,16 +35,19 @@ atualizar o commit de infraestrutura.
 |-------|--------|
 | 21:48 | Merge do #261, SHA `3003d5480c3b3a996ac06dcad5e50d936f3a663a`. |
 | 22:02 | CI da `main` verde (run 42934260282). |
-| 22:03 | `Coolify release` (run 42935987507) troca a imagem para `release-3003d548`. O recurso segue com o `app.json` de `ad26152`. |
+| 22:02 | `Coolify release` (run 42935987507) começa e troca a imagem para `release-3003d548`. O recurso segue com o `app.json` de `ad26152`. |
 | 22:03 | O binário novo recusa subir: "variável obrigatória ausente em produção: PROBE_BLOCKED_CIDRS". Restart loop; `readyz` 502. |
-| 22:04 | O receptor falha em `validate_runtime` ("Application container is not healthy"). O guarda local da release vê o run em failure. Ficam os dois `pending.json`. |
+| 22:03 | O receptor falha em `validate_runtime` ("Application container is not healthy"). O guarda local da release vê o run em failure. Ficam os dois `pending.json`. |
 | 22:06 | Aviso à coordenação. |
 | 22:16 | A coordenação faz o Passo 7 pela API do Coolify: `git_commit_sha` vai para `3003d54…`, deploy `hhrzkkxdgxlbgrx9irz4xtzp` termina `finished`. `readyz` 200, app `healthy`, 0 restarts, sem o aviso de lista vazia no boot. |
-| 22:19 | Reconciliação administrativa da fila: `current.json` vai para `3003d54…`, os dois `pending.json` são arquivados por rename em `/var/lib/coolify-release/audit/2026-11-11-stillon-3003d54/`. Fila liberada. |
+| 22:19 | Reconciliação administrativa da fila: `current.json` vai para `3003d54…`, os dois `pending.json` são arquivados por rename em `/var/lib/coolify-release/audit/2026-11-11-stillon-3003d54/` (a data do diretório está em UTC). Fila liberada. |
 
 ## Causa raiz
 
-A ordem do roteiro.
+A ordem do roteiro foi o gatilho.
+A causa de fundo é que a imagem e o commit de infraestrutura
+são publicados por caminhos independentes,
+sem nenhuma checagem de compatibilidade entre os dois.
 O `task10-4-passo-do-dono.md` e o plano da Task 10
 mandavam publicar a imagem (merge e release automático)
 **antes** do Passo 7, que atualiza o commit de infraestrutura.
@@ -53,7 +56,7 @@ O release automático só troca a imagem.
 O `app.json`, que decide quais variáveis chegam ao contêiner,
 fica preso ao commit de infraestrutura escolhido no recurso.
 A variável já estava cadastrada no Coolify
-(Passo 0.3 conferido), mas o `app.json` antigo não a listava,
+(o Passo 0.3 conferiu esse cadastro), mas o `app.json` antigo não a listava,
 então ela nunca chegou ao processo.
 
 O plano assumiu que a exigência nova estaria
@@ -75,7 +78,7 @@ se a imagem chegar antes do commit de infraestrutura.
 - O guarda do receptor (`validate_runtime`) reprovou
   o contêiner em cerca de 1 min e não marcou a release como boa:
   sem `current.json` novo, sem etiqueta de SHA.
-- O alerta chegou rápido: run vermelho às 22:04,
+- O alerta chegou rápido: run vermelho às 22:03,
   `readyz` 502 visto de fora, aviso à coordenação às 22:06.
 - O caminho de volta estava pronto:
   a variável já estava no recurso e no Bitwarden,
@@ -90,7 +93,7 @@ se a imagem chegar antes do commit de infraestrutura.
 - A ordem do roteiro tinha a imagem antes da infraestrutura,
   e nenhuma checagem comparava as duas.
 - O Passo 0.3 conferiu o lugar errado para este risco:
-  a variável no Coolify e no contêiner antigo,
+  o cadastro da variável no recurso do Coolify,
   e não se o `app.json` em uso a repassava.
 - O CI não sabe qual commit de infraestrutura
   está fixado no recurso, então não tinha como barrar.
@@ -102,6 +105,7 @@ se a imagem chegar antes do commit de infraestrutura.
 | # | Ação | Dono | Prazo |
 |---|------|------|-------|
 | 1 | Regra de publicação: mudança que exige variável nova segue expand/contract. Primeiro o código tolerante (só aviso), depois a infraestrutura (Passo 7), só então o código que exige. Alternativa aceita: o Passo 7 antes da release. Registrar no `deploy/coolify/release/README.md`. | Claude (sessão de código) | 2026-11-14 |
-| 2 | Check no CI: um teste compara as variáveis obrigatórias em produção declaradas em `internal/config` com as que o `app.json` do commit de infraestrutura fixado entrega, e falha se o código exige algo que a infraestrutura ainda não passa. Precisa de uma fonte versionada do SHA fixado. Só a ideia aqui; não implementado neste PR. | Claude (sessão de código) | 2026-11-21 |
-| 3 | Revisar os roteiros de passo do dono para a ordem da ação 1 (começando pelo `task10-4-passo-do-dono.md` e pelo plano da Task 10), com o Passo 7 antes do merge quando o código exigir variável nova. | Coordenação | 2026-11-14 |
-| 4 | Reconciliar os dois `pending.json` pelo `ISOLATION.md` e destravar a fila da VPS. | Coordenação (administrativo) | Concluída em 2026-11-10 às 22:19; intents arquivados em `/var/lib/coolify-release/audit/2026-11-11-stillon-3003d54/`. |
+| 2 | Check no CI: um teste compara as variáveis obrigatórias em produção declaradas em `internal/config` com as que o `app.json` do commit de infraestrutura fixado entrega, e falha se o código exige algo que a infraestrutura ainda não passa. Precisa de uma fonte versionada do SHA fixado. Alternativa que dispensa essa fonte: a própria release compara as variáveis exigidas pela imagem com as que o recurso entrega e recusa antes de trocar a imagem. Só a ideia aqui; não implementado neste PR. | Claude (sessão de código) | 2026-11-21 |
+| 3 | Revisar os roteiros de passo do dono para a ordem da ação 1 (começando pelo `task10-4-passo-do-dono.md` e pelo plano da Task 10), com o Passo 7 antes do merge quando o código exigir variável nova, e corrigir o Caso A do rollback, que ainda diz que a queda só acontece se a variável sumir do recurso. | Coordenação | 2026-11-14 |
+| 4 | Reconciliar os dois `pending.json` pelo `ISOLATION.md` e destravar a fila da VPS. | Coordenação (administrativo) | Concluída em 2026-11-10 às 22:19; intents arquivados em `/var/lib/coolify-release/audit/2026-11-11-stillon-3003d54/` (data em UTC). |
+| 5 | Avaliar como uma release falha de um projeto deixa de travar a fila da VPS inteira (hoje a reconciliação é manual). Até a decisão, o risco fica aceito e documentado aqui. | Coordenação | A definir pela coordenação |
