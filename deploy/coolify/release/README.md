@@ -44,7 +44,8 @@ Mudança assim segue expand/contract, em três publicações:
    O `app.json` que repassa a variável entra neste PR ou num anterior,
    nunca junto com o código que exige. Merge e release.
 2. Infraestrutura: cadastrar a variável no recurso do Coolify,
-   com a fila da VPS sem `pending.json`.
+   com a fila da VPS sem `pending.json` e sem run do `Coolify release`
+   em andamento (`gh run list --workflow coolify.yml`).
    Revisar o diff de `deploy/coolify/` entre o commit fixado e o novo,
    atualizar o commit de infraestrutura no recurso e publicar o recurso.
    Esse passo é manual e fica fora do `host.lock` ([ISOLATION.md](ISOLATION.md)).
