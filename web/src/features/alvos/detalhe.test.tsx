@@ -1,8 +1,8 @@
 import { act, screen, waitFor, within } from '@testing-library/react'
 import { http, HttpResponse } from 'msw'
 import { describe, expect, it } from 'vitest'
-import { ItemDoResumo } from '@/lib/api/schemas'
-import { horaMinuto } from '@/lib/format'
+import { Alvo, ItemDoResumo } from '@/lib/api/schemas'
+import { dataHora, horaMinuto } from '@/lib/format'
 import type { ErroForcado } from '@/test/api-falsa'
 import { alvo, incidente, itemDoResumo } from '@/test/fixtures'
 import { renderizarPainel } from '@/test/renderizar'
@@ -799,3 +799,52 @@ describe('o alvo sumiu', () => {
   })
 })
 
+
+// A linha do certificado (spec §8, "Alvo: detalhe"), abaixo dos indicadores.
+// O relógio é o da consulta do alvo; not_after fica longe da borda de um dia,
+// e os milissegundos entre a fixture e a resposta não mudam a conta.
+describe('certificado do alvo', () => {
+  const DIA_MS = 86_400_000
+  const daqui = (dias: number) => new Date(Date.now() + dias * DIA_MS).toISOString()
+  const leitura = (notAfter: string) => ({ not_after: notAfter, observed_at: new Date().toISOString() })
+
+  async function abrir(a: ReturnType<typeof alvo>) {
+    const r = await renderizarPainel('/targets/alvo-1')
+    r.falsa.estado.alvos = [a]
+    await r.cliente.refetchQueries()
+    await screen.findByRole('heading', { name: 'API', level: 1 })
+    return screen.getByTestId('certificado')
+  }
+
+  it('com leitura: válido até a data, em N dias, com ícone', async () => {
+    const notAfter = daqui(14.5)
+    const linha = await abrir(alvo({ tls: leitura(notAfter) }))
+    await waitFor(() => expect(linha).toHaveTextContent(`Certificado válido até ${dataHora(notAfter)}, em 15 dias`))
+    expect(linha.querySelector('svg')).toHaveAttribute('aria-hidden', 'true')
+  })
+
+  it('vencido: diz quando venceu, e não "em 0 dias"', async () => {
+    const notAfter = daqui(-2.5)
+    const linha = await abrir(alvo({ tls: leitura(notAfter) }))
+    await waitFor(() => expect(linha).toHaveTextContent(`Certificado venceu em ${dataHora(notAfter)}`))
+    expect(linha).not.toHaveTextContent(/dias?$/)
+  })
+
+  it('HTTPS sem leitura: aguardando a primeira sonda', async () => {
+    const linha = await abrir(alvo({ tls: null }))
+    expect(linha).toHaveTextContent('Certificado: aguardando a primeira sonda.')
+  })
+
+  it('HTTP sem leitura: não se aplica', async () => {
+    const linha = await abrir(alvo({ url: 'http://api.exemplo.com/health', tls: null }))
+    expect(linha).toHaveTextContent('Certificado: não se aplica a este endereço.')
+  })
+
+  it('o parse aceita tls null e recusa tls sem observed_at', () => {
+    expect(Alvo.safeParse(alvo({ tls: null })).success).toBe(true)
+    expect(Alvo.safeParse(alvo({ tls: leitura(daqui(10)) })).success).toBe(true)
+    expect(Alvo.safeParse({ ...alvo(), tls: { not_after: daqui(10) } }).success).toBe(false)
+    const { tls_warn: _semAviso, ...semTlsWarn } = alvo()
+    expect(Alvo.safeParse(semTlsWarn).success).toBe(false)
+  })
+})
