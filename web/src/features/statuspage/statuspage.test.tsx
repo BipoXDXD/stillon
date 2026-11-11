@@ -352,6 +352,23 @@ describe('status page', () => {
     expect(screen.getByLabelText('Nome de exibição de Site')).not.toHaveFocus()
   })
 
+  // Um campo que a tela não sabe marcar não some: a mensagem vai ao erro do
+  // topo. Sabotagem: tirar o ramo "campo === NO_TOPO" do catch.
+  it('o 400 com um campo que a tela não tem mostra a mensagem no erro do topo', async () => {
+    const r = await renderizarPainel('/status-pages')
+    r.falsa.estado.alvos = [alvo()]
+    r.falsa.estado.paginas = [salva()]
+    await r.cliente.refetchQueries()
+    r.falsa.estado.forcar.set('PATCH /status-pages/:id', {
+      status: 400,
+      code: 'validation_failed',
+      fields: [{ field: 'owner_id', reason: 'forbidden' }],
+    })
+    await r.usuario.click(await screen.findByRole('button', { name: 'Salvar' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('Não permitido.')
+    expect(screen.queryByText(/owner_id/)).not.toBeInTheDocument()
+  })
+
   it('a sugestão curta demais não acusa erro no slug antes de a pessoa mexer nele', async () => {
     const r = await renderizarPainel('/status-pages')
     await r.usuario.type(await screen.findByLabelText('Título'), 'A')
