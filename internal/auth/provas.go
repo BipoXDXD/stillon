@@ -22,7 +22,8 @@ import (
 // provas, e as que passam do limite nem chegam a verificar.
 //
 // Em memória de propósito: zera num restart, e um processo por vez atende a
-// API. O preço é que cada restart devolve as tentativas à família.
+// API. O preço é que cada restart devolve as cinco tentativas a quem tem
+// uma sessão roubada.
 
 // FamilyProofLimit é quantas provas erradas uma família aguenta; a última a
 // derruba. É o mesmo limiar do bloqueio da conta.

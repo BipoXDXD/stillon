@@ -294,11 +294,11 @@ func validHeaderValue(s string) bool {
 // nenhuma. Caminho, consulta e fragmento não contam. Uma URL que não se lê, ou
 // cujo host não converte para ASCII, não tem a origem de ninguém.
 //
-// O host é comparado depois de idna.Lookup.ToASCII, o perfil que o net/http
-// (e com ele o safedial) usa para discar e para o SNI. Com strings.ToLower, "straße.de" e "STRAẞE.de" davam a mesma origem,
-// mas o transporte disca xn--strae-oqa.de num e strasse.de no outro, que é
-// outro domínio: o PATCH mantinha os headers e o próximo check os levava ao
-// domínio novo.
+// O host é comparado depois de idna.Lookup.ToASCII, o perfil que o net/http (e com
+// ele o safedial) usa para discar e para o SNI. Com strings.ToLower, "straße.de" e
+// "STRAẞE.de" davam a mesma origem, mas o transporte disca xn--strae-oqa.de num e
+// strasse.de no outro, que é outro domínio: o PATCH mantinha os headers e o
+// próximo check os levava ao domínio novo.
 //
 // É a regra de apply no serviço: um PATCH que troca a origem sem mandar
 // headers os apaga. O painel a reimplementa com new URL(x).origin para avisar

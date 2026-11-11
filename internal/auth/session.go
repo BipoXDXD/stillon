@@ -293,8 +293,8 @@ func (m *Manager) Revoke(ctx context.Context, token string) error {
 	})
 }
 
-// travarSessao pega a trava do usuário ANTES da trava da linha, e toda transação que muda sessões segue essa ordem: é o que impede o
-// ciclo entre duas delas.
+// travarSessao pega a trava do usuário ANTES da trava da linha, e toda transação
+// que muda sessões segue essa ordem: é o que impede o ciclo entre duas delas.
 //
 // A trava da linha sozinha não basta. Em READ COMMITTED, o UPDATE que revoga
 // uma família espera a linha viva que uma rotação travou; a rotação insere o

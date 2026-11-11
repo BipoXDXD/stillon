@@ -301,12 +301,13 @@ func discarEmSerie(ctx context.Context, ips []netip.Addr, discar discarIP) (net.
 }
 
 // recusarHospedagem recusa address quando o IP cai numa faixa da própria
-// hospedagem (PROBE_BLOCKED_CIDRS). A VPS é dividida com outros projetos, e
-// as portas deles no IP público não são privadas para a lista fixa: sem esta
-// conferência, um alvo cadastrado alcançaria cada uma delas. O Unmap faz o ::ffff:a.b.c.d cair no CIDR v4. Endereço ilegível ou
-// com zona IPv6 é recusado aqui mesmo, sem contar com o AllowAddr que vem
-// depois no permitir: o Contains é falso para IP com zona, e o Unmap a
-// descarta, então aprovar dependeria da ordem das conferências.
+// hospedagem (PROBE_BLOCKED_CIDRS). A VPS é dividida com outros projetos, e as
+// portas deles no IP público não são privadas para a lista fixa: sem esta
+// conferência, um alvo cadastrado alcançaria cada uma delas. O Unmap faz o
+// ::ffff:a.b.c.d cair no CIDR v4. Endereço ilegível ou com zona IPv6 é recusado
+// aqui mesmo, sem contar com o AllowAddr que vem depois no permitir: o Contains é
+// falso para IP com zona, e o Unmap a descarta, então aprovar dependeria da ordem
+// das conferências.
 func recusarHospedagem(address string, hospedagem []netip.Prefix) error {
 	if len(hospedagem) == 0 {
 		return nil

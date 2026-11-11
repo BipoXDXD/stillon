@@ -329,8 +329,9 @@ func aumentaOHost(regraAntes *ContentRule, urlAntes string, regraDepois *Content
 
 // apply devolve true quando a mudança altera O QUE é sondado.
 //
-// Uma URL de outra origem sem headers no mesmo PATCH apaga os headers: eles são credenciais daquele destino, e levá-los a outro
-// host é o mesmo vazamento que o sondador já evita num redirecionamento.
+// Uma URL de outra origem sem headers no mesmo PATCH apaga os headers: eles são
+// credenciais daquele destino, e levá-los a outro host é o mesmo vazamento que o
+// sondador já evita num redirecionamento.
 func (p Patch) apply(f *fields, enabled *bool) bool {
 	antes := *f
 	if p.Name != nil {

@@ -96,11 +96,11 @@ func Maintain(ctx context.Context, pool *pgxpool.Pool, now time.Time) (Maintenan
 // pula a rodada e devolve 0 sem erro: o upsert é idempotente, e a rodada
 // seguinte cobre a janela.
 //
-// A marca d'água é o último rollup ANTES de ate. Um rollup no futuro (o
-// relógio esteve adiantado quando foi gravado) não conta: com a marca no
-// futuro, de ficava depois de ate e nenhuma hora era consolidada; limitada a ate, ela escondia a última marca real, e uma parada de mais
-// de 2 h perdia para sempre as horas antes dela. O rollup do
-// futuro fica; a retenção o apaga com a idade.
+// A marca d'água é o último rollup ANTES de ate. Um rollup no futuro (o relógio
+// esteve adiantado quando foi gravado) não conta: com a marca no futuro, de ficava
+// depois de ate e nenhuma hora era consolidada; limitada a ate, ela escondia a
+// última marca real, e uma parada de mais de 2 h perdia para sempre as horas antes
+// dela. O rollup do futuro fica; a retenção o apaga com a idade.
 func ConsolidateRollups(ctx context.Context, pool *pgxpool.Pool, now time.Time) (int64, error) {
 	ate := now.UTC().Truncate(time.Hour)
 	var n int64

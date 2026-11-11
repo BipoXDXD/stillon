@@ -148,9 +148,9 @@ func (s *TOTP) Confirm(ctx context.Context, userID uuid.UUID, code string, now t
 	// O timestep da confirmação já entra consumido: o código usado para
 	// ativar não pode servir de novo para entrar.
 	//
-	// E o segredo tem de ser o mesmo que validou o código: a troca de senha e o set-password apagam o segredo pendente, e uma
-	// confirmação que o leu antes ligaria o 2FA sem segredo nenhum — o dono
-	// nunca mais entraria.
+	// E o segredo tem de ser o mesmo que validou o código: a troca de senha e o
+	// set-password apagam o segredo pendente, e uma confirmação que o leu antes
+	// ligaria o 2FA sem segredo nenhum — o dono nunca mais entraria.
 	tag, err := tx.Exec(ctx,
 		`UPDATE users SET totp_confirmed_at = $2, totp_last_timestep = $3
 		   WHERE id = $1 AND totp_confirmed_at IS NULL AND totp_secret_enc = $4`,
@@ -185,10 +185,11 @@ func (s *TOTP) Confirm(ctx context.Context, userID uuid.UUID, code string, now t
 	return codes, nil
 }
 
-// SecondFactorProof é o que um VerifyWithProof aceito prova: o segredo ativo
-// como estava cifrado no banco quando o código foi aceito. O login a entrega a
-// Manager.IssueAfterSecondFactor, que a reconfere sob a trava do usuário: uma troca de autenticador ou um disable que comite entre o código
-// e a sessão faz a sessão ser recusada.
+// SecondFactorProof é o que um VerifyWithProof aceito prova: o segredo ativo como
+// estava cifrado no banco quando o código foi aceito. O login a entrega a
+// Manager.IssueAfterSecondFactor, que a reconfere sob a trava do usuário: uma
+// troca de autenticador ou um disable que comite entre o código e a sessão faz a
+// sessão ser recusada.
 type SecondFactorProof struct{ sealed []byte }
 
 // Verify aceita tanto um código do app quanto um código de recuperação. O de

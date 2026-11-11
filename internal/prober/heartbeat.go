@@ -28,9 +28,10 @@ const (
 	evaluateTickTimeout = 20 * time.Second
 )
 
-// HeartbeatEvaluator abre e fecha os incidentes de heartbeat. Não guarda nada em memória: cada tique lê o banco, reivindica
-// com SKIP LOCKED e grava incidente e outbox na mesma transação. Por isso duas
-// instâncias de --role=prober convivem, e um restart não perde nada.
+// HeartbeatEvaluator abre e fecha os incidentes de heartbeat. Não guarda nada em
+// memória: cada tique lê o banco, reivindica com SKIP LOCKED e grava incidente e
+// outbox na mesma transação. Por isso duas instâncias de --role=prober convivem, e
+// um restart não perde nada.
 type HeartbeatEvaluator struct {
 	pool        *pgxpool.Pool
 	clk         clock.Clock

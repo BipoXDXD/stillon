@@ -43,11 +43,12 @@ func lerCorpo(r io.Reader) (corpo []byte, cortado bool, err error) {
 	return corpo, cortado, nil
 }
 
-// tetoComprimido limita os bytes lidos da rede quando a sonda descomprime: o teto de lerCorpo vale sobre a saída, e um gzip
-// que não gera saída (membros vazios, um atrás do outro) seria lido até o
-// prazo. O deflate honesto nunca cresce mais que os 5 bytes de cada bloco
-// stored de 64 KiB, então 64 KiB de saída pedem pouco mais que 64 KiB de
-// entrada; o dobro dá folga para cabeçalhos e para o bufio do gzip.Reader.
+// tetoComprimido limita os bytes lidos da rede quando a sonda descomprime: o teto
+// de lerCorpo vale sobre a saída, e um gzip que não gera saída (membros vazios, um
+// atrás do outro) seria lido até o prazo. O deflate honesto nunca cresce mais que
+// os 5 bytes de cada bloco stored de 64 KiB, então 64 KiB de saída pedem pouco
+// mais que 64 KiB de entrada; o dobro dá folga para cabeçalhos e para o bufio do
+// gzip.Reader.
 const tetoComprimido = 2 * safedial.MaxBodyBytes
 
 // errTetoComprimido diz que o corpo comprimido passou de tetoComprimido.
@@ -381,7 +382,7 @@ func (c *cursor) lerString() []byte {
 // chaveIgual compara a chave crua com o token já decodificado do ponteiro.
 // Sem barra invertida e em UTF-8 válido, a chave crua é a própria chave. Fora
 // desse atalho, ela é decodificada runa a runa contra o token, sem alocar: um
-// json.Unmarshal por chave passava de 1 MiB num corpo de 64 KiB (D2c).
+// json.Unmarshal por chave passava de 1 MiB num corpo de 64 KiB.
 func chaveIgual(crua []byte, token string) bool {
 	miolo := crua[1 : len(crua)-1]
 	if bytes.IndexByte(miolo, '\\') < 0 && utf8.Valid(miolo) {

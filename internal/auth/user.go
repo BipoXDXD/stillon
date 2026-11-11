@@ -76,10 +76,11 @@ func emailPossivel(email string) bool {
 	return len(email) <= maxEmailBytes && !strings.ContainsFunc(email, unicode.IsControl)
 }
 
-// Attempts é o contador de tentativas de uma credencial de login: o bloqueio da conta (AccountAttempts) ou o do cookie de
-// dispositivo (Devices.Attempts). A tentativa é RESERVADA antes de verificar
-// — N tentativas simultâneas gastam N, e a que passa do limite nem chega a
-// verificar —, e quem reservou decide o fim dela:
+// Attempts é o contador de tentativas de uma credencial de login: o bloqueio da
+// conta (AccountAttempts) ou o do cookie de dispositivo (Devices.Attempts). A
+// tentativa é RESERVADA antes de verificar — N tentativas simultâneas gastam N, e
+// a que passa do limite nem chega a verificar —, e quem reservou decide o fim
+// dela:
 //
 //   - errada: nada; a reserva fica contada;
 //   - certa, com o login terminando aqui: Reset (zera);
@@ -303,9 +304,10 @@ func (s *PGStore) ResetFailures(ctx context.Context, userID uuid.UUID) error {
 	return nil
 }
 
-// RehashPassword é o rehash do login, e é um compare-and-swap. A versão anterior gravava sem condição: um login que verificou a
-// senha ANTIGA e regravou o hash dela depois de um set-password concorrente
-// desfazia a redefinição, e a senha antiga voltava a valer.
+// RehashPassword é o rehash do login, e é um compare-and-swap. A versão anterior
+// gravava sem condição: um login que verificou a senha ANTIGA e regravou o hash
+// dela depois de um set-password concorrente desfazia a redefinição, e a senha
+// antiga voltava a valer.
 func (s *PGStore) RehashPassword(ctx context.Context, userID uuid.UUID, oldHash, newHash string) (bool, error) {
 	n, err := db.New(s.pool).RehashUser(ctx, db.RehashUserParams{ID: userID, OldHash: oldHash, NewHash: newHash})
 	if err != nil {

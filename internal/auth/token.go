@@ -20,8 +20,9 @@ var ErrInvalidToken = errors.New("token de acesso inválido")
 type AccessClaims struct {
 	UserID uuid.UUID
 	// FamilyID é o claim sid (o "Session ID" registrado na IANA pelo OpenID
-	// Connect). É o que permite a GET /sessions marcar a sessão atual e às
-	// rotas de credencial recusar um token cuja sessão já foi encerrada: o cookie de refresh, com Path=/api/v1/auth, não chega lá.
+	// Connect). É o que permite a GET /sessions marcar a sessão atual e às rotas
+	// de credencial recusar um token cuja sessão já foi encerrada: o cookie de
+	// refresh, com Path=/api/v1/auth, não chega lá.
 	FamilyID uuid.UUID
 }
 
@@ -155,8 +156,8 @@ func NewChallengeToken(secret []byte, userID uuid.UUID, stamp string, now time.T
 
 // ParseChallengeToken devolve o desafio: o usuário, o carimbo da senha
 // verificada no login e o instante de emissão. Desafio sem carimbo ou sem
-// instante é inválido; um desafio emitido antes de o instante existir não tem instante e
-// morre com o deploy (no pior caso, um login refeito dentro de ChallengeTTL).
+// instante é inválido; um desafio emitido antes do campo cat existir não
+// tem instante e morre com o deploy (no pior caso, um login refeito dentro de ChallengeTTL).
 func ParseChallengeToken(secret []byte, raw string, now time.Time) (Challenge, error) {
 	var claims challengeJWT
 
