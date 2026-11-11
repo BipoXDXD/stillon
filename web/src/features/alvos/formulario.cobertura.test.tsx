@@ -259,7 +259,7 @@ describe('formulário de alvo: regra de conteúdo em "Avançado"', () => {
 
   it('na edição, um Range guardado acusa o seletor e abre "Avançado" antes do PATCH', async () => {
     const r = await montarEdicaoCom({ header_names: ['Range'] })
-    await r.usuario.click(screen.getByText('Avançado'))
+    // Com headers guardados, o "Avançado" já abre sozinho na edição.
     await r.usuario.selectOptions(screen.getByLabelText(VERIFICACAO), 'Contém')
     await r.usuario.type(screen.getByLabelText(DEVE_APARECER), 'ok')
     await r.usuario.click(screen.getByText('Avançado'))
@@ -277,7 +277,7 @@ describe('formulário de alvo: regra de conteúdo em "Avançado"', () => {
   // acusado no cliente, pelos nomes que a edição conhece.
   it('na edição, um Accept-Encoding guardado acusa o seletor antes do PATCH', async () => {
     const r = await montarEdicaoCom({ header_names: ['Accept-Encoding'] })
-    await r.usuario.click(screen.getByText('Avançado'))
+    // Com headers guardados, o "Avançado" já abre sozinho na edição.
     await r.usuario.selectOptions(screen.getByLabelText(VERIFICACAO), 'Contém')
     await r.usuario.type(screen.getByLabelText(DEVE_APARECER), 'ok')
     await r.usuario.click(screen.getByRole('button', { name: 'Salvar' }))
@@ -291,7 +291,7 @@ describe('formulário de alvo: regra de conteúdo em "Avançado"', () => {
   // no seletor travado.
   it('trocar para HEAD tira o erro já mostrado no seletor da regra', async () => {
     const r = await montarEdicaoCom({ header_names: ['Accept-Encoding'] })
-    await r.usuario.click(screen.getByText('Avançado'))
+    // Com headers guardados, o "Avançado" já abre sozinho na edição.
     await r.usuario.selectOptions(screen.getByLabelText(VERIFICACAO), 'Contém')
     await r.usuario.type(screen.getByLabelText(DEVE_APARECER), 'ok')
     await r.usuario.click(screen.getByRole('button', { name: 'Salvar' }))
