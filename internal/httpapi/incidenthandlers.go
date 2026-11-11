@@ -104,11 +104,7 @@ func (h *IncidentHandlers) List(w http.ResponseWriter, r *http.Request) {
 // Ack é POST /incidents/{id}/ack. Idempotente: o segundo ack devolve o
 // instante do primeiro.
 func (h *IncidentHandlers) Ack(w http.ResponseWriter, r *http.Request) {
-	userID, ok := usuario(w, r)
-	if !ok {
-		return
-	}
-	id, ok := pathID(w, r)
+	userID, id, ok := donoEID(w, r)
 	if !ok {
 		return
 	}

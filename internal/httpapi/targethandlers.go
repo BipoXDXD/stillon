@@ -202,11 +202,7 @@ func (h *TargetHandlers) Create(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *TargetHandlers) Get(w http.ResponseWriter, r *http.Request) {
-	userID, ok := usuario(w, r)
-	if !ok {
-		return
-	}
-	id, ok := pathID(w, r)
+	userID, id, ok := donoEID(w, r)
 	if !ok {
 		return
 	}
@@ -248,11 +244,7 @@ func (h *TargetHandlers) List(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *TargetHandlers) Update(w http.ResponseWriter, r *http.Request) {
-	userID, ok := usuario(w, r)
-	if !ok {
-		return
-	}
-	id, ok := pathID(w, r)
+	userID, id, ok := donoEID(w, r)
 	if !ok {
 		return
 	}
@@ -305,11 +297,7 @@ func (h *TargetHandlers) Update(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *TargetHandlers) Delete(w http.ResponseWriter, r *http.Request) {
-	userID, ok := usuario(w, r)
-	if !ok {
-		return
-	}
-	id, ok := pathID(w, r)
+	userID, id, ok := donoEID(w, r)
 	if !ok {
 		return
 	}
@@ -364,11 +352,7 @@ func lerIntervalo(q url.Values, agora time.Time) (from, to time.Time, invalido s
 }
 
 func (h *TargetHandlers) Checks(w http.ResponseWriter, r *http.Request) {
-	userID, ok := usuario(w, r)
-	if !ok {
-		return
-	}
-	id, ok := pathID(w, r)
+	userID, id, ok := donoEID(w, r)
 	if !ok {
 		return
 	}
@@ -550,6 +534,19 @@ func pathID(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {
 		return uuid.Nil, false
 	}
 	return id, true
+}
+
+// donoEID abre os handlers de recurso do usuário: o dono do token e o {id} da
+// rota. A ordem é contrato: sem usuário é 401 mesmo com id malformado, e só
+// depois um id malformado vira 404. Inverter deixaria quem não se autenticou
+// descobrir o formato do id.
+func donoEID(w http.ResponseWriter, r *http.Request) (userID, id uuid.UUID, ok bool) {
+	userID, ok = usuario(w, r)
+	if !ok {
+		return uuid.Nil, uuid.Nil, false
+	}
+	id, ok = pathID(w, r)
+	return userID, id, ok
 }
 
 func campoInvalido(w http.ResponseWriter, r *http.Request, campo, motivo string) {

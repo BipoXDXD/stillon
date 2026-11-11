@@ -112,11 +112,7 @@ func (h *StatusPageHandlers) Create(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *StatusPageHandlers) Update(w http.ResponseWriter, r *http.Request) {
-	userID, ok := usuario(w, r)
-	if !ok {
-		return
-	}
-	id, ok := pathID(w, r)
+	userID, id, ok := donoEID(w, r)
 	if !ok {
 		return
 	}

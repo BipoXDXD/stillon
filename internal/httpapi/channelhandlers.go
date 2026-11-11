@@ -89,11 +89,7 @@ func (h *ChannelHandlers) Create(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *ChannelHandlers) Delete(w http.ResponseWriter, r *http.Request) {
-	userID, ok := usuario(w, r)
-	if !ok {
-		return
-	}
-	id, ok := pathID(w, r)
+	userID, id, ok := donoEID(w, r)
 	if !ok {
 		return
 	}
@@ -113,11 +109,7 @@ func (h *ChannelHandlers) Delete(w http.ResponseWriter, r *http.Request) {
 // booleano, null inclusive, é invalid. Um null aceito viraria false e
 // pausaria o canal por engano.
 func (h *ChannelHandlers) SetEnabled(w http.ResponseWriter, r *http.Request) {
-	userID, ok := usuario(w, r)
-	if !ok {
-		return
-	}
-	id, ok := pathID(w, r)
+	userID, id, ok := donoEID(w, r)
 	if !ok {
 		return
 	}
@@ -144,11 +136,7 @@ func (h *ChannelHandlers) SetEnabled(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *ChannelHandlers) Resend(w http.ResponseWriter, r *http.Request) {
-	userID, ok := usuario(w, r)
-	if !ok {
-		return
-	}
-	id, ok := pathID(w, r)
+	userID, id, ok := donoEID(w, r)
 	if !ok {
 		return
 	}
