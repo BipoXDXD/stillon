@@ -160,7 +160,7 @@ func runUser(ctx context.Context, args []string, in entradaDaSenha, stdout, stde
 	// A mesma ordem do boot: o papel antes da migration. Num
 	// banco virgem, migrar como superusuário criaria as tabelas com o dono
 	// errado, e o papel comum depois não conseguiria usá-las.
-	pool, err := storage.NewPool(ctx, dsn)
+	pool, err := storage.NewPoolNamed(ctx, dsn, "stillon-user")
 	if err != nil {
 		return falhar(saidaAmbiente, "%v", err)
 	}
