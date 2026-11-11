@@ -56,21 +56,25 @@ export const TITULO_DA_TELA: RefObject<HTMLElement | null> = {
   },
 }
 
-// Um botão que some com o próprio clique, ou quando os dados mudam: o foco,
-// que estava nele, iria para o <body>. Se ele tinha o foco, o foco vai à
-// reserva. O efeito de layout roda na desmontagem ANTES de o React tirar o
-// <button> do DOM, com a ref ainda presa a ele. A reserva só é lida depois do
-// commit, porque ela pode nascer nele (o <h1> que vem com os dados).
-export function BotaoQueSome({ reserva, ...props }: PropsDoBotao & { reserva: RefObject<HTMLElement | null> }) {
-  const eu = useRef<HTMLButtonElement>(null)
+// Um elemento que some (com o próprio clique, ou quando os dados mudam) e
+// tinha o foco: sem isto, o foco iria para o <body>. Se ele tinha o foco, o
+// foco vai à reserva. O efeito de layout roda na desmontagem ANTES de o React
+// tirar o elemento do DOM, com a ref ainda presa a ele. A reserva só é lida
+// depois do commit, porque ela pode nascer nele (o <h1> que vem com os dados).
+export function useReservaDeFoco(eu: RefObject<HTMLElement | null>, reserva: RefObject<HTMLElement | null>) {
   useLayoutEffect(() => {
-    const botao = eu.current
+    const elemento = eu.current
     return () => {
       // A reserva é lida depois de propósito: é o elemento que está na tela
       // quando o commit termina.
       // oxlint-disable-next-line react-hooks/exhaustive-deps
-      if (botao && document.activeElement === botao) queueMicrotask(() => reserva.current?.focus())
+      if (elemento && document.activeElement === elemento) queueMicrotask(() => reserva.current?.focus())
     }
-  }, [reserva])
+  }, [eu, reserva])
+}
+
+export function BotaoQueSome({ reserva, ...props }: PropsDoBotao & { reserva: RefObject<HTMLElement | null> }) {
+  const eu = useRef<HTMLButtonElement>(null)
+  useReservaDeFoco(eu, reserva)
   return <Botao ref={eu} {...props} />
 }

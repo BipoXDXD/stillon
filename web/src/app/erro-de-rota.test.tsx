@@ -1,5 +1,6 @@
 import { onlineManager } from '@tanstack/react-query'
 import { fireEvent, render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { createMemoryRouter } from 'react-router'
 import { RouterProvider } from 'react-router/dom'
 import { afterEach, expect, it, vi } from 'vitest'
@@ -56,6 +57,27 @@ it('chunk que não carrega sem rede diz que depende da conexão e tenta de novo 
   fireEvent.click(screen.getByRole('button', { name: 'Tentar de novo' }))
   expect(await screen.findByText('A tela chegou')).toBeInTheDocument()
   expect(carregar).toHaveBeenCalledTimes(2)
+})
+
+// A tentativa que dá certo troca a tela inteira e leva o botão junto: o foco,
+// que estava nele, iria para o <body>. Vai ao título da tela que chegou.
+// Sabotagem: voltar o "Tentar de novo" a um Botao comum.
+it('a tentativa que dá certo leva o foco ao título da tela que chegou', async () => {
+  onlineManager.setOnline(false)
+  const carregar = vi
+    .fn<() => Promise<{ Component: () => React.JSX.Element }>>()
+    .mockRejectedValueOnce(new TypeError('Failed to fetch dynamically imported module: /assets/PaginaDetalhe.js'))
+    .mockResolvedValueOnce({
+      Component: () => (
+        <main>
+          <h1 tabIndex={-1}>A tela chegou</h1>
+        </main>
+      ),
+    })
+  const router = createMemoryRouter([{ path: '/', ErrorBoundary: ErroDeRota, lazy: carregar }])
+  render(<RouterProvider router={router} />)
+  await userEvent.setup().click(await screen.findByRole('button', { name: 'Tentar de novo' }))
+  expect(await screen.findByRole('heading', { name: 'A tela chegou' })).toHaveFocus()
 })
 
 // Sabotagem: semRede sem o "chunk &&".

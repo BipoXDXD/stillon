@@ -1,16 +1,24 @@
+import { useRef } from 'react'
 import { Navigate, Outlet, useLocation } from 'react-router'
 import { AvisoDeContexto } from '@/components/AvisoDeContexto'
-import { Botao } from '@/components/ui/botao'
+import { BotaoQueSome, TITULO_DA_TELA, useReservaDeFoco } from '@/components/ui/botao'
 import { useSessao } from './contexto'
 
-// O splash da verificação do boot e do chunk de uma rota sob demanda.
+// O splash da verificação do boot e do chunk de uma rota sob demanda. É o
+// <main> da vez (tabIndex -1): o "Tentar de novo" da porta, que some no
+// clique, deixa o foco aqui, e daqui ele segue para a tela que vier depois
+// (o painel, o login ou a própria porta, se a rede falhar de novo).
 export function SplashDoPainel() {
+  const eu = useRef<HTMLElement>(null)
+  useReservaDeFoco(eu, TITULO_DA_TELA)
   return (
     <>
       <AvisoDeContexto />
-      <div className="grid min-h-screen place-items-center" aria-busy="true">
-        <p className="text-suave">Carregando o StillOn…</p>
-      </div>
+      {/* Sem aria-busy no <main>: ele recebe o foco, e o leitor de tela
+          calaria o que está nele. O texto é um status (<output>). */}
+      <main ref={eu} tabIndex={-1} className="grid min-h-screen place-items-center outline-none">
+        <output className="text-suave">Carregando o StillOn…</output>
+      </main>
     </>
   )
 }
@@ -26,11 +34,23 @@ export function ExigirSessao() {
     return (
       <>
         <AvisoDeContexto />
-        <div role="alert" className="mx-auto mt-16 max-w-md space-y-4 p-4 text-center">
-          <h1 className="text-xl font-semibold">Não foi possível falar com o servidor</h1>
-          <p className="text-suave">Sua sessão pode estar ativa; tente de novo em instantes.</p>
-          <Botao onClick={() => void sessao.tentarDeNovo()}>Tentar de novo</Botao>
-        </div>
+        <main className="mx-auto mt-16 max-w-md p-4">
+          <div className="space-y-4 text-center">
+            {/* tabIndex -1: a reserva do foco quando o splash da nova tentativa some
+                e a rede falhou de novo. */}
+            <h1 tabIndex={-1} className="text-xl font-semibold outline-none">
+              Não foi possível falar com o servidor
+            </h1>
+            {/* O alerta é só a mensagem: envolvendo o <h1> focado, o título
+                seria lido duas vezes. */}
+            <p role="alert" className="text-suave">
+              Sua sessão pode estar ativa; tente de novo em instantes.
+            </p>
+            <BotaoQueSome reserva={TITULO_DA_TELA} onClick={() => void sessao.tentarDeNovo()}>
+              Tentar de novo
+            </BotaoQueSome>
+          </div>
+        </main>
       </>
     )
   }
