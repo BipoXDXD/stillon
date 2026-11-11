@@ -2,7 +2,6 @@ package httpapi
 
 import (
 	"errors"
-	"log/slog"
 	"net/http"
 	"time"
 
@@ -10,7 +9,6 @@ import (
 
 	"github.com/BipoXDXD/stillon/internal/apierr"
 	"github.com/BipoXDXD/stillon/internal/incident/history"
-	"github.com/BipoXDXD/stillon/internal/observability"
 	"github.com/BipoXDXD/stillon/internal/targets"
 )
 
@@ -123,7 +121,6 @@ func (h *IncidentHandlers) falhou(w http.ResponseWriter, r *http.Request, op str
 		apierr.WriteError(w, r, apierr.CodeNotFound)
 		return true
 	}
-	slog.Error(op, "erro", err, "trace_id", observability.TraceID(r.Context()))
-	apierr.WriteError(w, r, apierr.CodeInternal)
+	erroInterno(w, r, op, err)
 	return true
 }

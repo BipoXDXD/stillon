@@ -2,7 +2,6 @@ package httpapi
 
 import (
 	"errors"
-	"log/slog"
 	"net/http"
 	"net/url"
 	"slices"
@@ -13,7 +12,6 @@ import (
 	"github.com/BipoXDXD/stillon/internal/apierr"
 	"github.com/BipoXDXD/stillon/internal/clock"
 	"github.com/BipoXDXD/stillon/internal/httpapi/middleware"
-	"github.com/BipoXDXD/stillon/internal/observability"
 	"github.com/BipoXDXD/stillon/internal/targets"
 )
 
@@ -410,8 +408,7 @@ func (h *TargetHandlers) falhou(w http.ResponseWriter, r *http.Request, op strin
 		}
 		apierr.WriteValidation(w, r, campos)
 	default:
-		slog.Error(op, "erro", err, "trace_id", observability.TraceID(r.Context()))
-		apierr.WriteError(w, r, apierr.CodeInternal)
+		erroInterno(w, r, op, err)
 	}
 	return true
 }

@@ -1,7 +1,6 @@
 package httpapi
 
 import (
-	"log/slog"
 	"net/http"
 
 	"github.com/google/uuid"
@@ -10,7 +9,6 @@ import (
 	"github.com/BipoXDXD/stillon/internal/apierr"
 	"github.com/BipoXDXD/stillon/internal/auth"
 	"github.com/BipoXDXD/stillon/internal/httpapi/middleware"
-	"github.com/BipoXDXD/stillon/internal/observability"
 )
 
 // provasDaFamilia é o contador de provas erradas das rotas autenticadas (A3 do
@@ -55,8 +53,7 @@ func (p *provasDaFamilia) errou(w http.ResponseWriter, r *http.Request, res *aut
 func (p *provasDaFamilia) derrubar(w http.ResponseWriter, r *http.Request, userID, familyID uuid.UUID) {
 	if err := p.contas.RevokeFamilyForWrongProofs(r.Context(), userID, familyID,
 		auth.Meta{IP: middleware.ClientIP(r, p.proxies), UserAgent: r.UserAgent()}); err != nil {
-		slog.Error("derrubar família por provas erradas", "erro", err, "trace_id", observability.TraceID(r.Context()))
-		apierr.WriteError(w, r, apierr.CodeInternal)
+		erroInterno(w, r, "derrubar família por provas erradas", err)
 		return
 	}
 	apierr.WriteError(w, r, apierr.CodeUnauthorized)

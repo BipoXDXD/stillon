@@ -2,7 +2,6 @@ package httpapi
 
 import (
 	"errors"
-	"log/slog"
 	"net/http"
 	"net/url"
 	"slices"
@@ -13,7 +12,6 @@ import (
 
 	"github.com/BipoXDXD/stillon/internal/apierr"
 	"github.com/BipoXDXD/stillon/internal/heartbeat"
-	"github.com/BipoXDXD/stillon/internal/observability"
 )
 
 // Tipos do agendamento no contrato (spec de heartbeats, §7).
@@ -501,8 +499,7 @@ func (h *HeartbeatHandlers) falhou(w http.ResponseWriter, r *http.Request, op st
 	case errors.As(err, &verr):
 		campoInvalido(w, r, verr.Field, verr.Reason)
 	default:
-		slog.Error(op, "erro", err, "trace_id", observability.TraceID(r.Context()))
-		apierr.WriteError(w, r, apierr.CodeInternal)
+		erroInterno(w, r, op, err)
 	}
 	return true
 }

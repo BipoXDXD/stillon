@@ -5,7 +5,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"io"
-	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -19,7 +18,6 @@ import (
 	"github.com/BipoXDXD/stillon/internal/crypto"
 	"github.com/BipoXDXD/stillon/internal/heartbeat"
 	"github.com/BipoXDXD/stillon/internal/httpapi/middleware"
-	"github.com/BipoXDXD/stillon/internal/observability"
 )
 
 const (
@@ -95,8 +93,7 @@ func (h *PingHandlers) responder(w http.ResponseWriter, r *http.Request, registr
 	case errors.Is(err, heartbeat.ErrUnknownToken):
 		apierr.WriteError(w, r, apierr.CodeNotFound)
 	default:
-		slog.Error("registrar ping", "erro", err, "trace_id", observability.TraceID(r.Context()))
-		apierr.WriteError(w, r, apierr.CodeInternal)
+		erroInterno(w, r, "registrar ping", err)
 	}
 }
 
