@@ -1023,7 +1023,7 @@ set -eu
 # novo com espera crescente, e o command -v confirma que o sudo chegou.
 for tentativa in 1 2 3; do
     apt-get -o Acquire::Retries=5 update -qq >/dev/null &&
-        DEBIAN_FRONTEND=noninteractive apt-get install -y -qq sudo >/dev/null && break
+        DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=5 install -y -qq sudo >/dev/null && break
     [ "$tentativa" = 3 ] || sleep $((30 * tentativa))
 done
 command -v sudo >/dev/null
