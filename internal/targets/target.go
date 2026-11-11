@@ -15,6 +15,10 @@ var ErrNotFound = errors.New("alvo não encontrado")
 // ErrLimitReached: o usuário já tem MaxTargetsPerUser alvos (D17 do Plano 5).
 var ErrLimitReached = errors.New("limite de alvos atingido")
 
+// ErrContentHostLimit: o usuário já tem o teto de alvos com regra de conteúdo
+// no host de destino (D-T2). A resposta não diz o host nem a contagem.
+var ErrContentHostLimit = errors.New("limite de regras de conteúdo no host atingido")
+
 // Target é o que sai do domínio. Os VALORES dos headers não saem nunca (D5):
 // o dono os escreve, o sondador os usa, e ninguém os lê de volta.
 type Target struct {
@@ -126,6 +130,11 @@ const (
 	// cabe todos, e o custo de GET /targets/summary, que não pagina, tem teto
 	// (~33 ms e ~180 KB com 100 alvos, medidos na spec).
 	MaxTargetsPerUser = int64(MaxPageSize)
+
+	// DefaultContentRulesPerHost é o teto de alvos com regra de conteúdo por
+	// host quando o serviço nasce sem ComTetoDeRegrasPorHost (D-T3). O padrão
+	// de CONTENT_RULES_PER_HOST no config é o mesmo literal.
+	DefaultContentRulesPerHost = 5
 
 	// MaxChecksWindow é a janela que a tabela bruta atende (spec §9.1).
 	// Acima disso, a série vem de check_rollup_1h (D6 do Plano 2).

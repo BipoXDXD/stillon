@@ -41,6 +41,7 @@ const (
 	CodeSlugTaken           ErrorCode = "slug_taken"
 	CodeTargetLimit         ErrorCode = "target_limit_reached"
 	CodeHeartbeatLimit      ErrorCode = "heartbeat_limit_reached"
+	CodeContentHostLimit    ErrorCode = "content_rule_host_limit_reached"
 	CodeMethodNotAllowed    ErrorCode = "method_not_allowed"
 	CodeScheduleUnsupported ErrorCode = "schedule_unsupported"
 )
@@ -76,6 +77,8 @@ var errorTable = map[ErrorCode]struct {
 	// dos Planos 5–7.
 	CodeTargetLimit:    {http.StatusConflict, "Limite de alvos atingido."},
 	CodeHeartbeatLimit: {http.StatusConflict, "Limite de heartbeats atingido."},
+	// Sem o host nem a contagem: o painel já sabe o host que o dono digitou.
+	CodeContentHostLimit: {http.StatusConflict, "Limite de regras de conteúdo para este host atingido."},
 	// O método não existe naquela rota (B5 do Plano 10). Nenhum código
 	// anterior tinha 405: o not_found mudaria o status, e o Allow do ServeMux
 	// perderia o sentido.

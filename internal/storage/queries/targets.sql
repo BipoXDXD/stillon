@@ -202,3 +202,8 @@ SELECT pg_advisory_xact_lock(hashtextextended('stillon.targets:' || sqlc.arg(use
 
 -- name: CountTargets :one
 SELECT count(*) FROM targets WHERE user_id = $1;
+
+-- O teto de regras por host (D-T2): as URLs dos alvos do dono com regra,
+-- lidas sob LockUserTargets. A chave do host sai em Go (IDNA).
+-- name: ListContentRuleTargetURLs :many
+SELECT id, url FROM targets WHERE user_id = $1 AND content_mode IS NOT NULL;

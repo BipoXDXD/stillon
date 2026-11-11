@@ -166,12 +166,22 @@ func TestAnotherUsersTargetIs404OnEveryRoute(t *testing.T) {
 	a := newAPI(t)
 	ctx := context.Background()
 	dono := tokenDe(t, a, a.userID)
-	intruso := tokenDe(t, a, outroUsuario(t, a))
+	idDoIntruso := outroUsuario(t, a)
+	intruso := tokenDe(t, a, idDoIntruso)
 	admin, err := pgxpool.New(ctx, testdb.AdminDSN(t))
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(admin.Close)
+	// O intruso já tem o teto de regras em example.com (D-T2): o PATCH dele
+	// que levaria o alvo de A para lá tem de dar 404 antes de contar, ou o 409
+	// diria que o alvo existe.
+	if _, err := admin.Exec(ctx, `INSERT INTO targets (id, user_id, name, url, method, interval_sec, timeout_ms,
+		expected_status, next_run_at, content_mode, content_value)
+		SELECT gen_random_uuid(), $1, 'regra ' || i, 'https://example.com/' || i, 'GET', 60, 10000, 200, now(), 'contains', 'ok'
+		  FROM generate_series(1, 5) i`, idDoIntruso); err != nil {
+		t.Fatal(err)
+	}
 
 	const valorDeA = "CANARY-regra-de-a-7f3c"
 	alvoDeA := maps.Clone(alvoValido)
@@ -231,6 +241,9 @@ func TestAnotherUsersTargetIs404OnEveryRoute(t *testing.T) {
 			"content_rule": map[string]any{"mode": "json_equals", "value": "roubado", "json_pointer": "/status"},
 		}},
 		{http.MethodPatch, "/api/v1/targets/" + criado.ID, map[string]any{"content_rule": nil}},
+		{http.MethodPatch, "/api/v1/targets/" + criado.ID, map[string]any{
+			"url": "https://example.com/b", "content_rule": map[string]any{"mode": "contains", "value": "ok"},
+		}},
 		{http.MethodDelete, "/api/v1/targets/" + criado.ID, nil},
 		{http.MethodGet, "/api/v1/targets/" + criado.ID + "/checks", nil},
 	} {
@@ -851,6 +864,91 @@ func TestTargetLimitIs409(t *testing.T) {
 	}
 	if n != targets.MaxTargetsPerUser {
 		t.Errorf("%d alvos depois da recusa, queria %d", n, targets.MaxTargetsPerUser)
+	}
+}
+
+// D-T2: o teto de regras por host é 409 com código próprio, no POST e no
+// PATCH, e o corpo não diz o host nem a contagem.
+func TestContentRuleHostCapIs409(t *testing.T) {
+	a := newAPI(t)
+	tok := tokenDe(t, a, a.userID)
+	ctx := context.Background()
+
+	semRegra := maps.Clone(alvoValido)
+	semRegra["url"] = "https://example.com/x"
+	var x alvoJSON
+	if resp := chamar(t, a, http.MethodPost, "/api/v1/targets", tok, semRegra); resp.StatusCode != http.StatusCreated {
+		t.Fatalf("POST sem regra deu %d", resp.StatusCode)
+	} else {
+		lerCorpo(t, resp, &x)
+	}
+
+	tx, err := a.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `SELECT set_config('app.user_id', $1, true)`, a.userID.String()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO targets (id, user_id, name, url, method, interval_sec, timeout_ms, expected_status,
+		                                        next_run_at, content_mode, content_value)
+		SELECT gen_random_uuid(), $1, 'regra ' || i, 'https://example.com/' || i, 'GET', 60, 10000, 200, now(), 'contains', 'ok'
+		  FROM generate_series(1, 5) i`, a.userID); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	regra := map[string]any{"mode": "contains", "value": "ok"}
+	comRegra := maps.Clone(alvoValido)
+	comRegra["url"] = "https://example.com/z"
+	comRegra["content_rule"] = regra
+	for _, c := range []struct {
+		metodo, caminho string
+		corpo           any
+	}{
+		{http.MethodPost, "/api/v1/targets", comRegra},
+		{http.MethodPatch, "/api/v1/targets/" + x.ID, map[string]any{"content_rule": regra}},
+	} {
+		status, cru := lerCru(t, a, c.metodo, c.caminho, tok, c.corpo)
+		var env map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(cru), &env); err != nil {
+			t.Fatalf("%s %s: %v\n%s", c.metodo, c.caminho, err, cru)
+		}
+		var erro map[string]any
+		if err := json.Unmarshal(env["error"], &erro); err != nil {
+			t.Fatalf("%s %s: %v\n%s", c.metodo, c.caminho, err, cru)
+		}
+		if status != http.StatusConflict || erro["code"] != "content_rule_host_limit_reached" {
+			t.Errorf("%s %s deu %d/%v, queria 409/content_rule_host_limit_reached", c.metodo, c.caminho, status, erro["code"])
+		}
+		// As mesmas chaves do 409 de target_limit_reached: sem fields, sem
+		// nada que diga o host ou a contagem.
+		if chaves := slices.Sorted(maps.Keys(env)); !slices.Equal(chaves, []string{"error", "trace_id"}) {
+			t.Errorf("%s %s: chaves do envelope %v", c.metodo, c.caminho, chaves)
+		}
+		if chaves := slices.Sorted(maps.Keys(erro)); !slices.Equal(chaves, []string{"code", "message"}) {
+			t.Errorf("%s %s: chaves do erro %v", c.metodo, c.caminho, chaves)
+		}
+		if strings.Contains(cru, "example.com") {
+			t.Errorf("%s %s: o 409 cita o host: %s", c.metodo, c.caminho, cru)
+		}
+	}
+
+	admin, err := pgxpool.New(ctx, testdb.AdminDSN(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(admin.Close)
+	var n int
+	if err := admin.QueryRow(ctx, `SELECT count(*) FROM targets WHERE user_id = $1 AND content_mode IS NOT NULL`,
+		a.userID).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 5 {
+		t.Errorf("%d regras depois das recusas, queria 5", n)
 	}
 }
 

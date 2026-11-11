@@ -76,6 +76,7 @@ export const ERROS_DO_SERVIDOR = {
   status_page_exists: 409,
   slug_taken: 409,
   target_limit_reached: 409,
+  content_rule_host_limit_reached: 409,
   heartbeat_limit_reached: 409,
   method_not_allowed: 405,
   schedule_unsupported: 409,

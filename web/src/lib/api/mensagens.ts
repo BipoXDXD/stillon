@@ -21,6 +21,7 @@ const porCodigo: Record<string, string> = {
   invalid_credentials: 'E-mail ou senha incorretos.',
   validation_failed: 'Confira os campos destacados.',
   target_limit_reached: 'Limite de 100 alvos atingido.',
+  content_rule_host_limit_reached: 'Limite de regras de conteúdo para este host atingido.',
   heartbeat_limit_reached: 'Limite de 100 heartbeats atingido.',
   channel_limit_reached: 'Limite de 10 canais atingido.',
   channel_not_pending: 'O canal não está mais aguardando verificação.',
