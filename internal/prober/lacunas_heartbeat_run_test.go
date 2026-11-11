@@ -46,8 +46,10 @@ func TestHeartbeatRunAbreIncidenteNaSubidaEParaNoCancel(t *testing.T) {
 
 		cancel()
 		// Sem synctest.Wait aqui: um Run que não pára manteria a bolha ativa e
-		// o Wait nunca voltaria. O relógio da bolha avança entre os tiques e
-		// faz o prazo abaixo estourar com uma mensagem legível.
+		// o Wait nunca voltaria. Um Run que ignora o cancel e fica bloqueado
+		// deixa o relógio da bolha avançar, e o prazo abaixo estoura com
+		// mensagem legível. Um Run em laço quente nunca bloqueia, o relógio
+		// não anda, e só o -timeout do go test o encerra.
 		select {
 		case err := <-terminou:
 			if err != nil {
