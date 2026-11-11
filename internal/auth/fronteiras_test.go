@@ -85,8 +85,11 @@ func TestFailDuplicadoNaoContaDuasVezes(t *testing.T) {
 	familia := uuid.New()
 
 	r := provas.Reserve(familia)
-	if r.Fail() || r.Fail() {
+	if r.Fail() {
 		t.Fatal("o primeiro erro da família derrubou a sessão")
+	}
+	if r.Fail() {
+		t.Fatal("o Fail repetido da mesma reserva derrubou a sessão")
 	}
 	for i := 2; i <= 4; i++ {
 		if provas.Reserve(familia).Fail() {
