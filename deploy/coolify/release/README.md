@@ -31,21 +31,31 @@ Este registro não instala ou ativa o receptor na VPS.
 ## Variável obrigatória nova: expand/contract
 
 O release automático troca só a imagem.
-O `app.json`, que decide quais variáveis chegam ao contêiner,
+O `app.json`, que decide quais variáveis chegam aos containers,
 fica preso ao commit de infraestrutura escolhido no recurso.
 Uma imagem que passa a exigir algo que só o `app.json` novo entrega
 (variável nova, por exemplo) não sobe com o `app.json` antigo.
+O cadastro da variável no recurso e o `${…:?}` do manifesto
+estão em [`deploy/coolify/README.md`](../README.md).
 
 Mudança assim segue expand/contract, em três publicações:
 
-1. Código tolerante: sem a variável, só registra aviso. Merge e release.
-2. Infraestrutura: atualizar o commit de infraestrutura no recurso
-   e publicar o recurso.
+1. Código tolerante: sem a variável, só registra aviso.
+   O `app.json` que repassa a variável entra neste PR ou num anterior,
+   nunca junto com o código que exige. Merge e release.
+2. Infraestrutura: cadastrar a variável no recurso do Coolify,
+   com a fila da VPS sem `pending.json`.
+   Revisar o diff de `deploy/coolify/` entre o commit fixado e o novo,
+   atualizar o commit de infraestrutura no recurso e publicar o recurso.
+   Esse passo é manual e fica fora do `host.lock` ([ISOLATION.md](ISOLATION.md)).
+   Conferir: deploy `finished`, `readyz` 200
+   e o aviso do passo 1 ausente no log de boot.
 3. Só então o código que exige a variável. Merge e release.
 
-Alternativa aceita: atualizar o commit de infraestrutura
-antes do merge do código que exige,
-desde que o `app.json` novo funcione com a imagem atual.
+Alternativa aceita: com a variável já cadastrada no recurso,
+atualizar o commit de infraestrutura antes do merge do código que exige,
+desde que o `app.json` novo esteja na `main` num PR anterior
+e funcione com a imagem atual.
 
 Origem: [postmortem de 2026-11-10](../../../docs/postmortems/2026-11-10-release-261-variavel-obrigatoria.md)
 (o #261 publicou a imagem antes da infraestrutura e o site caiu por 13 min).
