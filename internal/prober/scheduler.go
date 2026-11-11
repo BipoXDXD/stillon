@@ -527,8 +527,8 @@ func (s *Scheduler) avaliar(ctx context.Context, q *db.Queries, a db.ClaimDueTar
 	anterior := recomecarAposLacuna(incident.State{
 		ConsecutiveFailures:  h.ConsecutiveFailures,
 		ConsecutiveSuccesses: h.ConsecutiveSuccesses,
-		StreakSince:          valorOuZero(h.StreakSince),
-		LastCheckedAt:        valorOuZero(h.LastCheckedAt),
+		StreakSince:          storage.TimeOrZero(h.StreakSince),
+		LastCheckedAt:        storage.TimeOrZero(h.LastCheckedAt),
 		Open:                 temAberto,
 	}, em, a.IntervalSec)
 	estado, acao := s.detector.Evaluate(anterior, paraDetector(em, res))
@@ -601,13 +601,6 @@ func recomecarAposLacuna(s incident.State, em time.Time, intervalSec int32) inci
 // somado a outros sucessos, fecha o incidente (spec §7.2).
 func paraDetector(em time.Time, r Result) incident.ProbeResult {
 	return incident.ProbeResult{Down: r.Status == StatusDown, At: em}
-}
-
-func valorOuZero(t *time.Time) time.Time {
-	if t == nil {
-		return time.Time{}
-	}
-	return *t
 }
 
 func (s *Scheduler) medirFila(ctx context.Context, now time.Time) error {

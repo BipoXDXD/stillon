@@ -398,7 +398,7 @@ func (d *Dispatcher) tentar(envios context.Context, n db.ClaimDueNotificationsRo
 	defer cancel()
 	err = canal.Send(ctx, dest, Event{
 		NotificationID: n.ID, Kind: n.Event, TargetName: n.TargetName,
-		StartedAt: n.StartedAt, ResolvedAt: valorOuZero(n.ResolvedAt), QueuedAt: n.CreatedAt, Cause: n.Cause,
+		StartedAt: n.StartedAt, ResolvedAt: storage.TimeOrZero(n.ResolvedAt), QueuedAt: n.CreatedAt, Cause: n.Cause,
 		ClosedByResume: n.ClosedByResume,
 	})
 	if err == nil {
@@ -503,11 +503,4 @@ func resultado(status string) string {
 		return "retry"
 	}
 	return status
-}
-
-func valorOuZero(t *time.Time) time.Time {
-	if t == nil {
-		return time.Time{}
-	}
-	return *t
 }
