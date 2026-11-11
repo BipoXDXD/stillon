@@ -38,6 +38,7 @@ func dsnComApplicationName(t *testing.T, nome string) string {
 // Sem application_name, o pg_stat_activity não diz quais conexões são do
 // StillOn nem de qual processo. O pool marca todas as suas conexões.
 func TestPoolSetsApplicationNameByDefault(t *testing.T) {
+	t.Setenv("PGAPPNAME", "") // o ambiente de quem roda não decide o teste
 	pool := testdb.New(t)
 	if got := applicationNameDe(t, pool); got != "stillon" {
 		t.Errorf("application_name = %q, queria %q", got, "stillon")
@@ -45,6 +46,7 @@ func TestPoolSetsApplicationNameByDefault(t *testing.T) {
 }
 
 func TestNewPoolNamedUsesTheGivenName(t *testing.T) {
+	t.Setenv("PGAPPNAME", "")
 	testdb.New(t) // sobe o banco e restaura o snapshot ao fim
 	pool, err := storage.NewPoolNamed(context.Background(), testdb.DSN(t), "stillon-prober")
 	if err != nil {
@@ -66,5 +68,19 @@ func TestApplicationNameFromTheDSNWins(t *testing.T) {
 	t.Cleanup(pool.Close)
 	if got := applicationNameDe(t, pool); got != "do-operador" {
 		t.Errorf("application_name = %q, queria %q (o do DSN)", got, "do-operador")
+	}
+}
+
+// PGAPPNAME também é do operador: vence o nome do processo como o do DSN.
+func TestApplicationNameFromPGAPPNAMEWins(t *testing.T) {
+	t.Setenv("PGAPPNAME", "do-ambiente")
+	testdb.New(t)
+	pool, err := storage.NewPoolNamed(context.Background(), testdb.DSN(t), "stillon-api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+	if got := applicationNameDe(t, pool); got != "do-ambiente" {
+		t.Errorf("application_name = %q, queria %q (o do PGAPPNAME)", got, "do-ambiente")
 	}
 }
