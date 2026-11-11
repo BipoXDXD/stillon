@@ -244,11 +244,11 @@ func (s *TOTP) ConfirmRotation(ctx context.Context, userID, familyID uuid.UUID, 
 	return codes, nil
 }
 
-// travarFamiliaViva toma a trava de sessões do usuário (D1 do Plano 5) e SÓ
+// travarFamiliaViva toma a trava de sessões do usuário e SÓ
 // ENTÃO confere a família: conferir antes deixaria uma revogação concorrente
 // passar entre a leitura e a escrita. Quem chama escolhe o erro de "família
 // morta". É a mesma função de account, não compartilhada: exportá-la aqui
-// faria o pacote público devolver *db.Queries.
+// obrigaria a API pública a receber *db.Queries.
 func travarFamiliaViva(ctx context.Context, q *db.Queries, userID, familyID uuid.UUID, now time.Time) (bool, error) {
 	if err := q.LockUserSessions(ctx, userID); err != nil {
 		return false, fmt.Errorf("travar sessões: %w", err)

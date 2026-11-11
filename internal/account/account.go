@@ -114,7 +114,7 @@ func familyIsLive(ctx context.Context, q *db.Queries, userID, familyID uuid.UUID
 	return vivo, nil
 }
 
-// travarFamiliaViva toma a trava de sessões do usuário (D1) e SÓ ENTÃO confere
+// travarFamiliaViva toma a trava de sessões do usuário e SÓ ENTÃO confere
 // a família: conferir antes da trava deixaria uma revogação concorrente passar
 // entre a leitura e a escrita. Quem chama escolhe o erro de "família morta".
 func travarFamiliaViva(ctx context.Context, q *db.Queries, userID, familyID uuid.UUID, now time.Time) (bool, error) {
@@ -215,7 +215,7 @@ func (s *Service) provarSegundoFator(ctx context.Context, userID uuid.UUID, code
 	return err
 }
 
-// gravarTroca é o passo 6 de ChangePassword: a trava do usuário (D1), a família
+// gravarTroca é o passo 6 de ChangePassword: a trava do usuário, a família
 // viva de novo, o CAS do hash, as OUTRAS famílias revogadas e a auditoria, numa
 // transação só.
 func (s *Service) gravarTroca(ctx context.Context, userID, familyID uuid.UUID, hashAntigo, hashNovo string, ipHash []byte, now time.Time) error {
