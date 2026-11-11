@@ -157,3 +157,69 @@ func TestChecksLongWindowEndingInThePastStopsAtTo(t *testing.T) {
 		t.Errorf("série = %+v; queria 07:00 (rollup) e 08:00 (bruto), sem 10:00", s.Rollups)
 	}
 }
+
+// Caracterização da janela [from, to) da série horária: from no meio da hora
+// puxa a hora que o contém, to no meio da hora deixa entrar o rollup dessa
+// hora e corta os brutos depois dele, e to em hora cheia é exclusivo. Rede de
+// segurança da troca dos parâmetros soltos de serieHoraria por rollupcut.Janela.
+//
+// Relógio em 12:20 de 22/09. Rollups em 19/09 às 08:00, 09:00 e 10:00 e em
+// 22/09 às 08:00 e 09:00 (a marca d'água: o corte vira 10:00). Checks brutos
+// às 10:15 e 10:45 de 22/09.
+func TestChecksLongWindowCharacterization(t *testing.T) {
+	a := novoAmbiente(t)
+	h := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
+	a.clk.Advance(h.Add(20 * time.Minute).Sub(a.clk.Now()))
+	dono := a.usuario(t)
+	alvo := a.alvo(t, dono)
+
+	dia19 := time.Date(2026, 9, 19, 0, 0, 0, 0, time.UTC)
+	for hora, total := range map[int]int32{8: 11, 9: 12, 10: 13} {
+		a.gravarRollup(t, alvo, dia19.Add(time.Duration(hora)*time.Hour), total, total, ptr(int32(100)))
+	}
+	a.gravarRollup(t, alvo, h.Add(-4*time.Hour), 21, 21, ptr(int32(100))) // 08:00
+	a.gravarRollup(t, alvo, h.Add(-3*time.Hour), 22, 22, ptr(int32(100))) // 09:00
+	a.gravarCheck(t, alvo, h.Add(-105*time.Minute), "down", 5000)         // 10:15
+	a.gravarCheck(t, alvo, h.Add(-75*time.Minute), "down", 5000)          // 10:45
+
+	type hora struct {
+		bucket    time.Time
+		total, ok int32
+	}
+	dia22 := func(h, m int) time.Time { return time.Date(2026, 9, 22, h, m, 0, 0, time.UTC) }
+	casos := []struct {
+		nome   string
+		to     time.Time
+		queria []hora
+	}{
+		{"to no meio da hora (10:30): entra o bruto das 10:15 e não o das 10:45", dia22(10, 30), []hora{
+			{dia19.Add(10 * time.Hour), 13, 13}, {dia22(8, 0), 21, 21}, {dia22(9, 0), 22, 22}, {dia22(10, 0), 1, 0},
+		}},
+		{"to antes do corte (08:30): sem brutos, o rollup das 08:00 entra", dia22(8, 30), []hora{
+			{dia19.Add(8 * time.Hour), 11, 11}, {dia19.Add(9 * time.Hour), 12, 12}, {dia19.Add(10 * time.Hour), 13, 13}, {dia22(8, 0), 21, 21},
+		}},
+		{"to em hora cheia (09:00): exclusivo", dia22(9, 0), []hora{
+			{dia19.Add(9 * time.Hour), 12, 12}, {dia19.Add(10 * time.Hour), 13, 13}, {dia22(8, 0), 21, 21},
+		}},
+	}
+	for _, c := range casos {
+		t.Run(c.nome, func(t *testing.T) {
+			s, err := a.svc.Checks(context.Background(), dono, alvo, c.to.Add(-3*24*time.Hour), c.to)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var got []hora
+			for _, r := range s.Rollups {
+				got = append(got, hora{r.Bucket, r.Total, r.OK})
+			}
+			if len(got) != len(c.queria) {
+				t.Fatalf("série = %+v, queria %+v", got, c.queria)
+			}
+			for i := range got {
+				if !got[i].bucket.Equal(c.queria[i].bucket) || got[i].total != c.queria[i].total || got[i].ok != c.queria[i].ok {
+					t.Errorf("hora %d = %+v, queria %+v", i, got[i], c.queria[i])
+				}
+			}
+		})
+	}
+}

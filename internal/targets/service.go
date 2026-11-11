@@ -409,8 +409,11 @@ func (s *Service) Checks(ctx context.Context, userID, id uuid.UUID, from, to tim
 			return naoAchado(err)
 		}
 		if out.Resolution == Resolution1h {
-			var err error
-			out.Rollups, err = serieHoraria(ctx, q, userID, id, from, to, s.clk.Now())
+			janela, err := rollupcut.NovaJanela(from, to, s.clk.Now())
+			if err != nil {
+				return fmt.Errorf("janela da série: %w", err)
+			}
+			out.Rollups, err = serieHoraria(ctx, q, userID, id, janela)
 			return err
 		}
 		rows, err := q.ListChecks(ctx, db.ListChecksParams{UserID: userID, TargetID: id, FromAt: from, ToAt: to})
@@ -429,30 +432,28 @@ func (s *Service) Checks(ctx context.Context, userID, id uuid.UUID, from, to tim
 	return out, err
 }
 
-// serieHoraria lê as horas de [from, to), com from arredondado para baixo até
-// a hora cheia, para que a hora que o contém entre. Como o resumo e a página
-// pública, junta os rollups até o corte de rollupcut e os checks brutos dele
-// em diante, agregados por hora com a fórmula dos rollups: ler só os rollups
-// deixava a série cega à queda em curso. O corte é lido antes das duas
+// serieHoraria lê as horas da janela [Desde, Ate), com o início já arredondado
+// para baixo até a hora cheia, para que a hora que o contém entre. Como o
+// resumo e a página pública, junta os rollups até o corte de rollupcut e os
+// checks brutos dele em diante, agregados por hora com a fórmula dos rollups:
+// ler só os rollups deixava a série cega à queda em curso. O corte é lido antes das duas
 // consultas, para nenhuma hora contar duas vezes. Os buckets saem em UTC: são
 // horas cheias em UTC por definição, e o pgx devolveria o fuso local do
 // processo.
-func serieHoraria(ctx context.Context, q *db.Queries, userID, id uuid.UUID, from, to, agora time.Time) ([]Rollup, error) {
-	h := agora.UTC().Truncate(time.Hour)
-	inicio := from.UTC().Truncate(time.Hour)
-	marca, err := q.LatestUserRollupBucket(ctx, db.LatestUserRollupBucketParams{Before: h, UserID: userID})
+func serieHoraria(ctx context.Context, q *db.Queries, userID, id uuid.UUID, j rollupcut.Janela) ([]Rollup, error) {
+	marca, err := q.LatestUserRollupBucket(ctx, db.LatestUserRollupBucketParams{Before: j.Hora(), UserID: userID})
 	if err != nil {
 		return nil, fmt.Errorf("marca d'água dos rollups: %w", err)
 	}
-	corte := rollupcut.At(marca, inicio, h)
+	corte := j.Corte(marca)
 
 	rollups, err := q.ListRollups(ctx, db.ListRollupsParams{
-		UserID: userID, TargetID: id, FromAt: inicio, ToAt: minTime(corte, to),
+		UserID: userID, TargetID: id, FromAt: j.Desde(), ToAt: minTime(corte, j.Ate()),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("listar rollups: %w", err)
 	}
-	brutos, err := q.ListRawHours(ctx, db.ListRawHoursParams{UserID: userID, TargetID: &id, FromAt: corte, ToAt: to})
+	brutos, err := q.ListRawHours(ctx, db.ListRawHoursParams{UserID: userID, TargetID: &id, FromAt: corte, ToAt: j.Ate()})
 	if err != nil {
 		return nil, fmt.Errorf("listar horas brutas: %w", err)
 	}
