@@ -36,6 +36,7 @@ type targetRequest struct {
 	ExpectedStatus      int32             `json:"expected_status"`
 	DegradedThresholdMS optional[int32]   `json:"degraded_threshold_ms"`
 	Enabled             *bool             `json:"enabled"`
+	TLSWarn             *bool             `json:"tls_warn"`
 	Headers             map[string]string `json:"headers"`
 	Tags                []string          `json:"tags"`
 }
@@ -49,6 +50,7 @@ type targetPatchRequest struct {
 	ExpectedStatus      optional[int32]             `json:"expected_status"`
 	DegradedThresholdMS optional[int32]             `json:"degraded_threshold_ms"`
 	Enabled             optional[bool]              `json:"enabled"`
+	TLSWarn             optional[bool]              `json:"tls_warn"`
 	Headers             optional[map[string]string] `json:"headers"`
 	Tags                optional[[]string]          `json:"tags"`
 }
@@ -57,18 +59,27 @@ type targetPatchRequest struct {
 // campo para valor de header, então nenhuma mudança futura no domínio o faz
 // aparecer aqui por acidente (D5).
 type targetResponse struct {
-	ID                  string    `json:"id"`
-	Name                string    `json:"name"`
-	URL                 string    `json:"url"`
-	Method              string    `json:"method"`
-	IntervalSec         int32     `json:"interval_sec"`
-	TimeoutMS           int32     `json:"timeout_ms"`
-	ExpectedStatus      int32     `json:"expected_status"`
-	DegradedThresholdMS *int32    `json:"degraded_threshold_ms"`
-	Enabled             bool      `json:"enabled"`
-	HeaderNames         []string  `json:"header_names"`
-	Tags                []string  `json:"tags"`
-	CreatedAt           time.Time `json:"created_at"`
+	ID                  string                   `json:"id"`
+	Name                string                   `json:"name"`
+	URL                 string                   `json:"url"`
+	Method              string                   `json:"method"`
+	IntervalSec         int32                    `json:"interval_sec"`
+	TimeoutMS           int32                    `json:"timeout_ms"`
+	ExpectedStatus      int32                    `json:"expected_status"`
+	DegradedThresholdMS *int32                   `json:"degraded_threshold_ms"`
+	Enabled             bool                     `json:"enabled"`
+	HeaderNames         []string                 `json:"header_names"`
+	Tags                []string                 `json:"tags"`
+	TLSWarn             bool                     `json:"tls_warn"`
+	TLS                 *certificateReadingReply `json:"tls"` // null: nenhuma leitura ainda
+	CreatedAt           time.Time                `json:"created_at"`
+}
+
+// certificateReadingReply é a validade do certificado (spec §7.2). Só de
+// saída: o DTO de entrada não tem o campo, e quem o manda recebe 400.
+type certificateReadingReply struct {
+	NotAfter   time.Time `json:"not_after"`
+	ObservedAt time.Time `json:"observed_at"`
 }
 
 type targetListResponse struct {
@@ -100,8 +111,16 @@ func toTargetResponse(t targets.Target) targetResponse {
 		ID: t.ID.String(), Name: t.Name, URL: t.URL, Method: t.Method,
 		IntervalSec: t.IntervalSec, TimeoutMS: t.TimeoutMS, ExpectedStatus: t.ExpectedStatus,
 		DegradedThresholdMS: t.DegradedThresholdMS, Enabled: t.Enabled,
-		HeaderNames: t.HeaderNames, Tags: t.Tags, CreatedAt: t.CreatedAt,
+		HeaderNames: t.HeaderNames, Tags: t.Tags, TLSWarn: t.TLSWarn, TLS: toCertificateReadingReply(t.TLS),
+		CreatedAt: t.CreatedAt,
 	}
+}
+
+func toCertificateReadingReply(c *targets.CertificateReading) *certificateReadingReply {
+	if c == nil {
+		return nil
+	}
+	return &certificateReadingReply{NotAfter: c.NotAfter, ObservedAt: c.ObservedAt}
 }
 
 func (h *TargetHandlers) Create(w http.ResponseWriter, r *http.Request) {
@@ -117,10 +136,13 @@ func (h *TargetHandlers) Create(w http.ResponseWriter, r *http.Request) {
 	in := targets.Input{
 		Name: req.Name, URL: req.URL, Method: req.Method,
 		IntervalSec: req.IntervalSec, TimeoutMS: req.TimeoutMS, ExpectedStatus: req.ExpectedStatus,
-		Enabled: true, Headers: req.Headers, Tags: req.Tags,
+		Enabled: true, TLSWarn: true, Headers: req.Headers, Tags: req.Tags,
 	}
 	if req.Enabled != nil {
 		in.Enabled = *req.Enabled
+	}
+	if req.TLSWarn != nil {
+		in.TLSWarn = *req.TLSWarn
 	}
 	// Ausente → padrão; null → desativado; número → valor (spec §11.5).
 	switch {
@@ -220,6 +242,7 @@ func (h *TargetHandlers) Update(w http.ResponseWriter, r *http.Request) {
 		{"name", req.Name.Null}, {"url", req.URL.Null}, {"method", req.Method.Null},
 		{"interval_sec", req.IntervalSec.Null}, {"timeout_ms", req.TimeoutMS.Null},
 		{"expected_status", req.ExpectedStatus.Null}, {"enabled", req.Enabled.Null},
+		{"tls_warn", req.TLSWarn.Null},
 	}) {
 		return
 	}
@@ -228,6 +251,7 @@ func (h *TargetHandlers) Update(w http.ResponseWriter, r *http.Request) {
 		Name: req.Name.ponteiro(), URL: req.URL.ponteiro(), Method: req.Method.ponteiro(),
 		IntervalSec: req.IntervalSec.ponteiro(), TimeoutMS: req.TimeoutMS.ponteiro(),
 		ExpectedStatus: req.ExpectedStatus.ponteiro(), Enabled: req.Enabled.ponteiro(),
+		TLSWarn: req.TLSWarn.ponteiro(),
 	}
 	if req.DegradedThresholdMS.Set {
 		p.SetDegradedThreshold = true

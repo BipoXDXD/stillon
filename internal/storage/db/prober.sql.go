@@ -113,6 +113,26 @@ func (q *Queries) EnsureChecksPartition(ctx context.Context, month time.Time) er
 	return err
 }
 
+const getTargetTLS = `-- name: GetTargetTLS :one
+SELECT not_after, observed_at FROM target_tls WHERE target_id = $1
+`
+
+type GetTargetTLSRow struct {
+	NotAfter   time.Time
+	ObservedAt time.Time
+}
+
+// Validade guardada do pior certificado visto no alvo (spec §5.2). Sem linha:
+// nenhuma leitura ainda. Quem decide se a leitura nova substitui é
+// prober.substituirValidade; a gravação corre depois da trava da histerese,
+// que serializa duas sondas do mesmo alvo.
+func (q *Queries) GetTargetTLS(ctx context.Context, targetID uuid.UUID) (GetTargetTLSRow, error) {
+	row := q.db.QueryRow(ctx, getTargetTLS, targetID)
+	var i GetTargetTLSRow
+	err := row.Scan(&i.NotAfter, &i.ObservedAt)
+	return i, err
+}
+
 const insertCheck = `-- name: InsertCheck :exec
 INSERT INTO checks (id, target_id, checked_at, status, latency_ms, status_code, error_kind)
 VALUES ($1, $2, $3, $4, $5, $6, $7)
@@ -166,4 +186,22 @@ func (q *Queries) LockTargetProbeSpec(ctx context.Context, id uuid.UUID) (LockTa
 	var i LockTargetProbeSpecRow
 	err := row.Scan(&i.URL, &i.Method, &i.Enabled)
 	return i, err
+}
+
+const saveTargetTLS = `-- name: SaveTargetTLS :exec
+INSERT INTO target_tls (target_id, not_after, observed_at)
+VALUES ($1, $2, $3)
+ON CONFLICT (target_id) DO UPDATE
+   SET not_after = EXCLUDED.not_after, observed_at = EXCLUDED.observed_at
+`
+
+type SaveTargetTLSParams struct {
+	TargetID   uuid.UUID
+	NotAfter   time.Time
+	ObservedAt time.Time
+}
+
+func (q *Queries) SaveTargetTLS(ctx context.Context, arg SaveTargetTLSParams) error {
+	_, err := q.db.Exec(ctx, saveTargetTLS, arg.TargetID, arg.NotAfter, arg.ObservedAt)
+	return err
 }

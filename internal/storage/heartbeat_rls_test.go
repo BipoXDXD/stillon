@@ -333,7 +333,7 @@ func TestHeartbeatConstraints(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
 	dono := novoUsuario(t, pool)
-	periodo, curto, longo := int32(3600), int32(59), int32(2678401)
+	periodo, curto, longo := int32(3600), int32(59), int32(31536001)
 	expr, fuso := "0 3 * * *", "UTC"
 	casos := []struct {
 		nome           string
@@ -352,7 +352,7 @@ func TestHeartbeatConstraints(t *testing.T) {
 		{"período curto", &curto, nil, nil, 300, hashDe("7"), "23514"},
 		{"período longo", &longo, nil, nil, 300, hashDe("8"), "23514"},
 		{"tolerância curta", &periodo, nil, nil, 29, hashDe("9"), "23514"},
-		{"tolerância longa", &periodo, nil, nil, 604801, hashDe("10"), "23514"},
+		{"tolerância longa", &periodo, nil, nil, 31536001, hashDe("10"), "23514"},
 		{"hash curto", &periodo, nil, nil, 300, []byte("curto"), "23514"},
 		{"hash repetido", &periodo, nil, nil, 300, hashDe("1"), "23505"},
 	}
@@ -400,7 +400,7 @@ func TestHeartbeatEventExitCodeMatchesTheKind(t *testing.T) {
 		t.Run(c.nome, func(t *testing.T) {
 			err := storage.InUserTx(ctx, pool, dono, func(q *db.Queries) error {
 				return q.InsertHeartbeatEvent(ctx, db.InsertHeartbeatEventParams{
-					ID: novoID(), HeartbeatID: hb, At: agora, Kind: c.tipo, ExitCode: c.exitCode,
+					ID: novoID(), HeartbeatID: hb, At: agora, Kind: c.tipo, ExitCode: c.exitCode, Source: "ping",
 				})
 			})
 			if codigoPG(err) != c.codigoEsperado {
@@ -532,10 +532,10 @@ func TestHeartbeatDescriptionCheckRefusesWhatTheCodeWouldNot(t *testing.T) {
 			})
 		})
 	}
-	if err := inserir("no teto", strings.Repeat("é", 1000)); err != nil {
+	if err := inserir("no teto", strings.Repeat("é", 10000)); err != nil {
 		t.Errorf("no teto: %v", err)
 	}
-	if err := inserir("acima", strings.Repeat("é", 1001)); codigoPG(err) != "23514" {
+	if err := inserir("acima", strings.Repeat("é", 10001)); codigoPG(err) != "23514" {
 		t.Errorf("acima do teto: %v; queria 23514", err)
 	}
 }

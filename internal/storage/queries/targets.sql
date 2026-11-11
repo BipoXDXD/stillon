@@ -5,8 +5,8 @@
 -- name: InsertTarget :exec
 INSERT INTO targets (id, user_id, name, url, method, interval_sec, timeout_ms,
                      expected_status, headers_enc, degraded_threshold_ms, enabled,
-                     next_run_at, created_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13);
+                     next_run_at, created_at, tls_warn)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14);
 
 -- name: GetTarget :one
 SELECT * FROM targets WHERE user_id = $1 AND id = $2;
@@ -30,7 +30,7 @@ SELECT * FROM targets
 UPDATE targets
    SET name = $3, url = $4, method = $5, interval_sec = $6, timeout_ms = $7,
        expected_status = $8, headers_enc = $9, degraded_threshold_ms = $10,
-       enabled = $11, next_run_at = $12
+       enabled = $11, next_run_at = $12, tls_warn = $13
  WHERE user_id = $1 AND id = $2;
 
 -- C4 (Plano 10): trocar a URL ou o método zera a histerese (a linha volta a
@@ -43,6 +43,31 @@ UPDATE target_health
  WHERE target_id = sqlc.arg(target_id)
    AND EXISTS (SELECT 1 FROM targets t
                 WHERE t.id = target_health.target_id AND t.user_id = sqlc.arg(user_id));
+
+-- A validade do certificado (spec §7.2), lida e apagada pelo dono. Como em
+-- ResetTargetHealth, o EXISTS filtra pelo dono além da RLS de target_tls. Só o
+-- sondador grava a linha (prober.sql).
+-- name: GetTargetTLSOfOwner :one
+SELECT tt.not_after, tt.observed_at
+  FROM target_tls tt
+ WHERE tt.target_id = sqlc.arg(target_id)
+   AND EXISTS (SELECT 1 FROM targets t
+                WHERE t.id = tt.target_id AND t.user_id = sqlc.arg(user_id));
+
+-- As validades de todos os alvos do dono numa consulta só: a lista não lê
+-- uma por alvo.
+-- name: ListTargetTLSOfOwner :many
+SELECT tt.target_id, tt.not_after, tt.observed_at
+  FROM target_tls tt
+ WHERE EXISTS (SELECT 1 FROM targets t
+                WHERE t.id = tt.target_id AND t.user_id = sqlc.arg(user_id));
+
+-- Outro host é outro certificado: a leitura do anterior não vale para ele.
+-- name: DeleteTargetTLSOfOwner :exec
+DELETE FROM target_tls tt
+ WHERE tt.target_id = sqlc.arg(target_id)
+   AND EXISTS (SELECT 1 FROM targets t
+                WHERE t.id = tt.target_id AND t.user_id = sqlc.arg(user_id));
 
 -- name: DeleteTarget :execrows
 DELETE FROM targets WHERE user_id = $1 AND id = $2;
