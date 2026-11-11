@@ -1,7 +1,7 @@
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
-import { useFieldArray, useForm, useWatch } from 'react-hook-form'
+import { useFieldArray, useForm, useWatch, type FieldPath } from 'react-hook-form'
 import { ArrowDown, ArrowUp } from 'lucide-react'
 import { Link } from 'react-router'
 import { z } from 'zod'
@@ -14,7 +14,8 @@ import { estiloDeCartao } from '@/components/ui/cartao'
 import { useCopiar } from '@/components/ui/copiar'
 import { CaixaDeMarcar, Campo, Entrada, ErroDoFormulario, Selecao } from '@/components/ui/campo'
 import { chaves, useAlvos, usePaginas, useResumo } from '@/lib/api/consultas'
-import { ApiError, naoEncontrado } from '@/lib/api/http'
+import { errosDosCampos, type ErroDoCampo } from '@/lib/api/erros-de-campo'
+import { ApiError, type ErroDeCampo, naoEncontrado } from '@/lib/api/http'
 import { mensagemDe, mensagemDoCampo } from '@/lib/api/mensagens'
 import type { Alvo, PaginaDeStatus } from '@/lib/api/schemas'
 import { MENSAGEM_INVISIVEL, temInvisivel } from '@/lib/rotulo'
@@ -49,6 +50,20 @@ const esquema = z.object({
     .max(MAX_ITENS, `Até ${MAX_ITENS} alvos.`),
 })
 type Valores = z.infer<typeof esquema>
+
+// O campo do 400 que a tela não tem vai para o erro do topo do formulário.
+const NO_TOPO = 'topo'
+
+// Onde cai um campo do 400: title e slug, o nome de exibição de cada item
+// (items[1].display_name vira items.1.display_name), o resto da lista em items.
+function campoDoErro(fe: ErroDeCampo): ErroDoCampo<FieldPath<Valores> | typeof NO_TOPO> {
+  const mensagem = mensagemDoCampo(fe.field, fe.reason)
+  const item = /^items\[(\d+)\]\.display_name$/.exec(fe.field)
+  if (fe.field === 'title' || fe.field === 'slug') return { campo: fe.field, mensagem }
+  if (item) return { campo: `items.${Number(item[1])}.display_name`, mensagem }
+  if (fe.field === 'items' || fe.field.startsWith('items[')) return { campo: 'items', mensagem }
+  return { campo: NO_TOPO, mensagem }
+}
 
 export function sugerirSlug(titulo: string): string {
   return titulo
@@ -121,13 +136,10 @@ function Formulario({ pagina, alvos }: { pagina: PaginaDeStatus | null; alvos: A
         avisar('Já existe uma status page; recarregamos a que está salva.')
         await qc.invalidateQueries({ queryKey: chaves.paginas })
       } else if (err instanceof ApiError && err.fields.length) {
-        for (const fe of err.fields) {
-          const texto = mensagemDoCampo(fe.field, fe.reason)
-          const item = /^items\[(\d+)\]\.display_name$/.exec(fe.field)
-          if (fe.field === 'title' || fe.field === 'slug') f.setError(fe.field, { message: texto })
-          else if (item) f.setError(`items.${Number(item[1])}.display_name`, { message: texto })
-          else if (fe.field === 'items' || fe.field.startsWith('items[')) f.setError('items', { message: texto })
-          else setErro(texto)
+        // Esta tela não move o foco, ao contrário do alvo e do heartbeat.
+        for (const { campo, mensagem } of errosDosCampos(err, campoDoErro)) {
+          if (campo === NO_TOPO) setErro(mensagem)
+          else f.setError(campo, { message: mensagem })
         }
       } else {
         setErro(mensagemDe(err))
