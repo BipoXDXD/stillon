@@ -83,6 +83,8 @@ func novaBancada(t *testing.T, ajustar func(*config.Config)) *bancada {
 		JWTSecret:  []byte("segredo-jwt-sintetico-so-para-teste"),
 		IPHashKey:  []byte("chave-de-ip-sintetica-so-para-teste"),
 		MasterKey:  []byte("chave-mestra-de-teste-32-bytes!!"),
+		// O prazo de produção: estes testes não pagam Argon2id de verdade.
+		RequestTimeout: 15 * time.Second,
 	}
 	if ajustar != nil {
 		ajustar(cfg)

@@ -52,11 +52,9 @@ func TestProberRoleProbesWithTheProductionClient(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cfg := &config.Config{
-		Role: config.RoleProber, DatabaseURL: testdb.DSN(t),
-		MasterKey: chave, ShutdownGrace: 2 * time.Second,
-		// MetricsAddr vazio: sem servidor de métricas neste teste.
-	}
+	// O helper desliga as métricas: sem servidor de métricas neste teste.
+	cfg := configDeTeste(t, config.RoleProber, testdb.DSN(t))
+	cfg.ShutdownGrace = 2 * time.Second
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	fim := make(chan error, 1)
@@ -103,10 +101,8 @@ func TestProberRoleProbesWithTheProductionClient(t *testing.T) {
 
 func TestRunRefusesARoleThatBypassesRLS(t *testing.T) {
 	testdb.New(t) // o cleanup restaura o banco
-	cfg := &config.Config{
-		Role: config.RoleProber, DatabaseURL: testdb.AdminDSN(t),
-		MasterKey: chave, ShutdownGrace: time.Second,
-	}
+	cfg := configDeTeste(t, config.RoleProber, testdb.AdminDSN(t))
+	cfg.ShutdownGrace = time.Second
 	// Com prazo: sem a checagem, run subiria normalmente e só voltaria no
 	// cancelamento. O teste ficaria pendurado em vez de vermelho.
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -135,10 +131,8 @@ func TestRunRefusesTheRoleBeforeMigrating(t *testing.T) {
 	}
 	vazio.User = admin.User
 
-	cfg := &config.Config{
-		Role: config.RoleProber, DatabaseURL: vazio.String(),
-		MasterKey: chave, ShutdownGrace: time.Second,
-	}
+	cfg := configDeTeste(t, config.RoleProber, vazio.String())
+	cfg.ShutdownGrace = time.Second
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := run(ctx, cfg); !errors.Is(err, storage.ErrRoleBypassesRLS) {
@@ -173,12 +167,8 @@ func TestRunFailsWhenAServerCannotStart(t *testing.T) {
 	}
 	defer ocupada.Close()
 
-	cfg := &config.Config{
-		Role: config.RoleAll, DatabaseURL: testdb.DSN(t), HTTPAddr: ocupada.Addr().String(),
-		PublicBaseURL: "http://localhost", CORSOrigin: "http://localhost:5173",
-		MasterKey: chave, JWTSecret: chave, IPHashKey: chave,
-		ShutdownGrace: time.Second,
-	}
+	cfg := configDeTeste(t, config.RoleAll, testdb.DSN(t))
+	cfg.HTTPAddr, cfg.ShutdownGrace = ocupada.Addr().String(), time.Second
 	fim := make(chan error, 1)
 	go func() { fim <- run(context.Background(), cfg) }()
 
@@ -212,13 +202,8 @@ func TestBusyMetricsPortSuggestsMetricsAddr(t *testing.T) {
 	}
 	defer ocupada.Close()
 
-	cfg := &config.Config{
-		Role: config.RoleAPI, DatabaseURL: testdb.DSN(t), HTTPAddr: "127.0.0.1:0",
-		MetricsAddr:   ocupada.Addr().String(),
-		PublicBaseURL: "http://localhost", CORSOrigin: "http://localhost:5173",
-		MasterKey: chave, JWTSecret: chave, IPHashKey: chave,
-		ShutdownGrace: time.Second,
-	}
+	cfg := configDeTeste(t, config.RoleAPI, testdb.DSN(t))
+	cfg.HTTPAddr, cfg.MetricsAddr, cfg.ShutdownGrace = "127.0.0.1:0", ocupada.Addr().String(), time.Second
 	fim := make(chan error, 1)
 	go func() { fim <- run(context.Background(), cfg) }()
 

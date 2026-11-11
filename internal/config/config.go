@@ -75,6 +75,10 @@ const keyLen = 32
 // acima dele (TestComposeProdGracePeriodCoversTheAppShutdown).
 const shutdownGrace = 15 * time.Second
 
+// requestTimeout termina o trabalho no banco antes do WriteTimeout de 30 s
+// do servidor, deixando margem para responder com o envelope de erro.
+const requestTimeout = 15 * time.Second
+
 type Config struct {
 	Role           Role
 	HTTPAddr       string
@@ -99,6 +103,10 @@ type Config struct {
 	ClientIPHeader string
 	LogLevel       slog.Level
 	ShutdownGrace  time.Duration
+	// RequestTimeout é o prazo de cada requisição da API, de /verify/ e de
+	// /p/. Não vem do ambiente: o Load fixa requestTimeout e só os testes,
+	// que montam o Config à mão, escolhem outro.
+	RequestTimeout time.Duration
 	// Argon2MaxConcurrent é o teto de Argon2id simultâneos (A1 do Plano 10):
 	// cada um custa 64 MiB. ARGON2_MAX_CONCURRENT, de 1 a 64; sem a variável,
 	// min(NumCPU, 4).
@@ -351,6 +359,7 @@ func Load(getenv func(string) string) (*Config, error) {
 		ClientIPHeader:      clientIPHeader("CLIENT_IP_HEADER"),
 		ProbeBlockedCIDRs:   hospedagem("PROBE_BLOCKED_CIDRS"),
 		ShutdownGrace:       shutdownGrace,
+		RequestTimeout:      requestTimeout,
 		Argon2MaxConcurrent: argon2("ARGON2_MAX_CONCURRENT"),
 		ContentRulesPerHost: regrasPorHost("CONTENT_RULES_PER_HOST"),
 		ResendAPIKey:        strings.TrimSpace(getenv("RESEND_API_KEY")),

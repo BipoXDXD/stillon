@@ -49,6 +49,36 @@ func TestShutdownGraceEhODaSpec(t *testing.T) {
 	}
 }
 
+// O prazo de produção de cada requisição é 15 s, abaixo do WriteTimeout de
+// 30 s do servidor; os testes que pedem mais montam o Config à mão.
+func TestRequestTimeoutDeProducaoEh15s(t *testing.T) {
+	cfg, err := Load(getenvFrom(validEnv()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.RequestTimeout != 15*time.Second {
+		t.Errorf("RequestTimeout = %v, queria 15s", cfg.RequestTimeout)
+	}
+}
+
+// O prazo não vem do ambiente: nenhuma variável afrouxa a proteção em
+// produção, nem com um nome plausível.
+func TestLoadIgnoraOPrazoDaRequisicaoNoAmbiente(t *testing.T) {
+	for _, nome := range []string{"REQUEST_TIMEOUT", "HTTP_REQUEST_TIMEOUT"} {
+		t.Run(nome, func(t *testing.T) {
+			env := validEnv()
+			env[nome] = "1h"
+			cfg, err := Load(getenvFrom(env))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.RequestTimeout != 15*time.Second {
+				t.Errorf("com %s=1h, RequestTimeout = %v, queria 15s", nome, cfg.RequestTimeout)
+			}
+		})
+	}
+}
+
 // Só o /0 confia em qualquer origem. Um /1 é largo, mas é decisão do operador
 // e não a falha aberta que a recusa existe para evitar.
 func TestTrustedProxiesSoRecusaOPrefixoZero(t *testing.T) {

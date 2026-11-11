@@ -75,6 +75,19 @@ type api struct {
 	rotacao string
 }
 
+// prazoDeTesteSobCarga substitui os 15 s de produção nos testes de
+// integração. Com -race e a máquina carregada, um Argon2id de produção chegou
+// a 4,5 s, e a troca de senha paga dois em série antes das consultas: os 15 s
+// estouravam em 503.
+//
+// O custo: com 60 s, um fluxo com Argon2id que passe a gastar mais de 15 s
+// já não falha aqui, e estes testes deixam de provar que ele cabe no
+// orçamento de produção (hoje um hash leva ~120 ms sem -race). Os 15 s
+// continuam provados por TestDeadlineCancelaSQLEEsperaDoPool, que os pede
+// explicitamente e mede a resposta entre 14 e 18 s, e o valor de produção por
+// config.TestRequestTimeoutDeProducaoEh15s.
+const prazoDeTesteSobCarga = 60 * time.Second
+
 func newAPI(t *testing.T) *api {
 	t.Helper()
 	return newAPIWith(t, nil)
@@ -107,10 +120,11 @@ func newAPICom(t *testing.T, ajustar func(*config.Config), ajustarDeps func(*htt
 	}
 
 	cfg := &config.Config{
-		CORSOrigin: "https://app.exemplo.com",
-		JWTSecret:  testJWTSecret,
-		IPHashKey:  testIPHashKey,
-		MasterKey:  testMasterKey,
+		CORSOrigin:     "https://app.exemplo.com",
+		JWTSecret:      testJWTSecret,
+		IPHashKey:      testIPHashKey,
+		MasterKey:      testMasterKey,
+		RequestTimeout: prazoDeTesteSobCarga,
 	}
 	if ajustar != nil {
 		ajustar(cfg)
@@ -876,7 +890,7 @@ func TestEveryErrorEnvelopeCarriesTheTraceID(t *testing.T) {
 	// Mais externo: o 429 sai do RateLimit global, antes de qualquer outra
 	// coisa da cadeia rodar.
 	var limitado *http.Response
-	for i := 0; i < 200 && limitado == nil; i++ {
+	for range 200 {
 		resp, err := http.Get(a.srv.URL + "/healthz")
 		if err != nil {
 			t.Fatal(err)

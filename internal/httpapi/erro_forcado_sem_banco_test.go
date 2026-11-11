@@ -63,6 +63,7 @@ func apiSemBanco(t *testing.T) (*httptest.Server, *clock.Fake) {
 	clk := clock.NewFake(time.Now().UTC().Truncate(time.Hour))
 	cfg := &config.Config{
 		CORSOrigin: "https://app.exemplo.com", JWTSecret: testJWTSecret, IPHashKey: testIPHashKey, MasterKey: testMasterKey,
+		RequestTimeout: 15 * time.Second,
 	}
 	box, err := crypto.NewBox(cfg.MasterKey)
 	if err != nil {
