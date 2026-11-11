@@ -39,7 +39,7 @@ const (
 	// isolamento passaria pelo WHERE da query e nunca pela política, e
 	// apagar a política deixaria a suíte verde. As migrations rodam como
 	// appUser para que ele seja o DONO das tabelas, exatamente como em
-	// produção (D8).
+	// produção.
 	appUser = "stillon_app"
 	appPass = "stillon_app"
 )
@@ -256,7 +256,7 @@ func iniciar(t *testing.T) {
 }
 
 // imagemPadrao é a imagem de desenvolvimento e testes: a mesma de produção,
-// por digest (D29 do Plano 7); a CI escolhe a versão por TEST_POSTGRES_IMAGE.
+// por digest; a CI escolhe a versão por TEST_POSTGRES_IMAGE.
 // O Dependabot não atualiza esta string: mantenha-a igual ao digest de
 // deploy/vps/db/Dockerfile e atualize as duas juntas (e a matriz do ci.yml).
 const imagemPadrao = "postgres:18-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873"

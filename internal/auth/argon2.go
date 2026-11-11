@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-// O teto de Argon2id simultâneos (A1 do Plano 10). Cada Argon2id custa 64 MiB
+// O teto de Argon2id simultâneos. Cada Argon2id custa 64 MiB
 // (argonMemory) por ~120 ms, e o limitador por IP limita a vazão de cada
 // origem, não a concorrência total: vinte logins simultâneos de duas origens
 // passavam de 1 GiB, e o processo morria por falta de memória, com o sondador
@@ -72,7 +72,7 @@ func Argon2MaxConcurrent() int { return cap(argon2Atual.Load().vagas) }
 // devolvida solta a vaga (chamá-la de novo não faz nada). Sem vaga no prazo,
 // devolve ErrArgon2Busy e uma função que não faz nada.
 //
-// A espera também para quando ctx é cancelado (M1 da revisão do Plano 10): o
+// A espera também para quando ctx é cancelado: o
 // cliente que desistiu não segura uma goroutine na fila pelo prazo inteiro. O
 // erro é ErrArgon2Busy, para quem chama responder como ao semáforo cheio (sem
 // verificar nem contar nada), e também o erro do ctx. Uma vaga livre é tomada

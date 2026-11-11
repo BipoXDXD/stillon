@@ -35,7 +35,7 @@ type SessionRow struct {
 // used_at.
 type Tx interface {
 	// SessionUserByHash e LockUserSessions vêm antes de LockSessionByHash em
-	// toda transação que muda sessões (D1 do Plano 5): a trava do usuário
+	// toda transação que muda sessões: a trava do usuário
 	// primeiro, a da linha depois.
 	SessionUserByHash(ctx context.Context, hash []byte) (uuid.UUID, error)
 	LockUserSessions(ctx context.Context, userID uuid.UUID) error
@@ -45,7 +45,7 @@ type Tx interface {
 	UserPasswordHash(ctx context.Context, userID uuid.UUID) (string, error)
 	// UserTOTPSecret é o segredo ativo do 2FA, cifrado como está no banco
 	// (nil sem 2FA), lido por IssueAfterSecondFactor depois de
-	// LockUserSessions (A4 do Plano 10).
+	// LockUserSessions.
 	UserTOTPSecret(ctx context.Context, userID uuid.UUID) ([]byte, error)
 	InsertSession(ctx context.Context, r SessionRow) error
 	MarkSessionUsed(ctx context.Context, id uuid.UUID, at time.Time) error
@@ -58,12 +58,11 @@ type Store interface {
 }
 
 // PGStore é a implementação em Postgres. Devolver o tipo concreto, e não a
-// interface, permite que o mesmo valor satisfaça Store agora e UserStore na
-// Task 8 — um consumidor pede a interface de que precisa.
+// interface, permite que o mesmo valor satisfaça Store e UserStore: um
+// consumidor pede a interface de que precisa.
 //
-// O Plano 2 troca o corpo destes métodos por código gerado pelo sqlc (spec
-// §3.3) sem mexer nas interfaces — ver o desvio registrado nas Global
-// Constraints deste plano.
+// Os corpos destes métodos migram aos poucos para código gerado pelo sqlc
+// (spec §3.3), sem mexer nas interfaces.
 type PGStore struct{ pool *pgxpool.Pool }
 
 func NewPGStore(pool *pgxpool.Pool) *PGStore { return &PGStore{pool: pool} }
@@ -100,8 +99,8 @@ func (t *pgTx) LockSessionByHash(ctx context.Context, hash []byte) (SessionRow, 
 	return r, nil
 }
 
-// SessionUserByHash, LockUserSessions e UserPasswordHash são sqlc (contrato
-// dos Planos 5–7, item 5); o resto deste arquivo migra no R2.
+// SessionUserByHash, LockUserSessions e UserPasswordHash já são sqlc;
+// o resto deste arquivo ainda é SQL escrito à mão e migra aos poucos.
 func (t *pgTx) SessionUserByHash(ctx context.Context, hash []byte) (uuid.UUID, error) {
 	id, err := db.New(t.tx).SessionUserByHash(ctx, hash)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -178,7 +177,7 @@ func (t *pgTx) InsertAudit(ctx context.Context, userID uuid.UUID, action string,
 
 // execer é o mínimo de pgx que insertAudit precisa. Existe para que o registro
 // de auditoria seja o MESMO código dentro do Tx do Store e dentro das
-// transações que o TOTP abre por conta própria (R39): duas cópias da mesma
+// transações que o TOTP abre por conta própria: duas cópias da mesma
 // instrução acabariam divergindo.
 type execer interface {
 	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)

@@ -51,7 +51,7 @@ func mensagem(ev Event) (assunto, corpo string) {
 }
 
 // prefixoDeTarefa marca as causas de heartbeat. "Fora do ar" descreve um
-// serviço, não um backup que não rodou (D20 da spec de heartbeats).
+// serviço, não um backup que não rodou.
 const prefixoDeTarefa = "heartbeat_"
 
 // causaFalhaDeTarefa é a falha avisada: a tarefa deu sinal, e o sinal foi ruim.

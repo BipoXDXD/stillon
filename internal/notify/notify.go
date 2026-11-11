@@ -108,8 +108,8 @@ func classificarResposta(resp *http.Response) error {
 
 // classificarErro traduz a falha de rede. Destino bloqueado pelo safedial é
 // permanente: o mesmo endereço será bloqueado de novo. O redirecionamento
-// recusado também (o webhook que redireciona sem fim continuará assim); até o
-// Plano 10 ele chegava aqui como ErrBlocked.
+// recusado também (o webhook que redireciona sem fim continuará assim); antes
+// ele chegava aqui como ErrBlocked.
 func classificarErro(err error) error {
 	switch {
 	case errors.Is(err, safedial.ErrBlocked), errors.Is(err, safedial.ErrInvalidURL), errors.Is(err, safedial.ErrRedirect):

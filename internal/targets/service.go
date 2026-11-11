@@ -30,7 +30,7 @@ type Service struct {
 	// antes das decisões de teto.
 	depoisDeContar func()
 	// tetoPorHost é o máximo de alvos do dono com regra de conteúdo num mesmo
-	// host de destino (D-T1, D-T3).
+	// host de destino.
 	tetoPorHost int
 }
 
@@ -242,7 +242,7 @@ func (s *Service) Update(ctx context.Context, userID, id uuid.UUID, p Patch) (Ta
 				return ErrContentHostLimit
 			}
 		}
-		// C4 (Plano 10): outra URL ou outro método é outro serviço, e outra
+		// Outra URL ou outro método é outro serviço, e outra
 		// regra é outro critério de saúde. As falhas do anterior não somam com
 		// as do novo; o incidente aberto fica e fecha pelos sucessos do novo.
 		if f.URL != row.URL || f.Method != row.Method || !f.ContentRule.Equal(regraGravada) {
@@ -257,7 +257,7 @@ func (s *Service) Update(ctx context.Context, userID, id uuid.UUID, p Patch) (Ta
 		}
 		proximo := row.NextRunAt
 		if mudouASonda {
-			proximo = s.clk.Now() // D13
+			proximo = s.clk.Now()
 		}
 		modo, valor, ponteiro := colunasDaRegra(f.ContentRule)
 		err = q.UpdateTarget(ctx, db.UpdateTargetParams{
@@ -316,8 +316,8 @@ func contarRegrasNoHost(ctx context.Context, q *db.Queries, userID uuid.UUID, ho
 	return n, nil
 }
 
-// aumentaOHost diz se o PATCH põe uma regra num host onde o alvo não contava
-// (D-T2): o teto barra o aumento, não o estado. Trocar valor, modo, caminho,
+// aumentaOHost diz se o PATCH põe uma regra num host onde o alvo não contava:
+// o teto barra o aumento, não o estado. Trocar valor, modo, caminho,
 // porta ou esquema no mesmo host, pausar ou tirar a regra nunca aumenta. É de
 // propósito outra pergunta que mudouDeDestino, que olha a origem inteira.
 func aumentaOHost(regraAntes *ContentRule, urlAntes string, regraDepois *ContentRule, urlDepois string) bool {
@@ -327,11 +327,11 @@ func aumentaOHost(regraAntes *ContentRule, urlAntes string, regraDepois *Content
 	return regraAntes == nil || hostDaRegra(urlAntes) != hostDaRegra(urlDepois)
 }
 
-// apply devolve true quando a mudança altera O QUE é sondado (D13).
+// apply devolve true quando a mudança altera O QUE é sondado.
 //
-// Uma URL de outra origem sem headers no mesmo PATCH apaga os headers (B1
-// do Plano 10): eles são credenciais daquele destino, e levá-los a outro
-// host é o mesmo vazamento que o sondador já evita num redirecionamento.
+// Uma URL de outra origem sem headers no mesmo PATCH apaga os headers: eles são
+// credenciais daquele destino, e levá-los a outro host é o mesmo vazamento que o
+// sondador já evita num redirecionamento.
 func (p Patch) apply(f *fields, enabled *bool) bool {
 	antes := *f
 	if p.Name != nil {

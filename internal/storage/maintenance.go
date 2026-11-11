@@ -34,7 +34,7 @@ const (
 	// rollupBackfill é até onde a primeira rodada volta, sem rollup nenhum:
 	// o que ainda pode existir de checks brutos. A partição sai inteira, então
 	// um check vive até 61 dias; 31 perderia a metade mais velha no primeiro
-	// deploy (achado da revisão).
+	// deploy.
 	rollupBackfill = 62 * 24 * time.Hour
 	// dropLockTimeout limita a espera do DROP da partição vencida. O DROP
 	// pega ACCESS EXCLUSIVE em checks, e enquanto espera, enfileira atrás
@@ -43,7 +43,7 @@ const (
 	dropLockTimeout = 2 * time.Second
 	// maintenanceRoundTimeout é o prazo de uma rodada inteira de RunMaintenance,
 	// abaixo do intervalo de produção (15 min): presa, a rodada desiste, vai
-	// ao log, e a seguinte tenta de novo (C2 da revisão).
+	// ao log, e a seguinte tenta de novo.
 	maintenanceRoundTimeout = 10 * time.Minute
 	// maintenanceStatementTimeout substitui, nas transações da manutenção, o
 	// statementTimeout do pool: a primeira consolidação volta 62 dias de
@@ -96,12 +96,11 @@ func Maintain(ctx context.Context, pool *pgxpool.Pool, now time.Time) (Maintenan
 // pula a rodada e devolve 0 sem erro: o upsert é idempotente, e a rodada
 // seguinte cobre a janela.
 //
-// A marca d'água é o último rollup ANTES de ate. Um rollup no futuro (o
-// relógio esteve adiantado quando foi gravado) não conta: com a marca no
-// futuro, de ficava depois de ate e nenhuma hora era consolidada (D4 do Plano
-// 10); limitada a ate, ela escondia a última marca real, e uma parada de mais
-// de 2 h perdia para sempre as horas antes dela (M1 da revisão). O rollup do
-// futuro fica; a retenção o apaga com a idade.
+// A marca d'água é o último rollup ANTES de ate. Um rollup no futuro (o relógio
+// esteve adiantado quando foi gravado) não conta: com a marca no futuro, de ficava
+// depois de ate e nenhuma hora era consolidada; limitada a ate, ela escondia a
+// última marca real, e uma parada de mais de 2 h perdia para sempre as horas antes
+// dela. O rollup do futuro fica; a retenção o apaga com a idade.
 func ConsolidateRollups(ctx context.Context, pool *pgxpool.Pool, now time.Time) (int64, error) {
 	ate := now.UTC().Truncate(time.Hour)
 	var n int64
@@ -144,7 +143,7 @@ func ConsolidateRollups(ctx context.Context, pool *pgxpool.Pool, now time.Time) 
 //
 // São duas transações. Os DELETEs vêm primeiro; o DROP das partições vem
 // sozinho, com lock_timeout, porque pega ACCESS EXCLUSIVE em checks e não
-// pode segurá-la durante o resto da retenção (achado da revisão). Se o DROP
+// pode segurá-la durante o resto da retenção. Se o DROP
 // não conseguir a trava, o erro sobe, os DELETEs já valeram, e a próxima
 // rodada tenta de novo.
 func ApplyRetention(ctx context.Context, pool *pgxpool.Pool, now time.Time) (MaintenanceReport, error) {
@@ -188,7 +187,7 @@ func ApplyRetention(ctx context.Context, pool *pgxpool.Pool, now time.Time) (Mai
 }
 
 // RunMaintenance roda Maintain ao subir e depois a cada every, até ctx acabar.
-// Substitui o MaintainChecksPartitions do Plano 2, que não tinha teste e dava
+// Substitui o antigo MaintainChecksPartitions, que não tinha teste e dava
 // panic com every <= 0. Erro de uma rodada vai ao log; a próxima tenta de novo.
 // Cada rodada tem o prazo maintenanceRoundTimeout, nunca maior que every.
 func RunMaintenance(ctx context.Context, pool *pgxpool.Pool, clk clock.Clock, every time.Duration) error {

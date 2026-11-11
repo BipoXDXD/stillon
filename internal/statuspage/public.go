@@ -108,8 +108,7 @@ func (s *Service) Public(ctx context.Context, slug string) (View, error) {
 	})
 	// A página mudou por este processo enquanto o voo estava no ar (o dono
 	// despublicou durante o acesso): o resultado pode ser o de antes, e
-	// quem esperou no voo refaz a consulta em vez de recebê-lo (achado da
-	// segunda revisão).
+	// quem esperou no voo refaz a consulta em vez de recebê-lo.
 	if s.cache.geracao(slug) != antes {
 		v, err = s.projetarComPrazo(ctx, slug, agora)
 	}
@@ -200,7 +199,7 @@ func (s *Service) projetar(ctx context.Context, slug string, agora time.Time) (V
 }
 
 // estado é o do último check, se ele ainda é recente. A regra mora em
-// targetstate, a mesma do dashboard (D15 do Plano 5).
+// targetstate, a mesma do dashboard.
 func estado(it db.ListPublicItemsRow, agora time.Time) State {
 	return State(targetstate.Current(it.Enabled, time.Duration(it.IntervalSec)*time.Second,
 		it.LastStatus, it.LastCheckedAt, agora))

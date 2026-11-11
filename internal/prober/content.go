@@ -29,7 +29,7 @@ type RegraDaSonda struct {
 
 // lerCorpo lê até MaxBodyBytes + 1 bytes: o byte a mais só diz que o corpo
 // passou do teto, e nunca é julgado. O leitor já é o corpo descomprimido,
-// então o teto vale também contra bomba de gzip (D1). Bater no teto
+// então o teto vale também contra bomba de gzip. Bater no teto
 // comprimido antes também é corpo cortado: ele não foi lido inteiro.
 func lerCorpo(r io.Reader) (corpo []byte, cortado bool, err error) {
 	corpo, err = io.ReadAll(io.LimitReader(r, safedial.MaxBodyBytes+1))
@@ -43,12 +43,12 @@ func lerCorpo(r io.Reader) (corpo []byte, cortado bool, err error) {
 	return corpo, cortado, nil
 }
 
-// tetoComprimido limita os bytes lidos da rede quando a sonda descomprime (M1
-// da revisão de segurança): o teto de lerCorpo vale sobre a saída, e um gzip
-// que não gera saída (membros vazios, um atrás do outro) seria lido até o
-// prazo. O deflate honesto nunca cresce mais que os 5 bytes de cada bloco
-// stored de 64 KiB, então 64 KiB de saída pedem pouco mais que 64 KiB de
-// entrada; o dobro dá folga para cabeçalhos e para o bufio do gzip.Reader.
+// tetoComprimido limita os bytes lidos da rede quando a sonda descomprime: o teto
+// de lerCorpo vale sobre a saída, e um gzip que não gera saída (membros vazios, um
+// atrás do outro) seria lido até o prazo. O deflate honesto nunca cresce mais que
+// os 5 bytes de cada bloco stored de 64 KiB, então 64 KiB de saída pedem pouco
+// mais que 64 KiB de entrada; o dobro dá folga para cabeçalhos e para o bufio do
+// gzip.Reader.
 const tetoComprimido = 2 * safedial.MaxBodyBytes
 
 // errTetoComprimido diz que o corpo comprimido passou de tetoComprimido.
@@ -81,7 +81,7 @@ func (l *leitorComTeto) Read(p []byte) (int, error) {
 // lerCorpoDaRegra lê o corpo que a regra vai julgar. Só um corpo sem
 // codificação ou com exatamente um gzip, somando todas as linhas de
 // Content-Encoding, tem leitura; o resto devolve ilegivel, e a sonda sai
-// content_encoding (T5 do STRIDE). O gzip é desfeito aqui, e não pelo
+// content_encoding. O gzip é desfeito aqui, e não pelo
 // transporte, que decide só pela primeira linha: com "gzip" e "br" em duas
 // linhas, ele desfazia uma camada e apagava as duas. O teto de lerCorpo vale
 // sobre o descomprimido. Corpo vazio não tem o que estar comprimido, e é
@@ -119,8 +119,8 @@ func lerCorpoDaRegra(resp *http.Response) (corpo []byte, cortado, ilegivel bool,
 
 // drenarSemRegra lê até 64 KiB do corpo de um alvo sem regra em que a sonda
 // pediu gzip, só pela latência e pelos erros de leitura: corpo maior que o
-// limite não é falha (D2). Com exatamente um gzip, o teto vale sobre o descomprimido, como
-// quando o transporte do Go descomprimia (antes do PR 5): drenar o gzip cru
+// limite não é falha. Com exatamente um gzip, o teto vale sobre o descomprimido, como
+// quando o transporte do Go descomprimia: drenar o gzip cru
 // leria da rede até 3× mais numa página grande. Um gzip que não abre é erro de
 // leitura, e a sonda sai unknown, como saía com o descompressor do transporte.
 // Bater no teto comprimido é só parar de drenar.
@@ -138,7 +138,7 @@ func drenarSemRegra(resp *http.Response) error {
 		_, err = io.Copy(io.Discard, io.LimitReader(zr, safedial.MaxBodyBytes))
 	}
 	if errors.Is(err, errTetoComprimido) {
-		return nil // drenou o bastante, como no teto descomprimido (D2)
+		return nil // drenou o bastante, como no teto descomprimido
 	}
 	return err
 }
@@ -382,7 +382,7 @@ func (c *cursor) lerString() []byte {
 // chaveIgual compara a chave crua com o token já decodificado do ponteiro.
 // Sem barra invertida e em UTF-8 válido, a chave crua é a própria chave. Fora
 // desse atalho, ela é decodificada runa a runa contra o token, sem alocar: um
-// json.Unmarshal por chave passava de 1 MiB num corpo de 64 KiB (D2c).
+// json.Unmarshal por chave passava de 1 MiB num corpo de 64 KiB.
 func chaveIgual(crua []byte, token string) bool {
 	miolo := crua[1 : len(crua)-1]
 	if bytes.IndexByte(miolo, '\\') < 0 && utf8.Valid(miolo) {

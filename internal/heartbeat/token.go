@@ -8,7 +8,7 @@ import (
 )
 
 // tokenBytes é o tamanho do token de ping: 256 bits de crypto/rand, como o de
-// verificação de canal (D7).
+// verificação de canal.
 const tokenBytes = 32
 
 // encodedTokenLength é o tamanho do token em base64url sem preenchimento.

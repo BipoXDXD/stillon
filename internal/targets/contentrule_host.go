@@ -9,7 +9,7 @@ import (
 )
 
 // hostDaRegra é a chave pela qual o teto de regras de conteúdo agrupa os
-// alvos (D-T1). Segue o que o transporte disca, como SameOrigin: IDNA e
+// alvos. Segue o que o transporte disca, como SameOrigin: IDNA e
 // minúsculas pelo safedial.DialedHost, IP na forma canônica, sem zona nem
 // mapeamento IPv4-em-IPv6. A porta fica de fora de propósito: separar por
 // porta multiplicaria o teto pelas portas do mesmo host.

@@ -19,7 +19,7 @@ import (
 	"github.com/BipoXDXD/stillon/internal/storage"
 )
 
-// Códigos de saída de `stillon user` (spec do Plano 5, §4.1). O 3 não muda de
+// Códigos de saída de `stillon user`. O 3 não muda de
 // sentido: um passo idempotente (o seed do compose) o trata como sucesso.
 const (
 	saidaOK            = 0
@@ -41,7 +41,7 @@ const (
 const maxLeitura = 4096
 
 // entradaDaSenha é de onde a senha vem. Senha NUNCA vem de argumento nem de
-// variável de ambiente (D6 do Plano 5): argumento aparece em `ps` e no
+// variável de ambiente: argumento aparece em `ps` e no
 // histórico do shell; variável, em /proc/<pid>/environ e no `docker inspect`.
 type entradaDaSenha struct {
 	// terminal: pede a senha duas vezes, sem eco, por lerSemEco.
@@ -157,7 +157,7 @@ func runUser(ctx context.Context, args []string, in entradaDaSenha, stdout, stde
 		return falhar(saidaUso, "DATABASE_URL não definida")
 	}
 
-	// A mesma ordem do boot (D7 do Plano 5): o papel antes da migration. Num
+	// A mesma ordem do boot: o papel antes da migration. Num
 	// banco virgem, migrar como superusuário criaria as tabelas com o dono
 	// errado, e o papel comum depois não conseguiria usá-las.
 	pool, err := storage.NewPool(ctx, dsn)
@@ -174,9 +174,9 @@ func runUser(ctx context.Context, args []string, in entradaDaSenha, stdout, stde
 	// Sem segundo fator e sem chave de IP: o CLI não troca senha pela API.
 	svc := account.NewService(pool, nil, clock.Real{}, nil)
 
-	// reset-2fa não lê senha (spec do Plano 9, §3.1): quem tem a DATABASE_URL
+	// reset-2fa não lê senha: quem tem a DATABASE_URL
 	// já pode tudo no banco. O e-mail sai na mensagem para quem rodou contra o
-	// banco errado perceber (R5 da spec).
+	// banco errado perceber.
 	if sub == "reset-2fa" {
 		ligado, n, err := svc.ResetTwoFactor(ctx, e)
 		if errors.Is(err, account.ErrUserNotFound) {

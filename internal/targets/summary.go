@@ -15,7 +15,7 @@ import (
 )
 
 // SparkHours é a janela do spark: as 24 horas cheias anteriores à hora
-// corrente (contrato dos Planos 5–7).
+// corrente.
 const SparkHours = 24
 
 // Summary é um alvo como o dashboard o mostra (GET /targets/summary).
@@ -25,11 +25,11 @@ type Summary struct {
 	Enabled bool
 	State   targetstate.State
 	// LastCheckedAt e LastLatencyMS são nil sem check nenhum; LastLatencyMS é
-	// nil também quando o último check foi down (D16 do Plano 5): a latência
+	// nil também quando o último check foi down: a latência
 	// de um down é o tempo até o timeout, não a do serviço.
 	LastCheckedAt *time.Time
 	LastLatencyMS *int32
-	// Uptime24h é ok/total sobre as horas do spark MAIS a hora corrente (D16):
+	// Uptime24h é ok/total sobre as horas do spark MAIS a hora corrente:
 	// uma queda em curso aparece nele. nil sem check nenhum na janela.
 	Uptime24h      *float64
 	OpenIncidentID *uuid.UUID
@@ -47,7 +47,7 @@ type SparkHour struct {
 
 type contagem struct{ total, ok int64 }
 
-// Summary monta o dashboard numa chamada só (D16 do Plano 5), em cinco
+// Summary monta o dashboard numa chamada só, em cinco
 // consultas na mesma transação do dono:
 //
 //  1. os alvos, com o último check e o incidente aberto;

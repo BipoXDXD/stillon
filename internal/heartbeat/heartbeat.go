@@ -8,7 +8,7 @@ package heartbeat
 import (
 	"strconv"
 	"time"
-	_ "time/tzdata" // o cron depende do fuso declarado, não do tzdata da imagem (D18)
+	_ "time/tzdata" // o cron depende do fuso declarado, não do tzdata da imagem
 
 	"github.com/google/uuid"
 )
@@ -34,11 +34,11 @@ const (
 	// heartbeat_limits.
 	MaxDescriptionLength = 10000
 
-	// RepeatWindow é por quanto tempo um sinal igual ao último é repetição
-	// (D9): o curl --retry de uma tarefa cabe nela, e um período, que é de
+	// RepeatWindow é por quanto tempo um sinal igual ao último é repetição:
+	// o curl --retry de uma tarefa cabe nela, e um período, que é de
 	// no mínimo um minuto, não.
 	RepeatWindow = 10 * time.Second
-	// MaxEventsPerHeartbeat é o teto do log de sinais (D15).
+	// MaxEventsPerHeartbeat é o teto do log de sinais.
 	MaxEventsPerHeartbeat = 1000
 	// EarlySignalMargin é quanto antes de um disparo do cron um sinal ainda
 	// conta como daquele disparo. Um host com o relógio adiantado termina a
@@ -47,7 +47,7 @@ const (
 	// MinGrace: acima disso, a folga passaria da menor tolerância aceita.
 	EarlySignalMargin = MinGrace
 	// ReopenCooldown é o intervalo mínimo entre aberturas de incidente do
-	// mesmo heartbeat (D11): um token vazado alternando falha e sucesso
+	// mesmo heartbeat: um token vazado alternando falha e sucesso
 	// dispararia um aviso a cada avaliação. Atrasa a abertura, nunca a perde.
 	ReopenCooldown = 5 * time.Minute
 )
@@ -103,7 +103,7 @@ const (
 	SignalStart   Signal = "start"
 	SignalSuccess Signal = "success"
 	SignalFail    Signal = "fail"
-	// SignalLog só registra: não mexe em último sinal, prazo nem execução (B4).
+	// SignalLog só registra: não mexe em último sinal, prazo nem execução.
 	SignalLog Signal = "log"
 )
 
@@ -116,10 +116,10 @@ const (
 	SourcePanel Source = "panel"
 )
 
-// Run identifica a execução que mandou o sinal (B7). Sem ID, o sinal vale como
+// Run identifica a execução que mandou o sinal. Sem ID, o sinal vale como
 // antes do rid. StartAt é o início de mesmo rid lido do log, ou nil; só faz
-// sentido com ID. Manual é o sucesso do sinalizar agora: ele não é a tarefa
-// (R2), então não encerra a execução aberta nem leva a duração dela.
+// sentido com ID. Manual é o sucesso do sinalizar agora: ele não é a tarefa,
+// então não encerra a execução aberta nem leva a duração dela.
 type Run struct {
 	ID      *uuid.UUID
 	StartAt *time.Time
@@ -187,7 +187,7 @@ type Event struct {
 // Apply aplica um sinal ao estado (seção 5 da spec). Devolve o estado novo e
 // o evento a gravar; sem evento, o sinal foi repetição e nada muda.
 //
-// Só o sucesso move o prazo (D10): a tolerância cobre o tempo de execução, e
+// Só o sucesso move o prazo: a tolerância cobre o tempo de execução, e
 // um início sem sucesso vira atraso no prazo normal. O log nunca é repetição:
 // cada linha que a tarefa manda é uma linha que ela quer ver.
 func (s State) Apply(sig Signal, now time.Time, run Run, sch Schedule, grace time.Duration) (State, *Event) {
@@ -257,7 +257,7 @@ func (s *State) measure(started, now time.Time) *int64 {
 
 // isRepeat vale para o intervalo negativo também: com relógios de instâncias
 // diferentes, now pode cair um pouco antes do último ping. Sinais de rid
-// diferentes são execuções diferentes, nunca repetição (B7).
+// diferentes são execuções diferentes, nunca repetição.
 func (s State) isRepeat(sig Signal, now time.Time, runID *uuid.UUID) bool {
 	return s.LastSignal == sig && sameRun(s.LastRunID, runID) && now.Sub(s.LastPingAt) < RepeatWindow
 }
@@ -277,7 +277,7 @@ func ResumedByPing(sig Signal, enabled, pingResumes bool) bool {
 }
 
 // FirstDeadline é o prazo a contar de from: o próximo instante esperado mais
-// a tolerância. Serve à criação (D12), à retomada e ao sucesso. Só o cron tem
+// a tolerância. Serve à criação, à retomada e ao sucesso. Só o cron tem
 // a folga EarlySignalMargin: no período, o próximo instante conta do próprio
 // sinal, e não há disparo marcado para confundir.
 func FirstDeadline(sch Schedule, grace time.Duration, from time.Time) time.Time {

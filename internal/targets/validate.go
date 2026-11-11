@@ -53,7 +53,7 @@ const (
 	maxHeadersTotalBytes   = 8 << 10
 )
 
-// D4: não há coluna de corpo, e PUT ou DELETE sem corpo num monitor seriam
+// Não há coluna de corpo, e PUT ou DELETE sem corpo num monitor seriam
 // armadilha.
 var allowedMethods = []string{"GET", "HEAD", "POST"}
 
@@ -124,7 +124,7 @@ func validate(f *fields) *ValidationError {
 	switch {
 	case f.TimeoutMS < minTimeoutMS || f.TimeoutMS > maxTimeoutMS:
 		v.add("timeout_ms", ReasonOutOfRange)
-	// D3: o jitter de −10% (spec §6.2) pode antecipar a próxima execução
+	// O jitter de −10% (spec §6.2) pode antecipar a próxima execução
 	// para 90% do intervalo. Um timeout acima disso deixaria duas sondas do
 	// mesmo alvo em voo ao mesmo tempo. Só se compara com intervalo válido,
 	// para não acusar o timeout pelo erro do intervalo.
@@ -132,7 +132,7 @@ func validate(f *fields) *ValidationError {
 		v.add("timeout_ms", ReasonOutOfRange)
 	}
 
-	// C2 (Plano 10): só 2xx e 4xx–5xx podem ser o status final. O 1xx o
+	// Só 2xx e 4xx–5xx podem ser o status final. O 1xx o
 	// net/http consome, e o 3xx o cliente segue (até 3 saltos); esperar um
 	// deles deixaria o alvo down para sempre, com um incidente que não fecha.
 	if s := f.ExpectedStatus; !(s >= 200 && s <= 299) && !(s >= 400 && s <= 599) {
@@ -294,14 +294,13 @@ func validHeaderValue(s string) bool {
 // nenhuma. Caminho, consulta e fragmento não contam. Uma URL que não se lê, ou
 // cujo host não converte para ASCII, não tem a origem de ninguém.
 //
-// O host é comparado depois de idna.Lookup.ToASCII, o perfil que o net/http
-// (e com ele o safedial) usa para discar e para o SNI (Q1 da revisão do Plano
-// 10). Com strings.ToLower, "straße.de" e "STRAẞE.de" davam a mesma origem,
-// mas o transporte disca xn--strae-oqa.de num e strasse.de no outro, que é
-// outro domínio: o PATCH mantinha os headers e o próximo check os levava ao
-// domínio novo.
+// O host é comparado depois de idna.Lookup.ToASCII, o perfil que o net/http (e com
+// ele o safedial) usa para discar e para o SNI. Com strings.ToLower, "straße.de" e
+// "STRAẞE.de" davam a mesma origem, mas o transporte disca xn--strae-oqa.de num e
+// strasse.de no outro, que é outro domínio: o PATCH mantinha os headers e o
+// próximo check os levava ao domínio novo.
 //
-// É a regra do B1 do Plano 10: um PATCH que troca a origem sem mandar
+// É a regra de apply no serviço: um PATCH que troca a origem sem mandar
 // headers os apaga. O painel a reimplementa com new URL(x).origin para avisar
 // antes de salvar, que usa o mesmo UTS 46. Onde as duas ainda divergirem
 // (IPv4 em notação não canônica, um host que o navegador aceita e o ToASCII

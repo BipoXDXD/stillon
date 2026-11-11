@@ -33,7 +33,7 @@ type Spec struct {
 	Content           *RegraDaSonda // nil: sem regra de conteúdo
 }
 
-// LogValue mostra os NOMES dos headers e nunca os valores (Plano 8). Os
+// LogValue mostra os NOMES dos headers e nunca os valores. Os
 // headers chegam aqui decifrados e costumam ser credencial de terceiro
 // (Authorization, X-Api-Key); sem isto, um slog.Any("spec", spec) gravaria
 // essa credencial no log. A proteção é do tipo, não da disciplina, como no
@@ -81,7 +81,7 @@ type Result struct {
 // regra de conteúdo ou sem ela. A ordem é transporte, status, regra e
 // lentidão: status errado segue http_status com qualquer corpo. A latência é
 // medida pelo relógio monotônico real, e não pelo relógio injetado, porque
-// o relógio falso dos testes não anda durante a sonda (D11).
+// o relógio falso dos testes não anda durante a sonda.
 //
 // Os handshakes TLS de todos os saltos são observados por um trace no
 // context, e não por resp.TLS, que só mostra o último salto: um redirect para

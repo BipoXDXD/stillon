@@ -135,7 +135,7 @@ func (s *Service) Update(ctx context.Context, userID, id uuid.UUID, patch Patch)
 	if err == nil {
 		// O slug antigo pode ser tomado por outro dono logo em seguida, e a
 		// página despublicada tem de sair na hora: o cache deste processo
-		// não pode servir a versão velha por mais 30s (achado da revisão).
+		// não pode servir a versão velha por mais 30s.
 		s.cache.forget(slugAntigo)
 		s.cache.forget(p.Slug)
 	}

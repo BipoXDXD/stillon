@@ -20,9 +20,9 @@ var ErrInvalidToken = errors.New("token de acesso inválido")
 type AccessClaims struct {
 	UserID uuid.UUID
 	// FamilyID é o claim sid (o "Session ID" registrado na IANA pelo OpenID
-	// Connect). É o que permite a GET /sessions marcar a sessão atual e às
-	// rotas de credencial recusar um token cuja sessão já foi encerrada (D2 do
-	// Plano 5): o cookie de refresh, com Path=/api/v1/auth, não chega lá.
+	// Connect). É o que permite a GET /sessions marcar a sessão atual e às rotas
+	// de credencial recusar um token cuja sessão já foi encerrada: o cookie de
+	// refresh, com Path=/api/v1/auth, não chega lá.
 	FamilyID uuid.UUID
 }
 
@@ -57,7 +57,7 @@ func ParseAccessToken(secret []byte, raw string, now time.Time) (AccessClaims, e
 
 	_, err := jwt.ParseWithClaims(raw, &claims,
 		func(t *jwt.Token) (any, error) { return secret, nil },
-		// Trava contra confusão de algoritmo (ruling R30). Sem esta opção,
+		// Trava contra confusão de algoritmo. Sem esta opção,
 		// um token forjado com alg=HS512 e assinado com o MESMO segredo é
 		// aceito: a biblioteca usa o alg do cabeçalho, que é escolha do
 		// atacante. Não é o alg=none que esta opção impede — esse já morre
@@ -88,7 +88,7 @@ func ParseAccessToken(secret []byte, raw string, now time.Time) (AccessClaims, e
 	}
 	// Sem sid, o token não diz de qual sessão veio, e as rotas de credencial
 	// não teriam como recusá-lo depois de a sessão ser encerrada. Não há token
-	// assim em circulação: o painel ainda não foi publicado (D2 do Plano 5).
+	// assim em circulação: o painel ainda não foi publicado.
 	familia, err := uuid.Parse(claims.SID)
 	if err != nil || familia == uuid.Nil {
 		return AccessClaims{}, fmt.Errorf("%w: sid ausente ou inválido", ErrInvalidToken)
@@ -109,9 +109,9 @@ type challengeJWT struct {
 	// PWS é o PasswordStamp do hash que conferiu com a senha do login. O
 	// /totp/verify o entrega a Issue, que recusa a sessão se a senha mudou
 	// depois do desafio: sem isto, um desafio obtido com a senha antiga abria
-	// sessão até cinco minutos depois de um set-password (Task 11 do Plano 5).
+	// sessão até cinco minutos depois de um set-password.
 	PWS string `json:"pws"`
-	// CAT é o instante de emissão em microssegundos Unix (Plano 8). É a chave
+	// CAT é o instante de emissão em microssegundos Unix. É a chave
 	// da marca d'água que torna o desafio de uso único: o iat não serve,
 	// porque jwt.NewNumericDate o arredonda para segundos, e dois desafios do
 	// mesmo usuário no mesmo segundo teriam a mesma marca. Microssegundo é a
@@ -156,8 +156,8 @@ func NewChallengeToken(secret []byte, userID uuid.UUID, stamp string, now time.T
 
 // ParseChallengeToken devolve o desafio: o usuário, o carimbo da senha
 // verificada no login e o instante de emissão. Desafio sem carimbo ou sem
-// instante é inválido; um desafio emitido antes do Plano 8 não tem instante e
-// morre com o deploy (no pior caso, um login refeito dentro de ChallengeTTL).
+// instante é inválido; um desafio emitido antes do campo cat existir não
+// tem instante e morre com o deploy (no pior caso, um login refeito dentro de ChallengeTTL).
 func ParseChallengeToken(secret []byte, raw string, now time.Time) (Challenge, error) {
 	var claims challengeJWT
 
