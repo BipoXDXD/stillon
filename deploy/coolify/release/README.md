@@ -94,3 +94,13 @@ conhece a propriedade. lint_workflows.py valida exatamente essa política, subst
 a linha queue por uma linha vazia em memória e executa actionlint sobre todo o restante do
 arquivo e todos os outros workflows intactos, com shellcheck e erros propagados. A validação
 do parser real do GitHub e os demais gates continuam obrigatórios.
+
+## Guardas locais de release
+
+Sessões que acompanham uma release e podem cancelá-la (para não intercalar com a de outro projeto
+na VPS) seguem uma regra: cancelar só com o job `deploy` explicitamente na fila (`queued`,
+`waiting` ou `pending`). Status ausente, ilegível ou de um passo interno do job nunca autoriza
+o cancelamento; nesse caso o guarda espera e lê de novo. Depois que o job de publicação começa,
+cancelar o run para o runner, mas não o receptor: a publicação segue no host. Foi o que aconteceu
+na release do #262 ([postmortem de 2026-11-10](../../../docs/postmortems/2026-11-10-release-261-variavel-obrigatoria.md),
+ação 6).
