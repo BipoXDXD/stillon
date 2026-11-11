@@ -17,6 +17,13 @@ import (
 
 var agora = time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
 
+// kindsConhecidos e eventosConhecidos são o que o binário desta versão
+// reivindica da outbox (notify.kindsConhecidos e notify.eventosConhecidos).
+var (
+	kindsConhecidos   = []string{"discord", "email"}
+	eventosConhecidos = []string{"opened", "resolved", "reminder"}
+)
+
 // users não tem RLS; a aplicação é dona da tabela.
 func novoUsuario(t *testing.T, pool *pgxpool.Pool) uuid.UUID {
 	t.Helper()

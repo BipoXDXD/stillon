@@ -18,7 +18,30 @@ import { ApiError } from '@/lib/api/http'
 import { mensagemDe, mensagemDoCampo, textoDoErroDeCanal } from '@/lib/api/mensagens'
 import type { Canal } from '@/lib/api/schemas'
 import { dataHora } from '@/lib/format'
-import { cn } from '@/lib/utils'
+import { assertUnreachable, cn } from '@/lib/utils'
+
+// 'desconhecido' é um tipo que uma versão posterior do servidor criou: a linha
+// aparece, sem as ações que só fazem sentido para um tipo conhecido.
+function rotuloDoTipo(kind: Canal['kind']): string {
+  switch (kind) {
+    case 'discord':
+      return 'Discord'
+    case 'email':
+      return 'E-mail'
+    case 'desconhecido':
+      return 'Outro tipo'
+    default:
+      return assertUnreachable(kind)
+  }
+}
+
+// O nome do canal nas linhas, nos botões, no diálogo e nos avisos. Sem hint (o
+// servidor não sabe ler o destino de um tipo que não conhece, ou o destino
+// ficou ilegível), a data de criação distingue as linhas: com dois canais
+// assim, o dono precisa saber qual está apagando.
+function nomeDoCanal(c: Canal): string {
+  return c.hint.trim() === '' ? `criado em ${dataHora(c.created_at)}` : c.hint
+}
 
 // Estado da verificação com forma, cor e texto (auditoria C2, S9).
 const estados: Record<Canal['status'], { texto: string; Icone: LucideIcon; tom: TomDoSelo }> = {
@@ -215,10 +238,10 @@ export function PaginaCanais() {
       await api.pausarCanal(c.id, enabled)
       await recarregar()
       // Com dois canais mudando juntos, o aviso diz qual.
-      avisar(`Canal ${c.hint} ${enabled ? 'retomado' : 'pausado'}.`)
+      avisar(`Canal ${nomeDoCanal(c)} ${enabled ? 'retomado' : 'pausado'}.`)
     } catch (e) {
       if (!(await listaVelha(e))) {
-        setErro(`Não foi possível ${enabled ? 'retomar' : 'pausar'} o canal ${c.hint}. ${mensagemDe(e)}`)
+        setErro(`Não foi possível ${enabled ? 'retomar' : 'pausar'} o canal ${nomeDoCanal(c)}. ${mensagemDe(e)}`)
       }
     } finally {
       emVoo.current.delete(c.id)
@@ -276,7 +299,7 @@ export function PaginaCanais() {
                 <li key={c.id} className={cn(estiloDeCartao, 'flex flex-wrap items-center justify-between gap-4')}>
                   <div className="min-w-0 space-y-2 break-words">
                     <p className="font-semibold">
-                      {c.kind === 'discord' ? 'Discord' : 'E-mail'} <span className="font-normal text-suave">{c.hint}</span>
+                      {rotuloDoTipo(c.kind)} <span className="font-normal text-suave">{nomeDoCanal(c)}</span>
                     </p>
                     <EstadoDoCanal canal={c} />
                     {c.last_error && c.last_failure_at && (
@@ -287,13 +310,13 @@ export function PaginaCanais() {
                     )}
                   </div>
                   <div className="flex flex-wrap gap-2">
-                    {(c.status === 'pending' || c.status === 'expired') && (
+                    {c.kind !== 'desconhecido' && (c.status === 'pending' || c.status === 'expired') && (
                       <Botao
                         tipo="secundario"
                         tamanho="pequeno"
                         disabled={reenviando.has(c.id)}
                         onClick={() => void reenviar(c)}
-                        aria-label={`Reenviar verificação do canal ${c.hint}`}
+                        aria-label={`Reenviar verificação do canal ${nomeDoCanal(c)}`}
                       >
                         Reenviar verificação
                       </Botao>
@@ -312,7 +335,7 @@ export function PaginaCanais() {
                         if (c.enabled) setPausar(c)
                         else void alternar(c)
                       }}
-                      aria-label={`${c.enabled ? 'Pausar' : 'Retomar'} o canal ${c.hint}`}
+                      aria-label={`${c.enabled ? 'Pausar' : 'Retomar'} o canal ${nomeDoCanal(c)}`}
                     >
                       {c.enabled ? 'Pausar' : 'Retomar'}
                     </Botao>
@@ -320,7 +343,7 @@ export function PaginaCanais() {
                       tipo="terciario"
                       tamanho="pequeno"
                       onClick={() => setApagar(c)}
-                      aria-label={`Apagar o canal ${c.hint}`}
+                      aria-label={`Apagar o canal ${nomeDoCanal(c)}`}
                     >
                       Apagar
                     </Botao>
@@ -353,7 +376,7 @@ export function PaginaCanais() {
         aberto={apagar !== null}
         aoMudar={(v) => !v && setApagar(null)}
         titulo="Apagar o canal?"
-        descricao={`O canal ${apagar?.hint ?? ''} deixa de receber os alertas.`}
+        descricao={apagar ? `O canal ${nomeDoCanal(apagar)} deixa de receber os alertas.` : ''}
         acao="Apagar canal"
         ocupado={apagando}
         aoConfirmar={() => void confirmarApagar()}

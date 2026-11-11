@@ -98,13 +98,19 @@ func (r *Reminders) Tick(ctx context.Context) (int, error) {
 }
 
 // enqueueDue enfileira, dentro da transação da página, o lembrete de cada
-// par vencido.
+// par vencido. Par de canal sem lembrete (tipo sem cadência ou desconhecido)
+// é pulado.
 func (r *Reminders) enqueueDue(ctx context.Context, q *db.Queries, pagina []db.ListReminderCandidatesRow, now time.Time) (int, error) {
 	enfileirados := 0
 	for _, c := range pagina {
-		vence, err := r.policy.NextReminder(Kind(c.Kind), c.StartedAt, c.BaseAt)
-		if err != nil {
-			return enfileirados, fmt.Errorf("incidente %s, canal %s: %w", c.IncidentID, c.ChannelID, err)
+		vence, ok := r.policy.NextReminder(Kind(c.Kind), c.StartedAt, c.BaseAt)
+		if !ok {
+			// Um tipo desconhecido vem de uma versão mais nova (rollback): fica
+			// no log e não para os outros pares da página.
+			if !r.policy.knows(Kind(c.Kind)) {
+				slog.Warn("lembrete: tipo de canal desconhecido", "channel_id", c.ChannelID, "kind", c.Kind)
+			}
+			continue
 		}
 		if now.Before(vence) {
 			continue

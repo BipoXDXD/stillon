@@ -229,9 +229,19 @@ export type IncidenteDeHeartbeat = z.infer<typeof IncidenteDeHeartbeat>
 
 export const ListaDeIncidentesDeHeartbeat = z.object({ items: z.array(IncidenteDeHeartbeat), next_cursor: z.string().optional() })
 
+// Os tipos que esta versão conhece: o teste de contrato exige um caso do Go
+// para cada um.
+export const TiposConhecidosDeCanal = z.enum(['discord', 'email'])
+
+// Um tipo de canal que uma versão posterior do servidor criou (SP2, piso de
+// rollback) vira 'desconhecido', pelo mesmo motivo do `desconhecido` acima: a
+// lista inteira não pode cair por uma linha. Só texto; sem kind continua erro.
+export const TipoDeCanal = TiposConhecidosDeCanal.or(z.string().transform(() => 'desconhecido' as const))
+export type TipoDeCanal = z.infer<typeof TipoDeCanal>
+
 export const Canal = z.object({
   id,
-  kind: z.enum(['discord', 'email']),
+  kind: TipoDeCanal,
   hint: z.string(),
   status: z.enum(['verified', 'pending', 'expired', 'failing']),
   enabled: z.boolean(),

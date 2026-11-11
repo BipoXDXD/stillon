@@ -28,9 +28,9 @@ func TestNextReminderIntervalByKindAndAge(t *testing.T) {
 	for _, c := range casos {
 		t.Run(c.nome, func(t *testing.T) {
 			base := inicioDoIncidente.Add(c.idade)
-			got, err := DefaultPolicy().NextReminder(c.kind, inicioDoIncidente, base)
-			if err != nil {
-				t.Fatal(err)
+			got, ok := DefaultPolicy().NextReminder(c.kind, inicioDoIncidente, base)
+			if !ok {
+				t.Fatalf("NextReminder(%q) sem lembrete; queria um", c.kind)
 			}
 			if want := base.Add(c.quer); !got.Equal(want) {
 				t.Errorf("NextReminder = %s; queria %s", got, want)
@@ -44,9 +44,9 @@ func TestNextReminderEmailSequence(t *testing.T) {
 	quer := []time.Duration{2 * time.Hour, 4 * time.Hour, 6 * time.Hour, 30 * time.Hour}
 	base := inicioDoIncidente
 	for i, q := range quer {
-		prox, err := DefaultPolicy().NextReminder(KindEmail, inicioDoIncidente, base)
-		if err != nil {
-			t.Fatal(err)
+		prox, ok := DefaultPolicy().NextReminder(KindEmail, inicioDoIncidente, base)
+		if !ok {
+			t.Fatalf("lembrete %d sem vencimento", i+1)
 		}
 		if got := prox.Sub(inicioDoIncidente); got != q {
 			t.Fatalf("lembrete %d em %s; queria %s", i+1, got, q)
@@ -55,8 +55,18 @@ func TestNextReminderEmailSequence(t *testing.T) {
 	}
 }
 
-func TestNextReminderUnknownKindFails(t *testing.T) {
-	if _, err := DefaultPolicy().NextReminder(Kind("sms"), inicioDoIncidente, inicioDoIncidente); err == nil {
-		t.Error("kind desconhecido deveria falhar")
+// Um tipo que esta versão não conhece (gravado por uma versão mais nova,
+// antes de um rollback) não tem lembrete; não é erro.
+func TestNextReminderTipoDesconhecidoNaoTemLembrete(t *testing.T) {
+	if _, ok := DefaultPolicy().NextReminder(Kind("futuro"), inicioDoIncidente, inicioDoIncidente); ok {
+		t.Error("tipo desconhecido não deveria ter lembrete")
+	}
+}
+
+// Cadência nil é um tipo conhecido que não lembra (o PagerDuty, adiante).
+func TestNextReminderCadenciaNilNaoTemLembrete(t *testing.T) {
+	p := Policy{longBandAge: reminderLongBandAge, cadences: map[Kind]*cadence{"x": nil}}
+	if _, ok := p.NextReminder(Kind("x"), inicioDoIncidente, inicioDoIncidente); ok {
+		t.Error("tipo com cadência nil não deveria ter lembrete")
 	}
 }

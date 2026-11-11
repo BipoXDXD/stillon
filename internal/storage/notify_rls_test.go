@@ -259,6 +259,7 @@ func TestNotificationClaimIsALease(t *testing.T) {
 			var err error
 			rows, err = q.ClaimDueNotifications(ctx, db.ClaimDueNotificationsParams{
 				Now: em, LeaseUntil: em.Add(2 * time.Minute), MaxRows: 8,
+				Kinds: kindsConhecidos, Events: eventosConhecidos,
 			})
 			return err
 		})
@@ -314,6 +315,7 @@ func TestNotificationClaimSkipsLockedRows(t *testing.T) {
 		var err error
 		rows, err = q.ClaimDueNotifications(prazo, db.ClaimDueNotificationsParams{
 			Now: agora, LeaseUntil: agora.Add(2 * time.Minute), MaxRows: 8,
+			Kinds: kindsConhecidos, Events: eventosConhecidos,
 		})
 		return err
 	})

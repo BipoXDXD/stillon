@@ -36,6 +36,7 @@ func TestClaimSkipsNotificationWithoutIncident(t *testing.T) {
 			// Um lugar só: o aviso sem incidente vence antes (11:59), então
 			// sem o filtro ele ocuparia a vaga e o lote voltaria vazio.
 			Now: agora, LeaseUntil: agora.Add(time.Minute), MaxRows: 1,
+			Kinds: kindsConhecidos, Events: eventosConhecidos,
 		})
 		return err
 	})
