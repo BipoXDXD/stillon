@@ -1,0 +1,96 @@
+package prober
+
+import (
+	"context"
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+
+	"github.com/BipoXDXD/stillon/internal/incident"
+	"github.com/BipoXDXD/stillon/internal/storage"
+	"github.com/BipoXDXD/stillon/internal/storage/db"
+)
+
+// incidenteAberto cria um incidente aberto do alvo, sem avisar ninguém.
+func (b *bancada) incidenteAberto(t *testing.T, alvo uuid.UUID) uuid.UUID {
+	t.Helper()
+	id := uuid.Must(uuid.NewV7())
+	err := storage.InProberTx(context.Background(), b.pool, func(q *db.Queries) error {
+		return q.OpenIncident(context.Background(), db.OpenIncidentParams{
+			ID: id, TargetID: alvo, StartedAt: b.clk.Now(), Cause: string(KindTimeout),
+		})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
+func (b *bancada) comoQueries(t *testing.T, fn func(q *db.Queries) error) error {
+	t.Helper()
+	return storage.InProberTx(context.Background(), b.pool, fn)
+}
+
+// A primeira chamada marca e enfileira nos canais entregáveis; a segunda
+// (n == 0, spec §8) não enfileira nem erra.
+func TestAvisarAbertura(t *testing.T) {
+	b := novaBancada(t, nil, MaxInFlight)
+	alvo := b.alvo(t, "https://exemplo.com", nil)
+	canal := b.canal(t, true, true)
+	b.canal(t, false, true) // pendente de verificação
+	id := b.incidenteAberto(t, alvo)
+	em := b.clk.Now().Add(time.Minute)
+	chamar := func() error {
+		return b.comoQueries(t, func(q *db.Queries) error {
+			return avisarAbertura(context.Background(), q, b.dono, id, em)
+		})
+	}
+
+	if err := chamar(); err != nil {
+		t.Fatal(err)
+	}
+	if abertura, _ := b.marcasDoIncidente(t, id); abertura == nil || !abertura.Equal(em) {
+		t.Errorf("open_notified_at = %v; queria %v", abertura, em)
+	}
+	if ns := b.notificacoes(t); len(ns) != 1 || ns[0].Canal != canal || ns[0].Evento != incident.EventOpened {
+		t.Fatalf("notificações = %+v; queria a abertura no canal entregável %s", ns, canal)
+	}
+
+	if err := chamar(); err != nil {
+		t.Fatal(err)
+	}
+	if ns := b.notificacoes(t); len(ns) != 1 {
+		t.Errorf("segunda chamada deixou %d notificações, queria 1", len(ns))
+	}
+}
+
+func TestAvisarFechamento(t *testing.T) {
+	b := novaBancada(t, nil, MaxInFlight)
+	alvo := b.alvo(t, "https://exemplo.com", nil)
+	canal := b.canal(t, true, true)
+	id := b.incidenteAberto(t, alvo)
+	em := b.clk.Now().Add(time.Minute)
+	chamar := func() error {
+		return b.comoQueries(t, func(q *db.Queries) error {
+			return avisarFechamento(context.Background(), q, b.dono, id, em)
+		})
+	}
+
+	if err := chamar(); err != nil {
+		t.Fatal(err)
+	}
+	if _, fechamento := b.marcasDoIncidente(t, id); fechamento == nil || !fechamento.Equal(em) {
+		t.Errorf("close_notified_at = %v; queria %v", fechamento, em)
+	}
+	if ns := b.notificacoes(t); len(ns) != 1 || ns[0].Canal != canal || ns[0].Evento != incident.EventResolved {
+		t.Fatalf("notificações = %+v; queria o fechamento no canal %s", ns, canal)
+	}
+
+	if err := chamar(); err != nil {
+		t.Fatal(err)
+	}
+	if ns := b.notificacoes(t); len(ns) != 1 {
+		t.Errorf("segunda chamada deixou %d notificações, queria 1", len(ns))
+	}
+}
