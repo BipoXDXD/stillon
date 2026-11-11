@@ -208,6 +208,20 @@ describe('incidentes do heartbeat', () => {
     expect(within(s).getByRole('button', { name: /^Reconhecer o incidente/ })).toBeInTheDocument()
   })
 
+  // O ack pode ter chegado ao servidor mesmo com a resposta perdida: o
+  // histórico é relido depois da falha. Sabotagem: invalidar só quando o ack
+  // deu certo → nenhum GET a mais.
+  it('um ack que falha relê o histórico, porque o ack pode ter chegado', async () => {
+    const r = await detalheCom({ incidentes: [{ id: 'i1' }] })
+    r.falsa.estado.forcar.set('POST /heartbeats/:id/incidents/:incident/ack', { status: 500, code: 'internal_error' })
+    const s = await secao('Incidentes')
+    const botao = await within(s).findByRole('button', { name: /^Reconhecer o incidente/ })
+    const antes = r.falsa.chamadas('GET /heartbeats/:id/incidents')
+    await r.usuario.click(botao)
+    await screen.findByRole('alert')
+    await waitFor(() => expect(r.falsa.chamadas('GET /heartbeats/:id/incidents')).toBeGreaterThan(antes))
+  })
+
   it('heartbeat apagado em outra aba: reconhecer volta ao painel', async () => {
     const r = await detalheCom({ incidentes: [{ id: 'i1' }] })
     const s = await secao('Incidentes')
