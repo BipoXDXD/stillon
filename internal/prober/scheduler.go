@@ -381,18 +381,7 @@ func (s *Scheduler) gravar(a db.ClaimDueTargetsRow, em time.Time, res Result) {
 		slog.Error("gerar id de check", "erro", err)
 		return
 	}
-	p := db.InsertCheckParams{
-		ID: id, TargetID: a.ID, CheckedAt: em,
-		Status: string(res.Status), LatencyMS: int32Limitado(res.Latency.Milliseconds()),
-	}
-	if res.StatusCode != 0 {
-		code := int32Limitado(int64(res.StatusCode))
-		p.StatusCode = &code
-	}
-	if res.ErrorKind != "" {
-		kind := string(res.ErrorKind)
-		p.ErrorKind = &kind
-	}
+	p := paramsDoCheck(id, a.ID, em, res)
 
 	var acao incident.Action
 	err = storage.InProberTx(ctx, s.pool, func(q *db.Queries) error {
@@ -413,18 +402,45 @@ func (s *Scheduler) gravar(a db.ClaimDueTargetsRow, em time.Time, res Result) {
 		// do mesmo alvo; a do alvo (FOR KEY SHARE) não as serializa.
 		return s.guardarValidade(ctx, q, a, em, res.CertNotAfter)
 	})
+	s.registrarDesfecho(ctx, a.ID, err, acao)
+}
+
+// paramsDoCheck monta a linha de checks de uma sonda: StatusCode e ErrorKind
+// ficam nil quando a sonda não os tem (sem resposta, ou não é down), e a
+// latência é limitada à faixa do int32.
+func paramsDoCheck(id, alvoID uuid.UUID, em time.Time, res Result) db.InsertCheckParams {
+	p := db.InsertCheckParams{
+		ID: id, TargetID: alvoID, CheckedAt: em,
+		Status: string(res.Status), LatencyMS: int32Limitado(res.Latency.Milliseconds()),
+	}
+	if res.StatusCode != 0 {
+		code := int32Limitado(int64(res.StatusCode))
+		p.StatusCode = &code
+	}
+	if res.ErrorKind != "" {
+		kind := string(res.ErrorKind)
+		p.ErrorKind = &kind
+	}
+	return p
+}
+
+// registrarDesfecho dá o destino ao erro da transação de gravar: sonda velha,
+// alvo pausado ou apagado são descartes esperados (log info ou métrica
+// esquecida), e só o resto é erro. No sucesso, uma transição de incidente
+// acorda o despachante de avisos sem bloquear a sonda.
+func (s *Scheduler) registrarDesfecho(ctx context.Context, alvoID uuid.UUID, err error, acao incident.Action) {
 	switch {
 	case errors.Is(err, errSondaVelha):
 		// O dono trocou a URL, o método ou a regra com a sonda em voo. Não é
 		// erro: o resultado julga outra coisa.
-		slog.Info("sonda descartada: o alvo mudou de URL, método ou regra de conteúdo durante a sonda", "target_id", a.ID)
+		slog.Info("sonda descartada: o alvo mudou de URL, método ou regra de conteúdo durante a sonda", "target_id", alvoID)
 	case errors.Is(err, errAlvoPausado):
 		// Um alvo pausado não abre incidente: sem sonda, nada o fecharia, e o
 		// aviso chegaria depois de o dono dizer que não quer monitorar.
-		slog.Info("sonda descartada: o alvo foi pausado durante a sonda", "target_id", a.ID)
+		slog.Info("sonda descartada: o alvo foi pausado durante a sonda", "target_id", alvoID)
 	case errors.Is(err, errAlvoSumido):
 		// O dono apagou o alvo com a sonda em voo, visto pela trava do alvo.
-		s.metrics.forget(a.ID)
+		s.metrics.forget(alvoID)
 	case err == nil:
 		if acao != incident.ActionNone {
 			select {
@@ -432,15 +448,15 @@ func (s *Scheduler) gravar(a db.ClaimDueTargetsRow, em time.Time, res Result) {
 			default:
 			}
 		}
-	case pareceAlvoSumido(err) && s.alvoApagado(ctx, a.ID):
+	case pareceAlvoSumido(err) && s.alvoApagado(ctx, alvoID):
 		// O dono apagou o alvo com a sonda em voo.
 		// Não é erro, é o dono tendo mudado de ideia.
-		s.metrics.forget(a.ID)
+		s.metrics.forget(alvoID)
 	default:
 		// Com o alvo vivo, o 42501 ou o 23503 veio de outra tabela (um canal
 		// apagado durante o enfileiramento, um GRANT ou uma RLS que
 		// regrediu), e o rollback levou check, histerese e incidente: é erro.
-		slog.Error("gravar check", "target_id", a.ID, "erro", err)
+		slog.Error("gravar check", "target_id", alvoID, "erro", err)
 	}
 }
 
