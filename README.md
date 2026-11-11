@@ -91,6 +91,15 @@ variáveis são segredos de interpolação do recurso no Coolify, nunca arquivos
 
 - **Sonda** alvos HTTP (GET, HEAD ou POST) de 30 s a 24 h, com headers cifrados, status
   esperado, limite de latência para "degradado" e até 8 tags para agrupar e filtrar.
+  Opcionalmente, uma **regra de conteúdo** (`content_rule`) julga os primeiros 64 KiB do corpo:
+  `contains` e `not_contains` procuram um texto, e `json_equals` compara o escalar apontado por um
+  ponteiro JSON (RFC 6901, como `/status`) com um valor. O `json_equals` compara o texto do
+  valor, sem olhar o tipo: `1` e `"1"`, `true` e `"true"` são iguais. Regra reprovada é a causa
+  `content_mismatch`; corpo numa codificação que o sondador não desfaz (br, zstd, deflate) é
+  `content_encoding`; e corpo acima de 64 KiB, ou acima de 128 KiB ainda comprimido, sem
+  conclusão é `body_limit`. A regra não aceita o
+  método HEAD (não há corpo) nem os headers `Accept-Encoding` e `Range` do dono (o corpo chegaria
+  comprimido ou cortado).
 - **Certificado** do host cadastrado: o detalhe do alvo mostra a validade ("Certificado válido até
   …, em N dias", ou a data em que venceu), "não se aplica" para `http` ou IP literal e "aguardando a
   primeira sonda" antes da primeira leitura. Atrás de um balanceador com réplicas de certificados
@@ -186,6 +195,7 @@ Kafka, porque o volume de um monitor destes cabe com folga no banco que já exis
 | Decisão | Código | Teste que prova |
 |---|---|---|
 | SSRF: o IP é validado **na hora de conectar** (`ControlContext`), não só no cadastro, o que fecha o DNS rebinding; redirect revalidado a cada salto | [`safedial`](internal/prober/safedial/safedial.go), [`transport.go`](internal/prober/safedial/transport.go) | [`transport_test.go`](internal/prober/safedial/transport_test.go) (`TestRedirectToAnotherInternalAddressIsBlockedAtTheHop`) |
+| IPs da própria hospedagem: a VPS é dividida com outros projetos, e o IP público dela não é privado para a lista fixa. `PROBE_BLOCKED_CIDRS` (IPs ou CIDRs v4 e v6, separados só por vírgula; no v6, a /64 roteada para a VPS, e não só o endereço) soma essas faixas ao bloqueio, conferidas no `ControlContext` depois do DNS e a cada salto de redirect, com o v4 mapeado normalizado para v4. Item inválido (vazio, com espaço em volta, ilegível ou /0) derruba o boot. Em produção, nos papéis que sondam (`all`, `prober`), o boot recusa a lista ausente ou vazia; os manifestos exigem `${PROBE_BLOCKED_CIDRS:?}`; em dev (localhost) ela é opcional, e o boot registra um WARN com `var=PROBE_BLOCKED_CIDRS` e deixa o gauge `probe_blocked_cidrs` em 0 | [`transport.go`](internal/prober/safedial/transport.go), [`config.go`](internal/config/config.go) | [`hospedagem_test.go`](internal/prober/safedial/hospedagem_test.go) (`TestProbeToTheServersOwnPublicIPIsBlocked`, `TestRedirectParaOIPDaHospedagemERecusado`), [`hospedagem_test.go`](internal/config/hospedagem_test.go) (`TestProducaoQueSondaExigeAListaDaHospedagem`, `TestListaDaHospedagemOpcionalForaDaProducaoQueSonda`), [`compose_test.go`](internal/config/compose_test.go) (`TestManifestosExigemAListaDaHospedagem`, `TestComposeProdRecusaSubirSemAListaDaHospedagem`), [`hospedagem_test.go`](internal/prober/hospedagem_test.go) (`TestListaDaHospedagemVaziaAvisaUmaVez`, `TestGaugeDaListaDaHospedagem`) |
 | Redirect para outro host/porta ou downgrade remove todos os headers personalizados, inclusive User-Agent; a identificação pública é recolocada e a cadeia que volta à origem permanece limpa. PATCH e redirect compartilham canonicalização IDNA | [`host.go`](internal/prober/safedial/host.go), [`transport.go`](internal/prober/safedial/transport.go) | [`probe_test.go`](internal/prober/probe_test.go) (`TestProbeRedirectDropsCustomUserAgentThroughoutAnUnsafeChain`), [`transport_test.go`](internal/prober/safedial/transport_test.go) |
 | Isolamento por usuário com **RLS e `FORCE`**; o boot recusa um papel com superusuário ou `BYPASSRLS` | [`00004_targets_checks.sql`](internal/storage/migrations/00004_targets_checks.sql), [`role.go`](internal/storage/role.go) | [`rls_test.go`](internal/storage/rls_test.go) (`TestRLSIsolatesTargetsEvenWithTheWrongFilter`), [`role_test.go`](internal/storage/role_test.go) |
 | Check infinito ou mais de um minuto à frente do relógio do banco é recusado antes de contaminar a histerese, inclusive por UPDATE e em partições novas; timestamps históricos finitos continuam permitidos | [`00010_checks_clock_guard.sql`](internal/storage/migrations/00010_checks_clock_guard.sql) | [`checkstime_test.go`](internal/storage/checkstime_test.go), [`future_check_test.go`](internal/prober/future_check_test.go) (`TestFutureCheckCannotPoisonIncidentHysteresis`) |
@@ -347,6 +357,11 @@ Aplicação e banco são dois recursos do Coolify, para que publicar o app não 
 o job `vps` do CI exercita.
 Os segredos são variáveis privadas do recurso no Coolify, com cópia no gerenciador de senhas do
 dono.
+`PROBE_BLOCKED_CIDRS` leva os IPs públicos da própria VPS: o v4 e, no v6, a /64 roteada para ela
+(o prefixo que o painel mostrar), porque qualquer endereço dessa faixa chega à máquina. Sem ela, a sonda alcançaria as
+portas dos outros projetos da máquina. Ela é obrigatória em produção: o `app.json` e o
+`compose.prod.yaml` a repassam com `${PROBE_BLOCKED_CIDRS:?…}`, então sem ela o `docker compose` recusa o
+manifesto, e o processo que sonda também recusa a configuração no boot.
 
 - **Imagem:** ~7,6 MB comprimida. A de produção sai do mesmo código e das mesmas bases fixadas
   por digest que o E2E testou, mas é construída de novo no `publish` (amd64 e arm64) e

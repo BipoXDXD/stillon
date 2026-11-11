@@ -61,12 +61,17 @@ var errSemEndereco = errors.New("nenhum endereço para discar")
 // O ControlContext, que o Go chama depois de criar o socket e antes de discar,
 // continua validando cada endereço. É a segunda barreira para os nomes e a
 // única para o IP literal.
-func NewTransport() *http.Transport { return transportPara(nil) }
+func NewTransport() *http.Transport { return transportPara(nil, nil) }
 
-// transportPara monta o transporte que só alcança os endereços públicos e as
-// exceções exatas de allowed.
-func transportPara(allowed []netip.AddrPort) *http.Transport {
+// transportPara monta o transporte que só alcança os endereços públicos fora
+// das faixas de hospedagem e as exceções exatas de allowed.
+func transportPara(allowed []netip.AddrPort, hospedagem []netip.Prefix) *http.Transport {
+	// A lista da hospedagem vem antes da exceção de teste: o IP da própria
+	// máquina nunca é alvo, nem quando um teste o libera pela porta.
 	permitir := func(address string) error {
+		if err := recusarHospedagem(address, hospedagem); err != nil {
+			return err
+		}
 		if liberado(address, allowed) {
 			return nil
 		}
@@ -103,6 +108,14 @@ func newTransport(permitir func(address string) error, dialer *net.Dialer) *http
 		DisableKeepAlives: true,
 
 		ForceAttemptHTTP2: true,
+
+		// O transporte não pede nem desfaz gzip por conta própria: ele decide
+		// pela primeira linha de Content-Encoding e apaga todas. Quem pede é
+		// a sonda (AcceptEncodingDaSonda, que atravessa limparHeaders); com
+		// regra ela descomprime e julga (prober.lerCorpoDaRegra), sem regra
+		// descomprime e drena (prober.drenarSemRegra), com o teto sobre o
+		// descomprimido nos dois. Discord e Resend não pedem e recebem identity.
+		DisableCompression: true,
 
 		// C1 (Plano 10): o padrão do net/http é 10 MiB de cabeçalho por
 		// resposta, e o HTTP/2 herda este número. Com 64 sondas em voo, um
@@ -287,6 +300,34 @@ func discarEmSerie(ctx context.Context, ips []netip.Addr, discar discarIP) (net.
 	return nil, falha
 }
 
+// recusarHospedagem recusa address quando o IP cai numa faixa da própria
+// hospedagem (PROBE_BLOCKED_CIDRS). A VPS é dividida com outros projetos, e
+// as portas deles no IP público não são privadas para a lista fixa: sem esta
+// conferência, um alvo cadastrado alcançaria cada uma delas (L1 do STRIDE do
+// #255). O Unmap faz o ::ffff:a.b.c.d cair no CIDR v4. Endereço ilegível ou
+// com zona IPv6 é recusado aqui mesmo, sem contar com o AllowAddr que vem
+// depois no permitir: o Contains é falso para IP com zona, e o Unmap a
+// descarta, então aprovar dependeria da ordem das conferências.
+func recusarHospedagem(address string, hospedagem []netip.Prefix) error {
+	if len(hospedagem) == 0 {
+		return nil
+	}
+	ap, err := netip.ParseAddrPort(address)
+	if err != nil {
+		return fmt.Errorf("%w: endereço ilegível %q", ErrBlocked, address)
+	}
+	if ap.Addr().Zone() != "" {
+		return fmt.Errorf("%w: zona IPv6 em %s", ErrBlocked, address)
+	}
+	ip := ap.Addr().Unmap()
+	for _, p := range hospedagem {
+		if p.Contains(ip) {
+			return fmt.Errorf("%w: %s pertence a %s", ErrBlocked, ip, p)
+		}
+	}
+	return nil
+}
+
 // liberado diz se address está na lista de exceções exatas. O Unmap iguala
 // 127.0.0.1 e ::ffff:127.0.0.1, que o sistema pode entregar em qualquer das
 // duas formas.
@@ -304,7 +345,14 @@ func liberado(address string, allowed []netip.AddrPort) bool {
 // NewClient monta o cliente completo, com limite de redirecionamentos e
 // revalidação de esquema a cada salto. timeout 0 deixa o prazo por conta do
 // context da requisição, que é como o sondador trabalha.
-func NewClient(timeout time.Duration) *http.Client { return newClient(timeout, nil) }
+func NewClient(timeout time.Duration) *http.Client { return newClient(timeout, nil, nil) }
+
+// NewClientBlocking é NewClient com as faixas da própria hospedagem somadas à
+// lista fixa de bloqueio. A recusa é igual à das outras faixas: ErrBlocked,
+// que a sonda registra como blocked. Sem faixas, é o NewClient.
+func NewClientBlocking(timeout time.Duration, hospedagem []netip.Prefix) *http.Client {
+	return newClient(timeout, nil, hospedagem)
+}
 
 // NewClientAllowing é NewClient com exceções EXATAS de IP:porta, que passam
 // pelo dial mesmo estando na lista de bloqueio.
@@ -319,6 +367,11 @@ func NewClient(timeout time.Duration) *http.Client { return newClient(timeout, n
 // produção chama esta função, e o panic garante que ela não vire, por
 // engano, liberação de rede interna.
 func NewClientAllowing(timeout time.Duration, allowed ...netip.AddrPort) *http.Client {
+	return newClient(timeout, normalizarLiberados(allowed), nil)
+}
+
+// normalizarLiberados entra em panic com endereço que não seja loopback (D15).
+func normalizarLiberados(allowed []netip.AddrPort) []netip.AddrPort {
 	norm := make([]netip.AddrPort, 0, len(allowed))
 	for _, ap := range allowed {
 		a := ap.Addr().Unmap()
@@ -327,12 +380,12 @@ func NewClientAllowing(timeout time.Duration, allowed ...netip.AddrPort) *http.C
 		}
 		norm = append(norm, netip.AddrPortFrom(a, ap.Port()))
 	}
-	return newClient(timeout, norm)
+	return norm
 }
 
-func newClient(timeout time.Duration, allowed []netip.AddrPort) *http.Client {
+func newClient(timeout time.Duration, allowed []netip.AddrPort, hospedagem []netip.Prefix) *http.Client {
 	return &http.Client{
-		Transport: transportPara(allowed),
+		Transport: transportPara(allowed, hospedagem),
 		Timeout:   timeout,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			// net/http já inclui a requisição original em via, então a
@@ -407,11 +460,21 @@ func deveLimparHeaders(saltos []*url.URL) bool {
 }
 
 // limparHeaders remove todos os valores copiados do alvo, inclusive um
-// User-Agent personalizado. Só recoloca a identificação pública do monitor.
+// User-Agent personalizado. Só recoloca a identificação pública do monitor e
+// o pedido de gzip da sonda.
 // Vai junto o Referer: ele carrega a URL anterior, que também é do alvo.
 func limparHeaders(h http.Header) {
+	pedeGzip := slices.Equal(h.Values("Accept-Encoding"), []string{AcceptEncodingDaSonda})
 	for nome := range h {
 		delete(h, nome)
 	}
 	h.Set("User-Agent", UserAgent)
+	if pedeGzip {
+		h.Set("Accept-Encoding", AcceptEncodingDaSonda)
+	}
 }
+
+// AcceptEncodingDaSonda é o único Accept-Encoding que atravessa o salto que
+// limpa os headers: o da sonda, que não diz nada do alvo. Sem ele, o salto
+// seguinte baixaria o corpo cru, já que o transporte não pede gzip.
+const AcceptEncodingDaSonda = "gzip"

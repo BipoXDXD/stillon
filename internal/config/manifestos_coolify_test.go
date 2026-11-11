@@ -103,7 +103,7 @@ var camposCriticos = map[string][]string{
 		"environment.DATABASE_URL", "environment.PUBLIC_BASE_URL", "environment.CORS_ORIGIN",
 		"environment.TRUSTED_PROXIES", "environment.CLIENT_IP_HEADER", "environment.METRICS_ADDR",
 		"environment.LOG_LEVEL", "environment.GOMEMLIMIT", "environment.MASTER_KEY",
-		"environment.JWT_SECRET", "environment.IP_HASH_KEY",
+		"environment.JWT_SECRET", "environment.IP_HASH_KEY", "environment.PROBE_BLOCKED_CIDRS",
 	},
 	"caddy": {
 		"image", "mem_limit", "cpus", "cap_drop", "security_opt", "restart", "logging.driver",

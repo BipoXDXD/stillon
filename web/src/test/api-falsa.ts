@@ -110,7 +110,9 @@ const CAMPOS_DO_ALVO = [
   'headers',
   'tags',
   'tls_warn',
+  'content_rule',
 ]
+const CAMPOS_DA_REGRA = { content_rule: ['mode', 'value', 'json_pointer'] }
 const CAMPOS_DO_HEARTBEAT = ['name', 'description', 'tags', 'schedule', 'grace_sec', 'enabled', 'ping_resumes']
 const CAMPOS_DO_AGENDAMENTO = ['kind', 'period_sec', 'expr', 'timezone']
 const CAMPOS_DA_PAGINA = ['slug', 'title', 'published', 'items']
@@ -123,6 +125,14 @@ const OBRIGATORIOS_DA_PAGINA = ['slug', 'title', 'published', 'items']
 const PROVAS_DO_2FA = ['password', 'code', 'recovery_code']
 
 export type ApiFalsa = ReturnType<typeof criarApiFalsa>
+
+// toContentRuleResponse do servidor: sem regra é null, e json_pointer sai
+// sempre, null fora de json_equals.
+function regraDaResposta(corpo: unknown) {
+  if (typeof corpo !== 'object' || corpo === null) return null
+  const r = corpo as { mode: 'contains' | 'not_contains' | 'json_equals'; value: string; json_pointer?: string }
+  return { mode: r.mode, value: r.value, json_pointer: r.json_pointer || null }
+}
 
 // Fora de um objeto (ausente, null) não há nome a recusar; o servidor trata o
 // tipo errado à parte.
@@ -472,11 +482,12 @@ export function criarApiFalsa() {
         // só existe depois da primeira sonda.
         tls_warn: corpo.tls_warn !== false,
         tls: null,
+        content_rule: regraDaResposta(corpo.content_rule),
         created_at: agora().toISOString(),
       }
       st.alvos.push(alvo)
       return HttpResponse.json(alvo, { status: 201 })
-    })),
+    }, CAMPOS_DA_REGRA)),
     rota('get', '/targets/:id', ({ params }) => {
       const a = st.alvos.find((x) => x.id === params.id)
       return a ? HttpResponse.json(a) : erro(404, 'not_found')
@@ -486,7 +497,7 @@ export function criarApiFalsa() {
       if (recusa) return recusa
       const a = st.alvos.find((x) => x.id === params.id)
       if (!a) return erro(404, 'not_found')
-      const { headers, ...resto } = corpo
+      const { headers, content_rule, ...resto } = corpo
       // B1 do Plano 10: trocar a origem da URL (esquema, host ou porta) sem
       // mandar headers apaga os headers; só o caminho, não.
       const outraOrigem =
@@ -497,8 +508,9 @@ export function criarApiFalsa() {
       // Como mudouDeDestino no servidor: outra origem é outro certificado, e a
       // leitura do anterior sai junto.
       if (outraOrigem) a.tls = null
+      if (content_rule !== undefined) a.content_rule = regraDaResposta(content_rule)
       return HttpResponse.json(a)
-    })),
+    }, CAMPOS_DA_REGRA)),
     rota('delete', '/targets/:id', ({ params }) => {
       // Como o servidor (TargetHandlers.Delete): alvo que não existe é 404.
       if (!st.alvos.some((x) => x.id === params.id)) return erro(404, 'not_found')

@@ -29,6 +29,14 @@ export type RespostaLogin = z.infer<typeof RespostaLogin>
 export const Me = z.object({ id, email: z.string(), totp_enabled: z.boolean(), created_at: instante })
 export type Me = z.infer<typeof Me>
 
+export const RegraDeConteudo = z.object({
+  mode: z.enum(['contains', 'not_contains', 'json_equals']),
+  value: z.string(),
+  // Sempre presente na resposta: null fora de json_equals.
+  json_pointer: z.string().nullable(),
+})
+export type RegraDeConteudo = z.infer<typeof RegraDeConteudo>
+
 export const Alvo = z.object({
   id,
   name: z.string(),
@@ -45,6 +53,7 @@ export const Alvo = z.object({
   // leitura da validade; null enquanto nenhuma sonda leu o certificado.
   tls_warn: z.boolean(),
   tls: z.object({ not_after: instante, observed_at: instante }).nullable(),
+  content_rule: RegraDeConteudo.nullable(),
   created_at: instante,
 })
 export type Alvo = z.infer<typeof Alvo>

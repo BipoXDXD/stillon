@@ -1,13 +1,33 @@
 import { zodResolver } from '@hookform/resolvers/zod'
-import { useState } from 'react'
+import { type ChangeEvent, useState } from 'react'
+import { flushSync } from 'react-dom'
 import { useFieldArray, useForm, useWatch } from 'react-hook-form'
 import { Botao } from '@/components/ui/botao'
 import { estiloDeCartao } from '@/components/ui/cartao'
 import { CaixaDeMarcar, Campo, Entrada, ErroDoFormulario, Opcao, Selecao } from '@/components/ui/campo'
 import { ApiError } from '@/lib/api/http'
 import { mensagemDe, mensagemDoCampo } from '@/lib/api/mensagens'
-import { campoDoServidor, esquemaDoAlvo, INTERVALOS, OUTRO, type ValoresDoAlvo } from './esquema'
+import { campoDoServidor, esquemaDoAlvo, INTERVALOS, OUTRO, REGRA_COM_HEAD, type ValoresDoAlvo } from './esquema'
 import { cn } from '@/lib/utils'
+
+const CAMPOS_DA_REGRA: readonly (keyof ValoresDoAlvo)[] = ['modoDaRegra', 'valorDaRegra', 'ponteiroDaRegra']
+
+const AVISO_DE_SEGREDO = 'Não use segredo na regra: o valor fica guardado sem criptografia, no banco e no backup.'
+
+const ROTULO_DO_VALOR = {
+  contains: 'Texto que deve aparecer',
+  not_contains: 'Texto que não pode aparecer',
+  json_equals: 'Valor esperado',
+} as const
+
+const AJUDA_DO_VALOR = {
+  contains: AVISO_DE_SEGREDO,
+  not_contains: AVISO_DE_SEGREDO,
+  json_equals: `Compara o texto do valor, sem olhar o tipo: 1 e "1" são iguais. Números são comparados como escritos no JSON. ${AVISO_DE_SEGREDO}`,
+} as const
+
+// O campo do formulário de um campo do 400 (headers[2].nome vira headers).
+const campoDoErro = (campo: string): keyof ValoresDoAlvo | undefined => campoDoServidor[campo.replace(/\[.*$/, '')]
 
 export function FormularioAlvo({
   iniciais,
@@ -22,8 +42,8 @@ export function FormularioAlvo({
   rotuloDoBotao: string
 }) {
   const editando = nomesDeHeaders !== undefined
-  // Na edição, o esquema conhece a base (a URL guardada, headers vazios).
-  const [esquema] = useState(() => esquemaDoAlvo(editando ? iniciais : undefined))
+  // Na edição, o esquema conhece a base: a URL e os nomes dos headers guardados.
+  const [esquema] = useState(() => esquemaDoAlvo(editando ? { url: iniciais.url, nomesDeHeaders } : undefined))
   const f = useForm<ValoresDoAlvo>({ resolver: zodResolver(esquema), defaultValues: iniciais })
   const headers = useFieldArray({ control: f.control, name: 'headers' })
   const [erroGeral, setErroGeral] = useState<string | null>(null)
@@ -31,9 +51,19 @@ export function FormularioAlvo({
   const lentidao = useWatch({ control: f.control, name: 'lentidao' })
   const modoHeaders = useWatch({ control: f.control, name: 'modoHeaders' })
   const intervaloEscolhido = useWatch({ control: f.control, name: 'intervaloEscolhido' })
+  const metodo = useWatch({ control: f.control, name: 'method' })
+  const modoDaRegra = useWatch({ control: f.control, name: 'modoDaRegra' })
+  // "Avançado" começa aberto só se o alvo já tem regra.
+  const [avancadoAberto, setAvancadoAberto] = useState(iniciais.modoDaRegra !== 'desligada')
   // Um erro da lista de headers inteira: com linhas registradas, o resolver o
   // põe em headers.root; sem nenhuma, em headers.
   const erroDosHeaders = e.headers?.message ?? e.headers?.root?.message
+
+  // O foco não entra num <details> fechado: com erro na regra, a seção abre
+  // (já no DOM, por isso o flushSync) antes de o foco ir ao campo culpado.
+  function abrirSeErroNaRegra(campos: readonly (keyof ValoresDoAlvo | undefined)[]) {
+    if (campos.some((c) => c !== undefined && CAMPOS_DA_REGRA.includes(c))) flushSync(() => setAvancadoAberto(true))
+  }
 
   async function enviar(v: ValoresDoAlvo) {
     setErroGeral(null)
@@ -42,14 +72,15 @@ export function FormularioAlvo({
     } catch (err) {
       // O 400 com fields vai para o campo certo; o resto, para o topo.
       if (err instanceof ApiError && err.fields.length) {
+        const comCampo = err.fields.map((fe) => ({ ...fe, campo: campoDoErro(fe.field) }))
+        abrirSeErroNaRegra(comCampo.map((fe) => fe.campo))
         let algum = false
-        for (const fe of err.fields) {
-          const campo = campoDoServidor[fe.field.replace(/\[.*$/, '')]
+        for (const { campo, field, reason } of comCampo) {
           if (campo) {
             // Com um intervalo da lista, o campo em segundos não está na
             // tela: o erro aparece (e o foco vai) no seletor.
             const noSeletor = campo === 'interval_sec' && f.getValues('intervaloEscolhido') !== OUTRO
-            f.setError(campo, { message: mensagemDoCampo(fe.field, fe.reason) }, { shouldFocus: !algum && !noSeletor })
+            f.setError(campo, { message: mensagemDoCampo(field, reason) }, { shouldFocus: !algum && !noSeletor })
             if (noSeletor && !algum) f.setFocus('intervaloEscolhido')
             algum = true
           }
@@ -62,7 +93,7 @@ export function FormularioAlvo({
 
   const numero = { valueAsNumber: true } as const
   return (
-    <form noValidate className={cn(estiloDeCartao, 'max-w-2xl space-y-6')} onSubmit={f.handleSubmit(enviar)}>
+    <form noValidate className={cn(estiloDeCartao, 'max-w-2xl space-y-6')} onSubmit={f.handleSubmit(enviar, (erros) => abrirSeErroNaRegra(CAMPOS_DA_REGRA.filter((c) => c in erros)))}>
       <ErroDoFormulario>{erroGeral}</ErroDoFormulario>
       <Campo rotulo="Nome" erro={e.name?.message}>
         {(a) => <Entrada {...a} {...f.register('name')} />}
@@ -76,7 +107,15 @@ export function FormularioAlvo({
       <div className="grid gap-4 sm:grid-cols-3">
         <Campo rotulo="Método" erro={e.method?.message}>
           {(a) => (
-            <Selecao {...a} {...f.register('method')}>
+            <Selecao
+              {...a}
+              {...f.register('method', {
+                // Com HEAD a regra não vale: um erro dela não fica no seletor travado.
+                onChange: (ev: ChangeEvent<HTMLSelectElement>) => {
+                  if (ev.target.value === 'HEAD') f.clearErrors(CAMPOS_DA_REGRA)
+                },
+              })}
+            >
               <option value="GET">GET</option>
               <option value="HEAD">HEAD</option>
               <option value="POST">POST</option>
@@ -193,9 +232,62 @@ export function FormularioAlvo({
         )}
       </fieldset>
 
+      <details
+        open={avancadoAberto}
+        onToggle={(ev) => setAvancadoAberto(ev.currentTarget.open)}
+        className="rounded-padrao border border-borda"
+      >
+        <summary className="flex min-h-11 cursor-pointer items-center px-4 text-sm font-semibold">Avançado</summary>
+        <fieldset className="space-y-4 px-4 pb-4">
+          <legend className="text-sm font-semibold">Verificar o conteúdo da resposta</legend>
+          <Campo
+            rotulo="Verificação"
+            erro={e.modoDaRegra?.message}
+            ajuda={metodo === 'HEAD' ? REGRA_COM_HEAD : 'Compara bytes em UTF-8 nos primeiros 64 KiB da resposta.'}
+          >
+            {(a) =>
+              // Com HEAD, um seletor travado em "Desligada" toma o lugar do
+              // registrado: a regra fica no estado (I1 da revisão) e volta
+              // como estava quando o método deixa de ser HEAD. As keys forçam
+              // um <select> novo: no mesmo nó, o RHF não reescreveria o valor.
+              metodo === 'HEAD' ? (
+                <Selecao key="travado" {...a} disabled value="desligada">
+                  <OpcoesDaRegra />
+                </Selecao>
+              ) : (
+                <Selecao key="regra" {...a} {...f.register('modoDaRegra')}>
+                  <OpcoesDaRegra />
+                </Selecao>
+              )
+            }
+          </Campo>
+          {metodo !== 'HEAD' && modoDaRegra !== 'desligada' && (
+            <Campo rotulo={ROTULO_DO_VALOR[modoDaRegra]} erro={e.valorDaRegra?.message} ajuda={AJUDA_DO_VALOR[modoDaRegra]}>
+              {(a) => <Entrada {...a} {...f.register('valorDaRegra')} />}
+            </Campo>
+          )}
+          {metodo !== 'HEAD' && modoDaRegra === 'json_equals' && (
+            <Campo rotulo="Ponteiro JSON" erro={e.ponteiroDaRegra?.message} ajuda="O caminho até o campo, como /status.">
+              {(a) => <Entrada {...a} placeholder="/status" {...f.register('ponteiroDaRegra')} />}
+            </Campo>
+          )}
+        </fieldset>
+      </details>
+
       <Botao type="submit" disabled={f.formState.isSubmitting}>
         {rotuloDoBotao}
       </Botao>
     </form>
+  )
+}
+
+function OpcoesDaRegra() {
+  return (
+    <>
+      <option value="desligada">Desligada</option>
+      <option value="contains">Contém</option>
+      <option value="not_contains">Não contém</option>
+      <option value="json_equals">JSON igual a</option>
+    </>
   )
 }

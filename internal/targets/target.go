@@ -31,6 +31,7 @@ type Target struct {
 	Tags                []string // normalizadas e ordenadas; nunca nil
 	TLSWarn             bool
 	TLS                 *CertificateReading // nil: o sondador ainda não leu um certificado do host
+	ContentRule         *ContentRule        // nil: sonda só pelo status
 	CreatedAt           time.Time
 }
 
@@ -57,6 +58,7 @@ type Input struct {
 	TLSWarn             bool // o padrão (true) é da camada HTTP, como Enabled
 	Headers             map[string]string
 	Tags                []string
+	ContentRule         *ContentRule
 }
 
 // Patch muda só o que vier preenchido. Nos campos com Set*, "limpar" é
@@ -72,6 +74,8 @@ type Patch struct {
 	Headers                                map[string]string
 	SetTags                                bool
 	Tags                                   []string
+	SetContentRule                         bool
+	ContentRule                            *ContentRule // nil com SetContentRule: limpa
 }
 
 type Check struct {

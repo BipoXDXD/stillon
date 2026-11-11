@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"math"
 	"net/http"
+	"net/netip"
 	"sync"
 	"time"
 
@@ -88,11 +89,25 @@ type Scheduler struct {
 	depoisDeLerValidade func()
 }
 
+// avisoListaDaHospedagemVazia é a mensagem estável do aviso de boot, para
+// busca e alerta no log.
+const avisoListaDaHospedagemVazia = "lista da hospedagem vazia: a sonda alcança o IP público da própria máquina"
+
 // New monta o agendador com o cliente de produção, guardado pelo safedial.
 // Não há como passar outro cliente por aqui: TestNewUsesTheSSRFGuardedClient
-// trava isso.
-func New(pool *pgxpool.Pool, box *crypto.Box, clk clock.Clock, m *Metrics) *Scheduler {
-	return newScheduler(pool, box, clk, m, safedial.NewClient(0), MaxInFlight)
+// trava isso. hospedagem são as faixas da própria máquina
+// (PROBE_BLOCKED_CIDRS), recusadas como as da lista fixa.
+//
+// A lista vazia não impede o sondador de subir (em produção o config.Load
+// já recusa a lista vazia; o aviso cobre o dev): ela vira um aviso, uma vez
+// por processo, e o gauge probe_blocked_cidrs em 0. New só é chamado no boot
+// dos papéis que sondam.
+func New(pool *pgxpool.Pool, box *crypto.Box, clk clock.Clock, m *Metrics, hospedagem []netip.Prefix) *Scheduler {
+	m.blockedCIDRs.Set(float64(len(hospedagem)))
+	if len(hospedagem) == 0 {
+		slog.Warn(avisoListaDaHospedagemVazia, "var", "PROBE_BLOCKED_CIDRS")
+	}
+	return newScheduler(pool, box, clk, m, safedial.NewClientBlocking(0, hospedagem), MaxInFlight)
 }
 
 func newScheduler(pool *pgxpool.Pool, box *crypto.Box, clk clock.Clock, m *Metrics, client *http.Client, max int32) *Scheduler {
@@ -325,7 +340,30 @@ func (s *Scheduler) especificar(a db.ClaimDueTargetsRow) (Spec, error) {
 	if a.DegradedThresholdMS != nil {
 		spec.DegradedThreshold = time.Duration(*a.DegradedThresholdMS) * time.Millisecond
 	}
+	if spec.Content, err = regraDaSonda(a.ContentMode, a.ContentValue, a.ContentJsonPointer); err != nil {
+		return Spec{}, err
+	}
 	return spec, nil
+}
+
+// regraDaSonda prepara para a sonda a regra das três colunas de targets; sem
+// regra, nil. O cadastro e o CHECK de targets só deixam gravar ponteiro que
+// ParseJSONPointer aceita, então o erro é defeito nosso, e quem chama o trata
+// como os headers que não abrem: log, sem gravar down.
+func regraDaSonda(mode, value, pointer *string) (*RegraDaSonda, error) {
+	regra := targets.RuleFromColumns(mode, value, pointer)
+	if regra == nil {
+		return nil, nil
+	}
+	r := &RegraDaSonda{Mode: regra.Mode, Value: []byte(regra.Value)}
+	if regra.JSONPointer != "" {
+		tokens, err := targets.ParseJSONPointer(regra.JSONPointer)
+		if err != nil {
+			return nil, fmt.Errorf("ler o ponteiro JSON da regra: %w", err)
+		}
+		r.Pointer = tokens
+	}
+	return r, nil
 }
 
 // gravar persiste o check, avalia a histerese e guarda a validade do
@@ -376,9 +414,10 @@ func (s *Scheduler) gravar(a db.ClaimDueTargetsRow, em time.Time, res Result) {
 	})
 	switch {
 	case errors.Is(err, errSondaVelha):
-		// O dono trocou a URL ou o método com a sonda em voo (E2 da revisão
-		// de 2026-10-14). Não é erro: o resultado é de outro serviço.
-		slog.Info("sonda descartada: o alvo mudou de URL ou método durante a sonda", "target_id", a.ID)
+		// O dono trocou a URL, o método ou a regra com a sonda em voo (E2 da
+		// revisão de 2026-10-14, T2 do PR 5). Não é erro: o resultado julga
+		// outra coisa.
+		slog.Info("sonda descartada: o alvo mudou de URL, método ou regra de conteúdo durante a sonda", "target_id", a.ID)
 	case errors.Is(err, errAlvoPausado):
 		// Um alvo pausado não abre incidente: sem sonda, nada o fecharia, e o
 		// aviso chegaria depois de o dono dizer que não quer monitorar.
@@ -436,28 +475,30 @@ func (s *Scheduler) guardarValidade(ctx context.Context, q *db.Queries, a db.Cla
 }
 
 var (
-	errSondaVelha  = errors.New("o alvo mudou de URL ou método durante a sonda")
+	errSondaVelha  = errors.New("o alvo mudou de URL, método ou regra de conteúdo durante a sonda")
 	errAlvoPausado = errors.New("o alvo foi pausado durante a sonda")
 	errAlvoSumido  = errors.New("o alvo foi apagado durante a sonda")
 )
 
 // conferirSonda é o fencing da gravação: trava a linha do alvo e confere se
-// ele segue ligado e se a URL e o método ainda são os da reivindicação. Um
-// PATCH aberto é esperado, e o que vale é o que ele gravou. Uma troca de ida e
-// volta (A, B, A) passa: a sonda foi de fato sobre a URL atual, e a histerese
-// zerada recomeça por um resultado dela.
+// ele segue ligado e se a URL, o método e a regra de conteúdo ainda são os da
+// reivindicação. Um PATCH aberto é esperado, e o que vale é o que ele gravou.
+// Uma troca de ida e volta (A, B, A) passa: a sonda foi de fato sobre o alvo
+// atual, e a histerese zerada recomeça por um resultado dela.
 func conferirSonda(ctx context.Context, q *db.Queries, a db.ClaimDueTargetsRow) error {
 	atual, err := q.LockTargetProbeSpec(ctx, a.ID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return errAlvoSumido
 	}
 	if err != nil {
-		return fmt.Errorf("conferir a URL do alvo: %w", err)
+		return fmt.Errorf("conferir o alvo da sonda: %w", err)
 	}
 	if !atual.Enabled {
 		return errAlvoPausado
 	}
-	if atual.URL != a.URL || atual.Method != a.Method {
+	regraDaReivindicacao := targets.RuleFromColumns(a.ContentMode, a.ContentValue, a.ContentJsonPointer)
+	regraAtual := targets.RuleFromColumns(atual.ContentMode, atual.ContentValue, atual.ContentJsonPointer)
+	if atual.URL != a.URL || atual.Method != a.Method || !regraAtual.Equal(regraDaReivindicacao) {
 		return errSondaVelha
 	}
 	return nil

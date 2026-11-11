@@ -79,6 +79,7 @@ type fields struct {
 	DegradedThresholdMS *int32
 	Headers             map[string]string
 	Tags                []string
+	ContentRule         *ContentRule
 
 	// urlGravada é a URL que a linha já tem, vazia no cadastro. Um alvo
 	// gravado antes da recusa de HostInstavelNoIDNA continua administrável: o
@@ -153,6 +154,10 @@ func validate(f *fields) *ValidationError {
 	} else {
 		f.Tags = t
 	}
+
+	// Depois do método e dos headers: a regra se confere contra os dois já
+	// normalizados.
+	validateContentRule(f, &v)
 
 	if len(v.Fields) == 0 {
 		return nil

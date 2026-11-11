@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
@@ -219,7 +218,7 @@ func (h *HeartbeatHandlers) List(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	limite, cursor, ok := paginaDe(w, r, q)
+	limite, cursor, ok := paginaDe(w, r, q, heartbeat.DefaultPageSize, heartbeat.MaxPageSize)
 	if !ok {
 		return
 	}
@@ -396,7 +395,7 @@ func (h *HeartbeatHandlers) Events(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	limite, cursor, ok := paginaDe(w, r, q)
+	limite, cursor, ok := paginaDe(w, r, q, heartbeat.DefaultPageSize, heartbeat.MaxPageSize)
 	if !ok {
 		return
 	}
@@ -433,7 +432,7 @@ func (h *HeartbeatHandlers) Incidents(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	limite, cursor, ok := paginaDe(w, r, q)
+	limite, cursor, ok := paginaDe(w, r, q, heartbeat.DefaultPageSize, heartbeat.MaxPageSize)
 	if !ok {
 		return
 	}
@@ -494,34 +493,6 @@ func donoEID(w http.ResponseWriter, r *http.Request) (uuid.UUID, uuid.UUID, bool
 	}
 	id, ok := pathID(w, r)
 	return userID, id, ok
-}
-
-// paginaDe lê limit e cursor. Fora da faixa ou malformado é 400, nunca o
-// padrão em silêncio.
-func paginaDe(w http.ResponseWriter, r *http.Request, q url.Values) (int32, *uuid.UUID, bool) {
-	limite := heartbeat.DefaultPageSize
-	if s := q.Get("limit"); s != "" {
-		n, err := strconv.ParseInt(s, 10, 32)
-		if err != nil {
-			campoInvalido(w, r, "limit", heartbeat.ReasonInvalid)
-			return 0, nil, false
-		}
-		if n < 1 || n > int64(heartbeat.MaxPageSize) {
-			campoInvalido(w, r, "limit", heartbeat.ReasonOutOfRange)
-			return 0, nil, false
-		}
-		limite = int32(n)
-	}
-	s := q.Get("cursor")
-	if s == "" {
-		return limite, nil, true
-	}
-	c, err := uuid.Parse(s)
-	if err != nil {
-		campoInvalido(w, r, "cursor", heartbeat.ReasonInvalid)
-		return 0, nil, false
-	}
-	return limite, &c, true
 }
 
 func (h *HeartbeatHandlers) falhou(w http.ResponseWriter, r *http.Request, op string, err error) bool {

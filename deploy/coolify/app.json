@@ -20,6 +20,7 @@
         "LOG_LEVEL": "info",
         "MASTER_KEY": "${MASTER_KEY:?defina MASTER_KEY no /opt/stillon/.env}",
         "METRICS_ADDR": "off",
+        "PROBE_BLOCKED_CIDRS": "${PROBE_BLOCKED_CIDRS:?defina PROBE_BLOCKED_CIDRS no /opt/stillon/.env}",
         "PUBLIC_BASE_URL": "https://${STILLON_DOMINIO:?defina STILLON_DOMINIO no /opt/stillon/.env}",
         "RESEND_API_KEY": "${RESEND_API_KEY:-}",
         "TRUSTED_PROXIES": "10.30.0.2/32"
