@@ -1,4 +1,3 @@
-import { useQueryClient } from '@tanstack/react-query'
 import { CircleCheck } from 'lucide-react'
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { Link, useSearchParams } from 'react-router'
@@ -21,12 +20,12 @@ import { ControleSegmentado, type OpcaoSegmentada } from '@/components/ui/contro
 import { estadoDoHeartbeat, textoDoHeartbeat } from '@/features/heartbeats/estado'
 import { useTarefasQuePedemAtencao } from '@/features/heartbeats/tarefas-que-pedem-atencao'
 import { chaves, useHeartbeats, useIncidentes, useIncidentesAbertos } from '@/lib/api/consultas'
-import { naoEncontrado } from '@/lib/api/http'
-import { mensagemDe, textoDaCausa } from '@/lib/api/mensagens'
+import { textoDaCausa } from '@/lib/api/mensagens'
 import type { Heartbeat, Incidente } from '@/lib/api/schemas'
 import { dataHora } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { agruparIncidentes, destinoDepoisDeCarregar, resumoDosAbertos } from './agrupamento'
+import { useReconhecer } from './reconhecer'
 
 type Filtro = 'open' | 'resolved' | 'all'
 const FILTROS: readonly OpcaoSegmentada<Filtro>[] = [
@@ -178,10 +177,8 @@ export function PaginaIncidentes() {
   const heartbeats = useHeartbeats()
   const tarefas = useTarefasQuePedemAtencao()
   const api = useApi()
-  const qc = useQueryClient()
   const avisar = useAvisar()
   const [erro, setErro] = useState<string | null>(null)
-  const [reconhecendo, setReconhecendo] = useState<ReadonlySet<string>>(new Set())
   // O incidente cujo Reconhecer acabou de ser usado. Se o botão sumiu (o ack
   // valeu), o foco iria ao <body>: vai ao "Reconhecido em" da linha, ou ao
   // título da tela se a linha também saiu da lista.
@@ -195,6 +192,16 @@ export function PaginaIncidentes() {
     if (document.activeElement && document.activeElement !== document.body) return
     const destino = document.getElementById(`ack-${id}`) ?? document.querySelector<HTMLElement>('main h1')
     destino?.focus()
+  })
+
+  const { reconhecendo, reconhecer } = useReconhecer({
+    enviar: api.reconhecer,
+    consulta: chaves.todosOsIncidentes,
+    aoNaoEncontrar: () => avisar('O incidente não existe mais: o alvo foi apagado, talvez em outra aba.'),
+    aoErrar: setErro,
+    aoTerminar: (id) => {
+      focarDepois.current = id
+    },
   })
 
   // O destino do foco depois do "Carregar mais". O efeito roda depois do
@@ -215,28 +222,6 @@ export function PaginaIncidentes() {
     const r = await consulta.fetchNextPage()
     const todos = r.data?.pages.flatMap((pg) => pg.items) ?? []
     setFocarNoIncidente(destinoDepoisDeCarregar(todos, conhecidos, r.hasNextPage))
-  }
-
-  async function reconhecer(id: string) {
-    setErro(null)
-    setReconhecendo((s) => new Set(s).add(id))
-    try {
-      await api.reconhecer(id)
-    } catch (e) {
-      // M3: o incidente sumiu com o alvo, apagado em outra aba. A lista é
-      // relida logo abaixo.
-      if (naoEncontrado(e)) avisar('O incidente não existe mais: o alvo foi apagado, talvez em outra aba.')
-      else setErro(mensagemDe(e))
-    } finally {
-      // Mesmo depois de uma falha: o ack pode ter chegado ao servidor.
-      await qc.invalidateQueries({ queryKey: chaves.todosOsIncidentes })
-      focarDepois.current = id
-      setReconhecendo((s) => {
-        const n = new Set(s)
-        n.delete(id)
-        return n
-      })
-    }
   }
 
   const frase = abertos.data ? resumoDosAbertos(abertos.data.itens, abertos.data.completa) : null

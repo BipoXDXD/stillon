@@ -222,6 +222,27 @@ describe('incidentes do heartbeat', () => {
     await waitFor(() => expect(r.falsa.chamadas('GET /heartbeats/:id/incidents')).toBeGreaterThan(antes))
   })
 
+  // aria-disabled não bloqueia o clique: a guarda é do próprio reconhecer.
+  // Sabotagem: tirar a guarda de reentrância → dois POSTs.
+  it('um segundo clique enquanto o ack voa não manda outro POST', async () => {
+    const r = await detalheCom({ incidentes: [{ id: 'i1' }] })
+    let soltar!: () => void
+    const segurado = new Promise<void>((ok) => (soltar = ok))
+    servidor.use(
+      http.post('*/api/v1/heartbeats/:id/incidents/:incident/ack', async () => {
+        await segurado
+      }),
+    )
+    const s = await secao('Incidentes')
+    const botao = await within(s).findByRole('button', { name: /^Reconhecer o incidente/ })
+    await r.usuario.click(botao)
+    await waitFor(() => expect(botao).toHaveAttribute('aria-disabled', 'true'))
+    await r.usuario.click(botao)
+    soltar()
+    await within(s).findByText(/lembretes parados/)
+    expect(r.falsa.chamadas('POST /heartbeats/:id/incidents/:incident/ack')).toBe(1)
+  })
+
   it('heartbeat apagado em outra aba: reconhecer volta ao painel', async () => {
     const r = await detalheCom({ incidentes: [{ id: 'i1' }] })
     const s = await secao('Incidentes')
