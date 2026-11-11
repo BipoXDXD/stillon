@@ -13,14 +13,14 @@ import (
 	"github.com/BipoXDXD/stillon/internal/config"
 )
 
-// O contador de provas por família das rotas autenticadas (A3 do Plano 10):
+// O contador de provas por família das rotas autenticadas:
 // a troca de senha e o enroll, confirm, disable, rotate e rotate/confirm do
 // 2FA. As provas erradas não tocam o bloqueio da conta; a quinta, na mesma
 // família, derruba a família e responde 401 unauthorized.
 
-// provasPorFamilia é o limite do contrato (spec do Plano 10, §4): a quinta
-// prova errada derruba a família. É auth.FamilyProofLimit, escrito aqui como
-// número para o teste não seguir o código se o limite mudar.
+// provasPorFamilia é o limite do contrato: a quinta prova errada derruba a
+// família. É auth.FamilyProofLimit, escrito aqui como número para o teste não
+// seguir o código se o limite mudar.
 const provasPorFamilia = 5
 
 // provaErrada manda uma prova errada para a rota e devolve o status e o code.
@@ -188,7 +188,7 @@ func TestWrongProofBudgetIsPerFamilyAcrossRoutes(t *testing.T) {
 	}
 }
 
-// A2 (Plano 10) nas rotas autenticadas: a reserva vem antes da verificação.
+// Nas rotas autenticadas, a reserva vem antes da verificação.
 // Doze senhas erradas simultâneas na mesma família rodam exatamente cinco
 // Argon2id; as outras nascem esgotadas (ou chegam com a família já derrubada)
 // e são recusadas sem verificar. Quatro respostas são invalid_credentials e o
@@ -235,13 +235,12 @@ func TestParallelWrongProofsVerifyAtMostTheBudget(t *testing.T) {
 	}
 }
 
-// C1 da revisão do Plano 10: quem tem a sessão e a senha, mas não o fator,
-// não pode zerar o orçamento da família com uma prova só de senha. Antes, o
-// enroll com a senha certa zerava a família (Succeed antes do Enroll) e só
-// depois respondia 403 por o 2FA já estar ligado: quatro códigos chutados no
-// disable (ou no rotate), um enroll, e mais quatro, sem fim. Agora o enroll
-// com o 2FA ligado devolve a reserva sem zerar nada, e a quinta prova errada
-// derruba a família.
+// Quem tem a sessão e a senha, mas não o fator, não pode zerar o orçamento da
+// família com uma prova só de senha. Antes, o enroll com a senha certa zerava a
+// família (Succeed antes do Enroll) e só depois respondia 403 por o 2FA já
+// estar ligado: quatro códigos chutados no disable (ou no rotate), um enroll, e
+// mais quatro, sem fim. Agora o enroll com o 2FA ligado devolve a reserva sem
+// zerar nada, e a quinta prova errada derruba a família.
 func TestPasswordAloneDoesNotResetTheFamilyBudget(t *testing.T) {
 	for _, rota := range []string{"/api/v1/auth/totp/disable", "/api/v1/auth/totp/rotate"} {
 		t.Run(rota, func(t *testing.T) {
@@ -284,13 +283,13 @@ func TestPasswordAloneDoesNotResetTheFamilyBudget(t *testing.T) {
 	}
 }
 
-// C1(b) da revisão do Plano 10: com o 2FA ligado, o /totp/confirm responde 403
-// ANTES de olhar o código. Antes ele conferia o código contra o segredo ativo
-// e respondia 403 ao certo e 400 ao errado: um oráculo que, com o enroll
-// zerando a família, dava para consultar sem limite. O ciclo é o da prova de
-// conceito da revisão (quatro chutes no confirm e um enroll com a senha,
-// repetido): nenhuma resposta distingue o código certo, e o confirm não gasta
-// prova (não há o que provar), então a família continua viva.
+// Com o 2FA ligado, o /totp/confirm responde 403 ANTES de olhar o código. Antes
+// ele conferia o código contra o segredo ativo e respondia 403 ao certo e 400
+// ao errado: um oráculo que, com o enroll zerando a família, dava para
+// consultar sem limite. O ciclo é o da prova de conceito do ataque (quatro
+// chutes no confirm e um enroll com a senha, repetido): nenhuma resposta
+// distingue o código certo, e o confirm não gasta prova (não há o que provar),
+// então a família continua viva.
 func TestConfirmWithTheFactorOnIsNotAnOracle(t *testing.T) {
 	a := newAPI(t)
 	segredo := cadastrarTOTP(t, a, clientWithJar(t))

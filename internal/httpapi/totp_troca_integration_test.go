@@ -17,7 +17,7 @@ import (
 	"github.com/BipoXDXD/stillon/internal/auth"
 )
 
-// A troca de autenticador com segredo pendente (Plano 9, §3.2), pelo HTTP:
+// A troca de autenticador com segredo pendente, pelo HTTP:
 // POST /auth/totp/rotate {password, code} e POST /auth/totp/rotate/confirm
 // {code}.
 
@@ -31,8 +31,8 @@ func codigoDe(t *testing.T, a *api, segredo string) string {
 }
 
 // iniciarTrocaHTTP chama o rotate e devolve o status e, no 200, o segredo novo
-// tirado da otpauth_uri. O rotation da resposta (A7 do Plano 10) fica em
-// a.rotacao, para o confirmarTrocaHTTP.
+// tirado da otpauth_uri. O rotation da resposta fica em a.rotacao, para o
+// confirmarTrocaHTTP.
 func iniciarTrocaHTTP(t *testing.T, a *api, token string, corpo map[string]string) (int, string) {
 	t.Helper()
 	resp := postComToken(t, http.DefaultClient, a.srv.URL+"/api/v1/auth/totp/rotate", token, corpo)
@@ -78,10 +78,10 @@ func confirmarTrocaHTTP(t *testing.T, a *api, token, codigo string) (int, string
 	return resp.StatusCode, "", r.RecoveryCodes
 }
 
-// temPendente diz se há troca em andamento. O segredo pendente e a família
-// que o iniciou (revisão final do Plano 9) andam juntos: gravados no rotate,
-// apagados em toda limpeza. Um sem o outro é erro do teste que chamou — assim
-// toda checagem de limpeza confere também a família.
+// temPendente diz se há troca em andamento. O segredo pendente e a família que
+// o iniciou andam juntos: gravados no rotate, apagados em toda limpeza. Um sem
+// o outro é erro do teste que chamou — assim toda checagem de limpeza confere
+// também a família.
 func temPendente(t *testing.T, a *api) bool {
 	t.Helper()
 	var sealed []byte
@@ -124,7 +124,7 @@ func familiaComRefresh(t *testing.T, a *api) (token, refresh string, familia uui
 
 // entrarCom faz o login em dois passos com o código dado (do app ou de
 // recuperação) e devolve o status do /totp/verify. Um segundo antes do login,
-// pela marca d'água do desafio (Plano 8).
+// pela marca d'água do desafio.
 func entrarCom(t *testing.T, a *api, codigo string) int {
 	t.Helper()
 	a.clk.Advance(time.Second)
@@ -137,9 +137,8 @@ func entrarCom(t *testing.T, a *api, codigo string) int {
 }
 
 // As provas do rotate são as do disable: a senha E a posse do fator atual.
-// Senha errada, código errado e código ausente são 401 invalid_credentials
-// (D24 do Plano 5), cada um conta na família (A3 do Plano 10, e não no
-// bloqueio da conta), e nada é gravado.
+// Senha errada, código errado e código ausente são 401 invalid_credentials,
+// cada um conta na família (e não no bloqueio da conta), e nada é gravado.
 func TestRotateRefusesWrongProofsAndCountsThem(t *testing.T) {
 	a := newAPI(t)
 	segredo := cadastrarTOTP(t, a, clientWithJar(t))
@@ -260,7 +259,7 @@ func TestOldAppWorksUntilTheRotationIsConfirmed(t *testing.T) {
 }
 
 // Código errado no confirm: 401 invalid_credentials, conta na família (não no
-// bloqueio da conta, A3 do Plano 10), e o pendente fica; um confirm certo
+// bloqueio da conta), e o pendente fica; um confirm certo
 // depois funciona.
 func TestRotateConfirmWrongCodeKeepsThePending(t *testing.T) {
 	a := newAPI(t)
@@ -310,7 +309,7 @@ func TestRotateConfirmWithoutPendingIsForbidden(t *testing.T) {
 }
 
 // Depois do confirm: os códigos de recuperação antigos não valem, os novos
-// valem, as outras famílias caem e a atual fica (spec do Plano 9, §3.2).
+// valem, as outras famílias caem e a atual fica.
 func TestRotateConfirmReplacesCodesAndOtherSessions(t *testing.T) {
 	a := newAPI(t)
 	outroAparelho := clientWithJar(t)
@@ -377,15 +376,15 @@ func TestDisableDropsThePendingRotationOverHTTP(t *testing.T) {
 	}
 }
 
-// A conta bloqueada não impede o dono logado de trocar de autenticador (A3 do
-// Plano 10; antes, era recusada com 401 invalid_credentials nas duas rotas): o
-// bloqueio é do login. Cada perna confere o error.code, e não só o status
-// (E9): o 401 de prova errada é invalid_credentials, o de sessão derrubada é
-// unauthorized, e o painel reage a eles de formas opostas.
+// A conta bloqueada não impede o dono logado de trocar de autenticador (antes,
+// era recusada com 401 invalid_credentials nas duas rotas): o bloqueio é do
+// login. Cada perna confere o error.code, e não só o status: o 401 de prova
+// errada é invalid_credentials, o de sessão derrubada é unauthorized, e o
+// painel reage a eles de formas opostas.
 //
 // A prova errada, com a conta bloqueada, não mexe no bloqueio (conta na
-// família); as provas certas o zeram, no rotate e no confirm (A6 do Plano 10,
-// revendo a D5 do Plano 9).
+// família); as provas certas o zeram, no rotate e no confirm (antes, a conta
+// bloqueada era recusada aqui).
 func TestRotateRoutesIgnoreTheAccountLock(t *testing.T) {
 	a := newAPI(t)
 	velho := cadastrarTOTP(t, a, clientWithJar(t))
@@ -433,13 +432,12 @@ func TestRotateRoutesIgnoreTheAccountLock(t *testing.T) {
 	}
 }
 
-// O pendente é da família de sessão que o iniciou (revisão final do Plano 9).
-// Outra sessão viva do dono não o confirma: nem com a dona viva, nem depois
-// de a dona ser encerrada por DELETE /sessions/{id} ou pelo logout — antes,
-// o pendente sobrevivia à sessão que o criou e qualquer outra o confirmava. É
-// o 403 forbidden de "sem troca em andamento", conferido antes do código e sem
-// contar falha. A perna
-// positiva, no mesmo cenário: rotate e confirm na mesma família.
+// O pendente é da família de sessão que o iniciou. Outra sessão viva do dono
+// não o confirma: nem com a dona viva, nem depois de a dona ser encerrada por
+// DELETE /sessions/{id} ou pelo logout — antes, o pendente sobrevivia à sessão
+// que o criou e qualquer outra o confirmava. É o 403 forbidden de "sem troca em
+// andamento", conferido antes do código e sem contar falha. A perna positiva,
+// no mesmo cenário: rotate e confirm na mesma família.
 func TestRotationBelongsToTheFamilyThatStartedIt(t *testing.T) {
 	for _, caso := range []string{"dona viva", "DELETE /sessions", "logout"} {
 		t.Run(caso, func(t *testing.T) {

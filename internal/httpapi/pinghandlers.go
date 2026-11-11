@@ -21,7 +21,7 @@ import (
 )
 
 const (
-	// pingBodyBytes: o corpo é descartado (D14), e o teto só limita o quanto
+	// pingBodyBytes: o corpo é descartado, e o teto só limita o quanto
 	// a drenagem lê.
 	pingBodyBytes = 10 << 10
 	// pingTimeout fica abaixo do prazo da API: um ping é uma transação curta,
@@ -99,7 +99,7 @@ func (h *PingHandlers) responder(w http.ResponseWriter, r *http.Request, registr
 
 // pingPublico é a cadeia de /ping/, separada da API. Quem chama é uma tarefa
 // agendada, com curl: fica fora do CORS e do RequireCustomHeader. Sem cookie e
-// sem sessão, não há o que um CSRF roubaria. Só POST (D6): uma prévia de link
+// sem sessão, não há o que um CSRF roubaria. Só POST: uma prévia de link
 // ou um scanner que fizesse GET contaria como sinal e esconderia uma tarefa
 // parada.
 func pingPublico(ctx context.Context, cfg *config.Config, clk clock.Clock, svc *heartbeat.PingService) http.Handler {

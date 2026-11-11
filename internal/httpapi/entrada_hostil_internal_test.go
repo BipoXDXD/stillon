@@ -68,7 +68,7 @@ func enviarHostil(t *testing.T, h http.HandlerFunc, ajustar func(*http.Request),
 	return r
 }
 
-// Um id malformado é 404 em toda rota com {id} (D16), e não 400 nem 500: o
+// Um id malformado é 404 em toda rota com {id}, e não 400 nem 500: o
 // recurso não existe de jeito nenhum.
 func TestIDMalformadoE404EmTodaRotaComID(t *testing.T) {
 	alvos, batidas, canais := &TargetHandlers{}, &HeartbeatHandlers{}, &ChannelHandlers{}

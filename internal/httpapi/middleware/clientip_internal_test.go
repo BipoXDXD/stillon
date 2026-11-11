@@ -159,7 +159,7 @@ func TestTrustedPeerWithoutAUsableHeaderWarnsAtMostOncePerMinute(t *testing.T) {
 	}
 }
 
-// B3 (Plano 10): em produção (PUBLIC_BASE_URL https, que liga AvisarXFF), um
+// Em produção (PUBLIC_BASE_URL https, que liga AvisarXFF), um
 // X-Forwarded-For vindo de fora de TRUSTED_PROXIES é quase sempre a lista
 // errada (o gateway da bridge do Docker no lugar do 127.0.0.1): todo
 // visitante cai num balde só, e antes nada avisava. O aviso é o mesmo do modo

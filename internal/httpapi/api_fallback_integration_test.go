@@ -8,7 +8,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// B5 (Plano 10): rota ou método inexistente sob /api/ responde no envelope
+// Rota ou método inexistente sob /api/ responde no envelope
 // de erro, com trace_id, como todo erro da API (spec §9.1). Antes, o ServeMux
 // respondia "404 page not found" e "Method Not Allowed" em texto puro, e o
 // painel via "Resposta inesperada do servidor".

@@ -46,7 +46,7 @@ func toIncidentResponse(i history.Incident) incidentResponse {
 var parametrosDaListaDeIncidentes = []string{"status", "target_id", "cursor", "limit"}
 
 // List é GET /incidents?status=open|resolved&target_id=&cursor=&limit=
-// (spec §9; target_id é do Plano 5).
+// (spec §9).
 func (h *IncidentHandlers) List(w http.ResponseWriter, r *http.Request) {
 	userID, ok := usuario(w, r)
 	if !ok {

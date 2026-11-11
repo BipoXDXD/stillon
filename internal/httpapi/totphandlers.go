@@ -16,15 +16,16 @@ type codeRequest struct {
 
 // TOTPEnroll exige sessão ativa E prova de posse da senha.
 //
-// A sessão sozinha não basta, e o motivo é o espelho exato do R38. Aquela
-// ruling fechou "token roubado DESLIGA o segundo fator"; faltava fechar
-// "token roubado LIGA o segundo fator com o autenticador do ladrão", que é
-// pior por três razões: o R38 removeu o caminho de volta, então o sequestro
-// não se desfaz por dentro; os códigos de recuperação saem no mesmo passo,
-// para o atacante; e ele persiste depois que a sessão roubada expira,
-// enquanto o dono perde o acesso. A senha é o que o ladrão de sessão não tem.
+// A sessão sozinha não basta, e o motivo é o espelho exato da recusa do
+// recadastro com o fator já ativo. Aquela regra fechou "token roubado DESLIGA o
+// segundo fator"; faltava fechar "token roubado LIGA o segundo fator com o
+// autenticador do ladrão", que é pior por três razões: a recusa removeu o
+// caminho de volta, então o sequestro não se desfaz por dentro; os códigos de
+// recuperação saem no mesmo passo, para o atacante; e ele persiste depois que a
+// sessão roubada expira, enquanto o dono perde o acesso. A senha é o que o
+// ladrão de sessão não tem.
 //
-// A senha errada conta no contador da família (A3 do Plano 10), como em toda
+// A senha errada conta no contador da família, como em toda
 // rota autenticada: ver provasDaFamilia.
 func (h *AuthHandlers) TOTPEnroll(w http.ResponseWriter, r *http.Request) {
 	userID, ok := middleware.UserID(r.Context())
@@ -56,13 +57,12 @@ func (h *AuthHandlers) TOTPEnroll(w http.ResponseWriter, r *http.Request) {
 
 	uri, err := h.totp.Enroll(r.Context(), userID, user.Email)
 	if errors.Is(err, auth.ErrTOTPAlreadyEnabled) {
-		// R38: recadastrar não pode ser a porta dos fundos para desligar o
+		// Recadastrar não pode ser a porta dos fundos para desligar o
 		// segundo fator de quem já o tem ativo.
 		//
-		// E a senha certa aqui NÃO zera a família (C1 da revisão do Plano
-		// 10): a reserva volta pelo Release do defer. Zerada, quem tem a
-		// sessão e a senha, mas não o fator, chutava quatro códigos no
-		// disable ou no rotate, mandava um enroll, e chutava mais quatro,
+		// E a senha certa aqui NÃO zera a família: a reserva volta pelo Release do
+		// defer. Zerada, quem tem a sessão e a senha, mas não o fator, chutava quatro
+		// códigos no disable ou no rotate, mandava um enroll, e chutava mais quatro,
 		// sem fim. Com o 2FA ligado, só a prova do fator zera a família.
 		apierr.WriteError(w, r, apierr.CodeForbidden)
 		return
@@ -80,8 +80,8 @@ func (h *AuthHandlers) TOTPEnroll(w http.ResponseWriter, r *http.Request) {
 }
 
 // TOTPConfirm liga o 2FA com um código do app recém-cadastrado. O código
-// errado é 400 validation_failed, como sempre, e conta no contador da família
-// (A3 do Plano 10): antes não contava em lugar nenhum, e um ladrão de sessão
+// errado é 400 validation_failed, como sempre, e conta no contador da família:
+// antes não contava em lugar nenhum, e um ladrão de sessão
 // chutava seis dígitos aqui contra o cadastro abandonado do dono, limitado só
 // por IP. A quinta derruba a família (401 unauthorized).
 func (h *AuthHandlers) TOTPConfirm(w http.ResponseWriter, r *http.Request) {
@@ -104,11 +104,10 @@ func (h *AuthHandlers) TOTPConfirm(w http.ResponseWriter, r *http.Request) {
 
 	codes, err := h.totp.Confirm(r.Context(), userID, req.Code, h.clk.Now())
 	if errors.Is(err, auth.ErrTOTPAlreadyEnabled) {
-		// Mesmo 403 do enroll: reconfirmar rotacionaria os códigos de
-		// recuperação e apagaria a data de ativação original. O Confirm
-		// recusa antes de olhar o código (C1 da revisão do Plano 10), então
-		// o 403 é o mesmo para o código certo e o errado, e não é oráculo.
-		// Nada foi provado: a reserva volta, e a família não zera.
+		// Mesmo 403 do enroll: reconfirmar rotacionaria os códigos de recuperação e
+		// apagaria a data de ativação original. O Confirm recusa antes de olhar o
+		// código, então o 403 é o mesmo para o código certo e o errado, e não é
+		// oráculo. Nada foi provado: a reserva volta, e a família não zera.
 		apierr.WriteError(w, r, apierr.CodeForbidden)
 		return
 	}
@@ -133,7 +132,7 @@ func (h *AuthHandlers) TOTPConfirm(w http.ResponseWriter, r *http.Request) {
 
 // TOTPVerify fecha o login em dois passos: valida o desafio e emite a sessão.
 //
-// O desafio vale uma vez (Plano 8). É um JWT sem estado próprio; o que o torna
+// O desafio vale uma vez. É um JWT sem estado próprio; o que o torna
 // de uso único é a marca d'água em users.totp_challenge_mark: o desafio só
 // abre sessão se for mais novo que a marca, e abri-la a avança até o instante
 // dele. Antes, o mesmo desafio abria uma sessão por código TOTP novo durante
@@ -144,14 +143,14 @@ func (h *AuthHandlers) TOTPConfirm(w http.ResponseWriter, r *http.Request) {
 // Ordem: desafio → usuário → pré-checagem da marca → reserva da tentativa →
 // código → Reset → ConsumeChallenge → sessão. A pré-checagem recusa antes do
 // código o desafio que já não pode abrir sessão, para não gastar um código de
-// recuperação com ele (revisão final do Plano 8).
+// recuperação com ele.
 //
-// A tentativa é reservada ANTES do código (A2 do Plano 10): antes, o bloqueio
+// A tentativa é reservada ANTES do código: antes, o bloqueio
 // era lido antes e a falha gravada depois, e quem tinha a senha disparava
 // centenas de códigos simultâneos de várias origens, todos passando pela
 // leitura antes de a quinta falha ser gravada. O contador é o do login
 // (h.tentativas): o cookie de dispositivo, se vale para a conta, ou o
-// bloqueio da conta (A3).
+// bloqueio da conta.
 func (h *AuthHandlers) TOTPVerify(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Challenge string `json:"challenge"`
@@ -196,11 +195,11 @@ func (h *AuthHandlers) TOTPVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// O segundo fator entra no MESMO contador do login (R40). Sem isto, quem
+	// O segundo fator entra no MESMO contador do login. Sem isto, quem
 	// já tem a senha chuta seis dígitos indefinidamente: o limite de
 	// /totp/verify é por IP, e um atacante com várias origens passa por cima
 	// dele sem que a conta jamais tranque. Bloqueado é o mesmo 401 genérico
-	// do login (R34), sem olhar o código.
+	// do login, sem olhar o código.
 	tentativas := h.tentativas(r, user, now)
 	reservou, err := tentativas.Reserve(r.Context())
 	if err != nil {
@@ -214,7 +213,7 @@ func (h *AuthHandlers) TOTPVerify(w http.ResponseWriter, r *http.Request) {
 
 	prova, err := h.totp.VerifyWithProof(r.Context(), userID, req.Code, now)
 	if err != nil {
-		// O mesmo 401 genérico do login errado (R34): um código distinto para
+		// O mesmo 401 genérico do login errado: um código distinto para
 		// "segundo fator falhou" contaria ao atacante que a senha estava
 		// certa, e a senha é justamente o que ele está testando. A reserva
 		// fica contada.
@@ -249,7 +248,7 @@ func (h *AuthHandlers) TOTPVerify(w http.ResponseWriter, r *http.Request) {
 	// O carimbo é o da senha verificada no login, antes do desafio: se ela
 	// mudou desde então (set-password, troca de senha), Issue recusa, e o
 	// desafio obtido com a senha antiga morre com ela. A prova do 2FA é
-	// reconferida do mesmo jeito (A4 do Plano 10).
+	// reconferida do mesmo jeito.
 	h.issue(w, r, userID, desafio.Stamp, &prova, user.DeviceStamp())
 }
 
@@ -257,10 +256,10 @@ type passwordRequest struct {
 	Password string `json:"password"`
 }
 
-// usuarioOuInterno é o erro das rotas do 2FA: o usuário do token que sumiu
-// no meio da requisição (auth.ErrNotFound) é 401 unauthorized, como no /me e
-// na troca de senha (A10 do Plano 10) — o painel volta ao login em vez de
-// mostrar um erro interno. O resto é h.internal.
+// usuarioOuInterno é o erro das rotas do 2FA: o usuário do token que sumiu no
+// meio da requisição (auth.ErrNotFound) é 401 unauthorized, como no /me e na
+// troca de senha — o painel volta ao login em vez de mostrar um erro interno. O
+// resto é h.internal.
 func (h *AuthHandlers) usuarioOuInterno(w http.ResponseWriter, r *http.Request, op string, err error) {
 	if errors.Is(err, auth.ErrNotFound) {
 		apierr.WriteError(w, r, apierr.CodeUnauthorized)
@@ -270,11 +269,11 @@ func (h *AuthHandlers) usuarioOuInterno(w http.ResponseWriter, r *http.Request, 
 }
 
 // senhaConfere escreve o erro e devolve false quando a senha não bate. O erro
-// é o mesmo CodeInvalidCredentials do login, pelo motivo do R34: um código
+// é o mesmo CodeInvalidCredentials do login, pelo mesmo motivo: um código
 // distinto aqui contaria ao atacante que a sessão que ele roubou é válida e
 // que só falta a senha.
 //
-// A senha errada conta no contador da família da reserva (A3 do Plano 10), e
+// A senha errada conta no contador da família da reserva, e
 // a quinta derruba a família. O bloqueio da CONTA não entra: nem recusa a
 // conta bloqueada (o dono logado não fica sem trocar a própria credencial
 // porque um anônimo travou o login), nem conta a falha (quem tem a sessão e
@@ -295,17 +294,16 @@ func (h *AuthHandlers) senhaConfere(w http.ResponseWriter, r *http.Request, res 
 // TOTPDisable exige DUAS provas: a senha e a posse do fator.
 //
 // Só a senha rebaixaria o 2FA a nada — quem descobrisse a senha desligaria o
-// segundo fator sozinho. Só o código reabriria o bypass que o R38 fechou, em
-// que uma sessão roubada bastava. O código de recuperação vale no lugar do
-// código do app, senão quem perde o telefone fica sem saída, que foi
-// justamente a lacuna que o R38 deixou.
+// segundo fator sozinho. Só o código reabriria o bypass que a recusa do
+// recadastro fechou, em que uma sessão roubada bastava. O código de recuperação
+// vale no lugar do código do app, senão quem perde o telefone fica sem saída,
+// que foi justamente a lacuna que aquela recusa deixou.
 //
-// Prova errada ou ausente é 401 invalid_credentials, e NUNCA unauthorized
-// (D24 do Plano 5, apontado pelo Plano 6): unauthorized quer dizer "token
-// recusado", e o painel responde a ele renovando a sessão; um código digitado
-// errado viraria renovação, e depois logout. A prova errada conta no contador
-// da família (A3 do Plano 10); a quinta derruba a família, e aí sim a resposta
-// é unauthorized.
+// Prova errada ou ausente é 401 invalid_credentials, e NUNCA unauthorized:
+// unauthorized quer dizer "token recusado", e o painel responde a ele renovando
+// a sessão; um código digitado errado viraria renovação, e depois logout. A
+// prova errada conta no contador da família; a quinta derruba a família, e aí
+// sim a resposta é unauthorized.
 func (h *AuthHandlers) TOTPDisable(w http.ResponseWriter, r *http.Request) {
 	userID, ok := middleware.UserID(r.Context())
 	familyID, okF := middleware.FamilyID(r.Context())
@@ -363,19 +361,18 @@ func (h *AuthHandlers) TOTPDisable(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// TOTPRotate inicia a troca de autenticador (Plano 9, §3.2): grava o segredo
+// TOTPRotate inicia a troca de autenticador: grava o segredo
 // do app novo como PENDENTE e devolve a otpauth_uri dele, no formato do
 // enroll. O app antigo continua valendo até o rotate/confirm.
 //
 // As provas são as do TOTPDisable, pelos mesmos motivos: a senha E a posse do
 // fator atual, por código do app ou de recuperação, em code ou recovery_code.
-// Só a sessão entregaria o segundo fator a quem a roubou (R38).
+// Só a sessão entregaria o segundo fator a quem a roubou.
 //
 // 2FA desligado é 403 forbidden, o espelho do enroll com o 2FA ligado; prova
-// errada ou ausente é 401 invalid_credentials, nunca unauthorized (D24 do
-// Plano 5), e conta no contador da família (A3 do Plano 10). O pendente fica
-// amarrado à família do token; se ela caiu antes da gravação, 401
-// unauthorized. O sucesso zera o bloqueio da conta (A6 do Plano 10).
+// errada ou ausente é 401 invalid_credentials, nunca unauthorized, e conta no
+// contador da família. O pendente fica amarrado à família do token; se ela caiu
+// antes da gravação, 401 unauthorized. O sucesso zera o bloqueio da conta.
 func (h *AuthHandlers) TOTPRotate(w http.ResponseWriter, r *http.Request) {
 	userID, ok := middleware.UserID(r.Context())
 	familyID, okF := middleware.FamilyID(r.Context())
@@ -436,27 +433,25 @@ func (h *AuthHandlers) TOTPRotate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	res.Succeed()
-	// rotation identifica ESTA troca (A7 do Plano 10): o rotate/confirm o
-	// exige de volta.
+	// rotation identifica ESTA troca: o rotate/confirm o exige de volta.
 	apierr.WriteJSON(w, http.StatusOK, map[string]string{"otpauth_uri": uri, "rotation": rotacao})
 }
 
 // TOTPRotateConfirm conclui a troca com um código do app NOVO e devolve os 10
 // códigos de recuperação novos, no formato do confirm. As outras sessões caem;
 // a do token fica. O corpo é {code, rotation}: rotation é o que o rotate
-// devolveu (A7 do Plano 10); ausente ou de outra troca é o 403 de "sem troca",
+// devolveu; ausente ou de outra troca é o 403 de "sem troca",
 // antes do código e sem contar prova errada.
 //
-// Sem troca em andamento é 403 forbidden (concluída ou cancelada em outra
-// aba), e também quando a troca foi iniciada por outra família de sessão: o
-// pendente é só da que o criou (revisão final do Plano 9). Código errado é
-// 401 invalid_credentials, e o pendente fica.
+// Sem troca em andamento é 403 forbidden (concluída ou cancelada em outra aba),
+// e também quando a troca foi iniciada por outra família de sessão: o pendente
+// é só da que o criou. Código errado é 401 invalid_credentials, e o pendente
+// fica.
 //
-// O código errado conta no contador da família (A3 do Plano 10), e a quinta
-// prova errada derruba a família: é isso, e não mais o bloqueio da conta, que
-// impede o confirm de virar um lugar para chutar seis dígitos. A conta
-// bloqueada deixou de ser recusada aqui (era a D2 do Plano 9): o bloqueio é
-// do login. O sucesso zera o bloqueio da conta (A6 do Plano 10).
+// O código errado conta no contador da família, e a quinta prova errada derruba
+// a família: é isso, e não mais o bloqueio da conta, que impede o confirm de
+// virar um lugar para chutar seis dígitos. A conta bloqueada deixou de ser
+// recusada aqui: o bloqueio é do login. O sucesso zera o bloqueio da conta.
 func (h *AuthHandlers) TOTPRotateConfirm(w http.ResponseWriter, r *http.Request) {
 	userID, ok := middleware.UserID(r.Context())
 	familyID, okF := middleware.FamilyID(r.Context())

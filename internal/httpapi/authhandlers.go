@@ -21,9 +21,9 @@ import (
 
 const refreshCookieName = "stillon_refresh"
 
-// deviceCookieName é o cookie de dispositivo (A3 do Plano 10): ver
-// auth.Devices. Mesmo Path do refresh, e por isso vai no login e no
-// /totp/verify, os dois lugares que o leem.
+// deviceCookieName é o cookie de dispositivo: ver auth.Devices. Mesmo Path do
+// refresh, e por isso vai no login e no /totp/verify, os dois lugares que o
+// leem.
 const deviceCookieName = "stillon_dispositivo"
 
 type AuthHandlers struct {
@@ -38,10 +38,10 @@ type AuthHandlers struct {
 	// ignorá-lo.
 	proxies middleware.Proxies
 	// provas conta as provas erradas das rotas autenticadas por família de
-	// sessão (A3 do Plano 10); a mesma instância do AccountHandlers.
+	// sessão; a mesma instância do AccountHandlers.
 	provas *provasDaFamilia
 	// dispositivos emite e confere o cookie de dispositivo, e conta as falhas
-	// de login de cada um (A3 do Plano 10).
+	// de login de cada um.
 	dispositivos *auth.Devices
 }
 
@@ -67,9 +67,9 @@ type tokenResponse struct {
 // do sistema (spec §5.2). O caminho de conta bloqueada paga o mesmo custo
 // pela mesma razão.
 //
-// A tentativa é reservada antes do Argon2id (A2 do Plano 10), no contador
-// que h.tentativas escolhe: o do cookie de dispositivo, se ele vale para esta
-// conta, ou o bloqueio da conta (A3).
+// A tentativa é reservada antes do Argon2id, no contador que h.tentativas
+// escolhe: o do cookie de dispositivo, se ele vale para esta conta, ou o
+// bloqueio da conta.
 func (h *AuthHandlers) Login(w http.ResponseWriter, r *http.Request) {
 	var req loginRequest
 	if !decodeJSON(w, r, &req) {
@@ -91,9 +91,9 @@ func (h *AuthHandlers) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// CheckPassword recusa o contador bloqueado sem olhar a senha. O bloqueio
-	// não se anuncia (R34, spec §5.2): a resposta é o mesmo 401 genérico de
-	// senha errada e de e-mail inexistente.
+	// CheckPassword recusa o contador bloqueado sem olhar a senha. O bloqueio não
+	// se anuncia: a resposta é o mesmo 401 genérico de senha errada e de e-mail
+	// inexistente.
 	//
 	// Uma mensagem distinta aqui reintroduziria exatamente a enumeração que o
 	// VerifyDummy existe para impedir, e por um canal muito mais barato que o
@@ -118,7 +118,7 @@ func (h *AuthHandlers) Login(w http.ResponseWriter, r *http.Request) {
 
 	// verificado é o hash que conferiu com a senha: é ele que a sessão (ou o
 	// desafio do segundo fator) leva como prova, e Issue recusa se ele já não
-	// for o hash do usuário (Task 11 do Plano 5).
+	// for o hash do usuário.
 	verificado := user.PasswordHash
 	if needsRehash {
 		// O rehash é um compare-and-swap: se um set-password comitou depois da
@@ -148,7 +148,7 @@ func (h *AuthHandlers) Login(w http.ResponseWriter, r *http.Request) {
 		// A senha certa não termina o login: a reserva dela volta (Refund),
 		// sem zerar o contador. Zerar aqui daria ao atacante que já tem a
 		// senha um botão de destravar entre um chute de seis dígitos e o
-		// próximo, e o bloqueio do R40 nunca chegaria ao limiar.
+		// próximo, e o bloqueio da conta nunca chegaria ao limiar.
 		devolverTentativa(r, tentativas)
 		challenge, err := auth.NewChallengeToken(h.jwtSecret, user.ID, auth.PasswordStamp(verificado), now)
 		if err != nil {
@@ -175,15 +175,14 @@ func (h *AuthHandlers) Login(w http.ResponseWriter, r *http.Request) {
 	h.issue(w, r, user.ID, auth.PasswordStamp(verificado), nil, auth.NewDeviceStamp(verificado, user.TOTPConfirmedAt))
 }
 
-// tentativas escolhe o contador do login (A3 do Plano 10): o do cookie de
-// dispositivo, se ele vale para esta conta e não está sendo ignorado (errou o
-// limite há menos de 15 min); senão, o bloqueio da conta, como antes. O
-// limitador por IP vale para os dois.
+// tentativas escolhe o contador do login: o do cookie de dispositivo, se ele
+// vale para esta conta e não está sendo ignorado (errou o limite há menos de 15
+// min); senão, o bloqueio da conta, como antes. O limitador por IP vale para os
+// dois.
 func (h *AuthHandlers) tentativas(r *http.Request, user auth.User, now time.Time) auth.Attempts {
 	if ck, err := r.Cookie(deviceCookieName); err == nil {
-		// O carimbo das credenciais de agora (I1 da revisão do Plano 10): o
-		// cookie cunhado antes de uma troca de senha, set-password ou
-		// reset-2fa não vale mais.
+		// O carimbo das credenciais de agora: o cookie cunhado antes de uma troca de
+		// senha, set-password ou reset-2fa não vale mais.
 		if id, ok := h.dispositivos.Check(ck.Value, user.ID, user.DeviceStamp()); ok && !h.dispositivos.Ignored(id) {
 			return h.dispositivos.Attempts(id)
 		}
@@ -231,11 +230,11 @@ func (h *AuthHandlers) Refresh(w http.ResponseWriter, r *http.Request) {
 
 // Logout encerra a família do refresh apresentado e apaga o cookie.
 //
-// Se a revogação falha no banco, a resposta é 500 e o cookie FICA (A9 do
-// Plano 10): antes, o erro ia só para o log, o navegador recebia 204 e perdia
-// o cookie, e a família continuava viva por até 30 dias no servidor — com
-// quem tivesse copiado o refresh ainda dentro, e o dono achando que tinha
-// saído. Com o cookie mantido, o painel pode avisar e tentar de novo.
+// Se a revogação falha no banco, a resposta é 500 e o cookie FICA: antes, o
+// erro ia só para o log, o navegador recebia 204 e perdia o cookie, e a família
+// continuava viva por até 30 dias no servidor — com quem tivesse copiado o
+// refresh ainda dentro, e o dono achando que tinha saído. Com o cookie mantido,
+// o painel pode avisar e tentar de novo.
 func (h *AuthHandlers) Logout(w http.ResponseWriter, r *http.Request) {
 	if ck, err := r.Cookie(refreshCookieName); err == nil {
 		if err := h.sessions.Revoke(r.Context(), ck.Value); err != nil {
@@ -250,10 +249,10 @@ func (h *AuthHandlers) Logout(w http.ResponseWriter, r *http.Request) {
 // issue abre a sessão de um login cuja senha conferiu; stamp é o carimbo do
 // hash verificado. Se a senha mudou no meio (set-password, troca de senha), a
 // resposta é o mesmo 401 da senha errada: a senha que o cliente mandou já não
-// é a da conta (R34).
+// é a da conta.
 //
 // Com o 2FA (prova não nil), a sessão também só nasce se o segredo que aceitou
-// o código ainda for o ativo (A4 do Plano 10); se uma troca de autenticador ou
+// o código ainda for o ativo; se uma troca de autenticador ou
 // um disable comitou no meio, o mesmo 401 invalid_credentials.
 //
 // dispositivo é o carimbo das credenciais para o cookie de dispositivo que o
@@ -296,7 +295,7 @@ func (h *AuthHandlers) issue(w http.ResponseWriter, r *http.Request, userID uuid
 //
 // dispositivo não nil diz que a sessão nasce de um login completo (senha e,
 // se ligado, o 2FA), e não de uma renovação: só aí sai um cookie de
-// dispositivo novo (A3 do Plano 10), com esse carimbo das credenciais, pela
+// dispositivo novo, com esse carimbo das credenciais, pela
 // mesma ordem — depois de o access token ser assinado.
 func (h *AuthHandlers) grantSession(w http.ResponseWriter, r *http.Request, refresh string, s auth.Session, dispositivo *auth.DeviceStamp) {
 	access, err := auth.NewAccessToken(h.jwtSecret, s.UserID, s.FamilyID, h.clk.Now())
@@ -329,7 +328,7 @@ func (h *AuthHandlers) setCookie(w http.ResponseWriter, token string, expires ti
 	})
 }
 
-// setDeviceCookie põe o cookie de dispositivo (A3 do Plano 10). Os atributos
+// setDeviceCookie põe o cookie de dispositivo. Os atributos
 // são os do refresh (HttpOnly, SameSite=Strict, Path /api/v1/auth, Secure com
 // https), e a validade é auth.DeviceTTL. Uma falha ao sortear o identificador
 // não derruba o login: o próximo login completo tenta de novo.
@@ -403,10 +402,10 @@ func (h *AuthHandlers) internal(w http.ResponseWriter, r *http.Request, op strin
 }
 
 // argon2Ocupado é a resposta de quando o teto de Argon2id simultâneos ficou
-// cheio pelo prazo inteiro (A1 do Plano 10): 429 rate_limited, com
-// Retry-After igual ao prazo. A senha não foi verificada, e nada contou no
-// bloqueio. Vale para a conta existente e para a inexistente (o VerifyDummy
-// passa pelo mesmo semáforo), então não enumera contas.
+// cheio pelo prazo inteiro: 429 rate_limited, com Retry-After igual ao prazo. A
+// senha não foi verificada, e nada contou no bloqueio. Vale para a conta
+// existente e para a inexistente (o VerifyDummy passa pelo mesmo semáforo),
+// então não enumera contas.
 func argon2Ocupado(w http.ResponseWriter, r *http.Request, op string) {
 	slog.Warn("teto de Argon2id simultâneos atingido", "op", op, "trace_id", observability.TraceID(r.Context()))
 	w.Header().Set("Retry-After", strconv.Itoa(int(auth.Argon2Wait/time.Second)))

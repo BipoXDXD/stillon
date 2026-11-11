@@ -20,10 +20,10 @@ import (
 )
 
 // Um login que verificou a senha ANTIGA não pode deixar uma sessão viva
-// depois de um set-password (D10: "todas as sessões") ou de uma troca de
+// depois de um set-password (que encerra todas as sessões) ou de uma troca de
 // senha (que encerra as outras). As duas redefinições pegam a trava do
-// usuário (D1) e trocam o hash; Issue pega a mesma trava e reconfere o hash
-// verificado (Task 11 do Plano 5).
+// usuário e trocam o hash; Issue pega a mesma trava e reconfere o hash
+// verificado.
 //
 // Cada caso roda nas duas ordens possíveis, e cada ordem trava uma metade do
 // conserto:

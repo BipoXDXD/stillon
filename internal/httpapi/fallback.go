@@ -6,8 +6,8 @@ import (
 	"github.com/BipoXDXD/stillon/internal/apierr"
 )
 
-// comEnvelope põe o 404 e o 405 do próprio ServeMux no envelope de erro (B5
-// do Plano 10, spec §9.1: todo erro da API tem error.code e trace_id).
+// comEnvelope põe o 404 e o 405 do próprio ServeMux no envelope de erro (spec
+// §9.1: todo erro da API tem error.code e trace_id).
 //
 // Só as requisições sem padrão (Handler devolve pattern "") passam pelo
 // interceptador: com padrão, quem responde é o handler da rota, e um 404

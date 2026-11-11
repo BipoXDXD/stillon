@@ -130,7 +130,7 @@ func TestTargetCRUDFlow(t *testing.T) {
 	var criado alvoJSON
 	cru := lerCorpo(t, resp, &criado)
 	if strings.Contains(string(cru), "segredo-do-cliente") {
-		t.Fatal("a resposta do POST contém o valor do header (D5)")
+		t.Fatal("a resposta do POST contém o valor do header")
 	}
 	if len(criado.HeaderNames) != 1 || criado.HeaderNames[0] != "Authorization" {
 		t.Errorf("header_names = %v", criado.HeaderNames)
@@ -173,7 +173,7 @@ func TestAnotherUsersTargetIs404OnEveryRoute(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(admin.Close)
-	// O intruso já tem o teto de regras em example.com (D-T2): o PATCH dele
+	// O intruso já tem o teto de regras em example.com: o PATCH dele
 	// que levaria o alvo de A para lá tem de dar 404 antes de contar, ou o 409
 	// diria que o alvo existe.
 	if _, err := admin.Exec(ctx, `INSERT INTO targets (id, user_id, name, url, method, interval_sec, timeout_ms,
@@ -195,8 +195,8 @@ func TestAnotherUsersTargetIs404OnEveryRoute(t *testing.T) {
 	gravarValidadeTLS(t, a, criado.ID)
 
 	// Histerese no meio de uma sequência de falhas, como o sondador deixaria:
-	// um PATCH que troca a regra a zeraria (C4) e adiantaria o next_run_at
-	// (D13). O intruso não pode provocar nenhum dos dois.
+	// um PATCH que troca a regra a zeraria e adiantaria o next_run_at.
+	// O intruso não pode provocar nenhum dos dois.
 	desde := a.clk.Now().Add(-3 * time.Minute)
 	if _, err := admin.Exec(ctx, `
 		INSERT INTO target_health (target_id, consecutive_failures, consecutive_successes, streak_since, last_checked_at)
@@ -458,8 +458,8 @@ func TestTargetRoutesRequireAuthentication(t *testing.T) {
 	}
 }
 
-// Dívida do Plano 2: as bordas das consultas via HTTP. Cada valor
-// malformado aponta o campo e o motivo certos.
+// As bordas das consultas via HTTP. Cada valor malformado aponta o campo e o
+// motivo certos.
 func TestTargetQueriesRejectMalformedValues(t *testing.T) {
 	a := newAPI(t)
 	tok := tokenDe(t, a, a.userID)
@@ -605,7 +605,7 @@ func TestDegradedThresholdAbsentNullAndValue(t *testing.T) {
 }
 
 // PATCH de headers: {...} substitui o conjunto inteiro, null limpa. Nas duas
-// respostas só podem aparecer nomes, nunca valores (D5).
+// respostas só podem aparecer nomes, nunca valores.
 func TestPatchHeadersReplacesAndClears(t *testing.T) {
 	a := newAPI(t)
 	tok := tokenDe(t, a, a.userID)
@@ -628,7 +628,7 @@ func TestPatchHeadersReplacesAndClears(t *testing.T) {
 		}
 		for _, v := range valores {
 			if strings.Contains(cru, v) {
-				t.Errorf("a resposta do PATCH contém o valor de header %q (D5): %s", v, cru)
+				t.Errorf("a resposta do PATCH contém o valor de header %q: %s", v, cru)
 			}
 		}
 		return got, cru
@@ -663,7 +663,7 @@ func TestMalformedIDIs404(t *testing.T) {
 	resp := chamar(t, a, http.MethodGet, "/api/v1/targets/nao-e-uuid", tokenDe(t, a, a.userID), nil)
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusNotFound {
-		t.Errorf("id malformado deu %d, queria 404 (D16)", resp.StatusCode)
+		t.Errorf("id malformado deu %d, queria 404", resp.StatusCode)
 	}
 }
 
@@ -737,7 +737,7 @@ func TestChecksEndpoint(t *testing.T) {
 		t.Errorf("checks = %q %+v", got.Resolution, got.Items)
 	}
 
-	// D6: acima de 48h a série é horária, lida de check_rollup_1h.
+	// Acima de 48h a série é horária, lida de check_rollup_1h.
 	fim := a.clk.Now().UTC().Truncate(time.Hour)
 	velho := db.InsertCheckParams{
 		ID: uuid.Must(uuid.NewV7()), TargetID: alvoID, CheckedAt: fim.Add(-30*time.Hour + time.Minute),
@@ -823,8 +823,7 @@ func TestPerUserRateLimit(t *testing.T) {
 	}
 }
 
-// O 101º alvo é 409 target_limit_reached (D17 do Plano 5, reconciliado no
-// contrato); o painel mapeia o código no formulário.
+// O 101º alvo é 409 target_limit_reached; o painel mapeia o código no formulário.
 func TestTargetLimitIs409(t *testing.T) {
 	a := newAPI(t)
 	tok := tokenDe(t, a, a.userID)
@@ -867,7 +866,7 @@ func TestTargetLimitIs409(t *testing.T) {
 	}
 }
 
-// D-T2: o teto de regras por host é 409 com código próprio, no POST e no
+// O teto de regras por host é 409 com código próprio, no POST e no
 // PATCH, e o corpo não diz o host nem a contagem.
 func TestContentRuleHostCapIs409(t *testing.T) {
 	a := newAPI(t)
@@ -952,10 +951,9 @@ func TestContentRuleHostCapIs409(t *testing.T) {
 	}
 }
 
-// B6 (Plano 10): a janela do gráfico sem relógio do navegador. Com
-// ?window=, o servidor calcula from = to - janela, e to é o agora do
-// servidor (ou o to pedido). Só as janelas do painel valem; window junto com
-// from é ambíguo e recusado.
+// A janela do gráfico sem relógio do navegador. Com ?window=, o servidor
+// calcula from = to - janela, e to é o agora do servidor (ou o to pedido). Só
+// as janelas do painel valem; window junto com from é ambíguo e recusado.
 func TestChecksWindowIsComputedByTheServer(t *testing.T) {
 	a := newAPI(t)
 	ctx := context.Background()
@@ -1029,7 +1027,7 @@ func TestChecksWindowIsComputedByTheServer(t *testing.T) {
 	}
 }
 
-// B1 (Plano 10), pelo contrato: PATCH com url de outra origem e sem headers
+// Pelo contrato: PATCH com url de outra origem e sem headers
 // responde header_names vazio.
 func TestPatchToAnotherOriginDropsTheHeaders(t *testing.T) {
 	a := newAPI(t)
@@ -1045,7 +1043,7 @@ func TestPatchToAnotherOriginDropsTheHeaders(t *testing.T) {
 	}
 }
 
-// C2 (Plano 10): 1xx e 3xx em expected_status são 400 no POST e no PATCH.
+// 1xx e 3xx em expected_status são 400 no POST e no PATCH.
 func TestExpectedStatusOutsideTheReachableRangesIs400(t *testing.T) {
 	a := newAPI(t)
 	tok := tokenDe(t, a, a.userID)

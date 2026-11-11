@@ -14,11 +14,10 @@ import (
 	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 )
 
-// As provas do 2FA pelo HTTP depois do Plano 10: o código do login não
-// desliga o 2FA (A4), a sessão só nasce com o segredo que aceitou o código
-// (A4), o confirm exige o rotation da troca que conhece (A7), o código de
-// recuperação digitado à mão vale (A8) e o usuário que some no meio é 401
-// unauthorized (A10).
+// As provas do 2FA pelo HTTP: o código do login
+// não desliga o 2FA, a sessão só nasce com o segredo que aceitou o código, o
+// confirm exige o rotation da troca que conhece, o código de recuperação
+// digitado à mão vale e o usuário que some no meio é 401 unauthorized.
 
 // resposta é o que uma requisição feita numa goroutine devolve ao teste.
 type resposta struct {
@@ -84,8 +83,8 @@ func prenderTravaDeSessoes(t *testing.T, a *api) func() {
 	return soltar
 }
 
-// A4 (auditoria S4): o código do app que abriu o login não desliga o 2FA na
-// mesma janela — o disable consome o timestep. O do período seguinte desliga.
+// O código do app que abriu o login não desliga o 2FA na mesma janela — o
+// disable consome o timestep. O do período seguinte desliga.
 func TestLoginCodeCannotDisableTheSecondFactor(t *testing.T) {
 	a := newAPI(t)
 	segredo := cadastrarTOTP(t, a, clientWithJar(t))
@@ -115,7 +114,7 @@ func TestLoginCodeCannotDisableTheSecondFactor(t *testing.T) {
 	}
 }
 
-// A4: a sessão depois do /totp/verify só nasce se o segredo que aceitou o
+// A sessão depois do /totp/verify só nasce se o segredo que aceitou o
 // código ainda é o ativo, conferido sob a trava do usuário. A trava fica
 // presa pelo teste enquanto o verify, com o código já aceito e o desafio já
 // consumido, espera para abrir a sessão; nesse intervalo o segredo muda (uma
@@ -171,7 +170,7 @@ func TestSecondFactorProofDiesWithTheRotation(t *testing.T) {
 	}
 }
 
-// A7: o rotate devolve rotation (32 caracteres hex, um por troca), e o
+// O rotate devolve rotation (32 caracteres hex, um por troca), e o
 // rotate/confirm exige o da troca vigente. O de uma troca que outro rotate da
 // MESMA família substituiu, ou nenhum, é o 403 forbidden de "sem troca",
 // antes do código: não conta como prova errada (cinco seguidos não derrubam a
@@ -222,7 +221,7 @@ func TestRotateConfirmNeedsTheRotationItKnows(t *testing.T) {
 	}
 }
 
-// A8: o código de recuperação vale como o dono o digitar — em minúsculas, com
+// O código de recuperação vale como o dono o digitar — em minúsculas, com
 // hífen e espaços — no segundo passo do login.
 func TestRecoveryCodeIsNormalizedAtLogin(t *testing.T) {
 	a := newAPI(t)
@@ -234,7 +233,7 @@ func TestRecoveryCodeIsNormalizedAtLogin(t *testing.T) {
 	}
 }
 
-// A10: o usuário que some no meio de uma rota do 2FA (depois da guarda da
+// O usuário que some no meio de uma rota do 2FA (depois da guarda da
 // sessão viva, antes do handler ler a conta) é 401 unauthorized, como no /me
 // e na troca de senha, e não 500. A tabela users fica travada pelo teste, a
 // rota para na primeira leitura dela, o usuário é apagado e a trava solta.

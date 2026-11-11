@@ -23,7 +23,7 @@ func SecurityHeaders(next http.Handler) http.Handler {
 		// Nada aqui usa câmera, microfone, localização, pagamento ou USB: um
 		// script injetado também não pode.
 		h.Set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=()")
-		// Item 26: nada que sai desta API deve ser guardado. A resposta de
+		// Nada que sai desta API deve ser guardado. A resposta de
 		// POST já não é cacheável por padrão, então isto é defesa em
 		// profundidade — cobre o histórico do navegador (que guarda respostas
 		// fora das regras de cache) e o proxy mal-comportado que ignora o
