@@ -665,7 +665,7 @@ func TestEnrollWrongPasswordCountsInTheFamily(t *testing.T) {
 		t.Errorf("GET /sessions com o token da família derrubada: %d, queria 401", st)
 	}
 	if n := falhasDeLogin(t, a); n != 0 {
-		t.Errorf("%d falhas no bloqueio da conta, queria 0 (A3)", n)
+		t.Errorf("%d falhas no bloqueio da conta, queria 0", n)
 	}
 
 	// A prova que importa: o dono não foi trancado, e a senha certa entra.
@@ -754,7 +754,7 @@ func TestSecondFactorRoutesAnswerInvalidCredentials(t *testing.T) {
 	// mesma família (abaixo do limite, que derrubaria a família e responderia
 	// unauthorized), e nenhuma no bloqueio da conta.
 	if n := falhasDeLogin(t, a); n != 0 {
-		t.Errorf("%d falhas no bloqueio da conta, queria 0 (A3)", n)
+		t.Errorf("%d falhas no bloqueio da conta, queria 0", n)
 	}
 	if confirmado, _, _, _ := estadoDoSegundoFator(t, a); !confirmado {
 		t.Error("uma recusa desligou o segundo fator")

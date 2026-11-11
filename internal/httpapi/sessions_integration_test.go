@@ -364,7 +364,7 @@ func TestRevokeOtherSessionKeepsCookie(t *testing.T) {
 // ausente ou inválido, e o sessaoViva do handler recusa de novo (sem usuário
 // ou família no contexto) antes de conferir a família. Este teste trava a
 // família viva, que só o sessaoViva confere; o token ausente é o
-// TestPlano5RoutesRequireAuthentication, que fica verde sem o Authn OU sem o
+// TestProtectedRoutesRequireAuthentication, que fica verde sem o Authn OU sem o
 // sessaoViva. Tirar os dois de GET /sessions deixa
 // ele vermelho (200).
 func TestSessionRoutesRejectDeadFamily(t *testing.T) {
