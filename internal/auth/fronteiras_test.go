@@ -67,8 +67,7 @@ func TestCheckPasswordSemVagaNaoReservaTentativa(t *testing.T) {
 	}
 }
 
-// Erro ao reservar a tentativa aborta o login com o erro original, sem
-// verificar a senha.
+// Erro ao reservar a tentativa aborta o login com o erro original.
 func TestCheckPasswordErroDaReservaPropaga(t *testing.T) {
 	tentativas := &tentativasFalsas{erro: errBoom}
 
