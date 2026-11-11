@@ -1,7 +1,7 @@
 // Package clock isola a leitura do tempo para que a lógica dependente de
 // relógio seja testável sem time.Sleep.
 //
-// A spec (§6.2) exige isso para o agendador do Plano 2; as sessões são o
+// A spec (§6.2) exige isso para o agendador das sondas; as sessões são o
 // primeiro consumidor.
 package clock
 

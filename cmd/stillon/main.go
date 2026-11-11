@@ -114,7 +114,7 @@ func run(ctx context.Context, cfg *config.Config) error {
 	defer pool.Close()
 
 	// Com um papel que ignora RLS, a segunda barreira de isolamento estaria
-	// desligada em silêncio (D8). A checagem vem ANTES da migration: CheckRole
+	// desligada em silêncio. A checagem vem ANTES da migration: CheckRole
 	// só lê pg_roles, e migrar primeiro faria o boot recusado criar todas as
 	// tabelas com o dono errado, que o papel comum depois não conseguiria usar.
 	if err := storage.CheckRole(ctx, pool); err != nil {
@@ -168,7 +168,7 @@ func run(ctx context.Context, cfg *config.Config) error {
 		g.Go(func() error { return lembretes.Run(gctx) })
 		// Quem abre e fecha incidente de heartbeat é este papel, e não quem
 		// recebe o ping: com --role=api e --role=prober separados, o ping só
-		// registra (D4 da spec de heartbeats).
+		// registra.
 		avaliador := prober.NewHeartbeatEvaluator(pool, clk)
 		g.Go(func() error { return avaliador.Run(gctx) })
 		slog.Info("sondador ativo", "max_em_voo", prober.MaxInFlight, "email", cfg.EmailEnabled())
@@ -233,7 +233,7 @@ func graceDoSondador(total time.Duration) time.Duration {
 }
 
 // erroDeServidor é a falha de um servidor ao subir. A porta de métricas
-// ocupada ganha a saída na mensagem (M7, Plano 9 §3.4): o caso comum é outro
+// ocupada ganha a saída na mensagem: o caso comum é outro
 // processo do StillOn no mesmo host (--role=api e --role=prober), e quem lê
 // o log precisa saber qual variável mudar.
 func erroDeServidor(nome string, err error) error {

@@ -9,7 +9,7 @@ import (
 	"github.com/BipoXDXD/stillon/internal/clock"
 )
 
-// As provas das rotas autenticadas (A3 do Plano 10): a troca de senha e o
+// As provas das rotas autenticadas: a troca de senha e o
 // enroll, confirm, disable, rotate e rotate/confirm do 2FA. Antes elas
 // consultavam e alimentavam o bloqueio da CONTA, e um anônimo que mandasse
 // cinco senhas erradas ao login a cada 15 min desligava, junto com o login,
@@ -18,11 +18,11 @@ import (
 // Agora cada família de sessão tem o seu contador, em memória. A quinta prova
 // errada derruba a família (a rota responde 401 unauthorized): quem tem a
 // sessão e chuta a senha é expulso, e o dono não é trancado por isso. A
-// reserva vem ANTES da verificação (A2): N requisições simultâneas gastam N
+// reserva vem ANTES da verificação: N requisições simultâneas gastam N
 // provas, e as que passam do limite nem chegam a verificar.
 //
 // Em memória de propósito: zera num restart, e um processo por vez atende a
-// API. O preço está registrado nas decisões do Plano 10.
+// API. O preço é que cada restart devolve as tentativas à família.
 
 // FamilyProofLimit é quantas provas erradas uma família aguenta; a última a
 // derruba. É o mesmo limiar do bloqueio da conta.

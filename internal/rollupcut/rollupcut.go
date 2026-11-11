@@ -1,7 +1,7 @@
 // Package rollupcut é a regra de onde a leitura de uptime troca os rollups
 // horários pelos checks brutos, a única do sistema: o dashboard
 // (GET /targets/summary) e a página pública (/p/{slug}) a chamam, e por isso
-// não divergem (C4 da revisão).
+// não divergem.
 //
 // A manutenção consolida as horas cheias a cada 15 min. Ler só os rollups
 // deixa a tela até ~1h15 atrasada e cega à queda em curso; ler só os brutos
@@ -12,7 +12,7 @@
 // A marca d'água que entra aqui é o último rollup ANTES da hora corrente: as
 // consultas de marca (LatestUserRollupBucket, LatestPageRollupBucket e a
 // LatestRollupBucketBefore da manutenção) ignoram o rollup gravado no futuro
-// por um relógio adiantado (C8 da revisão).
+// por um relógio adiantado.
 package rollupcut
 
 import "time"

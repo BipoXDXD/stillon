@@ -8,7 +8,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// Prazos do lado do servidor, em toda conexão do pool (C2 da revisão; SQL 13).
+// Prazos do lado do servidor, em toda conexão do pool.
 // O cancelamento pelo contexto depende de o cliente alcançar o banco; estes
 // valem mesmo quando ele não alcança.
 const (

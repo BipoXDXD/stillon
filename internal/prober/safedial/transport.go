@@ -117,7 +117,7 @@ func newTransport(permitir func(address string) error, dialer *net.Dialer) *http
 		// descomprimido nos dois. Discord e Resend não pedem e recebem identity.
 		DisableCompression: true,
 
-		// C1 (Plano 10): o padrão do net/http é 10 MiB de cabeçalho por
+		// O padrão do net/http é 10 MiB de cabeçalho por
 		// resposta, e o HTTP/2 herda este número. Com 64 sondas em voo, um
 		// alvo hostil segurava ~660 MiB de heap. Nenhum alvo legítimo de
 		// monitoramento, nem o Discord ou o Resend, manda mais que isto.
@@ -303,8 +303,7 @@ func discarEmSerie(ctx context.Context, ips []netip.Addr, discar discarIP) (net.
 // recusarHospedagem recusa address quando o IP cai numa faixa da própria
 // hospedagem (PROBE_BLOCKED_CIDRS). A VPS é dividida com outros projetos, e
 // as portas deles no IP público não são privadas para a lista fixa: sem esta
-// conferência, um alvo cadastrado alcançaria cada uma delas (L1 do STRIDE do
-// #255). O Unmap faz o ::ffff:a.b.c.d cair no CIDR v4. Endereço ilegível ou
+// conferência, um alvo cadastrado alcançaria cada uma delas. O Unmap faz o ::ffff:a.b.c.d cair no CIDR v4. Endereço ilegível ou
 // com zona IPv6 é recusado aqui mesmo, sem contar com o AllowAddr que vem
 // depois no permitir: o Contains é falso para IP com zona, e o Unmap a
 // descarta, então aprovar dependeria da ordem das conferências.
@@ -363,14 +362,14 @@ func NewClientBlocking(timeout time.Duration, hospedagem []netip.Prefix) *http.C
 // um teste de redirecionamento precisa que OUTRA porta do mesmo 127.0.0.1
 // continue bloqueada.
 //
-// Entra em panic com endereço que não seja loopback (D15). Nenhum código de
+// Entra em panic com endereço que não seja loopback. Nenhum código de
 // produção chama esta função, e o panic garante que ela não vire, por
 // engano, liberação de rede interna.
 func NewClientAllowing(timeout time.Duration, allowed ...netip.AddrPort) *http.Client {
 	return newClient(timeout, normalizarLiberados(allowed), nil)
 }
 
-// normalizarLiberados entra em panic com endereço que não seja loopback (D15).
+// normalizarLiberados entra em panic com endereço que não seja loopback.
 func normalizarLiberados(allowed []netip.AddrPort) []netip.AddrPort {
 	norm := make([]netip.AddrPort, 0, len(allowed))
 	for _, ap := range allowed {

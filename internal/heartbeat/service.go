@@ -20,7 +20,7 @@ import (
 )
 
 const (
-	// MaxPerUser é o teto de heartbeats por usuário, o mesmo de alvos (D16).
+	// MaxPerUser é o teto de heartbeats por usuário, o mesmo de alvos.
 	MaxPerUser int64 = 100
 
 	// PreviewRuns é quantos disparos a prévia do cron mostra.
@@ -394,7 +394,7 @@ func (s *Service) List(ctx context.Context, userID uuid.UUID, before *uuid.UUID,
 
 // Update aplica o patch com a linha travada. Só valor que muda recalcula o
 // prazo, a partir de agora: reenviar o que já está gravado não adia nada.
-// Retomar também recalcula, zera a falha e registra a retomada (D13). Quem
+// Retomar também recalcula, zera a falha e registra a retomada. Quem
 // fecha incidente é o avaliador, e prazo novo sozinho não fecha (§5 da spec).
 func (s *Service) Update(ctx context.Context, userID, id uuid.UUID, p Patch) (Heartbeat, error) {
 	if p.Name != nil {
@@ -557,7 +557,7 @@ func (s *Service) ClearEvents(ctx context.Context, userID, id uuid.UUID) error {
 }
 
 // RotateToken revoga o token atual trocando o hash, e devolve o novo, que só
-// existe neste retorno (D8).
+// existe neste retorno.
 func (s *Service) RotateToken(ctx context.Context, userID, id uuid.UUID) (Heartbeat, string, error) {
 	token, hash := NewPingToken()
 	var out Heartbeat
@@ -580,7 +580,7 @@ func (s *Service) RotateToken(ctx context.Context, userID, id uuid.UUID) (Heartb
 
 // PingNow é o "sinalizar agora" do painel: um sucesso no escopo do dono, pelo
 // mesmo caminho do ping (janela de repetição e retomada inclusas), marcado com
-// a origem panel para não se confundir com a tarefa (R2 da spec). Pelo mesmo
+// a origem panel para não se confundir com a tarefa. Pelo mesmo
 // motivo, não encerra a execução aberta: o início e a duração são da tarefa.
 func (s *Service) PingNow(ctx context.Context, userID, id uuid.UUID) (Heartbeat, error) {
 	var out Heartbeat

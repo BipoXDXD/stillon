@@ -1,6 +1,6 @@
 // Package webui serve o painel React (web/) embutido no binário, na mesma
 // origem da API: o cookie de refresh é SameSite=Strict com Path=/api/v1/auth,
-// e o painel precisa estar no mesmo site (contrato dos Planos 5, 6 e 7).
+// e o painel precisa estar no mesmo site.
 //
 // Este pacote só sabe servir arquivos. A cadeia de middlewares (RequestID,
 // Recover, SecurityHeaders) e a montagem na raiz ficam em httpapi/routes.go.
@@ -218,7 +218,7 @@ func (p *Painel) servirIndex(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// Politica é a CSP do painel (spec §5.7, spec do Plano 6 §5.3). O nonce vale
+// Politica é a CSP do painel (spec §5.7). O nonce vale
 // só para estilo: não há script inline, e nonce em script-src seria uma porta
 // a mais. Sem style-src-attr: React, Radix e Recharts escrevem estilo pelo
 // CSSOM, que a CSP não governa; só <style> injetado precisa do nonce.

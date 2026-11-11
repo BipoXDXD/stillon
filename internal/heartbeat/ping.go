@@ -20,7 +20,7 @@ import (
 var ErrUnknownToken = errors.New("token de ping desconhecido")
 
 // PingService recebe os sinais das tarefas. Só registra: quem abre e fecha
-// incidente é o avaliador, no papel prober (D4 da spec).
+// incidente é o avaliador, no papel prober.
 type PingService struct {
 	pool *pgxpool.Pool
 	clk  clock.Clock
@@ -43,8 +43,7 @@ func (s *PingService) PingExit(ctx context.Context, token string, code ExitCode,
 }
 
 // aplicar trava a linha, e isso serializa pings simultâneos: o segundo lê o que
-// o primeiro gravou, e a repetição tem um efeito só, entre instâncias também
-// (D9).
+// o primeiro gravou, e a repetição tem um efeito só, entre instâncias também.
 func (s *PingService) aplicar(ctx context.Context, token string, sinal sinalRecebido) error {
 	hash, ok := HashPingToken(token)
 	if !ok {
@@ -114,7 +113,7 @@ func execucaoDoSinal(ctx context.Context, q *db.Queries, heartbeatID uuid.UUID, 
 	return run, nil
 }
 
-// gravarEvento grava a linha do log e apara o teto (D15) na mesma transação.
+// gravarEvento grava a linha do log e apara o teto na mesma transação.
 func gravarEvento(ctx context.Context, q *db.Queries, heartbeatID uuid.UUID, ev Event, s sinalRecebido) error {
 	id, err := uuid.NewV7()
 	if err != nil {

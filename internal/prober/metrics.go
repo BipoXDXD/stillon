@@ -75,7 +75,7 @@ func (m *Metrics) observe(alvo uuid.UUID, r Result) {
 	m.mu.Unlock()
 }
 
-// forget apaga a série de um alvo que deixou de existir (D9 do Plano 2).
+// forget apaga a série de um alvo que deixou de existir.
 // Sem isso, cada alvo apagado deixaria uma série viva até o restart.
 func (m *Metrics) forget(alvo uuid.UUID) {
 	m.duration.DeleteLabelValues(alvo.String())

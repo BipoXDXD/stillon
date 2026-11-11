@@ -17,7 +17,7 @@ import (
 	"github.com/BipoXDXD/stillon/internal/clock"
 )
 
-// O cookie de dispositivo (A3 do Plano 10; OWASP, "Slow down online guessing
+// O cookie de dispositivo (OWASP, "Slow down online guessing
 // attacks with device cookies"). Antes, qualquer anônimo que soubesse o e-mail
 // do dono o trancava fora com cinco senhas erradas a cada 15 min: o bloqueio
 // era da conta, e valia para todo mundo.
@@ -30,8 +30,7 @@ import (
 // volta ao bloqueio da conta). Nada novo no banco: o MAC é a prova, e a chave
 // é derivada da MASTER_KEY com um rótulo próprio.
 //
-// O MAC cobre também um carimbo das credenciais da conta (DeviceStamp; I1 da
-// revisão do Plano 10): o hash da senha e a data de ativação do 2FA. Sem ele,
+// O MAC cobre também um carimbo das credenciais da conta (DeviceStamp): o hash da senha e a data de ativação do 2FA. Sem ele,
 // os cookies de quem já teve acesso completo sobreviviam à remediação do dono
 // (troca de senha, set-password, reset-2fa, que encerram as sessões), cada um
 // com o seu contador fora do bloqueio da conta. Com ele, esses eventos
