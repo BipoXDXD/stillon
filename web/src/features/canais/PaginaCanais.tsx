@@ -118,7 +118,9 @@ function NovoCanal({ aoCriar }: { aoCriar: (c: Canal) => void }) {
   })
   const [erro, setErro] = useState<string | null>(null)
   const tipo = useWatch({ control: f.control, name: 'kind' })
-  const erros = f.formState.errors as Partial<Record<'url' | 'email', { message?: string }>>
+  // getFieldState, e não formState.errors: o tipo do erro de uma união não tem
+  // `url` nem `email` em comum, e a leitura por nome já vem tipada.
+  const erroDe = (campo: 'url' | 'email') => f.getFieldState(campo, f.formState).error?.message
 
   async function enviar(v: Valores) {
     setErro(null)
@@ -152,13 +154,13 @@ function NovoCanal({ aoCriar }: { aoCriar: (c: Canal) => void }) {
         <Campo
           key="discord"
           rotulo="URL do webhook"
-          erro={erros.url?.message}
+          erro={erroDe('url')}
           ajuda="Mandamos uma mensagem de teste agora. Webhook de canal de fórum não é aceito."
         >
           {(a) => <Entrada {...a} type="url" {...f.register('url')} />}
         </Campo>
       ) : (
-        <Campo key="email" rotulo="E-mail" erro={erros.email?.message} ajuda="Mandamos um link de verificação, válido por 24 horas.">
+        <Campo key="email" rotulo="E-mail" erro={erroDe('email')} ajuda="Mandamos um link de verificação, válido por 24 horas.">
           {(a) => <Entrada {...a} type="email" {...f.register('email')} />}
         </Campo>
       )}

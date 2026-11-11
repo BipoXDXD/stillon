@@ -192,6 +192,23 @@ describe('canais', () => {
     expect(r.falsa.corpos('POST /channels')[2]).toEqual({ kind: 'email', email: 'dono@x' })
   })
 
+  // A mensagem do campo sai de formState.errors de uma união discriminada (a
+  // leitura tipada por nome, sem `as`); cada tipo mostra só o seu erro.
+  // Sabotagem: ler o erro do campo errado (url no lugar de email).
+  it('criar: a validação do formulário aparece junto do campo do tipo escolhido', async () => {
+    const r = await renderizarPainel('/channels')
+    await clicarNovoCanal(r)
+    const dialogo = await screen.findByRole('dialog')
+    await r.usuario.click(within(dialogo).getByRole('button', { name: 'Cadastrar canal' }))
+    expect(await within(dialogo).findByText('Cole a URL do webhook.')).toBeInTheDocument()
+    await r.usuario.click(within(dialogo).getByLabelText('E-mail', { selector: 'input[type=radio]' }))
+    expect(within(dialogo).queryByText('Cole a URL do webhook.')).not.toBeInTheDocument()
+    await r.usuario.type(within(dialogo).getByLabelText('E-mail', { selector: 'input[type=email]' }), 'sem-arroba')
+    await r.usuario.click(within(dialogo).getByRole('button', { name: 'Cadastrar canal' }))
+    expect(await within(dialogo).findByText('Informe um e-mail válido.')).toBeInTheDocument()
+    expect(r.falsa.corpos('POST /channels')).toEqual([])
+  })
+
   it('criar: limite de canais, limite de envios e URL de webhook inválida viram texto', async () => {
     const r = await renderizarPainel('/channels')
     await clicarNovoCanal(r)

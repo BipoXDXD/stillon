@@ -421,6 +421,17 @@ describe('o envelope de erro', () => {
     await expect(api.me()).rejects.toMatchObject({ name: 'ApiError', status: 200, code: 'unexpected' })
   })
 
+  // Parse, don't validate: com esquema, um 204 (ou qualquer sucesso sem corpo)
+  // não pode chegar à tela como `undefined` com tipo T; é o mesmo erro de
+  // contrato do JSON quebrado. Os endpoints que respondem 204 de verdade (os
+  // DELETE, logout, password, totp/disable, resend, clear) não têm esquema.
+  // Sabotagem: devolver undefined quando o status é 204, também com esquema.
+  it('204 numa rota com esquema vira ApiError "unexpected", não undefined com tipo T', async () => {
+    const { api } = await logado()
+    servidor.use(http.get('*/api/v1/me', () => new HttpResponse(null, { status: 204 })))
+    await expect(api.me()).rejects.toMatchObject({ name: 'ApiError', status: 204, code: 'unexpected' })
+  })
+
   // D10: uma chave que some do DTO quebra alto, com o nome do campo.
   it('resposta fora do schema falha com o nome do campo', async () => {
     const { falsa, api } = await logado()
@@ -533,6 +544,17 @@ describe('a API falsa segue o servidor', () => {
     expect(semCanal.status).toBe(400)
     expect((await semCanal.json()).error.fields).toEqual([{ field: 'enabled', reason: 'invalid' }])
     expect((await patchCru(sessao.token(), '/channels/nao-existe', '{"enabled":true}')).status).toBe(404)
+  })
+
+  // Sem esquema (DELETE, 204) o pedido resolve sem valor: é o `undefined` que as
+  // sobrecargas de `pedir` declaram como Promise<void>. Sabotagem: devolver o
+  // corpo (ou um objeto) no lugar de undefined.
+  it('apagar um canal que existe resolve sem valor', async () => {
+    const { falsa, api } = await logado()
+    const c = canal({ id: 'c1' })
+    falsa.estado.canais = [c]
+    await expect(api.apagarCanal('c1')).resolves.toBeUndefined()
+    expect(falsa.estado.canais).toEqual([])
   })
 
   // ChannelHandlers.Delete e Resend: canal que não existe é 404.

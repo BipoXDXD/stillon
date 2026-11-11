@@ -124,7 +124,11 @@ export type OpcoesDaApi = { prazoDoConfirmMs?: number }
 
 export function criarApi(sessao: Sessao, buscar: Buscar, o: OpcoesDaApi = {}) {
   const prazoDoConfirm = () => AbortSignal.timeout(o.prazoDoConfirmMs ?? PRAZO_DO_CONFIRM)
-  async function pedir<T>(p: Omit<Pedido, 'token'>, esquema: z.ZodType<T> | null): Promise<T> {
+  // Sem esquema não há corpo a devolver: as sobrecargas dizem isso no tipo, e o
+  // `undefined as T` que fingia um T qualquer deixa de existir.
+  function pedir(p: Omit<Pedido, 'token'>, esquema: null): Promise<void>
+  function pedir<T>(p: Omit<Pedido, 'token'>, esquema: z.ZodType<T>): Promise<T>
+  async function pedir<T>(p: Omit<Pedido, 'token'>, esquema: z.ZodType<T> | null): Promise<T | undefined> {
     const usado = sessao.token()
     let r = await enviar(buscar, { ...p, token: usado })
     if (r.status === 401) {
@@ -150,7 +154,9 @@ export function criarApi(sessao: Sessao, buscar: Buscar, o: OpcoesDaApi = {}) {
       }
     }
     if (!r.ok) throw await lerErro(r)
-    if (esquema === null || r.status === 204) return undefined as T
+    if (esquema === null) return undefined
+    // Com esquema, um 204 ou um corpo vazio não é um T: o lerCorpo falha com o
+    // ApiError 'unexpected' de sempre, em vez de devolver undefined com tipo T.
     return lerCorpo(r, esquema)
   }
 
