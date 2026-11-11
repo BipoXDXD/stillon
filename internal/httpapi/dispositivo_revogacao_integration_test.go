@@ -9,13 +9,12 @@ import (
 	"github.com/BipoXDXD/stillon/internal/account"
 )
 
-// I1 da revisão do Plano 10: o cookie de dispositivo morre com a remediação.
-// Quem já teve acesso completo à conta guardou cookies de 180 dias, e cada um
-// tirava o login do bloqueio da conta. O dono reage trocando a senha, pelo
-// set-password ou pelo reset-2fa (os dois encerram todas as sessões), e os
-// cookies continuavam valendo. Agora o MAC cobre um carimbo das credenciais
-// (o hash da senha e a data de ativação do 2FA), e cada um desses eventos o
-// muda.
+// O cookie de dispositivo morre com a remediação. Quem já teve acesso completo
+// à conta guardou cookies de 180 dias, e cada um tirava o login do bloqueio da
+// conta. O dono reage trocando a senha, pelo set-password ou pelo reset-2fa (os
+// dois encerram todas as sessões), e os cookies continuavam valendo. Agora o
+// MAC cobre um carimbo das credenciais (o hash da senha e a data de ativação do
+// 2FA), e cada um desses eventos o muda.
 //
 // Cada caso: o dono entra e guarda o cookie; a perna positiva prova que ele
 // vale (conta trancada, o dono entra); o evento acontece; com a conta trancada

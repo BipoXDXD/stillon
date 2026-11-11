@@ -9,7 +9,7 @@ import (
 	"github.com/BipoXDXD/stillon/internal/config"
 )
 
-// prenderVagasDoArgon2 segura n vagas do semáforo do Argon2id (A1) até o fim
+// prenderVagasDoArgon2 segura n vagas do semáforo do Argon2id até o fim
 // do teste, ou até a função devolvida soltá-las.
 func prenderVagasDoArgon2(t *testing.T, n int) func() {
 	t.Helper()
@@ -47,12 +47,12 @@ func TestFixtureHashUsesProductionParameters(t *testing.T) {
 	}
 }
 
-// A1 (Plano 10, §3.1): com o teto do Argon2id cheio, as rotas que pagam um
-// Argon2id respondem 429 rate_limited com Retry-After: 2 depois do prazo de
-// aquisição, em vez de empilhar 64 MiB por requisição até o processo morrer.
-// Cada caminho é um: senha errada no login, e-mail inexistente (VerifyDummy),
-// a senha de uma rota autenticada (enroll), a troca de senha e a conta
-// bloqueada. Nenhum conta no bloqueio: a senha não foi verificada.
+// Com o teto do Argon2id cheio, as rotas que pagam um Argon2id respondem 429
+// rate_limited com Retry-After: 2 depois do prazo de aquisição, em vez de
+// empilhar 64 MiB por requisição até o processo morrer. Cada caminho é um:
+// senha errada no login, e-mail inexistente (VerifyDummy), a senha de uma rota
+// autenticada (enroll), a troca de senha e a conta bloqueada. Nenhum conta no
+// bloqueio: a senha não foi verificada.
 //
 // O teto vem de ARGON2_MAX_CONCURRENT pelas rotas: com 5 (acima do padrão, que
 // é no máximo 4), 4 vagas presas ainda deixam o login passar, e é essa perna
@@ -112,7 +112,7 @@ func TestSaturatedArgon2AnswersRateLimited(t *testing.T) {
 
 	// A conta bloqueada paga o VerifyDummy, e ele passa pelo mesmo semáforo:
 	// com o teto cheio, o mesmo 429. Um 401 rápido aqui anunciaria o bloqueio
-	// (R34) justamente sob ataque.
+	// justamente sob ataque.
 	bloquearConta(t, a)
 	prenderVagasDoArgon2(t, 5)
 	resp = login(t, a, clientWithJar(t), testEmail, testPass)

@@ -342,9 +342,8 @@ func TestPublicPageColorsAreAccessible(t *testing.T) {
 	}
 }
 
-// Review Focus 5 da parte 3: a página usa os tokens do painel, nos dois
-// temas. Um token do template que não existe no index.css, ou com outro
-// valor, quebra aqui.
+// A página usa os tokens do painel, nos dois temas. Um token do template que
+// não existe no index.css, ou com outro valor, quebra aqui.
 func TestPublicPageUsesThePanelTokens(t *testing.T) {
 	c := lerCSSDaPagina(t)
 	painel := lerTokensDoPainel(t)
@@ -380,7 +379,7 @@ func lerTokensDoPainel(t *testing.T) map[tema]map[string]string {
 	return comHeranca(declaracoesDeTokens(bloco(":root")), declaracoesDeTokens(bloco(".dark")))
 }
 
-// Review Focus 4: o template só aponta fontes do próprio host, que é o que
+// O template só aponta fontes do próprio host, que é o que
 // o font-src 'self' da politicaDaPagina libera.
 func TestTemplateFontsComeFromTheOwnHost(t *testing.T) {
 	c := lerCSSDaPagina(t)

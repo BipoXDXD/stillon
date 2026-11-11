@@ -191,11 +191,11 @@ func TestListSessionsNeverExposesIPOrHash(t *testing.T) {
 // uso: renovar a sessão mais antiga não a traz para o topo. last_used_at é o
 // instante do último refresh.
 //
-// Guarda dupla (D23): a primeira família foi renovada, então tem uma linha
+// Guarda dupla: a primeira família foi renovada, então tem uma linha
 // usada e uma viva, e duas coisas fazem a lista mostrar a viva, uma vez só: o
 // filtro used_at IS NULL de ListLiveFamilies e a dedupe de ListSessions, que
 // fica com a linha mais nova de cada família. Sabotar só uma deixa este teste
-// verde; a sabotagem registrada (Task 11) tira o filtro E faz a dedupe ficar
+// verde; a sabotagem registrada tira o filtro E faz a dedupe ficar
 // com a linha mais velha, e o last_used_at da renovada sai errado.
 func TestListSessionsOrderAndTimes(t *testing.T) {
 	a := newAPI(t)
@@ -357,15 +357,15 @@ func TestRevokeOtherSessionKeepsCookie(t *testing.T) {
 	}
 }
 
-// Um token de sessão já encerrada não lista nem derruba sessões (D11): sem
+// Um token de sessão já encerrada não lista nem derruba sessões: sem
 // isso, o invasor encerrado continuaria 15 minutos derrubando o dono.
 //
-// Guarda dupla (D23) nas duas rotas: o Authn da cadeia recusa o token
+// Guarda dupla nas duas rotas: o Authn da cadeia recusa o token
 // ausente ou inválido, e o sessaoViva do handler recusa de novo (sem usuário
 // ou família no contexto) antes de conferir a família. Este teste trava a
 // família viva, que só o sessaoViva confere; o token ausente é o
 // TestPlano5RoutesRequireAuthentication, que fica verde sem o Authn OU sem o
-// sessaoViva. A sabotagem registrada (Task 11) tira os dois de GET /sessions,
+// sessaoViva. A sabotagem registrada tira os dois de GET /sessions,
 // e ele fica vermelho (200).
 func TestSessionRoutesRejectDeadFamily(t *testing.T) {
 	a := newAPI(t)

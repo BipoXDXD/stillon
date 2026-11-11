@@ -80,9 +80,9 @@ func TestClientIPFallsBackWhenTheForwardedHeaderIsUnusable(t *testing.T) {
 	}
 }
 
-// TestRateLimitSeparatesClientsBehindATrustedProxy é o dano que o item 21
-// descreve: hoje 20 clientes distintos atrás do proxy dividem um balde só, e
-// o primeiro deles derruba o login de todos os outros.
+// TestRateLimitSeparatesClientsBehindATrustedProxy é o dano do IP cru atrás do
+// proxy: hoje 20 clientes distintos atrás do proxy dividem um balde só, e o
+// primeiro deles derruba o login de todos os outros.
 func TestRateLimitSeparatesClientsBehindATrustedProxy(t *testing.T) {
 	ctx := t.Context()
 	confiaveis := prefixos(t, "10.0.0.0/8")
@@ -113,8 +113,8 @@ func fly(t *testing.T) middleware.Proxies {
 	return middleware.Proxies{Trusted: prefixos(t, "172.16.0.0/12"), Header: "Fly-Client-IP"}
 }
 
-// TestClientIPReadsFlyClientIPFromATrustedProxy é o caminho feliz da D22 do
-// Plano 7.
+// TestClientIPReadsFlyClientIPFromATrustedProxy é o caminho feliz do IP do cliente
+// atrás do Fly.
 func TestClientIPReadsFlyClientIPFromATrustedProxy(t *testing.T) {
 	r := requisicaoDoFly("172.19.0.5:5555", "198.51.100.7")
 	if got := middleware.ClientIP(r, fly(t)); got != "198.51.100.7" {
@@ -194,7 +194,7 @@ func TestRateLimitSeparatesClientsBehindFly(t *testing.T) {
 	}
 }
 
-// Plano 8: todas as saídas de ClientIP têm a mesma forma. Antes, só o
+// Todas as saídas de ClientIP têm a mesma forma. Antes, só o
 // Fly-Client-IP passava por Unmap; o endereço da conexão e o último salto do
 // X-Forwarded-For saíam crus, e o mesmo cliente IPv4 numa pilha dupla ganhava
 // dois ip_hash na auditoria e duas origens em GET /sessions.
@@ -257,7 +257,7 @@ func TestClientIPWritesIPv6InTheCanonicalForm(t *testing.T) {
 	}
 }
 
-// B2 (Plano 10): um proxy que acrescenta uma LINHA nova de X-Forwarded-For
+// Um proxy que acrescenta uma LINHA nova de X-Forwarded-For
 // (o HAProxy com option forwardfor), em vez de concatenar, deixa a linha do
 // cliente em primeiro lugar. As linhas são lidas juntas, na ordem, e o último
 // salto é o da última linha, que é a do proxy.

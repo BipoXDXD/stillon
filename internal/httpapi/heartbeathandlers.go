@@ -243,7 +243,7 @@ type cronPreviewResponse struct {
 var parametrosDaPrevia = []string{"expr", "timezone"}
 
 // CronPreview é GET /heartbeats/cron-preview: quem julga a expressão é o
-// servidor (T11), e o formulário mostra o que ele calculou. Sem estado e sem
+// servidor, e o formulário mostra o que ele calculou. Sem estado e sem
 // recurso: nada de dono a filtrar, mas a rota é autenticada como as outras.
 func (h *HeartbeatHandlers) CronPreview(w http.ResponseWriter, r *http.Request) {
 	if _, ok := usuario(w, r); !ok {

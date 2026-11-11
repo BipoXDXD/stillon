@@ -13,8 +13,8 @@ import (
 )
 
 // As rotas do segundo fator exigem a família do token viva, como /sessions e
-// /auth/password (D11): um access token de sessão encerrada não cadastra,
-// não confirma, não desliga nem troca o 2FA. Morta é 401 unauthorized (D24), antes de
+// /auth/password: um access token de sessão encerrada não cadastra,
+// não confirma, não desliga nem troca o 2FA. Morta é 401 unauthorized, antes de
 // olhar senha ou código.
 func TestTOTPRoutesRejectADeadFamily(t *testing.T) {
 	a := newAPI(t)
@@ -26,7 +26,7 @@ func TestTOTPRoutesRejectADeadFamily(t *testing.T) {
 		"enroll":  {"password": testPass},
 		"confirm": {"code": "000000"},
 		"disable": {"password": testPass, "code": "000000"},
-		// A troca de autenticador (Plano 9, §3.2) entra na mesma cadeia.
+		// A troca de autenticador entra na mesma cadeia.
 		"rotate":         {"password": testPass, "code": "000000"},
 		"rotate/confirm": {"code": "000000"},
 	} {
@@ -47,12 +47,12 @@ func TestTOTPRoutesRejectADeadFamily(t *testing.T) {
 // e o invasor tenta confirmar com o token antigo e um código válido do app
 // dele: se passasse, ficaria dono do 2FA e dos códigos de recuperação.
 //
-// Guarda dupla (D23) no "o 2FA não ficou ligado": a família viva exigida no
+// Guarda dupla no "o 2FA não ficou ligado": a família viva exigida no
 // /totp/confirm (o 401 unauthorized é só dela) e o segredo pendente apagado
 // na mesma transação da troca e do set-password (que também tem prova
 // própria: TestPasswordChangeDropsAPendingTOTPEnrollment, em
 // internal/account). Sabotar só o segredo pendente deixa este teste verde; a
-// sabotagem registrada (Task 11) tira as duas, e o 2FA do invasor liga.
+// sabotagem registrada tira as duas, e o 2FA do invasor liga.
 func TestIntruderCannotConfirmTOTPAfterThePasswordChanges(t *testing.T) {
 	for _, r := range []string{"troca de senha", "set-password"} {
 		t.Run(r, func(t *testing.T) {

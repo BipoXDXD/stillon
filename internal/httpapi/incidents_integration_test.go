@@ -123,13 +123,13 @@ func TestIncidentListRejectsBadQueries(t *testing.T) {
 	}
 }
 
-// ?target_id= é aditivo (Plano 5): combina com status, e o alvo de outro
+// ?target_id= é aditivo: combina com status, e o alvo de outro
 // usuário dá 200 com a lista vazia, não 404.
 //
-// Guarda dupla (D23) na lista vazia do alvo alheio: o t.user_id = $1 de
+// Guarda dupla na lista vazia do alvo alheio: o t.user_id = $1 de
 // ListIncidents e a RLS de targets e incidents (history.List roda em
 // storage.InUserTx). Sabotar só uma deixa este teste verde; a sabotagem
-// registrada (Task 11) tira o filtro E troca o InUserTx pelo InProberTx, e
+// registrada tira o filtro E troca o InUserTx pelo InProberTx, e
 // os incidentes do outro usuário aparecem.
 func TestIncidentListFiltersByTarget(t *testing.T) {
 	a := newAPI(t)

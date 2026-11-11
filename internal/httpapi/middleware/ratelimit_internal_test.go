@@ -14,12 +14,12 @@ import (
 	"github.com/BipoXDXD/stillon/internal/clock"
 )
 
-// TestRateLimitCapsTheNumberOfBuckets trava o item 30, que hoje é inerte
-// APENAS por causa do item 21: com RemoteAddr cru atrás do proxy o mapa tem
-// uma entrada só, e o atacante não consegue variar a chave. No instante em
-// que o ClientIP passa a ler o X-Forwarded-For de um proxy confiável, ele
-// recupera esse controle — e um mapa sem teto vira exaustão de memória.
-// Por isso os dois saem juntos.
+// TestRateLimitCapsTheNumberOfBuckets trava o teto de baldes, que hoje é inerte
+// APENAS por causa do IP cru: com RemoteAddr cru atrás do proxy
+// o mapa tem uma entrada só, e o atacante não consegue variar a chave. No
+// instante em que o ClientIP passa a ler o X-Forwarded-For de um proxy
+// confiável, ele recupera esse controle — e um mapa sem teto vira exaustão de
+// memória. Por isso os dois saem juntos.
 func TestRateLimitCapsTheNumberOfBuckets(t *testing.T) {
 	const teto = 8
 	h := rateLimit(t.Context(), clock.Real{}, porMinuto(60), 5, porIP(Proxies{}), teto)(http.HandlerFunc(

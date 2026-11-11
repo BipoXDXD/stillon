@@ -10,7 +10,7 @@ import (
 	"github.com/BipoXDXD/stillon/internal/account"
 )
 
-// resetarPeloCLI é o que `stillon user reset-2fa` chama (Plano 9, §3.1): o
+// resetarPeloCLI é o que `stillon user reset-2fa` chama: o
 // serviço sem segundo fator e sem chave de IP, como o CLI o monta.
 func resetarPeloCLI(t *testing.T, a *api) {
 	t.Helper()
@@ -48,11 +48,11 @@ func TestLoginAfterReset2FANeedsOnlyThePassword(t *testing.T) {
 }
 
 // O reset-2fa apaga a troca pendente: ligado de novo com outro app, o QR da
-// troca abandonada não confirma (spec do Plano 9, §6, linha 3.2).
+// troca abandonada não confirma.
 //
-// Desde a revisão final do Plano 9 o confirm abaixo, feito de outra família
-// (o reset encerrou a que iniciou), seria 403 mesmo sem a limpeza: quem prova
-// a limpeza é o temPendente, que confere o segredo E a família.
+// Como o confirm abaixo, feito de outra família (o reset encerrou a que
+// iniciou), seria 403 mesmo sem a limpeza: quem prova a limpeza é o
+// temPendente, que confere o segredo E a família.
 func TestReset2FADropsThePendingRotation(t *testing.T) {
 	a := newAPI(t)
 	velho := cadastrarTOTP(t, a, clientWithJar(t))

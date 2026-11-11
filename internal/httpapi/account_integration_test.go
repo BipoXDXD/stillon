@@ -201,8 +201,8 @@ func TestChangePasswordWrongCurrent(t *testing.T) {
 	if !senhaGravadaE(t, a, testPass) {
 		t.Error("a senha mudou com a senha atual errada")
 	}
-	// A senha errada conta no contador da família (A3 do Plano 10), e não no
-	// bloqueio da conta: quem chuta a senha com a sessão não tranca o dono.
+	// A senha errada conta no contador da família, e não no bloqueio da conta:
+	// quem chuta a senha com a sessão não tranca o dono.
 	if n := falhasDeLogin(t, a); n != 0 {
 		t.Errorf("%d falhas no bloqueio da conta, queria 0 (A3)", n)
 	}
@@ -211,10 +211,10 @@ func TestChangePasswordWrongCurrent(t *testing.T) {
 	}
 }
 
-// A conta bloqueada NÃO impede o dono logado de trocar a senha (A3 do Plano
-// 10): o bloqueio é do login. Antes, um anônimo que travasse o login a cada 15
-// min tirava do dono, junto, a troca de senha pelo painel. A troca com as
-// provas certas passa e zera o bloqueio, como sempre zerou (SwapUserHash).
+// A conta bloqueada NÃO impede o dono logado de trocar a senha: o bloqueio é do
+// login. Antes, um anônimo que travasse o login a cada 15 min tirava do dono,
+// junto, a troca de senha pelo painel. A troca com as provas certas passa e
+// zera o bloqueio, como sempre zerou (SwapUserHash).
 func TestChangePasswordIgnoresTheAccountLock(t *testing.T) {
 	a := newAPI(t)
 	_, token := entrar(t, a)
@@ -235,7 +235,7 @@ func TestChangePasswordIgnoresTheAccountLock(t *testing.T) {
 }
 
 // Com o segundo fator ligado, a senha sozinha não troca nada: sem código e com
-// código errado é o 401 genérico. A falha conta na família (A3 do Plano 10), e
+// código errado é o 401 genérico. A falha conta na família, e
 // não no bloqueio da conta.
 func TestChangePasswordRequiresTOTP(t *testing.T) {
 	a := newAPI(t)
@@ -244,7 +244,7 @@ func TestChangePasswordRequiresTOTP(t *testing.T) {
 	token := accessTokenDaSessao(t, a, c)
 
 	// invalid_credentials, e nunca unauthorized: o painel renova a sessão em
-	// unauthorized, e um código digitado errado viraria logout (D24).
+	// unauthorized, e um código digitado errado viraria logout.
 	for nome, corpo := range map[string]map[string]string{
 		"sem código":    {"current_password": testPass, "new_password": senhaNova},
 		"código errado": {"current_password": testPass, "new_password": senhaNova, "totp_code": "000000"},
@@ -367,7 +367,7 @@ func TestChangePasswordDeadFamily(t *testing.T) {
 //
 // É a trava do wiring, pelo Routes de verdade: registrar /auth/password sem o
 // limiteLogin, ou com uma instância própria do limitador, dá 401 no lugar do
-// 429 (sabotagens registradas na Task 11). Os cinco logins recusados com 401,
+// 429 (sabotagens registradas). Os cinco logins recusados com 401,
 // e não 429, são o contraponto: o balde tem 5 fichas, e a sexta requisição,
 // que é a troca, é a que o esgota.
 //

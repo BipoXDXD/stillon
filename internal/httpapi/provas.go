@@ -11,10 +11,10 @@ import (
 	"github.com/BipoXDXD/stillon/internal/httpapi/middleware"
 )
 
-// provasDaFamilia é o contador de provas erradas das rotas autenticadas (A3 do
-// Plano 10) e o que fazer quando ele estoura. Uma instância só, dividida pela
-// troca de senha e pelas cinco rotas do 2FA: com uma por rota, quem chuta a
-// senha multiplicaria o orçamento alternando as rotas.
+// provasDaFamilia é o contador de provas erradas das rotas autenticadas e o que
+// fazer quando ele estoura. Uma instância só, dividida pela troca de senha e
+// pelas cinco rotas do 2FA: com uma por rota, quem chuta a senha multiplicaria
+// o orçamento alternando as rotas.
 type provasDaFamilia struct {
 	contador *auth.FamilyProofs
 	contas   *account.Service

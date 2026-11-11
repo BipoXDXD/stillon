@@ -166,10 +166,9 @@ func TestBandPhraseFollowsTheSharedCases(t *testing.T) {
 	}
 }
 
-// Review Focus 4 da parte 3 do redesign: a página carrega as fontes de
-// /fonts/, no próprio host. A CSP abre font-src 'self' e nada além: a string
-// inteira é conferida, para uma diretiva a mais (script, imagem, outro host)
-// também quebrar o teste.
+// A página carrega as fontes de /fonts/, no próprio host. A CSP abre font-src
+// 'self' e nada além: a string inteira é conferida, para uma diretiva a mais
+// (script, imagem, outro host) também quebrar o teste.
 func TestPublicPagePolicyOpensOnlyTheOwnFonts(t *testing.T) {
 	const quer = "default-src 'none'; style-src 'nonce-abc'; font-src 'self'; " +
 		"frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
@@ -246,7 +245,7 @@ func TestTemplateRendersBandLegendAndDayClasses(t *testing.T) {
 	}
 }
 
-// Review Focus 1: sem itens, a faixa diz isso, e não há lista, legenda nem
+// Sem itens, a faixa diz isso, e não há lista, legenda nem
 // a nota das barras; o histórico continua.
 func TestPublicPageWithoutItems(t *testing.T) {
 	html := renderizar(t, statuspage.View{Title: "Empresa"})
@@ -261,7 +260,7 @@ func TestPublicPageWithoutItems(t *testing.T) {
 	}
 }
 
-// Review Focus 2: um serviço sem nenhum check em 90 dias é a barra inteira
+// Um serviço sem nenhum check em 90 dias é a barra inteira
 // em contorno, com o uptime e o selo dizendo "sem dados".
 func TestComponentWithoutDataIn90Days(t *testing.T) {
 	novo := statuspage.PublicItem{Name: "Novo", State: statuspage.StateUnknown}
@@ -274,7 +273,7 @@ func TestComponentWithoutDataIn90Days(t *testing.T) {
 	)
 }
 
-// Review Focus 3: o maior título que o servidor aceita, sem espaço, quebra em
+// O maior título que o servidor aceita, sem espaço, quebra em
 // qualquer ponto, e o nome do serviço e o detalhe da faixa também.
 func TestLongOrganizationNameWraps(t *testing.T) {
 	titulo := strings.Repeat("Organizacao", 9) + "X"

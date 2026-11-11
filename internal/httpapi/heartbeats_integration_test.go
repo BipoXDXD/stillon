@@ -996,7 +996,7 @@ func TestChangingTheScheduleDoesNotCloseTheIncident(t *testing.T) {
 	}
 }
 
-// D13: retomar zera a falha e recalcula o prazo, e o avaliador fecha o aberto.
+// Retomar zera a falha e recalcula o prazo, e o avaliador fecha o aberto.
 // O aviso diz que foi retomado, porque a tarefa não voltou: nenhum sucesso veio.
 func TestResumingClearsTheFailureAndClosesTheIncident(t *testing.T) {
 	a := newAPI(t)
@@ -1329,7 +1329,7 @@ func TestAckIsScopedToTheHeartbeatAndIdempotent(t *testing.T) {
 	}
 }
 
-// D3: os incidentes de heartbeat não entram em /incidents, cujo contrato exige
+// Os incidentes de heartbeat não entram em /incidents, cujo contrato exige
 // target_id em todo item: o painel de hoje recusaria a lista inteira.
 func TestIncidentsListStaysOnlyWithTargets(t *testing.T) {
 	a := newAPI(t)

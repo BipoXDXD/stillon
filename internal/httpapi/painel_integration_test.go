@@ -24,7 +24,7 @@ func comPainel(d *httpapi.Deps) {
 }
 
 // O wiring, e não a peça: cada prefixo cai na cadeia dele, pelo Routes()
-// inteiro. Os testes de middleware do Plano 1 provaram as peças e deixaram
+// inteiro. Os testes de middleware provaram as peças e deixaram
 // o arquivo de rotas sem trava (lição de teste do projeto); este teste
 // existe para que tirar uma linha da raiz fique vermelho.
 func TestCadaPrefixoCaiNaCadeiaCerta(t *testing.T) {
@@ -37,8 +37,8 @@ func TestCadaPrefixoCaiNaCadeiaCerta(t *testing.T) {
 		tipo    string
 	}{
 		// A API continua respondendo como API, inclusive onde não há rota:
-		// um /api/ que caísse no painel devolveria o index com 200. Desde o
-		// B5 do Plano 10, no envelope JSON.
+		// um /api/ que caísse no painel devolveria o index com 200. Com o
+		// fallback da API, no envelope JSON.
 		{"/api/v1/nao-existe", http.StatusNotFound, false, "application/json; charset=utf-8"},
 		{"/api/v1/me", http.StatusUnauthorized, false, "application/json; charset=utf-8"},
 		{"/healthz", http.StatusOK, false, ""},
@@ -51,7 +51,7 @@ func TestCadaPrefixoCaiNaCadeiaCerta(t *testing.T) {
 		{"/targets/0190a1b2", http.StatusOK, true, "text/html; charset=utf-8"},
 		{"/assets/index-a1b.js", http.StatusOK, false, "text/javascript; charset=utf-8"},
 		// A página pública (/p/…) carrega as fontes daqui, no mesmo host:
-		// é o que o font-src 'self' dela libera (redesign, PR 7).
+		// é o que o font-src 'self' dela libera.
 		{"/fonts/inter-latin.woff2", http.StatusOK, false, "font/woff2"},
 	}
 	for _, c := range casos {
