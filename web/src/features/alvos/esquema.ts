@@ -174,55 +174,77 @@ export function esquemaDoAlvo(base?: { url: string; nomesDeHeaders?: readonly st
       validarRegra(v, base?.nomesDeHeaders ?? [], ctx)
       const erroDasTags = erroNasTags(v.tagsTexto)
       if (erroDasTags) ctx.addIssue({ code: 'custom', path: ['tagsTexto'], message: erroDasTags })
-      // D3 do Plano 2: o jitter de −10% antecipa a próxima sonda para 90% do
-      // intervalo; um timeout maior deixaria duas sondas do alvo em voo.
-      // Como em validate.go, só com intervalo e timeout nas faixas: senão o
-      // erro é do próprio campo, não desta regra.
-      const intervaloOK = v.interval_sec >= 30 && v.interval_sec <= 86400
-      const timeoutOK = v.timeout_ms >= 1000 && v.timeout_ms <= 30000
-      if (intervaloOK && timeoutOK && v.timeout_ms * 10 >= v.interval_sec * 9000) {
-        ctx.addIssue({ code: 'custom', path: ['timeout_ms'], message: 'Tem de ser menor que 90% do intervalo.' })
-      }
-      if (v.lentidao === 'personalizado') {
-        const n = v.degraded_threshold_ms
-        if (Number.isNaN(n)) {
-          ctx.addIssue({ code: 'custom', path: ['degraded_threshold_ms'], message: 'Informe um número.' })
-        } else if (!Number.isInteger(n) || n < 1 || n > 60000) {
-          ctx.addIssue({ code: 'custom', path: ['degraded_threshold_ms'], message: 'Entre 1 e 60000 ms.' })
-        }
-      }
-      if (v.modoHeaders !== 'substituir') return
-      if (base && v.headers.length === 0) {
-        ctx.addIssue({
-          code: 'custom',
-          path: ['headers'],
-          message: 'Adicione ao menos um header, ou escolha “Remover todos”.',
-        })
-      }
-      const vistos = new Set<string>()
-      let total = 0
-      if (v.headers.length > 20) ctx.addIssue({ code: 'custom', path: ['headers'], message: 'Até 20 headers.' })
-      v.headers.forEach((h, i) => {
-        const nome = h.nome.toLowerCase()
-        if (!NOME_DE_HEADER.test(h.nome)) {
-          ctx.addIssue({ code: 'custom', path: ['headers', i, 'nome'], message: 'Nome de header inválido.' })
-        } else if (PROIBIDOS.has(nome)) {
-          ctx.addIssue({
-            code: 'custom',
-            path: ['headers', i, 'nome'],
-            message: 'Este header é controlado pelo monitor.',
-          })
-        } else if (vistos.has(nome)) {
-          ctx.addIssue({ code: 'custom', path: ['headers', i, 'nome'], message: 'Header repetido.' })
-        }
-        vistos.add(nome)
-        if (bytes(h.valor) > 1024) {
-          ctx.addIssue({ code: 'custom', path: ['headers', i, 'valor'], message: 'Até 1 KiB.' })
-        }
-        total += bytes(h.nome) + bytes(h.valor)
-      })
-      if (total > 8192) ctx.addIssue({ code: 'custom', path: ['headers'], message: 'Os headers somam mais de 8 KiB.' })
+      validarTimeoutNoIntervalo(v, ctx)
+      validarLimiarDaLentidao(v, ctx)
+      if (v.modoHeaders === 'substituir') validarHeadersSubstituidos(v.headers, base !== undefined, ctx)
     })
+}
+
+// D3 do Plano 2: o jitter de −10% antecipa a próxima sonda para 90% do
+// intervalo; um timeout maior deixaria duas sondas do alvo em voo.
+// Como em validate.go, só com intervalo e timeout nas faixas: senão o
+// erro é do próprio campo, não desta regra.
+function validarTimeoutNoIntervalo(
+  v: { interval_sec: number; timeout_ms: number },
+  ctx: z.RefinementCtx,
+) {
+  const intervaloOK = v.interval_sec >= 30 && v.interval_sec <= 86400
+  const timeoutOK = v.timeout_ms >= 1000 && v.timeout_ms <= 30000
+  if (intervaloOK && timeoutOK && v.timeout_ms * 10 >= v.interval_sec * 9000) {
+    ctx.addIssue({ code: 'custom', path: ['timeout_ms'], message: 'Tem de ser menor que 90% do intervalo.' })
+  }
+}
+
+// O limiar só é conferido com a lentidão personalizada; nos outros modos o
+// campo fica escondido e o valor dele não conta.
+function validarLimiarDaLentidao(
+  v: { lentidao: string; degraded_threshold_ms: number },
+  ctx: z.RefinementCtx,
+) {
+  if (v.lentidao !== 'personalizado') return
+  const n = v.degraded_threshold_ms
+  if (Number.isNaN(n)) {
+    ctx.addIssue({ code: 'custom', path: ['degraded_threshold_ms'], message: 'Informe um número.' })
+  } else if (!Number.isInteger(n) || n < 1 || n > 60000) {
+    ctx.addIssue({ code: 'custom', path: ['degraded_threshold_ms'], message: 'Entre 1 e 60000 ms.' })
+  }
+}
+
+// A lista só é conferida ao substituir. Na edição, uma lista vazia seria um
+// headers: {} que apaga tudo em silêncio.
+function validarHeadersSubstituidos(
+  headers: readonly { nome: string; valor: string }[],
+  naEdicao: boolean,
+  ctx: z.RefinementCtx,
+) {
+  if (naEdicao && headers.length === 0) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['headers'],
+      message: 'Adicione ao menos um header, ou escolha “Remover todos”.',
+    })
+  }
+  const vistos = new Set<string>()
+  let total = 0
+  if (headers.length > 20) ctx.addIssue({ code: 'custom', path: ['headers'], message: 'Até 20 headers.' })
+  headers.forEach((h, i) => {
+    const erroDoNome = erroDoNomeDeHeader(h.nome, vistos)
+    if (erroDoNome) ctx.addIssue({ code: 'custom', path: ['headers', i, 'nome'], message: erroDoNome })
+    vistos.add(h.nome.toLowerCase())
+    if (bytes(h.valor) > 1024) {
+      ctx.addIssue({ code: 'custom', path: ['headers', i, 'valor'], message: 'Até 1 KiB.' })
+    }
+    total += bytes(h.nome) + bytes(h.valor)
+  })
+  if (total > 8192) ctx.addIssue({ code: 'custom', path: ['headers'], message: 'Os headers somam mais de 8 KiB.' })
+}
+
+function erroDoNomeDeHeader(nome: string, vistos: ReadonlySet<string>): string | null {
+  if (!NOME_DE_HEADER.test(nome)) return 'Nome de header inválido.'
+  const minusculo = nome.toLowerCase()
+  if (PROIBIDOS.has(minusculo)) return 'Este header é controlado pelo monitor.'
+  if (vistos.has(minusculo)) return 'Header repetido.'
+  return null
 }
 
 type CamposDaRegra = {
