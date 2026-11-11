@@ -1,11 +1,16 @@
 package prober
 
 import (
+	"context"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"slices"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -97,5 +102,76 @@ func TestNewEntregaAListaDaHospedagemAoCliente(t *testing.T) {
 	}
 	if !errors.Is(err, safedial.ErrBlocked) || !strings.Contains(err.Error(), "pertence a 127.0.0.1/32") {
 		t.Errorf("erro = %v, queria ErrBlocked citando a faixa da hospedagem 127.0.0.1/32", err)
+	}
+}
+
+// O caminho de produção: Probe disca por clienteDaSonda, que clona o
+// transporte de New. O destino na faixa da hospedagem é recusado e não recebe
+// conexão. Como o Result guarda só o ErrorKind, e a 127.0.0.0/8 fixa também
+// dá KindBlocked, o teste embrulha o DialContext do modelo para ler o erro
+// que o transporte da sonda de fato devolveu: ele precisa citar a faixa da
+// hospedagem. Um clienteDaSonda que montasse um transporte novo, sem as
+// faixas, perderia o embrulho ou a citação, e o teste cairia.
+func TestProbeRecusaAHospedagemNoTransporteDaSonda(t *testing.T) {
+	var conexoes atomic.Int32
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) }))
+	srv.Config.ConnState = func(_ net.Conn, estado http.ConnState) {
+		if estado == http.StateNew {
+			conexoes.Add(1)
+		}
+	}
+	srv.Start()
+	t.Cleanup(srv.Close)
+	s := novoSemBanco(t, []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")})
+	modelo, erros := espiarDial(t, s.client)
+
+	r := Probe(context.Background(), modelo, Spec{
+		URL: srv.URL, Method: http.MethodGet, Timeout: 5 * time.Second, ExpectedStatus: http.StatusOK,
+	})
+
+	if r.Status != StatusDown || r.ErrorKind != KindBlocked {
+		t.Errorf("Probe = %s/%q, queria down/%q", r.Status, r.ErrorKind, KindBlocked)
+	}
+	if n := conexoes.Load(); n != 0 {
+		t.Errorf("o servidor na faixa da hospedagem recebeu %d conexões, queria 0", n)
+	}
+	vistos := erros()
+	if len(vistos) == 0 {
+		t.Fatal("a sonda não discou pelo transporte de New: nenhum dial passou pelo modelo")
+	}
+	for _, err := range vistos {
+		if !errors.Is(err, safedial.ErrBlocked) || !strings.Contains(err.Error(), "pertence a 127.0.0.1/32") {
+			t.Errorf("erro do dial = %v, queria ErrBlocked citando a faixa da hospedagem 127.0.0.1/32", err)
+		}
+	}
+}
+
+// espiarDial devolve uma cópia de modelo cujo transporte disca pelo
+// DialContext original e guarda cada erro, e a função que os lê.
+func espiarDial(t *testing.T, modelo *http.Client) (*http.Client, func() []error) {
+	t.Helper()
+	base, ok := modelo.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("transporte de New = %T, queria *http.Transport", modelo.Transport)
+	}
+	var mu sync.Mutex
+	var erros []error
+	discar := base.DialContext
+	espiao := base.Clone()
+	espiao.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
+		conn, err := discar(ctx, network, address)
+		if err != nil {
+			mu.Lock()
+			erros = append(erros, err)
+			mu.Unlock()
+		}
+		return conn, err
+	}
+	copia := *modelo
+	copia.Transport = espiao
+	return &copia, func() []error {
+		mu.Lock()
+		defer mu.Unlock()
+		return slices.Clone(erros)
 	}
 }

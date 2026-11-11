@@ -242,3 +242,13 @@ func TestDialContextBoundsTheWholeDialOnce(t *testing.T) {
 		t.Errorf("prazo do dial = início + %v, queria início + %v", prazos[0].Sub(inicio), MaxProbeTimeout)
 	}
 }
+
+// O teste acima monta o próprio dialer, então não prova o de produção. Um
+// Timeout ou Deadline em novoDialer valeria por tentativa e somaria prazos
+// em discarConjunto, por fora do prazo único do transporte.
+func TestNovoDialerNaoTemPrazoProprio(t *testing.T) {
+	d := novoDialer(func(string) error { return nil })
+	if d.Timeout != 0 || !d.Deadline.IsZero() {
+		t.Errorf("novoDialer: Timeout = %v, Deadline = %v; queria os dois zerados", d.Timeout, d.Deadline)
+	}
+}
