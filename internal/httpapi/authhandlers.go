@@ -382,10 +382,13 @@ func (h *AuthHandlers) meta(r *http.Request) auth.Meta {
 
 // userAgentGravavel deixa o cabeçalho aceitável para a coluna text, que recusa
 // byte fora de UTF-8 e NUL. O valor é só informativo, então não justifica
-// recusar um login: o trecho ilegível vira U+FFFD e o resto se mantém.
+// recusar um login: o trecho ilegível vira U+FFFD e o resto se mantém. O corte
+// em auth.MaxUserAgent vem depois, para contar os caracteres que de fato vão
+// para a coluna.
 func userAgentGravavel(userAgent string) string {
 	const substituto = "�"
-	return strings.ReplaceAll(strings.ToValidUTF8(userAgent, substituto), "\x00", substituto)
+	legivel := strings.ReplaceAll(strings.ToValidUTF8(userAgent, substituto), "\x00", substituto)
+	return auth.TruncateUserAgent(legivel)
 }
 
 // internal registra o erro real e devolve ao cliente apenas o envelope
