@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { http, HttpResponse } from 'msw'
 import { describe, expect, it } from 'vitest'
 import { PING_URL } from '@/test/api-falsa'
@@ -239,6 +239,20 @@ describe('incidentes do heartbeat', () => {
     await waitFor(() => expect(botao).toHaveAttribute('aria-disabled', 'true'))
     await r.usuario.click(botao)
     soltar()
+    await within(s).findByText(/lembretes parados/)
+    expect(r.falsa.chamadas('POST /heartbeats/:id/incidents/:incident/ack')).toBe(1)
+  })
+
+  // Dois cliques antes de o React redesenhar: a guarda não pode depender do
+  // valor do último render.
+  it('dois cliques no mesmo ciclo de render mandam um só POST de ack', async () => {
+    const r = await detalheCom({ incidentes: [{ id: 'i1' }] })
+    const s = await secao('Incidentes')
+    const botao = await within(s).findByRole('button', { name: /^Reconhecer o incidente/ })
+    act(() => {
+      fireEvent.click(botao)
+      fireEvent.click(botao)
+    })
     await within(s).findByText(/lembretes parados/)
     expect(r.falsa.chamadas('POST /heartbeats/:id/incidents/:incident/ack')).toBe(1)
   })

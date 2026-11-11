@@ -100,11 +100,9 @@ export function FaixaDeEstado({ item, incidentes, agora, aoSumir, aoErrar }: Pro
             ref={botao}
             // aria-disabled, e não disabled: o botão desabilitado perderia o
             // foco para o <body> enquanto o POST voa.
-            aria-disabled={reconhecendo.size > 0 || undefined}
+            aria-disabled={reconhecendo.has(aberto.id) || undefined}
             aria-describedby={idDaAjuda}
-            onClick={() => {
-              if (reconhecendo.size === 0) void reconhecer(aberto.id)
-            }}
+            onClick={() => void reconhecer(aberto.id)}
           >
             Reconhecer
           </Botao>
