@@ -28,6 +28,28 @@ A confirmação está em [SYNC-2.0.2.md](SYNC-2.0.2.md); instalação coordenada
 trava global, orçamento de storage, reconciliação e rollback permanecem em [ISOLATION.md](ISOLATION.md).
 Este registro não instala ou ativa o receptor na VPS.
 
+## Variável obrigatória nova: expand/contract
+
+O release automático troca só a imagem.
+O `app.json`, que decide quais variáveis chegam ao contêiner,
+fica preso ao commit de infraestrutura escolhido no recurso.
+Uma imagem que passa a exigir algo que só o `app.json` novo entrega
+(variável nova, por exemplo) não sobe com o `app.json` antigo.
+
+Mudança assim segue expand/contract, em três publicações:
+
+1. Código tolerante: sem a variável, só registra aviso. Merge e release.
+2. Infraestrutura: atualizar o commit de infraestrutura no recurso
+   e publicar o recurso.
+3. Só então o código que exige a variável. Merge e release.
+
+Alternativa aceita: atualizar o commit de infraestrutura
+antes do merge do código que exige,
+desde que o `app.json` novo funcione com a imagem atual.
+
+Origem: [postmortem de 2026-11-10](../../../docs/postmortems/2026-11-10-release-261-variavel-obrigatoria.md)
+(o #261 publicou a imagem antes da infraestrutura e o site caiu por 13 min).
+
 ## CI do commit destinado à publicação
 
 Publicações manuais também exigem o SHA completo da main atual e a CI de push desse mesmo
