@@ -10,18 +10,27 @@ INSERT INTO targets (id, user_id, name, url, method, interval_sec, timeout_ms,
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17);
 
 -- name: GetTarget :one
-SELECT * FROM targets WHERE user_id = $1 AND id = $2;
+SELECT id, user_id, name, url, method, interval_sec, timeout_ms,
+       expected_status, headers_enc, degraded_threshold_ms, enabled, next_run_at,
+       created_at, tls_warn, content_mode, content_value, content_json_pointer
+  FROM targets WHERE user_id = $1 AND id = $2;
 
 -- FOR UPDATE, e não FOR NO KEY UPDATE: a gravação do sondador
 -- (LockTargetProbeSpec, FOR KEY SHARE) precisa esperar o PATCH inteiro para
 -- ver a URL nova (E2 da revisão de 2026-10-14).
 -- name: GetTargetForUpdate :one
-SELECT * FROM targets WHERE user_id = $1 AND id = $2 FOR UPDATE;
+SELECT id, user_id, name, url, method, interval_sec, timeout_ms,
+       expected_status, headers_enc, degraded_threshold_ms, enabled, next_run_at,
+       created_at, tls_warn, content_mode, content_value, content_json_pointer
+  FROM targets WHERE user_id = $1 AND id = $2 FOR UPDATE;
 
 -- Paginação por cursor (spec §9.1): o id é UUIDv7, ordenável por tempo, e o
 -- cursor é o último id da página anterior.
 -- name: ListTargets :many
-SELECT * FROM targets
+SELECT id, user_id, name, url, method, interval_sec, timeout_ms,
+       expected_status, headers_enc, degraded_threshold_ms, enabled, next_run_at,
+       created_at, tls_warn, content_mode, content_value, content_json_pointer
+  FROM targets
  WHERE user_id = sqlc.arg(user_id)
    AND (sqlc.narg(before)::uuid IS NULL OR id < sqlc.narg(before)::uuid)
  ORDER BY id DESC

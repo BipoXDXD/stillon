@@ -41,7 +41,9 @@ UPDATE notif_channels SET enabled = sqlc.arg(enabled)
  WHERE user_id = sqlc.arg(user_id) AND id = sqlc.arg(id);
 
 -- name: GetChannel :one
-SELECT * FROM notif_channels WHERE user_id = $1 AND id = $2;
+SELECT id, user_id, kind, config_enc, verified_at, verify_token_hash,
+       verify_expires_at, enabled, created_at
+  FROM notif_channels WHERE user_id = $1 AND id = $2;
 
 -- name: DeleteChannel :execrows
 DELETE FROM notif_channels WHERE user_id = $1 AND id = $2;

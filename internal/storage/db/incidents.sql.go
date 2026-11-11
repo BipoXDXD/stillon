@@ -131,7 +131,9 @@ func (q *Queries) ExistingTargetIDs(ctx context.Context, ids []uuid.UUID) ([]uui
 }
 
 const getOpenIncident = `-- name: GetOpenIncident :one
-SELECT id, target_id, started_at, resolved_at, cause, ack_at, open_notified_at, close_notified_at, heartbeat_id, closed_by_resume FROM incidents WHERE target_id = $1::uuid AND resolved_at IS NULL
+SELECT id, target_id, started_at, resolved_at, cause, ack_at, open_notified_at,
+       close_notified_at, heartbeat_id, closed_by_resume
+  FROM incidents WHERE target_id = $1::uuid AND resolved_at IS NULL
 `
 
 func (q *Queries) GetOpenIncident(ctx context.Context, targetID uuid.UUID) (Incident, error) {
@@ -253,7 +255,9 @@ func (q *Queries) ListIncidents(ctx context.Context, arg ListIncidentsParams) ([
 }
 
 const lockTargetHealth = `-- name: LockTargetHealth :one
-SELECT target_id, consecutive_failures, consecutive_successes, streak_since, last_checked_at FROM target_health WHERE target_id = $1 FOR UPDATE
+SELECT target_id, consecutive_failures, consecutive_successes, streak_since,
+       last_checked_at
+  FROM target_health WHERE target_id = $1 FOR UPDATE
 `
 
 // A trava da linha serializa duas sondas do mesmo alvo gravando ao mesmo

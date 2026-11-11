@@ -12,7 +12,12 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13);
 -- (O nome evita "token": o gosec lê a constante gerada como credencial
 -- embutida, G101.)
 -- name: LockHeartbeatForPing :one
-SELECT * FROM heartbeats WHERE ping_token_hash = $1 FOR UPDATE;
+SELECT id, user_id, name, ping_token_hash, period_sec, cron_expr, timezone,
+       grace_sec, enabled, created_at, deadline_at, last_ping_at,
+       last_success_at, last_start_at, last_signal, failing_since,
+       last_incident_at, resumed_at, last_runtime_ms, description, last_run_id,
+       ping_resumes
+  FROM heartbeats WHERE ping_token_hash = $1 FOR UPDATE;
 
 -- name: OpenHeartbeatIncident :exec
 INSERT INTO incidents (id, heartbeat_id, started_at, cause)
@@ -52,7 +57,12 @@ DELETE FROM heartbeat_events e
                 OFFSET sqlc.arg(max_events)::int LIMIT 1);
 
 -- name: GetHeartbeat :one
-SELECT * FROM heartbeats WHERE user_id = $1 AND id = $2;
+SELECT id, user_id, name, ping_token_hash, period_sec, cron_expr, timezone,
+       grace_sec, enabled, created_at, deadline_at, last_ping_at,
+       last_success_at, last_start_at, last_signal, failing_since,
+       last_incident_at, resumed_at, last_runtime_ms, description, last_run_id,
+       ping_resumes
+  FROM heartbeats WHERE user_id = $1 AND id = $2;
 
 -- O log do dono, do mais novo ao mais velho. O id é UUIDv7, e o cursor é o
 -- último id da página anterior.
@@ -149,7 +159,12 @@ SELECT sqlc.embed(h), x.id AS open_incident_id
 -- FOR UPDATE: o PATCH lê a linha e recalcula o prazo, e um ping no meio se
 -- perderia sem a trava.
 -- name: GetHeartbeatForUpdate :one
-SELECT * FROM heartbeats WHERE user_id = $1 AND id = $2 FOR UPDATE;
+SELECT id, user_id, name, ping_token_hash, period_sec, cron_expr, timezone,
+       grace_sec, enabled, created_at, deadline_at, last_ping_at,
+       last_success_at, last_start_at, last_signal, failing_since,
+       last_incident_at, resumed_at, last_runtime_ms, description, last_run_id,
+       ping_resumes
+  FROM heartbeats WHERE user_id = $1 AND id = $2 FOR UPDATE;
 
 -- name: UpdateHeartbeat :exec
 UPDATE heartbeats

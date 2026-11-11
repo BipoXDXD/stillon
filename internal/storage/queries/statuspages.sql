@@ -2,7 +2,7 @@
 -- user_id; as públicas, sob InPublicTx (somente leitura, escopo do slug).
 
 -- name: GetStatusPage :one
-SELECT * FROM status_pages WHERE user_id = $1;
+SELECT id, user_id, slug, title, published, created_at FROM status_pages WHERE user_id = $1;
 
 -- A trava do PATCH: sem ela, dois PATCH simultâneos leem a mesma versão, e
 -- o segundo regrava os campos que o primeiro mudou (achado da revisão).
