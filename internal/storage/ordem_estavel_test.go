@@ -76,22 +76,25 @@ func TestListLiveFamiliesIsOrderedByFamilyThenNewestRow(t *testing.T) {
 	conn := conexaoSemRLS(t)
 	famBaixa, famMedia, famAlta := novoID(), novoID(), novoID()
 	instante := agora.Add(-time.Minute)
-	insere := func(familia uuid.UUID, agente string) {
+	insere := func(familia uuid.UUID, criada time.Time, agente string) {
 		t.Helper()
 		id := novoID()
 		if _, err := conn.Exec(ctx,
 			`INSERT INTO sessions (id, user_id, family_id, token_hash, expires_at, created_at, user_agent)
 			 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-			id, dono, familia, hashDe(id.String()), agora.Add(time.Hour), instante, agente); err != nil {
+			id, dono, familia, hashDe(id.String()), agora.Add(time.Hour), criada, agente); err != nil {
 			t.Fatalf("criar sessão: %v", err)
 		}
 	}
-	// Inserção do maior family_id para o menor e, no empate da família do
-	// meio, do menor id para o maior: o contrário da ordem exigida.
-	insere(famAlta, "alta")
-	insere(famMedia, "media-id-menor")
-	insere(famMedia, "media-id-maior")
-	insere(famBaixa, "baixa")
+	// Inserção do maior family_id para o menor e, na família do meio, do menor
+	// id para o maior: o contrário da ordem exigida. A última linha da família
+	// do meio é a mais VELHA e tem o MAIOR id: só created_at DESC a põe por
+	// último (com ASC, ou só com id DESC, ela subiria).
+	insere(famAlta, instante, "alta")
+	insere(famMedia, instante, "media-id-menor")
+	insere(famMedia, instante, "media-id-maior")
+	insere(famBaixa, instante, "baixa")
+	insere(famMedia, instante.Add(-time.Hour), "media-velha-id-maior")
 
 	linhas, err := db.New(conn).ListLiveFamilies(ctx, db.ListLiveFamiliesParams{UserID: dono, Now: agora})
 	if err != nil {
@@ -101,7 +104,7 @@ func TestListLiveFamiliesIsOrderedByFamilyThenNewestRow(t *testing.T) {
 	for _, l := range linhas {
 		obtido = append(obtido, l.UserAgent)
 	}
-	quer := []string{"baixa", "media-id-maior", "media-id-menor", "alta"}
+	quer := []string{"baixa", "media-id-maior", "media-id-menor", "media-velha-id-maior", "alta"}
 	if !slices.Equal(obtido, quer) {
 		t.Errorf("ordem das famílias vivas = %v, queria %v (family_id, depois created_at e id decrescentes)", obtido, quer)
 	}
