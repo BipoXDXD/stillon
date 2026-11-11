@@ -21,11 +21,11 @@ func (f *FamilyProofs) Len() int {
 	return len(f.contas)
 }
 
-// RotacaoDe expõe o identificador de troca (A7) aos testes do pacote, que o
+// RotacaoDe expõe o identificador de troca aos testes do pacote, que o
 // calculam a partir do pendente gravado.
 func RotacaoDe(pendente []byte) string { return rotacaoDe(pendente) }
 
-// ConsumirTimestep expõe o consumo do timestep (A4) para o teste que prova o
+// ConsumirTimestep expõe o consumo do timestep para o teste que prova o
 // compare-and-swap no segredo sem precisar encaixar uma troca no meio de um
 // Verify.
 func (s *TOTP) ConsumirTimestep(ctx context.Context, userID uuid.UUID, step int64, sealed []byte) error {

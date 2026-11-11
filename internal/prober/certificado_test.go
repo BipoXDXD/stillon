@@ -171,7 +171,7 @@ func TestValidadeDoHost(t *testing.T) {
 			dias(20), true,
 		},
 		{
-			// T3: o certificado apresentado não vale sem cadeia verificada.
+			// O certificado apresentado não vale sem cadeia verificada.
 			// Sabotagem: cair em PeerCertificates quando VerifiedChains vem vazio.
 			"handshake sem cadeia verificada não vale, mesmo com certificado apresentado",
 			func(t *testing.T) []tls.ConnectionState {

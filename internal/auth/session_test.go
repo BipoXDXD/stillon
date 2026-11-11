@@ -357,7 +357,7 @@ func TestConcurrentRotationLetsOnlyOneWin(t *testing.T) {
 	}
 }
 
-// A chave do HMAC de IP é validada na construção (ruling R27). Sem isso, a
+// A chave do HMAC de IP é validada na construção. Sem isso, a
 // chave curta só apareceria como panic de crypto.HashIP dentro do handler,
 // no primeiro login em produção, em vez de na partida do processo.
 func TestNewManagerRejectsShortIPKey(t *testing.T) {
@@ -449,8 +449,8 @@ func TestRotateReturnsCommitErrorInsteadOfReuse(t *testing.T) {
 
 // O refresh token nunca pode chegar em claro ao banco (spec §5.2). Hoje a
 // propriedade sobreviveria por acidente — gravar em claro e buscar em claro
-// continua funcionando —, então ela precisa de trava própria (ruling R31), do
-// mesmo jeito que o ip_hash.
+// continua funcionando —, então ela precisa de trava própria, do mesmo
+// jeito que o ip_hash.
 func TestTokenIsStoredHashed(t *testing.T) {
 	mgr, pool, _, userID := setup(t)
 	ctx := context.Background()
@@ -525,7 +525,7 @@ func TestLogoutKillsTheWholeFamily(t *testing.T) {
 	}
 }
 
-// R28 preservado: logout continua idempotente e não diz nada sobre a
+// Logout continua idempotente e não diz nada sobre a
 // existência do token.
 func TestRevokingAnUnknownTokenStaysSilent(t *testing.T) {
 	mgr, _, _, _ := setup(t)
@@ -601,7 +601,7 @@ func (s storeDeTx) InTx(ctx context.Context, fn func(context.Context, auth.Tx) e
 }
 
 // A trava do usuário vem antes da leitura do hash: é ela que fecha a corrida
-// com uma redefinição de senha (D1 do Plano 5).
+// com uma redefinição de senha.
 func TestIssueLocksTheUserBeforeReadingTheHash(t *testing.T) {
 	agora := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
 	var ordem []string

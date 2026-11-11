@@ -17,7 +17,7 @@ import (
 	"time"
 )
 
-// A recusa das chaves de demonstração (D14 do Plano 7) só protege se as
+// A recusa das chaves de demonstração só protege se as
 // chaves do compose.yaml forem ESTAS. Trocar uma chave no compose sem trocar
 // aqui deixaria o compose copiado para produção subir com uma chave pública.
 func TestComposeUsesTheDemoKeys(t *testing.T) {
@@ -39,7 +39,7 @@ func TestComposeUsesTheDemoKeys(t *testing.T) {
 }
 
 // O Postgres de produção, do compose, da perna 18 do CI, dos testes e do ensaio
-// de restauração tem de ser o MESMO digest (D29 do Plano 7). O Dependabot
+// de restauração tem de ser o MESMO digest. O Dependabot
 // atualiza o deploy/vps/db/Dockerfile, o deploy/vps/compose.prod.yaml e o
 // compose.yaml; as outras strings são a mão, e este teste pega a que ficou para
 // trás. Compara os digests entre si, sem fixar o valor: a troca de versão não
@@ -126,7 +126,7 @@ func servicoDe(t *testing.T, arquivo, nome string) string {
 	return string(m[1])
 }
 
-// D1 (Plano 10, §3.4; banco C1 da revisão): depois de um reboot, ou de um
+// Depois de um reboot, ou de um
 // restart do Docker, o daemon só religa os contêineres com política de
 // restart. O app voltava e o db não: o monitor ficava parado e calado. O
 // seed não entra: ele roda uma vez e sai.
@@ -142,7 +142,7 @@ func TestComposeDBRestartsWithTheHost(t *testing.T) {
 	}
 }
 
-// D1 (Plano 10, §3.4; banco S1 da revisão): quem copia o compose.yaml para
+// Quem copia o compose.yaml para
 // um servidor leva junto o usuário de demonstração e as chaves públicas. O
 // cabeçalho diz, antes de qualquer serviço, que ele é só da máquina local.
 func TestComposeHeaderSaysItIsLocalOnly(t *testing.T) {
@@ -156,7 +156,7 @@ func TestComposeHeaderSaysItIsLocalOnly(t *testing.T) {
 	}
 	// "atrás de um proxy": o seed e o boot olham só a PUBLIC_BASE_URL
 	// declarada. O compose copiado para um servidor, com um proxy na frente e
-	// a URL ainda local, passa pelos dois (I1 da revisão do Plano 10), e o
+	// a URL ainda local, passa pelos dois, e o
 	// cabeçalho não pode prometer proteção que não existe.
 	for _, frase := range []string{"SÓ PARA A MÁQUINA LOCAL", "NUNCA EM SERVIDOR", "compose de produção", "atrás de um proxy"} {
 		if !bytes.Contains(cabecalho, []byte(frase)) {
@@ -165,7 +165,7 @@ func TestComposeHeaderSaysItIsLocalOnly(t *testing.T) {
 	}
 }
 
-// C1 da revisão de 2026-10-14: sem stop_grace_period, o Docker manda SIGKILL
+// Sem stop_grace_period, o Docker manda SIGKILL
 // 10 s depois do SIGTERM, e o app planeja até shutdownGrace (15 s) para
 // terminar as sondas em voo e o lote do dispatcher. No `up` de um deploy, o
 // check em gravação se perdia e um aviso já entregue, mas ainda não marcado,

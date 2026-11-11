@@ -14,7 +14,7 @@ import (
 	"github.com/BipoXDXD/stillon/internal/storage/db"
 )
 
-// D9/M1 do Plano 2: apagar um alvo PARADO não passa pelo sondador. A série
+// Apagar um alvo PARADO não passa pelo sondador. A série
 // dele só some na reconciliação.
 func TestReconcileForgetsSeriesOfDeletedTargets(t *testing.T) {
 	srv, client := servidorLiberado(t, func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })

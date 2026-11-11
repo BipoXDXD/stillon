@@ -96,7 +96,7 @@ func TestSnapshotIsolatesTests(t *testing.T) {
 	}
 }
 
-// Item 9b do Plano 1: com --role=api e --role=prober subindo ao mesmo tempo,
+// Com --role=api e --role=prober subindo ao mesmo tempo,
 // os dois processos migram o mesmo banco. Sem o advisory lock, o segundo
 // tenta aplicar a mesma migration e cai no boot. O banco é novo e vazio
 // porque o de testdb.New já nasce migrado, e aí não haveria corrida.

@@ -156,7 +156,7 @@ func mustHashWith(t *testing.T, plain string, m, tt uint32, p uint8) string {
 }
 
 // HashPasswordWith recusa, com erro e sem panic, o que o decodeHash recusaria
-// ao ler (Plano 8). A perna positiva é o menor valor aceito em cada eixo.
+// ao ler. A perna positiva é o menor valor aceito em cada eixo.
 func TestHashPasswordWithRejectsOutOfRangeParams(t *testing.T) {
 	sal := []byte("saltsaltsaltsalt")
 	casos := []struct {

@@ -9,9 +9,9 @@ import (
 	"testing"
 )
 
-// D1 (Plano 10, §3.4): o seed do compose cria o único usuário com a senha de
+// O seed do compose cria o único usuário com a senha de
 // demonstração, que está no repositório. Num servidor, esse passa a ser O
-// usuário (banco S1 da revisão). O seed.sh só roda com PUBLIC_BASE_URL http
+// usuário. O seed.sh só roda com PUBLIC_BASE_URL http
 // num host de loopback, a mesma regra que o boot usa para aceitar as chaves
 // de demo (hostLocal), e recusa ANTES de chamar o binário.
 //

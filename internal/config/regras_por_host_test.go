@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// D-T3: CONTENT_RULES_PER_HOST é o teto de alvos com regra de conteúdo por
+// CONTENT_RULES_PER_HOST é o teto de alvos com regra de conteúdo por
 // host de destino. Sem a variável, 5; definida, um inteiro de 1 a 100. Fora
 // disso o boot recusa, nomeando a variável: zero barraria toda regra, e acima
 // de 100 (o teto de alvos por usuário) o valor não teria efeito.

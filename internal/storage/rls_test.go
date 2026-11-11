@@ -60,7 +60,7 @@ func TestWithoutScopeNothingIsVisible(t *testing.T) {
 	}
 }
 
-// Review Focus 1. Depois do primeiro SET LOCAL da sessão, o GUC volta como
+// Depois do primeiro SET LOCAL da sessão, o GUC volta como
 // string vazia, e não NULL. Um pool reusa a conexão; a próxima consulta nela
 // precisa funcionar. (Sem as aspas simples duplas aqui: o gofmt as troca por
 // aspas tipográficas em comentário de documentação.)
@@ -229,7 +229,7 @@ func TestChecksAreVisibleOnlyThroughTheirTarget(t *testing.T) {
 }
 
 // O sondador depende deste código para reconhecer "o alvo sumiu no meio da
-// sonda" (Task 7). O natural seria esperar a FK (23503); a RLS chega antes.
+// sonda". O natural seria esperar a FK (23503); a RLS chega antes.
 func TestCheckForVanishedTargetFailsWithRLSCode(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()

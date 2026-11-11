@@ -11,8 +11,8 @@ import (
 	"github.com/BipoXDXD/stillon/internal/clock"
 )
 
-// A3 (Plano 10, §3.1): as rotas autenticadas contam as provas erradas por
-// família de sessão, em memória. A reserva vem ANTES da verificação (A2): a
+// As rotas autenticadas contam as provas erradas por
+// família de sessão, em memória. A reserva vem ANTES da verificação: a
 // quinta falha derruba a família, e dali em diante toda reserva nasce
 // esgotada, sem verificar nada.
 func TestFamilyProofsDropTheFamilyAtTheLimit(t *testing.T) {

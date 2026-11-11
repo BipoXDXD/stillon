@@ -32,7 +32,7 @@ var (
 	hospedagemV6 = []netip.Prefix{netip.MustParsePrefix("::/64")}
 )
 
-// L1 do STRIDE do #255: a VPS é dividida com outros projetos, e as portas
+// A VPS é dividida com outros projetos, e as portas
 // deles no IP público não podem virar alvo.
 func TestProbeToTheServersOwnPublicIPIsBlocked(t *testing.T) {
 	cases := []struct {

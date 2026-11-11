@@ -135,7 +135,7 @@ func TestVerifyScopeSeesOnlyTheTokenRow(t *testing.T) {
 	novoCanal(t, pool, b, hB, agora.Add(24*time.Hour))
 	novoCanal(t, pool, b, hVencido, agora.Add(-time.Minute))
 	alvoA := novoAlvo(t, pool, a, agora)
-	// D3: um e-mail já verificado mantém o hash para sempre, então canalA
+	// Um e-mail já verificado mantém o hash para sempre, então canalA
 	// segue alcançável no escopo verify muito depois de confirmado. Se a
 	// política de notifications delegasse só "o canal existe", esta
 	// notificação vazaria para quem tem o token.
@@ -327,7 +327,7 @@ func TestNotificationClaimSkipsLockedRows(t *testing.T) {
 	}
 }
 
-// Dívida do Plano 2: dois boots concorrentes criando a mesma partição. Com
+// Dois boots concorrentes criando a mesma partição. Com
 // a advisory lock, a segunda chamada ESPERA a primeira. O teste segura a
 // trava numa sessão, confirma no pg_stat_activity que a chamada está
 // parada nela, e só então solta.

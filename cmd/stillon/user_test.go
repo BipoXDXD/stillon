@@ -223,7 +223,7 @@ func TestUserTerminalAsksTwice(t *testing.T) {
 	}
 }
 
-// Não existe flag nem variável de ambiente de senha (D6 do Plano 5). Com o
+// Não existe flag nem variável de ambiente de senha. Com o
 // stdin vazio e uma senha válida no ambiente, o resultado tem de ser "muito
 // curta" — a variável não foi lida.
 func TestUserHasNoPasswordFlagOrEnv(t *testing.T) {
@@ -328,7 +328,7 @@ func TestSetPasswordRevokesEverySessionAndClearsTheLock(t *testing.T) {
 	carimbo := auth.PasswordStamp(hashDoDono)
 	// Duas sessões vivas do dono, e a primeira renovada três vezes: quatro
 	// linhas numa família só. A mensagem conta sessões (famílias), não linhas:
-	// RevokeAllFamilies só marca a linha viva de cada família (Task 11).
+	// RevokeAllFamilies só marca a linha viva de cada família.
 	primeiro, _, err := mgr.Issue(ctx, dono, carimbo, meta)
 	if err != nil {
 		t.Fatal(err)

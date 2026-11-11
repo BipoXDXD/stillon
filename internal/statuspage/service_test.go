@@ -305,7 +305,7 @@ func TestDeletedTargetLeavesThePage(t *testing.T) {
 	}
 }
 
-// Dois PATCH ao mesmo tempo não perdem campo (achado da revisão): o Update
+// Dois PATCH ao mesmo tempo não perdem campo: o Update
 // trava a linha antes de ler. Aqui, outra transação trava a página e muda o
 // título; o PATCH de published espera por ela e lê o título novo. Sem a
 // trava, ele leria o título velho e o regravaria por cima.

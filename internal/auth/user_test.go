@@ -72,7 +72,7 @@ func reservar(t *testing.T, store *auth.PGStore, userID uuid.UUID, at time.Time)
 // O bloqueio só pode cair no limiar, nunca antes: travar cedo seria negação
 // de serviço contra o dono da conta. A reserva que atinge o limiar trava a
 // conta e ainda é concedida (é a quinta tentativa, e é verificada); a
-// seguinte é recusada e não conta nada (A2 do Plano 10).
+// seguinte é recusada e não conta nada.
 func TestReserveAttemptLocksExactlyAtTheThreshold(t *testing.T) {
 	_, pool, clk, userID := setup(t)
 	store := auth.NewPGStore(pool)
@@ -113,7 +113,7 @@ func TestReserveAttemptLocksExactlyAtTheThreshold(t *testing.T) {
 	}
 }
 
-// A2 (Plano 10): reservas simultâneas não furam o limiar. Doze de uma vez
+// Reservas simultâneas não furam o limiar. Doze de uma vez
 // concedem exatamente LockThreshold, e o contador para nele.
 func TestConcurrentReservationsStopAtTheThreshold(t *testing.T) {
 	_, pool, clk, userID := setup(t)
@@ -207,7 +207,7 @@ func TestIsLockedRespectsTheDeadline(t *testing.T) {
 	}
 }
 
-// O rehash do login é um compare-and-swap (Task 11 do Plano 5): com o hash
+// O rehash do login é um compare-and-swap: com o hash
 // antigo certo, grava; com outro (um set-password comitou depois da
 // verificação), não grava nada.
 func TestRehashPasswordIsACompareAndSwap(t *testing.T) {
@@ -260,7 +260,7 @@ var (
 // cada quinze minutos (96 por dia, três ordens de grandeza abaixo do
 // limitador) mantinha a vítima fora da própria conta para sempre, sem nunca
 // ganhar acesso e sem que ela descobrisse o motivo: o bloqueio é silencioso
-// por design (R34).
+// por design.
 func TestExpiredLockRestartsTheFailureCount(t *testing.T) {
 	_, pool, clk, userID := setup(t)
 	store := auth.NewPGStore(pool)
@@ -310,7 +310,7 @@ func TestNormalizeEmail(t *testing.T) {
 	}
 }
 
-// CheckPassword é a verificação do login (A2 do Plano 10): reserva a
+// CheckPassword é a verificação do login: reserva a
 // tentativa no contador recebido ANTES do Argon2id. Os três caminhos: senha
 // certa deixa a reserva (quem chama devolve ou zera); senha errada também;
 // contador bloqueado recusa até a senha certa, sem reservar nada, pagando o

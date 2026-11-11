@@ -16,10 +16,10 @@ import (
 // a tabela não entra: ela recebe ENABLE, FORCE e política na própria migration.
 var tabelasSemRLS = map[string]string{
 	"goose_db_version":    "é do goose e não guarda dado de usuário; ele a lê e grava sem escopo a cada boot",
-	"users":               "D7 do Plano 2: o login a consulta por e-mail antes de existir usuário na transação",
-	"sessions":            "D7 do Plano 2: login e refresh a consultam por e-mail e por hash, antes de existir usuário na transação",
+	"users":               "o login a consulta por e-mail antes de existir usuário na transação",
+	"sessions":            "login e refresh a consultam por e-mail e por hash, antes de existir usuário na transação",
 	"totp_recovery_codes": "as transações de login e 2FA não definem app.user_id; as queries filtram por user_id e a coluna guarda só hash",
-	"audit_log":           "D7 do Plano 2: user_id é anulável, a linha sobrevive à conta apagada, e a retenção apaga as de todos",
+	"audit_log":           "user_id é anulável, a linha sobrevive à conta apagada, e a retenção apaga as de todos",
 }
 
 // tabelaParticionadaConhecida impede a varredura de perder o relkind p em

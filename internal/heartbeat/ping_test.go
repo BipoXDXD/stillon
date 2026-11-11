@@ -310,7 +310,7 @@ func TestConcurrentPingNowAndFailKeepTheFailure(t *testing.T) {
 	}
 }
 
-// O sinal do painel não é a tarefa (R2): com a execução aberta, ele não a
+// O sinal do painel não é a tarefa: com a execução aberta, ele não a
 // encerra nem leva a duração dela; quem fecha é o sucesso da própria tarefa.
 func TestPingNowDoesNotCloseTheOpenRun(t *testing.T) {
 	a := novoAmbiente(t)
@@ -424,7 +424,7 @@ func TestEventCapIsPerHeartbeat(t *testing.T) {
 	}
 }
 
-// D13: ping em heartbeat pausado é aceito. Recusar quebraria a tarefa do dono.
+// Ping em heartbeat pausado é aceito. Recusar quebraria a tarefa do dono.
 func TestPingOnAPausedHeartbeatIsRecorded(t *testing.T) {
 	a := novoAmbiente(t)
 	ctx := context.Background()
@@ -726,7 +726,7 @@ func TestPingResumesOnSuccess(t *testing.T) {
 	}
 }
 
-// Ruling da Task 4: num agendamento que esta versão não conhece, o sucesso com
+// Num agendamento que esta versão não conhece, o sucesso com
 // ping_resumes religa a tarefa e deixa o prazo gravado como está.
 func TestPingResumesOnUnknownSchedule(t *testing.T) {
 	a := novoAmbiente(t)

@@ -9,7 +9,7 @@ import (
 	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 )
 
-// Review Focus 2. 23:30 do dia 30 em São Paulo já é dia 1 em UTC.
+// 23:30 do dia 30 em São Paulo já é dia 1 em UTC.
 func TestEnsureChecksPartitionsUsesUTCMonths(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
@@ -40,7 +40,7 @@ func TestEnsureChecksPartitionsUsesUTCMonths(t *testing.T) {
 	}
 }
 
-// Review Focus 2, pelo lado do banco. A função é chamada numa sessão com
+// O mesmo, pelo lado do banco. A função é chamada numa sessão com
 // TimeZone de São Paulo; as bordas precisam ser meia-noite UTC.
 func TestPartitionBoundsAreUTCRegardlessOfSessionTimeZone(t *testing.T) {
 	pool := testdb.New(t)

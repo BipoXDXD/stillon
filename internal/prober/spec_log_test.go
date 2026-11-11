@@ -12,7 +12,7 @@ import (
 	"github.com/BipoXDXD/stillon/internal/targets"
 )
 
-// Um Spec no log mostra os nomes dos headers e nunca os valores (Plano 8),
+// Um Spec no log mostra os nomes dos headers e nunca os valores,
 // nos dois formatos que o projeto usa (JSON em produção, texto em
 // desenvolvimento).
 func TestSpecLogValueHidesHeaderValues(t *testing.T) {

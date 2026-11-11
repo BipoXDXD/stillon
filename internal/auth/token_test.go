@@ -36,7 +36,7 @@ func TestAccessTokenRoundTrip(t *testing.T) {
 }
 
 // Um token sem sid não diz de qual sessão saiu, e as rotas de credencial não
-// teriam como recusá-lo depois de a sessão ser encerrada (D2 do Plano 5). É
+// teriam como recusá-lo depois de a sessão ser encerrada. É
 // assinado com o segredo CERTO: a recusa só pode vir da falta do claim.
 func TestAccessTokenWithoutSessionFamilyIsRejected(t *testing.T) {
 	now := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
@@ -97,7 +97,7 @@ func TestAccessTokenRejectsWrongSecret(t *testing.T) {
 // "alg: none" é o ataque clássico contra JWT: o atacante troca o algoritmo e
 // remove a assinatura.
 //
-// Este teste NÃO trava o jwt.WithValidMethods (ruling R30): na golang-jwt v5 o
+// Este teste NÃO trava o jwt.WithValidMethods: na golang-jwt v5 o
 // alg=none já morre dentro do Verify, que devolve
 // NoneSignatureTypeDisallowedError para qualquer chave que não seja a
 // constante UnsafeAllowNoneSignatureType — e a nossa keyfunc devolve []byte.
@@ -162,7 +162,7 @@ func TestChallengeTokenRoundTrip(t *testing.T) {
 
 // O instante do desafio tem resolução de microssegundo, e não de segundo como
 // o iat: é a chave da marca d'água do /totp/verify, e dois desafios do mesmo
-// usuário no mesmo segundo precisam de marcas diferentes (Plano 8).
+// usuário no mesmo segundo precisam de marcas diferentes.
 func TestChallengeTokenKeepsTheIssueInstantToTheMicrosecond(t *testing.T) {
 	now := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
 	instantes := []time.Time{now.Add(1 * time.Microsecond), now.Add(2 * time.Microsecond)}
@@ -181,8 +181,8 @@ func TestChallengeTokenKeepsTheIssueInstantToTheMicrosecond(t *testing.T) {
 	}
 }
 
-// Desafio sem instante de emissão (um emitido antes do Plano 8) é recusado:
-// sem ele, o /totp/verify não tem o que gravar como marca d'água.
+// Desafio sem instante de emissão (um emitido por uma versão antiga) é
+// recusado: sem ele, o /totp/verify não tem o que gravar como marca d'água.
 func TestChallengeTokenRequiresTheIssueInstant(t *testing.T) {
 	now := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
 	semInstante, err := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
@@ -201,7 +201,7 @@ func TestChallengeTokenRequiresTheIssueInstant(t *testing.T) {
 
 // O desafio leva o carimbo da senha verificada, e sem ele não existe: é o que
 // o /totp/verify entrega a Issue para recusar a sessão depois de um
-// set-password (Task 11 do Plano 5).
+// set-password.
 func TestChallengeTokenRequiresThePasswordStamp(t *testing.T) {
 	now := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
 	if _, err := auth.NewChallengeToken(jwtSecret, uuid.New(), "", now); err == nil {

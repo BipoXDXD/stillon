@@ -6,7 +6,7 @@ import (
 	"github.com/BipoXDXD/stillon/internal/targets"
 )
 
-// D-T1: a chave do host da regra de conteúdo segue o que o transporte disca.
+// A chave do host da regra de conteúdo segue o que o transporte disca.
 // Caixa, ponto final, porta, IDNA (inclusive o ponto ideográfico), forma do
 // IPv6, IPv4 mapeado e zona caem na mesma chave; URL que não se lê dá "", que
 // nunca casa com a chave de uma URL válida.

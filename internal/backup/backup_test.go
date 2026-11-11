@@ -278,7 +278,7 @@ func opcoesDeTeste(psql, dump string) options {
 	return o
 }
 
-// E4 da revisão: a mensagem continua dizendo o passo, mas a causa original
+// A mensagem continua dizendo o passo, mas a causa original
 // chega envelopada a quem chama, para o log do job distinguir prazo vencido,
 // código de saída do cliente e executável ausente.
 func TestFailuresKeepTheOriginalCause(t *testing.T) {

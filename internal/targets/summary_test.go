@@ -213,7 +213,7 @@ func TestSummaryUptimeSeesAnOngoingOutage(t *testing.T) {
 
 // Um rollup gravado no futuro (relógio adiantado) não vira a marca d'água:
 // com ele, o corte ia para a hora corrente e as horas fechadas ainda não
-// consolidadas sumiam do spark e do uptime (C8 da revisão).
+// consolidadas sumiam do spark e do uptime.
 //
 // Relógio em 12:20; rollups às 09:00 (60 de 60) e às 13:00 (futuro). O
 // check das 11:30 foi down: o spark tem 09:00 e 11:00, e o uptime é 60/61.
@@ -353,7 +353,7 @@ func TestSummaryIsolation(t *testing.T) {
 }
 
 // Os buckets são horas cheias em UTC mesmo com a sessão do banco num fuso de
-// meia hora: date_trunc em timestamptz usaria o fuso da sessão (D5 do Plano 4).
+// meia hora: date_trunc em timestamptz usaria o fuso da sessão.
 func TestSummaryBucketsAreUTCHoursInAnyTimeZone(t *testing.T) {
 	a := novoAmbiente(t)
 	a.clk.Advance(time.Date(2026, 9, 22, 12, 20, 0, 0, time.UTC).Sub(a.clk.Now()))

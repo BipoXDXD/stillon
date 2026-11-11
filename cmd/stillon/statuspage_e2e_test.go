@@ -17,11 +17,10 @@ import (
 	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 )
 
-// O caminho do Plano 4 no processo real, papel all: os checks de uma hora
-// já fechada viram rollup na manutenção que roda ao subir (sem esperar os
-// 15 minutos do ticker), e /p/{slug} mostra o uptime deles sem
-// autenticação. Prova o wiring de RunMaintenance, de StatusPages no Deps e
-// da cadeia /p/.
+// O caminho da página de status no processo real, papel all: os checks de uma
+// hora já fechada viram rollup na manutenção que roda ao subir (sem esperar os
+// 15 minutos do ticker), e /p/{slug} mostra o uptime deles sem autenticação.
+// Prova o wiring de RunMaintenance, de StatusPages no Deps e da cadeia /p/.
 //
 // O alvo está desativado: o sondador não o toca, e o estado atual sai como
 // "Sem dados", mas o uptime dos 90 dias vem dos rollups.
