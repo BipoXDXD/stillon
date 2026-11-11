@@ -106,7 +106,7 @@ export function FormularioAlvo({
       // O teto de regras por host (409) é da regra: a seção abre antes do
       // setError, porque o foco não entra num campo escondido.
       if (err instanceof ApiError && err.code === 'content_rule_host_limit_reached') {
-        abrirSeErroNaRegra(['valorDaRegra'])
+        flushSync(() => setAvancadoAberto(true))
         f.setError('valorDaRegra', { message: mensagemDe(err) }, { shouldFocus: true })
         return
       }
