@@ -348,6 +348,8 @@ describe('status page', () => {
     )
     expect(screen.getByLabelText('Nome de exibição de API')).not.toHaveAttribute('aria-invalid')
     expect(screen.queryByText(/items\[1\]/)).not.toBeInTheDocument()
+    // Ao contrário do alvo e do heartbeat, esta tela não leva o foco ao campo com erro.
+    expect(screen.getByLabelText('Nome de exibição de Site')).not.toHaveFocus()
   })
 
   it('a sugestão curta demais não acusa erro no slug antes de a pessoa mexer nele', async () => {

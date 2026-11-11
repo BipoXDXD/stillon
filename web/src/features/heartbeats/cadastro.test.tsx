@@ -261,6 +261,7 @@ describe('cadastro', () => {
     await r.usuario.click(screen.getByRole('button', { name: 'Cadastrar' }))
     expect(await screen.findByText(RECUSA_DO_CRON)).toBeInTheDocument()
     expect(screen.getByLabelText('Expressão')).toHaveAttribute('aria-invalid', 'true')
+    expect(screen.getByLabelText('Expressão')).toHaveFocus()
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 
