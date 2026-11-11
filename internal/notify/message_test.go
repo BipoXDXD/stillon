@@ -102,6 +102,23 @@ func TestMessageForResumeWithoutSuccess(t *testing.T) {
 	}
 }
 
+// As três causas da regra de conteúdo, na abertura do incidente.
+func TestMessageForContentRuleCauses(t *testing.T) {
+	for causa, quer := range map[string]string{
+		"content_mismatch": "Causa: conteúdo da resposta diferente do esperado.\n",
+		"body_limit":       "Causa: resposta grande demais para conferir o conteúdo.\n",
+		"content_encoding": "Causa: a resposta veio comprimida num formato que o StillOn não lê.\n",
+	} {
+		t.Run(causa, func(t *testing.T) {
+			ev := evAberto
+			ev.Cause = causa
+			if _, corpo := mensagem(ev); !strings.HasSuffix(corpo, quer) {
+				t.Errorf("corpo = %q; queria terminar em %q", corpo, quer)
+			}
+		})
+	}
+}
+
 // Causa fora do enum não vaza para a mensagem: vira o residual.
 func TestMessageNeverEchoesAnUnknownCause(t *testing.T) {
 	ev := evAberto

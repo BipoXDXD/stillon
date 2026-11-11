@@ -109,6 +109,14 @@ func newTransport(permitir func(address string) error, dialer *net.Dialer) *http
 
 		ForceAttemptHTTP2: true,
 
+		// O transporte não pede nem desfaz gzip por conta própria: ele decide
+		// pela primeira linha de Content-Encoding e apaga todas. Quem pede é
+		// a sonda (AcceptEncodingDaSonda, que atravessa limparHeaders); com
+		// regra ela descomprime e julga (prober.lerCorpoDaRegra), sem regra
+		// descomprime e drena (prober.drenarSemRegra), com o teto sobre o
+		// descomprimido nos dois. Discord e Resend não pedem e recebem identity.
+		DisableCompression: true,
+
 		// C1 (Plano 10): o padrão do net/http é 10 MiB de cabeçalho por
 		// resposta, e o HTTP/2 herda este número. Com 64 sondas em voo, um
 		// alvo hostil segurava ~660 MiB de heap. Nenhum alvo legítimo de
@@ -452,11 +460,21 @@ func deveLimparHeaders(saltos []*url.URL) bool {
 }
 
 // limparHeaders remove todos os valores copiados do alvo, inclusive um
-// User-Agent personalizado. Só recoloca a identificação pública do monitor.
+// User-Agent personalizado. Só recoloca a identificação pública do monitor e
+// o pedido de gzip da sonda.
 // Vai junto o Referer: ele carrega a URL anterior, que também é do alvo.
 func limparHeaders(h http.Header) {
+	pedeGzip := slices.Equal(h.Values("Accept-Encoding"), []string{AcceptEncodingDaSonda})
 	for nome := range h {
 		delete(h, nome)
 	}
 	h.Set("User-Agent", UserAgent)
+	if pedeGzip {
+		h.Set("Accept-Encoding", AcceptEncodingDaSonda)
+	}
 }
+
+// AcceptEncodingDaSonda é o único Accept-Encoding que atravessa o salto que
+// limpa os headers: o da sonda, que não diz nada do alvo. Sem ele, o salto
+// seguinte baixaria o corpo cru, já que o transporte não pede gzip.
+const AcceptEncodingDaSonda = "gzip"

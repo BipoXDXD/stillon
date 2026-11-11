@@ -91,6 +91,15 @@ variáveis são segredos de interpolação do recurso no Coolify, nunca arquivos
 
 - **Sonda** alvos HTTP (GET, HEAD ou POST) de 30 s a 24 h, com headers cifrados, status
   esperado, limite de latência para "degradado" e até 8 tags para agrupar e filtrar.
+  Opcionalmente, uma **regra de conteúdo** (`content_rule`) julga os primeiros 64 KiB do corpo:
+  `contains` e `not_contains` procuram um texto, e `json_equals` compara o escalar apontado por um
+  ponteiro JSON (RFC 6901, como `/status`) com um valor. O `json_equals` compara o texto do
+  valor, sem olhar o tipo: `1` e `"1"`, `true` e `"true"` são iguais. Regra reprovada é a causa
+  `content_mismatch`; corpo numa codificação que o sondador não desfaz (br, zstd, deflate) é
+  `content_encoding`; e corpo acima de 64 KiB, ou acima de 128 KiB ainda comprimido, sem
+  conclusão é `body_limit`. A regra não aceita o
+  método HEAD (não há corpo) nem os headers `Accept-Encoding` e `Range` do dono (o corpo chegaria
+  comprimido ou cortado).
 - **Certificado** do host cadastrado: o detalhe do alvo mostra a validade ("Certificado válido até
   …, em N dias", ou a data em que venceu), "não se aplica" para `http` ou IP literal e "aguardando a
   primeira sonda" antes da primeira leitura. Atrás de um balanceador com réplicas de certificados

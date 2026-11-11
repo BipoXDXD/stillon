@@ -173,6 +173,9 @@ type Target struct {
 	NextRunAt           time.Time
 	CreatedAt           time.Time
 	TlsWarn             bool
+	ContentMode         *string
+	ContentValue        *string
+	ContentJsonPointer  *string
 }
 
 type TargetHealth struct {

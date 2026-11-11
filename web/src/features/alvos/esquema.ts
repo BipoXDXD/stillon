@@ -1,6 +1,7 @@
 import { z } from 'zod'
-import type { AlteracaoAlvo, EntradaAlvo } from '@/lib/api/cliente'
-import type { Alvo } from '@/lib/api/schemas'
+import type { AlteracaoAlvo, EntradaAlvo, EntradaRegra } from '@/lib/api/cliente'
+import { CONTROLE_NA_REGRA, LIMITE_DA_REGRA } from '@/lib/api/mensagens'
+import { RegraDeConteudo, type Alvo } from '@/lib/api/schemas'
 import { MENSAGEM_INVISIVEL, temInvisivel } from '@/lib/rotulo'
 import { erroNasTags, separarTags } from '@/lib/tags'
 
@@ -72,12 +73,51 @@ function urlPermitida(raw: string): string | null {
   return null
 }
 
+// A regra de conteúdo espelha internal/targets/contentrule.go. O limite é em
+// caracteres como o servidor os conta (runas, o char_length do banco): um
+// emoji vale 1, e não os 2 do .length em UTF-16 (L9 do STRIDE). Os casos que
+// os dois lados julgam igual ficam em
+// internal/targets/testdata/regra-de-conteudo.json (regra-contrato.test.ts).
+// Os modos vêm do schema da resposta; "desligada" é só do formulário (a
+// ausência de regra, que vai como null).
+const modoDaRegra = z.enum(['desligada', ...RegraDeConteudo.shape.mode.options])
+const MAX_DA_REGRA = 256
+// unicode.IsControl do Go é a categoria Cc.
+const CONTROLE = /\p{Cc}/u
+// RFC 6901: depois de ~, só 0 ou 1.
+const ESCAPE_INVALIDO = /~(?![01])/
+
+export const REGRA_COM_HEAD = 'Com HEAD a resposta não tem corpo. Escolha GET ou POST para verificar o conteúdo.'
+// Headers do dono que estragam o corpo conferido, com o texto que cada um
+// mostra no seletor da regra. O nome fica em minúsculas, porque a comparação
+// é com os nomes já baixados; o tipo recusa outra caixa.
+const HEADERS_SEM_REGRA: readonly (readonly [Lowercase<string>, string])[] = [
+  ['accept-encoding', 'Remova o header Accept-Encoding para verificar o conteúdo: a resposta viria comprimida.'],
+  ['range', 'Remova o header Range para verificar o conteúdo: a resposta viria cortada.'],
+]
+
+function erroDoTextoDaRegra(s: string): string | null {
+  if (s === '') return 'Obrigatório.'
+  if ([...s].length > MAX_DA_REGRA) return LIMITE_DA_REGRA
+  if (CONTROLE.test(s)) return CONTROLE_NA_REGRA
+  return null
+}
+
+function erroDoPonteiro(p: string): string | null {
+  const erro = erroDoTextoDaRegra(p)
+  if (erro) return erro
+  if (!p.startsWith('/')) return 'Comece com /, como /status.'
+  if (ESCAPE_INVALIDO.test(p)) return 'No ponteiro, escreva ~1 para uma barra e ~0 para um til.'
+  return null
+}
+
 // Na edição, a base é o alvo como veio do servidor: a URL que ele já guardou
 // não passa de novo pelo espelho (um host não canônico que o servidor aceitou,
 // como http://0x7f.1/, não pode travar a edição nem a pausa do alvo), e
 // "Substituir todos" sem nenhuma linha não vira headers: {} (que apagaria
-// todos em silêncio; para isso existe "Remover todos").
-export function esquemaDoAlvo(base?: { url: string }) {
+// todos em silêncio; para isso existe "Remover todos"). Os nomes dos headers
+// guardados antecipam o Accept-Encoding ou o Range que "Manter como está" conservaria.
+export function esquemaDoAlvo(base?: { url: string; nomesDeHeaders?: readonly string[] }) {
   return z
     .object({
       name: z
@@ -125,8 +165,13 @@ export function esquemaDoAlvo(base?: { url: string }) {
       modoHeaders: z.enum(['manter', 'substituir', 'remover']),
       headers: z.array(z.object({ nome: z.string().trim(), valor: z.string() })),
       tagsTexto: z.string(),
+      // O valor não perde espaços: o servidor compara os bytes como vieram.
+      modoDaRegra,
+      valorDaRegra: z.string(),
+      ponteiroDaRegra: z.string(),
     })
     .superRefine((v, ctx) => {
+      validarRegra(v, base?.nomesDeHeaders ?? [], ctx)
       const erroDasTags = erroNasTags(v.tagsTexto)
       if (erroDasTags) ctx.addIssue({ code: 'custom', path: ['tagsTexto'], message: erroDasTags })
       // D3 do Plano 2: o jitter de −10% antecipa a próxima sonda para 90% do
@@ -180,6 +225,38 @@ export function esquemaDoAlvo(base?: { url: string }) {
     })
 }
 
+type CamposDaRegra = {
+  method: string
+  modoHeaders: string
+  headers: { nome: string }[]
+  modoDaRegra: z.infer<typeof modoDaRegra>
+  valorDaRegra: string
+  ponteiroDaRegra: string
+}
+
+// Os headers com que a sonda vai sair: os da lista ao substituir, os
+// guardados ao manter, nenhum ao remover.
+function headersQueFicam(v: CamposDaRegra, guardados: readonly string[]): readonly string[] {
+  if (v.modoHeaders === 'substituir') return v.headers.map((h) => h.nome)
+  if (v.modoHeaders === 'manter') return guardados
+  return []
+}
+
+// Desligada ou com HEAD, nada da regra é validado: com HEAD ela fica no
+// estado, escondida, e não vai no envio (I1 da revisão).
+function validarRegra(v: CamposDaRegra, guardados: readonly string[], ctx: z.RefinementCtx<CamposDaRegra>) {
+  if (v.modoDaRegra === 'desligada' || v.method === 'HEAD') return
+  const nomes = headersQueFicam(v, guardados).map((n) => n.toLowerCase())
+  for (const [proibido, mensagem] of HEADERS_SEM_REGRA) {
+    if (nomes.includes(proibido)) ctx.addIssue({ code: 'custom', path: ['modoDaRegra'], message: mensagem })
+  }
+  const erroDoValor = erroDoTextoDaRegra(v.valorDaRegra)
+  if (erroDoValor) ctx.addIssue({ code: 'custom', path: ['valorDaRegra'], message: erroDoValor })
+  if (v.modoDaRegra !== 'json_equals') return
+  const erroDoPonteiroDaRegra = erroDoPonteiro(v.ponteiroDaRegra)
+  if (erroDoPonteiroDaRegra) ctx.addIssue({ code: 'custom', path: ['ponteiroDaRegra'], message: erroDoPonteiroDaRegra })
+}
+
 export const esquemaAlvo = esquemaDoAlvo()
 
 export type ValoresDoAlvo = z.infer<typeof esquemaAlvo>
@@ -214,6 +291,9 @@ export const valoresPadrao: ValoresDoAlvo = {
   modoHeaders: 'substituir',
   headers: [],
   tagsTexto: '',
+  modoDaRegra: 'desligada',
+  valorDaRegra: '',
+  ponteiroDaRegra: '',
 }
 
 export function valoresDe(a: Alvo): ValoresDoAlvo {
@@ -232,6 +312,9 @@ export function valoresDe(a: Alvo): ValoresDoAlvo {
     modoHeaders: 'manter',
     headers: [],
     tagsTexto: a.tags.join(', '),
+    modoDaRegra: a.content_rule?.mode ?? 'desligada',
+    valorDaRegra: a.content_rule?.value ?? '',
+    ponteiroDaRegra: a.content_rule?.json_pointer ?? '',
   }
 }
 
@@ -239,6 +322,26 @@ function limiar(v: ValoresDoAlvo): number | null | undefined {
   if (v.lentidao === 'desativado') return null
   if (v.lentidao === 'personalizado') return v.degraded_threshold_ms
   return 2000
+}
+
+// Com HEAD não há corpo para conferir: a regra guardada no estado não vale.
+function regraDe(v: ValoresDoAlvo): EntradaRegra | null {
+  if (v.method === 'HEAD') return null
+  switch (v.modoDaRegra) {
+    case 'desligada':
+      return null
+    case 'json_equals':
+      return { mode: v.modoDaRegra, value: v.valorDaRegra, json_pointer: v.ponteiroDaRegra }
+    default:
+      return { mode: v.modoDaRegra, value: v.valorDaRegra }
+  }
+}
+
+const ponteiroDe = (r: EntradaRegra) => (r.mode === 'json_equals' ? r.json_pointer : null)
+
+function mesmaRegra(a: EntradaRegra | null, b: EntradaRegra | null): boolean {
+  if (a === null || b === null) return a === b
+  return a.mode === b.mode && a.value === b.value && ponteiroDe(a) === ponteiroDe(b)
 }
 
 function mapaDeHeaders(v: ValoresDoAlvo): Record<string, string> {
@@ -262,6 +365,8 @@ export function paraCriacao(v: ValoresDoAlvo): EntradaAlvo {
   if (v.headers.length) e.headers = mapaDeHeaders(v)
   const tags = separarTags(v.tagsTexto)
   if (tags.length) e.tags = tags
+  const regra = regraDe(v)
+  if (regra) e.content_rule = regra
   return e
 }
 
@@ -282,6 +387,10 @@ export function paraAlteracao(original: ValoresDoAlvo, v: ValoresDoAlvo): Altera
   if (v.modoHeaders === 'remover') a.headers = null
   const tags = separarTags(v.tagsTexto)
   if (tags.join() !== separarTags(original.tagsTexto).join()) a.tags = tags
+  // Desligar a regra (ou trocar para HEAD) é mandar null; ausente, o
+  // servidor a mantém.
+  const regra = regraDe(v)
+  if (!mesmaRegra(regra, regraDe(original))) a.content_rule = regra
   return a
 }
 
@@ -317,4 +426,8 @@ export const campoDoServidor: Record<string, keyof ValoresDoAlvo> = {
   degraded_threshold_ms: 'degraded_threshold_ms',
   headers: 'headers',
   tags: 'tagsTexto',
+  content_rule: 'modoDaRegra',
+  'content_rule.mode': 'modoDaRegra',
+  'content_rule.value': 'valorDaRegra',
+  'content_rule.json_pointer': 'ponteiroDaRegra',
 }

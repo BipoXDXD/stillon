@@ -292,7 +292,7 @@ func exigirDescartePelaCerca(t *testing.T, b *bancada, log *logSeguro, alvo uuid
 		t.Errorf("%d checks no histórico; queria %d, sem o da sonda do host antigo", len(c), checksAntes)
 	}
 	s := log.String()
-	if !strings.Contains(s, "sonda descartada: o alvo mudou de URL ou método durante a sonda") ||
+	if !strings.Contains(s, "sonda descartada: o alvo mudou de URL, método ou regra de conteúdo durante a sonda") ||
 		!strings.Contains(s, alvo.String()) || strings.Contains(s, "level=ERROR") {
 		t.Errorf("log = %q; queria só o descarte da sonda velha do alvo %s, sem erro", s, alvo)
 	}

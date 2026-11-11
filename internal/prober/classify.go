@@ -23,10 +23,17 @@ const (
 	KindTLS         ErrorKind = "tls"
 	KindConnRefused ErrorKind = "conn_refused"
 	KindHTTPStatus  ErrorKind = "http_status"
-	// KindBodyLimit está no enum da spec, e o Plano 2 nunca o emite: corpo
-	// grande é lido até 64 KiB e descartado, não é falha (D2).
+	// KindBodyLimit só sai com regra de conteúdo: o corpo passou de 64 KiB
+	// sem que a regra chegasse a uma conclusão (spec §5.3). Sem regra, corpo
+	// grande é lido até 64 KiB e descartado, e não é falha (D2).
 	KindBodyLimit ErrorKind = "body_limit"
 	KindBlocked   ErrorKind = "blocked"
+	// KindContentMismatch é a regra de conteúdo reprovada (spec §5.3).
+	KindContentMismatch ErrorKind = "content_mismatch"
+	// KindContentEncoding também só sai com regra: o corpo chegou numa
+	// codificação que a sonda não lê (tudo que não for um único gzip válido:
+	// br, zstd, deflate, "gzip, gzip"), e a regra não tem o que julgar.
+	KindContentEncoding ErrorKind = "content_encoding"
 	// KindUnknown é o residual (D1): reset, EOF no meio da resposta, erro de
 	// protocolo. Sem ele, cada um teria de fingir ser outra coisa.
 	KindUnknown ErrorKind = "unknown"

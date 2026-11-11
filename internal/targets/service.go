@@ -45,6 +45,7 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, in Input) (Targe
 		DegradedThresholdMS: in.DegradedThresholdMS,
 		Headers:             in.Headers,
 		Tags:                in.Tags,
+		ContentRule:         in.ContentRule,
 	}
 	if verr := validate(&f); verr != nil {
 		return Target{}, verr
@@ -62,6 +63,7 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, in Input) (Targe
 	// O alvo nasce vencido: a primeira sonda sai no próximo tick, e quem
 	// cadastrou vê o estado em segundos, não depois de um intervalo inteiro.
 	now := s.clk.Now()
+	modo, valor, ponteiro := colunasDaRegra(f.ContentRule)
 	err = storage.InUserTx(ctx, s.pool, userID, func(q *db.Queries) error {
 		// O teto conta e insere sob a trava do usuário: sem ela, dois POST
 		// simultâneos passariam os dois pela contagem.
@@ -83,6 +85,7 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, in Input) (Targe
 			IntervalSec: f.IntervalSec, TimeoutMS: f.TimeoutMS, ExpectedStatus: f.ExpectedStatus,
 			HeadersEnc: sealed, DegradedThresholdMS: f.DegradedThresholdMS,
 			Enabled: in.Enabled, NextRunAt: now, CreatedAt: now, TlsWarn: in.TLSWarn,
+			ContentMode: modo, ContentValue: valor, ContentJsonPointer: ponteiro,
 		})
 		if err != nil {
 			return err
@@ -99,7 +102,7 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, in Input) (Targe
 		ID: id, Name: f.Name, URL: f.URL, Method: f.Method,
 		IntervalSec: f.IntervalSec, TimeoutMS: f.TimeoutMS, ExpectedStatus: f.ExpectedStatus,
 		DegradedThresholdMS: f.DegradedThresholdMS, Enabled: in.Enabled, TLSWarn: in.TLSWarn,
-		HeaderNames: headerNames(f.Headers), Tags: f.Tags, CreatedAt: now,
+		HeaderNames: headerNames(f.Headers), Tags: f.Tags, ContentRule: f.ContentRule, CreatedAt: now,
 	}, nil
 }
 
@@ -178,8 +181,10 @@ func (s *Service) Update(ctx context.Context, userID, id uuid.UUID, p Patch) (Ta
 			Name: row.Name, URL: row.URL, Method: row.Method,
 			IntervalSec: row.IntervalSec, TimeoutMS: row.TimeoutMS, ExpectedStatus: row.ExpectedStatus,
 			DegradedThresholdMS: row.DegradedThresholdMS, Headers: headers, Tags: tags,
-			urlGravada: row.URL,
+			ContentRule: RuleFromColumns(row.ContentMode, row.ContentValue, row.ContentJsonPointer),
+			urlGravada:  row.URL,
 		}
+		regraGravada := f.ContentRule
 		enabled := row.Enabled
 		mudouASonda := p.apply(&f, &enabled)
 		tlsWarn := row.TlsWarn
@@ -189,10 +194,10 @@ func (s *Service) Update(ctx context.Context, userID, id uuid.UUID, p Patch) (Ta
 		if verr := validate(&f); verr != nil {
 			return verr
 		}
-		// C4 (Plano 10): outra URL ou outro método é outro serviço. As falhas
-		// do anterior não somam com as do novo; o incidente aberto fica e
-		// fecha pelos sucessos do novo.
-		if f.URL != row.URL || f.Method != row.Method {
+		// C4 (Plano 10): outra URL ou outro método é outro serviço, e outra
+		// regra é outro critério de saúde. As falhas do anterior não somam com
+		// as do novo; o incidente aberto fica e fecha pelos sucessos do novo.
+		if f.URL != row.URL || f.Method != row.Method || !f.ContentRule.Equal(regraGravada) {
 			if err := q.ResetTargetHealth(ctx, db.ResetTargetHealthParams{UserID: userID, TargetID: row.ID}); err != nil {
 				return fmt.Errorf("zerar histerese do alvo: %w", err)
 			}
@@ -206,11 +211,13 @@ func (s *Service) Update(ctx context.Context, userID, id uuid.UUID, p Patch) (Ta
 		if mudouASonda {
 			proximo = s.clk.Now() // D13
 		}
+		modo, valor, ponteiro := colunasDaRegra(f.ContentRule)
 		err = q.UpdateTarget(ctx, db.UpdateTargetParams{
 			UserID: userID, ID: id, Name: f.Name, URL: f.URL, Method: f.Method,
 			IntervalSec: f.IntervalSec, TimeoutMS: f.TimeoutMS, ExpectedStatus: f.ExpectedStatus,
 			HeadersEnc: sealed, DegradedThresholdMS: f.DegradedThresholdMS,
 			Enabled: enabled, NextRunAt: proximo, TlsWarn: tlsWarn,
+			ContentMode: modo, ContentValue: valor, ContentJsonPointer: ponteiro,
 		})
 		if err != nil {
 			return fmt.Errorf("atualizar alvo: %w", err)
@@ -236,7 +243,8 @@ func (s *Service) Update(ctx context.Context, userID, id uuid.UUID, p Patch) (Ta
 			ID: row.ID, Name: f.Name, URL: f.URL, Method: f.Method,
 			IntervalSec: f.IntervalSec, TimeoutMS: f.TimeoutMS, ExpectedStatus: f.ExpectedStatus,
 			DegradedThresholdMS: f.DegradedThresholdMS, Enabled: enabled, TLSWarn: tlsWarn, TLS: validade,
-			HeaderNames: headerNames(f.Headers), Tags: f.Tags, CreatedAt: row.CreatedAt,
+			HeaderNames: headerNames(f.Headers), Tags: f.Tags, ContentRule: f.ContentRule,
+			CreatedAt: row.CreatedAt,
 		}
 		return nil
 	})
@@ -279,12 +287,16 @@ func (p Patch) apply(f *fields, enabled *bool) bool {
 	if p.SetTags {
 		f.Tags = p.Tags
 	}
+	if p.SetContentRule {
+		f.ContentRule = p.ContentRule
+	}
 	if p.Enabled != nil {
 		*enabled = *p.Enabled
 	}
 	return f.URL != antes.URL || f.Method != antes.Method ||
 		f.IntervalSec != antes.IntervalSec || f.TimeoutMS != antes.TimeoutMS ||
-		f.ExpectedStatus != antes.ExpectedStatus || p.SetHeaders
+		f.ExpectedStatus != antes.ExpectedStatus || p.SetHeaders ||
+		!f.ContentRule.Equal(antes.ContentRule)
 }
 
 func (s *Service) Delete(ctx context.Context, userID, id uuid.UUID) error {
@@ -409,6 +421,7 @@ func (s *Service) toTarget(row db.Target) (Target, error) {
 		IntervalSec: row.IntervalSec, TimeoutMS: row.TimeoutMS, ExpectedStatus: row.ExpectedStatus,
 		DegradedThresholdMS: row.DegradedThresholdMS, Enabled: row.Enabled, TLSWarn: row.TlsWarn,
 		HeaderNames: headerNames(h), CreatedAt: row.CreatedAt,
+		ContentRule: RuleFromColumns(row.ContentMode, row.ContentValue, row.ContentJsonPointer),
 	}, nil
 }
 

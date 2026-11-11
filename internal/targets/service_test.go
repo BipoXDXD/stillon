@@ -809,3 +809,247 @@ func TestPatchToAnotherHostForgetsTheCertificate(t *testing.T) {
 		t.Errorf("TLS devolvido = %+v, queria nil depois de trocar de host", got.TLS)
 	}
 }
+
+func regraDeStatus() *targets.ContentRule {
+	return &targets.ContentRule{Mode: targets.ContentJSONEquals, Value: `"ok"`, JSONPointer: "/status"}
+}
+
+func mesmaRegraDeTeste(a, b *targets.ContentRule) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return *a == *b
+}
+
+// temErroDeCampo diz se err é um ValidationError com o motivo no campo.
+func temErroDeCampo(err error, campo, motivo string) bool {
+	var verr *targets.ValidationError
+	if !errors.As(err, &verr) {
+		return false
+	}
+	for _, f := range verr.Fields {
+		if f.Field == campo && f.Reason == motivo {
+			return true
+		}
+	}
+	return false
+}
+
+// A regra vai e volta pelas três colunas: o cadastro a grava, a leitura e a
+// lista a devolvem, um PATCH que não a cita a mantém e um PATCH com
+// SetContentRule e nil a limpa.
+func TestContentRuleRoundTrip(t *testing.T) {
+	a := novoAmbiente(t)
+	ctx := context.Background()
+	dono := a.usuario(t)
+	in := entrada()
+	in.ContentRule = regraDeStatus()
+	criado, err := a.svc.Create(ctx, dono, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !mesmaRegraDeTeste(criado.ContentRule, regraDeStatus()) {
+		t.Errorf("Create devolveu a regra %+v, queria %+v", criado.ContentRule, regraDeStatus())
+	}
+	lido, err := a.svc.Get(ctx, dono, criado.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !mesmaRegraDeTeste(lido.ContentRule, regraDeStatus()) {
+		t.Errorf("Get devolveu a regra %+v, queria %+v", lido.ContentRule, regraDeStatus())
+	}
+	lista, err := a.svc.List(ctx, dono, nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(lista) != 1 || !mesmaRegraDeTeste(lista[0].ContentRule, regraDeStatus()) {
+		t.Errorf("List devolveu %+v, queria um alvo com a regra", lista)
+	}
+
+	nome := "Outro nome"
+	mantido, err := a.svc.Update(ctx, dono, criado.ID, targets.Patch{Name: &nome})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !mesmaRegraDeTeste(mantido.ContentRule, regraDeStatus()) {
+		t.Errorf("Update sem SetContentRule devolveu a regra %+v, queria %+v", mantido.ContentRule, regraDeStatus())
+	}
+	if lido, err = a.svc.Get(ctx, dono, criado.ID); err != nil {
+		t.Fatal(err)
+	}
+	if !mesmaRegraDeTeste(lido.ContentRule, regraDeStatus()) {
+		t.Errorf("depois de um PATCH sem SetContentRule a regra gravada é %+v, queria %+v", lido.ContentRule, regraDeStatus())
+	}
+
+	limpo, err := a.svc.Update(ctx, dono, criado.ID, targets.Patch{SetContentRule: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if limpo.ContentRule != nil {
+		t.Errorf("Update com SetContentRule e nil devolveu a regra %+v", limpo.ContentRule)
+	}
+	if lido, err = a.svc.Get(ctx, dono, criado.ID); err != nil {
+		t.Fatal(err)
+	}
+	if lido.ContentRule != nil {
+		t.Errorf("depois de limpar, a regra gravada é %+v", lido.ContentRule)
+	}
+}
+
+// HEAD não traz corpo: um PATCH só de método num alvo com regra é recusado, e
+// nada muda no banco.
+func TestPatchToHeadWithRuleIsRefused(t *testing.T) {
+	a := novoAmbiente(t)
+	ctx := context.Background()
+	dono := a.usuario(t)
+	in := entrada()
+	in.ContentRule = regraDeStatus()
+	alvo, err := a.svc.Create(ctx, dono, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	head := "HEAD"
+	_, err = a.svc.Update(ctx, dono, alvo.ID, targets.Patch{Method: &head})
+	if !temErroDeCampo(err, "content_rule", targets.ReasonForbidden) {
+		t.Errorf("erro = %v, queria ValidationError content_rule forbidden", err)
+	}
+	relido, err := a.svc.Get(ctx, dono, alvo.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if relido.Method != "GET" || !mesmaRegraDeTeste(relido.ContentRule, regraDeStatus()) {
+		t.Errorf("relido: método %q, regra %+v; queria GET e a regra intacta", relido.Method, relido.ContentRule)
+	}
+}
+
+// Com o Accept-Encoding do dono, o transporte entrega o corpo comprimido e a
+// regra julgaria bytes que ninguém escreveu.
+func TestPatchAddingAcceptEncodingWithRuleIsRefused(t *testing.T) {
+	a := novoAmbiente(t)
+	ctx := context.Background()
+	dono := a.usuario(t)
+	in := entrada()
+	in.ContentRule = regraDeStatus()
+	alvo, err := a.svc.Create(ctx, dono, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = a.svc.Update(ctx, dono, alvo.ID, targets.Patch{
+		SetHeaders: true, Headers: map[string]string{"Accept-Encoding": "br"},
+	})
+	if !temErroDeCampo(err, "content_rule", targets.ReasonForbidden) {
+		t.Errorf("erro = %v, queria ValidationError content_rule forbidden", err)
+	}
+	if h := a.headersGravados(t, alvo.ID); len(h) != 1 || h["Authorization"] != "Bearer segredo-do-cliente" {
+		t.Errorf("headers gravados = %v, queria só o Authorization original", h)
+	}
+}
+
+// Com o Range do dono, a regra julgaria só uma fatia do corpo, e a fatia de um
+// gzip nem abre.
+func TestPatchAddingRangeWithRuleIsRefused(t *testing.T) {
+	a := novoAmbiente(t)
+	ctx := context.Background()
+	dono := a.usuario(t)
+	in := entrada()
+	in.ContentRule = regraDeStatus()
+	alvo, err := a.svc.Create(ctx, dono, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = a.svc.Update(ctx, dono, alvo.ID, targets.Patch{
+		SetHeaders: true, Headers: map[string]string{"Range": "bytes=0-1023"},
+	})
+	if !temErroDeCampo(err, "content_rule", targets.ReasonForbidden) {
+		t.Errorf("erro = %v, queria ValidationError content_rule forbidden", err)
+	}
+	if h := a.headersGravados(t, alvo.ID); len(h) != 1 || h["Authorization"] != "Bearer segredo-do-cliente" {
+		t.Errorf("headers gravados = %v, queria só o Authorization original", h)
+	}
+}
+
+// Outra regra é outro critério de saúde: as falhas pela regra antiga não somam
+// com as da nova, e a sonda sai já, como em qualquer mudança do que é sondado.
+func TestRuleChangeResetsHealthAndProbesNow(t *testing.T) {
+	a := novoAmbiente(t)
+	ctx := context.Background()
+	dono := a.usuario(t)
+	in := entrada()
+	in.ContentRule = regraDeStatus()
+	alvo, err := a.svc.Create(ctx, dono, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.clk.Advance(10 * time.Minute)
+	a.saude(t, alvo.ID, a.clk.Now().Add(-2*time.Minute), a.clk.Now().Add(-time.Minute))
+	if _, err := a.admin.Exec(ctx, `UPDATE targets SET next_run_at = $2 WHERE id = $1`,
+		alvo.ID, a.clk.Now().Add(50*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+
+	outra := &targets.ContentRule{Mode: targets.ContentJSONEquals, Value: `"pronto"`, JSONPointer: "/status"}
+	if _, err := a.svc.Update(ctx, dono, alvo.ID, targets.Patch{SetContentRule: true, ContentRule: outra}); err != nil {
+		t.Fatal(err)
+	}
+
+	if h := a.lerSaude(t, alvo.ID); h.falhas != 0 || h.sucessos != 0 || h.desde != nil {
+		t.Errorf("trocar a regra: histerese = %s, queria zerada e sem início", h)
+	}
+	var proximo time.Time
+	if err := a.admin.QueryRow(ctx, `SELECT next_run_at FROM targets WHERE id = $1`, alvo.ID).Scan(&proximo); err != nil {
+		t.Fatal(err)
+	}
+	if agora := time.Date(2026, 9, 22, 12, 10, 0, 0, time.UTC); !proximo.Equal(agora) {
+		t.Errorf("next_run_at = %v, queria %v", proximo.UTC(), agora)
+	}
+}
+
+// A regra é comparada pelo valor: reenviar a mesma regra (outro ponteiro, como
+// chega de cada PATCH decodificado) ou trocar só o nome não é outro critério de
+// saúde, e a histerese e o agendamento ficam como estavam.
+func TestSameRuleOrOtherFieldKeepsTheHysteresis(t *testing.T) {
+	nome := "Outro nome"
+	casos := map[string]targets.Patch{
+		"só o nome":      {Name: &nome},
+		"a mesma regra":  {SetContentRule: true, ContentRule: regraDeStatus()},
+		"nome e a regra": {Name: &nome, SetContentRule: true, ContentRule: regraDeStatus()},
+	}
+	for caso, p := range casos {
+		t.Run(caso, func(t *testing.T) {
+			a := novoAmbiente(t)
+			ctx := context.Background()
+			dono := a.usuario(t)
+			in := entrada()
+			in.ContentRule = regraDeStatus()
+			alvo, err := a.svc.Create(ctx, dono, in)
+			if err != nil {
+				t.Fatal(err)
+			}
+			a.clk.Advance(10 * time.Minute)
+			desde, ultimo := a.clk.Now().Add(-2*time.Minute), a.clk.Now().Add(-time.Minute)
+			a.saude(t, alvo.ID, desde, ultimo)
+			agendado := a.clk.Now().Add(50 * time.Second)
+			if _, err := a.admin.Exec(ctx, `UPDATE targets SET next_run_at = $2 WHERE id = $1`, alvo.ID, agendado); err != nil {
+				t.Fatal(err)
+			}
+
+			if _, err := a.svc.Update(ctx, dono, alvo.ID, p); err != nil {
+				t.Fatal(err)
+			}
+
+			if h := a.lerSaude(t, alvo.ID); h.falhas != 2 || h.desde == nil || !h.desde.Equal(desde) {
+				t.Errorf("histerese = %s, queria 2 falhas desde %v", h, desde)
+			}
+			var proximo time.Time
+			if err := a.admin.QueryRow(ctx, `SELECT next_run_at FROM targets WHERE id = $1`, alvo.ID).Scan(&proximo); err != nil {
+				t.Fatal(err)
+			}
+			if !proximo.Equal(agendado) {
+				t.Errorf("next_run_at = %v, queria %v intacto", proximo.UTC(), agendado)
+			}
+		})
+	}
+}

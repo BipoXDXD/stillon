@@ -1,0 +1,14 @@
+[
+  "timeout",
+  "dns",
+  "tls",
+  "conn_refused",
+  "http_status",
+  "body_limit",
+  "blocked",
+  "content_mismatch",
+  "content_encoding",
+  "unknown",
+  "heartbeat_late",
+  "heartbeat_failed"
+]

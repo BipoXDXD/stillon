@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"net/netip"
 	"net/url"
+	"slices"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -203,6 +204,58 @@ func TestCheckRedirectDropsTargetHeadersWhenTheHopLeavesTheOrigin(t *testing.T) 
 				t.Errorf("User-Agent = %q, queria %q", req.Header.Get("User-Agent"), ua)
 			}
 		})
+	}
+}
+
+// O Accept-Encoding: gzip é da sonda, que descomprime ela mesma, e não diz
+// nada do alvo: atravessa o salto que limpa os headers. Qualquer outro valor
+// é do dono e cai com os demais.
+func TestCheckRedirectKeepsOnlyTheProbesAcceptEncoding(t *testing.T) {
+	client := safedial.NewClient(0)
+	cases := []struct {
+		enviado string
+		quer    []string
+	}{
+		{"gzip", []string{"gzip"}},
+		{"br", nil},
+		{"gzip, br", nil},
+	}
+	for _, c := range cases {
+		t.Run(c.enviado, func(t *testing.T) {
+			origem, err := http.NewRequest(http.MethodGet, "http://exemplo.com/", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			req, err := http.NewRequest(http.MethodGet, "http://outro.com/", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			req.Header.Set("Accept-Encoding", c.enviado)
+			if err := client.CheckRedirect(req, []*http.Request{origem}); err != nil {
+				t.Fatalf("CheckRedirect = %v", err)
+			}
+			if got := req.Header.Values("Accept-Encoding"); !slices.Equal(got, c.quer) {
+				t.Errorf("Accept-Encoding = %q, queria %q", got, c.quer)
+			}
+		})
+	}
+}
+
+// O transporte não pede gzip por conta própria: quem pede é a sonda. Discord
+// e Resend, que não pedem, recebem o corpo sem codificação.
+func TestClientDoesNotAskForGzipByItself(t *testing.T) {
+	recebido := make(chan []string, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		recebido <- r.Header.Values("Accept-Encoding")
+	}))
+	t.Cleanup(srv.Close)
+	resp, err := safedial.NewClientAllowing(0, enderecoDe(t, srv)).Get(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if got := <-recebido; len(got) != 0 {
+		t.Errorf("Accept-Encoding = %q, queria nenhum", got)
 	}
 }
 

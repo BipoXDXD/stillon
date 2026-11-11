@@ -231,9 +231,10 @@ func TestAlvoTemExatamenteAsChavesDoContrato(t *testing.T) {
 	a := newAPI(t)
 	token := tokenDe(t, a, outroUsuario(t, a))
 	queria := []string{
-		"created_at", "degraded_threshold_ms", "enabled", "expected_status", "header_names", "id",
+		"content_rule", "created_at", "degraded_threshold_ms", "enabled", "expected_status", "header_names", "id",
 		"interval_sec", "method", "name", "tags", "timeout_ms", "tls", "tls_warn", "url",
 	}
+	queriaNaRegra := []string{"json_pointer", "mode", "value"}
 	chaves := func(onde, cru string) {
 		t.Helper()
 		var item map[string]json.RawMessage
@@ -243,9 +244,18 @@ func TestAlvoTemExatamenteAsChavesDoContrato(t *testing.T) {
 		if got := slices.Sorted(maps.Keys(item)); !slices.Equal(got, queria) {
 			t.Errorf("%s: chaves %v; queria %v", onde, got, queria)
 		}
+		var regra map[string]json.RawMessage
+		if err := json.Unmarshal(item["content_rule"], &regra); err != nil {
+			t.Fatalf("%s: content_rule: %v", onde, err)
+		}
+		if got := slices.Sorted(maps.Keys(regra)); !slices.Equal(got, queriaNaRegra) {
+			t.Errorf("%s: chaves da regra %v; queria %v", onde, got, queriaNaRegra)
+		}
 	}
 	status, criado := lerCru(t, a, http.MethodPost, "/api/v1/targets", token, map[string]any{
 		"name": "api", "url": "https://exemplo.com/", "tags": []string{"prod"},
+		// contains, e não json_equals: o json_pointer tem de sair mesmo null.
+		"content_rule": map[string]any{"mode": "contains", "value": "ok"},
 	})
 	if status != http.StatusCreated {
 		t.Fatalf("POST: %d %s", status, criado)
