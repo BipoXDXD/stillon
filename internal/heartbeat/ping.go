@@ -135,9 +135,9 @@ func gravarEvento(ctx context.Context, q *db.Queries, heartbeatID uuid.UUID, ev 
 
 func stateOf(h db.Heartbeat) State {
 	s := State{
-		DeadlineAt: h.DeadlineAt, LastPingAt: valueOrZero(h.LastPingAt),
-		LastSuccessAt: valueOrZero(h.LastSuccessAt), LastStartAt: valueOrZero(h.LastStartAt),
-		FailingSince: valueOrZero(h.FailingSince), LastRuntimeMS: h.LastRuntimeMS,
+		DeadlineAt: h.DeadlineAt, LastPingAt: storage.TimeOrZero(h.LastPingAt),
+		LastSuccessAt: storage.TimeOrZero(h.LastSuccessAt), LastStartAt: storage.TimeOrZero(h.LastStartAt),
+		FailingSince: storage.TimeOrZero(h.FailingSince), LastRuntimeMS: h.LastRuntimeMS,
 		LastRunID: h.LastRunID,
 	}
 	if h.LastSignal != nil {
@@ -162,13 +162,6 @@ func pingParams(h db.Heartbeat, s State, sig Signal, now time.Time) db.SaveHeart
 		LastSignal: &sinal, FailingSince: nilIfZero(s.FailingSince), LastRuntimeMS: s.LastRuntimeMS,
 		LastRunID: s.LastRunID, Enabled: enabled, ResumedAt: resumedAt,
 	}
-}
-
-func valueOrZero(t *time.Time) time.Time {
-	if t == nil {
-		return time.Time{}
-	}
-	return *t
 }
 
 func nilIfZero(t time.Time) *time.Time {
