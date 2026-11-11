@@ -1172,11 +1172,11 @@ func TestPreflightIsRateLimitedButKeepsItsCORSHeaders(t *testing.T) {
 		t.Errorf("o 429 veio com ACAO %q: o SPA não consegue ler a própria recusa", got)
 	}
 	if got := limitado.Header.Get("Vary"); !strings.Contains(got, "Origin") {
-		t.Errorf("o 429 veio com Vary %q, queria conter Origin (R33)", got)
+		t.Errorf("o 429 veio com Vary %q, queria conter Origin mesmo na recusa", got)
 	}
 }
 
-// Item 26: a resposta que carrega credencial não deve ser guardada.
+// A resposta que carrega credencial não deve ser guardada (no-store).
 func TestResponsesAreNotCacheable(t *testing.T) {
 	a := newAPI(t)
 	c := clientWithJar(t)
@@ -1188,7 +1188,7 @@ func TestResponsesAreNotCacheable(t *testing.T) {
 	}
 }
 
-// Item 27: corpo acima do limite é 413, e não 400. A requisição já era
+// Corpo acima do limite é 413, e não 400. A requisição já era
 // barrada pelo MaxBytesReader; o que faltava era o cliente conseguir
 // distinguir "seus dados são inválidos" de "seu corpo é grande demais".
 func TestOversizedBodyIsAPayloadTooLarge(t *testing.T) {
@@ -1216,7 +1216,7 @@ func TestOversizedBodyIsAPayloadTooLarge(t *testing.T) {
 	}
 }
 
-// Item 28: o autocompletar do celular costuma acrescentar um espaço à
+// O autocompletar do celular costuma acrescentar um espaço à
 // direita do e-mail. citext cobre a caixa, não o espaço.
 func TestLoginToleratesSurroundingWhitespaceInTheEmail(t *testing.T) {
 	a := newAPI(t)

@@ -195,8 +195,8 @@ func TestListSessionsNeverExposesIPOrHash(t *testing.T) {
 // usada e uma viva, e duas coisas fazem a lista mostrar a viva, uma vez só: o
 // filtro used_at IS NULL de ListLiveFamilies e a dedupe de ListSessions, que
 // fica com a linha mais nova de cada família. Sabotar só uma deixa este teste
-// verde; a sabotagem registrada tira o filtro E faz a dedupe ficar
-// com a linha mais velha, e o last_used_at da renovada sai errado.
+// verde; tirar o filtro E fazer a dedupe ficar com a
+// linha mais velha deixa o last_used_at da renovada errado.
 func TestListSessionsOrderAndTimes(t *testing.T) {
 	a := newAPI(t)
 	c, token := entrar(t, a)
@@ -365,8 +365,8 @@ func TestRevokeOtherSessionKeepsCookie(t *testing.T) {
 // ou família no contexto) antes de conferir a família. Este teste trava a
 // família viva, que só o sessaoViva confere; o token ausente é o
 // TestPlano5RoutesRequireAuthentication, que fica verde sem o Authn OU sem o
-// sessaoViva. A sabotagem registrada tira os dois de GET /sessions,
-// e ele fica vermelho (200).
+// sessaoViva. Tirar os dois de GET /sessions deixa
+// ele vermelho (200).
 func TestSessionRoutesRejectDeadFamily(t *testing.T) {
 	a := newAPI(t)
 	c, token := entrar(t, a)

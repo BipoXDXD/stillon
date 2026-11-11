@@ -128,9 +128,9 @@ func TestIncidentListRejectsBadQueries(t *testing.T) {
 //
 // Guarda dupla na lista vazia do alvo alheio: o t.user_id = $1 de
 // ListIncidents e a RLS de targets e incidents (history.List roda em
-// storage.InUserTx). Sabotar só uma deixa este teste verde; a sabotagem
-// registrada tira o filtro E troca o InUserTx pelo InProberTx, e
-// os incidentes do outro usuário aparecem.
+// storage.InUserTx). Sabotar só uma deixa este teste verde; tirar o filtro E
+// trocar o InUserTx pelo InProberTx faz os incidentes do outro usuário
+// aparecerem.
 func TestIncidentListFiltersByTarget(t *testing.T) {
 	a := newAPI(t)
 	tok := tokenDe(t, a, a.userID)
@@ -212,7 +212,7 @@ func TestAnotherUsersIncidentIs404(t *testing.T) {
 	resp = chamar(t, a, http.MethodPost, "/api/v1/incidents/nao-e-uuid/ack", tokenDe(t, a, a.userID), nil)
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusNotFound {
-		t.Errorf("id malformado deu %d, queria 404 (D16 do Plano 2)", resp.StatusCode)
+		t.Errorf("id malformado deu %d, queria 404", resp.StatusCode)
 	}
 }
 

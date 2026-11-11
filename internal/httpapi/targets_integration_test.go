@@ -130,7 +130,7 @@ func TestTargetCRUDFlow(t *testing.T) {
 	var criado alvoJSON
 	cru := lerCorpo(t, resp, &criado)
 	if strings.Contains(string(cru), "segredo-do-cliente") {
-		t.Fatal("a resposta do POST contém o valor do header (D5)")
+		t.Fatal("a resposta do POST contém o valor do header")
 	}
 	if len(criado.HeaderNames) != 1 || criado.HeaderNames[0] != "Authorization" {
 		t.Errorf("header_names = %v", criado.HeaderNames)
@@ -628,7 +628,7 @@ func TestPatchHeadersReplacesAndClears(t *testing.T) {
 		}
 		for _, v := range valores {
 			if strings.Contains(cru, v) {
-				t.Errorf("a resposta do PATCH contém o valor de header %q (D5): %s", v, cru)
+				t.Errorf("a resposta do PATCH contém o valor de header %q: %s", v, cru)
 			}
 		}
 		return got, cru
@@ -663,7 +663,7 @@ func TestMalformedIDIs404(t *testing.T) {
 	resp := chamar(t, a, http.MethodGet, "/api/v1/targets/nao-e-uuid", tokenDe(t, a, a.userID), nil)
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusNotFound {
-		t.Errorf("id malformado deu %d, queria 404 (D16)", resp.StatusCode)
+		t.Errorf("id malformado deu %d, queria 404", resp.StatusCode)
 	}
 }
 

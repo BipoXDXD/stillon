@@ -367,7 +367,7 @@ func TestChangePasswordDeadFamily(t *testing.T) {
 //
 // É a trava do wiring, pelo Routes de verdade: registrar /auth/password sem o
 // limiteLogin, ou com uma instância própria do limitador, dá 401 no lugar do
-// 429 (sabotagens registradas). Os cinco logins recusados com 401,
+// 429. Os cinco logins recusados com 401,
 // e não 429, são o contraponto: o balde tem 5 fichas, e a sexta requisição,
 // que é a troca, é a que o esgota.
 //

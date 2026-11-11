@@ -51,8 +51,8 @@ func TestTOTPRoutesRejectADeadFamily(t *testing.T) {
 // /totp/confirm (o 401 unauthorized é só dela) e o segredo pendente apagado
 // na mesma transação da troca e do set-password (que também tem prova
 // própria: TestPasswordChangeDropsAPendingTOTPEnrollment, em
-// internal/account). Sabotar só o segredo pendente deixa este teste verde; a
-// sabotagem registrada tira as duas, e o 2FA do invasor liga.
+// internal/account). Sabotar só o segredo pendente deixa este teste verde; tirar
+// as duas liga o 2FA do invasor.
 func TestIntruderCannotConfirmTOTPAfterThePasswordChanges(t *testing.T) {
 	for _, r := range []string{"troca de senha", "set-password"} {
 		t.Run(r, func(t *testing.T) {

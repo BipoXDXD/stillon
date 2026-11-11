@@ -12,7 +12,7 @@ import "net/http"
 // TODA resposta 429 sairia sem Access-Control-Allow-Origin e sem
 // Vary: Origin — o SPA legítimo veria um erro opaco, incapaz de ler a
 // própria recusa, e a perda do Vary reabriria o buraco de cache que o
-// Vary: Origin fechou.
+// Vary incondicional fechou.
 func CORS(origin string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

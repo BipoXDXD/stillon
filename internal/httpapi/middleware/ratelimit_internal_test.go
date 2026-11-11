@@ -19,7 +19,8 @@ import (
 // o mapa tem uma entrada só, e o atacante não consegue variar a chave. No
 // instante em que o ClientIP passa a ler o X-Forwarded-For de um proxy
 // confiável, ele recupera esse controle — e um mapa sem teto vira exaustão de
-// memória. Por isso os dois saem juntos.
+// memória. Por isso o teto de baldes e a leitura do X-Forwarded-For saem
+// juntos.
 func TestRateLimitCapsTheNumberOfBuckets(t *testing.T) {
 	const teto = 8
 	h := rateLimit(t.Context(), clock.Real{}, porMinuto(60), 5, porIP(Proxies{}), teto)(http.HandlerFunc(
