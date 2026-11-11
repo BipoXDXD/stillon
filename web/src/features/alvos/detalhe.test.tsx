@@ -827,6 +827,22 @@ describe('detalhe', () => {
       expect(await screen.findByRole('alert')).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Reconhecer' })).toBeInTheDocument()
     })
+
+    // O ack pode ter chegado ao servidor mesmo com a resposta perdida: a lista
+    // de incidentes é relida depois da falha. Sabotagem: invalidar só quando
+    // o ack deu certo → nenhum GET /incidents a mais.
+    it('um ack que falha relê os incidentes, porque o ack pode ter chegado', async () => {
+      const r = await renderizarPainel('/targets/alvo-1')
+      r.falsa.estado.alvos = [alvo()]
+      r.falsa.estado.resumo = [itemDoResumo({ state: 'down', open_incident_id: 'inc-1' })]
+      r.falsa.estado.incidentes = [incidente()]
+      await r.cliente.refetchQueries()
+      r.falsa.estado.forcar.set('POST /incidents/:id/ack', { status: 503, code: 'unavailable' })
+      const antes = r.falsa.chamadas('GET /incidents')
+      await r.usuario.click(await screen.findByRole('button', { name: 'Reconhecer' }))
+      await screen.findByRole('alert')
+      await waitFor(() => expect(r.falsa.chamadas('GET /incidents')).toBeGreaterThan(antes))
+    })
   })
 })
 

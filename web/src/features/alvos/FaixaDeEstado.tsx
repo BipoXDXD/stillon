@@ -1,12 +1,10 @@
-import { useQueryClient } from '@tanstack/react-query'
 import { Check, Circle, CircleDashed, Pause, Triangle, X, type LucideIcon } from 'lucide-react'
-import { useEffect, useId, useRef, useState } from 'react'
+import { useEffect, useId, useRef } from 'react'
 import { useApi } from '@/app/contexto'
 import { Selo } from '@/components/SeloDeEstado'
 import { Botao } from '@/components/ui/botao'
+import { useReconhecer } from '@/features/incidentes/reconhecer'
 import { chaves } from '@/lib/api/consultas'
-import { naoEncontrado } from '@/lib/api/http'
-import { mensagemDe } from '@/lib/api/mensagens'
 import type { Incidente, ItemDoResumo } from '@/lib/api/schemas'
 import type { EstadoExibido } from '@/lib/estado'
 import { dataHora } from '@/lib/format'
@@ -38,10 +36,8 @@ type Props = {
 // secundário não tem 3:1 sobre os tons 100 do escuro.
 export function FaixaDeEstado({ item, incidentes, agora, aoSumir, aoErrar }: Props) {
   const api = useApi()
-  const qc = useQueryClient()
   const idDoTitulo = useId()
   const idDaAjuda = useId()
-  const [reconhecendo, setReconhecendo] = useState(false)
   const reconhecido = useRef<HTMLParagraphElement>(null)
   // O Reconhecer some quando o ack vale, e o foco iria ao <body>: vai ao
   // "Reconhecido" (o mesmo cuidado da tela de incidentes, I1). Um ref e um
@@ -68,25 +64,15 @@ export function FaixaDeEstado({ item, incidentes, agora, aoSumir, aoErrar }: Pro
   const faixa = faixaDoEstado(item, aberto, agora)
   const { Icone, fundo, cor, secundario } = VISUAL_DA_FAIXA[faixa.estado]
 
-  async function reconhecer(id: string) {
-    aoErrar(null)
-    setReconhecendo(true)
-    try {
-      await api.reconhecer(id)
-    } catch (e) {
-      // 404: o incidente sumiu com o alvo, apagado em outra aba.
-      if (naoEncontrado(e)) {
-        aoSumir()
-        return
-      }
-      aoErrar(mensagemDe(e))
-    } finally {
-      // Mesmo depois de uma falha: o ack pode ter chegado ao servidor.
-      await qc.invalidateQueries({ queryKey: chaves.todosOsIncidentes })
+  const { reconhecendo, reconhecer } = useReconhecer({
+    enviar: api.reconhecer,
+    consulta: chaves.todosOsIncidentes,
+    aoNaoEncontrar: aoSumir,
+    aoErrar,
+    aoTerminar: () => {
       focarDepois.current = true
-      setReconhecendo(false)
-    }
-  }
+    },
+  })
 
   return (
     <section aria-labelledby={idDoTitulo} className={cn('flex flex-wrap items-start gap-4 rounded-padrao p-4 sm:p-6', fundo)}>
@@ -114,10 +100,10 @@ export function FaixaDeEstado({ item, incidentes, agora, aoSumir, aoErrar }: Pro
             ref={botao}
             // aria-disabled, e não disabled: o botão desabilitado perderia o
             // foco para o <body> enquanto o POST voa.
-            aria-disabled={reconhecendo || undefined}
+            aria-disabled={reconhecendo.size > 0 || undefined}
             aria-describedby={idDaAjuda}
             onClick={() => {
-              if (!reconhecendo) void reconhecer(aberto.id)
+              if (reconhecendo.size === 0) void reconhecer(aberto.id)
             }}
           >
             Reconhecer
