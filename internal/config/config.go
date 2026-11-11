@@ -103,6 +103,11 @@ type Config struct {
 	// cada um custa 64 MiB. ARGON2_MAX_CONCURRENT, de 1 a 64; sem a variável,
 	// min(NumCPU, 4).
 	Argon2MaxConcurrent int
+	// ContentRulesPerHost é o teto de alvos com regra de conteúdo por host de
+	// destino, por usuário (D-T3): limita o oráculo de leitura da regra.
+	// CONTENT_RULES_PER_HOST, de 1 a 100; sem a variável, 5. 100 equivale a
+	// desligar, porque é o teto de alvos por usuário.
+	ContentRulesPerHost int
 
 	// ProbeBlockedCIDRs são as faixas da própria hospedagem que a sonda
 	// recusa, além da lista fixa do safedial (PROBE_BLOCKED_CIDRS). A VPS é
@@ -316,6 +321,22 @@ func Load(getenv func(string) string) (*Config, error) {
 		return n
 	}
 
+	// CONTENT_RULES_PER_HOST: o teto de regras de conteúdo por host (D-T3).
+	// O padrão é o mesmo de targets.DefaultContentRulesPerHost (o config não
+	// importa o targets).
+	regrasPorHost := func(name string) int {
+		raw := strings.TrimSpace(getenv(name))
+		if raw == "" {
+			return 5
+		}
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 1 || n > 100 {
+			errs = append(errs, fmt.Errorf("%s %q precisa ser um inteiro de 1 a 100", name, raw))
+			return 0
+		}
+		return n
+	}
+
 	cfg := &Config{
 		Role:                role,
 		HTTPAddr:            opt("HTTP_ADDR", ":8080"),
@@ -331,6 +352,7 @@ func Load(getenv func(string) string) (*Config, error) {
 		ProbeBlockedCIDRs:   hospedagem("PROBE_BLOCKED_CIDRS"),
 		ShutdownGrace:       shutdownGrace,
 		Argon2MaxConcurrent: argon2("ARGON2_MAX_CONCURRENT"),
+		ContentRulesPerHost: regrasPorHost("CONTENT_RULES_PER_HOST"),
 		ResendAPIKey:        strings.TrimSpace(getenv("RESEND_API_KEY")),
 		EmailFrom:           strings.TrimSpace(getenv("EMAIL_FROM")),
 	}

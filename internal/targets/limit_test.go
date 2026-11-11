@@ -97,3 +97,11 @@ func TestConcurrentCreatesRespectTheLimit(t *testing.T) {
 		t.Errorf("%d alvos depois de dois POST simultâneos (erros: %v), queria %d", n, erros, targets.MaxTargetsPerUser)
 	}
 }
+
+// D-T3: sem opção, o serviço parte de 5 alvos com regra por host, o mesmo
+// literal do padrão de CONTENT_RULES_PER_HOST no config.
+func TestDefaultContentRulesPerHostIsFive(t *testing.T) {
+	if targets.DefaultContentRulesPerHost != 5 {
+		t.Errorf("DefaultContentRulesPerHost = %d, queria 5", targets.DefaultContentRulesPerHost)
+	}
+}

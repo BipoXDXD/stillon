@@ -28,10 +28,26 @@ type Service struct {
 	// depoisDeContar existe para o teste de criação concorrente: roda entre a
 	// contagem de alvos e a inserção.
 	depoisDeContar func()
+	// tetoPorHost é o máximo de alvos do dono com regra de conteúdo num mesmo
+	// host de destino (D-T1, D-T3).
+	tetoPorHost int
 }
 
-func NewService(pool *pgxpool.Pool, box *crypto.Box, clk clock.Clock) *Service {
-	return &Service{pool: pool, box: box, clk: clk}
+// Opcao ajusta o Service na criação.
+type Opcao func(*Service)
+
+// ComTetoDeRegrasPorHost troca o teto de alvos com regra de conteúdo por host
+// (CONTENT_RULES_PER_HOST); sem ela, vale DefaultContentRulesPerHost.
+func ComTetoDeRegrasPorHost(n int) Opcao {
+	return func(s *Service) { s.tetoPorHost = n }
+}
+
+func NewService(pool *pgxpool.Pool, box *crypto.Box, clk clock.Clock, opcoes ...Opcao) *Service {
+	s := &Service{pool: pool, box: box, clk: clk, tetoPorHost: DefaultContentRulesPerHost}
+	for _, o := range opcoes {
+		o(s)
+	}
+	return s
 }
 
 func (s *Service) Create(ctx context.Context, userID uuid.UUID, in Input) (Target, error) {

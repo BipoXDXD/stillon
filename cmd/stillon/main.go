@@ -182,7 +182,7 @@ func run(ctx context.Context, cfg *config.Config) error {
 			Sessions:    auth.NewManager(store, clk, cfg.IPHashKey),
 			TOTP:        segundoFator,
 			Accounts:    account.NewService(pool, segundoFator, clk, cfg.IPHashKey),
-			Targets:     targets.NewService(pool, box, clk),
+			Targets:     targets.NewService(pool, box, clk, targets.ComTetoDeRegrasPorHost(cfg.ContentRulesPerHost)),
 			Incidents:   history.NewService(pool, clk),
 			Channels:    notify.NewChannelService(pool, box, clk, notify.NewDiscord(), verificador(cfg), cfg.PublicBaseURL),
 			StatusPages: statuspage.NewService(pool, clk),
