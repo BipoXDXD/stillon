@@ -112,9 +112,11 @@ func TestFieldsDaLinhaSemRegra(t *testing.T) {
 func TestComoTargetNaoVazaValorDeHeaderEOrdenaOsNomes(t *testing.T) {
 	id := uuid.MustParse("00000000-0000-7000-8000-000000000002")
 	criado := time.Date(2026, 11, 2, 9, 0, 0, 0, time.UTC)
+	limiar := int32(900)
 	f := fields{
 		Name: "api", URL: "https://a.test/", Method: "GET", IntervalSec: 60, TimeoutMS: 5000, ExpectedStatus: 200,
-		Headers: map[string]string{"X-Z": "segredo", "X-A": "segredo"}, Tags: []string{"prod"},
+		DegradedThresholdMS: &limiar,
+		Headers:             map[string]string{"X-Z": "segredo", "X-A": "segredo"}, Tags: []string{"prod"},
 		ContentRule: &ContentRule{Mode: ContentContains, Value: "ok"},
 	}
 
@@ -122,7 +124,8 @@ func TestComoTargetNaoVazaValorDeHeaderEOrdenaOsNomes(t *testing.T) {
 
 	quer := Target{
 		ID: id, Name: "api", URL: "https://a.test/", Method: "GET", IntervalSec: 60, TimeoutMS: 5000, ExpectedStatus: 200,
-		Enabled: true, TLSWarn: false, HeaderNames: []string{"X-A", "X-Z"}, Tags: []string{"prod"}, CreatedAt: criado,
+		DegradedThresholdMS: &limiar,
+		Enabled:             true, TLSWarn: false, HeaderNames: []string{"X-A", "X-Z"}, Tags: []string{"prod"}, CreatedAt: criado,
 		ContentRule: &ContentRule{Mode: ContentContains, Value: "ok"},
 	}
 	if !reflect.DeepEqual(got, quer) {
@@ -142,17 +145,20 @@ func TestUpdateTargetParams(t *testing.T) {
 	id := uuid.MustParse("00000000-0000-7000-8000-0000000000bb")
 	proximo := time.Date(2026, 11, 3, 8, 0, 0, 0, time.UTC)
 	modo, valor, ponteiro := "json_equals", "1", "/a"
+	limiar := int32(700)
 	f := fields{
 		Name: "api", URL: "https://a.test/", Method: "GET", IntervalSec: 60, TimeoutMS: 5000, ExpectedStatus: 200,
-		ContentRule: &ContentRule{Mode: ContentJSONEquals, Value: "1", JSONPointer: "/a"},
+		DegradedThresholdMS: &limiar,
+		ContentRule:         &ContentRule{Mode: ContentJSONEquals, Value: "1", JSONPointer: "/a"},
 	}
 
-	got := f.updateTargetParams(userID, id, []byte("cifrado"), true, proximo, true)
+	// enabled e tlsWarn com valores diferentes: trocar um pelo outro tem de falhar.
+	got := f.updateTargetParams(userID, id, []byte("cifrado"), false, proximo, true)
 
 	quer := db.UpdateTargetParams{
 		UserID: userID, ID: id, Name: "api", URL: "https://a.test/", Method: "GET",
-		IntervalSec: 60, TimeoutMS: 5000, ExpectedStatus: 200, HeadersEnc: []byte("cifrado"),
-		Enabled: true, NextRunAt: proximo, TlsWarn: true,
+		IntervalSec: 60, TimeoutMS: 5000, ExpectedStatus: 200, DegradedThresholdMS: &limiar, HeadersEnc: []byte("cifrado"),
+		Enabled: false, NextRunAt: proximo, TlsWarn: true,
 		ContentMode: &modo, ContentValue: &valor, ContentJsonPointer: &ponteiro,
 	}
 	if !reflect.DeepEqual(got, quer) {
