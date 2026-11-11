@@ -261,7 +261,7 @@ func TestLongGapRestartsTheHysteresis(t *testing.T) {
 
 // A borda da lacuna (on/off point): três intervalos exatos ainda somam as
 // sequências; um segundo a mais recomeça a histerese. Trocar <= por < na
-// regra, ou o fator 3 por 2 ou 4, quebra um dos dois casos.
+// regra, ou targetstate.StaleIntervals de 3 para 2 ou 4, quebra um dos dois casos.
 func TestGapBoundaryOfTheHysteresis(t *testing.T) {
 	ultimo := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
 	antes := incident.State{ConsecutiveFailures: 2, StreakSince: ultimo, LastCheckedAt: ultimo}
