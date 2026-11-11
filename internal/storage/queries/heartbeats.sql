@@ -4,8 +4,8 @@
 
 -- name: InsertHeartbeat :exec
 INSERT INTO heartbeats (id, user_id, name, ping_token_hash, period_sec, cron_expr, timezone,
-                        grace_sec, enabled, created_at, deadline_at, description)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12);
+                        grace_sec, enabled, created_at, deadline_at, description, ping_resumes)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13);
 
 -- A trava serializa pings simultâneos do mesmo token: o segundo lê o estado
 -- que o primeiro gravou, e é isso que faz a repetição ter um efeito só (D9).
@@ -23,12 +23,22 @@ UPDATE heartbeats
    SET deadline_at = sqlc.arg(deadline_at), last_ping_at = sqlc.narg(last_ping_at),
        last_success_at = sqlc.narg(last_success_at), last_start_at = sqlc.narg(last_start_at),
        last_signal = sqlc.narg(last_signal), failing_since = sqlc.narg(failing_since),
-       last_runtime_ms = sqlc.narg(last_runtime_ms)
+       last_runtime_ms = sqlc.narg(last_runtime_ms), last_run_id = sqlc.narg(last_run_id),
+       enabled = sqlc.arg(enabled), resumed_at = sqlc.narg(resumed_at)
  WHERE id = sqlc.arg(id);
 
 -- name: InsertHeartbeatEvent :exec
-INSERT INTO heartbeat_events (id, heartbeat_id, at, kind, runtime_ms, exit_code)
-VALUES ($1, $2, $3, $4, $5, $6);
+INSERT INTO heartbeat_events (id, heartbeat_id, at, kind, runtime_ms, exit_code, run_id, source)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8);
+
+-- O início de uma execução com rid é o start mais recente de mesmo rid; o
+-- índice heartbeat_events_run_idx resolve a busca. Sem linha, o início nunca
+-- veio ou o teto do log o aparou.
+-- name: GetRunStartAt :one
+SELECT at FROM heartbeat_events
+ WHERE heartbeat_id = $1 AND run_id = $2 AND kind = 'start'
+ ORDER BY id DESC
+ LIMIT 1;
 
 -- O teto do log (D15), na transação do ping: apaga do evento de posição
 -- max_events + 1, do mais novo para o mais velho, para trás. O id é UUIDv7,
@@ -47,7 +57,7 @@ SELECT * FROM heartbeats WHERE user_id = $1 AND id = $2;
 -- O log do dono, do mais novo ao mais velho. O id é UUIDv7, e o cursor é o
 -- último id da página anterior.
 -- name: ListHeartbeatEvents :many
-SELECT e.id, e.heartbeat_id, e.at, e.kind, e.runtime_ms, e.exit_code
+SELECT e.id, e.heartbeat_id, e.at, e.kind, e.runtime_ms, e.exit_code, e.run_id, e.source
   FROM heartbeat_events e
   JOIN heartbeats h ON h.id = e.heartbeat_id
  WHERE h.user_id = sqlc.arg(user_id)
@@ -67,11 +77,16 @@ UPDATE heartbeats SET ping_token_hash = $3 WHERE user_id = $1 AND id = $2;
 -- entre aberturas (D11): quem está nele fica para um tique seguinte.
 -- O OR não usa heartbeats_due_idx, e fica assim por medição: separar em UNION
 -- piorou a consulta (spec de heartbeats, §4).
+-- Sem período e sem cron, a linha é de uma versão posterior com agendamento que
+-- este binário não conhece: o prazo dela não é confiável e não abre atraso, mas
+-- a falha avisada abre.
 -- name: ClaimHeartbeatsToOpen :many
 SELECT h.id, h.user_id, h.deadline_at, h.failing_since
   FROM heartbeats h
  WHERE h.enabled
-   AND (h.deadline_at <= sqlc.arg(now)::timestamptz OR h.failing_since IS NOT NULL)
+   AND (h.failing_since IS NOT NULL
+        OR (h.deadline_at <= sqlc.arg(now)::timestamptz
+            AND (h.period_sec IS NOT NULL OR h.cron_expr IS NOT NULL)))
    AND (h.last_incident_at IS NULL OR h.last_incident_at <= sqlc.arg(cooldown_cut)::timestamptz)
    AND NOT EXISTS (SELECT 1 FROM incidents x WHERE x.heartbeat_id = h.id AND x.resolved_at IS NULL)
  ORDER BY h.deadline_at
@@ -81,6 +96,8 @@ SELECT h.id, h.user_id, h.deadline_at, h.failing_since
 -- Com incidente aberto e saudável de novo, por um sucesso ou pela retomada
 -- depois do início: prazo novo, sozinho, não fecha (spec de heartbeats, §5).
 -- Pausado fica como está: sem avaliação, como o alvo pausado sem sonda (D13).
+-- Agendamento desconhecido (sem período e sem cron) não tem prazo confiável, e o
+-- sucesso basta: o ping nessa linha nunca move o prazo.
 -- name: ClaimHeartbeatsToClose :many
 SELECT h.id, h.user_id, h.last_success_at, x.id AS incident_id, x.started_at
   FROM incidents x
@@ -88,7 +105,7 @@ SELECT h.id, h.user_id, h.last_success_at, x.id AS incident_id, x.started_at
  WHERE x.resolved_at IS NULL
    AND h.enabled
    AND h.failing_since IS NULL
-   AND h.deadline_at > sqlc.arg(now)::timestamptz
+   AND (h.deadline_at > sqlc.arg(now)::timestamptz OR (h.period_sec IS NULL AND h.cron_expr IS NULL))
    AND (h.last_success_at >= x.started_at OR h.resumed_at >= x.started_at)
  ORDER BY x.id
  LIMIT sqlc.arg(max_rows)::int
@@ -140,11 +157,18 @@ UPDATE heartbeats
        period_sec = sqlc.narg(period_sec), cron_expr = sqlc.narg(cron_expr),
        timezone = sqlc.narg(timezone), grace_sec = sqlc.arg(grace_sec), enabled = sqlc.arg(enabled),
        deadline_at = sqlc.arg(deadline_at), failing_since = sqlc.narg(failing_since),
-       resumed_at = sqlc.narg(resumed_at), last_start_at = sqlc.narg(last_start_at)
+       resumed_at = sqlc.narg(resumed_at), last_start_at = sqlc.narg(last_start_at),
+       ping_resumes = sqlc.arg(ping_resumes)
  WHERE user_id = sqlc.arg(user_id) AND id = sqlc.arg(id);
 
 -- name: DeleteHeartbeat :execrows
 DELETE FROM heartbeats WHERE user_id = $1 AND id = $2;
+
+-- Limpar o log (SP1): só os eventos; last_*, prazo e incidentes ficam.
+-- name: DeleteHeartbeatEvents :execrows
+DELETE FROM heartbeat_events e
+ USING heartbeats h
+ WHERE h.id = e.heartbeat_id AND h.user_id = sqlc.arg(user_id) AND e.heartbeat_id = sqlc.arg(heartbeat_id);
 
 -- open NULL lista tudo; true só abertos; false só resolvidos.
 -- name: ListHeartbeatIncidents :many

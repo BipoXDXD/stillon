@@ -7,6 +7,7 @@ import (
 	"net/netip"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -202,4 +203,52 @@ func TestDiscarConjuntoFechaAConexaoDeQuemPerdeu(t *testing.T) {
 			t.Error("a conexão vencedora foi fechada")
 		}
 	})
+}
+
+// O dial roda num context sem o prazo da sonda (o net/http usa
+// context.WithoutCancel), e discarConjunto tenta um IP depois do outro. O
+// transporte põe um prazo único, MaxProbeTimeout, no context que o dialer de
+// fato recebe; o teste lê esse prazo de dentro do próprio dialer, que entra
+// pronto no newTransport, sem Timeout próprio.
+func TestDialContextBoundsTheWholeDialOnce(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { l.Close() })
+
+	var prazos []time.Time
+	dialer := &net.Dialer{ControlContext: func(ctx context.Context, _, _ string, _ syscall.RawConn) error {
+		prazo, ok := ctx.Deadline()
+		if !ok {
+			return errors.New("dial sem prazo")
+		}
+		prazos = append(prazos, prazo)
+		return nil
+	}}
+	tr := newTransport(func(string) error { return nil }, dialer)
+
+	inicio := time.Now()
+	conn, err := tr.DialContext(context.Background(), "tcp", l.Addr().String())
+	if err != nil {
+		t.Fatalf("DialContext: %v", err)
+	}
+	conn.Close()
+
+	if len(prazos) != 1 {
+		t.Fatalf("o dialer viu %d tentativas, queria 1", len(prazos))
+	}
+	if folga := prazos[0].Sub(inicio) - MaxProbeTimeout; folga < -time.Second || folga > time.Second {
+		t.Errorf("prazo do dial = início + %v, queria início + %v", prazos[0].Sub(inicio), MaxProbeTimeout)
+	}
+}
+
+// O teste acima monta o próprio dialer, então não prova o de produção. Um
+// Timeout ou Deadline em novoDialer valeria por tentativa e somaria prazos
+// em discarConjunto, por fora do prazo único do transporte.
+func TestNovoDialerNaoTemPrazoProprio(t *testing.T) {
+	d := novoDialer(func(string) error { return nil })
+	if d.Timeout != 0 || !d.Deadline.IsZero() {
+		t.Errorf("novoDialer: Timeout = %v, Deadline = %v; queria os dois zerados", d.Timeout, d.Deadline)
+	}
 }

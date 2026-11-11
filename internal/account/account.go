@@ -16,7 +16,6 @@ import (
 	"net/mail"
 	"slices"
 	"time"
-	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -431,13 +430,12 @@ type Session struct {
 	CreatedAt time.Time
 	// LastUsedAt é o último refresh (granularidade de ~15 min num painel ativo).
 	LastUsedAt time.Time
-	// UserAgent é o do último refresh, cortado em maxUserAgent code points.
+	// UserAgent é o do último refresh, cortado em auth.MaxUserAgent code
+	// points (linhas gravadas antes do teto na gravação podem passar dele).
 	// É texto de quem fez o login, inclusive de um invasor.
 	UserAgent string
 	Current   bool
 }
-
-const maxUserAgent = 256
 
 // ListSessions devolve as famílias vivas do usuário, da mais nova para a mais
 // antiga pelo login (created_at), e não pelo último uso: uma ordem que muda a
@@ -461,7 +459,7 @@ func (s *Service) ListSessions(ctx context.Context, userID, current uuid.UUID) (
 		seg, nseg := id.Time().UnixTime()
 		out = append(out, Session{
 			ID: id, CreatedAt: time.Unix(seg, nseg).UTC(), LastUsedAt: r.CreatedAt.UTC(),
-			UserAgent: cortar(r.UserAgent, maxUserAgent), Current: id == current,
+			UserAgent: auth.TruncateUserAgent(r.UserAgent), Current: id == current,
 		})
 	}
 	slices.SortFunc(out, func(a, b Session) int {
@@ -471,21 +469,6 @@ func (s *Service) ListSessions(ctx context.Context, userID, current uuid.UUID) (
 		return slices.Compare(b.ID[:], a.ID[:])
 	})
 	return out, nil
-}
-
-// cortar corta em n code points sem partir um caractere ao meio.
-func cortar(s string, n int) string {
-	if utf8.RuneCountInString(s) <= n {
-		return s
-	}
-	i := 0
-	for j := range s {
-		if i == n {
-			return s[:j]
-		}
-		i++
-	}
-	return s
 }
 
 // RevokeSession encerra a família pedida (DELETE /sessions/{id}). Só se ela

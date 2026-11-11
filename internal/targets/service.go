@@ -45,6 +45,7 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, in Input) (Targe
 		DegradedThresholdMS: in.DegradedThresholdMS,
 		Headers:             in.Headers,
 		Tags:                in.Tags,
+		ContentRule:         in.ContentRule,
 	}
 	if verr := validate(&f); verr != nil {
 		return Target{}, verr
@@ -62,6 +63,7 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, in Input) (Targe
 	// O alvo nasce vencido: a primeira sonda sai no próximo tick, e quem
 	// cadastrou vê o estado em segundos, não depois de um intervalo inteiro.
 	now := s.clk.Now()
+	modo, valor, ponteiro := colunasDaRegra(f.ContentRule)
 	err = storage.InUserTx(ctx, s.pool, userID, func(q *db.Queries) error {
 		// O teto conta e insere sob a trava do usuário: sem ela, dois POST
 		// simultâneos passariam os dois pela contagem.
@@ -82,7 +84,8 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, in Input) (Targe
 			ID: id, UserID: userID, Name: f.Name, URL: f.URL, Method: f.Method,
 			IntervalSec: f.IntervalSec, TimeoutMS: f.TimeoutMS, ExpectedStatus: f.ExpectedStatus,
 			HeadersEnc: sealed, DegradedThresholdMS: f.DegradedThresholdMS,
-			Enabled: in.Enabled, NextRunAt: now, CreatedAt: now,
+			Enabled: in.Enabled, NextRunAt: now, CreatedAt: now, TlsWarn: in.TLSWarn,
+			ContentMode: modo, ContentValue: valor, ContentJsonPointer: ponteiro,
 		})
 		if err != nil {
 			return err
@@ -98,8 +101,8 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, in Input) (Targe
 	return Target{
 		ID: id, Name: f.Name, URL: f.URL, Method: f.Method,
 		IntervalSec: f.IntervalSec, TimeoutMS: f.TimeoutMS, ExpectedStatus: f.ExpectedStatus,
-		DegradedThresholdMS: f.DegradedThresholdMS, Enabled: in.Enabled,
-		HeaderNames: headerNames(f.Headers), Tags: f.Tags, CreatedAt: now,
+		DegradedThresholdMS: f.DegradedThresholdMS, Enabled: in.Enabled, TLSWarn: in.TLSWarn,
+		HeaderNames: headerNames(f.Headers), Tags: f.Tags, ContentRule: f.ContentRule, CreatedAt: now,
 	}, nil
 }
 
@@ -113,7 +116,10 @@ func (s *Service) Get(ctx context.Context, userID, id uuid.UUID) (Target, error)
 		if out, err = s.toTarget(row); err != nil {
 			return err
 		}
-		out.Tags, err = lerTags(ctx, q, userID, id)
+		if out.Tags, err = lerTags(ctx, q, userID, id); err != nil {
+			return err
+		}
+		out.TLS, err = lerValidade(ctx, q, userID, id)
 		return err
 	})
 	return out, err
@@ -133,6 +139,10 @@ func (s *Service) List(ctx context.Context, userID uuid.UUID, before *uuid.UUID,
 		if err != nil {
 			return err
 		}
+		validades, err := validadesDoDono(ctx, q, userID)
+		if err != nil {
+			return err
+		}
 		out = make([]Target, 0, len(rows))
 		for _, r := range rows {
 			t, err := s.toTarget(r)
@@ -140,6 +150,7 @@ func (s *Service) List(ctx context.Context, userID uuid.UUID, before *uuid.UUID,
 				return err
 			}
 			t.Tags = tagsDoAlvo(tags, t.ID)
+			t.TLS = validades[t.ID]
 			out = append(out, t)
 		}
 		return nil
@@ -170,17 +181,23 @@ func (s *Service) Update(ctx context.Context, userID, id uuid.UUID, p Patch) (Ta
 			Name: row.Name, URL: row.URL, Method: row.Method,
 			IntervalSec: row.IntervalSec, TimeoutMS: row.TimeoutMS, ExpectedStatus: row.ExpectedStatus,
 			DegradedThresholdMS: row.DegradedThresholdMS, Headers: headers, Tags: tags,
-			urlGravada: row.URL,
+			ContentRule: RuleFromColumns(row.ContentMode, row.ContentValue, row.ContentJsonPointer),
+			urlGravada:  row.URL,
 		}
+		regraGravada := f.ContentRule
 		enabled := row.Enabled
 		mudouASonda := p.apply(&f, &enabled)
+		tlsWarn := row.TlsWarn
+		if p.TLSWarn != nil {
+			tlsWarn = *p.TLSWarn
+		}
 		if verr := validate(&f); verr != nil {
 			return verr
 		}
-		// C4 (Plano 10): outra URL ou outro método é outro serviço. As falhas
-		// do anterior não somam com as do novo; o incidente aberto fica e
-		// fecha pelos sucessos do novo.
-		if f.URL != row.URL || f.Method != row.Method {
+		// C4 (Plano 10): outra URL ou outro método é outro serviço, e outra
+		// regra é outro critério de saúde. As falhas do anterior não somam com
+		// as do novo; o incidente aberto fica e fecha pelos sucessos do novo.
+		if f.URL != row.URL || f.Method != row.Method || !f.ContentRule.Equal(regraGravada) {
 			if err := q.ResetTargetHealth(ctx, db.ResetTargetHealthParams{UserID: userID, TargetID: row.ID}); err != nil {
 				return fmt.Errorf("zerar histerese do alvo: %w", err)
 			}
@@ -194,14 +211,28 @@ func (s *Service) Update(ctx context.Context, userID, id uuid.UUID, p Patch) (Ta
 		if mudouASonda {
 			proximo = s.clk.Now() // D13
 		}
+		modo, valor, ponteiro := colunasDaRegra(f.ContentRule)
 		err = q.UpdateTarget(ctx, db.UpdateTargetParams{
 			UserID: userID, ID: id, Name: f.Name, URL: f.URL, Method: f.Method,
 			IntervalSec: f.IntervalSec, TimeoutMS: f.TimeoutMS, ExpectedStatus: f.ExpectedStatus,
 			HeadersEnc: sealed, DegradedThresholdMS: f.DegradedThresholdMS,
-			Enabled: enabled, NextRunAt: proximo,
+			Enabled: enabled, NextRunAt: proximo, TlsWarn: tlsWarn,
+			ContentMode: modo, ContentValue: valor, ContentJsonPointer: ponteiro,
 		})
 		if err != nil {
 			return fmt.Errorf("atualizar alvo: %w", err)
+		}
+		// Outra origem (esquema, host ou porta) é outro certificado: a leitura
+		// anterior sai junto com a troca.
+		if mudouDeDestino(row.URL, f.URL) {
+			err := q.DeleteTargetTLSOfOwner(ctx, db.DeleteTargetTLSOfOwnerParams{UserID: userID, TargetID: row.ID})
+			if err != nil {
+				return fmt.Errorf("apagar validade do certificado: %w", err)
+			}
+		}
+		validade, err := lerValidade(ctx, q, userID, row.ID)
+		if err != nil {
+			return err
 		}
 		if p.SetTags {
 			if err := trocarTags(ctx, q, userID, row.ID, f.Tags); err != nil {
@@ -211,8 +242,9 @@ func (s *Service) Update(ctx context.Context, userID, id uuid.UUID, p Patch) (Ta
 		out = Target{
 			ID: row.ID, Name: f.Name, URL: f.URL, Method: f.Method,
 			IntervalSec: f.IntervalSec, TimeoutMS: f.TimeoutMS, ExpectedStatus: f.ExpectedStatus,
-			DegradedThresholdMS: f.DegradedThresholdMS, Enabled: enabled,
-			HeaderNames: headerNames(f.Headers), Tags: f.Tags, CreatedAt: row.CreatedAt,
+			DegradedThresholdMS: f.DegradedThresholdMS, Enabled: enabled, TLSWarn: tlsWarn, TLS: validade,
+			HeaderNames: headerNames(f.Headers), Tags: f.Tags, ContentRule: f.ContentRule,
+			CreatedAt: row.CreatedAt,
 		}
 		return nil
 	})
@@ -255,12 +287,16 @@ func (p Patch) apply(f *fields, enabled *bool) bool {
 	if p.SetTags {
 		f.Tags = p.Tags
 	}
+	if p.SetContentRule {
+		f.ContentRule = p.ContentRule
+	}
 	if p.Enabled != nil {
 		*enabled = *p.Enabled
 	}
 	return f.URL != antes.URL || f.Method != antes.Method ||
 		f.IntervalSec != antes.IntervalSec || f.TimeoutMS != antes.TimeoutMS ||
-		f.ExpectedStatus != antes.ExpectedStatus || p.SetHeaders
+		f.ExpectedStatus != antes.ExpectedStatus || p.SetHeaders ||
+		!f.ContentRule.Equal(antes.ContentRule)
 }
 
 func (s *Service) Delete(ctx context.Context, userID, id uuid.UUID) error {
@@ -383,9 +419,37 @@ func (s *Service) toTarget(row db.Target) (Target, error) {
 	return Target{
 		ID: row.ID, Name: row.Name, URL: row.URL, Method: row.Method,
 		IntervalSec: row.IntervalSec, TimeoutMS: row.TimeoutMS, ExpectedStatus: row.ExpectedStatus,
-		DegradedThresholdMS: row.DegradedThresholdMS, Enabled: row.Enabled,
+		DegradedThresholdMS: row.DegradedThresholdMS, Enabled: row.Enabled, TLSWarn: row.TlsWarn,
 		HeaderNames: headerNames(h), CreatedAt: row.CreatedAt,
+		ContentRule: RuleFromColumns(row.ContentMode, row.ContentValue, row.ContentJsonPointer),
 	}, nil
+}
+
+// lerValidade devolve nil quando o sondador ainda não leu um certificado do
+// alvo. Os instantes saem em UTC: o pgx devolveria o fuso local do processo.
+func lerValidade(ctx context.Context, q *db.Queries, userID, targetID uuid.UUID) (*CertificateReading, error) {
+	r, err := q.GetTargetTLSOfOwner(ctx, db.GetTargetTLSOfOwnerParams{UserID: userID, TargetID: targetID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("ler validade do certificado: %w", err)
+	}
+	return &CertificateReading{NotAfter: r.NotAfter.UTC(), ObservedAt: r.ObservedAt.UTC()}, nil
+}
+
+// validadesDoDono lê as validades de todos os alvos do dono numa consulta só,
+// para a lista não fazer uma por alvo.
+func validadesDoDono(ctx context.Context, q *db.Queries, userID uuid.UUID) (map[uuid.UUID]*CertificateReading, error) {
+	linhas, err := q.ListTargetTLSOfOwner(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("ler validades do dono: %w", err)
+	}
+	validades := make(map[uuid.UUID]*CertificateReading, len(linhas))
+	for _, l := range linhas {
+		validades[l.TargetID] = &CertificateReading{NotAfter: l.NotAfter.UTC(), ObservedAt: l.ObservedAt.UTC()}
+	}
+	return validades, nil
 }
 
 // naoAchado traduz a ausência de linha. Sob a RLS, "não existe" e "é de

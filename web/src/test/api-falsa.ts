@@ -13,6 +13,7 @@ import type {
   PaginaDeStatus,
   Sessao,
 } from '@/lib/api/schemas'
+import { Agendamento } from '@/lib/api/schemas'
 
 // Uma API falsa, com estado, para o MSW. Ela imita as GUARDAS do servidor, e
 // não só as respostas felizes; sem isso, os testes de cliente passariam
@@ -77,6 +78,7 @@ export const ERROS_DO_SERVIDOR = {
   target_limit_reached: 409,
   heartbeat_limit_reached: 409,
   method_not_allowed: 405,
+  schedule_unsupported: 409,
 } as const
 
 type ErrosDoServidor = typeof ERROS_DO_SERVIDOR
@@ -91,6 +93,8 @@ const MAX_TAGS = 8
 const MAX_LETRAS_DA_TAG = 24
 const TAG_VALIDA = /^[\p{L}\p{Nd}_-]+$/u
 const ESTADOS_DO_FILTRO = ['up', 'degraded', 'down', 'unknown', 'paused']
+const MAX_NOME_DO_HEARTBEAT = 100
+const SUFIXO_DA_COPIA = ' (cópia)'
 
 // Os DTOs de entrada do servidor (decodeJSON recusa o que não estiver aqui).
 // Criar e editar aceitam os mesmos nomes em cada recurso.
@@ -105,19 +109,30 @@ const CAMPOS_DO_ALVO = [
   'enabled',
   'headers',
   'tags',
+  'tls_warn',
+  'content_rule',
 ]
-const CAMPOS_DO_HEARTBEAT = ['name', 'description', 'tags', 'schedule', 'grace_sec', 'enabled']
+const CAMPOS_DA_REGRA = { content_rule: ['mode', 'value', 'json_pointer'] }
+const CAMPOS_DO_HEARTBEAT = ['name', 'description', 'tags', 'schedule', 'grace_sec', 'enabled', 'ping_resumes']
 const CAMPOS_DO_AGENDAMENTO = ['kind', 'period_sec', 'expr', 'timezone']
 const CAMPOS_DA_PAGINA = ['slug', 'title', 'published', 'items']
 const CAMPOS_DO_ITEM_DA_PAGINA = ['target_id', 'display_name']
 // Os campos do PATCH em que null é 400, na ordem de recusouNulo no servidor. Nos
 // outros (tags, description, headers, degraded_threshold_ms), null limpa.
-const OBRIGATORIOS_DO_ALVO = ['name', 'url', 'method', 'interval_sec', 'timeout_ms', 'expected_status', 'enabled']
-const OBRIGATORIOS_DO_HEARTBEAT = ['name', 'schedule', 'grace_sec', 'enabled']
+const OBRIGATORIOS_DO_ALVO = ['name', 'url', 'method', 'interval_sec', 'timeout_ms', 'expected_status', 'enabled', 'tls_warn']
+const OBRIGATORIOS_DO_HEARTBEAT = ['name', 'schedule', 'grace_sec', 'enabled', 'ping_resumes']
 const OBRIGATORIOS_DA_PAGINA = ['slug', 'title', 'published', 'items']
 const PROVAS_DO_2FA = ['password', 'code', 'recovery_code']
 
 export type ApiFalsa = ReturnType<typeof criarApiFalsa>
+
+// toContentRuleResponse do servidor: sem regra é null, e json_pointer sai
+// sempre, null fora de json_equals.
+function regraDaResposta(corpo: unknown) {
+  if (typeof corpo !== 'object' || corpo === null) return null
+  const r = corpo as { mode: 'contains' | 'not_contains' | 'json_equals'; value: string; json_pointer?: string }
+  return { mode: r.mode, value: r.value, json_pointer: r.json_pointer || null }
+}
 
 // Fora de um objeto (ausente, null) não há nome a recusar; o servidor trata o
 // tipo errado à parte.
@@ -336,7 +351,10 @@ export function criarApiFalsa() {
   // updateParams do servidor: o prazo só recomeça se o agendamento ou a
   // tolerância mudarem de verdade.
   function mudouOPrazo(h: Entrada<typeof Heartbeat>, corpo: Json) {
-    const outroAgendamento = corpo.schedule !== undefined && !mesmoAgendamento(corpo.schedule as Json, h.schedule)
+    // A entrada do Agendamento é unknown (o preprocess do kind de versão
+    // posterior); o parse devolve a forma que o servidor compararia.
+    const atual: Json = { ...Agendamento.parse(h.schedule) }
+    const outroAgendamento = corpo.schedule !== undefined && !mesmoAgendamento(corpo.schedule as Json, atual)
     return outroAgendamento || (corpo.grace_sec !== undefined && corpo.grace_sec !== h.grace_sec)
   }
 
@@ -460,11 +478,16 @@ export function criarApiFalsa() {
         enabled: corpo.enabled !== false,
         header_names: Object.keys((corpo.headers as Json | undefined) ?? {}).sort(),
         tags: (corpo.tags as string[] | undefined) ?? [],
+        // Como o servidor: o aviso de certificado nasce ligado, e a leitura
+        // só existe depois da primeira sonda.
+        tls_warn: corpo.tls_warn !== false,
+        tls: null,
+        content_rule: regraDaResposta(corpo.content_rule),
         created_at: agora().toISOString(),
       }
       st.alvos.push(alvo)
       return HttpResponse.json(alvo, { status: 201 })
-    })),
+    }, CAMPOS_DA_REGRA)),
     rota('get', '/targets/:id', ({ params }) => {
       const a = st.alvos.find((x) => x.id === params.id)
       return a ? HttpResponse.json(a) : erro(404, 'not_found')
@@ -474,7 +497,7 @@ export function criarApiFalsa() {
       if (recusa) return recusa
       const a = st.alvos.find((x) => x.id === params.id)
       if (!a) return erro(404, 'not_found')
-      const { headers, ...resto } = corpo
+      const { headers, content_rule, ...resto } = corpo
       // B1 do Plano 10: trocar a origem da URL (esquema, host ou porta) sem
       // mandar headers apaga os headers; só o caminho, não.
       const outraOrigem =
@@ -482,8 +505,12 @@ export function criarApiFalsa() {
       Object.assign(a, resto)
       if (headers !== undefined) a.header_names = Object.keys((headers as Json | null) ?? {}).sort()
       else if (outraOrigem) a.header_names = []
+      // Como mudouDeDestino no servidor: outra origem é outro certificado, e a
+      // leitura do anterior sai junto.
+      if (outraOrigem) a.tls = null
+      if (content_rule !== undefined) a.content_rule = regraDaResposta(content_rule)
       return HttpResponse.json(a)
-    })),
+    }, CAMPOS_DA_REGRA)),
     rota('delete', '/targets/:id', ({ params }) => {
       // Como o servidor (TargetHandlers.Delete): alvo que não existe é 404.
       if (!st.alvos.some((x) => x.id === params.id)) return erro(404, 'not_found')
@@ -528,6 +555,7 @@ export function criarApiFalsa() {
         enabled: true,
         schedule: corpo.schedule as Entrada<typeof Heartbeat>['schedule'],
         grace_sec: corpo.grace_sec === undefined ? 300 : Number(corpo.grace_sec),
+        ping_resumes: corpo.ping_resumes === true,
         state: 'waiting' as const,
         deadline_at: primeiroPrazo(corpo.grace_sec === undefined ? 300 : Number(corpo.grace_sec)),
         last_ping_at: null,
@@ -582,6 +610,56 @@ export function criarApiFalsa() {
       if (!i) return erro(404, 'not_found')
       i.acknowledged_at ??= agora().toISOString()
       return HttpResponse.json(i)
+    }),
+    // O clone do servidor: sem token, eventos, last_* nem incidentes; o nome
+    // cortado para o sufixo caber em 100 caracteres (Rulings do PR 2 da SP1).
+    rota('post', '/heartbeats/:id/clone', ({ params }) => {
+      const h = st.heartbeats.find((x) => x.id === params.id)
+      if (!h) return erro(404, 'not_found')
+      if (Agendamento.parse(h.schedule).kind === 'unknown') return erro(409, 'schedule_unsupported')
+      const copia = {
+        ...h,
+        id: `hb-${st.heartbeats.length + 1}`,
+        name: `${Array.from(h.name).slice(0, MAX_NOME_DO_HEARTBEAT - SUFIXO_DA_COPIA.length).join('')}${SUFIXO_DA_COPIA}`,
+        state: h.enabled ? ('waiting' as const) : ('paused' as const),
+        deadline_at: primeiroPrazo(h.grace_sec),
+        last_ping_at: null,
+        last_success_at: null,
+        last_start_at: null,
+        last_runtime_ms: null,
+        open_incident_id: null,
+        created_at: agora().toISOString(),
+      }
+      st.heartbeats.push(copia)
+      return HttpResponse.json({ ...copia, ping_url: `${PING_URL}-copia` }, { status: 201 })
+    }),
+    // Limpar o que já está vazio também é 204.
+    rota('post', '/heartbeats/:id/events/clear', ({ params }) => {
+      if (!st.heartbeats.some((x) => x.id === params.id)) return erro(404, 'not_found')
+      st.eventos = []
+      return new HttpResponse(null, { status: 204 })
+    }),
+    // PingNow do servidor: um sucesso com source 'panel'. O log ganha a linha,
+    // o prazo recomeça e o sucesso tira o failing. O incidente aberto fica
+    // (registrarSinal não mexe nele), e com ele o statusDe segue em late.
+    rota('post', '/heartbeats/:id/ping-now', ({ params }) => {
+      const h = st.heartbeats.find((x) => x.id === params.id)
+      if (!h) return erro(404, 'not_found')
+      const quando = agora().toISOString()
+      st.eventos = [
+        { id: `ev-painel-${st.eventos.length + 1}`, at: quando, kind: 'success', runtime_ms: null, exit_code: null, run_id: null, source: 'panel' },
+        ...st.eventos,
+      ]
+      st.ultimosSinais.set(h.id, 'success')
+      Object.assign(h, {
+        last_ping_at: quando,
+        last_success_at: quando,
+        last_start_at: null,
+        deadline_at: primeiroPrazo(h.grace_sec),
+        state: 'up',
+      })
+      h.state = statusDe(h)
+      return HttpResponse.json(h)
     }),
     rota('post', '/heartbeats/:id/token/rotate', ({ params }) => {
       const h = st.heartbeats.find((x) => x.id === params.id)

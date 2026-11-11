@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
-	"strconv"
 	"time"
 
 	"github.com/google/uuid"
@@ -36,8 +35,24 @@ type targetRequest struct {
 	ExpectedStatus      int32             `json:"expected_status"`
 	DegradedThresholdMS optional[int32]   `json:"degraded_threshold_ms"`
 	Enabled             *bool             `json:"enabled"`
+	TLSWarn             *bool             `json:"tls_warn"`
 	Headers             map[string]string `json:"headers"`
 	Tags                []string          `json:"tags"`
+	ContentRule         *contentRuleDTO   `json:"content_rule"` // ausente ou null: sem regra
+}
+
+// contentRuleDTO é content_rule na entrada. O decoder estrito também vale
+// aqui dentro: um campo a mais é 400, e não uma regra diferente da pedida.
+// json_pointer ausente fica vazio, que é o certo fora de json_equals; em
+// json_equals, o domínio responde content_rule.json_pointer required.
+type contentRuleDTO struct {
+	Mode        string `json:"mode"`
+	Value       string `json:"value"`
+	JSONPointer string `json:"json_pointer"`
+}
+
+func (d contentRuleDTO) toDomain() *targets.ContentRule {
+	return &targets.ContentRule{Mode: targets.ContentMode(d.Mode), Value: d.Value, JSONPointer: d.JSONPointer}
 }
 
 type targetPatchRequest struct {
@@ -49,26 +64,58 @@ type targetPatchRequest struct {
 	ExpectedStatus      optional[int32]             `json:"expected_status"`
 	DegradedThresholdMS optional[int32]             `json:"degraded_threshold_ms"`
 	Enabled             optional[bool]              `json:"enabled"`
+	TLSWarn             optional[bool]              `json:"tls_warn"`
 	Headers             optional[map[string]string] `json:"headers"`
 	Tags                optional[[]string]          `json:"tags"`
+	ContentRule         optional[contentRuleDTO]    `json:"content_rule"` // null limpa
 }
 
 // targetResponse é o DTO de saída, construído campo a campo. Não existe
 // campo para valor de header, então nenhuma mudança futura no domínio o faz
 // aparecer aqui por acidente (D5).
 type targetResponse struct {
-	ID                  string    `json:"id"`
-	Name                string    `json:"name"`
-	URL                 string    `json:"url"`
-	Method              string    `json:"method"`
-	IntervalSec         int32     `json:"interval_sec"`
-	TimeoutMS           int32     `json:"timeout_ms"`
-	ExpectedStatus      int32     `json:"expected_status"`
-	DegradedThresholdMS *int32    `json:"degraded_threshold_ms"`
-	Enabled             bool      `json:"enabled"`
-	HeaderNames         []string  `json:"header_names"`
-	Tags                []string  `json:"tags"`
-	CreatedAt           time.Time `json:"created_at"`
+	ID                  string                   `json:"id"`
+	Name                string                   `json:"name"`
+	URL                 string                   `json:"url"`
+	Method              string                   `json:"method"`
+	IntervalSec         int32                    `json:"interval_sec"`
+	TimeoutMS           int32                    `json:"timeout_ms"`
+	ExpectedStatus      int32                    `json:"expected_status"`
+	DegradedThresholdMS *int32                   `json:"degraded_threshold_ms"`
+	Enabled             bool                     `json:"enabled"`
+	HeaderNames         []string                 `json:"header_names"`
+	Tags                []string                 `json:"tags"`
+	TLSWarn             bool                     `json:"tls_warn"`
+	TLS                 *certificateReadingReply `json:"tls"` // null: nenhuma leitura ainda
+	ContentRule         *contentRuleResponse     `json:"content_rule"`
+	CreatedAt           time.Time                `json:"created_at"`
+}
+
+// certificateReadingReply é a validade do certificado (spec §7.2). Só de
+// saída: o DTO de entrada não tem o campo, e quem o manda recebe 400.
+type certificateReadingReply struct {
+	NotAfter   time.Time `json:"not_after"`
+	ObservedAt time.Time `json:"observed_at"`
+}
+
+// contentRuleResponse é content_rule na saída. json_pointer sai sempre, null
+// fora de json_equals, para o cliente não adivinhar pela ausência.
+type contentRuleResponse struct {
+	Mode        string  `json:"mode"`
+	Value       string  `json:"value"`
+	JSONPointer *string `json:"json_pointer"`
+}
+
+func toContentRuleResponse(r *targets.ContentRule) *contentRuleResponse {
+	if r == nil {
+		return nil
+	}
+	out := &contentRuleResponse{Mode: string(r.Mode), Value: r.Value}
+	if r.JSONPointer != "" {
+		p := r.JSONPointer
+		out.JSONPointer = &p
+	}
+	return out
 }
 
 type targetListResponse struct {
@@ -100,8 +147,17 @@ func toTargetResponse(t targets.Target) targetResponse {
 		ID: t.ID.String(), Name: t.Name, URL: t.URL, Method: t.Method,
 		IntervalSec: t.IntervalSec, TimeoutMS: t.TimeoutMS, ExpectedStatus: t.ExpectedStatus,
 		DegradedThresholdMS: t.DegradedThresholdMS, Enabled: t.Enabled,
-		HeaderNames: t.HeaderNames, Tags: t.Tags, CreatedAt: t.CreatedAt,
+		HeaderNames: t.HeaderNames, Tags: t.Tags, TLSWarn: t.TLSWarn, TLS: toCertificateReadingReply(t.TLS),
+		ContentRule: toContentRuleResponse(t.ContentRule),
+		CreatedAt:   t.CreatedAt,
 	}
+}
+
+func toCertificateReadingReply(c *targets.CertificateReading) *certificateReadingReply {
+	if c == nil {
+		return nil
+	}
+	return &certificateReadingReply{NotAfter: c.NotAfter, ObservedAt: c.ObservedAt}
 }
 
 func (h *TargetHandlers) Create(w http.ResponseWriter, r *http.Request) {
@@ -117,10 +173,16 @@ func (h *TargetHandlers) Create(w http.ResponseWriter, r *http.Request) {
 	in := targets.Input{
 		Name: req.Name, URL: req.URL, Method: req.Method,
 		IntervalSec: req.IntervalSec, TimeoutMS: req.TimeoutMS, ExpectedStatus: req.ExpectedStatus,
-		Enabled: true, Headers: req.Headers, Tags: req.Tags,
+		Enabled: true, TLSWarn: true, Headers: req.Headers, Tags: req.Tags,
 	}
 	if req.Enabled != nil {
 		in.Enabled = *req.Enabled
+	}
+	if req.TLSWarn != nil {
+		in.TLSWarn = *req.TLSWarn
+	}
+	if req.ContentRule != nil {
+		in.ContentRule = req.ContentRule.toDomain()
 	}
 	// Ausente → padrão; null → desativado; número → valor (spec §11.5).
 	switch {
@@ -165,27 +227,9 @@ func (h *TargetHandlers) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	limit := targets.DefaultPageSize
-	if s := q.Get("limit"); s != "" {
-		n, err := strconv.ParseInt(s, 10, 32)
-		if err != nil {
-			campoInvalido(w, r, "limit", targets.ReasonInvalid)
-			return
-		}
-		if n < 1 || n > int64(targets.MaxPageSize) {
-			campoInvalido(w, r, "limit", targets.ReasonOutOfRange)
-			return
-		}
-		limit = int32(n)
-	}
-	var before *uuid.UUID
-	if s := q.Get("cursor"); s != "" {
-		c, err := uuid.Parse(s)
-		if err != nil {
-			campoInvalido(w, r, "cursor", targets.ReasonInvalid)
-			return
-		}
-		before = &c
+	limit, before, ok := paginaDe(w, r, q, targets.DefaultPageSize, targets.MaxPageSize)
+	if !ok {
+		return
 	}
 
 	items, err := h.svc.List(r.Context(), userID, before, limit)
@@ -220,6 +264,7 @@ func (h *TargetHandlers) Update(w http.ResponseWriter, r *http.Request) {
 		{"name", req.Name.Null}, {"url", req.URL.Null}, {"method", req.Method.Null},
 		{"interval_sec", req.IntervalSec.Null}, {"timeout_ms", req.TimeoutMS.Null},
 		{"expected_status", req.ExpectedStatus.Null}, {"enabled", req.Enabled.Null},
+		{"tls_warn", req.TLSWarn.Null},
 	}) {
 		return
 	}
@@ -228,6 +273,7 @@ func (h *TargetHandlers) Update(w http.ResponseWriter, r *http.Request) {
 		Name: req.Name.ponteiro(), URL: req.URL.ponteiro(), Method: req.Method.ponteiro(),
 		IntervalSec: req.IntervalSec.ponteiro(), TimeoutMS: req.TimeoutMS.ponteiro(),
 		ExpectedStatus: req.ExpectedStatus.ponteiro(), Enabled: req.Enabled.ponteiro(),
+		TLSWarn: req.TLSWarn.ponteiro(),
 	}
 	if req.DegradedThresholdMS.Set {
 		p.SetDegradedThreshold = true
@@ -243,6 +289,12 @@ func (h *TargetHandlers) Update(w http.ResponseWriter, r *http.Request) {
 	if req.Tags.Set {
 		p.SetTags = true
 		p.Tags = req.Tags.Value // null deixa Value nil: limpa
+	}
+	if req.ContentRule.Set {
+		p.SetContentRule = true
+		if !req.ContentRule.Null {
+			p.ContentRule = req.ContentRule.Value.toDomain()
+		}
 	}
 
 	t, err := h.svc.Update(r.Context(), userID, id, p)

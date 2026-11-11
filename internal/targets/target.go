@@ -29,7 +29,16 @@ type Target struct {
 	Enabled             bool
 	HeaderNames         []string
 	Tags                []string // normalizadas e ordenadas; nunca nil
+	TLSWarn             bool
+	TLS                 *CertificateReading // nil: o sondador ainda não leu um certificado do host
+	ContentRule         *ContentRule        // nil: sonda só pelo status
 	CreatedAt           time.Time
+}
+
+// CertificateReading é a validade do pior certificado que o sondador viu no
+// host cadastrado (spec §5.2), em UTC. ObservedAt é quando ele a viu.
+type CertificateReading struct {
+	NotAfter, ObservedAt time.Time
 }
 
 // Input é o cadastro. Zero em Method, IntervalSec, TimeoutMS e ExpectedStatus
@@ -46,8 +55,10 @@ type Input struct {
 	ExpectedStatus      int32
 	DegradedThresholdMS *int32
 	Enabled             bool
+	TLSWarn             bool // o padrão (true) é da camada HTTP, como Enabled
 	Headers             map[string]string
 	Tags                []string
+	ContentRule         *ContentRule
 }
 
 // Patch muda só o que vier preenchido. Nos campos com Set*, "limpar" é
@@ -58,11 +69,13 @@ type Patch struct {
 	IntervalSec, TimeoutMS, ExpectedStatus *int32
 	SetDegradedThreshold                   bool
 	DegradedThresholdMS                    *int32
-	Enabled                                *bool
+	Enabled, TLSWarn                       *bool
 	SetHeaders                             bool
 	Headers                                map[string]string
 	SetTags                                bool
 	Tags                                   []string
+	SetContentRule                         bool
+	ContentRule                            *ContentRule // nil com SetContentRule: limpa
 }
 
 type Check struct {

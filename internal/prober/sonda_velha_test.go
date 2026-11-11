@@ -5,6 +5,8 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -64,7 +66,14 @@ func (b *bancada) falhasSeguidas(t *testing.T, alvo uuid.UUID) int32 {
 // abertura: se a sonda velha contar, a URL nova herda a sequência.
 func (b *bancada) semearFalhas(t *testing.T, alvo uuid.UUID) {
 	t.Helper()
-	a := db.ClaimDueTargetsRow{ID: alvo, UserID: b.dono, URL: urlVelha, Method: "GET", IntervalSec: 60}
+	b.semearFalhasDa(t, db.ClaimDueTargetsRow{ID: alvo, UserID: b.dono, URL: urlVelha, Method: "GET", IntervalSec: 60})
+}
+
+// semearFalhasDa grava as duas falhas como sondas da reivindicação a, que tem
+// de bater com o alvo gravado, regra de conteúdo inclusive.
+func (b *bancada) semearFalhasDa(t *testing.T, a db.ClaimDueTargetsRow) {
+	t.Helper()
+	alvo := a.ID
 	falha := Result{Status: StatusDown, ErrorKind: KindTimeout}
 	t0 := b.clk.Now()
 	b.s.gravar(a, t0.Add(-2*time.Minute), falha)
@@ -262,5 +271,126 @@ func TestProbeWithTheOldMethodIsDiscarded(t *testing.T) {
 
 	if n := b.falhasSeguidas(t, alvo); n != 0 {
 		t.Errorf("%d falhas seguidas; a sonda com o método velho contou", n)
+	}
+}
+
+// alvoComContains grava o alvo com a regra contains valor.
+func alvoComContains(valor string) func(*db.InsertTargetParams) {
+	return func(p *db.InsertTargetParams) {
+		modo := string(targets.ContentContains)
+		p.ContentMode, p.ContentValue = &modo, &valor
+	}
+}
+
+func regraContains(valor string) targets.Patch {
+	return targets.Patch{SetContentRule: true, ContentRule: &targets.ContentRule{Mode: targets.ContentContains, Value: valor}}
+}
+
+// T2 da spec do PR 5. Trocar a regra também é julgar outra coisa: a sonda que
+// saiu com contains "a" e termina depois do PATCH para contains "b" é
+// descartada, como a da URL velha.
+func TestProbeDiscardedWhenRuleChanged(t *testing.T) {
+	client, chegou, liberar := clienteSegurado()
+	b := novaBancada(t, client, MaxInFlight)
+	b.canal(t, true, true)
+	alvo := b.alvo(t, urlVelha, alvoComContains("a"))
+	modo, valor := string(targets.ContentContains), "a"
+	b.semearFalhasDa(t, db.ClaimDueTargetsRow{
+		ID: alvo, UserID: b.dono, URL: urlVelha, Method: http.MethodGet, IntervalSec: 60,
+		ContentMode: &modo, ContentValue: &valor,
+	})
+
+	if n, err := b.s.Tick(context.Background()); err != nil || n != 1 {
+		t.Fatalf("Tick = %d, %v; queria uma sonda", n, err)
+	}
+	esperar(t, chegou, "a sonda da regra velha entrar em voo")
+
+	svc := targets.NewService(b.pool, b.box, b.clk)
+	if _, err := svc.Update(context.Background(), b.dono, alvo, regraContains("b")); err != nil {
+		t.Fatal(err)
+	}
+	close(liberar)
+	b.s.Stop(esperaMaxima)
+
+	if n := b.falhasSeguidas(t, alvo); n != 0 {
+		t.Errorf("%d falhas seguidas depois do PATCH; a sonda da regra velha contou para a nova", n)
+	}
+	if c := b.checks(t, alvo); len(c) != 2 {
+		t.Errorf("%d checks no histórico; queria só os 2 semeados, sem o da sonda velha", len(c))
+	}
+	if inc := b.incidentes(t); len(inc) != 0 {
+		t.Errorf("incidentes = %+v; queria nenhum", inc)
+	}
+}
+
+// Foco 5 da spec do PR 5. Com um incidente content_mismatch aberto, o dono
+// troca a regra. Só sucessos da regra nova fecham o incidente, e são os 5 do
+// incident.Default (CloseAfter): uma sonda da regra velha em voo durante a
+// troca, que PASSARIA pela regra velha, não conta como o primeiro deles.
+func TestRuleChangeClosesTheOpenIncidentOnlyWithNewRuleSuccesses(t *testing.T) {
+	chegou, liberar := make(chan struct{}), make(chan struct{})
+	var liberou sync.Once
+	soltar := func() { liberou.Do(func() { close(liberar) }) }
+	var segurar atomic.Bool
+	var corpo atomic.Pointer[string]
+	fora := "xyz" // sem "a" nem "b"
+	corpo.Store(&fora)
+	// Transporte em vez de httptest: o PATCH revalida a URL, e loopback é
+	// recusado no cadastro.
+	client := &http.Client{Transport: transporteFunc(func(r *http.Request) (*http.Response, error) {
+		if segurar.CompareAndSwap(true, false) {
+			close(chegou)
+			<-liberar
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK, Header: http.Header{},
+			Body: io.NopCloser(strings.NewReader(*corpo.Load())), Request: r,
+		}, nil
+	})}
+	b := novaBancada(t, client, MaxInFlight)
+	// Depois da bancada: cleanups rodam em ordem inversa, e a sonda presa
+	// precisa ser solta antes do Stop e da restauração do banco.
+	t.Cleanup(soltar)
+	b.canal(t, true, true)
+	alvo := b.alvo(t, urlVelha, alvoComContains("a"))
+	for range 3 {
+		b.rodada(t)
+	}
+	if inc := b.incidentes(t); len(inc) != 1 || inc[0].Cause != "content_mismatch" || inc[0].ResolvedAt != nil {
+		t.Fatalf("incidentes = %+v; queria um aberto por content_mismatch", inc)
+	}
+
+	// O corpo passa nas duas regras; a sonda da regra velha fica em voo
+	// enquanto o PATCH troca a regra.
+	ambas := "a b"
+	corpo.Store(&ambas)
+	segurar.Store(true)
+	if n, err := b.s.Tick(context.Background()); err != nil || n != 1 {
+		t.Fatalf("Tick = %d, %v; queria uma sonda", n, err)
+	}
+	esperar(t, chegou, "a sonda da regra velha entrar em voo")
+	svc := targets.NewService(b.pool, b.box, b.clk)
+	if _, err := svc.Update(context.Background(), b.dono, alvo, regraContains("b")); err != nil {
+		t.Fatal(err)
+	}
+	soltar()
+	b.s.emVoo.Wait()
+	b.clk.Advance(2 * time.Minute)
+
+	const sucessosParaFechar = 5 // incident.Default.CloseAfter
+	primeiro := b.rodada(t)
+	for range sucessosParaFechar - 2 {
+		b.rodada(t)
+	}
+	if inc := b.incidentes(t); len(inc) != 1 || inc[0].ResolvedAt != nil {
+		t.Fatalf("%d sucessos da regra nova: incidentes = %+v; queria o mesmo, ainda aberto (a sonda velha contou?)",
+			sucessosParaFechar-1, inc)
+	}
+	b.rodada(t)
+
+	inc := b.incidentes(t)
+	if len(inc) != 1 || inc[0].ResolvedAt == nil || !inc[0].ResolvedAt.Equal(primeiro) {
+		t.Fatalf("%d sucessos da regra nova: incidentes = %+v; queria resolvido em %v (o primeiro deles)",
+			sucessosParaFechar, inc, primeiro)
 	}
 }

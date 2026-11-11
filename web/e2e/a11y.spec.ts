@@ -359,6 +359,10 @@ async function controlesEncobertos(page: Page): Promise<string[]> {
     for (const e of Array.from(document.querySelectorAll<HTMLElement>(seletor))) {
       const r = e.getBoundingClientRect()
       if (r.width === 0 || r.height === 0) continue
+      // Dentro de um <details> fechado o controle tem retângulo, mas não é
+      // desenhado (content-visibility: hidden), e o scrollIntoView não o
+      // move: a posição velha caía sob a navegação fixa do celular.
+      if (!e.checkVisibility()) continue
       e.scrollIntoView({ block: 'center', inline: 'center' })
       const c = e.getBoundingClientRect()
       const cx = c.left + c.width / 2
@@ -442,16 +446,19 @@ for (const largura of [400, 1280]) {
     // do Botao (components/ui/botao.tsx), ou o size-11 do botão de tema.
     await page.goto('/targets/new')
     await expect(page.getByRole('heading', { name: 'Novo alvo', level: 1 })).toBeVisible()
-    // Os headers ficam no "Avançado", recolhido no cadastro; o summary também
-    // é alvo de toque.
+    // Os headers e a regra de conteúdo ficam no mesmo "Avançado", recolhido num
+    // alvo novo; o summary também é alvo de toque. Aberto, a regra com o JSON
+    // mostra os três campos dela.
     await page.locator('summary', { hasText: 'Avançado' }).click()
     await page.getByRole('button', { name: 'Adicionar header' }).click()
+    await page.getByRole('combobox', { name: 'Verificação' }).selectOption('json_equals')
     await conferir([
       ['tema', page.getByRole('button', { name: /^Tema:/ })],
       ['Sair', page.getByRole('button', { name: 'Sair' })],
       ['Avançado', page.locator('summary', { hasText: 'Avançado' })],
       ['Adicionar header', page.getByRole('button', { name: 'Adicionar header' })],
       ['Remover o header 1', page.getByRole('button', { name: 'Remover o header 1' })],
+      ['Verificação', page.getByRole('combobox', { name: 'Verificação' })],
     ])
     expect(await controlesEncobertos(page), `${largura} px: novo alvo`).toEqual([])
     await page.goto('/channels')
@@ -707,7 +714,9 @@ for (const largura of [400, 1280]) {
       expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(largura)
       for (const controle of [
         page.getByRole('link', { name: 'Editar' }),
+        page.getByRole('button', { name: 'Duplicar' }),
         page.getByRole('button', { name: 'Pausar' }),
+        page.getByRole('button', { name: 'Limpar eventos' }),
         page.getByRole('button', { name: 'Apagar' }),
         page.getByRole('button', { name: /^Reconhecer o incidente/ }),
         page.getByRole('button', { name: 'Gerar nova URL' }),

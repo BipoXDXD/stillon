@@ -9,12 +9,32 @@ import (
 	"net/http/httptest"
 	"net/netip"
 	"net/url"
+	"slices"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/BipoXDXD/stillon/internal/prober/safedial"
 )
+
+// A produção verifica o TLS com as raízes do sistema: nenhum TLSClientConfig
+// próprio, logo nem raiz de teste nem InsecureSkipVerify. A CA de teste entra
+// só no transporte montado pelo próprio teste. Sabotagem: TLSClientConfig com
+// InsecureSkipVerify em newTransport reprova este teste.
+//
+// Ele olha o transporte antes do primeiro RoundTrip, e não pode ser movido
+// para depois de uma requisição: no primeiro uso, o ForceAttemptHTTP2 cria um
+// TLSClientConfig vazio, e o nil deixaria de valer.
+func TestProductionClientKeepsDefaultVerification(t *testing.T) {
+	client := safedial.NewClient(0)
+	transport, ok := client.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("transporte de produção = %T, queria *http.Transport", client.Transport)
+	}
+	if transport.TLSClientConfig != nil {
+		t.Errorf("TLSClientConfig = %+v, queria nil (verificação padrão)", transport.TLSClientConfig)
+	}
+}
 
 // A comparação acompanha o host que net/http disca, não o case folding do
 // Unicode cru. Sabotagem: substituir a canonicalização por strings.EqualFold.
@@ -187,6 +207,58 @@ func TestCheckRedirectDropsTargetHeadersWhenTheHopLeavesTheOrigin(t *testing.T) 
 	}
 }
 
+// O Accept-Encoding: gzip é da sonda, que descomprime ela mesma, e não diz
+// nada do alvo: atravessa o salto que limpa os headers. Qualquer outro valor
+// é do dono e cai com os demais.
+func TestCheckRedirectKeepsOnlyTheProbesAcceptEncoding(t *testing.T) {
+	client := safedial.NewClient(0)
+	cases := []struct {
+		enviado string
+		quer    []string
+	}{
+		{"gzip", []string{"gzip"}},
+		{"br", nil},
+		{"gzip, br", nil},
+	}
+	for _, c := range cases {
+		t.Run(c.enviado, func(t *testing.T) {
+			origem, err := http.NewRequest(http.MethodGet, "http://exemplo.com/", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			req, err := http.NewRequest(http.MethodGet, "http://outro.com/", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			req.Header.Set("Accept-Encoding", c.enviado)
+			if err := client.CheckRedirect(req, []*http.Request{origem}); err != nil {
+				t.Fatalf("CheckRedirect = %v", err)
+			}
+			if got := req.Header.Values("Accept-Encoding"); !slices.Equal(got, c.quer) {
+				t.Errorf("Accept-Encoding = %q, queria %q", got, c.quer)
+			}
+		})
+	}
+}
+
+// O transporte não pede gzip por conta própria: quem pede é a sonda. Discord
+// e Resend, que não pedem, recebem o corpo sem codificação.
+func TestClientDoesNotAskForGzipByItself(t *testing.T) {
+	recebido := make(chan []string, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		recebido <- r.Header.Values("Accept-Encoding")
+	}))
+	t.Cleanup(srv.Close)
+	resp, err := safedial.NewClientAllowing(0, enderecoDe(t, srv)).Get(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if got := <-recebido; len(got) != 0 {
+		t.Errorf("Accept-Encoding = %q, queria nenhum", got)
+	}
+}
+
 // enderecoDe devolve o IP:porta exato em que o servidor de teste escuta.
 func enderecoDe(t *testing.T, srv *httptest.Server) netip.AddrPort {
 	t.Helper()
@@ -310,17 +382,27 @@ func TestTransportIgnoresEnvironmentProxy(t *testing.T) {
 	}
 }
 
-// O prazo de uma sonda é só o do context (Probe faz
-// context.WithTimeout(ctx, s.Timeout)); nenhum timeout de fase no Transport
-// pode cortar antes disso, ou um alvo com timeout_ms alto e resposta lenta
-// viraria "down" cedo demais. Ver o comentário em newTransport.
+// O prazo de uma sonda é o do context (Probe faz context.WithTimeout(ctx,
+// s.Timeout)); nenhum limite de fase no Transport pode cortar antes do maior
+// timeout_ms válido, ou um alvo com timeout_ms alto e resposta lenta viraria
+// "down" cedo demais. Ver o comentário em newTransport.
 func TestTransportLeavesTheDeadlineToTheContext(t *testing.T) {
 	tr := safedial.NewTransport()
 	if tr.ResponseHeaderTimeout != 0 {
-		t.Errorf("ResponseHeaderTimeout = %v, queria 0: o prazo fica só com o context", tr.ResponseHeaderTimeout)
+		t.Errorf("ResponseHeaderTimeout = %v, queria 0: o prazo do cabeçalho fica só com o context", tr.ResponseHeaderTimeout)
 	}
-	if tr.TLSHandshakeTimeout != 0 {
-		t.Errorf("TLSHandshakeTimeout = %v, queria 0: o prazo fica só com o context", tr.TLSHandshakeTimeout)
+	if tr.TLSHandshakeTimeout != 0 && tr.TLSHandshakeTimeout < safedial.MaxProbeTimeout {
+		t.Errorf("TLSHandshakeTimeout = %v, corta antes do maior prazo de sonda (%v)", tr.TLSHandshakeTimeout, safedial.MaxProbeTimeout)
+	}
+}
+
+// O net/http disca com um context sem cancelamento, e o handshake que a
+// sonda abandonou só para no TLSHandshakeTimeout. Zero é sem teto: um alvo
+// mudo prenderia socket e goroutines para sempre se o CloseIdleConnections
+// do Probe deixar de cancelar o dial (efeito não documentado do net/http).
+func TestTransportBoundsTheAbandonedHandshake(t *testing.T) {
+	if got := safedial.NewTransport().TLSHandshakeTimeout; got != safedial.MaxProbeTimeout {
+		t.Errorf("TLSHandshakeTimeout = %v, queria %v", got, safedial.MaxProbeTimeout)
 	}
 }
 

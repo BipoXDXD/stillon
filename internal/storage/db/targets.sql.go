@@ -40,6 +40,24 @@ func (q *Queries) DeleteTarget(ctx context.Context, arg DeleteTargetParams) (int
 	return result.RowsAffected(), nil
 }
 
+const deleteTargetTLSOfOwner = `-- name: DeleteTargetTLSOfOwner :exec
+DELETE FROM target_tls tt
+ WHERE tt.target_id = $1
+   AND EXISTS (SELECT 1 FROM targets t
+                WHERE t.id = tt.target_id AND t.user_id = $2)
+`
+
+type DeleteTargetTLSOfOwnerParams struct {
+	TargetID uuid.UUID
+	UserID   uuid.UUID
+}
+
+// Outro host é outro certificado: a leitura do anterior não vale para ele.
+func (q *Queries) DeleteTargetTLSOfOwner(ctx context.Context, arg DeleteTargetTLSOfOwnerParams) error {
+	_, err := q.db.Exec(ctx, deleteTargetTLSOfOwner, arg.TargetID, arg.UserID)
+	return err
+}
+
 const deleteTargetTags = `-- name: DeleteTargetTags :exec
 DELETE FROM target_tags tt
  USING targets t
@@ -57,7 +75,7 @@ func (q *Queries) DeleteTargetTags(ctx context.Context, arg DeleteTargetTagsPara
 }
 
 const getTarget = `-- name: GetTarget :one
-SELECT id, user_id, name, url, method, interval_sec, timeout_ms, expected_status, headers_enc, degraded_threshold_ms, enabled, next_run_at, created_at FROM targets WHERE user_id = $1 AND id = $2
+SELECT id, user_id, name, url, method, interval_sec, timeout_ms, expected_status, headers_enc, degraded_threshold_ms, enabled, next_run_at, created_at, tls_warn, content_mode, content_value, content_json_pointer FROM targets WHERE user_id = $1 AND id = $2
 `
 
 type GetTargetParams struct {
@@ -82,12 +100,16 @@ func (q *Queries) GetTarget(ctx context.Context, arg GetTargetParams) (Target, e
 		&i.Enabled,
 		&i.NextRunAt,
 		&i.CreatedAt,
+		&i.TlsWarn,
+		&i.ContentMode,
+		&i.ContentValue,
+		&i.ContentJsonPointer,
 	)
 	return i, err
 }
 
 const getTargetForUpdate = `-- name: GetTargetForUpdate :one
-SELECT id, user_id, name, url, method, interval_sec, timeout_ms, expected_status, headers_enc, degraded_threshold_ms, enabled, next_run_at, created_at FROM targets WHERE user_id = $1 AND id = $2 FOR UPDATE
+SELECT id, user_id, name, url, method, interval_sec, timeout_ms, expected_status, headers_enc, degraded_threshold_ms, enabled, next_run_at, created_at, tls_warn, content_mode, content_value, content_json_pointer FROM targets WHERE user_id = $1 AND id = $2 FOR UPDATE
 `
 
 type GetTargetForUpdateParams struct {
@@ -115,7 +137,39 @@ func (q *Queries) GetTargetForUpdate(ctx context.Context, arg GetTargetForUpdate
 		&i.Enabled,
 		&i.NextRunAt,
 		&i.CreatedAt,
+		&i.TlsWarn,
+		&i.ContentMode,
+		&i.ContentValue,
+		&i.ContentJsonPointer,
 	)
+	return i, err
+}
+
+const getTargetTLSOfOwner = `-- name: GetTargetTLSOfOwner :one
+SELECT tt.not_after, tt.observed_at
+  FROM target_tls tt
+ WHERE tt.target_id = $1
+   AND EXISTS (SELECT 1 FROM targets t
+                WHERE t.id = tt.target_id AND t.user_id = $2)
+`
+
+type GetTargetTLSOfOwnerParams struct {
+	TargetID uuid.UUID
+	UserID   uuid.UUID
+}
+
+type GetTargetTLSOfOwnerRow struct {
+	NotAfter   time.Time
+	ObservedAt time.Time
+}
+
+// A validade do certificado (spec §7.2), lida e apagada pelo dono. Como em
+// ResetTargetHealth, o EXISTS filtra pelo dono além da RLS de target_tls. Só o
+// sondador grava a linha (prober.sql).
+func (q *Queries) GetTargetTLSOfOwner(ctx context.Context, arg GetTargetTLSOfOwnerParams) (GetTargetTLSOfOwnerRow, error) {
+	row := q.db.QueryRow(ctx, getTargetTLSOfOwner, arg.TargetID, arg.UserID)
+	var i GetTargetTLSOfOwnerRow
+	err := row.Scan(&i.NotAfter, &i.ObservedAt)
 	return i, err
 }
 
@@ -123,8 +177,9 @@ const insertTarget = `-- name: InsertTarget :exec
 
 INSERT INTO targets (id, user_id, name, url, method, interval_sec, timeout_ms,
                      expected_status, headers_enc, degraded_threshold_ms, enabled,
-                     next_run_at, created_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+                     next_run_at, created_at, tls_warn, content_mode, content_value,
+                     content_json_pointer)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
 `
 
 type InsertTargetParams struct {
@@ -141,6 +196,10 @@ type InsertTargetParams struct {
 	Enabled             bool
 	NextRunAt           time.Time
 	CreatedAt           time.Time
+	TlsWarn             bool
+	ContentMode         *string
+	ContentValue        *string
+	ContentJsonPointer  *string
 }
 
 // Toda query daqui filtra por user_id E roda sob a RLS de InUserTx. As duas
@@ -161,6 +220,10 @@ func (q *Queries) InsertTarget(ctx context.Context, arg InsertTargetParams) erro
 		arg.Enabled,
 		arg.NextRunAt,
 		arg.CreatedAt,
+		arg.TlsWarn,
+		arg.ContentMode,
+		arg.ContentValue,
+		arg.ContentJsonPointer,
 	)
 	return err
 }
@@ -505,6 +568,35 @@ func (q *Queries) ListTargetSummaries(ctx context.Context, userID uuid.UUID) ([]
 	return items, nil
 }
 
+const listTargetTLSOfOwner = `-- name: ListTargetTLSOfOwner :many
+SELECT tt.target_id, tt.not_after, tt.observed_at
+  FROM target_tls tt
+ WHERE EXISTS (SELECT 1 FROM targets t
+                WHERE t.id = tt.target_id AND t.user_id = $1)
+`
+
+// As validades de todos os alvos do dono numa consulta só: a lista não lê
+// uma por alvo.
+func (q *Queries) ListTargetTLSOfOwner(ctx context.Context, userID uuid.UUID) ([]TargetTLS, error) {
+	rows, err := q.db.Query(ctx, listTargetTLSOfOwner, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []TargetTLS
+	for rows.Next() {
+		var i TargetTLS
+		if err := rows.Scan(&i.TargetID, &i.NotAfter, &i.ObservedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listTargetTags = `-- name: ListTargetTags :many
 SELECT tt.tag
   FROM target_tags tt
@@ -541,7 +633,7 @@ func (q *Queries) ListTargetTags(ctx context.Context, arg ListTargetTagsParams) 
 }
 
 const listTargets = `-- name: ListTargets :many
-SELECT id, user_id, name, url, method, interval_sec, timeout_ms, expected_status, headers_enc, degraded_threshold_ms, enabled, next_run_at, created_at FROM targets
+SELECT id, user_id, name, url, method, interval_sec, timeout_ms, expected_status, headers_enc, degraded_threshold_ms, enabled, next_run_at, created_at, tls_warn, content_mode, content_value, content_json_pointer FROM targets
  WHERE user_id = $1
    AND ($2::uuid IS NULL OR id < $2::uuid)
  ORDER BY id DESC
@@ -579,6 +671,10 @@ func (q *Queries) ListTargets(ctx context.Context, arg ListTargetsParams) ([]Tar
 			&i.Enabled,
 			&i.NextRunAt,
 			&i.CreatedAt,
+			&i.TlsWarn,
+			&i.ContentMode,
+			&i.ContentValue,
+			&i.ContentJsonPointer,
 		); err != nil {
 			return nil, err
 		}
@@ -642,10 +738,10 @@ type ResetTargetHealthParams struct {
 	UserID   uuid.UUID
 }
 
-// C4 (Plano 10): trocar a URL ou o método zera a histerese (a linha volta a
-// "sem dados"). last_checked_at fica: é a guarda de check fora de ordem do
-// detector. O EXISTS filtra pelo dono, como o resto deste arquivo, além da
-// RLS de target_health.
+// C4 (Plano 10): trocar a URL, o método ou a regra de conteúdo zera a
+// histerese (a linha volta a "sem dados"). last_checked_at fica: é a guarda
+// de check fora de ordem do detector. O EXISTS filtra pelo dono, como o resto
+// deste arquivo, além da RLS de target_health.
 func (q *Queries) ResetTargetHealth(ctx context.Context, arg ResetTargetHealthParams) error {
 	_, err := q.db.Exec(ctx, resetTargetHealth, arg.TargetID, arg.UserID)
 	return err
@@ -655,7 +751,8 @@ const updateTarget = `-- name: UpdateTarget :exec
 UPDATE targets
    SET name = $3, url = $4, method = $5, interval_sec = $6, timeout_ms = $7,
        expected_status = $8, headers_enc = $9, degraded_threshold_ms = $10,
-       enabled = $11, next_run_at = $12
+       enabled = $11, next_run_at = $12, tls_warn = $13,
+       content_mode = $14, content_value = $15, content_json_pointer = $16
  WHERE user_id = $1 AND id = $2
 `
 
@@ -672,6 +769,10 @@ type UpdateTargetParams struct {
 	DegradedThresholdMS *int32
 	Enabled             bool
 	NextRunAt           time.Time
+	TlsWarn             bool
+	ContentMode         *string
+	ContentValue        *string
+	ContentJsonPointer  *string
 }
 
 func (q *Queries) UpdateTarget(ctx context.Context, arg UpdateTargetParams) error {
@@ -688,6 +789,10 @@ func (q *Queries) UpdateTarget(ctx context.Context, arg UpdateTargetParams) erro
 		arg.DegradedThresholdMS,
 		arg.Enabled,
 		arg.NextRunAt,
+		arg.TlsWarn,
+		arg.ContentMode,
+		arg.ContentValue,
+		arg.ContentJsonPointer,
 	)
 	return err
 }

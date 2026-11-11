@@ -125,7 +125,7 @@ func TestHeartbeatResponseHasExactKeys(t *testing.T) {
 	dono := tokenDe(t, a, a.userID)
 	id, _ := criarHB(t, a, dono, corpoDePeriodo)
 	base := []string{"created_at", "deadline_at", "description", "enabled", "grace_sec", "id", "last_ping_at", "last_runtime_ms", "last_start_at",
-		"last_success_at", "name", "open_incident_id", "schedule", "state", "tags"}
+		"last_success_at", "name", "open_incident_id", "ping_resumes", "schedule", "state", "tags"}
 
 	_, corpo := lerCru(t, a, http.MethodGet, "/api/v1/heartbeats/"+id, dono, nil)
 	m := decodificar(t, corpo)
@@ -141,12 +141,136 @@ func TestHeartbeatResponseHasExactKeys(t *testing.T) {
 	if got := chavesDe(decodificar(t, corpo)); !slices.Equal(got, comURL) {
 		t.Errorf("rotação: %v", got)
 	}
+}
 
-	pingar(t, a, "/ping/"+tokenDaURL(t, corpo), nil)
-	_, corpo = lerCru(t, a, http.MethodGet, "/api/v1/heartbeats/"+id+"/events", dono, nil)
+// O evento sai com o mesmo conjunto de chaves com e sem rid: run_id ausente é
+// null, e não some.
+func TestHeartbeatEventHasExactKeys(t *testing.T) {
+	a := newAPI(t)
+	dono := tokenDe(t, a, a.userID)
+	id, ping := criarHB(t, a, dono, corpoDePeriodo)
+	pingar(t, a, "/ping/"+ping+"?rid="+ridValido, nil)
+	pingar(t, a, "/ping/"+ping, nil)
+
+	_, corpo := lerCru(t, a, http.MethodGet, "/api/v1/heartbeats/"+id+"/events", dono, nil)
 	ev := decodificar(t, corpo)["items"].([]any)
-	if len(ev) != 1 || !slices.Equal(chavesDe(ev[0].(map[string]any)), []string{"at", "exit_code", "id", "kind", "runtime_ms"}) {
-		t.Errorf("evento: %s", corpo)
+	if len(ev) != 2 {
+		t.Fatalf("eventos: %s", corpo)
+	}
+	quer := []string{"at", "exit_code", "id", "kind", "run_id", "runtime_ms", "source"}
+	for i, e := range ev {
+		if got := chavesDe(e.(map[string]any)); !slices.Equal(got, quer) {
+			t.Errorf("evento %d: chaves %v, queria %v", i, got, quer)
+		}
+	}
+}
+
+// O rid volta como o servidor o guardou, em minúsculas; sem rid, run_id é null.
+// A origem do sinal pela URL de ping é "ping".
+func TestEventListShowsRunIDAndSource(t *testing.T) {
+	a := newAPI(t)
+	dono := tokenDe(t, a, a.userID)
+	id, ping := criarHB(t, a, dono, corpoDePeriodo)
+	pingar(t, a, "/ping/"+ping+"/start?rid="+strings.ToUpper(ridValido), nil)
+	pingar(t, a, "/ping/"+ping, nil)
+
+	_, corpo := lerCru(t, a, http.MethodGet, "/api/v1/heartbeats/"+id+"/events", dono, nil)
+	ev := decodificar(t, corpo)["items"].([]any)
+	if len(ev) != 2 {
+		t.Fatalf("eventos: %s", corpo)
+	}
+	semRID, comRID := ev[0].(map[string]any), ev[1].(map[string]any)
+	if comRID["run_id"] != "0195f3c2-8a4b-7c1d-9e2f-3a4b5c6d7e8f" || comRID["source"] != "ping" {
+		t.Errorf("com rid: %v", comRID)
+	}
+	if v, ok := semRID["run_id"]; !ok || v != nil || semRID["source"] != "ping" {
+		t.Errorf("sem rid: %v", semRID)
+	}
+}
+
+func pingResumesDe(t *testing.T, corpo string) any {
+	t.Helper()
+	return decodificar(t, corpo)["ping_resumes"]
+}
+
+// ping_resumes nasce false, vem no cadastro e muda no PATCH sem mexer no prazo.
+// null e tipo errado são 400, e nada muda.
+func TestPingResumesRoundTrip(t *testing.T) {
+	a := newAPI(t)
+	dono := tokenDe(t, a, a.userID)
+	semCampo, _ := criarHB(t, a, dono, corpoDePeriodo)
+	_, corpo := lerCru(t, a, http.MethodGet, "/api/v1/heartbeats/"+semCampo, dono, nil)
+	if v := pingResumesDe(t, corpo); v != false {
+		t.Errorf("sem o campo: %v", v)
+	}
+
+	comCampo := maps.Clone(corpoDePeriodo)
+	comCampo["ping_resumes"] = true
+	id, _ := criarHB(t, a, dono, comCampo)
+	_, antes := lerCru(t, a, http.MethodGet, "/api/v1/heartbeats/"+id, dono, nil)
+	if v := pingResumesDe(t, antes); v != true {
+		t.Fatalf("com true: %v", v)
+	}
+	prazo := decodificar(t, antes)["deadline_at"]
+
+	a.clk.Advance(time.Minute)
+	caminho := "/api/v1/heartbeats/" + id
+	// Tipo errado é recusado pelo decoder, sem nomear o campo, como nos demais.
+	for _, c := range []struct {
+		nome  string
+		valor any
+		marca string
+	}{{"null", nil, `"field":"ping_resumes"`}, {"texto", "sim", `"validation_failed"`}} {
+		status, resp := lerCru(t, a, http.MethodPatch, caminho, dono, map[string]any{"ping_resumes": c.valor})
+		if status != http.StatusBadRequest || !strings.Contains(resp, c.marca) {
+			t.Errorf("PATCH %s: %d %s, queria 400 com %s", c.nome, status, resp, c.marca)
+		}
+		if _, depois := lerCru(t, a, http.MethodGet, caminho, dono, nil); depois != antes {
+			t.Errorf("PATCH %s mudou o heartbeat:\n%s\n%s", c.nome, antes, depois)
+		}
+	}
+
+	status, corpo := lerCru(t, a, http.MethodPatch, caminho, dono, map[string]any{"ping_resumes": false})
+	m := decodificar(t, corpo)
+	if status != http.StatusOK || m["ping_resumes"] != false || m["deadline_at"] != prazo {
+		t.Errorf("PATCH false: %d %s, queria false com prazo %v", status, corpo, prazo)
+	}
+	_, corpo = lerCru(t, a, http.MethodGet, caminho, dono, nil)
+	if v := pingResumesDe(t, corpo); v != false {
+		t.Errorf("leitura depois do PATCH: %v", v)
+	}
+}
+
+// Período de 1 h e tolerância de 10 min: o prazo é t0+1h10min, e a tolerância
+// é [t0+1h, t0+1h10min).
+func TestStateShowsGraceInsideTheWindow(t *testing.T) {
+	a := newAPI(t)
+	dono := tokenDe(t, a, a.userID)
+	id, ping := criarHB(t, a, dono, map[string]any{
+		"name": "backup", "schedule": map[string]any{"kind": "period", "period_sec": 3600}, "grace_sec": 600,
+	})
+	pingar(t, a, "/ping/"+ping, nil)
+	estado := func() any {
+		t.Helper()
+		dono = tokenDe(t, a, a.userID) // o relógio avança além da validade do token
+		_, corpo := lerCru(t, a, http.MethodGet, "/api/v1/heartbeats/"+id, dono, nil)
+		return decodificar(t, corpo)["state"]
+	}
+	a.clk.Advance(time.Hour - time.Second)
+	if e := estado(); e != "up" {
+		t.Errorf("em t0+1h-1s: %v, queria up", e)
+	}
+	a.clk.Advance(time.Second)
+	if e := estado(); e != "grace" {
+		t.Errorf("em t0+1h: %v, queria grace", e)
+	}
+	a.clk.Advance(10*time.Minute - time.Second)
+	if e := estado(); e != "grace" {
+		t.Errorf("em t0+1h10min-1s: %v, queria grace", e)
+	}
+	a.clk.Advance(time.Second)
+	if e := estado(); e != "late" {
+		t.Errorf("em t0+1h10min: %v, queria late", e)
 	}
 }
 
@@ -380,7 +504,7 @@ func TestPatchWithInvalidDescriptionChangesNothing(t *testing.T) {
 	corpo["description"] = "antes"
 	id, _ := criarHB(t, a, dono, corpo)
 	_, antes := lerCru(t, a, http.MethodGet, "/api/v1/heartbeats/"+id, dono, nil)
-	for _, invalida := range []any{strings.Repeat("a", 1001), "a\u0000b", "'; DROP TABLE heartbeats; --\u202E", 123} {
+	for _, invalida := range []any{strings.Repeat("a", 10001), "a\u0000b", "'; DROP TABLE heartbeats; --\u202E", 123} {
 		status, resp := lerCru(t, a, http.MethodPatch, "/api/v1/heartbeats/"+id, dono, map[string]any{"description": invalida, "name": "invadido"})
 		if status != http.StatusBadRequest {
 			t.Errorf("%v: %d %s", invalida, status, resp)
@@ -679,18 +803,19 @@ func TestHeartbeatValidationBoundaries(t *testing.T) {
 		{"período sem valor", map[string]any{"name": "a", "schedule": map[string]any{"kind": "period"}}, false, "period_sec"},
 		{"período abaixo", map[string]any{"name": "a", "schedule": periodo(59)}, false, "period_sec"},
 		{"período no piso", map[string]any{"name": "a", "schedule": periodo(60)}, true, ""},
-		{"período no teto", map[string]any{"name": "a", "schedule": periodo(2678400)}, true, ""},
-		{"período acima", map[string]any{"name": "a", "schedule": periodo(2678401)}, false, "period_sec"},
+		{"período no teto", map[string]any{"name": "a", "schedule": periodo(31536000)}, true, ""},
+		{"período acima", map[string]any{"name": "a", "schedule": periodo(31536001)}, false, "period_sec"},
 		{"período com expr", map[string]any{"name": "a", "schedule": map[string]any{"kind": "period", "period_sec": 60, "expr": "* * * * *"}}, false, "schedule"},
 		{"cron com período", map[string]any{"name": "a", "schedule": map[string]any{"kind": "cron", "period_sec": 60, "expr": "* * * * *", "timezone": "UTC"}}, false, "schedule"},
 		{"cron sem fuso", map[string]any{"name": "a", "schedule": map[string]any{"kind": "cron", "expr": "* * * * *"}}, false, "timezone"},
 		{"cron inválido", map[string]any{"name": "a", "schedule": map[string]any{"kind": "cron", "expr": "nunca", "timezone": "UTC"}}, false, "expr"},
 		{"tolerância abaixo", map[string]any{"name": "a", "schedule": periodo(60), "grace_sec": 29}, false, "grace_sec"},
 		{"tolerância no piso", map[string]any{"name": "a", "schedule": periodo(60), "grace_sec": 30}, true, ""},
-		{"tolerância no teto", map[string]any{"name": "a", "schedule": periodo(60), "grace_sec": 604800}, true, ""},
-		{"tolerância acima", map[string]any{"name": "a", "schedule": periodo(60), "grace_sec": 604801}, false, "grace_sec"},
-		{"descrição no teto", map[string]any{"name": "a", "schedule": periodo(60), "description": strings.Repeat("é", 1000)}, true, ""},
-		{"descrição acima do teto", map[string]any{"name": "a", "schedule": periodo(60), "description": strings.Repeat("é", 1001)}, false, "description"},
+		{"tolerância no teto", map[string]any{"name": "a", "schedule": periodo(60), "grace_sec": 31536000}, true, ""},
+		{"tolerância acima", map[string]any{"name": "a", "schedule": periodo(60), "grace_sec": 31536001}, false, "grace_sec"},
+		{"descrição no teto", map[string]any{"name": "a", "schedule": periodo(60), "description": strings.Repeat("é", 10000)}, true, ""},
+		{"descrição acima do teto", map[string]any{"name": "a", "schedule": periodo(60), "description": strings.Repeat("é", 10001)}, false, "description"},
+		{"descrição de emojis no teto", map[string]any{"name": "a", "schedule": periodo(60), "description": strings.Repeat("😀", 10000)}, true, ""},
 		{"descrição com NUL", map[string]any{"name": "a", "schedule": periodo(60), "description": "a\u0000b"}, false, "description[0]"},
 	}
 	a := newAPI(t)
@@ -710,6 +835,23 @@ func TestHeartbeatValidationBoundaries(t *testing.T) {
 			}
 		})
 	}
+	t.Run("PATCH para o período no teto recalcula o prazo", func(t *testing.T) {
+		dono := tokenDe(t, a, outroUsuario(t, a))
+		id, _ := criarHB(t, a, dono, corpoDePeriodo)
+		status, corpo := lerCru(t, a, http.MethodPatch, "/api/v1/heartbeats/"+id, dono, map[string]any{
+			"schedule": periodo(31536000),
+		})
+		if status != http.StatusOK {
+			t.Fatalf("PATCH: %d %s", status, corpo)
+		}
+		prazo, err := time.Parse(time.RFC3339, decodificar(t, corpo)["deadline_at"].(string))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want := a.clk.Now().Add(31536000*time.Second + 300*time.Second); !prazo.Equal(want) {
+			t.Errorf("prazo %v, queria %v", prazo, want)
+		}
+	})
 }
 
 // Campo ausente não muda nada; o que veio muda.
@@ -1048,6 +1190,9 @@ func TestDeletingAHeartbeatRevokesItsToken(t *testing.T) {
 	}
 }
 
+// O ping-now fica num teste próprio, como o idor_integration_test.go faz por
+// recurso: todas as chamadas saem do mesmo IP e do mesmo intruso, e com ele a
+// lista de rotas abaixo passaria do burst por IP (30) e por usuário (20).
 func TestAnotherUsersHeartbeatIsIndistinguishableFromMissing(t *testing.T) {
 	a := newAPI(t)
 	dono := tokenDe(t, a, a.userID)
@@ -1057,15 +1202,18 @@ func TestAnotherUsersHeartbeatIsIndistinguishableFromMissing(t *testing.T) {
 	_, corpo := lerCru(t, a, http.MethodGet, "/api/v1/heartbeats/"+id+"/incidents", dono, nil)
 	incidente := decodificar(t, corpo)["items"].([]any)[0].(map[string]any)["id"].(string)
 
+	intruso := outroUsuario(t, a)
 	molde := "/api/v1/heartbeats/%s"
 	conferirIDOR(t, a, cenarioIDOR{
-		dono: dono, intruso: tokenDe(t, a, outroUsuario(t, a)),
+		dono: dono, intruso: tokenDe(t, a, intruso),
 		rotas: []rotaAlheia{
 			{metodo: http.MethodGet, molde: molde, id: id},
 			{metodo: http.MethodPatch, molde: molde, id: id, corpo: map[string]any{"name": "roubado"}},
 			{metodo: http.MethodGet, molde: molde + "/events", id: id},
 			{metodo: http.MethodGet, molde: molde + "/incidents", id: id},
 			{metodo: http.MethodPost, molde: molde + "/token/rotate", id: id},
+			{metodo: http.MethodPost, molde: molde + "/clone", id: id},
+			{metodo: http.MethodPost, molde: molde + "/events/clear", id: id},
 			{metodo: http.MethodPost, molde: molde + "/incidents/" + incidente + "/ack", id: id},
 			{metodo: http.MethodDelete, molde: molde, id: id},
 		},
@@ -1074,8 +1222,68 @@ func TestAnotherUsersHeartbeatIsIndistinguishableFromMissing(t *testing.T) {
 		listasDoIntruso: []string{"/api/v1/heartbeats"},
 		dadosDoDono:     []string{id, "backup noturno"},
 	})
+	conferirDuplicarELimparSemEfeito(t, a, uuid.MustParse(id), intruso)
 	if status, _, corpo := pingar(t, a, "/ping/"+ping, nil); status != http.StatusOK {
 		t.Errorf("o token do dono parou: %d %s", status, corpo)
+	}
+}
+
+// O sinalizar agora alheio responde como o inexistente e não grava nada no
+// heartbeat do dono: nem last_ping_at, nem evento.
+func TestAnotherUsersPingNowIsIndistinguishableFromMissing(t *testing.T) {
+	a := newAPI(t)
+	dono := tokenDe(t, a, a.userID)
+	id, ping := criarHB(t, a, dono, corpoDePeriodo)
+	ultimoPing := a.clk.Now()
+	pingar(t, a, "/ping/"+ping+"/fail", nil)
+	eventosAntes := len(eventosPelaAPI(t, a, dono, id))
+
+	conferirIDOR(t, a, cenarioIDOR{
+		dono: dono, intruso: tokenDe(t, a, outroUsuario(t, a)),
+		rotas: []rotaAlheia{
+			{metodo: http.MethodPost, molde: "/api/v1/heartbeats/%s/ping-now", id: id},
+		},
+		leituras:        []string{"/api/v1/heartbeats/" + id, "/api/v1/heartbeats/" + id + "/events"},
+		listasDoIntruso: []string{"/api/v1/heartbeats"},
+		dadosDoDono:     []string{id, "backup noturno"},
+	})
+	if h := linhaDoHeartbeat(t, a, uuid.MustParse(id)); h.LastPingAt == nil || !h.LastPingAt.Equal(ultimoPing) {
+		t.Errorf("last_ping_at do dono = %s, queria %s", valorDe(h.LastPingAt), ultimoPing)
+	}
+	if n := len(eventosPelaAPI(t, a, dono, id)); n != eventosAntes {
+		t.Errorf("%d eventos depois do intruso, queria %d", n, eventosAntes)
+	}
+	if status, _, corpo := pingar(t, a, "/ping/"+ping, nil); status != http.StatusOK {
+		t.Errorf("o token do dono parou: %d %s", status, corpo)
+	}
+}
+
+// conferirDuplicarELimparSemEfeito olha o banco depois do intruso, e não só a
+// resposta: duplicar não criou cópia para ninguém, limpar não apagou o log do
+// dono (o único evento, o fail do cenário) e nada foi auditado em nome do
+// intruso sobre a tarefa do dono.
+func conferirDuplicarELimparSemEfeito(t *testing.T, a *api, id, intruso uuid.UUID) {
+	t.Helper()
+	if n := contarHeartbeatsDe(t, a, intruso); n != 0 {
+		t.Errorf("o intruso ficou com %d heartbeats, queria 0", n)
+	}
+	if n := contarHeartbeatsDe(t, a, a.userID); n != 1 {
+		t.Errorf("o dono ficou com %d heartbeats, queria 1", n)
+	}
+	var tipos []string
+	for _, e := range eventosDoHeartbeat(t, a, id) {
+		tipos = append(tipos, e.Kind)
+	}
+	if !slices.Equal(tipos, []string{"fail"}) {
+		t.Errorf("eventos do dono: %v, queria [fail]", tipos)
+	}
+	var auditados int
+	if err := a.pool.QueryRow(context.Background(),
+		`SELECT count(*) FROM audit_log WHERE entity_id = $1 AND user_id = $2`, id, intruso).Scan(&auditados); err != nil {
+		t.Fatal(err)
+	}
+	if auditados != 0 {
+		t.Errorf("%d linhas de auditoria do intruso sobre a tarefa do dono, queria 0", auditados)
 	}
 }
 
@@ -1205,5 +1413,14 @@ func TestHeartbeatTokenNeverReachesTheLog(t *testing.T) {
 	_, corpo := lerCru(t, a, http.MethodPost, "/api/v1/heartbeats/"+id+"/token/rotate", dono, nil)
 	if strings.Contains(log.String(), ping) || strings.Contains(log.String(), tokenDaURL(t, corpo)) {
 		t.Fatalf("token no log: %s", log.String())
+	}
+	// Duplicar é a terceira rota que emite token de ping.
+	status, copia := lerCru(t, a, http.MethodPost, "/api/v1/heartbeats/"+id+"/clone", dono, nil)
+	if status != http.StatusCreated {
+		t.Fatalf("duplicar deu %d: %s", status, copia)
+	}
+	url, _ := decodificar(t, copia)["ping_url"].(string)
+	if strings.Contains(log.String(), url) || strings.Contains(log.String(), tokenDaURL(t, copia)) {
+		t.Fatalf("token da cópia no log: %s", log.String())
 	}
 }

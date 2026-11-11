@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"slices"
 	"strings"
@@ -12,11 +13,13 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/BipoXDXD/stillon/internal/apierr"
 	"github.com/BipoXDXD/stillon/internal/auth"
 	"github.com/BipoXDXD/stillon/internal/storage"
 	"github.com/BipoXDXD/stillon/internal/storage/db"
+	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 	"github.com/BipoXDXD/stillon/internal/targets"
 )
 
@@ -75,13 +78,22 @@ func chamar(t *testing.T, a *api, metodo, caminho, token string, corpo any) *htt
 }
 
 type alvoJSON struct {
-	ID                  string    `json:"id"`
-	Name                string    `json:"name"`
-	URL                 string    `json:"url"`
-	IntervalSec         int32     `json:"interval_sec"`
-	DegradedThresholdMS *int32    `json:"degraded_threshold_ms"`
-	HeaderNames         []string  `json:"header_names"`
-	CreatedAt           time.Time `json:"created_at"`
+	ID                  string     `json:"id"`
+	Name                string     `json:"name"`
+	URL                 string     `json:"url"`
+	IntervalSec         int32      `json:"interval_sec"`
+	DegradedThresholdMS *int32     `json:"degraded_threshold_ms"`
+	HeaderNames         []string   `json:"header_names"`
+	ContentRule         *regraJSON `json:"content_rule"`
+	CreatedAt           time.Time  `json:"created_at"`
+}
+
+// regraJSON é content_rule na saída; JSONPointer nil é o null fora de
+// json_equals.
+type regraJSON struct {
+	Mode        string  `json:"mode"`
+	Value       string  `json:"value"`
+	JSONPointer *string `json:"json_pointer"`
 }
 
 // lerCorpo devolve o corpo cru (para procurar o que NÃO pode estar nele) e
@@ -152,36 +164,263 @@ func TestTargetCRUDFlow(t *testing.T) {
 // Spec §5.5: recurso de outro usuário é 404, nunca 403, em toda rota.
 func TestAnotherUsersTargetIs404OnEveryRoute(t *testing.T) {
 	a := newAPI(t)
+	ctx := context.Background()
 	dono := tokenDe(t, a, a.userID)
 	intruso := tokenDe(t, a, outroUsuario(t, a))
+	admin, err := pgxpool.New(ctx, testdb.AdminDSN(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(admin.Close)
 
-	resp := chamar(t, a, http.MethodPost, "/api/v1/targets", dono, alvoValido)
+	const valorDeA = "CANARY-regra-de-a-7f3c"
+	alvoDeA := maps.Clone(alvoValido)
+	alvoDeA["content_rule"] = map[string]any{"mode": "contains", "value": valorDeA}
+	resp := chamar(t, a, http.MethodPost, "/api/v1/targets", dono, alvoDeA)
 	var criado alvoJSON
-	lerCorpo(t, resp, &criado)
+	if cru := lerCorpo(t, resp, &criado); resp.StatusCode != http.StatusCreated {
+		t.Fatalf("POST do dono deu %d: %s", resp.StatusCode, cru)
+	}
+	id := uuid.MustParse(criado.ID)
+	gravarValidadeTLS(t, a, criado.ID)
 
-	for _, c := range []struct{ metodo, caminho string }{
-		{http.MethodGet, "/api/v1/targets/" + criado.ID},
-		{http.MethodPatch, "/api/v1/targets/" + criado.ID},
-		{http.MethodDelete, "/api/v1/targets/" + criado.ID},
-		{http.MethodGet, "/api/v1/targets/" + criado.ID + "/checks"},
-	} {
-		var corpo any
-		if c.metodo == http.MethodPatch {
-			corpo = map[string]any{"name": "roubado"}
+	// Histerese no meio de uma sequência de falhas, como o sondador deixaria:
+	// um PATCH que troca a regra a zeraria (C4) e adiantaria o next_run_at
+	// (D13). O intruso não pode provocar nenhum dos dois.
+	desde := a.clk.Now().Add(-3 * time.Minute)
+	if _, err := admin.Exec(ctx, `
+		INSERT INTO target_health (target_id, consecutive_failures, consecutive_successes, streak_since, last_checked_at)
+		VALUES ($1, 2, 0, $2, $2)`, id, desde); err != nil {
+		t.Fatal(err)
+	}
+	proximo := a.clk.Now().Add(42 * time.Minute)
+	if _, err := admin.Exec(ctx, `UPDATE targets SET next_run_at = $2 WHERE id = $1`, id, proximo); err != nil {
+		t.Fatal(err)
+	}
+	// desde é ponteiro: a histerese zerada tem streak_since NULL, e o teste
+	// precisa relatar a diferença em vez de parar no Scan.
+	type efeitos struct {
+		falhas, sucessos int32
+		desde            *time.Time
+		proximo          time.Time
+	}
+	lerEfeitos := func() efeitos {
+		t.Helper()
+		var e efeitos
+		if err := admin.QueryRow(ctx, `
+			SELECT h.consecutive_failures, h.consecutive_successes, h.streak_since, t.next_run_at
+			  FROM targets t JOIN target_health h ON h.target_id = t.id
+			 WHERE t.id = $1`, id).Scan(&e.falhas, &e.sucessos, &e.desde, &e.proximo); err != nil {
+			t.Fatal(err)
 		}
-		resp := chamar(t, a, c.metodo, c.caminho, intruso, corpo)
-		env := decodeEnvelope(t, resp)
-		resp.Body.Close()
-		if resp.StatusCode != http.StatusNotFound || env.Error.Code != "not_found" {
-			t.Errorf("%s %s pelo intruso deu %d/%s, queria 404/not_found", c.metodo, c.caminho, resp.StatusCode, env.Error.Code)
-		}
+		return e
+	}
+	antes := lerEfeitos()
+	if antes.desde == nil || !antes.proximo.Equal(proximo) {
+		t.Fatalf("a preparação não gravou a histerese e o next_run_at: %v", antes)
 	}
 
-	resp = chamar(t, a, http.MethodGet, "/api/v1/targets/"+criado.ID, dono, nil)
-	var intacto alvoJSON
-	lerCorpo(t, resp, &intacto)
-	if intacto.Name != "API" {
-		t.Errorf("o alvo do dono mudou para %q", intacto.Name)
+	for _, c := range []struct {
+		metodo, caminho string
+		corpo           any
+	}{
+		{http.MethodGet, "/api/v1/targets/" + criado.ID, nil},
+		{http.MethodPatch, "/api/v1/targets/" + criado.ID, map[string]any{"name": "roubado"}},
+		{http.MethodPatch, "/api/v1/targets/" + criado.ID, map[string]any{"tls_warn": false}},
+		{http.MethodPatch, "/api/v1/targets/" + criado.ID, map[string]any{
+			"content_rule": map[string]any{"mode": "json_equals", "value": "roubado", "json_pointer": "/status"},
+		}},
+		{http.MethodPatch, "/api/v1/targets/" + criado.ID, map[string]any{"content_rule": nil}},
+		{http.MethodDelete, "/api/v1/targets/" + criado.ID, nil},
+		{http.MethodGet, "/api/v1/targets/" + criado.ID + "/checks", nil},
+	} {
+		status, cru := lerCru(t, a, c.metodo, c.caminho, intruso, c.corpo)
+		var env envelopeComCampos
+		if err := json.Unmarshal([]byte(cru), &env); err != nil {
+			t.Fatalf("%s %s: %v\n%s", c.metodo, c.caminho, err, cru)
+		}
+		if status != http.StatusNotFound || env.Error.Code != "not_found" {
+			t.Errorf("%s %s %v pelo intruso deu %d/%s, queria 404/not_found", c.metodo, c.caminho, c.corpo, status, env.Error.Code)
+		}
+		conferirSemDadosDoDono(t, c.metodo+" "+c.caminho, cru,
+			[]string{"API", "api.exemplo.com", "segredo-do-cliente", valorDeA, notAfterTLS, "not_after"})
+	}
+	_, lista := lerCru(t, a, http.MethodGet, "/api/v1/targets", intruso, nil)
+	conferirSemDadosDoDono(t, "GET /api/v1/targets", lista, []string{criado.ID, valorDeA, notAfterTLS, "not_after"})
+
+	_, cru := lerCru(t, a, http.MethodGet, "/api/v1/targets/"+criado.ID, dono, nil)
+	var intacto struct {
+		Name        string     `json:"name"`
+		TLSWarn     bool       `json:"tls_warn"`
+		ContentRule *regraJSON `json:"content_rule"`
+	}
+	if err := json.Unmarshal([]byte(cru), &intacto); err != nil {
+		t.Fatal(err)
+	}
+	if intacto.Name != "API" || !intacto.TLSWarn {
+		t.Errorf("o alvo do dono mudou: %s", cru)
+	}
+	quer := regraJSON{Mode: "contains", Value: valorDeA}
+	if intacto.ContentRule == nil || *intacto.ContentRule != quer {
+		t.Errorf("a regra do dono mudou para %+v, queria %+v", intacto.ContentRule, quer)
+	}
+	if depois := lerEfeitos(); depois.falhas != 2 || depois.sucessos != 0 || depois.desde == nil ||
+		!depois.desde.Equal(desde) || !depois.proximo.Equal(proximo) {
+		t.Errorf("o PATCH do intruso mexeu na sondagem de A: falhas=%d sucessos=%d streak_since=%v next_run_at=%s; queria 2, 0, %s e %s",
+			depois.falhas, depois.sucessos, depois.desde, depois.proximo.UTC().Format(time.RFC3339),
+			desde.UTC().Format(time.RFC3339), proximo.UTC().Format(time.RFC3339))
+	}
+}
+
+// notAfterTLS e observedAtTLS são a validade que gravarValidadeTLS grava, como
+// a API as escreve.
+const (
+	notAfterTLS   = "2026-12-01T00:00:00Z"
+	observedAtTLS = "2026-09-22T11:30:00Z"
+)
+
+// gravarValidadeTLS grava a linha de target_tls do alvo como o sondador grava:
+// no escopo dele, o único que a escreve em produção.
+func gravarValidadeTLS(t *testing.T, a *api, alvoID string) {
+	t.Helper()
+	ctx := context.Background()
+	p := db.SaveTargetTLSParams{
+		TargetID:   uuid.MustParse(alvoID),
+		NotAfter:   time.Date(2026, 12, 1, 0, 0, 0, 0, time.UTC),
+		ObservedAt: time.Date(2026, 9, 22, 11, 30, 0, 0, time.UTC),
+	}
+	if err := storage.InProberTx(ctx, a.pool, func(q *db.Queries) error { return q.SaveTargetTLS(ctx, p) }); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Spec §7.2: a validade gravada pelo sondador sai no alvo, no GET e na lista;
+// sem leitura, "tls" é null, e não ausente.
+func TestTargetShowsTheCertificateReading(t *testing.T) {
+	a := newAPI(t)
+	tok := tokenDe(t, a, a.userID)
+	var lido, semLeitura alvoJSON
+	lerCorpo(t, chamar(t, a, http.MethodPost, "/api/v1/targets", tok, alvoValido), &lido)
+	lerCorpo(t, chamar(t, a, http.MethodPost, "/api/v1/targets", tok, alvoValido), &semLeitura)
+	gravarValidadeTLS(t, a, lido.ID)
+
+	queria := `"tls":{"not_after":"` + notAfterTLS + `","observed_at":"` + observedAtTLS + `"}`
+	_, cru := lerCru(t, a, http.MethodGet, "/api/v1/targets/"+lido.ID, tok, nil)
+	if !strings.Contains(cru, queria) {
+		t.Errorf("GET: queria %s em %s", queria, cru)
+	}
+	_, cru = lerCru(t, a, http.MethodGet, "/api/v1/targets/"+semLeitura.ID, tok, nil)
+	if !strings.Contains(cru, `"tls":null`) {
+		t.Errorf("GET sem leitura: queria \"tls\":null em %s", cru)
+	}
+
+	_, lista := lerCru(t, a, http.MethodGet, "/api/v1/targets", tok, nil)
+	var envelope struct {
+		Items []json.RawMessage `json:"items"`
+	}
+	if err := json.Unmarshal([]byte(lista), &envelope); err != nil {
+		t.Fatal(err)
+	}
+	porID := map[string]string{}
+	for _, item := range envelope.Items {
+		var id struct {
+			ID string `json:"id"`
+		}
+		if err := json.Unmarshal(item, &id); err != nil {
+			t.Fatal(err)
+		}
+		porID[id.ID] = string(item)
+	}
+	if !strings.Contains(porID[lido.ID], queria) {
+		t.Errorf("lista: queria %s em %s", queria, porID[lido.ID])
+	}
+	if !strings.Contains(porID[semLeitura.ID], `"tls":null`) {
+		t.Errorf("lista sem leitura: queria \"tls\":null em %s", porID[semLeitura.ID])
+	}
+}
+
+// tls_warn é ligado por padrão (spec §5.2), muda pelo PATCH e nunca vira null.
+// tls é só de saída: o DTO estrito o recusa na entrada como campo desconhecido.
+func TestTLSWarnDefaultsAndPatch(t *testing.T) {
+	a := newAPI(t)
+	tok := tokenDe(t, a, outroUsuario(t, a))
+	tlsWarn := func(onde, cru string) bool {
+		t.Helper()
+		var v struct {
+			TLSWarn *bool `json:"tls_warn"`
+		}
+		if err := json.Unmarshal([]byte(cru), &v); err != nil || v.TLSWarn == nil {
+			t.Fatalf("%s: sem tls_warn (%v): %s", onde, err, cru)
+		}
+		return *v.TLSWarn
+	}
+	criar := func(corpo map[string]any) (int, string, string) {
+		t.Helper()
+		status, cru := lerCru(t, a, http.MethodPost, "/api/v1/targets", tok, corpo)
+		var id struct {
+			ID string `json:"id"`
+		}
+		_ = json.Unmarshal([]byte(cru), &id) // o corpo de erro não tem id
+		return status, cru, id.ID
+	}
+
+	status, cru, padrao := criar(map[string]any{"name": "padrao", "url": "https://exemplo.com/"})
+	if status != http.StatusCreated || !tlsWarn("POST sem tls_warn", cru) {
+		t.Errorf("POST sem tls_warn: %d %s; queria 201 com true", status, cru)
+	}
+	status, cru, desligado := criar(map[string]any{"name": "desligado", "url": "https://exemplo.com/", "tls_warn": false})
+	if status != http.StatusCreated || tlsWarn("POST com false", cru) {
+		t.Errorf("POST com false: %d %s; queria 201 com false", status, cru)
+	}
+	_, cru = lerCru(t, a, http.MethodGet, "/api/v1/targets/"+desligado, tok, nil)
+	if tlsWarn("GET depois do POST com false", cru) {
+		t.Errorf("tls_warn false não foi gravado: %s", cru)
+	}
+
+	status, cru = lerCru(t, a, http.MethodPatch, "/api/v1/targets/"+desligado, tok, map[string]any{"tls_warn": true})
+	if status != http.StatusOK || !tlsWarn("PATCH true", cru) {
+		t.Errorf("PATCH true: %d %s", status, cru)
+	}
+	status, cru = lerCru(t, a, http.MethodPatch, "/api/v1/targets/"+padrao, tok, map[string]any{"name": "outro nome"})
+	if status != http.StatusOK || !tlsWarn("PATCH sem tls_warn", cru) {
+		t.Errorf("PATCH sem tls_warn mexeu no interruptor: %d %s", status, cru)
+	}
+	status, cru = lerCru(t, a, http.MethodPatch, "/api/v1/targets/"+padrao, tok, map[string]any{"tls_warn": false})
+	if status != http.StatusOK || tlsWarn("PATCH false", cru) {
+		t.Errorf("PATCH false: %d %s", status, cru)
+	}
+
+	var env envelopeComCampos
+	status, cru = lerCru(t, a, http.MethodPatch, "/api/v1/targets/"+desligado, tok, map[string]any{"tls_warn": nil})
+	if err := json.Unmarshal([]byte(cru), &env); err != nil {
+		t.Fatal(err)
+	}
+	if status != http.StatusBadRequest || len(env.Error.Fields) != 1 || env.Error.Fields[0].Field != "tls_warn" {
+		t.Errorf("PATCH tls_warn null: %d %s; queria 400 em tls_warn", status, cru)
+	}
+	for _, corpo := range []map[string]any{{"tls_warn": "sim"}, {"tls_warn": 1}} {
+		if status, cru := lerCru(t, a, http.MethodPatch, "/api/v1/targets/"+desligado, tok, corpo); status != http.StatusBadRequest {
+			t.Errorf("PATCH %v: %d %s; queria 400", corpo, status, cru)
+		}
+	}
+	_, cru = lerCru(t, a, http.MethodGet, "/api/v1/targets/"+desligado, tok, nil)
+	if !tlsWarn("GET depois dos PATCH recusados", cru) {
+		t.Errorf("um PATCH recusado mudou tls_warn: %s", cru)
+	}
+
+	if status, cru, _ := criar(map[string]any{"name": "sim", "url": "https://exemplo.com/", "tls_warn": "sim"}); status != http.StatusBadRequest {
+		t.Errorf("POST tls_warn \"sim\": %d %s; queria 400", status, cru)
+	}
+	tls := map[string]any{"not_after": notAfterTLS, "observed_at": observedAtTLS}
+	if status, cru, _ := criar(map[string]any{"name": "forjado", "url": "https://exemplo.com/", "tls": tls}); status != http.StatusBadRequest {
+		t.Errorf("POST com tls: %d %s; queria 400", status, cru)
+	}
+	if status, cru := lerCru(t, a, http.MethodPatch, "/api/v1/targets/"+padrao, tok, map[string]any{"tls": tls}); status != http.StatusBadRequest {
+		t.Errorf("PATCH com tls: %d %s; queria 400", status, cru)
+	}
+	_, lista := lerCru(t, a, http.MethodGet, "/api/v1/targets", tok, nil)
+	if strings.Contains(lista, "forjado") || strings.Contains(lista, `"name":"sim"`) || strings.Contains(lista, notAfterTLS) {
+		t.Errorf("um POST recusado criou alvo ou gravou validade: %s", lista)
 	}
 }
 
@@ -737,5 +976,163 @@ func TestExpectedStatusOutsideTheReachableRangesIs400(t *testing.T) {
 				t.Errorf("%s com expected_status %d deu %d %s, queria 400 expected_status/out_of_range", r.metodo, status, resp.StatusCode, cru)
 			}
 		}
+	}
+}
+
+// content_rule: POST com regra a devolve; PATCH com outra a troca; PATCH sem o
+// campo não mexe; PATCH com null limpa.
+func TestContentRuleCreatePatchAndClear(t *testing.T) {
+	a := newAPI(t)
+	tok := tokenDe(t, a, a.userID)
+
+	resp := chamar(t, a, http.MethodPost, "/api/v1/targets", tok, map[string]any{
+		"name": "x", "url": "https://exemplo.com/status",
+		"content_rule": map[string]any{"mode": "json_equals", "value": "ok", "json_pointer": "/status"},
+	})
+	var criado alvoJSON
+	if cru := lerCorpo(t, resp, &criado); resp.StatusCode != http.StatusCreated {
+		t.Fatalf("POST deu %d: %s", resp.StatusCode, cru)
+	}
+	if r := criado.ContentRule; r == nil || r.Mode != "json_equals" || r.Value != "ok" ||
+		r.JSONPointer == nil || *r.JSONPointer != "/status" {
+		t.Fatalf("POST devolveu a regra %+v, queria json_equals ok /status", r)
+	}
+
+	patch := func(corpo map[string]any) alvoJSON {
+		t.Helper()
+		resp := chamar(t, a, http.MethodPatch, "/api/v1/targets/"+criado.ID, tok, corpo)
+		var got alvoJSON
+		if cru := lerCorpo(t, resp, &got); resp.StatusCode != http.StatusOK {
+			t.Fatalf("PATCH %v deu %d: %s", corpo, resp.StatusCode, cru)
+		}
+		return got
+	}
+
+	trocado := patch(map[string]any{"content_rule": map[string]any{"mode": "not_contains", "value": "erro"}})
+	if r := trocado.ContentRule; r == nil || r.Mode != "not_contains" || r.Value != "erro" || r.JSONPointer != nil {
+		t.Errorf("PATCH com outra regra devolveu %+v, queria not_contains erro sem ponteiro", r)
+	}
+
+	mantido := patch(map[string]any{"name": "y"})
+	if r := mantido.ContentRule; r == nil || r.Mode != "not_contains" || r.Value != "erro" {
+		t.Errorf("PATCH sem o campo mexeu na regra: %+v", r)
+	}
+
+	limpo := patch(map[string]any{"content_rule": nil})
+	if limpo.ContentRule != nil {
+		t.Errorf("PATCH com null devolveu a regra %+v, queria null", *limpo.ContentRule)
+	}
+	resp = chamar(t, a, http.MethodGet, "/api/v1/targets/"+criado.ID, tok, nil)
+	cru := string(lerCorpo(t, resp, nil))
+	if !strings.Contains(cru, `"content_rule":null`) {
+		t.Errorf("GET depois do null não traz content_rule null: %s", cru)
+	}
+}
+
+// Cada recusa aponta o campo da regra e o motivo, e o envelope não ecoa o
+// valor enviado.
+func TestContentRuleValidationNamesTheField(t *testing.T) {
+	a := newAPI(t)
+	tok := tokenDe(t, a, a.userID)
+	const canario = "CANARY-9d2e41"
+
+	criar := func(extra map[string]any) (int, envelopeComCampos, string) {
+		t.Helper()
+		corpo := map[string]any{"name": "x", "url": "https://exemplo.com/"}
+		for k, v := range extra {
+			corpo[k] = v
+		}
+		resp := chamar(t, a, http.MethodPost, "/api/v1/targets", tok, corpo)
+		cru := lerCorpo(t, resp, nil)
+		var env envelopeComCampos
+		if resp.StatusCode != http.StatusCreated {
+			if err := json.Unmarshal(cru, &env); err != nil {
+				t.Fatalf("envelope inválido: %v %s", err, cru)
+			}
+		}
+		return resp.StatusCode, env, string(cru)
+	}
+	regra := func(valor string) map[string]any {
+		return map[string]any{"content_rule": map[string]any{"mode": "contains", "value": valor}}
+	}
+
+	for _, c := range []struct {
+		nome  string
+		extra map[string]any
+		quer  apierr.FieldError
+	}{
+		{"valor vazio", regra(""), apierr.FieldError{Field: "content_rule.value", Reason: "required"}},
+		{"HEAD com regra", map[string]any{
+			"method": "HEAD", "content_rule": map[string]any{"mode": "contains", "value": canario},
+		}, apierr.FieldError{Field: "content_rule", Reason: "forbidden"}},
+		{"valor com NUL", regra(canario + "\u0000"), apierr.FieldError{Field: "content_rule.value", Reason: "invalid"}},
+		{"257 caracteres", regra(canario + strings.Repeat("é", 257-len(canario))), apierr.FieldError{Field: "content_rule.value", Reason: "too_long"}},
+		// null em campo obrigatório é required, para mode como para value.
+		{"mode null", map[string]any{
+			"content_rule": map[string]any{"mode": nil, "value": canario},
+		}, apierr.FieldError{Field: "content_rule.mode", Reason: "required"}},
+		{"value null", map[string]any{
+			"content_rule": map[string]any{"mode": "contains", "value": nil},
+		}, apierr.FieldError{Field: "content_rule.value", Reason: "required"}},
+		// O ponteiro só existe em json_equals: sobrando, é recusado, não ignorado.
+		{"json_pointer com contains", map[string]any{
+			"content_rule": map[string]any{"mode": "contains", "value": canario, "json_pointer": "/status"},
+		}, apierr.FieldError{Field: "content_rule.json_pointer", Reason: "invalid"}},
+	} {
+		status, env, cru := criar(c.extra)
+		if status != http.StatusBadRequest || env.Error.Code != "validation_failed" ||
+			len(env.Error.Fields) != 1 || env.Error.Fields[0] != c.quer {
+			t.Errorf("%s deu %d/%+v, queria 400 %+v: %s", c.nome, status, env.Error.Fields, c.quer, cru)
+		}
+		if strings.Contains(cru, canario) {
+			t.Errorf("%s: a resposta ecoou o valor enviado: %s", c.nome, cru)
+		}
+	}
+
+	// 256 caracteres de dois bytes: o limite conta caracteres, não bytes.
+	if status, _, cru := criar(regra(strings.Repeat("é", 256))); status != http.StatusCreated {
+		t.Errorf("256 caracteres deu %d, queria 201: %s", status, cru)
+	}
+}
+
+// O decoder estrito alcança dentro da regra: um campo a mais (um "regex" que
+// o servidor não implementa) é 400, e não uma regra diferente da pedida.
+func TestContentRuleRejectsUnknownNestedField(t *testing.T) {
+	a := newAPI(t)
+	tok := tokenDe(t, a, a.userID)
+	extra := map[string]any{"mode": "contains", "value": "a", "regex": true}
+
+	resp := chamar(t, a, http.MethodPost, "/api/v1/targets", tok, map[string]any{
+		"name": "x", "url": "https://exemplo.com/", "content_rule": extra,
+	})
+	var env envelopeComCampos
+	if cru := lerCorpo(t, resp, &env); resp.StatusCode != http.StatusBadRequest || env.Error.Code != "validation_failed" {
+		t.Errorf("POST com campo desconhecido na regra deu %d/%s, queria 400: %s", resp.StatusCode, env.Error.Code, cru)
+	}
+	var lista struct {
+		Items []alvoJSON `json:"items"`
+	}
+	lerCorpo(t, chamar(t, a, http.MethodGet, "/api/v1/targets", tok, nil), &lista)
+	if len(lista.Items) != 0 {
+		t.Fatalf("o POST recusado criou %d alvo(s)", len(lista.Items))
+	}
+
+	// No PATCH também, e a regra gravada fica como estava.
+	resp = chamar(t, a, http.MethodPost, "/api/v1/targets", tok, map[string]any{
+		"name": "x", "url": "https://exemplo.com/",
+		"content_rule": map[string]any{"mode": "contains", "value": "b"},
+	})
+	var criado alvoJSON
+	if cru := lerCorpo(t, resp, &criado); resp.StatusCode != http.StatusCreated {
+		t.Fatalf("POST deu %d: %s", resp.StatusCode, cru)
+	}
+	resp = chamar(t, a, http.MethodPatch, "/api/v1/targets/"+criado.ID, tok, map[string]any{"content_rule": extra})
+	if cru := lerCorpo(t, resp, nil); resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("PATCH com campo desconhecido na regra deu %d, queria 400: %s", resp.StatusCode, cru)
+	}
+	var lido alvoJSON
+	lerCorpo(t, chamar(t, a, http.MethodGet, "/api/v1/targets/"+criado.ID, tok, nil), &lido)
+	if r := lido.ContentRule; r == nil || r.Mode != "contains" || r.Value != "b" {
+		t.Errorf("o PATCH recusado mexeu na regra: %+v", r)
 	}
 }

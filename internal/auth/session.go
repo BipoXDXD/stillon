@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 
@@ -60,6 +61,27 @@ type Session struct {
 type Meta struct {
 	IP        string
 	UserAgent string
+}
+
+// MaxUserAgent é o teto, em code points, do user agent: o que a sessão guarda
+// e o que a lista de sessões mostra. O cabeçalho só é informativo, e sem teto
+// próprio o único limite seria o dos cabeçalhos HTTP (dezenas de KiB).
+const MaxUserAgent = 256
+
+// TruncateUserAgent corta em MaxUserAgent code points sem partir um caractere
+// ao meio.
+func TruncateUserAgent(s string) string {
+	if utf8.RuneCountInString(s) <= MaxUserAgent {
+		return s
+	}
+	n := 0
+	for i := range s {
+		if n == MaxUserAgent {
+			return s[:i]
+		}
+		n++
+	}
+	return s
 }
 
 type Manager struct {

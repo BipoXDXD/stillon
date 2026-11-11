@@ -26,7 +26,8 @@ UPDATE targets t
        + make_interval(secs => t.interval_sec * (0.9 + random() * 0.2))
  WHERE t.id IN (SELECT id FROM lote)
 RETURNING t.id, t.user_id, t.url, t.method, t.timeout_ms, t.expected_status,
-          t.headers_enc, t.degraded_threshold_ms, t.interval_sec
+          t.headers_enc, t.degraded_threshold_ms, t.interval_sec,
+          t.content_mode, t.content_value, t.content_json_pointer
 `
 
 type ClaimDueTargetsParams struct {
@@ -44,6 +45,9 @@ type ClaimDueTargetsRow struct {
 	HeadersEnc          []byte
 	DegradedThresholdMS *int32
 	IntervalSec         int32
+	ContentMode         *string
+	ContentValue        *string
+	ContentJsonPointer  *string
 }
 
 // Estas queries rodam só sob InProberTx (app.scope = 'prober').
@@ -57,7 +61,9 @@ type ClaimDueTargetsRow struct {
 //
 // user_id volta porque a avaliação de incidente enfileira as notificações
 // nos canais do dono (Plano 3); interval_sec, porque a histerese recomeça
-// depois de uma lacuna longa entre checks.
+// depois de uma lacuna longa entre checks; as três colunas da regra de
+// conteúdo, porque a sonda julga o corpo pela regra que reivindicou, e a
+// cerca da gravação compara com ela.
 //
 // O lote fica numa CTE MATERIALIZED, que roda uma vez só. Numa subconsulta
 // dentro do IN, um nested loop pode reexecutá-la a cada linha de fora, e o
@@ -81,6 +87,9 @@ func (q *Queries) ClaimDueTargets(ctx context.Context, arg ClaimDueTargetsParams
 			&i.HeadersEnc,
 			&i.DegradedThresholdMS,
 			&i.IntervalSec,
+			&i.ContentMode,
+			&i.ContentValue,
+			&i.ContentJsonPointer,
 		); err != nil {
 			return nil, err
 		}
@@ -113,6 +122,26 @@ func (q *Queries) EnsureChecksPartition(ctx context.Context, month time.Time) er
 	return err
 }
 
+const getTargetTLS = `-- name: GetTargetTLS :one
+SELECT not_after, observed_at FROM target_tls WHERE target_id = $1
+`
+
+type GetTargetTLSRow struct {
+	NotAfter   time.Time
+	ObservedAt time.Time
+}
+
+// Validade guardada do pior certificado visto no alvo (spec §5.2). Sem linha:
+// nenhuma leitura ainda. Quem decide se a leitura nova substitui é
+// prober.substituirValidade; a gravação corre depois da trava da histerese,
+// que serializa duas sondas do mesmo alvo.
+func (q *Queries) GetTargetTLS(ctx context.Context, targetID uuid.UUID) (GetTargetTLSRow, error) {
+	row := q.db.QueryRow(ctx, getTargetTLS, targetID)
+	var i GetTargetTLSRow
+	err := row.Scan(&i.NotAfter, &i.ObservedAt)
+	return i, err
+}
+
 const insertCheck = `-- name: InsertCheck :exec
 INSERT INTO checks (id, target_id, checked_at, status, latency_ms, status_code, error_kind)
 VALUES ($1, $2, $3, $4, $5, $6, $7)
@@ -142,19 +171,24 @@ func (q *Queries) InsertCheck(ctx context.Context, arg InsertCheckParams) error 
 }
 
 const lockTargetProbeSpec = `-- name: LockTargetProbeSpec :one
-SELECT url, method, enabled FROM targets WHERE id = $1 FOR KEY SHARE
+SELECT url, method, enabled, content_mode, content_value, content_json_pointer
+  FROM targets WHERE id = $1 FOR KEY SHARE
 `
 
 type LockTargetProbeSpecRow struct {
-	URL     string
-	Method  string
-	Enabled bool
+	URL                string
+	Method             string
+	Enabled            bool
+	ContentMode        *string
+	ContentValue       *string
+	ContentJsonPointer *string
 }
 
-// Fencing da gravação (E2 da revisão de 2026-10-14). A sonda leva a URL e o
-// método da reivindicação; antes de gravar, o sondador relê os do alvo. Se o
-// dono trocou um dos dois com a sonda em voo, o PATCH zerou a histerese, e o
-// resultado é de outro serviço: a gravação é descartada.
+// Fencing da gravação (E2 da revisão de 2026-10-14). A sonda leva a URL, o
+// método e a regra de conteúdo da reivindicação; antes de gravar, o sondador
+// relê os do alvo. Se o dono trocou um deles com a sonda em voo, o PATCH
+// zerou a histerese, e o resultado julga outra coisa: a gravação é
+// descartada.
 //
 // FOR KEY SHARE espera o FOR UPDATE do PATCH (targets.GetTargetForUpdate) e,
 // depois do commit dele, devolve a linha nova. É a mesma trava que a FK do
@@ -164,6 +198,31 @@ type LockTargetProbeSpecRow struct {
 func (q *Queries) LockTargetProbeSpec(ctx context.Context, id uuid.UUID) (LockTargetProbeSpecRow, error) {
 	row := q.db.QueryRow(ctx, lockTargetProbeSpec, id)
 	var i LockTargetProbeSpecRow
-	err := row.Scan(&i.URL, &i.Method, &i.Enabled)
+	err := row.Scan(
+		&i.URL,
+		&i.Method,
+		&i.Enabled,
+		&i.ContentMode,
+		&i.ContentValue,
+		&i.ContentJsonPointer,
+	)
 	return i, err
+}
+
+const saveTargetTLS = `-- name: SaveTargetTLS :exec
+INSERT INTO target_tls (target_id, not_after, observed_at)
+VALUES ($1, $2, $3)
+ON CONFLICT (target_id) DO UPDATE
+   SET not_after = EXCLUDED.not_after, observed_at = EXCLUDED.observed_at
+`
+
+type SaveTargetTLSParams struct {
+	TargetID   uuid.UUID
+	NotAfter   time.Time
+	ObservedAt time.Time
+}
+
+func (q *Queries) SaveTargetTLS(ctx context.Context, arg SaveTargetTLSParams) error {
+	_, err := q.db.Exec(ctx, saveTargetTLS, arg.TargetID, arg.NotAfter, arg.ObservedAt)
+	return err
 }

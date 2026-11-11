@@ -29,6 +29,14 @@ export type RespostaLogin = z.infer<typeof RespostaLogin>
 export const Me = z.object({ id, email: z.string(), totp_enabled: z.boolean(), created_at: instante })
 export type Me = z.infer<typeof Me>
 
+export const RegraDeConteudo = z.object({
+  mode: z.enum(['contains', 'not_contains', 'json_equals']),
+  value: z.string(),
+  // Sempre presente na resposta: null fora de json_equals.
+  json_pointer: z.string().nullable(),
+})
+export type RegraDeConteudo = z.infer<typeof RegraDeConteudo>
+
 export const Alvo = z.object({
   id,
   name: z.string(),
@@ -41,6 +49,11 @@ export const Alvo = z.object({
   enabled: z.boolean(),
   header_names: z.array(z.string()),
   tags: z.array(z.string()),
+  // O aviso de certificado (o interruptor entra no painel no PR 7) e a última
+  // leitura da validade; null enquanto nenhuma sonda leu o certificado.
+  tls_warn: z.boolean(),
+  tls: z.object({ not_after: instante, observed_at: instante }).nullable(),
+  content_rule: RegraDeConteudo.nullable(),
   created_at: instante,
 })
 export type Alvo = z.infer<typeof Alvo>
@@ -118,13 +131,43 @@ export type ListaDeIncidentes = z.infer<typeof ListaDeIncidentes>
 
 // Os heartbeats (spec de heartbeats, §7). O incidente de heartbeat tem forma
 // própria: `GET /incidents` não os traz (D3).
-export const EstadoDoHeartbeat = z.enum(['waiting', 'up', 'late', 'failing', 'paused'])
+// Um valor que uma versão posterior do servidor criou (SP1, piso de rollback)
+// vira 'unknown': uma aba aberta antes do deploy não pode falhar no parse da
+// lista inteira por um estado ou tipo de sinal que ela não conhece. Só texto:
+// outro tipo continua erro de contrato. Aceitar qualquer texto é de propósito:
+// o custo é que um erro de digitação do servidor vira "Estado desconhecido" (ou
+// "Outro sinal") na tela, em vez de falhar alto como erro de contrato.
+const desconhecido = z.string().transform((): 'unknown' => 'unknown')
+
+export const EstadoDoHeartbeat = z.union([z.enum(['waiting', 'up', 'grace', 'late', 'failing', 'paused']), desconhecido])
 export type EstadoDoHeartbeat = z.infer<typeof EstadoDoHeartbeat>
 
-export const Agendamento = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('period'), period_sec: z.number() }),
-  z.object({ kind: z.literal('cron'), expr: z.string(), timezone: z.string() }),
-])
+// 'unknown' é a linha de um agendamento que esta versão não sabe ler: o
+// servidor manda só o kind, e o PATCH nela é 409 schedule_unsupported. Um
+// servidor posterior pode mandar o kind novo, e o painel trata igual.
+const PorPeriodo = z.object({ kind: z.literal('period'), period_sec: z.number() })
+const PorCron = z.object({ kind: z.literal('cron'), expr: z.string(), timezone: z.string() })
+
+export const AgendamentoEditavel = z.discriminatedUnion('kind', [PorPeriodo, PorCron])
+export type AgendamentoEditavel = z.infer<typeof AgendamentoEditavel>
+
+// Um kind texto que esta versão não conhece (o 'oncalendar' de uma versão
+// posterior) vira { kind: 'unknown' } antes da união, como o servidor faz com a
+// linha que não sabe ler; period e cron conhecidos continuam exigindo os campos.
+const KINDS_CONHECIDOS: readonly string[] = ['period', 'cron', 'unknown']
+
+function normalizarKindDesconhecido(valor: unknown): unknown {
+  if (typeof valor !== 'object' || valor === null || !('kind' in valor)) {
+    return valor
+  }
+  const { kind } = valor
+  return typeof kind === 'string' && !KINDS_CONHECIDOS.includes(kind) ? { kind: 'unknown' } : valor
+}
+
+export const Agendamento = z.preprocess(
+  normalizarKindDesconhecido,
+  z.discriminatedUnion('kind', [PorPeriodo, PorCron, z.object({ kind: z.literal('unknown') })]),
+)
 export type Agendamento = z.infer<typeof Agendamento>
 
 // Sem ping_url, de propósito: o z.object descarta o campo, e o segredo não
@@ -137,6 +180,7 @@ export const Heartbeat = z.object({
   enabled: z.boolean(),
   schedule: Agendamento,
   grace_sec: z.number(),
+  ping_resumes: z.boolean(),
   state: EstadoDoHeartbeat,
   deadline_at: instante,
   last_ping_at: instante.nullable(),
@@ -156,12 +200,17 @@ export const ListaDeHeartbeats = z.object({ items: z.array(Heartbeat), next_curs
 
 export const PreviaDoCron = z.object({ next_runs: z.array(instante) })
 
+// O rid que a tarefa mandou: o servidor aceita qualquer hex 8-4-4-4-12, sem
+// exigir versão nem variante de UUID, e o guarda em minúsculas. A origem é enum
+// estrito, ao contrário do kind: uma origem nova é mudança de contrato (spec §8).
 export const EventoDeHeartbeat = z.object({
   id,
   at: instante,
-  kind: z.enum(['start', 'success', 'fail']),
+  kind: z.union([z.enum(['start', 'success', 'fail', 'log']), desconhecido]),
   runtime_ms: z.number().nullable(),
   exit_code: z.number().nullable(),
+  run_id: z.guid().nullable(),
+  source: z.enum(['ping', 'panel']),
 })
 export type EventoDeHeartbeat = z.infer<typeof EventoDeHeartbeat>
 

@@ -44,6 +44,9 @@ describe('a regra do 401', () => {
       enabled: true,
       header_names: [],
       tags: [],
+      tls_warn: true,
+      tls: null,
+      content_rule: null,
       created_at: '2026-09-24T12:00:00Z',
     }))
     falsa.estado.atrasoRefresh = 20

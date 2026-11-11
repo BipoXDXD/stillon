@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"slices"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/BipoXDXD/stillon/internal/prober/safedial"
@@ -43,7 +44,7 @@ const (
 	minIntervalSec         = 30
 	maxIntervalSec         = 86400
 	minTimeoutMS           = 1000
-	maxTimeoutMS           = 30000
+	maxTimeoutMS           = int32(safedial.MaxProbeTimeout / time.Millisecond)
 	maxNameRunes           = 100
 	maxURLBytes            = 2048
 	maxDegradedThresholdMS = 60000
@@ -78,6 +79,7 @@ type fields struct {
 	DegradedThresholdMS *int32
 	Headers             map[string]string
 	Tags                []string
+	ContentRule         *ContentRule
 
 	// urlGravada é a URL que a linha já tem, vazia no cadastro. Um alvo
 	// gravado antes da recusa de HostInstavelNoIDNA continua administrável: o
@@ -152,6 +154,10 @@ func validate(f *fields) *ValidationError {
 	} else {
 		f.Tags = t
 	}
+
+	// Depois do método e dos headers: a regra se confere contra os dois já
+	// normalizados.
+	validateContentRule(f, &v)
 
 	if len(v.Fields) == 0 {
 		return nil
