@@ -240,6 +240,24 @@ describe('detalhe do heartbeat', () => {
     expect(screen.queryByText(/prazo/i)).not.toBeInTheDocument()
   })
 
+  // A mesma lista do painel no detalhe da tarefa. Sabotagem: a chave do
+  // heartbeat com o prefixo http: em PaginaHeartbeat → nenhum vizinho.
+  it('Anterior e Próximo seguem a lista da URL', async () => {
+    const r = await renderizarPainel('/')
+    r.falsa.estado.resumo = []
+    r.falsa.estado.heartbeats = [
+      heartbeat({ id: 'h1', name: 'Alfa' }),
+      heartbeat({ id: 'h2', name: 'Backup' }),
+      heartbeat({ id: 'h3', name: 'Cópia' }),
+    ]
+    // A lista do painel já estava no cache, ainda sem as tarefas.
+    await r.cliente.refetchQueries()
+    await r.router.navigate('/heartbeats/h2?ordem=nome')
+    const nav = await screen.findByRole('navigation', { name: 'Lista de monitores' })
+    expect(await within(nav).findByRole('link', { name: 'Anterior: Alfa' })).toHaveAttribute('href', '/heartbeats/h1?ordem=nome')
+    expect(within(nav).getByRole('link', { name: 'Próximo: Cópia' })).toHaveAttribute('href', '/heartbeats/h3?ordem=nome')
+  })
+
   it('heartbeat que não existe mostra o erro da rota, sem quebrar', async () => {
     const r = await renderizarPainel('/')
     await r.router.navigate('/heartbeats/nada')

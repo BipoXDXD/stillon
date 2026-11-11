@@ -1,5 +1,4 @@
 import { useQueryClient } from '@tanstack/react-query'
-import { ArrowLeft } from 'lucide-react'
 import { useEffect, useEffectEvent, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router'
 import { useApi } from '@/app/contexto'
@@ -17,6 +16,7 @@ import { naoEncontrado } from '@/lib/api/http'
 import { mensagemDe, textoDaCausa } from '@/lib/api/mensagens'
 import type { Heartbeat } from '@/lib/api/schemas'
 import { dataHora } from '@/lib/format'
+import { NavegacaoDaLista } from '@/features/painel/NavegacaoDaLista'
 import { assertUnreachable } from '@/lib/utils'
 import { DialogoDaUrlDePing } from './DialogoDaUrlDePing'
 import { comoEditavel } from './esquema'
@@ -159,14 +159,7 @@ function DetalheDoHeartbeat({ id }: { id: string }) {
       {(hb) => (
         <div className="space-y-8">
           <div className="space-y-4">
-            <Link
-              to="/"
-              aria-label="Voltar ao painel"
-              className="alvo-de-toque inline-flex items-center gap-1 text-sm font-semibold text-primaria underline-offset-4 hover:underline"
-            >
-              <ArrowLeft aria-hidden="true" className="size-4" />
-              Painel
-            </Link>
+            <NavegacaoDaLista chave={`heartbeat:${id}`} />
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div className="min-w-0 space-y-2">
                 <Titulo aba={hb.name}>{hb.name}</Titulo>
