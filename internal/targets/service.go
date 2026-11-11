@@ -25,8 +25,9 @@ type Service struct {
 	pool *pgxpool.Pool
 	box  *crypto.Box
 	clk  clock.Clock
-	// depoisDeContar existe para o teste de criação concorrente: roda entre a
-	// contagem de alvos e a inserção.
+	// depoisDeContar existe para os testes concorrentes: roda no máximo uma
+	// vez por Create ou Update, depois de todas as contagens daquela chamada e
+	// antes das decisões de teto.
 	depoisDeContar func()
 	// tetoPorHost é o máximo de alvos do dono com regra de conteúdo num mesmo
 	// host de destino (D-T1, D-T3).
@@ -90,11 +91,20 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, in Input) (Targe
 		if err != nil {
 			return fmt.Errorf("contar alvos: %w", err)
 		}
+		noHost := 0
+		if f.ContentRule != nil {
+			if noHost, err = contarRegrasNoHost(ctx, q, userID, hostDaRegra(f.URL), uuid.Nil); err != nil {
+				return err
+			}
+		}
 		if s.depoisDeContar != nil {
 			s.depoisDeContar()
 		}
 		if n >= MaxTargetsPerUser {
 			return ErrLimitReached
+		}
+		if f.ContentRule != nil && noHost >= s.tetoPorHost {
+			return ErrContentHostLimit
 		}
 		err = q.InsertTarget(ctx, db.InsertTargetParams{
 			ID: id, UserID: userID, Name: f.Name, URL: f.URL, Method: f.Method,
@@ -108,7 +118,7 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, in Input) (Targe
 		}
 		return q.InsertTargetTags(ctx, db.InsertTargetTagsParams{Tags: f.Tags, UserID: userID, TargetID: id})
 	})
-	if errors.Is(err, ErrLimitReached) {
+	if errors.Is(err, ErrLimitReached) || errors.Is(err, ErrContentHostLimit) {
 		return Target{}, err
 	}
 	if err != nil {
@@ -177,9 +187,19 @@ func (s *Service) List(ctx context.Context, userID uuid.UUID, before *uuid.UUID,
 // Update lê com FOR UPDATE, aplica o patch, valida o alvo RESULTANTE e grava,
 // tudo na mesma transação: dois PATCH simultâneos não se atropelam, e um
 // timeout que cabia no intervalo antigo não passa despercebido no novo.
+//
+// Ordem: trava do usuário, linha (404), validação (400), teto de regras por
+// host (409) e só então as escritas (histerese, alvo, validade do
+// certificado). A recusa vem antes de toda escrita para não depender do
+// rollback, e depois da linha para o alheio continuar 404.
 func (s *Service) Update(ctx context.Context, userID, id uuid.UUID, p Patch) (Target, error) {
 	var out Target
 	err := storage.InUserTx(ctx, s.pool, userID, func(q *db.Queries) error {
+		// A mesma ordem de travas do Create (consultiva, depois a linha): dois
+		// PATCH simultâneos que poriam regra no mesmo host contam em fila.
+		if err := q.LockUserTargets(ctx, userID); err != nil {
+			return fmt.Errorf("travar alvos do usuário: %w", err)
+		}
 		row, err := q.GetTargetForUpdate(ctx, db.GetTargetForUpdateParams{UserID: userID, ID: id})
 		if err != nil {
 			return naoAchado(err)
@@ -209,6 +229,18 @@ func (s *Service) Update(ctx context.Context, userID, id uuid.UUID, p Patch) (Ta
 		}
 		if verr := validate(&f); verr != nil {
 			return verr
+		}
+		if aumentaOHost(regraGravada, row.URL, f.ContentRule, f.URL) {
+			outros, err := contarRegrasNoHost(ctx, q, userID, hostDaRegra(f.URL), row.ID)
+			if err != nil {
+				return err
+			}
+			if s.depoisDeContar != nil {
+				s.depoisDeContar()
+			}
+			if outros >= s.tetoPorHost {
+				return ErrContentHostLimit
+			}
 		}
 		// C4 (Plano 10): outra URL ou outro método é outro serviço, e outra
 		// regra é outro critério de saúde. As falhas do anterior não somam com
@@ -265,6 +297,34 @@ func (s *Service) Update(ctx context.Context, userID, id uuid.UUID, p Patch) (Ta
 		return nil
 	})
 	return out, err
+}
+
+// contarRegrasNoHost conta os alvos do dono com regra cujo hostDaRegra é
+// host, sem contar exceto (uuid.Nil no Create). Só conta: quem chama compara
+// com o teto. Pede a trava LockUserTargets já tomada.
+func contarRegrasNoHost(ctx context.Context, q *db.Queries, userID uuid.UUID, host string, exceto uuid.UUID) (int, error) {
+	linhas, err := q.ListContentRuleTargetURLs(ctx, userID)
+	if err != nil {
+		return 0, fmt.Errorf("contar regras no host: %w", err)
+	}
+	n := 0
+	for _, l := range linhas {
+		if l.ID != exceto && hostDaRegra(l.URL) == host {
+			n++
+		}
+	}
+	return n, nil
+}
+
+// aumentaOHost diz se o PATCH põe uma regra num host onde o alvo não contava
+// (D-T2): o teto barra o aumento, não o estado. Trocar valor, modo, caminho,
+// porta ou esquema no mesmo host, pausar ou tirar a regra nunca aumenta. É de
+// propósito outra pergunta que mudouDeDestino, que olha a origem inteira.
+func aumentaOHost(regraAntes *ContentRule, urlAntes string, regraDepois *ContentRule, urlDepois string) bool {
+	if regraDepois == nil {
+		return false
+	}
+	return regraAntes == nil || hostDaRegra(urlAntes) != hostDaRegra(urlDepois)
 }
 
 // apply devolve true quando a mudança altera O QUE é sondado (D13).

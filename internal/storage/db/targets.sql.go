@@ -332,6 +332,37 @@ func (q *Queries) ListChecks(ctx context.Context, arg ListChecksParams) ([]ListC
 	return items, nil
 }
 
+const listContentRuleTargetURLs = `-- name: ListContentRuleTargetURLs :many
+SELECT id, url FROM targets WHERE user_id = $1 AND content_mode IS NOT NULL
+`
+
+type ListContentRuleTargetURLsRow struct {
+	ID  uuid.UUID
+	URL string
+}
+
+// O teto de regras por host (D-T2): as URLs dos alvos do dono com regra,
+// lidas sob LockUserTargets. A chave do host sai em Go (IDNA).
+func (q *Queries) ListContentRuleTargetURLs(ctx context.Context, userID uuid.UUID) ([]ListContentRuleTargetURLsRow, error) {
+	rows, err := q.db.Query(ctx, listContentRuleTargetURLs, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListContentRuleTargetURLsRow
+	for rows.Next() {
+		var i ListContentRuleTargetURLsRow
+		if err := rows.Scan(&i.ID, &i.URL); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listRawHours = `-- name: ListRawHours :many
 SELECT c.target_id,
        to_timestamp(floor(extract(epoch FROM c.checked_at) / 3600) * 3600)::timestamptz AS bucket,
