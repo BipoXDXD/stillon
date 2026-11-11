@@ -106,8 +106,9 @@ type Config struct {
 
 	// ProbeBlockedCIDRs são as faixas da própria hospedagem que a sonda
 	// recusa, além da lista fixa do safedial (PROBE_BLOCKED_CIDRS). A VPS é
-	// dividida com outros projetos, e o IP público dela não é privado. Vazia
-	// não derruba o boot (o sondador avisa); o fail-closed vem com o #255.
+	// dividida com outros projetos, e o IP público dela não é privado.
+	// Obrigatória em produção nos papéis que sondam (o boot recusa a variável
+	// ausente ou vazia); em dev, vazia, o sondador avisa.
 	ProbeBlockedCIDRs []netip.Prefix
 
 	// E-mail pelo Resend (spec §8). A chave é do operador; vazia, o canal
@@ -357,6 +358,13 @@ func Load(getenv func(string) string) (*Config, error) {
 			"colapsam num valor único para todos os clientes")
 	}
 
+	// Fail-closed: sem a lista, a sonda alcança as
+	// portas dos vizinhos da VPS. Lê o valor cru: um item inválido já tem o
+	// erro dele, e "ausente" ao lado esconderia o erro de digitação.
+	if exigeListaDaHospedagem(cfg.PublicBaseURL, cfg.Role) && getenv("PROBE_BLOCKED_CIDRS") == "" {
+		errs = append(errs, errors.New(erroListaDaHospedagemAusente))
+	}
+
 	// As chaves de demo só valem numa máquina local (http e host de
 	// loopback). Um compose copiado para um servidor com http e um host de
 	// verdade, ou 0.0.0.0, também é produção.
@@ -407,6 +415,18 @@ func EhHTTPS(s string) bool {
 func emProducao(publicBaseURL string) bool {
 	return publicBaseURL != "" && (EhHTTPS(publicBaseURL) || !hostLocal(publicBaseURL))
 }
+
+// exigeListaDaHospedagem diz se o boot recusa PROBE_BLOCKED_CIDRS vazia:
+// em produção (a mesma regra das chaves de demo) e só nos papéis que
+// sondam. O papel api nunca disca um alvo; em dev não há vizinhos.
+func exigeListaDaHospedagem(publicBaseURL string, role Role) bool {
+	return emProducao(publicBaseURL) && role.RunsProber()
+}
+
+// erroListaDaHospedagemAusente é estável, para o teste e para a busca no log.
+const erroListaDaHospedagemAusente = "variável obrigatória ausente em produção: PROBE_BLOCKED_CIDRS " +
+	"(os IPs públicos da própria VPS: o v4 e a /64 do v6, separados só por vírgula; " +
+	"sem ela a sonda alcança as portas dos outros projetos da máquina)"
 
 // faixaDaHospedagem lê um item de PROBE_BLOCKED_CIDRS. O IP solto vira /32 ou
 // /128, e o v4 mapeado vira v4: o safedial compara o IP já com Unmap. Pelo

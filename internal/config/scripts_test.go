@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -349,4 +350,26 @@ func readScriptRecord(t *testing.T, dir, name string) string {
 		t.Fatal(err)
 	}
 	return string(b)
+}
+
+// O job vps (~30 min de Actions) sobe o compose.prod.yaml com o .env que os
+// scripts escrevem; sem a lista, o app recusa o boot e o job fica vermelho.
+// Este teste pega o esquecimento em segundos.
+// Sabotagem: tirar a linha do heredoc de um dos scripts.
+func TestScriptsDoCIDefinemAListaDaHospedagem(t *testing.T) {
+	linha := regexp.MustCompile(`(?m)^PROBE_BLOCKED_CIDRS=\S+$`)
+	heredoc := regexp.MustCompile(`(?s)cat > "\$DIR/\.env" <<EOF\n(.*?)\nEOF\n`)
+	for _, script := range []string{"../../deploy/ci/checar-vps.sh", "../../deploy/ci/checar-borda-cloudflare.sh"} {
+		conteudo, err := os.ReadFile(script)
+		if err != nil {
+			t.Fatal(err)
+		}
+		m := heredoc.FindSubmatch(conteudo)
+		if m == nil {
+			t.Fatalf("%s: heredoc do .env não encontrado", script)
+		}
+		if n := len(linha.FindAll(m[1], -1)); n != 1 {
+			t.Errorf("%s: %d linhas PROBE_BLOCKED_CIDRS=… no .env, queria 1", script, n)
+		}
+	}
 }
