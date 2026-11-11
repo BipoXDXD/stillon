@@ -234,10 +234,7 @@ func (h *TargetHandlers) List(w http.ResponseWriter, r *http.Request) {
 	for _, t := range items {
 		resp.Items = append(resp.Items, toTargetResponse(t))
 	}
-	// Página cheia pode ter continuação; página incompleta, certamente não.
-	if len(items) == int(limit) {
-		resp.NextCursor = items[len(items)-1].ID.String()
-	}
+	resp.NextCursor = proximoCursor(items, limit, func(t targets.Target) uuid.UUID { return t.ID })
 	apierr.WriteJSON(w, http.StatusOK, resp)
 }
 

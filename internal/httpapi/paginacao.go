@@ -38,3 +38,14 @@ func paginaDe(w http.ResponseWriter, r *http.Request, q url.Values, padrao, maxi
 	}
 	return limite, &c, true
 }
+
+// proximoCursor devolve o cursor da página seguinte: o id do último item
+// quando a página veio cheia, ou "" quando não há continuação. Página cheia
+// pode ter continuação; página incompleta, certamente não. Com "" o campo
+// sai do JSON (omitempty).
+func proximoCursor[T any](items []T, limite int32, id func(T) uuid.UUID) string {
+	if len(items) == 0 || len(items) != int(limite) {
+		return ""
+	}
+	return id(items[len(items)-1]).String()
+}
