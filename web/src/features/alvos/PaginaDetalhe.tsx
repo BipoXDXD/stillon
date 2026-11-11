@@ -1,5 +1,4 @@
 import { useQueryClient } from '@tanstack/react-query'
-import { ArrowLeft } from 'lucide-react'
 import { useEffect, useEffectEvent, useId, useRef, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router'
 import { useApi } from '@/app/contexto'
@@ -19,6 +18,7 @@ import { mensagemDe, textoDoErroDeCheck } from '@/lib/api/mensagens'
 import type { Serie } from '@/lib/api/schemas'
 import { ATRASO_DO_SINAL_MS, useAposUmTempo } from '@/lib/atraso'
 import { dataHora, fuso, milissegundos, porcento } from '@/lib/format'
+import { NavegacaoDaLista } from '@/features/painel/NavegacaoDaLista'
 import { CertificadoDoAlvo } from './CertificadoDoAlvo'
 import { GraficoDeLatencia } from './GraficoDeLatencia'
 import { IncidentesRecentes } from './IncidentesRecentes'
@@ -201,16 +201,7 @@ function DetalheDoAlvo({ id }: { id: string }) {
       {(a) => (
         <div className="space-y-8">
           <div className="space-y-4">
-            {/* "Painel" visível, "Voltar ao painel" no nome acessível: não
-                colide com a aba "Painel" da navegação. */}
-            <Link
-              to="/"
-              aria-label="Voltar ao painel"
-              className="alvo-de-toque inline-flex items-center gap-1 text-sm font-semibold text-primaria underline-offset-4 hover:underline"
-            >
-              <ArrowLeft aria-hidden="true" className="size-4" />
-              Painel
-            </Link>
+            <NavegacaoDaLista chave={`http:${id}`} />
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div className="min-w-0 space-y-1">
                 <Titulo aba={a.name}>{a.name}</Titulo>
@@ -253,7 +244,18 @@ function DetalheDoAlvo({ id }: { id: string }) {
                 rotulo="Janela do gráfico"
                 opcoes={OPCOES_DE_JANELA}
                 valor={janela}
-                aoMudar={(j) => setParams({ janela: j }, { replace: true })}
+                // Só a janela muda: os filtros e a ordem da lista seguem na URL, para
+                // o Anterior/Próximo.
+                aoMudar={(j) =>
+                  setParams(
+                    (atual) => {
+                      const nova = new URLSearchParams(atual)
+                      nova.set('janela', j)
+                      return nova
+                    },
+                    { replace: true },
+                  )
+                }
               />
             </div>
             {/* Depois do seletor e com a linha reservada: nada se mexe logo

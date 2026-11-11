@@ -81,6 +81,7 @@ STILLON_BACKUP_PASSWORD=$(openssl rand -hex 32)
 MASTER_KEY=$(openssl rand -base64 32)
 JWT_SECRET=$(openssl rand -base64 32)
 IP_HASH_KEY=$IP_HASH_KEY
+PROBE_BLOCKED_CIDRS=192.0.2.10/32,2001:db8::/64
 EOF
 chmod 600 "$DIR/.env"
 

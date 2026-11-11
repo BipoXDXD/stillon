@@ -94,6 +94,9 @@ services:
       MASTER_KEY: ${MASTER_KEY:?defina MASTER_KEY no /opt/stillon/.env}
       JWT_SECRET: ${JWT_SECRET:?defina JWT_SECRET no /opt/stillon/.env}
       IP_HASH_KEY: ${IP_HASH_KEY:?defina IP_HASH_KEY no /opt/stillon/.env}
+      # IPs públicos da própria VPS (v4 e a /64 do v6) que a sonda recusa; sem
+      # eles, alcança os outros projetos da máquina. O boot também recusa a lista vazia.
+      PROBE_BLOCKED_CIDRS: ${PROBE_BLOCKED_CIDRS:?defina PROBE_BLOCKED_CIDRS no /opt/stillon/.env}
       # Vazios, o canal de e-mail fica indisponível (o app sobe).
       RESEND_API_KEY: ${RESEND_API_KEY:-}
       EMAIL_FROM: ${EMAIL_FROM:-}
