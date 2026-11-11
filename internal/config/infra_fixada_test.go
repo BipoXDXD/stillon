@@ -30,10 +30,11 @@ const (
 )
 
 // variaveisDoRecurso imita o .env do recurso do app no Coolify: os nomes que o
-// app.json interpola, com valores sintéticos válidos. Os valores reais são
-// segredo e ficam só no recurso. Um nome que o app.json passe a interpolar e
-// que não esteja aqui reprova: antes de incluí-lo, confira que ele já está
-// cadastrado no recurso. O e-mail fica ligado, como em produção (o Resend
+// environment e o command do serviço app interpolam, com valores sintéticos
+// válidos. Os valores reais são segredo e ficam só no recurso. Um nome novo
+// nesses dois campos que não esteja aqui reprova: antes de incluí-lo, confira
+// que ele já está cadastrado no recurso. Interpolações em outros campos (image,
+// labels, outros serviços) não chegam ao Load e não são conferidas aqui. O e-mail fica ligado, como em produção (o Resend
 // está ativo no recurso), para o teste exercitar as regras que o Load só
 // aplica com e-mail.
 func variaveisDoRecurso() map[string]string {
