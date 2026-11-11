@@ -1,7 +1,12 @@
 # Só o ensaio SSH: nenhuma chave, daemon do Docker ou aplicação nesta imagem.
 FROM ubuntu:24.04@sha256:008173c23f95b170204355c12626cb5a965d779a7e1283b09e9cffbb1bf33ca3
 
-RUN apt-get update \
+# Só o componente main (openssh, sudo e ca-certificates estão nele): o índice do
+# universe tem ~19 MB e um espelho lento no runner estourava o prazo do passo.
+# O retry com timeout curto troca de conexão em vez de esperar um download parado.
+RUN sed -i 's/^Components: .*/Components: main/' /etc/apt/sources.list.d/ubuntu.sources \
+    && printf 'Acquire::Retries "5";\nAcquire::http::Timeout "20";\n' > /etc/apt/apt.conf.d/80-ensaio \
+    && apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         openssh-server openssh-client sudo ca-certificates \
     && rm -rf /var/lib/apt/lists/* /etc/ssh/ssh_host_* \
