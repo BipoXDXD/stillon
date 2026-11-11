@@ -12,9 +12,10 @@ import (
 	"github.com/BipoXDXD/stillon/internal/heartbeat"
 )
 
-// Characterization tests de "marcar o incidente como avisado e enfileirar o
-// aviso" no caminho dos heartbeats (R3.6): gravam o comportamento de ANTES
-// da extração e têm de continuar verdes depois dela.
+// Fixam o contrato de "marcar o incidente como avisado e enfileirar o aviso"
+// no caminho dos heartbeats: marca gravada, aviso só nos canais entregáveis,
+// nenhum aviso novo quando o incidente já foi avisado (n == 0), e a transação
+// do avaliador inteira desfeita, com o erro devolvido pelo Tick, quando marcar ou enfileirar falha.
 
 func (b *bancadaHB) comoSondador(t *testing.T, fn func(pgx.Tx)) {
 	t.Helper()

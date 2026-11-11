@@ -32,8 +32,10 @@ func (b *bancada) comoQueries(t *testing.T, fn func(q *db.Queries) error) error 
 	return storage.InProberTx(context.Background(), b.pool, fn)
 }
 
-// A primeira chamada marca e enfileira nos canais entregáveis; a segunda
-// (n == 0, spec §8) não enfileira nem erra.
+// Marca e enfileira nos canais entregáveis. Um incidente cuja abertura já foi
+// avisada (n == 0, spec §8) não ganha aviso novo nem perde a marca anterior:
+// o ON CONFLICT do enfileiramento só deduplica o mesmo incidente, então só um
+// incidente pré-marcado prova que o n == 0 corta o enfileiramento.
 func TestAvisarAbertura(t *testing.T) {
 	b := novaBancada(t, nil, MaxInFlight)
 	alvo := b.alvo(t, "https://exemplo.com", nil)
@@ -57,14 +59,27 @@ func TestAvisarAbertura(t *testing.T) {
 		t.Fatalf("notificações = %+v; queria a abertura no canal entregável %s", ns, canal)
 	}
 
-	if err := chamar(); err != nil {
+	jaAvisado := b.incidenteAberto(t, b.alvo(t, "https://outro.exemplo.com", nil))
+	antes := em.Add(-time.Hour)
+	err := b.comoQueries(t, func(q *db.Queries) error {
+		_, err := q.MarkOpenNotified(context.Background(), db.MarkOpenNotifiedParams{ID: jaAvisado, Now: antes})
+		if err != nil {
+			return err
+		}
+		return avisarAbertura(context.Background(), q, b.dono, jaAvisado, em)
+	})
+	if err != nil {
 		t.Fatal(err)
 	}
+	if abertura, _ := b.marcasDoIncidente(t, jaAvisado); abertura == nil || !abertura.Equal(antes) {
+		t.Errorf("open_notified_at = %v; queria a marca anterior %v intacta", abertura, antes)
+	}
 	if ns := b.notificacoes(t); len(ns) != 1 {
-		t.Errorf("segunda chamada deixou %d notificações, queria 1", len(ns))
+		t.Errorf("notificações = %+v; queria só a do primeiro incidente, nenhuma para o já avisado", ns)
 	}
 }
 
+// Idem para o fechamento (ver TestAvisarAbertura).
 func TestAvisarFechamento(t *testing.T) {
 	b := novaBancada(t, nil, MaxInFlight)
 	alvo := b.alvo(t, "https://exemplo.com", nil)
@@ -87,10 +102,22 @@ func TestAvisarFechamento(t *testing.T) {
 		t.Fatalf("notificações = %+v; queria o fechamento no canal %s", ns, canal)
 	}
 
-	if err := chamar(); err != nil {
+	jaAvisado := b.incidenteAberto(t, b.alvo(t, "https://outro.exemplo.com", nil))
+	antes := em.Add(-time.Hour)
+	err := b.comoQueries(t, func(q *db.Queries) error {
+		_, err := q.MarkCloseNotified(context.Background(), db.MarkCloseNotifiedParams{ID: jaAvisado, Now: antes})
+		if err != nil {
+			return err
+		}
+		return avisarFechamento(context.Background(), q, b.dono, jaAvisado, em)
+	})
+	if err != nil {
 		t.Fatal(err)
 	}
+	if _, fechamento := b.marcasDoIncidente(t, jaAvisado); fechamento == nil || !fechamento.Equal(antes) {
+		t.Errorf("close_notified_at = %v; queria a marca anterior %v intacta", fechamento, antes)
+	}
 	if ns := b.notificacoes(t); len(ns) != 1 {
-		t.Errorf("segunda chamada deixou %d notificações, queria 1", len(ns))
+		t.Errorf("notificações = %+v; queria só a do primeiro incidente, nenhuma para o já avisado", ns)
 	}
 }

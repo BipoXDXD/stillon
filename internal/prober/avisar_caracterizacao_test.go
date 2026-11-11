@@ -13,9 +13,10 @@ import (
 	"github.com/BipoXDXD/stillon/internal/storage/db"
 )
 
-// Characterization tests de "marcar o incidente como avisado e enfileirar o
-// aviso" no caminho do agendador (R3.6): gravam o comportamento de ANTES da
-// extração e têm de continuar verdes depois dela.
+// Fixam o contrato de "marcar o incidente como avisado e enfileirar o aviso"
+// no caminho do agendador: marca gravada, aviso só nos canais entregáveis,
+// nenhum aviso novo quando o incidente já foi avisado (n == 0), e a transação
+// do check inteira desfeita quando marcar ou enfileirar falha.
 
 // comoSondador roda fn numa transação com o escopo do sondador (a RLS de
 // incidents não deixa a conexão do teste ver nada sem escopo).
