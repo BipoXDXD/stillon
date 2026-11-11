@@ -868,7 +868,7 @@ func TestDeferredBehindADefinitiveFailureUsesItsOwnBackoff(t *testing.T) {
 // persistir registra o erro no log.
 //
 // A chamada é direta porque Dispatch não deixa o valor entrar: o status nasce
-// de literais em dispatcher.go, e um Notifier só devolve erro.
+// das constantes de statusNotificacao em dispatcher.go, e um Notifier só devolve erro.
 func TestUnknownOutcomeStatusFailsLoudAndLeavesNotificationAndChannelUntouched(t *testing.T) {
 	for _, tc := range []struct{ nome, status string }{
 		{"erro de grafia", "canceled"},
