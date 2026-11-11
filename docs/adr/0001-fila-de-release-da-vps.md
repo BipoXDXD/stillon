@@ -31,13 +31,13 @@ Números da coordenação: 1 release com intents presos em cerca de 220 releases
 
 | Momento | O que o receptor grava ou exige |
 |---|---|
-| Entrada (`main`, ~903) | `flock` não bloqueante em `host.lock`, depois em `<projeto>/release.lock` e, no StillOn, em `/opt/stillon/.entrada.trava` (a mesma trava do backup). Quem perde a corrida é recusado, sem fila. |
+| Entrada (`main`, ~905) | `flock` não bloqueante em `host.lock`, depois em `<projeto>/release.lock` e, no StillOn, em `/opt/stillon/.entrada.trava` (a mesma trava do backup). Quem perde a corrida é recusado, sem fila. |
 | Admissão (`require_host_idle`, ~853) | Recusa se houver intent comum ou `pending.json` em qualquer diretório de projeto, inclusive de receptor antigo ou projeto desconhecido. |
 | Antes do primeiro `docker load` (~920) | Grava o intent comum com `status: "importing"`. Esse status **nunca é atualizado** nas fases seguintes. |
 | `deploy` (~767–795) | `require_no_pending` e `require_idle` do recurso; grava o intent do projeto (`deployment_uuid: null`); muda envs, manifest Duora ou allowlist GoblinShift; `POST /start`; regrava o intent do projeto com o UUID. |
 | Espera e validação (~796–835) | Até 1200 s pelo estado terminal do deployment; depois saúde (até 120 s em `starting`), identidade da imagem e readiness. |
 | Sucesso (~836–848, ~935) | `current.json`, histórico, remove o intent do projeto e por último o comum. |
-| Qualquer exceção ou morte | Nada é removido. As travas `flock` caem com o processo; os intents ficam. |
+| Qualquer exceção ou morte | Nenhum intent é removido (só o `incoming-*` temporário é apagado). As travas `flock` caem com o processo; os intents ficam. |
 
 O backup do StillOn (`stillon-backup-entrada.sh`, linha 5) também recusa enquanto existir
 `/var/lib/coolify-release/stillon/pending.json`.
@@ -129,9 +129,14 @@ manual (ver B).
 
 O bloqueio continua de host inteiro. Muda o tempo até destravar, com três peças fora do receptor:
 
-1. **Detecção:** a vigia existente avisa quando aparece `pending.json` (comum ou de projeto) há
-   mais de N minutos sem `host.lock` ocupado, com o projeto e o commit. Hoje quem nota é a
-   vigia de `readyz` ou a sessão que acompanha o run.
+1. **Detecção:** uma peça nova, root-only e só de leitura (timer do systemd próprio), avisa quando
+   existe `pending.json` (comum ou de projeto) há mais de N minutos sem `host.lock` ocupado, com o
+   projeto e o commit. Não pode ser o `stillon-vigia.service`: ele roda com `DynamicUser=yes` e
+   não lê `/var/lib/coolify-release` (root 0700), e dar esse acesso a ele aumentaria o privilégio
+   do vigia. A ocupação do `host.lock` é lida sem tocar a trava (`/proc/locks` ou `lslocks`),
+   nunca com `flock -n`: pegar a trava por um instante faria o receptor, que usa `LOCK_NB`,
+   recusar uma release que chegasse nesse momento. Hoje quem nota é o vigia de `readyz` ou a
+   sessão que acompanha o run.
 2. **Diagnóstico somente leitura:** um script administrativo root-only, fora do SSH de CI, que
    executa os passos 1 a 3 da §Reconciliação sem alterar nada: lê os intents, a fase deduzível
    (intent do projeto com ou sem UUID), o estado do deployment no Coolify, processos `docker load`
@@ -202,13 +207,15 @@ A falha de 10/11 cairia no caso 2: só o StillOn ficaria bloqueado.
   Para um problema de 1 em 220, esse custo é alto.
 - Mais estados no receptor e mais testes (cada fase com SIGKILL, falha durante a quarentena,
   leitura de arquivo corrompido, downgrade).
-- Benefício real é limitado: na VPS compartilhada a falha que mais importa liberar é rara, e a
+- O benefício real é limitado: na VPS compartilhada a falha que mais importa liberar é rara, e a
   reconciliação continua manual para o projeto que falhou.
 
 **Corrupção e concorrência**
 - **Falso terminal:** se `deployment_finished` aceitar um status que o Coolify ainda processa,
-  a quarentena libera o host com deployment vivo. Mitigação: só os status terminais já fixados
-  em `require_idle`; qualquer outro, ou erro de rede ao consultar, mantém o host bloqueado.
+  a quarentena libera o host com deployment vivo. Mitigação: a fase `terminal` só é gravada
+  depois que `deployment_finished` devolve verdadeiro, e ele só aceita `finished`; os status
+  terminais de `require_idle` (que incluem falhas) não servem para liberar. Qualquer outro
+  status, ou erro de rede ao consultar, mantém o host bloqueado.
 - **Crash no meio da quarentena:** a ordem (projeto `quarantined` primeiro, rename do comum
   depois) faz qualquer interrupção cair num estado em que os dois arquivos existem, e o comum
   bloqueia o host. Nunca há janela com o host liberado e o projeto sem marca.
@@ -250,7 +257,7 @@ disso, a pendência de um projeto bloqueia só ele.
   confirmar o fim do `docker load`): duas expansões de camadas simultâneas furam o orçamento de
   16 GiB e os 36 GiB de folga, que valem por release.
 
-Rejeitada: troca segurança de integridade por disponibilidade de publicação, que é o contrário do
+Rejeitada: troca integridade por disponibilidade de publicação, que é o contrário do
 que o ISOLATION.md e as regras do projeto pedem.
 
 ## Comparação
@@ -277,7 +284,7 @@ condicionada; rejeitar **D**.
   do ISOLATION.md, não implementar direto.
 - D fica registrada como rejeitada, para a hipótese não voltar sem fases.
 
-**Bottom line:** recomendo B: encurtar a reconciliação com alerta, diagnóstico somente leitura e
+**Bottom line:** decidido B: encurtar a reconciliação com alerta, diagnóstico somente leitura e
 arquivamento confirmado, sem mudar o receptor. Motivo: 1 falha em cerca de 220 releases não paga
 a revisão conjunta e a reinstalação que a cerca por fase (C) exige, e só C libera os outros
 projetos sem violar o motivo da linha 16. Custo principal: a VPS inteira continua bloqueada a
@@ -300,12 +307,21 @@ cada falha até um administrador agir; B encurta esse tempo, mas não o elimina.
 
 ## Compliance
 
-- **B:** o script de diagnóstico tem teste com intents sintéticos (comum sem fase, projeto sem UUID,
-  projeto com UUID e deployment terminal, `docker load` simulado ativo) e só devolve "terminados"
-  no último caso sem import ativo. O comando de arquivamento tem teste que recusa sem `host.lock`,
-  sem veredito "terminados" ou com projeto e commit que não batem, e que confere o rename para
-  `audit/` sem apagar arquivo. Nenhum cron, vigia ou workflow chama o arquivamento (conferível por
-  busca no repositório e na crontab da VPS).
+- **B, diagnóstico:** teste em matriz de condições com intents sintéticos (todo intent comum do
+  2.1.1 vem sem fase, então a fase vem só do intent do projeto). Eixos: intent do projeto ausente,
+  sem UUID ou com UUID; deployment `finished`, em andamento, falho ou ilegível (erro de rede);
+  `docker load` ativo ou não; `host.lock` ocupado ou livre. Só devolve "terminados" quando há
+  UUID, deployment `finished`, nenhum `docker load` ativo e `host.lock` livre; qualquer outra
+  combinação devolve "estado desconhecido, não reconciliar".
+- **B, só leitura:** teste que compara a árvore de arquivos (nomes, tamanhos, mtimes) antes e
+  depois do diagnóstico e da detecção, e prova que nenhum dos dois pega o `host.lock` (um
+  `flock -n` paralelo continua conseguindo a trava durante a execução).
+- **B, detecção:** teste que avisa com intent há mais de N minutos e `host.lock` livre, e não
+  avisa com o `host.lock` ocupado nem com intent mais novo que N minutos.
+- **B, arquivamento:** teste que recusa sem `host.lock`, sem veredito "terminados" ou com projeto
+  e commit que não batem, e que confere o rename para `audit/` sem apagar arquivo. Nenhum cron,
+  timer do systemd, vigia ou workflow chama o arquivamento (conferível por busca no repositório,
+  na crontab e em `systemctl list-timers` da VPS).
 - **Todas as opções:** os testes atuais de `test_host_isolation.py` continuam passando sem
   alteração; `verify_artifact.py` confirma os mesmos bytes do receptor nos três repositórios.
 - **Se C for adotada no futuro:** um teste por fase prova que SIGKILL deixa o host bloqueado e um
