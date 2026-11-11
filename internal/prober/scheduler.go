@@ -558,24 +558,12 @@ func (s *Scheduler) avaliar(ctx context.Context, q *db.Queries, a db.ClaimDueTar
 		}); err != nil {
 			return acao, fmt.Errorf("abrir incidente: %w", err)
 		}
-		n, err := q.MarkOpenNotified(ctx, db.MarkOpenNotifiedParams{ID: id, Now: em})
-		if err != nil {
-			return acao, fmt.Errorf("marcar abertura notificada: %w", err)
-		}
-		if n == 1 {
-			return acao, enfileirar(ctx, q, a.UserID, id, incident.EventOpened, em)
-		}
+		return acao, avisarAbertura(ctx, q, a.UserID, id, em)
 	case incident.ActionClose:
 		if _, err := q.ResolveIncident(ctx, db.ResolveIncidentParams{ID: aberto.ID, ResolvedAt: estado.StreakSince}); err != nil {
 			return acao, fmt.Errorf("resolver incidente: %w", err)
 		}
-		n, err := q.MarkCloseNotified(ctx, db.MarkCloseNotifiedParams{ID: aberto.ID, Now: em})
-		if err != nil {
-			return acao, fmt.Errorf("marcar fechamento notificado: %w", err)
-		}
-		if n == 1 {
-			return acao, enfileirar(ctx, q, a.UserID, aberto.ID, incident.EventResolved, em)
-		}
+		return acao, avisarFechamento(ctx, q, a.UserID, aberto.ID, em)
 	}
 	return acao, nil
 }
@@ -613,30 +601,6 @@ func recomecarAposLacuna(s incident.State, em time.Time, intervalSec int32) inci
 // somado a outros sucessos, fecha o incidente (spec §7.2).
 func paraDetector(em time.Time, r Result) incident.ProbeResult {
 	return incident.ProbeResult{Down: r.Status == StatusDown, At: em}
-}
-
-// enfileirar grava uma notificação por canal entregável do dono (spec §8).
-// Os ids são UUIDv7 gerados aqui, como em toda a aplicação (spec §4.2); com
-// no máximo notify.MaxChannels canais, um INSERT por canal é barato. O
-// UNIQUE (incident, channel, event, seq), com seq 0 na abertura e no
-// fechamento, torna a repetição inofensiva.
-func enfileirar(ctx context.Context, q *db.Queries, dono, incidente uuid.UUID, evento string, em time.Time) error {
-	canais, err := q.ListDeliverableChannels(ctx, dono)
-	if err != nil {
-		return fmt.Errorf("listar canais do dono: %w", err)
-	}
-	for _, canal := range canais {
-		id, err := uuid.NewV7()
-		if err != nil {
-			return fmt.Errorf("gerar id de notificação: %w", err)
-		}
-		if err := q.EnqueueNotification(ctx, db.EnqueueNotificationParams{
-			ID: id, IncidentID: incidente, ChannelID: canal, Event: evento, Now: em,
-		}); err != nil {
-			return fmt.Errorf("enfileirar notificação: %w", err)
-		}
-	}
-	return nil
 }
 
 func valorOuZero(t *time.Time) time.Time {

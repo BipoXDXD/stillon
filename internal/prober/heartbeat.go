@@ -11,7 +11,6 @@ import (
 
 	"github.com/BipoXDXD/stillon/internal/clock"
 	"github.com/BipoXDXD/stillon/internal/heartbeat"
-	"github.com/BipoXDXD/stillon/internal/incident"
 	"github.com/BipoXDXD/stillon/internal/storage"
 	"github.com/BipoXDXD/stillon/internal/storage/db"
 )
@@ -119,14 +118,7 @@ func abrirIncidenteDeHeartbeat(ctx context.Context, q *db.Queries, h db.ClaimHea
 	if err := q.MarkHeartbeatIncident(ctx, db.MarkHeartbeatIncidentParams{ID: h.ID, Now: now}); err != nil {
 		return fmt.Errorf("marcar abertura no heartbeat: %w", err)
 	}
-	n, err := q.MarkOpenNotified(ctx, db.MarkOpenNotifiedParams{ID: id, Now: now})
-	if err != nil {
-		return fmt.Errorf("marcar abertura notificada: %w", err)
-	}
-	if n == 1 {
-		return enfileirar(ctx, q, h.UserID, id, incident.EventOpened, now)
-	}
-	return nil
+	return avisarAbertura(ctx, q, h.UserID, id, now)
 }
 
 func fecharIncidenteDeHeartbeat(ctx context.Context, q *db.Queries, h db.ClaimHeartbeatsToCloseRow, now time.Time) error {
@@ -136,12 +128,5 @@ func fecharIncidenteDeHeartbeat(ctx context.Context, q *db.Queries, h db.ClaimHe
 	}); err != nil {
 		return fmt.Errorf("resolver incidente de heartbeat: %w", err)
 	}
-	n, err := q.MarkCloseNotified(ctx, db.MarkCloseNotifiedParams{ID: h.IncidentID, Now: now})
-	if err != nil {
-		return fmt.Errorf("marcar fechamento notificado: %w", err)
-	}
-	if n == 1 {
-		return enfileirar(ctx, q, h.UserID, h.IncidentID, incident.EventResolved, now)
-	}
-	return nil
+	return avisarFechamento(ctx, q, h.UserID, h.IncidentID, now)
 }
