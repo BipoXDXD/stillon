@@ -9,7 +9,8 @@ import (
 )
 
 // arquivosFixosDoSqlc são os únicos .go de db/ que não nascem de uma query: o
-// sqlc os gera sempre (db.go, models.go) ou com emit_interface (querier.go).
+// sqlc gera db.go e models.go sempre, e querier.go só se o emit_interface for
+// ligado no sqlc.yaml (hoje não é).
 var arquivosFixosDoSqlc = map[string]bool{"db.go": true, "models.go": true, "querier.go": true}
 
 // conferirSqlcSemOrfaos recebe os nomes base dos .go de db/ e dos .sql de
@@ -18,7 +19,7 @@ var arquivosFixosDoSqlc = map[string]bool{"db.go": true, "models.go": true, "que
 func conferirSqlcSemOrfaos(gerados, consultas []string) error {
 	var orfaos []string
 	for _, g := range gerados {
-		if arquivosFixosDoSqlc[g] {
+		if arquivosFixosDoSqlc[g] || strings.HasSuffix(g, "_test.go") {
 			continue
 		}
 		if !strings.HasSuffix(g, ".sql.go") || !slices.Contains(consultas, strings.TrimSuffix(g, ".go")) {
@@ -42,6 +43,10 @@ func TestSqlcOrphanCheckAcceptsMatchedFiles(t *testing.T) {
 		},
 		"só a allowlist": {
 			gerados:   []string{"db.go", "models.go"},
+			consultas: []string{"users.sql"},
+		},
+		"teste em db/ não é gerado": {
+			gerados:   []string{"db.go", "users.sql.go", "users_test.go"},
 			consultas: []string{"users.sql"},
 		},
 		"query sem gerado fica para o sqlc diff": {
