@@ -7,7 +7,9 @@ INSERT INTO target_health (target_id) VALUES ($1) ON CONFLICT DO NOTHING;
 -- A trava da linha serializa duas sondas do mesmo alvo gravando ao mesmo
 -- tempo (M4 do Plano 2): a segunda lê o estado que a primeira gravou.
 -- name: LockTargetHealth :one
-SELECT * FROM target_health WHERE target_id = $1 FOR UPDATE;
+SELECT target_id, consecutive_failures, consecutive_successes, streak_since,
+       last_checked_at
+  FROM target_health WHERE target_id = $1 FOR UPDATE;
 
 -- name: SaveTargetHealth :exec
 UPDATE target_health
@@ -16,7 +18,9 @@ UPDATE target_health
  WHERE target_id = $1;
 
 -- name: GetOpenIncident :one
-SELECT * FROM incidents WHERE target_id = sqlc.arg(target_id)::uuid AND resolved_at IS NULL;
+SELECT id, target_id, started_at, resolved_at, cause, ack_at, open_notified_at,
+       close_notified_at, heartbeat_id, closed_by_resume
+  FROM incidents WHERE target_id = sqlc.arg(target_id)::uuid AND resolved_at IS NULL;
 
 -- name: OpenIncident :exec
 INSERT INTO incidents (id, target_id, started_at, cause)

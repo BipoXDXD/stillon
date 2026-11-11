@@ -256,7 +256,12 @@ func (q *Queries) DeleteHeartbeatTags(ctx context.Context, arg DeleteHeartbeatTa
 }
 
 const getHeartbeat = `-- name: GetHeartbeat :one
-SELECT id, user_id, name, ping_token_hash, period_sec, cron_expr, timezone, grace_sec, enabled, created_at, deadline_at, last_ping_at, last_success_at, last_start_at, last_signal, failing_since, last_incident_at, resumed_at, last_runtime_ms, description, last_run_id, ping_resumes FROM heartbeats WHERE user_id = $1 AND id = $2
+SELECT id, user_id, name, ping_token_hash, period_sec, cron_expr, timezone,
+       grace_sec, enabled, created_at, deadline_at, last_ping_at,
+       last_success_at, last_start_at, last_signal, failing_since,
+       last_incident_at, resumed_at, last_runtime_ms, description, last_run_id,
+       ping_resumes
+  FROM heartbeats WHERE user_id = $1 AND id = $2
 `
 
 type GetHeartbeatParams struct {
@@ -295,7 +300,12 @@ func (q *Queries) GetHeartbeat(ctx context.Context, arg GetHeartbeatParams) (Hea
 }
 
 const getHeartbeatForUpdate = `-- name: GetHeartbeatForUpdate :one
-SELECT id, user_id, name, ping_token_hash, period_sec, cron_expr, timezone, grace_sec, enabled, created_at, deadline_at, last_ping_at, last_success_at, last_start_at, last_signal, failing_since, last_incident_at, resumed_at, last_runtime_ms, description, last_run_id, ping_resumes FROM heartbeats WHERE user_id = $1 AND id = $2 FOR UPDATE
+SELECT id, user_id, name, ping_token_hash, period_sec, cron_expr, timezone,
+       grace_sec, enabled, created_at, deadline_at, last_ping_at,
+       last_success_at, last_start_at, last_signal, failing_since,
+       last_incident_at, resumed_at, last_runtime_ms, description, last_run_id,
+       ping_resumes
+  FROM heartbeats WHERE user_id = $1 AND id = $2 FOR UPDATE
 `
 
 type GetHeartbeatForUpdateParams struct {
@@ -748,7 +758,12 @@ func (q *Queries) ListUserHeartbeatTags(ctx context.Context, userID uuid.UUID) (
 }
 
 const lockHeartbeatForPing = `-- name: LockHeartbeatForPing :one
-SELECT id, user_id, name, ping_token_hash, period_sec, cron_expr, timezone, grace_sec, enabled, created_at, deadline_at, last_ping_at, last_success_at, last_start_at, last_signal, failing_since, last_incident_at, resumed_at, last_runtime_ms, description, last_run_id, ping_resumes FROM heartbeats WHERE ping_token_hash = $1 FOR UPDATE
+SELECT id, user_id, name, ping_token_hash, period_sec, cron_expr, timezone,
+       grace_sec, enabled, created_at, deadline_at, last_ping_at,
+       last_success_at, last_start_at, last_signal, failing_since,
+       last_incident_at, resumed_at, last_runtime_ms, description, last_run_id,
+       ping_resumes
+  FROM heartbeats WHERE ping_token_hash = $1 FOR UPDATE
 `
 
 // A trava serializa pings simultâneos do mesmo token: o segundo lê o estado

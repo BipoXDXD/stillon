@@ -82,7 +82,9 @@ func (q *Queries) FindChannelByVerification(ctx context.Context, tokenHash []byt
 }
 
 const getChannel = `-- name: GetChannel :one
-SELECT id, user_id, kind, config_enc, verified_at, verify_token_hash, verify_expires_at, enabled, created_at FROM notif_channels WHERE user_id = $1 AND id = $2
+SELECT id, user_id, kind, config_enc, verified_at, verify_token_hash,
+       verify_expires_at, enabled, created_at
+  FROM notif_channels WHERE user_id = $1 AND id = $2
 `
 
 type GetChannelParams struct {
