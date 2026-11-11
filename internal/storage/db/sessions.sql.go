@@ -41,6 +41,7 @@ SELECT family_id, created_at, coalesce(user_agent, '')::text AS user_agent
   FROM sessions
  WHERE user_id = $1 AND used_at IS NULL AND revoked_at IS NULL
    AND expires_at > $2::timestamptz
+ ORDER BY family_id, created_at DESC, id DESC
 `
 
 type ListLiveFamiliesParams struct {
@@ -55,7 +56,9 @@ type ListLiveFamiliesRow struct {
 }
 
 // GET /sessions: a linha corrente de cada família viva do usuário. O
-// created_at dela é o do último refresh (cada rotação insere uma linha).
+// created_at dela é o do último refresh (cada rotação insere uma linha). A
+// ordem (família, linha mais nova, id) é total: ListSessions fica com a
+// primeira linha de cada família, e um empate de created_at não pode ser sorteio.
 func (q *Queries) ListLiveFamilies(ctx context.Context, arg ListLiveFamiliesParams) ([]ListLiveFamiliesRow, error) {
 	rows, err := q.db.Query(ctx, listLiveFamilies, arg.UserID, arg.Now)
 	if err != nil {

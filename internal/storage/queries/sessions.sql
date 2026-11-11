@@ -47,12 +47,15 @@ UPDATE sessions SET revoked_at = sqlc.arg(now)::timestamptz
    AND used_at IS NULL AND revoked_at IS NULL AND expires_at > sqlc.arg(now)::timestamptz;
 
 -- GET /sessions: a linha corrente de cada família viva do usuário. O
--- created_at dela é o do último refresh (cada rotação insere uma linha).
+-- created_at dela é o do último refresh (cada rotação insere uma linha). A
+-- ordem (família, linha mais nova, id) é total: ListSessions fica com a
+-- primeira linha de cada família, e um empate de created_at não pode ser sorteio.
 -- name: ListLiveFamilies :many
 SELECT family_id, created_at, coalesce(user_agent, '')::text AS user_agent
   FROM sessions
  WHERE user_id = sqlc.arg(user_id) AND used_at IS NULL AND revoked_at IS NULL
-   AND expires_at > sqlc.arg(now)::timestamptz;
+   AND expires_at > sqlc.arg(now)::timestamptz
+ ORDER BY family_id, created_at DESC, id DESC;
 
 -- DELETE /sessions/{id}: a linha viva da família, e só se ela for deste
 -- usuário.

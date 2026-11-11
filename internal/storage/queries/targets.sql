@@ -164,7 +164,7 @@ SELECT c.target_id,
    AND c.checked_at >= sqlc.arg(from_at)::timestamptz
    AND c.checked_at < sqlc.arg(to_at)::timestamptz
  GROUP BY 1, 2
- ORDER BY 1, 2;
+ ORDER BY c.target_id, bucket;
 
 -- A hora corrente entra só no uptime, não no spark: só contagens, sem
 -- percentil.

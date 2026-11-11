@@ -388,7 +388,7 @@ SELECT c.target_id,
    AND c.checked_at >= $3::timestamptz
    AND c.checked_at < $4::timestamptz
  GROUP BY 1, 2
- ORDER BY 1, 2
+ ORDER BY c.target_id, bucket
 `
 
 type ListRawHoursParams struct {

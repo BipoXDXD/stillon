@@ -92,7 +92,7 @@ SELECT u.target_id,
           JOIN status_page_items i ON i.target_id = c.target_id AND i.status_page_id = sqlc.arg(page_id)
          WHERE c.checked_at >= sqlc.arg(cut)::timestamptz AND c.checked_at < sqlc.arg(until)::timestamptz) u
  GROUP BY 1, 2
- ORDER BY 1, 2;
+ ORDER BY u.target_id, day;
 
 -- Latência mediana aproximada: média das medianas horárias, ponderada pelos
 -- sucessos de cada hora. As horas de [cut, until) saem dos checks brutos, com
@@ -125,5 +125,5 @@ SELECT i.display_name, x.started_at, x.resolved_at::timestamptz AS resolved_at
   FROM incidents x
   JOIN status_page_items i ON i.target_id = x.target_id AND i.status_page_id = sqlc.arg(page_id)
  WHERE x.resolved_at IS NOT NULL AND x.resolved_at >= sqlc.arg(since)::timestamptz
- ORDER BY x.started_at DESC
+ ORDER BY x.started_at DESC, x.id DESC
  LIMIT sqlc.arg(max_rows)::int;
