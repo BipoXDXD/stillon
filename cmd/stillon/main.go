@@ -107,7 +107,7 @@ const manutencaoACada = 15 * time.Minute
 // exemplo —, o contexto do grupo cancela, os outros encerram, e o processo
 // sai com erro, em vez de seguir meio vivo.
 func run(ctx context.Context, cfg *config.Config) error {
-	pool, err := storage.NewPool(ctx, cfg.DatabaseURL)
+	pool, err := storage.NewPoolNamed(ctx, cfg.DatabaseURL, "stillon-"+string(cfg.Role))
 	if err != nil {
 		return err
 	}
