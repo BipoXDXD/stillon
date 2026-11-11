@@ -1,6 +1,7 @@
 package targets
 
 import (
+	"slices"
 	"testing"
 	"time"
 
@@ -37,6 +38,48 @@ func TestSparkPorAlvoJuntaRollupsEBrutosPorAlvo(t *testing.T) {
 	}
 	if h := got[b][0]; !h.Bucket.Equal(h1) || h.Total != 7 || h.OK != 3 || h.P50 != nil {
 		t.Errorf("hora de b = %+v", h)
+	}
+}
+
+func TestSparkPorAlvoDevolveOsBucketsEmUTC(t *testing.T) {
+	brasilia := time.FixedZone("BRT", -3*3600)
+	// 05:00 em Brasília é 08:00 UTC; Equal sozinho não enxerga o fuso.
+	deBrasilia := time.Date(2026, 11, 10, 5, 0, 0, 0, brasilia)
+	a := uuid.New()
+
+	got := sparkPorAlvo(
+		[]db.ListSummaryRollupsRow{{TargetID: a, Bucket: deBrasilia, Total: 10, Ok: 9, P50: ptrI32(120)}},
+		[]db.ListRawHoursRow{{TargetID: a, Bucket: deBrasilia.Add(time.Hour), Total: 5, Ok: 4, P50: 80}},
+	)
+
+	if len(got[a]) != 2 {
+		t.Fatalf("horas de a = %+v, quero 2", got[a])
+	}
+	for i, quero := range []time.Time{
+		time.Date(2026, 11, 10, 8, 0, 0, 0, time.UTC),
+		time.Date(2026, 11, 10, 9, 0, 0, 0, time.UTC),
+	} {
+		if b := got[a][i].Bucket; !b.Equal(quero) || b.Location() != time.UTC {
+			t.Errorf("bucket %d = %v (%v), quero %v em UTC", i, b, b.Location(), quero)
+		}
+	}
+}
+
+func TestSparkPorAlvoHoraBrutaSemSucessoNaoTemP50(t *testing.T) {
+	a := uuid.New()
+	h := time.Date(2026, 11, 10, 8, 0, 0, 0, time.UTC)
+
+	got := sparkPorAlvo(nil, []db.ListRawHoursRow{
+		// P50 diferente de zero de propósito: com Ok=0 a agregação não tem
+		// latência de sucesso para reportar, e o valor bruto não pode vazar.
+		{TargetID: a, Bucket: h, Total: 3, Ok: 0, P50: 999, P95: 999, P99: 999, Max: 999},
+	})
+
+	if len(got[a]) != 1 {
+		t.Fatalf("horas de a = %+v, quero 1", got[a])
+	}
+	if hr := got[a][0]; !hr.Bucket.Equal(h) || hr.Total != 3 || hr.OK != 0 || hr.P50 != nil {
+		t.Errorf("hora bruta sem sucesso = %+v, quero Total 3, OK 0 e P50 nil", hr)
 	}
 }
 
@@ -163,5 +206,42 @@ func TestMontarResumosFiltraOrdenaEPreservaAOrdemDosAlvos(t *testing.T) {
 	}
 	if len(sc.Tags) != 1 || sc.Tags[0] != "prod" {
 		t.Errorf("tags de c = %v", sc.Tags)
+	}
+}
+
+func TestMontarResumosFiltraPorEstadoEPausado(t *testing.T) {
+	agora := time.Date(2026, 11, 10, 12, 30, 0, 0, time.UTC)
+	recente := agora.Add(-time.Minute)
+	sobe, pausado, cai, semCheck := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	alvos := []db.ListTargetSummariesRow{
+		{ID: sobe, Name: "sobe", Enabled: true, IntervalSec: 60, LastStatus: "up", LastCheckedAt: recente, LastLatencyMS: 40},
+		// Pausado com último check "up" recente: é "paused" no filtro, e
+		// nunca "up" nem "unknown".
+		{ID: pausado, Name: "pausado", Enabled: false, IntervalSec: 60, LastStatus: "up", LastCheckedAt: recente, LastLatencyMS: 41},
+		{ID: cai, Name: "cai", Enabled: true, IntervalSec: 60, LastStatus: "down", LastCheckedAt: recente, LastLatencyMS: 10000},
+		{ID: semCheck, Name: "sem-check", Enabled: true, IntervalSec: 60},
+	}
+	casos := []struct {
+		nome    string
+		estados []string
+		quero   []uuid.UUID
+	}{
+		{"sem estados não filtra", nil, []uuid.UUID{sobe, pausado, cai, semCheck}},
+		{"paused pega só o desativado", []string{EstadoPausado}, []uuid.UUID{pausado}},
+		{"up não pega o pausado", []string{"up"}, []uuid.UUID{sobe}},
+		{"unknown não pega o pausado", []string{"unknown"}, []uuid.UUID{semCheck}},
+		{"estados são alternativas (OU)", []string{"down", EstadoPausado}, []uuid.UUID{pausado, cai}},
+	}
+	for _, c := range casos {
+		t.Run(c.nome, func(t *testing.T) {
+			got := montarResumos(alvos, resumoBase{agora: agora, filtro: SummaryFilter{States: c.estados}})
+			ids := make([]uuid.UUID, len(got))
+			for i, sm := range got {
+				ids[i] = sm.ID
+			}
+			if !slices.Equal(ids, c.quero) {
+				t.Errorf("ids = %v, quero %v", ids, c.quero)
+			}
+		})
 	}
 }
