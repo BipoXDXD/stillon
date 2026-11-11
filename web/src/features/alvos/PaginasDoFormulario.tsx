@@ -6,7 +6,7 @@ import { EstadoDaConsulta } from '@/components/EstadoDaConsulta'
 import { Titulo } from '@/components/Titulo'
 import { useAvisar } from '@/components/ui/avisos'
 import { Confirmar } from '@/components/ui/dialogo'
-import { useAlvo } from '@/lib/api/consultas'
+import { chaves, useAlvo } from '@/lib/api/consultas'
 import type { Alvo } from '@/lib/api/schemas'
 import { FormularioAlvo } from './FormularioAlvo'
 import { apagaOsHeaders, paraAlteracao, paraCriacao, valoresDe, valoresPadrao } from './esquema'
@@ -24,7 +24,7 @@ export function PaginaNovoAlvo() {
         rotuloDoBotao="Cadastrar"
         aoEnviar={async (v) => {
           const a = await api.criarAlvo(paraCriacao(v))
-          await qc.invalidateQueries({ queryKey: ['targets'] })
+          await qc.invalidateQueries({ queryKey: chaves.todosOsAlvos })
           avisar('Alvo cadastrado.')
           navegar(`/targets/${a.id}`)
         }}
@@ -74,7 +74,7 @@ function EdicaoDoAlvo({ alvo }: { alvo: Alvo }) {
           const mudancas = paraAlteracao(iniciais, v)
           if (apagaOsHeaders(alvo.header_names, iniciais.url, mudancas) && !(await perguntar())) return
           if (Object.keys(mudancas).length) await api.alterarAlvo(alvo.id, mudancas)
-          await qc.invalidateQueries({ queryKey: ['targets'] })
+          await qc.invalidateQueries({ queryKey: chaves.todosOsAlvos })
           avisar('Alvo salvo.')
           navegar(`/targets/${alvo.id}`)
         }}

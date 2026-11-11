@@ -20,7 +20,7 @@ import { estiloDeCartao } from '@/components/ui/cartao'
 import { ControleSegmentado, type OpcaoSegmentada } from '@/components/ui/controle-segmentado'
 import { estadoDoHeartbeat, textoDoHeartbeat } from '@/features/heartbeats/estado'
 import { useTarefasQuePedemAtencao } from '@/features/heartbeats/tarefas-que-pedem-atencao'
-import { useHeartbeats, useIncidentes, useIncidentesAbertos } from '@/lib/api/consultas'
+import { chaves, useHeartbeats, useIncidentes, useIncidentesAbertos } from '@/lib/api/consultas'
 import { naoEncontrado } from '@/lib/api/http'
 import { mensagemDe, textoDaCausa } from '@/lib/api/mensagens'
 import type { Heartbeat, Incidente } from '@/lib/api/schemas'
@@ -229,7 +229,7 @@ export function PaginaIncidentes() {
       else setErro(mensagemDe(e))
     } finally {
       // Mesmo depois de uma falha: o ack pode ter chegado ao servidor.
-      await qc.invalidateQueries({ queryKey: ['incidents'] })
+      await qc.invalidateQueries({ queryKey: chaves.todosOsIncidentes })
       focarDepois.current = id
       setReconhecendo((s) => {
         const n = new Set(s)

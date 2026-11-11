@@ -12,7 +12,7 @@ import { Botao } from '@/components/ui/botao'
 import { ErroDoFormulario } from '@/components/ui/campo'
 import { ControleSegmentado, type OpcaoSegmentada } from '@/components/ui/controle-segmentado'
 import { Confirmar } from '@/components/ui/dialogo'
-import { useAlvo, useIncidentes, useSerie } from '@/lib/api/consultas'
+import { chaves, useAlvo, useIncidentes, useSerie } from '@/lib/api/consultas'
 import { naoEncontrado } from '@/lib/api/http'
 import { mensagemDe, textoDoErroDeCheck } from '@/lib/api/mensagens'
 import type { Serie } from '@/lib/api/schemas'
@@ -144,9 +144,9 @@ function DetalheDoAlvo({ id }: { id: string }) {
   async function sairDoAlvo(aviso: string) {
     avisar(aviso)
     await navegar('/', { flushSync: true })
-    qc.removeQueries({ queryKey: ['targets', id] })
-    void qc.invalidateQueries({ queryKey: ['targets'] })
-    void qc.invalidateQueries({ queryKey: ['incidents'] })
+    qc.removeQueries({ queryKey: chaves.alvo(id) })
+    void qc.invalidateQueries({ queryKey: chaves.todosOsAlvos })
+    void qc.invalidateQueries({ queryKey: chaves.todosOsIncidentes })
   }
 
   // O alvo foi apagado em outra aba (M3, o padrão de Canais).
@@ -172,7 +172,7 @@ function DetalheDoAlvo({ id }: { id: string }) {
     setErro(null)
     try {
       await api.alterarAlvo(id, { enabled: ativo })
-      await qc.invalidateQueries({ queryKey: ['targets'] })
+      await qc.invalidateQueries({ queryKey: chaves.todosOsAlvos })
     } catch (e) {
       if (naoEncontrado(e)) await sumiu()
       else setErro(mensagemDe(e))

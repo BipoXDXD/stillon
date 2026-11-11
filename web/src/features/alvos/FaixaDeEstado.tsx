@@ -4,6 +4,7 @@ import { useEffect, useId, useRef, useState } from 'react'
 import { useApi } from '@/app/contexto'
 import { Selo } from '@/components/SeloDeEstado'
 import { Botao } from '@/components/ui/botao'
+import { chaves } from '@/lib/api/consultas'
 import { naoEncontrado } from '@/lib/api/http'
 import { mensagemDe } from '@/lib/api/mensagens'
 import type { Incidente, ItemDoResumo } from '@/lib/api/schemas'
@@ -81,7 +82,7 @@ export function FaixaDeEstado({ item, incidentes, agora, aoSumir, aoErrar }: Pro
       aoErrar(mensagemDe(e))
     } finally {
       // Mesmo depois de uma falha: o ack pode ter chegado ao servidor.
-      await qc.invalidateQueries({ queryKey: ['incidents'] })
+      await qc.invalidateQueries({ queryKey: chaves.todosOsIncidentes })
       focarDepois.current = true
       setReconhecendo(false)
     }
