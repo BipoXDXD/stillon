@@ -486,15 +486,6 @@ func toHeartbeatIncidentResponse(i heartbeat.Incident) heartbeatIncidentResponse
 	}
 }
 
-func donoEID(w http.ResponseWriter, r *http.Request) (uuid.UUID, uuid.UUID, bool) {
-	userID, ok := usuario(w, r)
-	if !ok {
-		return uuid.Nil, uuid.Nil, false
-	}
-	id, ok := pathID(w, r)
-	return userID, id, ok
-}
-
 func (h *HeartbeatHandlers) falhou(w http.ResponseWriter, r *http.Request, op string, err error) bool {
 	if err == nil {
 		return false
