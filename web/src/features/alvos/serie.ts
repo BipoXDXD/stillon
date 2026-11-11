@@ -5,18 +5,22 @@ import type { Check, Hora, Serie } from '@/lib/api/schemas'
 // o Recharts não desenha no jsdom, então o que importa (o que é "fora", o
 // resumo em texto) é testado aqui, e o desenho, no E2E.
 
-// As chaves são os valores do ?window= do servidor (B6 do Plano 10), que
-// calcula o from; a duração fica como documentação do nome.
-export const JANELAS = {
+// Os valores do ?window= do servidor (B6 do Plano 10), que calcula o from, na
+// ordem em que o painel as mostra. A lista é a fonte do tipo: assim o
+// `Record` abaixo é exaustivo e ninguém precisa de `Object.keys(...) as`.
+export const ORDEM_DAS_JANELAS = ['1h', '6h', '24h', '7d', '30d', '90d'] as const
+
+export type Janela = (typeof ORDEM_DAS_JANELAS)[number]
+
+// A duração fica como documentação do nome.
+export const JANELAS: Record<Janela, number> = {
   '1h': 3_600_000,
   '6h': 6 * 3_600_000,
   '24h': 24 * 3_600_000,
   '7d': 7 * 86_400_000,
   '30d': 30 * 86_400_000,
   '90d': 90 * 86_400_000,
-} as const
-
-export type Janela = keyof typeof JANELAS
+}
 
 export function ehJanela(v: string | null): v is Janela {
   // hasOwn, e não `in`: "toString" está no protótipo de todo objeto.

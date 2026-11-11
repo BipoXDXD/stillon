@@ -535,6 +535,17 @@ describe('a API falsa segue o servidor', () => {
     expect((await patchCru(sessao.token(), '/channels/nao-existe', '{"enabled":true}')).status).toBe(404)
   })
 
+  // Sem esquema (DELETE, 204) o pedido resolve sem valor: é o `undefined` que as
+  // sobrecargas de `pedir` declaram como Promise<void>. Sabotagem: devolver o
+  // corpo (ou um objeto) no lugar de undefined.
+  it('apagar um canal que existe resolve sem valor', async () => {
+    const { falsa, api } = await logado()
+    const c = canal({ id: 'c1' })
+    falsa.estado.canais = [c]
+    await expect(api.apagarCanal('c1')).resolves.toBeUndefined()
+    expect(falsa.estado.canais).toEqual([])
+  })
+
   // ChannelHandlers.Delete e Resend: canal que não existe é 404.
   it('apagar ou reenviar a verificação de canal que não existe é 404', async () => {
     const { api } = await logado()
