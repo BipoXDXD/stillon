@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
-	"strconv"
 	"time"
 
 	"github.com/google/uuid"
@@ -187,27 +186,9 @@ func (h *TargetHandlers) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	limit := targets.DefaultPageSize
-	if s := q.Get("limit"); s != "" {
-		n, err := strconv.ParseInt(s, 10, 32)
-		if err != nil {
-			campoInvalido(w, r, "limit", targets.ReasonInvalid)
-			return
-		}
-		if n < 1 || n > int64(targets.MaxPageSize) {
-			campoInvalido(w, r, "limit", targets.ReasonOutOfRange)
-			return
-		}
-		limit = int32(n)
-	}
-	var before *uuid.UUID
-	if s := q.Get("cursor"); s != "" {
-		c, err := uuid.Parse(s)
-		if err != nil {
-			campoInvalido(w, r, "cursor", targets.ReasonInvalid)
-			return
-		}
-		before = &c
+	limit, before, ok := paginaDe(w, r, q, targets.DefaultPageSize, targets.MaxPageSize)
+	if !ok {
+		return
 	}
 
 	items, err := h.svc.List(r.Context(), userID, before, limit)
