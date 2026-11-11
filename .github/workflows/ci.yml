@@ -246,6 +246,8 @@ jobs:
         run: python3 deploy/ci/test_snapshot_banco_backup.py
       - name: fechamento da medição de memória, com docker falso
         run: python3 -m unittest discover -s deploy/ci -p test_coletar_memoria.py -v
+      - name: carga da medição de memória, contra um app HTTP falso
+        run: python3 -m unittest discover -s deploy/ci -p test_carga_memoria.py -v
       - name: ramos finais da entrada, com binários falsos
         run: python3 -m unittest discover -s deploy/ci -p test_entrada_ramos_finais.py -v
       - name: contrato do recibo entre o receptor e o stillon-entrada

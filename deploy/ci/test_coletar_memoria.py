@@ -99,6 +99,10 @@ class Coleta(unittest.TestCase):
             (self.cgroup / "system.slice" / f"docker-id-{s}.scope" / "memory.peak").unlink()
         self.assertVermelho(self.coletar(), "cgroup ilegível: app, caddy, db")
 
+    def test_memory_peak_vazio_sai_vermelho(self):
+        (self.cgroup / "system.slice" / "docker-id-app.scope" / "memory.peak").write_text("")
+        self.assertVermelho(self.coletar(), "cgroup ilegível: app")
+
     def test_memory_events_sem_oom_kill_sai_vermelho(self):
         (self.cgroup / "system.slice" / "docker-id-app.scope" / "memory.events").write_text("oom 0\n")
         self.assertVermelho(self.coletar(), "cgroup ilegível: app")

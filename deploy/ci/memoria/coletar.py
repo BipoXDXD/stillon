@@ -75,7 +75,7 @@ def linha_do_servico(servico, picos, quantas):
         problemas.add('OOM ou reinício')
     if not quantas.get(nome):
         problemas.add('sem amostras')
-    if peak is None or oom is None:
+    if not peak or oom is None:
         problemas.add('cgroup ilegível')
     linha = (f"| {servico} | {mib(teto) if teto else 'sem teto'} | {env[0] if env else '-'} | "
              f"{mib(picos.get(nome))} | {quantas.get(nome, 0)} | {mib(float(peak)) if peak else '?'} | "

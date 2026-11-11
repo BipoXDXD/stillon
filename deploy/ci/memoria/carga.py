@@ -5,7 +5,8 @@ Cadastra alvos em domínios .invalid (RFC 6761: a sonda roda e falha na
 resolução, sem tocar em site de terceiros) e, por alguns minutos, lê o resumo
 no ritmo que o limitador por usuário aceita e dispara rajadas de login, cada
 uma pagando um Argon2id. O resultado vai para o stdout e para o arquivo do
-primeiro argumento.
+primeiro argumento. Sai 1 se algum cadastro não receber 201, se aparecer
+qualquer 5xx ou se o app deixar de responder: a medição não vale sem a carga.
 """
 import collections
 import concurrent.futures
@@ -22,6 +23,8 @@ DURACAO_S = 240
 RAJADA_LOGIN = 5
 PAUSA_ENTRE_RAJADAS_S = 31  # o balde do login recarrega 5 fichas em 30 s
 PAUSA_DA_API_S = 1.05  # 60 por minuto é o limite por usuário
+ESPERA_INICIAL_S = 31  # os baldes que o Playwright gastou
+SEM_RESPOSTA = 'sem resposta'
 EMAIL = 'demo@stillon.local'
 SENHA = 'demo-stillon-2026'
 
@@ -36,7 +39,10 @@ def chamar(metodo, caminho, corpo=None, token=None):
         with urllib.request.urlopen(pedido, timeout=60) as resposta:
             return resposta.status, resposta.read()
     except urllib.error.HTTPError as erro:
-        return erro.code, erro.read()
+        with erro:
+            return erro.code, erro.read()
+    except OSError as erro:  # URLError, conexão recusada ou derrubada, timeout
+        return SEM_RESPOSTA, repr(erro).encode()
 
 
 def entrar():
@@ -76,15 +82,43 @@ def rajadas_de_login(fim, contagem):
             time.sleep(PAUSA_ENTRE_RAJADAS_S)
 
 
+def registrando_morte(alvo, contagem):
+    """Envolve o alvo de uma thread: uma exceção vira falha contada, não some."""
+    def executar(*args):
+        try:
+            alvo(*args)
+        except Exception as erro:  # noqa: BLE001 - qualquer morte da thread é falha da carga
+            contagem[f'thread {alvo.__name__} morreu: {erro!r}'] += 1
+    return executar
+
+
+def e_5xx(chave):
+    status = chave.rsplit(' ', 1)[-1]
+    return status.isdigit() and status.startswith('5')
+
+
+def falhas_da_carga(contagem):
+    falhas = []
+    if contagem['cadastro 201'] != ALVOS:
+        falhas.append(f"cadastro 201 em {contagem['cadastro 201']} de {ALVOS}")
+    respostas_5xx = sorted(c for c in contagem if e_5xx(c))
+    if respostas_5xx:
+        falhas.append('5xx: ' + ', '.join(respostas_5xx))
+    sem_resposta = sorted(c for c in contagem if c.endswith(SEM_RESPOSTA) or c.startswith('thread '))
+    if sem_resposta:
+        falhas.append('sem resposta: ' + ', '.join(sem_resposta))
+    return falhas
+
+
 def main():
     contagem = collections.Counter()
-    time.sleep(31)  # os baldes que o Playwright gastou
+    time.sleep(ESPERA_INICIAL_S)
     token = entrar()
     cadastrar_alvos(token, contagem)
     fim = time.monotonic() + DURACAO_S
     linhas = [
-        threading.Thread(target=ler_resumo, args=(token, fim, contagem)),
-        threading.Thread(target=rajadas_de_login, args=(fim, contagem)),
+        threading.Thread(target=registrando_morte(ler_resumo, contagem), args=(token, fim, contagem)),
+        threading.Thread(target=registrando_morte(rajadas_de_login, contagem), args=(fim, contagem)),
     ]
     for linha in linhas:
         linha.start()
@@ -94,7 +128,11 @@ def main():
     print(resultado)
     with open(sys.argv[1], 'w') as arquivo:
         arquivo.write(resultado + '\n')
+    falhas = falhas_da_carga(contagem)
+    for falha in falhas:
+        print(f'carga falhou: {falha}', file=sys.stderr)
+    return 1 if falhas else 0
 
 
 if __name__ == '__main__':
-    main()
+    sys.exit(main())
