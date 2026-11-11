@@ -75,12 +75,9 @@ func (s *TOTP) StartRotation(ctx context.Context, userID, familyID uuid.UUID, em
 	// Sob a trava, a família não cai no meio: ou a troca de senha já comitou
 	// (e a família está morta aqui), ou ela espera esta transação e apaga o
 	// pendente gravado.
-	if err := q.LockUserSessions(ctx, userID); err != nil {
-		return "", "", fmt.Errorf("travar sessões: %w", err)
-	}
-	viva, err := q.FamilyIsLive(ctx, db.FamilyIsLiveParams{UserID: userID, FamilyID: familyID, Now: now})
+	viva, err := travarFamiliaViva(ctx, q, userID, familyID, now)
 	if err != nil {
-		return "", "", fmt.Errorf("conferir família de sessão: %w", err)
+		return "", "", err
 	}
 	if !viva {
 		return "", "", ErrInvalidSession
@@ -201,14 +198,12 @@ func (s *TOTP) ConfirmRotation(ctx context.Context, userID, familyID uuid.UUID, 
 	// Plano 5), na mesma ordem da troca de senha: trava, linha de users,
 	// linhas de sessions. Sem ela, uma rotação de refresh em curso deixaria o
 	// sucessor fora da revogação.
-	if err := q.LockUserSessions(ctx, userID); err != nil {
-		return nil, fmt.Errorf("travar sessões: %w", err)
-	}
+	//
 	// A família pode ter caído entre a guarda da rota e a trava. Então nada
 	// muda: o 200 sempre quer dizer "trocado, e a sessão atual continua viva".
-	viva, err := q.FamilyIsLive(ctx, db.FamilyIsLiveParams{UserID: userID, FamilyID: familyID, Now: now})
+	viva, err := travarFamiliaViva(ctx, q, userID, familyID, now)
 	if err != nil {
-		return nil, fmt.Errorf("conferir família de sessão: %w", err)
+		return nil, err
 	}
 	if !viva {
 		return nil, ErrInvalidSession
@@ -247,4 +242,20 @@ func (s *TOTP) ConfirmRotation(ctx context.Context, userID, familyID uuid.UUID, 
 		return nil, fmt.Errorf("confirmar troca de TOTP: %w", err)
 	}
 	return codes, nil
+}
+
+// travarFamiliaViva toma a trava de sessões do usuário e SÓ
+// ENTÃO confere a família: conferir antes deixaria uma revogação concorrente
+// passar entre a leitura e a escrita. Quem chama escolhe o erro de "família
+// morta". É a mesma função de account, não compartilhada: exportá-la aqui
+// obrigaria a API pública a receber *db.Queries.
+func travarFamiliaViva(ctx context.Context, q *db.Queries, userID, familyID uuid.UUID, now time.Time) (bool, error) {
+	if err := q.LockUserSessions(ctx, userID); err != nil {
+		return false, fmt.Errorf("travar sessões: %w", err)
+	}
+	viva, err := q.FamilyIsLive(ctx, db.FamilyIsLiveParams{UserID: userID, FamilyID: familyID, Now: now})
+	if err != nil {
+		return false, fmt.Errorf("conferir família de sessão: %w", err)
+	}
+	return viva, nil
 }

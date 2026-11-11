@@ -136,299 +136,337 @@ func (c *Config) EmailEnabled() bool { return c.ResendAPIKey != "" }
 // Load recebe getenv como parâmetro em vez de chamar os.Getenv diretamente.
 // Isso torna a função pura e testável sem mexer no ambiente do processo de
 // teste, o que evita testes que interferem uns nos outros ao rodar em paralelo.
+//
+// A ordem das leituras é a ordem dos erros no errors.Join, e quem corrige um
+// deploy quebrado lê de cima para baixo: ela segue a dos campos do Config.
 func Load(getenv func(string) string) (*Config, error) {
-	var errs []error
-
-	req := func(name string) string {
-		v := strings.TrimSpace(getenv(name))
-		if v == "" {
-			errs = append(errs, fmt.Errorf("variável obrigatória ausente: %s", name))
-		}
-		return v
-	}
-
-	opt := func(name, def string) string {
-		if v := strings.TrimSpace(getenv(name)); v != "" {
-			return v
-		}
-		return def
-	}
-
-	key := func(name string) []byte {
-		raw := req(name)
-		if raw == "" {
-			return nil
-		}
-		b, err := base64.StdEncoding.DecodeString(raw)
-		if err != nil {
-			errs = append(errs, fmt.Errorf("%s não é base64 válido", name))
-			return nil
-		}
-		if len(b) != keyLen {
-			errs = append(errs, fmt.Errorf("%s deve ter %d bytes depois de decodificar, tem %d", name, keyLen, len(b)))
-			return nil
-		}
-		return b
-	}
-
-	// TRUSTED_PROXIES é a lista de origens cujo X-Forwarded-For vale. Vazia
-	// por padrão, e isso é deliberado: sem lista, o cabeçalho é ignorado e a
-	// falha é FECHADA (todos dividem um balde de rate limit). Acreditar no
-	// XFF de qualquer origem seria falha ABERTA — o atacante escolheria o
-	// próprio balde e a origem gravada na auditoria. Em produção atrás de um
-	// proxy, preencher esta lista é obrigatório; o aviso no boot cobra isso.
-	proxies := func(name string) []netip.Prefix {
-		raw := strings.TrimSpace(getenv(name))
-		if raw == "" {
-			return nil
-		}
-		var out []netip.Prefix
-		for _, parte := range strings.Split(raw, ",") {
-			parte = strings.TrimSpace(parte)
-			if parte == "" {
-				continue
-			}
-			p, err := netip.ParsePrefix(parte)
-			if err != nil {
-				errs = append(errs, fmt.Errorf("%s: %q não é um CIDR válido", name, parte))
-				continue
-			}
-			// Um /0 confia em qualquer origem: a falha aberta que a lista
-			// existe para evitar. Para medir o proxy, use o /32 ou o /128.
-			if p.Bits() == 0 {
-				errs = append(errs, fmt.Errorf("%s: %q é um prefixo /0, que confiaria no cabeçalho de qualquer origem; liste só os proxies", name, parte))
-				continue
-			}
-			out = append(out, p)
-		}
-		return out
-	}
-
-	// PROBE_BLOCKED_CIDRS: IPs ou CIDRs da própria hospedagem, v4 ou v6,
-	// separados por vírgula, sem espaço nem item vazio. Um item inválido
-	// derruba o boot: uma lista lida pela metade deixaria a hospedagem aberta
-	// sem aviso, e ",,," lida como vazia esconderia o erro de digitação.
-	hospedagem := func(name string) []netip.Prefix {
-		valor := getenv(name)
-		if valor == "" {
-			return nil
-		}
-		var out []netip.Prefix
-		for _, parte := range strings.Split(valor, ",") {
-			p, err := faixaDaHospedagem(parte)
-			if err != nil {
-				errs = append(errs, fmt.Errorf("%s: %q %w", name, parte, err))
-				continue
-			}
-			out = append(out, p)
-		}
-		return out
-	}
+	l := &leitor{getenv: getenv}
 
 	// O papel efetivo vem antes das métricas: o padrão de METRICS_ADDR depende
 	// dele (M7). O --role já sobrepôs ROLE antes do Load.
-	role := Role(opt("ROLE", string(RoleAll)))
-	switch role {
-	case RoleAll, RoleAPI, RoleProber:
-	default:
-		errs = append(errs, fmt.Errorf("ROLE inválido: %q (use all, api ou prober)", role))
-	}
-
-	// /metrics entrega o mapa operacional (spec §5.7): quantos alvos, que
-	// latências, quanta conexão. Só escuta em loopback; "off", em qualquer
-	// caixa, desliga. Um host vazio (":9090") escutaria em todas as
-	// interfaces, e por isso é erro, não padrão (D10).
-	//
-	// Sem a variável, o padrão é por papel (M7, Plano 9 §3.4): o sondador fica
-	// na 9091, e --role=api e --role=prober no mesmo host deixam de disputar
-	// a 9090. Definida (inclusive off), ela vale como sempre.
-	metricsAddr := func(name string) string {
-		padrao := "127.0.0.1:9090"
-		if role == RoleProber {
-			padrao = "127.0.0.1:9091"
-		}
-		raw := opt(name, padrao)
-		if strings.EqualFold(raw, "off") {
-			return ""
-		}
-		host, _, err := net.SplitHostPort(raw)
-		if err == nil && host == "localhost" {
-			return raw
-		}
-		if err == nil {
-			if ip, perr := netip.ParseAddr(host); perr == nil && ip.IsLoopback() {
-				return raw
-			}
-		}
-		errs = append(errs, fmt.Errorf("%s %q precisa escutar em loopback (127.0.0.1, [::1] ou localhost) ou ser \"off\"", name, raw))
-		return ""
-	}
-
-	// PUBLIC_BASE_URL decide se o processo está em produção (https): recusa
-	// das chaves de demo, cookie Secure, aviso de TRUSTED_PROXIES. Um valor
-	// malformado que começa com https:// não pode passar como http (falha
-	// aberta), então ele precisa ser uma URL http(s) absoluta, com host, e
-	// sem credenciais (userinfo), que iriam parar nos links dos e-mails. A
-	// mensagem não repete o valor: ele poderia trazer essas credenciais.
-	publicBaseURL := func(name string) string {
-		raw := req(name)
-		if raw == "" {
-			return ""
-		}
-		u, err := url.Parse(raw)
-		if err != nil || u.Hostname() == "" ||
-			!(strings.EqualFold(u.Scheme, "http") || strings.EqualFold(u.Scheme, "https")) {
-			errs = append(errs, fmt.Errorf("%s precisa ser uma URL http(s) absoluta com host, como https://status.exemplo.com", name))
-			return ""
-		}
-		if u.User != nil {
-			errs = append(errs, fmt.Errorf("%s não pode trazer credenciais na URL (a parte com @ antes do host)", name))
-			return ""
-		}
-		return raw
-	}
-
-	// CLIENT_IP_HEADER é um nome de cabeçalho HTTP, e de um valor só. O
-	// X-Forwarded-For é recusado aqui porque tem vários valores e já é o
-	// comportamento padrão (variável vazia). Só para proxy que substitui o
-	// cabeçalho (o do Fly); atrás do Caddy, vazio (ver Config.ClientIPHeader).
-	clientIPHeader := func(name string) string {
-		raw := strings.TrimSpace(getenv(name))
-		if raw == "" {
-			return ""
-		}
-		if !nomeDeCabecalho(raw) {
-			errs = append(errs, fmt.Errorf("%s %q não é um nome de cabeçalho HTTP", name, raw))
-			return ""
-		}
-		if strings.EqualFold(raw, "X-Forwarded-For") {
-			errs = append(errs, fmt.Errorf("%s: deixe vazio para usar o X-Forwarded-For; a variável é para um cabeçalho de um valor só, como Fly-Client-IP", name))
-			return ""
-		}
-		if cabecalhoProibido(raw) {
-			errs = append(errs, fmt.Errorf("%s %q não carrega o IP do cliente: a variável é para o cabeçalho de um valor só que o proxy escreve, como Fly-Client-IP", name, raw))
-			return ""
-		}
-		return http.CanonicalHeaderKey(raw)
-	}
-
-	// ARGON2_MAX_CONCURRENT: o teto de Argon2id simultâneos (A1 do Plano 10).
-	// Zero trancaria todo login; acima de 64 (4 GiB) o teto deixa de proteger
-	// a memória. O padrão é o mesmo de auth.DefaultArgon2MaxConcurrent (o
-	// config não importa o auth).
-	argon2 := func(name string) int {
-		raw := strings.TrimSpace(getenv(name))
-		if raw == "" {
-			return min(runtime.NumCPU(), 4)
-		}
-		n, err := strconv.Atoi(raw)
-		if err != nil || n < 1 || n > 64 {
-			errs = append(errs, fmt.Errorf("%s %q precisa ser um inteiro de 1 a 64", name, raw))
-			return 0
-		}
-		return n
-	}
-
-	// CONTENT_RULES_PER_HOST: o teto de regras de conteúdo por host (D-T3).
-	// O padrão é o mesmo de targets.DefaultContentRulesPerHost (o config não
-	// importa o targets).
-	regrasPorHost := func(name string) int {
-		raw := strings.TrimSpace(getenv(name))
-		if raw == "" {
-			return 5
-		}
-		n, err := strconv.Atoi(raw)
-		if err != nil || n < 1 || n > 100 {
-			errs = append(errs, fmt.Errorf("%s %q precisa ser um inteiro de 1 a 100", name, raw))
-			return 0
-		}
-		return n
-	}
+	role := l.papel()
 
 	cfg := &Config{
 		Role:                role,
-		HTTPAddr:            opt("HTTP_ADDR", ":8080"),
-		MetricsAddr:         metricsAddr("METRICS_ADDR"),
-		DatabaseURL:         req("DATABASE_URL"),
-		PublicBaseURL:       publicBaseURL("PUBLIC_BASE_URL"),
-		CORSOrigin:          req("CORS_ORIGIN"),
-		MasterKey:           key("MASTER_KEY"),
-		JWTSecret:           key("JWT_SECRET"),
-		IPHashKey:           key("IP_HASH_KEY"),
-		TrustedProxies:      proxies("TRUSTED_PROXIES"),
-		ClientIPHeader:      clientIPHeader("CLIENT_IP_HEADER"),
-		ProbeBlockedCIDRs:   hospedagem("PROBE_BLOCKED_CIDRS"),
+		HTTPAddr:            l.opcional("HTTP_ADDR", ":8080"),
+		MetricsAddr:         l.metricsAddr("METRICS_ADDR", role),
+		DatabaseURL:         l.obrigatoria("DATABASE_URL"),
+		PublicBaseURL:       l.publicBaseURL("PUBLIC_BASE_URL"),
+		CORSOrigin:          l.obrigatoria("CORS_ORIGIN"),
+		MasterKey:           l.chave("MASTER_KEY"),
+		JWTSecret:           l.chave("JWT_SECRET"),
+		IPHashKey:           l.chave("IP_HASH_KEY"),
+		TrustedProxies:      l.proxies("TRUSTED_PROXIES"),
+		ClientIPHeader:      l.clientIPHeader("CLIENT_IP_HEADER"),
+		ProbeBlockedCIDRs:   l.hospedagem("PROBE_BLOCKED_CIDRS"),
 		ShutdownGrace:       shutdownGrace,
 		RequestTimeout:      requestTimeout,
-		Argon2MaxConcurrent: argon2("ARGON2_MAX_CONCURRENT"),
-		ContentRulesPerHost: regrasPorHost("CONTENT_RULES_PER_HOST"),
+		Argon2MaxConcurrent: l.argon2("ARGON2_MAX_CONCURRENT"),
+		ContentRulesPerHost: l.regrasPorHost("CONTENT_RULES_PER_HOST"),
 		ResendAPIKey:        strings.TrimSpace(getenv("RESEND_API_KEY")),
 		EmailFrom:           strings.TrimSpace(getenv("EMAIL_FROM")),
 	}
 
-	// As duas variáveis de e-mail andam juntas. Sem nenhuma, o e-mail fica
-	// desligado, e cadastrar um canal de e-mail responde que ele está
-	// indisponível. Com só uma, é quase sempre esquecimento, e o boot avisa.
-	switch {
-	case (cfg.ResendAPIKey == "") != (cfg.EmailFrom == ""):
-		errs = append(errs, errors.New("RESEND_API_KEY e EMAIL_FROM andam juntas: defina as duas, ou nenhuma"))
-	case cfg.EmailFrom != "":
-		if _, err := mail.ParseAddress(cfg.EmailFrom); err != nil {
-			errs = append(errs, errors.New("EMAIL_FROM não é um endereço válido (use \"Nome <a@b.com>\" ou a@b.com)"))
+	l.exigirEmailPareado(cfg)
+	avisarSeFaltaListaDeProxies(cfg)
+	l.exigirListaDaHospedagem(cfg)
+	l.recusarChavesDeDemo(cfg)
+	cfg.LogLevel = l.nivelDeLog()
+
+	if len(l.errs) > 0 {
+		return nil, errors.Join(l.errs...)
+	}
+	return cfg, nil
+}
+
+// leitor lê as variáveis de ambiente e acumula os problemas: o Load reporta
+// todos de uma vez, na ordem em que foram achados.
+type leitor struct {
+	getenv func(string) string
+	errs   []error
+}
+
+func (l *leitor) falha(formato string, args ...any) {
+	l.errs = append(l.errs, fmt.Errorf(formato, args...))
+}
+
+func (l *leitor) obrigatoria(name string) string {
+	v := strings.TrimSpace(l.getenv(name))
+	if v == "" {
+		l.falha("variável obrigatória ausente: %s", name)
+	}
+	return v
+}
+
+func (l *leitor) opcional(name, def string) string {
+	if v := strings.TrimSpace(l.getenv(name)); v != "" {
+		return v
+	}
+	return def
+}
+
+func (l *leitor) chave(name string) []byte {
+	raw := l.obrigatoria(name)
+	if raw == "" {
+		return nil
+	}
+	b, err := base64.StdEncoding.DecodeString(raw)
+	if err != nil {
+		l.falha("%s não é base64 válido", name)
+		return nil
+	}
+	if len(b) != keyLen {
+		l.falha("%s deve ter %d bytes depois de decodificar, tem %d", name, keyLen, len(b))
+		return nil
+	}
+	return b
+}
+
+func (l *leitor) papel() Role {
+	role := Role(l.opcional("ROLE", string(RoleAll)))
+	switch role {
+	case RoleAll, RoleAPI, RoleProber:
+	default:
+		l.falha("ROLE inválido: %q (use all, api ou prober)", role)
+	}
+	return role
+}
+
+// proxies lê TRUSTED_PROXIES, a lista de origens cujo X-Forwarded-For vale.
+// Vazia por padrão, e isso é deliberado: sem lista, o cabeçalho é ignorado e a
+// falha é FECHADA (todos dividem um balde de rate limit). Acreditar no
+// XFF de qualquer origem seria falha ABERTA — o atacante escolheria o
+// próprio balde e a origem gravada na auditoria. Em produção atrás de um
+// proxy, preencher esta lista é obrigatório; o aviso no boot cobra isso.
+func (l *leitor) proxies(name string) []netip.Prefix {
+	raw := strings.TrimSpace(l.getenv(name))
+	if raw == "" {
+		return nil
+	}
+	var out []netip.Prefix
+	for _, parte := range strings.Split(raw, ",") {
+		parte = strings.TrimSpace(parte)
+		if parte == "" {
+			continue
+		}
+		p, err := netip.ParsePrefix(parte)
+		if err != nil {
+			l.falha("%s: %q não é um CIDR válido", name, parte)
+			continue
+		}
+		// Um /0 confia em qualquer origem: a falha aberta que a lista
+		// existe para evitar. Para medir o proxy, use o /32 ou o /128.
+		if p.Bits() == 0 {
+			l.falha("%s: %q é um prefixo /0, que confiaria no cabeçalho de qualquer origem; liste só os proxies", name, parte)
+			continue
+		}
+		out = append(out, p)
+	}
+	return out
+}
+
+// hospedagem lê PROBE_BLOCKED_CIDRS: IPs ou CIDRs da própria hospedagem, v4 ou
+// v6, separados por vírgula, sem espaço nem item vazio. Um item inválido
+// derruba o boot: uma lista lida pela metade deixaria a hospedagem aberta
+// sem aviso, e ",,," lida como vazia esconderia o erro de digitação.
+func (l *leitor) hospedagem(name string) []netip.Prefix {
+	valor := l.getenv(name)
+	if valor == "" {
+		return nil
+	}
+	var out []netip.Prefix
+	for _, parte := range strings.Split(valor, ",") {
+		p, err := faixaDaHospedagem(parte)
+		if err != nil {
+			l.falha("%s: %q %w", name, parte, err)
+			continue
+		}
+		out = append(out, p)
+	}
+	return out
+}
+
+// metricsAddr lê o endereço de /metrics, que entrega o mapa operacional
+// (spec §5.7): quantos alvos, que latências, quanta conexão. Só escuta em
+// loopback; "off", em qualquer caixa, desliga. Um host vazio (":9090")
+// escutaria em todas as interfaces, e por isso é erro, não padrão (D10).
+//
+// Sem a variável, o padrão é por papel (M7, Plano 9 §3.4): o sondador fica
+// na 9091, e --role=api e --role=prober no mesmo host deixam de disputar
+// a 9090. Definida (inclusive off), ela vale como sempre.
+func (l *leitor) metricsAddr(name string, role Role) string {
+	padrao := "127.0.0.1:9090"
+	if role == RoleProber {
+		padrao = "127.0.0.1:9091"
+	}
+	raw := l.opcional(name, padrao)
+	if strings.EqualFold(raw, "off") {
+		return ""
+	}
+	host, _, err := net.SplitHostPort(raw)
+	if err == nil && host == "localhost" {
+		return raw
+	}
+	if err == nil {
+		if ip, perr := netip.ParseAddr(host); perr == nil && ip.IsLoopback() {
+			return raw
 		}
 	}
+	l.falha("%s %q precisa escutar em loopback (127.0.0.1, [::1] ou localhost) ou ser \"off\"", name, raw)
+	return ""
+}
 
-	// Https sem lista de proxies quase sempre significa "esqueci de
-	// configurar": o deploy é atrás de um proxy, e sem a lista todo o rate
-	// limit por IP e todo o ip_hash da auditoria colapsam num valor só. É
-	// aviso e não erro porque um TLS terminado no próprio processo é
-	// legítimo, só é raro.
+// publicBaseURL decide se o processo está em produção (https): recusa
+// das chaves de demo, cookie Secure, aviso de TRUSTED_PROXIES. Um valor
+// malformado que começa com https:// não pode passar como http (falha
+// aberta), então ele precisa ser uma URL http(s) absoluta, com host, e
+// sem credenciais (userinfo), que iriam parar nos links dos e-mails. A
+// mensagem não repete o valor: ele poderia trazer essas credenciais.
+func (l *leitor) publicBaseURL(name string) string {
+	raw := l.obrigatoria(name)
+	if raw == "" {
+		return ""
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Hostname() == "" ||
+		!(strings.EqualFold(u.Scheme, "http") || strings.EqualFold(u.Scheme, "https")) {
+		l.falha("%s precisa ser uma URL http(s) absoluta com host, como https://status.exemplo.com", name)
+		return ""
+	}
+	if u.User != nil {
+		l.falha("%s não pode trazer credenciais na URL (a parte com @ antes do host)", name)
+		return ""
+	}
+	return raw
+}
+
+// clientIPHeader lê CLIENT_IP_HEADER, um nome de cabeçalho HTTP de um valor
+// só. O X-Forwarded-For é recusado aqui porque tem vários valores e já é o
+// comportamento padrão (variável vazia). Só para proxy que substitui o
+// cabeçalho (o do Fly); atrás do Caddy, vazio (ver Config.ClientIPHeader).
+func (l *leitor) clientIPHeader(name string) string {
+	raw := strings.TrimSpace(l.getenv(name))
+	if raw == "" {
+		return ""
+	}
+	if !nomeDeCabecalho(raw) {
+		l.falha("%s %q não é um nome de cabeçalho HTTP", name, raw)
+		return ""
+	}
+	if strings.EqualFold(raw, "X-Forwarded-For") {
+		l.falha("%s: deixe vazio para usar o X-Forwarded-For; a variável é para um cabeçalho de um valor só, como Fly-Client-IP", name)
+		return ""
+	}
+	if cabecalhoProibido(raw) {
+		l.falha("%s %q não carrega o IP do cliente: a variável é para o cabeçalho de um valor só que o proxy escreve, como Fly-Client-IP", name, raw)
+		return ""
+	}
+	return http.CanonicalHeaderKey(raw)
+}
+
+// argon2 lê ARGON2_MAX_CONCURRENT: o teto de Argon2id simultâneos (A1 do
+// Plano 10). Zero trancaria todo login; acima de 64 (4 GiB) o teto deixa de
+// proteger a memória. O padrão é o mesmo de auth.DefaultArgon2MaxConcurrent
+// (o config não importa o auth).
+func (l *leitor) argon2(name string) int {
+	raw := strings.TrimSpace(l.getenv(name))
+	if raw == "" {
+		return min(runtime.NumCPU(), 4)
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 1 || n > 64 {
+		l.falha("%s %q precisa ser um inteiro de 1 a 64", name, raw)
+		return 0
+	}
+	return n
+}
+
+// regrasPorHost lê CONTENT_RULES_PER_HOST: o teto de regras de conteúdo por
+// host (D-T3). O padrão é o mesmo de targets.DefaultContentRulesPerHost (o
+// config não importa o targets).
+func (l *leitor) regrasPorHost(name string) int {
+	raw := strings.TrimSpace(l.getenv(name))
+	if raw == "" {
+		return 5
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 1 || n > 100 {
+		l.falha("%s %q precisa ser um inteiro de 1 a 100", name, raw)
+		return 0
+	}
+	return n
+}
+
+// exigirEmailPareado cobra que as duas variáveis de e-mail andam juntas. Sem
+// nenhuma, o e-mail fica desligado, e cadastrar um canal de e-mail responde
+// que ele está indisponível. Com só uma, é quase sempre esquecimento, e o boot
+// recusa.
+func (l *leitor) exigirEmailPareado(cfg *Config) {
+	switch {
+	case (cfg.ResendAPIKey == "") != (cfg.EmailFrom == ""):
+		l.errs = append(l.errs, errors.New("RESEND_API_KEY e EMAIL_FROM andam juntas: defina as duas, ou nenhuma"))
+	case cfg.EmailFrom != "":
+		if _, err := mail.ParseAddress(cfg.EmailFrom); err != nil {
+			l.errs = append(l.errs, errors.New("EMAIL_FROM não é um endereço válido (use \"Nome <a@b.com>\" ou a@b.com)"))
+		}
+	}
+}
+
+// avisarSeFaltaListaDeProxies cobre o https sem lista de proxies, que quase
+// sempre significa "esqueci de configurar": o deploy é atrás de um proxy, e sem
+// a lista todo o rate limit por IP e todo o ip_hash da auditoria colapsam num
+// valor só. É aviso e não erro porque um TLS terminado no próprio processo é
+// legítimo, só é raro.
+func avisarSeFaltaListaDeProxies(cfg *Config) {
 	if EhHTTPS(cfg.PublicBaseURL) && len(cfg.TrustedProxies) == 0 {
 		slog.Warn("TRUSTED_PROXIES vazio com PUBLIC_BASE_URL https: " +
 			"se houver proxy na frente, o rate limit por IP e o ip_hash da auditoria " +
 			"colapsam num valor único para todos os clientes")
 	}
+}
 
-	// Fail-closed: sem a lista, a sonda alcança as
-	// portas dos vizinhos da VPS. Lê o valor cru: um item inválido já tem o
-	// erro dele, e "ausente" ao lado esconderia o erro de digitação.
-	if exigeListaDaHospedagem(cfg.PublicBaseURL, cfg.Role) && getenv("PROBE_BLOCKED_CIDRS") == "" {
-		errs = append(errs, errors.New(erroListaDaHospedagemAusente))
+// exigirListaDaHospedagem é o fail-closed da sonda: sem a lista, ela alcança as
+// portas dos vizinhos da VPS. Lê o valor cru: um item inválido já tem o
+// erro dele, e "ausente" ao lado esconderia o erro de digitação.
+func (l *leitor) exigirListaDaHospedagem(cfg *Config) {
+	if exigeListaDaHospedagem(cfg.PublicBaseURL, cfg.Role) && l.getenv("PROBE_BLOCKED_CIDRS") == "" {
+		l.errs = append(l.errs, errors.New(erroListaDaHospedagemAusente))
 	}
+}
 
-	// As chaves de demo só valem numa máquina local (http e host de
-	// loopback). Um compose copiado para um servidor com http e um host de
-	// verdade, ou 0.0.0.0, também é produção.
-	if emProducao(cfg.PublicBaseURL) {
-		for _, k := range []struct {
-			nome  string
-			valor []byte
-		}{{"MASTER_KEY", cfg.MasterKey}, {"JWT_SECRET", cfg.JWTSecret}, {"IP_HASH_KEY", cfg.IPHashKey}} {
-			if chaveDeDemo(k.valor) {
-				errs = append(errs, fmt.Errorf("%s é uma chave de demonstração do compose.yaml, pública no repositório; "+
-					"ela só é aceita com PUBLIC_BASE_URL http em localhost ou num IP de loopback; "+
-					"gere uma com `openssl rand -base64 32`", k.nome))
-			}
+// recusarChavesDeDemo faz as chaves de demo só valerem numa máquina local (http
+// e host de loopback). Um compose copiado para um servidor com http e um host
+// de verdade, ou 0.0.0.0, também é produção.
+func (l *leitor) recusarChavesDeDemo(cfg *Config) {
+	if !emProducao(cfg.PublicBaseURL) {
+		return
+	}
+	for _, k := range []struct {
+		nome  string
+		valor []byte
+	}{{"MASTER_KEY", cfg.MasterKey}, {"JWT_SECRET", cfg.JWTSecret}, {"IP_HASH_KEY", cfg.IPHashKey}} {
+		if chaveDeDemo(k.valor) {
+			l.falha("%s é uma chave de demonstração do compose.yaml, pública no repositório; "+
+				"ela só é aceita com PUBLIC_BASE_URL http em localhost ou num IP de loopback; "+
+				"gere uma com `openssl rand -base64 32`", k.nome)
 		}
 	}
+}
 
-	switch lvl := strings.ToLower(opt("LOG_LEVEL", "info")); lvl {
+func (l *leitor) nivelDeLog() slog.Level {
+	switch lvl := strings.ToLower(l.opcional("LOG_LEVEL", "info")); lvl {
 	case "debug":
-		cfg.LogLevel = slog.LevelDebug
+		return slog.LevelDebug
 	case "info":
-		cfg.LogLevel = slog.LevelInfo
+		return slog.LevelInfo
 	case "warn":
-		cfg.LogLevel = slog.LevelWarn
+		return slog.LevelWarn
 	case "error":
-		cfg.LogLevel = slog.LevelError
+		return slog.LevelError
 	default:
-		errs = append(errs, fmt.Errorf("LOG_LEVEL inválido: %q (use debug, info, warn ou error)", lvl))
+		l.falha("LOG_LEVEL inválido: %q (use debug, info, warn ou error)", lvl)
+		return slog.LevelInfo
 	}
-
-	if len(errs) > 0 {
-		return nil, errors.Join(errs...)
-	}
-	return cfg, nil
 }
 
 // EhHTTPS diz se PUBLIC_BASE_URL (ou outra URL) usa o esquema https. O esquema

@@ -24,6 +24,7 @@ import (
 	"github.com/BipoXDXD/stillon/internal/storage"
 	"github.com/BipoXDXD/stillon/internal/storage/db"
 	"github.com/BipoXDXD/stillon/internal/targets"
+	"github.com/BipoXDXD/stillon/internal/targetstate"
 )
 
 // MaxInFlight é o teto global de sondas simultâneas (spec §6.2). Sem ele,
@@ -568,18 +569,16 @@ func (s *Scheduler) avaliar(ctx context.Context, q *db.Queries, a db.ClaimDueTar
 	return acao, nil
 }
 
-// fatorLacuna é quantos intervalos sem check bastam para a histerese
-// recomeçar (ver recomecarAposLacuna).
-const fatorLacuna = 3
-
 // lacunaMaxima é o maior intervalo entre dois checks em que as sequências
-// ainda se somam.
+// ainda se somam: o mesmo prazo em que o último check deixa de dizer algo
+// sobre o presente (targetstate.StaleIntervals), para o painel e a histerese
+// não discordarem sobre quando um alvo ficou sem dados.
 func lacunaMaxima(intervalSec int32) time.Duration {
-	return fatorLacuna * time.Duration(intervalSec) * time.Second
+	return targetstate.StaleIntervals * time.Duration(intervalSec) * time.Second
 }
 
-// recomecarAposLacuna zera os dois contadores quando o check chega mais de
-// fatorLacuna intervalos depois do último. Sem isso, um alvo com duas falhas
+// recomecarAposLacuna zera os dois contadores quando o check chega depois de
+// lacunaMaxima do último. Sem isso, um alvo com duas falhas
 // que ficou pausado (ou cujo sondador ficou fora do ar) uma semana abriria
 // incidente na primeira falha de volta, com started_at de uma semana atrás.
 // Open fica como veio do banco (é a linha em incidents que manda), e

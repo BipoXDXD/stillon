@@ -445,6 +445,39 @@ func TestRevokeSessionTakesTheUserLock(t *testing.T) {
 	}
 }
 
+// A família pode cair enquanto o encerramento espera a trava (a troca de senha
+// de outro aparelho derruba as outras). Sob a trava ele confere de novo: nada
+// é revogado nem auditado, e quem pediu recebe ErrSessionNotFound.
+func TestRevokeSessionRechecksTheFamilyUnderTheLock(t *testing.T) {
+	c := montar(t)
+	soltar := segurarTrava(t, c.pool, c.user)
+	fim := make(chan error, 1)
+	go func() {
+		fim <- c.svc.RevokeSession(context.Background(), c.user, c.atual, auth.Meta{IP: "203.0.113.9"})
+	}()
+	if esperou, err := esperarNaTravaDoUsuario(t, c.pool, c.user, fim); !esperou {
+		t.Fatalf("o encerramento não chegou à trava (terminou com %v)", err)
+	}
+	// Revogada por fora enquanto o encerramento espera a trava.
+	if _, err := c.pool.Exec(context.Background(),
+		`UPDATE sessions SET revoked_at = now() WHERE family_id = $1`, c.atual); err != nil {
+		t.Fatal(err)
+	}
+	soltar()
+
+	if err := <-fim; !errors.Is(err, account.ErrSessionNotFound) {
+		t.Fatalf("erro = %v, queria ErrSessionNotFound", err)
+	}
+	var n int
+	if err := c.pool.QueryRow(context.Background(),
+		`SELECT count(*) FROM audit_log WHERE user_id = $1 AND action = 'session.revoked'`, c.user).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Errorf("session.revoked auditado %d vez(es) para uma família que já estava morta", n)
+	}
+}
+
 // segredoPendente diz se há segredo TOTP gravado e se está confirmado.
 func segredoPendente(t *testing.T, c cenario) (temSegredo, confirmado bool) {
 	t.Helper()
