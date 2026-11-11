@@ -70,6 +70,13 @@ export function FormularioAlvo({
     try {
       await aoEnviar(v)
     } catch (err) {
+      // O teto de regras por host (409) é da regra: a seção abre antes do
+      // setError, porque o foco não entra num campo escondido.
+      if (err instanceof ApiError && err.code === 'content_rule_host_limit_reached') {
+        abrirSeErroNaRegra(['valorDaRegra'])
+        f.setError('valorDaRegra', { message: mensagemDe(err) }, { shouldFocus: true })
+        return
+      }
       // O 400 com fields vai para o campo certo; o resto, para o topo.
       if (err instanceof ApiError && err.fields.length) {
         const comCampo = err.fields.map((fe) => ({ ...fe, campo: campoDoErro(fe.field) }))

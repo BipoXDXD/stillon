@@ -25,6 +25,7 @@ func TestDeadlineMantemEnvelopeEErrosDeDominio(t *testing.T) {
 		{apierr.CodeValidation, 400, apierr.CodeValidation},
 		{apierr.CodeUnauthorized, 401, apierr.CodeUnauthorized},
 		{apierr.CodeTargetLimit, 409, apierr.CodeTargetLimit},
+		{apierr.CodeContentHostLimit, 409, apierr.CodeContentHostLimit},
 		{apierr.CodeScheduleUnsupported, 409, apierr.CodeScheduleUnsupported},
 		{apierr.CodeRateLimited, 429, apierr.CodeRateLimited},
 		{apierr.CodeDeliveryFailed, 502, apierr.CodeDeliveryFailed},

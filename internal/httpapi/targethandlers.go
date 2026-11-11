@@ -417,6 +417,8 @@ func (h *TargetHandlers) falhou(w http.ResponseWriter, r *http.Request, op strin
 		apierr.WriteError(w, r, apierr.CodeNotFound)
 	case errors.Is(err, targets.ErrLimitReached):
 		apierr.WriteError(w, r, apierr.CodeTargetLimit)
+	case errors.Is(err, targets.ErrContentHostLimit):
+		apierr.WriteError(w, r, apierr.CodeContentHostLimit)
 	case errors.As(err, &verr):
 		campos := make([]apierr.FieldError, 0, len(verr.Fields))
 		for _, f := range verr.Fields {

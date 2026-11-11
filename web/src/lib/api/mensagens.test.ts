@@ -3,7 +3,8 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
-import { mensagemDoCampo, textoDaCausa, textoDoErroDeCheck } from './mensagens'
+import { ApiError } from './http'
+import { mensagemDe, mensagemDoCampo, textoDaCausa, textoDoErroDeCheck } from './mensagens'
 
 // A lista de causas que o Go confere contra os prober.ErrorKind e as causas de
 // tarefa (internal/notify/causas_test.go). Um kind sem texto aqui cairia em
@@ -69,5 +70,11 @@ describe('regra de conteúdo', () => {
     ['content_rule.value', 'required', 'Obrigatório.'],
   ])('%s %s vira texto próprio', (campo, motivo, texto) => {
     expect(mensagemDoCampo(campo, motivo)).toBe(texto)
+  })
+
+  it('o 409 do teto de regras por host tem texto próprio, sem o host', () => {
+    expect(mensagemDe(new ApiError(409, 'content_rule_host_limit_reached', ''))).toBe(
+      'Limite de regras de conteúdo para este host atingido.',
+    )
   })
 })

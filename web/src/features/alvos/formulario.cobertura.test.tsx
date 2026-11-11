@@ -368,4 +368,43 @@ describe('formulário de alvo: regra de conteúdo em "Avançado"', () => {
     await waitFor(() => expect(r.falsa.corpos(PATCH)).toEqual([{ content_rule: null }]))
     expect(r.falsa.estado.alvos[0]!.content_rule).toBeNull()
   })
+
+  // D-T2: o 409 do teto de regras por host vai para o campo do valor, com a
+  // seção aberta, e não para o aviso do topo.
+  const TEXTO_DO_TETO = 'Limite de regras de conteúdo para este host atingido.'
+
+  async function conferirTetoNoValor() {
+    const valor = screen.getByLabelText(DEVE_APARECER)
+    await waitFor(() => expect(valor).toHaveFocus())
+    expect(avancado()).toHaveAttribute('open')
+    expect(screen.getByText(TEXTO_DO_TETO)).toBeVisible()
+    expect(valor).toHaveAccessibleDescription(expect.stringContaining(TEXTO_DO_TETO))
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(valor).toHaveValue('ok')
+    expect(screen.getByLabelText(VERIFICACAO)).toHaveValue('contains')
+  }
+
+  it('na criação, o 409 do teto por host abre "Avançado" e acusa o valor da regra', async () => {
+    const r = await montarCriacao()
+    await r.usuario.click(screen.getByText('Avançado'))
+    await r.usuario.selectOptions(screen.getByLabelText(VERIFICACAO), 'Contém')
+    await r.usuario.type(screen.getByLabelText(DEVE_APARECER), 'ok')
+    await r.usuario.click(screen.getByText('Avançado'))
+    expect(avancado()).not.toHaveAttribute('open')
+    r.falsa.estado.forcar.set('POST /targets', { status: 409, code: 'content_rule_host_limit_reached' })
+    await r.usuario.click(screen.getByRole('button', { name: 'Cadastrar' }))
+    await conferirTetoNoValor()
+  })
+
+  it('na edição, o 409 do teto por host abre "Avançado" e acusa o valor da regra', async () => {
+    const r = await montarEdicaoCom({})
+    await r.usuario.click(screen.getByText('Avançado'))
+    await r.usuario.selectOptions(screen.getByLabelText(VERIFICACAO), 'Contém')
+    await r.usuario.type(screen.getByLabelText(DEVE_APARECER), 'ok')
+    await r.usuario.click(screen.getByText('Avançado'))
+    expect(avancado()).not.toHaveAttribute('open')
+    r.falsa.estado.forcar.set(PATCH, { status: 409, code: 'content_rule_host_limit_reached' })
+    await r.usuario.click(screen.getByRole('button', { name: 'Salvar' }))
+    await conferirTetoNoValor()
+  })
 })
