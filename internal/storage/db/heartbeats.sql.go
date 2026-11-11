@@ -88,7 +88,7 @@ type ClaimHeartbeatsToCloseRow struct {
 
 // Com incidente aberto e saudável de novo, por um sucesso ou pela retomada
 // depois do início: prazo novo, sozinho, não fecha (spec de heartbeats, §5).
-// Pausado fica como está: sem avaliação, como o alvo pausado sem sonda (D13).
+// Pausado fica como está: sem avaliação, como o alvo pausado sem sonda.
 // Agendamento desconhecido (sem período e sem cron) não tem prazo confiável, e o
 // sucesso basta: o ping nessa linha nunca move o prazo.
 func (q *Queries) ClaimHeartbeatsToClose(ctx context.Context, arg ClaimHeartbeatsToCloseParams) ([]ClaimHeartbeatsToCloseRow, error) {
@@ -144,11 +144,11 @@ type ClaimHeartbeatsToOpenRow struct {
 	FailingSince *time.Time
 }
 
-// Avaliador (D5): rodam sob InProberTx, com FOR UPDATE OF h SKIP LOCKED no
+// Avaliador: rodam sob InProberTx, com FOR UPDATE OF h SKIP LOCKED no
 // molde de ClaimDueTargets. Dois avaliadores pegam linhas diferentes, e o
 // índice único parcial é a garantia final de um incidente aberto por vez.
 // Sem incidente aberto, atrasado ou em falha, e fora do intervalo mínimo
-// entre aberturas (D11): quem está nele fica para um tique seguinte.
+// entre aberturas: quem está nele fica para um tique seguinte.
 // O OR não usa heartbeats_due_idx, e fica assim por medição: separar em UNION
 // piorou a consulta (spec de heartbeats, §4).
 // Sem período e sem cron, a linha é de uma versão posterior com agendamento que
@@ -230,7 +230,7 @@ type DeleteHeartbeatEventsParams struct {
 	HeartbeatID uuid.UUID
 }
 
-// Limpar o log (SP1): só os eventos; last_*, prazo e incidentes ficam.
+// Limpar o log: só os eventos; last_*, prazo e incidentes ficam.
 func (q *Queries) DeleteHeartbeatEvents(ctx context.Context, arg DeleteHeartbeatEventsParams) (int64, error) {
 	result, err := q.db.Exec(ctx, deleteHeartbeatEvents, arg.UserID, arg.HeartbeatID)
 	if err != nil {
@@ -641,7 +641,7 @@ type ListHeartbeatTagsParams struct {
 	HeartbeatID uuid.UUID
 }
 
-// Tags (paridade, PR 3). As leituras saem ordenadas pela tag, e a do dono serve
+// Tags. As leituras saem ordenadas pela tag, e a do dono serve
 // a lista sem uma consulta por heartbeat, como as de targets.sql.
 func (q *Queries) ListHeartbeatTags(ctx context.Context, arg ListHeartbeatTagsParams) ([]string, error) {
 	rows, err := q.db.Query(ctx, listHeartbeatTags, arg.UserID, arg.HeartbeatID)
@@ -767,7 +767,7 @@ SELECT id, user_id, name, ping_token_hash, period_sec, cron_expr, timezone,
 `
 
 // A trava serializa pings simultâneos do mesmo token: o segundo lê o estado
-// que o primeiro gravou, e é isso que faz a repetição ter um efeito só (D9).
+// que o primeiro gravou, e é isso que faz a repetição ter um efeito só.
 // (O nome evita "token": o gosec lê a constante gerada como credencial
 // embutida, G101.)
 func (q *Queries) LockHeartbeatForPing(ctx context.Context, pingTokenHash []byte) (Heartbeat, error) {
@@ -920,7 +920,7 @@ type SetHeartbeatPingHashParams struct {
 	PingTokenHash []byte
 }
 
-// Revogar é isto: o hash antigo deixa de casar com qualquer linha (D8).
+// Revogar é isto: o hash antigo deixa de casar com qualquer linha.
 func (q *Queries) SetHeartbeatPingHash(ctx context.Context, arg SetHeartbeatPingHashParams) error {
 	_, err := q.db.Exec(ctx, setHeartbeatPingHash, arg.UserID, arg.ID, arg.PingTokenHash)
 	return err
@@ -940,7 +940,7 @@ type TrimHeartbeatEventsParams struct {
 	MaxEvents   int32
 }
 
-// O teto do log (D15), na transação do ping: apaga do evento de posição
+// O teto do log, na transação do ping: apaga do evento de posição
 // max_events + 1, do mais novo para o mais velho, para trás. O id é UUIDv7,
 // e o índice (heartbeat_id, id DESC) resolve os dois lados.
 func (q *Queries) TrimHeartbeatEvents(ctx context.Context, arg TrimHeartbeatEventsParams) error {

@@ -125,7 +125,7 @@ type GetTargetForUpdateParams struct {
 
 // FOR UPDATE, e não FOR NO KEY UPDATE: a gravação do sondador
 // (LockTargetProbeSpec, FOR KEY SHARE) precisa esperar o PATCH inteiro para
-// ver a URL nova (E2 da revisão de 2026-10-14).
+// ver a URL nova.
 func (q *Queries) GetTargetForUpdate(ctx context.Context, arg GetTargetForUpdateParams) (Target, error) {
 	row := q.db.QueryRow(ctx, getTargetForUpdate, arg.UserID, arg.ID)
 	var i Target
@@ -272,7 +272,7 @@ type LatestUserRollupBucketParams struct {
 // rollups recentes faria o Postgres varrer o índice de bucket da instância
 // inteira, testando a política linha a linha. Só conta rollup ANTES de before
 // (a hora corrente): um gravado no futuro por relógio adiantado esconderia as
-// horas ainda não consolidadas (C8, a mesma guarda de
+// horas ainda não consolidadas (a mesma guarda de
 // LatestRollupBucketBefore). Sem rollup, a época Unix.
 func (q *Queries) LatestUserRollupBucket(ctx context.Context, arg LatestUserRollupBucketParams) (time.Time, error) {
 	row := q.db.QueryRow(ctx, latestUserRollupBucket, arg.Before, arg.UserID)
@@ -347,7 +347,7 @@ type ListContentRuleTargetURLsRow struct {
 	URL string
 }
 
-// O teto de regras por host (D-T2): as URLs dos alvos do dono com regra,
+// O teto de regras por host: as URLs dos alvos do dono com regra,
 // lidas sob LockUserTargets. A chave do host sai em Go (IDNA).
 func (q *Queries) ListContentRuleTargetURLs(ctx context.Context, userID uuid.UUID) ([]ListContentRuleTargetURLsRow, error) {
 	rows, err := q.db.Query(ctx, listContentRuleTargetURLs, userID)
@@ -570,7 +570,7 @@ type ListTargetSummariesRow struct {
 	OpenIncidentID *uuid.UUID
 }
 
-// GET /targets/summary (Plano 5). Todas rodam sob InUserTx E filtram por
+// GET /targets/summary. Todas rodam sob InUserTx E filtram por
 // user_id, como as de cima.
 // Os alvos do dono na ordem de GET /targets, com o último check e o incidente
 // aberto (o índice único parcial garante no máximo um). Alvo sem check volta
@@ -758,7 +758,7 @@ const lockUserTargets = `-- name: LockUserTargets :exec
 SELECT pg_advisory_xact_lock(hashtextextended('stillon.targets:' || $1::uuid::text, 0))
 `
 
-// O teto de alvos por usuário (Plano 5): contar e inserir sob esta trava.
+// O teto de alvos por usuário: contar e inserir sob esta trava.
 // Sem ela, dois POST simultâneos passariam os dois pela contagem.
 func (q *Queries) LockUserTargets(ctx context.Context, userID uuid.UUID) error {
 	_, err := q.db.Exec(ctx, lockUserTargets, userID)
@@ -778,7 +778,7 @@ type ResetTargetHealthParams struct {
 	UserID   uuid.UUID
 }
 
-// C4 (Plano 10): trocar a URL, o método ou a regra de conteúdo zera a
+// Trocar a URL, o método ou a regra de conteúdo zera a
 // histerese (a linha volta a "sem dados"). last_checked_at fica: é a guarda
 // de check fora de ordem do detector. O EXISTS filtra pelo dono, como o resto
 // deste arquivo, além da RLS de target_health.

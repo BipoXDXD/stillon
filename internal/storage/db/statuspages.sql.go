@@ -177,7 +177,7 @@ type ListPublicDailyUptimeRow struct {
 // Uptime diário (UTC) dos alvos da página: os rollups de [since, cut) mais
 // os checks brutos de [cut, until), no corte do pacote rollupcut (o mesmo do
 // dashboard). Sem os brutos, a página ficava até ~1h15 atrasada e cega à
-// queda em curso (C4 da revisão).
+// queda em curso.
 func (q *Queries) ListPublicDailyUptime(ctx context.Context, arg ListPublicDailyUptimeParams) ([]ListPublicDailyUptimeRow, error) {
 	rows, err := q.db.Query(ctx, listPublicDailyUptime,
 		arg.PageID,
@@ -232,7 +232,7 @@ type ListPublicIncidentsRow struct {
 // Incidentes resolvidos dos alvos da página que tocam a janela [since,
 // agora): resolvidos depois de since, mesmo que tenham começado antes. Filtrar
 // pelo início deixava sem explicação o dia vermelho da queda que atravessa o
-// começo da barra (C9). Só o nome de exibição, o início e o fim; a causa não
+// começo da barra. Só o nome de exibição, o início e o fim; a causa não
 // sai (spec §5.6).
 func (q *Queries) ListPublicIncidents(ctx context.Context, arg ListPublicIncidentsParams) ([]ListPublicIncidentsRow, error) {
 	rows, err := q.db.Query(ctx, listPublicIncidents, arg.PageID, arg.Since, arg.MaxRows)
@@ -410,7 +410,7 @@ SELECT id FROM status_pages WHERE user_id = $1 FOR UPDATE
 `
 
 // A trava do PATCH: sem ela, dois PATCH simultâneos leem a mesma versão, e
-// o segundo regrava os campos que o primeiro mudou (achado da revisão).
+// o segundo regrava os campos que o primeiro mudou.
 func (q *Queries) LockStatusPage(ctx context.Context, userID uuid.UUID) (uuid.UUID, error) {
 	row := q.db.QueryRow(ctx, lockStatusPage, userID)
 	var id uuid.UUID

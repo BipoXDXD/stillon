@@ -17,7 +17,7 @@ const countUsers = `-- name: CountUsers :one
 SELECT count(*) FROM users
 `
 
-// Conta do usuário (Plano 5). users não tem RLS (D7 do Plano 2): o login a
+// Conta do usuário. users não tem RLS: o login a
 // consulta por e-mail antes de existir usuário na transação. Toda query daqui
 // que parte de um usuário recebe o id dele.
 func (q *Queries) CountUsers(ctx context.Context) (int64, error) {
@@ -67,10 +67,10 @@ const getUserHash = `-- name: GetUserHash :one
 SELECT password_hash FROM users WHERE id = $1
 `
 
-// O hash atual, lido por auth.Manager.Issue SOB a trava do usuário (D1): a
+// O hash atual, lido por auth.Manager.Issue SOB a trava do usuário: a
 // sessão só nasce se a senha verificada no login ainda é a do usuário. Sem
 // isto, um login que conferiu a senha ANTIGA abria sessão depois de um
-// set-password ou de uma troca de senha, e ela sobrevivia (Task 11).
+// set-password ou de uma troca de senha, e ela sobrevivia.
 func (q *Queries) GetUserHash(ctx context.Context, id uuid.UUID) (string, error) {
 	row := q.db.QueryRow(ctx, getUserHash, id)
 	var password_hash string
@@ -105,7 +105,7 @@ type InsertAuditEntryParams struct {
 }
 
 // O registro de auditoria com entidade. O insertAudit do auth (sem entidade)
-// continua à mão até o R2.
+// continua escrito à mão em internal/auth/store.go.
 func (q *Queries) InsertAuditEntry(ctx context.Context, arg InsertAuditEntryParams) error {
 	_, err := q.db.Exec(ctx, insertAuditEntry,
 		arg.ID,
@@ -145,7 +145,7 @@ SELECT pg_advisory_xact_lock(hashtextextended('stillon.user_create', 0))
 `
 
 // Serializa dois `stillon user create` simultâneos: sem ela, os dois contam
-// zero usuários e os dois criam (D9 do Plano 5).
+// zero usuários e os dois criam.
 func (q *Queries) LockUserCreation(ctx context.Context) error {
 	_, err := q.db.Exec(ctx, lockUserCreation)
 	return err
@@ -165,7 +165,7 @@ type RehashUserParams struct {
 // O rehash do login (parâmetros do Argon2id subiram) é um compare-and-swap:
 // sem ele, o login que verificou a senha ANTIGA regravava o hash dela por cima
 // de um set-password concorrente, e desfazia a redefinição. Não mexe no
-// bloqueio: com segundo fator, quem zera é o /totp/verify (R40).
+// bloqueio: com segundo fator, quem zera é o /totp/verify.
 func (q *Queries) RehashUser(ctx context.Context, arg RehashUserParams) (int64, error) {
 	result, err := q.db.Exec(ctx, rehashUser, arg.NewHash, arg.ID, arg.OldHash)
 	if err != nil {
@@ -192,9 +192,9 @@ type ReplaceUserHashParams struct {
 //
 // Um cadastro de 2FA pendente (segredo sem confirmação) cai junto: quem o
 // iniciou pode ser o invasor que a redefinição está expulsando, e ele o
-// confirmaria com o autenticador dele. O 2FA confirmado fica (D10). Task 11.
+// confirmaria com o autenticador dele. O 2FA confirmado fica.
 //
-// Uma troca de autenticador em andamento (totp_pending_secret_enc, Plano 9)
+// Uma troca de autenticador em andamento (totp_pending_secret_enc)
 // cai pelo mesmo motivo: o pendente não tem prazo, quem o iniciou pode ser o
 // invasor, e uma sessão roubada o confirmaria depois, ficando com o 2FA.
 // Trocar a senha é a reação do dono à suspeita, e mata a troca. A família que
@@ -214,13 +214,13 @@ UPDATE users SET totp_secret_enc = NULL, totp_confirmed_at = NULL, totp_last_tim
  WHERE id = $1 AND totp_confirmed_at IS NOT NULL
 `
 
-// stillon user reset-2fa (Plano 9, §3.1): desliga o 2FA inteiro, inclusive a
+// stillon user reset-2fa: desliga o 2FA inteiro, inclusive a
 // troca de autenticador pendente. A guarda na WHERE torna o comando
 // idempotente: sem 2FA confirmado, nenhuma linha muda, e quem chama não
 // encerra sessão nem audita. A marca do desafio (totp_challenge_mark) fica:
 // ela só recusa desafios velhos, e zerá-la não ajuda ninguém.
 //
-// Tira também o bloqueio, como o set-password (A6 do Plano 10): quem roda o
+// Tira também o bloqueio, como o set-password: quem roda o
 // comando é o operador, a identidade foi provada fora da API, e o dono que
 // perdeu o autenticador costuma chegar aqui com a conta travada pelos chutes
 // dele mesmo. Com o 2FA já desligado, nada muda, nem o bloqueio.
