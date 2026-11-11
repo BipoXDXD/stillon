@@ -108,6 +108,7 @@ STILLON_BACKUP_PASSWORD=$(openssl rand -hex 32)
 MASTER_KEY=$(b64)
 JWT_SECRET=$(b64)
 IP_HASH_KEY=$IP_HASH_KEY
+PROBE_BLOCKED_CIDRS=192.0.2.10/32,2001:db8::/64
 RESEND_API_KEY=
 EMAIL_FROM=
 TESTE_VPS_HTTP=$HTTP
@@ -309,7 +310,7 @@ grep -q -- '-demo-\|ZGVtby12aWdpbHVtZS' "$RAIZ/deploy/vps/compose.prod.yaml" && 
 # com o .env do teste, cada segredo é o valor gerado acima. Um literal
 # qualquer (POSTGRES_PASSWORD: postgres, uma MASTER_KEY fixa) fica diferente.
 env_do_teste() { sed -n "s/^$1=//p" "$DIR/.env"; }
-for par in app:MASTER_KEY app:JWT_SECRET app:IP_HASH_KEY db:POSTGRES_PASSWORD db:STILLON_APP_PASSWORD db:STILLON_BACKUP_PASSWORD; do
+for par in app:MASTER_KEY app:JWT_SECRET app:IP_HASH_KEY app:PROBE_BLOCKED_CIDRS db:POSTGRES_PASSWORD db:STILLON_APP_PASSWORD db:STILLON_BACKUP_PASSWORD; do
     s=${par%%:*} v=${par#*:}
     [ "$(q ".services.$s.environment.$v // empty")" = "$(env_do_teste "$v")" ] ||
         falhar "o $v do $s não é o do .env (valor escrito no compose.prod.yaml?)"
