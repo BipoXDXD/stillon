@@ -83,7 +83,10 @@ func TestIDMalformadoE404EmTodaRotaComID(t *testing.T) {
 		"PATCH /heartbeats/{id}":                            batidas.Update,
 		"DELETE /heartbeats/{id}":                           batidas.Delete,
 		"POST /heartbeats/{id}/token/rotate":                batidas.RotateToken,
+		"POST /heartbeats/{id}/clone":                       batidas.Clone,
+		"POST /heartbeats/{id}/ping-now":                    batidas.PingNow,
 		"GET /heartbeats/{id}/events":                       batidas.Events,
+		"POST /heartbeats/{id}/events/clear":                batidas.ClearEvents,
 		"GET /heartbeats/{id}/incidents":                    batidas.Incidents,
 		"POST /heartbeats/{id}/incidents/{incident_id}/ack": batidas.AckIncident,
 		"DELETE /channels/{id}":                             canais.Delete,
@@ -91,7 +94,8 @@ func TestIDMalformadoE404EmTodaRotaComID(t *testing.T) {
 		"POST /channels/{id}/verify/resend":                 canais.Resend,
 		"PATCH /status-pages/{id}":                          paginas.Update,
 	}
-	ids := []string{"nao-e-uuid", "", "a\x00b", "' OR 1=1--", strings.Repeat("a", 4096)}
+	// "\x00" é o %00 depois de o roteador decodificar o caminho.
+	ids := []string{"nao-e-uuid", "", "\x00", "a\x00b", "' OR 1=1--", strings.Repeat("a", 4096)}
 	for rota, h := range rotas {
 		t.Run(rota, func(t *testing.T) {
 			for _, id := range ids {

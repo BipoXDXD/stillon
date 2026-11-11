@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -34,6 +36,26 @@ func servidor(t *testing.T, h http.HandlerFunc) (*httptest.Server, *http.Client)
 
 func especificacao(url string) Spec {
 	return Spec{URL: url, Method: http.MethodGet, Timeout: 2 * time.Second, ExpectedStatus: http.StatusOK}
+}
+
+// Result não tem campo para o corpo nem para mensagem de erro (spec §4.2,
+// §5.2): só o resultado sai de Probe. Campo novo entra aqui de propósito.
+func TestResultHasNoRoomForTheBody(t *testing.T) {
+	tipo := reflect.TypeFor[Result]()
+	campos := make([]string, 0, tipo.NumField())
+	for campo := range tipo.Fields() {
+		campos = append(campos, campo.Name+" "+campo.Type.String())
+	}
+	quer := []string{
+		"Status prober.Status",
+		"Latency time.Duration",
+		"StatusCode int",
+		"ErrorKind prober.ErrorKind",
+		"CertNotAfter time.Time",
+	}
+	if !slices.Equal(campos, quer) {
+		t.Errorf("campos de Result = %v, queria %v", campos, quer)
+	}
 }
 
 func TestProbeUp(t *testing.T) {

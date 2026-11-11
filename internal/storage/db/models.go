@@ -69,6 +69,8 @@ type Heartbeat struct {
 	ResumedAt      *time.Time
 	LastRuntimeMS  *int64
 	Description    string
+	LastRunID      *uuid.UUID
+	PingResumes    bool
 }
 
 type HeartbeatEvent struct {
@@ -78,6 +80,8 @@ type HeartbeatEvent struct {
 	Kind        string
 	RuntimeMS   *int64
 	ExitCode    *int16
+	RunID       *uuid.UUID
+	Source      string
 }
 
 type HeartbeatTag struct {
@@ -168,6 +172,7 @@ type Target struct {
 	Enabled             bool
 	NextRunAt           time.Time
 	CreatedAt           time.Time
+	TlsWarn             bool
 }
 
 type TargetHealth struct {
@@ -176,6 +181,12 @@ type TargetHealth struct {
 	ConsecutiveSuccesses int32
 	StreakSince          *time.Time
 	LastCheckedAt        *time.Time
+}
+
+type TargetTLS struct {
+	TargetID   uuid.UUID
+	NotAfter   time.Time
+	ObservedAt time.Time
 }
 
 type TargetTag struct {

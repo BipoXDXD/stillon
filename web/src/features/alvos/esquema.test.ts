@@ -206,7 +206,8 @@ describe('corpos e valores públicos do formulário', () => {
     const a: Alvo = {
       id: 'alvo-1', name: 'Site', url: 'https://site.exemplo.com/', method: 'HEAD',
       interval_sec: 42, timeout_ms: 2000, expected_status: 204, degraded_threshold_ms: limiar,
-      enabled: false, header_names: ['Authorization'], tags: ['b', 'a'], created_at: '2026-10-05T00:00:00Z',
+      enabled: false, header_names: ['Authorization'], tags: ['b', 'a'], tls_warn: true, tls: null,
+      created_at: '2026-10-05T00:00:00Z',
     }
     expect(valoresDe(a)).toEqual({
       name: 'Site', url: 'https://site.exemplo.com/', method: 'HEAD', intervaloEscolhido: 'outro',

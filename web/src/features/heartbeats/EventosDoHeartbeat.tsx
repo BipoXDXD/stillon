@@ -1,4 +1,4 @@
-import { Check, Play, X, type LucideIcon } from 'lucide-react'
+import { Check, CircleDashed, FileText, Play, X, type LucideIcon } from 'lucide-react'
 import { useRef } from 'react'
 import { EstadoDaConsulta } from '@/components/EstadoDaConsulta'
 import { Selo, type TomDoSelo } from '@/components/SeloDeEstado'
@@ -13,6 +13,10 @@ const TIPOS: Record<EventoDeHeartbeat['kind'], { texto: string; tom: TomDoSelo; 
   start: { texto: 'Início', tom: 'primaria', Icone: Play },
   success: { texto: 'Sucesso', tom: 'no-ar', Icone: Check },
   fail: { texto: 'Falha', tom: 'fora', Icone: X },
+  // O /log não muda o estado da tarefa: neutro.
+  log: { texto: 'Registro', tom: 'sem-dados', Icone: FileText },
+  // Um tipo de sinal de versão posterior do servidor: neutro, como o "Sem dados".
+  unknown: { texto: 'Outro sinal', tom: 'sem-dados', Icone: CircleDashed },
 }
 
 export function EventosDoHeartbeat({ id }: { id: string }) {
@@ -55,6 +59,9 @@ export function EventosDoHeartbeat({ id }: { id: string }) {
   )
 }
 
+// O primeiro bloco do rid basta para casar início e fim de uma execução no log.
+const TAMANHO_DA_EXECUCAO = 8
+
 function Evento({ evento }: { evento: EventoDeHeartbeat }) {
   const { texto, tom, Icone } = TIPOS[evento.kind]
   return (
@@ -65,6 +72,8 @@ function Evento({ evento }: { evento: EventoDeHeartbeat }) {
       <span className="text-sm">{dataHora(evento.at)}</span>
       {evento.runtime_ms !== null && <span className="text-meta text-suave">levou {tempoDeExecucao(evento.runtime_ms)}</span>}
       {evento.exit_code !== null && <span className="text-meta text-suave">código de saída {evento.exit_code}</span>}
+      {evento.run_id !== null && <span className="text-meta text-suave">{`execução ${evento.run_id.slice(0, TAMANHO_DA_EXECUCAO)}`}</span>}
+      {evento.source === 'panel' && <span className="text-meta text-suave">pelo painel</span>}
     </li>
   )
 }

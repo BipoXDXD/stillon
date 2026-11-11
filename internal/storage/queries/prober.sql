@@ -53,3 +53,16 @@ SELECT ensure_checks_partition(sqlc.arg(month)::date);
 -- no WHERE, porque sem linha a pausa se confundiria com o alvo apagado.
 -- name: LockTargetProbeSpec :one
 SELECT url, method, enabled FROM targets WHERE id = $1 FOR KEY SHARE;
+
+-- Validade guardada do pior certificado visto no alvo (spec §5.2). Sem linha:
+-- nenhuma leitura ainda. Quem decide se a leitura nova substitui é
+-- prober.substituirValidade; a gravação corre depois da trava da histerese,
+-- que serializa duas sondas do mesmo alvo.
+-- name: GetTargetTLS :one
+SELECT not_after, observed_at FROM target_tls WHERE target_id = $1;
+
+-- name: SaveTargetTLS :exec
+INSERT INTO target_tls (target_id, not_after, observed_at)
+VALUES ($1, $2, $3)
+ON CONFLICT (target_id) DO UPDATE
+   SET not_after = EXCLUDED.not_after, observed_at = EXCLUDED.observed_at;
