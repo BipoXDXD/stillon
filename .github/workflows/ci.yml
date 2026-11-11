@@ -227,7 +227,7 @@ jobs:
           shellcheck --version
           shellcheck scripts/docker-build.sh
           shellcheck deploy/ci/*.sh deploy/vps/stillon-entrada deploy/vps/vigia.sh \
-            deploy/vps/initdb.sh deploy/backup/backup.sh
+            deploy/vps/initdb.sh deploy/backup/backup.sh deploy/coolify/release/*.sh
       - name: checagens dos workflows
         run: sh deploy/ci/checar-workflows.sh
       - name: testes do checar-workflows
