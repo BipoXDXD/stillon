@@ -33,8 +33,9 @@ const (
 // app.json interpola, com valores sintéticos válidos. Os valores reais são
 // segredo e ficam só no recurso. Um nome que o app.json passe a interpolar e
 // que não esteja aqui reprova: antes de incluí-lo, confira que ele já está
-// cadastrado no recurso. O e-mail fica desligado (as duas vazias), o que o
-// Load aceita.
+// cadastrado no recurso. O e-mail fica ligado, como em produção (o Resend
+// está ativo no recurso), para o teste exercitar as regras que o Load só
+// aplica com e-mail.
 func variaveisDoRecurso() map[string]string {
 	chave := func(semente byte) string {
 		return base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{semente}, keyLen))
@@ -46,8 +47,8 @@ func variaveisDoRecurso() map[string]string {
 		"JWT_SECRET":           chave('j'),
 		"IP_HASH_KEY":          chave('i'),
 		"PROBE_BLOCKED_CIDRS":  "203.0.113.10,2001:db8::/64",
-		"EMAIL_FROM":           "",
-		"RESEND_API_KEY":       "",
+		"EMAIL_FROM":           "StillOn <alertas@exemplo.test>",
+		"RESEND_API_KEY":       "re_sintetico_do_teste",
 	}
 }
 
@@ -69,7 +70,7 @@ func TestOAppDesteCommitSobeNaInfraestruturaFixada(t *testing.T) {
 func TestOAppDesteCommitSobeComOManifestoDaArvore(t *testing.T) {
 	manifesto, err := os.ReadFile("../../" + manifestoNoRepo)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("lendo %s: %v", manifestoNoRepo, err)
 	}
 	if err := carregarComOManifesto(manifesto, variaveisDoRecurso()); err != nil {
 		t.Fatalf("o app não sobe com o %s desta árvore:\n%v", manifestoNoRepo, err)
@@ -92,7 +93,7 @@ func TestManifestoSemAVariavelExigidaReprova(t *testing.T) {
 		}}}}`)
 
 	err := carregarComOManifesto(manifesto, variaveisDoRecurso())
-	if err == nil || !strings.Contains(err.Error(), "variável obrigatória ausente em produção: PROBE_BLOCKED_CIDRS") {
+	if err == nil || !strings.Contains(err.Error(), erroListaDaHospedagemAusente) {
 		t.Fatalf("erro = %v, queria a recusa de PROBE_BLOCKED_CIDRS", err)
 	}
 }
@@ -115,6 +116,11 @@ func TestInterpolacaoDoManifesto(t *testing.T) {
 		{"ausente sem padrão", "${NOVA}", "", "variaveisDoRecurso"},
 		{"sintaxe desconhecida", "${A:+x}", "", "sintaxe"},
 		{"sem chaves", "$A", "", "sintaxe"},
+		{"padrão aninhado", "${A:-${B}}", "", "sintaxe"},
+		{"mensagem com interpolação", "${A:?veja ${B}}", "", "sintaxe"},
+		{"chave aberta no padrão", "${A:-{x}", "", "sintaxe"},
+		{"chave fechando sobrando", "${A:?msg}}", "", "sintaxe"},
+		{"chave fechando solta", "x}", "", "sintaxe"},
 	}
 	for _, c := range casos {
 		t.Run(c.nome, func(t *testing.T) {
@@ -220,15 +226,19 @@ func carregarComOManifesto(manifesto []byte, recurso map[string]string) error {
 }
 
 // interpolacao cobre a sintaxe do Compose que o app.json usa: $$, ${X},
-// ${X:?msg} e ${X:-padrão}. Qualquer outro "$" reprova, para o teste não
-// aceitar em silêncio uma forma que ele não sabe renderizar.
+// ${X:?msg} e ${X:-padrão}, sem aninhar. Qualquer outro "$", um "{" dentro do
+// msg ou do padrão e um "}" sobrando reprovam, para o teste não aceitar em
+// silêncio uma forma que ele não sabe renderizar.
 var interpolacao = regexp.MustCompile(`\$\$|\$\{([A-Za-z_][A-Za-z0-9_]*)(?:(:\?|:-)([^}]*))?\}`)
 
 func interpolar(bruto string, recurso map[string]string) (string, error) {
+	if err := recusarSintaxeNaoSuportada(bruto); err != nil {
+		return "", err
+	}
 	var erro error
 	saida := interpolacao.ReplaceAllStringFunc(bruto, func(trecho string) string {
 		if trecho == "$$" {
-			return "\x00" // sentinela: volta a ser "$" depois da checagem de sobras
+			return "$"
 		}
 		partes := interpolacao.FindStringSubmatch(trecho)
 		nome, operador, resto := partes[1], partes[2], partes[3]
@@ -252,10 +262,41 @@ func interpolar(bruto string, recurso map[string]string) (string, error) {
 	if erro != nil {
 		return "", erro
 	}
-	if strings.Contains(saida, "$") {
-		return "", fmt.Errorf("sintaxe de interpolação não suportada em %q", bruto)
+	return saida, nil
+}
+
+// recusarSintaxeNaoSuportada confere o modelo, não a saída: um valor do
+// recurso pode conter "$" ou chaves sem que isso seja sintaxe.
+func recusarSintaxeNaoSuportada(bruto string) error {
+	for _, partes := range interpolacao.FindAllStringSubmatch(bruto, -1) {
+		if resto := partes[3]; strings.ContainsAny(resto, "${") {
+			return fmt.Errorf("sintaxe de interpolação não suportada (aninhada) em %q", bruto)
+		}
 	}
-	return strings.ReplaceAll(saida, "\x00", "$"), nil
+	sobra := interpolacao.ReplaceAllString(bruto, "")
+	if strings.Contains(sobra, "$") || temChaveFechandoSolta(sobra) {
+		return fmt.Errorf("sintaxe de interpolação não suportada em %q", bruto)
+	}
+	return nil
+}
+
+// temChaveFechandoSolta acusa um "}" sem "{" literal antes dele: o resto de um
+// ${...} aninhado ou digitado a mais. Chaves literais pareadas, como as de
+// "$${A}", passam.
+func temChaveFechandoSolta(literal string) bool {
+	abertas := 0
+	for _, r := range literal {
+		switch r {
+		case '{':
+			abertas++
+		case '}':
+			if abertas == 0 {
+				return true
+			}
+			abertas--
+		}
+	}
+	return false
 }
 
 func papelDoComando(comando []string) (string, error) {

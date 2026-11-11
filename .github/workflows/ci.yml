@@ -129,7 +129,12 @@ jobs:
         # O checkout é raso; o TestOAppDesteCommitSobeNaInfraestruturaFixada lê
         # o app.json do commit fixado no recurso do Coolify (ação 2 do
         # postmortem de 2026-11-10). O repositório é público: dispensa token.
-        run: git fetch --no-tags --depth=1 origin "$(cat deploy/coolify/infra-fixada)"
+        # A atribuição numa linha própria derruba o passo sob bash -e se o
+        # arquivo faltar; o teste -n recusa o arquivo vazio, que buscaria o HEAD.
+        run: |
+          sha="$(cat deploy/coolify/infra-fixada)"
+          test -n "$sha" || { echo "::error::deploy/coolify/infra-fixada está vazio"; exit 1; }
+          git fetch --no-tags --depth=1 origin "$sha"
 
       - name: test
         # VM/daemon local exclusivo deste job: só este comando cria fixtures.
