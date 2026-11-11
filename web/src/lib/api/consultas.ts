@@ -10,6 +10,9 @@ const MS_DA_PREVIA = 60_000
 export const chaves = {
   me: ['me'] as const,
   previaDoCron: (expr: string, timezone: string) => ['previa-do-cron', expr, timezone] as const,
+  // Prefixos: invalidar um deles alcança tudo que está abaixo.
+  todosOsAlvos: ['targets'] as const,
+  todosOsIncidentes: ['incidents'] as const,
   resumo: ['targets', 'summary'] as const,
   // Abaixo da chave do resumo: quem invalida o resumo invalida as duas.
   resumoFiltrado: (f: FiltroDoResumo) => ['targets', 'summary', f.tags, f.estados] as const,

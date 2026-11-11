@@ -13,7 +13,7 @@ import { Botao, BotaoQueSome, TITULO_DA_TELA } from '@/components/ui/botao'
 import { Campo, Entrada, ErroDoFormulario, Opcao } from '@/components/ui/campo'
 import { estiloDeCartao } from '@/components/ui/cartao'
 import { Confirmar, Dialogo } from '@/components/ui/dialogo'
-import { useCanais } from '@/lib/api/consultas'
+import { chaves, useCanais } from '@/lib/api/consultas'
 import { ApiError } from '@/lib/api/http'
 import { mensagemDe, mensagemDoCampo, textoDoErroDeCanal } from '@/lib/api/mensagens'
 import type { Canal } from '@/lib/api/schemas'
@@ -191,7 +191,7 @@ export function PaginaCanais() {
   const emVoo = useRef(new Set<string>())
   const [alternando, setAlternando] = useState<ReadonlySet<string>>(new Set())
 
-  const recarregar = () => qc.invalidateQueries({ queryKey: ['channels'] })
+  const recarregar = () => qc.invalidateQueries({ queryKey: chaves.canais })
 
   // O canal mudou em outra aba: a lista na tela está velha.
   async function listaVelha(e: unknown): Promise<boolean> {
