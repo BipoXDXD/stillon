@@ -98,8 +98,7 @@ type Config struct {
 	// requisição, como o do Fly. Um proxy genérico (o Caddy, por padrão)
 	// repassa o valor que o cliente mandou, e a origem confiável não prova
 	// que foi o proxy que o escreveu: qualquer um escolheria o próprio IP em
-	// todo limitador e no ip_hash. Atrás do Caddy, deixe vazio (B4 do Plano
-	// 10).
+	// todo limitador e no ip_hash. Atrás do Caddy, deixe vazio.
 	ClientIPHeader string
 	LogLevel       slog.Level
 	ShutdownGrace  time.Duration
@@ -107,12 +106,12 @@ type Config struct {
 	// /p/. Não vem do ambiente: o Load fixa requestTimeout e só os testes,
 	// que montam o Config à mão, escolhem outro.
 	RequestTimeout time.Duration
-	// Argon2MaxConcurrent é o teto de Argon2id simultâneos (A1 do Plano 10):
+	// Argon2MaxConcurrent é o teto de Argon2id simultâneos:
 	// cada um custa 64 MiB. ARGON2_MAX_CONCURRENT, de 1 a 64; sem a variável,
 	// min(NumCPU, 4).
 	Argon2MaxConcurrent int
 	// ContentRulesPerHost é o teto de alvos com regra de conteúdo por host de
-	// destino, por usuário (D-T3): limita o oráculo de leitura da regra.
+	// destino, por usuário: limita o oráculo de leitura da regra.
 	// CONTENT_RULES_PER_HOST, de 1 a 100; sem a variável, 5. 100 equivale a
 	// desligar, porque é o teto de alvos por usuário.
 	ContentRulesPerHost int
@@ -143,7 +142,7 @@ func Load(getenv func(string) string) (*Config, error) {
 	l := &leitor{getenv: getenv}
 
 	// O papel efetivo vem antes das métricas: o padrão de METRICS_ADDR depende
-	// dele (M7). O --role já sobrepôs ROLE antes do Load.
+	// dele. O --role já sobrepôs ROLE antes do Load.
 	role := l.papel()
 
 	cfg := &Config{
@@ -289,9 +288,9 @@ func (l *leitor) hospedagem(name string) []netip.Prefix {
 // metricsAddr lê o endereço de /metrics, que entrega o mapa operacional
 // (spec §5.7): quantos alvos, que latências, quanta conexão. Só escuta em
 // loopback; "off", em qualquer caixa, desliga. Um host vazio (":9090")
-// escutaria em todas as interfaces, e por isso é erro, não padrão (D10).
+// escutaria em todas as interfaces, e por isso é erro, não padrão.
 //
-// Sem a variável, o padrão é por papel (M7, Plano 9 §3.4): o sondador fica
+// Sem a variável, o padrão é por papel: o sondador fica
 // na 9091, e --role=api e --role=prober no mesmo host deixam de disputar
 // a 9090. Definida (inclusive off), ela vale como sempre.
 func (l *leitor) metricsAddr(name string, role Role) string {
@@ -364,10 +363,10 @@ func (l *leitor) clientIPHeader(name string) string {
 	return http.CanonicalHeaderKey(raw)
 }
 
-// argon2 lê ARGON2_MAX_CONCURRENT: o teto de Argon2id simultâneos (A1 do
-// Plano 10). Zero trancaria todo login; acima de 64 (4 GiB) o teto deixa de
-// proteger a memória. O padrão é o mesmo de auth.DefaultArgon2MaxConcurrent
-// (o config não importa o auth).
+// argon2 lê ARGON2_MAX_CONCURRENT: o teto de Argon2id simultâneos. Zero
+// trancaria todo login; acima de 64 (4 GiB) o teto deixa de proteger a memória.
+// O padrão é o mesmo de auth.DefaultArgon2MaxConcurrent (o config não importa o
+// auth).
 func (l *leitor) argon2(name string) int {
 	raw := strings.TrimSpace(l.getenv(name))
 	if raw == "" {
@@ -382,7 +381,7 @@ func (l *leitor) argon2(name string) int {
 }
 
 // regrasPorHost lê CONTENT_RULES_PER_HOST: o teto de regras de conteúdo por
-// host (D-T3). O padrão é o mesmo de targets.DefaultContentRulesPerHost (o
+// host. O padrão é o mesmo de targets.DefaultContentRulesPerHost (o
 // config não importa o targets).
 func (l *leitor) regrasPorHost(name string) int {
 	raw := strings.TrimSpace(l.getenv(name))
@@ -558,7 +557,7 @@ func chaveDeDemo(k []byte) bool {
 }
 
 // cabecalhosProibidos são nomes que nunca carregam o IP do cliente, mas que
-// alguém copiaria por engano para o CLIENT_IP_HEADER (Plano 8). Com um deles,
+// alguém copiaria por engano para o CLIENT_IP_HEADER. Com um deles,
 // o app leria um valor que não é IP, cairia no endereço do proxy para todo
 // cliente e só avisaria uma vez por minuto no log: o erro de configuração
 // apareceria como rate limit coletivo, e não no boot.

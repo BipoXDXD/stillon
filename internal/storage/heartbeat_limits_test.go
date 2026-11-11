@@ -89,7 +89,7 @@ func TestHeartbeatLimitsChecksAcceptTheNewEdges(t *testing.T) {
 	}
 }
 
-// A descida converte em vez de apagar (spec SP1, §6): o binário do piso lê
+// A descida converte em vez de apagar: o binário do piso lê
 // essas linhas, e quem desce não perde a tarefa.
 func TestHeartbeatLimitsDownConvertsAndRestoresTheOldChecks(t *testing.T) {
 	ctx := context.Background()
@@ -207,7 +207,7 @@ func TestHeartbeatLimitsDownConvertsAndRestoresTheOldChecks(t *testing.T) {
 	}
 }
 
-// O piso de rollback (o binário do PR 1) sobe sobre o schema com as faixas
+// O piso de rollback (o binário anterior) sobe sobre o schema com as faixas
 // novas: as migrations dele já estão aplicadas, e o boot é um no-op.
 func TestFloorBinaryBootsOnHeartbeatLimits(t *testing.T) {
 	ctx := context.Background()

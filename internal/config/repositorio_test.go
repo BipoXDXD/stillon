@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// D2 (Plano 10, §3.4; banco S2 da revisão): uma versão maliciosa recém-
+// Uma versão maliciosa recém-
 // publicada de um pacote do grafo não entra no PR agrupado da semana
 // seguinte. O cooldown só vale para as atualizações de versão; as de
 // segurança do Dependabot não esperam (documentação do GitHub, opção
@@ -42,7 +42,7 @@ func TestDependabotWaitsSevenDaysForGoAndNpm(t *testing.T) {
 	}
 }
 
-// D3 (Plano 10, §3.4; banco S3 da revisão): o runbook (docs/deploy/vps.md)
+// O runbook (docs/deploy/vps.md)
 // gera a chave privada do age em ~ e decifra o backup em ~/stillon-restauro,
 // fora do repositório. A regra do .gitignore é a defesa para quando um desses
 // arquivos for parar num clone (copiado, baixado ali, ou gerado lá por
@@ -63,7 +63,7 @@ func TestGitignoreCoversTheBackupKeyAndDumps(t *testing.T) {
 		"web/.env.production",
 	}
 	// A perna oposta inclui arquivos que um dia serão versionados e que um
-	// padrão largo demais esconderia sem aviso (m2 da revisão do Plano 10): o
+	// padrão largo demais esconderia sem aviso: o
 	// exemplo de ambiente, o .env de desenvolvimento do Vite (sem segredo, por
 	// convenção dele) e chaves de fixture TLS em testdata/.
 	versionados := []string{

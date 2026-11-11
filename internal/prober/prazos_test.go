@@ -29,7 +29,7 @@ func terminaNoPrazo(t *testing.T, oque string, rodada func() error) error {
 	}
 }
 
-// C2 da revisão: uma consulta presa (conexão meio-aberta, tabela travada)
+// Uma consulta presa (conexão meio-aberta, tabela travada)
 // prendia o Tick, e o sondador parava de despachar todos os alvos com o
 // /readyz em 200. O Tick tem prazo, e o seguinte tenta de novo.
 func TestTickGivesUpAtTheDeadline(t *testing.T) {

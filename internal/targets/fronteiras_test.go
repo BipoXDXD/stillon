@@ -49,7 +49,7 @@ func TestValidateErrosExatos(t *testing.T) {
 			f.Headers = headersNumerados(8, 1019)
 			f.Headers["X-H00"] = strings.Repeat("v", 1020)
 		}, []FieldError{{"headers", ReasonTooLong}}},
-		// D3: com o intervalo já errado, o timeout não é acusado por ele.
+		// Com o intervalo já errado, o timeout não é acusado por ele.
 		{"intervalo inválido não acusa o timeout", func(f *fields) { f.IntervalSec = 10; f.TimeoutMS = 10000 }, []FieldError{{"interval_sec", ReasonOutOfRange}}},
 		// Todos os erros numa passada: o cliente corrige tudo de uma vez.
 		{"acumula os erros de todos os campos", func(f *fields) {
@@ -83,7 +83,7 @@ func TestValidateErrosExatos(t *testing.T) {
 	}
 }
 
-// D4: só GET, HEAD e POST; PUT e DELETE sem corpo seriam armadilha.
+// Só GET, HEAD e POST; PUT e DELETE sem corpo seriam armadilha.
 func TestValidateMetodos(t *testing.T) {
 	cases := []struct {
 		entrada string
@@ -294,7 +294,7 @@ func TestMudouDeDestino(t *testing.T) {
 	}
 }
 
-// O que cada campo do PATCH faz, e se ele muda O QUE é sondado (D13).
+// O que cada campo do PATCH faz, e se ele muda O QUE é sondado.
 func TestPatchApply(t *testing.T) {
 	headers := map[string]string{"Authorization": "Bearer x"}
 	novos := map[string]string{"X-Novo": "1"}

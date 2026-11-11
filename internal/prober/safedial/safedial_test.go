@@ -75,12 +75,12 @@ func TestAllowIP(t *testing.T) {
 		// endereço está só na /4.
 		{"240.0.0.1", true, "reservado, 240.0.0.0/4"},
 
-		// R23 — formas de IPv4 dentro de IPv6 que Unmap() NÃO desfaz. Ele só
+		// Formas de IPv4 dentro de IPv6 que Unmap() NÃO desfaz. Ele só
 		// reconhece ::ffff:a.b.c.d; estas três atravessariam a lista.
 		{"::127.0.0.1", true, "IPv4-compatível (obsoleto), ::/96"},
 		{"::ffff:0:127.0.0.1", true, "IPv4-traduzido (SIIT), ::ffff:0:0:0/96"},
 
-		// R22 — faixas de transição: um tradutor ou relay no caminho entrega
+		// Faixas de transição: um tradutor ou relay no caminho entrega
 		// o IPv4 embutido, inclusive o privado.
 		{"64:ff9b::127.0.0.1", true, "NAT64 bem conhecido embutindo loopback"},
 		{"64:ff9b:1::a00:5", true, "NAT64 de uso local (RFC 8215)"},
@@ -95,7 +95,7 @@ func TestAllowIP(t *testing.T) {
 		{"2001:4860:4860::8888", false, "DNS público do Google, fora do Teredo"},
 		{"2003::1", false, "fora do 6to4"},
 
-		// R23 — Unmap() DESCARTA a zona de um endereço mapeado: ::ffff:8.8.8.8%eth0
+		// Unmap() DESCARTA a zona de um endereço mapeado: ::ffff:8.8.8.8%eth0
 		// vira 8.8.8.8 limpo. Com a zona checada depois do Unmap, este passava,
 		// contrariando a regra "alvo legítimo nunca carrega zona".
 		{"::ffff:8.8.8.8%eth0", true, "IPv4 mapeado com zona"},
@@ -189,7 +189,7 @@ func TestAllowAddrRejectsNonLiteralHost(t *testing.T) {
 // Sem ela, um netip.Addr zerado não casa com prefixo nenhum da tabela e
 // AllowIP devolve nil — ou seja, PERMITE. A guarda é o que separa "endereço
 // que não parseou" de "liberado". Hoje nenhum consumidor chega aqui com Addr
-// inválido (o safedial ainda não tem consumidor, R5), mas o prober do Plano 2
+// inválido (o safedial ainda não tem consumidor), mas o prober
 // vai passar endereços vindos de resolução de DNS, e aí a guarda é a única
 // coisa entre um erro de resolução e uma requisição para onde não devia.
 //

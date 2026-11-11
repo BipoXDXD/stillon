@@ -202,7 +202,7 @@ func TestTargetTLSOwnerQueriesFilterByTheOwner(t *testing.T) {
 	}
 }
 
-// I8: o escopo público enxerga o alvo da página publicada, mas não a validade
+// O escopo público enxerga o alvo da página publicada, mas não a validade
 // do certificado dele. Delegar a política só ao alvo abriria a tabela à status
 // page.
 func TestPublicScopeCannotReadTargetTLS(t *testing.T) {

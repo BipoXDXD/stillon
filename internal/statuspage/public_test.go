@@ -208,7 +208,7 @@ func TestPublicIncidentsAreCapped(t *testing.T) {
 
 // A página completa os rollups com os checks brutos depois da marca d'água,
 // como o dashboard: uma queda que a manutenção ainda não consolidou aparece
-// na barra de hoje, no uptime de 90 dias e na latência (C4 da revisão).
+// na barra de hoje, no uptime de 90 dias e na latência.
 //
 // Relógio em 12:00. Rollup só até 09:00 (60 de 60, p50 100): o corte é
 // 10:00. O check das 09:30 já está no rollup e não conta de novo; os das
@@ -247,7 +247,7 @@ func TestPublicSeesChecksNotYetConsolidated(t *testing.T) {
 }
 
 // Um rollup gravado no futuro (relógio adiantado) não vira a marca d'água da
-// página: com ele, as horas fechadas e ainda não consolidadas sumiriam (C8).
+// página: com ele, as horas fechadas e ainda não consolidadas sumiriam.
 //
 // Relógio em 12:00; rollups às 09:00 (60 de 60, p50 100) e às 14:00
 // (futuro, 60 de 60, p50 300). O check das 10:30 foi down: hoje fica 60 ok
@@ -308,7 +308,7 @@ func texto[T any](p *T) string {
 
 // Um incidente entra no histórico se a queda tocou a janela de 90 dias, e não
 // só se começou dentro dela: a barra pinta o dia de vermelho, e a lista
-// precisa explicá-lo (C9).
+// precisa explicá-lo.
 func TestPublicIncidentsOverlappingTheWindowStart(t *testing.T) {
 	a := novoAmbiente(t)
 	adm := admin(t)
@@ -329,7 +329,7 @@ func TestPublicIncidentsOverlappingTheWindowStart(t *testing.T) {
 }
 
 // O alvo apagado some também da página pública, com o histórico de
-// incidentes dele (D18 do Plano 3: apagar o alvo leva o histórico).
+// incidentes dele (apagar o alvo leva o histórico).
 func TestDeletedTargetLeavesThePublicPage(t *testing.T) {
 	a := novoAmbiente(t)
 	adm := admin(t)
@@ -390,9 +390,9 @@ func TestPublicViewIsCachedForThirtySeconds(t *testing.T) {
 	}
 }
 
-// Mudança feita por este serviço tira o slug do cache na hora (achado da
-// revisão): A renomeia "acme" e B toma o slug logo em seguida; /p/acme
-// mostra B, e não a página de A em cache. Despublicar também vale na hora.
+// Mudança feita por este serviço tira o slug do cache na hora: A renomeia
+// "acme" e B toma o slug logo em seguida; /p/acme mostra B, e não a página de A
+// em cache. Despublicar também vale na hora.
 func TestOwnerChangesInvalidateTheCache(t *testing.T) {
 	a := novoAmbiente(t)
 	ctx := context.Background()

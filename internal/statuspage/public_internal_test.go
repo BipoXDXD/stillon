@@ -12,10 +12,10 @@ import (
 	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 )
 
-// O dono despublica enquanto uma projeção está no ar (achado da segunda
-// revisão). A projeção leu a página antes da mudança; sem a geração, ela a
-// gravaria no cache depois do forget, e a página seguiria pública por 30 s.
-// O gancho faz a mudança exatamente entre a leitura e a gravação no cache.
+// O dono despublica enquanto uma projeção está no ar. A projeção leu a página
+// antes da mudança; sem a geração, ela a gravaria no cache depois do forget, e
+// a página seguiria pública por 30 s. O gancho faz a mudança exatamente entre a
+// leitura e a gravação no cache.
 func TestUnpublishDuringAProjectionIsNotUndoneByTheCache(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()

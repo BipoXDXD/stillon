@@ -10,7 +10,7 @@ import (
 	"github.com/BipoXDXD/stillon/internal/incident"
 )
 
-// Pausar e retomar canal (Plano 9, §3.3): SetEnabled muda só o enabled, e o
+// Pausar e retomar canal: SetEnabled muda só o enabled, e o
 // canal volta no formato da listagem.
 func TestSetEnabledPausesAndResumes(t *testing.T) {
 	b := novaBancadaCanais(t, true)

@@ -15,7 +15,7 @@ import (
 )
 
 // Depois de um rollback, a outbox pode ter aviso de um tipo de canal ou de um
-// evento que este binário não sabe entregar (D-13=a da SP2). Reivindicá-lo
+// evento que este binário não sabe entregar. Reivindicá-lo
 // gastaria uma tentativa por volta até fechar como failed sem nunca ter
 // saído; ele fica pending, intacto, até a versão nova voltar. Os CHECKs são
 // afrouxados como superusuário para simular "schema novo, binário velho".

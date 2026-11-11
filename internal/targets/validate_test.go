@@ -88,14 +88,14 @@ func TestValidate(t *testing.T) {
 		{"intervalo 86401", func(f *fields) { f.IntervalSec = 86401 }, "interval_sec", ReasonOutOfRange},
 		{"timeout 999", func(f *fields) { f.TimeoutMS = 999 }, "timeout_ms", ReasonOutOfRange},
 		{"timeout 30001", func(f *fields) { f.TimeoutMS = 30001 }, "timeout_ms", ReasonOutOfRange},
-		// Review Focus 5 (D3): o jitter de −10% antecipa a próxima sonda
+		// O jitter de −10% antecipa a próxima sonda
 		// para 27s num intervalo de 30s.
 		{"timeout em 90% do intervalo", func(f *fields) { f.IntervalSec = 30; f.TimeoutMS = 27000 }, "timeout_ms", ReasonOutOfRange},
 		{"timeout logo abaixo de 90%", func(f *fields) { f.IntervalSec = 30; f.TimeoutMS = 26999 }, "", ""},
 
 		{"status 99", func(f *fields) { f.ExpectedStatus = 99 }, "expected_status", ReasonOutOfRange},
 		{"status 600", func(f *fields) { f.ExpectedStatus = 600 }, "expected_status", ReasonOutOfRange},
-		// C2 (Plano 10): 1xx o net/http consome, e 3xx o cliente segue; os
+		// 1xx o net/http consome, e 3xx o cliente segue; os
 		// dois nunca chegam à comparação, e o alvo ficaria down para sempre.
 		{"status 100", func(f *fields) { f.ExpectedStatus = 100 }, "expected_status", ReasonOutOfRange},
 		{"status 199", func(f *fields) { f.ExpectedStatus = 199 }, "expected_status", ReasonOutOfRange},
@@ -172,7 +172,7 @@ func TestValidateCanonicalizesHeaderNames(t *testing.T) {
 	}
 }
 
-// B1 (Plano 10): a origem é esquema, host e porta, na regra do navegador
+// A origem é esquema, host e porta, na regra do navegador
 // (WHATWG): esquema e host sem diferença de caixa, e a porta padrão do
 // esquema igual a porta nenhuma. Caminho, consulta e fragmento não contam.
 func TestSameOrigin(t *testing.T) {
@@ -197,7 +197,7 @@ func TestSameOrigin(t *testing.T) {
 		{"https://api.exemplo.com/", "://quebrada", false},
 		{"https://api.exemplo.com/", "", false},
 
-		// Q1 da revisão do Plano 10: o host é comparado como o net/http o
+		// O host é comparado como o net/http o
 		// disca (idna.Lookup.ToASCII). strings.ToLower dizia "mesma origem"
 		// para os dois primeiros, mas o transporte disca xn--strae-oqa.de
 		// num e strasse.de no outro, que é outro domínio registrável.
@@ -218,8 +218,8 @@ func TestSameOrigin(t *testing.T) {
 	}
 }
 
-// O SameOrigin concorda com o que o transporte do net/http de fato disca
-// (Q1 da revisão do Plano 10): para cada par de hosts IDN, "mesma origem"
+// O SameOrigin concorda com o que o transporte do net/http de fato disca:
+// para cada par de hosts IDN, "mesma origem"
 // se e só se as duas URLs discam o mesmo endereço. Prende o perfil do
 // idna.Lookup ao do net/http: se um dos dois mudar, este teste vê.
 func TestSameOriginAgreesWithTheDialedHost(t *testing.T) {

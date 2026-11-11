@@ -29,7 +29,7 @@ func terminaNoPrazo(t *testing.T, oque string, rodada func() error) error {
 	}
 }
 
-// C2 da revisão: a reivindicação do lote não tinha prazo, e uma consulta
+// A reivindicação do lote não tinha prazo, e uma consulta
 // presa parava a entrega de todos os avisos.
 func TestDispatchClaimGivesUpAtTheDeadline(t *testing.T) {
 	b := novaBancada(t, nil)
@@ -49,7 +49,7 @@ func TestDispatchClaimGivesUpAtTheDeadline(t *testing.T) {
 	}
 }
 
-// C1 da revisão: no encerramento, o lote em curso não tinha teto. Um webhook
+// No encerramento, o lote em curso não tinha teto. Um webhook
 // lento segurava o processo além do ShutdownGrace, o Docker o matava, e o
 // aviso entregue mas não marcado voltava pelo lease e saía duplicado. Agora,
 // depois do sinal, nenhum envio novo começa, o envio em curso é abortado em

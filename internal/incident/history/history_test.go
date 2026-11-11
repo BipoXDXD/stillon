@@ -169,10 +169,10 @@ func TestAckIsIdempotentAndScopedToTheOwner(t *testing.T) {
 // target_id restringe a um alvo; o de outro usuário dá lista vazia, e não os
 // incidentes dele.
 //
-// Guarda dupla (D23) na lista vazia do alvo alheio: o t.user_id = $1 de
+// Guarda dupla na lista vazia do alvo alheio: o t.user_id = $1 de
 // ListIncidents e a RLS de targets e incidents (List roda em InUserTx).
-// Sabotar só uma deixa este teste verde; a sabotagem registrada (Task 11)
-// quebra as duas.
+// Sabotar só uma deixa este teste verde; sabotar as duas o
+// quebra.
 func TestListFiltersByTarget(t *testing.T) {
 	b := novaBancada(t)
 	ctx := context.Background()

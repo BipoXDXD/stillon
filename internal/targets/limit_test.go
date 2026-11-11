@@ -40,8 +40,8 @@ func (a ambiente) encherAte(t *testing.T, dono uuid.UUID, n int) {
 // O 100º entra; o 101º é ErrLimitReached; o teto é por usuário.
 //
 // Duas barreiras fazem a contagem ser por usuário: o WHERE user_id de
-// CountTargets e a RLS da InUserTx. Sabotar só uma deixa o teste verde; o
-// relatório da Task 8 registra a sabotagem das duas juntas.
+// CountTargets e a RLS da InUserTx. Sabotar só uma deixa o teste verde; só
+// sabotar as duas juntas o quebra.
 func TestCreateStopsAtTheLimit(t *testing.T) {
 	a := novoAmbiente(t)
 	ctx := context.Background()
@@ -100,7 +100,7 @@ func TestConcurrentCreatesRespectTheLimit(t *testing.T) {
 	}
 }
 
-// D-T3: sem opção, o serviço parte de 5 alvos com regra por host, o mesmo
+// Sem opção, o serviço parte de 5 alvos com regra por host, o mesmo
 // literal do padrão de CONTENT_RULES_PER_HOST no config.
 func TestDefaultContentRulesPerHostIsFive(t *testing.T) {
 	if targets.DefaultContentRulesPerHost != 5 {
@@ -168,7 +168,7 @@ func semRegra(url string) targets.Input {
 	return in
 }
 
-// D-T1: o teto conta alvos com regra pela chave do host, sem porta, caixa nem
+// O teto conta alvos com regra pela chave do host, sem porta, caixa nem
 // ponto final; alvo sem regra não conta, e subdomínio é outro host.
 func TestCreateWithRuleStopsAtTheHostCap(t *testing.T) {
 	a := novoAmbiente(t)
@@ -200,7 +200,7 @@ func TestCreateWithRuleStopsAtTheHostCap(t *testing.T) {
 	}
 }
 
-// D-T1 (opção A): a contagem só vê as linhas do dono.
+// A contagem só vê as linhas do dono.
 func TestHostCapCountsOnlyThisUsersRules(t *testing.T) {
 	a := novoAmbiente(t)
 	ctx := context.Background()
@@ -227,7 +227,7 @@ func TestHostCapCountsOnlyThisUsersRules(t *testing.T) {
 	}
 }
 
-// D-T1: pausar não libera vaga.
+// Pausar não libera vaga.
 func TestHostCapCountsPausedTargets(t *testing.T) {
 	a := novoAmbiente(t)
 	dono := a.usuario(t)
@@ -252,7 +252,7 @@ func TestHostCapIsConfigurable(t *testing.T) {
 	}
 }
 
-// Review Focus 3: com o host cheio, corpo inválido é 400, não 409, nos dois
+// Com o host cheio, corpo inválido é 400, não 409, nos dois
 // caminhos.
 func TestValidationComesBeforeTheHostCap(t *testing.T) {
 	a := novoAmbiente(t)
@@ -276,7 +276,7 @@ func TestValidationComesBeforeTheHostCap(t *testing.T) {
 	}
 }
 
-// D-T2: o PATCH que põe regra num host cheio é recusado antes de qualquer
+// O PATCH que põe regra num host cheio é recusado antes de qualquer
 // escrita: nem a regra, nem a histerese, nem next_run_at, nem a validade do
 // certificado mudam.
 func TestPatchIntoAFullHostIsRefused(t *testing.T) {
@@ -335,7 +335,7 @@ func TestPatchIntoAFullHostIsRefused(t *testing.T) {
 	}
 }
 
-// D-T2 e D-T4: o teto barra o aumento, não o estado. Num host acima do teto,
+// O teto barra o aumento, não o estado. Num host acima do teto,
 // todo PATCH que não põe o alvo num host novo passa, e nem conta.
 func TestPatchThatDoesNotGrowTheHostPasses(t *testing.T) {
 	a := novoAmbiente(t)
@@ -410,7 +410,7 @@ func TestPatchOnAnotherUsersTargetIs404BeforeTheCap(t *testing.T) {
 	}
 }
 
-// D-T2: no Create, com os dois tetos estourados, vale o de alvos (V6).
+// No Create, com os dois tetos estourados, vale o de alvos.
 func TestTargetLimitComesBeforeTheHostCap(t *testing.T) {
 	a := novoAmbiente(t)
 	dono := a.usuario(t)
@@ -422,7 +422,7 @@ func TestTargetLimitComesBeforeTheHostCap(t *testing.T) {
 	}
 }
 
-// Review Focus 4: uma URL gravada que não se lê não casa com host nenhum.
+// Uma URL gravada que não se lê não casa com host nenhum.
 func TestUnreadableStoredURLDoesNotCount(t *testing.T) {
 	a := novoAmbiente(t)
 	dono := a.usuario(t)

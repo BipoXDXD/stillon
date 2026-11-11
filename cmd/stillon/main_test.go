@@ -180,7 +180,7 @@ func TestRunFailsWhenAServerCannotStart(t *testing.T) {
 		if !errors.Is(err, syscall.EADDRINUSE) || !strings.Contains(err.Error(), "servidor api") {
 			t.Errorf("run = %v, queria o EADDRINUSE do servidor api", err)
 		}
-		// A dica do METRICS_ADDR é só da porta de métricas (M7, Plano 9).
+		// A dica do METRICS_ADDR é só da porta de métricas.
 		if err != nil && strings.Contains(err.Error(), "METRICS_ADDR") {
 			t.Errorf("a porta da API ocupada sugeriu o METRICS_ADDR: %v", err)
 		}
@@ -189,7 +189,7 @@ func TestRunFailsWhenAServerCannotStart(t *testing.T) {
 	}
 }
 
-// M7 (Plano 9, §3.4): com a porta de métricas ocupada (outro processo do
+// Com a porta de métricas ocupada (outro processo do
 // StillOn no mesmo host, o caso de --role=api e --role=prober), o boot cai
 // com o EADDRINUSE do servidor de métricas, e a mensagem sugere o
 // METRICS_ADDR. A perna oposta (a porta da API ocupada não sugere) está em
@@ -236,7 +236,7 @@ func TestProberGraceFitsTheShutdownBudget(t *testing.T) {
 }
 
 // O dispatcher roda no mesmo errgroup e também tem de caber no ShutdownGrace
-// padrão (C1 da revisão): depois dele vem o SIGKILL, e um aviso entregue e
+// padrão: depois dele vem o SIGKILL, e um aviso entregue e
 // ainda não marcado volta pelo lease e sai duplicado.
 func TestDispatcherFitsTheShutdownGrace(t *testing.T) {
 	k := base64.StdEncoding.EncodeToString(chave)

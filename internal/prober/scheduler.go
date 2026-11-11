@@ -35,8 +35,8 @@ const tickEvery = time.Second
 
 // tickTimeout é o prazo de um Tick inteiro (reivindicar e medir a fila),
 // espera por conexão do pool incluída: uma consulta presa não segura o
-// despacho de todos os alvos, e o Tick seguinte tenta de novo (C2 da
-// revisão). Fica ACIMA de tickEvery de propósito: o Ticker descarta os
+// despacho de todos os alvos, e o Tick seguinte tenta de novo.
+// Fica ACIMA de tickEvery de propósito: o Ticker descarta os
 // disparos perdidos, então um Tick lento só atrasa o seguinte, enquanto um
 // prazo abaixo de 1 s transformaria um banco lento, mas vivo (pool disputado
 // pelas gravações das sondas), num sondador parado.
@@ -155,7 +155,7 @@ func (s *Scheduler) reconciliar(ctx context.Context) {
 }
 
 // Reconcile apaga as séries de latência de alvos que não existem mais e
-// atualiza incidents_open (D9/M1 do Plano 2).
+// atualiza incidents_open.
 //
 // forget só roda sozinho quando o alvo some com uma sonda em voo. Apagar um
 // alvo parado não passa pelo sondador, e com --role=api e --role=prober
@@ -277,7 +277,7 @@ func (s *Scheduler) Tick(ctx context.Context) (int, error) {
 
 // Stop espera as sondas em voo por até grace. Depois disso, aborta as que
 // sobraram e espera que terminem, o que é rápido, porque o http.Client
-// respeita o cancelamento. Sonda abortada não é gravada (D12).
+// respeita o cancelamento. Sonda abortada não é gravada.
 //
 // Não chame Tick durante nem depois de Stop: Run para de despachar antes de
 // chamá-lo.
@@ -317,7 +317,7 @@ func (s *Scheduler) sondar(a db.ClaimDueTargetsRow, checkedAt time.Time) {
 
 	res := Probe(s.sondas, s.client, spec)
 
-	// Review Focus 4. O shutdown se reconhece pela CAUSA do contexto, nunca
+	// O shutdown se reconhece pela CAUSA do contexto, nunca
 	// pelo erro da sonda: com WithCancelCause, o erro devolvido é a própria
 	// causa, e errors.Is(err, context.Canceled) é false.
 	if errors.Is(context.Cause(s.sondas), errShutdown) {
@@ -415,16 +415,15 @@ func (s *Scheduler) gravar(a db.ClaimDueTargetsRow, em time.Time, res Result) {
 	})
 	switch {
 	case errors.Is(err, errSondaVelha):
-		// O dono trocou a URL, o método ou a regra com a sonda em voo (E2 da
-		// revisão de 2026-10-14, T2 do PR 5). Não é erro: o resultado julga
-		// outra coisa.
+		// O dono trocou a URL, o método ou a regra com a sonda em voo. Não é
+		// erro: o resultado julga outra coisa.
 		slog.Info("sonda descartada: o alvo mudou de URL, método ou regra de conteúdo durante a sonda", "target_id", a.ID)
 	case errors.Is(err, errAlvoPausado):
 		// Um alvo pausado não abre incidente: sem sonda, nada o fecharia, e o
 		// aviso chegaria depois de o dono dizer que não quer monitorar.
 		slog.Info("sonda descartada: o alvo foi pausado durante a sonda", "target_id", a.ID)
 	case errors.Is(err, errAlvoSumido):
-		// Review Focus 3 do Plano 2, visto pela trava do alvo.
+		// O dono apagou o alvo com a sonda em voo, visto pela trava do alvo.
 		s.metrics.forget(a.ID)
 	case err == nil:
 		if acao != incident.ActionNone {
@@ -434,14 +433,13 @@ func (s *Scheduler) gravar(a db.ClaimDueTargetsRow, em time.Time, res Result) {
 			}
 		}
 	case pareceAlvoSumido(err) && s.alvoApagado(ctx, a.ID):
-		// Review Focus 3 do Plano 2: o dono apagou o alvo com a sonda em
+		// O dono apagou o alvo com a sonda em
 		// voo. Não é erro, é o dono tendo mudado de ideia.
 		s.metrics.forget(a.ID)
 	default:
 		// Com o alvo vivo, o 42501 ou o 23503 veio de outra tabela (um canal
 		// apagado durante o enfileiramento, um GRANT ou uma RLS que
-		// regrediu), e o rollback levou check, histerese e incidente: é erro
-		// (C6 da revisão).
+		// regrediu), e o rollback levou check, histerese e incidente: é erro.
 		slog.Error("gravar check", "target_id", a.ID, "erro", err)
 	}
 }
@@ -509,7 +507,7 @@ func conferirSonda(ctx context.Context, q *db.Queries, a db.ClaimDueTargetsRow) 
 // abre ou fecha o incidente e enfileira as notificações (spec §8).
 //
 // A linha de target_health é travada antes de ler o incidente aberto: duas
-// sondas do mesmo alvo gravando ao mesmo tempo (M4 do Plano 2) passam aqui
+// sondas do mesmo alvo gravando ao mesmo tempo passam aqui
 // uma de cada vez, e a segunda vê o estado que a primeira gravou.
 func (s *Scheduler) avaliar(ctx context.Context, q *db.Queries, a db.ClaimDueTargetsRow, em time.Time, res Result) (incident.Action, error) {
 	if err := q.EnsureTargetHealth(ctx, a.ID); err != nil {

@@ -181,7 +181,7 @@ func TestProbeTimeoutWhileReadingBody(t *testing.T) {
 	}
 }
 
-// D1c do STRIDE: com regra, o corpo é lido por lerCorpo, e não pelo
+// Com regra, o corpo é lido por lerCorpo, e não pelo
 // io.Copy de cima. O pedaço que chegou antes de o prazo vencer já tem o valor
 // procurado: se o erro da leitura fosse ignorado, a sonda daria up, e se o
 // corpo truncado fosse julgado, content_mismatch no not_contains.
@@ -209,7 +209,7 @@ func TestProbeTimeoutWhileReadingBodyWithRule(t *testing.T) {
 	}
 }
 
-// D2 e spec §5.1: um corpo sem fim é lido até 64 KiB e descartado, e a sonda
+// Um corpo sem fim é lido até 64 KiB e descartado, e a sonda
 // termina bem. Sem o limite, ela leria até o prazo estourar e daria timeout.
 func TestProbeCapsAnEndlessBodyWithoutFailing(t *testing.T) {
 	srv, client := servidor(t, func(w http.ResponseWriter, r *http.Request) {
@@ -250,7 +250,7 @@ func TestProbeFollowsRedirectWithinLimit(t *testing.T) {
 // dentro dele seria corrida de dados: a variável é escrita pela goroutine do
 // teste, e o detector não enxerga a rede como sincronização.
 //
-// C3 (Plano 10): excesso de saltos e esquema que não é http(s) no Location
+// Excesso de saltos e esquema que não é http(s) no Location
 // são erro de configuração do site, e não proteção de rede: saem como
 // unknown ("erro de rede" no alerta), e não como blocked ("destino bloqueado
 // pela proteção de rede"). O blocked fica para o IP recusado no dial.
@@ -274,8 +274,8 @@ func TestProbeRedirectToAnotherSchemeIsUnknown(t *testing.T) {
 	}
 }
 
-// A outra metade do C3: o salto para um endereço interno continua blocked.
-// A outra porta do 127.0.0.1 não está liberada no cliente do teste.
+// A outra metade do teste anterior: o salto para um endereço interno continua
+// blocked. A outra porta do 127.0.0.1 não está liberada no cliente do teste.
 func TestProbeRedirectToAnInternalAddressIsStillBlocked(t *testing.T) {
 	interno := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 	t.Cleanup(interno.Close)
@@ -287,7 +287,7 @@ func TestProbeRedirectToAnInternalAddressIsStillBlocked(t *testing.T) {
 	}
 }
 
-// C1 (Plano 10): uma resposta com cabeçalho acima de 64 KiB é down, sem que
+// Uma resposta com cabeçalho acima de 64 KiB é down, sem que
 // o sondador aloque o que o servidor quiser mandar. O tipo é unknown, o
 // residual: o net/http não tem erro próprio para isso, só texto. Um
 // cabeçalho grande, mas legítimo, passa.
@@ -310,7 +310,7 @@ func TestProbeResponseHeadersAboveTheCapAreDown(t *testing.T) {
 	}
 }
 
-// C1: o transporte real também propaga o teto de cabeçalhos ao HTTP/2.
+// O transporte real também propaga o teto de cabeçalhos ao HTTP/2.
 // Sabotagem: maxResponseHeaderBytes de 64 KiB para 2 MiB deixa o caso de
 // 100 KiB up e reprova este teste. O caso pequeno prova sucesso com TLS
 // validado, e cada caso observa o protocolo usado no servidor.
@@ -732,7 +732,7 @@ func TestProbeEmptyBodyFailsContains(t *testing.T) {
 	}
 }
 
-// Sem regra, nada muda: corpo grande segue não sendo falha (D2).
+// Sem regra, nada muda: corpo grande segue não sendo falha.
 func TestProbeWithoutRuleIgnoresTheBody(t *testing.T) {
 	srv, client := servidor(t, func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write(make([]byte, 1<<20))
@@ -778,8 +778,8 @@ func (tc *transporteContado) RoundTrip(r *http.Request) (*http.Response, error) 
 	return resp, nil
 }
 
-// Sem regra, o teto de 64 KiB vale sobre o corpo descomprimido, como antes do
-// PR 5, quando o transporte do Go descomprimia: numa página grande, a sonda
+// Sem regra, o teto de 64 KiB vale sobre o corpo descomprimido, como quando o
+// transporte do Go descomprimia: numa página grande, a sonda
 // lê da rede só o gzip desses 64 KiB, e não 64 KiB de gzip (3× o tráfego numa
 // home de 300 KiB). O teto do teste: 64 KiB de hexadecimal pedem 32 KiB
 // comprimidos, mais os 4 KiB do bufio do gzip.Reader; 40 KiB dá folga e fica
@@ -802,8 +802,8 @@ func TestProbeWithoutRuleDrainsTheDecompressedLimit(t *testing.T) {
 	}
 }
 
-// Sem regra, um gzip que não abre dá o mesmo resultado de antes do PR 5, quando
-// o erro vinha do descompressor do transporte: down/unknown. Corpo vazio com
+// Sem regra, um gzip que não abre dá o mesmo resultado de quando o erro
+// vinha do descompressor do transporte: down/unknown. Corpo vazio com
 // Content-Encoding: gzip não tem o que descomprimir e segue up.
 func TestProbeWithoutRuleAndABrokenGzipIsUnknownAsBefore(t *testing.T) {
 	casos := []struct {
@@ -831,7 +831,7 @@ func TestProbeWithoutRuleAndABrokenGzipIsUnknownAsBefore(t *testing.T) {
 }
 
 // Sem regra e com Range do dono, a sonda não descomprime, como o transporte do
-// Go antes do PR 5: a fatia de um gzip não abre sozinha. Um servidor que honra
+// Go fazia: a fatia de um gzip não abre sozinha. Um servidor que honra
 // o Range sobre a representação comprimida (estático pré-comprimido, CDN) tem
 // de seguir up.
 func TestProbeWithoutRuleAndOwnersRangeOverGzipIsUp(t *testing.T) {
@@ -852,7 +852,7 @@ func TestProbeWithoutRuleAndOwnersRangeOverGzipIsUp(t *testing.T) {
 }
 
 // Sem regra e com Range do dono, a sonda não acrescenta o Accept-Encoding dela:
-// o servidor responde a fatia em identity, como antes do PR 5.
+// o servidor responde a fatia em identity, como o transporte do Go fazia.
 func TestProbeWithoutRuleAndOwnersRangeDoesNotAskForGzip(t *testing.T) {
 	recebido := make(chan []string, 1)
 	srv, client := servidor(t, func(w http.ResponseWriter, r *http.Request) {
@@ -867,7 +867,7 @@ func TestProbeWithoutRuleAndOwnersRangeDoesNotAskForGzip(t *testing.T) {
 }
 
 // Sem regra e com Accept-Encoding do dono, a sonda drena o corpo cru, como o
-// transporte do Go antes do PR 5: um servidor que ignora o pedido e manda um
+// transporte do Go fazia: um servidor que ignora o pedido e manda um
 // gzip que não abre segue up.
 func TestProbeWithoutRuleAndOwnersAcceptEncodingDrainsRaw(t *testing.T) {
 	srv, client := servidor(t, func(w http.ResponseWriter, r *http.Request) {
@@ -894,9 +894,9 @@ var membrosGzipVazios = sync.OnceValue(func() []byte {
 	return bytes.Repeat(membro.Bytes(), (1<<20)/membro.Len())
 })
 
-// M1 da revisão de segurança: um gzip que não gera saída fazia a sonda ler a
+// Um gzip que não gera saída fazia a sonda ler a
 // rede até o prazo. O teto de bytes comprimidos é 128 KiB, com e sem regra.
-// Sem regra, atingi-lo é só parar de drenar (D2): up. Com regra, o corpo não
+// Sem regra, atingi-lo é só parar de drenar: up. Com regra, o corpo não
 // foi lido inteiro, e o veredito é o do corpo cortado: body_limit.
 func TestCompressedInputStopsAtItsOwnLimit(t *testing.T) {
 	const tetoComprimido = 128 << 10
@@ -974,7 +974,7 @@ var bombaGzip = sync.OnceValue(func() []byte {
 	return buf.Bytes()
 })
 
-// D1: o teto vale sobre o corpo DESCOMPRIMIDO. A sonda pede gzip e o
+// O teto vale sobre o corpo DESCOMPRIMIDO. A sonda pede gzip e o
 // descomprime ela mesma; sem o teto, inflaria 100 MiB. Este teste olha o
 // resultado de ponta a ponta; o que prova que a bomba não é inflada inteira é
 // TestLerCorpoDaRegraCapsTheDecompressedBody, que conta os bytes consumidos.
@@ -1014,7 +1014,7 @@ func gzipar(t *testing.T, b []byte) []byte {
 	return buf.Bytes()
 }
 
-// T5 do STRIDE: com regra, a sonda só lê um corpo sem codificação ou com
+// Com regra, a sonda só lê um corpo sem codificação ou com
 // exatamente um gzip, somando todas as linhas de Content-Encoding (RFC 9110
 // §5.3: duas linhas valem "gzip, gzip"). O resto não tem o que a regra julgue:
 // content_encoding, e não body_limit, que diria ao dono "resposta grande
@@ -1111,7 +1111,7 @@ func TestEmptyBodyWithContentEncodingIsJudged(t *testing.T) {
 	}
 }
 
-// I2: a regra não troca o cliente. O salto para outra porta do 127.0.0.1, não
+// A regra não troca o cliente. O salto para outra porta do 127.0.0.1, não
 // liberada, continua bloqueado pelo safedial.
 func TestContentRuleRedirectToInternalIsBlocked(t *testing.T) {
 	interno := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

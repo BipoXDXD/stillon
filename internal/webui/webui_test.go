@@ -63,7 +63,7 @@ func corpo(t *testing.T, r *http.Response) string {
 
 var nonceDaCSP = regexp.MustCompile(`style-src 'self' 'nonce-([A-Za-z0-9_-]{22})'`)
 
-// A tabela da spec do Plano 6 §5.2, caso a caso.
+// O roteamento do painel, caso a caso.
 func TestRoteamentoDoPainel(t *testing.T) {
 	h := webui.New(distDeTeste())
 	casos := []struct {
@@ -117,7 +117,7 @@ func TestRoteamentoDoPainel(t *testing.T) {
 
 // O nonce do cabeçalho é o do <meta> e o dos dois elementos do bundle. Se um
 // deles divergisse, o navegador bloquearia justamente os <style> que o
-// painel injeta, e o gráfico sumiria (spec do Plano 6 §8.1).
+// painel injeta, e o gráfico sumiria.
 func TestIndexLevaONonceDaCSP(t *testing.T) {
 	h := webui.New(distDeTeste())
 	r := pedir(t, h, "GET", "/")
@@ -245,7 +245,7 @@ func TestTodoArquivoDoDistTemTipo(t *testing.T) {
 	if n == 0 {
 		// Sem build, o teste não confere nada. Quem liga
 		// STILLON_EXIGIR_DIST=1 é o CI (ci.yml, job web, no passo depois do
-		// "npm run build"; Plano 6), e não o build: lá, um dist vazio é
+		// "npm run build"), e não o build: lá, um dist vazio é
 		// erro, e não um verde vazio.
 		if os.Getenv("STILLON_EXIGIR_DIST") == "1" {
 			t.Fatal("STILLON_EXIGIR_DIST=1 e o dist embutido está vazio: rode npm run build em web/ antes")

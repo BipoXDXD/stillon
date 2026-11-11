@@ -12,7 +12,7 @@ import (
 	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 )
 
-// sessions não tem RLS (D7 do Plano 2): aqui o WHERE é a única barreira, com
+// sessions não tem RLS: aqui o WHERE é a única barreira, com
 // ou sem superusuário. O teste segue o mesmo espelho dos outros recursos.
 
 // novaSessaoViva grava a linha viva de uma família do dono, com SQL cru.

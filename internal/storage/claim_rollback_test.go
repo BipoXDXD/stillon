@@ -14,7 +14,7 @@ import (
 	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 )
 
-// Uma versão futura grava avisos de certificado sem incidente (SP1, §12). O
+// Uma versão futura grava avisos de certificado sem incidente. O
 // binário anterior não sabe montar esse aviso: se a reivindicação o contasse,
 // a linha sumiria no JOIN com incidents, o lease venceria e cada volta
 // somaria uma tentativa até o aviso fechar como failed sem nunca ter saído.

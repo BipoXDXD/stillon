@@ -210,7 +210,7 @@ func TestStatusPageConstraints(t *testing.T) {
 // A política pública não muda o que o dono vê. Prova a propriedade, e não a
 // guarda "app.public_slug IS NOT NULL" da política: sem ela, a função
 // devolveria os itens que o dono enxerga, que são só os das páginas dele, e
-// o resultado seria o mesmo (achado da revisão, provado por sabotagem). A
+// o resultado seria o mesmo (provado por sabotagem). A
 // guarda é atalho: fora do escopo público, a função nem precisa rodar.
 func TestPublicPolicyDoesNotWidenOwnerScope(t *testing.T) {
 	pool := testdb.New(t)
@@ -263,7 +263,7 @@ func TestChannelHealthFollowsOwnerOrProber(t *testing.T) {
 }
 
 // A política pública de targets resolve os alvos da página UMA vez por
-// consulta, e não uma vez por alvo da instância (achado da revisão: com uma
+// consulta, e não uma vez por alvo da instância (com uma
 // função por linha, a página pública custava ~0,5 s com 5 mil alvos de
 // outros donos). A contagem de chamadas vem do próprio Postgres
 // (track_functions), sem cronômetro.

@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// A1 (Plano 10, §3.1): ARGON2_MAX_CONCURRENT é o teto de Argon2id simultâneos.
+// ARGON2_MAX_CONCURRENT é o teto de Argon2id simultâneos.
 // Sem a variável, min(NumCPU, 4); definida, um inteiro de 1 a 64. Fora disso o
 // boot recusa, nomeando a variável: um teto de zero trancaria todo login, e um
 // teto enorme devolveria o OOM que o semáforo existe para impedir.

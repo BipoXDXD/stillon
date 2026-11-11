@@ -23,7 +23,7 @@ import (
 )
 
 // pedido é o que o servidor de teste viu. A rede não conta como
-// sincronização para o -race (Plano 2), então o handler entrega o pedido
+// sincronização para o -race, então o handler entrega o pedido
 // por canal, e não numa variável que o teste lê.
 type pedido struct {
 	Metodo, Caminho, Query string
@@ -195,9 +195,10 @@ func TestDiscordRevalidatesTheURLBeforeSending(t *testing.T) {
 	}
 }
 
-// C3 (Plano 10) não muda o despacho: um webhook que redireciona sem fim
-// continua falha definitiva de canal inválido, como quando o erro era
-// ErrBlocked. Sem isto, virava falha de rede e seria tentado de novo.
+// Reclassificar o redirecionamento não muda o despacho: um webhook que
+// redireciona sem fim continua falha definitiva de canal inválido, como quando
+// o erro era ErrBlocked. Sem isto, virava falha de rede e seria tentado de
+// novo.
 func TestDiscordRedirectLoopIsAPermanentFailure(t *testing.T) {
 	srv, client, _ := provedor(t, func(w http.ResponseWriter) {
 		w.Header().Set("Location", "/api/webhooks/1/t")
