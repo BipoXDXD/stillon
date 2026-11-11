@@ -65,7 +65,7 @@ func novaBancada(t *testing.T, client *http.Client, vagas int32) *bancada {
 	m := NewMetrics(prometheus.NewRegistry())
 	var s *Scheduler
 	if client == nil {
-		s = New(pool, box, clk, m)
+		s = New(pool, box, clk, m, nil)
 	} else {
 		s = newScheduler(pool, box, clk, m, client, vagas)
 	}

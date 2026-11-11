@@ -90,7 +90,7 @@ func novaBancadaPublica(t *testing.T) *bancadaPublica {
 	if _, err := b.pool.Exec(t.Context(), `INSERT INTO users (id, email, password_hash) VALUES ($1, $2, 'x')`, b.owner, b.owner.String()+"@exemplo.test"); err != nil {
 		t.Fatal(err)
 	}
-	b.s = prober.New(b.pool, b.box, b.clk, prober.NewMetrics(b.reg))
+	b.s = prober.New(b.pool, b.box, b.clk, prober.NewMetrics(b.reg), nil)
 	t.Cleanup(func() { b.s.Stop(5 * time.Second) })
 	return b
 }

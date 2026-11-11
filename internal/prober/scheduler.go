@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"math"
 	"net/http"
+	"net/netip"
 	"sync"
 	"time"
 
@@ -82,13 +83,30 @@ type Scheduler struct {
 	// quando o prazo de Stop acaba.
 	sondas  context.Context
 	abortar context.CancelCauseFunc
+
+	// depoisDeLerValidade existe para o teste de sondas concorrentes do mesmo
+	// alvo: roda entre ler a validade guardada e decidir se a substitui.
+	depoisDeLerValidade func()
 }
+
+// avisoListaDaHospedagemVazia é a mensagem estável do aviso de boot, para
+// busca e alerta no log.
+const avisoListaDaHospedagemVazia = "lista da hospedagem vazia: a sonda alcança o IP público da própria máquina"
 
 // New monta o agendador com o cliente de produção, guardado pelo safedial.
 // Não há como passar outro cliente por aqui: TestNewUsesTheSSRFGuardedClient
-// trava isso.
-func New(pool *pgxpool.Pool, box *crypto.Box, clk clock.Clock, m *Metrics) *Scheduler {
-	return newScheduler(pool, box, clk, m, safedial.NewClient(0), MaxInFlight)
+// trava isso. hospedagem são as faixas da própria máquina
+// (PROBE_BLOCKED_CIDRS), recusadas como as da lista fixa.
+//
+// A lista vazia não impede o sondador de subir (o fail-closed vem com o
+// #255): ela vira um aviso, uma vez por processo, e o gauge
+// probe_blocked_cidrs em 0. New só é chamado no boot dos papéis que sondam.
+func New(pool *pgxpool.Pool, box *crypto.Box, clk clock.Clock, m *Metrics, hospedagem []netip.Prefix) *Scheduler {
+	m.blockedCIDRs.Set(float64(len(hospedagem)))
+	if len(hospedagem) == 0 {
+		slog.Warn(avisoListaDaHospedagemVazia, "var", "PROBE_BLOCKED_CIDRS")
+	}
+	return newScheduler(pool, box, clk, m, safedial.NewClientBlocking(0, hospedagem), MaxInFlight)
 }
 
 func newScheduler(pool *pgxpool.Pool, box *crypto.Box, clk clock.Clock, m *Metrics, client *http.Client, max int32) *Scheduler {
@@ -324,8 +342,9 @@ func (s *Scheduler) especificar(a db.ClaimDueTargetsRow) (Spec, error) {
 	return spec, nil
 }
 
-// gravar persiste o check e avalia a histerese na MESMA transação: ou o
-// check e o estado do alvo ficam gravados juntos, ou nenhum dos dois.
+// gravar persiste o check, avalia a histerese e guarda a validade do
+// certificado na MESMA transação: ou o check e o estado do alvo ficam
+// gravados juntos, ou nenhum dos dois.
 func (s *Scheduler) gravar(a db.ClaimDueTargetsRow, em time.Time, res Result) {
 	// Contexto próprio: a sonda terminou, e o resultado vale mesmo com o
 	// processo encerrando.
@@ -359,8 +378,15 @@ func (s *Scheduler) gravar(a db.ClaimDueTargetsRow, em time.Time, res Result) {
 			return err
 		}
 		var err error
-		acao, err = s.avaliar(ctx, q, a, em, res)
-		return err
+		if acao, err = s.avaliar(ctx, q, a, em, res); err != nil {
+			return err
+		}
+		if res.CertNotAfter.IsZero() {
+			return nil
+		}
+		// Depois de avaliar: é a trava da histerese que serializa duas sondas
+		// do mesmo alvo; a do alvo (FOR KEY SHARE) não as serializa.
+		return s.guardarValidade(ctx, q, a, em, res.CertNotAfter)
 	})
 	switch {
 	case errors.Is(err, errSondaVelha):
@@ -392,6 +418,35 @@ func (s *Scheduler) gravar(a db.ClaimDueTargetsRow, em time.Time, res Result) {
 		// (C6 da revisão).
 		slog.Error("gravar check", "target_id", a.ID, "erro", err)
 	}
+}
+
+// guardarValidade aplica a regra do pior certificado (substituirValidade) à
+// validade lida em em e grava em target_tls só quando ela muda a linha.
+// Precisa rodar com a trava da histerese do alvo já tomada.
+func (s *Scheduler) guardarValidade(ctx context.Context, q *db.Queries, a db.ClaimDueTargetsRow, em, lida time.Time) error {
+	var guardada *validadeGuardada
+	atual, err := q.GetTargetTLS(ctx, a.ID)
+	switch {
+	case err == nil:
+		guardada = &validadeGuardada{NotAfter: atual.NotAfter, ObservedAt: atual.ObservedAt}
+	case !errors.Is(err, pgx.ErrNoRows):
+		return fmt.Errorf("ler validade do certificado: %w", err)
+	}
+	if s.depoisDeLerValidade != nil {
+		s.depoisDeLerValidade()
+	}
+
+	intervalo := time.Duration(a.IntervalSec) * time.Second
+	nova, mudou := substituirValidade(guardada, lida, em, intervalo)
+	if !mudou {
+		return nil
+	}
+	if err := q.SaveTargetTLS(ctx, db.SaveTargetTLSParams{
+		TargetID: a.ID, NotAfter: nova.NotAfter, ObservedAt: nova.ObservedAt,
+	}); err != nil {
+		return fmt.Errorf("gravar validade do certificado: %w", err)
+	}
+	return nil
 }
 
 var (

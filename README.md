@@ -91,6 +91,11 @@ variáveis são segredos de interpolação do recurso no Coolify, nunca arquivos
 
 - **Sonda** alvos HTTP (GET, HEAD ou POST) de 30 s a 24 h, com headers cifrados, status
   esperado, limite de latência para "degradado" e até 8 tags para agrupar e filtrar.
+- **Certificado** do host cadastrado: o detalhe do alvo mostra a validade ("Certificado válido até
+  …, em N dias", ou a data em que venceu), "não se aplica" para `http` ou IP literal e "aguardando a
+  primeira sonda" antes da primeira leitura. Atrás de um balanceador com réplicas de certificados
+  diferentes, a sonda guarda o pior certificado visto. Na API do alvo, `tls` traz `not_after` e
+  `observed_at` (ou `null` sem leitura), e `tls_warn` é aceito no cadastro e no `PATCH` (padrão `true`).
 - **Incidentes** abrem depois de falhas seguidas e fecham depois de sucessos seguidos, com
   histórico por alvo.
 - **Notificações** pelo Discord e por e-mail (Resend), com entrega confiável: saem de uma fila
@@ -101,8 +106,20 @@ variáveis são segredos de interpolação do recurso no Coolify, nunca arquivos
 - **Heartbeats** para tarefas agendadas: a tarefa avisa por `POST` numa URL própria, com período e
   tolerância ou expressão cron com fuso explícito, sinais de início e falha, código de saída, tempo
   de execução, tags e log dos últimos eventos. O cadastro mostra os próximos disparos do cron antes
-  de salvar. Sem aviso no prazo, abre incidente pelos mesmos canais. Eles aparecem na tabela de
-  monitores do painel, junto dos alvos, com a última duração, a execução em curso e os mesmos filtros.
+  de salvar. Sem aviso no prazo, abre incidente pelos mesmos canais. Passada a hora esperada, a
+  tarefa fica **em tolerância** e o alarme só sai ao fim dela. O sufixo `/log` registra uma linha
+  sem mexer no prazo (o conteúdo enviado não é guardado), e `?rid=` com um UUID identifica cada
+  execução quando duas se sobrepõem. Com `ping_resumes` ligado, o primeiro sucesso religa uma
+  tarefa pausada; o painel tem "Sinalizar agora" para registrar um sucesso à mão. Eles aparecem
+  na tabela de monitores do painel, junto dos alvos, com a última duração, a execução em curso e
+  os mesmos filtros. Período e tolerância vão até 365 dias, e a descrição até 10000 caracteres. A
+  tarefa pode ser duplicada (`POST /api/v1/heartbeats/{id}/clone`): a cópia ganha o nome com
+  " (cópia)" e sai sem token, eventos, estado nem incidentes da original; a URL de ping nova
+  aparece uma vez só, a cópia conta no limite da conta, e um agendamento que esta versão não
+  entende responde 409. O log de eventos pode ser limpo (`POST /api/v1/heartbeats/{id}/events/clear`,
+  204), com registro em `audit_log` e sem mexer no prazo nem nos sinais. O diálogo da URL traz
+  exemplos prontos para curl (com run id e `/log`), crontab, wget, Python e PowerShell, todos com
+  `POST`.
   ```sh
   curl -fsS -m 10 --retry 3 -X POST https://stillon.tech/ping/SEU-TOKEN/start
   curl -fsS -m 10 --retry 3 -X POST https://stillon.tech/ping/SEU-TOKEN       # ou /fail
@@ -169,6 +186,7 @@ Kafka, porque o volume de um monitor destes cabe com folga no banco que já exis
 | Decisão | Código | Teste que prova |
 |---|---|---|
 | SSRF: o IP é validado **na hora de conectar** (`ControlContext`), não só no cadastro, o que fecha o DNS rebinding; redirect revalidado a cada salto | [`safedial`](internal/prober/safedial/safedial.go), [`transport.go`](internal/prober/safedial/transport.go) | [`transport_test.go`](internal/prober/safedial/transport_test.go) (`TestRedirectToAnotherInternalAddressIsBlockedAtTheHop`) |
+| IPs da própria hospedagem: a VPS é dividida com outros projetos, e o IP público dela não é privado para a lista fixa. `PROBE_BLOCKED_CIDRS` (IPs ou CIDRs v4 e v6, separados só por vírgula; no v6, a /64 roteada para a VPS, e não só o endereço) soma essas faixas ao bloqueio, conferidas no `ControlContext` depois do DNS e a cada salto de redirect, com o v4 mapeado normalizado para v4. Item inválido (vazio, com espaço em volta, ilegível ou /0) derruba o boot. A lista vazia é aceita por enquanto (o fail-closed vem com o #255): nos papéis que sondam (`all`, `prober`), o boot registra um WARN com `var=PROBE_BLOCKED_CIDRS` e o gauge `probe_blocked_cidrs` fica em 0 | [`transport.go`](internal/prober/safedial/transport.go), [`config.go`](internal/config/config.go) | [`hospedagem_test.go`](internal/prober/safedial/hospedagem_test.go) (`TestProbeToTheServersOwnPublicIPIsBlocked`, `TestRedirectParaOIPDaHospedagemERecusado`), [`hospedagem_test.go`](internal/config/hospedagem_test.go) (`TestProducaoSobeComAListaDaHospedagemVazia`), [`hospedagem_test.go`](internal/prober/hospedagem_test.go) (`TestListaDaHospedagemVaziaAvisaUmaVez`, `TestGaugeDaListaDaHospedagem`) |
 | Redirect para outro host/porta ou downgrade remove todos os headers personalizados, inclusive User-Agent; a identificação pública é recolocada e a cadeia que volta à origem permanece limpa. PATCH e redirect compartilham canonicalização IDNA | [`host.go`](internal/prober/safedial/host.go), [`transport.go`](internal/prober/safedial/transport.go) | [`probe_test.go`](internal/prober/probe_test.go) (`TestProbeRedirectDropsCustomUserAgentThroughoutAnUnsafeChain`), [`transport_test.go`](internal/prober/safedial/transport_test.go) |
 | Isolamento por usuário com **RLS e `FORCE`**; o boot recusa um papel com superusuário ou `BYPASSRLS` | [`00004_targets_checks.sql`](internal/storage/migrations/00004_targets_checks.sql), [`role.go`](internal/storage/role.go) | [`rls_test.go`](internal/storage/rls_test.go) (`TestRLSIsolatesTargetsEvenWithTheWrongFilter`), [`role_test.go`](internal/storage/role_test.go) |
 | Check infinito ou mais de um minuto à frente do relógio do banco é recusado antes de contaminar a histerese, inclusive por UPDATE e em partições novas; timestamps históricos finitos continuam permitidos | [`00010_checks_clock_guard.sql`](internal/storage/migrations/00010_checks_clock_guard.sql) | [`checkstime_test.go`](internal/storage/checkstime_test.go), [`future_check_test.go`](internal/prober/future_check_test.go) (`TestFutureCheckCannotPoisonIncidentHysteresis`) |
@@ -293,6 +311,12 @@ tem as convenções). Todo erro, inclusive rota ou método inexistente sob `/api
   `items`. Até 2026-11, `null` nesses campos valia como ausente (`name` mudou no #194). `null` limpa
   `tags`, `description` e `headers`, e em `degraded_threshold_ms` desliga a classificação `degraded`.
   No `PATCH /channels/{id}`, `enabled: null` é `400` com `invalid`.
+- Piso de rollback dos heartbeats: esta versão tolera linhas gravadas por uma versão posterior com
+  um agendamento que ela não entende. Na saída, o heartbeat vem com `"schedule": {"kind": "unknown"}`,
+  sem outros campos; o `PATCH` é recusado com `409 schedule_unsupported`, sem gravar nada (`DELETE`
+  e rotação de token seguem); o ping é aceito e registrado sem mexer no prazo; e o avaliador ignora
+  o prazo dessas linhas. A falha avisada (`/fail` ou código de saída diferente de zero) continua
+  abrindo o incidente `heartbeat_failed`, e o sucesso seguinte o fecha.
 
 O que mudou no Plano 10 (spec do Plano 10, §4):
 
@@ -324,6 +348,10 @@ Aplicação e banco são dois recursos do Coolify, para que publicar o app não 
 o job `vps` do CI exercita.
 Os segredos são variáveis privadas do recurso no Coolify, com cópia no gerenciador de senhas do
 dono.
+`PROBE_BLOCKED_CIDRS` leva os IPs públicos da própria VPS: o v4 e, no v6, a /64 roteada para ela
+(o prefixo que o painel mostrar), porque qualquer endereço dessa faixa chega à máquina. Sem ela, a sonda alcançaria as
+portas dos outros projetos da máquina. Por enquanto ela é opcional (o fail-closed vem com o #255):
+vazia, o processo que sonda sobe, registra um WARN no boot e deixa o gauge `probe_blocked_cidrs` em 0.
 
 - **Imagem:** ~7,6 MB comprimida. A de produção sai do mesmo código e das mesmas bases fixadas
   por digest que o E2E testou, mas é construída de novo no `publish` (amd64 e arm64) e

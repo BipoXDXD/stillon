@@ -39,7 +39,7 @@ var (
 		nome: "heartbeat", rota: "/api/v1/heartbeats",
 		leitura:      func(id string) string { return "/api/v1/heartbeats/" + id },
 		corpo:        func(*testing.T, *api, string) map[string]any { return corpoDePeriodo },
-		obrigatorios: []string{"name", "schedule", "grace_sec", "enabled"},
+		obrigatorios: []string{"name", "schedule", "grace_sec", "enabled", "ping_resumes"},
 		mudancaJunto: mudarTags,
 	}
 	paginaDePatch = recursoDePatch{

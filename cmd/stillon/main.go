@@ -151,7 +151,7 @@ func run(ctx context.Context, cfg *config.Config) error {
 	}
 
 	if cfg.Role.RunsProber() {
-		sched := prober.New(pool, box, clk, prober.NewMetrics(reg))
+		sched := prober.New(pool, box, clk, prober.NewMetrics(reg), cfg.ProbeBlockedCIDRs)
 		grace := graceDoSondador(cfg.ShutdownGrace)
 		g.Go(func() error { return sched.Run(gctx, grace) })
 		g.Go(func() error {
