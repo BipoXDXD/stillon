@@ -117,7 +117,7 @@ for (const tema of ['claro', 'escuro'] as const) {
     // de anúncio oculta por um instante, e um getByText na página inteira
     // acharia os dois (o modo estrito do Playwright recusa, conforme o tempo).
     await expect(
-      page.getByRole('region', { name: /Notifications/ }).getByText('Autenticador trocado. As outras sessões foram encerradas.'),
+      page.getByRole('region', { name: /Avisos/ }).getByText('Autenticador trocado. As outras sessões foram encerradas.'),
     ).toBeVisible()
     await controlePositivo(page, 'depois da troca')
   })
@@ -701,7 +701,9 @@ for (const largura of [400, 1280]) {
       expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(largura)
       for (const controle of [
         page.getByRole('link', { name: 'Editar' }),
+        page.getByRole('button', { name: 'Duplicar' }),
         page.getByRole('button', { name: 'Pausar' }),
+        page.getByRole('button', { name: 'Limpar eventos' }),
         page.getByRole('button', { name: 'Apagar' }),
         page.getByRole('button', { name: /^Reconhecer o incidente/ }),
         page.getByRole('button', { name: 'Gerar nova URL' }),

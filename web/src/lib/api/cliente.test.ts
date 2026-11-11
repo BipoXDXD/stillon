@@ -16,6 +16,10 @@ import { servidor } from '@/test/setup'
 import { ApiError } from './http'
 import { mensagemDe } from './mensagens'
 
+type ApiFalsa = ReturnType<typeof usarApiFalsa>
+
+const ROTA_DO_REFRESH = '*/api/v1/auth/refresh'
+
 async function logado() {
   const falsa = usarApiFalsa()
   const s = novaSessao()
@@ -40,6 +44,8 @@ describe('a regra do 401', () => {
       enabled: true,
       header_names: [],
       tags: [],
+      tls_warn: true,
+      tls: null,
       created_at: '2026-09-24T12:00:00Z',
     }))
     falsa.estado.atrasoRefresh = 20
@@ -152,6 +158,96 @@ describe('a regra do 401', () => {
     await expect(api.me()).rejects.toMatchObject({ code: 'unauthorized' })
     expect(sessao.estado()).toBe('anonimo')
     expect(sessao.motivo()).toBe('expirou')
+  })
+
+  // Durante um deploy o refresh falha sem dizer nada sobre a sessão: ela pode
+  // estar boa, e só o 401 do refresh a encerra (spec §11.2; aqui todo merge é
+  // deploy). Sabotagens previstas: em pedir(), "sessao.renovar(usado).catch(()
+  // => null)" derruba os quatro casos; em renovarAgora(), "r.status !== 401 &&
+  // r.status < 500" no lugar de "r.status !== 401" derruba os três 5xx.
+  describe.each([
+    {
+      caso: '503 da API',
+      status: 503,
+      code: 'unavailable',
+      provocar: (falsa: ApiFalsa) => falsa.estado.forcar.set('POST /auth/refresh', { status: 503, code: 'unavailable' }),
+    },
+    {
+      caso: '500 da API',
+      status: 500,
+      code: 'internal_error',
+      provocar: (falsa: ApiFalsa) => falsa.estado.forcar.set('POST /auth/refresh', { status: 500, code: 'internal_error' }),
+    },
+    {
+      caso: '502 do proxy, sem o envelope de erro',
+      status: 502,
+      code: 'unexpected',
+      provocar: () =>
+        servidor.use(
+          http.post(
+            ROTA_DO_REFRESH,
+            () => new HttpResponse('<h1>Bad Gateway</h1>', { status: 502, headers: { 'Content-Type': 'text/html' } }),
+          ),
+        ),
+    },
+    {
+      caso: 'rede caída',
+      status: 0,
+      code: 'network',
+      provocar: () => servidor.use(http.post(ROTA_DO_REFRESH, () => HttpResponse.error())),
+    },
+  ])('refresh com $caso', ({ status, code, provocar }) => {
+    it('a chamada falha com o erro do refresh, sem repetir, e a sessão fica aberta', async () => {
+      const { falsa, sessao, api } = await logado()
+      const tokenAntes = sessao.token()
+      falsa.expirarAcessos()
+      provocar(falsa)
+
+      const erro = await api.me().catch((x: unknown) => x)
+
+      expect(erro).toBeInstanceOf(ApiError)
+      expect(erro).toMatchObject({ status, code })
+      expect(falsa.chamadas('GET /me')).toBe(1)
+      expect(sessao.estado()).toBe('autenticado')
+      expect(sessao.motivo()).toBeNull()
+      expect(tokenAntes).not.toBeNull()
+      expect(sessao.token()).toBe(tokenAntes)
+    })
+  })
+
+  // A prova de que a sessão não ficou "meio aberta". Sabotagem prevista: tirar
+  // o ".finally" que limpa o emVoo em renovar() → a promessa rejeitada fica e
+  // nenhum refresh novo sai.
+  it('passado o 503, a chamada seguinte renova e a sessão segue', async () => {
+    const { falsa, sessao, api } = await logado()
+    falsa.expirarAcessos()
+    falsa.estado.forcar.set('POST /auth/refresh', { status: 503, code: 'unavailable' })
+    await expect(api.me()).rejects.toMatchObject({ status: 503 })
+
+    falsa.estado.forcar.delete('POST /auth/refresh')
+
+    await expect(api.me()).resolves.toMatchObject({ email: EMAIL })
+    expect(falsa.chamadas('POST /auth/refresh')).toBe(2)
+    expect(sessao.estado()).toBe('autenticado')
+  })
+
+  // O contraste dos casos acima, pela mesma rota: aqui o servidor recusou a
+  // sessão. Sabotagem prevista: tirar o "sessao.encerrar('expirou')" do !novo
+  // em pedir().
+  it('refresh respondendo 401 encerra a sessão, larga o token e devolve o 401 da chamada', async () => {
+    const { falsa, sessao, api } = await logado()
+    falsa.expirarAcessos()
+    falsa.estado.forcar.set('POST /auth/refresh', { status: 401, code: 'unauthorized' })
+
+    const erro = await api.me().catch((x: unknown) => x)
+
+    expect(erro).toBeInstanceOf(ApiError)
+    expect(erro).toMatchObject({ status: 401, code: 'unauthorized' })
+    expect(falsa.chamadas('POST /auth/refresh')).toBe(1)
+    expect(falsa.chamadas('GET /me')).toBe(1)
+    expect(sessao.estado()).toBe('anonimo')
+    expect(sessao.motivo()).toBe('expirou')
+    expect(sessao.token()).toBeNull()
   })
 
   it('401 de novo depois de renovar não entra em laço', async () => {

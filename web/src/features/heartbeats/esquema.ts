@@ -2,9 +2,10 @@ import { z } from 'zod'
 import type { AlteracaoHeartbeat, EntradaHeartbeat } from '@/lib/api/cliente'
 import type { ErroDeCampo } from '@/lib/api/http'
 import { mensagemDaLinhaDaDescricao, mensagemDoCampo } from '@/lib/api/mensagens'
-import type { Agendamento, Heartbeat } from '@/lib/api/schemas'
+import type { AgendamentoEditavel, Heartbeat } from '@/lib/api/schemas'
 import { fuso, pontosDeCodigo } from '@/lib/format'
 import { erroNasTags, separarTags } from '@/lib/tags'
+import { assertUnreachable } from '@/lib/utils'
 import { partirDuracao, SEGUNDOS_DA_UNIDADE, type Unidade } from './estado'
 
 // O formulário do heartbeat, com os limites da §7 da spec. A expressão cron
@@ -13,11 +14,11 @@ import { partirDuracao, SEGUNDOS_DA_UNIDADE, type Unidade } from './estado'
 const UNIDADES = ['dias', 'horas', 'minutos', 'segundos'] as const
 
 const LIMITES = {
-  periodo: { min: 60, max: 2_678_400, texto: 'Entre 1 minuto e 31 dias.' },
-  tolerancia: { min: 30, max: 604_800, texto: 'Entre 30 segundos e 7 dias.' },
+  periodo: { min: 60, max: 31_536_000, texto: 'Entre 1 minuto e 365 dias.' },
+  tolerancia: { min: 30, max: 31_536_000, texto: 'Entre 30 segundos e 365 dias.' },
 }
 const MAX_NOME = 100
-const MAX_DESCRICAO = 1000
+const MAX_DESCRICAO = 10_000
 const MAX_EXPR = 100
 const MAX_FUSO = 64
 const GRACE_PADRAO_SEC = 300
@@ -44,6 +45,7 @@ export const esquemaDoHeartbeat = z
     timezone: z.string().trim(),
     toleranciaQuantidade: z.number().or(z.nan()),
     toleranciaUnidade: z.enum(UNIDADES),
+    pingResumes: z.boolean(),
   })
   .superRefine((v, ctx) => {
     const fora = (campo: string, mensagem: string) => ctx.addIssue({ code: 'custom', path: [campo], message: mensagem })
@@ -86,18 +88,45 @@ export function valoresPadrao(): ValoresDoHeartbeat {
     timezone: fuso(),
     toleranciaQuantidade: tolerancia.quantidade,
     toleranciaUnidade: tolerancia.unidade,
+    pingResumes: false,
   }
 }
 
-export function valoresDe(hb: Heartbeat): ValoresDoHeartbeat {
+// O heartbeat que o formulário sabe editar. Um agendamento de versão posterior
+// do servidor ('unknown') não tem campos aqui, e o PATCH nele é 409
+// schedule_unsupported: a tela nem oferece a edição.
+export type HeartbeatEditavel = Omit<Heartbeat, 'schedule'> & { schedule: AgendamentoEditavel }
+
+export function comoEditavel(hb: Heartbeat): HeartbeatEditavel | null {
+  const { schedule } = hb
+  switch (schedule.kind) {
+    case 'period':
+    case 'cron':
+      return { ...hb, schedule }
+    case 'unknown':
+      return null
+    default:
+      return assertUnreachable(schedule)
+  }
+}
+
+export function valoresDe(hb: HeartbeatEditavel): ValoresDoHeartbeat {
   const tolerancia = partirDuracao(hb.grace_sec)
-  const base = { ...valoresPadrao(), name: hb.name, description: hb.description, tagsTexto: hb.tags.join(', '), toleranciaQuantidade: tolerancia.quantidade, toleranciaUnidade: tolerancia.unidade }
+  const base = {
+    ...valoresPadrao(),
+    name: hb.name,
+    description: hb.description,
+    tagsTexto: hb.tags.join(', '),
+    toleranciaQuantidade: tolerancia.quantidade,
+    toleranciaUnidade: tolerancia.unidade,
+    pingResumes: hb.ping_resumes,
+  }
   if (hb.schedule.kind === 'cron') return { ...base, tipo: 'cron', expr: hb.schedule.expr, timezone: hb.schedule.timezone }
   const periodo = partirDuracao(hb.schedule.period_sec)
   return { ...base, tipo: 'period', periodoQuantidade: periodo.quantidade, periodoUnidade: periodo.unidade }
 }
 
-function agendamento(v: ValoresDoHeartbeat): Agendamento {
+function agendamento(v: ValoresDoHeartbeat): AgendamentoEditavel {
   return v.tipo === 'cron'
     ? { kind: 'cron', expr: v.expr, timezone: v.timezone }
     : { kind: 'period', period_sec: emSegundos(v.periodoQuantidade, v.periodoUnidade) }
@@ -113,6 +142,7 @@ export function paraCriacao(v: ValoresDoHeartbeat): EntradaHeartbeat {
     grace_sec: graceDe(v),
     ...(tags.length > 0 && { tags }),
     ...(v.description !== '' && { description: v.description }),
+    ...(v.pingResumes && { ping_resumes: true }),
   }
 }
 
@@ -126,6 +156,7 @@ export function paraAlteracao(original: ValoresDoHeartbeat, v: ValoresDoHeartbea
   if (tags.join() !== separarTags(original.tagsTexto).join()) a.tags = tags
   if (JSON.stringify(agendamento(v)) !== JSON.stringify(agendamento(original))) a.schedule = agendamento(v)
   if (graceDe(v) !== graceDe(original)) a.grace_sec = graceDe(v)
+  if (v.pingResumes !== original.pingResumes) a.ping_resumes = v.pingResumes
   return a
 }
 
@@ -147,4 +178,5 @@ export const campoDoServidor: Partial<Record<string, keyof ValoresDoHeartbeat>> 
   expr: 'expr',
   timezone: 'timezone',
   grace_sec: 'toleranciaQuantidade',
+  ping_resumes: 'pingResumes',
 }

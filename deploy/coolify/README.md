@@ -12,6 +12,10 @@ Manter backups e restauração verificada antes de atualizar uma versão. Não a
 
 Todo serviço tem teto de CPU (`cpus`) e de memória (`mem_limit`): a VPS tem 2 vCPUs divididas com outros projetos. Os valores e o porquê de cada um estão comentados no `deploy/vps/compose.prod.yaml`, que usa os mesmos tetos; o `TestProductionComposeLimitsEveryService` exige os dois em todo serviço. Como o Coolify fixa o commit de infraestrutura, um teto novo só chega aos containers depois que esse commit é atualizado no recurso e o recurso é publicado de novo.
 
+## Atualizar o digest de uma imagem
+
+O Dependabot atualiza os arquivos Compose (`compose.yaml` e `deploy/vps/compose.prod.yaml`), mas não enxerga os manifestos daqui. Em todo PR dele que troque o digest do Caddy ou do Postgres, leve o mesmo digest, à mão, a `app.json` (Caddy) ou `database.json` (Postgres) antes do merge. Publicar a troca é um passo separado: a imagem tem de estar importada no host, e o commit de infraestrutura, atualizado no recurso.
+
 ## Imagem do banco: não fazer redeploy do `db` antes de restaurá-la
 
 Em 2026-11-06, a imagem de `stillon-db-1` estava em disco, sem tag nem digest:

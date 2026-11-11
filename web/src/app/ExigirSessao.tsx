@@ -3,22 +3,25 @@ import { AvisoDeContexto } from '@/components/AvisoDeContexto'
 import { Botao } from '@/components/ui/botao'
 import { useSessao } from './contexto'
 
+// O splash da verificação do boot e do chunk de uma rota sob demanda.
+export function SplashDoPainel() {
+  return (
+    <>
+      <AvisoDeContexto />
+      <div className="grid min-h-screen place-items-center" aria-busy="true">
+        <p className="text-suave">Carregando o StillOn…</p>
+      </div>
+    </>
+  )
+}
+
 // A porta das rotas autenticadas. Enquanto o boot verifica o cookie, um
 // splash — nunca o /login, que piscaria a cada F5 (spec §11.2, item 1).
 export function ExigirSessao() {
   const { sessao, estado, motivo } = useSessao()
   const local = useLocation()
 
-  if (estado === 'verificando') {
-    return (
-      <>
-        <AvisoDeContexto />
-        <div className="grid min-h-screen place-items-center" aria-busy="true">
-          <p className="text-suave">Carregando o StillOn…</p>
-        </div>
-      </>
-    )
-  }
+  if (estado === 'verificando') return <SplashDoPainel />
   if (estado === 'offline') {
     return (
       <>

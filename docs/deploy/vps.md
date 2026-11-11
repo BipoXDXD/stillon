@@ -1779,6 +1779,8 @@ nem o próprio `deploy` pode trocar a chave.
 `restrict,command="sudo /usr/local/sbin/stillon-entrada" ssh-ed25519 AAAA` e terminando em
 `stillon-deploy-github`.
 
+> **Na publicação pelo Coolify, a chave do backup não aponta para o `stillon-entrada`.** O `command=` dela e o `sudoers` apontam para o `stillon-backup-entrada` ([`deploy/coolify/release/stillon-backup-entrada.sh`](../../deploy/coolify/release/stillon-backup-entrada.sh)), o único script liberado. Ele aceita só o comando `backup`, recusa enquanto houver publicação pendente (`pending.json`) e então chama o `stillon-entrada`. Os passos acima descrevem a trilha manual antiga.
+
 **Confira** (no seu computador), que a chave **só** faz o que deve:
 
 **1/5 · Mac.** Rode só este e espere a saída:
@@ -3754,7 +3756,9 @@ Os três arquivos de versão, na VPS, são legíveis sem `sudo` (`0644`: não s�
 
 Rode o mesmo workflow com o SHA anterior (`cat /opt/stillon/versao-anterior` na VPS). Só é
 seguro se as migrations da versão nova forem **aditivas**: o `goose` não roda `Down` sozinho, e o
-rollback automático do script também não desfaz migration.
+rollback automático do script também não desfaz migration. Nunca rode `goose down` para voltar
+a versão que trouxe a `target_tls` (#246): o rollback dela é só de binário, porque o binário
+anterior funciona no schema novo e o `Down` apaga a escolha `tls_warn = false` de cada dono.
 
 **Se sair 3 com `stillon:<sha> já existe com outra imagem`:** uma tag `v*` publicada depois
 daquele deploy **moveu** a tag `:<sha>` do GHCR para o digest do build da tag (mesmo código, outro

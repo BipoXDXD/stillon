@@ -3,7 +3,7 @@ import { enviar, lerCorpo, lerErro, type Buscar, type Pedido } from './http'
 import {
   Alvo,
   CadastroTotp,
-  Agendamento,
+  AgendamentoEditavel,
   Canal,
   ConfirmacaoTotp,
   Heartbeat,
@@ -57,7 +57,14 @@ export type EntradaAlvo = {
 
 export type AlteracaoAlvo = Partial<EntradaAlvo>
 
-export type EntradaHeartbeat = { name: string; schedule: Agendamento; grace_sec: number; tags?: string[]; description?: string }
+export type EntradaHeartbeat = {
+  name: string
+  schedule: AgendamentoEditavel
+  grace_sec: number
+  tags?: string[]
+  description?: string
+  ping_resumes?: boolean
+}
 
 export type AlteracaoHeartbeat = Partial<EntradaHeartbeat> & { enabled?: boolean }
 
@@ -175,6 +182,13 @@ export function criarApi(sessao: Sessao, buscar: Buscar, o: OpcoesDaApi = {}) {
     apagarHeartbeat: (id: string) => pedir({ metodo: 'DELETE', caminho: `/heartbeats/${encodeURIComponent(id)}` }, null),
     rotacionarHeartbeat: (id: string) =>
       pedir({ metodo: 'POST', caminho: `/heartbeats/${encodeURIComponent(id)}/token/rotate` }, HeartbeatComPing),
+    duplicarHeartbeat: (id: string) =>
+      pedir({ metodo: 'POST', caminho: `/heartbeats/${encodeURIComponent(id)}/clone` }, HeartbeatComPing),
+    limparEventosDoHeartbeat: (id: string) =>
+      pedir({ metodo: 'POST', caminho: `/heartbeats/${encodeURIComponent(id)}/events/clear` }, null),
+    // Um sucesso pelo painel; a resposta é o heartbeat já atualizado.
+    sinalizarAgora: (id: string) =>
+      pedir({ metodo: 'POST', caminho: `/heartbeats/${encodeURIComponent(id)}/ping-now` }, Heartbeat),
     eventosDoHeartbeat: (id: string, cursor?: string) =>
       get(`/heartbeats/${encodeURIComponent(id)}/events${consulta({ cursor, limit: LIMITE_DO_LOG })}`, ListaDeEventos),
     incidentesDoHeartbeat: (id: string, cursor?: string) =>

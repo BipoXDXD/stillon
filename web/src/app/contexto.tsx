@@ -25,6 +25,8 @@ export function criarClienteDeConsultas() {
         retry: (n, e) => podeRepetir(e) && n < 2,
         staleTime: 10_000,
         refetchOnWindowFocus: true,
+        // A rede voltou: nada que veio antes da queda vale como atual.
+        refetchOnReconnect: 'always',
         // Aba em segundo plano não consulta (spec §11.4).
         refetchIntervalInBackground: false,
       },

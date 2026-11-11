@@ -67,6 +67,11 @@ func (h *VerifyHandlers) Page(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *VerifyHandlers) Confirm(w http.ResponseWriter, r *http.Request) {
+	// Lê o corpo antes do banco, como as demais rotas com teto configurado.
+	if _, err := io.Copy(io.Discard, r.Body); err != nil {
+		pagina(w, statusCorpoRecusado(err), paginaErro)
+		return
+	}
 	err := h.svc.ConfirmToken(r.Context(), r.PathValue("token"))
 	switch {
 	case err == nil:
@@ -77,6 +82,13 @@ func (h *VerifyHandlers) Confirm(w http.ResponseWriter, r *http.Request) {
 		slog.Error("confirmar token", "erro", err, "trace_id", observability.TraceID(r.Context()))
 		pagina(w, statusErroVerificacao(r.Context()), paginaErro)
 	}
+}
+
+func statusCorpoRecusado(err error) int {
+	if corpoAcimaDoTeto(err) {
+		return http.StatusRequestEntityTooLarge
+	}
+	return http.StatusBadRequest
 }
 
 func statusErroVerificacao(ctx context.Context) int {

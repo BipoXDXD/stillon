@@ -4,16 +4,24 @@
 -- empurra next_attempt_at para lease_until e conta a tentativa na mesma
 -- instrução que trava as linhas, e o commit acontece antes do envio. A
 -- CTE devolve, na mesma ida ao banco, tudo o que o envio precisa.
+--
+-- O lote fica numa CTE MATERIALIZED pelo mesmo motivo de ClaimDueTargets.
 -- name: ClaimDueNotifications :many
-WITH claimed AS (
+WITH lote AS MATERIALIZED (
+    SELECT id FROM notifications
+     WHERE status = 'pending' AND next_attempt_at <= sqlc.arg(now)::timestamptz
+       -- Piso de rollback (SP1, §12): uma versão futura grava aviso de
+       -- certificado sem incidente. Contá-lo aqui o faria sumir no JOIN com
+       -- incidents e somar tentativas até fechar como failed sem ter saído.
+       -- O PR 7 da SP1 remove o filtro ao trocar o JOIN por LEFT JOIN.
+       AND incident_id IS NOT NULL
+     ORDER BY next_attempt_at
+     LIMIT sqlc.arg(max_rows)::int
+       FOR UPDATE SKIP LOCKED
+), claimed AS (
     UPDATE notifications n
        SET next_attempt_at = sqlc.arg(lease_until)::timestamptz, attempts = n.attempts + 1
-     WHERE n.id IN (
-           SELECT id FROM notifications
-            WHERE status = 'pending' AND next_attempt_at <= sqlc.arg(now)::timestamptz
-            ORDER BY next_attempt_at
-            LIMIT sqlc.arg(max_rows)::int
-              FOR UPDATE SKIP LOCKED)
+     WHERE n.id IN (SELECT id FROM lote)
     RETURNING n.id, n.incident_id, n.channel_id, n.event, n.attempts, n.created_at, n.target_name
 )
 SELECT cl.id, cl.event, cl.attempts, cl.created_at,

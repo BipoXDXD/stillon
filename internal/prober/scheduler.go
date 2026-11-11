@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"math"
 	"net/http"
+	"net/netip"
 	"sync"
 	"time"
 
@@ -82,13 +83,30 @@ type Scheduler struct {
 	// quando o prazo de Stop acaba.
 	sondas  context.Context
 	abortar context.CancelCauseFunc
+
+	// depoisDeLerValidade existe para o teste de sondas concorrentes do mesmo
+	// alvo: roda entre ler a validade guardada e decidir se a substitui.
+	depoisDeLerValidade func()
 }
+
+// avisoListaDaHospedagemVazia é a mensagem estável do aviso de boot, para
+// busca e alerta no log.
+const avisoListaDaHospedagemVazia = "lista da hospedagem vazia: a sonda alcança o IP público da própria máquina"
 
 // New monta o agendador com o cliente de produção, guardado pelo safedial.
 // Não há como passar outro cliente por aqui: TestNewUsesTheSSRFGuardedClient
-// trava isso.
-func New(pool *pgxpool.Pool, box *crypto.Box, clk clock.Clock, m *Metrics) *Scheduler {
-	return newScheduler(pool, box, clk, m, safedial.NewClient(0), MaxInFlight)
+// trava isso. hospedagem são as faixas da própria máquina
+// (PROBE_BLOCKED_CIDRS), recusadas como as da lista fixa.
+//
+// A lista vazia não impede o sondador de subir (o fail-closed vem com o
+// #255): ela vira um aviso, uma vez por processo, e o gauge
+// probe_blocked_cidrs em 0. New só é chamado no boot dos papéis que sondam.
+func New(pool *pgxpool.Pool, box *crypto.Box, clk clock.Clock, m *Metrics, hospedagem []netip.Prefix) *Scheduler {
+	m.blockedCIDRs.Set(float64(len(hospedagem)))
+	if len(hospedagem) == 0 {
+		slog.Warn(avisoListaDaHospedagemVazia, "var", "PROBE_BLOCKED_CIDRS")
+	}
+	return newScheduler(pool, box, clk, m, safedial.NewClientBlocking(0, hospedagem), MaxInFlight)
 }
 
 func newScheduler(pool *pgxpool.Pool, box *crypto.Box, clk clock.Clock, m *Metrics, client *http.Client, max int32) *Scheduler {
@@ -208,17 +226,15 @@ func (s *Scheduler) Tick(ctx context.Context) (int, error) {
 			s.sem.Release(int64(vagas))
 			return 0, fmt.Errorf("reivindicar alvos: %w", err)
 		}
-		// Guarda do semáforo. O LIMIT da reivindicação vive numa subquery
-		// (IN (… LIMIT … FOR UPDATE SKIP LOCKED)), e o Postgres não promete
-		// avaliá-la uma vez só: num nested loop ela pode ser reexecutada e
-		// devolver mais linhas que vagas. Sem este corte, a sobra ficaria
+		// Guarda do semáforo. A CTE MATERIALIZED da reivindicação já impede
+		// um lote maior que vagas; este corte fica porque o custo de errar
+		// é derrubar o processo. Sem ele, a sobra ficaria
 		// negativa, nada voltaria ao semáforo e cada goroutine faria
 		// Release(1) de uma vaga que nunca foi tomada: o teto de 64 seria
 		// furado e viria o panic "semaphore: released more than held", que
 		// derruba o processo (em --role=all, a API junto). Os excedentes já
 		// tiveram o next_run_at empurrado pela reivindicação, então só perdem
-		// um intervalo. Não há teste comportamental: o Postgres não produz
-		// esse plano sob demanda.
+		// um intervalo.
 		if len(alvos) > int(vagas) {
 			slog.Error("reivindicação devolveu mais alvos que vagas; os excedentes ficam para o próximo intervalo",
 				"vagas", vagas, "alvos", len(alvos))
@@ -326,8 +342,9 @@ func (s *Scheduler) especificar(a db.ClaimDueTargetsRow) (Spec, error) {
 	return spec, nil
 }
 
-// gravar persiste o check e avalia a histerese na MESMA transação: ou o
-// check e o estado do alvo ficam gravados juntos, ou nenhum dos dois.
+// gravar persiste o check, avalia a histerese e guarda a validade do
+// certificado na MESMA transação: ou o check e o estado do alvo ficam
+// gravados juntos, ou nenhum dos dois.
 func (s *Scheduler) gravar(a db.ClaimDueTargetsRow, em time.Time, res Result) {
 	// Contexto próprio: a sonda terminou, e o resultado vale mesmo com o
 	// processo encerrando.
@@ -361,14 +378,25 @@ func (s *Scheduler) gravar(a db.ClaimDueTargetsRow, em time.Time, res Result) {
 			return err
 		}
 		var err error
-		acao, err = s.avaliar(ctx, q, a, em, res)
-		return err
+		if acao, err = s.avaliar(ctx, q, a, em, res); err != nil {
+			return err
+		}
+		if res.CertNotAfter.IsZero() {
+			return nil
+		}
+		// Depois de avaliar: é a trava da histerese que serializa duas sondas
+		// do mesmo alvo; a do alvo (FOR KEY SHARE) não as serializa.
+		return s.guardarValidade(ctx, q, a, em, res.CertNotAfter)
 	})
 	switch {
 	case errors.Is(err, errSondaVelha):
 		// O dono trocou a URL ou o método com a sonda em voo (E2 da revisão
 		// de 2026-10-14). Não é erro: o resultado é de outro serviço.
 		slog.Info("sonda descartada: o alvo mudou de URL ou método durante a sonda", "target_id", a.ID)
+	case errors.Is(err, errAlvoPausado):
+		// Um alvo pausado não abre incidente: sem sonda, nada o fecharia, e o
+		// aviso chegaria depois de o dono dizer que não quer monitorar.
+		slog.Info("sonda descartada: o alvo foi pausado durante a sonda", "target_id", a.ID)
 	case errors.Is(err, errAlvoSumido):
 		// Review Focus 3 do Plano 2, visto pela trava do alvo.
 		s.metrics.forget(a.ID)
@@ -392,16 +420,46 @@ func (s *Scheduler) gravar(a db.ClaimDueTargetsRow, em time.Time, res Result) {
 	}
 }
 
+// guardarValidade aplica a regra do pior certificado (substituirValidade) à
+// validade lida em em e grava em target_tls só quando ela muda a linha.
+// Precisa rodar com a trava da histerese do alvo já tomada.
+func (s *Scheduler) guardarValidade(ctx context.Context, q *db.Queries, a db.ClaimDueTargetsRow, em, lida time.Time) error {
+	var guardada *validadeGuardada
+	atual, err := q.GetTargetTLS(ctx, a.ID)
+	switch {
+	case err == nil:
+		guardada = &validadeGuardada{NotAfter: atual.NotAfter, ObservedAt: atual.ObservedAt}
+	case !errors.Is(err, pgx.ErrNoRows):
+		return fmt.Errorf("ler validade do certificado: %w", err)
+	}
+	if s.depoisDeLerValidade != nil {
+		s.depoisDeLerValidade()
+	}
+
+	intervalo := time.Duration(a.IntervalSec) * time.Second
+	nova, mudou := substituirValidade(guardada, lida, em, intervalo)
+	if !mudou {
+		return nil
+	}
+	if err := q.SaveTargetTLS(ctx, db.SaveTargetTLSParams{
+		TargetID: a.ID, NotAfter: nova.NotAfter, ObservedAt: nova.ObservedAt,
+	}); err != nil {
+		return fmt.Errorf("gravar validade do certificado: %w", err)
+	}
+	return nil
+}
+
 var (
-	errSondaVelha = errors.New("o alvo mudou de URL ou método durante a sonda")
-	errAlvoSumido = errors.New("o alvo foi apagado durante a sonda")
+	errSondaVelha  = errors.New("o alvo mudou de URL ou método durante a sonda")
+	errAlvoPausado = errors.New("o alvo foi pausado durante a sonda")
+	errAlvoSumido  = errors.New("o alvo foi apagado durante a sonda")
 )
 
-// conferirSonda é o fencing da gravação: trava a linha do alvo e confere se a
-// URL e o método ainda são os da reivindicação. Um PATCH aberto é esperado, e
-// o que vale é o que ele gravou. Uma troca de ida e volta (A, B, A) passa:
-// a sonda foi de fato sobre a URL atual, e a histerese zerada recomeça por
-// um resultado dela.
+// conferirSonda é o fencing da gravação: trava a linha do alvo e confere se
+// ele segue ligado e se a URL e o método ainda são os da reivindicação. Um
+// PATCH aberto é esperado, e o que vale é o que ele gravou. Uma troca de ida e
+// volta (A, B, A) passa: a sonda foi de fato sobre a URL atual, e a histerese
+// zerada recomeça por um resultado dela.
 func conferirSonda(ctx context.Context, q *db.Queries, a db.ClaimDueTargetsRow) error {
 	atual, err := q.LockTargetProbeSpec(ctx, a.ID)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -409,6 +467,9 @@ func conferirSonda(ctx context.Context, q *db.Queries, a db.ClaimDueTargetsRow) 
 	}
 	if err != nil {
 		return fmt.Errorf("conferir a URL do alvo: %w", err)
+	}
+	if !atual.Enabled {
+		return errAlvoPausado
 	}
 	if atual.URL != a.URL || atual.Method != a.Method {
 		return errSondaVelha

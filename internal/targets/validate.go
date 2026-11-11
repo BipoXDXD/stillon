@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"slices"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/BipoXDXD/stillon/internal/prober/safedial"
@@ -43,7 +44,7 @@ const (
 	minIntervalSec         = 30
 	maxIntervalSec         = 86400
 	minTimeoutMS           = 1000
-	maxTimeoutMS           = 30000
+	maxTimeoutMS           = int32(safedial.MaxProbeTimeout / time.Millisecond)
 	maxNameRunes           = 100
 	maxURLBytes            = 2048
 	maxDegradedThresholdMS = 60000

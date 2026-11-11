@@ -222,6 +222,50 @@ describe('entrar', () => {
     expect(screen.getByLabelText('Código do aplicativo autenticador')).toBeInTheDocument()
   })
 
+  // Segura a resposta da rota até soltar(), e depois cai no handler da API
+  // falsa, que é quem conta as chamadas. Os dois cliques acontecem com o
+  // primeiro envio ainda em voo.
+  function segurarRota(caminho: string) {
+    let soltar!: () => void
+    const segurado = new Promise<void>((ok) => (soltar = ok))
+    servidor.use(
+      http.post(`*/api/v1${caminho}`, async () => {
+        await segurado
+      }),
+    )
+    return () => soltar()
+  }
+
+  // Sabotagem prevista: tirar o "disabled" do botão Entrar → 2 logins.
+  it('clique duplo em Entrar com o login em voo manda um envio só', async () => {
+    const { usuario, falsa } = await renderizarPainel('/login', { logado: false })
+    await usuario.type(await screen.findByLabelText('E-mail'), EMAIL)
+    await usuario.type(screen.getByLabelText('Senha'), SENHA)
+    const soltar = segurarRota('/auth/login')
+    await usuario.dblClick(screen.getByRole('button', { name: 'Entrar' }))
+    soltar()
+    expect(await screen.findByRole('heading', { name: 'Painel' })).toBeInTheDocument()
+    expect(falsa.chamadas('POST /auth/login')).toBe(1)
+  })
+
+  // O segundo envio do mesmo código cairia na proteção contra replay, e a
+  // tela diria "Código incorreto" na hora de entrar. Sabotagem prevista: tirar
+  // o "disabled" do botão Verificar → 2 verificações.
+  it('clique duplo em Verificar com a prova em voo manda um envio só', async () => {
+    const { usuario, falsa } = await renderizarPainel('/login', { logado: false })
+    falsa.estado.totpLigado = true
+    await usuario.type(await screen.findByLabelText('E-mail'), EMAIL)
+    await usuario.type(screen.getByLabelText('Senha'), SENHA)
+    await usuario.click(screen.getByRole('button', { name: 'Entrar' }))
+    await usuario.type(await screen.findByLabelText('Código do aplicativo autenticador'), TOTP_OK)
+    const soltar = segurarRota('/auth/totp/verify')
+    await usuario.dblClick(screen.getByRole('button', { name: 'Verificar' }))
+    soltar()
+    expect(await screen.findByRole('heading', { name: 'Painel' })).toBeInTheDocument()
+    expect(falsa.chamadas('POST /auth/totp/verify')).toBe(1)
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
   // Task 11 do Plano 5: a senha trocada (em outro aparelho) depois do
   // desafio faz o verify responder invalid_credentials, também com o código
   // certo. A tela sugere voltar e entrar de novo. Sabotagem prevista: tirar

@@ -75,6 +75,9 @@ updates:
 
   # O Postgres do compose.yaml, o mesmo digest do de produção; e o
   # compose.prod.yaml da VPS (Caddy e Postgres).
+  # Passo manual em todo PR que troque esses digests: deploy/coolify/app.json e
+  # database.json guardam os mesmos digests e o Dependabot não os enxerga. Veja
+  # "Atualizar o digest de uma imagem" em deploy/coolify/README.md.
   - package-ecosystem: docker-compose
     directories:
       - /

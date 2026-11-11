@@ -3,6 +3,7 @@ import { ArrowLeft } from 'lucide-react'
 import { useEffect, useEffectEvent, useId, useRef, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router'
 import { useApi } from '@/app/contexto'
+import { useAnunciar } from '@/components/Anunciador'
 import { EstadoDaConsulta } from '@/components/EstadoDaConsulta'
 import { SeloDeEstado } from '@/components/SeloDeEstado'
 import { ListaDeTags } from '@/components/ListaDeTags'
@@ -12,17 +13,17 @@ import { Botao } from '@/components/ui/botao'
 import { ErroDoFormulario } from '@/components/ui/campo'
 import { ControleSegmentado, type OpcaoSegmentada } from '@/components/ui/controle-segmentado'
 import { Confirmar } from '@/components/ui/dialogo'
-import { useAlvo, useIncidentes, useResumo, useSerie } from '@/lib/api/consultas'
+import { useAlvo, useIncidentes, useSerie } from '@/lib/api/consultas'
 import { naoEncontrado } from '@/lib/api/http'
 import { mensagemDe, textoDoErroDeCheck } from '@/lib/api/mensagens'
 import type { Serie } from '@/lib/api/schemas'
+import { ATRASO_DO_SINAL_MS, useAposUmTempo } from '@/lib/atraso'
 import { dataHora, fuso, milissegundos, porcento } from '@/lib/format'
-import { cn } from '@/lib/utils'
-import { FaixaDeEstado } from './FaixaDeEstado'
+import { CertificadoDoAlvo } from './CertificadoDoAlvo'
 import { GraficoDeLatencia } from './GraficoDeLatencia'
 import { IncidentesRecentes } from './IncidentesRecentes'
-import { Indicadores } from './Indicadores'
 import { ehJanela, JANELAS, resumir, type Janela } from './serie'
+import { janelaCobertaPeloAviso, TopoDoDetalhe } from './TopoDoDetalhe'
 
 const NOMES: Record<Janela, string> = { '1h': '1 h', '6h': '6 h', '24h': '24 h', '7d': '7 dias', '30d': '30 dias', '90d': '90 dias' }
 const OPCOES_DE_JANELA: readonly OpcaoSegmentada<Janela>[] = (Object.keys(JANELAS) as Janela[]).map((j) => ({
@@ -116,16 +117,24 @@ function DetalheDoAlvo({ id }: { id: string }) {
   const navegar = useNavigate()
   const avisar = useAvisar()
   const alvo = useAlvo(id)
-  const resumo = useResumo()
   const serie = useSerie(id, janela)
   // Os incidentes recentes do alvo: a lista do fim da tela e o aberto da faixa.
   const incidentes = useIncidentes('all', id, 10)
   const [apagando, setApagando] = useState(false)
   const [ocupado, setOcupado] = useState(false)
   const [erro, setErro] = useState<string | null>(null)
-  const noResumo = resumo.data?.items.find((x) => x.id === id)
-  const agora = new Date(resumo.dataUpdatedAt)
   const idDoResumo = useId()
+  const anunciar = useAnunciar()
+
+  // O keepPreviousData não diz de que janela são os números na tela: é a
+  // última que chegou de verdade.
+  const [janelaNaTela, setJanelaNaTela] = useState(janela)
+  if (serie.isSuccess && !serie.isPlaceholderData && janelaNaTela !== janela) setJanelaNaTela(janela)
+  const esperaLonga = useAposUmTempo(serie.isPlaceholderData, ATRASO_DO_SINAL_MS)
+  const sinalDaTroca = esperaLonga ? `Ainda em ${NOMES[janelaNaTela]}, carregando ${NOMES[janela]}…` : ''
+  useEffect(() => {
+    if (sinalDaTroca) anunciar(sinalDaTroca)
+  }, [sinalDaTroca, anunciar])
 
   // Sai primeiro, e só então tira do cache o que era do alvo: com a tela
   // ainda montada, invalidar (ou remover) refaria o GET /targets/:id, e o 404
@@ -224,16 +233,13 @@ function DetalheDoAlvo({ id }: { id: string }) {
             </div>
           </div>
           <ErroDoFormulario>{erro}</ErroDoFormulario>
-          {noResumo && (
-            <FaixaDeEstado
-              item={noResumo}
-              incidentes={incidentes.data?.pages.flatMap((p) => p.items) ?? []}
-              agora={agora}
-              aoSumir={() => void sumiu()}
-              aoErrar={setErro}
-            />
-          )}
-          <Indicadores alvoId={id} item={noResumo} agora={agora} />
+          <TopoDoDetalhe
+            id={id}
+            incidentes={incidentes.data?.pages.flatMap((p) => p.items) ?? []}
+            aoSumir={() => void sumiu()}
+            aoErrar={setErro}
+          />
+          <CertificadoDoAlvo alvo={a} agora={new Date(alvo.dataUpdatedAt)} />
 
           <section
             className="space-y-4 rounded-padrao border border-borda bg-superficie p-4 sombra-nivel-1 sm:p-6"
@@ -250,12 +256,17 @@ function DetalheDoAlvo({ id }: { id: string }) {
                 aoMudar={(j) => setParams({ janela: j }, { replace: true })}
               />
             </div>
-            <EstadoDaConsulta consulta={serie}>
+            {/* Depois do seletor e com a linha reservada: nada se mexe logo
+                após o toque. Fora do aria-busy, que silenciaria o texto. */}
+            <p data-testid="troca-de-janela" className="min-h-5 text-sm text-suave">
+              {sinalDaTroca}
+            </p>
+            <EstadoDaConsulta consulta={serie} refeitaNoAviso={janelaCobertaPeloAviso(janela)}>
               {(s) => (
                 // Trocando de janela, os números da janela anterior ficam na
-                // tela (keepPreviousData) até a nova chegar: marcados como velhos.
-                <div className={cn('space-y-3', serie.isPlaceholderData && 'opacity-60')} aria-busy={serie.isPlaceholderData}>
-                  {serie.isPlaceholderData && <p className="text-sm text-suave">Carregando…</p>}
+                // tela (keepPreviousData) até a nova chegar. Opacidade no bloco
+                // reprovaria o contraste do texto.
+                <div className="space-y-3" aria-busy={serie.isPlaceholderData}>
                   <Resumo id={idDoResumo} serie={s} />
                   <p className="text-sm text-suave">
                     {s.resolution === '1h'
@@ -279,7 +290,8 @@ function DetalheDoAlvo({ id }: { id: string }) {
             </EstadoDaConsulta>
           </section>
 
-          <IncidentesRecentes consulta={incidentes} agora={agora} />
+          {/* O relógio da própria lista: o do resumo é 0 enquanto ele não responde. */}
+          <IncidentesRecentes consulta={incidentes} agora={new Date(incidentes.dataUpdatedAt)} />
 
           <Confirmar
             aberto={apagando}

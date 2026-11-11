@@ -7,6 +7,7 @@ LDFLAGS := -X main.version=$(VERSION)
 
 test:
 	python3 -m unittest discover -s deploy/ci -p test_docker_build.py -v
+	python3 -m unittest discover -s deploy/ci -p test_ensaiar_piso_env.py -v
 	go test -race -count=1 ./...
 
 test-short:

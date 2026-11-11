@@ -17,6 +17,8 @@ func validEnv() map[string]string {
 		"MASTER_KEY":      k,
 		"JWT_SECRET":      k,
 		"IP_HASH_KEY":     k,
+		// PUBLIC_BASE_URL https é produção, e produção que sonda exige a
+		// lista da hospedagem. 192.0.2.10 é de documentação (RFC 5737).
 	}
 }
 

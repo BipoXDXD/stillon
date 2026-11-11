@@ -107,6 +107,9 @@ services:
       # Opcionais: defina as duas no .env privado para avisos por e-mail.
       RESEND_API_KEY: "${RESEND_API_KEY:-}"
       EMAIL_FROM: "${EMAIL_FROM:-}"
+      # Opcional aqui (http em localhost não é produção): IPs da hospedagem
+      # que a sonda recusa, além da lista fixa.
+      PROBE_BLOCKED_CIDRS: "${PROBE_BLOCKED_CIDRS:-}"
     ports:
       # Só no loopback: numa rede de café, o painel de demo com senha
       # conhecida ficaria aberto a todos (D16).

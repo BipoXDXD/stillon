@@ -21,7 +21,7 @@ describe('copiar: ausência pública da capacidade de clipboard', () => {
       // Simula a API pública ausente; jsdom não prova políticas de contexto seguro.
       Object.defineProperty(navigator, 'clipboard', { configurable: true, value: undefined })
       await r.usuario.click(r.botao)
-      const avisos = within(screen.getByRole('region', { name: 'Notifications (F8)' }))
+      const avisos = within(screen.getByRole('region', { name: 'Avisos (F8)' }))
       expect(await avisos.findAllByText(FALHA)).toHaveLength(1)
       expect(avisos.queryByText('Link copiado.')).not.toBeInTheDocument()
       expect(r.botao).toHaveTextContent(/^Copiar$/)
@@ -37,7 +37,7 @@ describe('copiar: ausência pública da capacidade de clipboard', () => {
     const descriptor = Object.getOwnPropertyDescriptor(navigator, 'clipboard')
     try {
       await r.usuario.click(r.botao)
-      const avisos = within(screen.getByRole('region', { name: 'Notifications (F8)' }))
+      const avisos = within(screen.getByRole('region', { name: 'Avisos (F8)' }))
       expect(await avisos.findAllByText('Link copiado.')).toHaveLength(1)
       expect(r.botao).toHaveTextContent(/^Copiado$/)
       expect(await navigator.clipboard.readText()).toBe('http://localhost/p/minha')

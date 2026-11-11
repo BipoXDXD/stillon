@@ -36,6 +36,7 @@ type targetRequest struct {
 	ExpectedStatus      int32             `json:"expected_status"`
 	DegradedThresholdMS optional[int32]   `json:"degraded_threshold_ms"`
 	Enabled             *bool             `json:"enabled"`
+	TLSWarn             *bool             `json:"tls_warn"`
 	Headers             map[string]string `json:"headers"`
 	Tags                []string          `json:"tags"`
 }
@@ -49,6 +50,7 @@ type targetPatchRequest struct {
 	ExpectedStatus      optional[int32]             `json:"expected_status"`
 	DegradedThresholdMS optional[int32]             `json:"degraded_threshold_ms"`
 	Enabled             optional[bool]              `json:"enabled"`
+	TLSWarn             optional[bool]              `json:"tls_warn"`
 	Headers             optional[map[string]string] `json:"headers"`
 	Tags                optional[[]string]          `json:"tags"`
 }
@@ -57,18 +59,27 @@ type targetPatchRequest struct {
 // campo para valor de header, então nenhuma mudança futura no domínio o faz
 // aparecer aqui por acidente (D5).
 type targetResponse struct {
-	ID                  string    `json:"id"`
-	Name                string    `json:"name"`
-	URL                 string    `json:"url"`
-	Method              string    `json:"method"`
-	IntervalSec         int32     `json:"interval_sec"`
-	TimeoutMS           int32     `json:"timeout_ms"`
-	ExpectedStatus      int32     `json:"expected_status"`
-	DegradedThresholdMS *int32    `json:"degraded_threshold_ms"`
-	Enabled             bool      `json:"enabled"`
-	HeaderNames         []string  `json:"header_names"`
-	Tags                []string  `json:"tags"`
-	CreatedAt           time.Time `json:"created_at"`
+	ID                  string                   `json:"id"`
+	Name                string                   `json:"name"`
+	URL                 string                   `json:"url"`
+	Method              string                   `json:"method"`
+	IntervalSec         int32                    `json:"interval_sec"`
+	TimeoutMS           int32                    `json:"timeout_ms"`
+	ExpectedStatus      int32                    `json:"expected_status"`
+	DegradedThresholdMS *int32                   `json:"degraded_threshold_ms"`
+	Enabled             bool                     `json:"enabled"`
+	HeaderNames         []string                 `json:"header_names"`
+	Tags                []string                 `json:"tags"`
+	TLSWarn             bool                     `json:"tls_warn"`
+	TLS                 *certificateReadingReply `json:"tls"` // null: nenhuma leitura ainda
+	CreatedAt           time.Time                `json:"created_at"`
+}
+
+// certificateReadingReply é a validade do certificado (spec §7.2). Só de
+// saída: o DTO de entrada não tem o campo, e quem o manda recebe 400.
+type certificateReadingReply struct {
+	NotAfter   time.Time `json:"not_after"`
+	ObservedAt time.Time `json:"observed_at"`
 }
 
 type targetListResponse struct {
@@ -100,8 +111,16 @@ func toTargetResponse(t targets.Target) targetResponse {
 		ID: t.ID.String(), Name: t.Name, URL: t.URL, Method: t.Method,
 		IntervalSec: t.IntervalSec, TimeoutMS: t.TimeoutMS, ExpectedStatus: t.ExpectedStatus,
 		DegradedThresholdMS: t.DegradedThresholdMS, Enabled: t.Enabled,
-		HeaderNames: t.HeaderNames, Tags: t.Tags, CreatedAt: t.CreatedAt,
+		HeaderNames: t.HeaderNames, Tags: t.Tags, TLSWarn: t.TLSWarn, TLS: toCertificateReadingReply(t.TLS),
+		CreatedAt: t.CreatedAt,
 	}
+}
+
+func toCertificateReadingReply(c *targets.CertificateReading) *certificateReadingReply {
+	if c == nil {
+		return nil
+	}
+	return &certificateReadingReply{NotAfter: c.NotAfter, ObservedAt: c.ObservedAt}
 }
 
 func (h *TargetHandlers) Create(w http.ResponseWriter, r *http.Request) {
@@ -117,10 +136,13 @@ func (h *TargetHandlers) Create(w http.ResponseWriter, r *http.Request) {
 	in := targets.Input{
 		Name: req.Name, URL: req.URL, Method: req.Method,
 		IntervalSec: req.IntervalSec, TimeoutMS: req.TimeoutMS, ExpectedStatus: req.ExpectedStatus,
-		Enabled: true, Headers: req.Headers, Tags: req.Tags,
+		Enabled: true, TLSWarn: true, Headers: req.Headers, Tags: req.Tags,
 	}
 	if req.Enabled != nil {
 		in.Enabled = *req.Enabled
+	}
+	if req.TLSWarn != nil {
+		in.TLSWarn = *req.TLSWarn
 	}
 	// Ausente → padrão; null → desativado; número → valor (spec §11.5).
 	switch {
@@ -160,7 +182,10 @@ func (h *TargetHandlers) List(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	q := r.URL.Query()
+	q, ok := consultaPermitida(w, r, parametrosDaPagina)
+	if !ok {
+		return
+	}
 
 	limit := targets.DefaultPageSize
 	if s := q.Get("limit"); s != "" {
@@ -217,6 +242,7 @@ func (h *TargetHandlers) Update(w http.ResponseWriter, r *http.Request) {
 		{"name", req.Name.Null}, {"url", req.URL.Null}, {"method", req.Method.Null},
 		{"interval_sec", req.IntervalSec.Null}, {"timeout_ms", req.TimeoutMS.Null},
 		{"expected_status", req.ExpectedStatus.Null}, {"enabled", req.Enabled.Null},
+		{"tls_warn", req.TLSWarn.Null},
 	}) {
 		return
 	}
@@ -225,6 +251,7 @@ func (h *TargetHandlers) Update(w http.ResponseWriter, r *http.Request) {
 		Name: req.Name.ponteiro(), URL: req.URL.ponteiro(), Method: req.Method.ponteiro(),
 		IntervalSec: req.IntervalSec.ponteiro(), TimeoutMS: req.TimeoutMS.ponteiro(),
 		ExpectedStatus: req.ExpectedStatus.ponteiro(), Enabled: req.Enabled.ponteiro(),
+		TLSWarn: req.TLSWarn.ponteiro(),
 	}
 	if req.DegradedThresholdMS.Set {
 		p.SetDegradedThreshold = true
@@ -275,6 +302,39 @@ var janelasDaSerie = map[string]time.Duration{
 	"90d": 90 * 24 * time.Hour,
 }
 
+// lerIntervalo lê a janela [from, to) de GET /targets/{id}/checks. Sem to, é
+// agora; sem from nem window, são as 24 h antes do to. Devolve o nome do
+// primeiro campo inválido, na ordem to, window, from, ou "" se a janela vale.
+func lerIntervalo(q url.Values, agora time.Time) (from, to time.Time, invalido string) {
+	to = agora
+	if s := q.Get("to"); s != "" {
+		v, err := time.Parse(time.RFC3339, s)
+		if err != nil {
+			return time.Time{}, time.Time{}, "to"
+		}
+		to = v
+	}
+	from = to.Add(-24 * time.Hour)
+	// B6 (Plano 10): com window, o servidor calcula o from, e o gráfico não
+	// depende do relógio do navegador. window e from juntos seriam duas
+	// respostas para a mesma pergunta.
+	if q.Has("window") {
+		janela, ok := janelasDaSerie[q.Get("window")]
+		if !ok || q.Has("from") {
+			return time.Time{}, time.Time{}, "window"
+		}
+		from = to.Add(-janela)
+	}
+	if s := q.Get("from"); s != "" {
+		v, err := time.Parse(time.RFC3339, s)
+		if err != nil {
+			return time.Time{}, time.Time{}, "from"
+		}
+		from = v
+	}
+	return from, to, ""
+}
+
 func (h *TargetHandlers) Checks(w http.ResponseWriter, r *http.Request) {
 	userID, ok := usuario(w, r)
 	if !ok {
@@ -284,36 +344,10 @@ func (h *TargetHandlers) Checks(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	q := r.URL.Query()
-
-	to := h.clk.Now()
-	if s := q.Get("to"); s != "" {
-		v, err := time.Parse(time.RFC3339, s)
-		if err != nil {
-			campoInvalido(w, r, "to", targets.ReasonInvalid)
-			return
-		}
-		to = v
-	}
-	from := to.Add(-24 * time.Hour)
-	// B6 (Plano 10): com window, o servidor calcula o from, e o gráfico não
-	// depende do relógio do navegador. window e from juntos seriam duas
-	// respostas para a mesma pergunta.
-	if q.Has("window") {
-		janela, ok := janelasDaSerie[q.Get("window")]
-		if !ok || q.Has("from") {
-			campoInvalido(w, r, "window", targets.ReasonInvalid)
-			return
-		}
-		from = to.Add(-janela)
-	}
-	if s := q.Get("from"); s != "" {
-		v, err := time.Parse(time.RFC3339, s)
-		if err != nil {
-			campoInvalido(w, r, "from", targets.ReasonInvalid)
-			return
-		}
-		from = v
+	from, to, invalido := lerIntervalo(r.URL.Query(), h.clk.Now())
+	if invalido != "" {
+		campoInvalido(w, r, invalido, targets.ReasonInvalid)
+		return
 	}
 
 	serie, err := h.svc.Checks(r.Context(), userID, id, from, to)
@@ -399,11 +433,10 @@ type targetSummaryResponse struct {
 	Spark          []sparkResponse `json:"spark"`
 }
 
-// parametrosDoResumo é a allowlist de ?: um parâmetro desconhecido é 400, e
-// nunca um filtro ignorado que devolveria a lista inteira como se tivesse
-// filtrado. Pelo mesmo motivo a query passa por url.ParseQuery: r.URL.Query()
-// descarta em silêncio o par que não sabe ler (?tag=%zz, ?tag=a;tag=b).
-var parametrosDoResumo = []string{"tag", "state"}
+var (
+	parametrosDoResumo = []string{"tag", "state"}
+	parametrosDaPagina = []string{"limit", "cursor"}
+)
 
 const campoDaConsulta = "query"
 
@@ -415,17 +448,9 @@ func (h *TargetHandlers) Summary(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	q, err := url.ParseQuery(r.URL.RawQuery)
-	if err != nil {
-		campoInvalido(w, r, campoDaConsulta, targets.ReasonInvalid)
+	q, ok := consultaPermitida(w, r, parametrosDoResumo)
+	if !ok {
 		return
-	}
-	for chave := range q {
-		if !slices.Contains(parametrosDoResumo, chave) {
-			// Nome fixo: a chave é de quem chama e não tem limite de tamanho.
-			campoInvalido(w, r, campoDaConsulta, targets.ReasonInvalid)
-			return
-		}
 	}
 	filtro, verr := targets.ParseSummaryFilter(q["tag"], q["state"])
 	if h.falhou(w, r, "filtrar resumo", validacaoOuNada(verr)) {
@@ -453,6 +478,28 @@ func (h *TargetHandlers) Summary(w http.ResponseWriter, r *http.Request) {
 		itens = append(itens, item)
 	}
 	apierr.WriteJSON(w, http.StatusOK, map[string]any{"items": itens})
+}
+
+// consultaPermitida lê a query com a allowlist da rota: um parâmetro
+// desconhecido é 400, e nunca um filtro ignorado que devolveria a lista
+// inteira como se tivesse filtrado. Pelo mesmo motivo ela passa por
+// url.ParseQuery: r.URL.Query() descarta em silêncio o par que não sabe ler
+// (?tag=%zz, ?tag=a;tag=b). Parâmetro repetido é aceito, e quem usa q.Get fica
+// com o primeiro valor.
+func consultaPermitida(w http.ResponseWriter, r *http.Request, permitidos []string) (url.Values, bool) {
+	q, err := url.ParseQuery(r.URL.RawQuery)
+	if err != nil {
+		campoInvalido(w, r, campoDaConsulta, targets.ReasonInvalid)
+		return nil, false
+	}
+	for chave := range q {
+		if !slices.Contains(permitidos, chave) {
+			// Nome fixo: a chave é de quem chama e não tem limite de tamanho.
+			campoInvalido(w, r, campoDaConsulta, targets.ReasonInvalid)
+			return nil, false
+		}
+	}
+	return q, true
 }
 
 // validacaoOuNada evita o nil tipado: um *ValidationError nulo dentro de um
