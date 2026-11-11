@@ -1019,12 +1019,17 @@ ok "stillon-entrada: tar que não extrai ou não refaz, e jq ausente, saem 1 sem
 printf '#!/bin/sh\necho "args=$# pedido=${SSH_ORIGINAL_COMMAND:-} outra=${OUTRA:-} usuario=$(id -un)"\n' > "$TARS/entrada-falsa"
 cat > "$TARS/sudo.sh" <<'FIM'
 set -eu
-# O apt-get update só avisa quando o DNS cai; quem falha é o install. Tenta de
-# novo com espera crescente, e o command -v confirma que o sudo chegou.
+# O apt-get update só avisa quando o DNS cai; quem falha é o install. Depois
+# da primeira falha, o apt troca para um espelho fora do domínio ubuntu.com (o
+# runner já passou horas sem resolver só esses hosts), e o command -v confirma
+# que o sudo chegou.
 for tentativa in 1 2 3; do
     apt-get -o Acquire::Retries=5 update -qq >/dev/null &&
         DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=5 install -y -qq sudo >/dev/null && break
-    [ "$tentativa" = 3 ] || sleep $((30 * tentativa))
+    [ "$tentativa" = 3 ] && break
+    sed -i -E 's#https?://[a-z.]*ubuntu\.com/ubuntu/#http://mirrors.edge.kernel.org/ubuntu/#g' \
+        /etc/apt/sources.list.d/*.sources
+    sleep $((30 * tentativa))
 done
 command -v sudo >/dev/null
 useradd -m -s /bin/bash deploy
