@@ -99,7 +99,7 @@ do parser real do GitHub e os demais gates continuam obrigatórios.
 
 Sessões que acompanham uma release e podem cancelá-la (para não intercalar com a de outro projeto
 na VPS) seguem uma regra: cancelar só com o job `deploy` explicitamente na fila (`queued`,
-`waiting` ou `pending`). Status ausente, ilegível ou de um passo interno do job nunca autoriza
+`waiting`, `pending` ou `requested`). Status ausente, ilegível ou de um passo interno do job nunca autoriza
 o cancelamento; nesse caso o guarda espera e lê de novo. Depois que o job de publicação começa,
 cancelar o run para o runner, mas não o receptor: a publicação segue no host. Foi o que aconteceu
 na release do #262 ([postmortem de 2026-11-10](../../../docs/postmortems/2026-11-10-release-261-variavel-obrigatoria.md),

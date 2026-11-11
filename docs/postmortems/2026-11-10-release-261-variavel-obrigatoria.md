@@ -114,8 +114,8 @@ o host publicou `fc1e772` às 22:59
 O efeito foi o contrário do que o guarda registrou,
 e por sorte a publicação era a esperada.
 A reexecução das 23:13 foi recusada na entrada
-(`BlockingIOError`, `host.lock` ocupado pela release do GoblinShift,
-run 42942811612, com o deploy em andamento desde 22:59)
+(`BlockingIOError`, `host.lock` ocupado pelo receptor no host,
+que publicava a release do GoblinShift, run 42942811612)
 sem gravar estado.
 
 Causa, confirmada no log do guarda: ele lia "status do run" e "status do deploy"
@@ -123,7 +123,8 @@ separados por espaço e zerava o segundo quando os dois eram iguais.
 Com os dois `in_progress`, o deploy ficou vazio,
 e vazio era tratado como "não iniciado".
 Corrigido às 23:15: campos separados por `|`, e o guarda só cancela
-com o job `deploy` explicitamente `queued`, `waiting` ou `pending`;
+com o job `deploy` explicitamente `queued`, `waiting` ou `pending`
+(o do Duora também aceita `requested`);
 ausente na resposta conta como desconhecido e não cancela.
 
 Lição geral: cancelar o run depois que o job de publicação começou
@@ -140,4 +141,4 @@ um ou dois segundos de folga), e "não sei" nunca vale como "não começou".
 | 3 | Revisar os roteiros de passo do dono para a ordem da ação 1 (começando pelo `task10-4-passo-do-dono.md` e pelo plano da Task 10), com o Passo 7 antes do merge quando o código exigir variável nova, e corrigir o Caso A do rollback, que ainda diz que a queda só acontece se a variável sumir do recurso. | Coordenação | 2026-11-14 |
 | 4 | Reconciliar os dois `pending.json` pelo `ISOLATION.md` e destravar a fila da VPS. | Coordenação (administrativo) | Concluída em 2026-11-10 às 22:19; intents arquivados em `/var/lib/coolify-release/audit/2026-11-11-stillon-3003d54/` (data em UTC). |
 | 5 | Análise em formato ADR, com opções e trade-offs, de como uma release falha de um projeto deixa de travar a fila da VPS inteira, sem mudar o receptor nesta ação. O `ISOLATION.md` proíbe limpeza automática e bypass: toda opção mantém a reconciliação administrativa e o fail-closed. Hipótese inicial: bloquear só o projeto que falhou, com o intent comum como cerca. Até a decisão, o risco fica aceito: falha rara (1 release com intents presos em ~220 releases registradas no histórico do host: 62 StillOn, 157 Duora+GoblinShift); o bloqueio é fail-closed e protege as outras apps; a reconciliação está documentada (`ISOLATION.md` §Reconciliação) e foi executada em ~15 min em 10/11; a vigia de `readyz` e os guardas das sessões detectam a fila parada. Trocar isso por limpeza automática violaria o `ISOLATION.md`. | Coordenação (análise delegada ao StillOn) | 2026-11-21 |
-| 6 | Guardas de release das sessões: cancelar só com o job `deploy` explicitamente na fila (`queued`, `waiting`, `pending`); estado ausente, ilegível ou de passo interno nunca cancela. Regra registrada em `deploy/coolify/release/README.md` (§Guardas locais de release, neste PR). Situação em 10/11: StillOn corrigido às 23:15; Duora (`guarda-corte.sh`) já só cancela com status de fila desde 23:18; GoblinShift decide pelo passo de publicação e a Coordenação pediu que confira o critério. Fecha quando os três guardas seguirem a regra do README. | Claude (sessão do StillOn) pelo README e pelo guarda do StillOn; Coordenação pela conferência dos guardas do Duora e do GoblinShift | 2026-11-14 |
+| 6 | Guardas de release das sessões: cancelar só com o job `deploy` explicitamente na fila (`queued`, `waiting`, `pending` ou `requested`); estado ausente, ilegível ou de passo interno nunca cancela. Regra registrada em `deploy/coolify/release/README.md` (§Guardas locais de release, neste PR). Segunda ocorrência do mesmo modo de falha: o job `deploy` do run 42942811612 do GoblinShift começou a publicar às 22:59:50 e foi cancelado no Actions às 23:00:20, enquanto o receptor seguiu publicando no host (autor do cancelamento a confirmar). Situação em 10/11: StillOn corrigido às 23:15; Duora (`guarda-corte.sh`) já só cancela com status de fila desde 23:18; GoblinShift decide pelo passo de publicação e a Coordenação pediu que confira o critério. Fecha quando os três guardas seguirem a regra do README. | Claude (sessão do StillOn) pelo README e pelo guarda do StillOn; Coordenação pela conferência dos guardas do Duora e do GoblinShift | 2026-11-14 |
