@@ -102,9 +102,7 @@ export function FaixaDeEstado({ item, incidentes, agora, aoSumir, aoErrar }: Pro
             // foco para o <body> enquanto o POST voa.
             aria-disabled={reconhecendo.size > 0 || undefined}
             aria-describedby={idDaAjuda}
-            onClick={() => {
-              if (reconhecendo.size === 0) void reconhecer(aberto.id)
-            }}
+            onClick={() => void reconhecer(aberto.id)}
           >
             Reconhecer
           </Botao>

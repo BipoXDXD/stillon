@@ -1,4 +1,4 @@
-import { act, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { http, HttpResponse } from 'msw'
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 import { incidente } from '@/test/fixtures'
@@ -275,6 +275,22 @@ describe('incidentes', () => {
   it('sem incidentes em "Todos", a frase não fica com espaço solto', async () => {
     await renderizarPainel('/incidents?status=all')
     expect(await screen.findByText('Nenhum incidente.')).toBeInTheDocument()
+  })
+
+  // Dois cliques antes de o React redesenhar (o segundo dentro do mesmo
+  // ciclo): o aria-disabled ainda não chegou ao botão, então a guarda não pode
+  // depender do valor do último render.
+  it('dois cliques no mesmo ciclo de render mandam um só POST de ack', async () => {
+    const r = await renderizarPainel('/incidents')
+    r.falsa.estado.incidentes = [incidente()]
+    await r.cliente.refetchQueries()
+    const botao = await screen.findByRole('button', { name: 'Reconhecer o incidente de API' })
+    act(() => {
+      fireEvent.click(botao)
+      fireEvent.click(botao)
+    })
+    expect(await screen.findByText(/Reconhecido em/)).toBeInTheDocument()
+    expect(r.falsa.chamadas('POST /incidents/:id/ack')).toBe(1)
   })
 
   it('Reconhecer fica desabilitado enquanto o POST está em voo', async () => {

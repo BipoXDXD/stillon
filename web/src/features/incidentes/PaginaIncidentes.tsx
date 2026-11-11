@@ -102,9 +102,7 @@ function Cartao({
           // aria-disabled, e não disabled: o botão desabilitado perderia o
           // foco para o <body> enquanto o POST voa.
           aria-disabled={reconhecendo || undefined}
-          onClick={() => {
-            if (!reconhecendo) aoReconhecer(i.id)
-          }}
+          onClick={() => aoReconhecer(i.id)}
           aria-label={`Reconhecer o incidente de ${i.target_name}`}
           aria-describedby={ID_AJUDA_ACK}
         >

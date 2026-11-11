@@ -32,7 +32,6 @@ export function IncidentesDoHeartbeat({
     consulta: chaves.incidentesDoHeartbeat(id),
     aoNaoEncontrar: aoSumir,
     aoErrar,
-    ignorarEmAndamento: true,
   })
 
   return (
