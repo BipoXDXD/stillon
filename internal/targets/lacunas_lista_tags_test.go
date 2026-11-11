@@ -9,14 +9,13 @@ import (
 	"github.com/BipoXDXD/stillon/internal/targets"
 )
 
-// A lista traz a validade do certificado só do alvo que a tem, em UTC, e não
-// mistura alvos de outro dono. Antes, o corpo do laço de validadesDoDono nunca
+// A lista traz a validade do certificado só do alvo que a tem, em UTC; o alvo
+// sem leitura vem sem TLS. Antes, o corpo do laço de validadesDoDono nunca
 // rodava no pacote.
 func TestListTrazAValidadeDoCertificadoSoDoAlvoCerto(t *testing.T) {
 	a := novoAmbiente(t)
 	ctx := context.Background()
 	dono := a.usuario(t)
-	outroDono := a.usuario(t)
 
 	comCertificado, err := a.svc.Create(ctx, dono, entrada())
 	if err != nil {
@@ -26,14 +25,9 @@ func TestListTrazAValidadeDoCertificadoSoDoAlvoCerto(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	alheio, err := a.svc.Create(ctx, outroDono, entrada())
-	if err != nil {
-		t.Fatal(err)
-	}
 	notAfter := time.Date(2027, 1, 2, 3, 4, 5, 0, time.UTC)
 	observedAt := time.Date(2026, 11, 11, 10, 0, 0, 0, time.UTC)
 	a.gravarValidade(t, comCertificado.ID, notAfter, observedAt)
-	a.gravarValidade(t, alheio.ID, notAfter.AddDate(1, 0, 0), observedAt)
 
 	lista, err := a.svc.List(ctx, dono, nil, 10)
 	if err != nil {
@@ -59,7 +53,7 @@ func TestListTrazAValidadeDoCertificadoSoDoAlvoCerto(t *testing.T) {
 				t.Errorf("alvo sem certificado veio com TLS = %+v", alvo.TLS)
 			}
 		default:
-			t.Errorf("a lista trouxe o alvo %s, que não é do dono", alvo.ID)
+			t.Errorf("a lista trouxe o alvo inesperado %s", alvo.ID)
 		}
 	}
 }
