@@ -421,6 +421,17 @@ describe('o envelope de erro', () => {
     await expect(api.me()).rejects.toMatchObject({ name: 'ApiError', status: 200, code: 'unexpected' })
   })
 
+  // Parse, don't validate: com esquema, um 204 (ou qualquer sucesso sem corpo)
+  // não pode chegar à tela como `undefined` com tipo T; é o mesmo erro de
+  // contrato do JSON quebrado. Os endpoints que respondem 204 de verdade (os
+  // DELETE, logout, password, totp/disable, resend, clear) não têm esquema.
+  // Sabotagem: devolver undefined quando o status é 204, também com esquema.
+  it('204 numa rota com esquema vira ApiError "unexpected", não undefined com tipo T', async () => {
+    const { api } = await logado()
+    servidor.use(http.get('*/api/v1/me', () => new HttpResponse(null, { status: 204 })))
+    await expect(api.me()).rejects.toMatchObject({ name: 'ApiError', status: 204, code: 'unexpected' })
+  })
+
   // D10: uma chave que some do DTO quebra alto, com o nome do campo.
   it('resposta fora do schema falha com o nome do campo', async () => {
     const { falsa, api } = await logado()

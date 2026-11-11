@@ -154,7 +154,9 @@ export function criarApi(sessao: Sessao, buscar: Buscar, o: OpcoesDaApi = {}) {
       }
     }
     if (!r.ok) throw await lerErro(r)
-    if (esquema === null || r.status === 204) return undefined
+    if (esquema === null) return undefined
+    // Com esquema, um 204 ou um corpo vazio não é um T: o lerCorpo falha com o
+    // ApiError 'unexpected' de sempre, em vez de devolver undefined com tipo T.
     return lerCorpo(r, esquema)
   }
 
