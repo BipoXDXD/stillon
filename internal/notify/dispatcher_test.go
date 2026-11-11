@@ -890,7 +890,7 @@ func TestUnknownOutcomeStatusFailsLoudAndLeavesNotificationAndChannelUntouched(t
 				t.Fatalf("reivindicar = %v, %v; queria 1 notificação", lote, err)
 			}
 
-			err = b.d.persistir(ctx, lote[0], desfecho{status: tc.status})
+			err = b.d.persistir(ctx, lote[0], desfecho{status: statusNotificacao(tc.status)})
 			if err == nil || !strings.Contains(err.Error(), fmt.Sprintf("%q", tc.status)) {
 				t.Fatalf("persistir = %v; queria erro citando o status %q", err, tc.status)
 			}
