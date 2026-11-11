@@ -1019,7 +1019,14 @@ ok "stillon-entrada: tar que não extrai ou não refaz, e jq ausente, saem 1 sem
 printf '#!/bin/sh\necho "args=$# pedido=${SSH_ORIGINAL_COMMAND:-} outra=${OUTRA:-} usuario=$(id -un)"\n' > "$TARS/entrada-falsa"
 cat > "$TARS/sudo.sh" <<'FIM'
 set -eu
-apt-get update -qq >/dev/null && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq sudo >/dev/null
+# O apt-get update só avisa quando o DNS cai; quem falha é o install. Tenta de
+# novo com espera crescente, e o command -v confirma que o sudo chegou.
+for tentativa in 1 2 3; do
+    apt-get -o Acquire::Retries=5 update -qq >/dev/null &&
+        DEBIAN_FRONTEND=noninteractive apt-get install -y -qq sudo >/dev/null && break
+    [ "$tentativa" = 3 ] || sleep $((30 * tentativa))
+done
+command -v sudo >/dev/null
 useradd -m -s /bin/bash deploy
 install -m 0755 /t/entrada-falsa /usr/local/sbin/stillon-entrada
 install -m 0440 /t/sudoers /etc/sudoers.d/stillon-entrada

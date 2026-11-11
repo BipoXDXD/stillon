@@ -428,7 +428,15 @@ jobs:
         # abaixo o levaria junto.
         run: |
           npm ci --ignore-scripts --no-audit --no-fund
-          npx playwright install --with-deps chromium
+          # O --with-deps passa pelo apt, e o DNS do runner já ficou fora por
+          # minutos: o apt-get update só avisa e o install sai 100. Tenta de
+          # novo com espera crescente em vez de derrubar o CI na primeira.
+          echo 'Acquire::Retries "5";' | sudo tee /etc/apt/apt.conf.d/80-retries >/dev/null
+          for tentativa in 1 2 3; do
+            npx playwright install --with-deps chromium && break
+            [ "$tentativa" = 3 ] && exit 1
+            sleep $((60 * tentativa))
+          done
           npx playwright test --trace off
 
       - name: logs do compose
