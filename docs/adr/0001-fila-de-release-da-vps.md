@@ -37,7 +37,7 @@ Números da coordenação: 1 release com intents presos em cerca de 220 releases
 | `deploy` (~767–795) | `require_no_pending` e `require_idle` do recurso; grava o intent do projeto (`deployment_uuid: null`); muda envs, manifest Duora ou allowlist GoblinShift; `POST /start`; regrava o intent do projeto com o UUID. |
 | Espera e validação (~796–835) | Até 1200 s pelo estado terminal do deployment; depois saúde (até 120 s em `starting`), identidade da imagem e readiness. |
 | Sucesso (~836–848, ~935) | `current.json`, histórico, remove o intent do projeto e por último o comum. |
-| Qualquer exceção ou morte | Nenhum intent é removido (só o `incoming-*` temporário é apagado). As travas `flock` caem com o processo; os intents ficam. |
+| Qualquer exceção ou morte | Nenhum intent é removido (numa exceção capturada só o `incoming-*` temporário é apagado; num SIGKILL ele também fica). As travas `flock` caem com o processo; os intents ficam. |
 
 O backup do StillOn (`stillon-backup-entrada.sh`, linha 5) também recusa enquanto existir
 `/var/lib/coolify-release/stillon/pending.json`.
@@ -310,8 +310,9 @@ cada falha até um administrador agir; B encurta esse tempo, mas não o elimina.
 - **B, diagnóstico:** teste em matriz de condições com intents sintéticos (todo intent comum do
   2.1.1 vem sem fase, então a fase vem só do intent do projeto). Eixos: intent do projeto ausente,
   sem UUID ou com UUID; deployment `finished`, em andamento, falho ou ilegível (erro de rede);
-  `docker load` ativo ou não; `host.lock` ocupado ou livre. Só devolve "terminados" quando há
-  UUID, deployment `finished`, nenhum `docker load` ativo e `host.lock` livre; qualquer outra
+  `docker load` ativo ou não; `host.lock` ocupado ou livre; fila do recurso ociosa ou com outro
+  deployment ativo. Só devolve "terminados" quando há UUID, deployment `finished`, nenhum
+  `docker load` ativo, `host.lock` livre e fila do recurso ociosa; qualquer outra
   combinação devolve "estado desconhecido, não reconciliar".
 - **B, só leitura:** teste que compara a árvore de arquivos (nomes, tamanhos, mtimes) antes e
   depois do diagnóstico e da detecção, e prova que nenhum dos dois pega o `host.lock` (um
