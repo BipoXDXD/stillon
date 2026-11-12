@@ -15,6 +15,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/BipoXDXD/stillon/internal/clock"
+	"github.com/BipoXDXD/stillon/internal/storage"
 	"github.com/BipoXDXD/stillon/internal/storage/db"
 )
 
@@ -31,7 +32,9 @@ import (
 // requisições simultâneas gastam N provas, e as que passam do limite nem
 // chegam a verificar. Cada passo é uma instrução SQL única (INSERT ... ON
 // CONFLICT DO UPDATE, UPDATE ... RETURNING), então nenhum lê e depois grava e
-// o orçamento vale entre processos.
+// o orçamento vale entre processos. Cada instrução roda numa transação no
+// escopo da RLS do usuário (storage.InUserTx, migration 00029); a métrica, que
+// conta as famílias de todos, no escopo do sondador.
 //
 // No banco de propósito: o contador em memória zerava num restart ou deploy e
 // devolvia as cinco tentativas a quem tem uma sessão roubada. Família viva nunca
@@ -58,12 +61,12 @@ const prazoDoBanco = 5 * time.Second
 // FamilyProofs é o contador de provas por família de sessão, no banco. O valor
 // zero não serve: use NewFamilyProofs.
 type FamilyProofs struct {
-	q   *db.Queries
-	clk clock.Clock
+	pool *pgxpool.Pool
+	clk  clock.Clock
 }
 
 func NewFamilyProofs(pool *pgxpool.Pool, clk clock.Clock) *FamilyProofs {
-	return &FamilyProofs{q: db.New(pool), clk: clk}
+	return &FamilyProofs{pool: pool, clk: clk}
 }
 
 // ProofReservation é uma prova reservada. Quem reserva chama exatamente um
@@ -77,6 +80,7 @@ func NewFamilyProofs(pool *pgxpool.Pool, clk clock.Clock) *FamilyProofs {
 type ProofReservation struct {
 	f       *FamilyProofs
 	base    context.Context
+	usuario uuid.UUID
 	familia uuid.UUID
 	geracao uuid.UUID
 	n       int64
@@ -94,10 +98,15 @@ func (f *FamilyProofs) Reserve(ctx context.Context, userID, familyID uuid.UUID) 
 	if err != nil {
 		return nil, fmt.Errorf("gerar geração do contador de provas: %w", err)
 	}
-	linha, err := f.q.ReserveFamilyProof(ctx, db.ReserveFamilyProofParams{
-		FamilyID: familyID, UserID: userID, Generation: geracao, Now: agora,
+	var linha db.ReserveFamilyProofRow
+	err = storage.InUserTx(ctx, f.pool, userID, func(q *db.Queries) error {
+		var err error
+		linha, err = q.ReserveFamilyProof(ctx, db.ReserveFamilyProofParams{
+			FamilyID: familyID, UserID: userID, Generation: geracao, Now: agora,
+		})
+		return err
 	})
-	r := &ProofReservation{f: f, base: context.WithoutCancel(ctx), familia: familyID}
+	r := &ProofReservation{f: f, base: context.WithoutCancel(ctx), usuario: userID, familia: familyID}
 	switch {
 	case errors.Is(err, pgx.ErrNoRows), violaChaveEstrangeira(err):
 		// Sem linha: a família não está viva. Com a FK violada, o usuário foi
@@ -137,8 +146,13 @@ func (r *ProofReservation) Fail() (derrubar bool, err error) {
 	defer cancel()
 	// A posição da reserva conta chamadas em voo, não erros. Um Argon2
 	// saturado devolve sua reserva e não pode aproximar a família da expulsão.
-	erros, err := r.f.q.FailFamilyProof(ctx, db.FailFamilyProofParams{
-		Now: r.f.clk.Now(), FamilyID: r.familia, Generation: r.geracao,
+	var erros int64
+	err = storage.InUserTx(ctx, r.f.pool, r.usuario, func(q *db.Queries) error {
+		var err error
+		erros, err = q.FailFamilyProof(ctx, db.FailFamilyProofParams{
+			Now: r.f.clk.Now(), FamilyID: r.familia, Generation: r.geracao,
+		})
+		return err
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil // um sucesso ou a revogação já encerrou a vida desta prova em voo
@@ -158,8 +172,8 @@ func (r *ProofReservation) Succeed() {
 	}
 	ctx, cancel := context.WithTimeout(r.base, prazoDoBanco)
 	defer cancel()
-	if err := r.f.q.ClearFamilyProofs(ctx, db.ClearFamilyProofsParams{
-		FamilyID: r.familia, Generation: r.geracao,
+	if err := storage.InUserTx(ctx, r.f.pool, r.usuario, func(q *db.Queries) error {
+		return q.ClearFamilyProofs(ctx, db.ClearFamilyProofsParams{FamilyID: r.familia, Generation: r.geracao})
 	}); err != nil {
 		slog.ErrorContext(r.base, "zerar contador de provas da família", "erro", err, "family_id", r.familia)
 	}
@@ -175,8 +189,8 @@ func (r *ProofReservation) Release() {
 	}
 	ctx, cancel := context.WithTimeout(r.base, prazoDoBanco)
 	defer cancel()
-	if err := r.f.q.ReleaseFamilyProof(ctx, db.ReleaseFamilyProofParams{
-		FamilyID: r.familia, Generation: r.geracao,
+	if err := storage.InUserTx(ctx, r.f.pool, r.usuario, func(q *db.Queries) error {
+		return q.ReleaseFamilyProof(ctx, db.ReleaseFamilyProofParams{FamilyID: r.familia, Generation: r.geracao})
 	}); err != nil {
 		slog.ErrorContext(r.base, "devolver reserva de prova da família", "erro", err, "family_id", r.familia)
 	}
@@ -205,10 +219,22 @@ func (c *coletorDeProvas) Describe(ch chan<- *prometheus.Desc) { ch <- c.tamanho
 func (c *coletorDeProvas) Collect(ch chan<- prometheus.Metric) {
 	ctx, cancel := context.WithTimeout(context.Background(), prazoDoBanco)
 	defer cancel()
-	n, err := c.f.q.CountFamilyProofs(ctx)
+	n, err := c.f.contar(ctx)
 	if err != nil {
 		slog.Error("contar contadores de provas das famílias", "erro", err)
 		return
 	}
 	ch <- prometheus.MustNewConstMetric(c.tamanho, prometheus.GaugeValue, float64(n))
+}
+
+// contar é o total de famílias com contador, de todos os usuários: por isso
+// roda no escopo do sondador, o único da RLS que enxerga a tabela inteira.
+func (f *FamilyProofs) contar(ctx context.Context) (int64, error) {
+	var n int64
+	err := storage.InProberTx(ctx, f.pool, func(q *db.Queries) error {
+		var err error
+		n, err = q.CountFamilyProofs(ctx)
+		return err
+	})
+	return n, err
 }

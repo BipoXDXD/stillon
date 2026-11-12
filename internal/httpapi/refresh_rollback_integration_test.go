@@ -10,6 +10,7 @@ import (
 
 	"github.com/BipoXDXD/stillon/internal/auth"
 	"github.com/BipoXDXD/stillon/internal/httpapi"
+	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 )
 
 const canarioDaRotacao = "CANARY-falha-da-rotacao"
@@ -68,7 +69,7 @@ func recusarCommitDeSessoes(t *testing.T, a *api) func() {
 func fotoDasSessoes(t *testing.T, a *api) string {
 	t.Helper()
 	var foto string
-	if err := a.pool.QueryRow(context.Background(),
+	if err := testdb.Admin(t).QueryRow(context.Background(),
 		`SELECT coalesce(json_agg(s ORDER BY s.id)::text, '') FROM sessions s`).Scan(&foto); err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +78,7 @@ func fotoDasSessoes(t *testing.T, a *api) string {
 
 func contagemDasSessoes(t *testing.T, a *api) (total, usadas, revogadas int) {
 	t.Helper()
-	if err := a.pool.QueryRow(context.Background(),
+	if err := testdb.Admin(t).QueryRow(context.Background(),
 		`SELECT count(*), count(used_at), count(revoked_at) FROM sessions WHERE user_id = $1`, a.userID).
 		Scan(&total, &usadas, &revogadas); err != nil {
 		t.Fatal(err)

@@ -15,6 +15,7 @@ import (
 	"github.com/BipoXDXD/stillon/internal/auth"
 	"github.com/BipoXDXD/stillon/internal/clock"
 	"github.com/BipoXDXD/stillon/internal/crypto"
+	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 )
 
 // segredoDeTroca é o segredo "antigo" dos testes da troca de autenticador,
@@ -80,7 +81,7 @@ func familiaDoPendente(t *testing.T, pool *pgxpool.Pool, userID uuid.UUID) *uuid
 // /sessions/{id} de outro aparelho faria.
 func revogarFamilia(t *testing.T, pool *pgxpool.Pool, familia uuid.UUID, em time.Time) {
 	t.Helper()
-	if _, err := pool.Exec(context.Background(),
+	if _, err := testdb.Admin(t).Exec(context.Background(),
 		`UPDATE sessions SET revoked_at = $2 WHERE family_id = $1`, familia, em); err != nil {
 		t.Fatal(err)
 	}
@@ -371,7 +372,7 @@ func TestConfirmRotationRevokesTheOtherFamilies(t *testing.T) {
 	viva := func(f uuid.UUID) bool {
 		t.Helper()
 		var v bool
-		if err := pool.QueryRow(ctx,
+		if err := testdb.Admin(t).QueryRow(ctx,
 			`SELECT EXISTS (SELECT 1 FROM sessions WHERE family_id = $1 AND revoked_at IS NULL AND used_at IS NULL)`,
 			f).Scan(&v); err != nil {
 			t.Fatal(err)
@@ -394,7 +395,7 @@ func TestConfirmRotationRechecksTheFamily(t *testing.T) {
 	ctx := context.Background()
 	familia := familiaViva(t, pool, userID, inicioDaTroca)
 	novo := iniciarTroca(t, svc, pool, userID, familia)
-	if _, err := pool.Exec(ctx, `UPDATE sessions SET revoked_at = $2 WHERE family_id = $1`,
+	if _, err := testdb.Admin(t).Exec(ctx, `UPDATE sessions SET revoked_at = $2 WHERE family_id = $1`,
 		familia, inicioDaTroca); err != nil {
 		t.Fatal(err)
 	}
@@ -413,7 +414,7 @@ func TestConfirmRotationRechecksTheFamily(t *testing.T) {
 	// A perna positiva: com a família de volta à vida, o mesmo pendente
 	// confirma. (Outra família viva não serve: o pendente é só da família
 	// que o iniciou.)
-	if _, err := pool.Exec(ctx, `UPDATE sessions SET revoked_at = NULL WHERE family_id = $1`, familia); err != nil {
+	if _, err := testdb.Admin(t).Exec(ctx, `UPDATE sessions SET revoked_at = NULL WHERE family_id = $1`, familia); err != nil {
 		t.Fatal(err)
 	}
 	depois := em.Add(30 * time.Second)
@@ -669,7 +670,7 @@ func TestStartRotationRechecksTheFamily(t *testing.T) {
 		t.Errorf("%d eventos totp.rotation_started com a família morta", n)
 	}
 
-	if _, err := pool.Exec(ctx, `UPDATE sessions SET revoked_at = NULL WHERE family_id = $1`, familia); err != nil {
+	if _, err := testdb.Admin(t).Exec(ctx, `UPDATE sessions SET revoked_at = NULL WHERE family_id = $1`, familia); err != nil {
 		t.Fatal(err)
 	}
 	em := inicioDaTroca.Add(30 * time.Second)

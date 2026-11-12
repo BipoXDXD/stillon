@@ -25,7 +25,7 @@ func TestRetentionDeletesDeadFamilyProofsInBatchesAndKeepsLiveOnes(t *testing.T)
 	// Mortas: sem nenhuma sessão viva, paradas há mais que a folga.
 	const mortas = storage.FamilyProofsSweepBatch + 5
 	velha := agora.Add(-time.Hour)
-	if _, err := pool.Exec(ctx,
+	if _, err := testdb.Admin(t).Exec(ctx,
 		`INSERT INTO session_family_proofs (family_id, user_id, generation, reserved, errors, updated_at)
 		 SELECT gen_random_uuid(), $1, gen_random_uuid(), 1, 1, $2 FROM generate_series(1, $3::int)`,
 		dono, velha, mortas); err != nil {
@@ -33,19 +33,19 @@ func TestRetentionDeletesDeadFamilyProofsInBatchesAndKeepsLiveOnes(t *testing.T)
 	}
 	// Viva e parada há dias: fica.
 	viva := uuid.New()
-	if _, err := pool.Exec(ctx,
+	if _, err := testdb.Admin(t).Exec(ctx,
 		`INSERT INTO sessions (id, user_id, family_id, token_hash, expires_at) VALUES ($1, $2, $3, $4, $5)`,
 		uuid.New(), dono, viva, []byte("hash-da-viva"), agora.Add(24*time.Hour)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx,
+	if _, err := testdb.Admin(t).Exec(ctx,
 		`INSERT INTO session_family_proofs (family_id, user_id, generation, reserved, errors, updated_at)
 		 VALUES ($1, $2, $3, 4, 4, $4)`, viva, dono, uuid.New(), agora.Add(-10*24*time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 	// Morta há menos que a folga: as provas em voo ainda a usam.
 	recente := uuid.New()
-	if _, err := pool.Exec(ctx,
+	if _, err := testdb.Admin(t).Exec(ctx,
 		`INSERT INTO session_family_proofs (family_id, user_id, generation, reserved, errors, updated_at)
 		 VALUES ($1, $2, $3, 1, 1, $4)`, recente, dono, uuid.New(), agora.Add(-storage.FamilyProofsDeadGrace/2)); err != nil {
 		t.Fatal(err)
@@ -67,14 +67,14 @@ func TestRetentionDeletesDeadFamilyProofsInBatchesAndKeepsLiveOnes(t *testing.T)
 	}
 
 	var restam int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM session_family_proofs`).Scan(&restam); err != nil {
+	if err := testdb.Admin(t).QueryRow(ctx, `SELECT count(*) FROM session_family_proofs`).Scan(&restam); err != nil {
 		t.Fatal(err)
 	}
 	if restam != 2 {
 		t.Errorf("%d contadores restaram, queria 2: o da família viva e o da recém-derrubada", restam)
 	}
 	var daViva int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM session_family_proofs WHERE family_id = $1`, viva).Scan(&daViva); err != nil || daViva != 1 {
+	if err := testdb.Admin(t).QueryRow(ctx, `SELECT count(*) FROM session_family_proofs WHERE family_id = $1`, viva).Scan(&daViva); err != nil || daViva != 1 {
 		t.Errorf("contador da família viva: %d linhas (erro %v), queria 1", daViva, err)
 	}
 }
@@ -93,7 +93,7 @@ func TestRetentionStillRunsTheOldStepsWhenTheFamilyProofsCleanupFails(t *testing
 			t.Fatal(err)
 		}
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO sessions (id, user_id, family_id, token_hash, expires_at)
+	if _, err := testdb.Admin(t).Exec(ctx, `INSERT INTO sessions (id, user_id, family_id, token_hash, expires_at)
 		VALUES ($1, $2, $3, $4, $5)`, novoID(), dono, novoID(), novoID().String(), hoje.AddDate(0, 0, -8)); err != nil {
 		t.Fatal(err)
 	}

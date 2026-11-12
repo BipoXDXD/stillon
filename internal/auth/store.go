@@ -37,6 +37,11 @@ type Tx interface {
 	// SessionUserByHash e LockUserSessions vêm antes de LockSessionByHash em
 	// toda transação que muda sessões: a trava do usuário
 	// primeiro, a da linha depois.
+	//
+	// As duas também ligam o escopo da RLS (migration 00029):
+	// SessionUserByHash só enxerga a linha daquele hash, e LockUserSessions põe
+	// a transação no escopo do usuário. Por isso LockUserSessions vem antes de
+	// qualquer outra leitura ou escrita de sessions na transação.
 	SessionUserByHash(ctx context.Context, hash []byte) (uuid.UUID, error)
 	LockUserSessions(ctx context.Context, userID uuid.UUID) error
 	LockSessionByHash(ctx context.Context, hash []byte) (SessionRow, error)
@@ -102,7 +107,11 @@ func (t *pgTx) LockSessionByHash(ctx context.Context, hash []byte) (SessionRow, 
 // SessionUserByHash, LockUserSessions e UserPasswordHash já são sqlc;
 // o resto deste arquivo ainda é SQL escrito à mão e migra aos poucos.
 func (t *pgTx) SessionUserByHash(ctx context.Context, hash []byte) (uuid.UUID, error) {
-	id, err := db.New(t.tx).SessionUserByHash(ctx, hash)
+	q := db.New(t.tx)
+	if err := q.ScopeToSessionToken(ctx, hash); err != nil {
+		return uuid.Nil, fmt.Errorf("definir escopo do token: %w", err)
+	}
+	id, err := q.SessionUserByHash(ctx, hash)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return uuid.Nil, ErrNotFound
 	}
@@ -113,7 +122,11 @@ func (t *pgTx) SessionUserByHash(ctx context.Context, hash []byte) (uuid.UUID, e
 }
 
 func (t *pgTx) LockUserSessions(ctx context.Context, userID uuid.UUID) error {
-	if err := db.New(t.tx).LockUserSessions(ctx, userID); err != nil {
+	q := db.New(t.tx)
+	if err := q.ScopeToUser(ctx, userID); err != nil {
+		return fmt.Errorf("definir escopo do usuário: %w", err)
+	}
+	if err := q.LockUserSessions(ctx, userID); err != nil {
 		return fmt.Errorf("travar sessões do usuário: %w", err)
 	}
 	return nil

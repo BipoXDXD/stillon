@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/BipoXDXD/stillon/internal/auth"
+	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 )
 
 // rotacionarAte gira o refresh a cada 20 dias (dentro do RefreshTTL) até a
@@ -72,7 +73,7 @@ func TestFamilyRotatesUntilJustBeforeMaxFamilyAge(t *testing.T) {
 // família emitida pelo Manager é v7, então isto só cobre dado estranho no
 // banco (uma linha escrita à mão, uma restauração de outra origem).
 func TestFamilyWithoutV7IdCannotRotate(t *testing.T) {
-	mgr, pool, _, userID := setup(t)
+	mgr, _, _, userID := setup(t)
 	ctx := context.Background()
 
 	tok, _, err := mgr.Issue(ctx, userID, carimbo, meta)
@@ -80,7 +81,7 @@ func TestFamilyWithoutV7IdCannotRotate(t *testing.T) {
 		t.Fatal(err)
 	}
 	v4 := uuid.New()
-	if _, err := pool.Exec(ctx, `UPDATE sessions SET family_id = $2 WHERE user_id = $1`, userID, v4); err != nil {
+	if _, err := testdb.Admin(t).Exec(ctx, `UPDATE sessions SET family_id = $2 WHERE user_id = $1`, userID, v4); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := mgr.Rotate(ctx, tok, meta); !errors.Is(err, auth.ErrInvalidSession) {

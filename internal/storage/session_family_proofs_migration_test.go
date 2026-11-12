@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -23,12 +24,19 @@ func violaFK(err error) bool {
 	return errors.As(err, &pgErr) && pgErr.Code == "23503"
 }
 
+// inserirContadorDeProvas grava no escopo do usuário, como a aplicação: a RLS
+// da 00029 deixa passar e o que sobra para recusar são o CHECK e a FK.
 func inserirContadorDeProvas(ctx context.Context, pool *pgxpool.Pool, usuario uuid.UUID, reservadas, erros int) error {
-	_, err := pool.Exec(ctx,
-		`INSERT INTO session_family_proofs (family_id, user_id, generation, reserved, errors, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6)`,
-		uuid.New(), usuario, uuid.New(), reservadas, erros, agora)
-	return err
+	return pgx.BeginFunc(ctx, pool, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `SELECT set_config('app.user_id', $1, true)`, usuario.String()); err != nil {
+			return err
+		}
+		_, err := tx.Exec(ctx,
+			`INSERT INTO session_family_proofs (family_id, user_id, generation, reserved, errors, updated_at)
+			 VALUES ($1, $2, $3, $4, $5, $6)`,
+			uuid.New(), usuario, uuid.New(), reservadas, erros, agora)
+		return err
+	})
 }
 
 // O banco recusa o contador torto: mais erros que reservas (cada erro é uma
@@ -71,7 +79,8 @@ func TestSessionFamilyProofsDownDropsOnlyTheNewTable(t *testing.T) {
 	ctx := context.Background()
 	versao := versaoDaMigration(t, sufixoContadorDeProvas)
 	dsn := testdb.EmptyDatabase(t)
-	if err := storage.Migrate(ctx, dsn); err != nil {
+	// Só até a 00028: a RLS da 00029 é de outro deploy e tem o próprio down.
+	if err := storage.MigrateUpTo(ctx, dsn, versao); err != nil {
 		t.Fatal(err)
 	}
 	pool, err := pgxpool.New(ctx, dsn)

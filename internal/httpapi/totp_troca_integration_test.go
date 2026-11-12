@@ -15,6 +15,7 @@ import (
 	"github.com/pquerna/otp/totp"
 
 	"github.com/BipoXDXD/stillon/internal/auth"
+	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 )
 
 // A troca de autenticador com segredo pendente, pelo HTTP:
@@ -591,7 +592,7 @@ func TestRotateRechecksTheFamilyUnderTheLock(t *testing.T) {
 	}
 	// A revogação comita enquanto o rotate espera (a troca de senha faria o
 	// mesmo sob a trava; aqui, direto no banco).
-	if _, err := a.pool.Exec(ctx, `UPDATE sessions SET revoked_at = $2 WHERE family_id = $1`,
+	if _, err := testdb.Admin(t).Exec(ctx, `UPDATE sessions SET revoked_at = $2 WHERE family_id = $1`,
 		familia, a.clk.Now()); err != nil {
 		t.Fatal(err)
 	}
