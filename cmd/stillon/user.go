@@ -164,8 +164,8 @@ func runUser(ctx context.Context, args []string, in entradaDaSenha, stdout, stde
 	}
 	sub := args[0]
 	c := cliUser{ctx: ctx, in: in, stdout: stdout, stderr: stderr}
-	e, dsn, codigo, falhou := c.lerArgumentos(sub, args[1:], getenv)
-	if falhou {
+	e, dsn, codigo := c.lerArgumentos(sub, args[1:], getenv)
+	if codigo != saidaOK {
 		return codigo
 	}
 	svc, fechar, err := abrirServico(ctx, dsn)
@@ -179,35 +179,40 @@ func runUser(ctx context.Context, args []string, in entradaDaSenha, stdout, stde
 		return c.runCreate(svc, e)
 	case "set-password":
 		return c.runSetPassword(svc, e)
-	default:
+	case "reset-2fa":
 		return c.runReset2FA(svc, e)
+	default:
+		// Inalcançável: o subcomando foi validado no começo. Um subcomando
+		// novo que esqueça este switch falha em vez de cair no reset-2fa.
+		return c.falhar(saidaAmbiente, "subcomando sem despacho: %q", sub)
 	}
 }
 
-// lerArgumentos valida flag, e-mail e DATABASE_URL, nessa ordem. falhou diz que
-// a mensagem já saiu e codigo é o código de saída.
-func (c cliUser) lerArgumentos(sub string, args []string, getenv func(string) string) (email, dsn string, codigo int, falhou bool) {
+// lerArgumentos valida flag, e-mail e DATABASE_URL, nessa ordem. Com codigo
+// diferente de saidaOK, a mensagem já saiu, codigo é o código de saída e email
+// e dsn vêm vazios.
+func (c cliUser) lerArgumentos(sub string, args []string, getenv func(string) string) (email, dsn string, codigo int) {
 	fs := flag.NewFlagSet("stillon user "+sub, flag.ContinueOnError)
 	fs.SetOutput(c.stderr)
 	emailFlag := fs.String("email", "", "e-mail do usuário")
 	if err := fs.Parse(args); err != nil {
-		return "", "", saidaUso, true
+		return "", "", saidaUso
 	}
 	if fs.NArg() > 0 {
 		if sub == "reset-2fa" {
-			return "", "", c.falhar(saidaUso, "argumento inesperado: %q", fs.Arg(0)), true
+			return "", "", c.falhar(saidaUso, "argumento inesperado: %q", fs.Arg(0))
 		}
-		return "", "", c.falhar(saidaUso, "argumento inesperado: %q (a senha vem do stdin)", fs.Arg(0)), true
+		return "", "", c.falhar(saidaUso, "argumento inesperado: %q (a senha vem do stdin)", fs.Arg(0))
 	}
 	email, err := account.ValidateEmail(*emailFlag)
 	if err != nil {
-		return "", "", c.falhar(saidaUso, "--email precisa ser um endereço, como dono@exemplo.com"), true
+		return "", "", c.falhar(saidaUso, "--email precisa ser um endereço, como dono@exemplo.com")
 	}
 	dsn = strings.TrimSpace(getenv("DATABASE_URL"))
 	if dsn == "" {
-		return "", "", c.falhar(saidaUso, "DATABASE_URL não definida"), true
+		return "", "", c.falhar(saidaUso, "DATABASE_URL não definida")
 	}
-	return email, dsn, saidaOK, false
+	return email, dsn, saidaOK
 }
 
 // abrirServico abre o pool e monta o serviço de contas; fechar libera o pool.
