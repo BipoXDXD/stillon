@@ -193,8 +193,12 @@ func TestSupervisorDoesNotAcceptFailedOrUnclosedClients(t *testing.T) {
 			t.Setenv("BACKUP_TEST_MODE", mode)
 			t.Setenv("PGHOST", "restore")
 			t.Setenv("PGPASSWORD", "restore-secret")
+			o := opcoesDeTeste(psql, dump)
+			if mode == "good" {
+				o = comPrazosFolgados(o)
+			}
 			start := time.Now()
-			ref, err := run(context.Background(), "postgresql://backup@localhost/stillon?gssencmode=disable", "source-secret", filepath.Join(dir, "dump"), opcoesDeTeste(psql, dump))
+			ref, err := run(context.Background(), "postgresql://backup@localhost/stillon?gssencmode=disable", "source-secret", filepath.Join(dir, "dump"), o)
 			if mode == "good" {
 				info, statErr := os.Stat(filepath.Join(dir, "dump"))
 				if statErr != nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0600 {
@@ -247,7 +251,7 @@ case "$line" in
    *) printf '00000003-0000001A-1|21|2|3\n';;
   esac;;
  *pg_stat_clear_snapshot*) if [ "$BACKUP_TEST_MODE" = dirty-clear ]; then printf 'x\n'; else printf '\n'; fi;;
- *pg_stat_activity*) if [ "$BACKUP_TEST_MODE" = remaining-session ]; then printf '1\n'; else printf '0\n'; fi;;
+ *pg_stat_activity*) if [ "$BACKUP_TEST_MODE" = remaining-session ]; then printf '1\n'; else if [ "$BACKUP_TEST_MODE" = slow-count ]; then sleep 0.5; fi; printf '0\n'; fi;;
  ROLLBACK*) if [ "$BACKUP_TEST_MODE" = extra-output ]; then printf 'extra\n'; fi;;
  '\q') if [ "$BACKUP_TEST_MODE" = closed-stdout ]; then trap '' TERM; exec 1>&-; exec sleep 60; fi; if [ "$BACKUP_TEST_MODE" = exporter-error ]; then exit 3; fi;exit 0;;
 esac
@@ -265,6 +269,14 @@ exit 0
 }
 
 // opcoesDeTeste encurta os prazos para os clientes falsos.
+// comPrazosFolgados tira o caminho bom do relógio: com os prazos curtos dos
+// modos de falha, uma pausa do CI de ~100ms já estourava o encerramento e o
+// teste via "file already closed" no lugar do resultado que queria (#314).
+func comPrazosFolgados(o options) options {
+	o.prepareTimeout, o.dumpTimeout, o.cleanup, o.totalTimeout = 10*time.Second, 10*time.Second, 10*time.Second, 30*time.Second
+	return o
+}
+
 func opcoesDeTeste(psql, dump string) options {
 	o := defaultOptions()
 	o.psqlPath = psql
@@ -316,6 +328,31 @@ func TestFailuresKeepTheOriginalCause(t *testing.T) {
 				t.Fatalf("a causa vazou credencial: %v", err)
 			}
 		})
+	}
+}
+
+// Quando a checagem final passa do prazo de encerramento, o prazo fecha os pipes
+// e vence a leitura quase juntos, e o erro que chegava primeiro variava (EOF,
+// "file already closed", i/o timeout, context canceled). A causa tem de vir
+// sempre: o operador precisa ler que o prazo acabou, não um detalhe de pipe.
+func TestCleanupDeadlineIsAlwaysReportedAsTheCause(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("supervisor exige Linux")
+	}
+	for i := range 20 {
+		dir := t.TempDir()
+		psql, dump := clientesFalsos(t, dir)
+		t.Setenv("BACKUP_TEST_MODE", "slow-count")
+		saida := filepath.Join(dir, "dump")
+		o := opcoesDeTeste(psql, dump)
+		o.prepareTimeout, o.dumpTimeout, o.totalTimeout = 5*time.Second, 5*time.Second, 10*time.Second
+		_, err := run(context.Background(), "postgresql://backup@localhost/stillon", "source-secret", saida, o)
+		if !errors.Is(err, errEncerramentoExcedido) {
+			t.Fatalf("rodada %d: erro = %v, queria a causa %q", i, err, errEncerramentoExcedido)
+		}
+		if _, e := os.Stat(saida); !os.IsNotExist(e) {
+			t.Fatalf("rodada %d: falha deixou artefato próprio", i)
+		}
 	}
 }
 
@@ -421,7 +458,7 @@ func rodarBom(t *testing.T, depois func(saida string) error) (log []string, said
 	t.Setenv("BACKUP_TEST_MODE", "good")
 	t.Setenv("BACKUP_LOG", arquivoLog)
 	saida = filepath.Join(dir, "dump")
-	o := opcoesDeTeste(psql, dump)
+	o := comPrazosFolgados(opcoesDeTeste(psql, dump))
 	if depois != nil {
 		o.afterReference = func(context.Context, Reference) error { return depois(saida) }
 	}

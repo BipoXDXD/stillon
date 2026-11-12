@@ -159,8 +159,8 @@ func run(parent context.Context, publicURI, password, output string, o options) 
 	if e != nil {
 		return ref, e
 	}
-	exporterCtx, cancelExporter := context.WithCancel(ctx)
-	defer cancelExporter()
+	exporterCtx, cancelExporter := context.WithCancelCause(ctx)
+	defer cancelExporter(nil)
 	exportName, dumpName := identity+"_exporter", identity+"_dump"
 	p, e := abrirPipes()
 	if e != nil {
@@ -233,10 +233,21 @@ func run(parent context.Context, publicURI, password, output string, o options) 
 		return Reference{}, fmt.Errorf("dump interrompido ou falhou: %w", errors.Join(e, context.Cause(dumpCtx)))
 	}
 	finishDone := make(chan struct{})
-	finishTimer := time.AfterFunc(o.cleanup, func() { cancelExporter(); close(finishDone) })
+	finishStart := time.Now()
+	finishTimer := time.AfterFunc(o.cleanup, func() { cancelExporter(errEncerramentoExcedido); close(finishDone) })
 	defer func() {
-		if !finishTimer.Stop() {
+		fired := !finishTimer.Stop()
+		if fired {
 			<-finishDone
+		}
+		// O prazo fecha os pipes e vence a leitura quase ao mesmo tempo, e o
+		// erro que chega primeiro (EOF, "file already closed", i/o timeout,
+		// context canceled) varia com a corrida. A causa não varia. O relógio
+		// decide, não o Stop: um timer vencido que ainda não rodou também é
+		// parado com sucesso, e o i/o timeout já indica o prazo vencido.
+		if err != nil && (fired || time.Since(finishStart) >= o.cleanup) && !errors.Is(err, errEncerramentoExcedido) {
+			ref = Reference{}
+			err = fmt.Errorf("%w (%w após %s)", err, errEncerramentoExcedido, o.cleanup)
 		}
 	}()
 	if e = s.definirPrazos(o.cleanup); e != nil {
@@ -390,6 +401,10 @@ func opcoesDoExportador(o options) string {
 func milissegundos(d time.Duration) int64 {
 	return max(d.Milliseconds(), 1)
 }
+
+// errEncerramentoExcedido é a causa do cancelamento do exportador quando a
+// checagem final não termina dentro do prazo de encerramento.
+var errEncerramentoExcedido = errors.New("prazo de encerramento esgotado")
 
 // maxLinhaProtocolo é o maior tamanho de linha que o exportador pode mandar.
 const maxLinhaProtocolo = 512
