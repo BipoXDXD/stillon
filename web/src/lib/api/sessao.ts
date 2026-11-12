@@ -1,7 +1,7 @@
 import { ApiError, enviar, lerCorpo, lerErro, type Buscar } from './http'
 import { RespostaLogin, Token } from './schemas'
 
-// A sessão do painel (spec §11.2; spec do Plano 6 §3.4).
+// A sessão do painel (spec §11.2).
 //
 // O access token vive numa variável deste módulo e em nenhum outro lugar:
 // nada em localStorage, sessionStorage, IndexedDB ou estado React (spec
@@ -98,7 +98,7 @@ export function criarSessao(o: Opcoes) {
   // minha é a época em que o refresh foi PEDIDO, antes da trava: capturada
   // aqui dentro, depois de a trava soltar, ela já seria a época nova, e um
   // refresh que esperou a outra aba enquanto a sessão acabava gravaria o
-  // token (D15).
+  // token.
   async function renovarAgora(minha: number): Promise<string | null> {
     const r = await enviar(o.buscar, {
       metodo: 'POST',
@@ -162,7 +162,7 @@ export function criarSessao(o: Opcoes) {
 
   // O boot é UMA promessa por carga de página, fora da árvore React: o
   // StrictMode monta os efeitos duas vezes, e dois refreshes com o mesmo
-  // cookie seriam reúso (spec do Plano 6, D9).
+  // cookie seriam reúso.
   function iniciar(): Promise<void> {
     boot ??= (async () => {
       const minha = epoca
@@ -239,7 +239,7 @@ export function criarSessao(o: Opcoes) {
       // sessão do mesmo jeito: o refresh que ficou vence sozinho.
       if (!(e instanceof ApiError)) throw e
     }
-    // A9 do Plano 10: o servidor que não conseguiu revogar a sessão responde
+    // O servidor que não conseguiu revogar a sessão responde
     // 500 e não apaga o cookie, para o cliente tentar de novo. Largar a
     // sessão aqui seria fingir que saiu: ela continuaria viva no servidor.
     if (r && !r.ok) throw await lerErro(r)

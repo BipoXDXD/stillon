@@ -67,7 +67,7 @@ export function detalheDoProblema(it: ItemDoResumo, incidente: Incidente | undef
   return it.last_checked_at === null ? 'Nenhum check ainda' : `Último check ${haQuantoAteAgora(it.last_checked_at, agora)}`
 }
 
-// Uma linha de texto por alvo, sem gráfico (auditoria P7).
+// Uma linha de texto por alvo, sem gráfico.
 export function linhaSemDados(it: ItemDoResumo, agora: Date): string {
   if (!it.enabled) return 'Pausado'
   return it.last_checked_at === null

@@ -1,6 +1,6 @@
 import { cn } from '@/lib/utils'
 
-// O esqueleto do painel (auditoria P12): a manchete e oito linhas da tabela,
+// O esqueleto do painel: a manchete e oito linhas da tabela,
 // no lugar onde vão aparecer. A animação para com prefers-reduced-motion
 // (motion-reduce, e a regra global do index.css); o leitor de tela ouve
 // "Carregando…", e o e2e espera o aria-busy sumir.

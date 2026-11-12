@@ -75,7 +75,7 @@ function urlPermitida(raw: string): string | null {
 
 // A regra de conteúdo espelha internal/targets/contentrule.go. O limite é em
 // caracteres como o servidor os conta (runas, o char_length do banco): um
-// emoji vale 1, e não os 2 do .length em UTF-16 (L9 do STRIDE). Os casos que
+// emoji vale 1, e não os 2 do .length em UTF-16. Os casos que
 // os dois lados julgam igual ficam em
 // internal/targets/testdata/regra-de-conteudo.json (regra-contrato.test.ts).
 // Os modos vêm do schema da resposta; "desligada" é só do formulário (a
@@ -180,7 +180,7 @@ export function esquemaDoAlvo(base?: { url: string; nomesDeHeaders?: readonly st
     })
 }
 
-// D3 do Plano 2: o jitter de −10% antecipa a próxima sonda para 90% do
+// O jitter de −10% antecipa a próxima sonda para 90% do
 // intervalo; um timeout maior deixaria duas sondas do alvo em voo.
 // Como em validate.go, só com intervalo e timeout nas faixas: senão o
 // erro é do próprio campo, não desta regra.
@@ -265,7 +265,7 @@ function headersQueFicam(v: CamposDaRegra, guardados: readonly string[]): readon
 }
 
 // Desligada ou com HEAD, nada da regra é validado: com HEAD ela fica no
-// estado, escondida, e não vai no envio (I1 da revisão).
+// estado, escondida, e não vai no envio.
 function validarRegra(v: CamposDaRegra, guardados: readonly string[], ctx: z.RefinementCtx<CamposDaRegra>) {
   if (v.modoDaRegra === 'desligada' || v.method === 'HEAD') return
   const nomes = headersQueFicam(v, guardados).map((n) => n.toLowerCase())
@@ -383,7 +383,7 @@ function mapaDeHeaders(v: ValoresDoAlvo): Record<string, string> {
 }
 
 // O corpo do POST. Os números vão sempre explícitos (evita o "0 vira padrão
-// em POST e 400 em PATCH" das dívidas do Plano 2); o limiar padrão vai
+// em POST e 400 em PATCH"); o limiar padrão vai
 // ausente, que é o que o servidor lê como "use 2000 ms".
 export function paraCriacao(v: ValoresDoAlvo): EntradaAlvo {
   const e: EntradaAlvo = {
@@ -406,7 +406,7 @@ export function paraCriacao(v: ValoresDoAlvo): EntradaAlvo {
 
 // O corpo do PATCH: só o que mudou. O servidor recusa campo desconhecido, e
 // "headers" só vai com "substituir" ou "remover" — mandar {} apagaria os
-// headers em silêncio (spec do Plano 6, D24).
+// headers em silêncio.
 export function paraAlteracao(original: ValoresDoAlvo, v: ValoresDoAlvo): AlteracaoAlvo {
   const a: AlteracaoAlvo = {}
   if (v.name !== original.name) a.name = v.name
@@ -436,7 +436,7 @@ function origemDe(url: string): string | null {
   }
 }
 
-// B1 do Plano 10: um PATCH que troca a origem da URL (esquema, host ou
+// Um PATCH que troca a origem da URL (esquema, host ou
 // porta) sem mandar headers faz o servidor apagar os headers guardados, que
 // podem ser segredos do destino antigo. Só o caminho mantém. A origem é a do
 // new URL(x.trim()).origin, a regra do navegador que o servidor também usa
