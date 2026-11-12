@@ -39,20 +39,31 @@ const (
 	ciclosAposOErro = 2
 )
 
-// ritmoManual é o ritmo dos testes: guarda o período pedido e entrega os
-// tiques que o teste mandar.
+// ritmoManual é o ritmo dos testes: guarda o período pedido, entrega os
+// tiques que o teste mandar e registra a chamada do parar (o Stop do ticker
+// real).
 type ritmoManual struct {
 	tiques  chan time.Time
 	periodo chan time.Duration
+	parou   chan struct{}
 }
 
 func novoRitmoManual() *ritmoManual {
-	return &ritmoManual{tiques: make(chan time.Time), periodo: make(chan time.Duration, 1)}
+	return &ritmoManual{
+		tiques:  make(chan time.Time),
+		periodo: make(chan time.Duration, 1),
+		parou:   make(chan struct{}, 1),
+	}
 }
 
 func (m *ritmoManual) criar(periodo time.Duration) (<-chan time.Time, func()) {
 	m.periodo <- periodo
-	return m.tiques, func() {}
+	return m.tiques, func() {
+		select {
+		case m.parou <- struct{}{}:
+		default:
+		}
+	}
 }
 
 // periodoPedido exige que o laço tenha criado o ritmo com o período de
@@ -145,8 +156,9 @@ func esperarErroDoCiclo(t *testing.T, logs <-chan string, feito <-chan error, ms
 	}
 }
 
-// encerrarLaco cancela o ctx e exige que o laço devolva nil.
-func encerrarLaco(t *testing.T, cancel context.CancelFunc, feito <-chan error) {
+// encerrarLaco cancela o ctx e exige que o laço devolva nil e que, ao
+// voltar, já tenha parado o ritmo: um ticker esquecido seguiria disparando.
+func (m *ritmoManual) encerrarLaco(t *testing.T, cancel context.CancelFunc, feito <-chan error) {
 	t.Helper()
 	cancel()
 	select {
@@ -156,6 +168,11 @@ func encerrarLaco(t *testing.T, cancel context.CancelFunc, feito <-chan error) {
 		}
 	case <-time.After(guardaDoLaco):
 		t.Fatal("o laço não encerrou depois do cancelamento do ctx")
+	}
+	select {
+	case <-m.parou:
+	default:
+		t.Error("o laço voltou sem parar o ritmo")
 	}
 }
 
@@ -189,7 +206,7 @@ func TestDispatcherRunLogsTheCycleErrorAndKeepsRunning(t *testing.T) {
 		esperarErroDoCiclo(t, logs, feito, msgFalhaDoDespacho)
 	}
 	ritmo.tique(t, feito)
-	encerrarLaco(t, cancel, feito)
+	ritmo.encerrarLaco(t, cancel, feito)
 }
 
 // O sinal de encerramento chega com Dispatch preso no banco: a reivindicação
@@ -214,7 +231,7 @@ func TestDispatcherRunStopsQuietlyWhenCancelledDuringDispatch(t *testing.T) {
 	case <-time.After(guardaDoLaco):
 		t.Fatal("o ciclo não chegou ao banco")
 	}
-	encerrarLaco(t, cancel, feito)
+	ritmo.encerrarLaco(t, cancel, feito)
 	semErroNoLog(t, logs, msgFalhaDoDespacho)
 }
 
@@ -280,7 +297,7 @@ func TestRemindersRunLogsTheCycleErrorAndKeepsRunning(t *testing.T) {
 		esperarErroDoCiclo(t, logs, feito, msgFalhaDoLembrete)
 	}
 	ritmo.tique(t, feito)
-	encerrarLaco(t, cancel, feito)
+	ritmo.encerrarLaco(t, cancel, feito)
 }
 
 // Com o ctx já cancelado, o ciclo de lembretes falha por causa do
@@ -293,6 +310,6 @@ func TestRemindersRunStopsQuietlyWhenTheContextIsCancelled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	encerrarLaco(t, cancel, iniciarLaco(ctx, r.Run))
+	ritmo.encerrarLaco(t, cancel, iniciarLaco(ctx, r.Run))
 	semErroNoLog(t, logs, msgFalhaDoLembrete)
 }
