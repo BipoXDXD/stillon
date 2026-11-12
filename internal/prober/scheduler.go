@@ -180,11 +180,6 @@ func (s *Scheduler) Reconcile(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("reconciliar métricas: %w", err)
 	}
-	eventos, err := contarEventosDeHeartbeat(ctx, s.pool)
-	if err != nil {
-		return fmt.Errorf("reconciliar métricas: %w", err)
-	}
-
 	vivos := make(map[uuid.UUID]struct{}, len(existentes))
 	for _, id := range existentes {
 		vivos[id] = struct{}{}
@@ -195,7 +190,15 @@ func (s *Scheduler) Reconcile(ctx context.Context) error {
 		}
 	}
 	s.metrics.incidentsOpen.Set(float64(abertos))
-	s.metrics.heartbeatEvents.Set(float64(eventos))
+
+	// O tamanho do log é só uma métrica: se a contagem falhar, o ciclo já
+	// cumpriu o que importa. O gauge fica com o último valor bom (um 0 falso
+	// esconderia um log cheio) e o erro vai ao log.
+	if eventos, err := contarEventosDeHeartbeat(ctx, s.pool); err != nil {
+		slog.Error("contar eventos de heartbeat", "erro", err)
+	} else {
+		s.metrics.heartbeatEvents.Set(float64(eventos))
+	}
 	return nil
 }
 
