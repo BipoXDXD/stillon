@@ -8,7 +8,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/BipoXDXD/stillon/internal/storage"
 	"github.com/BipoXDXD/stillon/internal/storage/db"
 	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 )
@@ -107,5 +109,95 @@ func TestListLiveFamiliesIsOrderedByFamilyThenNewestRow(t *testing.T) {
 	quer := []string{"baixa", "media-id-maior", "media-id-menor", "media-velha-id-maior", "alta"}
 	if !slices.Equal(obtido, quer) {
 		t.Errorf("ordem das famílias vivas = %v, queria %v (family_id, depois created_at e id decrescentes)", obtido, quer)
+	}
+}
+
+// Duas séries por alvo, inseridas do fim para o começo e do alvo maior para o
+// menor: a ordem que a heap (ou o hash aggregate do GROUP BY) devolveria sem o
+// ORDER BY é a errada de propósito. A e B são alvos novos, e o id do UUIDv7
+// cresce: A < B.
+func novosAlvosComChecksEmDoisInstantes(t *testing.T, pool *pgxpool.Pool, dono uuid.UUID) (a, b uuid.UUID, ontem, hoje time.Time) {
+	t.Helper()
+	a = novoAlvo(t, pool, dono, agora)
+	b = novoAlvo(t, pool, dono, agora)
+	ontem, hoje = agora.Add(-24*time.Hour), agora
+	// Os dois instantes caem no mesmo mês, o da partição de agora.
+	if err := storage.EnsureChecksPartitions(context.Background(), pool, agora); err != nil {
+		t.Fatal(err)
+	}
+	novoCheck(t, pool, b, hoje)
+	novoCheck(t, pool, a, hoje)
+	novoCheck(t, pool, b, ontem)
+	novoCheck(t, pool, a, ontem)
+	return a, b, ontem, hoje
+}
+
+// Primeiro o alvo, depois o dia: com "day, target_id" a ordem seria A-ontem,
+// B-ontem, A-hoje, B-hoje.
+func TestListPublicDailyUptimeIsOrderedByTargetThenDay(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+	dono := novoUsuario(t, pool)
+	conn := conexaoSemRLS(t)
+	a, b, ontem, hoje := novosAlvosComChecksEmDoisInstantes(t, pool, dono)
+	paginaID := novoID()
+	if _, err := conn.Exec(ctx,
+		`INSERT INTO status_pages (id, user_id, slug, title, published, created_at) VALUES ($1, $2, 'ordem-diaria', 'Status', true, $3)`,
+		paginaID, dono, agora); err != nil {
+		t.Fatalf("criar página: %v", err)
+	}
+	for i, alvo := range []uuid.UUID{b, a} {
+		if _, err := conn.Exec(ctx,
+			`INSERT INTO status_page_items (status_page_id, target_id, display_name, position) VALUES ($1, $2, $3, $4)`,
+			paginaID, alvo, fmt.Sprintf("item-%d", i), i); err != nil {
+			t.Fatalf("criar item %d: %v", i, err)
+		}
+	}
+
+	// Só checks brutos: o corte é o começo da janela, então nenhum rollup entra.
+	desde := ontem.Add(-time.Hour)
+	linhas, err := db.New(conn).ListPublicDailyUptime(ctx, db.ListPublicDailyUptimeParams{
+		PageID: paginaID, Since: desde, Cut: desde, Until: hoje.Add(time.Hour),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var obtido []string
+	for _, l := range linhas {
+		obtido = append(obtido, fmt.Sprintf("%s %s", l.TargetID, l.Day.UTC().Format(time.DateOnly)))
+	}
+	quer := []string{
+		fmt.Sprintf("%s 2026-09-21", a), fmt.Sprintf("%s 2026-09-22", a),
+		fmt.Sprintf("%s 2026-09-21", b), fmt.Sprintf("%s 2026-09-22", b),
+	}
+	if !slices.Equal(obtido, quer) {
+		t.Errorf("ordem do uptime diário = %v, queria %v (target_id, depois day)", obtido, quer)
+	}
+}
+
+// O mesmo para as horas brutas: primeiro o alvo, depois a hora.
+func TestListRawHoursIsOrderedByTargetThenBucket(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+	dono := novoUsuario(t, pool)
+	conn := conexaoSemRLS(t)
+	a, b, ontem, hoje := novosAlvosComChecksEmDoisInstantes(t, pool, dono)
+
+	linhas, err := db.New(conn).ListRawHours(ctx, db.ListRawHoursParams{
+		UserID: dono, FromAt: ontem.Add(-time.Hour), ToAt: hoje.Add(time.Hour),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var obtido []string
+	for _, l := range linhas {
+		obtido = append(obtido, fmt.Sprintf("%s %s", l.TargetID, l.Bucket.UTC().Format(time.DateTime)))
+	}
+	quer := []string{
+		fmt.Sprintf("%s 2026-09-21 12:00:00", a), fmt.Sprintf("%s 2026-09-22 12:00:00", a),
+		fmt.Sprintf("%s 2026-09-21 12:00:00", b), fmt.Sprintf("%s 2026-09-22 12:00:00", b),
+	}
+	if !slices.Equal(obtido, quer) {
+		t.Errorf("ordem das horas brutas = %v, queria %v (target_id, depois bucket)", obtido, quer)
 	}
 }
