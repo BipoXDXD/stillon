@@ -188,8 +188,8 @@ func (h *AuthHandlers) TOTPVerify(w http.ResponseWriter, r *http.Request) {
 	//
 	// NÃO é atômica: dois verify simultâneos com o mesmo desafio passam os
 	// dois por aqui. O ConsumeChallenge depois do código continua sendo a
-	// autoridade, e nessa corrida o perdedor ainda pode gastar um código
-	// (resíduo registrado nas pendências).
+	// autoridade. Resíduo aceito: nessa corrida o perdedor ainda pode gastar
+	// um código sem abrir sessão.
 	if user.TOTPChallengeMark != nil && !desafio.IssuedAt.After(*user.TOTPChallengeMark) {
 		apierr.WriteError(w, r, apierr.CodeUnauthorized)
 		return

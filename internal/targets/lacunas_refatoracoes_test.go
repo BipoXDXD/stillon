@@ -106,19 +106,18 @@ const (
 	voltarTLS    = `ALTER TABLE target_tls_indisponivel_lacuna RENAME TO target_tls`
 )
 
-// Sem conseguir ler as tags do alvo, o PATCH falha com a causa do banco e
-// nada é gravado.
-func TestUpdateFalhaAoLerAsTagsENadaFicaGravado(t *testing.T) {
+// Sem conseguir ler as tags do alvo, o PATCH falha com a causa do banco. O
+// lerTags roda antes de qualquer escrita do Update: não há UPDATE a desfazer, e
+// por isso o teste não afirma "nada fica gravado", só a causa e o prefixo.
+func TestUpdateFalhaAoLerAsTagsComACausaDoBanco(t *testing.T) {
 	a := novoAmbiente(t)
 	dono := a.usuario(t)
 	alvo := a.alvo(t, dono)
-	restaurar := alterarDDLComplementar(t, a, renomearTags, voltarTags)
+	alterarDDLComplementar(t, a, renomearTags, voltarTags)
 
 	_, err := a.svc.Update(context.Background(), dono, alvo, targets.Patch{Name: ptr("Novo nome")})
 
 	exigirPGComplementar(t, err, "42P01", "ler tags do alvo: ")
-	restaurar()
-	exigirAlvoIntacto(t, a, dono, alvo, "API", entrada().URL, []string{})
 }
 
 // O PATCH que troca o host precisa apagar a validade do certificado antigo. Se

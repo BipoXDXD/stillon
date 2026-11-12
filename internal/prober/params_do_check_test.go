@@ -37,11 +37,15 @@ func TestParamsDoCheck_ResultadoCompleto(t *testing.T) {
 	if p.LatencyMS != 1234 {
 		t.Errorf("LatencyMS = %d, quer 1234", p.LatencyMS)
 	}
-	if p.StatusCode == nil || *p.StatusCode != 503 {
-		t.Errorf("StatusCode = %v, quer 503", p.StatusCode)
+	if p.StatusCode == nil {
+		t.Error("StatusCode = nil, quer 503")
+	} else if *p.StatusCode != 503 {
+		t.Errorf("StatusCode = %d, quer 503", *p.StatusCode)
 	}
-	if p.ErrorKind == nil || *p.ErrorKind != string(KindHTTPStatus) {
-		t.Errorf("ErrorKind = %v, quer %q", p.ErrorKind, KindHTTPStatus)
+	if p.ErrorKind == nil {
+		t.Error(`ErrorKind = nil, quer "http_status"`)
+	} else if *p.ErrorKind != "http_status" {
+		t.Errorf("ErrorKind = %q, quer %q", *p.ErrorKind, "http_status")
 	}
 }
 
@@ -62,5 +66,15 @@ func TestParamsDoCheck_LimitaALatenciaAoInt32(t *testing.T) {
 
 	if p.LatencyMS != math.MaxInt32 {
 		t.Errorf("LatencyMS = %d, quer %d", p.LatencyMS, int32(math.MaxInt32))
+	}
+}
+
+// Um relógio que andou para trás deixa a latência negativa; a coluna não
+// aceita (CHECK latency_ms >= 0), então a gravação trava em 0.
+func TestParamsDoCheck_LatenciaNegativaViraZero(t *testing.T) {
+	p := paramsDoCheck(uuid.New(), uuid.New(), time.Now(), Result{Status: StatusUp, Latency: -5 * time.Millisecond})
+
+	if p.LatencyMS != 0 {
+		t.Errorf("LatencyMS = %d, quer 0", p.LatencyMS)
 	}
 }

@@ -316,6 +316,29 @@ describe('incidentes', () => {
     expect(r.falsa.chamadas('POST /incidents/:id/ack')).toBe(1)
   })
 
+  // A trava é por incidente: com um ack em voo, o botão de outro incidente
+  // continua habilitado. Sabotagem: aria-disabled por "algum em voo"
+  // (reconhecendo.size > 0) → o segundo botão também fica aria-disabled.
+  it('o aria-disabled do Reconhecer vale só para o incidente em voo', async () => {
+    const r = await renderizarPainel('/incidents')
+    r.falsa.estado.incidentes = [incidente(), incidente({ id: 'inc-2', target_name: 'Site' })]
+    await r.cliente.refetchQueries()
+    let soltar!: () => void
+    const segurado = new Promise<void>((ok) => (soltar = ok))
+    servidor.use(
+      http.post('*/api/v1/incidents/:id/ack', async ({ params }) => {
+        if (params.id === 'inc-1') await segurado
+      }),
+    )
+    const emVoo = await screen.findByRole('button', { name: 'Reconhecer o incidente de API' })
+    const outro = await screen.findByRole('button', { name: 'Reconhecer o incidente de Site' })
+    await r.usuario.click(emVoo)
+    await waitFor(() => expect(emVoo).toHaveAttribute('aria-disabled', 'true'))
+    expect(outro).not.toHaveAttribute('aria-disabled')
+    soltar()
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Reconhecer o incidente de API' })).not.toBeInTheDocument())
+  })
+
   // I1 da revisão final: o Reconhecer some com o ack; o foco vai ao
   // "Reconhecido em" da linha, e não ao <body>. Sabotagem: tirar o
   // "focarDepois.current = id" de reconhecer() → o foco cai no body.

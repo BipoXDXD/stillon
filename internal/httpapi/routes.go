@@ -136,14 +136,15 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	// A troca de autenticador: a mesma cadeia, sem limitador por IP próprio. Quem
 	// limita as provas erradas destas rotas, e das três acima e da troca de senha,
 	// é o contador por família de sessão (provasDaFamilia): a quinta prova errada
-	// derruba a família. O bloqueio da conta é só do login e do /totp/verify.
+	// derruba a família. O contador de tentativas do login (da conta ou, com
+	// cookie de dispositivo válido, do dispositivo) é só do login e do /totp/verify.
 	mux.Handle("POST /api/v1/auth/totp/rotate", authn(viva(http.HandlerFunc(h.TOTPRotate))))
 	mux.Handle("POST /api/v1/auth/totp/rotate/confirm", authn(viva(http.HandlerFunc(h.TOTPRotateConfirm))))
 	// Verify não passa por authn: o usuário ainda não tem sessão, só o
-	// desafio. O limitador por IP vem de fora; o bloqueio da conta vale aqui, no
-	// handler: o código errado entra no mesmo contador do login (h.tentativas),
-	// porque só o limite por IP não segura quem chuta os seis dígitos de várias
-	// origens.
+	// desafio. O limitador por IP vem de fora; o contador de tentativas vale aqui,
+	// no handler: o código errado entra no mesmo contador do login (h.tentativas:
+	// o da conta ou o do dispositivo), porque só o limite por IP não segura quem
+	// chuta os seis dígitos de várias origens.
 	mux.Handle("POST /api/v1/auth/totp/verify",
 		middleware.RateLimit(ctx, d.Clock, 20, 5, proxiesDe(cfg))(http.HandlerFunc(h.TOTPVerify)))
 
