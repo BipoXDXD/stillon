@@ -148,7 +148,8 @@ func (h *AuthHandlers) Login(w http.ResponseWriter, r *http.Request) {
 		// A senha certa não termina o login: a reserva dela volta (Refund),
 		// sem zerar o contador. Zerar aqui daria ao atacante que já tem a
 		// senha um botão de destravar entre um chute de seis dígitos e o
-		// próximo, e o bloqueio da conta nunca chegaria ao limiar.
+		// próximo, e o contador (o da conta ou o do dispositivo) nunca chegaria ao
+		// limiar.
 		devolverTentativa(r, tentativas)
 		challenge, err := auth.NewChallengeToken(h.jwtSecret, user.ID, auth.PasswordStamp(verificado), now)
 		if err != nil {
