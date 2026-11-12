@@ -25,6 +25,7 @@ type estadoDaConta struct {
 	ativo      []byte
 	pendente   []byte
 	familia    string
+	iniciada   string
 	tentativas int
 	bloqueio   string
 	passo      int64
@@ -38,16 +39,20 @@ func fotografar(t *testing.T, pool *pgxpool.Pool, userID uuid.UUID) estadoDaCont
 	t.Helper()
 	var e estadoDaConta
 	var fam *uuid.UUID
-	var ate *time.Time
+	var ate, ini *time.Time
 	var passo *int64
 	if err := pool.QueryRow(context.Background(),
-		`SELECT totp_secret_enc, totp_pending_secret_enc, totp_pending_family_id, failed_attempts, locked_until, totp_last_timestep
+		`SELECT totp_secret_enc, totp_pending_secret_enc, totp_pending_family_id, totp_pending_started_at,
+		        failed_attempts, locked_until, totp_last_timestep
 		   FROM users WHERE id = $1`, userID).
-		Scan(&e.ativo, &e.pendente, &fam, &e.tentativas, &ate, &passo); err != nil {
+		Scan(&e.ativo, &e.pendente, &fam, &ini, &e.tentativas, &ate, &passo); err != nil {
 		t.Fatal(err)
 	}
 	if fam != nil {
 		e.familia = fam.String()
+	}
+	if ini != nil {
+		e.iniciada = ini.UTC().Format(time.RFC3339Nano)
 	}
 	if ate != nil {
 		e.bloqueio = ate.UTC().Format(time.RFC3339Nano)
@@ -68,7 +73,7 @@ func semEfeito(t *testing.T, pool *pgxpool.Pool, userID uuid.UUID, antes estadoD
 	t.Helper()
 	depois := fotografar(t, pool, userID)
 	if string(depois.ativo) != string(antes.ativo) || string(depois.pendente) != string(antes.pendente) ||
-		depois.familia != antes.familia || depois.tentativas != antes.tentativas || depois.bloqueio != antes.bloqueio ||
+		depois.familia != antes.familia || depois.iniciada != antes.iniciada || depois.tentativas != antes.tentativas || depois.bloqueio != antes.bloqueio ||
 		depois.passo != antes.passo || depois.codigos != antes.codigos || depois.iniciadas != antes.iniciadas ||
 		depois.trocadas != antes.trocadas || depois.recuperada != antes.recuperada {
 		t.Errorf("a recusa mexeu na conta:\n antes  %+v\n depois %+v", antes, depois)

@@ -21,13 +21,20 @@ import (
 //
 // StartRotation grava o segredo do app novo em totp_pending_secret_enc, e o
 // antigo continua valendo; ConfirmRotation, com um código do app novo, promove
-// o pendente numa transação só. O pendente não tem prazo, mas é da família de
-// sessão que o criou (totp_pending_family_id): só
-// ela o confirma, e ele morre com ela — revogada a família (DELETE
-// /sessions/{id}, logout, troca de senha), nenhuma outra sessão viva o
-// confirma. Pendente e família caem juntos na confirmação, no Disable, no
+// o pendente numa transação só. O pendente vale PendingRotationTTL (10 min) a
+// partir de totp_pending_started_at, e é da família de sessão que o criou
+// (totp_pending_family_id): só ela o confirma, e ele morre com ela —
+// revogada a família (DELETE /sessions/{id}, logout, troca de senha),
+// nenhuma outra sessão viva o confirma. Pendente e família caem juntos na confirmação, no Disable, no
 // reset-2fa do CLI, na troca de senha e no set-password, e um novo
 // StartRotation substitui os dois.
+
+// PendingRotationTTL é o prazo da troca pendente, contado do StartRotation. Passado
+// o prazo, a confirmação é recusada como "sem troca pendente" (ErrTOTPNoRotation)
+// e nada é gravado; o fator ativo não muda. Sem prazo, a troca valia enquanto a
+// família da sessão vivesse (RefreshTTL, 30 dias), e uma sessão roubada a
+// confirmaria muito depois.
+const PendingRotationTTL = 10 * time.Minute
 
 // StartRotation inicia a troca. O chamador já provou a senha; aqui se prova a
 // posse do fator ATUAL, pelo código do app ou por um código de recuperação — as
@@ -45,8 +52,8 @@ import (
 // de recuperação fica gasto com o rastro totp.recovery_used, mesmo que a troca
 // nunca seja confirmada.
 //
-// Pendente e família são gravados juntos, com a auditoria
-// totp.rotation_started (a pista do dono de que uma troca foi iniciada). O
+// Pendente, família e o instante do início (totp_pending_started_at, o `now` do
+// chamador) são gravados juntos, com a auditoria totp.rotation_started (a pista do dono de que uma troca foi iniciada). O
 // bloqueio da conta zera junto: a senha e a posse do fator acabaram de ser
 // provadas.
 //
@@ -135,10 +142,11 @@ func (s *TOTP) provarFatorAtual(ctx context.Context, tx pgx.Tx, userID, familyID
 func gravarPendente(ctx context.Context, tx pgx.Tx, userID, familyID uuid.UUID, sealed []byte, step *int64, now time.Time) error {
 	if _, err := tx.Exec(ctx,
 		`UPDATE users SET totp_pending_secret_enc = $2, totp_pending_family_id = $3,
+		                  totp_pending_started_at = $5,
 		                  totp_last_timestep = COALESCE($4, totp_last_timestep),
 		                  failed_attempts = 0, locked_until = NULL
 		   WHERE id = $1`,
-		userID, sealed, familyID, step); err != nil {
+		userID, sealed, familyID, step, now); err != nil {
 		return fmt.Errorf("gravar segredo TOTP pendente: %w", err)
 	}
 	return insertAudit(ctx, tx, userID, "totp.rotation_started", nil, now)
@@ -170,16 +178,18 @@ func rotacaoDe(pendente []byte) string {
 // trocado pode ter sido perdido ou roubado.
 //
 // Só a família que iniciou a troca a confirma (totp_pending_family_id): o
-// pendente de outra família é, para esta, "nenhuma troca em andamento". E só
+// pendente de outra família é, para esta, "nenhuma troca em andamento". O
+// pendente vencido (now no instante do prazo ou depois dele) também, e sem
+// gravar nada. E só
 // a troca que o cliente conhece (rotation): um rotate que
 // substituiu o pendente na mesma família faz o identificador não casar.
 //
-// Devolve ErrTOTPNoRotation sem pendente, com o pendente de outra família (ou
-// com o 2FA desligado), ou com outro rotation — sempre antes de olhar o
+// Devolve ErrTOTPNoRotation sem pendente, com o pendente de outra família ou
+// vencido (ou com o 2FA desligado), ou com outro rotation — sempre antes de olhar o
 // código —, ErrTOTPInvalid com o código errado (o pendente fica) e
 // ErrInvalidSession se a família caiu antes da trava.
 func (s *TOTP) ConfirmRotation(ctx context.Context, userID, familyID uuid.UUID, rotation, code string, now time.Time) ([]string, error) {
-	pendente, err := s.carregarPendenteDaTroca(ctx, userID, familyID, rotation)
+	pendente, err := s.carregarPendenteDaTroca(ctx, userID, familyID, rotation, now)
 	if err != nil {
 		return nil, err
 	}
@@ -224,16 +234,17 @@ func (s *TOTP) ConfirmRotation(ctx context.Context, userID, familyID uuid.UUID, 
 
 // carregarPendenteDaTroca lê o segredo pendente cifrado, como está no banco, e
 // confere que ele é a troca que o cliente conhece (rotation) e da família que a
-// iniciou. Tudo isso vem antes do código: o pendente de outra família, a troca
-// substituída e o 2FA desligado são, para quem chama, "nenhuma troca em
+// iniciou. Tudo isso vem antes do código: o pendente de outra família, o
+// vencido (PendingRotationTTL), a troca substituída e o 2FA desligado são, para quem chama, "nenhuma troca em
 // andamento" (ErrTOTPNoRotation), sem contar falha no bloqueio.
-func (s *TOTP) carregarPendenteDaTroca(ctx context.Context, userID, familyID uuid.UUID, rotation string) ([]byte, error) {
+func (s *TOTP) carregarPendenteDaTroca(ctx context.Context, userID, familyID uuid.UUID, rotation string, now time.Time) ([]byte, error) {
 	var pendente []byte
 	var dona *uuid.UUID
-	var confirmado *time.Time
+	var confirmado, iniciada *time.Time
 	err := s.pool.QueryRow(ctx,
-		`SELECT totp_pending_secret_enc, totp_pending_family_id, totp_confirmed_at FROM users WHERE id = $1`, userID).
-		Scan(&pendente, &dona, &confirmado)
+		`SELECT totp_pending_secret_enc, totp_pending_family_id, totp_confirmed_at, totp_pending_started_at
+		   FROM users WHERE id = $1`, userID).
+		Scan(&pendente, &dona, &confirmado, &iniciada)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -241,10 +252,18 @@ func (s *TOTP) carregarPendenteDaTroca(ctx context.Context, userID, familyID uui
 		return nil, fmt.Errorf("carregar troca de TOTP: %w", err)
 	}
 	if len(pendente) == 0 || confirmado == nil || dona == nil || *dona != familyID ||
+		pendenteVencido(iniciada, now) ||
 		!hmac.Equal([]byte(rotacaoDe(pendente)), []byte(rotation)) {
 		return nil, ErrTOTPNoRotation
 	}
 	return pendente, nil
+}
+
+// pendenteVencido: o prazo vale até um instante ANTES de iniciada+PendingRotationTTL;
+// no próprio prazo já venceu. Sem o instante (linha anterior à 00027 ou gravada
+// pelo binário anterior), o pendente é tratado como vencido.
+func pendenteVencido(iniciada *time.Time, now time.Time) bool {
+	return iniciada == nil || !now.Before(iniciada.Add(PendingRotationTTL))
 }
 
 // provarPendente confere o código contra o segredo pendente (ErrTOTPInvalid se

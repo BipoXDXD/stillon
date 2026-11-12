@@ -10,8 +10,8 @@ import (
 )
 
 // A troca de senha e o set-password matam uma troca de autenticador em
-// andamento: o pendente não tem prazo, e quem o iniciou (com a senha e o fator)
-// pode ser o invasor contra quem o dono está trocando a senha; uma sessão
+// andamento: o pendente vale só PendingRotationTTL (10 min), mas quem o iniciou
+// (com a senha e o fator) pode ser o invasor contra quem o dono está trocando a senha; uma sessão
 // roubada depois o confirmaria e ficaria com o 2FA. O pendente cai na mesma
 // transação que troca o hash. A perna positiva ("nenhuma") é o mesmo cenário
 // sem a troca de senha: o confirm passa.

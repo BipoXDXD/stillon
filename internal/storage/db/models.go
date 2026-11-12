@@ -226,4 +226,5 @@ type User struct {
 	TotpChallengeMark    *time.Time
 	TotpPendingSecretEnc []byte
 	TotpPendingFamilyID  *uuid.UUID
+	TotpPendingStartedAt *time.Time
 }
