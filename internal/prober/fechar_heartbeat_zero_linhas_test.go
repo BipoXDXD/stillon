@@ -63,14 +63,12 @@ func TestFechamentoComReivindicacaoVelhaNaoRepeteOAviso(t *testing.T) {
 	}
 }
 
-// O aviso de fechamento depende só do close_notified_at, não de o UPDATE ter
-// resolvido a linha. Hoje nenhum caminho deixa um incidente de heartbeat
-// resolvido sem close_notified_at, porque resolver e avisar vão na mesma
-// transação; se um caminho assim surgir (fechamento manual, limpeza, script de
-// suporte), uma reivindicação velha enfileira um "voltou" que ninguém pediu.
+// O aviso de fechamento só sai quando o UPDATE deste tique resolveu a linha.
+// Hoje nenhum caminho deixa um incidente de heartbeat resolvido sem
+// close_notified_at, porque resolver e avisar vão na mesma transação; se um
+// caminho assim surgir (fechamento manual, limpeza, script de suporte), uma
+// reivindicação velha não pode enfileirar um "voltou" que ninguém pediu.
 func TestFechamentoComZeroLinhasNaoAvisaIncidenteResolvidoPorOutroCaminho(t *testing.T) {
-	t.Skip("hardening em aberto: fecharIncidenteDeHeartbeat ignora as linhas do ResolveHeartbeatIncident " +
-		"e avisa mesmo com 0 linhas; a correção pede decisão entre as opções do PR")
 	b := novaBancadaHB(t)
 	id, velha := fechadoComAviso(t, b)
 	// Simula outro caminho que resolveu sem avisar.
