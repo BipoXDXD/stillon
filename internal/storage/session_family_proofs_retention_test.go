@@ -2,6 +2,7 @@ package storage_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -75,5 +76,45 @@ func TestRetentionDeletesDeadFamilyProofsInBatchesAndKeepsLiveOnes(t *testing.T)
 	var daViva int
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM session_family_proofs WHERE family_id = $1`, viva).Scan(&daViva); err != nil || daViva != 1 {
 		t.Errorf("contador da família viva: %d linhas (erro %v), queria 1", daViva, err)
+	}
+}
+
+// Com a limpeza dos contadores de provas falhando, as retenções que já existiam
+// ainda rodam (sessões vencidas, auditoria, DROP das partições) e o erro sobe,
+// agregado, sem ser escondido. Sabotagem: a limpeza dentro da transação das
+// outras retenções desfaz os DELETEs e pula o DROP.
+func TestRetentionStillRunsTheOldStepsWhenTheFamilyProofsCleanupFails(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+	hoje := hora(12, 0)
+	dono := novoUsuario(t, pool)
+	for _, mes := range []time.Time{hora(0, 0).AddDate(0, -2, 0), hoje} {
+		if err := storage.EnsureChecksPartitions(ctx, pool, mes); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO sessions (id, user_id, family_id, token_hash, expires_at)
+		VALUES ($1, $2, $3, $4, $5)`, novoID(), dono, novoID(), novoID().String(), hoje.AddDate(0, 0, -8)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO audit_log (id, user_id, action, at) VALUES ($1, $2, 'x', $3)`,
+		novoID(), dono, hoje.AddDate(0, -13, 0)); err != nil {
+		t.Fatal(err)
+	}
+	// A limpeza nova falha: a tabela sumiu.
+	if _, err := pool.Exec(ctx, `DROP TABLE session_family_proofs`); err != nil {
+		t.Fatal(err)
+	}
+
+	r, err := storage.ApplyRetention(ctx, pool, hoje)
+
+	if err == nil || !strings.Contains(err.Error(), "contadores de provas") {
+		t.Errorf("erro = %v, queria o erro da limpeza dos contadores, sem escondê-lo", err)
+	}
+	if r.DeletedSessions != 1 || r.DeletedAudit != 1 {
+		t.Errorf("relatório = %+v; queria a sessão e a auditoria vencidas apagadas apesar da falha", r)
+	}
+	if r.DroppedPartitions < 1 || existeTabela(t, pool, "checks_2026_07") {
+		t.Errorf("a partição vencida não foi apagada (DroppedPartitions=%d): a falha pulou o DROP", r.DroppedPartitions)
 	}
 }

@@ -292,8 +292,10 @@ que a onda de correção não fechou. Os que ela fechou: auth M1 (a espera do Ar
   erros reais. **Fechado localmente na primeira onda:** Fail conta erros concluídos e reservas de
   geração antiga não devolvem vagas à nova. `Exhausted` na sexta reserva em voo continua com
   a política anterior; não foi redesenhado nesta onda.
-- auth M3: a família parada é esquecida em 24 h (`familiaParada`): um ladrão com a sessão (30 dias de
-  refresh) tem 4 chutes de senha por dia, além dos de cada restart. O D3 só cita o restart.
+- auth M3: a família parada era esquecida em 24 h: um ladrão com a sessão (30 dias de refresh) tinha
+  4 chutes de senha por dia, além dos de cada restart. **Fechado no #324 (#345):** o contador vive no
+  Postgres e família viva nunca o perde por inatividade; só o sucesso o zera, e a retenção apaga o
+  contador da família revogada ou vencida.
 - painel M1: na ativação, repetir o confirm depois de "não se sabe" termina no toast "já está
   ativada" (o `403`), sem repetir que os códigos desta ativação se perderam; a troca trata o `403`
   depois da resposta perdida, a ativação não. **Fechado localmente em 2026-10-05:** o

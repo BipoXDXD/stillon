@@ -40,7 +40,7 @@ CREATE TABLE session_family_proofs (
 
 -- A coluna da FK: sem índice, apagar um usuário varreria a tabela.
 CREATE INDEX session_family_proofs_user_idx ON session_family_proofs (user_id);
--- A varredura.
+-- A retenção das famílias mortas (revogadas ou vencidas), por updated_at.
 CREATE INDEX session_family_proofs_updated_idx ON session_family_proofs (updated_at);
 
 -- +goose Down

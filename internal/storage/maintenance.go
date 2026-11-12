@@ -177,17 +177,12 @@ func ApplyRetention(ctx context.Context, pool *pgxpool.Pool, now time.Time) (Mai
 		if r.DeletedSessions, err = q.DeleteExpiredSessions(ctx, now.Add(-SessionGrace)); err != nil {
 			return fmt.Errorf("apagar sessões vencidas: %w", err)
 		}
-		if r.DeletedFamilyProofs, err = q.DeleteDeadFamilyProofs(ctx, db.DeleteDeadFamilyProofsParams{
-			DeadBefore: now.Add(-FamilyProofsDeadGrace), Now: now, Batch: FamilyProofsSweepBatch,
-		}); err != nil {
-			return fmt.Errorf("apagar contadores de provas de famílias mortas: %w", err)
-		}
 		return nil
 	})
 	if err != nil {
 		return r, err
 	}
-	err = InProberTx(ctx, pool, func(q *db.Queries) error {
+	dropErr := InProberTx(ctx, pool, func(q *db.Queries) error {
 		if err := q.SetLocalLockTimeout(ctx, milissegundos(dropLockTimeout)); err != nil {
 			return fmt.Errorf("limitar a espera do DROP: %w", err)
 		}
@@ -197,7 +192,22 @@ func ApplyRetention(ctx context.Context, pool *pgxpool.Pool, now time.Time) (Mai
 		}
 		return nil
 	})
-	return r, err
+	// A limpeza dos contadores de provas vai por último e na própria transação:
+	// se falhar, as retenções que já existiam e o DROP já valeram, e o erro sobe
+	// junto com o do DROP, se houver.
+	proofsErr := InProberTx(ctx, pool, func(q *db.Queries) error {
+		if err := q.SetLocalStatementTimeout(ctx, milissegundos(maintenanceStatementTimeout)); err != nil {
+			return fmt.Errorf("prazo da limpeza dos contadores de provas: %w", err)
+		}
+		var err error
+		if r.DeletedFamilyProofs, err = q.DeleteDeadFamilyProofs(ctx, db.DeleteDeadFamilyProofsParams{
+			DeadBefore: now.Add(-FamilyProofsDeadGrace), Now: now, Batch: FamilyProofsSweepBatch,
+		}); err != nil {
+			return fmt.Errorf("apagar contadores de provas de famílias mortas: %w", err)
+		}
+		return nil
+	})
+	return r, errors.Join(dropErr, proofsErr)
 }
 
 // RunMaintenance roda Maintain ao subir e depois a cada every, até ctx acabar.

@@ -183,10 +183,10 @@ func (r *ProofReservation) Release() {
 }
 
 // Collector expõe o tamanho da tabela (famílias com contador): todo acúmulo
-// tem limpeza e uma métrica, e é esta que mostra se a varredura e a revogação
-// estão segurando. É o total do banco, não o deste processo: agregue com max.
-// A contagem roda na coleta; se falhar, a métrica some daquela coleta em vez
-// de mentir com um zero.
+// tem limpeza e uma métrica, e é esta que mostra se a retenção das famílias
+// mortas (revogadas ou vencidas) está segurando. É o total do banco, não o
+// deste processo: agregue com max. A contagem roda na coleta; se falhar, a
+// métrica some daquela coleta em vez de mentir com um zero.
 func (f *FamilyProofs) Collector() prometheus.Collector {
 	return &coletorDeProvas{
 		f: f,
