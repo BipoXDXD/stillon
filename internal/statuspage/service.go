@@ -95,7 +95,7 @@ func (s *Service) Update(ctx context.Context, userID, id uuid.UUID, patch Patch)
 		if verr := validate(&in); verr != nil {
 			return verr
 		}
-		if err := regravar(ctx, q, userID, id, in, patch.Items != nil); err != nil {
+		if err := regravar(ctx, q, userID, id, in, patch.Items); err != nil {
 			return err
 		}
 		p, err = ler(ctx, q, userID)
@@ -150,14 +150,15 @@ func aplicarPatch(atual Page, patch Patch) Input {
 }
 
 // regravar grava o cadastro já validado. A lista de itens só é trocada
-// quando o patch a trouxe: sem ela, os itens atuais ficam como estão.
-func regravar(ctx context.Context, q *db.Queries, userID, id uuid.UUID, in Input, trocarItens bool) error {
+// quando o patch a trouxe (novosItens não nulo): sem ela, os itens atuais
+// ficam como estão. novosItens é o mesmo slice já validado em in.Items.
+func regravar(ctx context.Context, q *db.Queries, userID, id uuid.UUID, in Input, novosItens *[]Item) error {
 	if _, err := q.UpdateStatusPage(ctx, db.UpdateStatusPageParams{
 		UserID: userID, ID: id, Slug: in.Slug, Title: in.Title, Published: in.Published,
 	}); err != nil {
 		return traduzir(err)
 	}
-	if !trocarItens {
+	if novosItens == nil {
 		return nil
 	}
 	if err := q.DeleteStatusPageItems(ctx, db.DeleteStatusPageItemsParams{UserID: userID, PageID: id}); err != nil {
