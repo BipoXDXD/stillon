@@ -42,6 +42,9 @@ const (
 	// produção.
 	appUser = "stillon_app"
 	appPass = "stillon_app"
+
+	// snapshotName é o banco-molde de que restaurar recria o banco de teste.
+	snapshotName = "stillon_migrado"
 )
 
 var (
@@ -97,8 +100,58 @@ func New(t *testing.T) *pgxpool.Pool {
 }
 
 // restaurar devolve o banco de teste ao estado do snapshot.
+//
+// Substitui o container.Restore do testcontainers-go, que vaza uma conexão de
+// superusuário por chamada: o snapshotConnection do módulo postgres devolve um
+// *sql.Conn que ninguém fecha (o comentário dele diz que o pool.Close o fecharia,
+// mas sql.DB.Close não fecha conexão em uso). A conexão só some quando o GC
+// finaliza o socket, e o pacote targets chegava ao max_connections (53300 para
+// o papel da aplicação). Código upstream, igual ainda na v0.45.0:
+// https://github.com/testcontainers/testcontainers-go/blob/f31e98d4ee9b/modules/postgres/postgres.go#L352-L380
+//
+// Este restore pode sair quando o upstream fechar a conexão: o teste de
+// regressão (TestRestaurarNaoVazaConexaoDeAdmin) vai provar que ficou seguro.
+//
+// Precisa de zero conexões abertas no snapshot; as do banco alvo são derrubadas
+// aqui, mas o chamador fecha o pool antes.
 func restaurar(ctx context.Context) error {
-	return container.Restore(ctx)
+	admin, err := pgx.Connect(ctx, adminDSNDoBancoPostgres())
+	if err != nil {
+		return fmt.Errorf("conectar como admin ao banco postgres: %w", err)
+	}
+	defer admin.Close(ctx)
+
+	alvo := pgx.Identifier{dbName}.Sanitize()
+	molde := pgx.Identifier{snapshotName}.Sanitize()
+	dono := pgx.Identifier{adminUser}.Sanitize()
+
+	// Terminar antes do DROP ... WITH (FORCE) evita a falha ocasional dele e
+	// libera o snapshot, que não pode ter conexão para servir de template.
+	if _, err := admin.Exec(ctx, `SELECT pg_terminate_backend(pid) FROM pg_stat_activity
+		WHERE datname = ANY($1) AND pid <> pg_backend_pid()`, []string{dbName, snapshotName}); err != nil {
+		return fmt.Errorf("terminar conexões antes de restaurar: %w", err)
+	}
+	// #nosec G201 -- identificadores constantes, sanitizados por pgx.Identifier.
+	if _, err := admin.Exec(ctx, fmt.Sprintf(`DROP DATABASE IF EXISTS %s WITH (FORCE)`, alvo)); err != nil {
+		return fmt.Errorf("apagar banco de teste: %w", err)
+	}
+	// #nosec G201 -- idem.
+	if _, err := admin.Exec(ctx, fmt.Sprintf(`CREATE DATABASE %s WITH TEMPLATE %s OWNER %s`, alvo, molde, dono)); err != nil {
+		return fmt.Errorf("recriar banco de teste do snapshot: %w", err)
+	}
+	return nil
+}
+
+// adminDSNDoBancoPostgres aponta o admin para o banco "postgres": o banco de
+// teste é apagado e recriado, então não dá para ficar conectado nele.
+func adminDSNDoBancoPostgres() string {
+	u, err := url.Parse(adminDSN)
+	if err != nil {
+		// adminDSN vem de ConnectionString e já foi lido em start.
+		panic(fmt.Errorf("DSN de admin inválido: %w", err))
+	}
+	u.Path = "/postgres"
+	return u.String()
 }
 
 // intervaloDaConsulta é o passo do polling de EsperarBloqueados, não um prazo.
@@ -309,7 +362,7 @@ func start() {
 	if startErr = storage.Migrate(ctx, appDSN); startErr != nil {
 		return
 	}
-	startErr = container.Snapshot(ctx)
+	startErr = container.Snapshot(ctx, tcpostgres.WithSnapshotName(snapshotName))
 }
 
 func criarPapelDaAplicacao(ctx context.Context) error {
