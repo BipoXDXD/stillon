@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/BipoXDXD/stillon/internal/heartbeat"
+	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 )
 
 // Limpar o log e auditar a limpeza são um passo só: se a auditoria falha, o
@@ -206,8 +207,10 @@ func TestCreateComPassoRecusadoNaoGravaNada(t *testing.T) {
 }
 
 // A trava por usuário é a primeira coisa de criar: se ela não sai (aqui, outro
-// pedido a segura além do prazo do contexto), o erro volta embrulhado e nada é
-// gravado.
+// pedido a segura e o contexto é cancelado durante a espera), o erro volta
+// embrulhado e nada é gravado. O cancelamento só sai depois que o backend está
+// comprovadamente parado na trava: sem prazo de parede, que falharia à toa num
+// passo anterior (conexão, BEGIN, set_config) com a máquina carregada.
 func TestCreateSemATravaNaoGravaNada(t *testing.T) {
 	a := novoAmbiente(t)
 	svc := heartbeat.NewService(a.pool, a.clk)
@@ -221,11 +224,25 @@ func TestCreateSemATravaNaoGravaNada(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ctx, cancelar := context.WithTimeout(fundo, 300*time.Millisecond)
+	type resultado struct {
+		token string
+		err   error
+	}
+	ctx, cancelar := context.WithCancel(fundo)
 	defer cancelar()
-	_, token, err := svc.Create(ctx, a.dono, heartbeat.Input{Name: "novo", Schedule: hora, Grace: tolerancia, Enabled: true})
-	if err == nil || token != "" || !strings.Contains(err.Error(), "travar heartbeats do usuário") {
-		t.Fatalf("Create = %q, %v; queria erro da trava e sem token", token, err)
+	fim := make(chan resultado, 1)
+	go func() {
+		_, token, err := svc.Create(ctx, a.dono, heartbeat.Input{Name: "novo", Schedule: hora, Grace: tolerancia, Enabled: true})
+		fim <- resultado{token, err}
+	}()
+	if !testdb.EsperarBloqueados(t, a.pool, 1, fim) {
+		r := <-fim
+		t.Fatalf("Create terminou sem esperar a trava: %q, %v", r.token, r.err)
+	}
+	cancelar()
+	r := <-fim
+	if r.err == nil || r.token != "" || !strings.Contains(r.err.Error(), "travar heartbeats do usuário") {
+		t.Fatalf("Create = %q, %v; queria erro da trava e sem token", r.token, r.err)
 	}
 	if err := tx.Rollback(fundo); err != nil {
 		t.Fatal(err)
