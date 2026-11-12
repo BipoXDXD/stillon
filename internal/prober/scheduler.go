@@ -166,7 +166,7 @@ func (s *Scheduler) Reconcile(ctx context.Context) error {
 	defer cancel()
 	vistos := s.metrics.alvosVistos()
 	var existentes []uuid.UUID
-	var abertos, eventos int64
+	var abertos int64
 	err := storage.InProberTx(ctx, s.pool, func(q *db.Queries) error {
 		var err error
 		if len(vistos) > 0 {
@@ -174,12 +174,13 @@ func (s *Scheduler) Reconcile(ctx context.Context) error {
 				return err
 			}
 		}
-		if abertos, err = q.CountOpenIncidents(ctx); err != nil {
-			return err
-		}
-		eventos, err = q.CountHeartbeatEvents(ctx)
+		abertos, err = q.CountOpenIncidents(ctx)
 		return err
 	})
+	if err != nil {
+		return fmt.Errorf("reconciliar métricas: %w", err)
+	}
+	eventos, err := contarEventosDeHeartbeat(ctx, s.pool)
 	if err != nil {
 		return fmt.Errorf("reconciliar métricas: %w", err)
 	}
@@ -196,6 +197,30 @@ func (s *Scheduler) Reconcile(ctx context.Context) error {
 	s.metrics.incidentsOpen.Set(float64(abertos))
 	s.metrics.heartbeatEvents.Set(float64(eventos))
 	return nil
+}
+
+// contarEventosDeHeartbeat devolve o tamanho exato do log de sinais, numa
+// transação própria e curta para o JIT desligado não valer para mais nada.
+func contarEventosDeHeartbeat(ctx context.Context, b storage.Beginner) (int64, error) {
+	var total int64
+	err := storage.InProberTx(ctx, b, func(q *db.Queries) error {
+		var err error
+		total, err = contarEventosSemJIT(ctx, q)
+		return err
+	})
+	return total, err
+}
+
+// contarEventosSemJIT roda o count com o JIT desligado (SET LOCAL, que só vale
+// dentro da transação de q). Sob a RLS a tabela inteira é lida em Seq Scan e
+// conferida linha a linha contra heartbeats; o JIT entra a partir de uns 17 mil
+// registros e passa a ser a maior parte do tempo da consulta, a cada 30 s. Sem
+// ele o count continua exato e custa uma fração.
+func contarEventosSemJIT(ctx context.Context, q *db.Queries) (int64, error) {
+	if err := q.SetLocalJitOff(ctx); err != nil {
+		return 0, err
+	}
+	return q.CountHeartbeatEvents(ctx)
 }
 
 // Tick reivindica até "vagas livres" alvos vencidos e dispara uma goroutine

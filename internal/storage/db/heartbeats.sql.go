@@ -926,6 +926,19 @@ func (q *Queries) SetHeartbeatPingHash(ctx context.Context, arg SetHeartbeatPing
 	return err
 }
 
+const setLocalJitOff = `-- name: SetLocalJitOff :exec
+SELECT set_config('jit', 'off', true)
+`
+
+// Desliga o JIT só até o fim da transação (o SET LOCAL). Fora de uma transação
+// explícita o efeito dura só esta instrução: quem chama abre o BEGIN antes e roda
+// a consulta na mesma conexão. Nunca de sessão: o valor vazaria para o próximo
+// uso da conexão no pool.
+func (q *Queries) SetLocalJitOff(ctx context.Context) error {
+	_, err := q.db.Exec(ctx, setLocalJitOff)
+	return err
+}
+
 const trimHeartbeatEvents = `-- name: TrimHeartbeatEvents :exec
 DELETE FROM heartbeat_events e
  WHERE e.heartbeat_id = $1

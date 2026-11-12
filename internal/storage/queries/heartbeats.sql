@@ -210,6 +210,13 @@ RETURNING i.id, h.id AS heartbeat_id, h.name AS heartbeat_name, i.started_at, i.
 -- name: CountHeartbeatEvents :one
 SELECT count(*) FROM heartbeat_events;
 
+-- Desliga o JIT só até o fim da transação (o SET LOCAL). Fora de uma transação
+-- explícita o efeito dura só esta instrução: quem chama abre o BEGIN antes e roda
+-- a consulta na mesma conexão. Nunca de sessão: o valor vazaria para o próximo
+-- uso da conexão no pool.
+-- name: SetLocalJitOff :exec
+SELECT set_config('jit', 'off', true);
+
 -- Tags. As leituras saem ordenadas pela tag, e a do dono serve
 -- a lista sem uma consulta por heartbeat, como as de targets.sql.
 -- name: ListHeartbeatTags :many
