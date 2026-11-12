@@ -1,10 +1,11 @@
 import type { Locator, Page, Response } from '@playwright/test'
 import { expect } from './fixtures'
 
-// O login, a troca de senha e as rotas do 2FA dividem o balde do login (5 de
-// burst por IP, 1 ficha a cada 6 s), e o E2E sai todo de um IP só. Um 429
-// espera o Retry-After e envia de novo, com teto; o segundo a mais é a folga
-// para a ficha já ter voltado quando o reenvio chegar.
+// O login tem o balde por IP, e a troca de senha e as rotas do 2FA dividem o
+// balde da conta (5 de burst e 1 ficha a cada 6 s cada um); o E2E sai todo de
+// um IP só e de uma conta só. Um 429 espera o Retry-After e envia de novo,
+// com teto; o segundo a mais é a folga para a ficha já ter voltado quando o
+// reenvio chegar.
 export const ENVIOS_NO_LIMITE = 6
 // Teto da soma dos recuos de uma chamada (só as esperas do Retry-After, não
 // o tempo do envio): seis Retry-After de 6 s, com o segundo de folga, cabem nele; um Retry-After maior falha alto em vez de

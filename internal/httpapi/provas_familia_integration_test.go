@@ -116,7 +116,7 @@ func TestFifthWrongProofDropsTheFamily(t *testing.T) {
 	}
 	for _, caso := range casos {
 		t.Run(caso.nome, func(t *testing.T) {
-			a := apiOrigemPorPedido(t)
+			a := apiComFichaPorPedido(t)
 			token, _, familia := familiaComRefresh(t, a)
 			errar := caso.preparar(t, a, token)
 
@@ -148,7 +148,7 @@ func TestFifthWrongProofDropsTheFamily(t *testing.T) {
 // rotas diferentes somam na mesma família (inclusive o código ausente), e as
 // de outra família do mesmo dono não entram na conta.
 func TestWrongProofBudgetIsPerFamilyAcrossRoutes(t *testing.T) {
-	a := apiOrigemPorPedido(t)
+	a := apiComFichaPorPedido(t)
 	segredo := cadastrarTOTP(t, a, clientWithJar(t))
 	tokenA, _, _ := familiaComRefresh(t, a)
 	tokenB, _, _ := familiaComRefresh(t, a)
@@ -188,27 +188,44 @@ func TestWrongProofBudgetIsPerFamilyAcrossRoutes(t *testing.T) {
 	}
 }
 
-// Nas rotas autenticadas, a reserva vem antes da verificação.
-// Doze senhas erradas simultâneas na mesma família rodam exatamente cinco
-// Argon2id; as outras nascem esgotadas (ou chegam com a família já derrubada)
-// e são recusadas sem verificar. Quatro respostas são invalid_credentials e o
-// resto unauthorized.
+// Nas rotas autenticadas, a reserva vem antes da verificação. Com quatro provas
+// erradas já gastas, cinco senhas erradas simultâneas na mesma família rodam só
+// UM Argon2id a mais (cinco no total); as outras quatro chegam com o orçamento
+// esgotado (ou com a família já derrubada) e são recusadas sem verificar. Cinco
+// e não doze: o balde da conta (rajada de 5) barra o excedente antes da reserva,
+// e este teste mede a reserva.
 //
 // O teto de Argon2id acompanha o orçamento: com menos vagas, a quinta prova
 // espera uma delas, e em arm64 com -race cada Argon2id passa do Argon2Wait. A
 // recusa por semáforo devolve a reserva e não é o que este teste trava.
 func TestParallelWrongProofsVerifyAtMostTheBudget(t *testing.T) {
-	a := apiOrigemPorPedidoCom(t, func(cfg *config.Config) { cfg.Argon2MaxConcurrent = provasPorFamilia })
+	a := apiComFichaPorPedidoCom(t, func(cfg *config.Config) { cfg.Argon2MaxConcurrent = provasPorFamilia })
 	token := accessTokenValido(t, a)
 
 	antes := auth.Argon2Verifications()
+	enviar := func() (*http.Response, error) {
+		return postSemT(a.cliente(), a.srv.URL+"/api/v1/auth/totp/enroll", token,
+			map[string]string{"password": "senha-que-nao-e-a-dele"})
+	}
+	for i := 1; i <= provasPorFamilia-1; i++ {
+		resp, err := enviar()
+		if err != nil {
+			t.Fatal(err)
+		}
+		codigo := codigoDoErro(t, resp)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusUnauthorized || codigo != "invalid_credentials" {
+			t.Fatalf("prova errada %d: %d %s, queria 401 invalid_credentials", i, resp.StatusCode, codigo)
+		}
+	}
+
+	const simultaneas = provasPorFamilia
 	var mu sync.Mutex
 	codigos := map[string]int{}
 	var wg sync.WaitGroup
-	for range 12 {
+	for range simultaneas {
 		wg.Go(func() {
-			resp, err := postSemT(a.cliente(), a.srv.URL+"/api/v1/auth/totp/enroll", token,
-				map[string]string{"password": "senha-que-nao-e-a-dele"})
+			resp, err := enviar()
 			if err != nil {
 				t.Error(err)
 				return
@@ -224,11 +241,11 @@ func TestParallelWrongProofsVerifyAtMostTheBudget(t *testing.T) {
 	wg.Wait()
 
 	if n := auth.Argon2Verifications() - antes; n != provasPorFamilia {
-		t.Errorf("%d Argon2id com 12 provas simultâneas, queria %d", n, provasPorFamilia)
+		t.Errorf("%d Argon2id com %d provas simultâneas depois de %d, queria %d no total",
+			n, simultaneas, provasPorFamilia-1, provasPorFamilia)
 	}
-	if codigos["invalid_credentials"] != provasPorFamilia-1 || codigos["unauthorized"] != 12-(provasPorFamilia-1) {
-		t.Errorf("respostas %v, queria %d invalid_credentials e %d unauthorized",
-			codigos, provasPorFamilia-1, 12-(provasPorFamilia-1))
+	if codigos["unauthorized"] != simultaneas {
+		t.Errorf("respostas simultâneas %v, queria %d unauthorized", codigos, simultaneas)
 	}
 	if n := falhasDeLogin(t, a); n != 0 {
 		t.Errorf("%d falhas no bloqueio da conta, queria 0", n)
@@ -244,7 +261,7 @@ func TestParallelWrongProofsVerifyAtMostTheBudget(t *testing.T) {
 func TestPasswordAloneDoesNotResetTheFamilyBudget(t *testing.T) {
 	for _, rota := range []string{"/api/v1/auth/totp/disable", "/api/v1/auth/totp/rotate"} {
 		t.Run(rota, func(t *testing.T) {
-			a := apiOrigemPorPedido(t)
+			a := apiComFichaPorPedido(t)
 			segredo := cadastrarTOTP(t, a, clientWithJar(t))
 			token, _, familia := familiaComRefresh(t, a)
 			chutar := postEProva(rota, func(t *testing.T, a *api) map[string]string {
@@ -291,7 +308,7 @@ func TestPasswordAloneDoesNotResetTheFamilyBudget(t *testing.T) {
 // distingue o código certo, e o confirm não gasta prova (não há o que provar),
 // então a família continua viva.
 func TestConfirmWithTheFactorOnIsNotAnOracle(t *testing.T) {
-	a := apiOrigemPorPedido(t)
+	a := apiComFichaPorPedido(t)
 	segredo := cadastrarTOTP(t, a, clientWithJar(t))
 	token, _, _ := familiaComRefresh(t, a)
 	confirm := func(codigo string) (int, string) {

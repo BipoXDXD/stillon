@@ -21,9 +21,9 @@ import { codigoNovo } from './totp'
 // pilha própria e contra o compose (o job e2e do CI, com E2E_COMPOSE_SERVICE);
 // contra outra pilha externa, onde não há como rodar o CLI, é pulado.
 
-// Os baldes do login (5 de burst por IP, que as rotas do 2FA também gastam)
-// e do /totp/verify, que as specs anteriores gastaram; a mesma pausa do
-// fluxo.spec.ts.
+// Os baldes do login (5 de burst por IP), da conta (que as rotas do 2FA
+// gastam) e do /totp/verify, que as specs anteriores gastaram; a mesma pausa
+// do fluxo.spec.ts.
 const RECARGA_DOS_BALDES_MS = 21_000
 
 test.beforeAll(async () => {
@@ -43,8 +43,8 @@ async function chaveNaTela(page: Page): Promise<string> {
   return chave
 }
 
-// As rotas do 2FA dividem o balde do login (limiteLogin, por IP) e, no E2E,
-// que sai de um IP só, podem pegar 429: elas enviam por enviarNoLimite, que
+// As rotas do 2FA dividem o balde da conta e, no E2E, que sai de uma conta
+// só, podem pegar 429: elas enviam por enviarNoLimite, que
 // espera o Retry-After e reenvia. Nas rotas que levam código, o código sai de
 // codigoNovo DENTRO do envio, a cada tentativa: um código gerado antes dos
 // recuos poderia vencer (vale pouco mais de 30 s e o teto dos recuos é de 45
@@ -73,7 +73,7 @@ test('ativar o 2FA, trocar de autenticador com o rotation, entrar com o app novo
   test.setTimeout(240_000)
   const email = credenciais.email
   // O status de cada resposta da autenticação vai para o log do run (sem
-  // corpo nem cabeçalhos): um 429 no balde do login fica visível no CI.
+  // corpo nem cabeçalhos): um 429 num dos baldes fica visível no CI.
   page.on('response', (r) => {
     const { pathname } = new URL(r.url())
     if (pathname.startsWith('/api/v1/auth/')) console.log(`troca: ${r.request().method()} ${pathname} ${r.status()}`)
@@ -146,8 +146,8 @@ test('ativar o 2FA, trocar de autenticador com o rotation, entrar com o app novo
   // 4. Sair e entrar com o app novo: o segredo trocou de verdade.
   await page.getByRole('button', { name: 'Sair' }).click()
   await expect(page.getByRole('heading', { name: 'Entrar no StillOn' })).toBeVisible()
-  // Este login é o sétimo pedido seguido no balde do login (o entrar do passo
-  // 1 e as cinco rotas do 2FA): o enviarLogin recua no 429.
+  // Este login é o segundo pedido no balde do login por IP nesta spec, que
+  // as specs anteriores também gastaram: o enviarLogin recua no 429.
   const campoDoCodigo = page.getByLabel('Código do aplicativo autenticador')
   await enviarLogin(page, email, credenciais.senha, campoDoCodigo)
   await campoDoCodigo.fill(await codigoNovo(nova))
