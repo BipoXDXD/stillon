@@ -521,3 +521,63 @@ func TestPublicViewHasNoInternalFields(t *testing.T) {
 	}
 	andar(reflect.TypeOf(statuspage.View{}), "View")
 }
+
+// Borda do corte, lado dos rollups: com um rollup gravado na própria hora
+// corrente (relógio adiantado), o corte fica em H (a marca d'água ou o limite
+// de rollupcut.At o levam até lá) e o intervalo dos rollups é [desde, H),
+// exclusivo no fim. O rollup das 12:00 fica de fora, e as 12:00 vêm só dos
+// checks brutos: com o fim inclusivo, a hora corrente contaria duas vezes.
+//
+// Relógio em 12:00. Rollups às 11:00 (60 de 60) e às 12:00 (10 de 10, que não
+// pode entrar); check bruto das 12:30 (down). Hoje: 60 ok de 61.
+func TestPublicCutEdgeIgnoresARollupAtTheCurrentHour(t *testing.T) {
+	a := novoAmbiente(t)
+	adm := admin(t)
+	dono := a.usuario(t)
+	api := a.alvo(t, dono, "api")
+	a.publicar(t, dono, "empresa", true, statuspage.Item{TargetID: api, DisplayName: "API"})
+	hoje := agora.Truncate(24 * time.Hour)
+	p50 := 100
+	rollup(t, adm, api, hoje.Add(11*time.Hour), 60, 60, &p50)
+	rollup(t, adm, api, hoje.Add(12*time.Hour), 10, 10, &p50)
+	a.check(t, api, hoje.Add(12*time.Hour+30*time.Minute), "down")
+
+	v, err := a.svc.Public(context.Background(), "empresa")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u := v.Items[0].Days[statuspage.Days-1].Uptime; u == nil || *u != 60.0/61.0 {
+		t.Errorf("uptime de hoje = %s, queria 60/61", texto(u))
+	}
+}
+
+// Borda do corte, lado dos brutos: [início, corte) nos rollups e [corte,
+// fim da hora corrente) nos brutos, com o fim exclusivo. Um check às
+// 10:59:59.999 é da hora consolidada e não conta de novo; o das 11:00:00 exato
+// é a primeira hora bruta, e não some; o das 12:59:59.999 ainda é da hora
+// corrente; o das 13:00:00 exato é futuro e fica de fora.
+//
+// Relógio em 12:00; rollup só às 10:00 (60 de 60), corte às 11:00. Hoje: 61
+// ok de 62.
+func TestPublicCutEdgeSplitsRollupsAndRawAtTheExactInstant(t *testing.T) {
+	a := novoAmbiente(t)
+	adm := admin(t)
+	dono := a.usuario(t)
+	api := a.alvo(t, dono, "api")
+	a.publicar(t, dono, "empresa", true, statuspage.Item{TargetID: api, DisplayName: "API"})
+	hoje := agora.Truncate(24 * time.Hour)
+	p50 := 100
+	rollup(t, adm, api, hoje.Add(10*time.Hour), 60, 60, &p50)
+	a.check(t, api, hoje.Add(11*time.Hour-time.Millisecond), "down")
+	a.check(t, api, hoje.Add(11*time.Hour), "up")
+	a.check(t, api, hoje.Add(13*time.Hour-time.Millisecond), "down")
+	a.check(t, api, hoje.Add(13*time.Hour), "down")
+
+	v, err := a.svc.Public(context.Background(), "empresa")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u := v.Items[0].Days[statuspage.Days-1].Uptime; u == nil || *u != 61.0/62.0 {
+		t.Errorf("uptime de hoje = %s, queria 61/62", texto(u))
+	}
+}
