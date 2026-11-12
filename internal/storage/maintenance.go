@@ -150,11 +150,12 @@ func ConsolidateRollups(ctx context.Context, pool *pgxpool.Pool, now time.Time) 
 // ApplyRetention apaga o que venceu (spec §12). Pendência nunca sai por idade:
 // uma notificação pendente ainda vai ser tentada.
 //
-// São duas transações. Os DELETEs vêm primeiro; o DROP das partições vem
+// São três transações. Os DELETEs vêm primeiro; o DROP das partições vem
 // sozinho, com lock_timeout, porque pega ACCESS EXCLUSIVE em checks e não
-// pode segurá-la durante o resto da retenção. Se o DROP
-// não conseguir a trava, o erro sobe, os DELETEs já valeram, e a próxima
-// rodada tenta de novo.
+// pode segurá-la durante o resto da retenção. A limpeza dos contadores de
+// provas das famílias mortas vem por último, na própria transação. Se o DROP
+// ou a limpeza falharem, os DELETEs já valeram, o erro sobe (os dois, se
+// ambos falharem) e a próxima rodada tenta de novo.
 func ApplyRetention(ctx context.Context, pool *pgxpool.Pool, now time.Time) (MaintenanceReport, error) {
 	var r MaintenanceReport
 	err := InProberTx(ctx, pool, func(q *db.Queries) error {
