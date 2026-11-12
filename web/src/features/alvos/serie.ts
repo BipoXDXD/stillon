@@ -5,7 +5,7 @@ import type { Check, Hora, Serie } from '@/lib/api/schemas'
 // o Recharts não desenha no jsdom, então o que importa (o que é "fora", o
 // resumo em texto) é testado aqui, e o desenho, no E2E.
 
-// Os valores do ?window= do servidor (B6 do Plano 10), que calcula o from, na
+// Os valores do ?window= do servidor, que calcula o from, na
 // ordem em que o painel as mostra. A lista é a fonte do tipo: assim o
 // `Record` abaixo é exaustivo e ninguém precisa de `Object.keys(...) as`.
 export const ORDEM_DAS_JANELAS = ['1h', '6h', '24h', '7d', '30d', '90d'] as const
@@ -31,7 +31,7 @@ export type PontoBruto = { t: number; latencia: number | null; fora: number | nu
 export type PontoHorario = { t: number; p50: number | null; p95: number | null; faixa: [number, number] | null; uptime: number | null }
 
 // A latência de um check "down" é o tempo até o timeout ou a recusa, não a
-// do serviço (D23 do Plano 5): ela não entra na linha; o check vira uma
+// do serviço: ela não entra na linha; o check vira uma
 // marca na base do gráfico.
 export function pontosBrutos(itens: Check[]): PontoBruto[] {
   return itens.map((c) => ({

@@ -17,7 +17,7 @@ export function textoDoEstado(e: EstadoExibido): string {
 }
 
 // O servidor diz "unknown" também para alvo desativado; o painel distingue
-// pelo enabled (spec do Plano 6 §4.2).
+// pelo enabled.
 export function estadoExibido(estado: EstadoAlvo, ativo: boolean): EstadoExibido {
   return ativo ? estado : 'pausado'
 }

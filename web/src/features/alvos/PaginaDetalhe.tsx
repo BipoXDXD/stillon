@@ -149,7 +149,7 @@ function DetalheDoAlvo({ id }: { id: string }) {
     void qc.invalidateQueries({ queryKey: chaves.todosOsIncidentes })
   }
 
-  // O alvo foi apagado em outra aba (M3, o padrão de Canais).
+  // O alvo foi apagado em outra aba.
   const sumiu = () => sairDoAlvo('O alvo já tinha sido apagado, talvez em outra aba.')
 
   // O poll (60 s, foco da janela) que volta 404 depois de o alvo estar na

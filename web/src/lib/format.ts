@@ -1,7 +1,7 @@
 // Formatação para a tela, em pt-BR. Funções puras: o "agora" é parâmetro.
 
 // Porcentagem TRUNCADA em duas casas, nunca arredondada: "100,00%" num dia
-// com falha é pior que "99,99%" (D16 do Plano 4; nota do Plano 5 §12).
+// com falha é pior que "99,99%".
 // O + 1e-9 absorve o erro de ponto flutuante de valores exatos (0.0029 *
 // 10000 é 28,999…96, e um floor seco daria "0,28%"); é pequeno demais para
 // levar 0,99995 a "100,00%".
@@ -87,7 +87,7 @@ export function fuso(): string {
   return Intl.DateTimeFormat().resolvedOptions().timeZone
 }
 
-// Tamanho em code points, como o servidor conta (Plano 5, D1): "é" é 1,
+// Tamanho em code points, como o servidor conta: "é" é 1,
 // um emoji fora do plano básico também é 1; .length contaria unidades UTF-16.
 export function pontosDeCodigo(s: string): number {
   return [...s].length

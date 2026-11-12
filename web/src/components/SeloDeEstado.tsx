@@ -35,7 +35,7 @@ export function IconeDoEstado({ estado, texto, className }: { estado: EstadoExib
 }
 
 // `texto` troca só a palavra: o heartbeat tem a forma e a cor do estado, mas
-// não fica "fora do ar" (spec da tela, T2).
+// não fica "fora do ar".
 export function SeloDeEstado({ estado, texto, className }: { estado: EstadoExibido; texto?: string; className?: string }) {
   const { Icone, tom, cheio } = selos[estado]
   return (

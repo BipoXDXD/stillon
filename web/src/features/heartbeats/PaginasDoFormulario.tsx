@@ -12,7 +12,7 @@ import { AGENDAMENTO_NAO_SUPORTADO } from './estado'
 import { FormularioHeartbeat } from './FormularioHeartbeat'
 
 // A resposta do POST fica só aqui, no estado da tela: nada de cache, de URL nem
-// de estado do router, que vai para o history.state (spec da tela, T8).
+// de estado do router, que vai para o history.state.
 export function PaginaNovoHeartbeat() {
   const api = useApi()
   const qc = useQueryClient()

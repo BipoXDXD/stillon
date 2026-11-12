@@ -13,7 +13,7 @@ const porCodigo: Record<string, string> = {
   rate_limited: 'Muitas requisições. Aguarde um minuto e tente de novo.',
   payload_too_large: 'Os dados enviados são grandes demais.',
   not_found: 'Não encontrado.',
-  // B5 do Plano 10: o 405 da API vem no envelope, com código próprio.
+  // O 405 da API vem no envelope, com código próprio.
   method_not_allowed: 'O servidor não aceita esta operação. O painel pode estar desatualizado: recarregue a página.',
   forbidden: 'Operação não permitida.',
   unauthorized: 'Sua sessão terminou. Entre de novo.',
@@ -41,7 +41,7 @@ function duracao(segundos: number): string {
 
 export function mensagemDe(e: unknown): string {
   if (e instanceof ApiError) {
-    // O servidor disse quanto esperar (A1 do Plano 10): a tela repete.
+    // O servidor disse quanto esperar: a tela repete.
     if (e.code === 'rate_limited' && e.retryAfter !== null) {
       return `Muitas tentativas. Aguarde ${duracao(e.retryAfter)} e tente de novo.`
     }

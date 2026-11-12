@@ -89,7 +89,7 @@ function Cartao({
           {textoDaCausa(i.cause)} · {periodoDoIncidente(i, agora)}
         </p>
         {i.acknowledged_at && (
-          // tabIndex -1: o foco vem para cá quando o Reconhecer some (I1).
+          // tabIndex -1: o foco vem para cá quando o Reconhecer some.
           <p id={`ack-${i.id}`} tabIndex={-1} className="text-sm text-suave outline-none">
             Reconhecido em {dataHora(i.acknowledged_at)}
             {situacao === 'reconhecido' && ' · lembretes parados'}
@@ -125,7 +125,7 @@ function Grupo({ titulo, children }: { titulo: string; children: ReactNode }) {
   )
 }
 
-// O vazio dos abertos é o estado bom (auditoria I4): check em círculo verde.
+// O vazio dos abertos é o estado bom: check em círculo verde.
 function Vazio({ filtro, soDosAlvos }: { filtro: Filtro; soDosAlvos: boolean }) {
   if (filtro === 'resolved') return <p className="text-suave">Nenhum incidente resolvido.</p>
   // Com tarefa fora, ou sem saber das tarefas, dizer "nenhum" mentiria.
@@ -144,8 +144,8 @@ function Vazio({ filtro, soDosAlvos }: { filtro: Filtro; soDosAlvos: boolean }) 
   )
 }
 
-// Os incidentes de heartbeat têm rotas próprias (D3 da spec de heartbeats): a
-// lista aponta as tarefas fora, em vez de fingir que não existem (spec da tela, T13).
+// Os incidentes de heartbeat têm rotas próprias: a
+// lista aponta as tarefas fora, em vez de fingir que não existem.
 function TarefasQuePedemAtencao({ tarefas }: { tarefas: readonly Heartbeat[] }) {
   if (tarefas.length === 0) return null
   return (
@@ -251,7 +251,7 @@ export function PaginaIncidentes() {
       />
       <ErroDoFormulario>{erro}</ErroDoFormulario>
       {filtro !== 'resolved' && <TarefasQuePedemAtencao tarefas={tarefas} />}
-      {/* D17: um poll ou um "Carregar mais" que falha mantém a lista, com o
+      {/* Um poll ou um "Carregar mais" que falha mantém a lista, com o
           aviso de dados velhos; só sem dados nenhuns o erro toma a tela. */}
       <EstadoDaConsulta consulta={consulta}>
         {(d) => {

@@ -315,7 +315,7 @@ export function FormularioAlvo({
             >
               {(a) =>
                 // Com HEAD, um seletor travado em "Desligada" toma o lugar do
-                // registrado: a regra fica no estado (I1 da revisão) e volta
+                // registrado: a regra fica no estado e volta
                 // como estava quando o método deixa de ser HEAD. As keys forçam
                 // um <select> novo: no mesmo nó, o RHF não reescreveria o valor.
                 metodo === 'HEAD' ? (

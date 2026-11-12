@@ -11,7 +11,7 @@ const CURL = 'curl -fsS -m 10 --retry 3 -o /dev/null -X POST'
 
 type Exemplo = { titulo: string; texto: string; rotulo: string; nota?: string }
 
-// Todo exemplo manda POST (D6): um GET responde 405.
+// Todo exemplo manda POST: um GET responde 405.
 const EXEMPLOS = {
   curl: (url) => [
     { titulo: 'Ao terminar bem', texto: `${CURL} ${url}`, rotulo: 'Copiar o exemplo de sucesso' },
@@ -28,7 +28,7 @@ const EXEMPLOS = {
       texto: `RID=$(uuidgen); ${CURL} "${url}/start?rid=$RID"; tarefa.sh; ${CURL} "${url}/$??rid=$RID"`,
       rotulo: 'Copiar o exemplo com run id',
     },
-    // O corpo é descartado (D14 ainda não decidida): o exemplo não promete guardá-lo.
+    // O corpo é descartado, e o exemplo não promete guardá-lo.
     {
       titulo: 'Registrar uma linha, sem mexer no prazo',
       texto: `${CURL} --data-binary @- "${url}/log"`,
@@ -66,8 +66,8 @@ type Aba = keyof typeof EXEMPLOS
 const ABAS: readonly Aba[] = ['curl', 'crontab', 'wget', 'Python', 'PowerShell']
 
 // A URL de ping aparece aqui e em mais lugar nenhum: é a credencial da tarefa,
-// o servidor guarda só o hash, e ela vive no estado de quem abriu o diálogo
-// (spec da tela, T8 e T9). Só "Já guardei" fecha.
+// o servidor guarda só o hash, e ela vive no estado de quem abriu o diálogo.
+// Só "Já guardei" fecha.
 export function DialogoDaUrlDePing({ url, aoFechar }: { url: string | null; aoFechar: () => void }) {
   useSegurarNavegacao(url !== null)
   return (
@@ -93,7 +93,7 @@ export function DialogoDaUrlDePing({ url, aoFechar }: { url: string | null; aoFe
 }
 
 // Abas como botões com aria-pressed, no padrão dos filtros do painel: a
-// escolhida tem fundo, borda e check, nunca só a cor (DI 8).
+// escolhida tem fundo, borda e check, nunca só a cor.
 function ExemplosDeUso({ url }: { url: string }) {
   const [aba, setAba] = useState<Aba>('curl')
   return (
