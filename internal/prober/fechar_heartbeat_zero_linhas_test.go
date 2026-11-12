@@ -39,11 +39,12 @@ func fechadoComAviso(t *testing.T, b *bancadaHB) (uuid.UUID, db.ClaimHeartbeatsT
 }
 
 // Uma reivindicação velha chega ao fechamento depois que outro tique já
-// resolveu e avisou: o UPDATE resolve 0 linhas, e mesmo assim o fechamento
-// chama o aviso. O "voltou" não se repete por duas travas em série: o
-// MarkCloseNotified marca uma vez só, e o ON CONFLICT do EnqueueNotification
-// descarta a segunda linha do mesmo (incidente, canal, evento). O fim gravado
-// também não muda.
+// resolveu e avisou: o UPDATE resolve 0 linhas. O "voltou" não se repete e o
+// fim gravado não muda, qualquer que seja a barreira que segure o aviso: o
+// fechamento sair ao ver 0 linhas, ou, se ele ainda chamar o aviso, o
+// MarkCloseNotified que marca uma vez só e o ON CONFLICT do
+// EnqueueNotification que descarta a segunda linha do mesmo (incidente, canal,
+// evento).
 func TestFechamentoComReivindicacaoVelhaNaoRepeteOAviso(t *testing.T) {
 	b := novaBancadaHB(t)
 	id, velha := fechadoComAviso(t, b)
