@@ -845,6 +845,31 @@ describe('detalhe', () => {
       expect(screen.getByRole('button', { name: 'Reconhecer' })).toBeInTheDocument()
     })
 
+    // aria-disabled, e não disabled: o foco fica no botão enquanto o ack voa, e o
+    // anúncio de "desabilitado" some quando o ack termina. Sabotagem: tirar o
+    // aria-disabled de FaixaDeEstado → o atributo nunca aparece.
+    it('o Reconhecer fica aria-disabled, e com foco, enquanto o ack voa', async () => {
+      const r = await renderizarPainel('/targets/alvo-1')
+      r.falsa.estado.alvos = [alvo()]
+      r.falsa.estado.resumo = [itemDoResumo({ state: 'down', open_incident_id: 'inc-1' })]
+      r.falsa.estado.incidentes = [incidente()]
+      await r.cliente.refetchQueries()
+      let soltar!: () => void
+      const segurado = new Promise<void>((ok) => (soltar = ok))
+      servidor.use(
+        http.post('*/api/v1/incidents/:id/ack', async () => {
+          await segurado
+        }),
+      )
+      const botao = await screen.findByRole('button', { name: 'Reconhecer' })
+      expect(botao).not.toHaveAttribute('aria-disabled')
+      await r.usuario.click(botao)
+      await waitFor(() => expect(botao).toHaveAttribute('aria-disabled', 'true'))
+      expect(botao).toHaveFocus()
+      soltar()
+      await waitFor(() => expect(screen.queryByRole('button', { name: 'Reconhecer' })).not.toBeInTheDocument())
+    })
+
     // O ack pode ter chegado ao servidor mesmo com a resposta perdida: a lista
     // de incidentes é relida depois da falha. Sabotagem: invalidar só quando
     // o ack deu certo → nenhum GET /incidents a mais.

@@ -663,3 +663,63 @@ describe('a API falsa conta as provas erradas por família, como o servidor', ()
     await expect(sessao.entrar(EMAIL, SENHA)).rejects.toMatchObject({ code: 'invalid_credentials' })
   })
 })
+
+// Cada rota com id manda o id como um segmento só. O caminho.test.ts prova o
+// helper; aqui se prova que cada método do cliente o usa. Sabotagem: trocar o
+// caminho`…` de uma rota por um template cru → o `?c#d` do id vira query e
+// fragmento, e a linha dessa rota falha.
+describe('o id hostil vai codificado em toda rota com id', () => {
+  const ID = 'a/b?c#d'
+  const SEG = 'a%2Fb%3Fc%23d'
+  const CURSOR = 'cur/sor?'
+  const CURSOR_SEG = 'cur%2Fsor%3F'
+
+  const rotas: [string, (api: ReturnType<typeof novaSessao>['api']) => Promise<unknown>, string][] = [
+    ['alvo', (a) => a.alvo(ID), `GET /api/v1/targets/${SEG}`],
+    ['alterarAlvo', (a) => a.alterarAlvo(ID, {}), `PATCH /api/v1/targets/${SEG}`],
+    ['apagarAlvo', (a) => a.apagarAlvo(ID), `DELETE /api/v1/targets/${SEG}`],
+    ['serie', (a) => a.serie(ID, '24h'), `GET /api/v1/targets/${SEG}/checks?window=24h`],
+    ['reconhecer', (a) => a.reconhecer(ID), `POST /api/v1/incidents/${SEG}/ack`],
+    ['heartbeat', (a) => a.heartbeat(ID), `GET /api/v1/heartbeats/${SEG}`],
+    ['alterarHeartbeat', (a) => a.alterarHeartbeat(ID, {}), `PATCH /api/v1/heartbeats/${SEG}`],
+    ['apagarHeartbeat', (a) => a.apagarHeartbeat(ID), `DELETE /api/v1/heartbeats/${SEG}`],
+    ['rotacionarHeartbeat', (a) => a.rotacionarHeartbeat(ID), `POST /api/v1/heartbeats/${SEG}/token/rotate`],
+    ['duplicarHeartbeat', (a) => a.duplicarHeartbeat(ID), `POST /api/v1/heartbeats/${SEG}/clone`],
+    ['limparEventosDoHeartbeat', (a) => a.limparEventosDoHeartbeat(ID), `POST /api/v1/heartbeats/${SEG}/events/clear`],
+    ['sinalizarAgora', (a) => a.sinalizarAgora(ID), `POST /api/v1/heartbeats/${SEG}/ping-now`],
+    ['eventosDoHeartbeat', (a) => a.eventosDoHeartbeat(ID), `GET /api/v1/heartbeats/${SEG}/events?limit=20`],
+    [
+      'eventosDoHeartbeat com cursor',
+      (a) => a.eventosDoHeartbeat(ID, CURSOR),
+      `GET /api/v1/heartbeats/${SEG}/events?cursor=${CURSOR_SEG}&limit=20`,
+    ],
+    ['incidentesDoHeartbeat', (a) => a.incidentesDoHeartbeat(ID), `GET /api/v1/heartbeats/${SEG}/incidents?limit=20`],
+    [
+      'incidentesDoHeartbeat com cursor',
+      (a) => a.incidentesDoHeartbeat(ID, CURSOR),
+      `GET /api/v1/heartbeats/${SEG}/incidents?cursor=${CURSOR_SEG}&limit=20`,
+    ],
+    [
+      'reconhecerDoHeartbeat',
+      (a) => a.reconhecerDoHeartbeat(ID, ID),
+      `POST /api/v1/heartbeats/${SEG}/incidents/${SEG}/ack`,
+    ],
+    ['apagarCanal', (a) => a.apagarCanal(ID), `DELETE /api/v1/channels/${SEG}`],
+    ['reenviarVerificacao', (a) => a.reenviarVerificacao(ID), `POST /api/v1/channels/${SEG}/verify/resend`],
+    ['pausarCanal', (a) => a.pausarCanal(ID, true), `PATCH /api/v1/channels/${SEG}`],
+    ['alterarPagina', (a) => a.alterarPagina(ID, {}), `PATCH /api/v1/status-pages/${SEG}`],
+    ['encerrarSessao', (a) => a.encerrarSessao(ID), `DELETE /api/v1/sessions/${SEG}`],
+  ]
+
+  it.each(rotas)('%s', async (_nome, chamar, esperada) => {
+    const pedidos: string[] = []
+    // 500 sem corpo: a chamada rejeita, e o que importa é a URL pedida.
+    const buscar = (entrada: string, init: RequestInit) => {
+      pedidos.push(`${init.method ?? 'GET'} ${entrada}`)
+      return Promise.resolve(new Response(null, { status: 500 }))
+    }
+    const { api } = novaSessao({ buscar })
+    await chamar(api).catch(() => undefined)
+    expect(pedidos).toEqual([esperada])
+  })
+})
