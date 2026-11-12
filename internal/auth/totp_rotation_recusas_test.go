@@ -174,13 +174,25 @@ func TestStartRotationRefusalsChangeNothing(t *testing.T) {
 			erro: auth.ErrTOTPNotEnrolled,
 		},
 		{
-			// A família é conferida ANTES da prova: com a família morta, nem o
-			// código certo é gasto.
+			// Com a família morta, nem o código certo é gasto. A transação
+			// desfaz tudo nas duas ordens: a ORDEM família→prova é fixada pelo
+			// caso com o código errado, logo abaixo.
 			nome: "família morta, com o código certo",
 			preparo: func(t *testing.T, _ *auth.TOTP, pool *pgxpool.Pool, userID, familia uuid.UUID) (string, time.Time) {
 				gravarSegredoTOTP(t, pool, userID, segredoDeTroca)
 				revogarFamilia(t, pool, familia, inicioDaTroca)
 				return codigoEm(t, segredoDeTroca, inicioDaTroca), inicioDaTroca
+			},
+			erro: auth.ErrInvalidSession,
+		},
+		{
+			// A família é conferida ANTES da prova: com a ordem invertida, o
+			// código errado devolveria ErrTOTPInvalid.
+			nome: "família morta, com o código errado",
+			preparo: func(t *testing.T, _ *auth.TOTP, pool *pgxpool.Pool, userID, familia uuid.UUID) (string, time.Time) {
+				gravarSegredoTOTP(t, pool, userID, segredoDeTroca)
+				revogarFamilia(t, pool, familia, inicioDaTroca)
+				return "000000", inicioDaTroca
 			},
 			erro: auth.ErrInvalidSession,
 		},
