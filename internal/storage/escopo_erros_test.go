@@ -66,6 +66,24 @@ func auditoriasDe(t *testing.T, pool *pgxpool.Pool, acao string) int {
 	return n
 }
 
+// poolDoEscopo abre um pool só para a transação sob teste. Se ela não for
+// desfeita, a conexão fica presa e o Close do pool esperaria por ela para
+// sempre: o cleanup então deixa esse pool sem fechar, e o teste falha na hora
+// em vez de no timeout. O restaurar do testdb derruba a conexão no banco.
+func poolDoEscopo(t *testing.T, base *pgxpool.Pool) *pgxpool.Pool {
+	t.Helper()
+	p, err := pgxpool.NewWithConfig(context.Background(), base.Config())
+	if err != nil {
+		t.Fatalf("abrir pool do escopo: %v", err)
+	}
+	t.Cleanup(func() {
+		if p.Stat().AcquiredConns() == 0 {
+			p.Close()
+		}
+	})
+	return p
+}
+
 // O erro de fn volta como está, o que fn gravou some e a conexão volta ao
 // pool: uma transação deixada aberta seguraria as travas e esgotaria o pool.
 func TestScopedTxRollsBackAndPropagatesTheCallbackError(t *testing.T) {
@@ -73,10 +91,11 @@ func TestScopedTxRollsBackAndPropagatesTheCallbackError(t *testing.T) {
 	for _, e := range todosOsEscopos() {
 		t.Run(e.nome, func(t *testing.T) {
 			pool := testdb.New(t)
+			escopado := poolDoEscopo(t, pool)
 			ctx := context.Background()
 			acao := "desfeita-" + e.nome
 
-			err := e.roda(ctx, pool, func(q *db.Queries) error {
+			err := e.roda(ctx, escopado, func(q *db.Queries) error {
 				if e.escreve {
 					if err := gravarAuditoria(ctx, q, acao); err != nil {
 						return err
@@ -87,11 +106,11 @@ func TestScopedTxRollsBackAndPropagatesTheCallbackError(t *testing.T) {
 			if !errors.Is(err, falhou) {
 				t.Errorf("erro = %v, queria o erro de fn", err)
 			}
+			if n := escopado.Stat().AcquiredConns(); n != 0 {
+				t.Fatalf("%d conexões ainda presas depois do erro de fn: a transação não foi desfeita", n)
+			}
 			if n := auditoriasDe(t, pool, acao); n != 0 {
 				t.Errorf("a gravação de fn sobreviveu ao erro: %d linhas", n)
-			}
-			if n := pool.Stat().AcquiredConns(); n != 0 {
-				t.Errorf("%d conexões ainda presas depois do erro de fn", n)
 			}
 		})
 	}
