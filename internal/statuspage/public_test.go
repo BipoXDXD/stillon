@@ -522,10 +522,11 @@ func TestPublicViewHasNoInternalFields(t *testing.T) {
 	andar(reflect.TypeOf(statuspage.View{}), "View")
 }
 
-// Borda do corte, lado dos rollups: um rollup gravado na própria hora corrente
-// (relógio adiantado) não é a marca d'água, porque a marca só vê horas antes
-// de H. O corte então é H, e as 12:00 vêm só dos checks brutos: com o rollup
-// também, a hora corrente contaria duas vezes.
+// Borda do corte, lado dos rollups: com um rollup gravado na própria hora
+// corrente (relógio adiantado), o corte fica em H (a marca d'água ou o limite
+// de rollupcut.At o levam até lá) e o intervalo dos rollups é [desde, H),
+// exclusivo no fim. O rollup das 12:00 fica de fora, e as 12:00 vêm só dos
+// checks brutos: com o fim inclusivo, a hora corrente contaria duas vezes.
 //
 // Relógio em 12:00. Rollups às 11:00 (60 de 60) e às 12:00 (10 de 10, que não
 // pode entrar); check bruto das 12:30 (down). Hoje: 60 ok de 61.

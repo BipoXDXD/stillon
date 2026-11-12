@@ -385,14 +385,16 @@ func TestSummaryBucketsAreUTCHoursInAnyTimeZone(t *testing.T) {
 	}
 }
 
-// Borda do corte, lado dos rollups: um rollup gravado na própria hora corrente
-// (relógio adiantado ou consolidação precoce) não é a marca d'água, porque a
-// marca só vê horas antes de H. O corte então é H, e o rollup das 12:00 fica
-// de fora do spark: a hora corrente só entra, por contagem, pelos checks.
+// Borda do corte, lado dos rollups: com um rollup gravado na própria hora
+// corrente (relógio adiantado ou consolidação precoce), o corte fica em H (a
+// marca d'água ou o limite de rollupcut.At o levam até lá) e o intervalo dos
+// rollups é [início, H), exclusivo no fim. O rollup das 12:00 fica de fora do
+// spark: a hora corrente só entra, por contagem, pelos checks.
 //
 // Relógio em 12:20; rollups às 11:00 (60 de 60) e às 12:00 (10 de 10, que não
-// pode entrar); check bruto das 11:59:59.999 numa hora já consolidada e o das
-// 12:00:00 exato, que é da hora corrente (down).
+// pode entrar); check bruto das 11:59:59.999 numa hora já consolidada, o das
+// 12:00:00 exato, que é da hora corrente (down), e o das 13:00:00 exato, que
+// é da próxima hora e fica fora da contagem da corrente (fim exclusivo).
 func TestSummaryCutEdgeIgnoresARollupAtTheCurrentHour(t *testing.T) {
 	a := novoAmbiente(t)
 	a.clk.Advance(time.Date(2026, 9, 22, 12, 20, 0, 0, time.UTC).Sub(a.clk.Now()))
@@ -404,6 +406,7 @@ func TestSummaryCutEdgeIgnoresARollupAtTheCurrentHour(t *testing.T) {
 	a.gravarRollup(t, alvo, h, 10, 10, ptr(int32(100)))
 	a.gravarCheck(t, alvo, h.Add(-time.Millisecond), "down", 5000)
 	a.gravarCheck(t, alvo, h, "down", 5000)
+	a.gravarCheck(t, alvo, h.Add(time.Hour), "down", 5000)
 
 	s := resumoDe(t, a, dono)[alvo]
 	if len(s.Spark) != 1 || !s.Spark[0].Bucket.Equal(h.Add(-time.Hour)) || s.Spark[0].Total != 60 || s.Spark[0].OK != 60 {

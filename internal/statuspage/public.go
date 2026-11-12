@@ -158,7 +158,7 @@ func (s *Service) projetar(ctx context.Context, slug string, agora time.Time) (V
 		}
 		corte, ate := janela.Corte(marca), janela.Ate()
 		dias, err := q.ListPublicDailyUptime(ctx, db.ListPublicDailyUptimeParams{
-			PageID: pagina.ID, Since: desde, Cut: corte, Until: ate,
+			PageID: pagina.ID, Since: janela.Desde(), Cut: corte, Until: ate,
 		})
 		if err != nil {
 			return fmt.Errorf("listar uptime diário: %w", err)
@@ -170,7 +170,7 @@ func (s *Service) projetar(ctx context.Context, slug string, agora time.Time) (V
 			return fmt.Errorf("listar latência: %w", err)
 		}
 		incidentes, err := q.ListPublicIncidents(ctx, db.ListPublicIncidentsParams{
-			PageID: pagina.ID, Since: desde, MaxRows: MaxIncidents,
+			PageID: pagina.ID, Since: janela.Desde(), MaxRows: MaxIncidents,
 		})
 		if err != nil {
 			return fmt.Errorf("listar incidentes públicos: %w", err)
