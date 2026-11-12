@@ -713,10 +713,13 @@ describe('o id hostil vai codificado em toda rota com id', () => {
 
   it.each(rotas)('%s', async (_nome, chamar, esperada) => {
     const pedidos: string[] = []
-    // 500 sem corpo: a chamada rejeita, e o que importa é a URL pedida.
+    // 200 com `{}`: nem 401 (que dispararia o refresh) nem 5xx (que um retry
+    // futuro poderia repetir) mexem na contagem de pedidos. O corpo vazio de
+    // propósito não passa no schema de resposta, então a chamada pode rejeitar;
+    // o que importa é a URL pedida, uma vez só.
     const buscar = (entrada: string, init: RequestInit) => {
       pedidos.push(`${init.method ?? 'GET'} ${entrada}`)
-      return Promise.resolve(new Response(null, { status: 500 }))
+      return Promise.resolve(Response.json({}))
     }
     const { api } = novaSessao({ buscar })
     await chamar(api).catch(() => undefined)

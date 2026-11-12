@@ -232,8 +232,15 @@ func TestSupervisorDoesNotAcceptFailedOrUnclosedClients(t *testing.T) {
 			if mode == "closed-stdout" && time.Since(start) > 500*time.Millisecond {
 				t.Fatalf("Wait do exportador escapou do cleanup: %s", time.Since(start))
 			}
-			if elapsed := time.Since(start); elapsed > 2*time.Second {
+			elapsed := time.Since(start)
+			if elapsed > 2*time.Second {
 				t.Fatalf("cancelamento/cleanup presos: %s", elapsed)
+			}
+			// A falha por sessão aberta sai da espera própria (uma fração do
+			// cleanup), não do timer nem do pipe: se a espera usasse o cleanup
+			// inteiro, o tempo passaria dele e a falha voltaria à corrida de #317.
+			if mode == "remaining-session" && elapsed >= o.cleanup {
+				t.Fatalf("a espera pelas sessões não venceu antes do cleanup de %s: %s", o.cleanup, elapsed)
 			}
 		})
 	}
