@@ -193,8 +193,12 @@ func TestSupervisorDoesNotAcceptFailedOrUnclosedClients(t *testing.T) {
 			t.Setenv("BACKUP_TEST_MODE", mode)
 			t.Setenv("PGHOST", "restore")
 			t.Setenv("PGPASSWORD", "restore-secret")
+			o := opcoesDeTeste(psql, dump)
+			if mode == "good" {
+				o = comPrazosFolgados(o)
+			}
 			start := time.Now()
-			ref, err := run(context.Background(), "postgresql://backup@localhost/stillon?gssencmode=disable", "source-secret", filepath.Join(dir, "dump"), opcoesDeTeste(psql, dump))
+			ref, err := run(context.Background(), "postgresql://backup@localhost/stillon?gssencmode=disable", "source-secret", filepath.Join(dir, "dump"), o)
 			if mode == "good" {
 				info, statErr := os.Stat(filepath.Join(dir, "dump"))
 				if statErr != nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0600 {
@@ -265,6 +269,14 @@ exit 0
 }
 
 // opcoesDeTeste encurta os prazos para os clientes falsos.
+// comPrazosFolgados tira o caminho bom do relógio: com os prazos curtos dos
+// modos de falha, uma pausa do CI de ~100ms já estourava o encerramento e o
+// teste via "file already closed" no lugar do resultado que queria (#314).
+func comPrazosFolgados(o options) options {
+	o.prepareTimeout, o.dumpTimeout, o.cleanup, o.totalTimeout = 10*time.Second, 10*time.Second, 10*time.Second, 30*time.Second
+	return o
+}
+
 func opcoesDeTeste(psql, dump string) options {
 	o := defaultOptions()
 	o.psqlPath = psql
@@ -446,11 +458,7 @@ func rodarBom(t *testing.T, depois func(saida string) error) (log []string, said
 	t.Setenv("BACKUP_TEST_MODE", "good")
 	t.Setenv("BACKUP_LOG", arquivoLog)
 	saida = filepath.Join(dir, "dump")
-	o := opcoesDeTeste(psql, dump)
-	// O caminho bom não pode depender de relógio: com os prazos curtos dos
-	// modos de falha, uma pausa do CI de ~100ms já estourava o encerramento e o
-	// teste via "file already closed" no lugar do resultado que queria.
-	o.prepareTimeout, o.dumpTimeout, o.cleanup, o.totalTimeout = 10*time.Second, 10*time.Second, 10*time.Second, 30*time.Second
+	o := comPrazosFolgados(opcoesDeTeste(psql, dump))
 	if depois != nil {
 		o.afterReference = func(context.Context, Reference) error { return depois(saida) }
 	}
