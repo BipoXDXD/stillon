@@ -51,19 +51,12 @@ func NewService(pool *pgxpool.Pool, box *crypto.Box, clk clock.Clock, opcoes ...
 	return s
 }
 
+// Create valida, cifra os headers e grava o alvo com as tags, tudo numa
+// transação que primeiro confere os tetos. ErrLimitReached e
+// ErrContentHostLimit saem sem embrulho; qualquer outra falha de gravação vira
+// "gravar alvo".
 func (s *Service) Create(ctx context.Context, userID uuid.UUID, in Input) (Target, error) {
-	f := fields{
-		Name:                in.Name,
-		URL:                 in.URL,
-		Method:              cmp.Or(in.Method, DefaultMethod),
-		IntervalSec:         cmp.Or(in.IntervalSec, DefaultIntervalSec),
-		TimeoutMS:           cmp.Or(in.TimeoutMS, DefaultTimeoutMS),
-		ExpectedStatus:      cmp.Or(in.ExpectedStatus, DefaultExpectedStatus),
-		DegradedThresholdMS: in.DegradedThresholdMS,
-		Headers:             in.Headers,
-		Tags:                in.Tags,
-		ContentRule:         in.ContentRule,
-	}
+	f := camposDoCadastro(in)
 	if verr := validate(&f); verr != nil {
 		return Target{}, verr
 	}
@@ -80,43 +73,11 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, in Input) (Targe
 	// O alvo nasce vencido: a primeira sonda sai no próximo tick, e quem
 	// cadastrou vê o estado em segundos, não depois de um intervalo inteiro.
 	now := s.clk.Now()
-	modo, valor, ponteiro := colunasDaRegra(f.ContentRule)
 	err = storage.InUserTx(ctx, s.pool, userID, func(q *db.Queries) error {
-		// O teto conta e insere sob a trava do usuário: sem ela, dois POST
-		// simultâneos passariam os dois pela contagem.
-		if err := q.LockUserTargets(ctx, userID); err != nil {
-			return fmt.Errorf("travar alvos do usuário: %w", err)
-		}
-		n, err := q.CountTargets(ctx, userID)
-		if err != nil {
-			return fmt.Errorf("contar alvos: %w", err)
-		}
-		noHost := 0
-		if f.ContentRule != nil {
-			if noHost, err = contarRegrasNoHost(ctx, q, userID, hostDaRegra(f.URL), uuid.Nil); err != nil {
-				return err
-			}
-		}
-		if s.depoisDeContar != nil {
-			s.depoisDeContar()
-		}
-		if n >= MaxTargetsPerUser {
-			return ErrLimitReached
-		}
-		if f.ContentRule != nil && noHost >= s.tetoPorHost {
-			return ErrContentHostLimit
-		}
-		err = q.InsertTarget(ctx, db.InsertTargetParams{
-			ID: id, UserID: userID, Name: f.Name, URL: f.URL, Method: f.Method,
-			IntervalSec: f.IntervalSec, TimeoutMS: f.TimeoutMS, ExpectedStatus: f.ExpectedStatus,
-			HeadersEnc: sealed, DegradedThresholdMS: f.DegradedThresholdMS,
-			Enabled: in.Enabled, NextRunAt: now, CreatedAt: now, TlsWarn: in.TLSWarn,
-			ContentMode: modo, ContentValue: valor, ContentJsonPointer: ponteiro,
-		})
-		if err != nil {
+		if err := s.recusarAlvoAcimaDosTetos(ctx, q, userID, f); err != nil {
 			return err
 		}
-		return q.InsertTargetTags(ctx, db.InsertTargetTagsParams{Tags: f.Tags, UserID: userID, TargetID: id})
+		return inserirAlvo(ctx, q, f.insertTargetParams(userID, id, sealed, in.Enabled, in.TLSWarn, now), f.Tags)
 	})
 	if errors.Is(err, ErrLimitReached) || errors.Is(err, ErrContentHostLimit) {
 		return Target{}, err
@@ -125,6 +86,68 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, in Input) (Targe
 		return Target{}, fmt.Errorf("gravar alvo: %w", err)
 	}
 	return f.comoTarget(id, in.Enabled, in.TLSWarn, now), nil
+}
+
+// camposDoCadastro traz o cadastro para os campos do alvo, com os padrões no
+// lugar do que veio zerado (zero nunca é válido em nenhum deles).
+func camposDoCadastro(in Input) fields {
+	return fields{
+		Name:                in.Name,
+		URL:                 in.URL,
+		Method:              cmp.Or(in.Method, DefaultMethod),
+		IntervalSec:         cmp.Or(in.IntervalSec, DefaultIntervalSec),
+		TimeoutMS:           cmp.Or(in.TimeoutMS, DefaultTimeoutMS),
+		ExpectedStatus:      cmp.Or(in.ExpectedStatus, DefaultExpectedStatus),
+		DegradedThresholdMS: in.DegradedThresholdMS,
+		Headers:             in.Headers,
+		Tags:                in.Tags,
+		ContentRule:         in.ContentRule,
+	}
+}
+
+// recusarAlvoAcimaDosTetos conta e decide sob a trava do usuário: sem ela, dois
+// POST simultâneos passariam os dois pela contagem. As contagens vêm todas
+// antes do gancho depoisDeContar e das decisões, e o teto por usuário tem
+// precedência sobre o teto de regras por host.
+func (s *Service) recusarAlvoAcimaDosTetos(ctx context.Context, q *db.Queries, userID uuid.UUID, f fields) error {
+	if err := q.LockUserTargets(ctx, userID); err != nil {
+		return fmt.Errorf("travar alvos do usuário: %w", err)
+	}
+	n, err := q.CountTargets(ctx, userID)
+	if err != nil {
+		return fmt.Errorf("contar alvos: %w", err)
+	}
+	noHost, err := regrasNoHostDoNovoAlvo(ctx, q, userID, f)
+	if err != nil {
+		return err
+	}
+	if s.depoisDeContar != nil {
+		s.depoisDeContar()
+	}
+	if n >= MaxTargetsPerUser {
+		return ErrLimitReached
+	}
+	if f.ContentRule != nil && noHost >= s.tetoPorHost {
+		return ErrContentHostLimit
+	}
+	return nil
+}
+
+// regrasNoHostDoNovoAlvo conta os alvos do dono com regra no host do alvo novo.
+// Sem regra o teto por host não se aplica, e a contagem nem é feita.
+func regrasNoHostDoNovoAlvo(ctx context.Context, q *db.Queries, userID uuid.UUID, f fields) (int, error) {
+	if f.ContentRule == nil {
+		return 0, nil
+	}
+	return contarRegrasNoHost(ctx, q, userID, hostDaRegra(f.URL), uuid.Nil)
+}
+
+// inserirAlvo grava a linha do alvo e, em seguida, as tags dele.
+func inserirAlvo(ctx context.Context, q *db.Queries, p db.InsertTargetParams, tags []string) error {
+	if err := q.InsertTarget(ctx, p); err != nil {
+		return err
+	}
+	return q.InsertTargetTags(ctx, db.InsertTargetTagsParams{Tags: tags, UserID: p.UserID, TargetID: p.ID})
 }
 
 func (s *Service) Get(ctx context.Context, userID, id uuid.UUID) (Target, error) {
@@ -360,6 +383,20 @@ func (f fields) comoTarget(id uuid.UUID, enabled, tlsWarn bool, criadoEm time.Ti
 		IntervalSec: f.IntervalSec, TimeoutMS: f.TimeoutMS, ExpectedStatus: f.ExpectedStatus,
 		DegradedThresholdMS: f.DegradedThresholdMS, Enabled: enabled, TLSWarn: tlsWarn,
 		HeaderNames: headerNames(f.Headers), Tags: f.Tags, ContentRule: f.ContentRule, CreatedAt: criadoEm,
+	}
+}
+
+// insertTargetParams são as colunas do INSERT do alvo: os campos já validados,
+// os headers cifrados e o que o cadastro decide à parte. O alvo nasce vencido:
+// a próxima sonda e a criação são o mesmo instante.
+func (f fields) insertTargetParams(userID, id uuid.UUID, sealed []byte, enabled, tlsWarn bool, now time.Time) db.InsertTargetParams {
+	modo, valor, ponteiro := colunasDaRegra(f.ContentRule)
+	return db.InsertTargetParams{
+		ID: id, UserID: userID, Name: f.Name, URL: f.URL, Method: f.Method,
+		IntervalSec: f.IntervalSec, TimeoutMS: f.TimeoutMS, ExpectedStatus: f.ExpectedStatus,
+		HeadersEnc: sealed, DegradedThresholdMS: f.DegradedThresholdMS,
+		Enabled: enabled, NextRunAt: now, CreatedAt: now, TlsWarn: tlsWarn,
+		ContentMode: modo, ContentValue: valor, ContentJsonPointer: ponteiro,
 	}
 }
 
