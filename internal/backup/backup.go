@@ -253,7 +253,10 @@ func run(parent context.Context, publicURI, password, output string, o options) 
 	if e = s.definirPrazos(o.cleanup); e != nil {
 		return Reference{}, e
 	}
-	if e = s.aguardarSessoesEncerradas(o.cleanup, exportName, dumpName); e != nil {
+	// Só metade do encerramento espera as sessões; a outra metade fica para o
+	// ROLLBACK e o Wait do exportador. Com o mesmo prazo do pipe e do timer, o
+	// erro de uma sessão que não fecha saía da corrida entre os três (#317).
+	if e = s.aguardarSessoesEncerradas(o.cleanup/2, exportName, dumpName); e != nil {
 		return Reference{}, e
 	}
 	if e = s.pedirFimDoExportador(); e != nil {
@@ -495,14 +498,14 @@ func (s *supervisao) contarSessoes(consulta string) (uint64, error) {
 	}
 	blank, e := s.lerLinha()
 	if e != nil {
-		return 0, fmt.Errorf("checagem das sessões inválida: %w", e)
+		return 0, fmt.Errorf("checagem das sessões interrompida: %w", e)
 	}
 	if blank != "\n" {
 		return 0, errors.New("checagem das sessões inválida")
 	}
 	count, e := s.lerLinha()
 	if e != nil {
-		return 0, e
+		return 0, fmt.Errorf("checagem das sessões interrompida: %w", e)
 	}
 	n, e := strconv.ParseUint(strings.TrimSuffix(count, "\n"), 10, 64)
 	if e != nil {

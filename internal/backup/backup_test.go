@@ -176,7 +176,9 @@ var falhaEsperada = map[string]string{
 	"dump-error":        "dump interrompido ou falhou",
 	"extra-output":      "fechamento do exportador inválido",
 	"exporter-error":    "exportador não encerrou corretamente",
-	"remaining-session": "checagem das sessões interrompida",
+	"remaining-session": "sessão da execução permaneceu aberta",
+	"sessions-eof":      "checagem das sessões interrompida",
+	"clear-eof":         "checagem das sessões interrompida",
 	"dirty-clear":       "checagem das sessões inválida",
 	"blocked-read":      "protocolo da origem interrompido ou excessivo",
 	"closed-stdout":     "exportador não encerrou corretamente",
@@ -186,7 +188,7 @@ func TestSupervisorDoesNotAcceptFailedOrUnclosedClients(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("supervisor exige Linux")
 	}
-	for _, mode := range []string{"good", "bad-reference", "overflow", "sql-error", "dump-error", "extra-output", "exporter-error", "remaining-session", "dirty-clear", "blocked-read", "closed-stdout"} {
+	for _, mode := range []string{"good", "bad-reference", "overflow", "sql-error", "dump-error", "extra-output", "exporter-error", "remaining-session", "sessions-eof", "clear-eof", "dirty-clear", "blocked-read", "closed-stdout"} {
 		t.Run(mode, func(t *testing.T) {
 			dir := t.TempDir()
 			psql, dump := clientesFalsos(t, dir)
@@ -196,6 +198,13 @@ func TestSupervisorDoesNotAcceptFailedOrUnclosedClients(t *testing.T) {
 			o := opcoesDeTeste(psql, dump)
 			if mode == "good" {
 				o = comPrazosFolgados(o)
+			}
+			if mode == "remaining-session" {
+				// A espera pelas sessões usa metade do encerramento e deve vencer
+				// antes do prazo do pipe e do timer. Com 100ms essa folga era de
+				// 50ms e uma pausa do CI a comia (#317).
+				o = comPrazosFolgados(o)
+				o.cleanup = time.Second
 			}
 			start := time.Now()
 			ref, err := run(context.Background(), "postgresql://backup@localhost/stillon?gssencmode=disable", "source-secret", filepath.Join(dir, "dump"), o)
@@ -250,8 +259,8 @@ case "$line" in
    blocked-read) :;;
    *) printf '00000003-0000001A-1|21|2|3\n';;
   esac;;
- *pg_stat_clear_snapshot*) if [ "$BACKUP_TEST_MODE" = dirty-clear ]; then printf 'x\n'; else printf '\n'; fi;;
- *pg_stat_activity*) if [ "$BACKUP_TEST_MODE" = remaining-session ]; then printf '1\n'; else if [ "$BACKUP_TEST_MODE" = slow-count ]; then sleep 0.5; fi; printf '0\n'; fi;;
+ *pg_stat_clear_snapshot*) if [ "$BACKUP_TEST_MODE" = clear-eof ]; then exit 3; fi; if [ "$BACKUP_TEST_MODE" = dirty-clear ]; then printf 'x\n'; else printf '\n'; fi;;
+ *pg_stat_activity*) if [ "$BACKUP_TEST_MODE" = sessions-eof ]; then exit 3; fi; if [ "$BACKUP_TEST_MODE" = remaining-session ]; then printf '1\n'; else if [ "$BACKUP_TEST_MODE" = slow-count ]; then sleep 0.5; fi; printf '0\n'; fi;;
  ROLLBACK*) if [ "$BACKUP_TEST_MODE" = extra-output ]; then printf 'extra\n'; fi;;
  '\q') if [ "$BACKUP_TEST_MODE" = closed-stdout ]; then trap '' TERM; exec 1>&-; exec sleep 60; fi; if [ "$BACKUP_TEST_MODE" = exporter-error ]; then exit 3; fi;exit 0;;
 esac
