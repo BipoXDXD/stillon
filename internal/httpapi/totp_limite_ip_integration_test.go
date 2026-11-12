@@ -4,11 +4,13 @@ import (
 	"io"
 	"net/http"
 	"net/netip"
+	"net/url"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/BipoXDXD/stillon/internal/auth"
 	"github.com/BipoXDXD/stillon/internal/config"
 )
 
@@ -37,6 +39,7 @@ var rotasTOTPAutenticadas = []string{
 // com 400 antes de reservar qualquer prova, então o pedido só gasta ficha do
 // limite por IP e nunca toca o contador da família. De origem, o IP da conexão;
 // com ip, o cabeçalho do proxy confiável (ver apiAtrasDeProxy, de dispositivo_integration_test.go).
+// Com token vazio, o pedido vai sem o cabeçalho Authorization.
 func pedirSemProva(t *testing.T, a *api, rota, token, ip string) (int, http.Header, string) {
 	t.Helper()
 	corpo := jsonBody(t, map[string]any{"campo_que_nao_existe": true})
@@ -46,7 +49,9 @@ func pedirSemProva(t *testing.T, a *api, rota, token, ip string) (int, http.Head
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Requested-With", "stillon")
-	req.Header.Set("Authorization", "Bearer "+token)
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
 	if ip != "" {
 		req.Header.Set("X-Forwarded-For", ip)
 	}
@@ -281,5 +286,67 @@ func TestTOTPIPLimitDoesNotCountRefusedRequestsAsWrongProofs(t *testing.T) {
 	}
 	if n := eventosDaFamilia(t, a, "session.proof_limit", familia); n != 1 {
 		t.Errorf("%d eventos session.proof_limit, queria 1", n)
+	}
+}
+
+// O limite por IP vem POR FORA de authn e da guarda de sessão viva: esgotada a
+// rajada, o pedido sem token, com token forjado ou de uma família já encerrada
+// recebe o mesmo 429 de quem tem token válido, e não o 401. Se o limite passar
+// para dentro de authn, o 401 sai antes e o balde deixa de proteger justamente
+// quem não tem credencial. O controle, de outra origem, confere que cada um
+// desses tokens é de fato recusado (401) quando o balde não está esgotado.
+func TestTOTPIPLimitRunsBeforeAuthentication(t *testing.T) {
+	for _, rota := range rotasTOTPAutenticadas {
+		t.Run(rota, func(t *testing.T) {
+			a := apiAtrasDeProxy(t)
+			valido, _, familia := familiaComRefresh(t, a)
+			morto, refreshMorto, _ := familiaComRefresh(t, a)
+			encerrarFamilia(t, a, refreshMorto)
+			forjado, err := auth.NewAccessToken([]byte("outro-segredo-com-32-bytes-ou-+!"), a.userID, familia, a.clk.Now())
+			if err != nil {
+				t.Fatal(err)
+			}
+			casos := []struct{ nome, token string }{
+				{"token ausente", ""},
+				{"token forjado", forjado},
+				{"família encerrada", morto},
+			}
+
+			vizinho := novaOrigem()
+			for _, c := range casos {
+				if st, _, codigo := pedirSemProva(t, a, rota, c.token, vizinho); st != http.StatusUnauthorized || codigo != "unauthorized" {
+					t.Fatalf("controle, %s: %d %s, queria 401 unauthorized", c.nome, st, codigo)
+				}
+			}
+
+			const origem = "198.51.100.77"
+			for i := 1; i <= rajadaPorIP; i++ {
+				if st, _, _ := pedirSemProva(t, a, rota, valido, origem); st != http.StatusBadRequest {
+					t.Fatalf("pedido %d da rajada: %d, queria 400", i, st)
+				}
+			}
+			for _, c := range casos {
+				t.Run(c.nome, func(t *testing.T) {
+					st, h, codigo := pedirSemProva(t, a, rota, c.token, origem)
+					exigirRecusaPorIP(t, st, h, codigo)
+				})
+			}
+		})
+	}
+}
+
+// encerrarFamilia faz o logout com o refresh da família, que a deixa morta.
+func encerrarFamilia(t *testing.T, a *api, refresh string) {
+	t.Helper()
+	c := clientWithJar(t)
+	u, err := url.Parse(a.srv.URL + "/api/v1/auth")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.Jar.SetCookies(u, []*http.Cookie{{Name: "stillon_refresh", Value: refresh, Path: "/api/v1/auth"}})
+	resp := post(t, c, a.srv.URL+"/api/v1/auth/logout", nil)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("logout devolveu %d", resp.StatusCode)
 	}
 }
