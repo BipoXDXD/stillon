@@ -109,8 +109,9 @@ func New(t *testing.T) *pgxpool.Pool {
 // o papel da aplicação). Código upstream, igual ainda na v0.45.0:
 // https://github.com/testcontainers/testcontainers-go/blob/f31e98d4ee9b/modules/postgres/postgres.go#L352-L380
 //
-// Este restore pode sair quando o upstream fechar a conexão: o teste de
-// regressão (TestRestaurarNaoVazaConexaoDeAdmin) vai provar que ficou seguro.
+// Este restore pode sair quando o upstream fechar a conexão. Antes de trocar,
+// aponte o TestRestaurarNaoVazaConexaoDeAdmin para o container.Restore e veja-o
+// passar.
 //
 // Precisa de zero conexões abertas no snapshot; as do banco alvo são derrubadas
 // aqui, mas o chamador fecha o pool antes.
