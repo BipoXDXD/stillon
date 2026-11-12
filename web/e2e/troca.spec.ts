@@ -1,6 +1,6 @@
 import type { Page } from '@playwright/test'
 import { controlePositivo, expect, test } from './fixtures'
-import { enviarLogin } from './limite'
+import { enviarLogin, enviarNoLimite } from './limite'
 import { desligar2FA, podeDesligar2FA } from './pilha'
 import { codigoNovo } from './totp'
 
@@ -43,6 +43,19 @@ async function chaveNaTela(page: Page): Promise<string> {
   return chave
 }
 
+// As rotas do 2FA dividem o balde do login (limiteLogin, por IP) e, no E2E,
+// que sai de um IP só, podem pegar 429: elas enviam por enviarNoLimite, que
+// espera o Retry-After e reenvia. Nas rotas que levam código, o código sai de
+// codigoNovo DENTRO do envio, a cada tentativa: um código gerado antes dos
+// recuos poderia vencer (vale pouco mais de 30 s e o teto dos recuos é de 45
+// s), e o ultimoPasso do totp.ts garante um passo novo por chamada, então o
+// reenvio nunca repete um código (replay). O 429 não gasta o código no
+// servidor (o limite roda antes do handler); o passo gasto sem uso só faz o
+// codigoNovo esperar a virada, e essa espera fica dentro do envio, fora da
+// soma dos recuos que o teto de limite.ts conta. Os campos são preenchidos a cada tentativa, como no login:
+// a tela pode limpá-los depois de uma recusa.
+const ROTA_2FA = (fim: string) => `/api/v1/auth/totp/${fim}`
+
 async function guardarCodigos(page: Page) {
   const dialogo = page.getByRole('dialog')
   await expect(dialogo.getByRole('listitem')).toHaveCount(10)
@@ -55,7 +68,7 @@ test('ativar o 2FA, trocar de autenticador com o rotation, entrar com o app novo
   page,
   credenciais,
 }) => {
-  // Cinco códigos de passos novos: com a folga do servidor (totp.ts), até três
+  // Cinco códigos de passos novos (mais um por reenvio depois de um 429): com a folga do servidor (totp.ts), até três
   // viradas de 30 s de espera, e o prazo de antes cobre as cinco.
   test.setTimeout(240_000)
   const email = credenciais.email
@@ -71,23 +84,43 @@ test('ativar o 2FA, trocar de autenticador com o rotation, entrar com o app novo
   await page.getByRole('link', { name: 'Conta', exact: true }).click()
 
   // 1. Ativar: senha, o QR (a chave em texto), o código, os códigos.
+  const dialogo = page.getByRole('dialog')
   await page.getByRole('button', { name: 'Ativar' }).click()
-  await page.getByRole('dialog').getByLabel('Sua senha').fill(credenciais.senha)
-  await page.getByRole('dialog').getByRole('button', { name: 'Continuar' }).click()
+  await enviarNoLimite(
+    page,
+    ROTA_2FA('enroll'),
+    async () => {
+      await dialogo.getByLabel('Sua senha').fill(credenciais.senha)
+      await dialogo.getByRole('button', { name: 'Continuar' }).click()
+    },
+    dialogo.locator('code'),
+  )
   const velha = await chaveNaTela(page)
-  await page.getByRole('dialog').getByLabel('Código de 6 dígitos').fill(await codigoNovo(velha))
-  await page.getByRole('dialog').getByRole('button', { name: 'Ativar' }).click()
+  await enviarNoLimite(
+    page,
+    ROTA_2FA('confirm'),
+    async () => {
+      await dialogo.getByLabel('Código de 6 dígitos').fill(await codigoNovo(velha))
+      await dialogo.getByRole('button', { name: 'Ativar' }).click()
+    },
+    dialogo.getByLabel('Guardei os códigos'),
+  )
   await guardarCodigos(page)
   await expect(page.getByText('Ativada.', { exact: true })).toBeVisible()
 
   // 2. Trocar: as provas (senha e o código do app atual). O rotate devolve o
   //    rotation, 32 hex minúsculos.
   await page.getByRole('button', { name: 'Trocar autenticador' }).click()
-  await page.getByRole('dialog').getByLabel('Sua senha').fill(credenciais.senha)
-  await page.getByRole('dialog').getByLabel('Código do autenticador').fill(await codigoNovo(velha))
-  const rotate = page.waitForResponse((r) => r.url().endsWith('/api/v1/auth/totp/rotate'))
-  await page.getByRole('dialog').getByRole('button', { name: 'Continuar' }).click()
-  const respostaDoRotate = await rotate
+  const respostaDoRotate = await enviarNoLimite(
+    page,
+    ROTA_2FA('rotate'),
+    async () => {
+      await dialogo.getByLabel('Sua senha').fill(credenciais.senha)
+      await dialogo.getByLabel('Código do autenticador').fill(await codigoNovo(velha))
+      await dialogo.getByRole('button', { name: 'Continuar' }).click()
+    },
+    dialogo.getByLabel('Código de 6 dígitos'),
+  )
   expect(respostaDoRotate.status(), 'rotate').toBe(200)
   const { rotation } = (await respostaDoRotate.json()) as { rotation: string }
   expect(rotation).toMatch(/^[0-9a-f]{32}$/)
@@ -96,21 +129,25 @@ test('ativar o 2FA, trocar de autenticador com o rotation, entrar com o app novo
   //    que recebeu, e o servidor aceita.
   const nova = await chaveNaTela(page)
   expect(nova, 'a chave do app novo').not.toBe(velha)
-  await page.getByRole('dialog').getByLabel('Código de 6 dígitos').fill(await codigoNovo(nova))
-  const confirm = page.waitForRequest((r) => r.url().endsWith('/api/v1/auth/totp/rotate/confirm'))
-  await page.getByRole('dialog').getByRole('button', { name: 'Confirmar a troca' }).click()
-  const pedido = await confirm
-  expect(pedido.postDataJSON(), 'o corpo do rotate/confirm').toMatchObject({ rotation })
-  expect((await pedido.response())?.status(), 'rotate/confirm').toBe(200)
+  const respostaDoConfirm = await enviarNoLimite(
+    page,
+    ROTA_2FA('rotate/confirm'),
+    async () => {
+      await dialogo.getByLabel('Código de 6 dígitos').fill(await codigoNovo(nova))
+      await dialogo.getByRole('button', { name: 'Confirmar a troca' }).click()
+    },
+    dialogo.getByLabel('Guardei os códigos'),
+  )
+  expect(respostaDoConfirm.request().postDataJSON(), 'o corpo do rotate/confirm').toMatchObject({ rotation })
+  expect(respostaDoConfirm.status(), 'rotate/confirm').toBe(200)
   await guardarCodigos(page)
   await controlePositivo(page, 'a troca de autenticador')
 
   // 4. Sair e entrar com o app novo: o segredo trocou de verdade.
   await page.getByRole('button', { name: 'Sair' }).click()
   await expect(page.getByRole('heading', { name: 'Entrar no StillOn' })).toBeVisible()
-  // Este login é o sexto pedido seguido no balde do login (o entrar do passo
-  // 1 e as quatro rotas do 2FA): sem o recuo, pode pegar 429 quando as
-  // esperas do codigoNovo não deram tempo de a ficha voltar.
+  // Este login é o sétimo pedido seguido no balde do login (o entrar do passo
+  // 1 e as cinco rotas do 2FA): o enviarLogin recua no 429.
   const campoDoCodigo = page.getByLabel('Código do aplicativo autenticador')
   await enviarLogin(page, email, credenciais.senha, campoDoCodigo)
   await campoDoCodigo.fill(await codigoNovo(nova))
@@ -120,9 +157,15 @@ test('ativar o 2FA, trocar de autenticador com o rotation, entrar com o app novo
 
   // 5. Desativar com o app novo: o usuário volta como estava.
   await page.getByRole('button', { name: 'Desativar' }).click()
-  await page.getByRole('dialog').getByLabel('Sua senha').fill(credenciais.senha)
-  await page.getByRole('dialog').getByLabel('Código do autenticador').fill(await codigoNovo(nova))
-  await page.getByRole('dialog').getByRole('button', { name: 'Desativar' }).click()
-  await expect(page.getByText('Desativada.', { exact: true })).toBeVisible()
+  await enviarNoLimite(
+    page,
+    ROTA_2FA('disable'),
+    async () => {
+      await dialogo.getByLabel('Sua senha').fill(credenciais.senha)
+      await dialogo.getByLabel('Código do autenticador').fill(await codigoNovo(nova))
+      await dialogo.getByRole('button', { name: 'Desativar' }).click()
+    },
+    page.getByText('Desativada.', { exact: true }),
+  )
   await controlePositivo(page, 'o login com o app novo e o desativar')
 })

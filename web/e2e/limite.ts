@@ -1,4 +1,4 @@
-import type { Locator, Page } from '@playwright/test'
+import type { Locator, Page, Response } from '@playwright/test'
 import { expect } from './fixtures'
 
 // O login, a troca de senha e as rotas do 2FA dividem o balde do login (5 de
@@ -6,8 +6,8 @@ import { expect } from './fixtures'
 // espera o Retry-After e envia de novo, com teto; o segundo a mais é a folga
 // para a ficha já ter voltado quando o reenvio chegar.
 export const ENVIOS_NO_LIMITE = 6
-// Teto de tempo dos recuos de uma chamada: seis Retry-After de 6 s, com o
-// segundo de folga, cabem nele; um Retry-After maior falha alto em vez de
+// Teto da soma dos recuos de uma chamada (só as esperas do Retry-After, não
+// o tempo do envio): seis Retry-After de 6 s, com o segundo de folga, cabem nele; um Retry-After maior falha alto em vez de
 // prender o teste até o prazo dele.
 const PRAZO_NO_LIMITE_MS = 45_000
 const RETRY_AFTER_PADRAO_S = 6
@@ -18,24 +18,36 @@ export const esperarORetryAfter = (r: { headers(): Record<string, string> }) => 
 
 // Qualquer status que não seja 429 segue, e o resultado na tela cai na
 // asserção de quem chamou. Vale a resposta, e não o texto: o aviso do 429
-// anterior continua na tela até a resposta seguinte.
-export async function enviarNoLimite(page: Page, rota: string, enviar: () => Promise<void>, esperado: Locator) {
-  const inicio = performance.now()
+// anterior continua na tela até a resposta seguinte. Devolve a resposta que
+// não foi 429, para quem chama conferir o status e o corpo do pedido.
+export async function enviarNoLimite(
+  page: Page,
+  rota: string,
+  enviar: () => Promise<void>,
+  esperado: Locator,
+): Promise<Response> {
+  let recuado = 0
   for (let i = 0; i < ENVIOS_NO_LIMITE; i++) {
     const resposta = page.waitForResponse((r) => new URL(r.url()).pathname === rota && r.request().method() === 'POST')
     await enviar()
     const r = await resposta
     if (r.status() !== 429) {
       await expect(esperado).toBeVisible()
-      return
+      return r
+    }
+    // O último envio não tem reenvio depois dele: esperar o recuo só atrasaria
+    // a falha.
+    if (i === ENVIOS_NO_LIMITE - 1) {
+      throw new Error(`${rota}: o último envio (${ENVIOS_NO_LIMITE} de ${ENVIOS_NO_LIMITE}) ainda deu 429`)
     }
     const recuo = recuoDo429Ms(r)
-    if (performance.now() - inicio + recuo > PRAZO_NO_LIMITE_MS) {
+    if (recuado + recuo > PRAZO_NO_LIMITE_MS) {
       throw new Error(`${rota}: o recuo do 429 (${recuo} ms) passaria do teto de ${PRAZO_NO_LIMITE_MS} ms`)
     }
+    recuado += recuo
     await espera(recuo)
   }
-  throw new Error(`${rota}: ainda em 429 depois de ${ENVIOS_NO_LIMITE} envios`)
+  throw new Error(`${rota}: sem resposta depois de ${ENVIOS_NO_LIMITE} envios`)
 }
 
 export async function enviarLogin(page: Page, email: string, senha: string, esperado: Locator) {
