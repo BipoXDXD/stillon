@@ -7,9 +7,11 @@
 -- catálogo e o binário anterior segue gravando e limpando o pendente sem
 -- citá-la. O par users_totp_pending_pair (00011) não muda. A coluna só tem
 -- sentido com o pendente presente; limpar o pendente a deixa como está, e o
--- próximo StartRotation a sobrescreve. NULL com pendente (linha antiga, ou
--- gravada pelo binário anterior) é troca vencida: a confirmação a recusa como
--- "sem troca pendente", e o dono inicia outra.
+-- próximo StartRotation a sobrescreve. NULL com pendente (linha anterior à
+-- migration, ou gravada pelo binário anterior enquanto a coluna nunca foi
+-- preenchida) é troca vencida: a confirmação a recusa como "sem troca
+-- pendente", e o dono inicia outra. Um instante velho que sobrou (rollback e
+-- nova troca pelo binário anterior) só encurta o prazo, nunca o alonga.
 --
 -- lock_timeout de 5 s pelo mesmo motivo da 00026: o ALTER pega ACCESS
 -- EXCLUSIVE em users e não pode enfileirar o tráfego atrás de uma leitura longa.

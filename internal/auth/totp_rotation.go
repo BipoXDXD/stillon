@@ -23,9 +23,9 @@ import (
 // antigo continua valendo; ConfirmRotation, com um código do app novo, promove
 // o pendente numa transação só. O pendente vale PendingRotationTTL (10 min) a
 // partir de totp_pending_started_at, e é da família de sessão que o criou
-// (totp_pending_family_id): só ela o confirma, e ele morre com ela — revogada a família (DELETE
-// /sessions/{id}, logout, troca de senha), nenhuma outra sessão viva o
-// confirma. Pendente e família caem juntos na confirmação, no Disable, no
+// (totp_pending_family_id): só ela o confirma, e ele morre com ela —
+// revogada a família (DELETE /sessions/{id}, logout, troca de senha),
+// nenhuma outra sessão viva o confirma. Pendente e família caem juntos na confirmação, no Disable, no
 // reset-2fa do CLI, na troca de senha e no set-password, e um novo
 // StartRotation substitui os dois.
 
@@ -52,8 +52,8 @@ const PendingRotationTTL = 10 * time.Minute
 // de recuperação fica gasto com o rastro totp.recovery_used, mesmo que a troca
 // nunca seja confirmada.
 //
-// Pendente e família são gravados juntos, com a auditoria
-// totp.rotation_started (a pista do dono de que uma troca foi iniciada). O
+// Pendente, família e o instante do início (totp_pending_started_at, o `now` do
+// chamador) são gravados juntos, com a auditoria totp.rotation_started (a pista do dono de que uma troca foi iniciada). O
 // bloqueio da conta zera junto: a senha e a posse do fator acabaram de ser
 // provadas.
 //

@@ -85,6 +85,28 @@ func TestConfirmRotationRefusedAtAndAfterTheDeadline(t *testing.T) {
 	}
 }
 
+// O prazo vem ANTES do código: com a troca vencida e o código ERRADO a resposta
+// é a mesma de "sem troca pendente", e não ErrTOTPInvalid; a recusa também não
+// mexe no bloqueio da conta (semEfeito compara tentativas e bloqueio).
+func TestConfirmRotationExpiredWithAWrongCodeIsStillNoRotation(t *testing.T) {
+	svc, pool, userID := setupTOTP(t)
+	familia := familiaViva(t, pool, userID, inicioDaTroca)
+	novo := iniciarTroca(t, svc, pool, userID, familia)
+	rotation := rotacaoAtual(t, pool, userID)
+	bloquearConta(t, pool, userID)
+	antes := fotografar(t, pool, userID)
+
+	em := inicioDaTroca.Add(auth.PendingRotationTTL)
+	errado := "000000"
+	if errado == codigoEm(t, novo, em) {
+		errado = "111111"
+	}
+	if _, err := svc.ConfirmRotation(context.Background(), userID, familia, rotation, errado, em); !errors.Is(err, auth.ErrTOTPNoRotation) {
+		t.Fatalf("confirmação vencida com código errado devolveu %v, queria ErrTOTPNoRotation", err)
+	}
+	semEfeito(t, pool, userID, antes)
+}
+
 // Abandonar a troca não muda o fator ativo: depois do prazo o app antigo segue
 // valendo.
 func TestExpiredRotationKeepsTheOldFactor(t *testing.T) {
@@ -99,7 +121,7 @@ func TestExpiredRotationKeepsTheOldFactor(t *testing.T) {
 }
 
 // Linha pendente sem o instante (anterior à 00027, ou gravada pelo binário
-// anterior) é troca vencida.
+// anterior com a coluna ainda vazia) é troca vencida.
 func TestConfirmRotationRefusesAPendingWithoutStartedAt(t *testing.T) {
 	svc, pool, userID := setupTOTP(t)
 	ctx := context.Background()
