@@ -535,8 +535,9 @@ func TestPendingSecretIsBoundToColumnAndUser(t *testing.T) {
 	familiaDoOutro := familiaViva(t, pool, outro, inicioDaTroca)
 	// A família vai junto, para a recusa ser a da AAD, e não a da família.
 	if _, err := pool.Exec(ctx,
-		`UPDATE users SET totp_pending_secret_enc = $2, totp_pending_family_id = $3 WHERE id = $1`,
-		outro, sealed, familiaDoOutro); err != nil {
+		`UPDATE users SET totp_pending_secret_enc = $2, totp_pending_family_id = $3,
+		                  totp_pending_started_at = $4 WHERE id = $1`,
+		outro, sealed, familiaDoOutro, inicioDaTroca); err != nil {
 		t.Fatal(err)
 	}
 

@@ -20,7 +20,7 @@ INSERT INTO users (id, email, password_hash, created_at) VALUES ($1, $2, $3, $4)
 -- confirmaria com o autenticador dele. O 2FA confirmado fica.
 --
 -- Uma troca de autenticador em andamento (totp_pending_secret_enc)
--- cai pelo mesmo motivo: o pendente não tem prazo, quem o iniciou pode ser o
+-- cai pelo mesmo motivo: o pendente vale só PendingRotationTTL (10 min), mas quem o iniciou pode ser o
 -- invasor, e uma sessão roubada o confirmaria depois, ficando com o 2FA.
 -- Trocar a senha é a reação do dono à suspeita, e mata a troca. A família que
 -- a iniciou (totp_pending_family_id) cai junto: os dois andam juntos.
