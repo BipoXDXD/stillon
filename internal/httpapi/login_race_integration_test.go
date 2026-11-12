@@ -52,6 +52,16 @@ var redefinicoes = []redefinicao{
 	}},
 	{"troca de senha", func(t *testing.T, a *api) (func() error, int) {
 		_, token := entrar(t, a)
+		// A primeira reserva da família INSERE a linha do contador, e a FK dela
+		// pega FOR KEY SHARE na linha do usuário, que o teste trava com FOR
+		// UPDATE: a troca pararia na reserva, e não no UPDATE do hash que a
+		// ordem da corrida pressupõe. Uma prova errada antes cria a linha, e as
+		// reservas seguintes só a atualizam.
+		aquecimento := trocarSenha(t, a, token, map[string]string{"current_password": "nao-e-a-senha-atual", "new_password": senhaNova})
+		aquecimento.Body.Close()
+		if aquecimento.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("a prova de aquecimento devolveu %d, queria 401", aquecimento.StatusCode)
+		}
 		return func() error {
 			resp, err := postSemT(http.DefaultClient, a.srv.URL+"/api/v1/auth/password", token,
 				map[string]string{"current_password": testPass, "new_password": senhaNova})

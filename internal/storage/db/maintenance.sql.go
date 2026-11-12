@@ -49,6 +49,41 @@ func (q *Queries) ConsolidateRollups(ctx context.Context, arg ConsolidateRollups
 	return result.RowsAffected(), nil
 }
 
+const deleteDeadFamilyProofs = `-- name: DeleteDeadFamilyProofs :execrows
+DELETE FROM session_family_proofs
+ WHERE family_id IN (
+    SELECT p.family_id FROM session_family_proofs p
+     WHERE p.updated_at < $1::timestamptz
+       AND NOT EXISTS (
+            SELECT 1 FROM sessions s
+             WHERE s.user_id = p.user_id AND s.family_id = p.family_id
+               AND s.used_at IS NULL AND s.revoked_at IS NULL
+               AND s.expires_at > $2::timestamptz)
+     ORDER BY p.family_id
+     LIMIT $3::int)
+`
+
+type DeleteDeadFamilyProofsParams struct {
+	DeadBefore time.Time
+	Now        time.Time
+	Batch      int32
+}
+
+// O contador de provas erradas (session_family_proofs, sem RLS) de uma família
+// que deixou de existir: revogada (inclusive pela 5ª prova errada) ou vencida.
+// Família viva nunca perde o contador, por mais parada que esteja; a vida dela
+// já é limitada pelo prazo do refresh. A mesma definição de FamilyIsLive, no par
+// (usuário, família). A folga é para as provas em voo de uma família recém
+// derrubada, que ainda usam a linha para contar. Em lote, na ordem da chave: a
+// rodada seguinte pega o resto.
+func (q *Queries) DeleteDeadFamilyProofs(ctx context.Context, arg DeleteDeadFamilyProofsParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteDeadFamilyProofs, arg.DeadBefore, arg.Now, arg.Batch)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const deleteExpiredSessions = `-- name: DeleteExpiredSessions :execrows
 DELETE FROM sessions WHERE expires_at < $1::timestamptz
 `

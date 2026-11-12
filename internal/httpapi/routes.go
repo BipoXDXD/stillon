@@ -43,7 +43,11 @@ type Deps struct {
 	Sessions *auth.Manager
 	TOTP     *auth.TOTP
 	// Accounts é a conta do dono: GET /me e POST /auth/password.
-	Accounts  *account.Service
+	Accounts *account.Service
+	// Proofs é o contador de provas erradas por família de sessão, no banco:
+	// uma instância para a troca de senha e as rotas do 2FA. Nil só onde
+	// nenhuma dessas rotas é chamada, como Accounts.
+	Proofs    *auth.FamilyProofs
 	Targets   *targets.Service
 	Incidents *history.Service
 	Channels  *notify.ChannelService
@@ -84,9 +88,9 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	} else {
 		auth.SetArgon2MaxConcurrent(auth.DefaultArgon2MaxConcurrent())
 	}
-	// Uma instância do contador de provas por família para a troca de senha e
-	// as rotas do 2FA: o orçamento é da família, não da rota.
-	provas := &provasDaFamilia{contador: auth.NewFamilyProofs(d.Clock), contas: d.Accounts, proxies: proxiesDe(cfg)}
+	// Um contador de provas por família para a troca de senha e as rotas do
+	// 2FA: o orçamento é da família, não da rota.
+	provas := &provasDaFamilia{contador: d.Proofs, contas: d.Accounts, proxies: proxiesDe(cfg)}
 	// O cookie de dispositivo: a chave do MAC vem da MASTER_KEY por HKDF, com
 	// rótulo próprio.
 	dispositivos := auth.NewDevices(cfg.MasterKey, d.Clock)

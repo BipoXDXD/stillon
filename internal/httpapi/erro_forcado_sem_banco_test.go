@@ -74,6 +74,7 @@ func apiSemBanco(t *testing.T) (*httptest.Server, *clock.Fake) {
 	srv := httptest.NewServer(httpapi.Routes(ctx, cfg, httpapi.Deps{
 		Store: store, Sessions: auth.NewManager(store, clk, cfg.IPHashKey), TOTP: segundoFator,
 		Accounts:    account.NewService(pool, segundoFator, clk, cfg.IPHashKey),
+		Proofs:      auth.NewFamilyProofs(pool, clk),
 		Targets:     targets.NewService(pool, box, clk),
 		Incidents:   history.NewService(pool, clk),
 		Channels:    notify.NewChannelService(pool, box, clk, &discordFalso{}, &carteiroFalso{}, cfg.PublicBaseURL),
