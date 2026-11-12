@@ -1,4 +1,4 @@
-import type { Locator, Page } from '@playwright/test'
+import type { Locator, Page, Response } from '@playwright/test'
 import { expect } from './fixtures'
 
 // O login, a troca de senha e as rotas do 2FA dividem o balde do login (5 de
@@ -18,8 +18,14 @@ export const esperarORetryAfter = (r: { headers(): Record<string, string> }) => 
 
 // Qualquer status que não seja 429 segue, e o resultado na tela cai na
 // asserção de quem chamou. Vale a resposta, e não o texto: o aviso do 429
-// anterior continua na tela até a resposta seguinte.
-export async function enviarNoLimite(page: Page, rota: string, enviar: () => Promise<void>, esperado: Locator) {
+// anterior continua na tela até a resposta seguinte. Devolve a resposta que
+// não foi 429, para quem chama conferir o status e o corpo do pedido.
+export async function enviarNoLimite(
+  page: Page,
+  rota: string,
+  enviar: () => Promise<void>,
+  esperado: Locator,
+): Promise<Response> {
   const inicio = performance.now()
   for (let i = 0; i < ENVIOS_NO_LIMITE; i++) {
     const resposta = page.waitForResponse((r) => new URL(r.url()).pathname === rota && r.request().method() === 'POST')
@@ -27,7 +33,12 @@ export async function enviarNoLimite(page: Page, rota: string, enviar: () => Pro
     const r = await resposta
     if (r.status() !== 429) {
       await expect(esperado).toBeVisible()
-      return
+      return r
+    }
+    // O último envio não tem reenvio depois dele: esperar o recuo só atrasaria
+    // a falha.
+    if (i === ENVIOS_NO_LIMITE - 1) {
+      throw new Error(`${rota}: o último envio (${ENVIOS_NO_LIMITE} de ${ENVIOS_NO_LIMITE}) ainda deu 429`)
     }
     const recuo = recuoDo429Ms(r)
     if (performance.now() - inicio + recuo > PRAZO_NO_LIMITE_MS) {
@@ -35,7 +46,7 @@ export async function enviarNoLimite(page: Page, rota: string, enviar: () => Pro
     }
     await espera(recuo)
   }
-  throw new Error(`${rota}: ainda em 429 depois de ${ENVIOS_NO_LIMITE} envios`)
+  throw new Error(`${rota}: sem resposta depois de ${ENVIOS_NO_LIMITE} envios`)
 }
 
 export async function enviarLogin(page: Page, email: string, senha: string, esperado: Locator) {
