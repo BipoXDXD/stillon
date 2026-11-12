@@ -113,167 +113,263 @@ func sourceEnv(inherited []string, password, app, pgOptions string, connect time
 // segredo) e a senha, que só viaja no ambiente dos clientes.
 type origem struct{ uri, senha string }
 
-// run supervisiona uma execução. Os defers registrados aqui formam a ordem de
-// encerramento (o último registrado roda primeiro) e por isso ficam todos no
-// mesmo corpo; os passos lineares vivem nas funções abaixo, na ordem em que
-// run as chama.
+// run supervisiona uma execução. Os defers formam a ordem de encerramento (o
+// último registrado roda primeiro) e por isso ficam no corpo da fase que abre
+// cada recurso: run guarda a saída e a proteção parental, supervisionarExportador
+// guarda pipes, exportador e clientes, e as fases seguintes só encadeiam passos.
 func run(parent context.Context, publicURI, password, output string, o options) (ref Reference, err error) {
-	if e := validarEntrada(publicURI, password, output); e != nil {
+	if e := conferirPartida(parent, publicURI, password, output); e != nil {
 		return ref, e
 	}
-	if parent.Err() != nil {
-		return ref, parent.Err()
-	}
-	src := origem{uri: publicURI, senha: password}
 	ctx, cancel := context.WithTimeout(parent, o.totalTimeout)
 	defer cancel()
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
-	if e := supported(); e != nil {
-		return ref, e
-	}
 	created, e := criarSaida(output)
-	defer func() {
-		if err != nil && created != nil {
-			if descarteErr := descartarSaida(output, created); descarteErr != nil {
-				err = descarteErr
-			}
-		}
-	}()
+	defer func() { descartarSaidaSeFalhou(output, created, &err) }()
 	if e != nil {
 		return ref, e
 	}
-	if o.protectParent {
-		release, e := protectParent()
-		if e != nil {
-			return ref, e
-		}
-		defer func() {
-			if releaseErr := release(); releaseErr != nil && err == nil {
-				ref = Reference{}
-				err = fmt.Errorf("proteção parental não foi desarmada: %w", releaseErr)
-			}
-		}()
+	release, e := protegerPai(o)
+	if e != nil {
+		return ref, e
 	}
+	defer func() { registrarFalhaTardia(&ref, &err, release(), "proteção parental não foi desarmada") }()
 	identity, e := novaIdentidade()
 	if e != nil {
 		return ref, e
 	}
-	exporterCtx, cancelExporter := context.WithCancelCause(ctx)
+	x := &execucao{
+		o: o, src: origem{uri: publicURI, senha: password}, output: output, created: created,
+		ctx: ctx, cancel: cancel,
+		exportName: identity + "_exporter", dumpName: identity + "_dump",
+	}
+	return x.supervisionarExportador()
+}
+
+// execucao é o estado de uma execução de run: o que é fixo desde a partida e
+// os recursos que as fases vão abrindo (campos abaixo de exporterCtx).
+type execucao struct {
+	o          options
+	src        origem
+	output     string
+	created    os.FileInfo
+	ctx        context.Context
+	cancel     context.CancelFunc
+	exportName string
+	dumpName   string
+
+	exporterCtx    context.Context
+	cancelExporter context.CancelCauseFunc
+	p              pipes
+	null           *os.File
+	s              *supervisao
+	exporter       *exec.Cmd
+	exporterWaited bool
+	dump           *exec.Cmd // nil até o dump iniciar
+	dumpWaited     bool
+}
+
+// supervisionarExportador abre pipes, saída privada e exportador; a partir do
+// Start, o defer final garante que nenhum cliente fica vivo.
+func (x *execucao) supervisionarExportador() (ref Reference, err error) {
+	exporterCtx, cancelExporter := context.WithCancelCause(x.ctx)
+	x.exporterCtx, x.cancelExporter = exporterCtx, cancelExporter
 	defer cancelExporter(nil)
-	exportName, dumpName := identity+"_exporter", identity+"_dump"
 	p, e := abrirPipes()
 	if e != nil {
 		return ref, e
 	}
+	x.p = p
 	defer p.fecharTudo()
-	closeDone := make(chan error, 1)
-	stopClose := context.AfterFunc(exporterCtx, func() { closeDone <- errors.Join(closePipe(p.inWrite), closePipe(p.outRead)) })
-	defer func() {
-		if !stopClose() {
-			if closeErr := <-closeDone; closeErr != nil && err == nil {
-				ref = Reference{}
-				err = fmt.Errorf("fechamento dos pipes falhou: %w", closeErr)
-			}
-		}
-	}()
+	aguardarFechamento := fecharPipesAoCancelar(exporterCtx, p)
+	defer func() { registrarFalhaTardia(&ref, &err, aguardarFechamento(), "fechamento dos pipes falhou") }()
 	null, e := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
 	if e != nil {
 		return ref, fmt.Errorf("saída privada indisponível: %w", e)
 	}
+	x.null = null
 	defer null.Close()
-	exporter := novoExportador(exporterCtx, o, src, exportName, p, null)
-	if e = exporter.Start(); e != nil {
+	x.exporter = novoExportador(exporterCtx, x.o, x.src, x.exportName, p, null)
+	if e = x.exporter.Start(); e != nil {
 		return ref, fmt.Errorf("exportador não iniciou: %w", e)
 	}
-	exporterWaited := false
-	var dump *exec.Cmd
-	dumpWaited := false
 	defer func() {
-		cancel()
-		var pendentes []*exec.Cmd
-		if dump != nil && !dumpWaited {
-			pendentes = append(pendentes, dump)
-		}
-		if !exporterWaited {
-			pendentes = append(pendentes, exporter)
-		}
+		x.cancel()
 		// Em falha, a primeira causa já é sanitizada. Os resultados do cleanup
 		// são consumidos; não podem converter a falha em sucesso.
-		if problema := encerrarClientes(p, pendentes...); problema != nil && err == nil {
-			ref = Reference{}
-			err = fmt.Errorf("encerramento dos clientes falhou: %w", problema)
-		}
+		registrarFalhaTardia(&ref, &err, encerrarClientes(p, x.pendentes()...), "encerramento dos clientes falhou")
 	}()
 	if e = errors.Join(closePipe(p.inRead), closePipe(p.outWrite)); e != nil {
 		return ref, fmt.Errorf("fechamento das extremidades dos filhos falhou: %w", e)
 	}
-	s := &supervisao{ctx: ctx, inWrite: p.inWrite, outRead: p.outRead, reader: bufio.NewReaderSize(p.outRead, maxLinhaProtocolo)}
-	snapshot, ref, e := s.prepararReferencia(o.prepareTimeout)
+	x.s = &supervisao{ctx: x.ctx, inWrite: p.inWrite, outRead: p.outRead, reader: bufio.NewReaderSize(p.outRead, maxLinhaProtocolo)}
+	return x.exportar()
+}
+
+// exportar roda as fases com o exportador de pé: referência, dump e
+// encerramento. Só o sucesso devolve a referência.
+func (x *execucao) exportar() (Reference, error) {
+	snapshot, ref, e := x.s.prepararReferencia(x.o.prepareTimeout)
 	if e != nil {
 		return Reference{}, e
 	}
-	if o.afterReference != nil {
-		if e = o.afterReference(ctx, ref); e != nil {
+	if x.o.afterReference != nil {
+		if e = x.o.afterReference(x.ctx, ref); e != nil {
 			return Reference{}, fmt.Errorf("preparação interrompida: %w", e)
 		}
 	}
-	dumpCtx, cancelDump := context.WithTimeout(ctx, o.dumpTimeout)
+	dumpCtx, cancelDump := context.WithTimeout(x.ctx, x.o.dumpTimeout)
 	defer cancelDump()
-	dump = novoDump(dumpCtx, o, src, dumpName, snapshot, output, null)
-	if e = dump.Start(); e != nil {
-		dump = nil
-		return Reference{}, fmt.Errorf("dump não iniciou: %w", e)
-	}
-	e = dump.Wait()
-	dumpWaited = true
-	if e != nil {
-		// O prazo do dump vence como sinal no processo; a causa que importa
-		// para o log é o prazo, e ela vai junto.
-		return Reference{}, fmt.Errorf("dump interrompido ou falhou: %w", errors.Join(e, context.Cause(dumpCtx)))
-	}
-	finishDone := make(chan struct{})
-	finishStart := time.Now()
-	finishTimer := time.AfterFunc(o.cleanup, func() { cancelExporter(errEncerramentoExcedido); close(finishDone) })
-	defer func() {
-		fired := !finishTimer.Stop()
-		if fired {
-			<-finishDone
-		}
-		// O prazo fecha os pipes e vence a leitura quase ao mesmo tempo, e o
-		// erro que chega primeiro (EOF, "file already closed", i/o timeout,
-		// context canceled) varia com a corrida. A causa não varia. O relógio
-		// decide, não o Stop: um timer vencido que ainda não rodou também é
-		// parado com sucesso, e o i/o timeout já indica o prazo vencido.
-		if err != nil && (fired || time.Since(finishStart) >= o.cleanup) && !errors.Is(err, errEncerramentoExcedido) {
-			ref = Reference{}
-			err = fmt.Errorf("%w (%w após %s)", err, errEncerramentoExcedido, o.cleanup)
-		}
-	}()
-	if e = s.definirPrazos(o.cleanup); e != nil {
+	if e = x.executarDump(dumpCtx, snapshot); e != nil {
 		return Reference{}, e
 	}
-	// Só metade do encerramento espera as sessões; a outra metade fica para o
-	// ROLLBACK e o Wait do exportador. Com o mesmo prazo do pipe e do timer, o
-	// erro de uma sessão que não fecha saía da corrida entre os três (#317).
-	if e = s.aguardarSessoesEncerradas(o.cleanup/2, exportName, dumpName); e != nil {
-		return Reference{}, e
-	}
-	if e = s.pedirFimDoExportador(); e != nil {
-		return Reference{}, e
-	}
-	e = exporter.Wait()
-	exporterWaited = true
-	if e != nil {
-		return Reference{}, fmt.Errorf("exportador não encerrou corretamente: %w", e)
-	}
-	if e = errors.Join(context.Cause(ctx), context.Cause(exporterCtx)); e != nil {
-		return Reference{}, fmt.Errorf("prazo ou cancelamento antes da conclusão: %w", e)
-	}
-	if e = conferirSaida(output, created); e != nil {
+	if e = x.encerrarExportador(); e != nil {
 		return Reference{}, e
 	}
 	return ref, nil
+}
+
+func (x *execucao) executarDump(ctx context.Context, snapshot string) error {
+	dump := novoDump(ctx, x.o, x.src, x.dumpName, snapshot, x.output, x.null)
+	if e := dump.Start(); e != nil {
+		return fmt.Errorf("dump não iniciou: %w", e)
+	}
+	x.dump = dump
+	e := dump.Wait()
+	x.dumpWaited = true
+	if e != nil {
+		// O prazo do dump vence como sinal no processo; a causa que importa
+		// para o log é o prazo, e ela vai junto.
+		return fmt.Errorf("dump interrompido ou falhou: %w", errors.Join(e, context.Cause(ctx)))
+	}
+	return nil
+}
+
+// encerrarExportador é a fase final: metade do prazo de encerramento espera as
+// sessões sumirem da origem e a outra metade fica para o ROLLBACK e o Wait do
+// exportador. Com o mesmo prazo do pipe e do timer, o erro de uma sessão que
+// não fecha saía da corrida entre os três (#317).
+func (x *execucao) encerrarExportador() (err error) {
+	prazo := iniciarPrazoDeEncerramento(x.cancelExporter, x.o.cleanup)
+	defer func() { prazo.concluir(&err) }()
+	if e := x.s.definirPrazos(x.o.cleanup); e != nil {
+		return e
+	}
+	if e := x.s.aguardarSessoesEncerradas(x.o.cleanup/2, x.exportName, x.dumpName); e != nil {
+		return e
+	}
+	if e := x.s.pedirFimDoExportador(); e != nil {
+		return e
+	}
+	e := x.exporter.Wait()
+	x.exporterWaited = true
+	if e != nil {
+		return fmt.Errorf("exportador não encerrou corretamente: %w", e)
+	}
+	if e = errors.Join(context.Cause(x.ctx), context.Cause(x.exporterCtx)); e != nil {
+		return fmt.Errorf("prazo ou cancelamento antes da conclusão: %w", e)
+	}
+	return conferirSaida(x.output, x.created)
+}
+
+// pendentes são os clientes iniciados e ainda não esperados.
+func (x *execucao) pendentes() []*exec.Cmd {
+	var cmds []*exec.Cmd
+	if x.dump != nil && !x.dumpWaited {
+		cmds = append(cmds, x.dump)
+	}
+	if !x.exporterWaited {
+		cmds = append(cmds, x.exporter)
+	}
+	return cmds
+}
+
+// conferirPartida recusa a execução antes de qualquer efeito: entrada
+// inválida, contexto já cancelado ou plataforma sem suporte.
+func conferirPartida(parent context.Context, publicURI, password, output string) error {
+	if e := validarEntrada(publicURI, password, output); e != nil {
+		return e
+	}
+	if parent.Err() != nil {
+		return parent.Err()
+	}
+	return supported()
+}
+
+// descartarSaidaSeFalhou apaga a saída que esta execução criou quando ela
+// falhou; se o descarte também falha, esse erro passa a ser o resultado.
+func descartarSaidaSeFalhou(output string, created os.FileInfo, err *error) {
+	if *err == nil || created == nil {
+		return
+	}
+	if e := descartarSaida(output, created); e != nil {
+		*err = e
+	}
+}
+
+// protegerPai arma a proteção parental quando as opções pedem; sem ela,
+// devolve um desarme que não faz nada.
+func protegerPai(o options) (release func() error, err error) {
+	if !o.protectParent {
+		return func() error { return nil }, nil
+	}
+	return protectParent()
+}
+
+// registrarFalhaTardia transforma uma falha descoberta no encerramento em
+// resultado de run, mas só se a execução ainda não tinha falhado: a primeira
+// causa vence.
+func registrarFalhaTardia(ref *Reference, err *error, causa error, contexto string) {
+	if causa != nil && *err == nil {
+		*ref = Reference{}
+		*err = fmt.Errorf("%s: %w", contexto, causa)
+	}
+}
+
+// fecharPipesAoCancelar fecha os pipes do pai quando ctx é cancelado. O
+// retorno para a escuta e devolve o erro de um fechamento que já disparou.
+func fecharPipesAoCancelar(ctx context.Context, p pipes) (aguardar func() error) {
+	feito := make(chan error, 1)
+	parar := context.AfterFunc(ctx, func() { feito <- errors.Join(closePipe(p.inWrite), closePipe(p.outRead)) })
+	return func() error {
+		if parar() {
+			return nil
+		}
+		return <-feito
+	}
+}
+
+// prazoDeEncerramento cancela o exportador, com errEncerramentoExcedido como
+// causa, se a checagem final não terminar dentro do limite.
+type prazoDeEncerramento struct {
+	limite   time.Duration
+	inicio   time.Time
+	timer    *time.Timer
+	disparou chan struct{}
+}
+
+func iniciarPrazoDeEncerramento(cancelExporter context.CancelCauseFunc, limite time.Duration) *prazoDeEncerramento {
+	p := &prazoDeEncerramento{limite: limite, disparou: make(chan struct{})}
+	p.inicio = time.Now()
+	p.timer = time.AfterFunc(limite, func() { cancelExporter(errEncerramentoExcedido); close(p.disparou) })
+	return p
+}
+
+// concluir para o timer e, se o prazo estourou, rotula a falha com ele.
+func (p *prazoDeEncerramento) concluir(err *error) {
+	fired := !p.timer.Stop()
+	if fired {
+		<-p.disparou
+	}
+	// O prazo fecha os pipes e vence a leitura quase ao mesmo tempo, e o
+	// erro que chega primeiro (EOF, "file already closed", i/o timeout,
+	// context canceled) varia com a corrida. A causa não varia. O relógio
+	// decide, não o Stop: um timer vencido que ainda não rodou também é
+	// parado com sucesso, e o i/o timeout já indica o prazo vencido.
+	if *err != nil && (fired || time.Since(p.inicio) >= p.limite) && !errors.Is(*err, errEncerramentoExcedido) {
+		*err = fmt.Errorf("%w (%w após %s)", *err, errEncerramentoExcedido, p.limite)
+	}
 }
 
 // encerrarClientes fecha as pontas do pai e encerra os clientes que ainda não
