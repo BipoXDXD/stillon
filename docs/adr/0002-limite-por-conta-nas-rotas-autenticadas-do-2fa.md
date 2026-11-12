@@ -100,7 +100,8 @@ a regra que o garante):
 
 - 429 com `Retry-After` depois da rajada, em cada uma das seis rotas; as seis dividem um balde.
 - Duas sessões da mesma conta, de IPs diferentes, dividem o balde; dois usuários no mesmo IP não.
-- Pedido sem token, com token forjado ou vencido: 401 e balde do dono intacto.
+- Pedido sem token, com token forjado, adulterado ou vencido: 401 e balde do dono intacto, nas seis
+  rotas, mesmo depois de mais pedidos do intruso do que a rajada.
 - Login e fluxo completo do 2FA do mesmo IP, sem 429; login e `/totp/verify` seguem por IP e não
   gastam o balde da conta (e o contrário).
 - Recarga no relógio injetado; nenhum Argon2id num pedido barrado; o 429 não traz id, IP, e-mail,

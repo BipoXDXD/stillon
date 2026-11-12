@@ -307,34 +307,6 @@ func TestAccountBucketsOfDifferentAccountsAreIndependentAcrossIPs(t *testing.T) 
 	exigirRecusaPorConta(t, st, h, codigo)
 }
 
-// Quem não tem credencial válida não gasta ficha de ninguém: pedido sem Bearer,
-// com token forjado ou vencido é 401 e deixa o balde do dono intacto, mesmo
-// vindo do mesmo IP. A próxima rajada do dono passa inteira.
-func TestRequestsWithoutAValidTokenDoNotSpendTheAccountBucket(t *testing.T) {
-	a := newAPI(t)
-	token := tokenDe(t, a, a.userID)
-	familia := familiaDe(t, token, a)
-	forjado, err := auth.NewAccessToken([]byte("outro-segredo-com-mais-de-32-bytes!!"), a.userID, familia, a.clk.Now())
-	if err != nil {
-		t.Fatal(err)
-	}
-	vencido, err := auth.NewAccessToken(testJWTSecret, a.userID, familia, a.clk.Now().Add(-24*time.Hour))
-	if err != nil {
-		t.Fatal(err)
-	}
-	for i, intruso := range []string{"", forjado, vencido, "", forjado, vencido} {
-		rota := rotasDaConta[i]
-		st, h, corpo := pedirComCorpo(t, a, rota, intruso, "")
-		if codigo := codigoDoCorpo(t, corpo); st != http.StatusUnauthorized || codigo != "unauthorized" {
-			t.Fatalf("intruso %d em %s: %d %s, queria 401 unauthorized", i+1, rota, st, codigo)
-		}
-		exigirSemDadoAlheio(t, "intruso "+strconv.Itoa(i+1), h, corpo, a.userID.String(), familia.String(), testEmail, "127.0.0.1")
-	}
-	gastarFichas(t, a, rotasDaConta[0], token, rajadaPorConta)
-	st, h, codigo := pedirSemProva(t, a, rotasDaConta[0], token, "")
-	exigirRecusaPorConta(t, st, h, codigo)
-}
-
 // O caso do e2e: login, enroll, confirm, rotate, rotate/confirm, disable e login
 // de novo, do mesmo IP, sem 429. O login gasta ficha do IP, o resto gasta da
 // conta: nenhum balde disputa com o outro. A troca e o desligamento usam código
@@ -594,16 +566,81 @@ func TestRevokedTokenIsRefusedBeforeTheAccountBucket(t *testing.T) {
 			_, vivo := entrar(t, a)
 			sair := post(t, c, a.srv.URL+"/api/v1/auth/logout", nil)
 			sair.Body.Close()
+			familia := familiaDe(t, revogado, a)
 			for i := 1; i <= rajadaPorConta+3; i++ {
-				st, _, codigo := pedirSemProva(t, a, rota, revogado, "")
-				if st != http.StatusUnauthorized || codigo != "unauthorized" {
+				st, h, corpo := pedirComCorpo(t, a, rota, revogado, "")
+				if codigo := codigoDoCorpo(t, corpo); st != http.StatusUnauthorized || codigo != "unauthorized" {
 					t.Fatalf("pedido %d com a família revogada: %d %s, queria 401 unauthorized", i, st, codigo)
 				}
+				exigirSemDadoAlheio(t, "família revogada", h, corpo, a.userID.String(), familia.String(), testEmail, "127.0.0.1")
 			}
 			gastarFichas(t, a, rota, vivo, rajadaPorConta)
 			st, h, codigo := pedirSemProva(t, a, rota, vivo, "")
 			exigirRecusaPorConta(t, st, h, codigo)
 		})
+	}
+}
+
+// Cada intruso em cada uma das seis rotas: sem Authorization, com assinatura de
+// outro segredo, com a assinatura adulterada e vencido. O token de família
+// revogada tem o teste próprio (TestRevokedTokenIsRefusedBeforeTheAccountBucket).
+// O pedido é 401 unauthorized, o corpo não traz dado da conta, e o balde do dono
+// fica intacto: depois de rajada+3 pedidos do intruso, a conta legítima ainda
+// passa a rajada inteira e só a ficha seguinte é 429. Mais pedidos do que a
+// rajada é o que pega um limite posto antes do authn, ou com chave fixa quando
+// não há usuário: o intruso esgotaria esse balde e levaria 429 em vez de 401.
+func TestEachRouteRefusesAnIntruderWithoutSpendingTheAccountBucket(t *testing.T) {
+	intrusos := []struct {
+		nome  string
+		token func(t *testing.T, a *api, legitimo string) string
+	}{
+		{"sem Authorization", func(*testing.T, *api, string) string { return "" }},
+		{"assinatura de outro segredo", func(t *testing.T, a *api, legitimo string) string {
+			tok, err := auth.NewAccessToken([]byte("outro-segredo-com-mais-de-32-bytes!!"), a.userID, familiaDe(t, legitimo, a), a.clk.Now())
+			if err != nil {
+				t.Fatal(err)
+			}
+			return tok
+		}},
+		{"assinatura adulterada", func(t *testing.T, a *api, legitimo string) string {
+			partes := strings.Split(legitimo, ".")
+			assinatura := []byte(partes[2])
+			meio := len(assinatura) / 2
+			if assinatura[meio] == 'A' {
+				assinatura[meio] = 'B'
+			} else {
+				assinatura[meio] = 'A'
+			}
+			partes[2] = string(assinatura)
+			return strings.Join(partes, ".")
+		}},
+		{"vencido", func(t *testing.T, a *api, legitimo string) string {
+			tok, err := auth.NewAccessToken(testJWTSecret, a.userID, familiaDe(t, legitimo, a), a.clk.Now().Add(-24*time.Hour))
+			if err != nil {
+				t.Fatal(err)
+			}
+			return tok
+		}},
+	}
+	for _, rota := range rotasDaConta {
+		for _, intruso := range intrusos {
+			t.Run(rota+"/"+intruso.nome, func(t *testing.T) {
+				a := newAPI(t)
+				legitimo := tokenDe(t, a, a.userID)
+				familia := familiaDe(t, legitimo, a)
+				token := intruso.token(t, a, legitimo)
+				for i := 1; i <= rajadaPorConta+3; i++ {
+					st, h, corpo := pedirComCorpo(t, a, rota, token, "")
+					if codigo := codigoDoCorpo(t, corpo); st != http.StatusUnauthorized || codigo != "unauthorized" {
+						t.Fatalf("pedido %d do intruso: %d %s, queria 401 unauthorized", i, st, codigo)
+					}
+					exigirSemDadoAlheio(t, "intruso", h, corpo, a.userID.String(), familia.String(), testEmail, "127.0.0.1")
+				}
+				gastarFichas(t, a, rota, legitimo, rajadaPorConta)
+				st, h, codigo := pedirSemProva(t, a, rota, legitimo, "")
+				exigirRecusaPorConta(t, st, h, codigo)
+			})
+		}
 	}
 }
 
