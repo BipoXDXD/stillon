@@ -21,8 +21,9 @@ import { codigoNovo } from './totp'
 // pilha própria e contra o compose (o job e2e do CI, com E2E_COMPOSE_SERVICE);
 // contra outra pilha externa, onde não há como rodar o CLI, é pulado.
 
-// Os baldes do login (5 de burst por IP) e do /totp/verify, que o fluxo
-// acabou de gastar; a mesma pausa do fluxo.spec.ts.
+// Os baldes do login (5 de burst por IP, que as rotas do 2FA também gastam)
+// e do /totp/verify, que as specs anteriores gastaram; a mesma pausa do
+// fluxo.spec.ts.
 const RECARGA_DOS_BALDES_MS = 21_000
 
 test.beforeAll(async () => {
@@ -58,6 +59,12 @@ test('ativar o 2FA, trocar de autenticador com o rotation, entrar com o app novo
   // viradas de 30 s de espera, e o prazo de antes cobre as cinco.
   test.setTimeout(240_000)
   const email = credenciais.email
+  // O status de cada resposta da autenticação vai para o log do run (sem
+  // corpo nem cabeçalhos): um 429 no balde do login fica visível no CI.
+  page.on('response', (r) => {
+    const { pathname } = new URL(r.url())
+    if (pathname.startsWith('/api/v1/auth/')) console.log(`troca: ${r.request().method()} ${pathname} ${r.status()}`)
+  })
 
   await page.goto('/login')
   await enviarLogin(page, email, credenciais.senha, page.getByRole('heading', { name: 'Painel' }))
@@ -102,7 +109,7 @@ test('ativar o 2FA, trocar de autenticador com o rotation, entrar com o app novo
   await page.getByRole('button', { name: 'Sair' }).click()
   await expect(page.getByRole('heading', { name: 'Entrar no StillOn' })).toBeVisible()
   // Este login é o sexto pedido seguido no balde do login (o entrar do passo
-  // 1 e as quatro rotas do 2FA): sem o recuo, ele pega 429 sempre que as
+  // 1 e as quatro rotas do 2FA): sem o recuo, pode pegar 429 quando as
   // esperas do codigoNovo não deram tempo de a ficha voltar.
   const campoDoCodigo = page.getByLabel('Código do aplicativo autenticador')
   await enviarLogin(page, email, credenciais.senha, campoDoCodigo)
