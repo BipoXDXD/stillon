@@ -254,6 +254,84 @@ func TestUpdateChangesOnlyWhatCameAndReplacesItemsWhole(t *testing.T) {
 	}
 }
 
+// O PATCH só muda o que veio: cada campo sozinho deixa os outros como
+// estavam, e um PATCH vazio não muda nada.
+func TestUpdateEachFieldAloneKeepsTheOthers(t *testing.T) {
+	a := novoAmbiente(t)
+	ctx := context.Background()
+	dono := a.usuario(t)
+	api := a.alvo(t, dono, "api")
+	itens := []statuspage.Item{{TargetID: api, DisplayName: "API"}}
+	p, err := a.svc.Create(ctx, dono, statuspage.Input{Slug: "empresa", Title: "Status", Published: true, Items: itens})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	slug, titulo, despublicada := "empresa-2", "Outro", false
+	casos := []struct {
+		nome  string
+		patch statuspage.Patch
+		quer  statuspage.Page
+	}{
+		{"vazio", statuspage.Patch{}, statuspage.Page{Slug: "empresa", Title: "Status", Published: true, Items: itens}},
+		{"slug", statuspage.Patch{Slug: &slug}, statuspage.Page{Slug: "empresa-2", Title: "Status", Published: true, Items: itens}},
+		{"título", statuspage.Patch{Title: &titulo}, statuspage.Page{Slug: "empresa-2", Title: "Outro", Published: true, Items: itens}},
+		{"publicação", statuspage.Patch{Published: &despublicada}, statuspage.Page{Slug: "empresa-2", Title: "Outro", Published: false, Items: itens}},
+	}
+	for _, c := range casos {
+		got, err := a.svc.Update(ctx, dono, p.ID, c.patch)
+		if err != nil {
+			t.Fatalf("%s: %v", c.nome, err)
+		}
+		if got.ID != p.ID || got.Slug != c.quer.Slug || got.Title != c.quer.Title || got.Published != c.quer.Published ||
+			!slices.Equal(got.Items, c.quer.Items) || !got.CreatedAt.Equal(agora) {
+			t.Errorf("PATCH %s = %+v; queria %+v", c.nome, got, c.quer)
+		}
+	}
+}
+
+// Um PATCH recusado (validação, alvo alheio ou slug tomado) desfaz tudo:
+// nem os campos nem os itens mudam.
+func TestUpdateRefusedLeavesThePageUntouched(t *testing.T) {
+	a := novoAmbiente(t)
+	ctx := context.Background()
+	dono, outro := a.usuario(t), a.usuario(t)
+	api, alheio := a.alvo(t, dono, "api"), a.alvo(t, outro, "do outro")
+	itens := []statuspage.Item{{TargetID: api, DisplayName: "API"}}
+	p, err := a.svc.Create(ctx, dono, statuspage.Input{Slug: "empresa", Title: "Status", Items: itens})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.svc.Create(ctx, outro, statuspage.Input{Slug: "ocupado", Title: "Do outro"}); err != nil {
+		t.Fatal(err)
+	}
+
+	titulo, ocupado := "Mudou", "ocupado"
+	roubados := []statuspage.Item{{TargetID: alheio, DisplayName: "roubado"}}
+	invalidos := []statuspage.Item{{TargetID: api, DisplayName: ""}}
+	casos := []struct {
+		nome  string
+		patch statuspage.Patch
+		erro  func(error) bool
+	}{
+		{"alvo alheio", statuspage.Patch{Title: &titulo, Items: &roubados}, func(err error) bool {
+			f := campos(err)
+			return len(f) == 1 && f[0] == statuspage.FieldError{Field: "items[0].target_id", Reason: "invalid"}
+		}},
+		{"item inválido", statuspage.Patch{Title: &titulo, Items: &invalidos}, func(err error) bool { return campos(err) != nil }},
+		{"slug tomado", statuspage.Patch{Title: &titulo, Slug: &ocupado}, func(err error) bool { return errors.Is(err, statuspage.ErrSlugTaken) }},
+	}
+	for _, c := range casos {
+		if _, err := a.svc.Update(ctx, dono, p.ID, c.patch); !c.erro(err) {
+			t.Errorf("PATCH com %s = %v", c.nome, err)
+		}
+		got, err := a.svc.Get(ctx, dono)
+		if err != nil || got.Slug != "empresa" || got.Title != "Status" || !slices.Equal(got.Items, itens) {
+			t.Errorf("PATCH recusado com %s mexeu na página: %+v, %v", c.nome, got, err)
+		}
+	}
+}
+
 func TestUpdateOfAnotherIDIsNotFound(t *testing.T) {
 	a := novoAmbiente(t)
 	ctx := context.Background()
