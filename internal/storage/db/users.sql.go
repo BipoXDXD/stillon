@@ -195,8 +195,9 @@ type ReplaceUserHashParams struct {
 // confirmaria com o autenticador dele. O 2FA confirmado fica.
 //
 // Uma troca de autenticador em andamento (totp_pending_secret_enc)
-// cai pelo mesmo motivo: o pendente não tem prazo, quem o iniciou pode ser o
-// invasor, e uma sessão roubada o confirmaria depois, ficando com o 2FA.
+// cai pelo mesmo motivo: o pendente vale só PendingRotationTTL (10 min), mas
+// quem o iniciou pode ser o invasor, e uma sessão roubada o confirmaria
+// depois, ficando com o 2FA.
 // Trocar a senha é a reação do dono à suspeita, e mata a troca. A família que
 // a iniciou (totp_pending_family_id) cai junto: os dois andam juntos.
 func (q *Queries) ReplaceUserHash(ctx context.Context, arg ReplaceUserHashParams) (int64, error) {
