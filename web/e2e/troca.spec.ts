@@ -1,5 +1,6 @@
 import type { Page } from '@playwright/test'
 import { controlePositivo, expect, test } from './fixtures'
+import { enviarLogin } from './limite'
 import { desligar2FA, podeDesligar2FA } from './pilha'
 import { codigoNovo } from './totp'
 
@@ -59,10 +60,7 @@ test('ativar o 2FA, trocar de autenticador com o rotation, entrar com o app novo
   const email = credenciais.email
 
   await page.goto('/login')
-  await page.getByLabel('E-mail').fill(email)
-  await page.getByLabel('Senha').fill(credenciais.senha)
-  await page.getByRole('button', { name: 'Entrar' }).click()
-  await expect(page.getByRole('heading', { name: 'Painel' })).toBeVisible()
+  await enviarLogin(page, email, credenciais.senha, page.getByRole('heading', { name: 'Painel' }))
   await page.getByRole('link', { name: 'Conta', exact: true }).click()
 
   // 1. Ativar: senha, o QR (a chave em texto), o código, os códigos.
@@ -103,10 +101,12 @@ test('ativar o 2FA, trocar de autenticador com o rotation, entrar com o app novo
   // 4. Sair e entrar com o app novo: o segredo trocou de verdade.
   await page.getByRole('button', { name: 'Sair' }).click()
   await expect(page.getByRole('heading', { name: 'Entrar no StillOn' })).toBeVisible()
-  await page.getByLabel('E-mail').fill(email)
-  await page.getByLabel('Senha').fill(credenciais.senha)
-  await page.getByRole('button', { name: 'Entrar' }).click()
-  await page.getByLabel('Código do aplicativo autenticador').fill(await codigoNovo(nova))
+  // Este login é o sexto pedido seguido no balde do login (o entrar do passo
+  // 1 e as quatro rotas do 2FA): sem o recuo, ele pega 429 sempre que as
+  // esperas do codigoNovo não deram tempo de a ficha voltar.
+  const campoDoCodigo = page.getByLabel('Código do aplicativo autenticador')
+  await enviarLogin(page, email, credenciais.senha, campoDoCodigo)
+  await campoDoCodigo.fill(await codigoNovo(nova))
   await page.getByRole('button', { name: 'Verificar' }).click()
   // O ?next= volta a Configurações, como no fluxo.spec.ts.
   await expect(page.getByRole('heading', { name: 'Configurações' })).toBeVisible()
