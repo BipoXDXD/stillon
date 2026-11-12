@@ -19,8 +19,8 @@ const senhaNova = "a-senha-nova-bem-comprida"
 // entrar faz login num cliente próprio (um cookie jar = um aparelho) e devolve
 // o cliente e o access token. Cada chamada abre uma família de sessão.
 //
-// Atenção ao orçamento: o login e POST /auth/password dividem o balde de 10/min
-// com burst 5 por IP, e todo teste daqui roda do mesmo 127.0.0.1.
+// Atenção ao orçamento: o login tem o balde de 10/min com burst 5 por IP, e
+// todo teste daqui roda do mesmo 127.0.0.1. POST /auth/password tem o seu, por conta.
 func entrar(t *testing.T, a *api) (*http.Client, string) {
 	t.Helper()
 	c := clientWithJar(t)
@@ -361,20 +361,15 @@ func TestChangePasswordDeadFamily(t *testing.T) {
 	}
 }
 
-// A troca divide o balde do login (contrato: "mesmo limite por IP"). Os cinco
-// logins usam e-mail inexistente para não travar a conta: o que se mede é o
-// limitador.
+// A troca NÃO divide o balde do login: o login segue por IP, e a troca tem o
+// balde por conta (ver totp_limite_conta_integration_test.go). Os cinco logins
+// usam e-mail inexistente para não travar a conta: o que se mede é o limitador.
 //
-// É a trava do wiring, pelo Routes de verdade: registrar /auth/password sem o
-// limiteLogin, ou com uma instância própria do limitador, dá 401 no lugar do
-// 429. Os cinco logins recusados com 401,
-// e não 429, são o contraponto: o balde tem 5 fichas, e a sexta requisição,
-// que é a troca, é a que o esgota.
-//
-// O limitador lê o relógio falso da API: parado, nenhuma ficha volta durante o
-// teste, por mais lenta que a máquina esteja. Avançar 6 s (o limite é 10 por
-// minuto) devolve exatamente uma.
-func TestChangePasswordSharesTheLoginLimiter(t *testing.T) {
+// É a trava do wiring, pelo Routes de verdade: registrar /auth/password atrás do
+// limiteLogin dá 429 no lugar do 400. Os cinco logins recusados com 401, e a
+// sexta requisição, do mesmo IP, com 429 no login, são o contraponto: o balde do
+// IP está esgotado, e a troca com token válido ainda passa.
+func TestChangePasswordDoesNotShareTheLoginLimiter(t *testing.T) {
 	a := newAPI(t)
 	loginFalho := func() int {
 		resp := login(t, a, clientWithJar(t), "ninguem@exemplo.com", testPass)
@@ -383,16 +378,16 @@ func TestChangePasswordSharesTheLoginLimiter(t *testing.T) {
 	}
 	for i := range 5 {
 		if code := loginFalho(); code != http.StatusUnauthorized {
-			t.Fatalf("login %d devolveu %d, queria 401: o balde esgotou antes da troca", i+1, code)
+			t.Fatalf("login %d devolveu %d, queria 401: o balde esgotou antes da hora", i+1, code)
 		}
 	}
-	resp := trocarSenha(t, a, "token-qualquer", map[string]string{"current_password": testPass, "new_password": senhaNova})
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusTooManyRequests {
-		t.Fatalf("status %d, queria 429: a troca não divide o balde do login", resp.StatusCode)
+	if code := loginFalho(); code != http.StatusTooManyRequests {
+		t.Fatalf("sexto login devolveu %d, queria 429", code)
 	}
+	st, _, codigo := pedirSemProva(t, a, rotaSenha, tokenDe(t, a, a.userID), "")
+	exigirPassa(t, "a troca com o balde do login esgotado", st, codigo)
 
-	a.clk.Advance(6 * time.Second)
+	a.clk.Advance(umaFichaPorIP)
 	if code := loginFalho(); code != http.StatusUnauthorized {
 		t.Fatalf("depois de 6 s, o login devolveu %d, queria 401: a ficha não voltou", code)
 	}

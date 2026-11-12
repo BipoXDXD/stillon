@@ -176,7 +176,7 @@ func TestSecondFactorProofDiesWithTheRotation(t *testing.T) {
 // antes do código: não conta como prova errada (cinco seguidos não derrubam a
 // família) e o pendente fica.
 func TestRotateConfirmNeedsTheRotationItKnows(t *testing.T) {
-	a := apiOrigemPorPedido(t)
+	a := apiComFichaPorPedido(t)
 	velho := cadastrarTOTP(t, a, clientWithJar(t))
 	token := accessTokenValido(t, a)
 

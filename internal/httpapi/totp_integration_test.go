@@ -647,7 +647,7 @@ func falhasDeLogin(t *testing.T, a *api) int {
 // deixa de valer nas rotas que exigem a sessão viva. O dono não é trancado: a
 // conta não conta nada, e o login com a senha certa entra.
 func TestEnrollWrongPasswordCountsInTheFamily(t *testing.T) {
-	a := apiOrigemPorPedido(t)
+	a := apiComFichaPorPedido(t)
 	roubado := accessTokenValido(t, a)
 
 	for i := range provasPorFamilia {
