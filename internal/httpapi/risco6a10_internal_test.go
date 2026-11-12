@@ -35,7 +35,11 @@ type apagaUsuarioNaLeitura struct {
 
 func (a *apagaUsuarioNaLeitura) TraceQueryStart(ctx context.Context, _ *pgx.Conn, d pgx.TraceQueryStartData) context.Context {
 	if strings.Contains(d.SQL, "FROM users") && !a.feito.Swap(true) {
-		if _, err := a.outro.Exec(context.Background(), `DELETE FROM users WHERE id = $1`, a.usuario); err != nil {
+		// Com prazo: se a rota um dia travar a linha antes desta leitura, o
+		// DELETE esperaria por ela para sempre. Assim o teste falha, não trava.
+		prazo, cancelar := context.WithTimeout(context.Background(), prazoDoApagar)
+		defer cancelar()
+		if _, err := a.outro.Exec(prazo, `DELETE FROM users WHERE id = $1`, a.usuario); err != nil {
 			a.erro.Store(err)
 		}
 	}
@@ -43,6 +47,9 @@ func (a *apagaUsuarioNaLeitura) TraceQueryStart(ctx context.Context, _ *pgx.Conn
 }
 
 func (*apagaUsuarioNaLeitura) TraceQueryEnd(context.Context, *pgx.Conn, pgx.TraceQueryEndData) {}
+
+// prazoDoApagar limita o DELETE do gatilho.
+const prazoDoApagar = 5 * time.Second
 
 type cenarioDoUsuarioSumido struct {
 	h       *AuthHandlers

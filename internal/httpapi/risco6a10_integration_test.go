@@ -29,7 +29,11 @@ func TestTOTPConfirmSemCadastroNaoContaComoErro(t *testing.T) {
 
 	for i := range auth.FamilyProofLimit + 1 {
 		a.clk.Advance(umaFichaPorConta) // o balde por conta não entra na conta
-		status, corpo := lerCru(t, a, http.MethodPost, "/api/v1/auth/totp/confirm", tok, map[string]string{"code": "123456"})
+		resp := chamar(t, a, http.MethodPost, "/api/v1/auth/totp/confirm", tok, map[string]string{"code": "123456"})
+		status, corpo := resp.StatusCode, string(lerCorpo(t, resp, nil))
+		if cookies := resp.Header.Values("Set-Cookie"); len(cookies) != 0 {
+			t.Errorf("pedido %d: a recusa mexeu nos cookies: %v", i+1, cookies)
+		}
 		if status != http.StatusBadRequest {
 			t.Fatalf("pedido %d: status %d, queria 400: %s", i+1, status, corpo)
 		}
@@ -79,23 +83,23 @@ func TestPatchAlvoDegradedThresholdComValor(t *testing.T) {
 	}
 	caminho := "/api/v1/targets/" + criado.ID
 
-	patch := func(corpo map[string]any) (int, string) {
+	patch := func(t *testing.T, corpo map[string]any) (int, string) {
 		t.Helper()
 		return lerCru(t, a, http.MethodPatch, caminho, tok, corpo)
 	}
 
-	if status, corpo := patch(map[string]any{"degraded_threshold_ms": 800}); status != http.StatusOK {
+	if status, corpo := patch(t, map[string]any{"degraded_threshold_ms": 800}); status != http.StatusOK {
 		t.Fatalf("PATCH 800 deu %d: %s", status, corpo)
 	}
 	conferirLimiar(t, limiarDe(t, a, tok, criado.ID), 800)
 
-	if status, corpo := patch(map[string]any{"name": "outro nome"}); status != http.StatusOK {
+	if status, corpo := patch(t, map[string]any{"name": "outro nome"}); status != http.StatusOK {
 		t.Fatalf("PATCH sem o campo deu %d: %s", status, corpo)
 	}
 	conferirLimiar(t, limiarDe(t, a, tok, criado.ID), 800)
 
 	for _, borda := range []int32{1, 60000} {
-		if status, corpo := patch(map[string]any{"degraded_threshold_ms": borda}); status != http.StatusOK {
+		if status, corpo := patch(t, map[string]any{"degraded_threshold_ms": borda}); status != http.StatusOK {
 			t.Fatalf("PATCH %d deu %d: %s", borda, status, corpo)
 		}
 		conferirLimiar(t, limiarDe(t, a, tok, criado.ID), borda)
@@ -103,7 +107,7 @@ func TestPatchAlvoDegradedThresholdComValor(t *testing.T) {
 
 	for _, fora := range []int64{0, -1, 60001} {
 		t.Run(strconv.FormatInt(fora, 10), func(t *testing.T) {
-			status, corpo := patch(map[string]any{"degraded_threshold_ms": fora})
+			status, corpo := patch(t, map[string]any{"degraded_threshold_ms": fora})
 			conferirRecusa(t, status, corpo,
 				[]apierr.FieldError{{Field: "degraded_threshold_ms", Reason: targets.ReasonOutOfRange}})
 			conferirLimiar(t, limiarDe(t, a, tok, criado.ID), 60000)
@@ -122,7 +126,7 @@ func TestPatchAlvoDegradedThresholdComValor(t *testing.T) {
 	}
 	conferirLimiar(t, limiarDe(t, a, tok, criado.ID), 60000)
 
-	if status, corpo := patch(map[string]any{"degraded_threshold_ms": nil}); status != http.StatusOK {
+	if status, corpo := patch(t, map[string]any{"degraded_threshold_ms": nil}); status != http.StatusOK {
 		t.Fatalf("PATCH null deu %d: %s", status, corpo)
 	}
 	if got := limiarDe(t, a, tok, criado.ID); got != nil {
