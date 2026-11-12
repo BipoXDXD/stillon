@@ -72,8 +72,8 @@ async function entrarPelaApi(api: APIRequestContext, email: string, senha: strin
   }
 }
 
-// O login e a troca de senha dividem o balde do login (5 de burst por IP, 1
-// ficha a cada 6 s), e esta spec passa dele. Qualquer status que não seja 429
+// O login tem o balde por IP e a troca de senha o balde da conta (5 de burst e
+// 1 ficha a cada 6 s cada um), e esta spec passa dos dois. Qualquer status que não seja 429
 // segue, e o resultado na tela cai na asserção de quem chamou. Vale a resposta,
 // e não o texto: o aviso do 429 anterior continua na tela até a resposta
 // seguinte.

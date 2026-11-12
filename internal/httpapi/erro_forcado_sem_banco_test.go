@@ -169,9 +169,13 @@ func TestBancoForaNaoVazaNadaEmNenhumaRota(t *testing.T) {
 			t.Errorf("o log trouxe %q:\n%s", proibido, registrado)
 		}
 	}
-	// O erro real precisa estar lá, ou os canários ausentes não provam nada.
+	// O erro real precisa estar lá, ou os canários ausentes não provam nada. A
+	// troca de senha passa pelo viva antes do serviço (como as rotas do 2FA): com
+	// o banco fora, a falha registrada é a "conferir sessão", e o "trocar senha"
+	// só aparece quando o serviço falha depois de a sessão ser conferida
+	// (erro_interno_internal_test.go).
 	for _, operacao := range []string{
-		"conferir sessão", "buscar usuário", "trocar senha", "rotacionar sessão", "revogar sessão",
+		"conferir sessão", "buscar usuário", "rotacionar sessão", "revogar sessão",
 		"registrar ping", "status page pública", "verificar token", "confirmar token",
 	} {
 		if !strings.Contains(registrado, operacao) {

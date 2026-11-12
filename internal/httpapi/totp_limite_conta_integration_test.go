@@ -24,8 +24,8 @@ import (
 // rotate e rotate/confirm) e da troca de senha: 10 por minuto, rajada de 5, com
 // a chave sendo o usuário que authn põe no contexto. Não é o IP (NAT e terceiros
 // sem credencial não gastam o balde de ninguém) nem a sessão (logar de novo não
-// multiplica o orçamento). A cadeia é authn, limite da conta, sessão viva,
-// handler. O login e o /totp/verify seguem por IP, e o contador de provas por
+// multiplica o orçamento). A cadeia é authn, sessão viva, limite da conta,
+// handler: um token de sessão revogada é recusado pelo viva sem gastar ficha. O login e o /totp/verify seguem por IP, e o contador de provas por
 // família segue como o que derruba a sessão. Decisão: docs/adr/0002.
 
 const (
@@ -58,6 +58,18 @@ var rotasDaConta = append(slices.Clone(rotasTOTPAutenticadas), rotaSenha)
 // do proxy confiável (ver apiAtrasDeProxy, de dispositivo_integration_test.go).
 func pedirSemProva(t *testing.T, a *api, rota, token, ip string) (int, http.Header, string) {
 	t.Helper()
+	st, h, corpo := pedirComCorpo(t, a, rota, token, ip)
+	var env envelope
+	if err := json.Unmarshal([]byte(corpo), &env); err != nil {
+		return st, h, "(sem envelope)"
+	}
+	return st, h, env.Error.Code
+}
+
+// pedirComCorpo é o pedirSemProva que devolve o corpo bruto da resposta, para o
+// teste que afirma também que ele não traz dado alheio.
+func pedirComCorpo(t *testing.T, a *api, rota, token, ip string) (int, http.Header, string) {
+	t.Helper()
 	req, err := http.NewRequest(http.MethodPost, a.srv.URL+rota, jsonBody(t, map[string]any{"campo_que_nao_existe": true}))
 	if err != nil {
 		t.Fatal(err)
@@ -75,7 +87,26 @@ func pedirSemProva(t *testing.T, a *api, rota, token, ip string) (int, http.Head
 		t.Fatal(err)
 	}
 	defer resp.Body.Close()
-	return resp.StatusCode, resp.Header, codigoDoErro(t, resp)
+	bruto, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resp.StatusCode, resp.Header, string(bruto)
+}
+
+// exigirSemDadoAlheio afirma que o corpo e os cabeçalhos de uma recusa não
+// trazem nenhum dos valores que pertencem a outra conta (ou ao dono do balde).
+func exigirSemDadoAlheio(t *testing.T, quem string, h http.Header, corpo string, alheios ...string) {
+	t.Helper()
+	conteudo := strings.ToLower(corpo)
+	for k, vs := range h {
+		conteudo += " " + strings.ToLower(k+"="+strings.Join(vs, ","))
+	}
+	for _, alheio := range alheios {
+		if strings.Contains(conteudo, strings.ToLower(alheio)) {
+			t.Errorf("%s: a resposta traz %q: %s", quem, alheio, corpo)
+		}
+	}
 }
 
 // gastarFichas manda n pedidos sem prova da conta, todos esperados como 400.
@@ -196,7 +227,8 @@ func TestAccountRoutesShareOneBucket(t *testing.T) {
 }
 
 // A chave é a CONTA, e não a sessão: duas sessões da mesma conta (dois logins),
-// de IPs diferentes, dividem o balde. Logar de novo não rende ficha.
+// de IPs diferentes, dividem o balde, e o gasto se soma entre rotas e sessões.
+// Logar de novo não rende ficha.
 func TestAccountBucketIsSharedByTwoSessionsOfTheSameAccount(t *testing.T) {
 	a := apiAtrasDeProxyComProvas(t)
 	_, tokenA := entrar(t, a)
@@ -205,29 +237,74 @@ func TestAccountBucketIsSharedByTwoSessionsOfTheSameAccount(t *testing.T) {
 		t.Fatal("o teste precisa de duas famílias distintas")
 	}
 	ipA, ipB := novaOrigem(), novaOrigem()
-	for i := 1; i <= rajadaPorConta; i++ {
-		st, _, codigo := pedirSemProva(t, a, rotasTOTPAutenticadas[2], tokenA, ipA)
-		exigirPassa(t, "sessão A, pedido "+strconv.Itoa(i), st, codigo)
+	// Três fichas na sessão A (três rotas) e duas na B (outras duas): cinco no total.
+	gastos := []struct {
+		token, ip, rota string
+	}{
+		{tokenA, ipA, rotasDaConta[0]}, {tokenA, ipA, rotasDaConta[1]}, {tokenA, ipA, rotasDaConta[2]},
+		{tokenB, ipB, rotasDaConta[3]}, {tokenB, ipB, rotaSenha},
+	}
+	for i, g := range gastos {
+		st, _, codigo := pedirSemProva(t, a, g.rota, g.token, g.ip)
+		exigirPassa(t, "pedido "+strconv.Itoa(i+1)+" em "+g.rota, st, codigo)
 	}
 	for _, rota := range rotasDaConta {
-		st, h, codigo := pedirSemProva(t, a, rota, tokenB, ipB)
-		exigirRecusaPorConta(t, st, h, codigo)
+		for _, quem := range []struct{ token, ip string }{{tokenA, ipA}, {tokenB, ipB}} {
+			st, h, codigo := pedirSemProva(t, a, rota, quem.token, quem.ip)
+			exigirRecusaPorConta(t, st, h, codigo)
+		}
 	}
 }
 
 // NAT: dois usuários no mesmo IP. Esgotar o balde de um não gera 429 para o
-// outro em nenhuma das rotas, nem os faz disputar fichas.
+// outro em nenhuma das rotas, nem os faz disputar fichas, e nenhuma resposta traz
+// dado do outro.
 func TestAccountBucketDoesNotAffectAnotherUserBehindTheSameIP(t *testing.T) {
 	a := newAPI(t)
+	idB := segundoUsuario(t, a)
+	tokenA := tokenDe(t, a, a.userID)
+	tokenB := tokenDe(t, a, idB)
+	familiaA, familiaB := familiaDe(t, tokenA, a), familiaDe(t, tokenB, a)
+	gastarFichas(t, a, rotasDaConta[3], tokenA, rajadaPorConta)
+	st, h, corpo := pedirComCorpo(t, a, rotasDaConta[3], tokenA, "")
+	exigirRecusaPorConta(t, st, h, codigoDoCorpo(t, corpo))
+	exigirSemDadoAlheio(t, "429 da conta A", h, corpo, idB.String(), familiaB.String(), "vizinho@exemplo.com")
+	for _, rota := range rotasTOTPAutenticadas {
+		st, h, corpo := pedirComCorpo(t, a, rota, tokenB, "")
+		exigirPassa(t, "o vizinho em "+rota, st, codigoDoCorpo(t, corpo))
+		exigirSemDadoAlheio(t, "o vizinho em "+rota, h, corpo, a.userID.String(), familiaA.String(), testEmail)
+	}
+}
+
+// codigoDoCorpo lê o code do envelope de um corpo já lido.
+func codigoDoCorpo(t *testing.T, corpo string) string {
+	t.Helper()
+	var env envelope
+	if err := json.Unmarshal([]byte(corpo), &env); err != nil {
+		return "(sem envelope)"
+	}
+	return env.Error.Code
+}
+
+// Duas contas atrás de IPs diferentes não se afetam: com um balde global (ou
+// qualquer chave que não seja a conta), o abuso de uma esvaziaria o da outra.
+func TestAccountBucketsOfDifferentAccountsAreIndependentAcrossIPs(t *testing.T) {
+	a := apiAtrasDeProxyComProvas(t)
 	tokenA := tokenDe(t, a, a.userID)
 	tokenB := tokenDe(t, a, segundoUsuario(t, a))
-	gastarFichas(t, a, rotasDaConta[3], tokenA, rajadaPorConta)
-	st, h, codigo := pedirSemProva(t, a, rotasDaConta[3], tokenA, "")
-	exigirRecusaPorConta(t, st, h, codigo)
-	for _, rota := range rotasTOTPAutenticadas {
-		st, _, codigo := pedirSemProva(t, a, rota, tokenB, "")
-		exigirPassa(t, "o vizinho em "+rota, st, codigo)
+	ipA, ipB := novaOrigem(), novaOrigem()
+	for i, rota := range rotasDaConta[:rajadaPorConta] {
+		st, _, codigo := pedirSemProva(t, a, rota, tokenA, ipA)
+		exigirPassa(t, "conta A, pedido "+strconv.Itoa(i+1), st, codigo)
 	}
+	st, h, codigo := pedirSemProva(t, a, rotaSenha, tokenA, ipA)
+	exigirRecusaPorConta(t, st, h, codigo)
+	for i, rota := range rotasDaConta[:rajadaPorConta] {
+		st, _, codigo := pedirSemProva(t, a, rota, tokenB, ipB)
+		exigirPassa(t, "conta B, pedido "+strconv.Itoa(i+1), st, codigo)
+	}
+	st, h, codigo = pedirSemProva(t, a, rotaSenha, tokenB, ipB)
+	exigirRecusaPorConta(t, st, h, codigo)
 }
 
 // Quem não tem credencial válida não gasta ficha de ninguém: pedido sem Bearer,
@@ -247,9 +324,11 @@ func TestRequestsWithoutAValidTokenDoNotSpendTheAccountBucket(t *testing.T) {
 	}
 	for i, intruso := range []string{"", forjado, vencido, "", forjado, vencido} {
 		rota := rotasDaConta[i]
-		if st, _, codigo := pedirSemProva(t, a, rota, intruso, ""); st != http.StatusUnauthorized || codigo != "unauthorized" {
+		st, h, corpo := pedirComCorpo(t, a, rota, intruso, "")
+		if codigo := codigoDoCorpo(t, corpo); st != http.StatusUnauthorized || codigo != "unauthorized" {
 			t.Fatalf("intruso %d em %s: %d %s, queria 401 unauthorized", i+1, rota, st, codigo)
 		}
+		exigirSemDadoAlheio(t, "intruso "+strconv.Itoa(i+1), h, corpo, a.userID.String(), familia.String(), testEmail, "127.0.0.1")
 	}
 	gastarFichas(t, a, rotasDaConta[0], token, rajadaPorConta)
 	st, h, codigo := pedirSemProva(t, a, rotasDaConta[0], token, "")
@@ -504,22 +583,45 @@ func TestLoginAndVerifyStayPerIPAndDoNotShareTheAccountBucket(t *testing.T) {
 	})
 }
 
-// A ordem é authn, limite da conta, sessão viva, handler: o limite vem ANTES da
-// consulta de sessão (como nas rotas de recurso), então um token de família
-// encerrada também gasta ficha, e a sexta tentativa é 429 e não 401.
-func TestAccountLimitComesBeforeTheSessionCheck(t *testing.T) {
+// A ordem é authn, sessão viva, limite da conta, handler: um token de sessão
+// revogada, ainda dentro do prazo, recebe a recusa do viva e NÃO gasta ficha. A
+// prova é uma sessão viva da mesma conta, que continua com a rajada inteira.
+func TestRevokedTokenIsRefusedBeforeTheAccountBucket(t *testing.T) {
+	for _, rota := range rotasDaConta {
+		t.Run(rota, func(t *testing.T) {
+			a := newAPI(t)
+			c, revogado := entrar(t, a)
+			_, vivo := entrar(t, a)
+			sair := post(t, c, a.srv.URL+"/api/v1/auth/logout", nil)
+			sair.Body.Close()
+			for i := 1; i <= rajadaPorConta+3; i++ {
+				st, _, codigo := pedirSemProva(t, a, rota, revogado, "")
+				if st != http.StatusUnauthorized || codigo != "unauthorized" {
+					t.Fatalf("pedido %d com a família revogada: %d %s, queria 401 unauthorized", i, st, codigo)
+				}
+			}
+			gastarFichas(t, a, rota, vivo, rajadaPorConta)
+			st, h, codigo := pedirSemProva(t, a, rota, vivo, "")
+			exigirRecusaPorConta(t, st, h, codigo)
+		})
+	}
+}
+
+// Um token de sessão revogada não troca a senha, nem com a senha atual certa: o
+// viva recusa antes do limite e do serviço, e a senha gravada não muda.
+func TestRevokedTokenCannotChangeThePassword(t *testing.T) {
 	a := newAPI(t)
-	c, token := entrar(t, a)
+	c, revogado := entrar(t, a)
 	sair := post(t, c, a.srv.URL+"/api/v1/auth/logout", nil)
 	sair.Body.Close()
-	for i := 1; i <= rajadaPorConta; i++ {
-		st, _, codigo := pedirSemProva(t, a, rotasTOTPAutenticadas[0], token, "")
-		if st != http.StatusUnauthorized || codigo != "unauthorized" {
-			t.Fatalf("pedido %d com a família morta: %d %s, queria 401 unauthorized", i, st, codigo)
-		}
+	resp := trocarSenha(t, a, revogado, map[string]string{"current_password": testPass, "new_password": senhaNova})
+	defer resp.Body.Close()
+	if codigo := codigoDoErro(t, resp); resp.StatusCode != http.StatusUnauthorized || codigo != "unauthorized" {
+		t.Errorf("troca com a família revogada: %d %s, queria 401 unauthorized", resp.StatusCode, codigo)
 	}
-	st, h, codigo := pedirSemProva(t, a, rotasTOTPAutenticadas[0], token, "")
-	exigirRecusaPorConta(t, st, h, codigo)
+	if !senhaGravadaE(t, a, testPass) {
+		t.Error("a senha mudou com a sessão revogada")
+	}
 }
 
 // A senha atual errada em /auth/password gasta ficha da CONTA, e trocar de IP

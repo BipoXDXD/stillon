@@ -33,8 +33,8 @@ de custo (Argon2id) que não dependa do IP.
 ## Decisão
 
 Opção B. Uma instância só de `RateLimitUser` (10 por minuto, rajada 5, a mesma taxa do login),
-dividida pelas cinco rotas do 2FA e por `POST /auth/password`. A cadeia é `authn` → limite da conta
-→ sessão viva → handler. O limite por IP (`limiteLogin`) fica só no login. O `/totp/verify` segue
+dividida pelas cinco rotas do 2FA e por `POST /auth/password`. A cadeia é `authn` → sessão viva →
+limite da conta → handler. O limite por IP (`limiteLogin`) fica só no login. O `/totp/verify` segue
 com o seu limite por IP, e o piso global por IP e o contador de provas por família continuam
 valendo.
 
@@ -43,7 +43,9 @@ Detalhes que a decisão fixa:
 - A chave é o id do usuário, nunca a sessão nem a família: outra sessão da mesma conta, de qualquer
   IP, divide o balde, e logar de novo não rende ficha.
 - O limite vem depois de `authn`: pedido sem token válido é 401 e não gasta ficha de ninguém.
-- O limite vem antes de `viva`, como nas rotas de recurso.
+- O limite vem depois de `viva`: um token de sessão revogada, ainda no prazo, é recusado pelo `viva` e
+  não gasta o balde de que o dono precisa para trocar a senha ou o 2FA. Uma sessão viva da mesma
+  conta segue com a rajada inteira. `POST /auth/password` também passa pelo `viva`.
 - Uma senha atual errada em `/auth/password` gasta ficha da conta, e trocar de IP não zera o balde.
 - O 429 sai antes do handler: não reserva nem conta prova na família e não roda Argon2id.
 
@@ -53,6 +55,15 @@ Detalhes que a decisão fixa:
   gastas por terceiros sem credencial deixam de existir para o 2FA e para a troca de senha.
 - Login e 2FA param de disputar fichas.
 - Perde-se o balde apertado por IP nessas rotas: o que sobra é o piso global de 120 por minuto.
+- Custo da ordem: uma consulta de sessão por pedido de quem já tem token assinado, sob o piso global
+  por IP. Quem não tem token assinado continua barrado em `authn`, sem tocar o banco.
+- Risco aceito: com chave por conta, quem tem um token de sessão ainda viva gasta as fichas da conta e
+  pode atrasar o dono nessas seis rotas até as fichas voltarem (uma a cada 6 s). Não é erro de
+  ordem: é inerente à chave por conta, e a revogação da sessão fica em outro balde (o das rotas de
+  recurso).
+- Melhoria futura, sem prazo: um balde por (conta, família), com teto por conta, para que uma sessão
+  não esvazie a das outras. Custa mais código e mais memória, e só vale se o risco acima se mostrar
+  real.
 - O estado continua só em memória de cada instância: com mais de uma réplica, cada uma conta por si.
   A chave por conta migra junto com o resto (issue #328).
 - Não resolve, e continua fora de escopo: persistência do contador de provas (issue #324) e o total
@@ -70,7 +81,9 @@ a regra que o garante):
   gastam o balde da conta (e o contrário).
 - Recarga no relógio injetado; nenhum Argon2id num pedido barrado; o 429 não traz id, IP, e-mail,
   família nem nome do balde; pedido barrado não conta como prova errada.
-- Piso global por IP continua atingindo as rotas; o limite vem antes da sessão viva; senha atual
-  errada gasta a ficha da conta mesmo trocando de IP.
+- Piso global por IP continua atingindo as rotas; senha atual errada gasta a ficha da conta mesmo
+  trocando de IP; contas diferentes, em IPs diferentes, têm baldes independentes.
+- Token de sessão revogada é recusado antes do limite e não gasta ficha (uma sessão viva da mesma
+  conta mantém a rajada inteira), nas seis rotas; e não troca a senha.
 - `rotas_negar_por_padrao_integration_test.go` e `rotas_protegidas_test.go` seguem verdes: sem
   credencial, 401, e nunca 429 antes do 401.
