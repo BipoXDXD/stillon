@@ -15,11 +15,6 @@ import (
 func TestUpdateRejectsAnInvalidNameOrGraceAndWritesNothing(t *testing.T) {
 	a := novoAmbiente(t)
 	svc := heartbeat.NewService(a.pool, a.clk)
-	ctx := t.Context()
-	antes, _, err := svc.Create(ctx, a.dono, heartbeat.Input{Name: "backup", Schedule: hora, Grace: tolerancia, Enabled: true})
-	if err != nil {
-		t.Fatal(err)
-	}
 	casos := []struct {
 		nome   string
 		patch  heartbeat.Patch
@@ -38,7 +33,14 @@ func TestUpdateRejectsAnInvalidNameOrGraceAndWritesNothing(t *testing.T) {
 	}
 	for _, c := range casos {
 		t.Run(c.nome, func(t *testing.T) {
-			_, err := svc.Update(ctx, a.dono, antes.ID, c.patch)
+			// Cada caso tem o seu heartbeat: um patch que gravasse por engano
+			// não contamina o "antes" dos casos seguintes.
+			ctx := t.Context()
+			antes, _, err := svc.Create(ctx, a.dono, heartbeat.Input{Name: "backup", Schedule: hora, Grace: tolerancia, Enabled: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = svc.Update(ctx, a.dono, antes.ID, c.patch)
 			var ve *heartbeat.ValidationError
 			if !errors.As(err, &ve) || ve.Field != c.campo || ve.Reason != c.motivo {
 				t.Fatalf("Update = %v; queria %s %s", err, c.campo, c.motivo)
