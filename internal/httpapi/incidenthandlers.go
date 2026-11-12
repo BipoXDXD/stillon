@@ -93,9 +93,7 @@ func (h *IncidentHandlers) List(w http.ResponseWriter, r *http.Request) {
 	for _, i := range items {
 		resp.Items = append(resp.Items, toIncidentResponse(i))
 	}
-	if len(items) == int(f.Limit) {
-		resp.NextCursor = items[len(items)-1].ID.String()
-	}
+	resp.NextCursor = proximoCursor(items, f.Limit, func(i history.Incident) uuid.UUID { return i.ID })
 	apierr.WriteJSON(w, http.StatusOK, resp)
 }
 

@@ -12,6 +12,7 @@ import (
 
 	"github.com/BipoXDXD/stillon/internal/apierr"
 	"github.com/BipoXDXD/stillon/internal/heartbeat"
+	"github.com/BipoXDXD/stillon/internal/storage/db"
 )
 
 // Tipos do agendamento no contrato (spec de heartbeats, §7).
@@ -228,9 +229,7 @@ func (h *HeartbeatHandlers) List(w http.ResponseWriter, r *http.Request) {
 	for _, i := range items {
 		resp.Items = append(resp.Items, toHeartbeatResponse(i))
 	}
-	if len(items) == int(limite) {
-		resp.NextCursor = items[len(items)-1].ID.String()
-	}
+	resp.NextCursor = proximoCursor(items, limite, func(hb heartbeat.Heartbeat) uuid.UUID { return hb.ID })
 	apierr.WriteJSON(w, http.StatusOK, resp)
 }
 
@@ -413,9 +412,7 @@ func (h *HeartbeatHandlers) Events(w http.ResponseWriter, r *http.Request) {
 		}
 		resp.Items = append(resp.Items, ev)
 	}
-	if len(items) == int(limite) {
-		resp.NextCursor = items[len(items)-1].ID.String()
-	}
+	resp.NextCursor = proximoCursor(items, limite, func(e db.HeartbeatEvent) uuid.UUID { return e.ID })
 	apierr.WriteJSON(w, http.StatusOK, resp)
 }
 
@@ -454,9 +451,7 @@ func (h *HeartbeatHandlers) Incidents(w http.ResponseWriter, r *http.Request) {
 	for _, i := range items {
 		resp.Items = append(resp.Items, toHeartbeatIncidentResponse(i))
 	}
-	if len(items) == int(limite) {
-		resp.NextCursor = items[len(items)-1].ID.String()
-	}
+	resp.NextCursor = proximoCursor(items, limite, func(i heartbeat.Incident) uuid.UUID { return i.ID })
 	apierr.WriteJSON(w, http.StatusOK, resp)
 }
 
