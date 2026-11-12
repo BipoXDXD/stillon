@@ -2,11 +2,14 @@ package config
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"regexp"
 	"strconv"
 	"strings"
 	"testing"
+
+	"go.yaml.in/yaml/v3"
 )
 
 // Os baldes do limitador de autenticação (login por IP, 2FA e troca de senha
@@ -49,22 +52,22 @@ func TestReplicasDaAPIContaCadaFormaDeEscalar(t *testing.T) {
 		esperado int
 	}{
 		{"sem réplica declarada", map[string]servicoComAPI{"app": {imagem: "stillon:x"}}, 1},
-		{"scale 2", map[string]servicoComAPI{"app": {imagem: "stillon:x", replicas: "2"}}, 2},
+		{"scale 2", map[string]servicoComAPI{"app": {imagem: "stillon:x", replicas: []string{"2"}}}, 2},
 		{"segundo serviço da API", map[string]servicoComAPI{
 			"app":  {imagem: "stillon:x"},
 			"app2": {imagem: "ghcr.io/bipoxdxd/stillon:x", papel: "api"},
 		}, 2},
 		{"imagem por variável do Coolify", map[string]servicoComAPI{
-			"app": {imagem: "${STILLON_IMAGE:-stillon:abc@sha256:def}", replicas: "3"},
+			"app": {imagem: "${STILLON_IMAGE:-stillon:abc@sha256:def}", replicas: []string{"3"}},
 		}, 3},
 		{"sondador separado não serve a API", map[string]servicoComAPI{
 			"app":    {imagem: "stillon:x"},
-			"prober": {imagem: "stillon:x", papel: "prober", replicas: "2"},
+			"prober": {imagem: "stillon:x", papel: "prober", replicas: []string{"2"}},
 		}, 1},
 		{"seed e banco não contam", map[string]servicoComAPI{
 			"app":  {imagem: "stillon:x"},
 			"seed": {imagem: "ghcr.io/bipoxdxd/stillon:x-tools"},
-			"db":   {imagem: "postgres:18-alpine", replicas: "2"},
+			"db":   {imagem: "postgres:18-alpine", replicas: []string{"2"}},
 		}, 1},
 		{"sem a API", map[string]servicoComAPI{"db": {imagem: "postgres:18-alpine"}}, 0},
 	}
@@ -85,8 +88,43 @@ func TestManifestoYAMLLeScaleEDeployReplicas(t *testing.T) {
 	for nome, yaml := range casos {
 		t.Run(nome, func(t *testing.T) {
 			servicos := servicosDoYAML(t, yaml)
-			if got := servicos["app"].replicas; got != "2" {
-				t.Errorf("réplicas lidas = %q, esperado \"2\"", got)
+			if got := servicos["app"].replicas; len(got) != 1 || got[0] != "2" {
+				t.Errorf("réplicas lidas = %q, esperado [\"2\"]", got)
+			}
+		})
+	}
+}
+
+// Formas de YAML que um leitor por regex perde (revisão do #378): um
+// comentário na coluna 0 dentro de services esconderia o serviço seguinte, e
+// um scale vindo de âncora com merge não aparece no texto do serviço.
+func TestManifestoYAMLContaReplicasDaAPI(t *testing.T) {
+	casos := []struct {
+		nome     string
+		yaml     string
+		esperado int
+	}{
+		{"comentário na coluna 0 dentro de services",
+			"services:\n  app:\n    image: stillon:x\n# segunda réplica\n  app2:\n    image: ghcr.io/bipoxdxd/stillon:x\n",
+			2},
+		{"scale vindo de âncora com merge",
+			"x-escala: &escala\n  scale: 2\nservices:\n  app:\n    <<: *escala\n    image: stillon:x\n",
+			2},
+		{"scale e deploy.replicas no mesmo serviço somam",
+			"services:\n  app:\n    image: stillon:x\n    scale: 1\n    deploy:\n      replicas: 1\n",
+			2},
+		{"papel por lista no environment",
+			"services:\n  app:\n    image: stillon:x\n  prober:\n    image: stillon:x\n    scale: 3\n    environment:\n      - ROLE=prober\n",
+			1},
+		{"papel por command em texto",
+			"services:\n  app:\n    image: stillon:x\n  prober:\n    image: stillon:x\n    scale: 3\n    command: --role=prober\n",
+			1},
+	}
+	for _, c := range casos {
+		t.Run(c.nome, func(t *testing.T) {
+			servicos := servicosDoYAML(t, c.yaml)
+			if total := replicasDaAPI(t, c.nome, servicos); total != c.esperado {
+				t.Errorf("total = %d, esperado %d", total, c.esperado)
 			}
 		})
 	}
@@ -94,8 +132,8 @@ func TestManifestoYAMLLeScaleEDeployReplicas(t *testing.T) {
 
 type servicoComAPI struct {
 	imagem   string
-	papel    string // vazio: o padrão do binário, all
-	replicas string // vazio: 1
+	papel    string   // vazio: o padrão do binário, all
+	replicas []string // cada scale/deploy.replicas declarado; nenhum: 1
 }
 
 var imagemDoStillOn = regexp.MustCompile(`(^|[/-])stillon:`)
@@ -112,16 +150,18 @@ func replicasDaAPI(t *testing.T, arquivo string, servicos map[string]servicoComA
 		if !s.servesAPI() {
 			continue
 		}
-		if s.replicas == "" {
+		if len(s.replicas) == 0 {
 			total++
 			continue
 		}
-		n, err := strconv.Atoi(s.replicas)
-		if err != nil {
-			t.Fatalf("%s: serviço %s com réplicas %q, que não é um número fixo: %s",
-				arquivo, nome, s.replicas, motivoReplicaUnica)
+		for _, declarado := range s.replicas {
+			n, err := strconv.Atoi(declarado)
+			if err != nil {
+				t.Fatalf("%s: serviço %s com réplicas %q, que não é um número fixo: %s",
+					arquivo, nome, declarado, motivoReplicaUnica)
+			}
+			total += n
 		}
-		total += n
 	}
 	return total
 }
@@ -156,9 +196,11 @@ func servicosDoJSON(t *testing.T, arquivo string, conteudo []byte) map[string]se
 	}
 	servicos := make(map[string]servicoComAPI, len(manifesto.Services))
 	for nome, s := range manifesto.Services {
-		replicas := s.Scale.String()
-		if s.Deploy.Replicas != "" {
-			replicas = s.Deploy.Replicas.String()
+		var replicas []string
+		for _, declarado := range []json.Number{s.Scale, s.Deploy.Replicas} {
+			if declarado != "" {
+				replicas = append(replicas, declarado.String())
+			}
 		}
 		papel := s.Environment["ROLE"]
 		for _, arg := range s.Command {
@@ -171,46 +213,79 @@ func servicosDoJSON(t *testing.T, arquivo string, conteudo []byte) map[string]se
 	return servicos
 }
 
-var (
-	secaoServicos   = regexp.MustCompile(`(?m)^services:\n((?:(?:[ \t].*|[ \t]*)\n)*)`)
-	inicioDeServico = regexp.MustCompile(`(?m)^  ([A-Za-z0-9_.-]+):[ \t]*$`)
-	campoImagem     = regexp.MustCompile(`(?m)^    image:[ \t]*["']?([^"'\s]+)`)
-	campoPapel      = regexp.MustCompile(`(?m)--role=([a-z]+)|^      ROLE:[ \t]*["']?([a-z]+)`)
-	campoReplicas   = regexp.MustCompile(`(?m)^[ \t]+(?:scale|replicas):[ \t]*["']?([^"'\s#]+)`)
-)
+// composeYAML é o que a regra usa de um compose. O decodificador do yaml.v3
+// resolve âncoras e merge keys (<<) antes de preencher os campos, então um
+// scale herdado de x-escala aparece aqui como se estivesse escrito no serviço.
+type composeYAML struct {
+	Services map[string]struct {
+		Image       string `yaml:"image"`
+		Command     any    `yaml:"command"`
+		Environment any    `yaml:"environment"`
+		Scale       any    `yaml:"scale"`
+		Deploy      struct {
+			Replicas any `yaml:"replicas"`
+		} `yaml:"deploy"`
+	} `yaml:"services"`
+}
 
-// servicosDoYAML lê do bloco services só o que a regra usa, no subconjunto de
-// YAML que os composes do repositório escrevem (indentação de dois espaços).
-func servicosDoYAML(t *testing.T, yaml string) map[string]servicoComAPI {
+// servicosDoYAML decodifica o compose com um parser YAML de verdade:
+// comentários, indentação e âncoras não escondem serviço nem réplica.
+func servicosDoYAML(t *testing.T, conteudo string) map[string]servicoComAPI {
 	t.Helper()
-	secao := secaoServicos.FindStringSubmatch(yaml)
-	if secao == nil {
+	var manifesto composeYAML
+	if err := yaml.Unmarshal([]byte(conteudo), &manifesto); err != nil {
+		t.Fatalf("manifesto YAML inválido: %v", err)
+	}
+	if len(manifesto.Services) == 0 {
 		t.Fatal("manifesto YAML sem bloco services")
 	}
-	corpo := secao[1]
-	inicios := inicioDeServico.FindAllStringSubmatchIndex(corpo, -1)
-	servicos := make(map[string]servicoComAPI, len(inicios))
-	for i, ini := range inicios {
-		fim := len(corpo)
-		if i+1 < len(inicios) {
-			fim = inicios[i+1][0]
+	servicos := make(map[string]servicoComAPI, len(manifesto.Services))
+	for nome, s := range manifesto.Services {
+		var replicas []string
+		for _, declarado := range []any{s.Scale, s.Deploy.Replicas} {
+			if declarado != nil {
+				replicas = append(replicas, fmt.Sprint(declarado))
+			}
 		}
-		bloco := corpo[ini[1]:fim]
-		servicos[corpo[ini[2]:ini[3]]] = servicoComAPI{
-			imagem:   primeiroGrupo(campoImagem, bloco),
-			papel:    primeiroGrupo(campoPapel, bloco),
-			replicas: primeiroGrupo(campoReplicas, bloco),
+		servicos[nome] = servicoComAPI{
+			imagem:   s.Image,
+			papel:    papelDoServico(s.Environment, s.Command),
+			replicas: replicas,
 		}
 	}
 	return servicos
 }
 
-func primeiroGrupo(re *regexp.Regexp, texto string) string {
-	m := re.FindStringSubmatch(texto)
-	for _, grupo := range m[min(1, len(m)):] {
-		if grupo != "" {
-			return grupo
+// papelDoServico aceita as duas formas que o compose aceita para environment
+// (mapa ou lista de CHAVE=valor) e para command (lista ou texto); o --role do
+// command vence o ROLE do ambiente.
+func papelDoServico(ambiente, comando any) string {
+	papel := ""
+	switch v := ambiente.(type) {
+	case map[string]any:
+		if r, ok := v["ROLE"]; ok && r != nil {
+			papel = fmt.Sprint(r)
+		}
+	case []any:
+		for _, item := range v {
+			if r, ok := strings.CutPrefix(fmt.Sprint(item), "ROLE="); ok {
+				papel = r
+			}
 		}
 	}
-	return ""
+	var args []string
+	switch v := comando.(type) {
+	case string:
+		args = strings.Fields(v)
+	case []any:
+		for _, item := range v {
+			args = append(args, fmt.Sprint(item))
+		}
+	}
+	for _, arg := range args {
+		if r, ok := strings.CutPrefix(arg, "--role="); ok {
+			papel = r
+		}
+	}
+	return papel
 }
