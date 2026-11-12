@@ -35,9 +35,14 @@ export const chaves = {
 const INTERVALO_DO_RESUMO_MS = 15_000
 const INTERVALO_DOS_INCIDENTES_MS = 30_000
 const INTERVALO_DO_ALVO_MS = 60_000
+
 const INTERVALO_DA_SERIE_MS = 60_000
 const INTERVALO_DOS_CANAIS_MS = 60_000
 const INTERVALO_DOS_RESOLVIDOS_MS = 60_000
+
+// A primeira página de uma lista paginada não leva cursor. A anotação dá ao
+// useInfiniteQuery o tipo do cursor (string | undefined) sem uma assertion.
+const PRIMEIRA_PAGINA: string | undefined = undefined
 
 const estaSemRede = () => !onlineManager.isOnline()
 
@@ -102,7 +107,7 @@ export function useIncidentes(filtro: 'open' | 'resolved' | 'all', alvo?: string
         targetId: alvo,
         limit: limite,
       }),
-    initialPageParam: undefined as string | undefined,
+    initialPageParam: PRIMEIRA_PAGINA,
     getNextPageParam: (ultima) => ultima.next_cursor,
     refetchInterval: pollSoComUmaPagina,
   })
@@ -204,7 +209,7 @@ export function useEventosDoHeartbeat(id: string) {
   return useInfiniteQuery({
     queryKey: chaves.eventosDoHeartbeat(id),
     queryFn: ({ pageParam }) => api.eventosDoHeartbeat(id, pageParam),
-    initialPageParam: undefined as string | undefined,
+    initialPageParam: PRIMEIRA_PAGINA,
     getNextPageParam: (ultima) => ultima.next_cursor,
     refetchInterval: pollSoComUmaPagina,
   })
@@ -215,7 +220,7 @@ export function useIncidentesDoHeartbeat(id: string) {
   return useInfiniteQuery({
     queryKey: chaves.incidentesDoHeartbeat(id),
     queryFn: ({ pageParam }) => api.incidentesDoHeartbeat(id, pageParam),
-    initialPageParam: undefined as string | undefined,
+    initialPageParam: PRIMEIRA_PAGINA,
     getNextPageParam: (ultima) => ultima.next_cursor,
     refetchInterval: pollSoComUmaPagina,
   })
