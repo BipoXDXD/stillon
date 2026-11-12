@@ -29,7 +29,7 @@ type provaErrada func(t *testing.T, a *api, token string) (int, string)
 func postEProva(rota string, corpo func(t *testing.T, a *api) map[string]string) provaErrada {
 	return func(t *testing.T, a *api, token string) (int, string) {
 		t.Helper()
-		resp := postComToken(t, http.DefaultClient, a.srv.URL+rota, token, corpo(t, a))
+		resp := postComToken(t, a.cliente(), a.srv.URL+rota, token, corpo(t, a))
 		defer resp.Body.Close()
 		return resp.StatusCode, codigoDoErro(t, resp)
 	}
@@ -82,7 +82,7 @@ func TestFifthWrongProofDropsTheFamily(t *testing.T) {
 			})
 		}, http.StatusUnauthorized, "invalid_credentials"},
 		{"confirm", func(t *testing.T, a *api, token string) provaErrada {
-			resp := postComToken(t, http.DefaultClient, a.srv.URL+"/api/v1/auth/totp/enroll", token,
+			resp := postComToken(t, a.cliente(), a.srv.URL+"/api/v1/auth/totp/enroll", token,
 				map[string]string{"password": testPass})
 			resp.Body.Close()
 			if resp.StatusCode != http.StatusOK {
@@ -116,7 +116,7 @@ func TestFifthWrongProofDropsTheFamily(t *testing.T) {
 	}
 	for _, caso := range casos {
 		t.Run(caso.nome, func(t *testing.T) {
-			a := newAPI(t)
+			a := apiOrigemPorPedido(t)
 			token, _, familia := familiaComRefresh(t, a)
 			errar := caso.preparar(t, a, token)
 
@@ -148,7 +148,7 @@ func TestFifthWrongProofDropsTheFamily(t *testing.T) {
 // rotas diferentes somam na mesma família (inclusive o código ausente), e as
 // de outra família do mesmo dono não entram na conta.
 func TestWrongProofBudgetIsPerFamilyAcrossRoutes(t *testing.T) {
-	a := newAPI(t)
+	a := apiOrigemPorPedido(t)
 	segredo := cadastrarTOTP(t, a, clientWithJar(t))
 	tokenA, _, _ := familiaComRefresh(t, a)
 	tokenB, _, _ := familiaComRefresh(t, a)
@@ -198,7 +198,7 @@ func TestWrongProofBudgetIsPerFamilyAcrossRoutes(t *testing.T) {
 // espera uma delas, e em arm64 com -race cada Argon2id passa do Argon2Wait. A
 // recusa por semáforo devolve a reserva e não é o que este teste trava.
 func TestParallelWrongProofsVerifyAtMostTheBudget(t *testing.T) {
-	a := newAPICom(t, func(cfg *config.Config) { cfg.Argon2MaxConcurrent = provasPorFamilia }, nil)
+	a := apiOrigemPorPedidoCom(t, func(cfg *config.Config) { cfg.Argon2MaxConcurrent = provasPorFamilia })
 	token := accessTokenValido(t, a)
 
 	antes := auth.Argon2Verifications()
@@ -207,7 +207,7 @@ func TestParallelWrongProofsVerifyAtMostTheBudget(t *testing.T) {
 	var wg sync.WaitGroup
 	for range 12 {
 		wg.Go(func() {
-			resp, err := postSemT(http.DefaultClient, a.srv.URL+"/api/v1/auth/totp/enroll", token,
+			resp, err := postSemT(a.cliente(), a.srv.URL+"/api/v1/auth/totp/enroll", token,
 				map[string]string{"password": "senha-que-nao-e-a-dele"})
 			if err != nil {
 				t.Error(err)
@@ -244,7 +244,7 @@ func TestParallelWrongProofsVerifyAtMostTheBudget(t *testing.T) {
 func TestPasswordAloneDoesNotResetTheFamilyBudget(t *testing.T) {
 	for _, rota := range []string{"/api/v1/auth/totp/disable", "/api/v1/auth/totp/rotate"} {
 		t.Run(rota, func(t *testing.T) {
-			a := newAPI(t)
+			a := apiOrigemPorPedido(t)
 			segredo := cadastrarTOTP(t, a, clientWithJar(t))
 			token, _, familia := familiaComRefresh(t, a)
 			chutar := postEProva(rota, func(t *testing.T, a *api) map[string]string {
@@ -291,12 +291,12 @@ func TestPasswordAloneDoesNotResetTheFamilyBudget(t *testing.T) {
 // distingue o código certo, e o confirm não gasta prova (não há o que provar),
 // então a família continua viva.
 func TestConfirmWithTheFactorOnIsNotAnOracle(t *testing.T) {
-	a := newAPI(t)
+	a := apiOrigemPorPedido(t)
 	segredo := cadastrarTOTP(t, a, clientWithJar(t))
 	token, _, _ := familiaComRefresh(t, a)
 	confirm := func(codigo string) (int, string) {
 		t.Helper()
-		resp := postComToken(t, http.DefaultClient, a.srv.URL+"/api/v1/auth/totp/confirm", token,
+		resp := postComToken(t, a.cliente(), a.srv.URL+"/api/v1/auth/totp/confirm", token,
 			map[string]string{"code": codigo})
 		defer resp.Body.Close()
 		return resp.StatusCode, codigoDoErro(t, resp)
@@ -322,7 +322,7 @@ func TestConfirmWithTheFactorOnIsNotAnOracle(t *testing.T) {
 		t.Errorf("a família caiu com confirms que não provam nada: GET /sessions %d", st)
 	}
 	// O confirm não consumiu o timestep: o código certo ainda desliga o fator.
-	resp := postComToken(t, http.DefaultClient, a.srv.URL+"/api/v1/auth/totp/disable", token,
+	resp := postComToken(t, a.cliente(), a.srv.URL+"/api/v1/auth/totp/disable", token,
 		map[string]string{"password": testPass, "code": codigoDe(t, a, segredo)})
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusNoContent {

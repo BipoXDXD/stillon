@@ -176,7 +176,7 @@ func TestSecondFactorProofDiesWithTheRotation(t *testing.T) {
 // antes do código: não conta como prova errada (cinco seguidos não derrubam a
 // família) e o pendente fica.
 func TestRotateConfirmNeedsTheRotationItKnows(t *testing.T) {
-	a := newAPI(t)
+	a := apiOrigemPorPedido(t)
 	velho := cadastrarTOTP(t, a, clientWithJar(t))
 	token := accessTokenValido(t, a)
 
@@ -200,7 +200,7 @@ func TestRotateConfirmNeedsTheRotationItKnows(t *testing.T) {
 		if rot != "-" {
 			corpo["rotation"] = rot
 		}
-		resp := postComToken(t, http.DefaultClient, a.srv.URL+"/api/v1/auth/totp/rotate/confirm", token, corpo)
+		resp := postComToken(t, a.cliente(), a.srv.URL+"/api/v1/auth/totp/rotate/confirm", token, corpo)
 		defer resp.Body.Close()
 		return resp.StatusCode, codigoDoErro(t, resp)
 	}

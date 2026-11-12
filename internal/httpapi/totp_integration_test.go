@@ -316,11 +316,13 @@ func TestRecoveryCodeClosesLoginOnlyOnce(t *testing.T) {
 
 	usar := func(codigo string) int {
 		t.Helper()
-		// Um segundo entre os logins: o desafio vale uma vez e só abre sessão
+		// Alguns segundos entre os logins: o desafio vale uma vez e só abre sessão
 		// se for mais novo que o último consumido. Com o relógio
 		// parado, os três desafios sairiam no mesmo instante, e o terceiro
-		// seria recusado pela marca d'água, e não pelo código de recuperação.
-		a.clk.Advance(time.Second)
+		// seria recusado pela marca d'água, e não pelo código de recuperação. É
+		// também a ficha do limite por IP: o cadastro e os três logins passam da
+		// rajada de cinco.
+		esperarFichaDoIP(a)
 		resp := login(t, a, c, testEmail, testPass)
 		var d struct {
 			Challenge string `json:"challenge"`
@@ -645,11 +647,11 @@ func falhasDeLogin(t *testing.T, a *api) int {
 // deixa de valer nas rotas que exigem a sessão viva. O dono não é trancado: a
 // conta não conta nada, e o login com a senha certa entra.
 func TestEnrollWrongPasswordCountsInTheFamily(t *testing.T) {
-	a := newAPI(t)
+	a := apiOrigemPorPedido(t)
 	roubado := accessTokenValido(t, a)
 
 	for i := range provasPorFamilia {
-		resp := postComToken(t, http.DefaultClient, a.srv.URL+"/api/v1/auth/totp/enroll", roubado,
+		resp := postComToken(t, a.cliente(), a.srv.URL+"/api/v1/auth/totp/enroll", roubado,
 			map[string]string{"password": "chute-numero-" + strconv.Itoa(i)})
 		codigo := codigoDoErro(t, resp)
 		resp.Body.Close()

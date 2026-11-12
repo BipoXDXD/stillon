@@ -148,7 +148,7 @@ func TestBancoForaNaoVazaNadaEmNenhumaRota(t *testing.T) {
 
 	rotas := rotasRegistradas(t)
 	for _, rota := range rotas {
-		clk.Advance(time.Second) // devolve fichas aos limitadores: ver esperarVagaNoLimite
+		clk.Advance(umaFichaPorIP) // devolve fichas aos limitadores: ver esperarVagaNoLimite
 		esperado, ok := esperados[rota]
 		if !ok {
 			esperado = padrao
@@ -159,7 +159,7 @@ func TestBancoForaNaoVazaNadaEmNenhumaRota(t *testing.T) {
 	// inválida nunca a devolve nem a registra. O status aqui varia por rota, e
 	// já é o assunto de TestEveryProtectedRouteRejectsForgedToken.
 	for _, rota := range rotas {
-		clk.Advance(time.Second)
+		clk.Advance(umaFichaPorIP)
 		c.conferir(t, rota, c.canario, respostaSemBanco{})
 	}
 
