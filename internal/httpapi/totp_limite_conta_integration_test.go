@@ -307,34 +307,6 @@ func TestAccountBucketsOfDifferentAccountsAreIndependentAcrossIPs(t *testing.T) 
 	exigirRecusaPorConta(t, st, h, codigo)
 }
 
-// Quem não tem credencial válida não gasta ficha de ninguém: pedido sem Bearer,
-// com token forjado ou vencido é 401 e deixa o balde do dono intacto, mesmo
-// vindo do mesmo IP. A próxima rajada do dono passa inteira.
-func TestRequestsWithoutAValidTokenDoNotSpendTheAccountBucket(t *testing.T) {
-	a := newAPI(t)
-	token := tokenDe(t, a, a.userID)
-	familia := familiaDe(t, token, a)
-	forjado, err := auth.NewAccessToken([]byte("outro-segredo-com-mais-de-32-bytes!!"), a.userID, familia, a.clk.Now())
-	if err != nil {
-		t.Fatal(err)
-	}
-	vencido, err := auth.NewAccessToken(testJWTSecret, a.userID, familia, a.clk.Now().Add(-24*time.Hour))
-	if err != nil {
-		t.Fatal(err)
-	}
-	for i, intruso := range []string{"", forjado, vencido, "", forjado, vencido} {
-		rota := rotasDaConta[i]
-		st, h, corpo := pedirComCorpo(t, a, rota, intruso, "")
-		if codigo := codigoDoCorpo(t, corpo); st != http.StatusUnauthorized || codigo != "unauthorized" {
-			t.Fatalf("intruso %d em %s: %d %s, queria 401 unauthorized", i+1, rota, st, codigo)
-		}
-		exigirSemDadoAlheio(t, "intruso "+strconv.Itoa(i+1), h, corpo, a.userID.String(), familia.String(), testEmail, "127.0.0.1")
-	}
-	gastarFichas(t, a, rotasDaConta[0], token, rajadaPorConta)
-	st, h, codigo := pedirSemProva(t, a, rotasDaConta[0], token, "")
-	exigirRecusaPorConta(t, st, h, codigo)
-}
-
 // O caso do e2e: login, enroll, confirm, rotate, rotate/confirm, disable e login
 // de novo, do mesmo IP, sem 429. O login gasta ficha do IP, o resto gasta da
 // conta: nenhum balde disputa com o outro. A troca e o desligamento usam código
@@ -608,7 +580,8 @@ func TestRevokedTokenIsRefusedBeforeTheAccountBucket(t *testing.T) {
 }
 
 // Cada intruso em cada uma das seis rotas: sem Authorization, com assinatura de
-// outro segredo, com a assinatura adulterada, vencido e com a família revogada.
+// outro segredo, com a assinatura adulterada e vencido. O token de família
+// revogada tem o teste próprio (TestRevokedTokenIsRefusedBeforeTheAccountBucket).
 // O pedido é 401 unauthorized, o corpo não traz dado da conta, e o balde do dono
 // fica intacto: depois de rajada+3 pedidos do intruso, a conta legítima ainda
 // passa a rajada inteira e só a ficha seguinte é 429. Mais pedidos do que a
@@ -645,12 +618,6 @@ func TestEachRouteRefusesAnIntruderWithoutSpendingTheAccountBucket(t *testing.T)
 				t.Fatal(err)
 			}
 			return tok
-		}},
-		{"família revogada", func(t *testing.T, a *api, _ string) string {
-			c, revogado := entrar(t, a)
-			sair := post(t, c, a.srv.URL+"/api/v1/auth/logout", nil)
-			sair.Body.Close()
-			return revogado
 		}},
 	}
 	for _, rota := range rotasDaConta {
