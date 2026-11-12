@@ -266,6 +266,42 @@ func TestUserRejectsBadInvocations(t *testing.T) {
 	}
 }
 
+// A mensagem de cada recusa de argumento e de e-mail desconhecido é parte do
+// contrato do CLI (quem roda num terminal ou num script lê o texto): o
+// reset-2fa não fala de senha, e o e-mail aparece para quem errou de banco.
+func TestUserRefusalMessages(t *testing.T) {
+	testdb.New(t)
+	dsn := testdb.DSN(t)
+	casos := []struct {
+		nome   string
+		dsn    string
+		args   []string
+		codigo int
+		msg    string
+	}{
+		{"argumento sobrando no create", dsn, []string{"create", "--email", "dono@exemplo.com", "x"}, saidaUso,
+			`stillon user: argumento inesperado: "x" (a senha vem do stdin)` + "\n"},
+		{"argumento sobrando no reset-2fa", dsn, []string{"reset-2fa", "--email", "dono@exemplo.com", "x"}, saidaUso,
+			`stillon user: argumento inesperado: "x"` + "\n"},
+		{"e-mail inválido", dsn, []string{"create", "--email", "dono"}, saidaUso,
+			"stillon user: --email precisa ser um endereço, como dono@exemplo.com\n"},
+		{"sem DATABASE_URL", "", []string{"create", "--email", "dono@exemplo.com"}, saidaUso,
+			"stillon user: DATABASE_URL não definida\n"},
+		{"set-password sem usuário", dsn, []string{"set-password", "--email", "ninguem@exemplo.com"}, saidaNaoCadastrado,
+			"stillon user: nenhum usuário com o e-mail ninguem@exemplo.com; nada foi alterado\n"},
+		{"reset-2fa sem usuário", dsn, []string{"reset-2fa", "--email", "ninguem@exemplo.com"}, saidaNaoCadastrado,
+			"stillon user: nenhum usuário com o e-mail ninguem@exemplo.com; nada foi alterado\n"},
+	}
+	for _, c := range casos {
+		t.Run(c.nome, func(t *testing.T) {
+			r := rodarUser(t, c.dsn, senhaMarcada, c.args...)
+			if r.codigo != c.codigo || r.stderr != c.msg {
+				t.Errorf("código %d, stderr %q; queria %d e %q", r.codigo, r.stderr, c.codigo, c.msg)
+			}
+		})
+	}
+}
+
 // O CLI recusa o superusuário ANTES de migrar, como o boot. Só o código não
 // basta, porque ele sai igual nas duas ordens: o que trava a ordem é o banco
 // continuar vazio.
