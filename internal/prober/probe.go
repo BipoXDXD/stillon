@@ -100,11 +100,34 @@ func sondar(ctx context.Context, client *http.Client, s Spec) Result {
 	ctx, cancel := context.WithTimeout(ctx, s.Timeout)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(ctx, s.Method, s.URL, nil)
+	req, sondaPedeGzip, err := montarRequisicao(ctx, s)
 	if err != nil {
 		// A URL já foi validada no cadastro; chegar aqui é defeito, e o
 		// resultado honesto é "não deu para sondar".
 		return Result{Status: StatusDown, ErrorKind: KindUnknown}
+	}
+
+	inicio := time.Now()
+	resp, err := client.Do(req)
+	if err != nil {
+		return Result{Status: StatusDown, Latency: time.Since(inicio), ErrorKind: Classify(err)}
+	}
+	defer resp.Body.Close()
+
+	lido, err := lerCorpoDaResposta(resp, s, sondaPedeGzip)
+	latencia := time.Since(inicio)
+	if err != nil {
+		return Result{Status: StatusDown, Latency: latencia, StatusCode: resp.StatusCode, ErrorKind: Classify(err)}
+	}
+	return veredito(s, resp.StatusCode, latencia, lido)
+}
+
+// montarRequisicao monta a requisição da sonda e diz se a própria sonda pediu
+// gzip (e, portanto, precisa descomprimir).
+func montarRequisicao(ctx context.Context, s Spec) (req *http.Request, sondaPedeGzip bool, err error) {
+	req, err = http.NewRequestWithContext(ctx, s.Method, s.URL, nil)
+	if err != nil {
+		return nil, false, err
 	}
 	req.Header.Set("User-Agent", userAgent)
 	for nome, valor := range s.Headers {
@@ -117,52 +140,58 @@ func sondar(ctx context.Context, client *http.Client, s Spec) Result {
 	// transporte do Go: só pede (e só descomprime) se o dono não negociou a
 	// codificação nem pediu uma fatia, porque a fatia de um gzip não abre
 	// sozinha.
-	sondaPedeGzip := s.Content != nil || !donoNegociaCorpo(req.Header)
+	sondaPedeGzip = s.Content != nil || !donoNegociaCorpo(req.Header)
 	if sondaPedeGzip {
 		req.Header.Set("Accept-Encoding", safedial.AcceptEncodingDaSonda)
 	}
+	return req, sondaPedeGzip, nil
+}
 
-	inicio := time.Now()
-	resp, err := client.Do(req)
-	if err != nil {
-		return Result{Status: StatusDown, Latency: time.Since(inicio), ErrorKind: Classify(err)}
-	}
-	defer resp.Body.Close()
+// corpoLido é o que a leitura da resposta entrega ao veredito: o corpo só
+// existe quando há regra de conteúdo.
+type corpoLido struct {
+	corpo    []byte
+	cortado  bool
+	ilegivel bool
+}
 
+// lerCorpoDaResposta lê (ou só drena) o corpo da resposta conforme a sonda
+// tenha regra de conteúdo e tenha pedido gzip.
+func lerCorpoDaResposta(resp *http.Response, s Spec, sondaPedeGzip bool) (corpoLido, error) {
 	var (
-		corpo    []byte
-		cortado  bool
-		ilegivel bool
+		lido corpoLido
+		err  error
 	)
 	switch {
 	case s.Content != nil:
-		corpo, cortado, ilegivel, err = lerCorpoDaRegra(resp)
+		lido.corpo, lido.cortado, lido.ilegivel, err = lerCorpoDaRegra(resp)
 	case sondaPedeGzip:
 		err = drenarSemRegra(resp)
 	default:
 		err = drenarCru(resp.Body)
 	}
-	latencia := time.Since(inicio)
-	if err != nil {
-		return Result{Status: StatusDown, Latency: latencia, StatusCode: resp.StatusCode, ErrorKind: Classify(err)}
-	}
+	return lido, err
+}
 
-	if resp.StatusCode != s.ExpectedStatus {
-		return Result{Status: StatusDown, Latency: latencia, StatusCode: resp.StatusCode, ErrorKind: KindHTTPStatus}
+// veredito classifica uma resposta lida até o fim, na ordem status, regra de
+// conteúdo e lentidão: status errado segue http_status com qualquer corpo.
+func veredito(s Spec, statusCode int, latencia time.Duration, lido corpoLido) Result {
+	if statusCode != s.ExpectedStatus {
+		return Result{Status: StatusDown, Latency: latencia, StatusCode: statusCode, ErrorKind: KindHTTPStatus}
 	}
 	if s.Content != nil {
 		kind := KindContentEncoding
-		if !ilegivel {
-			kind = avaliarConteudo(*s.Content, corpo, cortado)
+		if !lido.ilegivel {
+			kind = avaliarConteudo(*s.Content, lido.corpo, lido.cortado)
 		}
 		if kind != "" {
-			return Result{Status: StatusDown, Latency: latencia, StatusCode: resp.StatusCode, ErrorKind: kind}
+			return Result{Status: StatusDown, Latency: latencia, StatusCode: statusCode, ErrorKind: kind}
 		}
 	}
 	if s.DegradedThreshold > 0 && latencia > s.DegradedThreshold {
-		return Result{Status: StatusDegraded, Latency: latencia, StatusCode: resp.StatusCode}
+		return Result{Status: StatusDegraded, Latency: latencia, StatusCode: statusCode}
 	}
-	return Result{Status: StatusUp, Latency: latencia, StatusCode: resp.StatusCode}
+	return Result{Status: StatusUp, Latency: latencia, StatusCode: statusCode}
 }
 
 // clienteDaSonda devolve uma cópia de modelo com um transporte só desta sonda,
