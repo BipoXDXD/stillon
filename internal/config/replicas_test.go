@@ -21,7 +21,9 @@ import (
 // um compartilhado (opção b do #328) e só então muda esta regra.
 //
 // A contagem é por manifesto: soma, entre os serviços que rodam a imagem do
-// StillOn com papel all ou api, o scale/deploy.replicas (1 se ausente). O
+// StillOn com papel all ou api, as réplicas de cada um (1 se ausente). Dentro
+// de um serviço, scale e deploy.replicas descrevem o mesmo número, então vale
+// o maior dos dois, não a soma. O
 // seed (imagem -tools) e um sondador (--role=prober) não servem a API.
 var manifestosComAPI = []string{
 	"../../compose.yaml",
@@ -53,6 +55,12 @@ func TestReplicasDaAPIContaCadaFormaDeEscalar(t *testing.T) {
 	}{
 		{"sem réplica declarada", map[string]servicoComAPI{"app": {imagem: "stillon:x"}}, 1},
 		{"scale 2", map[string]servicoComAPI{"app": {imagem: "stillon:x", replicas: []string{"2"}}}, 2},
+		{"scale 1 e deploy.replicas 1 no mesmo serviço", map[string]servicoComAPI{
+			"app": {imagem: "stillon:x", replicas: []string{"1", "1"}},
+		}, 1},
+		{"scale 1 e deploy.replicas 2 no mesmo serviço", map[string]servicoComAPI{
+			"app": {imagem: "stillon:x", replicas: []string{"1", "2"}},
+		}, 2},
 		{"segundo serviço da API", map[string]servicoComAPI{
 			"app":  {imagem: "stillon:x"},
 			"app2": {imagem: "ghcr.io/bipoxdxd/stillon:x", papel: "api"},
@@ -110,8 +118,11 @@ func TestManifestoYAMLContaReplicasDaAPI(t *testing.T) {
 		{"scale vindo de âncora com merge",
 			"x-escala: &escala\n  scale: 2\nservices:\n  app:\n    <<: *escala\n    image: stillon:x\n",
 			2},
-		{"scale e deploy.replicas no mesmo serviço somam",
+		{"scale e deploy.replicas iguais no mesmo serviço valem um",
 			"services:\n  app:\n    image: stillon:x\n    scale: 1\n    deploy:\n      replicas: 1\n",
+			1},
+		{"scale e deploy.replicas diferentes no mesmo serviço valem o maior",
+			"services:\n  app:\n    image: stillon:x\n    scale: 1\n    deploy:\n      replicas: 2\n",
 			2},
 		{"papel por lista no environment",
 			"services:\n  app:\n    image: stillon:x\n  prober:\n    image: stillon:x\n    scale: 3\n    environment:\n      - ROLE=prober\n",
@@ -133,7 +144,7 @@ func TestManifestoYAMLContaReplicasDaAPI(t *testing.T) {
 type servicoComAPI struct {
 	imagem   string
 	papel    string   // vazio: o padrão do binário, all
-	replicas []string // cada scale/deploy.replicas declarado; nenhum: 1
+	replicas []string // cada scale/deploy.replicas declarado; nenhum: 1; vários: o maior
 }
 
 var imagemDoStillOn = regexp.MustCompile(`(^|[/-])stillon:`)
@@ -150,20 +161,28 @@ func replicasDaAPI(t *testing.T, arquivo string, servicos map[string]servicoComA
 		if !s.servesAPI() {
 			continue
 		}
-		if len(s.replicas) == 0 {
-			total++
-			continue
-		}
-		for _, declarado := range s.replicas {
-			n, err := strconv.Atoi(declarado)
-			if err != nil {
-				t.Fatalf("%s: serviço %s com réplicas %q, que não é um número fixo: %s",
-					arquivo, nome, declarado, motivoReplicaUnica)
-			}
-			total += n
-		}
+		total += replicasDoServico(t, arquivo, nome, s.replicas)
 	}
 	return total
+}
+
+// replicasDoServico devolve o maior número declarado: scale e deploy.replicas
+// no mesmo serviço não se somam, um deles prevalece.
+func replicasDoServico(t *testing.T, arquivo, nome string, declarados []string) int {
+	t.Helper()
+	if len(declarados) == 0 {
+		return 1
+	}
+	maior := 0
+	for _, declarado := range declarados {
+		n, err := strconv.Atoi(declarado)
+		if err != nil {
+			t.Fatalf("%s: serviço %s com réplicas %q, que não é um número fixo: %s",
+				arquivo, nome, declarado, motivoReplicaUnica)
+		}
+		maior = max(maior, n)
+	}
+	return maior
 }
 
 func servicosDoManifesto(t *testing.T, arquivo string) map[string]servicoComAPI {
