@@ -98,6 +98,51 @@ func TestReconcileReportsTheHeartbeatEventLogSize(t *testing.T) {
 	}
 }
 
+// Acima do limiar a contagem exata custa uma leitura da tabela inteira a cada 30 s
+// (medido: 88 ms a 10^5 linhas), então o gauge passa a usar a estimativa das
+// estatísticas do Postgres. Depois de um ANALYZE ela é o valor real; sem ele
+// (reltuples = -1, ou desatualizada para baixo) o Reconcile cai na exata.
+func TestReconcileReportsTheHeartbeatEventLogSizeAboveTheExactLimit(t *testing.T) {
+	b := novaBancada(t, nil, MaxInFlight)
+	ctx := context.Background()
+	id := uuid.Must(uuid.NewV7())
+	_, hash := heartbeat.NewPingToken()
+	periodo := int32(3600)
+	err := storage.InUserTx(ctx, b.pool, b.dono, func(q *db.Queries) error {
+		return q.InsertHeartbeat(ctx, db.InsertHeartbeatParams{
+			ID: id, UserID: b.dono, Name: "backup", PingTokenHash: hash, PeriodSec: &periodo, GraceSec: 300,
+			Enabled: true, CreatedAt: b.clk.Now(), DeadlineAt: b.clk.Now().Add(time.Hour),
+		})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	total := heartbeatEventsExactBelow + 2000
+	tx, err := b.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, `SELECT set_config('app.scope', 'prober', true)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO heartbeat_events (id, heartbeat_id, at, kind)
+		SELECT uuidv7(), $1, $2, 'success' FROM generate_series(1, $3)`, id, b.clk.Now(), total); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.pool.Exec(ctx, `ANALYZE heartbeat_events`); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.s.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if v := testutil.ToFloat64(b.m.heartbeatEvents); v != float64(total) {
+		t.Errorf("heartbeat_events = %v, queria %d", v, total)
+	}
+}
+
 // Uma transição avisa o laço de Run, para que incidents_open não espere a
 // reconciliação periódica de 30s.
 func TestTransitionSignalsTheReconcileLoop(t *testing.T) {
