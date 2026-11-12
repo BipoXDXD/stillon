@@ -34,28 +34,21 @@ import (
 // o orçamento vale entre processos.
 //
 // No banco de propósito: o contador em memória zerava num restart ou deploy e
-// devolvia as cinco tentativas a quem tem uma sessão roubada. A linha de uma
-// família revogada sai na varredura de cada reserva, uma folga depois (as
-// provas em voo ainda a usam); a do usuário apagado, pela FK (migration 00028).
+// devolvia as cinco tentativas a quem tem uma sessão roubada. Família viva nunca
+// perde o contador, por mais parada que esteja: a vida dela já é limitada pelo
+// prazo do refresh, e só o sucesso o zera. A linha de uma família que deixou de
+// existir (revogada ou vencida) sai na retenção periódica
+// (storage.ApplyRetention), uma folga depois, porque as provas em voo ainda a
+// usam; a do usuário apagado, pela FK (migration 00028). A varredura fica fora
+// do caminho da reserva: manutenção que falha não derruba as rotas de prova.
 //
 // O resíduo: uma reserva em voo quando o processo cai fica contada como prova
-// gasta até a varredura das famílias paradas, o que só aproxima uma família
-// da expulsão. Nunca a afasta.
+// gasta até a família acabar, o que só aproxima uma família da expulsão. Nunca
+// a afasta.
 
 // FamilyProofLimit é quantas provas erradas uma família aguenta; a última a
 // derruba. É o mesmo limiar do bloqueio da conta.
 const FamilyProofLimit = LockThreshold
-
-// familiaParada é quanto uma família sem nenhuma reserva fica no contador. O
-// access token vive 15 min e o refresh o renova; uma família que ninguém usa
-// há um dia não precisa da conta de ontem, e a tabela não cresce para sempre.
-const familiaParada = 24 * time.Hour
-
-// folgaDaFamiliaMorta é quanto o contador de uma família que já não está viva
-// (revogada, inclusive pela quinta prova errada) fica no banco antes da
-// varredura: as provas em voo dela, no máximo um punhado de Argon2id sob o
-// prazo de 15 s da requisição, ainda precisam da linha para contar.
-const folgaDaFamiliaMorta = time.Minute
 
 // prazoDoBanco limita cada ida ao banco de uma prova. Fail, Succeed e Release
 // rodam SEM o cancelamento da requisição (ver ProofReservation): sem prazo
@@ -97,11 +90,6 @@ type ProofReservation struct {
 // responde 500 sem verificar.
 func (f *FamilyProofs) Reserve(ctx context.Context, userID, familyID uuid.UUID) (*ProofReservation, error) {
 	agora := f.clk.Now()
-	if err := f.q.SweepFamilyProofs(ctx, db.SweepFamilyProofsParams{
-		IdleBefore: agora.Add(-familiaParada), DeadBefore: agora.Add(-folgaDaFamiliaMorta), Now: agora,
-	}); err != nil {
-		return nil, fmt.Errorf("varrer contadores de provas: %w", err)
-	}
 	geracao, err := uuid.NewV7()
 	if err != nil {
 		return nil, fmt.Errorf("gerar geração do contador de provas: %w", err)

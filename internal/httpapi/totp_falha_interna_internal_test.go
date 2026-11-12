@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/BipoXDXD/stillon/internal/account"
+	"github.com/BipoXDXD/stillon/internal/apierr"
 	"github.com/BipoXDXD/stillon/internal/auth"
 	"github.com/BipoXDXD/stillon/internal/clock"
 	"github.com/BipoXDXD/stillon/internal/httpapi/middleware"
@@ -109,7 +110,7 @@ func novoCenarioDoSegundoFator(t *testing.T) cenarioDoSegundoFator {
 // comContadorNoBanco troca o contador de provas por um sobre um Postgres real,
 // com a família do cenário viva: o contador vive no banco, e o resto do cenário
 // segue com a porta fechada, que é o que faz o segundo fator falhar por dentro.
-func (c cenarioDoSegundoFator) comContadorNoBanco(t *testing.T) {
+func (c cenarioDoSegundoFator) comContadorNoBanco(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	ctx := context.Background()
 	pool := testdb.New(t)
@@ -123,6 +124,7 @@ func (c cenarioDoSegundoFator) comContadorNoBanco(t *testing.T) {
 		t.Fatal(err)
 	}
 	c.h.provas.contador = auth.NewFamilyProofs(pool, c.clk)
+	return pool
 }
 
 func (c cenarioDoSegundoFator) verificarCodigo(t *testing.T) *httptest.ResponseRecorder {
@@ -219,4 +221,39 @@ func TestTOTPDisableInternalFailuresDoNotCountAsWrongProofs(t *testing.T) {
 	if seguinte.Exhausted() {
 		t.Error("as falhas internas esgotaram o contador de provas da família")
 	}
+}
+
+// Banco fora na reserva da prova: 500 genérico, e nada é verificado (nem o
+// Argon2id roda). Sem a reserva, a prova não pode seguir. Sabotagem: reservar
+// ignorar o erro e seguir com uma reserva vazia.
+func TestTOTPDisableAnswers500AndVerifiesNothingWhenTheProofReservationFails(t *testing.T) {
+	c := novoCenarioDoSegundoFator(t) // o contador está na porta fechada
+	antes := auth.Argon2Verifications()
+
+	w := c.desligarFator(t)
+
+	conferirErroInternoGenerico(t, w)
+	if n := auth.Argon2Verifications() - antes; n != 0 {
+		t.Errorf("%d Argon2id rodaram sem a reserva da prova, queria 0", n)
+	}
+}
+
+// Banco fora ao registrar a prova errada: a prova não foi contada, então a rota
+// responde 500 em vez de 401 invalid_credentials, e a família não é derrubada.
+// Sabotagem: errou ignorar o erro do Fail.
+func TestWrongProofRegistrationFailureAnswers500(t *testing.T) {
+	c := novoCenarioDoSegundoFator(t)
+	pool := c.comContadorNoBanco(t)
+	r := httptest.NewRequest(http.MethodPost, "/api/v1/auth/totp/disable", nil)
+	reserva := httptest.NewRecorder()
+	res := c.h.provas.reservar(reserva, r, c.usuario, c.familia)
+	if res == nil {
+		t.Fatalf("a reserva respondeu %d antes do teste", reserva.Code)
+	}
+	pool.Close()
+
+	w := httptest.NewRecorder()
+	c.h.provas.errou(w, r, res, c.usuario, apierr.CodeInvalidCredentials)
+
+	conferirErroInternoGenerico(t, w)
 }

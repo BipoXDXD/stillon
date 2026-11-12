@@ -15,8 +15,9 @@ SET LOCAL lock_timeout = '5s';
 CREATE TABLE session_family_proofs (
     -- sessions.family_id não é chave de sessions (uma família tem uma linha por
     -- refresh), então não há FK para a família: a do usuário apagado é a FK
-    -- para users, e a da família revogada ou parada é a varredura que a
-    -- aplicação faz a cada reserva (SweepFamilyProofs).
+    -- para users, e a da família revogada ou vencida é a retenção periódica
+    -- (DeleteDeadFamilyProofs). Família viva nunca perde a linha: a vida dela
+    -- já é limitada pelo prazo do refresh.
     --
     -- Nada de gatilho em sessions que apague a linha ao revogar: as provas em
     -- voo da família (5 Argon2id) ainda precisam dela para contar, e quem as
@@ -31,8 +32,8 @@ CREATE TABLE session_family_proofs (
     -- verificação, então N requisições simultâneas gastam N provas.
     reserved   bigint NOT NULL CHECK (reserved >= 0),
     errors     bigint NOT NULL CHECK (errors >= 0),
-    -- Relógio da aplicação, o mesmo das sessões. Serve à varredura das
-    -- famílias paradas e das revogadas.
+    -- Relógio da aplicação, o mesmo das sessões. Serve à folga da retenção
+    -- das famílias mortas.
     updated_at timestamptz NOT NULL,
     CONSTRAINT session_family_proofs_errors_le_reserved CHECK (errors <= reserved)
 );

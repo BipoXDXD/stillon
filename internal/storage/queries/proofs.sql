@@ -40,23 +40,6 @@ UPDATE session_family_proofs SET reserved = reserved - 1
  WHERE family_id = sqlc.arg(family_id) AND generation = sqlc.arg(generation)
    AND reserved > errors;
 
--- A varredura, a cada reserva: apaga a conta da família parada (ninguém a usa
--- há um dia; o access token vive 15 min e o refresh o renova) e a da família
--- que já não está viva (revogada ou vencida) depois de uma folga, em que as
--- provas em voo ainda a usam para contar. É assim que a revogação limpa o
--- contador: nada de gatilho em sessions, que apagaria a linha antes das provas
--- em voo.
--- name: SweepFamilyProofs :exec
-DELETE FROM session_family_proofs p
- WHERE p.updated_at < sqlc.arg(idle_before)::timestamptz
-    OR (p.updated_at < sqlc.arg(dead_before)::timestamptz
-        AND NOT EXISTS (
-            SELECT 1 FROM sessions s
-             WHERE s.user_id = p.user_id AND s.family_id = p.family_id
-               AND s.used_at IS NULL AND s.revoked_at IS NULL
-               AND s.expires_at > sqlc.arg(now)::timestamptz
-        ));
-
 -- O tamanho da tabela, para a métrica.
 -- name: CountFamilyProofs :one
 SELECT count(*) FROM session_family_proofs;

@@ -126,32 +126,3 @@ func (q *Queries) ReserveFamilyProof(ctx context.Context, arg ReserveFamilyProof
 	err := row.Scan(&i.Generation, &i.Reserved)
 	return i, err
 }
-
-const sweepFamilyProofs = `-- name: SweepFamilyProofs :exec
-DELETE FROM session_family_proofs p
- WHERE p.updated_at < $1::timestamptz
-    OR (p.updated_at < $2::timestamptz
-        AND NOT EXISTS (
-            SELECT 1 FROM sessions s
-             WHERE s.user_id = p.user_id AND s.family_id = p.family_id
-               AND s.used_at IS NULL AND s.revoked_at IS NULL
-               AND s.expires_at > $3::timestamptz
-        ))
-`
-
-type SweepFamilyProofsParams struct {
-	IdleBefore time.Time
-	DeadBefore time.Time
-	Now        time.Time
-}
-
-// A varredura, a cada reserva: apaga a conta da família parada (ninguém a usa
-// há um dia; o access token vive 15 min e o refresh o renova) e a da família
-// que já não está viva (revogada ou vencida) depois de uma folga, em que as
-// provas em voo ainda a usam para contar. É assim que a revogação limpa o
-// contador: nada de gatilho em sessions, que apagaria a linha antes das provas
-// em voo.
-func (q *Queries) SweepFamilyProofs(ctx context.Context, arg SweepFamilyProofsParams) error {
-	_, err := q.db.Exec(ctx, sweepFamilyProofs, arg.IdleBefore, arg.DeadBefore, arg.Now)
-	return err
-}

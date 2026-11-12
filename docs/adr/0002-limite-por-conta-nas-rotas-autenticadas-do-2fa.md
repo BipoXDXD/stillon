@@ -66,8 +66,32 @@ Detalhes que a decisão fixa:
   real.
 - O estado continua só em memória de cada instância: com mais de uma réplica, cada uma conta por si.
   A chave por conta migra junto com o resto (issue #328).
-- Não resolve, e continua fora de escopo: persistência do contador de provas (issue #324) e o total
-  de provas erradas por conta somado entre famílias.
+- Continua fora de escopo: o total de provas erradas por conta somado entre famílias.
+- O contador de provas por família deixou de ser memória do processo (issue #324, ver a atualização
+  abaixo); o balde por conta continua só em memória de cada instância.
+
+## Atualização (issue #324): contador de provas por família persistido
+
+O contador de provas erradas por família passou da memória do processo para o Postgres (tabela
+`session_family_proofs`, migration 00028), de modo que um restart ou deploy não devolve o orçamento. Ele
+e o balde por conta são camadas independentes e se complementam: o balde limita a taxa e o custo por
+conta; o contador limita o total de provas erradas por família de sessão, e a quinta derruba a família.
+A ordem da cadeia não muda (`authn` → `viva` → limite da conta → handler, e a reserva da prova dentro do
+handler, antes de verificar). Um pedido barrado pelo balde (429) continua não reservando nem contando prova.
+
+Decisões:
+
+- O incremento é uma instrução SQL única, sem ler e depois gravar, então o orçamento vale entre processos
+  e a reserva continua vindo antes da verificação.
+- Erro de banco na reserva ou no registro da prova errada responde 500 e nada é verificado; a escrita do
+  registro não segue o cancelamento da requisição.
+- Família viva nunca perde o contador por inatividade: a vida dela já é limitada pelo prazo do refresh, e
+  só o sucesso o zera. A linha de uma família que deixou de existir (revogada ou vencida) sai na retenção
+  periódica, em lote, depois de uma folga curta; a do usuário apagado sai pela chave estrangeira. A
+  limpeza fica fora do caminho dos pedidos.
+- A métrica `session_family_proofs` mostra o tamanho da tabela.
+- Durante a sobreposição de um deploy, a instância antiga (contador em memória) e a nova (banco) contam
+  separado por alguns minutos.
 
 ## Compliance
 
@@ -85,5 +109,8 @@ a regra que o garante):
   trocando de IP; contas diferentes, em IPs diferentes, têm baldes independentes.
 - Token de sessão revogada é recusado antes do limite e não gasta ficha (uma sessão viva da mesma
   conta mantém a rajada inteira), nas seis rotas; e não troca a senha.
+- Contador persistido (issue #324): testes de `internal/auth/provas_test.go` e de
+  `internal/httpapi/provas_reinicio_integration_test.go` (restart no meio, orçamento exato sob
+  concorrência, falha de banco, família viva parada por mais de um dia).
 - `rotas_negar_por_padrao_integration_test.go` e `rotas_protegidas_test.go` seguem verdes: sem
   credencial, 401, e nunca 429 antes do 401.
