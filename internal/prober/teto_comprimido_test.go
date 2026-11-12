@@ -26,9 +26,18 @@ func TestCompressedLimitReaderStopsExactlyAtTheLimit(t *testing.T) {
 			leitor := comTetoComprimido(fonte)
 			buf := make([]byte, tamanho)
 
+			// Um leitor certo entrega ao menos um byte por Read até o teto e
+			// depois falha: teto + 1 leituras bastam. A folga só evita que um
+			// leitor quebrado (Read de 0 bytes sem erro, teto que não desconta)
+			// prenda o teste até o timeout em vez de falhar aqui.
+			maxLeituras := tetoComprimido + 2
 			entregues := 0
 			var err error
-			for err == nil {
+			for leituras := 0; err == nil; leituras++ {
+				if leituras == maxLeituras {
+					t.Fatalf("sem errTetoComprimido após %d leituras: entregues %d, lidos da fonte %d, teto %d",
+						leituras, entregues, fonte.lidos, tetoComprimido)
+				}
 				var n int
 				n, err = leitor.Read(buf)
 				entregues += n
