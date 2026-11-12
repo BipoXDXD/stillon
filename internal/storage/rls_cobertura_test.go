@@ -15,12 +15,9 @@ import (
 // chave é o nome exato em pg_class, e o valor é o motivo. Sem motivo escrito,
 // a tabela não entra: ela recebe ENABLE, FORCE e política na própria migration.
 var tabelasSemRLS = map[string]string{
-	"goose_db_version":      "é do goose e não guarda dado de usuário; ele a lê e grava sem escopo a cada boot",
-	"users":                 "o login a consulta por e-mail antes de existir usuário na transação",
-	"sessions":              "login e refresh a consultam por e-mail e por hash, antes de existir usuário na transação",
-	"totp_recovery_codes":   "as transações de login e 2FA não definem app.user_id; as queries filtram por user_id e a coluna guarda só hash",
-	"session_family_proofs": "as rotas autenticadas contam por família sem app.user_id na transação; a tabela guarda só ids e contagens, e as queries conferem o par (usuário, família) vivo",
-	"audit_log":             "user_id é anulável, a linha sobrevive à conta apagada, e a retenção apaga as de todos",
+	"goose_db_version": "é do goose e não guarda dado de usuário; ele a lê e grava sem escopo a cada boot",
+	"users":            "o login a consulta por e-mail antes de existir usuário na transação",
+	"audit_log":        "user_id é anulável, a linha sobrevive à conta apagada, e a retenção apaga as de todos",
 }
 
 // tabelaParticionadaConhecida impede a varredura de perder o relkind p em
