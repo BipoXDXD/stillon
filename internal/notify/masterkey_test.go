@@ -3,10 +3,12 @@ package notify
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/BipoXDXD/stillon/internal/crypto"
@@ -103,5 +105,31 @@ func TestCheckMasterKeyToleratesOneCorruptedChannel(t *testing.T) {
 
 	if err := CheckMasterKey(context.Background(), pool, box); err != nil {
 		t.Fatalf("CheckMasterKey com um canal corrompido e um sadio = %v", err)
+	}
+}
+
+// Banco que falha na leitura dos selos não é chave errada: o boot para com o
+// erro do banco embrulhado, e a mensagem não leva a chave. A revogação simula
+// um GRANT que regrediu; o snapshot restaurado no fim do teste a desfaz.
+func TestCheckMasterKeyWrapsTheDatabaseError(t *testing.T) {
+	pool := testdb.New(t)
+	box := caixa(t, chaveDeTeste)
+	gravarCanais(t, pool, seladoCom(t, box))
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, `REVOKE SELECT ON notif_channels FROM CURRENT_USER`); err != nil {
+		t.Fatal(err)
+	}
+
+	err := CheckMasterKey(ctx, pool, box)
+	const permissaoNegada = "42501"
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != permissaoNegada {
+		t.Fatalf("CheckMasterKey com o SELECT revogado = %v, queria o erro 42501 do banco embrulhado", err)
+	}
+	if errors.Is(err, ErrMasterKey) {
+		t.Fatalf("erro do banco virou ErrMasterKey: %v", err)
+	}
+	if strings.Contains(err.Error(), string(chaveDeTeste)) {
+		t.Fatal("a mensagem de erro traz a MASTER_KEY")
 	}
 }
