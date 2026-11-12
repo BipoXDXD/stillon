@@ -75,6 +75,11 @@ type api struct {
 	// rotacao é o rotation da última troca de autenticador que o iniciarTrocaHTTP
 	// viu aceita: o confirmarTrocaHTTP o manda de volta.
 	rotacao string
+	// ctx, cfg e deps são o que subiu o srv: reiniciar monta um servidor novo
+	// com eles sobre o mesmo banco.
+	ctx  context.Context
+	cfg  *config.Config
+	deps httpapi.Deps
 }
 
 // prazoDeTesteSobCarga substitui os 15 s de produção nos testes de
@@ -150,6 +155,7 @@ func newAPICom(t *testing.T, ajustar func(*config.Config), ajustarDeps func(*htt
 	deps := httpapi.Deps{
 		Store: store, Sessions: mgr, TOTP: segundoFator,
 		Accounts:    account.NewService(pool, segundoFator, clk, cfg.IPHashKey),
+		Proofs:      auth.NewFamilyProofs(pool, clk),
 		Targets:     targets.NewService(pool, box, clk),
 		Incidents:   history.NewService(pool, clk),
 		Channels:    notify.NewChannelService(pool, box, clk, discord, email, cfg.PublicBaseURL),
@@ -163,7 +169,8 @@ func newAPICom(t *testing.T, ajustar func(*config.Config), ajustarDeps func(*htt
 	}
 	srv := httptest.NewServer(httpapi.Routes(ctx, cfg, deps))
 	t.Cleanup(srv.Close)
-	return &api{srv: srv, pool: pool, clk: clk, userID: userID, discord: discord, email: email}
+	return &api{srv: srv, pool: pool, clk: clk, userID: userID, discord: discord, email: email,
+		ctx: ctx, cfg: cfg, deps: deps}
 }
 
 func post(t *testing.T, c *http.Client, url string, body any) *http.Response {

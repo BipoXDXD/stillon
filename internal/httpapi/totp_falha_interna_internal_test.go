@@ -17,6 +17,7 @@ import (
 	"github.com/BipoXDXD/stillon/internal/auth"
 	"github.com/BipoXDXD/stillon/internal/clock"
 	"github.com/BipoXDXD/stillon/internal/httpapi/middleware"
+	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 )
 
 const senhaDoDono = "senha-do-dono-bem-comprida"
@@ -97,12 +98,31 @@ func novoCenarioDoSegundoFator(t *testing.T) cenarioDoSegundoFator {
 			users: contas, sessions: auth.NewManager(nil, clk, chaveDeIP), totp: segundoFator, clk: clk,
 			jwtSecret: []byte("segredo-de-teste-com-32-bytes!!!"),
 			provas: &provasDaFamilia{
-				contador: auth.NewFamilyProofs(clk),
+				contador: auth.NewFamilyProofs(pool, clk),
 				contas:   account.NewService(pool, segundoFator, clk, chaveDeIP),
 			},
 		},
 		contas: contas, clk: clk, usuario: usuario, familia: uuid.New(),
 	}
+}
+
+// comContadorNoBanco troca o contador de provas por um sobre um Postgres real,
+// com a família do cenário viva: o contador vive no banco, e o resto do cenário
+// segue com a porta fechada, que é o que faz o segundo fator falhar por dentro.
+func (c cenarioDoSegundoFator) comContadorNoBanco(t *testing.T) {
+	t.Helper()
+	ctx := context.Background()
+	pool := testdb.New(t)
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO users (id, email, password_hash) VALUES ($1, 'dono@exemplo.com', 'x')`, c.usuario); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO sessions (id, user_id, family_id, token_hash, expires_at) VALUES ($1, $2, $3, $4, $5)`,
+		uuid.New(), c.usuario, c.familia, []byte("hash-da-sessao-do-cenario"), c.clk.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	c.h.provas.contador = auth.NewFamilyProofs(pool, c.clk)
 }
 
 func (c cenarioDoSegundoFator) verificarCodigo(t *testing.T) *httptest.ResponseRecorder {
@@ -173,6 +193,7 @@ func TestTOTPVerifyInternalFailureRefundsTheReservedAttempt(t *testing.T) {
 
 func TestTOTPDisableInternalFailureAnswersAGeneric500(t *testing.T) {
 	c := novoCenarioDoSegundoFator(t)
+	c.comContadorNoBanco(t)
 
 	conferirErroInternoGenerico(t, c.desligarFator(t))
 }
@@ -181,6 +202,7 @@ func TestTOTPDisableInternalFailureAnswersAGeneric500(t *testing.T) {
 // provas da família derrubariam a sessão do dono.
 func TestTOTPDisableInternalFailuresDoNotCountAsWrongProofs(t *testing.T) {
 	c := novoCenarioDoSegundoFator(t)
+	c.comContadorNoBanco(t)
 
 	const falhasSeguidas = auth.FamilyProofLimit
 	for range falhasSeguidas {
@@ -189,7 +211,10 @@ func TestTOTPDisableInternalFailuresDoNotCountAsWrongProofs(t *testing.T) {
 		}
 	}
 
-	seguinte := c.h.provas.contador.Reserve(c.familia)
+	seguinte, err := c.h.provas.contador.Reserve(context.Background(), c.usuario, c.familia)
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer seguinte.Release()
 	if seguinte.Exhausted() {
 		t.Error("as falhas internas esgotaram o contador de provas da família")

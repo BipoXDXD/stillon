@@ -81,22 +81,22 @@ func TestCheckPasswordErroDaReservaPropaga(t *testing.T) {
 // Fail só conta uma vez por reserva: chamá-lo de novo não aproxima a família
 // do limite de 5 erros.
 func TestFailDuplicadoNaoContaDuasVezes(t *testing.T) {
-	provas := auth.NewFamilyProofs(clock.NewFake(time.Date(2026, 11, 11, 12, 0, 0, 0, time.UTC)))
-	familia := uuid.New()
+	b := novaBancadaDeProvas(t)
+	usuario, familia := b.familia(t)
 
-	r := provas.Reserve(familia)
-	if r.Fail() {
+	r := b.reservar(t, usuario, familia)
+	if falhar(t, r) {
 		t.Fatal("o primeiro erro da família derrubou a sessão")
 	}
-	if r.Fail() {
+	if falhar(t, r) {
 		t.Fatal("o Fail repetido da mesma reserva derrubou a sessão")
 	}
 	for i := 2; i <= 4; i++ {
-		if provas.Reserve(familia).Fail() {
+		if falhar(t, b.reservar(t, usuario, familia)) {
 			t.Fatalf("o erro %d derrubou a família antes do 5º erro real", i)
 		}
 	}
-	if !provas.Reserve(familia).Fail() {
+	if !falhar(t, b.reservar(t, usuario, familia)) {
 		t.Error("o 5º erro real não derrubou a família")
 	}
 }
@@ -104,20 +104,20 @@ func TestFailDuplicadoNaoContaDuasVezes(t *testing.T) {
 // Succeed numa reserva já fechada por Fail não zera a conta: senão uma prova
 // certa tardia apagaria os erros e burlaria o limite.
 func TestSucceedDepoisDeFailNaoZera(t *testing.T) {
-	provas := auth.NewFamilyProofs(clock.NewFake(time.Date(2026, 11, 11, 12, 0, 0, 0, time.UTC)))
-	familia := uuid.New()
+	b := novaBancadaDeProvas(t)
+	usuario, familia := b.familia(t)
 
-	r := provas.Reserve(familia)
-	if r.Fail() {
+	r := b.reservar(t, usuario, familia)
+	if falhar(t, r) {
 		t.Fatal("o primeiro erro da família derrubou a sessão")
 	}
 	r.Succeed()
 	for i := 2; i <= 4; i++ {
-		if provas.Reserve(familia).Fail() {
+		if falhar(t, b.reservar(t, usuario, familia)) {
 			t.Fatalf("o erro %d derrubou a família antes do 5º erro real", i)
 		}
 	}
-	if !provas.Reserve(familia).Fail() {
+	if !falhar(t, b.reservar(t, usuario, familia)) {
 		t.Error("Succeed depois de Fail zerou a contagem: o 5º erro real não derrubou a família")
 	}
 }

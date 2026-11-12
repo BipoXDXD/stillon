@@ -177,11 +177,14 @@ func run(ctx context.Context, cfg *config.Config) error {
 	if cfg.Role.RunsAPI() {
 		store := auth.NewPGStore(pool)
 		segundoFator := auth.NewTOTP(pool, box, totpIssuer)
+		provas := auth.NewFamilyProofs(pool, clk)
+		reg.MustRegister(provas.Collector())
 		deps := httpapi.Deps{
 			Store:       store,
 			Sessions:    auth.NewManager(store, clk, cfg.IPHashKey),
 			TOTP:        segundoFator,
 			Accounts:    account.NewService(pool, segundoFator, clk, cfg.IPHashKey),
+			Proofs:      provas,
 			Targets:     targets.NewService(pool, box, clk, targets.ComTetoDeRegrasPorHost(cfg.ContentRulesPerHost)),
 			Incidents:   history.NewService(pool, clk),
 			Channels:    notify.NewChannelService(pool, box, clk, notify.NewDiscord(), verificador(cfg), cfg.PublicBaseURL),

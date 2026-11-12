@@ -74,6 +74,7 @@ func apiSemBanco(t *testing.T) (*httptest.Server, *clock.Fake) {
 	srv := httptest.NewServer(httpapi.Routes(ctx, cfg, httpapi.Deps{
 		Store: store, Sessions: auth.NewManager(store, clk, cfg.IPHashKey), TOTP: segundoFator,
 		Accounts:    account.NewService(pool, segundoFator, clk, cfg.IPHashKey),
+		Proofs:      auth.NewFamilyProofs(pool, clk),
 		Targets:     targets.NewService(pool, box, clk),
 		Incidents:   history.NewService(pool, clk),
 		Channels:    notify.NewChannelService(pool, box, clk, &discordFalso{}, &carteiroFalso{}, cfg.PublicBaseURL),
@@ -169,9 +170,11 @@ func TestBancoForaNaoVazaNadaEmNenhumaRota(t *testing.T) {
 			t.Errorf("o log trouxe %q:\n%s", proibido, registrado)
 		}
 	}
-	// O erro real precisa estar lá, ou os canários ausentes não provam nada.
+	// O erro real precisa estar lá, ou os canários ausentes não provam nada. A
+	// troca de senha falha já na reserva da prova, no banco: a falha da troca
+	// em si ("trocar senha") só chega ao log com o banco no ar.
 	for _, operacao := range []string{
-		"conferir sessão", "buscar usuário", "trocar senha", "rotacionar sessão", "revogar sessão",
+		"conferir sessão", "buscar usuário", "reservar prova da família", "rotacionar sessão", "revogar sessão",
 		"registrar ping", "status page pública", "verificar token", "confirmar token",
 	} {
 		if !strings.Contains(registrado, operacao) {

@@ -142,6 +142,15 @@ type Session struct {
 	CreatedAt time.Time
 }
 
+type SessionFamilyProof struct {
+	FamilyID   uuid.UUID
+	UserID     uuid.UUID
+	Generation uuid.UUID
+	Reserved   int64
+	Errors     int64
+	UpdatedAt  time.Time
+}
+
 type StatusPage struct {
 	ID        uuid.UUID
 	UserID    uuid.UUID

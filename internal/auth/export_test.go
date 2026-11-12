@@ -13,12 +13,10 @@ import (
 // semáforo padrão no Cleanup.
 func SetArgon2MaxConcurrentWithWait(n int, espera time.Duration) { trocarSemaforoArgon2(n, espera) }
 
-// Len diz quantas famílias o contador acompanha: é a única forma de observar a
-// varredura das paradas sem exportar o mapa.
-func (f *FamilyProofs) Len() int {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return len(f.contas)
+// Len diz quantas famílias o contador acompanha no banco: é a única forma de
+// observar a varredura das paradas e a limpeza na revogação.
+func (f *FamilyProofs) Len(ctx context.Context) (int64, error) {
+	return f.q.CountFamilyProofs(ctx)
 }
 
 // RotacaoDe expõe o identificador de troca aos testes do pacote, que o
