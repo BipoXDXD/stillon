@@ -510,11 +510,15 @@ func TestOperacoesDe2FARevertemSeAAuditoriaFalha(t *testing.T) {
 		nome    string
 		acao    string
 		codigos int // códigos de recuperação que têm de sobrar
+		// O fator como o cenário o deixa, e como o rollback tem de devolvê-lo:
+		// o estado "antes" lido do banco não prova isso sozinho.
+		confirmado bool // totp_confirmed_at preenchido
+		pendente   bool // segredo pendente de troca gravado
 		// preparar monta o cenário e devolve a operação que tem de falhar.
 		preparar func(t *testing.T, svc *auth.TOTP, pool *pgxpool.Pool, userID uuid.UUID) func() error
 	}{
 		{
-			nome: "Confirm", acao: "totp.enabled", codigos: 0,
+			nome: "Confirm", acao: "totp.enabled", codigos: 0, confirmado: false, pendente: false,
 			preparar: func(t *testing.T, svc *auth.TOTP, pool *pgxpool.Pool, userID uuid.UUID) func() error {
 				uri, err := svc.Enroll(context.Background(), userID, "totp@exemplo.com")
 				if err != nil {
@@ -528,7 +532,7 @@ func TestOperacoesDe2FARevertemSeAAuditoriaFalha(t *testing.T) {
 			},
 		},
 		{
-			nome: "VerifyWithProof com código de recuperação", acao: "totp.recovery_used", codigos: 1,
+			nome: "VerifyWithProof com código de recuperação", acao: "totp.recovery_used", codigos: 1, confirmado: true, pendente: false,
 			preparar: func(t *testing.T, svc *auth.TOTP, pool *pgxpool.Pool, userID uuid.UUID) func() error {
 				gravarSegredoTOTP(t, pool, userID, segredoDeTroca)
 				gravarCodigoDeRecuperacao(t, pool, userID)
@@ -539,7 +543,7 @@ func TestOperacoesDe2FARevertemSeAAuditoriaFalha(t *testing.T) {
 			},
 		},
 		{
-			nome: "Disable", acao: "totp.disabled", codigos: 1,
+			nome: "Disable", acao: "totp.disabled", codigos: 1, confirmado: true, pendente: false,
 			preparar: func(t *testing.T, svc *auth.TOTP, pool *pgxpool.Pool, userID uuid.UUID) func() error {
 				gravarSegredoTOTP(t, pool, userID, segredoDeTroca)
 				gravarCodigoDeRecuperacao(t, pool, userID)
@@ -548,7 +552,7 @@ func TestOperacoesDe2FARevertemSeAAuditoriaFalha(t *testing.T) {
 			},
 		},
 		{
-			nome: "StartRotation com código de recuperação", acao: "totp.recovery_used", codigos: 1,
+			nome: "StartRotation com código de recuperação", acao: "totp.recovery_used", codigos: 1, confirmado: true, pendente: false,
 			preparar: func(t *testing.T, svc *auth.TOTP, pool *pgxpool.Pool, userID uuid.UUID) func() error {
 				familia := familiaViva(t, pool, userID, now)
 				gravarSegredoTOTP(t, pool, userID, segredoDeTroca)
@@ -561,7 +565,7 @@ func TestOperacoesDe2FARevertemSeAAuditoriaFalha(t *testing.T) {
 			},
 		},
 		{
-			nome: "StartRotation", acao: "totp.rotation_started", codigos: 1,
+			nome: "StartRotation", acao: "totp.rotation_started", codigos: 1, confirmado: true, pendente: false,
 			preparar: func(t *testing.T, svc *auth.TOTP, pool *pgxpool.Pool, userID uuid.UUID) func() error {
 				familia := familiaViva(t, pool, userID, now)
 				gravarSegredoTOTP(t, pool, userID, segredoDeTroca)
@@ -574,7 +578,7 @@ func TestOperacoesDe2FARevertemSeAAuditoriaFalha(t *testing.T) {
 			},
 		},
 		{
-			nome: "ConfirmRotation", acao: "totp.rotated", codigos: 1,
+			nome: "ConfirmRotation", acao: "totp.rotated", codigos: 1, confirmado: true, pendente: true,
 			preparar: func(t *testing.T, svc *auth.TOTP, pool *pgxpool.Pool, userID uuid.UUID) func() error {
 				familia := familiaViva(t, pool, userID, now)
 				// Outra família viva: a confirmação a revogaria, e o rollback tem de
@@ -610,6 +614,12 @@ func TestOperacoesDe2FARevertemSeAAuditoriaFalha(t *testing.T) {
 			}
 			if depois.Codigos != caso.codigos {
 				t.Errorf("%d códigos de recuperação, queria %d", depois.Codigos, caso.codigos)
+			}
+			if depois.Confirmado != caso.confirmado {
+				t.Errorf("totp_confirmed_at preenchido = %v, queria %v", depois.Confirmado, caso.confirmado)
+			}
+			if temPendente := len(depois.Pendente) > 0 && depois.FamiliaPendente != nil; temPendente != caso.pendente {
+				t.Errorf("segredo pendente com família = %v, queria %v", temPendente, caso.pendente)
 			}
 			if depois.SessoesRevogadas != 0 {
 				t.Errorf("%d sessões revogadas, queria 0", depois.SessoesRevogadas)
