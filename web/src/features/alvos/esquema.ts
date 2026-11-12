@@ -75,7 +75,7 @@ function urlPermitida(raw: string): string | null {
 
 // A regra de conteúdo espelha internal/targets/contentrule.go. O limite é em
 // caracteres como o servidor os conta (runas, o char_length do banco): um
-// emoji vale 1, e não os 2 do .length em UTF-16 (L9 do STRIDE). Os casos que
+// emoji vale 1, e não os 2 do .length em UTF-16. Os casos que
 // os dois lados julgam igual ficam em
 // internal/targets/testdata/regra-de-conteudo.json (regra-contrato.test.ts).
 // Os modos vêm do schema da resposta; "desligada" é só do formulário (a

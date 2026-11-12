@@ -1,7 +1,7 @@
 // Formatação para a tela, em pt-BR. Funções puras: o "agora" é parâmetro.
 
 // Porcentagem TRUNCADA em duas casas, nunca arredondada: "100,00%" num dia
-// com falha é pior que "99,99%" .
+// com falha é pior que "99,99%".
 // O + 1e-9 absorve o erro de ponto flutuante de valores exatos (0.0029 *
 // 10000 é 28,999…96, e um floor seco daria "0,28%"); é pequeno demais para
 // levar 0,99995 a "100,00%".

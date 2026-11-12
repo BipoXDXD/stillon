@@ -9,8 +9,8 @@ import { assertUnreachable } from '@/lib/utils'
 import { partirDuracao, SEGUNDOS_DA_UNIDADE, type Unidade } from './estado'
 
 // O formulário do heartbeat, com os limites da §7 da spec. A expressão cron
-// quem julga é o servidor: um segundo parser aqui é o risco de dois
-// julgamentos divergentes.
+// quem julga é o servidor: um segundo parser de cron aqui erraria o fuso e o
+// horário de verão.
 const UNIDADES = ['dias', 'horas', 'minutos', 'segundos'] as const
 
 const LIMITES = {
