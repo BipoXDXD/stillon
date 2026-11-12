@@ -68,29 +68,32 @@ type contagem struct{ total, ok int64 }
 func (s *Service) Summary(ctx context.Context, userID uuid.UUID, filtro SummaryFilter) ([]Summary, error) {
 	agora := s.clk.Now()
 	h := agora.UTC().Truncate(time.Hour)
-	inicio := h.Add(-SparkHours * time.Hour)
+	janela, err := rollupcut.NovaJanela(h.Add(-SparkHours*time.Hour), h.Add(time.Hour), agora)
+	if err != nil {
+		return nil, fmt.Errorf("janela do resumo: %w", err)
+	}
 
 	var out []Summary
-	err := storage.InUserTx(ctx, s.pool, userID, func(q *db.Queries) error {
+	err = storage.InUserTx(ctx, s.pool, userID, func(q *db.Queries) error {
 		alvos, err := q.ListTargetSummaries(ctx, userID)
 		if err != nil {
 			return fmt.Errorf("listar alvos do resumo: %w", err)
 		}
-		marca, err := q.LatestUserRollupBucket(ctx, db.LatestUserRollupBucketParams{Before: h, UserID: userID})
+		marca, err := q.LatestUserRollupBucket(ctx, db.LatestUserRollupBucketParams{Before: janela.Hora(), UserID: userID})
 		if err != nil {
 			return fmt.Errorf("marca d'água dos rollups: %w", err)
 		}
-		corte := rollupcut.At(marca, inicio, h)
+		corte := janela.Corte(marca)
 
-		rollups, err := q.ListSummaryRollups(ctx, db.ListSummaryRollupsParams{UserID: userID, FromAt: inicio, ToAt: corte})
+		rollups, err := q.ListSummaryRollups(ctx, db.ListSummaryRollupsParams{UserID: userID, FromAt: janela.Desde(), ToAt: corte})
 		if err != nil {
 			return fmt.Errorf("rollups do resumo: %w", err)
 		}
-		brutos, err := q.ListRawHours(ctx, db.ListRawHoursParams{UserID: userID, FromAt: corte, ToAt: h})
+		brutos, err := q.ListRawHours(ctx, db.ListRawHoursParams{UserID: userID, FromAt: corte, ToAt: janela.Hora()})
 		if err != nil {
 			return fmt.Errorf("checks do resumo: %w", err)
 		}
-		correntes, err := q.ListSummaryCurrentHour(ctx, db.ListSummaryCurrentHourParams{UserID: userID, FromAt: h, ToAt: h.Add(time.Hour)})
+		correntes, err := q.ListSummaryCurrentHour(ctx, db.ListSummaryCurrentHourParams{UserID: userID, FromAt: janela.Hora(), ToAt: janela.Ate()})
 		if err != nil {
 			return fmt.Errorf("hora corrente do resumo: %w", err)
 		}
