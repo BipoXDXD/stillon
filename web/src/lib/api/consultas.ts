@@ -35,13 +35,12 @@ export const chaves = {
 const INTERVALO_DO_RESUMO_MS = 15_000
 const INTERVALO_DOS_INCIDENTES_MS = 30_000
 const INTERVALO_DO_ALVO_MS = 60_000
-
 const INTERVALO_DA_SERIE_MS = 60_000
 const INTERVALO_DOS_CANAIS_MS = 60_000
 const INTERVALO_DOS_RESOLVIDOS_MS = 60_000
 
-// A primeira página de uma lista paginada não leva cursor. A anotação dá ao
-// useInfiniteQuery o tipo do cursor (string | undefined) sem uma assertion.
+// A primeira página de uma lista paginada não leva cursor. A anotação alarga o
+// tipo para string | undefined, o que o getNextPageParam devolve.
 const PRIMEIRA_PAGINA: string | undefined = undefined
 
 const estaSemRede = () => !onlineManager.isOnline()
