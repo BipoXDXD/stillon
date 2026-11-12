@@ -253,10 +253,10 @@ func run(parent context.Context, publicURI, password, output string, o options) 
 	if e = s.definirPrazos(o.cleanup); e != nil {
 		return Reference{}, e
 	}
-	// Só metade do encerramento espera as sessões; a outra metade fica para o
+	// Só uma fração do encerramento espera as sessões; o resto fica para o
 	// ROLLBACK e o Wait do exportador. Com o mesmo prazo do pipe e do timer, o
 	// erro de uma sessão que não fecha saía da corrida entre os três (#317).
-	if e = s.aguardarSessoesEncerradas(o.cleanup/2, exportName, dumpName); e != nil {
+	if e = s.aguardarSessoesEncerradas(o.cleanup/divisorDaEsperaPorSessoes, exportName, dumpName); e != nil {
 		return Reference{}, e
 	}
 	if e = s.pedirFimDoExportador(); e != nil {
@@ -408,6 +408,11 @@ func milissegundos(d time.Duration) int64 {
 // errEncerramentoExcedido é a causa do cancelamento do exportador quando a
 // checagem final não termina dentro do prazo de encerramento.
 var errEncerramentoExcedido = errors.New("prazo de encerramento esgotado")
+
+// divisorDaEsperaPorSessoes parte o prazo de encerramento: a espera pelas
+// sessões abertas usa 1/N dele e vence antes do timer e do prazo do pipe, que
+// usam o prazo inteiro. Com N = 2 a margem é metade do prazo.
+const divisorDaEsperaPorSessoes = 2
 
 // maxLinhaProtocolo é o maior tamanho de linha que o exportador pode mandar.
 const maxLinhaProtocolo = 512

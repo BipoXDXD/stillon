@@ -56,13 +56,9 @@ import (
 // e ErrTOTPInvalid com a prova errada ou vazia — nessa ordem, e nos três casos
 // nada foi gasto nem gravado.
 func (s *TOTP) StartRotation(ctx context.Context, userID, familyID uuid.UUID, email, code string, now time.Time) (uri, rotation string, err error) {
-	key, err := s.novaChave(email)
+	uri, sealed, err := s.novoSegredoPendente(userID, email)
 	if err != nil {
 		return "", "", err
-	}
-	sealed, err := s.box.Seal([]byte(key.Secret()), aadPendente(userID))
-	if err != nil {
-		return "", "", fmt.Errorf("cifrar segredo TOTP pendente: %w", err)
 	}
 
 	tx, err := s.pool.Begin(ctx)
@@ -70,50 +66,82 @@ func (s *TOTP) StartRotation(ctx context.Context, userID, familyID uuid.UUID, em
 		return "", "", fmt.Errorf("abrir transação: %w", err)
 	}
 	defer tx.Rollback(ctx) // no-op depois de Commit
-	q := db.New(tx)
 
+	step, err := s.provarFatorAtual(ctx, tx, userID, familyID, code, now)
+	if err != nil {
+		return "", "", err
+	}
+	if err := gravarPendente(ctx, tx, userID, familyID, sealed, step, now); err != nil {
+		return "", "", err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return "", "", fmt.Errorf("gravar segredo TOTP pendente: %w", err)
+	}
+	return uri, rotacaoDe(sealed), nil
+}
+
+// novoSegredoPendente gera o segredo do app novo e o devolve como otpauth_uri e
+// cifrado com a AAD do pendente.
+func (s *TOTP) novoSegredoPendente(userID uuid.UUID, email string) (uri string, sealed []byte, err error) {
+	key, err := s.novaChave(email)
+	if err != nil {
+		return "", nil, err
+	}
+	sealed, err = s.box.Seal([]byte(key.Secret()), aadPendente(userID))
+	if err != nil {
+		return "", nil, fmt.Errorf("cifrar segredo TOTP pendente: %w", err)
+	}
+	return key.URL(), sealed, nil
+}
+
+// provarFatorAtual, na transação de StartRotation, trava e confere nesta ordem:
+// a família viva (ErrInvalidSession), o 2FA ligado (ErrTOTPNotEnrolled) e a
+// prova de posse (ErrTOTPInvalid). Só a última gasta alguma coisa, e o código de
+// recuperação gasto deixa o rastro totp.recovery_used. Devolve o timestep
+// consumido, ou nil quando a prova foi um código de recuperação.
+func (s *TOTP) provarFatorAtual(ctx context.Context, tx pgx.Tx, userID, familyID uuid.UUID, code string, now time.Time) (*int64, error) {
 	// Sob a trava, a família não cai no meio: ou a troca de senha já comitou
 	// (e a família está morta aqui), ou ela espera esta transação e apaga o
 	// pendente gravado.
-	viva, err := travarFamiliaViva(ctx, q, userID, familyID, now)
+	viva, err := travarFamiliaViva(ctx, db.New(tx), userID, familyID, now)
 	if err != nil {
-		return "", "", err
+		return nil, err
 	}
 	if !viva {
-		return "", "", ErrInvalidSession
+		return nil, ErrInvalidSession
 	}
 	f, err := s.fatorTravado(ctx, tx, userID)
 	if err != nil {
-		return "", "", err
+		return nil, err
 	}
 	if !f.confirmado {
-		return "", "", ErrTOTPNotEnrolled
+		return nil, ErrTOTPNotEnrolled
 	}
 	step, recuperacao, err := f.provar(ctx, tx, userID, code, now)
 	if err != nil {
-		return "", "", err
+		return nil, err
 	}
 	if recuperacao {
 		if err := insertAudit(ctx, tx, userID, "totp.recovery_used", nil, now); err != nil {
-			return "", "", err
+			return nil, err
 		}
 	}
+	return step, nil
+}
 
+// gravarPendente grava o segredo pendente com a família que o iniciou, consome
+// o timestep da prova (quando houve) e zera o bloqueio da conta, e deixa a
+// auditoria totp.rotation_started.
+func gravarPendente(ctx context.Context, tx pgx.Tx, userID, familyID uuid.UUID, sealed []byte, step *int64, now time.Time) error {
 	if _, err := tx.Exec(ctx,
 		`UPDATE users SET totp_pending_secret_enc = $2, totp_pending_family_id = $3,
 		                  totp_last_timestep = COALESCE($4, totp_last_timestep),
 		                  failed_attempts = 0, locked_until = NULL
 		   WHERE id = $1`,
 		userID, sealed, familyID, step); err != nil {
-		return "", "", fmt.Errorf("gravar segredo TOTP pendente: %w", err)
+		return fmt.Errorf("gravar segredo TOTP pendente: %w", err)
 	}
-	if err := insertAudit(ctx, tx, userID, "totp.rotation_started", nil, now); err != nil {
-		return "", "", err
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return "", "", fmt.Errorf("gravar segredo TOTP pendente: %w", err)
-	}
-	return key.URL(), rotacaoDe(sealed), nil
+	return insertAudit(ctx, tx, userID, "totp.rotation_started", nil, now)
 }
 
 // rotuloRotacao separa o hash do id de rotação de todo outro hash do selo.
@@ -151,36 +179,13 @@ func rotacaoDe(pendente []byte) string {
 // código —, ErrTOTPInvalid com o código errado (o pendente fica) e
 // ErrInvalidSession se a família caiu antes da trava.
 func (s *TOTP) ConfirmRotation(ctx context.Context, userID, familyID uuid.UUID, rotation, code string, now time.Time) ([]string, error) {
-	var pendente []byte
-	var dona *uuid.UUID
-	var confirmado *time.Time
-	err := s.pool.QueryRow(ctx,
-		`SELECT totp_pending_secret_enc, totp_pending_family_id, totp_confirmed_at FROM users WHERE id = $1`, userID).
-		Scan(&pendente, &dona, &confirmado)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, ErrNotFound
-	}
+	pendente, err := s.carregarPendenteDaTroca(ctx, userID, familyID, rotation)
 	if err != nil {
-		return nil, fmt.Errorf("carregar troca de TOTP: %w", err)
+		return nil, err
 	}
-	// O pendente de outra família sai aqui, antes do código: o mesmo 403 de
-	// "sem troca", sem contar falha no bloqueio.
-	if len(pendente) == 0 || confirmado == nil || dona == nil || *dona != familyID ||
-		!hmac.Equal([]byte(rotacaoDe(pendente)), []byte(rotation)) {
-		return nil, ErrTOTPNoRotation
-	}
-	plain, err := s.box.Open(pendente, aadPendente(userID))
+	ativo, step, err := s.provarPendente(userID, pendente, code, now)
 	if err != nil {
-		return nil, fmt.Errorf("decifrar segredo TOTP pendente: %w", err)
-	}
-	segredo := string(plain.Reveal())
-	step, ok := validateTOTP(code, segredo, now)
-	if !ok {
-		return nil, ErrTOTPInvalid
-	}
-	ativo, err := s.box.Seal([]byte(segredo), aadAtivo(userID))
-	if err != nil {
-		return nil, fmt.Errorf("cifrar segredo TOTP: %w", err)
+		return nil, err
 	}
 	codes, err := novosCodigosDeRecuperacao()
 	if err != nil {
@@ -208,7 +213,75 @@ func (s *TOTP) ConfirmRotation(ctx context.Context, userID, familyID uuid.UUID, 
 	if !viva {
 		return nil, ErrInvalidSession
 	}
+	if err := promoverPendente(ctx, tx, userID, familyID, promocao{pendente: pendente, ativo: ativo, step: step, codes: codes}, now); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("confirmar troca de TOTP: %w", err)
+	}
+	return codes, nil
+}
 
+// carregarPendenteDaTroca lê o segredo pendente cifrado, como está no banco, e
+// confere que ele é a troca que o cliente conhece (rotation) e da família que a
+// iniciou. Tudo isso vem antes do código: o pendente de outra família, a troca
+// substituída e o 2FA desligado são, para quem chama, "nenhuma troca em
+// andamento" (ErrTOTPNoRotation), sem contar falha no bloqueio.
+func (s *TOTP) carregarPendenteDaTroca(ctx context.Context, userID, familyID uuid.UUID, rotation string) ([]byte, error) {
+	var pendente []byte
+	var dona *uuid.UUID
+	var confirmado *time.Time
+	err := s.pool.QueryRow(ctx,
+		`SELECT totp_pending_secret_enc, totp_pending_family_id, totp_confirmed_at FROM users WHERE id = $1`, userID).
+		Scan(&pendente, &dona, &confirmado)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("carregar troca de TOTP: %w", err)
+	}
+	if len(pendente) == 0 || confirmado == nil || dona == nil || *dona != familyID ||
+		!hmac.Equal([]byte(rotacaoDe(pendente)), []byte(rotation)) {
+		return nil, ErrTOTPNoRotation
+	}
+	return pendente, nil
+}
+
+// provarPendente confere o código contra o segredo pendente (ErrTOTPInvalid se
+// não casa) e devolve esse segredo recifrado com a AAD de totp_secret_enc, pronto
+// para virar o ativo, e o timestep que o código usou.
+func (s *TOTP) provarPendente(userID uuid.UUID, pendente []byte, code string, now time.Time) (ativo []byte, step int64, err error) {
+	plain, err := s.box.Open(pendente, aadPendente(userID))
+	if err != nil {
+		return nil, 0, fmt.Errorf("decifrar segredo TOTP pendente: %w", err)
+	}
+	segredo := string(plain.Reveal())
+	step, ok := validateTOTP(code, segredo, now)
+	if !ok {
+		return nil, 0, ErrTOTPInvalid
+	}
+	ativo, err = s.box.Seal([]byte(segredo), aadAtivo(userID))
+	if err != nil {
+		return nil, 0, fmt.Errorf("cifrar segredo TOTP: %w", err)
+	}
+	return ativo, step, nil
+}
+
+// promocao é o que ConfirmRotation promove: o segredo pendente lido (a chave do
+// compare-and-swap), o mesmo segredo recifrado como ativo, o timestep do código
+// e os códigos de recuperação novos.
+type promocao struct {
+	pendente []byte
+	ativo    []byte
+	step     int64
+	codes    []string
+}
+
+// promoverPendente grava, na transação de ConfirmRotation e já sob a trava de
+// sessões, o que a confirmação muda: o pendente vira o segredo ativo, os códigos
+// de recuperação são trocados, as OUTRAS famílias de sessão caem e a auditoria
+// totp.rotated registra o evento.
+func promoverPendente(ctx context.Context, tx pgx.Tx, userID, familyID uuid.UUID, p promocao, now time.Time) error {
 	// Compare-and-swap no pendente lido e na família: um rotate que o
 	// substituiu, uma confirmação concorrente ou um Disable no meio fazem a
 	// WHERE não casar, e o código validado com o segredo velho não promove
@@ -218,30 +291,24 @@ func (s *TOTP) ConfirmRotation(ctx context.Context, userID, familyID uuid.UUID, 
 		                  totp_last_timestep = $3, failed_attempts = 0, locked_until = NULL
 		   WHERE id = $1 AND totp_confirmed_at IS NOT NULL AND totp_pending_secret_enc = $4
 		     AND totp_pending_family_id = $5`,
-		userID, ativo, step, pendente, familyID)
+		userID, p.ativo, p.step, p.pendente, familyID)
 	if err != nil {
-		return nil, fmt.Errorf("promover segredo TOTP: %w", err)
+		return fmt.Errorf("promover segredo TOTP: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
-		return nil, ErrTOTPNoRotation
+		return ErrTOTPNoRotation
 	}
-	if err := substituirCodigos(ctx, tx, userID, codes); err != nil {
-		return nil, err
+	if err := substituirCodigos(ctx, tx, userID, p.codes); err != nil {
+		return err
 	}
-	if _, err := q.RevokeOtherFamilies(ctx, db.RevokeOtherFamiliesParams{
+	if _, err := db.New(tx).RevokeOtherFamilies(ctx, db.RevokeOtherFamiliesParams{
 		UserID: userID, KeepFamilyID: familyID, Now: now,
 	}); err != nil {
-		return nil, fmt.Errorf("revogar as outras sessões: %w", err)
+		return fmt.Errorf("revogar as outras sessões: %w", err)
 	}
 	// Trocar o segundo fator é o que um sequestro faria; o evento é a pista
 	// do dono (a mesma razão de ativar o 2FA deixar rastro).
-	if err := insertAudit(ctx, tx, userID, "totp.rotated", nil, now); err != nil {
-		return nil, err
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return nil, fmt.Errorf("confirmar troca de TOTP: %w", err)
-	}
-	return codes, nil
+	return insertAudit(ctx, tx, userID, "totp.rotated", nil, now)
 }
 
 // travarFamiliaViva toma a trava de sessões do usuário e SÓ

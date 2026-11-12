@@ -287,6 +287,14 @@ func TestUserRefusalMessages(t *testing.T) {
 			"stillon user: --email precisa ser um endereço, como dono@exemplo.com\n"},
 		{"sem DATABASE_URL", "", []string{"create", "--email", "dono@exemplo.com"}, saidaUso,
 			"stillon user: DATABASE_URL não definida\n"},
+		// A ordem das validações é: argumento sobrando, e-mail, DATABASE_URL. Cada
+		// caso erra duas coisas de uma vez, e a mensagem diz qual vem primeiro.
+		{"e-mail inválido antes da DATABASE_URL", "", []string{"create", "--email", "dono"}, saidaUso,
+			"stillon user: --email precisa ser um endereço, como dono@exemplo.com\n"},
+		{"argumento sobrando antes do e-mail", dsn, []string{"create", "--email", "dono", "x"}, saidaUso,
+			`stillon user: argumento inesperado: "x" (a senha vem do stdin)` + "\n"},
+		{"argumento sobrando antes da DATABASE_URL", "", []string{"reset-2fa", "--email", "dono@exemplo.com", "x"}, saidaUso,
+			`stillon user: argumento inesperado: "x"` + "\n"},
 		{"set-password sem usuário", dsn, []string{"set-password", "--email", "ninguem@exemplo.com"}, saidaNaoCadastrado,
 			"stillon user: nenhum usuário com o e-mail ninguem@exemplo.com; nada foi alterado\n"},
 		{"reset-2fa sem usuário", dsn, []string{"reset-2fa", "--email", "ninguem@exemplo.com"}, saidaNaoCadastrado,

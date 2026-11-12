@@ -183,7 +183,7 @@ func (h *AuthHandlers) TOTPVerify(w http.ResponseWriter, r *http.Request) {
 	// código com ele só custaria caro — gastaria um código de recuperação (que
 	// não se renova e o TOTP.Verify apaga numa transação própria), o timestep
 	// e zeraria o contador de falhas, tudo para devolver 401. Não conta no
-	// bloqueio: não houve código errado. É o mesmo 401 unauthorized do
+	// contador de tentativas: não houve código errado. É o mesmo 401 unauthorized do
 	// desafio vencido.
 	//
 	// NÃO é atômica: dois verify simultâneos com o mesmo desafio passam os
@@ -233,8 +233,8 @@ func (h *AuthHandlers) TOTPVerify(w http.ResponseWriter, r *http.Request) {
 	// O consumo vem DEPOIS do código, de propósito: consumido antes, um
 	// código digitado errado queimaria o desafio e obrigaria a digitar a
 	// senha de novo. Desafio já usado é o mesmo 401 unauthorized de um
-	// desafio vencido, e não conta no bloqueio: quem chega aqui acertou o
-	// código.
+	// desafio vencido, e não conta no contador de tentativas (o da conta ou o do
+	// dispositivo): quem chega aqui acertou o código.
 	consumido, err := h.users.ConsumeChallenge(r.Context(), userID, desafio.IssuedAt)
 	if err != nil {
 		h.internal(w, r, "consumir desafio", err)
