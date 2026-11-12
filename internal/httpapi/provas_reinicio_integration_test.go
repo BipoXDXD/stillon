@@ -24,7 +24,7 @@ func (a *api) reiniciar(t *testing.T) {
 // não devolve as tentativas. Quatro erradas, o restart, e a quinta derruba a
 // família, que é o que a memória do processo não garantia.
 func TestFifthWrongProofDropsTheFamilyEvenWithARestartInTheMiddle(t *testing.T) {
-	a := apiOrigemPorPedido(t)
+	a := apiComFichaPorPedido(t)
 	token, _, familia := familiaComRefresh(t, a)
 	errar := postEProva("/api/v1/auth/totp/enroll", func(*testing.T, *api) map[string]string {
 		return map[string]string{"password": "senha-que-nao-e-a-dele"}
@@ -55,7 +55,7 @@ func TestFifthWrongProofDropsTheFamilyEvenWithARestartInTheMiddle(t *testing.T) 
 // Quem erra e reinicia a cada prova gasta o mesmo orçamento de quem não
 // reinicia: um restart por prova não zera nada.
 func TestWrongProofBudgetSurvivesARestartPerProof(t *testing.T) {
-	a := apiOrigemPorPedido(t)
+	a := apiComFichaPorPedido(t)
 	token, _, _ := familiaComRefresh(t, a)
 	errar := postEProva("/api/v1/auth/totp/enroll", func(*testing.T, *api) map[string]string {
 		return map[string]string{"password": "senha-que-nao-e-a-dele"}

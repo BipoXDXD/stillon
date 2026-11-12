@@ -94,10 +94,11 @@ func TestEveryProtectedRouteRejectsForgedToken(t *testing.T) {
 }
 
 // esperarVagaNoLimite devolve um token aos limites por IP da API: o global
-// (120/min, rajada de 30) e o de autenticação (10/min, rajada de 5), que a troca
-// de senha e as cinco rotas do 2FA dividem. A enumeração sai toda do mesmo IP,
-// e com o relógio parado passaria da rajada: o 429 esconderia o 401 que o teste
-// quer ver. Uma ficha do mais lento (umaFichaPorIP) basta para os dois.
+// (120/min, rajada de 30) e o do login (10/min, rajada de 5). A enumeração sai
+// toda do mesmo IP, e com o relógio parado passaria da rajada: o 429 esconderia
+// o 401 que o teste quer ver. Uma ficha do mais lento (umaFichaPorIP) basta para
+// os dois. As rotas autenticadas têm o balde por conta, que vem depois de authn:
+// com token forjado, nunca é gasto.
 func esperarVagaNoLimite(a *api) { esperarFichaDoIP(a) }
 
 // Toda mutação registrada da API, pública ou não (refresh e logout usam o

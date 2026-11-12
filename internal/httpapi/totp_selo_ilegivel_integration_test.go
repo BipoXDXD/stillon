@@ -155,7 +155,7 @@ func TestUnreadableTOTPSecretFailsVerifyWithoutPunishingTheOwner(t *testing.T) {
 func TestUnreadableTOTPSecretFailsDisableWithoutCountingWrongProofs(t *testing.T) {
 	for _, caso := range selosIlegiveis {
 		t.Run(caso.nome, func(t *testing.T) {
-			a := apiOrigemPorPedido(t)
+			a := apiComFichaPorPedido(t)
 			c := clientWithJar(t)
 			segredo := cadastrarTOTP(t, a, c)
 			token := accessTokenDaSessao(t, a, c)

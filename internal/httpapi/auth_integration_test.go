@@ -66,9 +66,9 @@ type api struct {
 	// recuperacao guarda os códigos que o último cadastrarTOTP devolveu; eles
 	// só aparecem em claro uma vez, e mais de um teste precisa deles.
 	recuperacao []string
-	// origemPorPedido faz o cliente de a.cliente() chegar, a cada pedido, de uma
-	// origem nova (ver apiOrigemPorPedido).
-	origemPorPedido bool
+	// fichaPorPedido faz o relógio andar uma ficha da conta a cada pedido de
+	// a.cliente() (ver apiComFichaPorPedido).
+	fichaPorPedido bool
 	// discord e email substituem os envios de verificação dos canais.
 	discord *discordFalso
 	email   *carteiroFalso
