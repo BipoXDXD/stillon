@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -99,6 +100,60 @@ func TestReconcileReportsTheHeartbeatEventLogSize(t *testing.T) {
 	}
 	if v := testutil.ToFloat64(b.m.heartbeatEvents); v != 3 {
 		t.Errorf("heartbeat_events = %v, queria 3", v)
+	}
+}
+
+// O tamanho do log é só uma métrica: se a contagem falhar, o forget e o
+// incidents_open do ciclo acontecem do mesmo jeito, o erro vai ao log e o gauge
+// de tamanho fica com o último valor bom, sem um 0 falso.
+func TestReconcileKeepsGoingWhenTheHeartbeatEventCountFails(t *testing.T) {
+	log := capturarLog(t)
+	srv, client := servidorLiberado(t, func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
+	b := novaBancada(t, client, MaxInFlight)
+	vivo := b.alvo(t, srv.URL, nil)
+	apagado := b.alvo(t, srv.URL, nil)
+	b.rodada(t)
+
+	ctx := context.Background()
+	err := storage.InProberTx(ctx, b.pool, func(q *db.Queries) error {
+		return q.OpenIncident(ctx, db.OpenIncidentParams{
+			ID: uuid.Must(uuid.NewV7()), TargetID: vivo, StartedAt: b.clk.Now(), Cause: "dns",
+		})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = storage.InUserTx(ctx, b.pool, b.dono, func(q *db.Queries) error {
+		_, err := q.DeleteTarget(ctx, db.DeleteTargetParams{UserID: b.dono, ID: apagado})
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.m.heartbeatEvents.Set(7)
+	// DDL literal só no banco descartável do teste: a contagem passa a falhar
+	// com 42P01 e nenhuma outra consulta do ciclo toca a tabela.
+	if _, err := b.pool.Exec(ctx, `ALTER TABLE heartbeat_events RENAME TO heartbeat_events_indisponivel`); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := b.s.Reconcile(ctx); err != nil {
+		t.Fatalf("Reconcile = %v; a falha da contagem não pode abortar o ciclo", err)
+	}
+
+	if n := testutil.CollectAndCount(b.m.duration); n != 1 {
+		t.Errorf("%d séries depois do ciclo, queria 1 (forget do alvo apagado)", n)
+	}
+	if v := testutil.ToFloat64(b.m.incidentsOpen); v != 1 {
+		t.Errorf("incidents_open = %v, queria 1", v)
+	}
+	if v := testutil.ToFloat64(b.m.heartbeatEvents); v != 7 {
+		t.Errorf("heartbeat_events = %v, queria 7 (o último valor bom)", v)
+	}
+	for _, trecho := range []string{"level=ERROR", `msg="contar eventos de heartbeat"`, "42P01"} {
+		if !strings.Contains(log.String(), trecho) {
+			t.Errorf("log sem %q:\n%s", trecho, log.String())
+		}
 	}
 }
 

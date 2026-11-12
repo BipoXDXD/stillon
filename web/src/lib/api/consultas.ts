@@ -39,6 +39,10 @@ const INTERVALO_DA_SERIE_MS = 60_000
 const INTERVALO_DOS_CANAIS_MS = 60_000
 const INTERVALO_DOS_RESOLVIDOS_MS = 60_000
 
+// A primeira página de uma lista paginada não leva cursor. A anotação alarga o
+// tipo para string | undefined, o que o getNextPageParam devolve.
+const PRIMEIRA_PAGINA: string | undefined = undefined
+
 const estaSemRede = () => !onlineManager.isOnline()
 
 // Sem rede o React Query pausa as consultas em vez de falhar: nenhum erro
@@ -102,7 +106,7 @@ export function useIncidentes(filtro: 'open' | 'resolved' | 'all', alvo?: string
         targetId: alvo,
         limit: limite,
       }),
-    initialPageParam: undefined as string | undefined,
+    initialPageParam: PRIMEIRA_PAGINA,
     getNextPageParam: (ultima) => ultima.next_cursor,
     refetchInterval: pollSoComUmaPagina,
   })
@@ -204,7 +208,7 @@ export function useEventosDoHeartbeat(id: string) {
   return useInfiniteQuery({
     queryKey: chaves.eventosDoHeartbeat(id),
     queryFn: ({ pageParam }) => api.eventosDoHeartbeat(id, pageParam),
-    initialPageParam: undefined as string | undefined,
+    initialPageParam: PRIMEIRA_PAGINA,
     getNextPageParam: (ultima) => ultima.next_cursor,
     refetchInterval: pollSoComUmaPagina,
   })
@@ -215,7 +219,7 @@ export function useIncidentesDoHeartbeat(id: string) {
   return useInfiniteQuery({
     queryKey: chaves.incidentesDoHeartbeat(id),
     queryFn: ({ pageParam }) => api.incidentesDoHeartbeat(id, pageParam),
-    initialPageParam: undefined as string | undefined,
+    initialPageParam: PRIMEIRA_PAGINA,
     getNextPageParam: (ultima) => ultima.next_cursor,
     refetchInterval: pollSoComUmaPagina,
   })

@@ -155,13 +155,16 @@ func (s *Scheduler) reconciliar(ctx context.Context) {
 }
 
 // Reconcile apaga as séries de latência de alvos que não existem mais e
-// atualiza incidents_open.
+// atualiza incidents_open e o gauge heartbeat_events. A contagem de
+// heartbeat_events não aborta o ciclo: se falhar, o gauge guarda o último
+// valor e o erro só vai ao log.
 //
 // forget só roda sozinho quando o alvo some com uma sonda em voo. Apagar um
 // alvo parado não passa pelo sondador, e com --role=api e --role=prober
 // separados nem poderia: sem esta reconciliação, a série do alvo apagado
 // vivia até o restart.
 func (s *Scheduler) Reconcile(ctx context.Context) error {
+	desligando := ctx // o recebido: o filho abaixo também acaba no prazo próprio
 	ctx, cancel := context.WithTimeout(ctx, s.reconcileTimeout)
 	defer cancel()
 	vistos := s.metrics.alvosVistos()
@@ -180,11 +183,6 @@ func (s *Scheduler) Reconcile(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("reconciliar métricas: %w", err)
 	}
-	eventos, err := contarEventosDeHeartbeat(ctx, s.pool)
-	if err != nil {
-		return fmt.Errorf("reconciliar métricas: %w", err)
-	}
-
 	vivos := make(map[uuid.UUID]struct{}, len(existentes))
 	for _, id := range existentes {
 		vivos[id] = struct{}{}
@@ -195,7 +193,18 @@ func (s *Scheduler) Reconcile(ctx context.Context) error {
 		}
 	}
 	s.metrics.incidentsOpen.Set(float64(abertos))
-	s.metrics.heartbeatEvents.Set(float64(eventos))
+
+	// O tamanho do log é só uma métrica: se a contagem falhar, o ciclo já
+	// cumpriu o que importa. O gauge fica com o último valor bom (um 0 falso
+	// esconderia um log cheio) e o erro vai ao log, exceto no desligamento
+	// (como em reconciliar), mas não no prazo próprio do ciclo.
+	if eventos, err := contarEventosDeHeartbeat(ctx, s.pool); err != nil {
+		if desligando.Err() == nil {
+			slog.Error("contar eventos de heartbeat", "erro", err)
+		}
+	} else {
+		s.metrics.heartbeatEvents.Set(float64(eventos))
+	}
 	return nil
 }
 
