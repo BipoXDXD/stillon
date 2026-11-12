@@ -207,21 +207,15 @@ UPDATE incidents i
 RETURNING i.id, h.id AS heartbeat_id, h.name AS heartbeat_name, i.started_at, i.resolved_at, i.cause, i.ack_at;
 
 -- O tamanho do log, para a métrica heartbeat_events (Reconcile do sondador).
--- Exata, mas cara: sob a RLS ela lê a tabela inteira e confere cada linha
--- contra heartbeats (medição de 2026-11-12: 12 ms a 10^5 linhas e 108 ms a
--- 10^6; com JIT, 88 e 180 ms). O Reconcile só a usa abaixo do limiar de
--- EstimateHeartbeatEvents.
 -- name: CountHeartbeatEvents :one
 SELECT count(*) FROM heartbeat_events;
 
--- A estimativa do planejador (reltuples, atualizada pelo autovacuum e pelo
--- ANALYZE), sem tocar na tabela: menos de 1 ms em qualquer tamanho. Serve ao gauge de
--- acúmulo, onde ±20% não muda a leitura; abaixo do limiar o Reconcile prefere a
--- contagem exata. Tabela ainda sem estatística tem reltuples = -1: vira 0.
--- name: EstimateHeartbeatEvents :one
-SELECT greatest(c.reltuples, 0)::bigint AS estimate
-  FROM pg_catalog.pg_class c
- WHERE c.oid = 'heartbeat_events'::regclass;
+-- Desliga o JIT só até o fim da transação (o SET LOCAL). Fora de uma transação
+-- explícita o efeito dura só esta instrução: quem chama abre o BEGIN antes e roda
+-- a consulta na mesma conexão. Nunca de sessão: o valor vazaria para o próximo
+-- uso da conexão no pool.
+-- name: SetLocalJitOff :exec
+SELECT set_config('jit', 'off', true);
 
 -- Tags. As leituras saem ordenadas pela tag, e a do dono serve
 -- a lista sem uma consulta por heartbeat, como as de targets.sql.

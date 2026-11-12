@@ -51,12 +51,6 @@ const reconcileEvery = 30 * time.Second
 // despachos, em vez de parar o sondador.
 const reconcileTimeout = 5 * time.Second
 
-// heartbeatEventsExactBelow é até onde o gauge heartbeat_events é contado
-// linha a linha. Acima dele a leitura da tabela inteira (sob a RLS, 12 ms a 10^5
-// linhas, 88 ms com JIT) vira custo a cada 30 s, e a estimativa do Postgres,
-// com erro de ordem de 20%, já diz se o teto e a retenção seguram.
-const heartbeatEventsExactBelow = 10_000
-
 // PersistTimeout é o prazo próprio de cada gravação de check. Uma sonda que
 // termina no limite do grace de Stop ainda grava com este prazo, então Stop
 // pode levar até grace + PersistTimeout. Exportado para que o wiring
@@ -172,7 +166,7 @@ func (s *Scheduler) Reconcile(ctx context.Context) error {
 	defer cancel()
 	vistos := s.metrics.alvosVistos()
 	var existentes []uuid.UUID
-	var abertos, eventos int64
+	var abertos int64
 	err := storage.InProberTx(ctx, s.pool, func(q *db.Queries) error {
 		var err error
 		if len(vistos) > 0 {
@@ -180,12 +174,13 @@ func (s *Scheduler) Reconcile(ctx context.Context) error {
 				return err
 			}
 		}
-		if abertos, err = q.CountOpenIncidents(ctx); err != nil {
-			return err
-		}
-		eventos, err = contarEventosDeHeartbeat(ctx, q)
+		abertos, err = q.CountOpenIncidents(ctx)
 		return err
 	})
+	if err != nil {
+		return fmt.Errorf("reconciliar métricas: %w", err)
+	}
+	eventos, err := contarEventosDeHeartbeat(ctx, s.pool)
 	if err != nil {
 		return fmt.Errorf("reconciliar métricas: %w", err)
 	}
@@ -204,17 +199,26 @@ func (s *Scheduler) Reconcile(ctx context.Context) error {
 	return nil
 }
 
-// contarEventosDeHeartbeat devolve o tamanho do log de sinais: a estimativa do
-// Postgres quando ela passa de heartbeatEventsExactBelow, senão a contagem
-// exata. Estatística ausente ou defasada para baixo cai na exata, que é o custo
-// de antes e nunca um número menor que o real sem aviso.
-func contarEventosDeHeartbeat(ctx context.Context, q *db.Queries) (int64, error) {
-	estimativa, err := q.EstimateHeartbeatEvents(ctx)
-	if err != nil {
+// contarEventosDeHeartbeat devolve o tamanho exato do log de sinais, numa
+// transação própria e curta para o JIT desligado não valer para mais nada.
+func contarEventosDeHeartbeat(ctx context.Context, b storage.Beginner) (int64, error) {
+	var total int64
+	err := storage.InProberTx(ctx, b, func(q *db.Queries) error {
+		var err error
+		total, err = contarEventosSemJIT(ctx, q)
+		return err
+	})
+	return total, err
+}
+
+// contarEventosSemJIT roda o count com o JIT desligado (SET LOCAL, que só vale
+// dentro da transação de q). Sob a RLS a tabela inteira é lida em Seq Scan e
+// conferida linha a linha contra heartbeats; o JIT entra a partir de uns 17 mil
+// registros e passa a ser a maior parte do tempo da consulta, a cada 30 s. Sem
+// ele o count continua exato e custa uma fração.
+func contarEventosSemJIT(ctx context.Context, q *db.Queries) (int64, error) {
+	if err := q.SetLocalJitOff(ctx); err != nil {
 		return 0, err
-	}
-	if estimativa >= heartbeatEventsExactBelow {
-		return estimativa, nil
 	}
 	return q.CountHeartbeatEvents(ctx)
 }

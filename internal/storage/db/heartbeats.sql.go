@@ -184,10 +184,6 @@ SELECT count(*) FROM heartbeat_events
 `
 
 // O tamanho do log, para a métrica heartbeat_events (Reconcile do sondador).
-// Exata, mas cara: sob a RLS ela lê a tabela inteira e confere cada linha
-// contra heartbeats (medição de 2026-11-12: 12 ms a 10^5 linhas e 108 ms a
-// 10^6; com JIT, 88 e 180 ms). O Reconcile só a usa abaixo do limiar de
-// EstimateHeartbeatEvents.
 func (q *Queries) CountHeartbeatEvents(ctx context.Context) (int64, error) {
 	row := q.db.QueryRow(ctx, countHeartbeatEvents)
 	var count int64
@@ -257,23 +253,6 @@ type DeleteHeartbeatTagsParams struct {
 func (q *Queries) DeleteHeartbeatTags(ctx context.Context, arg DeleteHeartbeatTagsParams) error {
 	_, err := q.db.Exec(ctx, deleteHeartbeatTags, arg.UserID, arg.HeartbeatID)
 	return err
-}
-
-const estimateHeartbeatEvents = `-- name: EstimateHeartbeatEvents :one
-SELECT greatest(c.reltuples, 0)::bigint AS estimate
-  FROM pg_catalog.pg_class c
- WHERE c.oid = 'heartbeat_events'::regclass
-`
-
-// A estimativa do planejador (reltuples, atualizada pelo autovacuum e pelo
-// ANALYZE), sem tocar na tabela: menos de 1 ms em qualquer tamanho. Serve ao gauge de
-// acúmulo, onde ±20% não muda a leitura; abaixo do limiar o Reconcile prefere a
-// contagem exata. Tabela ainda sem estatística tem reltuples = -1: vira 0.
-func (q *Queries) EstimateHeartbeatEvents(ctx context.Context) (int64, error) {
-	row := q.db.QueryRow(ctx, estimateHeartbeatEvents)
-	var estimate int64
-	err := row.Scan(&estimate)
-	return estimate, err
 }
 
 const getHeartbeat = `-- name: GetHeartbeat :one
@@ -944,6 +923,19 @@ type SetHeartbeatPingHashParams struct {
 // Revogar é isto: o hash antigo deixa de casar com qualquer linha.
 func (q *Queries) SetHeartbeatPingHash(ctx context.Context, arg SetHeartbeatPingHashParams) error {
 	_, err := q.db.Exec(ctx, setHeartbeatPingHash, arg.UserID, arg.ID, arg.PingTokenHash)
+	return err
+}
+
+const setLocalJitOff = `-- name: SetLocalJitOff :exec
+SELECT set_config('jit', 'off', true)
+`
+
+// Desliga o JIT só até o fim da transação (o SET LOCAL). Fora de uma transação
+// explícita o efeito dura só esta instrução: quem chama abre o BEGIN antes e roda
+// a consulta na mesma conexão. Nunca de sessão: o valor vazaria para o próximo
+// uso da conexão no pool.
+func (q *Queries) SetLocalJitOff(ctx context.Context) error {
+	_, err := q.db.Exec(ctx, setLocalJitOff)
 	return err
 }
 

@@ -3,10 +3,14 @@ package prober
 import (
 	"context"
 	"net/http"
+	"slices"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
 	"github.com/BipoXDXD/stillon/internal/heartbeat"
@@ -98,11 +102,9 @@ func TestReconcileReportsTheHeartbeatEventLogSize(t *testing.T) {
 	}
 }
 
-// Acima do limiar a contagem exata custa uma leitura da tabela inteira a cada 30 s
-// (medido: 88 ms a 10^5 linhas), então o gauge passa a usar a estimativa das
-// estatísticas do Postgres. Depois de um ANALYZE ela é o valor real; sem ele
-// (reltuples = -1, ou desatualizada para baixo) o Reconcile cai na exata.
-func TestReconcileReportsTheHeartbeatEventLogSizeAboveTheExactLimit(t *testing.T) {
+// Acima de uns 17 mil registros o JIT entra no count e passa a ser a maior parte
+// do tempo dele; a contagem, com ou sem JIT, continua a exata.
+func TestReconcileReportsTheExactHeartbeatEventLogSizeAboveTheJitThreshold(t *testing.T) {
 	b := novaBancada(t, nil, MaxInFlight)
 	ctx := context.Background()
 	id := uuid.Must(uuid.NewV7())
@@ -117,29 +119,106 @@ func TestReconcileReportsTheHeartbeatEventLogSizeAboveTheExactLimit(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	total := heartbeatEventsExactBelow + 2000
+	// gen_random_uuid e não uuidv7(): o CI roda o Postgres 17, que não tem a segunda.
 	tx, err := b.pool.Begin(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer tx.Rollback(ctx)
 	if _, err := tx.Exec(ctx, `SELECT set_config('app.scope', 'prober', true)`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := tx.Exec(ctx, `INSERT INTO heartbeat_events (id, heartbeat_id, at, kind)
-		SELECT uuidv7(), $1, $2, 'success' FROM generate_series(1, $3)`, id, b.clk.Now(), total); err != nil {
+		SELECT gen_random_uuid(), $1, $2, 'success' FROM generate_series(1, 20000)`, id, b.clk.Now()); err != nil {
 		t.Fatal(err)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := b.pool.Exec(ctx, `ANALYZE heartbeat_events`); err != nil {
-		t.Fatal(err)
-	}
 	if err := b.s.Reconcile(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if v := testutil.ToFloat64(b.m.heartbeatEvents); v != float64(total) {
-		t.Errorf("heartbeat_events = %v, queria %d", v, total)
+	if v := testutil.ToFloat64(b.m.heartbeatEvents); v != 20000 {
+		t.Errorf("heartbeat_events = %v, queria 20000", v)
+	}
+}
+
+// espiaoDeTx observa o valor de jit na conexão logo antes de cada instrução que
+// passa por ela, sem alterar a instrução.
+type espiaoDeTx struct {
+	pgx.Tx
+	jit *[]string
+}
+
+func (e espiaoDeTx) observar(ctx context.Context) {
+	var v string
+	if err := e.Tx.QueryRow(ctx, `SELECT current_setting('jit')`).Scan(&v); err != nil {
+		v = err.Error()
+	}
+	*e.jit = append(*e.jit, v)
+}
+
+func (e espiaoDeTx) Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
+	e.observar(ctx)
+	return e.Tx.Exec(ctx, sql, args...)
+}
+
+func (e espiaoDeTx) Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {
+	e.observar(ctx)
+	return e.Tx.Query(ctx, sql, args...)
+}
+
+func (e espiaoDeTx) QueryRow(ctx context.Context, sql string, args ...any) pgx.Row {
+	e.observar(ctx)
+	return e.Tx.QueryRow(ctx, sql, args...)
+}
+
+type espiaoDeConexao struct {
+	*pgxpool.Conn
+	jit *[]string
+}
+
+func (c espiaoDeConexao) Begin(ctx context.Context) (pgx.Tx, error) {
+	tx, err := c.Conn.Begin(ctx)
+	return espiaoDeTx{Tx: tx, jit: c.jit}, err
+}
+
+// O JIT fica desligado só durante a contagem (SET LOCAL na mesma transação e na
+// mesma conexão) e a conexão devolvida ao pool volta ao valor de antes.
+func TestHeartbeatEventCountRunsWithJitOffOnlyInsideItsTransaction(t *testing.T) {
+	b := novaBancada(t, nil, MaxInFlight)
+	ctx := context.Background()
+	conn, err := b.pool.Acquire(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Release()
+	jitDaConexao := func() string {
+		var v string
+		if err := conn.QueryRow(ctx, `SELECT current_setting('jit')`).Scan(&v); err != nil {
+			t.Fatal(err)
+		}
+		return v
+	}
+	if v := jitDaConexao(); v != "on" {
+		t.Fatalf("jit antes = %q, queria on", v)
+	}
+
+	var vistos []string
+	total, err := contarEventosDeHeartbeat(ctx, espiaoDeConexao{Conn: conn, jit: &vistos})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if total != 0 {
+		t.Errorf("total = %d, queria 0", total)
+	}
+	// Três instruções na transação: o escopo da RLS, o SET LOCAL e o count.
+	if want := []string{"on", "on", "off"}; !slices.Equal(vistos, want) {
+		t.Errorf("jit antes de cada instrução = %v, queria %v", vistos, want)
+	}
+	if v := jitDaConexao(); v != "on" {
+		t.Errorf("jit da conexão depois do commit = %q, queria on", v)
 	}
 }
 
