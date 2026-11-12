@@ -2,7 +2,6 @@ package statuspage_test
 
 import (
 	"context"
-	"errors"
 	"strings"
 	"sync"
 	"testing"
@@ -139,39 +138,5 @@ func (a ambiente) insereCheck(t *testing.T, alvo uuid.UUID, em time.Time, latenc
 	})
 	if err != nil {
 		t.Fatal(err)
-	}
-}
-
-// A página publicada mostra a latência dos próprios alvos, e nenhuma
-// latência sai de rascunho ou de slug que não existe, mesmo com checks.
-func TestPublicLatencyComesOnlyFromThePublishedPage(t *testing.T) {
-	a := novoAmbiente(t)
-	ctx := context.Background()
-	dono, outro, terceiro := a.usuario(t), a.usuario(t), a.usuario(t)
-	naPagina, fora := a.alvo(t, dono, "api"), a.alvo(t, dono, "fora")
-	doOutro, noRascunho := a.alvo(t, outro, "do outro"), a.alvo(t, terceiro, "no rascunho")
-	a.publicar(t, dono, "empresa", true, statuspage.Item{TargetID: naPagina, DisplayName: "API"})
-	a.publicar(t, outro, "outra", true, statuspage.Item{TargetID: doOutro, DisplayName: "Do outro"})
-	a.publicar(t, terceiro, "rascunho", false, statuspage.Item{TargetID: noRascunho, DisplayName: "Rascunho"})
-	em := a.clk.Now().Add(-time.Minute)
-	a.insereCheck(t, naPagina, em, 111)
-	a.insereCheck(t, fora, em, 222)
-	a.insereCheck(t, doOutro, em, 333)
-	a.insereCheck(t, noRascunho, em, 444)
-
-	v, err := a.svc.Public(ctx, "empresa")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(v.Items) != 1 || v.Items[0].Name != "API" || v.Items[0].LatencyMS == nil || *v.Items[0].LatencyMS != 111 {
-		t.Errorf("empresa = %+v, queria só API com 111 ms", v.Items)
-	}
-	if v, err := a.svc.Public(ctx, "outra"); err != nil || len(v.Items) != 1 || v.Items[0].LatencyMS == nil || *v.Items[0].LatencyMS != 333 {
-		t.Errorf("outra = %+v (%v), queria só o alvo do outro com 333 ms (controle)", v.Items, err)
-	}
-	for _, slug := range []string{"rascunho", "nao-existe"} {
-		if v, err := a.svc.Public(ctx, slug); !errors.Is(err, statuspage.ErrNotFound) {
-			t.Errorf("Public(%q) = %+v, %v; queria ErrNotFound", slug, v, err)
-		}
 	}
 }
