@@ -566,11 +566,13 @@ func TestRevokedTokenIsRefusedBeforeTheAccountBucket(t *testing.T) {
 			_, vivo := entrar(t, a)
 			sair := post(t, c, a.srv.URL+"/api/v1/auth/logout", nil)
 			sair.Body.Close()
+			familia := familiaDe(t, revogado, a)
 			for i := 1; i <= rajadaPorConta+3; i++ {
-				st, _, codigo := pedirSemProva(t, a, rota, revogado, "")
-				if st != http.StatusUnauthorized || codigo != "unauthorized" {
+				st, h, corpo := pedirComCorpo(t, a, rota, revogado, "")
+				if codigo := codigoDoCorpo(t, corpo); st != http.StatusUnauthorized || codigo != "unauthorized" {
 					t.Fatalf("pedido %d com a família revogada: %d %s, queria 401 unauthorized", i, st, codigo)
 				}
+				exigirSemDadoAlheio(t, "família revogada", h, corpo, a.userID.String(), familia.String(), testEmail, "127.0.0.1")
 			}
 			gastarFichas(t, a, rota, vivo, rajadaPorConta)
 			st, h, codigo := pedirSemProva(t, a, rota, vivo, "")
