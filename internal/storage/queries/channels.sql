@@ -67,3 +67,8 @@ UPDATE notif_channels
    SET verified_at = COALESCE(verified_at, sqlc.arg(now)::timestamptz)
  WHERE verify_token_hash = sqlc.arg(token_hash)
    AND (verified_at IS NOT NULL OR verify_expires_at > sqlc.arg(now)::timestamptz);
+
+-- Conferência da MASTER_KEY na subida (notify.CheckMasterKey), sob
+-- InProberTx: os selos mais recentes de qualquer dono, só para tentar abrir.
+-- name: LatestChannelSeals :many
+SELECT id, config_enc FROM notif_channels ORDER BY created_at DESC, id DESC LIMIT $1;
