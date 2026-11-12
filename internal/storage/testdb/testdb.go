@@ -89,11 +89,16 @@ func New(t *testing.T) *pgxpool.Pool {
 		pool.Close()
 		// Restore precisa de zero conexões abertas no banco alvo, por isso
 		// vem depois do Close.
-		if err := container.Restore(ctx); err != nil {
+		if err := restaurar(ctx); err != nil {
 			t.Fatalf("restaurar snapshot: %v", err)
 		}
 	})
 	return pool
+}
+
+// restaurar devolve o banco de teste ao estado do snapshot.
+func restaurar(ctx context.Context) error {
+	return container.Restore(ctx)
 }
 
 // intervaloDaConsulta é o passo do polling de EsperarBloqueados, não um prazo.
