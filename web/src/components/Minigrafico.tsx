@@ -26,7 +26,7 @@ const ALTURA = 24
 const MS_POR_HORA = 3_600_000
 
 // As 24 horas do painel em SVG próprio: o Recharts fica fora do painel
-// (quase metade do bundle, spec do Plano 6, D4). Hora sem check é lacuna,
+// (quase metade do bundle). Hora sem check é lacuna,
 // não zero. O nome acessível resume as horas por estado.
 export function Minigrafico({ horas, agora }: { horas: HoraDoSpark[]; agora: Date }) {
   const inicio = Math.floor(agora.getTime() / MS_POR_HORA) - HORAS

@@ -22,7 +22,7 @@ import { MENSAGEM_INVISIVEL, temInvisivel } from '@/lib/rotulo'
 import { cn } from '@/lib/utils'
 import { PreviaDaPagina } from './PreviaDaPagina'
 
-// O CHECK de status_pages.slug (Plano 4, D13).
+// O CHECK de status_pages.slug.
 const SLUG = /^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$/
 const MAX_ITENS = 20
 
@@ -96,7 +96,7 @@ function Formulario({ pagina, alvos }: { pagina: PaginaDeStatus | null; alvos: A
   const tituloAtual = useWatch({ control: f.control, name: 'title' })
   const usados = new Set(escolhidos.map((i) => i.target_id))
   const livres = alvos.filter((a) => !usados.has(a.id))
-  // I1: o "Tirar" some com a linha, e o foco iria ao <body>. Vai ao "Tirar"
+  // O "Tirar" some com a linha, e o foco iria ao <body>. Vai ao "Tirar"
   // que ocupou o lugar (o da linha de baixo), ou ao da última linha, ou ao
   // seletor de acrescentar, ou ao título da tela. Um efeito a cada render:
   // o que o pede é o render da remoção.
@@ -126,7 +126,7 @@ function Formulario({ pagina, alvos }: { pagina: PaginaDeStatus | null; alvos: A
       if (err instanceof ApiError && err.code === 'slug_taken') {
         f.setError('slug', { message: 'Este endereço já está em uso.' }, { shouldFocus: true })
       } else if (naoEncontrado(err)) {
-        // M3: a página sumiu entre carregar e salvar. Como no 409 abaixo, o
+        // A página sumiu entre carregar e salvar. Como no 409 abaixo, o
         // aviso vai pelo toast: a recarga remonta o formulário.
         avisar('A status page já tinha sido apagada, talvez em outra aba.')
         await qc.invalidateQueries({ queryKey: chaves.paginas })
@@ -201,8 +201,8 @@ function Formulario({ pagina, alvos }: { pagina: PaginaDeStatus | null; alvos: A
               {(a) => <Entrada {...a} {...f.register(`items.${i}.display_name`)} />}
             </Campo>
             {/* Ordem por botões, não arrastar: teclado e leitor de tela.
-                Reordenar é secundário; Tirar, que remove, é terciário
-                (auditoria SP2). aria-disabled, e não disabled, nas pontas:
+                Reordenar é secundário; Tirar, que remove, é terciário.
+                aria-disabled, e não disabled, nas pontas:
                 o botão que leva o item à ponta está com o foco, e
                 desabilitado o perderia para o <body> (como o Reconhecer).
                 A guarda fica no clique. */}

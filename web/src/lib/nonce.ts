@@ -7,7 +7,7 @@ import { setNonce } from 'get-nonce'
 // Quem injeta <style> em runtime precisa dele, ou a CSP bloqueia o estilo:
 // o react-remove-scroll (Dialog e AlertDialog do Radix) lê o nonce do
 // get-nonce, e é para isso o setNonce abaixo. Sem ele, abrir um diálogo não
-// trava a rolagem da página (spec do Plano 6, §8.1). Em desenvolvimento o
+// trava a rolagem da página. Em desenvolvimento o
 // valor é o marcador literal, sem efeito: o Vite não aplica CSP.
 const meta = document.querySelector<HTMLMetaElement>('meta[property="csp-nonce"]')
 

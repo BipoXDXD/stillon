@@ -2,7 +2,7 @@ import { Monitor, Moon, Sun, type LucideIcon } from 'lucide-react'
 import { Botao } from '@/components/ui/botao'
 import { useTema, type Tema } from '@/lib/tema'
 
-// O tema num botão de ícone (auditoria L5): cada clique passa ao próximo, na
+// O tema num botão de ícone: cada clique passa ao próximo, na
 // ordem Sistema → Claro → Escuro → Sistema. O nome acessível diz o tema em
 // vigor; o title, o próximo.
 const CICLO: Record<Tema, { rotulo: string; Icone: LucideIcon; proximo: Tema }> = {

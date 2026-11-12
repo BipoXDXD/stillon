@@ -4,11 +4,10 @@ import { dataHora, duracao } from '@/lib/format'
 import { assertUnreachable } from '@/lib/utils'
 
 // O heartbeat na escala de gravidade do painel (forma, cor, ordem e filtro),
-// com palavra própria: uma tarefa não fica "fora do ar" (spec da tela, T2 e T3).
+// com palavra própria: uma tarefa não fica "fora do ar".
 const ESTADOS: Record<EstadoDoHeartbeat, { exibido: EstadoExibido; texto: string }> = {
   up: { exibido: 'up', texto: 'Em dia' },
-  // Passou do prazo e o alarme ainda não saiu: degradado, que não pede atenção
-  // (Ruling do plano da SP1, PR 3).
+  // Passou do prazo e o alarme ainda não saiu: degradado, que não pede atenção.
   grace: { exibido: 'degraded', texto: 'Em tolerância' },
   late: { exibido: 'down', texto: 'Atrasado' },
   failing: { exibido: 'down', texto: 'Falhando' },
@@ -29,7 +28,7 @@ export function textoDoHeartbeat(e: EstadoDoHeartbeat): string {
 // Atrasado e falhando são derivados na leitura, e quem abre o incidente é o
 // avaliador: com ele parado, a tarefa está fora sem incidente nenhum. O
 // open_incident_id sozinho deixaria a tela verde a parada toda. Ele entra pela
-// tarefa pausada: pausar não encerra o incidente (D13). Vale para a manchete e
+// tarefa pausada: pausar não encerra o incidente. Vale para a manchete e
 // para /incidents.
 export function pedeAtencao(hb: Pick<Heartbeat, 'state' | 'open_incident_id'>): boolean {
   return estadoDoHeartbeat(hb.state) === 'down' || hb.open_incident_id !== null

@@ -9,8 +9,8 @@ import { assertUnreachable } from '@/lib/utils'
 import { partirDuracao, SEGUNDOS_DA_UNIDADE, type Unidade } from './estado'
 
 // O formulário do heartbeat, com os limites da §7 da spec. A expressão cron
-// quem julga é o servidor: um segundo parser aqui é o risco que o D17 evitou
-// (spec da tela, T11).
+// quem julga é o servidor: um segundo parser aqui é o risco de dois
+// julgamentos divergentes.
 const UNIDADES = ['dias', 'horas', 'minutos', 'segundos'] as const
 
 const LIMITES = {
@@ -146,7 +146,7 @@ export function paraCriacao(v: ValoresDoHeartbeat): EntradaHeartbeat {
   }
 }
 
-// Só o que mudou de valor (spec da tela, T12): "1 dia" e "24 horas" são o mesmo
+// Só o que mudou de valor: "1 dia" e "24 horas" são o mesmo
 // período, e reenviá-lo não é mudança.
 export function paraAlteracao(original: ValoresDoHeartbeat, v: ValoresDoHeartbeat): AlteracaoHeartbeat {
   const a: AlteracaoHeartbeat = {}

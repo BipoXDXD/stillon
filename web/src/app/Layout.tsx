@@ -56,7 +56,7 @@ export function Layout() {
           <Marca />
           <NavegacaoPrincipal />
           <div className="ml-auto flex min-w-0 items-center gap-2">
-            {/* O e-mail some no celular (auditoria L1); a conta está na aba Conta. */}
+            {/* O e-mail some no celular; a conta está na aba Conta. */}
             {me.data && <span className="hidden max-w-64 truncate text-meta text-apagado lg:inline">{me.data.email}</span>}
             <BotaoDeTema />
             <BotaoSair />
@@ -96,7 +96,7 @@ function SinalDeCargaDeRota() {
 }
 
 // No celular a navegação é a barra inferior fixa, de 5 abas de 44 px
-// (auditoria L1: antes, ~265 px de menu vinham antes do conteúdo); a partir
+// (antes, ~265 px de menu vinham antes do conteúdo); a partir
 // de lg (1024 px) ela volta ao fluxo do cabeçalho. Um <nav> só nos dois
 // casos: a ordem do Tab e o nome da região não mudam com a largura. O item
 // atual usa a primária 100 e o peso 600, e o aria-current diz o mesmo ao
@@ -179,7 +179,7 @@ function BotaoSair() {
         try {
           await sessao.sair()
         } catch (e) {
-          // O servidor não fez o logout (A9 do Plano 10): a sessão
+          // O servidor não fez o logout: a sessão
           // continua, e o Sair pode ser tentado de novo.
           avisar(`Não foi possível sair. ${mensagemDe(e)}`, 'erro')
         } finally {

@@ -47,7 +47,7 @@ function DetalheDoHeartbeat({ id }: { id: string }) {
   const [confirmando, setConfirmando] = useState<Confirmacao | null>(null)
   const [ocupado, setOcupado] = useState(false)
   const [erro, setErro] = useState<string | null>(null)
-  // Só aqui, no estado da tela (spec da tela, T8).
+  // Só aqui, no estado da tela.
   const [urlNova, setUrlNova] = useState<UrlNova | null>(null)
   // Vai à cópia depois de fechar: com a URL na tela, o diálogo segura a navegação.
   const [copiaGuardada, setCopiaGuardada] = useState<string | null>(null)

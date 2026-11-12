@@ -4,7 +4,7 @@ import { Botao } from './botao'
 
 // Dialog e AlertDialog do Radix. Os dois travam a rolagem da página com o
 // react-remove-scroll, que injeta um <style>: é o nonce de src/lib/nonce.ts
-// que o deixa passar pela CSP (spec do Plano 6, §8.1).
+// que o deixa passar pela CSP.
 
 const sobreposicao = 'fixed inset-0 z-40 bg-sobreposicao'
 // inset-x-4 + mx-auto + max-w-lg centra a caixa com 16 px de folga no

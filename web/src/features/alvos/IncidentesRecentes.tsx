@@ -6,7 +6,7 @@ import { textoDaCausa } from '@/lib/api/mensagens'
 
 // Os incidentes recentes do alvo (spec do redesign, Telas > 2): uma linha
 // por incidente, com o selo da situação, a causa e o período. Pela
-// EstadoDaConsulta (D17): um poll de fundo que falha mantém a lista.
+// EstadoDaConsulta: um poll de fundo que falha mantém a lista.
 export function IncidentesRecentes({ consulta, agora }: { consulta: ReturnType<typeof useIncidentes>; agora: Date }) {
   return (
     <section className="space-y-3" aria-labelledby="titulo-incidentes">
