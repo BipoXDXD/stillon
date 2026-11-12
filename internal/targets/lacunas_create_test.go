@@ -151,6 +151,22 @@ func TestCreateDevolveOErroDoTetoSemEmbrulho(t *testing.T) {
 	}
 }
 
+// Quando os dois tetos estouram juntos, o do usuário vence: o alvo novo, com
+// regra, cairia no teto por host, mas o dono já está no máximo de alvos e o
+// erro devolvido é ErrLimitReached, nunca ErrContentHostLimit.
+func TestCreateComOsDoisTetosEstouradosDevolveOTetoDoUsuario(t *testing.T) {
+	a := novoAmbiente(t)
+	dono := a.usuario(t)
+	a.encherComRegra(t, dono, "https://example.com", targets.DefaultContentRulesPerHost, true)
+	a.encherAte(t, dono, int(targets.MaxTargetsPerUser)-targets.DefaultContentRulesPerHost)
+
+	_, err := a.svc.Create(context.Background(), dono, comRegra("https://example.com/nova"))
+
+	if err != targets.ErrLimitReached {
+		t.Fatalf("erro = %v, queria ErrLimitReached (teto do usuário tem precedência sobre o do host)", err)
+	}
+}
+
 // Falha de infraestrutura na transação vira "gravar alvo: ..." (com a causa
 // preservada) e não grava linha nenhuma.
 func TestCreateEmbrulhaFalhaDeGravacaoEPreservaACausa(t *testing.T) {
