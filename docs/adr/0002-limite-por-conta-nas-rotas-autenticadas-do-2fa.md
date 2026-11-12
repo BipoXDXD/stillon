@@ -130,3 +130,6 @@ e custa migration, latência e um ponto de falha novo.
   declarar mais de uma réplica de processo que sirva a API (`scale`, `deploy.replicas` ou um segundo
   serviço com a imagem do StillOn e papel `all`/`api`). Quem implementar o limitador compartilhado muda
   esta regra no mesmo PR.
+- **Limite da trava:** ela só vê o que está nos manifestos do repositório. Escala feita fora dele (o
+  painel do Coolify, `docker compose up --scale`) não passa pelo teste; antes de escalar por esses
+  caminhos, vale o mesmo gatilho.
