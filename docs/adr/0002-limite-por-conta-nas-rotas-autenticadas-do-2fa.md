@@ -115,3 +115,18 @@ a regra que o garante):
   concorrência, falha de banco, família viva parada por mais de um dia).
 - `rotas_negar_por_padrao_integration_test.go` e `rotas_protegidas_test.go` seguem verdes: sem
   credencial, 401, e nunca 429 antes do 401.
+
+## Atualização (issue #328, opção a): em memória até a segunda réplica
+
+O limitador de autenticação (login e `/totp/verify` por IP; 2FA e troca de senha por conta) continua só em
+memória de cada processo. Com uma réplica, um balde compartilhado (Postgres ou Redis) não dá ganho nenhum
+e custa migration, latência e um ponto de falha novo.
+
+- **Gatilho:** antes de escalar a API para N>1, trocar o limitador por um compartilhado (opção b do #328,
+  restrita às rotas de auth). Com N réplicas e balanceador sem afinidade, cada uma conta por si e o teto
+  sobe até N vezes, sem erro nenhum.
+- **Trava:** `TestLimitadorEmMemoriaExigeUmaReplicaDaAPI` (`internal/config/replicas_test.go`) lê o
+  `compose.yaml`, o `deploy/vps/compose.prod.yaml` e o `deploy/coolify/app.json` e falha se algum
+  declarar mais de uma réplica de processo que sirva a API (`scale`, `deploy.replicas` ou um segundo
+  serviço com a imagem do StillOn e papel `all`/`api`). Quem implementar o limitador compartilhado muda
+  esta regra no mesmo PR.
