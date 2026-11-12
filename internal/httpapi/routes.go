@@ -116,9 +116,14 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	// dispositivo: o navegador que já completou um login tem um contador próprio,
 	// e o bloqueio disparado por outras origens não o alcança.
 	//
-	// Uma instância só, e não uma por rota: a troca de senha divide o balde do
-	// login (o mesmo limite por IP da rota de login). Com instâncias separadas,
-	// quem adivinha senha dobraria o orçamento alternando as duas rotas.
+	// Uma instância só, e não uma por rota: a troca de senha e as cinco rotas
+	// autenticadas do 2FA dividem o balde do login (o mesmo limite por IP da rota
+	// de login). Com instâncias separadas, quem adivinha senha ou código dobraria
+	// o orçamento alternando as rotas. O limite é do IP e não olha a sessão: outra
+	// família da mesma conta, do mesmo IP, cai no mesmo balde.
+	//
+	// O estado dos baldes é só da memória desta instância: com mais de uma réplica,
+	// cada uma conta por si. É a mesma limitação do login, e não é resolvida aqui.
 	limiteLogin := middleware.RateLimit(ctx, d.Clock, 10, 5, proxiesDe(cfg))
 	mux.Handle("POST /api/v1/auth/login", limiteLogin(http.HandlerFunc(h.Login)))
 	mux.Handle("POST /api/v1/auth/password", limiteLogin(authn(http.HandlerFunc(ah.ChangePassword))))
@@ -128,18 +133,20 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	// Todas exigem a família do token viva: um token de sessão encerrada não mexe
 	// no 2FA.
 	viva := ah.exigirSessaoViva
-	mux.Handle("POST /api/v1/auth/totp/enroll", authn(viva(http.HandlerFunc(h.TOTPEnroll))))
-	mux.Handle("POST /api/v1/auth/totp/confirm", authn(viva(http.HandlerFunc(h.TOTPConfirm))))
+	mux.Handle("POST /api/v1/auth/totp/enroll", limiteLogin(authn(viva(http.HandlerFunc(h.TOTPEnroll)))))
+	mux.Handle("POST /api/v1/auth/totp/confirm", limiteLogin(authn(viva(http.HandlerFunc(h.TOTPConfirm)))))
 	// Desativar é a saída que a recusa do recadastro tirou. Exige senha E posse do
 	// fator, no handler — a sessão sozinha aqui seria o bypass de volta.
-	mux.Handle("POST /api/v1/auth/totp/disable", authn(viva(http.HandlerFunc(h.TOTPDisable))))
-	// A troca de autenticador: a mesma cadeia, sem limitador por IP próprio. Quem
-	// limita as provas erradas destas rotas, e das três acima e da troca de senha,
-	// é o contador por família de sessão (provasDaFamilia): a quinta prova errada
-	// derruba a família. O contador de tentativas do login (da conta ou, com
-	// cookie de dispositivo válido, do dispositivo) é só do login e do /totp/verify.
-	mux.Handle("POST /api/v1/auth/totp/rotate", authn(viva(http.HandlerFunc(h.TOTPRotate))))
-	mux.Handle("POST /api/v1/auth/totp/rotate/confirm", authn(viva(http.HandlerFunc(h.TOTPRotateConfirm))))
+	mux.Handle("POST /api/v1/auth/totp/disable", limiteLogin(authn(viva(http.HandlerFunc(h.TOTPDisable)))))
+	// A troca de autenticador: a mesma cadeia. Duas camadas independentes limitam
+	// as provas erradas destas rotas, e das três acima e da troca de senha: o
+	// limite por IP (limiteLogin, por fora de authn, antes de qualquer consulta) e
+	// o contador por família de sessão (provasDaFamilia), em que a quinta prova
+	// errada derruba a família. O 429 sai antes do handler e não conta prova. O
+	// contador de tentativas do login (da conta ou, com cookie de dispositivo
+	// válido, do dispositivo) é só do login e do /totp/verify.
+	mux.Handle("POST /api/v1/auth/totp/rotate", limiteLogin(authn(viva(http.HandlerFunc(h.TOTPRotate)))))
+	mux.Handle("POST /api/v1/auth/totp/rotate/confirm", limiteLogin(authn(viva(http.HandlerFunc(h.TOTPRotateConfirm)))))
 	// Verify não passa por authn: o usuário ainda não tem sessão, só o
 	// desafio. O limitador por IP vem de fora; o contador de tentativas vale aqui,
 	// no handler: o código errado entra no mesmo contador do login (h.tentativas:

@@ -21,7 +21,7 @@ func enviarCru(t *testing.T, a *api, metodo, caminho, token, corpo string) (int,
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := a.cliente().Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,6 +59,8 @@ func TestAuthRoutesRejectUnknownFields(t *testing.T) {
 		{"/api/v1/auth/totp/rotate", token, `{"password":"a","code":"1","secret":"AAAA"}`},
 		{"/api/v1/auth/totp/rotate/confirm", token, `{"code":"1","rotation":"x","extra":1}`},
 	} {
+		// A mesma origem manda oito pedidos e o balde do IP tem rajada de cinco.
+		esperarFichaDoIP(a)
 		status, corpo := enviarCru(t, a, http.MethodPost, r.caminho, r.token, r.corpo)
 		if status != http.StatusBadRequest || codigoDoEnvelope(t, corpo) != "validation_failed" {
 			t.Errorf("%s com campo extra deu %d %s, queria 400 validation_failed", r.caminho, status, corpo)

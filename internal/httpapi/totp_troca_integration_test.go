@@ -35,7 +35,7 @@ func codigoDe(t *testing.T, a *api, segredo string) string {
 // confirmarTrocaHTTP.
 func iniciarTrocaHTTP(t *testing.T, a *api, token string, corpo map[string]string) (int, string) {
 	t.Helper()
-	resp := postComToken(t, http.DefaultClient, a.srv.URL+"/api/v1/auth/totp/rotate", token, corpo)
+	resp := postComToken(t, a.cliente(), a.srv.URL+"/api/v1/auth/totp/rotate", token, corpo)
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		return resp.StatusCode, ""

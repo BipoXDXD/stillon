@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/pquerna/otp"
 	"github.com/pquerna/otp/totp"
@@ -21,6 +22,8 @@ func TestTOTPRoutesRejectADeadFamily(t *testing.T) {
 	c, token := entrar(t, a)
 	sair := post(t, c, a.srv.URL+"/api/v1/auth/logout", nil)
 	sair.Body.Close()
+	// O login e as cinco rotas saem do mesmo IP: uma ficha a mais que a rajada.
+	a.clk.Advance(time.Minute)
 
 	for rota, corpo := range map[string]map[string]string{
 		"enroll":  {"password": testPass},
