@@ -19,12 +19,12 @@ import (
 // Os testes "bem velho / bem novo" de maintenance_test.go não distinguem `<` de
 // `<=` nem `>=` de `>`.
 
-const umMicro = time.Microsecond
+const passoMicro = time.Microsecond
 
 // tresInstantes devolve o corte e os instantes a 1 µs de cada lado, nessa
 // ordem: antes, no corte, depois.
 func tresInstantes(corte time.Time) [3]time.Time {
-	return [3]time.Time{corte.Add(-umMicro), corte, corte.Add(umMicro)}
+	return [3]time.Time{corte.Add(-passoMicro), corte, corte.Add(passoMicro)}
 }
 
 // execComoSondador roda um comando no escopo do sondador, que enxerga as
@@ -199,7 +199,7 @@ func TestRetentionRollupsEdgeIsExclusiveAtTheCutoff(t *testing.T) {
 		nome string
 		now  time.Time
 	}{
-		{"corte 1 µs antes do bucket", agora.Add(-umMicro)},
+		{"corte 1 µs antes do bucket", agora.Add(-passoMicro)},
 		{"corte no bucket", agora},
 	} {
 		if r := aplicarRetencao(t, pool, caso.now); r.DeletedRollups != 0 || contar() != 1 {
@@ -207,7 +207,7 @@ func TestRetentionRollupsEdgeIsExclusiveAtTheCutoff(t *testing.T) {
 				caso.nome, r.DeletedRollups, contar())
 		}
 	}
-	if r := aplicarRetencao(t, pool, agora.Add(umMicro)); r.DeletedRollups != 1 || contar() != 0 {
+	if r := aplicarRetencao(t, pool, agora.Add(passoMicro)); r.DeletedRollups != 1 || contar() != 0 {
 		t.Errorf("corte 1 µs depois do bucket: apagou %d rollups (restam %d); queria 1 apagado e 0 restantes",
 			r.DeletedRollups, contar())
 	}
@@ -275,7 +275,7 @@ func TestRetentionDeadFamilyProofsLivenessEdgeIsExclusiveAtNow(t *testing.T) {
 	if err := rows.Err(); err != nil {
 		t.Fatal(err)
 	}
-	if len(sobra) != 1 || !sobra[0].Equal(agora.Add(umMicro)) {
+	if len(sobra) != 1 || !sobra[0].Equal(agora.Add(passoMicro)) {
 		t.Errorf("sobraram os contadores das famílias que vencem em %v; queria só a que vence 1 µs depois de agora", sobra)
 	}
 }
@@ -290,10 +290,10 @@ func TestConsolidationWindowIncludesFromAndExcludesTo(t *testing.T) {
 	if err := storage.EnsureChecksPartitions(context.Background(), pool, de); err != nil {
 		t.Fatal(err)
 	}
-	checkEm(t, pool, alvo, de.Add(-umMicro), "up", 1)   // hora 09, fora
-	checkEm(t, pool, alvo, de, "up", 20)                // hora 10, dentro
-	checkEm(t, pool, alvo, ate.Add(-umMicro), "up", 30) // hora 10, dentro
-	checkEm(t, pool, alvo, ate, "up", 4)                // hora 11, fora
+	checkEm(t, pool, alvo, de.Add(-passoMicro), "up", 1)   // hora 09, fora
+	checkEm(t, pool, alvo, de, "up", 20)                   // hora 10, dentro
+	checkEm(t, pool, alvo, ate.Add(-passoMicro), "up", 30) // hora 10, dentro
+	checkEm(t, pool, alvo, ate, "up", 4)                   // hora 11, fora
 
 	consolidarJanela(t, pool, de, ate)
 
