@@ -1,5 +1,6 @@
 import type { Page } from '@playwright/test'
 import { controlePositivo, expect, test } from './fixtures'
+import { enviarLogin } from './limite'
 import { desligar2FA, podeDesligar2FA } from './pilha'
 import { codigoNovo } from './totp'
 
@@ -20,8 +21,9 @@ import { codigoNovo } from './totp'
 // pilha própria e contra o compose (o job e2e do CI, com E2E_COMPOSE_SERVICE);
 // contra outra pilha externa, onde não há como rodar o CLI, é pulado.
 
-// Os baldes do login (5 de burst por IP) e do /totp/verify, que o fluxo
-// acabou de gastar; a mesma pausa do fluxo.spec.ts.
+// Os baldes do login (5 de burst por IP), da conta (que as rotas do 2FA
+// gastam) e do /totp/verify, que as specs anteriores gastaram; a mesma pausa
+// do fluxo.spec.ts.
 const RECARGA_DOS_BALDES_MS = 21_000
 
 test.beforeAll(async () => {
@@ -57,12 +59,15 @@ test('ativar o 2FA, trocar de autenticador com o rotation, entrar com o app novo
   // viradas de 30 s de espera, e o prazo de antes cobre as cinco.
   test.setTimeout(240_000)
   const email = credenciais.email
+  // O status de cada resposta da autenticação vai para o log do run (sem
+  // corpo nem cabeçalhos): um 429 num dos baldes fica visível no CI.
+  page.on('response', (r) => {
+    const { pathname } = new URL(r.url())
+    if (pathname.startsWith('/api/v1/auth/')) console.log(`troca: ${r.request().method()} ${pathname} ${r.status()}`)
+  })
 
   await page.goto('/login')
-  await page.getByLabel('E-mail').fill(email)
-  await page.getByLabel('Senha').fill(credenciais.senha)
-  await page.getByRole('button', { name: 'Entrar' }).click()
-  await expect(page.getByRole('heading', { name: 'Painel' })).toBeVisible()
+  await enviarLogin(page, email, credenciais.senha, page.getByRole('heading', { name: 'Painel' }))
   await page.getByRole('link', { name: 'Conta', exact: true }).click()
 
   // 1. Ativar: senha, o QR (a chave em texto), o código, os códigos.
@@ -103,10 +108,11 @@ test('ativar o 2FA, trocar de autenticador com o rotation, entrar com o app novo
   // 4. Sair e entrar com o app novo: o segredo trocou de verdade.
   await page.getByRole('button', { name: 'Sair' }).click()
   await expect(page.getByRole('heading', { name: 'Entrar no StillOn' })).toBeVisible()
-  await page.getByLabel('E-mail').fill(email)
-  await page.getByLabel('Senha').fill(credenciais.senha)
-  await page.getByRole('button', { name: 'Entrar' }).click()
-  await page.getByLabel('Código do aplicativo autenticador').fill(await codigoNovo(nova))
+  // Este login é o segundo pedido no balde do login por IP nesta spec, que
+  // as specs anteriores também gastaram: o enviarLogin recua no 429.
+  const campoDoCodigo = page.getByLabel('Código do aplicativo autenticador')
+  await enviarLogin(page, email, credenciais.senha, campoDoCodigo)
+  await campoDoCodigo.fill(await codigoNovo(nova))
   await page.getByRole('button', { name: 'Verificar' }).click()
   // O ?next= volta a Configurações, como no fluxo.spec.ts.
   await expect(page.getByRole('heading', { name: 'Configurações' })).toBeVisible()

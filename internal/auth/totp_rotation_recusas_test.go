@@ -87,9 +87,8 @@ func bloquearConta(t *testing.T, pool *pgxpool.Pool, userID uuid.UUID) {
 }
 
 // novoUsuarioTOTP cria mais um usuário no banco do teste. Os testes de recusa
-// rodam um caso por usuário num banco só: cada teste que pede um banco limpo
-// deixa uma conexão administrativa aberta (testdb.Restore), e o Postgres de
-// teste tem 100 conexões para a suíte inteira.
+// rodam um caso por usuário num banco só, para não pagar uma restauração do
+// snapshot por caso.
 func novoUsuarioTOTP(t *testing.T, pool *pgxpool.Pool) uuid.UUID {
 	t.Helper()
 	id := uuid.New()
