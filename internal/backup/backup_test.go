@@ -236,6 +236,9 @@ func clientesFalsos(t *testing.T, dir string) (psql, dump string) {
 	t.Helper()
 	psql = filepath.Join(dir, "psql")
 	dump = filepath.Join(dir, "pg_dump")
+	// O modo slow-count usa `sleep 0.5`: a fração não é POSIX, mas o supervisor
+	// só roda em Linux (GNU coreutils e busybox aceitam), e os testes que o
+	// usam dão Skip nos outros sistemas.
 	script := `#!/bin/sh
 if [ -n "${PGHOST:-}" ] || [ "${PGPASSWORD:-}" != "source-secret" ]; then exit 9; fi
 if [ -n "${BACKUP_LOG:-}" ]; then printf 'psql %s\n' "$*" >> "$BACKUP_LOG"; fi
@@ -268,7 +271,6 @@ exit 0
 	return psql, dump
 }
 
-// opcoesDeTeste encurta os prazos para os clientes falsos.
 // comPrazosFolgados tira o caminho bom do relógio: com os prazos curtos dos
 // modos de falha, uma pausa do CI de ~100ms já estourava o encerramento e o
 // teste via "file already closed" no lugar do resultado que queria (#314).
@@ -277,6 +279,7 @@ func comPrazosFolgados(o options) options {
 	return o
 }
 
+// opcoesDeTeste encurta os prazos para os clientes falsos.
 func opcoesDeTeste(psql, dump string) options {
 	o := defaultOptions()
 	o.psqlPath = psql
@@ -353,6 +356,31 @@ func TestCleanupDeadlineIsAlwaysReportedAsTheCause(t *testing.T) {
 		if _, e := os.Stat(saida); !os.IsNotExist(e) {
 			t.Fatalf("rodada %d: falha deixou artefato próprio", i)
 		}
+	}
+}
+
+// O caso inverso: uma falha que não vem do prazo (saída extra, exportador que
+// sai com erro) não ganha o sufixo "prazo de encerramento esgotado", porque o
+// prazo, folgado aqui, não venceu. Sem isso, o sufixo viraria um rótulo
+// automático para qualquer erro depois do dump.
+func TestFailureBeforeTheCleanupDeadlineIsNotLabelledAsTheDeadline(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("supervisor exige Linux")
+	}
+	for _, mode := range []string{"extra-output", "exporter-error"} {
+		t.Run(mode, func(t *testing.T) {
+			dir := t.TempDir()
+			psql, dump := clientesFalsos(t, dir)
+			t.Setenv("BACKUP_TEST_MODE", mode)
+			o := comPrazosFolgados(opcoesDeTeste(psql, dump))
+			_, err := run(context.Background(), "postgresql://backup@localhost/stillon", "source-secret", filepath.Join(dir, "dump"), o)
+			if err == nil || !strings.HasPrefix(err.Error(), falhaEsperada[mode]) {
+				t.Fatalf("erro = %v, queria uma falha começando com %q", err, falhaEsperada[mode])
+			}
+			if errors.Is(err, errEncerramentoExcedido) || strings.Contains(err.Error(), errEncerramentoExcedido.Error()) {
+				t.Fatalf("o erro cita o prazo de encerramento, que não venceu: %v", err)
+			}
+		})
 	}
 }
 
