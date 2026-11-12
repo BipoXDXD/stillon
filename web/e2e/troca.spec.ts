@@ -51,8 +51,8 @@ async function chaveNaTela(page: Page): Promise<string> {
 // s), e o ultimoPasso do totp.ts garante um passo novo por chamada, então o
 // reenvio nunca repete um código (replay). O 429 não gasta o código no
 // servidor (o limite roda antes do handler); o passo gasto sem uso só faz o
-// codigoNovo esperar a virada, e essa espera fica antes do clique, fora do
-// prazo da resposta. Os campos são preenchidos a cada tentativa, como no login:
+// codigoNovo esperar a virada, e essa espera fica dentro do envio, fora da
+// soma dos recuos que o teto de limite.ts conta. Os campos são preenchidos a cada tentativa, como no login:
 // a tela pode limpá-los depois de uma recusa.
 const ROTA_2FA = (fim: string) => `/api/v1/auth/totp/${fim}`
 

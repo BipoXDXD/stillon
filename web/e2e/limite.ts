@@ -6,8 +6,8 @@ import { expect } from './fixtures'
 // espera o Retry-After e envia de novo, com teto; o segundo a mais é a folga
 // para a ficha já ter voltado quando o reenvio chegar.
 export const ENVIOS_NO_LIMITE = 6
-// Teto de tempo dos recuos de uma chamada: seis Retry-After de 6 s, com o
-// segundo de folga, cabem nele; um Retry-After maior falha alto em vez de
+// Teto da soma dos recuos de uma chamada (só as esperas do Retry-After, não
+// o tempo do envio): seis Retry-After de 6 s, com o segundo de folga, cabem nele; um Retry-After maior falha alto em vez de
 // prender o teste até o prazo dele.
 const PRAZO_NO_LIMITE_MS = 45_000
 const RETRY_AFTER_PADRAO_S = 6
@@ -26,7 +26,7 @@ export async function enviarNoLimite(
   enviar: () => Promise<void>,
   esperado: Locator,
 ): Promise<Response> {
-  const inicio = performance.now()
+  let recuado = 0
   for (let i = 0; i < ENVIOS_NO_LIMITE; i++) {
     const resposta = page.waitForResponse((r) => new URL(r.url()).pathname === rota && r.request().method() === 'POST')
     await enviar()
@@ -41,9 +41,10 @@ export async function enviarNoLimite(
       throw new Error(`${rota}: o último envio (${ENVIOS_NO_LIMITE} de ${ENVIOS_NO_LIMITE}) ainda deu 429`)
     }
     const recuo = recuoDo429Ms(r)
-    if (performance.now() - inicio + recuo > PRAZO_NO_LIMITE_MS) {
+    if (recuado + recuo > PRAZO_NO_LIMITE_MS) {
       throw new Error(`${rota}: o recuo do 429 (${recuo} ms) passaria do teto de ${PRAZO_NO_LIMITE_MS} ms`)
     }
+    recuado += recuo
     await espera(recuo)
   }
   throw new Error(`${rota}: sem resposta depois de ${ENVIOS_NO_LIMITE} envios`)
