@@ -213,7 +213,7 @@ func (s *TOTP) ConfirmRotation(ctx context.Context, userID, familyID uuid.UUID, 
 	if !viva {
 		return nil, ErrInvalidSession
 	}
-	if err := promoverPendente(ctx, tx, q, userID, familyID, pendente, ativo, step, codes, now); err != nil {
+	if err := promoverPendente(ctx, tx, userID, familyID, promocao{pendente: pendente, ativo: ativo, step: step, codes: codes}, now); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -267,11 +267,21 @@ func (s *TOTP) provarPendente(userID uuid.UUID, pendente []byte, code string, no
 	return ativo, step, nil
 }
 
+// promocao é o que ConfirmRotation promove: o segredo pendente lido (a chave do
+// compare-and-swap), o mesmo segredo recifrado como ativo, o timestep do código
+// e os códigos de recuperação novos.
+type promocao struct {
+	pendente []byte
+	ativo    []byte
+	step     int64
+	codes    []string
+}
+
 // promoverPendente grava, na transação de ConfirmRotation e já sob a trava de
 // sessões, o que a confirmação muda: o pendente vira o segredo ativo, os códigos
 // de recuperação são trocados, as OUTRAS famílias de sessão caem e a auditoria
 // totp.rotated registra o evento.
-func promoverPendente(ctx context.Context, tx pgx.Tx, q *db.Queries, userID, familyID uuid.UUID, pendente, ativo []byte, step int64, codes []string, now time.Time) error {
+func promoverPendente(ctx context.Context, tx pgx.Tx, userID, familyID uuid.UUID, p promocao, now time.Time) error {
 	// Compare-and-swap no pendente lido e na família: um rotate que o
 	// substituiu, uma confirmação concorrente ou um Disable no meio fazem a
 	// WHERE não casar, e o código validado com o segredo velho não promove
@@ -281,17 +291,17 @@ func promoverPendente(ctx context.Context, tx pgx.Tx, q *db.Queries, userID, fam
 		                  totp_last_timestep = $3, failed_attempts = 0, locked_until = NULL
 		   WHERE id = $1 AND totp_confirmed_at IS NOT NULL AND totp_pending_secret_enc = $4
 		     AND totp_pending_family_id = $5`,
-		userID, ativo, step, pendente, familyID)
+		userID, p.ativo, p.step, p.pendente, familyID)
 	if err != nil {
 		return fmt.Errorf("promover segredo TOTP: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrTOTPNoRotation
 	}
-	if err := substituirCodigos(ctx, tx, userID, codes); err != nil {
+	if err := substituirCodigos(ctx, tx, userID, p.codes); err != nil {
 		return err
 	}
-	if _, err := q.RevokeOtherFamilies(ctx, db.RevokeOtherFamiliesParams{
+	if _, err := db.New(tx).RevokeOtherFamilies(ctx, db.RevokeOtherFamiliesParams{
 		UserID: userID, KeepFamilyID: familyID, Now: now,
 	}); err != nil {
 		return fmt.Errorf("revogar as outras sessões: %w", err)
