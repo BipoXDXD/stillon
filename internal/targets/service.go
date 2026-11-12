@@ -124,12 +124,7 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, in Input) (Targe
 	if err != nil {
 		return Target{}, fmt.Errorf("gravar alvo: %w", err)
 	}
-	return Target{
-		ID: id, Name: f.Name, URL: f.URL, Method: f.Method,
-		IntervalSec: f.IntervalSec, TimeoutMS: f.TimeoutMS, ExpectedStatus: f.ExpectedStatus,
-		DegradedThresholdMS: f.DegradedThresholdMS, Enabled: in.Enabled, TLSWarn: in.TLSWarn,
-		HeaderNames: headerNames(f.Headers), Tags: f.Tags, ContentRule: f.ContentRule, CreatedAt: now,
-	}, nil
+	return f.comoTarget(id, in.Enabled, in.TLSWarn, now), nil
 }
 
 func (s *Service) Get(ctx context.Context, userID, id uuid.UUID) (Target, error) {
@@ -213,20 +208,11 @@ func (s *Service) Update(ctx context.Context, userID, id uuid.UUID, p Patch) (Ta
 			return err
 		}
 
-		f := fields{
-			Name: row.Name, URL: row.URL, Method: row.Method,
-			IntervalSec: row.IntervalSec, TimeoutMS: row.TimeoutMS, ExpectedStatus: row.ExpectedStatus,
-			DegradedThresholdMS: row.DegradedThresholdMS, Headers: headers, Tags: tags,
-			ContentRule: RuleFromColumns(row.ContentMode, row.ContentValue, row.ContentJsonPointer),
-			urlGravada:  row.URL,
-		}
+		f := fieldsDaLinha(row, headers, tags)
 		regraGravada := f.ContentRule
 		enabled := row.Enabled
 		mudouASonda := p.apply(&f, &enabled)
-		tlsWarn := row.TlsWarn
-		if p.TLSWarn != nil {
-			tlsWarn = *p.TLSWarn
-		}
+		tlsWarn := p.tlsWarnDepois(row.TlsWarn)
 		if verr := validate(&f); verr != nil {
 			return verr
 		}
@@ -245,7 +231,7 @@ func (s *Service) Update(ctx context.Context, userID, id uuid.UUID, p Patch) (Ta
 		// Outra URL ou outro método é outro serviço, e outra
 		// regra é outro critério de saúde. As falhas do anterior não somam com
 		// as do novo; o incidente aberto fica e fecha pelos sucessos do novo.
-		if f.URL != row.URL || f.Method != row.Method || !f.ContentRule.Equal(regraGravada) {
+		if mudouOCriterioDeSaude(row.URL, row.Method, regraGravada, f) {
 			if err := q.ResetTargetHealth(ctx, db.ResetTargetHealthParams{UserID: userID, TargetID: row.ID}); err != nil {
 				return fmt.Errorf("zerar histerese do alvo: %w", err)
 			}
@@ -259,14 +245,7 @@ func (s *Service) Update(ctx context.Context, userID, id uuid.UUID, p Patch) (Ta
 		if mudouASonda {
 			proximo = s.clk.Now()
 		}
-		modo, valor, ponteiro := colunasDaRegra(f.ContentRule)
-		err = q.UpdateTarget(ctx, db.UpdateTargetParams{
-			UserID: userID, ID: id, Name: f.Name, URL: f.URL, Method: f.Method,
-			IntervalSec: f.IntervalSec, TimeoutMS: f.TimeoutMS, ExpectedStatus: f.ExpectedStatus,
-			HeadersEnc: sealed, DegradedThresholdMS: f.DegradedThresholdMS,
-			Enabled: enabled, NextRunAt: proximo, TlsWarn: tlsWarn,
-			ContentMode: modo, ContentValue: valor, ContentJsonPointer: ponteiro,
-		})
+		err = q.UpdateTarget(ctx, f.updateTargetParams(userID, id, sealed, enabled, proximo, tlsWarn))
 		if err != nil {
 			return fmt.Errorf("atualizar alvo: %w", err)
 		}
@@ -287,16 +266,65 @@ func (s *Service) Update(ctx context.Context, userID, id uuid.UUID, p Patch) (Ta
 				return err
 			}
 		}
-		out = Target{
-			ID: row.ID, Name: f.Name, URL: f.URL, Method: f.Method,
-			IntervalSec: f.IntervalSec, TimeoutMS: f.TimeoutMS, ExpectedStatus: f.ExpectedStatus,
-			DegradedThresholdMS: f.DegradedThresholdMS, Enabled: enabled, TLSWarn: tlsWarn, TLS: validade,
-			HeaderNames: headerNames(f.Headers), Tags: f.Tags, ContentRule: f.ContentRule,
-			CreatedAt: row.CreatedAt,
-		}
+		out = f.comoTarget(row.ID, enabled, tlsWarn, row.CreatedAt)
+		out.TLS = validade
 		return nil
 	})
 	return out, err
+}
+
+// fieldsDaLinha monta os campos editáveis do alvo a partir da linha gravada,
+// dos headers já abertos e das tags lidas. urlGravada guarda a URL de agora
+// para a validação reconhecer o que o PATCH não mexeu.
+func fieldsDaLinha(row db.Target, headers map[string]string, tags []string) fields {
+	return fields{
+		Name: row.Name, URL: row.URL, Method: row.Method,
+		IntervalSec: row.IntervalSec, TimeoutMS: row.TimeoutMS, ExpectedStatus: row.ExpectedStatus,
+		DegradedThresholdMS: row.DegradedThresholdMS, Headers: headers, Tags: tags,
+		ContentRule: RuleFromColumns(row.ContentMode, row.ContentValue, row.ContentJsonPointer),
+		urlGravada:  row.URL,
+	}
+}
+
+// comoTarget é a visão pública dos campos. Só nomes de header saem, nunca os
+// valores; a leitura do certificado (TLS) quem chama acrescenta.
+func (f fields) comoTarget(id uuid.UUID, enabled, tlsWarn bool, criadoEm time.Time) Target {
+	return Target{
+		ID: id, Name: f.Name, URL: f.URL, Method: f.Method,
+		IntervalSec: f.IntervalSec, TimeoutMS: f.TimeoutMS, ExpectedStatus: f.ExpectedStatus,
+		DegradedThresholdMS: f.DegradedThresholdMS, Enabled: enabled, TLSWarn: tlsWarn,
+		HeaderNames: headerNames(f.Headers), Tags: f.Tags, ContentRule: f.ContentRule, CreatedAt: criadoEm,
+	}
+}
+
+// updateTargetParams são as colunas do UPDATE do alvo: os campos já
+// validados, os headers cifrados e os três valores que o PATCH decide à parte.
+func (f fields) updateTargetParams(userID, id uuid.UUID, sealed []byte, enabled bool, proximo time.Time, tlsWarn bool) db.UpdateTargetParams {
+	modo, valor, ponteiro := colunasDaRegra(f.ContentRule)
+	return db.UpdateTargetParams{
+		UserID: userID, ID: id, Name: f.Name, URL: f.URL, Method: f.Method,
+		IntervalSec: f.IntervalSec, TimeoutMS: f.TimeoutMS, ExpectedStatus: f.ExpectedStatus,
+		HeadersEnc: sealed, DegradedThresholdMS: f.DegradedThresholdMS,
+		Enabled: enabled, NextRunAt: proximo, TlsWarn: tlsWarn,
+		ContentMode: modo, ContentValue: valor, ContentJsonPointer: ponteiro,
+	}
+}
+
+// tlsWarnDepois é o aviso de certificado que vale depois do PATCH: o enviado,
+// ou o atual quando o PATCH não falou dele.
+func (p Patch) tlsWarnDepois(atual bool) bool {
+	if p.TLSWarn != nil {
+		return *p.TLSWarn
+	}
+	return atual
+}
+
+// mudouOCriterioDeSaude diz se o PATCH trocou o que define "saudável": outra
+// URL ou outro método é outro serviço, e outra regra é outro critério. Quem
+// decide isso zera a histerese, porque as falhas do anterior não somam com as
+// do novo.
+func mudouOCriterioDeSaude(urlAntes, metodoAntes string, regraAntes *ContentRule, depois fields) bool {
+	return depois.URL != urlAntes || depois.Method != metodoAntes || !depois.ContentRule.Equal(regraAntes)
 }
 
 // contarRegrasNoHost conta os alvos do dono com regra cujo hostDaRegra é
@@ -493,13 +521,7 @@ func (s *Service) toTarget(row db.Target) (Target, error) {
 	if err != nil {
 		return Target{}, err
 	}
-	return Target{
-		ID: row.ID, Name: row.Name, URL: row.URL, Method: row.Method,
-		IntervalSec: row.IntervalSec, TimeoutMS: row.TimeoutMS, ExpectedStatus: row.ExpectedStatus,
-		DegradedThresholdMS: row.DegradedThresholdMS, Enabled: row.Enabled, TLSWarn: row.TlsWarn,
-		HeaderNames: headerNames(h), CreatedAt: row.CreatedAt,
-		ContentRule: RuleFromColumns(row.ContentMode, row.ContentValue, row.ContentJsonPointer),
-	}, nil
+	return fieldsDaLinha(row, h, nil).comoTarget(row.ID, row.Enabled, row.TlsWarn, row.CreatedAt), nil
 }
 
 // lerValidade devolve nil quando o sondador ainda não leu um certificado do
