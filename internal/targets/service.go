@@ -190,87 +190,153 @@ func (s *Service) List(ctx context.Context, userID uuid.UUID, before *uuid.UUID,
 func (s *Service) Update(ctx context.Context, userID, id uuid.UUID, p Patch) (Target, error) {
 	var out Target
 	err := storage.InUserTx(ctx, s.pool, userID, func(q *db.Queries) error {
-		// A mesma ordem de travas do Create (consultiva, depois a linha): dois
-		// PATCH simultâneos que poriam regra no mesmo host contam em fila.
-		if err := q.LockUserTargets(ctx, userID); err != nil {
-			return fmt.Errorf("travar alvos do usuário: %w", err)
-		}
-		row, err := q.GetTargetForUpdate(ctx, db.GetTargetForUpdateParams{UserID: userID, ID: id})
-		if err != nil {
-			return naoAchado(err)
-		}
-		headers, err := OpenHeaders(s.box, row.ID, row.HeadersEnc)
-		if err != nil {
-			return err
-		}
-		tags, err := lerTags(ctx, q, userID, row.ID)
-		if err != nil {
-			return err
-		}
-
-		f := fieldsDaLinha(row, headers, tags)
-		regraGravada := f.ContentRule
-		enabled := row.Enabled
-		mudouASonda := p.apply(&f, &enabled)
-		tlsWarn := p.tlsWarnDepois(row.TlsWarn)
-		if verr := validate(&f); verr != nil {
-			return verr
-		}
-		if aumentaOHost(regraGravada, row.URL, f.ContentRule, f.URL) {
-			outros, err := contarRegrasNoHost(ctx, q, userID, hostDaRegra(f.URL), row.ID)
-			if err != nil {
-				return err
-			}
-			if s.depoisDeContar != nil {
-				s.depoisDeContar()
-			}
-			if outros >= s.tetoPorHost {
-				return ErrContentHostLimit
-			}
-		}
-		// Outra URL ou outro método é outro serviço, e outra
-		// regra é outro critério de saúde. As falhas do anterior não somam com
-		// as do novo; o incidente aberto fica e fecha pelos sucessos do novo.
-		if mudouOCriterioDeSaude(row.URL, row.Method, regraGravada, f) {
-			if err := q.ResetTargetHealth(ctx, db.ResetTargetHealthParams{UserID: userID, TargetID: row.ID}); err != nil {
-				return fmt.Errorf("zerar histerese do alvo: %w", err)
-			}
-		}
-
-		sealed, err := SealHeaders(s.box, row.ID, f.Headers)
-		if err != nil {
-			return err
-		}
-		proximo := row.NextRunAt
-		if mudouASonda {
-			proximo = s.clk.Now()
-		}
-		err = q.UpdateTarget(ctx, f.updateTargetParams(userID, id, sealed, enabled, proximo, tlsWarn))
-		if err != nil {
-			return fmt.Errorf("atualizar alvo: %w", err)
-		}
-		// Outra origem (esquema, host ou porta) é outro certificado: a leitura
-		// anterior sai junto com a troca.
-		if mudouDeDestino(row.URL, f.URL) {
-			err := q.DeleteTargetTLSOfOwner(ctx, db.DeleteTargetTLSOfOwnerParams{UserID: userID, TargetID: row.ID})
-			if err != nil {
-				return fmt.Errorf("apagar validade do certificado: %w", err)
-			}
-		}
-		validade, err := lerValidade(ctx, q, userID, row.ID)
-		if err != nil {
-			return err
-		}
-		if p.SetTags {
-			if err := trocarTags(ctx, q, userID, row.ID, f.Tags); err != nil {
-				return err
-			}
-		}
-		out = f.comoTarget(row.ID, enabled, tlsWarn, row.CreatedAt)
-		out.TLS = validade
-		return nil
+		var err error
+		out, err = s.editarAlvo(ctx, q, userID, id, p)
+		return err
 	})
 	return out, err
+}
+
+// editarAlvo é o corpo transacional do Update, na ordem que o doc dele fixa.
+func (s *Service) editarAlvo(ctx context.Context, q *db.Queries, userID, id uuid.UUID, p Patch) (Target, error) {
+	row, f, err := s.lerParaEditar(ctx, q, userID, id)
+	if err != nil {
+		return Target{}, err
+	}
+	e := novaEdicao(row, f, p)
+	if verr := validate(&e.f); verr != nil {
+		return Target{}, verr
+	}
+	if err := s.recusarRegraAcimaDoTeto(ctx, q, userID, e); err != nil {
+		return Target{}, err
+	}
+	if err := zerarHistereseSeMudouOCriterio(ctx, q, userID, e); err != nil {
+		return Target{}, err
+	}
+	if err := s.gravarAlvo(ctx, q, userID, e); err != nil {
+		return Target{}, err
+	}
+	validade, err := acompanharDestinoETags(ctx, q, userID, e, p)
+	if err != nil {
+		return Target{}, err
+	}
+	out := e.f.comoTarget(row.ID, e.enabled, e.tlsWarn, row.CreatedAt)
+	out.TLS = validade
+	return out, nil
+}
+
+// lerParaEditar toma a trava do usuário e lê a linha com FOR UPDATE, os
+// headers abertos e as tags. A mesma ordem de travas do Create (consultiva,
+// depois a linha): dois PATCH simultâneos que poriam regra no mesmo host
+// contam em fila. Linha de outro dono é ErrNotFound.
+func (s *Service) lerParaEditar(ctx context.Context, q *db.Queries, userID, id uuid.UUID) (db.Target, fields, error) {
+	if err := q.LockUserTargets(ctx, userID); err != nil {
+		return db.Target{}, fields{}, fmt.Errorf("travar alvos do usuário: %w", err)
+	}
+	row, err := q.GetTargetForUpdate(ctx, db.GetTargetForUpdateParams{UserID: userID, ID: id})
+	if err != nil {
+		return db.Target{}, fields{}, naoAchado(err)
+	}
+	headers, err := OpenHeaders(s.box, row.ID, row.HeadersEnc)
+	if err != nil {
+		return db.Target{}, fields{}, err
+	}
+	tags, err := lerTags(ctx, q, userID, row.ID)
+	if err != nil {
+		return db.Target{}, fields{}, err
+	}
+	return row, fieldsDaLinha(row, headers, tags), nil
+}
+
+// edicao é o PATCH já aplicado à linha gravada, ainda sem nenhuma escrita:
+// os campos de depois, a regra que valia antes e as três decisões que o PATCH
+// toma à parte dos campos (enabled, aviso de certificado e se a sonda mudou).
+type edicao struct {
+	row          db.Target
+	regraGravada *ContentRule
+	f            fields
+	enabled      bool
+	tlsWarn      bool
+	mudouASonda  bool
+}
+
+func novaEdicao(row db.Target, f fields, p Patch) edicao {
+	e := edicao{row: row, regraGravada: f.ContentRule, f: f, enabled: row.Enabled, tlsWarn: p.tlsWarnDepois(row.TlsWarn)}
+	e.mudouASonda = p.apply(&e.f, &e.enabled)
+	return e
+}
+
+// recusarRegraAcimaDoTeto devolve ErrContentHostLimit quando a edição poria
+// uma regra num host que já está no teto. Só conta quando a edição aumenta o
+// host; a recusa vem antes de toda escrita para não depender do rollback.
+func (s *Service) recusarRegraAcimaDoTeto(ctx context.Context, q *db.Queries, userID uuid.UUID, e edicao) error {
+	if !aumentaOHost(e.regraGravada, e.row.URL, e.f.ContentRule, e.f.URL) {
+		return nil
+	}
+	outros, err := contarRegrasNoHost(ctx, q, userID, hostDaRegra(e.f.URL), e.row.ID)
+	if err != nil {
+		return err
+	}
+	if s.depoisDeContar != nil {
+		s.depoisDeContar()
+	}
+	if outros >= s.tetoPorHost {
+		return ErrContentHostLimit
+	}
+	return nil
+}
+
+// zerarHistereseSeMudouOCriterio: outra URL ou outro método é outro serviço,
+// e outra regra é outro critério de saúde. As falhas do anterior não somam com
+// as do novo; o incidente aberto fica e fecha pelos sucessos do novo.
+func zerarHistereseSeMudouOCriterio(ctx context.Context, q *db.Queries, userID uuid.UUID, e edicao) error {
+	if !mudouOCriterioDeSaude(e.row.URL, e.row.Method, e.regraGravada, e.f) {
+		return nil
+	}
+	if err := q.ResetTargetHealth(ctx, db.ResetTargetHealthParams{UserID: userID, TargetID: e.row.ID}); err != nil {
+		return fmt.Errorf("zerar histerese do alvo: %w", err)
+	}
+	return nil
+}
+
+// gravarAlvo cifra os headers e grava a linha. A próxima sonda sai agora só
+// quando mudou o que é sondado; senão o agendamento anterior fica.
+func (s *Service) gravarAlvo(ctx context.Context, q *db.Queries, userID uuid.UUID, e edicao) error {
+	sealed, err := SealHeaders(s.box, e.row.ID, e.f.Headers)
+	if err != nil {
+		return err
+	}
+	proximo := e.row.NextRunAt
+	if e.mudouASonda {
+		proximo = s.clk.Now()
+	}
+	err = q.UpdateTarget(ctx, e.f.updateTargetParams(userID, e.row.ID, sealed, e.enabled, proximo, e.tlsWarn))
+	if err != nil {
+		return fmt.Errorf("atualizar alvo: %w", err)
+	}
+	return nil
+}
+
+// acompanharDestinoETags faz o que vem depois do UPDATE: outra origem
+// (esquema, host ou porta) é outro certificado, e a leitura anterior sai junto
+// com a troca; devolve a validade que ficou e, se o PATCH mandou tags, troca-as.
+func acompanharDestinoETags(ctx context.Context, q *db.Queries, userID uuid.UUID, e edicao, p Patch) (*CertificateReading, error) {
+	if mudouDeDestino(e.row.URL, e.f.URL) {
+		err := q.DeleteTargetTLSOfOwner(ctx, db.DeleteTargetTLSOfOwnerParams{UserID: userID, TargetID: e.row.ID})
+		if err != nil {
+			return nil, fmt.Errorf("apagar validade do certificado: %w", err)
+		}
+	}
+	validade, err := lerValidade(ctx, q, userID, e.row.ID)
+	if err != nil {
+		return nil, err
+	}
+	if p.SetTags {
+		if err := trocarTags(ctx, q, userID, e.row.ID, e.f.Tags); err != nil {
+			return nil, err
+		}
+	}
+	return validade, nil
 }
 
 // fieldsDaLinha monta os campos editáveis do alvo a partir da linha gravada,
@@ -362,31 +428,24 @@ func aumentaOHost(regraAntes *ContentRule, urlAntes string, regraDepois *Content
 // sondador já evita num redirecionamento.
 func (p Patch) apply(f *fields, enabled *bool) bool {
 	antes := *f
-	if p.Name != nil {
-		f.Name = *p.Name
-	}
-	if p.URL != nil {
-		f.URL = *p.URL
-	}
-	if p.Method != nil {
-		f.Method = *p.Method
-	}
-	if p.IntervalSec != nil {
-		f.IntervalSec = *p.IntervalSec
-	}
-	if p.TimeoutMS != nil {
-		f.TimeoutMS = *p.TimeoutMS
-	}
-	if p.ExpectedStatus != nil {
-		f.ExpectedStatus = *p.ExpectedStatus
-	}
+	p.aplicarCampos(f)
+	p.aplicarHeaders(f, antes.URL)
+	sobrescrever(enabled, p.Enabled)
+	return p.mudouASonda(antes, *f)
+}
+
+// aplicarCampos grava em f os campos que o PATCH mandou: ponteiro nil é
+// ausente e não altera; nos campos que aceitam limpar, a flag Set* manda e o
+// valor nil limpa.
+func (p Patch) aplicarCampos(f *fields) {
+	sobrescrever(&f.Name, p.Name)
+	sobrescrever(&f.URL, p.URL)
+	sobrescrever(&f.Method, p.Method)
+	sobrescrever(&f.IntervalSec, p.IntervalSec)
+	sobrescrever(&f.TimeoutMS, p.TimeoutMS)
+	sobrescrever(&f.ExpectedStatus, p.ExpectedStatus)
 	if p.SetDegradedThreshold {
 		f.DegradedThresholdMS = p.DegradedThresholdMS
-	}
-	if p.SetHeaders {
-		f.Headers = p.Headers
-	} else if mudouDeDestino(antes.URL, f.URL) {
-		f.Headers = nil
 	}
 	if p.SetTags {
 		f.Tags = p.Tags
@@ -394,13 +453,33 @@ func (p Patch) apply(f *fields, enabled *bool) bool {
 	if p.SetContentRule {
 		f.ContentRule = p.ContentRule
 	}
-	if p.Enabled != nil {
-		*enabled = *p.Enabled
+}
+
+// aplicarHeaders troca os headers quando o PATCH os mandou; sem eles, uma URL
+// de outra origem (urlAntes é a de antes do PATCH) apaga os que existiam.
+func (p Patch) aplicarHeaders(f *fields, urlAntes string) {
+	if p.SetHeaders {
+		f.Headers = p.Headers
+	} else if mudouDeDestino(urlAntes, f.URL) {
+		f.Headers = nil
 	}
-	return f.URL != antes.URL || f.Method != antes.Method ||
-		f.IntervalSec != antes.IntervalSec || f.TimeoutMS != antes.TimeoutMS ||
-		f.ExpectedStatus != antes.ExpectedStatus || p.SetHeaders ||
-		!f.ContentRule.Equal(antes.ContentRule)
+}
+
+// mudouASonda diz se o PATCH alterou o que a sonda faz: destino, método,
+// cadência, prazo, status esperado, headers ou regra. Nome, tags, limiar,
+// enabled e aviso de certificado não contam.
+func (p Patch) mudouASonda(antes, depois fields) bool {
+	return depois.URL != antes.URL || depois.Method != antes.Method ||
+		depois.IntervalSec != antes.IntervalSec || depois.TimeoutMS != antes.TimeoutMS ||
+		depois.ExpectedStatus != antes.ExpectedStatus || p.SetHeaders ||
+		!depois.ContentRule.Equal(antes.ContentRule)
+}
+
+// sobrescrever copia *novo para *destino quando o PATCH mandou o campo.
+func sobrescrever[T any](destino, novo *T) {
+	if novo != nil {
+		*destino = *novo
+	}
 }
 
 func (s *Service) Delete(ctx context.Context, userID, id uuid.UUID) error {

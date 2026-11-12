@@ -194,6 +194,40 @@ func TestUpdateFalhaAoTrocarTagsDesfazOPatchInteiro(t *testing.T) {
 	}
 }
 
+// Sem conseguir zerar a histerese, o PATCH que trocou o critério de saúde falha
+// com a causa do banco e nada do alvo muda, a URL nova inclusive.
+func TestUpdateFalhaAoZerarAHisteresePreservaOAlvo(t *testing.T) {
+	a := novoAmbiente(t)
+	dono := a.usuario(t)
+	alvo := a.alvo(t, dono)
+	restaurar := alterarDDLComplementar(t, a,
+		`ALTER TABLE target_health RENAME TO target_health_indisponivel_lacuna`,
+		`ALTER TABLE target_health_indisponivel_lacuna RENAME TO target_health`)
+
+	_, err := a.svc.Update(context.Background(), dono, alvo, targets.Patch{URL: ptr("https://outro.exemplo.com/health")})
+
+	exigirPGComplementar(t, err, "42P01", "zerar histerese do alvo: ")
+	restaurar()
+	exigirAlvoIntacto(t, a, dono, alvo, "API", entrada().URL, []string{})
+}
+
+// Sem conseguir tomar a trava do usuário, o PATCH falha com a causa do banco
+// antes de ler o alvo e nada muda.
+func TestUpdateFalhaAoTravarOsAlvosDoUsuario(t *testing.T) {
+	a := novoAmbiente(t)
+	dono := a.usuario(t)
+	alvo := a.alvo(t, dono)
+	restaurar := alterarDDLComplementar(t, a,
+		`REVOKE EXECUTE ON FUNCTION pg_advisory_xact_lock(bigint) FROM PUBLIC`,
+		`GRANT EXECUTE ON FUNCTION pg_advisory_xact_lock(bigint) TO PUBLIC`)
+
+	_, err := a.svc.Update(context.Background(), dono, alvo, targets.Patch{Name: ptr("Novo nome")})
+
+	exigirPGComplementar(t, err, "42501", "travar alvos do usuário: ")
+	restaurar()
+	exigirAlvoIntacto(t, a, dono, alvo, "API", entrada().URL, []string{})
+}
+
 // idsDoResumo devolve os ids do resumo em ordem fixa, para comparar conjuntos
 // sem depender da ordem da lista.
 func idsDoResumo(itens []targets.Summary) []string {
