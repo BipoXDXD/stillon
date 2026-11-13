@@ -31,11 +31,15 @@ func TestRetentionDeletesDeadFamilyProofsInBatchesAndKeepsLiveOnes(t *testing.T)
 		dono, velha, mortas); err != nil {
 		t.Fatal(err)
 	}
-	// Viva e parada há dias: fica.
+	// Viva e parada há dias: fica. O prazo sai do now() do banco, não do
+	// relógio fixo agora (que fica no passado do banco): assim a sessão é viva
+	// também para as políticas do sondador, e o teste reprova se a de leitura
+	// das famílias com contador sumir.
 	viva := uuid.New()
 	if _, err := testdb.Admin(t).Exec(ctx,
-		`INSERT INTO sessions (id, user_id, family_id, token_hash, expires_at) VALUES ($1, $2, $3, $4, $5)`,
-		uuid.New(), dono, viva, []byte("hash-da-viva"), agora.Add(24*time.Hour)); err != nil {
+		`INSERT INTO sessions (id, user_id, family_id, token_hash, expires_at)
+		 VALUES ($1, $2, $3, $4, now() + interval '24 hours')`,
+		uuid.New(), dono, viva, []byte("hash-da-viva")); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := testdb.Admin(t).Exec(ctx,
