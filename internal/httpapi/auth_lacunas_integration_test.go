@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/BipoXDXD/stillon/internal/auth"
+	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 )
 
 // Lacunas de autenticação apontadas pela cobertura do pacote: ramos que só
@@ -75,7 +76,7 @@ func conferirRecusaDeSessao(t *testing.T, a *api, r respostaLida, status int, co
 func errosDasFamilias(t *testing.T, a *api) int {
 	t.Helper()
 	var n int
-	if err := a.pool.QueryRow(context.Background(),
+	if err := testdb.Admin(t).QueryRow(context.Background(),
 		`SELECT coalesce(sum(errors), 0) FROM session_family_proofs WHERE user_id = $1`, a.userID).Scan(&n); err != nil {
 		t.Fatal(err)
 	}

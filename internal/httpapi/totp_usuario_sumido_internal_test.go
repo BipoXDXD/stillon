@@ -12,6 +12,7 @@ import (
 
 	"github.com/BipoXDXD/stillon/internal/auth"
 	"github.com/BipoXDXD/stillon/internal/httpapi/middleware"
+	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 )
 
 // contaSumida é a conta apagada depois da guarda de sessão viva e da reserva
@@ -30,7 +31,7 @@ func (contaSumida) ByID(context.Context, uuid.UUID) (auth.User, error) {
 // serviço do TOTP é concreto, sem como devolver ErrNotFound num teste.
 func TestTOTPRoutesAnswer401WhenTheUserVanishes(t *testing.T) {
 	c := novoCenarioDoSegundoFator(t)
-	pool := c.comContadorNoBanco(t)
+	c.comContadorNoBanco(t)
 	c.h.users = contaSumida{c.contas}
 
 	rotas := []struct {
@@ -75,7 +76,7 @@ func TestTOTPRoutesAnswer401WhenTheUserVanishes(t *testing.T) {
 	}
 
 	var erros int
-	if err := pool.QueryRow(context.Background(),
+	if err := testdb.Admin(t).QueryRow(context.Background(),
 		`SELECT coalesce(sum(errors), 0) FROM session_family_proofs WHERE family_id = $1`, c.familia).Scan(&erros); err != nil {
 		t.Fatal(err)
 	}
