@@ -20,12 +20,13 @@ defaults:
   run:
     shell: bash
 
-# Um push novo no mesmo ref (PR, main ou tag) cancela a execução anterior:
-# uma execução superada não prova nada e só gasta minutos de Actions. Na main, o publish da execução
-# nova substitui o da cancelada.
+# Fora da main, um push novo no mesmo ref (PR ou tag) cancela a execução anterior: uma execução
+# superada não prova nada e só gasta minutos de Actions. Na main, toda execução vai até o fim: o
+# Coolify release só publica um SHA cujo ci terminou com sucesso, e merges seguidos cancelariam
+# todos eles. As execuções da main esperam na fila do grupo, uma de cada vez.
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 # Actions fixadas por SHA completo (a tag vem no comentário) e ferramentas com
 # versão: uma tag móvel roda código alheio com o GITHUB_TOKEN, e @latest muda

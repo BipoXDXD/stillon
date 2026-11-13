@@ -12,6 +12,7 @@ SCRIPT = pathlib.Path("deploy/ci/checar-workflows.sh")
 SONDA_YML = pathlib.Path(".github/workflows/zz-sonda.yml")
 SONDA_SH = pathlib.Path("deploy/ci/zz-sonda.sh")
 COOLIFY = pathlib.Path(".github/workflows/coolify.yml")
+CI = pathlib.Path(".github/workflows/ci.yml")
 MENSAGEM_HOST_KEY = "FALHOU: StrictHostKeyChecking desligado"
 MENSAGEM_KEYSCAN = "FALHOU: ssh-keyscan"
 LINHAS_PROIBIDAS = (
@@ -192,6 +193,15 @@ SABOTAGENS_COOLIFY = (
     ),
 )
 
+MENSAGEM_CONCORRENCIA_CI = "ci.yml: o ci da main não pode ser cancelado"
+CANCELA_SO_FORA_DA_MAIN = "  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}\n"
+SABOTAGENS_CI = (
+    ("cancela tudo", CANCELA_SO_FORA_DA_MAIN, "  cancel-in-progress: true\n"),
+    ("condição invertida", CANCELA_SO_FORA_DA_MAIN,
+     "  cancel-in-progress: ${{ github.ref == 'refs/heads/main' }}\n"),
+    ("grupo único para todos os refs", "  group: ci-${{ github.ref }}\n", "  group: ci\n"),
+)
+
 
 class ChecarWorkflowsTest(unittest.TestCase):
     @classmethod
@@ -258,6 +268,18 @@ class ChecarWorkflowsTest(unittest.TestCase):
                 resultado = self.checar()
                 self.assertNotEqual(resultado.returncode, 0, "o script não reprovou")
                 self.assertIn(mensagem, resultado.stderr)
+
+    def test_ci_sabotado_reprova(self):
+        caminho = self.copia / CI
+        original = caminho.read_text()
+        self.addCleanup(caminho.write_text, original)
+        for nome, trecho, troca in SABOTAGENS_CI:
+            with self.subTest(sabotagem=nome):
+                self.assertIn(trecho, original)
+                caminho.write_text(original.replace(trecho, troca, 1))
+                resultado = self.checar()
+                self.assertNotEqual(resultado.returncode, 0, "o script não reprovou")
+                self.assertIn(MENSAGEM_CONCORRENCIA_CI, resultado.stderr)
 
 
 if __name__ == "__main__":
