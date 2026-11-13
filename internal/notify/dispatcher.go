@@ -88,6 +88,7 @@ type Dispatcher struct {
 	claimTimeout time.Duration
 	// shutdownSendGrace é campo para que os testes o encurtem.
 	shutdownSendGrace time.Duration
+	ritmo             ritmo
 }
 
 // NewDispatcher recebe os canais que o operador configurou. Um canal de
@@ -101,6 +102,7 @@ func NewDispatcher(pool *pgxpool.Pool, box *crypto.Box, clk clock.Clock, reg pro
 			Help: "Desfechos de envio de notificação, por canal e resultado.",
 		}, []string{"kind", "result"}),
 		sendTimeout: sendTimeout, claimTimeout: claimTimeout, shutdownSendGrace: shutdownSendGrace,
+		ritmo: ritmoReal,
 	}
 	for _, n := range notifiers {
 		d.notifiers[n.Kind()] = n
@@ -112,13 +114,13 @@ func NewDispatcher(pool *pgxpool.Pool, box *crypto.Box, clk clock.Clock, reg pro
 // Run despacha a cada dispatchEvery até ctx acabar. Um lote em andamento
 // termina antes de Run voltar, em até ShutdownBudget (ver Dispatch).
 func (d *Dispatcher) Run(ctx context.Context) error {
-	t := time.NewTicker(dispatchEvery)
-	defer t.Stop()
+	tiques, parar := d.ritmo(dispatchEvery)
+	defer parar()
 	for {
 		select {
 		case <-ctx.Done():
 			return nil
-		case <-t.C:
+		case <-tiques:
 			if _, err := d.Dispatch(ctx); err != nil && ctx.Err() == nil {
 				slog.Error("despachar notificações", "erro", err)
 			}

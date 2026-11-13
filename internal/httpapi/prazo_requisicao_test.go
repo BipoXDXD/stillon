@@ -2,6 +2,7 @@ package httpapi_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
@@ -65,6 +66,50 @@ func TestRoutesAplicaOPrazoDaConfiguracao(t *testing.T) {
 	rotas.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/readyz", nil))
 	if w.Code != http.StatusOK || restante <= 0 || restante > 50*time.Millisecond {
 		t.Fatalf("status=%d restante=%v", w.Code, restante)
+	}
+}
+
+// Um banco que não responde segura o ping até o contexto acabar. Com o prazo
+// de requisição folgado (10 s), quem tem de cortar é o teto próprio do
+// /readyz: o orquestrador recebe 503 unavailable em cerca de 2 s, e o handler
+// não fica pendurado até o prazo da requisição.
+func TestReadyzComPingTravadoRespondeNaoProntoNoTeto(t *testing.T) {
+	const tetoDoReadyz = 2 * time.Second
+	const folga = 2 * time.Second
+	var restante time.Duration
+	rotas := rotasSemBanco(t, configSemBanco(10*time.Second), func(ctx context.Context) error {
+		if deadline, ok := ctx.Deadline(); ok {
+			restante = time.Until(deadline)
+		}
+		<-ctx.Done()
+		return ctx.Err()
+	})
+
+	w := httptest.NewRecorder()
+	respondeu := make(chan struct{})
+	go func() {
+		defer close(respondeu)
+		rotas.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	}()
+	select {
+	case <-respondeu:
+	case <-time.After(tetoDoReadyz + folga):
+		t.Fatalf("/readyz com ping travado não respondeu em %v: o teto do ping sumiu", tetoDoReadyz+folga)
+	}
+
+	if restante <= 0 || restante > tetoDoReadyz {
+		t.Errorf("ping recebeu %v de prazo, queria no máximo %v", restante, tetoDoReadyz)
+	}
+	var env struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &env); err != nil {
+		t.Fatalf("corpo não é o envelope de erro (%v): %s", err, w.Body)
+	}
+	if w.Code != http.StatusServiceUnavailable || env.Error.Code != "unavailable" {
+		t.Errorf("/readyz com ping travado deu %d/%q, queria 503/unavailable", w.Code, env.Error.Code)
 	}
 }
 

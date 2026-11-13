@@ -130,6 +130,11 @@ func run(ctx context.Context, cfg *config.Config) error {
 	if err != nil {
 		return err
 	}
+	// Os dois papéis decifram destinos de canal, então os dois conferem a
+	// chave antes de servir qualquer coisa.
+	if err := notify.CheckMasterKey(ctx, pool, box); err != nil {
+		return err
+	}
 	clk := clock.Real{}
 
 	// A partição do mês corrente tem de existir antes da primeira sonda.

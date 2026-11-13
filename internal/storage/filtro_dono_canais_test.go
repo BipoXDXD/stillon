@@ -134,3 +134,26 @@ func TestRenewVerificationFiltersOwnerWithoutRLS(t *testing.T) {
 		t.Error("A renovou o próprio canal e o token não mudou")
 	}
 }
+
+func TestListChannelsFiltersOwnerWithoutRLS(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+	a, b := novoUsuario(t, pool), novoUsuario(t, pool)
+	canalA := novoCanal(t, pool, a, nil, agora)
+	q := queriesSemRLS(t)
+	listar := func(dono uuid.UUID) []db.ListChannelsRow {
+		t.Helper()
+		cs, err := q.ListChannels(ctx, dono)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return cs
+	}
+
+	if deB := listar(b); len(deB) != 0 {
+		t.Errorf("B listou %d canais sem RLS, queria 0 (o canal de A vazou)", len(deB))
+	}
+	if deA := listar(a); len(deA) != 1 || deA[0].ID != canalA {
+		t.Errorf("A listou %v, queria só o canal %s", deA, canalA)
+	}
+}

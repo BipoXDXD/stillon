@@ -83,6 +83,33 @@ func comoSendError(t *testing.T, err error) *SendError {
 	return se
 }
 
+// Os limites {1,20} do id e {1,100} do token são a única defesa de formato
+// abaixo do maxDiscordURL: as URLs daqui ficam bem abaixo do teto.
+func TestValidateDiscordURLIdLengthBoundary(t *testing.T) {
+	const base = "https://discord.com/api/webhooks/"
+	if err := ValidateDiscordURL(base + strings.Repeat("1", 20) + "/t"); err != nil {
+		t.Errorf("id de 20 dígitos: %v, queria aceito", err)
+	}
+	if err := ValidateDiscordURL(base + strings.Repeat("1", 21) + "/t"); !errors.Is(err, ErrDiscordURL) {
+		t.Errorf("id de 21 dígitos: %v, queria ErrDiscordURL", err)
+	}
+}
+
+func TestValidateDiscordURLTokenLengthBoundary(t *testing.T) {
+	const base = "https://discord.com/api/webhooks/1/"
+	aceito := base + strings.Repeat("a", 100)
+	recusado := base + strings.Repeat("a", 101)
+	if len(recusado) > maxDiscordURL {
+		t.Fatalf("URL de %d caracteres passa do maxDiscordURL; o teste não provaria a regex", len(recusado))
+	}
+	if err := ValidateDiscordURL(aceito); err != nil {
+		t.Errorf("token de 100 caracteres: %v, queria aceito", err)
+	}
+	if err := ValidateDiscordURL(recusado); !errors.Is(err, ErrDiscordURL) {
+		t.Errorf("token de 101 caracteres: %v, queria ErrDiscordURL", err)
+	}
+}
+
 func TestValidateDiscordURL(t *testing.T) {
 	cases := []struct {
 		url string
