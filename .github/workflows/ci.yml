@@ -251,6 +251,10 @@ jobs:
         run: sudo env "PATH=$PATH" python3 deploy/ci/testar-imagem-backup.py
       - name: nome anterior do projeto
         run: sh deploy/ci/checar-nome.sh
+      - name: limpeza de contêineres só do que a execução criou
+        run: sh deploy/ci/checar-conteineres.sh
+      - name: testes do checar-conteineres
+        run: python3 -m unittest discover -s deploy/ci -p test_checar_conteineres.py -v
       - name: vps.sh contra um ssh falso
         run: sh deploy/ci/testar-vps.sh
       - name: snapshot do banco no backup, contra Docker falso

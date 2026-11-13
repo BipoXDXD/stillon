@@ -317,7 +317,7 @@ class ImageStorageTests(unittest.TestCase):
 
     def test_docker_contract_refuses_prune_volume_removal_and_service_stop(self) -> None:
         for argv in [
-            ["/usr/bin/docker", "system", "prune", "-af"],
+            ["/usr/bin/docker", "system", "prune", "-af"],  # checar-conteineres: permitido, o receptor recusa
             ["/usr/bin/docker", "volume", "rm", "database"],
             ["/usr/bin/docker", "stop", "other-project"],
             ["/usr/bin/docker", "compose", "down", "-v"],
