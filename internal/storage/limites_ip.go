@@ -36,10 +36,10 @@ func (o *OrcamentosPorIP) Gastar(ctx context.Context, balde string, chave []byte
 	// Apagar uma linha é devolver o balde cheio, o que só é inofensivo depois
 	// de ele ter tido tempo de encher sozinho.
 	ocioso := max(OciosoMinimoPorIP, aCada*time.Duration(rajada))
-	var linha db.SpendIPRateLimitTokenRow
+	var linha db.SpendIPRateLimitQuotaRow
 	err := InIPRateLimitTx(ctx, o.banco, func(q *db.Queries) error {
 		var err error
-		linha, err = q.SpendIPRateLimitToken(ctx, db.SpendIPRateLimitTokenParams{
+		linha, err = q.SpendIPRateLimitQuota(ctx, db.SpendIPRateLimitQuotaParams{
 			Bucket:          balde,
 			KeyHash:         chave,
 			Burst:           float64(rajada),

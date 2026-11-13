@@ -14,7 +14,7 @@
 -- O CTE apaga até 20 linhas paradas do MESMO balde (paradas além de
 -- idle_before equivalem a um balde cheio), sem esperar quem as trava, e nunca a
 -- da própria chave. É a limpeza: cada gasto paga um pouco, sem job.
--- name: SpendIPRateLimitToken :one
+-- name: SpendIPRateLimitQuota :one
 WITH idle AS (
     DELETE FROM ip_rate_limits d
      WHERE (d.bucket, d.key_hash) IN (

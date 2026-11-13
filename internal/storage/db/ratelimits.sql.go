@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-const spendIPRateLimitToken = `-- name: SpendIPRateLimitToken :one
+const spendIPRateLimitQuota = `-- name: SpendIPRateLimitQuota :one
 
 WITH idle AS (
     DELETE FROM ip_rate_limits d
@@ -37,7 +37,7 @@ RETURNING last_allowed,
           ip_rate_limit_refill(tokens, updated_at, $4::timestamptz, $3::float8, $5::float8)::float8 AS available
 `
 
-type SpendIPRateLimitTokenParams struct {
+type SpendIPRateLimitQuotaParams struct {
 	Bucket          string
 	KeyHash         []byte
 	Burst           float64
@@ -46,7 +46,7 @@ type SpendIPRateLimitTokenParams struct {
 	IdleBefore      time.Time
 }
 
-type SpendIPRateLimitTokenRow struct {
+type SpendIPRateLimitQuotaRow struct {
 	LastAllowed bool
 	Available   float64
 }
@@ -66,8 +66,8 @@ type SpendIPRateLimitTokenRow struct {
 // O CTE apaga até 20 linhas paradas do MESMO balde (paradas além de
 // idle_before equivalem a um balde cheio), sem esperar quem as trava, e nunca a
 // da própria chave. É a limpeza: cada gasto paga um pouco, sem job.
-func (q *Queries) SpendIPRateLimitToken(ctx context.Context, arg SpendIPRateLimitTokenParams) (SpendIPRateLimitTokenRow, error) {
-	row := q.db.QueryRow(ctx, spendIPRateLimitToken,
+func (q *Queries) SpendIPRateLimitQuota(ctx context.Context, arg SpendIPRateLimitQuotaParams) (SpendIPRateLimitQuotaRow, error) {
+	row := q.db.QueryRow(ctx, spendIPRateLimitQuota,
 		arg.Bucket,
 		arg.KeyHash,
 		arg.Burst,
@@ -75,7 +75,7 @@ func (q *Queries) SpendIPRateLimitToken(ctx context.Context, arg SpendIPRateLimi
 		arg.SecondsPerToken,
 		arg.IdleBefore,
 	)
-	var i SpendIPRateLimitTokenRow
+	var i SpendIPRateLimitQuotaRow
 	err := row.Scan(&i.LastAllowed, &i.Available)
 	return i, err
 }
