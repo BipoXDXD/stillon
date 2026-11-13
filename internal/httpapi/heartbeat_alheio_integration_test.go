@@ -82,7 +82,10 @@ func TestAnotherUsersHeartbeatIs404OnEveryRoute(t *testing.T) {
 		status, cru := lerCru(t, a, metodo, caminho, intruso, corpos[rota])
 		var env envelopeComCampos
 		if err := json.Unmarshal([]byte(cru), &env); err != nil {
-			t.Fatalf("%s: %v\n%s", rota, err, cru)
+			// Errorf, não Fatalf: uma rota que vaza não pode esconder as seguintes.
+			t.Errorf("%s pelo intruso deu %d com corpo que não é JSON: %v\n%s", rota, status, err, cru)
+			conferirSemDadosDoDono(t, rota, cru, proibidos)
+			continue
 		}
 		if status != http.StatusNotFound || env.Error.Code != "not_found" {
 			t.Errorf("%s pelo intruso deu %d/%s, queria 404/not_found", rota, status, env.Error.Code)
