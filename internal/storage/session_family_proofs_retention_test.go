@@ -101,8 +101,9 @@ func TestRetentionStillRunsTheOldStepsWhenTheFamilyProofsCleanupFails(t *testing
 		novoID(), dono, hoje.AddDate(0, -13, 0)); err != nil {
 		t.Fatal(err)
 	}
-	// A limpeza nova falha: a tabela sumiu.
-	if _, err := pool.Exec(ctx, `DROP TABLE session_family_proofs`); err != nil {
+	// A limpeza nova falha: a tabela sumiu (CASCADE leva junto a política
+	// sessions_prober_select_proof_family da 00030, que a referencia).
+	if _, err := pool.Exec(ctx, `DROP TABLE session_family_proofs CASCADE`); err != nil {
 		t.Fatal(err)
 	}
 
