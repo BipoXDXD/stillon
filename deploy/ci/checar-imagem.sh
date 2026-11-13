@@ -13,13 +13,17 @@ falhas=0
 falhar() { echo "FALHOU: $*" >&2; falhas=$((falhas + 1)); }
 
 # Tudo o que o script cria sai no fim, inclusive se um passo abortar no meio
-# (set -e): o diretório temporário, o contêiner do `version` e o do `docker
-# create`. Nomes com o PID, para duas execuções em paralelo não se pisarem.
+# (set -e): o diretório temporário e os contêineres desta execução. Cada
+# contêiner leva a label stillon.run com um id aleatório da execução, e a
+# limpeza filtra só por ela: nem nome nem padrão, que pegariam o contêiner de
+# outra execução na mesma máquina (issue #390).
 tmp=$(mktemp -d)
-ctr_versao=checar-imagem-versao-$$
-ctr_copia=checar-imagem-copia-$$
+EXECUCAO=$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')
+ROTULO="stillon.run=$EXECUCAO"
 limpar() {
-    docker rm -f "$ctr_versao" "$ctr_copia" >/dev/null 2>&1 || true
+    for cid in $(docker ps -aq --filter "label=$ROTULO"); do
+        docker rm -f "$cid" >/dev/null 2>&1 || true
+    done
     rm -rf "$tmp"
 }
 trap limpar EXIT
@@ -40,7 +44,7 @@ esac
 #    daemon fora do ar ou uma imagem errada também dão código diferente de
 #    zero, e passariam por "sem shell".
 for sh in /bin/sh /busybox/sh; do
-    if saida=$(docker run --rm --entrypoint "$sh" "$IMAGEM" -c true 2>&1); then
+    if saida=$(docker run --rm --label "$ROTULO" --entrypoint "$sh" "$IMAGEM" -c true 2>&1); then
         falhar "a imagem tem shell: $sh"
     elif ! printf '%s' "$saida" | grep -q "no such file or directory"; then
         falhar "docker run com $sh falhou por outro motivo: $saida"
@@ -52,24 +56,23 @@ done
 #    aparecer como FALHOU, e as outras checagens rodam mesmo assim. O
 #    cliente do docker repassa o TERM ao contêiner e continua esperando (um
 #    PID 1 que ignora o TERM nunca sai): por isso o -k, que manda KILL ao
-#    cliente 5 s depois. O timeout mata só o cliente; o contêiner nomeado
-#    sai no `docker rm -f` logo abaixo (e no trap, se algo abortar antes).
+#    cliente 5 s depois. O timeout mata só o cliente; o contêiner, marcado
+#    com a label da execução, sai no trap.
 #    Só o stdout entra na comparação: um aviso do docker no stderr (o
 #    WARNING de plataforma, "Unable to find image…") viraria "versão
 #    errada". O stderr segue direto para o log, e a mensagem de erro aponta
 #    para ele.
-if got=$(timeout -k 5 30 docker run --rm --name "$ctr_versao" "$IMAGEM" version); then
+if got=$(timeout -k 5 30 docker run --rm --label "$ROTULO" "$IMAGEM" version); then
     [ "$got" = "$VERSAO" ] || falhar "stillon version = '$got', queria '$VERSAO'"
 else
     falhar "stillon version não respondeu em 30 s ou saiu com erro (código $?; o stderr está logo acima): '$got'"
 fi
-docker rm -f "$ctr_versao" >/dev/null 2>&1 || true
 
 # 4. O painel está DENTRO do binário. O build passa com o dist vazio (o
 #    .gitkeep basta para o go:embed), e o painel viraria um 503: por isso a
 #    checagem olha o conteúdo, não o build. O index.html do Vite referencia o
 #    bundle com hash; nenhum código Go tem essa string.
-docker create --name "$ctr_copia" "$IMAGEM" >/dev/null
+ctr_copia=$(docker create --label "$ROTULO" "$IMAGEM")
 docker cp -q "$ctr_copia:/stillon" "$tmp/stillon"
 docker rm "$ctr_copia" >/dev/null
 grep -aq 'src="/assets/index-' "$tmp/stillon" || falhar "o binário não embute o index.html do painel"

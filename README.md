@@ -301,6 +301,13 @@ Para rodar a API e o sondador separados no mesmo host (`--role=api` e `--role=pr
 precisa configurar nada: sem `METRICS_ADDR`, a porta de métricas é `127.0.0.1:9090` para `api` e
 `all` e `127.0.0.1:9091` para `prober`.
 
+**Versão do Go.** O projeto fica no Go 1.26.x e recebe só patches (de segurança, sobretudo): o
+`go.mod`, a imagem `golang` do [`Dockerfile`](Dockerfile), o CI (`go-version-file: go.mod`) e o
+`go-version` fixo do [`deploy.yml`](.github/workflows/deploy.yml) andam juntos e mudam no
+mesmo PR. Minor novo (1.27) só por decisão explícita do dono, num PR próprio; por isso o
+[`dependabot.yml`](.github/dependabot.yml) ignora os bumps de minor e de major da imagem `golang` e
+mantém os de patch e de digest (a diretiva `go` do `go.mod` o Dependabot não atualiza).
+
 ## API
 
 REST sob `/api/v1`, usada pelo painel (a [spec, §9](docs/superpowers/specs/2026-09-22-stillon-design.md)

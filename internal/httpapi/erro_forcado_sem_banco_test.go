@@ -30,6 +30,7 @@ import (
 	"github.com/BipoXDXD/stillon/internal/incident/history"
 	"github.com/BipoXDXD/stillon/internal/notify"
 	"github.com/BipoXDXD/stillon/internal/statuspage"
+	"github.com/BipoXDXD/stillon/internal/storage"
 	"github.com/BipoXDXD/stillon/internal/targets"
 )
 
@@ -82,6 +83,7 @@ func apiSemBanco(t *testing.T) (*httptest.Server, *clock.Fake) {
 		Pings:       heartbeat.NewPingService(pool, clk),
 		Heartbeats:  heartbeat.NewService(pool, clk),
 		Clock:       clk, Ready: pool.Ping,
+		LimitesIP: storage.NewOrcamentosPorIP(pool, clk),
 	}))
 	t.Cleanup(srv.Close)
 	return srv, clk
@@ -174,9 +176,10 @@ func TestBancoForaNaoVazaNadaEmNenhumaRota(t *testing.T) {
 	// troca de senha passa pelo viva antes do serviço (como as rotas do 2FA): com
 	// o banco fora, a falha registrada é a "conferir sessão", e o "trocar senha"
 	// só aparece quando o serviço falha depois de a sessão ser conferida
-	// (erro_interno_internal_test.go).
+	// (erro_interno_internal_test.go). O login e o /totp/verify param antes, no
+	// limite por IP, que também está no banco.
 	for _, operacao := range []string{
-		"conferir sessão", "buscar usuário", "rotacionar sessão", "revogar sessão",
+		"conferir sessão", "limite por IP", "rotacionar sessão", "revogar sessão",
 		"registrar ping", "status page pública", "verificar token", "confirmar token",
 	} {
 		if !strings.Contains(registrado, operacao) {

@@ -58,6 +58,11 @@ type Deps struct {
 	// Heartbeats é o cadastro do dono.
 	Heartbeats *heartbeat.Service
 	Clock      clock.Clock
+	// LimitesIP guarda os baldes por IP do login e do /totp/verify. Em
+	// produção é o Postgres (storage.OrcamentosPorIP), para que réplicas
+	// dividam o orçamento de cada origem; os testes sem banco passam
+	// middleware.NovosOrcamentosEmMemoria. Obrigatório.
+	LimitesIP middleware.Orcamentos
 	// Ready é o teste de prontidão de /readyz: o ping no banco em produção.
 	Ready func(context.Context) error
 	// Painel são os arquivos do painel React. Nil é o embutido no binário
@@ -79,6 +84,10 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	// Sem https não há como marcar o cookie como Secure: o navegador
 	// simplesmente não o guardaria, e o desenvolvimento local pararia. Em
 	// produção PUBLIC_BASE_URL é https, e o refresh nunca trafega em claro.
+	// Sem orçamento, o login ficaria sem limite por IP: defeito de montagem.
+	if d.LimitesIP == nil {
+		panic("httpapi: Deps sem LimitesIP; passe storage.NewOrcamentosPorIP (ou, sem banco, middleware.NovosOrcamentosEmMemoria)")
+	}
 	secureCookie := config.EhHTTPS(cfg.PublicBaseURL)
 	// O teto de Argon2id simultâneos é do processo, e quem o
 	// paga é a API: o config.Load sempre o preenche; um Config montado à mão
@@ -125,9 +134,12 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	// CONTA, de que só quem tem token válido gasta ficha: com o IP, quem divide
 	// NAT ou um terceiro sem credencial esvaziaria o balde do dono.
 	//
-	// O estado dos baldes é só da memória desta instância: com mais de uma réplica,
-	// cada uma conta por si. É a mesma limitação do login, e não é resolvida aqui.
-	limiteLogin := middleware.RateLimit(ctx, d.Clock, 10, 5, proxiesDe(cfg))
+	// Os baldes por IP (login e /totp/verify) ficam em d.LimitesIP, no Postgres em
+	// produção: réplicas somam as tentativas de uma origem no mesmo orçamento. Os
+	// outros limites (por conta, o piso global por IP, o ping, a página pública e
+	// o /verify) continuam na memória de cada instância.
+	limiteLogin := middleware.RateLimitIPCompartilhado(d.LimitesIP,
+		middleware.BaldeIP{Nome: "login", PorMinuto: 10, Rajada: 5}, proxiesDe(cfg), cfg.IPHashKey)
 	mux.Handle("POST /api/v1/auth/login", limiteLogin(http.HandlerFunc(h.Login)))
 	// Uma instância só, e não uma por rota: a troca de senha e as cinco rotas do
 	// 2FA dividem o balde. Com instâncias separadas, quem adivinha senha ou código
@@ -167,7 +179,8 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	// o da conta ou o do dispositivo), porque só o limite por IP não segura quem
 	// chuta os seis dígitos de várias origens.
 	mux.Handle("POST /api/v1/auth/totp/verify",
-		middleware.RateLimit(ctx, d.Clock, 20, 5, proxiesDe(cfg))(http.HandlerFunc(h.TOTPVerify)))
+		middleware.RateLimitIPCompartilhado(d.LimitesIP,
+			middleware.BaldeIP{Nome: "totp_verify", PorMinuto: 20, Rajada: 5}, proxiesDe(cfg), cfg.IPHashKey)(http.HandlerFunc(h.TOTPVerify)))
 
 	// Rotas de recurso: Authn primeiro, depois o limite por USUÁRIO (spec
 	// §5.7), que precisa do usuário que Authn põe no contexto. Uma instância
