@@ -44,7 +44,7 @@
           "max-size": "10m"
         }
       },
-      "cpus": 2,
+      "cpus": 0.5,
       "mem_limit": "512m",
       "networks": {
         "stillon": {
@@ -78,7 +78,7 @@
           "max-size": "10m"
         }
       },
-      "cpus": 2,
+      "cpus": 0.25,
       "mem_limit": "128m",
       "networks": {
         "edge": {
