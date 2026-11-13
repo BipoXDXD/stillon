@@ -21,7 +21,7 @@ COPY web/ ./
 # O vite.config.ts manda o build para ../internal/webui/dist (contrato).
 RUN npm run build
 
-FROM --platform=$BUILDPLATFORM golang:1.26.11-alpine@sha256:ae52b5bc6ed045a9ed26ab03dc19327a802a9cc9aa8b27ed57f5c6b60579b0bb AS build
+FROM --platform=$BUILDPLATFORM golang:1.27.0-alpine@sha256:4c9fe60190a2a3350ddc51de80d0224b8a6698d12bdfc999fee45ea9d6c46dbc AS build
 ARG TARGETOS
 ARG TARGETARCH
 WORKDIR /src
