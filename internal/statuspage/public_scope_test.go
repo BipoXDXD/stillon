@@ -7,13 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/BipoXDXD/stillon/internal/statuspage"
-	"github.com/BipoXDXD/stillon/internal/storage"
-	"github.com/BipoXDXD/stillon/internal/storage/db"
 	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 )
 
@@ -121,22 +118,5 @@ func TestPublicLatencyRunsInsideThePublicScopeOfTheSlug(t *testing.T) {
 	}
 	if !escopo {
 		t.Errorf("a latência rodou sem app.public_slug = \"empresa\" na transação: %v", tx)
-	}
-}
-
-// insereCheck grava um check bem-sucedido com a latência dada.
-func (a ambiente) insereCheck(t *testing.T, alvo uuid.UUID, em time.Time, latencia int32) {
-	t.Helper()
-	ctx := context.Background()
-	if err := storage.EnsureChecksPartitions(ctx, a.pool, em); err != nil {
-		t.Fatal(err)
-	}
-	err := storage.InProberTx(ctx, a.pool, func(q *db.Queries) error {
-		return q.InsertCheck(ctx, db.InsertCheckParams{
-			ID: uuid.Must(uuid.NewV7()), TargetID: alvo, CheckedAt: em, Status: "up", LatencyMS: latencia,
-		})
-	})
-	if err != nil {
-		t.Fatal(err)
 	}
 }
