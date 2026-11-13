@@ -38,18 +38,19 @@ type Reminders struct {
 	policy      Policy
 	pageSize    int32
 	tickTimeout time.Duration
+	ritmo       ritmo
 }
 
 func NewReminders(pool *pgxpool.Pool, clk clock.Clock, policy Policy) *Reminders {
-	return &Reminders{pool: pool, clk: clk, policy: policy, pageSize: reminderPageSize, tickTimeout: reminderTickTimeout}
+	return &Reminders{pool: pool, clk: clk, policy: policy, pageSize: reminderPageSize, tickTimeout: reminderTickTimeout, ritmo: ritmoReal}
 }
 
 // Run roda Tick na subida e depois a cada remindEvery, até ctx acabar: um
 // lembrete que venceu com o processo fora do ar sai logo. Um tique que falha
 // fica no log, e o seguinte tenta de novo: o estado está todo no banco.
 func (r *Reminders) Run(ctx context.Context) error {
-	t := time.NewTicker(remindEvery)
-	defer t.Stop()
+	tiques, parar := r.ritmo(remindEvery)
+	defer parar()
 	for {
 		if _, err := r.Tick(ctx); err != nil && ctx.Err() == nil {
 			slog.Error("enfileirar lembretes", "erro", err)
@@ -57,7 +58,7 @@ func (r *Reminders) Run(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			return nil
-		case <-t.C:
+		case <-tiques:
 		}
 	}
 }
