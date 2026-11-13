@@ -15,7 +15,7 @@
 -- NOT EXISTS lê sessions com as políticas de SELECT do sondador, e só enxerga
 -- a sessão viva por causa dela. Sem aquela política o NOT EXISTS fica sempre
 -- verdadeiro e o sondador volta a apagar o contador da família viva. Quem
--- mexer nela (a L7, por exemplo) precisa manter a visibilidade da sessão viva
+-- mexer nela precisa manter a visibilidade da sessão viva
 -- ao sondador ou trocar este NOT EXISTS por uma função SECURITY DEFINER. O
 -- teste da família viva pega a regressão. O used_at e o revoked_at repetem o
 -- corte que a outra já faz.
