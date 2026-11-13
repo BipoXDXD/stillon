@@ -48,6 +48,14 @@ func InProberTx(ctx context.Context, b Beginner, fn func(*db.Queries) error) err
 	return inTx(ctx, b, `SELECT set_config('app.scope', $1, true)`, "prober", fn)
 }
 
+// InIPRateLimitTx roda fn no escopo do limite por IP (login e /totp/verify):
+// a RLS abre só ip_rate_limits, a tabela sem dono que o limite lê e grava
+// antes de existir usuário, e nada de outra tabela. É o único lugar do código
+// que liga esse escopo.
+func InIPRateLimitTx(ctx context.Context, b Beginner, fn func(*db.Queries) error) error {
+	return inTx(ctx, b, `SELECT set_config('app.scope', $1, true)`, "ip_rate_limit", fn)
+}
+
 // InVerifyTx roda fn no escopo de verificação de canal (GET/POST
 // /verify/{token}): a RLS enxerga só a linha de notif_channels cujo
 // verify_token_hash é tokenHash, e nada de outra tabela. É o único lugar do

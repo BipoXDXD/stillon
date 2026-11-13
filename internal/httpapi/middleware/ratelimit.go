@@ -3,10 +3,8 @@ package middleware
 import (
 	"container/list"
 	"context"
-	"math"
 	"net/http"
 	"net/netip"
-	"strconv"
 	"sync"
 	"time"
 
@@ -120,6 +118,14 @@ const ociosoMinimo = 10 * time.Minute
 // rateLimit recebe o teto como parâmetro para que o teste possa exercitá-lo
 // sem criar cem mil buckets.
 func rateLimit(ctx context.Context, clk clock.Clock, limite rate.Limit, burst int, chave chaveFn, teto int) func(http.Handler) http.Handler {
+	st := novoEstado(ctx, clk, limite, burst, chave, teto)
+	return func(next http.Handler) http.Handler {
+		return &limiterHandler{st: st, next: next}
+	}
+}
+
+// novoEstado cria os baldes e liga a varredura, que para com ctx.
+func novoEstado(ctx context.Context, clk clock.Clock, limite rate.Limit, burst int, chave chaveFn, teto int) *limiterState {
 	st := &limiterState{
 		buckets: map[string]*list.Element{},
 		uso:     list.New(),
@@ -149,10 +155,7 @@ func rateLimit(ctx context.Context, clk clock.Clock, limite rate.Limit, burst in
 			}
 		}
 	}()
-
-	return func(next http.Handler) http.Handler {
-		return &limiterHandler{st: st, next: next}
-	}
+	return st
 }
 
 func (h *limiterHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -168,12 +171,8 @@ func (h *limiterHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.st.mu.Unlock()
 
 	if !allow {
-		// Retry-After diz ao cliente legítimo quanto esperar. Sem prazo
-		// conhecido (taxa zero), o cabeçalho fica de fora.
-		if espera > 0 {
-			w.Header().Set("Retry-After", strconv.Itoa(int(math.Ceil(espera.Seconds()))))
-		}
-		apierr.WriteError(w, r, apierr.CodeRateLimited)
+		// Retry-After diz ao cliente legítimo quanto esperar.
+		recusar(w, r, espera)
 		return
 	}
 	h.next.ServeHTTP(w, r)

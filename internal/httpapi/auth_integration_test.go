@@ -28,6 +28,7 @@ import (
 	"github.com/BipoXDXD/stillon/internal/incident/history"
 	"github.com/BipoXDXD/stillon/internal/notify"
 	"github.com/BipoXDXD/stillon/internal/statuspage"
+	"github.com/BipoXDXD/stillon/internal/storage"
 	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 	"github.com/BipoXDXD/stillon/internal/targets"
 )
@@ -163,6 +164,7 @@ func newAPICom(t *testing.T, ajustar func(*config.Config), ajustarDeps func(*htt
 		Pings:       heartbeat.NewPingService(pool, clk),
 		Heartbeats:  heartbeat.NewService(pool, clk),
 		Clock:       clk, Ready: pool.Ping,
+		LimitesIP: storage.NewOrcamentosPorIP(pool, clk),
 	}
 	if ajustarDeps != nil {
 		ajustarDeps(&deps)
