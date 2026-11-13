@@ -23,7 +23,8 @@ defaults:
 # Fora da main, um push novo no mesmo ref (PR ou tag) cancela a execução anterior: uma execução
 # superada não prova nada e só gasta minutos de Actions. Na main, toda execução vai até o fim: o
 # Coolify release só publica um SHA cujo ci terminou com sucesso, e merges seguidos cancelariam
-# todos eles. As execuções da main esperam na fila do grupo, uma de cada vez.
+# todos eles. O GitHub guarda uma só execução pendente por grupo: com vários merges durante uma
+# execução, a pendente mais nova substitui as outras e cobre o conteúdo delas.
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
