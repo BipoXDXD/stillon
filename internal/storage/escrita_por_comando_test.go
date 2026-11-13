@@ -240,3 +240,28 @@ func TestCaminhosLegitimosDeEscritaContinuam(t *testing.T) {
 		t.Fatalf("sondador avisando e fechando incidente: %v", err)
 	}
 }
+
+// Uma partição que já existia antes da migration das políticas por comando
+// sai dela com as mesmas políticas da mãe: a checks_via_target antiga cai e
+// entram a de leitura e a de gravação do sondador.
+func TestEscritaPorComandoAlcancaParticaoAnterior(t *testing.T) {
+	ctx := context.Background()
+	versao := versaoDaMigration(t, "rls_escrita_por_comando")
+	dsn := testdb.EmptyDatabase(t)
+	if err := storage.MigrateUpTo(ctx, dsn, versao-1); err != nil {
+		t.Fatal(err)
+	}
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	if _, err := pool.Exec(ctx, `SELECT ensure_checks_partition($1::date)`, agora); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := storage.MigrateUpTo(ctx, dsn, versao); err != nil {
+		t.Fatalf("up da %d: %v", versao, err)
+	}
+	exigirParticaoProtegida(t, pool, particaoDoMesDeAgora)
+}

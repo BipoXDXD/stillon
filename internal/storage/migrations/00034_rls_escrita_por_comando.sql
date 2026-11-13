@@ -19,6 +19,11 @@
 -- protect_checks_partition (00033), reescrita aqui.
 SET LOCAL lock_timeout = '5s';
 
+-- A trava de partição vem antes de qualquer trava de tabela: a retenção e a
+-- criação de partição pegam a advisory e depois checks. Na ordem inversa, um
+-- DROP de partição concorrente fecha um deadlock com esta migration.
+SELECT pg_advisory_xact_lock(hashtextextended('stillon.ensure_checks_partition', 0));
+
 DROP POLICY checks_via_target ON checks;
 CREATE POLICY checks_select_via_target ON checks FOR SELECT
     USING (EXISTS (SELECT 1 FROM targets t WHERE t.id = checks.target_id));
