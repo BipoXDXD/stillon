@@ -5,10 +5,12 @@ import { useApi } from '@/app/contexto'
 import { Botao } from '@/components/ui/botao'
 import { Campo, Entrada } from '@/components/ui/campo'
 import { ApiError } from '@/lib/api/http'
-import { erroDeCredencial, respostaPerdida, AvisoDeCredencial } from './credencial'
-import type { ErroDeCredencial } from './credencial'
+import { erroDeCredencial, AvisoDeCredencial, type ErroDeCredencial } from './credencial'
+import { esquemaSenha } from './esquemasDoTotp'
 import { JA_ATIVADA } from './mensagensDoTotp'
-import { esquemaSenha, useEnvioUnico, PassoDoQr, CodigosDeRecuperacao } from './passosDoTotp'
+import { PassoDoQr, CodigosDeRecuperacao } from './passosDoTotp'
+import { respostaPerdida } from './respostaPerdida'
+import { useEnvioUnico } from './useEnvioUnico'
 
 // O confirm responde o mesmo 400 para código errado e para cadastro que
 // sumiu (trocar a senha apaga o cadastro pendente: pendência do Plano 6).

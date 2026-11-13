@@ -25,7 +25,7 @@ import zipfile
 
 REPO = "BipoXDXD/stillon"
 API = "https://api.github.com/"
-IMAGEM = "postgres@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873"
+IMAGEM = "postgres@sha256:123b17998ccaf47e53b502e8c6a1e79afd8f579c6f3eec83c563da026f957395"
 TETO_DE_RESPOSTA = 16 * 1024 * 1024
 TEMPO_DA_API_S = 40
 ITENS_POR_PAGINA = 100
