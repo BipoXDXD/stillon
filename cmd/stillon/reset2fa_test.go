@@ -35,7 +35,7 @@ func donoCom2FA(t *testing.T, pool *pgxpool.Pool, dsn string, ligar bool) uuid.U
 			t.Fatal(err)
 		}
 		for range 3 {
-			if _, err := pool.Exec(ctx,
+			if _, err := testdb.Admin(t).Exec(ctx,
 				`INSERT INTO totp_recovery_codes (id, user_id, code_hash) VALUES ($1, $2, $3)`,
 				uuid.New(), dono, uuid.New().String()); err != nil {
 				t.Fatal(err)
@@ -54,7 +54,7 @@ func donoCom2FA(t *testing.T, pool *pgxpool.Pool, dsn string, ligar bool) uuid.U
 func vivasDe(t *testing.T, pool *pgxpool.Pool, user uuid.UUID) int {
 	t.Helper()
 	var n int
-	if err := pool.QueryRow(context.Background(),
+	if err := testdb.Admin(t).QueryRow(context.Background(),
 		`SELECT count(*) FROM sessions WHERE user_id = $1 AND used_at IS NULL AND revoked_at IS NULL`, user).Scan(&n); err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +81,7 @@ func TestReset2FATurnsItOffAndEndsEverySession(t *testing.T) {
 
 	var ligado, sobra bool
 	var codigos int
-	if err := pool.QueryRow(context.Background(),
+	if err := testdb.Admin(t).QueryRow(context.Background(),
 		`SELECT totp_confirmed_at IS NOT NULL,
 		        totp_secret_enc IS NOT NULL OR totp_last_timestep IS NOT NULL OR totp_pending_secret_enc IS NOT NULL
 		           OR totp_pending_family_id IS NOT NULL,
@@ -183,7 +183,7 @@ func TestSessionCountAgreesInNumber(t *testing.T) {
 				dsn := testdb.DSN(t)
 				dono := donoCom2FA(t, pool, dsn, cmd == "reset-2fa")
 				if caso.vivas == 1 {
-					if _, err := pool.Exec(context.Background(),
+					if _, err := testdb.Admin(t).Exec(context.Background(),
 						`UPDATE sessions SET revoked_at = now()
 						  WHERE family_id = (SELECT family_id FROM sessions WHERE user_id = $1 LIMIT 1)`, dono); err != nil {
 						t.Fatal(err)

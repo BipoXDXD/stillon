@@ -391,7 +391,7 @@ func TestAccessTokenCarriesTheSessionFamily(t *testing.T) {
 	}
 
 	var familia uuid.UUID
-	if err := a.pool.QueryRow(ctx,
+	if err := testdb.Admin(t).QueryRow(ctx,
 		`SELECT family_id FROM sessions WHERE user_id = $1`, a.userID).Scan(&familia); err != nil {
 		t.Fatal(err)
 	}
@@ -558,7 +558,7 @@ func TestLockedAccountIsIndistinguishableFromUnknownAccount(t *testing.T) {
 // sessoesDoUsuario devolve quantas sessões existem e quantas estão revogadas.
 func sessoesDoUsuario(t *testing.T, a *api) (total, revogadas int) {
 	t.Helper()
-	err := a.pool.QueryRow(context.Background(),
+	err := testdb.Admin(t).QueryRow(context.Background(),
 		`SELECT count(*), count(revoked_at) FROM sessions WHERE user_id = $1`, a.userID).
 		Scan(&total, &revogadas)
 	if err != nil {
@@ -952,7 +952,7 @@ func TestSessionsBehindATrustedProxyRecordDistinctOrigins(t *testing.T) {
 	entrarComOrigem("203.0.113.42")
 
 	var distintos int
-	if err := a.pool.QueryRow(context.Background(),
+	if err := testdb.Admin(t).QueryRow(context.Background(),
 		`SELECT count(DISTINCT ip_hash) FROM sessions WHERE user_id = $1`, a.userID).
 		Scan(&distintos); err != nil {
 		t.Fatal(err)
@@ -998,7 +998,7 @@ func TestSessionsBehindFlyRecordDistinctOrigins(t *testing.T) {
 	entrarComOrigem("203.0.113.42")
 
 	var distintos int
-	if err := a.pool.QueryRow(context.Background(),
+	if err := testdb.Admin(t).QueryRow(context.Background(),
 		`SELECT count(DISTINCT ip_hash) FROM sessions WHERE user_id = $1`, a.userID).
 		Scan(&distintos); err != nil {
 		t.Fatal(err)

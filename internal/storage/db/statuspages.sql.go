@@ -42,6 +42,10 @@ type GetPublicPageRow struct {
 
 // Públicas. Nenhuma devolve URL, headers, user_id nem status code: a
 // projeção só tem o que a spec §5.6 permite expor.
+// As leituras públicas abaixo recebem o id da página e conferem, cada uma, que
+// ela está publicada. A RLS de InPublicTx já limita o escopo à página
+// publicada do slug; o JOIN com status_pages repete a regra no SQL, para que
+// ela não dependa só da política (defesa em profundidade).
 func (q *Queries) GetPublicPage(ctx context.Context, slug string) (GetPublicPageRow, error) {
 	row := q.db.QueryRow(ctx, getPublicPage, slug)
 	var i GetPublicPageRow
@@ -121,6 +125,7 @@ func (q *Queries) InsertStatusPageItem(ctx context.Context, arg InsertStatusPage
 const latestPageRollupBucket = `-- name: LatestPageRollupBucket :one
 SELECT coalesce(max(r.bucket), 'epoch'::timestamptz)::timestamptz
   FROM status_page_items i
+  JOIN status_pages p ON p.id = i.status_page_id AND p.published
   CROSS JOIN LATERAL (
        SELECT bucket FROM check_rollup_1h
         WHERE target_id = i.target_id AND bucket < $1::timestamptz
@@ -150,11 +155,13 @@ SELECT u.target_id,
   FROM (SELECT r.target_id, r.bucket AS at, r.total, r.ok
           FROM check_rollup_1h r
           JOIN status_page_items i ON i.target_id = r.target_id AND i.status_page_id = $1
+          JOIN status_pages p ON p.id = i.status_page_id AND p.published
          WHERE r.bucket >= $2::timestamptz AND r.bucket < $3::timestamptz
         UNION ALL
         SELECT c.target_id, c.checked_at, 1, (c.status <> 'down')::int
           FROM checks c
           JOIN status_page_items i ON i.target_id = c.target_id AND i.status_page_id = $1
+          JOIN status_pages p ON p.id = i.status_page_id AND p.published
          WHERE c.checked_at >= $3::timestamptz AND c.checked_at < $4::timestamptz) u
  GROUP BY 1, 2
  ORDER BY u.target_id, day
@@ -212,6 +219,7 @@ const listPublicIncidents = `-- name: ListPublicIncidents :many
 SELECT i.display_name, x.started_at, x.resolved_at::timestamptz AS resolved_at
   FROM incidents x
   JOIN status_page_items i ON i.target_id = x.target_id AND i.status_page_id = $1
+  JOIN status_pages p ON p.id = i.status_page_id AND p.published
  WHERE x.resolved_at IS NOT NULL AND x.resolved_at >= $2::timestamptz
  ORDER BY x.started_at DESC, x.id DESC
  LIMIT $3::int
@@ -259,6 +267,7 @@ SELECT i.target_id, i.display_name, t.enabled, t.interval_sec,
        coalesce(lc.status, '')::text AS last_status,
        coalesce(lc.checked_at, 'epoch'::timestamptz)::timestamptz AS last_checked_at
   FROM status_page_items i
+  JOIN status_pages p ON p.id = i.status_page_id AND p.published
   JOIN targets t ON t.id = i.target_id
   LEFT JOIN LATERAL (
        SELECT c.status, c.checked_at FROM checks c
@@ -312,6 +321,7 @@ SELECT h.target_id, (sum(h.p50::bigint * h.ok) / nullif(sum(h.ok), 0))::int AS p
   FROM (SELECT r.target_id, r.p50, r.ok
           FROM check_rollup_1h r
           JOIN status_page_items i ON i.target_id = r.target_id AND i.status_page_id = $1
+          JOIN status_pages p ON p.id = i.status_page_id AND p.published
          WHERE r.bucket >= $2::timestamptz AND r.bucket < $3::timestamptz
         UNION ALL
         SELECT c.target_id,
@@ -319,6 +329,7 @@ SELECT h.target_id, (sum(h.p50::bigint * h.ok) / nullif(sum(h.ok), 0))::int AS p
                (count(*) FILTER (WHERE c.status <> 'down'))::int
           FROM checks c
           JOIN status_page_items i ON i.target_id = c.target_id AND i.status_page_id = $1
+          JOIN status_pages p ON p.id = i.status_page_id AND p.published
          WHERE c.checked_at >= greatest($3::timestamptz, $2::timestamptz)
            AND c.checked_at < $4::timestamptz
          GROUP BY c.target_id, floor(extract(epoch FROM c.checked_at) / 3600)) h

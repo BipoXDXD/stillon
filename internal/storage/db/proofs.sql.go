@@ -106,10 +106,10 @@ type ReserveFamilyProofRow struct {
 	Reserved   int64
 }
 
-// Contador de provas erradas por família de sessão (#324). session_family_proofs
-// não tem RLS: as rotas autenticadas contam por família sem app.user_id na
-// transação, e a tabela guarda só ids e contagens. Toda query daqui é uma
-// instrução única, e é isso que a torna atômica: nada de ler e depois gravar.
+// Contador de provas erradas por família de sessão (#324). RLS forçada desde a
+// 00029: cada instrução roda em storage.InUserTx, e a contagem da métrica no
+// escopo do sondador. Toda query daqui é uma instrução única, e é isso que a
+// torna atômica: nada de ler e depois gravar.
 // Reserva uma prova antes de verificar. O INSERT só nasce para uma família
 // viva (a mesma definição de FamilyIsLive), então quem chega depois da
 // revogação não recria a linha que a varredura apagou; sem linha devolvida, a

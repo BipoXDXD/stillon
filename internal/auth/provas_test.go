@@ -50,7 +50,7 @@ func (b *bancadaDeProvas) familia(t *testing.T) (usuario, familia uuid.UUID) {
 
 func (b *bancadaDeProvas) sessaoDe(t *testing.T, usuario, familia uuid.UUID) {
 	t.Helper()
-	if _, err := b.pool.Exec(context.Background(),
+	if _, err := testdb.Admin(t).Exec(context.Background(),
 		`INSERT INTO sessions (id, user_id, family_id, token_hash, expires_at) VALUES ($1, $2, $3, $4, $5)`,
 		uuid.New(), usuario, familia, uuid.NewString(), b.clk.Now().Add(30*24*time.Hour)); err != nil {
 		t.Fatal(err)
@@ -59,7 +59,7 @@ func (b *bancadaDeProvas) sessaoDe(t *testing.T, usuario, familia uuid.UUID) {
 
 func (b *bancadaDeProvas) revogar(t *testing.T, familia uuid.UUID) {
 	t.Helper()
-	if _, err := b.pool.Exec(context.Background(),
+	if _, err := testdb.Admin(t).Exec(context.Background(),
 		`UPDATE sessions SET revoked_at = $2 WHERE family_id = $1`, familia, b.clk.Now()); err != nil {
 		t.Fatal(err)
 	}
@@ -539,7 +539,7 @@ func TestFamilyProofsConcurrentFailuresDropTheFamilyExactlyOnce(t *testing.T) {
 		t.Errorf("%d Fail pediram para derrubar a família, queria exatamente 1", n)
 	}
 	var erros int64
-	if err := b.pool.QueryRow(context.Background(),
+	if err := testdb.Admin(t).QueryRow(context.Background(),
 		`SELECT errors FROM session_family_proofs WHERE family_id = $1`, familia).Scan(&erros); err != nil || erros != auth.FamilyProofLimit {
 		t.Errorf("errors = %d (erro %v), queria %d", erros, err, auth.FamilyProofLimit)
 	}
@@ -582,7 +582,7 @@ func TestFamilyProofsConcurrentRetentionDoesNotDeleteALiveFamilysCounter(t *test
 	wg.Wait()
 
 	var erros int64
-	if err := b.pool.QueryRow(context.Background(),
+	if err := testdb.Admin(t).QueryRow(context.Background(),
 		`SELECT errors FROM session_family_proofs WHERE family_id = $1`, familia).Scan(&erros); err != nil || erros != auth.FamilyProofLimit-2 {
 		t.Fatalf("errors = %d (erro %v), queria %d: a retenção apagou o contador da família viva", erros, err, auth.FamilyProofLimit-2)
 	}

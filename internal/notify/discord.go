@@ -30,6 +30,9 @@ var discordHosts = map[string]bool{
 // /api/webhooks/{id}/{token}, com versão opcional (/api/v10/webhooks/...).
 var discordPath = regexp.MustCompile(`^/api(/v[0-9]{1,2})?/webhooks/[0-9]{1,20}/[A-Za-z0-9_-]{1,100}$`)
 
+// maxDiscordURL é um corte barato antes do url.Parse: recusa entrada enorme
+// sem pagar o parse. A regex do caminho já limita a URL válida a ~165
+// caracteres, então o teto não muda o que é aceito.
 const maxDiscordURL = 512
 
 // ValidateDiscordURL aceita só URLs de webhook do Discord: https, host da

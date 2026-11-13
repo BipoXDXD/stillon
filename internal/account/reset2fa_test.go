@@ -12,6 +12,7 @@ import (
 
 	"github.com/BipoXDXD/stillon/internal/account"
 	"github.com/BipoXDXD/stillon/internal/auth"
+	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 )
 
 // estadoDo2FA lê as colunas que o reset-2fa zera, os códigos de
@@ -34,7 +35,7 @@ func lerEstadoDo2FA(t *testing.T, pool *pgxpool.Pool, user uuid.UUID) estadoDo2F
 		Scan(&e.segredo, &e.confirmado, &e.timestep, &e.pendente, &e.familia, &e.marca); err != nil {
 		t.Fatal(err)
 	}
-	if err := pool.QueryRow(ctx,
+	if err := testdb.Admin(t).QueryRow(ctx,
 		`SELECT count(*) FROM totp_recovery_codes WHERE user_id = $1`, user).Scan(&e.codigos); err != nil {
 		t.Fatal(err)
 	}
@@ -53,7 +54,7 @@ func codigoAgora(t *testing.T, c cenario, segredo string) string {
 func familiasVivas(t *testing.T, pool *pgxpool.Pool, user uuid.UUID) int {
 	t.Helper()
 	var n int
-	if err := pool.QueryRow(context.Background(),
+	if err := testdb.Admin(t).QueryRow(context.Background(),
 		`SELECT count(*) FROM sessions WHERE user_id = $1 AND used_at IS NULL AND revoked_at IS NULL`,
 		user).Scan(&n); err != nil {
 		t.Fatal(err)
@@ -104,7 +105,7 @@ func TestResetTwoFactorTurnsItOff(t *testing.T) {
 		outro, c.clk.Now()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.pool.Exec(ctx,
+	if _, err := testdb.Admin(t).Exec(ctx,
 		`INSERT INTO totp_recovery_codes (id, user_id, code_hash) VALUES ($1, $2, '\x02')`, uuid.New(), outro); err != nil {
 		t.Fatal(err)
 	}

@@ -16,7 +16,7 @@ func SetArgon2MaxConcurrentWithWait(n int, espera time.Duration) { trocarSemafor
 // Len diz quantas famílias o contador acompanha no banco: é a única forma de
 // observar a varredura das paradas e a limpeza na revogação.
 func (f *FamilyProofs) Len(ctx context.Context) (int64, error) {
-	return f.q.CountFamilyProofs(ctx)
+	return f.contar(ctx)
 }
 
 // RotacaoDe expõe o identificador de troca aos testes do pacote, que o

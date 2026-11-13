@@ -104,7 +104,7 @@ func TestSessaoRemovidaEntreAsDuasLeiturasEhSessaoInexistente(t *testing.T) {
 				inner: auth.NewPGStore(pool),
 				apagar: func() {
 					apagou = true
-					if _, err := pool.Exec(ctx, `DELETE FROM sessions WHERE family_id = $1`, alvo.FamilyID); err != nil {
+					if _, err := testdb.Admin(t).Exec(ctx, `DELETE FROM sessions WHERE family_id = $1`, alvo.FamilyID); err != nil {
 						t.Fatalf("apagar a sessão no meio: %v", err)
 					}
 				},
@@ -116,10 +116,10 @@ func TestSessaoRemovidaEntreAsDuasLeiturasEhSessaoInexistente(t *testing.T) {
 				t.Fatal("a sessão não foi apagada entre as leituras: o teste não exercitou a corrida")
 			}
 			var total, vivasDoEspectador, auditorias int
-			if err := pool.QueryRow(ctx, `SELECT count(*) FROM sessions WHERE user_id = $1`, userID).Scan(&total); err != nil {
+			if err := testdb.Admin(t).QueryRow(ctx, `SELECT count(*) FROM sessions WHERE user_id = $1`, userID).Scan(&total); err != nil {
 				t.Fatal(err)
 			}
-			if err := pool.QueryRow(ctx,
+			if err := testdb.Admin(t).QueryRow(ctx,
 				`SELECT count(*) FROM sessions
 				  WHERE family_id = $1 AND used_at IS NULL AND revoked_at IS NULL`,
 				espectador.FamilyID).Scan(&vivasDoEspectador); err != nil {
@@ -197,7 +197,7 @@ var ligadoPorOutraTransacao = time.Date(2026, 9, 22, 11, 30, 0, 0, time.UTC)
 func contarCodigos(t *testing.T, pool *pgxpool.Pool, userID uuid.UUID) int {
 	t.Helper()
 	var n int
-	if err := pool.QueryRow(context.Background(),
+	if err := testdb.Admin(t).QueryRow(context.Background(),
 		`SELECT count(*) FROM totp_recovery_codes WHERE user_id = $1`, userID).Scan(&n); err != nil {
 		t.Fatal(err)
 	}
@@ -343,7 +343,7 @@ func TestConfirmRotationPerdeACorridaDaGuardaDoUpdate(t *testing.T) {
 			ctx := context.Background()
 			familia := familiaViva(t, pool, userID, inicioDaTroca)
 			novo := iniciarTroca(t, base, pool, userID, familia)
-			if _, err := pool.Exec(ctx,
+			if _, err := testdb.Admin(t).Exec(ctx,
 				`INSERT INTO totp_recovery_codes (id, user_id, code_hash) VALUES ($1, $2, '\x0a0b'::bytea)`,
 				uuid.New(), userID); err != nil {
 				t.Fatal(err)
@@ -461,7 +461,7 @@ func lerEstadoDoFator(t *testing.T, pool *pgxpool.Pool, userID uuid.UUID) estado
 		Scan(&e.Segredo, &e.Pendente, &e.Confirmado, &e.FamiliaPendente, &e.UltimoPasso); err != nil {
 		t.Fatal(err)
 	}
-	rows, err := pool.Query(ctx,
+	rows, err := testdb.Admin(t).Query(ctx,
 		`SELECT code_hash FROM totp_recovery_codes WHERE user_id = $1 ORDER BY code_hash`, userID)
 	if err != nil {
 		t.Fatal(err)
@@ -478,7 +478,7 @@ func lerEstadoDoFator(t *testing.T, pool *pgxpool.Pool, userID uuid.UUID) estado
 		t.Fatal(err)
 	}
 	e.Codigos = len(e.CodigosHash)
-	if err := pool.QueryRow(ctx,
+	if err := testdb.Admin(t).QueryRow(ctx,
 		`SELECT count(*) FROM sessions WHERE user_id = $1 AND revoked_at IS NOT NULL`, userID).
 		Scan(&e.SessoesRevogadas); err != nil {
 		t.Fatal(err)
@@ -493,7 +493,7 @@ const codigoDeRecuperacaoDoTeste = "ABCDEFGHIJ234567"
 
 func gravarCodigoDeRecuperacao(t *testing.T, pool *pgxpool.Pool, userID uuid.UUID) {
 	t.Helper()
-	if _, err := pool.Exec(context.Background(),
+	if _, err := testdb.Admin(t).Exec(context.Background(),
 		`INSERT INTO totp_recovery_codes (id, user_id, code_hash) VALUES ($1, $2, $3)`,
 		uuid.New(), userID, crypto.HashToken(codigoDeRecuperacaoDoTeste)); err != nil {
 		t.Fatal(err)

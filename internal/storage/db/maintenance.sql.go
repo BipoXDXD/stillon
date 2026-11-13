@@ -69,7 +69,7 @@ type DeleteDeadFamilyProofsParams struct {
 	Batch      int32
 }
 
-// O contador de provas erradas (session_family_proofs, sem RLS) de uma família
+// O contador de provas erradas (session_family_proofs) de uma família
 // que deixou de existir: revogada (inclusive pela 5ª prova errada) ou vencida.
 // Família viva nunca perde o contador, por mais parada que esteja; a vida dela
 // já é limitada pelo prazo do refresh. A mesma definição de FamilyIsLive, no par
