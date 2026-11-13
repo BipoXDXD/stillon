@@ -4,6 +4,7 @@ import { Botao } from '@/components/ui/botao'
 import { ErroDoFormulario } from '@/components/ui/campo'
 import { ApiError } from '@/lib/api/http'
 import { mensagemDe } from '@/lib/api/mensagens'
+import { respostaPerdida } from './respostaPerdida'
 
 // As rotas de credencial (/auth/password, /auth/totp/*) nunca renovam o
 // token sozinhas (reconciliação, item 3): um "unauthorized" delas é o
@@ -16,13 +17,6 @@ export type ErroDeCredencial = { texto: string; renovavel: boolean; renovado?: b
 
 // Um código que não é de 6 dígitos é de recuperação (16 caracteres base32).
 export const ehDeRecuperacao = (codigo: string | undefined) => !!codigo && !/^\d{6}$/.test(codigo)
-
-// A resposta de um confirm se perdeu (E2 do Plano 10): sem rede, prazo
-// estourado (os dois chegam como 'network'), um 5xx do proxy sem o envelope,
-// ou um 2xx que não se lê. O servidor pode ter gravado. Um erro COM o
-// envelope é a resposta do servidor, e ela diz o que aconteceu.
-export const respostaPerdida = (e: unknown) =>
-  e instanceof ApiError && (e.code === 'network' || (e.code === 'unexpected' && (e.status >= 500 || e.status < 400)))
 
 export function erroDeCredencial(e: unknown, errado: string, codigoEnviado?: string): ErroDeCredencial {
   let r: ErroDeCredencial
