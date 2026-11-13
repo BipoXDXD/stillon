@@ -386,6 +386,15 @@ for j in release-tools gates; do
     fi
 done
 
+# O ci da main nunca é cancelado por outro push: o Coolify release só publica
+# o SHA cujo ci terminou com sucesso. Fora da main o cancelamento continua.
+CI_YML=$WF/ci.yml
+CONCORRENCIA_DO_CI="concurrency:
+  group: ci-\${{ github.ref }}
+  cancel-in-progress: \${{ github.ref != 'refs/heads/main' }}"
+concorrencia=$(sed -n '/^concurrency:$/,/^$/p' "$CI_YML" | sed '/^$/d')
+[ "$concorrencia" = "$CONCORRENCIA_DO_CI" ] || falhar "$CI_YML: o ci da main não pode ser cancelado (concurrency diferente de CONCORRENCIA_DO_CI neste script)"
+
 if [ "$falhas" -gt 0 ]; then
     echo "$falhas falha(s) nos workflows" >&2
     exit 1
