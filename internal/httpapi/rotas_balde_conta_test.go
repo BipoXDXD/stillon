@@ -49,7 +49,7 @@ func rotasComBaldeDaConta(t *testing.T) []string {
 			t.Fatal(err)
 		}
 		comBalde := nomesDerivadosDe(arquivo, raizDoBaldeDaConta)
-		if declara(arquivo, raizDoBaldeDaConta) {
+		if declaraVariavel(arquivo, raizDoBaldeDaConta) {
 			raizAchada = true
 		}
 		ast.Inspect(arquivo, func(n ast.Node) bool {
@@ -58,7 +58,7 @@ func rotasComBaldeDaConta(t *testing.T) []string {
 				return true
 			}
 			chamada := n.(*ast.CallExpr)
-			if len(chamada.Args) < 2 || !citaAlgum(chamada.Args[1], comBalde) {
+			if len(chamada.Args) < 2 || !citaAlgumNome(chamada.Args[1], comBalde) {
 				return true
 			}
 			metodo, caminho, ok := strings.Cut(padrao, " ")
@@ -82,18 +82,20 @@ func rotasComBaldeDaConta(t *testing.T) []string {
 }
 
 // nomesDerivadosDe devolve raiz mais todo nome atribuído a partir de uma
-// expressão que cita algum nome do conjunto, até o ponto fixo.
+// expressão que cita algum nome do conjunto, até o ponto fixo. Segue `x := ...`,
+// `x = ...` e `var x = ...`; não segue o limitador passado como argumento a uma
+// função auxiliar nem derivação entre arquivos.
 func nomesDerivadosDe(arquivo *ast.File, raiz string) map[string]bool {
 	nomes := map[string]bool{raiz: true}
 	for cresceu := true; cresceu; {
 		cresceu = false
 		ast.Inspect(arquivo, func(n ast.Node) bool {
-			atrib, ok := n.(*ast.AssignStmt)
-			if !ok || !slices.ContainsFunc(atrib.Rhs, func(e ast.Expr) bool { return citaAlgum(e, nomes) }) {
+			destinos, valores, ok := atribuicaoDe(n)
+			if !ok || !slices.ContainsFunc(valores, func(e ast.Expr) bool { return citaAlgumNome(e, nomes) }) {
 				return true
 			}
-			for _, lhs := range atrib.Lhs {
-				if id, ok := lhs.(*ast.Ident); ok && !nomes[id.Name] {
+			for _, id := range destinos {
+				if !nomes[id.Name] {
 					nomes[id.Name] = true
 					cresceu = true
 				}
@@ -104,24 +106,39 @@ func nomesDerivadosDe(arquivo *ast.File, raiz string) map[string]bool {
 	return nomes
 }
 
-// declara diz se o arquivo atribui um valor a nome.
-func declara(arquivo *ast.File, nome string) bool {
+// declaraVariavel diz se o arquivo atribui um valor a nome, por `:=`, `=` ou `var`.
+func declaraVariavel(arquivo *ast.File, nome string) bool {
 	achou := false
 	ast.Inspect(arquivo, func(n ast.Node) bool {
-		if atrib, ok := n.(*ast.AssignStmt); ok {
-			for _, lhs := range atrib.Lhs {
-				if id, ok := lhs.(*ast.Ident); ok && id.Name == nome {
-					achou = true
-				}
-			}
+		destinos, _, _ := atribuicaoDe(n)
+		if slices.ContainsFunc(destinos, func(id *ast.Ident) bool { return id.Name == nome }) {
+			achou = true
 		}
 		return !achou
 	})
 	return achou
 }
 
-// citaAlgum diz se a expressão usa algum identificador do conjunto.
-func citaAlgum(e ast.Expr, nomes map[string]bool) bool {
+// atribuicaoDe devolve os identificadores do lado esquerdo e as expressões do
+// lado direito de um `x := ...`, `x = ...` ou `var x = ...`; ok é falso para
+// qualquer outro nó.
+func atribuicaoDe(n ast.Node) (destinos []*ast.Ident, valores []ast.Expr, ok bool) {
+	switch no := n.(type) {
+	case *ast.AssignStmt:
+		for _, lhs := range no.Lhs {
+			if id, ehIdent := lhs.(*ast.Ident); ehIdent {
+				destinos = append(destinos, id)
+			}
+		}
+		return destinos, no.Rhs, true
+	case *ast.ValueSpec:
+		return no.Names, no.Values, true
+	}
+	return nil, nil, false
+}
+
+// citaAlgumNome diz se a expressão usa algum identificador do conjunto.
+func citaAlgumNome(e ast.Expr, nomes map[string]bool) bool {
 	cita := false
 	ast.Inspect(e, func(n ast.Node) bool {
 		if id, ok := n.(*ast.Ident); ok && nomes[id.Name] {
