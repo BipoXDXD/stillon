@@ -11,9 +11,14 @@
 -- diferença só pesa para sessão a segundos de vencer, e nesse caso a
 -- política só adia a limpeza para a próxima rodada.
 --
--- O used_at e o revoked_at repetem o que a sessions_prober_select_proof_family
--- já corta (o sondador não vê sessão usada ou revogada que não venceu); ficam
--- explícitos para a política não depender do desenho da outra.
+-- Esta política DEPENDE da sessions_prober_select_proof_family (00030): o
+-- NOT EXISTS lê sessions com as políticas de SELECT do sondador, e só enxerga
+-- a sessão viva por causa dela. Sem aquela política o NOT EXISTS fica sempre
+-- verdadeiro e o sondador volta a apagar o contador da família viva. Quem
+-- mexer nela (a L7, por exemplo) precisa manter a visibilidade da sessão viva
+-- ao sondador ou trocar este NOT EXISTS por uma função SECURITY DEFINER. O
+-- teste da família viva pega a regressão. O used_at e o revoked_at repetem o
+-- corte que a outra já faz.
 --
 -- Só a política de DELETE. A de SELECT não pode citar sessions: a
 -- sessions_prober_select_proof_family (00030) lê esta tabela de volta, e a
