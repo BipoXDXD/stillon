@@ -30,11 +30,14 @@ const tabelaParticionadaConhecida = "checks"
 // é coerente com uma tabela que ninguém usa. Um teste de isolamento escrito à
 // mão só protege a tabela que alguém lembrou de testar; este cobre a próxima.
 //
-// As partições ficam fora de propósito: RLS não se herda e elas não têm a
-// própria, porque a política vale para consultas pela tabela-mãe, e esta é a
-// tabela verificada aqui. A aplicação nunca nomeia uma partição.
+// As partições entram também: RLS não se herda, e uma consulta que nomeasse a
+// partição escaparia da política da mãe. O teste cria uma antes da varredura,
+// porque o banco migrado ainda não tem nenhuma.
 func TestEveryTableForcesRLSWithAPolicy(t *testing.T) {
 	pool := testdb.New(t)
+	if _, err := pool.Exec(context.Background(), `SELECT ensure_checks_partition($1::date)`, agora); err != nil {
+		t.Fatal(err)
+	}
 	tabelas := lerTabelasDaAplicacao(t, pool)
 
 	for _, tabela := range tabelas {
@@ -60,6 +63,9 @@ func TestEveryTableForcesRLSWithAPolicy(t *testing.T) {
 	}) {
 		t.Errorf("a varredura não viu %s como tabela particionada: ela não cobre o relkind p", tabelaParticionadaConhecida)
 	}
+	if !slices.ContainsFunc(tabelas, func(tabela tabelaDaAplicacao) bool { return tabela.particao }) {
+		t.Errorf("a varredura não viu nenhuma partição: ela não cobre relispartition")
+	}
 }
 
 type tabelaDaAplicacao struct {
@@ -68,6 +74,7 @@ type tabelaDaAplicacao struct {
 	ligada    bool
 	forcada   bool
 	politicas int
+	particao  bool
 }
 
 func (t tabelaDaAplicacao) protecoesAusentes() []string {
@@ -88,12 +95,11 @@ func lerTabelasDaAplicacao(t *testing.T, pool *pgxpool.Pool) []tabelaDaAplicacao
 	t.Helper()
 	linhas, err := pool.Query(context.Background(),
 		`SELECT c.relname, c.relkind::text, c.relrowsecurity, c.relforcerowsecurity,
-		        (SELECT count(*) FROM pg_policy p WHERE p.polrelid = c.oid)
+		        (SELECT count(*) FROM pg_policy p WHERE p.polrelid = c.oid), c.relispartition
 		   FROM pg_class c
 		   JOIN pg_namespace n ON n.oid = c.relnamespace
 		  WHERE n.nspname = 'public'
 		    AND c.relkind IN ('r', 'p')
-		    AND NOT c.relispartition
 		  ORDER BY c.relname`)
 	if err != nil {
 		t.Fatalf("listar tabelas de public: %v", err)
@@ -103,7 +109,7 @@ func lerTabelasDaAplicacao(t *testing.T, pool *pgxpool.Pool) []tabelaDaAplicacao
 	var tabelas []tabelaDaAplicacao
 	for linhas.Next() {
 		var tabela tabelaDaAplicacao
-		if err := linhas.Scan(&tabela.nome, &tabela.relkind, &tabela.ligada, &tabela.forcada, &tabela.politicas); err != nil {
+		if err := linhas.Scan(&tabela.nome, &tabela.relkind, &tabela.ligada, &tabela.forcada, &tabela.politicas, &tabela.particao); err != nil {
 			t.Fatalf("ler linha do catálogo: %v", err)
 		}
 		tabelas = append(tabelas, tabela)
