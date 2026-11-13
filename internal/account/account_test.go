@@ -377,7 +377,7 @@ func TestChangePasswordRechecksTheFamilyUnderTheLock(t *testing.T) {
 		t.Fatalf("a troca não chegou à trava (terminou com %v)", err)
 	}
 	// Revogada por fora enquanto a troca espera a trava.
-	if _, err := c.pool.Exec(context.Background(),
+	if _, err := testdb.Admin(t).Exec(context.Background(),
 		`UPDATE sessions SET revoked_at = now() WHERE family_id = $1`, c.atual); err != nil {
 		t.Fatal(err)
 	}
@@ -459,7 +459,7 @@ func TestRevokeSessionRechecksTheFamilyUnderTheLock(t *testing.T) {
 		t.Fatalf("o encerramento não chegou à trava (terminou com %v)", err)
 	}
 	// Revogada por fora enquanto o encerramento espera a trava.
-	if _, err := c.pool.Exec(context.Background(),
+	if _, err := testdb.Admin(t).Exec(context.Background(),
 		`UPDATE sessions SET revoked_at = now() WHERE family_id = $1`, c.atual); err != nil {
 		t.Fatal(err)
 	}
@@ -662,7 +662,7 @@ func familiaRenovada(t *testing.T, c cenario) uuid.UUID {
 
 func linhasRevogadas(t *testing.T, c cenario, familia uuid.UUID) (revogadas, total int) {
 	t.Helper()
-	if err := c.pool.QueryRow(context.Background(),
+	if err := testdb.Admin(t).QueryRow(context.Background(),
 		`SELECT count(*) FILTER (WHERE revoked_at IS NOT NULL), count(*) FROM sessions WHERE family_id = $1`,
 		familia).Scan(&revogadas, &total); err != nil {
 		t.Fatal(err)

@@ -50,7 +50,7 @@ func segredoCifrado(t *testing.T, pool *pgxpool.Pool, userID uuid.UUID) []byte {
 func quantosCodigos(t *testing.T, pool *pgxpool.Pool, userID uuid.UUID) int {
 	t.Helper()
 	var n int
-	if err := pool.QueryRow(context.Background(),
+	if err := testdb.Admin(t).QueryRow(context.Background(),
 		`SELECT count(*) FROM totp_recovery_codes WHERE user_id = $1`, userID).Scan(&n); err != nil {
 		t.Fatal(err)
 	}
@@ -285,7 +285,7 @@ func prenderTravaDoUsuario(t *testing.T, pool *pgxpool.Pool, userID uuid.UUID) f
 func codigoLivre(t *testing.T, pool *pgxpool.Pool, userID uuid.UUID) bool {
 	t.Helper()
 	ctx := context.Background()
-	tx, err := pool.Begin(ctx)
+	tx, err := testdb.Admin(t).Begin(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

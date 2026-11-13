@@ -100,7 +100,7 @@ func postSemT(c *http.Client, url, token string, body any) (*http.Response, erro
 func familiasVivas(t *testing.T, a *api) int {
 	t.Helper()
 	var n int
-	if err := a.pool.QueryRow(context.Background(),
+	if err := testdb.Admin(t).QueryRow(context.Background(),
 		`SELECT count(DISTINCT family_id) FROM sessions
 		  WHERE user_id = $1 AND used_at IS NULL AND revoked_at IS NULL AND expires_at > $2`,
 		a.userID, a.clk.Now()).Scan(&n); err != nil {

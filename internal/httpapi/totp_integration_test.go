@@ -12,6 +12,7 @@ import (
 	"github.com/pquerna/otp/totp"
 
 	"github.com/BipoXDXD/stillon/internal/auth"
+	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 )
 
 // accessTokenValido assina um access token legítimo do usuário do teste, com
@@ -808,7 +809,7 @@ func estadoDoSegundoFator(t *testing.T, a *api) (confirmado, temSegredo bool, co
 		Scan(&at, &sealed); err != nil {
 		t.Fatal(err)
 	}
-	if err := a.pool.QueryRow(ctx,
+	if err := testdb.Admin(t).QueryRow(ctx,
 		`SELECT count(*) FROM totp_recovery_codes WHERE user_id = $1`, a.userID).Scan(&codigos); err != nil {
 		t.Fatal(err)
 	}

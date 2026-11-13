@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/BipoXDXD/stillon/internal/config"
+	"github.com/BipoXDXD/stillon/internal/crypto"
 	"github.com/BipoXDXD/stillon/internal/incident"
 	"github.com/BipoXDXD/stillon/internal/storage"
 	"github.com/BipoXDXD/stillon/internal/storage/db"
@@ -29,7 +30,17 @@ func TestProberRoleEnqueuesOverdueReminders(t *testing.T) {
 	alvo, canal, incidente := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
 	agora := time.Now()
 	avisada := agora.Add(-31 * time.Minute)
-	err := storage.InUserTx(ctx, pool, dono, func(q *db.Queries) error {
+	// O destino é selado com a chave de configDeTeste: a subida confere a
+	// MASTER_KEY contra os canais gravados e recusaria um selo que não abre.
+	box, err := crypto.NewBox(chave)
+	if err != nil {
+		t.Fatal(err)
+	}
+	selado, err := box.Seal([]byte("https://discord.com/api/webhooks/1/tok"), crypto.AAD("notif_channels", "config_enc", canal))
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = storage.InUserTx(ctx, pool, dono, func(q *db.Queries) error {
 		// Ligado, porque alvo pausado não gera lembrete, mas com a próxima
 		// sonda daqui a um dia: o sondador não mexe no alvo durante o teste.
 		if err := q.InsertTarget(ctx, db.InsertTargetParams{
@@ -40,7 +51,7 @@ func TestProberRoleEnqueuesOverdueReminders(t *testing.T) {
 			return err
 		}
 		return q.InsertChannel(ctx, db.InsertChannelParams{
-			ID: canal, UserID: dono, Kind: "discord", ConfigEnc: []byte{1}, VerifiedAt: &agora, CreatedAt: agora,
+			ID: canal, UserID: dono, Kind: "discord", ConfigEnc: selado, VerifiedAt: &agora, CreatedAt: agora,
 		})
 	})
 	if err != nil {

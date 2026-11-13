@@ -68,7 +68,7 @@ func (s *TOTP) StartRotation(ctx context.Context, userID, familyID uuid.UUID, em
 		return "", "", err
 	}
 
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.beginUserTx(ctx, userID)
 	if err != nil {
 		return "", "", fmt.Errorf("abrir transação: %w", err)
 	}
@@ -202,7 +202,7 @@ func (s *TOTP) ConfirmRotation(ctx context.Context, userID, familyID uuid.UUID, 
 		return nil, err
 	}
 
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.beginUserTx(ctx, userID)
 	if err != nil {
 		return nil, fmt.Errorf("abrir transação: %w", err)
 	}

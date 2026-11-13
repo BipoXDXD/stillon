@@ -170,9 +170,11 @@ const sessionUserByHash = `-- name: SessionUserByHash :one
 SELECT user_id FROM sessions WHERE token_hash = $1
 `
 
-// Sessões (spec §5.2). sessions não tem RLS: login e refresh
-// a consultam por e-mail e por hash, antes de existir usuário na transação.
-// Toda query daqui que parte de um usuário filtra por user_id.
+// Sessões (spec §5.2). RLS forçada desde a 00029: o refresh e o logout
+// descobrem o dono pelo hash no escopo app.session_token_hash (só leitura), e
+// tudo o mais roda no escopo do usuário (ScopeToUser antes de LockUserSessions,
+// ou storage.InUserTx). Toda query daqui que parte de um usuário filtra também
+// por user_id: o WHERE e a RLS são duas barreiras.
 // O dono de um refresh, lido SEM trava: serve só para saber qual trava de
 // usuário pegar antes de travar a linha.
 func (q *Queries) SessionUserByHash(ctx context.Context, tokenHash []byte) (uuid.UUID, error) {

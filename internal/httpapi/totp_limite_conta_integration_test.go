@@ -557,9 +557,11 @@ func TestLoginAndVerifyStayPerIPAndDoNotShareTheAccountBucket(t *testing.T) {
 
 // A ordem é authn, sessão viva, limite da conta, handler: um token de sessão
 // revogada, ainda dentro do prazo, recebe a recusa do viva e NÃO gasta ficha. A
-// prova é uma sessão viva da mesma conta, que continua com a rajada inteira.
+// prova é uma sessão viva da mesma conta, que continua com a rajada inteira. As
+// rotas saem do próprio router (rotasComBaldeDaConta): uma rota nova com o
+// balde por conta entra aqui sem ninguém lembrar dela.
 func TestRevokedTokenIsRefusedBeforeTheAccountBucket(t *testing.T) {
-	for _, rota := range rotasDaConta {
+	for _, rota := range rotasComBaldeDaConta(t) {
 		t.Run(rota, func(t *testing.T) {
 			a := newAPI(t)
 			c, revogado := entrar(t, a)

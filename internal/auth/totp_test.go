@@ -269,7 +269,7 @@ func gravarSegredoTOTP(t *testing.T, pool *pgxpool.Pool, userID uuid.UUID, secre
 }
 
 func TestRecoveryCodeWorksExactlyOnce(t *testing.T) {
-	svc, pool, userID := setupTOTP(t)
+	svc, _, userID := setupTOTP(t)
 	ctx := context.Background()
 	now := time.Now()
 
@@ -289,7 +289,7 @@ func TestRecoveryCodeWorksExactlyOnce(t *testing.T) {
 	contar := func() int {
 		t.Helper()
 		var n int
-		if err := pool.QueryRow(ctx,
+		if err := testdb.Admin(t).QueryRow(ctx,
 			`SELECT count(*) FROM totp_recovery_codes WHERE user_id = $1`, userID).Scan(&n); err != nil {
 			t.Fatal(err)
 		}
@@ -535,7 +535,7 @@ func TestConfirmRejectsAWrongCode(t *testing.T) {
 	}
 
 	var codigos int
-	if err := pool.QueryRow(ctx,
+	if err := testdb.Admin(t).QueryRow(ctx,
 		`SELECT count(*) FROM totp_recovery_codes WHERE user_id = $1`, userID).Scan(&codigos); err != nil {
 		t.Fatal(err)
 	}
@@ -786,7 +786,7 @@ func TestVerifyRejectsACodeTwoPeriodsAway(t *testing.T) {
 
 // Desligar o 2FA leva junto os códigos de recuperação.
 func TestDisableRemovesTheRecoveryCodes(t *testing.T) {
-	svc, pool, userID := setupTOTP(t)
+	svc, _, userID := setupTOTP(t)
 	ctx := context.Background()
 	now := time.Date(2026, 9, 22, 12, 0, 15, 0, time.UTC)
 	uri, err := svc.Enroll(ctx, userID, "pessoa@exemplo.com")
@@ -810,7 +810,7 @@ func TestDisableRemovesTheRecoveryCodes(t *testing.T) {
 		t.Fatal(err)
 	}
 	var restantes int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM totp_recovery_codes WHERE user_id = $1`, userID).Scan(&restantes); err != nil {
+	if err := testdb.Admin(t).QueryRow(ctx, `SELECT count(*) FROM totp_recovery_codes WHERE user_id = $1`, userID).Scan(&restantes); err != nil {
 		t.Fatal(err)
 	}
 	if restantes != 0 {
