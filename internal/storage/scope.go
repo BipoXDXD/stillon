@@ -78,10 +78,13 @@ func InPingTx(ctx context.Context, b Beginner, tokenHash []byte, fn func(*db.Que
 // RLS enxerga a página publicada daquele slug, os itens dela e, por
 // delegação, os alvos, checks, rollups e incidentes desses itens. Nada mais.
 //
-// A transação é READ ONLY. As políticas que delegam a targets são FOR ALL
-// (incidents, checks, target_health), e sem isto o escopo público seria
-// também porta de escrita nelas. O Postgres recusa qualquer escrita com
-// 25006, seja qual for a política.
+// A transação é READ ONLY. Desde as políticas por comando (migrations 00034
+// e 00035), nenhuma política dá escrita ao escopo público: as de checks,
+// incidents, target_health e check_rollup_1h só deixam ler quem enxerga o
+// alvo e gravar o sondador ou o dono nomeado. O READ ONLY fica como segunda
+// barreira, para uma política futura que delegue a targets sem nomear o
+// escopo: o Postgres recusa qualquer escrita com 25006, seja qual for a
+// política.
 func InPublicTx(ctx context.Context, b Beginner, slug string, fn func(*db.Queries) error) error {
 	if slug == "" {
 		return ErrNoSlug

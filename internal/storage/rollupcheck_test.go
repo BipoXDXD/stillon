@@ -45,7 +45,7 @@ func TestRollupLatenciesMustBeCoherent(t *testing.T) {
 	} {
 		t.Run(tc.nome, func(t *testing.T) {
 			bucket := agora.Add(time.Duration(i) * time.Hour)
-			err := inserirRollup(t, pool, dono, alvo, bucket, tc.ok, tc.p50, tc.p95, tc.p99, tc.maxi)
+			err := inserirRollup(t, pool, alvo, bucket, tc.ok, tc.p50, tc.p95, tc.p99, tc.maxi)
 			switch {
 			case tc.recusa && !violaCheck(err):
 				t.Errorf("rollup incoerente: erro = %v, queria check_violation (23514)", err)
@@ -75,21 +75,21 @@ func TestRollupLatencyMigrationKeepsOldRowsAndGuardsNewOnes(t *testing.T) {
 	defer pool.Close()
 	dono := novoUsuario(t, pool)
 	alvo := novoAlvoNoEsquemaDa00013(t, pool, dono, agora)
-	if err := inserirRollup(t, pool, dono, alvo, agora, 2, ptr(20), ptr(10), nil, ptr(5)); err != nil {
+	if err := inserirRollup(t, pool, alvo, agora, 2, ptr(20), ptr(10), nil, ptr(5)); err != nil {
 		t.Fatalf("linha antiga, gravada antes da 00013: %v", err)
 	}
 
 	if err := storage.MigrateUpTo(ctx, dsn, 13); err != nil {
 		t.Fatalf("a 00013 não sobe sobre uma linha antiga incoerente: %v", err)
 	}
-	if err := inserirRollup(t, pool, dono, alvo, agora.Add(time.Hour), 2, ptr(20), ptr(10), nil, ptr(5)); !violaCheck(err) {
+	if err := inserirRollup(t, pool, alvo, agora.Add(time.Hour), 2, ptr(20), ptr(10), nil, ptr(5)); !violaCheck(err) {
 		t.Errorf("rollup novo incoerente depois da 00013: erro = %v, queria check_violation (23514)", err)
 	}
 
 	if err := storage.MigrateDownTo(ctx, dsn, 12); err != nil {
 		t.Fatalf("down da 00013 com a linha antiga: %v", err)
 	}
-	if err := inserirRollup(t, pool, dono, alvo, agora.Add(2*time.Hour), 2, ptr(20), ptr(10), nil, ptr(5)); err != nil {
+	if err := inserirRollup(t, pool, alvo, agora.Add(2*time.Hour), 2, ptr(20), ptr(10), nil, ptr(5)); err != nil {
 		t.Errorf("depois do down o CHECK ainda recusa: %v", err)
 	}
 }
@@ -121,7 +121,7 @@ func TestRollupLatencyChecksAreValidated(t *testing.T) {
 	}
 	dono := novoUsuario(t, pool)
 	alvo := novoAlvoNoEsquemaDa00013(t, pool, dono, agora)
-	if err := inserirRollup(t, pool, dono, alvo, agora, 2, ptr(20), ptr(10), nil, ptr(5)); !violaCheck(err) {
+	if err := inserirRollup(t, pool, alvo, agora, 2, ptr(20), ptr(10), nil, ptr(5)); !violaCheck(err) {
 		t.Errorf("rollup incoerente depois do down da 00014: erro = %v, queria check_violation (23514)", err)
 	}
 }
@@ -166,9 +166,10 @@ func violaCheck(err error) bool {
 	return errors.As(err, &pgErr) && pgErr.Code == "23514"
 }
 
-// inserirRollup grava um rollup cru no escopo do dono (a RLS do rollup passa
-// pelo alvo), por fora da consolidação.
-func inserirRollup(t *testing.T, pool *pgxpool.Pool, dono, alvo uuid.UUID, bucket time.Time,
+// inserirRollup grava um rollup cru no escopo do sondador, por fora da
+// consolidação. Desde a 00035 só o sondador grava rollup; nas versões antigas
+// a FOR ALL pelo alvo também o deixa passar.
+func inserirRollup(t *testing.T, pool *pgxpool.Pool, alvo uuid.UUID, bucket time.Time,
 	ok int32, p50, p95, p99, maxi *int32) error {
 	t.Helper()
 	ctx := context.Background()
@@ -177,7 +178,7 @@ func inserirRollup(t *testing.T, pool *pgxpool.Pool, dono, alvo uuid.UUID, bucke
 		t.Fatal(err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	if _, err := tx.Exec(ctx, `SELECT set_config('app.user_id', $1, true)`, dono.String()); err != nil {
+	if _, err := tx.Exec(ctx, `SELECT set_config('app.scope', 'prober', true)`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := tx.Exec(ctx, `
