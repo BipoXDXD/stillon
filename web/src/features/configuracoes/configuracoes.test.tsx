@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { CODIGOS_NOVOS, RECUPERACAO_OK, rotacao, SEGREDO_NOVO, TOTP_NOVO, TOTP_OK } from '@/test/api-falsa'
 import { sessao as familia, me } from '@/test/fixtures'
 import { renderizarPainel, SENHA } from '@/test/renderizar'
-import { ATRASO_DA_REVOGACAO } from './PaginaConfiguracoes'
+import { ATRASO_DA_REVOGACAO } from './passosDoTotp'
 import { servidor } from '@/test/setup'
 
 // Uma resposta segurada até o teste soltar.

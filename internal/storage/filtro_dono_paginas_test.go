@@ -134,3 +134,39 @@ func TestOwnTargetIDsFiltersOwnerWithoutRLS(t *testing.T) {
 		t.Errorf("A recebeu %v, queria só %s", deA, alvoA)
 	}
 }
+
+func TestGetStatusPageFiltersOwnerWithoutRLS(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+	a, b := novoUsuario(t, pool), novoUsuario(t, pool)
+	paginaA := novaPagina(t, pool, a, "pagina-a", true)
+	q := queriesSemRLS(t)
+
+	_, err := q.GetStatusPage(ctx, b)
+	exigirNenhumaLinha(t, err, "GetStatusPage")
+	p, err := q.GetStatusPage(ctx, a)
+	if err != nil {
+		t.Fatalf("A lendo a própria página: %v", err)
+	}
+	if p.ID != paginaA || p.UserID != a {
+		t.Errorf("A leu a página %s do dono %s, queria %s de %s", p.ID, p.UserID, paginaA, a)
+	}
+}
+
+func TestLockStatusPageFiltersOwnerWithoutRLS(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+	a, b := novoUsuario(t, pool), novoUsuario(t, pool)
+	paginaA := novaPagina(t, pool, a, "pagina-a", true)
+	q := queriesSemRLS(t)
+
+	_, err := q.LockStatusPage(ctx, b)
+	exigirNenhumaLinha(t, err, "LockStatusPage")
+	id, err := q.LockStatusPage(ctx, a)
+	if err != nil {
+		t.Fatalf("A travando a própria página: %v", err)
+	}
+	if id != paginaA {
+		t.Errorf("A travou a página %s, queria %s", id, paginaA)
+	}
+}
