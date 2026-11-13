@@ -90,16 +90,10 @@ func TestChecksRejectFutureUpdatesAndNewPartitions(t *testing.T) {
 		t.Fatal(err)
 	}
 	novoCheck(t, pool, alvo, bancoAgora.Add(-time.Minute))
-	tx, err := pool.Begin(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer tx.Rollback(ctx)
-	if _, err := tx.Exec(ctx, `SELECT set_config('app.user_id', $1, true)`, dono.String()); err != nil {
-		t.Fatal(err)
-	}
-	_, err = tx.Exec(ctx, `UPDATE checks SET checked_at = $1 WHERE target_id = $2`, bancoAgora.Add(24*time.Hour), alvo)
-	_ = tx.Rollback(ctx)
+	// Nenhum escopo da aplicação altera check (00034): o UPDATE vai pelo admin,
+	// que passa da RLS, para exercitar só o gatilho.
+	_, err := testdb.Admin(t).Exec(ctx, `UPDATE checks SET checked_at = $1 WHERE target_id = $2`,
+		bancoAgora.Add(24*time.Hour), alvo)
 	exigirCheckFuturoRecusado(t, err)
 
 	// Uma partição criada DEPOIS da migration também precisa da proteção.
