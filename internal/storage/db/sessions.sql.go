@@ -41,6 +41,7 @@ SELECT family_id, created_at, coalesce(user_agent, '')::text AS user_agent
   FROM sessions
  WHERE user_id = $1 AND used_at IS NULL AND revoked_at IS NULL
    AND expires_at > $2::timestamptz
+ ORDER BY family_id, created_at DESC, id DESC
 `
 
 type ListLiveFamiliesParams struct {
@@ -55,7 +56,9 @@ type ListLiveFamiliesRow struct {
 }
 
 // GET /sessions: a linha corrente de cada família viva do usuário. O
-// created_at dela é o do último refresh (cada rotação insere uma linha).
+// created_at dela é o do último refresh (cada rotação insere uma linha). A
+// ordem (família, linha mais nova, id) é total: ListSessions fica com a
+// primeira linha de cada família, e um empate de created_at não pode ser sorteio.
 func (q *Queries) ListLiveFamilies(ctx context.Context, arg ListLiveFamiliesParams) ([]ListLiveFamiliesRow, error) {
 	rows, err := q.db.Query(ctx, listLiveFamilies, arg.UserID, arg.Now)
 	if err != nil {
@@ -80,7 +83,7 @@ const lockUserSessions = `-- name: LockUserSessions :exec
 SELECT pg_advisory_xact_lock(hashtextextended('stillon.sessions:' || $1::uuid::text, 0))
 `
 
-// Serializa as mutações de sessão de um usuário (D1 do Plano 5). É de
+// Serializa as mutações de sessão de um usuário. É de
 // TRANSAÇÃO: sai sozinha no commit ou no rollback. Toda transação que mexe em
 // linhas de sessions a pega ANTES de qualquer trava de linha, e é isso que
 // impede o ciclo (deadlock) entre rotação e revogação.
@@ -103,7 +106,7 @@ type RevokeAllFamiliesParams struct {
 
 // As revogações por usuário (set-password, troca de senha, DELETE
 // /sessions/{id}) marcam só a linha VIVA de cada família: não usada e não
-// vencida (Task 11 do Plano 5). É ela que Rotate aceita; uma linha já
+// vencida. É ela que Rotate aceita; uma linha já
 // rotacionada apresentada de novo é reúso, que Rotate confere ANTES da
 // revogação, com ou sem revoked_at. Marcar também as linhas mortas não
 // protegia nada e disputava as mesmas linhas, em outra ordem, com a
@@ -167,11 +170,13 @@ const sessionUserByHash = `-- name: SessionUserByHash :one
 SELECT user_id FROM sessions WHERE token_hash = $1
 `
 
-// Sessões (spec §5.2). sessions não tem RLS (D7 do Plano 2): login e refresh
-// a consultam por e-mail e por hash, antes de existir usuário na transação.
-// Toda query daqui que parte de um usuário filtra por user_id.
+// Sessões (spec §5.2). RLS forçada desde a 00029: o refresh e o logout
+// descobrem o dono pelo hash no escopo app.session_token_hash (só leitura), e
+// tudo o mais roda no escopo do usuário (ScopeToUser antes de LockUserSessions,
+// ou storage.InUserTx). Toda query daqui que parte de um usuário filtra também
+// por user_id: o WHERE e a RLS são duas barreiras.
 // O dono de um refresh, lido SEM trava: serve só para saber qual trava de
-// usuário pegar antes de travar a linha (D1 do Plano 5).
+// usuário pegar antes de travar a linha.
 func (q *Queries) SessionUserByHash(ctx context.Context, tokenHash []byte) (uuid.UUID, error) {
 	row := q.db.QueryRow(ctx, sessionUserByHash, tokenHash)
 	var user_id uuid.UUID

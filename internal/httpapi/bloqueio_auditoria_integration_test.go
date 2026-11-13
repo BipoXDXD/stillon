@@ -16,10 +16,11 @@ import (
 	"github.com/BipoXDXD/stillon/internal/auth"
 	"github.com/BipoXDXD/stillon/internal/config"
 	"github.com/BipoXDXD/stillon/internal/crypto"
+	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 )
 
 // O bloqueio da conta deixa rastro: um evento em audit_log e uma linha de log.
-// A resposta ao cliente continua sem revelar nada (R34), e é por isso que o
+// A resposta ao cliente continua sem revelar nada, e é por isso que o
 // rastro precisa existir: quem está trancado não recebe explicação, e a coluna
 // locked_until é sobrescrita no ciclo seguinte.
 
@@ -166,7 +167,7 @@ func TestAccountLockUnknownEmailRecordsNothing(t *testing.T) {
 }
 
 // Da primeira à sexta, com o evento sendo gravado no meio, a resposta é a de
-// um e-mail que nunca existiu (R34).
+// um e-mail que nunca existiu.
 func TestAccountLockResponseMatchesUnknownEmail(t *testing.T) {
 	a := apiAtrasDeProxy(t)
 	statusSemConta, semConta := tentarLogin(t, a, emailSemConta, senhaErrada, novaOrigem())
@@ -470,7 +471,7 @@ func TestAccountLockCorrectPasswordWithFailingAuditOpensNoSession(t *testing.T) 
 		t.Errorf("a resposta trouxe token: %s", corpo)
 	}
 	var sessoes int
-	if err := a.pool.QueryRow(context.Background(),
+	if err := testdb.Admin(t).QueryRow(context.Background(),
 		`SELECT count(*) FROM sessions WHERE user_id = $1`, a.userID).Scan(&sessoes); err != nil {
 		t.Fatal(err)
 	}

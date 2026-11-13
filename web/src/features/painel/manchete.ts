@@ -24,7 +24,7 @@ export type Tarefas = { itens: readonly Heartbeat[]; confirmadas: boolean }
 // A manchete fala do conjunto inteiro, alvos e tarefas (spec da tela, A
 // manchete). "Tudo no ar." só quando todo ativo está bem e a resposta das
 // tarefas chegou: um ativo ainda sem dados não está "no ar", e os pausados
-// não contam, salvo a tarefa pausada com incidente aberto (D13), que pede
+// não contam, salvo a tarefa pausada com incidente aberto, que pede
 // atenção como em /incidents.
 export function manchete(itens: readonly ItemDoResumo[], tarefas: Tarefas): Manchete {
   const alvos = itens.map((it) => estadoExibido(it.state, it.enabled))
@@ -173,7 +173,7 @@ export function ultimoResolvido(itens: readonly Incidente[]): Resolvido | null {
 }
 
 // A frase do "Tudo no ar.". Sem resposta (carregando ou falha), nada: não
-// saber não é "nenhum incidente". A consulta só vê os alvos (D3): com tarefas
+// saber não é "nenhum incidente". A consulta só vê os alvos: com tarefas
 // cadastradas, a frase diz isso, em vez de negar o histórico delas.
 export function fraseDoUltimoResolvido(itens: readonly Incidente[] | undefined, comTarefas: boolean): string | null {
   if (itens === undefined) return null

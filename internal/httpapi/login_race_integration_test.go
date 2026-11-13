@@ -20,10 +20,10 @@ import (
 )
 
 // Um login que verificou a senha ANTIGA não pode deixar uma sessão viva
-// depois de um set-password (D10: "todas as sessões") ou de uma troca de
+// depois de um set-password (que encerra todas as sessões) ou de uma troca de
 // senha (que encerra as outras). As duas redefinições pegam a trava do
-// usuário (D1) e trocam o hash; Issue pega a mesma trava e reconfere o hash
-// verificado (Task 11 do Plano 5).
+// usuário e trocam o hash; Issue pega a mesma trava e reconfere o hash
+// verificado.
 //
 // Cada caso roda nas duas ordens possíveis, e cada ordem trava uma metade do
 // conserto:
@@ -52,6 +52,16 @@ var redefinicoes = []redefinicao{
 	}},
 	{"troca de senha", func(t *testing.T, a *api) (func() error, int) {
 		_, token := entrar(t, a)
+		// A primeira reserva da família INSERE a linha do contador, e a FK dela
+		// pega FOR KEY SHARE na linha do usuário, que o teste trava com FOR
+		// UPDATE: a troca pararia na reserva, e não no UPDATE do hash que a
+		// ordem da corrida pressupõe. Uma prova errada antes cria a linha, e as
+		// reservas seguintes só a atualizam.
+		aquecimento := trocarSenha(t, a, token, map[string]string{"current_password": "nao-e-a-senha-atual", "new_password": senhaNova})
+		aquecimento.Body.Close()
+		if aquecimento.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("a prova de aquecimento devolveu %d, queria 401", aquecimento.StatusCode)
+		}
 		return func() error {
 			resp, err := postSemT(http.DefaultClient, a.srv.URL+"/api/v1/auth/password", token,
 				map[string]string{"current_password": testPass, "new_password": senhaNova})
@@ -90,7 +100,7 @@ func postSemT(c *http.Client, url, token string, body any) (*http.Response, erro
 func familiasVivas(t *testing.T, a *api) int {
 	t.Helper()
 	var n int
-	if err := a.pool.QueryRow(context.Background(),
+	if err := testdb.Admin(t).QueryRow(context.Background(),
 		`SELECT count(DISTINCT family_id) FROM sessions
 		  WHERE user_id = $1 AND used_at IS NULL AND revoked_at IS NULL AND expires_at > $2`,
 		a.userID, a.clk.Now()).Scan(&n); err != nil {

@@ -56,7 +56,7 @@ function EdicaoDoAlvo({ alvo }: { alvo: Alvo }) {
   const navegar = useNavigate()
   const avisar = useAvisar()
   const [iniciais] = useState(() => valoresDe(alvo))
-  // A resposta do aviso de B1 (headers apagados), aberto no meio do envio:
+  // A resposta do aviso de headers apagados, aberto no meio do envio:
   // o envio espera por ela, e o erro do PATCH continua indo aos campos.
   const [resposta, setResposta] = useState<((salvar: boolean) => void) | null>(null)
   const perguntar = () => new Promise<boolean>((r) => setResposta(() => r))

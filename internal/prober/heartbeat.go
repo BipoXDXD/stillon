@@ -28,10 +28,10 @@ const (
 	evaluateTickTimeout = 20 * time.Second
 )
 
-// HeartbeatEvaluator abre e fecha os incidentes de heartbeat (D4 e D5 da spec
-// de heartbeats). Não guarda nada em memória: cada tique lê o banco, reivindica
-// com SKIP LOCKED e grava incidente e outbox na mesma transação. Por isso duas
-// instâncias de --role=prober convivem, e um restart não perde nada.
+// HeartbeatEvaluator abre e fecha os incidentes de heartbeat. Não guarda nada em
+// memória: cada tique lê o banco, reivindica com SKIP LOCKED e grava incidente e
+// outbox na mesma transação. Por isso duas instâncias de --role=prober convivem, e
+// um restart não perde nada.
 type HeartbeatEvaluator struct {
 	pool        *pgxpool.Pool
 	clk         clock.Clock
@@ -123,10 +123,16 @@ func abrirIncidenteDeHeartbeat(ctx context.Context, q *db.Queries, h db.ClaimHea
 
 func fecharIncidenteDeHeartbeat(ctx context.Context, q *db.Queries, h db.ClaimHeartbeatsToCloseRow, now time.Time) error {
 	fim, retomada := heartbeat.Closing(h.StartedAt, h.LastSuccessAt, now)
-	if _, err := q.ResolveHeartbeatIncident(ctx, db.ResolveHeartbeatIncidentParams{
+	linhas, err := q.ResolveHeartbeatIncident(ctx, db.ResolveHeartbeatIncidentParams{
 		ID: h.IncidentID, ResolvedAt: fim, ClosedByResume: retomada,
-	}); err != nil {
+	})
+	if err != nil {
 		return fmt.Errorf("resolver incidente de heartbeat: %w", err)
+	}
+	// O "voltou" só sai da transição que este tique fez. Com 0 linhas, outro
+	// caminho já resolveu o incidente e o aviso, se houver, é dele.
+	if linhas != 1 {
+		return nil
 	}
 	return avisarFechamento(ctx, q, h.UserID, h.IncidentID, now)
 }

@@ -39,6 +39,13 @@ func (e *ValidationError) add(field, reason string) {
 	e.Fields = append(e.Fields, FieldError{Field: field, Reason: reason})
 }
 
+// addSe registra o erro só quando há motivo; motivo vazio quer dizer campo válido.
+func (e *ValidationError) addSe(field, reason string) {
+	if reason != "" {
+		e.add(field, reason)
+	}
+}
+
 // Limites de cadastro. Cada um tem par num CHECK da migration 00004.
 const (
 	minIntervalSec         = 30
@@ -53,7 +60,7 @@ const (
 	maxHeadersTotalBytes   = 8 << 10
 )
 
-// D4: não há coluna de corpo, e PUT ou DELETE sem corpo num monitor seriam
+// Não há coluna de corpo, e PUT ou DELETE sem corpo num monitor seriam
 // armadilha.
 var allowedMethods = []string{"GET", "HEAD", "POST"}
 
@@ -94,54 +101,20 @@ func validate(f *fields) *ValidationError {
 	var v ValidationError
 
 	f.Name = strings.TrimSpace(f.Name)
-	switch {
-	case f.Name == "":
-		v.add("name", ReasonRequired)
-	case utf8.RuneCountInString(f.Name) > maxNameRunes:
-		v.add("name", ReasonTooLong)
-	case rotulo.TemInvisivel(f.Name):
-		v.add("name", ReasonInvalid)
-	}
+	v.addSe("name", motivoDoNome(f.Name))
 
 	f.URL = strings.TrimSpace(f.URL)
-	motivo := checkURL(f.URL)
-	if motivo == "" && f.URL != f.urlGravada && safedial.HostInstavelNoIDNA(f.URL) {
-		motivo = ReasonInvalid
-	}
-	if motivo != "" {
-		v.add("url", motivo)
-	}
+	v.addSe("url", motivoDaURL(f.URL, f.urlGravada))
 
 	f.Method = strings.ToUpper(f.Method)
 	if !slices.Contains(allowedMethods, f.Method) {
 		v.add("method", ReasonInvalid)
 	}
 
-	intervaloOK := f.IntervalSec >= minIntervalSec && f.IntervalSec <= maxIntervalSec
-	if !intervaloOK {
-		v.add("interval_sec", ReasonOutOfRange)
-	}
-	switch {
-	case f.TimeoutMS < minTimeoutMS || f.TimeoutMS > maxTimeoutMS:
-		v.add("timeout_ms", ReasonOutOfRange)
-	// D3: o jitter de −10% (spec §6.2) pode antecipar a próxima execução
-	// para 90% do intervalo. Um timeout acima disso deixaria duas sondas do
-	// mesmo alvo em voo ao mesmo tempo. Só se compara com intervalo válido,
-	// para não acusar o timeout pelo erro do intervalo.
-	case intervaloOK && int64(f.TimeoutMS)*10 >= int64(f.IntervalSec)*9000:
-		v.add("timeout_ms", ReasonOutOfRange)
-	}
-
-	// C2 (Plano 10): só 2xx e 4xx–5xx podem ser o status final. O 1xx o
-	// net/http consome, e o 3xx o cliente segue (até 3 saltos); esperar um
-	// deles deixaria o alvo down para sempre, com um incidente que não fecha.
-	if s := f.ExpectedStatus; !(s >= 200 && s <= 299) && !(s >= 400 && s <= 599) {
-		v.add("expected_status", ReasonOutOfRange)
-	}
-
-	if d := f.DegradedThresholdMS; d != nil && (*d < 1 || *d > maxDegradedThresholdMS) {
-		v.add("degraded_threshold_ms", ReasonOutOfRange)
-	}
+	v.addSe("interval_sec", motivoDoIntervalo(f.IntervalSec))
+	v.addSe("timeout_ms", motivoDoTimeout(f.TimeoutMS, f.IntervalSec))
+	v.addSe("expected_status", motivoDoStatusEsperado(f.ExpectedStatus))
+	v.addSe("degraded_threshold_ms", motivoDoLimiarDegradado(f.DegradedThresholdMS))
 
 	if h, motivo := normalizeHeaders(f.Headers); motivo != "" {
 		v.add("headers", motivo)
@@ -163,6 +136,74 @@ func validate(f *fields) *ValidationError {
 		return nil
 	}
 	return &v
+}
+
+// motivoDoNome recebe o nome já sem espaço nas pontas.
+func motivoDoNome(name string) string {
+	switch {
+	case name == "":
+		return ReasonRequired
+	case utf8.RuneCountInString(name) > maxNameRunes:
+		return ReasonTooLong
+	case rotulo.TemInvisivel(name):
+		return ReasonInvalid
+	}
+	return ""
+}
+
+// motivoDaURL recebe a URL já sem espaço nas pontas e a que a linha já
+// grava (vazia no cadastro).
+func motivoDaURL(raw, urlGravada string) string {
+	if motivo := checkURL(raw); motivo != "" {
+		return motivo
+	}
+	if raw != urlGravada && safedial.HostInstavelNoIDNA(raw) {
+		return ReasonInvalid
+	}
+	return ""
+}
+
+func intervaloValido(sec int32) bool {
+	return sec >= minIntervalSec && sec <= maxIntervalSec
+}
+
+func motivoDoIntervalo(sec int32) string {
+	if !intervaloValido(sec) {
+		return ReasonOutOfRange
+	}
+	return ""
+}
+
+func motivoDoTimeout(timeoutMS, intervalSec int32) string {
+	if timeoutMS < minTimeoutMS || timeoutMS > maxTimeoutMS {
+		return ReasonOutOfRange
+	}
+	// O jitter de −10% (spec §6.2) pode antecipar a próxima execução
+	// para 90% do intervalo. Um timeout acima disso deixaria duas sondas do
+	// mesmo alvo em voo ao mesmo tempo. Só se compara com intervalo válido,
+	// para não acusar o timeout pelo erro do intervalo.
+	if intervaloValido(intervalSec) && int64(timeoutMS)*10 >= int64(intervalSec)*9000 {
+		return ReasonOutOfRange
+	}
+	return ""
+}
+
+// motivoDoStatusEsperado aceita só 2xx e 4xx–5xx como status final. O 1xx o
+// net/http consome, e o 3xx o cliente segue (até 3 saltos); esperar um
+// deles deixaria o alvo down para sempre, com um incidente que não fecha.
+func motivoDoStatusEsperado(s int32) string {
+	if !(s >= 200 && s <= 299) && !(s >= 400 && s <= 599) {
+		return ReasonOutOfRange
+	}
+	return ""
+}
+
+// motivoDoLimiarDegradado trata o limiar ausente (nil) como válido.
+func motivoDoLimiarDegradado(d *int32) string {
+	if d != nil && (*d < 1 || *d > maxDegradedThresholdMS) {
+		return ReasonOutOfRange
+	}
+	return ""
 }
 
 // checkURL é a recusa antecipada, só para dar resposta útil no cadastro.
@@ -294,14 +335,13 @@ func validHeaderValue(s string) bool {
 // nenhuma. Caminho, consulta e fragmento não contam. Uma URL que não se lê, ou
 // cujo host não converte para ASCII, não tem a origem de ninguém.
 //
-// O host é comparado depois de idna.Lookup.ToASCII, o perfil que o net/http
-// (e com ele o safedial) usa para discar e para o SNI (Q1 da revisão do Plano
-// 10). Com strings.ToLower, "straße.de" e "STRAẞE.de" davam a mesma origem,
-// mas o transporte disca xn--strae-oqa.de num e strasse.de no outro, que é
-// outro domínio: o PATCH mantinha os headers e o próximo check os levava ao
-// domínio novo.
+// O host é comparado depois de idna.Lookup.ToASCII, o perfil que o net/http (e com
+// ele o safedial) usa para discar e para o SNI. Com strings.ToLower, "straße.de" e
+// "STRAẞE.de" davam a mesma origem, mas o transporte disca xn--strae-oqa.de num e
+// strasse.de no outro, que é outro domínio: o PATCH mantinha os headers e o
+// próximo check os levava ao domínio novo.
 //
-// É a regra do B1 do Plano 10: um PATCH que troca a origem sem mandar
+// É a regra de apply no serviço: um PATCH que troca a origem sem mandar
 // headers os apaga. O painel a reimplementa com new URL(x).origin para avisar
 // antes de salvar, que usa o mesmo UTS 46. Onde as duas ainda divergirem
 // (IPv4 em notação não canônica, um host que o navegador aceita e o ToASCII

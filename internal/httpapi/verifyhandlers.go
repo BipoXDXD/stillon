@@ -13,10 +13,10 @@ import (
 
 // VerifyHandlers servem o link do e-mail de verificação (spec §5.8, §9).
 //
-// O GET só mostra um botão; quem verifica é o POST do formulário (D2 deste
-// plano). Leitores de link de provedores de e-mail abrem os links das
-// mensagens para checar malware. Se o GET verificasse, o endereço de um
-// terceiro seria confirmado sem ele: o relay de spam que a §5.8 fecha.
+// O GET só mostra um botão; quem verifica é o POST do formulário. Leitores de
+// link de provedores de e-mail abrem os links das mensagens para checar
+// malware. Se o GET verificasse, o endereço de um terceiro seria confirmado sem
+// ele: o relay de spam que a §5.8 fecha.
 type VerifyHandlers struct {
 	svc *notify.ChannelService
 }

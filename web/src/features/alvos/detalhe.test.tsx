@@ -1,4 +1,4 @@
-import { act, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { http, HttpResponse } from 'msw'
 import { describe, expect, it } from 'vitest'
 import { Alvo, ItemDoResumo } from '@/lib/api/schemas'
@@ -816,6 +816,23 @@ describe('detalhe', () => {
       await waitFor(() => expect(r.router.state.location.pathname).toBe('/'))
     })
 
+    // Dois cliques antes de o React redesenhar: a guarda não pode depender do
+    // valor do último render.
+    it('dois cliques no mesmo ciclo de render mandam um só POST de ack', async () => {
+      const r = await renderizarPainel('/targets/alvo-1')
+      r.falsa.estado.alvos = [alvo()]
+      r.falsa.estado.resumo = [itemDoResumo({ state: 'down', open_incident_id: 'inc-1' })]
+      r.falsa.estado.incidentes = [incidente()]
+      await r.cliente.refetchQueries()
+      const botao = await screen.findByRole('button', { name: 'Reconhecer' })
+      act(() => {
+        fireEvent.click(botao)
+        fireEvent.click(botao)
+      })
+      await waitFor(() => expect(screen.queryByRole('button', { name: 'Reconhecer' })).not.toBeInTheDocument())
+      expect(r.falsa.chamadas('POST /incidents/:id/ack')).toBe(1)
+    })
+
     it('um ack que falha mostra o erro e mantém o Reconhecer', async () => {
       const r = await renderizarPainel('/targets/alvo-1')
       r.falsa.estado.alvos = [alvo()]
@@ -826,6 +843,31 @@ describe('detalhe', () => {
       await r.usuario.click(await screen.findByRole('button', { name: 'Reconhecer' }))
       expect(await screen.findByRole('alert')).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Reconhecer' })).toBeInTheDocument()
+    })
+
+    // aria-disabled, e não disabled: o foco fica no botão enquanto o ack voa, e o
+    // anúncio de "desabilitado" some quando o ack termina. Sabotagem: tirar o
+    // aria-disabled de FaixaDeEstado → o atributo nunca aparece.
+    it('o Reconhecer fica aria-disabled, e com foco, enquanto o ack voa', async () => {
+      const r = await renderizarPainel('/targets/alvo-1')
+      r.falsa.estado.alvos = [alvo()]
+      r.falsa.estado.resumo = [itemDoResumo({ state: 'down', open_incident_id: 'inc-1' })]
+      r.falsa.estado.incidentes = [incidente()]
+      await r.cliente.refetchQueries()
+      let soltar!: () => void
+      const segurado = new Promise<void>((ok) => (soltar = ok))
+      servidor.use(
+        http.post('*/api/v1/incidents/:id/ack', async () => {
+          await segurado
+        }),
+      )
+      const botao = await screen.findByRole('button', { name: 'Reconhecer' })
+      expect(botao).not.toHaveAttribute('aria-disabled')
+      await r.usuario.click(botao)
+      await waitFor(() => expect(botao).toHaveAttribute('aria-disabled', 'true'))
+      expect(botao).toHaveFocus()
+      soltar()
+      await waitFor(() => expect(screen.queryByRole('button', { name: 'Reconhecer' })).not.toBeInTheDocument())
     })
 
     // O ack pode ter chegado ao servidor mesmo com a resposta perdida: a lista

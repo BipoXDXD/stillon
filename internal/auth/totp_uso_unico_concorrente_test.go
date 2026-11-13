@@ -23,6 +23,13 @@ const verificacoesConcorrentes = 8
 // quantas foram aceitas e quantas recusadas com ErrTOTPInvalid.
 func disputarCodigo(t *testing.T, pool *pgxpool.Pool, travar string, userID uuid.UUID, verificar func() error) (aceitas, recusadas int) {
 	t.Helper()
+	return disputarOperacao(t, pool, travar, userID, auth.ErrTOTPInvalid, verificar)
+}
+
+// disputarOperacao é disputarCodigo para qualquer operação: quem perde a
+// corrida devolve o erro recusa, e qualquer outro erro falha o teste.
+func disputarOperacao(t *testing.T, pool *pgxpool.Pool, travar string, userID uuid.UUID, recusa error, operar func() error) (aceitas, recusadas int) {
+	t.Helper()
 	// Sem conexão para a trava e a espera, as verificações ficariam na fila do
 	// pool e o teste só pararia no -timeout.
 	if limite := pool.Config().MaxConns; limite < verificacoesConcorrentes+2 {
@@ -37,13 +44,18 @@ func disputarCodigo(t *testing.T, pool *pgxpool.Pool, travar string, userID uuid
 	var umaVez sync.Once
 	soltar := func() { umaVez.Do(func() { _ = trava.Rollback(ctx) }) }
 	t.Cleanup(soltar)
+	// No escopo do usuário, como a aplicação: sem ele, a RLS esconderia os
+	// códigos de recuperação e a trava não pegaria linha nenhuma.
+	if _, err := trava.Exec(ctx, `SELECT set_config('app.user_id', $1, true)`, userID.String()); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := trava.Exec(ctx, travar, userID); err != nil {
 		t.Fatal(err)
 	}
 
 	resultados := make(chan error, verificacoesConcorrentes)
 	for range verificacoesConcorrentes {
-		go func() { resultados <- verificar() }()
+		go func() { resultados <- operar() }()
 	}
 	chegaram := testdb.EsperarBloqueados(t, pool, verificacoesConcorrentes, resultados)
 	soltar()
@@ -51,10 +63,10 @@ func disputarCodigo(t *testing.T, pool *pgxpool.Pool, travar string, userID uuid
 		switch err := <-resultados; {
 		case err == nil:
 			aceitas++
-		case errors.Is(err, auth.ErrTOTPInvalid):
+		case errors.Is(err, recusa):
 			recusadas++
 		default:
-			t.Errorf("verificação concorrente: %v, queria nil ou ErrTOTPInvalid", err)
+			t.Errorf("operação concorrente: %v, queria nil ou %v", err, recusa)
 		}
 	}
 	if !chegaram {

@@ -39,9 +39,12 @@ const (
 	// isolamento passaria pelo WHERE da query e nunca pela política, e
 	// apagar a política deixaria a suíte verde. As migrations rodam como
 	// appUser para que ele seja o DONO das tabelas, exatamente como em
-	// produção (D8).
+	// produção.
 	appUser = "stillon_app"
 	appPass = "stillon_app"
+
+	// snapshotName é o banco-molde de que restaurar recria o banco de teste.
+	snapshotName = "stillon_migrado"
 )
 
 var (
@@ -89,11 +92,67 @@ func New(t *testing.T) *pgxpool.Pool {
 		pool.Close()
 		// Restore precisa de zero conexões abertas no banco alvo, por isso
 		// vem depois do Close.
-		if err := container.Restore(ctx); err != nil {
+		if err := restaurar(ctx); err != nil {
 			t.Fatalf("restaurar snapshot: %v", err)
 		}
 	})
 	return pool
+}
+
+// restaurar devolve o banco de teste ao estado do snapshot.
+//
+// Substitui o container.Restore do testcontainers-go, que vaza uma conexão de
+// superusuário por chamada: o snapshotConnection do módulo postgres devolve um
+// *sql.Conn que ninguém fecha (o comentário dele diz que o pool.Close o fecharia,
+// mas sql.DB.Close não fecha conexão em uso). A conexão só some quando o GC
+// finaliza o socket, e o pacote targets chegava ao max_connections (53300 para
+// o papel da aplicação). Código upstream, igual ainda na v0.45.0:
+// https://github.com/testcontainers/testcontainers-go/blob/f31e98d4ee9b/modules/postgres/postgres.go#L352-L380
+//
+// Este restore pode sair quando o upstream fechar a conexão. Antes de trocar,
+// aponte o TestRestaurarNaoVazaConexaoDeAdmin para o container.Restore e veja-o
+// passar.
+//
+// Precisa de zero conexões abertas no snapshot; as do banco alvo são derrubadas
+// aqui, mas o chamador fecha o pool antes.
+func restaurar(ctx context.Context) error {
+	admin, err := pgx.Connect(ctx, adminDSNDoBancoPostgres())
+	if err != nil {
+		return fmt.Errorf("conectar como admin ao banco postgres: %w", err)
+	}
+	defer admin.Close(ctx)
+
+	alvo := pgx.Identifier{dbName}.Sanitize()
+	molde := pgx.Identifier{snapshotName}.Sanitize()
+	dono := pgx.Identifier{adminUser}.Sanitize()
+
+	// Terminar antes do DROP ... WITH (FORCE) evita a falha ocasional dele e
+	// libera o snapshot, que não pode ter conexão para servir de template.
+	if _, err := admin.Exec(ctx, `SELECT pg_terminate_backend(pid) FROM pg_stat_activity
+		WHERE datname = ANY($1) AND pid <> pg_backend_pid()`, []string{dbName, snapshotName}); err != nil {
+		return fmt.Errorf("terminar conexões antes de restaurar: %w", err)
+	}
+	// #nosec G201 -- identificadores constantes, sanitizados por pgx.Identifier.
+	if _, err := admin.Exec(ctx, fmt.Sprintf(`DROP DATABASE IF EXISTS %s WITH (FORCE)`, alvo)); err != nil {
+		return fmt.Errorf("apagar banco de teste: %w", err)
+	}
+	// #nosec G201 -- idem.
+	if _, err := admin.Exec(ctx, fmt.Sprintf(`CREATE DATABASE %s WITH TEMPLATE %s OWNER %s`, alvo, molde, dono)); err != nil {
+		return fmt.Errorf("recriar banco de teste do snapshot: %w", err)
+	}
+	return nil
+}
+
+// adminDSNDoBancoPostgres aponta o admin para o banco "postgres": o banco de
+// teste é apagado e recriado, então não dá para ficar conectado nele.
+func adminDSNDoBancoPostgres() string {
+	u, err := url.Parse(adminDSN)
+	if err != nil {
+		// adminDSN vem de ConnectionString e já foi lido em start.
+		panic(fmt.Errorf("DSN de admin inválido: %w", err))
+	}
+	u.Path = "/postgres"
+	return u.String()
 }
 
 // intervaloDaConsulta é o passo do polling de EsperarBloqueados, não um prazo.
@@ -176,6 +235,36 @@ func AdminDSN(t *testing.T) string {
 	return adminDSN
 }
 
+// Admin é um pool de superusuário no banco de teste, para o teste preparar e
+// reler as tabelas com RLS "por fora" da política, como faria quem tivesse um
+// dump: o papel da aplicação, sem escopo, não vê nada nelas. Chame depois de
+// New: o pool fecha no cleanup, antes de o snapshot voltar. É um pool por
+// teste, aberto na primeira chamada e reaproveitado nas seguintes, e a conexão
+// só abre no primeiro uso.
+func Admin(t *testing.T) *pgxpool.Pool {
+	t.Helper()
+	iniciar(t)
+	if pool, ok := poolsDeAdmin.Load(t); ok {
+		return pool.(*pgxpool.Pool)
+	}
+	pool, err := pgxpool.New(context.Background(), adminDSN)
+	if err != nil {
+		t.Fatalf("abrir pool de admin: %v", err)
+	}
+	if outro, carregado := poolsDeAdmin.LoadOrStore(t, pool); carregado {
+		pool.Close() // outra goroutine do mesmo teste chegou antes
+		return outro.(*pgxpool.Pool)
+	}
+	t.Cleanup(func() {
+		poolsDeAdmin.Delete(t)
+		pool.Close()
+	})
+	return pool
+}
+
+// poolsDeAdmin guarda o pool de Admin de cada teste em curso.
+var poolsDeAdmin sync.Map
+
 // Psql roda script com o psql de dentro do contêiner, como superusuário, no
 // banco de teste, e devolve o código de saída e a saída combinada. É para o que
 // só o psql faz: metacomandos, variáveis e o código de saída.
@@ -256,7 +345,7 @@ func iniciar(t *testing.T) {
 }
 
 // imagemPadrao é a imagem de desenvolvimento e testes: a mesma de produção,
-// por digest (D29 do Plano 7); a CI escolhe a versão por TEST_POSTGRES_IMAGE.
+// por digest; a CI escolhe a versão por TEST_POSTGRES_IMAGE.
 // O Dependabot não atualiza esta string: mantenha-a igual ao digest de
 // deploy/vps/db/Dockerfile e atualize as duas juntas (e a matriz do ci.yml).
 const imagemPadrao = "postgres:18-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873"
@@ -304,7 +393,7 @@ func start() {
 	if startErr = storage.Migrate(ctx, appDSN); startErr != nil {
 		return
 	}
-	startErr = container.Snapshot(ctx)
+	startErr = container.Snapshot(ctx, tcpostgres.WithSnapshotName(snapshotName))
 }
 
 func criarPapelDaAplicacao(ctx context.Context) error {

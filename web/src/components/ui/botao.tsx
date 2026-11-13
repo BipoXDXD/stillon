@@ -3,7 +3,7 @@ import { Slot } from 'radix-ui'
 import { useLayoutEffect, useRef, type ComponentProps, type RefObject } from 'react'
 import { cn } from '@/lib/utils'
 
-// Pirâmide de botões (DI 4, spec do redesign): uma ação primária sólida por
+// Pirâmide de botões (spec do redesign): uma ação primária sólida por
 // tela, secundárias com contorno, terciárias só em texto. O vermelho sólido
 // (perigo) é só do botão que confirma uma ação destrutiva num diálogo; antes
 // da confirmação, Apagar, Encerrar e Desativar são terciários

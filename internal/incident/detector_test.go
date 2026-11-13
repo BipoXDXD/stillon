@@ -81,7 +81,7 @@ func TestTransitionCarriesTheStartOfTheStreak(t *testing.T) {
 	}
 }
 
-// M4 do Plano 2: duas sondas do mesmo alvo em voo, gravando fora de ordem.
+// Duas sondas do mesmo alvo em voo, gravando fora de ordem.
 // Um sucesso VELHO não pode zerar uma sequência de falhas mais nova.
 func TestOutOfOrderCheckIsIgnored(t *testing.T) {
 	s, _ := rodar(Default, State{}, "dd") // falhas em t0 e t0+1min

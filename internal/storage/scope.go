@@ -65,8 +65,8 @@ func InVerifyTx(ctx context.Context, b Beginner, tokenHash []byte, fn func(*db.Q
 
 // InPingTx roda fn no escopo do ping público (POST /ping/{token}): a RLS
 // enxerga só a linha de heartbeats cujo ping_token_hash é tokenHash e os
-// eventos dela. Incidentes ficam de fora: quem os abre é o avaliador (D4 da
-// spec de heartbeats). É o único lugar do código que liga esse escopo.
+// eventos dela. Incidentes ficam de fora: quem os abre é o avaliador. É o
+// único lugar do código que liga esse escopo.
 func InPingTx(ctx context.Context, b Beginner, tokenHash []byte, fn func(*db.Queries) error) error {
 	if len(tokenHash) != sha256.Size {
 		return ErrNoToken

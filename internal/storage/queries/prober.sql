@@ -9,7 +9,7 @@
 -- pelos que o primeiro travou (TestSkipLockedDoesNotWaitForAnotherProber).
 --
 -- user_id volta porque a avaliação de incidente enfileira as notificações
--- nos canais do dono (Plano 3); interval_sec, porque a histerese recomeça
+-- nos canais do dono; interval_sec, porque a histerese recomeça
 -- depois de uma lacuna longa entre checks; as três colunas da regra de
 -- conteúdo, porque a sonda julga o corpo pela regra que reivindicou, e a
 -- cerca da gravação compara com ela.
@@ -44,7 +44,7 @@ VALUES ($1, $2, $3, $4, $5, $6, $7);
 -- name: EnsureChecksPartition :exec
 SELECT ensure_checks_partition(sqlc.arg(month)::date);
 
--- Fencing da gravação (E2 da revisão de 2026-10-14). A sonda leva a URL, o
+-- Fencing da gravação. A sonda leva a URL, o
 -- método e a regra de conteúdo da reivindicação; antes de gravar, o sondador
 -- relê os do alvo. Se o dono trocou um deles com a sonda em voo, o PATCH
 -- zerou a histerese, e o resultado julga outra coisa: a gravação é

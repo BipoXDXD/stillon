@@ -12,7 +12,7 @@ import (
 	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 )
 
-// O pool leva os prazos do lado do servidor (C2 da revisão). O
+// O pool leva os prazos do lado do servidor. O
 // statement_timeout é a rede de segurança de uma consulta cujo cliente sumiu
 // (o cancelamento pelo contexto nem chega ao banco numa conexão meio-aberta);
 // o idle_in_transaction_session_timeout derruba a transação aberta que
@@ -62,7 +62,7 @@ func (c canalDeLog) Handle(_ context.Context, r slog.Record) error {
 func (c canalDeLog) WithAttrs([]slog.Attr) slog.Handler { return c }
 func (c canalDeLog) WithGroup(string) slog.Handler      { return c }
 
-// C2 da revisão: uma rodada de manutenção presa prendia o job para sempre,
+// Uma rodada de manutenção presa prendia o job para sempre,
 // sem nenhuma linha no log. A rodada tem prazo; quando ele vence, o erro vai
 // ao log e a próxima tenta de novo.
 func TestMaintenanceRoundGivesUpAtTheDeadline(t *testing.T) {

@@ -153,7 +153,7 @@ func exigirRecusaComHeadersRecusados(t *testing.T, nome, valor string) {
 	}
 }
 
-// Trocar a regra é "mudou a sonda" (D13), como URL e método; reenviar a mesma
+// Trocar a regra é "mudou a sonda", como URL e método; reenviar a mesma
 // regra não é.
 func TestPatchApplyContentRule(t *testing.T) {
 	gravada := regra(ContentContains, "ok", "")

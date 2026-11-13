@@ -198,7 +198,7 @@ func TestEmailVerificationFlow(t *testing.T) {
 	if st, err := b.svc.CheckToken(ctx, token); err != nil || st != VerifyPending {
 		t.Fatalf("CheckToken = %v, %v; queria pendente", st, err)
 	}
-	// Olhar não verifica: é o que protege do leitor de links (D2).
+	// Olhar não verifica: é o que protege do leitor de links.
 	if cs := b.listar(t, b.dono); cs[0].Status != StatusPending {
 		t.Fatalf("o GET verificou o canal: %+v", cs[0])
 	}
@@ -321,10 +321,10 @@ func TestChannelLimitIsCheckedBeforeSending(t *testing.T) {
 }
 
 // A segunda conferência do limite, a da gravação, é serializada pela trava
-// na linha do usuário (LockUser). O R9 da spec do Plano 5 dizia que não; o
-// código tinha a trava desde o Plano 3, e faltava esta prova (Plano 8). Com
-// nove canais, duas criações simultâneas se encontram depois da contagem: sem
-// a trava, as duas contam nove e gravam, e o usuário fica com onze.
+// na linha do usuário (LockUser). O código já tinha a trava, e faltava esta
+// prova. Com nove canais, duas criações simultâneas se encontram depois da
+// contagem: sem a trava, as duas contam nove e gravam, e o usuário fica com
+// onze.
 func TestConcurrentCreatesDoNotPassTheChannelLimit(t *testing.T) {
 	b := novaBancadaCanais(t, true)
 	ctx := context.Background()

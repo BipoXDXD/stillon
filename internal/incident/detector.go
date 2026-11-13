@@ -59,14 +59,14 @@ var Default = Detector{OpenAfter: 3, CloseAfter: 5}
 
 // Evaluate aplica um check ao estado e devolve o estado novo e a transição.
 //
-// Diverge do contrato da spec §7.3 em dois pontos, registrados no plano: os
+// Diverge do contrato da spec §7.3 em dois pontos: os
 // contadores são atualizados AQUI, e não por quem chama (assim a regra
 // inteira fica num lugar só e testável sem banco), e não há Window, porque
 // a histerese por contagem não precisa de janela.
 //
 // Um check com At igual ou anterior ao último avaliado é ignorado: o estado
 // volta intacto e a ação é ActionNone. Isso acontece quando duas sondas do
-// mesmo alvo estão em voo e a mais nova grava primeiro (M4 do Plano 2). Sem
+// mesmo alvo estão em voo e a mais nova grava primeiro. Sem
 // a guarda, um sucesso velho chegando atrasado zeraria uma sequência de
 // falhas mais recente.
 func (d Detector) Evaluate(s State, r ProbeResult) (State, Action) {

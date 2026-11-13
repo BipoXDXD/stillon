@@ -107,14 +107,14 @@ const manutencaoACada = 15 * time.Minute
 // exemplo —, o contexto do grupo cancela, os outros encerram, e o processo
 // sai com erro, em vez de seguir meio vivo.
 func run(ctx context.Context, cfg *config.Config) error {
-	pool, err := storage.NewPool(ctx, cfg.DatabaseURL)
+	pool, err := storage.NewPoolNamed(ctx, cfg.DatabaseURL, "stillon-"+string(cfg.Role))
 	if err != nil {
 		return err
 	}
 	defer pool.Close()
 
 	// Com um papel que ignora RLS, a segunda barreira de isolamento estaria
-	// desligada em silêncio (D8). A checagem vem ANTES da migration: CheckRole
+	// desligada em silêncio. A checagem vem ANTES da migration: CheckRole
 	// só lê pg_roles, e migrar primeiro faria o boot recusado criar todas as
 	// tabelas com o dono errado, que o papel comum depois não conseguiria usar.
 	if err := storage.CheckRole(ctx, pool); err != nil {
@@ -128,6 +128,11 @@ func run(ctx context.Context, cfg *config.Config) error {
 
 	box, err := crypto.NewBox(cfg.MasterKey)
 	if err != nil {
+		return err
+	}
+	// Os dois papéis decifram destinos de canal, então os dois conferem a
+	// chave antes de servir qualquer coisa.
+	if err := notify.CheckMasterKey(ctx, pool, box); err != nil {
 		return err
 	}
 	clk := clock.Real{}
@@ -168,7 +173,7 @@ func run(ctx context.Context, cfg *config.Config) error {
 		g.Go(func() error { return lembretes.Run(gctx) })
 		// Quem abre e fecha incidente de heartbeat é este papel, e não quem
 		// recebe o ping: com --role=api e --role=prober separados, o ping só
-		// registra (D4 da spec de heartbeats).
+		// registra.
 		avaliador := prober.NewHeartbeatEvaluator(pool, clk)
 		g.Go(func() error { return avaliador.Run(gctx) })
 		slog.Info("sondador ativo", "max_em_voo", prober.MaxInFlight, "email", cfg.EmailEnabled())
@@ -177,11 +182,14 @@ func run(ctx context.Context, cfg *config.Config) error {
 	if cfg.Role.RunsAPI() {
 		store := auth.NewPGStore(pool)
 		segundoFator := auth.NewTOTP(pool, box, totpIssuer)
+		provas := auth.NewFamilyProofs(pool, clk)
+		reg.MustRegister(provas.Collector())
 		deps := httpapi.Deps{
 			Store:       store,
 			Sessions:    auth.NewManager(store, clk, cfg.IPHashKey),
 			TOTP:        segundoFator,
 			Accounts:    account.NewService(pool, segundoFator, clk, cfg.IPHashKey),
+			Proofs:      provas,
 			Targets:     targets.NewService(pool, box, clk, targets.ComTetoDeRegrasPorHost(cfg.ContentRulesPerHost)),
 			Incidents:   history.NewService(pool, clk),
 			Channels:    notify.NewChannelService(pool, box, clk, notify.NewDiscord(), verificador(cfg), cfg.PublicBaseURL),
@@ -233,7 +241,7 @@ func graceDoSondador(total time.Duration) time.Duration {
 }
 
 // erroDeServidor é a falha de um servidor ao subir. A porta de métricas
-// ocupada ganha a saída na mensagem (M7, Plano 9 §3.4): o caso comum é outro
+// ocupada ganha a saída na mensagem: o caso comum é outro
 // processo do StillOn no mesmo host (--role=api e --role=prober), e quem lê
 // o log precisa saber qual variável mudar.
 func erroDeServidor(nome string, err error) error {

@@ -27,7 +27,7 @@ var migrationsFS embed.FS
 // O session locker (advisory lock do Postgres) serializa processos que
 // migram ao mesmo tempo. Com instância única ele é inerte; com --role=api e
 // --role=prober subindo juntos, sem ele os dois aplicam a mesma migration e
-// o segundo cai no boot (item 9b do Plano 1, modo de falha medido: crash, não
+// o segundo cai no boot (modo de falha medido: crash, não
 // corrupção). O lock é de sessão, e o Postgres o solta sozinho se a conexão
 // morrer: um processo derrubado no meio não tranca os outros.
 //

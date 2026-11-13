@@ -90,7 +90,7 @@ func TestAvaliarConteudo(t *testing.T) {
 	}
 }
 
-// D2c do STRIDE: comparar uma chave fora do atalho não aloca. Com um
+// Comparar uma chave fora do atalho não aloca. Com um
 // json.Unmarshal por chave, um corpo de 64 KiB alocava mais de 1 MiB.
 func TestChaveIgualDoesNotAllocate(t *testing.T) {
 	casos := []struct{ crua, token string }{
@@ -176,14 +176,14 @@ func corpoJSONDeChaves(tb testing.TB, chave, token func(int) string) ([]byte, Re
 	return []byte(corpo.String()), RegraDaSonda{Mode: targets.ContentJSONEquals, Value: []byte("ok"), Pointer: []string{token(i)}}
 }
 
-// D2c do STRIDE: chaves com escape, que o encoding/json decodificaria uma a uma.
+// Chaves com escape, que o encoding/json decodificaria uma a uma.
 func corpoJSONChavesEscapadas(tb testing.TB) ([]byte, RegraDaSonda) {
 	return corpoJSONDeChaves(tb,
 		func(i int) string { return fmt.Sprintf(`a\/%05d`, i) },
 		func(i int) string { return fmt.Sprintf("a/%05d", i) })
 }
 
-// D2c do STRIDE: chaves com um byte de UTF-8 inválido, que vira U+FFFD.
+// Chaves com um byte de UTF-8 inválido, que vira U+FFFD.
 func corpoJSONChavesUTF8Invalido(tb testing.TB) ([]byte, RegraDaSonda) {
 	return corpoJSONDeChaves(tb,
 		func(i int) string { return fmt.Sprintf("\xff%05d", i) },
@@ -250,7 +250,7 @@ func (c *contador) Read(p []byte) (int, error) {
 	return n, err
 }
 
-// D1 com a descompressão nossa: a bomba de gzip (100 MiB de zeros em uns
+// Com a descompressão nossa, a bomba de gzip (100 MiB de zeros em uns
 // 100 KiB) para no teto de 64 KiB descomprimidos, e só o começo dela é lido.
 // Inflar tudo e cortar depois devolveria o mesmo corpo, mas consumiria a bomba
 // inteira: a contagem de bytes lidos é o que pega isso.
@@ -313,7 +313,7 @@ func TestLerCorpoReadsAtMostOneByteOverTheLimit(t *testing.T) {
 	}
 }
 
-// escalarDeReferencia é a semântica do Ruling escrita do jeito mais direto,
+// escalarDeReferencia é a semântica da regra escrita do jeito mais direto,
 // com a árvore inteira do encoding/json: o fuzz confere que o cursor, que pula
 // valores à mão, diz o mesmo e nunca entra em pânico.
 func escalarDeReferencia(corpo []byte, ponteiro []string) (string, bool) {

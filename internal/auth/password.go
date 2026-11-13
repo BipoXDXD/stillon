@@ -27,7 +27,7 @@ const (
 
 var ErrInvalidHash = errors.New("hash de senha malformado")
 
-// Política de senha NOVA (D3 do Plano 5), da NIST 800-63B-4 §3.1.1.2: 15
+// Política de senha NOVA, da NIST 800-63B-4 §3.1.1.2: 15
 // caracteres no mínimo, porque o segundo fator é opcional e a senha pode ser o
 // único fator; aceitar ao menos 64; nenhuma regra de composição. O máximo de
 // 128 dá folga a gerenciadores de senha e mantém o pior caso em 512 bytes.
@@ -62,7 +62,7 @@ func ValidateNewPassword(plain string) string {
 
 // HashPassword gera um hash no formato PHC, com salt aleatório.
 //
-// Toma uma vaga do semáforo do Argon2id (A1 do Plano 10): sem vaga no prazo,
+// Toma uma vaga do semáforo do Argon2id: sem vaga no prazo,
 // ou com ctx cancelado enquanto espera, ErrArgon2Busy.
 func HashPassword(ctx context.Context, plain string) (string, error) {
 	salt := make([]byte, argonSaltLen)
@@ -76,11 +76,11 @@ func HashPassword(ctx context.Context, plain string) (string, error) {
 // com parâmetros antigos e exercitar o caminho de rehash. O código de
 // produção usa sempre HashPassword.
 //
-// Recusa os mesmos parâmetros que o decodeHash recusa ao ler (Plano 8), e
+// Recusa os mesmos parâmetros que o decodeHash recusa ao ler, e
 // salt vazio: argon2.IDKey entra em panic com t=0, p=0 ou memória abaixo de
 // 8*p, e um hash assim nem seria lido de volta.
 //
-// Toma uma vaga do semáforo do Argon2id (A1 do Plano 10): sem vaga no prazo,
+// Toma uma vaga do semáforo do Argon2id: sem vaga no prazo,
 // ErrArgon2Busy.
 func HashPasswordWith(plain string, salt []byte, memory, time uint32, threads uint8) (string, error) {
 	return hashCom(context.Background(), plain, salt, memory, time, threads)
@@ -123,7 +123,7 @@ var verificacoes atomic.Uint64
 // processo já fez. Existe para os testes que travam "todo caminho de falha
 // paga um Argon2id" (e-mail inexistente, conta bloqueada, senha errada)
 // contando verificações, e não medindo relógio: a medida de tempo oscilava
-// sob carga no CI (Task 11 do Plano 5). É só leitura; não muda nada.
+// sob carga no CI. É só leitura; não muda nada.
 func Argon2Verifications() uint64 { return verificacoes.Load() }
 
 // VerifyPassword confere a senha e informa se o hash precisa ser refeito.
@@ -132,7 +132,7 @@ func Argon2Verifications() uint64 { return verificacoes.Load() }
 // nenhuma: o login valida com os parâmetros gravados, e quem chama regrava o
 // hash com os parâmetros atuais.
 //
-// Toma uma vaga do semáforo do Argon2id (A1 do Plano 10): sem vaga no prazo,
+// Toma uma vaga do semáforo do Argon2id: sem vaga no prazo,
 // ErrArgon2Busy, e a senha não foi verificada; o mesmo com ctx cancelado
 // enquanto espera a vaga (o cliente desistiu).
 func VerifyPassword(ctx context.Context, encoded, plain string) (ok bool, needsRehash bool, err error) {
@@ -221,7 +221,7 @@ var dummyHash = sync.OnceValue(func() string {
 // custe o mesmo de uma senha errada. Sem isso, o tempo de resposta diz ao
 // atacante quais e-mails têm conta (spec §5.2).
 //
-// Passa pelo mesmo semáforo da verificação real (A1 do Plano 10): com o teto
+// Passa pelo mesmo semáforo da verificação real: com o teto
 // cheio, a conta existente e a inexistente recebem o mesmo ErrArgon2Busy, no
 // mesmo prazo.
 func VerifyDummy(ctx context.Context) error {

@@ -35,8 +35,8 @@ const tickEvery = time.Second
 
 // tickTimeout é o prazo de um Tick inteiro (reivindicar e medir a fila),
 // espera por conexão do pool incluída: uma consulta presa não segura o
-// despacho de todos os alvos, e o Tick seguinte tenta de novo (C2 da
-// revisão). Fica ACIMA de tickEvery de propósito: o Ticker descarta os
+// despacho de todos os alvos, e o Tick seguinte tenta de novo.
+// Fica ACIMA de tickEvery de propósito: o Ticker descarta os
 // disparos perdidos, então um Tick lento só atrasa o seguinte, enquanto um
 // prazo abaixo de 1 s transformaria um banco lento, mas vivo (pool disputado
 // pelas gravações das sondas), num sondador parado.
@@ -155,18 +155,21 @@ func (s *Scheduler) reconciliar(ctx context.Context) {
 }
 
 // Reconcile apaga as séries de latência de alvos que não existem mais e
-// atualiza incidents_open (D9/M1 do Plano 2).
+// atualiza incidents_open e o gauge heartbeat_events. A contagem de
+// heartbeat_events não aborta o ciclo: se falhar, o gauge guarda o último
+// valor e o erro só vai ao log.
 //
 // forget só roda sozinho quando o alvo some com uma sonda em voo. Apagar um
 // alvo parado não passa pelo sondador, e com --role=api e --role=prober
 // separados nem poderia: sem esta reconciliação, a série do alvo apagado
 // vivia até o restart.
 func (s *Scheduler) Reconcile(ctx context.Context) error {
+	desligando := ctx // o recebido: o filho abaixo também acaba no prazo próprio
 	ctx, cancel := context.WithTimeout(ctx, s.reconcileTimeout)
 	defer cancel()
 	vistos := s.metrics.alvosVistos()
 	var existentes []uuid.UUID
-	var abertos, eventos int64
+	var abertos int64
 	err := storage.InProberTx(ctx, s.pool, func(q *db.Queries) error {
 		var err error
 		if len(vistos) > 0 {
@@ -174,16 +177,12 @@ func (s *Scheduler) Reconcile(ctx context.Context) error {
 				return err
 			}
 		}
-		if abertos, err = q.CountOpenIncidents(ctx); err != nil {
-			return err
-		}
-		eventos, err = q.CountHeartbeatEvents(ctx)
+		abertos, err = q.CountOpenIncidents(ctx)
 		return err
 	})
 	if err != nil {
 		return fmt.Errorf("reconciliar métricas: %w", err)
 	}
-
 	vivos := make(map[uuid.UUID]struct{}, len(existentes))
 	for _, id := range existentes {
 		vivos[id] = struct{}{}
@@ -194,8 +193,43 @@ func (s *Scheduler) Reconcile(ctx context.Context) error {
 		}
 	}
 	s.metrics.incidentsOpen.Set(float64(abertos))
-	s.metrics.heartbeatEvents.Set(float64(eventos))
+
+	// O tamanho do log é só uma métrica: se a contagem falhar, o ciclo já
+	// cumpriu o que importa. O gauge fica com o último valor bom (um 0 falso
+	// esconderia um log cheio) e o erro vai ao log, exceto no desligamento
+	// (como em reconciliar), mas não no prazo próprio do ciclo.
+	if eventos, err := contarEventosDeHeartbeat(ctx, s.pool); err != nil {
+		if desligando.Err() == nil {
+			slog.Error("contar eventos de heartbeat", "erro", err)
+		}
+	} else {
+		s.metrics.heartbeatEvents.Set(float64(eventos))
+	}
 	return nil
+}
+
+// contarEventosDeHeartbeat devolve o tamanho exato do log de sinais, numa
+// transação própria e curta para o JIT desligado não valer para mais nada.
+func contarEventosDeHeartbeat(ctx context.Context, b storage.Beginner) (int64, error) {
+	var total int64
+	err := storage.InProberTx(ctx, b, func(q *db.Queries) error {
+		var err error
+		total, err = contarEventosSemJIT(ctx, q)
+		return err
+	})
+	return total, err
+}
+
+// contarEventosSemJIT roda o count com o JIT desligado (SET LOCAL, que só vale
+// dentro da transação de q). Sob a RLS a tabela inteira é lida em Seq Scan e
+// conferida linha a linha contra heartbeats; o JIT entra a partir de uns 17 mil
+// registros e passa a ser a maior parte do tempo da consulta, a cada 30 s. Sem
+// ele o count continua exato e custa uma fração.
+func contarEventosSemJIT(ctx context.Context, q *db.Queries) (int64, error) {
+	if err := q.SetLocalJitOff(ctx); err != nil {
+		return 0, err
+	}
+	return q.CountHeartbeatEvents(ctx)
 }
 
 // Tick reivindica até "vagas livres" alvos vencidos e dispara uma goroutine
@@ -277,7 +311,7 @@ func (s *Scheduler) Tick(ctx context.Context) (int, error) {
 
 // Stop espera as sondas em voo por até grace. Depois disso, aborta as que
 // sobraram e espera que terminem, o que é rápido, porque o http.Client
-// respeita o cancelamento. Sonda abortada não é gravada (D12).
+// respeita o cancelamento. Sonda abortada não é gravada.
 //
 // Não chame Tick durante nem depois de Stop: Run para de despachar antes de
 // chamá-lo.
@@ -317,7 +351,7 @@ func (s *Scheduler) sondar(a db.ClaimDueTargetsRow, checkedAt time.Time) {
 
 	res := Probe(s.sondas, s.client, spec)
 
-	// Review Focus 4. O shutdown se reconhece pela CAUSA do contexto, nunca
+	// O shutdown se reconhece pela CAUSA do contexto, nunca
 	// pelo erro da sonda: com WithCancelCause, o erro devolvido é a própria
 	// causa, e errors.Is(err, context.Canceled) é false.
 	if errors.Is(context.Cause(s.sondas), errShutdown) {
@@ -381,18 +415,7 @@ func (s *Scheduler) gravar(a db.ClaimDueTargetsRow, em time.Time, res Result) {
 		slog.Error("gerar id de check", "erro", err)
 		return
 	}
-	p := db.InsertCheckParams{
-		ID: id, TargetID: a.ID, CheckedAt: em,
-		Status: string(res.Status), LatencyMS: int32Limitado(res.Latency.Milliseconds()),
-	}
-	if res.StatusCode != 0 {
-		code := int32Limitado(int64(res.StatusCode))
-		p.StatusCode = &code
-	}
-	if res.ErrorKind != "" {
-		kind := string(res.ErrorKind)
-		p.ErrorKind = &kind
-	}
+	p := paramsDoCheck(id, a.ID, em, res)
 
 	var acao incident.Action
 	err = storage.InProberTx(ctx, s.pool, func(q *db.Queries) error {
@@ -413,19 +436,45 @@ func (s *Scheduler) gravar(a db.ClaimDueTargetsRow, em time.Time, res Result) {
 		// do mesmo alvo; a do alvo (FOR KEY SHARE) não as serializa.
 		return s.guardarValidade(ctx, q, a, em, res.CertNotAfter)
 	})
+	s.registrarDesfecho(ctx, a.ID, err, acao)
+}
+
+// paramsDoCheck monta a linha de checks de uma sonda: StatusCode e ErrorKind
+// ficam nil quando a sonda não os tem (sem resposta, ou não é down), e a
+// latência é limitada à faixa do int32.
+func paramsDoCheck(id, alvoID uuid.UUID, em time.Time, res Result) db.InsertCheckParams {
+	p := db.InsertCheckParams{
+		ID: id, TargetID: alvoID, CheckedAt: em,
+		Status: string(res.Status), LatencyMS: int32Limitado(res.Latency.Milliseconds()),
+	}
+	if res.StatusCode != 0 {
+		code := int32Limitado(int64(res.StatusCode))
+		p.StatusCode = &code
+	}
+	if res.ErrorKind != "" {
+		kind := string(res.ErrorKind)
+		p.ErrorKind = &kind
+	}
+	return p
+}
+
+// registrarDesfecho dá o destino ao erro da transação de gravar: sonda velha,
+// alvo pausado ou apagado são descartes esperados (log info ou métrica
+// esquecida), e só o resto é erro. No sucesso, uma transição de incidente
+// acorda o despachante de avisos sem bloquear a sonda.
+func (s *Scheduler) registrarDesfecho(ctx context.Context, alvoID uuid.UUID, err error, acao incident.Action) {
 	switch {
 	case errors.Is(err, errSondaVelha):
-		// O dono trocou a URL, o método ou a regra com a sonda em voo (E2 da
-		// revisão de 2026-10-14, T2 do PR 5). Não é erro: o resultado julga
-		// outra coisa.
-		slog.Info("sonda descartada: o alvo mudou de URL, método ou regra de conteúdo durante a sonda", "target_id", a.ID)
+		// O dono trocou a URL, o método ou a regra com a sonda em voo. Não é
+		// erro: o resultado julga outra coisa.
+		slog.Info("sonda descartada: o alvo mudou de URL, método ou regra de conteúdo durante a sonda", "target_id", alvoID)
 	case errors.Is(err, errAlvoPausado):
 		// Um alvo pausado não abre incidente: sem sonda, nada o fecharia, e o
 		// aviso chegaria depois de o dono dizer que não quer monitorar.
-		slog.Info("sonda descartada: o alvo foi pausado durante a sonda", "target_id", a.ID)
+		slog.Info("sonda descartada: o alvo foi pausado durante a sonda", "target_id", alvoID)
 	case errors.Is(err, errAlvoSumido):
-		// Review Focus 3 do Plano 2, visto pela trava do alvo.
-		s.metrics.forget(a.ID)
+		// O dono apagou o alvo com a sonda em voo, visto pela trava do alvo.
+		s.metrics.forget(alvoID)
 	case err == nil:
 		if acao != incident.ActionNone {
 			select {
@@ -433,16 +482,15 @@ func (s *Scheduler) gravar(a db.ClaimDueTargetsRow, em time.Time, res Result) {
 			default:
 			}
 		}
-	case pareceAlvoSumido(err) && s.alvoApagado(ctx, a.ID):
-		// Review Focus 3 do Plano 2: o dono apagou o alvo com a sonda em
-		// voo. Não é erro, é o dono tendo mudado de ideia.
-		s.metrics.forget(a.ID)
+	case pareceAlvoSumido(err) && s.alvoApagado(ctx, alvoID):
+		// O dono apagou o alvo com a sonda em voo.
+		// Não é erro, é o dono tendo mudado de ideia.
+		s.metrics.forget(alvoID)
 	default:
 		// Com o alvo vivo, o 42501 ou o 23503 veio de outra tabela (um canal
 		// apagado durante o enfileiramento, um GRANT ou uma RLS que
-		// regrediu), e o rollback levou check, histerese e incidente: é erro
-		// (C6 da revisão).
-		slog.Error("gravar check", "target_id", a.ID, "erro", err)
+		// regrediu), e o rollback levou check, histerese e incidente: é erro.
+		slog.Error("gravar check", "target_id", alvoID, "erro", err)
 	}
 }
 
@@ -509,7 +557,7 @@ func conferirSonda(ctx context.Context, q *db.Queries, a db.ClaimDueTargetsRow) 
 // abre ou fecha o incidente e enfileira as notificações (spec §8).
 //
 // A linha de target_health é travada antes de ler o incidente aberto: duas
-// sondas do mesmo alvo gravando ao mesmo tempo (M4 do Plano 2) passam aqui
+// sondas do mesmo alvo gravando ao mesmo tempo passam aqui
 // uma de cada vez, e a segunda vê o estado que a primeira gravou.
 func (s *Scheduler) avaliar(ctx context.Context, q *db.Queries, a db.ClaimDueTargetsRow, em time.Time, res Result) (incident.Action, error) {
 	if err := q.EnsureTargetHealth(ctx, a.ID); err != nil {

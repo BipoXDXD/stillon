@@ -11,6 +11,7 @@ import (
 	"github.com/pquerna/otp/totp"
 
 	"github.com/BipoXDXD/stillon/internal/auth"
+	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 )
 
 // A política pede 15 caracteres; testPass tem 22.
@@ -19,8 +20,8 @@ const senhaNova = "a-senha-nova-bem-comprida"
 // entrar faz login num cliente próprio (um cookie jar = um aparelho) e devolve
 // o cliente e o access token. Cada chamada abre uma família de sessão.
 //
-// Atenção ao orçamento: o login e POST /auth/password dividem o balde de 10/min
-// com burst 5 por IP, e todo teste daqui roda do mesmo 127.0.0.1.
+// Atenção ao orçamento: o login tem o balde de 10/min com burst 5 por IP, e
+// todo teste daqui roda do mesmo 127.0.0.1. POST /auth/password tem o seu, por conta.
 func entrar(t *testing.T, a *api) (*http.Client, string) {
 	t.Helper()
 	c := clientWithJar(t)
@@ -201,20 +202,20 @@ func TestChangePasswordWrongCurrent(t *testing.T) {
 	if !senhaGravadaE(t, a, testPass) {
 		t.Error("a senha mudou com a senha atual errada")
 	}
-	// A senha errada conta no contador da família (A3 do Plano 10), e não no
-	// bloqueio da conta: quem chuta a senha com a sessão não tranca o dono.
+	// A senha errada conta no contador da família, e não no bloqueio da conta:
+	// quem chuta a senha com a sessão não tranca o dono.
 	if n := falhasDeLogin(t, a); n != 0 {
-		t.Errorf("%d falhas no bloqueio da conta, queria 0 (A3)", n)
+		t.Errorf("%d falhas no bloqueio da conta, queria 0", n)
 	}
 	if !renova(t, a, outro) {
 		t.Error("a troca recusada revogou as outras sessões")
 	}
 }
 
-// A conta bloqueada NÃO impede o dono logado de trocar a senha (A3 do Plano
-// 10): o bloqueio é do login. Antes, um anônimo que travasse o login a cada 15
-// min tirava do dono, junto, a troca de senha pelo painel. A troca com as
-// provas certas passa e zera o bloqueio, como sempre zerou (SwapUserHash).
+// A conta bloqueada NÃO impede o dono logado de trocar a senha: o bloqueio é do
+// login. Antes, um anônimo que travasse o login a cada 15 min tirava do dono,
+// junto, a troca de senha pelo painel. A troca com as provas certas passa e
+// zera o bloqueio, como sempre zerou (SwapUserHash).
 func TestChangePasswordIgnoresTheAccountLock(t *testing.T) {
 	a := newAPI(t)
 	_, token := entrar(t, a)
@@ -235,7 +236,7 @@ func TestChangePasswordIgnoresTheAccountLock(t *testing.T) {
 }
 
 // Com o segundo fator ligado, a senha sozinha não troca nada: sem código e com
-// código errado é o 401 genérico. A falha conta na família (A3 do Plano 10), e
+// código errado é o 401 genérico. A falha conta na família, e
 // não no bloqueio da conta.
 func TestChangePasswordRequiresTOTP(t *testing.T) {
 	a := newAPI(t)
@@ -244,7 +245,7 @@ func TestChangePasswordRequiresTOTP(t *testing.T) {
 	token := accessTokenDaSessao(t, a, c)
 
 	// invalid_credentials, e nunca unauthorized: o painel renova a sessão em
-	// unauthorized, e um código digitado errado viraria logout (D24).
+	// unauthorized, e um código digitado errado viraria logout.
 	for nome, corpo := range map[string]map[string]string{
 		"sem código":    {"current_password": testPass, "new_password": senhaNova},
 		"código errado": {"current_password": testPass, "new_password": senhaNova, "totp_code": "000000"},
@@ -260,7 +261,7 @@ func TestChangePasswordRequiresTOTP(t *testing.T) {
 		t.Fatal("a senha mudou sem o segundo fator")
 	}
 	if n := falhasDeLogin(t, a); n != 0 {
-		t.Errorf("%d falhas no bloqueio da conta, queria 0 (A3)", n)
+		t.Errorf("%d falhas no bloqueio da conta, queria 0", n)
 	}
 
 	code, err := totp.GenerateCode(segredo, a.clk.Now())
@@ -293,7 +294,7 @@ func TestChangePasswordAcceptsARecoveryCode(t *testing.T) {
 	}
 	var restantes, usos int
 	ctx := context.Background()
-	if err := a.pool.QueryRow(ctx, `SELECT count(*) FROM totp_recovery_codes WHERE user_id = $1`, a.userID).Scan(&restantes); err != nil {
+	if err := testdb.Admin(t).QueryRow(ctx, `SELECT count(*) FROM totp_recovery_codes WHERE user_id = $1`, a.userID).Scan(&restantes); err != nil {
 		t.Fatal(err)
 	}
 	if err := a.pool.QueryRow(ctx, `SELECT count(*) FROM audit_log WHERE user_id = $1 AND action = 'totp.recovery_used'`, a.userID).Scan(&usos); err != nil {
@@ -361,20 +362,15 @@ func TestChangePasswordDeadFamily(t *testing.T) {
 	}
 }
 
-// A troca divide o balde do login (contrato: "mesmo limite por IP"). Os cinco
-// logins usam e-mail inexistente para não travar a conta: o que se mede é o
-// limitador.
+// A troca NÃO divide o balde do login: o login segue por IP, e a troca tem o
+// balde por conta (ver totp_limite_conta_integration_test.go). Os cinco logins
+// usam e-mail inexistente para não travar a conta: o que se mede é o limitador.
 //
-// É a trava do wiring, pelo Routes de verdade: registrar /auth/password sem o
-// limiteLogin, ou com uma instância própria do limitador, dá 401 no lugar do
-// 429 (sabotagens registradas na Task 11). Os cinco logins recusados com 401,
-// e não 429, são o contraponto: o balde tem 5 fichas, e a sexta requisição,
-// que é a troca, é a que o esgota.
-//
-// O limitador lê o relógio falso da API: parado, nenhuma ficha volta durante o
-// teste, por mais lenta que a máquina esteja. Avançar 6 s (o limite é 10 por
-// minuto) devolve exatamente uma.
-func TestChangePasswordSharesTheLoginLimiter(t *testing.T) {
+// É a trava do wiring, pelo Routes de verdade: registrar /auth/password atrás do
+// limiteLogin dá 429 no lugar do 400. Os cinco logins recusados com 401, e a
+// sexta requisição, do mesmo IP, com 429 no login, são o contraponto: o balde do
+// IP está esgotado, e a troca com token válido ainda passa.
+func TestChangePasswordDoesNotShareTheLoginLimiter(t *testing.T) {
 	a := newAPI(t)
 	loginFalho := func() int {
 		resp := login(t, a, clientWithJar(t), "ninguem@exemplo.com", testPass)
@@ -383,16 +379,16 @@ func TestChangePasswordSharesTheLoginLimiter(t *testing.T) {
 	}
 	for i := range 5 {
 		if code := loginFalho(); code != http.StatusUnauthorized {
-			t.Fatalf("login %d devolveu %d, queria 401: o balde esgotou antes da troca", i+1, code)
+			t.Fatalf("login %d devolveu %d, queria 401: o balde esgotou antes da hora", i+1, code)
 		}
 	}
-	resp := trocarSenha(t, a, "token-qualquer", map[string]string{"current_password": testPass, "new_password": senhaNova})
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusTooManyRequests {
-		t.Fatalf("status %d, queria 429: a troca não divide o balde do login", resp.StatusCode)
+	if code := loginFalho(); code != http.StatusTooManyRequests {
+		t.Fatalf("sexto login devolveu %d, queria 429", code)
 	}
+	st, _, codigo := pedirSemProva(t, a, rotaSenha, tokenDe(t, a, a.userID), "")
+	exigirPassa(t, "a troca com o balde do login esgotado", st, codigo)
 
-	a.clk.Advance(6 * time.Second)
+	a.clk.Advance(umaFichaPorIP)
 	if code := loginFalho(); code != http.StatusUnauthorized {
 		t.Fatalf("depois de 6 s, o login devolveu %d, queria 401: a ficha não voltou", code)
 	}

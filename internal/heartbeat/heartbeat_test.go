@@ -47,7 +47,7 @@ func TestSuccessMovesTheDeadlineByPeriodPlusGrace(t *testing.T) {
 	}
 }
 
-// D10: início e falha não mexem no prazo.
+// Início e falha não mexem no prazo.
 func TestStartAndFailDoNotMoveTheDeadline(t *testing.T) {
 	prazo := agora.Add(time.Hour)
 	for _, sig := range []heartbeat.Signal{heartbeat.SignalStart, heartbeat.SignalFail} {
@@ -160,7 +160,8 @@ func TestRuntimeIsNeverNegative(t *testing.T) {
 	}
 }
 
-// D9, nas duas bordas da janela.
+// Um sucesso repetido dentro de RepeatWindow não gera evento nem muda o
+// estado; a partir da borda da janela é um sucesso novo. Testa as duas bordas.
 func TestRepeatWindowBoundaries(t *testing.T) {
 	base, _ := aplicar(heartbeat.State{}, heartbeat.SignalSuccess, agora)
 	casos := []struct {
@@ -949,7 +950,7 @@ func TestGraceWindowEndsAtTheDeadline(t *testing.T) {
 }
 
 // "Em tolerância" é a janela [prazo - tolerância, prazo): começa no instante
-// exato e termina quando o atraso começa (A9).
+// exato e termina quando o atraso começa.
 func TestGraceStateBoundaries(t *testing.T) {
 	emDia := func() heartbeat.StatusFacts {
 		return heartbeat.StatusFacts{

@@ -176,7 +176,9 @@ var falhaEsperada = map[string]string{
 	"dump-error":        "dump interrompido ou falhou",
 	"extra-output":      "fechamento do exportador inválido",
 	"exporter-error":    "exportador não encerrou corretamente",
-	"remaining-session": "checagem das sessões interrompida",
+	"remaining-session": "sessão da execução permaneceu aberta",
+	"sessions-eof":      "checagem das sessões interrompida",
+	"clear-eof":         "checagem das sessões interrompida",
 	"dirty-clear":       "checagem das sessões inválida",
 	"blocked-read":      "protocolo da origem interrompido ou excessivo",
 	"closed-stdout":     "exportador não encerrou corretamente",
@@ -186,15 +188,26 @@ func TestSupervisorDoesNotAcceptFailedOrUnclosedClients(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("supervisor exige Linux")
 	}
-	for _, mode := range []string{"good", "bad-reference", "overflow", "sql-error", "dump-error", "extra-output", "exporter-error", "remaining-session", "dirty-clear", "blocked-read", "closed-stdout"} {
+	for _, mode := range []string{"good", "bad-reference", "overflow", "sql-error", "dump-error", "extra-output", "exporter-error", "remaining-session", "sessions-eof", "clear-eof", "dirty-clear", "blocked-read", "closed-stdout"} {
 		t.Run(mode, func(t *testing.T) {
 			dir := t.TempDir()
 			psql, dump := clientesFalsos(t, dir)
 			t.Setenv("BACKUP_TEST_MODE", mode)
 			t.Setenv("PGHOST", "restore")
 			t.Setenv("PGPASSWORD", "restore-secret")
+			o := opcoesDeTeste(psql, dump)
+			if mode == "good" {
+				o = comPrazosFolgados(o)
+			}
+			if mode == "remaining-session" {
+				// A espera pelas sessões usa metade do encerramento e deve vencer
+				// antes do prazo do pipe e do timer. Com 100ms essa folga era de
+				// 50ms e uma pausa do CI a comia (#317).
+				o = comPrazosFolgados(o)
+				o.cleanup = time.Second
+			}
 			start := time.Now()
-			ref, err := run(context.Background(), "postgresql://backup@localhost/stillon?gssencmode=disable", "source-secret", filepath.Join(dir, "dump"), opcoesDeTeste(psql, dump))
+			ref, err := run(context.Background(), "postgresql://backup@localhost/stillon?gssencmode=disable", "source-secret", filepath.Join(dir, "dump"), o)
 			if mode == "good" {
 				info, statErr := os.Stat(filepath.Join(dir, "dump"))
 				if statErr != nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0600 {
@@ -219,8 +232,15 @@ func TestSupervisorDoesNotAcceptFailedOrUnclosedClients(t *testing.T) {
 			if mode == "closed-stdout" && time.Since(start) > 500*time.Millisecond {
 				t.Fatalf("Wait do exportador escapou do cleanup: %s", time.Since(start))
 			}
-			if elapsed := time.Since(start); elapsed > 2*time.Second {
+			elapsed := time.Since(start)
+			if elapsed > 2*time.Second {
 				t.Fatalf("cancelamento/cleanup presos: %s", elapsed)
+			}
+			// A falha por sessão aberta sai da espera própria (uma fração do
+			// cleanup), não do timer nem do pipe: se a espera usasse o cleanup
+			// inteiro, o tempo passaria dele e a falha voltaria à corrida de #317.
+			if mode == "remaining-session" && elapsed >= o.cleanup {
+				t.Fatalf("a espera pelas sessões não venceu antes do cleanup de %s: %s", o.cleanup, elapsed)
 			}
 		})
 	}
@@ -232,6 +252,9 @@ func clientesFalsos(t *testing.T, dir string) (psql, dump string) {
 	t.Helper()
 	psql = filepath.Join(dir, "psql")
 	dump = filepath.Join(dir, "pg_dump")
+	// O modo slow-count usa `sleep 0.5`: a fração não é POSIX, mas o supervisor
+	// só roda em Linux (GNU coreutils e busybox aceitam), e os testes que o
+	// usam dão Skip nos outros sistemas.
 	script := `#!/bin/sh
 if [ -n "${PGHOST:-}" ] || [ "${PGPASSWORD:-}" != "source-secret" ]; then exit 9; fi
 if [ -n "${BACKUP_LOG:-}" ]; then printf 'psql %s\n' "$*" >> "$BACKUP_LOG"; fi
@@ -246,8 +269,8 @@ case "$line" in
    blocked-read) :;;
    *) printf '00000003-0000001A-1|21|2|3\n';;
   esac;;
- *pg_stat_clear_snapshot*) if [ "$BACKUP_TEST_MODE" = dirty-clear ]; then printf 'x\n'; else printf '\n'; fi;;
- *pg_stat_activity*) if [ "$BACKUP_TEST_MODE" = remaining-session ]; then printf '1\n'; else printf '0\n'; fi;;
+ *pg_stat_clear_snapshot*) if [ "$BACKUP_TEST_MODE" = clear-eof ]; then exit 3; fi; if [ "$BACKUP_TEST_MODE" = dirty-clear ]; then printf 'x\n'; else printf '\n'; fi;;
+ *pg_stat_activity*) if [ "$BACKUP_TEST_MODE" = sessions-eof ]; then exit 3; fi; if [ "$BACKUP_TEST_MODE" = remaining-session ]; then printf '1\n'; else if [ "$BACKUP_TEST_MODE" = slow-count ]; then sleep 0.5; fi; printf '0\n'; fi;;
  ROLLBACK*) if [ "$BACKUP_TEST_MODE" = extra-output ]; then printf 'extra\n'; fi;;
  '\q') if [ "$BACKUP_TEST_MODE" = closed-stdout ]; then trap '' TERM; exec 1>&-; exec sleep 60; fi; if [ "$BACKUP_TEST_MODE" = exporter-error ]; then exit 3; fi;exit 0;;
 esac
@@ -264,6 +287,14 @@ exit 0
 	return psql, dump
 }
 
+// comPrazosFolgados tira o caminho bom do relógio: com os prazos curtos dos
+// modos de falha, uma pausa do CI de ~100ms já estourava o encerramento e o
+// teste via "file already closed" no lugar do resultado que queria (#314).
+func comPrazosFolgados(o options) options {
+	o.prepareTimeout, o.dumpTimeout, o.cleanup, o.totalTimeout = 10*time.Second, 10*time.Second, 10*time.Second, 30*time.Second
+	return o
+}
+
 // opcoesDeTeste encurta os prazos para os clientes falsos.
 func opcoesDeTeste(psql, dump string) options {
 	o := defaultOptions()
@@ -278,7 +309,7 @@ func opcoesDeTeste(psql, dump string) options {
 	return o
 }
 
-// E4 da revisão: a mensagem continua dizendo o passo, mas a causa original
+// A mensagem continua dizendo o passo, mas a causa original
 // chega envelopada a quem chama, para o log do job distinguir prazo vencido,
 // código de saída do cliente e executável ausente.
 func TestFailuresKeepTheOriginalCause(t *testing.T) {
@@ -314,6 +345,56 @@ func TestFailuresKeepTheOriginalCause(t *testing.T) {
 			}
 			if strings.Contains(err.Error(), "source-secret") || strings.Contains(err.Error(), "postgresql://") {
 				t.Fatalf("a causa vazou credencial: %v", err)
+			}
+		})
+	}
+}
+
+// Quando a checagem final passa do prazo de encerramento, o prazo fecha os pipes
+// e vence a leitura quase juntos, e o erro que chegava primeiro variava (EOF,
+// "file already closed", i/o timeout, context canceled). A causa tem de vir
+// sempre: o operador precisa ler que o prazo acabou, não um detalhe de pipe.
+func TestCleanupDeadlineIsAlwaysReportedAsTheCause(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("supervisor exige Linux")
+	}
+	for i := range 20 {
+		dir := t.TempDir()
+		psql, dump := clientesFalsos(t, dir)
+		t.Setenv("BACKUP_TEST_MODE", "slow-count")
+		saida := filepath.Join(dir, "dump")
+		o := opcoesDeTeste(psql, dump)
+		o.prepareTimeout, o.dumpTimeout, o.totalTimeout = 5*time.Second, 5*time.Second, 10*time.Second
+		_, err := run(context.Background(), "postgresql://backup@localhost/stillon", "source-secret", saida, o)
+		if !errors.Is(err, errEncerramentoExcedido) {
+			t.Fatalf("rodada %d: erro = %v, queria a causa %q", i, err, errEncerramentoExcedido)
+		}
+		if _, e := os.Stat(saida); !os.IsNotExist(e) {
+			t.Fatalf("rodada %d: falha deixou artefato próprio", i)
+		}
+	}
+}
+
+// O caso inverso: uma falha que não vem do prazo (saída extra, exportador que
+// sai com erro) não ganha o sufixo "prazo de encerramento esgotado", porque o
+// prazo, folgado aqui, não venceu. Sem isso, o sufixo viraria um rótulo
+// automático para qualquer erro depois do dump.
+func TestFailureBeforeTheCleanupDeadlineIsNotLabelledAsTheDeadline(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("supervisor exige Linux")
+	}
+	for _, mode := range []string{"extra-output", "exporter-error"} {
+		t.Run(mode, func(t *testing.T) {
+			dir := t.TempDir()
+			psql, dump := clientesFalsos(t, dir)
+			t.Setenv("BACKUP_TEST_MODE", mode)
+			o := comPrazosFolgados(opcoesDeTeste(psql, dump))
+			_, err := run(context.Background(), "postgresql://backup@localhost/stillon", "source-secret", filepath.Join(dir, "dump"), o)
+			if err == nil || !strings.HasPrefix(err.Error(), falhaEsperada[mode]) {
+				t.Fatalf("erro = %v, queria uma falha começando com %q", err, falhaEsperada[mode])
+			}
+			if errors.Is(err, errEncerramentoExcedido) || strings.Contains(err.Error(), errEncerramentoExcedido.Error()) {
+				t.Fatalf("o erro cita o prazo de encerramento, que não venceu: %v", err)
 			}
 		})
 	}
@@ -421,7 +502,7 @@ func rodarBom(t *testing.T, depois func(saida string) error) (log []string, said
 	t.Setenv("BACKUP_TEST_MODE", "good")
 	t.Setenv("BACKUP_LOG", arquivoLog)
 	saida = filepath.Join(dir, "dump")
-	o := opcoesDeTeste(psql, dump)
+	o := comPrazosFolgados(opcoesDeTeste(psql, dump))
 	if depois != nil {
 		o.afterReference = func(context.Context, Reference) error { return depois(saida) }
 	}

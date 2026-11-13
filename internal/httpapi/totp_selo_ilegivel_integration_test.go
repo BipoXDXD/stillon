@@ -155,7 +155,7 @@ func TestUnreadableTOTPSecretFailsVerifyWithoutPunishingTheOwner(t *testing.T) {
 func TestUnreadableTOTPSecretFailsDisableWithoutCountingWrongProofs(t *testing.T) {
 	for _, caso := range selosIlegiveis {
 		t.Run(caso.nome, func(t *testing.T) {
-			a := newAPI(t)
+			a := apiComFichaPorPedido(t)
 			c := clientWithJar(t)
 			segredo := cadastrarTOTP(t, a, c)
 			token := accessTokenDaSessao(t, a, c)
@@ -163,7 +163,7 @@ func TestUnreadableTOTPSecretFailsDisableWithoutCountingWrongProofs(t *testing.T
 			pedido := map[string]string{"password": testPass, "code": codigoDe(t, a, segredo)}
 
 			for range auth.FamilyProofLimit + 1 {
-				conferirErroInternoGenerico(t, postComToken(t, http.DefaultClient, a.srv.URL+"/api/v1/auth/totp/disable", token, pedido))
+				conferirErroInternoGenerico(t, postComToken(t, a.cliente(), a.srv.URL+"/api/v1/auth/totp/disable", token, pedido))
 			}
 
 			if n := familiasVivas(t, a); n != 1 {

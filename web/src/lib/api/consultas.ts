@@ -6,7 +6,7 @@ import type { Incidente, ItemDoResumo, ListaDeIncidentes } from './schemas'
 
 const MS_DA_PREVIA = 60_000
 
-// As chaves e os intervalos de atualização (spec §11.4; spec do Plano 6 §3.5).
+// As chaves e os intervalos de atualização (spec §11.4).
 export const chaves = {
   me: ['me'] as const,
   previaDoCron: (expr: string, timezone: string) => ['previa-do-cron', expr, timezone] as const,
@@ -30,7 +30,7 @@ export const chaves = {
   sessoes: ['sessions'] as const,
 }
 
-// Os intervalos do poll (spec do Plano 6 §3.5). O resumo é o mais curto: é
+// Os intervalos do poll. O resumo é o mais curto: é
 // ele que responde "tem algo quebrado?" no painel.
 const INTERVALO_DO_RESUMO_MS = 15_000
 const INTERVALO_DOS_INCIDENTES_MS = 30_000
@@ -38,6 +38,10 @@ const INTERVALO_DO_ALVO_MS = 60_000
 const INTERVALO_DA_SERIE_MS = 60_000
 const INTERVALO_DOS_CANAIS_MS = 60_000
 const INTERVALO_DOS_RESOLVIDOS_MS = 60_000
+
+// A primeira página de uma lista paginada não leva cursor. A anotação alarga o
+// tipo para string | undefined, o que o getNextPageParam devolve.
+const PRIMEIRA_PAGINA: string | undefined = undefined
 
 const estaSemRede = () => !onlineManager.isOnline()
 
@@ -102,7 +106,7 @@ export function useIncidentes(filtro: 'open' | 'resolved' | 'all', alvo?: string
         targetId: alvo,
         limit: limite,
       }),
-    initialPageParam: undefined as string | undefined,
+    initialPageParam: PRIMEIRA_PAGINA,
     getNextPageParam: (ultima) => ultima.next_cursor,
     refetchInterval: pollSoComUmaPagina,
   })
@@ -117,7 +121,7 @@ function pollSoComUmaPagina(q: { state: { data?: { pages: unknown[] } } }): numb
 }
 
 // Os incidentes abertos: uma página de até 100, o teto da rota. Uma consulta
-// só, dividida pelo contador da navegação (spec do Plano 6 §4.9), pelos
+// só, dividida pelo contador da navegação, pelos
 // cartões do painel e pelo resumo da tela de incidentes: cada um lê o que
 // precisa pelo select. A chave fica sob ['incidents'], e o reconhecer, que
 // invalida ['incidents'], atualiza todos.
@@ -138,7 +142,7 @@ function useConsultaDosAbertos<T>(select: (d: ListaDeIncidentes) => T) {
 const CONTADOR_CHEIO = 99
 
 // Mais que uma página vira "99+". As tarefas que pedem atenção somam: /incidents
-// não as traz (D3), e o contador não fica mudo com tarefa fora (spec da tela, T13).
+// não as traz, e o contador não fica mudo com tarefa fora.
 function textoDoContador(d: ListaDeIncidentes, tarefas: number): string {
   const total = d.items.length + tarefas
   return d.next_cursor || total > CONTADOR_CHEIO ? `${CONTADOR_CHEIO}+` : String(total)
@@ -204,7 +208,7 @@ export function useEventosDoHeartbeat(id: string) {
   return useInfiniteQuery({
     queryKey: chaves.eventosDoHeartbeat(id),
     queryFn: ({ pageParam }) => api.eventosDoHeartbeat(id, pageParam),
-    initialPageParam: undefined as string | undefined,
+    initialPageParam: PRIMEIRA_PAGINA,
     getNextPageParam: (ultima) => ultima.next_cursor,
     refetchInterval: pollSoComUmaPagina,
   })
@@ -215,7 +219,7 @@ export function useIncidentesDoHeartbeat(id: string) {
   return useInfiniteQuery({
     queryKey: chaves.incidentesDoHeartbeat(id),
     queryFn: ({ pageParam }) => api.incidentesDoHeartbeat(id, pageParam),
-    initialPageParam: undefined as string | undefined,
+    initialPageParam: PRIMEIRA_PAGINA,
     getNextPageParam: (ultima) => ultima.next_cursor,
     refetchInterval: pollSoComUmaPagina,
   })

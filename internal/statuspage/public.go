@@ -108,8 +108,7 @@ func (s *Service) Public(ctx context.Context, slug string) (View, error) {
 	})
 	// A página mudou por este processo enquanto o voo estava no ar (o dono
 	// despublicou durante o acesso): o resultado pode ser o de antes, e
-	// quem esperou no voo refaz a consulta em vez de recebê-lo (achado da
-	// segunda revisão).
+	// quem esperou no voo refaz a consulta em vez de recebê-lo.
 	if s.cache.geracao(slug) != antes {
 		v, err = s.projetarComPrazo(ctx, slug, agora)
 	}
@@ -132,8 +131,12 @@ func (s *Service) projetar(ctx context.Context, slug string, agora time.Time) (V
 	h := agora.UTC().Truncate(time.Hour)
 	hoje := agora.UTC().Truncate(24 * time.Hour)
 	desde := hoje.AddDate(0, 0, -(Days - 1))
+	janela, err := rollupcut.NovaJanela(desde, h.Add(time.Hour), agora)
+	if err != nil {
+		return View{}, fmt.Errorf("janela da página: %w", err)
+	}
 	v := View{GeneratedAt: agora}
-	err := storage.InPublicTx(ctx, s.pool, slug, func(q *db.Queries) error {
+	err = storage.InPublicTx(ctx, s.pool, slug, func(q *db.Queries) error {
 		pagina, err := q.GetPublicPage(ctx, slug)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrNotFound
@@ -149,13 +152,13 @@ func (s *Service) projetar(ctx context.Context, slug string, agora time.Time) (V
 		}
 		// Rollups até o corte e checks brutos dele até o fim da hora
 		// corrente, como o dashboard: a queda em curso aparece na barra.
-		marca, err := q.LatestPageRollupBucket(ctx, db.LatestPageRollupBucketParams{Before: h, PageID: pagina.ID})
+		marca, err := q.LatestPageRollupBucket(ctx, db.LatestPageRollupBucketParams{Before: janela.Hora(), PageID: pagina.ID})
 		if err != nil {
 			return fmt.Errorf("marca d'água dos rollups da página: %w", err)
 		}
-		corte, ate := rollupcut.At(marca, desde, h), h.Add(time.Hour)
+		corte, ate := janela.Corte(marca), janela.Ate()
 		dias, err := q.ListPublicDailyUptime(ctx, db.ListPublicDailyUptimeParams{
-			PageID: pagina.ID, Since: desde, Cut: corte, Until: ate,
+			PageID: pagina.ID, Since: janela.Desde(), Cut: corte, Until: ate,
 		})
 		if err != nil {
 			return fmt.Errorf("listar uptime diário: %w", err)
@@ -167,7 +170,7 @@ func (s *Service) projetar(ctx context.Context, slug string, agora time.Time) (V
 			return fmt.Errorf("listar latência: %w", err)
 		}
 		incidentes, err := q.ListPublicIncidents(ctx, db.ListPublicIncidentsParams{
-			PageID: pagina.ID, Since: desde, MaxRows: MaxIncidents,
+			PageID: pagina.ID, Since: janela.Desde(), MaxRows: MaxIncidents,
 		})
 		if err != nil {
 			return fmt.Errorf("listar incidentes públicos: %w", err)
@@ -200,7 +203,7 @@ func (s *Service) projetar(ctx context.Context, slug string, agora time.Time) (V
 }
 
 // estado é o do último check, se ele ainda é recente. A regra mora em
-// targetstate, a mesma do dashboard (D15 do Plano 5).
+// targetstate, a mesma do dashboard.
 func estado(it db.ListPublicItemsRow, agora time.Time) State {
 	return State(targetstate.Current(it.Enabled, time.Duration(it.IntervalSec)*time.Second,
 		it.LastStatus, it.LastCheckedAt, agora))

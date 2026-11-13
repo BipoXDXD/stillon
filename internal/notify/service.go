@@ -39,7 +39,7 @@ var (
 	ErrInvalidToken   = errors.New("token de verificação inválido ou vencido")
 )
 
-// Motivos de ValidationError, no vocabulário fechado da API (D14 do Plano 2).
+// Motivos de ValidationError, no vocabulário fechado da API.
 const (
 	ReasonRequired    = "required"
 	ReasonInvalid     = "invalid"
@@ -64,8 +64,7 @@ type VerificationMailer interface {
 	SendVerification(ctx context.Context, dest crypto.Secret, link string) error
 }
 
-// Channel é o que sai do domínio. Não tem campo para o destino: só o hint
-// (D5 do Plano 2, aplicado aos canais).
+// Channel é o que sai do domínio. Não tem campo para o destino: só o hint.
 type Channel struct {
 	ID        uuid.UUID
 	Kind      Kind
@@ -88,7 +87,7 @@ const (
 	// StatusFailing é o canal verificado cuja última entrega falhou de vez,
 	// sem sucesso depois dela: o webhook foi apagado, o domínio do e-mail
 	// perdeu a verificação. O canal continua recebendo tentativas; o status
-	// existe para que o dono saiba (pendência do Plano 3).
+	// existe para que o dono saiba.
 	StatusFailing ChannelStatus = "failing"
 )
 
@@ -110,7 +109,7 @@ type ChannelService struct {
 	baseURL string
 	// depoisDeContar é um gancho de teste, chamado entre a contagem travada e
 	// o INSERT: é onde duas criações simultâneas se encontrariam se a trava
-	// não existisse (Plano 8, o mesmo desenho do targets.Service).
+	// não existisse (o mesmo desenho do targets.Service).
 	depoisDeContar func()
 }
 
@@ -245,7 +244,7 @@ func (s *ChannelService) cabeNa(ctx context.Context, q *db.Queries, userID uuid.
 
 // List devolve os canais do usuário. Uma linha que não decifra (chave
 // trocada, linha adulterada) sai sem hint, em vez de derrubar a lista
-// inteira: é o defeito que o Plano 2 deixou em targets.List.
+// inteira.
 func (s *ChannelService) List(ctx context.Context, userID uuid.UUID) ([]Channel, error) {
 	var out []Channel
 	err := storage.InUserTx(ctx, s.pool, userID, func(q *db.Queries) error {
@@ -308,7 +307,7 @@ func (s *ChannelService) Delete(ctx context.Context, userID, id uuid.UUID) error
 	})
 }
 
-// SetEnabled pausa (false) ou retoma (true) o canal (Plano 9, §3.3) e o
+// SetEnabled pausa (false) ou retoma (true) o canal e o
 // devolve no formato da listagem. Canal alheio ou inexistente é ErrNotFound:
 // a RLS e o user_id na WHERE o escondem. Mudar para o valor que já está não é
 // erro.
@@ -398,7 +397,7 @@ const (
 )
 
 // CheckToken só lê: é o GET, que um leitor de links do provedor de e-mail
-// pode disparar sozinho, sem o dono (D2 deste plano).
+// pode disparar sozinho, sem o dono.
 func (s *ChannelService) CheckToken(ctx context.Context, token string) (VerifyState, error) {
 	hash, ok := hashDoToken(token)
 	if !ok {

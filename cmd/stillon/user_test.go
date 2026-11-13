@@ -223,7 +223,7 @@ func TestUserTerminalAsksTwice(t *testing.T) {
 	}
 }
 
-// Não existe flag nem variável de ambiente de senha (D6 do Plano 5). Com o
+// Não existe flag nem variável de ambiente de senha. Com o
 // stdin vazio e uma senha válida no ambiente, o resultado tem de ser "muito
 // curta" — a variável não foi lida.
 func TestUserHasNoPasswordFlagOrEnv(t *testing.T) {
@@ -263,6 +263,50 @@ func TestUserRejectsBadInvocations(t *testing.T) {
 	}
 	if r := rodarUser(t, "", senhaMarcada, "create", "--email", "dono@exemplo.com"); r.codigo != saidaUso {
 		t.Errorf("sem DATABASE_URL: código %d, queria 2", r.codigo)
+	}
+}
+
+// A mensagem de cada recusa de argumento e de e-mail desconhecido é parte do
+// contrato do CLI (quem roda num terminal ou num script lê o texto): o
+// reset-2fa não fala de senha, e o e-mail aparece para quem errou de banco.
+func TestUserRefusalMessages(t *testing.T) {
+	testdb.New(t)
+	dsn := testdb.DSN(t)
+	casos := []struct {
+		nome   string
+		dsn    string
+		args   []string
+		codigo int
+		msg    string
+	}{
+		{"argumento sobrando no create", dsn, []string{"create", "--email", "dono@exemplo.com", "x"}, saidaUso,
+			`stillon user: argumento inesperado: "x" (a senha vem do stdin)` + "\n"},
+		{"argumento sobrando no reset-2fa", dsn, []string{"reset-2fa", "--email", "dono@exemplo.com", "x"}, saidaUso,
+			`stillon user: argumento inesperado: "x"` + "\n"},
+		{"e-mail inválido", dsn, []string{"create", "--email", "dono"}, saidaUso,
+			"stillon user: --email precisa ser um endereço, como dono@exemplo.com\n"},
+		{"sem DATABASE_URL", "", []string{"create", "--email", "dono@exemplo.com"}, saidaUso,
+			"stillon user: DATABASE_URL não definida\n"},
+		// A ordem das validações é: argumento sobrando, e-mail, DATABASE_URL. Cada
+		// caso erra duas coisas de uma vez, e a mensagem diz qual vem primeiro.
+		{"e-mail inválido antes da DATABASE_URL", "", []string{"create", "--email", "dono"}, saidaUso,
+			"stillon user: --email precisa ser um endereço, como dono@exemplo.com\n"},
+		{"argumento sobrando antes do e-mail", dsn, []string{"create", "--email", "dono", "x"}, saidaUso,
+			`stillon user: argumento inesperado: "x" (a senha vem do stdin)` + "\n"},
+		{"argumento sobrando antes da DATABASE_URL", "", []string{"reset-2fa", "--email", "dono@exemplo.com", "x"}, saidaUso,
+			`stillon user: argumento inesperado: "x"` + "\n"},
+		{"set-password sem usuário", dsn, []string{"set-password", "--email", "ninguem@exemplo.com"}, saidaNaoCadastrado,
+			"stillon user: nenhum usuário com o e-mail ninguem@exemplo.com; nada foi alterado\n"},
+		{"reset-2fa sem usuário", dsn, []string{"reset-2fa", "--email", "ninguem@exemplo.com"}, saidaNaoCadastrado,
+			"stillon user: nenhum usuário com o e-mail ninguem@exemplo.com; nada foi alterado\n"},
+	}
+	for _, c := range casos {
+		t.Run(c.nome, func(t *testing.T) {
+			r := rodarUser(t, c.dsn, senhaMarcada, c.args...)
+			if r.codigo != c.codigo || r.stderr != c.msg {
+				t.Errorf("código %d, stderr %q; queria %d e %q", r.codigo, r.stderr, c.codigo, c.msg)
+			}
+		})
 	}
 }
 
@@ -328,7 +372,7 @@ func TestSetPasswordRevokesEverySessionAndClearsTheLock(t *testing.T) {
 	carimbo := auth.PasswordStamp(hashDoDono)
 	// Duas sessões vivas do dono, e a primeira renovada três vezes: quatro
 	// linhas numa família só. A mensagem conta sessões (famílias), não linhas:
-	// RevokeAllFamilies só marca a linha viva de cada família (Task 11).
+	// RevokeAllFamilies só marca a linha viva de cada família.
 	primeiro, _, err := mgr.Issue(ctx, dono, carimbo, meta)
 	if err != nil {
 		t.Fatal(err)
@@ -347,7 +391,7 @@ func TestSetPasswordRevokesEverySessionAndClearsTheLock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `UPDATE sessions SET expires_at = now() - interval '1 minute' WHERE family_id = $1`,
+	if _, err := testdb.Admin(t).Exec(ctx, `UPDATE sessions SET expires_at = now() - interval '1 minute' WHERE family_id = $1`,
 		vencida.FamilyID); err != nil {
 		t.Fatal(err)
 	}
@@ -371,7 +415,7 @@ func TestSetPasswordRevokesEverySessionAndClearsTheLock(t *testing.T) {
 
 	var vivas, revogadas, falhas int
 	var travada, totp bool
-	if err := pool.QueryRow(ctx,
+	if err := testdb.Admin(t).QueryRow(ctx,
 		`SELECT count(*) FILTER (WHERE used_at IS NULL AND revoked_at IS NULL AND expires_at > now()),
 		        count(*) FILTER (WHERE revoked_at IS NOT NULL)
 		   FROM sessions WHERE user_id = $1`, dono).Scan(&vivas, &revogadas); err != nil {

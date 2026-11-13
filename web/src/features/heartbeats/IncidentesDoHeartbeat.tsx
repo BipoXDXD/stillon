@@ -11,7 +11,7 @@ import { dataHora } from '@/lib/format'
 
 const ID_AJUDA = 'ajuda-reconhecer-heartbeat'
 
-// O histórico do heartbeat, pela rota própria: /incidents não o traz (D3).
+// O histórico do heartbeat, pela rota própria: /incidents não o traz.
 export function IncidentesDoHeartbeat({
   id,
   agora,
@@ -32,7 +32,6 @@ export function IncidentesDoHeartbeat({
     consulta: chaves.incidentesDoHeartbeat(id),
     aoNaoEncontrar: aoSumir,
     aoErrar,
-    ignorarEmAndamento: true,
   })
 
   return (

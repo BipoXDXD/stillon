@@ -208,7 +208,7 @@ func TestPublicIncidentsAreCapped(t *testing.T) {
 
 // A página completa os rollups com os checks brutos depois da marca d'água,
 // como o dashboard: uma queda que a manutenção ainda não consolidou aparece
-// na barra de hoje, no uptime de 90 dias e na latência (C4 da revisão).
+// na barra de hoje, no uptime de 90 dias e na latência.
 //
 // Relógio em 12:00. Rollup só até 09:00 (60 de 60, p50 100): o corte é
 // 10:00. O check das 09:30 já está no rollup e não conta de novo; os das
@@ -247,7 +247,7 @@ func TestPublicSeesChecksNotYetConsolidated(t *testing.T) {
 }
 
 // Um rollup gravado no futuro (relógio adiantado) não vira a marca d'água da
-// página: com ele, as horas fechadas e ainda não consolidadas sumiriam (C8).
+// página: com ele, as horas fechadas e ainda não consolidadas sumiriam.
 //
 // Relógio em 12:00; rollups às 09:00 (60 de 60, p50 100) e às 14:00
 // (futuro, 60 de 60, p50 300). O check das 10:30 foi down: hoje fica 60 ok
@@ -308,7 +308,7 @@ func texto[T any](p *T) string {
 
 // Um incidente entra no histórico se a queda tocou a janela de 90 dias, e não
 // só se começou dentro dela: a barra pinta o dia de vermelho, e a lista
-// precisa explicá-lo (C9).
+// precisa explicá-lo.
 func TestPublicIncidentsOverlappingTheWindowStart(t *testing.T) {
 	a := novoAmbiente(t)
 	adm := admin(t)
@@ -329,7 +329,7 @@ func TestPublicIncidentsOverlappingTheWindowStart(t *testing.T) {
 }
 
 // O alvo apagado some também da página pública, com o histórico de
-// incidentes dele (D18 do Plano 3: apagar o alvo leva o histórico).
+// incidentes dele (apagar o alvo leva o histórico).
 func TestDeletedTargetLeavesThePublicPage(t *testing.T) {
 	a := novoAmbiente(t)
 	adm := admin(t)
@@ -390,9 +390,9 @@ func TestPublicViewIsCachedForThirtySeconds(t *testing.T) {
 	}
 }
 
-// Mudança feita por este serviço tira o slug do cache na hora (achado da
-// revisão): A renomeia "acme" e B toma o slug logo em seguida; /p/acme
-// mostra B, e não a página de A em cache. Despublicar também vale na hora.
+// Mudança feita por este serviço tira o slug do cache na hora: A renomeia
+// "acme" e B toma o slug logo em seguida; /p/acme mostra B, e não a página de A
+// em cache. Despublicar também vale na hora.
 func TestOwnerChangesInvalidateTheCache(t *testing.T) {
 	a := novoAmbiente(t)
 	ctx := context.Background()
@@ -520,4 +520,64 @@ func TestPublicViewHasNoInternalFields(t *testing.T) {
 		}
 	}
 	andar(reflect.TypeOf(statuspage.View{}), "View")
+}
+
+// Borda do corte, lado dos rollups: com um rollup gravado na própria hora
+// corrente (relógio adiantado), o corte fica em H (a marca d'água ou o limite
+// de rollupcut.At o levam até lá) e o intervalo dos rollups é [desde, H),
+// exclusivo no fim. O rollup das 12:00 fica de fora, e as 12:00 vêm só dos
+// checks brutos: com o fim inclusivo, a hora corrente contaria duas vezes.
+//
+// Relógio em 12:00. Rollups às 11:00 (60 de 60) e às 12:00 (10 de 10, que não
+// pode entrar); check bruto das 12:30 (down). Hoje: 60 ok de 61.
+func TestPublicCutEdgeIgnoresARollupAtTheCurrentHour(t *testing.T) {
+	a := novoAmbiente(t)
+	adm := admin(t)
+	dono := a.usuario(t)
+	api := a.alvo(t, dono, "api")
+	a.publicar(t, dono, "empresa", true, statuspage.Item{TargetID: api, DisplayName: "API"})
+	hoje := agora.Truncate(24 * time.Hour)
+	p50 := 100
+	rollup(t, adm, api, hoje.Add(11*time.Hour), 60, 60, &p50)
+	rollup(t, adm, api, hoje.Add(12*time.Hour), 10, 10, &p50)
+	a.check(t, api, hoje.Add(12*time.Hour+30*time.Minute), "down")
+
+	v, err := a.svc.Public(context.Background(), "empresa")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u := v.Items[0].Days[statuspage.Days-1].Uptime; u == nil || *u != 60.0/61.0 {
+		t.Errorf("uptime de hoje = %s, queria 60/61", texto(u))
+	}
+}
+
+// Borda do corte, lado dos brutos: [início, corte) nos rollups e [corte,
+// fim da hora corrente) nos brutos, com o fim exclusivo. Um check às
+// 10:59:59.999 é da hora consolidada e não conta de novo; o das 11:00:00 exato
+// é a primeira hora bruta, e não some; o das 12:59:59.999 ainda é da hora
+// corrente; o das 13:00:00 exato é futuro e fica de fora.
+//
+// Relógio em 12:00; rollup só às 10:00 (60 de 60), corte às 11:00. Hoje: 61
+// ok de 62.
+func TestPublicCutEdgeSplitsRollupsAndRawAtTheExactInstant(t *testing.T) {
+	a := novoAmbiente(t)
+	adm := admin(t)
+	dono := a.usuario(t)
+	api := a.alvo(t, dono, "api")
+	a.publicar(t, dono, "empresa", true, statuspage.Item{TargetID: api, DisplayName: "API"})
+	hoje := agora.Truncate(24 * time.Hour)
+	p50 := 100
+	rollup(t, adm, api, hoje.Add(10*time.Hour), 60, 60, &p50)
+	a.check(t, api, hoje.Add(11*time.Hour-time.Millisecond), "down")
+	a.check(t, api, hoje.Add(11*time.Hour), "up")
+	a.check(t, api, hoje.Add(13*time.Hour-time.Millisecond), "down")
+	a.check(t, api, hoje.Add(13*time.Hour), "down")
+
+	v, err := a.svc.Public(context.Background(), "empresa")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u := v.Items[0].Days[statuspage.Days-1].Uptime; u == nil || *u != 61.0/62.0 {
+		t.Errorf("uptime de hoje = %s, queria 61/62", texto(u))
+	}
 }

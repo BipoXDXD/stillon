@@ -32,7 +32,7 @@ type Incident struct {
 
 // Filter: Open nil lista tudo; true só abertos; false só resolvidos. Before
 // é o cursor, o último id da página anterior. TargetID restringe a um alvo
-// (Plano 5, a tela de detalhe do alvo); o de outro usuário dá lista vazia,
+// (a tela de detalhe do alvo); o de outro usuário dá lista vazia,
 // não erro: o filtro não confirma a existência de alvo alheio.
 type Filter struct {
 	Open     *bool

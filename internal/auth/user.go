@@ -32,7 +32,7 @@ type User struct {
 	PasswordHash   string
 	FailedAttempts int
 	LockedUntil    *time.Time
-	// TOTPChallengeMark é a marca d'água do desafio de 2FA (Plano 8): o
+	// TOTPChallengeMark é a marca d'água do desafio de 2FA: o
 	// instante do último desafio consumido, nil se nenhum foi. Só ByID a
 	// preenche; é o TOTPVerify quem a lê.
 	TOTPChallengeMark *time.Time
@@ -76,18 +76,18 @@ func emailPossivel(email string) bool {
 	return len(email) <= maxEmailBytes && !strings.ContainsFunc(email, unicode.IsControl)
 }
 
-// Attempts é o contador de tentativas de uma credencial de login (A2 e A3 do
-// Plano 10): o bloqueio da conta (AccountAttempts) ou o do cookie de
-// dispositivo (Devices.Attempts). A tentativa é RESERVADA antes de verificar
-// — N tentativas simultâneas gastam N, e a que passa do limite nem chega a
-// verificar —, e quem reservou decide o fim dela:
+// Attempts é o contador de tentativas de uma credencial de login: o bloqueio da
+// conta (AccountAttempts) ou o do cookie de dispositivo (Devices.Attempts). A
+// tentativa é RESERVADA antes de verificar — N tentativas simultâneas gastam N, e
+// a que passa do limite nem chega a verificar —, e quem reservou decide o fim
+// dela:
 //
 //   - errada: nada; a reserva fica contada;
 //   - certa, com o login terminando aqui: Reset (zera);
 //   - certa, com outro passo pela frente (a senha certa com 2FA ligado):
 //     Refund, que devolve só esta reserva. Zerar ali daria ao atacante que já
 //     tem a senha um botão de destravar entre um chute de seis dígitos e o
-//     próximo (R40).
+//     próximo.
 type Attempts interface {
 	// Reserve devolve false quando o contador está bloqueado: nada foi
 	// reservado, e quem chama recusa sem verificar a credencial.
@@ -124,10 +124,10 @@ func (c contaAttempts) Reset(ctx context.Context) error {
 
 // CheckPassword é a verificação de senha do login. Custa um Argon2id em todo
 // caminho. As rotas autenticadas que pedem a senha de novo (troca de senha e
-// as do 2FA) não passam por aqui desde o A3 do Plano 10: elas usam
+// as do 2FA) não passam por aqui: elas usam
 // VerifyPassword e o contador da família de sessão, e não o bloqueio da conta.
 //
-// A ordem é o ponto (A2 do Plano 10): a vaga do Argon2id primeiro, depois a
+// A ordem é o ponto: a vaga do Argon2id primeiro, depois a
 // reserva da tentativa, e só então a verificação. Antes, o bloqueio era lido
 // antes e a falha gravada depois do Argon2id, e N requisições simultâneas
 // passavam todas pela leitura: o limite de 5 virava o número de origens do
@@ -135,13 +135,13 @@ func (c contaAttempts) Reset(ctx context.Context) error {
 // tentativa do dono.
 //
 // Contador bloqueado é recusado sem olhar a senha, pagando o mesmo Argon2id
-// (o dummy): o bloqueio não se anuncia (R34), nem pela resposta nem pelo
+// (o dummy): o bloqueio não se anuncia, nem pela resposta nem pelo
 // tempo. Senha errada deixa a reserva contada. Senha certa também deixa a
 // reserva: quem chama devolve (Refund) ou zera (Reset), conforme o login
 // termine ou não aqui (ver Attempts).
 //
 // needsRehash só vale quando ok. Com o teto do Argon2id cheio, devolve
-// ErrArgon2Busy sem reservar nada (A1 do Plano 10).
+// ErrArgon2Busy sem reservar nada.
 func CheckPassword(ctx context.Context, t Attempts, u User, plain string) (ok, needsRehash bool, err error) {
 	soltar, err := ReserveArgon2(ctx)
 	if err != nil {
@@ -177,7 +177,7 @@ type UserStore interface {
 	// ConsumeChallenge avança a marca d'água do desafio de 2FA até issuedAt,
 	// só se o desafio for mais novo que ela; consumed diz se avançou. Um
 	// desafio que não avança a marca já foi usado, ou é mais antigo que um
-	// usado (Plano 8).
+	// usado.
 	ConsumeChallenge(ctx context.Context, userID uuid.UUID, issuedAt time.Time) (consumed bool, err error)
 }
 
@@ -202,8 +202,8 @@ func (s *PGStore) ByEmail(ctx context.Context, email string) (User, error) {
 	return u, nil
 }
 
-// ReserveAttempt reserva a tentativa ANTES da verificação, numa instrução só
-// (A2 do Plano 10): incrementa o contador e aplica o bloqueio no mesmo
+// ReserveAttempt reserva a tentativa ANTES da verificação, numa instrução só:
+// incrementa o contador e aplica o bloqueio no mesmo
 // UPDATE, e só se a conta não estiver bloqueada em at. Sem linha de volta, a
 // conta está bloqueada, e nada muda. Duas reservas simultâneas disputam a
 // mesma linha: a segunda espera a primeira comitar e relê (READ COMMITTED),
@@ -221,7 +221,7 @@ func (s *PGStore) ByEmail(ctx context.Context, email string) (User, error) {
 // requisição a cada quinze minutos, 96 por dia, muito abaixo do limitador,
 // mantinha a vítima fora da conta para sempre. O atacante não ganhava acesso
 // nenhum: era negação de serviço pura sobre conta alheia, e silenciosa,
-// porque o bloqueio não se anuncia (R34).
+// porque o bloqueio não se anuncia.
 //
 // A comparação usa $3, o instante recebido, e nunca now(): o relógio é
 // injetado, e um now() do banco divergiria do clock.Fake nos testes.
@@ -232,7 +232,7 @@ func (s *PGStore) ByEmail(ctx context.Context, email string) (User, error) {
 //
 // A reserva que trava grava o evento de auditoria na mesma transação do
 // UPDATE: se a gravação falhar, a trava não fica. O bloqueio não se anuncia a quem
-// tenta (R34), então esse evento e a linha de log são o único rastro dele. O
+// tenta, então esse evento e a linha de log são o único rastro dele. O
 // evento registra a trava aplicada, mesmo quando a quinta tentativa estava
 // certa e quem chama a desfaz logo depois: quatro erros seguidos de um acerto
 // também é sinal que vale guardar. Essa trava desfeita pode se repetir a cada
@@ -304,10 +304,10 @@ func (s *PGStore) ResetFailures(ctx context.Context, userID uuid.UUID) error {
 	return nil
 }
 
-// RehashPassword é o rehash do login, e é um compare-and-swap (Task 11 do
-// Plano 5). A versão anterior gravava sem condição: um login que verificou a
-// senha ANTIGA e regravou o hash dela depois de um set-password concorrente
-// desfazia a redefinição, e a senha antiga voltava a valer.
+// RehashPassword é o rehash do login, e é um compare-and-swap. A versão anterior
+// gravava sem condição: um login que verificou a senha ANTIGA e regravou o hash
+// dela depois de um set-password concorrente desfazia a redefinição, e a senha
+// antiga voltava a valer.
 func (s *PGStore) RehashPassword(ctx context.Context, userID uuid.UUID, oldHash, newHash string) (bool, error) {
 	n, err := db.New(s.pool).RehashUser(ctx, db.RehashUserParams{ID: userID, OldHash: oldHash, NewHash: newHash})
 	if err != nil {
@@ -336,8 +336,8 @@ func (s *PGStore) ConsumeChallenge(ctx context.Context, userID uuid.UUID, issued
 
 // ByID atende os dois caminhos de TOTP que só têm o id vindo do token: o
 // cadastro, que precisa do e-mail para o nome da conta na URI otpauth://, e a
-// verificação do segundo fator, que precisa do estado de bloqueio (R40) e da
-// marca d'água do desafio (Plano 8).
+// verificação do segundo fator, que precisa do estado de bloqueio e da
+// marca d'água do desafio.
 //
 // Uma consulta só, em vez de um EmailByID ao lado de um ByID lendo a mesma
 // linha da mesma tabela.

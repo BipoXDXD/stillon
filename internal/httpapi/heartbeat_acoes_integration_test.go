@@ -16,7 +16,7 @@ import (
 	"github.com/BipoXDXD/stillon/internal/storage/db"
 )
 
-// Ações sobre uma tarefa que já existe (SP1, PR 2): duplicar e limpar o log.
+// Ações sobre uma tarefa que já existe: duplicar e limpar o log.
 
 func clonar(t *testing.T, a *api, token, id string, corpo any) (int, string) {
 	t.Helper()
@@ -241,7 +241,7 @@ func TestCloneIgnoresTheBody(t *testing.T) {
 	}
 }
 
-// Limpar o log (SP1, PR 2, Task 4).
+// Limpar o log.
 
 func limpar(t *testing.T, a *api, token, id string, corpo any) (int, string) {
 	t.Helper()
@@ -523,7 +523,7 @@ func TestClearEventsKeepsTheLogWhenTheAuditFails(t *testing.T) {
 	}
 }
 
-// Sinalizar agora pelo painel (SP1, PR 3).
+// Sinalizar agora pelo painel.
 
 // pingNow chama o "sinalizar agora" do painel e exige 200.
 func pingNow(t *testing.T, a *api, token, id string, corpo any) map[string]any {
@@ -572,7 +572,7 @@ func incidentesDoHeartbeat(t *testing.T, a *api, token, id, status string) int {
 	return len(decodificar(t, corpo)["items"].([]any))
 }
 
-// R2 da §10: o sinal manual não se confunde com a tarefa. Ele vale como um
+// O sinal manual não se confunde com a tarefa. Ele vale como um
 // sucesso (prazo novo, e o avaliador fecha o atraso no tique seguinte), mas o
 // log o marca como do painel.
 func TestPingNowIsMarkedAsPanel(t *testing.T) {

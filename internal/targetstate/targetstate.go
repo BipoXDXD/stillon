@@ -1,5 +1,5 @@
 // Package targetstate é a regra do estado atual de um alvo, a única do
-// sistema (D15 do Plano 5): a página pública (/p/{slug}) e o dashboard
+// sistema: a página pública (/p/{slug}) e o dashboard
 // (GET /targets/summary) a chamam, e por isso não divergem.
 package targetstate
 

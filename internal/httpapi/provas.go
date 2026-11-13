@@ -11,10 +11,10 @@ import (
 	"github.com/BipoXDXD/stillon/internal/httpapi/middleware"
 )
 
-// provasDaFamilia é o contador de provas erradas das rotas autenticadas (A3 do
-// Plano 10) e o que fazer quando ele estoura. Uma instância só, dividida pela
-// troca de senha e pelas cinco rotas do 2FA: com uma por rota, quem chuta a
-// senha multiplicaria o orçamento alternando as rotas.
+// provasDaFamilia é o contador de provas erradas das rotas autenticadas e o que
+// fazer quando ele estoura. Uma instância só, dividida pela troca de senha e
+// pelas cinco rotas do 2FA: com uma por rota, quem chuta a senha multiplicaria
+// o orçamento alternando as rotas.
 type provasDaFamilia struct {
 	contador *auth.FamilyProofs
 	contas   *account.Service
@@ -22,14 +22,19 @@ type provasDaFamilia struct {
 }
 
 // reservar reserva uma prova para a família do token, antes de verificar
-// qualquer coisa. Devolve nil depois de já ter respondido, quando a família
-// estava esgotada: aí nada é verificado (nem o Argon2id roda), e a família é
-// derrubada de novo, se ainda estiver de pé.
+// qualquer coisa. Devolve nil depois de já ter respondido: com a família
+// esgotada nada é verificado (nem o Argon2id roda) e ela é derrubada de novo,
+// se ainda estiver de pé; com erro de banco a resposta é 500, e também nada
+// é verificado.
 //
 // Quem recebe a reserva chama Fail (por errou) ou Succeed ao julgar as provas,
 // e sempre Release com defer.
 func (p *provasDaFamilia) reservar(w http.ResponseWriter, r *http.Request, userID, familyID uuid.UUID) *auth.ProofReservation {
-	res := p.contador.Reserve(familyID)
+	res, err := p.contador.Reserve(r.Context(), userID, familyID)
+	if err != nil {
+		erroInterno(w, r, "reservar prova da família", err)
+		return nil
+	}
 	if res.Exhausted() {
 		res.Release()
 		p.derrubar(w, r, userID, familyID)
@@ -43,7 +48,12 @@ func (p *provasDaFamilia) reservar(w http.ResponseWriter, r *http.Request, userI
 // última derruba a família e responde 401 unauthorized: o painel renova a
 // sessão, a renovação falha, e quem estava chutando volta ao login.
 func (p *provasDaFamilia) errou(w http.ResponseWriter, r *http.Request, res *auth.ProofReservation, userID uuid.UUID, codigo apierr.ErrorCode) {
-	if res.Fail() {
+	derrubar, err := res.Fail()
+	if err != nil {
+		erroInterno(w, r, "registrar prova errada da família", err)
+		return
+	}
+	if derrubar {
 		p.derrubar(w, r, userID, res.FamilyID())
 		return
 	}

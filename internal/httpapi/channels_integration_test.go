@@ -107,8 +107,8 @@ func TestDiscordChannelFlow(t *testing.T) {
 	}
 }
 
-// Pendência do Plano 3: o canal que falhou de vez aparece como failing, com
-// o motivo e a hora; antes da falha, os dois campos são null.
+// O canal que falhou de vez aparece como failing, com o motivo e a hora; antes
+// da falha, os dois campos são null.
 func TestFailingChannelShowsTheLastError(t *testing.T) {
 	a := newAPI(t)
 	ctx := context.Background()
@@ -302,6 +302,45 @@ func TestChannelErrorsMapToCodes(t *testing.T) {
 		t.Errorf("reenviar Discord deu %d/%s, queria 409/channel_not_pending", resp.StatusCode, e.Error.Code)
 	}
 	resp.Body.Close()
+}
+
+// Um canal de e-mail pendente cujo destino não abre (config_enc corrompido,
+// ou selado com outra chave quando algum selo recente abre; a MASTER_KEY toda
+// errada nem sobe, por notify.CheckMasterKey) não tem para onde reenviar: o
+// reenvio responde 500 internal_error, sem mandar e-mail e sem pôr no corpo o
+// erro de decifrar.
+func TestResendWithUnreadableDestinationIsInternalError(t *testing.T) {
+	a := newAPI(t)
+	ctx := context.Background()
+	agora := a.clk.Now()
+	expira := agora.Add(notify.VerifyTTL)
+	id := uuid.Must(uuid.NewV7())
+	err := storage.InUserTx(ctx, a.pool, a.userID, func(q *db.Queries) error {
+		return q.InsertChannel(ctx, db.InsertChannelParams{
+			ID: id, UserID: a.userID, Kind: string(notify.KindEmail), ConfigEnc: []byte("destino-ilegivel"),
+			VerifyTokenHash: []byte("hash-antigo"), VerifyExpiresAt: &expira, CreatedAt: agora,
+		})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resp := chamar(t, a, http.MethodPost, "/api/v1/channels/"+id.String()+"/verify/resend", tokenDe(t, a, a.userID), nil)
+	corpo := string(lerCorpo(t, resp, nil))
+	if resp.StatusCode != http.StatusInternalServerError || !strings.Contains(corpo, `"internal_error"`) {
+		t.Errorf("reenvio com destino ilegível deu %d: %s; queria 500 internal_error", resp.StatusCode, corpo)
+	}
+	for _, proibido := range append([]string{"decifrar", "destino do canal", "cipher", "message authentication"}, marcasDeDetalheInterno...) {
+		if strings.Contains(corpo, proibido) {
+			t.Errorf("corpo do reenvio vaza detalhe interno %q: %s", proibido, corpo)
+		}
+	}
+	a.email.mu.Lock()
+	enviados := len(a.email.links)
+	a.email.mu.Unlock()
+	if enviados != 0 {
+		t.Errorf("reenvio com destino ilegível mandou %d e-mail(s), queria nenhum", enviados)
+	}
 }
 
 func TestChannelLimitIs409(t *testing.T) {

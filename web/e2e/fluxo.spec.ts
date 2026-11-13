@@ -19,7 +19,8 @@ let sobra: Sobra | null = null
 // Os limitadores (ver abaixo) respondem 429; o Retry-After não é lido aqui. A limpeza roda
 // depois do fluxo, que gastou os baldes: um 429 aqui é o limite, não o
 // produto. Espera com recuo limitado (2+4+8+16 s = 30 s, o bastante para o
-// balde do login, 1 ficha a cada 6 s, e o por usuário, 1 por segundo) e tenta
+// balde do login por IP e o da conta (troca de senha e 2FA), 1 ficha a cada
+// 6 s cada, e o por usuário dos recursos, 1 por segundo) e tenta
 // de novo; o afterEach tem prazo próprio de 60 s. Qualquer outro status volta
 // na hora e cai na asserção de quem chamou: um 500 não vira nova tentativa.
 const RECUOS_DO_429_MS = [2_000, 4_000, 8_000, 16_000]

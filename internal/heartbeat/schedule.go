@@ -39,7 +39,7 @@ func NewPeriod(period time.Duration) (Schedule, error) {
 }
 
 // NewCron é o agendamento por expressão de 5 campos, num fuso IANA
-// obrigatório: sem ele, o horário dependeria da máquina (D18).
+// obrigatório: sem ele, o horário dependeria da máquina.
 func NewCron(expr, timezone string) (Schedule, error) {
 	loc, err := parseTimezone(timezone)
 	if err != nil {

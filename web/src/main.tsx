@@ -11,7 +11,7 @@ import { ProvedorDoPainel } from './app/contexto'
 import { rotas } from './app/rotas'
 
 // O boot é disparado aqui, fora da árvore React: uma promessa por carga de
-// página, que o StrictMode não duplica (spec do Plano 6, D9).
+// página, que o StrictMode não duplica.
 void sessao.iniciar()
 
 const router = createBrowserRouter(rotas)

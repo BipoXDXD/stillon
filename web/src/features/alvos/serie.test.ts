@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Serie } from '@/lib/api/schemas'
-import { comP95Reduzido, ehJanela, faixasForaDoAr, latenciasDaSerie, pontosBrutos, pontosHorarios, pontosPorGrupoDoP95, resumir, trechosDoP95 } from './serie'
+import { comP95Reduzido, ehJanela, faixasForaDoAr, JANELAS, latenciasDaSerie, ORDEM_DAS_JANELAS, pontosBrutos, pontosHorarios, pontosPorGrupoDoP95, resumir, trechosDoP95 } from './serie'
 
 const check = (min: number, status: 'up' | 'degraded' | 'down', latency_ms: number) => ({
   checked_at: new Date(Date.UTC(2026, 8, 24, 12, min)).toISOString(),
@@ -115,6 +115,15 @@ describe('redução do p95', () => {
   it('em grupos de 1, a hora sem p95 também separa', () => {
     expect(trechosDoP95(reduzidos([10, null, 30], 1))).toEqual([0, 1])
   })
+})
+
+// A ordem é a do seletor do painel; o Record JANELAS tem as mesmas chaves (o
+// compilador exige), e o servidor só aceita estes nomes em ?window=.
+it('as janelas vão da menor para a maior, e cada uma tem a sua duração', () => {
+  expect(ORDEM_DAS_JANELAS).toEqual(['1h', '6h', '24h', '7d', '30d', '90d'])
+  expect(Object.keys(JANELAS)).toEqual([...ORDEM_DAS_JANELAS])
+  const duracoes = ORDEM_DAS_JANELAS.map((j) => JANELAS[j])
+  expect(duracoes).toEqual([...duracoes].sort((a, b) => a - b))
 })
 
 it('ehJanela só aceita as janelas, não o que vem do protótipo', () => {

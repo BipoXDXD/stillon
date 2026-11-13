@@ -6,7 +6,7 @@ import { TITULO_DA_TELA } from './botao'
 
 // Avisos passageiros ("Alvo salvo"). Radix Toast, e não o sonner: o sonner
 // injeta um <style> sem suporte a nonce, que a CSP do painel bloqueia (o
-// toast saía sem estilo, largura total no rodapé — spike, §8.1).
+// toast saía sem estilo, largura total no rodapé).
 
 type Aviso = { id: number; texto: string; tipo: 'ok' | 'erro' }
 

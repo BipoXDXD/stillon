@@ -1,4 +1,4 @@
-import { act, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { http, HttpResponse } from 'msw'
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 import { incidente } from '@/test/fixtures'
@@ -277,6 +277,22 @@ describe('incidentes', () => {
     expect(await screen.findByText('Nenhum incidente.')).toBeInTheDocument()
   })
 
+  // Dois cliques antes de o React redesenhar (o segundo dentro do mesmo
+  // ciclo): o aria-disabled ainda não chegou ao botão, então a guarda não pode
+  // depender do valor do último render.
+  it('dois cliques no mesmo ciclo de render mandam um só POST de ack', async () => {
+    const r = await renderizarPainel('/incidents')
+    r.falsa.estado.incidentes = [incidente()]
+    await r.cliente.refetchQueries()
+    const botao = await screen.findByRole('button', { name: 'Reconhecer o incidente de API' })
+    act(() => {
+      fireEvent.click(botao)
+      fireEvent.click(botao)
+    })
+    expect(await screen.findByText(/Reconhecido em/)).toBeInTheDocument()
+    expect(r.falsa.chamadas('POST /incidents/:id/ack')).toBe(1)
+  })
+
   it('Reconhecer fica desabilitado enquanto o POST está em voo', async () => {
     const r = await renderizarPainel('/incidents')
     r.falsa.estado.incidentes = [incidente()]
@@ -298,6 +314,29 @@ describe('incidentes', () => {
     soltar()
     expect(await screen.findByText(/Reconhecido em/)).toBeInTheDocument()
     expect(r.falsa.chamadas('POST /incidents/:id/ack')).toBe(1)
+  })
+
+  // A trava é por incidente: com um ack em voo, o botão de outro incidente
+  // continua habilitado. Sabotagem: aria-disabled por "algum em voo"
+  // (reconhecendo.size > 0) → o segundo botão também fica aria-disabled.
+  it('o aria-disabled do Reconhecer vale só para o incidente em voo', async () => {
+    const r = await renderizarPainel('/incidents')
+    r.falsa.estado.incidentes = [incidente(), incidente({ id: 'inc-2', target_name: 'Site' })]
+    await r.cliente.refetchQueries()
+    let soltar!: () => void
+    const segurado = new Promise<void>((ok) => (soltar = ok))
+    servidor.use(
+      http.post('*/api/v1/incidents/:id/ack', async ({ params }) => {
+        if (params.id === 'inc-1') await segurado
+      }),
+    )
+    const emVoo = await screen.findByRole('button', { name: 'Reconhecer o incidente de API' })
+    const outro = await screen.findByRole('button', { name: 'Reconhecer o incidente de Site' })
+    await r.usuario.click(emVoo)
+    await waitFor(() => expect(emVoo).toHaveAttribute('aria-disabled', 'true'))
+    expect(outro).not.toHaveAttribute('aria-disabled')
+    soltar()
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Reconhecer o incidente de API' })).not.toBeInTheDocument())
   })
 
   // I1 da revisão final: o Reconhecer some com o ack; o foco vai ao

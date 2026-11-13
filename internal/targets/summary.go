@@ -15,7 +15,7 @@ import (
 )
 
 // SparkHours é a janela do spark: as 24 horas cheias anteriores à hora
-// corrente (contrato dos Planos 5–7).
+// corrente.
 const SparkHours = 24
 
 // Summary é um alvo como o dashboard o mostra (GET /targets/summary).
@@ -25,11 +25,11 @@ type Summary struct {
 	Enabled bool
 	State   targetstate.State
 	// LastCheckedAt e LastLatencyMS são nil sem check nenhum; LastLatencyMS é
-	// nil também quando o último check foi down (D16 do Plano 5): a latência
+	// nil também quando o último check foi down: a latência
 	// de um down é o tempo até o timeout, não a do serviço.
 	LastCheckedAt *time.Time
 	LastLatencyMS *int32
-	// Uptime24h é ok/total sobre as horas do spark MAIS a hora corrente (D16):
+	// Uptime24h é ok/total sobre as horas do spark MAIS a hora corrente:
 	// uma queda em curso aparece nele. nil sem check nenhum na janela.
 	Uptime24h      *float64
 	OpenIncidentID *uuid.UUID
@@ -47,7 +47,7 @@ type SparkHour struct {
 
 type contagem struct{ total, ok int64 }
 
-// Summary monta o dashboard numa chamada só (D16 do Plano 5), em cinco
+// Summary monta o dashboard numa chamada só, em cinco
 // consultas na mesma transação do dono:
 //
 //  1. os alvos, com o último check e o incidente aberto;
@@ -68,83 +68,130 @@ type contagem struct{ total, ok int64 }
 func (s *Service) Summary(ctx context.Context, userID uuid.UUID, filtro SummaryFilter) ([]Summary, error) {
 	agora := s.clk.Now()
 	h := agora.UTC().Truncate(time.Hour)
-	inicio := h.Add(-SparkHours * time.Hour)
+	janela, err := rollupcut.NovaJanela(h.Add(-SparkHours*time.Hour), h.Add(time.Hour), agora)
+	if err != nil {
+		return nil, fmt.Errorf("janela do resumo: %w", err)
+	}
 
 	var out []Summary
-	err := storage.InUserTx(ctx, s.pool, userID, func(q *db.Queries) error {
+	err = storage.InUserTx(ctx, s.pool, userID, func(q *db.Queries) error {
 		alvos, err := q.ListTargetSummaries(ctx, userID)
 		if err != nil {
 			return fmt.Errorf("listar alvos do resumo: %w", err)
 		}
-		marca, err := q.LatestUserRollupBucket(ctx, db.LatestUserRollupBucketParams{Before: h, UserID: userID})
+		marca, err := q.LatestUserRollupBucket(ctx, db.LatestUserRollupBucketParams{Before: janela.Hora(), UserID: userID})
 		if err != nil {
 			return fmt.Errorf("marca d'água dos rollups: %w", err)
 		}
-		corte := rollupcut.At(marca, inicio, h)
+		corte := janela.Corte(marca)
 
-		horas := map[uuid.UUID][]SparkHour{}
-		rollups, err := q.ListSummaryRollups(ctx, db.ListSummaryRollupsParams{UserID: userID, FromAt: inicio, ToAt: corte})
+		rollups, err := q.ListSummaryRollups(ctx, db.ListSummaryRollupsParams{UserID: userID, FromAt: janela.Desde(), ToAt: corte})
 		if err != nil {
 			return fmt.Errorf("rollups do resumo: %w", err)
 		}
-		for _, r := range rollups {
-			horas[r.TargetID] = append(horas[r.TargetID], SparkHour{Bucket: r.Bucket.UTC(), Total: r.Total, OK: r.Ok, P50: r.P50})
-		}
-		brutos, err := q.ListRawHours(ctx, db.ListRawHoursParams{UserID: userID, FromAt: corte, ToAt: h})
+		brutos, err := q.ListRawHours(ctx, db.ListRawHoursParams{UserID: userID, FromAt: corte, ToAt: janela.Hora()})
 		if err != nil {
 			return fmt.Errorf("checks do resumo: %w", err)
 		}
-		for _, r := range brutos {
-			hora := horaBruta(r)
-			horas[r.TargetID] = append(horas[r.TargetID], SparkHour{Bucket: hora.Bucket, Total: hora.Total, OK: hora.OK, P50: hora.P50})
-		}
-		correntes, err := q.ListSummaryCurrentHour(ctx, db.ListSummaryCurrentHourParams{UserID: userID, FromAt: h, ToAt: h.Add(time.Hour)})
+		correntes, err := q.ListSummaryCurrentHour(ctx, db.ListSummaryCurrentHourParams{UserID: userID, FromAt: janela.Hora(), ToAt: janela.Ate()})
 		if err != nil {
 			return fmt.Errorf("hora corrente do resumo: %w", err)
 		}
-		corrente := map[uuid.UUID]contagem{}
-		for _, r := range correntes {
-			corrente[r.TargetID] = contagem{total: int64(r.Total), ok: int64(r.Ok)}
-		}
+		horas := sparkPorAlvo(rollups, brutos)
+		corrente := contagemPorAlvo(correntes)
 
 		tags, err := tagsDoDono(ctx, q, userID)
 		if err != nil {
 			return err
 		}
 
-		out = make([]Summary, 0, len(alvos))
-		for _, a := range alvos {
-			sm := Summary{
-				ID: a.ID, Name: a.Name, Enabled: a.Enabled, OpenIncidentID: a.OpenIncidentID,
-				State: targetstate.Current(a.Enabled, time.Duration(a.IntervalSec)*time.Second,
-					a.LastStatus, a.LastCheckedAt, agora),
-				Tags:  tagsDoAlvo(tags, a.ID),
-				Spark: horas[a.ID],
-			}
-			if !filtro.accepts(sm) {
-				continue
-			}
-			if a.LastStatus != "" {
-				em := a.LastCheckedAt.UTC()
-				sm.LastCheckedAt = &em
-				if a.LastStatus != "down" {
-					ms := a.LastLatencyMS
-					sm.LastLatencyMS = &ms
-				}
-			}
-			slices.SortFunc(sm.Spark, func(x, y SparkHour) int { return x.Bucket.Compare(y.Bucket) })
-			c := corrente[a.ID]
-			for _, hr := range sm.Spark {
-				c.total += int64(hr.Total)
-				c.ok += int64(hr.OK)
-			}
-			if c.total > 0 {
-				u := float64(c.ok) / float64(c.total)
-				sm.Uptime24h = &u
-			}
-			out = append(out, sm)
-		}
+		out = montarResumos(alvos, resumoBase{agora: agora, filtro: filtro, tags: tags, horas: horas, corrente: corrente})
 		return nil
 	})
 	return out, err
+}
+
+// sparkPorAlvo agrupa por alvo as horas dos rollups e, em seguida, as dos
+// checks brutos, sem ordenar: quem lê ordena.
+func sparkPorAlvo(rollups []db.ListSummaryRollupsRow, brutos []db.ListRawHoursRow) map[uuid.UUID][]SparkHour {
+	horas := map[uuid.UUID][]SparkHour{}
+	for _, r := range rollups {
+		horas[r.TargetID] = append(horas[r.TargetID], SparkHour{Bucket: r.Bucket.UTC(), Total: r.Total, OK: r.Ok, P50: r.P50})
+	}
+	for _, r := range brutos {
+		hora := horaBruta(r)
+		horas[r.TargetID] = append(horas[r.TargetID], SparkHour{Bucket: hora.Bucket, Total: hora.Total, OK: hora.OK, P50: hora.P50})
+	}
+	return horas
+}
+
+// contagemPorAlvo indexa por alvo as contagens da hora corrente.
+func contagemPorAlvo(linhas []db.ListSummaryCurrentHourRow) map[uuid.UUID]contagem {
+	porAlvo := map[uuid.UUID]contagem{}
+	for _, r := range linhas {
+		porAlvo[r.TargetID] = contagem{total: int64(r.Total), ok: int64(r.Ok)}
+	}
+	return porAlvo
+}
+
+// ultimoCheck devolve o instante (UTC) e a latência do último check do alvo.
+// Alvo sem check devolve nil nos dois; a latência é nil também quando o último
+// check foi down, porque a de um down é o tempo até o timeout.
+func ultimoCheck(a db.ListTargetSummariesRow) (em *time.Time, latenciaMS *int32) {
+	if a.LastStatus == "" {
+		return nil, nil
+	}
+	utc := a.LastCheckedAt.UTC()
+	if a.LastStatus == "down" {
+		return &utc, nil
+	}
+	ms := a.LastLatencyMS
+	return &utc, &ms
+}
+
+// uptime24h é ok/total da hora corrente somada às horas do spark; nil sem
+// check nenhum.
+func uptime24h(corrente contagem, spark []SparkHour) *float64 {
+	total, ok := corrente.total, corrente.ok
+	for _, hr := range spark {
+		total += int64(hr.Total)
+		ok += int64(hr.OK)
+	}
+	if total == 0 {
+		return nil
+	}
+	u := float64(ok) / float64(total)
+	return &u
+}
+
+// resumoBase reúne o que montarResumos cruza com cada alvo.
+type resumoBase struct {
+	agora    time.Time
+	filtro   SummaryFilter
+	tags     map[uuid.UUID][]string
+	horas    map[uuid.UUID][]SparkHour
+	corrente map[uuid.UUID]contagem
+}
+
+// montarResumos monta o resumo de cada alvo, na ordem dos alvos, e descarta os
+// que o filtro recusa. Ordena o spark de cada alvo, in place.
+func montarResumos(alvos []db.ListTargetSummariesRow, b resumoBase) []Summary {
+	out := make([]Summary, 0, len(alvos))
+	for _, a := range alvos {
+		sm := Summary{
+			ID: a.ID, Name: a.Name, Enabled: a.Enabled, OpenIncidentID: a.OpenIncidentID,
+			State: targetstate.Current(a.Enabled, time.Duration(a.IntervalSec)*time.Second,
+				a.LastStatus, a.LastCheckedAt, b.agora),
+			Tags:  tagsDoAlvo(b.tags, a.ID),
+			Spark: b.horas[a.ID],
+		}
+		if !b.filtro.accepts(sm) {
+			continue
+		}
+		sm.LastCheckedAt, sm.LastLatencyMS = ultimoCheck(a)
+		slices.SortFunc(sm.Spark, func(x, y SparkHour) int { return x.Bucket.Compare(y.Bucket) })
+		sm.Uptime24h = uptime24h(b.corrente[a.ID], sm.Spark)
+		out = append(out, sm)
+	}
+	return out
 }

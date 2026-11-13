@@ -40,7 +40,7 @@ export function FaixaDeEstado({ item, incidentes, agora, aoSumir, aoErrar }: Pro
   const idDaAjuda = useId()
   const reconhecido = useRef<HTMLParagraphElement>(null)
   // O Reconhecer some quando o ack vale, e o foco iria ao <body>: vai ao
-  // "Reconhecido" (o mesmo cuidado da tela de incidentes, I1). Um ref e um
+  // "Reconhecido" (o mesmo cuidado da tela de incidentes). Um ref e um
   // efeito a cada render. A lista relida vem do pai, num render que pode
   // chegar depois do de sair do "reconhecendo", com o foco ainda no botão:
   // o pedido espera o "Reconhecido" existir, e cai se o foco foi a outro
@@ -100,11 +100,9 @@ export function FaixaDeEstado({ item, incidentes, agora, aoSumir, aoErrar }: Pro
             ref={botao}
             // aria-disabled, e não disabled: o botão desabilitado perderia o
             // foco para o <body> enquanto o POST voa.
-            aria-disabled={reconhecendo.size > 0 || undefined}
+            aria-disabled={reconhecendo.has(aberto.id) || undefined}
             aria-describedby={idDaAjuda}
-            onClick={() => {
-              if (reconhecendo.size === 0) void reconhecer(aberto.id)
-            }}
+            onClick={() => void reconhecer(aberto.id)}
           >
             Reconhecer
           </Botao>

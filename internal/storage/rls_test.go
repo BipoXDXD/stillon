@@ -60,7 +60,7 @@ func TestWithoutScopeNothingIsVisible(t *testing.T) {
 	}
 }
 
-// Review Focus 1. Depois do primeiro SET LOCAL da sessão, o GUC volta como
+// Depois do primeiro SET LOCAL da sessão, o GUC volta como
 // string vazia, e não NULL. Um pool reusa a conexão; a próxima consulta nela
 // precisa funcionar. (Sem as aspas simples duplas aqui: o gofmt as troca por
 // aspas tipográficas em comentário de documentação.)
@@ -108,6 +108,70 @@ func TestScopeSurvivesConnectionReuse(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("o sondador falhou numa conexão reusada: %v", err)
+	}
+}
+
+// ScopeToUser e ScopeToSessionHash ligam o escopo no meio de uma transação
+// que o código de auth abriu. Como InUserTx, o valor tem de morrer no fim
+// dela: a próxima transação na MESMA conexão do pool não pode herdá-lo, ou
+// um pedido sem escopo enxergaria as sessões de quem usou a conexão antes.
+// O teste lê a GUC direto, então vale com ou sem as políticas da 00029.
+func TestEscopoNoMeioDaTransacaoNaoVazaParaAConexaoReusada(t *testing.T) {
+	casos := []struct {
+		nome  string
+		guc   string
+		ligar func(context.Context, *db.Queries) error
+	}{
+		{"ScopeToUser", "app.user_id", func(ctx context.Context, q *db.Queries) error {
+			return q.ScopeToUser(ctx, uuid.New())
+		}},
+		{"ScopeToSessionHash", "app.session_token_hash", func(ctx context.Context, q *db.Queries) error {
+			return q.ScopeToSessionHash(ctx, make([]byte, 32))
+		}},
+	}
+	for _, c := range casos {
+		t.Run(c.nome, func(t *testing.T) {
+			pool := testdb.New(t)
+			ctx := context.Background()
+			conn, err := pool.Acquire(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer conn.Release()
+
+			tx, err := conn.Begin(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := c.ligar(ctx, db.New(tx)); err != nil {
+				t.Fatal(err)
+			}
+			// A premissa: dentro da transação o escopo está ligado. Sem
+			// isto, uma consulta que não grava nada passaria no fim.
+			var dentro string
+			if err := tx.QueryRow(ctx, `SELECT coalesce(current_setting($1, true), '')`, c.guc).Scan(&dentro); err != nil {
+				t.Fatal(err)
+			}
+			if dentro == "" {
+				t.Fatalf("premissa quebrada: %s vazia dentro da transação", c.guc)
+			}
+			if err := tx.Commit(ctx); err != nil {
+				t.Fatal(err)
+			}
+
+			proxima, err := conn.Begin(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer proxima.Rollback(ctx)
+			var depois string
+			if err := proxima.QueryRow(ctx, `SELECT coalesce(current_setting($1, true), '')`, c.guc).Scan(&depois); err != nil {
+				t.Fatal(err)
+			}
+			if depois != "" {
+				t.Errorf("a próxima transação na mesma conexão herdou %s = %q", c.guc, depois)
+			}
+		})
 	}
 }
 
@@ -229,7 +293,7 @@ func TestChecksAreVisibleOnlyThroughTheirTarget(t *testing.T) {
 }
 
 // O sondador depende deste código para reconhecer "o alvo sumiu no meio da
-// sonda" (Task 7). O natural seria esperar a FK (23503); a RLS chega antes.
+// sonda". O natural seria esperar a FK (23503); a RLS chega antes.
 func TestCheckForVanishedTargetFailsWithRLSCode(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()

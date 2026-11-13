@@ -226,7 +226,7 @@ func TestFloorBinaryBootsOnContentRule(t *testing.T) {
 }
 
 // A migration desiste entre os dois limites: o teto é folga sobre o
-// lock_timeout de 5 s, e o piso fixa o Ruling contra um prazo curto, que
+// lock_timeout de 5 s, e o piso fixa a decisão contra um prazo curto, que
 // derrubaria o boot com 55P03 a cada leitura longa.
 const (
 	pisoDaMigrationTravada = 4 * time.Second

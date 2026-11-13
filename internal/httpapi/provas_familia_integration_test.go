@@ -13,14 +13,14 @@ import (
 	"github.com/BipoXDXD/stillon/internal/config"
 )
 
-// O contador de provas por família das rotas autenticadas (A3 do Plano 10):
+// O contador de provas por família das rotas autenticadas:
 // a troca de senha e o enroll, confirm, disable, rotate e rotate/confirm do
 // 2FA. As provas erradas não tocam o bloqueio da conta; a quinta, na mesma
 // família, derruba a família e responde 401 unauthorized.
 
-// provasPorFamilia é o limite do contrato (spec do Plano 10, §4): a quinta
-// prova errada derruba a família. É auth.FamilyProofLimit, escrito aqui como
-// número para o teste não seguir o código se o limite mudar.
+// provasPorFamilia é o limite do contrato: a quinta prova errada derruba a
+// família. É auth.FamilyProofLimit, escrito aqui como número para o teste não
+// seguir o código se o limite mudar.
 const provasPorFamilia = 5
 
 // provaErrada manda uma prova errada para a rota e devolve o status e o code.
@@ -29,7 +29,7 @@ type provaErrada func(t *testing.T, a *api, token string) (int, string)
 func postEProva(rota string, corpo func(t *testing.T, a *api) map[string]string) provaErrada {
 	return func(t *testing.T, a *api, token string) (int, string) {
 		t.Helper()
-		resp := postComToken(t, http.DefaultClient, a.srv.URL+rota, token, corpo(t, a))
+		resp := postComToken(t, a.cliente(), a.srv.URL+rota, token, corpo(t, a))
 		defer resp.Body.Close()
 		return resp.StatusCode, codigoDoErro(t, resp)
 	}
@@ -82,7 +82,7 @@ func TestFifthWrongProofDropsTheFamily(t *testing.T) {
 			})
 		}, http.StatusUnauthorized, "invalid_credentials"},
 		{"confirm", func(t *testing.T, a *api, token string) provaErrada {
-			resp := postComToken(t, http.DefaultClient, a.srv.URL+"/api/v1/auth/totp/enroll", token,
+			resp := postComToken(t, a.cliente(), a.srv.URL+"/api/v1/auth/totp/enroll", token,
 				map[string]string{"password": testPass})
 			resp.Body.Close()
 			if resp.StatusCode != http.StatusOK {
@@ -116,7 +116,7 @@ func TestFifthWrongProofDropsTheFamily(t *testing.T) {
 	}
 	for _, caso := range casos {
 		t.Run(caso.nome, func(t *testing.T) {
-			a := newAPI(t)
+			a := apiComFichaPorPedido(t)
 			token, _, familia := familiaComRefresh(t, a)
 			errar := caso.preparar(t, a, token)
 
@@ -148,7 +148,7 @@ func TestFifthWrongProofDropsTheFamily(t *testing.T) {
 // rotas diferentes somam na mesma família (inclusive o código ausente), e as
 // de outra família do mesmo dono não entram na conta.
 func TestWrongProofBudgetIsPerFamilyAcrossRoutes(t *testing.T) {
-	a := newAPI(t)
+	a := apiComFichaPorPedido(t)
 	segredo := cadastrarTOTP(t, a, clientWithJar(t))
 	tokenA, _, _ := familiaComRefresh(t, a)
 	tokenB, _, _ := familiaComRefresh(t, a)
@@ -188,27 +188,44 @@ func TestWrongProofBudgetIsPerFamilyAcrossRoutes(t *testing.T) {
 	}
 }
 
-// A2 (Plano 10) nas rotas autenticadas: a reserva vem antes da verificação.
-// Doze senhas erradas simultâneas na mesma família rodam exatamente cinco
-// Argon2id; as outras nascem esgotadas (ou chegam com a família já derrubada)
-// e são recusadas sem verificar. Quatro respostas são invalid_credentials e o
-// resto unauthorized.
+// Nas rotas autenticadas, a reserva vem antes da verificação. Com quatro provas
+// erradas já gastas, cinco senhas erradas simultâneas na mesma família rodam só
+// UM Argon2id a mais (cinco no total); as outras quatro chegam com o orçamento
+// esgotado (ou com a família já derrubada) e são recusadas sem verificar. Cinco
+// e não doze: o balde da conta (rajada de 5) barra o excedente antes da reserva,
+// e este teste mede a reserva.
 //
 // O teto de Argon2id acompanha o orçamento: com menos vagas, a quinta prova
 // espera uma delas, e em arm64 com -race cada Argon2id passa do Argon2Wait. A
 // recusa por semáforo devolve a reserva e não é o que este teste trava.
 func TestParallelWrongProofsVerifyAtMostTheBudget(t *testing.T) {
-	a := newAPICom(t, func(cfg *config.Config) { cfg.Argon2MaxConcurrent = provasPorFamilia }, nil)
+	a := apiComFichaPorPedidoCom(t, func(cfg *config.Config) { cfg.Argon2MaxConcurrent = provasPorFamilia })
 	token := accessTokenValido(t, a)
 
 	antes := auth.Argon2Verifications()
+	enviar := func() (*http.Response, error) {
+		return postSemT(a.cliente(), a.srv.URL+"/api/v1/auth/totp/enroll", token,
+			map[string]string{"password": "senha-que-nao-e-a-dele"})
+	}
+	for i := 1; i <= provasPorFamilia-1; i++ {
+		resp, err := enviar()
+		if err != nil {
+			t.Fatal(err)
+		}
+		codigo := codigoDoErro(t, resp)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusUnauthorized || codigo != "invalid_credentials" {
+			t.Fatalf("prova errada %d: %d %s, queria 401 invalid_credentials", i, resp.StatusCode, codigo)
+		}
+	}
+
+	const simultaneas = provasPorFamilia
 	var mu sync.Mutex
 	codigos := map[string]int{}
 	var wg sync.WaitGroup
-	for range 12 {
+	for range simultaneas {
 		wg.Go(func() {
-			resp, err := postSemT(http.DefaultClient, a.srv.URL+"/api/v1/auth/totp/enroll", token,
-				map[string]string{"password": "senha-que-nao-e-a-dele"})
+			resp, err := enviar()
 			if err != nil {
 				t.Error(err)
 				return
@@ -224,28 +241,27 @@ func TestParallelWrongProofsVerifyAtMostTheBudget(t *testing.T) {
 	wg.Wait()
 
 	if n := auth.Argon2Verifications() - antes; n != provasPorFamilia {
-		t.Errorf("%d Argon2id com 12 provas simultâneas, queria %d", n, provasPorFamilia)
+		t.Errorf("%d Argon2id com %d provas simultâneas depois de %d, queria %d no total",
+			n, simultaneas, provasPorFamilia-1, provasPorFamilia)
 	}
-	if codigos["invalid_credentials"] != provasPorFamilia-1 || codigos["unauthorized"] != 12-(provasPorFamilia-1) {
-		t.Errorf("respostas %v, queria %d invalid_credentials e %d unauthorized",
-			codigos, provasPorFamilia-1, 12-(provasPorFamilia-1))
+	if codigos["unauthorized"] != simultaneas {
+		t.Errorf("respostas simultâneas %v, queria %d unauthorized", codigos, simultaneas)
 	}
 	if n := falhasDeLogin(t, a); n != 0 {
 		t.Errorf("%d falhas no bloqueio da conta, queria 0", n)
 	}
 }
 
-// C1 da revisão do Plano 10: quem tem a sessão e a senha, mas não o fator,
-// não pode zerar o orçamento da família com uma prova só de senha. Antes, o
-// enroll com a senha certa zerava a família (Succeed antes do Enroll) e só
-// depois respondia 403 por o 2FA já estar ligado: quatro códigos chutados no
-// disable (ou no rotate), um enroll, e mais quatro, sem fim. Agora o enroll
-// com o 2FA ligado devolve a reserva sem zerar nada, e a quinta prova errada
-// derruba a família.
+// Quem tem a sessão e a senha, mas não o fator, não pode zerar o orçamento da
+// família com uma prova só de senha. Antes, o enroll com a senha certa zerava a
+// família (Succeed antes do Enroll) e só depois respondia 403 por o 2FA já
+// estar ligado: quatro códigos chutados no disable (ou no rotate), um enroll, e
+// mais quatro, sem fim. Agora o enroll com o 2FA ligado devolve a reserva sem
+// zerar nada, e a quinta prova errada derruba a família.
 func TestPasswordAloneDoesNotResetTheFamilyBudget(t *testing.T) {
 	for _, rota := range []string{"/api/v1/auth/totp/disable", "/api/v1/auth/totp/rotate"} {
 		t.Run(rota, func(t *testing.T) {
-			a := newAPI(t)
+			a := apiComFichaPorPedido(t)
 			segredo := cadastrarTOTP(t, a, clientWithJar(t))
 			token, _, familia := familiaComRefresh(t, a)
 			chutar := postEProva(rota, func(t *testing.T, a *api) map[string]string {
@@ -284,20 +300,20 @@ func TestPasswordAloneDoesNotResetTheFamilyBudget(t *testing.T) {
 	}
 }
 
-// C1(b) da revisão do Plano 10: com o 2FA ligado, o /totp/confirm responde 403
-// ANTES de olhar o código. Antes ele conferia o código contra o segredo ativo
-// e respondia 403 ao certo e 400 ao errado: um oráculo que, com o enroll
-// zerando a família, dava para consultar sem limite. O ciclo é o da prova de
-// conceito da revisão (quatro chutes no confirm e um enroll com a senha,
-// repetido): nenhuma resposta distingue o código certo, e o confirm não gasta
-// prova (não há o que provar), então a família continua viva.
+// Com o 2FA ligado, o /totp/confirm responde 403 ANTES de olhar o código. Antes
+// ele conferia o código contra o segredo ativo e respondia 403 ao certo e 400
+// ao errado: um oráculo que, com o enroll zerando a família, dava para
+// consultar sem limite. O ciclo é o da prova de conceito do ataque (quatro
+// chutes no confirm e um enroll com a senha, repetido): nenhuma resposta
+// distingue o código certo, e o confirm não gasta prova (não há o que provar),
+// então a família continua viva.
 func TestConfirmWithTheFactorOnIsNotAnOracle(t *testing.T) {
-	a := newAPI(t)
+	a := apiComFichaPorPedido(t)
 	segredo := cadastrarTOTP(t, a, clientWithJar(t))
 	token, _, _ := familiaComRefresh(t, a)
 	confirm := func(codigo string) (int, string) {
 		t.Helper()
-		resp := postComToken(t, http.DefaultClient, a.srv.URL+"/api/v1/auth/totp/confirm", token,
+		resp := postComToken(t, a.cliente(), a.srv.URL+"/api/v1/auth/totp/confirm", token,
 			map[string]string{"code": codigo})
 		defer resp.Body.Close()
 		return resp.StatusCode, codigoDoErro(t, resp)
@@ -323,7 +339,7 @@ func TestConfirmWithTheFactorOnIsNotAnOracle(t *testing.T) {
 		t.Errorf("a família caiu com confirms que não provam nada: GET /sessions %d", st)
 	}
 	// O confirm não consumiu o timestep: o código certo ainda desliga o fator.
-	resp := postComToken(t, http.DefaultClient, a.srv.URL+"/api/v1/auth/totp/disable", token,
+	resp := postComToken(t, a.cliente(), a.srv.URL+"/api/v1/auth/totp/disable", token,
 		map[string]string{"password": testPass, "code": codigoDe(t, a, segredo)})
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusNoContent {

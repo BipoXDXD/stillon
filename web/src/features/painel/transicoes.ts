@@ -25,7 +25,7 @@ export function anunciaveis(itens: readonly ItemDoResumo[], heartbeats: readonly
 type Anterior = Pick<Anunciavel, 'estado' | 'texto'>
 
 // Compara o texto: atrasado e falhando têm o mesmo estado exibido, e a troca
-// de um pelo outro é notícia. Uma tarefa não "volta ao ar" (spec da tela, T2).
+// de um pelo outro é notícia. Uma tarefa não "volta ao ar".
 export function transicoes(anterior: Map<string, Anterior> | null, atuais: readonly Anunciavel[]): string[] {
   if (anterior === null) return []
   const frases: string[] = []

@@ -33,7 +33,7 @@ func ocuparArgon2(t *testing.T, n int, espera time.Duration) []func() {
 	return vagas
 }
 
-// A1 (Plano 10, §3.1): TODA chamada do Argon2id passa pelo semáforo — o hash,
+// TODA chamada do Argon2id passa pelo semáforo — o hash,
 // a verificação e o VerifyDummy do e-mail inexistente (senão o tempo deixaria
 // de ser o mesmo com ou sem conta). Com as vagas presas, cada caminho desiste
 // no prazo com ErrArgon2Busy sem rodar o Argon2id; solta uma vaga, o mesmo
@@ -133,7 +133,7 @@ func TestArgon2WaiterGetsTheReleasedSlot(t *testing.T) {
 	})
 }
 
-// M1 da revisão do Plano 10 (auth): quem espera a vaga com o contexto da
+// Quem espera a vaga com o contexto da
 // requisição desiste quando ele é cancelado (o cliente foi embora), e não
 // segura a goroutine na fila até o fim do prazo. O erro é ErrArgon2Busy (a
 // API responde como ao semáforo cheio, sem contar prova) e também o do

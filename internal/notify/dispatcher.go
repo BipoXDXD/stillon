@@ -24,8 +24,8 @@ import (
 const (
 	dispatchEvery = 2 * time.Second
 	// claimTimeout é o prazo da reivindicação do lote, espera por conexão do
-	// pool incluída: uma consulta presa não para a entrega de todos os avisos
-	// (C2 da revisão). Fica acima de dispatchEvery pelo mesmo motivo do
+	// pool incluída: uma consulta presa não para a entrega de todos os avisos.
+	// Fica acima de dispatchEvery pelo mesmo motivo do
 	// tickTimeout do sondador: o Ticker descarta os disparos perdidos, e um
 	// prazo apertado demais pararia a entrega com o banco só lento. Os envios
 	// e as gravações dos desfechos têm prazos próprios.
@@ -60,7 +60,7 @@ const (
 	rateLimitGrace = time.Hour
 
 	// shutdownSendGrace é quanto, depois do sinal de encerramento, os envios
-	// em curso ainda têm antes de serem abortados (C1 da revisão). Nenhum
+	// em curso ainda têm antes de serem abortados. Nenhum
 	// envio novo começa depois do sinal.
 	shutdownSendGrace = 7 * time.Second
 
@@ -88,6 +88,7 @@ type Dispatcher struct {
 	claimTimeout time.Duration
 	// shutdownSendGrace é campo para que os testes o encurtem.
 	shutdownSendGrace time.Duration
+	ritmo             ritmo
 }
 
 // NewDispatcher recebe os canais que o operador configurou. Um canal de
@@ -101,6 +102,7 @@ func NewDispatcher(pool *pgxpool.Pool, box *crypto.Box, clk clock.Clock, reg pro
 			Help: "Desfechos de envio de notificação, por canal e resultado.",
 		}, []string{"kind", "result"}),
 		sendTimeout: sendTimeout, claimTimeout: claimTimeout, shutdownSendGrace: shutdownSendGrace,
+		ritmo: ritmoReal,
 	}
 	for _, n := range notifiers {
 		d.notifiers[n.Kind()] = n
@@ -112,13 +114,13 @@ func NewDispatcher(pool *pgxpool.Pool, box *crypto.Box, clk clock.Clock, reg pro
 // Run despacha a cada dispatchEvery até ctx acabar. Um lote em andamento
 // termina antes de Run voltar, em até ShutdownBudget (ver Dispatch).
 func (d *Dispatcher) Run(ctx context.Context) error {
-	t := time.NewTicker(dispatchEvery)
-	defer t.Stop()
+	tiques, parar := d.ritmo(dispatchEvery)
+	defer parar()
 	for {
 		select {
 		case <-ctx.Done():
 			return nil
-		case <-t.C:
+		case <-tiques:
 			if _, err := d.Dispatch(ctx); err != nil && ctx.Err() == nil {
 				slog.Error("despachar notificações", "erro", err)
 			}
@@ -229,8 +231,7 @@ func porCanal(lote []db.ClaimDueNotificationsRow) [][]db.ClaimDueNotificationsRo
 // transitória (429, timeout, rede, 5xx), o resto da fila não é enviado: o
 // canal está pedindo espera ou está fora, e mandar mais só gastaria até
 // sendTimeout por notificação. Sem isso, um webhook que trava seguraria o
-// lote inteiro por k × sendTimeout, e os outros canais esperariam junto
-// (achado da revisão).
+// lote inteiro por k × sendTimeout, e os outros canais esperariam junto.
 //
 // Com o sinal de encerramento, o resto da fila volta à fila sem envio.
 func (d *Dispatcher) entregarEmSerie(p prazos, fila []db.ClaimDueNotificationsRow) {
@@ -492,7 +493,7 @@ func (d *Dispatcher) persistir(gravacoes context.Context, n db.ClaimDueNotificat
 				return err
 			}
 			// O canal passa a "failing" até a próxima entrega que der certo
-			// (pendência do Plano 3: antes, a falha só ia para a auditoria). A
+			// (antes, a falha só ia para a auditoria). A
 			// falha do próprio StillOn não é culpa do canal.
 			if !f.doSistema {
 				if err := q.MarkChannelFailure(ctx, db.MarkChannelFailureParams{ChannelID: n.ChannelID, Now: d.clk.Now(), LastError: motivo}); err != nil {

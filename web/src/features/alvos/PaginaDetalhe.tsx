@@ -22,11 +22,11 @@ import { NavegacaoDaLista } from '@/features/painel/NavegacaoDaLista'
 import { CertificadoDoAlvo } from './CertificadoDoAlvo'
 import { GraficoDeLatencia } from './GraficoDeLatencia'
 import { IncidentesRecentes } from './IncidentesRecentes'
-import { ehJanela, JANELAS, resumir, type Janela } from './serie'
+import { ehJanela, ORDEM_DAS_JANELAS, resumir, type Janela } from './serie'
 import { janelaCobertaPeloAviso, TopoDoDetalhe } from './TopoDoDetalhe'
 
 const NOMES: Record<Janela, string> = { '1h': '1 h', '6h': '6 h', '24h': '24 h', '7d': '7 dias', '30d': '30 dias', '90d': '90 dias' }
-const OPCOES_DE_JANELA: readonly OpcaoSegmentada<Janela>[] = (Object.keys(JANELAS) as Janela[]).map((j) => ({
+const OPCOES_DE_JANELA: readonly OpcaoSegmentada<Janela>[] = ORDEM_DAS_JANELAS.map((j) => ({
   valor: j,
   rotulo: NOMES[j],
 }))
@@ -149,7 +149,7 @@ function DetalheDoAlvo({ id }: { id: string }) {
     void qc.invalidateQueries({ queryKey: chaves.todosOsIncidentes })
   }
 
-  // O alvo foi apagado em outra aba (M3, o padrão de Canais).
+  // O alvo foi apagado em outra aba.
   const sumiu = () => sairDoAlvo('O alvo já tinha sido apagado, talvez em outra aba.')
 
   // O poll (60 s, foco da janela) que volta 404 depois de o alvo estar na

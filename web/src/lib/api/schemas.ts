@@ -7,9 +7,9 @@ import { z } from 'zod'
 z.config({ jitless: true })
 
 // Os schemas das respostas da API, campo a campo com os DTOs Go
-// (internal/httpapi/*handlers.go) e o contrato dos Planos 5–7.
+// (internal/httpapi/*handlers.go) e o contrato da API.
 //
-// Toda resposta passa por aqui (D10 da spec do Plano 6). O z.object padrão
+// Toda resposta passa por aqui. O z.object padrão
 // descarta chave extra, então um campo novo no servidor não quebra o painel;
 // e falha com chave ausente ou tipo trocado, então uma remoção quebra alto,
 // com o nome do campo, em vez de virar undefined numa tela.
@@ -130,8 +130,8 @@ export const ListaDeIncidentes = z.object({ items: z.array(Incidente), next_curs
 export type ListaDeIncidentes = z.infer<typeof ListaDeIncidentes>
 
 // Os heartbeats (spec de heartbeats, §7). O incidente de heartbeat tem forma
-// própria: `GET /incidents` não os traz (D3).
-// Um valor que uma versão posterior do servidor criou (SP1, piso de rollback)
+// própria: `GET /incidents` não os traz.
+// Um valor que uma versão posterior do servidor criou (piso de rollback)
 // vira 'unknown': uma aba aberta antes do deploy não pode falhar no parse da
 // lista inteira por um estado ou tipo de sinal que ela não conhece. Só texto:
 // outro tipo continua erro de contrato. Aceitar qualquer texto é de propósito:
@@ -171,7 +171,7 @@ export const Agendamento = z.preprocess(
 export type Agendamento = z.infer<typeof Agendamento>
 
 // Sem ping_url, de propósito: o z.object descarta o campo, e o segredo não
-// entra no cache por este tipo (spec da tela, T8).
+// entra no cache por este tipo.
 export const Heartbeat = z.object({
   id,
   name: z.string(),
@@ -233,7 +233,7 @@ export const ListaDeIncidentesDeHeartbeat = z.object({ items: z.array(IncidenteD
 // para cada um.
 export const TiposConhecidosDeCanal = z.enum(['discord', 'email'])
 
-// Um tipo de canal que uma versão posterior do servidor criou (SP2, piso de
+// Um tipo de canal que uma versão posterior do servidor criou (piso de
 // rollback) vira 'desconhecido', pelo mesmo motivo do `desconhecido` acima: a
 // lista inteira não pode cair por uma linha. Só texto; sem kind continua erro.
 export const TipoDeCanal = TiposConhecidosDeCanal.or(z.string().transform(() => 'desconhecido' as const))
@@ -281,7 +281,7 @@ export type Sessao = z.infer<typeof Sessao>
 export const ListaDeSessoes = z.object({ items: z.array(Sessao) })
 
 export const CadastroTotp = z.object({ otpauth_uri: z.string().startsWith('otpauth://') })
-// O rotate devolve também o rotation (A7 do Plano 10): 16 bytes em hex que
+// O rotate devolve também o rotation: 16 bytes em hex que
 // identificam o pendente. O confirm o devolve, e um pendente substituído por
 // outro rotate da mesma sessão responde 403, como "sem troca".
 export const InicioDaTroca = CadastroTotp.extend({ rotation: z.string().regex(/^[0-9a-f]{32}$/) })

@@ -70,7 +70,7 @@ type targetPatchRequest struct {
 
 // targetResponse é o DTO de saída, construído campo a campo. Não existe
 // campo para valor de header, então nenhuma mudança futura no domínio o faz
-// aparecer aqui por acidente (D5).
+// aparecer aqui por acidente.
 type targetResponse struct {
 	ID                  string                   `json:"id"`
 	Name                string                   `json:"name"`
@@ -129,7 +129,7 @@ type checkResponse struct {
 	ErrorKind  *string   `json:"error_kind"`
 }
 
-// rollupResponse é uma hora da série quando resolution é "1h" (D6).
+// rollupResponse é uma hora da série quando resolution é "1h".
 type rollupResponse struct {
 	Bucket time.Time `json:"bucket"`
 	Total  int32     `json:"total"`
@@ -234,10 +234,7 @@ func (h *TargetHandlers) List(w http.ResponseWriter, r *http.Request) {
 	for _, t := range items {
 		resp.Items = append(resp.Items, toTargetResponse(t))
 	}
-	// Página cheia pode ter continuação; página incompleta, certamente não.
-	if len(items) == int(limit) {
-		resp.NextCursor = items[len(items)-1].ID.String()
-	}
+	resp.NextCursor = proximoCursor(items, limit, func(t targets.Target) uuid.UUID { return t.ID })
 	apierr.WriteJSON(w, http.StatusOK, resp)
 }
 
@@ -306,7 +303,7 @@ func (h *TargetHandlers) Delete(w http.ResponseWriter, r *http.Request) {
 }
 
 // janelasDaSerie são as janelas que GET /targets/{id}/checks aceita em
-// ?window= (B6 do Plano 10): as do gráfico do painel, e só elas.
+// ?window=: as do gráfico do painel, e só elas.
 var janelasDaSerie = map[string]time.Duration{
 	"1h":  time.Hour,
 	"6h":  6 * time.Hour,
@@ -329,7 +326,7 @@ func lerIntervalo(q url.Values, agora time.Time) (from, to time.Time, invalido s
 		to = v
 	}
 	from = to.Add(-24 * time.Hour)
-	// B6 (Plano 10): com window, o servidor calcula o from, e o gráfico não
+	// Com window, o servidor calcula o from, e o gráfico não
 	// depende do relógio do navegador. window e from juntos seriam duas
 	// respostas para a mesma pergunta.
 	if q.Has("window") {
@@ -429,7 +426,7 @@ type sparkResponse struct {
 }
 
 // targetSummaryResponse é o item de GET /targets/summary, no shape do
-// contrato dos Planos 5–7. Campo a campo, como targetResponse: nada de URL
+// contrato. Campo a campo, como targetResponse: nada de URL
 // nem de headers.
 type targetSummaryResponse struct {
 	ID             string          `json:"id"`
@@ -522,7 +519,7 @@ func validacaoOuNada(verr *targets.ValidationError) error {
 	return verr
 }
 
-// pathID lê o {id} da rota. Malformado é 404 (D16): o recurso não existe de
+// pathID lê o {id} da rota. Malformado é 404: o recurso não existe de
 // jeito nenhum, e um 400 ensinaria o formato do id a quem varre.
 func pathID(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {
 	id, err := uuid.Parse(r.PathValue("id"))

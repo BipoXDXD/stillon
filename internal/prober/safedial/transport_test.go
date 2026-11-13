@@ -116,7 +116,7 @@ func TestCheckRedirectRevalidaEsquemaELimitaSaltos(t *testing.T) {
 	}
 
 	// Um salto para esquema não permitido é recusado antes de discar. O erro
-	// é de redirecionamento, e não de proteção de rede (C3 do Plano 10): o
+	// é de redirecionamento, e não de proteção de rede: o
 	// dono que lê "destino bloqueado" procura um SSRF que não existe.
 	recusado := func(err error, oque string) {
 		t.Helper()
@@ -270,7 +270,7 @@ func enderecoDe(t *testing.T, srv *httptest.Server) netip.AddrPort {
 }
 
 // Controle positivo: sem ele, todo teste abaixo que espera bloqueio passaria
-// também se NewClientAllowing não liberasse nada. É o mesmo buraco do R15.
+// também se NewClientAllowing não liberasse nada.
 func TestAllowedAddressIsReachable(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
@@ -288,7 +288,7 @@ func TestAllowedAddressIsReachable(t *testing.T) {
 	}
 }
 
-// R15, agora como comportamento. Reuso de conexão pula o dialer e, com ele,
+// Reuso de conexão pula o dialer e, com ele,
 // a revalidação do IP no ControlContext: se o keep-alive voltar, uma conexão
 // aberta para um IP público serviria requisições depois de o DNS apontar
 // para um interno. O servidor conta quantas conexões NOVAS viu.
@@ -352,7 +352,7 @@ func TestRedirectToAnotherInternalAddressIsBlockedAtTheHop(t *testing.T) {
 	if !errors.Is(err, safedial.ErrBlocked) {
 		t.Errorf("erro = %v, queria envolver ErrBlocked", err)
 	}
-	// Sem esta asserção o teste seria o do Plano 1 de novo: o bloqueio
+	// Sem esta asserção o teste não provaria o redirect: o bloqueio
 	// poderia ter acontecido no salto zero, e o redirect nunca teria rodado.
 	if redirecionou.Load() != 1 {
 		t.Fatalf("o redirecionador recebeu %d requisições, queria 1: o bloqueio não aconteceu no salto", redirecionou.Load())
@@ -406,7 +406,7 @@ func TestTransportBoundsTheAbandonedHandshake(t *testing.T) {
 	}
 }
 
-// C1 (Plano 10): sem teto, o net/http aceita até 10 MiB de cabeçalho por
+// Sem teto, o net/http aceita até 10 MiB de cabeçalho por
 // resposta (e o HTTP/2 herda o mesmo número). 64 sondas em voo com 10 MiB
 // cada davam ~660 MiB de heap. O teto vale também para o Discord e o Resend,
 // que usam este transporte. O comportamento está em TestProbe... do pacote

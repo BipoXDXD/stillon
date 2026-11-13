@@ -74,6 +74,7 @@ func apiSemBanco(t *testing.T) (*httptest.Server, *clock.Fake) {
 	srv := httptest.NewServer(httpapi.Routes(ctx, cfg, httpapi.Deps{
 		Store: store, Sessions: auth.NewManager(store, clk, cfg.IPHashKey), TOTP: segundoFator,
 		Accounts:    account.NewService(pool, segundoFator, clk, cfg.IPHashKey),
+		Proofs:      auth.NewFamilyProofs(pool, clk),
 		Targets:     targets.NewService(pool, box, clk),
 		Incidents:   history.NewService(pool, clk),
 		Channels:    notify.NewChannelService(pool, box, clk, &discordFalso{}, &carteiroFalso{}, cfg.PublicBaseURL),
@@ -148,7 +149,7 @@ func TestBancoForaNaoVazaNadaEmNenhumaRota(t *testing.T) {
 
 	rotas := rotasRegistradas(t)
 	for _, rota := range rotas {
-		clk.Advance(time.Second) // devolve fichas aos limitadores: ver esperarVagaNoLimite
+		clk.Advance(umaFichaPorIP) // devolve fichas aos limitadores: ver esperarVagaNoLimite
 		esperado, ok := esperados[rota]
 		if !ok {
 			esperado = padrao
@@ -159,7 +160,7 @@ func TestBancoForaNaoVazaNadaEmNenhumaRota(t *testing.T) {
 	// inválida nunca a devolve nem a registra. O status aqui varia por rota, e
 	// já é o assunto de TestEveryProtectedRouteRejectsForgedToken.
 	for _, rota := range rotas {
-		clk.Advance(time.Second)
+		clk.Advance(umaFichaPorIP)
 		c.conferir(t, rota, c.canario, respostaSemBanco{})
 	}
 
@@ -169,9 +170,13 @@ func TestBancoForaNaoVazaNadaEmNenhumaRota(t *testing.T) {
 			t.Errorf("o log trouxe %q:\n%s", proibido, registrado)
 		}
 	}
-	// O erro real precisa estar lá, ou os canários ausentes não provam nada.
+	// O erro real precisa estar lá, ou os canários ausentes não provam nada. A
+	// troca de senha passa pelo viva antes do serviço (como as rotas do 2FA): com
+	// o banco fora, a falha registrada é a "conferir sessão", e o "trocar senha"
+	// só aparece quando o serviço falha depois de a sessão ser conferida
+	// (erro_interno_internal_test.go).
 	for _, operacao := range []string{
-		"conferir sessão", "buscar usuário", "trocar senha", "rotacionar sessão", "revogar sessão",
+		"conferir sessão", "buscar usuário", "rotacionar sessão", "revogar sessão",
 		"registrar ping", "status page pública", "verificar token", "confirmar token",
 	} {
 		if !strings.Contains(registrado, operacao) {

@@ -330,7 +330,7 @@ func TestPausingKeepsTheOpenIncident(t *testing.T) {
 	}
 }
 
-// D11: token vazado alternando falha e sucesso gera no máximo uma abertura a
+// Token vazado alternando falha e sucesso gera no máximo uma abertura a
 // cada 5 min. A falha que ficou esperando abre depois: atrasa, não se perde.
 func TestReopenCooldownLimitsIncidents(t *testing.T) {
 	b := novaBancadaHB(t)

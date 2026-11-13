@@ -17,7 +17,7 @@ var chaveMestra = []byte("chave-mestra-de-teste-32-bytes!!")
 // hashDoDono é um hash de senha qualquer: o carimbo só o compara.
 const hashDoDono = "$argon2id$hash-do-dono"
 
-// A3 (Plano 10): o cookie de dispositivo vale para a conta que o recebeu, até
+// O cookie de dispositivo vale para a conta que o recebeu, até
 // o prazo, e só com a chave que o assinou. Qualquer outra coisa é "sem
 // cookie", e o login segue pelo bloqueio da conta.
 func TestDeviceCookieChecks(t *testing.T) {
@@ -65,7 +65,7 @@ func TestDeviceCookieChecks(t *testing.T) {
 		"lixo":                  {"nao-e-um-cookie", dono, d, carimbo},
 		"vazio":                 {"", dono, d, carimbo},
 		"de outra chave mestra": {valor, dono, auth.NewDevices([]byte("outra-chave-mestra-com-32-bytes!"), clk), carimbo},
-		// I1 da revisão do Plano 10: a senha ou o 2FA mudaram depois do
+		// A senha ou o 2FA mudaram depois do
 		// cookie.
 		"de antes da troca de senha": {valor, dono, d, auth.NewDeviceStamp("$argon2id$hash-novo", nil)},
 		"de antes de ligar o 2FA":    {valor, dono, d, auth.NewDeviceStamp(hashDoDono, &ativado)},

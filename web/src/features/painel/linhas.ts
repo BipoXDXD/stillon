@@ -61,7 +61,7 @@ function situacaoDoAlvo(it: ItemDoResumo, estado: EstadoExibido, incidente: Inci
 }
 
 // Sem uptime e sem as 24 horas: o heartbeat não tem nada disso, e medida
-// inventada mentiria (spec da tela, T5).
+// inventada mentiria.
 export function linhaDoHeartbeat(hb: Heartbeat, agora: Date): LinhaDeMonitor {
   return {
     tipo: 'heartbeat',

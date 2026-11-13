@@ -23,7 +23,7 @@ import (
 )
 
 // pedido é o que o servidor de teste viu. A rede não conta como
-// sincronização para o -race (Plano 2), então o handler entrega o pedido
+// sincronização para o -race, então o handler entrega o pedido
 // por canal, e não numa variável que o teste lê.
 type pedido struct {
 	Metodo, Caminho, Query string
@@ -81,6 +81,33 @@ func comoSendError(t *testing.T, err error) *SendError {
 		t.Fatalf("erro = %v, queria *SendError", err)
 	}
 	return se
+}
+
+// Os limites {1,20} do id e {1,100} do token são a única defesa de formato
+// abaixo do maxDiscordURL: as URLs daqui ficam bem abaixo do teto.
+func TestValidateDiscordURLIdLengthBoundary(t *testing.T) {
+	const base = "https://discord.com/api/webhooks/"
+	if err := ValidateDiscordURL(base + strings.Repeat("1", 20) + "/t"); err != nil {
+		t.Errorf("id de 20 dígitos: %v, queria aceito", err)
+	}
+	if err := ValidateDiscordURL(base + strings.Repeat("1", 21) + "/t"); !errors.Is(err, ErrDiscordURL) {
+		t.Errorf("id de 21 dígitos: %v, queria ErrDiscordURL", err)
+	}
+}
+
+func TestValidateDiscordURLTokenLengthBoundary(t *testing.T) {
+	const base = "https://discord.com/api/webhooks/1/"
+	aceito := base + strings.Repeat("a", 100)
+	recusado := base + strings.Repeat("a", 101)
+	if len(recusado) > maxDiscordURL {
+		t.Fatalf("URL de %d caracteres passa do maxDiscordURL; o teste não provaria a regex", len(recusado))
+	}
+	if err := ValidateDiscordURL(aceito); err != nil {
+		t.Errorf("token de 100 caracteres: %v, queria aceito", err)
+	}
+	if err := ValidateDiscordURL(recusado); !errors.Is(err, ErrDiscordURL) {
+		t.Errorf("token de 101 caracteres: %v, queria ErrDiscordURL", err)
+	}
 }
 
 func TestValidateDiscordURL(t *testing.T) {
@@ -195,9 +222,10 @@ func TestDiscordRevalidatesTheURLBeforeSending(t *testing.T) {
 	}
 }
 
-// C3 (Plano 10) não muda o despacho: um webhook que redireciona sem fim
-// continua falha definitiva de canal inválido, como quando o erro era
-// ErrBlocked. Sem isto, virava falha de rede e seria tentado de novo.
+// Reclassificar o redirecionamento não muda o despacho: um webhook que
+// redireciona sem fim continua falha definitiva de canal inválido, como quando
+// o erro era ErrBlocked. Sem isto, virava falha de rede e seria tentado de
+// novo.
 func TestDiscordRedirectLoopIsAPermanentFailure(t *testing.T) {
 	srv, client, _ := provedor(t, func(w http.ResponseWriter) {
 		w.Header().Set("Location", "/api/webhooks/1/t")

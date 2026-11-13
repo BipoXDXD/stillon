@@ -88,7 +88,7 @@ func TestTargetQueriesFilterByOwnerWithoutRLS(t *testing.T) {
 		t.Errorf("com o dono, UpdateTarget e ResetTargetHealth não agiram: %+v", e)
 	}
 
-	// O teto de regras por host (D-T2) lê as URLs com regra do dono: sem o
+	// O teto de regras por host lê as URLs com regra do dono: sem o
 	// filtro, as de A contariam no teto de B.
 	if _, err := admin.Exec(ctx, `UPDATE targets SET content_mode = 'contains', content_value = 'ok' WHERE id = $1`, alvoDeA); err != nil {
 		t.Fatal(err)

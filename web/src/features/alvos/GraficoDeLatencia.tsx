@@ -21,7 +21,7 @@ const TRACO_DO_P95 = '4 3'
 
 // Recharts, só aqui: este arquivo entra no chunk do detalhe, carregado sob
 // demanda. As cores são variáveis CSS do index.css, e não um <style> gerado
-// em runtime, que a CSP bloquearia sem nonce (spike do Plano 6, §8.1).
+// em runtime, que a CSP bloquearia sem nonce.
 //
 // O desenho da spec do redesign (Telas > 2): a linha da mediana em índigo, a
 // faixa p50–p95 em primária 100, o "fora do ar" hachurado (forma + cor), as

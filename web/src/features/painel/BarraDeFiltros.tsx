@@ -177,7 +177,7 @@ function Grupo({ nome, children }: { nome: string; children: ReactNode }) {
   )
 }
 
-// Ligado tem fundo, borda e check: nunca só a cor (DI 8).
+// Ligado tem fundo, borda e check: nunca só a cor.
 function BotaoDeFiltro({
   ligado,
   quantos,

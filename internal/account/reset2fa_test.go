@@ -12,9 +12,10 @@ import (
 
 	"github.com/BipoXDXD/stillon/internal/account"
 	"github.com/BipoXDXD/stillon/internal/auth"
+	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 )
 
-// estadoDo2FA lê as colunas que o reset-2fa zera (Plano 9, §3.1), os códigos de
+// estadoDo2FA lê as colunas que o reset-2fa zera, os códigos de
 // recuperação e a marca do desafio, que ele NÃO mexe.
 type estadoDo2FA struct {
 	segredo, confirmado, timestep, pendente bool
@@ -34,7 +35,7 @@ func lerEstadoDo2FA(t *testing.T, pool *pgxpool.Pool, user uuid.UUID) estadoDo2F
 		Scan(&e.segredo, &e.confirmado, &e.timestep, &e.pendente, &e.familia, &e.marca); err != nil {
 		t.Fatal(err)
 	}
-	if err := pool.QueryRow(ctx,
+	if err := testdb.Admin(t).QueryRow(ctx,
 		`SELECT count(*) FROM totp_recovery_codes WHERE user_id = $1`, user).Scan(&e.codigos); err != nil {
 		t.Fatal(err)
 	}
@@ -53,7 +54,7 @@ func codigoAgora(t *testing.T, c cenario, segredo string) string {
 func familiasVivas(t *testing.T, pool *pgxpool.Pool, user uuid.UUID) int {
 	t.Helper()
 	var n int
-	if err := pool.QueryRow(context.Background(),
+	if err := testdb.Admin(t).QueryRow(context.Background(),
 		`SELECT count(*) FROM sessions WHERE user_id = $1 AND used_at IS NULL AND revoked_at IS NULL`,
 		user).Scan(&n); err != nil {
 		t.Fatal(err)
@@ -80,7 +81,7 @@ func TestResetTwoFactorTurnsItOff(t *testing.T) {
 	ctx := context.Background()
 	segredo := cadastrarTOTP(t, c, true)
 	// Uma segunda família do dono, que inicia a troca (o pendente fica
-	// amarrado a ela, revisão final do Plano 9), e um outro usuário com 2FA e
+	// amarrado a ela), e um outro usuário com 2FA e
 	// sessão.
 	mgr := auth.NewManager(auth.NewPGStore(c.pool), c.clk, ipKey)
 	var hash string
@@ -104,7 +105,7 @@ func TestResetTwoFactorTurnsItOff(t *testing.T) {
 		outro, c.clk.Now()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.pool.Exec(ctx,
+	if _, err := testdb.Admin(t).Exec(ctx,
 		`INSERT INTO totp_recovery_codes (id, user_id, code_hash) VALUES ($1, $2, '\x02')`, uuid.New(), outro); err != nil {
 		t.Fatal(err)
 	}
@@ -182,8 +183,8 @@ func TestResetTwoFactorUnknownEmail(t *testing.T) {
 	}
 }
 
-// O reset-2fa toma a trava de sessões do usuário antes de revogar (D1 do
-// Plano 5), como o set-password.
+// O reset-2fa toma a trava de sessões do usuário antes de revogar, como o
+// set-password.
 func TestResetTwoFactorTakesTheUserLock(t *testing.T) {
 	c := montar(t)
 	cadastrarTOTP(t, c, true)
@@ -203,7 +204,7 @@ func TestResetTwoFactorTakesTheUserLock(t *testing.T) {
 	}
 }
 
-// A6 (Plano 10, §3.1): o reset-2fa tira o bloqueio da conta, como o
+// O reset-2fa tira o bloqueio da conta, como o
 // set-password: o operador provou a identidade fora da API, e o dono que
 // perdeu o autenticador costuma chegar com a conta travada pelos próprios
 // chutes. Sem 2FA ligado o comando não muda nada — nem o bloqueio (a perna

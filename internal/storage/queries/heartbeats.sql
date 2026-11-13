@@ -8,7 +8,7 @@ INSERT INTO heartbeats (id, user_id, name, ping_token_hash, period_sec, cron_exp
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13);
 
 -- A trava serializa pings simultâneos do mesmo token: o segundo lê o estado
--- que o primeiro gravou, e é isso que faz a repetição ter um efeito só (D9).
+-- que o primeiro gravou, e é isso que faz a repetição ter um efeito só.
 -- (O nome evita "token": o gosec lê a constante gerada como credencial
 -- embutida, G101.)
 -- name: LockHeartbeatForPing :one
@@ -45,7 +45,7 @@ SELECT at FROM heartbeat_events
  ORDER BY id DESC
  LIMIT 1;
 
--- O teto do log (D15), na transação do ping: apaga do evento de posição
+-- O teto do log, na transação do ping: apaga do evento de posição
 -- max_events + 1, do mais novo para o mais velho, para trás. O id é UUIDv7,
 -- e o índice (heartbeat_id, id DESC) resolve os dois lados.
 -- name: TrimHeartbeatEvents :exec
@@ -76,15 +76,15 @@ SELECT e.id, e.heartbeat_id, e.at, e.kind, e.runtime_ms, e.exit_code, e.run_id, 
  ORDER BY e.id DESC
  LIMIT sqlc.arg(max_rows)::int;
 
--- Revogar é isto: o hash antigo deixa de casar com qualquer linha (D8).
+-- Revogar é isto: o hash antigo deixa de casar com qualquer linha.
 -- name: SetHeartbeatPingHash :exec
 UPDATE heartbeats SET ping_token_hash = $3 WHERE user_id = $1 AND id = $2;
 
--- Avaliador (D5): rodam sob InProberTx, com FOR UPDATE OF h SKIP LOCKED no
+-- Avaliador: rodam sob InProberTx, com FOR UPDATE OF h SKIP LOCKED no
 -- molde de ClaimDueTargets. Dois avaliadores pegam linhas diferentes, e o
 -- índice único parcial é a garantia final de um incidente aberto por vez.
 -- Sem incidente aberto, atrasado ou em falha, e fora do intervalo mínimo
--- entre aberturas (D11): quem está nele fica para um tique seguinte.
+-- entre aberturas: quem está nele fica para um tique seguinte.
 -- O OR não usa heartbeats_due_idx, e fica assim por medição: separar em UNION
 -- piorou a consulta (spec de heartbeats, §4).
 -- Sem período e sem cron, a linha é de uma versão posterior com agendamento que
@@ -105,7 +105,7 @@ SELECT h.id, h.user_id, h.deadline_at, h.failing_since
 
 -- Com incidente aberto e saudável de novo, por um sucesso ou pela retomada
 -- depois do início: prazo novo, sozinho, não fecha (spec de heartbeats, §5).
--- Pausado fica como está: sem avaliação, como o alvo pausado sem sonda (D13).
+-- Pausado fica como está: sem avaliação, como o alvo pausado sem sonda.
 -- Agendamento desconhecido (sem período e sem cron) não tem prazo confiável, e o
 -- sucesso basta: o ping nessa linha nunca move o prazo.
 -- name: ClaimHeartbeatsToClose :many
@@ -179,7 +179,7 @@ UPDATE heartbeats
 -- name: DeleteHeartbeat :execrows
 DELETE FROM heartbeats WHERE user_id = $1 AND id = $2;
 
--- Limpar o log (SP1): só os eventos; last_*, prazo e incidentes ficam.
+-- Limpar o log: só os eventos; last_*, prazo e incidentes ficam.
 -- name: DeleteHeartbeatEvents :execrows
 DELETE FROM heartbeat_events e
  USING heartbeats h
@@ -210,7 +210,14 @@ RETURNING i.id, h.id AS heartbeat_id, h.name AS heartbeat_name, i.started_at, i.
 -- name: CountHeartbeatEvents :one
 SELECT count(*) FROM heartbeat_events;
 
--- Tags (paridade, PR 3). As leituras saem ordenadas pela tag, e a do dono serve
+-- Desliga o JIT só até o fim da transação (o SET LOCAL). Fora de uma transação
+-- explícita o efeito dura só esta instrução: quem chama abre o BEGIN antes e roda
+-- a consulta na mesma conexão. Nunca de sessão: o valor vazaria para o próximo
+-- uso da conexão no pool.
+-- name: SetLocalJitOff :exec
+SELECT set_config('jit', 'off', true);
+
+-- Tags. As leituras saem ordenadas pela tag, e a do dono serve
 -- a lista sem uma consulta por heartbeat, como as de targets.sql.
 -- name: ListHeartbeatTags :many
 SELECT ht.tag

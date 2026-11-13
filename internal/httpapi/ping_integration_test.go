@@ -172,7 +172,7 @@ func TestPingExitCodeWithUnknownTokenAnswersTheSame(t *testing.T) {
 	}
 }
 
-// A repetição do D9 vale pelo sinal: um retry do curl não duplica a linha, mesmo
+// A repetição vale pelo sinal: um retry do curl não duplica a linha, mesmo
 // que o número mude.
 func TestPingRepeatedExitCodeHasOneEffect(t *testing.T) {
 	a := newAPI(t)

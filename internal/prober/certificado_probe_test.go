@@ -187,7 +187,7 @@ func TestTLSHandshakeObservedOverHTTP2(t *testing.T) {
 	conferirValidade(t, res, intermediarioAte)
 }
 
-// T3: certificado não verificado não influencia aviso.
+// Certificado não verificado não influencia aviso.
 func TestUnverifiedCertificateRecordsNothing(t *testing.T) {
 	resolverDeTeste(t, "127.0.0.1")
 	srv, _ := servidorTLS(t, hostSonda, folhaAte, false, responder200)
@@ -202,7 +202,7 @@ func TestUnverifiedCertificateRecordsNothing(t *testing.T) {
 	conferirValidade(t, res, time.Time{})
 }
 
-// T3 ponta a ponta: um handshake que conclui sem verificar (InsecureSkipVerify,
+// Ponta a ponta: um handshake que conclui sem verificar (InsecureSkipVerify,
 // só neste teste) traz PeerCertificates e nenhuma VerifiedChains, e não pode
 // virar leitura. Sabotagem: cair em PeerCertificates quando VerifiedChains
 // vem vazio.
@@ -214,7 +214,7 @@ func TestPresentedButUnverifiedCertificateRecordsNothing(t *testing.T) {
 	if !ok {
 		t.Fatalf("transporte de produção = %T, queria *http.Transport", client.Transport)
 	}
-	transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} // #nosec G402 -- T3: handshake sem verificação, só no teste
+	transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} // #nosec G402 -- handshake sem verificação, só no teste
 	t.Cleanup(transport.CloseIdleConnections)
 
 	res := Probe(t.Context(), client, especificacao(urlDe(t, "https", hostSonda, srv)))
@@ -308,7 +308,7 @@ func TestDownByStatusStillReadsTheCertificate(t *testing.T) {
 	conferirValidade(t, res, intermediarioAte)
 }
 
-// Minor 6 da revisão de segurança do #246. Os certificados que o dono vai ver
+// Os certificados que o dono vai ver
 // no aviso (folha vencida, intermediário vencido com a folha válida e emitido
 // para outro nome) falham a verificação no handshake: a sonda sai down/tls e
 // não há leitura. Sabotagem: no coletor, guardar os UnverifiedCertificates do
@@ -407,7 +407,7 @@ func servidorTLSContado(t *testing.T, host string) (*httptest.Server, *x509.Cert
 	return srv, raiz, ouvinte
 }
 
-// Minor 5 da revisão de segurança do #246. A leitura do certificado vem do
+// A leitura do certificado vem do
 // handshake que o transporte do safedial já faz, e de nenhuma outra conexão:
 // um destino que a lista fixa bloqueia (aqui, o loopback não liberado) não
 // recebe conexão nem gera leitura, e um destino liberado recebe exatamente a

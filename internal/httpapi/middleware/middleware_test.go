@@ -192,7 +192,7 @@ func TestCORSOnlyEchoesTheConfiguredOrigin(t *testing.T) {
 	}
 	// A resposta também depende do header Origin nesse ramo: sem Vary aqui,
 	// um cache poderia servir a resposta desta requisição hostil (sem
-	// headers de CORS) para um cliente legítimo depois (R33).
+	// headers de CORS) para um cliente legítimo depois.
 	if got := rec.Header().Get("Vary"); got != "Origin" {
 		t.Errorf("Vary = %q, queria Origin (origem hostil)", got)
 	}

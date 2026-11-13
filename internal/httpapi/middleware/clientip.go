@@ -21,12 +21,11 @@ import (
 //
 // Header só serve atrás de um proxy que SUBSTITUI esse cabeçalho, como o do
 // Fly: um proxy genérico (o Caddy, por padrão) repassa o valor que o cliente
-// mandou, e aí qualquer um escolhe o próprio IP. Atrás do Caddy, vazio (B4 do
-// Plano 10).
+// mandou, e aí qualquer um escolhe o próprio IP. Atrás do Caddy, vazio.
 //
-// AvisarXFF liga o aviso de X-Forwarded-For vindo de fora de Trusted (B3 do
-// Plano 10). Em produção (PUBLIC_BASE_URL https) isso quase sempre é a lista
-// errada; em desenvolvimento seria ruído.
+// AvisarXFF liga o aviso de X-Forwarded-For vindo de fora de Trusted. Em
+// produção (PUBLIC_BASE_URL https) isso quase sempre é a lista errada; em
+// desenvolvimento seria ruído.
 type Proxies struct {
 	Trusted   []netip.Prefix
 	Header    string
@@ -48,11 +47,10 @@ func ClientIP(r *http.Request, p Proxies) string {
 	if err != nil {
 		direto = r.RemoteAddr
 	}
-	// O endereço da conexão sai na mesma forma que os dos cabeçalhos (Plano
-	// 8): sem isto, o mesmo cliente IPv4 numa pilha dupla chegava como
-	// "::ffff:1.2.3.4" e ganhava um ip_hash diferente do "1.2.3.4". O que não
-	// é IP (listener de unix socket, pipe de teste) continua como veio: não há
-	// outro valor para usar.
+	// O endereço da conexão sai na mesma forma que os dos cabeçalhos: sem isto, o
+	// mesmo cliente IPv4 numa pilha dupla chegava como "::ffff:1.2.3.4" e ganhava
+	// um ip_hash diferente do "1.2.3.4". O que não é IP (listener de unix socket,
+	// pipe de teste) continua como veio: não há outro valor para usar.
 	if n, ok := normalizar(direto); ok {
 		direto = n
 	}
@@ -60,7 +58,7 @@ func ClientIP(r *http.Request, p Proxies) string {
 		return peloCabecalho(r, p, direto)
 	}
 
-	// Todas as linhas, na ordem (B2 do Plano 10): um proxy que acrescenta uma
+	// Todas as linhas, na ordem: um proxy que acrescenta uma
 	// linha nova em vez de concatenar (o HAProxy com option forwardfor) deixa
 	// a linha do cliente em primeiro lugar, e o Get só devolveria essa.
 	linhas := r.Header.Values("X-Forwarded-For")

@@ -38,7 +38,7 @@ const (
 )
 
 // As duas chaves têm exatamente 32 bytes: auth.NewManager entra em panic com
-// menos que isso (R27), e aqui o Config é construído à mão, sem passar por
+// menos que isso, e aqui o Config é construído à mão, sem passar por
 // config.Load.
 var (
 	testJWTSecret = []byte("segredo-de-teste-com-32-bytes!!!")
@@ -66,13 +66,20 @@ type api struct {
 	// recuperacao guarda os códigos que o último cadastrarTOTP devolveu; eles
 	// só aparecem em claro uma vez, e mais de um teste precisa deles.
 	recuperacao []string
+	// fichaPorPedido faz o relógio andar uma ficha da conta a cada pedido de
+	// a.cliente() (ver apiComFichaPorPedido).
+	fichaPorPedido bool
 	// discord e email substituem os envios de verificação dos canais.
 	discord *discordFalso
 	email   *carteiroFalso
-	// rotacao é o rotation da última troca de autenticador que o
-	// iniciarTrocaHTTP viu aceita (A7 do Plano 10): o confirmarTrocaHTTP o
-	// manda de volta.
+	// rotacao é o rotation da última troca de autenticador que o iniciarTrocaHTTP
+	// viu aceita: o confirmarTrocaHTTP o manda de volta.
 	rotacao string
+	// ctx, cfg e deps são o que subiu o srv: reiniciar monta um servidor novo
+	// com eles sobre o mesmo banco.
+	ctx  context.Context
+	cfg  *config.Config
+	deps httpapi.Deps
 }
 
 // prazoDeTesteSobCarga substitui os 15 s de produção nos testes de
@@ -131,7 +138,7 @@ func newAPICom(t *testing.T, ajustar func(*config.Config), ajustarDeps func(*htt
 	}
 
 	// O contexto de vida do servidor: é ele que encerra a varredura de
-	// buckets do RateLimit quando o teste termina (R32).
+	// buckets do RateLimit quando o teste termina.
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 
@@ -148,6 +155,7 @@ func newAPICom(t *testing.T, ajustar func(*config.Config), ajustarDeps func(*htt
 	deps := httpapi.Deps{
 		Store: store, Sessions: mgr, TOTP: segundoFator,
 		Accounts:    account.NewService(pool, segundoFator, clk, cfg.IPHashKey),
+		Proofs:      auth.NewFamilyProofs(pool, clk),
 		Targets:     targets.NewService(pool, box, clk),
 		Incidents:   history.NewService(pool, clk),
 		Channels:    notify.NewChannelService(pool, box, clk, discord, email, cfg.PublicBaseURL),
@@ -161,7 +169,8 @@ func newAPICom(t *testing.T, ajustar func(*config.Config), ajustarDeps func(*htt
 	}
 	srv := httptest.NewServer(httpapi.Routes(ctx, cfg, deps))
 	t.Cleanup(srv.Close)
-	return &api{srv: srv, pool: pool, clk: clk, userID: userID, discord: discord, email: email}
+	return &api{srv: srv, pool: pool, clk: clk, userID: userID, discord: discord, email: email,
+		ctx: ctx, cfg: cfg, deps: deps}
 }
 
 func post(t *testing.T, c *http.Client, url string, body any) *http.Response {
@@ -363,8 +372,8 @@ func accessDe(t *testing.T, resp *http.Response) string {
 	return body.AccessToken
 }
 
-// O access token leva a família do refresh que saiu junto com ele (claim sid,
-// D2 do Plano 5), no login e em cada refresh. É o que GET /sessions usa para
+// O access token leva a família do refresh que saiu junto com ele (claim sid),
+// no login e em cada refresh. É o que GET /sessions usa para
 // marcar a sessão atual.
 func TestAccessTokenCarriesTheSessionFamily(t *testing.T) {
 	a := newAPI(t)
@@ -382,7 +391,7 @@ func TestAccessTokenCarriesTheSessionFamily(t *testing.T) {
 	}
 
 	var familia uuid.UUID
-	if err := a.pool.QueryRow(ctx,
+	if err := testdb.Admin(t).QueryRow(ctx,
 		`SELECT family_id FROM sessions WHERE user_id = $1`, a.userID).Scan(&familia); err != nil {
 		t.Fatal(err)
 	}
@@ -443,7 +452,7 @@ func TestLoginDoesNotRevealWhetherAccountExists(t *testing.T) {
 // de Argon2id, e essa diferença enumera as contas (spec §5.2).
 //
 // A trava conta verificações Argon2id (auth.Argon2Verifications), e não mede
-// relógio: a versão com tempo oscilava sob carga no CI (Task 11). A
+// relógio: a versão com tempo oscilava sob carga no CI. A
 // propriedade é a mesma — cada caminho de falha paga exatamente um Argon2id.
 func TestLoginSpendsTheSameCPUWhetherOrNotTheAccountExists(t *testing.T) {
 	a := newAPI(t)
@@ -512,7 +521,7 @@ func TestLockedAccountIsRejectedUntilTheLockExpires(t *testing.T) {
 	}
 }
 
-// O bloqueio não pode se anunciar (R34, spec §5.2).
+// O bloqueio não pode se anunciar.
 //
 // Se a conta bloqueada tivesse resposta própria, o VerifyDummy inteiro seria
 // anulado: bastaria ao atacante mandar seis senhas erradas por e-mail. Onde
@@ -549,7 +558,7 @@ func TestLockedAccountIsIndistinguishableFromUnknownAccount(t *testing.T) {
 // sessoesDoUsuario devolve quantas sessões existem e quantas estão revogadas.
 func sessoesDoUsuario(t *testing.T, a *api) (total, revogadas int) {
 	t.Helper()
-	err := a.pool.QueryRow(context.Background(),
+	err := testdb.Admin(t).QueryRow(context.Background(),
 		`SELECT count(*), count(revoked_at) FROM sessions WHERE user_id = $1`, a.userID).
 		Scan(&total, &revogadas)
 	if err != nil {
@@ -559,7 +568,7 @@ func sessoesDoUsuario(t *testing.T, a *api) (total, revogadas int) {
 }
 
 // Detecção de reúso percorrida pelo caminho que um atacante percorre: HTTP
-// inteiro, do cookie ao banco (R36, spec §5.2).
+// inteiro, do cookie ao banco.
 //
 // Um refresh já rotacionado que reaparece só tem uma explicação: cópia. Não
 // há como saber se quem chegou agora é o ladrão ou o dono, então a família
@@ -568,7 +577,7 @@ func sessoesDoUsuario(t *testing.T, a *api) (total, revogadas int) {
 // A asserção que importa é a do banco. Devolver 401 é fácil — o ramo de
 // ErrInvalidSession devolve o mesmo 401 e o mesmo cookie limpo, então a
 // resposta sozinha não distingue "recusou" de "revogou de verdade". Foi
-// exatamente essa distinção que escondeu o bug do Rotate na Task 6.
+// exatamente essa distinção que escondeu um bug antigo do Rotate.
 func TestReusedRefreshCookieRevokesTheWholeFamily(t *testing.T) {
 	a := newAPI(t)
 	c := clientWithJar(t)
@@ -849,11 +858,11 @@ func TestRefreshCookieIsSecureWhenPublicBaseURLIsUppercaseHTTPS(t *testing.T) {
 // envelope de erro sai com trace_id vazio — o erro visto pelo cliente deixa
 // de ser correlacionável com o log do servidor (spec §9.1).
 //
-// Os testes da Task 7 não pegam isso porque montam as cadeias à mão e sempre
-// põem RequestID na frente; a ordem real vive em routes.go. Por isso este
-// teste força erros em três profundidades diferentes da cadeia real, sendo a
-// mais externa o 429 do RateLimit — o primeiro middleware depois de
-// RequestID que responde sozinho.
+// Os testes unitários de middleware não pegam isso porque montam
+// as cadeias à mão e sempre põem RequestID na frente; a ordem real vive em
+// routes.go. Por isso este teste força erros em três profundidades diferentes
+// da cadeia real, sendo a mais externa o 429 do RateLimit — o primeiro
+// middleware depois de RequestID que responde sozinho.
 func TestEveryErrorEnvelopeCarriesTheTraceID(t *testing.T) {
 	a := newAPI(t)
 
@@ -907,8 +916,8 @@ func TestEveryErrorEnvelopeCarriesTheTraceID(t *testing.T) {
 	conferir("429 do RateLimit", limitado)
 }
 
-// TestSessionsBehindATrustedProxyRecordDistinctOrigins trava a metade do
-// item 21 que não é rate limit e é a que não tem volta.
+// TestSessionsBehindATrustedProxyRecordDistinctOrigins trava, do problema do IP
+// atrás do proxy, a metade que não é rate limit e é a que não tem volta.
 //
 // A §4.2 criou ip_hash para "correlacionar tentativas da mesma origem". Com
 // RemoteAddr cru atrás do proxy da plataforma, toda sessão do sistema grava
@@ -943,7 +952,7 @@ func TestSessionsBehindATrustedProxyRecordDistinctOrigins(t *testing.T) {
 	entrarComOrigem("203.0.113.42")
 
 	var distintos int
-	if err := a.pool.QueryRow(context.Background(),
+	if err := testdb.Admin(t).QueryRow(context.Background(),
 		`SELECT count(DISTINCT ip_hash) FROM sessions WHERE user_id = $1`, a.userID).
 		Scan(&distintos); err != nil {
 		t.Fatal(err)
@@ -955,7 +964,7 @@ func TestSessionsBehindATrustedProxyRecordDistinctOrigins(t *testing.T) {
 }
 
 // TestSessionsBehindFlyRecordDistinctOrigins é a mesma trava no formato do
-// Fly (D22 do Plano 7): o X-Forwarded-For termina no IP do app, igual para
+// Fly: o X-Forwarded-For termina no IP do app, igual para
 // todos, e o cliente vem em Fly-Client-IP. Passa pelo wiring inteiro:
 // config → Routes → AuthHandlers → ClientIP.
 func TestSessionsBehindFlyRecordDistinctOrigins(t *testing.T) {
@@ -989,7 +998,7 @@ func TestSessionsBehindFlyRecordDistinctOrigins(t *testing.T) {
 	entrarComOrigem("203.0.113.42")
 
 	var distintos int
-	if err := a.pool.QueryRow(context.Background(),
+	if err := testdb.Admin(t).QueryRow(context.Background(),
 		`SELECT count(DISTINCT ip_hash) FROM sessions WHERE user_id = $1`, a.userID).
 		Scan(&distintos); err != nil {
 		t.Fatal(err)
@@ -1000,7 +1009,7 @@ func TestSessionsBehindFlyRecordDistinctOrigins(t *testing.T) {
 	}
 }
 
-// TestPasswordChangeBehindFlyAuditsTheClient: as rotas da conta (Plano 5)
+// TestPasswordChangeBehindFlyAuditsTheClient: as rotas da conta
 // também gravam ip_hash, na auditoria. Cada grupo de handlers recebe os
 // proxies do Routes por um caminho próprio; o teste do login não trava este.
 func TestPasswordChangeBehindFlyAuditsTheClient(t *testing.T) {
@@ -1123,8 +1132,8 @@ func TestTheMiddlewareChainIsActuallyWired(t *testing.T) {
 	})
 }
 
-// TestPreflightIsRateLimitedButKeepsItsCORSHeaders cobre o item 24 e a
-// armadilha da correção óbvia.
+// TestPreflightIsRateLimitedButKeepsItsCORSHeaders cobre o preflight contado pelo
+// limitador e a armadilha da correção óbvia.
 //
 // O CORS envolvia o limitador e respondia 204 ao OPTIONS antes de ele rodar,
 // então preflights eram ilimitados. Mas simplesmente trocar as duas linhas
@@ -1132,7 +1141,7 @@ func TestTheMiddlewareChainIsActuallyWired(t *testing.T) {
 // só preflight — perderia Access-Control-Allow-Origin e Vary: Origin. O SPA
 // legítimo que batesse no limite veria um erro opaco de CORS e não
 // conseguiria nem LER o 429 para dizer "tente de novo"; e perder Vary: Origin
-// reabriria o buraco de cache que o R33 fechou.
+// reabriria o buraco de cache que o Vary: Origin do CORS fechou.
 //
 // Por isso o CORS ficou dividido: cabeçalhos por fora, atalho do OPTIONS por
 // dentro do limitador.
@@ -1173,11 +1182,11 @@ func TestPreflightIsRateLimitedButKeepsItsCORSHeaders(t *testing.T) {
 		t.Errorf("o 429 veio com ACAO %q: o SPA não consegue ler a própria recusa", got)
 	}
 	if got := limitado.Header.Get("Vary"); !strings.Contains(got, "Origin") {
-		t.Errorf("o 429 veio com Vary %q, queria conter Origin (R33)", got)
+		t.Errorf("o 429 veio com Vary %q, queria conter Origin mesmo na recusa", got)
 	}
 }
 
-// Item 26: a resposta que carrega credencial não deve ser guardada.
+// A resposta que carrega credencial não deve ser guardada (no-store).
 func TestResponsesAreNotCacheable(t *testing.T) {
 	a := newAPI(t)
 	c := clientWithJar(t)
@@ -1189,7 +1198,7 @@ func TestResponsesAreNotCacheable(t *testing.T) {
 	}
 }
 
-// Item 27: corpo acima do limite é 413, e não 400. A requisição já era
+// Corpo acima do limite é 413, e não 400. A requisição já era
 // barrada pelo MaxBytesReader; o que faltava era o cliente conseguir
 // distinguir "seus dados são inválidos" de "seu corpo é grande demais".
 func TestOversizedBodyIsAPayloadTooLarge(t *testing.T) {
@@ -1217,7 +1226,7 @@ func TestOversizedBodyIsAPayloadTooLarge(t *testing.T) {
 	}
 }
 
-// Item 28: o autocompletar do celular costuma acrescentar um espaço à
+// O autocompletar do celular costuma acrescentar um espaço à
 // direita do e-mail. citext cobre a caixa, não o espaço.
 func TestLoginToleratesSurroundingWhitespaceInTheEmail(t *testing.T) {
 	a := newAPI(t)

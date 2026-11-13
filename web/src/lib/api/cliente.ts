@@ -1,4 +1,5 @@
 import type { z } from 'zod'
+import { caminho } from './caminho'
 import { enviar, lerCorpo, lerErro, type Buscar, type Pedido } from './http'
 import {
   Alvo,
@@ -38,8 +39,8 @@ import type { Sessao } from './sessao'
 // Plano 5; e em /auth/totp/rotate e /auth/totp/rotate/confirm, spec do
 // Plano 9 §3.2), e repetir reenviaria o erro e contaria outra falha no
 // bloqueio progressivo.
-function podeRenovar(caminho: string, code: string) {
-  return code === 'unauthorized' && !caminho.startsWith('/auth/')
+function podeRenovar(rota: string, code: string) {
+  return code === 'unauthorized' && !rota.startsWith('/auth/')
 }
 
 export type EntradaAlvo = {
@@ -124,7 +125,11 @@ export type OpcoesDaApi = { prazoDoConfirmMs?: number }
 
 export function criarApi(sessao: Sessao, buscar: Buscar, o: OpcoesDaApi = {}) {
   const prazoDoConfirm = () => AbortSignal.timeout(o.prazoDoConfirmMs ?? PRAZO_DO_CONFIRM)
-  async function pedir<T>(p: Omit<Pedido, 'token'>, esquema: z.ZodType<T> | null): Promise<T> {
+  // Sem esquema não há corpo a devolver: as sobrecargas dizem isso no tipo, e o
+  // `undefined as T` que fingia um T qualquer deixa de existir.
+  function pedir(p: Omit<Pedido, 'token'>, esquema: null): Promise<void>
+  function pedir<T>(p: Omit<Pedido, 'token'>, esquema: z.ZodType<T>): Promise<T>
+  async function pedir<T>(p: Omit<Pedido, 'token'>, esquema: z.ZodType<T> | null): Promise<T | undefined> {
     const usado = sessao.token()
     let r = await enviar(buscar, { ...p, token: usado })
     if (r.status === 401) {
@@ -150,27 +155,29 @@ export function criarApi(sessao: Sessao, buscar: Buscar, o: OpcoesDaApi = {}) {
       }
     }
     if (!r.ok) throw await lerErro(r)
-    if (esquema === null || r.status === 204) return undefined as T
+    if (esquema === null) return undefined
+    // Com esquema, um 204 ou um corpo vazio não é um T: o lerCorpo falha com o
+    // ApiError 'unexpected' de sempre, em vez de devolver undefined com tipo T.
     return lerCorpo(r, esquema)
   }
 
-  const get = <T>(caminho: string, esquema: z.ZodType<T>) => pedir({ metodo: 'GET', caminho }, esquema)
+  const get = <T>(rota: string, esquema: z.ZodType<T>) => pedir({ metodo: 'GET', caminho: rota }, esquema)
 
   return {
     me: () => get('/me', Me),
 
     resumo: (filtro: FiltroDoResumo = { tags: [], estados: [] }) => get(`/targets/summary${consultaDoResumo(filtro)}`, Resumo),
     alvos: () => get('/targets?limit=100', ListaDeAlvos),
-    alvo: (id: string) => get(`/targets/${encodeURIComponent(id)}`, Alvo),
+    alvo: (id: string) => get(caminho`/targets/${id}`, Alvo),
     criarAlvo: (e: EntradaAlvo) => pedir({ metodo: 'POST', caminho: '/targets', corpo: e }, Alvo),
     alterarAlvo: (id: string, a: AlteracaoAlvo) =>
-      pedir({ metodo: 'PATCH', caminho: `/targets/${encodeURIComponent(id)}`, corpo: a }, Alvo),
-    apagarAlvo: (id: string) => pedir({ metodo: 'DELETE', caminho: `/targets/${encodeURIComponent(id)}` }, null),
+      pedir({ metodo: 'PATCH', caminho: caminho`/targets/${id}`, corpo: a }, Alvo),
+    apagarAlvo: (id: string) => pedir({ metodo: 'DELETE', caminho: caminho`/targets/${id}` }, null),
     // Só a janela, pelo nome (B6 do Plano 10): o servidor calcula from = to −
     // janela com o relógio dele. O from calculado aqui dependia do relógio
     // do navegador, e o to sempre foi o do servidor.
     serie: (id: string, janela: string) =>
-      get(`/targets/${encodeURIComponent(id)}/checks${consulta({ window: janela })}`, Serie),
+      get(caminho`/targets/${id}/checks` + consulta({ window: janela }), Serie),
 
     incidentes: (f: FiltroIncidentes) =>
       get(
@@ -178,51 +185,51 @@ export function criarApi(sessao: Sessao, buscar: Buscar, o: OpcoesDaApi = {}) {
         ListaDeIncidentes,
       ),
     reconhecer: (id: string) =>
-      pedir({ metodo: 'POST', caminho: `/incidents/${encodeURIComponent(id)}/ack` }, Incidente),
+      pedir({ metodo: 'POST', caminho: caminho`/incidents/${id}/ack` }, Incidente),
 
     // Uma página de 100 é tudo: é o teto por usuário (spec da tela, T7).
     heartbeats: () => get('/heartbeats?limit=100', ListaDeHeartbeats),
-    heartbeat: (id: string) => get(`/heartbeats/${encodeURIComponent(id)}`, Heartbeat),
+    heartbeat: (id: string) => get(caminho`/heartbeats/${id}`, Heartbeat),
     previaDoCron: (expr: string, timezone: string) => get(`/heartbeats/cron-preview${consulta({ expr, timezone })}`, PreviaDoCron),
     criarHeartbeat: (e: EntradaHeartbeat) => pedir({ metodo: 'POST', caminho: '/heartbeats', corpo: e }, HeartbeatComPing),
     alterarHeartbeat: (id: string, a: AlteracaoHeartbeat) =>
-      pedir({ metodo: 'PATCH', caminho: `/heartbeats/${encodeURIComponent(id)}`, corpo: a }, Heartbeat),
-    apagarHeartbeat: (id: string) => pedir({ metodo: 'DELETE', caminho: `/heartbeats/${encodeURIComponent(id)}` }, null),
+      pedir({ metodo: 'PATCH', caminho: caminho`/heartbeats/${id}`, corpo: a }, Heartbeat),
+    apagarHeartbeat: (id: string) => pedir({ metodo: 'DELETE', caminho: caminho`/heartbeats/${id}` }, null),
     rotacionarHeartbeat: (id: string) =>
-      pedir({ metodo: 'POST', caminho: `/heartbeats/${encodeURIComponent(id)}/token/rotate` }, HeartbeatComPing),
+      pedir({ metodo: 'POST', caminho: caminho`/heartbeats/${id}/token/rotate` }, HeartbeatComPing),
     duplicarHeartbeat: (id: string) =>
-      pedir({ metodo: 'POST', caminho: `/heartbeats/${encodeURIComponent(id)}/clone` }, HeartbeatComPing),
+      pedir({ metodo: 'POST', caminho: caminho`/heartbeats/${id}/clone` }, HeartbeatComPing),
     limparEventosDoHeartbeat: (id: string) =>
-      pedir({ metodo: 'POST', caminho: `/heartbeats/${encodeURIComponent(id)}/events/clear` }, null),
+      pedir({ metodo: 'POST', caminho: caminho`/heartbeats/${id}/events/clear` }, null),
     // Um sucesso pelo painel; a resposta é o heartbeat já atualizado.
     sinalizarAgora: (id: string) =>
-      pedir({ metodo: 'POST', caminho: `/heartbeats/${encodeURIComponent(id)}/ping-now` }, Heartbeat),
+      pedir({ metodo: 'POST', caminho: caminho`/heartbeats/${id}/ping-now` }, Heartbeat),
     eventosDoHeartbeat: (id: string, cursor?: string) =>
-      get(`/heartbeats/${encodeURIComponent(id)}/events${consulta({ cursor, limit: LIMITE_DO_LOG })}`, ListaDeEventos),
+      get(caminho`/heartbeats/${id}/events` + consulta({ cursor, limit: LIMITE_DO_LOG }), ListaDeEventos),
     incidentesDoHeartbeat: (id: string, cursor?: string) =>
-      get(`/heartbeats/${encodeURIComponent(id)}/incidents${consulta({ cursor, limit: LIMITE_DO_LOG })}`, ListaDeIncidentesDeHeartbeat),
+      get(caminho`/heartbeats/${id}/incidents` + consulta({ cursor, limit: LIMITE_DO_LOG }), ListaDeIncidentesDeHeartbeat),
     reconhecerDoHeartbeat: (id: string, incidente: string) =>
       pedir(
-        { metodo: 'POST', caminho: `/heartbeats/${encodeURIComponent(id)}/incidents/${encodeURIComponent(incidente)}/ack` },
+        { metodo: 'POST', caminho: caminho`/heartbeats/${id}/incidents/${incidente}/ack` },
         IncidenteDeHeartbeat,
       ),
     canais: () => get('/channels', ListaDeCanais),
     criarCanal: (e: EntradaCanal) => pedir({ metodo: 'POST', caminho: '/channels', corpo: e }, Canal),
-    apagarCanal: (id: string) => pedir({ metodo: 'DELETE', caminho: `/channels/${encodeURIComponent(id)}` }, null),
+    apagarCanal: (id: string) => pedir({ metodo: 'DELETE', caminho: caminho`/channels/${id}` }, null),
     reenviarVerificacao: (id: string) =>
-      pedir({ metodo: 'POST', caminho: `/channels/${encodeURIComponent(id)}/verify/resend` }, null),
+      pedir({ metodo: 'POST', caminho: caminho`/channels/${id}/verify/resend` }, null),
     // Spec do Plano 9 §3.3: pausar (enabled false) e retomar (true) pelo
     // mesmo PATCH; a resposta é o canal no formato da lista.
     pausarCanal: (id: string, enabled: boolean) =>
-      pedir({ metodo: 'PATCH', caminho: `/channels/${encodeURIComponent(id)}`, corpo: { enabled } }, Canal),
+      pedir({ metodo: 'PATCH', caminho: caminho`/channels/${id}`, corpo: { enabled } }, Canal),
 
     paginas: () => get('/status-pages', ListaDePaginas),
     criarPagina: (e: EntradaPagina) => pedir({ metodo: 'POST', caminho: '/status-pages', corpo: e }, PaginaDeStatus),
     alterarPagina: (id: string, e: Partial<EntradaPagina>) =>
-      pedir({ metodo: 'PATCH', caminho: `/status-pages/${encodeURIComponent(id)}`, corpo: e }, PaginaDeStatus),
+      pedir({ metodo: 'PATCH', caminho: caminho`/status-pages/${id}`, corpo: e }, PaginaDeStatus),
 
     sessoes: () => get('/sessions', ListaDeSessoes),
-    encerrarSessao: (id: string) => pedir({ metodo: 'DELETE', caminho: `/sessions/${encodeURIComponent(id)}` }, null),
+    encerrarSessao: (id: string) => pedir({ metodo: 'DELETE', caminho: caminho`/sessions/${id}` }, null),
     trocarSenha: (t: TrocaDeSenha) => pedir({ metodo: 'POST', caminho: '/auth/password', corpo: t }, null),
 
     totpCadastrar: (senha: string) =>

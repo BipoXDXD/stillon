@@ -9,7 +9,7 @@ import (
 	"github.com/BipoXDXD/stillon/internal/auth"
 )
 
-// A marca d'água do desafio de 2FA (Plano 8): o primeiro desafio consome, o
+// A marca d'água do desafio de 2FA: o primeiro desafio consome, o
 // mesmo não consome de novo, um mais antigo nunca, e um mais novo sim.
 func TestConsumeChallengeAdvancesTheMarkOnlyForward(t *testing.T) {
 	_, pool, _, userID := setup(t)

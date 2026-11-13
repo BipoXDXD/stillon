@@ -204,7 +204,7 @@ func TestDiscardedProbeDoesNotTouchTargetTLS(t *testing.T) {
 	}
 }
 
-// Minor 6 da revisão de segurança do #246. Com o certificado já vencido (ou
+// Com o certificado já vencido (ou
 // trocado por um inválido), a sonda sai down/tls sem leitura: o check entra
 // no histórico, e a linha guardada fica intacta, com o not_after anterior,
 // que o painel mostra como "venceu em". A validade guardada (1º de setembro)
@@ -250,7 +250,7 @@ func TestTLSFailureKeepsTheStoredCertificate(t *testing.T) {
 	}
 }
 
-// Minor 4 da revisão de segurança do #246. O PATCH troca a URL para outro host
+// O PATCH troca a URL para outro host
 // com uma sonda da URL velha em voo: o PATCH apaga a leitura do host antigo, e
 // a sonda velha, que termina depois, não pode recriá-la para o alvo.
 // Sabotagens: tirar a comparação de URL de conferirSonda faz a sonda velha

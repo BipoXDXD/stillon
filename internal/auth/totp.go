@@ -23,10 +23,10 @@ import (
 var (
 	ErrTOTPInvalid     = errors.New("código de segundo fator inválido")
 	ErrTOTPNotEnrolled = errors.New("segundo fator não cadastrado")
-	// ErrTOTPAlreadyEnabled fecha o bypass do R38: ver Enroll.
+	// ErrTOTPAlreadyEnabled fecha o bypass do recadastro com o fator já ativo: ver Enroll.
 	ErrTOTPAlreadyEnabled = errors.New("segundo fator já está ativo")
 	// ErrTOTPNoRotation: não há troca de autenticador em andamento (nenhum
-	// segredo pendente), ou o 2FA foi desligado no meio (Plano 9, §3.2).
+	// segredo pendente), ou o 2FA foi desligado no meio.
 	ErrTOTPNoRotation = errors.New("nenhuma troca de autenticador em andamento")
 )
 
@@ -54,12 +54,27 @@ func NewTOTP(pool *pgxpool.Pool, box *crypto.Box, issuer string) *TOTP {
 	return &TOTP{pool: pool, box: box, issuer: issuer}
 }
 
+// beginUserTx abre a transação já no escopo da RLS do usuário (migration
+// 00029): os códigos de recuperação e as sessões que ela tocar são só os dele.
+// Quem chama faz o Rollback adiado, como num Begin comum.
+func (s *TOTP) beginUserTx(ctx context.Context, userID uuid.UUID) (pgx.Tx, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := db.New(tx).ScopeToUser(ctx, userID); err != nil {
+		_ = tx.Rollback(ctx) // o erro que importa é o do escopo
+		return nil, fmt.Errorf("definir escopo do usuário: %w", err)
+	}
+	return tx, nil
+}
+
 // Enroll gera um segredo novo e o grava cifrado, ainda não confirmado.
 //
 // Gravar sem ativar é deliberado: se o usuário fechar a tela no meio do
 // cadastro, a conta continua acessível com senha apenas.
 //
-// Com um fator JÁ confirmado, Enroll recusa (R38). A versão anterior zerava o
+// Com um fator JÁ confirmado, Enroll recusa. A versão anterior zerava o
 // totp_confirmed_at, e isso era um bypass completo do segundo fator: quem
 // tivesse um access token — o caso que importa é o token ROUBADO — desligava o
 // 2FA numa requisição, sem provar posse de nada, e o login seguinte voltava a
@@ -67,7 +82,7 @@ func NewTOTP(pool *pgxpool.Pool, box *crypto.Box, issuer string) *TOTP {
 // exatamente o que o segundo fator existe para impedir.
 //
 // Trocar de autenticador depois de ativado tem caminho próprio, com prova de
-// posse do fator atual: StartRotation e ConfirmRotation (Plano 9, §3.2). Não
+// posse do fator atual: StartRotation e ConfirmRotation. Não
 // "conserte" o Enroll zerando a coluna.
 func (s *TOTP) Enroll(ctx context.Context, userID uuid.UUID, email string) (string, error) {
 	key, err := s.novaChave(email)
@@ -109,7 +124,7 @@ func (s *TOTP) Enroll(ctx context.Context, userID uuid.UUID, email string) (stri
 // mostrados uma única vez: o banco guarda apenas o hash.
 //
 // Com o fator já ligado, recusa com ErrTOTPAlreadyEnabled ANTES de conferir o
-// código (C1 da revisão do Plano 10). Conferido antes, o código certo dava
+// código. Conferido antes, o código certo dava
 // ErrTOTPAlreadyEnabled e o errado ErrTOTPInvalid: um oráculo do código do
 // segredo ATIVO, sem consumir o timestep, que quem tinha só a sessão
 // consultava e depois usava no disable ou no rotate.
@@ -131,14 +146,14 @@ func (s *TOTP) Confirm(ctx context.Context, userID uuid.UUID, code string, now t
 		return nil, err
 	}
 
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.beginUserTx(ctx, userID)
 	if err != nil {
 		return nil, fmt.Errorf("abrir transação: %w", err)
 	}
 	defer tx.Rollback(ctx) // no-op depois de Commit
 
-	// A guarda `totp_confirmed_at IS NULL` é a simetria que faltava ao R38,
-	// que a pôs no Enroll e esqueceu do Confirm. Sem ela, um segundo Confirm
+	// A guarda `totp_confirmed_at IS NULL` é a simetria que faltava ao Confirm:
+	// o Enroll já recusava fator ativo, e ele esqueceu. Sem ela, um segundo Confirm
 	// rotacionava os dez códigos de recuperação em silêncio, gravava outro
 	// totp.enabled e REESCREVIA a data de ativação — apagando a evidência que
 	// uma investigação de sequestro precisaria. Na WHERE, e não num SELECT
@@ -148,10 +163,9 @@ func (s *TOTP) Confirm(ctx context.Context, userID uuid.UUID, code string, now t
 	// O timestep da confirmação já entra consumido: o código usado para
 	// ativar não pode servir de novo para entrar.
 	//
-	// E o segredo tem de ser o mesmo que validou o código (Task 11 do Plano
-	// 5): a troca de senha e o set-password apagam o segredo pendente, e uma
-	// confirmação que o leu antes ligaria o 2FA sem segredo nenhum — o dono
-	// nunca mais entraria.
+	// E o segredo tem de ser o mesmo que validou o código: a troca de senha e o
+	// set-password apagam o segredo pendente, e uma confirmação que o leu antes
+	// ligaria o 2FA sem segredo nenhum — o dono nunca mais entraria.
 	tag, err := tx.Exec(ctx,
 		`UPDATE users SET totp_confirmed_at = $2, totp_last_timestep = $3
 		   WHERE id = $1 AND totp_confirmed_at IS NULL AND totp_secret_enc = $4`,
@@ -175,7 +189,7 @@ func (s *TOTP) Confirm(ctx context.Context, userID uuid.UUID, code string, now t
 	}
 
 	// Ativar um segundo fator é evento de segurança, e vai na mesma transação
-	// para que não exista ativação sem rastro (R39).
+	// para que não exista ativação sem rastro.
 	if err := insertAudit(ctx, tx, userID, "totp.enabled", nil, now); err != nil {
 		return nil, err
 	}
@@ -186,11 +200,11 @@ func (s *TOTP) Confirm(ctx context.Context, userID uuid.UUID, code string, now t
 	return codes, nil
 }
 
-// SecondFactorProof é o que um VerifyWithProof aceito prova: o segredo ativo
-// como estava cifrado no banco quando o código foi aceito. O login a entrega a
-// Manager.IssueAfterSecondFactor, que a reconfere sob a trava do usuário (A4 do
-// Plano 10): uma troca de autenticador ou um disable que comite entre o código
-// e a sessão faz a sessão ser recusada.
+// SecondFactorProof é o que um VerifyWithProof aceito prova: o segredo ativo como
+// estava cifrado no banco quando o código foi aceito. O login a entrega a
+// Manager.IssueAfterSecondFactor, que a reconfere sob a trava do usuário: uma
+// troca de autenticador ou um disable que comite entre o código e a sessão faz a
+// sessão ser recusada.
 type SecondFactorProof struct{ sealed []byte }
 
 // Verify aceita tanto um código do app quanto um código de recuperação. O de
@@ -218,10 +232,10 @@ func (s *TOTP) VerifyWithProof(ctx context.Context, userID uuid.UUID, code strin
 
 	// O consumo e o registro de auditoria vão na mesma transação: uso de
 	// código de recuperação é sinal forte de perda de dispositivo OU de
-	// comprometimento, e é a única pista que o dono da conta teria (R39). A
+	// comprometimento, e é a única pista que o dono da conta teria. A
 	// transação impede as duas metades soltas — código consumido sem rastro,
 	// ou rastro de um consumo que não aconteceu.
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.beginUserTx(ctx, userID)
 	if err != nil {
 		return SecondFactorProof{}, fmt.Errorf("abrir transação: %w", err)
 	}
@@ -258,7 +272,7 @@ func consumirRecuperacao(ctx context.Context, tx pgx.Tx, userID uuid.UUID, code 
 }
 
 // normalizarRecuperacao põe o código de recuperação digitado no formato em
-// que ele foi gerado (A8 do Plano 10): base32 maiúsculo, sem separador. Sai
+// que ele foi gerado: base32 maiúsculo, sem separador. Sai
 // todo espaço e todo hífen, e a caixa sobe. O dono digita em minúsculas no
 // celular, ou o teclado capitaliza só a primeira letra, ou copia com espaço:
 // antes o hash não casava, a resposta era 401 e a falha contava — justamente
@@ -275,26 +289,26 @@ func normalizarRecuperacao(code string) string {
 
 // Disable desliga o segundo fator e apaga tudo que o sustentava.
 //
-// Existe porque o R38 fechou o único caminho de volta: recusar o recadastro
-// impediu o bypass, mas deixou sem saída quem perdeu o telefone — e, pior,
+// Existe porque o Enroll fechou o único caminho de volta ao recusar o recadastro:
+// isso impediu o bypass, mas deixou sem saída quem perdeu o telefone — e, pior,
 // quem teve o fator LIGADO por um atacante com sessão roubada. A diferença
-// entre esta rota e o bypass que o R38 fechou é a prova exigida: aqui é
+// entre esta rota e o bypass que a recusa do Enroll fechou é a prova exigida: aqui é
 // preciso posse do fator, e o chamador ainda exige a senha antes.
 //
 // Um código de recuperação serve no lugar do código do app, que é o caso que
 // motiva a rota existir.
 //
-// Tudo numa transação, na ordem global de travas (A5 do Plano 10): a trava de
+// Tudo numa transação, na ordem global de travas: a trava de
 // sessões do usuário, a linha de users (FOR NO KEY UPDATE), os códigos de
 // recuperação, a auditoria. Antes, o código de recuperação era apagado ANTES
 // de a linha de users ser travada, e um rotate/confirm ou um reset-2fa, que
 // fazem o contrário, fechavam um ciclo com ele (deadlock). E a prova é
 // conferida dentro da transação, sob a trava da linha: o código do app tem de
-// ser de um timestep ainda não usado (A4) — antes só era validado, e o código
+// ser de um timestep ainda não usado — antes só era validado, e o código
 // usado no login desligava o 2FA na mesma janela de 90 s. (Gravar o timestep
 // aqui não mudaria nada: o segredo cai na mesma transação.)
 func (s *TOTP) Disable(ctx context.Context, userID uuid.UUID, code string, now time.Time) error {
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.beginUserTx(ctx, userID)
 	if err != nil {
 		return fmt.Errorf("abrir transação: %w", err)
 	}
@@ -314,7 +328,7 @@ func (s *TOTP) Disable(ctx context.Context, userID uuid.UUID, code string, now t
 		return err
 	}
 
-	// O segredo pendente de uma troca (Plano 9, §3.2) cai junto: sem isto, o
+	// O segredo pendente de uma troca cai junto: sem isto, o
 	// QR de uma troca abandonada ainda confirmaria depois que o 2FA fosse
 	// ligado de novo com outro app.
 	if _, err := tx.Exec(ctx,
@@ -332,7 +346,7 @@ func (s *TOTP) Disable(ctx context.Context, userID uuid.UUID, code string, now t
 	}
 
 	// Desligar o segundo fator é exatamente o que um sequestro tentaria: o
-	// evento é a pista que o dono da conta teria (mesma razão do R39).
+	// evento é a pista que o dono da conta teria (mesma razão da auditoria de totp.enabled).
 	if err := insertAudit(ctx, tx, userID, "totp.disabled", nil, now); err != nil {
 		return err
 	}
@@ -343,7 +357,7 @@ func (s *TOTP) Disable(ctx context.Context, userID uuid.UUID, code string, now t
 }
 
 // fatorTravado é o estado do segundo fator lido com a linha de users travada
-// (FOR NO KEY UPDATE, A5 do Plano 10), na transação de quem chama, depois da
+// (FOR NO KEY UPDATE), na transação de quem chama, depois da
 // trava de sessões. FOR NO KEY UPDATE, e não FOR UPDATE: o INSERT em audit_log
 // toma KEY SHARE na linha de users (a chave estrangeira), e FOR UPDATE o faria
 // esperar. Sob esta trava, conferir e consumir a prova não têm janela entre
@@ -403,12 +417,12 @@ func (f fatorTravado) provar(ctx context.Context, tx pgx.Tx, userID uuid.UUID, c
 // consumirTimestep marca o período como usado e recusa se ele já foi.
 //
 // A condição vai na cláusula WHERE, e não num SELECT anterior, pelo mesmo
-// motivo do R38: entre ler e escrever cabe outra verificação com o mesmo
+// motivo da recusa do Enroll: entre ler e escrever cabe outra verificação com o mesmo
 // código, e é exatamente essa corrida que o reúso explora. Recusar `<=` e não
 // só `=` fecha também o código do período ANTERIOR depois que um posterior
 // entrou.
 //
-// E o segredo tem de ser o mesmo que validou o código (A4 do Plano 10): uma
+// E o segredo tem de ser o mesmo que validou o código: uma
 // troca de autenticador que comitou entre a leitura do segredo e aqui faria o
 // código do app ANTIGO ser aceito depois da troca. É o compare-and-swap que o
 // Confirm já fazia.
@@ -489,8 +503,8 @@ func validateTOTP(code, secret string, now time.Time) (int64, bool) {
 }
 
 // aadAtivo e aadPendente amarram cada selo à tabela, à coluna e ao usuário:
-// um valor não abre na linha de outro usuário, nem na outra coluna (Plano 9,
-// §3.2). Por isso a confirmação da troca decifra o pendente e cifra de novo
+// um valor não abre na linha de outro usuário, nem na outra coluna.
+// Por isso a confirmação da troca decifra o pendente e cifra de novo
 // com aadAtivo, em vez de copiar os bytes.
 func aadAtivo(userID uuid.UUID) []byte {
 	return crypto.AAD("users", "totp_secret_enc", userID)

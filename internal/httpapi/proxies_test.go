@@ -6,7 +6,7 @@ import (
 	"github.com/BipoXDXD/stillon/internal/config"
 )
 
-// B3 (Plano 10): o aviso de X-Forwarded-For fora de TRUSTED_PROXIES só liga
+// O aviso de X-Forwarded-For fora de TRUSTED_PROXIES só liga
 // em produção (PUBLIC_BASE_URL https). Em desenvolvimento seria ruído: o
 // compose e o Vite não têm proxy na lista.
 func TestProxiesWarnAboutForwardedForOnlyOverHTTPS(t *testing.T) {

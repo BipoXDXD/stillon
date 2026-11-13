@@ -147,7 +147,7 @@ func TestConsolidationCatchesUpAfterAGap(t *testing.T) {
 	}
 }
 
-// D4 (Plano 10, §3.4; banco C2 da revisão): o host sobe com o relógio
+// O host sobe com o relógio
 // adiantado (RTC errado antes do NTP), e a manutenção grava um rollup no
 // futuro. Quando o relógio volta ao certo, a marca d'água ficava à frente de
 // "agora" e a consolidação não fazia nada até o tempo real a alcançar. A
@@ -176,7 +176,7 @@ func TestConsolidationSurvivesAWatermarkInTheFuture(t *testing.T) {
 	}
 }
 
-// M1 da revisão do Plano 10 (banco-docs): com um rollup no futuro, a marca
+// Com um rollup no futuro, a marca
 // d'água limitada a "agora" escondia a última marca real, e uma parada de
 // mais de 2 h (app fora, manutenção falhando) perdia para sempre as horas
 // antes dela. A marca é a última hora consolidada ANTES de "agora" (max(bucket)
@@ -316,7 +316,7 @@ func TestRetentionRemovesOnlyWhatExpired(t *testing.T) {
 		}
 	}
 	for _, dias := range []int{-8, -6} {
-		if _, err := pool.Exec(ctx, `INSERT INTO sessions (id, user_id, family_id, token_hash, expires_at)
+		if _, err := testdb.Admin(t).Exec(ctx, `INSERT INTO sessions (id, user_id, family_id, token_hash, expires_at)
 			VALUES ($1, $2, $3, $4, $5)`, novoID(), dono, novoID(), novoID().String(), hoje.AddDate(0, 0, dias)); err != nil {
 			t.Fatal(err)
 		}
@@ -449,7 +449,7 @@ func TestPartitionDropGivesUpWhenChecksIsBusy(t *testing.T) {
 	defer cancel()
 	inicio := time.Now()
 	// Pelo caminho do job (Maintain): o relatório do que os DELETEs fizeram
-	// sobe junto com o erro, para ir ao log (achado da segunda revisão).
+	// sobe junto com o erro, para ir ao log.
 	r, err := storage.Maintain(prazo, pool, hoje)
 	if codigoPG(err) != "55P03" || time.Since(inicio) > 10*time.Second {
 		t.Errorf("com checks ocupada, Maintain deu %v em %v; queria 55P03 (lock_timeout) em segundos", err, time.Since(inicio))

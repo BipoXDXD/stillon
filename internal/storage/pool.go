@@ -8,7 +8,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// Prazos do lado do servidor, em toda conexão do pool (C2 da revisão; SQL 13).
+// Prazos do lado do servidor, em toda conexão do pool.
 // O cancelamento pelo contexto depende de o cliente alcançar o banco; estes
 // valem mesmo quando ele não alcança.
 const (
@@ -26,12 +26,26 @@ const (
 	idleInTransactionTimeout = time.Minute
 )
 
-// NewPool constrói o pool de conexões da aplicação.
+// defaultApplicationName marca as conexões do pool quando o chamador não dá
+// nome ao processo: é o que o pg_stat_activity mostra, e com ele o operador
+// separa as conexões do StillOn das de outros projetos do mesmo Postgres.
+const defaultApplicationName = "stillon"
+
+// NewPool constrói o pool de conexões da aplicação, com o application_name
+// padrão ("stillon").
 //
 // MaxConnLifetime existe para que conexões sejam recicladas periodicamente:
 // sem isso, uma conexão pode ficar pendurada em um backend de Postgres que o
 // provedor vai derrubar, e o erro aparece como falha intermitente.
 func NewPool(ctx context.Context, dsn string) (*pgxpool.Pool, error) {
+	return NewPoolNamed(ctx, dsn, defaultApplicationName)
+}
+
+// NewPoolNamed é o NewPool com o application_name escolhido pelo chamador, para
+// que cada papel do processo (API, sondador) apareça com o seu nome no
+// pg_stat_activity. O application_name que já vier no DSN (ou em PGAPPNAME)
+// sempre vence: quem opera o banco decide.
+func NewPoolNamed(ctx context.Context, dsn, applicationName string) (*pgxpool.Pool, error) {
 	cfg, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
 		return nil, fmt.Errorf("DSN inválido: %w", err)
@@ -41,6 +55,9 @@ func NewPool(ctx context.Context, dsn string) (*pgxpool.Pool, error) {
 	cfg.MaxConnLifetime = time.Hour
 	cfg.MaxConnIdleTime = 15 * time.Minute
 	cfg.HealthCheckPeriod = time.Minute
+	if _, doDSN := cfg.ConnConfig.RuntimeParams["application_name"]; !doDSN {
+		cfg.ConnConfig.RuntimeParams["application_name"] = applicationName
+	}
 	cfg.ConnConfig.RuntimeParams["statement_timeout"] = milissegundos(statementTimeout)
 	cfg.ConnConfig.RuntimeParams["idle_in_transaction_session_timeout"] = milissegundos(idleInTransactionTimeout)
 

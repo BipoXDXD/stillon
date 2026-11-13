@@ -167,7 +167,7 @@ func TestTickProbesDueTargetAndRecordsCheck(t *testing.T) {
 	if c.Status != "up" || c.StatusCode == nil || *c.StatusCode != 200 || c.ErrorKind != nil {
 		t.Errorf("check = %+v", c)
 	}
-	// D11: checked_at vem do relógio injetado.
+	// checked_at vem do relógio injetado.
 	if !c.CheckedAt.Equal(b.clk.Now()) {
 		t.Errorf("checked_at = %v, queria o relógio injetado %v", c.CheckedAt, b.clk.Now())
 	}
@@ -463,7 +463,7 @@ func capturarLog(t *testing.T) *logSeguro {
 	return l
 }
 
-// Review Focus 3. O dono apaga o alvo com a sonda em voo. Nada quebra,
+// O dono apaga o alvo com a sonda em voo. Nada quebra,
 // nenhum erro vai ao log, e a série de latência do alvo some.
 func TestVanishedTargetIsDiscardedQuietly(t *testing.T) {
 	log := capturarLog(t)
@@ -496,12 +496,12 @@ func TestVanishedTargetIsDiscardedQuietly(t *testing.T) {
 		t.Errorf("alvo apagado virou erro no log:\n%s", log)
 	}
 	if n := testutil.CollectAndCount(b.m.duration); n != 0 {
-		t.Errorf("%d séries de latência sobraram para um alvo apagado (D9)", n)
+		t.Errorf("%d séries de latência sobraram para um alvo apagado", n)
 	}
 }
 
-// Review Focus 4. SIGTERM com sonda em voo: ela é abortada ao fim do prazo
-// e NÃO vira um down no histórico (D12).
+// SIGTERM com sonda em voo: ela é abortada ao fim do prazo
+// e NÃO vira um down no histórico.
 func TestShutdownDiscardsAbortedProbes(t *testing.T) {
 	chegou := make(chan struct{})
 	srv, client := servidorLiberado(t, func(w http.ResponseWriter, r *http.Request) {
@@ -525,7 +525,7 @@ func TestShutdownDiscardsAbortedProbes(t *testing.T) {
 	}
 }
 
-// O outro lado de D12: a sonda que termina DENTRO do prazo é gravada.
+// O outro lado: a sonda que termina DENTRO do prazo é gravada.
 func TestShutdownWaitsForProbesThatFinishInTime(t *testing.T) {
 	chegou, liberar := make(chan struct{}), make(chan struct{})
 	srv, client := servidorLiberado(t, func(w http.ResponseWriter, r *http.Request) {
@@ -881,7 +881,7 @@ func TestCheckWithoutResponseHasNoStatusCode(t *testing.T) {
 	}
 }
 
-// I1 da spec do PR 5. O corpo da resposta e o valor da regra são texto de
+// O corpo da resposta e o valor da regra são texto de
 // terceiros e do dono: nenhum dos dois sai da sonda. Depois de três falhas
 // por content_mismatch, com incidente aberto e aviso enfileirado, nenhum
 // canário aparece no banco do sondador (checks, incidents, notifications), no

@@ -213,7 +213,7 @@ func TestSummaryUptimeSeesAnOngoingOutage(t *testing.T) {
 
 // Um rollup gravado no futuro (relógio adiantado) não vira a marca d'água:
 // com ele, o corte ia para a hora corrente e as horas fechadas ainda não
-// consolidadas sumiam do spark e do uptime (C8 da revisão).
+// consolidadas sumiam do spark e do uptime.
 //
 // Relógio em 12:20; rollups às 09:00 (60 de 60) e às 13:00 (futuro). O
 // check das 11:30 foi down: o spark tem 09:00 e 11:00, e o uptime é 60/61.
@@ -353,7 +353,7 @@ func TestSummaryIsolation(t *testing.T) {
 }
 
 // Os buckets são horas cheias em UTC mesmo com a sessão do banco num fuso de
-// meia hora: date_trunc em timestamptz usaria o fuso da sessão (D5 do Plano 4).
+// meia hora: date_trunc em timestamptz usaria o fuso da sessão.
 func TestSummaryBucketsAreUTCHoursInAnyTimeZone(t *testing.T) {
 	a := novoAmbiente(t)
 	a.clk.Advance(time.Date(2026, 9, 22, 12, 20, 0, 0, time.UTC).Sub(a.clk.Now()))
@@ -382,5 +382,71 @@ func TestSummaryBucketsAreUTCHoursInAnyTimeZone(t *testing.T) {
 	}
 	if len(itens) != 1 || len(itens[0].Spark) != 1 || !itens[0].Spark[0].Bucket.Equal(h.Add(-time.Hour)) {
 		t.Fatalf("spark = %+v; queria uma hora, 11:00 UTC", itens)
+	}
+}
+
+// Borda do corte, lado dos rollups: com um rollup gravado na própria hora
+// corrente (relógio adiantado ou consolidação precoce), o corte fica em H (a
+// marca d'água ou o limite de rollupcut.At o levam até lá) e o intervalo dos
+// rollups é [início, H), exclusivo no fim. O rollup das 12:00 fica de fora do
+// spark: a hora corrente só entra, por contagem, pelos checks.
+//
+// Relógio em 12:20; rollups às 11:00 (60 de 60) e às 12:00 (10 de 10, que não
+// pode entrar); check bruto das 11:59:59.999 numa hora já consolidada, o das
+// 12:00:00 exato, que é da hora corrente (down), e o das 13:00:00 exato, que
+// é da próxima hora e fica fora da contagem da corrente (fim exclusivo).
+func TestSummaryCutEdgeIgnoresARollupAtTheCurrentHour(t *testing.T) {
+	a := novoAmbiente(t)
+	a.clk.Advance(time.Date(2026, 9, 22, 12, 20, 0, 0, time.UTC).Sub(a.clk.Now()))
+	h := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
+	dono := a.usuario(t)
+	alvo := a.alvo(t, dono)
+
+	a.gravarRollup(t, alvo, h.Add(-time.Hour), 60, 60, ptr(int32(100)))
+	a.gravarRollup(t, alvo, h, 10, 10, ptr(int32(100)))
+	a.gravarCheck(t, alvo, h.Add(-time.Millisecond), "down", 5000)
+	a.gravarCheck(t, alvo, h, "down", 5000)
+	a.gravarCheck(t, alvo, h.Add(time.Hour), "down", 5000)
+
+	s := resumoDe(t, a, dono)[alvo]
+	if len(s.Spark) != 1 || !s.Spark[0].Bucket.Equal(h.Add(-time.Hour)) || s.Spark[0].Total != 60 || s.Spark[0].OK != 60 {
+		t.Fatalf("spark = %+v; queria só o rollup das 11:00 (60/60)", s.Spark)
+	}
+	if want := 60.0 / 61.0; s.Uptime24h == nil || *s.Uptime24h != want {
+		t.Errorf("uptime_24h = %v, queria %v (60 do rollup + 1 down da hora corrente)", s.Uptime24h, want)
+	}
+}
+
+// Borda do corte, lado dos brutos: o corte é a hora seguinte à marca d'água e
+// vale como [corte, H) nos brutos e [início, corte) nos rollups. Um check às
+// 10:59:59.999 é da hora consolidada e não conta de novo; um check às 11:00:00
+// exato é a primeira hora bruta, e não some.
+//
+// Relógio em 12:20; rollup só às 10:00 (60 de 60), corte às 11:00.
+func TestSummaryCutEdgeSplitsRollupsAndRawAtTheExactInstant(t *testing.T) {
+	a := novoAmbiente(t)
+	a.clk.Advance(time.Date(2026, 9, 22, 12, 20, 0, 0, time.UTC).Sub(a.clk.Now()))
+	h := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
+	dono := a.usuario(t)
+	alvo := a.alvo(t, dono)
+
+	a.gravarRollup(t, alvo, h.Add(-2*time.Hour), 60, 60, ptr(int32(100)))
+	a.gravarCheck(t, alvo, h.Add(-time.Hour-time.Millisecond), "down", 5000) // 10:59:59.999
+	a.gravarCheck(t, alvo, h.Add(-time.Hour), "up", 70)                      // 11:00:00
+	a.gravarCheck(t, alvo, h.Add(-time.Millisecond), "down", 5000)           // 11:59:59.999
+
+	s := resumoDe(t, a, dono)[alvo]
+	if len(s.Spark) != 2 {
+		t.Fatalf("spark com %d horas (%+v), queria 2", len(s.Spark), s.Spark)
+	}
+	dez, onze := s.Spark[0], s.Spark[1]
+	if !dez.Bucket.Equal(h.Add(-2*time.Hour)) || dez.Total != 60 || dez.OK != 60 {
+		t.Errorf("10:00 = %+v; queria o rollup (60/60), sem o check das 10:59:59.999", dez)
+	}
+	if !onze.Bucket.Equal(h.Add(-time.Hour)) || onze.Total != 2 || onze.OK != 1 {
+		t.Errorf("11:00 = %+v; queria 2 checks (11:00:00 up e 11:59:59.999 down)", onze)
+	}
+	if want := 61.0 / 62.0; s.Uptime24h == nil || *s.Uptime24h != want {
+		t.Errorf("uptime_24h = %v, queria %v", s.Uptime24h, want)
 	}
 }

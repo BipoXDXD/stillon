@@ -1,7 +1,7 @@
 import { useEffect, useRef, type ReactNode } from 'react'
 
 // A primeira tela da carga da página não recebe o foco: o primeiro Tab é o
-// "Pular para o conteúdo" (spec do Plano 6 §4.9). Toda tela seguinte — uma
+// "Pular para o conteúdo". Toda tela seguinte — uma
 // navegação dentro do painel — recebe (§3.7). Um valor do módulo: uma carga
 // de página, uma primeira tela.
 let primeiraTela = true
@@ -13,7 +13,7 @@ export function esquecerAPrimeiraTela() {
 
 // O <h1> de cada tela. Ao montar, muda o título da aba e, depois de uma
 // navegação, recebe o foco: o React Router troca a tela sem recarregar, e
-// sem isso o leitor de tela não percebe a navegação (spec do Plano 6 §3.7).
+// sem isso o leitor de tela não percebe a navegação.
 // Dois efeitos: o título da aba acompanha `aba`; o foco é da montagem, e uma
 // `aba` que muda depois (a mesma tela com outro nome) não o rouba.
 // descritoPor: o id de um texto que o leitor de tela lê junto com o título

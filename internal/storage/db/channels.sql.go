@@ -136,7 +136,7 @@ type GetChannelViewRow struct {
 }
 
 // Um canal no formato da listagem (ListChannels), para a resposta do PATCH
-// /channels/{id} (Plano 9, §3.3).
+// /channels/{id}.
 func (q *Queries) GetChannelView(ctx context.Context, arg GetChannelViewParams) (GetChannelViewRow, error) {
 	row := q.db.QueryRow(ctx, getChannelView, arg.UserID, arg.ID)
 	var i GetChannelViewRow
@@ -184,6 +184,37 @@ func (q *Queries) InsertChannel(ctx context.Context, arg InsertChannelParams) er
 		arg.CreatedAt,
 	)
 	return err
+}
+
+const latestChannelSeals = `-- name: LatestChannelSeals :many
+SELECT id, config_enc FROM notif_channels ORDER BY created_at DESC, id DESC LIMIT $1
+`
+
+type LatestChannelSealsRow struct {
+	ID        uuid.UUID
+	ConfigEnc []byte
+}
+
+// Conferência da MASTER_KEY na subida (notify.CheckMasterKey), sob
+// InProberTx: os selos mais recentes de qualquer dono, só para tentar abrir.
+func (q *Queries) LatestChannelSeals(ctx context.Context, limit int32) ([]LatestChannelSealsRow, error) {
+	rows, err := q.db.Query(ctx, latestChannelSeals, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []LatestChannelSealsRow
+	for rows.Next() {
+		var i LatestChannelSealsRow
+		if err := rows.Scan(&i.ID, &i.ConfigEnc); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listChannels = `-- name: ListChannels :many
@@ -249,7 +280,7 @@ SELECT id FROM users WHERE id = $1 FOR UPDATE
 // user_id; as duas do fim rodam sob InVerifyTx.
 // Serializa as criações de canal do mesmo usuário, para que o limite de
 // canais valha também contra duas requisições simultâneas. users não tem
-// RLS (D7 do Plano 2).
+// RLS.
 func (q *Queries) LockUser(ctx context.Context, id uuid.UUID) error {
 	_, err := q.db.Exec(ctx, lockUser, id)
 	return err
@@ -294,7 +325,7 @@ type SetChannelEnabledParams struct {
 	ID      uuid.UUID
 }
 
-// Pausar e retomar (Plano 9, §3.3). O despacho lê enabled na hora do envio
+// Pausar e retomar. O despacho lê enabled na hora do envio
 // (semEnvio): pausado, o aviso é cancelado, e retomar não o reenvia. Gravar o
 // valor que já está afeta a linha do mesmo jeito: a rota é idempotente.
 func (q *Queries) SetChannelEnabled(ctx context.Context, arg SetChannelEnabledParams) (int64, error) {

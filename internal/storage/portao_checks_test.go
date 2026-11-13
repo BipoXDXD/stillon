@@ -2,7 +2,7 @@
 
 package storage_test
 
-// Portão de lock da Task 1 do PR 5 da SP1: mede o que a troca do CHECK de
+// Portão de lock: mede o que a troca do CHECK de
 // checks.error_kind (para aceitar 'content_mismatch') custa ao sondador com um
 // volume de produção, nas duas formas possíveis da migration, e confere que a
 // forma NOT VALID é aceita pelo Postgres em tabela particionada.
@@ -292,7 +292,7 @@ func gravarComoSondador(pool *pgxpool.Pool, alvo uuid.UUID) (time.Duration, erro
 	return time.Since(inicio), err
 }
 
-// trocarRestricao é o trecho da migration da Task 3, numa conexão do papel da
+// trocarRestricao é o trecho da migration, numa conexão do papel da
 // aplicação sem o statement_timeout do pool, como o goose roda no boot.
 func trocarRestricao(t *testing.T, notValid bool) error {
 	t.Helper()

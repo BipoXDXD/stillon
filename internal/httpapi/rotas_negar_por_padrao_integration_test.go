@@ -12,7 +12,6 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 )
@@ -94,11 +93,13 @@ func TestEveryProtectedRouteRejectsForgedToken(t *testing.T) {
 	}
 }
 
-// esperarVagaNoLimite devolve um token ao limite por IP da API (120/min). A
-// enumeração sai toda do mesmo IP, e com o relógio parado passaria da rajada
-// de 30 assim que a API tivesse mais rotas que isso: o 429 esconderia o 401
-// que o teste quer ver.
-func esperarVagaNoLimite(a *api) { a.clk.Advance(time.Second) }
+// esperarVagaNoLimite devolve um token aos limites por IP da API: o global
+// (120/min, rajada de 30) e o do login (10/min, rajada de 5). A enumeração sai
+// toda do mesmo IP, e com o relógio parado passaria da rajada: o 429 esconderia
+// o 401 que o teste quer ver. Uma ficha do mais lento (umaFichaPorIP) basta para
+// os dois. As rotas autenticadas têm o balde por conta, que vem depois de authn:
+// com token forjado, nunca é gasto.
+func esperarVagaNoLimite(a *api) { esperarFichaDoIP(a) }
 
 // Toda mutação registrada da API, pública ou não (refresh e logout usam o
 // cookie, que é o que um CSRF aproveitaria), exige o X-Requested-With. Só o

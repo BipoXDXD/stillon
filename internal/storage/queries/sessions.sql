@@ -1,13 +1,15 @@
--- Sessões (spec §5.2). sessions não tem RLS (D7 do Plano 2): login e refresh
--- a consultam por e-mail e por hash, antes de existir usuário na transação.
--- Toda query daqui que parte de um usuário filtra por user_id.
+-- Sessões (spec §5.2). RLS forçada desde a 00029: o refresh e o logout
+-- descobrem o dono pelo hash no escopo app.session_token_hash (só leitura), e
+-- tudo o mais roda no escopo do usuário (ScopeToUser antes de LockUserSessions,
+-- ou storage.InUserTx). Toda query daqui que parte de um usuário filtra também
+-- por user_id: o WHERE e a RLS são duas barreiras.
 
 -- O dono de um refresh, lido SEM trava: serve só para saber qual trava de
--- usuário pegar antes de travar a linha (D1 do Plano 5).
+-- usuário pegar antes de travar a linha.
 -- name: SessionUserByHash :one
 SELECT user_id FROM sessions WHERE token_hash = $1;
 
--- Serializa as mutações de sessão de um usuário (D1 do Plano 5). É de
+-- Serializa as mutações de sessão de um usuário. É de
 -- TRANSAÇÃO: sai sozinha no commit ou no rollback. Toda transação que mexe em
 -- linhas de sessions a pega ANTES de qualquer trava de linha, e é isso que
 -- impede o ciclo (deadlock) entre rotação e revogação.
@@ -16,7 +18,7 @@ SELECT pg_advisory_xact_lock(hashtextextended('stillon.sessions:' || sqlc.arg(us
 
 -- As revogações por usuário (set-password, troca de senha, DELETE
 -- /sessions/{id}) marcam só a linha VIVA de cada família: não usada e não
--- vencida (Task 11 do Plano 5). É ela que Rotate aceita; uma linha já
+-- vencida. É ela que Rotate aceita; uma linha já
 -- rotacionada apresentada de novo é reúso, que Rotate confere ANTES da
 -- revogação, com ou sem revoked_at. Marcar também as linhas mortas não
 -- protegia nada e disputava as mesmas linhas, em outra ordem, com a
@@ -47,12 +49,15 @@ UPDATE sessions SET revoked_at = sqlc.arg(now)::timestamptz
    AND used_at IS NULL AND revoked_at IS NULL AND expires_at > sqlc.arg(now)::timestamptz;
 
 -- GET /sessions: a linha corrente de cada família viva do usuário. O
--- created_at dela é o do último refresh (cada rotação insere uma linha).
+-- created_at dela é o do último refresh (cada rotação insere uma linha). A
+-- ordem (família, linha mais nova, id) é total: ListSessions fica com a
+-- primeira linha de cada família, e um empate de created_at não pode ser sorteio.
 -- name: ListLiveFamilies :many
 SELECT family_id, created_at, coalesce(user_agent, '')::text AS user_agent
   FROM sessions
  WHERE user_id = sqlc.arg(user_id) AND used_at IS NULL AND revoked_at IS NULL
-   AND expires_at > sqlc.arg(now)::timestamptz;
+   AND expires_at > sqlc.arg(now)::timestamptz
+ ORDER BY family_id, created_at DESC, id DESC;
 
 -- DELETE /sessions/{id}: a linha viva da família, e só se ela for deste
 -- usuário.

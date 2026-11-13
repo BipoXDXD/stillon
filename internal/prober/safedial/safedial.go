@@ -22,7 +22,7 @@ var (
 	ErrBlocked    = errors.New("endereço bloqueado")
 	ErrInvalidURL = errors.New("URL inválida")
 	// ErrRedirect é o redirecionamento recusado: saltos demais ou um
-	// Location que não é http(s) sem credenciais (C3 do Plano 10). Não
+	// Location que não é http(s) sem credenciais. Não
 	// envolve ErrBlocked nem ErrInvalidURL de propósito: é configuração do
 	// site, e não a proteção de rede agindo. O IP interno num salto continua
 	// ErrBlocked, no dial.
@@ -68,15 +68,15 @@ var blockedPrefixes = []netip.Prefix{
 	// Unmap() não reconhece.
 	netip.MustParsePrefix("::ffff:0:0:0/96"),
 	// NAT64 (RFC 6052, RFC 8215): o tradutor da rede entrega o IPv4 embutido
-	// nos 32 bits finais. 64:ff9b::7f00:1 é 127.0.0.1 visto através dele (R22).
+	// nos 32 bits finais. 64:ff9b::7f00:1 é 127.0.0.1 visto através dele.
 	netip.MustParsePrefix("64:ff9b::/96"),
 	netip.MustParsePrefix("64:ff9b:1::/48"),
 	// 6to4 (RFC 3056, obsoleto pela RFC 7526): 2002:AABB:CCDD::/48 embute o
-	// IPv4 AA.BB.CC.DD, e um relay o alcança — inclusive se for privado (R22).
+	// IPv4 AA.BB.CC.DD, e um relay o alcança — inclusive se for privado.
 	// Bloquear a /16 inteira, em vez de decodificar o IPv4 embutido, é a
 	// escolha fail-closed: nenhum alvo legítimo de hoje vive em 6to4.
 	netip.MustParsePrefix("2002::/16"),
-	// Teredo (RFC 4380): 2001:0000::/32 embute servidor e cliente IPv4 (R22).
+	// Teredo (RFC 4380): 2001:0000::/32 embute servidor e cliente IPv4.
 	// É uma /32 só: 2001:4860::, do Google, é público e não pode cair aqui.
 	netip.MustParsePrefix("2001::/32"),
 	netip.MustParsePrefix("2001:db8::/32"), // documentação IPv6
@@ -89,7 +89,7 @@ func AllowIP(ip netip.Addr) error {
 		return fmt.Errorf("%w: endereço inválido", ErrBlocked)
 	}
 
-	// A zona vem ANTES do Unmap, e a ordem importa (R23). netip.Prefix.Contains
+	// A zona vem ANTES do Unmap, e a ordem importa. netip.Prefix.Contains
 	// devolve false para qualquer endereço com zona, então sem esta recusa
 	// ::1%lo atravessaria a lista inteira. E Unmap() DESCARTA a zona de um
 	// endereço mapeado: ::ffff:8.8.8.8%eth0 viraria 8.8.8.8 limpo e passaria

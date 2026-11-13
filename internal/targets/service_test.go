@@ -150,7 +150,7 @@ func TestAnotherUsersTargetIsNotFound(t *testing.T) {
 	}
 }
 
-// D13: mudar o que é sondado reagenda para agora; mudar o nome, não.
+// Mudar o que é sondado reagenda para agora; mudar o nome, não.
 func TestUpdateReschedulesOnlyWhenTheProbeChanges(t *testing.T) {
 	a := novoAmbiente(t)
 	ctx := context.Background()
@@ -315,7 +315,7 @@ func TestListPaginatesByCursorNewestFirst(t *testing.T) {
 	}
 }
 
-// D6: até 48h a série é bruta; acima, horária (rollups); acima de
+// Até 48h a série é bruta; acima, horária (rollups); acima de
 // MaxRollupWindow, 400. As bordas são exatas dos dois lados.
 func TestChecksWindowPicksTheResolution(t *testing.T) {
 	a := novoAmbiente(t)
@@ -347,7 +347,7 @@ func TestChecksWindowPicksTheResolution(t *testing.T) {
 	}
 }
 
-// D6: a série horária vem de check_rollup_1h, só do alvo pedido, e inclui a
+// A série horária vem de check_rollup_1h, só do alvo pedido, e inclui a
 // hora que contém from (arredondado para baixo) e exclui a que começa em to.
 func TestChecksReadsHourlyRollupsAboveTheRawWindow(t *testing.T) {
 	a := novoAmbiente(t)
@@ -416,7 +416,7 @@ func (a ambiente) headersGravados(t *testing.T, id uuid.UUID) map[string]string 
 	return h
 }
 
-// B1 (Plano 10): um PATCH que troca a origem da URL (esquema, host ou porta)
+// Um PATCH que troca a origem da URL (esquema, host ou porta)
 // sem mandar headers apaga os headers. Sem isso, quem tivesse um access token
 // do dono (uma sessão roubada, ou encerrada há menos de 15 min) apontava o
 // alvo para um host dele e recebia o Authorization do dono no próximo check,
@@ -515,7 +515,7 @@ func (a ambiente) lerSaude(t *testing.T, id uuid.UUID) histerese {
 	return h
 }
 
-// C4 (Plano 10): trocar a URL ou o método troca o serviço sondado, e as
+// Trocar a URL ou o método troca o serviço sondado, e as
 // falhas do anterior não podem somar com as do novo: a primeira falha
 // passageira da URL nova abriria um incidente com o started_at da antiga. A
 // histerese volta a "sem dados" (contadores zerados, sem início de
@@ -560,7 +560,7 @@ func TestUpdateOfURLOrMethodResetsTheHysteresis(t *testing.T) {
 	}
 }
 
-// A troca de URL não resolve o incidente aberto (decisão do Plano 10): ele
+// A troca de URL não resolve o incidente aberto: ele
 // fecha pelos sucessos da URL nova, que é o caso comum (o dono corrigiu uma
 // URL errada), e o aviso "voltou" sai quando o novo endereço provar que está
 // no ar, não no PATCH. Os outros alvos do mesmo dono não são tocados.

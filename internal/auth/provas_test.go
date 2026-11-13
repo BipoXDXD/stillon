@@ -1,60 +1,183 @@
 package auth_test
 
 import (
+	"context"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/BipoXDXD/stillon/internal/auth"
 	"github.com/BipoXDXD/stillon/internal/clock"
+	"github.com/BipoXDXD/stillon/internal/storage"
+	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 )
 
-// A3 (Plano 10, §3.1): as rotas autenticadas contam as provas erradas por
-// família de sessão, em memória. A reserva vem ANTES da verificação (A2): a
-// quinta falha derruba a família, e dali em diante toda reserva nasce
-// esgotada, sem verificar nada.
+// As rotas autenticadas contam as provas erradas por família de sessão, no
+// Postgres. A reserva vem ANTES da verificação: a quinta falha derruba a
+// família, e dali em diante toda reserva nasce esgotada, sem verificar nada.
+
+// bancadaDeProvas é um contador sobre um Postgres real, com o relógio fake.
+type bancadaDeProvas struct {
+	pool   *pgxpool.Pool
+	clk    *clock.Fake
+	provas *auth.FamilyProofs
+}
+
+func novaBancadaDeProvas(t *testing.T) *bancadaDeProvas {
+	t.Helper()
+	pool := testdb.New(t)
+	clk := clock.NewFake(time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC))
+	return &bancadaDeProvas{pool: pool, clk: clk, provas: auth.NewFamilyProofs(pool, clk)}
+}
+
+// familia cria um usuário com uma família de sessão viva e devolve os dois ids.
+func (b *bancadaDeProvas) familia(t *testing.T) (usuario, familia uuid.UUID) {
+	t.Helper()
+	usuario, familia = uuid.New(), uuid.New()
+	if _, err := b.pool.Exec(context.Background(),
+		`INSERT INTO users (id, email, password_hash) VALUES ($1, $2, 'x')`,
+		usuario, usuario.String()+"@exemplo.com"); err != nil {
+		t.Fatal(err)
+	}
+	b.sessaoDe(t, usuario, familia)
+	return usuario, familia
+}
+
+func (b *bancadaDeProvas) sessaoDe(t *testing.T, usuario, familia uuid.UUID) {
+	t.Helper()
+	if _, err := testdb.Admin(t).Exec(context.Background(),
+		`INSERT INTO sessions (id, user_id, family_id, token_hash, expires_at) VALUES ($1, $2, $3, $4, $5)`,
+		uuid.New(), usuario, familia, uuid.NewString(), b.clk.Now().Add(30*24*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func (b *bancadaDeProvas) revogar(t *testing.T, familia uuid.UUID) {
+	t.Helper()
+	if _, err := testdb.Admin(t).Exec(context.Background(),
+		`UPDATE sessions SET revoked_at = $2 WHERE family_id = $1`, familia, b.clk.Now()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// retencao roda a retenção periódica no relógio da bancada.
+func (b *bancadaDeProvas) retencao(t *testing.T) {
+	t.Helper()
+	if _, err := storage.ApplyRetention(context.Background(), b.pool, b.clk.Now()); err != nil {
+		t.Fatalf("retenção: %v", err)
+	}
+}
+
+func (b *bancadaDeProvas) tamanho(t *testing.T) int64 {
+	t.Helper()
+	n, err := b.provas.Len(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
+func (b *bancadaDeProvas) reservar(t *testing.T, usuario, familia uuid.UUID) *auth.ProofReservation {
+	t.Helper()
+	return reservarCom(t, b.provas, usuario, familia)
+}
+
+func reservarCom(t *testing.T, provas *auth.FamilyProofs, usuario, familia uuid.UUID) *auth.ProofReservation {
+	t.Helper()
+	r, err := provas.Reserve(context.Background(), usuario, familia)
+	if err != nil {
+		t.Fatalf("reservar: %v", err)
+	}
+	return r
+}
+
+// falhar é Fail com o erro de banco como falha do teste.
+func falhar(t *testing.T, r *auth.ProofReservation) bool {
+	t.Helper()
+	derrubar, err := r.Fail()
+	if err != nil {
+		t.Fatalf("Fail: %v", err)
+	}
+	return derrubar
+}
+
 func TestFamilyProofsDropTheFamilyAtTheLimit(t *testing.T) {
-	provas := auth.NewFamilyProofs(clock.NewFake(time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)))
-	familia := uuid.New()
+	b := novaBancadaDeProvas(t)
+	usuario, familia := b.familia(t)
 
 	for i := 1; i < auth.FamilyProofLimit; i++ {
-		r := provas.Reserve(familia)
+		r := b.reservar(t, usuario, familia)
 		if r.Exhausted() {
 			t.Fatalf("reserva %d nasceu esgotada", i)
 		}
-		if r.Fail() {
+		if falhar(t, r) {
 			t.Fatalf("a falha %d derrubou a família (limite %d)", i, auth.FamilyProofLimit)
 		}
 		r.Release() // depois de Fail, Release não devolve nada
 	}
-	r := provas.Reserve(familia)
+	r := b.reservar(t, usuario, familia)
 	if r.Exhausted() {
 		t.Fatal("a quinta reserva nasceu esgotada")
 	}
-	if !r.Fail() {
+	if !falhar(t, r) {
 		t.Fatalf("a falha %d não derrubou a família", auth.FamilyProofLimit)
 	}
 	r.Release()
-	if !provas.Reserve(familia).Exhausted() {
+	if !b.reservar(t, usuario, familia).Exhausted() {
+		t.Error("depois da quinta falha, a reserva seguinte não nasceu esgotada")
+	}
+}
+
+// O contador sobrevive à recriação do serviço: quatro falhas contadas por uma
+// instância valem para a instância nova sobre o mesmo banco, e a quinta derruba.
+// É o que a memória do processo não fazia (#324).
+func TestFamilyProofsSurviveRecreatingTheService(t *testing.T) {
+	b := novaBancadaDeProvas(t)
+	usuario, familia := b.familia(t)
+	for i := 1; i < auth.FamilyProofLimit; i++ {
+		if falhar(t, b.reservar(t, usuario, familia)) {
+			t.Fatalf("a falha %d derrubou a família", i)
+		}
+	}
+
+	reiniciado := auth.NewFamilyProofs(b.pool, b.clk)
+
+	r := reservarCom(t, reiniciado, usuario, familia)
+	if r.Exhausted() {
+		t.Fatal("a reserva depois do restart nasceu esgotada: a quinta ainda cabe")
+	}
+	if !falhar(t, r) {
+		t.Error("a quinta falha, depois do restart, não derrubou a família: o contador não sobreviveu")
+	}
+	if !reservarCom(t, reiniciado, usuario, familia).Exhausted() {
 		t.Error("depois da quinta falha, a reserva seguinte não nasceu esgotada")
 	}
 }
 
 // Reservas simultâneas contam todas: com 12 em voo, só as 5 primeiras
-// verificam; as outras nascem esgotadas.
+// verificam; as outras nascem esgotadas. O incremento é atômico no banco, e
+// instâncias diferentes do contador dividem o mesmo orçamento.
 func TestFamilyProofsCountConcurrentReservations(t *testing.T) {
-	provas := auth.NewFamilyProofs(clock.NewFake(time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)))
-	familia := uuid.New()
+	b := novaBancadaDeProvas(t)
+	usuario, familia := b.familia(t)
+	instancias := []*auth.FamilyProofs{b.provas, auth.NewFamilyProofs(b.pool, b.clk)}
 
 	var mu sync.Mutex
 	validas := 0
 	var wg sync.WaitGroup
 	reservas := make(chan *auth.ProofReservation, 12)
-	for range 12 {
+	for i := range 12 {
 		wg.Go(func() {
-			r := provas.Reserve(familia)
+			r, err := instancias[i%len(instancias)].Reserve(context.Background(), usuario, familia)
+			if err != nil {
+				t.Error(err)
+				return
+			}
 			if !r.Exhausted() {
 				mu.Lock()
 				validas++
@@ -76,71 +199,78 @@ func TestFamilyProofsCountConcurrentReservations(t *testing.T) {
 // Release devolve a reserva de quem não chegou a errar prova (um 403, um 500,
 // a sessão caída); Succeed zera a família; e cada família tem a sua conta.
 func TestFamilyProofsReleaseSucceedAndIsolation(t *testing.T) {
-	provas := auth.NewFamilyProofs(clock.NewFake(time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)))
-	a, b := uuid.New(), uuid.New()
+	b := novaBancadaDeProvas(t)
+	ua, a := b.familia(t)
+	ub, fb := b.familia(t)
 
 	for range 10 {
-		provas.Reserve(a).Release()
+		b.reservar(t, ua, a).Release()
 	}
 	for i := 1; i < auth.FamilyProofLimit; i++ {
-		if provas.Reserve(a).Fail() {
+		if falhar(t, b.reservar(t, ua, a)) {
 			t.Fatalf("a falha %d derrubou a família: as reservas devolvidas continuaram contando", i)
 		}
 	}
-	if provas.Reserve(b).Fail() {
+	if falhar(t, b.reservar(t, ub, fb)) {
 		t.Error("as falhas da família A derrubaram a família B")
 	}
-	r := provas.Reserve(a)
+	r := b.reservar(t, ua, a)
 	r.Succeed()
 	r.Release()
 	for i := 1; i < auth.FamilyProofLimit; i++ {
-		if provas.Reserve(a).Fail() {
+		if falhar(t, b.reservar(t, ua, a)) {
 			t.Fatalf("depois do sucesso, a falha %d já derrubou a família: Succeed não zerou", i)
 		}
 	}
 }
 
-// A conta de uma família parada há mais de um dia é esquecida: o mapa não
-// cresce para sempre com famílias que ninguém usa mais. A família esgotada
-// também é esquecida — ela já foi derrubada no banco, e o token dela não passa
-// da guarda da sessão viva.
-func TestFamilyProofsForgetIdleFamilies(t *testing.T) {
-	clk := clock.NewFake(time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC))
-	provas := auth.NewFamilyProofs(clk)
-	parada, outra := uuid.New(), uuid.New()
+// Família viva nunca perde o contador por inatividade: a vida dela já é limitada
+// pelo prazo do refresh, e só o sucesso o zera. Parada por mais de um dia (e
+// com a retenção rodando), a quinta prova errada ainda derruba a família.
+func TestFamilyProofsOfALiveFamilyNeverExpireByInactivity(t *testing.T) {
+	b := novaBancadaDeProvas(t)
+	usuario, familia := b.familia(t)
 	for i := 1; i < auth.FamilyProofLimit; i++ {
-		provas.Reserve(parada).Fail()
+		falhar(t, b.reservar(t, usuario, familia))
 	}
-	provas.Reserve(outra).Fail()
-	clk.Advance(25 * time.Hour)
-	if provas.Reserve(parada).Fail() {
-		t.Error("a conta de uma família parada há 25 h continuou valendo")
+
+	b.clk.Advance(25 * time.Hour)
+	b.retencao(t)
+	b.clk.Advance(5 * 24 * time.Hour)
+	b.retencao(t)
+
+	if n := b.tamanho(t); n != 1 {
+		t.Fatalf("%d linhas depois da retenção, queria 1: a da família viva ficou", n)
 	}
-	if n := provas.Len(); n != 1 {
-		t.Errorf("%d famílias no mapa, queria 1: a outra, parada, não foi varrida", n)
+	r := b.reservar(t, usuario, familia)
+	if r.Exhausted() {
+		t.Fatal("a reserva da família viva parada nasceu esgotada: a quinta ainda cabe")
+	}
+	if !falhar(t, r) {
+		t.Error("a quinta prova errada, depois de dias parada, não derrubou a família: a inatividade zerou o contador")
 	}
 }
 
 // Sabotagem: decidir pela posição da reserva (n), em vez dos erros reais.
 func TestFamilyProofsDoNotCountReleasedReservationsAsFailures(t *testing.T) {
-	provas := auth.NewFamilyProofs(clock.NewFake(time.Date(2026, 10, 4, 12, 0, 0, 0, time.UTC)))
-	familia := uuid.New()
+	b := novaBancadaDeProvas(t)
+	usuario, familia := b.familia(t)
 	reservas := make([]*auth.ProofReservation, auth.FamilyProofLimit)
 	for i := range reservas {
-		reservas[i] = provas.Reserve(familia)
+		reservas[i] = b.reservar(t, usuario, familia)
 	}
 	for _, reserva := range reservas[:len(reservas)-1] {
 		reserva.Release()
 	}
-	if reservas[len(reservas)-1].Fail() {
+	if falhar(t, reservas[len(reservas)-1]) {
 		t.Error("a única prova errada derrubou a família depois de devolver as outras reservas")
 	}
 	for erros := 2; erros < auth.FamilyProofLimit; erros++ {
-		if provas.Reserve(familia).Fail() {
+		if falhar(t, b.reservar(t, usuario, familia)) {
 			t.Fatalf("a falha real %d derrubou a família antes do limite", erros)
 		}
 	}
-	if !provas.Reserve(familia).Fail() {
+	if !falhar(t, b.reservar(t, usuario, familia)) {
 		t.Error("a quinta falha real não derrubou a família")
 	}
 }
@@ -148,42 +278,30 @@ func TestFamilyProofsDoNotCountReleasedReservationsAsFailures(t *testing.T) {
 // Um sucesso zera o orçamento. Reservas anteriores não podem devolver vagas
 // da conta nova. Sabotagem: Release procurar somente pelo id da família.
 func TestFamilyProofsOldReservationCannotRefundANewBudget(t *testing.T) {
-	provas := auth.NewFamilyProofs(clock.NewFake(time.Date(2026, 10, 4, 12, 0, 0, 0, time.UTC)))
-	familia := uuid.New()
-	antiga := provas.Reserve(familia)
-	provas.Reserve(familia).Succeed()
+	b := novaBancadaDeProvas(t)
+	usuario, familia := b.familia(t)
+	antiga := b.reservar(t, usuario, familia)
+	b.reservar(t, usuario, familia).Succeed()
 	for range auth.FamilyProofLimit {
-		provas.Reserve(familia)
+		b.reservar(t, usuario, familia)
 	}
 	antiga.Release()
-	if !provas.Reserve(familia).Exhausted() {
+	if !b.reservar(t, usuario, familia).Exhausted() {
 		t.Error("a reserva antiga devolveu uma vaga da conta nova ainda em voo")
-	}
-}
-
-// On point de familiaParada: com exatamente 24 h sem reserva, a família fica.
-func TestFamilyProofsKeepAFamilyIdleForExactlyTheLimit(t *testing.T) {
-	clk := clock.NewFake(time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC))
-	provas := auth.NewFamilyProofs(clk)
-	provas.Reserve(uuid.New())
-	clk.Advance(24 * time.Hour)
-	provas.Reserve(uuid.New())
-	if got := provas.Len(); got != 2 {
-		t.Errorf("%d famílias, queria 2", got)
 	}
 }
 
 // Um sucesso zera a família: as provas que estavam em voo não contam mais.
 func TestFamilyProofsInFlightFailuresAfterASuccessDoNotCount(t *testing.T) {
-	provas := auth.NewFamilyProofs(clock.NewFake(time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)))
-	familia := uuid.New()
+	b := novaBancadaDeProvas(t)
+	usuario, familia := b.familia(t)
 	emVoo := make([]*auth.ProofReservation, 0, auth.FamilyProofLimit)
 	for range auth.FamilyProofLimit {
-		emVoo = append(emVoo, provas.Reserve(familia))
+		emVoo = append(emVoo, b.reservar(t, usuario, familia))
 	}
-	provas.Reserve(familia).Succeed()
+	b.reservar(t, usuario, familia).Succeed()
 	for i, r := range emVoo {
-		if r.Fail() {
+		if falhar(t, r) {
 			t.Errorf("a falha em voo %d derrubou a família depois do sucesso", i+1)
 		}
 	}
@@ -191,27 +309,287 @@ func TestFamilyProofsInFlightFailuresAfterASuccessDoNotCount(t *testing.T) {
 
 // O sucesso de uma reserva antiga não zera a conta que nasceu depois dela.
 func TestFamilyProofsOldSuccessDoesNotResetANewCount(t *testing.T) {
-	provas := auth.NewFamilyProofs(clock.NewFake(time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)))
-	familia := uuid.New()
-	velha := provas.Reserve(familia)
-	provas.Reserve(familia).Succeed()
+	b := novaBancadaDeProvas(t)
+	usuario, familia := b.familia(t)
+	velha := b.reservar(t, usuario, familia)
+	b.reservar(t, usuario, familia).Succeed()
 	for range auth.FamilyProofLimit - 1 {
-		provas.Reserve(familia).Fail()
+		falhar(t, b.reservar(t, usuario, familia))
 	}
 	velha.Succeed()
-	if !provas.Reserve(familia).Fail() {
+	if !falhar(t, b.reservar(t, usuario, familia)) {
 		t.Error("a falha do limite não derrubou a família: o sucesso antigo zerou a conta nova")
 	}
 }
 
 // Reserva devolvida não aproxima a família do esgotamento.
 func TestFamilyProofsReleasedReservationsDoNotExhaust(t *testing.T) {
-	provas := auth.NewFamilyProofs(clock.NewFake(time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)))
-	familia := uuid.New()
+	b := novaBancadaDeProvas(t)
+	usuario, familia := b.familia(t)
 	for range auth.FamilyProofLimit + 1 {
-		provas.Reserve(familia).Release()
+		b.reservar(t, usuario, familia).Release()
 	}
-	if provas.Reserve(familia).Exhausted() {
+	if b.reservar(t, usuario, familia).Exhausted() {
 		t.Error("reservas devolvidas esgotaram a família")
+	}
+}
+
+// Quem manda a prova e larga a conexão não escapa da conta: a escrita do Fail
+// não segue o cancelamento da requisição. Sabotagem: gravar com o contexto da
+// requisição, e a falha desconectada deixa de contar.
+func TestFamilyProofsCountAFailureWhoseRequestWasCancelled(t *testing.T) {
+	b := novaBancadaDeProvas(t)
+	usuario, familia := b.familia(t)
+	for i := 1; i < auth.FamilyProofLimit; i++ {
+		ctx, cancelar := context.WithCancel(context.Background())
+		r, err := b.provas.Reserve(ctx, usuario, familia)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cancelar() // o cliente largou a conexão enquanto o servidor julgava
+		if falhar(t, r) {
+			t.Fatalf("a falha %d derrubou a família", i)
+		}
+	}
+	if !falhar(t, b.reservar(t, usuario, familia)) {
+		t.Error("a quinta falha não derrubou a família: as falhas de requisições canceladas não contaram")
+	}
+}
+
+// Revogar a família limpa o contador dela pela retenção, mas só depois de uma folga: as
+// provas em voo ainda precisam da linha para contar (a 5ª derruba a família
+// enquanto as reservas esgotadas já a revogaram). Sabotagem: apagar a linha na
+// própria revogação, e a conta das provas em voo se perde.
+func TestFamilyProofsAreSweptByRetentionAfterTheFamilyIsRevoked(t *testing.T) {
+	b := novaBancadaDeProvas(t)
+	usuario, familia := b.familia(t)
+	outroUsuario, outraFamilia := b.familia(t)
+	emVoo := b.reservar(t, usuario, familia)
+	falhar(t, b.reservar(t, outroUsuario, outraFamilia))
+
+	b.revogar(t, familia)
+	b.retencao(t)
+
+	if n := b.tamanho(t); n != 2 {
+		t.Fatalf("%d linhas logo depois da revogação, queria 2: a da família revogada fica pela folga", n)
+	}
+	if falhar(t, emVoo) {
+		t.Error("a prova em voo derrubou a família no primeiro erro")
+	}
+
+	b.clk.Advance(2 * time.Minute)
+	b.retencao(t)
+
+	if n := b.tamanho(t); n != 1 {
+		t.Errorf("%d linhas depois da folga, queria 1: só a da família revogada sai", n)
+	}
+}
+
+// Quem chega depois da revogação não recria o contador: a reserva nasce
+// esgotada e nada é gravado. Sabotagem: INSERT sem a conferência de família viva.
+func TestFamilyProofsReservationOnARevokedFamilyIsExhaustedAndLeavesNoRow(t *testing.T) {
+	b := novaBancadaDeProvas(t)
+	usuario, familia := b.familia(t)
+	b.revogar(t, familia)
+
+	r := b.reservar(t, usuario, familia)
+
+	if !r.Exhausted() {
+		t.Error("a reserva de uma família revogada nasceu válida")
+	}
+	if falhar(t, r) {
+		t.Error("Fail numa reserva de família morta pediu para derrubar de novo")
+	}
+	r.Succeed()
+	r.Release()
+	if n := b.tamanho(t); n != 0 {
+		t.Errorf("%d linhas depois de reservar numa família revogada, queria 0", n)
+	}
+}
+
+// A família de outro usuário não vale: o contador só nasce para o par
+// (usuário, família) vivo.
+func TestFamilyProofsReservationWithAnotherUsersIDIsRefused(t *testing.T) {
+	b := novaBancadaDeProvas(t)
+	_, familia := b.familia(t)
+	outro, _ := b.familia(t)
+
+	if !b.reservar(t, outro, familia).Exhausted() {
+		t.Error("a reserva com a família de outro usuário nasceu válida")
+	}
+	if n := b.tamanho(t); n != 0 {
+		t.Errorf("%d linhas, queria 0", n)
+	}
+}
+
+// Apagar o usuário leva o contador junto (ON DELETE CASCADE).
+func TestFamilyProofsAreDeletedWithTheUser(t *testing.T) {
+	b := novaBancadaDeProvas(t)
+	usuario, familia := b.familia(t)
+	falhar(t, b.reservar(t, usuario, familia))
+
+	if _, err := b.pool.Exec(context.Background(), `DELETE FROM users WHERE id = $1`, usuario); err != nil {
+		t.Fatal(err)
+	}
+
+	if n := b.tamanho(t); n != 0 {
+		t.Errorf("%d linhas depois de apagar o usuário, queria 0", n)
+	}
+}
+
+// Erro de banco não é reserva: o contador não finge que há orçamento.
+func TestFamilyProofsReserveFailsClosedOnDatabaseError(t *testing.T) {
+	b := novaBancadaDeProvas(t)
+	usuario, familia := b.familia(t)
+	b.pool.Close()
+
+	r, err := b.provas.Reserve(context.Background(), usuario, familia)
+
+	if err == nil {
+		t.Fatalf("Reserve sem banco devolveu a reserva %+v e nenhum erro", r)
+	}
+}
+
+// A métrica de tamanho é o total do banco, lido na coleta.
+func TestFamilyProofsCollectorReportsTheTableSize(t *testing.T) {
+	b := novaBancadaDeProvas(t)
+	reg := prometheus.NewPedanticRegistry()
+	reg.MustRegister(b.provas.Collector())
+	for range 3 {
+		usuario, familia := b.familia(t)
+		falhar(t, b.reservar(t, usuario, familia))
+	}
+
+	familias, err := reg.Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(familias) != 1 || familias[0].GetName() != "session_family_proofs" {
+		t.Fatalf("famílias de métricas = %v, queria só session_family_proofs", familias)
+	}
+	if got := familias[0].GetMetric()[0].GetGauge().GetValue(); got != 3 {
+		t.Errorf("session_family_proofs = %v, queria 3", got)
+	}
+}
+
+// Erro de banco no Fail é erro, e a reserva continua contada: a prova errada
+// não passa de graça, e a próxima reserva já vê o orçamento menor. Sabotagem:
+// Fail engolir o erro e devolver (false, nil) deixa de falhar o teste.
+func TestFamilyProofsFailOnDatabaseErrorReturnsTheErrorAndKeepsTheReservation(t *testing.T) {
+	b := novaBancadaDeProvas(t)
+	usuario, familia := b.familia(t)
+	ctx := context.Background()
+	segundoPool, err := pgxpool.NewWithConfig(ctx, b.pool.Config())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(segundoPool.Close)
+	r := b.reservar(t, usuario, familia)
+
+	b.pool.Close()
+	derrubar, err := r.Fail()
+	r.Release() // fechada: não devolve a reserva
+
+	if err == nil {
+		t.Fatal("Fail sem banco não devolveu erro")
+	}
+	if derrubar {
+		t.Error("Fail com erro pediu para derrubar a família")
+	}
+	outra := auth.NewFamilyProofs(segundoPool, b.clk)
+	// A reserva da falha perdida segue contada: sobram quatro vagas, e a sexta nasce esgotada.
+	for i := 2; i <= auth.FamilyProofLimit; i++ {
+		if reservarCom(t, outra, usuario, familia).Exhausted() {
+			t.Fatalf("a reserva %d nasceu esgotada cedo demais", i)
+		}
+	}
+	if !reservarCom(t, outra, usuario, familia).Exhausted() {
+		t.Error("a reserva da falha com erro foi devolvida: a sexta nasceu válida")
+	}
+}
+
+// Cinco Fail simultâneos derrubam a família exatamente uma vez e não passam do
+// orçamento: o erro de número cinco é um só, e o seguinte já nasce esgotado.
+func TestFamilyProofsConcurrentFailuresDropTheFamilyExactlyOnce(t *testing.T) {
+	b := novaBancadaDeProvas(t)
+	usuario, familia := b.familia(t)
+	reservas := make([]*auth.ProofReservation, auth.FamilyProofLimit)
+	for i := range reservas {
+		reservas[i] = b.reservar(t, usuario, familia)
+	}
+
+	var derrubadas atomic.Int32
+	var wg sync.WaitGroup
+	for _, r := range reservas {
+		wg.Go(func() {
+			derrubar, err := r.Fail()
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			if derrubar {
+				derrubadas.Add(1)
+			}
+		})
+	}
+	wg.Wait()
+
+	if n := derrubadas.Load(); n != 1 {
+		t.Errorf("%d Fail pediram para derrubar a família, queria exatamente 1", n)
+	}
+	var erros int64
+	if err := testdb.Admin(t).QueryRow(context.Background(),
+		`SELECT errors FROM session_family_proofs WHERE family_id = $1`, familia).Scan(&erros); err != nil || erros != auth.FamilyProofLimit {
+		t.Errorf("errors = %d (erro %v), queria %d", erros, err, auth.FamilyProofLimit)
+	}
+	if !b.reservar(t, usuario, familia).Exhausted() {
+		t.Error("depois dos cinco erros, a reserva seguinte não nasceu esgotada")
+	}
+}
+
+// A retenção rodando junto com reservas e falhas nunca apaga o contador de uma
+// família viva, nem com o relógio dela muito adiante. Sabotagem: tirar o NOT
+// EXISTS da query faria a contagem sumir no meio da corrida.
+func TestFamilyProofsConcurrentRetentionDoesNotDeleteALiveFamilysCounter(t *testing.T) {
+	b := novaBancadaDeProvas(t)
+	usuario, familia := b.familia(t)
+	for i := 1; i < auth.FamilyProofLimit-1; i++ {
+		falhar(t, b.reservar(t, usuario, familia)) // três erros
+	}
+	var wg sync.WaitGroup
+	for range 6 {
+		wg.Go(func() {
+			for range 5 {
+				b.clk.Advance(2 * time.Minute) // a linha sempre passou da folga para a retenção
+				if _, err := storage.ApplyRetention(context.Background(), b.pool, b.clk.Now()); err != nil {
+					t.Error(err)
+					return
+				}
+			}
+		})
+		wg.Go(func() {
+			for range 5 {
+				r, err := b.provas.Reserve(context.Background(), usuario, familia)
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				r.Release()
+			}
+		})
+	}
+	wg.Wait()
+
+	var erros int64
+	if err := testdb.Admin(t).QueryRow(context.Background(),
+		`SELECT errors FROM session_family_proofs WHERE family_id = $1`, familia).Scan(&erros); err != nil || erros != auth.FamilyProofLimit-2 {
+		t.Fatalf("errors = %d (erro %v), queria %d: a retenção apagou o contador da família viva", erros, err, auth.FamilyProofLimit-2)
+	}
+	if falhar(t, b.reservar(t, usuario, familia)) {
+		t.Fatal("o quarto erro derrubou a família")
+	}
+	if !falhar(t, b.reservar(t, usuario, familia)) {
+		t.Error("o quinto erro não derrubou a família")
 	}
 }

@@ -83,7 +83,7 @@ func (b *bancada) semearFalhasDa(t *testing.T, a db.ClaimDueTargetsRow) {
 	}
 }
 
-// E2 da revisão de 2026-10-14. O PATCH troca a URL com uma sonda da URL
+// O PATCH troca a URL com uma sonda da URL
 // velha em voo; a sonda termina DEPOIS do PATCH. O resultado dela é sobre
 // outro serviço: não pode entrar na histerese recém-zerada, nem no histórico
 // de checks do alvo com a URL nova.
@@ -254,7 +254,7 @@ func TestPauseWithProbeInFlightIsAwaitedByTheWrite(t *testing.T) {
 	b.conferirSemRastroDaSonda(t, alvo)
 }
 
-// Trocar só o método também é outro serviço (C4 do Plano 10): a sonda com o
+// Trocar só o método também é outro serviço: a sonda com o
 // método velho é descartada como a da URL velha.
 func TestProbeWithTheOldMethodIsDiscarded(t *testing.T) {
 	b := novaBancada(t, nil, MaxInFlight)
@@ -286,7 +286,7 @@ func regraContains(valor string) targets.Patch {
 	return targets.Patch{SetContentRule: true, ContentRule: &targets.ContentRule{Mode: targets.ContentContains, Value: valor}}
 }
 
-// T2 da spec do PR 5. Trocar a regra também é julgar outra coisa: a sonda que
+// Trocar a regra também é julgar outra coisa: a sonda que
 // saiu com contains "a" e termina depois do PATCH para contains "b" é
 // descartada, como a da URL velha.
 func TestProbeDiscardedWhenRuleChanged(t *testing.T) {
@@ -323,7 +323,7 @@ func TestProbeDiscardedWhenRuleChanged(t *testing.T) {
 	}
 }
 
-// Foco 5 da spec do PR 5. Com um incidente content_mismatch aberto, o dono
+// Com um incidente content_mismatch aberto, o dono
 // troca a regra. Só sucessos da regra nova fecham o incidente, e são os 5 do
 // incident.Default (CloseAfter): uma sonda da regra velha em voo durante a
 // troca, que PASSARIA pela regra velha, não conta como o primeiro deles.
