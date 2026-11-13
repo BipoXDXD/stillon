@@ -124,7 +124,7 @@ func TestRetentionSessionsEdgeIsExclusiveAtTheCutoff(t *testing.T) {
 	dono := novoUsuario(t, pool)
 	i := tresInstantes(agora.Add(-storage.SessionGrace))
 	for _, em := range i {
-		if _, err := pool.Exec(ctx, `INSERT INTO sessions (id, user_id, family_id, token_hash, expires_at)
+		if _, err := testdb.Admin(t).Exec(ctx, `INSERT INTO sessions (id, user_id, family_id, token_hash, expires_at)
 			VALUES ($1, $2, $3, $4, $5)`, novoID(), dono, novoID(), novoID().String(), em); err != nil {
 			t.Fatal(err)
 		}
@@ -221,7 +221,7 @@ func TestRetentionDeadFamilyProofsGraceEdgeIsExclusive(t *testing.T) {
 	dono := novoUsuario(t, pool)
 	i := tresInstantes(agora.Add(-storage.FamilyProofsDeadGrace))
 	for _, em := range i {
-		if _, err := pool.Exec(ctx,
+		if _, err := testdb.Admin(t).Exec(ctx,
 			`INSERT INTO session_family_proofs (family_id, user_id, generation, reserved, errors, updated_at)
 			 VALUES ($1, $2, $3, 1, 1, $4)`, uuid.New(), dono, uuid.New(), em); err != nil {
 			t.Fatal(err)
@@ -246,11 +246,11 @@ func TestRetentionDeadFamilyProofsLivenessEdgeIsExclusiveAtNow(t *testing.T) {
 	for _, vence := range tresInstantes(agora) {
 		familia := uuid.New()
 		familiaQueVenceEm[familia] = vence
-		if _, err := pool.Exec(ctx, `INSERT INTO sessions (id, user_id, family_id, token_hash, expires_at)
+		if _, err := testdb.Admin(t).Exec(ctx, `INSERT INTO sessions (id, user_id, family_id, token_hash, expires_at)
 			VALUES ($1, $2, $3, $4, $5)`, novoID(), dono, familia, novoID().String(), vence); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := pool.Exec(ctx,
+		if _, err := testdb.Admin(t).Exec(ctx,
 			`INSERT INTO session_family_proofs (family_id, user_id, generation, reserved, errors, updated_at)
 			 VALUES ($1, $2, $3, 1, 1, $4)`, familia, dono, uuid.New(), velho); err != nil {
 			t.Fatal(err)
@@ -259,7 +259,7 @@ func TestRetentionDeadFamilyProofsLivenessEdgeIsExclusiveAtNow(t *testing.T) {
 	if r := aplicarRetencao(t, pool, agora); r.DeletedFamilyProofs != 2 {
 		t.Errorf("apagou %d contadores, queria 2 (o da sessão vencida 1 µs antes e o da que vence agora)", r.DeletedFamilyProofs)
 	}
-	rows, err := pool.Query(ctx, `SELECT family_id FROM session_family_proofs`)
+	rows, err := testdb.Admin(t).Query(ctx, `SELECT family_id FROM session_family_proofs`)
 	if err != nil {
 		t.Fatal(err)
 	}
