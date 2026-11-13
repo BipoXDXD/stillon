@@ -111,7 +111,7 @@ func TestScopeSurvivesConnectionReuse(t *testing.T) {
 	}
 }
 
-// ScopeToUser e ScopeToSessionToken ligam o escopo no meio de uma transação
+// ScopeToUser e ScopeToSessionHash ligam o escopo no meio de uma transação
 // que o código de auth abriu. Como InUserTx, o valor tem de morrer no fim
 // dela: a próxima transação na MESMA conexão do pool não pode herdá-lo, ou
 // um pedido sem escopo enxergaria as sessões de quem usou a conexão antes.
@@ -125,8 +125,8 @@ func TestEscopoNoMeioDaTransacaoNaoVazaParaAConexaoReusada(t *testing.T) {
 		{"ScopeToUser", "app.user_id", func(ctx context.Context, q *db.Queries) error {
 			return q.ScopeToUser(ctx, uuid.New())
 		}},
-		{"ScopeToSessionToken", "app.session_token_hash", func(ctx context.Context, q *db.Queries) error {
-			return q.ScopeToSessionToken(ctx, make([]byte, 32))
+		{"ScopeToSessionHash", "app.session_token_hash", func(ctx context.Context, q *db.Queries) error {
+			return q.ScopeToSessionHash(ctx, make([]byte, 32))
 		}},
 	}
 	for _, c := range casos {

@@ -76,3 +76,34 @@ func TestListRawHoursOfTargetFiltersOwnerWithoutRLS(t *testing.T) {
 		t.Errorf("A leu %v, queria uma hora de total 1 do alvo %s em %s", deA, alvoA, agora)
 	}
 }
+
+// A marca d'água do resumo é a do dono: sem o filtro, o rollup de A
+// adiantaria a de B, e B pularia as próprias horas ainda não consolidadas.
+func TestLatestUserRollupBucketFiltersOwnerWithoutRLS(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+	a, b := novoUsuario(t, pool), novoUsuario(t, pool)
+	alvoA := novoAlvo(t, pool, a, agora)
+	conn := conexaoSemRLS(t)
+	q := db.New(conn)
+	hora := agora.Add(-time.Hour)
+	if _, err := conn.Exec(ctx, `INSERT INTO check_rollup_1h (target_id, bucket, total, ok, p50, p95, p99, max)
+		VALUES ($1, $2, 2, 2, 10, 20, 30, 40)`, alvoA, hora); err != nil {
+		t.Fatal(err)
+	}
+	marca := func(dono uuid.UUID) time.Time {
+		t.Helper()
+		m, err := q.LatestUserRollupBucket(ctx, db.LatestUserRollupBucketParams{Before: agora, UserID: dono})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return m
+	}
+
+	if m := marca(b); !m.Equal(time.Unix(0, 0)) {
+		t.Errorf("a marca d'água de B sem RLS foi %s, queria a época Unix (o rollup de A vazou)", m.UTC().Format(time.RFC3339))
+	}
+	if m := marca(a); !m.Equal(hora) {
+		t.Errorf("a marca d'água de A foi %s, queria %s", m.UTC().Format(time.RFC3339), hora.UTC().Format(time.RFC3339))
+	}
+}

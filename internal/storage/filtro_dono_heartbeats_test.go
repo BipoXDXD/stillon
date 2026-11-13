@@ -299,3 +299,50 @@ func TestInsertHeartbeatTagsFiltersOwnerWithoutRLS(t *testing.T) {
 		t.Errorf("A pôs a tag api e ficou %v, queria [api prod]", tags)
 	}
 }
+
+func TestListHeartbeatsFiltersOwnerWithoutRLS(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+	a, b := novoUsuario(t, pool), novoUsuario(t, pool)
+	hbA := novoHeartbeat(t, pool, a, "a")
+	q := queriesSemRLS(t)
+	listar := func(dono uuid.UUID) []db.ListHeartbeatsRow {
+		t.Helper()
+		hs, err := q.ListHeartbeats(ctx, db.ListHeartbeatsParams{UserID: dono, MaxRows: 10})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return hs
+	}
+
+	if deB := listar(b); len(deB) != 0 {
+		t.Errorf("B listou %d heartbeats sem RLS, queria 0 (o heartbeat de A vazou)", len(deB))
+	}
+	if deA := listar(a); len(deA) != 1 || deA[0].Heartbeat.ID != hbA {
+		t.Errorf("A listou %v, queria só o heartbeat %s", deA, hbA)
+	}
+}
+
+func TestListUserHeartbeatTagsFiltersOwnerWithoutRLS(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+	a, b := novoUsuario(t, pool), novoUsuario(t, pool)
+	hbA := novoHeartbeat(t, pool, a, "a")
+	comTagDoHeartbeat(t, pool, a, hbA)
+	q := queriesSemRLS(t)
+	listar := func(dono uuid.UUID) []db.HeartbeatTag {
+		t.Helper()
+		tags, err := q.ListUserHeartbeatTags(ctx, dono)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return tags
+	}
+
+	if deB := listar(b); len(deB) != 0 {
+		t.Errorf("B listou as tags %v dos heartbeats de A sem RLS", deB)
+	}
+	if deA := listar(a); len(deA) != 1 || deA[0].HeartbeatID != hbA || deA[0].Tag != "prod" {
+		t.Errorf("A listou %v, queria só a tag prod do heartbeat %s", deA, hbA)
+	}
+}
