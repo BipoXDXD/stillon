@@ -192,6 +192,7 @@ func run(ctx context.Context, cfg *config.Config) error {
 			Pings:       heartbeat.NewPingService(pool, clk),
 			Heartbeats:  heartbeat.NewService(pool, clk),
 			Clock:       clk,
+			LimitesIP:   storage.NewOrcamentosPorIP(pool, clk),
 			Ready:       pool.Ping,
 		}
 		servir(gctx, g, httpapi.NewServer(cfg, httpapi.Routes(gctx, cfg, deps)), "api", cfg.ShutdownGrace)

@@ -15,6 +15,7 @@ import (
 	"github.com/BipoXDXD/stillon/internal/clock"
 	"github.com/BipoXDXD/stillon/internal/config"
 	"github.com/BipoXDXD/stillon/internal/httpapi"
+	"github.com/BipoXDXD/stillon/internal/httpapi/middleware"
 	"github.com/BipoXDXD/stillon/internal/notify"
 	"github.com/BipoXDXD/stillon/internal/statuspage"
 )
@@ -96,6 +97,7 @@ func novaBancada(t *testing.T, ajustar func(*config.Config)) *bancada {
 		Channels:    notify.NewChannelService(nil, nil, clk, nil, nil, cfg.PublicBaseURL),
 		StatusPages: statuspage.NewService(nil, clk),
 		Clock:       clk,
+		LimitesIP:   middleware.NovosOrcamentosEmMemoria(ctx, clk),
 	}
 	return &bancada{rotas: httpapi.Routes(ctx, cfg, deps), clk: clk}
 }
