@@ -16,16 +16,18 @@
 # shell ou Python (versionados ou não ignorados):
 #   1. `docker container prune` e `docker system prune`;
 #   2. `docker ps` combinado com comm, diff ou grep -v na mesma linha, ou um
-#      comm/diff sobre a foto de um `docker ps` (variável ou arquivo) num
-#      script de shell que também chama `docker rm`;
+#      comm, diff ou grep -v sobre a foto de um `docker ps` (variável ou
+#      arquivo) num script de shell que também chama `docker rm`;
 #   3. `docker rm` sobre uma listagem (`$(docker ps …)`, `xargs`) que não
 #      filtra por label=stillon.run=, ou com um nome literal como argumento;
 #   4. `docker rm` num script de shell que lista contêineres por nome ou
 #      imagem (`--filter name=`, `--filter ancestor=`) ou por grep.
 # É uma checagem de texto: só conta o código, e um comentário pode citar o
 # que é proibido. Uma linha que cita o padrão de propósito (o teste de uma
-# guarda que o recusa) leva o comentário "checar-conteineres: permitido" com
-# o motivo. Nos .py valem só as regras 1 e 2 (o nome de uma variável
+# guarda que o recusa) leva, em comentário no fim dela,
+# "# checar-conteineres: permitido, <motivo>"; sem motivo, não vale.
+# Limite: `docker stop` e `docker kill` não são olhados (a issue #390 trata
+# da remoção); parar contêiner por nome ou sobre `$(docker ps -q)` passa. Nos .py valem só as regras 1 e 2 (o nome de uma variável
 # Python não se distingue de um nome literal).
 set -eu
 
@@ -59,7 +61,7 @@ function falhar(msg) { falhar_em(FILENAME, FNR, msg) }
 function fechar_arquivo() {
     if (arq == "" || py) return
     if (tem_rm && linha_diff)
-        falhar_em(arq, linha_diff, "escolha de contêiner por diff de docker ps (comm ou diff sobre uma listagem de docker ps, e docker rm no mesmo script)")
+        falhar_em(arq, linha_diff, "escolha de contêiner por diff de docker ps (comm, diff ou grep -v sobre uma listagem de docker ps, e docker rm no mesmo script)")
     if (tem_rm && linha_lista_nome)
         falhar_em(arq, linha_lista_nome, "docker rm num script que lista contêineres por nome, imagem ou grep; filtre só por label=stillon.run=<uuid>")
 }
@@ -71,7 +73,7 @@ FNR == 1 {
 }
 {
     l = $0
-    if (l ~ /^[ \t]*#/ || l ~ /checar-conteineres: permitido/) next
+    if (l ~ /^[ \t]*#/ || l ~ /[ \t]#[ \t]*checar-conteineres: permitido,[ \t]*[^ \t]/) next
     sub(/[ \t]#.*$/, "", l)
     if (py) gsub(/["\047,\[\]]/, " ", l)
 
@@ -90,14 +92,15 @@ FNR == 1 {
 
     if (py) next
 
-    # A foto de docker ps (variável ou arquivo) que um comm/diff compara depois.
-    if (ps && match(l, /[A-Za-z_][A-Za-z0-9_]*="?\$\([ \t]*docker[ \t]/))
+    # A foto de docker ps (variável ou arquivo) que um comm, diff ou grep -v
+    # compara depois.
+    if (ps && match(l, /[A-Za-z_][A-Za-z0-9_]*="?(\$\(|`)[ \t]*docker[ \t]/))
         foto["$" substr(l, RSTART, index(substr(l, RSTART), "=") - 1)] = 1
     if (ps && match(l, />>?[ \t]*"?[^ \t"|;&)]+/)) {
         f = substr(l, RSTART, RLENGTH); sub(/^>>?[ \t]*"?/, "", f)
         if (f !~ /^&|^\/dev\//) foto[f] = 1
     }
-    if (diff && !linha_diff)
+    if ((diff || inverte) && !linha_diff)
         for (f in foto)
             if (index(l, f) || (f ~ /^\$/ && index(l, "${" substr(f, 2) "}"))) { linha_diff = FNR; break }
     if (ps && !linha_lista_nome && (l ~ /--filter[ =]+["\047]?(name|ancestor)=/ || l ~ /\|[ \t]*grep/))

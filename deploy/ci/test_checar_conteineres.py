@@ -32,6 +32,24 @@ SCRIPTS_RUINS = (
         "docker rm -f $novos\n",
         DIFF,
     ),
+    (
+        "foto em arquivo, grep -v e rm",
+        "docker ps -q > antes\ngo test ./...\ndocker ps -q > depois\n"
+        'for id in $(grep -vxFf antes depois); do docker rm -f "$id"; done\n',
+        DIFF,
+    ),
+    (
+        "foto em variável, grep -v e rm",
+        'antes=$(docker ps -q)\ngo test ./...\nnovos=$(docker ps -q)\n'
+        'for id in $(echo "$novos" | grep -vxF "$antes"); do docker rm -f "$id"; done\n',
+        DIFF,
+    ),
+    (
+        "foto com crase e comm",
+        "antes=`docker ps -q`\ngo test ./...\n"
+        'for id in $(comm -13 <(echo "$antes") <(sort)); do docker rm -f "$id"; done\n',
+        DIFF,
+    ),
     ("docker ps com grep -v na mesma linha", "docker ps -q | grep -v \"$meu\" > alheios\n", DIFF),
     ("comm com docker ps na mesma linha", "comm -13 antes <(docker ps -q | sort)\n", DIFF),
     ("container prune", "docker container prune -f\n", PRUNE),
@@ -126,6 +144,17 @@ class ChecarConteineresTest(unittest.TestCase):
         resultado = self.checar()
         self.assertNotEqual(resultado.returncode, 0, resultado.stderr)
         self.assertIn(PRUNE, resultado.stderr)
+
+    def test_marcador_sem_motivo_ou_fora_de_comentario_reprova(self):
+        for nome, linha in (
+            ("sem motivo", '["docker", "system", "prune"],  # checar-conteineres: permitido\n'),
+            ("dentro de string", 'x = ["docker", "system", "prune", "checar-conteineres: permitido, x"]\n'),
+        ):
+            with self.subTest(nome):
+                self.escrever(SONDA_PY, linha)
+                resultado = self.checar()
+                self.assertNotEqual(resultado.returncode, 0, resultado.stderr)
+                self.assertIn(PRUNE, resultado.stderr)
 
     def test_linha_marcada_como_permitida_passa(self):
         self.escrever(
