@@ -108,7 +108,7 @@ func (t *pgTx) LockSessionByHash(ctx context.Context, hash []byte) (SessionRow, 
 // o resto deste arquivo ainda é SQL escrito à mão e migra aos poucos.
 func (t *pgTx) SessionUserByHash(ctx context.Context, hash []byte) (uuid.UUID, error) {
 	q := db.New(t.tx)
-	if err := q.ScopeToSessionToken(ctx, hash); err != nil {
+	if err := q.ScopeToSessionHash(ctx, hash); err != nil {
 		return uuid.Nil, fmt.Errorf("definir escopo do token: %w", err)
 	}
 	id, err := q.SessionUserByHash(ctx, hash)
