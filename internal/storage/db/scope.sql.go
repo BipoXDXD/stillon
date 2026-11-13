@@ -11,15 +11,15 @@ import (
 	"github.com/google/uuid"
 )
 
-const scopeToSessionToken = `-- name: ScopeToSessionToken :exec
+const scopeToSessionHash = `-- name: ScopeToSessionHash :exec
 SELECT set_config('app.session_token_hash', encode($1::bytea, 'hex'), true)
 `
 
 // Pré-autenticação do refresh e do logout: a transação LÊ só a linha de
 // sessions cujo token_hash é este (política sessions_by_token_select), e só
 // para descobrir o dono. Em hexadecimal porque GUC é texto.
-func (q *Queries) ScopeToSessionToken(ctx context.Context, tokenHash []byte) error {
-	_, err := q.db.Exec(ctx, scopeToSessionToken, tokenHash)
+func (q *Queries) ScopeToSessionHash(ctx context.Context, tokenHash []byte) error {
+	_, err := q.db.Exec(ctx, scopeToSessionHash, tokenHash)
 	return err
 }
 

@@ -11,5 +11,5 @@ SELECT set_config('app.user_id', sqlc.arg(user_id)::uuid::text, true);
 -- Pré-autenticação do refresh e do logout: a transação LÊ só a linha de
 -- sessions cujo token_hash é este (política sessions_by_token_select), e só
 -- para descobrir o dono. Em hexadecimal porque GUC é texto.
--- name: ScopeToSessionToken :exec
+-- name: ScopeToSessionHash :exec
 SELECT set_config('app.session_token_hash', encode(sqlc.arg(token_hash)::bytea, 'hex'), true);
