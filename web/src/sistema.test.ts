@@ -143,7 +143,7 @@ describe('vermelho sólido só na confirmação', () => {
   const PERIGO = /tipo="perigo"|tipo=\{[^}]*'perigo'/g
   const USOS_PERMITIDOS = {
     'src/components/ui/dialogo.tsx': 1,
-    'src/features/configuracoes/PaginaConfiguracoes.tsx': 1,
+    'src/features/configuracoes/DesativarTotp.tsx': 1,
   }
 
   it('tipo="perigo" aparece só nos diálogos de confirmação', () => {
