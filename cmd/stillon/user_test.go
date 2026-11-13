@@ -391,7 +391,7 @@ func TestSetPasswordRevokesEverySessionAndClearsTheLock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `UPDATE sessions SET expires_at = now() - interval '1 minute' WHERE family_id = $1`,
+	if _, err := testdb.Admin(t).Exec(ctx, `UPDATE sessions SET expires_at = now() - interval '1 minute' WHERE family_id = $1`,
 		vencida.FamilyID); err != nil {
 		t.Fatal(err)
 	}
@@ -415,7 +415,7 @@ func TestSetPasswordRevokesEverySessionAndClearsTheLock(t *testing.T) {
 
 	var vivas, revogadas, falhas int
 	var travada, totp bool
-	if err := pool.QueryRow(ctx,
+	if err := testdb.Admin(t).QueryRow(ctx,
 		`SELECT count(*) FILTER (WHERE used_at IS NULL AND revoked_at IS NULL AND expires_at > now()),
 		        count(*) FILTER (WHERE revoked_at IS NOT NULL)
 		   FROM sessions WHERE user_id = $1`, dono).Scan(&vivas, &revogadas); err != nil {

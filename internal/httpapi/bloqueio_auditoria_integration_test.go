@@ -16,6 +16,7 @@ import (
 	"github.com/BipoXDXD/stillon/internal/auth"
 	"github.com/BipoXDXD/stillon/internal/config"
 	"github.com/BipoXDXD/stillon/internal/crypto"
+	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 )
 
 // O bloqueio da conta deixa rastro: um evento em audit_log e uma linha de log.
@@ -470,7 +471,7 @@ func TestAccountLockCorrectPasswordWithFailingAuditOpensNoSession(t *testing.T) 
 		t.Errorf("a resposta trouxe token: %s", corpo)
 	}
 	var sessoes int
-	if err := a.pool.QueryRow(context.Background(),
+	if err := testdb.Admin(t).QueryRow(context.Background(),
 		`SELECT count(*) FROM sessions WHERE user_id = $1`, a.userID).Scan(&sessoes); err != nil {
 		t.Fatal(err)
 	}

@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -200,7 +201,7 @@ func userAgentDaSessaoViva(t *testing.T, a *api) string {
 
 func userAgentsDasSessoesVivas(t *testing.T, a *api) []string {
 	t.Helper()
-	rows, err := a.pool.Query(context.Background(),
+	rows, err := testdb.Admin(t).Query(context.Background(),
 		`SELECT user_agent FROM sessions WHERE user_id = $1 AND used_at IS NULL`, a.userID)
 	if err != nil {
 		t.Fatal(err)

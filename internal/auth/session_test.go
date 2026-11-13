@@ -46,7 +46,7 @@ var carimbo = auth.PasswordStamp("x")
 // carimbo de outro hash (a senha mudou depois do login) é recusado, e nada é
 // gravado. Carimbo vazio nem chega ao banco.
 func TestIssueRefusesAStalePassword(t *testing.T) {
-	mgr, pool, _, userID := setup(t)
+	mgr, _, _, userID := setup(t)
 	ctx := context.Background()
 
 	for nome, c := range map[string]string{
@@ -66,7 +66,7 @@ func TestIssueRefusesAStalePassword(t *testing.T) {
 		t.Errorf("carimbo vazio: erro = %v, queria recusa antes do banco", err)
 	}
 	var n int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM sessions`).Scan(&n); err != nil {
+	if err := testdb.Admin(t).QueryRow(ctx, `SELECT count(*) FROM sessions`).Scan(&n); err != nil {
 		t.Fatal(err)
 	}
 	if n != 0 {
@@ -109,7 +109,7 @@ func TestIssueThenRotate(t *testing.T) {
 // Como não há como saber se quem chegou primeiro foi o ladrão ou o dono, a
 // resposta é derrubar a família inteira e exigir login novo.
 func TestReusedTokenRevokesEntireFamily(t *testing.T) {
-	mgr, pool, _, userID := setup(t)
+	mgr, _, _, userID := setup(t)
 	ctx := context.Background()
 
 	tok1, _, _ := mgr.Issue(ctx, userID, carimbo, meta)
@@ -129,7 +129,7 @@ func TestReusedTokenRevokesEntireFamily(t *testing.T) {
 	}
 
 	var vivas int
-	err = pool.QueryRow(ctx,
+	err = testdb.Admin(t).QueryRow(ctx,
 		`SELECT count(*) FROM sessions WHERE user_id = $1 AND revoked_at IS NULL`,
 		userID).Scan(&vivas)
 	if err != nil {
@@ -197,7 +197,7 @@ func TestRevokedTokenIsRejected(t *testing.T) {
 
 // O IP nunca pode chegar em claro ao banco (spec §4.2).
 func TestIPIsStoredHashed(t *testing.T) {
-	mgr, pool, _, userID := setup(t)
+	mgr, _, _, userID := setup(t)
 	ctx := context.Background()
 
 	if _, _, err := mgr.Issue(ctx, userID, carimbo, auth.Meta{IP: "203.0.113.9", UserAgent: "teste"}); err != nil {
@@ -205,7 +205,7 @@ func TestIPIsStoredHashed(t *testing.T) {
 	}
 
 	var ipHash []byte
-	err := pool.QueryRow(ctx, `SELECT ip_hash FROM sessions WHERE user_id = $1`, userID).Scan(&ipHash)
+	err := testdb.Admin(t).QueryRow(ctx, `SELECT ip_hash FROM sessions WHERE user_id = $1`, userID).Scan(&ipHash)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -221,7 +221,7 @@ func TestIPIsStoredHashed(t *testing.T) {
 // qualquer: o teste acima aceitaria qualquer digest de 32 bytes, inclusive um
 // hash sem chave — justamente o hash enumerável que a §4.2 proíbe.
 func TestIPHashIsKeyedHMAC(t *testing.T) {
-	mgr, pool, _, userID := setup(t)
+	mgr, _, _, userID := setup(t)
 	ctx := context.Background()
 
 	const ip = "203.0.113.9"
@@ -230,7 +230,7 @@ func TestIPHashIsKeyedHMAC(t *testing.T) {
 	}
 
 	var ipHash []byte
-	if err := pool.QueryRow(ctx, `SELECT ip_hash FROM sessions WHERE user_id = $1`, userID).Scan(&ipHash); err != nil {
+	if err := testdb.Admin(t).QueryRow(ctx, `SELECT ip_hash FROM sessions WHERE user_id = $1`, userID).Scan(&ipHash); err != nil {
 		t.Fatal(err)
 	}
 
@@ -347,7 +347,7 @@ func TestConcurrentRotationLetsOnlyOneWin(t *testing.T) {
 	// Detectado o reúso, a família cai inteira — inclusive o token que a
 	// rotação vencedora acabou de emitir.
 	var vivas int
-	if err := pool.QueryRow(ctx,
+	if err := testdb.Admin(t).QueryRow(ctx,
 		`SELECT count(*) FROM sessions WHERE user_id = $1 AND revoked_at IS NULL`,
 		userID).Scan(&vivas); err != nil {
 		t.Fatal(err)
@@ -452,7 +452,7 @@ func TestRotateReturnsCommitErrorInsteadOfReuse(t *testing.T) {
 // continua funcionando —, então ela precisa de trava própria, do mesmo
 // jeito que o ip_hash.
 func TestTokenIsStoredHashed(t *testing.T) {
-	mgr, pool, _, userID := setup(t)
+	mgr, _, _, userID := setup(t)
 	ctx := context.Background()
 
 	tok, s, err := mgr.Issue(ctx, userID, carimbo, meta)
@@ -461,7 +461,7 @@ func TestTokenIsStoredHashed(t *testing.T) {
 	}
 
 	var tokenHash []byte
-	if err := pool.QueryRow(ctx,
+	if err := testdb.Admin(t).QueryRow(ctx,
 		`SELECT token_hash FROM sessions WHERE id = $1`, s.ID).Scan(&tokenHash); err != nil {
 		t.Fatal(err)
 	}
@@ -484,7 +484,7 @@ func TestTokenIsStoredHashed(t *testing.T) {
 // o usuário tem contra uma sessão suspeita, e não havia outra: não existe
 // "encerrar todas as sessões" nem troca de senha que revogue.
 func TestLogoutKillsTheWholeFamily(t *testing.T) {
-	mgr, pool, _, userID := setup(t)
+	mgr, _, _, userID := setup(t)
 	ctx := context.Background()
 
 	daVitima, _, err := mgr.Issue(ctx, userID, carimbo, meta)
@@ -501,7 +501,7 @@ func TestLogoutKillsTheWholeFamily(t *testing.T) {
 	vivas := func() int {
 		t.Helper()
 		var n int
-		if err := pool.QueryRow(ctx,
+		if err := testdb.Admin(t).QueryRow(ctx,
 			`SELECT count(*) FROM sessions WHERE user_id = $1 AND revoked_at IS NULL`,
 			userID).Scan(&n); err != nil {
 			t.Fatal(err)

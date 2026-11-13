@@ -24,6 +24,7 @@ import (
 	"github.com/BipoXDXD/stillon/internal/auth"
 	"github.com/BipoXDXD/stillon/internal/clock"
 	"github.com/BipoXDXD/stillon/internal/crypto"
+	"github.com/BipoXDXD/stillon/internal/storage"
 	"github.com/BipoXDXD/stillon/internal/storage/db"
 )
 
@@ -103,7 +104,13 @@ func (s *Service) Me(ctx context.Context, userID uuid.UUID) (Account, error) {
 // FamilyIsLive diz se a família de sessão do token ainda está viva: tem a
 // linha corrente, não usada, não revogada e não vencida.
 func (s *Service) FamilyIsLive(ctx context.Context, userID, familyID uuid.UUID) (bool, error) {
-	return familyIsLive(ctx, db.New(s.pool), userID, familyID, s.clk.Now())
+	var vivo bool
+	err := storage.InUserTx(ctx, s.pool, userID, func(q *db.Queries) error {
+		var err error
+		vivo, err = familyIsLive(ctx, q, userID, familyID, s.clk.Now())
+		return err
+	})
+	return vivo, err
 }
 
 func familyIsLive(ctx context.Context, q *db.Queries, userID, familyID uuid.UUID, now time.Time) (bool, error) {
@@ -219,7 +226,7 @@ func (s *Service) provarSegundoFator(ctx context.Context, userID uuid.UUID, code
 // viva de novo, o CAS do hash, as OUTRAS famílias revogadas e a auditoria, numa
 // transação só.
 func (s *Service) gravarTroca(ctx context.Context, userID, familyID uuid.UUID, hashAntigo, hashNovo string, ipHash []byte, now time.Time) error {
-	return s.inTx(ctx, func(q *db.Queries) error {
+	return storage.InUserTx(ctx, s.pool, userID, func(q *db.Queries) error {
 		// A família pode ter caído entre o passo 2 e a trava (um DELETE
 		// /sessions de outro aparelho, a detecção de reúso). Então nada muda:
 		// o 204 sempre quer dizer "trocada e a atual continua viva".
@@ -366,6 +373,11 @@ func (s *Service) ResetPassword(ctx context.Context, email, password string) (in
 		if err != nil {
 			return fmt.Errorf("buscar usuário: %w", err)
 		}
+		// O usuário só aparece agora: daqui em diante a transação é dele
+		// para a RLS de sessions e dos códigos de recuperação (migration 00029).
+		if err := q.ScopeToUser(ctx, userID); err != nil {
+			return fmt.Errorf("definir escopo do usuário: %w", err)
+		}
 		// A trava do usuário antes de tocar em sessions: sem ela, uma
 		// rotação em curso deixaria o sucessor fora da revogação.
 		if err := q.LockUserSessions(ctx, userID); err != nil {
@@ -407,6 +419,11 @@ func (s *Service) ResetTwoFactor(ctx context.Context, email string) (ligado bool
 		}
 		if err != nil {
 			return fmt.Errorf("buscar usuário: %w", err)
+		}
+		// O usuário só aparece agora: daqui em diante a transação é dele
+		// para a RLS de sessions e dos códigos de recuperação (migration 00029).
+		if err := q.ScopeToUser(ctx, userID); err != nil {
+			return fmt.Errorf("definir escopo do usuário: %w", err)
 		}
 		// A trava do usuário antes de tocar em users e sessions, na
 		// ordem do set-password: sem ela, uma rotação em curso deixaria o
@@ -459,7 +476,12 @@ type Session struct {
 // antiga pelo login (created_at), e não pelo último uso: uma ordem que muda a
 // cada refresh faria a linha trocar de lugar embaixo do clique de "encerrar".
 func (s *Service) ListSessions(ctx context.Context, userID, current uuid.UUID) ([]Session, error) {
-	rows, err := db.New(s.pool).ListLiveFamilies(ctx, db.ListLiveFamiliesParams{UserID: userID, Now: s.clk.Now()})
+	var rows []db.ListLiveFamiliesRow
+	err := storage.InUserTx(ctx, s.pool, userID, func(q *db.Queries) error {
+		var err error
+		rows, err = q.ListLiveFamilies(ctx, db.ListLiveFamiliesParams{UserID: userID, Now: s.clk.Now()})
+		return err
+	})
 	if err != nil {
 		return nil, fmt.Errorf("listar sessões: %w", err)
 	}
@@ -516,7 +538,7 @@ func (s *Service) revogarFamilia(ctx context.Context, userID, familyID uuid.UUID
 	}
 	now := s.clk.Now()
 	ipHash := crypto.HashIP(s.ipKey, meta.IP)
-	return s.inTx(ctx, func(q *db.Queries) error {
+	return storage.InUserTx(ctx, s.pool, userID, func(q *db.Queries) error {
 		// A trava do usuário antes de tocar em sessions: sem ela, uma
 		// rotação em curso da família deixaria o sucessor vivo.
 		vivo, err := travarFamiliaViva(ctx, q, userID, familyID, now)

@@ -248,7 +248,7 @@ func TestResourceAccessStopsAfterEachRevocationCause(t *testing.T) {
 func TestResourceRoutesRejectAbsentExpiredOrAnotherUsersFamily(t *testing.T) {
 	a := newAPI(t)
 	_, _, vencida := familiaComRefresh(t, a)
-	if _, err := a.pool.Exec(context.Background(), `UPDATE sessions SET expires_at=$2 WHERE family_id=$1`, vencida, a.clk.Now().Add(-time.Second)); err != nil {
+	if _, err := testdb.Admin(t).Exec(context.Background(), `UPDATE sessions SET expires_at=$2 WHERE family_id=$1`, vencida, a.clk.Now().Add(-time.Second)); err != nil {
 		t.Fatal(err)
 	}
 	outro := outroUsuario(t, a)

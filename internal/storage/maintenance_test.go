@@ -316,7 +316,7 @@ func TestRetentionRemovesOnlyWhatExpired(t *testing.T) {
 		}
 	}
 	for _, dias := range []int{-8, -6} {
-		if _, err := pool.Exec(ctx, `INSERT INTO sessions (id, user_id, family_id, token_hash, expires_at)
+		if _, err := testdb.Admin(t).Exec(ctx, `INSERT INTO sessions (id, user_id, family_id, token_hash, expires_at)
 			VALUES ($1, $2, $3, $4, $5)`, novoID(), dono, novoID(), novoID().String(), hoje.AddDate(0, 0, dias)); err != nil {
 			t.Fatal(err)
 		}
