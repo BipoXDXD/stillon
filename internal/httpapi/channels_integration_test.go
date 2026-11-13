@@ -304,9 +304,11 @@ func TestChannelErrorsMapToCodes(t *testing.T) {
 	resp.Body.Close()
 }
 
-// Um canal de e-mail pendente cujo destino não abre (MASTER_KEY trocada ou
-// config_enc corrompido) não tem para onde reenviar: o reenvio responde 500
-// internal_error, sem mandar e-mail e sem pôr no corpo o erro de decifrar.
+// Um canal de e-mail pendente cujo destino não abre (config_enc corrompido,
+// ou selado com outra chave quando algum selo recente abre; a MASTER_KEY toda
+// errada nem sobe, por notify.CheckMasterKey) não tem para onde reenviar: o
+// reenvio responde 500 internal_error, sem mandar e-mail e sem pôr no corpo o
+// erro de decifrar.
 func TestResendWithUnreadableDestinationIsInternalError(t *testing.T) {
 	a := newAPI(t)
 	ctx := context.Background()
