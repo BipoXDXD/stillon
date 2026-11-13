@@ -25,6 +25,9 @@ updates:
     # versão: as de segurança não esperam (documentação do GitHub, cooldown).
     cooldown:
       default-days: 7
+    # A diretiva go do go.mod não é dependência para o gomod do Dependabot
+    # (ele só lê os require): o Go 1.26.x é segurado na imagem golang, no
+    # bloco docker abaixo (README, "Versão do Go"; issue #402).
 
   - package-ecosystem: npm
     directory: /web
@@ -66,12 +69,15 @@ updates:
     # Versão MAIOR de Postgres e Node não vem por PR: o Postgres maior é dump
     # e restauração num volume novo na VPS (D36; runbook, "Upgrade maior do
     # Postgres"), e o Node maior muda o que o build do painel exige. Menores
-    # e digests, sim.
+    # e digests, sim. A imagem golang fica no 1.26.x: só patch e digest
+    # (README, "Versão do Go"; issue #402).
     ignore:
       - dependency-name: postgres
         update-types: ['version-update:semver-major']
       - dependency-name: node
         update-types: ['version-update:semver-major']
+      - dependency-name: golang
+        update-types: ['version-update:semver-major', 'version-update:semver-minor']
 
   # O Postgres do compose.yaml, o mesmo digest do de produção; e o
   # compose.prod.yaml da VPS (Caddy e Postgres).
