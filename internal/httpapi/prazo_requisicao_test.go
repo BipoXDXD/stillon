@@ -17,6 +17,7 @@ import (
 	"github.com/BipoXDXD/stillon/internal/config"
 	"github.com/BipoXDXD/stillon/internal/crypto"
 	"github.com/BipoXDXD/stillon/internal/httpapi"
+	"github.com/BipoXDXD/stillon/internal/httpapi/middleware"
 	"github.com/BipoXDXD/stillon/internal/notify"
 	"github.com/BipoXDXD/stillon/internal/statuspage"
 )
@@ -33,6 +34,7 @@ func rotasSemBanco(t *testing.T, cfg *config.Config, ping func(context.Context) 
 		StatusPages: statuspage.NewService(nil, clk),
 		Clock:       clk,
 		Ready:       ping,
+		LimitesIP:   middleware.NovosOrcamentosEmMemoria(ctx, clk),
 	})
 }
 
@@ -190,6 +192,7 @@ func TestVerifyAplicaOPrazoDaConfiguracao(t *testing.T) {
 		Channels:    notify.NewChannelService(pool, box, clk, &discordFalso{}, &carteiroFalso{}, cfg.PublicBaseURL),
 		StatusPages: statuspage.NewService(nil, clk),
 		Clock:       clk,
+		LimitesIP:   middleware.NovosOrcamentosEmMemoria(ctx, clk),
 	})
 	for _, rota := range []struct{ metodo, caminho string }{
 		{http.MethodGet, "/verify/" + strings.Repeat("A", 43)},

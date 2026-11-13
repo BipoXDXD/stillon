@@ -1,13 +1,14 @@
 import { zodResolver } from '@hookform/resolvers/zod'
 import { QRCodeSVG } from 'qrcode.react'
-import { useRef, useState } from 'react'
+import { useState } from 'react'
 import { useForm } from 'react-hook-form'
-import { z } from 'zod'
 import { Botao } from '@/components/ui/botao'
 import { useCopiar } from '@/components/ui/copiar'
 import { CaixaDeMarcar, Campo, Entrada } from '@/components/ui/campo'
 import { AvisoDeCredencial } from './credencial'
 import type { ErroDeCredencial } from './credencial'
+import { esquemaCodigo, esquemaSenha } from './esquemasDoTotp'
+import { useEnvioUnico } from './useEnvioUnico'
 
 // Quanto a URL do .txt dos códigos vive depois do clique (o do FileSaver.js).
 export const ATRASO_DA_REVOGACAO = 40_000
@@ -18,34 +19,6 @@ function segredoDe(uri: string): string {
   } catch {
     return ''
   }
-}
-
-// Um envio vazio iria ao servidor e contaria como tentativa falha no
-// bloqueio progressivo (R34). Só "não vazio": o formato do código (6
-// dígitos ou os 16 de recuperação) quem decide é o servidor.
-export const esquemaSenha = z.object({ senha: z.string().min(1, 'Informe a senha.') })
-export const esquemaCodigo = z.object({ codigo: z.string().trim().min(1, 'Informe o código.') })
-
-// Um envio por vez (revisão final do Plano 9). O handleSubmit do
-// react-hook-form não impede reentrada: um clique duplo (ou Enter duas vezes)
-// mandava dois rotate, ou dois confirm — e o 2º confirm, com o pendente já
-// consumido pelo 1º, voltava 403 e tirava da tela os códigos novos. A ref
-// segura a reentrada no mesmo tique; o estado alimenta o aria-disabled.
-export function useEnvioUnico() {
-  const emVoo = useRef(false)
-  const [enviando, setEnviando] = useState(false)
-  const enviar = async (fn: () => Promise<void>) => {
-    if (emVoo.current) return
-    emVoo.current = true
-    setEnviando(true)
-    try {
-      await fn()
-    } finally {
-      emVoo.current = false
-      setEnviando(false)
-    }
-  }
-  return { enviando, enviar }
 }
 
 // O QR e a chave de um segredo novo, e o código que o app gera com ele: o

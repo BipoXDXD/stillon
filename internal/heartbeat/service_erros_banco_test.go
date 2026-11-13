@@ -143,8 +143,13 @@ func TestEventsEIncidentsDevolvemOErroDaLeitura(t *testing.T) {
 		a := novoAmbiente(t)
 		svc := heartbeat.NewService(a.pool, a.clk)
 		id, _ := a.novoHeartbeat(t)
-		a.comoDono(t, `INSERT INTO incidents (id, heartbeat_id, started_at, cause) VALUES ($1, $2, $3, 'heartbeat_late')`,
-			uuid.Must(uuid.NewV7()), id, agora.Add(-time.Hour))
+		// Só o sondador abre incidente; o Admin, que ignora a RLS, monta o
+		// histórico sem depender dessa política.
+		if _, err := testdb.Admin(t).Exec(context.Background(),
+			`INSERT INTO incidents (id, heartbeat_id, started_at, cause) VALUES ($1, $2, $3, 'heartbeat_late')`,
+			uuid.Must(uuid.NewV7()), id, agora.Add(-time.Hour)); err != nil {
+			t.Fatal(err)
+		}
 		a.executar(t, politicaRecusarLeitura("incidents", "ListHeartbeatIncidents"))
 
 		out, err := svc.Incidents(context.Background(), a.dono, id, nil, nil, 50)

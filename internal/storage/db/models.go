@@ -102,6 +102,14 @@ type Incident struct {
 	ClosedByResume  bool
 }
 
+type IpRateLimit struct {
+	Bucket      string
+	KeyHash     []byte
+	Tokens      float64
+	LastAllowed bool
+	UpdatedAt   time.Time
+}
+
 type NotifChannel struct {
 	ID              uuid.UUID
 	UserID          uuid.UUID
