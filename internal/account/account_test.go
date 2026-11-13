@@ -47,11 +47,11 @@ func novo(t *testing.T) (*account.Service, *pgxpool.Pool) {
 	return comHasherBarato(svc), pool
 }
 
-// Dois `stillon user create` ao mesmo tempo não criam dois donos (D9 do Plano
-// 5). O gancho segura cada criação entre a contagem e a inserção até as duas
-// chegarem ali, ou por meio segundo: com a trava, a segunda não chega à
-// contagem enquanto a primeira não comitar, e espera o meio segundo sozinha;
-// sem a trava, as duas contam zero e as duas inserem.
+// Dois `stillon user create` ao mesmo tempo não criam dois donos. O gancho
+// segura cada criação entre a contagem e a inserção até as duas chegarem ali,
+// ou por meio segundo: com a trava, a segunda não chega à contagem enquanto a
+// primeira não comitar, e espera o meio segundo sozinha; sem a trava, as duas
+// contam zero e as duas inserem.
 func TestConcurrentCreateMakesOneUser(t *testing.T) {
 	svc, pool := novo(t)
 	var chegaram sync.WaitGroup
@@ -182,7 +182,7 @@ func chaveDoUsuario(user uuid.UUID) string {
 }
 
 // segurarTrava toma, numa conexão do teste, a mesma advisory lock que as
-// mutações de sessão do usuário tomam (D1). Devolve a função que a solta.
+// mutações de sessão do usuário tomam. Devolve a função que a solta.
 //
 // Soltar é idempotente, e o t.Cleanup solta se o teste morrer antes (um
 // t.Fatal entre segurar e soltar): sem isso, a conexão continuaria com a
@@ -266,7 +266,7 @@ func trocar(c cenario) error {
 		account.ChangePasswordInput{Current: senha, New: "a-senha-nova-bem-comprida"}, auth.Meta{IP: "203.0.113.9"})
 }
 
-// A troca toma a trava do usuário antes de tocar em sessions (D1): com ela
+// A troca toma a trava do usuário antes de tocar em sessions: com ela
 // segura por fora, a troca espera; solta, termina.
 func TestChangePasswordTakesTheUserLock(t *testing.T) {
 	c := montar(t)
@@ -346,7 +346,7 @@ func TestChangePasswordKeepsRecoveryCodeWhenTheNewHashIsRateLimited(t *testing.T
 }
 
 // O set-password do CLI também toma a trava do usuário antes de revogar as
-// famílias (D1, D10): sem ela, o sucessor de uma rotação em curso escaparia.
+// famílias: sem ela, o sucessor de uma rotação em curso escaparia.
 func TestResetPasswordTakesTheUserLock(t *testing.T) {
 	c := montar(t)
 	soltar := segurarTrava(t, c.pool, c.user)
@@ -426,7 +426,7 @@ func TestChangePasswordLosesToAConcurrentChange(t *testing.T) {
 	}
 }
 
-// Encerrar uma sessão também toma a trava do usuário (D1): é o que impede o
+// Encerrar uma sessão também toma a trava do usuário: é o que impede o
 // sucessor de uma rotação em curso de escapar da revogação.
 func TestRevokeSessionTakesTheUserLock(t *testing.T) {
 	c := montar(t)
@@ -442,6 +442,39 @@ func TestRevokeSessionTakesTheUserLock(t *testing.T) {
 	soltar()
 	if err := <-fim; err != nil {
 		t.Fatalf("o encerramento falhou depois de soltar a trava: %v", err)
+	}
+}
+
+// A família pode cair enquanto o encerramento espera a trava (a troca de senha
+// de outro aparelho derruba as outras). Sob a trava ele confere de novo: nada
+// é revogado nem auditado, e quem pediu recebe ErrSessionNotFound.
+func TestRevokeSessionRechecksTheFamilyUnderTheLock(t *testing.T) {
+	c := montar(t)
+	soltar := segurarTrava(t, c.pool, c.user)
+	fim := make(chan error, 1)
+	go func() {
+		fim <- c.svc.RevokeSession(context.Background(), c.user, c.atual, auth.Meta{IP: "203.0.113.9"})
+	}()
+	if esperou, err := esperarNaTravaDoUsuario(t, c.pool, c.user, fim); !esperou {
+		t.Fatalf("o encerramento não chegou à trava (terminou com %v)", err)
+	}
+	// Revogada por fora enquanto o encerramento espera a trava.
+	if _, err := c.pool.Exec(context.Background(),
+		`UPDATE sessions SET revoked_at = now() WHERE family_id = $1`, c.atual); err != nil {
+		t.Fatal(err)
+	}
+	soltar()
+
+	if err := <-fim; !errors.Is(err, account.ErrSessionNotFound) {
+		t.Fatalf("erro = %v, queria ErrSessionNotFound", err)
+	}
+	var n int
+	if err := c.pool.QueryRow(context.Background(),
+		`SELECT count(*) FROM audit_log WHERE user_id = $1 AND action = 'session.revoked'`, c.user).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Errorf("session.revoked auditado %d vez(es) para uma família que já estava morta", n)
 	}
 }
 
@@ -485,7 +518,7 @@ func cadastrarTOTP(t *testing.T, c cenario, confirmar bool) string {
 
 // A troca de senha e o set-password apagam um cadastro de 2FA pendente (não
 // confirmado), na mesma transação que troca o hash: quem o iniciou pode ser o
-// invasor que a troca está expulsando. O 2FA confirmado fica (D10).
+// invasor que a troca está expulsando. O 2FA confirmado fica.
 func TestPasswordChangeDropsAPendingTOTPEnrollment(t *testing.T) {
 	redefinir := map[string]func(c cenario, segredo string) error{
 		"troca de senha": func(c cenario, segredo string) error {
@@ -637,8 +670,8 @@ func linhasRevogadas(t *testing.T, c cenario, familia uuid.UUID) (revogadas, tot
 	return revogadas, total
 }
 
-// DELETE /sessions/{id} e a troca de senha marcam só a linha viva da família
-// (Task 11): as rotacionadas ficam para a retenção, que as apaga numa
+// DELETE /sessions/{id} e a troca de senha marcam só a linha viva da família:
+// as rotacionadas ficam para a retenção, que as apaga numa
 // transação longa, e disputar as mesmas linhas em outra ordem arriscava
 // deadlock. (O set-password tem a mesma asserção no teste do CLI.)
 func TestRevocationsMarkOnlyTheLiveRow(t *testing.T) {

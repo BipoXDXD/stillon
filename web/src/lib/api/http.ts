@@ -13,7 +13,7 @@ export type ErroDeCampo = { field: string; reason: string }
 // o servidor; 'network' e 'unexpected' são do cliente: rede caída e resposta
 // que não é o envelope (502 do proxy, HTML, JSON inválido).
 // retryAfter: os segundos do cabeçalho Retry-After de um 429, quando vem
-// (o teto de hashes em paralelo do login manda; A1 do Plano 10).
+// (o teto de hashes em paralelo do login manda).
 export class ApiError extends Error {
   readonly status: number
   readonly code: string
@@ -100,7 +100,7 @@ export async function lerErro(r: Response): Promise<ApiError> {
 
 // lerCorpo lê uma resposta de sucesso pelo schema da rota. JSON quebrado ou
 // fora do contrato vira ApiError 'unexpected' com o status da resposta, e
-// nunca uma exceção crua na tela (spec do Plano 6 §3.4): a tela mostra a
+// nunca uma exceção crua na tela: a tela mostra a
 // mensagem de sempre, e o QueryClient não repete (status < 500). A mensagem
 // leva os caminhos dos campos que falharam, para o log e para o suporte.
 export async function lerCorpo<T>(r: Response, esquema: z.ZodType<T>): Promise<T> {

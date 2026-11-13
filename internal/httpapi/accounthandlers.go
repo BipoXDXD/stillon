@@ -2,7 +2,6 @@ package httpapi
 
 import (
 	"errors"
-	"log/slog"
 	"net/http"
 	"time"
 
@@ -12,10 +11,9 @@ import (
 	"github.com/BipoXDXD/stillon/internal/apierr"
 	"github.com/BipoXDXD/stillon/internal/auth"
 	"github.com/BipoXDXD/stillon/internal/httpapi/middleware"
-	"github.com/BipoXDXD/stillon/internal/observability"
 )
 
-// AccountHandlers são as rotas da conta do dono (Plano 5): GET /me, POST
+// AccountHandlers são as rotas da conta do dono: GET /me, POST
 // /auth/password, GET /sessions e DELETE /sessions/{id}.
 type AccountHandlers struct {
 	svc     *account.Service
@@ -23,8 +21,7 @@ type AccountHandlers struct {
 	// secureCookie: o mesmo critério do AuthHandlers, para apagar o cookie de
 	// refresh quando a sessão encerrada é a atual.
 	secureCookie bool
-	// provas: o contador de provas erradas por família (A3 do Plano 10), o
-	// mesmo das rotas do 2FA.
+	// provas: o contador de provas erradas por família, o mesmo das rotas do 2FA.
 	provas *provasDaFamilia
 }
 
@@ -71,12 +68,12 @@ type changePasswordRequest struct {
 
 // ChangePassword é POST /auth/password: 204, e as OUTRAS sessões encerradas.
 //
-// Os erros seguem o contrato dos Planos 5–7: senha nova fora da política é 400
-// com o campo; senha atual ou segundo fator errado é o 401 genérico do login
-// (R34); a sessão do token já encerrada é 401 unauthorized, que o painel
+// Os erros seguem o contrato: senha nova fora da política é 400
+// com o campo; senha atual ou segundo fator errado é o 401 genérico do login;
+// a sessão do token já encerrada é 401 unauthorized, que o painel
 // trata renovando (e a renovação falha, levando ao login).
 //
-// A prova errada conta no contador da família (A3 do Plano 10), e a quinta
+// A prova errada conta no contador da família, e a quinta
 // derruba a família (401 unauthorized). O bloqueio da conta não entra aqui.
 func (h *AccountHandlers) ChangePassword(w http.ResponseWriter, r *http.Request) {
 	userID, ok := middleware.UserID(r.Context())
@@ -223,6 +220,5 @@ func (h *AccountHandlers) internal(w http.ResponseWriter, r *http.Request, op st
 		argon2Ocupado(w, r, op)
 		return
 	}
-	slog.Error(op, "erro", err, "trace_id", observability.TraceID(r.Context()))
-	apierr.WriteError(w, r, apierr.CodeInternal)
+	erroInterno(w, r, op, err)
 }

@@ -1,10 +1,9 @@
-// Package account é o serviço da conta do dono (Plano 5): criar e redefinir a
-// senha pelo CLI, e desligar o 2FA pelo CLI (reset-2fa, Plano 9); ler a conta
+// Package account é o serviço da conta do dono: criar e redefinir a
+// senha pelo CLI, e desligar o 2FA pelo CLI (reset-2fa); ler a conta
 // e trocar a senha pela API. O CLI e a API chamam o mesmo serviço, para que a
-// política de senha e a normalização do e-mail sejam as mesmas nos dois (D20
-// do Plano 5).
+// política de senha e a normalização do e-mail sejam as mesmas nos dois.
 //
-// users e sessions não têm RLS (D7 do Plano 2). A barreira aqui é outra: toda
+// users e sessions não têm RLS. A barreira aqui é outra: toda
 // query que parte de um usuário recebe o id dele, e cada uma tem teste de
 // isolamento com sabotagem.
 package account
@@ -16,7 +15,6 @@ import (
 	"net/mail"
 	"slices"
 	"time"
-	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -38,13 +36,14 @@ var (
 	ErrInvalidEmail = errors.New("e-mail inválido")
 	// ErrInvalidCredentials: senha atual errada, segundo fator errado ou
 	// ausente, conta bloqueada, ou a senha mudou no meio. Um erro só, pelo
-	// motivo do R34: distinguir os casos contaria ao atacante o que acertou.
+	// motivo de segurança: distinguir os casos contaria ao atacante o que
+	// acertou.
 	ErrInvalidCredentials = errors.New("credenciais inválidas")
-	// ErrSessionGone: a família de sessão do token já não está viva (D11 do
-	// Plano 5), ou o usuário não existe mais.
+	// ErrSessionGone: a família de sessão do token já não está viva, ou o
+	// usuário não existe mais.
 	ErrSessionGone = errors.New("sessão encerrada")
 	// ErrSessionNotFound: a família pedida não aparece em GET /sessions —
-	// inexistente, de outro usuário, já revogada ou vencida (D14).
+	// inexistente, de outro usuário, já revogada ou vencida.
 	ErrSessionNotFound = errors.New("sessão não encontrada")
 )
 
@@ -115,6 +114,16 @@ func familyIsLive(ctx context.Context, q *db.Queries, userID, familyID uuid.UUID
 	return vivo, nil
 }
 
+// travarFamiliaViva toma a trava de sessões do usuário e SÓ ENTÃO confere
+// a família: conferir antes da trava deixaria uma revogação concorrente passar
+// entre a leitura e a escrita. Quem chama escolhe o erro de "família morta".
+func travarFamiliaViva(ctx context.Context, q *db.Queries, userID, familyID uuid.UUID, now time.Time) (bool, error) {
+	if err := q.LockUserSessions(ctx, userID); err != nil {
+		return false, fmt.Errorf("travar sessões: %w", err)
+	}
+	return familyIsLive(ctx, q, userID, familyID, now)
+}
+
 // ChangePasswordInput é o corpo de POST /auth/password.
 type ChangePasswordInput struct {
 	Current  string
@@ -122,7 +131,7 @@ type ChangePasswordInput struct {
 	TOTPCode string
 }
 
-// ChangePassword troca a senha pela API (D12 do Plano 5), na ordem:
+// ChangePassword troca a senha pela API, na ordem:
 //
 //  1. a política da senha nova (pública: validá-la primeiro não vaza nada e
 //     não gasta Argon2 nem conta falha por erro de digitação na nova);
@@ -131,10 +140,10 @@ type ChangePasswordInput struct {
 //  4. o hash novo, fora da transação e antes de consumir o segundo fator;
 //  5. o segundo fator, se ligado, por auth.TOTP.Verify (aceita o código de
 //     recuperação);
-//  6. a transação: trava do usuário (D1), família viva de novo, CAS do hash,
+//  6. a transação: trava do usuário, família viva de novo, CAS do hash,
 //     as OUTRAS famílias revogadas, auditoria.
 //
-// O bloqueio da CONTA não entra aqui (A3 do Plano 10): nem recusa a conta
+// O bloqueio da CONTA não entra aqui: nem recusa a conta
 // bloqueada, nem conta a prova errada. Quem conta as provas erradas desta
 // rota é o contador da família de sessão, no handler (auth.FamilyProofs).
 //
@@ -180,40 +189,48 @@ func (s *Service) ChangePassword(ctx context.Context, userID, familyID uuid.UUID
 		return err
 	}
 
+	if err := s.provarSegundoFator(ctx, userID, in.TOTPCode, now); err != nil {
+		return err
+	}
+
+	return s.gravarTroca(ctx, userID, familyID, u.PasswordHash, hash, crypto.HashIP(s.ipKey, meta.IP), now)
+}
+
+// provarSegundoFator é o passo 5 de ChangePassword: sem 2FA ligado não há o
+// que provar. O Verify consome o timestep (ou o código de recuperação) fora da
+// transação de gravarTroca: se ela desistir, quem tentar de novo espera o
+// próximo código de 30 s.
+func (s *Service) provarSegundoFator(ctx context.Context, userID uuid.UUID, code string, now time.Time) error {
 	ligado, err := s.totp.IsEnabled(ctx, userID)
 	if err != nil {
 		return err
 	}
-	if ligado {
-		// O Verify consome o timestep (ou o código de recuperação) fora da
-		// transação abaixo: se ela desistir, quem tentar de novo espera o
-		// próximo código de 30 s.
-		err := s.totp.Verify(ctx, userID, in.TOTPCode, now)
-		if errors.Is(err, auth.ErrTOTPInvalid) || errors.Is(err, auth.ErrTOTPNotEnrolled) {
-			return ErrInvalidCredentials
-		}
-		if err != nil {
-			return err
-		}
+	if !ligado {
+		return nil
 	}
+	err = s.totp.Verify(ctx, userID, code, now)
+	if errors.Is(err, auth.ErrTOTPInvalid) || errors.Is(err, auth.ErrTOTPNotEnrolled) {
+		return ErrInvalidCredentials
+	}
+	return err
+}
 
-	ipHash := crypto.HashIP(s.ipKey, meta.IP)
-
+// gravarTroca é o passo 6 de ChangePassword: a trava do usuário, a família
+// viva de novo, o CAS do hash, as OUTRAS famílias revogadas e a auditoria, numa
+// transação só.
+func (s *Service) gravarTroca(ctx context.Context, userID, familyID uuid.UUID, hashAntigo, hashNovo string, ipHash []byte, now time.Time) error {
 	return s.inTx(ctx, func(q *db.Queries) error {
-		if err := q.LockUserSessions(ctx, userID); err != nil {
-			return fmt.Errorf("travar sessões: %w", err)
-		}
 		// A família pode ter caído entre o passo 2 e a trava (um DELETE
 		// /sessions de outro aparelho, a detecção de reúso). Então nada muda:
 		// o 204 sempre quer dizer "trocada e a atual continua viva".
-		vivo, err := familyIsLive(ctx, q, userID, familyID, now)
+		vivo, err := travarFamiliaViva(ctx, q, userID, familyID, now)
 		if err != nil {
 			return err
 		}
 		if !vivo {
 			return ErrSessionGone
 		}
-		n, err := q.SwapUserHash(ctx, db.SwapUserHashParams{ID: userID, NewHash: hash, OldHash: u.PasswordHash})
+		n, err := q.SwapUserHash(ctx, db.SwapUserHashParams{ID: userID, NewHash: hashNovo, OldHash: hashAntigo})
 		if err != nil {
 			return fmt.Errorf("gravar senha: %w", err)
 		}
@@ -269,9 +286,9 @@ func (s *Service) UserIDByEmail(ctx context.Context, email string) (uuid.UUID, e
 }
 
 // CreateUser cria o dono. Recusa com ErrUserExists se já existe QUALQUER
-// usuário (D8 do Plano 5), e a recusa não muda nada.
+// usuário, e a recusa não muda nada.
 //
-// A contagem e a inserção rodam sob uma advisory lock de transação (D9): sem
+// A contagem e a inserção rodam sob uma advisory lock de transação: sem
 // ela, dois CLIs simultâneos contariam zero e criariam dois donos.
 func (s *Service) CreateUser(ctx context.Context, email, password string) (uuid.UUID, error) {
 	e, err := ValidateEmail(email)
@@ -324,7 +341,7 @@ func (s *Service) CreateUser(ctx context.Context, email, password string) (uuid.
 }
 
 // ResetPassword é o caminho de recuperação do operador (stillon user
-// set-password, D10 do Plano 5): grava a senha nova, tira o bloqueio e encerra
+// set-password): grava a senha nova, tira o bloqueio e encerra
 // TODAS as sessões. Recuperação quase sempre é "perdi" ou "vazou", e manter as
 // sessões deixaria o invasor dentro. Não mexe no segundo fator.
 //
@@ -349,7 +366,7 @@ func (s *Service) ResetPassword(ctx context.Context, email, password string) (in
 		if err != nil {
 			return fmt.Errorf("buscar usuário: %w", err)
 		}
-		// A trava do usuário antes de tocar em sessions (D1): sem ela, uma
+		// A trava do usuário antes de tocar em sessions: sem ela, uma
 		// rotação em curso deixaria o sucessor fora da revogação.
 		if err := q.LockUserSessions(ctx, userID); err != nil {
 			return fmt.Errorf("travar sessões: %w", err)
@@ -366,14 +383,14 @@ func (s *Service) ResetPassword(ctx context.Context, email, password string) (in
 	return revogadas, err
 }
 
-// ResetTwoFactor é o `stillon user reset-2fa` (Plano 9, §3.1): a saída de quem
+// ResetTwoFactor é o `stillon user reset-2fa`: a saída de quem
 // perdeu o autenticador E os códigos de recuperação, sem SQL à mão. Não pede
 // senha: quem tem a DATABASE_URL já pode tudo no banco, e o comando existe
 // para que o SQL certo não precise ser escrito, não como fronteira de
 // segurança.
 //
 // Numa transação: o 2FA desligado (segredo, confirmação, timestep e a troca
-// pendente), o bloqueio da conta zerado (A6 do Plano 10, como o
+// pendente), o bloqueio da conta zerado (como o
 // set-password), os códigos de recuperação apagados, TODAS as sessões
 // encerradas (quem estivesse dentro com uma sessão roubada sai, como no
 // set-password) e a auditoria totp.reset_cli. Sem 2FA ligado, nada muda: ligado volta false, sem
@@ -391,7 +408,7 @@ func (s *Service) ResetTwoFactor(ctx context.Context, email string) (ligado bool
 		if err != nil {
 			return fmt.Errorf("buscar usuário: %w", err)
 		}
-		// A trava do usuário antes de tocar em users e sessions (D1), na
+		// A trava do usuário antes de tocar em users e sessions, na
 		// ordem do set-password: sem ela, uma rotação em curso deixaria o
 		// sucessor fora da revogação.
 		if err := q.LockUserSessions(ctx, userID); err != nil {
@@ -420,8 +437,8 @@ func (s *Service) ResetTwoFactor(ctx context.Context, email string) (ligado bool
 	return ligado, revogadas, nil
 }
 
-// Session é uma família de refresh viva, como GET /sessions a mostra (D13 do
-// Plano 5). Não tem IP nem hash: não há campo onde eles caibam.
+// Session é uma família de refresh viva, como GET /sessions a mostra. Não tem
+// IP nem hash: não há campo onde eles caibam.
 type Session struct {
 	// ID é a família (family_id), o mesmo id do claim sid.
 	ID uuid.UUID
@@ -431,13 +448,12 @@ type Session struct {
 	CreatedAt time.Time
 	// LastUsedAt é o último refresh (granularidade de ~15 min num painel ativo).
 	LastUsedAt time.Time
-	// UserAgent é o do último refresh, cortado em maxUserAgent code points.
+	// UserAgent é o do último refresh, cortado em auth.MaxUserAgent code
+	// points (linhas gravadas antes do teto na gravação podem passar dele).
 	// É texto de quem fez o login, inclusive de um invasor.
 	UserAgent string
 	Current   bool
 }
-
-const maxUserAgent = 256
 
 // ListSessions devolve as famílias vivas do usuário, da mais nova para a mais
 // antiga pelo login (created_at), e não pelo último uso: uma ordem que muda a
@@ -461,7 +477,7 @@ func (s *Service) ListSessions(ctx context.Context, userID, current uuid.UUID) (
 		seg, nseg := id.Time().UnixTime()
 		out = append(out, Session{
 			ID: id, CreatedAt: time.Unix(seg, nseg).UTC(), LastUsedAt: r.CreatedAt.UTC(),
-			UserAgent: cortar(r.UserAgent, maxUserAgent), Current: id == current,
+			UserAgent: auth.TruncateUserAgent(r.UserAgent), Current: id == current,
 		})
 	}
 	slices.SortFunc(out, func(a, b Session) int {
@@ -473,31 +489,16 @@ func (s *Service) ListSessions(ctx context.Context, userID, current uuid.UUID) (
 	return out, nil
 }
 
-// cortar corta em n code points sem partir um caractere ao meio.
-func cortar(s string, n int) string {
-	if utf8.RuneCountInString(s) <= n {
-		return s
-	}
-	i := 0
-	for j := range s {
-		if i == n {
-			return s[:j]
-		}
-		i++
-	}
-	return s
-}
-
 // RevokeSession encerra a família pedida (DELETE /sessions/{id}). Só se ela
-// estiver viva E for do usuário; qualquer outra coisa é ErrSessionNotFound
-// (D14): a família "existe" para a API exatamente quando aparece em GET
+// estiver viva E for do usuário; qualquer outra coisa é ErrSessionNotFound:
+// a família "existe" para a API exatamente quando aparece em GET
 // /sessions.
 func (s *Service) RevokeSession(ctx context.Context, userID, familyID uuid.UUID, meta auth.Meta) error {
 	return s.revogarFamilia(ctx, userID, familyID, meta, "session.revoked")
 }
 
 // RevokeFamilyForWrongProofs derruba a família que errou provas demais numa
-// rota autenticada (A3 do Plano 10), com a auditoria session.proof_limit: é a
+// rota autenticada, com a auditoria session.proof_limit: é a
 // pista do dono de que alguém com uma sessão dele chutou a senha ou o código.
 // A família já morta é nil: duas requisições que estouram juntas derrubam uma
 // vez só.
@@ -516,12 +517,9 @@ func (s *Service) revogarFamilia(ctx context.Context, userID, familyID uuid.UUID
 	now := s.clk.Now()
 	ipHash := crypto.HashIP(s.ipKey, meta.IP)
 	return s.inTx(ctx, func(q *db.Queries) error {
-		// A trava do usuário antes de tocar em sessions (D1): sem ela, uma
+		// A trava do usuário antes de tocar em sessions: sem ela, uma
 		// rotação em curso da família deixaria o sucessor vivo.
-		if err := q.LockUserSessions(ctx, userID); err != nil {
-			return fmt.Errorf("travar sessões: %w", err)
-		}
-		vivo, err := familyIsLive(ctx, q, userID, familyID, now)
+		vivo, err := travarFamiliaViva(ctx, q, userID, familyID, now)
 		if err != nil {
 			return err
 		}
@@ -551,8 +549,8 @@ func (s *Service) inTx(ctx context.Context, fn func(*db.Queries) error) error {
 	return tx.Commit(ctx)
 }
 
-// audit grava na mesma transação da mudança: não existe mudança sem rastro,
-// nem rastro de mudança que não aconteceu (mesma razão do R39).
+// audit grava na mesma transação da mudança: não existe mudança sem rastro, nem
+// rastro de mudança que não aconteceu.
 func audit(ctx context.Context, q *db.Queries, userID uuid.UUID, action string, entity *string, entityID *uuid.UUID, ipHash []byte, at time.Time) error {
 	id, err := uuid.NewV7()
 	if err != nil {

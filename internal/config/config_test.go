@@ -17,6 +17,10 @@ func validEnv() map[string]string {
 		"MASTER_KEY":      k,
 		"JWT_SECRET":      k,
 		"IP_HASH_KEY":     k,
+		// PUBLIC_BASE_URL https é produção, e produção que sonda (ROLE padrão,
+		// all) exige a lista da hospedagem. 192.0.2.10 é de documentação
+		// (RFC 5737): nenhum alvo de teste cai nela.
+		"PROBE_BLOCKED_CIDRS": "192.0.2.10",
 	}
 }
 
@@ -159,7 +163,7 @@ func TestLoadRejectsAMalformedTrustedProxy(t *testing.T) {
 }
 
 // Spec §5.7: /metrics entrega o mapa operacional, e só pode escutar em
-// loopback (D10). "off" desliga.
+// loopback. "off" desliga.
 func TestMetricsAddrMustBeLoopback(t *testing.T) {
 	cases := []struct {
 		valor string
@@ -202,7 +206,7 @@ func TestMetricsAddrMustBeLoopback(t *testing.T) {
 	}
 }
 
-// M7 (Plano 9, §3.4): sem METRICS_ADDR, o padrão depende do papel efetivo,
+// Sem METRICS_ADDR, o padrão depende do papel efetivo,
 // para que --role=api e --role=prober no mesmo host não disputem a porta. Com
 // METRICS_ADDR definida (inclusive off), ela vale para qualquer papel, e as
 // validações de sempre continuam.
@@ -328,7 +332,7 @@ func TestLoadRejectsABadClientIPHeader(t *testing.T) {
 	}
 }
 
-// Plano 8: nomes que nunca carregam o IP do cliente são recusados no boot, em
+// Nomes que nunca carregam o IP do cliente são recusados no boot, em
 // qualquer caixa. Sem isto, o erro só aparecia como um balde de rate limit
 // dividido por todos os clientes.
 func TestLoadRejectsHeadersThatNeverCarryTheClientIP(t *testing.T) {
@@ -367,7 +371,7 @@ func TestLoadRejectsHeadersThatNeverCarryTheClientIP(t *testing.T) {
 func TestLoadRejectsDemoKeysOverHTTPS(t *testing.T) {
 	// O esquema não diferencia maiúsculas (RFC 3986): "HTTPS://" também é
 	// produção, e não pode passar pelo portão como se fosse http.
-	// https em loopback também recusa (Plano 8): o portão é "http E
+	// https em loopback também recusa: o portão é "http E
 	// loopback", e não "loopback"; sem estes dois casos, uma regressão para
 	// só !hostLocal passaria no CI.
 	for _, base := range []string{"https://stillon.example", "HTTPS://stillon.example", "https://localhost", "https://127.0.0.1"} {
@@ -511,7 +515,7 @@ func TestLoadAcceptsValidPublicBaseURL(t *testing.T) {
 
 // As chaves de demo só servem numa máquina local. Um compose copiado para um
 // servidor com http e um host de verdade (ou 0.0.0.0) também é produção, e o
-// esquema sozinho não pega isso (I3 da revisão do Plano 7).
+// esquema sozinho não pega isso.
 func TestLoadRejectsDemoKeysOnANonLoopbackHost(t *testing.T) {
 	for _, base := range []string{
 		"http://stillon.example",

@@ -24,7 +24,9 @@ import (
 // reais. Dez consultas presas no advisory lock lotam o pool; duas esperam
 // conexão. O prazo precisa interromper ambos sem confirmar novos alvos.
 func TestDeadlineCancelaSQLEEsperaDoPool(t *testing.T) {
-	a := newAPI(t)
+	// O prazo de produção (config.Load fixa 15 s), e não o folgado do helper:
+	// as janelas de 14 a 18 s abaixo medem esse valor.
+	a := newAPIWith(t, func(c *config.Config) { c.RequestTimeout = 15 * time.Second })
 	token := accessTokenValido(t, a)
 	ctx := t.Context()
 	admin, err := pgxpool.New(ctx, testdb.AdminDSN(t))

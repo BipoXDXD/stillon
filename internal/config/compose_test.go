@@ -2,11 +2,14 @@ package config
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -14,7 +17,7 @@ import (
 	"time"
 )
 
-// A recusa das chaves de demonstração (D14 do Plano 7) só protege se as
+// A recusa das chaves de demonstração só protege se as
 // chaves do compose.yaml forem ESTAS. Trocar uma chave no compose sem trocar
 // aqui deixaria o compose copiado para produção subir com uma chave pública.
 func TestComposeUsesTheDemoKeys(t *testing.T) {
@@ -36,7 +39,7 @@ func TestComposeUsesTheDemoKeys(t *testing.T) {
 }
 
 // O Postgres de produção, do compose, da perna 18 do CI, dos testes e do ensaio
-// de restauração tem de ser o MESMO digest (D29 do Plano 7). O Dependabot
+// de restauração tem de ser o MESMO digest. O Dependabot
 // atualiza o deploy/vps/db/Dockerfile, o deploy/vps/compose.prod.yaml e o
 // compose.yaml; as outras strings são a mão, e este teste pega a que ficou para
 // trás. Compara os digests entre si, sem fixar o valor: a troca de versão não
@@ -123,7 +126,7 @@ func servicoDe(t *testing.T, arquivo, nome string) string {
 	return string(m[1])
 }
 
-// D1 (Plano 10, §3.4; banco C1 da revisão): depois de um reboot, ou de um
+// Depois de um reboot, ou de um
 // restart do Docker, o daemon só religa os contêineres com política de
 // restart. O app voltava e o db não: o monitor ficava parado e calado. O
 // seed não entra: ele roda uma vez e sai.
@@ -139,7 +142,7 @@ func TestComposeDBRestartsWithTheHost(t *testing.T) {
 	}
 }
 
-// D1 (Plano 10, §3.4; banco S1 da revisão): quem copia o compose.yaml para
+// Quem copia o compose.yaml para
 // um servidor leva junto o usuário de demonstração e as chaves públicas. O
 // cabeçalho diz, antes de qualquer serviço, que ele é só da máquina local.
 func TestComposeHeaderSaysItIsLocalOnly(t *testing.T) {
@@ -153,7 +156,7 @@ func TestComposeHeaderSaysItIsLocalOnly(t *testing.T) {
 	}
 	// "atrás de um proxy": o seed e o boot olham só a PUBLIC_BASE_URL
 	// declarada. O compose copiado para um servidor, com um proxy na frente e
-	// a URL ainda local, passa pelos dois (I1 da revisão do Plano 10), e o
+	// a URL ainda local, passa pelos dois, e o
 	// cabeçalho não pode prometer proteção que não existe.
 	for _, frase := range []string{"SÓ PARA A MÁQUINA LOCAL", "NUNCA EM SERVIDOR", "compose de produção", "atrás de um proxy"} {
 		if !bytes.Contains(cabecalho, []byte(frase)) {
@@ -162,7 +165,7 @@ func TestComposeHeaderSaysItIsLocalOnly(t *testing.T) {
 	}
 }
 
-// C1 da revisão de 2026-10-14: sem stop_grace_period, o Docker manda SIGKILL
+// Sem stop_grace_period, o Docker manda SIGKILL
 // 10 s depois do SIGTERM, e o app planeja até shutdownGrace (15 s) para
 // terminar as sondas em voo e o lote do dispatcher. No `up` de um deploy, o
 // check em gravação se perdia e um aviso já entregue, mas ainda não marcado,
@@ -333,4 +336,99 @@ func bytesComSufixo(valor string, sufixos map[string]int64) (int64, error) {
 		return n * fator, nil
 	}
 	return 0, errors.New("sufixo desconhecido")
+}
+
+// Os dois manifestos de produção repassam a lista da hospedagem ao app com
+// ${…:?}: o boot já a exige (exigeListaDaHospedagem), e sem ela no
+// environment o contêiner subiria só para sair. Com :?, a falta pára o deploy
+// no docker compose, antes de parar o contêiner que está no ar.
+// Sabotagens: :- no lugar de :?, ? sem os dois-pontos (aceita vazia), a
+// variável no caddy.
+func TestManifestosExigemAListaDaHospedagem(t *testing.T) {
+	exigida := regexp.MustCompile(`^\$\{PROBE_BLOCKED_CIDRS:\?[^}]+\}$`)
+
+	coolify := servicosCoolify(t, "../../deploy/coolify/app.json")
+	if v := coolify["app"].Environment["PROBE_BLOCKED_CIDRS"]; !exigida.MatchString(v) {
+		t.Errorf("app.json: PROBE_BLOCKED_CIDRS do app = %q, queria ${PROBE_BLOCKED_CIDRS:?…}", v)
+	}
+	for _, nome := range []string{"caddy", "db"} {
+		if v, ok := coolify[nome].Environment["PROBE_BLOCKED_CIDRS"]; ok {
+			t.Errorf("app.json: o %s recebe PROBE_BLOCKED_CIDRS (%q); só o app sonda", nome, v)
+		}
+	}
+
+	const prod = "../../deploy/vps/compose.prod.yaml"
+	linha := regexp.MustCompile(`(?m)^      PROBE_BLOCKED_CIDRS: \$\{PROBE_BLOCKED_CIDRS:\?[^}]+\}$`)
+	if !linha.MatchString(servicoDe(t, prod, "app")) {
+		t.Errorf("compose.prod.yaml: o environment do app não tem PROBE_BLOCKED_CIDRS: ${PROBE_BLOCKED_CIDRS:?…}")
+	}
+	for _, nome := range []string{"caddy", "db"} {
+		if strings.Contains(servicoDe(t, prod, nome), "PROBE_BLOCKED_CIDRS") {
+			t.Errorf("compose.prod.yaml: o %s cita PROBE_BLOCKED_CIDRS; só o app sonda", nome)
+		}
+	}
+}
+
+// A regex acima pega a troca de :? por :-, mas não prova a semântica: aqui o
+// docker compose de verdade interpola o compose.prod.yaml. O controle
+// positivo impede que outra variável faltando faça o teste passar.
+func TestComposeProdRecusaSubirSemAListaDaHospedagem(t *testing.T) {
+	if _, err := exec.LookPath("docker"); err != nil {
+		t.Fatal("docker fora do PATH: o make test exige Docker")
+	}
+	casos := []struct {
+		nome     string
+		linha    string // linha de PROBE_BLOCKED_CIDRS no .env; vazia = sem a linha
+		recusado bool
+	}{
+		{nome: "com a lista", linha: "PROBE_BLOCKED_CIDRS=192.0.2.10/32,2001:db8::/64"},
+		{nome: "sem a linha", recusado: true},
+		{nome: "vazia", linha: "PROBE_BLOCKED_CIDRS=", recusado: true},
+	}
+	for _, c := range casos {
+		t.Run(c.nome, func(t *testing.T) {
+			saida, err := composeConfig(t, c.linha)
+			switch {
+			case !c.recusado && err != nil:
+				t.Fatalf("docker compose config recusou com a lista: %v\n%s", err, saida)
+			case c.recusado && err == nil:
+				t.Fatalf("docker compose config aceitou %q; queria a recusa", c.nome)
+			case c.recusado && !strings.Contains(saida, "defina PROBE_BLOCKED_CIDRS"):
+				t.Errorf("saída = %q; queria \"defina PROBE_BLOCKED_CIDRS\"", saida)
+			}
+		})
+	}
+}
+
+// composeConfig roda docker compose config -q sobre o compose.prod.yaml com um
+// .env fictício completo mais a linha da lista, e o ambiente do processo sem
+// PROBE_BLOCKED_CIDRS (o compose dá preferência ao ambiente sobre o .env).
+func composeConfig(t *testing.T, linhaDaLista string) (string, error) {
+	t.Helper()
+	env := strings.Join([]string{
+		"STILLON_DOMINIO=stillon.example",
+		"POSTGRES_PASSWORD=senha-ficticia-postgres",
+		"STILLON_APP_PASSWORD=senha-ficticia-app",
+		"STILLON_BACKUP_PASSWORD=senha-ficticia-backup",
+		"MASTER_KEY=ZGVtby1zdGlsbG9uLU1BU1RFUl9LRVktbmFvdXNlISE=",
+		"JWT_SECRET=ZGVtby1zdGlsbG9uLUpXVF9TRUNSRVQtbmFvdXNlISE=",
+		"IP_HASH_KEY=ZGVtby1zdGlsbG9uLUlQX0hBU0hfS0VZLW5hb3VzZSE=",
+		linhaDaLista,
+	}, "\n") + "\n"
+	arquivo := filepath.Join(t.TempDir(), ".env")
+	if err := os.WriteFile(arquivo, []byte(env), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "docker", "compose",
+		"--project-directory", "../../deploy/vps", "--env-file", arquivo,
+		"-f", "../../deploy/vps/compose.prod.yaml", "config", "-q")
+	for _, kv := range os.Environ() {
+		if !strings.HasPrefix(kv, "PROBE_BLOCKED_CIDRS=") {
+			cmd.Env = append(cmd.Env, kv)
+		}
+	}
+	saida, err := cmd.CombinedOutput()
+	return string(saida), err
 }

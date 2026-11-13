@@ -12,11 +12,23 @@ mkdir "$stage/images"
 python3 "$script_dir/send.py" requested > "$stage/requested.tsv"
 while IFS=$'\t' read -r role reference; do
   crane manifest "$reference" > "$stage/index.json"
-  if jq -e 'has("manifests")' "$stage/index.json" >/dev/null; then
+  # jq -e: 0 and 1 answer the question; any other status is a jq failure.
+  # -s and the guard accept exactly one object, so null or a second document
+  # cannot pass as a manifest that is not an index.
+  is_index=0
+  jq -se 'if length == 1 and (.[0] | type) == "object" then .[0] | has("manifests") else error("expected one JSON object") end' \
+    "$stage/index.json" >/dev/null || is_index=$?
+  case $is_index in
+  0)
     digest=$(jq -er '[.manifests[] | select(.platform.os == "linux" and .platform.architecture == "amd64")] | if length == 1 then .[0].digest else error("ambiguous platform") end' "$stage/index.json")
-  else
+    ;;
+  1)
     digest=$(crane digest "$reference")
-  fi
+    ;;
+  *)
+    exit "$is_index"
+    ;;
+  esac
   [[ $digest =~ ^sha256:[0-9a-f]{64}$ ]]
   repository=${reference%@*}
   repository=${repository%:*}

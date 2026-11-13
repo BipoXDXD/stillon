@@ -2,16 +2,13 @@ package httpapi
 
 import (
 	"errors"
-	"log/slog"
 	"net/http"
-	"strconv"
 	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/BipoXDXD/stillon/internal/apierr"
 	"github.com/BipoXDXD/stillon/internal/incident/history"
-	"github.com/BipoXDXD/stillon/internal/observability"
 	"github.com/BipoXDXD/stillon/internal/targets"
 )
 
@@ -49,7 +46,7 @@ func toIncidentResponse(i history.Incident) incidentResponse {
 var parametrosDaListaDeIncidentes = []string{"status", "target_id", "cursor", "limit"}
 
 // List é GET /incidents?status=open|resolved&target_id=&cursor=&limit=
-// (spec §9; target_id é do Plano 5).
+// (spec §9).
 func (h *IncidentHandlers) List(w http.ResponseWriter, r *http.Request) {
 	userID, ok := usuario(w, r)
 	if !ok {
@@ -59,7 +56,7 @@ func (h *IncidentHandlers) List(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	f := history.Filter{Limit: history.DefaultPageSize}
+	var f history.Filter
 
 	switch q.Get("status") {
 	case "":
@@ -72,26 +69,11 @@ func (h *IncidentHandlers) List(w http.ResponseWriter, r *http.Request) {
 		campoInvalido(w, r, "status", targets.ReasonInvalid)
 		return
 	}
-	if s := q.Get("limit"); s != "" {
-		n, err := strconv.ParseInt(s, 10, 32)
-		if err != nil {
-			campoInvalido(w, r, "limit", targets.ReasonInvalid)
-			return
-		}
-		if n < 1 || n > int64(history.MaxPageSize) {
-			campoInvalido(w, r, "limit", targets.ReasonOutOfRange)
-			return
-		}
-		f.Limit = int32(n)
+	limite, cursor, ok := paginaDe(w, r, q, history.DefaultPageSize, history.MaxPageSize)
+	if !ok {
+		return
 	}
-	if s := q.Get("cursor"); s != "" {
-		c, err := uuid.Parse(s)
-		if err != nil {
-			campoInvalido(w, r, "cursor", targets.ReasonInvalid)
-			return
-		}
-		f.Before = &c
-	}
+	f.Limit, f.Before = limite, cursor
 	// target_id malformado é 400, como o cursor: é parâmetro de consulta, e
 	// não o recurso do caminho (que seria 404).
 	if s := q.Get("target_id"); s != "" {
@@ -111,20 +93,14 @@ func (h *IncidentHandlers) List(w http.ResponseWriter, r *http.Request) {
 	for _, i := range items {
 		resp.Items = append(resp.Items, toIncidentResponse(i))
 	}
-	if len(items) == int(f.Limit) {
-		resp.NextCursor = items[len(items)-1].ID.String()
-	}
+	resp.NextCursor = proximoCursor(items, f.Limit, func(i history.Incident) uuid.UUID { return i.ID })
 	apierr.WriteJSON(w, http.StatusOK, resp)
 }
 
 // Ack é POST /incidents/{id}/ack. Idempotente: o segundo ack devolve o
 // instante do primeiro.
 func (h *IncidentHandlers) Ack(w http.ResponseWriter, r *http.Request) {
-	userID, ok := usuario(w, r)
-	if !ok {
-		return
-	}
-	id, ok := pathID(w, r)
+	userID, id, ok := donoEID(w, r)
 	if !ok {
 		return
 	}
@@ -143,7 +119,6 @@ func (h *IncidentHandlers) falhou(w http.ResponseWriter, r *http.Request, op str
 		apierr.WriteError(w, r, apierr.CodeNotFound)
 		return true
 	}
-	slog.Error(op, "erro", err, "trace_id", observability.TraceID(r.Context()))
-	apierr.WriteError(w, r, apierr.CodeInternal)
+	erroInterno(w, r, op, err)
 	return true
 }

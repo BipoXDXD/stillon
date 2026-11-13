@@ -1,7 +1,11 @@
 import type { HoraDoSpark } from '@/lib/api/schemas'
 import { plural } from '@/lib/format'
 
-export type EstadoDaHora = 'no-ar' | 'degradado' | 'fora'
+// Do melhor para o pior, a ordem do nome acessível. A lista é a fonte do tipo,
+// para percorrer os estados sem `Object.keys(...) as`.
+const ESTADOS = ['no-ar', 'degradado', 'fora'] as const
+
+export type EstadoDaHora = (typeof ESTADOS)[number]
 
 // Forma + cor (spec do redesign, Telas > 1): a hora boa é uma barra cheia e
 // cinza; a degradada tem dois terços da altura, e a fora do ar, um terço,
@@ -22,7 +26,7 @@ const ALTURA = 24
 const MS_POR_HORA = 3_600_000
 
 // As 24 horas do painel em SVG próprio: o Recharts fica fora do painel
-// (quase metade do bundle, spec do Plano 6, D4). Hora sem check é lacuna,
+// (quase metade do bundle). Hora sem check é lacuna,
 // não zero. O nome acessível resume as horas por estado.
 export function Minigrafico({ horas, agora }: { horas: HoraDoSpark[]; agora: Date }) {
   const inicio = Math.floor(agora.getTime() / MS_POR_HORA) - HORAS
@@ -65,7 +69,7 @@ const NOMES: Record<EstadoDaHora, [string, string]> = {
 
 function resumir(estados: EstadoDaHora[]): string {
   if (estados.length === 0) return 'sem checks'
-  return (Object.keys(NOMES) as EstadoDaHora[])
+  return ESTADOS
     .map((e) => [e, estados.filter((x) => x === e).length] as const)
     .filter(([, n]) => n > 0)
     .map(([e, n]) => plural(n, ...NOMES[e]))

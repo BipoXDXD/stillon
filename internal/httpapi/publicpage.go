@@ -41,23 +41,24 @@ const (
 	// O limite por IP é folgado: o visitante de uma página em incidente
 	// recarrega. Com TRUSTED_PROXIES vazio atrás do proxy do Fly, todos os
 	// visitantes dividem um balde, e a página cai no pior momento (ver
-	// pendência do Plano 5).
+	// a configuração de TRUSTED_PROXIES).
 	publicPorMinuto = 120
 	publicBurst     = 60
 )
 
 // paginaPublica é a cadeia de /p/{slug}, separada da API como a de
 // /verify/: sem CORS, sem RequireCustomHeader, e com a CSP e o cache
-// próprios desta página.
-func paginaPublica(ctx context.Context, cfg *config.Config, clk clock.Clock, svc *statuspage.Service) http.Handler {
+// próprios desta página. A página entra pronta (em produção,
+// PublicPageHandlers.Page) para a cadeia ser exercitada sem banco.
+func paginaPublica(ctx context.Context, cfg *config.Config, clk clock.Clock, pagina http.HandlerFunc) http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /p/{slug}", (&PublicPageHandlers{svc: svc}).Page)
+	mux.HandleFunc("GET /p/{slug}", pagina)
 
 	var h http.Handler = mux
 	h = middleware.RateLimit(ctx, clk, publicPorMinuto, publicBurst, proxiesDe(cfg))(h)
 	h = middleware.SecurityHeaders(h)
 	h = middleware.Recover(h)
-	h = middleware.Deadline(requestTimeout)(h)
+	h = middleware.Deadline(cfg.RequestTimeout)(h)
 	h = middleware.RequestID(h)
 	return h
 }

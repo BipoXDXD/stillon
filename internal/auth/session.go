@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 
@@ -43,7 +44,7 @@ var (
 	ErrStalePassword = errors.New("a senha mudou depois de verificada")
 	// ErrStaleSecondFactor: o segredo do 2FA que aceitou o código já não é o
 	// do usuário (uma troca de autenticador ou um disable comitou entre o
-	// /totp/verify e a sessão; A4 do Plano 10). Quem chama responde como o
+	// /totp/verify e a sessão). Quem chama responde como o
 	// código errado: invalid_credentials.
 	ErrStaleSecondFactor = errors.New("o segundo fator mudou depois de verificado")
 )
@@ -62,14 +63,35 @@ type Meta struct {
 	UserAgent string
 }
 
+// MaxUserAgent é o teto, em code points, do user agent: o que a sessão guarda
+// e o que a lista de sessões mostra. O cabeçalho só é informativo, e sem teto
+// próprio o único limite seria o dos cabeçalhos HTTP (dezenas de KiB).
+const MaxUserAgent = 256
+
+// TruncateUserAgent corta em MaxUserAgent code points sem partir um caractere
+// ao meio.
+func TruncateUserAgent(s string) string {
+	if utf8.RuneCountInString(s) <= MaxUserAgent {
+		return s
+	}
+	n := 0
+	for i := range s {
+		if n == MaxUserAgent {
+			return s[:i]
+		}
+		n++
+	}
+	return s
+}
+
 type Manager struct {
 	store Store
 	clk   clock.Clock
 	ipKey []byte
 }
 
-// NewManager entra em panic com ipKey curta em vez de devolver erro (ruling
-// R27, mesma decisão do R7 em crypto.HashIP). A validação fica aqui, na
+// NewManager entra em panic com ipKey curta em vez de devolver erro (a mesma
+// decisão de crypto.HashIP). A validação fica aqui, na
 // partida do processo, e não no primeiro Issue/Rotate: sem ela o panic de
 // HashIP só estouraria dentro do handler HTTP, no primeiro login em produção.
 // config.Load já garante 32 bytes para IPHashKey, então chave curta chegando
@@ -99,7 +121,7 @@ func PasswordStamp(hash string) string {
 // Issue cria uma família nova. É o caminho do login, e só depois de uma senha
 // verificada: stamp é o PasswordStamp do hash que conferiu com ela.
 //
-// Sob a trava do usuário (D1 do Plano 5), Issue confere que o hash atual ainda
+// Sob a trava do usuário, Issue confere que o hash atual ainda
 // é o verificado, e recusa com ErrStalePassword se não for. As duas metades
 // são necessárias. Sem a reconferência, um login que verificou a senha ANTIGA
 // e chegou aqui depois de um set-password (ou de uma troca de senha) abria uma
@@ -119,7 +141,7 @@ func (m *Manager) Issue(ctx context.Context, userID uuid.UUID, stamp string, met
 // IssueAfterSecondFactor é o Issue do login com 2FA: além do carimbo da senha,
 // confere, sob a MESMA trava do usuário, que o segredo que aceitou o código
 // (proof) ainda é o segredo ativo, e recusa com ErrStaleSecondFactor se não
-// for (A4 do Plano 10). Sem isto, um código do app ANTIGO aceito um instante
+// for. Sem isto, um código do app ANTIGO aceito um instante
 // antes de uma troca de autenticador comitar abria uma sessão depois da
 // troca, que a troca (que encerra as outras famílias sob a mesma trava) já não
 // alcançava. Com a trava, ou a troca comita antes (e a reconferência recusa),
@@ -249,7 +271,7 @@ func (m *Manager) Rotate(ctx context.Context, token string, meta Meta) (string, 
 // dispositivos: derruba a cadeia deste login, que é o que o usuário quer
 // dizer com "sair".
 //
-// Revogar um token que não existe, ou já revogado, devolve nil (ruling R28):
+// Revogar um token que não existe, ou já revogado, devolve nil:
 // logout é idempotente. Um cliente que reenvia o logout, ou que manda um
 // cookie já morto, não deve receber erro — e o retorno não diz nada sobre a
 // existência do token, então quem chama não pode inferir nada dele.
@@ -259,10 +281,10 @@ func (m *Manager) Revoke(ctx context.Context, token string) error {
 	return m.store.InTx(ctx, func(ctx context.Context, tx Tx) error {
 		// A trava do usuário, e não a da linha, é o que fecha a corrida com
 		// uma rotação simultânea: o cookie apresentado pode ser um refresh
-		// antigo, e a linha viva que a rotação trava é outra (D1 do Plano 5).
+		// antigo, e a linha viva que a rotação trava é outra.
 		cur, err := travarSessao(ctx, tx, hash)
 		if errors.Is(err, ErrNotFound) {
-			return nil // R28
+			return nil
 		}
 		if err != nil {
 			return err
@@ -271,9 +293,8 @@ func (m *Manager) Revoke(ctx context.Context, token string) error {
 	})
 }
 
-// travarSessao pega a trava do usuário ANTES da trava da linha (D1 do Plano
-// 5), e toda transação que muda sessões segue essa ordem: é o que impede o
-// ciclo entre duas delas.
+// travarSessao pega a trava do usuário ANTES da trava da linha, e toda transação
+// que muda sessões segue essa ordem: é o que impede o ciclo entre duas delas.
 //
 // A trava da linha sozinha não basta. Em READ COMMITTED, o UPDATE que revoga
 // uma família espera a linha viva que uma rotação travou; a rotação insere o

@@ -24,8 +24,8 @@ import (
 const (
 	dispatchEvery = 2 * time.Second
 	// claimTimeout é o prazo da reivindicação do lote, espera por conexão do
-	// pool incluída: uma consulta presa não para a entrega de todos os avisos
-	// (C2 da revisão). Fica acima de dispatchEvery pelo mesmo motivo do
+	// pool incluída: uma consulta presa não para a entrega de todos os avisos.
+	// Fica acima de dispatchEvery pelo mesmo motivo do
 	// tickTimeout do sondador: o Ticker descarta os disparos perdidos, e um
 	// prazo apertado demais pararia a entrega com o banco só lento. Os envios
 	// e as gravações dos desfechos têm prazos próprios.
@@ -60,7 +60,7 @@ const (
 	rateLimitGrace = time.Hour
 
 	// shutdownSendGrace é quanto, depois do sinal de encerramento, os envios
-	// em curso ainda têm antes de serem abortados (C1 da revisão). Nenhum
+	// em curso ainda têm antes de serem abortados. Nenhum
 	// envio novo começa depois do sinal.
 	shutdownSendGrace = 7 * time.Second
 
@@ -193,6 +193,7 @@ func (d *Dispatcher) reivindicar(ctx context.Context) ([]db.ClaimDueNotification
 		var err error
 		lote, err = q.ClaimDueNotifications(ctx, db.ClaimDueNotificationsParams{
 			Now: now, LeaseUntil: now.Add(lease), MaxRows: maxConcurrentSends,
+			Kinds: kindsParaReivindicar(), Events: eventosConhecidos,
 		})
 		return err
 	})
@@ -228,8 +229,7 @@ func porCanal(lote []db.ClaimDueNotificationsRow) [][]db.ClaimDueNotificationsRo
 // transitória (429, timeout, rede, 5xx), o resto da fila não é enviado: o
 // canal está pedindo espera ou está fora, e mandar mais só gastaria até
 // sendTimeout por notificação. Sem isso, um webhook que trava seguraria o
-// lote inteiro por k × sendTimeout, e os outros canais esperariam junto
-// (achado da revisão).
+// lote inteiro por k × sendTimeout, e os outros canais esperariam junto.
 //
 // Com o sinal de encerramento, o resto da fila volta à fila sem envio.
 func (d *Dispatcher) entregarEmSerie(p prazos, fila []db.ClaimDueNotificationsRow) {
@@ -262,7 +262,7 @@ func (d *Dispatcher) liberar(p prazos, n db.ClaimDueNotificationsRow) {
 // pendente para agora, com a tentativa devolvida. A falha é do StillOn, e
 // não do canal.
 func interrompida(agora time.Time) desfecho {
-	return desfecho{status: "pending", proxima: agora, devolver: true}
+	return desfecho{status: statusPending, proxima: agora, devolver: true}
 }
 
 // entregarProtegido isola o panic de um envio: a notificação fica como a
@@ -295,21 +295,15 @@ func (d *Dispatcher) adiar(p prazos, n db.ClaimDueNotificationsRow, parou desfec
 		if proxima.IsZero() { // quem parou o canal já tinha falhado de vez
 			proxima = d.clk.Now().Add(backoff(n.Attempts))
 		}
-		f = desfecho{status: "pending", reason: parou.reason, proxima: proxima}
-		switch {
-		case parou.reason == ReasonRateLimited && d.perdoa429(n):
-			f.devolver = true
-		case n.Attempts >= MaxAttempts:
-			f = desfecho{status: "failed", reason: parou.reason}
-		}
+		f = d.decidirRetentativa(n, parou.reason, proxima)
 	}
 	// "deferred" é só o que volta à fila; o resto conta pelo desfecho.
 	rotulo := "deferred"
-	if f.status != "pending" {
+	if f.status != statusPending {
 		rotulo = resultado(f.status)
 	}
 	d.total.WithLabelValues(n.Kind, rotulo).Inc()
-	if f.status == "failed" && !f.doSistema {
+	if f.status == statusFailed && !f.doSistema {
 		slog.Warn("notificação falhou de vez", "notification_id", n.ID, "channel_id", n.ChannelID, "motivo", f.reason)
 	}
 	if err := d.persistir(p.gravacoes, n, f); err != nil {
@@ -317,9 +311,22 @@ func (d *Dispatcher) adiar(p prazos, n db.ClaimDueNotificationsRow, parou desfec
 	}
 }
 
+// statusNotificacao é o status de uma notificação depois de uma tentativa.
+// Os valores são os gravados na coluna notifications.status. Um tipo próprio
+// evita que um literal com erro de grafia vire, em silêncio, uma falha
+// definitiva: persistir recusa o que não conhece.
+type statusNotificacao string
+
+const (
+	statusSent      statusNotificacao = "sent"
+	statusPending   statusNotificacao = "pending" // retentativa
+	statusCancelled statusNotificacao = "cancelled"
+	statusFailed    statusNotificacao = "failed"
+)
+
 // desfecho é o que fazer com a notificação depois da tentativa.
 type desfecho struct {
-	status  string // sent, pending (retentativa), failed ou cancelled
+	status  statusNotificacao
 	reason  Reason
 	proxima time.Time
 	// devolver desconta a tentativa que a reivindicação contou (429 dentro
@@ -337,7 +344,7 @@ type desfecho struct {
 func (d *Dispatcher) entregar(p prazos, n db.ClaimDueNotificationsRow) desfecho {
 	f := d.tentar(p.envios, n)
 	d.total.WithLabelValues(n.Kind, resultado(f.status)).Inc()
-	if f.status == "failed" {
+	if f.status == statusFailed {
 		// Só o motivo vai ao log, nunca o destino.
 		slog.Warn("notificação falhou de vez", "notification_id", n.ID, "channel_id", n.ChannelID, "motivo", f.reason)
 	}
@@ -356,25 +363,25 @@ func semEnvio(n db.ClaimDueNotificationsRow) (desfecho, bool) {
 	// Spec §5.8: a verificação vale no ENVIO, não só no fan-out. Um canal
 	// desabilitado depois de enfileirado não recebe mais nada.
 	if !n.Enabled || n.VerifiedAt == nil {
-		return desfecho{status: "cancelled"}, true
+		return desfecho{status: statusCancelled}, true
 	}
 	// Uma abertura que ainda não saiu quando o incidente já fechou fica
 	// velha: o fechamento diz quando caiu e quando voltou.
 	if n.Event == incident.EventOpened && n.ResolvedAt != nil {
-		return desfecho{status: "cancelled"}, true
+		return desfecho{status: statusCancelled}, true
 	}
 	// Um lembrete só faz sentido com o incidente aberto, sem ack e com o
 	// alvo ativo: reconhecer ou pausar o alvo interrompe os lembretes,
 	// inclusive os que já estão na fila.
 	if n.Event == incident.EventReminder && (n.ResolvedAt != nil || n.AckAt != nil || !n.TargetEnabled) {
-		return desfecho{status: "cancelled"}, true
+		return desfecho{status: statusCancelled}, true
 	}
 	// A reivindicação já contou esta tentativa. Passar do teto só acontece
 	// quando o desfecho da última não chegou a ser gravado (processo morto,
 	// commit que falhou) e a linha voltou quando o lease venceu: ela falha
 	// de vez sem enviar, porque o teto é de envios.
 	if n.Attempts > MaxAttempts {
-		return desfecho{status: "failed", reason: ReasonUnknown, doSistema: true}, true
+		return desfecho{status: statusFailed, reason: ReasonUnknown, doSistema: true}, true
 	}
 	return desfecho{}, false
 }
@@ -386,22 +393,22 @@ func (d *Dispatcher) tentar(envios context.Context, n db.ClaimDueNotificationsRo
 	}
 	canal, ok := d.notifiers[Kind(n.Kind)]
 	if !ok {
-		return desfecho{status: "failed", reason: ReasonInvalidChannel}
+		return desfecho{status: statusFailed, reason: ReasonInvalidChannel}
 	}
 	dest, err := openConfig(d.box, n.ChannelID, n.ConfigEnc)
 	if err != nil {
-		return desfecho{status: "failed", reason: ReasonInvalidChannel}
+		return desfecho{status: statusFailed, reason: ReasonInvalidChannel}
 	}
 
 	ctx, cancel := context.WithTimeout(envios, d.sendTimeout)
 	defer cancel()
 	err = canal.Send(ctx, dest, Event{
 		NotificationID: n.ID, Kind: n.Event, TargetName: n.TargetName,
-		StartedAt: n.StartedAt, ResolvedAt: valorOuZero(n.ResolvedAt), QueuedAt: n.CreatedAt, Cause: n.Cause,
+		StartedAt: n.StartedAt, ResolvedAt: storage.TimeOrZero(n.ResolvedAt), QueuedAt: n.CreatedAt, Cause: n.Cause,
 		ClosedByResume: n.ClosedByResume,
 	})
 	if err == nil {
-		return desfecho{status: "sent"}
+		return desfecho{status: statusSent}
 	}
 	// Abortado pelo encerramento: volta à fila para já. A entrega é
 	// at-least-once. No e-mail, a Idempotency-Key (id da notificação) faz o
@@ -421,16 +428,29 @@ func (d *Dispatcher) tentar(envios context.Context, n db.ClaimDueNotificationsRo
 		}
 	}
 	if se.Permanent {
-		return desfecho{status: "failed", reason: se.Reason}
+		return desfecho{status: statusFailed, reason: se.Reason}
 	}
 	espera := max(backoff(n.Attempts), se.RetryAfter)
-	if se.Reason == ReasonRateLimited && d.perdoa429(n) {
-		return desfecho{status: "pending", reason: se.Reason, proxima: d.clk.Now().Add(espera), devolver: true, transitoria: true}
+	f := d.decidirRetentativa(n, se.Reason, d.clk.Now().Add(espera))
+	f.transitoria = true
+	return f
+}
+
+// decidirRetentativa é a política de uma falha transitória, igual para quem
+// foi enviado (tentar) e para quem foi adiado porque o canal parou (adiar):
+// um 429 dentro de rateLimitGrace devolve a tentativa, porque é o provedor
+// pedindo espera; fora disso a tentativa conta, e quem já está no teto falha
+// de vez. proxima é quando a retentativa pode sair, e quem chama decide a
+// espera.
+func (d *Dispatcher) decidirRetentativa(n db.ClaimDueNotificationsRow, motivo Reason, proxima time.Time) desfecho {
+	switch {
+	case motivo == ReasonRateLimited && d.perdoa429(n):
+		return desfecho{status: statusPending, reason: motivo, proxima: proxima, devolver: true}
+	case n.Attempts >= MaxAttempts:
+		return desfecho{status: statusFailed, reason: motivo}
+	default:
+		return desfecho{status: statusPending, reason: motivo, proxima: proxima}
 	}
-	if n.Attempts >= MaxAttempts {
-		return desfecho{status: "failed", reason: se.Reason, transitoria: true}
-	}
-	return desfecho{status: "pending", reason: se.Reason, proxima: d.clk.Now().Add(espera), transitoria: true}
 }
 
 // backoff dobra a cada tentativa a partir de firstBackoff: 30s, 1min,
@@ -455,23 +475,23 @@ func (d *Dispatcher) persistir(gravacoes context.Context, n db.ClaimDueNotificat
 	}
 	return storage.InProberTx(ctx, d.pool, func(q *db.Queries) error {
 		switch f.status {
-		case "sent":
+		case statusSent:
 			if err := q.MarkNotificationSent(ctx, db.MarkNotificationSentParams{ID: n.ID, Now: d.clk.Now()}); err != nil {
 				return err
 			}
 			return q.MarkChannelSuccess(ctx, db.MarkChannelSuccessParams{ChannelID: n.ChannelID, Now: d.clk.Now()})
-		case "pending":
+		case statusPending:
 			return q.RetryNotification(ctx, db.RetryNotificationParams{
 				ID: n.ID, NextAttemptAt: f.proxima, LastError: motivo, Refund: f.devolver,
 			})
-		case "cancelled":
-			return q.CloseNotification(ctx, db.CloseNotificationParams{ID: n.ID, Status: "cancelled", LastError: motivo})
-		case "failed":
-			if err := q.CloseNotification(ctx, db.CloseNotificationParams{ID: n.ID, Status: "failed", LastError: motivo}); err != nil {
+		case statusCancelled:
+			return q.CloseNotification(ctx, db.CloseNotificationParams{ID: n.ID, Status: string(statusCancelled), LastError: motivo})
+		case statusFailed:
+			if err := q.CloseNotification(ctx, db.CloseNotificationParams{ID: n.ID, Status: string(statusFailed), LastError: motivo}); err != nil {
 				return err
 			}
 			// O canal passa a "failing" até a próxima entrega que der certo
-			// (pendência do Plano 3: antes, a falha só ia para a auditoria). A
+			// (antes, a falha só ia para a auditoria). A
 			// falha do próprio StillOn não é culpa do canal.
 			if !f.doSistema {
 				if err := q.MarkChannelFailure(ctx, db.MarkChannelFailureParams{ChannelID: n.ChannelID, Now: d.clk.Now(), LastError: motivo}); err != nil {
@@ -497,16 +517,9 @@ func (d *Dispatcher) persistir(gravacoes context.Context, n db.ClaimDueNotificat
 }
 
 // resultado é o rótulo de notify_total: "pending" vira "retry".
-func resultado(status string) string {
-	if status == "pending" {
+func resultado(status statusNotificacao) string {
+	if status == statusPending {
 		return "retry"
 	}
-	return status
-}
-
-func valorOuZero(t *time.Time) time.Time {
-	if t == nil {
-		return time.Time{}
-	}
-	return *t
+	return string(status)
 }

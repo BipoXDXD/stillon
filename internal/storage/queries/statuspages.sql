@@ -2,10 +2,10 @@
 -- user_id; as públicas, sob InPublicTx (somente leitura, escopo do slug).
 
 -- name: GetStatusPage :one
-SELECT * FROM status_pages WHERE user_id = $1;
+SELECT id, user_id, slug, title, published, created_at FROM status_pages WHERE user_id = $1;
 
 -- A trava do PATCH: sem ela, dois PATCH simultâneos leem a mesma versão, e
--- o segundo regrava os campos que o primeiro mudou (achado da revisão).
+-- o segundo regrava os campos que o primeiro mudou.
 -- name: LockStatusPage :one
 SELECT id FROM status_pages WHERE user_id = $1 FOR UPDATE;
 
@@ -77,7 +77,7 @@ SELECT coalesce(max(r.bucket), 'epoch'::timestamptz)::timestamptz
 -- Uptime diário (UTC) dos alvos da página: os rollups de [since, cut) mais
 -- os checks brutos de [cut, until), no corte do pacote rollupcut (o mesmo do
 -- dashboard). Sem os brutos, a página ficava até ~1h15 atrasada e cega à
--- queda em curso (C4 da revisão).
+-- queda em curso.
 -- name: ListPublicDailyUptime :many
 SELECT u.target_id,
        to_timestamp(floor(extract(epoch FROM u.at) / 86400) * 86400)::timestamptz AS day,
@@ -92,7 +92,7 @@ SELECT u.target_id,
           JOIN status_page_items i ON i.target_id = c.target_id AND i.status_page_id = sqlc.arg(page_id)
          WHERE c.checked_at >= sqlc.arg(cut)::timestamptz AND c.checked_at < sqlc.arg(until)::timestamptz) u
  GROUP BY 1, 2
- ORDER BY 1, 2;
+ ORDER BY u.target_id, day;
 
 -- Latência mediana aproximada: média das medianas horárias, ponderada pelos
 -- sucessos de cada hora. As horas de [cut, until) saem dos checks brutos, com
@@ -118,12 +118,12 @@ SELECT h.target_id, (sum(h.p50::bigint * h.ok) / nullif(sum(h.ok), 0))::int AS p
 -- Incidentes resolvidos dos alvos da página que tocam a janela [since,
 -- agora): resolvidos depois de since, mesmo que tenham começado antes. Filtrar
 -- pelo início deixava sem explicação o dia vermelho da queda que atravessa o
--- começo da barra (C9). Só o nome de exibição, o início e o fim; a causa não
+-- começo da barra. Só o nome de exibição, o início e o fim; a causa não
 -- sai (spec §5.6).
 -- name: ListPublicIncidents :many
 SELECT i.display_name, x.started_at, x.resolved_at::timestamptz AS resolved_at
   FROM incidents x
   JOIN status_page_items i ON i.target_id = x.target_id AND i.status_page_id = sqlc.arg(page_id)
  WHERE x.resolved_at IS NOT NULL AND x.resolved_at >= sqlc.arg(since)::timestamptz
- ORDER BY x.started_at DESC
+ ORDER BY x.started_at DESC, x.id DESC
  LIMIT sqlc.arg(max_rows)::int;

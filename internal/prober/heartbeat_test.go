@@ -90,7 +90,7 @@ func (b *bancadaHB) tick(t *testing.T) int {
 
 func (b *bancadaHB) pingar(t *testing.T, token string, sig heartbeat.Signal) {
 	t.Helper()
-	if err := b.pg.Ping(t.Context(), token, sig); err != nil {
+	if err := b.pg.Ping(t.Context(), token, sig, nil); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -330,7 +330,7 @@ func TestPausingKeepsTheOpenIncident(t *testing.T) {
 	}
 }
 
-// D11: token vazado alternando falha e sucesso gera no máximo uma abertura a
+// Token vazado alternando falha e sucesso gera no máximo uma abertura a
 // cada 5 min. A falha que ficou esperando abre depois: atrasa, não se perde.
 func TestReopenCooldownLimitsIncidents(t *testing.T) {
 	b := novaBancadaHB(t)
@@ -482,6 +482,7 @@ func TestHeartbeatIncidentFlowsThroughTheOutbox(t *testing.T) {
 		var err error
 		entregaveis, err = q.ClaimDueNotifications(ctx, db.ClaimDueNotificationsParams{
 			Now: b.clk.Now(), LeaseUntil: b.clk.Now().Add(time.Minute), MaxRows: 10,
+			Kinds: []string{"discord", "email"}, Events: []string{"opened", "resolved", "reminder"},
 		})
 		return err
 	})

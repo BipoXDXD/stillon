@@ -125,12 +125,24 @@ jobs:
           # flags, então dividem a chave; o cache delas é equivalente.
           cache-dependency-path: go.sum
 
+      - name: buscar o commit de infraestrutura fixado
+        # O checkout é raso; o TestOAppDesteCommitSobeNaInfraestruturaFixada lê
+        # o app.json do commit fixado no recurso do Coolify (ação 2 do
+        # postmortem de 2026-11-10). O repositório é público: dispensa token.
+        # A atribuição numa linha própria derruba o passo sob bash -e se o
+        # arquivo faltar; o teste -n recusa o arquivo vazio, que buscaria o HEAD.
+        run: |
+          sha="$(cat deploy/coolify/infra-fixada)"
+          test -n "$sha" || { echo "::error::deploy/coolify/infra-fixada está vazio"; exit 1; }
+          git fetch --no-tags --depth=1 origin "$sha"
+
       - name: test
         # VM/daemon local exclusivo deste job: só este comando cria fixtures.
         # Não compartilhar a sessão TC entre pacotes; o collector acompanha
         # todas as sessões próprias e nunca para/remove contêineres.
         run: |
           python3 -m unittest discover -s deploy/ci -p test_docker_build.py -v
+          python3 -m unittest discover -s deploy/ci -p test_ensaiar_piso_env.py -v
           python3 deploy/ci/diagnostico-fixture.py \
             --output "$RUNNER_TEMP/fixture-diagnostic" --daemon-exclusivo -- \
             go test -race -count=1 -coverprofile=coverage.out ./...
@@ -226,7 +238,7 @@ jobs:
           shellcheck --version
           shellcheck scripts/docker-build.sh
           shellcheck deploy/ci/*.sh deploy/vps/stillon-entrada deploy/vps/vigia.sh \
-            deploy/vps/initdb.sh deploy/backup/backup.sh
+            deploy/vps/initdb.sh deploy/backup/backup.sh deploy/coolify/release/*.sh
       - name: checagens dos workflows
         run: sh deploy/ci/checar-workflows.sh
       - name: testes do checar-workflows
@@ -243,6 +255,10 @@ jobs:
         run: sh deploy/ci/testar-vps.sh
       - name: snapshot do banco no backup, contra Docker falso
         run: python3 deploy/ci/test_snapshot_banco_backup.py
+      - name: fechamento da medição de memória, com docker falso
+        run: python3 -m unittest discover -s deploy/ci -p test_coletar_memoria.py -v
+      - name: carga da medição de memória, contra um app HTTP falso
+        run: python3 -m unittest discover -s deploy/ci -p test_carga_memoria.py -v
       - name: ramos finais da entrada, com binários falsos
         run: python3 -m unittest discover -s deploy/ci -p test_entrada_ramos_finais.py -v
       - name: contrato do recibo entre o receptor e o stillon-entrada
@@ -412,7 +428,28 @@ jobs:
         # abaixo o levaria junto.
         run: |
           npm ci --ignore-scripts --no-audit --no-fund
-          npx playwright install --with-deps chromium
+          # O --with-deps passa pelo apt, e o runner já passou horas sem
+          # resolver os hosts *.ubuntu.com (o resto da rede respondia): o
+          # apt-get update só avisa e o install sai 100. Sem DNS para o espelho
+          # do runner, o apt começa direto num espelho fora de ubuntu.com, porque
+          # cada tentativa contra um nome que não resolve gastava ~10 min do prazo
+          # do job. O espelho do runner e o security.ubuntu.com resolvem em
+          # separado: se qualquer um falhar, a troca vem antes da primeira
+          # tentativa. Com DNS, uma falha do install também leva à troca.
+          trocar_espelho() {
+            sudo sed -i -E 's#https?://[a-z.]*ubuntu\.com/ubuntu/#http://mirrors.edge.kernel.org/ubuntu/#g' \
+              /etc/apt/apt-mirrors.txt /etc/apt/sources.list.d/*.sources 2>/dev/null || true
+          }
+          for host in azure.archive.ubuntu.com security.ubuntu.com; do
+            timeout 10 getent hosts "$host" >/dev/null || { trocar_espelho; break; }
+          done
+          echo 'Acquire::Retries "5";' | sudo tee /etc/apt/apt.conf.d/80-retries >/dev/null
+          for tentativa in 1 2 3; do
+            npx playwright install --with-deps chromium && break
+            [ "$tentativa" = 3 ] && exit 1
+            trocar_espelho
+            sleep $((30 * tentativa))
+          done
           npx playwright test --trace off
 
       - name: logs do compose

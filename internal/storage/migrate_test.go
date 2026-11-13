@@ -34,7 +34,7 @@ func TestMigrationsApplyAndSchemaIsUsable(t *testing.T) {
 	// acrescentam em users. Provar que a tabela existe não prova que elas
 	// rodaram: sem esta checagem o teste ficaria verde com o schema da
 	// 00001 sozinho.
-	for _, column := range []string{"totp_confirmed_at", "totp_secret_enc", "totp_last_timestep", "totp_challenge_mark", "totp_pending_secret_enc", "totp_pending_family_id"} {
+	for _, column := range []string{"totp_confirmed_at", "totp_secret_enc", "totp_last_timestep", "totp_challenge_mark", "totp_pending_secret_enc", "totp_pending_family_id", "totp_pending_started_at"} {
 		var exists bool
 		err := pool.QueryRow(ctx,
 			`SELECT EXISTS (SELECT 1 FROM information_schema.columns
@@ -96,7 +96,7 @@ func TestSnapshotIsolatesTests(t *testing.T) {
 	}
 }
 
-// Item 9b do Plano 1: com --role=api e --role=prober subindo ao mesmo tempo,
+// Com --role=api e --role=prober subindo ao mesmo tempo,
 // os dois processos migram o mesmo banco. Sem o advisory lock, o segundo
 // tenta aplicar a mesma migration e cai no boot. O banco é novo e vazio
 // porque o de testdb.New já nasce migrado, e aí não haveria corrida.

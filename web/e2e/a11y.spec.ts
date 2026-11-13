@@ -260,6 +260,8 @@ for (const tema of ['claro', 'escuro'] as const) {
       await conferir(rota)
     }
     await page.goto('/targets/new')
+    // Os headers ficam no "Avançado", recolhido no cadastro.
+    await page.locator('summary', { hasText: 'Avançado' }).click()
     await page.getByRole('button', { name: 'Adicionar header' }).click()
     await page.getByLabel('Nome do header 1', { exact: true }).fill('Authorization')
     await page.getByLabel('Valor do header 1', { exact: true }).fill('sentinela-publica-de-teste')
@@ -357,6 +359,10 @@ async function controlesEncobertos(page: Page): Promise<string[]> {
     for (const e of Array.from(document.querySelectorAll<HTMLElement>(seletor))) {
       const r = e.getBoundingClientRect()
       if (r.width === 0 || r.height === 0) continue
+      // Dentro de um <details> fechado o controle tem retângulo, mas não é
+      // desenhado (content-visibility: hidden), e o scrollIntoView não o
+      // move: a posição velha caía sob a navegação fixa do celular.
+      if (!e.checkVisibility()) continue
       e.scrollIntoView({ block: 'center', inline: 'center' })
       const c = e.getBoundingClientRect()
       const cx = c.left + c.width / 2
@@ -440,12 +446,19 @@ for (const largura of [400, 1280]) {
     // do Botao (components/ui/botao.tsx), ou o size-11 do botão de tema.
     await page.goto('/targets/new')
     await expect(page.getByRole('heading', { name: 'Novo alvo', level: 1 })).toBeVisible()
+    // Os headers e a regra de conteúdo ficam no mesmo "Avançado", recolhido num
+    // alvo novo; o summary também é alvo de toque. Aberto, a regra com o JSON
+    // mostra os três campos dela.
+    await page.locator('summary', { hasText: 'Avançado' }).click()
     await page.getByRole('button', { name: 'Adicionar header' }).click()
+    await page.getByRole('combobox', { name: 'Verificação' }).selectOption('json_equals')
     await conferir([
       ['tema', page.getByRole('button', { name: /^Tema:/ })],
       ['Sair', page.getByRole('button', { name: 'Sair' })],
+      ['Avançado', page.locator('summary', { hasText: 'Avançado' })],
       ['Adicionar header', page.getByRole('button', { name: 'Adicionar header' })],
       ['Remover o header 1', page.getByRole('button', { name: 'Remover o header 1' })],
+      ['Verificação', page.getByRole('combobox', { name: 'Verificação' })],
     ])
     expect(await controlesEncobertos(page), `${largura} px: novo alvo`).toEqual([])
     await page.goto('/channels')
@@ -701,7 +714,9 @@ for (const largura of [400, 1280]) {
       expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(largura)
       for (const controle of [
         page.getByRole('link', { name: 'Editar' }),
+        page.getByRole('button', { name: 'Duplicar' }),
         page.getByRole('button', { name: 'Pausar' }),
+        page.getByRole('button', { name: 'Limpar eventos' }),
         page.getByRole('button', { name: 'Apagar' }),
         page.getByRole('button', { name: /^Reconhecer o incidente/ }),
         page.getByRole('button', { name: 'Gerar nova URL' }),
@@ -905,4 +920,106 @@ test('celular de 400 px: a prévia da status page com nome de exibição longo',
   await expect(previa.getByText(nomeLongo, { exact: true })).toBeVisible()
   expect(await page.evaluate(() => document.documentElement.scrollWidth), 'prévia: overflow').toBe(400)
   await controlePositivo(page, 'prévia com nome longo')
+})
+
+// Um campo num <details> fechado não recebe foco no navegador (no jsdom,
+// recebe: o teste de unidade não prova isto). Um erro num campo do "Avançado",
+// do navegador ou do servidor, abre a seção e leva o foco ao campo.
+// Sabotagem: tirar o abrirOAvancadoComErro do handleSubmit, ou o
+// setAvancadoAberto(true) do caminho do 400.
+test('erro num campo do "Avançado" abre a seção e foca o campo', async ({ page }) => {
+  await imitarApi(page)
+  const avancado = page.locator('details', { has: page.locator('summary', { hasText: 'Avançado' }) })
+  const preencher = async () => {
+    await page.goto('/targets/new')
+    await expect(page.getByRole('heading', { name: 'Novo alvo', level: 1 })).toBeVisible()
+    await page.getByLabel('Nome', { exact: true }).fill('API nova')
+    await page.getByLabel('URL', { exact: true }).fill('https://api.exemplo.com/health')
+  }
+
+  // Erro do navegador: o timeout inválido, com a seção recolhida de novo.
+  await preencher()
+  await page.locator('summary', { hasText: 'Avançado' }).click()
+  await page.getByLabel('Timeout (ms)').fill('50')
+  await page.locator('summary', { hasText: 'Avançado' }).click()
+  await expect(avancado).not.toHaveAttribute('open')
+  await page.getByRole('button', { name: 'Cadastrar', exact: true }).click()
+  await expect(avancado).toHaveAttribute('open')
+  await expect(page.getByLabel('Timeout (ms)')).toHaveAttribute('aria-invalid', 'true')
+  await expect(page.getByLabel('Timeout (ms)')).toBeFocused()
+
+  // Erro do servidor: o 400 aponta o status esperado, com a seção recolhida.
+  await page.route('**/api/v1/targets', (route) =>
+    route.request().method() === 'POST'
+      ? route.fulfill({
+          status: 400,
+          json: {
+            error: { code: 'validation_failed', message: '', fields: [{ field: 'expected_status', reason: 'out_of_range' }] },
+            trace_id: 't',
+          },
+        })
+      : route.fallback(),
+  )
+  await preencher()
+  await expect(avancado).not.toHaveAttribute('open')
+  await page.getByRole('button', { name: 'Cadastrar', exact: true }).click()
+  const status = page.getByLabel('Status HTTP esperado')
+  await expect(status).toHaveAttribute('aria-invalid', 'true')
+  await expect(avancado).toHaveAttribute('open')
+  await expect(status).toBeFocused()
+  await controlePositivo(page, 'erro no "Avançado"')
+})
+
+// WCAG 3.3.1 e 2.4.3: fechar o "Avançado" com o erro dentro e reenviar não
+// pode falhar em silêncio; a seção reabre, o campo recebe o foco e a mensagem
+// fica à vista. Sabotagem: voltar ao open={avancadoAberto || erroNoAvancado(e)}.
+test('fechar o "Avançado" com erro e reenviar reabre a seção e foca o campo', async ({ page }) => {
+  await imitarApi(page)
+  const summary = page.locator('summary', { hasText: 'Avançado' })
+  const avancado = page.locator('details', { has: summary })
+  const cadastrar = page.getByRole('button', { name: 'Cadastrar', exact: true })
+  const preencher = async () => {
+    await page.goto('/targets/new')
+    await expect(page.getByRole('heading', { name: 'Novo alvo', level: 1 })).toBeVisible()
+    await page.getByLabel('Nome', { exact: true }).fill('API nova')
+    await page.getByLabel('URL', { exact: true }).fill('https://api.exemplo.com/health')
+  }
+
+  // Erro do navegador: o timeout inválido.
+  await preencher()
+  await summary.click()
+  const timeout = page.getByLabel('Timeout (ms)')
+  await timeout.fill('50')
+  await cadastrar.click()
+  await expect(timeout).toHaveAttribute('aria-invalid', 'true')
+  await summary.click()
+  await expect(avancado).not.toHaveAttribute('open')
+  await cadastrar.click()
+  await expect(avancado).toHaveAttribute('open')
+  await expect(timeout).toBeFocused()
+  await expect(page.getByText('Mínimo de 1000 ms.')).toBeVisible()
+
+  // Erro do servidor: o 400 aponta o status esperado nos dois envios.
+  await page.route('**/api/v1/targets', (route) =>
+    route.request().method() === 'POST'
+      ? route.fulfill({
+          status: 400,
+          json: {
+            error: { code: 'validation_failed', message: '', fields: [{ field: 'expected_status', reason: 'out_of_range' }] },
+            trace_id: 't',
+          },
+        })
+      : route.fallback(),
+  )
+  await preencher()
+  await cadastrar.click()
+  const status = page.getByLabel('Status HTTP esperado')
+  await expect(status).toHaveAttribute('aria-invalid', 'true')
+  await summary.click()
+  await expect(avancado).not.toHaveAttribute('open')
+  await cadastrar.click()
+  await expect(avancado).toHaveAttribute('open')
+  await expect(status).toBeFocused()
+  await expect(page.getByText('Fora do intervalo permitido.')).toBeVisible()
+  await controlePositivo(page, 'erro no "Avançado" depois de fechar')
 })

@@ -6,7 +6,7 @@ import { TITULO_DA_TELA } from './botao'
 
 // Avisos passageiros ("Alvo salvo"). Radix Toast, e não o sonner: o sonner
 // injeta um <style> sem suporte a nonce, que a CSP do painel bloqueia (o
-// toast saía sem estilo, largura total no rodapé — spike, §8.1).
+// toast saía sem estilo, largura total no rodapé).
 
 type Aviso = { id: number; texto: string; tipo: 'ok' | 'erro' }
 
@@ -68,7 +68,7 @@ export function ProvedorDeAvisos({ children }: { children: ReactNode }) {
               devolverFoco.current = document.activeElement === regiao.current
               setAvisos((l) => l.filter((x) => x.id !== a.id))
             }}
-            className={`rounded-padrao border bg-superficie text-sm sombra-nivel-2 ${
+            className={`rounded-padrao border bg-superficie-elevada text-sm sombra-nivel-2 ${
               a.tipo === 'erro' ? 'flex items-start gap-2 border-perigo py-1 pr-1 pl-3' : 'border-borda p-3'
             }`}
           >
@@ -95,7 +95,7 @@ export function ProvedorDeAvisos({ children }: { children: ReactNode }) {
           label="Avisos ({hotkey})"
           className="flex max-h-[calc(100dvh-9rem)] flex-col gap-2 overflow-y-auto"
         />
-        {escondidos > 0 && <p className="rounded-padrao border border-borda bg-superficie p-3 text-sm text-suave sombra-nivel-2">e mais {escondidos}</p>}
+        {escondidos > 0 && <p className="rounded-padrao border border-borda bg-superficie-elevada p-3 text-sm text-suave sombra-nivel-2">e mais {escondidos}</p>}
       </div>
     </Toast.Provider>
   )

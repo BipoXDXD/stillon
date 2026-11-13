@@ -15,7 +15,7 @@ var ErrRoleBypassesRLS = errors.New("o papel do banco ignora row-level security"
 // Superusuário e BYPASSRLS atravessam as políticas mesmo com FORCE ROW LEVEL
 // SECURITY. Rodar a aplicação com um deles não produz erro nenhum: só
 // desliga, em silêncio, a segunda barreira de isolamento da spec §5.5. Por
-// isso a checagem é no boot, e é erro, não aviso (D8).
+// isso a checagem é no boot, e é erro, não aviso.
 func CheckRole(ctx context.Context, pool *pgxpool.Pool) error {
 	var super, bypass bool
 	err := pool.QueryRow(ctx,

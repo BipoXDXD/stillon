@@ -108,6 +108,7 @@ STILLON_BACKUP_PASSWORD=$(openssl rand -hex 32)
 MASTER_KEY=$(b64)
 JWT_SECRET=$(b64)
 IP_HASH_KEY=$IP_HASH_KEY
+PROBE_BLOCKED_CIDRS=192.0.2.10/32,2001:db8::/64
 RESEND_API_KEY=
 EMAIL_FROM=
 TESTE_VPS_HTTP=$HTTP
@@ -309,7 +310,7 @@ grep -q -- '-demo-\|ZGVtby12aWdpbHVtZS' "$RAIZ/deploy/vps/compose.prod.yaml" && 
 # com o .env do teste, cada segredo é o valor gerado acima. Um literal
 # qualquer (POSTGRES_PASSWORD: postgres, uma MASTER_KEY fixa) fica diferente.
 env_do_teste() { sed -n "s/^$1=//p" "$DIR/.env"; }
-for par in app:MASTER_KEY app:JWT_SECRET app:IP_HASH_KEY db:POSTGRES_PASSWORD db:STILLON_APP_PASSWORD db:STILLON_BACKUP_PASSWORD; do
+for par in app:MASTER_KEY app:JWT_SECRET app:IP_HASH_KEY app:PROBE_BLOCKED_CIDRS db:POSTGRES_PASSWORD db:STILLON_APP_PASSWORD db:STILLON_BACKUP_PASSWORD; do
     s=${par%%:*} v=${par#*:}
     [ "$(q ".services.$s.environment.$v // empty")" = "$(env_do_teste "$v")" ] ||
         falhar "o $v do $s não é o do .env (valor escrito no compose.prod.yaml?)"
@@ -1018,7 +1019,19 @@ ok "stillon-entrada: tar que não extrai ou não refaz, e jq ausente, saem 1 sem
 printf '#!/bin/sh\necho "args=$# pedido=${SSH_ORIGINAL_COMMAND:-} outra=${OUTRA:-} usuario=$(id -un)"\n' > "$TARS/entrada-falsa"
 cat > "$TARS/sudo.sh" <<'FIM'
 set -eu
-apt-get update -qq >/dev/null && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq sudo >/dev/null
+# O apt-get update só avisa quando o DNS cai; quem falha é o install. Depois
+# da primeira falha, o apt troca para um espelho fora do domínio ubuntu.com (o
+# runner já passou horas sem resolver só esses hosts), e o command -v confirma
+# que o sudo chegou.
+for tentativa in 1 2 3; do
+    apt-get -o Acquire::Retries=5 update -qq >/dev/null &&
+        DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=5 install -y -qq sudo >/dev/null && break
+    [ "$tentativa" = 3 ] && break
+    sed -i -E 's#https?://[a-z.]*ubuntu\.com/ubuntu/#http://mirrors.edge.kernel.org/ubuntu/#g' \
+        /etc/apt/sources.list.d/*.sources
+    sleep $((30 * tentativa))
+done
+command -v sudo >/dev/null
 useradd -m -s /bin/bash deploy
 install -m 0755 /t/entrada-falsa /usr/local/sbin/stillon-entrada
 install -m 0440 /t/sudoers /etc/sudoers.d/stillon-entrada

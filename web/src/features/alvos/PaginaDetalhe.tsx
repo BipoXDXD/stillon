@@ -1,5 +1,4 @@
 import { useQueryClient } from '@tanstack/react-query'
-import { ArrowLeft } from 'lucide-react'
 import { useEffect, useEffectEvent, useId, useRef, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router'
 import { useApi } from '@/app/contexto'
@@ -13,19 +12,21 @@ import { Botao } from '@/components/ui/botao'
 import { ErroDoFormulario } from '@/components/ui/campo'
 import { ControleSegmentado, type OpcaoSegmentada } from '@/components/ui/controle-segmentado'
 import { Confirmar } from '@/components/ui/dialogo'
-import { useAlvo, useIncidentes, useSerie } from '@/lib/api/consultas'
+import { chaves, useAlvo, useIncidentes, useSerie } from '@/lib/api/consultas'
 import { naoEncontrado } from '@/lib/api/http'
 import { mensagemDe, textoDoErroDeCheck } from '@/lib/api/mensagens'
 import type { Serie } from '@/lib/api/schemas'
 import { ATRASO_DO_SINAL_MS, useAposUmTempo } from '@/lib/atraso'
 import { dataHora, fuso, milissegundos, porcento } from '@/lib/format'
+import { NavegacaoDaLista } from '@/features/painel/NavegacaoDaLista'
+import { CertificadoDoAlvo } from './CertificadoDoAlvo'
 import { GraficoDeLatencia } from './GraficoDeLatencia'
 import { IncidentesRecentes } from './IncidentesRecentes'
-import { ehJanela, JANELAS, resumir, type Janela } from './serie'
+import { ehJanela, ORDEM_DAS_JANELAS, resumir, type Janela } from './serie'
 import { janelaCobertaPeloAviso, TopoDoDetalhe } from './TopoDoDetalhe'
 
 const NOMES: Record<Janela, string> = { '1h': '1 h', '6h': '6 h', '24h': '24 h', '7d': '7 dias', '30d': '30 dias', '90d': '90 dias' }
-const OPCOES_DE_JANELA: readonly OpcaoSegmentada<Janela>[] = (Object.keys(JANELAS) as Janela[]).map((j) => ({
+const OPCOES_DE_JANELA: readonly OpcaoSegmentada<Janela>[] = ORDEM_DAS_JANELAS.map((j) => ({
   valor: j,
   rotulo: NOMES[j],
 }))
@@ -143,12 +144,12 @@ function DetalheDoAlvo({ id }: { id: string }) {
   async function sairDoAlvo(aviso: string) {
     avisar(aviso)
     await navegar('/', { flushSync: true })
-    qc.removeQueries({ queryKey: ['targets', id] })
-    void qc.invalidateQueries({ queryKey: ['targets'] })
-    void qc.invalidateQueries({ queryKey: ['incidents'] })
+    qc.removeQueries({ queryKey: chaves.alvo(id) })
+    void qc.invalidateQueries({ queryKey: chaves.todosOsAlvos })
+    void qc.invalidateQueries({ queryKey: chaves.todosOsIncidentes })
   }
 
-  // O alvo foi apagado em outra aba (M3, o padrão de Canais).
+  // O alvo foi apagado em outra aba.
   const sumiu = () => sairDoAlvo('O alvo já tinha sido apagado, talvez em outra aba.')
 
   // O poll (60 s, foco da janela) que volta 404 depois de o alvo estar na
@@ -171,7 +172,7 @@ function DetalheDoAlvo({ id }: { id: string }) {
     setErro(null)
     try {
       await api.alterarAlvo(id, { enabled: ativo })
-      await qc.invalidateQueries({ queryKey: ['targets'] })
+      await qc.invalidateQueries({ queryKey: chaves.todosOsAlvos })
     } catch (e) {
       if (naoEncontrado(e)) await sumiu()
       else setErro(mensagemDe(e))
@@ -200,16 +201,7 @@ function DetalheDoAlvo({ id }: { id: string }) {
       {(a) => (
         <div className="space-y-8">
           <div className="space-y-4">
-            {/* "Painel" visível, "Voltar ao painel" no nome acessível: não
-                colide com a aba "Painel" da navegação. */}
-            <Link
-              to="/"
-              aria-label="Voltar ao painel"
-              className="alvo-de-toque inline-flex items-center gap-1 text-sm font-semibold text-primaria underline-offset-4 hover:underline"
-            >
-              <ArrowLeft aria-hidden="true" className="size-4" />
-              Painel
-            </Link>
+            <NavegacaoDaLista chave={`http:${id}`} />
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div className="min-w-0 space-y-1">
                 <Titulo aba={a.name}>{a.name}</Titulo>
@@ -238,6 +230,7 @@ function DetalheDoAlvo({ id }: { id: string }) {
             aoSumir={() => void sumiu()}
             aoErrar={setErro}
           />
+          <CertificadoDoAlvo alvo={a} agora={new Date(alvo.dataUpdatedAt)} />
 
           <section
             className="space-y-4 rounded-padrao border border-borda bg-superficie p-4 sombra-nivel-1 sm:p-6"
@@ -251,7 +244,18 @@ function DetalheDoAlvo({ id }: { id: string }) {
                 rotulo="Janela do gráfico"
                 opcoes={OPCOES_DE_JANELA}
                 valor={janela}
-                aoMudar={(j) => setParams({ janela: j }, { replace: true })}
+                // Só a janela muda: os filtros e a ordem da lista seguem na URL, para
+                // o Anterior/Próximo.
+                aoMudar={(j) =>
+                  setParams(
+                    (atual) => {
+                      const nova = new URLSearchParams(atual)
+                      nova.set('janela', j)
+                      return nova
+                    },
+                    { replace: true },
+                  )
+                }
               />
             </div>
             {/* Depois do seletor e com a linha reservada: nada se mexe logo

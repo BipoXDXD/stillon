@@ -86,48 +86,17 @@ func (s *Service) Update(ctx context.Context, userID, id uuid.UUID, patch Patch)
 	var p Page
 	var slugAntigo string
 	err := storage.InUserTx(ctx, s.pool, userID, func(q *db.Queries) error {
-		if _, err := q.LockStatusPage(ctx, userID); err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				return ErrNotFound
-			}
-			return fmt.Errorf("travar status page: %w", err)
-		}
-		atual, err := ler(ctx, q, userID)
+		atual, err := lerTravada(ctx, q, userID, id)
 		if err != nil {
 			return err
 		}
 		slugAntigo = atual.Slug
-		if atual.ID != id {
-			return ErrNotFound
-		}
-		in := Input{Slug: atual.Slug, Title: atual.Title, Published: atual.Published, Items: atual.Items}
-		if patch.Slug != nil {
-			in.Slug = *patch.Slug
-		}
-		if patch.Title != nil {
-			in.Title = *patch.Title
-		}
-		if patch.Published != nil {
-			in.Published = *patch.Published
-		}
-		if patch.Items != nil {
-			in.Items = *patch.Items
-		}
+		in := aplicarPatch(atual, patch)
 		if verr := validate(&in); verr != nil {
 			return verr
 		}
-		if _, err := q.UpdateStatusPage(ctx, db.UpdateStatusPageParams{
-			UserID: userID, ID: id, Slug: in.Slug, Title: in.Title, Published: in.Published,
-		}); err != nil {
-			return traduzir(err)
-		}
-		if patch.Items != nil {
-			if err := q.DeleteStatusPageItems(ctx, db.DeleteStatusPageItemsParams{UserID: userID, PageID: id}); err != nil {
-				return fmt.Errorf("apagar itens: %w", err)
-			}
-			if err := gravarItens(ctx, q, userID, id, in.Items); err != nil {
-				return err
-			}
+		if err := regravar(ctx, q, userID, id, in, patch.Items); err != nil {
+			return err
 		}
 		p, err = ler(ctx, q, userID)
 		return err
@@ -135,11 +104,67 @@ func (s *Service) Update(ctx context.Context, userID, id uuid.UUID, patch Patch)
 	if err == nil {
 		// O slug antigo pode ser tomado por outro dono logo em seguida, e a
 		// página despublicada tem de sair na hora: o cache deste processo
-		// não pode servir a versão velha por mais 30s (achado da revisão).
+		// não pode servir a versão velha por mais 30s.
 		s.cache.forget(slugAntigo)
 		s.cache.forget(p.Slug)
 	}
 	return p, err
+}
+
+// lerTravada trava a página do usuário antes de ler, para que dois PATCH ao
+// mesmo tempo não se sobreponham, e recusa a que não tem o id pedido.
+func lerTravada(ctx context.Context, q *db.Queries, userID, id uuid.UUID) (Page, error) {
+	if _, err := q.LockStatusPage(ctx, userID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Page{}, ErrNotFound
+		}
+		return Page{}, fmt.Errorf("travar status page: %w", err)
+	}
+	atual, err := ler(ctx, q, userID)
+	if err != nil {
+		return Page{}, err
+	}
+	if atual.ID != id {
+		return Page{}, ErrNotFound
+	}
+	return atual, nil
+}
+
+// aplicarPatch devolve o cadastro que resulta de pôr por cima da página atual
+// só os campos que vieram no patch.
+func aplicarPatch(atual Page, patch Patch) Input {
+	in := Input{Slug: atual.Slug, Title: atual.Title, Published: atual.Published, Items: atual.Items}
+	if patch.Slug != nil {
+		in.Slug = *patch.Slug
+	}
+	if patch.Title != nil {
+		in.Title = *patch.Title
+	}
+	if patch.Published != nil {
+		in.Published = *patch.Published
+	}
+	if patch.Items != nil {
+		in.Items = *patch.Items
+	}
+	return in
+}
+
+// regravar grava o cadastro já validado. A lista de itens só é trocada
+// quando o patch a trouxe (novosItens não nulo): sem ela, os itens atuais
+// ficam como estão. novosItens é o mesmo slice já validado em in.Items.
+func regravar(ctx context.Context, q *db.Queries, userID, id uuid.UUID, in Input, novosItens *[]Item) error {
+	if _, err := q.UpdateStatusPage(ctx, db.UpdateStatusPageParams{
+		UserID: userID, ID: id, Slug: in.Slug, Title: in.Title, Published: in.Published,
+	}); err != nil {
+		return traduzir(err)
+	}
+	if novosItens == nil {
+		return nil
+	}
+	if err := q.DeleteStatusPageItems(ctx, db.DeleteStatusPageItemsParams{UserID: userID, PageID: id}); err != nil {
+		return fmt.Errorf("apagar itens: %w", err)
+	}
+	return gravarItens(ctx, q, userID, id, in.Items)
 }
 
 // gravarItens confere que cada alvo é do dono e grava na ordem dada. A RLS

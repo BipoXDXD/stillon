@@ -19,7 +19,7 @@ import (
 	"github.com/BipoXDXD/stillon/internal/storage"
 )
 
-// Códigos de saída de `stillon user` (spec do Plano 5, §4.1). O 3 não muda de
+// Códigos de saída de `stillon user`. O 3 não muda de
 // sentido: um passo idempotente (o seed do compose) o trata como sucesso.
 const (
 	saidaOK            = 0
@@ -41,7 +41,7 @@ const (
 const maxLeitura = 4096
 
 // entradaDaSenha é de onde a senha vem. Senha NUNCA vem de argumento nem de
-// variável de ambiente (D6 do Plano 5): argumento aparece em `ps` e no
+// variável de ambiente: argumento aparece em `ps` e no
 // histórico do shell; variável, em /proc/<pid>/environ e no `docker inspect`.
 type entradaDaSenha struct {
 	// terminal: pede a senha duas vezes, sem eco, por lerSemEco.
@@ -117,133 +117,190 @@ A senha (create, set-password) vem do stdin: num terminal, é pedida duas
 vezes, sem eco; num pipe, é a única linha da entrada. O reset-2fa não pede
 senha. Só DATABASE_URL é lida do ambiente.`
 
+// cliUser carrega o que todo subcomando de `stillon user` usa: o contexto, a
+// origem da senha e os dois fluxos de saída.
+type cliUser struct {
+	ctx    context.Context
+	in     entradaDaSenha
+	stdout io.Writer
+	stderr io.Writer
+}
+
+// falhar escreve a mensagem e devolve o código de saída.
+func (c cliUser) falhar(codigo int, formato string, a ...any) int {
+	// Com o contexto encerrado (Ctrl-C, SIGTERM), a falha é a interrupção,
+	// em qualquer fase: o pgx devolve o erro do contexto, e sair com 1
+	// diria "ambiente quebrado" a quem só desistiu.
+	if c.ctx.Err() != nil {
+		fmt.Fprintln(c.stderr, "stillon user: interrompido")
+		return saidaInterrompida
+	}
+	fmt.Fprintf(c.stderr, "stillon user: "+formato+"\n", a...)
+	return codigo
+}
+
+// falharNaoCadastrado é a recusa de set-password e reset-2fa para um e-mail sem
+// usuário. O e-mail sai na mensagem para quem rodou contra o banco errado
+// perceber.
+func (c cliUser) falharNaoCadastrado(email string) int {
+	return c.falhar(saidaNaoCadastrado, "nenhum usuário com o e-mail %s; nada foi alterado", email)
+}
+
+// falharDoServico classifica o erro de uma escrita de senha: política da senha
+// é erro de uso (2); o resto, de ambiente (1).
+func (c cliUser) falharDoServico(err error) int {
+	if msg, ok := foraDaPolitica(err); ok {
+		return c.falhar(saidaUso, "%s", msg)
+	}
+	return c.falhar(saidaAmbiente, "%v", err)
+}
+
 // runUser é `stillon user ...`. Devolve o código de saída; quem chama sai do
 // processo com ele.
 func runUser(ctx context.Context, args []string, in entradaDaSenha, stdout, stderr io.Writer, getenv func(string) string) int {
-	falhar := func(codigo int, formato string, a ...any) int {
-		// Com o contexto encerrado (Ctrl-C, SIGTERM), a falha é a interrupção,
-		// em qualquer fase: o pgx devolve o erro do contexto, e sair com 1
-		// diria "ambiente quebrado" a quem só desistiu.
-		if ctx.Err() != nil {
-			fmt.Fprintln(stderr, "stillon user: interrompido")
-			return saidaInterrompida
-		}
-		fmt.Fprintf(stderr, "stillon user: "+formato+"\n", a...)
-		return codigo
-	}
 	if len(args) == 0 || (args[0] != "create" && args[0] != "set-password" && args[0] != "reset-2fa") {
 		fmt.Fprintln(stderr, usoUser)
 		return saidaUso
 	}
 	sub := args[0]
+	c := cliUser{ctx: ctx, in: in, stdout: stdout, stderr: stderr}
+	e, dsn, codigo := c.lerArgumentos(sub, args[1:], getenv)
+	if codigo != saidaOK {
+		return codigo
+	}
+	svc, fechar, err := abrirServico(ctx, dsn)
+	if err != nil {
+		return c.falhar(saidaAmbiente, "%v", err)
+	}
+	defer fechar()
+
+	switch sub {
+	case "create":
+		return c.runCreate(svc, e)
+	case "set-password":
+		return c.runSetPassword(svc, e)
+	case "reset-2fa":
+		return c.runReset2FA(svc, e)
+	default:
+		// Inalcançável: o subcomando foi validado no começo. Um subcomando
+		// novo que esqueça este switch falha em vez de cair no reset-2fa.
+		return c.falhar(saidaAmbiente, "subcomando sem despacho: %q", sub)
+	}
+}
+
+// lerArgumentos valida flag, e-mail e DATABASE_URL, nessa ordem. Com codigo
+// diferente de saidaOK, a mensagem já saiu, codigo é o código de saída e email
+// e dsn vêm vazios.
+func (c cliUser) lerArgumentos(sub string, args []string, getenv func(string) string) (email, dsn string, codigo int) {
 	fs := flag.NewFlagSet("stillon user "+sub, flag.ContinueOnError)
-	fs.SetOutput(stderr)
-	email := fs.String("email", "", "e-mail do usuário")
-	if err := fs.Parse(args[1:]); err != nil {
-		return saidaUso
+	fs.SetOutput(c.stderr)
+	emailFlag := fs.String("email", "", "e-mail do usuário")
+	if err := fs.Parse(args); err != nil {
+		return "", "", saidaUso
 	}
 	if fs.NArg() > 0 {
 		if sub == "reset-2fa" {
-			return falhar(saidaUso, "argumento inesperado: %q", fs.Arg(0))
+			return "", "", c.falhar(saidaUso, "argumento inesperado: %q", fs.Arg(0))
 		}
-		return falhar(saidaUso, "argumento inesperado: %q (a senha vem do stdin)", fs.Arg(0))
+		return "", "", c.falhar(saidaUso, "argumento inesperado: %q (a senha vem do stdin)", fs.Arg(0))
 	}
-	e, err := account.ValidateEmail(*email)
+	email, err := account.ValidateEmail(*emailFlag)
 	if err != nil {
-		return falhar(saidaUso, "--email precisa ser um endereço, como dono@exemplo.com")
+		return "", "", c.falhar(saidaUso, "--email precisa ser um endereço, como dono@exemplo.com")
 	}
-	dsn := strings.TrimSpace(getenv("DATABASE_URL"))
+	dsn = strings.TrimSpace(getenv("DATABASE_URL"))
 	if dsn == "" {
-		return falhar(saidaUso, "DATABASE_URL não definida")
+		return "", "", c.falhar(saidaUso, "DATABASE_URL não definida")
 	}
+	return email, dsn, saidaOK
+}
 
-	// A mesma ordem do boot (D7 do Plano 5): o papel antes da migration. Num
+// abrirServico abre o pool e monta o serviço de contas; fechar libera o pool.
+func abrirServico(ctx context.Context, dsn string) (svc *account.Service, fechar func(), err error) {
+	// A mesma ordem do boot: o papel antes da migration. Num
 	// banco virgem, migrar como superusuário criaria as tabelas com o dono
 	// errado, e o papel comum depois não conseguiria usá-las.
-	pool, err := storage.NewPool(ctx, dsn)
+	pool, err := storage.NewPoolNamed(ctx, dsn, "stillon-user")
 	if err != nil {
-		return falhar(saidaAmbiente, "%v", err)
+		return nil, nil, err
 	}
-	defer pool.Close()
 	if err := storage.CheckRole(ctx, pool); err != nil {
-		return falhar(saidaAmbiente, "%v", err)
+		pool.Close()
+		return nil, nil, err
 	}
 	if err := storage.Migrate(ctx, dsn); err != nil {
-		return falhar(saidaAmbiente, "%v", err)
+		pool.Close()
+		return nil, nil, err
 	}
 	// Sem segundo fator e sem chave de IP: o CLI não troca senha pela API.
-	svc := account.NewService(pool, nil, clock.Real{}, nil)
+	return account.NewService(pool, nil, clock.Real{}, nil), pool.Close, nil
+}
 
-	// reset-2fa não lê senha (spec do Plano 9, §3.1): quem tem a DATABASE_URL
-	// já pode tudo no banco. O e-mail sai na mensagem para quem rodou contra o
-	// banco errado perceber (R5 da spec).
-	if sub == "reset-2fa" {
-		ligado, n, err := svc.ResetTwoFactor(ctx, e)
-		if errors.Is(err, account.ErrUserNotFound) {
-			return falhar(saidaNaoCadastrado, "nenhum usuário com o e-mail %s; nada foi alterado", e)
-		}
-		if err != nil {
-			return falhar(saidaAmbiente, "%v", err)
-		}
-		if !ligado {
-			fmt.Fprintf(stdout, "o 2FA já estava desativado para %s; nada mudou\n", e)
-			return saidaOK
-		}
-		fmt.Fprintf(stdout, "2FA desativado para %s; %s. Novos acessos dessas sessões estão bloqueados; ações já em andamento podem ser concluídas. Entre com a senha e ative de novo pelo painel.\n", e, sessoesEncerradas(n))
+// runReset2FA desliga o 2FA. Não lê senha: quem tem a DATABASE_URL já pode
+// tudo no banco.
+func (c cliUser) runReset2FA(svc *account.Service, e string) int {
+	ligado, n, err := svc.ResetTwoFactor(c.ctx, e)
+	if errors.Is(err, account.ErrUserNotFound) {
+		return c.falharNaoCadastrado(e)
+	}
+	if err != nil {
+		return c.falhar(saidaAmbiente, "%v", err)
+	}
+	if !ligado {
+		fmt.Fprintf(c.stdout, "o 2FA já estava desativado para %s; nada mudou\n", e)
 		return saidaOK
 	}
+	fmt.Fprintf(c.stdout, "2FA desativado para %s; %s. Novos acessos dessas sessões estão bloqueados; ações já em andamento podem ser concluídas. Entre com a senha e ative de novo pelo painel.\n", e, sessoesEncerradas(n))
+	return saidaOK
+}
 
-	// A pré-condição vem ANTES da senha: ninguém digita duas vezes à toa.
-	switch sub {
-	case "create":
-		existe, err := svc.HasUsers(ctx)
-		if err != nil {
-			return falhar(saidaAmbiente, "%v", err)
-		}
-		if existe {
-			return falhar(saidaJaExiste, "já existe um usuário; nada foi alterado (use `stillon user set-password` para trocar a senha)")
-		}
-	case "set-password":
-		if _, err := svc.UserIDByEmail(ctx, e); errors.Is(err, account.ErrUserNotFound) {
-			return falhar(saidaNaoCadastrado, "nenhum usuário com o e-mail %s; nada foi alterado", e)
-		} else if err != nil {
-			return falhar(saidaAmbiente, "%v", err)
-		}
-	}
-
-	senha, err := lerSenha(ctx, in, stderr)
+// runCreate cria o dono. A pré-condição vem ANTES da senha: ninguém digita
+// duas vezes à toa.
+func (c cliUser) runCreate(svc *account.Service, e string) int {
+	existe, err := svc.HasUsers(c.ctx)
 	if err != nil {
-		return falhar(saidaUso, "%v", err)
+		return c.falhar(saidaAmbiente, "%v", err)
 	}
-
+	if existe {
+		return c.falhar(saidaJaExiste, "já existe um usuário; nada foi alterado (use `stillon user set-password` para trocar a senha)")
+	}
+	senha, err := lerSenha(c.ctx, c.in, c.stderr)
+	if err != nil {
+		return c.falhar(saidaUso, "%v", err)
+	}
 	// A política da senha é a do serviço, e só dele: uma segunda checagem aqui
 	// poderia divergir, e o PolicyError sairia como erro de ambiente (1).
-	switch sub {
-	case "create":
-		id, err := svc.CreateUser(ctx, e, senha)
-		if errors.Is(err, account.ErrUserExists) {
-			return falhar(saidaJaExiste, "já existe um usuário; nada foi alterado")
-		}
-		if msg, ok := foraDaPolitica(err); ok {
-			return falhar(saidaUso, "%s", msg)
-		}
-		if err != nil {
-			return falhar(saidaAmbiente, "%v", err)
-		}
-		fmt.Fprintf(stdout, "usuário criado: %s (id %s)\n", e, id)
-	case "set-password":
-		n, err := svc.ResetPassword(ctx, e, senha)
-		if errors.Is(err, account.ErrUserNotFound) {
-			return falhar(saidaNaoCadastrado, "nenhum usuário com o e-mail %s; nada foi alterado", e)
-		}
-		if msg, ok := foraDaPolitica(err); ok {
-			return falhar(saidaUso, "%s", msg)
-		}
-		if err != nil {
-			return falhar(saidaAmbiente, "%v", err)
-		}
-		fmt.Fprintf(stdout, "senha redefinida; %s. Novos acessos dessas sessões estão bloqueados; ações já em andamento podem ser concluídas.\n", sessoesEncerradas(n))
+	id, err := svc.CreateUser(c.ctx, e, senha)
+	if errors.Is(err, account.ErrUserExists) {
+		return c.falhar(saidaJaExiste, "já existe um usuário; nada foi alterado")
 	}
+	if err != nil {
+		return c.falharDoServico(err)
+	}
+	fmt.Fprintf(c.stdout, "usuário criado: %s (id %s)\n", e, id)
+	return saidaOK
+}
+
+// runSetPassword redefine a senha. A pré-condição (o e-mail existe) vem ANTES
+// da senha, como no create.
+func (c cliUser) runSetPassword(svc *account.Service, e string) int {
+	if _, err := svc.UserIDByEmail(c.ctx, e); errors.Is(err, account.ErrUserNotFound) {
+		return c.falharNaoCadastrado(e)
+	} else if err != nil {
+		return c.falhar(saidaAmbiente, "%v", err)
+	}
+	senha, err := lerSenha(c.ctx, c.in, c.stderr)
+	if err != nil {
+		return c.falhar(saidaUso, "%v", err)
+	}
+	n, err := svc.ResetPassword(c.ctx, e, senha)
+	if errors.Is(err, account.ErrUserNotFound) {
+		return c.falharNaoCadastrado(e)
+	}
+	if err != nil {
+		return c.falharDoServico(err)
+	}
+	fmt.Fprintf(c.stdout, "senha redefinida; %s. Novos acessos dessas sessões estão bloqueados; ações já em andamento podem ser concluídas.\n", sessoesEncerradas(n))
 	return saidaOK
 }
 

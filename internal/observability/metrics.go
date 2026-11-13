@@ -25,7 +25,7 @@ func NewRegistry() *prometheus.Registry {
 }
 
 // NewMetricsServer serve GET /metrics em addr, e nada mais. A config garante
-// que addr é loopback (spec §5.7, D10); este servidor não tem autenticação
+// que addr é loopback (spec §5.7); este servidor não tem autenticação
 // porque não precisa, já que não é alcançável de fora.
 func NewMetricsServer(addr string, reg *prometheus.Registry) *http.Server {
 	mux := http.NewServeMux()

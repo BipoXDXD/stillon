@@ -71,6 +71,7 @@ func TestClaimDueNotificationsRespectsTheLimitInAnyPlan(t *testing.T) {
 	tx := transacaoComReexecucao(t, pool)
 	lote, err := db.New(tx).ClaimDueNotifications(ctx, db.ClaimDueNotificationsParams{
 		Now: agora, LeaseUntil: agora.Add(time.Minute), MaxRows: 1,
+		Kinds: kindsConhecidos, Events: eventosConhecidos,
 	})
 	if err != nil {
 		t.Fatal(err)

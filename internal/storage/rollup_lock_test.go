@@ -9,7 +9,7 @@ import (
 	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 )
 
-// E3 da revisão de 2026-10-14. Com dois sondadores, duas consolidações
+// Com dois sondadores, duas consolidações
 // concorrentes fariam o mesmo upsert em ordens diferentes (deadlock 40P01) ou
 // em dobro. Quem chega com a trava tomada pula a rodada na hora, sem esperar
 // nem gravar; com a trava solta, a rodada seguinte consolida.

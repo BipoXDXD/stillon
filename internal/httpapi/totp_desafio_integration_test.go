@@ -22,7 +22,7 @@ func verificar(t *testing.T, a *api, c *http.Client, segredo, desafio string) *h
 		map[string]string{"challenge": desafio, "code": code})
 }
 
-// O desafio abre UMA sessão (Plano 8). Antes, com o mesmo desafio e um código
+// O desafio abre UMA sessão. Antes, com o mesmo desafio e um código
 // TOTP novo a cada período, abria uma sessão por período durante os cinco
 // minutos de validade.
 func TestTOTPChallengeOpensOnlyOneSession(t *testing.T) {
@@ -64,7 +64,7 @@ func TestTOTPChallengeOpensOnlyOneSession(t *testing.T) {
 }
 
 // Consumir um desafio invalida os MAIS ANTIGOS ainda abertos; o inverso, o
-// mais antigo primeiro e o mais novo depois, funciona (spec do Plano 8, §3.1).
+// mais antigo primeiro e o mais novo depois, funciona.
 func TestNewerTOTPChallengeRetiresTheOlderOne(t *testing.T) {
 	a := newAPI(t)
 	c := clientWithJar(t)
@@ -104,9 +104,9 @@ func TestNewerTOTPChallengeRetiresTheOlderOne(t *testing.T) {
 	}
 }
 
-// Um desafio emitido antes do deploy do Plano 8 não tem o claim cat. Ele
-// chega ao verify como qualquer desafio inválido: 401 unauthorized, que o
-// painel trata voltando ao passo da senha, e nunca um 500.
+// Um desafio emitido antes de o desafio ganhar a marca de uso não tem o claim
+// cat. Ele chega ao verify como qualquer desafio inválido: 401 unauthorized,
+// que o painel trata voltando ao passo da senha, e nunca um 500.
 func TestTOTPChallengeFromBeforeTheMarkIsRefusedAsExpired(t *testing.T) {
 	a := newAPI(t)
 	c := clientWithJar(t)
@@ -138,13 +138,12 @@ func TestTOTPChallengeFromBeforeTheMarkIsRefusedAsExpired(t *testing.T) {
 	}
 }
 
-// Um desafio já consumido é recusado ANTES do código, e o código de
-// recuperação enviado com ele continua valendo (revisão final do Plano 8).
-// Antes, o TOTP.Verify apagava o código de recuperação numa transação própria
-// e só depois o ConsumeChallenge recusava o desafio: o usuário recebia 401 e
-// perdia um código que não se renova. Os gatilhos reais são duas abas (a mais
-// nova já entrou) e a resposta do verify perdida na rede, com o reenvio do
-// mesmo desafio e o próximo código.
+// Um desafio já consumido é recusado ANTES do código, e o código de recuperação
+// enviado com ele continua valendo. Antes, o TOTP.Verify apagava o código de
+// recuperação numa transação própria e só depois o ConsumeChallenge recusava o
+// desafio: o usuário recebia 401 e perdia um código que não se renova. Os
+// gatilhos reais são duas abas (a mais nova já entrou) e a resposta do verify
+// perdida na rede, com o reenvio do mesmo desafio e o próximo código.
 func TestSpentTOTPChallengeDoesNotBurnARecoveryCode(t *testing.T) {
 	a := newAPI(t)
 	c := clientWithJar(t)
@@ -169,7 +168,7 @@ func TestSpentTOTPChallengeDoesNotBurnARecoveryCode(t *testing.T) {
 	}
 
 	// A prova de que o código não foi gasto: com um desafio NOVO, o MESMO
-	// código de recuperação abre a sessão. O segundo de avanço é o do D10:
+	// código de recuperação abre a sessão. O segundo de avanço existe porque,
 	// com o relógio parado, o desafio novo sairia no mesmo microssegundo do
 	// consumido e seria recusado pela marca.
 	a.clk.Advance(time.Second)

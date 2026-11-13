@@ -1,7 +1,7 @@
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
-import { useFieldArray, useForm, useWatch } from 'react-hook-form'
+import { useFieldArray, useForm, useWatch, type FieldPath } from 'react-hook-form'
 import { ArrowDown, ArrowUp } from 'lucide-react'
 import { Link } from 'react-router'
 import { z } from 'zod'
@@ -13,15 +13,16 @@ import { Botao, BotaoQueSome } from '@/components/ui/botao'
 import { estiloDeCartao } from '@/components/ui/cartao'
 import { useCopiar } from '@/components/ui/copiar'
 import { CaixaDeMarcar, Campo, Entrada, ErroDoFormulario, Selecao } from '@/components/ui/campo'
-import { useAlvos, usePaginas, useResumo } from '@/lib/api/consultas'
-import { ApiError, naoEncontrado } from '@/lib/api/http'
+import { chaves, useAlvos, usePaginas, useResumo } from '@/lib/api/consultas'
+import { errosDosCampos, type ErroDoCampo } from '@/lib/api/erros-de-campo'
+import { ApiError, type ErroDeCampo, naoEncontrado } from '@/lib/api/http'
 import { mensagemDe, mensagemDoCampo } from '@/lib/api/mensagens'
 import type { Alvo, PaginaDeStatus } from '@/lib/api/schemas'
 import { MENSAGEM_INVISIVEL, temInvisivel } from '@/lib/rotulo'
 import { cn } from '@/lib/utils'
 import { PreviaDaPagina } from './PreviaDaPagina'
 
-// O CHECK de status_pages.slug (Plano 4, D13).
+// O CHECK de status_pages.slug.
 const SLUG = /^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$/
 const MAX_ITENS = 20
 
@@ -49,6 +50,20 @@ const esquema = z.object({
     .max(MAX_ITENS, `Até ${MAX_ITENS} alvos.`),
 })
 type Valores = z.infer<typeof esquema>
+
+// O campo do 400 que a tela não tem vai para o erro do topo do formulário.
+const NO_TOPO = 'topo'
+
+// Onde cai um campo do 400: title e slug, o nome de exibição de cada item
+// (items[1].display_name vira items.1.display_name), o resto da lista em items.
+function campoDoErro(fe: ErroDeCampo): ErroDoCampo<FieldPath<Valores> | typeof NO_TOPO> {
+  const mensagem = mensagemDoCampo(fe.field, fe.reason)
+  const item = /^items\[(\d+)\]\.display_name$/.exec(fe.field)
+  if (fe.field === 'title' || fe.field === 'slug') return { campo: fe.field, mensagem }
+  if (item) return { campo: `items.${Number(item[1])}.display_name`, mensagem }
+  if (fe.field === 'items' || fe.field.startsWith('items[')) return { campo: 'items', mensagem }
+  return { campo: NO_TOPO, mensagem }
+}
 
 export function sugerirSlug(titulo: string): string {
   return titulo
@@ -81,7 +96,7 @@ function Formulario({ pagina, alvos }: { pagina: PaginaDeStatus | null; alvos: A
   const tituloAtual = useWatch({ control: f.control, name: 'title' })
   const usados = new Set(escolhidos.map((i) => i.target_id))
   const livres = alvos.filter((a) => !usados.has(a.id))
-  // I1: o "Tirar" some com a linha, e o foco iria ao <body>. Vai ao "Tirar"
+  // O "Tirar" some com a linha, e o foco iria ao <body>. Vai ao "Tirar"
   // que ocupou o lugar (o da linha de baixo), ou ao da última linha, ou ao
   // seletor de acrescentar, ou ao título da tela. Um efeito a cada render:
   // o que o pede é o render da remoção.
@@ -105,29 +120,26 @@ function Formulario({ pagina, alvos }: { pagina: PaginaDeStatus | null; alvos: A
     try {
       if (pagina) await api.alterarPagina(pagina.id, v)
       else await api.criarPagina(v)
-      await qc.invalidateQueries({ queryKey: ['status-pages'] })
+      await qc.invalidateQueries({ queryKey: chaves.paginas })
       avisar('Status page salva. A página pública muda em até 30 segundos.')
     } catch (err) {
       if (err instanceof ApiError && err.code === 'slug_taken') {
         f.setError('slug', { message: 'Este endereço já está em uso.' }, { shouldFocus: true })
       } else if (naoEncontrado(err)) {
-        // M3: a página sumiu entre carregar e salvar. Como no 409 abaixo, o
+        // A página sumiu entre carregar e salvar. Como no 409 abaixo, o
         // aviso vai pelo toast: a recarga remonta o formulário.
         avisar('A status page já tinha sido apagada, talvez em outra aba.')
-        await qc.invalidateQueries({ queryKey: ['status-pages'] })
+        await qc.invalidateQueries({ queryKey: chaves.paginas })
       } else if (err instanceof ApiError && err.code === 'status_page_exists') {
         // Corrida entre abas: a recarga troca a `key` do formulário e o
         // remonta, então o aviso sai pelo toast, que sobrevive à troca.
         avisar('Já existe uma status page; recarregamos a que está salva.')
-        await qc.invalidateQueries({ queryKey: ['status-pages'] })
+        await qc.invalidateQueries({ queryKey: chaves.paginas })
       } else if (err instanceof ApiError && err.fields.length) {
-        for (const fe of err.fields) {
-          const texto = mensagemDoCampo(fe.field, fe.reason)
-          const item = /^items\[(\d+)\]\.display_name$/.exec(fe.field)
-          if (fe.field === 'title' || fe.field === 'slug') f.setError(fe.field, { message: texto })
-          else if (item) f.setError(`items.${Number(item[1])}.display_name`, { message: texto })
-          else if (fe.field === 'items' || fe.field.startsWith('items[')) f.setError('items', { message: texto })
-          else setErro(texto)
+        // Esta tela não move o foco, ao contrário do alvo e do heartbeat.
+        for (const { campo, mensagem } of errosDosCampos(err, campoDoErro)) {
+          if (campo === NO_TOPO) setErro(mensagem)
+          else f.setError(campo, { message: mensagem })
         }
       } else {
         setErro(mensagemDe(err))
@@ -189,8 +201,8 @@ function Formulario({ pagina, alvos }: { pagina: PaginaDeStatus | null; alvos: A
               {(a) => <Entrada {...a} {...f.register(`items.${i}.display_name`)} />}
             </Campo>
             {/* Ordem por botões, não arrastar: teclado e leitor de tela.
-                Reordenar é secundário; Tirar, que remove, é terciário
-                (auditoria SP2). aria-disabled, e não disabled, nas pontas:
+                Reordenar é secundário; Tirar, que remove, é terciário.
+                aria-disabled, e não disabled, nas pontas:
                 o botão que leva o item à ponta está com o foco, e
                 desabilitado o perderia para o <body> (como o Reconhecer).
                 A guarda fica no clique. */}

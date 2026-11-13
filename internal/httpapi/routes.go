@@ -25,10 +25,6 @@ import (
 // maxBodyBytes cobre com folga qualquer payload legítimo desta API.
 const maxBodyBytes = 1 << 20 // 1 MiB
 
-// Termina o trabalho no banco antes do WriteTimeout de 30s, deixando
-// margem para responder com o envelope de erro. ReadTimeout só limita I/O.
-const requestTimeout = 15 * time.Second
-
 // As rotas que mandam mensagem para fora (criar canal, reenviar
 // verificação) ganham um balde próprio por usuário: um envio a cada 6
 // minutos, 5 de uma vez. Dá 10 por hora depois do burst (spec §5.8).
@@ -46,8 +42,12 @@ type Deps struct {
 	Store    *auth.PGStore
 	Sessions *auth.Manager
 	TOTP     *auth.TOTP
-	// Accounts é a conta do dono: GET /me e POST /auth/password (Plano 5).
-	Accounts  *account.Service
+	// Accounts é a conta do dono: GET /me e POST /auth/password.
+	Accounts *account.Service
+	// Proofs é o contador de provas erradas por família de sessão, no banco:
+	// uma instância para a troca de senha e as rotas do 2FA. Nil só onde
+	// nenhuma dessas rotas é chamada, como Accounts.
+	Proofs    *auth.FamilyProofs
 	Targets   *targets.Service
 	Incidents *history.Service
 	Channels  *notify.ChannelService
@@ -68,13 +68,19 @@ type Deps struct {
 // Routes monta a árvore de rotas e a cadeia de middlewares.
 //
 // ctx é o contexto de vida do servidor: ele encerra as goroutines de
-// varredura dos rate limiters no shutdown, em vez de deixá-las vazar (R32).
+// varredura dos rate limiters no shutdown, em vez de deixá-las vazar.
 func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
+	// O prazo vem do config.Load (15 s). Zero ou negativo deixaria toda
+	// requisição vencida na largada: um Config montado sem ele é defeito do
+	// código.
+	if cfg.RequestTimeout <= 0 {
+		panic("httpapi: Config sem RequestTimeout positivo; monte o Config pelo config.Load ou defina RequestTimeout")
+	}
 	// Sem https não há como marcar o cookie como Secure: o navegador
 	// simplesmente não o guardaria, e o desenvolvimento local pararia. Em
 	// produção PUBLIC_BASE_URL é https, e o refresh nunca trafega em claro.
 	secureCookie := config.EhHTTPS(cfg.PublicBaseURL)
-	// O teto de Argon2id simultâneos (A1 do Plano 10) é do processo, e quem o
+	// O teto de Argon2id simultâneos é do processo, e quem o
 	// paga é a API: o config.Load sempre o preenche; um Config montado à mão
 	// (testes) sem ele fica com o padrão.
 	if cfg.Argon2MaxConcurrent > 0 {
@@ -82,11 +88,11 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	} else {
 		auth.SetArgon2MaxConcurrent(auth.DefaultArgon2MaxConcurrent())
 	}
-	// Uma instância do contador de provas por família para a troca de senha e
-	// as rotas do 2FA (A3 do Plano 10): o orçamento é da família, não da rota.
-	provas := &provasDaFamilia{contador: auth.NewFamilyProofs(d.Clock), contas: d.Accounts, proxies: proxiesDe(cfg)}
-	// O cookie de dispositivo (A3 do Plano 10): a chave do MAC vem da
-	// MASTER_KEY por HKDF, com rótulo próprio.
+	// Um contador de provas por família para a troca de senha e as rotas do
+	// 2FA: o orçamento é da família, não da rota.
+	provas := &provasDaFamilia{contador: d.Proofs, contas: d.Accounts, proxies: proxiesDe(cfg)}
+	// O cookie de dispositivo: a chave do MAC vem da MASTER_KEY por HKDF, com
+	// rótulo próprio.
 	dispositivos := auth.NewDevices(cfg.MasterKey, d.Clock)
 	h := NewAuthHandlers(d.Store, d.Sessions, d.TOTP, d.Clock, cfg.JWTSecret, secureCookie, proxiesDe(cfg), provas, dispositivos)
 	th := NewTargetHandlers(d.Targets, d.Clock)
@@ -102,49 +108,64 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	// Rotas de autenticação: limite mais apertado, porque é onde a força
 	// bruta bate.
 	//
-	// Este limitador e o bloqueio progressivo de auth.LockThreshold operam em
-	// camadas diferentes e de propósito: o limite é por IP, o bloqueio é por
-	// conta. Depois de esgotado o burst ainda passam 10 tentativas por minuto,
-	// então cinco falhas na mesma conta chegam em poucos segundos — o
-	// bloqueio não fica inalcançável (R35).
+	// O login tem um limitador por IP e o bloqueio progressivo de
+	// auth.LockThreshold, que operam em camadas diferentes e de propósito: o
+	// limite é por IP, o bloqueio é por conta. Depois de esgotado o burst ainda
+	// passam 10 tentativas por minuto, então cinco falhas na mesma conta chegam
+	// em poucos segundos — o bloqueio não fica inalcançável.
 	//
-	// O limitador NÃO protege o dono contra o bloqueio da própria conta: o
-	// burst (5) é igual ao limiar (5), e um único IP tranca a conta com cinco
-	// senhas erradas a cada 15 min. (Uma versão anterior deste comentário
-	// dizia o contrário; a revisão de 2026-09-25 mostrou que era falso.) Quem
-	// deixa o dono entrar mesmo assim é o cookie de dispositivo (A3 do Plano
-	// 10): o navegador que já completou um login tem um contador próprio, e o
-	// bloqueio disparado por outras origens não o alcança.
+	// O limitador NÃO protege o dono contra o bloqueio da própria conta: o burst
+	// (5) é igual ao limiar (5), e um único IP tranca a conta com cinco senhas
+	// erradas a cada 15 min. Quem deixa o dono entrar mesmo assim é o cookie de
+	// dispositivo: o navegador que já completou um login tem um contador próprio,
+	// e o bloqueio disparado por outras origens não o alcança.
 	//
-	// Uma instância só, e não uma por rota: a troca de senha divide o balde do
-	// login (D5 do Plano 5; contrato dos Planos 5–7, "mesmo limite por IP da
-	// rota de login"). Com instâncias separadas, quem adivinha senha dobraria
-	// o orçamento alternando as duas rotas.
+	// O balde por IP é só do login (e, mais abaixo, do /totp/verify, que tem o
+	// seu). A troca de senha e as cinco rotas autenticadas do 2FA têm um balde por
+	// CONTA, de que só quem tem token válido gasta ficha: com o IP, quem divide
+	// NAT ou um terceiro sem credencial esvaziaria o balde do dono.
+	//
+	// O estado dos baldes é só da memória desta instância: com mais de uma réplica,
+	// cada uma conta por si. É a mesma limitação do login, e não é resolvida aqui.
 	limiteLogin := middleware.RateLimit(ctx, d.Clock, 10, 5, proxiesDe(cfg))
 	mux.Handle("POST /api/v1/auth/login", limiteLogin(http.HandlerFunc(h.Login)))
-	mux.Handle("POST /api/v1/auth/password", limiteLogin(authn(http.HandlerFunc(ah.ChangePassword))))
+	// Uma instância só, e não uma por rota: a troca de senha e as cinco rotas do
+	// 2FA dividem o balde. Com instâncias separadas, quem adivinha senha ou código
+	// dobraria o orçamento alternando as rotas. A chave é o usuário que authn põe
+	// no contexto, e não a sessão: outra família da mesma conta, de qualquer IP,
+	// cai no mesmo balde, e logar de novo não rende ficha. A cadeia é authn, viva,
+	// limite, handler: sem token válido, 401 e nenhuma ficha gasta; e um token de
+	// sessão revogada (ainda no prazo de 15 min) é recusado pelo viva SEM gastar o
+	// balde de que o dono precisa para trocar a senha ou o 2FA. O preço é uma
+	// consulta de sessão por pedido de quem já tem token assinado, sob o piso
+	// global por IP. Mesma taxa do login: 10/min, rajada 5.
+	limiteConta := middleware.RateLimitUser(ctx, d.Clock, 10, 5)
+	viva := ah.exigirSessaoViva
+	autenticadaComLimite := func(fn http.HandlerFunc) http.Handler { return authn(viva(limiteConta(fn))) }
+	mux.Handle("POST /api/v1/auth/password", autenticadaComLimite(ah.ChangePassword))
 	mux.Handle("POST /api/v1/auth/refresh", http.HandlerFunc(h.Refresh))
 	mux.Handle("POST /api/v1/auth/logout", http.HandlerFunc(h.Logout))
 
-	// Todas exigem a família do token viva (D11, Task 11): um token de
-	// sessão encerrada não mexe no 2FA.
-	viva := ah.exigirSessaoViva
-	mux.Handle("POST /api/v1/auth/totp/enroll", authn(viva(http.HandlerFunc(h.TOTPEnroll))))
-	mux.Handle("POST /api/v1/auth/totp/confirm", authn(viva(http.HandlerFunc(h.TOTPConfirm))))
-	// Desativar é a saída que o R38 tirou. Exige senha E posse do fator, no
-	// handler — a sessão sozinha aqui seria o bypass de volta.
-	mux.Handle("POST /api/v1/auth/totp/disable", authn(viva(http.HandlerFunc(h.TOTPDisable))))
-	// A troca de autenticador (Plano 9, §3.2): a mesma cadeia, sem limitador
-	// por IP próprio. Quem limita as provas erradas destas rotas, e das três
-	// acima e da troca de senha, é o contador por família de sessão
-	// (provasDaFamilia, A3 do Plano 10): a quinta prova errada derruba a
-	// família. O bloqueio da conta é só do login e do /totp/verify.
-	mux.Handle("POST /api/v1/auth/totp/rotate", authn(viva(http.HandlerFunc(h.TOTPRotate))))
-	mux.Handle("POST /api/v1/auth/totp/rotate/confirm", authn(viva(http.HandlerFunc(h.TOTPRotateConfirm))))
+	// Todas exigem a família do token viva: um token de sessão encerrada não mexe
+	// no 2FA.
+	mux.Handle("POST /api/v1/auth/totp/enroll", autenticadaComLimite(h.TOTPEnroll))
+	mux.Handle("POST /api/v1/auth/totp/confirm", autenticadaComLimite(h.TOTPConfirm))
+	// Desativar é a saída que a recusa do recadastro tirou. Exige senha E posse do
+	// fator, no handler — a sessão sozinha aqui seria o bypass de volta.
+	mux.Handle("POST /api/v1/auth/totp/disable", autenticadaComLimite(h.TOTPDisable))
+	// A troca de autenticador: a mesma cadeia. Duas camadas independentes limitam
+	// as provas erradas destas rotas, e das três acima e da troca de senha: o
+	// limite por conta (limiteConta, depois de authn e da sessão viva) e o contador
+	// por família de sessão (provasDaFamilia), em que a quinta prova errada derruba
+	// a família. O 429 sai antes do handler e não conta prova. O contador de tentativas do login (da conta ou, com cookie de
+	// dispositivo válido, do dispositivo) é só do login e do /totp/verify.
+	mux.Handle("POST /api/v1/auth/totp/rotate", autenticadaComLimite(h.TOTPRotate))
+	mux.Handle("POST /api/v1/auth/totp/rotate/confirm", autenticadaComLimite(h.TOTPRotateConfirm))
 	// Verify não passa por authn: o usuário ainda não tem sessão, só o
-	// desafio. O limitador cobre o lugar do bloqueio por conta, que aqui não
-	// se aplica — a senha já foi acertada, o que resta é adivinhar seis
-	// dígitos.
+	// desafio. O limitador por IP vem de fora; o contador de tentativas vale aqui,
+	// no handler: o código errado entra no mesmo contador do login (h.tentativas:
+	// o da conta ou o do dispositivo), porque só o limite por IP não segura quem
+	// chuta os seis dígitos de várias origens.
 	mux.Handle("POST /api/v1/auth/totp/verify",
 		middleware.RateLimit(ctx, d.Clock, 20, 5, proxiesDe(cfg))(http.HandlerFunc(h.TOTPVerify)))
 
@@ -184,7 +205,10 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	mux.Handle("PATCH /api/v1/heartbeats/{id}", protegida(hb.Update))
 	mux.Handle("DELETE /api/v1/heartbeats/{id}", protegida(hb.Delete))
 	mux.Handle("POST /api/v1/heartbeats/{id}/token/rotate", protegida(hb.RotateToken))
+	mux.Handle("POST /api/v1/heartbeats/{id}/clone", protegida(hb.Clone))
+	mux.Handle("POST /api/v1/heartbeats/{id}/ping-now", protegida(hb.PingNow))
 	mux.Handle("GET /api/v1/heartbeats/{id}/events", protegida(hb.Events))
+	mux.Handle("POST /api/v1/heartbeats/{id}/events/clear", protegida(hb.ClearEvents))
 	mux.Handle("GET /api/v1/heartbeats/{id}/incidents", protegida(hb.Incidents))
 	mux.Handle("POST /api/v1/heartbeats/{id}/incidents/{incident_id}/ack", protegida(hb.AckIncident))
 
@@ -193,7 +217,7 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	mux.Handle("GET /api/v1/channels", protegida(ch.List))
 	mux.Handle("POST /api/v1/channels", comEnvio(ch.Create))
 	mux.Handle("DELETE /api/v1/channels/{id}", protegida(ch.Delete))
-	// Pausar e retomar (Plano 9, §3.3) não manda mensagem para fora: fica no
+	// Pausar e retomar não manda mensagem para fora: fica no
 	// limitador comum, e não no balde de envio.
 	mux.Handle("PATCH /api/v1/channels/{id}", protegida(ch.SetEnabled))
 	mux.Handle("POST /api/v1/channels/{id}/verify/resend", comEnvio(ch.Resend))
@@ -222,16 +246,16 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	handler = middleware.RequireCustomHeader(handler)
 	handler = middleware.BodyLimit(maxBodyBytes)(handler)
 	// Preflight fica DENTRO do rate limit e FORA do RequireCustomHeader: o
-	// OPTIONS passa a ser contado pelo limitador (item 24) sem precisar do
+	// OPTIONS passa a ser contado pelo limitador sem precisar do
 	// cabeçalho customizado, que nenhum preflight carrega. Os cabeçalhos de
 	// CORS continuam por fora do limitador, em middleware.CORS, para que o
-	// 429 também os leve (R33).
+	// 429 também os leve.
 	handler = middleware.Preflight()(handler)
 	handler = middleware.RateLimit(ctx, d.Clock, 120, 30, proxiesDe(cfg))(handler)
 	handler = middleware.CORS(cfg.CORSOrigin)(handler)
 	handler = middleware.SecurityHeaders(handler)
 	handler = middleware.Recover(handler)
-	handler = middleware.Deadline(requestTimeout)(handler)
+	handler = middleware.Deadline(cfg.RequestTimeout)(handler)
 	handler = middleware.RequestID(handler)
 
 	// A raiz separa as cadeias pelo prefixo, e o ServeMux escolhe sempre o
@@ -243,7 +267,7 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	raiz.Handle("/healthz", handler)
 	raiz.Handle("/readyz", handler)
 	raiz.Handle("/verify/", verificacao(ctx, cfg, d.Clock, d.Channels))
-	raiz.Handle("/p/", paginaPublica(ctx, cfg, d.Clock, d.StatusPages))
+	raiz.Handle("/p/", paginaPublica(ctx, cfg, d.Clock, (&PublicPageHandlers{svc: d.StatusPages}).Page))
 	raiz.Handle("/ping/", pingPublico(ctx, cfg, d.Clock, d.Pings))
 	raiz.Handle("/", painel(d.Painel))
 	return raiz
@@ -268,7 +292,7 @@ func painel(arquivos fs.FS) http.Handler {
 }
 
 // painelEmbutido lê e comprime o dist embutido uma vez por processo. O New
-// lê tudo e comprime no boot (D8 do plano); refazer isso a cada Routes()
+// lê tudo e comprime no boot; refazer isso a cada Routes()
 // custava ~70 s na suíte de integração com -race e um dist real, que monta
 // Routes() em quase todo teste.
 var painelEmbutido = sync.OnceValue(func() *webui.Painel { return webui.New(webui.Dist()) })
@@ -276,7 +300,7 @@ var painelEmbutido = sync.OnceValue(func() *webui.Painel { return webui.New(webu
 // proxiesDe junta as duas variáveis que decidem de onde vem o IP do cliente.
 // Todo limitador por IP e o ip_hash da auditoria passam por aqui: um lugar
 // só para errar ou acertar. Com PUBLIC_BASE_URL https, um X-Forwarded-For de
-// fora de TRUSTED_PROXIES vira aviso no log (B3 do Plano 10).
+// fora de TRUSTED_PROXIES vira aviso no log.
 func proxiesDe(cfg *config.Config) middleware.Proxies {
 	return middleware.Proxies{
 		Trusted: cfg.TrustedProxies, Header: cfg.ClientIPHeader,
@@ -325,7 +349,7 @@ func verificacao(ctx context.Context, cfg *config.Config, clk clock.Clock, svc *
 	h = middleware.RateLimit(ctx, clk, 20, 10, proxiesDe(cfg))(h)
 	h = middleware.SecurityHeaders(h)
 	h = middleware.Recover(h)
-	h = middleware.Deadline(requestTimeout)(h)
+	h = middleware.Deadline(cfg.RequestTimeout)(h)
 	h = middleware.RequestID(h)
 	return h
 }

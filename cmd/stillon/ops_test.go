@@ -127,9 +127,9 @@ func TestVersionPrintsTheStampedVersion(t *testing.T) {
 	}
 }
 
-// Os dois subcomandos de operação passam pelo mesmo despacho do `user` (Plano
-// 5), e o servidor continua sendo o padrão: um argumento que não está no mapa
-// (a flag --role, um nome qualquer) segue para o flag.Parse de main.
+// Os dois subcomandos de operação passam pelo mesmo despacho do `user`, e o
+// servidor continua sendo o padrão: um argumento que não está no mapa (a flag
+// --role, um nome qualquer) segue para o flag.Parse de main.
 func TestOperationSubcommandsShareTheDispatch(t *testing.T) {
 	for _, nome := range []string{"user", "healthcheck", "version"} {
 		if _, ok := subcomandos[nome]; !ok {

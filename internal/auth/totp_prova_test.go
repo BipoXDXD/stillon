@@ -17,9 +17,9 @@ import (
 	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 )
 
-// As provas do 2FA depois do Plano 10: amarradas ao segredo que as validou
-// (A4), conferidas na ordem global de travas (A5), a troca identificada pelo
-// rotation (A7) e o código de recuperação normalizado (A8).
+// As provas do 2FA: amarradas ao segredo que as validou, conferidas na ordem
+// global de travas, a troca identificada pelo rotation e o código de
+// recuperação normalizado.
 
 // ligarComCodigos liga o 2FA pelo caminho do painel (Enroll e Confirm) e
 // devolve o segredo e os dez códigos de recuperação.
@@ -57,7 +57,7 @@ func quantosCodigos(t *testing.T, pool *pgxpool.Pool, userID uuid.UUID) int {
 	return n
 }
 
-// A4: o consumo do timestep é um compare-and-swap também no segredo. Uma
+// O consumo do timestep é um compare-and-swap também no segredo. Uma
 // troca de autenticador que comite entre a leitura do segredo e o consumo faz
 // o código do app antigo ser recusado; com o segredo que o validou, passa.
 func TestTimestepConsumptionIsBoundToTheSecret(t *testing.T) {
@@ -76,7 +76,7 @@ func TestTimestepConsumptionIsBoundToTheSecret(t *testing.T) {
 	}
 }
 
-// A4 (auditoria S4): o disable CONSOME o timestep. O código que abriu o login
+// O disable CONSOME o timestep. O código que abriu o login
 // não desliga o 2FA na mesma janela; o do período seguinte desliga.
 func TestDisableConsumesTheTimestep(t *testing.T) {
 	svc, pool, userID := setupTOTP(t)
@@ -99,7 +99,7 @@ func TestDisableConsumesTheTimestep(t *testing.T) {
 	}
 }
 
-// A5: o disable toma a trava de sessões do usuário ANTES de tocar em qualquer
+// O disable toma a trava de sessões do usuário ANTES de tocar em qualquer
 // linha. Com a trava presa, ele espera, e enquanto espera o código de
 // recuperação que ele vai gastar não está travado — antes, ele apagava o
 // código primeiro e só então travava users, a ordem inversa da do
@@ -128,7 +128,7 @@ func TestDisableTakesTheUserLockFirst(t *testing.T) {
 	}
 }
 
-// A5: o rotate confere a família e o 2FA ligado ANTES de gastar a prova, sob
+// O rotate confere a família e o 2FA ligado ANTES de gastar a prova, sob
 // a trava. Com a família caída, nem o código de recuperação nem o timestep do
 // código do app são gastos.
 func TestStartRotationSpendsNothingForADeadFamily(t *testing.T) {
@@ -154,7 +154,7 @@ func TestStartRotationSpendsNothingForADeadFamily(t *testing.T) {
 	}
 }
 
-// A7: o rotate devolve o identificador da troca (32 caracteres hex, diferente
+// O rotate devolve o identificador da troca (32 caracteres hex, diferente
 // a cada rotate), e o confirm só conclui a troca que o cliente conhece.
 // Ausente ou de uma troca já substituída é ErrTOTPNoRotation, antes do código.
 func TestConfirmRotationNeedsTheRotation(t *testing.T) {
@@ -191,7 +191,7 @@ func TestConfirmRotationNeedsTheRotation(t *testing.T) {
 	}
 }
 
-// A8: o código de recuperação é gerado em base32 maiúsculo, sem separador, e
+// O código de recuperação é gerado em base32 maiúsculo, sem separador, e
 // é aceito como o dono o digitar: em minúsculas, com hífens e espaços. Um uso
 // só, em qualquer grafia.
 func TestRecoveryCodesAreNormalized(t *testing.T) {
@@ -213,7 +213,7 @@ func TestRecoveryCodesAreNormalized(t *testing.T) {
 	}
 }
 
-// A4: a sessão depois do 2FA só nasce se o segredo que aceitou o código ainda
+// A sessão depois do 2FA só nasce se o segredo que aceitou o código ainda
 // é o ativo, conferido sob a trava do usuário. Uma troca de autenticador ou um
 // disable no meio fazem a emissão recusar com ErrStaleSecondFactor.
 func TestIssueAfterSecondFactorRechecksTheSecret(t *testing.T) {

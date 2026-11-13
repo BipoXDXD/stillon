@@ -24,6 +24,36 @@ export function ordenarPorGravidade<T extends { estado: EstadoExibido; nome: str
   return [...linhas].sort((a, b) => GRAVIDADE[a.estado] - GRAVIDADE[b.estado] || compararNomes(a.nome, b.nome))
 }
 
+// As três zonas da lista (RUI, densidade): o problema pede atenção e tem
+// mais espaço; quem está no ar e quem está parado ficam rebaixados.
+export type Zona = 'problema' | 'no-ar' | 'parado'
+
+export function zonaDoEstado(e: EstadoExibido): Zona {
+  if (ehProblema(e)) return 'problema'
+  return e === 'up' ? 'no-ar' : 'parado'
+}
+
+export const TEXTO_DA_ZONA: Record<Zona, string> = {
+  problema: 'Com problema',
+  'no-ar': 'No ar',
+  parado: 'Sem dados ou pausados',
+}
+
+export type BlocoDaLista<T> = { zona: Zona; linhas: T[] }
+
+// Corta a lista, na ordem dada, em blocos seguidos da mesma zona. Na ordem
+// por gravidade, um bloco por zona; não reordena nada.
+export function separarEmZonas<T extends { estado: EstadoExibido }>(linhas: readonly T[]): BlocoDaLista<T>[] {
+  const blocos: BlocoDaLista<T>[] = []
+  for (const linha of linhas) {
+    const zona = zonaDoEstado(linha.estado)
+    const bloco = blocos.at(-1)
+    if (bloco?.zona === zona) bloco.linhas.push(linha)
+    else blocos.push({ zona, linhas: [linha] })
+  }
+  return blocos
+}
+
 // A situação de um problema: com incidente aberto, a causa e
 // há quanto tempo; sem ele, a latência (degradado) ou o último check (fora
 // do ar antes de o incidente abrir).
@@ -37,7 +67,7 @@ export function detalheDoProblema(it: ItemDoResumo, incidente: Incidente | undef
   return it.last_checked_at === null ? 'Nenhum check ainda' : `Último check ${haQuantoAteAgora(it.last_checked_at, agora)}`
 }
 
-// Uma linha de texto por alvo, sem gráfico (auditoria P7).
+// Uma linha de texto por alvo, sem gráfico.
 export function linhaSemDados(it: ItemDoResumo, agora: Date): string {
   if (!it.enabled) return 'Pausado'
   return it.last_checked_at === null

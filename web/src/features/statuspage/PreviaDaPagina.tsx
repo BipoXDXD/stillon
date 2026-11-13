@@ -26,7 +26,7 @@ const TONS_DA_FAIXA: Record<EstadoAlvo, string> = {
   unknown: 'border-l-sem-dados bg-sem-dados-100 text-sem-dados',
 }
 
-// Prévia da página pública (auditoria SP3; spec do Plano 6, D23): o papel, o
+// Prévia da página pública: o papel, o
 // título em Fraunces, a mesma faixa de estado e um cartão por alvo. A página
 // real é HTML do servidor, só acessível depois de publicada, e o painel não
 // tem os 90 dias de cada alvo: a barra vira um contorno, e a nota diz o que

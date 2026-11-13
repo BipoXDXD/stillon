@@ -7,6 +7,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
+
+	"github.com/google/uuid"
 
 	"github.com/BipoXDXD/stillon/internal/crypto"
 	"github.com/BipoXDXD/stillon/internal/heartbeat"
@@ -28,7 +31,7 @@ func mustPeriod(d time.Duration) heartbeat.Schedule {
 }
 
 func aplicar(s heartbeat.State, sig heartbeat.Signal, em time.Time) (heartbeat.State, *heartbeat.Event) {
-	return s.Apply(sig, em, hora, tolerancia)
+	return s.Apply(sig, em, heartbeat.Run{}, hora, tolerancia)
 }
 
 func TestSuccessMovesTheDeadlineByPeriodPlusGrace(t *testing.T) {
@@ -44,7 +47,7 @@ func TestSuccessMovesTheDeadlineByPeriodPlusGrace(t *testing.T) {
 	}
 }
 
-// D10: início e falha não mexem no prazo.
+// Início e falha não mexem no prazo.
 func TestStartAndFailDoNotMoveTheDeadline(t *testing.T) {
 	prazo := agora.Add(time.Hour)
 	for _, sig := range []heartbeat.Signal{heartbeat.SignalStart, heartbeat.SignalFail} {
@@ -82,6 +85,26 @@ func TestRuntimeComesFromTheOpenStartAndConsumesIt(t *testing.T) {
 	_, ev = aplicar(s, heartbeat.SignalSuccess, agora.Add(time.Hour))
 	if ev.RuntimeMS != nil {
 		t.Errorf("segundo sucesso herdou tempo de execução: %d", *ev.RuntimeMS)
+	}
+}
+
+// O sucesso manual (o sinalizar agora do painel) move o prazo, mas não encerra
+// a execução aberta: o início e a última duração ficam para a tarefa.
+func TestManualSuccessKeepsTheOpenRun(t *testing.T) {
+	anterior := int64(5000)
+	s := heartbeat.State{LastStartAt: agora, LastRuntimeMS: &anterior}
+	s, ev := s.Apply(heartbeat.SignalSuccess, agora.Add(time.Minute), heartbeat.Run{Manual: true}, hora, tolerancia)
+	if ev.RuntimeMS != nil {
+		t.Errorf("o sucesso manual mediu %d ms, queria nil", *ev.RuntimeMS)
+	}
+	if !s.LastStartAt.Equal(agora) {
+		t.Errorf("last_start_at %v, queria %v", s.LastStartAt, agora)
+	}
+	if s.LastRuntimeMS == nil || *s.LastRuntimeMS != anterior {
+		t.Errorf("last_runtime_ms %v, queria %d", s.LastRuntimeMS, anterior)
+	}
+	if !s.LastSuccessAt.Equal(agora.Add(time.Minute)) {
+		t.Errorf("last_success_at %v, queria %v", s.LastSuccessAt, agora.Add(time.Minute))
 	}
 }
 
@@ -137,7 +160,8 @@ func TestRuntimeIsNeverNegative(t *testing.T) {
 	}
 }
 
-// D9, nas duas bordas da janela.
+// Um sucesso repetido dentro de RepeatWindow não gera evento nem muda o
+// estado; a partir da borda da janela é um sucesso novo. Testa as duas bordas.
 func TestRepeatWindowBoundaries(t *testing.T) {
 	base, _ := aplicar(heartbeat.State{}, heartbeat.SignalSuccess, agora)
 	casos := []struct {
@@ -180,6 +204,7 @@ func TestPeriodRange(t *testing.T) {
 		{0, false}, {-time.Minute, false},
 		{heartbeat.MinPeriod - time.Second, false}, {heartbeat.MinPeriod, true},
 		{heartbeat.MaxPeriod, true}, {heartbeat.MaxPeriod + time.Second, false},
+		{365 * 24 * time.Hour, true}, {365*24*time.Hour + time.Second, false},
 	}
 	for _, c := range casos {
 		_, err := heartbeat.NewPeriod(c.d)
@@ -200,6 +225,7 @@ func TestGraceRange(t *testing.T) {
 	}{
 		{0, false}, {heartbeat.MinGrace - time.Second, false}, {heartbeat.MinGrace, true},
 		{heartbeat.MaxGrace, true}, {heartbeat.MaxGrace + time.Second, false},
+		{365 * 24 * time.Hour, true}, {365*24*time.Hour + time.Second, false},
 	}
 	for _, c := range casos {
 		if err := heartbeat.ValidateGrace(c.d); (err == nil) != c.ok {
@@ -344,11 +370,164 @@ func TestScheduleFromRow(t *testing.T) {
 	if err != nil || !s.IsCron() || s.CronExpr() != expr || s.Timezone() != fuso {
 		t.Fatalf("cron: %+v, %v", s, err)
 	}
-	if _, err := heartbeat.ScheduleFromRow(nil, nil, nil); err == nil {
-		t.Fatal("linha sem agendamento passou")
-	}
 	if _, err := heartbeat.ScheduleFromRow(nil, &expr, nil); err == nil {
 		t.Fatal("cron sem fuso passou")
+	}
+}
+
+// Piso de rollback: uma versão futura pode gravar período acima da faixa de
+// cadastro, e esta versão precisa ler a linha mesmo assim.
+func TestScheduleFromRowAcceptsPeriodAboveRegistrationRange(t *testing.T) {
+	periodo := int32(31536000)
+	s, err := heartbeat.ScheduleFromRow(&periodo, nil, nil)
+	if err != nil {
+		t.Fatalf("365 dias: %v", err)
+	}
+	if !s.IsKnown() || s.Period() != 365*24*time.Hour {
+		t.Fatalf("365 dias: conhecido=%v período=%v", s.IsKnown(), s.Period())
+	}
+	t0 := time.Date(2026, 11, 10, 0, 0, 0, 0, time.UTC)
+	if got, want := s.Next(t0), time.Date(2027, 11, 10, 0, 0, 0, 0, time.UTC); !got.Equal(want) {
+		t.Errorf("Next %v, queria %v", got, want)
+	}
+}
+
+func TestScheduleFromRowRejectsNonPositivePeriod(t *testing.T) {
+	for _, p := range []int32{0, -60} {
+		_, err := heartbeat.ScheduleFromRow(&p, nil, nil)
+		var ve *heartbeat.ValidationError
+		if !errors.As(err, &ve) || ve.Field != "period_sec" || ve.Reason != heartbeat.ReasonOutOfRange {
+			t.Errorf("período %d: erro %v, queria period_sec/out_of_range", p, err)
+		}
+	}
+}
+
+// Período e cron nulos é a forma que esta versão não conhece: lê sem erro e
+// marca como desconhecida, com ou sem fuso gravado.
+func TestScheduleFromRowWithoutPeriodOrCronIsUnknown(t *testing.T) {
+	fuso := "America/Sao_Paulo"
+	for _, tz := range []*string{nil, &fuso} {
+		s, err := heartbeat.ScheduleFromRow(nil, nil, tz)
+		if err != nil {
+			t.Fatalf("fuso %v: %v", tz, err)
+		}
+		if s.IsKnown() || s.IsCron() {
+			t.Errorf("fuso %v: conhecido=%v cron=%v, queria desconhecido", tz, s.IsKnown(), s.IsCron())
+		}
+	}
+}
+
+func TestScheduleFromRowCronWithoutTimezoneStillFails(t *testing.T) {
+	expr := "0 3 * * *"
+	if _, err := heartbeat.ScheduleFromRow(nil, &expr, nil); err == nil {
+		t.Fatal("cron sem fuso passou")
+	}
+}
+
+// A leitura ficou sem teto, mas o cadastro não: a faixa continua no NewPeriod,
+// e um segundo acima dos 365 dias é recusado.
+func TestNewPeriodStillEnforcesRegistrationRange(t *testing.T) {
+	_, err := heartbeat.NewPeriod(365*24*time.Hour + time.Second)
+	var ve *heartbeat.ValidationError
+	if !errors.As(err, &ve) || ve.Field != "period_sec" || ve.Reason != heartbeat.ReasonOutOfRange {
+		t.Fatalf("erro %v, queria period_sec/out_of_range", err)
+	}
+}
+
+// Next num agendamento desconhecido é bug de quem chama: não há próximo
+// instante a inventar, e um prazo errado gravado seria pior que a queda.
+func TestNextOnUnknownSchedulePanics(t *testing.T) {
+	s, err := heartbeat.ScheduleFromRow(nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if recover() == nil {
+			t.Error("Next em agendamento desconhecido não entrou em pânico")
+		}
+	}()
+	s.Next(time.Date(2026, 11, 10, 0, 0, 0, 0, time.UTC))
+}
+
+// Piso de rollback: numa linha que esta versão não sabe agendar, o sinal fica
+// registrado como em qualquer outra, mas o prazo gravado não se move.
+func TestApplyOnUnknownScheduleKeepsDeadline(t *testing.T) {
+	desconhecido, err := heartbeat.ScheduleFromRow(nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prazo := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	em := time.Date(2026, 11, 10, 10, 0, 0, 0, time.UTC)
+	inicioAnterior := time.Date(2026, 11, 10, 9, 59, 0, 0, time.UTC)
+	falhandoDesde := time.Date(2026, 11, 10, 9, 0, 0, 0, time.UTC)
+	casos := []struct {
+		nome          string
+		antes         heartbeat.State
+		sig           heartbeat.Signal
+		sucesso       time.Time
+		falhandoDesde time.Time
+	}{
+		{nome: "início", antes: heartbeat.State{DeadlineAt: prazo}, sig: heartbeat.SignalStart},
+		{nome: "falha", antes: heartbeat.State{DeadlineAt: prazo}, sig: heartbeat.SignalFail, falhandoDesde: em},
+		{
+			nome: "sucesso limpa a falha", sig: heartbeat.SignalSuccess, sucesso: em,
+			antes: heartbeat.State{DeadlineAt: prazo, FailingSince: falhandoDesde},
+		},
+		{
+			nome: "sucesso depois de início", sig: heartbeat.SignalSuccess, sucesso: em,
+			antes: heartbeat.State{
+				DeadlineAt: prazo, LastStartAt: inicioAnterior, LastPingAt: inicioAnterior,
+				LastSignal: heartbeat.SignalStart,
+			},
+		},
+	}
+	for _, c := range casos {
+		t.Run(c.nome, func(t *testing.T) {
+			s, ev := c.antes.Apply(c.sig, em, heartbeat.Run{}, desconhecido, tolerancia)
+			if !s.DeadlineAt.Equal(time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)) {
+				t.Errorf("prazo %v, queria 2026-11-10T12:00:00Z", s.DeadlineAt)
+			}
+			if !s.LastPingAt.Equal(em) || s.LastSignal != c.sig {
+				t.Errorf("último ping %v/%s, queria %v/%s", s.LastPingAt, s.LastSignal, em, c.sig)
+			}
+			if !s.LastSuccessAt.Equal(c.sucesso) {
+				t.Errorf("último sucesso %v, queria %v", s.LastSuccessAt, c.sucesso)
+			}
+			if !s.FailingSince.Equal(c.falhandoDesde) {
+				t.Errorf("falhando desde %v, queria %v", s.FailingSince, c.falhandoDesde)
+			}
+			if ev == nil || ev.Kind != c.sig || !ev.At.Equal(em) {
+				t.Errorf("evento %+v, queria %s em %v", ev, c.sig, em)
+			}
+		})
+	}
+	// O log não mexe em nada nem com o agendamento desconhecido: só o evento.
+	t.Run("log", func(t *testing.T) {
+		antes := heartbeat.State{
+			DeadlineAt:   time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC),
+			LastPingAt:   time.Date(2026, 11, 10, 9, 59, 0, 0, time.UTC),
+			LastSignal:   heartbeat.SignalStart,
+			FailingSince: time.Date(2026, 11, 10, 9, 0, 0, 0, time.UTC),
+			LastStartAt:  time.Date(2026, 11, 10, 9, 59, 0, 0, time.UTC),
+		}
+		s, ev := antes.Apply(heartbeat.SignalLog, em, heartbeat.Run{}, desconhecido, tolerancia)
+		if s != antes {
+			t.Errorf("log mudou o estado: %+v", s)
+		}
+		if ev == nil || ev.Kind != heartbeat.SignalLog || !ev.At.Equal(time.Date(2026, 11, 10, 10, 0, 0, 0, time.UTC)) {
+			t.Errorf("evento %+v, queria log em 2026-11-10T10:00:00Z", ev)
+		}
+	})
+}
+
+func TestEqualTellsUnknownApart(t *testing.T) {
+	a, _ := heartbeat.ScheduleFromRow(nil, nil, nil)
+	b, _ := heartbeat.ScheduleFromRow(nil, nil, nil)
+	if !a.Equal(b) {
+		t.Error("dois desconhecidos deram diferentes")
+	}
+	if a.Equal(heartbeat.Schedule{}) || (heartbeat.Schedule{}).Equal(a) {
+		t.Error("desconhecido deu igual ao valor zero")
 	}
 }
 
@@ -543,6 +722,9 @@ func TestValidateDescription(t *testing.T) {
 		{nome: "emoji composto passa", entrada: "dono \U0001F469\u200D\U0001F4BB", quer: "dono \U0001F469\u200D\U0001F4BB"},
 		{nome: "no teto, em caracteres", entrada: teto, quer: teto},
 		{nome: "acima do teto", entrada: teto + "é", motivo: heartbeat.ReasonOutOfRange, campo: "description"},
+		{nome: "10000 caracteres de dois bytes", entrada: strings.Repeat("é", 10000), quer: strings.Repeat("é", 10000)},
+		{nome: "10000 emojis de quatro bytes", entrada: strings.Repeat("😀", 10000), quer: strings.Repeat("😀", 10000)},
+		{nome: "10001 caracteres", entrada: strings.Repeat("é", 10001), motivo: heartbeat.ReasonOutOfRange, campo: "description"},
 		{nome: "NUL", entrada: "a\x00b", motivo: heartbeat.ReasonInvalid, campo: "description[0]"},
 		{nome: "retorno de carro", entrada: "a\r\nb", motivo: heartbeat.ReasonInvalid, campo: "description[0]"},
 		{nome: "inversão bidi na segunda linha", entrada: "a\n\u202Eb", motivo: heartbeat.ReasonInvalid, campo: "description[1]"},
@@ -557,9 +739,250 @@ func TestValidateDescription(t *testing.T) {
 			var verr *heartbeat.ValidationError
 			switch {
 			case c.motivo == "" && (err != nil || got != c.quer):
-				t.Errorf("devolveu %q, %v; queria %q", got, err, c.quer)
+				t.Errorf("devolveu %.40q (%d bytes), %v; queria %.40q (%d bytes)", got, len(got), err, c.quer, len(c.quer))
 			case c.motivo != "" && (!errors.As(err, &verr) || verr.Field != c.campo || verr.Reason != c.motivo):
 				t.Errorf("erro %v; queria %s %s", err, c.campo, c.motivo)
+			}
+		})
+	}
+}
+
+// O nome da cópia cabe nos 100 caracteres do cadastro, contados em caracteres:
+// cortar por byte deixaria um nome multibyte curto demais (ou partiria um
+// caractere ao meio).
+func TestCloneName(t *testing.T) {
+	casos := []struct{ nome, entrada, quer string }{
+		{"curto ganha o sufixo", "backup", "backup (cópia)"},
+		{"no teto corta para caber", strings.Repeat("a", 100), strings.Repeat("a", 92) + " (cópia)"},
+		{"92 caracteres cabem sem corte", strings.Repeat("a", 92), strings.Repeat("a", 92) + " (cópia)"},
+		{"93 caracteres perdem um", strings.Repeat("a", 93), strings.Repeat("a", 92) + " (cópia)"},
+		{"multibyte corta por caractere", strings.Repeat("é", 99), strings.Repeat("é", 92) + " (cópia)"},
+		{"espaço deixado pelo corte sai", strings.Repeat("a", 91) + " b...", strings.Repeat("a", 91) + " (cópia)"},
+		{"combinante no fim sem corte fica", "Cafe\u0301", "Cafe\u0301 (cópia)"},
+		{"seletor de variação sem corte fica", "Backup \u2764\uFE0F", "Backup \u2764\uFE0F (cópia)"},
+		{"ZWJ deixado pelo corte sai", strings.Repeat("a", 90) + "x\u200Dyz", strings.Repeat("a", 90) + "x (cópia)"},
+	}
+	for _, c := range casos {
+		t.Run(c.nome, func(t *testing.T) {
+			got := heartbeat.CloneName(c.entrada)
+			if got != c.quer {
+				t.Errorf("CloneName(%.20q…) = %q, queria %q", c.entrada, got, c.quer)
+			}
+			if n := utf8.RuneCountInString(got); n > heartbeat.MaxNameLength {
+				t.Errorf("%d caracteres, acima de %d", n, heartbeat.MaxNameLength)
+			}
+			if _, err := heartbeat.ValidateName(got); err != nil {
+				t.Errorf("o nome da cópia %q não passa no cadastro: %v", got, err)
+			}
+		})
+	}
+}
+
+var (
+	t0   = time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	ridA = uuid.MustParse("0193a1b2-0000-7000-8000-00000000000a")
+	ridB = uuid.MustParse("0193a1b2-0000-7000-8000-00000000000b")
+)
+
+func comRid(s heartbeat.State, sig heartbeat.Signal, em time.Time, run heartbeat.Run) (heartbeat.State, *heartbeat.Event) {
+	return s.Apply(sig, em, run, hora, tolerancia)
+}
+
+func ptr[T any](v T) *T { return &v }
+
+// /log registra o evento e não mexe em último sinal, prazo nem execução.
+func TestLogChangesNothingButTheEvent(t *testing.T) {
+	antes := heartbeat.State{
+		DeadlineAt:    time.Date(2026, 11, 10, 13, 5, 0, 0, time.UTC),
+		LastPingAt:    time.Date(2026, 11, 10, 11, 59, 0, 0, time.UTC),
+		LastSuccessAt: time.Date(2026, 11, 10, 11, 0, 0, 0, time.UTC),
+		LastStartAt:   time.Date(2026, 11, 10, 11, 58, 0, 0, time.UTC),
+		LastSignal:    heartbeat.SignalSuccess,
+		FailingSince:  time.Date(2026, 11, 10, 10, 0, 0, 0, time.UTC),
+		LastRuntimeMS: ptr(int64(1234)),
+		LastRunID:     ptr(ridB),
+	}
+	s, ev := comRid(antes, heartbeat.SignalLog, t0, heartbeat.Run{ID: ptr(ridA)})
+	if s != antes {
+		t.Errorf("log mudou o estado: %+v", s)
+	}
+	if ev == nil || !ev.At.Equal(time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)) || ev.Kind != heartbeat.SignalLog ||
+		ev.RuntimeMS != nil || ev.RunID == nil || *ev.RunID != ridA {
+		t.Fatalf("evento %+v, queria log em t0 com ridA", ev)
+	}
+	s, ev = comRid(s, heartbeat.SignalLog, t0.Add(time.Second), heartbeat.Run{})
+	if ev == nil || ev.Kind != heartbeat.SignalLog || ev.RunID != nil {
+		t.Errorf("segundo log em 1 s: evento %+v, queria outro log sem rid", ev)
+	}
+	if s != antes {
+		t.Errorf("segundo log mudou o estado: %+v", s)
+	}
+}
+
+func TestRepeatComparesTheRunID(t *testing.T) {
+	casos := []struct {
+		nome            string
+		primeiro, outro *uuid.UUID
+		repeticao       bool
+	}{
+		{"mesmo rid", ptr(ridA), ptr(ridA), true},
+		{"rids distintos", ptr(ridA), ptr(ridB), false},
+		{"sem rid e com rid", nil, ptr(ridA), false},
+		{"com rid e sem rid", ptr(ridA), nil, false},
+		{"sem rid nos dois", nil, nil, true},
+	}
+	for _, c := range casos {
+		t.Run(c.nome, func(t *testing.T) {
+			s, _ := comRid(heartbeat.State{}, heartbeat.SignalSuccess, t0, heartbeat.Run{ID: c.primeiro})
+			_, ev := comRid(s, heartbeat.SignalSuccess, t0.Add(5*time.Second), heartbeat.Run{ID: c.outro})
+			if (ev == nil) != c.repeticao {
+				t.Fatalf("evento %+v, repetição esperada=%v", ev, c.repeticao)
+			}
+		})
+	}
+}
+
+func TestOverlappingRunsMeasureTheirOwnStart(t *testing.T) {
+	s, _ := comRid(heartbeat.State{}, heartbeat.SignalStart, t0, heartbeat.Run{ID: ptr(ridA)})
+	s, _ = comRid(s, heartbeat.SignalStart, t0.Add(10*time.Minute), heartbeat.Run{ID: ptr(ridB)})
+	s, ev := comRid(s, heartbeat.SignalSuccess, t0.Add(30*time.Minute), heartbeat.Run{ID: ptr(ridA), StartAt: ptr(t0)})
+	if ev == nil || ev.RuntimeMS == nil || *ev.RuntimeMS != 1800000 {
+		t.Fatalf("duração de A %+v, queria 1800000", ev)
+	}
+	if !s.LastStartAt.Equal(time.Date(2026, 11, 10, 12, 10, 0, 0, time.UTC)) {
+		t.Errorf("início aberto %v, queria o de B (12:10)", s.LastStartAt)
+	}
+	s, ev = comRid(s, heartbeat.SignalSuccess, t0.Add(40*time.Minute),
+		heartbeat.Run{ID: ptr(ridB), StartAt: ptr(t0.Add(10 * time.Minute))})
+	if ev == nil || ev.RuntimeMS == nil || *ev.RuntimeMS != 1800000 {
+		t.Fatalf("duração de B %+v, queria 1800000", ev)
+	}
+	if !s.LastStartAt.IsZero() {
+		t.Errorf("o início de B não foi consumido: %v", s.LastStartAt)
+	}
+	if s.LastRuntimeMS == nil || *s.LastRuntimeMS != 1800000 {
+		t.Errorf("última duração %v, queria 1800000", s.LastRuntimeMS)
+	}
+}
+
+func TestRunWithoutStartInTheLogHasNoRuntime(t *testing.T) {
+	aberto := time.Date(2026, 11, 10, 11, 50, 0, 0, time.UTC)
+	antes := heartbeat.State{
+		DeadlineAt: time.Date(2026, 11, 10, 12, 30, 0, 0, time.UTC), LastStartAt: aberto,
+		LastPingAt: aberto, LastSignal: heartbeat.SignalStart, LastRuntimeMS: ptr(int64(5000)),
+	}
+	s, ev := comRid(antes, heartbeat.SignalSuccess, t0, heartbeat.Run{ID: ptr(ridA)})
+	if ev == nil || ev.RuntimeMS != nil {
+		t.Fatalf("evento %+v, queria sucesso sem duração", ev)
+	}
+	if s.LastRuntimeMS != nil {
+		t.Errorf("última duração %d, queria nil", *s.LastRuntimeMS)
+	}
+	if !s.LastStartAt.Equal(time.Date(2026, 11, 10, 11, 50, 0, 0, time.UTC)) {
+		t.Errorf("início aberto %v, queria 11:50 intacto", s.LastStartAt)
+	}
+	if !s.DeadlineAt.Equal(time.Date(2026, 11, 10, 13, 5, 0, 0, time.UTC)) {
+		t.Errorf("prazo %v, queria 13:05", s.DeadlineAt)
+	}
+}
+
+func TestLastRunIDFollowsTheLastStateChangingSignal(t *testing.T) {
+	s, _ := comRid(heartbeat.State{}, heartbeat.SignalStart, t0, heartbeat.Run{ID: ptr(ridA)})
+	if s.LastRunID == nil || *s.LastRunID != ridA {
+		t.Fatalf("último rid %v, queria A", s.LastRunID)
+	}
+	s, _ = comRid(s, heartbeat.SignalLog, t0.Add(time.Minute), heartbeat.Run{ID: ptr(ridB)})
+	if s.LastRunID == nil || *s.LastRunID != ridA {
+		t.Fatalf("log mudou o último rid para %v", s.LastRunID)
+	}
+	s, _ = comRid(s, heartbeat.SignalFail, t0.Add(2*time.Minute), heartbeat.Run{})
+	if s.LastRunID != nil {
+		t.Errorf("falha sem rid deixou o último rid em %v", *s.LastRunID)
+	}
+}
+
+// Só o sucesso de um heartbeat pausado com retomada por ping o retoma.
+func TestResumedByPing(t *testing.T) {
+	const (
+		start   = heartbeat.SignalStart
+		success = heartbeat.SignalSuccess
+		fail    = heartbeat.SignalFail
+		log     = heartbeat.SignalLog
+	)
+	casos := []struct {
+		sig                  heartbeat.Signal
+		enabled, pingResumes bool
+		want                 bool
+	}{
+		{success, false, true, true},
+		{success, false, false, false},
+		{success, true, true, false},
+		{success, true, false, false},
+		{start, false, true, false},
+		{start, false, false, false},
+		{start, true, true, false},
+		{fail, false, true, false},
+		{fail, false, false, false},
+		{fail, true, true, false},
+		{log, false, true, false},
+		{log, false, false, false},
+		{log, true, true, false},
+	}
+	for _, c := range casos {
+		if got := heartbeat.ResumedByPing(c.sig, c.enabled, c.pingResumes); got != c.want {
+			t.Errorf("ResumedByPing(%s, enabled=%v, pingResumes=%v) = %v, queria %v",
+				c.sig, c.enabled, c.pingResumes, got, c.want)
+		}
+	}
+}
+
+// A janela é [prazo - tolerância, prazo) por si só, sem depender de o caso
+// late vir antes no switch de statusOf.
+func TestGraceWindowEndsAtTheDeadline(t *testing.T) {
+	prazo := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	f := heartbeat.StatusFacts{Enabled: true, KnownSchedule: true, FinishedARun: true, Deadline: prazo, Grace: 5 * time.Minute}
+	if !f.InGrace(prazo.Add(-time.Nanosecond)) {
+		t.Error("um instante antes do prazo ficou fora da tolerância")
+	}
+	if f.InGrace(prazo) {
+		t.Error("o prazo ficou dentro da tolerância")
+	}
+}
+
+// "Em tolerância" é a janela [prazo - tolerância, prazo): começa no instante
+// exato e termina quando o atraso começa.
+func TestGraceStateBoundaries(t *testing.T) {
+	emDia := func() heartbeat.StatusFacts {
+		return heartbeat.StatusFacts{
+			Enabled: true, KnownSchedule: true, FinishedARun: true,
+			Deadline: time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC), Grace: 5 * time.Minute,
+		}
+	}
+	dentro := time.Date(2026, 11, 10, 11, 57, 0, 0, time.UTC)
+	casos := []struct {
+		nome   string
+		fatos  func(*heartbeat.StatusFacts)
+		agora  time.Time
+		estado heartbeat.Status
+	}{
+		{"início exato da tolerância", nil, time.Date(2026, 11, 10, 11, 55, 0, 0, time.UTC), heartbeat.StatusGrace},
+		{"um instante antes", nil, time.Date(2026, 11, 10, 11, 54, 59, 999999999, time.UTC), heartbeat.StatusUp},
+		{"no prazo", nil, time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC), heartbeat.StatusLate},
+		{"execução aberta", func(f *heartbeat.StatusFacts) { f.RunOpen = true }, dentro, heartbeat.StatusUp},
+		{"nunca terminou", func(f *heartbeat.StatusFacts) { f.FinishedARun = false }, dentro, heartbeat.StatusWaiting},
+		{"agendamento desconhecido", func(f *heartbeat.StatusFacts) { f.KnownSchedule = false }, dentro, heartbeat.StatusUp},
+		{"pausado", func(f *heartbeat.StatusFacts) { f.Enabled = false }, dentro, heartbeat.StatusPaused},
+		{"falhando", func(f *heartbeat.StatusFacts) { f.Failing = true }, dentro, heartbeat.StatusFailing},
+		{"incidente aberto", func(f *heartbeat.StatusFacts) { f.OpenIncident = true }, dentro, heartbeat.StatusLate},
+	}
+	for _, c := range casos {
+		t.Run(c.nome, func(t *testing.T) {
+			f := emDia()
+			if c.fatos != nil {
+				c.fatos(&f)
+			}
+			if got := heartbeat.StatusOf(f, c.agora); got != c.estado {
+				t.Errorf("estado %q, queria %q", got, c.estado)
 			}
 		})
 	}

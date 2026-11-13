@@ -14,7 +14,7 @@ import (
 	"github.com/BipoXDXD/stillon/internal/auth"
 )
 
-// estadoDo2FA lê as colunas que o reset-2fa zera (Plano 9, §3.1), os códigos de
+// estadoDo2FA lê as colunas que o reset-2fa zera, os códigos de
 // recuperação e a marca do desafio, que ele NÃO mexe.
 type estadoDo2FA struct {
 	segredo, confirmado, timestep, pendente bool
@@ -80,7 +80,7 @@ func TestResetTwoFactorTurnsItOff(t *testing.T) {
 	ctx := context.Background()
 	segredo := cadastrarTOTP(t, c, true)
 	// Uma segunda família do dono, que inicia a troca (o pendente fica
-	// amarrado a ela, revisão final do Plano 9), e um outro usuário com 2FA e
+	// amarrado a ela), e um outro usuário com 2FA e
 	// sessão.
 	mgr := auth.NewManager(auth.NewPGStore(c.pool), c.clk, ipKey)
 	var hash string
@@ -182,8 +182,8 @@ func TestResetTwoFactorUnknownEmail(t *testing.T) {
 	}
 }
 
-// O reset-2fa toma a trava de sessões do usuário antes de revogar (D1 do
-// Plano 5), como o set-password.
+// O reset-2fa toma a trava de sessões do usuário antes de revogar, como o
+// set-password.
 func TestResetTwoFactorTakesTheUserLock(t *testing.T) {
 	c := montar(t)
 	cadastrarTOTP(t, c, true)
@@ -203,7 +203,7 @@ func TestResetTwoFactorTakesTheUserLock(t *testing.T) {
 	}
 }
 
-// A6 (Plano 10, §3.1): o reset-2fa tira o bloqueio da conta, como o
+// O reset-2fa tira o bloqueio da conta, como o
 // set-password: o operador provou a identidade fora da API, e o dono que
 // perdeu o autenticador costuma chegar com a conta travada pelos próprios
 // chutes. Sem 2FA ligado o comando não muda nada — nem o bloqueio (a perna

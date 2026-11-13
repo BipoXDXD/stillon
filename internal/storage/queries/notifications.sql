@@ -8,11 +8,22 @@
 -- O lote fica numa CTE MATERIALIZED pelo mesmo motivo de ClaimDueTargets.
 -- name: ClaimDueNotifications :many
 WITH lote AS MATERIALIZED (
-    SELECT id FROM notifications
-     WHERE status = 'pending' AND next_attempt_at <= sqlc.arg(now)::timestamptz
-     ORDER BY next_attempt_at
+    SELECT n.id FROM notifications n
+      JOIN notif_channels c ON c.id = n.channel_id
+     WHERE n.status = 'pending' AND n.next_attempt_at <= sqlc.arg(now)::timestamptz
+       -- Piso de rollback: uma versão futura grava aviso de
+       -- certificado sem incidente. Contá-lo aqui o faria sumir no JOIN com
+       -- incidents e somar tentativas até fechar como failed sem ter saído.
+       -- O filtro sai quando o JOIN com incidents virar LEFT JOIN.
+       AND n.incident_id IS NOT NULL
+       -- Piso de rollback: tipo de canal ou evento que este
+       -- binário não sabe entregar fica pending, sem gastar tentativa. As
+       -- listas vêm de notify.kindsConhecidos e notify.eventosConhecidos.
+       AND c.kind = ANY(sqlc.arg(kinds)::text[])
+       AND n.event = ANY(sqlc.arg(events)::text[])
+     ORDER BY n.next_attempt_at
      LIMIT sqlc.arg(max_rows)::int
-       FOR UPDATE SKIP LOCKED
+       FOR UPDATE OF n SKIP LOCKED
 ), claimed AS (
     UPDATE notifications n
        SET next_attempt_at = sqlc.arg(lease_until)::timestamptz, attempts = n.attempts + 1
@@ -35,7 +46,7 @@ UPDATE notifications SET status = 'sent', sent_at = sqlc.arg(now)::timestamptz, 
  WHERE id = sqlc.arg(id);
 
 -- refund devolve a tentativa que a reivindicação contou: um 429 é o
--- provedor pedindo espera, não uma falha do envio (Plano 4, apagão em massa).
+-- provedor pedindo espera, não uma falha do envio (caso típico: um apagão em massa).
 -- name: RetryNotification :exec
 UPDATE notifications
    SET next_attempt_at = sqlc.arg(next_attempt_at), last_error = sqlc.narg(last_error),
@@ -47,11 +58,11 @@ UPDATE notifications
 UPDATE notifications SET status = $2, last_error = $3 WHERE id = $1;
 
 -- Falha definitiva vai para a trilha de auditoria (spec §8). audit_log não
--- tem RLS (D7 do Plano 2).
+-- tem RLS.
 -- name: InsertAudit :exec
 INSERT INTO audit_log (id, user_id, action, entity, entity_id, at) VALUES ($1, $2, $3, $4, $5, $6);
 
--- Saúde do canal (Plano 4): o último sucesso e a última falha definitiva.
+-- Saúde do canal: o último sucesso e a última falha definitiva.
 -- name: MarkChannelSuccess :exec
 INSERT INTO channel_health (channel_id, last_success_at) VALUES (sqlc.arg(channel_id), sqlc.arg(now)::timestamptz)
 ON CONFLICT (channel_id) DO UPDATE SET last_success_at = EXCLUDED.last_success_at;

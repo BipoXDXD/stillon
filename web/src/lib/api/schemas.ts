@@ -7,9 +7,9 @@ import { z } from 'zod'
 z.config({ jitless: true })
 
 // Os schemas das respostas da API, campo a campo com os DTOs Go
-// (internal/httpapi/*handlers.go) e o contrato dos Planos 5–7.
+// (internal/httpapi/*handlers.go) e o contrato da API.
 //
-// Toda resposta passa por aqui (D10 da spec do Plano 6). O z.object padrão
+// Toda resposta passa por aqui. O z.object padrão
 // descarta chave extra, então um campo novo no servidor não quebra o painel;
 // e falha com chave ausente ou tipo trocado, então uma remoção quebra alto,
 // com o nome do campo, em vez de virar undefined numa tela.
@@ -29,6 +29,14 @@ export type RespostaLogin = z.infer<typeof RespostaLogin>
 export const Me = z.object({ id, email: z.string(), totp_enabled: z.boolean(), created_at: instante })
 export type Me = z.infer<typeof Me>
 
+export const RegraDeConteudo = z.object({
+  mode: z.enum(['contains', 'not_contains', 'json_equals']),
+  value: z.string(),
+  // Sempre presente na resposta: null fora de json_equals.
+  json_pointer: z.string().nullable(),
+})
+export type RegraDeConteudo = z.infer<typeof RegraDeConteudo>
+
 export const Alvo = z.object({
   id,
   name: z.string(),
@@ -41,6 +49,11 @@ export const Alvo = z.object({
   enabled: z.boolean(),
   header_names: z.array(z.string()),
   tags: z.array(z.string()),
+  // O aviso de certificado (o interruptor entra no painel no PR 7) e a última
+  // leitura da validade; null enquanto nenhuma sonda leu o certificado.
+  tls_warn: z.boolean(),
+  tls: z.object({ not_after: instante, observed_at: instante }).nullable(),
+  content_rule: RegraDeConteudo.nullable(),
   created_at: instante,
 })
 export type Alvo = z.infer<typeof Alvo>
@@ -117,18 +130,48 @@ export const ListaDeIncidentes = z.object({ items: z.array(Incidente), next_curs
 export type ListaDeIncidentes = z.infer<typeof ListaDeIncidentes>
 
 // Os heartbeats (spec de heartbeats, §7). O incidente de heartbeat tem forma
-// própria: `GET /incidents` não os traz (D3).
-export const EstadoDoHeartbeat = z.enum(['waiting', 'up', 'late', 'failing', 'paused'])
+// própria: `GET /incidents` não os traz.
+// Um valor que uma versão posterior do servidor criou (piso de rollback)
+// vira 'unknown': uma aba aberta antes do deploy não pode falhar no parse da
+// lista inteira por um estado ou tipo de sinal que ela não conhece. Só texto:
+// outro tipo continua erro de contrato. Aceitar qualquer texto é de propósito:
+// o custo é que um erro de digitação do servidor vira "Estado desconhecido" (ou
+// "Outro sinal") na tela, em vez de falhar alto como erro de contrato.
+const desconhecido = z.string().transform((): 'unknown' => 'unknown')
+
+export const EstadoDoHeartbeat = z.union([z.enum(['waiting', 'up', 'grace', 'late', 'failing', 'paused']), desconhecido])
 export type EstadoDoHeartbeat = z.infer<typeof EstadoDoHeartbeat>
 
-export const Agendamento = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('period'), period_sec: z.number() }),
-  z.object({ kind: z.literal('cron'), expr: z.string(), timezone: z.string() }),
-])
+// 'unknown' é a linha de um agendamento que esta versão não sabe ler: o
+// servidor manda só o kind, e o PATCH nela é 409 schedule_unsupported. Um
+// servidor posterior pode mandar o kind novo, e o painel trata igual.
+const PorPeriodo = z.object({ kind: z.literal('period'), period_sec: z.number() })
+const PorCron = z.object({ kind: z.literal('cron'), expr: z.string(), timezone: z.string() })
+
+export const AgendamentoEditavel = z.discriminatedUnion('kind', [PorPeriodo, PorCron])
+export type AgendamentoEditavel = z.infer<typeof AgendamentoEditavel>
+
+// Um kind texto que esta versão não conhece (o 'oncalendar' de uma versão
+// posterior) vira { kind: 'unknown' } antes da união, como o servidor faz com a
+// linha que não sabe ler; period e cron conhecidos continuam exigindo os campos.
+const KINDS_CONHECIDOS: readonly string[] = ['period', 'cron', 'unknown']
+
+function normalizarKindDesconhecido(valor: unknown): unknown {
+  if (typeof valor !== 'object' || valor === null || !('kind' in valor)) {
+    return valor
+  }
+  const { kind } = valor
+  return typeof kind === 'string' && !KINDS_CONHECIDOS.includes(kind) ? { kind: 'unknown' } : valor
+}
+
+export const Agendamento = z.preprocess(
+  normalizarKindDesconhecido,
+  z.discriminatedUnion('kind', [PorPeriodo, PorCron, z.object({ kind: z.literal('unknown') })]),
+)
 export type Agendamento = z.infer<typeof Agendamento>
 
 // Sem ping_url, de propósito: o z.object descarta o campo, e o segredo não
-// entra no cache por este tipo (spec da tela, T8).
+// entra no cache por este tipo.
 export const Heartbeat = z.object({
   id,
   name: z.string(),
@@ -137,6 +180,7 @@ export const Heartbeat = z.object({
   enabled: z.boolean(),
   schedule: Agendamento,
   grace_sec: z.number(),
+  ping_resumes: z.boolean(),
   state: EstadoDoHeartbeat,
   deadline_at: instante,
   last_ping_at: instante.nullable(),
@@ -156,12 +200,17 @@ export const ListaDeHeartbeats = z.object({ items: z.array(Heartbeat), next_curs
 
 export const PreviaDoCron = z.object({ next_runs: z.array(instante) })
 
+// O rid que a tarefa mandou: o servidor aceita qualquer hex 8-4-4-4-12, sem
+// exigir versão nem variante de UUID, e o guarda em minúsculas. A origem é enum
+// estrito, ao contrário do kind: uma origem nova é mudança de contrato (spec §8).
 export const EventoDeHeartbeat = z.object({
   id,
   at: instante,
-  kind: z.enum(['start', 'success', 'fail']),
+  kind: z.union([z.enum(['start', 'success', 'fail', 'log']), desconhecido]),
   runtime_ms: z.number().nullable(),
   exit_code: z.number().nullable(),
+  run_id: z.guid().nullable(),
+  source: z.enum(['ping', 'panel']),
 })
 export type EventoDeHeartbeat = z.infer<typeof EventoDeHeartbeat>
 
@@ -180,9 +229,19 @@ export type IncidenteDeHeartbeat = z.infer<typeof IncidenteDeHeartbeat>
 
 export const ListaDeIncidentesDeHeartbeat = z.object({ items: z.array(IncidenteDeHeartbeat), next_cursor: z.string().optional() })
 
+// Os tipos que esta versão conhece: o teste de contrato exige um caso do Go
+// para cada um.
+export const TiposConhecidosDeCanal = z.enum(['discord', 'email'])
+
+// Um tipo de canal que uma versão posterior do servidor criou (piso de
+// rollback) vira 'desconhecido', pelo mesmo motivo do `desconhecido` acima: a
+// lista inteira não pode cair por uma linha. Só texto; sem kind continua erro.
+export const TipoDeCanal = TiposConhecidosDeCanal.or(z.string().transform(() => 'desconhecido' as const))
+export type TipoDeCanal = z.infer<typeof TipoDeCanal>
+
 export const Canal = z.object({
   id,
-  kind: z.enum(['discord', 'email']),
+  kind: TipoDeCanal,
   hint: z.string(),
   status: z.enum(['verified', 'pending', 'expired', 'failing']),
   enabled: z.boolean(),
@@ -222,7 +281,7 @@ export type Sessao = z.infer<typeof Sessao>
 export const ListaDeSessoes = z.object({ items: z.array(Sessao) })
 
 export const CadastroTotp = z.object({ otpauth_uri: z.string().startsWith('otpauth://') })
-// O rotate devolve também o rotation (A7 do Plano 10): 16 bytes em hex que
+// O rotate devolve também o rotation: 16 bytes em hex que
 // identificam o pendente. O confirm o devolve, e um pendente substituído por
 // outro rotate da mesma sessão responde 403, como "sem troca".
 export const InicioDaTroca = CadastroTotp.extend({ rotation: z.string().regex(/^[0-9a-f]{32}$/) })

@@ -15,14 +15,25 @@ import (
 const claimDueNotifications = `-- name: ClaimDueNotifications :many
 
 WITH lote AS MATERIALIZED (
-    SELECT id FROM notifications
-     WHERE status = 'pending' AND next_attempt_at <= $1::timestamptz
-     ORDER BY next_attempt_at
-     LIMIT $2::int
-       FOR UPDATE SKIP LOCKED
+    SELECT n.id FROM notifications n
+      JOIN notif_channels c ON c.id = n.channel_id
+     WHERE n.status = 'pending' AND n.next_attempt_at <= $1::timestamptz
+       -- Piso de rollback: uma versão futura grava aviso de
+       -- certificado sem incidente. Contá-lo aqui o faria sumir no JOIN com
+       -- incidents e somar tentativas até fechar como failed sem ter saído.
+       -- O filtro sai quando o JOIN com incidents virar LEFT JOIN.
+       AND n.incident_id IS NOT NULL
+       -- Piso de rollback: tipo de canal ou evento que este
+       -- binário não sabe entregar fica pending, sem gastar tentativa. As
+       -- listas vêm de notify.kindsConhecidos e notify.eventosConhecidos.
+       AND c.kind = ANY($2::text[])
+       AND n.event = ANY($3::text[])
+     ORDER BY n.next_attempt_at
+     LIMIT $4::int
+       FOR UPDATE OF n SKIP LOCKED
 ), claimed AS (
     UPDATE notifications n
-       SET next_attempt_at = $3::timestamptz, attempts = n.attempts + 1
+       SET next_attempt_at = $5::timestamptz, attempts = n.attempts + 1
      WHERE n.id IN (SELECT id FROM lote)
     RETURNING n.id, n.incident_id, n.channel_id, n.event, n.attempts, n.created_at, n.target_name
 )
@@ -40,6 +51,8 @@ SELECT cl.id, cl.event, cl.attempts, cl.created_at,
 
 type ClaimDueNotificationsParams struct {
 	Now        time.Time
+	Kinds      []string
+	Events     []string
 	MaxRows    int32
 	LeaseUntil time.Time
 }
@@ -73,7 +86,13 @@ type ClaimDueNotificationsRow struct {
 //
 // O lote fica numa CTE MATERIALIZED pelo mesmo motivo de ClaimDueTargets.
 func (q *Queries) ClaimDueNotifications(ctx context.Context, arg ClaimDueNotificationsParams) ([]ClaimDueNotificationsRow, error) {
-	rows, err := q.db.Query(ctx, claimDueNotifications, arg.Now, arg.MaxRows, arg.LeaseUntil)
+	rows, err := q.db.Query(ctx, claimDueNotifications,
+		arg.Now,
+		arg.Kinds,
+		arg.Events,
+		arg.MaxRows,
+		arg.LeaseUntil,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -176,7 +195,7 @@ type InsertAuditParams struct {
 }
 
 // Falha definitiva vai para a trilha de auditoria (spec §8). audit_log não
-// tem RLS (D7 do Plano 2).
+// tem RLS.
 func (q *Queries) InsertAudit(ctx context.Context, arg InsertAuditParams) error {
 	_, err := q.db.Exec(ctx, insertAudit,
 		arg.ID,
@@ -287,7 +306,7 @@ type MarkChannelSuccessParams struct {
 	Now       time.Time
 }
 
-// Saúde do canal (Plano 4): o último sucesso e a última falha definitiva.
+// Saúde do canal: o último sucesso e a última falha definitiva.
 func (q *Queries) MarkChannelSuccess(ctx context.Context, arg MarkChannelSuccessParams) error {
 	_, err := q.db.Exec(ctx, markChannelSuccess, arg.ChannelID, arg.Now)
 	return err
@@ -323,7 +342,7 @@ type RetryNotificationParams struct {
 }
 
 // refund devolve a tentativa que a reivindicação contou: um 429 é o
-// provedor pedindo espera, não uma falha do envio (Plano 4, apagão em massa).
+// provedor pedindo espera, não uma falha do envio (caso típico: um apagão em massa).
 func (q *Queries) RetryNotification(ctx context.Context, arg RetryNotificationParams) error {
 	_, err := q.db.Exec(ctx, retryNotification,
 		arg.NextAttemptAt,

@@ -2,7 +2,7 @@
 //
 // É um pacote folha de propósito: tanto internal/httpapi quanto
 // internal/httpapi/middleware precisam de WriteError, e internal/httpapi
-// (via routes.go, Task 8) importa internal/httpapi/middleware. Se WriteError
+// (via routes.go) importa internal/httpapi/middleware. Se WriteError
 // vivesse em internal/httpapi, os middlewares teriam que importar
 // internal/httpapi para usá-lo, e internal/httpapi importaria de volta
 // internal/httpapi/middleware — ciclo de importação, que Go proíbe. Por isso
@@ -24,24 +24,26 @@ type ErrorCode string
 
 const (
 	// #nosec G101 -- o regex do gosec bate no NOME da constante ("Credentials"); o valor é um código de erro da API, não um segredo.
-	CodeInvalidCredentials ErrorCode = "invalid_credentials"
-	CodeInvalidSession     ErrorCode = "invalid_session"
-	CodeUnauthorized       ErrorCode = "unauthorized"
-	CodeNotFound           ErrorCode = "not_found"
-	CodeValidation         ErrorCode = "validation_failed"
-	CodeRateLimited        ErrorCode = "rate_limited"
-	CodePayloadTooLarge    ErrorCode = "payload_too_large"
-	CodeForbidden          ErrorCode = "forbidden"
-	CodeInternal           ErrorCode = "internal_error"
-	CodeUnavailable        ErrorCode = "unavailable"
-	CodeChannelLimit       ErrorCode = "channel_limit_reached"
-	CodeChannelNotPending  ErrorCode = "channel_not_pending"
-	CodeDeliveryFailed     ErrorCode = "delivery_failed"
-	CodeStatusPageExists   ErrorCode = "status_page_exists"
-	CodeSlugTaken          ErrorCode = "slug_taken"
-	CodeTargetLimit        ErrorCode = "target_limit_reached"
-	CodeHeartbeatLimit     ErrorCode = "heartbeat_limit_reached"
-	CodeMethodNotAllowed   ErrorCode = "method_not_allowed"
+	CodeInvalidCredentials  ErrorCode = "invalid_credentials"
+	CodeInvalidSession      ErrorCode = "invalid_session"
+	CodeUnauthorized        ErrorCode = "unauthorized"
+	CodeNotFound            ErrorCode = "not_found"
+	CodeValidation          ErrorCode = "validation_failed"
+	CodeRateLimited         ErrorCode = "rate_limited"
+	CodePayloadTooLarge     ErrorCode = "payload_too_large"
+	CodeForbidden           ErrorCode = "forbidden"
+	CodeInternal            ErrorCode = "internal_error"
+	CodeUnavailable         ErrorCode = "unavailable"
+	CodeChannelLimit        ErrorCode = "channel_limit_reached"
+	CodeChannelNotPending   ErrorCode = "channel_not_pending"
+	CodeDeliveryFailed      ErrorCode = "delivery_failed"
+	CodeStatusPageExists    ErrorCode = "status_page_exists"
+	CodeSlugTaken           ErrorCode = "slug_taken"
+	CodeTargetLimit         ErrorCode = "target_limit_reached"
+	CodeHeartbeatLimit      ErrorCode = "heartbeat_limit_reached"
+	CodeContentHostLimit    ErrorCode = "content_rule_host_limit_reached"
+	CodeMethodNotAllowed    ErrorCode = "method_not_allowed"
+	CodeScheduleUnsupported ErrorCode = "schedule_unsupported"
 )
 
 // A mensagem vem sempre desta tabela, nunca do erro subjacente.
@@ -71,17 +73,21 @@ var errorTable = map[ErrorCode]struct {
 	// Uma status page por usuário (spec §2.1); a segunda é conflito.
 	CodeStatusPageExists: {http.StatusConflict, "Você já tem uma status page."},
 	CodeSlugTaken:        {http.StatusConflict, "Este endereço já está em uso."},
-	// O teto de alvos por usuário (D17 do Plano 5); reconciliado no contrato
-	// dos Planos 5–7.
+	// O teto de alvos por usuário.
 	CodeTargetLimit:    {http.StatusConflict, "Limite de alvos atingido."},
 	CodeHeartbeatLimit: {http.StatusConflict, "Limite de heartbeats atingido."},
-	// O método não existe naquela rota (B5 do Plano 10). Nenhum código
+	// Sem o host nem a contagem: o painel já sabe o host que o dono digitou.
+	CodeContentHostLimit: {http.StatusConflict, "Limite de regras de conteúdo para este host atingido."},
+	// O método não existe naquela rota. Nenhum código
 	// anterior tinha 405: o not_found mudaria o status, e o Allow do ServeMux
 	// perderia o sentido.
 	CodeMethodNotAllowed: {http.StatusMethodNotAllowed, "Método não permitido nesta rota."},
+	// O heartbeat foi gravado por uma versão posterior, com um agendamento que
+	// esta não sabe editar: conflito com o estado do recurso, não pedido inválido.
+	CodeScheduleUnsupported: {http.StatusConflict, "Agendamento não suportado nesta versão."},
 }
 
-// FieldError aponta o campo culpado de um 400 (D14). Field e Reason vêm de
+// FieldError aponta o campo culpado de um 400. Field e Reason vêm de
 // vocabulário fechado, definido no código e nunca no corpo recebido: é o que
 // mantém a garantia de WriteError de que nada do cliente nem do banco ecoa
 // na resposta.

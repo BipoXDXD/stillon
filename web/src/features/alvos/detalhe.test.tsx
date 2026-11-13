@@ -1,8 +1,8 @@
-import { act, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { http, HttpResponse } from 'msw'
 import { describe, expect, it } from 'vitest'
-import { ItemDoResumo } from '@/lib/api/schemas'
-import { horaMinuto } from '@/lib/format'
+import { Alvo, ItemDoResumo } from '@/lib/api/schemas'
+import { dataHora, horaMinuto } from '@/lib/format'
 import type { ErroForcado } from '@/test/api-falsa'
 import { alvo, incidente, itemDoResumo } from '@/test/fixtures'
 import { renderizarPainel } from '@/test/renderizar'
@@ -328,6 +328,18 @@ describe('detalhe', () => {
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 
+  // Bloco 2, item 1: o texto secundário da faixa é o 700 do matiz do estado,
+  // e não o cinza suave. Sabotagem: voltar o detalhe da faixa a text-suave.
+  it('o texto secundário da faixa é do matiz do estado', async () => {
+    const r = await renderizarPainel('/targets/alvo-1')
+    r.falsa.estado.alvos = [alvo()]
+    r.falsa.estado.resumo = [itemDoResumo({ state: 'down', enabled: false })]
+    await r.cliente.refetchQueries()
+    const detalhe = await screen.findByText('Os checks estão parados. Retome para voltar a vigiar.')
+    expect(detalhe).toHaveClass('text-sem-dados-700')
+    expect(detalhe).not.toHaveClass('text-suave')
+  })
+
   it('janela desconhecida na URL cai nas 24 h, sem quebrar', async () => {
     const r = await renderizarPainel('/targets/alvo-1?janela=toString')
     r.falsa.estado.alvos = [alvo()]
@@ -340,6 +352,79 @@ describe('detalhe', () => {
     r.falsa.estado.alvos = [alvo()]
     await r.cliente.refetchQueries()
     expect(await screen.findByRole('link', { name: 'Voltar ao painel' })).toHaveAttribute('href', '/')
+  })
+
+  // Bloco 2, item 3: Anterior/Próximo na lista que veio do painel (filtros e
+  // ordem na URL). Sabotagem: os links sem a busca da lista, ou a volta ao
+  // painel sem ela.
+  it('Anterior e Próximo seguem a lista da URL, e a volta leva a lista junto', async () => {
+    const r = await renderizarPainel('/targets/alvo-1?ordem=nome&janela=7d')
+    r.falsa.estado.alvos = [alvo()]
+    r.falsa.estado.resumo = [
+      itemDoResumo({ id: 'alvo-0', name: 'Alfa' }),
+      itemDoResumo({ id: 'alvo-1', name: 'API' }),
+      itemDoResumo({ id: 'alvo-2', name: 'Banco', state: 'down' }),
+    ]
+    await r.cliente.refetchQueries()
+    const nav = await screen.findByRole('navigation', { name: 'Lista de monitores' })
+    expect(await within(nav).findByRole('link', { name: 'Anterior: Alfa' })).toHaveAttribute('href', '/targets/alvo-0?ordem=nome')
+    expect(within(nav).getByRole('link', { name: 'Próximo: Banco' })).toHaveAttribute('href', '/targets/alvo-2?ordem=nome')
+    expect(within(nav).getByRole('link', { name: 'Voltar ao painel' })).toHaveAttribute('href', '/?ordem=nome')
+  })
+
+  // Um alvo que o filtro da URL esconde não tem vizinho na lista: só a volta.
+  it('fora da lista filtrada, sem Anterior nem Próximo', async () => {
+    const r = await renderizarPainel('/targets/alvo-1?busca=banco')
+    r.falsa.estado.alvos = [alvo()]
+    r.falsa.estado.resumo = [itemDoResumo({ id: 'alvo-1', name: 'API' }), itemDoResumo({ id: 'alvo-2', name: 'Banco' })]
+    await r.cliente.refetchQueries()
+    const nav = await screen.findByRole('navigation', { name: 'Lista de monitores' })
+    // Controle positivo: a lista da URL chegou à volta, e as consultas
+    // responderam; só então a ausência dos vizinhos prova alguma coisa.
+    expect(within(nav).getByRole('link', { name: 'Voltar ao painel' })).toHaveAttribute('href', '/?busca=banco')
+    await waitFor(() => expect(r.cliente.isFetching()).toBe(0))
+    expect(within(nav).getAllByRole('link')).toHaveLength(1)
+  })
+
+  // Com tag ou estado na URL, a lista vem da consulta filtrada na API, não do
+  // resumo inteiro. Sabotagem: em useLinhasDaLista, usar sempre
+  // resumo.data?.items → API ganha o vizinho Banco no primeiro, e Avião vira o
+  // Próximo no segundo.
+  it('filtro de estado na URL: alvo fora da lista filtrada fica só com a volta', async () => {
+    const r = await renderizarPainel('/targets/alvo-1?estado=down')
+    r.falsa.estado.alvos = [alvo()]
+    r.falsa.estado.resumo = [itemDoResumo({ id: 'alvo-1', name: 'API' }), itemDoResumo({ id: 'alvo-2', name: 'Banco', state: 'down' })]
+    await r.cliente.refetchQueries()
+    const nav = await screen.findByRole('navigation', { name: 'Lista de monitores' })
+    expect(within(nav).getByRole('link', { name: 'Voltar ao painel' })).toHaveAttribute('href', '/?estado=down')
+    await waitFor(() => expect(r.falsa.estado.consultasDoResumo).toContain('state=down'))
+    await waitFor(() => expect(r.cliente.isFetching()).toBe(0))
+    expect(within(nav).getAllByRole('link')).toHaveLength(1)
+  })
+
+  it('filtro de estado na URL: Anterior e Próximo vêm da lista filtrada', async () => {
+    const r = await renderizarPainel('/targets/alvo-1?estado=down&ordem=nome')
+    r.falsa.estado.alvos = [alvo()]
+    r.falsa.estado.resumo = [
+      itemDoResumo({ id: 'alvo-0', name: 'Alfa', state: 'down' }),
+      itemDoResumo({ id: 'alvo-1', name: 'API', state: 'down' }),
+      itemDoResumo({ id: 'alvo-9', name: 'Avião' }),
+      itemDoResumo({ id: 'alvo-2', name: 'Banco', state: 'down' }),
+    ]
+    await r.cliente.refetchQueries()
+    const nav = await screen.findByRole('navigation', { name: 'Lista de monitores' })
+    expect(await within(nav).findByRole('link', { name: 'Anterior: Alfa' })).toHaveAttribute('href', '/targets/alvo-0?estado=down&ordem=nome')
+    expect(within(nav).getByRole('link', { name: 'Próximo: Banco' })).toHaveAttribute('href', '/targets/alvo-2?estado=down&ordem=nome')
+  })
+
+  // Sabotagem: voltar ao setParams({ janela }), que apaga a lista da URL.
+  it('trocar a janela do gráfico mantém a lista na URL', async () => {
+    const r = await renderizarPainel('/targets/alvo-1?ordem=nome')
+    r.falsa.estado.alvos = [alvo()]
+    await r.cliente.refetchQueries()
+    await r.usuario.click(await screen.findByRole('radio', { name: '7 dias' }))
+    expect(new URLSearchParams(r.router.state.location.search).get('ordem')).toBe('nome')
+    expect(new URLSearchParams(r.router.state.location.search).get('janela')).toBe('7d')
   })
 
   // Spec, Telas > 2: quatro KPIs. 30 dias vem da janela horária; a mediana,
@@ -660,6 +745,33 @@ describe('detalhe', () => {
       expect(r.falsa.chamadas('POST /incidents/:id/ack')).toBe(1)
     })
 
+    // RUI, texto sobre fundo colorido: o secundário da faixa (a ajuda do
+    // Reconhecer e o "Reconhecido") é o 700 do matiz do fundo, não o cinza.
+    // O tokens.test confere a tabela; este, que os parágrafos a usam.
+    // Sabotagem: trocar o secundario desses dois <p> por text-suave.
+    it('com incidente aberto, a ajuda e o "Reconhecido" usam o 700 do matiz da faixa', async () => {
+      const r = await renderizarPainel('/targets/alvo-1')
+      r.falsa.estado.alvos = [alvo()]
+      r.falsa.estado.resumo = [itemDoResumo({ state: 'down', open_incident_id: 'inc-1' })]
+      r.falsa.estado.incidentes = [incidente({ cause: 'conn_refused' })]
+      await r.cliente.refetchQueries()
+      const faixa = await screen.findByRole('region', { name: /^Fora do ar há / })
+      expect(faixa).toHaveClass('bg-fora-100')
+      expect(within(faixa).getByText('Reconhecer interrompe os lembretes; não resolve o incidente.')).toHaveClass('text-fora-700')
+      await r.usuario.click(within(faixa).getByRole('button', { name: 'Reconhecer' }))
+      expect(await within(faixa).findByText(/lembretes parados desde/)).toHaveClass('text-fora-700')
+    })
+
+    it('incidente aberto pela regra de conteúdo diz a causa em texto', async () => {
+      const r = await renderizarPainel('/targets/alvo-1')
+      r.falsa.estado.alvos = [alvo({ content_rule: { mode: 'contains', value: 'ok', json_pointer: null } })]
+      r.falsa.estado.resumo = [itemDoResumo({ state: 'down', open_incident_id: 'inc-1' })]
+      r.falsa.estado.incidentes = [incidente({ cause: 'content_mismatch' })]
+      await r.cliente.refetchQueries()
+      const faixa = await screen.findByRole('region', { name: /^Fora do ar há / })
+      expect(within(faixa).getByText(/^Conteúdo diferente do esperado · desde /)).toBeInTheDocument()
+    })
+
     it('sem incidente aberto, a faixa diz o estado e o último check, sem Reconhecer', async () => {
       const r = await renderizarPainel('/targets/alvo-1')
       r.falsa.estado.alvos = [alvo()]
@@ -704,6 +816,23 @@ describe('detalhe', () => {
       await waitFor(() => expect(r.router.state.location.pathname).toBe('/'))
     })
 
+    // Dois cliques antes de o React redesenhar: a guarda não pode depender do
+    // valor do último render.
+    it('dois cliques no mesmo ciclo de render mandam um só POST de ack', async () => {
+      const r = await renderizarPainel('/targets/alvo-1')
+      r.falsa.estado.alvos = [alvo()]
+      r.falsa.estado.resumo = [itemDoResumo({ state: 'down', open_incident_id: 'inc-1' })]
+      r.falsa.estado.incidentes = [incidente()]
+      await r.cliente.refetchQueries()
+      const botao = await screen.findByRole('button', { name: 'Reconhecer' })
+      act(() => {
+        fireEvent.click(botao)
+        fireEvent.click(botao)
+      })
+      await waitFor(() => expect(screen.queryByRole('button', { name: 'Reconhecer' })).not.toBeInTheDocument())
+      expect(r.falsa.chamadas('POST /incidents/:id/ack')).toBe(1)
+    })
+
     it('um ack que falha mostra o erro e mantém o Reconhecer', async () => {
       const r = await renderizarPainel('/targets/alvo-1')
       r.falsa.estado.alvos = [alvo()]
@@ -714,6 +843,47 @@ describe('detalhe', () => {
       await r.usuario.click(await screen.findByRole('button', { name: 'Reconhecer' }))
       expect(await screen.findByRole('alert')).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Reconhecer' })).toBeInTheDocument()
+    })
+
+    // aria-disabled, e não disabled: o foco fica no botão enquanto o ack voa, e o
+    // anúncio de "desabilitado" some quando o ack termina. Sabotagem: tirar o
+    // aria-disabled de FaixaDeEstado → o atributo nunca aparece.
+    it('o Reconhecer fica aria-disabled, e com foco, enquanto o ack voa', async () => {
+      const r = await renderizarPainel('/targets/alvo-1')
+      r.falsa.estado.alvos = [alvo()]
+      r.falsa.estado.resumo = [itemDoResumo({ state: 'down', open_incident_id: 'inc-1' })]
+      r.falsa.estado.incidentes = [incidente()]
+      await r.cliente.refetchQueries()
+      let soltar!: () => void
+      const segurado = new Promise<void>((ok) => (soltar = ok))
+      servidor.use(
+        http.post('*/api/v1/incidents/:id/ack', async () => {
+          await segurado
+        }),
+      )
+      const botao = await screen.findByRole('button', { name: 'Reconhecer' })
+      expect(botao).not.toHaveAttribute('aria-disabled')
+      await r.usuario.click(botao)
+      await waitFor(() => expect(botao).toHaveAttribute('aria-disabled', 'true'))
+      expect(botao).toHaveFocus()
+      soltar()
+      await waitFor(() => expect(screen.queryByRole('button', { name: 'Reconhecer' })).not.toBeInTheDocument())
+    })
+
+    // O ack pode ter chegado ao servidor mesmo com a resposta perdida: a lista
+    // de incidentes é relida depois da falha. Sabotagem: invalidar só quando
+    // o ack deu certo → nenhum GET /incidents a mais.
+    it('um ack que falha relê os incidentes, porque o ack pode ter chegado', async () => {
+      const r = await renderizarPainel('/targets/alvo-1')
+      r.falsa.estado.alvos = [alvo()]
+      r.falsa.estado.resumo = [itemDoResumo({ state: 'down', open_incident_id: 'inc-1' })]
+      r.falsa.estado.incidentes = [incidente()]
+      await r.cliente.refetchQueries()
+      r.falsa.estado.forcar.set('POST /incidents/:id/ack', { status: 503, code: 'unavailable' })
+      const antes = r.falsa.chamadas('GET /incidents')
+      await r.usuario.click(await screen.findByRole('button', { name: 'Reconhecer' }))
+      await screen.findByRole('alert')
+      await waitFor(() => expect(r.falsa.chamadas('GET /incidents')).toBeGreaterThan(antes))
     })
   })
 })
@@ -770,3 +940,52 @@ describe('o alvo sumiu', () => {
   })
 })
 
+
+// A linha do certificado (spec §8, "Alvo: detalhe"), abaixo dos indicadores.
+// O relógio é o da consulta do alvo; not_after fica longe da borda de um dia,
+// e os milissegundos entre a fixture e a resposta não mudam a conta.
+describe('certificado do alvo', () => {
+  const DIA_MS = 86_400_000
+  const daqui = (dias: number) => new Date(Date.now() + dias * DIA_MS).toISOString()
+  const leitura = (notAfter: string) => ({ not_after: notAfter, observed_at: new Date().toISOString() })
+
+  async function abrir(a: ReturnType<typeof alvo>) {
+    const r = await renderizarPainel('/targets/alvo-1')
+    r.falsa.estado.alvos = [a]
+    await r.cliente.refetchQueries()
+    await screen.findByRole('heading', { name: 'API', level: 1 })
+    return screen.getByTestId('certificado')
+  }
+
+  it('com leitura: válido até a data, em N dias, com ícone', async () => {
+    const notAfter = daqui(14.5)
+    const linha = await abrir(alvo({ tls: leitura(notAfter) }))
+    await waitFor(() => expect(linha).toHaveTextContent(`Certificado válido até ${dataHora(notAfter)}, em 15 dias`))
+    expect(linha.querySelector('svg')).toHaveAttribute('aria-hidden', 'true')
+  })
+
+  it('vencido: diz quando venceu, e não "em 0 dias"', async () => {
+    const notAfter = daqui(-2.5)
+    const linha = await abrir(alvo({ tls: leitura(notAfter) }))
+    await waitFor(() => expect(linha).toHaveTextContent(`Certificado venceu em ${dataHora(notAfter)}`))
+    expect(linha).not.toHaveTextContent(/dias?$/)
+  })
+
+  it('HTTPS sem leitura: aguardando a primeira sonda', async () => {
+    const linha = await abrir(alvo({ tls: null }))
+    expect(linha).toHaveTextContent('Certificado: aguardando a primeira sonda.')
+  })
+
+  it('HTTP sem leitura: não se aplica', async () => {
+    const linha = await abrir(alvo({ url: 'http://api.exemplo.com/health', tls: null }))
+    expect(linha).toHaveTextContent('Certificado: não se aplica a este endereço.')
+  })
+
+  it('o parse aceita tls null e recusa tls sem observed_at', () => {
+    expect(Alvo.safeParse(alvo({ tls: null })).success).toBe(true)
+    expect(Alvo.safeParse(alvo({ tls: leitura(daqui(10)) })).success).toBe(true)
+    expect(Alvo.safeParse({ ...alvo(), tls: { not_after: daqui(10) } }).success).toBe(false)
+    const { tls_warn: _semAviso, ...semTlsWarn } = alvo()
+    expect(Alvo.safeParse(semTlsWarn).success).toBe(false)
+  })
+})

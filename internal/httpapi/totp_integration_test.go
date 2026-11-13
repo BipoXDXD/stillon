@@ -16,7 +16,7 @@ import (
 
 // accessTokenValido assina um access token legítimo do usuário do teste, com
 // o mesmo segredo que a API usa, de uma sessão viva aberta aqui: as rotas do
-// segundo fator exigem a família do token viva (Task 11), e um sid inventado
+// segundo fator exigem a família do token viva, e um sid inventado
 // seria recusado antes de chegar ao que o teste quer medir.
 func accessTokenValido(t *testing.T, a *api) string {
 	t.Helper()
@@ -316,11 +316,13 @@ func TestRecoveryCodeClosesLoginOnlyOnce(t *testing.T) {
 
 	usar := func(codigo string) int {
 		t.Helper()
-		// Um segundo entre os logins: o desafio vale uma vez e só abre sessão
-		// se for mais novo que o último consumido (Plano 8). Com o relógio
+		// Alguns segundos entre os logins: o desafio vale uma vez e só abre sessão
+		// se for mais novo que o último consumido. Com o relógio
 		// parado, os três desafios sairiam no mesmo instante, e o terceiro
-		// seria recusado pela marca d'água, e não pelo código de recuperação.
-		a.clk.Advance(time.Second)
+		// seria recusado pela marca d'água, e não pelo código de recuperação. É
+		// também a ficha do limite por IP: o cadastro e os três logins passam da
+		// rajada de cinco.
+		esperarFichaDoIP(a)
 		resp := login(t, a, c, testEmail, testPass)
 		var d struct {
 			Challenge string `json:"challenge"`
@@ -378,7 +380,7 @@ func desafioAtual(t *testing.T, a *api, c *http.Client) string {
 	return d.Challenge
 }
 
-// R38, pelo HTTP: com o fator ativo, enroll devolve 403 e não desliga nada.
+// Pelo HTTP: com o fator ativo, enroll devolve 403 e não desliga nada.
 //
 // É o bypass que importa: o atacante com um access token ROUBADO chamaria
 // enroll, o segundo fator cairia, e a senha voltaria a bastar sozinha.
@@ -423,15 +425,14 @@ func TestEnrollIsForbiddenAfterTOTPIsConfirmed(t *testing.T) {
 	}
 }
 
-// R40: errar o segundo fator conta para o bloqueio progressivo da conta.
+// Errar o segundo fator conta para o bloqueio progressivo da conta.
 //
 // Sem isso, quem já tem a senha chuta os seis dígitos indefinidamente: o
 // limite de /totp/verify é por IP, e várias origens passam por cima dele.
 func TestFailedSecondFactorLocksTheAccount(t *testing.T) {
 	a := newAPI(t)
-	// c é um navegador SEM o cookie de dispositivo (A3 do Plano 10): o do
-	// cadastro o recebeu no login completo, e as falhas dele não contariam na
-	// conta.
+	// c é um navegador SEM o cookie de dispositivo: o do cadastro o recebeu no
+	// login completo, e as falhas dele não contariam na conta.
 	cadastrarTOTP(t, a, clientWithJar(t))
 	c := clientWithJar(t)
 
@@ -478,14 +479,13 @@ func TestFailedSecondFactorLocksTheAccount(t *testing.T) {
 	}
 }
 
-// A perna oposta do R40: o segundo fator correto zera o contador. Sem ela,
-// "as falhas contam" passaria numa implementação que nunca zera e trancaria a
-// conta de quem acerta.
+// A perna oposta da contagem de falhas: o segundo fator correto zera o
+// contador. Sem ela, "as falhas contam" passaria numa implementação que nunca
+// zera e trancaria a conta de quem acerta.
 func TestSuccessfulSecondFactorClearsTheFailureCount(t *testing.T) {
 	a := newAPI(t)
-	// c é um navegador SEM o cookie de dispositivo (A3 do Plano 10): o do
-	// cadastro o recebeu no login completo, e as falhas dele não contariam na
-	// conta.
+	// c é um navegador SEM o cookie de dispositivo: o do cadastro o recebeu no
+	// login completo, e as falhas dele não contariam na conta.
 	secret := cadastrarTOTP(t, a, clientWithJar(t))
 	c := clientWithJar(t)
 
@@ -518,12 +518,11 @@ func TestSuccessfulSecondFactorClearsTheFailureCount(t *testing.T) {
 
 // O login com a senha certa NÃO pode zerar o contador quando há segundo fator
 // ativo: seria um botão de destravar entre um chute de seis dígitos e o
-// próximo, e o bloqueio do R40 nunca chegaria ao limiar.
+// próximo, e o bloqueio da conta nunca chegaria ao limiar.
 func TestLoggingInAgainDoesNotClearSecondFactorFailures(t *testing.T) {
 	a := newAPI(t)
-	// c é um navegador SEM o cookie de dispositivo (A3 do Plano 10): o do
-	// cadastro o recebeu no login completo, e as falhas dele não contariam na
-	// conta.
+	// c é um navegador SEM o cookie de dispositivo: o do cadastro o recebeu no
+	// login completo, e as falhas dele não contariam na conta.
 	cadastrarTOTP(t, a, clientWithJar(t))
 	c := clientWithJar(t)
 
@@ -548,14 +547,13 @@ func TestLoggingInAgainDoesNotClearSecondFactorFailures(t *testing.T) {
 
 // Enquanto a conta está trancada, nem o segundo fator correto fecha o login.
 //
-// Sem esta guarda, o bloqueio do R40 não seguraria nada: o atacante que
+// Sem esta guarda, o bloqueio da conta não seguraria nada: o atacante que
 // chegasse ao código certo depois de trancar a conta entraria assim mesmo, e o
 // ResetFailures do sucesso ainda destravaria a conta para ele.
 func TestSecondFactorIsRefusedWhileTheAccountIsLocked(t *testing.T) {
 	a := newAPI(t)
-	// c é um navegador SEM o cookie de dispositivo (A3 do Plano 10): o do
-	// cadastro o recebeu no login completo, e as falhas dele não contariam na
-	// conta.
+	// c é um navegador SEM o cookie de dispositivo: o do cadastro o recebeu no
+	// login completo, e as falhas dele não contariam na conta.
 	secret := cadastrarTOTP(t, a, clientWithJar(t))
 	c := clientWithJar(t)
 
@@ -609,10 +607,11 @@ func segredoGravado(t *testing.T, a *api) bool {
 	return len(sealed) > 0
 }
 
-// TestEnrollRequiresThePassword fecha o espelho do R38.
+// TestEnrollRequiresThePassword fecha o espelho da recusa do recadastro com o
+// fator ativo.
 //
-// O R38 fechou "token roubado DESLIGA o fator". Ninguém havia fechado "token
-// roubado LIGA o fator com o autenticador do ladrão", que é pior: como o R38
+// Essa recusa fechou "token roubado DESLIGA o fator". Ninguém havia fechado "token
+// roubado LIGA o fator com o autenticador do ladrão", que é pior: como a recusa
 // removeu o caminho de volta, o sequestro é permanente e os códigos de
 // recuperação saem no mesmo passo, para o atacante.
 func TestEnrollRequiresThePassword(t *testing.T) {
@@ -643,16 +642,16 @@ func falhasDeLogin(t *testing.T, a *api) int {
 }
 
 // Um access token roubado não pode virar oráculo de senha pelo cadastro do
-// segundo fator: cada senha errada ali conta no contador da família de sessão
-// (A3 do Plano 10), e a quinta derruba a família — 401 unauthorized, e o token
+// segundo fator: cada senha errada ali conta no contador da família de sessão,
+// e a quinta derruba a família — 401 unauthorized, e o token
 // deixa de valer nas rotas que exigem a sessão viva. O dono não é trancado: a
 // conta não conta nada, e o login com a senha certa entra.
 func TestEnrollWrongPasswordCountsInTheFamily(t *testing.T) {
-	a := newAPI(t)
+	a := apiComFichaPorPedido(t)
 	roubado := accessTokenValido(t, a)
 
 	for i := range provasPorFamilia {
-		resp := postComToken(t, http.DefaultClient, a.srv.URL+"/api/v1/auth/totp/enroll", roubado,
+		resp := postComToken(t, a.cliente(), a.srv.URL+"/api/v1/auth/totp/enroll", roubado,
 			map[string]string{"password": "chute-numero-" + strconv.Itoa(i)})
 		codigo := codigoDoErro(t, resp)
 		resp.Body.Close()
@@ -668,7 +667,7 @@ func TestEnrollWrongPasswordCountsInTheFamily(t *testing.T) {
 		t.Errorf("GET /sessions com o token da família derrubada: %d, queria 401", st)
 	}
 	if n := falhasDeLogin(t, a); n != 0 {
-		t.Errorf("%d falhas no bloqueio da conta, queria 0 (A3)", n)
+		t.Errorf("%d falhas no bloqueio da conta, queria 0", n)
 	}
 
 	// A prova que importa: o dono não foi trancado, e a senha certa entra.
@@ -679,10 +678,10 @@ func TestEnrollWrongPasswordCountsInTheFamily(t *testing.T) {
 	}
 }
 
-// A conta bloqueada NÃO impede o dono logado de mexer no segundo fator (A3 do
-// Plano 10): o bloqueio é do login e do /totp/verify. Com a senha certa, o
-// enroll chega ao 403 do fator já ativo, e o disable desliga — antes, os dois
-// eram 401 invalid_credentials enquanto um anônimo mantivesse o login travado.
+// A conta bloqueada NÃO impede o dono logado de mexer no segundo fator: o
+// bloqueio é do login e do /totp/verify. Com a senha certa, o enroll chega ao
+// 403 do fator já ativo, e o disable desliga — antes, os dois eram 401
+// invalid_credentials enquanto um anônimo mantivesse o login travado.
 func TestSecondFactorRoutesIgnoreTheAccountLock(t *testing.T) {
 	a := newAPI(t)
 	c := clientWithJar(t)
@@ -716,10 +715,10 @@ func TestSecondFactorRoutesIgnoreTheAccountLock(t *testing.T) {
 }
 
 // Senha errada, código ausente e código errado nas rotas do segundo fator são
-// 401 invalid_credentials, e nunca unauthorized (D24 do Plano 5, apontado pelo
-// Plano 6): o painel renova a sessão em unauthorized, e um código digitado
-// errado viraria renovação e logout. O token recusado continua unauthorized:
-// é essa perna que prova que o código não é o mesmo para tudo.
+// 401 invalid_credentials, e nunca unauthorized: o painel renova a sessão em
+// unauthorized, e um código digitado errado viraria renovação e logout. O token
+// recusado continua unauthorized: é essa perna que prova que o código não é o
+// mesmo para tudo.
 func TestSecondFactorRoutesAnswerInvalidCredentials(t *testing.T) {
 	a := newAPI(t)
 	c := clientWithJar(t)
@@ -755,9 +754,9 @@ func TestSecondFactorRoutesAnswerInvalidCredentials(t *testing.T) {
 	}
 	// Senha errada duas vezes, código ausente e código errado: quatro falhas na
 	// mesma família (abaixo do limite, que derrubaria a família e responderia
-	// unauthorized), e nenhuma no bloqueio da conta (A3 do Plano 10).
+	// unauthorized), e nenhuma no bloqueio da conta.
 	if n := falhasDeLogin(t, a); n != 0 {
-		t.Errorf("%d falhas no bloqueio da conta, queria 0 (A3)", n)
+		t.Errorf("%d falhas no bloqueio da conta, queria 0", n)
 	}
 	if confirmado, _, _, _ := estadoDoSegundoFator(t, a); !confirmado {
 		t.Error("uma recusa desligou o segundo fator")
@@ -828,12 +827,14 @@ func desativar(t *testing.T, a *api, token string, corpo map[string]string) int 
 	return resp.StatusCode
 }
 
-// TestDisableRequiresPasswordAndPossession dá a saída que o R38 tirou.
+// TestDisableRequiresPasswordAndPossession dá a saída que a recusa do
+// recadastro tirou.
 //
-// Sem rota de desativação, quem foi sequestrado pelo caminho do item 20 não
-// tinha remédio dentro do sistema. A rota precisa de DUAS provas: a senha e a
-// posse do fator. Só a senha rebaixaria o 2FA a nada; só o código deixaria a
-// sessão roubada desligá-lo, que é exatamente o bypass do R38.
+// Sem rota de desativação, quem foi sequestrado pelo recadastro com um token
+// roubado não tinha remédio dentro do sistema. A rota precisa de DUAS provas: a
+// senha e a posse do fator. Só a senha rebaixaria o 2FA a nada; só o código
+// deixaria a sessão roubada desligá-lo, que é exatamente o bypass que a recusa
+// do recadastro fechou.
 func TestDisableRequiresPasswordAndPossession(t *testing.T) {
 	a := newAPI(t)
 	c := clientWithJar(t)

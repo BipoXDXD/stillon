@@ -4,13 +4,13 @@ import { Botao } from './botao'
 
 // Dialog e AlertDialog do Radix. Os dois travam a rolagem da página com o
 // react-remove-scroll, que injeta um <style>: é o nonce de src/lib/nonce.ts
-// que o deixa passar pela CSP (spec do Plano 6, §8.1).
+// que o deixa passar pela CSP.
 
 const sobreposicao = 'fixed inset-0 z-40 bg-sobreposicao'
 // inset-x-4 + mx-auto + max-w-lg centra a caixa com 16 px de folga no
 // celular, sem valor arbitrário de largura.
 const caixa =
-  'fixed inset-x-4 top-1/2 z-50 mx-auto max-h-[90vh] max-w-lg -translate-y-1/2 space-y-4 overflow-y-auto rounded-padrao border border-borda bg-superficie p-4 sombra-nivel-2 sm:p-6'
+  'fixed inset-x-4 top-1/2 z-50 mx-auto max-h-[90vh] max-w-lg -translate-y-1/2 space-y-4 overflow-y-auto rounded-padrao border border-borda bg-superficie-elevada p-4 sombra-nivel-2 sm:p-6'
 
 // O foco volta a quem abriu. O Radix devolve o foco ao seu Trigger, mas aqui
 // o diálogo abre por `aberto`, sem Trigger: sem isto, o foco caía no <body>

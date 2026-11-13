@@ -39,7 +39,7 @@ func (t txQuePausa) LockSessionByHash(ctx context.Context, hash []byte) (auth.Se
 }
 
 // Revogar uma família enquanto ela é rotacionada não pode deixar o sucessor
-// vivo (§4.7 da spec do Plano 5).
+// vivo.
 //
 // Em READ COMMITTED, o UPDATE que revoga espera a linha viva travada pela
 // rotação; a rotação insere o sucessor e comita; o UPDATE revoga a linha que

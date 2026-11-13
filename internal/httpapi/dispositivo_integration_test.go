@@ -21,9 +21,9 @@ import (
 	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 )
 
-// O login e o /totp/verify depois do Plano 10: a tentativa é reservada antes
-// de verificar (A2), o navegador que completou um login recebe o cookie de
-// dispositivo e tem um contador próprio (A3), e o logout não mente (A9).
+// O login e o /totp/verify com o contador por dispositivo: a tentativa é
+// reservada antes de verificar, o navegador que completou um login recebe o
+// cookie de dispositivo e tem um contador próprio, e o logout não mente.
 
 const nomeDoCookieDeDispositivo = "stillon_dispositivo"
 
@@ -153,7 +153,7 @@ func TestDeviceCookieIsSecureWithHTTPS(t *testing.T) {
 	}
 }
 
-// A3 (Plano 10): um anônimo que sabe o e-mail tranca a conta com cinco senhas
+// Um anônimo que sabe o e-mail tranca a conta com cinco senhas
 // erradas, e sem o cookie ninguém entra, nem com a senha certa. O navegador
 // do dono, que já completou um login, entra: o cookie de dispositivo válido
 // para a conta tira o login do bloqueio da conta. Um cookie forjado (com um MAC
@@ -247,8 +247,8 @@ func TestDeviceFailuresCountOnTheDeviceOnly(t *testing.T) {
 // apresentado sem o cookie, cai no bloqueio da conta.
 //
 // O cookie do login do cadastro não serve: ligar o 2FA muda o carimbo das
-// credenciais (I1 da revisão do Plano 10). O dono entra de novo, com o 2FA,
-// e é esse login completo que põe o cookie.
+// credenciais. O dono entra de novo, com o 2FA, e é esse login completo que põe
+// o cookie.
 func TestDeviceCookieAlsoCoversTheSecondFactor(t *testing.T) {
 	a := apiAtrasDeProxy(t)
 	dono := clientWithJar(t)
@@ -305,7 +305,7 @@ func TestDeviceCookieAlsoCoversTheSecondFactor(t *testing.T) {
 	}
 }
 
-// A2 (Plano 10): oito senhas erradas simultâneas, cada uma de uma origem,
+// Oito senhas erradas simultâneas, cada uma de uma origem,
 // contam exatamente LockThreshold falhas: a quinta reserva trava a conta, e
 // as seguintes são recusadas sem contar. Antes, todas liam a conta
 // destravada, verificavam e só então gravavam a falha — o limite de cinco
@@ -402,7 +402,7 @@ func (s storeQueFalha) InTx(ctx context.Context, fn func(context.Context, auth.T
 	return s.inner.InTx(ctx, fn)
 }
 
-// A9 (Plano 10): se a revogação falha, o logout responde 500 internal_error e
+// Se a revogação falha, o logout responde 500 internal_error e
 // NÃO apaga o cookie; a família continua viva (é a verdade), e o cliente pode
 // tentar de novo. A perna positiva: com o banco de volta, o mesmo logout é 204,
 // apaga o cookie e derruba a família.
@@ -443,7 +443,7 @@ func TestLogoutThatCannotRevokeKeepsTheCookie(t *testing.T) {
 	}
 }
 
-// A reserva vem ANTES do código (A2): com a conta trancada, um código de
+// A reserva vem ANTES do código: com a conta trancada, um código de
 // recuperação certo no /totp/verify é recusado sem ser gasto. Verificar antes
 // de reservar queimaria o código — que não se renova — para devolver 401.
 func TestLockedAccountDoesNotBurnARecoveryCode(t *testing.T) {

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/BipoXDXD/stillon/internal/apierr"
 	"github.com/BipoXDXD/stillon/internal/heartbeat"
 	"github.com/BipoXDXD/stillon/internal/httpapi"
 	"github.com/BipoXDXD/stillon/internal/storage"
@@ -170,7 +172,7 @@ func TestPingExitCodeWithUnknownTokenAnswersTheSame(t *testing.T) {
 	}
 }
 
-// A repetição do D9 vale pelo sinal: um retry do curl não duplica a linha, mesmo
+// A repetição vale pelo sinal: um retry do curl não duplica a linha, mesmo
 // que o número mude.
 func TestPingRepeatedExitCodeHasOneEffect(t *testing.T) {
 	a := newAPI(t)
@@ -263,7 +265,10 @@ func TestPingNeverLogsTheToken(t *testing.T) {
 	pingar(t, a, "/ping/"+token, nil)
 	pingar(t, a, "/ping/"+token+"/3", nil)
 	pingar(t, a, "/ping/"+token+"/abc", nil)
+	pingar(t, a, "/ping/"+token+"/log?rid="+ridValido, nil)
+	pingar(t, a, "/ping/"+token+"/log?rid=x", nil)
 	pingar(t, a, "/ping/"+desconhecido, nil)
+	pingar(t, a, "/ping/"+desconhecido+"/log", nil)
 
 	// Falha interna: o banco fechado faz o Ping devolver erro.
 	a.pool.Close()
@@ -272,6 +277,9 @@ func TestPingNeverLogsTheToken(t *testing.T) {
 	}
 	if status, _, corpo := pingar(t, a, "/ping/"+token+"/3", nil); status != http.StatusInternalServerError {
 		t.Fatalf("com o banco fechado, com código: %d %s", status, corpo)
+	}
+	if status, _, corpo := pingar(t, a, "/ping/"+token+"/log", nil); status != http.StatusInternalServerError {
+		t.Fatalf("com o banco fechado, no log: %d %s", status, corpo)
 	}
 	if strings.Contains(log.String(), token) || strings.Contains(log.String(), desconhecido) {
 		t.Fatalf("token no log: %s", log.String())
@@ -375,7 +383,7 @@ func TestPingChainServesOnlyPing(t *testing.T) {
 	a := newAPI(t)
 	id, token := novoHeartbeat(t, a)
 
-	for _, sufixo := range []string{"", "/0"} {
+	for _, sufixo := range []string{"", "/0", "/log"} {
 		for _, metodo := range []string{http.MethodGet, http.MethodHead, http.MethodPut, http.MethodDelete} {
 			req, err := http.NewRequest(metodo, a.srv.URL+"/ping/"+token+sufixo, nil)
 			if err != nil {
@@ -410,5 +418,133 @@ func TestPingChainServesOnlyPing(t *testing.T) {
 	resp.Body.Close()
 	if v := resp.Header.Get("Access-Control-Allow-Origin"); v != "" {
 		t.Errorf("a cadeia pública tem CORS: %q", v)
+	}
+}
+
+// ridValido é um uuid canônico fixo, para os testes do ?rid=.
+const ridValido = "0195f3c2-8a4b-7c1d-9e2f-3a4b5c6d7e8f"
+
+func prazoDe(t *testing.T, a *api, id uuid.UUID) time.Time {
+	t.Helper()
+	ctx := context.Background()
+	var h db.Heartbeat
+	err := storage.InUserTx(ctx, a.pool, a.userID, func(q *db.Queries) error {
+		var err error
+		h, err = q.GetHeartbeat(ctx, db.GetHeartbeatParams{UserID: a.userID, ID: id})
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return h.DeadlineAt
+}
+
+// O /log só registra: responde o corpo fixo, não mexe no prazo e aparece no log
+// de eventos da API com o tipo log.
+func TestPingLogRecordsWithoutMovingTheDeadline(t *testing.T) {
+	a := newAPI(t)
+	id, token := novoHeartbeat(t, a)
+	antes := prazoDe(t, a, id)
+	a.clk.Advance(10 * time.Minute)
+
+	status, _, corpo := pingar(t, a, "/ping/"+token+"/log", nil)
+	if status != http.StatusOK || strings.TrimSpace(corpo) != `{"status":"ok"}` {
+		t.Fatalf("POST /log: %d %s", status, corpo)
+	}
+	if depois := prazoDe(t, a, id); !depois.Equal(antes) {
+		t.Errorf("o /log moveu o prazo: %s, antes %s", depois, antes)
+	}
+	dono := tokenDe(t, a, a.userID)
+	_, corpo = lerCru(t, a, http.MethodGet, "/api/v1/heartbeats/"+id.String()+"/events", dono, nil)
+	ev := decodificar(t, corpo)["items"].([]any)
+	if len(ev) != 1 || ev[0].(map[string]any)["kind"] != "log" {
+		t.Errorf("eventos: %s", corpo)
+	}
+}
+
+// Token desconhecido no /log responde como nas outras rotas.
+func TestPingLogUnknownTokenIs404(t *testing.T) {
+	a := newAPI(t)
+	desconhecido, _ := heartbeat.NewPingToken()
+	stRef, _, corpoRef := pingar(t, a, "/ping/"+desconhecido, nil)
+	if stRef != http.StatusNotFound {
+		t.Fatalf("referência deu %d: %s", stRef, corpoRef)
+	}
+	st, _, corpo := pingar(t, a, "/ping/"+desconhecido+"/log", nil)
+	if st != stRef || semTrace(t, corpo) != semTrace(t, corpoRef) {
+		t.Errorf("/log deu %d %s; o token desconhecido, %d %s", st, corpo, stRef, corpoRef)
+	}
+}
+
+// rid malformado é 400 antes de olhar o token: a resposta é a mesma para token
+// válido, inexistente e malformado, e por isso não vira oráculo. Também vem
+// antes do corpo: o teto de 10 KiB não chega a ser lido.
+func TestMalformedRunIDIs400BeforeTheToken(t *testing.T) {
+	a := newAPI(t)
+	id, token := novoHeartbeat(t, a)
+	inexistente, _ := heartbeat.NewPingToken()
+
+	caminhos := []string{
+		"/ping/" + token,
+		"/ping/" + inexistente,
+		"/ping/curto",
+		"/ping/" + token + "/7",
+		"/ping/" + token + "/log",
+	}
+	var ref string
+	for i, caminho := range caminhos {
+		status, _, corpo := pingar(t, a, caminho+"?rid=x", nil)
+		var env struct {
+			Error struct {
+				Fields []apierr.FieldError `json:"fields"`
+			} `json:"error"`
+		}
+		if err := json.Unmarshal([]byte(corpo), &env); err != nil {
+			t.Fatalf("caminho %d: %v: %s", i, err, corpo)
+		}
+		quer := []apierr.FieldError{{Field: "rid", Reason: "invalid"}}
+		if status != http.StatusBadRequest || !slices.Equal(env.Error.Fields, quer) {
+			t.Errorf("caminho %d: %d %s, queria 400 com %v", i, status, corpo, quer)
+		}
+		if i == 0 {
+			ref = semTrace(t, corpo)
+		} else if semTrace(t, corpo) != ref {
+			t.Errorf("caminho %d: corpo %s diferente do primeiro %s", i, corpo, ref)
+		}
+	}
+
+	grande := strings.NewReader(strings.Repeat("x", 11<<10))
+	if status, _, corpo := pingar(t, a, "/ping/"+token+"?rid=x", grande); status != http.StatusBadRequest {
+		t.Errorf("corpo de 11 KiB com rid malformado deu %d: %s", status, corpo)
+	}
+	if n := contarEventos(t, a, id); n != 0 {
+		t.Errorf("rid malformado gravou %d eventos", n)
+	}
+}
+
+// Os outros parâmetros da query seguem ignorados: quem já chama com algo a
+// mais não quebra.
+func TestPingIgnoresOtherQueryParameters(t *testing.T) {
+	a := newAPI(t)
+	id, token := novoHeartbeat(t, a)
+	if status, _, corpo := pingar(t, a, "/ping/"+token+"?foo=1&rid="+ridValido, nil); status != http.StatusOK {
+		t.Fatalf("%d %s", status, corpo)
+	}
+	ev := eventosDoHeartbeat(t, a, id)
+	if len(ev) != 1 || ev[0].RunID == nil || ev[0].RunID.String() != ridValido {
+		t.Errorf("eventos %+v, queria um com run_id %s", ev, ridValido)
+	}
+}
+
+// O código de saída também leva o rid ao evento.
+func TestPingExitCodeCarriesTheRunID(t *testing.T) {
+	a := newAPI(t)
+	id, token := novoHeartbeat(t, a)
+	if status, _, corpo := pingar(t, a, "/ping/"+token+"/3?rid="+ridValido, nil); status != http.StatusOK {
+		t.Fatalf("%d %s", status, corpo)
+	}
+	ev := eventosDoHeartbeat(t, a, id)
+	if len(ev) != 1 || ev[0].RunID == nil || ev[0].RunID.String() != ridValido {
+		t.Errorf("eventos %+v, queria um com run_id %s", ev, ridValido)
 	}
 }

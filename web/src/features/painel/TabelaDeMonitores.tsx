@@ -7,9 +7,11 @@ import type { EstadoExibido } from '@/lib/estado'
 import { porcento } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { tagsVisiveis } from './filtros'
+import { TEXTO_DA_ZONA, zonaDoEstado, type Zona } from './grupos'
 import { medidaDaLinha, situacaoNaLinhaDoNome, type LinhaDeMonitor } from './linhas'
 
-// A tabela do painel denso: uma linha de 48 px por monitor (com 44, a área de toque de um nome encosta na do vizinho), com o cabeçalho
+// A tabela do painel denso: uma linha de 48 px por monitor (56 no problema;
+// com 44, a área de toque de um nome encosta na do vizinho), com o cabeçalho
 // uma vez só. As colunas somem por largura (spec, tabela de colunas); o estado
 // nunca some: abaixo de lg ele é o ícone junto do nome, com o texto para o
 // leitor de tela.
@@ -19,7 +21,25 @@ const DE_SM = 'hidden sm:table-cell'
 
 const ACENTOS: Partial<Record<EstadoExibido, string>> = { down: 'acento-fora', degraded: 'acento-degradado' }
 
-export function TabelaDeMonitores({ linhas, agora }: { linhas: LinhaDeMonitor[]; agora: Date }) {
+// Três zonas de densidade (RUI): o problema ganha altura e o nome em 600; no
+// ar e parado ficam rebaixados, com o nome em 400 e as medidas em suave (4,5:1
+// nos dois temas). O parado leva também o nome em suave.
+const ZONAS: Record<Zona, { linha: string; nome: string; medida: string }> = {
+  problema: { linha: 'h-14', nome: 'font-semibold', medida: '' },
+  'no-ar': { linha: 'h-12', nome: 'font-normal', medida: 'text-suave' },
+  parado: { linha: 'h-12', nome: 'font-normal text-suave', medida: 'text-suave' },
+}
+
+const COLUNAS = 7
+
+// blocos: a lista já ordenada, cortada em blocos (as zonas, na ordem por
+// gravidade, cada uma com o seu título; nas outras ordens, um bloco sem
+// zona). Cada bloco é um <tbody>, e o vão entre eles é uma faixa da cor do
+// fundo, como se fossem cartões separados. daLista: os filtros e a ordem na
+// URL, que o link do detalhe leva junto para o Anterior/Próximo de lá.
+type Props = { blocos: readonly { zona: Zona | null; linhas: readonly LinhaDeMonitor[] }[]; daLista: string; agora: Date }
+
+export function TabelaDeMonitores({ blocos, daLista, agora }: Props) {
   return (
     <div className="rounded-padrao border border-borda bg-superficie sombra-nivel-1">
       <table className="w-full text-sm">
@@ -37,22 +57,36 @@ export function TabelaDeMonitores({ linhas, agora }: { linhas: LinhaDeMonitor[];
             <th scope="col" className={cn(CELULA, 'py-2 text-left font-normal')}>Últimas 24 h</th>
           </tr>
         </thead>
-        <tbody className="divide-y divide-borda border-t border-borda">
-          {linhas.map((linha) => (
-            <LinhaDaTabela key={linha.chave} linha={linha} agora={agora} />
-          ))}
-        </tbody>
+        {blocos.map(({ zona, linhas }, i) => (
+          <tbody key={zona ?? i} className={cn('divide-y divide-borda', i === 0 ? 'border-t border-borda' : 'border-t-8 border-fundo')}>
+            {zona && (
+              // Um <h3> numa célula, e não um <th scope="rowgroup">: o leitor
+              // de tela pula de seção pelos títulos, e a contagem de cabeçalhos
+              // de linha segue um por monitor.
+              <tr>
+                <td colSpan={COLUNAS} className={cn(CELULA, 'pt-4 pb-2')}>
+                  <h3 className="rotulo-de-grupo font-sans text-apagado">
+                    {TEXTO_DA_ZONA[zona]} · {linhas.length}
+                  </h3>
+                </td>
+              </tr>
+            )}
+            {linhas.map((linha) => (
+              <LinhaDaTabela key={linha.chave} linha={linha} daLista={daLista} agora={agora} />
+            ))}
+          </tbody>
+        ))}
       </table>
     </div>
   )
 }
 
-function LinhaDaTabela({ linha, agora }: { linha: LinhaDeMonitor; agora: Date }) {
+function LinhaDaTabela({ linha, daLista, agora }: { linha: LinhaDeMonitor; daLista: string; agora: Date }) {
   const acento = ACENTOS[linha.estado]
   const situacaoAbaixo = situacaoNaLinhaDoNome(linha)
-  const parado = linha.estado === 'unknown' || linha.estado === 'pausado'
+  const zona = ZONAS[zonaDoEstado(linha.estado)]
   return (
-    <tr className="h-12">
+    <tr className={zona.linha}>
       <td className={cn(SO_DESKTOP, CELULA, acento)}>
         <SeloDeEstado estado={linha.estado} texto={linha.textoDoEstado} />
       </td>
@@ -60,9 +94,9 @@ function LinhaDaTabela({ linha, agora }: { linha: LinhaDeMonitor; agora: Date })
         <span className="flex min-h-11 items-center gap-2">
           <IconeDoEstado estado={linha.estado} texto={linha.textoDoEstado} className="lg:hidden" />
           <Link
-            to={linha.href}
+            to={{ pathname: linha.href, search: daLista }}
             {...(linha.tipo === 'http' && aoApontarPreCarregar(carregarDetalhe))}
-            className={cn('alvo-de-toque min-w-0 font-semibold underline-offset-4 hover:underline', parado && 'text-suave')}
+            className={cn('alvo-de-toque min-w-0 underline-offset-4 hover:underline', zona.nome)}
           >
             {linha.nome}
           </Link>
@@ -86,8 +120,10 @@ function LinhaDaTabela({ linha, agora }: { linha: LinhaDeMonitor; agora: Date })
           )}
         </span>
       </td>
-      <td className={cn(DE_SM, CELULA, 'text-right whitespace-nowrap')}>{medidaDaLinha(linha)}</td>
-      <td className={cn(CELULA, 'text-right whitespace-nowrap')}>{linha.uptime24h === null ? '—' : porcento(linha.uptime24h)}</td>
+      <td className={cn(DE_SM, CELULA, 'text-right whitespace-nowrap', zona.medida)}>{medidaDaLinha(linha)}</td>
+      <td className={cn(CELULA, 'text-right whitespace-nowrap', zona.medida)}>
+        {linha.uptime24h === null ? '—' : porcento(linha.uptime24h)}
+      </td>
       <td className={CELULA}>
         <Minigrafico horas={linha.historico} agora={agora} />
       </td>

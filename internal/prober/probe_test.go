@@ -1,17 +1,26 @@
 package prober
 
 import (
+	"bytes"
+	"compress/gzip"
 	"crypto/tls"
 	"crypto/x509"
+	"fmt"
+	"io"
+	"math/rand/v2"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"reflect"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/BipoXDXD/stillon/internal/prober/safedial"
+	"github.com/BipoXDXD/stillon/internal/targets"
 )
 
 func enderecoDe(t *testing.T, srv *httptest.Server) netip.AddrPort {
@@ -34,6 +43,26 @@ func servidor(t *testing.T, h http.HandlerFunc) (*httptest.Server, *http.Client)
 
 func especificacao(url string) Spec {
 	return Spec{URL: url, Method: http.MethodGet, Timeout: 2 * time.Second, ExpectedStatus: http.StatusOK}
+}
+
+// Result não tem campo para o corpo nem para mensagem de erro (spec §4.2,
+// §5.2): só o resultado sai de Probe. Campo novo entra aqui de propósito.
+func TestResultHasNoRoomForTheBody(t *testing.T) {
+	tipo := reflect.TypeFor[Result]()
+	campos := make([]string, 0, tipo.NumField())
+	for campo := range tipo.Fields() {
+		campos = append(campos, campo.Name+" "+campo.Type.String())
+	}
+	quer := []string{
+		"Status prober.Status",
+		"Latency time.Duration",
+		"StatusCode int",
+		"ErrorKind prober.ErrorKind",
+		"CertNotAfter time.Time",
+	}
+	if !slices.Equal(campos, quer) {
+		t.Errorf("campos de Result = %v, queria %v", campos, quer)
+	}
 }
 
 func TestProbeUp(t *testing.T) {
@@ -152,7 +181,35 @@ func TestProbeTimeoutWhileReadingBody(t *testing.T) {
 	}
 }
 
-// D2 e spec §5.1: um corpo sem fim é lido até 64 KiB e descartado, e a sonda
+// Com regra, o corpo é lido por lerCorpo, e não pelo
+// io.Copy de cima. O pedaço que chegou antes de o prazo vencer já tem o valor
+// procurado: se o erro da leitura fosse ignorado, a sonda daria up, e se o
+// corpo truncado fosse julgado, content_mismatch no not_contains.
+func TestProbeTimeoutWhileReadingBodyWithRule(t *testing.T) {
+	for _, modo := range []targets.ContentMode{targets.ContentContains, targets.ContentNotContains} {
+		t.Run(string(modo), func(t *testing.T) {
+			parar := make(chan struct{})
+			srv, client := servidor(t, func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte("tudo ok"))
+				w.(http.Flusher).Flush()
+				select {
+				case <-r.Context().Done():
+				case <-parar:
+				}
+			})
+			t.Cleanup(func() { close(parar) })
+
+			s := comRegra(srv.URL, modo, "ok")
+			s.Timeout = 200 * time.Millisecond
+			if res := Probe(t.Context(), client, s); res.Status != StatusDown || res.ErrorKind != KindTimeout || res.StatusCode != 200 {
+				t.Errorf("res = %+v, queria down/timeout/200", res)
+			}
+		})
+	}
+}
+
+// Spec §5.1: um corpo sem fim é lido até 64 KiB e descartado, e a sonda
 // termina bem. Sem o limite, ela leria até o prazo estourar e daria timeout.
 func TestProbeCapsAnEndlessBodyWithoutFailing(t *testing.T) {
 	srv, client := servidor(t, func(w http.ResponseWriter, r *http.Request) {
@@ -193,7 +250,7 @@ func TestProbeFollowsRedirectWithinLimit(t *testing.T) {
 // dentro dele seria corrida de dados: a variável é escrita pela goroutine do
 // teste, e o detector não enxerga a rede como sincronização.
 //
-// C3 (Plano 10): excesso de saltos e esquema que não é http(s) no Location
+// Excesso de saltos e esquema que não é http(s) no Location
 // são erro de configuração do site, e não proteção de rede: saem como
 // unknown ("erro de rede" no alerta), e não como blocked ("destino bloqueado
 // pela proteção de rede"). O blocked fica para o IP recusado no dial.
@@ -217,8 +274,8 @@ func TestProbeRedirectToAnotherSchemeIsUnknown(t *testing.T) {
 	}
 }
 
-// A outra metade do C3: o salto para um endereço interno continua blocked.
-// A outra porta do 127.0.0.1 não está liberada no cliente do teste.
+// A outra metade do teste anterior: o salto para um endereço interno continua
+// blocked. A outra porta do 127.0.0.1 não está liberada no cliente do teste.
 func TestProbeRedirectToAnInternalAddressIsStillBlocked(t *testing.T) {
 	interno := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 	t.Cleanup(interno.Close)
@@ -230,7 +287,7 @@ func TestProbeRedirectToAnInternalAddressIsStillBlocked(t *testing.T) {
 	}
 }
 
-// C1 (Plano 10): uma resposta com cabeçalho acima de 64 KiB é down, sem que
+// Uma resposta com cabeçalho acima de 64 KiB é down, sem que
 // o sondador aloque o que o servidor quiser mandar. O tipo é unknown, o
 // residual: o net/http não tem erro próprio para isso, só texto. Um
 // cabeçalho grande, mas legítimo, passa.
@@ -253,7 +310,7 @@ func TestProbeResponseHeadersAboveTheCapAreDown(t *testing.T) {
 	}
 }
 
-// C1: o transporte real também propaga o teto de cabeçalhos ao HTTP/2.
+// O transporte real também propaga o teto de cabeçalhos ao HTTP/2.
 // Sabotagem: maxResponseHeaderBytes de 64 KiB para 2 MiB deixa o caso de
 // 100 KiB up e reprova este teste. O caso pequeno prova sucesso com TLS
 // validado, e cada caso observa o protocolo usado no servidor.
@@ -322,6 +379,92 @@ func TestProbeSendsConfiguredHeadersAndUserAgent(t *testing.T) {
 	}
 	if !strings.HasPrefix(recebido.Get("User-Agent"), "StillOn/") {
 		t.Errorf("User-Agent = %q", recebido.Get("User-Agent"))
+	}
+}
+
+// Toda sonda pede gzip ela mesma, com ou sem regra e em qualquer salto: o
+// transporte do safedial não pede mais (DisableCompression), e sem o header a
+// sonda sem regra baixaria seus 64 KiB crus, com mais banda e mais latência
+// medida do que antes.
+func TestEveryProbeAsksForGzip(t *testing.T) {
+	casos := []struct {
+		nome     string
+		regra    bool
+		redirect string // "", "mesmo host" ou "outro host"
+	}{
+		{"sem regra", false, ""},
+		{"com regra", true, ""},
+		{"sem regra, redirect no mesmo host", false, "mesmo host"},
+		{"sem regra, redirect para outro host", false, "outro host"},
+		{"com regra, redirect para outro host", true, "outro host"},
+	}
+	for _, c := range casos {
+		t.Run(c.nome, func(t *testing.T) {
+			recebido := make(chan []string, 1)
+			destino := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/inicio" {
+					http.Redirect(w, r, "/fim", http.StatusFound)
+					return
+				}
+				recebido <- r.Header.Values("Accept-Encoding")
+			}))
+			t.Cleanup(destino.Close)
+			url := destino.URL
+			permitidos := []netip.AddrPort{enderecoDe(t, destino)}
+			switch c.redirect {
+			case "mesmo host":
+				url += "/inicio"
+			case "outro host":
+				origem := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					http.Redirect(w, r, destino.URL+"/fim", http.StatusFound)
+				}))
+				t.Cleanup(origem.Close)
+				url = origem.URL
+				permitidos = append(permitidos, enderecoDe(t, origem))
+			}
+			s := especificacao(url)
+			if c.regra {
+				s = comRegra(url, targets.ContentNotContains, "erro")
+			}
+			res := Probe(t.Context(), safedial.NewClientAllowing(0, permitidos...), s)
+			if res.Status != StatusUp {
+				t.Fatalf("res = %+v, queria up", res)
+			}
+			if got := <-recebido; !slices.Equal(got, []string{"gzip"}) {
+				t.Errorf("Accept-Encoding recebido = %q, queria [gzip]", got)
+			}
+		})
+	}
+}
+
+// Sem regra, o Accept-Encoding do dono vale como antes: a sonda só drena o
+// corpo, e trocá-lo mudaria o que o dono escolheu testar.
+func TestOwnersAcceptEncodingWithoutRuleIsKept(t *testing.T) {
+	recebido := make(chan []string, 1)
+	srv, client := servidor(t, func(w http.ResponseWriter, r *http.Request) {
+		recebido <- r.Header.Values("Accept-Encoding")
+	})
+	s := especificacao(srv.URL)
+	s.Headers = map[string]string{"Accept-Encoding": "br"}
+	Probe(t.Context(), client, s)
+	if got := <-recebido; !slices.Equal(got, []string{"br"}) {
+		t.Errorf("Accept-Encoding recebido = %q, queria [br]", got)
+	}
+}
+
+// Com regra, o descompressor é o nosso e só lê gzip: o Accept-Encoding do
+// dono é ignorado e o servidor recebe só o da sonda. O cadastro já o recusa;
+// isto é a defesa para um alvo que chegue aqui sem passar por ele.
+func TestOwnersAcceptEncodingWithRuleIsIgnored(t *testing.T) {
+	recebido := make(chan []string, 1)
+	srv, client := servidor(t, func(w http.ResponseWriter, r *http.Request) {
+		recebido <- r.Header.Values("Accept-Encoding")
+	})
+	s := comRegra(srv.URL, targets.ContentNotContains, "erro")
+	s.Headers = map[string]string{"accept-encoding": "br"}
+	Probe(t.Context(), client, s)
+	if got := <-recebido; !slices.Equal(got, []string{"gzip"}) {
+		t.Errorf("Accept-Encoding recebido = %q, queria [gzip]", got)
 	}
 }
 
@@ -530,5 +673,456 @@ func TestProbeRedirectDropsCustomUserAgentThroughoutAnUnsafeChain(t *testing.T) 
 		if recebido == sentinela || !strings.HasPrefix(recebido, "StillOn/") {
 			t.Errorf("%s recebeu User-Agent %q, queria somente identificação pública", salto, recebido)
 		}
+	}
+}
+
+func comRegra(url string, modo targets.ContentMode, valor string) Spec {
+	s := especificacao(url)
+	s.Content = &RegraDaSonda{Mode: modo, Value: []byte(valor)}
+	return s
+}
+
+// Spec §5.3: a regra julga até 64 KiB. Um corpo de exatamente 64 KiB é lido
+// inteiro; com um byte a mais, o valor que termina nesse byte fica de fora, e
+// o resultado é inconclusivo (body_limit), nunca up.
+func TestProbeContentAtTheExactLimit(t *testing.T) {
+	const fim = "FIM-OK"
+	casos := []struct {
+		nome    string
+		tamanho int
+		quer    Status
+		tipo    ErrorKind
+	}{
+		{"65536 bytes", 65536, StatusUp, ""},
+		{"65537 bytes", 65537, StatusDown, KindBodyLimit},
+	}
+	for _, c := range casos {
+		t.Run(c.nome, func(t *testing.T) {
+			corpo := strings.Repeat("a", c.tamanho-len(fim)) + fim
+			srv, client := servidor(t, func(w http.ResponseWriter, r *http.Request) {
+				_, _ = w.Write([]byte(corpo))
+			})
+			res := Probe(t.Context(), client, comRegra(srv.URL, targets.ContentContains, fim))
+			if res.Status != c.quer || res.ErrorKind != c.tipo || res.StatusCode != http.StatusOK {
+				t.Errorf("res = %+v, queria %s/%q/200", res, c.quer, c.tipo)
+			}
+		})
+	}
+}
+
+// O status esperado vem antes da regra: um 500 continua http_status, mesmo
+// com um corpo que reprovaria a regra.
+func TestProbeContentIsCheckedAfterTheStatus(t *testing.T) {
+	srv, client := servidor(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte("erro interno"))
+	})
+	res := Probe(t.Context(), client, comRegra(srv.URL, targets.ContentContains, "ok"))
+	if res.Status != StatusDown || res.ErrorKind != KindHTTPStatus || res.StatusCode != 500 {
+		t.Errorf("res = %+v, queria down/http_status/500", res)
+	}
+}
+
+func TestProbeEmptyBodyFailsContains(t *testing.T) {
+	srv, client := servidor(t, func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) })
+	s := comRegra(srv.URL, targets.ContentContains, "ok")
+	s.ExpectedStatus = http.StatusNoContent
+	if res := Probe(t.Context(), client, s); res.Status != StatusDown || res.ErrorKind != KindContentMismatch {
+		t.Errorf("res = %+v, queria down/content_mismatch", res)
+	}
+}
+
+// Sem regra, nada muda: corpo grande segue não sendo falha.
+func TestProbeWithoutRuleIgnoresTheBody(t *testing.T) {
+	srv, client := servidor(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(make([]byte, 1<<20))
+	})
+	if res := Probe(t.Context(), client, especificacao(srv.URL)); res.Status != StatusUp || res.ErrorKind != "" {
+		t.Errorf("res = %+v, queria up sem erro", res)
+	}
+}
+
+// htmlGrande é uma página de ~286 KiB que comprime pela metade: linhas de 64
+// dígitos hexadecimais sorteados com semente fixa. Cada dígito carrega 4 bits
+// de entropia num byte, então nenhum gzip a comprime abaixo de metade; 64 KiB
+// de HTML pedem pelo menos 32 KiB comprimidos (a página inteira passa de
+// 140 KiB comprimida).
+var htmlGrande = sync.OnceValue(func() []byte {
+	sorteio := rand.New(rand.NewPCG(1, 2))
+	var b bytes.Buffer
+	b.WriteString("<!doctype html><html><body><pre>\n")
+	for b.Len() < 286<<10 {
+		fmt.Fprintf(&b, "%016x%016x%016x%016x\n", sorteio.Uint64(), sorteio.Uint64(), sorteio.Uint64(), sorteio.Uint64())
+	}
+	b.WriteString("</pre></body></html>\n")
+	return b.Bytes()
+})
+
+// transporteContado conta os bytes que a sonda consome do corpo da resposta,
+// ainda comprimido, porque o transporte não descomprime (DisableCompression).
+type transporteContado struct {
+	base  http.RoundTripper
+	corpo *contador
+}
+
+func (tc *transporteContado) RoundTrip(r *http.Request) (*http.Response, error) {
+	resp, err := tc.base.RoundTrip(r)
+	if err != nil {
+		return nil, err
+	}
+	tc.corpo.fonte = resp.Body
+	resp.Body = struct {
+		io.Reader
+		io.Closer
+	}{tc.corpo, resp.Body}
+	return resp, nil
+}
+
+// Sem regra, o teto de 64 KiB vale sobre o corpo descomprimido, como quando o
+// transporte do Go descomprimia: numa página grande, a sonda
+// lê da rede só o gzip desses 64 KiB, e não 64 KiB de gzip (3× o tráfego numa
+// home de 300 KiB). O teto do teste: 64 KiB de hexadecimal pedem 32 KiB
+// comprimidos, mais os 4 KiB do bufio do gzip.Reader; 40 KiB dá folga e fica
+// bem longe dos 64 KiB de quem drena o gzip cru.
+func TestProbeWithoutRuleDrainsTheDecompressedLimit(t *testing.T) {
+	comprimido := gzipar(t, htmlGrande())
+	srv, client := servidor(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Encoding", "gzip")
+		_, _ = w.Write(comprimido)
+	})
+	corpo := &contador{}
+	contado := *client
+	contado.Transport = &transporteContado{base: client.Transport, corpo: corpo}
+	if res := Probe(t.Context(), &contado, especificacao(srv.URL)); res.Status != StatusUp || res.ErrorKind != "" {
+		t.Fatalf("res = %+v, queria up sem erro", res)
+	}
+	const piso, teto = 31 << 10, 40 << 10
+	if corpo.lidos < piso || corpo.lidos > teto {
+		t.Errorf("%d bytes comprimidos lidos de %d, queria entre %d e %d", corpo.lidos, len(comprimido), piso, teto)
+	}
+}
+
+// Sem regra, um gzip que não abre dá o mesmo resultado de quando o erro
+// vinha do descompressor do transporte: down/unknown. Corpo vazio com
+// Content-Encoding: gzip não tem o que descomprimir e segue up.
+func TestProbeWithoutRuleAndABrokenGzipIsUnknownAsBefore(t *testing.T) {
+	casos := []struct {
+		nome  string
+		corpo []byte
+		quer  Status
+		tipo  ErrorKind
+	}{
+		{"cabeçalho que não é gzip", []byte("isto não é gzip"), StatusDown, KindUnknown},
+		{"gzip cortado no meio", gzipar(t, htmlGrande())[:8<<10], StatusDown, KindUnknown},
+		{"corpo vazio", nil, StatusUp, ""},
+	}
+	for _, c := range casos {
+		t.Run(c.nome, func(t *testing.T) {
+			srv, client := servidor(t, func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Encoding", "gzip")
+				_, _ = w.Write(c.corpo)
+			})
+			res := Probe(t.Context(), client, especificacao(srv.URL))
+			if res.Status != c.quer || res.ErrorKind != c.tipo || res.StatusCode != http.StatusOK {
+				t.Errorf("res = %+v, queria %s/%q/200", res, c.quer, c.tipo)
+			}
+		})
+	}
+}
+
+// Sem regra e com Range do dono, a sonda não descomprime, como o transporte do
+// Go fazia: a fatia de um gzip não abre sozinha. Um servidor que honra
+// o Range sobre a representação comprimida (estático pré-comprimido, CDN) tem
+// de seguir up.
+func TestProbeWithoutRuleAndOwnersRangeOverGzipIsUp(t *testing.T) {
+	comprimido := gzipar(t, htmlGrande())
+	srv, client := servidor(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Encoding", "gzip")
+		w.Header().Set("Content-Range", fmt.Sprintf("bytes 0-1023/%d", len(comprimido)))
+		w.WriteHeader(http.StatusPartialContent)
+		_, _ = w.Write(comprimido[:1024])
+	})
+	s := especificacao(srv.URL)
+	s.ExpectedStatus = http.StatusPartialContent
+	s.Headers = map[string]string{"Range": "bytes=0-1023"}
+	res := Probe(t.Context(), client, s)
+	if res.Status != StatusUp || res.ErrorKind != "" || res.StatusCode != http.StatusPartialContent {
+		t.Errorf("res = %+v, queria up/206", res)
+	}
+}
+
+// Sem regra e com Range do dono, a sonda não acrescenta o Accept-Encoding dela:
+// o servidor responde a fatia em identity, como o transporte do Go fazia.
+func TestProbeWithoutRuleAndOwnersRangeDoesNotAskForGzip(t *testing.T) {
+	recebido := make(chan []string, 1)
+	srv, client := servidor(t, func(w http.ResponseWriter, r *http.Request) {
+		recebido <- r.Header.Values("Accept-Encoding")
+	})
+	s := especificacao(srv.URL)
+	s.Headers = map[string]string{"range": "bytes=0-1023"}
+	Probe(t.Context(), client, s)
+	if got := <-recebido; len(got) != 0 {
+		t.Errorf("Accept-Encoding recebido = %q, queria nenhum", got)
+	}
+}
+
+// Sem regra e com Accept-Encoding do dono, a sonda drena o corpo cru, como o
+// transporte do Go fazia: um servidor que ignora o pedido e manda um
+// gzip que não abre segue up.
+func TestProbeWithoutRuleAndOwnersAcceptEncodingDrainsRaw(t *testing.T) {
+	srv, client := servidor(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Encoding", "gzip")
+		_, _ = w.Write([]byte("isto não é gzip"))
+	})
+	s := especificacao(srv.URL)
+	s.Headers = map[string]string{"Accept-Encoding": "br"}
+	res := Probe(t.Context(), client, s)
+	if res.Status != StatusUp || res.ErrorKind != "" || res.StatusCode != http.StatusOK {
+		t.Errorf("res = %+v, queria up/200", res)
+	}
+}
+
+// membrosGzipVazios é ~1 MiB de membros gzip sem conteúdo: o gzip.Reader os lê
+// um atrás do outro (multistream) e não produz um byte de saída, então o teto
+// sobre o descomprimido nunca chega.
+var membrosGzipVazios = sync.OnceValue(func() []byte {
+	var membro bytes.Buffer
+	zw := gzip.NewWriter(&membro)
+	if err := zw.Close(); err != nil {
+		panic(err)
+	}
+	return bytes.Repeat(membro.Bytes(), (1<<20)/membro.Len())
+})
+
+// Um gzip que não gera saída fazia a sonda ler a
+// rede até o prazo. O teto de bytes comprimidos é 128 KiB, com e sem regra.
+// Sem regra, atingi-lo é só parar de drenar: up. Com regra, o corpo não
+// foi lido inteiro, e o veredito é o do corpo cortado: body_limit.
+func TestCompressedInputStopsAtItsOwnLimit(t *testing.T) {
+	const tetoComprimido = 128 << 10
+	casos := []struct {
+		nome  string
+		regra bool
+		quer  Status
+		tipo  ErrorKind
+	}{
+		{"sem regra", false, StatusUp, ""},
+		{"com regra", true, StatusDown, KindBodyLimit},
+	}
+	for _, c := range casos {
+		t.Run(c.nome, func(t *testing.T) {
+			srv, client := servidor(t, func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Encoding", "gzip")
+				_, _ = w.Write(membrosGzipVazios())
+			})
+			corpo := &contador{}
+			contado := *client
+			contado.Transport = &transporteContado{base: client.Transport, corpo: corpo}
+			s := especificacao(srv.URL)
+			if c.regra {
+				s = comRegra(srv.URL, targets.ContentNotContains, "erro")
+			}
+			res := Probe(t.Context(), &contado, s)
+			if res.Status != c.quer || res.ErrorKind != c.tipo || res.StatusCode != http.StatusOK {
+				t.Errorf("res = %+v, queria %s/%q/200", res, c.quer, c.tipo)
+			}
+			if corpo.lidos != tetoComprimido {
+				t.Errorf("%d bytes comprimidos lidos de %d, queria exatamente %d", corpo.lidos, len(membrosGzipVazios()), tetoComprimido)
+			}
+		})
+	}
+}
+
+// O maior cabeçalho gzip que o Go aceita (FEXTRA de 65 535 bytes, FNAME e
+// FCOMMENT de 511) cabe no teto comprimido: a regra julga o corpo que vem
+// depois dele.
+func TestLargestGzipHeaderFitsTheCompressedLimit(t *testing.T) {
+	var buf bytes.Buffer
+	zw := gzip.NewWriter(&buf)
+	zw.Extra = bytes.Repeat([]byte("e"), 65535)
+	zw.Name = strings.Repeat("n", 511)
+	zw.Comment = strings.Repeat("c", 511)
+	if _, err := zw.Write([]byte("ok")); err != nil {
+		t.Fatal(err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	srv, client := servidor(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Encoding", "gzip")
+		_, _ = w.Write(buf.Bytes())
+	})
+	res := Probe(t.Context(), client, comRegra(srv.URL, targets.ContentContains, "ok"))
+	if res.Status != StatusUp || res.ErrorKind != "" || res.StatusCode != http.StatusOK {
+		t.Errorf("res = %+v, queria up/200", res)
+	}
+}
+
+// 100 MiB de zeros comprimidos cabem em ~100 KiB.
+var bombaGzip = sync.OnceValue(func() []byte {
+	var buf bytes.Buffer
+	zw := gzip.NewWriter(&buf)
+	bloco := make([]byte, 1<<20)
+	for range 100 {
+		if _, err := zw.Write(bloco); err != nil {
+			panic(err)
+		}
+	}
+	if err := zw.Close(); err != nil {
+		panic(err)
+	}
+	return buf.Bytes()
+})
+
+// O teto vale sobre o corpo DESCOMPRIMIDO. A sonda pede gzip e o
+// descomprime ela mesma; sem o teto, inflaria 100 MiB. Este teste olha o
+// resultado de ponta a ponta; o que prova que a bomba não é inflada inteira é
+// TestLerCorpoDaRegraCapsTheDecompressedBody, que conta os bytes consumidos.
+func TestGzipBombStopsAtLimit(t *testing.T) {
+	bomba := bombaGzip()
+	srv, client := servidor(t, func(w http.ResponseWriter, r *http.Request) {
+		if !strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Encoding", "gzip")
+		_, _ = w.Write(bomba)
+	})
+	s := comRegra(srv.URL, targets.ContentContains, "x")
+	s.Timeout = 10 * time.Second
+	inicio := time.Now()
+	res := Probe(t.Context(), client, s)
+	if gasto := time.Since(inicio); gasto >= 2*time.Second {
+		t.Errorf("a sonda levou %v, queria menos de 2 s", gasto)
+	}
+	if res.Status != StatusDown || res.ErrorKind != KindBodyLimit || res.StatusCode != http.StatusOK {
+		t.Errorf("res = %+v, queria down/body_limit/200", res)
+	}
+}
+
+// gzipar comprime b uma vez.
+func gzipar(t *testing.T, b []byte) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	zw := gzip.NewWriter(&buf)
+	if _, err := zw.Write(b); err != nil {
+		t.Fatal(err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+// Com regra, a sonda só lê um corpo sem codificação ou com
+// exatamente um gzip, somando todas as linhas de Content-Encoding (RFC 9110
+// §5.3: duas linhas valem "gzip, gzip"). O resto não tem o que a regra julgue:
+// content_encoding, e não body_limit, que diria ao dono "resposta grande
+// demais". Julgar bytes ainda comprimidos daria up falso no not_contains, e o
+// corpo de erro vai comprimido duas vezes justamente para que uma camada só
+// desfeita ainda esconda a palavra.
+func TestUnsolicitedContentEncodingIsInconclusive(t *testing.T) {
+	certo := []byte("tudo certo")
+	comErro := []byte("deu erro aqui")
+	casos := []struct {
+		nome      string
+		encodings []string
+		corpo     []byte
+		quer      Status
+		tipo      ErrorKind
+	}{
+		{"br", []string{"br"}, certo, StatusDown, KindContentEncoding},
+		{"zstd", []string{"zstd"}, certo, StatusDown, KindContentEncoding},
+		{"deflate", []string{"deflate"}, certo, StatusDown, KindContentEncoding},
+		{"gzip duas vezes", []string{"gzip, gzip"}, gzipar(t, gzipar(t, comErro)), StatusDown, KindContentEncoding},
+		{"gzip em duas linhas", []string{"gzip", "gzip"}, gzipar(t, gzipar(t, comErro)), StatusDown, KindContentEncoding},
+		{"gzip e br em duas linhas", []string{"gzip", "br"}, gzipar(t, gzipar(t, comErro)), StatusDown, KindContentEncoding},
+		{"gzip único passa", []string{"gzip"}, gzipar(t, certo), StatusUp, ""},
+		{"gzip único é julgado", []string{"gzip"}, gzipar(t, comErro), StatusDown, KindContentMismatch},
+		{"GZIP em outra caixa", []string{"GZIP"}, gzipar(t, certo), StatusUp, ""},
+		{"gzip com identity", []string{"identity", "gzip"}, gzipar(t, certo), StatusUp, ""},
+		{"identity", []string{"identity"}, certo, StatusUp, ""},
+		{"gzip que não é gzip", []string{"gzip"}, certo, StatusDown, KindContentEncoding},
+	}
+	for _, c := range casos {
+		t.Run(c.nome, func(t *testing.T) {
+			srv, client := servidor(t, func(w http.ResponseWriter, r *http.Request) {
+				for _, e := range c.encodings {
+					w.Header().Add("Content-Encoding", e)
+				}
+				_, _ = w.Write(c.corpo)
+			})
+			res := Probe(t.Context(), client, comRegra(srv.URL, targets.ContentNotContains, "erro"))
+			if res.Status != c.quer || res.ErrorKind != c.tipo || res.StatusCode != http.StatusOK {
+				t.Errorf("res = %+v, queria %s/%q/200", res, c.quer, c.tipo)
+			}
+		})
+	}
+}
+
+// O mesmo depois de um redirect para outro host. Nesse salto o safedial
+// limpa os headers do alvo, inclusive o Accept-Encoding da sonda; se o
+// transporte pedisse gzip por conta própria, ele desfaria uma camada e
+// apagaria as linhas de Content-Encoding antes de a sonda vê-las.
+func TestContentEncodingAfterARedirectToAnotherHost(t *testing.T) {
+	duasVezes := gzipar(t, gzipar(t, []byte("deu erro aqui")))
+	destino := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Add("Content-Encoding", "gzip")
+		w.Header().Add("Content-Encoding", "gzip")
+		_, _ = w.Write(duasVezes)
+	}))
+	t.Cleanup(destino.Close)
+	origem := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, destino.URL, http.StatusFound)
+	}))
+	t.Cleanup(origem.Close)
+	client := safedial.NewClientAllowing(0, enderecoDe(t, origem), enderecoDe(t, destino))
+
+	res := Probe(t.Context(), client, comRegra(origem.URL, targets.ContentNotContains, "erro"))
+	if res.Status != StatusDown || res.ErrorKind != KindContentEncoding || res.StatusCode != http.StatusOK {
+		t.Errorf("res = %+v, queria down/content_encoding/200", res)
+	}
+}
+
+// Corpo vazio não tem o que estar comprimido: com qualquer Content-Encoding,
+// a regra julga o vazio, como julgaria sem o header.
+func TestEmptyBodyWithContentEncodingIsJudged(t *testing.T) {
+	casos := []struct {
+		nome string
+		modo targets.ContentMode
+		quer Status
+		tipo ErrorKind
+	}{
+		{"not_contains passa", targets.ContentNotContains, StatusUp, ""},
+		{"contains reprova", targets.ContentContains, StatusDown, KindContentMismatch},
+	}
+	for _, c := range casos {
+		for _, encoding := range []string{"br", "gzip"} {
+			t.Run(c.nome+" com "+encoding, func(t *testing.T) {
+				srv, client := servidor(t, func(w http.ResponseWriter, r *http.Request) {
+					w.Header().Set("Content-Encoding", encoding)
+				})
+				res := Probe(t.Context(), client, comRegra(srv.URL, c.modo, "erro"))
+				if res.Status != c.quer || res.ErrorKind != c.tipo || res.StatusCode != http.StatusOK {
+					t.Errorf("res = %+v, queria %s/%q/200", res, c.quer, c.tipo)
+				}
+			})
+		}
+	}
+}
+
+// A regra não troca o cliente. O salto para outra porta do 127.0.0.1, não
+// liberada, continua bloqueado pelo safedial.
+func TestContentRuleRedirectToInternalIsBlocked(t *testing.T) {
+	interno := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("ok"))
+	}))
+	t.Cleanup(interno.Close)
+	srv, client := servidor(t, func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, interno.URL, http.StatusFound)
+	})
+	res := Probe(t.Context(), client, comRegra(srv.URL, targets.ContentContains, "ok"))
+	if res.Status != StatusDown || res.ErrorKind != KindBlocked {
+		t.Errorf("res = %+v, queria down/blocked", res)
 	}
 }

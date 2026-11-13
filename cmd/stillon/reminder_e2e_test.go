@@ -65,9 +65,8 @@ func TestProberRoleEnqueuesOverdueReminders(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cfg := &config.Config{
-		Role: config.RoleProber, DatabaseURL: testdb.DSN(t), MasterKey: chave, ShutdownGrace: 2 * time.Second,
-	}
+	cfg := configDeTeste(t, config.RoleProber, testdb.DSN(t))
+	cfg.ShutdownGrace = 2 * time.Second
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	fim := make(chan error, 1)

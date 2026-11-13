@@ -19,7 +19,7 @@ import (
 	"github.com/BipoXDXD/stillon/internal/storage/db"
 )
 
-// Pausar e retomar canal pela API (Plano 9, §3.3): PATCH /channels/{id} com
+// Pausar e retomar canal pela API: PATCH /channels/{id} com
 // {"enabled": bool}.
 
 func criarCanalDiscord(t *testing.T, a *api, tok string) string {

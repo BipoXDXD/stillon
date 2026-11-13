@@ -346,7 +346,7 @@ func TestVerifyFailsWhenEnrolledButNotConfirmed(t *testing.T) {
 	}
 }
 
-// R38: com um fator já confirmado, Enroll recusa — e, o que mais importa,
+// Com um fator já confirmado, Enroll recusa — e, o que mais importa,
 // recusa SEM estragar nada.
 //
 // A versão anterior zerava o totp_confirmed_at, e isso era um bypass completo:
@@ -422,7 +422,7 @@ func eventosDeAuditoria(t *testing.T, pool *pgxpool.Pool, userID uuid.UUID, acti
 	return n
 }
 
-// R39: ativar o segundo fator deixa rastro.
+// Ativar o segundo fator deixa rastro.
 func TestConfirmIsAudited(t *testing.T) {
 	svc, pool, userID := setupTOTP(t)
 	ctx := context.Background()
@@ -450,7 +450,7 @@ func TestConfirmIsAudited(t *testing.T) {
 	}
 }
 
-// R39: uso de código de recuperação é sinal de perda de dispositivo OU de
+// O uso de código de recuperação é sinal de perda de dispositivo OU de
 // comprometimento, e é a única pista que o dono da conta teria.
 func TestRecoveryCodeUseIsAudited(t *testing.T) {
 	svc, pool, userID := setupTOTP(t)
@@ -524,7 +524,7 @@ func TestConfirmRejectsAWrongCode(t *testing.T) {
 	}
 
 	// A asserção que distingue "recusou" de "recusou e ativou mesmo assim" —
-	// a mesma distinção que escondeu o bug do Rotate na Task 6.
+	// a mesma distinção que já escondeu um bug do Rotate.
 	var confirmado *time.Time
 	if err := pool.QueryRow(ctx,
 		`SELECT totp_confirmed_at FROM users WHERE id = $1`, userID).Scan(&confirmado); err != nil {
@@ -617,7 +617,7 @@ func TestAnEarlierCodeIsRefusedAfterALaterOne(t *testing.T) {
 }
 
 // TestConfirmIsRefusedOnAnAlreadyConfirmedAccount fecha a simetria que
-// faltava ao R38.
+// faltava ao Enroll.
 //
 // Confirm não tinha guarda nenhuma: o UPDATE era `WHERE id = $1` seco,
 // enquanto o do Enroll já trazia `AND totp_confirmed_at IS NULL`. Um segundo
@@ -660,9 +660,9 @@ func TestConfirmIsRefusedOnAnAlreadyConfirmedAccount(t *testing.T) {
 	if _, err := svc.Confirm(ctx, userID, outro, depois); !errors.Is(err, auth.ErrTOTPAlreadyEnabled) {
 		t.Errorf("segundo Confirm devolveu %v, queria ErrTOTPAlreadyEnabled", err)
 	}
-	// Com o fator ligado, o código nem é conferido (C1 da revisão do Plano
-	// 10): o errado recebe o mesmo ErrTOTPAlreadyEnabled do certo, e o
-	// Confirm deixa de ser um oráculo do código do segredo ativo.
+	// Com o fator ligado, o código nem é conferido: o errado recebe o mesmo
+	// ErrTOTPAlreadyEnabled do certo, e o Confirm deixa de ser um oráculo do
+	// código do segredo ativo.
 	if _, err := svc.Confirm(ctx, userID, codigoErradoDe(t, secret, depois), depois); !errors.Is(err, auth.ErrTOTPAlreadyEnabled) {
 		t.Errorf("Confirm com código errado e o fator ligado devolveu %v, queria ErrTOTPAlreadyEnabled", err)
 	}

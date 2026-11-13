@@ -34,11 +34,20 @@
    campos e botões (WCAG 1.4.11). src/tokens.test.ts converte para sRGB e
    confere o contraste de cada par (4,5:1 texto, 3:1 componente e foco) nos
    dois temas: um par reprovado ajusta a luminosidade, nunca o matiz. O
-   apagado do claro saiu de 0.58 (spec) para 0.53, que passa sobre o fundo. */
+   apagado do claro saiu de 0.58 (spec) para 0.53, que passa sobre o fundo.
+   Cada estado tem três tons: o 100 (fundo tintado), a base (selo, ícone,
+   gráfico) e o 700, o texto do mesmo matiz sobre o 100 (RUI: sobre fundo
+   colorido, nada de cinza). Só os tons com uso: 200 e 300 entram quando
+   houver o que pintar com eles. No escuro a escala se inverte: o 100 é
+   escuro, e o 700, claro. */
 :root {
   color-scheme: light;
   --fundo: oklch(0.98 0.008 85);
   --superficie: oklch(1 0 0);
+  /* O que flutua acima do cartão (diálogo, aviso, tooltip). No claro, a
+     sombra de nível 2 já o separa; no escuro, que não tem sombra, é um tom
+     mais claro que o cartão (PUI: superfície mais alta, mais clara). */
+  --superficie-elevada: var(--superficie);
   --painel: oklch(0.95 0.01 80);
   --texto: oklch(0.22 0.015 60);
   --suave: oklch(0.45 0.015 60);
@@ -54,18 +63,27 @@
   --perigo-texto: oklch(1 0 0);
   --estado-no-ar: oklch(0.48 0.11 150);
   --estado-no-ar-100: oklch(0.96 0.03 150);
+  --estado-no-ar-700: oklch(0.38 0.09 150);
   --estado-degradado: oklch(0.52 0.12 70);
   --estado-degradado-100: oklch(0.97 0.035 85);
+  --estado-degradado-700: oklch(0.38 0.08 85);
   --estado-fora: oklch(0.5 0.17 30);
   --estado-fora-100: oklch(0.96 0.025 30);
+  --estado-fora-700: oklch(0.38 0.13 30);
   --estado-sem-dados: var(--suave);
   --estado-sem-dados-100: var(--painel);
+  --estado-sem-dados-700: oklch(0.38 0.015 80);
   --grafico-linha: var(--primaria);
   --grafico-faixa: var(--primaria-100);
   --sobreposicao: oklch(0.22 0.015 60 / 0.6);
-  /* Duas camadas (DI 9): uma grande e suave, outra pequena e escura. */
-  --sombra-nivel-1: 0 1px 3px oklch(0.22 0.015 60 / 0.12), 0 1px 2px oklch(0.22 0.015 60 / 0.08);
+  /* Duas camadas (sombras em duas partes): uma grande e suave, outra
+     pequena e escura, que marca a borda de baixo. No nível 1 a pequena é a
+     mais escura; no 2, a grande domina. */
+  --sombra-nivel-1: 0 1px 3px oklch(0.22 0.015 60 / 0.1), 0 1px 2px oklch(0.22 0.015 60 / 0.2);
   --sombra-nivel-2: 0 12px 24px oklch(0.22 0.015 60 / 0.14), 0 4px 8px oklch(0.22 0.015 60 / 0.08);
+  /* Baixo-relevo (RUI): a sombra interna no alto do trilho de um seletor,
+     como se ele fosse cavado na superfície. */
+  --sombra-interna: inset 0 1px 2px oklch(0.22 0.015 60 / 0.12);
 }
 
 /* O escuro não usa sombra: a superfície mais clara que o fundo faz o papel,
@@ -76,6 +94,9 @@
   color-scheme: dark;
   --fundo: oklch(0.2 0.01 60);
   --superficie: oklch(0.25 0.01 60);
+  /* 0.28: o mais claro em que o apagado (4,5:1) e a borda de controle (3:1)
+     ainda passam; src/tokens.test.ts confere. */
+  --superficie-elevada: oklch(0.28 0.01 60);
   --painel: oklch(0.16 0.01 60);
   --texto: oklch(0.93 0.01 80);
   --suave: oklch(0.75 0.012 70);
@@ -88,19 +109,25 @@
   --perigo-texto: oklch(0.2 0.03 30);
   --estado-no-ar: oklch(0.78 0.13 150);
   --estado-no-ar-100: oklch(0.3 0.05 150);
+  --estado-no-ar-700: oklch(0.85 0.08 150);
   --estado-degradado: oklch(0.82 0.13 80);
   --estado-degradado-100: oklch(0.31 0.05 80);
+  --estado-degradado-700: oklch(0.86 0.08 80);
   --estado-fora: oklch(0.72 0.17 30);
   --estado-fora-100: oklch(0.3 0.06 30);
+  --estado-fora-700: oklch(0.85 0.08 30);
   --estado-sem-dados-100: oklch(0.3 0.01 60);
+  --estado-sem-dados-700: oklch(0.85 0.012 60);
   --sobreposicao: oklch(0 0 0 / 0.6);
   --sombra-nivel-1: 0 0 transparent;
   --sombra-nivel-2: 0 0 transparent;
+  --sombra-interna: inset 0 0 transparent;
 }
 
 @theme inline {
   --color-fundo: var(--fundo);
   --color-superficie: var(--superficie);
+  --color-superficie-elevada: var(--superficie-elevada);
   --color-painel: var(--painel);
   --color-texto: var(--texto);
   --color-suave: var(--suave);
@@ -116,12 +143,16 @@
   --color-perigo-texto: var(--perigo-texto);
   --color-no-ar: var(--estado-no-ar);
   --color-no-ar-100: var(--estado-no-ar-100);
+  --color-no-ar-700: var(--estado-no-ar-700);
   --color-degradado: var(--estado-degradado);
   --color-degradado-100: var(--estado-degradado-100);
+  --color-degradado-700: var(--estado-degradado-700);
   --color-fora: var(--estado-fora);
   --color-fora-100: var(--estado-fora-100);
+  --color-fora-700: var(--estado-fora-700);
   --color-sem-dados: var(--estado-sem-dados);
   --color-sem-dados-100: var(--estado-sem-dados-100);
+  --color-sem-dados-700: var(--estado-sem-dados-700);
   --color-sobreposicao: var(--sobreposicao);
 }
 
@@ -140,13 +171,18 @@
   --radius-padrao: 0.5rem;
 }
 
-/* Sombras de dois níveis (DI 9): 1 para cartão e item ativo, 2 para diálogo,
+/* Sombras de dois níveis: 1 para cartão e item ativo, 2 para diálogo,
    popover e aviso. No escuro as duas são transparentes. */
 @utility sombra-nivel-1 {
   box-shadow: var(--sombra-nivel-1);
 }
 @utility sombra-nivel-2 {
   box-shadow: var(--sombra-nivel-2);
+}
+/* O trilho do seletor, rebaixado. No escuro, o painel mais escuro que o
+   fundo já faz o papel. */
+@utility sombra-interna {
+  box-shadow: var(--sombra-interna);
 }
 
 /* A borda de acento da linha de problema (spec do painel denso). Uma sombra
@@ -164,7 +200,7 @@
   box-shadow: inset 4px 0 0 var(--estado-degradado);
 }
 
-/* Caixa alta só em rótulo de grupo pequeno, com 0,05em (DI 6). */
+/* Caixa alta só em rótulo de grupo pequeno, com 0,05em. */
 @utility rotulo-de-grupo {
   font-size: var(--text-xs);
   line-height: var(--text-xs--line-height);

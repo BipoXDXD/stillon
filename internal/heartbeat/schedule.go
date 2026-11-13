@@ -24,6 +24,10 @@ type Schedule struct {
 	location *time.Location
 	expr     string
 	timezone string
+	// unknown marca a linha gravada por uma versão futura numa forma que esta
+	// não sabe calcular. É campo próprio, e não o valor zero, para que um
+	// Schedule{} esquecido continue sendo bug e não vire "desconhecido".
+	unknown bool
 }
 
 // NewPeriod é o agendamento por período fixo, contado a partir do sinal.
@@ -35,7 +39,7 @@ func NewPeriod(period time.Duration) (Schedule, error) {
 }
 
 // NewCron é o agendamento por expressão de 5 campos, num fuso IANA
-// obrigatório: sem ele, o horário dependeria da máquina (D18).
+// obrigatório: sem ele, o horário dependeria da máquina.
 func NewCron(expr, timezone string) (Schedule, error) {
 	loc, err := parseTimezone(timezone)
 	if err != nil {
@@ -59,17 +63,31 @@ func NewCron(expr, timezone string) (Schedule, error) {
 	return Schedule{cron: sch, location: loc, expr: expr, timezone: timezone}, nil
 }
 
-// ScheduleFromRow remonta o agendamento das colunas de heartbeats. O CHECK
-// heartbeats_one_schedule garante uma das duas formas, e o erro aqui só
-// aparece com uma linha que a validação de hoje recusaria.
+// ScheduleFromRow remonta o agendamento das colunas de heartbeats. É o piso de
+// rollback: lê o que uma versão futura gravou sem reaplicar as faixas de
+// cadastro, que continuam em NewPeriod. Período acima de MaxPeriod é lido como
+// está; período e cron nulos viram a forma desconhecida (IsKnown falso). Cron
+// sem fuso segue erro, porque o CHECK de hoje já o impede.
 func ScheduleFromRow(periodSec *int32, cronExpr, timezone *string) (Schedule, error) {
 	if periodSec != nil {
-		return NewPeriod(time.Duration(*periodSec) * time.Second)
+		return periodFromRow(*periodSec)
 	}
-	if cronExpr == nil || timezone == nil {
+	if cronExpr == nil {
+		return Schedule{unknown: true}, nil
+	}
+	if timezone == nil {
 		return Schedule{}, &ValidationError{Field: "schedule", Reason: ReasonRequired}
 	}
 	return NewCron(*cronExpr, *timezone)
+}
+
+// periodFromRow só recusa o que nenhuma versão gravaria: sem período positivo,
+// Next devolveria o próprio instante e o prazo não andaria.
+func periodFromRow(sec int32) (Schedule, error) {
+	if sec <= 0 {
+		return Schedule{}, &ValidationError{Field: "period_sec", Reason: ReasonOutOfRange}
+	}
+	return Schedule{period: time.Duration(sec) * time.Second}, nil
 }
 
 func parseTimezone(timezone string) (*time.Location, error) {
@@ -88,7 +106,12 @@ func parseTimezone(timezone string) (*time.Location, error) {
 }
 
 // Next é o próximo instante em que a tarefa deve ter dado sinal depois de t.
+// Num agendamento desconhecido não há próximo instante: chamar Next é bug de
+// quem chama, que devia ter checado IsKnown, e inventar um prazo seria pior.
 func (s Schedule) Next(t time.Time) time.Time {
+	if s.unknown {
+		panic("heartbeat: Next em agendamento desconhecido; confira IsKnown antes")
+	}
 	if s.cron == nil {
 		return t.Add(s.period)
 	}
@@ -113,8 +136,12 @@ func (s Schedule) NextRuns(t time.Time, n int) []time.Time {
 // Equal diz se os dois agendamentos são o mesmo: reenviar o que já está gravado
 // não é mudança.
 func (s Schedule) Equal(o Schedule) bool {
-	return s.period == o.period && s.expr == o.expr && s.timezone == o.timezone
+	return s.unknown == o.unknown && s.period == o.period && s.expr == o.expr && s.timezone == o.timezone
 }
+
+// IsKnown diz se esta versão sabe calcular o agendamento. Falso só numa linha
+// gravada por uma versão futura; nada que nasce aqui é desconhecido.
+func (s Schedule) IsKnown() bool { return !s.unknown }
 
 // IsCron diz qual das duas formas o agendamento tem.
 func (s Schedule) IsCron() bool { return s.cron != nil }

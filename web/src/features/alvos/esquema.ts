@@ -1,6 +1,7 @@
 import { z } from 'zod'
-import type { AlteracaoAlvo, EntradaAlvo } from '@/lib/api/cliente'
-import type { Alvo } from '@/lib/api/schemas'
+import type { AlteracaoAlvo, EntradaAlvo, EntradaRegra } from '@/lib/api/cliente'
+import { CONTROLE_NA_REGRA, LIMITE_DA_REGRA } from '@/lib/api/mensagens'
+import { RegraDeConteudo, type Alvo } from '@/lib/api/schemas'
 import { MENSAGEM_INVISIVEL, temInvisivel } from '@/lib/rotulo'
 import { erroNasTags, separarTags } from '@/lib/tags'
 
@@ -72,12 +73,51 @@ function urlPermitida(raw: string): string | null {
   return null
 }
 
+// A regra de conteúdo espelha internal/targets/contentrule.go. O limite é em
+// caracteres como o servidor os conta (runas, o char_length do banco): um
+// emoji vale 1, e não os 2 do .length em UTF-16. Os casos que
+// os dois lados julgam igual ficam em
+// internal/targets/testdata/regra-de-conteudo.json (regra-contrato.test.ts).
+// Os modos vêm do schema da resposta; "desligada" é só do formulário (a
+// ausência de regra, que vai como null).
+const modoDaRegra = z.enum(['desligada', ...RegraDeConteudo.shape.mode.options])
+const MAX_DA_REGRA = 256
+// unicode.IsControl do Go é a categoria Cc.
+const CONTROLE = /\p{Cc}/u
+// RFC 6901: depois de ~, só 0 ou 1.
+const ESCAPE_INVALIDO = /~(?![01])/
+
+export const REGRA_COM_HEAD = 'Com HEAD a resposta não tem corpo. Escolha GET ou POST para verificar o conteúdo.'
+// Headers do dono que estragam o corpo conferido, com o texto que cada um
+// mostra no seletor da regra. O nome fica em minúsculas, porque a comparação
+// é com os nomes já baixados; o tipo recusa outra caixa.
+const HEADERS_SEM_REGRA: readonly (readonly [Lowercase<string>, string])[] = [
+  ['accept-encoding', 'Remova o header Accept-Encoding para verificar o conteúdo: a resposta viria comprimida.'],
+  ['range', 'Remova o header Range para verificar o conteúdo: a resposta viria cortada.'],
+]
+
+function erroDoTextoDaRegra(s: string): string | null {
+  if (s === '') return 'Obrigatório.'
+  if ([...s].length > MAX_DA_REGRA) return LIMITE_DA_REGRA
+  if (CONTROLE.test(s)) return CONTROLE_NA_REGRA
+  return null
+}
+
+function erroDoPonteiro(p: string): string | null {
+  const erro = erroDoTextoDaRegra(p)
+  if (erro) return erro
+  if (!p.startsWith('/')) return 'Comece com /, como /status.'
+  if (ESCAPE_INVALIDO.test(p)) return 'No ponteiro, escreva ~1 para uma barra e ~0 para um til.'
+  return null
+}
+
 // Na edição, a base é o alvo como veio do servidor: a URL que ele já guardou
 // não passa de novo pelo espelho (um host não canônico que o servidor aceitou,
 // como http://0x7f.1/, não pode travar a edição nem a pausa do alvo), e
 // "Substituir todos" sem nenhuma linha não vira headers: {} (que apagaria
-// todos em silêncio; para isso existe "Remover todos").
-export function esquemaDoAlvo(base?: { url: string }) {
+// todos em silêncio; para isso existe "Remover todos"). Os nomes dos headers
+// guardados antecipam o Accept-Encoding ou o Range que "Manter como está" conservaria.
+export function esquemaDoAlvo(base?: { url: string; nomesDeHeaders?: readonly string[] }) {
   return z
     .object({
       name: z
@@ -125,59 +165,118 @@ export function esquemaDoAlvo(base?: { url: string }) {
       modoHeaders: z.enum(['manter', 'substituir', 'remover']),
       headers: z.array(z.object({ nome: z.string().trim(), valor: z.string() })),
       tagsTexto: z.string(),
+      // O valor não perde espaços: o servidor compara os bytes como vieram.
+      modoDaRegra,
+      valorDaRegra: z.string(),
+      ponteiroDaRegra: z.string(),
     })
     .superRefine((v, ctx) => {
+      validarRegra(v, base?.nomesDeHeaders ?? [], ctx)
       const erroDasTags = erroNasTags(v.tagsTexto)
       if (erroDasTags) ctx.addIssue({ code: 'custom', path: ['tagsTexto'], message: erroDasTags })
-      // D3 do Plano 2: o jitter de −10% antecipa a próxima sonda para 90% do
-      // intervalo; um timeout maior deixaria duas sondas do alvo em voo.
-      // Como em validate.go, só com intervalo e timeout nas faixas: senão o
-      // erro é do próprio campo, não desta regra.
-      const intervaloOK = v.interval_sec >= 30 && v.interval_sec <= 86400
-      const timeoutOK = v.timeout_ms >= 1000 && v.timeout_ms <= 30000
-      if (intervaloOK && timeoutOK && v.timeout_ms * 10 >= v.interval_sec * 9000) {
-        ctx.addIssue({ code: 'custom', path: ['timeout_ms'], message: 'Tem de ser menor que 90% do intervalo.' })
-      }
-      if (v.lentidao === 'personalizado') {
-        const n = v.degraded_threshold_ms
-        if (Number.isNaN(n)) {
-          ctx.addIssue({ code: 'custom', path: ['degraded_threshold_ms'], message: 'Informe um número.' })
-        } else if (!Number.isInteger(n) || n < 1 || n > 60000) {
-          ctx.addIssue({ code: 'custom', path: ['degraded_threshold_ms'], message: 'Entre 1 e 60000 ms.' })
-        }
-      }
-      if (v.modoHeaders !== 'substituir') return
-      if (base && v.headers.length === 0) {
-        ctx.addIssue({
-          code: 'custom',
-          path: ['headers'],
-          message: 'Adicione ao menos um header, ou escolha “Remover todos”.',
-        })
-      }
-      const vistos = new Set<string>()
-      let total = 0
-      if (v.headers.length > 20) ctx.addIssue({ code: 'custom', path: ['headers'], message: 'Até 20 headers.' })
-      v.headers.forEach((h, i) => {
-        const nome = h.nome.toLowerCase()
-        if (!NOME_DE_HEADER.test(h.nome)) {
-          ctx.addIssue({ code: 'custom', path: ['headers', i, 'nome'], message: 'Nome de header inválido.' })
-        } else if (PROIBIDOS.has(nome)) {
-          ctx.addIssue({
-            code: 'custom',
-            path: ['headers', i, 'nome'],
-            message: 'Este header é controlado pelo monitor.',
-          })
-        } else if (vistos.has(nome)) {
-          ctx.addIssue({ code: 'custom', path: ['headers', i, 'nome'], message: 'Header repetido.' })
-        }
-        vistos.add(nome)
-        if (bytes(h.valor) > 1024) {
-          ctx.addIssue({ code: 'custom', path: ['headers', i, 'valor'], message: 'Até 1 KiB.' })
-        }
-        total += bytes(h.nome) + bytes(h.valor)
-      })
-      if (total > 8192) ctx.addIssue({ code: 'custom', path: ['headers'], message: 'Os headers somam mais de 8 KiB.' })
+      validarTimeoutNoIntervalo(v, ctx)
+      validarLimiarDaLentidao(v, ctx)
+      if (v.modoHeaders === 'substituir') validarHeadersSubstituidos(v.headers, base !== undefined, ctx)
     })
+}
+
+// O jitter de −10% antecipa a próxima sonda para 90% do
+// intervalo; um timeout maior deixaria duas sondas do alvo em voo.
+// Como em validate.go, só com intervalo e timeout nas faixas: senão o
+// erro é do próprio campo, não desta regra.
+function validarTimeoutNoIntervalo(
+  v: { interval_sec: number; timeout_ms: number },
+  ctx: z.RefinementCtx,
+) {
+  const intervaloOK = v.interval_sec >= 30 && v.interval_sec <= 86400
+  const timeoutOK = v.timeout_ms >= 1000 && v.timeout_ms <= 30000
+  if (intervaloOK && timeoutOK && v.timeout_ms * 10 >= v.interval_sec * 9000) {
+    ctx.addIssue({ code: 'custom', path: ['timeout_ms'], message: 'Tem de ser menor que 90% do intervalo.' })
+  }
+}
+
+// O limiar só é conferido com a lentidão personalizada; nos outros modos o
+// campo fica escondido e o valor dele não conta.
+function validarLimiarDaLentidao(
+  v: { lentidao: string; degraded_threshold_ms: number },
+  ctx: z.RefinementCtx,
+) {
+  if (v.lentidao !== 'personalizado') return
+  const n = v.degraded_threshold_ms
+  if (Number.isNaN(n)) {
+    ctx.addIssue({ code: 'custom', path: ['degraded_threshold_ms'], message: 'Informe um número.' })
+  } else if (!Number.isInteger(n) || n < 1 || n > 60000) {
+    ctx.addIssue({ code: 'custom', path: ['degraded_threshold_ms'], message: 'Entre 1 e 60000 ms.' })
+  }
+}
+
+// A lista só é conferida ao substituir. Na edição, uma lista vazia seria um
+// headers: {} que apaga tudo em silêncio.
+function validarHeadersSubstituidos(
+  headers: readonly { nome: string; valor: string }[],
+  naEdicao: boolean,
+  ctx: z.RefinementCtx,
+) {
+  if (naEdicao && headers.length === 0) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['headers'],
+      message: 'Adicione ao menos um header, ou escolha “Remover todos”.',
+    })
+  }
+  const vistos = new Set<string>()
+  let total = 0
+  if (headers.length > 20) ctx.addIssue({ code: 'custom', path: ['headers'], message: 'Até 20 headers.' })
+  headers.forEach((h, i) => {
+    const erroDoNome = erroDoNomeDeHeader(h.nome, vistos)
+    if (erroDoNome) ctx.addIssue({ code: 'custom', path: ['headers', i, 'nome'], message: erroDoNome })
+    vistos.add(h.nome.toLowerCase())
+    if (bytes(h.valor) > 1024) {
+      ctx.addIssue({ code: 'custom', path: ['headers', i, 'valor'], message: 'Até 1 KiB.' })
+    }
+    total += bytes(h.nome) + bytes(h.valor)
+  })
+  if (total > 8192) ctx.addIssue({ code: 'custom', path: ['headers'], message: 'Os headers somam mais de 8 KiB.' })
+}
+
+function erroDoNomeDeHeader(nome: string, vistos: ReadonlySet<string>): string | null {
+  if (!NOME_DE_HEADER.test(nome)) return 'Nome de header inválido.'
+  const minusculo = nome.toLowerCase()
+  if (PROIBIDOS.has(minusculo)) return 'Este header é controlado pelo monitor.'
+  if (vistos.has(minusculo)) return 'Header repetido.'
+  return null
+}
+
+type CamposDaRegra = {
+  method: string
+  modoHeaders: string
+  headers: { nome: string }[]
+  modoDaRegra: z.infer<typeof modoDaRegra>
+  valorDaRegra: string
+  ponteiroDaRegra: string
+}
+
+// Os headers com que a sonda vai sair: os da lista ao substituir, os
+// guardados ao manter, nenhum ao remover.
+function headersQueFicam(v: CamposDaRegra, guardados: readonly string[]): readonly string[] {
+  if (v.modoHeaders === 'substituir') return v.headers.map((h) => h.nome)
+  if (v.modoHeaders === 'manter') return guardados
+  return []
+}
+
+// Desligada ou com HEAD, nada da regra é validado: com HEAD ela fica no
+// estado, escondida, e não vai no envio.
+function validarRegra(v: CamposDaRegra, guardados: readonly string[], ctx: z.RefinementCtx<CamposDaRegra>) {
+  if (v.modoDaRegra === 'desligada' || v.method === 'HEAD') return
+  const nomes = headersQueFicam(v, guardados).map((n) => n.toLowerCase())
+  for (const [proibido, mensagem] of HEADERS_SEM_REGRA) {
+    if (nomes.includes(proibido)) ctx.addIssue({ code: 'custom', path: ['modoDaRegra'], message: mensagem })
+  }
+  const erroDoValor = erroDoTextoDaRegra(v.valorDaRegra)
+  if (erroDoValor) ctx.addIssue({ code: 'custom', path: ['valorDaRegra'], message: erroDoValor })
+  if (v.modoDaRegra !== 'json_equals') return
+  const erroDoPonteiroDaRegra = erroDoPonteiro(v.ponteiroDaRegra)
+  if (erroDoPonteiroDaRegra) ctx.addIssue({ code: 'custom', path: ['ponteiroDaRegra'], message: erroDoPonteiroDaRegra })
 }
 
 export const esquemaAlvo = esquemaDoAlvo()
@@ -214,6 +313,9 @@ export const valoresPadrao: ValoresDoAlvo = {
   modoHeaders: 'substituir',
   headers: [],
   tagsTexto: '',
+  modoDaRegra: 'desligada',
+  valorDaRegra: '',
+  ponteiroDaRegra: '',
 }
 
 export function valoresDe(a: Alvo): ValoresDoAlvo {
@@ -232,7 +334,22 @@ export function valoresDe(a: Alvo): ValoresDoAlvo {
     modoHeaders: 'manter',
     headers: [],
     tagsTexto: a.tags.join(', '),
+    modoDaRegra: a.content_rule?.mode ?? 'desligada',
+    valorDaRegra: a.content_rule?.value ?? '',
+    ponteiroDaRegra: a.content_rule?.json_pointer ?? '',
   }
+}
+
+// Na edição, um "Avançado" fora do padrão (ou com headers guardados) começa
+// aberto: recolhido, o valor raro do alvo passaria despercebido.
+export function avancadoPersonalizado(v: ValoresDoAlvo, nomesDeHeaders: readonly string[]): boolean {
+  return (
+    v.method !== valoresPadrao.method ||
+    v.timeout_ms !== valoresPadrao.timeout_ms ||
+    v.expected_status !== valoresPadrao.expected_status ||
+    v.lentidao !== valoresPadrao.lentidao ||
+    nomesDeHeaders.length > 0
+  )
 }
 
 function limiar(v: ValoresDoAlvo): number | null | undefined {
@@ -241,12 +358,32 @@ function limiar(v: ValoresDoAlvo): number | null | undefined {
   return 2000
 }
 
+// Com HEAD não há corpo para conferir: a regra guardada no estado não vale.
+function regraDe(v: ValoresDoAlvo): EntradaRegra | null {
+  if (v.method === 'HEAD') return null
+  switch (v.modoDaRegra) {
+    case 'desligada':
+      return null
+    case 'json_equals':
+      return { mode: v.modoDaRegra, value: v.valorDaRegra, json_pointer: v.ponteiroDaRegra }
+    default:
+      return { mode: v.modoDaRegra, value: v.valorDaRegra }
+  }
+}
+
+const ponteiroDe = (r: EntradaRegra) => (r.mode === 'json_equals' ? r.json_pointer : null)
+
+function mesmaRegra(a: EntradaRegra | null, b: EntradaRegra | null): boolean {
+  if (a === null || b === null) return a === b
+  return a.mode === b.mode && a.value === b.value && ponteiroDe(a) === ponteiroDe(b)
+}
+
 function mapaDeHeaders(v: ValoresDoAlvo): Record<string, string> {
   return Object.fromEntries(v.headers.map((h) => [h.nome, h.valor]))
 }
 
 // O corpo do POST. Os números vão sempre explícitos (evita o "0 vira padrão
-// em POST e 400 em PATCH" das dívidas do Plano 2); o limiar padrão vai
+// em POST e 400 em PATCH"); o limiar padrão vai
 // ausente, que é o que o servidor lê como "use 2000 ms".
 export function paraCriacao(v: ValoresDoAlvo): EntradaAlvo {
   const e: EntradaAlvo = {
@@ -262,12 +399,14 @@ export function paraCriacao(v: ValoresDoAlvo): EntradaAlvo {
   if (v.headers.length) e.headers = mapaDeHeaders(v)
   const tags = separarTags(v.tagsTexto)
   if (tags.length) e.tags = tags
+  const regra = regraDe(v)
+  if (regra) e.content_rule = regra
   return e
 }
 
 // O corpo do PATCH: só o que mudou. O servidor recusa campo desconhecido, e
 // "headers" só vai com "substituir" ou "remover" — mandar {} apagaria os
-// headers em silêncio (spec do Plano 6, D24).
+// headers em silêncio.
 export function paraAlteracao(original: ValoresDoAlvo, v: ValoresDoAlvo): AlteracaoAlvo {
   const a: AlteracaoAlvo = {}
   if (v.name !== original.name) a.name = v.name
@@ -282,6 +421,10 @@ export function paraAlteracao(original: ValoresDoAlvo, v: ValoresDoAlvo): Altera
   if (v.modoHeaders === 'remover') a.headers = null
   const tags = separarTags(v.tagsTexto)
   if (tags.join() !== separarTags(original.tagsTexto).join()) a.tags = tags
+  // Desligar a regra (ou trocar para HEAD) é mandar null; ausente, o
+  // servidor a mantém.
+  const regra = regraDe(v)
+  if (!mesmaRegra(regra, regraDe(original))) a.content_rule = regra
   return a
 }
 
@@ -293,7 +436,7 @@ function origemDe(url: string): string | null {
   }
 }
 
-// B1 do Plano 10: um PATCH que troca a origem da URL (esquema, host ou
+// Um PATCH que troca a origem da URL (esquema, host ou
 // porta) sem mandar headers faz o servidor apagar os headers guardados, que
 // podem ser segredos do destino antigo. Só o caminho mantém. A origem é a do
 // new URL(x.trim()).origin, a regra do navegador que o servidor também usa
@@ -317,4 +460,8 @@ export const campoDoServidor: Record<string, keyof ValoresDoAlvo> = {
   degraded_threshold_ms: 'degraded_threshold_ms',
   headers: 'headers',
   tags: 'tagsTexto',
+  content_rule: 'modoDaRegra',
+  'content_rule.mode': 'modoDaRegra',
+  'content_rule.value': 'valorDaRegra',
+  'content_rule.json_pointer': 'ponteiroDaRegra',
 }

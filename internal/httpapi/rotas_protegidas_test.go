@@ -9,15 +9,14 @@ import (
 	"github.com/google/uuid"
 )
 
-// A cadeia das rotas novas do Plano 5, pelo Routes de verdade (a lição do
-// Plano 1: provar cada middleware à mão não prova o wiring).
+// A cadeia das rotas da conta, pelo Routes de verdade (provar cada
+// middleware à mão não prova o wiring).
 //
-// Sem token, toda rota nova responde o 401 unauthorized. Duas guardas dão
-// isso: o Authn da cadeia e o próprio handler, que recusa sem usuário no
-// contexto (como o D25 do Plano 4); registrar a rota sem Authn deixa este
-// teste verde, e o comentário existe para ninguém achar que ele trava o
-// Authn sozinho.
-func TestPlano5RoutesRequireAuthentication(t *testing.T) {
+// Sem token, toda rota nova responde o 401 unauthorized. Duas guardas dão isso:
+// o Authn da cadeia e o próprio handler, que recusa sem usuário no contexto;
+// registrar a rota sem Authn deixa este teste verde, e o comentário existe para
+// ninguém achar que ele trava o Authn sozinho.
+func TestProtectedRoutesRequireAuthentication(t *testing.T) {
 	a := newAPI(t)
 	for _, r := range []struct{ metodo, caminho string }{
 		{http.MethodGet, "/api/v1/me"},
@@ -37,7 +36,7 @@ func TestPlano5RoutesRequireAuthentication(t *testing.T) {
 
 // As mutações novas exigem X-Requested-With (spec §5.3) e o corpo passa pelo
 // limite de 1 MiB, como todas as da API.
-func TestPlano5MutationsPassThroughTheChain(t *testing.T) {
+func TestProtectedMutationsPassThroughTheChain(t *testing.T) {
 	a := newAPI(t)
 	_, token := entrar(t, a)
 	for _, r := range []struct{ metodo, caminho string }{

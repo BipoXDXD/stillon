@@ -240,9 +240,85 @@ describe('detalhe do heartbeat', () => {
     expect(screen.queryByText(/prazo/i)).not.toBeInTheDocument()
   })
 
+  // A mesma lista do painel no detalhe da tarefa. Sabotagem: a chave do
+  // heartbeat com o prefixo http: em PaginaHeartbeat → nenhum vizinho.
+  it('Anterior e Próximo seguem a lista da URL', async () => {
+    const r = await renderizarPainel('/')
+    r.falsa.estado.resumo = []
+    r.falsa.estado.heartbeats = [
+      heartbeat({ id: 'h1', name: 'Alfa' }),
+      heartbeat({ id: 'h2', name: 'Backup' }),
+      heartbeat({ id: 'h3', name: 'Cópia' }),
+    ]
+    // A lista do painel já estava no cache, ainda sem as tarefas.
+    await r.cliente.refetchQueries()
+    await r.router.navigate('/heartbeats/h2?ordem=nome')
+    const nav = await screen.findByRole('navigation', { name: 'Lista de monitores' })
+    expect(await within(nav).findByRole('link', { name: 'Anterior: Alfa' })).toHaveAttribute('href', '/heartbeats/h1?ordem=nome')
+    expect(within(nav).getByRole('link', { name: 'Próximo: Cópia' })).toHaveAttribute('href', '/heartbeats/h3?ordem=nome')
+  })
+
   it('heartbeat que não existe mostra o erro da rota, sem quebrar', async () => {
     const r = await renderizarPainel('/')
     await r.router.navigate('/heartbeats/nada')
     expect(await screen.findByRole('alert')).toHaveTextContent('Não encontrado.')
+  })
+})
+
+describe('heartbeat em tolerância na lista', () => {
+  // Ruling do plano: degradado que não pede atenção. Com "Tudo no ar." o
+  // parágrafo de baixo é o do último incidente, não "Tarefas: …"; quem diz que
+  // a tarefa não está em dia é a meta. Sabotagens: mapear grace para down → a
+  // manchete pede atenção; contar grace como em dia na metaDoPainel → "1 de 1".
+  it('a linha diz "Em tolerância", e a manchete não pede atenção', async () => {
+    await painelCom({
+      alvos: [{ id: 'a', name: 'API' }],
+      heartbeats: [{ id: 'h1', name: 'Backup', state: 'grace', deadline_at: '2099-01-01T12:00:00Z' }],
+    })
+    expect(await screen.findByRole('heading', { level: 2, name: 'Tudo no ar.' })).toBeInTheDocument()
+    const linha = within(await tabela()).getByRole('row', { name: /Backup/ })
+    expect(within(linha).getAllByRole('cell')[0]).toHaveTextContent('Em tolerância')
+    expect(linha).toHaveTextContent(/Sem sinal desde o prazo esperado; o alarme sai às 01\/01\/2099/)
+    expect(screen.getByText(/ · 1 de 1 no ar · 0 de 1 tarefa em dia$/)).toBeInTheDocument()
+    expect(screen.queryByText(/Tarefas:/)).not.toBeInTheDocument()
+  })
+
+  // Sabotagem: mapear grace para up → o filtro Degradado não a alcança.
+  it('o filtro de degradado a alcança e a conta', async () => {
+    const r = await renderizarPainel('/?estado=degraded')
+    r.falsa.estado.resumo = [itemDoResumo({ id: 'a', name: 'API' })]
+    r.falsa.estado.heartbeats = [heartbeat({ id: 'h1', name: 'Backup', state: 'grace' })]
+    await r.cliente.refetchQueries()
+    const botao = await within(await screen.findByRole('group', { name: 'Estado' })).findByRole('button', { name: /^Degradado/ })
+    expect(botao).toHaveTextContent('Degradado1')
+    expect(await nomesNaTabela()).toEqual(['Backup'])
+  })
+})
+
+describe('heartbeat de versão posterior na lista', () => {
+  // Sabotagem: tirar o ramo unknown do Agendamento → a consulta inteira falha
+  // e a tabela não mostra nem o heartbeat conhecido.
+  it('agendamento desconhecido: a linha aparece', async () => {
+    await painelCom({
+      heartbeats: [
+        { id: 'h1', name: 'Backup', schedule: { kind: 'unknown' } },
+        { id: 'h2', name: 'Relatório' },
+      ],
+    })
+    expect((await nomesNaTabela()).sort()).toEqual(['Backup', 'Relatório'])
+  })
+
+  // Sabotagens: mapear o estado desconhecido para 'down' → a manchete pede
+  // atenção; devolver 'aguardando' → "sem execução concluída", que é falso.
+  it('estado novo: a linha diz "Estado desconhecido" e a manchete diz isso', async () => {
+    await painelCom({
+      alvos: [{ id: 'a', name: 'API' }],
+      heartbeats: [{ id: 'h1', name: 'Backup', state: 'futuro' }],
+    })
+    expect(await screen.findByRole('heading', { level: 2, name: 'Uma tarefa em estado desconhecido.' })).toBeInTheDocument()
+    const linha = within(await tabela()).getByRole('row', { name: /Backup/ })
+    expect(within(linha).getAllByRole('cell')[0]).toHaveTextContent('Estado desconhecido')
+    expect(screen.queryByRole('heading', { level: 2, name: /pede atenção/ })).not.toBeInTheDocument()
+    expect(screen.getByText('1 no ar. Tarefas: 1 em estado desconhecido.')).toBeInTheDocument()
   })
 })

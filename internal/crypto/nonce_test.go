@@ -10,7 +10,7 @@ import (
 // O nonce vai para um atributo HTML e para o cabeçalho da CSP, e os dois
 // têm de ser o mesmo texto. Um caractere que o html/template escapa ("+"
 // vira "&#43;") quebraria isso só às vezes, conforme o sorteio: por isso o
-// teste sorteia mil (D26 do Plano 4).
+// teste sorteia mil.
 func TestCSPNonceNeedsNoEscaping(t *testing.T) {
 	seguro := regexp.MustCompile(`^[A-Za-z0-9_-]{22}$`)
 	for range 1000 {

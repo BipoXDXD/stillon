@@ -321,7 +321,7 @@ func TestNoSendPastTheLastAttempt(t *testing.T) {
 		t.Errorf("%d entradas de auditoria, queria 1", n)
 	}
 	// A falha foi do StillOn (o desfecho não chegou a ser gravado), não do
-	// canal: ele não vira failing (achado da revisão).
+	// canal: ele não vira failing.
 	if c := b.canalVisto(t); c.Status != StatusVerified {
 		t.Errorf("canal = %+v; queria verified, sem culpa pela falha do próprio StillOn", c)
 	}
@@ -515,7 +515,7 @@ func (b *bancada) canalVisto(t *testing.T) Channel {
 	return cs[0]
 }
 
-// Pendência do Plano 3: o canal que quebra depois de verificado não falha
+// O canal que quebra depois de verificado não falha
 // mais em silêncio. A falha definitiva o põe em failing, com o motivo; a
 // próxima entrega que dá certo o tira, sem ação do dono.
 func TestDefinitiveFailureMarksTheChannelFailingUntilASuccess(t *testing.T) {
@@ -604,7 +604,7 @@ func (b *bancada) apagao(t *testing.T, n int) []uuid.UUID {
 	return ids
 }
 
-// Apagão em massa (pendência do Plano 3): um 429 é o provedor pedindo
+// Apagão em massa: um 429 é o provedor pedindo
 // espera, e não gasta tentativa. Dez 429 seguidos, mais que MaxAttempts,
 // e a notificação ainda sai.
 func TestRateLimitDoesNotSpendAttempts(t *testing.T) {
@@ -741,10 +741,10 @@ func (b *bancada) tentativas(t *testing.T, n int32) {
 	}
 }
 
-// Um webhook que trava não segura o lote por k × sendTimeout (achado da
-// revisão): depois de uma falha transitória, o resto da fila do canal é
-// adiado sem envio. Fora do 429, a tentativa conta, como contaria se cada
-// uma tivesse sido enviada e falhado igual.
+// Um webhook que trava não segura o lote por k × sendTimeout: depois de uma
+// falha transitória, o resto da fila do canal é adiado sem envio. Fora do 429,
+// a tentativa conta, como contaria se cada uma tivesse sido enviada e falhado
+// igual.
 func TestTransientFailureHoldsTheRestOfTheChannel(t *testing.T) {
 	b := novaBancada(t, nil)
 	ids := b.apagao(t, 4)
@@ -793,7 +793,7 @@ func TestDeferredAtTheLastAttemptFailWithoutSending(t *testing.T) {
 	}
 }
 
-// Adiar não pula os cancelamentos de tentar (achado da segunda revisão): a
+// Adiar não pula os cancelamentos de tentar: a
 // abertura cujo incidente já fechou é cancelada, e não adiada; e a linha que
 // voltou do lease além do teto falha sem culpar o canal.
 func TestDeferralKeepsThePreSendDecisions(t *testing.T) {
@@ -868,7 +868,7 @@ func TestDeferredBehindADefinitiveFailureUsesItsOwnBackoff(t *testing.T) {
 // persistir registra o erro no log.
 //
 // A chamada é direta porque Dispatch não deixa o valor entrar: o status nasce
-// de literais em dispatcher.go, e um Notifier só devolve erro.
+// das constantes de statusNotificacao em dispatcher.go, e um Notifier só devolve erro.
 func TestUnknownOutcomeStatusFailsLoudAndLeavesNotificationAndChannelUntouched(t *testing.T) {
 	for _, tc := range []struct{ nome, status string }{
 		{"erro de grafia", "canceled"},
@@ -890,7 +890,7 @@ func TestUnknownOutcomeStatusFailsLoudAndLeavesNotificationAndChannelUntouched(t
 				t.Fatalf("reivindicar = %v, %v; queria 1 notificação", lote, err)
 			}
 
-			err = b.d.persistir(ctx, lote[0], desfecho{status: tc.status})
+			err = b.d.persistir(ctx, lote[0], desfecho{status: statusNotificacao(tc.status)})
 			if err == nil || !strings.Contains(err.Error(), fmt.Sprintf("%q", tc.status)) {
 				t.Fatalf("persistir = %v; queria erro citando o status %q", err, tc.status)
 			}

@@ -35,7 +35,7 @@ type chaveFn func(*http.Request) (string, bool)
 // GC — não há como cancelá-lo — então a goroutine de limpeza precisaria de
 // um jeito explícito de terminar; amarrar isso ao contexto do servidor faz
 // a goroutine morrer no shutdown gracioso junto com o resto, em vez de
-// vazar para sempre (R32).
+// vazar para sempre.
 func RateLimit(ctx context.Context, clk clock.Clock, perMinute, burst int, px Proxies) func(http.Handler) http.Handler {
 	return rateLimit(ctx, clk, porMinuto(perMinute), burst, porIP(px), maxBuckets)
 }

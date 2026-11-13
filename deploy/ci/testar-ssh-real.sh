@@ -33,7 +33,10 @@ ok() { echo "OK: $*"; }
 for ferramenta in docker ssh-keygen timeout awk cmp sha256sum; do
     command -v "$ferramenta" >/dev/null || falhar "ferramenta ausente: $ferramenta"
 done
-docker build -q -t "$imagem" "$RAIZ/deploy/ci/ssh" >/dev/null
+# Progresso visível: o pull da base e o apt-get são a única rede externa do ensaio, e
+# um build mudo deixava o timeout do passo sem dizer em qual etapa parou.
+echo "construindo $imagem (pull da ubuntu:24.04 e apt-get)"
+docker build --progress=plain -t "$imagem" "$RAIZ/deploy/ci/ssh"
 ssh-keygen -q -t ed25519 -N '' -f "$tmp/cliente"
 ssh-keygen -q -t ed25519 -N '' -f "$tmp/servidor"
 ssh-keygen -q -t ed25519 -N '' -f "$tmp/servidor-incorreto"

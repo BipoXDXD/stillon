@@ -3,13 +3,11 @@ package httpapi
 import (
 	"encoding/json"
 	"errors"
-	"log/slog"
 	"net/http"
 	"time"
 
 	"github.com/BipoXDXD/stillon/internal/apierr"
 	"github.com/BipoXDXD/stillon/internal/notify"
-	"github.com/BipoXDXD/stillon/internal/observability"
 )
 
 type ChannelHandlers struct {
@@ -89,11 +87,7 @@ func (h *ChannelHandlers) Create(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *ChannelHandlers) Delete(w http.ResponseWriter, r *http.Request) {
-	userID, ok := usuario(w, r)
-	if !ok {
-		return
-	}
-	id, ok := pathID(w, r)
+	userID, id, ok := donoEID(w, r)
 	if !ok {
 		return
 	}
@@ -104,20 +98,14 @@ func (h *ChannelHandlers) Delete(w http.ResponseWriter, r *http.Request) {
 }
 
 // SetEnabled é PATCH /channels/{id} com {"enabled": bool}: pausa ou retoma o
-// canal (Plano 9, §3.3) e devolve o canal no formato de um item de GET
-// /channels.
+// canal e devolve o canal no formato de um item de GET /channels.
 //
 // O corpo é estrito como o dos outros PATCH: campo desconhecido é 400 (sem
 // fields, porque o nome do campo vem do cliente e não ecoa: vocabulário
-// fechado, D14 do Plano 2). Sem enabled é required; enabled que não é
-// booleano, null inclusive, é invalid. Um null aceito viraria false e
-// pausaria o canal por engano.
+// fechado). Sem enabled é required; enabled que não é booleano, null inclusive,
+// é invalid. Um null aceito viraria false e pausaria o canal por engano.
 func (h *ChannelHandlers) SetEnabled(w http.ResponseWriter, r *http.Request) {
-	userID, ok := usuario(w, r)
-	if !ok {
-		return
-	}
-	id, ok := pathID(w, r)
+	userID, id, ok := donoEID(w, r)
 	if !ok {
 		return
 	}
@@ -144,11 +132,7 @@ func (h *ChannelHandlers) SetEnabled(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *ChannelHandlers) Resend(w http.ResponseWriter, r *http.Request) {
-	userID, ok := usuario(w, r)
-	if !ok {
-		return
-	}
-	id, ok := pathID(w, r)
+	userID, id, ok := donoEID(w, r)
 	if !ok {
 		return
 	}
@@ -175,8 +159,7 @@ func (h *ChannelHandlers) falhou(w http.ResponseWriter, r *http.Request, op stri
 	case errors.Is(err, notify.ErrDeliveryFailed):
 		apierr.WriteError(w, r, apierr.CodeDeliveryFailed)
 	default:
-		slog.Error(op, "erro", err, "trace_id", observability.TraceID(r.Context()))
-		apierr.WriteError(w, r, apierr.CodeInternal)
+		erroInterno(w, r, op, err)
 	}
 	return true
 }

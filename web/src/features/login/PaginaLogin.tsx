@@ -57,7 +57,7 @@ const esquemaSenha = z.object({
   // O "@" não recusa ninguém: todo e-mail cadastrado tem um.
   email: z.string().trim().min(1, 'Informe o e-mail.').includes('@', { message: 'Informe um e-mail válido.' }),
   // Sem a política de tamanho: ela vale só para senha nova, e o login aceita
-  // a senha antiga mais curta (R5 do Plano 5).
+  // a senha antiga mais curta.
   senha: z.string().min(1, 'Informe a senha.'),
 })
 
@@ -81,7 +81,7 @@ export function PaginaLogin() {
   // o botão que tinha o foco some com o formulário; sem isto o foco cairia no
   // <body>. O formulário da senha remonta (key), e o autoFocus do campo da
   // senha o leva para lá. Na carga da página, não: o primeiro Tab é o "Pular
-  // para o conteúdo" (D20).
+  // para o conteúdo".
   const [voltou, setVoltou] = useState(false)
 
   // De volta ao passo da senha: o desafio fica para trás, e a senha é
@@ -108,7 +108,7 @@ export function PaginaLogin() {
       navegar(destino, { replace: true })
     } catch (e) {
       // O mesmo texto para senha errada, e-mail inexistente e conta
-      // bloqueada: o bloqueio não se anuncia (R34 do Plano 1).
+      // bloqueada: o bloqueio não se anuncia.
       setErro(mensagemDe(e))
       senha.setValue('senha', '')
     }
@@ -126,7 +126,7 @@ export function PaginaLogin() {
         voltarASenha('O tempo para digitar o código acabou. Entre de novo.')
         return
       }
-      // Task 11 do Plano 5: se a senha mudou depois deste desafio, o verify
+      // Se a senha mudou depois deste desafio, o verify
       // responde invalid_credentials como para um código errado — e um
       // código de recuperação pode já ter sido gasto nele.
       setErro(

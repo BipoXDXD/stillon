@@ -5,22 +5,32 @@
 -- name: InsertTarget :exec
 INSERT INTO targets (id, user_id, name, url, method, interval_sec, timeout_ms,
                      expected_status, headers_enc, degraded_threshold_ms, enabled,
-                     next_run_at, created_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13);
+                     next_run_at, created_at, tls_warn, content_mode, content_value,
+                     content_json_pointer)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17);
 
 -- name: GetTarget :one
-SELECT * FROM targets WHERE user_id = $1 AND id = $2;
+SELECT id, user_id, name, url, method, interval_sec, timeout_ms,
+       expected_status, headers_enc, degraded_threshold_ms, enabled, next_run_at,
+       created_at, tls_warn, content_mode, content_value, content_json_pointer
+  FROM targets WHERE user_id = $1 AND id = $2;
 
 -- FOR UPDATE, e não FOR NO KEY UPDATE: a gravação do sondador
 -- (LockTargetProbeSpec, FOR KEY SHARE) precisa esperar o PATCH inteiro para
--- ver a URL nova (E2 da revisão de 2026-10-14).
+-- ver a URL nova.
 -- name: GetTargetForUpdate :one
-SELECT * FROM targets WHERE user_id = $1 AND id = $2 FOR UPDATE;
+SELECT id, user_id, name, url, method, interval_sec, timeout_ms,
+       expected_status, headers_enc, degraded_threshold_ms, enabled, next_run_at,
+       created_at, tls_warn, content_mode, content_value, content_json_pointer
+  FROM targets WHERE user_id = $1 AND id = $2 FOR UPDATE;
 
 -- Paginação por cursor (spec §9.1): o id é UUIDv7, ordenável por tempo, e o
 -- cursor é o último id da página anterior.
 -- name: ListTargets :many
-SELECT * FROM targets
+SELECT id, user_id, name, url, method, interval_sec, timeout_ms,
+       expected_status, headers_enc, degraded_threshold_ms, enabled, next_run_at,
+       created_at, tls_warn, content_mode, content_value, content_json_pointer
+  FROM targets
  WHERE user_id = sqlc.arg(user_id)
    AND (sqlc.narg(before)::uuid IS NULL OR id < sqlc.narg(before)::uuid)
  ORDER BY id DESC
@@ -30,19 +40,45 @@ SELECT * FROM targets
 UPDATE targets
    SET name = $3, url = $4, method = $5, interval_sec = $6, timeout_ms = $7,
        expected_status = $8, headers_enc = $9, degraded_threshold_ms = $10,
-       enabled = $11, next_run_at = $12
+       enabled = $11, next_run_at = $12, tls_warn = $13,
+       content_mode = $14, content_value = $15, content_json_pointer = $16
  WHERE user_id = $1 AND id = $2;
 
--- C4 (Plano 10): trocar a URL ou o método zera a histerese (a linha volta a
--- "sem dados"). last_checked_at fica: é a guarda de check fora de ordem do
--- detector. O EXISTS filtra pelo dono, como o resto deste arquivo, além da
--- RLS de target_health.
+-- Trocar a URL, o método ou a regra de conteúdo zera a
+-- histerese (a linha volta a "sem dados"). last_checked_at fica: é a guarda
+-- de check fora de ordem do detector. O EXISTS filtra pelo dono, como o resto
+-- deste arquivo, além da RLS de target_health.
 -- name: ResetTargetHealth :exec
 UPDATE target_health
    SET consecutive_failures = 0, consecutive_successes = 0, streak_since = NULL
  WHERE target_id = sqlc.arg(target_id)
    AND EXISTS (SELECT 1 FROM targets t
                 WHERE t.id = target_health.target_id AND t.user_id = sqlc.arg(user_id));
+
+-- A validade do certificado (spec §7.2), lida e apagada pelo dono. Como em
+-- ResetTargetHealth, o EXISTS filtra pelo dono além da RLS de target_tls. Só o
+-- sondador grava a linha (prober.sql).
+-- name: GetTargetTLSOfOwner :one
+SELECT tt.not_after, tt.observed_at
+  FROM target_tls tt
+ WHERE tt.target_id = sqlc.arg(target_id)
+   AND EXISTS (SELECT 1 FROM targets t
+                WHERE t.id = tt.target_id AND t.user_id = sqlc.arg(user_id));
+
+-- As validades de todos os alvos do dono numa consulta só: a lista não lê
+-- uma por alvo.
+-- name: ListTargetTLSOfOwner :many
+SELECT tt.target_id, tt.not_after, tt.observed_at
+  FROM target_tls tt
+ WHERE EXISTS (SELECT 1 FROM targets t
+                WHERE t.id = tt.target_id AND t.user_id = sqlc.arg(user_id));
+
+-- Outro host é outro certificado: a leitura do anterior não vale para ele.
+-- name: DeleteTargetTLSOfOwner :exec
+DELETE FROM target_tls tt
+ WHERE tt.target_id = sqlc.arg(target_id)
+   AND EXISTS (SELECT 1 FROM targets t
+                WHERE t.id = tt.target_id AND t.user_id = sqlc.arg(user_id));
 
 -- name: DeleteTarget :execrows
 DELETE FROM targets WHERE user_id = $1 AND id = $2;
@@ -57,7 +93,7 @@ SELECT c.checked_at, c.status, c.latency_ms, c.status_code, c.error_kind
    AND c.checked_at < sqlc.arg(to_at)
  ORDER BY c.checked_at;
 
--- GET /targets/summary (Plano 5). Todas rodam sob InUserTx E filtram por
+-- GET /targets/summary. Todas rodam sob InUserTx E filtram por
 -- user_id, como as de cima.
 
 -- Os alvos do dono na ordem de GET /targets, com o último check e o incidente
@@ -84,7 +120,7 @@ SELECT t.id, t.name, t.enabled, t.interval_sec,
 -- rollups recentes faria o Postgres varrer o índice de bucket da instância
 -- inteira, testando a política linha a linha. Só conta rollup ANTES de before
 -- (a hora corrente): um gravado no futuro por relógio adiantado esconderia as
--- horas ainda não consolidadas (C8, a mesma guarda de
+-- horas ainda não consolidadas (a mesma guarda de
 -- LatestRollupBucketBefore). Sem rollup, a época Unix.
 -- name: LatestUserRollupBucket :one
 SELECT coalesce(max(r.bucket), 'epoch'::timestamptz)::timestamptz
@@ -128,7 +164,7 @@ SELECT c.target_id,
    AND c.checked_at >= sqlc.arg(from_at)::timestamptz
    AND c.checked_at < sqlc.arg(to_at)::timestamptz
  GROUP BY 1, 2
- ORDER BY 1, 2;
+ ORDER BY c.target_id, bucket;
 
 -- A hora corrente entra só no uptime, não no spark: só contagens, sem
 -- percentil.
@@ -168,10 +204,15 @@ SELECT t.id, unnest(sqlc.arg(tags)::text[])
   FROM targets t
  WHERE t.user_id = sqlc.arg(user_id) AND t.id = sqlc.arg(target_id);
 
--- O teto de alvos por usuário (Plano 5): contar e inserir sob esta trava.
+-- O teto de alvos por usuário: contar e inserir sob esta trava.
 -- Sem ela, dois POST simultâneos passariam os dois pela contagem.
 -- name: LockUserTargets :exec
 SELECT pg_advisory_xact_lock(hashtextextended('stillon.targets:' || sqlc.arg(user_id)::uuid::text, 0));
 
 -- name: CountTargets :one
 SELECT count(*) FROM targets WHERE user_id = $1;
+
+-- O teto de regras por host: as URLs dos alvos do dono com regra,
+-- lidas sob LockUserTargets. A chave do host sai em Go (IDNA).
+-- name: ListContentRuleTargetURLs :many
+SELECT id, url FROM targets WHERE user_id = $1 AND content_mode IS NOT NULL;

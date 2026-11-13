@@ -3,7 +3,7 @@ import { Slot } from 'radix-ui'
 import { useLayoutEffect, useRef, type ComponentProps, type RefObject } from 'react'
 import { cn } from '@/lib/utils'
 
-// Pirâmide de botões (DI 4, spec do redesign): uma ação primária sólida por
+// Pirâmide de botões (spec do redesign): uma ação primária sólida por
 // tela, secundárias com contorno, terciárias só em texto. O vermelho sólido
 // (perigo) é só do botão que confirma uma ação destrutiva num diálogo; antes
 // da confirmação, Apagar, Encerrar e Desativar são terciários
@@ -19,7 +19,10 @@ const variantes = cva(
       tipo: {
         primario: 'bg-primaria text-primaria-texto hover:bg-primaria/90',
         secundario: 'border border-borda-controle bg-superficie text-texto hover:bg-painel',
-        terciario: 'text-primaria hover:bg-primaria-100',
+        // Sublinhado (PUI): sem fundo nem borda, é o que diz "isto é clicável".
+        // Com ícone (o "X" de dispensar, um "+") o ícone já diz, e o traço só
+        // pesaria numa ação que é rebaixada de propósito.
+        terciario: 'text-primaria underline underline-offset-4 hover:bg-primaria-100 has-[svg]:no-underline',
         perigo: 'bg-perigo text-perigo-texto hover:bg-perigo/90',
       } satisfies Record<TipoDeBotao, string>,
       tamanho: {
@@ -53,21 +56,25 @@ export const TITULO_DA_TELA: RefObject<HTMLElement | null> = {
   },
 }
 
-// Um botão que some com o próprio clique, ou quando os dados mudam: o foco,
-// que estava nele, iria para o <body>. Se ele tinha o foco, o foco vai à
-// reserva. O efeito de layout roda na desmontagem ANTES de o React tirar o
-// <button> do DOM, com a ref ainda presa a ele. A reserva só é lida depois do
-// commit, porque ela pode nascer nele (o <h1> que vem com os dados).
-export function BotaoQueSome({ reserva, ...props }: PropsDoBotao & { reserva: RefObject<HTMLElement | null> }) {
-  const eu = useRef<HTMLButtonElement>(null)
+// Um elemento que some (com o próprio clique, ou quando os dados mudam) e
+// tinha o foco: sem isto, o foco iria para o <body>. Se ele tinha o foco, o
+// foco vai à reserva. O efeito de layout roda na desmontagem ANTES de o React
+// tirar o elemento do DOM, com a ref ainda presa a ele. A reserva só é lida
+// depois do commit, porque ela pode nascer nele (o <h1> que vem com os dados).
+export function useReservaDeFoco(eu: RefObject<HTMLElement | null>, reserva: RefObject<HTMLElement | null>) {
   useLayoutEffect(() => {
-    const botao = eu.current
+    const elemento = eu.current
     return () => {
       // A reserva é lida depois de propósito: é o elemento que está na tela
       // quando o commit termina.
       // oxlint-disable-next-line react-hooks/exhaustive-deps
-      if (botao && document.activeElement === botao) queueMicrotask(() => reserva.current?.focus())
+      if (elemento && document.activeElement === elemento) queueMicrotask(() => reserva.current?.focus())
     }
-  }, [reserva])
+  }, [eu, reserva])
+}
+
+export function BotaoQueSome({ reserva, ...props }: PropsDoBotao & { reserva: RefObject<HTMLElement | null> }) {
+  const eu = useRef<HTMLButtonElement>(null)
+  useReservaDeFoco(eu, reserva)
   return <Botao ref={eu} {...props} />
 }

@@ -1,4 +1,3 @@
-import { useQueryClient } from '@tanstack/react-query'
 import { CircleCheck } from 'lucide-react'
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { Link, useSearchParams } from 'react-router'
@@ -20,13 +19,13 @@ import { estiloDeCartao } from '@/components/ui/cartao'
 import { ControleSegmentado, type OpcaoSegmentada } from '@/components/ui/controle-segmentado'
 import { estadoDoHeartbeat, textoDoHeartbeat } from '@/features/heartbeats/estado'
 import { useTarefasQuePedemAtencao } from '@/features/heartbeats/tarefas-que-pedem-atencao'
-import { useHeartbeats, useIncidentes, useIncidentesAbertos } from '@/lib/api/consultas'
-import { naoEncontrado } from '@/lib/api/http'
-import { mensagemDe, textoDaCausa } from '@/lib/api/mensagens'
+import { chaves, useHeartbeats, useIncidentes, useIncidentesAbertos } from '@/lib/api/consultas'
+import { textoDaCausa } from '@/lib/api/mensagens'
 import type { Heartbeat, Incidente } from '@/lib/api/schemas'
 import { dataHora } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { agruparIncidentes, destinoDepoisDeCarregar, resumoDosAbertos } from './agrupamento'
+import { useReconhecer } from './reconhecer'
 
 type Filtro = 'open' | 'resolved' | 'all'
 const FILTROS: readonly OpcaoSegmentada<Filtro>[] = [
@@ -90,7 +89,7 @@ function Cartao({
           {textoDaCausa(i.cause)} · {periodoDoIncidente(i, agora)}
         </p>
         {i.acknowledged_at && (
-          // tabIndex -1: o foco vem para cá quando o Reconhecer some (I1).
+          // tabIndex -1: o foco vem para cá quando o Reconhecer some.
           <p id={`ack-${i.id}`} tabIndex={-1} className="text-sm text-suave outline-none">
             Reconhecido em {dataHora(i.acknowledged_at)}
             {situacao === 'reconhecido' && ' · lembretes parados'}
@@ -103,9 +102,7 @@ function Cartao({
           // aria-disabled, e não disabled: o botão desabilitado perderia o
           // foco para o <body> enquanto o POST voa.
           aria-disabled={reconhecendo || undefined}
-          onClick={() => {
-            if (!reconhecendo) aoReconhecer(i.id)
-          }}
+          onClick={() => aoReconhecer(i.id)}
           aria-label={`Reconhecer o incidente de ${i.target_name}`}
           aria-describedby={ID_AJUDA_ACK}
         >
@@ -128,7 +125,7 @@ function Grupo({ titulo, children }: { titulo: string; children: ReactNode }) {
   )
 }
 
-// O vazio dos abertos é o estado bom (auditoria I4): check em círculo verde.
+// O vazio dos abertos é o estado bom: check em círculo verde.
 function Vazio({ filtro, soDosAlvos }: { filtro: Filtro; soDosAlvos: boolean }) {
   if (filtro === 'resolved') return <p className="text-suave">Nenhum incidente resolvido.</p>
   // Com tarefa fora, ou sem saber das tarefas, dizer "nenhum" mentiria.
@@ -147,8 +144,8 @@ function Vazio({ filtro, soDosAlvos }: { filtro: Filtro; soDosAlvos: boolean }) 
   )
 }
 
-// Os incidentes de heartbeat têm rotas próprias (D3 da spec de heartbeats): a
-// lista aponta as tarefas fora, em vez de fingir que não existem (spec da tela, T13).
+// Os incidentes de heartbeat têm rotas próprias: a
+// lista aponta as tarefas fora, em vez de fingir que não existem.
 function TarefasQuePedemAtencao({ tarefas }: { tarefas: readonly Heartbeat[] }) {
   if (tarefas.length === 0) return null
   return (
@@ -178,10 +175,8 @@ export function PaginaIncidentes() {
   const heartbeats = useHeartbeats()
   const tarefas = useTarefasQuePedemAtencao()
   const api = useApi()
-  const qc = useQueryClient()
   const avisar = useAvisar()
   const [erro, setErro] = useState<string | null>(null)
-  const [reconhecendo, setReconhecendo] = useState<ReadonlySet<string>>(new Set())
   // O incidente cujo Reconhecer acabou de ser usado. Se o botão sumiu (o ack
   // valeu), o foco iria ao <body>: vai ao "Reconhecido em" da linha, ou ao
   // título da tela se a linha também saiu da lista.
@@ -195,6 +190,16 @@ export function PaginaIncidentes() {
     if (document.activeElement && document.activeElement !== document.body) return
     const destino = document.getElementById(`ack-${id}`) ?? document.querySelector<HTMLElement>('main h1')
     destino?.focus()
+  })
+
+  const { reconhecendo, reconhecer } = useReconhecer({
+    enviar: api.reconhecer,
+    consulta: chaves.todosOsIncidentes,
+    aoNaoEncontrar: () => avisar('O incidente não existe mais: o alvo foi apagado, talvez em outra aba.'),
+    aoErrar: setErro,
+    aoTerminar: (id) => {
+      focarDepois.current = id
+    },
   })
 
   // O destino do foco depois do "Carregar mais". O efeito roda depois do
@@ -215,28 +220,6 @@ export function PaginaIncidentes() {
     const r = await consulta.fetchNextPage()
     const todos = r.data?.pages.flatMap((pg) => pg.items) ?? []
     setFocarNoIncidente(destinoDepoisDeCarregar(todos, conhecidos, r.hasNextPage))
-  }
-
-  async function reconhecer(id: string) {
-    setErro(null)
-    setReconhecendo((s) => new Set(s).add(id))
-    try {
-      await api.reconhecer(id)
-    } catch (e) {
-      // M3: o incidente sumiu com o alvo, apagado em outra aba. A lista é
-      // relida logo abaixo.
-      if (naoEncontrado(e)) avisar('O incidente não existe mais: o alvo foi apagado, talvez em outra aba.')
-      else setErro(mensagemDe(e))
-    } finally {
-      // Mesmo depois de uma falha: o ack pode ter chegado ao servidor.
-      await qc.invalidateQueries({ queryKey: ['incidents'] })
-      focarDepois.current = id
-      setReconhecendo((s) => {
-        const n = new Set(s)
-        n.delete(id)
-        return n
-      })
-    }
   }
 
   const frase = abertos.data ? resumoDosAbertos(abertos.data.itens, abertos.data.completa) : null
@@ -268,7 +251,7 @@ export function PaginaIncidentes() {
       />
       <ErroDoFormulario>{erro}</ErroDoFormulario>
       {filtro !== 'resolved' && <TarefasQuePedemAtencao tarefas={tarefas} />}
-      {/* D17: um poll ou um "Carregar mais" que falha mantém a lista, com o
+      {/* Um poll ou um "Carregar mais" que falha mantém a lista, com o
           aviso de dados velhos; só sem dados nenhuns o erro toma a tela. */}
       <EstadoDaConsulta consulta={consulta}>
         {(d) => {

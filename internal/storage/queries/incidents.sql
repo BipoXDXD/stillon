@@ -5,9 +5,11 @@
 INSERT INTO target_health (target_id) VALUES ($1) ON CONFLICT DO NOTHING;
 
 -- A trava da linha serializa duas sondas do mesmo alvo gravando ao mesmo
--- tempo (M4 do Plano 2): a segunda lê o estado que a primeira gravou.
+-- tempo: a segunda lê o estado que a primeira gravou.
 -- name: LockTargetHealth :one
-SELECT * FROM target_health WHERE target_id = $1 FOR UPDATE;
+SELECT target_id, consecutive_failures, consecutive_successes, streak_since,
+       last_checked_at
+  FROM target_health WHERE target_id = $1 FOR UPDATE;
 
 -- name: SaveTargetHealth :exec
 UPDATE target_health
@@ -16,7 +18,9 @@ UPDATE target_health
  WHERE target_id = $1;
 
 -- name: GetOpenIncident :one
-SELECT * FROM incidents WHERE target_id = sqlc.arg(target_id)::uuid AND resolved_at IS NULL;
+SELECT id, target_id, started_at, resolved_at, cause, ack_at, open_notified_at,
+       close_notified_at, heartbeat_id, closed_by_resume
+  FROM incidents WHERE target_id = sqlc.arg(target_id)::uuid AND resolved_at IS NULL;
 
 -- name: OpenIncident :exec
 INSERT INTO incidents (id, target_id, started_at, cause)
@@ -52,7 +56,7 @@ VALUES (sqlc.arg(id), sqlc.arg(incident_id), sqlc.arg(channel_id), sqlc.arg(even
           WHERE i.id = sqlc.arg(incident_id)))
 ON CONFLICT (incident_id, channel_id, event, seq) DO NOTHING;
 
--- Reconciliação das métricas (D9/M1 do Plano 2).
+-- Reconciliação das métricas do sondador: quantos incidentes estão abertos.
 -- name: CountOpenIncidents :one
 SELECT count(*) FROM incidents WHERE resolved_at IS NULL;
 
@@ -62,11 +66,11 @@ SELECT id FROM targets WHERE id = ANY(sqlc.arg(ids)::uuid[]);
 -- Histórico (API): rodam sob InUserTx e filtram por user_id, como as de
 -- targets.sql. open NULL lista tudo; true só abertos; false só resolvidos.
 -- target_id NULL lista todos os alvos; um id de alvo alheio não casa com
--- nada e devolve a lista vazia (reconciliação dos Planos 5–7).
+-- nada e devolve a lista vazia.
 -- O id é UUIDv7, gerado quando o incidente abre: ordenar por ele é ordenar
 -- pela abertura, e o cursor é o último id da página anterior.
 -- O JOIN deixa de fora os incidentes de heartbeat, que têm rotas próprias: o
--- painel exige target_id em cada item (D3 da spec de heartbeats). t.id, e não
+-- painel exige target_id em cada item (spec de heartbeats). t.id, e não
 -- i.target_id, porque a coluna agora aceita NULL e a saída aqui nunca é nula.
 -- name: ListIncidents :many
 SELECT i.id, t.id AS target_id, t.name AS target_name, i.started_at, i.resolved_at, i.cause, i.ack_at

@@ -6,9 +6,13 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
+
+	"github.com/BipoXDXD/stillon/internal/targets"
 )
 
-// Um Spec no log mostra os nomes dos headers e nunca os valores (Plano 8),
+// Um Spec no log mostra os nomes dos headers e nunca os valores,
 // nos dois formatos que o projeto usa (JSON em produção, texto em
 // desenvolvimento).
 func TestSpecLogValueHidesHeaderValues(t *testing.T) {
@@ -32,6 +36,30 @@ func TestSpecLogValueHidesHeaderValues(t *testing.T) {
 			if !strings.Contains(saida, quer) {
 				t.Errorf("%s: o log não traz %q: %s", nome, quer, saida)
 			}
+		}
+	}
+}
+
+// A regra aparece no log pelo modo; o valor e o ponteiro são texto do dono e
+// ficam de fora.
+func TestSpecLogValueShowsTheRuleModeOnly(t *testing.T) {
+	canario := "CANARY-" + uuid.NewString()
+	spec := Spec{
+		URL: "https://alvo.example/saude", Method: "GET", Timeout: 5 * time.Second, ExpectedStatus: 200,
+		Content: &RegraDaSonda{Mode: targets.ContentJSONEquals, Value: []byte(canario), Pointer: []string{canario}},
+	}
+	for nome, novo := range map[string]func(*bytes.Buffer) slog.Handler{
+		"json":  func(b *bytes.Buffer) slog.Handler { return slog.NewJSONHandler(b, nil) },
+		"texto": func(b *bytes.Buffer) slog.Handler { return slog.NewTextHandler(b, nil) },
+	} {
+		var buf bytes.Buffer
+		slog.New(novo(&buf)).Info("sonda", "spec", spec)
+		saida := buf.String()
+		if strings.Contains(saida, "CANARY-") {
+			t.Errorf("%s: o valor ou o ponteiro da regra foi para o log: %s", nome, saida)
+		}
+		if !strings.Contains(saida, "content_mode") || !strings.Contains(saida, "json_equals") {
+			t.Errorf("%s: o log não traz content_mode=json_equals: %s", nome, saida)
 		}
 	}
 }

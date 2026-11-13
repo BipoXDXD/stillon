@@ -4,7 +4,7 @@ import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
 import { textoDoErroDeCanal } from './mensagens'
-import { Canal } from './schemas'
+import { Canal, TiposConhecidosDeCanal } from './schemas'
 
 // O JSON real de channelResponse, escrito e conferido pelo teste Go
 // TestChannelResponseKeepsThePanelContract
@@ -57,7 +57,8 @@ describe('o schema Canal aceita o que a API devolve', () => {
     const valores = <T>(de: (c: Canal) => T) => new Set(canais.map(de))
     const ambos = new Set([true, false])
 
-    expect(valores((c) => c.kind)).toEqual(new Set(Canal.shape.kind.options))
+    // Só os tipos conhecidos: 'desconhecido' é do painel, e o Go nunca o envia.
+    expect(valores((c) => c.kind)).toEqual(new Set(TiposConhecidosDeCanal.options))
     expect(valores((c) => c.status)).toEqual(new Set(Canal.shape.status.options))
     expect(valores((c) => c.enabled)).toEqual(ambos)
     expect(valores((c) => c.last_error === null)).toEqual(ambos)

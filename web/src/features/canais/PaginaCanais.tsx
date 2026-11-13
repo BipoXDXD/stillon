@@ -13,14 +13,37 @@ import { Botao, BotaoQueSome, TITULO_DA_TELA } from '@/components/ui/botao'
 import { Campo, Entrada, ErroDoFormulario, Opcao } from '@/components/ui/campo'
 import { estiloDeCartao } from '@/components/ui/cartao'
 import { Confirmar, Dialogo } from '@/components/ui/dialogo'
-import { useCanais } from '@/lib/api/consultas'
+import { chaves, useCanais } from '@/lib/api/consultas'
 import { ApiError } from '@/lib/api/http'
 import { mensagemDe, mensagemDoCampo, textoDoErroDeCanal } from '@/lib/api/mensagens'
 import type { Canal } from '@/lib/api/schemas'
 import { dataHora } from '@/lib/format'
-import { cn } from '@/lib/utils'
+import { assertUnreachable, cn } from '@/lib/utils'
 
-// Estado da verificação com forma, cor e texto (auditoria C2, S9).
+// 'desconhecido' é um tipo que uma versão posterior do servidor criou: a linha
+// aparece, sem as ações que só fazem sentido para um tipo conhecido.
+function rotuloDoTipo(kind: Canal['kind']): string {
+  switch (kind) {
+    case 'discord':
+      return 'Discord'
+    case 'email':
+      return 'E-mail'
+    case 'desconhecido':
+      return 'Outro tipo'
+    default:
+      return assertUnreachable(kind)
+  }
+}
+
+// O nome do canal nas linhas, nos botões, no diálogo e nos avisos. Sem hint (o
+// servidor não sabe ler o destino de um tipo que não conhece, ou o destino
+// ficou ilegível), a data de criação distingue as linhas: com dois canais
+// assim, o dono precisa saber qual está apagando.
+function nomeDoCanal(c: Canal): string {
+  return c.hint.trim() === '' ? `criado em ${dataHora(c.created_at)}` : c.hint
+}
+
+// Estado da verificação com forma, cor e texto.
 const estados: Record<Canal['status'], { texto: string; Icone: LucideIcon; tom: TomDoSelo }> = {
   verified: { texto: 'Verificado', Icone: CircleCheck, tom: 'no-ar' },
   pending: { texto: 'Aguardando verificação', Icone: Clock, tom: 'degradado' },
@@ -28,7 +51,7 @@ const estados: Record<Canal['status'], { texto: string; Icone: LucideIcon; tom: 
   failing: { texto: 'Falhando', Icone: CircleX, tom: 'fora' },
 }
 
-// Canal pausado (auditoria C3): o que importa é que os avisos são
+// Canal pausado: o que importa é que os avisos são
 // descartados, então "Pausado" é o selo, em âmbar (o alvo pausado do painel
 // é cinza: pausar um alvo não perde nada). A verificação continua, rebaixada
 // a texto apagado.
@@ -95,7 +118,9 @@ function NovoCanal({ aoCriar }: { aoCriar: (c: Canal) => void }) {
   })
   const [erro, setErro] = useState<string | null>(null)
   const tipo = useWatch({ control: f.control, name: 'kind' })
-  const erros = f.formState.errors as Partial<Record<'url' | 'email', { message?: string }>>
+  // getFieldState, e não formState.errors: o tipo do erro de uma união não tem
+  // `url` nem `email` em comum, e a leitura por nome já vem tipada.
+  const erroDe = (campo: 'url' | 'email') => f.getFieldState(campo, f.formState).error?.message
 
   async function enviar(v: Valores) {
     setErro(null)
@@ -129,13 +154,13 @@ function NovoCanal({ aoCriar }: { aoCriar: (c: Canal) => void }) {
         <Campo
           key="discord"
           rotulo="URL do webhook"
-          erro={erros.url?.message}
+          erro={erroDe('url')}
           ajuda="Mandamos uma mensagem de teste agora. Webhook de canal de fórum não é aceito."
         >
           {(a) => <Entrada {...a} type="url" {...f.register('url')} />}
         </Campo>
       ) : (
-        <Campo key="email" rotulo="E-mail" erro={erros.email?.message} ajuda="Mandamos um link de verificação, válido por 24 horas.">
+        <Campo key="email" rotulo="E-mail" erro={erroDe('email')} ajuda="Mandamos um link de verificação, válido por 24 horas.">
           {(a) => <Entrada {...a} type="email" {...f.register('email')} />}
         </Campo>
       )}
@@ -154,21 +179,21 @@ export function PaginaCanais() {
   const [criando, setCriando] = useState(false)
   const [apagar, setApagar] = useState<Canal | null>(null)
   const [erro, setErro] = useState<string | null>(null)
-  // Um POST de reenvio por canal de cada vez (E8 da revisão de 2026-10-14):
+  // Um POST de reenvio por canal de cada vez:
   // a ref segura a reentrada no mesmo tique, e o estado desabilita o botão,
   // como no pausar. Um DELETE por vez: sem DELETE em dobro.
   const reenvioEmVoo = useRef(new Set<string>())
   const [reenviando, setReenviando] = useState<ReadonlySet<string>>(new Set())
   const [apagando, setApagando] = useState(false)
-  // Pausar pede confirmação (spec do Plano 9 §4.1): os avisos da pausa são
-  // descartados. Um PATCH por canal de cada vez (E4 do Plano 10): o de um
+  // Pausar pede confirmação: os avisos da pausa são
+  // descartados. Um PATCH por canal de cada vez: o de um
   // canal não segura o de outro. A ref segura a reentrada no mesmo tique; o
   // estado alimenta o aria-disabled e o ocupado do Confirmar.
   const [pausar, setPausar] = useState<Canal | null>(null)
   const emVoo = useRef(new Set<string>())
   const [alternando, setAlternando] = useState<ReadonlySet<string>>(new Set())
 
-  const recarregar = () => qc.invalidateQueries({ queryKey: ['channels'] })
+  const recarregar = () => qc.invalidateQueries({ queryKey: chaves.canais })
 
   // O canal mudou em outra aba: a lista na tela está velha.
   async function listaVelha(e: unknown): Promise<boolean> {
@@ -203,7 +228,7 @@ export function PaginaCanais() {
   }
 
   // Pausa (enabled false) ou retoma (true). O despacho cancela os avisos de
-  // canal pausado na hora do envio (semEnvio, Plano 3): retomar não reenvia
+  // canal pausado na hora do envio (semEnvio): retomar não reenvia
   // o que passou.
   async function alternar(c: Canal) {
     if (emVoo.current.has(c.id)) return
@@ -215,16 +240,16 @@ export function PaginaCanais() {
       await api.pausarCanal(c.id, enabled)
       await recarregar()
       // Com dois canais mudando juntos, o aviso diz qual.
-      avisar(`Canal ${c.hint} ${enabled ? 'retomado' : 'pausado'}.`)
+      avisar(`Canal ${nomeDoCanal(c)} ${enabled ? 'retomado' : 'pausado'}.`)
     } catch (e) {
       if (!(await listaVelha(e))) {
-        setErro(`Não foi possível ${enabled ? 'retomar' : 'pausar'} o canal ${c.hint}. ${mensagemDe(e)}`)
+        setErro(`Não foi possível ${enabled ? 'retomar' : 'pausar'} o canal ${nomeDoCanal(c)}. ${mensagemDe(e)}`)
       }
     } finally {
       emVoo.current.delete(c.id)
       setAlternando(new Set(emVoo.current))
       // Só o Confirmar DESTE canal fecha: com um Retomar em voo, o Pausar de
-      // outro canal pode ter sido aberto no meio (revisão final do Plano 9).
+      // outro canal pode ter sido aberto no meio.
       setPausar((p) => (p?.id === c.id ? null : p))
     }
   }
@@ -276,7 +301,7 @@ export function PaginaCanais() {
                 <li key={c.id} className={cn(estiloDeCartao, 'flex flex-wrap items-center justify-between gap-4')}>
                   <div className="min-w-0 space-y-2 break-words">
                     <p className="font-semibold">
-                      {c.kind === 'discord' ? 'Discord' : 'E-mail'} <span className="font-normal text-suave">{c.hint}</span>
+                      {rotuloDoTipo(c.kind)} <span className="font-normal text-suave">{nomeDoCanal(c)}</span>
                     </p>
                     <EstadoDoCanal canal={c} />
                     {c.last_error && c.last_failure_at && (
@@ -287,13 +312,13 @@ export function PaginaCanais() {
                     )}
                   </div>
                   <div className="flex flex-wrap gap-2">
-                    {(c.status === 'pending' || c.status === 'expired') && (
+                    {c.kind !== 'desconhecido' && (c.status === 'pending' || c.status === 'expired') && (
                       <Botao
                         tipo="secundario"
                         tamanho="pequeno"
                         disabled={reenviando.has(c.id)}
                         onClick={() => void reenviar(c)}
-                        aria-label={`Reenviar verificação do canal ${c.hint}`}
+                        aria-label={`Reenviar verificação do canal ${nomeDoCanal(c)}`}
                       >
                         Reenviar verificação
                       </Botao>
@@ -312,7 +337,7 @@ export function PaginaCanais() {
                         if (c.enabled) setPausar(c)
                         else void alternar(c)
                       }}
-                      aria-label={`${c.enabled ? 'Pausar' : 'Retomar'} o canal ${c.hint}`}
+                      aria-label={`${c.enabled ? 'Pausar' : 'Retomar'} o canal ${nomeDoCanal(c)}`}
                     >
                       {c.enabled ? 'Pausar' : 'Retomar'}
                     </Botao>
@@ -320,7 +345,7 @@ export function PaginaCanais() {
                       tipo="terciario"
                       tamanho="pequeno"
                       onClick={() => setApagar(c)}
-                      aria-label={`Apagar o canal ${c.hint}`}
+                      aria-label={`Apagar o canal ${nomeDoCanal(c)}`}
                     >
                       Apagar
                     </Botao>
@@ -353,7 +378,7 @@ export function PaginaCanais() {
         aberto={apagar !== null}
         aoMudar={(v) => !v && setApagar(null)}
         titulo="Apagar o canal?"
-        descricao={`O canal ${apagar?.hint ?? ''} deixa de receber os alertas.`}
+        descricao={apagar ? `O canal ${nomeDoCanal(apagar)} deixa de receber os alertas.` : ''}
         acao="Apagar canal"
         ocupado={apagando}
         aoConfirmar={() => void confirmarApagar()}

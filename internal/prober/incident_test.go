@@ -209,7 +209,7 @@ func TestOnlyDownCountsAsFailure(t *testing.T) {
 	}
 }
 
-// M4 do Plano 2, pelo caminho de gravação: duas sondas do mesmo alvo em voo
+// Pelo caminho de gravação: duas sondas do mesmo alvo em voo
 // gravam fora de ordem. O sucesso velho fica no histórico de checks, mas não
 // zera a sequência de falhas mais nova.
 func TestOutOfOrderCheckDoesNotResetTheFailureStreak(t *testing.T) {
@@ -261,7 +261,7 @@ func TestLongGapRestartsTheHysteresis(t *testing.T) {
 
 // A borda da lacuna (on/off point): três intervalos exatos ainda somam as
 // sequências; um segundo a mais recomeça a histerese. Trocar <= por < na
-// regra, ou o fator 3 por 2 ou 4, quebra um dos dois casos.
+// regra, ou targetstate.StaleIntervals de 3 para 2 ou 4, quebra um dos dois casos.
 func TestGapBoundaryOfTheHysteresis(t *testing.T) {
 	ultimo := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
 	antes := incident.State{ConsecutiveFailures: 2, StreakSince: ultimo, LastCheckedAt: ultimo}
@@ -309,7 +309,7 @@ func TestDegradedChecksResolveTheIncident(t *testing.T) {
 	}
 }
 
-// C6 da revisão: 42501 e 23503 viravam sempre "o alvo foi apagado", sem log.
+// Os códigos 42501 e 23503 viravam sempre "o alvo foi apagado", sem log.
 // Mas a transação que abre o incidente também enfileira os avisos, e o
 // INSERT em notifications gera os mesmos códigos (canal apagado em corrida,
 // GRANT ou RLS que regrediu). O rollback levava check, histerese e

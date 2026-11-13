@@ -21,7 +21,7 @@ const TRACO_DO_P95 = '4 3'
 
 // Recharts, só aqui: este arquivo entra no chunk do detalhe, carregado sob
 // demanda. As cores são variáveis CSS do index.css, e não um <style> gerado
-// em runtime, que a CSP bloquearia sem nonce (spike do Plano 6, §8.1).
+// em runtime, que a CSP bloquearia sem nonce.
 //
 // O desenho da spec do redesign (Telas > 2): a linha da mediana em índigo, a
 // faixa p50–p95 em primária 100, o "fora do ar" hachurado (forma + cor), as
@@ -159,7 +159,7 @@ function ConteudoDoTooltip({ pontos, label }: { pontos: readonly (PontoBruto | P
   const ponto = pontos.find((p) => p.t === Number(label))
   if (ponto === undefined) return null
   return (
-    <div className="min-w-44 space-y-1 rounded-padrao border border-borda bg-superficie p-3 text-sm sombra-nivel-2">
+    <div className="min-w-44 space-y-1 rounded-padrao border border-borda bg-superficie-elevada p-3 text-sm sombra-nivel-2">
       <p className="text-meta text-suave">{dataHora(new Date(ponto.t).toISOString())}</p>
       {'p50' in ponto ? (
         <>

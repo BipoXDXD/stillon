@@ -107,8 +107,8 @@ func TestDiscordChannelFlow(t *testing.T) {
 	}
 }
 
-// Pendência do Plano 3: o canal que falhou de vez aparece como failing, com
-// o motivo e a hora; antes da falha, os dois campos são null.
+// O canal que falhou de vez aparece como failing, com o motivo e a hora; antes
+// da falha, os dois campos são null.
 func TestFailingChannelShowsTheLastError(t *testing.T) {
 	a := newAPI(t)
 	ctx := context.Background()

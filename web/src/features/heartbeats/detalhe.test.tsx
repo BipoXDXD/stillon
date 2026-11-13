@@ -1,7 +1,10 @@
-import { screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
+import { http, HttpResponse } from 'msw'
 import { describe, expect, it } from 'vitest'
+import { PING_URL } from '@/test/api-falsa'
 import { eventoDeHeartbeat, heartbeat, incidente, incidenteDeHeartbeat } from '@/test/fixtures'
 import { renderizarPainel } from '@/test/renderizar'
+import { servidor } from '@/test/setup'
 import { tempoDeExecucao } from './estado'
 
 type ComListas = {
@@ -205,6 +208,55 @@ describe('incidentes do heartbeat', () => {
     expect(within(s).getByRole('button', { name: /^Reconhecer o incidente/ })).toBeInTheDocument()
   })
 
+  // O ack pode ter chegado ao servidor mesmo com a resposta perdida: o
+  // histórico é relido depois da falha. Sabotagem: invalidar só quando o ack
+  // deu certo → nenhum GET a mais.
+  it('um ack que falha relê o histórico, porque o ack pode ter chegado', async () => {
+    const r = await detalheCom({ incidentes: [{ id: 'i1' }] })
+    r.falsa.estado.forcar.set('POST /heartbeats/:id/incidents/:incident/ack', { status: 500, code: 'internal_error' })
+    const s = await secao('Incidentes')
+    const botao = await within(s).findByRole('button', { name: /^Reconhecer o incidente/ })
+    const antes = r.falsa.chamadas('GET /heartbeats/:id/incidents')
+    await r.usuario.click(botao)
+    await screen.findByRole('alert')
+    await waitFor(() => expect(r.falsa.chamadas('GET /heartbeats/:id/incidents')).toBeGreaterThan(antes))
+  })
+
+  // aria-disabled não bloqueia o clique: a guarda é do próprio reconhecer.
+  // Sabotagem: tirar a guarda de reentrância → dois POSTs.
+  it('um segundo clique enquanto o ack voa não manda outro POST', async () => {
+    const r = await detalheCom({ incidentes: [{ id: 'i1' }] })
+    let soltar!: () => void
+    const segurado = new Promise<void>((ok) => (soltar = ok))
+    servidor.use(
+      http.post('*/api/v1/heartbeats/:id/incidents/:incident/ack', async () => {
+        await segurado
+      }),
+    )
+    const s = await secao('Incidentes')
+    const botao = await within(s).findByRole('button', { name: /^Reconhecer o incidente/ })
+    await r.usuario.click(botao)
+    await waitFor(() => expect(botao).toHaveAttribute('aria-disabled', 'true'))
+    await r.usuario.click(botao)
+    soltar()
+    await within(s).findByText(/lembretes parados/)
+    expect(r.falsa.chamadas('POST /heartbeats/:id/incidents/:incident/ack')).toBe(1)
+  })
+
+  // Dois cliques antes de o React redesenhar: a guarda não pode depender do
+  // valor do último render.
+  it('dois cliques no mesmo ciclo de render mandam um só POST de ack', async () => {
+    const r = await detalheCom({ incidentes: [{ id: 'i1' }] })
+    const s = await secao('Incidentes')
+    const botao = await within(s).findByRole('button', { name: /^Reconhecer o incidente/ })
+    act(() => {
+      fireEvent.click(botao)
+      fireEvent.click(botao)
+    })
+    await within(s).findByText(/lembretes parados/)
+    expect(r.falsa.chamadas('POST /heartbeats/:id/incidents/:incident/ack')).toBe(1)
+  })
+
   it('heartbeat apagado em outra aba: reconhecer volta ao painel', async () => {
     const r = await detalheCom({ incidentes: [{ id: 'i1' }] })
     const s = await secao('Incidentes')
@@ -279,6 +331,24 @@ describe('tela de incidentes e contador', () => {
     expect(screen.queryByRole('region', { name: 'Tarefas que pedem atenção' })).not.toBeInTheDocument()
   })
 
+  // Sabotagem: deixar log como "Outro sinal", ou tirar a origem e a execução da linha.
+  it('o registro tem selo próprio, e a linha diz a execução e o que veio do painel', async () => {
+    await detalheCom({
+      eventos: [
+        { id: 'e1', kind: 'log', run_id: '0b3f6c2e-9a1d-4e7f-8c55-1234567890ab' },
+        { id: 'e2', kind: 'success', source: 'panel' },
+      ],
+    })
+    const linhas = await within(await secao('Log de eventos')).findAllByRole('listitem')
+    expect(linhas.map((l) => within(l).getByText(/^(Registro|Sucesso)$/).textContent)).toEqual(['Registro', 'Sucesso'])
+    const [registro, sucesso] = linhas
+    if (registro === undefined || sucesso === undefined) throw new Error('o log não tem as duas linhas')
+    expect(within(registro).getByText('execução 0b3f6c2e')).toBeInTheDocument()
+    expect(registro).not.toHaveTextContent('pelo painel')
+    expect(within(sucesso).getByText('pelo painel')).toBeInTheDocument()
+    expect(sucesso).not.toHaveTextContent('execução')
+  })
+
   // Sabotagem: contar só /incidents → a aba não diz nada.
   it('o contador da aba soma alvos e heartbeats', async () => {
     const r = await renderizarPainel('/')
@@ -286,5 +356,305 @@ describe('tela de incidentes e contador', () => {
     r.falsa.estado.heartbeats = [atrasado]
     await r.cliente.refetchQueries()
     expect(await screen.findByRole('link', { name: 'Incidentes, 2 abertos' })).toBeInTheDocument()
+  })
+})
+
+describe('em tolerância no detalhe', () => {
+  // Sabotagens: tirar o ramo grace do fraseDoEstado → a frase some; tirar o
+  // ramo grace do Prazo → "Próximo prazo" com a hora do alarme.
+  it('mostra o selo, a hora do alarme e nenhuma palavra de alerta', async () => {
+    await detalheCom({ state: 'grace', deadline_at: '2099-01-01T12:00:00Z' })
+    expect(screen.getByText('Em tolerância')).toBeInTheDocument()
+    const s = await secao('Agendamento e sinais')
+    expect(within(s).getByText(/^Sem sinal desde o prazo esperado; o alarme sai às 01\/01\/2099,? \d{2}:\d{2}\.$/)).toBeInTheDocument()
+    expect(within(s).getByText('Alarme').nextElementSibling).toHaveTextContent(/^01\/01\/2099,? \d{2}:\d{2}$/)
+    expect(within(s).queryByText(/Próximo prazo|Prazo vencido/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Atrasado|Falhando|Fora do ar|Estado desconhecido/)).not.toBeInTheDocument()
+  })
+})
+
+// Segura uma rota da API falsa até soltar: o que a tela mostra no intervalo.
+function portao() {
+  let soltar = () => {}
+  const aberto = new Promise<void>((resolve) => {
+    soltar = resolve
+  })
+  return { aberto, soltar }
+}
+
+describe('sinalizar agora', () => {
+  const AVISO = 'Sinal de sucesso enviado.'
+  const avisou = async () => expect((await screen.findAllByText(AVISO)).length).toBeGreaterThan(0)
+
+  // Sabotagem: não invalidar os eventos → o log fica em "Nenhum sinal recebido.".
+  it('chama a rota, avisa e o log mostra o sinal do painel', async () => {
+    const r = await detalheCom()
+    const s = await secao('Log de eventos')
+    await within(s).findByText('Nenhum sinal recebido.')
+    await r.usuario.click(screen.getByRole('button', { name: 'Sinalizar agora' }))
+    await avisou()
+    expect(r.falsa.chamadas('POST /heartbeats/:id/ping-now')).toBe(1)
+    const linha = await within(s).findByRole('listitem')
+    expect(within(linha).getByText('Sucesso')).toBeInTheDocument()
+    expect(within(linha).getByText('pelo painel')).toBeInTheDocument()
+  })
+
+  // Atraso só por prazo: a rota devolve "Em dia", e entre o clique e o refetch
+  // a tela não volta a dizer "Atrasado". Sabotagem: tirar o setQueryData.
+  it('atraso por prazo: mostra o estado devolvido pela rota antes do refetch', async () => {
+    const r = await detalheCom({ state: 'late', open_incident_id: null, deadline_at: '2026-09-24T11:00:00Z' })
+    expect(screen.getByText('Atrasado')).toBeInTheDocument()
+    const p = portao()
+    servidor.use(
+      http.get('*/api/v1/heartbeats/h1', async () => {
+        await p.aberto
+        return undefined
+      }),
+    )
+    await r.usuario.click(screen.getByRole('button', { name: 'Sinalizar agora' }))
+    await avisou()
+    expect(screen.queryByText('Atrasado')).not.toBeInTheDocument()
+    expect(screen.getByText('Em dia')).toBeInTheDocument()
+    p.soltar()
+    await waitFor(() => expect(r.cliente.isFetching()).toBe(0))
+    expect(screen.queryByText('Atrasado')).not.toBeInTheDocument()
+  })
+
+  // O sinal não fecha o incidente (statusOf do servidor: incidente aberto é
+  // late). Sabotagem: a API falsa zerar o open_incident_id → "Em dia".
+  it('com incidente aberto, o sinal registra e a tarefa continua Atrasado', async () => {
+    const r = await detalheCom({ state: 'late', open_incident_id: 'i1', deadline_at: '2026-09-24T11:00:00Z' })
+    await r.usuario.click(screen.getByRole('button', { name: 'Sinalizar agora' }))
+    await avisou()
+    await waitFor(() => expect(r.cliente.isFetching()).toBe(0))
+    expect(screen.getByText('Atrasado')).toBeInTheDocument()
+    expect(screen.queryByText('Em dia')).not.toBeInTheDocument()
+  })
+
+  // Sabotagem: tirar a guarda do ocupado → dois sinais.
+  it('fica ocupado enquanto a rota responde, sem duplo clique', async () => {
+    const r = await detalheCom()
+    const p = portao()
+    servidor.use(
+      http.post('*/api/v1/heartbeats/h1/ping-now', async () => {
+        await p.aberto
+        return undefined
+      }),
+    )
+    const botao = screen.getByRole('button', { name: 'Sinalizar agora' })
+    await r.usuario.click(botao)
+    expect(botao).toHaveAttribute('aria-disabled', 'true')
+    await r.usuario.click(botao)
+    p.soltar()
+    await avisou()
+    expect(r.falsa.chamadas('POST /heartbeats/:id/ping-now')).toBe(1)
+    await waitFor(() => expect(botao).not.toHaveAttribute('aria-disabled'))
+  })
+
+  it('erro fica na tela, e o heartbeat também', async () => {
+    const r = await detalheCom()
+    r.falsa.estado.forcar.set('POST /heartbeats/:id/ping-now', { status: 500, code: 'internal_error' })
+    await r.usuario.click(screen.getByRole('button', { name: 'Sinalizar agora' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('Erro interno do servidor.')
+    expect(screen.queryByText(AVISO)).not.toBeInTheDocument()
+    expect(screen.getByRole('heading', { level: 1, name: 'Backup' })).toBeInTheDocument()
+  })
+})
+
+// Dados de uma versão posterior do servidor (SP1, piso de rollback): o painel
+// antigo mostra a linha, sem quebrar o parse e sem oferecer edição.
+describe('heartbeat de versão posterior', () => {
+  // Sabotagem: tirar o ramo unknown do Agendamento → o detalhe não carrega.
+  it('agendamento desconhecido: diz que não é suportado e não oferece Editar', async () => {
+    await detalheCom({ schedule: { kind: 'unknown' } })
+    const s = await secao('Agendamento e sinais')
+    expect(within(s).getByText('Agendamento').nextElementSibling).toHaveTextContent('Agendamento não suportado nesta versão')
+    expect(screen.queryByRole('link', { name: 'Editar' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Apagar' })).toBeInTheDocument()
+  })
+
+  // O clone de um agendamento desconhecido é 409 schedule_unsupported.
+  // Sabotagem: o botão fora da condição.
+  it('agendamento desconhecido não oferece Duplicar', async () => {
+    await detalheCom({ schedule: { kind: 'unknown' } })
+    expect(screen.queryByRole('button', { name: 'Duplicar' })).not.toBeInTheDocument()
+  })
+
+  it('agendamento conhecido oferece Duplicar', async () => {
+    await detalheCom()
+    expect(screen.getByRole('button', { name: 'Duplicar' })).toBeInTheDocument()
+  })
+
+  it('agendamento conhecido continua com Editar', async () => {
+    await detalheCom()
+    expect(screen.getByRole('link', { name: 'Editar' })).toHaveAttribute('href', '/heartbeats/h1/edit')
+  })
+
+  it('a rota de edição de um agendamento desconhecido não monta o formulário', async () => {
+    const r = await renderizarPainel('/')
+    r.falsa.estado.heartbeats = [heartbeat({ id: 'h1', name: 'Backup', schedule: { kind: 'unknown' } })]
+    await r.router.navigate('/heartbeats/h1/edit')
+    expect(await screen.findByText('Agendamento não suportado nesta versão.')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Salvar' })).not.toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Voltar ao heartbeat' })).toHaveAttribute('href', '/heartbeats/h1')
+  })
+
+  // Sabotagem: tirar o 'unknown' de EventoDeHeartbeat.kind → o log inteiro vira erro.
+  it('evento de tipo novo aparece como "Outro sinal" e não derruba o log', async () => {
+    await detalheCom({
+      eventos: [
+        { id: 'e1', kind: 'futuro' },
+        { id: 'e2', kind: 'success' },
+      ],
+    })
+    const linhas = await within(await secao('Log de eventos')).findAllByRole('listitem')
+    expect(linhas.map((l) => within(l).getByText(/^(Outro sinal|Sucesso)$/).textContent)).toEqual(['Outro sinal', 'Sucesso'])
+  })
+
+  // Sabotagem: tirar o 'unknown' de EstadoDoHeartbeat → o detalhe vira erro.
+  it('estado novo aparece como "Estado desconhecido", sem palavra de alerta', async () => {
+    await detalheCom({ state: 'futuro' })
+    expect(screen.getByText('Estado desconhecido')).toBeInTheDocument()
+    expect(screen.queryByText(/Atrasado|Falhando|Fora do ar/)).not.toBeInTheDocument()
+  })
+
+  // Todo PATCH nessa linha é 409 schedule_unsupported: pausar e retomar
+  // falhariam sempre. Sabotagem: o botão fora da condição.
+  it.each([
+    ['ativo', { enabled: true, state: 'up' }],
+    ['pausado', { enabled: false, state: 'paused' }],
+  ] as const)('agendamento desconhecido %s não oferece Pausar nem Retomar', async (_, p) => {
+    await detalheCom({ schedule: { kind: 'unknown' }, ...p })
+    expect(screen.queryByRole('button', { name: 'Pausar' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Retomar' })).not.toBeInTheDocument()
+  })
+
+  it('agendamento desconhecido ainda pode ser apagado', async () => {
+    const r = await detalheCom({ schedule: { kind: 'unknown' } })
+    await r.usuario.click(screen.getByRole('button', { name: 'Apagar' }))
+    await r.usuario.click(await screen.findByRole('button', { name: 'Apagar heartbeat' }))
+    await waitFor(() => expect(r.router.state.location.pathname).toBe('/'))
+    expect(r.falsa.chamadas('DELETE /heartbeats/:id')).toBe(1)
+    expect(r.falsa.estado.heartbeats).toEqual([])
+  })
+
+  // O servidor não move o prazo dessa linha: a data guardada mentiria.
+  // Sabotagem: tirar o ramo unknown do Prazo → "Próximo prazo" com a data.
+  it('agendamento desconhecido não afirma prazo', async () => {
+    await detalheCom({ schedule: { kind: 'unknown' }, deadline_at: '2099-01-01T12:00:00Z' })
+    const s = await secao('Agendamento e sinais')
+    expect(within(s).getByText('Prazo').nextElementSibling).toHaveTextContent('Prazo não acompanhado nesta versão')
+    expect(within(s).queryByText(/Próximo prazo|Prazo vencido/)).not.toBeInTheDocument()
+  })
+
+  // Sabotagem: tirar o ramo unknown do fraseDoEstado → ", até <data>" volta.
+  it('agendamento desconhecido esperando não promete data', async () => {
+    await detalheCom({ schedule: { kind: 'unknown' }, state: 'waiting', last_ping_at: null, deadline_at: '2099-01-01T12:00:00Z' })
+    const s = await secao('Agendamento e sinais')
+    expect(within(s).getByText('Aguardando o primeiro sinal.')).toBeInTheDocument()
+    expect(within(s).queryByText(/Aguardando o primeiro sinal, até /)).not.toBeInTheDocument()
+  })
+})
+
+describe('duplicar', () => {
+  const dialogoDaUrl = () => screen.findByRole('dialog', { name: 'Guarde a URL de ping' })
+
+  // Sabotagem: navegar antes do "Já guardei" → a URL da cópia some sem ser vista.
+  it('chama a rota, mostra a URL da cópia uma vez, e "Já guardei" leva à cópia', async () => {
+    const r = await detalheCom()
+    await r.usuario.click(screen.getByRole('button', { name: 'Duplicar' }))
+    const d = await dialogoDaUrl()
+    expect(within(d).getByText(`${PING_URL}-copia`)).toBeInTheDocument()
+    expect(r.falsa.chamadas('POST /heartbeats/:id/clone')).toBe(1)
+    expect(r.router.state.location.pathname).toBe('/heartbeats/h1')
+    await r.usuario.click(within(d).getByRole('button', { name: 'Já guardei' }))
+    await waitFor(() => expect(r.router.state.location.pathname).toBe('/heartbeats/hb-2'))
+    expect(await screen.findByRole('heading', { level: 1, name: 'Backup (cópia)' })).toBeInTheDocument()
+    expect((await screen.findAllByText('Cópia criada.')).length).toBeGreaterThan(0)
+    expect(screen.queryByText(`${PING_URL}-copia`)).not.toBeInTheDocument()
+  })
+
+  it('no limite de heartbeats, o aviso fica na tela e o botão volta', async () => {
+    const r = await detalheCom()
+    r.falsa.estado.forcar.set('POST /heartbeats/:id/clone', { status: 409, code: 'heartbeat_limit_reached' })
+    await r.usuario.click(screen.getByRole('button', { name: 'Duplicar' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('Limite de 100 heartbeats atingido.')
+    expect(screen.getByRole('button', { name: 'Duplicar' })).not.toHaveAttribute('aria-disabled')
+    expect(screen.queryByRole('dialog', { name: 'Guarde a URL de ping' })).not.toBeInTheDocument()
+    expect(r.router.state.location.pathname).toBe('/heartbeats/h1')
+  })
+
+  // Sabotagem: tirar o `if (ocupado) return` do executar → duas cópias.
+  it('ocupado, o segundo clique não envia de novo', async () => {
+    const r = await detalheCom()
+    let pedidos = 0
+    let soltar = () => {}
+    const resposta = new Promise<void>((resolve) => {
+      soltar = resolve
+    })
+    servidor.use(
+      http.post('*/api/v1/heartbeats/h1/clone', async () => {
+        pedidos += 1
+        await resposta
+        return HttpResponse.json(
+          { ...heartbeat({ id: 'hb-9', name: 'Backup (cópia)' }), ping_url: `${PING_URL}-copia` },
+          { status: 201 },
+        )
+      }),
+    )
+    const botao = screen.getByRole('button', { name: 'Duplicar' })
+    await r.usuario.click(botao)
+    await waitFor(() => expect(botao).toHaveAttribute('aria-disabled', 'true'))
+    await r.usuario.click(botao)
+    soltar()
+    await dialogoDaUrl()
+    expect(pedidos).toBe(1)
+  })
+})
+
+describe('limpar eventos', () => {
+  // Sabotagem: mostrar o botão sem olhar o log → ele aparece aqui.
+  it('com o log vazio, não oferece limpar', async () => {
+    await detalheCom()
+    await within(await secao('Log de eventos')).findByText('Nenhum sinal recebido.')
+    expect(screen.queryByRole('button', { name: 'Limpar eventos' })).not.toBeInTheDocument()
+  })
+
+  // Sabotagem: limpar sem confirmar, ou não invalidar o log depois.
+  it('confirma, chama a rota, e o log fica vazio', async () => {
+    const r = await detalheCom({ eventos: [{ id: 'e1', kind: 'success' }] })
+    await r.usuario.click(await screen.findByRole('button', { name: 'Limpar eventos' }))
+    const confirmacao = await screen.findByRole('alertdialog', { name: 'Limpar o log de eventos?' })
+    expect(confirmacao).toHaveTextContent('Os sinais registrados somem. O estado, o prazo e os incidentes continuam.')
+    expect(r.falsa.chamadas('POST /heartbeats/:id/events/clear')).toBe(0)
+    await r.usuario.click(within(confirmacao).getByRole('button', { name: 'Limpar eventos' }))
+    const s = await secao('Log de eventos')
+    expect(await within(s).findByText('Nenhum sinal recebido.')).toBeInTheDocument()
+    expect(r.falsa.chamadas('POST /heartbeats/:id/events/clear')).toBe(1)
+    expect((await screen.findAllByText('Eventos apagados.')).length).toBeGreaterThan(0)
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument())
+    expect(screen.queryByRole('button', { name: 'Limpar eventos' })).not.toBeInTheDocument()
+    // O botão sumiu com o log: o foco não cai no <body>.
+    expect(screen.getByRole('heading', { level: 1, name: 'Backup' })).toHaveFocus()
+  })
+
+  it('cancelar não limpa', async () => {
+    const r = await detalheCom({ eventos: [{ id: 'e1', kind: 'success' }] })
+    await r.usuario.click(await screen.findByRole('button', { name: 'Limpar eventos' }))
+    const confirmacao = await screen.findByRole('alertdialog', { name: 'Limpar o log de eventos?' })
+    await r.usuario.click(within(confirmacao).getByRole('button', { name: 'Cancelar' }))
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument())
+    expect(r.falsa.chamadas('POST /heartbeats/:id/events/clear')).toBe(0)
+    expect(screen.getByRole('button', { name: 'Limpar eventos' })).toHaveFocus()
+  })
+
+  it('erro ao limpar aparece na tela e os eventos ficam', async () => {
+    const r = await detalheCom({ eventos: [{ id: 'e1', kind: 'success' }] })
+    r.falsa.estado.forcar.set('POST /heartbeats/:id/events/clear', { status: 500, code: 'internal_error' })
+    await r.usuario.click(await screen.findByRole('button', { name: 'Limpar eventos' }))
+    const confirmacao = await screen.findByRole('alertdialog', { name: 'Limpar o log de eventos?' })
+    await r.usuario.click(within(confirmacao).getByRole('button', { name: 'Limpar eventos' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('Erro interno do servidor.')
+    expect(await within(await secao('Log de eventos')).findAllByRole('listitem')).toHaveLength(1)
   })
 })

@@ -17,8 +17,8 @@ import (
 	"github.com/BipoXDXD/stillon/internal/crypto"
 )
 
-// segredoDeTroca é o segredo "antigo" dos testes da troca de autenticador
-// (Plano 9, §3.2), gravado já confirmado por gravarSegredoTOTP.
+// segredoDeTroca é o segredo "antigo" dos testes da troca de autenticador,
+// gravado já confirmado por gravarSegredoTOTP.
 const segredoDeTroca = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"
 
 // inicioDaTroca: 15 s dentro de um período, para o skew não pôr o código de
@@ -46,7 +46,7 @@ func familiaViva(t *testing.T, pool *pgxpool.Pool, userID uuid.UUID, em time.Tim
 	return s.FamilyID
 }
 
-// rotacaoAtual é o rotation (A7 do Plano 10) da troca pendente do usuário,
+// rotacaoAtual é o rotation da troca pendente do usuário,
 // como o rotate o devolveu: o que o confirm exige de volta.
 func rotacaoAtual(t *testing.T, pool *pgxpool.Pool, userID uuid.UUID) string {
 	t.Helper()
@@ -224,8 +224,8 @@ func TestStartRotationRequiresTheCurrentFactor(t *testing.T) {
 }
 
 // Um código de recuperação prova a posse no lugar do app (o caso de quem
-// perdeu o celular), e fica gasto mesmo que a troca não seja confirmada (R1
-// da spec do Plano 9), com o mesmo rastro de auditoria do login.
+// perdeu o celular), e fica gasto mesmo que a troca não seja confirmada, com
+// o mesmo rastro de auditoria do login.
 func TestStartRotationAcceptsARecoveryCode(t *testing.T) {
 	svc, pool, userID := setupTOTP(t)
 	ctx := context.Background()
@@ -356,7 +356,7 @@ func TestConfirmRotationReplacesTheRecoveryCodes(t *testing.T) {
 }
 
 // A confirmação encerra as OUTRAS famílias de sessão e mantém a atual: um
-// celular trocado pode ter sido perdido ou roubado (spec do Plano 9, §3.2).
+// celular trocado pode ter sido perdido ou roubado.
 func TestConfirmRotationRevokesTheOtherFamilies(t *testing.T) {
 	svc, pool, userID := setupTOTP(t)
 	ctx := context.Background()
@@ -412,7 +412,7 @@ func TestConfirmRotationRechecksTheFamily(t *testing.T) {
 
 	// A perna positiva: com a família de volta à vida, o mesmo pendente
 	// confirma. (Outra família viva não serve: o pendente é só da família
-	// que o iniciou, revisão final do Plano 9.)
+	// que o iniciou.)
 	if _, err := pool.Exec(ctx, `UPDATE sessions SET revoked_at = NULL WHERE family_id = $1`, familia); err != nil {
 		t.Fatal(err)
 	}
@@ -422,7 +422,7 @@ func TestConfirmRotationRechecksTheFamily(t *testing.T) {
 	}
 }
 
-// A confirmação toma a trava de sessões do usuário (D1 do Plano 5) antes de
+// A confirmação toma a trava de sessões do usuário antes de
 // revogar as outras famílias: sem ela, uma rotação em curso deixaria o
 // sucessor fora da revogação.
 func TestConfirmRotationTakesTheUserLock(t *testing.T) {
@@ -535,8 +535,9 @@ func TestPendingSecretIsBoundToColumnAndUser(t *testing.T) {
 	familiaDoOutro := familiaViva(t, pool, outro, inicioDaTroca)
 	// A família vai junto, para a recusa ser a da AAD, e não a da família.
 	if _, err := pool.Exec(ctx,
-		`UPDATE users SET totp_pending_secret_enc = $2, totp_pending_family_id = $3 WHERE id = $1`,
-		outro, sealed, familiaDoOutro); err != nil {
+		`UPDATE users SET totp_pending_secret_enc = $2, totp_pending_family_id = $3,
+		                  totp_pending_started_at = $4 WHERE id = $1`,
+		outro, sealed, familiaDoOutro, inicioDaTroca); err != nil {
 		t.Fatal(err)
 	}
 
@@ -577,7 +578,7 @@ func TestPendingSecretIsBoundToColumnAndUser(t *testing.T) {
 	}
 }
 
-// O pendente é da família de sessão que o criou (revisão final do Plano 9):
+// O pendente é da família de sessão que o criou:
 // outra família do mesmo dono, viva, não o confirma, nem com o código certo —
 // é ErrTOTPNoRotation (403 no handler, o mesmo de "sem troca em andamento"), e
 // nada muda. A perna positiva é a família que iniciou, no mesmo cenário.

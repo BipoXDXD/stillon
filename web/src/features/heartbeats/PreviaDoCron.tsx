@@ -33,7 +33,7 @@ function textoDoErro(erro: unknown): string {
   return campo ? mensagemDoCampo(campo.field, campo.reason) : 'Não foi possível calcular os próximos disparos agora.'
 }
 
-// A prévia informa e não trava: quem julga é o servidor, no envio (T11).
+// A prévia informa e não trava: quem julga é o servidor, no envio.
 export function PreviaDoCron({ expr, timezone }: { expr: string; timezone: string }) {
   const exprAdiada = useValorAdiado(expr.trim(), ESPERA_DA_PREVIA_MS)
   const fusoAdiado = useValorAdiado(timezone.trim(), ESPERA_DA_PREVIA_MS)

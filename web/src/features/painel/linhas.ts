@@ -1,8 +1,9 @@
-import { estadoDoHeartbeat, inicioEmCurso, prazoVencido, tempoDeExecucao, textoDaEspera, textoDoHeartbeat } from '@/features/heartbeats/estado'
+import { estadoDoHeartbeat, inicioEmCurso, prazoVencido, tempoDeExecucao, textoDaEspera, textoDaTolerancia, textoDoHeartbeat } from '@/features/heartbeats/estado'
 import { textoDaCausa } from '@/lib/api/mensagens'
 import type { Heartbeat, HoraDoSpark, Incidente, ItemDoResumo } from '@/lib/api/schemas'
 import { estadoExibido, textoDoEstado, type EstadoExibido } from '@/lib/estado'
 import { duracao, haQuantoAteAgora, milissegundos } from '@/lib/format'
+import { assertUnreachable } from '@/lib/utils'
 import { detalheDoProblema, ehProblema, linhaSemDados } from './grupos'
 
 // O que a tabela de monitores desenha. Ela não conhece o item da API: um
@@ -60,7 +61,7 @@ function situacaoDoAlvo(it: ItemDoResumo, estado: EstadoExibido, incidente: Inci
 }
 
 // Sem uptime e sem as 24 horas: o heartbeat não tem nada disso, e medida
-// inventada mentiria (spec da tela, T5).
+// inventada mentiria.
 export function linhaDoHeartbeat(hb: Heartbeat, agora: Date): LinhaDeMonitor {
   return {
     tipo: 'heartbeat',
@@ -85,10 +86,16 @@ function situacaoDoHeartbeat(hb: Heartbeat, agora: Date): string {
       return textoDaCausa('heartbeat_failed')
     case 'up':
       return textoEmDia(hb, agora)
+    case 'grace':
+      return textoDaTolerancia(hb)
     case 'waiting':
       return textoDeExecucao(hb, agora) ?? textoDaEspera(hb)
     case 'paused':
       return 'Pausado'
+    case 'unknown':
+      return textoDoHeartbeat(hb.state)
+    default:
+      return assertUnreachable(hb.state)
   }
 }
 

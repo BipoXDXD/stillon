@@ -21,7 +21,7 @@ import (
 	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 )
 
-// O caminho do Plano 3 no processo real, com o cliente e o validador de
+// O caminho do incidente no processo real, com o cliente e o validador de
 // PRODUÇÃO: um alvo que falha abre incidente depois de três sondas, a
 // abertura vai para a outbox, e o dispatcher tenta o canal Discord. O canal
 // tem uma URL interna, que só entra por fora da API; o envio a recusa, falha
@@ -71,10 +71,8 @@ func TestIncidentFlowsFromProbeToAuditedNotification(t *testing.T) {
 	}
 
 	metricas := portaLivre(t)
-	cfg := &config.Config{
-		Role: config.RoleProber, DatabaseURL: testdb.DSN(t), MetricsAddr: metricas,
-		MasterKey: chave, ShutdownGrace: 2 * time.Second,
-	}
+	cfg := configDeTeste(t, config.RoleProber, testdb.DSN(t))
+	cfg.MetricsAddr, cfg.ShutdownGrace = metricas, 2*time.Second
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	fim := make(chan error, 1)
@@ -203,9 +201,9 @@ func escopoDoDono(t *testing.T, pool *pgxpool.Pool, dono uuid.UUID, sql string, 
 	}
 }
 
-// O papel api com as dependências dos Planos 3 e 4 ligadas: sem Channels,
-// Incidents ou StatusPages no Deps, as rotas cairiam em panic (nil) na primeira chamada
-// autenticada; sem Ready, /readyz responderia 503.
+// O papel api com as dependências de incidente e de página de status ligadas:
+// sem Channels, Incidents ou StatusPages no Deps, as rotas cairiam em panic
+// (nil) na primeira chamada autenticada; sem Ready, /readyz responderia 503.
 func TestAPIRoleWiresIncidentsChannelsAndReadyz(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
@@ -214,11 +212,8 @@ func TestAPIRoleWiresIncidentsChannelsAndReadyz(t *testing.T) {
 		t.Fatal(err)
 	}
 	addr := portaLivre(t)
-	cfg := &config.Config{
-		Role: config.RoleAPI, DatabaseURL: testdb.DSN(t), HTTPAddr: addr,
-		PublicBaseURL: "http://localhost", CORSOrigin: "http://localhost:5173",
-		MasterKey: chave, JWTSecret: chave, IPHashKey: chave, ShutdownGrace: time.Second,
-	}
+	cfg := configDeTeste(t, config.RoleAPI, testdb.DSN(t))
+	cfg.HTTPAddr, cfg.ShutdownGrace = addr, time.Second
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	fim := make(chan error, 1)

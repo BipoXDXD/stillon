@@ -142,3 +142,12 @@ describe('ControleSegmentado', () => {
     for (const r of screen.getAllByRole('radio')) expect(r).toHaveClass('min-h-11', 'min-w-11')
   })
 })
+
+// Bloco 2, item 5: o trilho é um baixo-relevo, cavado na superfície, e o
+// item ativo sobe dele com a sombra de nível 1. Sabotagem: tirar a sombra
+// interna do trilho.
+it('o trilho fica em baixo-relevo e o item ativo, acima dele', () => {
+  render(<Tela inicial="6h" aoMudar={vi.fn<(v: Janela) => void>()} />)
+  expect(screen.getByRole('radiogroup', { name: 'Janela do gráfico' })).toHaveClass('bg-painel', 'sombra-interna')
+  expect(screen.getByRole('radio', { name: '6 h' })).toHaveClass('sombra-nivel-1')
+})

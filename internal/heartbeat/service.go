@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/google/uuid"
@@ -19,7 +20,7 @@ import (
 )
 
 const (
-	// MaxPerUser é o teto de heartbeats por usuário, o mesmo de alvos (D16).
+	// MaxPerUser é o teto de heartbeats por usuário, o mesmo de alvos.
 	MaxPerUser int64 = 100
 
 	// PreviewRuns é quantos disparos a prévia do cron mostra.
@@ -32,6 +33,9 @@ const (
 var (
 	ErrNotFound     = errors.New("heartbeat não encontrado")
 	ErrLimitReached = errors.New("limite de heartbeats atingido")
+	// ErrScheduleUnsupported recusa editar a linha cujo agendamento veio de
+	// uma versão posterior: esta não saberia regravá-lo nem recalcular o prazo.
+	ErrScheduleUnsupported = errors.New("agendamento não suportado nesta versão")
 )
 
 // Status é o que o painel mostra, derivado do estado e do relógio: nada disto
@@ -43,7 +47,10 @@ const (
 	StatusFailing Status = "failing"
 	StatusLate    Status = "late"
 	StatusWaiting Status = "waiting"
-	StatusUp      Status = "up"
+	// StatusGrace é a janela de tolerância antes do prazo: o sinal ainda não
+	// veio, mas não está atrasado. Não pede atenção.
+	StatusGrace Status = "grace"
+	StatusUp    Status = "up"
 )
 
 // Heartbeat é o que sai do domínio. Não tem campo para o token nem para o
@@ -64,6 +71,9 @@ type Heartbeat struct {
 	LastRuntimeMS  *int64
 	OpenIncidentID *uuid.UUID
 	CreatedAt      time.Time
+	// PingResumes: um sucesso, pela URL de ping ou pelo sinalizar agora, retoma
+	// o heartbeat pausado.
+	PingResumes bool
 }
 
 // Input é o cadastro. O agendamento já chega validado (NewPeriod, NewCron).
@@ -74,6 +84,7 @@ type Input struct {
 	Schedule    Schedule
 	Grace       time.Duration
 	Enabled     bool
+	PingResumes bool
 }
 
 // Patch: nil é "não mexa". Tags não seguem a regra: nil e vazio limpam, e quem
@@ -86,6 +97,7 @@ type Patch struct {
 	Schedule    *Schedule
 	Grace       *time.Duration
 	Enabled     *bool
+	PingResumes *bool
 }
 
 // Incident é um incidente de heartbeat na visão do dono.
@@ -185,37 +197,120 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, in Input) (Heart
 	params := db.InsertHeartbeatParams{
 		ID: id, UserID: userID, Name: nome, Description: descricao, PingTokenHash: hash, GraceSec: seconds(in.Grace),
 		Enabled: in.Enabled, CreatedAt: now, DeadlineAt: FirstDeadline(in.Schedule, in.Grace, now),
+		PingResumes: in.PingResumes,
 	}
 	params.PeriodSec, params.CronExpr, params.Timezone = scheduleColumns(in.Schedule)
 
 	var out Heartbeat
 	err = storage.InUserTx(ctx, s.pool, userID, func(q *db.Queries) error {
-		if err := q.LockUserHeartbeats(ctx, userID); err != nil {
-			return fmt.Errorf("travar heartbeats do usuário: %w", err)
-		}
-		n, err := q.CountHeartbeats(ctx, userID)
-		if err != nil {
-			return fmt.Errorf("contar heartbeats: %w", err)
-		}
-		if s.depoisDeContar != nil {
-			s.depoisDeContar()
-		}
-		if n >= MaxPerUser {
-			return ErrLimitReached
-		}
-		if err := q.InsertHeartbeat(ctx, params); err != nil {
-			return err
-		}
-		if err := q.InsertHeartbeatTags(ctx, db.InsertHeartbeatTagsParams{Tags: tags, UserID: userID, HeartbeatID: id}); err != nil {
-			return fmt.Errorf("gravar tags do heartbeat: %w", err)
-		}
-		out, err = s.responseOf(ctx, q, userID, id)
+		var err error
+		out, err = s.inserir(ctx, q, userID, params, tags)
 		return err
 	})
 	if err != nil {
 		return Heartbeat{}, "", err
 	}
 	return out, token, nil
+}
+
+// inserir grava o heartbeat dentro do limite por usuário. A trava vem antes da
+// contagem: sem ela, dois pedidos simultâneos contariam 99 e gravariam 101.
+func (s *Service) inserir(ctx context.Context, q *db.Queries, userID uuid.UUID, params db.InsertHeartbeatParams, tags []string) (Heartbeat, error) {
+	if err := q.LockUserHeartbeats(ctx, userID); err != nil {
+		return Heartbeat{}, fmt.Errorf("travar heartbeats do usuário: %w", err)
+	}
+	n, err := q.CountHeartbeats(ctx, userID)
+	if err != nil {
+		return Heartbeat{}, fmt.Errorf("contar heartbeats: %w", err)
+	}
+	if s.depoisDeContar != nil {
+		s.depoisDeContar()
+	}
+	if n >= MaxPerUser {
+		return Heartbeat{}, ErrLimitReached
+	}
+	if err := q.InsertHeartbeat(ctx, params); err != nil {
+		return Heartbeat{}, err
+	}
+	if err := q.InsertHeartbeatTags(ctx, db.InsertHeartbeatTagsParams{Tags: tags, UserID: userID, HeartbeatID: params.ID}); err != nil {
+		return Heartbeat{}, fmt.Errorf("gravar tags do heartbeat: %w", err)
+	}
+	return s.responseOf(ctx, q, userID, params.ID)
+}
+
+// CloneSuffix marca o nome da cópia.
+const CloneSuffix = " (cópia)"
+
+// Clone grava uma tarefa nova com a configuração do original (nome com o
+// sufixo, descrição, tags, agendamento, tolerância e enabled) e devolve o token
+// novo, que só existe neste retorno. Não copia token, eventos, last_*, falha,
+// incidentes nem a retomada: a cópia nasce como uma criação, e conta no limite.
+func (s *Service) Clone(ctx context.Context, userID, id uuid.UUID) (Heartbeat, string, error) {
+	novoID, err := uuid.NewV7()
+	if err != nil {
+		return Heartbeat{}, "", fmt.Errorf("gerar id de heartbeat: %w", err)
+	}
+	token, hash := NewPingToken()
+	var out Heartbeat
+	err = storage.InUserTx(ctx, s.pool, userID, func(q *db.Queries) error {
+		original, err := q.GetHeartbeat(ctx, db.GetHeartbeatParams{UserID: userID, ID: id})
+		if err != nil {
+			return notFound(err)
+		}
+		params, err := s.cloneParams(original, novoID, hash)
+		if err != nil {
+			return err
+		}
+		tags, err := q.ListHeartbeatTags(ctx, db.ListHeartbeatTagsParams{UserID: userID, HeartbeatID: id})
+		if err != nil {
+			return fmt.Errorf("ler tags do heartbeat: %w", err)
+		}
+		out, err = s.inserir(ctx, q, userID, params, tags)
+		return err
+	})
+	if err != nil {
+		return Heartbeat{}, "", err
+	}
+	return out, token, nil
+}
+
+func (s *Service) cloneParams(original db.Heartbeat, id uuid.UUID, hash []byte) (db.InsertHeartbeatParams, error) {
+	sch, err := ScheduleFromRow(original.PeriodSec, original.CronExpr, original.Timezone)
+	if err != nil {
+		return db.InsertHeartbeatParams{}, fmt.Errorf("agendamento do heartbeat %s: %w", original.ID, err)
+	}
+	// A cópia regrava o agendamento por scheduleColumns, que não conhece o de
+	// uma versão posterior, e FirstDeadline não saberia calcular o prazo.
+	if !sch.IsKnown() {
+		return db.InsertHeartbeatParams{}, ErrScheduleUnsupported
+	}
+	grace := time.Duration(original.GraceSec) * time.Second
+	now := s.clk.Now()
+	params := db.InsertHeartbeatParams{
+		ID: id, UserID: original.UserID, Name: cloneName(original.Name), Description: original.Description,
+		PingTokenHash: hash, GraceSec: original.GraceSec, Enabled: original.Enabled, CreatedAt: now,
+		DeadlineAt: FirstDeadline(sch, grace, now), PingResumes: original.PingResumes,
+	}
+	params.PeriodSec, params.CronExpr, params.Timezone = scheduleColumns(sch)
+	return params, nil
+}
+
+// cloneName põe o sufixo e corta o nome, por caractere, para a cópia caber em
+// MaxNameLength. Só o corte deixa sobra no fim, e ela sai: espaço (dobraria o
+// do sufixo), formatação como o ZWJ (Cf, que ValidateName recusaria no próximo
+// PATCH com o mesmo nome) e marca combinante órfã do caractere-base cortado. O
+// nome que cabe inteiro fica como está: já veio limpo do cadastro, e o
+// combinante no fim dele é legítimo ("Café" decomposto, "❤️").
+func cloneName(name string) string {
+	caben := MaxNameLength - utf8.RuneCountInString(CloneSuffix)
+	if runas := []rune(name); len(runas) > caben {
+		name = strings.TrimRightFunc(string(runas[:caben]), soltoNoFim)
+	}
+	return name + CloneSuffix
+}
+
+func soltoNoFim(r rune) bool {
+	return unicode.IsSpace(r) || unicode.Is(unicode.Cf, r) || unicode.In(r, unicode.Mn, unicode.Me)
 }
 
 func normalizeTags(cruas []string) ([]string, error) {
@@ -299,7 +394,7 @@ func (s *Service) List(ctx context.Context, userID uuid.UUID, before *uuid.UUID,
 
 // Update aplica o patch com a linha travada. Só valor que muda recalcula o
 // prazo, a partir de agora: reenviar o que já está gravado não adia nada.
-// Retomar também recalcula, zera a falha e registra a retomada (D13). Quem
+// Retomar também recalcula, zera a falha e registra a retomada. Quem
 // fecha incidente é o avaliador, e prazo novo sozinho não fecha (§5 da spec).
 func (s *Service) Update(ctx context.Context, userID, id uuid.UUID, p Patch) (Heartbeat, error) {
 	if p.Name != nil {
@@ -366,11 +461,21 @@ func (s *Service) updateParams(h db.Heartbeat, p Patch) (db.UpdateHeartbeatParam
 	if err != nil {
 		return db.UpdateHeartbeatParams{}, fmt.Errorf("agendamento do heartbeat %s: %w", h.ID, err)
 	}
+	// Antes de qualquer cálculo: scheduleColumns gravaria período zero no
+	// lugar do agendamento que esta versão não conhece, e FirstDeadline não
+	// sabe calculá-lo.
+	if !sch.IsKnown() {
+		return db.UpdateHeartbeatParams{}, ErrScheduleUnsupported
+	}
 	grace := time.Duration(h.GraceSec) * time.Second
 	out := db.UpdateHeartbeatParams{
 		UserID: h.UserID, ID: h.ID, Name: h.Name, Description: h.Description, Enabled: h.Enabled,
 		DeadlineAt: h.DeadlineAt, FailingSince: h.FailingSince, ResumedAt: h.ResumedAt,
-		LastStartAt: h.LastStartAt,
+		LastStartAt: h.LastStartAt, PingResumes: h.PingResumes,
+	}
+	// Só uma preferência: não mexe no prazo.
+	if p.PingResumes != nil {
+		out.PingResumes = *p.PingResumes
 	}
 	if p.Name != nil {
 		out.Name = *p.Name
@@ -418,8 +523,41 @@ func (s *Service) Delete(ctx context.Context, userID, id uuid.UUID) error {
 	})
 }
 
+const (
+	// AuditEventsCleared é a ação que limpar o log grava em audit_log.
+	AuditEventsCleared = "heartbeat.events_cleared"
+	auditEntity        = "heartbeat"
+)
+
+// ClearEvents apaga o log de eventos do heartbeat e deixa o rastro em
+// audit_log, na mesma transação: não existe log apagado sem auditoria. Só os
+// eventos saem; last_*, prazo e incidentes ficam (spec §7.2). O log já vazio
+// também é auditado, porque o pedido aconteceu. Agendamento desconhecido não
+// impede: nada aqui regrava o agendamento nem recalcula o prazo.
+func (s *Service) ClearEvents(ctx context.Context, userID, id uuid.UUID) error {
+	auditID, err := uuid.NewV7()
+	if err != nil {
+		return fmt.Errorf("gerar id de auditoria: %w", err)
+	}
+	entity := auditEntity
+	return storage.InUserTx(ctx, s.pool, userID, func(q *db.Queries) error {
+		if err := exists(ctx, q, userID, id); err != nil {
+			return err
+		}
+		if _, err := q.DeleteHeartbeatEvents(ctx, db.DeleteHeartbeatEventsParams{UserID: userID, HeartbeatID: id}); err != nil {
+			return fmt.Errorf("apagar eventos: %w", err)
+		}
+		if err := q.InsertAuditEntry(ctx, db.InsertAuditEntryParams{
+			ID: auditID, UserID: &userID, Action: AuditEventsCleared, Entity: &entity, EntityID: &id, At: s.clk.Now(),
+		}); err != nil {
+			return fmt.Errorf("auditar %s: %w", AuditEventsCleared, err)
+		}
+		return nil
+	})
+}
+
 // RotateToken revoga o token atual trocando o hash, e devolve o novo, que só
-// existe neste retorno (D8).
+// existe neste retorno.
 func (s *Service) RotateToken(ctx context.Context, userID, id uuid.UUID) (Heartbeat, string, error) {
 	token, hash := NewPingToken()
 	var out Heartbeat
@@ -438,6 +576,31 @@ func (s *Service) RotateToken(ctx context.Context, userID, id uuid.UUID) (Heartb
 		return Heartbeat{}, "", err
 	}
 	return out, token, nil
+}
+
+// PingNow é o "sinalizar agora" do painel: um sucesso no escopo do dono, pelo
+// mesmo caminho do ping (janela de repetição e retomada inclusas), marcado com
+// a origem panel para não se confundir com a tarefa. Pelo mesmo
+// motivo, não encerra a execução aberta: o início e a duração são da tarefa.
+func (s *Service) PingNow(ctx context.Context, userID, id uuid.UUID) (Heartbeat, error) {
+	var out Heartbeat
+	err := storage.InUserTx(ctx, s.pool, userID, func(q *db.Queries) error {
+		// A trava serializa com o ping: sem ela, um ping concorrente leria a
+		// linha antiga e um dos dois se perderia, como no PATCH.
+		h, err := q.GetHeartbeatForUpdate(ctx, db.GetHeartbeatForUpdateParams{UserID: userID, ID: id})
+		if err != nil {
+			return notFound(err)
+		}
+		if err := registrarSinal(ctx, q, h, sinalRecebido{sig: SignalSuccess, source: SourcePanel}, s.clk.Now()); err != nil {
+			return err
+		}
+		out, err = s.view(ctx, q, userID, id)
+		return err
+	})
+	if err != nil {
+		return Heartbeat{}, err
+	}
+	return out, nil
 }
 
 // Events é o log do heartbeat, do mais novo ao mais velho.
@@ -519,7 +682,8 @@ func pageSize(limit int32) int32 {
 	return limit
 }
 
-// seconds cabe em int32: as faixas validadas vão até 31 dias.
+// seconds cabe em int32: as faixas validadas vão até 365 dias (31536000 s,
+// CHECKs da migration heartbeat_limits), longe de 2^31-1.
 func seconds(d time.Duration) int32 { return int32(d / time.Second) } // #nosec G115 -- faixa validada (ValidateGrace, NewPeriod).
 
 func scheduleColumns(s Schedule) (period *int32, expr, timezone *string) {
@@ -538,10 +702,15 @@ func toHeartbeat(h db.Heartbeat, open *uuid.UUID, now time.Time) (Heartbeat, err
 	}
 	return Heartbeat{
 		ID: h.ID, Name: h.Name, Description: h.Description, Tags: []string{}, Enabled: h.Enabled, Schedule: sch,
-		Grace:      time.Duration(h.GraceSec) * time.Second,
-		Status:     statusOf(h.Enabled, h.FailingSince != nil, open != nil, h.DeadlineAt, finishedARun(h), now),
+		Grace: time.Duration(h.GraceSec) * time.Second,
+		Status: statusOf(statusFacts{
+			Enabled: h.Enabled, Failing: h.FailingSince != nil, OpenIncident: open != nil,
+			KnownSchedule: sch.IsKnown(), FinishedARun: finishedARun(h), RunOpen: h.LastStartAt != nil,
+			Deadline: h.DeadlineAt, Grace: time.Duration(h.GraceSec) * time.Second,
+		}, now),
 		DeadlineAt: h.DeadlineAt, LastPingAt: h.LastPingAt, LastSuccessAt: h.LastSuccessAt,
 		LastStartAt: h.LastStartAt, LastRuntimeMS: h.LastRuntimeMS, OpenIncidentID: open, CreatedAt: h.CreatedAt,
+		PingResumes: h.PingResumes,
 	}, nil
 }
 
@@ -552,18 +721,36 @@ func finishedARun(h db.Heartbeat) bool {
 	return h.LastSuccessAt != nil || (h.LastSignal != nil && Signal(*h.LastSignal) != SignalStart)
 }
 
+// statusFacts são os fatos da linha de que o estado derivado depende.
+type statusFacts struct {
+	Enabled, Failing, OpenIncident, KnownSchedule, FinishedARun, RunOpen bool
+	Deadline                                                             time.Time
+	Grace                                                                time.Duration
+}
+
 // O incidente aberto conta como atraso mesmo com prazo futuro: editar o
-// agendamento move o prazo, e a tarefa continua devendo um sinal.
-func statusOf(enabled, failing, openIncident bool, deadline time.Time, finished bool, now time.Time) Status {
+// agendamento move o prazo, e a tarefa continua devendo um sinal. Com
+// agendamento desconhecido (linha de uma versão posterior) o prazo gravado não
+// é confiável, e só o incidente aberto torna o estado atrasado.
+func statusOf(f statusFacts, now time.Time) Status {
 	switch {
-	case !enabled:
+	case !f.Enabled:
 		return StatusPaused
-	case failing:
+	case f.Failing:
 		return StatusFailing
-	case openIncident, !deadline.After(now):
+	case f.OpenIncident, f.KnownSchedule && !f.Deadline.After(now):
 		return StatusLate
-	case !finished:
+	case !f.FinishedARun:
 		return StatusWaiting
+	case f.inGrace(now):
+		return StatusGrace
 	}
 	return StatusUp
+}
+
+// inGrace diz se now cai na tolerância antes do prazo, [prazo - tolerância,
+// prazo). Com agendamento desconhecido o prazo não é confiável, e com execução
+// aberta a tarefa está trabalhando: nos dois casos não há o que tolerar.
+func (f statusFacts) inGrace(now time.Time) bool {
+	return f.KnownSchedule && !f.RunOpen && !now.Before(f.Deadline.Add(-f.Grace)) && now.Before(f.Deadline)
 }

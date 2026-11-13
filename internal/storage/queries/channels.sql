@@ -3,7 +3,7 @@
 
 -- Serializa as criações de canal do mesmo usuário, para que o limite de
 -- canais valha também contra duas requisições simultâneas. users não tem
--- RLS (D7 do Plano 2).
+-- RLS.
 -- name: LockUser :exec
 SELECT id FROM users WHERE id = $1 FOR UPDATE;
 
@@ -25,7 +25,7 @@ SELECT c.id, c.kind, c.config_enc, c.verified_at, c.verify_expires_at, c.enabled
  ORDER BY c.id DESC;
 
 -- Um canal no formato da listagem (ListChannels), para a resposta do PATCH
--- /channels/{id} (Plano 9, §3.3).
+-- /channels/{id}.
 -- name: GetChannelView :one
 SELECT c.id, c.kind, c.config_enc, c.verified_at, c.verify_expires_at, c.enabled, c.created_at,
        h.last_success_at, h.last_failure_at, h.last_error
@@ -33,7 +33,7 @@ SELECT c.id, c.kind, c.config_enc, c.verified_at, c.verify_expires_at, c.enabled
   LEFT JOIN channel_health h ON h.channel_id = c.id
  WHERE c.user_id = $1 AND c.id = $2;
 
--- Pausar e retomar (Plano 9, §3.3). O despacho lê enabled na hora do envio
+-- Pausar e retomar. O despacho lê enabled na hora do envio
 -- (semEnvio): pausado, o aviso é cancelado, e retomar não o reenvia. Gravar o
 -- valor que já está afeta a linha do mesmo jeito: a rota é idempotente.
 -- name: SetChannelEnabled :execrows
@@ -41,7 +41,9 @@ UPDATE notif_channels SET enabled = sqlc.arg(enabled)
  WHERE user_id = sqlc.arg(user_id) AND id = sqlc.arg(id);
 
 -- name: GetChannel :one
-SELECT * FROM notif_channels WHERE user_id = $1 AND id = $2;
+SELECT id, user_id, kind, config_enc, verified_at, verify_token_hash,
+       verify_expires_at, enabled, created_at
+  FROM notif_channels WHERE user_id = $1 AND id = $2;
 
 -- name: DeleteChannel :execrows
 DELETE FROM notif_channels WHERE user_id = $1 AND id = $2;
