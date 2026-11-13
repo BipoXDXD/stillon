@@ -112,9 +112,9 @@ func exigirParticaoProtegida(t *testing.T, pool *pgxpool.Pool, particao string) 
 	}
 }
 
-// lerProtecaoDaParticao devolve as políticas da partição como texto (nome e
-// comando, em ordem), para comparar com as da mãe: as migrations seguintes
-// podem trocar as políticas, e partição e mãe têm de andar juntas.
+// lerProtecaoDaParticao devolve as políticas da partição como texto, para
+// comparar com as da mãe: as migrations seguintes podem trocar as políticas, e
+// partição e mãe têm de andar juntas.
 func lerProtecaoDaParticao(t *testing.T, pool *pgxpool.Pool, particao string) (ligada, forcada bool, politicas string) {
 	t.Helper()
 	err := pool.QueryRow(context.Background(),
@@ -127,11 +127,22 @@ func lerProtecaoDaParticao(t *testing.T, pool *pgxpool.Pool, particao string) (l
 	return ligada, forcada, politicasDe(t, pool, particao)
 }
 
+// politicasDe descreve as políticas da tabela, uma por linha e em ordem de
+// nome: nome, comando, permissiva ou restritiva, USING e WITH CHECK. O nome da
+// própria tabela nas expressões vira <tabela>, porque a da partição se refere
+// a checks_AAAA_MM e a da mãe a checks; comparar só nome e comando deixaria
+// passar uma partição de política afrouxada.
 func politicasDe(t *testing.T, pool *pgxpool.Pool, tabela string) string {
 	t.Helper()
 	var politicas string
 	err := pool.QueryRow(context.Background(),
-		`SELECT coalesce(string_agg(p.polname || ':' || p.polcmd::text, ',' ORDER BY p.polname), '')
+		`SELECT coalesce(string_agg(
+		            concat_ws(' | ', p.polname, p.polcmd::text, p.polpermissive::text,
+		                      replace(coalesce(pg_get_expr(p.polqual, p.polrelid), '-'),
+		                              quote_ident(c.relname) || '.', '<tabela>.'),
+		                      replace(coalesce(pg_get_expr(p.polwithcheck, p.polrelid), '-'),
+		                              quote_ident(c.relname) || '.', '<tabela>.')),
+		            E'\n' ORDER BY p.polname), '')
 		   FROM pg_policy p JOIN pg_class c ON c.oid = p.polrelid
 		  WHERE c.relname = $1`, tabela).Scan(&politicas)
 	if err != nil {
