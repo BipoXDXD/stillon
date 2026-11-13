@@ -3760,10 +3760,6 @@ rollback automático do script também não desfaz migration. Nunca rode `goose 
 a versão que trouxe a `target_tls` (#246): o rollback dela é só de binário, porque o binário
 anterior funciona no schema novo e o `Down` apaga a escolha `tls_warn = false` de cada dono.
 
-A 00029 (RLS em `sessions`, `session_family_proofs` e `totp_recovery_codes`) é a exceção: um
-binário anterior ao commit dos escopos de sessão e 2FA sobe sem erro nesse schema, mas não consegue
-logar ninguém. Para voltar a uma versão anterior a esse commit, rode antes o `Down` da 00029.
-
 **Se sair 3 com `stillon:<sha> já existe com outra imagem`:** uma tag `v*` publicada depois
 daquele deploy **moveu** a tag `:<sha>` do GHCR para o digest do build da tag (mesmo código, outro
 build, reescaneado; `ci.yml`), e o workflow leva esse digest novo. A VPS ainda guarda a imagem
