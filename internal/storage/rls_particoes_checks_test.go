@@ -89,8 +89,8 @@ func TestChecksPartitionRLSMigrationCoversExistingPartitionsAndGoesDown(t *testi
 		t.Fatalf("função anterior depois do down: %v", err)
 	}
 	for _, particao := range []string{particaoDoMesDeAgora, "checks_2026_10"} {
-		if ligada, forcada, politicas := lerProtecaoDaParticao(t, pool, particao); ligada || forcada || politicas != 0 {
-			t.Errorf("depois do down, %s: ENABLE=%v FORCE=%v políticas=%d; queria tudo desligado",
+		if ligada, forcada, politicas := lerProtecaoDaParticao(t, pool, particao); ligada || forcada || politicas != "" {
+			t.Errorf("depois do down, %s: ENABLE=%v FORCE=%v políticas=%q; queria tudo desligado",
 				particao, ligada, forcada, politicas)
 		}
 	}
@@ -104,23 +104,40 @@ func TestChecksPartitionRLSMigrationCoversExistingPartitionsAndGoesDown(t *testi
 func exigirParticaoProtegida(t *testing.T, pool *pgxpool.Pool, particao string) {
 	t.Helper()
 	ligada, forcada, politicas := lerProtecaoDaParticao(t, pool, particao)
-	if !ligada || !forcada || politicas != 1 {
-		t.Errorf("partição %s: ENABLE=%v FORCE=%v políticas=%d; queria true, true e 1",
-			particao, ligada, forcada, politicas)
+	if !ligada || !forcada {
+		t.Errorf("partição %s: ENABLE=%v FORCE=%v; queria true e true", particao, ligada, forcada)
+	}
+	if mae := politicasDe(t, pool, "checks"); politicas == "" || politicas != mae {
+		t.Errorf("partição %s com as políticas %q; queria as da mãe, %q", particao, politicas, mae)
 	}
 }
 
-func lerProtecaoDaParticao(t *testing.T, pool *pgxpool.Pool, particao string) (ligada, forcada bool, politicas int) {
+// lerProtecaoDaParticao devolve as políticas da partição como texto (nome e
+// comando, em ordem), para comparar com as da mãe: as migrations seguintes
+// podem trocar as políticas, e partição e mãe têm de andar juntas.
+func lerProtecaoDaParticao(t *testing.T, pool *pgxpool.Pool, particao string) (ligada, forcada bool, politicas string) {
 	t.Helper()
 	err := pool.QueryRow(context.Background(),
-		`SELECT c.relrowsecurity, c.relforcerowsecurity,
-		        (SELECT count(*) FROM pg_policy p WHERE p.polrelid = c.oid AND p.polname = 'checks_via_target')
+		`SELECT c.relrowsecurity, c.relforcerowsecurity
 		   FROM pg_class c
-		  WHERE c.relname = $1 AND c.relispartition`, particao).Scan(&ligada, &forcada, &politicas)
+		  WHERE c.relname = $1 AND c.relispartition`, particao).Scan(&ligada, &forcada)
 	if err != nil {
 		t.Fatalf("ler a partição %s no catálogo: %v", particao, err)
 	}
-	return ligada, forcada, politicas
+	return ligada, forcada, politicasDe(t, pool, particao)
+}
+
+func politicasDe(t *testing.T, pool *pgxpool.Pool, tabela string) string {
+	t.Helper()
+	var politicas string
+	err := pool.QueryRow(context.Background(),
+		`SELECT coalesce(string_agg(p.polname || ':' || p.polcmd::text, ',' ORDER BY p.polname), '')
+		   FROM pg_policy p JOIN pg_class c ON c.oid = p.polrelid
+		  WHERE c.relname = $1`, tabela).Scan(&politicas)
+	if err != nil {
+		t.Fatalf("ler as políticas de %s: %v", tabela, err)
+	}
+	return politicas
 }
 
 // contarNaParticao conta os checks consultando a partição pelo nome, sob o
