@@ -44,6 +44,11 @@ func disputarOperacao(t *testing.T, pool *pgxpool.Pool, travar string, userID uu
 	var umaVez sync.Once
 	soltar := func() { umaVez.Do(func() { _ = trava.Rollback(ctx) }) }
 	t.Cleanup(soltar)
+	// No escopo do usuário, como a aplicação: sem ele, a RLS esconderia os
+	// códigos de recuperação e a trava não pegaria linha nenhuma.
+	if _, err := trava.Exec(ctx, `SELECT set_config('app.user_id', $1, true)`, userID.String()); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := trava.Exec(ctx, travar, userID); err != nil {
 		t.Fatal(err)
 	}

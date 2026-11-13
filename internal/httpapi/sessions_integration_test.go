@@ -16,6 +16,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/BipoXDXD/stillon/internal/auth"
+	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 )
 
 type sessaoItem struct {
@@ -117,7 +118,7 @@ func TestListSessionsShowsOnlyLiveFamilies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := a.pool.Exec(ctx, `UPDATE sessions SET expires_at = $2 WHERE family_id = $1`,
+	if _, err := testdb.Admin(t).Exec(ctx, `UPDATE sessions SET expires_at = $2 WHERE family_id = $1`,
 		vencida.FamilyID, a.clk.Now().Add(-time.Second)); err != nil {
 		t.Fatal(err)
 	}
@@ -170,7 +171,7 @@ func TestListSessionsNeverExposesIPOrHash(t *testing.T) {
 	}
 
 	var ipHash, tokenHash []byte
-	if err := a.pool.QueryRow(context.Background(),
+	if err := testdb.Admin(t).QueryRow(context.Background(),
 		`SELECT ip_hash, token_hash FROM sessions WHERE user_id = $1`, a.userID).Scan(&ipHash, &tokenHash); err != nil {
 		t.Fatal(err)
 	}

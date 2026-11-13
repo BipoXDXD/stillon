@@ -11,6 +11,7 @@ import (
 	"github.com/pquerna/otp/totp"
 
 	"github.com/BipoXDXD/stillon/internal/auth"
+	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 )
 
 // A política pede 15 caracteres; testPass tem 22.
@@ -293,7 +294,7 @@ func TestChangePasswordAcceptsARecoveryCode(t *testing.T) {
 	}
 	var restantes, usos int
 	ctx := context.Background()
-	if err := a.pool.QueryRow(ctx, `SELECT count(*) FROM totp_recovery_codes WHERE user_id = $1`, a.userID).Scan(&restantes); err != nil {
+	if err := testdb.Admin(t).QueryRow(ctx, `SELECT count(*) FROM totp_recovery_codes WHERE user_id = $1`, a.userID).Scan(&restantes); err != nil {
 		t.Fatal(err)
 	}
 	if err := a.pool.QueryRow(ctx, `SELECT count(*) FROM audit_log WHERE user_id = $1 AND action = 'totp.recovery_used'`, a.userID).Scan(&usos); err != nil {

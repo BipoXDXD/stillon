@@ -54,6 +54,21 @@ func NewTOTP(pool *pgxpool.Pool, box *crypto.Box, issuer string) *TOTP {
 	return &TOTP{pool: pool, box: box, issuer: issuer}
 }
 
+// beginUserTx abre a transação já no escopo da RLS do usuário (migration
+// 00029): os códigos de recuperação e as sessões que ela tocar são só os dele.
+// Quem chama faz o Rollback adiado, como num Begin comum.
+func (s *TOTP) beginUserTx(ctx context.Context, userID uuid.UUID) (pgx.Tx, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := db.New(tx).ScopeToUser(ctx, userID); err != nil {
+		_ = tx.Rollback(ctx) // o erro que importa é o do escopo
+		return nil, fmt.Errorf("definir escopo do usuário: %w", err)
+	}
+	return tx, nil
+}
+
 // Enroll gera um segredo novo e o grava cifrado, ainda não confirmado.
 //
 // Gravar sem ativar é deliberado: se o usuário fechar a tela no meio do
@@ -131,7 +146,7 @@ func (s *TOTP) Confirm(ctx context.Context, userID uuid.UUID, code string, now t
 		return nil, err
 	}
 
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.beginUserTx(ctx, userID)
 	if err != nil {
 		return nil, fmt.Errorf("abrir transação: %w", err)
 	}
@@ -220,7 +235,7 @@ func (s *TOTP) VerifyWithProof(ctx context.Context, userID uuid.UUID, code strin
 	// comprometimento, e é a única pista que o dono da conta teria. A
 	// transação impede as duas metades soltas — código consumido sem rastro,
 	// ou rastro de um consumo que não aconteceu.
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.beginUserTx(ctx, userID)
 	if err != nil {
 		return SecondFactorProof{}, fmt.Errorf("abrir transação: %w", err)
 	}
@@ -293,7 +308,7 @@ func normalizarRecuperacao(code string) string {
 // usado no login desligava o 2FA na mesma janela de 90 s. (Gravar o timestep
 // aqui não mudaria nada: o segredo cai na mesma transação.)
 func (s *TOTP) Disable(ctx context.Context, userID uuid.UUID, code string, now time.Time) error {
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.beginUserTx(ctx, userID)
 	if err != nil {
 		return fmt.Errorf("abrir transação: %w", err)
 	}

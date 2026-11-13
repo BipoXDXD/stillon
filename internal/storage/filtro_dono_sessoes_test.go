@@ -12,8 +12,8 @@ import (
 	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 )
 
-// sessions não tem RLS: aqui o WHERE é a única barreira, com
-// ou sem superusuário. O teste segue o mesmo espelho dos outros recursos.
+// A conexão atravessa a RLS de sessions (00029): aqui o WHERE é a única
+// barreira. O teste segue o mesmo espelho dos outros recursos.
 
 // novaSessaoViva grava a linha viva de uma família do dono, com SQL cru.
 func novaSessaoViva(t *testing.T, conn *pgx.Conn, dono uuid.UUID) (sessao, familia uuid.UUID) {

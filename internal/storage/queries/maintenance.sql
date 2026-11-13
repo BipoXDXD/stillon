@@ -83,7 +83,7 @@ DELETE FROM audit_log WHERE at < sqlc.arg(cutoff)::timestamptz;
 -- name: DeleteExpiredSessions :execrows
 DELETE FROM sessions WHERE expires_at < sqlc.arg(cutoff)::timestamptz;
 
--- O contador de provas erradas (session_family_proofs, sem RLS) de uma família
+-- O contador de provas erradas (session_family_proofs) de uma família
 -- que deixou de existir: revogada (inclusive pela 5ª prova errada) ou vencida.
 -- Família viva nunca perde o contador, por mais parada que esteja; a vida dela
 -- já é limitada pelo prazo do refresh. A mesma definição de FamilyIsLive, no par

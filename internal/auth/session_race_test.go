@@ -112,7 +112,7 @@ func TestRevokingDuringRotationLeavesNothingAlive(t *testing.T) {
 			}
 
 			var vivas int
-			if err := pool.QueryRow(ctx,
+			if err := testdb.Admin(t).QueryRow(ctx,
 				`SELECT count(*) FROM sessions
 				  WHERE family_id = $1 AND used_at IS NULL AND revoked_at IS NULL`,
 				s.FamilyID).Scan(&vivas); err != nil {

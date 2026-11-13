@@ -235,6 +235,36 @@ func AdminDSN(t *testing.T) string {
 	return adminDSN
 }
 
+// Admin é um pool de superusuário no banco de teste, para o teste preparar e
+// reler as tabelas com RLS "por fora" da política, como faria quem tivesse um
+// dump: o papel da aplicação, sem escopo, não vê nada nelas. Chame depois de
+// New: o pool fecha no cleanup, antes de o snapshot voltar. É um pool por
+// teste, aberto na primeira chamada e reaproveitado nas seguintes, e a conexão
+// só abre no primeiro uso.
+func Admin(t *testing.T) *pgxpool.Pool {
+	t.Helper()
+	iniciar(t)
+	if pool, ok := poolsDeAdmin.Load(t); ok {
+		return pool.(*pgxpool.Pool)
+	}
+	pool, err := pgxpool.New(context.Background(), adminDSN)
+	if err != nil {
+		t.Fatalf("abrir pool de admin: %v", err)
+	}
+	if outro, carregado := poolsDeAdmin.LoadOrStore(t, pool); carregado {
+		pool.Close() // outra goroutine do mesmo teste chegou antes
+		return outro.(*pgxpool.Pool)
+	}
+	t.Cleanup(func() {
+		poolsDeAdmin.Delete(t)
+		pool.Close()
+	})
+	return pool
+}
+
+// poolsDeAdmin guarda o pool de Admin de cada teste em curso.
+var poolsDeAdmin sync.Map
+
 // Psql roda script com o psql de dentro do contêiner, como superusuário, no
 // banco de teste, e devolve o código de saída e a saída combinada. É para o que
 // só o psql faz: metacomandos, variáveis e o código de saída.

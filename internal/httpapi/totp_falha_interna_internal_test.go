@@ -118,7 +118,7 @@ func (c cenarioDoSegundoFator) comContadorNoBanco(t *testing.T) *pgxpool.Pool {
 		`INSERT INTO users (id, email, password_hash) VALUES ($1, 'dono@exemplo.com', 'x')`, c.usuario); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx,
+	if _, err := testdb.Admin(t).Exec(ctx,
 		`INSERT INTO sessions (id, user_id, family_id, token_hash, expires_at) VALUES ($1, $2, $3, $4, $5)`,
 		uuid.New(), c.usuario, c.familia, []byte("hash-da-sessao-do-cenario"), c.clk.Now().Add(time.Hour)); err != nil {
 		t.Fatal(err)
