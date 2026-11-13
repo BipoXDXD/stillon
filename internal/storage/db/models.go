@@ -27,7 +27,6 @@ type ChannelHealth struct {
 	LastError     *string
 }
 
-// Particionada por mês. A RLS vale na mãe e em cada partição: protect_checks_partition (00033, 00034, 00035) copia para a partição as políticas da mãe, e ensure_checks_partition a chama para toda partição nova.
 type Check struct {
 	ID         uuid.UUID
 	TargetID   uuid.UUID
