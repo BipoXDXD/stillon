@@ -126,18 +126,19 @@ $$;
 -- +goose StatementEnd
 
 -- O comentário da 00004 diz que partição não tem RLS; desde a 00033 cada
--- partição tem. A 00004 não se edita, então a nota correta fica no catálogo.
-COMMENT ON TABLE checks IS
-    'Particionada por mês. A RLS vale na mãe e em cada partição: protect_checks_partition '
-    '(00033, 00034, 00035) copia para a partição as políticas da mãe, e ensure_checks_partition a chama '
-    'para toda partição nova.';
+-- partição tem. A 00004 não se edita, então a nota correta fica no catálogo,
+-- na política de leitura da mãe: um COMMENT ON TABLE iria parar no código que
+-- o sqlc gera.
+COMMENT ON POLICY checks_select_via_target ON checks IS
+    'Vale na mãe e em cada partição: protect_checks_partition (00033, 00034, 00035) copia para a '
+    'partição as políticas da mãe, e ensure_checks_partition a chama para toda partição nova.';
 
 -- +goose Down
 SET LOCAL lock_timeout = '5s';
 
 SELECT pg_advisory_xact_lock(hashtextextended('stillon.ensure_checks_partition', 0));
 
-COMMENT ON TABLE checks IS NULL;
+COMMENT ON POLICY checks_select_via_target ON checks IS NULL;
 
 -- +goose StatementBegin
 CREATE OR REPLACE FUNCTION protect_checks_partition(p_partition regclass) RETURNS void
