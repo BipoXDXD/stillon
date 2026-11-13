@@ -224,26 +224,31 @@ func TestComposeProdAppIsReadOnly(t *testing.T) {
 // de produção tem teto de CPU e de memória: sem `cpus`, um laço quente do app
 // ou uma consulta pesada no db toma a máquina dos vizinhos; sem `mem_limit`, o
 // OOM killer do host escolhe a vítima. Vale para os composes que o Coolify
-// publica e para o compose.prod.yaml do stillon-entrada.
+// publica e para o compose.prod.yaml do stillon-entrada. A soma dos tetos de
+// um mesmo deploy fica abaixo das 2 vCPUs: teto igual ao da máquina é o mesmo
+// que não ter teto.
 const vcpusDaVPS = 2.0
 
 func TestProductionComposeLimitsEveryService(t *testing.T) {
+	somaCoolify := 0.0
 	for _, arquivo := range []string{"../../deploy/coolify/app.json", "../../deploy/coolify/database.json"} {
 		for nome, servico := range servicosCoolify(t, arquivo) {
-			conferirCPUs(t, arquivo, nome, servico.CPUs)
+			somaCoolify += conferirCPUs(t, arquivo, nome, servico.CPUs)
 			if _, err := bytesDoLimite(servico.MemLimit); err != nil {
 				t.Errorf("%s: serviço %s com mem_limit %q: %v", arquivo, nome, servico.MemLimit, err)
 			}
 		}
 	}
+	conferirSomaDeCPUs(t, "deploy/coolify (app.json + database.json)", somaCoolify)
 	const prod = "../../deploy/vps/compose.prod.yaml"
+	somaProd := 0.0
 	for _, nome := range []string{"caddy", "app", "db"} {
 		bloco := servicoDe(t, prod, nome)
 		cpus := regexp.MustCompile(`(?m)^    cpus: (\S+)$`).FindStringSubmatch(bloco)
 		if cpus == nil {
 			t.Errorf("%s: serviço %s sem cpus", prod, nome)
 		} else {
-			conferirCPUs(t, prod, nome, json.Number(cpus[1]))
+			somaProd += conferirCPUs(t, prod, nome, json.Number(cpus[1]))
 		}
 		mem := regexp.MustCompile(`(?m)^    mem_limit: (\S+)$`).FindStringSubmatch(bloco)
 		if mem == nil {
@@ -252,6 +257,7 @@ func TestProductionComposeLimitsEveryService(t *testing.T) {
 			t.Errorf("%s: serviço %s com mem_limit %q: %v", prod, nome, mem[1], err)
 		}
 	}
+	conferirSomaDeCPUs(t, prod, somaProd)
 }
 
 // Obrigação 4 no compose do Coolify: o GOMEMLIMIT fica abaixo do mem_limit do
@@ -300,15 +306,26 @@ func servicosCoolify(t *testing.T, arquivo string) map[string]servicoCoolify {
 	return compose.Services
 }
 
-func conferirCPUs(t *testing.T, arquivo, nome string, valor json.Number) {
+// conferirCPUs devolve o teto lido, ou 0 quando ele falta ou é inválido (o
+// erro já foi registrado).
+func conferirCPUs(t *testing.T, arquivo, nome string, valor json.Number) float64 {
 	t.Helper()
 	if valor == "" {
 		t.Errorf("%s: serviço %s sem cpus", arquivo, nome)
-		return
+		return 0
 	}
 	cpus, err := strconv.ParseFloat(string(valor), 64)
 	if err != nil || cpus <= 0 || cpus > vcpusDaVPS {
 		t.Errorf("%s: serviço %s com cpus %q: precisa ficar em (0, %v]", arquivo, nome, valor, vcpusDaVPS)
+		return 0
+	}
+	return cpus
+}
+
+func conferirSomaDeCPUs(t *testing.T, origem string, soma float64) {
+	t.Helper()
+	if soma >= vcpusDaVPS {
+		t.Errorf("%s: a soma dos cpus é %v; precisa ficar abaixo das %v vCPUs da VPS, ou o teto não protege os vizinhos", origem, soma, vcpusDaVPS)
 	}
 }
 
