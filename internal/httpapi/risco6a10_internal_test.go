@@ -74,7 +74,7 @@ func novoCenarioDoUsuarioSumido(t *testing.T) *cenarioDoUsuarioSumido {
 		`INSERT INTO users (id, email, password_hash) VALUES ($1, 'sumido@exemplo.com', $2)`, usuario, hash); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx,
+	if _, err := testdb.Admin(t).Exec(ctx,
 		`INSERT INTO sessions (id, user_id, family_id, token_hash, expires_at) VALUES ($1, $2, $3, $4, $5)`,
 		uuid.New(), usuario, familia, []byte("hash-da-sessao-do-sumido"), clk.Now().Add(time.Hour)); err != nil {
 		t.Fatal(err)
