@@ -186,6 +186,37 @@ func (q *Queries) InsertChannel(ctx context.Context, arg InsertChannelParams) er
 	return err
 }
 
+const latestChannelSeals = `-- name: LatestChannelSeals :many
+SELECT id, config_enc FROM notif_channels ORDER BY created_at DESC, id DESC LIMIT $1
+`
+
+type LatestChannelSealsRow struct {
+	ID        uuid.UUID
+	ConfigEnc []byte
+}
+
+// Conferência da MASTER_KEY na subida (notify.CheckMasterKey), sob
+// InProberTx: os selos mais recentes de qualquer dono, só para tentar abrir.
+func (q *Queries) LatestChannelSeals(ctx context.Context, limit int32) ([]LatestChannelSealsRow, error) {
+	rows, err := q.db.Query(ctx, latestChannelSeals, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []LatestChannelSealsRow
+	for rows.Next() {
+		var i LatestChannelSealsRow
+		if err := rows.Scan(&i.ID, &i.ConfigEnc); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listChannels = `-- name: ListChannels :many
 SELECT c.id, c.kind, c.config_enc, c.verified_at, c.verify_expires_at, c.enabled, c.created_at,
        h.last_success_at, h.last_failure_at, h.last_error

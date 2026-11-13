@@ -13,11 +13,13 @@ import (
 	"github.com/BipoXDXD/stillon/internal/storage/db"
 )
 
-// Um destino que não abre (MASTER_KEY errada num deploy ou num restauro, ou
-// linha corrompida) é tratado como falha definitiva e auditada do canal
-// dono dele, sem envio, e não derruba nem atrasa os outros canais do mesmo
-// lote. O teste prende o desfecho de hoje: se a decisão mudar (por exemplo,
-// para retentar com backoff), é este teste que muda junto, de propósito.
+// Um destino que não abre (linha corrompida, ou canal selado com outra chave
+// quando algum selo recente abre; a MASTER_KEY toda errada nem chega aqui,
+// porque CheckMasterKey recusa a subida) é tratado como falha definitiva e
+// auditada do canal dono dele, sem envio, e não derruba nem atrasa os outros
+// canais do mesmo lote. O teste prende o desfecho de hoje: se a decisão
+// mudar (por exemplo, para retentar com backoff), é este teste que muda
+// junto, de propósito.
 func TestUnreadableDestinationFailsAloneAndTheOtherChannelStillSends(t *testing.T) {
 	outraChave, err := crypto.NewBox([]byte("outra-chave-de-teste-de-32-bytes"))
 	if err != nil {
