@@ -31,7 +31,7 @@ func TestSondadorNaoApagaContadorDeProvasDeFamiliaViva(t *testing.T) {
 	}{
 		{viva, "1 day", false, false},
 		{revogada, "1 day", true, false},
-		{vencida, "-1 day", false, false},
+		{vencida, "-1 second", false, false},
 		{usada, "1 day", false, true},
 	} {
 		if _, err := testdb.Admin(t).Exec(ctx,
