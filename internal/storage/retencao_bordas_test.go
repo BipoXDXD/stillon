@@ -49,7 +49,8 @@ func execComoSondador(t *testing.T, pool *pgxpool.Pool, sql string, args ...any)
 }
 
 // instantesQueSobraram lê, no escopo do sondador, os instantes de uma coluna
-// de tempo, em ordem.
+// de tempo, em ordem. Sessões e provas de família são lidas pelo Admin, que
+// ignora a RLS: a conferência não depende do que o sondador pode ver.
 func instantesQueSobraram(t *testing.T, pool *pgxpool.Pool, sql string) []time.Time {
 	t.Helper()
 	ctx := context.Background()
@@ -132,7 +133,7 @@ func TestRetentionSessionsEdgeIsExclusiveAtTheCutoff(t *testing.T) {
 	if r := aplicarRetencao(t, pool, agora); r.DeletedSessions != 1 {
 		t.Errorf("apagou %d sessões, queria 1", r.DeletedSessions)
 	}
-	conferirSobra(t, "sessões", instantesQueSobraram(t, pool, `SELECT expires_at FROM sessions ORDER BY expires_at`), i)
+	conferirSobra(t, "sessões", instantesQueSobraram(t, testdb.Admin(t), `SELECT expires_at FROM sessions ORDER BY expires_at`), i)
 }
 
 // DeleteOldHeartbeatEvents: `at < corte`, agora com o lado de depois também.
@@ -231,7 +232,7 @@ func TestRetentionDeadFamilyProofsGraceEdgeIsExclusive(t *testing.T) {
 		t.Errorf("apagou %d contadores, queria 1", r.DeletedFamilyProofs)
 	}
 	conferirSobra(t, "contadores de provas",
-		instantesQueSobraram(t, pool, `SELECT updated_at FROM session_family_proofs ORDER BY updated_at`), i)
+		instantesQueSobraram(t, testdb.Admin(t), `SELECT updated_at FROM session_family_proofs ORDER BY updated_at`), i)
 }
 
 // DeleteDeadFamilyProofs, segundo predicado: a família está viva com
