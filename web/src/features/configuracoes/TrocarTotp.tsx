@@ -3,10 +3,10 @@ import { useRef, useState } from 'react'
 import { useApi } from '@/app/contexto'
 import { chaves } from '@/lib/api/consultas'
 import { ApiError } from '@/lib/api/http'
-import { ehDeRecuperacao, erroDeCredencial, respostaPerdida } from './credencial'
-import type { ErroDeCredencial } from './credencial'
+import { ehDeRecuperacao, erroDeCredencial, type ErroDeCredencial } from './credencial'
 import { RECUPERACAO_GASTA } from './mensagensDoTotp'
 import { PassoDoQr, CodigosDeRecuperacao, FormularioDeProvas } from './passosDoTotp'
+import { respostaPerdida } from './respostaPerdida'
 
 // 403 no rotate/confirm: não há troca pendente. Outra aba concluiu a troca,
 // ou a cancelou (desativar apaga o pendente; outro rotate o substitui).
