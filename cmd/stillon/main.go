@@ -5,10 +5,14 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
+	"maps"
 	"net/http"
 	"os"
 	"os/signal"
+	"slices"
+	"strings"
 	"syscall"
 	"time"
 
@@ -61,14 +65,19 @@ func main() {
 		}
 	}
 
-	role := flag.String("role", "", "all | api | prober (sobrepõe a env ROLE)")
-	flag.Parse()
+	role, err := lerFlagsDoServidor(os.Args[1:], os.Stderr)
+	if errors.Is(err, flag.ErrHelp) {
+		os.Exit(0)
+	}
+	if err != nil {
+		os.Exit(2)
+	}
 
 	getenv := os.Getenv
-	if *role != "" {
+	if role != "" {
 		getenv = func(key string) string {
 			if key == "ROLE" {
-				return *role
+				return role
 			}
 			return os.Getenv(key)
 		}
@@ -93,6 +102,30 @@ func main() {
 		os.Exit(1)
 	}
 	log.Info("encerrado")
+}
+
+// errArgumentoSobrando é a palavra que sobra depois das flags do servidor.
+var errArgumentoSobrando = errors.New("argumento que não é flag nem subcomando")
+
+// lerFlagsDoServidor lê as flags do modo servidor e escreve em stderr o motivo
+// de uma recusa. Sobra de argumento é recusa: o pacote flag para na primeira
+// palavra que não é flag sem reclamar, e um subcomando digitado errado
+// ("healtcheck") subiria o servidor e migraria o banco antes de morrer com a
+// porta ocupada.
+func lerFlagsDoServidor(args []string, stderr io.Writer) (role string, err error) {
+	fs := flag.NewFlagSet("stillon", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	papel := fs.String("role", "", "all | api | prober (sobrepõe a env ROLE)")
+	if err := fs.Parse(args); err != nil {
+		return "", err
+	}
+	if fs.NArg() > 0 {
+		fmt.Fprintf(stderr, "stillon: subcomando desconhecido %q; os subcomandos são %s\n",
+			fs.Arg(0), strings.Join(slices.Sorted(maps.Keys(subcomandos)), ", "))
+		fs.Usage()
+		return "", errArgumentoSobrando
+	}
+	return *papel, nil
 }
 
 // manutencaoACada é o intervalo do job de manutenção (spec §12): partições,
