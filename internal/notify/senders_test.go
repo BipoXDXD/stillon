@@ -313,6 +313,13 @@ func TestResendClassifiesResponses(t *testing.T) {
 	}{
 		{"mesma chave em processamento", conflito("concurrent_idempotent_requests"), ReasonRateLimited, false},
 		{"mesma chave com outro corpo", conflito("invalid_idempotent_request"), ReasonRejected, true},
+		// Repetir com a mesma chave é seguro: se o 409 era o de outro corpo,
+		// ele volta igual até o teto de tentativas.
+		{"409 com corpo ilegível", func(w http.ResponseWriter) {
+			w.WriteHeader(http.StatusConflict)
+			_, _ = io.WriteString(w, `<html>conflito</html>`)
+		}, ReasonServerError, false},
+		{"409 com nome desconhecido", conflito("outro_conflito"), ReasonServerError, false},
 		{"422 é pedido inválido", status(http.StatusUnprocessableEntity), ReasonRejected, true},
 		{"403 é domínio não verificado", status(http.StatusForbidden), ReasonRejected, true},
 		{"503 é transitório", status(http.StatusServiceUnavailable), ReasonServerError, false},
