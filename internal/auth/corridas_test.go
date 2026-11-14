@@ -261,6 +261,7 @@ func TestConfirmPerdeACorridaDaGuardaDoUpdate(t *testing.T) {
 				t.Fatal(err)
 			}
 			codigo := codigoEm(t, secretFromURI(t, uri), now)
+			familia := familiaViva(t, pool, userID, now)
 
 			svc, exigirCorrida := totpComEscritaAntesDe(t, "SET totp_confirmed_at = $2, totp_last_timestep = $3", func() {
 				args := append([]any{userID}, caso.argumento...)
@@ -269,7 +270,7 @@ func TestConfirmPerdeACorridaDaGuardaDoUpdate(t *testing.T) {
 				}
 			})
 
-			codes, err := svc.Confirm(ctx, userID, codigo, now)
+			codes, err := svc.Confirm(ctx, userID, familia, codigo, now)
 			exigirCorrida()
 			if !errors.Is(err, caso.esperado) {
 				t.Errorf("Confirm devolveu %v, queria %v", err, caso.esperado)
@@ -525,8 +526,9 @@ func TestOperacoesDe2FARevertemSeAAuditoriaFalha(t *testing.T) {
 					t.Fatal(err)
 				}
 				codigo := codigoEm(t, secretFromURI(t, uri), now)
+				familia := familiaViva(t, pool, userID, now)
 				return func() error {
-					_, err := svc.Confirm(context.Background(), userID, codigo, now)
+					_, err := svc.Confirm(context.Background(), userID, familia, codigo, now)
 					return err
 				}
 			},

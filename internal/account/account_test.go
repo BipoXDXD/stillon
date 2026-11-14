@@ -300,7 +300,7 @@ func TestChangePasswordKeepsRecoveryCodeWhenTheNewHashIsRateLimited(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	codes, err := c.totp.Confirm(ctx, c.user, code, c.clk.Now())
+	codes, err := c.totp.Confirm(ctx, c.user, c.atual, code, c.clk.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -508,7 +508,7 @@ func cadastrarTOTP(t *testing.T, c cenario, confirmar bool) string {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := c.totp.Confirm(ctx, c.user, code, c.clk.Now()); err != nil {
+		if _, err := c.totp.Confirm(ctx, c.user, c.atual, code, c.clk.Now()); err != nil {
 			t.Fatal(err)
 		}
 		c.clk.Advance(30 * time.Second) // o timestep da confirmação já foi consumido
@@ -598,11 +598,11 @@ func TestPendingTOTPConfirmLosesToAPasswordChange(t *testing.T) {
 	}
 	fimConfirm := make(chan error, 1)
 	go func() {
-		_, err := c.totp.Confirm(ctx, c.user, code, c.clk.Now())
+		_, err := c.totp.Confirm(ctx, c.user, c.atual, code, c.clk.Now())
 		fimConfirm <- err
 	}()
 	if esperou, err := esperarPresosAtras(t, c.pool, donoDaLinha, 2, fimConfirm); !esperou {
-		t.Fatalf("a confirmação não chegou ao UPDATE dela (terminou com %v)", err)
+		t.Fatalf("a confirmação não ficou presa atrás da troca (terminou com %v)", err)
 	}
 	soltar()
 

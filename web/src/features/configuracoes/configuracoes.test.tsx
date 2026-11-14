@@ -345,6 +345,27 @@ describe('2FA', () => {
     expect(await screen.findByText('Ativada.')).toBeInTheDocument()
   })
 
+  // Ligar o 2FA encerra as outras sessões no servidor; a lista relida mostra
+  // só esta. Sabotagem: tirar o invalidateQueries de chaves.sessoes do
+  // AtivarTotp → a lista fica com as duas.
+  it('ativar encerra as outras sessões, e a lista relida mostra só esta', async () => {
+    const r = await renderizarPainel('/settings')
+    r.falsa.estado.sessoes = [familia(), familia({ id: 'fam-2', current: false })]
+    await r.cliente.refetchQueries()
+    expect(await screen.findAllByRole('button', { name: 'Encerrar' })).toHaveLength(2)
+    await r.usuario.click(await screen.findByRole('button', { name: 'Ativar' }))
+    const dialogo = await screen.findByRole('dialog')
+    await r.usuario.type(within(dialogo).getByLabelText('Sua senha'), SENHA)
+    await r.usuario.click(within(dialogo).getByRole('button', { name: 'Continuar' }))
+    await r.usuario.type(await within(dialogo).findByLabelText('Código de 6 dígitos'), TOTP_OK)
+    await r.usuario.click(within(dialogo).getByRole('button', { name: 'Ativar' }))
+    expect(await within(dialogo).findByText('AAAABBBBCCCCDDDD')).toBeInTheDocument()
+    // O diálogo modal esconde a lista: conclui antes de contar.
+    await r.usuario.click(within(dialogo).getByLabelText('Guardei os códigos'))
+    await r.usuario.click(within(dialogo).getByRole('button', { name: 'Concluir' }))
+    await waitFor(() => expect(screen.getAllByRole('button', { name: 'Encerrar' })).toHaveLength(1))
+  })
+
   // M2 da revisão final: um envio vazio nos diálogos do 2FA ia ao servidor
   // e contava como tentativa falha no bloqueio progressivo (R34). Agora o
   // formulário o segura. Sabotagens: trocar o esquema de um dos formulários

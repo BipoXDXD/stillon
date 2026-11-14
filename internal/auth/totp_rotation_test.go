@@ -237,7 +237,7 @@ func TestStartRotationAcceptsARecoveryCode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	recuperacao, err := svc.Confirm(ctx, userID, codigoEm(t, secretFromURI(t, uri), now), now)
+	recuperacao, err := svc.Confirm(ctx, userID, familia, codigoEm(t, secretFromURI(t, uri), now), now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -330,7 +330,7 @@ func TestConfirmRotationReplacesTheRecoveryCodes(t *testing.T) {
 		t.Fatal(err)
 	}
 	atual := secretFromURI(t, uri)
-	antigos, err := svc.Confirm(ctx, userID, codigoEm(t, atual, now), now)
+	antigos, err := svc.Confirm(ctx, userID, familia, codigoEm(t, atual, now), now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -506,7 +506,7 @@ func TestDisableDropsThePendingRotation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.Confirm(ctx, userID, codigoEm(t, secretFromURI(t, uri), em), em); err != nil {
+	if _, err := svc.Confirm(ctx, userID, familiaViva(t, pool, userID, em), codigoEm(t, secretFromURI(t, uri), em), em); err != nil {
 		t.Fatal(err)
 	}
 	em = em.Add(30 * time.Second)

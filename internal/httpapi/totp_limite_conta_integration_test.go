@@ -451,8 +451,9 @@ func TestAccountLimitResponseLeaksNothing(t *testing.T) {
 // derruba. O contador de provas segue como era.
 func TestAccountLimitDoesNotCountRefusedRequestsAsWrongProofs(t *testing.T) {
 	a := newAPI(t)
-	token, _, familia := familiaComRefresh(t, a)
+	// A família vem depois do cadastro: ligar o 2FA encerra as outras sessões.
 	segredo := cadastrarTOTP(t, a, clientWithJar(t))
+	token, _, familia := familiaComRefresh(t, a)
 	a.clk.Advance(time.Minute) // o cadastro gastou fichas da mesma conta
 
 	errada := func() (int, string) {

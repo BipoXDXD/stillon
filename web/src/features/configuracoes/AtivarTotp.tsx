@@ -1,9 +1,11 @@
 import { zodResolver } from '@hookform/resolvers/zod'
+import { useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { useApi } from '@/app/contexto'
 import { Botao } from '@/components/ui/botao'
 import { Campo, Entrada } from '@/components/ui/campo'
+import { chaves } from '@/lib/api/consultas'
 import { ApiError } from '@/lib/api/http'
 import { erroDeCredencial, AvisoDeCredencial, type ErroDeCredencial } from './credencial'
 import { esquemaSenha } from './esquemasDoTotp'
@@ -40,6 +42,7 @@ export function AtivarTotp({
   aoIncerta: (texto: string) => void
 }) {
   const api = useApi()
+  const qc = useQueryClient()
   const [passo, setPasso] = useState<'senha' | 'codigo' | 'codigos'>('senha')
   const [uri, setUri] = useState('')
   const [codigos, setCodigos] = useState<string[]>([])
@@ -96,6 +99,8 @@ export function AtivarTotp({
           aoOcupar(true)
           try {
             setCodigos((await api.totpConfirmar(c)).recovery_codes)
+            // Ligar o 2FA encerrou as outras sessões no servidor.
+            void qc.invalidateQueries({ queryKey: chaves.sessoes })
             // Daqui em diante os códigos só existem nesta tela: Esc e o
             // clique fora não fecham o diálogo, só "Concluir".
             aoTravar()

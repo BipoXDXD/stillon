@@ -104,7 +104,7 @@ func TestConcurrentVerificationsAcceptTheAppCodeOnce(t *testing.T) {
 // de um comprometimento: um gasto, um evento.
 func TestConcurrentVerificationsSpendTheRecoveryCodeOnce(t *testing.T) {
 	svc, pool, userID := setupTOTP(t)
-	_, codigos := ligarComCodigos(t, svc, userID, inicioDaTroca)
+	_, codigos := ligarComCodigos(t, svc, pool, userID, inicioDaTroca)
 
 	aceitas, recusadas := disputarCodigo(t, pool, `SELECT 1 FROM totp_recovery_codes WHERE user_id = $1 FOR UPDATE`, userID, func() error {
 		return svc.Verify(context.Background(), userID, codigos[0], inicioDaTroca)

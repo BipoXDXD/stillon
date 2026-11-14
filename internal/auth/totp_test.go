@@ -79,7 +79,7 @@ func TestEnrollThenConfirm(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	recovery, err := svc.Confirm(ctx, userID, code, now)
+	recovery, err := svc.Confirm(ctx, userID, familiaViva(t, pool, userID, now), code, now)
 	if err != nil {
 		t.Fatalf("confirmar: %v", err)
 	}
@@ -138,7 +138,7 @@ func TestEnrollThenConfirm(t *testing.T) {
 }
 
 func TestVerifyRejectsWrongCode(t *testing.T) {
-	svc, _, userID := setupTOTP(t)
+	svc, pool, userID := setupTOTP(t)
 	ctx := context.Background()
 	now := time.Now()
 
@@ -150,7 +150,7 @@ func TestVerifyRejectsWrongCode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.Confirm(ctx, userID, code, now); err != nil {
+	if _, err := svc.Confirm(ctx, userID, familiaViva(t, pool, userID, now), code, now); err != nil {
 		t.Fatal(err)
 	}
 
@@ -269,7 +269,7 @@ func gravarSegredoTOTP(t *testing.T, pool *pgxpool.Pool, userID uuid.UUID, secre
 }
 
 func TestRecoveryCodeWorksExactlyOnce(t *testing.T) {
-	svc, _, userID := setupTOTP(t)
+	svc, pool, userID := setupTOTP(t)
 	ctx := context.Background()
 	now := time.Now()
 
@@ -281,7 +281,7 @@ func TestRecoveryCodeWorksExactlyOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	recovery, err := svc.Confirm(ctx, userID, code, now)
+	recovery, err := svc.Confirm(ctx, userID, familiaViva(t, pool, userID, now), code, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -377,7 +377,7 @@ func TestEnrollIsRefusedWhenTOTPAlreadyConfirmed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.Confirm(ctx, userID, code, now); err != nil {
+	if _, err := svc.Confirm(ctx, userID, familiaViva(t, pool, userID, now), code, now); err != nil {
 		t.Fatal(err)
 	}
 
@@ -441,7 +441,7 @@ func TestConfirmIsAudited(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.Confirm(ctx, userID, code, now); err != nil {
+	if _, err := svc.Confirm(ctx, userID, familiaViva(t, pool, userID, now), code, now); err != nil {
 		t.Fatal(err)
 	}
 
@@ -466,7 +466,7 @@ func TestRecoveryCodeUseIsAudited(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	recovery, err := svc.Confirm(ctx, userID, code, now)
+	recovery, err := svc.Confirm(ctx, userID, familiaViva(t, pool, userID, now), code, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -519,7 +519,7 @@ func TestConfirmRejectsAWrongCode(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := svc.Confirm(ctx, userID, "000000", now); !errors.Is(err, auth.ErrTOTPInvalid) {
+	if _, err := svc.Confirm(ctx, userID, familiaViva(t, pool, userID, now), "000000", now); !errors.Is(err, auth.ErrTOTPInvalid) {
 		t.Errorf("Confirm com código errado devolveu %v, queria ErrTOTPInvalid", err)
 	}
 
@@ -640,7 +640,7 @@ func TestConfirmIsRefusedOnAnAlreadyConfirmedAccount(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	primeiros, err := svc.Confirm(ctx, userID, code, now)
+	primeiros, err := svc.Confirm(ctx, userID, familiaViva(t, pool, userID, now), code, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -657,13 +657,13 @@ func TestConfirmIsRefusedOnAnAlreadyConfirmedAccount(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.Confirm(ctx, userID, outro, depois); !errors.Is(err, auth.ErrTOTPAlreadyEnabled) {
+	if _, err := svc.Confirm(ctx, userID, familiaViva(t, pool, userID, depois), outro, depois); !errors.Is(err, auth.ErrTOTPAlreadyEnabled) {
 		t.Errorf("segundo Confirm devolveu %v, queria ErrTOTPAlreadyEnabled", err)
 	}
 	// Com o fator ligado, o código nem é conferido: o errado recebe o mesmo
 	// ErrTOTPAlreadyEnabled do certo, e o Confirm deixa de ser um oráculo do
 	// código do segredo ativo.
-	if _, err := svc.Confirm(ctx, userID, codigoErradoDe(t, secret, depois), depois); !errors.Is(err, auth.ErrTOTPAlreadyEnabled) {
+	if _, err := svc.Confirm(ctx, userID, familiaViva(t, pool, userID, depois), codigoErradoDe(t, secret, depois), depois); !errors.Is(err, auth.ErrTOTPAlreadyEnabled) {
 		t.Errorf("Confirm com código errado e o fator ligado devolveu %v, queria ErrTOTPAlreadyEnabled", err)
 	}
 
@@ -786,7 +786,7 @@ func TestVerifyRejectsACodeTwoPeriodsAway(t *testing.T) {
 
 // Desligar o 2FA leva junto os códigos de recuperação.
 func TestDisableRemovesTheRecoveryCodes(t *testing.T) {
-	svc, _, userID := setupTOTP(t)
+	svc, pool, userID := setupTOTP(t)
 	ctx := context.Background()
 	now := time.Date(2026, 9, 22, 12, 0, 15, 0, time.UTC)
 	uri, err := svc.Enroll(ctx, userID, "pessoa@exemplo.com")
@@ -798,7 +798,7 @@ func TestDisableRemovesTheRecoveryCodes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.Confirm(ctx, userID, codigo, now); err != nil {
+	if _, err := svc.Confirm(ctx, userID, familiaViva(t, pool, userID, now), codigo, now); err != nil {
 		t.Fatal(err)
 	}
 	depois := now.Add(time.Minute)
