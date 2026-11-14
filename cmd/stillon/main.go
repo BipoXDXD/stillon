@@ -104,7 +104,7 @@ func main() {
 	log.Info("encerrado")
 }
 
-// errArgumentoSobrando é a palavra que sobra depois das flags do servidor.
+// errArgumentoSobrando recusa a palavra que sobra depois das flags do servidor.
 var errArgumentoSobrando = errors.New("argumento que não é flag nem subcomando")
 
 // lerFlagsDoServidor lê as flags do modo servidor e escreve em stderr o motivo

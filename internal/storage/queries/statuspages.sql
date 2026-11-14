@@ -41,7 +41,8 @@ SELECT i.target_id, i.display_name, i.position
 -- FOR KEY SHARE segura os alvos até o fim da transação que grava os itens:
 -- sem ela, um alvo apagado entre esta conferência e o INSERT do item faz a FK
 -- recusar (23503), e o pedido vira 500 em vez de erro do item. Uma remoção que
--- chega antes espera ou já sumiu, e o alvo não volta daqui.
+-- começa depois espera esta transação; uma já em curso termina antes da
+-- conferência, e o alvo sai do resultado.
 SELECT id FROM targets WHERE user_id = sqlc.arg(user_id) AND id = ANY(sqlc.arg(ids)::uuid[])
 FOR KEY SHARE;
 

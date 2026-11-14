@@ -20,8 +20,8 @@ func TestPanicValueStaysOutOfTheLog(t *testing.T) {
 		valor  any
 		querNo string
 	}{
-		{"string", "webhook ruim: " + canario, "string"},
-		{"erro com a URL", &url.Error{Op: "Post", URL: canario, Err: errors.New("quebrou")}, "*url.Error"},
+		{"string", "webhook ruim: " + canario, "valor string omitido"},
+		{"erro com a URL", &url.Error{Op: "Post", URL: canario, Err: errors.New("quebrou")}, "valor *url.Error omitido"},
 		{"erro do runtime", erroDeRuntime(), "index out of range"},
 	}
 	for _, c := range casos {

@@ -435,7 +435,9 @@ func (s *Scheduler) gravar(a db.ClaimDueTargetsRow, em time.Time, res Result) {
 		}
 		// O check atrasado que o detector ignorou também não mexe na
 		// validade: o certificado lido antes de uma renovação voltaria por
-		// cima do renovado, com o observed_at velho.
+		// cima do renovado, com o observed_at velho. Se o atrasado trazia um
+		// certificado pior (trocado por um que vence antes), a próxima sonda
+		// em ordem lê o mesmo certificado e o grava.
 		if res.CertNotAfter.IsZero() || !emOrdem {
 			return nil
 		}
