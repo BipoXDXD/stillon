@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 
 	"github.com/BipoXDXD/stillon/internal/clock"
 	"github.com/BipoXDXD/stillon/internal/heartbeat"
@@ -578,5 +579,25 @@ func TestResumeWithoutSuccessIsRecordedAsClosedByResume(t *testing.T) {
 	}
 	if !b.encerradoPorRetomada(t, id) {
 		t.Error("closed_by_resume falso num fechamento por retomada")
+	}
+}
+
+// O contador de tiques só anda com um tique que terminou: é o sinal de que o
+// avaliador está vivo, e o que o e2e usa para provar que o papel api não o liga.
+func TestTickCountsOnlyCompletedTicks(t *testing.T) {
+	b := novaBancadaHB(t)
+	b.tick(t)
+	b.tick(t)
+	if n := testutil.ToFloat64(b.av.Collector()); n != 2 {
+		t.Fatalf("depois de 2 tiques: %v, queria 2", n)
+	}
+
+	cancelado, cancel := context.WithCancel(t.Context())
+	cancel()
+	if _, err := b.av.Tick(cancelado); err == nil {
+		t.Fatal("tique com contexto cancelado não falhou")
+	}
+	if n := testutil.ToFloat64(b.av.Collector()); n != 2 {
+		t.Errorf("tique que falhou contou: %v, queria 2", n)
 	}
 }
