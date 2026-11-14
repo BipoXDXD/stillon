@@ -28,9 +28,10 @@ WITH lote AS MATERIALIZED (
     UPDATE notifications n
        SET next_attempt_at = sqlc.arg(lease_until)::timestamptz, attempts = n.attempts + 1
      WHERE n.id IN (SELECT id FROM lote)
-    RETURNING n.id, n.incident_id, n.channel_id, n.event, n.attempts, n.created_at, n.target_name
+    RETURNING n.id, n.incident_id, n.channel_id, n.event, n.attempts, n.created_at, n.target_name,
+              n.xmin::text AS lease_token
 )
-SELECT cl.id, cl.event, cl.attempts, cl.created_at,
+SELECT cl.id, cl.event, cl.attempts, cl.created_at, cl.lease_token::text AS lease_token,
        c.id AS channel_id, c.user_id, c.kind, c.config_enc, c.enabled, c.verified_at,
        i.id AS incident_id, i.started_at, i.resolved_at, i.ack_at, i.cause, i.closed_by_resume,
        COALESCE(cl.target_name, t.name, h.name)::text AS target_name,
@@ -41,21 +42,30 @@ SELECT cl.id, cl.event, cl.attempts, cl.created_at,
   LEFT JOIN targets t ON t.id = i.target_id
   LEFT JOIN heartbeats h ON h.id = i.heartbeat_id;
 
--- name: MarkNotificationSent :exec
+-- As três gravações de desfecho abaixo só valem para o dono da
+-- reivindicação: lease_token é o xmin da versão da linha que
+-- ClaimDueNotifications gravou, e qualquer gravação seguinte (outra
+-- reivindicação, o desfecho do dono novo) o troca por um xid maior, que não
+-- se repete. Zero linhas quer dizer que o lease venceu e outro dispatcher é o
+-- dono agora, ou que a notificação sumiu com o canal (ON DELETE CASCADE).
+-- Nem attempts nem next_attempt_at servem de cerca: o 429 do dono novo
+-- devolve a tentativa, e o "agora" dele pode ser o lease_until antigo.
+-- name: MarkNotificationSent :execrows
 UPDATE notifications SET status = 'sent', sent_at = sqlc.arg(now)::timestamptz, last_error = NULL
- WHERE id = sqlc.arg(id);
+ WHERE id = sqlc.arg(id) AND status = 'pending' AND xmin::text = sqlc.arg(lease_token)::text;
 
 -- refund devolve a tentativa que a reivindicação contou: um 429 é o
 -- provedor pedindo espera, não uma falha do envio (caso típico: um apagão em massa).
--- name: RetryNotification :exec
+-- name: RetryNotification :execrows
 UPDATE notifications
    SET next_attempt_at = sqlc.arg(next_attempt_at), last_error = sqlc.narg(last_error),
        attempts = attempts - CASE WHEN sqlc.arg(refund)::bool THEN 1 ELSE 0 END
- WHERE id = sqlc.arg(id);
+ WHERE id = sqlc.arg(id) AND status = 'pending' AND xmin::text = sqlc.arg(lease_token)::text;
 
 -- status é 'failed' ou 'cancelled'.
--- name: CloseNotification :exec
-UPDATE notifications SET status = $2, last_error = $3 WHERE id = $1;
+-- name: CloseNotification :execrows
+UPDATE notifications SET status = sqlc.arg(status), last_error = sqlc.narg(last_error)
+ WHERE id = sqlc.arg(id) AND status = 'pending' AND xmin::text = sqlc.arg(lease_token)::text;
 
 -- Falha definitiva vai para a trilha de auditoria (spec §8). audit_log não
 -- tem RLS.

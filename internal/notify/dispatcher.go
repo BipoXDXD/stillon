@@ -80,6 +80,10 @@ const (
 // encerramento.
 var errEncerramento = errors.New("encerramento do dispatcher")
 
+// errLeasePerdido é a gravação de quem perdeu a notificação: o lease venceu
+// e outro dispatcher a reivindicou de novo. O dono novo decide o desfecho.
+var errLeasePerdido = errors.New("lease da notificação perdido")
+
 // Dispatcher consome a outbox de notificações (spec §8). Roda no papel do
 // sondador, fora do caminho crítico da sonda.
 type Dispatcher struct {
@@ -472,6 +476,19 @@ func backoff(tentativa int32) time.Duration {
 	return min(d, maxBackoff)
 }
 
+// doDono traduz as linhas de uma gravação de desfecho: zero é o lease
+// perdido, e o erro desfaz a transação inteira, sem tocar na saúde do canal
+// nem na auditoria, que ficam com o dono novo.
+func doDono(linhas int64, err error) error {
+	if err != nil {
+		return err
+	}
+	if linhas == 0 {
+		return errLeasePerdido
+	}
+	return nil
+}
+
 // espalhar desloca a espera em até ±jitter. Num apagão, dezenas de avisos
 // falham juntos no mesmo webhook; com a mesma espera, voltariam todos no
 // mesmo instante e bateriam no provedor de novo como uma onda só.
@@ -493,18 +510,24 @@ func (d *Dispatcher) persistir(gravacoes context.Context, n db.ClaimDueNotificat
 	return storage.InProberTx(ctx, d.pool, func(q *db.Queries) error {
 		switch f.status {
 		case statusSent:
-			if err := q.MarkNotificationSent(ctx, db.MarkNotificationSentParams{ID: n.ID, Now: d.clk.Now()}); err != nil {
+			if err := doDono(q.MarkNotificationSent(ctx, db.MarkNotificationSentParams{
+				ID: n.ID, Now: d.clk.Now(), LeaseToken: n.LeaseToken,
+			})); err != nil {
 				return err
 			}
 			return q.MarkChannelSuccess(ctx, db.MarkChannelSuccessParams{ChannelID: n.ChannelID, Now: d.clk.Now()})
 		case statusPending:
-			return q.RetryNotification(ctx, db.RetryNotificationParams{
-				ID: n.ID, NextAttemptAt: f.proxima, LastError: motivo, Refund: f.devolver,
-			})
+			return doDono(q.RetryNotification(ctx, db.RetryNotificationParams{
+				ID: n.ID, NextAttemptAt: f.proxima, LastError: motivo, Refund: f.devolver, LeaseToken: n.LeaseToken,
+			}))
 		case statusCancelled:
-			return q.CloseNotification(ctx, db.CloseNotificationParams{ID: n.ID, Status: string(statusCancelled), LastError: motivo})
+			return doDono(q.CloseNotification(ctx, db.CloseNotificationParams{
+				ID: n.ID, Status: string(statusCancelled), LastError: motivo, LeaseToken: n.LeaseToken,
+			}))
 		case statusFailed:
-			if err := q.CloseNotification(ctx, db.CloseNotificationParams{ID: n.ID, Status: string(statusFailed), LastError: motivo}); err != nil {
+			if err := doDono(q.CloseNotification(ctx, db.CloseNotificationParams{
+				ID: n.ID, Status: string(statusFailed), LastError: motivo, LeaseToken: n.LeaseToken,
+			})); err != nil {
 				return err
 			}
 			// O canal passa a "failing" até a próxima entrega que der certo
