@@ -267,7 +267,7 @@ func (d *Dispatcher) entregarEmSerie(p prazos, fila []db.ClaimDueNotificationsRo
 func (d *Dispatcher) liberar(p prazos, n db.ClaimDueNotificationsRow) {
 	d.total.WithLabelValues(n.Kind, "deferred").Inc()
 	if err := d.persistir(p.gravacoes, n, interrompida(d.clk.Now())); err != nil {
-		slog.Error("devolver notificação no encerramento", "notification_id", n.ID, "erro", err)
+		registrarGravacao("devolver notificação no encerramento", n, err)
 	}
 }
 
@@ -320,7 +320,7 @@ func (d *Dispatcher) adiar(p prazos, n db.ClaimDueNotificationsRow, parou desfec
 		slog.Warn("notificação falhou de vez", "notification_id", n.ID, "channel_id", n.ChannelID, "motivo", f.reason)
 	}
 	if err := d.persistir(p.gravacoes, n, f); err != nil {
-		slog.Error("gravar desfecho de notificação", "notification_id", n.ID, "erro", err)
+		registrarGravacao("gravar desfecho de notificação", n, err)
 	}
 }
 
@@ -362,7 +362,7 @@ func (d *Dispatcher) entregar(p prazos, n db.ClaimDueNotificationsRow) desfecho 
 		slog.Warn("notificação falhou de vez", "notification_id", n.ID, "channel_id", n.ChannelID, "motivo", f.reason)
 	}
 	if err := d.persistir(p.gravacoes, n, f); err != nil {
-		slog.Error("gravar desfecho de notificação", "notification_id", n.ID, "erro", err)
+		registrarGravacao("gravar desfecho de notificação", n, err)
 	}
 	return f
 }
@@ -474,6 +474,19 @@ func backoff(tentativa int32) time.Duration {
 		d *= 2
 	}
 	return min(d, maxBackoff)
+}
+
+// registrarGravacao põe no log a gravação de desfecho que falhou. O lease
+// perdido não é erro do StillOn: ou o dono apagou o canal no meio do envio
+// (o ON DELETE CASCADE levou a notificação), ou outro dispatcher a
+// reivindicou depois que o lease venceu, e esse caso, que pode ter gerado um
+// envio repetido, merece o aviso.
+func registrarGravacao(acao string, n db.ClaimDueNotificationsRow, err error) {
+	if errors.Is(err, errLeasePerdido) {
+		slog.Warn(acao+": a notificação mudou de dono ou foi apagada com o canal", "notification_id", n.ID)
+		return
+	}
+	slog.Error(acao, "notification_id", n.ID, "erro", err)
 }
 
 // doDono traduz as linhas de uma gravação de desfecho: zero é o lease
