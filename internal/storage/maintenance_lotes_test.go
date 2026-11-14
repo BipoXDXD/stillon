@@ -2,6 +2,7 @@ package storage_test
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -117,5 +118,26 @@ func TestRetentionOtherTablesSurviveAFailingTable(t *testing.T) {
 	}
 	if r.DroppedPartitions < 1 || r.DeletedFamilyProofs != 1 {
 		t.Errorf("o DROP das partições vencidas ou a limpeza dos contadores de provas não rodou: %+v", r)
+	}
+}
+
+// Um lote que falha depois de outros comitados não apaga a contagem deles: o
+// relatório diz o que de fato saiu do banco, e o laço para no erro.
+func TestRetentionBatchFailureKeepsCommittedCount(t *testing.T) {
+	pool := testdb.New(t)
+	falha := errors.New("lote quebrado")
+	chamadas := 0
+	total, err := storage.DeleteInBatches(context.Background(), pool, 3, 5, func(*db.Queries, int32) (int64, error) {
+		chamadas++
+		if chamadas == 3 {
+			return 0, falha
+		}
+		return 3, nil
+	})
+	if !errors.Is(err, falha) {
+		t.Fatalf("erro %v; queria o do lote", err)
+	}
+	if total != 6 || chamadas != 3 {
+		t.Errorf("total %d em %d chamadas; queria 6 (dois lotes de 3 comitados) em 3", total, chamadas)
 	}
 }

@@ -40,10 +40,10 @@ const (
 	// bastante para o DELETE terminar em segundos e não segurar locks.
 	retentionBatch = 5000
 	// retentionMaxBatches é o teto de lotes por tabela numa rodada: com a rodada
-	// a cada 15 min, até 100 mil linhas por tabela, e o resto na seguinte. Com
-	// lotes de segundos, a rodada fica bem abaixo de maintenanceRoundTimeout;
-	// se mesmo assim o prazo vencer, o DROP e a limpeza falham com ele e a
-	// rodada seguinte tenta de novo.
+	// a cada 15 min, até 100 mil linhas por tabela, e o resto na seguinte. O
+	// pior caso (todo lote batendo no statement_timeout) passa do prazo da
+	// rodada; por isso o DROP e a limpeza das provas rodam antes das tabelas, e
+	// um prazo vencido só corta lotes, que a rodada seguinte retoma.
 	retentionMaxBatches = 20
 )
 
@@ -170,11 +170,12 @@ func ConsolidateRollups(ctx context.Context, pool *pgxpool.Pool, now time.Time) 
 // segura as outras: o erro sobe com o nome dela, e o relatório conta só os
 // lotes que comitaram.
 //
-// O DROP das partições vem sozinho, com lock_timeout, porque pega ACCESS
-// EXCLUSIVE em checks e não pode segurá-la durante o resto da retenção. A
-// limpeza dos contadores de provas das famílias mortas vem por último, na
-// própria transação. Os dois rodam mesmo com uma tabela falhando; todos os
-// erros sobem juntos, e a próxima rodada tenta de novo.
+// O DROP das partições vem primeiro e sozinho, com lock_timeout, porque pega
+// ACCESS EXCLUSIVE em checks e não pode segurá-la durante o resto da retenção;
+// a limpeza dos contadores de provas das famílias mortas vem logo depois, na
+// própria transação. Os dois vêm antes das tabelas para que lotes lentos não
+// os deixem sem prazo, rodada após rodada. Todos os erros sobem juntos, e a
+// próxima rodada tenta de novo.
 func ApplyRetention(ctx context.Context, pool *pgxpool.Pool, now time.Time) (MaintenanceReport, error) {
 	return applyRetention(ctx, pool, now, retentionLimits{batch: retentionBatch, maxBatches: retentionMaxBatches})
 }
@@ -196,7 +197,7 @@ type retentionTable struct {
 
 func applyRetention(ctx context.Context, pool *pgxpool.Pool, now time.Time, lim retentionLimits) (MaintenanceReport, error) {
 	var r MaintenanceReport
-	var errs []error
+	errs := []error{dropExpiredPartitions(ctx, pool, now, &r), sweepDeadFamilyProofs(ctx, pool, now, &r)}
 	for _, tbl := range retentionTables(ctx, now, &r) {
 		n, err := deleteInBatches(ctx, pool, lim, tbl.delete)
 		*tbl.deleted = n
@@ -204,7 +205,6 @@ func applyRetention(ctx context.Context, pool *pgxpool.Pool, now time.Time, lim 
 			errs = append(errs, fmt.Errorf("apagar %s: %w", tbl.what, err))
 		}
 	}
-	errs = append(errs, dropExpiredPartitions(ctx, pool, now, &r), sweepDeadFamilyProofs(ctx, pool, now, &r))
 	return r, errors.Join(errs...)
 }
 

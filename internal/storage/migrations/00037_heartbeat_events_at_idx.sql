@@ -8,4 +8,5 @@ SET LOCAL lock_timeout = '5s';
 CREATE INDEX heartbeat_events_at_idx ON heartbeat_events (at);
 
 -- +goose Down
+SET LOCAL lock_timeout = '5s';
 DROP INDEX heartbeat_events_at_idx;
