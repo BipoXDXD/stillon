@@ -85,8 +85,9 @@ func TestRetentionDeletesInBatchesUpToTheCapPerRound(t *testing.T) {
 	}
 }
 
-// Uma tabela que falha não segura as outras nem o DROP das partições: o erro
-// dela sobe com o nome da tabela, e o resto da retenção vale.
+// Uma tabela que falha não segura as outras, nem o DROP das partições, nem a
+// limpeza dos contadores de provas: o erro dela sobe com o nome da tabela, e o
+// resto da retenção vale.
 func TestRetentionOtherTablesSurviveAFailingTable(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
@@ -97,6 +98,12 @@ func TestRetentionOtherTablesSurviveAFailingTable(t *testing.T) {
 		}
 	}
 	semearVencidos(t, pool, hoje, 1)
+	// Um contador de provas de família morta (sem sessão), velho além da folga.
+	if _, err := testdb.Admin(t).Exec(ctx,
+		`INSERT INTO session_family_proofs (family_id, user_id, generation, reserved, errors, updated_at)
+		 VALUES ($1, $2, $3, 1, 1, $4)`, uuid.New(), novoUsuario(t, pool), uuid.New(), hoje.Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := testdb.Admin(t).Exec(ctx, `DROP TABLE audit_log CASCADE`); err != nil {
 		t.Fatal(err)
 	}
@@ -108,7 +115,7 @@ func TestRetentionOtherTablesSurviveAFailingTable(t *testing.T) {
 	if r.DeletedRollups != 1 || r.DeletedNotifications != 1 || r.DeletedHeartbeatEvents != 1 || r.DeletedSessions != 1 {
 		t.Errorf("relatório %+v; queria 1 de cada tabela que não falhou", r)
 	}
-	if r.DroppedPartitions < 1 {
-		t.Errorf("o DROP das partições vencidas não rodou: %+v", r)
+	if r.DroppedPartitions < 1 || r.DeletedFamilyProofs != 1 {
+		t.Errorf("o DROP das partições vencidas ou a limpeza dos contadores de provas não rodou: %+v", r)
 	}
 }

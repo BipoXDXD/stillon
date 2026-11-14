@@ -40,8 +40,10 @@ const (
 	// bastante para o DELETE terminar em segundos e não segurar locks.
 	retentionBatch = 5000
 	// retentionMaxBatches é o teto de lotes por tabela numa rodada: com a rodada
-	// a cada 15 min, até 100 mil linhas por tabela, e o resto na seguinte, sem
-	// estourar maintenanceRoundTimeout.
+	// a cada 15 min, até 100 mil linhas por tabela, e o resto na seguinte. Com
+	// lotes de segundos, a rodada fica bem abaixo de maintenanceRoundTimeout;
+	// se mesmo assim o prazo vencer, o DROP e a limpeza falham com ele e a
+	// rodada seguinte tenta de novo.
 	retentionMaxBatches = 20
 )
 
