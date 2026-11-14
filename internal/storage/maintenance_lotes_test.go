@@ -144,8 +144,8 @@ func TestRetentionBatchFailureKeepsCommittedCount(t *testing.T) {
 
 // semearVivos grava em cada tabela da retenção por DELETE uma linha que não
 // venceu, e nas notificações também uma pendente velha, que nunca sai por
-// idade. Devolve quantas linhas foram semeadas por tabela.
-func semearVivos(t *testing.T, pool *pgxpool.Pool, hoje time.Time) [5]int64 {
+// idade.
+func semearVivos(t *testing.T, pool *pgxpool.Pool, hoje time.Time) {
 	t.Helper()
 	ctx := context.Background()
 	dono := novoUsuario(t, pool)
@@ -179,7 +179,6 @@ func semearVivos(t *testing.T, pool *pgxpool.Pool, hoje time.Time) [5]int64 {
 		VALUES ($1, $2, $3, $4, $5)`, novoID(), dono, novoID(), uuid.NewString(), hoje.AddDate(0, 0, 1)); err != nil {
 		t.Fatal(err)
 	}
-	return [5]int64{1, 2, 1, 1, 1}
 }
 
 func linhasPorTabela(t *testing.T) [5]int64 {
@@ -195,13 +194,17 @@ func linhasPorTabela(t *testing.T) [5]int64 {
 
 // O filtro do corte mora dentro da subquery com LIMIT: com lote 1, as rodadas
 // esgotam as vencidas e param, e a linha que não venceu (e a pendente velha)
-// sobrevive em cada tabela. Um LIMIT fora do filtro apagaria as vivas também.
+// sobrevive em cada tabela. As vivas vão primeiro para o disco: num banco
+// recém-restaurado o plano é seq scan, e um LIMIT sem o filtro pegaria uma
+// delas logo no primeiro lote, e o laço ou a apagaria (sem
+// filtro nenhum) ou pararia num lote vazio (filtro só fora da subquery),
+// deixando vencidas para trás.
 func TestRetentionBatchesKeepRowsThatDidNotExpire(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
 	hoje := hora(12, 0)
+	semearVivos(t, pool, hoje)
 	semearVencidos(t, pool, hoje, 2)
-	vivos := semearVivos(t, pool, hoje)
 
 	r, err := storage.ApplyRetentionInBatches(ctx, pool, hoje, 1, 5)
 	if err != nil {
@@ -210,7 +213,7 @@ func TestRetentionBatchesKeepRowsThatDidNotExpire(t *testing.T) {
 	if got := apagadosPorTabela(r); got != [5]int64{2, 2, 2, 2, 2} {
 		t.Errorf("apagou %v (rollups, notificações, eventos, auditoria, sessões); queria as 2 vencidas de cada", got)
 	}
-	if got := linhasPorTabela(t); got != vivos {
-		t.Errorf("sobraram %v linhas por tabela; queria as vivas %v", got, vivos)
+	if got := linhasPorTabela(t); got != [5]int64{1, 2, 1, 1, 1} {
+		t.Errorf("sobraram %v linhas por tabela; queria só as vivas (1 de cada, 2 notificações: a entregue recente e a pendente velha)", got)
 	}
 }
