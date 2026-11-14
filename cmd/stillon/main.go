@@ -175,6 +175,7 @@ func run(ctx context.Context, cfg *config.Config) error {
 		// recebe o ping: com --role=api e --role=prober separados, o ping só
 		// registra.
 		avaliador := prober.NewHeartbeatEvaluator(pool, clk)
+		reg.MustRegister(avaliador.Collector())
 		g.Go(func() error { return avaliador.Run(gctx) })
 		slog.Info("sondador ativo", "max_em_voo", prober.MaxInFlight, "email", cfg.EmailEnabled())
 	}

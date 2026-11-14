@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/BipoXDXD/stillon/internal/clock"
 	"github.com/BipoXDXD/stillon/internal/heartbeat"
@@ -37,11 +38,22 @@ type HeartbeatEvaluator struct {
 	clk         clock.Clock
 	pageSize    int32
 	tickTimeout time.Duration
+	ticks       prometheus.Counter
 }
 
 func NewHeartbeatEvaluator(pool *pgxpool.Pool, clk clock.Clock) *HeartbeatEvaluator {
-	return &HeartbeatEvaluator{pool: pool, clk: clk, pageSize: evaluatePageSize, tickTimeout: evaluateTickTimeout}
+	return &HeartbeatEvaluator{
+		pool: pool, clk: clk, pageSize: evaluatePageSize, tickTimeout: evaluateTickTimeout,
+		ticks: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "heartbeat_evaluator_ticks_total",
+			Help: "Tiques do avaliador de heartbeats que terminaram sem erro.",
+		}),
+	}
 }
+
+// Collector expõe o contador de tiques. Só quem roda o avaliador o registra, e
+// um contador parado no /metrics mostra o avaliador travado.
+func (e *HeartbeatEvaluator) Collector() prometheus.Collector { return e.ticks }
 
 // Run roda Tick na subida e depois a cada evaluateEvery, até ctx acabar: um
 // prazo que venceu com o processo fora do ar vira incidente logo. Um tique que
@@ -99,6 +111,7 @@ func (e *HeartbeatEvaluator) Tick(ctx context.Context) (int, error) {
 		}
 		total += len(abrir) + len(fechar)
 		if len(abrir) < int(e.pageSize) && len(fechar) < int(e.pageSize) {
+			e.ticks.Inc()
 			return total, nil
 		}
 	}

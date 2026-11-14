@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -16,9 +17,13 @@ import (
 	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 )
 
-// esperaDoAvaliador passa do intervalo do avaliador: o teste de ausência só
-// prova algo se um avaliador ligado por engano tivesse tido tempo de agir.
-const esperaDoAvaliador = 6 * time.Second
+// metricaDoAvaliador é o contador de tiques do avaliador de heartbeats. Ele
+// só é registrado onde o avaliador roda, então a ausência dele no /metrics
+// prova que o papel não liga o avaliador, sem esperar um tique que talvez não
+// viesse a tempo numa máquina lenta. O limite: um avaliador ligado sem
+// registrar o contador passaria; por isso o registro fica colado à criação em
+// main.go.
+const metricaDoAvaliador = "heartbeat_evaluator_ticks_total"
 
 // heartbeatVencido cria um heartbeat com o prazo uma hora no passado.
 func heartbeatVencido(t *testing.T, pool *pgxpool.Pool) (uuid.UUID, string) {
@@ -83,6 +88,14 @@ func TestProberRoleEvaluatesHeartbeats(t *testing.T) {
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
+	// O tique só conta depois do commit, e o servidor de métricas sobe numa
+	// goroutine própria: a primeira leitura pode vir antes de um ou do outro.
+	for !avaliadorContou(lerMetricas(t, cfg.MetricsAddr)) {
+		if time.Now().After(prazo) {
+			t.Fatalf("o papel prober abriu o incidente sem contar o tique em %s", metricaDoAvaliador)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 	cancel()
 	if err := <-fim; err != nil {
 		t.Errorf("run: %v", err)
@@ -95,7 +108,7 @@ func TestAPIRoleRecordsPingsButDoesNotEvaluate(t *testing.T) {
 	id, token := heartbeatVencido(t, pool)
 	addr := portaLivre(t)
 	cfg := configDeTeste(t, config.RoleAPI, testdb.DSN(t))
-	cfg.HTTPAddr, cfg.ShutdownGrace = addr, time.Second
+	cfg.HTTPAddr, cfg.MetricsAddr, cfg.ShutdownGrace = addr, portaLivre(t), time.Second
 	runCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	fim := make(chan error, 1)
@@ -126,7 +139,19 @@ func TestAPIRoleRecordsPingsButDoesNotEvaluate(t *testing.T) {
 	if n := contarComoSondador(t, pool, eventosDoHeartbeat, id); n != 1 {
 		t.Errorf("%d eventos, queria 1", n)
 	}
-	time.Sleep(esperaDoAvaliador)
+	// run registra todas as métricas antes de subir o servidor da API, então,
+	// com o /readyz em 200, o /metrics já mostra tudo o que o papel liga.
+	metricas := lerMetricas(t, cfg.MetricsAddr)
+	for !strings.Contains(metricas, "go_goroutines") {
+		if time.Now().After(prazo) {
+			t.Fatal("o /metrics não respondeu dentro do prazo do /readyz")
+		}
+		time.Sleep(50 * time.Millisecond)
+		metricas = lerMetricas(t, cfg.MetricsAddr)
+	}
+	if strings.Contains(metricas, metricaDoAvaliador) {
+		t.Errorf("o papel api ligou o avaliador de heartbeats (%s no /metrics)", metricaDoAvaliador)
+	}
 	if n := contarComoSondador(t, pool, incidentesDoHeartbeat, id); n != 0 {
 		t.Errorf("o papel api abriu %d incidentes", n)
 	}
@@ -134,4 +159,16 @@ func TestAPIRoleRecordsPingsButDoesNotEvaluate(t *testing.T) {
 	if err := <-fim; err != nil {
 		t.Errorf("run: %v", err)
 	}
+}
+
+// avaliadorContou diz se o /metrics traz o contador do avaliador com ao menos
+// um tique.
+func avaliadorContou(metricas string) bool {
+	for _, linha := range strings.Split(metricas, "\n") {
+		valor, ok := strings.CutPrefix(linha, metricaDoAvaliador+" ")
+		if ok && valor != "0" {
+			return true
+		}
+	}
+	return false
 }
