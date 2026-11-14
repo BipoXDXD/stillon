@@ -41,6 +41,9 @@ func TestChannelDeletedDuringSendIsNotLoggedAsError(t *testing.T) {
 			if strings.Contains(log.String(), "level=ERROR") {
 				t.Errorf("o canal apagado virou erro no log:\n%s", log)
 			}
+			if !strings.Contains(log.String(), "level=WARN") || !strings.Contains(log.String(), "foi apagada com o canal") {
+				t.Errorf("o desfecho descartado não foi para o log como aviso:\n%s", log)
+			}
 			if n := b.linhasDeSaude(t); n != 0 {
 				t.Errorf("channel_health tem %d linhas de um canal apagado", n)
 			}

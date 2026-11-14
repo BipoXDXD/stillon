@@ -50,7 +50,10 @@ const (
 	// sexta tentativa acontece cerca de 15 minutos depois da primeira.
 	MaxAttempts  = 6
 	firstBackoff = 30 * time.Second
-	maxBackoff   = time.Hour
+	// maxBackoff é o teto antes do espalhamento: com o jitter, a espera
+	// chega a 72 min. Cortar depois de espalhar juntaria no teto exato
+	// metade das retentativas que o espalhamento separou.
+	maxBackoff = time.Hour
 	// jitter é a fração, para mais e para menos, com que a espera da
 	// retentativa é espalhada.
 	jitter = 0.2
@@ -483,7 +486,8 @@ func backoff(tentativa int32) time.Duration {
 // envio repetido, merece o aviso.
 func registrarGravacao(acao string, n db.ClaimDueNotificationsRow, err error) {
 	if errors.Is(err, errLeasePerdido) {
-		slog.Warn(acao+": a notificação mudou de dono ou foi apagada com o canal", "notification_id", n.ID)
+		slog.Warn(acao+": a notificação mudou de dono ou foi apagada com o canal",
+			"notification_id", n.ID, "channel_id", n.ChannelID)
 		return
 	}
 	slog.Error(acao, "notification_id", n.ID, "erro", err)
