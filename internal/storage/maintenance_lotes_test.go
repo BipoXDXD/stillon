@@ -141,3 +141,76 @@ func TestRetentionBatchFailureKeepsCommittedCount(t *testing.T) {
 		t.Errorf("total %d em %d chamadas; queria 6 (dois lotes de 3 comitados) em 3", total, chamadas)
 	}
 }
+
+// semearVivos grava em cada tabela da retenção por DELETE uma linha que não
+// venceu, e nas notificações também uma pendente velha, que nunca sai por
+// idade. Devolve quantas linhas foram semeadas por tabela.
+func semearVivos(t *testing.T, pool *pgxpool.Pool, hoje time.Time) [5]int64 {
+	t.Helper()
+	ctx := context.Background()
+	dono := novoUsuario(t, pool)
+	alvo := novoAlvo(t, pool, dono, agora)
+	recente := hoje.AddDate(0, -1, 0)
+	if _, err := pool.Exec(ctx, `SELECT ensure_checks_partition($1::date)`, recente); err != nil {
+		t.Fatal(err)
+	}
+	checkEm(t, pool, alvo, recente.Add(5*time.Minute), "up", 10)
+	consolidarJanela(t, pool, recente, recente.Add(time.Hour))
+
+	inc := novoIncidente(t, pool, alvo)
+	notificacaoEm(t, pool, inc, novoCanal(t, pool, dono, nil, time.Time{}), hoje.AddDate(0, 0, -40))
+	entregue := notificacaoEm(t, pool, inc, novoCanal(t, pool, dono, nil, time.Time{}), hoje.AddDate(0, 0, -5))
+	hb := novoHeartbeat(t, pool, dono, "vivos")
+	if err := storage.InProberTx(ctx, pool, func(q *db.Queries) error {
+		if err := q.MarkNotificationSent(ctx, db.MarkNotificationSentParams{ID: entregue, Now: hoje}); err != nil {
+			return err
+		}
+		return q.InsertHeartbeatEvent(ctx, db.InsertHeartbeatEventParams{
+			ID: novoID(), HeartbeatID: hb, At: hoje.AddDate(0, 0, -5), Kind: "success", Source: "ping",
+		})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO audit_log (id, user_id, action, at) VALUES ($1, $2, 'x', $3)`,
+		novoID(), dono, recente); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := testdb.Admin(t).Exec(ctx, `INSERT INTO sessions (id, user_id, family_id, token_hash, expires_at)
+		VALUES ($1, $2, $3, $4, $5)`, novoID(), dono, novoID(), uuid.NewString(), hoje.AddDate(0, 0, 1)); err != nil {
+		t.Fatal(err)
+	}
+	return [5]int64{1, 2, 1, 1, 1}
+}
+
+func linhasPorTabela(t *testing.T) [5]int64 {
+	t.Helper()
+	var n [5]int64
+	for i, tabela := range []string{"check_rollup_1h", "notifications", "heartbeat_events", "audit_log", "sessions"} {
+		if err := testdb.Admin(t).QueryRow(context.Background(), `SELECT count(*) FROM `+tabela).Scan(&n[i]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return n
+}
+
+// O filtro do corte mora dentro da subquery com LIMIT: com lote 1, as rodadas
+// esgotam as vencidas e param, e a linha que não venceu (e a pendente velha)
+// sobrevive em cada tabela. Um LIMIT fora do filtro apagaria as vivas também.
+func TestRetentionBatchesKeepRowsThatDidNotExpire(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+	hoje := hora(12, 0)
+	semearVencidos(t, pool, hoje, 2)
+	vivos := semearVivos(t, pool, hoje)
+
+	r, err := storage.ApplyRetentionInBatches(ctx, pool, hoje, 1, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := apagadosPorTabela(r); got != [5]int64{2, 2, 2, 2, 2} {
+		t.Errorf("apagou %v (rollups, notificações, eventos, auditoria, sessões); queria as 2 vencidas de cada", got)
+	}
+	if got := linhasPorTabela(t); got != vivos {
+		t.Errorf("sobraram %v linhas por tabela; queria as vivas %v", got, vivos)
+	}
+}
