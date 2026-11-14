@@ -115,22 +115,57 @@ func TestAccessTokenRejectsNoneAlgorithm(t *testing.T) {
 // Confusão de algoritmo: o atacante mantém o mesmo segredo e só troca o alg do
 // cabeçalho. É isto que o jwt.WithValidMethods impede — sem ele, a biblioteca
 // verifica com o método que o cabeçalho pedir, ou seja, com o método que o
-// atacante escolheu.
+// atacante escolheu. Os claims são completos e o HS256 com os mesmos claims é
+// aceito, então a recusa só pode vir do algoritmo.
 func TestAccessTokenRejectsAlgorithmConfusion(t *testing.T) {
 	now := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
-	claims := jwt.RegisteredClaims{
-		Subject:   uuid.New().String(),
-		IssuedAt:  jwt.NewNumericDate(now),
-		ExpiresAt: jwt.NewNumericDate(now.Add(15 * time.Minute)),
+	claims := jwt.MapClaims{
+		"sub": uuid.NewString(), "sid": uuid.NewString(),
+		"iat": now.Unix(), "exp": now.Add(15 * time.Minute).Unix(),
 	}
+	conferirSoHS256(t, claims, func(raw string) error {
+		_, err := auth.ParseAccessToken(jwtSecret, raw, now)
+		return err
+	})
+}
 
-	forjado, err := jwt.NewWithClaims(jwt.SigningMethodHS512, claims).SignedString(jwtSecret)
-	if err != nil {
-		t.Fatal(err)
+// O desafio do TOTP passa pela mesma trava: um desafio forjado em HS512 viraria
+// a porta de entrada do segundo fator.
+func TestChallengeTokenRejectsAlgorithmConfusion(t *testing.T) {
+	now := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
+	claims := jwt.MapClaims{
+		"sub": uuid.NewString(), "aud": []string{"totp-challenge"},
+		"iat": now.Unix(), "exp": now.Add(time.Minute).Unix(),
+		"pws": auth.PasswordStamp("x"), "cat": now.UnixMicro(),
 	}
+	conferirSoHS256(t, claims, func(raw string) error {
+		_, err := auth.ParseChallengeToken(jwtSecret, raw, now)
+		return err
+	})
+}
 
-	if _, err := auth.ParseAccessToken(jwtSecret, forjado, now); err == nil {
-		t.Error("token forjado com alg=HS512 foi aceito; só HS256 é esperado")
+// conferirSoHS256 assina os mesmos claims com o mesmo segredo em cada método
+// HMAC e exige que só o HS256 passe por parse.
+func conferirSoHS256(t *testing.T, claims jwt.Claims, parse func(raw string) error) {
+	t.Helper()
+	metodos := []*jwt.SigningMethodHMAC{jwt.SigningMethodHS256, jwt.SigningMethodHS384, jwt.SigningMethodHS512}
+	for _, m := range metodos {
+		t.Run(m.Alg(), func(t *testing.T) {
+			raw, err := jwt.NewWithClaims(m, claims).SignedString(jwtSecret)
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = parse(raw)
+			if m == jwt.SigningMethodHS256 {
+				if err != nil {
+					t.Fatalf("controle em HS256 recusado: %v", err)
+				}
+				return
+			}
+			if !errors.Is(err, auth.ErrInvalidToken) {
+				t.Errorf("token forjado com alg=%s: erro %v, queria ErrInvalidToken", m.Alg(), err)
+			}
+		})
 	}
 }
 
