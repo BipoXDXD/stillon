@@ -225,7 +225,7 @@ func TestSondadorSegueGravandoHistereseERollup(t *testing.T) {
 		}
 	}
 	err = storage.InProberTx(ctx, pool, func(q *db.Queries) error {
-		n, err := q.DeleteOldRollups(ctx, agora.Add(24*time.Hour))
+		n, err := q.DeleteOldRollups(ctx, db.DeleteOldRollupsParams{Cutoff: agora.Add(24 * time.Hour), Batch: 10})
 		if err == nil && n != 1 {
 			t.Errorf("retenção apagou %d rollups; queria 1", n)
 		}
