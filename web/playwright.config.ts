@@ -8,6 +8,10 @@ import { defineConfig, devices } from '@playwright/test'
 // binário precisa do banco antes.
 export default defineConfig({
   testDir: './e2e',
+  // As capturas não são teste: geram as imagens do README e só rodam pelo
+  // capturas.config.ts. Ficam fora daqui por configuração, e não por um
+  // test.skip, porque o CI reprova qualquer teste pulado.
+  testIgnore: '**/capturas.spec.ts',
   // Uma pilha, um usuário: os testes dividem o limite por usuário da API
   // (60/min, burst 20) e o do login (10/min por IP). Em série.
   workers: 1,
