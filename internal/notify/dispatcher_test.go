@@ -34,7 +34,8 @@ type canalFalso struct {
 	envios    []Event
 	destinos  []string
 	bloquear  bool
-	panico    bool
+	// panico, quando não é nil, é o valor do panic no meio do envio.
+	panico any
 	// chegou, quando não é nil, recebe um sinal a cada envio que começa.
 	chegou chan struct{}
 	// aoEnviar, quando não é nil, roda no meio do envio, antes da resposta.
@@ -59,8 +60,8 @@ func (c *canalFalso) Send(ctx context.Context, dest crypto.Secret, ev Event) err
 	if aoEnviar != nil {
 		aoEnviar()
 	}
-	if panico {
-		panic("canal quebrado")
+	if panico != nil {
+		panic(panico)
 	}
 	if bloquear {
 		<-ctx.Done()
@@ -494,7 +495,7 @@ func TestPanickingNotifierDoesNotKillTheDispatcher(t *testing.T) {
 	t.Cleanup(func() { slog.SetDefault(antigo) })
 
 	b := novaBancada(t, nil)
-	b.canal.panico = true
+	b.canal.panico = "canal quebrado"
 	id := b.enfileirar(t, incident.EventOpened)
 
 	b.despachar(t, 1)

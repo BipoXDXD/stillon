@@ -8,6 +8,7 @@ import (
 	"math"
 	"net/http"
 	"net/netip"
+	"runtime/debug"
 	"sync"
 	"time"
 
@@ -20,6 +21,7 @@ import (
 	"github.com/BipoXDXD/stillon/internal/clock"
 	"github.com/BipoXDXD/stillon/internal/crypto"
 	"github.com/BipoXDXD/stillon/internal/incident"
+	"github.com/BipoXDXD/stillon/internal/observability"
 	"github.com/BipoXDXD/stillon/internal/prober/safedial"
 	"github.com/BipoXDXD/stillon/internal/storage"
 	"github.com/BipoXDXD/stillon/internal/storage/db"
@@ -292,11 +294,12 @@ func (s *Scheduler) Tick(ctx context.Context) (int, error) {
 			// Registrado por último, roda primeiro: segura o panic de uma
 			// sonda, e os três defers acima rodam depois dele como numa
 			// saída normal, devolvendo a vaga e o inflight. Sem isto, um
-			// panic numa sonda derruba o processo inteiro. O log leva só o
-			// valor do panic e o alvo, nunca a requisição.
+			// panic numa sonda derruba o processo inteiro. O log leva o alvo,
+			// a pilha e o valor descrito sem dados, nunca a requisição.
 			defer func() {
 				if r := recover(); r != nil {
-					slog.Error("panic na sonda", "target_id", a.ID, "panic", fmt.Sprint(r))
+					slog.Error("panic na sonda", "target_id", a.ID,
+						"panic", observability.DescreverPanic(r), "stack", string(debug.Stack()))
 				}
 			}()
 			s.sondar(a, now)

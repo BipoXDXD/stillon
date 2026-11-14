@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math/rand/v2"
+	"runtime/debug"
 	"slices"
 	"sync"
 	"time"
@@ -18,6 +19,7 @@ import (
 	"github.com/BipoXDXD/stillon/internal/clock"
 	"github.com/BipoXDXD/stillon/internal/crypto"
 	"github.com/BipoXDXD/stillon/internal/incident"
+	"github.com/BipoXDXD/stillon/internal/observability"
 	"github.com/BipoXDXD/stillon/internal/storage"
 	"github.com/BipoXDXD/stillon/internal/storage/db"
 )
@@ -287,7 +289,8 @@ func interrompida(agora time.Time) desfecho {
 func (d *Dispatcher) entregarProtegido(p prazos, n db.ClaimDueNotificationsRow) (f desfecho) {
 	defer func() {
 		if r := recover(); r != nil {
-			slog.Error("panic no envio de notificação", "notification_id", n.ID, "panic", fmt.Sprint(r))
+			slog.Error("panic no envio de notificação", "notification_id", n.ID,
+				"panic", observability.DescreverPanic(r), "stack", string(debug.Stack()))
 			f = desfecho{}
 		}
 	}()

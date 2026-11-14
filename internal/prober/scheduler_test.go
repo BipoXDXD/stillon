@@ -738,7 +738,8 @@ func (transportePanicante) RoundTrip(*http.Request) (*http.Response, error) {
 
 // Um panic numa sonda não derruba o processo: vira log, e a vaga e o
 // scheduler_inflight voltam como numa saída normal. Sem o recover, o panic
-// na goroutine mata o binário de teste inteiro.
+// na goroutine mata o binário de teste inteiro. O valor do panic fica fora
+// do log (pode trazer a URL do alvo com credencial); vão o tipo e a pilha.
 func TestProbePanicIsLoggedAndReturnsTheSlot(t *testing.T) {
 	log := capturarLog(t)
 	b := novaBancada(t, &http.Client{Transport: transportePanicante{}}, 1)
@@ -751,8 +752,11 @@ func TestProbePanicIsLoggedAndReturnsTheSlot(t *testing.T) {
 
 	saida := log.String()
 	if !strings.Contains(saida, "panic na sonda") || !strings.Contains(saida, alvo.String()) ||
-		!strings.Contains(saida, "transporte sabotado pelo teste") {
-		t.Errorf("log sem o panic da sonda e o alvo:\n%s", saida)
+		!strings.Contains(saida, "valor string omitido") || !strings.Contains(saida, "stack=") {
+		t.Errorf("log sem o panic da sonda, o alvo, o tipo e a pilha:\n%s", saida)
+	}
+	if strings.Contains(saida, "transporte sabotado pelo teste") {
+		t.Errorf("o valor do panic foi para o log:\n%s", saida)
 	}
 	if v := testutil.ToFloat64(b.m.inflight); v != 0 {
 		t.Errorf("scheduler_inflight = %v depois do panic, queria 0", v)
