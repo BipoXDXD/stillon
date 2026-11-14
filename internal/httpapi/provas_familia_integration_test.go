@@ -93,19 +93,19 @@ func TestFifthWrongProofDropsTheFamily(t *testing.T) {
 			})
 		}, http.StatusBadRequest, "validation_failed"},
 		{"disable", func(t *testing.T, a *api, token string) provaErrada {
-			segredo := cadastrarTOTP(t, a, clientWithJar(t))
+			segredo := ligarPelaSessao(t, a, token)
 			return postEProva("/api/v1/auth/totp/disable", func(t *testing.T, a *api) map[string]string {
 				return map[string]string{"password": testPass, "code": codigoErradoPara(t, a, segredo)}
 			})
 		}, http.StatusUnauthorized, "invalid_credentials"},
 		{"rotate", func(t *testing.T, a *api, token string) provaErrada {
-			segredo := cadastrarTOTP(t, a, clientWithJar(t))
+			segredo := ligarPelaSessao(t, a, token)
 			return postEProva("/api/v1/auth/totp/rotate", func(t *testing.T, a *api) map[string]string {
 				return map[string]string{"password": testPass, "code": codigoErradoPara(t, a, segredo)}
 			})
 		}, http.StatusUnauthorized, "invalid_credentials"},
 		{"rotate/confirm", func(t *testing.T, a *api, token string) provaErrada {
-			velho := cadastrarTOTP(t, a, clientWithJar(t))
+			velho := ligarPelaSessao(t, a, token)
 			if st, _ := iniciarTrocaHTTP(t, a, token, map[string]string{"password": testPass, "code": codigoDe(t, a, velho)}); st != http.StatusOK {
 				t.Fatalf("rotate devolveu %d", st)
 			}

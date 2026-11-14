@@ -102,7 +102,7 @@ func (h *AuthHandlers) TOTPConfirm(w http.ResponseWriter, r *http.Request) {
 	}
 	defer res.Release()
 
-	codes, err := h.totp.Confirm(r.Context(), userID, req.Code, h.clk.Now())
+	codes, err := h.totp.Confirm(r.Context(), userID, familyID, req.Code, h.clk.Now())
 	if errors.Is(err, auth.ErrTOTPAlreadyEnabled) {
 		// Mesmo 403 do enroll: reconfirmar rotacionaria os códigos de recuperação e
 		// apagaria a data de ativação original. O Confirm recusa antes de olhar o
@@ -118,6 +118,12 @@ func (h *AuthHandlers) TOTPConfirm(w http.ResponseWriter, r *http.Request) {
 	if errors.Is(err, auth.ErrTOTPNotEnrolled) {
 		// Sem cadastro não há código a errar: a reserva volta.
 		apierr.WriteError(w, r, apierr.CodeValidation)
+		return
+	}
+	if errors.Is(err, auth.ErrInvalidSession) {
+		// A família caiu entre a guarda da rota e a trava: o mesmo 401
+		// unauthorized da guarda, e nada foi ligado.
+		apierr.WriteError(w, r, apierr.CodeUnauthorized)
 		return
 	}
 	if err != nil {

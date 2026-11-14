@@ -121,14 +121,16 @@ func (s *TOTP) Enroll(ctx context.Context, userID uuid.UUID, email string) (stri
 }
 
 // Confirm ativa o segundo fator e devolve os códigos de recuperação. Eles são
-// mostrados uma única vez: o banco guarda apenas o hash.
+// mostrados uma única vez: o banco guarda apenas o hash. Encerra as outras
+// famílias de sessão do usuário e mantém familyID; ErrInvalidSession se ela
+// caiu antes da trava.
 //
 // Com o fator já ligado, recusa com ErrTOTPAlreadyEnabled ANTES de conferir o
 // código. Conferido antes, o código certo dava
 // ErrTOTPAlreadyEnabled e o errado ErrTOTPInvalid: um oráculo do código do
 // segredo ATIVO, sem consumir o timestep, que quem tinha só a sessão
 // consultava e depois usava no disable ou no rotate.
-func (s *TOTP) Confirm(ctx context.Context, userID uuid.UUID, code string, now time.Time) ([]string, error) {
+func (s *TOTP) Confirm(ctx context.Context, userID, familyID uuid.UUID, code string, now time.Time) ([]string, error) {
 	secret, confirmado, sealed, err := s.loadSealed(ctx, userID)
 	if err != nil {
 		return nil, err
@@ -151,6 +153,19 @@ func (s *TOTP) Confirm(ctx context.Context, userID uuid.UUID, code string, now t
 		return nil, fmt.Errorf("abrir transação: %w", err)
 	}
 	defer tx.Rollback(ctx) // no-op depois de Commit
+	q := db.New(tx)
+
+	// A trava de sessões vem antes da linha de users, na ordem da troca de
+	// senha e da troca do fator. A família pode ter caído entre a guarda da
+	// rota e a trava; então nada muda: o 200 sempre quer dizer "ligado, e a
+	// sessão atual continua viva".
+	viva, err := travarFamiliaViva(ctx, q, userID, familyID, now)
+	if err != nil {
+		return nil, err
+	}
+	if !viva {
+		return nil, ErrInvalidSession
+	}
 
 	// A guarda `totp_confirmed_at IS NULL` é a simetria que faltava ao Confirm:
 	// o Enroll já recusava fator ativo, e ele esqueceu. Sem ela, um segundo Confirm
@@ -186,6 +201,13 @@ func (s *TOTP) Confirm(ctx context.Context, userID uuid.UUID, code string, now t
 	// Recadastro invalida os códigos anteriores.
 	if err := substituirCodigos(ctx, tx, userID, codes); err != nil {
 		return nil, err
+	}
+	// Quem liga o 2FA depois de suspeitar de um acesso indevido espera que a
+	// sessão do intruso caia junto: as outras famílias saem, a atual fica.
+	if _, err := q.RevokeOtherFamilies(ctx, db.RevokeOtherFamiliesParams{
+		UserID: userID, KeepFamilyID: familyID, Now: now,
+	}); err != nil {
+		return nil, fmt.Errorf("revogar as outras sessões: %w", err)
 	}
 
 	// Ativar um segundo fator é evento de segurança, e vai na mesma transação

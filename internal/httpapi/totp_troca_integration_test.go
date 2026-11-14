@@ -200,8 +200,10 @@ func TestRotateWithTOTPOffIsForbidden(t *testing.T) {
 		t.Error("o rotate sem 2FA gravou um pendente")
 	}
 
+	// Ligar o 2FA encerra as outras sessões, inclusive a de token: o rotate
+	// segue por uma sessão aberta depois.
 	segredo := cadastrarTOTP(t, a, clientWithJar(t))
-	if st, _ := iniciarTrocaHTTP(t, a, token, map[string]string{"password": testPass, "code": codigoDe(t, a, segredo)}); st != http.StatusOK {
+	if st, _ := iniciarTrocaHTTP(t, a, accessTokenValido(t, a), map[string]string{"password": testPass, "code": codigoDe(t, a, segredo)}); st != http.StatusOK {
 		t.Errorf("rotate com o 2FA ligado devolveu %d, queria 200", st)
 	}
 }
@@ -369,8 +371,10 @@ func TestDisableDropsThePendingRotationOverHTTP(t *testing.T) {
 		t.Error("o disable deixou o segredo pendente")
 	}
 
+	// Religa pela MESMA sessão: ligar encerra as outras, e a troca abandonada
+	// é desta família, então o 403 só pode vir do pendente apagado.
 	a.clk.Advance(30 * time.Second)
-	cadastrarTOTP(t, a, clientWithJar(t))
+	ligarPelaSessao(t, a, token)
 	st, codigo, _ := confirmarTrocaHTTP(t, a, token, codigoDe(t, a, abandonado))
 	if st != http.StatusForbidden || codigo != "forbidden" {
 		t.Errorf("confirm da troca abandonada antes do disable: %d %s, queria 403 forbidden", st, codigo)

@@ -161,8 +161,8 @@ func TestStartRotationRefusalsChangeNothing(t *testing.T) {
 		},
 		{
 			nome: "código de recuperação já gasto",
-			preparo: func(t *testing.T, svc *auth.TOTP, pool *pgxpool.Pool, userID, _ uuid.UUID) (string, time.Time) {
-				_, codigos := ligarComCodigos(t, svc, userID, inicioDaTroca)
+			preparo: func(t *testing.T, svc *auth.TOTP, _ *pgxpool.Pool, userID, familia uuid.UUID) (string, time.Time) {
+				_, codigos := ligarNaFamilia(t, svc, userID, familia, inicioDaTroca)
 				if err := svc.Verify(context.Background(), userID, codigos[0], inicioDaTroca); err != nil {
 					t.Fatal(err)
 				}

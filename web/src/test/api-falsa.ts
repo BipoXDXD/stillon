@@ -798,6 +798,8 @@ export function criarApiFalsa() {
       provaCerta(request)
       st.totpLigado = true
       st.totpPendente = false
+      // Ligar o 2FA encerra as outras sessões, como no servidor.
+      st.sessoes = st.sessoes.filter((s) => s.current)
       return HttpResponse.json({ recovery_codes: ['AAAABBBBCCCCDDDD', 'EEEEFFFFGGGGHHHH'] })
     })),
     rota('post', '/auth/totp/disable', estrita(PROVAS_DO_2FA, ({ request, corpo }) => {

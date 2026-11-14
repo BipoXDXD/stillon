@@ -23,14 +23,21 @@ import (
 
 // ligarComCodigos liga o 2FA pelo caminho do painel (Enroll e Confirm) e
 // devolve o segredo e os dez códigos de recuperação.
-func ligarComCodigos(t *testing.T, svc *auth.TOTP, userID uuid.UUID, em time.Time) (string, []string) {
+func ligarComCodigos(t *testing.T, svc *auth.TOTP, pool *pgxpool.Pool, userID uuid.UUID, em time.Time) (string, []string) {
+	t.Helper()
+	return ligarNaFamilia(t, svc, userID, familiaViva(t, pool, userID, em), em)
+}
+
+// ligarNaFamilia liga o 2FA pela família dada. Ligar encerra as outras
+// famílias, então quem vai usar uma família depois liga por ela.
+func ligarNaFamilia(t *testing.T, svc *auth.TOTP, userID, familia uuid.UUID, em time.Time) (string, []string) {
 	t.Helper()
 	uri, err := svc.Enroll(context.Background(), userID, "totp@exemplo.com")
 	if err != nil {
 		t.Fatal(err)
 	}
 	segredo := secretFromURI(t, uri)
-	codigos, err := svc.Confirm(context.Background(), userID, codigoEm(t, segredo, em), em)
+	codigos, err := svc.Confirm(context.Background(), userID, familia, codigoEm(t, segredo, em), em)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,7 +114,7 @@ func TestDisableConsumesTheTimestep(t *testing.T) {
 func TestDisableTakesTheUserLockFirst(t *testing.T) {
 	svc, pool, userID := setupTOTP(t)
 	ctx := context.Background()
-	_, codigos := ligarComCodigos(t, svc, userID, inicioDaTroca)
+	_, codigos := ligarComCodigos(t, svc, pool, userID, inicioDaTroca)
 
 	soltar := prenderTravaDoUsuario(t, pool, userID)
 	fim := make(chan error, 1)
@@ -134,7 +141,7 @@ func TestDisableTakesTheUserLockFirst(t *testing.T) {
 func TestStartRotationSpendsNothingForADeadFamily(t *testing.T) {
 	svc, pool, userID := setupTOTP(t)
 	ctx := context.Background()
-	segredo, codigos := ligarComCodigos(t, svc, userID, inicioDaTroca)
+	segredo, codigos := ligarComCodigos(t, svc, pool, userID, inicioDaTroca)
 	familia := familiaViva(t, pool, userID, inicioDaTroca)
 	revogarFamilia(t, pool, familia, inicioDaTroca)
 
@@ -195,9 +202,9 @@ func TestConfirmRotationNeedsTheRotation(t *testing.T) {
 // é aceito como o dono o digitar: em minúsculas, com hífens e espaços. Um uso
 // só, em qualquer grafia.
 func TestRecoveryCodesAreNormalized(t *testing.T) {
-	svc, _, userID := setupTOTP(t)
+	svc, pool, userID := setupTOTP(t)
 	ctx := context.Background()
-	_, codigos := ligarComCodigos(t, svc, userID, inicioDaTroca)
+	_, codigos := ligarComCodigos(t, svc, pool, userID, inicioDaTroca)
 	for _, c := range codigos {
 		if !regexp.MustCompile(`^[A-Z2-7]{16}$`).MatchString(c) {
 			t.Fatalf("código gerado %q fora do formato base32 maiúsculo de 16 caracteres", c)
