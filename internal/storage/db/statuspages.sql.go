@@ -431,6 +431,7 @@ func (q *Queries) LockStatusPage(ctx context.Context, userID uuid.UUID) (uuid.UU
 
 const ownTargetIDs = `-- name: OwnTargetIDs :many
 SELECT id FROM targets WHERE user_id = $1 AND id = ANY($2::uuid[])
+FOR KEY SHARE
 `
 
 type OwnTargetIDsParams struct {
@@ -440,6 +441,10 @@ type OwnTargetIDsParams struct {
 
 // Os alvos do dono entre os ids pedidos: a validação dos itens diz qual id
 // não é dele.
+// FOR KEY SHARE segura os alvos até o fim da transação que grava os itens:
+// sem ela, um alvo apagado entre esta conferência e o INSERT do item faz a FK
+// recusar (23503), e o pedido vira 500 em vez de erro do item. Uma remoção que
+// chega antes espera ou já sumiu, e o alvo não volta daqui.
 func (q *Queries) OwnTargetIDs(ctx context.Context, arg OwnTargetIDsParams) ([]uuid.UUID, error) {
 	rows, err := q.db.Query(ctx, ownTargetIDs, arg.UserID, arg.Ids)
 	if err != nil {

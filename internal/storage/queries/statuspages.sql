@@ -38,7 +38,12 @@ SELECT i.target_id, i.display_name, i.position
 -- Os alvos do dono entre os ids pedidos: a validação dos itens diz qual id
 -- não é dele.
 -- name: OwnTargetIDs :many
-SELECT id FROM targets WHERE user_id = sqlc.arg(user_id) AND id = ANY(sqlc.arg(ids)::uuid[]);
+-- FOR KEY SHARE segura os alvos até o fim da transação que grava os itens:
+-- sem ela, um alvo apagado entre esta conferência e o INSERT do item faz a FK
+-- recusar (23503), e o pedido vira 500 em vez de erro do item. Uma remoção que
+-- chega antes espera ou já sumiu, e o alvo não volta daqui.
+SELECT id FROM targets WHERE user_id = sqlc.arg(user_id) AND id = ANY(sqlc.arg(ids)::uuid[])
+FOR KEY SHARE;
 
 -- Públicas. Nenhuma devolve URL, headers, user_id nem status code: a
 -- projeção só tem o que a spec §5.6 permite expor.
