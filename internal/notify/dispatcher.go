@@ -50,6 +50,13 @@ const (
 
 	// MaxAttempts é o teto de tentativas (spec §8). Com o backoff abaixo, a
 	// sexta tentativa acontece cerca de 15 minutos depois da primeira.
+	//
+	// A entrega é pelo menos uma vez: um timeout depois do envio pode
+	// duplicar. Quando o provedor recebe o aviso mas a resposta não chega a
+	// tempo, a tentativa conta como falha e o aviso sai de novo. No e-mail, a
+	// Idempotency-Key (derivada do id da notificação) faz o Resend descartar a
+	// repetição; o webhook do Discord não tem chave, e o aviso chega em dobro.
+	// É de propósito: para um monitor, perder um alerta é pior que receber dois.
 	MaxAttempts  = 6
 	firstBackoff = 30 * time.Second
 	// maxBackoff é o teto antes do espalhamento: com o jitter, a espera

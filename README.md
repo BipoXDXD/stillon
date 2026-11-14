@@ -108,7 +108,10 @@ variáveis são segredos de interpolação do recurso no Coolify, nunca arquivos
 - **Incidentes** abrem depois de falhas seguidas e fecham depois de sucessos seguidos, com
   histórico por alvo.
 - **Notificações** pelo Discord e por e-mail (Resend), com entrega confiável: saem de uma fila
-  no próprio Postgres e sobrevivem a um restart. Enquanto o incidente segue aberto e sem
+  no próprio Postgres e sobrevivem a um restart. A entrega é pelo menos uma vez: um timeout
+  depois do envio pode duplicar o aviso, porque perder um alerta é pior que receber dois. As
+  retentativas têm teto (6) e espera crescente; no e-mail, a `Idempotency-Key` faz o Resend
+  descartar a repetição, e no Discord o aviso pode chegar em dobro. Enquanto o incidente segue aberto e sem
   reconhecimento, cada canal recebe lembretes (Discord a cada 30 min e e-mail a cada 2 h nas
   primeiras 6 h; depois, a cada 6 h e 24 h). Reconhecer no painel interrompe os lembretes; o
   aviso de que o alvo voltou sai do mesmo jeito.
