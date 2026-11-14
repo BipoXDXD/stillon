@@ -278,6 +278,16 @@ func TestRevokeSessionOfAnotherUserIs404(t *testing.T) {
 	if resp.StatusCode != http.StatusNotFound || codigo != "not_found" {
 		t.Errorf("DELETE da sessão alheia devolveu %d %s, queria 404 not_found", resp.StatusCode, codigo)
 	}
+	// O 404 da sessão alheia é o mesmo de um id que nunca existiu: nada no
+	// corpo conta que aquela sessão é de alguém.
+	stAlheia, alheia := lerCru(t, a, http.MethodDelete, "/api/v1/sessions/"+s.FamilyID.String(), token, nil)
+	stInexistente, inexistente := lerCru(t, a, http.MethodDelete, "/api/v1/sessions/"+uuid.NewString(), token, nil)
+	if stAlheia != http.StatusNotFound || stInexistente != http.StatusNotFound {
+		t.Errorf("alheia deu %d, inexistente %d; queria 404 nos dois", stAlheia, stInexistente)
+	}
+	if semTrace(t, alheia) != semTrace(t, inexistente) {
+		t.Errorf("o 404 da sessão alheia difere do inexistente:\n%s\n%s", alheia, inexistente)
+	}
 	if _, _, err := mgr.Rotate(context.Background(), doOutro, meta); err != nil {
 		t.Errorf("a sessão do outro usuário caiu: %v", err)
 	}
