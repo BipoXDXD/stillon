@@ -84,11 +84,14 @@ UPDATE users SET password_hash = sqlc.arg(new_hash)
 -- Tira também o bloqueio, como o set-password: quem roda o
 -- comando é o operador, a identidade foi provada fora da API, e o dono que
 -- perdeu o autenticador costuma chegar aqui com a conta travada pelos chutes
--- dele mesmo. Com o 2FA já desligado, nada muda, nem o bloqueio.
+-- dele mesmo. É também a única saída do teto absoluto do bloqueio do
+-- segundo fator (totp_locked_until = 'infinity'). Com o 2FA já desligado,
+-- nada muda, nem o bloqueio.
 -- name: ResetTOTP :execrows
 UPDATE users SET totp_secret_enc = NULL, totp_confirmed_at = NULL, totp_last_timestep = NULL,
        totp_pending_secret_enc = NULL, totp_pending_family_id = NULL,
-       failed_attempts = 0, locked_until = NULL
+       failed_attempts = 0, locked_until = NULL,
+       totp_failures = 0, totp_locked_until = NULL
  WHERE id = $1 AND totp_confirmed_at IS NOT NULL;
 
 -- Os códigos de recuperação morrem com o fator (reset-2fa).

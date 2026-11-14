@@ -128,6 +128,11 @@ func lerRole(args []string, stderr io.Writer) (role string, codigo int, seguir b
 // o rollup da última hora cheia disponível logo depois de ela fechar.
 const manutencaoACada = 15 * time.Minute
 
+// avisoDeBloqueioACada é o intervalo da fila de avisos de bloqueio do segundo
+// fator: o bloqueio mais curto dura 15 min, então um minuto de atraso no
+// e-mail não muda o que o dono pode fazer.
+const avisoDeBloqueioACada = time.Minute
+
 // run é onde o wiring acontece. Mantido separado de main para que main tenha
 // apenas responsabilidade de processo (flags, sinais, código de saída).
 //
@@ -230,6 +235,15 @@ func run(ctx context.Context, cfg *config.Config) error {
 			Ready:       pool.Ping,
 		}
 		servir(gctx, g, httpapi.NewServer(cfg, httpapi.Routes(gctx, cfg, deps)), "api", cfg.ShutdownGrace)
+		// O aviso do bloqueio do segundo fator sai deste papel, que é quem
+		// lê users. Sem o Resend, os avisos ficam na fila (totp_lock_alert_at)
+		// até o e-mail ser ligado.
+		if cfg.EmailEnabled() {
+			mailer := notify.NewResend(crypto.Secret(cfg.ResendAPIKey), cfg.EmailFrom)
+			g.Go(func() error { return auth.RunTOTPLockAlerts(gctx, store, mailer, avisoDeBloqueioACada) })
+		} else {
+			slog.Warn("e-mail desligado: avisos de bloqueio do segundo fator ficam na fila")
+		}
 	}
 
 	return g.Wait()

@@ -235,4 +235,7 @@ type User struct {
 	TotpPendingSecretEnc []byte
 	TotpPendingFamilyID  *uuid.UUID
 	TotpPendingStartedAt *time.Time
+	TotpFailures         int32
+	TotpLockedUntil      *time.Time
+	TotpLockAlertAt      *time.Time
 }

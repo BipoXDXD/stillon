@@ -171,6 +171,12 @@ type UserStore interface {
 	// intermediário do login (ver Attempts).
 	RefundAttempt(ctx context.Context, userID uuid.UUID) error
 	ResetFailures(ctx context.Context, userID uuid.UUID) error
+	// ReserveTOTPAttempt, RefundTOTPAttempt e ResetTOTPFailures são o
+	// bloqueio progressivo do segundo fator (TOTPAttempts), à parte do da
+	// conta.
+	ReserveTOTPAttempt(ctx context.Context, userID uuid.UUID, ipHash []byte, at time.Time) (bool, error)
+	RefundTOTPAttempt(ctx context.Context, userID uuid.UUID) error
+	ResetTOTPFailures(ctx context.Context, userID uuid.UUID) error
 	// RehashPassword troca oldHash por newHash só se oldHash ainda for o hash
 	// gravado; swapped diz se trocou.
 	RehashPassword(ctx context.Context, userID uuid.UUID, oldHash, newHash string) (swapped bool, err error)
@@ -264,7 +270,7 @@ func (s *PGStore) ReserveAttempt(ctx context.Context, userID uuid.UUID, ipHash [
 		if !travou {
 			return nil
 		}
-		return insertLockAudit(ctx, tx, userID, ipHash, at)
+		return insertLockAudit(ctx, tx, userID, ipHash, at, acaoContaBloqueada, LockDuration)
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil

@@ -48,6 +48,20 @@ func (r *Resend) SendVerification(ctx context.Context, dest crypto.Secret, link 
 	return r.post(ctx, dest, "[StillOn] Confirme este endereço", corpo, "")
 }
 
+// SendTOTPLocked avisa o dono que o segundo fator foi bloqueado por códigos
+// errados. O texto não traz código, IP nem horário exato: só o que
+// o dono precisa para agir. chave é a Idempotency-Key do bloqueio.
+func (r *Resend) SendTOTPLocked(ctx context.Context, email string, permanente bool, chave string) error {
+	corpo := "O segundo fator da sua conta no StillOn foi bloqueado depois de vários códigos errados seguidos.\n\n" +
+		"O código só é pedido depois da senha certa. Se não foi você, troque a senha agora.\n"
+	if permanente {
+		corpo += "\nO bloqueio não vence sozinho: só o comando stillon user reset-2fa, rodado no servidor, o libera.\n"
+	} else {
+		corpo += "\nO bloqueio vence sozinho, e cada novo bloqueio dura o dobro do anterior.\n"
+	}
+	return r.post(ctx, crypto.Secret(email), "[StillOn] Segundo fator bloqueado", corpo, chave)
+}
+
 type resendPayload struct {
 	From    string   `json:"from"`
 	To      []string `json:"to"`

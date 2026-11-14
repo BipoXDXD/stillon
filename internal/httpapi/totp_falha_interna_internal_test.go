@@ -31,6 +31,8 @@ type contasDoDuble struct {
 
 	usuario                       auth.User
 	reservas, devolucoes, zeradas int
+	// O mesmo destino, no contador próprio do segundo fator.
+	reservasTOTP, devolucoesTOTP, zeradasTOTP int
 }
 
 func (c *contasDoDuble) ByID(context.Context, uuid.UUID) (auth.User, error) {
@@ -49,6 +51,21 @@ func (c *contasDoDuble) RefundAttempt(context.Context, uuid.UUID) error {
 
 func (c *contasDoDuble) ResetFailures(context.Context, uuid.UUID) error {
 	c.zeradas++
+	return nil
+}
+
+func (c *contasDoDuble) ReserveTOTPAttempt(context.Context, uuid.UUID, []byte, time.Time) (bool, error) {
+	c.reservasTOTP++
+	return true, nil
+}
+
+func (c *contasDoDuble) RefundTOTPAttempt(context.Context, uuid.UUID) error {
+	c.devolucoesTOTP++
+	return nil
+}
+
+func (c *contasDoDuble) ResetTOTPFailures(context.Context, uuid.UUID) error {
+	c.zeradasTOTP++
 	return nil
 }
 
@@ -190,6 +207,10 @@ func TestTOTPVerifyInternalFailureRefundsTheReservedAttempt(t *testing.T) {
 	if c.contas.reservas != 1 || c.contas.devolucoes != 1 || c.contas.zeradas != 0 {
 		t.Errorf("reservas = %d, devoluções = %d, zeradas = %d; queria 1, 1 e 0",
 			c.contas.reservas, c.contas.devolucoes, c.contas.zeradas)
+	}
+	if c.contas.reservasTOTP != 1 || c.contas.devolucoesTOTP != 1 || c.contas.zeradasTOTP != 0 {
+		t.Errorf("segundo fator: reservas = %d, devoluções = %d, zeradas = %d; queria 1, 1 e 0",
+			c.contas.reservasTOTP, c.contas.devolucoesTOTP, c.contas.zeradasTOTP)
 	}
 }
 

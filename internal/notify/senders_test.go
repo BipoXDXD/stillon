@@ -342,6 +342,46 @@ func TestResendVerificationCarriesTheLinkAndNoIdempotencyKey(t *testing.T) {
 	}
 }
 
+// O aviso de bloqueio do segundo fator leva a chave de idempotência do
+// bloqueio e nenhum detalhe sensível; o permanente diz como liberar.
+func TestResendTOTPLockedCarriesTheKeyAndNoSensitiveDetail(t *testing.T) {
+	casos := []struct {
+		nome       string
+		permanente bool
+		comoSair   string
+	}{
+		{"temporário", false, "dura o dobro"},
+		{"permanente", true, "stillon user reset-2fa"},
+	}
+	for _, c := range casos {
+		t.Run(c.nome, func(t *testing.T) {
+			srv, client, pedidos := provedor(t, status(http.StatusOK))
+			r := &Resend{client: client, endpoint: srv.URL, apiKey: crypto.Secret("k"), from: "a@b.dev"}
+
+			if err := r.SendTOTPLocked(context.Background(), "dono@x.com", c.permanente, "totp-lock/u/1"); err != nil {
+				t.Fatal(err)
+			}
+			p := receber(t, pedidos)
+			if k := p.Cabecalho.Get("Idempotency-Key"); k != "totp-lock/u/1" {
+				t.Errorf("Idempotency-Key = %q", k)
+			}
+			var corpo resendPayload
+			if err := json.Unmarshal(p.Corpo, &corpo); err != nil {
+				t.Fatal(err)
+			}
+			if len(corpo.To) != 1 || corpo.To[0] != "dono@x.com" || !strings.Contains(corpo.Subject, "Segundo fator bloqueado") {
+				t.Errorf("payload = %+v", corpo)
+			}
+			if !strings.Contains(corpo.Text, c.comoSair) {
+				t.Errorf("texto sem %q: %s", c.comoSair, corpo.Text)
+			}
+			if c.permanente == strings.Contains(corpo.Text, "dura o dobro") {
+				t.Errorf("texto do caso errado: %s", corpo.Text)
+			}
+		})
+	}
+}
+
 func TestResendClassifiesResponses(t *testing.T) {
 	conflito := func(nome string) func(http.ResponseWriter) {
 		return func(w http.ResponseWriter) {

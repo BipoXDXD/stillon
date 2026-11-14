@@ -352,10 +352,14 @@ func (s *TOTP) Disable(ctx context.Context, userID uuid.UUID, code string, now t
 
 	// O segredo pendente de uma troca cai junto: sem isto, o
 	// QR de uma troca abandonada ainda confirmaria depois que o 2FA fosse
-	// ligado de novo com outro app.
+	// ligado de novo com outro app. O bloqueio do segundo fator também: as
+	// falhas contadas contra o fator que sai não valem para o próximo. A trava
+	// do teto absoluto fica: ela só sai pelo reset-2fa do CLI.
 	if _, err := tx.Exec(ctx,
 		`UPDATE users SET totp_secret_enc = NULL, totp_confirmed_at = NULL, totp_pending_secret_enc = NULL,
-		                  totp_pending_family_id = NULL
+		                  totp_pending_family_id = NULL,
+		                  totp_failures = CASE WHEN totp_locked_until = 'infinity' THEN totp_failures ELSE 0 END,
+		                  totp_locked_until = CASE WHEN totp_locked_until = 'infinity' THEN totp_locked_until END
 		   WHERE id = $1`, userID); err != nil {
 		return fmt.Errorf("desativar TOTP: %w", err)
 	}
