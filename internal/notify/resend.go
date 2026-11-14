@@ -73,7 +73,7 @@ func (r *Resend) post(ctx context.Context, dest crypto.Secret, assunto, corpo, c
 		req.Header.Set("Idempotency-Key", chave)
 	}
 
-	resp, err := r.client.Do(req)
+	resp, err := semSeguirRedirect(r.client).Do(req)
 	if err != nil {
 		return classificarErro(err)
 	}

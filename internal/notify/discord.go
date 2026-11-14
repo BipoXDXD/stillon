@@ -121,10 +121,15 @@ func (d *Discord) post(ctx context.Context, dest crypto.Secret, conteudo string)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", userAgent)
 
-	resp, err := d.client.Do(req)
+	resp, err := semSeguirRedirect(d.client).Do(req)
 	if err != nil {
 		return classificarErro(err)
 	}
 	defer drenar(resp)
+	// O webhook é o canal: um que redireciona está quebrado ou mudou de
+	// lugar, e repetir não resolve.
+	if resp.StatusCode >= 300 && resp.StatusCode < 400 {
+		return &SendError{Reason: ReasonInvalidChannel, Permanent: true}
+	}
 	return classificarResposta(resp)
 }

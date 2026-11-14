@@ -93,6 +93,16 @@ const maxRetryAfter = time.Hour
 // classificarResposta traduz o status HTTP. 2xx é entregue; 429 e 5xx são
 // transitórios; o resto dos 4xx é recusa do provedor, e repetir o mesmo
 // pedido daria a mesma recusa.
+// semSeguirRedirect devolve uma cópia do cliente que entrega o 3xx a quem
+// chamou. Seguir o redirect trocaria o POST por um GET sem corpo, e o 2xx
+// desse GET viraria "enviado" sem a mensagem sair. A cópia vale em qualquer
+// construção do sender, inclusive a dos testes.
+func semSeguirRedirect(c *http.Client) *http.Client {
+	semSeguir := *c
+	semSeguir.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	return &semSeguir
+}
+
 func classificarResposta(resp *http.Response) error {
 	switch {
 	case resp.StatusCode >= 200 && resp.StatusCode < 300:
