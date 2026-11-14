@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
+	"io"
 	"log/slog"
 	"math"
 	"net/http"
@@ -33,6 +34,13 @@ import (
 var templatesFS embed.FS
 
 var statusTemplate = template.Must(template.ParseFS(templatesFS, "templates/status.html"))
+
+// RenderizarPaginaPublica escreve em w o HTML da status page de v. O nonce
+// autoriza o CSS inline e precisa ir também na CSP da resposta. Além do
+// handler, usa-a o gerador do exemplo das capturas (cmd/exemplo-pagina-publica).
+func RenderizarPaginaPublica(w io.Writer, v statuspage.View, nonce string) error {
+	return statusTemplate.Execute(w, apresentar(v, nonce))
+}
 
 const (
 	// A resposta é pública e a mesma para todos: 30s no cache do navegador
@@ -87,7 +95,7 @@ func (h *PublicPageHandlers) Page(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var buf bytes.Buffer
-	if err := statusTemplate.Execute(&buf, apresentar(v, nonce)); err != nil {
+	if err := RenderizarPaginaPublica(&buf, v, nonce); err != nil {
 		slog.Error("renderizar status page", "erro", err, "trace_id", observability.TraceID(r.Context()))
 		pagina(w, http.StatusServiceUnavailable, paginaIndisponivel)
 		return
