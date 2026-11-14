@@ -97,6 +97,9 @@ func novaBancada(t *testing.T, mexer func(*db.InsertChannelParams)) *bancada {
 	}
 	b := &bancada{pool: pool, clk: clk, box: box, canal: &canalFalso{}, dono: uuid.Must(uuid.NewV7())}
 	b.d = NewDispatcher(pool, box, clk, prometheus.NewRegistry(), b.canal)
+	// O meio do sorteio deixa o backoff exato, e os testes de tempo continuam
+	// determinísticos; o espalhamento tem testes próprios.
+	b.d.sortear = sorteioFixo(0.5)
 
 	if _, err := pool.Exec(ctx, `INSERT INTO users (id, email, password_hash) VALUES ($1, $2, 'x')`,
 		b.dono, b.dono.String()+"@exemplo.com"); err != nil {

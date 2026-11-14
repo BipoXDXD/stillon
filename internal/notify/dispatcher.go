@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math/rand/v2"
 	"slices"
 	"sync"
 	"time"
@@ -50,6 +51,9 @@ const (
 	MaxAttempts  = 6
 	firstBackoff = 30 * time.Second
 	maxBackoff   = time.Hour
+	// jitter é a fração, para mais e para menos, com que a espera da
+	// retentativa é espalhada.
+	jitter = 0.2
 
 	// rateLimitGrace é por quanto tempo, contado do enfileiramento, um 429
 	// não gasta tentativa. Num apagão em massa, dezenas de alertas vão ao
@@ -89,6 +93,9 @@ type Dispatcher struct {
 	// shutdownSendGrace é campo para que os testes o encurtem.
 	shutdownSendGrace time.Duration
 	ritmo             ritmo
+	// sortear devolve um valor em [0, 1) para espalhar o backoff; é campo
+	// para que os testes fixem o sorteio.
+	sortear func() float64
 }
 
 // NewDispatcher recebe os canais que o operador configurou. Um canal de
@@ -102,7 +109,7 @@ func NewDispatcher(pool *pgxpool.Pool, box *crypto.Box, clk clock.Clock, reg pro
 			Help: "Desfechos de envio de notificação, por canal e resultado.",
 		}, []string{"kind", "result"}),
 		sendTimeout: sendTimeout, claimTimeout: claimTimeout, shutdownSendGrace: shutdownSendGrace,
-		ritmo: ritmoReal,
+		ritmo: ritmoReal, sortear: rand.Float64,
 	}
 	for _, n := range notifiers {
 		d.notifiers[n.Kind()] = n
@@ -295,7 +302,7 @@ func (d *Dispatcher) adiar(p prazos, n db.ClaimDueNotificationsRow, parou desfec
 	if !decidido {
 		proxima := parou.proxima
 		if proxima.IsZero() { // quem parou o canal já tinha falhado de vez
-			proxima = d.clk.Now().Add(backoff(n.Attempts))
+			proxima = d.clk.Now().Add(d.espalhar(backoff(n.Attempts)))
 		}
 		f = d.decidirRetentativa(n, parou.reason, proxima)
 	}
@@ -432,7 +439,7 @@ func (d *Dispatcher) tentar(envios context.Context, n db.ClaimDueNotificationsRo
 	if se.Permanent {
 		return desfecho{status: statusFailed, reason: se.Reason}
 	}
-	espera := max(backoff(n.Attempts), se.RetryAfter)
+	espera := max(d.espalhar(backoff(n.Attempts)), se.RetryAfter)
 	f := d.decidirRetentativa(n, se.Reason, d.clk.Now().Add(espera))
 	f.transitoria = true
 	return f
@@ -463,6 +470,14 @@ func backoff(tentativa int32) time.Duration {
 		d *= 2
 	}
 	return min(d, maxBackoff)
+}
+
+// espalhar desloca a espera em até ±jitter. Num apagão, dezenas de avisos
+// falham juntos no mesmo webhook; com a mesma espera, voltariam todos no
+// mesmo instante e bateriam no provedor de novo como uma onda só.
+func (d *Dispatcher) espalhar(espera time.Duration) time.Duration {
+	fator := 1 - jitter + 2*jitter*d.sortear()
+	return time.Duration(float64(espera) * fator)
 }
 
 // gravacoes é o contexto do lote: acaba persistTimeout depois de os envios
