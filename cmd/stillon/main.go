@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -61,14 +62,16 @@ func main() {
 		}
 	}
 
-	role := flag.String("role", "", "all | api | prober (sobrepõe a env ROLE)")
-	flag.Parse()
+	role, codigo, seguir := lerRole(os.Args[1:], os.Stderr)
+	if !seguir {
+		os.Exit(codigo)
+	}
 
 	getenv := os.Getenv
-	if *role != "" {
+	if role != "" {
 		getenv = func(key string) string {
 			if key == "ROLE" {
-				return *role
+				return role
 			}
 			return os.Getenv(key)
 		}
@@ -93,6 +96,31 @@ func main() {
 		os.Exit(1)
 	}
 	log.Info("encerrado")
+}
+
+// usoDoServidor lista o que o binário aceita; sai quando o argumento não é
+// subcomando nem flag do servidor.
+const usoDoServidor = "uso: stillon [user|healthcheck|backup-snapshot|version] ou stillon --role=all|api|prober"
+
+// lerRole lê as flags do modo servidor. seguir é falso quando o processo deve
+// sair com codigo sem subir o servidor: -h (0), flag desconhecida ou um
+// argumento solto (saidaUso). Sem esta checagem, um subcomando digitado errado
+// (`stillon migarte`) subia o servidor.
+func lerRole(args []string, stderr io.Writer) (role string, codigo int, seguir bool) {
+	fs := flag.NewFlagSet("stillon", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	roleFlag := fs.String("role", "", "all | api | prober (sobrepõe a env ROLE)")
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return "", saidaOK, false
+		}
+		return "", saidaUso, false
+	}
+	if fs.NArg() > 0 {
+		fmt.Fprintf(stderr, "argumento inesperado: %q\n%s\n", fs.Arg(0), usoDoServidor)
+		return "", saidaUso, false
+	}
+	return *roleFlag, saidaOK, true
 }
 
 // manutencaoACada é o intervalo do job de manutenção (spec §12): partições,
