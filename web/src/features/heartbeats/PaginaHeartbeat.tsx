@@ -46,6 +46,7 @@ function DetalheDoHeartbeat({ id }: { id: string }) {
   const temEventos = (eventos.data?.pages[0]?.items.length ?? 0) > 0
   const [confirmando, setConfirmando] = useState<Confirmacao | null>(null)
   const [ocupado, setOcupado] = useState(false)
+  const acaoEmVoo = useRef(false)
   const [erro, setErro] = useState<string | null>(null)
   // Só aqui, no estado da tela.
   const [urlNova, setUrlNova] = useState<UrlNova | null>(null)
@@ -79,11 +80,12 @@ function DetalheDoHeartbeat({ id }: { id: string }) {
     if (sumiuNoPoll) aoSumirNoPoll(sumiuNoPoll)
   }, [sumiuNoPoll])
 
-  // Uma ação de cada vez: o estado segura o clique duplo e o Confirmar. Ao
-  // terminar, ela fecha só a própria confirmação: a ação espera a tela
-  // atualizar, e nesse intervalo a pessoa pode ter aberto outra.
+  // A ref segura o segundo clique antes de o estado atualizar a tela. Ao
+  // terminar, a ação fecha só a própria confirmação: nesse intervalo a
+  // pessoa pode ter aberto outra.
   async function executar(acao: () => Promise<void>, confirmacao: Confirmacao | null) {
-    if (ocupado) return
+    if (acaoEmVoo.current) return
+    acaoEmVoo.current = true
     setOcupado(true)
     setErro(null)
     try {
@@ -92,6 +94,7 @@ function DetalheDoHeartbeat({ id }: { id: string }) {
       if (naoEncontrado(e)) await sumiu()
       else setErro(mensagemDe(e))
     } finally {
+      acaoEmVoo.current = false
       setOcupado(false)
       setConfirmando((aberta) => (aberta === confirmacao ? null : aberta))
     }

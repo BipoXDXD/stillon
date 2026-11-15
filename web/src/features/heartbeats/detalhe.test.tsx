@@ -431,8 +431,7 @@ describe('sinalizar agora', () => {
     expect(screen.queryByText('Em dia')).not.toBeInTheDocument()
   })
 
-  // Sabotagem: tirar a guarda do ocupado → dois sinais.
-  it('fica ocupado enquanto a rota responde, sem duplo clique', async () => {
+  it('Sinalizar manda um POST mesmo com dois cliques no mesmo render', async () => {
     const r = await detalheCom()
     const p = portao()
     servidor.use(
@@ -442,7 +441,10 @@ describe('sinalizar agora', () => {
       }),
     )
     const botao = screen.getByRole('button', { name: 'Sinalizar agora' })
-    await r.usuario.click(botao)
+    act(() => {
+      fireEvent.click(botao)
+      fireEvent.click(botao)
+    })
     expect(botao).toHaveAttribute('aria-disabled', 'true')
     await r.usuario.click(botao)
     p.soltar()
@@ -584,8 +586,7 @@ describe('duplicar', () => {
     expect(r.router.state.location.pathname).toBe('/heartbeats/h1')
   })
 
-  // Sabotagem: tirar o `if (ocupado) return` do executar → duas cópias.
-  it('ocupado, o segundo clique não envia de novo', async () => {
+  it('Duplicar manda um POST mesmo com dois cliques no mesmo render', async () => {
     const r = await detalheCom()
     let pedidos = 0
     let soltar = () => {}
@@ -603,7 +604,10 @@ describe('duplicar', () => {
       }),
     )
     const botao = screen.getByRole('button', { name: 'Duplicar' })
-    await r.usuario.click(botao)
+    act(() => {
+      fireEvent.click(botao)
+      fireEvent.click(botao)
+    })
     await waitFor(() => expect(botao).toHaveAttribute('aria-disabled', 'true'))
     await r.usuario.click(botao)
     soltar()
