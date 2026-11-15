@@ -86,20 +86,27 @@ def checar_playwright(relatorio):
         return ["relatório sem stats: não é do reporter json do Playwright"], 0
     erros = [f"erro fora dos testes: {e.get('message', e)}" for e in relatorio.get("errors", [])
              if isinstance(e, dict)]
-    pulados = stats.get("skipped", 0)
+    lista, passaram = [], 0
+    for suite in relatorio.get("suites", []):
+        for titulo, teste in testes_do_playwright(suite):
+            status = teste.get("status")
+            expectativa = teste.get("expectedStatus")
+            if status == "skipped":
+                motivos = [a.get("description", "") for a in teste.get("annotations", [])
+                           if a.get("type") in ("skip", "fixme")]
+                lista.append(f"  {titulo}" + (f": {'; '.join(motivos)}" if motivos else ""))
+            elif expectativa != "passed":
+                erros.append(f"expectativa {expectativa!r} em {titulo}, exigia 'passed'")
+            elif status != "expected" or [r.get("status") for r in teste.get("results", [])] != ["passed"]:
+                erros.append(f"sem aprovação real: {titulo}")
+            else:
+                passaram += 1
+    pulados = max(stats.get("skipped", 0), len(lista))
     if pulados:
-        lista = []
-        for suite in relatorio.get("suites", []):
-            for titulo, teste in testes_do_playwright(suite):
-                if teste.get("status") == "skipped":
-                    motivos = [a.get("description", "") for a in teste.get("annotations", [])
-                               if a.get("type") in ("skip", "fixme")]
-                    lista.append(f"  {titulo}" + (f": {'; '.join(motivos)}" if motivos else ""))
         erros.append(plural(pulados, "teste pulado", "testes pulados") + "\n" + "\n".join(lista))
     inesperados = stats.get("unexpected", 0) + stats.get("flaky", 0)
     if inesperados:
         erros.append(plural(inesperados, "teste falhou", "testes falharam"))
-    passaram = stats.get("expected", 0)
     if passaram == 0:
         erros.append("nenhum teste passou")
     return erros, passaram
@@ -132,7 +139,7 @@ def checar_vitest(relatorio):
 
 
 CHECAGENS = {
-    "go": lambda texto: checar_go(texto.splitlines()),
+    "go": lambda texto: checar_go(texto.split("\n")),
     "playwright": lambda texto: checar_playwright(json.loads(texto)),
     "vitest": lambda texto: checar_vitest(json.loads(texto)),
 }
@@ -144,7 +151,7 @@ def main(argv=None):
     parser.add_argument("relatorio", type=Path)
     args = parser.parse_args(argv)
     try:
-        erros, passaram = CHECAGENS[args.modo](args.relatorio.read_text(encoding="utf-8"))
+        erros, passaram = CHECAGENS[args.modo](args.relatorio.read_bytes().decode("utf-8"))
     except (OSError, json.JSONDecodeError, UnicodeDecodeError) as e:
         print(f"::error::relatório ilegível ({args.relatorio}): {e}")
         return 1

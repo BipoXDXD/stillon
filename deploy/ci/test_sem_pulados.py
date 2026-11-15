@@ -26,8 +26,13 @@ def evento(acao, pacote="github.com/BipoXDXD/stillon/internal/x", teste=None, sa
     return json.dumps(e)
 
 
-def teste_do_playwright(titulo, status, anotacoes=()):
-    return {"title": titulo, "tests": [{"status": status, "annotations": list(anotacoes)}]}
+def teste_do_playwright(titulo, status, anotacoes=(), *, expectativa="passed", resultados=None):
+    if resultados is None:
+        resultados = {"expected": ["passed"], "skipped": [], "unexpected": ["failed"],
+                      "flaky": ["failed", "passed"]}[status]
+    return {"title": titulo, "tests": [{"status": status, "annotations": list(anotacoes),
+                                       "expectedStatus": expectativa,
+                                       "results": [{"status": r} for r in resultados]}]}
 
 
 def relatorio_do_playwright(specs, esperados, pulados, inesperados=0, describe=None, instaveis=0, erros=()):
@@ -69,6 +74,15 @@ class GoTestJson(Guard):
                           evento("pass"))
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertIn("1 teste passou", r.stdout)
+
+    def test_unicode_line_separators_inside_json_are_not_record_delimiters(self):
+        for separador in ("\u0085", "\u2028", "\u2029"):
+            with self.subTest(separador=separador):
+                saida = json.dumps({"Action": "output", "Test": "TestA",
+                                    "Output": f"antes{separador}depois\n"}, ensure_ascii=False)
+                r = self.rodar_go(evento("run", teste="TestA"), saida, evento("pass", teste="TestA"))
+                self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+                self.assertIn("1 teste passou", r.stdout)
 
     def test_a_skipped_test_fails_and_names_the_test_and_reason(self):
         r = self.rodar_go(
@@ -178,6 +192,30 @@ class PlaywrightJson(Guard):
             [teste_do_playwright("entra", "expected")], esperados=1, pulados=0))
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertIn("1 teste passou", r.stdout)
+
+    def test_an_expected_failure_fails_even_beside_a_passing_test(self):
+        r = self.rodar("playwright", relatorio_do_playwright(
+            [teste_do_playwright("entra", "expected"),
+             teste_do_playwright("falha conhecida", "expected", expectativa="failed",
+                                 resultados=["failed"])], esperados=2, pulados=0))
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("e2e/a.spec.ts › falha conhecida", r.stdout)
+
+    def test_an_expected_pass_without_a_real_pass_fails(self):
+        for resultados in ([], ["failed"], ["skipped"], ["timedOut"], ["failed", "passed"]):
+            with self.subTest(resultados=resultados):
+                r = self.rodar("playwright", relatorio_do_playwright(
+                    [teste_do_playwright("sem aprovação", "expected", resultados=resultados)],
+                    esperados=1, pulados=0))
+                self.assertEqual(r.returncode, 1)
+                self.assertIn("e2e/a.spec.ts › sem aprovação", r.stdout)
+
+    def test_a_listed_skip_fails_even_when_the_summary_underreports_it(self):
+        r = self.rodar("playwright", relatorio_do_playwright(
+            [teste_do_playwright("entra", "expected"), teste_do_playwright("pulou", "skipped")],
+            esperados=1, pulados=0))
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("e2e/a.spec.ts › pulou", r.stdout)
 
     def test_a_skipped_test_fails_and_names_file_title_and_reason(self):
         r = self.rodar("playwright", relatorio_do_playwright(
