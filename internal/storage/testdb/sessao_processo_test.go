@@ -20,9 +20,22 @@ type fixtureDoFilho struct {
 	ID, Sessao, LabelSessao string
 }
 
+// varFixtureFilho, com o nome do filho, faz TestSessoesDosProcessosIsolamCleanup
+// rodar como o filho que ele próprio inicia.
+const varFixtureFilho = "STILLON_FIXTURE_FILHO"
+
 // O mesmo executável é iniciado duas vezes pelo mesmo pai e recebe a mesma
 // configuração herdada. São Postgres reais, com os snapshots e cleanup de New.
+//
+// O filho é este mesmo teste, com varFixtureFilho definida: assim o helper não
+// existe como teste na varredura normal, onde apareceria pulado. Não dá para
+// despachá-lo pelo TestMain com testing.RunTests: fora do m.Run a lista de
+// -test.cpu fica vazia, e o RunTests devolve sucesso sem rodar nada.
 func TestSessoesDosProcessosIsolamCleanup(t *testing.T) {
+	if nome := os.Getenv(varFixtureFilho); nome != "" {
+		fixtureProcessoFilho(t, nome)
+		return
+	}
 	if testing.Short() {
 		t.Skip("precisa de Docker e dois processos de fixture")
 	}
@@ -36,8 +49,8 @@ func TestSessoesDosProcessosIsolamCleanup(t *testing.T) {
 	herdada := "stillon-regressao-" + rand.Text()
 	iniciarFilho := func(nome string) func() {
 		filhoCtx, cancelarFilho := context.WithCancel(ctx)
-		cmd := exec.CommandContext(filhoCtx, executavel, "-test.run=^TestFixtureProcessoFilho$", "-test.v")
-		cmd.Env = append(os.Environ(), "STILLON_FIXTURE_FILHO="+nome, "STILLON_FIXTURE_DIR="+dir, "TESTCONTAINERS_SESSION_ID="+herdada)
+		cmd := exec.CommandContext(filhoCtx, executavel, "-test.run=^TestSessoesDosProcessosIsolamCleanup$", "-test.v")
+		cmd.Env = append(os.Environ(), varFixtureFilho+"="+nome, "STILLON_FIXTURE_DIR="+dir, "TESTCONTAINERS_SESSION_ID="+herdada)
 		log, err := os.Create(filepath.Join(dir, nome+".log"))
 		if err != nil {
 			t.Fatal(err)
@@ -138,11 +151,7 @@ func TestSessoesDosProcessosIsolamCleanup(t *testing.T) {
 
 // Executado somente nos filhos. O marcador de SQL é escrito apenas depois de
 // uma consulta real, solicitada pelo pai após observar o cleanup do irmão.
-func TestFixtureProcessoFilho(t *testing.T) {
-	nome := os.Getenv("STILLON_FIXTURE_FILHO")
-	if nome == "" {
-		t.Skip("helper de subprocesso")
-	}
+func fixtureProcessoFilho(t *testing.T, nome string) {
 	ctx, cancelar := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancelar()
 	dir := os.Getenv("STILLON_FIXTURE_DIR")

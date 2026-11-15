@@ -145,9 +145,16 @@ jobs:
         run: |
           python3 -m unittest discover -s deploy/ci -p test_docker_build.py -v
           python3 -m unittest discover -s deploy/ci -p test_ensaiar_piso_env.py -v
+          # O go test -json vai para um arquivo, e o sem-pulados reprova teste
+          # pulado (o que não roda no CI sai por configuração, nunca por
+          # t.Skip) e mostra a saída de cada teste que falhou.
+          status=0
           python3 deploy/ci/diagnostico-fixture.py \
             --output "$RUNNER_TEMP/fixture-diagnostic" --daemon-exclusivo -- \
-            go test -race -count=1 -coverprofile=coverage.out ./...
+            sh -c "exec go test -json -race -count=1 -coverprofile=coverage.out ./... > '$RUNNER_TEMP/go-test.jsonl'" \
+            || status=$?
+          python3 deploy/ci/sem-pulados.py go "$RUNNER_TEMP/go-test.jsonl" || status=1
+          exit "$status"
 
       - name: diagnóstico limitado das fixtures
         if: ${{ !cancelled() }}
@@ -245,6 +252,8 @@ jobs:
         run: sh deploy/ci/checar-workflows.sh
       - name: testes do checar-workflows
         run: python3 -m unittest discover -s deploy/ci -p test_checar_workflows.py -v
+      - name: testes do guard de testes pulados
+        run: python3 -m unittest discover -s deploy/ci -p test_sem_pulados.py -v
       - name: ensaio de restauração e aviso, sem rede
         run: python3 -m unittest discover -s deploy/ci -p test_revalidar_backup.py -v
       - name: collector das fixtures contra Docker falso
@@ -291,7 +300,12 @@ jobs:
       - run: npm ci --ignore-scripts --no-audit --no-fund
       - run: npm run typecheck
       - run: npm run lint
-      - run: npx vitest run
+      - name: testes do painel (vitest), sem nenhum pulado
+        run: |
+          status=0
+          npx vitest run --reporter=default --reporter=json --outputFile.json="$RUNNER_TEMP/vitest.json" || status=$?
+          python3 ../deploy/ci/sem-pulados.py vitest "$RUNNER_TEMP/vitest.json" || status=1
+          exit "$status"
       - run: npm run build
       - name: o build não suja a árvore
         # O .gitignore ignora internal/webui/dist menos o .gitkeep (Plano 6):
@@ -313,7 +327,11 @@ jobs:
         working-directory: .
         env:
           STILLON_EXIGIR_DIST: '1'
-        run: go test -count=1 ./internal/webui/
+        run: |
+          status=0
+          go test -json -count=1 ./internal/webui/ > "$RUNNER_TEMP/go-test-webui.jsonl" || status=$?
+          python3 deploy/ci/sem-pulados.py go "$RUNNER_TEMP/go-test-webui.jsonl" || status=1
+          exit "$status"
 
   image:
     # A imagem de produção que o e2e vai usar, só amd64 (a do runner). O
@@ -456,7 +474,12 @@ jobs:
             trocar_espelho
             sleep $((30 * tentativa))
           done
-          npx playwright test --trace off
+          # O reporter json alimenta o sem-pulados: teste pulado reprova o job.
+          status=0
+          PLAYWRIGHT_JSON_OUTPUT_FILE="$RUNNER_TEMP/playwright.json" \
+            npx playwright test --trace off --reporter=list,json || status=$?
+          python3 ../deploy/ci/sem-pulados.py playwright "$RUNNER_TEMP/playwright.json" || status=1
+          exit "$status"
 
       - name: logs do compose
         if: failure()

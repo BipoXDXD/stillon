@@ -4,8 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"io/fs"
+	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pressly/goose/v3"
+
+	"github.com/BipoXDXD/stillon/internal/storage/db"
 )
 
 // MigrateUpTo aplica as migrations só até version, para o teste montar o
@@ -52,3 +56,15 @@ func testProvider(dsn string) (*goose.Provider, func(), error) {
 
 // RollupLockKey deixa o teste segurar a mesma trava da consolidação.
 const RollupLockKey = rollupLockKey
+
+// ApplyRetentionInBatches roda a retenção com lote e teto de lotes dados, para
+// o teste ver o corte por rodada sem semear milhares de linhas.
+func ApplyRetentionInBatches(ctx context.Context, pool *pgxpool.Pool, now time.Time, batch int32, maxBatches int) (MaintenanceReport, error) {
+	return applyRetention(ctx, pool, now, retentionLimits{batch: batch, maxBatches: maxBatches})
+}
+
+// DeleteInBatches expõe o laço de lotes com um DELETE dado, para o teste
+// provocar a falha de um lote depois de outros já comitados.
+func DeleteInBatches(ctx context.Context, pool *pgxpool.Pool, batch int32, maxBatches int, del func(*db.Queries, int32) (int64, error)) (int64, error) {
+	return deleteInBatches(ctx, pool, retentionLimits{batch: batch, maxBatches: maxBatches}, del)
+}

@@ -13,14 +13,13 @@ import { expect, test } from './fixtures'
 // a11y.spec.ts (sem segredo, sem backend de dados), com dados de exemplo
 // próprios nas telas que os mostram (preparar); a página pública é o
 // template Go renderizado com dados de exemplo (STILLON_EXEMPLO_PUBLICA,
-// gerado por TestGerarExemploDaPaginaPublica), e as fontes vêm do binário.
-// Só roda com CAPTURAR=1: as imagens vão para o repositório, não para o CI.
-// Para gerar (na raiz, com o Docker de pé):
+// gerado por cmd/exemplo-pagina-publica), e as fontes vêm do binário.
+// Só roda pelo capturas.config.ts, que o CI não usa: as imagens vão para o
+// repositório. Para gerar (na raiz, com o Docker de pé):
 //   mkdir -p web/e2e/.tmp
-//   STILLON_EXEMPLO_PUBLICA="$PWD/web/e2e/.tmp/status-publica.html" go test ./internal/httpapi/ -run TestGerarExemploDaPaginaPublica
+//   go run ./cmd/exemplo-pagina-publica "$PWD/web/e2e/.tmp/status-publica.html"
 //   cd web && npm run build
-//   CAPTURAR=1 STILLON_EXEMPLO_PUBLICA="$PWD/e2e/.tmp/status-publica.html" npx playwright test e2e/capturas.spec.ts
-test.skip(!process.env.CAPTURAR, 'capturas só com CAPTURAR=1 (PR 8 do redesign)')
+//   STILLON_EXEMPLO_PUBLICA="$PWD/e2e/.tmp/status-publica.html" npx playwright test -c capturas.config.ts
 
 const DESTINO = path.resolve(import.meta.dirname, '../../docs/design/painel-depois')
 const LARGURAS = [400, 1280] as const
@@ -427,7 +426,7 @@ test('capturas da página pública', async ({ page }) => {
   const exemplo = process.env.STILLON_EXEMPLO_PUBLICA ?? ''
   if (exemplo === '') {
     throw new Error(
-      'gere antes o exemplo: STILLON_EXEMPLO_PUBLICA=<arquivo absoluto> go test ./internal/httpapi -run TestGerarExemploDaPaginaPublica',
+      'gere antes o exemplo (go run ./cmd/exemplo-pagina-publica <arquivo absoluto>) e passe-o em STILLON_EXEMPLO_PUBLICA',
     )
   }
   const html = readFileSync(exemplo, 'utf8')
