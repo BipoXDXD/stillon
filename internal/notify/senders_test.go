@@ -319,6 +319,10 @@ func TestResendClassifiesResponses(t *testing.T) {
 			w.WriteHeader(http.StatusConflict)
 			_, _ = io.WriteString(w, `<html>conflito</html>`)
 		}, ReasonServerError, false},
+		{"409 com nome parcialmente decodificado", func(w http.ResponseWriter) {
+			w.WriteHeader(http.StatusConflict)
+			_, _ = io.WriteString(w, `{"name":"invalid_idempotent_request","name":1}`)
+		}, ReasonServerError, false},
 		{"409 com nome desconhecido", conflito("outro_conflito"), ReasonServerError, false},
 		{"422 é pedido inválido", status(http.StatusUnprocessableEntity), ReasonRejected, true},
 		{"403 é domínio não verificado", status(http.StatusForbidden), ReasonRejected, true},

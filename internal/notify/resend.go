@@ -94,8 +94,9 @@ func conflitoResend(resp *http.Response) error {
 	var corpo struct {
 		Name string `json:"name"`
 	}
-	// O erro de decodificação deixa Name vazio, e o vazio cai no default.
-	_ = json.NewDecoder(io.LimitReader(resp.Body, 4<<10)).Decode(&corpo)
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 4<<10)).Decode(&corpo); err != nil {
+		return &SendError{Reason: ReasonServerError}
+	}
 	switch corpo.Name {
 	case "concurrent_idempotent_requests":
 		return &SendError{Reason: ReasonRateLimited}
