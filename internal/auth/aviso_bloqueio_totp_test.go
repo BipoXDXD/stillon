@@ -36,6 +36,16 @@ func (a *avisosFalsos) ClearTOTPLockAlert(_ context.Context, userID uuid.UUID, l
 	return true, nil
 }
 
+func (a *avisosFalsos) RecordTOTPLockAlertFailure(_ context.Context, userID uuid.UUID, lockedAt time.Time) error {
+	for i, alerta := range a.pendentes {
+		if alerta.UserID == userID && alerta.LockedAt.Equal(lockedAt) {
+			a.pendentes = append(slices.Delete(a.pendentes, i, i+1), alerta)
+			break
+		}
+	}
+	return nil
+}
+
 type envioDeAviso struct {
 	email      string
 	permanente bool
@@ -43,20 +53,21 @@ type envioDeAviso struct {
 }
 
 type correioFalso struct {
-	enviados  []envioDeAviso
-	falhaPara string
-	recusa    error
+	enviados        []envioDeAviso
+	falhaPara       string
+	recusa          error
+	destinoInvalido bool
 }
 
-func (c *correioFalso) SendTOTPLocked(_ context.Context, email string, permanente bool, chave string) error {
+func (c *correioFalso) SendTOTPLocked(_ context.Context, email string, permanente bool, chave string) (bool, error) {
 	if email == c.falhaPara {
 		if c.recusa != nil {
-			return c.recusa
+			return c.destinoInvalido, c.recusa
 		}
-		return errors.New("resend fora do ar")
+		return false, errors.New("resend fora do ar")
 	}
 	c.enviados = append(c.enviados, envioDeAviso{email, permanente, chave})
-	return nil
+	return false, nil
 }
 
 func TestRejectedTOTPLockAlertsDoNotHoldTheNextBatch(t *testing.T) {
@@ -70,14 +81,54 @@ func TestRejectedTOTPLockAlertsDoNotHoldTheNextBatch(t *testing.T) {
 	const destino = "dono@exemplo.com"
 	avisos.pendentes = append(avisos.pendentes, auth.TOTPLockAlert{UserID: uuid.New(), Email: destino, LockedAt: em.Add(time.Minute)})
 	correio := &correioFalso{
-		falhaPara: "recusa@exemplo.com",
-		recusa:    fmt.Errorf("provedor: %w", &notify.SendError{Reason: notify.ReasonRejected, Permanent: true}),
+		falhaPara:       "recusa@exemplo.com",
+		recusa:          fmt.Errorf("provedor: %w", &notify.SendError{Reason: notify.ReasonRejected, Permanent: true}),
+		destinoInvalido: true,
 	}
 
 	auth.SendTOTPLockAlerts(context.Background(), avisos, correio)
 	auth.SendTOTPLockAlerts(context.Background(), avisos, correio)
 	if len(correio.enviados) != 1 || correio.enviados[0].email != destino || len(avisos.pendentes) != 0 {
 		t.Fatalf("entregues=%d, pendentes=%d, queria um envio e fila vazia", len(correio.enviados), len(avisos.pendentes))
+	}
+}
+
+func TestTOTPLockAlertRetriesDoNotHoldTheNextBatch(t *testing.T) {
+	avisos := &avisosFalsos{}
+	em := time.Date(2026, 11, 14, 12, 0, 0, 0, time.UTC)
+	for i := range 20 {
+		avisos.pendentes = append(avisos.pendentes, auth.TOTPLockAlert{
+			UserID: uuid.New(), Email: "falha@exemplo.com", LockedAt: em.Add(time.Duration(i) * time.Second),
+		})
+	}
+	const destino = "dono@exemplo.com"
+	avisos.pendentes = append(avisos.pendentes, auth.TOTPLockAlert{UserID: uuid.New(), Email: destino, LockedAt: em.Add(time.Minute)})
+	correio := &correioFalso{falhaPara: "falha@exemplo.com"}
+
+	auth.SendTOTPLockAlerts(context.Background(), avisos, correio)
+	auth.SendTOTPLockAlerts(context.Background(), avisos, correio)
+	if len(correio.enviados) != 1 || correio.enviados[0].email != destino || len(avisos.pendentes) != 20 {
+		t.Fatalf("entregues=%d, pendentes=%d, queria um envio e vinte retentativas", len(correio.enviados), len(avisos.pendentes))
+	}
+}
+
+func TestTOTPLockAlertSurvivesAProviderReconfiguration(t *testing.T) {
+	const destino = "dono@exemplo.com"
+	aviso := auth.TOTPLockAlert{UserID: uuid.New(), Email: destino, LockedAt: time.Now(), Permanent: true}
+	avisos := &avisosFalsos{pendentes: []auth.TOTPLockAlert{aviso}}
+	correio := &correioFalso{
+		falhaPara: destino,
+		recusa:    &notify.SendError{Reason: notify.ReasonRejected, Permanent: true},
+	}
+
+	auth.SendTOTPLockAlerts(context.Background(), avisos, correio)
+	if len(avisos.pendentes) != 1 || avisos.pendentes[0] != aviso {
+		t.Fatalf("a recusa do provedor alterou a fila: %d aviso(s) pendente(s)", len(avisos.pendentes))
+	}
+	correio.falhaPara = ""
+	auth.SendTOTPLockAlerts(context.Background(), avisos, correio)
+	if len(correio.enviados) != 1 || !correio.enviados[0].permanente || len(avisos.pendentes) != 0 {
+		t.Fatalf("após reparar o provedor: enviados=%d pendentes=%d", len(correio.enviados), len(avisos.pendentes))
 	}
 }
 

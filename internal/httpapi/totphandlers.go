@@ -220,7 +220,7 @@ func (h *AuthHandlers) TOTPVerify(w http.ResponseWriter, r *http.Request) {
 	prova, err := h.totp.VerifyLogin(r.Context(), desafio, req.Code, h.sessions.IPHash(h.meta(r)), now)
 	if err != nil {
 		if errors.Is(err, auth.ErrTOTPLocked) || errors.Is(err, auth.ErrNotFound) ||
-			errors.Is(err, auth.ErrTOTPNotEnrolled) || errors.Is(err, auth.ErrStalePassword) {
+			errors.Is(err, auth.ErrTOTPNotEnrolled) || errors.Is(err, auth.ErrStalePassword) || errors.Is(err, auth.ErrStaleSecondFactor) {
 			devolverTentativa(r, tentativas)
 			apierr.WriteError(w, r, apierr.CodeInvalidCredentials)
 			return

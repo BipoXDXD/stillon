@@ -8,6 +8,7 @@ import (
 
 	"github.com/pquerna/otp/totp"
 
+	"github.com/BipoXDXD/stillon/internal/account"
 	"github.com/BipoXDXD/stillon/internal/auth"
 )
 
@@ -93,6 +94,47 @@ func TestSecondFactorTurnedOffBeforeVerificationDoesNotCount(t *testing.T) {
 	}
 	if falhas, _ := estadoDoBloqueio(t, a); falhas != falhasAntes {
 		t.Errorf("tentativa sem fator ativo contou na conta: %d → %d", falhasAntes, falhas)
+	}
+}
+
+func TestChallengeForPreviousSecondFactorDoesNotAffectReenrollment(t *testing.T) {
+	a := newAPI(t)
+	c := clientWithJar(t)
+	cadastrarTOTP(t, a, c)
+	anterior := desafioAtual(t, a, c)
+	if ligado, _, err := account.NewService(a.pool, nil, a.clk, nil).ResetTwoFactor(context.Background(), testEmail); err != nil || !ligado {
+		t.Fatalf("reset do segundo fator: desligou=%t erro=%v", ligado, err)
+	}
+	a.clk.Advance(time.Minute)
+	c = clientWithJar(t)
+	segredo := cadastrarTOTP(t, a, c)
+	a.clk.Advance(30 * time.Second)
+	novo := desafioAtual(t, a, c)
+	codigo, err := totp.GenerateCode(segredo, a.clk.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resp := post(t, c, a.srv.URL+"/api/v1/auth/totp/verify",
+		map[string]string{"challenge": anterior, "code": "invalido"})
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("desafio anterior com código inválido = %d, queria 401", resp.StatusCode)
+	}
+	if falhas, ate, aviso := estadoDoSegundoFatorBloqueado(t, a); falhas != 0 || ate != nil || aviso != nil {
+		t.Errorf("o desafio anterior alterou o fator recadastrado: falhas=%d até=%v aviso=%v", falhas, ate, aviso)
+	}
+	resp = post(t, c, a.srv.URL+"/api/v1/auth/totp/verify",
+		map[string]string{"challenge": anterior, "code": codigo})
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("desafio anterior com código atual = %d, queria 401", resp.StatusCode)
+	}
+	resp = post(t, c, a.srv.URL+"/api/v1/auth/totp/verify",
+		map[string]string{"challenge": novo, "code": codigo})
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("desafio atual com código atual = %d, queria 200", resp.StatusCode)
 	}
 }
 

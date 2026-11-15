@@ -70,9 +70,10 @@ func (s *TOTP) VerifyLogin(ctx context.Context, challenge Challenge, code string
 	var falhas int
 	var travado bool
 	var hash string
+	var confirmadoEm *time.Time
 	err = tx.QueryRow(ctx, `
-		SELECT password_hash, totp_failures, COALESCE(totp_locked_until > $2, false)
-		  FROM users WHERE id = $1 FOR NO KEY UPDATE`, userID, now).Scan(&hash, &falhas, &travado)
+		SELECT password_hash, totp_confirmed_at, totp_failures, COALESCE(totp_locked_until > $2, false)
+		  FROM users WHERE id = $1 FOR NO KEY UPDATE`, userID, now).Scan(&hash, &confirmadoEm, &falhas, &travado)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return SecondFactorProof{}, ErrNotFound
 	}
@@ -81,6 +82,12 @@ func (s *TOTP) VerifyLogin(ctx context.Context, challenge Challenge, code string
 	}
 	if subtle.ConstantTimeCompare([]byte(PasswordStamp(hash)), []byte(challenge.Stamp)) != 1 {
 		return SecondFactorProof{}, ErrStalePassword
+	}
+	if confirmadoEm == nil {
+		return SecondFactorProof{}, ErrTOTPNotEnrolled
+	}
+	if challenge.IssuedAt.Before(*confirmadoEm) {
+		return SecondFactorProof{}, ErrStaleSecondFactor
 	}
 	if travado {
 		return SecondFactorProof{}, ErrTOTPLocked
@@ -131,7 +138,8 @@ func gravarFalhaTOTP(ctx context.Context, tx pgx.Tx, userID uuid.UUID, ipHash []
 		   SET totp_failures = $2,
 		       totp_locked_until = CASE WHEN $3 THEN 'infinity'::timestamptz ELSE $4::timestamptz END,
 		       totp_lock_alert_at = CASE WHEN $6 THEN $5 ELSE totp_lock_alert_at END,
-		       totp_lock_alert_permanent = CASE WHEN $6 THEN $3 ELSE totp_lock_alert_permanent END
+		       totp_lock_alert_permanent = CASE WHEN $6 THEN $3 ELSE totp_lock_alert_permanent END,
+		       totp_lock_alert_attempted_at = CASE WHEN $6 THEN NULL ELSE totp_lock_alert_attempted_at END
 		 WHERE id = $1`, userID, falhas, permanente, ate, now, travou); err != nil {
 		return fmt.Errorf("gravar falha do segundo fator: %w", err)
 	}
@@ -160,14 +168,14 @@ type TOTPLockAlert struct {
 	Permanent bool
 }
 
-// PendingTOTPLockAlerts devolve até limite avisos pendentes, os mais antigos
-// primeiro.
+// PendingTOTPLockAlerts ordena cada aviso pelo instante em que entrou na fila
+// ou pela última tentativa, para a fila avançar após falhas.
 func (s *PGStore) PendingTOTPLockAlerts(ctx context.Context, limite int) ([]TOTPLockAlert, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, email, totp_lock_alert_at, totp_lock_alert_permanent
 		  FROM users
 		 WHERE totp_lock_alert_at IS NOT NULL
-		 ORDER BY totp_lock_alert_at
+		 ORDER BY COALESCE(totp_lock_alert_attempted_at, totp_lock_alert_at), id
 		 LIMIT $1`, limite)
 	if err != nil {
 		return nil, fmt.Errorf("listar avisos de bloqueio do segundo fator: %w", err)
@@ -183,11 +191,22 @@ func (s *PGStore) PendingTOTPLockAlerts(ctx context.Context, limite int) ([]TOTP
 	return avisos, nil
 }
 
+// RecordTOTPLockAlertFailure registra a tentativa sem alterar o evento.
+func (s *PGStore) RecordTOTPLockAlertFailure(ctx context.Context, userID uuid.UUID, lockedAt time.Time) error {
+	_, err := s.pool.Exec(ctx, `
+		UPDATE users SET totp_lock_alert_attempted_at = CURRENT_TIMESTAMP
+		 WHERE id = $1 AND totp_lock_alert_at = $2`, userID, lockedAt)
+	if err != nil {
+		return fmt.Errorf("registrar tentativa de aviso do segundo fator: %w", err)
+	}
+	return nil
+}
+
 // ClearTOTPLockAlert tira o aviso da fila só se ele ainda é o do bloqueio de
 // lockedAt: um bloqueio novo durante o envio continua pendente.
 func (s *PGStore) ClearTOTPLockAlert(ctx context.Context, userID uuid.UUID, lockedAt time.Time) (bool, error) {
 	tag, err := s.pool.Exec(ctx,
-		`UPDATE users SET totp_lock_alert_at = NULL, totp_lock_alert_permanent = FALSE WHERE id = $1 AND totp_lock_alert_at = $2`,
+		`UPDATE users SET totp_lock_alert_at = NULL, totp_lock_alert_permanent = FALSE, totp_lock_alert_attempted_at = NULL WHERE id = $1 AND totp_lock_alert_at = $2`,
 		userID, lockedAt)
 	if err != nil {
 		return false, fmt.Errorf("tirar aviso de bloqueio do segundo fator da fila: %w", err)
@@ -199,12 +218,13 @@ func (s *PGStore) ClearTOTPLockAlert(ctx context.Context, userID uuid.UUID, lock
 type TOTPLockAlertStore interface {
 	PendingTOTPLockAlerts(ctx context.Context, limite int) ([]TOTPLockAlert, error)
 	ClearTOTPLockAlert(ctx context.Context, userID uuid.UUID, lockedAt time.Time) (bool, error)
+	RecordTOTPLockAlertFailure(ctx context.Context, userID uuid.UUID, lockedAt time.Time) error
 }
 
 // TOTPLockMailer manda o e-mail do bloqueio. chave é a chave de idempotência
 // do envio. *notify.Resend satisfaz.
 type TOTPLockMailer interface {
-	SendTOTPLocked(ctx context.Context, email string, permanente bool, chave string) error
+	SendTOTPLocked(ctx context.Context, email string, permanente bool, chave string) (destinoInvalido bool, err error)
 }
 
 // totpAvisosPorRodada limita uma rodada de envio; o resto fica para a próxima.
@@ -212,8 +232,8 @@ const totpAvisosPorRodada = 20
 
 // SendTOTPLockAlerts faz uma rodada de envio. A chave de idempotência é a do
 // bloqueio (usuário e instante): duas réplicas da API na mesma rodada mandam o
-// mesmo e-mail uma vez só. Um aviso sai da fila após entrega ou recusa
-// definitiva. Falhas transitórias ficam para a próxima rodada.
+// mesmo e-mail uma vez só. Avisos entregues ou com destino inválido saem da
+// fila. As demais falhas continuam elegíveis para outra rodada.
 func SendTOTPLockAlerts(ctx context.Context, store TOTPLockAlertStore, mailer TOTPLockMailer) {
 	avisos, err := store.PendingTOTPLockAlerts(ctx, totpAvisosPorRodada)
 	if err != nil {
@@ -222,10 +242,13 @@ func SendTOTPLockAlerts(ctx context.Context, store TOTPLockAlertStore, mailer TO
 	}
 	for _, a := range avisos {
 		chave := fmt.Sprintf("totp-lock/%s/%d", a.UserID, a.LockedAt.UnixMicro())
-		if err := mailer.SendTOTPLocked(ctx, a.Email, a.Permanent, chave); err != nil {
+		destinoInvalido, err := mailer.SendTOTPLocked(ctx, a.Email, a.Permanent, chave)
+		if err != nil {
 			slog.WarnContext(ctx, "enviar aviso de bloqueio do segundo fator", "user_id", a.UserID, "erro", err)
-			var recusa interface{ IsPermanent() bool }
-			if !errors.As(err, &recusa) || !recusa.IsPermanent() {
+			if !destinoInvalido {
+				if err := store.RecordTOTPLockAlertFailure(ctx, a.UserID, a.LockedAt); err != nil {
+					slog.ErrorContext(ctx, "registrar tentativa de aviso do segundo fator", "user_id", a.UserID, "erro", err)
+				}
 				continue
 			}
 		}

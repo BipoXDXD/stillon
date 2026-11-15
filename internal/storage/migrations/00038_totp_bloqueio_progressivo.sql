@@ -13,14 +13,17 @@
 -- ele não mudou (auth.SendTOTPLockAlerts). Bloqueios seguidos sem envio no
 -- meio (e-mail fora do ar) viram um aviso só, o do último. A natureza
 -- do aviso fica gravada com o instante, para permanecer estável na retentativa.
+-- A última tentativa ordena a fila e permite avançar mesmo após uma falha.
 ALTER TABLE users
     ADD COLUMN totp_failures integer NOT NULL DEFAULT 0 CHECK (totp_failures >= 0),
     ADD COLUMN totp_locked_until timestamptz,
     ADD COLUMN totp_lock_alert_at timestamptz,
-    ADD COLUMN totp_lock_alert_permanent boolean NOT NULL DEFAULT FALSE;
+    ADD COLUMN totp_lock_alert_permanent boolean NOT NULL DEFAULT FALSE,
+    ADD COLUMN totp_lock_alert_attempted_at timestamptz;
 
 -- +goose Down
 ALTER TABLE users
+    DROP COLUMN totp_lock_alert_attempted_at,
     DROP COLUMN totp_lock_alert_permanent,
     DROP COLUMN totp_lock_alert_at,
     DROP COLUMN totp_locked_until,

@@ -87,8 +87,6 @@ func (e *SendError) Error() string {
 	return fmt.Sprintf("envio falhou: %s (permanente: %v)", e.Reason, e.Permanent)
 }
 
-func (e *SendError) IsPermanent() bool { return e.Permanent }
-
 // maxRetryAfter limita o Retry-After que o provedor pode impor.
 const maxRetryAfter = time.Hour
 

@@ -358,7 +358,7 @@ func TestResendTOTPLockedCarriesTheKeyAndNoSensitiveDetail(t *testing.T) {
 			srv, client, pedidos := provedor(t, status(http.StatusOK))
 			r := &Resend{client: client, endpoint: srv.URL, apiKey: crypto.Secret("k"), from: "a@b.dev"}
 
-			if err := r.SendTOTPLocked(context.Background(), "dono@x.com", c.permanente, "totp-lock/u/1"); err != nil {
+			if _, err := r.SendTOTPLocked(context.Background(), "dono@x.com", c.permanente, "totp-lock/u/1"); err != nil {
 				t.Fatal(err)
 			}
 			p := receber(t, pedidos)
@@ -377,6 +377,38 @@ func TestResendTOTPLockedCarriesTheKeyAndNoSensitiveDetail(t *testing.T) {
 			}
 			if c.permanente == strings.Contains(corpo.Text, "dura o dobro") {
 				t.Errorf("texto do caso errado: %s", corpo.Text)
+			}
+		})
+	}
+}
+
+func TestResendTOTPLockedDistinguishesDestinationFromProviderConfiguration(t *testing.T) {
+	for _, codigo := range []int{http.StatusUnauthorized, http.StatusForbidden} {
+		t.Run(http.StatusText(codigo), func(t *testing.T) {
+			var restaurado atomic.Bool
+			srv, client, pedidos := provedor(t, func(w http.ResponseWriter) {
+				if restaurado.Load() {
+					w.WriteHeader(http.StatusOK)
+					return
+				}
+				w.WriteHeader(codigo)
+			})
+			r := &Resend{client: client, endpoint: srv.URL, apiKey: crypto.Secret("k"), from: "a@b.dev"}
+			ctx := context.Background()
+			if invalido, err := r.SendTOTPLocked(ctx, "sem endereço", false, "totp-lock/u/1"); !invalido || err == nil {
+				t.Fatalf("destino inválido: invalido=%t, erro=%v", invalido, err)
+			}
+			if invalido, err := r.SendTOTPLocked(ctx, "dono@x.com", true, "totp-lock/u/2"); invalido || err == nil {
+				t.Fatalf("recusa do provedor: invalido=%t, erro=%v", invalido, err)
+			}
+			antes := receber(t, pedidos)
+			restaurado.Store(true)
+			if invalido, err := r.SendTOTPLocked(ctx, "dono@x.com", true, "totp-lock/u/2"); invalido || err != nil {
+				t.Fatalf("provedor restaurado: invalido=%t, erro=%v", invalido, err)
+			}
+			depois := receber(t, pedidos)
+			if antes.Cabecalho.Get("Idempotency-Key") != depois.Cabecalho.Get("Idempotency-Key") || string(antes.Corpo) != string(depois.Corpo) {
+				t.Fatal("a retentativa alterou a chave ou o conteúdo do aviso")
 			}
 		})
 	}
