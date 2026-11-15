@@ -73,7 +73,7 @@ func (r *Resend) post(ctx context.Context, dest crypto.Secret, assunto, corpo, c
 		req.Header.Set("Idempotency-Key", chave)
 	}
 
-	resp, err := r.client.Do(req)
+	resp, err := semSeguirRedirect(r.client).Do(req)
 	if err != nil {
 		return classificarErro(err)
 	}
@@ -87,14 +87,22 @@ func (r *Resend) post(ctx context.Context, dest crypto.Secret, assunto, corpo, c
 // conflitoResend separa os dois 409 do Resend. concurrent_idempotent_requests
 // é a mesma chave ainda em processamento, e vale repetir mais tarde;
 // invalid_idempotent_request é a mesma chave com outro corpo, e repetir dá
-// o mesmo 409.
+// o mesmo 409. Um 409 que não se deixa ler (corpo que não decodifica ou
+// nome desconhecido) é transitório: repetir com a mesma chave é seguro, e
+// se ele era o de outro corpo volta igual até o teto de tentativas.
 func conflitoResend(resp *http.Response) error {
 	var corpo struct {
 		Name string `json:"name"`
 	}
-	_ = json.NewDecoder(io.LimitReader(resp.Body, 4<<10)).Decode(&corpo)
-	if corpo.Name == "concurrent_idempotent_requests" {
-		return &SendError{Reason: ReasonRateLimited}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 4<<10)).Decode(&corpo); err != nil {
+		return &SendError{Reason: ReasonServerError}
 	}
-	return &SendError{Reason: ReasonRejected, Permanent: true}
+	switch corpo.Name {
+	case "concurrent_idempotent_requests":
+		return &SendError{Reason: ReasonRateLimited}
+	case "invalid_idempotent_request":
+		return &SendError{Reason: ReasonRejected, Permanent: true}
+	default:
+		return &SendError{Reason: ReasonServerError}
+	}
 }

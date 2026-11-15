@@ -166,17 +166,12 @@ func TestRetentionHeartbeatEventsEdgeIsExclusiveAtTheCutoff(t *testing.T) {
 // a exceção da linha mais nova por (incidente, canal) não entra no caso.
 func TestRetentionNotificationsEdgeIsExclusiveAtTheCutoff(t *testing.T) {
 	pool := testdb.New(t)
-	ctx := context.Background()
 	dono := novoUsuario(t, pool)
 	inc := novoIncidente(t, pool, novoAlvo(t, pool, dono, agora))
 	i := tresInstantes(agora.Add(-storage.NotificationsRetention))
 	for _, em := range i {
 		id := notificacaoEm(t, pool, inc, novoCanal(t, pool, dono, nil, time.Time{}), em)
-		if err := storage.InProberTx(ctx, pool, func(q *db.Queries) error {
-			return q.MarkNotificationSent(ctx, db.MarkNotificationSentParams{ID: id, Now: agora})
-		}); err != nil {
-			t.Fatal(err)
-		}
+		marcarEntregue(t, id, agora)
 	}
 	if r := aplicarRetencao(t, pool, agora); r.DeletedNotifications != 1 {
 		t.Errorf("apagou %d notificações, queria 1", r.DeletedNotifications)

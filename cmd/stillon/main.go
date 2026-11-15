@@ -283,7 +283,9 @@ func erroDeServidor(nome string, err error) error {
 }
 
 // servir roda srv até ctx acabar e então o desliga com prazo (spec §6.2).
-// Uma falha ao subir volta como erro do grupo e derruba o resto.
+// Uma falha ao subir volta como erro do grupo e derruba o resto. Pedido que
+// passa do prazo não faz o encerramento falhar: as conexões que sobraram são
+// cortadas e o processo sai normalmente.
 func servir(ctx context.Context, g *errgroup.Group, srv *http.Server, nome string, grace time.Duration) {
 	g.Go(func() error {
 		falhou := make(chan error, 1)
@@ -300,6 +302,11 @@ func servir(ctx context.Context, g *errgroup.Group, srv *http.Server, nome strin
 		}
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), grace)
 		defer cancel()
-		return srv.Shutdown(shutdownCtx)
+		err := srv.Shutdown(shutdownCtx)
+		if errors.Is(err, context.DeadlineExceeded) {
+			slog.Warn("prazo de encerramento estourou; conexões cortadas", "servidor", nome, "grace", grace)
+			return srv.Close()
+		}
+		return err
 	})
 }

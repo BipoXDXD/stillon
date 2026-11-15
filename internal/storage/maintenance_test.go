@@ -299,13 +299,8 @@ func TestRetentionRemovesOnlyWhatExpired(t *testing.T) {
 	velhaEntregue := notificacaoEm(t, pool, inc, novoCanal(t, pool, dono, nil, time.Time{}), hoje.AddDate(0, 0, -40))
 	velhaPendente := notificacaoEm(t, pool, inc, novoCanal(t, pool, dono, nil, time.Time{}), hoje.AddDate(0, 0, -40))
 	novaEntregue := notificacaoEm(t, pool, inc, novoCanal(t, pool, dono, nil, time.Time{}), hoje.AddDate(0, 0, -10))
-	for _, id := range []uuid.UUID{velhaEntregue, novaEntregue} {
-		if err := storage.InProberTx(ctx, pool, func(q *db.Queries) error {
-			return q.MarkNotificationSent(ctx, db.MarkNotificationSentParams{ID: id, Now: hoje})
-		}); err != nil {
-			t.Fatal(err)
-		}
-	}
+	marcarEntregue(t, velhaEntregue, hoje)
+	marcarEntregue(t, novaEntregue, hoje)
 
 	// Auditoria: 13 meses (sai), 11 (fica). Sessões: vencida há 8 dias
 	// (sai), há 6 (fica).
@@ -356,6 +351,18 @@ func consolidarJanela(t *testing.T, pool *pgxpool.Pool, de, ate time.Time) {
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+// marcarEntregue grava como enviada uma notificação de notificacaoEm. Ela
+// nunca foi reivindicada, então não há lease para a cerca de
+// MarkNotificationSent: a gravação vai direto, como administrador.
+func marcarEntregue(t *testing.T, id uuid.UUID, entregue time.Time) {
+	t.Helper()
+	tag, err := testdb.Admin(t).Exec(context.Background(),
+		`UPDATE notifications SET status = 'sent', sent_at = $2 WHERE id = $1`, id, entregue)
+	if err != nil || tag.RowsAffected() != 1 {
+		t.Fatalf("marcar %s como enviada: %v, %d linhas", id, err, tag.RowsAffected())
 	}
 }
 

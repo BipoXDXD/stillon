@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math/rand/v2"
+	"runtime/debug"
 	"slices"
 	"sync"
 	"time"
@@ -17,6 +19,7 @@ import (
 	"github.com/BipoXDXD/stillon/internal/clock"
 	"github.com/BipoXDXD/stillon/internal/crypto"
 	"github.com/BipoXDXD/stillon/internal/incident"
+	"github.com/BipoXDXD/stillon/internal/observability"
 	"github.com/BipoXDXD/stillon/internal/storage"
 	"github.com/BipoXDXD/stillon/internal/storage/db"
 )
@@ -47,9 +50,22 @@ const (
 
 	// MaxAttempts é o teto de tentativas (spec §8). Com o backoff abaixo, a
 	// sexta tentativa acontece cerca de 15 minutos depois da primeira.
+	//
+	// A entrega é pelo menos uma vez: um timeout depois do envio pode
+	// duplicar. Quando o provedor recebe o aviso mas a resposta não chega a
+	// tempo, a tentativa conta como falha e o aviso sai de novo. No e-mail, a
+	// Idempotency-Key (derivada do id da notificação) faz o Resend descartar a
+	// repetição; o webhook do Discord não tem chave, e o aviso chega em dobro.
+	// É de propósito: para um monitor, perder um alerta é pior que receber dois.
 	MaxAttempts  = 6
 	firstBackoff = 30 * time.Second
-	maxBackoff   = time.Hour
+	// maxBackoff é o teto antes do espalhamento: com o jitter, a espera
+	// chega a 72 min. Cortar depois de espalhar juntaria no teto exato
+	// metade das retentativas que o espalhamento separou.
+	maxBackoff = time.Hour
+	// jitter é a fração, para mais e para menos, com que a espera da
+	// retentativa é espalhada.
+	jitter = 0.2
 
 	// rateLimitGrace é por quanto tempo, contado do enfileiramento, um 429
 	// não gasta tentativa. Num apagão em massa, dezenas de alertas vão ao
@@ -76,6 +92,10 @@ const (
 // encerramento.
 var errEncerramento = errors.New("encerramento do dispatcher")
 
+// errLeasePerdido é a gravação de quem perdeu a notificação: o lease venceu
+// e outro dispatcher a reivindicou de novo. O dono novo decide o desfecho.
+var errLeasePerdido = errors.New("lease da notificação perdido")
+
 // Dispatcher consome a outbox de notificações (spec §8). Roda no papel do
 // sondador, fora do caminho crítico da sonda.
 type Dispatcher struct {
@@ -89,6 +109,9 @@ type Dispatcher struct {
 	// shutdownSendGrace é campo para que os testes o encurtem.
 	shutdownSendGrace time.Duration
 	ritmo             ritmo
+	// sortear devolve um valor em [0, 1) para espalhar o backoff; é campo
+	// para que os testes fixem o sorteio.
+	sortear func() float64
 }
 
 // NewDispatcher recebe os canais que o operador configurou. Um canal de
@@ -102,7 +125,7 @@ func NewDispatcher(pool *pgxpool.Pool, box *crypto.Box, clk clock.Clock, reg pro
 			Help: "Desfechos de envio de notificação, por canal e resultado.",
 		}, []string{"kind", "result"}),
 		sendTimeout: sendTimeout, claimTimeout: claimTimeout, shutdownSendGrace: shutdownSendGrace,
-		ritmo: ritmoReal,
+		ritmo: ritmoReal, sortear: rand.Float64,
 	}
 	for _, n := range notifiers {
 		d.notifiers[n.Kind()] = n
@@ -256,7 +279,7 @@ func (d *Dispatcher) entregarEmSerie(p prazos, fila []db.ClaimDueNotificationsRo
 func (d *Dispatcher) liberar(p prazos, n db.ClaimDueNotificationsRow) {
 	d.total.WithLabelValues(n.Kind, "deferred").Inc()
 	if err := d.persistir(p.gravacoes, n, interrompida(d.clk.Now())); err != nil {
-		slog.Error("devolver notificação no encerramento", "notification_id", n.ID, "erro", err)
+		registrarGravacao("devolver notificação no encerramento", n, err)
 	}
 }
 
@@ -273,7 +296,8 @@ func interrompida(agora time.Time) desfecho {
 func (d *Dispatcher) entregarProtegido(p prazos, n db.ClaimDueNotificationsRow) (f desfecho) {
 	defer func() {
 		if r := recover(); r != nil {
-			slog.Error("panic no envio de notificação", "notification_id", n.ID, "panic", fmt.Sprint(r))
+			slog.Error("panic no envio de notificação", "notification_id", n.ID,
+				"panic", observability.DescreverPanic(r), "stack", string(debug.Stack()))
 			f = desfecho{}
 		}
 	}()
@@ -295,7 +319,7 @@ func (d *Dispatcher) adiar(p prazos, n db.ClaimDueNotificationsRow, parou desfec
 	if !decidido {
 		proxima := parou.proxima
 		if proxima.IsZero() { // quem parou o canal já tinha falhado de vez
-			proxima = d.clk.Now().Add(backoff(n.Attempts))
+			proxima = d.clk.Now().Add(d.espalhar(backoff(n.Attempts)))
 		}
 		f = d.decidirRetentativa(n, parou.reason, proxima)
 	}
@@ -309,7 +333,7 @@ func (d *Dispatcher) adiar(p prazos, n db.ClaimDueNotificationsRow, parou desfec
 		slog.Warn("notificação falhou de vez", "notification_id", n.ID, "channel_id", n.ChannelID, "motivo", f.reason)
 	}
 	if err := d.persistir(p.gravacoes, n, f); err != nil {
-		slog.Error("gravar desfecho de notificação", "notification_id", n.ID, "erro", err)
+		registrarGravacao("gravar desfecho de notificação", n, err)
 	}
 }
 
@@ -351,7 +375,7 @@ func (d *Dispatcher) entregar(p prazos, n db.ClaimDueNotificationsRow) desfecho 
 		slog.Warn("notificação falhou de vez", "notification_id", n.ID, "channel_id", n.ChannelID, "motivo", f.reason)
 	}
 	if err := d.persistir(p.gravacoes, n, f); err != nil {
-		slog.Error("gravar desfecho de notificação", "notification_id", n.ID, "erro", err)
+		registrarGravacao("gravar desfecho de notificação", n, err)
 	}
 	return f
 }
@@ -432,7 +456,7 @@ func (d *Dispatcher) tentar(envios context.Context, n db.ClaimDueNotificationsRo
 	if se.Permanent {
 		return desfecho{status: statusFailed, reason: se.Reason}
 	}
-	espera := max(backoff(n.Attempts), se.RetryAfter)
+	espera := max(d.espalhar(backoff(n.Attempts)), se.RetryAfter)
 	f := d.decidirRetentativa(n, se.Reason, d.clk.Now().Add(espera))
 	f.transitoria = true
 	return f
@@ -465,6 +489,41 @@ func backoff(tentativa int32) time.Duration {
 	return min(d, maxBackoff)
 }
 
+// registrarGravacao põe no log a gravação de desfecho que falhou. O lease
+// perdido não é erro do StillOn: ou o dono apagou o canal no meio do envio
+// (o ON DELETE CASCADE levou a notificação), ou outro dispatcher a
+// reivindicou depois que o lease venceu, e esse caso, que pode ter gerado um
+// envio repetido, merece o aviso.
+func registrarGravacao(acao string, n db.ClaimDueNotificationsRow, err error) {
+	if errors.Is(err, errLeasePerdido) {
+		slog.Warn(acao+": a notificação mudou de dono ou foi apagada com o canal",
+			"notification_id", n.ID, "channel_id", n.ChannelID)
+		return
+	}
+	slog.Error(acao, "notification_id", n.ID, "erro", err)
+}
+
+// doDono traduz as linhas de uma gravação de desfecho: zero é o lease
+// perdido, e o erro desfaz a transação inteira, sem tocar na saúde do canal
+// nem na auditoria, que ficam com o dono novo.
+func doDono(linhas int64, err error) error {
+	if err != nil {
+		return err
+	}
+	if linhas == 0 {
+		return errLeasePerdido
+	}
+	return nil
+}
+
+// espalhar desloca a espera em até ±jitter. Num apagão, dezenas de avisos
+// falham juntos no mesmo webhook; com a mesma espera, voltariam todos no
+// mesmo instante e bateriam no provedor de novo como uma onda só.
+func (d *Dispatcher) espalhar(espera time.Duration) time.Duration {
+	fator := 1 - jitter + 2*jitter*d.sortear()
+	return time.Duration(float64(espera) * fator)
+}
+
 // gravacoes é o contexto do lote: acaba persistTimeout depois de os envios
 // serem abortados no encerramento.
 func (d *Dispatcher) persistir(gravacoes context.Context, n db.ClaimDueNotificationsRow, f desfecho) error {
@@ -478,18 +537,24 @@ func (d *Dispatcher) persistir(gravacoes context.Context, n db.ClaimDueNotificat
 	return storage.InProberTx(ctx, d.pool, func(q *db.Queries) error {
 		switch f.status {
 		case statusSent:
-			if err := q.MarkNotificationSent(ctx, db.MarkNotificationSentParams{ID: n.ID, Now: d.clk.Now()}); err != nil {
+			if err := doDono(q.MarkNotificationSent(ctx, db.MarkNotificationSentParams{
+				ID: n.ID, Now: d.clk.Now(), LeaseToken: n.LeaseToken,
+			})); err != nil {
 				return err
 			}
 			return q.MarkChannelSuccess(ctx, db.MarkChannelSuccessParams{ChannelID: n.ChannelID, Now: d.clk.Now()})
 		case statusPending:
-			return q.RetryNotification(ctx, db.RetryNotificationParams{
-				ID: n.ID, NextAttemptAt: f.proxima, LastError: motivo, Refund: f.devolver,
-			})
+			return doDono(q.RetryNotification(ctx, db.RetryNotificationParams{
+				ID: n.ID, NextAttemptAt: f.proxima, LastError: motivo, Refund: f.devolver, LeaseToken: n.LeaseToken,
+			}))
 		case statusCancelled:
-			return q.CloseNotification(ctx, db.CloseNotificationParams{ID: n.ID, Status: string(statusCancelled), LastError: motivo})
+			return doDono(q.CloseNotification(ctx, db.CloseNotificationParams{
+				ID: n.ID, Status: string(statusCancelled), LastError: motivo, LeaseToken: n.LeaseToken,
+			}))
 		case statusFailed:
-			if err := q.CloseNotification(ctx, db.CloseNotificationParams{ID: n.ID, Status: string(statusFailed), LastError: motivo}); err != nil {
+			if err := doDono(q.CloseNotification(ctx, db.CloseNotificationParams{
+				ID: n.ID, Status: string(statusFailed), LastError: motivo, LeaseToken: n.LeaseToken,
+			})); err != nil {
 				return err
 			}
 			// O canal passa a "failing" até a próxima entrega que der certo

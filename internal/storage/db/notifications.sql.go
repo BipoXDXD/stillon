@@ -35,9 +35,10 @@ WITH lote AS MATERIALIZED (
     UPDATE notifications n
        SET next_attempt_at = $5::timestamptz, attempts = n.attempts + 1
      WHERE n.id IN (SELECT id FROM lote)
-    RETURNING n.id, n.incident_id, n.channel_id, n.event, n.attempts, n.created_at, n.target_name
+    RETURNING n.id, n.incident_id, n.channel_id, n.event, n.attempts, n.created_at, n.target_name,
+              n.xmin::text AS lease_token
 )
-SELECT cl.id, cl.event, cl.attempts, cl.created_at,
+SELECT cl.id, cl.event, cl.attempts, cl.created_at, cl.lease_token::text AS lease_token,
        c.id AS channel_id, c.user_id, c.kind, c.config_enc, c.enabled, c.verified_at,
        i.id AS incident_id, i.started_at, i.resolved_at, i.ack_at, i.cause, i.closed_by_resume,
        COALESCE(cl.target_name, t.name, h.name)::text AS target_name,
@@ -62,6 +63,7 @@ type ClaimDueNotificationsRow struct {
 	Event          string
 	Attempts       int32
 	CreatedAt      time.Time
+	LeaseToken     string
 	ChannelID      uuid.UUID
 	UserID         uuid.UUID
 	Kind           string
@@ -105,6 +107,7 @@ func (q *Queries) ClaimDueNotifications(ctx context.Context, arg ClaimDueNotific
 			&i.Event,
 			&i.Attempts,
 			&i.CreatedAt,
+			&i.LeaseToken,
 			&i.ChannelID,
 			&i.UserID,
 			&i.Kind,
@@ -130,20 +133,30 @@ func (q *Queries) ClaimDueNotifications(ctx context.Context, arg ClaimDueNotific
 	return items, nil
 }
 
-const closeNotification = `-- name: CloseNotification :exec
-UPDATE notifications SET status = $2, last_error = $3 WHERE id = $1
+const closeNotification = `-- name: CloseNotification :execrows
+UPDATE notifications SET status = $1, last_error = $2
+ WHERE id = $3 AND status = 'pending' AND xmin::text = $4::text
 `
 
 type CloseNotificationParams struct {
-	ID        uuid.UUID
-	Status    string
-	LastError *string
+	Status     string
+	LastError  *string
+	ID         uuid.UUID
+	LeaseToken string
 }
 
 // status é 'failed' ou 'cancelled'.
-func (q *Queries) CloseNotification(ctx context.Context, arg CloseNotificationParams) error {
-	_, err := q.db.Exec(ctx, closeNotification, arg.ID, arg.Status, arg.LastError)
-	return err
+func (q *Queries) CloseNotification(ctx context.Context, arg CloseNotificationParams) (int64, error) {
+	result, err := q.db.Exec(ctx, closeNotification,
+		arg.Status,
+		arg.LastError,
+		arg.ID,
+		arg.LeaseToken,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const enqueueReminder = `-- name: EnqueueReminder :execrows
@@ -312,26 +325,38 @@ func (q *Queries) MarkChannelSuccess(ctx context.Context, arg MarkChannelSuccess
 	return err
 }
 
-const markNotificationSent = `-- name: MarkNotificationSent :exec
+const markNotificationSent = `-- name: MarkNotificationSent :execrows
 UPDATE notifications SET status = 'sent', sent_at = $1::timestamptz, last_error = NULL
- WHERE id = $2
+ WHERE id = $2 AND status = 'pending' AND xmin::text = $3::text
 `
 
 type MarkNotificationSentParams struct {
-	Now time.Time
-	ID  uuid.UUID
+	Now        time.Time
+	ID         uuid.UUID
+	LeaseToken string
 }
 
-func (q *Queries) MarkNotificationSent(ctx context.Context, arg MarkNotificationSentParams) error {
-	_, err := q.db.Exec(ctx, markNotificationSent, arg.Now, arg.ID)
-	return err
+// As três gravações de desfecho abaixo só valem para o dono da
+// reivindicação: lease_token é o xmin da versão da linha que
+// ClaimDueNotifications gravou, e qualquer gravação seguinte (outra
+// reivindicação, o desfecho do dono novo) o troca por um xid maior, que não
+// se repete. Zero linhas quer dizer que o lease venceu e outro dispatcher é o
+// dono agora, ou que a notificação sumiu com o canal (ON DELETE CASCADE).
+// Nem attempts nem next_attempt_at servem de cerca: o 429 do dono novo
+// devolve a tentativa, e o "agora" dele pode ser o lease_until antigo.
+func (q *Queries) MarkNotificationSent(ctx context.Context, arg MarkNotificationSentParams) (int64, error) {
+	result, err := q.db.Exec(ctx, markNotificationSent, arg.Now, arg.ID, arg.LeaseToken)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
-const retryNotification = `-- name: RetryNotification :exec
+const retryNotification = `-- name: RetryNotification :execrows
 UPDATE notifications
    SET next_attempt_at = $1, last_error = $2,
        attempts = attempts - CASE WHEN $3::bool THEN 1 ELSE 0 END
- WHERE id = $4
+ WHERE id = $4 AND status = 'pending' AND xmin::text = $5::text
 `
 
 type RetryNotificationParams struct {
@@ -339,16 +364,21 @@ type RetryNotificationParams struct {
 	LastError     *string
 	Refund        bool
 	ID            uuid.UUID
+	LeaseToken    string
 }
 
 // refund devolve a tentativa que a reivindicação contou: um 429 é o
 // provedor pedindo espera, não uma falha do envio (caso típico: um apagão em massa).
-func (q *Queries) RetryNotification(ctx context.Context, arg RetryNotificationParams) error {
-	_, err := q.db.Exec(ctx, retryNotification,
+func (q *Queries) RetryNotification(ctx context.Context, arg RetryNotificationParams) (int64, error) {
+	result, err := q.db.Exec(ctx, retryNotification,
 		arg.NextAttemptAt,
 		arg.LastError,
 		arg.Refund,
 		arg.ID,
+		arg.LeaseToken,
 	)
-	return err
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }

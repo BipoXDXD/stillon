@@ -57,6 +57,12 @@ type Detector struct {
 // Default é a histerese da spec: rápido para abrir, lento para fechar.
 var Default = Detector{OpenAfter: 3, CloseAfter: 5}
 
+// Aceita diz se um check feito em at entra na histerese: o primeiro sempre
+// entra; depois, só um posterior ao último avaliado.
+func (s State) Aceita(at time.Time) bool {
+	return s.LastCheckedAt.IsZero() || at.After(s.LastCheckedAt)
+}
+
 // Evaluate aplica um check ao estado e devolve o estado novo e a transição.
 //
 // Diverge do contrato da spec §7.3 em dois pontos: os
@@ -70,7 +76,7 @@ var Default = Detector{OpenAfter: 3, CloseAfter: 5}
 // a guarda, um sucesso velho chegando atrasado zeraria uma sequência de
 // falhas mais recente.
 func (d Detector) Evaluate(s State, r ProbeResult) (State, Action) {
-	if !s.LastCheckedAt.IsZero() && !r.At.After(s.LastCheckedAt) {
+	if !s.Aceita(r.At) {
 		return s, ActionNone
 	}
 	s.LastCheckedAt = r.At

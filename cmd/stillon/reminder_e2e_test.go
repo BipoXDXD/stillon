@@ -57,6 +57,7 @@ func TestProberRoleEnqueuesOverdueReminders(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	aberta := uuid.Must(uuid.NewV7())
 	err = storage.InProberTx(ctx, pool, func(q *db.Queries) error {
 		if err := q.OpenIncident(ctx, db.OpenIncidentParams{ID: incidente, TargetID: alvo, StartedAt: agora.Add(-time.Hour), Cause: "timeout"}); err != nil {
 			return err
@@ -64,16 +65,18 @@ func TestProberRoleEnqueuesOverdueReminders(t *testing.T) {
 		if _, err := q.MarkOpenNotified(ctx, db.MarkOpenNotifiedParams{ID: incidente, Now: avisada}); err != nil {
 			return err
 		}
-		aberta := uuid.Must(uuid.NewV7())
-		if err := q.EnqueueNotification(ctx, db.EnqueueNotificationParams{
+		return q.EnqueueNotification(ctx, db.EnqueueNotificationParams{
 			ID: aberta, IncidentID: incidente, ChannelID: canal, Event: incident.EventOpened, Now: avisada,
-		}); err != nil {
-			return err
-		}
-		return q.MarkNotificationSent(ctx, db.MarkNotificationSentParams{ID: aberta, Now: avisada})
+		})
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+	// Nunca reivindicada, a abertura não tem lease para a cerca de
+	// MarkNotificationSent: vira enviada direto, como administrador.
+	if tag, err := testdb.Admin(t).Exec(ctx, `UPDATE notifications SET status = 'sent', sent_at = $2 WHERE id = $1`,
+		aberta, avisada); err != nil || tag.RowsAffected() != 1 {
+		t.Fatalf("marcar a abertura como enviada: %v, %d linhas", err, tag.RowsAffected())
 	}
 
 	cfg := configDeTeste(t, config.RoleProber, testdb.DSN(t))

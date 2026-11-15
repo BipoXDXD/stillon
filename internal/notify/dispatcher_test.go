@@ -34,9 +34,12 @@ type canalFalso struct {
 	envios    []Event
 	destinos  []string
 	bloquear  bool
-	panico    bool
+	// panico, quando não é nil, é o valor do panic no meio do envio.
+	panico any
 	// chegou, quando não é nil, recebe um sinal a cada envio que começa.
 	chegou chan struct{}
+	// aoEnviar, quando não é nil, roda no meio do envio, antes da resposta.
+	aoEnviar func()
 }
 
 func (*canalFalso) Kind() Kind { return KindDiscord }
@@ -49,13 +52,16 @@ func (c *canalFalso) Send(ctx context.Context, dest crypto.Secret, ev Event) err
 	if len(c.respostas) > 0 {
 		resp, c.respostas = c.respostas[0], c.respostas[1:]
 	}
-	bloquear, panico, chegou := c.bloquear, c.panico, c.chegou
+	bloquear, panico, chegou, aoEnviar := c.bloquear, c.panico, c.chegou, c.aoEnviar
 	c.mu.Unlock()
 	if chegou != nil {
 		chegou <- struct{}{}
 	}
-	if panico {
-		panic("canal quebrado")
+	if aoEnviar != nil {
+		aoEnviar()
+	}
+	if panico != nil {
+		panic(panico)
 	}
 	if bloquear {
 		<-ctx.Done()
@@ -97,6 +103,9 @@ func novaBancada(t *testing.T, mexer func(*db.InsertChannelParams)) *bancada {
 	}
 	b := &bancada{pool: pool, clk: clk, box: box, canal: &canalFalso{}, dono: uuid.Must(uuid.NewV7())}
 	b.d = NewDispatcher(pool, box, clk, prometheus.NewRegistry(), b.canal)
+	// O meio do sorteio deixa o backoff exato, e os testes de tempo continuam
+	// determinísticos; o espalhamento tem testes próprios.
+	b.d.sortear = sorteioFixo(0.5)
 
 	if _, err := pool.Exec(ctx, `INSERT INTO users (id, email, password_hash) VALUES ($1, $2, 'x')`,
 		b.dono, b.dono.String()+"@exemplo.com"); err != nil {
@@ -486,7 +495,7 @@ func TestPanickingNotifierDoesNotKillTheDispatcher(t *testing.T) {
 	t.Cleanup(func() { slog.SetDefault(antigo) })
 
 	b := novaBancada(t, nil)
-	b.canal.panico = true
+	b.canal.panico = "canal quebrado"
 	id := b.enfileirar(t, incident.EventOpened)
 
 	b.despachar(t, 1)

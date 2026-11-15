@@ -161,17 +161,31 @@ func regravar(ctx context.Context, q *db.Queries, userID, id uuid.UUID, in Input
 	if novosItens == nil {
 		return nil
 	}
+	// Os alvos são travados antes de apagar os itens antigos: é a ordem do
+	// DELETE de um alvo (o alvo, depois os itens no cascade). Na ordem
+	// inversa, um PATCH e a remoção de um alvo da lista se esperam (40P01).
+	if err := conferirPosse(ctx, q, userID, in.Items); err != nil {
+		return err
+	}
 	if err := q.DeleteStatusPageItems(ctx, db.DeleteStatusPageItemsParams{UserID: userID, PageID: id}); err != nil {
 		return fmt.Errorf("apagar itens: %w", err)
 	}
-	return gravarItens(ctx, q, userID, id, in.Items)
+	return inserirItens(ctx, q, id, in.Items)
 }
 
-// gravarItens confere que cada alvo é do dono e grava na ordem dada. A RLS
-// dos itens também recusa alvo alheio (WITH CHECK da migration 00006); esta
-// checagem existe para dizer QUAL item está errado, em vez de um erro de
-// política.
+// gravarItens confere a posse dos alvos e grava os itens na ordem dada.
 func gravarItens(ctx context.Context, q *db.Queries, userID, pageID uuid.UUID, items []Item) error {
+	if err := conferirPosse(ctx, q, userID, items); err != nil {
+		return err
+	}
+	return inserirItens(ctx, q, pageID, items)
+}
+
+// conferirPosse confere que cada alvo é do dono e o trava até o fim da
+// transação (OwnTargetIDs). A RLS dos itens também recusa alvo alheio (WITH
+// CHECK da migration 00006); esta checagem existe para dizer QUAL item está
+// errado, em vez de um erro de política.
+func conferirPosse(ctx context.Context, q *db.Queries, userID uuid.UUID, items []Item) error {
 	if len(items) == 0 {
 		return nil
 	}
@@ -196,6 +210,10 @@ func gravarItens(ctx context.Context, q *db.Queries, userID, pageID uuid.UUID, i
 	if len(verr.Fields) > 0 {
 		return &verr
 	}
+	return nil
+}
+
+func inserirItens(ctx context.Context, q *db.Queries, pageID uuid.UUID, items []Item) error {
 	for i, it := range items {
 		if err := q.InsertStatusPageItem(ctx, db.InsertStatusPageItemParams{
 			StatusPageID: pageID, TargetID: it.TargetID, DisplayName: it.DisplayName, Position: int32(i),

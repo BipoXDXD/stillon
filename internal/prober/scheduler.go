@@ -8,6 +8,7 @@ import (
 	"math"
 	"net/http"
 	"net/netip"
+	"runtime/debug"
 	"sync"
 	"time"
 
@@ -20,6 +21,7 @@ import (
 	"github.com/BipoXDXD/stillon/internal/clock"
 	"github.com/BipoXDXD/stillon/internal/crypto"
 	"github.com/BipoXDXD/stillon/internal/incident"
+	"github.com/BipoXDXD/stillon/internal/observability"
 	"github.com/BipoXDXD/stillon/internal/prober/safedial"
 	"github.com/BipoXDXD/stillon/internal/storage"
 	"github.com/BipoXDXD/stillon/internal/storage/db"
@@ -292,11 +294,12 @@ func (s *Scheduler) Tick(ctx context.Context) (int, error) {
 			// Registrado por último, roda primeiro: segura o panic de uma
 			// sonda, e os três defers acima rodam depois dele como numa
 			// saída normal, devolvendo a vaga e o inflight. Sem isto, um
-			// panic numa sonda derruba o processo inteiro. O log leva só o
-			// valor do panic e o alvo, nunca a requisição.
+			// panic numa sonda derruba o processo inteiro. O log leva o alvo,
+			// a pilha e o valor descrito sem dados, nunca a requisição.
 			defer func() {
 				if r := recover(); r != nil {
-					slog.Error("panic na sonda", "target_id", a.ID, "panic", fmt.Sprint(r))
+					slog.Error("panic na sonda", "target_id", a.ID,
+						"panic", observability.DescreverPanic(r), "stack", string(debug.Stack()))
 				}
 			}()
 			s.sondar(a, now)
@@ -425,11 +428,17 @@ func (s *Scheduler) gravar(a db.ClaimDueTargetsRow, em time.Time, res Result) {
 		if err := q.InsertCheck(ctx, p); err != nil {
 			return err
 		}
+		var emOrdem bool
 		var err error
-		if acao, err = s.avaliar(ctx, q, a, em, res); err != nil {
+		if acao, emOrdem, err = s.avaliar(ctx, q, a, em, res); err != nil {
 			return err
 		}
-		if res.CertNotAfter.IsZero() {
+		// O check atrasado que o detector ignorou também não mexe na
+		// validade: o certificado lido antes de uma renovação voltaria por
+		// cima do renovado, com o observed_at velho. Se o atrasado trazia um
+		// certificado pior (trocado por um que vence antes), a próxima sonda
+		// em ordem lê o mesmo certificado e o grava.
+		if res.CertNotAfter.IsZero() || !emOrdem {
 			return nil
 		}
 		// Depois de avaliar: é a trava da histerese que serializa duas sondas
@@ -559,18 +568,18 @@ func conferirSonda(ctx context.Context, q *db.Queries, a db.ClaimDueTargetsRow) 
 // A linha de target_health é travada antes de ler o incidente aberto: duas
 // sondas do mesmo alvo gravando ao mesmo tempo passam aqui
 // uma de cada vez, e a segunda vê o estado que a primeira gravou.
-func (s *Scheduler) avaliar(ctx context.Context, q *db.Queries, a db.ClaimDueTargetsRow, em time.Time, res Result) (incident.Action, error) {
+func (s *Scheduler) avaliar(ctx context.Context, q *db.Queries, a db.ClaimDueTargetsRow, em time.Time, res Result) (acao incident.Action, emOrdem bool, err error) {
 	if err := q.EnsureTargetHealth(ctx, a.ID); err != nil {
-		return incident.ActionNone, fmt.Errorf("criar histerese do alvo: %w", err)
+		return incident.ActionNone, false, fmt.Errorf("criar histerese do alvo: %w", err)
 	}
 	h, err := q.LockTargetHealth(ctx, a.ID)
 	if err != nil {
-		return incident.ActionNone, fmt.Errorf("travar histerese do alvo: %w", err)
+		return incident.ActionNone, false, fmt.Errorf("travar histerese do alvo: %w", err)
 	}
 	aberto, err := q.GetOpenIncident(ctx, a.ID)
 	temAberto := err == nil
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		return incident.ActionNone, fmt.Errorf("buscar incidente aberto: %w", err)
+		return incident.ActionNone, false, fmt.Errorf("buscar incidente aberto: %w", err)
 	}
 
 	anterior := recomecarAposLacuna(incident.State{
@@ -580,6 +589,7 @@ func (s *Scheduler) avaliar(ctx context.Context, q *db.Queries, a db.ClaimDueTar
 		LastCheckedAt:        storage.TimeOrZero(h.LastCheckedAt),
 		Open:                 temAberto,
 	}, em, a.IntervalSec)
+	emOrdem = anterior.Aceita(em)
 	estado, acao := s.detector.Evaluate(anterior, paraDetector(em, res))
 
 	// Depois de qualquer Evaluate os dois instantes estão preenchidos: um
@@ -592,29 +602,29 @@ func (s *Scheduler) avaliar(ctx context.Context, q *db.Queries, a db.ClaimDueTar
 		StreakSince:          &desde,
 		LastCheckedAt:        estado.LastCheckedAt,
 	}); err != nil {
-		return incident.ActionNone, fmt.Errorf("gravar histerese do alvo: %w", err)
+		return incident.ActionNone, false, fmt.Errorf("gravar histerese do alvo: %w", err)
 	}
 
 	switch acao {
 	case incident.ActionOpen:
 		id, err := uuid.NewV7()
 		if err != nil {
-			return acao, fmt.Errorf("gerar id de incidente: %w", err)
+			return acao, emOrdem, fmt.Errorf("gerar id de incidente: %w", err)
 		}
 		// Abrir só acontece num check down, que sempre tem error_kind.
 		if err := q.OpenIncident(ctx, db.OpenIncidentParams{
 			ID: id, TargetID: a.ID, StartedAt: estado.StreakSince, Cause: string(res.ErrorKind),
 		}); err != nil {
-			return acao, fmt.Errorf("abrir incidente: %w", err)
+			return acao, emOrdem, fmt.Errorf("abrir incidente: %w", err)
 		}
-		return acao, avisarAbertura(ctx, q, a.UserID, id, em)
+		return acao, emOrdem, avisarAbertura(ctx, q, a.UserID, id, em)
 	case incident.ActionClose:
 		if _, err := q.ResolveIncident(ctx, db.ResolveIncidentParams{ID: aberto.ID, ResolvedAt: estado.StreakSince}); err != nil {
-			return acao, fmt.Errorf("resolver incidente: %w", err)
+			return acao, emOrdem, fmt.Errorf("resolver incidente: %w", err)
 		}
-		return acao, avisarFechamento(ctx, q, a.UserID, aberto.ID, em)
+		return acao, emOrdem, avisarFechamento(ctx, q, a.UserID, aberto.ID, em)
 	}
-	return acao, nil
+	return acao, emOrdem, nil
 }
 
 // lacunaMaxima é o maior intervalo entre dois checks em que as sequências

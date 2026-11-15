@@ -35,10 +35,8 @@ func semearVencidos(t *testing.T, pool *pgxpool.Pool, hoje time.Time, n int) {
 		consolidarJanela(t, pool, b, b.Add(time.Hour))
 
 		id := notificacaoEm(t, pool, inc, novoCanal(t, pool, dono, nil, time.Time{}), hoje.AddDate(0, 0, -40))
+		marcarEntregue(t, id, hoje)
 		if err := storage.InProberTx(ctx, pool, func(q *db.Queries) error {
-			if err := q.MarkNotificationSent(ctx, db.MarkNotificationSentParams{ID: id, Now: hoje}); err != nil {
-				return err
-			}
 			return q.InsertHeartbeatEvent(ctx, db.InsertHeartbeatEventParams{
 				ID: novoID(), HeartbeatID: hb, At: hoje.AddDate(0, 0, -40), Kind: "success", Source: "ping",
 			})
@@ -181,10 +179,8 @@ func semearVivos(t *testing.T, pool *pgxpool.Pool, hoje time.Time) {
 	notificacaoEm(t, pool, inc, novoCanal(t, pool, dono, nil, time.Time{}), hoje.AddDate(0, 0, -40))
 	entregue := notificacaoEm(t, pool, inc, novoCanal(t, pool, dono, nil, time.Time{}), hoje.AddDate(0, 0, -5))
 	hb := novoHeartbeat(t, pool, dono, "vivos")
+	marcarEntregue(t, entregue, hoje)
 	if err := storage.InProberTx(ctx, pool, func(q *db.Queries) error {
-		if err := q.MarkNotificationSent(ctx, db.MarkNotificationSentParams{ID: entregue, Now: hoje}); err != nil {
-			return err
-		}
 		return q.InsertHeartbeatEvent(ctx, db.InsertHeartbeatEventParams{
 			ID: novoID(), HeartbeatID: hb, At: hoje.AddDate(0, 0, -5), Kind: "success", Source: "ping",
 		})
