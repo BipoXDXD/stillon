@@ -37,8 +37,8 @@ func provedorQueRedireciona(t *testing.T) (*httptest.Server, *http.Client, *atom
 
 func TestDiscordSingleRedirectIsNotDelivered(t *testing.T) {
 	srv, client, seguiu := provedorQueRedireciona(t)
-	d := &Discord{client: client, validate: aceitarQualquer}
-	err := d.Send(context.Background(), crypto.Secret(srv.URL+"/api/webhooks/1/t"), evAberto)
+	d := discordDoProvedor(t, srv.URL, client)
+	err := d.Send(context.Background(), crypto.Secret(webhookDeTeste), evAberto)
 	if se := comoSendError(t, err); se.Reason != ReasonInvalidChannel || !se.Permanent {
 		t.Errorf("302 único deu %+v, queria invalid_channel permanente", se)
 	}

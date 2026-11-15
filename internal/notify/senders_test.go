@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"net/url"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -71,8 +72,6 @@ var evAberto = Event{
 	StartedAt:      time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC),
 	Cause:          "timeout",
 }
-
-func aceitarQualquer(string) error { return nil }
 
 func comoSendError(t *testing.T, err error) *SendError {
 	t.Helper()
@@ -140,11 +139,56 @@ func TestValidateDiscordURL(t *testing.T) {
 	}
 }
 
+type transporteFunc func(*http.Request) (*http.Response, error)
+
+func (f transporteFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+// O redirecionamento para o servidor local acontece no transporte do teste.
+// O sender valida e monta a requisição com o mesmo código de produção.
+func discordDoProvedor(t *testing.T, endereco string, client *http.Client) *Discord {
+	t.Helper()
+	destino, err := url.Parse(endereco)
+	if err != nil {
+		t.Fatal(err)
+	}
+	transporte := client.Transport
+	copia := *client
+	copia.Transport = transporteFunc(func(r *http.Request) (*http.Response, error) {
+		pedido := r.Clone(r.Context())
+		pedido.URL.Scheme = destino.Scheme
+		pedido.URL.Host = destino.Host
+		pedido.Host = destino.Host
+		return transporte.RoundTrip(pedido)
+	})
+	return &Discord{client: &copia}
+}
+
+func TestDiscordSendsToTheCanonicalWebhookOrigin(t *testing.T) {
+	for _, host := range []string{"discord.com", "discordapp.com", "canary.discord.com", "ptb.discord.com"} {
+		t.Run(host, func(t *testing.T) {
+			const caminho = "/api/v10/webhooks/1/Teste_-"
+			var enviado string
+			d := NewDiscord()
+			d.client.Transport = transporteFunc(func(r *http.Request) (*http.Response, error) {
+				enviado = r.URL.String()
+				return &http.Response{StatusCode: http.StatusNoContent, Body: http.NoBody}, nil
+			})
+			dest := crypto.Secret("https://" + strings.ToUpper(host) + caminho)
+			if err := d.SendTest(context.Background(), dest); err != nil {
+				t.Fatal(err)
+			}
+			if esperado := "https://" + host + caminho + "?wait=true"; enviado != esperado {
+				t.Errorf("URL enviada = %q, queria %q", enviado, esperado)
+			}
+		})
+	}
+}
+
 func TestDiscordSendsWithoutMentionsOrEmbeds(t *testing.T) {
 	srv, client, pedidos := provedor(t, status(http.StatusOK))
-	d := &Discord{client: client, validate: aceitarQualquer}
+	d := discordDoProvedor(t, srv.URL, client)
 
-	if err := d.Send(context.Background(), crypto.Secret(srv.URL+"/api/webhooks/1/tok"), evAberto); err != nil {
+	if err := d.Send(context.Background(), crypto.Secret(webhookDeTeste), evAberto); err != nil {
 		t.Fatal(err)
 	}
 	p := receber(t, pedidos)
@@ -188,8 +232,8 @@ func TestDiscordClassifiesResponses(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.nome, func(t *testing.T) {
 			srv, client, _ := provedor(t, c.responder)
-			d := &Discord{client: client, validate: aceitarQualquer}
-			err := d.Send(context.Background(), crypto.Secret(srv.URL+"/api/webhooks/1/t"), evAberto)
+			d := discordDoProvedor(t, srv.URL, client)
+			err := d.Send(context.Background(), crypto.Secret(webhookDeTeste), evAberto)
 			if c.reason == "" {
 				if err != nil {
 					t.Fatalf("erro = %v, queria entregue", err)
@@ -210,7 +254,7 @@ func TestDiscordClassifiesResponses(t *testing.T) {
 func TestDiscordRevalidatesTheURLBeforeSending(t *testing.T) {
 	var chegou atomic.Int32
 	srv, client, _ := provedor(t, func(w http.ResponseWriter) { chegou.Add(1); w.WriteHeader(http.StatusOK) })
-	d := &Discord{client: client, validate: ValidateDiscordURL}
+	d := &Discord{client: client}
 
 	err := d.Send(context.Background(), crypto.Secret(srv.URL+"/api/webhooks/1/t"), evAberto)
 	se := comoSendError(t, err)
@@ -231,8 +275,8 @@ func TestDiscordRedirectLoopIsAPermanentFailure(t *testing.T) {
 		w.Header().Set("Location", "/api/webhooks/1/t")
 		w.WriteHeader(http.StatusFound)
 	})
-	d := &Discord{client: client, validate: aceitarQualquer}
-	err := d.Send(context.Background(), crypto.Secret(srv.URL+"/api/webhooks/1/t"), evAberto)
+	d := discordDoProvedor(t, srv.URL, client)
+	err := d.Send(context.Background(), crypto.Secret("https://discord.com/api/webhooks/1/t"), evAberto)
 	if se := comoSendError(t, err); se.Reason != ReasonInvalidChannel || !se.Permanent {
 		t.Errorf("redirecionamento sem fim deu %+v, queria invalid_channel permanente", se)
 	}
@@ -240,8 +284,8 @@ func TestDiscordRedirectLoopIsAPermanentFailure(t *testing.T) {
 
 // O SendError não carrega o erro de origem, que traz a URL com o token.
 func TestSendErrorNeverCarriesTheWebhookToken(t *testing.T) {
-	d := &Discord{client: safedial.NewClient(0), validate: aceitarQualquer}
-	err := d.Send(context.Background(), crypto.Secret("http://127.0.0.1:1/api/webhooks/1/token-secreto"), evAberto)
+	d := discordDoProvedor(t, "http://127.0.0.1:1", safedial.NewClient(0))
+	err := d.Send(context.Background(), crypto.Secret("https://discord.com/api/webhooks/1/token-secreto"), evAberto)
 	if err == nil || strings.Contains(err.Error(), "token-secreto") {
 		t.Errorf("erro = %v; não pode ser nil nem conter o token", err)
 	}
@@ -345,11 +389,11 @@ func TestSendTimesOutWithTheContext(t *testing.T) {
 	var once sync.Once
 	t.Cleanup(func() { once.Do(func() { close(liberar) }) })
 	srv, client, _ := provedor(t, func(w http.ResponseWriter) { <-liberar })
-	d := &Discord{client: client, validate: aceitarQualquer}
+	d := discordDoProvedor(t, srv.URL, client)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
-	se := comoSendError(t, d.Send(ctx, crypto.Secret(srv.URL+"/api/webhooks/1/t"), evAberto))
+	se := comoSendError(t, d.Send(ctx, crypto.Secret(webhookDeTeste), evAberto))
 	once.Do(func() { close(liberar) })
 	if se.Reason != ReasonTimeout || se.Permanent {
 		t.Errorf("SendError = %+v, queria timeout transitório", se)
@@ -377,12 +421,12 @@ func TestRetryAfter(t *testing.T) {
 // O lembrete chega no Discord com a cor da abertura: o alvo segue fora.
 func TestDiscordReminderHasTheOpenedColor(t *testing.T) {
 	srv, client, pedidos := provedor(t, status(http.StatusOK))
-	d := &Discord{client: client, validate: aceitarQualquer}
+	d := discordDoProvedor(t, srv.URL, client)
 	ev := evAberto
 	ev.Kind = incident.EventReminder
 	ev.QueuedAt = ev.StartedAt.Add(time.Hour)
 
-	if err := d.Send(context.Background(), crypto.Secret(srv.URL+"/api/webhooks/1/tok"), ev); err != nil {
+	if err := d.Send(context.Background(), crypto.Secret(webhookDeTeste), ev); err != nil {
 		t.Fatal(err)
 	}
 	var corpo discordPayload
@@ -397,12 +441,12 @@ func TestDiscordReminderHasTheOpenedColor(t *testing.T) {
 // Só o fechamento sai em verde.
 func TestDiscordResolvedHasTheResolvedColor(t *testing.T) {
 	srv, client, pedidos := provedor(t, status(http.StatusOK))
-	d := &Discord{client: client, validate: aceitarQualquer}
+	d := discordDoProvedor(t, srv.URL, client)
 	ev := evAberto
 	ev.Kind = incident.EventResolved
 	ev.ResolvedAt = ev.StartedAt.Add(time.Hour)
 
-	if err := d.Send(context.Background(), crypto.Secret(srv.URL+"/api/webhooks/1/tok"), ev); err != nil {
+	if err := d.Send(context.Background(), crypto.Secret(webhookDeTeste), ev); err != nil {
 		t.Fatal(err)
 	}
 	var corpo discordPayload

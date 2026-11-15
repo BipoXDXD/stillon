@@ -48,7 +48,7 @@ func TestSendersReadAtMostABoundedBodyBeforeClosing(t *testing.T) {
 		enviar func(*http.Client) error
 	}{
 		{"discord", func(c *http.Client) error {
-			d := &Discord{client: c, validate: func(string) error { return nil }}
+			d := &Discord{client: c}
 			return d.Send(context.Background(), crypto.Secret(webhookDeTeste), evAberto)
 		}},
 		{"resend", func(c *http.Client) error {
