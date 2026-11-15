@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"crypto/subtle"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -58,7 +59,8 @@ var ErrTOTPLocked = errors.New("segundo fator bloqueado")
 
 // VerifyLogin confere o código e grava o desfecho sob a mesma trava de users.
 // Assim, só uma falha confirmada pode bloquear o fator e gerar um aviso.
-func (s *TOTP) VerifyLogin(ctx context.Context, userID uuid.UUID, code string, ipHash []byte, now time.Time) (SecondFactorProof, error) {
+func (s *TOTP) VerifyLogin(ctx context.Context, challenge Challenge, code string, ipHash []byte, now time.Time) (SecondFactorProof, error) {
+	userID := challenge.UserID
 	tx, err := s.beginUserTx(ctx, userID)
 	if err != nil {
 		return SecondFactorProof{}, fmt.Errorf("abrir transação do segundo fator: %w", err)
@@ -67,14 +69,18 @@ func (s *TOTP) VerifyLogin(ctx context.Context, userID uuid.UUID, code string, i
 
 	var falhas int
 	var travado bool
+	var hash string
 	err = tx.QueryRow(ctx, `
-		SELECT totp_failures, COALESCE(totp_locked_until > $2, false)
-		  FROM users WHERE id = $1 FOR NO KEY UPDATE`, userID, now).Scan(&falhas, &travado)
+		SELECT password_hash, totp_failures, COALESCE(totp_locked_until > $2, false)
+		  FROM users WHERE id = $1 FOR NO KEY UPDATE`, userID, now).Scan(&hash, &falhas, &travado)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return SecondFactorProof{}, ErrNotFound
 	}
 	if err != nil {
 		return SecondFactorProof{}, fmt.Errorf("ler bloqueio do segundo fator: %w", err)
+	}
+	if subtle.ConstantTimeCompare([]byte(PasswordStamp(hash)), []byte(challenge.Stamp)) != 1 {
+		return SecondFactorProof{}, ErrStalePassword
 	}
 	if travado {
 		return SecondFactorProof{}, ErrTOTPLocked

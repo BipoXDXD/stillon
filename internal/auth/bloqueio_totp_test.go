@@ -62,9 +62,13 @@ func prepararTOTPProgressivo(t *testing.T) (*auth.TOTP, *pgxpool.Pool, uuid.UUID
 	return svc, pool, userID, segredo
 }
 
+func desafioProgressivo(userID uuid.UUID) auth.Challenge {
+	return auth.Challenge{UserID: userID, Stamp: auth.PasswordStamp("x")}
+}
+
 func registrarErroTOTP(t *testing.T, svc *auth.TOTP, userID uuid.UUID, at time.Time) bool {
 	t.Helper()
-	_, err := svc.VerifyLogin(context.Background(), userID, "", nil, at)
+	_, err := svc.VerifyLogin(context.Background(), desafioProgressivo(userID), "", nil, at)
 	switch {
 	case errors.Is(err, auth.ErrTOTPInvalid):
 		return true
@@ -146,7 +150,7 @@ func TestConcurrentTOTPFailuresStopAtTheLock(t *testing.T) {
 	for range tentativas {
 		go func() {
 			<-inicio
-			_, err := svc.VerifyLogin(ctx, userID, "", nil, now)
+			_, err := svc.VerifyLogin(ctx, desafioProgressivo(userID), "", nil, now)
 			resultados <- err
 		}()
 	}
@@ -179,7 +183,7 @@ func TestTOTPResetStartsTheProgressionOver(t *testing.T) {
 	gastarTOTP(t, svc, userID, t0, 5)
 	t1 := t0.Add(15 * time.Minute)
 	gastarTOTP(t, svc, userID, t1, 2)
-	if _, err := svc.VerifyLogin(context.Background(), userID, codigoEm(t, segredo, t1), nil, t1); err != nil {
+	if _, err := svc.VerifyLogin(context.Background(), desafioProgressivo(userID), codigoEm(t, segredo, t1), nil, t1); err != nil {
 		t.Fatal(err)
 	}
 	if got := lerTravaTOTP(t, pool, userID); got.falhas != 0 || got.ate != nil || got.permanente {
@@ -223,7 +227,7 @@ func TestTOTPAbsoluteCapOnlyTheCLIReleases(t *testing.T) {
 	if got := lerTravaTOTP(t, pool, userID); got.falhas != 0 || got.ate != nil || got.permanente {
 		t.Fatalf("depois do reset-2fa: %+v, queria tudo zerado", got)
 	}
-	if _, err := svc.VerifyLogin(ctx, userID, "", nil, t0); !errors.Is(err, auth.ErrTOTPNotEnrolled) {
+	if _, err := svc.VerifyLogin(ctx, desafioProgressivo(userID), "", nil, t0); !errors.Is(err, auth.ErrTOTPNotEnrolled) {
 		t.Fatalf("depois do reset-2fa: %v, queria fator desativado", err)
 	}
 	if avisos := lerAvisos(t, store); len(avisos) != 1 || !avisos[0].Permanent || !avisos[0].LockedAt.Equal(t0) {
@@ -252,7 +256,7 @@ func TestReset2FAAllowsReenrollmentAfterAPermanentLockAndDisable(t *testing.T) {
 		t.Fatal(err)
 	}
 	verificacao := now.Add(time.Minute)
-	if _, err := svc.VerifyLogin(ctx, userID, codigoEm(t, segredo, verificacao), nil, verificacao); err != nil {
+	if _, err := svc.VerifyLogin(ctx, desafioProgressivo(userID), codigoEm(t, segredo, verificacao), nil, verificacao); err != nil {
 		t.Fatalf("verificar fator recadastrado: %v", err)
 	}
 }
@@ -290,7 +294,7 @@ func TestInternalTOTPFailureDoesNotApplyALock(t *testing.T) {
 	if _, err := pool.Exec(ctx, `UPDATE users SET totp_secret_enc = $2 WHERE id = $1`, userID, []byte{1}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.VerifyLogin(ctx, userID, "", nil, t0); err == nil || errors.Is(err, auth.ErrTOTPInvalid) {
+	if _, err := svc.VerifyLogin(ctx, desafioProgressivo(userID), "", nil, t0); err == nil || errors.Is(err, auth.ErrTOTPInvalid) {
 		t.Fatalf("segredo ilegível retornou %v, queria erro interno", err)
 	}
 	if got := lerTravaTOTP(t, pool, userID); got.falhas != 4 || got.ate != nil || got.avisoEm != nil {
