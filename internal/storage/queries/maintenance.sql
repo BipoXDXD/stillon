@@ -49,8 +49,15 @@ SELECT set_config('statement_timeout', sqlc.arg(timeout)::text, true);
 -- name: DropChecksPartitionsBefore :one
 SELECT drop_checks_partitions_before(sqlc.arg(cutoff)::timestamptz)::int;
 
+-- Os DELETEs de retenção vão em lotes de até batch linhas, cada lote na sua
+-- transação (storage.ApplyRetention): um DELETE único de meses de acúmulo
+-- passava do statement_timeout e voltava inteiro, rodada após rodada.
 -- name: DeleteOldRollups :execrows
-DELETE FROM check_rollup_1h WHERE bucket < sqlc.arg(cutoff)::timestamptz;
+DELETE FROM check_rollup_1h
+ WHERE (target_id, bucket) IN (
+    SELECT r.target_id, r.bucket FROM check_rollup_1h r
+     WHERE r.bucket < sqlc.arg(cutoff)::timestamptz
+     LIMIT sqlc.arg(batch)::int);
 
 -- Entregues, falhas e canceladas; pendente nunca sai por idade. Fica também a
 -- linha mais nova de cada par (incidente, canal) que ainda pode receber lembrete:
@@ -59,29 +66,44 @@ DELETE FROM check_rollup_1h WHERE bucket < sqlc.arg(cutoff)::timestamptz;
 -- propósito: a retenção pode rodar entre a retomada e o tique seguinte. Uma
 -- linha por par de incidente aberto é o teto do que sobra; ao fechar, ela sai.
 -- name: DeleteOldNotifications :execrows
-DELETE FROM notifications n
- WHERE n.status <> 'pending' AND n.created_at < sqlc.arg(cutoff)::timestamptz
-   AND NOT EXISTS (
-        SELECT 1 FROM incidents i
-         WHERE i.id = n.incident_id
-           AND i.resolved_at IS NULL AND i.ack_at IS NULL AND i.open_notified_at IS NOT NULL
-           AND NOT EXISTS (
-                SELECT 1 FROM notifications mais_nova
-                 WHERE mais_nova.incident_id = n.incident_id
-                   AND mais_nova.channel_id = n.channel_id
-                   AND mais_nova.created_at > n.created_at));
+DELETE FROM notifications
+ WHERE id IN (
+    SELECT n.id FROM notifications n
+     WHERE n.status <> 'pending' AND n.created_at < sqlc.arg(cutoff)::timestamptz
+       AND NOT EXISTS (
+            SELECT 1 FROM incidents i
+             WHERE i.id = n.incident_id
+               AND i.resolved_at IS NULL AND i.ack_at IS NULL AND i.open_notified_at IS NOT NULL
+               AND NOT EXISTS (
+                    SELECT 1 FROM notifications mais_nova
+                     WHERE mais_nova.incident_id = n.incident_id
+                       AND mais_nova.channel_id = n.channel_id
+                       AND mais_nova.created_at > n.created_at))
+     LIMIT sqlc.arg(batch)::int);
 
 -- A idade do log de sinais (spec de heartbeats). O teto por heartbeat
 -- fica na transação do ping; esta cobre quem parou de pingar.
 -- name: DeleteOldHeartbeatEvents :execrows
-DELETE FROM heartbeat_events WHERE at < sqlc.arg(cutoff)::timestamptz;
+DELETE FROM heartbeat_events
+ WHERE id IN (
+    SELECT e.id FROM heartbeat_events e
+     WHERE e.at < sqlc.arg(cutoff)::timestamptz
+     LIMIT sqlc.arg(batch)::int);
 
 -- audit_log e sessions não têm RLS.
 -- name: DeleteOldAudit :execrows
-DELETE FROM audit_log WHERE at < sqlc.arg(cutoff)::timestamptz;
+DELETE FROM audit_log
+ WHERE id IN (
+    SELECT a.id FROM audit_log a
+     WHERE a.at < sqlc.arg(cutoff)::timestamptz
+     LIMIT sqlc.arg(batch)::int);
 
 -- name: DeleteExpiredSessions :execrows
-DELETE FROM sessions WHERE expires_at < sqlc.arg(cutoff)::timestamptz;
+DELETE FROM sessions
+ WHERE id IN (
+    SELECT s.id FROM sessions s
+     WHERE s.expires_at < sqlc.arg(cutoff)::timestamptz
+     LIMIT sqlc.arg(batch)::int);
 
 -- O contador de provas erradas (session_family_proofs) de uma família
 -- que deixou de existir: revogada (inclusive pela 5ª prova errada) ou vencida.

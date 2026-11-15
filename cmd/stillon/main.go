@@ -7,12 +7,9 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"maps"
 	"net/http"
 	"os"
 	"os/signal"
-	"slices"
-	"strings"
 	"syscall"
 	"time"
 
@@ -65,12 +62,9 @@ func main() {
 		}
 	}
 
-	role, err := lerFlagsDoServidor(os.Args[1:], os.Stderr)
-	if errors.Is(err, flag.ErrHelp) {
-		os.Exit(0)
-	}
-	if err != nil {
-		os.Exit(2)
+	role, codigo, seguir := lerRole(os.Args[1:], os.Stderr)
+	if !seguir {
+		os.Exit(codigo)
 	}
 
 	getenv := os.Getenv
@@ -104,28 +98,29 @@ func main() {
 	log.Info("encerrado")
 }
 
-// errArgumentoSobrando recusa a palavra que sobra depois das flags do servidor.
-var errArgumentoSobrando = errors.New("argumento que não é flag nem subcomando")
+// usoDoServidor lista o que o binário aceita; sai quando o argumento não é
+// subcomando nem flag do servidor.
+const usoDoServidor = "uso: stillon [user|healthcheck|backup-snapshot|version] ou stillon --role=all|api|prober"
 
-// lerFlagsDoServidor lê as flags do modo servidor e escreve em stderr o motivo
-// de uma recusa. Sobra de argumento é recusa: o pacote flag para na primeira
-// palavra que não é flag sem reclamar, e um subcomando digitado errado
-// ("healtcheck") subiria o servidor e migraria o banco antes de morrer com a
-// porta ocupada.
-func lerFlagsDoServidor(args []string, stderr io.Writer) (role string, err error) {
+// lerRole lê as flags do modo servidor. seguir é falso quando o processo deve
+// sair com codigo sem subir o servidor: -h (0), flag desconhecida ou um
+// argumento solto (saidaUso). Sem esta checagem, um subcomando digitado errado
+// (`stillon migarte`) subia o servidor.
+func lerRole(args []string, stderr io.Writer) (role string, codigo int, seguir bool) {
 	fs := flag.NewFlagSet("stillon", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	papel := fs.String("role", "", "all | api | prober (sobrepõe a env ROLE)")
+	roleFlag := fs.String("role", "", "all | api | prober (sobrepõe a env ROLE)")
 	if err := fs.Parse(args); err != nil {
-		return "", err
+		if errors.Is(err, flag.ErrHelp) {
+			return "", saidaOK, false
+		}
+		return "", saidaUso, false
 	}
 	if fs.NArg() > 0 {
-		fmt.Fprintf(stderr, "stillon: subcomando desconhecido %q; os subcomandos são %s\n",
-			fs.Arg(0), strings.Join(slices.Sorted(maps.Keys(subcomandos)), ", "))
-		fs.Usage()
-		return "", errArgumentoSobrando
+		fmt.Fprintf(stderr, "argumento inesperado: %q\n%s\n", fs.Arg(0), usoDoServidor)
+		return "", saidaUso, false
 	}
-	return *papel, nil
+	return *roleFlag, saidaOK, true
 }
 
 // manutencaoACada é o intervalo do job de manutenção (spec §12): partições,

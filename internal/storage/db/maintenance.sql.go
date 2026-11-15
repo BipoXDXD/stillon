@@ -85,11 +85,20 @@ func (q *Queries) DeleteDeadFamilyProofs(ctx context.Context, arg DeleteDeadFami
 }
 
 const deleteExpiredSessions = `-- name: DeleteExpiredSessions :execrows
-DELETE FROM sessions WHERE expires_at < $1::timestamptz
+DELETE FROM sessions
+ WHERE id IN (
+    SELECT s.id FROM sessions s
+     WHERE s.expires_at < $1::timestamptz
+     LIMIT $2::int)
 `
 
-func (q *Queries) DeleteExpiredSessions(ctx context.Context, cutoff time.Time) (int64, error) {
-	result, err := q.db.Exec(ctx, deleteExpiredSessions, cutoff)
+type DeleteExpiredSessionsParams struct {
+	Cutoff time.Time
+	Batch  int32
+}
+
+func (q *Queries) DeleteExpiredSessions(ctx context.Context, arg DeleteExpiredSessionsParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteExpiredSessions, arg.Cutoff, arg.Batch)
 	if err != nil {
 		return 0, err
 	}
@@ -97,12 +106,21 @@ func (q *Queries) DeleteExpiredSessions(ctx context.Context, cutoff time.Time) (
 }
 
 const deleteOldAudit = `-- name: DeleteOldAudit :execrows
-DELETE FROM audit_log WHERE at < $1::timestamptz
+DELETE FROM audit_log
+ WHERE id IN (
+    SELECT a.id FROM audit_log a
+     WHERE a.at < $1::timestamptz
+     LIMIT $2::int)
 `
 
+type DeleteOldAuditParams struct {
+	Cutoff time.Time
+	Batch  int32
+}
+
 // audit_log e sessions não têm RLS.
-func (q *Queries) DeleteOldAudit(ctx context.Context, cutoff time.Time) (int64, error) {
-	result, err := q.db.Exec(ctx, deleteOldAudit, cutoff)
+func (q *Queries) DeleteOldAudit(ctx context.Context, arg DeleteOldAuditParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteOldAudit, arg.Cutoff, arg.Batch)
 	if err != nil {
 		return 0, err
 	}
@@ -110,13 +128,22 @@ func (q *Queries) DeleteOldAudit(ctx context.Context, cutoff time.Time) (int64, 
 }
 
 const deleteOldHeartbeatEvents = `-- name: DeleteOldHeartbeatEvents :execrows
-DELETE FROM heartbeat_events WHERE at < $1::timestamptz
+DELETE FROM heartbeat_events
+ WHERE id IN (
+    SELECT e.id FROM heartbeat_events e
+     WHERE e.at < $1::timestamptz
+     LIMIT $2::int)
 `
+
+type DeleteOldHeartbeatEventsParams struct {
+	Cutoff time.Time
+	Batch  int32
+}
 
 // A idade do log de sinais (spec de heartbeats). O teto por heartbeat
 // fica na transação do ping; esta cobre quem parou de pingar.
-func (q *Queries) DeleteOldHeartbeatEvents(ctx context.Context, cutoff time.Time) (int64, error) {
-	result, err := q.db.Exec(ctx, deleteOldHeartbeatEvents, cutoff)
+func (q *Queries) DeleteOldHeartbeatEvents(ctx context.Context, arg DeleteOldHeartbeatEventsParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteOldHeartbeatEvents, arg.Cutoff, arg.Batch)
 	if err != nil {
 		return 0, err
 	}
@@ -124,18 +151,26 @@ func (q *Queries) DeleteOldHeartbeatEvents(ctx context.Context, cutoff time.Time
 }
 
 const deleteOldNotifications = `-- name: DeleteOldNotifications :execrows
-DELETE FROM notifications n
- WHERE n.status <> 'pending' AND n.created_at < $1::timestamptz
-   AND NOT EXISTS (
-        SELECT 1 FROM incidents i
-         WHERE i.id = n.incident_id
-           AND i.resolved_at IS NULL AND i.ack_at IS NULL AND i.open_notified_at IS NOT NULL
-           AND NOT EXISTS (
-                SELECT 1 FROM notifications mais_nova
-                 WHERE mais_nova.incident_id = n.incident_id
-                   AND mais_nova.channel_id = n.channel_id
-                   AND mais_nova.created_at > n.created_at))
+DELETE FROM notifications
+ WHERE id IN (
+    SELECT n.id FROM notifications n
+     WHERE n.status <> 'pending' AND n.created_at < $1::timestamptz
+       AND NOT EXISTS (
+            SELECT 1 FROM incidents i
+             WHERE i.id = n.incident_id
+               AND i.resolved_at IS NULL AND i.ack_at IS NULL AND i.open_notified_at IS NOT NULL
+               AND NOT EXISTS (
+                    SELECT 1 FROM notifications mais_nova
+                     WHERE mais_nova.incident_id = n.incident_id
+                       AND mais_nova.channel_id = n.channel_id
+                       AND mais_nova.created_at > n.created_at))
+     LIMIT $2::int)
 `
+
+type DeleteOldNotificationsParams struct {
+	Cutoff time.Time
+	Batch  int32
+}
 
 // Entregues, falhas e canceladas; pendente nunca sai por idade. Fica também a
 // linha mais nova de cada par (incidente, canal) que ainda pode receber lembrete:
@@ -143,8 +178,8 @@ DELETE FROM notifications n
 // pausado não gera linha nova por mais de 30 dias. O filtro não olha a pausa de
 // propósito: a retenção pode rodar entre a retomada e o tique seguinte. Uma
 // linha por par de incidente aberto é o teto do que sobra; ao fechar, ela sai.
-func (q *Queries) DeleteOldNotifications(ctx context.Context, cutoff time.Time) (int64, error) {
-	result, err := q.db.Exec(ctx, deleteOldNotifications, cutoff)
+func (q *Queries) DeleteOldNotifications(ctx context.Context, arg DeleteOldNotificationsParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteOldNotifications, arg.Cutoff, arg.Batch)
 	if err != nil {
 		return 0, err
 	}
@@ -152,11 +187,23 @@ func (q *Queries) DeleteOldNotifications(ctx context.Context, cutoff time.Time) 
 }
 
 const deleteOldRollups = `-- name: DeleteOldRollups :execrows
-DELETE FROM check_rollup_1h WHERE bucket < $1::timestamptz
+DELETE FROM check_rollup_1h
+ WHERE (target_id, bucket) IN (
+    SELECT r.target_id, r.bucket FROM check_rollup_1h r
+     WHERE r.bucket < $1::timestamptz
+     LIMIT $2::int)
 `
 
-func (q *Queries) DeleteOldRollups(ctx context.Context, cutoff time.Time) (int64, error) {
-	result, err := q.db.Exec(ctx, deleteOldRollups, cutoff)
+type DeleteOldRollupsParams struct {
+	Cutoff time.Time
+	Batch  int32
+}
+
+// Os DELETEs de retenção vão em lotes de até batch linhas, cada lote na sua
+// transação (storage.ApplyRetention): um DELETE único de meses de acúmulo
+// passava do statement_timeout e voltava inteiro, rodada após rodada.
+func (q *Queries) DeleteOldRollups(ctx context.Context, arg DeleteOldRollupsParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteOldRollups, arg.Cutoff, arg.Batch)
 	if err != nil {
 		return 0, err
 	}

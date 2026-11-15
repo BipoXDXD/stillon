@@ -36,6 +36,18 @@ const (
 )
 
 const (
+	// retentionBatch é o teto de linhas de um lote da retenção: pequeno o
+	// bastante para o DELETE terminar em segundos e não segurar locks.
+	retentionBatch = 5000
+	// retentionMaxBatches é o teto de lotes por tabela numa rodada: com a rodada
+	// a cada 15 min, até 100 mil linhas por tabela, e o resto na seguinte. O
+	// pior caso (todo lote batendo no statement_timeout) passa do prazo da
+	// rodada; por isso o DROP e a limpeza das provas rodam antes das tabelas, e
+	// um prazo vencido só corta lotes, que a rodada seguinte retoma.
+	retentionMaxBatches = 20
+)
+
+const (
 	// rollupReconsolidate é quanto antes da marca d'água cada rodada volta:
 	// um check que chegou atrasado ainda entra na hora dele.
 	rollupReconsolidate = 2 * time.Hour
@@ -89,8 +101,9 @@ func Maintain(ctx context.Context, pool *pgxpool.Pool, now time.Time) (Maintenan
 		return r, err
 	}
 	r.RollupHours = n
-	// Com o DROP desistindo, os DELETEs já valeram: o relatório parcial
-	// sobe junto com o erro, para o log dizer o que foi feito.
+	// Com o DROP desistindo ou uma tabela falhando, o resto da retenção já
+	// valeu: o relatório parcial sobe junto com o erro, para o log dizer o que
+	// foi feito.
 	ret, err := ApplyRetention(ctx, pool, now)
 	ret.RollupHours = r.RollupHours
 	return ret, err
@@ -150,40 +163,99 @@ func ConsolidateRollups(ctx context.Context, pool *pgxpool.Pool, now time.Time) 
 // ApplyRetention apaga o que venceu (spec §12). Pendência nunca sai por idade:
 // uma notificação pendente ainda vai ser tentada.
 //
-// São três transações. Os DELETEs vêm primeiro; o DROP das partições vem
-// sozinho, com lock_timeout, porque pega ACCESS EXCLUSIVE em checks e não
-// pode segurá-la durante o resto da retenção. A limpeza dos contadores de
-// provas das famílias mortas vem por último, na própria transação. Se o DROP
-// ou a limpeza falharem, os DELETEs já valeram, o erro sobe (os dois, se
-// ambos falharem) e a próxima rodada tenta de novo.
+// Cada tabela sai em lotes de até retentionBatch linhas, cada lote na sua
+// transação, até retentionMaxBatches lotes por rodada: um DELETE único de
+// meses de acúmulo passava do statement_timeout e voltava inteiro, rodada após
+// rodada. O que passa do teto sai na rodada seguinte. Uma tabela que falha não
+// segura as outras: o erro sobe com o nome dela, e o relatório conta só os
+// lotes que comitaram.
+//
+// O DROP das partições vem primeiro e sozinho, com lock_timeout, porque pega
+// ACCESS EXCLUSIVE em checks e não pode segurá-la durante o resto da retenção;
+// a limpeza dos contadores de provas das famílias mortas vem logo depois, na
+// própria transação. Os dois vêm antes das tabelas para que lotes lentos não
+// os deixem sem prazo, rodada após rodada. Todos os erros sobem juntos, e a
+// próxima rodada tenta de novo.
 func ApplyRetention(ctx context.Context, pool *pgxpool.Pool, now time.Time) (MaintenanceReport, error) {
+	return applyRetention(ctx, pool, now, retentionLimits{batch: retentionBatch, maxBatches: retentionMaxBatches})
+}
+
+// retentionLimits é o tamanho do lote e o teto de lotes por tabela numa
+// rodada; o teste encolhe os dois.
+type retentionLimits struct {
+	batch      int32
+	maxBatches int
+}
+
+// retentionTable é uma tabela da retenção por DELETE: o nome para o erro, onde
+// o relatório soma e o DELETE de um lote.
+type retentionTable struct {
+	what    string
+	deleted *int64
+	delete  func(q *db.Queries, batch int32) (int64, error)
+}
+
+func applyRetention(ctx context.Context, pool *pgxpool.Pool, now time.Time, lim retentionLimits) (MaintenanceReport, error) {
 	var r MaintenanceReport
-	err := InProberTx(ctx, pool, func(q *db.Queries) error {
-		if err := q.SetLocalStatementTimeout(ctx, milissegundos(maintenanceStatementTimeout)); err != nil {
-			return fmt.Errorf("prazo da retenção: %w", err)
+	errs := []error{dropExpiredPartitions(ctx, pool, now, &r), sweepDeadFamilyProofs(ctx, pool, now, &r)}
+	for _, tbl := range retentionTables(ctx, now, &r) {
+		n, err := deleteInBatches(ctx, pool, lim, tbl.delete)
+		*tbl.deleted = n
+		if err != nil {
+			errs = append(errs, fmt.Errorf("apagar %s: %w", tbl.what, err))
 		}
-		var err error
-		if r.DeletedRollups, err = q.DeleteOldRollups(ctx, now.AddDate(0, -RollupRetentionMonths, 0)); err != nil {
-			return fmt.Errorf("apagar rollups vencidos: %w", err)
-		}
-		if r.DeletedNotifications, err = q.DeleteOldNotifications(ctx, now.Add(-NotificationsRetention)); err != nil {
-			return fmt.Errorf("apagar notificações vencidas: %w", err)
-		}
-		if r.DeletedHeartbeatEvents, err = q.DeleteOldHeartbeatEvents(ctx, now.Add(-HeartbeatEventsRetention)); err != nil {
-			return fmt.Errorf("apagar eventos de heartbeat vencidos: %w", err)
-		}
-		if r.DeletedAudit, err = q.DeleteOldAudit(ctx, now.AddDate(0, -AuditRetentionMonths, 0)); err != nil {
-			return fmt.Errorf("apagar auditoria vencida: %w", err)
-		}
-		if r.DeletedSessions, err = q.DeleteExpiredSessions(ctx, now.Add(-SessionGrace)); err != nil {
-			return fmt.Errorf("apagar sessões vencidas: %w", err)
-		}
-		return nil
-	})
-	if err != nil {
-		return r, err
 	}
-	dropErr := InProberTx(ctx, pool, func(q *db.Queries) error {
+	return r, errors.Join(errs...)
+}
+
+func retentionTables(ctx context.Context, now time.Time, r *MaintenanceReport) []retentionTable {
+	return []retentionTable{
+		{"rollups vencidos", &r.DeletedRollups, func(q *db.Queries, batch int32) (int64, error) {
+			return q.DeleteOldRollups(ctx, db.DeleteOldRollupsParams{Cutoff: now.AddDate(0, -RollupRetentionMonths, 0), Batch: batch})
+		}},
+		{"notificações vencidas", &r.DeletedNotifications, func(q *db.Queries, batch int32) (int64, error) {
+			return q.DeleteOldNotifications(ctx, db.DeleteOldNotificationsParams{Cutoff: now.Add(-NotificationsRetention), Batch: batch})
+		}},
+		{"eventos de heartbeat vencidos", &r.DeletedHeartbeatEvents, func(q *db.Queries, batch int32) (int64, error) {
+			return q.DeleteOldHeartbeatEvents(ctx, db.DeleteOldHeartbeatEventsParams{Cutoff: now.Add(-HeartbeatEventsRetention), Batch: batch})
+		}},
+		{"auditoria vencida", &r.DeletedAudit, func(q *db.Queries, batch int32) (int64, error) {
+			return q.DeleteOldAudit(ctx, db.DeleteOldAuditParams{Cutoff: now.AddDate(0, -AuditRetentionMonths, 0), Batch: batch})
+		}},
+		{"sessões vencidas", &r.DeletedSessions, func(q *db.Queries, batch int32) (int64, error) {
+			return q.DeleteExpiredSessions(ctx, db.DeleteExpiredSessionsParams{Cutoff: now.Add(-SessionGrace), Batch: batch})
+		}},
+	}
+}
+
+// deleteInBatches roda o DELETE de um lote, cada um na sua transação, até um
+// lote vir incompleto (acabou o que venceu) ou chegar ao teto. Devolve quantas
+// linhas os lotes comitados apagaram.
+func deleteInBatches(ctx context.Context, pool *pgxpool.Pool, lim retentionLimits, del func(*db.Queries, int32) (int64, error)) (int64, error) {
+	var total int64
+	for range lim.maxBatches {
+		var n int64
+		err := InProberTx(ctx, pool, func(q *db.Queries) error {
+			if err := q.SetLocalStatementTimeout(ctx, milissegundos(maintenanceStatementTimeout)); err != nil {
+				return fmt.Errorf("prazo do lote: %w", err)
+			}
+			var err error
+			n, err = del(q, lim.batch)
+			return err
+		})
+		if err != nil {
+			return total, err
+		}
+		total += n
+		if n < int64(lim.batch) {
+			break
+		}
+	}
+	return total, nil
+}
+
+func dropExpiredPartitions(ctx context.Context, pool *pgxpool.Pool, now time.Time, r *MaintenanceReport) error {
+	return InProberTx(ctx, pool, func(q *db.Queries) error {
 		if err := q.SetLocalLockTimeout(ctx, milissegundos(dropLockTimeout)); err != nil {
 			return fmt.Errorf("limitar a espera do DROP: %w", err)
 		}
@@ -193,10 +265,10 @@ func ApplyRetention(ctx context.Context, pool *pgxpool.Pool, now time.Time) (Mai
 		}
 		return nil
 	})
-	// A limpeza dos contadores de provas vai por último e na própria transação:
-	// se falhar, as retenções que já existiam e o DROP já valeram, e o erro sobe
-	// junto com o do DROP, se houver.
-	proofsErr := InProberTx(ctx, pool, func(q *db.Queries) error {
+}
+
+func sweepDeadFamilyProofs(ctx context.Context, pool *pgxpool.Pool, now time.Time, r *MaintenanceReport) error {
+	return InProberTx(ctx, pool, func(q *db.Queries) error {
 		if err := q.SetLocalStatementTimeout(ctx, milissegundos(maintenanceStatementTimeout)); err != nil {
 			return fmt.Errorf("prazo da limpeza dos contadores de provas: %w", err)
 		}
@@ -208,7 +280,6 @@ func ApplyRetention(ctx context.Context, pool *pgxpool.Pool, now time.Time) (Mai
 		}
 		return nil
 	})
-	return r, errors.Join(dropErr, proofsErr)
 }
 
 // RunMaintenance roda Maintain ao subir e depois a cada every, até ctx acabar.
