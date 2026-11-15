@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"testing"
 	"time"
@@ -55,8 +56,8 @@ func TestShutdownPastTheGraceClosesWithoutError(t *testing.T) {
 	}
 	select {
 	case err := <-pedido:
-		if err == nil {
-			t.Error("o pedido preso terminou com resposta; queria a conexão cortada")
+		if err == nil || errors.Is(err, context.DeadlineExceeded) {
+			t.Errorf("o pedido preso terminou com %v; queria a conexão cortada pelo servidor", err)
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("a conexão do pedido preso continuou aberta depois do encerramento")
