@@ -334,7 +334,7 @@ describe('canais', () => {
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 
-  it('apagar pelo Confirmar: um DELETE só, e o erro anterior some', async () => {
+  it('apagar pelo Confirmar: um DELETE no mesmo render, e o erro anterior some', async () => {
     const r = await renderizarPainel('/channels')
     r.falsa.estado.canais = [canal({ kind: 'email', hint: 'd***@exemplo.com', status: 'pending' })]
     await r.cliente.refetchQueries()
@@ -346,8 +346,10 @@ describe('canais', () => {
     await r.usuario.click(screen.getByRole('button', { name: 'Apagar o canal d***@exemplo.com' }))
     const confirmar = await screen.findByRole('alertdialog')
     const acao = within(confirmar).getByRole('button', { name: 'Apagar canal' })
-    fireEvent.click(acao)
-    fireEvent.click(acao)
+    act(() => {
+      fireEvent.click(acao)
+      fireEvent.click(acao)
+    })
     expect((await screen.findAllByText('Canal apagado.'))[0]).toBeInTheDocument()
     expect(r.falsa.chamadas('DELETE /channels/:id')).toBe(1)
     expect(await screen.findByText(/Nenhum canal/)).toBeInTheDocument()

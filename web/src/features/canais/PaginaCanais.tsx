@@ -184,6 +184,7 @@ export function PaginaCanais() {
   // como no pausar. Um DELETE por vez: sem DELETE em dobro.
   const reenvioEmVoo = useRef(new Set<string>())
   const [reenviando, setReenviando] = useState<ReadonlySet<string>>(new Set())
+  const exclusaoEmVoo = useRef(false)
   const [apagando, setApagando] = useState(false)
   // Pausar pede confirmação: os avisos da pausa são
   // descartados. Um PATCH por canal de cada vez: o de um
@@ -255,7 +256,8 @@ export function PaginaCanais() {
   }
 
   async function confirmarApagar() {
-    if (!apagar) return
+    if (!apagar || exclusaoEmVoo.current) return
+    exclusaoEmVoo.current = true
     setErro(null)
     setApagando(true)
     try {
@@ -265,6 +267,7 @@ export function PaginaCanais() {
     } catch (e) {
       if (!(await listaVelha(e))) setErro(mensagemDe(e))
     } finally {
+      exclusaoEmVoo.current = false
       setApagando(false)
       setApagar(null)
     }

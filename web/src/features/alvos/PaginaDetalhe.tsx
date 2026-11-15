@@ -122,6 +122,8 @@ function DetalheDoAlvo({ id }: { id: string }) {
   const incidentes = useIncidentes('all', id, 10)
   const [apagando, setApagando] = useState(false)
   const [ocupado, setOcupado] = useState(false)
+  const alternanciaEmVoo = useRef(false)
+  const [alternando, setAlternando] = useState(false)
   const [erro, setErro] = useState<string | null>(null)
   const idDoResumo = useId()
   const anunciar = useAnunciar()
@@ -169,6 +171,9 @@ function DetalheDoAlvo({ id }: { id: string }) {
   }, [sumiuNoPoll])
 
   async function alternar(ativo: boolean) {
+    if (alternanciaEmVoo.current) return
+    alternanciaEmVoo.current = true
+    setAlternando(true)
     setErro(null)
     try {
       await api.alterarAlvo(id, { enabled: ativo })
@@ -176,6 +181,9 @@ function DetalheDoAlvo({ id }: { id: string }) {
     } catch (e) {
       if (naoEncontrado(e)) await sumiu()
       else setErro(mensagemDe(e))
+    } finally {
+      alternanciaEmVoo.current = false
+      setAlternando(false)
     }
   }
 
@@ -214,7 +222,7 @@ function DetalheDoAlvo({ id }: { id: string }) {
                 <Botao tipo="secundario" asChild>
                   <Link to={`/targets/${id}/edit`}>Editar</Link>
                 </Botao>
-                <Botao tipo="terciario" onClick={() => void alternar(!a.enabled)}>
+                <Botao tipo="terciario" aria-disabled={alternando || undefined} onClick={() => void alternar(!a.enabled)}>
                   {a.enabled ? 'Pausar' : 'Retomar'}
                 </Botao>
                 <Botao tipo="terciario" onClick={() => setApagando(true)}>

@@ -234,12 +234,17 @@ describe('detalhe', () => {
     expect(r.cliente.getQueryCache().findAll({ queryKey: ['targets', 'alvo-1'] })).toHaveLength(0)
   })
 
-  it('Pausar e Retomar mandam o PATCH com enabled', async () => {
+  it('Pausar e Retomar mandam um PATCH por ação mesmo com dois cliques no mesmo render', async () => {
     const r = await renderizarPainel('/targets/alvo-1')
     r.falsa.estado.alvos = [alvo()]
     await r.cliente.refetchQueries()
-    await r.usuario.click(await screen.findByRole('button', { name: 'Pausar' }))
-    await r.usuario.click(await screen.findByRole('button', { name: 'Retomar' }))
+    for (const nome of ['Pausar', 'Retomar']) {
+      const botao = await screen.findByRole('button', { name: nome })
+      act(() => {
+        fireEvent.click(botao)
+        fireEvent.click(botao)
+      })
+    }
     await screen.findByRole('button', { name: 'Pausar' })
     expect(r.falsa.estado.corpos.get('PATCH /targets/:id')).toEqual([{ enabled: false }, { enabled: true }])
   })
