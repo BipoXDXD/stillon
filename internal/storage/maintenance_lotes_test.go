@@ -125,20 +125,40 @@ func TestRetentionOtherTablesSurviveAFailingTable(t *testing.T) {
 // relatório diz o que de fato saiu do banco, e o laço para no erro.
 func TestRetentionBatchFailureKeepsCommittedCount(t *testing.T) {
 	pool := testdb.New(t)
+	ctx := context.Background()
+	admin := testdb.Admin(t)
+	hoje := hora(12, 0)
+	dono := novoUsuario(t, pool)
+	if _, err := admin.Exec(ctx, `INSERT INTO audit_log (id, user_id, action, at)
+		SELECT gen_random_uuid(), $1, 'x', $2 FROM generate_series(1, 9)`,
+		dono, hoje.AddDate(0, -13, 0)); err != nil {
+		t.Fatal(err)
+	}
 	falha := errors.New("lote quebrado")
 	chamadas := 0
-	total, err := storage.DeleteInBatches(context.Background(), pool, 3, 5, func(*db.Queries, int32) (int64, error) {
+	total, err := storage.DeleteInBatches(ctx, pool, 3, 5, func(q *db.Queries, batch int32) (int64, error) {
+		n, err := q.DeleteOldAudit(ctx, db.DeleteOldAuditParams{Cutoff: hoje.AddDate(0, -12, 0), Batch: batch})
+		if err != nil {
+			return 0, err
+		}
 		chamadas++
 		if chamadas == 3 {
-			return 0, falha
+			return n, falha
 		}
-		return 3, nil
+		return n, nil
 	})
 	if !errors.Is(err, falha) {
 		t.Fatalf("erro %v; queria o do lote", err)
 	}
 	if total != 6 || chamadas != 3 {
 		t.Errorf("total %d em %d chamadas; queria 6 (dois lotes de 3 comitados) em 3", total, chamadas)
+	}
+	var restantes int
+	if err := admin.QueryRow(ctx, `SELECT count(*) FROM audit_log WHERE user_id = $1`, dono).Scan(&restantes); err != nil {
+		t.Fatal(err)
+	}
+	if restantes != 3 {
+		t.Errorf("ficaram %d linhas no banco; queria 3 do lote revertido", restantes)
 	}
 }
 

@@ -1,12 +1,15 @@
+-- +goose NO TRANSACTION
+
 -- +goose Up
--- A retenção apaga heartbeat_events por idade (at), em lotes. Sem índice em
--- at, cada lote varria a tabela inteira. A tabela é pequena (teto de 1000
--- eventos por heartbeat), então o CREATE INDEX comum, dentro da transação,
--- termina em instantes; o lock_timeout faz a migration desistir em vez de
--- enfileirar o ping atrás dela, e o boot tenta de novo.
-SET LOCAL lock_timeout = '5s';
-CREATE INDEX heartbeat_events_at_idx ON heartbeat_events (at);
+-- O índice atende aos lotes por idade sem bloquear as escritas dos pings
+-- durante a construção. Se a construção anterior foi interrompida, o
+-- índice pode ter ficado inválido; remova antes de tentar outra vez.
+SET lock_timeout = '5s';
+DROP INDEX CONCURRENTLY IF EXISTS heartbeat_events_at_idx;
+CREATE INDEX CONCURRENTLY heartbeat_events_at_idx ON heartbeat_events (at);
+RESET lock_timeout;
 
 -- +goose Down
-SET LOCAL lock_timeout = '5s';
-DROP INDEX heartbeat_events_at_idx;
+SET lock_timeout = '5s';
+DROP INDEX CONCURRENTLY IF EXISTS heartbeat_events_at_idx;
+RESET lock_timeout;
