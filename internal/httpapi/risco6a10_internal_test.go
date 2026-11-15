@@ -232,34 +232,5 @@ func TestTOTPVerifyFalhaAoReservarTentativaDevolve500(t *testing.T) {
 		t.Errorf("reservas = %d, devoluções = %d, zeradas = %d; queria 1, 0 e 0",
 			c.contas.reservas, c.contas.devolucoes, c.contas.zeradas)
 	}
-	if c.contas.reservasTOTP != 0 {
-		t.Errorf("o segundo fator reservou %d vez(es) sem a reserva da conta", c.contas.reservasTOTP)
-	}
-}
 
-type contasQueNaoReservamTOTP struct{ *contasDoDuble }
-
-func (c contasQueNaoReservamTOTP) ReserveTOTPAttempt(context.Context, uuid.UUID, []byte, time.Time) (bool, error) {
-	c.reservasTOTP++
-	return false, errors.New("banco fora")
-}
-
-// Banco fora ao reservar no contador do segundo fator: 500 genérico, a reserva
-// da conta volta e o código não é julgado. Sabotagem: não devolver a reserva
-// da conta (devoluções = 0).
-func TestTOTPVerifyFalhaAoReservarNoSegundoFatorDevolveAReservaDaConta(t *testing.T) {
-	c := novoCenarioDoSegundoFator(t)
-	c.h.users = contasQueNaoReservamTOTP{c.contas}
-
-	w := c.verificarCodigo(t)
-
-	conferirErroInternoGenerico(t, w)
-	if c.contas.reservas != 1 || c.contas.devolucoes != 1 || c.contas.zeradas != 0 {
-		t.Errorf("conta: reservas = %d, devoluções = %d, zeradas = %d; queria 1, 1 e 0",
-			c.contas.reservas, c.contas.devolucoes, c.contas.zeradas)
-	}
-	if c.contas.reservasTOTP != 1 || c.contas.devolucoesTOTP != 0 || c.contas.zeradasTOTP != 0 {
-		t.Errorf("segundo fator: reservas = %d, devoluções = %d, zeradas = %d; queria 1, 0 e 0",
-			c.contas.reservasTOTP, c.contas.devolucoesTOTP, c.contas.zeradasTOTP)
-	}
 }

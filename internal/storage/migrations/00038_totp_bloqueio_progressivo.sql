@@ -11,14 +11,17 @@
 -- instante do último bloqueio ainda não avisado. Gravá-lo no mesmo UPDATE que
 -- trava evita a escrita dupla (banco e depois e-mail), e o envio o apaga só se
 -- ele não mudou (auth.SendTOTPLockAlerts). Bloqueios seguidos sem envio no
--- meio (e-mail fora do ar) viram um aviso só, o do último.
+-- meio (e-mail fora do ar) viram um aviso só, o do último. A natureza
+-- do aviso fica gravada com o instante, para permanecer estável na retentativa.
 ALTER TABLE users
     ADD COLUMN totp_failures integer NOT NULL DEFAULT 0 CHECK (totp_failures >= 0),
     ADD COLUMN totp_locked_until timestamptz,
-    ADD COLUMN totp_lock_alert_at timestamptz;
+    ADD COLUMN totp_lock_alert_at timestamptz,
+    ADD COLUMN totp_lock_alert_permanent boolean NOT NULL DEFAULT FALSE;
 
 -- +goose Down
 ALTER TABLE users
+    DROP COLUMN totp_lock_alert_permanent,
     DROP COLUMN totp_lock_alert_at,
     DROP COLUMN totp_locked_until,
     DROP COLUMN totp_failures;

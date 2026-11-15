@@ -217,45 +217,28 @@ func (h *AuthHandlers) TOTPVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Além do contador do login, o segundo fator tem o bloqueio progressivo
-	// dele (auth.TOTPAttempts): cada bloqueio dura o dobro do anterior, só um
-	// acerto zera, e um teto absoluto trava até o reset-2fa do CLI. Travado é
-	// o mesmo 401 genérico, sem olhar o código, e a reserva do login volta:
-	// a recusa não diz nada sobre o código, e não deve trancar a senha do dono.
-	segundoFator := auth.TOTPAttempts(h.users, userID, h.sessions.IPHash(h.meta(r)), now)
-	reservouSegundo, err := segundoFator.Reserve(r.Context())
+	prova, err := h.totp.VerifyLogin(r.Context(), userID, req.Code, h.sessions.IPHash(h.meta(r)), now)
 	if err != nil {
-		devolverTentativa(r, tentativas)
-		h.internal(w, r, "reservar tentativa do bloqueio do segundo fator", err)
-		return
-	}
-	if !reservouSegundo {
-		devolverTentativa(r, tentativas)
-		apierr.WriteError(w, r, apierr.CodeInvalidCredentials)
-		return
-	}
-
-	prova, err := h.totp.VerifyWithProof(r.Context(), userID, req.Code, now)
-	if err != nil {
+		if errors.Is(err, auth.ErrTOTPLocked) || errors.Is(err, auth.ErrNotFound) || errors.Is(err, auth.ErrTOTPNotEnrolled) {
+			devolverTentativa(r, tentativas)
+			apierr.WriteError(w, r, apierr.CodeInvalidCredentials)
+			return
+		}
 		// O mesmo 401 genérico do login errado: um código distinto para
 		// "segundo fator falhou" contaria ao atacante que a senha estava
 		// certa, e a senha é justamente o que ele está testando. A reserva
 		// fica contada.
-		if errors.Is(err, auth.ErrTOTPInvalid) || errors.Is(err, auth.ErrTOTPNotEnrolled) {
+		if errors.Is(err, auth.ErrTOTPInvalid) {
 			apierr.WriteError(w, r, apierr.CodeInvalidCredentials)
 			return
 		}
 		devolverTentativa(r, tentativas)
-		devolverTentativa(r, segundoFator)
 		h.internal(w, r, "verificar TOTP", err)
 		return
 	}
 
 	if err := tentativas.Reset(r.Context()); err != nil {
 		slog.Error("zerar falhas de segundo fator", "erro", err)
-	}
-	if err := segundoFator.Reset(r.Context()); err != nil {
-		slog.Error("zerar o bloqueio do segundo fator", "erro", err)
 	}
 
 	// O consumo vem DEPOIS do código, de propósito: consumido antes, um

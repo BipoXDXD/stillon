@@ -3,12 +3,15 @@ package auth_test
 import (
 	"context"
 	"errors"
+	"fmt"
+	"slices"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/BipoXDXD/stillon/internal/auth"
+	"github.com/BipoXDXD/stillon/internal/notify"
 )
 
 type avisoLimpo struct {
@@ -21,12 +24,15 @@ type avisosFalsos struct {
 	limpos    []avisoLimpo
 }
 
-func (a *avisosFalsos) PendingTOTPLockAlerts(context.Context, int) ([]auth.TOTPLockAlert, error) {
-	return a.pendentes, nil
+func (a *avisosFalsos) PendingTOTPLockAlerts(_ context.Context, limite int) ([]auth.TOTPLockAlert, error) {
+	return slices.Clone(a.pendentes[:min(limite, len(a.pendentes))]), nil
 }
 
 func (a *avisosFalsos) ClearTOTPLockAlert(_ context.Context, userID uuid.UUID, lockedAt time.Time) (bool, error) {
 	a.limpos = append(a.limpos, avisoLimpo{userID, lockedAt})
+	a.pendentes = slices.DeleteFunc(a.pendentes, func(alerta auth.TOTPLockAlert) bool {
+		return alerta.UserID == userID && alerta.LockedAt.Equal(lockedAt)
+	})
 	return true, nil
 }
 
@@ -39,14 +45,40 @@ type envioDeAviso struct {
 type correioFalso struct {
 	enviados  []envioDeAviso
 	falhaPara string
+	recusa    error
 }
 
 func (c *correioFalso) SendTOTPLocked(_ context.Context, email string, permanente bool, chave string) error {
 	if email == c.falhaPara {
+		if c.recusa != nil {
+			return c.recusa
+		}
 		return errors.New("resend fora do ar")
 	}
 	c.enviados = append(c.enviados, envioDeAviso{email, permanente, chave})
 	return nil
+}
+
+func TestRejectedTOTPLockAlertsDoNotHoldTheNextBatch(t *testing.T) {
+	avisos := &avisosFalsos{}
+	em := time.Date(2026, 11, 14, 12, 0, 0, 0, time.UTC)
+	for i := range 20 {
+		avisos.pendentes = append(avisos.pendentes, auth.TOTPLockAlert{
+			UserID: uuid.New(), Email: "recusa@exemplo.com", LockedAt: em.Add(time.Duration(i) * time.Second),
+		})
+	}
+	const destino = "dono@exemplo.com"
+	avisos.pendentes = append(avisos.pendentes, auth.TOTPLockAlert{UserID: uuid.New(), Email: destino, LockedAt: em.Add(time.Minute)})
+	correio := &correioFalso{
+		falhaPara: "recusa@exemplo.com",
+		recusa:    fmt.Errorf("provedor: %w", &notify.SendError{Reason: notify.ReasonRejected, Permanent: true}),
+	}
+
+	auth.SendTOTPLockAlerts(context.Background(), avisos, correio)
+	auth.SendTOTPLockAlerts(context.Background(), avisos, correio)
+	if len(correio.enviados) != 1 || correio.enviados[0].email != destino || len(avisos.pendentes) != 0 {
+		t.Fatalf("entregues=%d, pendentes=%d, queria um envio e fila vazia", len(correio.enviados), len(avisos.pendentes))
+	}
 }
 
 // Cada aviso pendente sai uma vez, com a chave de idempotência do bloqueio

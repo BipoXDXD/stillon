@@ -53,118 +53,94 @@ func TOTPLockFor(falhas int) (duracao time.Duration, permanente bool) {
 	return duracao, false
 }
 
-// TOTPAttempts é o bloqueio do segundo fator como Attempts, com o instante do
-// verify e o ip_hash de quem tenta (para a auditoria do bloqueio).
-func TOTPAttempts(users UserStore, userID uuid.UUID, ipHash []byte, now time.Time) Attempts {
-	return totpAttempts{users: users, userID: userID, ipHash: ipHash, now: now}
-}
+// ErrTOTPLocked indica que o segundo fator ainda está bloqueado.
+var ErrTOTPLocked = errors.New("segundo fator bloqueado")
 
-type totpAttempts struct {
-	users  UserStore
-	userID uuid.UUID
-	ipHash []byte
-	now    time.Time
-}
+// VerifyLogin confere o código e grava o desfecho sob a mesma trava de users.
+// Assim, só uma falha confirmada pode bloquear o fator e gerar um aviso.
+func (s *TOTP) VerifyLogin(ctx context.Context, userID uuid.UUID, code string, ipHash []byte, now time.Time) (SecondFactorProof, error) {
+	tx, err := s.beginUserTx(ctx, userID)
+	if err != nil {
+		return SecondFactorProof{}, fmt.Errorf("abrir transação do segundo fator: %w", err)
+	}
+	defer tx.Rollback(ctx)
 
-func (a totpAttempts) Reserve(ctx context.Context) (bool, error) {
-	return a.users.ReserveTOTPAttempt(ctx, a.userID, a.ipHash, a.now)
-}
-
-func (a totpAttempts) Refund(ctx context.Context) error {
-	return a.users.RefundTOTPAttempt(ctx, a.userID)
-}
-
-func (a totpAttempts) Reset(ctx context.Context) error {
-	return a.users.ResetTOTPFailures(ctx, a.userID)
-}
-
-// ReserveTOTPAttempt reserva um código ANTES da verificação, como
-// ReserveAttempt: N códigos simultâneos gastam N. Devolve false, sem contar
-// nada, se o segundo fator está travado em at. A reserva que trava ainda é
-// concedida e verificada; se o código estiver certo, quem chama zera.
-//
-// O FOR UPDATE serializa as reservas da mesma conta, e é ele que deixa a
-// duração ser calculada em Go (TOTPLockFor) a partir da contagem lida. O
-// bloqueio grava, no mesmo UPDATE, o aviso pendente ao dono
-// (totp_lock_alert_at) e, na mesma transação, a auditoria.
-func (s *PGStore) ReserveTOTPAttempt(ctx context.Context, userID uuid.UUID, ipHash []byte, at time.Time) (bool, error) {
-	var concedida, travou, permanente bool
-	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
-		var falhas int
-		var travado bool
-		if err := tx.QueryRow(ctx, `
-			SELECT totp_failures, totp_locked_until IS NOT NULL AND totp_locked_until > $2
-			  FROM users WHERE id = $1 FOR UPDATE`, userID, at).Scan(&falhas, &travado); err != nil {
-			return err
-		}
-		if travado {
-			return nil
-		}
-		concedida = true
-		falhas++
-		duracao, perm := TOTPLockFor(falhas)
-		permanente = perm
-		var ate *time.Time
-		if duracao > 0 {
-			fim := at.Add(duracao)
-			ate = &fim
-		}
-		if _, err := tx.Exec(ctx, `
-			UPDATE users
-			   SET totp_failures = $2,
-			       totp_locked_until = CASE WHEN $3 THEN 'infinity'::timestamptz ELSE $4::timestamptz END,
-			       totp_lock_alert_at = CASE WHEN $3 OR $4::timestamptz IS NOT NULL THEN $5 ELSE totp_lock_alert_at END
-			 WHERE id = $1`,
-			userID, falhas, permanente, ate, at); err != nil {
-			return err
-		}
-		travou = permanente || ate != nil
-		if !travou {
-			return nil
-		}
-		return insertLockAudit(ctx, tx, userID, ipHash, at, acaoTOTPBloqueado, 0)
-	})
+	var falhas int
+	var travado bool
+	err = tx.QueryRow(ctx, `
+		SELECT totp_failures, COALESCE(totp_locked_until > $2, false)
+		  FROM users WHERE id = $1 FOR NO KEY UPDATE`, userID, now).Scan(&falhas, &travado)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return false, nil
+		return SecondFactorProof{}, ErrNotFound
 	}
 	if err != nil {
-		return false, fmt.Errorf("reservar tentativa de segundo fator: %w", err)
+		return SecondFactorProof{}, fmt.Errorf("ler bloqueio do segundo fator: %w", err)
+	}
+	if travado {
+		return SecondFactorProof{}, ErrTOTPLocked
+	}
+
+	fator, err := s.fatorTravado(ctx, tx, userID)
+	if err != nil {
+		return SecondFactorProof{}, err
+	}
+	if !fator.confirmado {
+		return SecondFactorProof{}, ErrTOTPNotEnrolled
+	}
+	step, recuperacao, err := fator.provar(ctx, tx, userID, code, now)
+	if errors.Is(err, ErrTOTPInvalid) {
+		return SecondFactorProof{}, gravarFalhaTOTP(ctx, tx, userID, ipHash, falhas+1, now)
+	}
+	if err != nil {
+		return SecondFactorProof{}, err
+	}
+
+	if _, err := tx.Exec(ctx, `
+		UPDATE users SET totp_last_timestep = COALESCE($2::bigint, totp_last_timestep),
+		       totp_failures = 0, totp_locked_until = NULL
+		 WHERE id = $1`, userID, step); err != nil {
+		return SecondFactorProof{}, fmt.Errorf("gravar acerto do segundo fator: %w", err)
+	}
+	if recuperacao {
+		if err := insertAudit(ctx, tx, userID, "totp.recovery_used", nil, now); err != nil {
+			return SecondFactorProof{}, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return SecondFactorProof{}, fmt.Errorf("confirmar acerto do segundo fator: %w", err)
+	}
+	return SecondFactorProof{sealed: fator.sealed}, nil
+}
+
+func gravarFalhaTOTP(ctx context.Context, tx pgx.Tx, userID uuid.UUID, ipHash []byte, falhas int, now time.Time) error {
+	duracao, permanente := TOTPLockFor(falhas)
+	var ate *time.Time
+	if duracao > 0 {
+		fim := now.Add(duracao)
+		ate = &fim
+	}
+	travou := permanente || ate != nil
+	if _, err := tx.Exec(ctx, `
+		UPDATE users
+		   SET totp_failures = $2,
+		       totp_locked_until = CASE WHEN $3 THEN 'infinity'::timestamptz ELSE $4::timestamptz END,
+		       totp_lock_alert_at = CASE WHEN $6 THEN $5 ELSE totp_lock_alert_at END,
+		       totp_lock_alert_permanent = CASE WHEN $6 THEN $3 ELSE totp_lock_alert_permanent END
+		 WHERE id = $1`, userID, falhas, permanente, ate, now, travou); err != nil {
+		return fmt.Errorf("gravar falha do segundo fator: %w", err)
+	}
+	if travou {
+		if err := insertLockAudit(ctx, tx, userID, ipHash, now, acaoTOTPBloqueado, 0); err != nil {
+			return err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("confirmar falha do segundo fator: %w", err)
 	}
 	if travou {
 		logTOTPBloqueado(ctx, userID, permanente)
 	}
-	return concedida, nil
-}
-
-// RefundTOTPAttempt devolve UMA reserva: a de um verify que falhou por erro
-// interno, sem dizer nada sobre o código. Se a reserva devolvida tinha
-// travado (a contagem está num ponto de bloqueio), a trava sai com ela. O
-// aviso pendente fica: é raro, e avisar a mais é o lado seguro.
-func (s *PGStore) RefundTOTPAttempt(ctx context.Context, userID uuid.UUID) error {
-	_, err := s.pool.Exec(ctx, `
-		UPDATE users
-		   SET totp_failures = GREATEST(totp_failures - 1, 0),
-		       totp_locked_until = CASE
-		           WHEN totp_failures >= $3 OR (totp_failures > 0 AND totp_failures % $2 = 0) THEN NULL
-		           ELSE totp_locked_until
-		       END
-		 WHERE id = $1`,
-		userID, TOTPLockThreshold, TOTPMaxFailures)
-	if err != nil {
-		return fmt.Errorf("devolver tentativa de segundo fator: %w", err)
-	}
-	return nil
-}
-
-// ResetTOTPFailures zera o contador e a trava: só um segundo fator certo (ou o
-// reset-2fa do CLI) chega aqui.
-func (s *PGStore) ResetTOTPFailures(ctx context.Context, userID uuid.UUID) error {
-	_, err := s.pool.Exec(ctx,
-		`UPDATE users SET totp_failures = 0, totp_locked_until = NULL WHERE id = $1`, userID)
-	if err != nil {
-		return fmt.Errorf("zerar falhas de segundo fator: %w", err)
-	}
-	return nil
+	return ErrTOTPInvalid
 }
 
 // TOTPLockAlert é um aviso de bloqueio do segundo fator à espera de envio.
@@ -182,7 +158,7 @@ type TOTPLockAlert struct {
 // primeiro.
 func (s *PGStore) PendingTOTPLockAlerts(ctx context.Context, limite int) ([]TOTPLockAlert, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT id, email, totp_lock_alert_at, totp_locked_until = 'infinity'::timestamptz
+		SELECT id, email, totp_lock_alert_at, totp_lock_alert_permanent
 		  FROM users
 		 WHERE totp_lock_alert_at IS NOT NULL
 		 ORDER BY totp_lock_alert_at
@@ -192,9 +168,7 @@ func (s *PGStore) PendingTOTPLockAlerts(ctx context.Context, limite int) ([]TOTP
 	}
 	avisos, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (TOTPLockAlert, error) {
 		var a TOTPLockAlert
-		var permanente *bool
-		err := row.Scan(&a.UserID, &a.Email, &a.LockedAt, &permanente)
-		a.Permanent = permanente != nil && *permanente
+		err := row.Scan(&a.UserID, &a.Email, &a.LockedAt, &a.Permanent)
 		return a, err
 	})
 	if err != nil {
@@ -207,7 +181,7 @@ func (s *PGStore) PendingTOTPLockAlerts(ctx context.Context, limite int) ([]TOTP
 // lockedAt: um bloqueio novo durante o envio continua pendente.
 func (s *PGStore) ClearTOTPLockAlert(ctx context.Context, userID uuid.UUID, lockedAt time.Time) (bool, error) {
 	tag, err := s.pool.Exec(ctx,
-		`UPDATE users SET totp_lock_alert_at = NULL WHERE id = $1 AND totp_lock_alert_at = $2`,
+		`UPDATE users SET totp_lock_alert_at = NULL, totp_lock_alert_permanent = FALSE WHERE id = $1 AND totp_lock_alert_at = $2`,
 		userID, lockedAt)
 	if err != nil {
 		return false, fmt.Errorf("tirar aviso de bloqueio do segundo fator da fila: %w", err)
@@ -232,8 +206,8 @@ const totpAvisosPorRodada = 20
 
 // SendTOTPLockAlerts faz uma rodada de envio. A chave de idempotência é a do
 // bloqueio (usuário e instante): duas réplicas da API na mesma rodada mandam o
-// mesmo e-mail uma vez só. O aviso só sai da fila depois do envio; o que
-// falha fica para a próxima rodada.
+// mesmo e-mail uma vez só. Um aviso sai da fila após entrega ou recusa
+// definitiva. Falhas transitórias ficam para a próxima rodada.
 func SendTOTPLockAlerts(ctx context.Context, store TOTPLockAlertStore, mailer TOTPLockMailer) {
 	avisos, err := store.PendingTOTPLockAlerts(ctx, totpAvisosPorRodada)
 	if err != nil {
@@ -244,7 +218,10 @@ func SendTOTPLockAlerts(ctx context.Context, store TOTPLockAlertStore, mailer TO
 		chave := fmt.Sprintf("totp-lock/%s/%d", a.UserID, a.LockedAt.UnixMicro())
 		if err := mailer.SendTOTPLocked(ctx, a.Email, a.Permanent, chave); err != nil {
 			slog.WarnContext(ctx, "enviar aviso de bloqueio do segundo fator", "user_id", a.UserID, "erro", err)
-			continue
+			var recusa interface{ IsPermanent() bool }
+			if !errors.As(err, &recusa) || !recusa.IsPermanent() {
+				continue
+			}
 		}
 		if _, err := store.ClearTOTPLockAlert(ctx, a.UserID, a.LockedAt); err != nil {
 			slog.ErrorContext(ctx, "tirar aviso de bloqueio do segundo fator da fila", "user_id", a.UserID, "erro", err)

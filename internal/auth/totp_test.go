@@ -836,7 +836,7 @@ func TestDisableClearsTheSecondFactorLock(t *testing.T) {
 	}
 }
 
-func desligarComTrava(t *testing.T, ate string, falhasDepois int, travaFica bool) {
+func desligarComTrava(t *testing.T, ate string, falhasDepois int, travaFica bool) (*auth.TOTP, *pgxpool.Pool, uuid.UUID) {
 	t.Helper()
 	svc, pool, userID := setupTOTP(t)
 	ctx := context.Background()
@@ -880,6 +880,7 @@ func desligarComTrava(t *testing.T, ate string, falhasDepois int, travaFica bool
 	if falhas != falhasDepois || travado != travaFica {
 		t.Errorf("depois de desligar: falhas=%d travado=%v, queria %d e %v", falhas, travado, falhasDepois, travaFica)
 	}
+	return svc, pool, userID
 }
 
 // Linha confirmada sem segredo é conta sem segundo fator, e não erro interno.

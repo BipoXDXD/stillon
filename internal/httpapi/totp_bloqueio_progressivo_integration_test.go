@@ -72,6 +72,30 @@ func TestAnonymousWithoutThePasswordNeverTouchesTheTOTPCounter(t *testing.T) {
 	}
 }
 
+func TestSecondFactorTurnedOffBeforeVerificationDoesNotCount(t *testing.T) {
+	a := newAPI(t)
+	c := clientWithJar(t)
+	cadastrarTOTP(t, a, c)
+	desafio := desafioAtual(t, a, c)
+	if _, err := a.pool.Exec(context.Background(),
+		`UPDATE users SET totp_confirmed_at = NULL, totp_secret_enc = NULL WHERE id = $1`, a.userID); err != nil {
+		t.Fatal(err)
+	}
+	falhasAntes, _ := estadoDoBloqueio(t, a)
+	resp := post(t, c, a.srv.URL+"/api/v1/auth/totp/verify",
+		map[string]string{"challenge": desafio, "code": "000000"})
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("status = %d, queria 401", resp.StatusCode)
+	}
+	if falhas, _, _ := estadoDoSegundoFatorBloqueado(t, a); falhas != 0 {
+		t.Errorf("tentativa sem fator ativo contou no 2FA: %d", falhas)
+	}
+	if falhas, _ := estadoDoBloqueio(t, a); falhas != falhasAntes {
+		t.Errorf("tentativa sem fator ativo contou na conta: %d → %d", falhasAntes, falhas)
+	}
+}
+
 // O segundo fator travado recusa até o código certo, com o mesmo 401 genérico,
 // e a recusa não conta no bloqueio da conta.
 func TestLockedSecondFactorRefusesTheRightCode(t *testing.T) {
@@ -136,7 +160,7 @@ func TestRightCodeResetsTheTOTPCounter(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("código certo devolveu %d, queria 200", resp.StatusCode)
 	}
-	if falhas, ate, _ := estadoDoSegundoFatorBloqueado(t, a); falhas != 0 || ate != nil {
-		t.Fatalf("depois do acerto: falhas=%d até=%v, queria zerado", falhas, ate)
+	if falhas, ate, avisoEm := estadoDoSegundoFatorBloqueado(t, a); falhas != 0 || ate != nil || avisoEm != nil {
+		t.Fatalf("depois do acerto: falhas=%d até=%v aviso=%v, queria zerado e sem aviso", falhas, ate, avisoEm)
 	}
 }
