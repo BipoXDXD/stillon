@@ -125,6 +125,35 @@ func TestReset2FAWhenAlreadyOffChangesNothing(t *testing.T) {
 	}
 }
 
+func TestReset2FAClearsPermanentLockWhenTheFactorIsOff(t *testing.T) {
+	ctx := context.Background()
+	pool := testdb.New(t)
+	dsn := testdb.DSN(t)
+	dono := donoCom2FA(t, pool, dsn, false)
+	if _, err := pool.Exec(ctx, `UPDATE users SET totp_failures = $2, totp_locked_until = 'infinity' WHERE id = $1`, dono, auth.TOTPMaxFailures); err != nil {
+		t.Fatal(err)
+	}
+
+	r := rodarUser(t, dsn, "", "reset-2fa", "--email", "dono@exemplo.com")
+	if r.codigo != saidaOK {
+		t.Fatalf("reset-2fa: código %d; stderr %q", r.codigo, r.stderr)
+	}
+	var falhas int
+	var travado bool
+	if err := pool.QueryRow(ctx, `SELECT totp_failures, totp_locked_until IS NOT NULL FROM users WHERE id = $1`, dono).Scan(&falhas, &travado); err != nil {
+		t.Fatal(err)
+	}
+	if falhas != 0 || travado {
+		t.Errorf("reset deixou falhas=%d, travado=%t", falhas, travado)
+	}
+	if v := vivasDe(t, pool, dono); v != 0 {
+		t.Errorf("reset deixou %d sessões vivas, queria zero", v)
+	}
+	if n := auditorias(t, pool, "totp.reset_cli"); n != 1 {
+		t.Errorf("%d registros totp.reset_cli, queria 1", n)
+	}
+}
+
 // Os códigos de saída são os do set-password: 4 para e-mail não cadastrado
 // (nada muda), 2 para uso errado. O texto de uso lista o subcomando.
 func TestReset2FAExitCodes(t *testing.T) {

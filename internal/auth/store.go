@@ -210,8 +210,10 @@ func insertAudit(ctx context.Context, q execer, userID uuid.UUID, action string,
 	return nil
 }
 
-// insertLockAudit grava o bloqueio, a não ser que a conta já tenha um evento
-// dele há menos de LockDuration. O limite antigo fica de fora de propósito: um
+// insertLockAudit grava o bloqueio (acao), a não ser que a conta já tenha um
+// evento da mesma ação há menos de janela. Janela zero grava sempre: é a do
+// segundo fator, em que cada evento exige cinco códigos errados a mais. Na
+// conta, a janela é LockDuration. O limite antigo fica de fora de propósito: um
 // bloqueio real só recomeça quando o anterior venceu, então nunca cai na janela
 // de outro bloqueio real. Uma trava desfeita (quinta senha certa com 2FA) grava
 // o mesmo evento, e um bloqueio real dentro da janela dela fica representado por
@@ -219,7 +221,7 @@ func insertAudit(ctx context.Context, q execer, userID uuid.UUID, action string,
 //
 // Quem chama segura a linha da conta na mesma transação: reservas simultâneas
 // chegam aqui uma de cada vez, e cada instrução enxerga o evento já comitado.
-func insertLockAudit(ctx context.Context, q execer, userID uuid.UUID, ipHash []byte, at time.Time) error {
+func insertLockAudit(ctx context.Context, q execer, userID uuid.UUID, ipHash []byte, at time.Time, acao string, janela time.Duration) error {
 	id, err := uuid.NewV7()
 	if err != nil {
 		return fmt.Errorf("gerar id de auditoria: %w", err)
@@ -230,7 +232,7 @@ func insertLockAudit(ctx context.Context, q execer, userID uuid.UUID, ipHash []b
 		 WHERE NOT EXISTS (
 		       SELECT 1 FROM audit_log
 		        WHERE user_id = $2 AND action = $3 AND at > $6)`,
-		id, userID, acaoContaBloqueada, ipHash, at, at.Add(-LockDuration))
+		id, userID, acao, ipHash, at, at.Add(-janela))
 	if err != nil {
 		return fmt.Errorf("inserir auditoria do bloqueio: %w", err)
 	}

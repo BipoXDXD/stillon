@@ -338,7 +338,8 @@ func TestLoginRehashDoesNotUndoAPasswordReset(t *testing.T) {
 // Com segundo fator, a senha é verificada no login e a sessão só nasce no
 // /totp/verify, até cinco minutos depois (ChallengeTTL). O desafio obtido com a
 // senha antiga não pode abrir sessão depois de um set-password, nem com o
-// código certo: ele leva o carimbo do hash verificado, e Issue o reconfere.
+// código certo. O desafio também não pode consumir o código nem mover o
+// contador do fator depois de o carimbo da senha perder a validade.
 // Não é corrida de milissegundos: a janela é o prazo inteiro do desafio.
 func TestTOTPChallengeFromTheOldPasswordDiesWithTheReset(t *testing.T) {
 	a := newAPI(t)
@@ -350,11 +351,24 @@ func TestTOTPChallengeFromTheOldPasswordDiesWithTheReset(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	a.clk.Advance(30 * time.Second)
+	var passoAntes *int64
+	if err := a.pool.QueryRow(context.Background(), `SELECT totp_last_timestep FROM users WHERE id = $1`, a.userID).Scan(&passoAntes); err != nil {
+		t.Fatal(err)
+	}
 	code, err := totp.GenerateCode(segredo, a.clk.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
 	outro := clientWithJar(t)
+	recusa := post(t, outro, a.srv.URL+"/api/v1/auth/totp/verify", map[string]string{"challenge": desafio, "code": "invalido"})
+	recusa.Body.Close()
+	if recusa.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("desafio da senha antiga com código inválido: %d, queria 401", recusa.StatusCode)
+	}
+	if falhas, ate, aviso := estadoDoSegundoFatorBloqueado(t, a); falhas != 0 || ate != nil || aviso != nil {
+		t.Errorf("o desafio da senha antiga alterou o segundo fator: falhas=%d trava=%v aviso=%v", falhas, ate, aviso)
+	}
 	resp := post(t, outro, a.srv.URL+"/api/v1/auth/totp/verify", map[string]string{"challenge": desafio, "code": code})
 	codigo := codigoDoErro(t, resp)
 	resp.Body.Close()
@@ -363,6 +377,14 @@ func TestTOTPChallengeFromTheOldPasswordDiesWithTheReset(t *testing.T) {
 	}
 	if n := familiasVivas(t, a); n != 0 {
 		t.Errorf("%d sessões vivas: o desafio da senha antiga abriu sessão depois do set-password", n)
+	}
+	var passoPreservado bool
+	if err := a.pool.QueryRow(context.Background(),
+		`SELECT totp_last_timestep IS NOT DISTINCT FROM $2 FROM users WHERE id = $1`, a.userID, passoAntes).Scan(&passoPreservado); err != nil {
+		t.Fatal(err)
+	}
+	if !passoPreservado {
+		t.Error("o desafio da senha antiga consumiu o código do segundo fator")
 	}
 
 	// O contraponto: um desafio novo, da senha nova, abre (a recusa acima não

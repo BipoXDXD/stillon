@@ -211,20 +211,24 @@ func (q *Queries) ReplaceUserHash(ctx context.Context, arg ReplaceUserHashParams
 const resetTOTP = `-- name: ResetTOTP :execrows
 UPDATE users SET totp_secret_enc = NULL, totp_confirmed_at = NULL, totp_last_timestep = NULL,
        totp_pending_secret_enc = NULL, totp_pending_family_id = NULL,
-       failed_attempts = 0, locked_until = NULL
- WHERE id = $1 AND totp_confirmed_at IS NOT NULL
+       failed_attempts = 0, locked_until = NULL,
+       totp_failures = 0, totp_locked_until = NULL
+ WHERE id = $1 AND (totp_confirmed_at IS NOT NULL OR totp_locked_until = 'infinity'::timestamptz)
 `
 
 // stillon user reset-2fa: desliga o 2FA inteiro, inclusive a
 // troca de autenticador pendente. A guarda na WHERE torna o comando
-// idempotente: sem 2FA confirmado, nenhuma linha muda, e quem chama não
-// encerra sessão nem audita. A marca do desafio (totp_challenge_mark) fica:
+// idempotente quando a conta está sem 2FA confirmado e sem trava permanente.
+// Nessa condição, quem chama deixa as sessões e a auditoria como estão.
+// A marca do desafio (totp_challenge_mark) fica:
 // ela só recusa desafios velhos, e zerá-la não ajuda ninguém.
 //
 // Tira também o bloqueio, como o set-password: quem roda o
 // comando é o operador, a identidade foi provada fora da API, e o dono que
 // perdeu o autenticador costuma chegar aqui com a conta travada pelos chutes
-// dele mesmo. Com o 2FA já desligado, nada muda, nem o bloqueio.
+// dele mesmo. É também a única saída do teto absoluto do bloqueio do
+// segundo fator (totp_locked_until = 'infinity'), inclusive quando a
+// desativação do fator já apagou a confirmação.
 func (q *Queries) ResetTOTP(ctx context.Context, id uuid.UUID) (int64, error) {
 	result, err := q.db.Exec(ctx, resetTOTP, id)
 	if err != nil {

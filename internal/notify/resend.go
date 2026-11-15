@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
+	"net/mail"
 
 	"github.com/BipoXDXD/stillon/internal/crypto"
 	"github.com/BipoXDXD/stillon/internal/prober/safedial"
@@ -46,6 +48,25 @@ func (r *Resend) SendVerification(ctx context.Context, dest crypto.Secret, link 
 		"Para confirmar, abra o link abaixo em até 24 horas:\n" + link + "\n\n" +
 		"Se não foi você, ignore esta mensagem: sem a confirmação, nenhum alerta é enviado.\n"
 	return r.post(ctx, dest, "[StillOn] Confirme este endereço", corpo, "")
+}
+
+// SendTOTPLocked avisa o dono que o segundo fator foi bloqueado por códigos
+// errados. O texto não traz código, IP nem horário exato: só o que
+// o dono precisa para agir. chave é a Idempotency-Key do bloqueio.
+// O booleano indica um endereço que falhou na validação local.
+func (r *Resend) SendTOTPLocked(ctx context.Context, email string, permanente bool, chave string) (destinoInvalido bool, err error) {
+	destino, err := mail.ParseAddress(email)
+	if err != nil || destino.Name != "" || destino.Address != email {
+		return true, errors.New("destino do aviso inválido")
+	}
+	corpo := "O segundo fator da sua conta no StillOn foi bloqueado depois de vários códigos errados seguidos.\n\n" +
+		"O código só é pedido depois da senha certa. Se não foi você, troque a senha agora.\n"
+	if permanente {
+		corpo += "\nO bloqueio não vence sozinho: só o comando stillon user reset-2fa, rodado no servidor, o libera.\n"
+	} else {
+		corpo += "\nO bloqueio vence sozinho, e cada novo bloqueio dura o dobro do anterior.\n"
+	}
+	return false, r.post(ctx, crypto.Secret(email), "[StillOn] Segundo fator bloqueado", corpo, chave)
 }
 
 type resendPayload struct {

@@ -818,6 +818,71 @@ func TestDisableRemovesTheRecoveryCodes(t *testing.T) {
 	}
 }
 
+// Desligar o 2FA zera o bloqueio dele: religado, o fator novo começa sem as
+// falhas do antigo (com 49, um único erro já travaria de vez). A trava do
+// teto absoluto fica, porque só o reset-2fa do CLI a libera.
+func TestDisableClearsTheSecondFactorLock(t *testing.T) {
+	casos := []struct {
+		nome         string
+		ate          string
+		falhasDepois int
+		travaFica    bool
+	}{
+		{"temporária", "now", 0, false},
+		{"permanente", "infinity", 50, true},
+	}
+	for _, c := range casos {
+		t.Run(c.nome, func(t *testing.T) { desligarComTrava(t, c.ate, c.falhasDepois, c.travaFica) })
+	}
+}
+
+func desligarComTrava(t *testing.T, ate string, falhasDepois int, travaFica bool) (*auth.TOTP, *pgxpool.Pool, uuid.UUID) {
+	t.Helper()
+	svc, pool, userID := setupTOTP(t)
+	ctx := context.Background()
+	now := time.Date(2026, 9, 22, 12, 0, 15, 0, time.UTC)
+	uri, err := svc.Enroll(ctx, userID, "pessoa@exemplo.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	secret := secretFromURI(t, uri)
+	codigo, err := totp.GenerateCode(secret, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Confirm(ctx, userID, familiaViva(t, pool, userID, now), codigo, now); err != nil {
+		t.Fatal(err)
+	}
+	depois := now.Add(time.Minute)
+	falhasAntes := 49
+	if ate == "infinity" {
+		falhasAntes = 50
+	}
+	if _, err := testdb.Admin(t).Exec(ctx,
+		`UPDATE users SET totp_failures = $2,
+		        totp_locked_until = CASE WHEN $3 = 'infinity' THEN 'infinity'::timestamptz ELSE $4 END
+		  WHERE id = $1`, userID, falhasAntes, ate, depois.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	codigo, err = totp.GenerateCode(secret, depois)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Disable(ctx, userID, codigo, depois); err != nil {
+		t.Fatal(err)
+	}
+	var falhas int
+	var travado bool
+	if err := testdb.Admin(t).QueryRow(ctx,
+		`SELECT totp_failures, totp_locked_until IS NOT NULL FROM users WHERE id = $1`, userID).Scan(&falhas, &travado); err != nil {
+		t.Fatal(err)
+	}
+	if falhas != falhasDepois || travado != travaFica {
+		t.Errorf("depois de desligar: falhas=%d travado=%v, queria %d e %v", falhas, travado, falhasDepois, travaFica)
+	}
+	return svc, pool, userID
+}
+
 // Linha confirmada sem segredo é conta sem segundo fator, e não erro interno.
 func TestDisableTreatsAConfirmationWithoutASecretAsNotEnrolled(t *testing.T) {
 	svc, pool, userID := setupTOTP(t)

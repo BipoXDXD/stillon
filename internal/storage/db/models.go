@@ -222,17 +222,22 @@ type TotpRecoveryCode struct {
 }
 
 type User struct {
-	ID                   uuid.UUID
-	Email                string
-	PasswordHash         string
-	TotpSecretEnc        []byte
-	FailedAttempts       int32
-	LockedUntil          *time.Time
-	CreatedAt            time.Time
-	TotpConfirmedAt      *time.Time
-	TotpLastTimestep     *int64
-	TotpChallengeMark    *time.Time
-	TotpPendingSecretEnc []byte
-	TotpPendingFamilyID  *uuid.UUID
-	TotpPendingStartedAt *time.Time
+	ID                       uuid.UUID
+	Email                    string
+	PasswordHash             string
+	TotpSecretEnc            []byte
+	FailedAttempts           int32
+	LockedUntil              *time.Time
+	CreatedAt                time.Time
+	TotpConfirmedAt          *time.Time
+	TotpLastTimestep         *int64
+	TotpChallengeMark        *time.Time
+	TotpPendingSecretEnc     []byte
+	TotpPendingFamilyID      *uuid.UUID
+	TotpPendingStartedAt     *time.Time
+	TotpFailures             int32
+	TotpLockedUntil          *time.Time
+	TotpLockAlertAt          *time.Time
+	TotpLockAlertPermanent   bool
+	TotpLockAlertAttemptedAt *time.Time
 }

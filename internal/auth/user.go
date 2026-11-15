@@ -264,7 +264,7 @@ func (s *PGStore) ReserveAttempt(ctx context.Context, userID uuid.UUID, ipHash [
 		if !travou {
 			return nil
 		}
-		return insertLockAudit(ctx, tx, userID, ipHash, at)
+		return insertLockAudit(ctx, tx, userID, ipHash, at, acaoContaBloqueada, LockDuration)
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil

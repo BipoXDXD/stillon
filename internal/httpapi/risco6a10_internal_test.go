@@ -232,4 +232,5 @@ func TestTOTPVerifyFalhaAoReservarTentativaDevolve500(t *testing.T) {
 		t.Errorf("reservas = %d, devoluções = %d, zeradas = %d; queria 1, 0 e 0",
 			c.contas.reservas, c.contas.devolucoes, c.contas.zeradas)
 	}
+
 }
