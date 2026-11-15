@@ -299,6 +299,7 @@ test('senha: login errado recusado, trocar pelo painel, a antiga deixa de entrar
     await trocar(nova, credenciais.senha)
     senhaTrocada = false
     await page.getByRole('button', { name: 'Sair' }).click()
+    await expect(page.getByRole('heading', { name: 'Entrar no StillOn' })).toBeVisible()
     await entrarPeloPainel(page, credenciais.email, credenciais.senha)
     await controlePositivo(page, 'a troca de senha')
   } finally {
