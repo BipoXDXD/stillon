@@ -382,6 +382,22 @@ func TestResendTOTPLockedCarriesTheKeyAndNoSensitiveDetail(t *testing.T) {
 	}
 }
 
+func TestResendTOTPLockedPreservesTheRegisteredAddress(t *testing.T) {
+	srv, client, pedidos := provedor(t, status(http.StatusOK))
+	r := &Resend{client: client, endpoint: srv.URL, apiKey: crypto.Secret("k"), from: "a@b.dev"}
+	const endereco = "titular@intranet"
+	if invalido, err := r.SendTOTPLocked(context.Background(), endereco, false, "totp-lock/u/1"); invalido || err != nil {
+		t.Fatalf("destino cadastrado: inválido=%t, erro=%v", invalido, err)
+	}
+	var corpo resendPayload
+	if err := json.Unmarshal(receber(t, pedidos).Corpo, &corpo); err != nil {
+		t.Fatal(err)
+	}
+	if len(corpo.To) != 1 || corpo.To[0] != endereco {
+		t.Fatalf("destino enviado = %v, queria %s", corpo.To, endereco)
+	}
+}
+
 func TestResendTOTPLockedDistinguishesDestinationFromProviderConfiguration(t *testing.T) {
 	for _, codigo := range []int{http.StatusUnauthorized, http.StatusForbidden} {
 		t.Run(http.StatusText(codigo), func(t *testing.T) {

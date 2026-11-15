@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/mail"
 
 	"github.com/BipoXDXD/stillon/internal/crypto"
 	"github.com/BipoXDXD/stillon/internal/prober/safedial"
@@ -54,8 +55,8 @@ func (r *Resend) SendVerification(ctx context.Context, dest crypto.Secret, link 
 // o dono precisa para agir. chave é a Idempotency-Key do bloqueio.
 // O booleano indica um endereço que falhou na validação local.
 func (r *Resend) SendTOTPLocked(ctx context.Context, email string, permanente bool, chave string) (destinoInvalido bool, err error) {
-	destino, ok := NormalizeEmail(email)
-	if !ok {
+	destino, err := mail.ParseAddress(email)
+	if err != nil || destino.Name != "" || destino.Address != email {
 		return true, errors.New("destino do aviso inválido")
 	}
 	corpo := "O segundo fator da sua conta no StillOn foi bloqueado depois de vários códigos errados seguidos.\n\n" +
@@ -65,7 +66,7 @@ func (r *Resend) SendTOTPLocked(ctx context.Context, email string, permanente bo
 	} else {
 		corpo += "\nO bloqueio vence sozinho, e cada novo bloqueio dura o dobro do anterior.\n"
 	}
-	return false, r.post(ctx, crypto.Secret(destino), "[StillOn] Segundo fator bloqueado", corpo, chave)
+	return false, r.post(ctx, crypto.Secret(email), "[StillOn] Segundo fator bloqueado", corpo, chave)
 }
 
 type resendPayload struct {
