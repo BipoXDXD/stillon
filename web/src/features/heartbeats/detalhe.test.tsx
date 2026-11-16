@@ -159,6 +159,63 @@ describe('log de eventos', () => {
   })
 })
 
+it.each([
+  {
+    nome: 'Log de eventos',
+    rota: 'events',
+    rotulo: 'Carregar mais',
+    listas: { eventos: Array.from({ length: 21 }, (_, i) => ({ id: `e${i}` })) },
+    mensagem: 'Não foi possível carregar mais eventos.',
+  },
+  {
+    nome: 'Incidentes',
+    rota: 'incidents',
+    rotulo: 'Carregar mais incidentes',
+    listas: {
+      incidentes: Array.from({ length: 21 }, (_, i) => ({ id: `i${i}`, resolved_at: '2026-09-24T12:00:00Z' })),
+    },
+    mensagem: 'Não foi possível carregar mais incidentes.',
+  },
+])('$nome preserva a lista e tenta somente o cursor que falhou', async ({ nome, rota, rotulo, listas, mensagem }) => {
+  const r = await renderizarPainel('/')
+  r.falsa.estado.heartbeats = [heartbeat({ id: 'h1', name: 'Backup' })]
+  r.falsa.estado.eventos = (listas.eventos ?? []).map(eventoDeHeartbeat)
+  r.falsa.estado.incidentesDeHeartbeat = (listas.incidentes ?? []).map((i) => incidenteDeHeartbeat({ heartbeat_id: 'h1', ...i }))
+  const cursores: Array<string | null> = []
+  let falhar = true
+  servidor.use(
+    http.get(`*/api/v1/heartbeats/h1/${rota}`, ({ request }) => {
+      const cursor = new URL(request.url).searchParams.get('cursor')
+      cursores.push(cursor)
+      if (cursor !== null && falhar) {
+        return HttpResponse.json({ error: { code: 'internal_error' }, trace_id: 't' }, { status: 500 })
+      }
+      return undefined
+    }),
+  )
+  await r.router.navigate('/heartbeats/h1')
+  const s = within(await secao(nome))
+  const linhas = await s.findAllByRole('listitem')
+  expect(linhas).toHaveLength(20)
+  const botao = s.getByRole('button', { name: rotulo })
+  await r.usuario.click(botao)
+  await waitFor(() => expect(cursores).toHaveLength(2))
+  expect(await s.findByRole('alert')).toHaveTextContent(mensagem)
+  expect(s.queryByText(/Mostrando os dados de/)).not.toBeInTheDocument()
+  expect(s.getAllByRole('listitem')).toEqual(linhas)
+  expect(s.getByRole('button', { name: 'Tentar de novo' })).toBe(botao)
+  expect(botao).toHaveFocus()
+
+  falhar = false
+  await r.usuario.click(botao)
+  await waitFor(() => expect(s.getAllByRole('listitem')).toHaveLength(21))
+  expect(cursores[1]).not.toBeNull()
+  expect(cursores).toEqual([null, cursores[1], cursores[1]])
+  expect(s.getAllByRole('listitem').slice(0, 20)).toEqual(linhas)
+  expect(s.queryByRole('alert')).not.toBeInTheDocument()
+  expect(s.getByRole('heading', { name: nome })).toHaveFocus()
+})
+
 describe('incidentes do heartbeat', () => {
   it('sem incidente, diz isso', async () => {
     await detalheCom()
