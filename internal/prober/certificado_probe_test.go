@@ -1,16 +1,17 @@
 package prober
 
 import (
-	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httptrace"
 	"slices"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/BipoXDXD/stillon/internal/prober/safedial"
@@ -156,8 +157,8 @@ func TestProbeAcceptsTheTrailingDot(t *testing.T) {
 
 // Em HTTP/2 o trace também dispara, e em cada salto: o redirect para o mesmo
 // host abre uma segunda conexão (sem keep-alive) e as duas passam pelo
-// coletor. Os saltos são sequenciais; a concorrência com o Probe é provada por
-// TestHandshakeFinishedAfterProbeReturnsIsNotARace.
+// coletor. Os saltos são sequenciais. TestHandshakeCollectorConcurrentSnapshot
+// exercita a escrita concorrente à leitura do coletor.
 func TestTLSHandshakeObservedOverHTTP2(t *testing.T) {
 	resolverDeTeste(t, "127.0.0.1")
 	protocolos := make(chan int, 2)
@@ -223,72 +224,97 @@ func TestPresentedButUnverifiedCertificateRecordsNothing(t *testing.T) {
 	conferirValidade(t, res, time.Time{})
 }
 
-// O transporte disca com context.WithoutCancel: a discagem sobrevive ao
-// client.Do que desistiu e chama o trace depois de o Probe ter lido o coletor.
-// O servidor segura o handshake até o prazo do context da sonda; vencido, o
-// Probe volta por timeout e, em paralelo, o handshake termina e o cliente
-// fecha a conexão (sem keep-alive). Sabotagem: tirar o mutex do coletor faz o
-// -race acusar este teste.
-//
-// A liberação vem do prazo do context, e não de um close feito por este teste
-// depois do Probe: o detector conta toda leitura e escrita de socket como
-// sincronização, e um close posterior à leitura do coletor ordenaria, pelo
-// socket, o append depois dela, escondendo a corrida.
-//
-// O prazo começa imediatamente antes do Probe, e o servidor recebe o context
-// por canal: começar antes da montagem do servidor e do cliente deixaria o
-// prazo vencer antes da discagem, sem handshake a observar.
-func TestHandshakeFinishedAfterProbeReturnsIsNotARace(t *testing.T) {
-	const prazoDaSonda = 50 * time.Millisecond
-	resolverDeTeste(t, "127.0.0.1")
-	raiz, cert := cadeiaDeTeste(t, hostSonda, folhaAte, intermediarioAte)
-	contextoDaSonda := make(chan context.Context, 1)
-	fechada := make(chan struct{}, 1)
-
-	srv := httptest.NewUnstartedServer(http.HandlerFunc(responder200))
-	srv.TLS = &tls.Config{
-		Certificates: []tls.Certificate{cert},
-		GetConfigForClient: func(*tls.ClientHelloInfo) (*tls.Config, error) {
-			ctx := <-contextoDaSonda
-			contextoDaSonda <- ctx // devolve, se outra conexão chegar
-			<-ctx.Done()
-			return nil, nil
-		},
-	}
-	srv.Config.ConnState = func(_ net.Conn, estado http.ConnState) {
-		if estado == http.StateClosed {
-			select {
-			case fechada <- struct{}{}:
-			default:
-			}
+// O transporte de teste só devolve o erro do prazo. O trace pertence ao
+// request real de Probe e recebe a conclusão depois do retorno da sonda.
+func TestProbeReturnsTimeoutBeforeLateHandshake(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		s := especificacao("https://" + hostSonda + "/")
+		var trace *httptrace.ClientTrace
+		var observados []tls.ConnectionState
+		observador := &httptrace.ClientTrace{
+			TLSHandshakeDone: func(estado tls.ConnectionState, err error) {
+				if err != nil {
+					t.Errorf("callback recebeu erro: %v", err)
+					return
+				}
+				observados = append(observados, estado)
+			},
 		}
-	}
-	srv.StartTLS()
-	t.Cleanup(srv.Close)
-	client := clienteComRaiz(t, raiz, enderecoDe(t, srv))
-	url := urlDe(t, "https", hostSonda, srv)
+		ctx := httptrace.WithClientTrace(t.Context(), observador)
+		client := &http.Client{Transport: transporteFunc(func(req *http.Request) (*http.Response, error) {
+			trace = httptrace.ContextClientTrace(req.Context())
+			select {
+			case <-req.Context().Done():
+				return nil, req.Context().Err()
+			case <-time.After(2 * s.Timeout):
+				return nil, fmt.Errorf("o contexto da sonda não expirou no prazo")
+			}
+		})}
 
-	ctx, cancel := context.WithTimeout(t.Context(), prazoDaSonda)
-	t.Cleanup(cancel)
-	contextoDaSonda <- ctx
-	res := Probe(ctx, client, especificacao(url))
+		inicio := time.Now()
+		res := Probe(ctx, client, s)
+		if res.Status != StatusDown || res.ErrorKind != KindTimeout || res.StatusCode != 0 {
+			t.Fatalf("res = %+v, queria down/timeout sem status HTTP", res)
+		}
+		if decorrido := time.Since(inicio); decorrido != s.Timeout {
+			t.Errorf("a sonda retornou após %v, queria %v", decorrido, s.Timeout)
+		}
+		conferirValidade(t, res, time.Time{})
+		if len(observados) != 0 {
+			t.Fatalf("houve %d callbacks antes do retorno, queria zero", len(observados))
+		}
+		if trace == nil || trace == observador || trace.TLSHandshakeDone == nil {
+			t.Fatal("o request não recebeu o trace de handshake de Probe")
+		}
 
-	if res.Status != StatusDown || res.ErrorKind != KindTimeout {
-		t.Fatalf("res = %+v, queria down/timeout", res)
-	}
-	// As duas saídas são corretas: zero quando o Probe lê o coletor antes de o
-	// handshake terminar (o caso comum), a validade quando, num runner
-	// saturado, o handshake termina primeiro. A prova da corrida é do -race,
-	// que não depende desta asserção.
-	if !res.CertNotAfter.IsZero() && !res.CertNotAfter.Equal(intermediarioAte) {
-		t.Errorf("CertNotAfter = %v, queria zero ou %v", res.CertNotAfter, intermediarioAte)
-	}
+		folha := &x509.Certificate{DNSNames: []string{hostSonda}, NotAfter: folhaAte}
+		estado := tls.ConnectionState{
+			HandshakeComplete: true,
+			ServerName:        hostSonda,
+			VerifiedChains:    [][]*x509.Certificate{{folha}},
+		}
+		terminou := make(chan struct{})
+		go func() {
+			defer close(terminou)
+			trace.TLSHandshakeDone(estado, nil)
+		}()
+		select {
+		case <-terminou:
+		case <-time.After(s.Timeout):
+			t.Fatal("o callback tardio não terminou")
+		}
+		if len(observados) != 1 || observados[0].ServerName != hostSonda {
+			t.Fatalf("callbacks após o retorno = %+v, queria um para %s", observados, hostSonda)
+		}
+	})
+}
 
-	const prazoDoFechamento = 5 * time.Second
+// Sabotagem: tirar os locks do coletor deve fazer o -race acusar a escrita do
+// append e a leitura do slice. O sinal de partida precede os dois acessos
+// sem ordená-los entre si. A espera pela escrita vem depois da leitura.
+func TestHandshakeCollectorConcurrentSnapshot(t *testing.T) {
+	trace, coletados := coletorDeHandshakes()
+	estado := tls.ConnectionState{ServerName: hostSonda, HandshakeComplete: true}
+	partir := make(chan struct{})
+	terminou := make(chan struct{})
+	go func() {
+		defer close(terminou)
+		<-partir
+		trace.TLSHandshakeDone(estado, nil)
+	}()
+	close(partir)
+	primeiraLeitura := coletados()
 	select {
-	case <-fechada:
-	case <-time.After(prazoDoFechamento):
-		t.Fatal("o servidor não viu a conexão fechar depois do handshake liberado")
+	case <-terminou:
+	case <-time.After(5 * time.Second):
+		t.Fatal("o callback concorrente não terminou")
+	}
+
+	if len(primeiraLeitura) > 1 {
+		t.Errorf("a leitura concorrente viu %d handshakes, queria zero ou um", len(primeiraLeitura))
+	}
+	if estados := coletados(); len(estados) != 1 || estados[0].ServerName != hostSonda {
+		t.Errorf("o coletor registrou %+v, queria um handshake para %s", estados, hostSonda)
 	}
 }
 
