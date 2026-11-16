@@ -32,8 +32,8 @@ export type Opcoes = {
   buscar: Buscar
   travar?: Travar
   canal?: Canal | null
-  // Quanto um refresh (ou o logout) espera antes de desistir. Uma rede
-  // travada não pode segurar a trava de todas as abas, nem o "Sair".
+  // Prazo das requisições da sessão. Uma rede travada não pode deixar
+  // o formulário pendente nem segurar a trava de refresh entre abas.
   prazoMs?: number
 }
 
@@ -209,7 +209,12 @@ export function criarSessao(o: Opcoes) {
   })
 
   async function entrar(email: string, senha: string): Promise<ResultadoLogin> {
-    const r = await enviar(o.buscar, { metodo: 'POST', caminho: '/auth/login', corpo: { email, password: senha } })
+    const r = await enviar(o.buscar, {
+      metodo: 'POST',
+      caminho: '/auth/login',
+      corpo: { email, password: senha },
+      sinal: AbortSignal.timeout(prazoMs),
+    })
     if (!r.ok) throw await lerErro(r)
     const d = await lerCorpo(r, RespostaLogin)
     if ('totp_required' in d) return { tipo: 'totp', desafio: d.challenge }
@@ -222,6 +227,7 @@ export function criarSessao(o: Opcoes) {
       metodo: 'POST',
       caminho: '/auth/totp/verify',
       corpo: { challenge: desafio, code: codigo },
+      sinal: AbortSignal.timeout(prazoMs),
     })
     if (!r.ok) throw await lerErro(r)
     aceitar((await lerCorpo(r, Token)).access_token)
