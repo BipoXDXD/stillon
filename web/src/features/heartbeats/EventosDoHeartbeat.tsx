@@ -1,11 +1,10 @@
 import { Check, CircleDashed, FileText, Play, X, type LucideIcon } from 'lucide-react'
 import { useRef } from 'react'
-import { EstadoDaConsulta } from '@/components/EstadoDaConsulta'
 import { Selo, type TomDoSelo } from '@/components/SeloDeEstado'
-import { BotaoQueSome } from '@/components/ui/botao'
 import { useEventosDoHeartbeat } from '@/lib/api/consultas'
 import type { EventoDeHeartbeat } from '@/lib/api/schemas'
 import { dataHora } from '@/lib/format'
+import { ListaPaginadaDoHeartbeat } from './ListaPaginadaDoHeartbeat'
 import { tempoDeExecucao } from './estado'
 
 // Forma + cor + texto, como os outros selos.
@@ -28,33 +27,19 @@ export function EventosDoHeartbeat({ id }: { id: string }) {
       <h2 ref={titulo} id="titulo-eventos" tabIndex={-1} className="text-xl outline-none">
         Log de eventos
       </h2>
-      <EstadoDaConsulta consulta={consulta}>
+      <ListaPaginadaDoHeartbeat consulta={consulta} reserva={titulo} itens="eventos">
         {(dados) => {
           const itens = dados.pages.flatMap((p) => p.items)
           if (itens.length === 0) return <p className="text-suave">Nenhum sinal recebido.</p>
           return (
-            <>
-              <ul className="divide-y divide-borda rounded-padrao border border-borda bg-superficie px-4 sombra-nivel-1">
-                {itens.map((e) => (
-                  <Evento key={e.id} evento={e} />
-                ))}
-              </ul>
-              {consulta.hasNextPage && (
-                <BotaoQueSome
-                  tipo="secundario"
-                  reserva={titulo}
-                  aria-disabled={consulta.isFetchingNextPage || undefined}
-                  onClick={() => {
-                    if (!consulta.isFetchingNextPage) void consulta.fetchNextPage()
-                  }}
-                >
-                  Carregar mais
-                </BotaoQueSome>
-              )}
-            </>
+            <ul className="divide-y divide-borda rounded-padrao border border-borda bg-superficie px-4 sombra-nivel-1">
+              {itens.map((e) => (
+                <Evento key={e.id} evento={e} />
+              ))}
+            </ul>
           )
         }}
-      </EstadoDaConsulta>
+      </ListaPaginadaDoHeartbeat>
     </section>
   )
 }

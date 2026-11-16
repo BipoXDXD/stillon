@@ -1,6 +1,5 @@
 import { useRef } from 'react'
 import { useApi } from '@/app/contexto'
-import { EstadoDaConsulta } from '@/components/EstadoDaConsulta'
 import { periodoDoIncidente, SeloDoIncidente, situacaoDoIncidente } from '@/components/SeloDoIncidente'
 import { BotaoQueSome } from '@/components/ui/botao'
 import { useReconhecer } from '@/features/incidentes/reconhecer'
@@ -8,6 +7,7 @@ import { chaves, useIncidentesDoHeartbeat } from '@/lib/api/consultas'
 import { textoDaCausa } from '@/lib/api/mensagens'
 import type { IncidenteDeHeartbeat } from '@/lib/api/schemas'
 import { dataHora } from '@/lib/format'
+import { ListaPaginadaDoHeartbeat } from './ListaPaginadaDoHeartbeat'
 
 const ID_AJUDA = 'ajuda-reconhecer-heartbeat'
 
@@ -40,7 +40,7 @@ export function IncidentesDoHeartbeat({
       <h2 ref={titulo} id="titulo-incidentes-heartbeat" tabIndex={-1} className="text-xl outline-none">
         Incidentes
       </h2>
-      <EstadoDaConsulta consulta={consulta}>
+      <ListaPaginadaDoHeartbeat consulta={consulta} reserva={titulo} itens="incidentes">
         {(dados) => {
           const itens = dados.pages.flatMap((p) => p.items)
           if (itens.length === 0) return <p className="text-suave">Nenhum incidente.</p>
@@ -71,22 +71,10 @@ export function IncidentesDoHeartbeat({
                   </li>
                 ))}
               </ul>
-              {consulta.hasNextPage && (
-                <BotaoQueSome
-                  tipo="secundario"
-                  reserva={titulo}
-                  aria-disabled={consulta.isFetchingNextPage || undefined}
-                  onClick={() => {
-                    if (!consulta.isFetchingNextPage) void consulta.fetchNextPage()
-                  }}
-                >
-                  Carregar mais incidentes
-                </BotaoQueSome>
-              )}
             </>
           )
         }}
-      </EstadoDaConsulta>
+      </ListaPaginadaDoHeartbeat>
     </section>
   )
 }
