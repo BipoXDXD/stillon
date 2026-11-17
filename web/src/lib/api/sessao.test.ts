@@ -634,13 +634,13 @@ describe('os prazos da sessão', () => {
         init.signal?.addEventListener('abort', () => rejeitar(init.signal?.reason), { once: true })
       }),
     )
-    const avisar = vi.fn()
+    const avisar = vi.fn<Canal['postMessage']>()
     const { sessao } = novaSessao({
       buscar,
-      canal: { postMessage: avisar, addEventListener: vi.fn() },
+      canal: { postMessage: avisar, addEventListener: vi.fn<Canal['addEventListener']>() },
       prazoMs: PRAZO_CURTO_MS,
     })
-    const terminou = vi.fn()
+    const terminou = vi.fn<(resultado: unknown) => void>()
     void enviar(sessao).then(terminou, terminou)
 
     await vi.advanceTimersByTimeAsync(PRAZO_CURTO_MS - 1)
