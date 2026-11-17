@@ -318,9 +318,9 @@ func (l *leitor) metricsAddr(name string, role Role) string {
 // publicBaseURL decide se o processo está em produção (https): recusa
 // das chaves de demo, cookie Secure, aviso de TRUSTED_PROXIES. Um valor
 // malformado que começa com https:// não pode passar como http (falha
-// aberta), então ele precisa ser uma URL http(s) absoluta, com host, e
-// sem credenciais (userinfo), que iriam parar nos links dos e-mails. A
-// mensagem não repete o valor: ele poderia trazer essas credenciais.
+// aberta), então ele precisa ser uma URL http(s) absoluta, com host.
+// Credenciais, query e fragmento são recusados para montar links. As
+// mensagens omitem o valor, que pode conter segredos.
 func (l *leitor) publicBaseURL(name string) string {
 	raw := l.obrigatoria(name)
 	if raw == "" {
@@ -334,6 +334,10 @@ func (l *leitor) publicBaseURL(name string) string {
 	}
 	if u.User != nil {
 		l.falha("%s não pode trazer credenciais na URL (a parte com @ antes do host)", name)
+		return ""
+	}
+	if strings.ContainsAny(raw, "?#") {
+		l.falha("%s não pode trazer query ou fragmento", name)
 		return ""
 	}
 	return raw

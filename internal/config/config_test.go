@@ -496,6 +496,7 @@ func TestLoadAcceptsValidPublicBaseURL(t *testing.T) {
 		"HTTPS://stillon.example",
 		"https://stillon.example/",
 		"https://stillon.example/status",
+		"https://stillon.example/status%3F%23",
 		"http://localhost:8080",
 		"http://127.0.0.1:8080",
 		"http://[::1]:8080",
@@ -509,6 +510,21 @@ func TestLoadAcceptsValidPublicBaseURL(t *testing.T) {
 		}
 		if cfg.PublicBaseURL != v {
 			t.Errorf("PUBLIC_BASE_URL=%q guardado como %q", v, cfg.PublicBaseURL)
+		}
+	}
+}
+
+func TestLoadRejectsQueryAndFragmentInPublicBaseURL(t *testing.T) {
+	for _, suffix := range []string{"?chave=segredo", "?", "#segredo", "#"} {
+		env := validEnv()
+		env["PUBLIC_BASE_URL"] = "https://stillon.example/status" + suffix
+		_, err := Load(getenvFrom(env))
+		if err == nil || !strings.Contains(err.Error(), "PUBLIC_BASE_URL não pode trazer query ou fragmento") {
+			t.Errorf("sufixo %q: erro = %v, queria recusa de query ou fragmento", suffix, err)
+			continue
+		}
+		if strings.Contains(err.Error(), "segredo") {
+			t.Errorf("a mensagem repete o valor configurado: %v", err)
 		}
 	}
 }

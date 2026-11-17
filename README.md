@@ -33,8 +33,9 @@ no primeiro `up`: `DEMO_TARGETS_EXTRA="https://seu.site/ https://outro.site/" do
 - Os alvos de exemplo precisam de internet. Um serviço rodando na sua máquina ou no próprio
   compose **não** pode ser alvo: o sondador recusa endereço privado, de propósito (SSRF, abaixo).
 - As chaves do `compose.yaml` são de demonstração e estão no repositório. O boot valida a
-  `PUBLIC_BASE_URL` (esquema `http` ou `https`, com host, sem usuário e senha) e só aceita essas
-  chaves com `http` e host de loopback (`localhost` ou IP de loopback, como `127.0.0.1` e `::1`).
+  `PUBLIC_BASE_URL` (esquema `http` ou `https`, com host, sem credenciais, query ou fragmento).
+  As chaves de demonstração exigem `http` e host de loopback (`localhost` ou IP de loopback,
+  como `127.0.0.1` e `::1`).
   Com `https` ele recusa sempre, até em `https://localhost`; com qualquer outro host, também. O
   boot só olha a URL **declarada**: o compose copiado para um servidor com um proxy na frente e a
   `PUBLIC_BASE_URL` ainda `http://localhost:8080` sobe com elas (ver abaixo).
