@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { EMAIL, RECUPERACAO_OK, SENHA, TOTP_OK, type ErroForcado } from '@/test/api-falsa'
 import { buscarDoTeste, novaSessao, travaFalsa, usarApiFalsa } from '@/test/ambiente'
 import { ApiError, type Buscar } from './http'
-import type { Canal, Estado, Travar } from './sessao'
+import type { Canal, Estado, Sessao, Travar } from './sessao'
 
 // Dois BroadcastChannel do mesmo nome, como duas abas. O nome é novo a cada
 // chamada: as sessões de um teste continuam vivas depois dele, e num nome
@@ -598,7 +598,7 @@ describe('erros de rede', () => {
   })
 })
 
-describe('o prazo do refresh', () => {
+describe('os prazos da sessão', () => {
   const PRAZO_CURTO_MS = 50
   const PRAZO_PADRAO_MS = 10_000
 
@@ -623,6 +623,34 @@ describe('o prazo do refresh', () => {
   afterEach(() => {
     vi.useRealTimers()
     vi.restoreAllMocks()
+  })
+
+  it.each([
+    { caminho: '/auth/login', enviar: (sessao: Sessao) => sessao.entrar(EMAIL, SENHA) },
+    { caminho: '/auth/totp/verify', enviar: (sessao: Sessao) => sessao.verificarTotp('desafio-1', TOTP_OK) },
+  ])('POST $caminho sem resposta cancela a espera no prazo da sessão', async ({ caminho, enviar }) => {
+    const buscar = vi.fn<Buscar>((_entrada, init) =>
+      new Promise<Response>((_, rejeitar) => {
+        init.signal?.addEventListener('abort', () => rejeitar(init.signal?.reason), { once: true })
+      }),
+    )
+    const avisar = vi.fn<Canal['postMessage']>()
+    const { sessao } = novaSessao({
+      buscar,
+      canal: { postMessage: avisar, addEventListener: vi.fn<Canal['addEventListener']>() },
+      prazoMs: PRAZO_CURTO_MS,
+    })
+    const terminou = vi.fn<(resultado: unknown) => void>()
+    void enviar(sessao).then(terminou, terminou)
+
+    await vi.advanceTimersByTimeAsync(PRAZO_CURTO_MS - 1)
+    expect(terminou).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(1)
+
+    expect(terminou).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ code: 'network', status: 0 }))
+    expect(buscar).toHaveBeenCalledExactlyOnceWith(`/api/v1${caminho}`, expect.objectContaining({ method: 'POST' }))
+    expect(sessao.token()).toBeNull()
+    expect(avisar).not.toHaveBeenCalled()
   })
 
   // Sabotagem prevista: tirar o "sinal: AbortSignal.timeout(prazoMs)" do
