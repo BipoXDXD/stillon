@@ -20,10 +20,17 @@ if [ -n "${CREDENTIALS_DIRECTORY:-}" ]; then
 else
     ARQ_ENV=/opt/stillon/vigia.env
 fi
-valor() { sed -n "s/^$1=//p" "$ARQ_ENV" | tail -n 1; }
+valor() {
+    awk -v prefixo="$1=" '
+        index($0, prefixo) == 1 { valor = substr($0, length(prefixo) + 1) }
+        END { print valor }
+    ' < "$ARQ_ENV"
+}
 
-hc=$(valor HC_URL)
-dominio=$(valor STILLON_DOMINIO)
+if ! hc=$(valor HC_URL) || ! dominio=$(valor STILLON_DOMINIO); then
+    echo "vigia: não foi possível ler $ARQ_ENV" >&2
+    exit 1
+fi
 if [ -z "$hc" ]; then
     echo "vigia: HC_URL vazio em $ARQ_ENV: não há a quem avisar" >&2
     exit 1
