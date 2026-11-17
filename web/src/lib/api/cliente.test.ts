@@ -28,8 +28,39 @@ async function logado() {
 }
 
 describe('prazo das consultas', () => {
+  it('adiantar os timers do polling não vence o prazo de um GET em voo', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const prazoNativo = new AbortController()
+    const criarPrazo = vi.spyOn(AbortSignal, 'timeout').mockReturnValue(prazoNativo.signal)
+    let responder!: (resposta: Response) => void
+    const resposta = new Promise<Response>((resolve) => { responder = resolve })
+    const buscar = vi.fn<Buscar>(() => resposta)
+    const { api } = novaSessao({ buscar })
+    const terminou = vi.fn<(resultado: unknown) => void>()
+    const consulta = api.alvos()
+    const observar = consulta.then(terminou, terminou)
+    try {
+      expect(buscar).toHaveBeenCalledTimes(1)
+      await vi.advanceTimersByTimeAsync(10_000)
+      expect(terminou).not.toHaveBeenCalled()
+      expect(buscar.mock.calls[0]?.[1].signal?.aborted).toBe(false)
+      expect(criarPrazo).toHaveBeenCalledExactlyOnceWith(10_000)
+    } finally {
+      responder(Response.json({ items: [] }))
+      await observar
+      criarPrazo.mockRestore()
+      vi.useRealTimers()
+    }
+    await expect(consulta).resolves.toEqual({ items: [] })
+  })
+
   it.each(['antes dos cabeçalhos', 'durante o corpo'])('termina em erro de rede %s', async (fase) => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const criarPrazo = vi.spyOn(AbortSignal, 'timeout').mockImplementation((ms) => {
+      const controlador = new AbortController()
+      setTimeout(() => controlador.abort(new DOMException('Prazo vencido.', 'TimeoutError')), ms)
+      return controlador.signal
+    })
     try {
       const corpoAbortado = vi.fn<() => void>()
       const buscar = vi.fn<Buscar>(async (_entrada, { signal }) => {
@@ -61,6 +92,7 @@ describe('prazo das consultas', () => {
       const abortosEsperados = fase === 'durante o corpo' ? 1 : 0
       expect(corpoAbortado).toHaveBeenCalledTimes(abortosEsperados)
     } finally {
+      criarPrazo.mockRestore()
       vi.useRealTimers()
     }
   })
@@ -78,6 +110,10 @@ describe('prazo das consultas', () => {
     const metodo = Object.getOwnPropertyDescriptor(AbortSignal, 'any')
     Object.defineProperty(AbortSignal, 'any', { configurable: true, value: undefined })
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const prazo = new AbortController()
+    const criarPrazo = vi.spyOn(AbortSignal, 'timeout').mockReturnValue(prazo.signal)
+    const ouvirPrazo = vi.spyOn(prazo.signal, 'addEventListener')
+    const limparPrazo = vi.spyOn(prazo.signal, 'removeEventListener')
     try {
       const buscar = vi.fn<Buscar>((_entrada, { signal }) =>
         new Promise<Response>((_, rejeitar) => {
@@ -93,6 +129,8 @@ describe('prazo das consultas', () => {
       await expect(api.alvos(concluida.signal)).resolves.toEqual({ items: [] })
       expect(ouvirConcluida).toHaveBeenCalledTimes(1)
       expect(limparConcluida).toHaveBeenCalledExactlyOnceWith('abort', ouvirConcluida.mock.calls[0]?.[1])
+      expect(ouvirPrazo).toHaveBeenCalledTimes(1)
+      expect(limparPrazo).toHaveBeenCalledExactlyOnceWith('abort', ouvirPrazo.mock.calls[0]?.[1])
       expect(vi.getTimerCount()).toBe(0)
 
       const pendente = new AbortController()
@@ -106,8 +144,11 @@ describe('prazo das consultas', () => {
       await expect(resultado).resolves.toBe(motivo)
       expect(buscar.mock.calls[1]?.[1].signal?.reason).toBe(motivo)
       expect(limparPendente).toHaveBeenCalledExactlyOnceWith('abort', ouvirPendente.mock.calls[0]?.[1])
+      expect(ouvirPrazo).toHaveBeenCalledTimes(2)
+      expect(limparPrazo).toHaveBeenNthCalledWith(2, 'abort', ouvirPrazo.mock.calls[1]?.[1])
       expect(vi.getTimerCount()).toBe(0)
     } finally {
+      criarPrazo.mockRestore()
       vi.useRealTimers()
       if (metodo) Object.defineProperty(AbortSignal, 'any', metodo)
       else Reflect.deleteProperty(AbortSignal, 'any')

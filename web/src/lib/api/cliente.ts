@@ -171,6 +171,9 @@ export function criarApi(sessao: Sessao, buscar: Buscar, o: OpcoesDaApi = {}) {
   async function get<T>(rota: string, esquema: z.ZodType<T>, cancelamento?: AbortSignal): Promise<T> {
     if (cancelamento?.aborted) throw cancelamento.reason
     const controlador = new AbortController()
+    // O prazo de rede usa o relógio nativo, como a sessão. Ele é
+    // independente dos timers de atualização do painel.
+    const prazo = AbortSignal.timeout(PRAZO_DA_CONSULTA_MS)
 
     // O fetch e o corpo usam o sinal. A consulta também pode deixar de
     // esperar pelo refresh compartilhado, que tem prazo próprio. O mesmo
@@ -182,17 +185,18 @@ export function criarApi(sessao: Sessao, buscar: Buscar, o: OpcoesDaApi = {}) {
         controlador.abort(motivo)
       }
     })
-    const abortar = () => cancelar(cancelamento?.reason)
-    cancelamento?.addEventListener('abort', abortar, { once: true })
-    const prazo = setTimeout(() => cancelar(erroDeRede()), PRAZO_DA_CONSULTA_MS)
+    const abortarPeloChamador = () => cancelar(cancelamento?.reason)
+    const abortarPorPrazo = () => cancelar(erroDeRede())
+    cancelamento?.addEventListener('abort', abortarPeloChamador, { once: true })
+    prazo.addEventListener('abort', abortarPorPrazo, { once: true })
     try {
       return await Promise.race([
         pedir({ metodo: 'GET', caminho: rota, sinal: controlador.signal }, esquema),
         cancelada,
       ])
     } finally {
-      clearTimeout(prazo)
-      cancelamento?.removeEventListener('abort', abortar)
+      prazo.removeEventListener('abort', abortarPorPrazo)
+      cancelamento?.removeEventListener('abort', abortarPeloChamador)
     }
   }
 
