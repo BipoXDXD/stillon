@@ -48,7 +48,12 @@ export function useDialogosDoTotp(totp: boolean | undefined) {
     setAbrindo(true)
     let ligado: boolean
     try {
-      ligado = (await qc.fetchQuery({ queryKey: chaves.me, queryFn: api.me, staleTime: 0 })).totp_enabled
+      const eu = await qc.fetchQuery({
+        queryKey: chaves.me,
+        queryFn: ({ signal }) => api.me(signal),
+        staleTime: 0,
+      })
+      ligado = eu.totp_enabled
     } catch (e) {
       avisar(mensagemDe(e), 'erro')
       return
