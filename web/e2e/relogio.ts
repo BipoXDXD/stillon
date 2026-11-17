@@ -1,4 +1,4 @@
-import type { Page } from '@playwright/test'
+import type { Page, Request } from '@playwright/test'
 
 // O painel só descobre o que mudou fora dele (o ping de uma tarefa, o
 // avaliador abrindo ou fechando um incidente) pelo próprio poll: 15 s no
@@ -12,6 +12,8 @@ import type { Page } from '@playwright/test'
 // Nada muda no servidor: o avaliador, os limitadores e a cadência do teste
 // seguem no relógio real. Fora das esperas o relógio anda no ritmo normal, e
 // timers curtos de interface (o "Copiado" de 2 s, os avisos) não encurtam.
+// O Clock também adianta AbortSignal.timeout. Enquanto uma requisição da API
+// espera na cadência ou está em trânsito, o relógio só anda no ritmo real.
 //
 // 4×: com a cadência de uma requisição por segundo (cadencia.ts), a tela da
 // tarefa pede ~0,5 por segundo (heartbeat a cada 3,75 s, eventos e incidentes
@@ -21,15 +23,39 @@ const TIQUE_MS = 250
 
 // Precisa vir antes do primeiro goto: o relógio falso é instalado na página.
 // O Date e os timers seguem andando sozinhos; noRitmoDoPoll só os adianta.
-export async function instalarRelogio(page: Page): Promise<void> {
-  await page.clock.install()
+export async function instalarRelogio(page: Page) {
+  const pendentes = new Set<Request>()
+  const iniciou = (pedido: Request) => {
+    if (new URL(pedido.url()).pathname.startsWith('/api/v1/')) pendentes.add(pedido)
+  }
+  const terminou = (pedido: Request) => {
+    pendentes.delete(pedido)
+  }
+  const encerrar = () => {
+    page.off('request', iniciou)
+    page.off('requestfinished', terminou)
+    page.off('requestfailed', terminou)
+    pendentes.clear()
+  }
+  // request vem antes de o handler da cadência liberar a rota. A espera
+  // pelo turno também conta, até o corpo chegar ou o navegador abortar.
+  page.on('request', iniciou)
+  page.on('requestfinished', terminou)
+  page.on('requestfailed', terminou)
+  try {
+    await page.clock.install()
+  } catch (erro) {
+    encerrar()
+    throw erro
+  }
+  return { pollar: <T>(espera: () => Promise<T>) => noRitmoDoPoll(page, pendentes, espera), encerrar }
 }
 
-export async function noRitmoDoPoll<T>(page: Page, espera: () => Promise<T>): Promise<T> {
+async function noRitmoDoPoll<T>(page: Page, pendentes: ReadonlySet<Request>, espera: () => Promise<T>): Promise<T> {
   const controle = { ativo: true }
   // A falha do relógio vira valor já aqui: rejeitada no meio da espera, sem
   // ninguém aguardando, ela seria uma rejeição não tratada.
-  const falhaDoRelogio = adiantar(page, controle).then(
+  const falhaDoRelogio = adiantar(page, pendentes, controle).then(
     () => null,
     (e: unknown) => e,
   )
@@ -47,9 +73,9 @@ export async function noRitmoDoPoll<T>(page: Page, espera: () => Promise<T>): Pr
   return resultado
 }
 
-async function adiantar(page: Page, controle: { ativo: boolean }): Promise<void> {
+async function adiantar(page: Page, pendentes: ReadonlySet<Request>, controle: { ativo: boolean }): Promise<void> {
   while (controle.ativo) {
     await new Promise((ok) => setTimeout(ok, TIQUE_MS))
-    if (controle.ativo) await page.clock.fastForward(TIQUE_MS * (ACELERACAO - 1))
+    if (controle.ativo && pendentes.size === 0) await page.clock.fastForward(TIQUE_MS * (ACELERACAO - 1))
   }
 }

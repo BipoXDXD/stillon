@@ -1,6 +1,6 @@
 import type { z } from 'zod'
 import { caminho } from './caminho'
-import { enviar, lerCorpo, lerErro, type Buscar, type Pedido } from './http'
+import { enviar, erroDeRede, lerCorpo, lerErro, type Buscar, type Pedido } from './http'
 import {
   Alvo,
   CadastroTotp,
@@ -113,6 +113,7 @@ function consultaDoResumo({ tags, estados }: FiltroDoResumo): string {
 }
 
 const LIMITE_DO_LOG = 20
+const PRAZO_DA_CONSULTA_MS = 10_000
 
 export type Api = ReturnType<typeof criarApi>
 
@@ -130,15 +131,19 @@ export function criarApi(sessao: Sessao, buscar: Buscar, o: OpcoesDaApi = {}) {
   function pedir(p: Omit<Pedido, 'token'>, esquema: null): Promise<void>
   function pedir<T>(p: Omit<Pedido, 'token'>, esquema: z.ZodType<T>): Promise<T>
   async function pedir<T>(p: Omit<Pedido, 'token'>, esquema: z.ZodType<T> | null): Promise<T | undefined> {
+    const sinalDaConsulta = p.metodo === 'GET' ? p.sinal : undefined
     const usado = sessao.token()
     let r = await enviar(buscar, { ...p, token: usado })
+    sinalDaConsulta?.throwIfAborted()
     if (r.status === 401) {
       const erro = await lerErro(r)
+      sinalDaConsulta?.throwIfAborted()
       // Sem token não há o que renovar: é uma requisição que ainda voava
       // quando a sessão acabou. Renovar aqui rodaria um refresh com o cookie
       // já apagado e trocaria o motivo do fim da sessão.
       if (usado === null || !podeRenovar(p.caminho, erro.code)) throw erro
       const novo = await sessao.renovar(usado)
+      sinalDaConsulta?.throwIfAborted()
       if (!novo) {
         // A sessão pode já ter acabado por outro motivo enquanto o refresh
         // voava (sair, encerrar aqui): o motivo que vale é o primeiro.
@@ -146,8 +151,10 @@ export function criarApi(sessao: Sessao, buscar: Buscar, o: OpcoesDaApi = {}) {
         throw erro
       }
       r = await enviar(buscar, { ...p, token: novo })
+      sinalDaConsulta?.throwIfAborted()
       if (r.status === 401) {
         const outro = await lerErro(r)
+        sinalDaConsulta?.throwIfAborted()
         // Como acima: se a sessão acabou enquanto a repetição voava, o
         // motivo que vale é o primeiro.
         if (sessao.estado() === 'autenticado' && podeRenovar(p.caminho, outro.code)) sessao.encerrar('expirou')
@@ -161,14 +168,45 @@ export function criarApi(sessao: Sessao, buscar: Buscar, o: OpcoesDaApi = {}) {
     return lerCorpo(r, esquema)
   }
 
-  const get = <T>(rota: string, esquema: z.ZodType<T>) => pedir({ metodo: 'GET', caminho: rota }, esquema)
+  async function get<T>(rota: string, esquema: z.ZodType<T>, cancelamento?: AbortSignal): Promise<T> {
+    if (cancelamento?.aborted) throw cancelamento.reason
+    const controlador = new AbortController()
+    // O prazo de rede usa o relógio nativo, como a sessão. Ele é
+    // independente dos timers de atualização do painel.
+    const prazo = AbortSignal.timeout(PRAZO_DA_CONSULTA_MS)
+
+    // O fetch e o corpo usam o sinal. A consulta também pode deixar de
+    // esperar pelo refresh compartilhado, que tem prazo próprio. O mesmo
+    // controlador reúne os dois motivos de aborto nos navegadores alvo.
+    let cancelar!: (motivo: unknown) => void
+    const cancelada = new Promise<never>((_, rejeitar) => {
+      cancelar = (motivo) => {
+        rejeitar(motivo)
+        controlador.abort(motivo)
+      }
+    })
+    const abortarPeloChamador = () => cancelar(cancelamento?.reason)
+    const abortarPorPrazo = () => cancelar(erroDeRede())
+    cancelamento?.addEventListener('abort', abortarPeloChamador, { once: true })
+    prazo.addEventListener('abort', abortarPorPrazo, { once: true })
+    try {
+      return await Promise.race([
+        pedir({ metodo: 'GET', caminho: rota, sinal: controlador.signal }, esquema),
+        cancelada,
+      ])
+    } finally {
+      prazo.removeEventListener('abort', abortarPorPrazo)
+      cancelamento?.removeEventListener('abort', abortarPeloChamador)
+    }
+  }
 
   return {
-    me: () => get('/me', Me),
+    me: (sinal?: AbortSignal) => get('/me', Me, sinal),
 
-    resumo: (filtro: FiltroDoResumo = { tags: [], estados: [] }) => get(`/targets/summary${consultaDoResumo(filtro)}`, Resumo),
-    alvos: () => get('/targets?limit=100', ListaDeAlvos),
-    alvo: (id: string) => get(caminho`/targets/${id}`, Alvo),
+    resumo: (filtro: FiltroDoResumo = { tags: [], estados: [] }, sinal?: AbortSignal) =>
+      get(`/targets/summary${consultaDoResumo(filtro)}`, Resumo, sinal),
+    alvos: (sinal?: AbortSignal) => get('/targets?limit=100', ListaDeAlvos, sinal),
+    alvo: (id: string, sinal?: AbortSignal) => get(caminho`/targets/${id}`, Alvo, sinal),
     criarAlvo: (e: EntradaAlvo) => pedir({ metodo: 'POST', caminho: '/targets', corpo: e }, Alvo),
     alterarAlvo: (id: string, a: AlteracaoAlvo) =>
       pedir({ metodo: 'PATCH', caminho: caminho`/targets/${id}`, corpo: a }, Alvo),
@@ -176,21 +214,23 @@ export function criarApi(sessao: Sessao, buscar: Buscar, o: OpcoesDaApi = {}) {
     // Só a janela, pelo nome (B6 do Plano 10): o servidor calcula from = to −
     // janela com o relógio dele. O from calculado aqui dependia do relógio
     // do navegador, e o to sempre foi o do servidor.
-    serie: (id: string, janela: string) =>
-      get(caminho`/targets/${id}/checks` + consulta({ window: janela }), Serie),
+    serie: (id: string, janela: string, sinal?: AbortSignal) =>
+      get(caminho`/targets/${id}/checks` + consulta({ window: janela }), Serie, sinal),
 
-    incidentes: (f: FiltroIncidentes) =>
+    incidentes: (f: FiltroIncidentes, sinal?: AbortSignal) =>
       get(
         `/incidents${consulta({ status: f.status, cursor: f.cursor, target_id: f.targetId, limit: f.limit })}`,
         ListaDeIncidentes,
+        sinal,
       ),
     reconhecer: (id: string) =>
       pedir({ metodo: 'POST', caminho: caminho`/incidents/${id}/ack` }, Incidente),
 
     // Uma página de 100 é tudo: é o teto por usuário (spec da tela, T7).
-    heartbeats: () => get('/heartbeats?limit=100', ListaDeHeartbeats),
-    heartbeat: (id: string) => get(caminho`/heartbeats/${id}`, Heartbeat),
-    previaDoCron: (expr: string, timezone: string) => get(`/heartbeats/cron-preview${consulta({ expr, timezone })}`, PreviaDoCron),
+    heartbeats: (sinal?: AbortSignal) => get('/heartbeats?limit=100', ListaDeHeartbeats, sinal),
+    heartbeat: (id: string, sinal?: AbortSignal) => get(caminho`/heartbeats/${id}`, Heartbeat, sinal),
+    previaDoCron: (expr: string, timezone: string, sinal?: AbortSignal) =>
+      get(`/heartbeats/cron-preview${consulta({ expr, timezone })}`, PreviaDoCron, sinal),
     criarHeartbeat: (e: EntradaHeartbeat) => pedir({ metodo: 'POST', caminho: '/heartbeats', corpo: e }, HeartbeatComPing),
     alterarHeartbeat: (id: string, a: AlteracaoHeartbeat) =>
       pedir({ metodo: 'PATCH', caminho: caminho`/heartbeats/${id}`, corpo: a }, Heartbeat),
@@ -204,16 +244,16 @@ export function criarApi(sessao: Sessao, buscar: Buscar, o: OpcoesDaApi = {}) {
     // Um sucesso pelo painel; a resposta é o heartbeat já atualizado.
     sinalizarAgora: (id: string) =>
       pedir({ metodo: 'POST', caminho: caminho`/heartbeats/${id}/ping-now` }, Heartbeat),
-    eventosDoHeartbeat: (id: string, cursor?: string) =>
-      get(caminho`/heartbeats/${id}/events` + consulta({ cursor, limit: LIMITE_DO_LOG }), ListaDeEventos),
-    incidentesDoHeartbeat: (id: string, cursor?: string) =>
-      get(caminho`/heartbeats/${id}/incidents` + consulta({ cursor, limit: LIMITE_DO_LOG }), ListaDeIncidentesDeHeartbeat),
+    eventosDoHeartbeat: (id: string, cursor?: string, sinal?: AbortSignal) =>
+      get(caminho`/heartbeats/${id}/events` + consulta({ cursor, limit: LIMITE_DO_LOG }), ListaDeEventos, sinal),
+    incidentesDoHeartbeat: (id: string, cursor?: string, sinal?: AbortSignal) =>
+      get(caminho`/heartbeats/${id}/incidents` + consulta({ cursor, limit: LIMITE_DO_LOG }), ListaDeIncidentesDeHeartbeat, sinal),
     reconhecerDoHeartbeat: (id: string, incidente: string) =>
       pedir(
         { metodo: 'POST', caminho: caminho`/heartbeats/${id}/incidents/${incidente}/ack` },
         IncidenteDeHeartbeat,
       ),
-    canais: () => get('/channels', ListaDeCanais),
+    canais: (sinal?: AbortSignal) => get('/channels', ListaDeCanais, sinal),
     criarCanal: (e: EntradaCanal) => pedir({ metodo: 'POST', caminho: '/channels', corpo: e }, Canal),
     apagarCanal: (id: string) => pedir({ metodo: 'DELETE', caminho: caminho`/channels/${id}` }, null),
     reenviarVerificacao: (id: string) =>
@@ -223,12 +263,12 @@ export function criarApi(sessao: Sessao, buscar: Buscar, o: OpcoesDaApi = {}) {
     pausarCanal: (id: string, enabled: boolean) =>
       pedir({ metodo: 'PATCH', caminho: caminho`/channels/${id}`, corpo: { enabled } }, Canal),
 
-    paginas: () => get('/status-pages', ListaDePaginas),
+    paginas: (sinal?: AbortSignal) => get('/status-pages', ListaDePaginas, sinal),
     criarPagina: (e: EntradaPagina) => pedir({ metodo: 'POST', caminho: '/status-pages', corpo: e }, PaginaDeStatus),
     alterarPagina: (id: string, e: Partial<EntradaPagina>) =>
       pedir({ metodo: 'PATCH', caminho: caminho`/status-pages/${id}`, corpo: e }, PaginaDeStatus),
 
-    sessoes: () => get('/sessions', ListaDeSessoes),
+    sessoes: (sinal?: AbortSignal) => get('/sessions', ListaDeSessoes, sinal),
     encerrarSessao: (id: string) => pedir({ metodo: 'DELETE', caminho: caminho`/sessions/${id}` }, null),
     trocarSenha: (t: TrocaDeSenha) => pedir({ metodo: 'POST', caminho: '/auth/password', corpo: t }, null),
 

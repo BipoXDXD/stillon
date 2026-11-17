@@ -53,12 +53,16 @@ export function useSemRede(): boolean {
 
 export function useMe() {
   const api = useApi()
-  return useQuery({ queryKey: chaves.me, queryFn: api.me, staleTime: Infinity })
+  return useQuery({ queryKey: chaves.me, queryFn: ({ signal }) => api.me(signal), staleTime: Infinity })
 }
 
 export function useResumo() {
   const api = useApi()
-  return useQuery({ queryKey: chaves.resumo, queryFn: () => api.resumo(), refetchInterval: INTERVALO_DO_RESUMO_MS })
+  return useQuery({
+    queryKey: chaves.resumo,
+    queryFn: ({ signal }) => api.resumo(undefined, signal),
+    refetchInterval: INTERVALO_DO_RESUMO_MS,
+  })
 }
 
 // A tabela com filtro de tag ou estado. A consulta completa continua em poll:
@@ -68,7 +72,7 @@ export function useResumoFiltrado(filtro: FiltroDoResumo, ativo: boolean, naTela
   const api = useApi()
   return useQuery({
     queryKey: chaves.resumoFiltrado(filtro),
-    queryFn: () => api.resumo(filtro),
+    queryFn: ({ signal }) => api.resumo(filtro, signal),
     refetchInterval: INTERVALO_DO_RESUMO_MS,
     enabled: ativo,
     placeholderData: (anterior) => anterior ?? naTela,
@@ -77,19 +81,23 @@ export function useResumoFiltrado(filtro: FiltroDoResumo, ativo: boolean, naTela
 
 export function useAlvos() {
   const api = useApi()
-  return useQuery({ queryKey: chaves.alvos, queryFn: api.alvos })
+  return useQuery({ queryKey: chaves.alvos, queryFn: ({ signal }) => api.alvos(signal) })
 }
 
 export function useAlvo(id: string) {
   const api = useApi()
-  return useQuery({ queryKey: chaves.alvo(id), queryFn: () => api.alvo(id), refetchInterval: INTERVALO_DO_ALVO_MS })
+  return useQuery({
+    queryKey: chaves.alvo(id),
+    queryFn: ({ signal }) => api.alvo(id, signal),
+    refetchInterval: INTERVALO_DO_ALVO_MS,
+  })
 }
 
 export function useSerie(id: string, janela: string) {
   const api = useApi()
   return useQuery({
     queryKey: chaves.serie(id, janela),
-    queryFn: () => api.serie(id, janela),
+    queryFn: ({ signal }) => api.serie(id, janela, signal),
     refetchInterval: INTERVALO_DA_SERIE_MS,
     placeholderData: keepPreviousData,
   })
@@ -99,13 +107,16 @@ export function useIncidentes(filtro: 'open' | 'resolved' | 'all', alvo?: string
   const api = useApi()
   return useInfiniteQuery({
     queryKey: chaves.incidentes(filtro, alvo, limite),
-    queryFn: ({ pageParam }) =>
-      api.incidentes({
-        status: filtro === 'all' ? undefined : filtro,
-        cursor: pageParam,
-        targetId: alvo,
-        limit: limite,
-      }),
+    queryFn: ({ pageParam, signal }) =>
+      api.incidentes(
+        {
+          status: filtro === 'all' ? undefined : filtro,
+          cursor: pageParam,
+          targetId: alvo,
+          limit: limite,
+        },
+        signal,
+      ),
     initialPageParam: PRIMEIRA_PAGINA,
     getNextPageParam: (ultima) => ultima.next_cursor,
     refetchInterval: pollSoComUmaPagina,
@@ -133,7 +144,7 @@ function useConsultaDosAbertos<T>(select: (d: ListaDeIncidentes) => T) {
   const api = useApi()
   return useQuery({
     queryKey: [...chaves.incidentes('open', undefined, LIMITE_DOS_ABERTOS), 'abertos'],
-    queryFn: () => api.incidentes({ status: 'open', limit: LIMITE_DOS_ABERTOS }),
+    queryFn: ({ signal }) => api.incidentes({ status: 'open', limit: LIMITE_DOS_ABERTOS }, signal),
     refetchInterval: INTERVALO_DOS_INCIDENTES_MS,
     select,
   })
@@ -173,7 +184,7 @@ export function useResolvidosRecentes(ativa: boolean) {
   const api = useApi()
   return useQuery({
     queryKey: [...chaves.incidentes('resolved', undefined, LIMITE_DOS_RESOLVIDOS), 'ultimo'],
-    queryFn: () => api.incidentes({ status: 'resolved', limit: LIMITE_DOS_RESOLVIDOS }),
+    queryFn: ({ signal }) => api.incidentes({ status: 'resolved', limit: LIMITE_DOS_RESOLVIDOS }, signal),
     enabled: ativa,
     refetchInterval: INTERVALO_DOS_RESOLVIDOS_MS,
   })
@@ -182,12 +193,20 @@ export function useResolvidosRecentes(ativa: boolean) {
 // No ritmo do resumo: a manchete fala dos dois (spec da tela, A manchete).
 export function useHeartbeats() {
   const api = useApi()
-  return useQuery({ queryKey: chaves.heartbeats, queryFn: api.heartbeats, refetchInterval: INTERVALO_DO_RESUMO_MS })
+  return useQuery({
+    queryKey: chaves.heartbeats,
+    queryFn: ({ signal }) => api.heartbeats(signal),
+    refetchInterval: INTERVALO_DO_RESUMO_MS,
+  })
 }
 
 export function useHeartbeat(id: string) {
   const api = useApi()
-  return useQuery({ queryKey: chaves.heartbeat(id), queryFn: () => api.heartbeat(id), refetchInterval: INTERVALO_DO_RESUMO_MS })
+  return useQuery({
+    queryKey: chaves.heartbeat(id),
+    queryFn: ({ signal }) => api.heartbeat(id, signal),
+    refetchInterval: INTERVALO_DO_RESUMO_MS,
+  })
 }
 
 // Sem retry: 400 é a resposta para quem ainda está digitando. A expressão não
@@ -196,7 +215,7 @@ export function usePreviaDoCron(expr: string, timezone: string) {
   const api = useApi()
   return useQuery({
     queryKey: chaves.previaDoCron(expr, timezone),
-    queryFn: () => api.previaDoCron(expr, timezone),
+    queryFn: ({ signal }) => api.previaDoCron(expr, timezone, signal),
     enabled: expr !== '' && timezone !== '',
     retry: false,
     staleTime: MS_DA_PREVIA,
@@ -207,7 +226,7 @@ export function useEventosDoHeartbeat(id: string) {
   const api = useApi()
   return useInfiniteQuery({
     queryKey: chaves.eventosDoHeartbeat(id),
-    queryFn: ({ pageParam }) => api.eventosDoHeartbeat(id, pageParam),
+    queryFn: ({ pageParam, signal }) => api.eventosDoHeartbeat(id, pageParam, signal),
     initialPageParam: PRIMEIRA_PAGINA,
     getNextPageParam: (ultima) => ultima.next_cursor,
     refetchInterval: pollSoComUmaPagina,
@@ -218,7 +237,7 @@ export function useIncidentesDoHeartbeat(id: string) {
   const api = useApi()
   return useInfiniteQuery({
     queryKey: chaves.incidentesDoHeartbeat(id),
-    queryFn: ({ pageParam }) => api.incidentesDoHeartbeat(id, pageParam),
+    queryFn: ({ pageParam, signal }) => api.incidentesDoHeartbeat(id, pageParam, signal),
     initialPageParam: PRIMEIRA_PAGINA,
     getNextPageParam: (ultima) => ultima.next_cursor,
     refetchInterval: pollSoComUmaPagina,
@@ -227,15 +246,19 @@ export function useIncidentesDoHeartbeat(id: string) {
 
 export function useCanais() {
   const api = useApi()
-  return useQuery({ queryKey: chaves.canais, queryFn: api.canais, refetchInterval: INTERVALO_DOS_CANAIS_MS })
+  return useQuery({
+    queryKey: chaves.canais,
+    queryFn: ({ signal }) => api.canais(signal),
+    refetchInterval: INTERVALO_DOS_CANAIS_MS,
+  })
 }
 
 export function usePaginas() {
   const api = useApi()
-  return useQuery({ queryKey: chaves.paginas, queryFn: api.paginas })
+  return useQuery({ queryKey: chaves.paginas, queryFn: ({ signal }) => api.paginas(signal) })
 }
 
 export function useSessoes() {
   const api = useApi()
-  return useQuery({ queryKey: chaves.sessoes, queryFn: api.sessoes })
+  return useQuery({ queryKey: chaves.sessoes, queryFn: ({ signal }) => api.sessoes(signal) })
 }

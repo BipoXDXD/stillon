@@ -39,6 +39,10 @@ export class ApiError extends Error {
   }
 }
 
+export function erroDeRede(): ApiError {
+  return new ApiError(0, 'network', 'Sem conexão com o servidor.')
+}
+
 // O objeto não existe (mais): apagado em outra aba, ou nunca existiu. As
 // telas tratam igual: explicam, tiram do cache e voltam à lista.
 export function naoEncontrado(e: unknown): boolean {
@@ -142,6 +146,6 @@ export async function enviar(buscar: Buscar, p: Pedido): Promise<Response> {
     return await buscar(PREFIXO + p.caminho, init)
   } catch (e) {
     if (e instanceof DOMException && e.name === 'AbortError') throw e
-    throw new ApiError(0, 'network', 'Sem conexão com o servidor.')
+    throw erroDeRede()
   }
 }

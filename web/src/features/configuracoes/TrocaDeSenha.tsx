@@ -46,7 +46,11 @@ export function TrocaDeSenha({ comTotp }: { comTotp: boolean }) {
         // troca sem código contaria uma prova errada (R34). Relido, o /me
         // mostra o campo do código, e o envio fica para o usuário.
         try {
-          const eu = await qc.fetchQuery({ queryKey: chaves.me, queryFn: api.me, staleTime: 0 })
+          const eu = await qc.fetchQuery({
+            queryKey: chaves.me,
+            queryFn: ({ signal }) => api.me(signal),
+            staleTime: 0,
+          })
           if (eu.totp_enabled && !comTotp) {
             setErro({ texto: 'A verificação em duas etapas foi ativada. Informe o código.', renovavel: false })
             return
