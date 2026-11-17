@@ -1,7 +1,7 @@
 import type { APIRequestContext, APIResponse } from '@playwright/test'
 import { cadenciarRecursos } from './cadencia'
 import { controlePositivo, expect, test } from './fixtures'
-import { instalarRelogio, noRitmoDoPoll } from './relogio'
+import { instalarRelogio } from './relogio'
 
 // Um clique não depende da cadência nem do poll: ele só espera o elemento. Sem
 // este prazo, um elemento que nunca aparece consumia o tempo inteiro do teste
@@ -248,14 +248,16 @@ const MANCHETE_SEM_TAREFA = /^(Todos os monitores estão pausados|Tudo no ar|Um 
 test('heartbeat: cadastro, URL, sinais reais, incidente, pausa, retomada, rotação e apagar', async ({ page, context, request, credenciais }, info) => {
   test.setTimeout(PRAZO_DA_JORNADA_MS)
   const encerrar = await cadenciarRecursos(page, performance.now() + info.timeout)
+  let encerrarRelogio: (() => void) | undefined
   try {
     const nome = `Tarefa E2E ${Date.now()}`
     sobra = { rota: 'heartbeats', nomes: [nome] }
     const noPoll = { timeout: ESPERA_DO_POLL_MS }
     // A espera pelo poll anda com o relógio do navegador acelerado (relogio.ts);
     // o prazo de cada uma (noPoll) segue em tempo real.
-    const pollar = <T>(espera: () => Promise<T>) => noRitmoDoPoll(page, espera)
-    await instalarRelogio(page)
+    const relogio = await instalarRelogio(page)
+    const { pollar } = relogio
+    encerrarRelogio = relogio.encerrar
     const irAoPainel = () => page.getByRole('navigation', { name: 'Principal' }).getByRole('link', { name: 'Painel' }).click()
     const selo = (texto: string) => page.getByText(texto, { exact: true })
     const log = page.getByRole('region', { name: 'Log de eventos' }).getByRole('listitem')
@@ -385,6 +387,7 @@ test('heartbeat: cadastro, URL, sinais reais, incidente, pausa, retomada, rotaç
 
     await controlePositivo(page, 'o fim da jornada do heartbeat')
   } finally {
+    encerrarRelogio?.()
     await encerrar()
   }
 })
@@ -395,6 +398,7 @@ test('heartbeat: cadastro, URL, sinais reais, incidente, pausa, retomada, rotaç
 test('heartbeat: editar, reconhecer o incidente e o sucesso que o fecha', async ({ page, request, credenciais }, info) => {
   test.setTimeout(PRAZO_DA_JORNADA_MS)
   const encerrar = await cadenciarRecursos(page, performance.now() + info.timeout)
+  let encerrarRelogio: (() => void) | undefined
   try {
     const nome = `Tarefa E2E ${Date.now()}`
     const nomeNovo = `${nome} editada`
@@ -402,8 +406,9 @@ test('heartbeat: editar, reconhecer o incidente e o sucesso que o fecha', async 
     const noPoll = { timeout: ESPERA_DO_POLL_MS }
     // A espera pelo poll anda com o relógio do navegador acelerado (relogio.ts);
     // o prazo de cada uma (noPoll) segue em tempo real.
-    const pollar = <T>(espera: () => Promise<T>) => noRitmoDoPoll(page, espera)
-    await instalarRelogio(page)
+    const relogio = await instalarRelogio(page)
+    const { pollar } = relogio
+    encerrarRelogio = relogio.encerrar
     const selo = (texto: string) => page.getByText(texto, { exact: true })
     const log = page.getByRole('region', { name: 'Log de eventos' }).getByRole('listitem')
     const incidente = page.getByRole('region', { name: 'Incidentes' }).getByRole('listitem').filter({ hasText: 'A tarefa avisou falha' })
@@ -495,6 +500,7 @@ test('heartbeat: editar, reconhecer o incidente e o sucesso que o fecha', async 
 
     await controlePositivo(page, 'o fim da jornada de edição do heartbeat')
   } finally {
+    encerrarRelogio?.()
     await encerrar()
   }
 })
