@@ -14,8 +14,25 @@ z.config({ jitless: true })
 // e falha com chave ausente ou tipo trocado, então uma remoção quebra alto,
 // com o nome do campo, em vez de virar undefined numa tela.
 
-const instante = z.string().min(1)
+// Os timestamps de time.Time incluem fuso e podem ter fração de segundo.
+const instante = z.iso.datetime({ offset: true })
 const id = z.string().min(1)
+
+const urlPublica = z.string().refine((valor) => {
+  // O Compose local usa HTTP. Exija a autoridade explícita e sem credenciais,
+  // pois o parser do navegador pode consertar URLs sem as barras ou sem host.
+  if (!/^https?:\/\/[^/?#\\@\s]+(?:[/?#]|$)/i.test(valor)) return false
+  // net/url recusa controles ASCII, inclusive os que URL remove ao ler o caminho.
+  for (const caractere of valor) {
+    const codigo = caractere.charCodeAt(0)
+    if (codigo < 0x20 || codigo === 0x7f) return false
+  }
+  try {
+    return new URL(valor).hostname !== ''
+  } catch {
+    return false
+  }
+}, 'URL pública HTTP ou HTTPS inválida.')
 
 export const Token = z.object({ access_token: z.string().min(1), expires_in: z.number() })
 export type Token = z.infer<typeof Token>
@@ -262,7 +279,7 @@ export const PaginaDeStatus = z.object({
   title: z.string(),
   published: z.boolean(),
   items: z.array(ItemDaPagina),
-  public_url: z.string(),
+  public_url: urlPublica,
   created_at: instante,
 })
 export type PaginaDeStatus = z.infer<typeof PaginaDeStatus>
