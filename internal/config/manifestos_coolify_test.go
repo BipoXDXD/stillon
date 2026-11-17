@@ -82,6 +82,9 @@ var diferencasAceitas = map[string][]diferencaAceita{
 		{campo: "pull_policy", provado: campoAusente, noAr: "never", motivo: motivoPullPolicy},
 		{campo: "container_name", provado: campoAusente, noAr: "stillon-db-1", motivo: motivoNome},
 		{campo: "labels", provado: campoAusente, noAr: rotulosNoAr, motivo: motivoRotulo},
+		{campo: "cgroup_parent", provado: campoAusente, noAr: "production.slice", motivo: "o banco no host compartilha os limites da slice de produção, ausente no runner da VPS de teste"},
+		{campo: "cpuset", provado: campoAusente, noAr: "4-7", motivo: "a afinidade do banco no host usa os CPUs 4 a 7 reservados à produção"},
+		{campo: "memswap_limit", provado: campoAusente, noAr: "-1", motivo: "o cgroup do banco herda o teto de swap agregado da production.slice"},
 		{
 			campo:   "volumes[/docker-entrypoint-initdb.d/10-stillon.sh].source",
 			provado: "./initdb.sh",

@@ -44,6 +44,9 @@
       },
       "cpus": 0.5,
       "mem_limit": "512m",
+      "memswap_limit": -1,
+      "cpuset": "4-7",
+      "cgroup_parent": "production.slice",
       "networks": {
         "stillon": {
           "ipv4_address": "10.30.0.4"
