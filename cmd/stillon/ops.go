@@ -7,6 +7,8 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
+	"net/url"
 	"strings"
 	"time"
 
@@ -46,7 +48,7 @@ func runVersion(args []string, stdout, stderr io.Writer) int {
 // ferramenta do healthcheck do compose.
 func runHealthcheck(ctx context.Context, args []string, stderr io.Writer, getenv func(string) string) int {
 	if len(args) > 0 {
-		fmt.Fprintln(stderr, "uso: stillon healthcheck (a porta vem de HTTP_ADDR)")
+		fmt.Fprintln(stderr, "uso: stillon healthcheck (o endereço vem de HTTP_ADDR)")
 		return saidaUso
 	}
 	url, err := urlDeProntidao(getenv("HTTP_ADDR"))
@@ -65,19 +67,26 @@ func runHealthcheck(ctx context.Context, args []string, stderr io.Writer, getenv
 	return 0
 }
 
-// urlDeProntidao monta o /readyz em loopback a partir do HTTP_ADDR do
-// processo. O host do HTTP_ADDR não interessa: o healthcheck roda dentro do
-// mesmo contêiner, e o servidor escuta em todas as interfaces.
+// urlDeProntidao monta o /readyz a partir do HTTP_ADDR do processo.
+// Para endereços wildcard, usa o loopback da família do listener.
 func urlDeProntidao(httpAddr string) (string, error) {
 	httpAddr = strings.TrimSpace(httpAddr)
 	if httpAddr == "" {
 		httpAddr = ":8080"
 	}
-	_, porta, err := net.SplitHostPort(httpAddr)
+	host, porta, err := net.SplitHostPort(httpAddr)
 	if err != nil || porta == "" {
 		return "", fmt.Errorf("HTTP_ADDR %q sem porta", httpAddr)
 	}
-	return "http://" + net.JoinHostPort("127.0.0.1", porta) + "/readyz", nil
+	ip, _ := netip.ParseAddr(host)
+	switch {
+	case host == "" || ip.Unmap() == netip.IPv4Unspecified():
+		host = "127.0.0.1"
+	case ip.WithZone("") == netip.IPv6Unspecified():
+		host = "::1"
+	}
+	endereco := url.URL{Scheme: "http", Host: net.JoinHostPort(host, porta), Path: "/readyz"}
+	return endereco.String(), nil
 }
 
 // checar exige 200 do /readyz dentro do prazo. Qualquer outra coisa (503 com
@@ -89,7 +98,9 @@ func checar(ctx context.Context, url string, prazo time.Duration) error {
 	if err != nil {
 		return err
 	}
-	resp, err := http.DefaultClient.Do(req)
+	// A prontidão é consultada diretamente no listener, mesmo com HTTP_PROXY.
+	cliente := http.Client{Transport: &http.Transport{DisableKeepAlives: true}}
+	resp, err := cliente.Do(req)
 	if err != nil {
 		return err
 	}
