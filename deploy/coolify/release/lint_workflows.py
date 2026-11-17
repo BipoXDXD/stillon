@@ -24,14 +24,15 @@ def normalize_queue(source):
 
 
 def main():
-    target = Path('.github/workflows/coolify.yml')
+    root = Path(__file__).resolve().parents[3]
+    target = root / '.github/workflows/coolify.yml'
     normalized = normalize_queue(target.read_text())
-    other = sorted(str(p) for p in target.parent.iterdir()
+    other = sorted(str(p.relative_to(root)) for p in target.parent.iterdir()
                    if p.is_file() and p.suffix in {'.yml', '.yaml'} and p != target)
     if other:
-        subprocess.run(['actionlint', *other], check=True)
-    subprocess.run(['actionlint', '-stdin-filename', str(target), '-'],
-                   input=normalized.encode(), check=True)
+        subprocess.run(['actionlint', *other], cwd=root, check=True)
+    subprocess.run(['actionlint', '-stdin-filename', str(target.relative_to(root)), '-'],
+                   cwd=root, input=normalized.encode(), check=True)
 
 
 if __name__ == '__main__':

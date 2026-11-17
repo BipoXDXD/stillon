@@ -1,7 +1,9 @@
-import unittest
 import subprocess
-from unittest.mock import patch
+import unittest
+from contextlib import chdir
 from pathlib import Path
+from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 import lint_workflows
 
@@ -27,6 +29,20 @@ class QueueLintTests(unittest.TestCase):
     def test_queue_in_other_text_is_not_silently_removed(self):
         extra = '\n# example\nexample: |\n  queue: max\n'
         self.assertTrue(lint_workflows.normalize_queue(self.source + extra).endswith(extra))
+
+    def test_lints_repository_workflows_from_another_directory(self):
+        root = Path(__file__).resolve().parents[3]
+        with TemporaryDirectory() as directory, chdir(directory):
+            with patch.object(lint_workflows.subprocess, 'run') as run:
+                lint_workflows.main()
+
+        other, coolify = run.call_args_list
+        self.assertIn('.github/workflows/ci.yml', other.args[0])
+        self.assertNotIn('.github/workflows/coolify.yml', other.args[0])
+        self.assertEqual(other.kwargs['cwd'], root)
+        self.assertEqual(coolify.args[0], ['actionlint', '-stdin-filename', '.github/workflows/coolify.yml', '-'])
+        self.assertEqual(coolify.kwargs['cwd'], root)
+        self.assertEqual(coolify.kwargs['input'], lint_workflows.normalize_queue(self.source).encode())
 
     def test_linter_errors_outside_supported_policy_are_propagated(self):
         broken = self.source.replace('RELEASE_PROJECT: stillon',
