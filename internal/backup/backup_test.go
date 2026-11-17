@@ -13,6 +13,30 @@ import (
 	"time"
 )
 
+func TestFailedDiscardPreservesTheBackupError(t *testing.T) {
+	// Um diretório não vazio faz a remoção falhar, inclusive como root.
+	saida := t.TempDir()
+	if err := os.WriteFile(filepath.Join(saida, "conteudo"), nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	criada, err := os.Lstat(saida)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	causa := errors.New("falha do backup")
+	err = causa
+	descartarSaidaSeFalhou(saida, criada, &err)
+
+	if !errors.Is(err, causa) {
+		t.Errorf("erro perdeu a causa original: %v", err)
+	}
+	var descarte *fs.PathError
+	if !errors.As(err, &descarte) || descarte.Path != saida {
+		t.Errorf("erro perdeu a causa da remoção: %v", err)
+	}
+}
+
 func TestURIRejectsSecretsAndPolicyOverrides(t *testing.T) {
 	for _, key := range []string{"options", "service", "application_name", "fallback_application_name", "connect_timeout", "password", "sslpassword", "passfile", "oauth_client_secret", "scram_client_key", "scram_server_key"} {
 		for _, encoded := range []string{key, strings.ToUpper(key), "%" + map[byte]string{'o': "6f", 's': "73", 'a': "61", 'f': "66", 'c': "63", 'p': "70"}[key[0]] + key[1:]} {
