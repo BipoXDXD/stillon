@@ -178,12 +178,19 @@ func TestArgon2WaitStopsWhenTheContextIsCanceled(t *testing.T) {
 	})
 }
 
-// Capacidade: o padrão é min(NumCPU, 4); a faixa aceita é 1–64, e o que
+// Capacidade: o padrão é min(GOMAXPROCS, 4); a faixa aceita é 1–64, e o que
 // passar dela é trazido para dentro (a config já recusa antes).
 func TestArgon2CapacityDefaultsAndClamps(t *testing.T) {
-	t.Cleanup(func() { auth.SetArgon2MaxConcurrent(auth.DefaultArgon2MaxConcurrent()) })
-	if got, quer := auth.DefaultArgon2MaxConcurrent(), min(runtime.NumCPU(), 4); got != quer {
-		t.Errorf("padrão = %d, queria min(NumCPU, 4) = %d", got, quer)
+	anterior := runtime.GOMAXPROCS(0)
+	t.Cleanup(func() {
+		runtime.GOMAXPROCS(anterior)
+		auth.SetArgon2MaxConcurrent(auth.DefaultArgon2MaxConcurrent())
+	})
+	for _, c := range []struct{ procs, quer int }{{1, 1}, {5, 4}} {
+		runtime.GOMAXPROCS(c.procs)
+		if got := auth.DefaultArgon2MaxConcurrent(); got != c.quer {
+			t.Errorf("GOMAXPROCS=%d: padrão %d, queria %d", c.procs, got, c.quer)
+		}
 	}
 	for _, c := range []struct{ pedido, quer int }{{0, 1}, {1, 1}, {7, 7}, {64, 64}, {100, 64}} {
 		auth.SetArgon2MaxConcurrent(c.pedido)
