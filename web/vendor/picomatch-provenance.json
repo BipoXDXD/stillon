@@ -1,0 +1,40 @@
+{
+  "schema": 1,
+  "package": "picomatch",
+  "version": "4.0.7",
+  "purl": "pkg:npm/picomatch@4.0.7",
+  "vulnerabilityIds": [
+    "CVE-2026-112366",
+    "GHSA-fc5q-39xc-vjpf"
+  ],
+  "upstream": {
+    "tarball": "https://registry.npmjs.org/picomatch/-/picomatch-4.0.7.tgz",
+    "integrity": "sha512-qcJu88Q2IWqJsDD529JKMdwGm/dvInW4HvQnRwiH9JtihJvzGOscDtHE3x1pBKeUOTysQ8kVmLnJ2kJu7yhcGA==",
+    "pullRequest": "https://github.com/micromatch/picomatch/pull/264"
+  },
+  "backport": {
+    "sourcePullRequest": "https://github.com/BipoXDXD/duora/pull/595",
+    "sourceHead": "c8577591244d19f65a5e77d4e4f53edbec44d742",
+    "sourceCiCheckout": "ee5901247a6c96bdf2d6418d58896b328ec85824",
+    "sourceSupplyChainJob": "https://github.com/BipoXDXD/duora/actions/runs/44240165531/job/134585985540",
+    "sourceManifestSha256": "0610bfb915629df62508f55b1b9b87c0a38a565174b64116976d1561809b0371",
+    "patchSha256": "a5e0dd867d4594e411a3b9c8a61478476901be3c7e641064aa0ce2af88d55789",
+    "files": {
+      "LICENSE": "d0cd141b0c322fded5dfad1d4645bb2fedfc05b7321fe1009469638190d59ef9",
+      "README.md": "a69b87120fe2b9cb8f9057eaef6b9f9887f803e02185ca2f431e8162f6312220",
+      "index.js": "02ae26406508e28f9ba0865be16cf77f0b33de6c4d4d49c212c4176df1d5625a",
+      "lib/constants.js": "c28f952d2758261fe5428a121add485cc25b03e0193633f649de903dc0e5e222",
+      "lib/parse.js": "75817e6d673c9a54a5612e066d531c00d99053b703e6b813e69de1d9c0af9bd0",
+      "lib/picomatch.js": "fdd249d7ffff853f3bb1c77eafc8baa1a437bea85a94c35877b83c6a40d9ca94",
+      "lib/scan.js": "6457a1764e5c2e543cc3a0c00ce12ebb3764097628868198370b64d4e642aaae",
+      "lib/utils.js": "f04604f70cd1a3f6ace80b84766468674ff38b4bb83818d2ef1d81fc6355f935",
+      "package.json": "479b70b87aa7b44344d62c8a459ae7e53dd2bca6c61f1396bd55e63e9de73fc6",
+      "posix.js": "5695ff5dfcd5a338a40630bd506056f2950bcb08fe1cc068519cbbfe60add480"
+    }
+  },
+  "tarball": {
+    "path": "web/vendor/picomatch-4.0.7-backport4.tgz",
+    "sha256": "8eec5b02f2e04dd1da622f74ac4a51ccca5c9228a80c4b2c88951430a50719aa",
+    "integrity": "sha512-DhUzDVgBwlKnQ+vf5u6C/9vKMSbD2W/G1vJu5sPA7Ts9Pa2JB5VCoi0bhAcdVaAyimkEMvi773AYp/OgwQX5Rw=="
+  }
+}
