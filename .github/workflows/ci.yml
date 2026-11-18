@@ -297,7 +297,13 @@ jobs:
           node-version: '24'
           cache: npm
           cache-dependency-path: web/package-lock.json
+      - run: node --version && npm --version
       - run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: conferir o backport instalado do Picomatch
+        working-directory: .
+        run: |
+          python3 deploy/ci/picomatch_backport.py verify .
+          python3 -m unittest discover -s deploy/ci -p test_picomatch_backport.py -v
       - run: npm run typecheck
       - run: npm run lint
       - name: testes do painel (vitest), sem nenhum pulado
@@ -332,6 +338,22 @@ jobs:
           go test -json -count=1 ./internal/webui/ > "$RUNNER_TEMP/go-test-webui.jsonl" || status=$?
           python3 deploy/ci/sem-pulados.py go "$RUNNER_TEMP/go-test-webui.jsonl" || status=1
           exit "$status"
+
+      - name: Trivy do lockfile npm e verificação do backport
+        working-directory: .
+        run: |
+          reports=$(mktemp -d "$RUNNER_TEMP/supply-chain-reports.XXXXXX")
+          echo "STILLON_NPM_SCAN_REPORTS=$reports" >> "$GITHUB_ENV"
+          bash deploy/ci/checar-supply-chain-npm.sh "$reports"
+
+      - name: preservar evidências do scan npm
+        if: ${{ !cancelled() && env.STILLON_NPM_SCAN_REPORTS != '' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: supply-chain-npm
+          path: ${{ env.STILLON_NPM_SCAN_REPORTS }}/
+          if-no-files-found: error
+          retention-days: 30
 
   image:
     # A imagem de produção que o e2e vai usar, só amd64 (a do runner). O
