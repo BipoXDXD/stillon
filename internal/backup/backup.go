@@ -298,13 +298,14 @@ func conferirPartida(parent context.Context, publicURI, password, output string)
 }
 
 // descartarSaidaSeFalhou apaga a saída que esta execução criou quando ela
-// falhou; se o descarte também falha, esse erro passa a ser o resultado.
+// falhou. Se o descarte também falha, preserva as duas causas, com a falha
+// do backup primeiro.
 func descartarSaidaSeFalhou(output string, created os.FileInfo, err *error) {
 	if *err == nil || created == nil {
 		return
 	}
 	if e := descartarSaida(output, created); e != nil {
-		*err = e
+		*err = errors.Join(*err, e)
 	}
 }
 
