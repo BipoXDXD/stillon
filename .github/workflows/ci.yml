@@ -502,7 +502,7 @@ jobs:
     # fechado, recusas e backup só cifrado.
     needs: image
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -550,11 +550,15 @@ jobs:
       - name: IP do cliente atrás da Cloudflare (prova a fixture, não a produção)
         timeout-minutes: 5
         run: bash deploy/ci/checar-borda-cloudflare.sh "$IMAGEM:ci"
+      - name: preparar imagem da fixture SSH
+        # Pull e apt-get têm prazo próprio. O ensaio abaixo usa a imagem local.
+        timeout-minutes: 12
+        run: docker build --progress=plain -t stillon-ssh-teste:ci deploy/ci/ssh
       - name: SSH real da chave restrita de deploy
         timeout-minutes: 5
         run: |
           shellcheck deploy/ci/ssh/*.sh
-          bash deploy/ci/testar-ssh-real.sh
+          bash deploy/ci/testar-ssh-real.sh stillon-ssh-teste:ci
 
   publish:
     # Só depois de tudo verde, e só em push para a main ou tag v* deste
