@@ -99,12 +99,17 @@ func TestHealthcheckGivesUpOnASilentServer(t *testing.T) {
 	}
 }
 
-func TestReadyzURLUsesLoopbackAndThePortOfHTTPAddr(t *testing.T) {
+func TestReadyzURLUsesHTTPAddr(t *testing.T) {
 	for addr, queria := range map[string]string{
-		"":             "http://127.0.0.1:8080/readyz",
-		":9000":        "http://127.0.0.1:9000/readyz",
-		"0.0.0.0:8081": "http://127.0.0.1:8081/readyz",
-		"[::]:8082":    "http://127.0.0.1:8082/readyz",
+		"":                       "http://127.0.0.1:8080/readyz",
+		":9000":                  "http://127.0.0.1:9000/readyz",
+		"0.0.0.0:8081":           "http://127.0.0.1:8081/readyz",
+		"192.0.2.42:8082":        "http://192.0.2.42:8082/readyz",
+		"stillon.test:8083":      "http://stillon.test:8083/readyz",
+		"[2001:db8::42]:8084":    "http://[2001:db8::42]:8084/readyz",
+		"[fe80::1%en0]:8085":     "http://[fe80::1%25en0]:8085/readyz",
+		"[::]:8086":              "http://[::1]:8086/readyz",
+		"[0:0:0:0:0:0:0:0]:8087": "http://[::1]:8087/readyz",
 	} {
 		got, err := urlDeProntidao(addr)
 		if err != nil || got != queria {
