@@ -34,9 +34,9 @@ const (
 	MaxArgon2Concurrent = 64
 )
 
-// DefaultArgon2MaxConcurrent é min(NumCPU, 4): mais vagas que núcleos não
-// deixa nada mais rápido, só usa mais memória; e 4 vagas são 256 MiB.
-func DefaultArgon2MaxConcurrent() int { return min(runtime.NumCPU(), 4) }
+// DefaultArgon2MaxConcurrent usa o GOMAXPROCS em vigor, com teto de quatro
+// vagas (256 MiB).
+func DefaultArgon2MaxConcurrent() int { return min(runtime.GOMAXPROCS(0), 4) }
 
 // semaforoArgon2 junta as vagas e o prazo de espera por uma delas. O prazo é
 // fixado quando o semáforo é criado, junto com a capacidade: quem reserva lê

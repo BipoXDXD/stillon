@@ -108,7 +108,7 @@ type Config struct {
 	RequestTimeout time.Duration
 	// Argon2MaxConcurrent é o teto de Argon2id simultâneos:
 	// cada um custa 64 MiB. ARGON2_MAX_CONCURRENT, de 1 a 64; sem a variável,
-	// min(NumCPU, 4).
+	// min(GOMAXPROCS, 4).
 	Argon2MaxConcurrent int
 	// ContentRulesPerHost é o teto de alvos com regra de conteúdo por host de
 	// destino, por usuário: limita o oráculo de leitura da regra.
@@ -374,7 +374,7 @@ func (l *leitor) clientIPHeader(name string) string {
 func (l *leitor) argon2(name string) int {
 	raw := strings.TrimSpace(l.getenv(name))
 	if raw == "" {
-		return min(runtime.NumCPU(), 4)
+		return min(runtime.GOMAXPROCS(0), 4)
 	}
 	n, err := strconv.Atoi(raw)
 	if err != nil || n < 1 || n > 64 {

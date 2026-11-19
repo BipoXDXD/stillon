@@ -6,17 +6,16 @@ import (
 	"testing"
 )
 
-// ARGON2_MAX_CONCURRENT é o teto de Argon2id simultâneos.
-// Sem a variável, min(NumCPU, 4); definida, um inteiro de 1 a 64. Fora disso o
-// boot recusa, nomeando a variável: um teto de zero trancaria todo login, e um
-// teto enorme devolveria o OOM que o semáforo existe para impedir.
+// ARGON2_MAX_CONCURRENT sobrescreve o teto padrão com um inteiro de 1 a 64.
 func TestArgon2MaxConcurrent(t *testing.T) {
+	anterior := runtime.GOMAXPROCS(1)
+	t.Cleanup(func() { runtime.GOMAXPROCS(anterior) })
+
 	cases := []struct {
 		valor string
 		quer  int
 		ok    bool
 	}{
-		{"", min(runtime.NumCPU(), 4), true},
 		{"1", 1, true},
 		{" 3 ", 3, true},
 		{"64", 64, true},
@@ -29,9 +28,7 @@ func TestArgon2MaxConcurrent(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.valor, func(t *testing.T) {
 			env := validEnv()
-			if c.valor != "" {
-				env["ARGON2_MAX_CONCURRENT"] = c.valor
-			}
+			env["ARGON2_MAX_CONCURRENT"] = c.valor
 			cfg, err := Load(getenvFrom(env))
 			if !c.ok {
 				if err == nil || !strings.Contains(err.Error(), "ARGON2_MAX_CONCURRENT") {
@@ -46,5 +43,20 @@ func TestArgon2MaxConcurrent(t *testing.T) {
 				t.Errorf("ARGON2_MAX_CONCURRENT=%q: Argon2MaxConcurrent = %d, queria %d", c.valor, cfg.Argon2MaxConcurrent, c.quer)
 			}
 		})
+	}
+}
+
+func TestArgon2MaxConcurrentDefaultsToGOMAXPROCS(t *testing.T) {
+	anterior := runtime.GOMAXPROCS(0)
+	t.Cleanup(func() { runtime.GOMAXPROCS(anterior) })
+	for _, c := range []struct{ procs, quer int }{{1, 1}, {5, 4}} {
+		runtime.GOMAXPROCS(c.procs)
+		cfg, err := Load(getenvFrom(validEnv()))
+		if err != nil {
+			t.Fatalf("GOMAXPROCS=%d: Load falhou: %v", c.procs, err)
+		}
+		if cfg.Argon2MaxConcurrent != c.quer {
+			t.Errorf("GOMAXPROCS=%d: Argon2MaxConcurrent = %d, queria %d", c.procs, cfg.Argon2MaxConcurrent, c.quer)
+		}
 	}
 }
