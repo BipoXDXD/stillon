@@ -138,7 +138,9 @@ export function useDialogosDoTotp(totp: boolean | undefined) {
             setTravado(true)
             setIncerta(null)
           }}
-          aoTerminar={() => terminar('Verificação em duas etapas ativada.')}
+          aoTerminar={() =>
+            terminar('Verificação em duas etapas ativada. As outras sessões foram encerradas.')
+          }
           // O /me relido fecha o diálogo (o portão); o aviso fica no toast,
           // que sobrevive a ele.
           aoJaAtivada={() => {

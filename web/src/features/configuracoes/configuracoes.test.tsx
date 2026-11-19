@@ -364,6 +364,9 @@ describe('2FA', () => {
     await r.usuario.click(within(dialogo).getByLabelText('Guardei os códigos'))
     await r.usuario.click(within(dialogo).getByRole('button', { name: 'Concluir' }))
     await waitFor(() => expect(screen.getAllByRole('button', { name: 'Encerrar' })).toHaveLength(1))
+    expect(
+      await screen.findByText('Verificação em duas etapas ativada. As outras sessões foram encerradas.'),
+    ).toBeInTheDocument()
   })
 
   // M2 da revisão final: um envio vazio nos diálogos do 2FA ia ao servidor
@@ -1305,7 +1308,9 @@ describe('envio em voo nos diálogos do 2FA', () => {
     await r.usuario.click(within(dialogo).getByRole('button', { name: 'Concluir' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
     expect(await screen.findByRole('button', { name: 'Desativar' })).toBeInTheDocument()
-    expect(await screen.findByText('Verificação em duas etapas ativada.')).toBeInTheDocument()
+    expect(
+      await screen.findByText('Verificação em duas etapas ativada. As outras sessões foram encerradas.'),
+    ).toBeInTheDocument()
     expect(screen.queryByText(ATIVACAO_INCERTA)).not.toBeInTheDocument()
   })
 
