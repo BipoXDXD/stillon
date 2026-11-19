@@ -54,6 +54,9 @@ func RateLimitIPCompartilhado(o Orcamentos, b BaldeIP, px Proxies, chaveIP []byt
 		panic("middleware: BaldeIP sem nome, taxa ou rajada positiva")
 	}
 	aCada := time.Minute / time.Duration(b.PorMinuto)
+	if aCada == 0 {
+		panic("middleware: BaldeIP.PorMinuto precisa produzir um intervalo de ao menos 1 ns")
+	}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			chave := crypto.HashIP(chaveIP, chaveDe(ClientIP(r, px)))

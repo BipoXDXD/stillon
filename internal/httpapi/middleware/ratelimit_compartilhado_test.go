@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -60,6 +61,35 @@ func TestSharedIPLimitPassesTheBucketRule(t *testing.T) {
 	if o.balde != "login" || o.aCada != 6*time.Second || o.rajada != 5 {
 		t.Errorf("regra recebida = (%q, %v, %d), queria (login, 6s, 5)", o.balde, o.aCada, o.rajada)
 	}
+}
+
+func TestSharedIPLimitRequiresPositiveTokenInterval(t *testing.T) {
+	maiorTaxa := min(int64(math.MaxInt), int64(time.Minute/time.Nanosecond))
+	b := baldeDeTeste
+	b.PorMinuto = int(maiorTaxa)
+	o := &orcamentoGravado{permitido: true}
+	t.Run("maior taxa válida", func(t *testing.T) {
+		h := middleware.RateLimitIPCompartilhado(o, b, middleware.Proxies{}, chaveIPDeTeste)(http.NotFoundHandler())
+		h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/", nil))
+		if quer := time.Minute / time.Duration(maiorTaxa); o.aCada != quer {
+			t.Errorf("intervalo no orçamento = %v, queria %v", o.aCada, quer)
+		}
+	})
+
+	// Em 32 bits, toda taxa positiva representável produz intervalo positivo.
+	if maiorTaxa == int64(math.MaxInt) {
+		return
+	}
+	t.Run("taxa que reduz o intervalo a zero", func(t *testing.T) {
+		b.PorMinuto++
+		defer func() {
+			motivo, _ := recover().(string)
+			if !strings.Contains(motivo, "BaldeIP.PorMinuto") {
+				t.Errorf("montagem com taxa %d: panic = %q, queria recusa de BaldeIP.PorMinuto", b.PorMinuto, motivo)
+			}
+		}()
+		middleware.RateLimitIPCompartilhado(o, b, middleware.Proxies{}, chaveIPDeTeste)
+	})
 }
 
 // O orçamento recebe o HMAC da origem, e não o IP: é o que vai para o banco.
