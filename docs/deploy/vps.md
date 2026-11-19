@@ -1453,15 +1453,19 @@ sudo nano /opt/stillon/.env
 ```
 
 - `STILLON_DOMINIO`: o seu domínio, sem `https://` (o valor de `DOMINIO`).
+- Em `PROBE_BLOCKED_CIDRS`, informe o IPv4 público da VPS e o prefixo IPv6 `/64` roteado para
+  ela, conforme exibidos no painel da hospedagem. Separe os dois por vírgula, sem espaços. O
+  Compose de produção exige essa lista para impedir que a sonda acesse os IPs da própria VPS.
 - `RESEND_API_KEY`: cole a chave do gerenciador (passo 1.5). Este `.env` é um dos lugares
   onde segredo pode ser colado.
 - `EMAIL_FROM`: `StillOn <alertas@avisos.seu-domínio>` (passo 1.5).
 
 Salve com `Ctrl+O` e Enter, saia com `Ctrl+X`.
 
-O `.env` tem só estas nove variáveis (a `HC_URL` do healthchecks não está nele: ela vai para
-o `vigia.env` do bloco 8, e o vigia nunca lê o `.env`). O resto o `compose.prod.yaml` monta sozinho: a
-`PUBLIC_BASE_URL` e a `CORS_ORIGIN` (`https://` + `STILLON_DOMINIO`), a `DATABASE_URL` (com a
+O `.env` segue a lista de variáveis do [modelo `env.exemplo`](../../deploy/vps/env.exemplo).
+A `HC_URL` do healthchecks vai para o `vigia.env` do bloco 8, o único arquivo que o vigia lê.
+O `compose.prod.yaml` deriva a `PUBLIC_BASE_URL` e a `CORS_ORIGIN` (`https://` +
+`STILLON_DOMINIO`), a `DATABASE_URL` (com a
 `STILLON_APP_PASSWORD` e o IP fixo do banco) e o `TRUSTED_PROXIES` (o IP fixo do Caddy). O
 compose lê o `.env` pela interpolação (`${…}`), e cada serviço recebe só as variáveis de que
 precisa: o Caddy não vê segredo nenhum, e o app não vê a senha do superusuário nem a do backup.
