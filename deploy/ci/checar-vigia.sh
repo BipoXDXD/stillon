@@ -62,10 +62,13 @@ HC=https://hc-ping.com/0000-teste
 # roda <cenário de saúde> <conteúdo do vigia.env> [cenário dos pings];
 # devolve o código do vigia.
 roda() {
-    local c=0
     printf '%s\n' "$2" > "$T/cred/stillon-vigia"
+    executa "$1" "${3:-ok}"
+}
+executa() {
+    local c=0
     : > "$T/registro"
-    env -i PATH="$T/bin:/usr/bin:/bin" CREDENTIALS_DIRECTORY="$T/cred" REGISTRO="$T/registro" SAUDE="$1" PING="${3:-ok}" \
+    env -i PATH="$T/bin:/usr/bin:/bin" CREDENTIALS_DIRECTORY="$T/cred" REGISTRO="$T/registro" SAUDE="$1" PING="$2" \
         sh "$VIGIA" 2> "$T/erro" || c=$?
     echo "$c"
 }
@@ -93,7 +96,18 @@ c=$(roda ok "STILLON_DOMINIO=stillon.example
 HC_URL=")
 [ "$c" != 0 ] || falhar "sem HC_URL: o vigia saiu 0"
 [ -z "$(urls)" ] || falhar "sem HC_URL: pediu '$(urls)'"
-grep -q HC_URL "$T/erro" || falhar "sem HC_URL: não disse o que falta"
+grep -Fq 'HC_URL vazio' "$T/erro" || falhar "sem HC_URL: não disse o que falta"
+
+# 4b. Sem arquivo de credencial: diagnostica a leitura e não faz pedidos.
+rm "$T/cred/stillon-vigia"
+c=$(executa ok ok)
+[ "$c" != 0 ] || falhar "sem arquivo: o vigia saiu 0"
+[ -z "$(urls)" ] || falhar "sem arquivo: pediu '$(urls)'"
+grep -Fq "vigia: não foi possível ler $T/cred/stillon-vigia" "$T/erro" ||
+    falhar "sem arquivo: não diagnosticou a falha de leitura"
+if grep -Fq 'HC_URL vazio' "$T/erro"; then
+    falhar "sem arquivo: confundiu falha de leitura com HC_URL vazia"
+fi
 
 # 5. Sem domínio: é falha (pinga /fail), e não um pedido a https:///healthz.
 c=$(roda ok "HC_URL=$HC")
