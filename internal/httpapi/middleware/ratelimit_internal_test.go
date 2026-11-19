@@ -81,40 +81,41 @@ func TestRateLimitUserRefusesRequestsWithoutUser(t *testing.T) {
 // aos 10 minutos parado, o usuário ganharia 5 envios novos a cada 10
 // minutos, o triplo do limite.
 func TestSweepKeepsABucketUntilItCouldHaveRefilled(t *testing.T) {
-	h := rateLimit(t.Context(), clock.Real{}, rate.Every(6*time.Minute), 5, porUsuario, 1000)(http.HandlerFunc(
-		func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) }))
-	lh := h.(*limiterHandler)
+	clk := clock.NewFake(instanteBase)
+	h := rateLimit(t.Context(), clk, rate.Every(6*time.Minute), 5, porUsuario, 1000)(http.HandlerFunc(proximo))
 
 	r := httptest.NewRequest(http.MethodPost, "/api/v1/channels", nil)
 	r = r.WithContext(context.WithValue(r.Context(), userKey{}, uuid.New()))
+	pedir := func() int {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, r)
+		return rec.Code
+	}
 	for range 5 {
-		h.ServeHTTP(httptest.NewRecorder(), r)
+		if code := pedir(); code != http.StatusOK {
+			t.Fatalf("requisição dentro da rajada deu %d, queria 200", code)
+		}
 	}
 
-	lh.st.mu.Lock()
-	for _, e := range lh.st.buckets {
-		e.Value.(*bucket).seen = time.Now().Add(-11 * time.Minute)
-	}
-	lh.st.varrer()
-	n := len(lh.st.buckets)
-	lh.st.mu.Unlock()
-	if n != 1 {
-		t.Fatal("o balde vazio foi apagado aos 11 minutos, antes de poder encher: o limite por hora vazaria")
+	clk.Advance(11 * time.Minute)
+	varrerAgora(h.(*limiterHandler))
+	if quantosBuckets(h) != 1 {
+		t.Fatal("o balde foi apagado aos 11 minutos, antes de poder encher")
 	}
 
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, r)
-	if rec.Code != http.StatusTooManyRequests {
-		t.Errorf("depois da varredura, a sexta requisição deu %d, queria 429", rec.Code)
+	if code := pedir(); code != http.StatusOK {
+		t.Errorf("o único token recarregado deu %d, queria 200", code)
+	}
+	if code := pedir(); code != http.StatusTooManyRequests {
+		t.Errorf("a requisição seguinte deu %d, queria 429", code)
 	}
 }
 
 // A varredura apaga o balde parado além do ocioso e mantém o que ainda está
 // dentro dele.
 func TestSweepRemovesOnlyTheIdleBuckets(t *testing.T) {
-	h := rateLimit(t.Context(), clock.Real{}, rate.Every(time.Hour), 1, porIP(Proxies{}), 1000)(http.HandlerFunc(
-		func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) }))
-	lh := h.(*limiterHandler)
+	clk := clock.NewFake(instanteBase)
+	h := rateLimit(t.Context(), clk, rate.Every(time.Hour), 1, porIP(Proxies{}), 1000)(http.HandlerFunc(proximo))
 	pedir := func(origem string) int {
 		r := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", nil)
 		r.RemoteAddr = origem + ":1234"
@@ -123,13 +124,16 @@ func TestSweepRemovesOnlyTheIdleBuckets(t *testing.T) {
 		return w.Code
 	}
 	const parada, ativa = "198.51.100.1", "198.51.100.2"
-	pedir(parada)
-	pedir(ativa)
+	if code := pedir(parada); code != http.StatusOK {
+		t.Fatalf("primeira requisição da origem parada deu %d, queria 200", code)
+	}
+	clk.Advance(time.Hour)
+	if code := pedir(ativa); code != http.StatusOK {
+		t.Fatalf("primeira requisição da origem ativa deu %d, queria 200", code)
+	}
 
-	lh.st.mu.Lock()
-	lh.st.buckets[chaveDe(parada)].Value.(*bucket).seen = time.Now().Add(-lh.st.ocioso - time.Minute)
-	lh.st.varrer()
-	lh.st.mu.Unlock()
+	clk.Advance(time.Minute)
+	varrerAgora(h.(*limiterHandler))
 
 	if n := quantosBuckets(h); n != 1 {
 		t.Fatalf("%d buckets depois da varredura, queria 1 (só o ativo)", n)
