@@ -16,10 +16,12 @@ import (
 	"github.com/BipoXDXD/stillon/internal/tenancy"
 )
 
-// Nomes que o Postgres dá aos UNIQUE da migration 00006.
+// Nomes que o Postgres dá aos UNIQUE da migration 00006, mais o índice único
+// por projeto da 00040.
 const (
-	constraintUser = "status_pages_user_id_key"
-	constraintSlug = "status_pages_slug_key"
+	constraintUser    = "status_pages_user_id_key"
+	constraintSlug    = "status_pages_slug_key"
+	constraintProjeto = "status_pages_project_key"
 )
 
 // Service é o cadastro da página. Todo método do dono recebe o escopo de
@@ -264,13 +266,16 @@ func ler(ctx context.Context, q *db.Queries, projectID uuid.UUID) (Page, error) 
 	return p, nil
 }
 
-// traduzir separa as duas violações de UNIQUE de status_pages. O resto sai
-// como erro interno.
+// traduzir separa as violações de UNIQUE de status_pages. Página repetida é
+// ErrExists pelo UNIQUE de user_id OU pelo de project_id: com os dois violados
+// ao mesmo tempo, o Postgres pode reportar qualquer um, e o de projeto sozinho
+// é o caso de um segundo membro que ainda não tem página. O resto sai como
+// erro interno.
 func traduzir(err error) error {
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 		switch pgErr.ConstraintName {
-		case constraintUser:
+		case constraintUser, constraintProjeto:
 			return ErrExists
 		case constraintSlug:
 			return ErrSlugTaken

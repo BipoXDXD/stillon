@@ -149,3 +149,22 @@ func TestMemberCannotEditStatusPage(t *testing.T) {
 			n, tituloNoBanco, publicadaNoBanco, "Status")
 	}
 }
+
+// A segunda página do mesmo projeto é ErrExists, também quando quem a cria
+// ainda não tem página (o manager): aí quem dispara é o UNIQUE de project_id,
+// e não o de user_id. Sem o mapeamento, viraria erro interno (500).
+func TestSecondPageInSameProjectIsExists(t *testing.T) {
+	a := novoAmbiente(t)
+	ctx := context.Background()
+	dono, manager := a.usuario(t), a.usuario(t)
+	projeto := testdb.ProjetoPadrao(t, dono)
+	testdb.Membro(t, projeto, manager, "manager")
+	if _, err := a.svc.Create(ctx, escopoNo(projeto, dono, tenancy.RoleOwner), statuspage.Input{Slug: "empresa", Title: "Status"}); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := a.svc.Create(ctx, escopoNo(projeto, manager, tenancy.RoleManager), statuspage.Input{Slug: "outra", Title: "Outra"})
+	if !errors.Is(err, statuspage.ErrExists) {
+		t.Errorf("segunda página no mesmo projeto, pelo manager: erro %v, queria ErrExists", err)
+	}
+}
