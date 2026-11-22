@@ -21,7 +21,9 @@ import (
 )
 
 const (
-	// MaxPerUser é o teto de heartbeats por usuário, o mesmo de alvos.
+	// MaxPerUser é o teto de heartbeats, o mesmo de alvos. Até o PR 2b ele
+	// vale para o usuário dentro do projeto atual (a contagem roda sob
+	// InProjectTx); o teto por titular vem no PR 2b.
 	MaxPerUser int64 = 100
 
 	// PreviewRuns é quantos disparos a prévia do cron mostra.
@@ -117,7 +119,9 @@ type Incident struct {
 // confere a pertença e liga a RLS para aquele projeto: as queries filtram por
 // project_id E a política filtra de novo. A permissão vale pelo papel lido NA
 // transação (o escopo que InProjectTx entrega), nunca pelo que quem chamou
-// trouxe. As cotas (trava e contagem) continuam por user_id.
+// trouxe. As cotas (trava e contagem) continuam por user_id e, sob
+// InProjectTx, valem para o usuário dentro do projeto atual; o teto por
+// titular vem no PR 2b.
 type Service struct {
 	pool *pgxpool.Pool
 	clk  clock.Clock
@@ -225,7 +229,8 @@ func (s *Service) Create(ctx context.Context, scope tenancy.ProjectScope, in Inp
 	return out, token, nil
 }
 
-// inserir grava o heartbeat dentro do limite por usuário (o do escopo). A
+// inserir grava o heartbeat dentro do limite do usuário do escopo, contado só
+// no projeto atual até o PR 2b (teto por titular). A
 // trava vem antes da contagem: sem ela, dois pedidos simultâneos contariam 99
 // e gravariam 101.
 func (s *Service) inserir(ctx context.Context, q *db.Queries, sc tenancy.ProjectScope, params db.InsertHeartbeatParams, tags []string) (Heartbeat, error) {

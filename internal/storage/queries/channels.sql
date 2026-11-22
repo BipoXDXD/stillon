@@ -23,7 +23,9 @@ VALUES (sqlc.arg(id), sqlc.arg(user_id), sqlc.arg(kind), sqlc.arg(config_enc),
         sqlc.narg(verified_at), sqlc.narg(verify_token_hash), sqlc.narg(verify_expires_at),
         true, sqlc.arg(created_at), sqlc.arg(project_id)::uuid);
 
--- Sem paginação: o limite por usuário é pequeno (notify.MaxChannels).
+-- Sem paginação: a listagem traz os canais de quem chama no projeto atual,
+-- que nunca passam do limite pequeno do usuário (notify.MaxChannels); o teto
+-- por titular vem no PR 2b.
 -- name: ListChannels :many
 SELECT c.id, c.kind, c.config_enc, c.verified_at, c.verify_expires_at, c.enabled, c.created_at,
        h.last_success_at, h.last_failure_at, h.last_error

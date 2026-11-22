@@ -62,9 +62,10 @@ func (s *Service) Get(ctx context.Context, scope tenancy.ProjectScope) (Page, er
 }
 
 // Create (PermManageStatusPage) cria a página no projeto do escopo, com
-// user_id = quem criou. A segunda do mesmo usuário é ErrExists, e o slug de
-// outro é ErrSlugTaken: os dois vêm do UNIQUE do banco, e não de uma
-// consulta antes, então valem também sob concorrência.
+// user_id = quem criou. A segunda do mesmo projeto é ErrExists, e também a
+// segunda do mesmo usuário enquanto o UNIQUE de user_id existir (até o
+// contract); o slug de outro é ErrSlugTaken. Os três vêm do UNIQUE do banco,
+// e não de uma consulta antes, então valem também sob concorrência.
 func (s *Service) Create(ctx context.Context, scope tenancy.ProjectScope, in Input) (Page, error) {
 	if verr := validate(&in); verr != nil {
 		return Page{}, verr

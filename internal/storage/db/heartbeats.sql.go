@@ -821,8 +821,11 @@ SELECT pg_advisory_xact_lock(hashtextextended('stillon.heartbeats:' || $1::uuid:
 
 // API do dono: as de cima e estas rodam sob InProjectTx e filtram por
 // project_id, como as de targets.sql. As exceções, por user_id, são as cotas
-// do usuário (LockUserHeartbeats, CountHeartbeats).
-// O teto por usuário: contar e inserir sob esta trava, como LockUserTargets.
+// (LockUserHeartbeats, CountHeartbeats).
+// O teto de heartbeats: contar e inserir sob esta trava, como LockUserTargets.
+// Até o PR 2b ele vale para o usuário dentro do projeto atual (a RLS
+// restritiva de InProjectTx corta os de outros projetos); o teto por titular
+// vem no PR 2b.
 func (q *Queries) LockUserHeartbeats(ctx context.Context, userID uuid.UUID) error {
 	_, err := q.db.Exec(ctx, lockUserHeartbeats, userID)
 	return err

@@ -14,8 +14,9 @@ import (
 )
 
 // StatusPageHandlers servem o cadastro do dono (spec §9). A API é no
-// plural, como a §9, mas cada usuário tem uma página só (spec §2.1): GET
-// devolve uma lista de zero ou um item.
+// plural, como a §9, mas cada projeto tem uma página só (e, até o contract,
+// o UNIQUE de user_id também limita a uma por usuário): GET devolve uma lista
+// de zero ou um item.
 type StatusPageHandlers struct {
 	svc     *statuspage.Service
 	baseURL string

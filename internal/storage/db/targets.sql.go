@@ -220,12 +220,14 @@ type InsertTargetParams struct {
 // Toda query de posse daqui filtra por project_id E roda sob a RLS de
 // InProjectTx. As duas barreiras são independentes de propósito (spec §5.5):
 // um WHERE esquecido é pego pela política, e uma política desligada é pega
-// pelo WHERE. As exceções, por user_id, são as cotas do titular no fim do
-// arquivo (LockUserTargets, CountTargets, ListContentRuleTargetURLs).
+// pelo WHERE. As exceções, por user_id, são as cotas no fim do arquivo
+// (LockUserTargets, CountTargets, ListContentRuleTargetURLs): até o PR 2b,
+// contam os alvos de quem chama dentro do projeto atual (a RLS restritiva
+// corta os de outros projetos); o teto por titular vem no PR 2b.
 // user_id é quem criou o alvo; project_id, o projeto em que ele vive. O
 // serviço sempre manda project_id. Ele aceita nulo só para o caminho antigo
-// (InUserTx, o binário anterior e os testes de outros pacotes), em que o
-// gatilho preencher_project_id_padrao põe o Projeto padrão; no escopo de
+// (InUserTx e os testes de outros pacotes), em que o gatilho
+// preencher_project_id_padrao põe o Projeto padrão; no escopo de
 // projeto o gatilho não preenche, e a RLS recusa o nulo (42501).
 func (q *Queries) InsertTarget(ctx context.Context, arg InsertTargetParams) error {
 	_, err := q.db.Exec(ctx, insertTarget,
@@ -364,8 +366,8 @@ type ListContentRuleTargetURLsRow struct {
 	URL string
 }
 
-// O teto de regras por host: as URLs dos alvos do dono com regra,
-// lidas sob LockUserTargets. A chave do host sai em Go (IDNA).
+// O teto de regras por host: as URLs dos alvos com regra de quem chama,
+// dentro do projeto atual até o PR 2b, lidas sob LockUserTargets. A chave do host sai em Go (IDNA).
 func (q *Queries) ListContentRuleTargetURLs(ctx context.Context, userID uuid.UUID) ([]ListContentRuleTargetURLsRow, error) {
 	rows, err := q.db.Query(ctx, listContentRuleTargetURLs, userID)
 	if err != nil {
@@ -777,8 +779,10 @@ const lockUserTargets = `-- name: LockUserTargets :exec
 SELECT pg_advisory_xact_lock(hashtextextended('stillon.targets:' || $1::uuid::text, 0))
 `
 
-// O teto de alvos por usuário: contar e inserir sob esta trava.
-// Sem ela, dois POST simultâneos passariam os dois pela contagem.
+// O teto de alvos: contar e inserir sob esta trava. Até o PR 2b ele vale
+// para o usuário dentro do projeto atual (CountTargets roda sob a RLS
+// restritiva de InProjectTx); o teto por titular vem no PR 2b. Sem a trava,
+// dois POST simultâneos passariam os dois pela contagem.
 func (q *Queries) LockUserTargets(ctx context.Context, userID uuid.UUID) error {
 	_, err := q.db.Exec(ctx, lockUserTargets, userID)
 	return err

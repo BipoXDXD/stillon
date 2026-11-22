@@ -248,7 +248,9 @@ type ListChannelsRow struct {
 	LastError       *string
 }
 
-// Sem paginação: o limite por usuário é pequeno (notify.MaxChannels).
+// Sem paginação: a listagem traz os canais de quem chama no projeto atual,
+// que nunca passam do limite pequeno do usuário (notify.MaxChannels); o teto
+// por titular vem no PR 2b.
 func (q *Queries) ListChannels(ctx context.Context, projectID uuid.UUID) ([]ListChannelsRow, error) {
 	rows, err := q.db.Query(ctx, listChannels, projectID)
 	if err != nil {

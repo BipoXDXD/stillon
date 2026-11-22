@@ -70,7 +70,8 @@ var errorTable = map[ErrorCode]struct {
 	// 502: a falha foi do destino (Discord ou provedor de e-mail), não do
 	// pedido nem deste servidor.
 	CodeDeliveryFailed: {http.StatusBadGateway, "Não foi possível entregar a mensagem de verificação."},
-	// Uma status page por usuário (spec §2.1); a segunda é conflito.
+	// Uma status page por projeto (e por usuário, até o contract); a segunda
+	// é conflito.
 	CodeStatusPageExists: {http.StatusConflict, "Você já tem uma status page."},
 	CodeSlugTaken:        {http.StatusConflict, "Este endereço já está em uso."},
 	// O teto de alvos por usuário.

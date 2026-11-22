@@ -114,8 +114,9 @@ func camposDoCadastro(in Input) fields {
 
 // recusarAlvoAcimaDosTetos conta e decide sob a trava do usuário: sem ela, dois
 // POST simultâneos passariam os dois pela contagem. As contagens vêm todas
-// antes do gancho depoisDeContar e das decisões, e o teto por usuário tem
-// precedência sobre o teto de regras por host.
+// antes do gancho depoisDeContar e das decisões, e o teto de alvos (do usuário
+// dentro do projeto atual até o PR 2b) tem precedência sobre o teto de regras
+// por host.
 func (s *Service) recusarAlvoAcimaDosTetos(ctx context.Context, q *db.Queries, userID uuid.UUID, f fields) error {
 	if err := q.LockUserTargets(ctx, userID); err != nil {
 		return fmt.Errorf("travar alvos do usuário: %w", err)

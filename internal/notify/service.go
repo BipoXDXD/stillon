@@ -22,8 +22,9 @@ import (
 )
 
 const (
-	// MaxChannels é o limite de canais por usuário. Canal é destino de
-	// envio: sem teto, cada canal novo seria mais um alvo de mensagem.
+	// MaxChannels é o limite de canais do usuário (ver cabe e Create para
+	// onde ele é contado; o teto por titular vem no PR 2b). Canal é destino
+	// de envio: sem teto, cada canal novo seria mais um alvo de mensagem.
 	MaxChannels = 10
 	// VerifyTTL é a validade do link de verificação (spec §5.8).
 	VerifyTTL = 24 * time.Hour
@@ -103,8 +104,11 @@ type ChannelInput struct {
 // que confere a pertença e liga a RLS para aquele projeto: as queries filtram
 // por project_id E a política filtra de novo. A permissão vale pelo papel lido
 // NA transação (o escopo que InProjectTx entrega), nunca pelo que quem chamou
-// trouxe. A cota (trava e contagem) continua por user_id, e a verificação por
-// link (CheckToken, ConfirmToken) não sabe nada de projeto.
+// trouxe. A cota (trava e contagem) continua por user_id: a pré-conferência
+// (cabe, sob InUserTx) conta os canais do usuário em todos os projetos, e a
+// definitiva, com a trava, roda dentro de InProjectTx e conta só os do projeto
+// atual; o teto por titular vem no PR 2b. A verificação por link
+// (CheckToken, ConfirmToken) não sabe nada de projeto.
 type ChannelService struct {
 	pool    *pgxpool.Pool
 	box     *crypto.Box
@@ -242,8 +246,10 @@ func (s *ChannelService) exigir(ctx context.Context, scope tenancy.ProjectScope,
 	})
 }
 
-// cabe é a pré-conferência do limite, antes do envio. Continua sob InUserTx:
-// o limite é por usuário, e sob InProjectTx a contagem só veria o projeto.
+// cabe é a pré-conferência do limite, antes do envio. Continua sob InUserTx,
+// em que a contagem vê os canais do usuário em todos os projetos; a
+// conferência definitiva (cabeNa dentro de InProjectTx, em Create) só vê o
+// projeto atual. O teto por titular vem no PR 2b.
 func (s *ChannelService) cabe(ctx context.Context, userID uuid.UUID, travar bool) error {
 	return storage.InUserTx(ctx, s.pool, userID, func(q *db.Queries) error {
 		return s.cabeNa(ctx, q, userID, travar)

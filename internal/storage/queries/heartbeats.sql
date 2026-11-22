@@ -139,9 +139,12 @@ UPDATE heartbeats SET last_incident_at = sqlc.arg(now)::timestamptz WHERE id = s
 
 -- API do dono: as de cima e estas rodam sob InProjectTx e filtram por
 -- project_id, como as de targets.sql. As exceções, por user_id, são as cotas
--- do usuário (LockUserHeartbeats, CountHeartbeats).
+-- (LockUserHeartbeats, CountHeartbeats).
 
--- O teto por usuário: contar e inserir sob esta trava, como LockUserTargets.
+-- O teto de heartbeats: contar e inserir sob esta trava, como LockUserTargets.
+-- Até o PR 2b ele vale para o usuário dentro do projeto atual (a RLS
+-- restritiva de InProjectTx corta os de outros projetos); o teto por titular
+-- vem no PR 2b.
 -- name: LockUserHeartbeats :exec
 SELECT pg_advisory_xact_lock(hashtextextended('stillon.heartbeats:' || sqlc.arg(user_id)::uuid::text, 0));
 
