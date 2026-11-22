@@ -137,6 +137,21 @@ type Notification struct {
 	TargetName    *string
 }
 
+type Project struct {
+	ID        uuid.UUID
+	Name      string
+	TitularID uuid.UUID
+	IsDefault bool
+	CreatedAt time.Time
+}
+
+type ProjectMember struct {
+	ProjectID uuid.UUID
+	UserID    uuid.UUID
+	Role      string
+	CreatedAt time.Time
+}
+
 type Session struct {
 	ID        uuid.UUID
 	UserID    uuid.UUID
@@ -240,4 +255,7 @@ type User struct {
 	TotpLockAlertAt          *time.Time
 	TotpLockAlertPermanent   bool
 	TotpLockAlertAttemptedAt *time.Time
+	IsOperator               bool
+	EmailVerifiedAt          *time.Time
+	SuspendedAt              *time.Time
 }
