@@ -126,12 +126,14 @@ func revogarFamiliaNaReserva(t *testing.T, a *api) {
 // A trava autoritativa contra o reuso do desafio é o ConsumeChallenge, e não a
 // pré-checagem: dois verify com o mesmo desafio passam os dois pela
 // pré-checagem. O perdedor acerta o código e ainda assim leva 401 unauthorized,
-// sem sessão.
+// sem sessão. As duas falhas semeadas antes do verify sobrevivem a ele: a
+// reserva do código certo volta (Refund), e nada zera o contador sem sessão.
 func TestTOTPVerifyRefusesAChallengeConsumedMidRequest(t *testing.T) {
 	a := newAPI(t)
 	c := clientWithJar(t)
 	segredo := cadastrarTOTP(t, a, c)
 	desafio := desafioAtual(t, a, c)
+	errarSenha(t, a, 2)
 	d, err := auth.ParseChallengeToken(testJWTSecret, desafio, a.clk.Now())
 	if err != nil {
 		t.Fatal(err)
@@ -145,8 +147,8 @@ func TestTOTPVerifyRefusesAChallengeConsumedMidRequest(t *testing.T) {
 	if depois, _ := sessoesDoUsuario(t, a); depois != antes {
 		t.Errorf("sessões do usuário: %d antes, %d depois; o desafio consumido abriu sessão", antes, depois)
 	}
-	// O código foi aceito (o timestep gravado disparou o trigger e zerou as
-	// falhas): o 401 veio do consumo do desafio, e não do código.
+	// O código foi aceito (o timestep gravado disparou o trigger): o 401 veio
+	// do consumo do desafio, e não do código.
 	var marca *time.Time
 	if err := a.pool.QueryRow(context.Background(),
 		`SELECT totp_challenge_mark FROM users WHERE id = $1`, a.userID).Scan(&marca); err != nil {
@@ -155,8 +157,9 @@ func TestTOTPVerifyRefusesAChallengeConsumedMidRequest(t *testing.T) {
 	if marca == nil || !marca.Equal(d.IssuedAt) {
 		t.Fatalf("marca = %v, queria %v: o código não chegou a ser aceito", marca, d.IssuedAt)
 	}
-	if falhas, _ := estadoDoBloqueio(t, a); falhas != 0 {
-		t.Errorf("%d falhas contadas; quem perde o consumo acertou o código", falhas)
+	if falhas, _ := estadoDoBloqueio(t, a); falhas != 2 {
+		t.Errorf("%d falhas contadas, queria as 2 semeadas: quem perde o consumo acertou o código "+
+			"(a reserva volta) e não abriu sessão (o contador não zera)", falhas)
 	}
 }
 

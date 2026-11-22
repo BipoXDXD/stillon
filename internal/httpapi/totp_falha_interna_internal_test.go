@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -257,4 +258,30 @@ func TestWrongProofRegistrationFailureAnswers500(t *testing.T) {
 	c.h.provas.errou(w, r, res, c.usuario, apierr.CodeInvalidCredentials)
 
 	conferirErroInternoGenerico(t, w)
+}
+
+// sessoesQueFalham é o banco das sessões fora do ar: toda emissão falha com um
+// erro que não é recusa (nem senha nem segundo fator vencidos).
+type sessoesQueFalham struct{}
+
+func (sessoesQueFalham) InTx(context.Context, func(context.Context, auth.Tx) error) error {
+	return errors.New("banco fora do ar")
+}
+
+// A credencial estava certa e quem falhou foi o servidor ao emitir a sessão: a
+// reserva volta (Refund), e o contador NÃO zera, porque sessão nenhuma nasceu.
+// Zerar ali daria a quem já tem a senha um destravador a cada erro interno.
+func TestIssueThatFailsRefundsTheAttempt(t *testing.T) {
+	c := novoCenarioDoSegundoFator(t)
+	c.h.sessions = auth.NewManager(sessoesQueFalham{}, c.clk, []byte("chave-de-teste-com-32-bytes-ok!!"))
+	tentativas := auth.AccountAttempts(c.contas, c.usuario, nil, c.clk.Now())
+	r := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", nil)
+	w := httptest.NewRecorder()
+
+	c.h.issue(w, r, c.usuario, auth.PasswordStamp("x"), nil, auth.DeviceStamp{}, tentativas)
+
+	conferirErroInternoGenerico(t, w)
+	if c.contas.devolucoes != 1 || c.contas.zeradas != 0 {
+		t.Errorf("devoluções = %d, zeradas = %d; queria 1 e 0", c.contas.devolucoes, c.contas.zeradas)
+	}
 }
