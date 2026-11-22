@@ -22,8 +22,14 @@ var (
 	agoraDoProjeto   = time.Date(2026, 11, 22, 12, 0, 0, 0, time.UTC)
 )
 
+// errProjetoNulo faz o papel de storage.ErrNoProject: o resolvedor real
+// (tenancy.Service → storage.InProjectTx) devolve esse erro, e não
+// tenancy.ErrProjectNotFound, quando recebe o UUID nulo.
+var errProjetoNulo = errors.New("transação de projeto sem projeto")
+
 // resolvedorFalso conhece um vínculo só (membro em projeto) e um Projeto
-// padrão; falha devolve esse erro em toda chamada.
+// padrão; falha devolve esse erro em toda chamada. Como o real, recusa o
+// UUID nulo com errProjetoNulo.
 type resolvedorFalso struct {
 	membro, projeto uuid.UUID
 	padrao          tenancy.ProjectScope
@@ -33,6 +39,9 @@ type resolvedorFalso struct {
 func (f resolvedorFalso) Scope(_ context.Context, userID, projectID uuid.UUID) (tenancy.ProjectScope, error) {
 	if f.falha != nil {
 		return tenancy.ProjectScope{}, f.falha
+	}
+	if projectID == uuid.Nil {
+		return tenancy.ProjectScope{}, errProjetoNulo
 	}
 	if userID != f.membro || projectID != f.projeto {
 		return tenancy.ProjectScope{}, tenancy.ErrProjectNotFound
@@ -109,7 +118,7 @@ func corpoSemTrace(t *testing.T, rec *httptest.ResponseRecorder) map[string]any 
 }
 
 // Quem não é membro não pode distinguir um projeto alheio de um inexistente,
-// nem de um id malformado: as três respostas são o mesmo 404.
+// nem de um id malformado ou do UUID nulo: as respostas são o mesmo 404.
 func TestProjetoDoCaminhoMapsBadUUIDAndNonMemberToSame404(t *testing.T) {
 	membro, estranho, projeto := uuid.New(), uuid.New(), uuid.New()
 	final := &escopoVisto{}
@@ -120,6 +129,7 @@ func TestProjetoDoCaminhoMapsBadUUIDAndNonMemberToSame404(t *testing.T) {
 		usuario       uuid.UUID
 	}{
 		{"id malformado", "/projetos/nao-e-uuid/coisas", membro},
+		{"UUID nulo", "/projetos/" + uuid.Nil.String() + "/coisas", membro},
 		{"projeto inexistente", "/projetos/" + uuid.NewString() + "/coisas", membro},
 		{"projeto de outro", "/projetos/" + projeto.String() + "/coisas", estranho},
 	}

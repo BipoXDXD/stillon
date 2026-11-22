@@ -257,6 +257,22 @@ func TestAnotherUsersProjectIsIndistinguishableFromMissing(t *testing.T) {
 	conferirLeiturasDoDonoIguais(t, antes, lerTudoDoDono(t, a, dono, r, leituras))
 }
 
+// O UUID nulo no {projectID} é um projeto que não existe: o mesmo 404 de um
+// UUID qualquer, e não o 500 do storage.ErrNoProject que InProjectTx devolve
+// quando o recebe.
+func TestNilProjectIDIsIndistinguishableFromMissing(t *testing.T) {
+	a := newAPI(t)
+	dono := tokenDe(t, a, a.userID)
+	stNulo, crNulo := lerCru(t, a, http.MethodGet, "/api/v1/projects/"+uuid.Nil.String()+"/targets", dono, nil)
+	stInexistente, crInexistente := lerCru(t, a, http.MethodGet, "/api/v1/projects/"+uuid.NewString()+"/targets", dono, nil)
+	if stNulo != http.StatusNotFound || stInexistente != http.StatusNotFound {
+		t.Fatalf("UUID nulo deu %d, inexistente %d; queria 404 nos dois:\n%s", stNulo, stInexistente, crNulo)
+	}
+	if semTrace(t, crNulo) != semTrace(t, crInexistente) {
+		t.Errorf("o 404 do UUID nulo difere do inexistente:\n%s\n%s", crNulo, crInexistente)
+	}
+}
+
 // O viewer do projeto do dono lê, mas não escreve: toda gêmea de escrita dá
 // 403 forbidden, e nada do dono muda. As gêmeas de leitura de coleção dão
 // 200. As de leitura por {id} dão 200 ou 404: enquanto a política permissiva

@@ -34,9 +34,11 @@ func Projeto(ctx context.Context) (tenancy.ProjectScope, bool) {
 
 // ProjetoDoCaminho resolve o {projectID} da rota. Vem depois de Authn.
 //
-// Id malformado, projeto inexistente e projeto de que o usuário não é membro
-// dão o MESMO 404 not_found: um 403, ou um 404 diferente, diria a quem não é
-// membro que o projeto existe.
+// Id malformado, UUID nulo, projeto inexistente e projeto de que o usuário não
+// é membro dão o MESMO 404 not_found: um 403, ou um 404 diferente, diria a
+// quem não é membro que o projeto existe. O UUID nulo para aqui porque o
+// resolvedor o recusa como defeito de chamada (storage.ErrNoProject), que
+// viraria 500.
 func ProjetoDoCaminho(res ResolvedorDeProjeto) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -46,7 +48,7 @@ func ProjetoDoCaminho(res ResolvedorDeProjeto) func(http.Handler) http.Handler {
 				return
 			}
 			projectID, err := uuid.Parse(r.PathValue("projectID"))
-			if err != nil {
+			if err != nil || projectID == uuid.Nil {
 				apierr.WriteError(w, r, apierr.CodeNotFound)
 				return
 			}
