@@ -17,7 +17,7 @@ const seteDias = 7 * 24 * time.Hour
 func serieLonga(t *testing.T, a ambiente, dono, alvo uuid.UUID) map[time.Time]targets.Rollup {
 	t.Helper()
 	agora := a.clk.Now()
-	s, err := a.svc.Checks(context.Background(), dono, alvo, agora.Add(-seteDias), agora)
+	s, err := a.svc.Checks(context.Background(), targets.EscopoDe(t, a.pool, dono), alvo, agora.Add(-seteDias), agora)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -149,7 +149,7 @@ func TestChecksLongWindowEndingInThePastStopsAtTo(t *testing.T) {
 	a.gravarCheck(t, alvo, h.Add(-90*time.Minute), "down", 5000)          // 10:30, depois de to
 
 	ate := h.Add(-2 * time.Hour) // 10:00
-	s, err := a.svc.Checks(context.Background(), dono, alvo, ate.Add(-seteDias), ate)
+	s, err := a.svc.Checks(context.Background(), targets.EscopoDe(t, a.pool, dono), alvo, ate.Add(-seteDias), ate)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -204,7 +204,7 @@ func TestChecksLongWindowCharacterization(t *testing.T) {
 	}
 	for _, c := range casos {
 		t.Run(c.nome, func(t *testing.T) {
-			s, err := a.svc.Checks(context.Background(), dono, alvo, c.to.Add(-3*24*time.Hour), c.to)
+			s, err := a.svc.Checks(context.Background(), targets.EscopoDe(t, a.pool, dono), alvo, c.to.Add(-3*24*time.Hour), c.to)
 			if err != nil {
 				t.Fatal(err)
 			}

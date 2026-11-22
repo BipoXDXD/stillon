@@ -21,7 +21,7 @@ import (
 func TestPaginacaoDasListagens(t *testing.T) {
 	alvos, batidas, incidentes := &TargetHandlers{clk: clock.NewFake(time.Now())}, &HeartbeatHandlers{}, &IncidentHandlers{}
 	rotas := map[string]http.HandlerFunc{
-		"targets": alvos.List, "incidents": incidentes.List, "heartbeats": batidas.List,
+		"targets": noProjetoPadrao(alvos.List), "incidents": incidentes.List, "heartbeats": batidas.List,
 		"heartbeats events": batidas.Events, "heartbeats incidents": batidas.Incidents,
 	}
 	cursor := uuid.NewString()

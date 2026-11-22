@@ -85,3 +85,19 @@ func Suspender(t *testing.T, usuario uuid.UUID) {
 		t.Fatalf("suspender %s: usuário não existe", usuario)
 	}
 }
+
+// ProjetoDoAlvo lê, por fora da RLS, o projeto em que o alvo vive. Falha se o
+// alvo não tem projeto: o gatilho só o preenche quando o dono já tem o
+// Projeto padrão (chame ProjetoPadrao antes de criar o alvo).
+func ProjetoDoAlvo(t *testing.T, alvo uuid.UUID) uuid.UUID {
+	t.Helper()
+	var projeto *uuid.UUID
+	if err := Admin(t).QueryRow(context.Background(),
+		`SELECT project_id FROM targets WHERE id = $1`, alvo).Scan(&projeto); err != nil {
+		t.Fatalf("ler o projeto do alvo %s: %v", alvo, err)
+	}
+	if projeto == nil {
+		t.Fatalf("o alvo %s não tem projeto: crie o Projeto padrão do dono antes do alvo", alvo)
+	}
+	return *projeto
+}

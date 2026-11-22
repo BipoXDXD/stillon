@@ -14,12 +14,15 @@ import (
 
 // A série longa de um alvo (GET /targets/{id}/checks acima de 48 h) junta os
 // rollups consolidados e as horas cruas ainda não consolidadas. As duas
-// queries recebem o id do alvo e filtram o dono pelo JOIN com targets.
+// queries recebem o id do alvo e filtram o projeto pelo JOIN com targets.
 
 func TestListRollupsFiltersOwnerWithoutRLS(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
-	a, b := novoUsuario(t, pool), novoUsuario(t, pool)
+	// A e B são dois projetos do MESMO usuário: só o filtro por projeto os
+	// separa (o por dono deixaria passar).
+	a := novoUsuario(t, pool)
+	pa, pb := testdb.ProjetoPadrao(t, a), testdb.NovoProjeto(t, a, "B")
 	alvoA := novoAlvo(t, pool, a, agora)
 	conn := conexaoSemRLS(t)
 	q := db.New(conn)
@@ -27,10 +30,10 @@ func TestListRollupsFiltersOwnerWithoutRLS(t *testing.T) {
 		VALUES ($1, $2, 2, 2, 10, 20, 30, 40)`, alvoA, agora); err != nil {
 		t.Fatal(err)
 	}
-	rollups := func(dono uuid.UUID) []db.ListRollupsRow {
+	rollups := func(projeto uuid.UUID) []db.ListRollupsRow {
 		t.Helper()
 		r, err := q.ListRollups(ctx, db.ListRollupsParams{
-			UserID: dono, TargetID: alvoA, FromAt: agora.Add(-time.Hour), ToAt: agora.Add(time.Hour),
+			ProjectID: projeto, TargetID: alvoA, FromAt: agora.Add(-time.Hour), ToAt: agora.Add(time.Hour),
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -38,10 +41,10 @@ func TestListRollupsFiltersOwnerWithoutRLS(t *testing.T) {
 		return r
 	}
 
-	if deB := rollups(b); len(deB) != 0 {
+	if deB := rollups(pb); len(deB) != 0 {
 		t.Errorf("B leu %d rollups do alvo de A sem RLS, queria 0", len(deB))
 	}
-	deA := rollups(a)
+	deA := rollups(pa)
 	if len(deA) != 1 || !deA[0].Bucket.Equal(agora) || deA[0].Total != 2 {
 		t.Errorf("A leu %v, queria um rollup de total 2 em %s", deA, agora)
 	}
@@ -50,17 +53,20 @@ func TestListRollupsFiltersOwnerWithoutRLS(t *testing.T) {
 func TestListRawHoursOfTargetFiltersOwnerWithoutRLS(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
-	a, b := novoUsuario(t, pool), novoUsuario(t, pool)
+	// A e B são dois projetos do MESMO usuário: só o filtro por projeto os
+	// separa (o por dono deixaria passar).
+	a := novoUsuario(t, pool)
+	pa, pb := testdb.ProjetoPadrao(t, a), testdb.NovoProjeto(t, a, "B")
 	alvoA := novoAlvo(t, pool, a, agora)
 	if err := storage.EnsureChecksPartitions(ctx, pool, agora); err != nil {
 		t.Fatal(err)
 	}
 	novoCheck(t, pool, alvoA, agora.Add(5*time.Minute))
 	q := queriesSemRLS(t)
-	horas := func(dono uuid.UUID) []db.ListRawHoursRow {
+	horas := func(projeto uuid.UUID) []db.ListRawHoursRow {
 		t.Helper()
 		r, err := q.ListRawHours(ctx, db.ListRawHoursParams{
-			UserID: dono, TargetID: &alvoA, FromAt: agora.Add(-time.Hour), ToAt: agora.Add(time.Hour),
+			ProjectID: projeto, TargetID: &alvoA, FromAt: agora.Add(-time.Hour), ToAt: agora.Add(time.Hour),
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -68,21 +74,24 @@ func TestListRawHoursOfTargetFiltersOwnerWithoutRLS(t *testing.T) {
 		return r
 	}
 
-	if deB := horas(b); len(deB) != 0 {
+	if deB := horas(pb); len(deB) != 0 {
 		t.Errorf("B leu %d horas cruas do alvo de A sem RLS, queria 0", len(deB))
 	}
-	deA := horas(a)
+	deA := horas(pa)
 	if len(deA) != 1 || deA[0].TargetID != alvoA || !deA[0].Bucket.Equal(agora) || deA[0].Total != 1 {
 		t.Errorf("A leu %v, queria uma hora de total 1 do alvo %s em %s", deA, alvoA, agora)
 	}
 }
 
-// A marca d'água do resumo é a do dono: sem o filtro, o rollup de A
+// A marca d'água do resumo é a do projeto: sem o filtro, o rollup de A
 // adiantaria a de B, e B pularia as próprias horas ainda não consolidadas.
-func TestLatestUserRollupBucketFiltersOwnerWithoutRLS(t *testing.T) {
+func TestLatestProjectRollupBucketFiltersOwnerWithoutRLS(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
-	a, b := novoUsuario(t, pool), novoUsuario(t, pool)
+	// A e B são dois projetos do MESMO usuário: só o filtro por projeto os
+	// separa (o por dono deixaria passar).
+	a := novoUsuario(t, pool)
+	pa, pb := testdb.ProjetoPadrao(t, a), testdb.NovoProjeto(t, a, "B")
 	alvoA := novoAlvo(t, pool, a, agora)
 	conn := conexaoSemRLS(t)
 	q := db.New(conn)
@@ -91,19 +100,19 @@ func TestLatestUserRollupBucketFiltersOwnerWithoutRLS(t *testing.T) {
 		VALUES ($1, $2, 2, 2, 10, 20, 30, 40)`, alvoA, hora); err != nil {
 		t.Fatal(err)
 	}
-	marca := func(dono uuid.UUID) time.Time {
+	marca := func(projeto uuid.UUID) time.Time {
 		t.Helper()
-		m, err := q.LatestUserRollupBucket(ctx, db.LatestUserRollupBucketParams{Before: agora, UserID: dono})
+		m, err := q.LatestProjectRollupBucket(ctx, db.LatestProjectRollupBucketParams{Before: agora, ProjectID: projeto})
 		if err != nil {
 			t.Fatal(err)
 		}
 		return m
 	}
 
-	if m := marca(b); !m.Equal(time.Unix(0, 0)) {
+	if m := marca(pb); !m.Equal(time.Unix(0, 0)) {
 		t.Errorf("a marca d'água de B sem RLS foi %s, queria a época Unix (o rollup de A vazou)", m.UTC().Format(time.RFC3339))
 	}
-	if m := marca(a); !m.Equal(hora) {
+	if m := marca(pa); !m.Equal(hora) {
 		t.Errorf("a marca d'água de A foi %s, queria %s", m.UTC().Format(time.RFC3339), hora.UTC().Format(time.RFC3339))
 	}
 }

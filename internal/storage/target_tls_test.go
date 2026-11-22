@@ -162,33 +162,35 @@ func TestOwnerCannotWriteTheirOwnTargetTLS(t *testing.T) {
 	}
 }
 
-// As consultas do dono (targets.sql) filtram por user_id além da RLS, e cada
-// barreira vale sozinha, como nas tags. Aqui, o filtro sozinho: sob o escopo
-// de A, a política deixa A ver a própria validade, e só o WHERE barra o pedido
-// feito em nome de B.
+// As consultas do dono (targets.sql) filtram por project_id além da RLS, e
+// cada barreira vale sozinha, como nas tags. Aqui, o filtro sozinho: sob o
+// escopo de A, a política deixa A ver a própria validade, e só o WHERE barra
+// o pedido feito no projeto B, que também é de A.
 func TestTargetTLSOwnerQueriesFilterByTheOwner(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
-	a, b := novoUsuario(t, pool), novoUsuario(t, pool)
+	// O projeto B é do próprio A: só o filtro por projeto o separa do alvo.
+	a := novoUsuario(t, pool)
+	projetoA, projetoB := testdb.ProjetoPadrao(t, a), testdb.NovoProjeto(t, a, "B")
 	alvoA := novoAlvo(t, pool, a, agora)
 	novaValidadeTLS(t, pool, alvoA)
 
 	err := storage.InUserTx(ctx, pool, a, func(q *db.Queries) error {
-		if _, err := q.GetTargetTLSOfOwner(ctx, db.GetTargetTLSOfOwnerParams{UserID: b, TargetID: alvoA}); !errors.Is(err, pgx.ErrNoRows) {
+		if _, err := q.GetTargetTLSOfOwner(ctx, db.GetTargetTLSOfOwnerParams{ProjectID: projetoB, TargetID: alvoA}); !errors.Is(err, pgx.ErrNoRows) {
 			t.Errorf("ler a validade de A em nome de B deu %v, queria ErrNoRows", err)
 		}
-		deB, err := q.ListTargetTLSOfOwner(ctx, b)
+		deB, err := q.ListTargetTLSOfOwner(ctx, projetoB)
 		if err != nil {
 			return err
 		}
 		if len(deB) != 0 {
 			t.Errorf("listar as validades em nome de B devolveu %d linhas de A", len(deB))
 		}
-		if err := q.DeleteTargetTLSOfOwner(ctx, db.DeleteTargetTLSOfOwnerParams{UserID: b, TargetID: alvoA}); err != nil {
+		if err := q.DeleteTargetTLSOfOwner(ctx, db.DeleteTargetTLSOfOwnerParams{ProjectID: projetoB, TargetID: alvoA}); err != nil {
 			return err
 		}
 		// Controle: em nome do dono, a mesma linha aparece.
-		doDono, err := q.ListTargetTLSOfOwner(ctx, a)
+		doDono, err := q.ListTargetTLSOfOwner(ctx, projetoA)
 		if err != nil {
 			return err
 		}

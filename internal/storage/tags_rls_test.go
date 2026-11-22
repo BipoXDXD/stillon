@@ -15,10 +15,11 @@ func TestTagsSaoVisiveisSoAtravesDoAlvo(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
 	a, b := novoUsuario(t, pool), novoUsuario(t, pool)
+	pa, pb := testdb.ProjetoPadrao(t, a), testdb.ProjetoPadrao(t, b)
 	alvoA := novoAlvo(t, pool, a, agora)
 
 	err := storage.InUserTx(ctx, pool, a, func(q *db.Queries) error {
-		return q.InsertTargetTags(ctx, db.InsertTargetTagsParams{Tags: []string{"prod", "api"}, UserID: a, TargetID: alvoA})
+		return q.InsertTargetTags(ctx, db.InsertTargetTagsParams{Tags: []string{"prod", "api"}, ProjectID: pa, TargetID: alvoA})
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -30,9 +31,9 @@ func TestTagsSaoVisiveisSoAtravesDoAlvo(t *testing.T) {
 		t.Errorf("sob o escopo de B, SELECT sem WHERE viu %d tags de A", n)
 	}
 
-	// A política sozinha: o WHERE pede o dono certo, mas o escopo é o de B.
+	// A política sozinha: o WHERE pede o projeto certo, mas o escopo é o de B.
 	err = storage.InUserTx(ctx, pool, b, func(q *db.Queries) error {
-		daA, err := q.ListUserTargetTags(ctx, a)
+		daA, err := q.ListProjectTargetTags(ctx, pa)
 		if err != nil {
 			return err
 		}
@@ -46,9 +47,9 @@ func TestTagsSaoVisiveisSoAtravesDoAlvo(t *testing.T) {
 	}
 
 	// O filtro sozinho: a política deixa A ver as próprias tags, e o WHERE
-	// pede as de B, que A não tem.
+	// pede as do projeto de B, que A não tem.
 	err = storage.InUserTx(ctx, pool, a, func(q *db.Queries) error {
-		deB, err := q.ListUserTargetTags(ctx, b)
+		deB, err := q.ListProjectTargetTags(ctx, pb)
 		if err != nil {
 			return err
 		}
@@ -80,11 +81,12 @@ func TestCheckDaTagRecusaOQueOCodigoNaoDeixariaPassar(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
 	a := novoUsuario(t, pool)
+	testdb.ProjetoPadrao(t, a)
 	alvo := novoAlvo(t, pool, a, agora)
 
 	for _, tag := range []string{"", "a b", "a,b", "a\nb", "aaaaaaaaaaaaaaaaaaaaaaaaa"} {
 		err := storage.InUserTx(ctx, pool, a, func(q *db.Queries) error {
-			return q.InsertTargetTags(ctx, db.InsertTargetTagsParams{Tags: []string{tag}, UserID: a, TargetID: alvo})
+			return q.InsertTargetTags(ctx, db.InsertTargetTagsParams{Tags: []string{tag}, ProjectID: testdb.ProjetoDoAlvo(t, alvo), TargetID: alvo})
 		})
 		if codigoPG(err) != "23514" {
 			t.Errorf("tag %q: %v; queria violação de CHECK (23514)", tag, err)
@@ -96,12 +98,13 @@ func TestApagarOAlvoLevaAsTags(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
 	a := novoUsuario(t, pool)
+	testdb.ProjetoPadrao(t, a)
 	alvo := novoAlvo(t, pool, a, agora)
 	err := storage.InUserTx(ctx, pool, a, func(q *db.Queries) error {
-		if err := q.InsertTargetTags(ctx, db.InsertTargetTagsParams{Tags: []string{"prod"}, UserID: a, TargetID: alvo}); err != nil {
+		if err := q.InsertTargetTags(ctx, db.InsertTargetTagsParams{Tags: []string{"prod"}, ProjectID: testdb.ProjetoDoAlvo(t, alvo), TargetID: alvo}); err != nil {
 			return err
 		}
-		n, err := q.DeleteTarget(ctx, db.DeleteTargetParams{UserID: a, ID: alvo})
+		n, err := q.DeleteTarget(ctx, db.DeleteTargetParams{ProjectID: testdb.ProjetoDoAlvo(t, alvo), ID: alvo})
 		if n != 1 {
 			t.Errorf("apagou %d alvos", n)
 		}

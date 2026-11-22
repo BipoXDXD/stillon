@@ -98,6 +98,12 @@ func TestCreatedUserTargetLandsInDefaultProject(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	var padrao uuid.UUID
+	if err := testdb.Admin(t).QueryRow(ctx,
+		`SELECT id FROM projects WHERE titular_id = $1 AND is_default`, id).Scan(&padrao); err != nil {
+		t.Fatalf("ler o Projeto padrão: %v", err)
+	}
+
 	alvo := uuid.New()
 	agora := time.Date(2026, 11, 22, 9, 30, 0, 0, time.UTC)
 	var got db.Target
@@ -110,17 +116,11 @@ func TestCreatedUserTargetLandsInDefaultProject(t *testing.T) {
 			return err
 		}
 		var err error
-		got, err = q.GetTarget(ctx, db.GetTargetParams{UserID: id, ID: alvo})
+		got, err = q.GetTarget(ctx, db.GetTargetParams{ProjectID: padrao, ID: alvo})
 		return err
 	})
 	if err != nil {
 		t.Fatal(err)
-	}
-
-	var padrao uuid.UUID
-	if err := testdb.Admin(t).QueryRow(ctx,
-		`SELECT id FROM projects WHERE titular_id = $1 AND is_default`, id).Scan(&padrao); err != nil {
-		t.Fatalf("ler o Projeto padrão: %v", err)
 	}
 	if got.ProjectID == nil || *got.ProjectID != padrao {
 		t.Errorf("project_id do alvo = %v, queria o Projeto padrão %v", got.ProjectID, padrao)

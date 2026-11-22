@@ -24,16 +24,16 @@ func (q *Queries) CountTargets(ctx context.Context, userID uuid.UUID) (int64, er
 }
 
 const deleteTarget = `-- name: DeleteTarget :execrows
-DELETE FROM targets WHERE user_id = $1 AND id = $2
+DELETE FROM targets WHERE project_id = $1::uuid AND id = $2
 `
 
 type DeleteTargetParams struct {
-	UserID uuid.UUID
-	ID     uuid.UUID
+	ProjectID uuid.UUID
+	ID        uuid.UUID
 }
 
 func (q *Queries) DeleteTarget(ctx context.Context, arg DeleteTargetParams) (int64, error) {
-	result, err := q.db.Exec(ctx, deleteTarget, arg.UserID, arg.ID)
+	result, err := q.db.Exec(ctx, deleteTarget, arg.ProjectID, arg.ID)
 	if err != nil {
 		return 0, err
 	}
@@ -44,33 +44,33 @@ const deleteTargetTLSOfOwner = `-- name: DeleteTargetTLSOfOwner :exec
 DELETE FROM target_tls tt
  WHERE tt.target_id = $1
    AND EXISTS (SELECT 1 FROM targets t
-                WHERE t.id = tt.target_id AND t.user_id = $2)
+                WHERE t.id = tt.target_id AND t.project_id = $2::uuid)
 `
 
 type DeleteTargetTLSOfOwnerParams struct {
-	TargetID uuid.UUID
-	UserID   uuid.UUID
+	TargetID  uuid.UUID
+	ProjectID uuid.UUID
 }
 
 // Outro host é outro certificado: a leitura do anterior não vale para ele.
 func (q *Queries) DeleteTargetTLSOfOwner(ctx context.Context, arg DeleteTargetTLSOfOwnerParams) error {
-	_, err := q.db.Exec(ctx, deleteTargetTLSOfOwner, arg.TargetID, arg.UserID)
+	_, err := q.db.Exec(ctx, deleteTargetTLSOfOwner, arg.TargetID, arg.ProjectID)
 	return err
 }
 
 const deleteTargetTags = `-- name: DeleteTargetTags :exec
 DELETE FROM target_tags tt
  USING targets t
- WHERE t.id = tt.target_id AND t.user_id = $1 AND tt.target_id = $2
+ WHERE t.id = tt.target_id AND t.project_id = $1::uuid AND tt.target_id = $2
 `
 
 type DeleteTargetTagsParams struct {
-	UserID   uuid.UUID
-	TargetID uuid.UUID
+	ProjectID uuid.UUID
+	TargetID  uuid.UUID
 }
 
 func (q *Queries) DeleteTargetTags(ctx context.Context, arg DeleteTargetTagsParams) error {
-	_, err := q.db.Exec(ctx, deleteTargetTags, arg.UserID, arg.TargetID)
+	_, err := q.db.Exec(ctx, deleteTargetTags, arg.ProjectID, arg.TargetID)
 	return err
 }
 
@@ -79,16 +79,16 @@ SELECT id, user_id, name, url, method, interval_sec, timeout_ms,
        expected_status, headers_enc, degraded_threshold_ms, enabled, next_run_at,
        created_at, tls_warn, content_mode, content_value, content_json_pointer,
        project_id
-  FROM targets WHERE user_id = $1 AND id = $2
+  FROM targets WHERE project_id = $1::uuid AND id = $2
 `
 
 type GetTargetParams struct {
-	UserID uuid.UUID
-	ID     uuid.UUID
+	ProjectID uuid.UUID
+	ID        uuid.UUID
 }
 
 func (q *Queries) GetTarget(ctx context.Context, arg GetTargetParams) (Target, error) {
-	row := q.db.QueryRow(ctx, getTarget, arg.UserID, arg.ID)
+	row := q.db.QueryRow(ctx, getTarget, arg.ProjectID, arg.ID)
 	var i Target
 	err := row.Scan(
 		&i.ID,
@@ -118,19 +118,19 @@ SELECT id, user_id, name, url, method, interval_sec, timeout_ms,
        expected_status, headers_enc, degraded_threshold_ms, enabled, next_run_at,
        created_at, tls_warn, content_mode, content_value, content_json_pointer,
        project_id
-  FROM targets WHERE user_id = $1 AND id = $2 FOR UPDATE
+  FROM targets WHERE project_id = $1::uuid AND id = $2 FOR UPDATE
 `
 
 type GetTargetForUpdateParams struct {
-	UserID uuid.UUID
-	ID     uuid.UUID
+	ProjectID uuid.UUID
+	ID        uuid.UUID
 }
 
 // FOR UPDATE, e não FOR NO KEY UPDATE: a gravação do sondador
 // (LockTargetProbeSpec, FOR KEY SHARE) precisa esperar o PATCH inteiro para
 // ver a URL nova.
 func (q *Queries) GetTargetForUpdate(ctx context.Context, arg GetTargetForUpdateParams) (Target, error) {
-	row := q.db.QueryRow(ctx, getTargetForUpdate, arg.UserID, arg.ID)
+	row := q.db.QueryRow(ctx, getTargetForUpdate, arg.ProjectID, arg.ID)
 	var i Target
 	err := row.Scan(
 		&i.ID,
@@ -160,12 +160,12 @@ SELECT tt.not_after, tt.observed_at
   FROM target_tls tt
  WHERE tt.target_id = $1
    AND EXISTS (SELECT 1 FROM targets t
-                WHERE t.id = tt.target_id AND t.user_id = $2)
+                WHERE t.id = tt.target_id AND t.project_id = $2::uuid)
 `
 
 type GetTargetTLSOfOwnerParams struct {
-	TargetID uuid.UUID
-	UserID   uuid.UUID
+	TargetID  uuid.UUID
+	ProjectID uuid.UUID
 }
 
 type GetTargetTLSOfOwnerRow struct {
@@ -173,11 +173,11 @@ type GetTargetTLSOfOwnerRow struct {
 	ObservedAt time.Time
 }
 
-// A validade do certificado (spec §7.2), lida e apagada pelo dono. Como em
-// ResetTargetHealth, o EXISTS filtra pelo dono além da RLS de target_tls. Só o
+// A validade do certificado (spec §7.2), lida e apagada pelo projeto. Como em
+// ResetTargetHealth, o EXISTS filtra pelo projeto além da RLS de target_tls. Só o
 // sondador grava a linha (prober.sql).
 func (q *Queries) GetTargetTLSOfOwner(ctx context.Context, arg GetTargetTLSOfOwnerParams) (GetTargetTLSOfOwnerRow, error) {
-	row := q.db.QueryRow(ctx, getTargetTLSOfOwner, arg.TargetID, arg.UserID)
+	row := q.db.QueryRow(ctx, getTargetTLSOfOwner, arg.TargetID, arg.ProjectID)
 	var i GetTargetTLSOfOwnerRow
 	err := row.Scan(&i.NotAfter, &i.ObservedAt)
 	return i, err
@@ -188,8 +188,12 @@ const insertTarget = `-- name: InsertTarget :exec
 INSERT INTO targets (id, user_id, name, url, method, interval_sec, timeout_ms,
                      expected_status, headers_enc, degraded_threshold_ms, enabled,
                      next_run_at, created_at, tls_warn, content_mode, content_value,
-                     content_json_pointer)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+                     content_json_pointer, project_id)
+VALUES ($1, $2, $3, $4, $5,
+        $6, $7, $8,
+        $9, $10, $11,
+        $12, $13, $14, $15,
+        $16, $17, $18::uuid)
 `
 
 type InsertTargetParams struct {
@@ -210,11 +214,19 @@ type InsertTargetParams struct {
 	ContentMode         *string
 	ContentValue        *string
 	ContentJsonPointer  *string
+	ProjectID           *uuid.UUID
 }
 
-// Toda query daqui filtra por user_id E roda sob a RLS de InUserTx. As duas
-// barreiras são independentes de propósito (spec §5.5): um WHERE esquecido
-// é pego pela política, e uma política desligada é pega pelo WHERE.
+// Toda query de posse daqui filtra por project_id E roda sob a RLS de
+// InProjectTx. As duas barreiras são independentes de propósito (spec §5.5):
+// um WHERE esquecido é pego pela política, e uma política desligada é pega
+// pelo WHERE. As exceções, por user_id, são as cotas do titular no fim do
+// arquivo (LockUserTargets, CountTargets, ListContentRuleTargetURLs).
+// user_id é quem criou o alvo; project_id, o projeto em que ele vive. O
+// serviço sempre manda project_id. Ele aceita nulo só para o caminho antigo
+// (InUserTx, o binário anterior e os testes de outros pacotes), em que o
+// gatilho preencher_project_id_padrao põe o Projeto padrão; no escopo de
+// projeto o gatilho não preenche, e a RLS recusa o nulo (42501).
 func (q *Queries) InsertTarget(ctx context.Context, arg InsertTargetParams) error {
 	_, err := q.db.Exec(ctx, insertTarget,
 		arg.ID,
@@ -234,6 +246,7 @@ func (q *Queries) InsertTarget(ctx context.Context, arg InsertTargetParams) erro
 		arg.ContentMode,
 		arg.ContentValue,
 		arg.ContentJsonPointer,
+		arg.ProjectID,
 	)
 	return err
 }
@@ -242,44 +255,44 @@ const insertTargetTags = `-- name: InsertTargetTags :exec
 INSERT INTO target_tags (target_id, tag)
 SELECT t.id, unnest($1::text[])
   FROM targets t
- WHERE t.user_id = $2 AND t.id = $3
+ WHERE t.project_id = $2::uuid AND t.id = $3
 `
 
 type InsertTargetTagsParams struct {
-	Tags     []string
-	UserID   uuid.UUID
-	TargetID uuid.UUID
+	Tags      []string
+	ProjectID uuid.UUID
+	TargetID  uuid.UUID
 }
 
 func (q *Queries) InsertTargetTags(ctx context.Context, arg InsertTargetTagsParams) error {
-	_, err := q.db.Exec(ctx, insertTargetTags, arg.Tags, arg.UserID, arg.TargetID)
+	_, err := q.db.Exec(ctx, insertTargetTags, arg.Tags, arg.ProjectID, arg.TargetID)
 	return err
 }
 
-const latestUserRollupBucket = `-- name: LatestUserRollupBucket :one
+const latestProjectRollupBucket = `-- name: LatestProjectRollupBucket :one
 SELECT coalesce(max(r.bucket), 'epoch'::timestamptz)::timestamptz
   FROM targets t
   CROSS JOIN LATERAL (
        SELECT bucket FROM check_rollup_1h
         WHERE target_id = t.id AND bucket < $1::timestamptz
         ORDER BY bucket DESC LIMIT 1) r
- WHERE t.user_id = $2
+ WHERE t.project_id = $2::uuid
 `
 
-type LatestUserRollupBucketParams struct {
-	Before time.Time
-	UserID uuid.UUID
+type LatestProjectRollupBucketParams struct {
+	Before    time.Time
+	ProjectID uuid.UUID
 }
 
-// A marca d'água DO DONO: a hora mais recente já consolidada entre os alvos
-// dele. max(bucket) da tabela inteira não serve: sob a RLS, um dono sem
+// A marca d'água DO PROJETO: a hora mais recente já consolidada entre os
+// alvos dele. max(bucket) da tabela inteira não serve: sob a RLS, um projeto sem
 // rollups recentes faria o Postgres varrer o índice de bucket da instância
 // inteira, testando a política linha a linha. Só conta rollup ANTES de before
 // (a hora corrente): um gravado no futuro por relógio adiantado esconderia as
 // horas ainda não consolidadas (a mesma guarda de
 // LatestRollupBucketBefore). Sem rollup, a época Unix.
-func (q *Queries) LatestUserRollupBucket(ctx context.Context, arg LatestUserRollupBucketParams) (time.Time, error) {
-	row := q.db.QueryRow(ctx, latestUserRollupBucket, arg.Before, arg.UserID)
+func (q *Queries) LatestProjectRollupBucket(ctx context.Context, arg LatestProjectRollupBucketParams) (time.Time, error) {
+	row := q.db.QueryRow(ctx, latestProjectRollupBucket, arg.Before, arg.ProjectID)
 	var column_1 time.Time
 	err := row.Scan(&column_1)
 	return column_1, err
@@ -289,7 +302,7 @@ const listChecks = `-- name: ListChecks :many
 SELECT c.checked_at, c.status, c.latency_ms, c.status_code, c.error_kind
   FROM checks c
   JOIN targets t ON t.id = c.target_id
- WHERE t.user_id = $1
+ WHERE t.project_id = $1::uuid
    AND c.target_id = $2
    AND c.checked_at >= $3
    AND c.checked_at < $4
@@ -297,10 +310,10 @@ SELECT c.checked_at, c.status, c.latency_ms, c.status_code, c.error_kind
 `
 
 type ListChecksParams struct {
-	UserID   uuid.UUID
-	TargetID uuid.UUID
-	FromAt   time.Time
-	ToAt     time.Time
+	ProjectID uuid.UUID
+	TargetID  uuid.UUID
+	FromAt    time.Time
+	ToAt      time.Time
 }
 
 type ListChecksRow struct {
@@ -313,7 +326,7 @@ type ListChecksRow struct {
 
 func (q *Queries) ListChecks(ctx context.Context, arg ListChecksParams) ([]ListChecksRow, error) {
 	rows, err := q.db.Query(ctx, listChecks,
-		arg.UserID,
+		arg.ProjectID,
 		arg.TargetID,
 		arg.FromAt,
 		arg.ToAt,
@@ -373,6 +386,34 @@ func (q *Queries) ListContentRuleTargetURLs(ctx context.Context, userID uuid.UUI
 	return items, nil
 }
 
+const listProjectTargetTags = `-- name: ListProjectTargetTags :many
+SELECT tt.target_id, tt.tag
+  FROM target_tags tt
+  JOIN targets t ON t.id = tt.target_id
+ WHERE t.project_id = $1::uuid
+ ORDER BY tt.target_id, tt.tag
+`
+
+func (q *Queries) ListProjectTargetTags(ctx context.Context, projectID uuid.UUID) ([]TargetTag, error) {
+	rows, err := q.db.Query(ctx, listProjectTargetTags, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []TargetTag
+	for rows.Next() {
+		var i TargetTag
+		if err := rows.Scan(&i.TargetID, &i.Tag); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listRawHours = `-- name: ListRawHours :many
 SELECT c.target_id,
        to_timestamp(floor(extract(epoch FROM c.checked_at) / 3600) * 3600)::timestamptz AS bucket,
@@ -387,7 +428,7 @@ SELECT c.target_id,
        coalesce(max(c.latency_ms) FILTER (WHERE c.status <> 'down'), 0)::int AS max
   FROM checks c
   JOIN targets t ON t.id = c.target_id
- WHERE t.user_id = $1
+ WHERE t.project_id = $1::uuid
    AND ($2::uuid IS NULL OR c.target_id = $2::uuid)
    AND c.checked_at >= $3::timestamptz
    AND c.checked_at < $4::timestamptz
@@ -396,10 +437,10 @@ SELECT c.target_id,
 `
 
 type ListRawHoursParams struct {
-	UserID   uuid.UUID
-	TargetID *uuid.UUID
-	FromAt   time.Time
-	ToAt     time.Time
+	ProjectID uuid.UUID
+	TargetID  *uuid.UUID
+	FromAt    time.Time
+	ToAt      time.Time
 }
 
 type ListRawHoursRow struct {
@@ -414,14 +455,14 @@ type ListRawHoursRow struct {
 }
 
 // As horas cheias ainda não consolidadas, com a MESMA fórmula de
-// ConsolidateRollups. Serve o resumo (todos os alvos do dono, target_id nulo)
+// ConsolidateRollups. Serve o resumo (todos os alvos do projeto, target_id nulo)
 // e a série longa de um alvo (GET /targets/{id}/checks acima de 48 h). As
 // latências saem 0 numa hora sem sucesso (o sqlc não enxerga a nulidade do
 // percentil); quem lê usa ok = 0 para saber que não há latência, a mesma
 // regra do CHECK de check_rollup_1h.
 func (q *Queries) ListRawHours(ctx context.Context, arg ListRawHoursParams) ([]ListRawHoursRow, error) {
 	rows, err := q.db.Query(ctx, listRawHours,
-		arg.UserID,
+		arg.ProjectID,
 		arg.TargetID,
 		arg.FromAt,
 		arg.ToAt,
@@ -457,16 +498,16 @@ const listSummaryCurrentHour = `-- name: ListSummaryCurrentHour :many
 SELECT c.target_id, count(*)::int AS total, (count(*) FILTER (WHERE c.status <> 'down'))::int AS ok
   FROM checks c
   JOIN targets t ON t.id = c.target_id
- WHERE t.user_id = $1
+ WHERE t.project_id = $1::uuid
    AND c.checked_at >= $2::timestamptz
    AND c.checked_at < $3::timestamptz
  GROUP BY 1
 `
 
 type ListSummaryCurrentHourParams struct {
-	UserID uuid.UUID
-	FromAt time.Time
-	ToAt   time.Time
+	ProjectID uuid.UUID
+	FromAt    time.Time
+	ToAt      time.Time
 }
 
 type ListSummaryCurrentHourRow struct {
@@ -478,7 +519,7 @@ type ListSummaryCurrentHourRow struct {
 // A hora corrente entra só no uptime, não no spark: só contagens, sem
 // percentil.
 func (q *Queries) ListSummaryCurrentHour(ctx context.Context, arg ListSummaryCurrentHourParams) ([]ListSummaryCurrentHourRow, error) {
-	rows, err := q.db.Query(ctx, listSummaryCurrentHour, arg.UserID, arg.FromAt, arg.ToAt)
+	rows, err := q.db.Query(ctx, listSummaryCurrentHour, arg.ProjectID, arg.FromAt, arg.ToAt)
 	if err != nil {
 		return nil, err
 	}
@@ -501,15 +542,15 @@ const listSummaryRollups = `-- name: ListSummaryRollups :many
 SELECT r.target_id, r.bucket, r.total, r.ok, r.p50
   FROM check_rollup_1h r
   JOIN targets t ON t.id = r.target_id
- WHERE t.user_id = $1
+ WHERE t.project_id = $1::uuid
    AND r.bucket >= $2::timestamptz
    AND r.bucket < $3::timestamptz
 `
 
 type ListSummaryRollupsParams struct {
-	UserID uuid.UUID
-	FromAt time.Time
-	ToAt   time.Time
+	ProjectID uuid.UUID
+	FromAt    time.Time
+	ToAt      time.Time
 }
 
 type ListSummaryRollupsRow struct {
@@ -521,7 +562,7 @@ type ListSummaryRollupsRow struct {
 }
 
 func (q *Queries) ListSummaryRollups(ctx context.Context, arg ListSummaryRollupsParams) ([]ListSummaryRollupsRow, error) {
-	rows, err := q.db.Query(ctx, listSummaryRollups, arg.UserID, arg.FromAt, arg.ToAt)
+	rows, err := q.db.Query(ctx, listSummaryRollups, arg.ProjectID, arg.FromAt, arg.ToAt)
 	if err != nil {
 		return nil, err
 	}
@@ -559,7 +600,7 @@ SELECT t.id, t.name, t.enabled, t.interval_sec,
         WHERE c.target_id = t.id
         ORDER BY c.checked_at DESC LIMIT 1) lc ON true
   LEFT JOIN incidents x ON x.target_id = t.id AND x.resolved_at IS NULL
- WHERE t.user_id = $1
+ WHERE t.project_id = $1::uuid
  ORDER BY t.id DESC
 `
 
@@ -574,14 +615,14 @@ type ListTargetSummariesRow struct {
 	OpenIncidentID *uuid.UUID
 }
 
-// GET /targets/summary. Todas rodam sob InUserTx E filtram por
-// user_id, como as de cima.
-// Os alvos do dono na ordem de GET /targets, com o último check e o incidente
+// GET /targets/summary. Todas rodam sob InProjectTx E filtram por
+// project_id, como as de cima.
+// Os alvos do projeto na ordem de GET /targets, com o último check e o incidente
 // aberto (o índice único parcial garante no máximo um). Alvo sem check volta
 // com last_status ” e last_checked_at na época Unix, como ListPublicItems: o
 // sqlc não enxerga a nulidade de um LEFT JOIN LATERAL.
-func (q *Queries) ListTargetSummaries(ctx context.Context, userID uuid.UUID) ([]ListTargetSummariesRow, error) {
-	rows, err := q.db.Query(ctx, listTargetSummaries, userID)
+func (q *Queries) ListTargetSummaries(ctx context.Context, projectID uuid.UUID) ([]ListTargetSummariesRow, error) {
+	rows, err := q.db.Query(ctx, listTargetSummaries, projectID)
 	if err != nil {
 		return nil, err
 	}
@@ -613,13 +654,13 @@ const listTargetTLSOfOwner = `-- name: ListTargetTLSOfOwner :many
 SELECT tt.target_id, tt.not_after, tt.observed_at
   FROM target_tls tt
  WHERE EXISTS (SELECT 1 FROM targets t
-                WHERE t.id = tt.target_id AND t.user_id = $1)
+                WHERE t.id = tt.target_id AND t.project_id = $1::uuid)
 `
 
-// As validades de todos os alvos do dono numa consulta só: a lista não lê
+// As validades de todos os alvos do projeto numa consulta só: a lista não lê
 // uma por alvo.
-func (q *Queries) ListTargetTLSOfOwner(ctx context.Context, userID uuid.UUID) ([]TargetTLS, error) {
-	rows, err := q.db.Query(ctx, listTargetTLSOfOwner, userID)
+func (q *Queries) ListTargetTLSOfOwner(ctx context.Context, projectID uuid.UUID) ([]TargetTLS, error) {
+	rows, err := q.db.Query(ctx, listTargetTLSOfOwner, projectID)
 	if err != nil {
 		return nil, err
 	}
@@ -642,19 +683,19 @@ const listTargetTags = `-- name: ListTargetTags :many
 SELECT tt.tag
   FROM target_tags tt
   JOIN targets t ON t.id = tt.target_id
- WHERE t.user_id = $1 AND tt.target_id = $2
+ WHERE t.project_id = $1::uuid AND tt.target_id = $2
  ORDER BY tt.tag
 `
 
 type ListTargetTagsParams struct {
-	UserID   uuid.UUID
-	TargetID uuid.UUID
+	ProjectID uuid.UUID
+	TargetID  uuid.UUID
 }
 
 // Tags (spec do painel denso). As duas leituras saem ordenadas pela tag, e a
-// do dono serve a lista e o resumo sem uma consulta por alvo.
+// do projeto serve a lista e o resumo sem uma consulta por alvo.
 func (q *Queries) ListTargetTags(ctx context.Context, arg ListTargetTagsParams) ([]string, error) {
-	rows, err := q.db.Query(ctx, listTargetTags, arg.UserID, arg.TargetID)
+	rows, err := q.db.Query(ctx, listTargetTags, arg.ProjectID, arg.TargetID)
 	if err != nil {
 		return nil, err
 	}
@@ -679,22 +720,22 @@ SELECT id, user_id, name, url, method, interval_sec, timeout_ms,
        created_at, tls_warn, content_mode, content_value, content_json_pointer,
        project_id
   FROM targets
- WHERE user_id = $1
+ WHERE project_id = $1::uuid
    AND ($2::uuid IS NULL OR id < $2::uuid)
  ORDER BY id DESC
  LIMIT $3::int
 `
 
 type ListTargetsParams struct {
-	UserID  uuid.UUID
-	Before  *uuid.UUID
-	MaxRows int32
+	ProjectID uuid.UUID
+	Before    *uuid.UUID
+	MaxRows   int32
 }
 
 // Paginação por cursor (spec §9.1): o id é UUIDv7, ordenável por tempo, e o
 // cursor é o último id da página anterior.
 func (q *Queries) ListTargets(ctx context.Context, arg ListTargetsParams) ([]Target, error) {
-	rows, err := q.db.Query(ctx, listTargets, arg.UserID, arg.Before, arg.MaxRows)
+	rows, err := q.db.Query(ctx, listTargets, arg.ProjectID, arg.Before, arg.MaxRows)
 	if err != nil {
 		return nil, err
 	}
@@ -732,34 +773,6 @@ func (q *Queries) ListTargets(ctx context.Context, arg ListTargetsParams) ([]Tar
 	return items, nil
 }
 
-const listUserTargetTags = `-- name: ListUserTargetTags :many
-SELECT tt.target_id, tt.tag
-  FROM target_tags tt
-  JOIN targets t ON t.id = tt.target_id
- WHERE t.user_id = $1
- ORDER BY tt.target_id, tt.tag
-`
-
-func (q *Queries) ListUserTargetTags(ctx context.Context, userID uuid.UUID) ([]TargetTag, error) {
-	rows, err := q.db.Query(ctx, listUserTargetTags, userID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []TargetTag
-	for rows.Next() {
-		var i TargetTag
-		if err := rows.Scan(&i.TargetID, &i.Tag); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const lockUserTargets = `-- name: LockUserTargets :exec
 SELECT pg_advisory_xact_lock(hashtextextended('stillon.targets:' || $1::uuid::text, 0))
 `
@@ -776,35 +789,36 @@ UPDATE target_health
    SET consecutive_failures = 0, consecutive_successes = 0, streak_since = NULL
  WHERE target_id = $1
    AND EXISTS (SELECT 1 FROM targets t
-                WHERE t.id = target_health.target_id AND t.user_id = $2)
+                WHERE t.id = target_health.target_id AND t.project_id = $2::uuid)
 `
 
 type ResetTargetHealthParams struct {
-	TargetID uuid.UUID
-	UserID   uuid.UUID
+	TargetID  uuid.UUID
+	ProjectID uuid.UUID
 }
 
 // Trocar a URL, o método ou a regra de conteúdo zera a
 // histerese (a linha volta a "sem dados"). last_checked_at fica: é a guarda
-// de check fora de ordem do detector. O EXISTS filtra pelo dono, como o resto
+// de check fora de ordem do detector. O EXISTS filtra pelo projeto, como o resto
 // deste arquivo, além da RLS de target_health.
 func (q *Queries) ResetTargetHealth(ctx context.Context, arg ResetTargetHealthParams) error {
-	_, err := q.db.Exec(ctx, resetTargetHealth, arg.TargetID, arg.UserID)
+	_, err := q.db.Exec(ctx, resetTargetHealth, arg.TargetID, arg.ProjectID)
 	return err
 }
 
 const updateTarget = `-- name: UpdateTarget :exec
 UPDATE targets
-   SET name = $3, url = $4, method = $5, interval_sec = $6, timeout_ms = $7,
-       expected_status = $8, headers_enc = $9, degraded_threshold_ms = $10,
-       enabled = $11, next_run_at = $12, tls_warn = $13,
-       content_mode = $14, content_value = $15, content_json_pointer = $16
- WHERE user_id = $1 AND id = $2
+   SET name = $1, url = $2, method = $3,
+       interval_sec = $4, timeout_ms = $5,
+       expected_status = $6, headers_enc = $7,
+       degraded_threshold_ms = $8, enabled = $9,
+       next_run_at = $10, tls_warn = $11,
+       content_mode = $12, content_value = $13,
+       content_json_pointer = $14
+ WHERE project_id = $15::uuid AND id = $16
 `
 
 type UpdateTargetParams struct {
-	UserID              uuid.UUID
-	ID                  uuid.UUID
 	Name                string
 	URL                 string
 	Method              string
@@ -819,12 +833,12 @@ type UpdateTargetParams struct {
 	ContentMode         *string
 	ContentValue        *string
 	ContentJsonPointer  *string
+	ProjectID           uuid.UUID
+	ID                  uuid.UUID
 }
 
 func (q *Queries) UpdateTarget(ctx context.Context, arg UpdateTargetParams) error {
 	_, err := q.db.Exec(ctx, updateTarget,
-		arg.UserID,
-		arg.ID,
 		arg.Name,
 		arg.URL,
 		arg.Method,
@@ -839,6 +853,8 @@ func (q *Queries) UpdateTarget(ctx context.Context, arg UpdateTargetParams) erro
 		arg.ContentMode,
 		arg.ContentValue,
 		arg.ContentJsonPointer,
+		arg.ProjectID,
+		arg.ID,
 	)
 	return err
 }

@@ -20,7 +20,7 @@ func ligarTLSWarn(t *testing.T, a ambiente, dono uuid.UUID, ligado bool) targets
 	t.Helper()
 	in := entrada()
 	in.TLSWarn = ligado
-	alvo, err := a.svc.Create(context.Background(), dono, in)
+	alvo, err := a.svc.Create(context.Background(), targets.EscopoDe(t, a.pool, dono), in)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,14 +44,14 @@ func TestUpdateTLSWarnGravaOValorEnviado(t *testing.T) {
 			dono := a.usuario(t)
 			alvo := ligarTLSWarn(t, a, dono, c.antes)
 
-			devolvido, err := a.svc.Update(ctx, dono, alvo.ID, targets.Patch{TLSWarn: &c.enviar})
+			devolvido, err := a.svc.Update(ctx, targets.EscopoDe(t, a.pool, dono), alvo.ID, targets.Patch{TLSWarn: &c.enviar})
 			if err != nil {
 				t.Fatal(err)
 			}
 			if devolvido.TLSWarn != c.enviar {
 				t.Errorf("Update devolveu TLSWarn = %v, queria %v", devolvido.TLSWarn, c.enviar)
 			}
-			lido, err := a.svc.Get(ctx, dono, alvo.ID)
+			lido, err := a.svc.Get(ctx, targets.EscopoDe(t, a.pool, dono), alvo.ID)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -69,14 +69,14 @@ func TestUpdateSemTLSWarnMantemOAvisoGravado(t *testing.T) {
 	dono := a.usuario(t)
 	alvo := ligarTLSWarn(t, a, dono, true)
 
-	devolvido, err := a.svc.Update(ctx, dono, alvo.ID, targets.Patch{Name: ptr("Outro nome")})
+	devolvido, err := a.svc.Update(ctx, targets.EscopoDe(t, a.pool, dono), alvo.ID, targets.Patch{Name: ptr("Outro nome")})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !devolvido.TLSWarn {
 		t.Error("Update devolveu TLSWarn = false depois de um PATCH que não o citou")
 	}
-	lido, err := a.svc.Get(ctx, dono, alvo.ID)
+	lido, err := a.svc.Get(ctx, targets.EscopoDe(t, a.pool, dono), alvo.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +89,7 @@ func TestUpdateSemTLSWarnMantemOAvisoGravado(t *testing.T) {
 // ficado gravado: o erro da transação desfaz também o UPDATE que já rodou.
 func exigirAlvoIntacto(t *testing.T, a ambiente, dono, id uuid.UUID, nome, url string, tags []string) {
 	t.Helper()
-	lido, err := a.svc.Get(context.Background(), dono, id)
+	lido, err := a.svc.Get(context.Background(), targets.EscopoDe(t, a.pool, dono), id)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,7 +115,7 @@ func TestUpdateFalhaAoLerAsTagsComACausaDoBanco(t *testing.T) {
 	alvo := a.alvo(t, dono)
 	alterarDDLComplementar(t, a, renomearTags, voltarTags)
 
-	_, err := a.svc.Update(context.Background(), dono, alvo, targets.Patch{Name: ptr("Novo nome")})
+	_, err := a.svc.Update(context.Background(), targets.EscopoDe(t, a.pool, dono), alvo, targets.Patch{Name: ptr("Novo nome")})
 
 	exigirPGComplementar(t, err, "42P01", "ler tags do alvo: ")
 }
@@ -130,7 +130,7 @@ func TestUpdateFalhaAoApagarAValidadeDesfazOUpdateDaURL(t *testing.T) {
 	a.gravarValidade(t, alvo, a.clk.Now().Add(30*24*time.Hour), a.clk.Now())
 	restaurar := alterarDDLComplementar(t, a, renomearTLS, voltarTLS)
 
-	_, err := a.svc.Update(context.Background(), dono, alvo, targets.Patch{URL: ptr("https://outro.exemplo.com/health")})
+	_, err := a.svc.Update(context.Background(), targets.EscopoDe(t, a.pool, dono), alvo, targets.Patch{URL: ptr("https://outro.exemplo.com/health")})
 
 	exigirPGComplementar(t, err, "42P01", "apagar validade do certificado: ")
 	restaurar()
@@ -148,7 +148,7 @@ func TestUpdateFalhaAoLerAValidadeDesfazOUpdate(t *testing.T) {
 	alvo := a.alvo(t, dono)
 	restaurar := alterarDDLComplementar(t, a, renomearTLS, voltarTLS)
 
-	_, err := a.svc.Update(context.Background(), dono, alvo, targets.Patch{Name: ptr("Novo nome")})
+	_, err := a.svc.Update(context.Background(), targets.EscopoDe(t, a.pool, dono), alvo, targets.Patch{Name: ptr("Novo nome")})
 
 	exigirPGComplementar(t, err, "42P01", "ler validade do certificado: ")
 	restaurar()
@@ -171,7 +171,7 @@ func TestUpdateFalhaAoTrocarTagsDesfazOPatchInteiro(t *testing.T) {
 			dono := a.usuario(t)
 			in := entrada()
 			in.Tags = []string{"prod"}
-			criado, err := a.svc.Create(context.Background(), dono, in)
+			criado, err := a.svc.Create(context.Background(), targets.EscopoDe(t, a.pool, dono), in)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -184,7 +184,7 @@ func TestUpdateFalhaAoTrocarTagsDesfazOPatchInteiro(t *testing.T) {
 					FOR EACH ROW EXECUTE FUNCTION recusar_tags_lacuna();`,
 				`DROP TRIGGER recusar_tags_lacuna ON target_tags; DROP FUNCTION recusar_tags_lacuna();`)
 
-			_, err = a.svc.Update(context.Background(), dono, criado.ID,
+			_, err = a.svc.Update(context.Background(), targets.EscopoDe(t, a.pool, dono), criado.ID,
 				targets.Patch{Name: ptr("Novo nome"), SetTags: true, Tags: []string{"a", "b"}})
 
 			exigirPGComplementar(t, err, "23514", c.prefixo)
@@ -204,7 +204,7 @@ func TestUpdateFalhaAoZerarAHisteresePreservaOAlvo(t *testing.T) {
 		`ALTER TABLE target_health RENAME TO target_health_indisponivel_lacuna`,
 		`ALTER TABLE target_health_indisponivel_lacuna RENAME TO target_health`)
 
-	_, err := a.svc.Update(context.Background(), dono, alvo, targets.Patch{URL: ptr("https://outro.exemplo.com/health")})
+	_, err := a.svc.Update(context.Background(), targets.EscopoDe(t, a.pool, dono), alvo, targets.Patch{URL: ptr("https://outro.exemplo.com/health")})
 
 	exigirPGComplementar(t, err, "42P01", "zerar histerese do alvo: ")
 	restaurar()
@@ -221,7 +221,7 @@ func TestUpdateFalhaAoTravarOsAlvosDoUsuario(t *testing.T) {
 		`REVOKE EXECUTE ON FUNCTION pg_advisory_xact_lock(bigint) FROM PUBLIC`,
 		`GRANT EXECUTE ON FUNCTION pg_advisory_xact_lock(bigint) TO PUBLIC`)
 
-	_, err := a.svc.Update(context.Background(), dono, alvo, targets.Patch{Name: ptr("Novo nome")})
+	_, err := a.svc.Update(context.Background(), targets.EscopoDe(t, a.pool, dono), alvo, targets.Patch{Name: ptr("Novo nome")})
 
 	exigirPGComplementar(t, err, "42501", "travar alvos do usuário: ")
 	restaurar()
@@ -254,7 +254,7 @@ func resumoFiltrado(t *testing.T, a ambiente, dono uuid.UUID, tags, estados []st
 	if verr != nil {
 		t.Fatalf("filtro recusado: %v", verr)
 	}
-	itens, err := a.svc.Summary(context.Background(), dono, filtro)
+	itens, err := a.svc.Summary(context.Background(), targets.EscopoDe(t, a.pool, dono), filtro)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -265,7 +265,7 @@ func alvoComTags(t *testing.T, a ambiente, dono uuid.UUID, tags ...string) uuid.
 	t.Helper()
 	in := entrada()
 	in.Tags = tags
-	alvo, err := a.svc.Create(context.Background(), dono, in)
+	alvo, err := a.svc.Create(context.Background(), targets.EscopoDe(t, a.pool, dono), in)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -314,7 +314,7 @@ func TestSummaryFiltroPausadoDevolveSoOAlvoDesativado(t *testing.T) {
 	ativo := a.alvo(t, dono)
 	in := entrada()
 	in.Enabled = false
-	pausado, err := a.svc.Create(context.Background(), dono, in)
+	pausado, err := a.svc.Create(context.Background(), targets.EscopoDe(t, a.pool, dono), in)
 	if err != nil {
 		t.Fatal(err)
 	}

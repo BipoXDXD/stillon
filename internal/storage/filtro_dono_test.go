@@ -70,13 +70,16 @@ func exigirNenhumaLinha(t *testing.T, err error, leitura string) {
 func TestGetTargetFiltersOwnerWithoutRLS(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
-	a, b := novoUsuario(t, pool), novoUsuario(t, pool)
+	// A e B são dois projetos do MESMO usuário: só o filtro por projeto os
+	// separa (o por dono deixaria passar).
+	a := novoUsuario(t, pool)
+	pa, pb := testdb.ProjetoPadrao(t, a), testdb.NovoProjeto(t, a, "B")
 	alvoA := novoAlvo(t, pool, a, agora)
 	q := queriesSemRLS(t)
 
-	_, err := q.GetTarget(ctx, db.GetTargetParams{UserID: b, ID: alvoA})
+	_, err := q.GetTarget(ctx, db.GetTargetParams{ProjectID: pb, ID: alvoA})
 	exigirNenhumaLinha(t, err, "GetTarget")
-	alvo, err := q.GetTarget(ctx, db.GetTargetParams{UserID: a, ID: alvoA})
+	alvo, err := q.GetTarget(ctx, db.GetTargetParams{ProjectID: pa, ID: alvoA})
 	if err != nil {
 		t.Fatalf("A lendo o próprio alvo: %v", err)
 	}
@@ -88,18 +91,21 @@ func TestGetTargetFiltersOwnerWithoutRLS(t *testing.T) {
 func TestListTargetsFiltersOwnerWithoutRLS(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
-	a, b := novoUsuario(t, pool), novoUsuario(t, pool)
+	// A e B são dois projetos do MESMO usuário: só o filtro por projeto os
+	// separa (o por dono deixaria passar).
+	a := novoUsuario(t, pool)
+	pa, pb := testdb.ProjetoPadrao(t, a), testdb.NovoProjeto(t, a, "B")
 	alvoA := novoAlvo(t, pool, a, agora)
 	q := queriesSemRLS(t)
 
-	deB, err := q.ListTargets(ctx, db.ListTargetsParams{UserID: b, MaxRows: 10})
+	deB, err := q.ListTargets(ctx, db.ListTargetsParams{ProjectID: pb, MaxRows: 10})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(deB) != 0 {
 		t.Errorf("B listou %d alvos sem RLS, queria 0 (o alvo de A vazou)", len(deB))
 	}
-	deA, err := q.ListTargets(ctx, db.ListTargetsParams{UserID: a, MaxRows: 10})
+	deA, err := q.ListTargets(ctx, db.ListTargetsParams{ProjectID: pa, MaxRows: 10})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,21 +117,24 @@ func TestListTargetsFiltersOwnerWithoutRLS(t *testing.T) {
 func TestDeleteTargetFiltersOwnerWithoutRLS(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
-	a, b := novoUsuario(t, pool), novoUsuario(t, pool)
+	// A e B são dois projetos do MESMO usuário: só o filtro por projeto os
+	// separa (o por dono deixaria passar).
+	a := novoUsuario(t, pool)
+	pa, pb := testdb.ProjetoPadrao(t, a), testdb.NovoProjeto(t, a, "B")
 	alvoA := novoAlvo(t, pool, a, agora)
 	q := queriesSemRLS(t)
 
-	apagadas, err := q.DeleteTarget(ctx, db.DeleteTargetParams{UserID: b, ID: alvoA})
+	apagadas, err := q.DeleteTarget(ctx, db.DeleteTargetParams{ProjectID: pb, ID: alvoA})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if apagadas != 0 {
 		t.Errorf("B apagou %d linhas sem RLS, queria 0", apagadas)
 	}
-	if _, err := q.GetTarget(ctx, db.GetTargetParams{UserID: a, ID: alvoA}); err != nil {
+	if _, err := q.GetTarget(ctx, db.GetTargetParams{ProjectID: pa, ID: alvoA}); err != nil {
 		t.Errorf("o alvo de A sumiu depois do DELETE de B: %v", err)
 	}
-	apagadas, err = q.DeleteTarget(ctx, db.DeleteTargetParams{UserID: a, ID: alvoA})
+	apagadas, err = q.DeleteTarget(ctx, db.DeleteTargetParams{ProjectID: pa, ID: alvoA})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -137,25 +146,28 @@ func TestDeleteTargetFiltersOwnerWithoutRLS(t *testing.T) {
 func TestListChecksFiltersOwnerWithoutRLS(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
-	a, b := novoUsuario(t, pool), novoUsuario(t, pool)
+	// A e B são dois projetos do MESMO usuário: só o filtro por projeto os
+	// separa (o por dono deixaria passar).
+	a := novoUsuario(t, pool)
+	pa, pb := testdb.ProjetoPadrao(t, a), testdb.NovoProjeto(t, a, "B")
 	alvoA := novoAlvo(t, pool, a, agora)
 	if err := storage.EnsureChecksPartitions(ctx, pool, agora); err != nil {
 		t.Fatal(err)
 	}
 	novoCheck(t, pool, alvoA, agora)
 	q := queriesSemRLS(t)
-	janela := func(dono uuid.UUID) db.ListChecksParams {
-		return db.ListChecksParams{UserID: dono, TargetID: alvoA, FromAt: agora.Add(-time.Hour), ToAt: agora.Add(time.Hour)}
+	janela := func(projeto uuid.UUID) db.ListChecksParams {
+		return db.ListChecksParams{ProjectID: projeto, TargetID: alvoA, FromAt: agora.Add(-time.Hour), ToAt: agora.Add(time.Hour)}
 	}
 
-	deB, err := q.ListChecks(ctx, janela(b))
+	deB, err := q.ListChecks(ctx, janela(pb))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(deB) != 0 {
 		t.Errorf("B leu %d checks do alvo de A sem RLS, queria 0", len(deB))
 	}
-	deA, err := q.ListChecks(ctx, janela(a))
+	deA, err := q.ListChecks(ctx, janela(pa))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -164,10 +176,10 @@ func TestListChecksFiltersOwnerWithoutRLS(t *testing.T) {
 	}
 }
 
-// atualizacaoDoAlvo copia o alvo com outro nome, para o UPDATE de quem chama.
-func atualizacaoDoAlvo(alvo db.Target, dono uuid.UUID, nome string) db.UpdateTargetParams {
+// atualizacaoDoAlvo copia o alvo com outro nome, para o UPDATE no projeto dado.
+func atualizacaoDoAlvo(alvo db.Target, projeto uuid.UUID, nome string) db.UpdateTargetParams {
 	return db.UpdateTargetParams{
-		UserID: dono, ID: alvo.ID, Name: nome, URL: alvo.URL, Method: alvo.Method,
+		ProjectID: projeto, ID: alvo.ID, Name: nome, URL: alvo.URL, Method: alvo.Method,
 		IntervalSec: alvo.IntervalSec, TimeoutMS: alvo.TimeoutMS, ExpectedStatus: alvo.ExpectedStatus,
 		HeadersEnc: alvo.HeadersEnc, DegradedThresholdMS: alvo.DegradedThresholdMS,
 		Enabled: alvo.Enabled, NextRunAt: alvo.NextRunAt,
@@ -177,12 +189,15 @@ func atualizacaoDoAlvo(alvo db.Target, dono uuid.UUID, nome string) db.UpdateTar
 func TestUpdateTargetFiltersOwnerWithoutRLS(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
-	a, b := novoUsuario(t, pool), novoUsuario(t, pool)
+	// A e B são dois projetos do MESMO usuário: só o filtro por projeto os
+	// separa (o por dono deixaria passar).
+	a := novoUsuario(t, pool)
+	pa, pb := testdb.ProjetoPadrao(t, a), testdb.NovoProjeto(t, a, "B")
 	alvoA := novoAlvo(t, pool, a, agora)
 	q := queriesSemRLS(t)
 	alvoDeA := func() db.Target {
 		t.Helper()
-		alvo, err := q.GetTarget(ctx, db.GetTargetParams{UserID: a, ID: alvoA})
+		alvo, err := q.GetTarget(ctx, db.GetTargetParams{ProjectID: pa, ID: alvoA})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -190,13 +205,13 @@ func TestUpdateTargetFiltersOwnerWithoutRLS(t *testing.T) {
 	}
 	original := alvoDeA()
 
-	if err := q.UpdateTarget(ctx, atualizacaoDoAlvo(original, b, "de B")); err != nil {
+	if err := q.UpdateTarget(ctx, atualizacaoDoAlvo(original, pb, "de B")); err != nil {
 		t.Fatal(err)
 	}
 	if nome := alvoDeA().Name; nome != original.Name {
 		t.Errorf("B renomeou o alvo de A sem RLS para %q, queria %q", nome, original.Name)
 	}
-	if err := q.UpdateTarget(ctx, atualizacaoDoAlvo(original, a, "novo")); err != nil {
+	if err := q.UpdateTarget(ctx, atualizacaoDoAlvo(original, pa, "novo")); err != nil {
 		t.Fatal(err)
 	}
 	if nome := alvoDeA().Name; nome != "novo" {
@@ -207,7 +222,10 @@ func TestUpdateTargetFiltersOwnerWithoutRLS(t *testing.T) {
 func TestResetTargetHealthFiltersOwnerWithoutRLS(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
-	a, b := novoUsuario(t, pool), novoUsuario(t, pool)
+	// A e B são dois projetos do MESMO usuário: só o filtro por projeto os
+	// separa (o por dono deixaria passar).
+	a := novoUsuario(t, pool)
+	pa, pb := testdb.ProjetoPadrao(t, a), testdb.NovoProjeto(t, a, "B")
 	alvoA := novoAlvo(t, pool, a, agora)
 	conn := conexaoSemRLS(t)
 	q := db.New(conn)
@@ -224,13 +242,13 @@ func TestResetTargetHealthFiltersOwnerWithoutRLS(t *testing.T) {
 		return n
 	}
 
-	if err := q.ResetTargetHealth(ctx, db.ResetTargetHealthParams{TargetID: alvoA, UserID: b}); err != nil {
+	if err := q.ResetTargetHealth(ctx, db.ResetTargetHealthParams{TargetID: alvoA, ProjectID: pb}); err != nil {
 		t.Fatal(err)
 	}
 	if n := falhas(); n != 3 {
 		t.Errorf("B zerou a histerese do alvo de A sem RLS: %d falhas, queria 3", n)
 	}
-	if err := q.ResetTargetHealth(ctx, db.ResetTargetHealthParams{TargetID: alvoA, UserID: a}); err != nil {
+	if err := q.ResetTargetHealth(ctx, db.ResetTargetHealthParams{TargetID: alvoA, ProjectID: pa}); err != nil {
 		t.Fatal(err)
 	}
 	if n := falhas(); n != 0 {
@@ -243,17 +261,17 @@ func comTagDoAlvo(t *testing.T, pool *pgxpool.Pool, dono, alvo uuid.UUID) {
 	t.Helper()
 	ctx := context.Background()
 	err := storage.InUserTx(ctx, pool, dono, func(q *db.Queries) error {
-		return q.InsertTargetTags(ctx, db.InsertTargetTagsParams{Tags: []string{"prod"}, UserID: dono, TargetID: alvo})
+		return q.InsertTargetTags(ctx, db.InsertTargetTagsParams{Tags: []string{"prod"}, ProjectID: testdb.ProjetoDoAlvo(t, alvo), TargetID: alvo})
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 }
 
-// tagsDoAlvo lê as tags do alvo como o dono, sem RLS.
-func tagsDoAlvo(t *testing.T, q *db.Queries, dono, alvo uuid.UUID) []string {
+// tagsDoAlvo lê as tags do alvo no projeto dado, sem RLS.
+func tagsDoAlvo(t *testing.T, q *db.Queries, projeto, alvo uuid.UUID) []string {
 	t.Helper()
-	tags, err := q.ListTargetTags(context.Background(), db.ListTargetTagsParams{UserID: dono, TargetID: alvo})
+	tags, err := q.ListTargetTags(context.Background(), db.ListTargetTagsParams{ProjectID: projeto, TargetID: alvo})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -262,15 +280,18 @@ func tagsDoAlvo(t *testing.T, q *db.Queries, dono, alvo uuid.UUID) []string {
 
 func TestListTargetTagsFiltersOwnerWithoutRLS(t *testing.T) {
 	pool := testdb.New(t)
-	a, b := novoUsuario(t, pool), novoUsuario(t, pool)
+	// A e B são dois projetos do MESMO usuário: só o filtro por projeto os
+	// separa (o por dono deixaria passar).
+	a := novoUsuario(t, pool)
+	pa, pb := testdb.ProjetoPadrao(t, a), testdb.NovoProjeto(t, a, "B")
 	alvoA := novoAlvo(t, pool, a, agora)
 	comTagDoAlvo(t, pool, a, alvoA)
 	q := queriesSemRLS(t)
 
-	if tags := tagsDoAlvo(t, q, b, alvoA); len(tags) != 0 {
+	if tags := tagsDoAlvo(t, q, pb, alvoA); len(tags) != 0 {
 		t.Errorf("B leu as tags %v do alvo de A sem RLS", tags)
 	}
-	if tags := tagsDoAlvo(t, q, a, alvoA); !slices.Equal(tags, []string{"prod"}) {
+	if tags := tagsDoAlvo(t, q, pa, alvoA); !slices.Equal(tags, []string{"prod"}) {
 		t.Errorf("A leu %v, queria [prod]", tags)
 	}
 }
@@ -278,21 +299,24 @@ func TestListTargetTagsFiltersOwnerWithoutRLS(t *testing.T) {
 func TestDeleteTargetTagsFiltersOwnerWithoutRLS(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
-	a, b := novoUsuario(t, pool), novoUsuario(t, pool)
+	// A e B são dois projetos do MESMO usuário: só o filtro por projeto os
+	// separa (o por dono deixaria passar).
+	a := novoUsuario(t, pool)
+	pa, pb := testdb.ProjetoPadrao(t, a), testdb.NovoProjeto(t, a, "B")
 	alvoA := novoAlvo(t, pool, a, agora)
 	comTagDoAlvo(t, pool, a, alvoA)
 	q := queriesSemRLS(t)
 
-	if err := q.DeleteTargetTags(ctx, db.DeleteTargetTagsParams{UserID: b, TargetID: alvoA}); err != nil {
+	if err := q.DeleteTargetTags(ctx, db.DeleteTargetTagsParams{ProjectID: pb, TargetID: alvoA}); err != nil {
 		t.Fatal(err)
 	}
-	if tags := tagsDoAlvo(t, q, a, alvoA); !slices.Equal(tags, []string{"prod"}) {
+	if tags := tagsDoAlvo(t, q, pa, alvoA); !slices.Equal(tags, []string{"prod"}) {
 		t.Errorf("depois do DELETE de B sem RLS, o alvo de A ficou com %v, queria [prod]", tags)
 	}
-	if err := q.DeleteTargetTags(ctx, db.DeleteTargetTagsParams{UserID: a, TargetID: alvoA}); err != nil {
+	if err := q.DeleteTargetTags(ctx, db.DeleteTargetTagsParams{ProjectID: pa, TargetID: alvoA}); err != nil {
 		t.Fatal(err)
 	}
-	if tags := tagsDoAlvo(t, q, a, alvoA); len(tags) != 0 {
+	if tags := tagsDoAlvo(t, q, pa, alvoA); len(tags) != 0 {
 		t.Errorf("A apagou as próprias tags e sobrou %v", tags)
 	}
 }
@@ -300,21 +324,24 @@ func TestDeleteTargetTagsFiltersOwnerWithoutRLS(t *testing.T) {
 func TestInsertTargetTagsFiltersOwnerWithoutRLS(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
-	a, b := novoUsuario(t, pool), novoUsuario(t, pool)
+	// A e B são dois projetos do MESMO usuário: só o filtro por projeto os
+	// separa (o por dono deixaria passar).
+	a := novoUsuario(t, pool)
+	pa, pb := testdb.ProjetoPadrao(t, a), testdb.NovoProjeto(t, a, "B")
 	alvoA := novoAlvo(t, pool, a, agora)
 	comTagDoAlvo(t, pool, a, alvoA)
 	q := queriesSemRLS(t)
 
-	if err := q.InsertTargetTags(ctx, db.InsertTargetTagsParams{Tags: []string{"intrusa"}, UserID: b, TargetID: alvoA}); err != nil {
+	if err := q.InsertTargetTags(ctx, db.InsertTargetTagsParams{Tags: []string{"intrusa"}, ProjectID: pb, TargetID: alvoA}); err != nil {
 		t.Fatal(err)
 	}
-	if tags := tagsDoAlvo(t, q, a, alvoA); !slices.Equal(tags, []string{"prod"}) {
+	if tags := tagsDoAlvo(t, q, pa, alvoA); !slices.Equal(tags, []string{"prod"}) {
 		t.Errorf("B pôs tag no alvo de A sem RLS: %v, queria [prod]", tags)
 	}
-	if err := q.InsertTargetTags(ctx, db.InsertTargetTagsParams{Tags: []string{"api"}, UserID: a, TargetID: alvoA}); err != nil {
+	if err := q.InsertTargetTags(ctx, db.InsertTargetTagsParams{Tags: []string{"api"}, ProjectID: pa, TargetID: alvoA}); err != nil {
 		t.Fatal(err)
 	}
-	if tags := tagsDoAlvo(t, q, a, alvoA); !slices.Equal(tags, []string{"api", "prod"}) {
+	if tags := tagsDoAlvo(t, q, pa, alvoA); !slices.Equal(tags, []string{"api", "prod"}) {
 		t.Errorf("A pôs a tag api e ficou %v, queria [api prod]", tags)
 	}
 }
@@ -322,7 +349,10 @@ func TestInsertTargetTagsFiltersOwnerWithoutRLS(t *testing.T) {
 func TestGetTargetForUpdateFiltersOwnerWithoutRLS(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
-	a, b := novoUsuario(t, pool), novoUsuario(t, pool)
+	// A e B são dois projetos do MESMO usuário: só o filtro por projeto os
+	// separa (o por dono deixaria passar).
+	a := novoUsuario(t, pool)
+	pa, pb := testdb.ProjetoPadrao(t, a), testdb.NovoProjeto(t, a, "B")
 	alvoA := novoAlvo(t, pool, a, agora)
 	conn, outra := conexaoSemRLS(t), conexaoSemRLS(t)
 	tx, err := conn.Begin(ctx)
@@ -332,14 +362,14 @@ func TestGetTargetForUpdateFiltersOwnerWithoutRLS(t *testing.T) {
 	defer func() { _ = tx.Rollback(ctx) }()
 	q := db.New(tx)
 
-	_, err = q.GetTargetForUpdate(ctx, db.GetTargetForUpdateParams{UserID: b, ID: alvoA})
+	_, err = q.GetTargetForUpdate(ctx, db.GetTargetForUpdateParams{ProjectID: pb, ID: alvoA})
 	exigirNenhumaLinha(t, err, "GetTargetForUpdate")
 	// A transação de B segue aberta: se ela tivesse travado a linha de A, o
 	// NOWAIT de outra conexão falharia na hora.
 	if _, err := outra.Exec(ctx, `SELECT 1 FROM targets WHERE id = $1 FOR UPDATE NOWAIT`, alvoA); err != nil {
 		t.Errorf("a linha do alvo de A ficou travada pela leitura de B: %v", err)
 	}
-	alvo, err := q.GetTargetForUpdate(ctx, db.GetTargetForUpdateParams{UserID: a, ID: alvoA})
+	alvo, err := q.GetTargetForUpdate(ctx, db.GetTargetForUpdateParams{ProjectID: pa, ID: alvoA})
 	if err != nil {
 		t.Fatalf("A travando o próprio alvo: %v", err)
 	}

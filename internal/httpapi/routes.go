@@ -208,10 +208,13 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	// caminho, agem no Projeto padrão do usuário (criado na primeira chamada).
 	// O projeto vem depois da sessão viva: token de sessão revogada não cria
 	// projeto. /me e /sessions são da conta, não de um projeto, e ficam em
-	// protegida. As cadeias com ProjetoDoCaminho chegam com as rotas
-	// /api/v1/projects/{projectID}/...
+	// protegida. As rotas /api/v1/projects/{projectID}/... são as gêmeas: a
+	// mesma cadeia, com o projeto lido do caminho (ProjetoDoCaminho) no lugar
+	// do padrão, e os mesmos handlers, que leem o escopo por escopo().
 	padrao := middleware.ProjetoPadrao(d.Projects)
 	recursoLegado := func(fn http.HandlerFunc) http.Handler { return authn(porUsuario(viva(padrao(fn)))) }
+	doCaminho := middleware.ProjetoDoCaminho(d.Projects)
+	noProjeto := func(fn http.HandlerFunc) http.Handler { return authn(porUsuario(viva(doCaminho(fn)))) }
 
 	mux.Handle("GET /api/v1/me", protegida(ah.Me))
 	mux.Handle("GET /api/v1/sessions", protegida(ah.ListSessions))
@@ -225,6 +228,14 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	mux.Handle("PATCH /api/v1/targets/{id}", recursoLegado(th.Update))
 	mux.Handle("DELETE /api/v1/targets/{id}", recursoLegado(th.Delete))
 	mux.Handle("GET /api/v1/targets/{id}/checks", recursoLegado(th.Checks))
+
+	mux.Handle("GET /api/v1/projects/{projectID}/targets", noProjeto(th.List))
+	mux.Handle("POST /api/v1/projects/{projectID}/targets", noProjeto(th.Create))
+	mux.Handle("GET /api/v1/projects/{projectID}/targets/summary", noProjeto(th.Summary))
+	mux.Handle("GET /api/v1/projects/{projectID}/targets/{id}", noProjeto(th.Get))
+	mux.Handle("PATCH /api/v1/projects/{projectID}/targets/{id}", noProjeto(th.Update))
+	mux.Handle("DELETE /api/v1/projects/{projectID}/targets/{id}", noProjeto(th.Delete))
+	mux.Handle("GET /api/v1/projects/{projectID}/targets/{id}/checks", noProjeto(th.Checks))
 
 	mux.Handle("GET /api/v1/incidents", recursoLegado(ih.List))
 	mux.Handle("POST /api/v1/incidents/{id}/ack", recursoLegado(ih.Ack))

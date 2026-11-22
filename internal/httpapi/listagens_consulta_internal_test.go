@@ -42,7 +42,7 @@ func TestListingsRejectQueryOutsideTheAllowlist(t *testing.T) {
 		// deOutraRota é aceito em outra listagem: a allowlist varia por rota.
 		deOutraRota string
 	}{
-		{"GET /targets", alvos.List, "status=open"},
+		{"GET /targets", noProjetoPadrao(alvos.List), "status=open"},
 		{"GET /incidents", incidentes.List, "tag=web"},
 		{"GET /heartbeats", heartbeats.List, "status=open"},
 		{"GET /heartbeats/{id}/events", heartbeats.Events, "status=open"},

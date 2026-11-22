@@ -11,6 +11,7 @@ import (
 	"github.com/BipoXDXD/stillon/internal/incident"
 	"github.com/BipoXDXD/stillon/internal/storage"
 	"github.com/BipoXDXD/stillon/internal/storage/db"
+	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 )
 
 // O 42501 ou o 23503 chega à gravação depois que o dono apagou o alvo, sem a
@@ -35,7 +36,7 @@ func TestDesfechoComAlvoApagadoNoMeioDoCiclo(t *testing.T) {
 
 			ctx := context.Background()
 			err := storage.InUserTx(ctx, b.pool, b.dono, func(q *db.Queries) error {
-				_, err := q.DeleteTarget(ctx, db.DeleteTargetParams{UserID: b.dono, ID: alvo})
+				_, err := q.DeleteTarget(ctx, db.DeleteTargetParams{ProjectID: testdb.ProjetoDoAlvo(t, alvo), ID: alvo})
 				return err
 			})
 			if err != nil {

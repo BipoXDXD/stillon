@@ -253,7 +253,7 @@ func TestGetTargetReturnsProjectID(t *testing.T) {
 	var row db.Target
 	err := storage.InUserTx(ctx, pool, dono, func(q *db.Queries) error {
 		var err error
-		row, err = q.GetTarget(ctx, db.GetTargetParams{UserID: dono, ID: alvo})
+		row, err = q.GetTarget(ctx, db.GetTargetParams{ProjectID: testdb.ProjetoDoAlvo(t, alvo), ID: alvo})
 		return err
 	})
 	if err != nil {

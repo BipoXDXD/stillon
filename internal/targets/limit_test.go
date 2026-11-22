@@ -48,13 +48,13 @@ func TestCreateStopsAtTheLimit(t *testing.T) {
 	dono, outro := a.usuario(t), a.usuario(t)
 	a.encherAte(t, dono, int(targets.MaxTargetsPerUser)-1)
 
-	if _, err := a.svc.Create(ctx, dono, entrada()); err != nil {
+	if _, err := a.svc.Create(ctx, targets.EscopoDe(t, a.pool, dono), entrada()); err != nil {
 		t.Fatalf("o 100º alvo foi recusado: %v", err)
 	}
-	if _, err := a.svc.Create(ctx, dono, entrada()); !errors.Is(err, targets.ErrLimitReached) {
+	if _, err := a.svc.Create(ctx, targets.EscopoDe(t, a.pool, dono), entrada()); !errors.Is(err, targets.ErrLimitReached) {
 		t.Fatalf("o 101º alvo deu %v, queria ErrLimitReached", err)
 	}
-	if _, err := a.svc.Create(ctx, outro, entrada()); err != nil {
+	if _, err := a.svc.Create(ctx, targets.EscopoDe(t, a.pool, outro), entrada()); err != nil {
 		t.Errorf("o teto de um usuário barrou outro: %v", err)
 	}
 }
@@ -80,13 +80,14 @@ func TestConcurrentCreatesRespectTheLimit(t *testing.T) {
 		}
 	})
 
+	escopo := targets.EscopoDe(t, a.pool, dono)
 	erros := make([]error, 2)
 	var wg sync.WaitGroup
 	for i := range erros {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, erros[i] = a.svc.Create(context.Background(), dono, entrada())
+			_, erros[i] = a.svc.Create(context.Background(), escopo, entrada())
 		}()
 	}
 	wg.Wait()
@@ -176,16 +177,16 @@ func TestCreateWithRuleStopsAtTheHostCap(t *testing.T) {
 	dono := a.usuario(t)
 	a.encherComRegra(t, dono, "https://example.com", 4, true)
 
-	if _, err := a.svc.Create(ctx, dono, semRegra("https://example.com/x")); err != nil {
+	if _, err := a.svc.Create(ctx, targets.EscopoDe(t, a.pool, dono), semRegra("https://example.com/x")); err != nil {
 		t.Fatalf("alvo sem regra no host recusado: %v", err)
 	}
-	if _, err := a.svc.Create(ctx, dono, comRegra("https://EXAMPLE.com./saude")); err != nil {
+	if _, err := a.svc.Create(ctx, targets.EscopoDe(t, a.pool, dono), comRegra("https://EXAMPLE.com./saude")); err != nil {
 		t.Fatalf("a 5ª regra no host foi recusada: %v", err)
 	}
-	if _, err := a.svc.Create(ctx, dono, comRegra("https://example.com:8443/")); err != targets.ErrContentHostLimit {
+	if _, err := a.svc.Create(ctx, targets.EscopoDe(t, a.pool, dono), comRegra("https://example.com:8443/")); err != targets.ErrContentHostLimit {
 		t.Fatalf("a 6ª regra no host (outra porta) deu %v, queria ErrContentHostLimit sem embrulho", err)
 	}
-	if _, err := a.svc.Create(ctx, dono, comRegra("https://a.example.com/")); err != nil {
+	if _, err := a.svc.Create(ctx, targets.EscopoDe(t, a.pool, dono), comRegra("https://a.example.com/")); err != nil {
 		t.Fatalf("regra em subdomínio recusada: %v", err)
 	}
 	if n := a.regrasDoDono(t, dono); n != 6 {
@@ -207,7 +208,7 @@ func TestHostCapCountsOnlyThisUsersRules(t *testing.T) {
 	dono, outro := a.usuario(t), a.usuario(t)
 	a.encherComRegra(t, outro, "https://example.com", 5, true)
 
-	if _, err := a.svc.Create(ctx, dono, comRegra("https://example.com/a")); err != nil {
+	if _, err := a.svc.Create(ctx, targets.EscopoDe(t, a.pool, dono), comRegra("https://example.com/a")); err != nil {
 		t.Fatalf("as regras de outro usuário barraram o dono: %v", err)
 	}
 	if n := a.regrasDoDono(t, outro); n != 5 {
@@ -233,7 +234,7 @@ func TestHostCapCountsPausedTargets(t *testing.T) {
 	dono := a.usuario(t)
 	a.encherComRegra(t, dono, "https://example.com", 5, false)
 
-	if _, err := a.svc.Create(context.Background(), dono, comRegra("https://example.com/a")); !errors.Is(err, targets.ErrContentHostLimit) {
+	if _, err := a.svc.Create(context.Background(), targets.EscopoDe(t, a.pool, dono), comRegra("https://example.com/a")); !errors.Is(err, targets.ErrContentHostLimit) {
 		t.Fatalf("com 5 regras pausadas no host, Create deu %v, queria ErrContentHostLimit", err)
 	}
 }
@@ -244,10 +245,10 @@ func TestHostCapIsConfigurable(t *testing.T) {
 	dono := a.usuario(t)
 	svc := targets.NewService(a.pool, caixa(t), a.clk, targets.ComTetoDeRegrasPorHost(1))
 
-	if _, err := svc.Create(ctx, dono, comRegra("https://example.com/1")); err != nil {
+	if _, err := svc.Create(ctx, targets.EscopoDe(t, a.pool, dono), comRegra("https://example.com/1")); err != nil {
 		t.Fatalf("a 1ª regra com teto 1 foi recusada: %v", err)
 	}
-	if _, err := svc.Create(ctx, dono, comRegra("https://example.com/2")); !errors.Is(err, targets.ErrContentHostLimit) {
+	if _, err := svc.Create(ctx, targets.EscopoDe(t, a.pool, dono), comRegra("https://example.com/2")); !errors.Is(err, targets.ErrContentHostLimit) {
 		t.Fatalf("a 2ª regra com teto 1 deu %v, queria ErrContentHostLimit", err)
 	}
 }
@@ -258,7 +259,7 @@ func TestValidationComesBeforeTheHostCap(t *testing.T) {
 	a := novoAmbiente(t)
 	ctx := context.Background()
 	dono := a.usuario(t)
-	x, err := a.svc.Create(ctx, dono, semRegra("https://example.com/x"))
+	x, err := a.svc.Create(ctx, targets.EscopoDe(t, a.pool, dono), semRegra("https://example.com/x"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -267,11 +268,11 @@ func TestValidationComesBeforeTheHostCap(t *testing.T) {
 	var verr *targets.ValidationError
 	head := comRegra("https://example.com/h")
 	head.Method = "HEAD"
-	if _, err := a.svc.Create(ctx, dono, head); !errors.As(err, &verr) {
+	if _, err := a.svc.Create(ctx, targets.EscopoDe(t, a.pool, dono), head); !errors.As(err, &verr) {
 		t.Errorf("Create com HEAD e regra no host cheio deu %v, queria ValidationError", err)
 	}
 	vazia := &targets.ContentRule{Mode: targets.ContentContains, Value: ""}
-	if _, err := a.svc.Update(ctx, dono, x.ID, targets.Patch{SetContentRule: true, ContentRule: vazia}); !errors.As(err, &verr) {
+	if _, err := a.svc.Update(ctx, targets.EscopoDe(t, a.pool, dono), x.ID, targets.Patch{SetContentRule: true, ContentRule: vazia}); !errors.As(err, &verr) {
 		t.Errorf("PATCH com valor vazio no host cheio deu %v, queria ValidationError", err)
 	}
 }
@@ -283,11 +284,11 @@ func TestPatchIntoAFullHostIsRefused(t *testing.T) {
 	a := novoAmbiente(t)
 	ctx := context.Background()
 	dono := a.usuario(t)
-	x, err := a.svc.Create(ctx, dono, semRegra("https://example.com/x"))
+	x, err := a.svc.Create(ctx, targets.EscopoDe(t, a.pool, dono), semRegra("https://example.com/x"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	y, err := a.svc.Create(ctx, dono, comRegra("https://other.org/"))
+	y, err := a.svc.Create(ctx, targets.EscopoDe(t, a.pool, dono), comRegra("https://other.org/"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -299,7 +300,7 @@ func TestPatchIntoAFullHostIsRefused(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := a.svc.Update(ctx, dono, x.ID, targets.Patch{SetContentRule: true, ContentRule: regraOK()}); !errors.Is(err, targets.ErrContentHostLimit) {
+	if _, err := a.svc.Update(ctx, targets.EscopoDe(t, a.pool, dono), x.ID, targets.Patch{SetContentRule: true, ContentRule: regraOK()}); !errors.Is(err, targets.ErrContentHostLimit) {
 		t.Fatalf("PATCH pondo regra em X no host cheio deu %v, queria ErrContentHostLimit", err)
 	}
 	var semModo bool
@@ -320,7 +321,7 @@ func TestPatchIntoAFullHostIsRefused(t *testing.T) {
 	// Trocar de host com a regra: o mesmo teto; a URL e a validade do
 	// certificado do host anterior ficam.
 	a.gravarValidade(t, y.ID, a.clk.Now().Add(30*24*time.Hour), a.clk.Now())
-	if _, err := a.svc.Update(ctx, dono, y.ID, targets.Patch{URL: ptr("https://example.com/y")}); !errors.Is(err, targets.ErrContentHostLimit) {
+	if _, err := a.svc.Update(ctx, targets.EscopoDe(t, a.pool, dono), y.ID, targets.Patch{URL: ptr("https://example.com/y")}); !errors.Is(err, targets.ErrContentHostLimit) {
 		t.Fatalf("PATCH movendo Y com regra para o host cheio deu %v, queria ErrContentHostLimit", err)
 	}
 	var url string
@@ -357,13 +358,13 @@ func TestPatchThatDoesNotGrowTheHostPasses(t *testing.T) {
 		{"sem regra", targets.Patch{SetContentRule: true, ContentRule: nil}},
 	}
 	for _, c := range patches {
-		if _, err := a.svc.Update(ctx, dono, z, c.p); err != nil {
+		if _, err := a.svc.Update(ctx, targets.EscopoDe(t, a.pool, dono), z, c.p); err != nil {
 			t.Errorf("PATCH de %s num host acima do teto deu %v", c.nome, err)
 		}
 	}
 
 	a.svc.SetDepoisDeContar(nil)
-	if _, err := a.svc.Update(ctx, dono, z, targets.Patch{SetContentRule: true, ContentRule: regraOK()}); !errors.Is(err, targets.ErrContentHostLimit) {
+	if _, err := a.svc.Update(ctx, targets.EscopoDe(t, a.pool, dono), z, targets.Patch{SetContentRule: true, ContentRule: regraOK()}); !errors.Is(err, targets.ErrContentHostLimit) {
 		t.Errorf("devolver a regra a Z com 6 outras no host deu %v, queria ErrContentHostLimit", err)
 	}
 }
@@ -374,13 +375,13 @@ func TestPatchRemovingARuleFreesTheSlot(t *testing.T) {
 	dono := a.usuario(t)
 	ids := a.encherComRegra(t, dono, "https://example.com", 5, true)
 
-	if _, err := a.svc.Update(ctx, dono, ids[0], targets.Patch{SetContentRule: true, ContentRule: nil}); err != nil {
+	if _, err := a.svc.Update(ctx, targets.EscopoDe(t, a.pool, dono), ids[0], targets.Patch{SetContentRule: true, ContentRule: nil}); err != nil {
 		t.Fatalf("tirar a regra deu %v", err)
 	}
-	if _, err := a.svc.Create(ctx, dono, comRegra("https://example.com/nova")); err != nil {
+	if _, err := a.svc.Create(ctx, targets.EscopoDe(t, a.pool, dono), comRegra("https://example.com/nova")); err != nil {
 		t.Fatalf("a vaga liberada não foi aceita: %v", err)
 	}
-	if _, err := a.svc.Create(ctx, dono, comRegra("https://example.com/outra")); !errors.Is(err, targets.ErrContentHostLimit) {
+	if _, err := a.svc.Create(ctx, targets.EscopoDe(t, a.pool, dono), comRegra("https://example.com/outra")); !errors.Is(err, targets.ErrContentHostLimit) {
 		t.Fatalf("a 6ª regra deu %v, queria ErrContentHostLimit", err)
 	}
 }
@@ -391,12 +392,12 @@ func TestPatchOnAnotherUsersTargetIs404BeforeTheCap(t *testing.T) {
 	ctx := context.Background()
 	dono, outro := a.usuario(t), a.usuario(t)
 	a.encherComRegra(t, dono, "https://example.com", 5, true)
-	w, err := a.svc.Create(ctx, outro, semRegra("https://other.org/w"))
+	w, err := a.svc.Create(ctx, targets.EscopoDe(t, a.pool, outro), semRegra("https://other.org/w"))
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	_, err = a.svc.Update(ctx, dono, w.ID, targets.Patch{URL: ptr("https://example.com/w"), SetContentRule: true, ContentRule: regraOK()})
+	_, err = a.svc.Update(ctx, targets.EscopoDe(t, a.pool, dono), w.ID, targets.Patch{URL: ptr("https://example.com/w"), SetContentRule: true, ContentRule: regraOK()})
 	if !errors.Is(err, targets.ErrNotFound) {
 		t.Fatalf("PATCH do dono no alvo de outro deu %v, queria ErrNotFound", err)
 	}
@@ -417,7 +418,7 @@ func TestTargetLimitComesBeforeTheHostCap(t *testing.T) {
 	a.encherAte(t, dono, 95)
 	a.encherComRegra(t, dono, "https://example.com", 5, true)
 
-	if _, err := a.svc.Create(context.Background(), dono, comRegra("https://example.com/z")); !errors.Is(err, targets.ErrLimitReached) {
+	if _, err := a.svc.Create(context.Background(), targets.EscopoDe(t, a.pool, dono), comRegra("https://example.com/z")); !errors.Is(err, targets.ErrLimitReached) {
 		t.Fatalf("com 100 alvos e o host cheio, Create deu %v, queria ErrLimitReached", err)
 	}
 }
@@ -433,7 +434,7 @@ func TestUnreadableStoredURLDoesNotCount(t *testing.T) {
 	}
 	svc := targets.NewService(a.pool, caixa(t), a.clk, targets.ComTetoDeRegrasPorHost(1))
 
-	if _, err := svc.Create(context.Background(), dono, comRegra("https://example.com/")); err != nil {
+	if _, err := svc.Create(context.Background(), targets.EscopoDe(t, a.pool, dono), comRegra("https://example.com/")); err != nil {
 		t.Fatalf("a URL ilegível gravada barrou a regra: %v", err)
 	}
 }
@@ -476,11 +477,12 @@ func TestConcurrentCreatesRespectTheHostCap(t *testing.T) {
 	a.encherComRegra(t, dono, "https://example.com", 4, true)
 	a.segurarAteAsDuas()
 
+	escopo := targets.EscopoDe(t, a.pool, dono)
 	erros := make([]error, 2)
 	var wg sync.WaitGroup
 	for i := range erros {
 		wg.Go(func() {
-			_, erros[i] = a.svc.Create(context.Background(), dono, comRegra("https://example.com/c"))
+			_, erros[i] = a.svc.Create(context.Background(), escopo, comRegra("https://example.com/c"))
 		})
 	}
 	wg.Wait()
@@ -496,22 +498,23 @@ func TestConcurrentPatchesRespectTheHostCap(t *testing.T) {
 	ctx := context.Background()
 	dono := a.usuario(t)
 	a.encherComRegra(t, dono, "https://example.com", 4, true)
-	x, err := a.svc.Create(ctx, dono, semRegra("https://example.com/x"))
+	x, err := a.svc.Create(ctx, targets.EscopoDe(t, a.pool, dono), semRegra("https://example.com/x"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	y, err := a.svc.Create(ctx, dono, semRegra("https://example.com/y"))
+	y, err := a.svc.Create(ctx, targets.EscopoDe(t, a.pool, dono), semRegra("https://example.com/y"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	a.segurarAteAsDuas()
 
 	ids := []uuid.UUID{x.ID, y.ID}
+	escopo := targets.EscopoDe(t, a.pool, dono)
 	erros := make([]error, 2)
 	var wg sync.WaitGroup
 	for i := range erros {
 		wg.Go(func() {
-			_, erros[i] = a.svc.Update(ctx, dono, ids[i], targets.Patch{SetContentRule: true, ContentRule: regraOK()})
+			_, erros[i] = a.svc.Update(ctx, escopo, ids[i], targets.Patch{SetContentRule: true, ContentRule: regraOK()})
 		})
 	}
 	wg.Wait()

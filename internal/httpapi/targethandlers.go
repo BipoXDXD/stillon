@@ -13,6 +13,7 @@ import (
 	"github.com/BipoXDXD/stillon/internal/clock"
 	"github.com/BipoXDXD/stillon/internal/httpapi/middleware"
 	"github.com/BipoXDXD/stillon/internal/targets"
+	"github.com/BipoXDXD/stillon/internal/tenancy"
 )
 
 type TargetHandlers struct {
@@ -159,7 +160,7 @@ func toCertificateReadingReply(c *targets.CertificateReading) *certificateReadin
 }
 
 func (h *TargetHandlers) Create(w http.ResponseWriter, r *http.Request) {
-	userID, ok := usuario(w, r)
+	sc, ok := escopo(w, r)
 	if !ok {
 		return
 	}
@@ -192,7 +193,7 @@ func (h *TargetHandlers) Create(w http.ResponseWriter, r *http.Request) {
 		in.DegradedThresholdMS = &v
 	}
 
-	t, err := h.svc.Create(r.Context(), userID, in)
+	t, err := h.svc.Create(r.Context(), sc, in)
 	if h.falhou(w, r, "criar alvo", err) {
 		return
 	}
@@ -200,11 +201,11 @@ func (h *TargetHandlers) Create(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *TargetHandlers) Get(w http.ResponseWriter, r *http.Request) {
-	userID, id, ok := donoEID(w, r)
+	sc, id, ok := escopoEID(w, r)
 	if !ok {
 		return
 	}
-	t, err := h.svc.Get(r.Context(), userID, id)
+	t, err := h.svc.Get(r.Context(), sc, id)
 	if h.falhou(w, r, "buscar alvo", err) {
 		return
 	}
@@ -212,7 +213,7 @@ func (h *TargetHandlers) Get(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *TargetHandlers) List(w http.ResponseWriter, r *http.Request) {
-	userID, ok := usuario(w, r)
+	sc, ok := escopo(w, r)
 	if !ok {
 		return
 	}
@@ -226,7 +227,7 @@ func (h *TargetHandlers) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	items, err := h.svc.List(r.Context(), userID, before, limit)
+	items, err := h.svc.List(r.Context(), sc, before, limit)
 	if h.falhou(w, r, "listar alvos", err) {
 		return
 	}
@@ -239,7 +240,7 @@ func (h *TargetHandlers) List(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *TargetHandlers) Update(w http.ResponseWriter, r *http.Request) {
-	userID, id, ok := donoEID(w, r)
+	sc, id, ok := escopoEID(w, r)
 	if !ok {
 		return
 	}
@@ -284,7 +285,7 @@ func (h *TargetHandlers) Update(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	t, err := h.svc.Update(r.Context(), userID, id, p)
+	t, err := h.svc.Update(r.Context(), sc, id, p)
 	if h.falhou(w, r, "atualizar alvo", err) {
 		return
 	}
@@ -292,11 +293,11 @@ func (h *TargetHandlers) Update(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *TargetHandlers) Delete(w http.ResponseWriter, r *http.Request) {
-	userID, id, ok := donoEID(w, r)
+	sc, id, ok := escopoEID(w, r)
 	if !ok {
 		return
 	}
-	if h.falhou(w, r, "apagar alvo", h.svc.Delete(r.Context(), userID, id)) {
+	if h.falhou(w, r, "apagar alvo", h.svc.Delete(r.Context(), sc, id)) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -347,7 +348,7 @@ func lerIntervalo(q url.Values, agora time.Time) (from, to time.Time, invalido s
 }
 
 func (h *TargetHandlers) Checks(w http.ResponseWriter, r *http.Request) {
-	userID, id, ok := donoEID(w, r)
+	sc, id, ok := escopoEID(w, r)
 	if !ok {
 		return
 	}
@@ -357,7 +358,7 @@ func (h *TargetHandlers) Checks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	serie, err := h.svc.Checks(r.Context(), userID, id, from, to)
+	serie, err := h.svc.Checks(r.Context(), sc, id, from, to)
 	if h.falhou(w, r, "listar checks", err) {
 		return
 	}
@@ -385,15 +386,19 @@ func (h *TargetHandlers) Checks(w http.ResponseWriter, r *http.Request) {
 
 // falhou traduz o erro do domínio para o envelope e devolve true se havia
 // erro. O detalhe de um erro inesperado vai só para o log, correlacionado
-// pelo trace_id (spec §9.1).
+// pelo trace_id (spec §9.1). Projeto sem pertença (o escopo pode ter mudado
+// entre o middleware e a transação) é o mesmo 404 de alvo inexistente; papel
+// sem a permissão é 403.
 func (h *TargetHandlers) falhou(w http.ResponseWriter, r *http.Request, op string, err error) bool {
 	if err == nil {
 		return false
 	}
 	var verr *targets.ValidationError
 	switch {
-	case errors.Is(err, targets.ErrNotFound):
+	case errors.Is(err, targets.ErrNotFound), errors.Is(err, tenancy.ErrProjectNotFound):
 		apierr.WriteError(w, r, apierr.CodeNotFound)
+	case errors.Is(err, tenancy.ErrForbidden):
+		apierr.WriteError(w, r, apierr.CodeForbidden)
 	case errors.Is(err, targets.ErrLimitReached):
 		apierr.WriteError(w, r, apierr.CodeTargetLimit)
 	case errors.Is(err, targets.ErrContentHostLimit):
@@ -452,7 +457,7 @@ const campoDaConsulta = "query"
 // sem paginação (o teto de alvos por usuário é o limite). ?tag= e ?state=
 // filtram (spec do painel denso).
 func (h *TargetHandlers) Summary(w http.ResponseWriter, r *http.Request) {
-	userID, ok := usuario(w, r)
+	sc, ok := escopo(w, r)
 	if !ok {
 		return
 	}
@@ -464,7 +469,7 @@ func (h *TargetHandlers) Summary(w http.ResponseWriter, r *http.Request) {
 	if h.falhou(w, r, "filtrar resumo", validacaoOuNada(verr)) {
 		return
 	}
-	resumo, err := h.svc.Summary(r.Context(), userID, filtro)
+	resumo, err := h.svc.Summary(r.Context(), sc, filtro)
 	if h.falhou(w, r, "resumir alvos", err) {
 		return
 	}
@@ -541,6 +546,18 @@ func donoEID(w http.ResponseWriter, r *http.Request) (userID, id uuid.UUID, ok b
 	}
 	id, ok = pathID(w, r)
 	return userID, id, ok
+}
+
+// escopoEID abre os handlers de alvo com {id}: o escopo de projeto que o
+// middleware pôs no contexto e o {id} da rota. Sem escopo é defeito de
+// montagem (500, ver escopo); só depois um id malformado vira 404.
+func escopoEID(w http.ResponseWriter, r *http.Request) (tenancy.ProjectScope, uuid.UUID, bool) {
+	sc, ok := escopo(w, r)
+	if !ok {
+		return tenancy.ProjectScope{}, uuid.Nil, false
+	}
+	id, ok := pathID(w, r)
+	return sc, id, ok
 }
 
 func campoInvalido(w http.ResponseWriter, r *http.Request, campo, motivo string) {

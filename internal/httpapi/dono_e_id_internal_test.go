@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -14,11 +15,32 @@ import (
 	"github.com/BipoXDXD/stillon/internal/auth"
 	"github.com/BipoXDXD/stillon/internal/clock"
 	"github.com/BipoXDXD/stillon/internal/httpapi/middleware"
+	"github.com/BipoXDXD/stillon/internal/tenancy"
 )
+
+// resolvedorFixo põe qualquer usuário como owner de um projeto qualquer, sem
+// banco: os testes daqui param antes do serviço.
+type resolvedorFixo struct{}
+
+func (resolvedorFixo) Scope(_ context.Context, userID, projectID uuid.UUID) (tenancy.ProjectScope, error) {
+	return tenancy.ProjectScope{ProjectID: projectID, UserID: userID, Role: tenancy.RoleOwner}, nil
+}
+
+func (resolvedorFixo) DefaultScope(_ context.Context, userID uuid.UUID) (tenancy.ProjectScope, error) {
+	return tenancy.ProjectScope{ProjectID: uuid.New(), UserID: userID, Role: tenancy.RoleOwner}, nil
+}
+
+// noProjetoPadrao põe h atrás de middleware.ProjetoPadrao, como nas rotas
+// antigas de alvos: o handler lê o escopo do contexto, e o 401 sem usuário
+// vem do middleware.
+func noProjetoPadrao(h http.HandlerFunc) http.HandlerFunc {
+	return middleware.ProjetoPadrao(resolvedorFixo{})(h).ServeHTTP
+}
 
 // rotaComDonoEId é um handler que começa com "usuário do token, depois {id}
 // da rota". Os handlers de heartbeat entram como controle: já usavam donoEID
-// antes da mudança de lugar.
+// antes da mudança de lugar. Os de alvo leem o escopo de projeto, e entram
+// atrás de noProjetoPadrao, como na rota.
 type rotaComDonoEId struct {
 	nome    string
 	handler http.HandlerFunc
@@ -28,10 +50,10 @@ func rotasComDonoEId() []rotaComDonoEId {
 	alvos, incidentes, canais := &TargetHandlers{}, &IncidentHandlers{}, &ChannelHandlers{}
 	paginas, batidas := &StatusPageHandlers{}, &HeartbeatHandlers{}
 	return []rotaComDonoEId{
-		{"GET /targets/{id}", alvos.Get},
-		{"PATCH /targets/{id}", alvos.Update},
-		{"DELETE /targets/{id}", alvos.Delete},
-		{"GET /targets/{id}/checks", alvos.Checks},
+		{"GET /targets/{id}", noProjetoPadrao(alvos.Get)},
+		{"PATCH /targets/{id}", noProjetoPadrao(alvos.Update)},
+		{"DELETE /targets/{id}", noProjetoPadrao(alvos.Delete)},
+		{"GET /targets/{id}/checks", noProjetoPadrao(alvos.Checks)},
 		{"POST /incidents/{id}/ack", incidentes.Ack},
 		{"DELETE /channels/{id}", canais.Delete},
 		{"PATCH /channels/{id}/enabled", canais.SetEnabled},

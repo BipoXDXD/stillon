@@ -266,7 +266,7 @@ func TestOldHostProbeDoesNotRecreateTargetTLS(t *testing.T) {
 
 	nova := urlNova
 	svc := targets.NewService(b.pool, b.box, b.clk)
-	if _, err := svc.Update(context.Background(), b.dono, alvo, targets.Patch{URL: &nova}); err != nil {
+	if _, err := svc.Update(context.Background(), b.escopo(t), alvo, targets.Patch{URL: &nova}); err != nil {
 		t.Fatal(err)
 	}
 	if l, ok := b.linhaTLS(t, alvo); ok {
@@ -322,13 +322,13 @@ func TestOldHostProbeWaitsForAnOpenPatchAndLeavesNoCertificate(t *testing.T) {
 		t.Fatal(err)
 	}
 	q := db.New(tx)
-	if _, err := q.GetTargetForUpdate(ctx, db.GetTargetForUpdateParams{UserID: b.dono, ID: alvo}); err != nil {
+	if _, err := q.GetTargetForUpdate(ctx, db.GetTargetForUpdateParams{ProjectID: testdb.ProjetoDoAlvo(t, alvo), ID: alvo}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := tx.Exec(ctx, `UPDATE targets SET url = $2 WHERE id = $1`, alvo, urlNova); err != nil {
 		t.Fatal(err)
 	}
-	if err := q.DeleteTargetTLSOfOwner(ctx, db.DeleteTargetTLSOfOwnerParams{UserID: b.dono, TargetID: alvo}); err != nil {
+	if err := q.DeleteTargetTLSOfOwner(ctx, db.DeleteTargetTLSOfOwnerParams{ProjectID: testdb.ProjetoDoAlvo(t, alvo), TargetID: alvo}); err != nil {
 		t.Fatal(err)
 	}
 

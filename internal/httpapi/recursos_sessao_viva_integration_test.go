@@ -87,6 +87,7 @@ func TestEveryResourceRouteRejectsRevokedFamily(t *testing.T) {
 		t.Fatalf("preparar página: %d", resp.StatusCode)
 	}
 	hb, ping := criarHB(t, a, dono, corpoDePeriodo)
+	noProjeto := "/api/v1/projects/" + testdb.ProjetoPadrao(t, a.userID).String()
 	if status, _, corpo := pingar(t, a, "/ping/"+ping, nil); status != http.StatusOK {
 		t.Fatalf("preparar evento: %d %s", status, corpo)
 	}
@@ -116,6 +117,13 @@ func TestEveryResourceRouteRejectsRevokedFamily(t *testing.T) {
 		{"PATCH /api/v1/targets/{id}", "/api/v1/targets/" + alvo, map[string]string{"name": "alterado sem sessão"}},
 		{"DELETE /api/v1/targets/{id}", "/api/v1/targets/" + alvo, nil},
 		{"GET /api/v1/targets/{id}/checks", "/api/v1/targets/" + alvo + "/checks", nil},
+		{"GET /api/v1/projects/{projectID}/targets", noProjeto + "/targets", nil},
+		{"POST /api/v1/projects/{projectID}/targets", noProjeto + "/targets", alvoValido},
+		{"GET /api/v1/projects/{projectID}/targets/summary", noProjeto + "/targets/summary", nil},
+		{"GET /api/v1/projects/{projectID}/targets/{id}", noProjeto + "/targets/" + alvo, nil},
+		{"PATCH /api/v1/projects/{projectID}/targets/{id}", noProjeto + "/targets/" + alvo, map[string]string{"name": "alterado sem sessão"}},
+		{"DELETE /api/v1/projects/{projectID}/targets/{id}", noProjeto + "/targets/" + alvo, nil},
+		{"GET /api/v1/projects/{projectID}/targets/{id}/checks", noProjeto + "/targets/" + alvo + "/checks", nil},
 		{"GET /api/v1/incidents", "/api/v1/incidents", nil},
 		{"POST /api/v1/incidents/{id}/ack", "/api/v1/incidents/" + incidentes[0] + "/ack", nil},
 		{"GET /api/v1/channels", "/api/v1/channels", nil},

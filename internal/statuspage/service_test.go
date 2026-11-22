@@ -364,6 +364,7 @@ func TestDeletedTargetLeavesThePage(t *testing.T) {
 	a := novoAmbiente(t)
 	ctx := context.Background()
 	dono := a.usuario(t)
+	testdb.ProjetoPadrao(t, dono)
 	api, site := a.alvo(t, dono, "api"), a.alvo(t, dono, "site")
 	if _, err := a.svc.Create(ctx, dono, statuspage.Input{
 		Slug: "empresa", Title: "T", Items: []statuspage.Item{{TargetID: api, DisplayName: "API"}, {TargetID: site, DisplayName: "Site"}},
@@ -371,7 +372,7 @@ func TestDeletedTargetLeavesThePage(t *testing.T) {
 		t.Fatal(err)
 	}
 	err := storage.InUserTx(ctx, a.pool, dono, func(q *db.Queries) error {
-		_, err := q.DeleteTarget(ctx, db.DeleteTargetParams{UserID: dono, ID: api})
+		_, err := q.DeleteTarget(ctx, db.DeleteTargetParams{ProjectID: testdb.ProjetoDoAlvo(t, api), ID: api})
 		return err
 	})
 	if err != nil {

@@ -100,7 +100,7 @@ func TestProbeOfTheOldURLFinishingAfterThePatchIsDiscarded(t *testing.T) {
 
 	nova := urlNova
 	svc := targets.NewService(b.pool, b.box, b.clk)
-	if _, err := svc.Update(context.Background(), b.dono, alvo, targets.Patch{URL: &nova}); err != nil {
+	if _, err := svc.Update(context.Background(), b.escopo(t), alvo, targets.Patch{URL: &nova}); err != nil {
 		t.Fatal(err)
 	}
 	close(liberar)
@@ -136,10 +136,10 @@ func TestProbeWriteWaitsForAnOpenPatchAndSeesTheNewURL(t *testing.T) {
 		t.Fatal(err)
 	}
 	q := db.New(tx)
-	if _, err := q.GetTargetForUpdate(ctx, db.GetTargetForUpdateParams{UserID: b.dono, ID: alvo}); err != nil {
+	if _, err := q.GetTargetForUpdate(ctx, db.GetTargetForUpdateParams{ProjectID: testdb.ProjetoDoAlvo(t, alvo), ID: alvo}); err != nil {
 		t.Fatal(err)
 	}
-	if err := q.ResetTargetHealth(ctx, db.ResetTargetHealthParams{UserID: b.dono, TargetID: alvo}); err != nil {
+	if err := q.ResetTargetHealth(ctx, db.ResetTargetHealthParams{ProjectID: testdb.ProjetoDoAlvo(t, alvo), TargetID: alvo}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := tx.Exec(ctx, `UPDATE targets SET url = $2 WHERE id = $1`, alvo, urlNova); err != nil {
@@ -201,7 +201,7 @@ func TestPauseWithProbeInFlightDiscardsTheResult(t *testing.T) {
 
 	pausado := false
 	svc := targets.NewService(b.pool, b.box, b.clk)
-	if _, err := svc.Update(context.Background(), b.dono, alvo, targets.Patch{Enabled: &pausado}); err != nil {
+	if _, err := svc.Update(context.Background(), b.escopo(t), alvo, targets.Patch{Enabled: &pausado}); err != nil {
 		t.Fatal(err)
 	}
 	close(liberar)
@@ -229,7 +229,7 @@ func TestPauseWithProbeInFlightIsAwaitedByTheWrite(t *testing.T) {
 	if _, err := tx.Exec(ctx, `SELECT set_config('app.user_id', $1, true)`, b.dono.String()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.New(tx).GetTargetForUpdate(ctx, db.GetTargetForUpdateParams{UserID: b.dono, ID: alvo}); err != nil {
+	if _, err := db.New(tx).GetTargetForUpdate(ctx, db.GetTargetForUpdateParams{ProjectID: testdb.ProjetoDoAlvo(t, alvo), ID: alvo}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := tx.Exec(ctx, `UPDATE targets SET enabled = false WHERE id = $1`, alvo); err != nil {
@@ -263,7 +263,7 @@ func TestProbeWithTheOldMethodIsDiscarded(t *testing.T) {
 
 	head := http.MethodHead
 	svc := targets.NewService(b.pool, b.box, b.clk)
-	if _, err := svc.Update(context.Background(), b.dono, alvo, targets.Patch{Method: &head}); err != nil {
+	if _, err := svc.Update(context.Background(), b.escopo(t), alvo, targets.Patch{Method: &head}); err != nil {
 		t.Fatal(err)
 	}
 	a := db.ClaimDueTargetsRow{ID: alvo, UserID: b.dono, URL: urlVelha, Method: http.MethodGet, IntervalSec: 60}
@@ -306,7 +306,7 @@ func TestProbeDiscardedWhenRuleChanged(t *testing.T) {
 	esperar(t, chegou, "a sonda da regra velha entrar em voo")
 
 	svc := targets.NewService(b.pool, b.box, b.clk)
-	if _, err := svc.Update(context.Background(), b.dono, alvo, regraContains("b")); err != nil {
+	if _, err := svc.Update(context.Background(), b.escopo(t), alvo, regraContains("b")); err != nil {
 		t.Fatal(err)
 	}
 	close(liberar)
@@ -370,7 +370,7 @@ func TestRuleChangeClosesTheOpenIncidentOnlyWithNewRuleSuccesses(t *testing.T) {
 	}
 	esperar(t, chegou, "a sonda da regra velha entrar em voo")
 	svc := targets.NewService(b.pool, b.box, b.clk)
-	if _, err := svc.Update(context.Background(), b.dono, alvo, regraContains("b")); err != nil {
+	if _, err := svc.Update(context.Background(), b.escopo(t), alvo, regraContains("b")); err != nil {
 		t.Fatal(err)
 	}
 	soltar()

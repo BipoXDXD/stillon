@@ -90,6 +90,8 @@ func novaBancadaPublica(t *testing.T) *bancadaPublica {
 	if _, err := b.pool.Exec(t.Context(), `INSERT INTO users (id, email, password_hash) VALUES ($1, $2, 'x')`, b.owner, b.owner.String()+"@exemplo.test"); err != nil {
 		t.Fatal(err)
 	}
+	// Com o Projeto padrão, o gatilho põe nele os alvos que a bancada cria.
+	testdb.ProjetoPadrao(t, b.owner)
 	b.s = prober.New(b.pool, b.box, b.clk, prober.NewMetrics(b.reg), nil)
 	t.Cleanup(func() { b.s.Stop(5 * time.Second) })
 	return b
@@ -115,7 +117,7 @@ func (b *bancadaPublica) checks(t *testing.T, id uuid.UUID) []db.ListChecksRow {
 	var rows []db.ListChecksRow
 	err := storage.InUserTx(t.Context(), b.pool, b.owner, func(q *db.Queries) error {
 		var err error
-		rows, err = q.ListChecks(t.Context(), db.ListChecksParams{UserID: b.owner, TargetID: id, FromAt: b.clk.Now().Add(-time.Hour), ToAt: b.clk.Now().Add(time.Hour)})
+		rows, err = q.ListChecks(t.Context(), db.ListChecksParams{ProjectID: testdb.ProjetoDoAlvo(t, id), TargetID: id, FromAt: b.clk.Now().Add(-time.Hour), ToAt: b.clk.Now().Add(time.Hour)})
 		return err
 	})
 	if err != nil {
@@ -186,7 +188,7 @@ func (b *bancadaPublica) incidente(t *testing.T, id uuid.UUID) {
 func (b *bancadaPublica) apagar(t *testing.T, id uuid.UUID) {
 	t.Helper()
 	err := storage.InUserTx(t.Context(), b.pool, b.owner, func(q *db.Queries) error {
-		n, err := q.DeleteTarget(t.Context(), db.DeleteTargetParams{UserID: b.owner, ID: id})
+		n, err := q.DeleteTarget(t.Context(), db.DeleteTargetParams{ProjectID: testdb.ProjetoDoAlvo(t, id), ID: id})
 		if err == nil && n != 1 {
 			return fmt.Errorf("DeleteTarget removeu %d linhas", n)
 		}

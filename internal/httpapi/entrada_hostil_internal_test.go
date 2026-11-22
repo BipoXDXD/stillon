@@ -74,10 +74,10 @@ func TestIDMalformadoE404EmTodaRotaComID(t *testing.T) {
 	alvos, batidas, canais := &TargetHandlers{}, &HeartbeatHandlers{}, &ChannelHandlers{}
 	paginas, incidentes := &StatusPageHandlers{}, &IncidentHandlers{}
 	rotas := map[string]http.HandlerFunc{
-		"GET /targets/{id}":                                 alvos.Get,
-		"PATCH /targets/{id}":                               alvos.Update,
-		"DELETE /targets/{id}":                              alvos.Delete,
-		"GET /targets/{id}/checks":                          alvos.Checks,
+		"GET /targets/{id}":                                 noProjetoPadrao(alvos.Get),
+		"PATCH /targets/{id}":                               noProjetoPadrao(alvos.Update),
+		"DELETE /targets/{id}":                              noProjetoPadrao(alvos.Delete),
+		"GET /targets/{id}/checks":                          noProjetoPadrao(alvos.Checks),
 		"POST /incidents/{id}/ack":                          incidentes.Ack,
 		"GET /heartbeats/{id}":                              batidas.Get,
 		"PATCH /heartbeats/{id}":                            batidas.Update,
@@ -124,7 +124,7 @@ func TestIncidenteMalformadoNoAckE404(t *testing.T) {
 func TestConsultaHostilE400NasListagens(t *testing.T) {
 	alvos, batidas, incidentes := &TargetHandlers{clk: clock.NewFake(time.Now())}, &HeartbeatHandlers{}, &IncidentHandlers{}
 	paginadas := map[string]http.HandlerFunc{
-		"targets": alvos.List, "incidents": incidentes.List, "heartbeats": batidas.List,
+		"targets": noProjetoPadrao(alvos.List), "incidents": incidentes.List, "heartbeats": batidas.List,
 		"heartbeats events": batidas.Events, "heartbeats incidents": batidas.Incidents,
 	}
 	const (
@@ -156,13 +156,13 @@ func TestConsultaHostilE400NasListagens(t *testing.T) {
 		{"incidents", incidentes.List, "status=OPEN", "status", invalido},
 		{"incidents", incidentes.List, "target_id=%00", "target_id", invalido},
 		{"heartbeats incidents", batidas.Incidents, "status=%00", "status", invalido},
-		{"checks", alvos.Checks, "from=%00", "from", invalido},
-		{"checks", alvos.Checks, "to=%00", "to", invalido},
-		{"checks", alvos.Checks, "window=%00", "window", invalido},
-		{"checks", alvos.Checks, "window=", "window", invalido},
-		{"checks", alvos.Checks, "window=1h&from=2026-01-01T00:00:00Z", "window", invalido},
-		{"checks", alvos.Checks, "from=2026-01-02T00:00:00Z&to=2026-01-01T00:00:00Z", "from", invalido},
-		{"checks", alvos.Checks, "from=0001-01-01T00:00:00Z&to=9999-12-31T23:59:59Z", "from", foraDaFaixa},
+		{"checks", noProjetoPadrao(alvos.Checks), "from=%00", "from", invalido},
+		{"checks", noProjetoPadrao(alvos.Checks), "to=%00", "to", invalido},
+		{"checks", noProjetoPadrao(alvos.Checks), "window=%00", "window", invalido},
+		{"checks", noProjetoPadrao(alvos.Checks), "window=", "window", invalido},
+		{"checks", noProjetoPadrao(alvos.Checks), "window=1h&from=2026-01-01T00:00:00Z", "window", invalido},
+		{"checks", noProjetoPadrao(alvos.Checks), "from=2026-01-02T00:00:00Z&to=2026-01-01T00:00:00Z", "from", invalido},
+		{"checks", noProjetoPadrao(alvos.Checks), "from=0001-01-01T00:00:00Z&to=9999-12-31T23:59:59Z", "from", foraDaFaixa},
 		{"cron-preview", batidas.CronPreview, "expr=*%20*%20*%20*%20*&timezone=UTC%00", "timezone", invalido},
 		{"cron-preview", batidas.CronPreview, "expr=*%20*%20*%20*%20*&timezone=" + strings.Repeat("a", 65), "timezone", invalido},
 	}
@@ -221,8 +221,8 @@ func TestCorpoHostilE400NaFronteira(t *testing.T) {
 		{"página: itens demais", paginas.Create, `{"slug":"empresa","title":"T","items":[` + strings.Join(vinteEUm, ",") + `]}`, "items", "out_of_range"},
 		{"heartbeat: fuso com NUL", batidas.Create, cron + `"UTC\u0000"}}`, "timezone", "invalid"},
 		{"heartbeat: fuso longo", batidas.Create, cron + `"` + strings.Repeat("a", 65) + `"}}`, "timezone", "invalid"},
-		{"alvo: URL com NUL", alvos.Create, `{"name":"a","url":"https://exemplo.com/\u0000"}`, "url", "invalid"},
-		{"alvo: método com NUL", alvos.Create, `{"name":"a","url":"https://exemplo.com/","method":"G\u0000"}`, "method", "invalid"},
+		{"alvo: URL com NUL", noProjetoPadrao(alvos.Create), `{"name":"a","url":"https://exemplo.com/\u0000"}`, "url", "invalid"},
+		{"alvo: método com NUL", noProjetoPadrao(alvos.Create), `{"name":"a","url":"https://exemplo.com/","method":"G\u0000"}`, "method", "invalid"},
 	}
 	for _, c := range casos {
 		t.Run(c.nome, func(t *testing.T) {

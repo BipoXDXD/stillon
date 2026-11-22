@@ -39,7 +39,7 @@ func rollupsDe(t *testing.T, pool *pgxpool.Pool, dono, alvo uuid.UUID) []db.List
 	err := storage.InUserTx(ctx, pool, dono, func(q *db.Queries) error {
 		var err error
 		rows, err = q.ListRollups(ctx, db.ListRollupsParams{
-			UserID: dono, TargetID: alvo, FromAt: hora(0, 0).AddDate(0, 0, -90), ToAt: hora(0, 0).AddDate(0, 0, 90),
+			ProjectID: testdb.ProjetoDoAlvo(t, alvo), TargetID: alvo, FromAt: hora(0, 0).AddDate(0, 0, -90), ToAt: hora(0, 0).AddDate(0, 0, 90),
 		})
 		return err
 	})
@@ -68,6 +68,7 @@ func valor(p *int32) int32 {
 func TestConsolidateRollupsAggregatesClosedHours(t *testing.T) {
 	pool := testdb.New(t)
 	dono := novoUsuario(t, pool)
+	testdb.ProjetoPadrao(t, dono)
 	alvo := novoAlvo(t, pool, dono, agora)
 	if err := storage.EnsureChecksPartitions(context.Background(), pool, agora); err != nil {
 		t.Fatal(err)
@@ -96,6 +97,7 @@ func TestConsolidateRollupsAggregatesClosedHours(t *testing.T) {
 func TestConsolidationIsIdempotentAndPicksUpLateChecks(t *testing.T) {
 	pool := testdb.New(t)
 	dono := novoUsuario(t, pool)
+	testdb.ProjetoPadrao(t, dono)
 	alvo := novoAlvo(t, pool, dono, agora)
 	if err := storage.EnsureChecksPartitions(context.Background(), pool, agora); err != nil {
 		t.Fatal(err)
@@ -117,6 +119,7 @@ func TestConsolidationIsIdempotentAndPicksUpLateChecks(t *testing.T) {
 func TestHourWithoutSuccessHasNoLatency(t *testing.T) {
 	pool := testdb.New(t)
 	dono := novoUsuario(t, pool)
+	testdb.ProjetoPadrao(t, dono)
 	alvo := novoAlvo(t, pool, dono, agora)
 	if err := storage.EnsureChecksPartitions(context.Background(), pool, agora); err != nil {
 		t.Fatal(err)
@@ -133,6 +136,7 @@ func TestHourWithoutSuccessHasNoLatency(t *testing.T) {
 func TestConsolidationCatchesUpAfterAGap(t *testing.T) {
 	pool := testdb.New(t)
 	dono := novoUsuario(t, pool)
+	testdb.ProjetoPadrao(t, dono)
 	alvo := novoAlvo(t, pool, dono, agora)
 	if err := storage.EnsureChecksPartitions(context.Background(), pool, agora); err != nil {
 		t.Fatal(err)
@@ -155,6 +159,7 @@ func TestConsolidationCatchesUpAfterAGap(t *testing.T) {
 func TestConsolidationSurvivesAWatermarkInTheFuture(t *testing.T) {
 	pool := testdb.New(t)
 	dono := novoUsuario(t, pool)
+	testdb.ProjetoPadrao(t, dono)
 	alvo := novoAlvo(t, pool, dono, agora)
 	if err := storage.EnsureChecksPartitions(context.Background(), pool, agora); err != nil {
 		t.Fatal(err)
@@ -185,6 +190,7 @@ func TestConsolidationSurvivesAWatermarkInTheFuture(t *testing.T) {
 func TestConsolidationCatchesUpAfterAGapWithAWatermarkInTheFuture(t *testing.T) {
 	pool := testdb.New(t)
 	dono := novoUsuario(t, pool)
+	testdb.ProjetoPadrao(t, dono)
 	alvo := novoAlvo(t, pool, dono, agora)
 	if err := storage.EnsureChecksPartitions(context.Background(), pool, agora); err != nil {
 		t.Fatal(err)
@@ -415,6 +421,7 @@ func TestFirstConsolidationReachesTheOldestRawChecks(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
 	dono := novoUsuario(t, pool)
+	testdb.ProjetoPadrao(t, dono)
 	alvo := novoAlvo(t, pool, dono, agora)
 	velho := hora(10, 0).AddDate(0, 0, -60)
 	if err := storage.EnsureChecksPartitions(ctx, pool, velho); err != nil {

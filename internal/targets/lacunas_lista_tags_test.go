@@ -17,11 +17,11 @@ func TestListTrazAValidadeDoCertificadoSoDoAlvoCerto(t *testing.T) {
 	ctx := context.Background()
 	dono := a.usuario(t)
 
-	comCertificado, err := a.svc.Create(ctx, dono, entrada())
+	comCertificado, err := a.svc.Create(ctx, targets.EscopoDe(t, a.pool, dono), entrada())
 	if err != nil {
 		t.Fatal(err)
 	}
-	semCertificado, err := a.svc.Create(ctx, dono, entrada())
+	semCertificado, err := a.svc.Create(ctx, targets.EscopoDe(t, a.pool, dono), entrada())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -29,7 +29,7 @@ func TestListTrazAValidadeDoCertificadoSoDoAlvoCerto(t *testing.T) {
 	observedAt := time.Date(2026, 11, 11, 10, 0, 0, 0, time.UTC)
 	a.gravarValidade(t, comCertificado.ID, notAfter, observedAt)
 
-	lista, err := a.svc.List(ctx, dono, nil, 10)
+	lista, err := a.svc.List(ctx, targets.EscopoDe(t, a.pool, dono), nil, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,13 +68,13 @@ func TestUpdateSetTagsSubstituiAsTags(t *testing.T) {
 
 	in := entrada()
 	in.Tags = []string{"prod"}
-	alvo, err := a.svc.Create(ctx, dono, in)
+	alvo, err := a.svc.Create(ctx, targets.EscopoDe(t, a.pool, dono), in)
 	if err != nil {
 		t.Fatal(err)
 	}
 	lidas := func(passo string) []string {
 		t.Helper()
-		got, err := a.svc.Get(ctx, dono, alvo.ID)
+		got, err := a.svc.Get(ctx, targets.EscopoDe(t, a.pool, dono), alvo.ID)
 		if err != nil {
 			t.Fatalf("%s: %v", passo, err)
 		}
@@ -84,14 +84,14 @@ func TestUpdateSetTagsSubstituiAsTags(t *testing.T) {
 		t.Fatalf("tags depois do Create = %v, queria [prod]", got)
 	}
 
-	if _, err := a.svc.Update(ctx, dono, alvo.ID, targets.Patch{SetTags: true, Tags: []string{"a", "b"}}); err != nil {
+	if _, err := a.svc.Update(ctx, targets.EscopoDe(t, a.pool, dono), alvo.ID, targets.Patch{SetTags: true, Tags: []string{"a", "b"}}); err != nil {
 		t.Fatal(err)
 	}
 	if got := lidas("depois de trocar"); !slices.Equal(got, []string{"a", "b"}) {
 		t.Errorf("tags depois de trocar = %v, queria [a b]", got)
 	}
 
-	if _, err := a.svc.Update(ctx, dono, alvo.ID, targets.Patch{SetTags: true, Tags: nil}); err != nil {
+	if _, err := a.svc.Update(ctx, targets.EscopoDe(t, a.pool, dono), alvo.ID, targets.Patch{SetTags: true, Tags: nil}); err != nil {
 		t.Fatal(err)
 	}
 	got := lidas("depois de limpar")

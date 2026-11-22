@@ -16,11 +16,14 @@ import (
 	"github.com/BipoXDXD/stillon/internal/rollupcut"
 	"github.com/BipoXDXD/stillon/internal/storage"
 	"github.com/BipoXDXD/stillon/internal/storage/db"
+	"github.com/BipoXDXD/stillon/internal/tenancy"
 )
 
-// Service é o CRUD de alvos. Todo método recebe userID logo depois de ctx
-// (spec §5.5) e roda sob storage.InUserTx, que liga a RLS para esse
-// usuário: as queries filtram por user_id E a política filtra de novo.
+// Service é o CRUD de alvos. Todo método recebe o escopo de projeto logo
+// depois de ctx e roda sob storage.InProjectTx, que confere a pertença e liga
+// a RLS para aquele projeto: as queries filtram por project_id E a política
+// filtra de novo. A permissão vale pelo papel lido NA transação (o escopo que
+// InProjectTx entrega), nunca pelo que quem chamou trouxe.
 type Service struct {
 	pool *pgxpool.Pool
 	box  *crypto.Box
@@ -52,10 +55,11 @@ func NewService(pool *pgxpool.Pool, box *crypto.Box, clk clock.Clock, opcoes ...
 }
 
 // Create valida, cifra os headers e grava o alvo com as tags, tudo numa
-// transação que primeiro confere os tetos. ErrLimitReached e
+// transação que primeiro confere o papel (PermEditMonitors) e os tetos.
+// tenancy.ErrForbidden, tenancy.ErrProjectNotFound, ErrLimitReached e
 // ErrContentHostLimit saem sem embrulho; qualquer outra falha de gravação vira
-// "gravar alvo".
-func (s *Service) Create(ctx context.Context, userID uuid.UUID, in Input) (Target, error) {
+// "gravar alvo". O alvo nasce no projeto do escopo, com user_id = quem criou.
+func (s *Service) Create(ctx context.Context, scope tenancy.ProjectScope, in Input) (Target, error) {
 	f := camposDoCadastro(in)
 	if verr := validate(&f); verr != nil {
 		return Target{}, verr
@@ -73,13 +77,16 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, in Input) (Targe
 	// O alvo nasce vencido: a primeira sonda sai no próximo tick, e quem
 	// cadastrou vê o estado em segundos, não depois de um intervalo inteiro.
 	now := s.clk.Now()
-	err = storage.InUserTx(ctx, s.pool, userID, func(q *db.Queries) error {
-		if err := s.recusarAlvoAcimaDosTetos(ctx, q, userID, f); err != nil {
+	err = storage.InProjectTx(ctx, s.pool, scope.UserID, scope.ProjectID, func(q *db.Queries, atual tenancy.ProjectScope) error {
+		if err := atual.Require(tenancy.PermEditMonitors); err != nil {
 			return err
 		}
-		return inserirAlvo(ctx, q, f.insertTargetParams(userID, id, sealed, in.Enabled, in.TLSWarn, now), f.Tags)
+		if err := s.recusarAlvoAcimaDosTetos(ctx, q, atual.UserID, f); err != nil {
+			return err
+		}
+		return inserirAlvo(ctx, q, atual, f.insertTargetParams(atual, id, sealed, in.Enabled, in.TLSWarn, now), f.Tags)
 	})
-	if errors.Is(err, ErrLimitReached) || errors.Is(err, ErrContentHostLimit) {
+	if errors.Is(err, ErrLimitReached) || errors.Is(err, ErrContentHostLimit) || erroDeEscopo(err) {
 		return Target{}, err
 	}
 	if err != nil {
@@ -142,48 +149,58 @@ func regrasNoHostDoNovoAlvo(ctx context.Context, q *db.Queries, userID uuid.UUID
 	return contarRegrasNoHost(ctx, q, userID, hostDaRegra(f.URL), uuid.Nil)
 }
 
-// inserirAlvo grava a linha do alvo e, em seguida, as tags dele.
-func inserirAlvo(ctx context.Context, q *db.Queries, p db.InsertTargetParams, tags []string) error {
+// inserirAlvo grava a linha do alvo e, em seguida, as tags dele, no projeto
+// do escopo.
+func inserirAlvo(ctx context.Context, q *db.Queries, sc tenancy.ProjectScope, p db.InsertTargetParams, tags []string) error {
 	if err := q.InsertTarget(ctx, p); err != nil {
 		return err
 	}
-	return q.InsertTargetTags(ctx, db.InsertTargetTagsParams{Tags: tags, UserID: p.UserID, TargetID: p.ID})
+	return q.InsertTargetTags(ctx, db.InsertTargetTagsParams{Tags: tags, ProjectID: sc.ProjectID, TargetID: p.ID})
 }
 
-func (s *Service) Get(ctx context.Context, userID, id uuid.UUID) (Target, error) {
+// Get lê um alvo do projeto (PermRead). Alvo de outro projeto é ErrNotFound.
+func (s *Service) Get(ctx context.Context, scope tenancy.ProjectScope, id uuid.UUID) (Target, error) {
 	var out Target
-	err := storage.InUserTx(ctx, s.pool, userID, func(q *db.Queries) error {
-		row, err := q.GetTarget(ctx, db.GetTargetParams{UserID: userID, ID: id})
+	err := storage.InProjectTx(ctx, s.pool, scope.UserID, scope.ProjectID, func(q *db.Queries, atual tenancy.ProjectScope) error {
+		if err := atual.Require(tenancy.PermRead); err != nil {
+			return err
+		}
+		row, err := q.GetTarget(ctx, db.GetTargetParams{ProjectID: atual.ProjectID, ID: id})
 		if err != nil {
 			return naoAchado(err)
 		}
 		if out, err = s.toTarget(row); err != nil {
 			return err
 		}
-		if out.Tags, err = lerTags(ctx, q, userID, id); err != nil {
+		if out.Tags, err = lerTags(ctx, q, atual.ProjectID, id); err != nil {
 			return err
 		}
-		out.TLS, err = lerValidade(ctx, q, userID, id)
+		out.TLS, err = lerValidade(ctx, q, atual.ProjectID, id)
 		return err
 	})
 	return out, err
 }
 
-func (s *Service) List(ctx context.Context, userID uuid.UUID, before *uuid.UUID, limit int32) ([]Target, error) {
+// List é uma página dos alvos do projeto (PermRead), do mais novo para o mais
+// antigo.
+func (s *Service) List(ctx context.Context, scope tenancy.ProjectScope, before *uuid.UUID, limit int32) ([]Target, error) {
 	if limit < 1 || limit > MaxPageSize {
 		limit = DefaultPageSize
 	}
 	var out []Target
-	err := storage.InUserTx(ctx, s.pool, userID, func(q *db.Queries) error {
-		rows, err := q.ListTargets(ctx, db.ListTargetsParams{UserID: userID, Before: before, MaxRows: limit})
+	err := storage.InProjectTx(ctx, s.pool, scope.UserID, scope.ProjectID, func(q *db.Queries, atual tenancy.ProjectScope) error {
+		if err := atual.Require(tenancy.PermRead); err != nil {
+			return err
+		}
+		rows, err := q.ListTargets(ctx, db.ListTargetsParams{ProjectID: atual.ProjectID, Before: before, MaxRows: limit})
 		if err != nil {
 			return fmt.Errorf("listar alvos: %w", err)
 		}
-		tags, err := tagsDoDono(ctx, q, userID)
+		tags, err := tagsDoProjeto(ctx, q, atual.ProjectID)
 		if err != nil {
 			return err
 		}
-		validades, err := validadesDoDono(ctx, q, userID)
+		validades, err := validadesDoProjeto(ctx, q, atual.ProjectID)
 		if err != nil {
 			return err
 		}
@@ -206,23 +223,28 @@ func (s *Service) List(ctx context.Context, userID uuid.UUID, before *uuid.UUID,
 // tudo na mesma transação: dois PATCH simultâneos não se atropelam, e um
 // timeout que cabia no intervalo antigo não passa despercebido no novo.
 //
-// Ordem: trava do usuário, linha (404), validação (400), teto de regras por
-// host (409) e só então as escritas (histerese, alvo, validade do
+// Ordem: papel (403), trava do usuário, linha (404), validação (400), teto de
+// regras por host (409) e só então as escritas (histerese, alvo, validade do
 // certificado). A recusa vem antes de toda escrita para não depender do
 // rollback, e depois da linha para o alheio continuar 404.
-func (s *Service) Update(ctx context.Context, userID, id uuid.UUID, p Patch) (Target, error) {
+func (s *Service) Update(ctx context.Context, scope tenancy.ProjectScope, id uuid.UUID, p Patch) (Target, error) {
 	var out Target
-	err := storage.InUserTx(ctx, s.pool, userID, func(q *db.Queries) error {
+	err := storage.InProjectTx(ctx, s.pool, scope.UserID, scope.ProjectID, func(q *db.Queries, atual tenancy.ProjectScope) error {
+		if err := atual.Require(tenancy.PermEditMonitors); err != nil {
+			return err
+		}
 		var err error
-		out, err = s.editarAlvo(ctx, q, userID, id, p)
+		out, err = s.editarAlvo(ctx, q, atual, id, p)
 		return err
 	})
 	return out, err
 }
 
 // editarAlvo é o corpo transacional do Update, na ordem que o doc dele fixa.
-func (s *Service) editarAlvo(ctx context.Context, q *db.Queries, userID, id uuid.UUID, p Patch) (Target, error) {
-	row, f, err := s.lerParaEditar(ctx, q, userID, id)
+// As cotas (trava e regras por host) são do usuário do escopo; a linha, a
+// histerese, a validade e as tags são do projeto.
+func (s *Service) editarAlvo(ctx context.Context, q *db.Queries, sc tenancy.ProjectScope, id uuid.UUID, p Patch) (Target, error) {
+	row, f, err := s.lerParaEditar(ctx, q, sc, id)
 	if err != nil {
 		return Target{}, err
 	}
@@ -230,16 +252,16 @@ func (s *Service) editarAlvo(ctx context.Context, q *db.Queries, userID, id uuid
 	if verr := validate(&e.f); verr != nil {
 		return Target{}, verr
 	}
-	if err := s.recusarRegraAcimaDoTeto(ctx, q, userID, e); err != nil {
+	if err := s.recusarRegraAcimaDoTeto(ctx, q, sc.UserID, e); err != nil {
 		return Target{}, err
 	}
-	if err := zerarHistereseSeMudouOCriterio(ctx, q, userID, e); err != nil {
+	if err := zerarHistereseSeMudouOCriterio(ctx, q, sc.ProjectID, e); err != nil {
 		return Target{}, err
 	}
-	if err := s.gravarAlvo(ctx, q, userID, e); err != nil {
+	if err := s.gravarAlvo(ctx, q, sc.ProjectID, e); err != nil {
 		return Target{}, err
 	}
-	validade, err := acompanharDestinoETags(ctx, q, userID, e, p)
+	validade, err := acompanharDestinoETags(ctx, q, sc.ProjectID, e, p)
 	if err != nil {
 		return Target{}, err
 	}
@@ -251,12 +273,12 @@ func (s *Service) editarAlvo(ctx context.Context, q *db.Queries, userID, id uuid
 // lerParaEditar toma a trava do usuário e lê a linha com FOR UPDATE, os
 // headers abertos e as tags. A mesma ordem de travas do Create (consultiva,
 // depois a linha): dois PATCH simultâneos que poriam regra no mesmo host
-// contam em fila. Linha de outro dono é ErrNotFound.
-func (s *Service) lerParaEditar(ctx context.Context, q *db.Queries, userID, id uuid.UUID) (db.Target, fields, error) {
-	if err := q.LockUserTargets(ctx, userID); err != nil {
+// contam em fila. Linha de outro projeto é ErrNotFound.
+func (s *Service) lerParaEditar(ctx context.Context, q *db.Queries, sc tenancy.ProjectScope, id uuid.UUID) (db.Target, fields, error) {
+	if err := q.LockUserTargets(ctx, sc.UserID); err != nil {
 		return db.Target{}, fields{}, fmt.Errorf("travar alvos do usuário: %w", err)
 	}
-	row, err := q.GetTargetForUpdate(ctx, db.GetTargetForUpdateParams{UserID: userID, ID: id})
+	row, err := q.GetTargetForUpdate(ctx, db.GetTargetForUpdateParams{ProjectID: sc.ProjectID, ID: id})
 	if err != nil {
 		return db.Target{}, fields{}, naoAchado(err)
 	}
@@ -264,7 +286,7 @@ func (s *Service) lerParaEditar(ctx context.Context, q *db.Queries, userID, id u
 	if err != nil {
 		return db.Target{}, fields{}, err
 	}
-	tags, err := lerTags(ctx, q, userID, row.ID)
+	tags, err := lerTags(ctx, q, sc.ProjectID, row.ID)
 	if err != nil {
 		return db.Target{}, fields{}, err
 	}
@@ -312,11 +334,11 @@ func (s *Service) recusarRegraAcimaDoTeto(ctx context.Context, q *db.Queries, us
 // zerarHistereseSeMudouOCriterio: outra URL ou outro método é outro serviço,
 // e outra regra é outro critério de saúde. As falhas do anterior não somam com
 // as do novo; o incidente aberto fica e fecha pelos sucessos do novo.
-func zerarHistereseSeMudouOCriterio(ctx context.Context, q *db.Queries, userID uuid.UUID, e edicao) error {
+func zerarHistereseSeMudouOCriterio(ctx context.Context, q *db.Queries, projectID uuid.UUID, e edicao) error {
 	if !mudouOCriterioDeSaude(e.row.URL, e.row.Method, e.regraGravada, e.f) {
 		return nil
 	}
-	if err := q.ResetTargetHealth(ctx, db.ResetTargetHealthParams{UserID: userID, TargetID: e.row.ID}); err != nil {
+	if err := q.ResetTargetHealth(ctx, db.ResetTargetHealthParams{ProjectID: projectID, TargetID: e.row.ID}); err != nil {
 		return fmt.Errorf("zerar histerese do alvo: %w", err)
 	}
 	return nil
@@ -324,7 +346,7 @@ func zerarHistereseSeMudouOCriterio(ctx context.Context, q *db.Queries, userID u
 
 // gravarAlvo cifra os headers e grava a linha. A próxima sonda sai agora só
 // quando mudou o que é sondado; senão o agendamento anterior fica.
-func (s *Service) gravarAlvo(ctx context.Context, q *db.Queries, userID uuid.UUID, e edicao) error {
+func (s *Service) gravarAlvo(ctx context.Context, q *db.Queries, projectID uuid.UUID, e edicao) error {
 	sealed, err := SealHeaders(s.box, e.row.ID, e.f.Headers)
 	if err != nil {
 		return err
@@ -333,7 +355,7 @@ func (s *Service) gravarAlvo(ctx context.Context, q *db.Queries, userID uuid.UUI
 	if e.mudouASonda {
 		proximo = s.clk.Now()
 	}
-	err = q.UpdateTarget(ctx, e.f.updateTargetParams(userID, e.row.ID, sealed, e.enabled, proximo, e.tlsWarn))
+	err = q.UpdateTarget(ctx, e.f.updateTargetParams(projectID, e.row.ID, sealed, e.enabled, proximo, e.tlsWarn))
 	if err != nil {
 		return fmt.Errorf("atualizar alvo: %w", err)
 	}
@@ -343,19 +365,19 @@ func (s *Service) gravarAlvo(ctx context.Context, q *db.Queries, userID uuid.UUI
 // acompanharDestinoETags faz o que vem depois do UPDATE: outra origem
 // (esquema, host ou porta) é outro certificado, e a leitura anterior sai junto
 // com a troca; devolve a validade que ficou e, se o PATCH mandou tags, troca-as.
-func acompanharDestinoETags(ctx context.Context, q *db.Queries, userID uuid.UUID, e edicao, p Patch) (*CertificateReading, error) {
+func acompanharDestinoETags(ctx context.Context, q *db.Queries, projectID uuid.UUID, e edicao, p Patch) (*CertificateReading, error) {
 	if mudouDeDestino(e.row.URL, e.f.URL) {
-		err := q.DeleteTargetTLSOfOwner(ctx, db.DeleteTargetTLSOfOwnerParams{UserID: userID, TargetID: e.row.ID})
+		err := q.DeleteTargetTLSOfOwner(ctx, db.DeleteTargetTLSOfOwnerParams{ProjectID: projectID, TargetID: e.row.ID})
 		if err != nil {
 			return nil, fmt.Errorf("apagar validade do certificado: %w", err)
 		}
 	}
-	validade, err := lerValidade(ctx, q, userID, e.row.ID)
+	validade, err := lerValidade(ctx, q, projectID, e.row.ID)
 	if err != nil {
 		return nil, err
 	}
 	if p.SetTags {
-		if err := trocarTags(ctx, q, userID, e.row.ID, e.f.Tags); err != nil {
+		if err := trocarTags(ctx, q, projectID, e.row.ID, e.f.Tags); err != nil {
 			return nil, err
 		}
 	}
@@ -388,11 +410,13 @@ func (f fields) comoTarget(id uuid.UUID, enabled, tlsWarn bool, criadoEm time.Ti
 
 // insertTargetParams são as colunas do INSERT do alvo: os campos já validados,
 // os headers cifrados e o que o cadastro decide à parte. O alvo nasce vencido:
-// a próxima sonda e a criação são o mesmo instante.
-func (f fields) insertTargetParams(userID, id uuid.UUID, sealed []byte, enabled, tlsWarn bool, now time.Time) db.InsertTargetParams {
+// a próxima sonda e a criação são o mesmo instante. Nasce no projeto do
+// escopo, e user_id guarda quem o criou. project_id nunca vai nulo daqui:
+// nulo, no escopo de projeto, é recusado pela RLS (ver InsertTarget).
+func (f fields) insertTargetParams(sc tenancy.ProjectScope, id uuid.UUID, sealed []byte, enabled, tlsWarn bool, now time.Time) db.InsertTargetParams {
 	modo, valor, ponteiro := colunasDaRegra(f.ContentRule)
 	return db.InsertTargetParams{
-		ID: id, UserID: userID, Name: f.Name, URL: f.URL, Method: f.Method,
+		ID: id, ProjectID: &sc.ProjectID, UserID: sc.UserID, Name: f.Name, URL: f.URL, Method: f.Method,
 		IntervalSec: f.IntervalSec, TimeoutMS: f.TimeoutMS, ExpectedStatus: f.ExpectedStatus,
 		HeadersEnc: sealed, DegradedThresholdMS: f.DegradedThresholdMS,
 		Enabled: enabled, NextRunAt: now, CreatedAt: now, TlsWarn: tlsWarn,
@@ -402,10 +426,10 @@ func (f fields) insertTargetParams(userID, id uuid.UUID, sealed []byte, enabled,
 
 // updateTargetParams são as colunas do UPDATE do alvo: os campos já
 // validados, os headers cifrados e os três valores que o PATCH decide à parte.
-func (f fields) updateTargetParams(userID, id uuid.UUID, sealed []byte, enabled bool, proximo time.Time, tlsWarn bool) db.UpdateTargetParams {
+func (f fields) updateTargetParams(projectID, id uuid.UUID, sealed []byte, enabled bool, proximo time.Time, tlsWarn bool) db.UpdateTargetParams {
 	modo, valor, ponteiro := colunasDaRegra(f.ContentRule)
 	return db.UpdateTargetParams{
-		UserID: userID, ID: id, Name: f.Name, URL: f.URL, Method: f.Method,
+		ProjectID: projectID, ID: id, Name: f.Name, URL: f.URL, Method: f.Method,
 		IntervalSec: f.IntervalSec, TimeoutMS: f.TimeoutMS, ExpectedStatus: f.ExpectedStatus,
 		HeadersEnc: sealed, DegradedThresholdMS: f.DegradedThresholdMS,
 		Enabled: enabled, NextRunAt: proximo, TlsWarn: tlsWarn,
@@ -519,9 +543,14 @@ func sobrescrever[T any](destino, novo *T) {
 	}
 }
 
-func (s *Service) Delete(ctx context.Context, userID, id uuid.UUID) error {
-	return storage.InUserTx(ctx, s.pool, userID, func(q *db.Queries) error {
-		n, err := q.DeleteTarget(ctx, db.DeleteTargetParams{UserID: userID, ID: id})
+// Delete apaga um alvo do projeto (PermEditMonitors). Alvo de outro projeto é
+// ErrNotFound.
+func (s *Service) Delete(ctx context.Context, scope tenancy.ProjectScope, id uuid.UUID) error {
+	return storage.InProjectTx(ctx, s.pool, scope.UserID, scope.ProjectID, func(q *db.Queries, atual tenancy.ProjectScope) error {
+		if err := atual.Require(tenancy.PermEditMonitors); err != nil {
+			return err
+		}
+		n, err := q.DeleteTarget(ctx, db.DeleteTargetParams{ProjectID: atual.ProjectID, ID: id})
 		if err != nil {
 			return fmt.Errorf("apagar alvo: %w", err)
 		}
@@ -535,9 +564,9 @@ func (s *Service) Delete(ctx context.Context, userID, id uuid.UUID) error {
 // Checks devolve a série de um alvo no intervalo [from, to). Até
 // MaxChecksWindow, os checks brutos; acima, a série horária (serieHoraria).
 // Busca o alvo antes, e não só a série, porque uma lista vazia não
-// distinguiria "alvo de outro usuário" de "alvo sem sondas": o primeiro
-// precisa ser 404.
-func (s *Service) Checks(ctx context.Context, userID, id uuid.UUID, from, to time.Time) (Series, error) {
+// distinguiria "alvo de outro projeto" de "alvo sem sondas": o primeiro
+// precisa ser 404. Pede PermRead.
+func (s *Service) Checks(ctx context.Context, scope tenancy.ProjectScope, id uuid.UUID, from, to time.Time) (Series, error) {
 	if !from.Before(to) {
 		return Series{}, &ValidationError{Fields: []FieldError{{Field: "from", Reason: ReasonInvalid}}}
 	}
@@ -548,8 +577,11 @@ func (s *Service) Checks(ctx context.Context, userID, id uuid.UUID, from, to tim
 	if to.Sub(from) > MaxChecksWindow {
 		out.Resolution = Resolution1h
 	}
-	err := storage.InUserTx(ctx, s.pool, userID, func(q *db.Queries) error {
-		if _, err := q.GetTarget(ctx, db.GetTargetParams{UserID: userID, ID: id}); err != nil {
+	err := storage.InProjectTx(ctx, s.pool, scope.UserID, scope.ProjectID, func(q *db.Queries, atual tenancy.ProjectScope) error {
+		if err := atual.Require(tenancy.PermRead); err != nil {
+			return err
+		}
+		if _, err := q.GetTarget(ctx, db.GetTargetParams{ProjectID: atual.ProjectID, ID: id}); err != nil {
 			return naoAchado(err)
 		}
 		if out.Resolution == Resolution1h {
@@ -557,10 +589,10 @@ func (s *Service) Checks(ctx context.Context, userID, id uuid.UUID, from, to tim
 			if err != nil {
 				return fmt.Errorf("janela da série: %w", err)
 			}
-			out.Rollups, err = serieHoraria(ctx, q, userID, id, janela)
+			out.Rollups, err = serieHoraria(ctx, q, atual.ProjectID, id, janela)
 			return err
 		}
-		rows, err := q.ListChecks(ctx, db.ListChecksParams{UserID: userID, TargetID: id, FromAt: from, ToAt: to})
+		rows, err := q.ListChecks(ctx, db.ListChecksParams{ProjectID: atual.ProjectID, TargetID: id, FromAt: from, ToAt: to})
 		if err != nil {
 			return fmt.Errorf("listar checks: %w", err)
 		}
@@ -584,20 +616,20 @@ func (s *Service) Checks(ctx context.Context, userID, id uuid.UUID, from, to tim
 // consultas, para nenhuma hora contar duas vezes. Os buckets saem em UTC: são
 // horas cheias em UTC por definição, e o pgx devolveria o fuso local do
 // processo.
-func serieHoraria(ctx context.Context, q *db.Queries, userID, id uuid.UUID, j rollupcut.Janela) ([]Rollup, error) {
-	marca, err := q.LatestUserRollupBucket(ctx, db.LatestUserRollupBucketParams{Before: j.Hora(), UserID: userID})
+func serieHoraria(ctx context.Context, q *db.Queries, projectID, id uuid.UUID, j rollupcut.Janela) ([]Rollup, error) {
+	marca, err := q.LatestProjectRollupBucket(ctx, db.LatestProjectRollupBucketParams{Before: j.Hora(), ProjectID: projectID})
 	if err != nil {
 		return nil, fmt.Errorf("marca d'água dos rollups: %w", err)
 	}
 	corte := j.Corte(marca)
 
 	rollups, err := q.ListRollups(ctx, db.ListRollupsParams{
-		UserID: userID, TargetID: id, FromAt: j.Desde(), ToAt: minTime(corte, j.Ate()),
+		ProjectID: projectID, TargetID: id, FromAt: j.Desde(), ToAt: minTime(corte, j.Ate()),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("listar rollups: %w", err)
 	}
-	brutos, err := q.ListRawHours(ctx, db.ListRawHoursParams{UserID: userID, TargetID: &id, FromAt: corte, ToAt: j.Ate()})
+	brutos, err := q.ListRawHours(ctx, db.ListRawHoursParams{ProjectID: projectID, TargetID: &id, FromAt: corte, ToAt: j.Ate()})
 	if err != nil {
 		return nil, fmt.Errorf("listar horas brutas: %w", err)
 	}
@@ -642,8 +674,8 @@ func (s *Service) toTarget(row db.Target) (Target, error) {
 
 // lerValidade devolve nil quando o sondador ainda não leu um certificado do
 // alvo. Os instantes saem em UTC: o pgx devolveria o fuso local do processo.
-func lerValidade(ctx context.Context, q *db.Queries, userID, targetID uuid.UUID) (*CertificateReading, error) {
-	r, err := q.GetTargetTLSOfOwner(ctx, db.GetTargetTLSOfOwnerParams{UserID: userID, TargetID: targetID})
+func lerValidade(ctx context.Context, q *db.Queries, projectID, targetID uuid.UUID) (*CertificateReading, error) {
+	r, err := q.GetTargetTLSOfOwner(ctx, db.GetTargetTLSOfOwnerParams{ProjectID: projectID, TargetID: targetID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -653,12 +685,12 @@ func lerValidade(ctx context.Context, q *db.Queries, userID, targetID uuid.UUID)
 	return &CertificateReading{NotAfter: r.NotAfter.UTC(), ObservedAt: r.ObservedAt.UTC()}, nil
 }
 
-// validadesDoDono lê as validades de todos os alvos do dono numa consulta só,
-// para a lista não fazer uma por alvo.
-func validadesDoDono(ctx context.Context, q *db.Queries, userID uuid.UUID) (map[uuid.UUID]*CertificateReading, error) {
-	linhas, err := q.ListTargetTLSOfOwner(ctx, userID)
+// validadesDoProjeto lê as validades de todos os alvos do projeto numa
+// consulta só, para a lista não fazer uma por alvo.
+func validadesDoProjeto(ctx context.Context, q *db.Queries, projectID uuid.UUID) (map[uuid.UUID]*CertificateReading, error) {
+	linhas, err := q.ListTargetTLSOfOwner(ctx, projectID)
 	if err != nil {
-		return nil, fmt.Errorf("ler validades do dono: %w", err)
+		return nil, fmt.Errorf("ler validades do projeto: %w", err)
 	}
 	validades := make(map[uuid.UUID]*CertificateReading, len(linhas))
 	for _, l := range linhas {
@@ -668,10 +700,16 @@ func validadesDoDono(ctx context.Context, q *db.Queries, userID uuid.UUID) (map[
 }
 
 // naoAchado traduz a ausência de linha. Sob a RLS, "não existe" e "é de
-// outro usuário" são indistinguíveis de propósito: os dois viram 404.
+// outro projeto" são indistinguíveis de propósito: os dois viram 404.
 func naoAchado(err error) error {
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrNotFound
 	}
 	return fmt.Errorf("buscar alvo: %w", err)
+}
+
+// erroDeEscopo diz se err é a recusa do escopo de projeto (sem pertença ou
+// papel sem a permissão), que sai sem embrulho para quem chama traduzir.
+func erroDeEscopo(err error) bool {
+	return errors.Is(err, tenancy.ErrForbidden) || errors.Is(err, tenancy.ErrProjectNotFound)
 }

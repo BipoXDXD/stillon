@@ -38,8 +38,8 @@ func corposEstritos() map[string]corpoEstrito {
 	agendaComExtra := `{"kind":"period","period_sec":60,"extra":1}`
 
 	return map[string]corpoEstrito{
-		"TargetHandlers.Create": {handler: alvos.Create, valido: `{"name":"api","url":"https://exemplo.com/"}`},
-		"TargetHandlers.Update": {handler: alvos.Update, valido: `{"name":"api"}`},
+		"TargetHandlers.Create": {handler: noProjetoPadrao(alvos.Create), valido: `{"name":"api","url":"https://exemplo.com/"}`},
+		"TargetHandlers.Update": {handler: noProjetoPadrao(alvos.Update), valido: `{"name":"api"}`},
 		"HeartbeatHandlers.Create": {handler: batidas.Create,
 			valido:    `{"name":"x","schedule":{"kind":"period","period_sec":60}}`,
 			aninhados: []string{`{"name":"x","schedule":` + agendaComExtra + `}`}},

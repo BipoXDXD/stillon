@@ -119,6 +119,7 @@ func TestDonoNaoEscreveHistereseNemRollup(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
 	dono := novoUsuario(t, pool)
+	testdb.ProjetoPadrao(t, dono)
 	alvo, semLinhas := novoAlvo(t, pool, dono, agora), novoAlvo(t, pool, dono, agora)
 	if _, err := testdb.Admin(t).Exec(ctx,
 		`INSERT INTO target_health (target_id, consecutive_failures, streak_since, last_checked_at)
@@ -185,7 +186,7 @@ func TestDonoNaoEscreveHistereseNemRollup(t *testing.T) {
 
 	// O zerar da edição de alvo (ResetTargetHealth) continua passando.
 	err := storage.InUserTx(ctx, pool, dono, func(q *db.Queries) error {
-		return q.ResetTargetHealth(ctx, db.ResetTargetHealthParams{UserID: dono, TargetID: alvo})
+		return q.ResetTargetHealth(ctx, db.ResetTargetHealthParams{ProjectID: testdb.ProjetoDoAlvo(t, alvo), TargetID: alvo})
 	})
 	if err != nil {
 		t.Fatalf("o dono zerando a histerese: %v", err)

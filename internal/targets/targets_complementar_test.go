@@ -73,7 +73,7 @@ func TestHeaderValidationComplementar(t *testing.T) {
 			dono := a.usuario(t)
 			in := entrada()
 			in.Headers = tc.headers
-			got, err := a.svc.Create(context.Background(), dono, in)
+			got, err := a.svc.Create(context.Background(), targets.EscopoDe(t, a.pool, dono), in)
 			var cause *targets.ValidationError
 			if !errors.As(err, &cause) || got.ID != uuid.Nil {
 				t.Fatalf("entrada inválida aceita: %+v, %v", got, err)
@@ -81,7 +81,7 @@ func TestHeaderValidationComplementar(t *testing.T) {
 			if cause.Error() != "dados do alvo inválidos" || len(cause.Fields) != 1 || cause.Fields[0].Field != "headers" || cause.Fields[0].Reason != tc.reason {
 				t.Fatalf("diagnóstico inválido: %+v, %q", cause, cause.Error())
 			}
-			rows, err := a.svc.List(context.Background(), dono, nil, 0)
+			rows, err := a.svc.List(context.Background(), targets.EscopoDe(t, a.pool, dono), nil, 0)
 			if err != nil || len(rows) != 0 {
 				t.Fatalf("validação inseriu alvo: %v, %v", rows, err)
 			}
@@ -95,7 +95,7 @@ func TestHeaderTABRoundTripComplementar(t *testing.T) {
 	in := entrada()
 	value := "Bearer\tcredencial-sintetica"
 	in.Headers = map[string]string{"Authorization": value}
-	got, err := a.svc.Create(context.Background(), dono, in)
+	got, err := a.svc.Create(context.Background(), targets.EscopoDe(t, a.pool, dono), in)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -182,19 +182,19 @@ func TestStoredInvalidJSONRecoveryComplementar(t *testing.T) {
 			}
 			switch operation {
 			case "Get":
-				got, e := a.svc.Get(ctx, dono, id)
+				got, e := a.svc.Get(ctx, targets.EscopoDe(t, a.pool, dono), id)
 				err = e
 				if got.ID != uuid.Nil {
 					t.Fatalf("Get retornou sucesso: %+v", got)
 				}
 			case "List":
-				got, e := a.svc.List(ctx, dono, nil, 0)
+				got, e := a.svc.List(ctx, targets.EscopoDe(t, a.pool, dono), nil, 0)
 				err = e
 				if len(got) != 0 {
 					t.Fatalf("List retornou sucesso: %+v", got)
 				}
 			case "Update":
-				got, e := a.svc.Update(ctx, dono, id, targets.Patch{Name: ptr("Novo nome")})
+				got, e := a.svc.Update(ctx, targets.EscopoDe(t, a.pool, dono), id, targets.Patch{Name: ptr("Novo nome")})
 				err = e
 				if got.ID != uuid.Nil {
 					t.Fatalf("Update retornou sucesso: %+v", got)
@@ -205,18 +205,18 @@ func TestStoredInvalidJSONRecoveryComplementar(t *testing.T) {
 				t.Fatalf("causa JSON perdida: %v", err)
 			}
 			restore()
-			got, err := a.svc.Get(ctx, dono, id)
+			got, err := a.svc.Get(ctx, targets.EscopoDe(t, a.pool, dono), id)
 			if err != nil || got.Name != "API" || len(got.HeaderNames) != 1 {
 				t.Fatalf("recuperação alterou dados: %+v, %v", got, err)
 			}
 			switch operation {
 			case "List":
-				rows, e := a.svc.List(ctx, dono, nil, 0)
+				rows, e := a.svc.List(ctx, targets.EscopoDe(t, a.pool, dono), nil, 0)
 				if e != nil || len(rows) != 1 || rows[0].ID != id {
 					t.Fatalf("List não recuperou: %v, %v", rows, e)
 				}
 			case "Update":
-				updated, e := a.svc.Update(ctx, dono, id, targets.Patch{Name: ptr("Novo nome")})
+				updated, e := a.svc.Update(ctx, targets.EscopoDe(t, a.pool, dono), id, targets.Patch{Name: ptr("Novo nome")})
 				if e != nil || updated.Name != "Novo nome" {
 					t.Fatalf("Update não recuperou: %v, %v", updated, e)
 				}
@@ -232,7 +232,7 @@ func TestServiceSQLRecoveryComplementar(t *testing.T) {
 	}
 	scenarios := []scenario{
 		{"Get", `ALTER TABLE targets RENAME TO targets_indisponivel_complementar`, `ALTER TABLE targets_indisponivel_complementar RENAME TO targets`, "42P01", "buscar alvo: ", func(t *testing.T, a ambiente, u, id uuid.UUID, broken bool) {
-			got, err := a.svc.Get(context.Background(), u, id)
+			got, err := a.svc.Get(context.Background(), targets.EscopoDe(t, a.pool, u), id)
 			if broken {
 				exigirPGComplementar(t, err, "42P01", "buscar alvo: ")
 				if got.ID != uuid.Nil {
@@ -243,7 +243,7 @@ func TestServiceSQLRecoveryComplementar(t *testing.T) {
 			}
 		}},
 		{"List", `ALTER TABLE targets RENAME TO targets_indisponivel_complementar`, `ALTER TABLE targets_indisponivel_complementar RENAME TO targets`, "42P01", "listar alvos: ", func(t *testing.T, a ambiente, u, id uuid.UUID, broken bool) {
-			got, err := a.svc.List(context.Background(), u, nil, 0)
+			got, err := a.svc.List(context.Background(), targets.EscopoDe(t, a.pool, u), nil, 0)
 			if broken {
 				exigirPGComplementar(t, err, "42P01", "listar alvos: ")
 				if len(got) != 0 {
@@ -254,7 +254,7 @@ func TestServiceSQLRecoveryComplementar(t *testing.T) {
 			}
 		}},
 		{"Create", `ALTER TABLE targets RENAME TO targets_indisponivel_complementar`, `ALTER TABLE targets_indisponivel_complementar RENAME TO targets`, "42P01", "gravar alvo: contar alvos: ", func(t *testing.T, a ambiente, u, id uuid.UUID, broken bool) {
-			got, err := a.svc.Create(context.Background(), u, entrada())
+			got, err := a.svc.Create(context.Background(), targets.EscopoDe(t, a.pool, u), entrada())
 			if broken {
 				exigirPGComplementar(t, err, "42P01", "gravar alvo: contar alvos: ")
 				if got.ID != uuid.Nil {
@@ -265,7 +265,7 @@ func TestServiceSQLRecoveryComplementar(t *testing.T) {
 			}
 		}},
 		{"Update_busca", `ALTER TABLE targets RENAME TO targets_indisponivel_complementar`, `ALTER TABLE targets_indisponivel_complementar RENAME TO targets`, "42P01", "buscar alvo: ", func(t *testing.T, a ambiente, u, id uuid.UUID, broken bool) {
-			got, err := a.svc.Update(context.Background(), u, id, targets.Patch{Name: ptr("Novo nome")})
+			got, err := a.svc.Update(context.Background(), targets.EscopoDe(t, a.pool, u), id, targets.Patch{Name: ptr("Novo nome")})
 			if broken {
 				exigirPGComplementar(t, err, "42P01", "buscar alvo: ")
 				if got.ID != uuid.Nil {
@@ -276,7 +276,7 @@ func TestServiceSQLRecoveryComplementar(t *testing.T) {
 			}
 		}},
 		{"Update_saude", `ALTER TABLE target_health RENAME TO target_health_indisponivel_complementar`, `ALTER TABLE target_health_indisponivel_complementar RENAME TO target_health`, "42P01", "zerar histerese do alvo: ", func(t *testing.T, a ambiente, u, id uuid.UUID, broken bool) {
-			got, err := a.svc.Update(context.Background(), u, id, targets.Patch{URL: ptr("https://api.exemplo.com/v2/health")})
+			got, err := a.svc.Update(context.Background(), targets.EscopoDe(t, a.pool, u), id, targets.Patch{URL: ptr("https://api.exemplo.com/v2/health")})
 			if broken {
 				exigirPGComplementar(t, err, "42P01", "zerar histerese do alvo: ")
 				if got.ID != uuid.Nil {
@@ -287,7 +287,7 @@ func TestServiceSQLRecoveryComplementar(t *testing.T) {
 			}
 		}},
 		{"Update_gravacao", `ALTER TABLE targets ADD CONSTRAINT targets_nome_complementar CHECK (name <> 'Novo nome')`, `ALTER TABLE targets DROP CONSTRAINT targets_nome_complementar`, "23514", "atualizar alvo: ", func(t *testing.T, a ambiente, u, id uuid.UUID, broken bool) {
-			got, err := a.svc.Update(context.Background(), u, id, targets.Patch{Name: ptr("Novo nome")})
+			got, err := a.svc.Update(context.Background(), targets.EscopoDe(t, a.pool, u), id, targets.Patch{Name: ptr("Novo nome")})
 			if broken {
 				exigirPGComplementar(t, err, "23514", "atualizar alvo: ")
 				if got.ID != uuid.Nil {
@@ -298,20 +298,20 @@ func TestServiceSQLRecoveryComplementar(t *testing.T) {
 			}
 		}},
 		{"Delete", `ALTER TABLE targets RENAME TO targets_indisponivel_complementar`, `ALTER TABLE targets_indisponivel_complementar RENAME TO targets`, "42P01", "apagar alvo: ", func(t *testing.T, a ambiente, u, id uuid.UUID, broken bool) {
-			err := a.svc.Delete(context.Background(), u, id)
+			err := a.svc.Delete(context.Background(), targets.EscopoDe(t, a.pool, u), id)
 			if broken {
 				exigirPGComplementar(t, err, "42P01", "apagar alvo: ")
 			} else {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if _, err := a.svc.Get(context.Background(), u, id); !errors.Is(err, targets.ErrNotFound) {
+				if _, err := a.svc.Get(context.Background(), targets.EscopoDe(t, a.pool, u), id); !errors.Is(err, targets.ErrNotFound) {
 					t.Fatalf("Delete não persistiu: %v", err)
 				}
 			}
 		}},
 		{"Summary_alvos", `ALTER TABLE targets RENAME TO targets_indisponivel_complementar`, `ALTER TABLE targets_indisponivel_complementar RENAME TO targets`, "42P01", "listar alvos do resumo: ", func(t *testing.T, a ambiente, u, id uuid.UUID, broken bool) {
-			got, err := a.svc.Summary(context.Background(), u, targets.SummaryFilter{})
+			got, err := a.svc.Summary(context.Background(), targets.EscopoDe(t, a.pool, u), targets.SummaryFilter{})
 			if broken {
 				exigirPGComplementar(t, err, "42P01", "listar alvos do resumo: ")
 				if len(got) != 0 {
@@ -322,7 +322,7 @@ func TestServiceSQLRecoveryComplementar(t *testing.T) {
 			}
 		}},
 		{"Summary_marca", `ALTER TABLE check_rollup_1h RENAME TO rollup_indisponivel_complementar`, `ALTER TABLE rollup_indisponivel_complementar RENAME TO check_rollup_1h`, "42P01", "marca d'água dos rollups: ", func(t *testing.T, a ambiente, u, id uuid.UUID, broken bool) {
-			got, err := a.svc.Summary(context.Background(), u, targets.SummaryFilter{})
+			got, err := a.svc.Summary(context.Background(), targets.EscopoDe(t, a.pool, u), targets.SummaryFilter{})
 			if broken {
 				exigirPGComplementar(t, err, "42P01", "marca d'água dos rollups: ")
 			} else if err != nil || len(got) != 1 || got[0].ID != id {
@@ -330,7 +330,7 @@ func TestServiceSQLRecoveryComplementar(t *testing.T) {
 			}
 		}},
 		{"Checks_brutos", `ALTER TABLE checks RENAME TO checks_indisponivel_complementar`, `ALTER TABLE checks_indisponivel_complementar RENAME TO checks`, "42P01", "listar checks: ", func(t *testing.T, a ambiente, u, id uuid.UUID, broken bool) {
-			got, err := a.svc.Checks(context.Background(), u, id, a.clk.Now().Add(-time.Hour), a.clk.Now())
+			got, err := a.svc.Checks(context.Background(), targets.EscopoDe(t, a.pool, u), id, a.clk.Now().Add(-time.Hour), a.clk.Now())
 			if broken {
 				exigirPGComplementar(t, err, "42P01", "listar checks: ")
 			} else if err != nil || len(got.Checks) != 1 || got.Checks[0].LatencyMS != 77 {
@@ -338,7 +338,7 @@ func TestServiceSQLRecoveryComplementar(t *testing.T) {
 			}
 		}},
 		{"Checks_rollups", `ALTER TABLE check_rollup_1h RENAME TO rollup_indisponivel_complementar`, `ALTER TABLE rollup_indisponivel_complementar RENAME TO check_rollup_1h`, "42P01", "marca d'água dos rollups: ", func(t *testing.T, a ambiente, u, id uuid.UUID, broken bool) {
-			got, err := a.svc.Checks(context.Background(), u, id, a.clk.Now().Add(-72*time.Hour), a.clk.Now())
+			got, err := a.svc.Checks(context.Background(), targets.EscopoDe(t, a.pool, u), id, a.clk.Now().Add(-72*time.Hour), a.clk.Now())
 			if broken {
 				exigirPGComplementar(t, err, "42P01", "marca d'água dos rollups: ")
 			} else if err != nil || len(got.Rollups) != 1 || got.Rollups[0].Total != 2 || got.Rollups[0].OK != 1 {
@@ -360,7 +360,7 @@ func TestServiceSQLRecoveryComplementar(t *testing.T) {
 			restore := alterarDDLComplementar(t, a, tc.apply, tc.undo)
 			tc.run(t, a, u, id, true)
 			restore()
-			original, err := a.svc.Get(context.Background(), u, id)
+			original, err := a.svc.Get(context.Background(), targets.EscopoDe(t, a.pool, u), id)
 			if err != nil || original.Name != "API" || original.URL != entrada().URL {
 				t.Fatalf("falha alterou alvo: %+v, %v", original, err)
 			}
@@ -374,11 +374,11 @@ func TestUpdateTimeoutPersistsAndReschedulesComplementar(t *testing.T) {
 	u := a.usuario(t)
 	id := a.alvo(t, u)
 	a.clk.Advance(time.Minute)
-	got, err := a.svc.Update(context.Background(), u, id, targets.Patch{TimeoutMS: ptr(int32(5000))})
+	got, err := a.svc.Update(context.Background(), targets.EscopoDe(t, a.pool, u), id, targets.Patch{TimeoutMS: ptr(int32(5000))})
 	if err != nil || got.TimeoutMS != 5000 {
 		t.Fatalf("PATCH timeout: %+v, %v", got, err)
 	}
-	saved, err := a.svc.Get(context.Background(), u, id)
+	saved, err := a.svc.Get(context.Background(), targets.EscopoDe(t, a.pool, u), id)
 	var next time.Time
 	if err != nil || saved.TimeoutMS != 5000 {
 		t.Fatalf("timeout não persistiu: %+v, %v", saved, err)
@@ -411,7 +411,7 @@ func TestChecksRejectsInvalidWindowComplementar(t *testing.T) {
 	id := a.alvo(t, u)
 	for _, span := range []time.Duration{0, time.Second} {
 		t.Run(span.String(), func(t *testing.T) {
-			got, err := a.svc.Checks(context.Background(), u, id, a.clk.Now().Add(span), a.clk.Now())
+			got, err := a.svc.Checks(context.Background(), targets.EscopoDe(t, a.pool, u), id, a.clk.Now().Add(span), a.clk.Now())
 			var cause *targets.ValidationError
 			if !errors.As(err, &cause) || len(cause.Fields) != 1 || cause.Fields[0].Field != "from" || cause.Fields[0].Reason != targets.ReasonInvalid || len(got.Checks) != 0 || len(got.Rollups) != 0 {
 				t.Fatalf("janela vazia/invertida aceita: %+v, %v", got, err)
@@ -474,14 +474,14 @@ func TestSummaryCancellationAndRecoveryComplementar(t *testing.T) {
 		t.Helper()
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		got, err := svc.Summary(ctx, u, targets.SummaryFilter{})
+		got, err := svc.Summary(ctx, targets.EscopoDe(t, a.pool, u), targets.SummaryFilter{})
 		if err != nil || len(got) != 1 || got[0].ID != id || got[0].Uptime24h == nil || *got[0].Uptime24h != 1 {
 			t.Fatalf("Summary não recuperou: %+v, %v", got, err)
 		}
 	}
 	discovery := &summaryTraceRequestComplementar{}
 	ctx, cancel := context.WithTimeout(context.WithValue(context.Background(), summaryTraceKeyComplementar{}, discovery), 10*time.Second)
-	got, err := svc.Summary(ctx, u, targets.SummaryFilter{})
+	got, err := svc.Summary(ctx, targets.EscopoDe(t, a.pool, u), targets.SummaryFilter{})
 	cancel()
 	if err != nil || len(got) != 1 || got[0].ID != id {
 		t.Fatalf("controle positivo falhou: %+v, %v", got, err)
@@ -501,7 +501,7 @@ func TestSummaryCancellationAndRecoveryComplementar(t *testing.T) {
 			defer cancel()
 			request := &summaryTraceRequestComplementar{stopAfter: index + 1, cancel: cancel}
 			ctx = context.WithValue(ctx, summaryTraceKeyComplementar{}, request)
-			_, err := svc.Summary(ctx, u, targets.SummaryFilter{})
+			_, err := svc.Summary(ctx, targets.EscopoDe(t, a.pool, u), targets.SummaryFilter{})
 			request.mu.Lock()
 			fired := request.fired
 			request.mu.Unlock()

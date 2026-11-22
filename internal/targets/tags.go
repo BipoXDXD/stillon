@@ -76,8 +76,8 @@ func estadoDoFiltro(s Summary) string {
 	return string(s.State)
 }
 
-func lerTags(ctx context.Context, q *db.Queries, userID, targetID uuid.UUID) ([]string, error) {
-	tags, err := q.ListTargetTags(ctx, db.ListTargetTagsParams{UserID: userID, TargetID: targetID})
+func lerTags(ctx context.Context, q *db.Queries, projectID, targetID uuid.UUID) ([]string, error) {
+	tags, err := q.ListTargetTags(ctx, db.ListTargetTagsParams{ProjectID: projectID, TargetID: targetID})
 	if err != nil {
 		return nil, fmt.Errorf("ler tags do alvo: %w", err)
 	}
@@ -87,10 +87,10 @@ func lerTags(ctx context.Context, q *db.Queries, userID, targetID uuid.UUID) ([]
 	return tags, nil
 }
 
-func tagsDoDono(ctx context.Context, q *db.Queries, userID uuid.UUID) (map[uuid.UUID][]string, error) {
-	linhas, err := q.ListUserTargetTags(ctx, userID)
+func tagsDoProjeto(ctx context.Context, q *db.Queries, projectID uuid.UUID) (map[uuid.UUID][]string, error) {
+	linhas, err := q.ListProjectTargetTags(ctx, projectID)
 	if err != nil {
-		return nil, fmt.Errorf("ler tags do dono: %w", err)
+		return nil, fmt.Errorf("ler tags do projeto: %w", err)
 	}
 	tags := make(map[uuid.UUID][]string, len(linhas))
 	for _, l := range linhas {
@@ -106,11 +106,11 @@ func tagsDoAlvo(tags map[uuid.UUID][]string, id uuid.UUID) []string {
 	return []string{}
 }
 
-func trocarTags(ctx context.Context, q *db.Queries, userID, targetID uuid.UUID, tags []string) error {
-	if err := q.DeleteTargetTags(ctx, db.DeleteTargetTagsParams{UserID: userID, TargetID: targetID}); err != nil {
+func trocarTags(ctx context.Context, q *db.Queries, projectID, targetID uuid.UUID, tags []string) error {
+	if err := q.DeleteTargetTags(ctx, db.DeleteTargetTagsParams{ProjectID: projectID, TargetID: targetID}); err != nil {
 		return fmt.Errorf("apagar tags do alvo: %w", err)
 	}
-	err := q.InsertTargetTags(ctx, db.InsertTargetTagsParams{Tags: tags, UserID: userID, TargetID: targetID})
+	err := q.InsertTargetTags(ctx, db.InsertTargetTagsParams{Tags: tags, ProjectID: projectID, TargetID: targetID})
 	if err != nil {
 		return fmt.Errorf("gravar tags do alvo: %w", err)
 	}

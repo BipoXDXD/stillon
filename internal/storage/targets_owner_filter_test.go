@@ -14,13 +14,18 @@ import (
 )
 
 // Espelho de TestRLSIsolatesTargetsEvenWithTheWrongFilter: aqui a RLS fica de
-// fora (conexão de superusuário) e só o filtro por user_id separa os donos. As
-// três queries são as que o PATCH usa; sem este teste, apagar o user_id = $1 de
-// qualquer uma deixaria a suíte verde, porque a RLS ainda barraria o intruso.
+// fora (conexão de superusuário) e só o filtro por project_id separa os
+// projetos. As três queries são as que o PATCH usa; sem este teste, apagar o
+// project_id do WHERE de qualquer uma deixaria a suíte verde, porque a RLS
+// ainda barraria o intruso.
 func TestTargetQueriesFilterByOwnerWithoutRLS(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
+	// Os dois projetos são do MESMO usuário: só o filtro por projeto os separa.
+	// B é outro usuário, para a cota (ListContentRuleTargetURLs), que segue
+	// por dono.
 	a, b := novoUsuario(t, pool), novoUsuario(t, pool)
+	pa, pb := testdb.ProjetoPadrao(t, a), testdb.NovoProjeto(t, a, "B")
 	proximo := agora.Add(42 * time.Minute)
 	alvoDeA := novoAlvo(t, pool, a, proximo)
 
@@ -37,16 +42,16 @@ func TestTargetQueriesFilterByOwnerWithoutRLS(t *testing.T) {
 	}
 	q := db.New(admin)
 
-	tentar := func(dono uuid.UUID) error {
+	tentar := func(projeto uuid.UUID) error {
 		t.Helper()
-		_, errGet := q.GetTargetForUpdate(ctx, db.GetTargetForUpdateParams{UserID: dono, ID: alvoDeA})
+		_, errGet := q.GetTargetForUpdate(ctx, db.GetTargetForUpdateParams{ProjectID: projeto, ID: alvoDeA})
 		if err := q.UpdateTarget(ctx, db.UpdateTargetParams{
-			UserID: dono, ID: alvoDeA, Name: "roubado", URL: "https://outro.exemplo.com", Method: "GET",
+			ProjectID: projeto, ID: alvoDeA, Name: "roubado", URL: "https://outro.exemplo.com", Method: "GET",
 			IntervalSec: 60, TimeoutMS: 5000, ExpectedStatus: 200, Enabled: true, NextRunAt: agora,
 		}); err != nil {
 			t.Fatalf("UpdateTarget: %v", err)
 		}
-		if err := q.ResetTargetHealth(ctx, db.ResetTargetHealthParams{UserID: dono, TargetID: alvoDeA}); err != nil {
+		if err := q.ResetTargetHealth(ctx, db.ResetTargetHealthParams{ProjectID: projeto, TargetID: alvoDeA}); err != nil {
 			t.Fatalf("ResetTargetHealth: %v", err)
 		}
 		return errGet
@@ -69,7 +74,7 @@ func TestTargetQueriesFilterByOwnerWithoutRLS(t *testing.T) {
 		return e
 	}
 
-	if err := tentar(b); !errors.Is(err, pgx.ErrNoRows) {
+	if err := tentar(pb); !errors.Is(err, pgx.ErrNoRows) {
 		t.Errorf("GetTargetForUpdate de B sobre o alvo de A deu %v, queria ErrNoRows", err)
 	}
 	if e := ler(); e.nome != "alvo" || !e.proximo.Equal(proximo) {
@@ -81,7 +86,7 @@ func TestTargetQueriesFilterByOwnerWithoutRLS(t *testing.T) {
 
 	// Controle: com o dono certo, as três alcançam a linha. Sem isto, uma
 	// conexão que não atravessasse a RLS deixaria o teste verde à toa.
-	if err := tentar(a); err != nil {
+	if err := tentar(pa); err != nil {
 		t.Fatalf("GetTargetForUpdate do dono deu %v", err)
 	}
 	if e := ler(); e.nome != "roubado" || e.falhas != 0 || e.sequenciaDesde != nil {

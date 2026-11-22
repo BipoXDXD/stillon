@@ -335,11 +335,12 @@ func TestDeletedTargetLeavesThePublicPage(t *testing.T) {
 	adm := admin(t)
 	ctx := context.Background()
 	dono := a.usuario(t)
+	testdb.ProjetoPadrao(t, dono)
 	api, site := a.alvo(t, dono, "api"), a.alvo(t, dono, "site")
 	a.publicar(t, dono, "empresa", true, statuspage.Item{TargetID: api, DisplayName: "API"}, statuspage.Item{TargetID: site, DisplayName: "Site"})
 	incidenteResolvido(t, adm, api, a.clk.Now().Add(-2*time.Hour), a.clk.Now().Add(-time.Hour))
 	err := storage.InUserTx(ctx, a.pool, dono, func(q *db.Queries) error {
-		_, err := q.DeleteTarget(ctx, db.DeleteTargetParams{UserID: dono, ID: api})
+		_, err := q.DeleteTarget(ctx, db.DeleteTargetParams{ProjectID: testdb.ProjetoDoAlvo(t, api), ID: api})
 		return err
 	})
 	if err != nil {

@@ -141,7 +141,7 @@ func TestComoTargetSemHeadersTemListaVazia(t *testing.T) {
 }
 
 func TestUpdateTargetParams(t *testing.T) {
-	userID := uuid.MustParse("00000000-0000-7000-8000-0000000000aa")
+	projectID := uuid.MustParse("00000000-0000-7000-8000-0000000000aa")
 	id := uuid.MustParse("00000000-0000-7000-8000-0000000000bb")
 	proximo := time.Date(2026, 11, 3, 8, 0, 0, 0, time.UTC)
 	modo, valor, ponteiro := "json_equals", "1", "/a"
@@ -153,10 +153,10 @@ func TestUpdateTargetParams(t *testing.T) {
 	}
 
 	// enabled e tlsWarn com valores diferentes: trocar um pelo outro tem de falhar.
-	got := f.updateTargetParams(userID, id, []byte("cifrado"), false, proximo, true)
+	got := f.updateTargetParams(projectID, id, []byte("cifrado"), false, proximo, true)
 
 	quer := db.UpdateTargetParams{
-		UserID: userID, ID: id, Name: "api", URL: "https://a.test/", Method: "GET",
+		ProjectID: projectID, ID: id, Name: "api", URL: "https://a.test/", Method: "GET",
 		IntervalSec: 60, TimeoutMS: 5000, ExpectedStatus: 200, DegradedThresholdMS: &limiar, HeadersEnc: []byte("cifrado"),
 		Enabled: false, NextRunAt: proximo, TlsWarn: true,
 		ContentMode: &modo, ContentValue: &valor, ContentJsonPointer: &ponteiro,
