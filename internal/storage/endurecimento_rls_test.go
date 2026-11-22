@@ -345,10 +345,13 @@ func TestPoliticasDeUpdateDasTabelasComDono(t *testing.T) {
 		"heartbeats.heartbeats_owner:*",
 		"heartbeats.heartbeats_ping_update:w",
 		"heartbeats.heartbeats_prober_update:w",
+		"heartbeats.heartbeats_so_projeto_do_escopo:*",
 		"notif_channels.notif_channels_owner:*",
+		"notif_channels.notif_channels_so_projeto_do_escopo:*",
 		"notif_channels.notif_channels_verify_update:w",
 		"targets.targets_owner:*",
 		"targets.targets_prober_update:w",
+		"targets.targets_so_projeto_do_escopo:*",
 	}
 	if strings.Join(politicas, "\n") != strings.Join(esperadas, "\n") {
 		t.Errorf("políticas de UPDATE:\n%s\nqueria:\n%s", strings.Join(politicas, "\n"), strings.Join(esperadas, "\n"))

@@ -318,7 +318,7 @@ func TestProjectMigrationsDownKeepResources(t *testing.T) {
 	if n := contar(t, admin, `SELECT count(*) FROM pg_class WHERE relname = 'projects'`); n != 0 {
 		t.Errorf("depois do down: %d relação(ões) projects, queria 0", n)
 	}
-	inserirComSQLAntigo(t, pool, insercoesAntigas[0], usuarios[0].dono, nil)
+	inserirComSQLAntigo(t, pool, insercoesAntigas[0], usuarios[0].dono)
 
 	if err := storage.MigrateUpTo(ctx, dsn, versao); err != nil {
 		t.Fatalf("subir de novo até a %d: %v", versao, err)
