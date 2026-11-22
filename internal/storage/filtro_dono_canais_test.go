@@ -26,7 +26,7 @@ func canalDe(t *testing.T, q *db.Queries, projeto, canal uuid.UUID) db.NotifChan
 	return c
 }
 
-func TestGetChannelFiltersOwnerWithoutRLS(t *testing.T) {
+func TestGetChannelFiltersProjectWithoutRLS(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
 	a := novoUsuario(t, pool)
@@ -41,7 +41,7 @@ func TestGetChannelFiltersOwnerWithoutRLS(t *testing.T) {
 	}
 }
 
-func TestGetChannelViewFiltersOwnerWithoutRLS(t *testing.T) {
+func TestGetChannelViewFiltersProjectWithoutRLS(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
 	a := novoUsuario(t, pool)
@@ -60,7 +60,7 @@ func TestGetChannelViewFiltersOwnerWithoutRLS(t *testing.T) {
 	}
 }
 
-func TestSetChannelEnabledFiltersOwnerWithoutRLS(t *testing.T) {
+func TestSetChannelEnabledFiltersProjectWithoutRLS(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
 	a := novoUsuario(t, pool)
@@ -84,7 +84,7 @@ func TestSetChannelEnabledFiltersOwnerWithoutRLS(t *testing.T) {
 	}
 }
 
-func TestDeleteChannelFiltersOwnerWithoutRLS(t *testing.T) {
+func TestDeleteChannelFiltersProjectWithoutRLS(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
 	a := novoUsuario(t, pool)
@@ -109,7 +109,7 @@ func TestDeleteChannelFiltersOwnerWithoutRLS(t *testing.T) {
 	}
 }
 
-func TestRenewVerificationFiltersOwnerWithoutRLS(t *testing.T) {
+func TestRenewVerificationFiltersProjectWithoutRLS(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
 	a := novoUsuario(t, pool)
@@ -141,7 +141,7 @@ func TestRenewVerificationFiltersOwnerWithoutRLS(t *testing.T) {
 	}
 }
 
-func TestListChannelsFiltersOwnerWithoutRLS(t *testing.T) {
+func TestListChannelsFiltersProjectWithoutRLS(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
 	a := novoUsuario(t, pool)

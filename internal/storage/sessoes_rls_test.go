@@ -199,7 +199,8 @@ func TestEscopoDoSondadorSoLeEApagaSessoesEContadores(t *testing.T) {
 
 // comEscopo roda fn numa transação com a GUC definida como SET LOCAL, igual aos
 // escopos de storage. commit=false termina em rollback: é para o fn que provoca
-// um erro e deixa a transação abortada.
+// um erro e deixa a transação abortada. Com projetoDoDono no lugar da GUC, liga
+// o escopo do Projeto padrão do usuário.
 func comEscopo(t *testing.T, pool *pgxpool.Pool, guc, valor string, fn func(pgx.Tx), commit bool) {
 	t.Helper()
 	ctx := context.Background()
@@ -208,7 +209,9 @@ func comEscopo(t *testing.T, pool *pgxpool.Pool, guc, valor string, fn func(pgx.
 		t.Fatal(err)
 	}
 	defer tx.Rollback(ctx) // no-op depois de Commit
-	if _, err := tx.Exec(ctx, `SELECT set_config($1, $2, true)`, guc, valor); err != nil {
+	if guc == projetoDoDono {
+		escopoDoProjetoDe(t, pool, tx, uuid.MustParse(valor))
+	} else if _, err := tx.Exec(ctx, `SELECT set_config($1, $2, true)`, guc, valor); err != nil {
 		t.Fatal(err)
 	}
 	fn(tx)

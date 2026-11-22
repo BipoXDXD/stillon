@@ -9,7 +9,6 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/BipoXDXD/stillon/internal/storage"
 	"github.com/BipoXDXD/stillon/internal/storage/db"
 	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 )
@@ -22,7 +21,7 @@ import (
 func inserirItem(t *testing.T, pool *pgxpool.Pool, dono uuid.UUID, item db.InsertStatusPageItemParams) error {
 	t.Helper()
 	ctx := context.Background()
-	return storage.InUserTx(ctx, pool, dono, func(q *db.Queries) error {
+	return emProjetoTx(t, pool, dono, func(q *db.Queries) error {
 		return q.InsertStatusPageItem(ctx, item)
 	})
 }

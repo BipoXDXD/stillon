@@ -14,7 +14,7 @@ import (
 
 	"github.com/BipoXDXD/stillon/internal/storage"
 	"github.com/BipoXDXD/stillon/internal/storage/db"
-	"github.com/BipoXDXD/stillon/internal/storage/testdb"
+	"github.com/BipoXDXD/stillon/internal/tenancy"
 )
 
 var agora = time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
@@ -38,31 +38,112 @@ func novoUsuario(t *testing.T, pool *pgxpool.Pool) uuid.UUID {
 	return id
 }
 
-// novoAlvo grava só as colunas que targets tem desde a 00004, e não pelo
-// InsertTarget gerado: os testes de migration o chamam com o banco parado numa
-// versão antiga, sem as colunas que vieram depois (a regra de conteúdo, por
-// exemplo). O escopo é o mesmo de storage.InUserTx, sob a RLS.
+// projetoPadraoDe devolve o Projeto padrão do dono no banco de pool, criando-o
+// com o vínculo de owner se faltar. Grava pelo papel da aplicação no escopo de
+// usuário, como a conta faz no cadastro (projects e project_members são da
+// pessoa): serve também ao banco de testdb.EmptyDatabase já migrado, que
+// testdb.ProjetoPadrao (superusuário no banco compartilhado) não alcança.
+func projetoPadraoDe(t *testing.T, pool *pgxpool.Pool, dono uuid.UUID) uuid.UUID {
+	t.Helper()
+	ctx := context.Background()
+	var projeto uuid.UUID
+	err := storage.InUserTx(ctx, pool, dono, func(q *db.Queries) error {
+		if err := q.EnsureDefaultProject(ctx, db.EnsureDefaultProjectParams{
+			ID: novoID(), Name: "Projeto padrão", TitularID: dono, Now: agora,
+		}); err != nil {
+			return err
+		}
+		var err error
+		if projeto, err = q.GetDefaultProjectID(ctx, dono); err != nil {
+			return err
+		}
+		return q.EnsureProjectOwner(ctx, db.EnsureProjectOwnerParams{ProjectID: projeto, UserID: dono, Now: agora})
+	})
+	if err != nil {
+		t.Fatalf("Projeto padrão de %s: %v", dono, err)
+	}
+	return projeto
+}
+
+// noProjetoPadraoDe roda fn no escopo do Projeto padrão do dono
+// (storage.InProjectPgxTx, que confere a pertença antes de ligar
+// app.project_id), com o pgx.Tx cru para o SQL sem query gerada. As sementes
+// passam por aqui: com as políticas por pertença ao projeto, o escopo de
+// usuário não vê nem grava recurso nenhum.
+func noProjetoPadraoDe(t *testing.T, pool *pgxpool.Pool, dono uuid.UUID, fn func(tx pgx.Tx, projeto uuid.UUID) error) error {
+	t.Helper()
+	projeto := projetoPadraoDe(t, pool, dono)
+	return storage.InProjectPgxTx(context.Background(), pool, dono, projeto,
+		func(tx pgx.Tx, _ tenancy.ProjectScope) error { return fn(tx, projeto) })
+}
+
+// emProjetoTx é o storage.InUserTx dos testes de recurso: roda fn com as
+// queries geradas no escopo do Projeto padrão do dono.
+func emProjetoTx(t *testing.T, pool *pgxpool.Pool, dono uuid.UUID, fn func(*db.Queries) error) error {
+	t.Helper()
+	return noProjetoPadraoDe(t, pool, dono, func(tx pgx.Tx, _ uuid.UUID) error { return fn(db.New(tx)) })
+}
+
+// projetoDoDono, no lugar do nome do GUC em emEscopo e comEscopo, liga o
+// escopo do Projeto padrão do usuário cujo id vem no valor (ver
+// escopoDoProjetoDe). Os testes que comparam escopos sobre a mesma tabela
+// (dono, sondador, ping, página pública) trocam app.user_id por ele sem mudar
+// de forma.
+const projetoDoDono = "projeto padrão do dono"
+
+// escopoDoProjetoDe liga, na transação tx já aberta, o escopo do Projeto
+// padrão do dono: storage.InProjectPgxTx num savepoint de tx confere a
+// pertença e liga app.user_id e app.project_id, que valem em tx depois que o
+// savepoint fecha. Para a transação que o teste segura aberta e para o banco
+// de testdb.EmptyDatabase (testdb.EscopoDoProjetoPadrao só alcança o
+// compartilhado).
+func escopoDoProjetoDe(t *testing.T, pool *pgxpool.Pool, tx pgx.Tx, dono uuid.UUID) uuid.UUID {
+	t.Helper()
+	projeto := projetoPadraoDe(t, pool, dono)
+	if err := storage.InProjectPgxTx(context.Background(), tx, dono, projeto,
+		func(pgx.Tx, tenancy.ProjectScope) error { return nil }); err != nil {
+		t.Fatalf("ligar o escopo do Projeto padrão de %s: %v", dono, err)
+	}
+	return projeto
+}
+
+// novoAlvo grava um alvo no Projeto padrão do dono, no escopo desse projeto.
+// SQL cru, e não o InsertTarget gerado, para gravar só as colunas que todo
+// banco migrado até o fim tem.
 func novoAlvo(t *testing.T, pool *pgxpool.Pool, dono uuid.UUID, proximo time.Time) uuid.UUID {
 	t.Helper()
-	id := uuid.Must(uuid.NewV7())
-	ctx := context.Background()
-	tx, err := pool.Begin(ctx)
+	id := novoID()
+	err := noProjetoPadraoDe(t, pool, dono, func(tx pgx.Tx, projeto uuid.UUID) error {
+		_, err := tx.Exec(context.Background(), `
+			INSERT INTO targets (id, user_id, project_id, name, url, method, interval_sec, timeout_ms,
+			                     expected_status, enabled, next_run_at, created_at)
+			VALUES ($1, $2, $3, 'alvo', 'https://exemplo.com', 'GET', 60, 5000, 200, true, $4, $5)`,
+			id, dono, projeto, proximo, agora)
+		return err
+	})
 	if err != nil {
-		t.Fatal(err)
-	}
-	defer tx.Rollback(ctx)
-	if _, err := tx.Exec(ctx, `SELECT set_config('app.user_id', $1, true)`, dono.String()); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO targets (id, user_id, name, url, method, interval_sec, timeout_ms,
-		                     expected_status, enabled, next_run_at, created_at)
-		VALUES ($1, $2, 'alvo', 'https://exemplo.com', 'GET', 60, 5000, 200, true, $3, $4)`,
-		id, dono, proximo, agora); err != nil {
 		t.Fatalf("criar alvo: %v", err)
 	}
-	if err := tx.Commit(ctx); err != nil {
-		t.Fatal(err)
+	return id
+}
+
+// novoAlvoDoBinarioAnterior grava como o binário anterior aos projetos: só as
+// colunas que targets tem desde a 00004, sem project_id, no escopo de
+// usuário. É para o banco parado numa versão antiga (testes de migration), em
+// que as políticas ainda são por dono e as colunas novas não existem.
+func novoAlvoDoBinarioAnterior(t *testing.T, pool *pgxpool.Pool, dono uuid.UUID, proximo time.Time) uuid.UUID {
+	t.Helper()
+	id := novoID()
+	err := emEscopo(t, pool, "app.user_id", dono.String(), func(tx pgx.Tx) error {
+		_, err := tx.Exec(context.Background(), `
+			INSERT INTO targets (id, user_id, name, url, method, interval_sec, timeout_ms,
+			                     expected_status, enabled, next_run_at, created_at)
+			VALUES ($1, $2, 'alvo', 'https://exemplo.com', 'GET', 60, 5000, 200, true, $3, $4)`,
+			id, dono, proximo, agora)
+		return err
+	})
+	if err != nil {
+		t.Fatalf("criar alvo: %v", err)
 	}
 	return id
 }
@@ -83,56 +164,55 @@ func novoCheck(t *testing.T, pool *pgxpool.Pool, alvo uuid.UUID, em time.Time) {
 }
 
 // contarComEscopo roda um SELECT count(*) SEM WHERE sob o escopo de um
-// usuário: é a consulta que "esqueceu o filtro", e só a política a contém.
+// usuário, para as tabelas da pessoa (sessões, projetos, vínculos): é a
+// consulta que "esqueceu o filtro", e só a política a contém.
 func contarComEscopo(t *testing.T, pool *pgxpool.Pool, userID uuid.UUID, tabela string) int {
 	t.Helper()
-	ctx := context.Background()
-	tx, err := pool.Begin(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer tx.Rollback(ctx)
-	if _, err := tx.Exec(ctx, `SELECT set_config('app.user_id', $1, true)`, userID.String()); err != nil {
-		t.Fatal(err)
-	}
 	var n int
-	// tabela é sempre um literal do próprio teste.
-	if err := tx.QueryRow(ctx, `SELECT count(*) FROM `+tabela).Scan(&n); err != nil {
+	err := emEscopo(t, pool, "app.user_id", userID.String(), func(tx pgx.Tx) error {
+		// tabela é sempre um literal do próprio teste.
+		return tx.QueryRow(context.Background(), `SELECT count(*) FROM `+tabela).Scan(&n)
+	})
+	if err != nil {
 		t.Fatal(err)
 	}
 	return n
 }
 
-// novoCanal cria um canal do dono. tokenHash nil cria um Discord já
-// verificado; com hash, um e-mail pendente que vence em expira.
+// contarNoProjeto roda um SELECT count(*) SEM WHERE no escopo do Projeto
+// padrão do usuário: a consulta que "esqueceu o filtro" numa tabela de
+// projeto. Só as políticas do projeto a contêm: a permissiva (<t>_owner até a
+// 00044, <t>_do_projeto depois) e a restritiva <t>_so_projeto_do_escopo, nas
+// quatro tabelas com project_id; as de posse indireta herdam pelo EXISTS no
+// pai. Uma das duas já basta para separar dois projetos, então a sabotagem que
+// deixa vermelho troca as duas por true.
+func contarNoProjeto(t *testing.T, pool *pgxpool.Pool, userID uuid.UUID, tabela string) int {
+	t.Helper()
+	var n int
+	err := noProjetoPadraoDe(t, pool, userID, func(tx pgx.Tx, _ uuid.UUID) error {
+		// tabela é sempre um literal do próprio teste.
+		return tx.QueryRow(context.Background(), `SELECT count(*) FROM `+tabela).Scan(&n)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
+// novoCanal cria um canal no Projeto padrão do dono. tokenHash nil cria um
+// Discord já verificado; com hash, um e-mail pendente que vence em expira.
 func novoCanal(t *testing.T, pool *pgxpool.Pool, dono uuid.UUID, tokenHash []byte, expira time.Time) uuid.UUID {
 	t.Helper()
 	ctx := context.Background()
 	id := uuid.Must(uuid.NewV7())
-	p := db.InsertChannelParams{ID: id, UserID: dono, ProjectID: testdb.ProjetoPadrao(t, dono), Kind: "discord", ConfigEnc: []byte{1}, CreatedAt: agora}
-	if tokenHash == nil {
-		p.VerifiedAt = &agora
-	} else {
-		p.Kind, p.VerifyTokenHash, p.VerifyExpiresAt = "email", tokenHash, &expira
-	}
-	if err := storage.InUserTx(ctx, pool, dono, func(q *db.Queries) error { return q.InsertChannel(ctx, p) }); err != nil {
-		t.Fatalf("criar canal: %v", err)
-	}
-	return id
-}
-
-// novoCanalNoBancoVazio cria um canal Discord verificado sem project_id, por
-// SQL cru sob o escopo de storage.InUserTx: os testes de migration usam um
-// banco de testdb.EmptyDatabase, onde testdb.ProjetoPadrao (que grava no banco
-// compartilhado) não alcança o dono.
-func novoCanalNoBancoVazio(t *testing.T, pool *pgxpool.Pool, dono uuid.UUID) uuid.UUID {
-	t.Helper()
-	id := uuid.Must(uuid.NewV7())
-	err := emEscopo(t, pool, "app.user_id", dono.String(), func(tx pgx.Tx) error {
-		_, err := tx.Exec(context.Background(), `
-			INSERT INTO notif_channels (id, user_id, kind, config_enc, verified_at, enabled, created_at)
-			VALUES ($1, $2, 'discord', '\x01', $3, true, $3)`, id, dono, agora)
-		return err
+	err := noProjetoPadraoDe(t, pool, dono, func(tx pgx.Tx, projeto uuid.UUID) error {
+		p := db.InsertChannelParams{ID: id, UserID: dono, ProjectID: projeto, Kind: "discord", ConfigEnc: []byte{1}, CreatedAt: agora}
+		if tokenHash == nil {
+			p.VerifiedAt = &agora
+		} else {
+			p.Kind, p.VerifyTokenHash, p.VerifyExpiresAt = "email", tokenHash, &expira
+		}
+		return db.New(tx).InsertChannel(ctx, p)
 	})
 	if err != nil {
 		t.Fatalf("criar canal: %v", err)

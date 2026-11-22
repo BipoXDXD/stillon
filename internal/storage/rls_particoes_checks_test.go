@@ -22,7 +22,9 @@ const particaoDoMesDeAgora = "checks_2026_09"
 // Uma partição criada depois da migration já nasce com a RLS da mãe: quem não
 // enxerga o alvo não enxerga os checks dele nem consultando a partição pelo
 // nome. O sondador continua gravando pela mãe, e a retenção continua apagando
-// a partição inteira.
+// a partição inteira. No escopo do projeto do estranho, vermelho com as
+// políticas do projeto em targets (targets_do_projeto e
+// targets_so_projeto_do_escopo) trocadas por true.
 func TestNewChecksPartitionEnforcesTheParentPolicy(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
@@ -34,10 +36,10 @@ func TestNewChecksPartitionEnforcesTheParentPolicy(t *testing.T) {
 	novoCheck(t, pool, alvo, agora)
 
 	exigirParticaoProtegida(t, pool, particaoDoMesDeAgora)
-	if n := contarNaParticao(t, pool, estranho, particaoDoMesDeAgora); n != 0 {
+	if n := contarNaParticao(t, pool, projetoDoDono, estranho, particaoDoMesDeAgora); n != 0 {
 		t.Errorf("outro usuário lê %d checks pela partição, queria 0", n)
 	}
-	if n := contarNaParticao(t, pool, dono, particaoDoMesDeAgora); n != 1 {
+	if n := contarNaParticao(t, pool, projetoDoDono, dono, particaoDoMesDeAgora); n != 1 {
 		t.Errorf("o dono lê %d checks pela partição, queria 1: a política barrou demais", n)
 	}
 
@@ -67,7 +69,7 @@ func TestChecksPartitionRLSMigrationCoversExistingPartitionsAndGoesDown(t *testi
 	}
 	defer pool.Close()
 	estranho, dono := novoUsuario(t, pool), novoUsuario(t, pool)
-	alvo := novoAlvo(t, pool, dono, agora)
+	alvo := novoAlvoDoBinarioAnterior(t, pool, dono, agora)
 	if _, err := pool.Exec(ctx, `SELECT ensure_checks_partition($1::date)`, agora); err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +79,7 @@ func TestChecksPartitionRLSMigrationCoversExistingPartitionsAndGoesDown(t *testi
 		t.Fatalf("up da %d: %v", versao, err)
 	}
 	exigirParticaoProtegida(t, pool, particaoDoMesDeAgora)
-	if n := contarNaParticao(t, pool, estranho, particaoDoMesDeAgora); n != 0 {
+	if n := contarNaParticao(t, pool, "app.user_id", estranho, particaoDoMesDeAgora); n != 0 {
 		t.Errorf("partição anterior à migration: outro usuário lê %d checks, queria 0", n)
 	}
 	novoCheck(t, pool, alvo, agora.Add(1))
@@ -152,11 +154,12 @@ func politicasDe(t *testing.T, pool *pgxpool.Pool, tabela string) string {
 }
 
 // contarNaParticao conta os checks consultando a partição pelo nome, sob o
-// escopo do usuário: o caminho que a política da mãe não cobre.
-func contarNaParticao(t *testing.T, pool *pgxpool.Pool, usuario uuid.UUID, particao string) int {
+// escopo de usuario (guc: projetoDoDono no banco migrado até o fim, app.user_id
+// no parado antes dos projetos): o caminho que a política da mãe não cobre.
+func contarNaParticao(t *testing.T, pool *pgxpool.Pool, guc string, usuario uuid.UUID, particao string) int {
 	t.Helper()
 	var n int
-	err := emEscopo(t, pool, "app.user_id", usuario.String(), func(tx pgx.Tx) error {
+	err := emEscopo(t, pool, guc, usuario.String(), func(tx pgx.Tx) error {
 		return tx.QueryRow(context.Background(),
 			`SELECT count(*) FROM `+pgx.Identifier{particao}.Sanitize()).Scan(&n)
 	})

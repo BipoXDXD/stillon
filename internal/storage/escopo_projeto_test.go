@@ -176,11 +176,12 @@ func TestInProjectTxRejectsNilIDs(t *testing.T) {
 
 // No molde de TestScopeSurvivesConnectionReuse: app.project_id é SET LOCAL e
 // não pode vazar para a próxima transação na mesma conexão do pool. Se
-// vazasse, um InUserTx seguinte veria só um projeto do usuário.
+// vazasse, a consulta sem escopo seguinte veria o alvo do projeto A (pela
+// targets_do_projeto). A transação seguinte, no projeto B, vê só o alvo de B.
 func TestProjectScopeSurvivesConnectionReuse(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
-	u, a, _, _, _ := doisProjetos(t, pool)
+	u, a, b, _, _ := doisProjetos(t, pool)
 
 	conn, err := pool.Acquire(ctx)
 	if err != nil {
@@ -214,18 +215,18 @@ func TestProjectScopeSurvivesConnectionReuse(t *testing.T) {
 		t.Errorf("sem escopo viu %d alvos", n)
 	}
 
-	err = storage.InUserTx(ctx, conn, u, func(q *db.Queries) error {
+	err = storage.InProjectTx(ctx, conn, u, b, func(q *db.Queries, _ tenancy.ProjectScope) error {
 		total, err := q.CountTargets(ctx, u)
 		if err != nil {
 			return err
 		}
-		if total != 2 {
-			t.Errorf("InUserTx depois de InProjectTx na mesma conexão viu %d alvos, queria 2", total)
+		if total != 1 {
+			t.Errorf("InProjectTx no projeto B depois do A na mesma conexão viu %d alvos, queria 1", total)
 		}
 		return nil
 	})
 	if err != nil {
-		t.Fatalf("InUserTx numa conexão reusada falhou: %v", err)
+		t.Fatalf("InProjectTx numa conexão reusada falhou: %v", err)
 	}
 }
 

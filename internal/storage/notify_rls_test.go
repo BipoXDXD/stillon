@@ -16,6 +16,9 @@ import (
 
 // target_health e incidents não têm user_id: a RLS delega ao alvo, como em
 // checks. Quem não enxerga o alvo não enxerga nem cria nada dele.
+// No escopo do projeto, vermelho sem a comparação de projeto em
+// targets_do_projeto e targets_so_projeto_do_escopo, incidents_projeto_update e
+// target_health_projeto_reset.
 func TestIncidentsAndHealthFollowTheTarget(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
@@ -27,15 +30,15 @@ func TestIncidentsAndHealthFollowTheTarget(t *testing.T) {
 	}
 
 	for _, tabela := range []string{"incidents", "target_health"} {
-		if n := contarComEscopo(t, pool, b, tabela); n != 0 {
+		if n := contarNoProjeto(t, pool, b, tabela); n != 0 {
 			t.Errorf("B viu %d linhas de %s do alvo de A", n, tabela)
 		}
-		if n := contarComEscopo(t, pool, a, tabela); n != 1 {
+		if n := contarNoProjeto(t, pool, a, tabela); n != 1 {
 			t.Errorf("A viu %d linhas de %s, queria 1", n, tabela)
 		}
 	}
 
-	err := storage.InUserTx(ctx, pool, a, func(q *db.Queries) error {
+	err := emProjetoTx(t, pool, a, func(q *db.Queries) error {
 		return q.OpenIncident(ctx, db.OpenIncidentParams{ID: novoID(), TargetID: alvoB, StartedAt: agora, Cause: "dns"})
 	})
 	if codigoPG(err) != "42501" {
@@ -74,6 +77,9 @@ func TestOnlyOneOpenIncidentPerTarget(t *testing.T) {
 
 // O dono vê só os seus canais. O sondador lê os de todos para o fan-out e
 // não escreve nenhum.
+// Cada dono no escopo do próprio projeto: vermelho sem a comparação de
+// projeto em notif_channels_do_projeto e notif_channels_so_projeto_do_escopo
+// (até a 00044, notif_channels_owner).
 func TestChannelsAreIsolatedAndProberOnlyReads(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
@@ -81,7 +87,7 @@ func TestChannelsAreIsolatedAndProberOnlyReads(t *testing.T) {
 	canalA := novoCanal(t, pool, a, nil, time.Time{})
 	novoCanal(t, pool, b, nil, time.Time{})
 
-	if n := contarComEscopo(t, pool, a, "notif_channels"); n != 1 {
+	if n := contarNoProjeto(t, pool, a, "notif_channels"); n != 1 {
 		t.Errorf("sob o escopo de A, SELECT sem WHERE viu %d canais, queria 1", n)
 	}
 
@@ -218,7 +224,7 @@ func TestConfirmChannelIsIdempotentAndRespectsExpiry(t *testing.T) {
 	}
 
 	var verificadoEm time.Time
-	err := storage.InUserTx(ctx, pool, dono, func(q *db.Queries) error {
+	err := emProjetoTx(t, pool, dono, func(q *db.Queries) error {
 		c, err := q.GetChannel(ctx, db.GetChannelParams{ProjectID: testdb.ProjetoPadrao(t, dono), ID: canal})
 		if err == nil && c.VerifiedAt != nil {
 			verificadoEm = *c.VerifiedAt
@@ -243,6 +249,9 @@ func TestInVerifyTxRefusesAMalformedHash(t *testing.T) {
 
 // A outbox delega ao canal. O sondador reivindica, e a reivindicação é um
 // lease: a mesma notificação não volta antes de ele vencer.
+// A parte do dono, no escopo do projeto, fica vermelha sem a comparação de
+// projeto em notifications_via_channel, notif_channels_do_projeto e
+// notif_channels_so_projeto_do_escopo.
 func TestNotificationClaimIsALease(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
@@ -250,7 +259,7 @@ func TestNotificationClaimIsALease(t *testing.T) {
 	alvo := novoAlvo(t, pool, a, agora)
 	n := novaNotificacao(t, pool, novoIncidente(t, pool, alvo), novoCanal(t, pool, a, nil, time.Time{}))
 
-	if v := contarComEscopo(t, pool, b, "notifications"); v != 0 {
+	if v := contarNoProjeto(t, pool, b, "notifications"); v != 0 {
 		t.Errorf("B viu %d notificações de A", v)
 	}
 

@@ -90,7 +90,7 @@ func canalDeTipo(t *testing.T, pool *pgxpool.Pool, dono uuid.UUID, kind string) 
 	t.Helper()
 	ctx := context.Background()
 	p := db.InsertChannelParams{ID: novoID(), UserID: dono, ProjectID: testdb.ProjetoPadrao(t, dono), Kind: kind, ConfigEnc: []byte{1}, VerifiedAt: &agora, CreatedAt: agora}
-	if err := storage.InUserTx(ctx, pool, dono, func(q *db.Queries) error { return q.InsertChannel(ctx, p) }); err != nil {
+	if err := emProjetoTx(t, pool, dono, func(q *db.Queries) error { return q.InsertChannel(ctx, p) }); err != nil {
 		t.Fatalf("criar canal %s: %v", kind, err)
 	}
 	return p.ID

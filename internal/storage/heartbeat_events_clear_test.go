@@ -8,7 +8,6 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/BipoXDXD/stillon/internal/storage"
 	"github.com/BipoXDXD/stillon/internal/storage/db"
 	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 )
@@ -21,7 +20,7 @@ import (
 func eventosDe(t *testing.T, pool *pgxpool.Pool, userID, heartbeat uuid.UUID) int {
 	t.Helper()
 	var n int
-	err := emEscopo(t, pool, "app.user_id", userID.String(), func(tx pgx.Tx) error {
+	err := emEscopo(t, pool, projetoDoDono, userID.String(), func(tx pgx.Tx) error {
 		return tx.QueryRow(context.Background(),
 			`SELECT count(*) FROM heartbeat_events WHERE heartbeat_id = $1`, heartbeat).Scan(&n)
 	})
@@ -44,7 +43,7 @@ func desligarRLSDoDono(t *testing.T, pool *pgxpool.Pool, tabelas ...string) {
 }
 
 // Sem a RLS, só o filtro h.user_id separa B do log de A.
-func TestDeleteHeartbeatEventsFiltersByOwnerWithoutRLS(t *testing.T) {
+func TestDeleteHeartbeatEventsFiltersByProjectWithoutRLS(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
 	a, b := novoUsuario(t, pool), novoUsuario(t, pool)
@@ -56,7 +55,7 @@ func TestDeleteHeartbeatEventsFiltersByOwnerWithoutRLS(t *testing.T) {
 	}
 
 	var apagadas int64
-	err := storage.InUserTx(ctx, pool, b, func(q *db.Queries) error {
+	err := emProjetoTx(t, pool, b, func(q *db.Queries) error {
 		var err error
 		apagadas, err = q.DeleteHeartbeatEvents(ctx, db.DeleteHeartbeatEventsParams{ProjectID: testdb.ProjetoPadrao(t, b), HeartbeatID: hbA})
 		return err
@@ -73,6 +72,9 @@ func TestDeleteHeartbeatEventsFiltersByOwnerWithoutRLS(t *testing.T) {
 }
 
 // Sem o filtro (um DELETE cru), só a RLS separa B do log de A.
+// heartbeat_events herda pelo EXISTS em heartbeats: vermelho sem a
+// comparação de projeto em heartbeats_do_projeto e
+// heartbeats_so_projeto_do_escopo.
 func TestRawDeleteOfAnotherUsersHeartbeatEventsAffectsNothing(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
@@ -83,7 +85,7 @@ func TestRawDeleteOfAnotherUsersHeartbeatEventsAffectsNothing(t *testing.T) {
 	apagar := func(quem uuid.UUID) int64 {
 		t.Helper()
 		var apagadas int64
-		err := emEscopo(t, pool, "app.user_id", quem.String(), func(tx pgx.Tx) error {
+		err := emEscopo(t, pool, projetoDoDono, quem.String(), func(tx pgx.Tx) error {
 			tag, err := tx.Exec(ctx, `DELETE FROM heartbeat_events WHERE heartbeat_id = $1`, hbA)
 			apagadas = tag.RowsAffected()
 			return err

@@ -15,8 +15,10 @@ import (
 	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 )
 
-// A consulta que esqueceu o filtro, e a que filtrou pelo usuário errado:
-// só a política separa os dois donos.
+// A consulta que esqueceu o filtro, e a que filtrou pelo projeto errado: no
+// escopo do projeto de A, só a política separa o projeto de B. Vermelho com
+// targets_do_projeto (targets_owner até a 00044) e a restritiva
+// targets_so_projeto_do_escopo trocadas por true: cada uma sozinha já separa.
 func TestRLSIsolatesTargetsEvenWithTheWrongFilter(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
@@ -26,21 +28,21 @@ func TestRLSIsolatesTargetsEvenWithTheWrongFilter(t *testing.T) {
 	novoAlvo(t, pool, a, agora)
 	alvoB := novoAlvo(t, pool, b, agora)
 
-	if n := contarComEscopo(t, pool, a, "targets"); n != 1 {
-		t.Errorf("sob o escopo de A, SELECT sem WHERE viu %d alvos, queria 1", n)
+	if n := contarNoProjeto(t, pool, a, "targets"); n != 1 {
+		t.Errorf("sob o escopo do projeto de A, SELECT sem WHERE viu %d alvos, queria 1", n)
 	}
 
-	err := storage.InUserTx(ctx, pool, a, func(q *db.Queries) error {
+	err := emProjetoTx(t, pool, a, func(q *db.Queries) error {
 		daB, err := q.ListTargets(ctx, db.ListTargetsParams{ProjectID: pb, MaxRows: 10})
 		if err != nil {
 			return err
 		}
 		if len(daB) != 0 {
-			t.Errorf("sob o escopo de A, listar os alvos de B devolveu %d", len(daB))
+			t.Errorf("sob o escopo do projeto de A, listar os alvos de B devolveu %d", len(daB))
 		}
 		_, err = q.GetTarget(ctx, db.GetTargetParams{ProjectID: testdb.ProjetoDoAlvo(t, alvoB), ID: alvoB})
 		if !errors.Is(err, pgx.ErrNoRows) {
-			t.Errorf("sob o escopo de A, buscar o alvo de B deu %v, queria ErrNoRows", err)
+			t.Errorf("sob o escopo do projeto de A, buscar o alvo de B deu %v, queria ErrNoRows", err)
 		}
 		return nil
 	})
@@ -62,16 +64,18 @@ func TestWithoutScopeNothingIsVisible(t *testing.T) {
 	}
 }
 
-// Depois do primeiro SET LOCAL da sessão, o GUC volta como
-// string vazia, e não NULL. Um pool reusa a conexão; a próxima consulta nela
-// precisa funcionar. (Sem as aspas simples duplas aqui: o gofmt as troca por
-// aspas tipográficas em comentário de documentação.)
+// Depois do primeiro SET LOCAL da sessão, o GUC volta como string vazia, e
+// não NULL. Um pool reusa a conexão; a próxima consulta nela precisa
+// funcionar. O escopo de usuário fica para as tabelas da pessoa: aqui,
+// sessions. Vermelho sem o NULLIF de sessions_owner (o cast de string vazia
+// para uuid quebra a consulta sem escopo). O mesmo para app.project_id está
+// em TestProjectScopeSurvivesConnectionReuse. (Sem as aspas simples duplas
+// aqui: o gofmt as troca por aspas tipográficas em comentário de
+// documentação.)
 func TestScopeSurvivesConnectionReuse(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
-	dono := novoUsuario(t, pool)
-	projeto := testdb.ProjetoPadrao(t, dono)
-	novoAlvo(t, pool, dono, agora.Add(-time.Minute))
+	dono := gravarCredenciaisDeA(t, pool).dono
 
 	conn, err := pool.Acquire(ctx)
 	if err != nil {
@@ -79,12 +83,17 @@ func TestScopeSurvivesConnectionReuse(t *testing.T) {
 	}
 	defer conn.Release()
 
+	var revogadas int64
 	err = storage.InUserTx(ctx, conn, dono, func(q *db.Queries) error {
-		_, err := q.ListTargets(ctx, db.ListTargetsParams{ProjectID: projeto, MaxRows: 10})
+		var err error
+		revogadas, err = q.RevokeAllFamilies(ctx, db.RevokeAllFamiliesParams{UserID: dono, Now: agora})
 		return err
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if revogadas != 1 {
+		t.Fatalf("InUserTx revogou %d sessões do dono, queria a 1 dele: sem ver a linha, o escopo não foi ligado", revogadas)
 	}
 
 	// A premissa do teste. Se o Postgres um dia devolver NULL aqui, este
@@ -98,11 +107,11 @@ func TestScopeSurvivesConnectionReuse(t *testing.T) {
 	}
 
 	var n int
-	if err := conn.QueryRow(ctx, `SELECT count(*) FROM targets`).Scan(&n); err != nil {
+	if err := conn.QueryRow(ctx, `SELECT count(*) FROM sessions`).Scan(&n); err != nil {
 		t.Fatalf("consulta sem escopo numa conexão reusada falhou: %v", err)
 	}
 	if n != 0 {
-		t.Errorf("sem escopo viu %d alvos", n)
+		t.Errorf("sem escopo viu %d sessões", n)
 	}
 
 	err = storage.InProberTx(ctx, conn, func(q *db.Queries) error {
@@ -146,6 +155,7 @@ func TestEscopoNoMeioDaTransacaoNaoVazaParaAConexaoReusada(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			defer tx.Rollback(ctx)
 			if err := c.ligar(ctx, db.New(tx)); err != nil {
 				t.Fatal(err)
 			}
@@ -211,14 +221,13 @@ func TestProberCanRescheduleButNotCreate(t *testing.T) {
 	}
 }
 
-// Duas tentativas, cada uma na sua transação: um erro aborta a transação, e a
-// segunda instrução falharia por isso, não pela RLS.
-//
-// Com WHERE, o UPDATE precisa ler colunas, e o Postgres passa a exigir que a
-// linha NOVA satisfaça também o USING das políticas de SELECT — uma segunda
-// barreira, independente do WITH CHECK de targets_owner. Por isso a primeira
-// tentativa continua verde com WITH CHECK (true). Só a tentativa sem WHERE
-// depende do WITH CHECK de dono, e é ela que o prende.
+// No escopo do projeto, o membro pode alterar o alvo, mas não entregá-lo a
+// outro usuário: o projeto do escopo continua o mesmo, então o WITH CHECK de
+// targets_do_projeto deixa passar, e quem barra é o gatilho
+// guard_user_id_imutavel (00031). Vermelho sem o gatilho
+// targets_user_id_imutavel (até a 00044, o WITH CHECK de targets_owner barrava
+// também). Duas tentativas, cada uma na sua transação: um erro aborta a
+// transação, e a segunda instrução falharia por isso, não pela trava.
 func TestOwnerCannotHandTargetToAnotherUser(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
@@ -232,23 +241,22 @@ func TestOwnerCannotHandTargetToAnotherUser(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer tx.Rollback(ctx)
-		if _, err := tx.Exec(ctx, `SELECT set_config('app.user_id', $1, true)`, a.String()); err != nil {
-			t.Fatal(err)
-		}
+		escopoDoProjetoDe(t, pool, tx, a)
 		_, err = tx.Exec(ctx, sql, args...)
 		return err
 	}
 
 	if err := tentar(`UPDATE targets SET user_id = $1 WHERE id = $2`, b, alvo); codigoPG(err) != "42501" {
-		t.Errorf("com WHERE, A entregou o alvo a B (erro = %v); queria violação de RLS 42501", err)
+		t.Errorf("com WHERE, A entregou o alvo a B (erro = %v); queria 42501", err)
 	}
 	if err := tentar(`UPDATE targets SET user_id = $1`, b); codigoPG(err) != "42501" {
-		t.Errorf("sem WHERE, A entregou o alvo a B (erro = %v); queria violação de RLS 42501: "+
-			"o WITH CHECK de targets_owner não está barrando", err)
+		t.Errorf("sem WHERE, A entregou o alvo a B (erro = %v); queria 42501: "+
+			"o gatilho guard_user_id_imutavel não está barrando", err)
 	}
 }
 
-// uuid.Nil nunca é usuário; a transação nem começa.
+// uuid.Nil nunca é usuário; a transação nem começa. O escopo de usuário só
+// serve às tabelas da pessoa (sessions e afins).
 func TestInUserTxRefusesNilUser(t *testing.T) {
 	pool := testdb.New(t)
 	chamou := false
@@ -264,6 +272,9 @@ func TestInUserTxRefusesNilUser(t *testing.T) {
 	}
 }
 
+// checks não tem dono nem projeto: checks_select_via_target herda pelo EXISTS
+// em targets. Vermelho com as políticas do projeto em targets
+// (targets_do_projeto e targets_so_projeto_do_escopo) trocadas por true.
 func TestChecksAreVisibleOnlyThroughTheirTarget(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
@@ -277,10 +288,10 @@ func TestChecksAreVisibleOnlyThroughTheirTarget(t *testing.T) {
 	novoCheck(t, pool, alvoA, agora)
 	novoCheck(t, pool, alvoB, agora)
 
-	if n := contarComEscopo(t, pool, a, "checks"); n != 1 {
-		t.Errorf("sob o escopo de A, SELECT sem WHERE viu %d checks, queria 1", n)
+	if n := contarNoProjeto(t, pool, a, "checks"); n != 1 {
+		t.Errorf("sob o escopo do projeto de A, SELECT sem WHERE viu %d checks, queria 1", n)
 	}
-	err := storage.InUserTx(ctx, pool, a, func(q *db.Queries) error {
+	err := emProjetoTx(t, pool, a, func(q *db.Queries) error {
 		rows, err := q.ListChecks(ctx, db.ListChecksParams{
 			ProjectID: testdb.ProjetoDoAlvo(t, alvoB), TargetID: alvoB, FromAt: agora.Add(-time.Hour), ToAt: agora.Add(time.Hour),
 		})
@@ -288,7 +299,7 @@ func TestChecksAreVisibleOnlyThroughTheirTarget(t *testing.T) {
 			return err
 		}
 		if len(rows) != 0 {
-			t.Errorf("sob o escopo de A, os checks de B vieram (%d)", len(rows))
+			t.Errorf("sob o escopo do projeto de A, os checks de B vieram (%d)", len(rows))
 		}
 		return nil
 	})

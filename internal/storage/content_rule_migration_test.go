@@ -251,7 +251,7 @@ func TestContentRuleMigrationGivesUpOnLockTimeout(t *testing.T) {
 	defer pool.Close()
 	particaoDeAgora(t, pool)
 	dono := novoUsuario(t, pool)
-	alvo := novoAlvo(t, pool, dono, agora)
+	alvo := novoAlvoDoBinarioAnterior(t, pool, dono, agora)
 	antes := versaoDoBanco(t, pool)
 
 	sondador, err := pool.Begin(ctx)
@@ -362,16 +362,17 @@ func versaoDoBanco(t *testing.T, pool *pgxpool.Pool) int64 {
 	return v
 }
 
-// inserirAlvoComRegra grava o alvo com SQL cru no escopo do dono: o
-// InsertTarget gerado ainda não cita as colunas da regra.
+// inserirAlvoComRegra grava o alvo com SQL cru no Projeto padrão do dono, no
+// escopo desse projeto: o InsertTarget gerado ainda não cita as colunas da
+// regra.
 func inserirAlvoComRegra(t *testing.T, pool *pgxpool.Pool, dono uuid.UUID, metodo string, r regraDeConteudo) error {
 	t.Helper()
-	return emEscopo(t, pool, "app.user_id", dono.String(), func(tx pgx.Tx) error {
+	return noProjetoPadraoDe(t, pool, dono, func(tx pgx.Tx, projeto uuid.UUID) error {
 		_, err := tx.Exec(context.Background(), `INSERT INTO targets
-			(id, user_id, name, url, method, interval_sec, timeout_ms, expected_status, enabled,
+			(id, user_id, project_id, name, url, method, interval_sec, timeout_ms, expected_status, enabled,
 			 next_run_at, created_at, content_mode, content_value, content_json_pointer)
-			VALUES ($1, $2, 'alvo', 'https://exemplo.com', $3, 60, 5000, 200, true, $4, $4, $5, $6, $7)`,
-			novoID(), dono, metodo, agora, r.modo, r.valor, r.ponteiro)
+			VALUES ($1, $2, $3, 'alvo', 'https://exemplo.com', $4, 60, 5000, 200, true, $5, $5, $6, $7, $8)`,
+			novoID(), dono, projeto, metodo, agora, r.modo, r.valor, r.ponteiro)
 		return err
 	})
 }

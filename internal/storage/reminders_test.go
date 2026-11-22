@@ -69,6 +69,9 @@ func TestReminderSeqStartsAtOne(t *testing.T) {
 }
 
 // O lembrete segue a RLS da outbox: o dono o enxerga, outro usuário não.
+// No escopo do projeto, vermelho sem a comparação de projeto em
+// notifications_via_channel, notif_channels_do_projeto e
+// notif_channels_so_projeto_do_escopo.
 func TestReminderFollowsTheChannelRLS(t *testing.T) {
 	pool := testdb.New(t)
 	a, b := novoUsuario(t, pool), novoUsuario(t, pool)
@@ -78,10 +81,10 @@ func TestReminderFollowsTheChannelRLS(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if n := contarComEscopo(t, pool, a, "notifications"); n != 1 {
+	if n := contarNoProjeto(t, pool, a, "notifications"); n != 1 {
 		t.Errorf("A viu %d notificações, queria 1", n)
 	}
-	if n := contarComEscopo(t, pool, b, "notifications"); n != 0 {
+	if n := contarNoProjeto(t, pool, b, "notifications"); n != 0 {
 		t.Errorf("B viu %d notificações de A", n)
 	}
 }
@@ -101,7 +104,7 @@ func TestReminderMigrationGoesDownWithRemindersInTheOutbox(t *testing.T) {
 	}
 	defer pool.Close()
 	dono := novoUsuario(t, pool)
-	canal := novoCanalNoBancoVazio(t, pool, dono)
+	canal := novoCanal(t, pool, dono, nil, time.Time{})
 	incidente := novoIncidente(t, pool, novoAlvo(t, pool, dono, agora))
 	novaNotificacao(t, pool, incidente, canal)
 	for seq := int32(1); seq <= 2; seq++ {

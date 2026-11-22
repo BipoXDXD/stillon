@@ -68,7 +68,7 @@ func TestDonoSoAlteraOAckDoIncidente(t *testing.T) {
 	antes := linhaComoJSON(t, "incidents", "id", incidente)
 	for coluna, c := range casos {
 		t.Run(coluna, func(t *testing.T) {
-			comEscopo(t, pool, "app.user_id", dono.String(), func(tx pgx.Tx) {
+			comEscopo(t, pool, projetoDoDono, dono.String(), func(tx pgx.Tx) {
 				tag, err := tx.Exec(ctx, c.sql, append([]any{incidente}, c.args...)...)
 				if codigoPG(err) != "42501" {
 					t.Errorf("o dono alterando %s deu %d linha(s) e erro %v; queria 42501", coluna, tag.RowsAffected(), err)
@@ -80,7 +80,7 @@ func TestDonoSoAlteraOAckDoIncidente(t *testing.T) {
 		})
 	}
 
-	err := storage.InUserTx(ctx, pool, dono, func(q *db.Queries) error {
+	err := emProjetoTx(t, pool, dono, func(q *db.Queries) error {
 		_, err := q.AckIncident(ctx, db.AckIncidentParams{Now: agora, ProjectID: projeto, ID: incidente})
 		return err
 	})
@@ -165,7 +165,7 @@ func TestDonoNaoEscreveHistereseNemRollup(t *testing.T) {
 	}
 	for nome, sql := range recusas {
 		t.Run(nome, func(t *testing.T) {
-			comEscopo(t, pool, "app.user_id", dono.String(), func(tx pgx.Tx) {
+			comEscopo(t, pool, projetoDoDono, dono.String(), func(tx pgx.Tx) {
 				tag, err := tx.Exec(ctx, sql)
 				if codigoPG(err) != "42501" && (err != nil || tag.RowsAffected() != 0) {
 					t.Errorf("o dono: %d linha(s) e erro %v; queria 42501 ou 0 linhas", tag.RowsAffected(), err)
@@ -176,7 +176,7 @@ func TestDonoNaoEscreveHistereseNemRollup(t *testing.T) {
 	}
 	for nome, sql := range apagar {
 		t.Run(nome, func(t *testing.T) {
-			comEscopo(t, pool, "app.user_id", dono.String(), func(tx pgx.Tx) {
+			comEscopo(t, pool, projetoDoDono, dono.String(), func(tx pgx.Tx) {
 				if n := afetadasNaTx(t, tx, sql); n != 0 {
 					t.Errorf("o dono apagou %d linha(s); queria 0", n)
 				}
@@ -186,7 +186,7 @@ func TestDonoNaoEscreveHistereseNemRollup(t *testing.T) {
 	}
 
 	// O zerar da edição de alvo (ResetTargetHealth) continua passando.
-	err := storage.InUserTx(ctx, pool, dono, func(q *db.Queries) error {
+	err := emProjetoTx(t, pool, dono, func(q *db.Queries) error {
 		return q.ResetTargetHealth(ctx, db.ResetTargetHealthParams{ProjectID: testdb.ProjetoDoAlvo(t, alvo), TargetID: alvo})
 	})
 	if err != nil {
@@ -249,7 +249,7 @@ func TestNinguemAlteraCheck(t *testing.T) {
 	antes := linhaComoJSON(t, "checks", "id", check)
 
 	for _, escopo := range []struct{ guc, valor string }{
-		{"app.user_id", dono.String()},
+		{projetoDoDono, dono.String()},
 		{"app.scope", "prober"},
 	} {
 		for _, tabela := range []string{"checks", pgx.Identifier{particao}.Sanitize()} {

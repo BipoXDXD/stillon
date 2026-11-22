@@ -108,7 +108,7 @@ func TestChecksRejectFutureUpdatesAndNewPartitions(t *testing.T) {
 		})
 	})
 	exigirCheckFuturoRecusado(t, err)
-	if n := contarComEscopo(t, pool, dono, "checks"); n != 1 {
+	if n := contarNoProjeto(t, pool, dono, "checks"); n != 1 {
 		t.Fatalf("%d checks depois das recusas, queria apenas o legítimo", n)
 	}
 }

@@ -36,7 +36,7 @@ func rollupsDe(t *testing.T, pool *pgxpool.Pool, dono, alvo uuid.UUID) []db.List
 	t.Helper()
 	ctx := context.Background()
 	var rows []db.ListRollupsRow
-	err := storage.InUserTx(ctx, pool, dono, func(q *db.Queries) error {
+	err := emProjetoTx(t, pool, dono, func(q *db.Queries) error {
 		var err error
 		rows, err = q.ListRollups(ctx, db.ListRollupsParams{
 			ProjectID: testdb.ProjetoDoAlvo(t, alvo), TargetID: alvo, FromAt: hora(0, 0).AddDate(0, 0, -90), ToAt: hora(0, 0).AddDate(0, 0, 90),
@@ -216,6 +216,8 @@ func TestConsolidationCatchesUpAfterAGapWithAWatermarkInTheFuture(t *testing.T) 
 }
 
 // Rollups não atravessam donos: a RLS delega ao alvo.
+// No escopo do projeto, vermelho sem a comparação de projeto em
+// targets_do_projeto e targets_so_projeto_do_escopo.
 func TestRollupsFollowTheTarget(t *testing.T) {
 	pool := testdb.New(t)
 	a, b := novoUsuario(t, pool), novoUsuario(t, pool)
@@ -225,10 +227,10 @@ func TestRollupsFollowTheTarget(t *testing.T) {
 	}
 	checkEm(t, pool, alvo, hora(10, 5), "up", 100)
 	consolidar(t, pool, hora(11, 0))
-	if n := contarComEscopo(t, pool, a, "check_rollup_1h"); n != 1 {
+	if n := contarNoProjeto(t, pool, a, "check_rollup_1h"); n != 1 {
 		t.Errorf("o dono viu %d rollups, queria 1", n)
 	}
-	if n := contarComEscopo(t, pool, b, "check_rollup_1h"); n != 0 {
+	if n := contarNoProjeto(t, pool, b, "check_rollup_1h"); n != 0 {
 		t.Errorf("outro usuário viu %d rollups", n)
 	}
 }
@@ -456,6 +458,7 @@ func TestPartitionDropGivesUpWhenChecksIsBusy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer ocupada.Rollback(ctx)
 	if _, err := ocupada.Exec(ctx, `SELECT count(*) FROM checks`); err != nil {
 		t.Fatal(err)
 	}

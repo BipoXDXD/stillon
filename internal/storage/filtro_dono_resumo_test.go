@@ -16,7 +16,7 @@ import (
 // superusuário, sem RLS, e só o project_id do WHERE separa A de B, dois
 // projetos do MESMO usuário (o filtro por dono deixaria passar).
 
-func TestListTargetSummariesFiltersOwnerWithoutRLS(t *testing.T) {
+func TestListTargetSummariesFiltersProjectWithoutRLS(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
 	a := novoUsuario(t, pool)
@@ -40,7 +40,7 @@ func TestListTargetSummariesFiltersOwnerWithoutRLS(t *testing.T) {
 	}
 }
 
-func TestListSummaryRollupsFiltersOwnerWithoutRLS(t *testing.T) {
+func TestListSummaryRollupsFiltersProjectWithoutRLS(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
 	a := novoUsuario(t, pool)
@@ -72,7 +72,7 @@ func TestListSummaryRollupsFiltersOwnerWithoutRLS(t *testing.T) {
 	}
 }
 
-func TestListSummaryCurrentHourFiltersOwnerWithoutRLS(t *testing.T) {
+func TestListSummaryCurrentHourFiltersProjectWithoutRLS(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
 	a := novoUsuario(t, pool)

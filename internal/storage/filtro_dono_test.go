@@ -67,7 +67,7 @@ func exigirNenhumaLinha(t *testing.T, err error, leitura string) {
 	}
 }
 
-func TestGetTargetFiltersOwnerWithoutRLS(t *testing.T) {
+func TestGetTargetFiltersProjectWithoutRLS(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
 	// A e B são dois projetos do MESMO usuário: só o filtro por projeto os
@@ -88,7 +88,7 @@ func TestGetTargetFiltersOwnerWithoutRLS(t *testing.T) {
 	}
 }
 
-func TestListTargetsFiltersOwnerWithoutRLS(t *testing.T) {
+func TestListTargetsFiltersProjectWithoutRLS(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
 	// A e B são dois projetos do MESMO usuário: só o filtro por projeto os
@@ -114,7 +114,7 @@ func TestListTargetsFiltersOwnerWithoutRLS(t *testing.T) {
 	}
 }
 
-func TestDeleteTargetFiltersOwnerWithoutRLS(t *testing.T) {
+func TestDeleteTargetFiltersProjectWithoutRLS(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
 	// A e B são dois projetos do MESMO usuário: só o filtro por projeto os
@@ -143,7 +143,7 @@ func TestDeleteTargetFiltersOwnerWithoutRLS(t *testing.T) {
 	}
 }
 
-func TestListChecksFiltersOwnerWithoutRLS(t *testing.T) {
+func TestListChecksFiltersProjectWithoutRLS(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
 	// A e B são dois projetos do MESMO usuário: só o filtro por projeto os
@@ -186,7 +186,7 @@ func atualizacaoDoAlvo(alvo db.Target, projeto uuid.UUID, nome string) db.Update
 	}
 }
 
-func TestUpdateTargetFiltersOwnerWithoutRLS(t *testing.T) {
+func TestUpdateTargetFiltersProjectWithoutRLS(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
 	// A e B são dois projetos do MESMO usuário: só o filtro por projeto os
@@ -219,7 +219,7 @@ func TestUpdateTargetFiltersOwnerWithoutRLS(t *testing.T) {
 	}
 }
 
-func TestResetTargetHealthFiltersOwnerWithoutRLS(t *testing.T) {
+func TestResetTargetHealthFiltersProjectWithoutRLS(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
 	// A e B são dois projetos do MESMO usuário: só o filtro por projeto os
@@ -260,7 +260,7 @@ func TestResetTargetHealthFiltersOwnerWithoutRLS(t *testing.T) {
 func comTagDoAlvo(t *testing.T, pool *pgxpool.Pool, dono, alvo uuid.UUID) {
 	t.Helper()
 	ctx := context.Background()
-	err := storage.InUserTx(ctx, pool, dono, func(q *db.Queries) error {
+	err := emProjetoTx(t, pool, dono, func(q *db.Queries) error {
 		return q.InsertTargetTags(ctx, db.InsertTargetTagsParams{Tags: []string{"prod"}, ProjectID: testdb.ProjetoDoAlvo(t, alvo), TargetID: alvo})
 	})
 	if err != nil {
@@ -278,7 +278,7 @@ func tagsDoAlvo(t *testing.T, q *db.Queries, projeto, alvo uuid.UUID) []string {
 	return tags
 }
 
-func TestListTargetTagsFiltersOwnerWithoutRLS(t *testing.T) {
+func TestListTargetTagsFiltersProjectWithoutRLS(t *testing.T) {
 	pool := testdb.New(t)
 	// A e B são dois projetos do MESMO usuário: só o filtro por projeto os
 	// separa (o por dono deixaria passar).
@@ -296,7 +296,7 @@ func TestListTargetTagsFiltersOwnerWithoutRLS(t *testing.T) {
 	}
 }
 
-func TestDeleteTargetTagsFiltersOwnerWithoutRLS(t *testing.T) {
+func TestDeleteTargetTagsFiltersProjectWithoutRLS(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
 	// A e B são dois projetos do MESMO usuário: só o filtro por projeto os
@@ -321,7 +321,7 @@ func TestDeleteTargetTagsFiltersOwnerWithoutRLS(t *testing.T) {
 	}
 }
 
-func TestInsertTargetTagsFiltersOwnerWithoutRLS(t *testing.T) {
+func TestInsertTargetTagsFiltersProjectWithoutRLS(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
 	// A e B são dois projetos do MESMO usuário: só o filtro por projeto os
@@ -346,7 +346,7 @@ func TestInsertTargetTagsFiltersOwnerWithoutRLS(t *testing.T) {
 	}
 }
 
-func TestGetTargetForUpdateFiltersOwnerWithoutRLS(t *testing.T) {
+func TestGetTargetForUpdateFiltersProjectWithoutRLS(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
 	// A e B são dois projetos do MESMO usuário: só o filtro por projeto os

@@ -21,7 +21,7 @@ func novaPagina(t *testing.T, pool *pgxpool.Pool, dono uuid.UUID, slug string, p
 	ctx := context.Background()
 	id := novoID()
 	projeto := testdb.ProjetoPadrao(t, dono)
-	err := storage.InUserTx(ctx, pool, dono, func(q *db.Queries) error {
+	err := emProjetoTx(t, pool, dono, func(q *db.Queries) error {
 		if err := q.InsertStatusPage(ctx, db.InsertStatusPageParams{
 			ID: id, UserID: dono, ProjectID: projeto, Slug: slug, Title: "Status", Published: publicada, CreatedAt: agora,
 		}); err != nil {
@@ -166,6 +166,9 @@ func TestPublicScopeIsReadOnly(t *testing.T) {
 
 // A FK ignora RLS: sem o WITH CHECK nos itens, A poria na própria página
 // o alvo de B, e a página pública de A mostraria o estado do alvo de B.
+// No escopo do projeto de A, vermelho sem a comparação de projeto em
+// targets_do_projeto e targets_so_projeto_do_escopo, pelos quais o WITH CHECK
+// dos itens enxerga o alvo.
 func TestOwnerCannotPutAnotherUsersTargetOnThePage(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
@@ -173,7 +176,7 @@ func TestOwnerCannotPutAnotherUsersTargetOnThePage(t *testing.T) {
 	pagina := novaPagina(t, pool, a, "pagina-a", true)
 	alvoB := novoAlvo(t, pool, b, agora)
 
-	err := storage.InUserTx(ctx, pool, a, func(q *db.Queries) error {
+	err := emProjetoTx(t, pool, a, func(q *db.Queries) error {
 		return q.InsertStatusPageItem(ctx, db.InsertStatusPageItemParams{
 			StatusPageID: pagina, TargetID: alvoB, DisplayName: "roubado", Position: 0,
 		})
@@ -192,7 +195,7 @@ func TestStatusPageConstraints(t *testing.T) {
 	novaPagina(t, pool, a, "pagina-a", false)
 
 	inserir := func(dono uuid.UUID, slug string) error {
-		return storage.InUserTx(ctx, pool, dono, func(q *db.Queries) error {
+		return emProjetoTx(t, pool, dono, func(q *db.Queries) error {
 			return q.InsertStatusPage(ctx, db.InsertStatusPageParams{
 				ID: novoID(), UserID: dono, ProjectID: testdb.ProjetoPadrao(t, dono), Slug: slug, Title: "x", CreatedAt: agora,
 			})
@@ -216,19 +219,24 @@ func TestStatusPageConstraints(t *testing.T) {
 // devolveria os itens que o dono enxerga, que são só os das páginas dele, e
 // o resultado seria o mesmo (provado por sabotagem). A
 // guarda é atalho: fora do escopo público, a função nem precisa rodar.
+// No escopo do projeto, vermelho sem a comparação de projeto em
+// targets_do_projeto e targets_so_projeto_do_escopo.
 func TestPublicPolicyDoesNotWidenOwnerScope(t *testing.T) {
 	pool := testdb.New(t)
 	a, b := novoUsuario(t, pool), novoUsuario(t, pool)
 	novoAlvo(t, pool, a, agora)
 	novaPagina(t, pool, b, "pagina-b", true, novoAlvo(t, pool, b, agora))
 
-	if n := contarComEscopo(t, pool, a, "targets"); n != 1 {
+	if n := contarNoProjeto(t, pool, a, "targets"); n != 1 {
 		t.Errorf("A viu %d alvos com a página de B publicada, queria 1", n)
 	}
 }
 
 // channel_health segue notifications: o dono do canal e o sondador; o
 // escopo verify, que enxerga o canal, não.
+// No escopo do projeto, vermelho sem a comparação de projeto em
+// channel_health_projeto_ou_sondador, notif_channels_do_projeto e
+// notif_channels_so_projeto_do_escopo.
 func TestChannelHealthFollowsOwnerOrProber(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
@@ -243,10 +251,10 @@ func TestChannelHealthFollowsOwnerOrProber(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if n := contarComEscopo(t, pool, a, "channel_health"); n != 1 {
+	if n := contarNoProjeto(t, pool, a, "channel_health"); n != 1 {
 		t.Errorf("o dono viu %d linhas de channel_health, queria 1", n)
 	}
-	if n := contarComEscopo(t, pool, b, "channel_health"); n != 0 {
+	if n := contarNoProjeto(t, pool, b, "channel_health"); n != 0 {
 		t.Errorf("outro usuário viu %d linhas de channel_health", n)
 	}
 	tx, err := pool.Begin(ctx)

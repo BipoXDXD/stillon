@@ -55,6 +55,9 @@ func linhasAfetadas(t *testing.T, pool *pgxpool.Pool, guc, valor, comando string
 }
 
 // target_tls segue o dono do alvo ou o sondador, nomeados na política.
+// No escopo do projeto, vermelho sem a comparação de projeto em
+// target_tls_projeto_ou_sondador_select, targets_do_projeto e
+// targets_so_projeto_do_escopo.
 func TestTargetTLSFollowsOwnerOrProber(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
@@ -63,20 +66,20 @@ func TestTargetTLSFollowsOwnerOrProber(t *testing.T) {
 	novaValidadeTLS(t, pool, alvoA)
 	novaValidadeTLS(t, pool, alvoB)
 
-	if n := contarComEscopo(t, pool, a, "target_tls"); n != 1 {
+	if n := contarNoProjeto(t, pool, a, "target_tls"); n != 1 {
 		t.Errorf("o dono A viu %d linhas de target_tls, queria a do seu alvo", n)
 	}
-	if n := contarEmEscopo(t, pool, "app.user_id", b.String(),
+	if n := contarEmEscopo(t, pool, projetoDoDono, b.String(),
 		"target_tls WHERE target_id = '"+alvoA.String()+"'"); n != 0 {
 		t.Errorf("o dono B viu %d linhas do alvo de A", n)
 	}
 	maisTarde := validadeTLS.Add(24 * time.Hour)
-	if n := linhasAfetadas(t, pool, "app.user_id", b.String(),
+	if n := linhasAfetadas(t, pool, projetoDoDono, b.String(),
 		`UPDATE target_tls SET not_after = $1 WHERE target_id = $2`, maisTarde, alvoA); n != 0 {
 		t.Errorf("o UPDATE de B tocou %d linhas do alvo de A", n)
 	}
 	var guardada time.Time
-	err := emEscopo(t, pool, "app.user_id", a.String(), func(tx pgx.Tx) error {
+	err := emEscopo(t, pool, projetoDoDono, a.String(), func(tx pgx.Tx) error {
 		return tx.QueryRow(ctx, `SELECT not_after FROM target_tls WHERE target_id = $1`, alvoA).Scan(&guardada)
 	})
 	if err != nil || !guardada.Equal(validadeTLS) {
@@ -85,7 +88,7 @@ func TestTargetTLSFollowsOwnerOrProber(t *testing.T) {
 
 	// B não grava a linha de um alvo de A: o WITH CHECK recusa com 42501.
 	alvoSemLinha := novoAlvo(t, pool, a, agora)
-	err = emEscopo(t, pool, "app.user_id", b.String(), func(tx pgx.Tx) error {
+	err = emEscopo(t, pool, projetoDoDono, b.String(), func(tx pgx.Tx) error {
 		_, err := tx.Exec(ctx, `INSERT INTO target_tls (target_id, not_after, observed_at) VALUES ($1, $2, $3)`,
 			alvoSemLinha, validadeTLS, agora)
 		return err
@@ -120,14 +123,14 @@ func TestOwnerCannotWriteTheirOwnTargetTLS(t *testing.T) {
 	forjada := validadeTLS.Add(365 * 24 * time.Hour)
 
 	// O upsert do sondador, no escopo do dono, sobre a linha existente.
-	err := storage.InUserTx(ctx, pool, dono, func(q *db.Queries) error {
+	err := emProjetoTx(t, pool, dono, func(q *db.Queries) error {
 		return q.SaveTargetTLS(ctx, db.SaveTargetTLSParams{TargetID: alvo, NotAfter: forjada, ObservedAt: agora})
 	})
 	if codigoPG(err) != "42501" {
 		t.Errorf("o dono regravou a validade do próprio alvo: erro %v, queria 42501", err)
 	}
 	// O mesmo upsert num alvo do dono ainda sem linha.
-	err = storage.InUserTx(ctx, pool, dono, func(q *db.Queries) error {
+	err = emProjetoTx(t, pool, dono, func(q *db.Queries) error {
 		return q.SaveTargetTLS(ctx, db.SaveTargetTLSParams{TargetID: alvoSemLinha, NotAfter: forjada, ObservedAt: agora})
 	})
 	if codigoPG(err) != "42501" {
@@ -135,7 +138,7 @@ func TestOwnerCannotWriteTheirOwnTargetTLS(t *testing.T) {
 	}
 	// UPDATE direto: sem política de UPDATE para o dono, a linha fica invisível
 	// ao comando e nada muda.
-	if n := linhasAfetadas(t, pool, "app.user_id", dono.String(),
+	if n := linhasAfetadas(t, pool, projetoDoDono, dono.String(),
 		`UPDATE target_tls SET not_after = $1 WHERE target_id = $2`, forjada, alvo); n != 0 {
 		t.Errorf("o UPDATE do dono tocou %d linhas do próprio alvo", n)
 	}
@@ -175,7 +178,7 @@ func TestTargetTLSOwnerQueriesFilterByTheOwner(t *testing.T) {
 	alvoA := novoAlvo(t, pool, a, agora)
 	novaValidadeTLS(t, pool, alvoA)
 
-	err := storage.InUserTx(ctx, pool, a, func(q *db.Queries) error {
+	err := emProjetoTx(t, pool, a, func(q *db.Queries) error {
 		if _, err := q.GetTargetTLSOfOwner(ctx, db.GetTargetTLSOfOwnerParams{ProjectID: projetoB, TargetID: alvoA}); !errors.Is(err, pgx.ErrNoRows) {
 			t.Errorf("ler a validade de A em nome de B deu %v, queria ErrNoRows", err)
 		}
@@ -233,7 +236,7 @@ func TestTargetTLSGoesWithTheTargetAndTheUser(t *testing.T) {
 		novaValidadeTLS(t, pool, alvo)
 	}
 
-	if n := linhasAfetadas(t, pool, "app.user_id", dono.String(), `DELETE FROM targets WHERE id = $1`, alvoApagado); n != 1 {
+	if n := linhasAfetadas(t, pool, projetoDoDono, dono.String(), `DELETE FROM targets WHERE id = $1`, alvoApagado); n != 1 {
 		t.Fatalf("o DELETE do alvo tocou %d linhas", n)
 	}
 	if n := contarEmEscopo(t, pool, "app.scope", "prober", "target_tls"); n != 2 {
@@ -267,7 +270,7 @@ func TestTargetTLSDownAndUp(t *testing.T) {
 	dono := novoUsuario(t, pool)
 	alvo := novoAlvo(t, pool, dono, agora)
 	novaValidadeTLS(t, pool, alvo)
-	if n := linhasAfetadas(t, pool, "app.user_id", dono.String(),
+	if n := linhasAfetadas(t, pool, projetoDoDono, dono.String(),
 		`UPDATE targets SET tls_warn = false WHERE id = $1`, alvo); n != 1 {
 		t.Fatalf("desligar tls_warn tocou %d linhas", n)
 	}
@@ -290,6 +293,7 @@ func TestTargetTLSDownAndUp(t *testing.T) {
 		t.Fatalf("subir de novo depois do down: %v", err)
 	}
 	var avisar bool
+	// O banco ficou na target_tls, antes dos projetos: o escopo é o de usuário.
 	err = emEscopo(t, pool, "app.user_id", dono.String(), func(tx pgx.Tx) error {
 		return tx.QueryRow(ctx, `SELECT tls_warn FROM targets WHERE id = $1`, alvo).Scan(&avisar)
 	})

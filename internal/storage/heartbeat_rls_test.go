@@ -24,32 +24,11 @@ func novoHeartbeat(t *testing.T, pool *pgxpool.Pool, dono uuid.UUID, nome string
 	ctx := context.Background()
 	id := novoID()
 	periodo := int32(3600)
-	err := storage.InUserTx(ctx, pool, dono, func(q *db.Queries) error {
-		return q.InsertHeartbeat(ctx, db.InsertHeartbeatParams{
-			ID: id, UserID: dono, ProjectID: testdb.ProjetoPadrao(t, dono), Name: nome, PingTokenHash: hashDe(nome), PeriodSec: &periodo,
+	err := noProjetoPadraoDe(t, pool, dono, func(tx pgx.Tx, projeto uuid.UUID) error {
+		return db.New(tx).InsertHeartbeat(ctx, db.InsertHeartbeatParams{
+			ID: id, UserID: dono, ProjectID: projeto, Name: nome, PingTokenHash: hashDe(nome), PeriodSec: &periodo,
 			GraceSec: 300, Enabled: true, CreatedAt: agora, DeadlineAt: agora.Add(time.Hour),
 		})
-	})
-	if err != nil {
-		t.Fatalf("criar heartbeat: %v", err)
-	}
-	return id
-}
-
-// novoHeartbeatNoBancoVazio cria um heartbeat de período sem project_id, por
-// SQL cru sob o escopo de storage.InUserTx: os testes de migration usam um
-// banco de testdb.EmptyDatabase, onde testdb.ProjetoPadrao (que grava no banco
-// compartilhado) não alcança o dono.
-func novoHeartbeatNoBancoVazio(t *testing.T, pool *pgxpool.Pool, dono uuid.UUID, nome string) uuid.UUID {
-	t.Helper()
-	id := novoID()
-	err := emEscopo(t, pool, "app.user_id", dono.String(), func(tx pgx.Tx) error {
-		_, err := tx.Exec(context.Background(), `
-			INSERT INTO heartbeats (id, user_id, name, ping_token_hash, period_sec, grace_sec, enabled,
-			                        created_at, deadline_at)
-			VALUES ($1, $2, $3, $4, 3600, 300, true, $5, $6)`,
-			id, dono, nome, hashDe(nome), agora, agora.Add(time.Hour))
-		return err
 	})
 	if err != nil {
 		t.Fatalf("criar heartbeat: %v", err)
@@ -73,7 +52,8 @@ func novoIncidenteDeHeartbeat(t *testing.T, pool *pgxpool.Pool, heartbeat uuid.U
 }
 
 // emEscopo roda fn numa transação com um GUC ligado, com SQL cru: é o que uma
-// query que "esqueceu o filtro" faria, e só a política a contém.
+// query que "esqueceu o filtro" faria, e só a política a contém. Com
+// projetoDoDono no lugar do GUC, liga o escopo do Projeto padrão do usuário.
 func emEscopo(t *testing.T, pool *pgxpool.Pool, guc, valor string, fn func(pgx.Tx) error) error {
 	t.Helper()
 	ctx := context.Background()
@@ -82,7 +62,9 @@ func emEscopo(t *testing.T, pool *pgxpool.Pool, guc, valor string, fn func(pgx.T
 		t.Fatal(err)
 	}
 	defer tx.Rollback(ctx)
-	if _, err := tx.Exec(ctx, `SELECT set_config($1, $2, true)`, guc, valor); err != nil {
+	if guc == projetoDoDono {
+		escopoDoProjetoDe(t, pool, tx, uuid.MustParse(valor))
+	} else if _, err := tx.Exec(ctx, `SELECT set_config($1, $2, true)`, guc, valor); err != nil {
 		t.Fatal(err)
 	}
 	if err := fn(tx); err != nil {
@@ -119,6 +101,10 @@ func contarEmEscopo(t *testing.T, pool *pgxpool.Pool, guc, valor, tabela string)
 
 func hashHex(s string) string { return hex.EncodeToString(hashDe(s)) }
 
+// Cada um no escopo do próprio projeto. Vermelho sem a comparação de projeto
+// em heartbeats_do_projeto e heartbeats_so_projeto_do_escopo (eventos e
+// incidentes herdam pelo EXISTS; até a 00044, heartbeats_owner no lugar de
+// heartbeats_do_projeto).
 func TestHeartbeatsAreIsolatedByOwner(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
@@ -128,17 +114,17 @@ func TestHeartbeatsAreIsolatedByOwner(t *testing.T) {
 	novoIncidenteDeHeartbeat(t, pool, hbA)
 
 	for _, tabela := range []string{"heartbeats", "heartbeat_events", "incidents"} {
-		if n := contarComEscopo(t, pool, a, tabela); n != 1 {
+		if n := contarNoProjeto(t, pool, a, tabela); n != 1 {
 			t.Errorf("A viu %d linhas de %s, queria 1", n, tabela)
 		}
 	}
 	for _, tabela := range []string{"heartbeat_events", "incidents"} {
-		if n := contarComEscopo(t, pool, b, tabela); n != 0 {
+		if n := contarNoProjeto(t, pool, b, tabela); n != 0 {
 			t.Errorf("B viu %d linhas de %s do heartbeat de A", n, tabela)
 		}
 	}
 
-	err := emEscopo(t, pool, "app.user_id", a.String(), func(tx pgx.Tx) error {
+	err := emEscopo(t, pool, projetoDoDono, a.String(), func(tx pgx.Tx) error {
 		_, err := tx.Exec(ctx, `INSERT INTO heartbeat_events (id, heartbeat_id, at, kind) VALUES ($1, $2, $3, 'fail')`,
 			novoID(), hbB, agora)
 		return err
@@ -146,7 +132,7 @@ func TestHeartbeatsAreIsolatedByOwner(t *testing.T) {
 	if codigoPG(err) != "42501" {
 		t.Errorf("A gravando evento no heartbeat de B deu %v, queria 42501", err)
 	}
-	err = storage.InUserTx(ctx, pool, a, func(q *db.Queries) error {
+	err = emProjetoTx(t, pool, a, func(q *db.Queries) error {
 		return q.OpenHeartbeatIncident(ctx, db.OpenHeartbeatIncidentParams{
 			ID: novoID(), HeartbeatID: hbB, StartedAt: agora, Cause: "heartbeat_late",
 		})
@@ -213,7 +199,7 @@ func TestPingScopeSeesOnlyTheTokenRow(t *testing.T) {
 		t.Fatalf("UPDATE sem WHERE alterou %d linhas (erro %v), queria só a do token", alteradas, err)
 	}
 	var nome string
-	err = emEscopo(t, pool, "app.user_id", b.String(), func(tx pgx.Tx) error {
+	err = emEscopo(t, pool, projetoDoDono, b.String(), func(tx pgx.Tx) error {
 		return tx.QueryRow(ctx, `SELECT name FROM heartbeats WHERE id = $1`, hbB).Scan(&nome)
 	})
 	if err != nil || nome != "b" {
@@ -379,7 +365,7 @@ func TestHeartbeatConstraints(t *testing.T) {
 	}
 	for _, c := range casos {
 		t.Run(c.nome, func(t *testing.T) {
-			err := storage.InUserTx(ctx, pool, dono, func(q *db.Queries) error {
+			err := emProjetoTx(t, pool, dono, func(q *db.Queries) error {
 				return q.InsertHeartbeat(ctx, db.InsertHeartbeatParams{
 					ID: novoID(), UserID: dono, ProjectID: testdb.ProjetoPadrao(t, dono), Name: "h", PingTokenHash: c.hash, PeriodSec: c.periodo,
 					CronExpr: c.cron, Timezone: c.tz, GraceSec: c.grace, Enabled: true,
@@ -419,7 +405,7 @@ func TestHeartbeatEventExitCodeMatchesTheKind(t *testing.T) {
 	}
 	for _, c := range casos {
 		t.Run(c.nome, func(t *testing.T) {
-			err := storage.InUserTx(ctx, pool, dono, func(q *db.Queries) error {
+			err := emProjetoTx(t, pool, dono, func(q *db.Queries) error {
 				return q.InsertHeartbeatEvent(ctx, db.InsertHeartbeatEventParams{
 					ID: novoID(), HeartbeatID: hb, At: agora, Kind: c.tipo, ExitCode: c.exitCode, Source: "ping",
 				})
@@ -434,7 +420,7 @@ func TestHeartbeatEventExitCodeMatchesTheKind(t *testing.T) {
 func comTagDoHeartbeat(t *testing.T, pool *pgxpool.Pool, dono, hb uuid.UUID) {
 	t.Helper()
 	ctx := context.Background()
-	err := storage.InUserTx(ctx, pool, dono, func(q *db.Queries) error {
+	err := emProjetoTx(t, pool, dono, func(q *db.Queries) error {
 		return q.InsertHeartbeatTags(ctx, db.InsertHeartbeatTagsParams{Tags: []string{"prod"}, ProjectID: testdb.ProjetoPadrao(t, dono), HeartbeatID: hb})
 	})
 	if err != nil {
@@ -444,6 +430,9 @@ func comTagDoHeartbeat(t *testing.T, pool *pgxpool.Pool, dono, hb uuid.UUID) {
 
 // As tags são do dono: nem B, nem o escopo do ping, que enxerga a linha do
 // heartbeat, nem o avaliador, nem o escopo público as leem.
+// Para B, no escopo do projeto dele, vermelho sem a comparação de projeto em
+// heartbeat_tags_do_projeto, heartbeats_do_projeto e
+// heartbeats_so_projeto_do_escopo.
 func TestHeartbeatTagsAreSeenOnlyByTheOwner(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
@@ -451,7 +440,7 @@ func TestHeartbeatTagsAreSeenOnlyByTheOwner(t *testing.T) {
 	id := novoID()
 	hash := hashDe("tags")
 	periodo := int32(3600)
-	err := storage.InUserTx(ctx, pool, a, func(q *db.Queries) error {
+	err := emProjetoTx(t, pool, a, func(q *db.Queries) error {
 		return q.InsertHeartbeat(ctx, db.InsertHeartbeatParams{
 			ID: id, UserID: a, ProjectID: testdb.ProjetoPadrao(t, a), Name: "h", PingTokenHash: hash, PeriodSec: &periodo, GraceSec: 300,
 			Enabled: true, CreatedAt: agora, DeadlineAt: agora,
@@ -466,10 +455,10 @@ func TestHeartbeatTagsAreSeenOnlyByTheOwner(t *testing.T) {
 		t.Errorf("o escopo público leu %d tags", n)
 	}
 
-	if n := contarComEscopo(t, pool, a, "heartbeat_tags"); n != 1 {
+	if n := contarNoProjeto(t, pool, a, "heartbeat_tags"); n != 1 {
 		t.Fatalf("sob o escopo do dono, %d tags; queria 1 (controle)", n)
 	}
-	if n := contarComEscopo(t, pool, b, "heartbeat_tags"); n != 0 {
+	if n := contarNoProjeto(t, pool, b, "heartbeat_tags"); n != 0 {
 		t.Errorf("sob o escopo de B, %d tags", n)
 	}
 	contar := func(q *db.Queries) (int64, error) {
@@ -505,6 +494,9 @@ func TestHeartbeatTagsAreSeenOnlyByTheOwner(t *testing.T) {
 }
 
 // B não insere tag no heartbeat de A, mesmo sem o filtro da query.
+// No escopo do projeto de B, vermelho sem a comparação de projeto em
+// heartbeat_tags_do_projeto, heartbeats_do_projeto e
+// heartbeats_so_projeto_do_escopo.
 func TestAnotherUserCannotInsertHeartbeatTags(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
@@ -515,9 +507,7 @@ func TestAnotherUserCannotInsertHeartbeatTags(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	if _, err := tx.Exec(ctx, `SELECT set_config('app.user_id', $1, true)`, b.String()); err != nil {
-		t.Fatal(err)
-	}
+	escopoDoProjetoDe(t, pool, tx, b)
 	_, err = tx.Exec(ctx, `INSERT INTO heartbeat_tags (heartbeat_id, tag) VALUES ($1, 'invadida')`, hb)
 	if codigoPG(err) != "42501" {
 		t.Errorf("B inserir tag deu %v, queria 42501", err)
@@ -530,7 +520,7 @@ func TestHeartbeatTagCheckRefusesWhatTheCodeWouldNot(t *testing.T) {
 	dono := novoUsuario(t, pool)
 	hb := novoHeartbeat(t, pool, dono, "backup")
 	for _, tag := range []string{"", "a b", "a,b", "a\nb", strings.Repeat("a", 25)} {
-		err := storage.InUserTx(ctx, pool, dono, func(q *db.Queries) error {
+		err := emProjetoTx(t, pool, dono, func(q *db.Queries) error {
 			return q.InsertHeartbeatTags(ctx, db.InsertHeartbeatTagsParams{Tags: []string{tag}, ProjectID: testdb.ProjetoPadrao(t, dono), HeartbeatID: hb})
 		})
 		if codigoPG(err) != "23514" {
@@ -546,7 +536,7 @@ func TestHeartbeatDescriptionCheckRefusesWhatTheCodeWouldNot(t *testing.T) {
 	dono := novoUsuario(t, pool)
 	periodo := int32(3600)
 	inserir := func(nome, descricao string) error {
-		return storage.InUserTx(ctx, pool, dono, func(q *db.Queries) error {
+		return emProjetoTx(t, pool, dono, func(q *db.Queries) error {
 			return q.InsertHeartbeat(ctx, db.InsertHeartbeatParams{
 				ID: novoID(), UserID: dono, ProjectID: testdb.ProjetoPadrao(t, dono), Name: nome, PingTokenHash: hashDe(nome), PeriodSec: &periodo,
 				GraceSec: 300, Enabled: true, CreatedAt: agora, DeadlineAt: agora.Add(time.Hour), Description: descricao,
@@ -567,14 +557,14 @@ func TestDeletingAHeartbeatTakesItsTags(t *testing.T) {
 	dono := novoUsuario(t, pool)
 	hb := novoHeartbeat(t, pool, dono, "backup")
 	comTagDoHeartbeat(t, pool, dono, hb)
-	err := storage.InUserTx(ctx, pool, dono, func(q *db.Queries) error {
+	err := emProjetoTx(t, pool, dono, func(q *db.Queries) error {
 		_, err := q.DeleteHeartbeat(ctx, db.DeleteHeartbeatParams{ProjectID: testdb.ProjetoPadrao(t, dono), ID: hb})
 		return err
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n := contarComEscopo(t, pool, dono, "heartbeat_tags"); n != 0 {
+	if n := contarNoProjeto(t, pool, dono, "heartbeat_tags"); n != 0 {
 		t.Errorf("sobraram %d tags", n)
 	}
 }
@@ -608,7 +598,7 @@ func TestDeletingAHeartbeatCascades(t *testing.T) {
 	novoEvento(t, pool, hb)
 	novoIncidenteDeHeartbeat(t, pool, hb)
 
-	err := emEscopo(t, pool, "app.user_id", dono.String(), func(tx pgx.Tx) error {
+	err := emEscopo(t, pool, projetoDoDono, dono.String(), func(tx pgx.Tx) error {
 		_, err := tx.Exec(ctx, `DELETE FROM heartbeats WHERE id = $1`, hb)
 		return err
 	})
@@ -634,7 +624,7 @@ func TestHeartbeatMigrationGoesDownWithHeartbeatIncidents(t *testing.T) {
 	}
 	defer pool.Close()
 	dono := novoUsuario(t, pool)
-	hb := novoHeartbeatNoBancoVazio(t, pool, dono, "a")
+	hb := novoHeartbeat(t, pool, dono, "a")
 	novoEvento(t, pool, hb)
 	novoIncidenteDeHeartbeat(t, pool, hb)
 	novoIncidente(t, pool, novoAlvo(t, pool, dono, agora))

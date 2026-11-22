@@ -107,10 +107,10 @@ func TestSondadorNaoApagaCheckNemIncidente(t *testing.T) {
 	if n := apagarEmEscopo(t, pool, "app.scope", "prober", "incidents", incidenteHB); n != 0 {
 		t.Errorf("sondador apagou %d incidentes de heartbeat", n)
 	}
-	if n := contarComEscopo(t, pool, dono, "checks"); n != 1 {
+	if n := contarNoProjeto(t, pool, dono, "checks"); n != 1 {
 		t.Errorf("o dono vê %d checks depois das tentativas; queria 1", n)
 	}
-	if n := contarComEscopo(t, pool, dono, "incidents"); n != 2 {
+	if n := contarNoProjeto(t, pool, dono, "incidents"); n != 2 {
 		t.Errorf("o dono vê %d incidentes depois das tentativas; queria 2", n)
 	}
 }
@@ -122,10 +122,10 @@ func TestDonoNaoApagaCheckNemIncidente(t *testing.T) {
 	check := checkDoSondador(t, pool, alvo)
 	incidente := incidenteDoSondador(t, pool, alvo)
 
-	if n := apagarEmEscopo(t, pool, "app.user_id", dono.String(), "checks", check); n != 0 {
+	if n := apagarEmEscopo(t, pool, projetoDoDono, dono.String(), "checks", check); n != 0 {
 		t.Errorf("o dono apagou %d checks", n)
 	}
-	if n := apagarEmEscopo(t, pool, "app.user_id", dono.String(), "incidents", incidente); n != 0 {
+	if n := apagarEmEscopo(t, pool, projetoDoDono, dono.String(), "incidents", incidente); n != 0 {
 		t.Errorf("o dono apagou %d incidentes", n)
 	}
 }
@@ -157,7 +157,7 @@ func TestDonoNaoForjaCheckNemIncidente(t *testing.T) {
 	}
 	for nome, inserir := range casos {
 		t.Run(nome, func(t *testing.T) {
-			err := emEscopo(t, pool, "app.user_id", dono.String(), inserir)
+			err := emEscopo(t, pool, projetoDoDono, dono.String(), inserir)
 			if codigoPG(err) != "42501" {
 				t.Errorf("o dono inserindo %s deu %v, queria 42501", nome, err)
 			}
@@ -171,7 +171,7 @@ func TestTagsDoAlvoSaoSoDoDono(t *testing.T) {
 	dono := novoUsuario(t, pool)
 	testdb.ProjetoPadrao(t, dono)
 	alvo := novoAlvo(t, pool, dono, agora)
-	err := storage.InUserTx(ctx, pool, dono, func(q *db.Queries) error {
+	err := emProjetoTx(t, pool, dono, func(q *db.Queries) error {
 		return q.InsertTargetTags(ctx, db.InsertTargetTagsParams{Tags: []string{"prod"}, ProjectID: testdb.ProjetoDoAlvo(t, alvo), TargetID: alvo})
 	})
 	if err != nil {
@@ -197,7 +197,7 @@ func TestTagsDoAlvoSaoSoDoDono(t *testing.T) {
 	if n := contarEmEscopo(t, pool, "app.scope", "prober", "target_tags"); n != 0 {
 		t.Errorf("sondador viu %d tags", n)
 	}
-	if n := contarComEscopo(t, pool, dono, "target_tags"); n != 1 {
+	if n := contarNoProjeto(t, pool, dono, "target_tags"); n != 1 {
 		t.Errorf("o dono vê %d tags; queria 1", n)
 	}
 }
@@ -215,7 +215,7 @@ func TestCaminhosLegitimosDeEscritaContinuam(t *testing.T) {
 	hb := novoHeartbeat(t, pool, dono, "hb")
 	incidenteHB := novoIncidenteDeHeartbeat(t, pool, hb)
 
-	err := storage.InUserTx(ctx, pool, dono, func(q *db.Queries) error {
+	err := emProjetoTx(t, pool, dono, func(q *db.Queries) error {
 		if _, err := q.AckIncident(ctx, db.AckIncidentParams{Now: agora, ProjectID: projeto, ID: incidente}); err != nil {
 			return err
 		}

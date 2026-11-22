@@ -43,7 +43,7 @@ func mesmaPagina(x, y db.StatusPage) bool {
 	return criadasJuntas && mesmoProjeto && x == y
 }
 
-func TestUpdateStatusPageFiltersOwnerWithoutRLS(t *testing.T) {
+func TestUpdateStatusPageFiltersProjectWithoutRLS(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
 	a := novoUsuario(t, pool)
@@ -82,7 +82,7 @@ func TestUpdateStatusPageFiltersOwnerWithoutRLS(t *testing.T) {
 	}
 }
 
-func TestListStatusPageItemsFiltersOwnerWithoutRLS(t *testing.T) {
+func TestListStatusPageItemsFiltersProjectWithoutRLS(t *testing.T) {
 	pool := testdb.New(t)
 	a := novoUsuario(t, pool)
 	pa, pb := testdb.ProjetoPadrao(t, a), testdb.NovoProjeto(t, a, "B")
@@ -98,7 +98,7 @@ func TestListStatusPageItemsFiltersOwnerWithoutRLS(t *testing.T) {
 	}
 }
 
-func TestDeleteStatusPageItemsFiltersOwnerWithoutRLS(t *testing.T) {
+func TestDeleteStatusPageItemsFiltersProjectWithoutRLS(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
 	a := novoUsuario(t, pool)
@@ -121,7 +121,7 @@ func TestDeleteStatusPageItemsFiltersOwnerWithoutRLS(t *testing.T) {
 	}
 }
 
-func TestOwnTargetIDsFiltersOwnerWithoutRLS(t *testing.T) {
+func TestOwnTargetIDsFiltersProjectWithoutRLS(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
 	a := novoUsuario(t, pool)
@@ -145,7 +145,7 @@ func TestOwnTargetIDsFiltersOwnerWithoutRLS(t *testing.T) {
 	}
 }
 
-func TestGetStatusPageFiltersOwnerWithoutRLS(t *testing.T) {
+func TestGetStatusPageFiltersProjectWithoutRLS(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
 	a := novoUsuario(t, pool)
@@ -164,7 +164,7 @@ func TestGetStatusPageFiltersOwnerWithoutRLS(t *testing.T) {
 	}
 }
 
-func TestLockStatusPageFiltersOwnerWithoutRLS(t *testing.T) {
+func TestLockStatusPageFiltersProjectWithoutRLS(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
 	a := novoUsuario(t, pool)
