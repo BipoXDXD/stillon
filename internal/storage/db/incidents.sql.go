@@ -154,15 +154,24 @@ func (q *Queries) GetOpenIncident(ctx context.Context, targetID uuid.UUID) (Inci
 	return i, err
 }
 
-const listDeliverableChannels = `-- name: ListDeliverableChannels :many
-SELECT id FROM notif_channels
- WHERE user_id = $1 AND enabled AND verified_at IS NOT NULL
- ORDER BY id
+const listDeliverableChannelsForIncident = `-- name: ListDeliverableChannelsForIncident :many
+SELECT c.id
+  FROM incidents i
+  LEFT JOIN targets t    ON t.id = i.target_id
+  LEFT JOIN heartbeats h ON h.id = i.heartbeat_id
+  JOIN notif_channels c
+    ON c.project_id = COALESCE(t.project_id, h.project_id)
+    OR ((c.project_id IS NULL OR COALESCE(t.project_id, h.project_id) IS NULL)
+        AND c.user_id = COALESCE(t.user_id, h.user_id))
+ WHERE i.id = $1 AND c.enabled AND c.verified_at IS NOT NULL
+ ORDER BY c.id
 `
 
-// Fan-out (spec §8, §5.8): só canais habilitados E verificados.
-func (q *Queries) ListDeliverableChannels(ctx context.Context, userID uuid.UUID) ([]uuid.UUID, error) {
-	rows, err := q.db.Query(ctx, listDeliverableChannels, userID)
+// Fan-out (spec §8): canais habilitados E verificados do PROJETO do recurso
+// do incidente. Fallback legado (sai no PR 7, com o NOT NULL): recurso ou
+// canal sem project_id casa por user_id, a regra antiga.
+func (q *Queries) ListDeliverableChannelsForIncident(ctx context.Context, incidentID uuid.UUID) ([]uuid.UUID, error) {
+	rows, err := q.db.Query(ctx, listDeliverableChannelsForIncident, incidentID)
 	if err != nil {
 		return nil, err
 	}

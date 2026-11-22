@@ -617,12 +617,12 @@ func (s *Scheduler) avaliar(ctx context.Context, q *db.Queries, a db.ClaimDueTar
 		}); err != nil {
 			return acao, emOrdem, fmt.Errorf("abrir incidente: %w", err)
 		}
-		return acao, emOrdem, avisarAbertura(ctx, q, a.UserID, id, em)
+		return acao, emOrdem, avisarAbertura(ctx, q, id, em)
 	case incident.ActionClose:
 		if _, err := q.ResolveIncident(ctx, db.ResolveIncidentParams{ID: aberto.ID, ResolvedAt: estado.StreakSince}); err != nil {
 			return acao, emOrdem, fmt.Errorf("resolver incidente: %w", err)
 		}
-		return acao, emOrdem, avisarFechamento(ctx, q, a.UserID, aberto.ID, em)
+		return acao, emOrdem, avisarFechamento(ctx, q, aberto.ID, em)
 	}
 	return acao, emOrdem, nil
 }

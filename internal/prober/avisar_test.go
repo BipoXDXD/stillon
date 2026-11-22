@@ -45,7 +45,7 @@ func TestAvisarAbertura(t *testing.T) {
 	em := b.clk.Now().Add(time.Minute)
 	chamar := func() error {
 		return b.comoQueries(t, func(q *db.Queries) error {
-			return avisarAbertura(context.Background(), q, b.dono, id, em)
+			return avisarAbertura(context.Background(), q, id, em)
 		})
 	}
 
@@ -66,7 +66,7 @@ func TestAvisarAbertura(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		return avisarAbertura(context.Background(), q, b.dono, jaAvisado, em)
+		return avisarAbertura(context.Background(), q, jaAvisado, em)
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -88,7 +88,7 @@ func TestAvisarFechamento(t *testing.T) {
 	em := b.clk.Now().Add(time.Minute)
 	chamar := func() error {
 		return b.comoQueries(t, func(q *db.Queries) error {
-			return avisarFechamento(context.Background(), q, b.dono, id, em)
+			return avisarFechamento(context.Background(), q, id, em)
 		})
 	}
 
@@ -109,7 +109,7 @@ func TestAvisarFechamento(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		return avisarFechamento(context.Background(), q, b.dono, jaAvisado, em)
+		return avisarFechamento(context.Background(), q, jaAvisado, em)
 	})
 	if err != nil {
 		t.Fatal(err)

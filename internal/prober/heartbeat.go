@@ -131,7 +131,7 @@ func abrirIncidenteDeHeartbeat(ctx context.Context, q *db.Queries, h db.ClaimHea
 	if err := q.MarkHeartbeatIncident(ctx, db.MarkHeartbeatIncidentParams{ID: h.ID, Now: now}); err != nil {
 		return fmt.Errorf("marcar abertura no heartbeat: %w", err)
 	}
-	return avisarAbertura(ctx, q, h.UserID, id, now)
+	return avisarAbertura(ctx, q, id, now)
 }
 
 func fecharIncidenteDeHeartbeat(ctx context.Context, q *db.Queries, h db.ClaimHeartbeatsToCloseRow, now time.Time) error {
@@ -147,5 +147,5 @@ func fecharIncidenteDeHeartbeat(ctx context.Context, q *db.Queries, h db.ClaimHe
 	if linhas != 1 {
 		return nil
 	}
-	return avisarFechamento(ctx, q, h.UserID, h.IncidentID, now)
+	return avisarFechamento(ctx, q, h.IncidentID, now)
 }

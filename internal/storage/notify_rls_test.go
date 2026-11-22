@@ -85,8 +85,10 @@ func TestChannelsAreIsolatedAndProberOnlyReads(t *testing.T) {
 		t.Errorf("sob o escopo de A, SELECT sem WHERE viu %d canais, queria 1", n)
 	}
 
+	// O canal cria o Projeto padrão de A antes do alvo: o gatilho põe o alvo nele.
+	incidenteA := novoIncidente(t, pool, novoAlvo(t, pool, a, agora))
 	err := storage.InProberTx(ctx, pool, func(q *db.Queries) error {
-		ids, err := q.ListDeliverableChannels(ctx, a)
+		ids, err := q.ListDeliverableChannelsForIncident(ctx, incidenteA)
 		if err != nil {
 			return err
 		}
