@@ -11,6 +11,44 @@ import (
 	"github.com/google/uuid"
 )
 
+const activeMembershipRole = `-- name: ActiveMembershipRole :one
+SELECT m.role
+  FROM project_members m
+  JOIN users u ON u.id = m.user_id
+  JOIN projects p ON p.id = m.project_id
+  JOIN users t ON t.id = p.titular_id
+ WHERE m.project_id = $1 AND m.user_id = $2
+   AND u.suspended_at IS NULL AND t.suspended_at IS NULL
+`
+
+type ActiveMembershipRoleParams struct {
+	ProjectID uuid.UUID
+	UserID    uuid.UUID
+}
+
+// O papel de user_id no projeto, se for membro, a conta dele não estiver
+// suspensa e a do titular também não. Sem linha: não membro, projeto
+// inexistente ou suspensão, que a aplicação trata igual (404). Sem FOR SHARE:
+// travar a linha exigiria política de UPDATE em project_members.
+func (q *Queries) ActiveMembershipRole(ctx context.Context, arg ActiveMembershipRoleParams) (string, error) {
+	row := q.db.QueryRow(ctx, activeMembershipRole, arg.ProjectID, arg.UserID)
+	var role string
+	err := row.Scan(&role)
+	return role, err
+}
+
+const scopeToProject = `-- name: ScopeToProject :exec
+SELECT set_config('app.project_id', $1::uuid::text, true)
+`
+
+// O ÚNICO lugar que liga app.project_id é storage.InProjectTx, e só depois de
+// ActiveMembershipRole conferir a pertença na mesma transação. As políticas
+// restritivas da 00042 passam a enxergar só as linhas deste projeto.
+func (q *Queries) ScopeToProject(ctx context.Context, projectID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, scopeToProject, projectID)
+	return err
+}
+
 const scopeToSessionHash = `-- name: ScopeToSessionHash :exec
 SELECT set_config('app.session_token_hash', encode($1::bytea, 'hex'), true)
 `
