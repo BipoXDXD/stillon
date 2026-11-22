@@ -11,6 +11,11 @@ SELECT id FROM users WHERE email = $1;
 -- name: InsertUser :exec
 INSERT INTO users (id, email, password_hash, created_at) VALUES ($1, $2, $3, $4);
 
+-- O usuário criado pelo CLI é o operador: sem as cotas do plano grátis, e com
+-- o e-mail dado por verificado (foi o operador quem o digitou no servidor).
+-- name: MarkUserOperator :exec
+UPDATE users SET is_operator = true, email_verified_at = sqlc.arg(now) WHERE id = sqlc.arg(id);
+
 -- A senha redefinida pelo operador também tira o bloqueio: é o caminho de
 -- recuperação de quem ficou trancado para fora. (O nome evita "password": o
 -- gosec lê a constante gerada como credencial embutida, G101.)
