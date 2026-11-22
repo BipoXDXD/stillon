@@ -16,15 +16,12 @@ import (
 )
 
 // accessTokenValido assina um access token legítimo do usuário do teste, com
-// o mesmo segredo que a API usa, de uma sessão viva aberta aqui: as rotas do
+// o mesmo segredo que a API usa, de uma sessão preexistente da fixture: as rotas do
 // segundo fator exigem a família do token viva, e um sid inventado
 // seria recusado antes de chegar ao que o teste quer medir.
 func accessTokenValido(t *testing.T, a *api) string {
 	t.Helper()
-	_, s, err := gerente(a).Issue(context.Background(), a.userID, carimboDe(t, a, a.userID), auth.Meta{IP: "203.0.113.9"})
-	if err != nil {
-		t.Fatal(err)
-	}
+	_, s := sessaoPreexistente(t, a)
 	tok, err := auth.NewAccessToken(testJWTSecret, a.userID, s.FamilyID, a.clk.Now())
 	if err != nil {
 		t.Fatal(err)

@@ -42,6 +42,55 @@ var meta = auth.Meta{IP: "203.0.113.9", UserAgent: "teste"}
 // carimbo é a prova de senha verificada do usuário de setup, cujo hash é 'x'.
 var carimbo = auth.PasswordStamp("x")
 
+// O segredo do enrollment existe antes de a confirmação tornar o fator
+// obrigatório. O limite compartilhado precisa distinguir as duas situações,
+// inclusive um estado confirmado sem segredo utilizável (recusa fechada).
+func TestIssueRequiresAConfirmedSecondFactor(t *testing.T) {
+	for _, caso := range []struct {
+		nome       string
+		segredo    []byte
+		confirmado bool
+	}{
+		{"sem cadastro", nil, false},
+		{"cadastro não confirmado", []byte("segredo-cifrado-pendente"), false},
+		{"fator confirmado", []byte("segredo-cifrado-ativo"), true},
+		{"confirmado sem segredo", nil, true},
+	} {
+		t.Run(caso.nome, func(t *testing.T) {
+			mgr, pool, clk, userID := setup(t)
+			ctx := context.Background()
+			var confirmadoEm *time.Time
+			if caso.confirmado {
+				agora := clk.Now()
+				confirmadoEm = &agora
+			}
+			if _, err := pool.Exec(ctx,
+				`UPDATE users SET totp_secret_enc = $2, totp_confirmed_at = $3 WHERE id = $1`,
+				userID, caso.segredo, confirmadoEm); err != nil {
+				t.Fatal(err)
+			}
+			token, sessao, err := mgr.Issue(ctx, userID, carimbo, meta)
+			quer := 1
+			if caso.confirmado {
+				quer = 0
+				if !errors.Is(err, auth.ErrStaleSecondFactor) || token != "" || sessao.ID != uuid.Nil {
+					t.Errorf("fator ativo sem prova: token=%q sessão=%v erro=%v", token, sessao.ID, err)
+				}
+			} else if err != nil || token == "" || sessao.ID == uuid.Nil {
+				t.Errorf("fator não confirmado: token=%q sessão=%v erro=%v", token, sessao.ID, err)
+			}
+			var n int
+			if err := testdb.Admin(t).QueryRow(ctx,
+				`SELECT count(*) FROM sessions WHERE user_id = $1`, userID).Scan(&n); err != nil {
+				t.Fatal(err)
+			}
+			if n != quer {
+				t.Errorf("%d sessões gravadas, queria %d", n, quer)
+			}
+		})
+	}
+}
+
 // Issue só abre sessão se o hash do usuário ainda é o que foi verificado: um
 // carimbo de outro hash (a senha mudou depois do login) é recusado, e nada é
 // gravado. Carimbo vazio nem chega ao banco.
@@ -404,8 +453,10 @@ func (txFalsa) LockUserSessions(context.Context, uuid.UUID) error { return nil }
 func (txFalsa) UserPasswordHash(context.Context, uuid.UUID) (string, error) {
 	return "x", nil
 }
-func (txFalsa) UserTOTPSecret(context.Context, uuid.UUID) ([]byte, error) { return nil, nil }
-func (txFalsa) InsertSession(context.Context, auth.SessionRow) error      { return nil }
+func (txFalsa) UserTOTPSecret(context.Context, uuid.UUID) ([]byte, bool, error) {
+	return nil, false, nil
+}
+func (txFalsa) InsertSession(context.Context, auth.SessionRow) error { return nil }
 func (txFalsa) MarkSessionUsed(context.Context, uuid.UUID, time.Time) error {
 	return nil
 }
@@ -575,6 +626,11 @@ func (t txQueRegistra) UserPasswordHash(ctx context.Context, id uuid.UUID) (stri
 	return t.txFalsa.UserPasswordHash(ctx, id)
 }
 
+func (t txQueRegistra) UserTOTPSecret(ctx context.Context, id uuid.UUID) ([]byte, bool, error) {
+	t.anotar("lê o fator")
+	return t.txFalsa.UserTOTPSecret(ctx, id)
+}
+
 func (t txQueRegistra) SessionUserByHash(ctx context.Context, h []byte) (uuid.UUID, error) {
 	t.anotar("acha o usuário")
 	return t.txFalsa.SessionUserByHash(ctx, h)
@@ -610,6 +666,7 @@ func TestIssueLocksTheUserBeforeReadingTheHash(t *testing.T) {
 		t.Fatal(err)
 	}
 	confereOrdem(t, ordem, "trava do usuário", "lê o hash")
+	confereOrdem(t, ordem, "trava do usuário", "lê o fator")
 }
 
 // Quem muda sessões pega a trava do usuário antes da trava da linha.

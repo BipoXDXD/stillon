@@ -3,6 +3,7 @@ package auth_test
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"errors"
 	"sync"
 	"testing"
@@ -13,7 +14,6 @@ import (
 	"github.com/pquerna/otp/totp"
 
 	"github.com/BipoXDXD/stillon/internal/auth"
-	"github.com/BipoXDXD/stillon/internal/clock"
 	"github.com/BipoXDXD/stillon/internal/crypto"
 	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 )
@@ -35,16 +35,26 @@ func codigoEm(t *testing.T, segredo string, em time.Time) string {
 	return c
 }
 
-// familiaViva abre uma família de sessão do usuário do setupTOTP, cujo hash é
-// 'x'. A confirmação da troca encerra as OUTRAS famílias e mantém esta.
+// familiaViva representa uma família já existente para testar confirmação,
+// troca e revogação. A fixture pode ter fator ativo: inserir a sessão aqui
+// evita consumir código TOTP ou recovery só para montar esse estado. Os
+// testes de emissão e de login passam pelo Manager e pelos handlers reais.
 func familiaViva(t *testing.T, pool *pgxpool.Pool, userID uuid.UUID, em time.Time) uuid.UUID {
 	t.Helper()
-	mgr := auth.NewManager(auth.NewPGStore(pool), clock.NewFake(em), ipKey)
-	_, s, err := mgr.Issue(context.Background(), userID, auth.PasswordStamp("x"), meta)
+	familia, err := uuid.NewV7()
 	if err != nil {
 		t.Fatal(err)
 	}
-	return s.FamilyID
+	var ms [8]byte
+	binary.BigEndian.PutUint64(ms[:], uint64(em.UnixMilli()))
+	copy(familia[:6], ms[2:])
+	if _, err := testdb.Admin(t).Exec(context.Background(),
+		`INSERT INTO sessions (id, user_id, family_id, token_hash, expires_at, ip_hash)
+		 VALUES ($1, $2, $1, $3, $4, $5)`, familia, userID,
+		crypto.HashToken(uuid.NewString()), em.Add(auth.RefreshTTL), crypto.HashIP(ipKey, meta.IP)); err != nil {
+		t.Fatal(err)
+	}
+	return familia
 }
 
 // rotacaoAtual é o rotation da troca pendente do usuário,

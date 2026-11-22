@@ -108,14 +108,12 @@ func eventosDe(t *testing.T, a *api, acao string) int {
 	return n
 }
 
-// familiaComRefresh abre uma família pelo Manager (sem o balde do login) e
-// devolve o access token dela, o refresh (para o logout) e o id.
+// familiaComRefresh prepara uma família preexistente e devolve o access
+// token dela, o refresh (para o logout) e o id; ver sessaoPreexistente.
 func familiaComRefresh(t *testing.T, a *api) (token, refresh string, familia uuid.UUID) {
 	t.Helper()
-	refresh, s, err := gerente(a).Issue(context.Background(), a.userID, carimboDe(t, a, a.userID), auth.Meta{IP: "203.0.113.9"})
-	if err != nil {
-		t.Fatal(err)
-	}
+	refresh, s := sessaoPreexistente(t, a)
+	var err error
 	token, err = auth.NewAccessToken(testJWTSecret, a.userID, s.FamilyID, a.clk.Now())
 	if err != nil {
 		t.Fatal(err)

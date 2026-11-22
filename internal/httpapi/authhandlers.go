@@ -255,6 +255,8 @@ func (h *AuthHandlers) Logout(w http.ResponseWriter, r *http.Request) {
 // Com o 2FA (prova não nil), a sessão também só nasce se o segredo que aceitou
 // o código ainda for o ativo; se uma troca de autenticador ou
 // um disable comitou no meio, o mesmo 401 invalid_credentials.
+// Um fator ativado entre a consulta do login sem prova e a emissão também
+// exige repetir o login, sem entregar credenciais só com a senha.
 //
 // dispositivo é o carimbo das credenciais para o cookie de dispositivo que o
 // login completo recebe (ver auth.DeviceStamp).

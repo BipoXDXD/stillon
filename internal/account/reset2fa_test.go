@@ -2,6 +2,7 @@ package account_test
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
 	"testing"
 	"time"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/BipoXDXD/stillon/internal/account"
 	"github.com/BipoXDXD/stillon/internal/auth"
+	"github.com/BipoXDXD/stillon/internal/crypto"
 	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 )
 
@@ -72,6 +74,27 @@ func eventos(t *testing.T, pool *pgxpool.Pool, user uuid.UUID, acao string) int 
 	return n
 }
 
+// familiaPreexistente monta a sessão anterior à ativação do fator para o
+// teste de reset. A fixture preserva timestep, códigos e relógio do cenário;
+// a abertura de um login com 2FA é exercitada nos testes de auth/httpapi.
+func familiaPreexistente(t *testing.T, c cenario, user uuid.UUID) uuid.UUID {
+	t.Helper()
+	familia, err := uuid.NewV7()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ms [8]byte
+	binary.BigEndian.PutUint64(ms[:], uint64(c.clk.Now().UnixMilli()))
+	copy(familia[:6], ms[2:])
+	if _, err := testdb.Admin(t).Exec(context.Background(),
+		`INSERT INTO sessions (id, user_id, family_id, token_hash, expires_at, ip_hash)
+		 VALUES ($1, $2, $1, $3, $4, $5)`, familia, user,
+		crypto.HashToken(uuid.NewString()), c.clk.Now().Add(auth.RefreshTTL), crypto.HashIP(ipKey, "203.0.113.9")); err != nil {
+		t.Fatal(err)
+	}
+	return familia
+}
+
 // Com o 2FA ligado (e uma troca pendente), o reset-2fa desliga tudo numa
 // transação: as cinco colunas nulas (o pendente com a família dele), os códigos apagados, TODAS as sessões
 // encerradas e a auditoria totp.reset_cli. A marca do desafio fica. Outro
@@ -83,16 +106,8 @@ func TestResetTwoFactorTurnsItOff(t *testing.T) {
 	// Uma segunda família do dono, que inicia a troca (o pendente fica
 	// amarrado a ela), e um outro usuário com 2FA e
 	// sessão.
-	mgr := auth.NewManager(auth.NewPGStore(c.pool), c.clk, ipKey)
-	var hash string
-	if err := c.pool.QueryRow(ctx, `SELECT password_hash FROM users WHERE id = $1`, c.user).Scan(&hash); err != nil {
-		t.Fatal(err)
-	}
-	_, sessao, err := mgr.Issue(ctx, c.user, auth.PasswordStamp(hash), auth.Meta{IP: "203.0.113.9"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := c.totp.StartRotation(ctx, c.user, sessao.FamilyID, "dono@exemplo.com", codigoAgora(t, c, segredo), c.clk.Now()); err != nil {
+	familia := familiaPreexistente(t, c, c.user)
+	if _, _, err := c.totp.StartRotation(ctx, c.user, familia, "dono@exemplo.com", codigoAgora(t, c, segredo), c.clk.Now()); err != nil {
 		t.Fatal(err)
 	}
 	marca := c.clk.Now().Add(-time.Minute)
@@ -109,9 +124,7 @@ func TestResetTwoFactorTurnsItOff(t *testing.T) {
 		`INSERT INTO totp_recovery_codes (id, user_id, code_hash) VALUES ($1, $2, '\x02')`, uuid.New(), outro); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := mgr.Issue(ctx, outro, auth.PasswordStamp("x"), auth.Meta{IP: "203.0.113.9"}); err != nil {
-		t.Fatal(err)
-	}
+	familiaPreexistente(t, c, outro)
 
 	antes := lerEstadoDo2FA(t, c.pool, c.user)
 	if !antes.segredo || !antes.confirmado || !antes.timestep || !antes.pendente || !antes.familia || antes.codigos != 10 {

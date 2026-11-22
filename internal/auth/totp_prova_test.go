@@ -235,6 +235,11 @@ func TestIssueAfterSecondFactorRechecksTheSecret(t *testing.T) {
 				t.Fatal(err)
 			}
 		},
+		"segredo deixou de estar confirmado": func(t *testing.T, pool *pgxpool.Pool, userID uuid.UUID) {
+			if _, err := pool.Exec(ctx, `UPDATE users SET totp_confirmed_at = NULL WHERE id = $1`, userID); err != nil {
+				t.Fatal(err)
+			}
+		},
 	}
 	for nome, mudar := range casos {
 		t.Run(nome, func(t *testing.T) {
