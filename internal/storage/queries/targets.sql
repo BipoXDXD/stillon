@@ -12,7 +12,8 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $
 -- name: GetTarget :one
 SELECT id, user_id, name, url, method, interval_sec, timeout_ms,
        expected_status, headers_enc, degraded_threshold_ms, enabled, next_run_at,
-       created_at, tls_warn, content_mode, content_value, content_json_pointer
+       created_at, tls_warn, content_mode, content_value, content_json_pointer,
+       project_id
   FROM targets WHERE user_id = $1 AND id = $2;
 
 -- FOR UPDATE, e não FOR NO KEY UPDATE: a gravação do sondador
@@ -21,7 +22,8 @@ SELECT id, user_id, name, url, method, interval_sec, timeout_ms,
 -- name: GetTargetForUpdate :one
 SELECT id, user_id, name, url, method, interval_sec, timeout_ms,
        expected_status, headers_enc, degraded_threshold_ms, enabled, next_run_at,
-       created_at, tls_warn, content_mode, content_value, content_json_pointer
+       created_at, tls_warn, content_mode, content_value, content_json_pointer,
+       project_id
   FROM targets WHERE user_id = $1 AND id = $2 FOR UPDATE;
 
 -- Paginação por cursor (spec §9.1): o id é UUIDv7, ordenável por tempo, e o
@@ -29,7 +31,8 @@ SELECT id, user_id, name, url, method, interval_sec, timeout_ms,
 -- name: ListTargets :many
 SELECT id, user_id, name, url, method, interval_sec, timeout_ms,
        expected_status, headers_enc, degraded_threshold_ms, enabled, next_run_at,
-       created_at, tls_warn, content_mode, content_value, content_json_pointer
+       created_at, tls_warn, content_mode, content_value, content_json_pointer,
+       project_id
   FROM targets
  WHERE user_id = sqlc.arg(user_id)
    AND (sqlc.narg(before)::uuid IS NULL OR id < sqlc.narg(before)::uuid)

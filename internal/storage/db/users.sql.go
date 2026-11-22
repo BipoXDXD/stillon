@@ -151,6 +151,22 @@ func (q *Queries) LockUserCreation(ctx context.Context) error {
 	return err
 }
 
+const markUserOperator = `-- name: MarkUserOperator :exec
+UPDATE users SET is_operator = true, email_verified_at = $1 WHERE id = $2
+`
+
+type MarkUserOperatorParams struct {
+	Now *time.Time
+	ID  uuid.UUID
+}
+
+// O usuário criado pelo CLI é o operador: sem as cotas do plano grátis, e com
+// o e-mail dado por verificado (foi o operador quem o digitou no servidor).
+func (q *Queries) MarkUserOperator(ctx context.Context, arg MarkUserOperatorParams) error {
+	_, err := q.db.Exec(ctx, markUserOperator, arg.Now, arg.ID)
+	return err
+}
+
 const rehashUser = `-- name: RehashUser :execrows
 UPDATE users SET password_hash = $1
  WHERE id = $2 AND password_hash = $3

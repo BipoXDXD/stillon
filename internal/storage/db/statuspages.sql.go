@@ -55,7 +55,7 @@ func (q *Queries) GetPublicPage(ctx context.Context, slug string) (GetPublicPage
 
 const getStatusPage = `-- name: GetStatusPage :one
 
-SELECT id, user_id, slug, title, published, created_at FROM status_pages WHERE user_id = $1
+SELECT id, user_id, slug, title, published, created_at, project_id FROM status_pages WHERE user_id = $1
 `
 
 // Status page (spec §10): as do dono rodam sob InUserTx e filtram por
@@ -70,6 +70,7 @@ func (q *Queries) GetStatusPage(ctx context.Context, userID uuid.UUID) (StatusPa
 		&i.Title,
 		&i.Published,
 		&i.CreatedAt,
+		&i.ProjectID,
 	)
 	return i, err
 }

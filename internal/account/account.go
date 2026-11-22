@@ -54,6 +54,9 @@ type PolicyError struct{ Reason string }
 
 func (e PolicyError) Error() string { return "senha fora da política: " + e.Reason }
 
+// nomeProjetoPadrao é o nome do projeto que todo usuário recebe ao nascer.
+const nomeProjetoPadrao = "Projeto padrão"
+
 // maxEmailLen é o limite prático de um endereço (RFC 5321 §4.5.3.1.3 e a
 // errata 1690: 254 no caminho).
 const maxEmailLen = 254
@@ -297,6 +300,9 @@ func (s *Service) UserIDByEmail(ctx context.Context, email string) (uuid.UUID, e
 //
 // A contagem e a inserção rodam sob uma advisory lock de transação: sem
 // ela, dois CLIs simultâneos contariam zero e criariam dois donos.
+//
+// O usuário nasce operador (is_operator, e-mail verificado) e com o Projeto
+// padrão, de que é titular e owner, tudo na mesma transação.
 func (s *Service) CreateUser(ctx context.Context, email, password string) (uuid.UUID, error) {
 	e, err := ValidateEmail(email)
 	if err != nil {
@@ -339,12 +345,47 @@ func (s *Service) CreateUser(ctx context.Context, email, password string) (uuid.
 			}
 			return fmt.Errorf("inserir usuário: %w", err)
 		}
+		if err := q.MarkUserOperator(ctx, db.MarkUserOperatorParams{ID: id, Now: &now}); err != nil {
+			return fmt.Errorf("marcar operador: %w", err)
+		}
+		if err := criarProjetoPadrao(ctx, q, id, now); err != nil {
+			return err
+		}
 		return audit(ctx, q, id, "user.created", nil, nil, nil, now)
 	})
 	if err != nil {
 		return uuid.Nil, err
 	}
 	return id, nil
+}
+
+// criarProjetoPadrao cria o Projeto padrão do usuário e o vínculo de owner,
+// na transação que criou o usuário: o banco não garante que todo projeto tenha
+// um owner, então os dois nascem juntos ou nenhum nasce. projects e
+// project_members estão sob FORCE RLS, por isso o escopo do usuário vem antes.
+func criarProjetoPadrao(ctx context.Context, q *db.Queries, userID uuid.UUID, now time.Time) error {
+	if err := q.ScopeToUser(ctx, userID); err != nil {
+		return fmt.Errorf("escopo do usuário: %w", err)
+	}
+	novo, err := uuid.NewV7()
+	if err != nil {
+		return fmt.Errorf("gerar id do projeto: %w", err)
+	}
+	if err := q.EnsureDefaultProject(ctx, db.EnsureDefaultProjectParams{
+		ID: novo, Name: nomeProjetoPadrao, TitularID: userID, Now: now,
+	}); err != nil {
+		return fmt.Errorf("criar Projeto padrão: %w", err)
+	}
+	projeto, err := q.GetDefaultProjectID(ctx, userID)
+	if err != nil {
+		return fmt.Errorf("ler Projeto padrão: %w", err)
+	}
+	if err := q.EnsureProjectOwner(ctx, db.EnsureProjectOwnerParams{
+		ProjectID: projeto, UserID: userID, Now: now,
+	}); err != nil {
+		return fmt.Errorf("vincular owner ao Projeto padrão: %w", err)
+	}
+	return nil
 }
 
 // ResetPassword é o caminho de recuperação do operador (stillon user

@@ -71,6 +71,7 @@ type Heartbeat struct {
 	Description    string
 	LastRunID      *uuid.UUID
 	PingResumes    bool
+	ProjectID      *uuid.UUID
 }
 
 type HeartbeatEvent struct {
@@ -120,6 +121,7 @@ type NotifChannel struct {
 	VerifyExpiresAt *time.Time
 	Enabled         bool
 	CreatedAt       time.Time
+	ProjectID       *uuid.UUID
 }
 
 type Notification struct {
@@ -135,6 +137,21 @@ type Notification struct {
 	SentAt        *time.Time
 	Seq           int32
 	TargetName    *string
+}
+
+type Project struct {
+	ID        uuid.UUID
+	Name      string
+	TitularID uuid.UUID
+	IsDefault bool
+	CreatedAt time.Time
+}
+
+type ProjectMember struct {
+	ProjectID uuid.UUID
+	UserID    uuid.UUID
+	Role      string
+	CreatedAt time.Time
 }
 
 type Session struct {
@@ -166,6 +183,7 @@ type StatusPage struct {
 	Title     string
 	Published bool
 	CreatedAt time.Time
+	ProjectID *uuid.UUID
 }
 
 type StatusPageItem struct {
@@ -193,6 +211,7 @@ type Target struct {
 	ContentMode         *string
 	ContentValue        *string
 	ContentJsonPointer  *string
+	ProjectID           *uuid.UUID
 }
 
 type TargetHealth struct {
@@ -240,4 +259,7 @@ type User struct {
 	TotpLockAlertAt          *time.Time
 	TotpLockAlertPermanent   bool
 	TotpLockAlertAttemptedAt *time.Time
+	IsOperator               bool
+	EmailVerifiedAt          *time.Time
+	SuspendedAt              *time.Time
 }
