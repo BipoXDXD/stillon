@@ -146,7 +146,8 @@ func (h *AuthHandlers) TOTPConfirm(w http.ResponseWriter, r *http.Request) {
 // simultâneos: se o mais novo terminar primeiro, o mais antigo refaz a senha).
 //
 // Ordem: desafio → usuário → pré-checagem da marca → reserva da tentativa →
-// código → Reset → ConsumeChallenge → sessão. A pré-checagem recusa antes do
+// código → ConsumeChallenge → sessão (que zera o contador só se nascer, ver
+// issue). A pré-checagem recusa antes do
 // código o desafio que já não pode abrir sessão, para não gastar um código de
 // recuperação com ele.
 //
