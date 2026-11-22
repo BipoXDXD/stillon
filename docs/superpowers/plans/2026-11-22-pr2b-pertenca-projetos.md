@@ -325,6 +325,7 @@ Regras de reescrita:
 - Create: `internal/storage/migrations/00044_rls_por_pertenca_ao_projeto.sql`
 - Test: `internal/storage/rls_pertenca_test.go`, `internal/httpapi/membro_projeto_integration_test.go`
 - Modify: `internal/storage/endurecimento_rls_test.go` (`TestPoliticasDeUpdateDasTabelasComDono`), `internal/storage/project_id_recursos_test.go` (`TestProjectIDIsImmutableOnceSet`), `internal/storage/rls_projeto_test.go:65-73` (`recursosDeProjeto` ganha `incAlvo, incHeartbeat uuid.UUID`; `TestRestrictivePolicyLeavesServiceScopesUntouched`), `internal/storage/guarda_escopo_test.go` (textos no presente), os três `TODO(PR 2b)` e os gêmeos de leitura abaixo
+- Modify (pendências do 2b.1): `internal/storage/project_id_recursos_test.go` (`TestOlderBinaryInsertsLandInDefaultProject`, `TestInsertWithoutDefaultProjectKeepsNullProjectID`, `TestFillTriggerSkipsProjectScope`), `internal/account/projeto_padrao_test.go` (semente crua com `app.user_id`), `internal/httpapi/projetos_integration_test.go` (`TestViewerResendLeavesPendingTokenUntouched`, só re-sabotagem), `internal/storage/rls_projeto_test.go` (isolamento de `status_pages`), `internal/storage/escopo_projeto_test.go` (`TestProjectScopeSurvivesConnectionReuse`, só re-sabotagem)
 
 **Interfaces:**
 - Consumes: `storage.InProjectTx`, `storage.InUserTx`, `storage.MigrateUpTo`/`MigrateDownTo` (`export_test.go:17,29`), `testdb.{EmptyDatabase, NovoProjeto, Membro, Suspender, NoProjetoPadrao, Admin}`, `semearProjeto(t, dono, projeto uuid.UUID, nome, slug string) recursosDeProjeto` (já existe, `rls_projeto_test.go:73`).
@@ -357,6 +358,12 @@ Regras de reescrita:
   - `TestPolicySwapDownRestoresCatalogAndKeepsRows`: `EmptyDatabase`, `MigrateUpTo(00043)`; snapshot S0 = `relname, polname, polcmd, polpermissive, pg_get_expr(polqual), pg_get_expr(polwithcheck)` ordenado + `pg_get_functiondef('guard_project_id_imutavel'::regproc)` + existência de `backfill_projetos_padrao`; `MigrateUpTo(00044)` e semeadura por `InProjectTx`; `MigrateDownTo(00043)`; snapshot igual a S0, contagens via admin iguais e `InUserTx(U)` volta a ver os alvos.
   - `TestPoliticasDeUpdateDasTabelasComDono`: as esperadas trocam `*_owner:*` por `heartbeats.heartbeats_do_projeto:*`, `notif_channels.notif_channels_do_projeto:*`, `targets.targets_do_projeto:*`.
   - `TestRestrictivePolicyLeavesServiceScopesUntouched`: volta a asserção invertida, `InUserTx(U)` vê 0 alvos.
+  - Pendências do 2b.1 (Parked destinados a esta task; hoje só no ledger fora do git):
+    - Ruling A2, `internal/storage/project_id_recursos_test.go`: `TestOlderBinaryInsertsLandInDefaultProject` e `TestInsertWithoutDefaultProjectKeepsNullProjectID` passam a afirmar 42501 na inserção pelo caminho antigo (ou saem); `TestFillTriggerSkipsProjectScope` aceita 42501 sem exigir o nome da política. `TestPoliticasDeUpdateDasTabelasComDono` já está na lista acima.
+    - `internal/account/projeto_padrao_test.go`: a semente crua com `app.user_id` (INSERT em `targets` sem `project_id`, no teste do projeto padrão) sai ou muda junto com o gatilho do caminho antigo.
+    - `TestViewerResendLeavesPendingTokenUntouched` (`internal/httpapi/projetos_integration_test.go`): depois da troca, re-sabotar (tirar o `Require` de `internal/notify/service.go`) e ver caírem as asserções de hash/expiração e do carteiro, não só o status.
+    - Isolamento de `status_pages` entre projetos: teste que cai com `status_pages_do_projeto` sabotada (hoje só `TestProjectScopeSeesNothingOfOtherProjectOfSameUser`, sem prova por sabotagem).
+    - `TestProjectScopeSurvivesConnectionReuse` (`internal/storage/escopo_projeto_test.go`): confirmar que, depois da 00044, ele prova vazamento de `app.project_id` (sabotagem: não limpar o GUC).
   - Os três `TODO(PR 2b)` (apagar o comentário `TODO` e o texto "a permissiva ainda é por dono"):
     - `internal/targets/projeto_test.go:95`, `TestViewerReadsButCannotChangeTargets`: `len(vistos) == 1 && vistos[0].ID == alvo.ID`.
     - `internal/statuspage/projeto_test.go:134`, `TestMemberCannotEditStatusPage`: `got, err := a.svc.Get(ctx, comoMember)` com `err == nil && got.ID == p.ID`.
