@@ -18,8 +18,13 @@ func NewService(repo ProjectRepository, clk clock.Clock) *Service {
 	return &Service{repo: repo, clk: clk}
 }
 
-// Scope devolve o escopo de userID em projectID, ou ErrProjectNotFound.
+// Scope devolve o escopo de userID em projectID, ou ErrProjectNotFound. O UUID
+// nulo nunca é projeto: sai ErrProjectNotFound sem ir ao repositório (o
+// middleware já o barra; aqui é a defesa do domínio).
 func (s *Service) Scope(ctx context.Context, userID, projectID uuid.UUID) (ProjectScope, error) {
+	if projectID == uuid.Nil {
+		return ProjectScope{}, ErrProjectNotFound
+	}
 	return s.repo.Membership(ctx, userID, projectID)
 }
 
