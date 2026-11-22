@@ -1,11 +1,18 @@
 -- Heartbeats (docs/superpowers/specs/2026-11-05-heartbeats-design.md). As do
--- dono rodam sob InUserTx e filtram por user_id; as do ping, sob InPingTx; as
--- do avaliador, sob InProberTx.
+-- dono rodam sob InProjectTx e filtram por project_id (as cotas, por user_id);
+-- as do ping, sob InPingTx; as do avaliador, sob InProberTx.
 
+-- user_id é quem criou o heartbeat; project_id, o projeto em que ele vive, e
+-- sempre vem: no escopo de projeto o gatilho preencher_project_id_padrao não
+-- preenche, e a RLS recusaria o nulo.
 -- name: InsertHeartbeat :exec
 INSERT INTO heartbeats (id, user_id, name, ping_token_hash, period_sec, cron_expr, timezone,
-                        grace_sec, enabled, created_at, deadline_at, description, ping_resumes)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13);
+                        grace_sec, enabled, created_at, deadline_at, description, ping_resumes,
+                        project_id)
+VALUES (sqlc.arg(id), sqlc.arg(user_id), sqlc.arg(name), sqlc.arg(ping_token_hash),
+        sqlc.narg(period_sec), sqlc.narg(cron_expr), sqlc.narg(timezone), sqlc.arg(grace_sec),
+        sqlc.arg(enabled), sqlc.arg(created_at), sqlc.arg(deadline_at), sqlc.arg(description),
+        sqlc.arg(ping_resumes), sqlc.arg(project_id)::uuid);
 
 -- A trava serializa pings simultâneos do mesmo token: o segundo lê o estado
 -- que o primeiro gravou, e é isso que faz a repetição ter um efeito só.
@@ -62,15 +69,15 @@ SELECT id, user_id, name, ping_token_hash, period_sec, cron_expr, timezone,
        last_success_at, last_start_at, last_signal, failing_since,
        last_incident_at, resumed_at, last_runtime_ms, description, last_run_id,
        ping_resumes, project_id
-  FROM heartbeats WHERE user_id = $1 AND id = $2;
+  FROM heartbeats WHERE project_id = sqlc.arg(project_id)::uuid AND id = sqlc.arg(id);
 
--- O log do dono, do mais novo ao mais velho. O id é UUIDv7, e o cursor é o
+-- O log do projeto, do mais novo ao mais velho. O id é UUIDv7, e o cursor é o
 -- último id da página anterior.
 -- name: ListHeartbeatEvents :many
 SELECT e.id, e.heartbeat_id, e.at, e.kind, e.runtime_ms, e.exit_code, e.run_id, e.source
   FROM heartbeat_events e
   JOIN heartbeats h ON h.id = e.heartbeat_id
- WHERE h.user_id = sqlc.arg(user_id)
+ WHERE h.project_id = sqlc.arg(project_id)::uuid
    AND e.heartbeat_id = sqlc.arg(heartbeat_id)
    AND (sqlc.narg(before)::uuid IS NULL OR e.id < sqlc.narg(before)::uuid)
  ORDER BY e.id DESC
@@ -78,7 +85,8 @@ SELECT e.id, e.heartbeat_id, e.at, e.kind, e.runtime_ms, e.exit_code, e.run_id, 
 
 -- Revogar é isto: o hash antigo deixa de casar com qualquer linha.
 -- name: SetHeartbeatPingHash :exec
-UPDATE heartbeats SET ping_token_hash = $3 WHERE user_id = $1 AND id = $2;
+UPDATE heartbeats SET ping_token_hash = sqlc.arg(ping_token_hash)
+ WHERE project_id = sqlc.arg(project_id)::uuid AND id = sqlc.arg(id);
 
 -- Avaliador: rodam sob InProberTx, com FOR UPDATE OF h SKIP LOCKED no
 -- molde de ClaimDueTargets. Dois avaliadores pegam linhas diferentes, e o
@@ -129,8 +137,9 @@ UPDATE incidents
 -- name: MarkHeartbeatIncident :exec
 UPDATE heartbeats SET last_incident_at = sqlc.arg(now)::timestamptz WHERE id = sqlc.arg(id);
 
--- API do dono: as de cima e estas rodam sob InUserTx e filtram por user_id,
--- como as de targets.sql.
+-- API do dono: as de cima e estas rodam sob InProjectTx e filtram por
+-- project_id, como as de targets.sql. As exceções, por user_id, são as cotas
+-- do usuário (LockUserHeartbeats, CountHeartbeats).
 
 -- O teto por usuário: contar e inserir sob esta trava, como LockUserTargets.
 -- name: LockUserHeartbeats :exec
@@ -144,14 +153,14 @@ SELECT count(*) FROM heartbeats WHERE user_id = $1;
 SELECT sqlc.embed(h), x.id AS open_incident_id
   FROM heartbeats h
   LEFT JOIN incidents x ON x.heartbeat_id = h.id AND x.resolved_at IS NULL
- WHERE h.user_id = sqlc.arg(user_id) AND h.id = sqlc.arg(id);
+ WHERE h.project_id = sqlc.arg(project_id)::uuid AND h.id = sqlc.arg(id);
 
 -- Paginação por cursor: o id é UUIDv7, e o cursor é o último id da página.
 -- name: ListHeartbeats :many
 SELECT sqlc.embed(h), x.id AS open_incident_id
   FROM heartbeats h
   LEFT JOIN incidents x ON x.heartbeat_id = h.id AND x.resolved_at IS NULL
- WHERE h.user_id = sqlc.arg(user_id)
+ WHERE h.project_id = sqlc.arg(project_id)::uuid
    AND (sqlc.narg(before)::uuid IS NULL OR h.id < sqlc.narg(before)::uuid)
  ORDER BY h.id DESC
  LIMIT sqlc.arg(max_rows)::int;
@@ -164,7 +173,7 @@ SELECT id, user_id, name, ping_token_hash, period_sec, cron_expr, timezone,
        last_success_at, last_start_at, last_signal, failing_since,
        last_incident_at, resumed_at, last_runtime_ms, description, last_run_id,
        ping_resumes, project_id
-  FROM heartbeats WHERE user_id = $1 AND id = $2 FOR UPDATE;
+  FROM heartbeats WHERE project_id = sqlc.arg(project_id)::uuid AND id = sqlc.arg(id) FOR UPDATE;
 
 -- name: UpdateHeartbeat :exec
 UPDATE heartbeats
@@ -174,23 +183,23 @@ UPDATE heartbeats
        deadline_at = sqlc.arg(deadline_at), failing_since = sqlc.narg(failing_since),
        resumed_at = sqlc.narg(resumed_at), last_start_at = sqlc.narg(last_start_at),
        ping_resumes = sqlc.arg(ping_resumes)
- WHERE user_id = sqlc.arg(user_id) AND id = sqlc.arg(id);
+ WHERE project_id = sqlc.arg(project_id)::uuid AND id = sqlc.arg(id);
 
 -- name: DeleteHeartbeat :execrows
-DELETE FROM heartbeats WHERE user_id = $1 AND id = $2;
+DELETE FROM heartbeats WHERE project_id = sqlc.arg(project_id)::uuid AND id = sqlc.arg(id);
 
 -- Limpar o log: só os eventos; last_*, prazo e incidentes ficam.
 -- name: DeleteHeartbeatEvents :execrows
 DELETE FROM heartbeat_events e
  USING heartbeats h
- WHERE h.id = e.heartbeat_id AND h.user_id = sqlc.arg(user_id) AND e.heartbeat_id = sqlc.arg(heartbeat_id);
+ WHERE h.id = e.heartbeat_id AND h.project_id = sqlc.arg(project_id)::uuid AND e.heartbeat_id = sqlc.arg(heartbeat_id);
 
 -- open NULL lista tudo; true só abertos; false só resolvidos.
 -- name: ListHeartbeatIncidents :many
 SELECT i.id, h.id AS heartbeat_id, h.name AS heartbeat_name, i.started_at, i.resolved_at, i.cause, i.ack_at
   FROM incidents i
   JOIN heartbeats h ON h.id = i.heartbeat_id
- WHERE h.user_id = sqlc.arg(user_id)
+ WHERE h.project_id = sqlc.arg(project_id)::uuid
    AND h.id = sqlc.arg(heartbeat_id)
    AND (sqlc.narg(open)::bool IS NULL OR (i.resolved_at IS NULL) = sqlc.narg(open)::bool)
    AND (sqlc.narg(before)::uuid IS NULL OR i.id < sqlc.narg(before)::uuid)
@@ -202,7 +211,7 @@ SELECT i.id, h.id AS heartbeat_id, h.name AS heartbeat_name, i.started_at, i.res
 UPDATE incidents i
    SET ack_at = COALESCE(i.ack_at, sqlc.arg(now)::timestamptz)
   FROM heartbeats h
- WHERE h.id = i.heartbeat_id AND h.user_id = sqlc.arg(user_id)
+ WHERE h.id = i.heartbeat_id AND h.project_id = sqlc.arg(project_id)::uuid
    AND h.id = sqlc.arg(heartbeat_id) AND i.id = sqlc.arg(id)
 RETURNING i.id, h.id AS heartbeat_id, h.name AS heartbeat_name, i.started_at, i.resolved_at, i.cause, i.ack_at;
 
@@ -217,29 +226,29 @@ SELECT count(*) FROM heartbeat_events;
 -- name: SetLocalJitOff :exec
 SELECT set_config('jit', 'off', true);
 
--- Tags. As leituras saem ordenadas pela tag, e a do dono serve
+-- Tags. As leituras saem ordenadas pela tag, e a do projeto serve
 -- a lista sem uma consulta por heartbeat, como as de targets.sql.
 -- name: ListHeartbeatTags :many
 SELECT ht.tag
   FROM heartbeat_tags ht
   JOIN heartbeats h ON h.id = ht.heartbeat_id
- WHERE h.user_id = sqlc.arg(user_id) AND ht.heartbeat_id = sqlc.arg(heartbeat_id)
+ WHERE h.project_id = sqlc.arg(project_id)::uuid AND ht.heartbeat_id = sqlc.arg(heartbeat_id)
  ORDER BY ht.tag;
 
--- name: ListUserHeartbeatTags :many
+-- name: ListProjectHeartbeatTags :many
 SELECT ht.heartbeat_id, ht.tag
   FROM heartbeat_tags ht
   JOIN heartbeats h ON h.id = ht.heartbeat_id
- WHERE h.user_id = sqlc.arg(user_id)
+ WHERE h.project_id = sqlc.arg(project_id)::uuid
  ORDER BY ht.heartbeat_id, ht.tag;
 
 -- name: DeleteHeartbeatTags :exec
 DELETE FROM heartbeat_tags ht
  USING heartbeats h
- WHERE h.id = ht.heartbeat_id AND h.user_id = sqlc.arg(user_id) AND ht.heartbeat_id = sqlc.arg(heartbeat_id);
+ WHERE h.id = ht.heartbeat_id AND h.project_id = sqlc.arg(project_id)::uuid AND ht.heartbeat_id = sqlc.arg(heartbeat_id);
 
 -- name: InsertHeartbeatTags :exec
 INSERT INTO heartbeat_tags (heartbeat_id, tag)
 SELECT h.id, unnest(sqlc.arg(tags)::text[])
   FROM heartbeats h
- WHERE h.user_id = sqlc.arg(user_id) AND h.id = sqlc.arg(heartbeat_id);
+ WHERE h.project_id = sqlc.arg(project_id)::uuid AND h.id = sqlc.arg(heartbeat_id);

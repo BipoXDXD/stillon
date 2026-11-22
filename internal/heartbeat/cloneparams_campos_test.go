@@ -16,11 +16,12 @@ var (
 	// PingResumes é configuração, como Enabled: a cópia retoma por ping se a
 	// original retomava.
 	camposCopiadosNoClone = []string{
-		"UserID", "Name", "Description", "PeriodSec", "CronExpr", "Timezone", "GraceSec", "Enabled", "PingResumes",
+		"Name", "Description", "PeriodSec", "CronExpr", "Timezone", "GraceSec", "Enabled", "PingResumes",
 	}
-	// A cópia nasce como uma criação: id, token e instantes são dela.
+	// A cópia nasce como uma criação: id, token e instantes são dela, e ela
+	// vive no projeto do escopo com user_id = quem duplicou.
 	camposNaoCopiadosDePropositoNoClone = []string{
-		"ID", "PingTokenHash", "CreatedAt", "DeadlineAt",
+		"ID", "PingTokenHash", "CreatedAt", "DeadlineAt", "UserID", "ProjectID",
 	}
 )
 

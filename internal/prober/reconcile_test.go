@@ -83,7 +83,7 @@ func TestReconcileReportsTheHeartbeatEventLogSize(t *testing.T) {
 	periodo := int32(3600)
 	err := storage.InUserTx(ctx, b.pool, b.dono, func(q *db.Queries) error {
 		return q.InsertHeartbeat(ctx, db.InsertHeartbeatParams{
-			ID: id, UserID: b.dono, Name: "backup", PingTokenHash: hash, PeriodSec: &periodo, GraceSec: 300,
+			ID: id, UserID: b.dono, ProjectID: testdb.ProjetoPadrao(t, b.dono), Name: "backup", PingTokenHash: hash, PeriodSec: &periodo, GraceSec: 300,
 			Enabled: true, CreatedAt: b.clk.Now(), DeadlineAt: b.clk.Now().Add(time.Hour),
 		})
 	})
@@ -168,7 +168,7 @@ func TestReconcileReportsTheExactHeartbeatEventLogSizeAboveTheJitThreshold(t *te
 	periodo := int32(3600)
 	err := storage.InUserTx(ctx, b.pool, b.dono, func(q *db.Queries) error {
 		return q.InsertHeartbeat(ctx, db.InsertHeartbeatParams{
-			ID: id, UserID: b.dono, Name: "backup", PingTokenHash: hash, PeriodSec: &periodo, GraceSec: 300,
+			ID: id, UserID: b.dono, ProjectID: testdb.ProjetoPadrao(t, b.dono), Name: "backup", PingTokenHash: hash, PeriodSec: &periodo, GraceSec: 300,
 			Enabled: true, CreatedAt: b.clk.Now(), DeadlineAt: b.clk.Now().Add(time.Hour),
 		})
 	})

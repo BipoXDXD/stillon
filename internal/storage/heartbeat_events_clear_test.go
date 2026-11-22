@@ -58,7 +58,7 @@ func TestDeleteHeartbeatEventsFiltersByOwnerWithoutRLS(t *testing.T) {
 	var apagadas int64
 	err := storage.InUserTx(ctx, pool, b, func(q *db.Queries) error {
 		var err error
-		apagadas, err = q.DeleteHeartbeatEvents(ctx, db.DeleteHeartbeatEventsParams{UserID: b, HeartbeatID: hbA})
+		apagadas, err = q.DeleteHeartbeatEvents(ctx, db.DeleteHeartbeatEventsParams{ProjectID: testdb.ProjetoPadrao(t, b), HeartbeatID: hbA})
 		return err
 	})
 	if err != nil {

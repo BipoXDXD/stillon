@@ -19,6 +19,7 @@ import (
 	"github.com/BipoXDXD/stillon/internal/storage"
 	"github.com/BipoXDXD/stillon/internal/storage/db"
 	"github.com/BipoXDXD/stillon/internal/storage/testdb"
+	"github.com/BipoXDXD/stillon/internal/tenancy"
 )
 
 var inicioHB = time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)
@@ -54,7 +55,7 @@ func (b *bancadaHB) heartbeat(t *testing.T, nome string) (uuid.UUID, string) {
 	periodo := int32(3600)
 	err := storage.InUserTx(ctx, b.pool, b.dono, func(q *db.Queries) error {
 		return q.InsertHeartbeat(ctx, db.InsertHeartbeatParams{
-			ID: id, UserID: b.dono, Name: nome, PingTokenHash: hash, PeriodSec: &periodo, GraceSec: 300,
+			ID: id, UserID: b.dono, ProjectID: testdb.ProjetoPadrao(t, b.dono), Name: nome, PingTokenHash: hash, PeriodSec: &periodo, GraceSec: 300,
 			Enabled: true, CreatedAt: inicioHB, DeadlineAt: inicioHB.Add(prazoHB),
 		})
 	})
@@ -96,9 +97,16 @@ func (b *bancadaHB) pingar(t *testing.T, token string, sig heartbeat.Signal) {
 	}
 }
 
+// escopo é o do dono, owner do Projeto padrão, para chamar o serviço de
+// heartbeats.
+func (b *bancadaHB) escopo(t *testing.T) tenancy.ProjectScope {
+	t.Helper()
+	return tenancy.ProjectScope{ProjectID: testdb.ProjetoPadrao(t, b.dono), UserID: b.dono, Role: tenancy.RoleOwner}
+}
+
 func (b *bancadaHB) pausar(t *testing.T, id uuid.UUID, ligado bool) {
 	t.Helper()
-	if _, err := heartbeat.NewService(b.pool, b.clk).Update(t.Context(), b.dono, id, heartbeat.Patch{Enabled: &ligado}); err != nil {
+	if _, err := heartbeat.NewService(b.pool, b.clk).Update(t.Context(), b.escopo(t), id, heartbeat.Patch{Enabled: &ligado}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -281,7 +289,7 @@ func TestSuccessJustBeforeTheCronFireRaisesNoFalseIncident(t *testing.T) {
 	expr, fuso := "0 3 * * *", "UTC"
 	err := storage.InUserTx(ctx, b.pool, b.dono, func(q *db.Queries) error {
 		return q.InsertHeartbeat(ctx, db.InsertHeartbeatParams{
-			ID: id, UserID: b.dono, Name: "backup", PingTokenHash: hash, CronExpr: &expr, Timezone: &fuso,
+			ID: id, UserID: b.dono, ProjectID: testdb.ProjetoPadrao(t, b.dono), Name: "backup", PingTokenHash: hash, CronExpr: &expr, Timezone: &fuso,
 			GraceSec: 300, Enabled: true, CreatedAt: inicioHB, DeadlineAt: inicioHB.Add(24 * time.Hour),
 		})
 	})

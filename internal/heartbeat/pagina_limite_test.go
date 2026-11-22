@@ -40,7 +40,7 @@ func TestEventsHonraOLimitePedidoNaFaixaEVoltaAoPadraoForaDela(t *testing.T) {
 	}{
 		{3, 3}, {1, 1}, {100, 100}, {101, 50}, {0, 50}, {-1, 50},
 	} {
-		ev, err := svc.Events(context.Background(), a.dono, id, nil, c.limite)
+		ev, err := svc.Events(context.Background(), a.escopo(t), id, nil, c.limite)
 		if err != nil {
 			t.Fatalf("Events(limite %d): %v", c.limite, err)
 		}
@@ -64,7 +64,7 @@ func TestIncidentsHonraOLimitePedido(t *testing.T) {
 	}{
 		{2, 2}, {1, 1}, {0, 3},
 	} {
-		inc, err := svc.Incidents(context.Background(), a.dono, id, nil, nil, c.limite)
+		inc, err := svc.Incidents(context.Background(), a.escopo(t), id, nil, nil, c.limite)
 		if err != nil {
 			t.Fatalf("Incidents(limite %d): %v", c.limite, err)
 		}

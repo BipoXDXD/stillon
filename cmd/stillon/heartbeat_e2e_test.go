@@ -38,7 +38,7 @@ func heartbeatVencido(t *testing.T, pool *pgxpool.Pool) (uuid.UUID, string) {
 	agora := time.Now()
 	err := storage.InUserTx(ctx, pool, dono, func(q *db.Queries) error {
 		return q.InsertHeartbeat(ctx, db.InsertHeartbeatParams{
-			ID: id, UserID: dono, Name: "backup", PingTokenHash: hash, PeriodSec: &periodo, GraceSec: 300,
+			ID: id, UserID: dono, ProjectID: testdb.ProjetoPadrao(t, dono), Name: "backup", PingTokenHash: hash, PeriodSec: &periodo, GraceSec: 300,
 			Enabled: true, CreatedAt: agora, DeadlineAt: agora.Add(-time.Hour),
 		})
 	})

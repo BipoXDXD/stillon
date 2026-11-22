@@ -79,16 +79,16 @@ func TestIDMalformadoE404EmTodaRotaComID(t *testing.T) {
 		"DELETE /targets/{id}":                              noProjetoPadrao(alvos.Delete),
 		"GET /targets/{id}/checks":                          noProjetoPadrao(alvos.Checks),
 		"POST /incidents/{id}/ack":                          incidentes.Ack,
-		"GET /heartbeats/{id}":                              batidas.Get,
-		"PATCH /heartbeats/{id}":                            batidas.Update,
-		"DELETE /heartbeats/{id}":                           batidas.Delete,
-		"POST /heartbeats/{id}/token/rotate":                batidas.RotateToken,
-		"POST /heartbeats/{id}/clone":                       batidas.Clone,
-		"POST /heartbeats/{id}/ping-now":                    batidas.PingNow,
-		"GET /heartbeats/{id}/events":                       batidas.Events,
-		"POST /heartbeats/{id}/events/clear":                batidas.ClearEvents,
-		"GET /heartbeats/{id}/incidents":                    batidas.Incidents,
-		"POST /heartbeats/{id}/incidents/{incident_id}/ack": batidas.AckIncident,
+		"GET /heartbeats/{id}":                              noProjetoPadrao(batidas.Get),
+		"PATCH /heartbeats/{id}":                            noProjetoPadrao(batidas.Update),
+		"DELETE /heartbeats/{id}":                           noProjetoPadrao(batidas.Delete),
+		"POST /heartbeats/{id}/token/rotate":                noProjetoPadrao(batidas.RotateToken),
+		"POST /heartbeats/{id}/clone":                       noProjetoPadrao(batidas.Clone),
+		"POST /heartbeats/{id}/ping-now":                    noProjetoPadrao(batidas.PingNow),
+		"GET /heartbeats/{id}/events":                       noProjetoPadrao(batidas.Events),
+		"POST /heartbeats/{id}/events/clear":                noProjetoPadrao(batidas.ClearEvents),
+		"GET /heartbeats/{id}/incidents":                    noProjetoPadrao(batidas.Incidents),
+		"POST /heartbeats/{id}/incidents/{incident_id}/ack": noProjetoPadrao(batidas.AckIncident),
 		"DELETE /channels/{id}":                             canais.Delete,
 		"PATCH /channels/{id}":                              canais.SetEnabled,
 		"POST /channels/{id}/verify/resend":                 canais.Resend,
@@ -109,7 +109,7 @@ func TestIDMalformadoE404EmTodaRotaComID(t *testing.T) {
 }
 
 func TestIncidenteMalformadoNoAckE404(t *testing.T) {
-	h := (&HeartbeatHandlers{}).AckIncident
+	h := noProjetoPadrao((&HeartbeatHandlers{}).AckIncident)
 	for _, id := range []string{"nao-e-uuid", "a\x00b", "' OR 1=1--"} {
 		r := enviarHostil(t, h, func(req *http.Request) { req.SetPathValue("incident_id", id) }, `{}`)
 		if r.chegou || r.status != http.StatusNotFound || r.codigo != "not_found" {
@@ -124,8 +124,8 @@ func TestIncidenteMalformadoNoAckE404(t *testing.T) {
 func TestConsultaHostilE400NasListagens(t *testing.T) {
 	alvos, batidas, incidentes := &TargetHandlers{clk: clock.NewFake(time.Now())}, &HeartbeatHandlers{}, &IncidentHandlers{}
 	paginadas := map[string]http.HandlerFunc{
-		"targets": noProjetoPadrao(alvos.List), "incidents": incidentes.List, "heartbeats": batidas.List,
-		"heartbeats events": batidas.Events, "heartbeats incidents": batidas.Incidents,
+		"targets": noProjetoPadrao(alvos.List), "incidents": incidentes.List, "heartbeats": noProjetoPadrao(batidas.List),
+		"heartbeats events": noProjetoPadrao(batidas.Events), "heartbeats incidents": noProjetoPadrao(batidas.Incidents),
 	}
 	const (
 		foraDaFaixa = "out_of_range"
@@ -155,7 +155,7 @@ func TestConsultaHostilE400NasListagens(t *testing.T) {
 		{"incidents", incidentes.List, "status=%00", "status", invalido},
 		{"incidents", incidentes.List, "status=OPEN", "status", invalido},
 		{"incidents", incidentes.List, "target_id=%00", "target_id", invalido},
-		{"heartbeats incidents", batidas.Incidents, "status=%00", "status", invalido},
+		{"heartbeats incidents", noProjetoPadrao(batidas.Incidents), "status=%00", "status", invalido},
 		{"checks", noProjetoPadrao(alvos.Checks), "from=%00", "from", invalido},
 		{"checks", noProjetoPadrao(alvos.Checks), "to=%00", "to", invalido},
 		{"checks", noProjetoPadrao(alvos.Checks), "window=%00", "window", invalido},
@@ -219,8 +219,8 @@ func TestCorpoHostilE400NaFronteira(t *testing.T) {
 		{"página: título longo", paginas.Create, `{"slug":"empresa","title":"` + strings.Repeat("a", 101) + `"}`, "title", "too_long"},
 		{"página: nome com NUL", paginas.Create, item(`a\u0000b`), "items[0].display_name", "invalid"},
 		{"página: itens demais", paginas.Create, `{"slug":"empresa","title":"T","items":[` + strings.Join(vinteEUm, ",") + `]}`, "items", "out_of_range"},
-		{"heartbeat: fuso com NUL", batidas.Create, cron + `"UTC\u0000"}}`, "timezone", "invalid"},
-		{"heartbeat: fuso longo", batidas.Create, cron + `"` + strings.Repeat("a", 65) + `"}}`, "timezone", "invalid"},
+		{"heartbeat: fuso com NUL", noProjetoPadrao(batidas.Create), cron + `"UTC\u0000"}}`, "timezone", "invalid"},
+		{"heartbeat: fuso longo", noProjetoPadrao(batidas.Create), cron + `"` + strings.Repeat("a", 65) + `"}}`, "timezone", "invalid"},
 		{"alvo: URL com NUL", noProjetoPadrao(alvos.Create), `{"name":"a","url":"https://exemplo.com/\u0000"}`, "url", "invalid"},
 		{"alvo: método com NUL", noProjetoPadrao(alvos.Create), `{"name":"a","url":"https://exemplo.com/","method":"G\u0000"}`, "method", "invalid"},
 	}

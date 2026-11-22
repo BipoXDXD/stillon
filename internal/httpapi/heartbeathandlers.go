@@ -13,6 +13,7 @@ import (
 	"github.com/BipoXDXD/stillon/internal/apierr"
 	"github.com/BipoXDXD/stillon/internal/heartbeat"
 	"github.com/BipoXDXD/stillon/internal/storage/db"
+	"github.com/BipoXDXD/stillon/internal/tenancy"
 )
 
 // Tipos do agendamento no contrato (spec de heartbeats, §7).
@@ -175,7 +176,7 @@ func (h *HeartbeatHandlers) pingURL(token string) string {
 }
 
 func (h *HeartbeatHandlers) Create(w http.ResponseWriter, r *http.Request) {
-	userID, ok := usuario(w, r)
+	sc, ok := escopo(w, r)
 	if !ok {
 		return
 	}
@@ -201,7 +202,7 @@ func (h *HeartbeatHandlers) Create(w http.ResponseWriter, r *http.Request) {
 	if req.PingResumes != nil {
 		in.PingResumes = *req.PingResumes
 	}
-	criado, token, err := h.svc.Create(r.Context(), userID, in)
+	criado, token, err := h.svc.Create(r.Context(), sc, in)
 	if h.falhou(w, r, "criar heartbeat", err) {
 		return
 	}
@@ -209,7 +210,7 @@ func (h *HeartbeatHandlers) Create(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *HeartbeatHandlers) List(w http.ResponseWriter, r *http.Request) {
-	userID, ok := usuario(w, r)
+	sc, ok := escopo(w, r)
 	if !ok {
 		return
 	}
@@ -221,7 +222,7 @@ func (h *HeartbeatHandlers) List(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	items, err := h.svc.List(r.Context(), userID, cursor, limite)
+	items, err := h.svc.List(r.Context(), sc, cursor, limite)
 	if h.falhou(w, r, "listar heartbeats", err) {
 		return
 	}
@@ -267,11 +268,11 @@ func (h *HeartbeatHandlers) CronPreview(w http.ResponseWriter, r *http.Request) 
 }
 
 func (h *HeartbeatHandlers) Get(w http.ResponseWriter, r *http.Request) {
-	userID, id, ok := donoEID(w, r)
+	sc, id, ok := escopoEID(w, r)
 	if !ok {
 		return
 	}
-	item, err := h.svc.Get(r.Context(), userID, id)
+	item, err := h.svc.Get(r.Context(), sc, id)
 	if h.falhou(w, r, "ler heartbeat", err) {
 		return
 	}
@@ -279,7 +280,7 @@ func (h *HeartbeatHandlers) Get(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *HeartbeatHandlers) Update(w http.ResponseWriter, r *http.Request) {
-	userID, id, ok := donoEID(w, r)
+	sc, id, ok := escopoEID(w, r)
 	if !ok {
 		return
 	}
@@ -312,7 +313,7 @@ func (h *HeartbeatHandlers) Update(w http.ResponseWriter, r *http.Request) {
 		grace := time.Duration(req.GraceSec.Value) * time.Second
 		p.Grace = &grace
 	}
-	item, err := h.svc.Update(r.Context(), userID, id, p)
+	item, err := h.svc.Update(r.Context(), sc, id, p)
 	if h.falhou(w, r, "atualizar heartbeat", err) {
 		return
 	}
@@ -320,22 +321,22 @@ func (h *HeartbeatHandlers) Update(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *HeartbeatHandlers) Delete(w http.ResponseWriter, r *http.Request) {
-	userID, id, ok := donoEID(w, r)
+	sc, id, ok := escopoEID(w, r)
 	if !ok {
 		return
 	}
-	if h.falhou(w, r, "apagar heartbeat", h.svc.Delete(r.Context(), userID, id)) {
+	if h.falhou(w, r, "apagar heartbeat", h.svc.Delete(r.Context(), sc, id)) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *HeartbeatHandlers) RotateToken(w http.ResponseWriter, r *http.Request) {
-	userID, id, ok := donoEID(w, r)
+	sc, id, ok := escopoEID(w, r)
 	if !ok {
 		return
 	}
-	item, token, err := h.svc.RotateToken(r.Context(), userID, id)
+	item, token, err := h.svc.RotateToken(r.Context(), sc, id)
 	if h.falhou(w, r, "rotacionar token", err) {
 		return
 	}
@@ -345,11 +346,11 @@ func (h *HeartbeatHandlers) RotateToken(w http.ResponseWriter, r *http.Request) 
 // Clone é POST /heartbeats/{id}/clone. Como a rotação, ignora o corpo: nada que
 // o cliente mande muda o que a cópia leva.
 func (h *HeartbeatHandlers) Clone(w http.ResponseWriter, r *http.Request) {
-	userID, id, ok := donoEID(w, r)
+	sc, id, ok := escopoEID(w, r)
 	if !ok {
 		return
 	}
-	copia, token, err := h.svc.Clone(r.Context(), userID, id)
+	copia, token, err := h.svc.Clone(r.Context(), sc, id)
 	if h.falhou(w, r, "duplicar heartbeat", err) {
 		return
 	}
@@ -359,11 +360,11 @@ func (h *HeartbeatHandlers) Clone(w http.ResponseWriter, r *http.Request) {
 // PingNow é POST /heartbeats/{id}/ping-now. O corpo não é lido: o sinal é
 // sempre um sucesso do painel, e nada do que o cliente mandar muda isso.
 func (h *HeartbeatHandlers) PingNow(w http.ResponseWriter, r *http.Request) {
-	userID, id, ok := donoEID(w, r)
+	sc, id, ok := escopoEID(w, r)
 	if !ok {
 		return
 	}
-	item, err := h.svc.PingNow(r.Context(), userID, id)
+	item, err := h.svc.PingNow(r.Context(), sc, id)
 	if h.falhou(w, r, "sinalizar agora", err) {
 		return
 	}
@@ -373,18 +374,18 @@ func (h *HeartbeatHandlers) PingNow(w http.ResponseWriter, r *http.Request) {
 // ClearEvents é POST /heartbeats/{id}/events/clear. Ignora o corpo: limpar
 // apaga o log inteiro, e nada que o cliente mande escolhe o que sai.
 func (h *HeartbeatHandlers) ClearEvents(w http.ResponseWriter, r *http.Request) {
-	userID, id, ok := donoEID(w, r)
+	sc, id, ok := escopoEID(w, r)
 	if !ok {
 		return
 	}
-	if h.falhou(w, r, "limpar eventos do heartbeat", h.svc.ClearEvents(r.Context(), userID, id)) {
+	if h.falhou(w, r, "limpar eventos do heartbeat", h.svc.ClearEvents(r.Context(), sc, id)) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *HeartbeatHandlers) Events(w http.ResponseWriter, r *http.Request) {
-	userID, id, ok := donoEID(w, r)
+	sc, id, ok := escopoEID(w, r)
 	if !ok {
 		return
 	}
@@ -396,7 +397,7 @@ func (h *HeartbeatHandlers) Events(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	items, err := h.svc.Events(r.Context(), userID, id, cursor, limite)
+	items, err := h.svc.Events(r.Context(), sc, id, cursor, limite)
 	if h.falhou(w, r, "listar eventos", err) {
 		return
 	}
@@ -419,7 +420,7 @@ func (h *HeartbeatHandlers) Events(w http.ResponseWriter, r *http.Request) {
 var parametrosDosIncidentesDoHeartbeat = []string{"limit", "cursor", "status"}
 
 func (h *HeartbeatHandlers) Incidents(w http.ResponseWriter, r *http.Request) {
-	userID, id, ok := donoEID(w, r)
+	sc, id, ok := escopoEID(w, r)
 	if !ok {
 		return
 	}
@@ -443,7 +444,7 @@ func (h *HeartbeatHandlers) Incidents(w http.ResponseWriter, r *http.Request) {
 		campoInvalido(w, r, "status", heartbeat.ReasonInvalid)
 		return
 	}
-	items, err := h.svc.Incidents(r.Context(), userID, id, aberto, cursor, limite)
+	items, err := h.svc.Incidents(r.Context(), sc, id, aberto, cursor, limite)
 	if h.falhou(w, r, "listar incidentes de heartbeat", err) {
 		return
 	}
@@ -456,7 +457,7 @@ func (h *HeartbeatHandlers) Incidents(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *HeartbeatHandlers) AckIncident(w http.ResponseWriter, r *http.Request) {
-	userID, id, ok := donoEID(w, r)
+	sc, id, ok := escopoEID(w, r)
 	if !ok {
 		return
 	}
@@ -465,7 +466,7 @@ func (h *HeartbeatHandlers) AckIncident(w http.ResponseWriter, r *http.Request) 
 		apierr.WriteError(w, r, apierr.CodeNotFound)
 		return
 	}
-	item, err := h.svc.Ack(r.Context(), userID, id, incidente)
+	item, err := h.svc.Ack(r.Context(), sc, id, incidente)
 	if h.falhou(w, r, "reconhecer incidente de heartbeat", err) {
 		return
 	}
@@ -479,14 +480,20 @@ func toHeartbeatIncidentResponse(i heartbeat.Incident) heartbeatIncidentResponse
 	}
 }
 
+// falhou traduz o erro do domínio para o envelope e devolve true se havia
+// erro. Projeto sem pertença (o escopo pode ter mudado entre o middleware e a
+// transação) é o mesmo 404 de heartbeat inexistente; papel sem a permissão é
+// 403.
 func (h *HeartbeatHandlers) falhou(w http.ResponseWriter, r *http.Request, op string, err error) bool {
 	if err == nil {
 		return false
 	}
 	var verr *heartbeat.ValidationError
 	switch {
-	case errors.Is(err, heartbeat.ErrNotFound):
+	case errors.Is(err, heartbeat.ErrNotFound), errors.Is(err, tenancy.ErrProjectNotFound):
 		apierr.WriteError(w, r, apierr.CodeNotFound)
+	case errors.Is(err, tenancy.ErrForbidden):
+		apierr.WriteError(w, r, apierr.CodeForbidden)
 	case errors.Is(err, heartbeat.ErrLimitReached):
 		apierr.WriteError(w, r, apierr.CodeHeartbeatLimit)
 	case errors.Is(err, heartbeat.ErrScheduleUnsupported):

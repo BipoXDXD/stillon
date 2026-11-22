@@ -38,8 +38,7 @@ func noProjetoPadrao(h http.HandlerFunc) http.HandlerFunc {
 }
 
 // rotaComDonoEId é um handler que começa com "usuário do token, depois {id}
-// da rota". Os handlers de heartbeat entram como controle: já usavam donoEID
-// antes da mudança de lugar. Os de alvo leem o escopo de projeto, e entram
+// da rota". Os de alvo e de heartbeat leem o escopo de projeto, e entram
 // atrás de noProjetoPadrao, como na rota.
 type rotaComDonoEId struct {
 	nome    string
@@ -59,8 +58,8 @@ func rotasComDonoEId() []rotaComDonoEId {
 		{"PATCH /channels/{id}/enabled", canais.SetEnabled},
 		{"POST /channels/{id}/resend", canais.Resend},
 		{"PATCH /status-pages/{id}", paginas.Update},
-		{"GET /heartbeats/{id}", batidas.Get},
-		{"PATCH /heartbeats/{id}", batidas.Update},
+		{"GET /heartbeats/{id}", noProjetoPadrao(batidas.Get)},
+		{"PATCH /heartbeats/{id}", noProjetoPadrao(batidas.Update)},
 	}
 }
 
@@ -148,7 +147,7 @@ func TestAckDeHeartbeatComIncidenteMalformadoDa404(t *testing.T) {
 	req.SetPathValue("id", uuid.NewString())
 	req.SetPathValue("incident_id", "x")
 
-	rec := comUsuario(t, (&HeartbeatHandlers{}).AckIncident, req)
+	rec := comUsuario(t, noProjetoPadrao((&HeartbeatHandlers{}).AckIncident), req)
 
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, queria 404: %s", rec.Code, rec.Body)

@@ -45,7 +45,7 @@ func TestGetHeartbeatForUpdateFiltersByOwnerWithoutRLS(t *testing.T) {
 	}
 
 	err := storage.InUserTx(ctx, pool, b, func(q *db.Queries) error {
-		_, err := q.GetHeartbeatForUpdate(ctx, db.GetHeartbeatForUpdateParams{UserID: b, ID: hbA})
+		_, err := q.GetHeartbeatForUpdate(ctx, db.GetHeartbeatForUpdateParams{ProjectID: testdb.ProjetoPadrao(t, b), ID: hbA})
 		return err
 	})
 	if !errors.Is(err, pgx.ErrNoRows) {

@@ -45,7 +45,7 @@ func (a ambiente) novoHeartbeat(t *testing.T) (uuid.UUID, string) {
 	periodo := int32(3600)
 	err := storage.InUserTx(ctx, a.pool, a.dono, func(q *db.Queries) error {
 		return q.InsertHeartbeat(ctx, db.InsertHeartbeatParams{
-			ID: id, UserID: a.dono, Name: "backup", PingTokenHash: hash, PeriodSec: &periodo,
+			ID: id, UserID: a.dono, ProjectID: testdb.ProjetoPadrao(t, a.dono), Name: "backup", PingTokenHash: hash, PeriodSec: &periodo,
 			GraceSec: 300, Enabled: true, CreatedAt: agora, DeadlineAt: agora.Add(time.Hour),
 		})
 	})
@@ -61,7 +61,7 @@ func (a ambiente) linha(t *testing.T, id uuid.UUID) db.Heartbeat {
 	var h db.Heartbeat
 	err := storage.InUserTx(ctx, a.pool, a.dono, func(q *db.Queries) error {
 		var err error
-		h, err = q.GetHeartbeat(ctx, db.GetHeartbeatParams{UserID: a.dono, ID: id})
+		h, err = q.GetHeartbeat(ctx, db.GetHeartbeatParams{ProjectID: testdb.ProjetoPadrao(t, a.dono), ID: id})
 		return err
 	})
 	if err != nil {
@@ -76,7 +76,7 @@ func (a ambiente) eventos(t *testing.T, id uuid.UUID) []db.HeartbeatEvent {
 	var ev []db.HeartbeatEvent
 	err := storage.InUserTx(ctx, a.pool, a.dono, func(q *db.Queries) error {
 		var err error
-		ev, err = q.ListHeartbeatEvents(ctx, db.ListHeartbeatEventsParams{UserID: a.dono, HeartbeatID: id, MaxRows: 5000})
+		ev, err = q.ListHeartbeatEvents(ctx, db.ListHeartbeatEventsParams{ProjectID: testdb.ProjetoPadrao(t, a.dono), HeartbeatID: id, MaxRows: 5000})
 		return err
 	})
 	if err != nil {
@@ -229,12 +229,13 @@ func TestConcurrentPingNowAndPingHaveOneEffect(t *testing.T) {
 	painel := heartbeat.NewService(a.pool, a.clk)
 	id, token := a.novoHeartbeat(t)
 
+	sc := a.escopo(t)
 	const n = 8
 	var fns []func() error
 	for range n {
 		fns = append(fns,
 			func() error {
-				_, err := painel.PingNow(context.Background(), a.dono, id)
+				_, err := painel.PingNow(context.Background(), sc, id)
 				return err
 			},
 			func() error { return a.svc.Ping(context.Background(), token, heartbeat.SignalSuccess, nil) },
@@ -266,12 +267,13 @@ func TestConcurrentPingNowAndFailKeepTheFailure(t *testing.T) {
 	a.pingar(t, token, heartbeat.SignalStart)
 	a.clk.Advance(time.Minute)
 
+	sc := a.escopo(t)
 	const n = 8
 	var fns []func() error
 	for range n {
 		fns = append(fns,
 			func() error {
-				_, err := painel.PingNow(context.Background(), a.dono, id)
+				_, err := painel.PingNow(context.Background(), sc, id)
 				return err
 			},
 			func() error { return a.svc.Ping(context.Background(), token, heartbeat.SignalFail, nil) },
@@ -319,7 +321,7 @@ func TestPingNowDoesNotCloseTheOpenRun(t *testing.T) {
 	inicio := a.clk.Now()
 	a.pingar(t, token, heartbeat.SignalStart)
 	a.clk.Advance(time.Minute)
-	if _, err := painel.PingNow(context.Background(), a.dono, id); err != nil {
+	if _, err := painel.PingNow(context.Background(), a.escopo(t), id); err != nil {
 		t.Fatal(err)
 	}
 
@@ -430,7 +432,7 @@ func TestPingOnAPausedHeartbeatIsRecorded(t *testing.T) {
 	ctx := context.Background()
 	id, token := a.novoHeartbeat(t)
 	desligado := false
-	if _, err := heartbeat.NewService(a.pool, a.clk).Update(ctx, a.dono, id, heartbeat.Patch{Enabled: &desligado}); err != nil {
+	if _, err := heartbeat.NewService(a.pool, a.clk).Update(ctx, a.escopo(t), id, heartbeat.Patch{Enabled: &desligado}); err != nil {
 		t.Fatal(err)
 	}
 	a.pingar(t, token, heartbeat.SignalSuccess)

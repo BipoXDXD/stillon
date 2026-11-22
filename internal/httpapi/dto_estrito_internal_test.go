@@ -40,10 +40,10 @@ func corposEstritos() map[string]corpoEstrito {
 	return map[string]corpoEstrito{
 		"TargetHandlers.Create": {handler: noProjetoPadrao(alvos.Create), valido: `{"name":"api","url":"https://exemplo.com/"}`},
 		"TargetHandlers.Update": {handler: noProjetoPadrao(alvos.Update), valido: `{"name":"api"}`},
-		"HeartbeatHandlers.Create": {handler: batidas.Create,
+		"HeartbeatHandlers.Create": {handler: noProjetoPadrao(batidas.Create),
 			valido:    `{"name":"x","schedule":{"kind":"period","period_sec":60}}`,
 			aninhados: []string{`{"name":"x","schedule":` + agendaComExtra + `}`}},
-		"HeartbeatHandlers.Update": {handler: batidas.Update, valido: `{"name":"x"}`,
+		"HeartbeatHandlers.Update": {handler: noProjetoPadrao(batidas.Update), valido: `{"name":"x"}`,
 			aninhados: []string{`{"schedule":` + agendaComExtra + `}`}},
 		"ChannelHandlers.Create":     {handler: canais.Create, valido: `{"kind":"discord","url":"` + webhookValidoDoTeste + `"}`},
 		"ChannelHandlers.SetEnabled": {handler: canais.SetEnabled, valido: `{"enabled":true}`},

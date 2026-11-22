@@ -44,9 +44,9 @@ func TestListingsRejectQueryOutsideTheAllowlist(t *testing.T) {
 	}{
 		{"GET /targets", noProjetoPadrao(alvos.List), "status=open"},
 		{"GET /incidents", incidentes.List, "tag=web"},
-		{"GET /heartbeats", heartbeats.List, "status=open"},
-		{"GET /heartbeats/{id}/events", heartbeats.Events, "status=open"},
-		{"GET /heartbeats/{id}/incidents", heartbeats.Incidents, "target_id=1"},
+		{"GET /heartbeats", noProjetoPadrao(heartbeats.List), "status=open"},
+		{"GET /heartbeats/{id}/events", noProjetoPadrao(heartbeats.Events), "status=open"},
+		{"GET /heartbeats/{id}/incidents", noProjetoPadrao(heartbeats.Incidents), "target_id=1"},
 	} {
 		for _, consulta := range append(slices.Clone(consultasRecusadasEmToda), rota.deOutraRota) {
 			t.Run(rota.nome+"?"+consulta, func(t *testing.T) {

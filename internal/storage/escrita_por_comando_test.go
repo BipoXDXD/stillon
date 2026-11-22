@@ -219,7 +219,7 @@ func TestCaminhosLegitimosDeEscritaContinuam(t *testing.T) {
 			return err
 		}
 		_, err := q.AckHeartbeatIncident(ctx, db.AckHeartbeatIncidentParams{
-			Now: agora, UserID: dono, HeartbeatID: hb, ID: incidenteHB,
+			Now: agora, ProjectID: testdb.ProjetoPadrao(t, dono), HeartbeatID: hb, ID: incidenteHB,
 		})
 		return err
 	})

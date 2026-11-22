@@ -147,6 +147,19 @@ func TestEveryResourceRouteRejectsRevokedFamily(t *testing.T) {
 		{"POST /api/v1/heartbeats/{id}/events/clear", "/api/v1/heartbeats/" + hb + "/events/clear", nil},
 		{"GET /api/v1/heartbeats/{id}/incidents", "/api/v1/heartbeats/" + hb + "/incidents", nil},
 		{"POST /api/v1/heartbeats/{id}/incidents/{incident_id}/ack", "/api/v1/heartbeats/" + hb + "/incidents/" + uuid.NewString() + "/ack", nil},
+		{"GET /api/v1/projects/{projectID}/heartbeats", noProjeto + "/heartbeats", nil},
+		{"POST /api/v1/projects/{projectID}/heartbeats", noProjeto + "/heartbeats", corpoDePeriodo},
+		{"GET /api/v1/projects/{projectID}/heartbeats/{id}", noProjeto + "/heartbeats/" + hb, nil},
+		{"PATCH /api/v1/projects/{projectID}/heartbeats/{id}", noProjeto + "/heartbeats/" + hb, map[string]string{"name": "outro"}},
+		{"DELETE /api/v1/projects/{projectID}/heartbeats/{id}", noProjeto + "/heartbeats/" + hb, nil},
+		{"POST /api/v1/projects/{projectID}/heartbeats/{id}/token/rotate", noProjeto + "/heartbeats/" + hb + "/token/rotate", nil},
+		{"POST /api/v1/projects/{projectID}/heartbeats/{id}/clone", noProjeto + "/heartbeats/" + hb + "/clone", nil},
+		{"POST /api/v1/projects/{projectID}/heartbeats/{id}/ping-now", noProjeto + "/heartbeats/" + hb + "/ping-now", nil},
+		{"GET /api/v1/projects/{projectID}/heartbeats/cron-preview", noProjeto + "/heartbeats/cron-preview?expr=0+3+*+*+*&timezone=UTC", nil},
+		{"GET /api/v1/projects/{projectID}/heartbeats/{id}/events", noProjeto + "/heartbeats/" + hb + "/events", nil},
+		{"POST /api/v1/projects/{projectID}/heartbeats/{id}/events/clear", noProjeto + "/heartbeats/" + hb + "/events/clear", nil},
+		{"GET /api/v1/projects/{projectID}/heartbeats/{id}/incidents", noProjeto + "/heartbeats/" + hb + "/incidents", nil},
+		{"POST /api/v1/projects/{projectID}/heartbeats/{id}/incidents/{incident_id}/ack", noProjeto + "/heartbeats/" + hb + "/incidents/" + uuid.NewString() + "/ack", nil},
 	}
 	// A matriz não pode deixar uma rota de recurso nova sem a prova de
 	// revogação. A enumeração existente também verifica registros novos.

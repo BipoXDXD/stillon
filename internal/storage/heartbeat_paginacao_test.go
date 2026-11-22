@@ -75,7 +75,7 @@ func eventosDoDono(t *testing.T, pool *pgxpool.Pool, dono, heartbeat uuid.UUID, 
 	err := storage.InUserTx(ctx, pool, dono, func(q *db.Queries) error {
 		var err error
 		linhas, err = q.ListHeartbeatEvents(ctx, db.ListHeartbeatEventsParams{
-			UserID: dono, HeartbeatID: heartbeat, Before: antes, MaxRows: max,
+			ProjectID: testdb.ProjetoPadrao(t, dono), HeartbeatID: heartbeat, Before: antes, MaxRows: max,
 		})
 		return err
 	})
@@ -172,7 +172,7 @@ func incidentesDoDono(t *testing.T, pool *pgxpool.Pool, dono, heartbeat uuid.UUI
 	err := storage.InUserTx(ctx, pool, dono, func(q *db.Queries) error {
 		var err error
 		linhas, err = q.ListHeartbeatIncidents(ctx, db.ListHeartbeatIncidentsParams{
-			UserID: dono, HeartbeatID: heartbeat, Open: abertos, Before: antes, MaxRows: max,
+			ProjectID: testdb.ProjetoPadrao(t, dono), HeartbeatID: heartbeat, Open: abertos, Before: antes, MaxRows: max,
 		})
 		return err
 	})

@@ -72,7 +72,7 @@ func TestListToleratesRowsFromLaterVersions(t *testing.T) {
 	desconhecido, _ := a.novoHeartbeat(t)
 	a.comoDono(t, `UPDATE heartbeats SET period_sec = NULL WHERE id = $1`, desconhecido)
 
-	lista, err := heartbeat.NewService(a.pool, a.clk).List(context.Background(), a.dono, nil, 0)
+	lista, err := heartbeat.NewService(a.pool, a.clk).List(context.Background(), a.escopo(t), nil, 0)
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -126,7 +126,7 @@ func TestUnknownScheduleStatusIgnoresDeadline(t *testing.T) {
 			id, token := a.heartbeatDesconhecido(t)
 			c.preparo(t, a, id, token)
 
-			h, err := heartbeat.NewService(a.pool, a.clk).Get(context.Background(), a.dono, id)
+			h, err := heartbeat.NewService(a.pool, a.clk).Get(context.Background(), a.escopo(t), id)
 			if err != nil {
 				t.Fatalf("Get: %v", err)
 			}

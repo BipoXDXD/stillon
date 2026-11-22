@@ -254,6 +254,20 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	mux.Handle("GET /api/v1/heartbeats/{id}/incidents", recursoLegado(hb.Incidents))
 	mux.Handle("POST /api/v1/heartbeats/{id}/incidents/{incident_id}/ack", recursoLegado(hb.AckIncident))
 
+	mux.Handle("GET /api/v1/projects/{projectID}/heartbeats", noProjeto(hb.List))
+	mux.Handle("POST /api/v1/projects/{projectID}/heartbeats", noProjeto(hb.Create))
+	mux.Handle("GET /api/v1/projects/{projectID}/heartbeats/cron-preview", noProjeto(hb.CronPreview))
+	mux.Handle("GET /api/v1/projects/{projectID}/heartbeats/{id}", noProjeto(hb.Get))
+	mux.Handle("PATCH /api/v1/projects/{projectID}/heartbeats/{id}", noProjeto(hb.Update))
+	mux.Handle("DELETE /api/v1/projects/{projectID}/heartbeats/{id}", noProjeto(hb.Delete))
+	mux.Handle("POST /api/v1/projects/{projectID}/heartbeats/{id}/token/rotate", noProjeto(hb.RotateToken))
+	mux.Handle("POST /api/v1/projects/{projectID}/heartbeats/{id}/clone", noProjeto(hb.Clone))
+	mux.Handle("POST /api/v1/projects/{projectID}/heartbeats/{id}/ping-now", noProjeto(hb.PingNow))
+	mux.Handle("GET /api/v1/projects/{projectID}/heartbeats/{id}/events", noProjeto(hb.Events))
+	mux.Handle("POST /api/v1/projects/{projectID}/heartbeats/{id}/events/clear", noProjeto(hb.ClearEvents))
+	mux.Handle("GET /api/v1/projects/{projectID}/heartbeats/{id}/incidents", noProjeto(hb.Incidents))
+	mux.Handle("POST /api/v1/projects/{projectID}/heartbeats/{id}/incidents/{incident_id}/ack", noProjeto(hb.AckIncident))
+
 	porEnvio := middleware.RateLimitUserEvery(ctx, d.Clock, envioACada, envioBurst)
 	comEnvioLegado := func(fn http.HandlerFunc) http.Handler { return authn(porUsuario(porEnvio(viva(padrao(fn))))) }
 	mux.Handle("GET /api/v1/channels", recursoLegado(ch.List))

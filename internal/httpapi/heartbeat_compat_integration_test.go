@@ -14,6 +14,7 @@ import (
 
 	"github.com/BipoXDXD/stillon/internal/storage"
 	"github.com/BipoXDXD/stillon/internal/storage/db"
+	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 )
 
 // Piso de rollback na API: este binário precisa servir linhas gravadas por uma
@@ -73,7 +74,7 @@ func linhaDoHeartbeat(t *testing.T, a *api, id uuid.UUID) db.Heartbeat {
 	var h db.Heartbeat
 	err := storage.InUserTx(ctx, a.pool, a.userID, func(q *db.Queries) error {
 		var err error
-		h, err = q.GetHeartbeatForUpdate(ctx, db.GetHeartbeatForUpdateParams{UserID: a.userID, ID: id})
+		h, err = q.GetHeartbeatForUpdate(ctx, db.GetHeartbeatForUpdateParams{ProjectID: testdb.ProjetoPadrao(t, a.userID), ID: id})
 		return err
 	})
 	if err != nil {
