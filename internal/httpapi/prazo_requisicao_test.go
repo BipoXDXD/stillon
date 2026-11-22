@@ -3,6 +3,7 @@ package httpapi_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/BipoXDXD/stillon/internal/clock"
@@ -20,7 +22,26 @@ import (
 	"github.com/BipoXDXD/stillon/internal/httpapi/middleware"
 	"github.com/BipoXDXD/stillon/internal/notify"
 	"github.com/BipoXDXD/stillon/internal/statuspage"
+	"github.com/BipoXDXD/stillon/internal/tenancy"
 )
+
+// repoFalso é o repositório de projetos dos testes sem banco. Nenhum deles
+// chega a uma rota de recurso; se chegar, a falha aparece como 500.
+type repoFalso struct{}
+
+var errRepoFalso = errors.New("repoFalso: teste sem banco")
+
+func (repoFalso) Membership(context.Context, uuid.UUID, uuid.UUID) (tenancy.ProjectScope, error) {
+	return tenancy.ProjectScope{}, errRepoFalso
+}
+
+func (repoFalso) EnsureDefault(context.Context, uuid.UUID, time.Time) (tenancy.ProjectScope, error) {
+	return tenancy.ProjectScope{}, errRepoFalso
+}
+
+func (repoFalso) ListForUser(context.Context, uuid.UUID) ([]tenancy.ProjectSummary, error) {
+	return nil, errRepoFalso
+}
 
 // rotasSemBanco monta Routes sem Postgres: o /readyz só chama o ping
 // injetado, e o ping vê o contexto que a cadeia de middlewares lhe deu.
@@ -32,6 +53,7 @@ func rotasSemBanco(t *testing.T, cfg *config.Config, ping func(context.Context) 
 	return httpapi.Routes(ctx, cfg, httpapi.Deps{
 		Channels:    notify.NewChannelService(nil, nil, clk, nil, nil, cfg.PublicBaseURL),
 		StatusPages: statuspage.NewService(nil, clk),
+		Projects:    tenancy.NewService(repoFalso{}, clk),
 		Clock:       clk,
 		Ready:       ping,
 		LimitesIP:   middleware.NovosOrcamentosEmMemoria(ctx, clk),
@@ -191,6 +213,7 @@ func TestVerifyAplicaOPrazoDaConfiguracao(t *testing.T) {
 	rotas := httpapi.Routes(ctx, cfg, httpapi.Deps{
 		Channels:    notify.NewChannelService(pool, box, clk, &discordFalso{}, &carteiroFalso{}, cfg.PublicBaseURL),
 		StatusPages: statuspage.NewService(nil, clk),
+		Projects:    tenancy.NewService(repoFalso{}, clk),
 		Clock:       clk,
 		LimitesIP:   middleware.NovosOrcamentosEmMemoria(ctx, clk),
 	})
