@@ -278,6 +278,13 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	mux.Handle("PATCH /api/v1/channels/{id}", recursoLegado(ch.SetEnabled))
 	mux.Handle("POST /api/v1/channels/{id}/verify/resend", comEnvioLegado(ch.Resend))
 
+	comEnvioNoProjeto := func(fn http.HandlerFunc) http.Handler { return authn(porUsuario(porEnvio(viva(doCaminho(fn))))) }
+	mux.Handle("GET /api/v1/projects/{projectID}/channels", noProjeto(ch.List))
+	mux.Handle("POST /api/v1/projects/{projectID}/channels", comEnvioNoProjeto(ch.Create))
+	mux.Handle("DELETE /api/v1/projects/{projectID}/channels/{id}", noProjeto(ch.Delete))
+	mux.Handle("PATCH /api/v1/projects/{projectID}/channels/{id}", noProjeto(ch.SetEnabled))
+	mux.Handle("POST /api/v1/projects/{projectID}/channels/{id}/verify/resend", comEnvioNoProjeto(ch.Resend))
+
 	mux.Handle("GET /api/v1/status-pages", recursoLegado(sp.List))
 	mux.Handle("POST /api/v1/status-pages", recursoLegado(sp.Create))
 	mux.Handle("PATCH /api/v1/status-pages/{id}", recursoLegado(sp.Update))

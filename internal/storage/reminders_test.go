@@ -101,7 +101,7 @@ func TestReminderMigrationGoesDownWithRemindersInTheOutbox(t *testing.T) {
 	}
 	defer pool.Close()
 	dono := novoUsuario(t, pool)
-	canal := novoCanal(t, pool, dono, nil, time.Time{})
+	canal := novoCanalNoBancoVazio(t, pool, dono)
 	incidente := novoIncidente(t, pool, novoAlvo(t, pool, dono, agora))
 	novaNotificacao(t, pool, incidente, canal)
 	for seq := int32(1); seq <= 2; seq++ {

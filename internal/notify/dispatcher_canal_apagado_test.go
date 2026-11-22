@@ -30,8 +30,9 @@ func TestChannelDeletedDuringSendIsNotLoggedAsError(t *testing.T) {
 			b := novaBancada(t, nil)
 			svc := NewChannelService(b.pool, b.box, b.clk, nil, nil, "https://stillon.example")
 			b.canal.respostas = []error{tc.resposta}
+			sc := escopoPadrao(t, b.pool, b.dono)
 			b.canal.aoEnviar = func() {
-				if err := svc.Delete(context.Background(), b.dono, b.canalID); err != nil {
+				if err := svc.Delete(context.Background(), sc, b.canalID); err != nil {
 					t.Errorf("apagar o canal no meio do envio: %v", err)
 				}
 			}

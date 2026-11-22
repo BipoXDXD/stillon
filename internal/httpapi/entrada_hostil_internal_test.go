@@ -89,9 +89,9 @@ func TestIDMalformadoE404EmTodaRotaComID(t *testing.T) {
 		"POST /heartbeats/{id}/events/clear":                noProjetoPadrao(batidas.ClearEvents),
 		"GET /heartbeats/{id}/incidents":                    noProjetoPadrao(batidas.Incidents),
 		"POST /heartbeats/{id}/incidents/{incident_id}/ack": noProjetoPadrao(batidas.AckIncident),
-		"DELETE /channels/{id}":                             canais.Delete,
-		"PATCH /channels/{id}":                              canais.SetEnabled,
-		"POST /channels/{id}/verify/resend":                 canais.Resend,
+		"DELETE /channels/{id}":                             noProjetoPadrao(canais.Delete),
+		"PATCH /channels/{id}":                              noProjetoPadrao(canais.SetEnabled),
+		"POST /channels/{id}/verify/resend":                 noProjetoPadrao(canais.Resend),
 		"PATCH /status-pages/{id}":                          paginas.Update,
 	}
 	// "\x00" é o %00 depois de o roteador decodificar o caminho.
@@ -209,11 +209,11 @@ func TestCorpoHostilE400NaFronteira(t *testing.T) {
 		corpo         string
 		campo, motivo string
 	}{
-		{"canal: tipo com NUL", canais.Create, `{"kind":"a\u0000"}`, "kind", "invalid"},
-		{"canal: webhook com NUL", canais.Create, `{"kind":"discord","url":"` + webhook + `a\u0000"}`, "url", "invalid"},
-		{"canal: webhook longo", canais.Create, `{"kind":"discord","url":"` + webhook + strings.Repeat("a", 600) + `"}`, "url", "invalid"},
-		{"canal: e-mail com NUL", canais.Create, `{"kind":"email","email":"a\u0000@exemplo.com"}`, "email", "invalid"},
-		{"canal: e-mail longo", canais.Create, `{"kind":"email","email":"` + strings.Repeat("a", 250) + `@exemplo.com"}`, "email", "invalid"},
+		{"canal: tipo com NUL", noProjetoPadrao(canais.Create), `{"kind":"a\u0000"}`, "kind", "invalid"},
+		{"canal: webhook com NUL", noProjetoPadrao(canais.Create), `{"kind":"discord","url":"` + webhook + `a\u0000"}`, "url", "invalid"},
+		{"canal: webhook longo", noProjetoPadrao(canais.Create), `{"kind":"discord","url":"` + webhook + strings.Repeat("a", 600) + `"}`, "url", "invalid"},
+		{"canal: e-mail com NUL", noProjetoPadrao(canais.Create), `{"kind":"email","email":"a\u0000@exemplo.com"}`, "email", "invalid"},
+		{"canal: e-mail longo", noProjetoPadrao(canais.Create), `{"kind":"email","email":"` + strings.Repeat("a", 250) + `@exemplo.com"}`, "email", "invalid"},
 		{"página: slug com NUL", paginas.Create, `{"slug":"em\u0000presa","title":"T"}`, "slug", "invalid"},
 		{"página: título com NUL", paginas.Create, `{"slug":"empresa","title":"a\u0000b"}`, "title", "invalid"},
 		{"página: título longo", paginas.Create, `{"slug":"empresa","title":"` + strings.Repeat("a", 101) + `"}`, "title", "too_long"},

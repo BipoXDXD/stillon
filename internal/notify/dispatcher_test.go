@@ -119,7 +119,7 @@ func novaBancada(t *testing.T, mexer func(*db.InsertChannelParams)) *bancada {
 		t.Fatal(err)
 	}
 	canal := db.InsertChannelParams{
-		ID: b.canalID, UserID: b.dono, Kind: string(KindDiscord), ConfigEnc: sealed, VerifiedAt: &agora, CreatedAt: agora,
+		ID: b.canalID, UserID: b.dono, ProjectID: testdb.ProjetoPadrao(t, b.dono), Kind: string(KindDiscord), ConfigEnc: sealed, VerifiedAt: &agora, CreatedAt: agora,
 	}
 	if mexer != nil {
 		mexer(&canal)
@@ -537,7 +537,7 @@ func TestPlainErrorIsRetried(t *testing.T) {
 func (b *bancada) canalVisto(t *testing.T) Channel {
 	t.Helper()
 	svc := NewChannelService(b.pool, b.box, b.clk, nil, nil, "https://stillon.example")
-	cs, err := svc.List(context.Background(), b.dono)
+	cs, err := svc.List(context.Background(), escopoPadrao(t, b.pool, b.dono))
 	if err != nil || len(cs) != 1 {
 		t.Fatalf("List = %v, %v", cs, err)
 	}
@@ -728,7 +728,7 @@ func TestDifferentChannelsSendInParallel(t *testing.T) {
 	agora := b.clk.Now()
 	err = storage.InUserTx(ctx, b.pool, b.dono, func(q *db.Queries) error {
 		return q.InsertChannel(ctx, db.InsertChannelParams{
-			ID: outro, UserID: b.dono, Kind: string(KindDiscord), ConfigEnc: sealed, VerifiedAt: &agora, CreatedAt: agora,
+			ID: outro, UserID: b.dono, ProjectID: testdb.ProjetoPadrao(t, b.dono), Kind: string(KindDiscord), ConfigEnc: sealed, VerifiedAt: &agora, CreatedAt: agora,
 		})
 	})
 	if err != nil {

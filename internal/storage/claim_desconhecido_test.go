@@ -89,7 +89,7 @@ func conferirSoAConhecidaReivindicada(t *testing.T, pool *pgxpool.Pool, conhecid
 func canalDeTipo(t *testing.T, pool *pgxpool.Pool, dono uuid.UUID, kind string) uuid.UUID {
 	t.Helper()
 	ctx := context.Background()
-	p := db.InsertChannelParams{ID: novoID(), UserID: dono, Kind: kind, ConfigEnc: []byte{1}, VerifiedAt: &agora, CreatedAt: agora}
+	p := db.InsertChannelParams{ID: novoID(), UserID: dono, ProjectID: testdb.ProjetoPadrao(t, dono), Kind: kind, ConfigEnc: []byte{1}, VerifiedAt: &agora, CreatedAt: agora}
 	if err := storage.InUserTx(ctx, pool, dono, func(q *db.Queries) error { return q.InsertChannel(ctx, p) }); err != nil {
 		t.Fatalf("criar canal %s: %v", kind, err)
 	}

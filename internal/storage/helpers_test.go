@@ -9,10 +9,12 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/BipoXDXD/stillon/internal/storage"
 	"github.com/BipoXDXD/stillon/internal/storage/db"
+	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 )
 
 var agora = time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
@@ -107,13 +109,32 @@ func novoCanal(t *testing.T, pool *pgxpool.Pool, dono uuid.UUID, tokenHash []byt
 	t.Helper()
 	ctx := context.Background()
 	id := uuid.Must(uuid.NewV7())
-	p := db.InsertChannelParams{ID: id, UserID: dono, Kind: "discord", ConfigEnc: []byte{1}, CreatedAt: agora}
+	p := db.InsertChannelParams{ID: id, UserID: dono, ProjectID: testdb.ProjetoPadrao(t, dono), Kind: "discord", ConfigEnc: []byte{1}, CreatedAt: agora}
 	if tokenHash == nil {
 		p.VerifiedAt = &agora
 	} else {
 		p.Kind, p.VerifyTokenHash, p.VerifyExpiresAt = "email", tokenHash, &expira
 	}
 	if err := storage.InUserTx(ctx, pool, dono, func(q *db.Queries) error { return q.InsertChannel(ctx, p) }); err != nil {
+		t.Fatalf("criar canal: %v", err)
+	}
+	return id
+}
+
+// novoCanalNoBancoVazio cria um canal Discord verificado sem project_id, por
+// SQL cru sob o escopo de storage.InUserTx: os testes de migration usam um
+// banco de testdb.EmptyDatabase, onde testdb.ProjetoPadrao (que grava no banco
+// compartilhado) não alcança o dono.
+func novoCanalNoBancoVazio(t *testing.T, pool *pgxpool.Pool, dono uuid.UUID) uuid.UUID {
+	t.Helper()
+	id := uuid.Must(uuid.NewV7())
+	err := emEscopo(t, pool, "app.user_id", dono.String(), func(tx pgx.Tx) error {
+		_, err := tx.Exec(context.Background(), `
+			INSERT INTO notif_channels (id, user_id, kind, config_enc, verified_at, enabled, created_at)
+			VALUES ($1, $2, 'discord', '\x01', $3, true, $3)`, id, dono, agora)
+		return err
+	})
+	if err != nil {
 		t.Fatalf("criar canal: %v", err)
 	}
 	return id

@@ -85,7 +85,7 @@ func (b *bancadaLembretes) canalSemAbertura(t *testing.T, kind Kind, mexer func(
 	ctx := context.Background()
 	agora := b.clk.Now()
 	p := db.InsertChannelParams{
-		ID: uuid.Must(uuid.NewV7()), UserID: b.dono, Kind: string(kind), ConfigEnc: []byte{1}, VerifiedAt: &agora, CreatedAt: agora,
+		ID: uuid.Must(uuid.NewV7()), UserID: b.dono, ProjectID: testdb.ProjetoPadrao(t, b.dono), Kind: string(kind), ConfigEnc: []byte{1}, VerifiedAt: &agora, CreatedAt: agora,
 	}
 	if mexer != nil {
 		mexer(&p)
@@ -100,7 +100,7 @@ func (b *bancadaLembretes) pausar(t *testing.T, canal uuid.UUID, pausado bool) {
 	t.Helper()
 	ctx := context.Background()
 	err := storage.InUserTx(ctx, b.pool, b.dono, func(q *db.Queries) error {
-		_, err := q.SetChannelEnabled(ctx, db.SetChannelEnabledParams{UserID: b.dono, ID: canal, Enabled: !pausado})
+		_, err := q.SetChannelEnabled(ctx, db.SetChannelEnabledParams{ProjectID: testdb.ProjetoPadrao(t, b.dono), ID: canal, Enabled: !pausado})
 		return err
 	})
 	if err != nil {

@@ -63,7 +63,7 @@ func TestIncidentFlowsFromProbeToAuditedNotification(t *testing.T) {
 			return err
 		}
 		return q.InsertChannel(ctx, db.InsertChannelParams{
-			ID: canal, UserID: dono, Kind: "discord", ConfigEnc: sealed, VerifiedAt: &agora, CreatedAt: agora,
+			ID: canal, UserID: dono, ProjectID: testdb.ProjetoPadrao(t, dono), Kind: "discord", ConfigEnc: sealed, VerifiedAt: &agora, CreatedAt: agora,
 		})
 	})
 	if err != nil {
