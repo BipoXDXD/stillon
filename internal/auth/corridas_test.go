@@ -164,11 +164,15 @@ func (*tracerQueIntercala) TraceQueryEnd(context.Context, *pgx.Conn, pgx.TraceQu
 
 // totpComEscritaAntesDe devolve um TOTP que usa o MESMO banco de base, por um
 // pool próprio com o tracer, e a função que exige que a escrita tenha entrado.
-func totpComEscritaAntesDe(t *testing.T, trecho string, escrita func()) (*auth.TOTP, func()) {
+// Os ajustes, se houver, mexem na configuração desse pool antes de abri-lo.
+func totpComEscritaAntesDe(t *testing.T, trecho string, escrita func(), ajustes ...func(*pgxpool.Config)) (*auth.TOTP, func()) {
 	t.Helper()
 	cfg, err := pgxpool.ParseConfig(testdb.DSN(t))
 	if err != nil {
 		t.Fatal(err)
+	}
+	for _, ajustar := range ajustes {
+		ajustar(cfg)
 	}
 	tr := &tracerQueIntercala{trecho: trecho, antes: escrita}
 	cfg.ConnConfig.Tracer = tr
@@ -301,6 +305,65 @@ func TestConfirmPerdeACorridaDaGuardaDoUpdate(t *testing.T) {
 			}
 			if n := contarAuditoria(t, pool, userID, "totp.enabled"); n != 0 {
 				t.Errorf("%d eventos totp.enabled, queria 0", n)
+			}
+		})
+	}
+}
+
+// A recusa do Confirm, quando a guarda do UPDATE não acha a linha, é
+// classificada dentro da transação que ainda segura a conexão. Classificada por
+// uma consulta ao pool, ela pedia uma segunda conexão enquanto a primeira
+// estava presa na transação: com o pool esgotado, o Confirm ficava parado até
+// o prazo do contexto vencer, em vez de recusar na hora.
+func TestConfirmAlreadyEnabledWithASingleConnection(t *testing.T) {
+	casos := []struct {
+		nome      string
+		escrever  string
+		argumento []any
+		esperado  error
+	}{
+		{
+			nome:      "2FA ligado por outra transação",
+			escrever:  `UPDATE users SET totp_confirmed_at = $2 WHERE id = $1`,
+			argumento: []any{ligadoPorOutraTransacao},
+			esperado:  auth.ErrTOTPAlreadyEnabled,
+		},
+		{
+			nome:     "segredo pendente apagado",
+			escrever: `UPDATE users SET totp_secret_enc = NULL WHERE id = $1`,
+			esperado: auth.ErrTOTPNotEnrolled,
+		},
+	}
+	for _, caso := range casos {
+		t.Run(caso.nome, func(t *testing.T) {
+			base, pool, userID := setupTOTP(t)
+			now := inicioDaTroca
+
+			uri, err := base.Enroll(context.Background(), userID, "totp@exemplo.com")
+			if err != nil {
+				t.Fatal(err)
+			}
+			codigo := codigoEm(t, secretFromURI(t, uri), now)
+			familia := familiaViva(t, pool, userID, now)
+
+			// A escrita concorrente vai pelo pool de base; o pool do serviço
+			// tem uma conexão só, a que a transação do Confirm segura.
+			svc, exigirCorrida := totpComEscritaAntesDe(t, "SET totp_confirmed_at = $2, totp_last_timestep = $3", func() {
+				args := append([]any{userID}, caso.argumento...)
+				if _, err := pool.Exec(context.Background(), caso.escrever, args...); err != nil {
+					t.Fatalf("escrita concorrente: %v", err)
+				}
+			}, func(cfg *pgxpool.Config) { cfg.MaxConns = 1 })
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_, err = svc.Confirm(ctx, userID, familia, codigo, now)
+			exigirCorrida()
+			if !errors.Is(err, caso.esperado) {
+				t.Errorf("Confirm devolveu %v, queria %v", err, caso.esperado)
+			}
+			if ctx.Err() != nil {
+				t.Errorf("o prazo do contexto venceu (%v): o Confirm esperou uma segunda conexão", ctx.Err())
 			}
 		})
 	}
