@@ -149,8 +149,10 @@ expansão gzip, IDs distintos e referência imutável indisponível. Os testes d
 
 Sentinelas e simulações não comprovam integridade de PostgreSQL, isolamento efetivo de mounts, recovery após
 queda da VPS nem durabilidade do daemon. Nenhuma VPS, dado, segredo ou publicação de produção foi acessado.
-A homologação descartável com Docker/Coolify/PostgreSQL reais está em [HOMOLOGATION.md](HOMOLOGATION.md),
-com versões, resultados, ensaios invalidados e limitações. Paridade com versões, schema, carga e backups
+A homologação descartável com Docker/Coolify/PostgreSQL reais dos workloads sintéticos Duora/GoblinShift está no
+[relatório canônico fixado](https://github.com/BipoXDXD/duora/blob/33719c777e50faf68a1a8db750848d83808320df/scripts/release/coolify/HOMOLOGATION.md),
+com versões, resultados, ensaios invalidados e limitações; ela não é um ensaio completo da aplicação StillOn.
+Paridade com versões, schema, carga e backups
 efetivamente instalados continua exigindo validação operacional própria antes da ativação.
 
 ## Política administrativa GoblinShift

@@ -28,6 +28,13 @@ func donoCom2FA(t *testing.T, pool *pgxpool.Pool, dsn string, ligar bool) uuid.U
 	if err := pool.QueryRow(ctx, `SELECT id, password_hash FROM users`).Scan(&dono, &hash); err != nil {
 		t.Fatal(err)
 	}
+	// As sessões da fixture existem antes de o fator ficar obrigatório.
+	mgr := auth.NewManager(auth.NewPGStore(pool), clock.Real{}, []byte("chave-de-teste-com-32-bytes-ok!!"))
+	for range 2 {
+		if _, _, err := mgr.Issue(ctx, dono, auth.PasswordStamp(hash), auth.Meta{IP: "203.0.113.9"}); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if ligar {
 		if _, err := pool.Exec(ctx,
 			`UPDATE users SET totp_secret_enc = '\x01', totp_confirmed_at = now(), totp_last_timestep = 7,
@@ -40,12 +47,6 @@ func donoCom2FA(t *testing.T, pool *pgxpool.Pool, dsn string, ligar bool) uuid.U
 				uuid.New(), dono, uuid.New().String()); err != nil {
 				t.Fatal(err)
 			}
-		}
-	}
-	mgr := auth.NewManager(auth.NewPGStore(pool), clock.Real{}, []byte("chave-de-teste-com-32-bytes-ok!!"))
-	for range 2 {
-		if _, _, err := mgr.Issue(ctx, dono, auth.PasswordStamp(hash), auth.Meta{IP: "203.0.113.9"}); err != nil {
-			t.Fatal(err)
 		}
 	}
 	return dono

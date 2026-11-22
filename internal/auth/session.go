@@ -44,7 +44,8 @@ var (
 	ErrStalePassword = errors.New("a senha mudou depois de verificada")
 	// ErrStaleSecondFactor: o segredo do 2FA que aceitou o código já não é o
 	// do usuário (uma troca de autenticador ou um disable comitou entre o
-	// /totp/verify e a sessão). Quem chama responde como o
+	// /totp/verify e a sessão), ou o fator foi ativado depois da consulta do
+	// login sem prova. Quem chama responde como o
 	// código errado: invalid_credentials.
 	ErrStaleSecondFactor = errors.New("o segundo fator mudou depois de verificado")
 )
@@ -132,6 +133,11 @@ func PasswordStamp(hash string) string {
 // que pega a mesma trava, a revoga). TestLoginRacingAPasswordReset
 // (internal/httpapi) prova as duas ordens.
 //
+// Também reconfere que o 2FA continua sem confirmação. Se um Confirm comitou
+// depois da consulta inicial do login, recusa com ErrStaleSecondFactor. Se a
+// sessão comitar primeiro, o Confirm, sob a mesma trava, a revoga. Um cadastro
+// de fator ainda não confirmado continua permitindo login só com senha.
+//
 // A trava do usuário vem antes de qualquer outra coisa, como em toda
 // transação que muda sessions; Issue não trava linha nenhuma de sessions.
 func (m *Manager) Issue(ctx context.Context, userID uuid.UUID, stamp string, meta Meta) (string, Session, error) {
@@ -175,12 +181,16 @@ func (m *Manager) issue(ctx context.Context, userID uuid.UUID, stamp string, pro
 		if subtle.ConstantTimeCompare([]byte(PasswordStamp(hash)), []byte(stamp)) != 1 {
 			return ErrStalePassword
 		}
-		if proof != nil {
-			ativo, err := tx.UserTOTPSecret(ctx, userID)
-			if err != nil {
-				return err
+		ativo, confirmado, err := tx.UserTOTPSecret(ctx, userID)
+		if err != nil {
+			return err
+		}
+		if proof == nil {
+			if confirmado {
+				return ErrStaleSecondFactor
 			}
-			if len(ativo) == 0 || !bytes.Equal(ativo, proof.sealed) {
+		} else {
+			if !confirmado || len(ativo) == 0 || !bytes.Equal(ativo, proof.sealed) {
 				return ErrStaleSecondFactor
 			}
 		}

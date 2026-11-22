@@ -61,6 +61,11 @@ func (s *sessoesDoDuble) UserPasswordHash(context.Context, uuid.UUID) (string, e
 	return hashDeSenhaDoDuble, nil
 }
 
+// O cenário deste double não tem segundo fator ativo.
+func (s *sessoesDoDuble) UserTOTPSecret(context.Context, uuid.UUID) ([]byte, bool, error) {
+	return nil, false, nil
+}
+
 func (s *sessoesDoDuble) MarkSessionUsed(context.Context, uuid.UUID, time.Time) error { return nil }
 
 func (s *sessoesDoDuble) InsertSession(_ context.Context, r auth.SessionRow) error {
