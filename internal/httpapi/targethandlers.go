@@ -535,19 +535,6 @@ func pathID(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {
 	return id, true
 }
 
-// donoEID abre os handlers de recurso do usuário: o dono do token e o {id} da
-// rota. A ordem é contrato: sem usuário é 401 mesmo com id malformado, e só
-// depois um id malformado vira 404. Inverter deixaria quem não se autenticou
-// descobrir o formato do id.
-func donoEID(w http.ResponseWriter, r *http.Request) (userID, id uuid.UUID, ok bool) {
-	userID, ok = usuario(w, r)
-	if !ok {
-		return uuid.Nil, uuid.Nil, false
-	}
-	id, ok = pathID(w, r)
-	return userID, id, ok
-}
-
 // escopoEID abre os handlers de alvo com {id}: o escopo de projeto que o
 // middleware pôs no contexto e o {id} da rota. Sem escopo é defeito de
 // montagem (500, ver escopo); só depois um id malformado vira 404.
