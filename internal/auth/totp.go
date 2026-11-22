@@ -189,9 +189,17 @@ func (s *TOTP) Confirm(ctx context.Context, userID, familyID uuid.UUID, code str
 		return nil, fmt.Errorf("ativar TOTP: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
-		enabled, err := s.IsEnabled(ctx, userID)
+		// A classificação lê pela própria transação: uma consulta ao pool
+		// pediria uma segunda conexão com esta presa, e com o pool esgotado o
+		// Confirm esperava até o prazo do contexto em vez de recusar.
+		var enabled bool
+		err := tx.QueryRow(ctx,
+			`SELECT totp_confirmed_at IS NOT NULL FROM users WHERE id = $1`, userID).Scan(&enabled)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("classificar confirmação TOTP: %w", err)
 		}
 		if enabled {
 			return nil, ErrTOTPAlreadyEnabled
