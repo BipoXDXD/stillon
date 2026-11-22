@@ -132,9 +132,7 @@ func TestProbeWriteWaitsForAnOpenPatchAndSeesTheNewURL(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer tx.Rollback(context.Background())
-	if _, err := tx.Exec(ctx, `SELECT set_config('app.user_id', $1, true)`, b.dono.String()); err != nil {
-		t.Fatal(err)
-	}
+	testdb.EscopoDoProjetoPadrao(t, tx, b.dono)
 	q := db.New(tx)
 	if _, err := q.GetTargetForUpdate(ctx, db.GetTargetForUpdateParams{ProjectID: testdb.ProjetoDoAlvo(t, alvo), ID: alvo}); err != nil {
 		t.Fatal(err)
@@ -226,9 +224,7 @@ func TestPauseWithProbeInFlightIsAwaitedByTheWrite(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer tx.Rollback(context.Background())
-	if _, err := tx.Exec(ctx, `SELECT set_config('app.user_id', $1, true)`, b.dono.String()); err != nil {
-		t.Fatal(err)
-	}
+	testdb.EscopoDoProjetoPadrao(t, tx, b.dono)
 	if _, err := db.New(tx).GetTargetForUpdate(ctx, db.GetTargetForUpdateParams{ProjectID: testdb.ProjetoDoAlvo(t, alvo), ID: alvo}); err != nil {
 		t.Fatal(err)
 	}

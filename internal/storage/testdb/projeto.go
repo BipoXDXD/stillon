@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/BipoXDXD/stillon/internal/storage"
@@ -67,6 +68,21 @@ func noProjetoPadrao(t *testing.T, b storage.Beginner, userID uuid.UUID,
 	projeto := ProjetoPadrao(t, userID)
 	return storage.InProjectTx(context.Background(), b, userID, projeto,
 		func(q *db.Queries, _ tenancy.ProjectScope) error { return fn(q, projeto) })
+}
+
+// EscopoDoProjetoPadrao liga, na transação tx já aberta, o escopo do Projeto
+// padrão de userID, e devolve o projeto: para o SQL de teste sem query gerada
+// e para a transação que o teste segura aberta (trava de linha, concorrência).
+// Passa por storage.InProjectPgxTx num savepoint de tx: a mesma conferência de
+// pertença, e os set_config locais valem para tx depois que o savepoint fecha.
+func EscopoDoProjetoPadrao(t *testing.T, tx pgx.Tx, userID uuid.UUID) uuid.UUID {
+	t.Helper()
+	projeto := ProjetoPadrao(t, userID)
+	if err := storage.InProjectPgxTx(context.Background(), tx, userID, projeto,
+		func(pgx.Tx, tenancy.ProjectScope) error { return nil }); err != nil {
+		t.Fatalf("ligar o escopo do Projeto padrão de %s: %v", userID, err)
+	}
+	return projeto
 }
 
 // NovoProjeto cria um projeto que não é o padrão, com titular como owner, e

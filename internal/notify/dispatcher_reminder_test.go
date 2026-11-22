@@ -143,9 +143,7 @@ func (b *bancada) renomearAlvo(t *testing.T, nome string) {
 		t.Fatal(err)
 	}
 	defer tx.Rollback(ctx)
-	if _, err := tx.Exec(ctx, `SELECT set_config('app.user_id', $1, true)`, b.dono.String()); err != nil {
-		t.Fatal(err)
-	}
+	testdb.EscopoDoProjetoPadrao(t, tx, b.dono)
 	tag, err := tx.Exec(ctx, `UPDATE targets SET name = $1 WHERE id = (SELECT target_id FROM incidents WHERE id = $2)`, nome, b.incidente)
 	if err != nil || tag.RowsAffected() != 1 {
 		t.Fatalf("renomear alvo: %v, %d linhas", err, tag.RowsAffected())

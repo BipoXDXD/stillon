@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 	"github.com/BipoXDXD/stillon/internal/targets"
 )
 
@@ -24,12 +25,10 @@ func (a ambiente) encherAte(t *testing.T, dono uuid.UUID, n int) {
 		t.Fatal(err)
 	}
 	defer tx.Rollback(ctx)
-	if _, err := tx.Exec(ctx, `SELECT set_config('app.user_id', $1, true)`, dono.String()); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := tx.Exec(ctx, `INSERT INTO targets (id, user_id, name, url, method, interval_sec, timeout_ms, expected_status, next_run_at)
-		SELECT gen_random_uuid(), $1, 'alvo ' || i, 'https://exemplo.com/' || i, 'GET', 60, 10000, 200, now()
-		  FROM generate_series(1, $2::int) i`, dono, n); err != nil {
+	projeto := testdb.EscopoDoProjetoPadrao(t, tx, dono)
+	if _, err := tx.Exec(ctx, `INSERT INTO targets (id, user_id, project_id, name, url, method, interval_sec, timeout_ms, expected_status, next_run_at)
+		SELECT gen_random_uuid(), $1, $3, 'alvo ' || i, 'https://exemplo.com/' || i, 'GET', 60, 10000, 200, now()
+		  FROM generate_series(1, $2::int) i`, dono, n, projeto); err != nil {
 		t.Fatal(err)
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -119,15 +118,13 @@ func (a ambiente) encherComRegra(t *testing.T, dono uuid.UUID, urlBase string, n
 		t.Fatal(err)
 	}
 	defer tx.Rollback(ctx)
-	if _, err := tx.Exec(ctx, `SELECT set_config('app.user_id', $1, true)`, dono.String()); err != nil {
-		t.Fatal(err)
-	}
-	rows, err := tx.Query(ctx, `INSERT INTO targets (id, user_id, name, url, method, interval_sec, timeout_ms, expected_status,
+	projeto := testdb.EscopoDoProjetoPadrao(t, tx, dono)
+	rows, err := tx.Query(ctx, `INSERT INTO targets (id, user_id, project_id, name, url, method, interval_sec, timeout_ms, expected_status,
 		                                            next_run_at, enabled, content_mode, content_value)
-		SELECT gen_random_uuid(), $1, 'regra ' || i, $2 || '/' || i, 'GET', 60, 10000, 200, now(), $4, 'contains', 'ok'
+		SELECT gen_random_uuid(), $1, $5, 'regra ' || i, $2 || '/' || i, 'GET', 60, 10000, 200, now(), $4, 'contains', 'ok'
 		  FROM generate_series(1, $3::int) i
 		 ORDER BY i
-		RETURNING id`, dono, urlBase, n, habilitado)
+		RETURNING id`, dono, urlBase, n, habilitado, projeto)
 	if err != nil {
 		t.Fatal(err)
 	}

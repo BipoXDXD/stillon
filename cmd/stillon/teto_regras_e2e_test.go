@@ -87,9 +87,7 @@ func TestAPIRoleAppliesTheConfiguredContentRulesPerHost(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer tx.Rollback(ctx)
-	if _, err := tx.Exec(ctx, `SELECT set_config('app.user_id', $1, true)`, dono.String()); err != nil {
-		t.Fatal(err)
-	}
+	testdb.EscopoDoProjetoPadrao(t, tx, dono)
 	var n int
 	if err := tx.QueryRow(ctx, `SELECT count(*) FROM targets WHERE user_id = $1`, dono).Scan(&n); err != nil {
 		t.Fatal(err)

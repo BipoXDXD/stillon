@@ -43,9 +43,7 @@ func comoDonoSQL(t *testing.T, a *api, sql string, args ...any) {
 		t.Fatal(err)
 	}
 	defer tx.Rollback(ctx)
-	if _, err := tx.Exec(ctx, `SELECT set_config('app.user_id', $1, true)`, a.userID.String()); err != nil {
-		t.Fatal(err)
-	}
+	testdb.EscopoDoProjetoPadrao(t, tx, a.userID)
 	tag, err := tx.Exec(ctx, sql, args...)
 	if err != nil {
 		t.Fatalf("%s: %v", sql, err)

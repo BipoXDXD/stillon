@@ -154,9 +154,7 @@ func devolverAFila(t *testing.T, pool *pgxpool.Pool, dono, alvo uuid.UUID) {
 		t.Fatal(err)
 	}
 	defer tx.Rollback(ctx)
-	if _, err := tx.Exec(ctx, `SELECT set_config('app.user_id', $1, true)`, dono.String()); err != nil {
-		t.Fatal(err)
-	}
+	testdb.EscopoDoProjetoPadrao(t, tx, dono)
 	if _, err := tx.Exec(ctx, `UPDATE targets SET next_run_at = now() - interval '1 minute' WHERE id = $1`, alvo); err != nil {
 		t.Fatal(err)
 	}
@@ -192,9 +190,7 @@ func escopoDoDono(t *testing.T, pool *pgxpool.Pool, dono uuid.UUID, sql string, 
 		t.Fatal(err)
 	}
 	defer tx.Rollback(ctx)
-	if _, err := tx.Exec(ctx, `SELECT set_config('app.user_id', $1, true)`, dono.String()); err != nil {
-		t.Fatal(err)
-	}
+	testdb.EscopoDoProjetoPadrao(t, tx, dono)
 	if err := tx.QueryRow(ctx, sql, args...).Scan(dst...); err != nil {
 		t.Fatal(err)
 	}

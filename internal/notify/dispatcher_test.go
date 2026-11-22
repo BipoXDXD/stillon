@@ -178,9 +178,7 @@ func (b *bancada) estado(t *testing.T, id uuid.UUID) linha {
 		t.Fatal(err)
 	}
 	defer tx.Rollback(ctx)
-	if _, err := tx.Exec(ctx, `SELECT set_config('app.user_id', $1, true)`, b.dono.String()); err != nil {
-		t.Fatal(err)
-	}
+	testdb.EscopoDoProjetoPadrao(t, tx, b.dono)
 	var l linha
 	err = tx.QueryRow(ctx, `SELECT status, attempts, next_attempt_at, last_error, sent_at FROM notifications WHERE id = $1`, id).
 		Scan(&l.Status, &l.Attempts, &l.Proxima, &l.Erro, &l.Enviada)
@@ -309,9 +307,8 @@ func TestNoSendPastTheLastAttempt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := tx.Exec(ctx, `SELECT set_config('app.user_id', $1, true)`, b.dono.String()); err != nil {
-		t.Fatal(err)
-	}
+	defer tx.Rollback(ctx) // sem ele, um Fatal antes do Commit prende a conexão e o pool.Close da limpeza espera para sempre
+	testdb.EscopoDoProjetoPadrao(t, tx, b.dono)
 	if tag, err := tx.Exec(ctx, `UPDATE notifications SET attempts = $2 WHERE id = $1`, id, MaxAttempts); err != nil || tag.RowsAffected() != 1 {
 		t.Fatalf("UPDATE attempts: %v, %d linhas", err, tag.RowsAffected())
 	}
@@ -375,9 +372,8 @@ func TestDisabledChannelIsCancelledWithoutSending(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := tx.Exec(ctx, `SELECT set_config('app.user_id', $1, true)`, b.dono.String()); err != nil {
-		t.Fatal(err)
-	}
+	defer tx.Rollback(ctx)
+	testdb.EscopoDoProjetoPadrao(t, tx, b.dono)
 	if _, err := tx.Exec(ctx, `UPDATE notif_channels SET enabled = false WHERE id = $1`, b.canalID); err != nil {
 		t.Fatal(err)
 	}
@@ -759,9 +755,8 @@ func (b *bancada) tentativas(t *testing.T, n int32) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := tx.Exec(ctx, `SELECT set_config('app.user_id', $1, true)`, b.dono.String()); err != nil {
-		t.Fatal(err)
-	}
+	defer tx.Rollback(ctx)
+	testdb.EscopoDoProjetoPadrao(t, tx, b.dono)
 	if _, err := tx.Exec(ctx, `UPDATE notifications SET attempts = $1`, n); err != nil {
 		t.Fatal(err)
 	}

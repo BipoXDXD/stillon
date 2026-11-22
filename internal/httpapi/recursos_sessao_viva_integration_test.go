@@ -28,9 +28,7 @@ func recursosPersistidos(t *testing.T, a *api) string {
 		t.Fatal(err)
 	}
 	defer tx.Rollback(ctx)
-	if _, err := tx.Exec(ctx, `SELECT set_config('app.user_id', $1, true)`, a.userID.String()); err != nil {
-		t.Fatal(err)
-	}
+	testdb.EscopoDoProjetoPadrao(t, tx, a.userID)
 	var estado string
 	err = tx.QueryRow(ctx, `SELECT jsonb_build_array(
 		(SELECT coalesce(jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text), '[]') FROM targets t),

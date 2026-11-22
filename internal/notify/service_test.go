@@ -408,9 +408,8 @@ func TestUnreadableChannelDoesNotBreakTheList(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := tx.Exec(ctx, `SELECT set_config('app.user_id', $1, true)`, b.dono.String()); err != nil {
-		t.Fatal(err)
-	}
+	defer tx.Rollback(ctx)
+	testdb.EscopoDoProjetoPadrao(t, tx, b.dono)
 	if _, err := tx.Exec(ctx, `UPDATE notif_channels SET config_enc = '\x00ff' WHERE id = $1`, c.ID); err != nil {
 		t.Fatal(err)
 	}

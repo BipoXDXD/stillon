@@ -340,9 +340,7 @@ func pausarAlvoDoIncidente(t *testing.T, pool *pgxpool.Pool, dono, incidente uui
 		t.Fatal(err)
 	}
 	defer tx.Rollback(ctx)
-	if _, err := tx.Exec(ctx, `SELECT set_config('app.user_id', $1, true)`, dono.String()); err != nil {
-		t.Fatal(err)
-	}
+	testdb.EscopoDoProjetoPadrao(t, tx, dono)
 	tag, err := tx.Exec(ctx, `UPDATE targets SET enabled = $1 WHERE id = (SELECT target_id FROM incidents WHERE id = $2)`, !pausado, incidente)
 	if err != nil || tag.RowsAffected() != 1 {
 		t.Fatalf("pausar alvo: %v, %d linhas", err, tag.RowsAffected())

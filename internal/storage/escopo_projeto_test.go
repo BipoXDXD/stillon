@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/BipoXDXD/stillon/internal/storage"
 	"github.com/BipoXDXD/stillon/internal/storage/db"
@@ -225,5 +226,41 @@ func TestProjectScopeSurvivesConnectionReuse(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("InUserTx numa conexão reusada falhou: %v", err)
+	}
+}
+
+// InProjectPgxTx é o caminho de InProjectTx com o pgx.Tx cru, para o SQL que
+// não tem query gerada: liga app.user_id e app.project_id depois de conferir a
+// pertença. Sem pertença, o mesmo erro de InProjectTx e fn não roda.
+func TestInProjectPgxTxScopesProjectAfterMembership(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+	u, a, _, _, _ := doisProjetos(t, pool)
+
+	var usuario, projeto string
+	var visto tenancy.ProjectScope
+	err := storage.InProjectPgxTx(ctx, pool, u, a, func(tx pgx.Tx, sc tenancy.ProjectScope) error {
+		visto = sc
+		return tx.QueryRow(ctx, `SELECT coalesce(current_setting('app.user_id', true), ''),
+		                                coalesce(current_setting('app.project_id', true), '')`).Scan(&usuario, &projeto)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if usuario != u.String() || projeto != a.String() {
+		t.Errorf("GUCs dentro de fn = (%q, %q), queria (%q, %q)", usuario, projeto, u, a)
+	}
+	if visto != (tenancy.ProjectScope{ProjectID: a, UserID: u, Role: tenancy.RoleOwner}) {
+		t.Errorf("escopo entregue = %+v, queria owner de %s", visto, a)
+	}
+
+	estranho := novoUsuario(t, pool)
+	rodou := false
+	err = storage.InProjectPgxTx(ctx, pool, estranho, a, func(pgx.Tx, tenancy.ProjectScope) error {
+		rodou = true
+		return nil
+	})
+	if !errors.Is(err, tenancy.ErrProjectNotFound) || rodou {
+		t.Errorf("sem pertença: err = %v, fn rodou = %v; queria tenancy.ErrProjectNotFound sem rodar fn", err, rodou)
 	}
 }

@@ -68,9 +68,7 @@ func (b *bancada) comoDono(t *testing.T, fn func(pgx.Tx)) {
 		t.Fatal(err)
 	}
 	defer tx.Rollback(ctx)
-	if _, err := tx.Exec(ctx, `SELECT set_config('app.user_id', $1, true)`, b.dono.String()); err != nil {
-		t.Fatal(err)
-	}
+	testdb.EscopoDoProjetoPadrao(t, tx, b.dono)
 	fn(tx)
 	if err := tx.Commit(ctx); err != nil {
 		t.Fatal(err)

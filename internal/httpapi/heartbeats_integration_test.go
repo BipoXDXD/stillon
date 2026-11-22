@@ -106,9 +106,7 @@ func TestCreateStoresOnlyTheTokenHash(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer tx.Rollback(ctx)
-	if _, err := tx.Exec(ctx, `SELECT set_config('app.user_id', $1, true)`, a.userID.String()); err != nil {
-		t.Fatal(err)
-	}
+	testdb.EscopoDoProjetoPadrao(t, tx, a.userID)
 	if err := tx.QueryRow(ctx, `SELECT ping_token_hash, h::text FROM heartbeats h`).Scan(&hash, &linha); err != nil {
 		t.Fatal(err)
 	}

@@ -37,9 +37,7 @@ func (b *bancada) linhaTLS(t *testing.T, alvo uuid.UUID) (linhaTLS, bool) {
 		t.Fatal(err)
 	}
 	defer tx.Rollback(ctx)
-	if _, err := tx.Exec(ctx, `SELECT set_config('app.user_id', $1, true)`, b.dono.String()); err != nil {
-		t.Fatal(err)
-	}
+	testdb.EscopoDoProjetoPadrao(t, tx, b.dono)
 	var l linhaTLS
 	err = tx.QueryRow(ctx, `SELECT not_after, observed_at, xmin::text::bigint FROM target_tls WHERE target_id = $1`, alvo).
 		Scan(&l.NotAfter, &l.ObservedAt, &l.Xmin)
@@ -318,9 +316,7 @@ func TestOldHostProbeWaitsForAnOpenPatchAndLeavesNoCertificate(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer tx.Rollback(context.Background())
-	if _, err := tx.Exec(ctx, `SELECT set_config('app.user_id', $1, true)`, b.dono.String()); err != nil {
-		t.Fatal(err)
-	}
+	testdb.EscopoDoProjetoPadrao(t, tx, b.dono)
 	q := db.New(tx)
 	if _, err := q.GetTargetForUpdate(ctx, db.GetTargetForUpdateParams{ProjectID: testdb.ProjetoDoAlvo(t, alvo), ID: alvo}); err != nil {
 		t.Fatal(err)

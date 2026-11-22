@@ -406,8 +406,8 @@ func TestConcurrentPatchesDoNotLoseFields(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer outra.Rollback(ctx)
+	testdb.EscopoDoProjetoPadrao(t, outra, dono)
 	for _, sql := range []string{
-		`SELECT set_config('app.user_id', '` + dono.String() + `', true)`,
 		`SELECT id FROM status_pages FOR UPDATE`,
 		`UPDATE status_pages SET title = 'Novo'`,
 	} {

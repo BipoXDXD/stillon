@@ -65,3 +65,28 @@ func TestNoProjetoPadraoUsesProjectScope(t *testing.T) {
 		t.Errorf("NoProjetoPadrao: projeto = %s, err = %v; queria %s", visto, err, padrao)
 	}
 }
+
+// Depois de EscopoDoProjetoPadrao, a própria transação do teste está no escopo
+// do projeto, com o savepoint de InProjectPgxTx já fechado.
+func TestEscopoDoProjetoPadraoLeavesTxInProjectScope(t *testing.T) {
+	pool := New(t)
+	ctx := context.Background()
+	dono := uuid.Must(uuid.NewV7())
+	if _, err := pool.Exec(ctx, `INSERT INTO users (id, email, password_hash) VALUES ($1, 'tx@exemplo.com', 'x')`, dono); err != nil {
+		t.Fatal(err)
+	}
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+
+	projeto := EscopoDoProjetoPadrao(t, tx, dono)
+	var visto string
+	if err := tx.QueryRow(ctx, `SELECT coalesce(current_setting('app.project_id', true), '')`).Scan(&visto); err != nil {
+		t.Fatal(err)
+	}
+	if projeto != ProjetoPadrao(t, dono) || visto != projeto.String() {
+		t.Errorf("app.project_id na transação = %q (devolvido %s), queria o Projeto padrão %s", visto, projeto, ProjetoPadrao(t, dono))
+	}
+}
