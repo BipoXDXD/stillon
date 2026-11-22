@@ -260,7 +260,7 @@ SELECT id, user_id, name, ping_token_hash, period_sec, cron_expr, timezone,
        grace_sec, enabled, created_at, deadline_at, last_ping_at,
        last_success_at, last_start_at, last_signal, failing_since,
        last_incident_at, resumed_at, last_runtime_ms, description, last_run_id,
-       ping_resumes
+       ping_resumes, project_id
   FROM heartbeats WHERE user_id = $1 AND id = $2
 `
 
@@ -295,6 +295,7 @@ func (q *Queries) GetHeartbeat(ctx context.Context, arg GetHeartbeatParams) (Hea
 		&i.Description,
 		&i.LastRunID,
 		&i.PingResumes,
+		&i.ProjectID,
 	)
 	return i, err
 }
@@ -304,7 +305,7 @@ SELECT id, user_id, name, ping_token_hash, period_sec, cron_expr, timezone,
        grace_sec, enabled, created_at, deadline_at, last_ping_at,
        last_success_at, last_start_at, last_signal, failing_since,
        last_incident_at, resumed_at, last_runtime_ms, description, last_run_id,
-       ping_resumes
+       ping_resumes, project_id
   FROM heartbeats WHERE user_id = $1 AND id = $2 FOR UPDATE
 `
 
@@ -341,12 +342,13 @@ func (q *Queries) GetHeartbeatForUpdate(ctx context.Context, arg GetHeartbeatFor
 		&i.Description,
 		&i.LastRunID,
 		&i.PingResumes,
+		&i.ProjectID,
 	)
 	return i, err
 }
 
 const getHeartbeatView = `-- name: GetHeartbeatView :one
-SELECT h.id, h.user_id, h.name, h.ping_token_hash, h.period_sec, h.cron_expr, h.timezone, h.grace_sec, h.enabled, h.created_at, h.deadline_at, h.last_ping_at, h.last_success_at, h.last_start_at, h.last_signal, h.failing_since, h.last_incident_at, h.resumed_at, h.last_runtime_ms, h.description, h.last_run_id, h.ping_resumes, x.id AS open_incident_id
+SELECT h.id, h.user_id, h.name, h.ping_token_hash, h.period_sec, h.cron_expr, h.timezone, h.grace_sec, h.enabled, h.created_at, h.deadline_at, h.last_ping_at, h.last_success_at, h.last_start_at, h.last_signal, h.failing_since, h.last_incident_at, h.resumed_at, h.last_runtime_ms, h.description, h.last_run_id, h.ping_resumes, h.project_id, x.id AS open_incident_id
   FROM heartbeats h
   LEFT JOIN incidents x ON x.heartbeat_id = h.id AND x.resolved_at IS NULL
  WHERE h.user_id = $1 AND h.id = $2
@@ -389,6 +391,7 @@ func (q *Queries) GetHeartbeatView(ctx context.Context, arg GetHeartbeatViewPara
 		&i.Heartbeat.Description,
 		&i.Heartbeat.LastRunID,
 		&i.Heartbeat.PingResumes,
+		&i.Heartbeat.ProjectID,
 		&i.OpenIncidentID,
 	)
 	return i, err
@@ -664,7 +667,7 @@ func (q *Queries) ListHeartbeatTags(ctx context.Context, arg ListHeartbeatTagsPa
 }
 
 const listHeartbeats = `-- name: ListHeartbeats :many
-SELECT h.id, h.user_id, h.name, h.ping_token_hash, h.period_sec, h.cron_expr, h.timezone, h.grace_sec, h.enabled, h.created_at, h.deadline_at, h.last_ping_at, h.last_success_at, h.last_start_at, h.last_signal, h.failing_since, h.last_incident_at, h.resumed_at, h.last_runtime_ms, h.description, h.last_run_id, h.ping_resumes, x.id AS open_incident_id
+SELECT h.id, h.user_id, h.name, h.ping_token_hash, h.period_sec, h.cron_expr, h.timezone, h.grace_sec, h.enabled, h.created_at, h.deadline_at, h.last_ping_at, h.last_success_at, h.last_start_at, h.last_signal, h.failing_since, h.last_incident_at, h.resumed_at, h.last_runtime_ms, h.description, h.last_run_id, h.ping_resumes, h.project_id, x.id AS open_incident_id
   FROM heartbeats h
   LEFT JOIN incidents x ON x.heartbeat_id = h.id AND x.resolved_at IS NULL
  WHERE h.user_id = $1
@@ -717,6 +720,7 @@ func (q *Queries) ListHeartbeats(ctx context.Context, arg ListHeartbeatsParams) 
 			&i.Heartbeat.Description,
 			&i.Heartbeat.LastRunID,
 			&i.Heartbeat.PingResumes,
+			&i.Heartbeat.ProjectID,
 			&i.OpenIncidentID,
 		); err != nil {
 			return nil, err
@@ -762,7 +766,7 @@ SELECT id, user_id, name, ping_token_hash, period_sec, cron_expr, timezone,
        grace_sec, enabled, created_at, deadline_at, last_ping_at,
        last_success_at, last_start_at, last_signal, failing_since,
        last_incident_at, resumed_at, last_runtime_ms, description, last_run_id,
-       ping_resumes
+       ping_resumes, project_id
   FROM heartbeats WHERE ping_token_hash = $1 FOR UPDATE
 `
 
@@ -796,6 +800,7 @@ func (q *Queries) LockHeartbeatForPing(ctx context.Context, pingTokenHash []byte
 		&i.Description,
 		&i.LastRunID,
 		&i.PingResumes,
+		&i.ProjectID,
 	)
 	return i, err
 }

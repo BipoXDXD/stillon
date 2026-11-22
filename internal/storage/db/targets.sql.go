@@ -77,7 +77,8 @@ func (q *Queries) DeleteTargetTags(ctx context.Context, arg DeleteTargetTagsPara
 const getTarget = `-- name: GetTarget :one
 SELECT id, user_id, name, url, method, interval_sec, timeout_ms,
        expected_status, headers_enc, degraded_threshold_ms, enabled, next_run_at,
-       created_at, tls_warn, content_mode, content_value, content_json_pointer
+       created_at, tls_warn, content_mode, content_value, content_json_pointer,
+       project_id
   FROM targets WHERE user_id = $1 AND id = $2
 `
 
@@ -107,6 +108,7 @@ func (q *Queries) GetTarget(ctx context.Context, arg GetTargetParams) (Target, e
 		&i.ContentMode,
 		&i.ContentValue,
 		&i.ContentJsonPointer,
+		&i.ProjectID,
 	)
 	return i, err
 }
@@ -114,7 +116,8 @@ func (q *Queries) GetTarget(ctx context.Context, arg GetTargetParams) (Target, e
 const getTargetForUpdate = `-- name: GetTargetForUpdate :one
 SELECT id, user_id, name, url, method, interval_sec, timeout_ms,
        expected_status, headers_enc, degraded_threshold_ms, enabled, next_run_at,
-       created_at, tls_warn, content_mode, content_value, content_json_pointer
+       created_at, tls_warn, content_mode, content_value, content_json_pointer,
+       project_id
   FROM targets WHERE user_id = $1 AND id = $2 FOR UPDATE
 `
 
@@ -147,6 +150,7 @@ func (q *Queries) GetTargetForUpdate(ctx context.Context, arg GetTargetForUpdate
 		&i.ContentMode,
 		&i.ContentValue,
 		&i.ContentJsonPointer,
+		&i.ProjectID,
 	)
 	return i, err
 }
@@ -672,7 +676,8 @@ func (q *Queries) ListTargetTags(ctx context.Context, arg ListTargetTagsParams) 
 const listTargets = `-- name: ListTargets :many
 SELECT id, user_id, name, url, method, interval_sec, timeout_ms,
        expected_status, headers_enc, degraded_threshold_ms, enabled, next_run_at,
-       created_at, tls_warn, content_mode, content_value, content_json_pointer
+       created_at, tls_warn, content_mode, content_value, content_json_pointer,
+       project_id
   FROM targets
  WHERE user_id = $1
    AND ($2::uuid IS NULL OR id < $2::uuid)
@@ -715,6 +720,7 @@ func (q *Queries) ListTargets(ctx context.Context, arg ListTargetsParams) ([]Tar
 			&i.ContentMode,
 			&i.ContentValue,
 			&i.ContentJsonPointer,
+			&i.ProjectID,
 		); err != nil {
 			return nil, err
 		}

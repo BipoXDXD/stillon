@@ -372,6 +372,10 @@ func TestGatilhosDeGuardaSaoBeforeUpdatePorLinha(t *testing.T) {
 		{"notif_channels", "notif_channels_user_id_imutavel"},
 		{"incidents", "incidents_so_ack_fora_do_sondador"},
 		{"target_health", "target_health_so_zerar_fora_do_sondador"},
+		{"targets", "targets_project_id_imutavel"},
+		{"heartbeats", "heartbeats_project_id_imutavel"},
+		{"notif_channels", "notif_channels_project_id_imutavel"},
+		{"status_pages", "status_pages_project_id_imutavel"},
 	} {
 		t.Run(g.gatilho, func(t *testing.T) {
 			var tipo int16

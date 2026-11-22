@@ -16,7 +16,7 @@ SELECT id, user_id, name, ping_token_hash, period_sec, cron_expr, timezone,
        grace_sec, enabled, created_at, deadline_at, last_ping_at,
        last_success_at, last_start_at, last_signal, failing_since,
        last_incident_at, resumed_at, last_runtime_ms, description, last_run_id,
-       ping_resumes
+       ping_resumes, project_id
   FROM heartbeats WHERE ping_token_hash = $1 FOR UPDATE;
 
 -- name: OpenHeartbeatIncident :exec
@@ -61,7 +61,7 @@ SELECT id, user_id, name, ping_token_hash, period_sec, cron_expr, timezone,
        grace_sec, enabled, created_at, deadline_at, last_ping_at,
        last_success_at, last_start_at, last_signal, failing_since,
        last_incident_at, resumed_at, last_runtime_ms, description, last_run_id,
-       ping_resumes
+       ping_resumes, project_id
   FROM heartbeats WHERE user_id = $1 AND id = $2;
 
 -- O log do dono, do mais novo ao mais velho. O id é UUIDv7, e o cursor é o
@@ -163,7 +163,7 @@ SELECT id, user_id, name, ping_token_hash, period_sec, cron_expr, timezone,
        grace_sec, enabled, created_at, deadline_at, last_ping_at,
        last_success_at, last_start_at, last_signal, failing_since,
        last_incident_at, resumed_at, last_runtime_ms, description, last_run_id,
-       ping_resumes
+       ping_resumes, project_id
   FROM heartbeats WHERE user_id = $1 AND id = $2 FOR UPDATE;
 
 -- name: UpdateHeartbeat :exec

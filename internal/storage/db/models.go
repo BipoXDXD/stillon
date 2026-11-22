@@ -71,6 +71,7 @@ type Heartbeat struct {
 	Description    string
 	LastRunID      *uuid.UUID
 	PingResumes    bool
+	ProjectID      *uuid.UUID
 }
 
 type HeartbeatEvent struct {
@@ -120,6 +121,7 @@ type NotifChannel struct {
 	VerifyExpiresAt *time.Time
 	Enabled         bool
 	CreatedAt       time.Time
+	ProjectID       *uuid.UUID
 }
 
 type Notification struct {
@@ -181,6 +183,7 @@ type StatusPage struct {
 	Title     string
 	Published bool
 	CreatedAt time.Time
+	ProjectID *uuid.UUID
 }
 
 type StatusPageItem struct {
@@ -208,6 +211,7 @@ type Target struct {
 	ContentMode         *string
 	ContentValue        *string
 	ContentJsonPointer  *string
+	ProjectID           *uuid.UUID
 }
 
 type TargetHealth struct {
