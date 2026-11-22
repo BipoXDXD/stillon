@@ -239,6 +239,8 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 
 	mux.Handle("GET /api/v1/incidents", recursoLegado(ih.List))
 	mux.Handle("POST /api/v1/incidents/{id}/ack", recursoLegado(ih.Ack))
+	mux.Handle("GET /api/v1/projects/{projectID}/incidents", noProjeto(ih.List))
+	mux.Handle("POST /api/v1/projects/{projectID}/incidents/{id}/ack", noProjeto(ih.Ack))
 
 	mux.Handle("GET /api/v1/heartbeats", recursoLegado(hb.List))
 	mux.Handle("POST /api/v1/heartbeats", recursoLegado(hb.Create))

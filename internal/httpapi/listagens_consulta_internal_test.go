@@ -43,7 +43,7 @@ func TestListingsRejectQueryOutsideTheAllowlist(t *testing.T) {
 		deOutraRota string
 	}{
 		{"GET /targets", noProjetoPadrao(alvos.List), "status=open"},
-		{"GET /incidents", incidentes.List, "tag=web"},
+		{"GET /incidents", noProjetoPadrao(incidentes.List), "tag=web"},
 		{"GET /heartbeats", noProjetoPadrao(heartbeats.List), "status=open"},
 		{"GET /heartbeats/{id}/events", noProjetoPadrao(heartbeats.Events), "status=open"},
 		{"GET /heartbeats/{id}/incidents", noProjetoPadrao(heartbeats.Incidents), "target_id=1"},

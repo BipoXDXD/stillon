@@ -44,6 +44,7 @@ func TestDonoSoAlteraOAckDoIncidente(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
 	dono := novoUsuario(t, pool)
+	projeto := testdb.ProjetoPadrao(t, dono)
 	alvo, outroAlvo := novoAlvo(t, pool, dono, agora), novoAlvo(t, pool, dono, agora)
 	hb := novoHeartbeat(t, pool, dono, "hb")
 	incidente := incidenteDoSondador(t, pool, alvo)
@@ -80,7 +81,7 @@ func TestDonoSoAlteraOAckDoIncidente(t *testing.T) {
 	}
 
 	err := storage.InUserTx(ctx, pool, dono, func(q *db.Queries) error {
-		_, err := q.AckIncident(ctx, db.AckIncidentParams{Now: agora, UserID: dono, ID: incidente})
+		_, err := q.AckIncident(ctx, db.AckIncidentParams{Now: agora, ProjectID: projeto, ID: incidente})
 		return err
 	})
 	if err != nil {

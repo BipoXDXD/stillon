@@ -78,7 +78,7 @@ func TestIDMalformadoE404EmTodaRotaComID(t *testing.T) {
 		"PATCH /targets/{id}":                               noProjetoPadrao(alvos.Update),
 		"DELETE /targets/{id}":                              noProjetoPadrao(alvos.Delete),
 		"GET /targets/{id}/checks":                          noProjetoPadrao(alvos.Checks),
-		"POST /incidents/{id}/ack":                          incidentes.Ack,
+		"POST /incidents/{id}/ack":                          noProjetoPadrao(incidentes.Ack),
 		"GET /heartbeats/{id}":                              noProjetoPadrao(batidas.Get),
 		"PATCH /heartbeats/{id}":                            noProjetoPadrao(batidas.Update),
 		"DELETE /heartbeats/{id}":                           noProjetoPadrao(batidas.Delete),
@@ -124,7 +124,7 @@ func TestIncidenteMalformadoNoAckE404(t *testing.T) {
 func TestConsultaHostilE400NasListagens(t *testing.T) {
 	alvos, batidas, incidentes := &TargetHandlers{clk: clock.NewFake(time.Now())}, &HeartbeatHandlers{}, &IncidentHandlers{}
 	paginadas := map[string]http.HandlerFunc{
-		"targets": noProjetoPadrao(alvos.List), "incidents": incidentes.List, "heartbeats": noProjetoPadrao(batidas.List),
+		"targets": noProjetoPadrao(alvos.List), "incidents": noProjetoPadrao(incidentes.List), "heartbeats": noProjetoPadrao(batidas.List),
 		"heartbeats events": noProjetoPadrao(batidas.Events), "heartbeats incidents": noProjetoPadrao(batidas.Incidents),
 	}
 	const (
@@ -152,9 +152,9 @@ func TestConsultaHostilE400NasListagens(t *testing.T) {
 		h                       http.HandlerFunc
 		consulta, campo, motivo string
 	}{
-		{"incidents", incidentes.List, "status=%00", "status", invalido},
-		{"incidents", incidentes.List, "status=OPEN", "status", invalido},
-		{"incidents", incidentes.List, "target_id=%00", "target_id", invalido},
+		{"incidents", noProjetoPadrao(incidentes.List), "status=%00", "status", invalido},
+		{"incidents", noProjetoPadrao(incidentes.List), "status=OPEN", "status", invalido},
+		{"incidents", noProjetoPadrao(incidentes.List), "target_id=%00", "target_id", invalido},
 		{"heartbeats incidents", noProjetoPadrao(batidas.Incidents), "status=%00", "status", invalido},
 		{"checks", noProjetoPadrao(alvos.Checks), "from=%00", "from", invalido},
 		{"checks", noProjetoPadrao(alvos.Checks), "to=%00", "to", invalido},

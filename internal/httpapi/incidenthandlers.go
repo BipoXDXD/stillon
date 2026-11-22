@@ -10,6 +10,7 @@ import (
 	"github.com/BipoXDXD/stillon/internal/apierr"
 	"github.com/BipoXDXD/stillon/internal/incident/history"
 	"github.com/BipoXDXD/stillon/internal/targets"
+	"github.com/BipoXDXD/stillon/internal/tenancy"
 )
 
 type IncidentHandlers struct {
@@ -48,7 +49,7 @@ var parametrosDaListaDeIncidentes = []string{"status", "target_id", "cursor", "l
 // List é GET /incidents?status=open|resolved&target_id=&cursor=&limit=
 // (spec §9).
 func (h *IncidentHandlers) List(w http.ResponseWriter, r *http.Request) {
-	userID, ok := usuario(w, r)
+	sc, ok := escopo(w, r)
 	if !ok {
 		return
 	}
@@ -85,7 +86,7 @@ func (h *IncidentHandlers) List(w http.ResponseWriter, r *http.Request) {
 		f.TargetID = &alvo
 	}
 
-	items, err := h.svc.List(r.Context(), userID, f)
+	items, err := h.svc.List(r.Context(), sc, f)
 	if h.falhou(w, r, "listar incidentes", err) {
 		return
 	}
@@ -100,25 +101,31 @@ func (h *IncidentHandlers) List(w http.ResponseWriter, r *http.Request) {
 // Ack é POST /incidents/{id}/ack. Idempotente: o segundo ack devolve o
 // instante do primeiro.
 func (h *IncidentHandlers) Ack(w http.ResponseWriter, r *http.Request) {
-	userID, id, ok := donoEID(w, r)
+	sc, id, ok := escopoEID(w, r)
 	if !ok {
 		return
 	}
-	i, err := h.svc.Ack(r.Context(), userID, id)
+	i, err := h.svc.Ack(r.Context(), sc, id)
 	if h.falhou(w, r, "reconhecer incidente", err) {
 		return
 	}
 	apierr.WriteJSON(w, http.StatusOK, toIncidentResponse(i))
 }
 
+// falhou traduz o erro do serviço. Projeto sem pertença (ErrProjectNotFound,
+// da transação) é o mesmo 404 de incidente inexistente; papel sem a permissão
+// é 403.
 func (h *IncidentHandlers) falhou(w http.ResponseWriter, r *http.Request, op string, err error) bool {
 	if err == nil {
 		return false
 	}
-	if errors.Is(err, history.ErrNotFound) {
+	switch {
+	case errors.Is(err, history.ErrNotFound), errors.Is(err, tenancy.ErrProjectNotFound):
 		apierr.WriteError(w, r, apierr.CodeNotFound)
-		return true
+	case errors.Is(err, tenancy.ErrForbidden):
+		apierr.WriteError(w, r, apierr.CodeForbidden)
+	default:
+		erroInterno(w, r, op, err)
 	}
-	erroInterno(w, r, op, err)
 	return true
 }

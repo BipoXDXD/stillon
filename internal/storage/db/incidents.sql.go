@@ -16,14 +16,14 @@ const ackIncident = `-- name: AckIncident :one
 UPDATE incidents i
    SET ack_at = COALESCE(i.ack_at, $1::timestamptz)
   FROM targets t
- WHERE t.id = i.target_id AND t.user_id = $2 AND i.id = $3
+ WHERE t.id = i.target_id AND t.project_id = $2::uuid AND i.id = $3
 RETURNING i.id, t.id AS target_id, t.name AS target_name, i.started_at, i.resolved_at, i.cause, i.ack_at
 `
 
 type AckIncidentParams struct {
-	Now    time.Time
-	UserID uuid.UUID
-	ID     uuid.UUID
+	Now       time.Time
+	ProjectID uuid.UUID
+	ID        uuid.UUID
 }
 
 type AckIncidentRow struct {
@@ -38,7 +38,7 @@ type AckIncidentRow struct {
 
 // Reconhecer é idempotente: o COALESCE preserva o primeiro ack.
 func (q *Queries) AckIncident(ctx context.Context, arg AckIncidentParams) (AckIncidentRow, error) {
-	row := q.db.QueryRow(ctx, ackIncident, arg.Now, arg.UserID, arg.ID)
+	row := q.db.QueryRow(ctx, ackIncident, arg.Now, arg.ProjectID, arg.ID)
 	var i AckIncidentRow
 	err := row.Scan(
 		&i.ID,
@@ -185,7 +185,7 @@ const listIncidents = `-- name: ListIncidents :many
 SELECT i.id, t.id AS target_id, t.name AS target_name, i.started_at, i.resolved_at, i.cause, i.ack_at
   FROM incidents i
   JOIN targets t ON t.id = i.target_id
- WHERE t.user_id = $1
+ WHERE t.project_id = $1::uuid
    AND ($2::bool IS NULL OR (i.resolved_at IS NULL) = $2::bool)
    AND ($3::uuid IS NULL OR i.id < $3::uuid)
    AND ($4::uuid IS NULL OR i.target_id = $4::uuid)
@@ -194,11 +194,11 @@ SELECT i.id, t.id AS target_id, t.name AS target_name, i.started_at, i.resolved_
 `
 
 type ListIncidentsParams struct {
-	UserID   uuid.UUID
-	Open     *bool
-	Before   *uuid.UUID
-	TargetID *uuid.UUID
-	MaxRows  int32
+	ProjectID uuid.UUID
+	Open      *bool
+	Before    *uuid.UUID
+	TargetID  *uuid.UUID
+	MaxRows   int32
 }
 
 type ListIncidentsRow struct {
@@ -211,10 +211,10 @@ type ListIncidentsRow struct {
 	AckAt      *time.Time
 }
 
-// Histórico (API): rodam sob InUserTx e filtram por user_id, como as de
-// targets.sql. open NULL lista tudo; true só abertos; false só resolvidos.
-// target_id NULL lista todos os alvos; um id de alvo alheio não casa com
-// nada e devolve a lista vazia.
+// Histórico (API): rodam sob InProjectTx e filtram pelo project_id do alvo,
+// como as de targets.sql. open NULL lista tudo; true só abertos; false só resolvidos.
+// target_id NULL lista todos os alvos; um id de alvo de outro projeto não
+// casa com nada e devolve a lista vazia.
 // O id é UUIDv7, gerado quando o incidente abre: ordenar por ele é ordenar
 // pela abertura, e o cursor é o último id da página anterior.
 // O JOIN deixa de fora os incidentes de heartbeat, que têm rotas próprias: o
@@ -222,7 +222,7 @@ type ListIncidentsRow struct {
 // i.target_id, porque a coluna agora aceita NULL e a saída aqui nunca é nula.
 func (q *Queries) ListIncidents(ctx context.Context, arg ListIncidentsParams) ([]ListIncidentsRow, error) {
 	rows, err := q.db.Query(ctx, listIncidents,
-		arg.UserID,
+		arg.ProjectID,
 		arg.Open,
 		arg.Before,
 		arg.TargetID,

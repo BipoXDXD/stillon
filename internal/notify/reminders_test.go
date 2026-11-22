@@ -40,9 +40,10 @@ func novaBancadaLembretes(t *testing.T) *bancadaLembretes {
 	alvo := uuid.Must(uuid.NewV7())
 	agora := clk.Now()
 	b.inicio = agora
+	projeto := testdb.ProjetoPadrao(t, b.dono)
 	err := storage.InUserTx(ctx, pool, b.dono, func(q *db.Queries) error {
 		return q.InsertTarget(ctx, db.InsertTargetParams{
-			ID: alvo, UserID: b.dono, Name: "API", URL: "https://exemplo.com", Method: "GET",
+			ID: alvo, UserID: b.dono, ProjectID: &projeto, Name: "API", URL: "https://exemplo.com", Method: "GET",
 			IntervalSec: 60, TimeoutMS: 5000, ExpectedStatus: 200, Enabled: true, NextRunAt: agora, CreatedAt: agora,
 		})
 	})
@@ -243,7 +244,7 @@ func TestRemindersSkipAcknowledgedIncident(t *testing.T) {
 	discord := b.canal(t, KindDiscord, nil)
 	ctx := context.Background()
 	err := storage.InUserTx(ctx, b.pool, b.dono, func(q *db.Queries) error {
-		_, err := q.AckIncident(ctx, db.AckIncidentParams{UserID: b.dono, ID: b.incidente, Now: b.clk.Now()})
+		_, err := q.AckIncident(ctx, db.AckIncidentParams{ProjectID: testdb.ProjetoPadrao(t, b.dono), ID: b.incidente, Now: b.clk.Now()})
 		return err
 	})
 	if err != nil {

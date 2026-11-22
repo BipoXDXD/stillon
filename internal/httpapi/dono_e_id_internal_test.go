@@ -38,8 +38,8 @@ func noProjetoPadrao(h http.HandlerFunc) http.HandlerFunc {
 }
 
 // rotaComDonoEId é um handler que começa com "usuário do token, depois {id}
-// da rota". Os de alvo, de heartbeat, de canal e de status page leem o escopo de
-// projeto, e entram atrás de noProjetoPadrao, como na rota.
+// da rota". Todos leem o escopo de projeto, e entram atrás de
+// noProjetoPadrao, como na rota.
 type rotaComDonoEId struct {
 	nome    string
 	handler http.HandlerFunc
@@ -53,7 +53,7 @@ func rotasComDonoEId() []rotaComDonoEId {
 		{"PATCH /targets/{id}", noProjetoPadrao(alvos.Update)},
 		{"DELETE /targets/{id}", noProjetoPadrao(alvos.Delete)},
 		{"GET /targets/{id}/checks", noProjetoPadrao(alvos.Checks)},
-		{"POST /incidents/{id}/ack", incidentes.Ack},
+		{"POST /incidents/{id}/ack", noProjetoPadrao(incidentes.Ack)},
 		{"DELETE /channels/{id}", noProjetoPadrao(canais.Delete)},
 		{"PATCH /channels/{id}/enabled", noProjetoPadrao(canais.SetEnabled)},
 		{"POST /channels/{id}/resend", noProjetoPadrao(canais.Resend)},

@@ -84,7 +84,7 @@ func (b *bancada) incidentes(t *testing.T) []db.ListIncidentsRow {
 	var rows []db.ListIncidentsRow
 	err := storage.InUserTx(ctx, b.pool, b.dono, func(q *db.Queries) error {
 		var err error
-		rows, err = q.ListIncidents(ctx, db.ListIncidentsParams{UserID: b.dono, MaxRows: 100})
+		rows, err = q.ListIncidents(ctx, db.ListIncidentsParams{ProjectID: testdb.ProjetoPadrao(t, b.dono), MaxRows: 100})
 		return err
 	})
 	if err != nil {

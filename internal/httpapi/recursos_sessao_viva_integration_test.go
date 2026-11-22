@@ -126,6 +126,8 @@ func TestEveryResourceRouteRejectsRevokedFamily(t *testing.T) {
 		{"GET /api/v1/projects/{projectID}/targets/{id}/checks", noProjeto + "/targets/" + alvo + "/checks", nil},
 		{"GET /api/v1/incidents", "/api/v1/incidents", nil},
 		{"POST /api/v1/incidents/{id}/ack", "/api/v1/incidents/" + incidentes[0] + "/ack", nil},
+		{"GET /api/v1/projects/{projectID}/incidents", noProjeto + "/incidents", nil},
+		{"POST /api/v1/projects/{projectID}/incidents/{id}/ack", noProjeto + "/incidents/" + incidentes[0] + "/ack", nil},
 		{"GET /api/v1/channels", "/api/v1/channels", nil},
 		{"POST /api/v1/channels", "/api/v1/channels", map[string]string{"kind": "email", "email": "outro@exemplo.com"}},
 		{"PATCH /api/v1/channels/{id}", "/api/v1/channels/" + canal.ID, map[string]bool{"enabled": false}},
