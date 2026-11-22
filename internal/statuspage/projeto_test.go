@@ -164,7 +164,7 @@ func TestSecondPageInSameProjectIsExists(t *testing.T) {
 	}
 
 	_, err := a.svc.Create(ctx, escopoNo(projeto, manager, tenancy.RoleManager), statuspage.Input{Slug: "outra", Title: "Outra"})
-	if !errors.Is(err, statuspage.ErrNotFound) {
+	if !errors.Is(err, statuspage.ErrExists) {
 		t.Errorf("segunda página no mesmo projeto, pelo manager: erro %v, queria ErrExists", err)
 	}
 }
