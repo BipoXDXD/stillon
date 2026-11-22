@@ -2,7 +2,6 @@ package httpapi
 
 import (
 	"errors"
-	"log/slog"
 	"net/http"
 
 	"github.com/BipoXDXD/stillon/internal/apierr"
@@ -238,21 +237,19 @@ func (h *AuthHandlers) TOTPVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := tentativas.Reset(r.Context()); err != nil {
-		slog.Error("zerar falhas de segundo fator", "erro", err)
-	}
-
 	// O consumo vem DEPOIS do código, de propósito: consumido antes, um
 	// código digitado errado queimaria o desafio e obrigaria a digitar a
 	// senha de novo. Desafio já usado é o mesmo 401 unauthorized de um
 	// desafio vencido, e não conta no contador de tentativas (o da conta ou o do
-	// dispositivo): quem chega aqui acertou o código.
+	// dispositivo): quem chega aqui acertou o código, e a reserva volta.
 	consumido, err := h.users.ConsumeChallenge(r.Context(), userID, desafio.IssuedAt)
 	if err != nil {
+		devolverTentativa(r, tentativas)
 		h.internal(w, r, "consumir desafio", err)
 		return
 	}
 	if !consumido {
+		devolverTentativa(r, tentativas)
 		apierr.WriteError(w, r, apierr.CodeUnauthorized)
 		return
 	}
@@ -260,8 +257,8 @@ func (h *AuthHandlers) TOTPVerify(w http.ResponseWriter, r *http.Request) {
 	// O carimbo é o da senha verificada no login, antes do desafio: se ela
 	// mudou desde então (set-password, troca de senha), Issue recusa, e o
 	// desafio obtido com a senha antiga morre com ela. A prova do 2FA é
-	// reconferida do mesmo jeito.
-	h.issue(w, r, userID, desafio.Stamp, &prova, user.DeviceStamp())
+	// reconferida do mesmo jeito. O contador zera em issue, se a sessão nascer.
+	h.issue(w, r, userID, desafio.Stamp, &prova, user.DeviceStamp(), tentativas)
 }
 
 type passwordRequest struct {

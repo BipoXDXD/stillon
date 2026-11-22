@@ -103,10 +103,17 @@ func novoCenarioDeSessao(t *testing.T) (*sessoesDoDuble, http.HandlerFunc, http.
 	}
 	emitir := func(w http.ResponseWriter, r *http.Request) {
 		h.issue(w, r, banco.userID, auth.PasswordStamp(hashDeSenhaDoDuble), nil,
-			auth.NewDeviceStamp(hashDeSenhaDoDuble, nil))
+			auth.NewDeviceStamp(hashDeSenhaDoDuble, nil), tentativasSemContador{})
 	}
 	return banco, emitir, h.Refresh
 }
+
+// tentativasSemContador é o contador de um login que este cenário não mede.
+type tentativasSemContador struct{}
+
+func (tentativasSemContador) Reserve(context.Context) (bool, error) { return true, nil }
+func (tentativasSemContador) Refund(context.Context) error          { return nil }
+func (tentativasSemContador) Reset(context.Context) error           { return nil }
 
 func requisicaoComUserAgent(userAgent string) *http.Request {
 	r := httptest.NewRequest(http.MethodPost, "/", nil)

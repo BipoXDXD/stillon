@@ -60,6 +60,8 @@ func TestLoginRacingTOTPConfirmationThatCommitsFirst(t *testing.T) {
 	t.Cleanup(soltar)
 	_, dono := entrar(t, a)
 	segredo := iniciarCadastroHTTP(t, a, dono)
+	// Duas falhas antes: a senha certa recusada na emissão não pode zerá-las.
+	errarSenha(t, a, 2)
 	armado.Store(true)
 	_, fimLogin := loginAssincrono(t, a)
 	select {
@@ -95,6 +97,10 @@ func TestLoginRacingTOTPConfirmationThatCommitsFirst(t *testing.T) {
 	}
 	if inseridas != 1 {
 		t.Errorf("%d sessões gravadas: o login recusado não pode criar família", inseridas)
+	}
+	// O login não terminou: a reserva volta, sem zerar o contador.
+	if falhas, _ := estadoDoBloqueio(t, a); falhas != 2 {
+		t.Errorf("failed_attempts = %d depois do login recusado na emissão, queria 2", falhas)
 	}
 	if st := statusEmMe(t, a, dono); st != http.StatusOK {
 		t.Errorf("a sessão do dono deu %d em /me, queria 200", st)

@@ -119,25 +119,28 @@ func TestLoginCodeCannotDisableTheSecondFactor(t *testing.T) {
 // presa pelo teste enquanto o verify, com o código já aceito e o desafio já
 // consumido, espera para abrir a sessão; nesse intervalo o segredo muda (uma
 // troca de autenticador) ou some (um disable). O verify responde 401
-// invalid_credentials e nenhuma sessão nasce. A perna positiva: nada muda no
-// intervalo, e a sessão nasce.
+// invalid_credentials e nenhuma sessão nasce, e o contador de falhas fica
+// como estava: o login não terminou. A perna positiva: nada muda no
+// intervalo, a sessão nasce e o contador zera.
 func TestSecondFactorProofDiesWithTheRotation(t *testing.T) {
 	casos := []struct {
 		nome   string
 		mudar  string
 		status int
 		codigo string
+		falhas int
 	}{
-		{"nada muda", ``, http.StatusOK, ""},
+		{"nada muda", ``, http.StatusOK, "", 0},
 		{"troca de autenticador", `UPDATE users SET totp_secret_enc = totp_secret_enc || '\x00'::bytea WHERE id = $1`,
-			http.StatusUnauthorized, "invalid_credentials"},
+			http.StatusUnauthorized, "invalid_credentials", 2},
 		{"disable", `UPDATE users SET totp_secret_enc = NULL, totp_confirmed_at = NULL WHERE id = $1`,
-			http.StatusUnauthorized, "invalid_credentials"},
+			http.StatusUnauthorized, "invalid_credentials", 2},
 	}
 	for _, caso := range casos {
 		t.Run(caso.nome, func(t *testing.T) {
 			a := newAPI(t)
 			segredo := cadastrarTOTP(t, a, clientWithJar(t))
+			errarSenha(t, a, 2)
 			a.clk.Advance(time.Second)
 			desafio := desafioAtual(t, a, clientWithJar(t))
 			antes := familiasVivas(t, a)
@@ -165,6 +168,9 @@ func TestSecondFactorProofDiesWithTheRotation(t *testing.T) {
 			novas := familiasVivas(t, a) - antes
 			if quer := map[bool]int{true: 1, false: 0}[caso.status == http.StatusOK]; novas != quer {
 				t.Errorf("%d famílias novas, queria %d", novas, quer)
+			}
+			if falhas, _ := estadoDoBloqueio(t, a); falhas != caso.falhas {
+				t.Errorf("failed_attempts = %d, queria %d", falhas, caso.falhas)
 			}
 		})
 	}

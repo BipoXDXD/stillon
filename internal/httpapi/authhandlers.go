@@ -165,15 +165,10 @@ func (h *AuthHandlers) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// O contador só zera quando o login de fato termina. Com segundo fator
-	// ativo ele termina em /totp/verify, e é lá que o reset acontece.
-	if err := tentativas.Reset(r.Context()); err != nil {
-		slog.Error("zerar falhas de login", "erro", err)
-	}
-
 	// O cookie de dispositivo sai com o carimbo do hash verificado (o do
-	// rehash, se houve): é ele o hash da conta daqui em diante.
-	h.issue(w, r, user.ID, auth.PasswordStamp(verificado), nil, auth.NewDeviceStamp(verificado, user.TOTPConfirmedAt))
+	// rehash, se houve): é ele o hash da conta daqui em diante. O contador
+	// zera dentro de issue, só se a sessão nascer.
+	h.issue(w, r, user.ID, auth.PasswordStamp(verificado), nil, auth.NewDeviceStamp(verificado, user.TOTPConfirmedAt), tentativas)
 }
 
 // tentativas escolhe o contador do login: o do cookie de dispositivo, se ele
@@ -260,7 +255,13 @@ func (h *AuthHandlers) Logout(w http.ResponseWriter, r *http.Request) {
 //
 // dispositivo é o carimbo das credenciais para o cookie de dispositivo que o
 // login completo recebe (ver auth.DeviceStamp).
-func (h *AuthHandlers) issue(w http.ResponseWriter, r *http.Request, userID uuid.UUID, stamp string, prova *auth.SecondFactorProof, dispositivo auth.DeviceStamp) {
+//
+// tentativas é a reserva do contador que a prova deste login fez. Ele só zera
+// quando a sessão nasce, porque só então o login terminou. Recusada a emissão
+// (a senha ou o fator mudaram no meio) ou falhando o banco, a reserva volta
+// (Refund), como na senha certa com 2FA: zerar ali daria a quem tem a senha um
+// jeito de destravar o contador sem completar o login.
+func (h *AuthHandlers) issue(w http.ResponseWriter, r *http.Request, userID uuid.UUID, stamp string, prova *auth.SecondFactorProof, dispositivo auth.DeviceStamp, tentativas auth.Attempts) {
 	var token string
 	var s auth.Session
 	var err error
@@ -270,12 +271,17 @@ func (h *AuthHandlers) issue(w http.ResponseWriter, r *http.Request, userID uuid
 		token, s, err = h.sessions.Issue(r.Context(), userID, stamp, h.meta(r))
 	}
 	if errors.Is(err, auth.ErrStalePassword) || errors.Is(err, auth.ErrStaleSecondFactor) {
+		devolverTentativa(r, tentativas)
 		apierr.WriteError(w, r, apierr.CodeInvalidCredentials)
 		return
 	}
 	if err != nil {
+		devolverTentativa(r, tentativas)
 		h.internal(w, r, "emitir sessão", err)
 		return
+	}
+	if err := tentativas.Reset(r.Context()); err != nil {
+		slog.Error("zerar falhas de login", "erro", err)
 	}
 	h.grantSession(w, r, token, s, &dispositivo)
 }
