@@ -209,9 +209,12 @@ func TestProberCanRescheduleButNotCreate(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// Com o projeto de verdade de A: a recusa vem da RLS do sondador, não de
+	// um project_id inválido.
+	projetoDeA := testdb.ProjetoPadrao(t, a)
 	err = storage.InProberTx(ctx, pool, func(q *db.Queries) error {
 		return q.InsertTarget(ctx, db.InsertTargetParams{
-			ID: uuid.Must(uuid.NewV7()), UserID: a, Name: "x", URL: "https://x",
+			ID: uuid.Must(uuid.NewV7()), UserID: a, ProjectID: projetoDeA, Name: "x", URL: "https://x",
 			Method: "GET", IntervalSec: 60, TimeoutMS: 5000, ExpectedStatus: 200,
 			Enabled: true, NextRunAt: agora, CreatedAt: agora,
 		})

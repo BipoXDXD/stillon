@@ -35,7 +35,7 @@ func TestAllRoleConsolidatesAndServesThePublicPage(t *testing.T) {
 	hora := agora.UTC().Truncate(time.Hour).Add(-2 * time.Hour)
 	err := testdb.NoProjetoPadrao(t, pool, dono, func(q *db.Queries, projeto uuid.UUID) error {
 		if err := q.InsertTarget(ctx, db.InsertTargetParams{
-			ID: alvo, UserID: dono, ProjectID: &projeto, Name: "nome-interno", URL: "http://127.0.0.1:1/",
+			ID: alvo, UserID: dono, ProjectID: projeto, Name: "nome-interno", URL: "http://127.0.0.1:1/",
 			Method: "GET", IntervalSec: 60, TimeoutMS: 1000, ExpectedStatus: 200,
 			Enabled: false, NextRunAt: agora, CreatedAt: agora,
 		}); err != nil {

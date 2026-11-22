@@ -179,21 +179,21 @@ func TestTargetTLSOwnerQueriesFilterByTheOwner(t *testing.T) {
 	novaValidadeTLS(t, pool, alvoA)
 
 	err := emProjetoTx(t, pool, a, func(q *db.Queries) error {
-		if _, err := q.GetTargetTLSOfOwner(ctx, db.GetTargetTLSOfOwnerParams{ProjectID: projetoB, TargetID: alvoA}); !errors.Is(err, pgx.ErrNoRows) {
+		if _, err := q.GetTargetTLSOfProject(ctx, db.GetTargetTLSOfProjectParams{ProjectID: projetoB, TargetID: alvoA}); !errors.Is(err, pgx.ErrNoRows) {
 			t.Errorf("ler a validade de A em nome de B deu %v, queria ErrNoRows", err)
 		}
-		deB, err := q.ListTargetTLSOfOwner(ctx, projetoB)
+		deB, err := q.ListTargetTLSOfProject(ctx, projetoB)
 		if err != nil {
 			return err
 		}
 		if len(deB) != 0 {
 			t.Errorf("listar as validades em nome de B devolveu %d linhas de A", len(deB))
 		}
-		if err := q.DeleteTargetTLSOfOwner(ctx, db.DeleteTargetTLSOfOwnerParams{ProjectID: projetoB, TargetID: alvoA}); err != nil {
+		if err := q.DeleteTargetTLSOfProject(ctx, db.DeleteTargetTLSOfProjectParams{ProjectID: projetoB, TargetID: alvoA}); err != nil {
 			return err
 		}
 		// Controle: em nome do dono, a mesma linha aparece.
-		doDono, err := q.ListTargetTLSOfOwner(ctx, projetoA)
+		doDono, err := q.ListTargetTLSOfProject(ctx, projetoA)
 		if err != nil {
 			return err
 		}

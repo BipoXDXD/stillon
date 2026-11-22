@@ -45,7 +45,7 @@ func (a ambiente) alvoNoProjeto(t *testing.T, dono, projeto uuid.UUID, nome stri
 	id := uuid.Must(uuid.NewV7())
 	err := storage.InProjectTx(ctx, a.pool, dono, projeto, func(q *db.Queries, _ tenancy.ProjectScope) error {
 		return q.InsertTarget(ctx, db.InsertTargetParams{
-			ID: id, UserID: dono, ProjectID: &projeto, Name: nome, URL: "https://interno.exemplo.com/health",
+			ID: id, UserID: dono, ProjectID: projeto, Name: nome, URL: "https://interno.exemplo.com/health",
 			Method: "GET", IntervalSec: 60, TimeoutMS: 5000, ExpectedStatus: 200, Enabled: true,
 			NextRunAt: a.clk.Now(), CreatedAt: a.clk.Now(),
 		})

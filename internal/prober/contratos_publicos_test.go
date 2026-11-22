@@ -108,7 +108,7 @@ func (b *bancadaPublica) inserirAlvo(t *testing.T, id uuid.UUID, enabled bool, h
 	t.Helper()
 	p := db.InsertTargetParams{ID: id, UserID: b.owner, Name: "alvo público", URL: "http://127.0.0.1:1", Method: "GET", IntervalSec: 60, TimeoutMS: 1000, ExpectedStatus: 200, Enabled: enabled, HeadersEnc: headers, NextRunAt: b.clk.Now(), CreatedAt: b.clk.Now()}
 	if err := testdb.NoProjetoPadrao(t, b.pool, b.owner, func(q *db.Queries, projeto uuid.UUID) error {
-		p.ProjectID = &projeto
+		p.ProjectID = projeto
 		return q.InsertTarget(t.Context(), p)
 	}); err != nil {
 		t.Fatal(err)

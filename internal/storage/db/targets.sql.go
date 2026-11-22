@@ -40,21 +40,21 @@ func (q *Queries) DeleteTarget(ctx context.Context, arg DeleteTargetParams) (int
 	return result.RowsAffected(), nil
 }
 
-const deleteTargetTLSOfOwner = `-- name: DeleteTargetTLSOfOwner :exec
+const deleteTargetTLSOfProject = `-- name: DeleteTargetTLSOfProject :exec
 DELETE FROM target_tls tt
  WHERE tt.target_id = $1
    AND EXISTS (SELECT 1 FROM targets t
                 WHERE t.id = tt.target_id AND t.project_id = $2::uuid)
 `
 
-type DeleteTargetTLSOfOwnerParams struct {
+type DeleteTargetTLSOfProjectParams struct {
 	TargetID  uuid.UUID
 	ProjectID uuid.UUID
 }
 
 // Outro host é outro certificado: a leitura do anterior não vale para ele.
-func (q *Queries) DeleteTargetTLSOfOwner(ctx context.Context, arg DeleteTargetTLSOfOwnerParams) error {
-	_, err := q.db.Exec(ctx, deleteTargetTLSOfOwner, arg.TargetID, arg.ProjectID)
+func (q *Queries) DeleteTargetTLSOfProject(ctx context.Context, arg DeleteTargetTLSOfProjectParams) error {
+	_, err := q.db.Exec(ctx, deleteTargetTLSOfProject, arg.TargetID, arg.ProjectID)
 	return err
 }
 
@@ -155,7 +155,7 @@ func (q *Queries) GetTargetForUpdate(ctx context.Context, arg GetTargetForUpdate
 	return i, err
 }
 
-const getTargetTLSOfOwner = `-- name: GetTargetTLSOfOwner :one
+const getTargetTLSOfProject = `-- name: GetTargetTLSOfProject :one
 SELECT tt.not_after, tt.observed_at
   FROM target_tls tt
  WHERE tt.target_id = $1
@@ -163,12 +163,12 @@ SELECT tt.not_after, tt.observed_at
                 WHERE t.id = tt.target_id AND t.project_id = $2::uuid)
 `
 
-type GetTargetTLSOfOwnerParams struct {
+type GetTargetTLSOfProjectParams struct {
 	TargetID  uuid.UUID
 	ProjectID uuid.UUID
 }
 
-type GetTargetTLSOfOwnerRow struct {
+type GetTargetTLSOfProjectRow struct {
 	NotAfter   time.Time
 	ObservedAt time.Time
 }
@@ -176,9 +176,9 @@ type GetTargetTLSOfOwnerRow struct {
 // A validade do certificado (spec §7.2), lida e apagada pelo projeto. Como em
 // ResetTargetHealth, o EXISTS filtra pelo projeto além da RLS de target_tls. Só o
 // sondador grava a linha (prober.sql).
-func (q *Queries) GetTargetTLSOfOwner(ctx context.Context, arg GetTargetTLSOfOwnerParams) (GetTargetTLSOfOwnerRow, error) {
-	row := q.db.QueryRow(ctx, getTargetTLSOfOwner, arg.TargetID, arg.ProjectID)
-	var i GetTargetTLSOfOwnerRow
+func (q *Queries) GetTargetTLSOfProject(ctx context.Context, arg GetTargetTLSOfProjectParams) (GetTargetTLSOfProjectRow, error) {
+	row := q.db.QueryRow(ctx, getTargetTLSOfProject, arg.TargetID, arg.ProjectID)
+	var i GetTargetTLSOfProjectRow
 	err := row.Scan(&i.NotAfter, &i.ObservedAt)
 	return i, err
 }
@@ -214,7 +214,7 @@ type InsertTargetParams struct {
 	ContentMode         *string
 	ContentValue        *string
 	ContentJsonPointer  *string
-	ProjectID           *uuid.UUID
+	ProjectID           uuid.UUID
 }
 
 // Toda query de posse daqui filtra por project_id E roda sob a RLS de
@@ -224,11 +224,8 @@ type InsertTargetParams struct {
 // (LockUserTargets, CountTargets, ListContentRuleTargetURLs): até o PR 2b,
 // contam os alvos de quem chama dentro do projeto atual (a RLS restritiva
 // corta os de outros projetos); o teto por titular vem no PR 2b.
-// user_id é quem criou o alvo; project_id, o projeto em que ele vive. O
-// serviço sempre manda project_id. Ele aceita nulo só para o caminho antigo
-// (InUserTx e os testes de outros pacotes), em que o gatilho
-// preencher_project_id_padrao põe o Projeto padrão; no escopo de
-// projeto o gatilho não preenche, e a RLS recusa o nulo (42501).
+// user_id é quem criou o alvo; project_id, o projeto em que ele vive,
+// obrigatório: todo chamador grava no escopo de projeto.
 func (q *Queries) InsertTarget(ctx context.Context, arg InsertTargetParams) error {
 	_, err := q.db.Exec(ctx, insertTarget,
 		arg.ID,
@@ -652,7 +649,7 @@ func (q *Queries) ListTargetSummaries(ctx context.Context, projectID uuid.UUID) 
 	return items, nil
 }
 
-const listTargetTLSOfOwner = `-- name: ListTargetTLSOfOwner :many
+const listTargetTLSOfProject = `-- name: ListTargetTLSOfProject :many
 SELECT tt.target_id, tt.not_after, tt.observed_at
   FROM target_tls tt
  WHERE EXISTS (SELECT 1 FROM targets t
@@ -661,8 +658,8 @@ SELECT tt.target_id, tt.not_after, tt.observed_at
 
 // As validades de todos os alvos do projeto numa consulta só: a lista não lê
 // uma por alvo.
-func (q *Queries) ListTargetTLSOfOwner(ctx context.Context, projectID uuid.UUID) ([]TargetTLS, error) {
-	rows, err := q.db.Query(ctx, listTargetTLSOfOwner, projectID)
+func (q *Queries) ListTargetTLSOfProject(ctx context.Context, projectID uuid.UUID) ([]TargetTLS, error) {
+	rows, err := q.db.Query(ctx, listTargetTLSOfProject, projectID)
 	if err != nil {
 		return nil, err
 	}

@@ -368,7 +368,7 @@ func (s *Service) gravarAlvo(ctx context.Context, q *db.Queries, projectID uuid.
 // com a troca; devolve a validade que ficou e, se o PATCH mandou tags, troca-as.
 func acompanharDestinoETags(ctx context.Context, q *db.Queries, projectID uuid.UUID, e edicao, p Patch) (*CertificateReading, error) {
 	if mudouDeDestino(e.row.URL, e.f.URL) {
-		err := q.DeleteTargetTLSOfOwner(ctx, db.DeleteTargetTLSOfOwnerParams{ProjectID: projectID, TargetID: e.row.ID})
+		err := q.DeleteTargetTLSOfProject(ctx, db.DeleteTargetTLSOfProjectParams{ProjectID: projectID, TargetID: e.row.ID})
 		if err != nil {
 			return nil, fmt.Errorf("apagar validade do certificado: %w", err)
 		}
@@ -417,7 +417,7 @@ func (f fields) comoTarget(id uuid.UUID, enabled, tlsWarn bool, criadoEm time.Ti
 func (f fields) insertTargetParams(sc tenancy.ProjectScope, id uuid.UUID, sealed []byte, enabled, tlsWarn bool, now time.Time) db.InsertTargetParams {
 	modo, valor, ponteiro := colunasDaRegra(f.ContentRule)
 	return db.InsertTargetParams{
-		ID: id, ProjectID: &sc.ProjectID, UserID: sc.UserID, Name: f.Name, URL: f.URL, Method: f.Method,
+		ID: id, ProjectID: sc.ProjectID, UserID: sc.UserID, Name: f.Name, URL: f.URL, Method: f.Method,
 		IntervalSec: f.IntervalSec, TimeoutMS: f.TimeoutMS, ExpectedStatus: f.ExpectedStatus,
 		HeadersEnc: sealed, DegradedThresholdMS: f.DegradedThresholdMS,
 		Enabled: enabled, NextRunAt: now, CreatedAt: now, TlsWarn: tlsWarn,
@@ -676,7 +676,7 @@ func (s *Service) toTarget(row db.Target) (Target, error) {
 // lerValidade devolve nil quando o sondador ainda não leu um certificado do
 // alvo. Os instantes saem em UTC: o pgx devolveria o fuso local do processo.
 func lerValidade(ctx context.Context, q *db.Queries, projectID, targetID uuid.UUID) (*CertificateReading, error) {
-	r, err := q.GetTargetTLSOfOwner(ctx, db.GetTargetTLSOfOwnerParams{ProjectID: projectID, TargetID: targetID})
+	r, err := q.GetTargetTLSOfProject(ctx, db.GetTargetTLSOfProjectParams{ProjectID: projectID, TargetID: targetID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -689,7 +689,7 @@ func lerValidade(ctx context.Context, q *db.Queries, projectID, targetID uuid.UU
 // validadesDoProjeto lê as validades de todos os alvos do projeto numa
 // consulta só, para a lista não fazer uma por alvo.
 func validadesDoProjeto(ctx context.Context, q *db.Queries, projectID uuid.UUID) (map[uuid.UUID]*CertificateReading, error) {
-	linhas, err := q.ListTargetTLSOfOwner(ctx, projectID)
+	linhas, err := q.ListTargetTLSOfProject(ctx, projectID)
 	if err != nil {
 		return nil, fmt.Errorf("ler validades do projeto: %w", err)
 	}

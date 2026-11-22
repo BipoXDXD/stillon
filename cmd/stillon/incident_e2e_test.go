@@ -55,7 +55,7 @@ func TestIncidentFlowsFromProbeToAuditedNotification(t *testing.T) {
 	}
 	err = testdb.NoProjetoPadrao(t, pool, dono, func(q *db.Queries, projeto uuid.UUID) error {
 		if err := q.InsertTarget(ctx, db.InsertTargetParams{
-			ID: alvo, UserID: dono, ProjectID: &projeto, Name: "interno", URL: "http://127.0.0.1:1/",
+			ID: alvo, UserID: dono, ProjectID: projeto, Name: "interno", URL: "http://127.0.0.1:1/",
 			Method: "GET", IntervalSec: 60, TimeoutMS: 1000, ExpectedStatus: 200,
 			Enabled: true, NextRunAt: agora.Add(-time.Minute), CreatedAt: agora,
 		}); err != nil {

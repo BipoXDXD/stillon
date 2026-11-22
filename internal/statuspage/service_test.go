@@ -53,7 +53,7 @@ func (a ambiente) alvo(t *testing.T, dono uuid.UUID, nome string) uuid.UUID {
 	testdb.ProjetoPadrao(t, dono)
 	err := testdb.NoProjetoPadrao(t, a.pool, dono, func(q *db.Queries, projeto uuid.UUID) error {
 		return q.InsertTarget(ctx, db.InsertTargetParams{
-			ID: id, UserID: dono, ProjectID: &projeto, Name: nome, URL: "https://interno.exemplo.com/health", Method: "GET",
+			ID: id, UserID: dono, ProjectID: projeto, Name: nome, URL: "https://interno.exemplo.com/health", Method: "GET",
 			IntervalSec: 60, TimeoutMS: 5000, ExpectedStatus: 200, Enabled: true, NextRunAt: a.clk.Now(), CreatedAt: a.clk.Now(),
 		})
 	})

@@ -287,7 +287,7 @@ func novoIncidenteDaBancada(t *testing.T, b *bancada) uuid.UUID {
 	agora, alvo, id := b.clk.Now(), uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
 	err := testdb.NoProjetoPadrao(t, b.pool, b.dono, func(q *db.Queries, projeto uuid.UUID) error {
 		return q.InsertTarget(ctx, db.InsertTargetParams{
-			ID: alvo, UserID: b.dono, ProjectID: &projeto, Name: "Outra", URL: "https://exemplo.com/outra", Method: "GET",
+			ID: alvo, UserID: b.dono, ProjectID: projeto, Name: "Outra", URL: "https://exemplo.com/outra", Method: "GET",
 			IntervalSec: 60, TimeoutMS: 5000, ExpectedStatus: 200, Enabled: true, NextRunAt: agora, CreatedAt: agora,
 		})
 	})

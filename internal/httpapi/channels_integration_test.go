@@ -427,6 +427,41 @@ func TestChannelSendsHaveTheirOwnRateLimit(t *testing.T) {
 	canaisDe(t, a, tok) // falha se o GET também estiver no balde de envio
 }
 
+// As gêmeas de envio gastam o mesmo balde das rotas antigas: com o relógio
+// parado, 3 criações e 2 reenvios pelo projeto esgotam a rajada, o sexto envio
+// e a criação pela rota antiga dão 429, e a leitura do projeto fica de fora.
+func TestProjectChannelSendsShareTheSendBucket(t *testing.T) {
+	a := newAPI(t)
+	tok := tokenDe(t, a, a.userID)
+	noProjeto := "/api/v1/projects/" + testdb.ProjetoPadrao(t, a.userID).String() + "/channels"
+	for i := 1; i <= 3; i++ {
+		status, corpo := lerCru(t, a, http.MethodPost, noProjeto, tok,
+			map[string]string{"kind": "discord", "url": webhookDeTeste})
+		if status == http.StatusTooManyRequests {
+			t.Fatalf("criação %d pelo projeto deu 429 antes da rajada: %s", i, corpo)
+		}
+	}
+	reenvio := noProjeto + "/" + uuid.NewString() + "/verify/resend"
+	for i := 1; i <= 2; i++ {
+		status, corpo := lerCru(t, a, http.MethodPost, reenvio, tok, nil)
+		if status == http.StatusTooManyRequests {
+			t.Fatalf("reenvio %d pelo projeto deu 429 antes da rajada: %s", i, corpo)
+		}
+	}
+	status, corpo := lerCru(t, a, http.MethodPost, reenvio, tok, nil)
+	if erro, _ := decodificar(t, corpo)["error"].(map[string]any); status != http.StatusTooManyRequests || erro["code"] != "rate_limited" {
+		t.Fatalf("sexto envio (reenvio pelo projeto) deu %d, queria 429 rate_limited: %s", status, corpo)
+	}
+	resp := chamar(t, a, http.MethodPost, "/api/v1/channels", tok, map[string]string{"kind": "discord", "url": webhookDeTeste})
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusTooManyRequests {
+		t.Errorf("criação pela rota antiga deu %d, queria 429: o balde de envio é um só", resp.StatusCode)
+	}
+	if status, corpo := lerCru(t, a, http.MethodGet, noProjeto, tok, nil); status != http.StatusOK {
+		t.Errorf("GET %s deu %d, queria 200: a leitura não gasta o balde de envio: %s", noProjeto, status, corpo)
+	}
+}
+
 func TestChannelRoutesRequireAuthentication(t *testing.T) {
 	a := newAPI(t)
 	id := uuid.NewString()

@@ -126,7 +126,7 @@ func novaBancada(t *testing.T, mexer func(*db.InsertChannelParams)) *bancada {
 	}
 	err = testdb.NoProjetoPadrao(t, pool, b.dono, func(q *db.Queries, projeto uuid.UUID) error {
 		if err := q.InsertTarget(ctx, db.InsertTargetParams{
-			ID: alvo, UserID: b.dono, ProjectID: &projeto, Name: "API", URL: "https://exemplo.com", Method: "GET",
+			ID: alvo, UserID: b.dono, ProjectID: projeto, Name: "API", URL: "https://exemplo.com", Method: "GET",
 			IntervalSec: 60, TimeoutMS: 5000, ExpectedStatus: 200, Enabled: true, NextRunAt: agora, CreatedAt: agora,
 		}); err != nil {
 			return err
@@ -606,7 +606,7 @@ func (b *bancada) apagao(t *testing.T, n int) []uuid.UUID {
 		agora := b.clk.Now()
 		err := testdb.NoProjetoPadrao(t, b.pool, b.dono, func(q *db.Queries, projeto uuid.UUID) error {
 			return q.InsertTarget(ctx, db.InsertTargetParams{
-				ID: alvo, UserID: b.dono, ProjectID: &projeto, Name: fmt.Sprintf("alvo-%d", i), URL: "https://exemplo.com", Method: "GET",
+				ID: alvo, UserID: b.dono, ProjectID: projeto, Name: fmt.Sprintf("alvo-%d", i), URL: "https://exemplo.com", Method: "GET",
 				IntervalSec: 60, TimeoutMS: 5000, ExpectedStatus: 200, Enabled: true, NextRunAt: agora, CreatedAt: agora,
 			})
 		})

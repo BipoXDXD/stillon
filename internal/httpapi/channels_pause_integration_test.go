@@ -230,7 +230,7 @@ func TestPausedChannelDropsThroughTheRoute(t *testing.T) {
 	alvo, incidente := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
 	if err := testdb.NoProjetoPadrao(t, a.pool, a.userID, func(q *db.Queries, projeto uuid.UUID) error {
 		return q.InsertTarget(ctx, db.InsertTargetParams{
-			ID: alvo, UserID: a.userID, ProjectID: &projeto, Name: "API", URL: "https://exemplo.com", Method: "GET",
+			ID: alvo, UserID: a.userID, ProjectID: projeto, Name: "API", URL: "https://exemplo.com", Method: "GET",
 			IntervalSec: 60, TimeoutMS: 5000, ExpectedStatus: 200, Enabled: true, NextRunAt: agora, CreatedAt: agora,
 		})
 	}); err != nil {

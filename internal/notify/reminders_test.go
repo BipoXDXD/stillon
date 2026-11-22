@@ -43,7 +43,7 @@ func novaBancadaLembretes(t *testing.T) *bancadaLembretes {
 	b.inicio = agora
 	err := testdb.NoProjetoPadrao(t, pool, b.dono, func(q *db.Queries, projeto uuid.UUID) error {
 		return q.InsertTarget(ctx, db.InsertTargetParams{
-			ID: alvo, UserID: b.dono, ProjectID: &projeto, Name: "API", URL: "https://exemplo.com", Method: "GET",
+			ID: alvo, UserID: b.dono, ProjectID: projeto, Name: "API", URL: "https://exemplo.com", Method: "GET",
 			IntervalSec: 60, TimeoutMS: 5000, ExpectedStatus: 200, Enabled: true, NextRunAt: agora, CreatedAt: agora,
 		})
 	})

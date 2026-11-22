@@ -324,7 +324,7 @@ func TestOldHostProbeWaitsForAnOpenPatchAndLeavesNoCertificate(t *testing.T) {
 	if _, err := tx.Exec(ctx, `UPDATE targets SET url = $2 WHERE id = $1`, alvo, urlNova); err != nil {
 		t.Fatal(err)
 	}
-	if err := q.DeleteTargetTLSOfOwner(ctx, db.DeleteTargetTLSOfOwnerParams{ProjectID: testdb.ProjetoDoAlvo(t, alvo), TargetID: alvo}); err != nil {
+	if err := q.DeleteTargetTLSOfProject(ctx, db.DeleteTargetTLSOfProjectParams{ProjectID: testdb.ProjetoDoAlvo(t, alvo), TargetID: alvo}); err != nil {
 		t.Fatal(err)
 	}
 

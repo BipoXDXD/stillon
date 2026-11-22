@@ -103,7 +103,7 @@ func (b *bancada) alvo(t *testing.T, url string, mexer func(*db.InsertTargetPara
 		mexer(&p)
 	}
 	if err := testdb.NoProjetoPadrao(t, b.pool, b.dono, func(q *db.Queries, projeto uuid.UUID) error {
-		p.ProjectID = &projeto
+		p.ProjectID = projeto
 		return q.InsertTarget(ctx, p)
 	}); err != nil {
 		t.Fatal(err)

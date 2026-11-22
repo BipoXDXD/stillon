@@ -47,7 +47,7 @@ func (b *bancada) alvo(t *testing.T, dono uuid.UUID, nome string) uuid.UUID {
 	id := uuid.Must(uuid.NewV7())
 	err := testdb.NoProjetoPadrao(t, b.pool, dono, func(q *db.Queries, projeto uuid.UUID) error {
 		return q.InsertTarget(ctx, db.InsertTargetParams{
-			ID: id, UserID: dono, ProjectID: &projeto, Name: nome, URL: "https://exemplo.com", Method: "GET",
+			ID: id, UserID: dono, ProjectID: projeto, Name: nome, URL: "https://exemplo.com", Method: "GET",
 			IntervalSec: 60, TimeoutMS: 5000, ExpectedStatus: 200, Enabled: true, NextRunAt: agora, CreatedAt: agora,
 		})
 	})

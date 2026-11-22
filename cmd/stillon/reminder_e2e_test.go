@@ -44,7 +44,7 @@ func TestProberRoleEnqueuesOverdueReminders(t *testing.T) {
 		// Ligado, porque alvo pausado não gera lembrete, mas com a próxima
 		// sonda daqui a um dia: o sondador não mexe no alvo durante o teste.
 		if err := q.InsertTarget(ctx, db.InsertTargetParams{
-			ID: alvo, UserID: dono, ProjectID: &projeto, Name: "fora", URL: "https://exemplo.com/",
+			ID: alvo, UserID: dono, ProjectID: projeto, Name: "fora", URL: "https://exemplo.com/",
 			Method: "GET", IntervalSec: 60, TimeoutMS: 1000, ExpectedStatus: 200,
 			Enabled: true, NextRunAt: agora.Add(24 * time.Hour), CreatedAt: agora,
 		}); err != nil {

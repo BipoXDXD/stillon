@@ -44,7 +44,7 @@ func TestProberRoleProbesWithTheProductionClient(t *testing.T) {
 	agora := time.Now()
 	err := testdb.NoProjetoPadrao(t, pool, dono, func(q *db.Queries, projeto uuid.UUID) error {
 		return q.InsertTarget(ctx, db.InsertTargetParams{
-			ID: alvo, UserID: dono, ProjectID: &projeto, Name: "interno", URL: "http://127.0.0.1:1/",
+			ID: alvo, UserID: dono, ProjectID: projeto, Name: "interno", URL: "http://127.0.0.1:1/",
 			Method: "GET", IntervalSec: 60, TimeoutMS: 1000, ExpectedStatus: 200,
 			Enabled: true, NextRunAt: agora.Add(-time.Minute), CreatedAt: agora,
 		})
