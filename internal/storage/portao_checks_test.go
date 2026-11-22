@@ -124,7 +124,7 @@ func medirForma(t *testing.T, linhas int64, forma string, notValid bool) medicao
 	dono := novoUsuario(t, pool)
 	alvos := make([]uuid.UUID, alvosDoPortao)
 	for i := range alvos {
-		alvos[i] = novoAlvo(t, pool, dono, agora)
+		alvos[i] = novoAlvoDoBinarioAnterior(t, pool, dono, agora)
 	}
 	// Pelo papel da aplicação, como em produção: ele é o dono das partições,
 	// e o ALTER na mãe precisa ser dono de cada uma.

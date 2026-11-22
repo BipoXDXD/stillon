@@ -9,7 +9,6 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/BipoXDXD/stillon/internal/storage"
 	"github.com/BipoXDXD/stillon/internal/storage/db"
 	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 )
@@ -24,7 +23,7 @@ import (
 func heartbeatsVisiveis(t *testing.T, pool *pgxpool.Pool, userID, id uuid.UUID) int {
 	t.Helper()
 	var n int
-	err := emEscopo(t, pool, "app.user_id", userID.String(), func(tx pgx.Tx) error {
+	err := emEscopo(t, pool, projetoDoDono, userID.String(), func(tx pgx.Tx) error {
 		return tx.QueryRow(context.Background(), `SELECT count(*) FROM heartbeats WHERE id = $1`, id).Scan(&n)
 	})
 	if err != nil {
@@ -34,7 +33,7 @@ func heartbeatsVisiveis(t *testing.T, pool *pgxpool.Pool, userID, id uuid.UUID) 
 }
 
 // Sem a RLS, só o filtro user_id da query separa B da linha de A.
-func TestGetHeartbeatForUpdateFiltersByOwnerWithoutRLS(t *testing.T) {
+func TestGetHeartbeatForUpdateFiltersByProjectWithoutRLS(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
 	a, b := novoUsuario(t, pool), novoUsuario(t, pool)
@@ -44,7 +43,7 @@ func TestGetHeartbeatForUpdateFiltersByOwnerWithoutRLS(t *testing.T) {
 		t.Fatalf("sem RLS, B devia enxergar a linha de A e viu %d: o teste não provaria o filtro", n)
 	}
 
-	err := storage.InUserTx(ctx, pool, b, func(q *db.Queries) error {
+	err := emProjetoTx(t, pool, b, func(q *db.Queries) error {
 		_, err := q.GetHeartbeatForUpdate(ctx, db.GetHeartbeatForUpdateParams{ProjectID: testdb.ProjetoPadrao(t, b), ID: hbA})
 		return err
 	})

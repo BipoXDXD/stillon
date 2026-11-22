@@ -10,7 +10,6 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/BipoXDXD/stillon/internal/heartbeat"
-	"github.com/BipoXDXD/stillon/internal/storage"
 	"github.com/BipoXDXD/stillon/internal/storage/db"
 	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 )
@@ -22,8 +21,7 @@ func TestHeartbeatLimitHoldsUnderConcurrency(t *testing.T) {
 	a := novoAmbiente(t)
 	ctx := context.Background()
 	periodo := int32(3600)
-	projeto := testdb.ProjetoPadrao(t, a.dono)
-	err := storage.InUserTx(ctx, a.pool, a.dono, func(q *db.Queries) error {
+	err := testdb.NoProjetoPadrao(t, a.pool, a.dono, func(q *db.Queries, projeto uuid.UUID) error {
 		for range heartbeat.MaxPerUser - 1 {
 			_, hash := heartbeat.NewPingToken()
 			if err := q.InsertHeartbeat(ctx, db.InsertHeartbeatParams{
@@ -63,7 +61,7 @@ func TestHeartbeatLimitHoldsUnderConcurrency(t *testing.T) {
 	wg.Wait()
 
 	var n int64
-	err = storage.InUserTx(ctx, a.pool, a.dono, func(q *db.Queries) error {
+	err = testdb.NoProjetoPadrao(t, a.pool, a.dono, func(q *db.Queries, _ uuid.UUID) error {
 		var err error
 		n, err = q.CountHeartbeats(ctx, a.dono)
 		return err
@@ -83,8 +81,7 @@ func TestCloneLimitHoldsUnderConcurrency(t *testing.T) {
 	ctx := context.Background()
 	original, _ := a.novoHeartbeat(t)
 	periodo := int32(3600)
-	projeto := testdb.ProjetoPadrao(t, a.dono)
-	err := storage.InUserTx(ctx, a.pool, a.dono, func(q *db.Queries) error {
+	err := testdb.NoProjetoPadrao(t, a.pool, a.dono, func(q *db.Queries, projeto uuid.UUID) error {
 		for range heartbeat.MaxPerUser - 2 {
 			_, hash := heartbeat.NewPingToken()
 			if err := q.InsertHeartbeat(ctx, db.InsertHeartbeatParams{
@@ -124,7 +121,7 @@ func TestCloneLimitHoldsUnderConcurrency(t *testing.T) {
 	wg.Wait()
 
 	var n int64
-	err = storage.InUserTx(ctx, a.pool, a.dono, func(q *db.Queries) error {
+	err = testdb.NoProjetoPadrao(t, a.pool, a.dono, func(q *db.Queries, _ uuid.UUID) error {
 		var err error
 		n, err = q.CountHeartbeats(ctx, a.dono)
 		return err
@@ -164,7 +161,7 @@ func TestCreateLeavesNothingWhenTheResponseFails(t *testing.T) {
 	}
 	var n int64
 	fundo := context.Background()
-	err = storage.InUserTx(fundo, a.pool, a.dono, func(q *db.Queries) error {
+	err = testdb.NoProjetoPadrao(t, a.pool, a.dono, func(q *db.Queries, _ uuid.UUID) error {
 		var err error
 		n, err = q.CountHeartbeats(fundo, a.dono)
 		return err

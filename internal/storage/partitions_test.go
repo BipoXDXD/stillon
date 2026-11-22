@@ -72,9 +72,7 @@ func TestPartitionBoundsAreUTCRegardlessOfSessionTimeZone(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer tx.Rollback(ctx)
-	if _, err := tx.Exec(ctx, `SELECT set_config('app.user_id', $1, true)`, dono.String()); err != nil {
-		t.Fatal(err)
-	}
+	escopoDoProjetoDe(t, pool, tx, dono)
 	rows, err := tx.Query(ctx, `SELECT tableoid::regclass::text FROM checks ORDER BY checked_at`)
 	if err != nil {
 		t.Fatal(err)

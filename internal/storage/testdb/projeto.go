@@ -5,6 +5,12 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/BipoXDXD/stillon/internal/storage"
+	"github.com/BipoXDXD/stillon/internal/storage/db"
+	"github.com/BipoXDXD/stillon/internal/tenancy"
 )
 
 // ProjetoPadrao devolve o Projeto padrão do usuário, criando-o com o vínculo
@@ -38,6 +44,43 @@ func ProjetoPadrao(t *testing.T, userID uuid.UUID) uuid.UUID {
 		VALUES ($1, $2, 'owner', now())
 		ON CONFLICT (project_id, user_id) DO NOTHING`, projeto, userID); err != nil {
 		t.Fatalf("vincular o titular ao Projeto padrão: %v", err)
+	}
+	return projeto
+}
+
+// NoProjetoPadrao garante o Projeto padrão de userID e roda fn em
+// storage.InProjectTx nele; projeto vai para os Insert* que pedem project_id.
+//
+// As sementes de recurso dos testes passam por aqui, e não por
+// storage.InUserTx: com as políticas por pertença ao projeto, o escopo de
+// usuário não vê nem grava recurso nenhum.
+func NoProjetoPadrao(t *testing.T, pool *pgxpool.Pool, userID uuid.UUID,
+	fn func(q *db.Queries, projeto uuid.UUID) error) error {
+	t.Helper()
+	return noProjetoPadrao(t, pool, userID, fn)
+}
+
+// noProjetoPadrao aceita qualquer storage.Beginner para o teste do helper
+// guardar a transação e ler o app.project_id nela.
+func noProjetoPadrao(t *testing.T, b storage.Beginner, userID uuid.UUID,
+	fn func(q *db.Queries, projeto uuid.UUID) error) error {
+	t.Helper()
+	projeto := ProjetoPadrao(t, userID)
+	return storage.InProjectTx(context.Background(), b, userID, projeto,
+		func(q *db.Queries, _ tenancy.ProjectScope) error { return fn(q, projeto) })
+}
+
+// EscopoDoProjetoPadrao liga, na transação tx já aberta, o escopo do Projeto
+// padrão de userID, e devolve o projeto: para o SQL de teste sem query gerada
+// e para a transação que o teste segura aberta (trava de linha, concorrência).
+// Passa por storage.InProjectPgxTx num savepoint de tx: a mesma conferência de
+// pertença, e os set_config locais valem para tx depois que o savepoint fecha.
+func EscopoDoProjetoPadrao(t *testing.T, tx pgx.Tx, userID uuid.UUID) uuid.UUID {
+	t.Helper()
+	projeto := ProjetoPadrao(t, userID)
+	if err := storage.InProjectPgxTx(context.Background(), tx, userID, projeto,
+		func(pgx.Tx, tenancy.ProjectScope) error { return nil }); err != nil {
+		t.Fatalf("ligar o escopo do Projeto padrão de %s: %v", userID, err)
 	}
 	return projeto
 }

@@ -42,9 +42,9 @@ func TestProberRoleProbesWithTheProductionClient(t *testing.T) {
 	testdb.ProjetoPadrao(t, dono)
 	alvo := uuid.Must(uuid.NewV7())
 	agora := time.Now()
-	err := storage.InUserTx(ctx, pool, dono, func(q *db.Queries) error {
+	err := testdb.NoProjetoPadrao(t, pool, dono, func(q *db.Queries, projeto uuid.UUID) error {
 		return q.InsertTarget(ctx, db.InsertTargetParams{
-			ID: alvo, UserID: dono, Name: "interno", URL: "http://127.0.0.1:1/",
+			ID: alvo, UserID: dono, ProjectID: projeto, Name: "interno", URL: "http://127.0.0.1:1/",
 			Method: "GET", IntervalSec: 60, TimeoutMS: 1000, ExpectedStatus: 200,
 			Enabled: true, NextRunAt: agora.Add(-time.Minute), CreatedAt: agora,
 		})
@@ -73,10 +73,10 @@ func TestProberRoleProbesWithTheProductionClient(t *testing.T) {
 			t.Fatal("nenhum check gravado em 15s: o sondador não está no wiring")
 		case <-passo.C:
 		}
-		err := storage.InUserTx(ctx, pool, dono, func(q *db.Queries) error {
+		err := testdb.NoProjetoPadrao(t, pool, dono, func(q *db.Queries, projeto uuid.UUID) error {
 			var err error
 			rows, err = q.ListChecks(ctx, db.ListChecksParams{
-				ProjectID: testdb.ProjetoDoAlvo(t, alvo), TargetID: alvo, FromAt: agora.Add(-time.Hour), ToAt: time.Now().Add(time.Hour),
+				ProjectID: projeto, TargetID: alvo, FromAt: agora.Add(-time.Hour), ToAt: time.Now().Add(time.Hour),
 			})
 			return err
 		})

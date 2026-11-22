@@ -249,27 +249,14 @@ func TestProjectScopeRefusesWritingIntoAnotherProject(t *testing.T) {
 	})
 }
 
-// Sem app.project_id a restritiva vale true: o binário anterior (InUserTx), o
-// sondador, o ping e a página pública continuam vendo o que viam.
+// Sem app.project_id a restritiva vale true: o sondador, o ping e a página
+// pública continuam vendo o que viam. O escopo de usuário já não vê recurso
+// nenhum depois da troca das políticas por pertença ao projeto, e por isso
+// não está aqui.
 func TestRestrictivePolicyLeavesServiceScopesUntouched(t *testing.T) {
 	pool := testdb.New(t)
-	u, _, _, ra, rb := doisProjetos(t, pool)
+	_, _, _, ra, rb := doisProjetos(t, pool)
 	ctx := context.Background()
-
-	t.Run("InUserTx", func(t *testing.T) {
-		var n int64
-		err := storage.InUserTx(ctx, pool, u, func(q *db.Queries) error {
-			var err error
-			n, err = q.CountTargets(ctx, u)
-			return err
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if n != 2 {
-			t.Errorf("InUserTx vê %d alvos; queria 2 (os de A e de B)", n)
-		}
-	})
 
 	t.Run("InProberTx", func(t *testing.T) {
 		var reivindicados []uuid.UUID
@@ -322,7 +309,7 @@ func TestRestrictiveMigrationBackfillsOrphanRows(t *testing.T) {
 	ctx := context.Background()
 	pool, admin, dsn := bancoNaVersao(t, versaoDaMigration(t, sufixoProjetoPadrao))
 	dono := novoUsuario(t, pool)
-	alvo := novoAlvo(t, pool, dono, agora)
+	alvo := novoAlvoDoBinarioAnterior(t, pool, dono, agora)
 	if n := contar(t, admin, `SELECT count(*) FROM targets WHERE id = $1 AND project_id IS NULL`, alvo); n != 1 {
 		t.Fatalf("o alvo do binário anterior já nasceu com projeto (%d órfãos); o teste não prova o backfill", n)
 	}

@@ -109,7 +109,7 @@ func TestOlderBinaryIgnoresHeartbeatRows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ClaimDueTargets: %v", err)
 	}
-	err = storage.InUserTx(ctx, pool, dono, func(q *db.Queries) error {
+	err = emProjetoTx(t, pool, dono, func(q *db.Queries) error {
 		l, err := q.ListTargets(ctx, db.ListTargetsParams{ProjectID: projeto, MaxRows: 10})
 		if err != nil {
 			return err
@@ -129,7 +129,7 @@ func TestOlderBinaryIgnoresHeartbeatRows(t *testing.T) {
 
 	// target_id num uuid.UUID, e não num ponteiro: é o que o binário anterior
 	// escaneia, e um NULL aqui derrubaria a rota.
-	err = emEscopo(t, pool, "app.user_id", dono.String(), func(tx pgx.Tx) error {
+	err = emEscopo(t, pool, projetoDoDono, dono.String(), func(tx pgx.Tx) error {
 		var ids []uuid.UUID
 		rows, err := tx.Query(ctx, antigaListIncidents, dono, nil, nil, nil, 10)
 		if err != nil {
@@ -228,7 +228,7 @@ func TestOlderBinaryIgnoresHeartbeatRows(t *testing.T) {
 		t.Fatalf("ListReminderCandidates antiga: %v", err)
 	}
 
-	err = emEscopo(t, pool, "app.user_id", dono.String(), func(tx pgx.Tx) error {
+	err = emEscopo(t, pool, projetoDoDono, dono.String(), func(tx pgx.Tx) error {
 		var id, alvoID uuid.UUID
 		var nome, causa string
 		var inicio time.Time

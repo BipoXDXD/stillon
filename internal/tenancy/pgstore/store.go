@@ -4,10 +4,12 @@ package pgstore
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/BipoXDXD/stillon/internal/storage"
@@ -41,12 +43,36 @@ func (s *Store) Membership(ctx context.Context, userID, projectID uuid.UUID) (te
 	return escopo, nil
 }
 
-// EnsureDefault cria o Projeto padrão e o vínculo de owner na mesma transação
-// (o banco não garante que todo projeto tenha owner). O índice único parcial
-// faz a chamada concorrente não criar outro: o ON CONFLICT espera a primeira
-// transação e, em READ COMMITTED, o SELECT seguinte já enxerga o projeto dela.
-// O escopo sai de Membership, que aplica as regras de suspensão.
+// EnsureDefault devolve o escopo no Projeto padrão de userID, criando-o se
+// preciso. As rotas antigas chamam isto a cada requisição, então o caminho
+// rápido só lê: achou o padrão, o escopo sai de Membership, que aplica as
+// regras de suspensão. Um padrão sem owner não se repara aqui (Membership o
+// recusaria), mas isso é inalcançável: o padrão nasce com o owner na mesma
+// transação, e o app não tem UPDATE nem DELETE em projects e
+// project_members. Sem padrão, o caminho lento cria o projeto e o vínculo
+// de owner na mesma transação (o banco não garante que todo projeto tenha
+// owner). O índice único parcial faz a chamada concorrente não criar outro: o
+// ON CONFLICT espera a primeira transação e, em READ COMMITTED, o SELECT
+// seguinte já enxerga o projeto dela.
 func (s *Store) EnsureDefault(ctx context.Context, userID uuid.UUID, now time.Time) (tenancy.ProjectScope, error) {
+	var existente uuid.UUID
+	err := storage.InUserTx(ctx, s.pool, userID, func(q *db.Queries) error {
+		var err error
+		existente, err = q.GetDefaultProjectID(ctx, userID)
+		return err
+	})
+	switch {
+	case err == nil:
+		return s.Membership(ctx, userID, existente)
+	case !errors.Is(err, pgx.ErrNoRows):
+		return tenancy.ProjectScope{}, fmt.Errorf("ler Projeto padrão: %w", err)
+	}
+	return s.criarPadrao(ctx, userID, now)
+}
+
+// criarPadrao é o caminho lento de EnsureDefault: INSERT ON CONFLICT do
+// projeto, leitura do id e vínculo de owner, numa transação só.
+func (s *Store) criarPadrao(ctx context.Context, userID uuid.UUID, now time.Time) (tenancy.ProjectScope, error) {
 	novo, err := uuid.NewV7()
 	if err != nil {
 		return tenancy.ProjectScope{}, fmt.Errorf("gerar id do projeto: %w", err)

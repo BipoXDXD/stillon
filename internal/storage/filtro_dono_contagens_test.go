@@ -89,9 +89,9 @@ func heartbeatsDe(t *testing.T, pool *pgxpool.Pool, dono uuid.UUID, prefixo stri
 	criarVarios(n, func(i int) { novoHeartbeat(t, pool, dono, fmt.Sprintf("hb-contagem-%s-%d", prefixo, i)) })
 }
 
-// B pede a remoção da validade TLS do alvo de A; sem RLS, só o filtro por
-// dono impede o DELETE, e a releitura do banco prova que a linha ficou.
-func TestDeleteTargetTLSOfOwnerFiltersOwnerWithoutRLS(t *testing.T) {
+// O projeto B pede a remoção da validade TLS do alvo de A; sem RLS, só o filtro por
+// projeto impede o DELETE, e a releitura do banco prova que a linha ficou.
+func TestDeleteTargetTLSOfProjectFiltersProjectWithoutRLS(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
 	// A e B são dois projetos do MESMO usuário: só o filtro por projeto os
@@ -102,10 +102,10 @@ func TestDeleteTargetTLSOfOwnerFiltersOwnerWithoutRLS(t *testing.T) {
 	novaValidadeTLS(t, pool, alvoA)
 	q := queriesSemRLS(t)
 
-	if err := q.DeleteTargetTLSOfOwner(ctx, db.DeleteTargetTLSOfOwnerParams{ProjectID: pb, TargetID: alvoA}); err != nil {
+	if err := q.DeleteTargetTLSOfProject(ctx, db.DeleteTargetTLSOfProjectParams{ProjectID: pb, TargetID: alvoA}); err != nil {
 		t.Fatalf("B removendo a validade de A: %v", err)
 	}
-	v, err := q.GetTargetTLSOfOwner(ctx, db.GetTargetTLSOfOwnerParams{ProjectID: pa, TargetID: alvoA})
+	v, err := q.GetTargetTLSOfProject(ctx, db.GetTargetTLSOfProjectParams{ProjectID: pa, TargetID: alvoA})
 	if err != nil {
 		t.Fatalf("a validade de A sumiu depois do DELETE em nome de B: %v", err)
 	}
@@ -114,9 +114,9 @@ func TestDeleteTargetTLSOfOwnerFiltersOwnerWithoutRLS(t *testing.T) {
 	}
 
 	// Controle: em nome do dono, o mesmo DELETE remove a linha.
-	if err := q.DeleteTargetTLSOfOwner(ctx, db.DeleteTargetTLSOfOwnerParams{ProjectID: pa, TargetID: alvoA}); err != nil {
+	if err := q.DeleteTargetTLSOfProject(ctx, db.DeleteTargetTLSOfProjectParams{ProjectID: pa, TargetID: alvoA}); err != nil {
 		t.Fatalf("A removendo a própria validade: %v", err)
 	}
-	_, err = q.GetTargetTLSOfOwner(ctx, db.GetTargetTLSOfOwnerParams{ProjectID: pa, TargetID: alvoA})
-	exigirNenhumaLinha(t, err, "GetTargetTLSOfOwner depois do DELETE do dono")
+	_, err = q.GetTargetTLSOfProject(ctx, db.GetTargetTLSOfProjectParams{ProjectID: pa, TargetID: alvoA})
+	exigirNenhumaLinha(t, err, "GetTargetTLSOfProject depois do DELETE do dono")
 }

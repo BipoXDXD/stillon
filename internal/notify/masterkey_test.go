@@ -12,7 +12,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/BipoXDXD/stillon/internal/crypto"
-	"github.com/BipoXDXD/stillon/internal/storage"
 	"github.com/BipoXDXD/stillon/internal/storage/db"
 	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 )
@@ -39,8 +38,7 @@ func gravarCanais(t *testing.T, pool *pgxpool.Pool, selos ...func(uuid.UUID) []b
 		t.Fatal(err)
 	}
 	agora := time.Date(2026, 11, 12, 12, 0, 0, 0, time.UTC)
-	projeto := testdb.ProjetoPadrao(t, dono)
-	err := storage.InUserTx(ctx, pool, dono, func(q *db.Queries) error {
+	err := testdb.NoProjetoPadrao(t, pool, dono, func(q *db.Queries, projeto uuid.UUID) error {
 		for i, selar := range selos {
 			id := uuid.Must(uuid.NewV7())
 			if err := q.InsertChannel(ctx, db.InsertChannelParams{

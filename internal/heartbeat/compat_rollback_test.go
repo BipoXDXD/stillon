@@ -12,6 +12,7 @@ import (
 
 	"github.com/BipoXDXD/stillon/internal/heartbeat"
 	"github.com/BipoXDXD/stillon/internal/prober"
+	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 )
 
 // Piso de rollback: este binário precisa ler linhas gravadas por uma versão
@@ -38,9 +39,7 @@ func (a ambiente) comoDono(t *testing.T, sql string, args ...any) {
 		t.Fatal(err)
 	}
 	defer tx.Rollback(ctx)
-	if _, err := tx.Exec(ctx, `SELECT set_config('app.user_id', $1, true)`, a.dono.String()); err != nil {
-		t.Fatal(err)
-	}
+	testdb.EscopoDoProjetoPadrao(t, tx, a.dono)
 	tag, err := tx.Exec(ctx, sql, args...)
 	if err != nil {
 		t.Fatalf("%s: %v", sql, err)

@@ -12,7 +12,6 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/BipoXDXD/stillon/internal/storage"
 	"github.com/BipoXDXD/stillon/internal/storage/db"
 	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 )
@@ -65,8 +64,9 @@ var insercoesAntigas = []insercaoAntiga{
 	}},
 }
 
-// inserirComSQLAntigo grava uma linha com o INSERT antigo no escopo do dono
-// (o InUserTx).
+// inserirComSQLAntigo grava uma linha com o INSERT antigo no escopo de usuário
+// do dono, como o binário anterior (o InUserTx); com o pool do superusuário, a
+// linha entra como dado legado, por fora da RLS.
 func inserirComSQLAntigo(t *testing.T, pool *pgxpool.Pool, ins insercaoAntiga, dono uuid.UUID) uuid.UUID {
 	t.Helper()
 	ctx := context.Background()
@@ -179,10 +179,10 @@ func TestProjectIDIsImmutableOnceSet(t *testing.T) {
 		nome, guc, valor, tabela string
 		id                       uuid.UUID
 	}{
-		{"dono em targets", "app.user_id", dono.String(), "targets", alvo},
-		{"dono em heartbeats", "app.user_id", dono.String(), "heartbeats", hb},
-		{"dono em notif_channels", "app.user_id", dono.String(), "notif_channels", canal},
-		{"dono em status_pages", "app.user_id", dono.String(), "status_pages", pagina},
+		{"dono em targets", projetoDoDono, dono.String(), "targets", alvo},
+		{"dono em heartbeats", projetoDoDono, dono.String(), "heartbeats", hb},
+		{"dono em notif_channels", projetoDoDono, dono.String(), "notif_channels", canal},
+		{"dono em status_pages", projetoDoDono, dono.String(), "status_pages", pagina},
 		{"ping em heartbeats", "app.ping_token_hash", hashHex("hb-projeto"), "heartbeats", hb},
 		{"verificação em notif_channels", "app.verify_token_hash", hashHex("verifica-projeto"), "notif_channels", canal},
 	}
@@ -197,17 +197,21 @@ func TestProjectIDIsImmutableOnceSet(t *testing.T) {
 		})
 	}
 
+	// A linha sem projeto é dado legado, e o backfill é o da migration: depois
+	// da troca das políticas por pertença ao projeto, nenhum escopo da
+	// aplicação enxerga linha com project_id NULL. Os dois passam pelo
+	// superusuário, que ignora a RLS mas não o gatilho guard_project_id_imutavel:
+	// é ele que tem de deixar NULL → valor passar.
 	t.Run("NULL para o padrão passa", func(t *testing.T) {
+		admin := testdb.Admin(t)
 		for _, ins := range insercoesAntigas {
 			semProjeto := novoUsuario(t, pool)
-			id := inserirComSQLAntigo(t, pool, ins, semProjeto)
+			id := inserirComSQLAntigo(t, admin, ins, semProjeto)
 			padrao := testdb.ProjetoPadrao(t, semProjeto)
-			comEscopo(t, pool, "app.user_id", semProjeto.String(), func(tx pgx.Tx) {
-				tag, err := tx.Exec(ctx, `UPDATE `+ins.tabela+` SET project_id = $1 WHERE id = $2`, padrao, id)
-				if err != nil || tag.RowsAffected() != 1 {
-					t.Errorf("%s: backfill deu %d linha(s) e erro %v; queria 1 linha", ins.tabela, tag.RowsAffected(), err)
-				}
-			}, true)
+			tag, err := admin.Exec(ctx, `UPDATE `+ins.tabela+` SET project_id = $1 WHERE id = $2`, padrao, id)
+			if err != nil || tag.RowsAffected() != 1 {
+				t.Errorf("%s: backfill deu %d linha(s) e erro %v; queria 1 linha", ins.tabela, tag.RowsAffected(), err)
+			}
 			if got := projectIDDe(t, ins.tabela, id); got == nil || *got != padrao {
 				t.Errorf("%s: project_id = %v depois do backfill, queria %s", ins.tabela, got, padrao)
 			}
@@ -251,7 +255,7 @@ func TestGetTargetReturnsProjectID(t *testing.T) {
 	alvo := novoAlvo(t, pool, dono, agora)
 
 	var row db.Target
-	err := storage.InUserTx(ctx, pool, dono, func(q *db.Queries) error {
+	err := emProjetoTx(t, pool, dono, func(q *db.Queries) error {
 		var err error
 		row, err = q.GetTarget(ctx, db.GetTargetParams{ProjectID: testdb.ProjetoDoAlvo(t, alvo), ID: alvo})
 		return err

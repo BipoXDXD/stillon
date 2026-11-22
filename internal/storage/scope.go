@@ -45,8 +45,9 @@ func InUserTx(ctx context.Context, b Beginner, userID uuid.UUID, fn func(*db.Que
 
 // InProjectTx roda fn no escopo do projeto projectID, agindo como userID. Na
 // MESMA transação, liga app.user_id, confere a pertença (membro com a conta
-// ativa, titular com a conta ativa) e só então liga app.project_id: é o ÚNICO
-// lugar do código que liga app.project_id, e nunca antes da conferência.
+// ativa, titular com a conta ativa) e só então liga app.project_id: com
+// InProjectPgxTx, que ela embrulha, é o ÚNICO caminho do código que liga
+// app.project_id, e nunca antes da conferência.
 //
 // Sem pertença, o erro é tenancy.ErrProjectNotFound, o mesmo de um projeto
 // inexistente, para a API não revelar que o projeto existe; fn não roda. fn
@@ -54,6 +55,16 @@ func InUserTx(ctx context.Context, b Beginner, userID uuid.UUID, fn func(*db.Que
 // nunca pelo de quem chamou.
 func InProjectTx(ctx context.Context, b Beginner, userID, projectID uuid.UUID,
 	fn func(*db.Queries, tenancy.ProjectScope) error) error {
+	return InProjectPgxTx(ctx, b, userID, projectID, func(tx pgx.Tx, escopo tenancy.ProjectScope) error {
+		return fn(db.New(tx), escopo)
+	})
+}
+
+// InProjectPgxTx é InProjectTx com o pgx.Tx cru, para o SQL sem query gerada
+// (as sementes dos testes): a mesma conferência de pertença, o mesmo erro e o
+// mesmo escopo. É aqui que app.project_id é ligado.
+func InProjectPgxTx(ctx context.Context, b Beginner, userID, projectID uuid.UUID,
+	fn func(pgx.Tx, tenancy.ProjectScope) error) error {
 	if userID == uuid.Nil {
 		return ErrNoUser
 	}
@@ -86,7 +97,7 @@ func InProjectTx(ctx context.Context, b Beginner, userID, projectID uuid.UUID,
 	if err := q.ScopeToProject(ctx, projectID); err != nil {
 		return fmt.Errorf("definir escopo do projeto: %w", err)
 	}
-	if err := fn(q, tenancy.ProjectScope{ProjectID: projectID, UserID: userID, Role: papel}); err != nil {
+	if err := fn(tx, tenancy.ProjectScope{ProjectID: projectID, UserID: userID, Role: papel}); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)

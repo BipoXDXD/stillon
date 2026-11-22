@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/BipoXDXD/stillon/internal/statuspage"
+	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 	"github.com/BipoXDXD/stillon/internal/tenancy"
 )
 
@@ -45,9 +46,7 @@ func TestTargetDeletedWhileSavingItemsIsAnItemError(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer outra.Rollback(ctx)
-			if _, err := outra.Exec(ctx, `SELECT set_config('app.user_id', $1, true)`, dono.String()); err != nil {
-				t.Fatal(err)
-			}
+			testdb.EscopoDoProjetoPadrao(t, outra, dono)
 			if _, err := outra.Exec(ctx, `DELETE FROM targets WHERE id = $1`, alvo); err != nil {
 				t.Fatal(err)
 			}
@@ -115,9 +114,7 @@ func TestPatchWhileTheTargetIsDeletedDoesNotDeadlock(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer outra.Rollback(ctx)
-	if _, err := outra.Exec(ctx, `SELECT set_config('app.user_id', $1, true)`, dono.String()); err != nil {
-		t.Fatal(err)
-	}
+	testdb.EscopoDoProjetoPadrao(t, outra, dono)
 	if _, err := outra.Exec(ctx, `SELECT id FROM targets WHERE id = $1 FOR UPDATE`, alvo); err != nil {
 		t.Fatal(err)
 	}

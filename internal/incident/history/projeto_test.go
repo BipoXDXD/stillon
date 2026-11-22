@@ -29,7 +29,7 @@ func (b *bancada) alvoNoProjeto(t *testing.T, dono, projeto uuid.UUID, nome stri
 	id := uuid.Must(uuid.NewV7())
 	err := storage.InProjectTx(ctx, b.pool, dono, projeto, func(q *db.Queries, _ tenancy.ProjectScope) error {
 		return q.InsertTarget(ctx, db.InsertTargetParams{
-			ID: id, UserID: dono, ProjectID: &projeto, Name: nome, URL: "https://exemplo.com", Method: "GET",
+			ID: id, UserID: dono, ProjectID: projeto, Name: nome, URL: "https://exemplo.com", Method: "GET",
 			IntervalSec: 60, TimeoutMS: 5000, ExpectedStatus: 200, Enabled: true, NextRunAt: agora, CreatedAt: agora,
 		})
 	})

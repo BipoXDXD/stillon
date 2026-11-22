@@ -339,8 +339,8 @@ func TestDeletedTargetLeavesThePublicPage(t *testing.T) {
 	api, site := a.alvo(t, dono, "api"), a.alvo(t, dono, "site")
 	a.publicar(t, dono, "empresa", true, statuspage.Item{TargetID: api, DisplayName: "API"}, statuspage.Item{TargetID: site, DisplayName: "Site"})
 	incidenteResolvido(t, adm, api, a.clk.Now().Add(-2*time.Hour), a.clk.Now().Add(-time.Hour))
-	err := storage.InUserTx(ctx, a.pool, dono, func(q *db.Queries) error {
-		_, err := q.DeleteTarget(ctx, db.DeleteTargetParams{ProjectID: testdb.ProjetoDoAlvo(t, api), ID: api})
+	err := testdb.NoProjetoPadrao(t, a.pool, dono, func(q *db.Queries, projeto uuid.UUID) error {
+		_, err := q.DeleteTarget(ctx, db.DeleteTargetParams{ProjectID: projeto, ID: api})
 		return err
 	})
 	if err != nil {
@@ -374,8 +374,8 @@ func TestPublicViewIsCachedForThirtySeconds(t *testing.T) {
 	}
 
 	// Outro processo muda o título, sem passar por este serviço.
-	err = storage.InUserTx(ctx, a.pool, dono, func(q *db.Queries) error {
-		_, err := q.UpdateStatusPage(ctx, db.UpdateStatusPageParams{ProjectID: testdb.ProjetoPadrao(t, dono), ID: p.ID, Slug: "empresa", Title: "Título novo", Published: true})
+	err = testdb.NoProjetoPadrao(t, a.pool, dono, func(q *db.Queries, projeto uuid.UUID) error {
+		_, err := q.UpdateStatusPage(ctx, db.UpdateStatusPageParams{ProjectID: projeto, ID: p.ID, Slug: "empresa", Title: "Título novo", Published: true})
 		return err
 	})
 	if err != nil {
@@ -443,8 +443,8 @@ func TestTakingASlugFreedElsewhereInvalidatesTheCache(t *testing.T) {
 	donoA, donoB, donoC := a.usuario(t), a.usuario(t), a.usuario(t)
 	liberarEmOutraInstancia := func(dono uuid.UUID, p statuspage.Page, novoSlug string) {
 		t.Helper()
-		err := storage.InUserTx(ctx, a.pool, dono, func(q *db.Queries) error {
-			_, err := q.UpdateStatusPage(ctx, db.UpdateStatusPageParams{ProjectID: testdb.ProjetoPadrao(t, dono), ID: p.ID, Slug: novoSlug, Title: p.Title, Published: true})
+		err := testdb.NoProjetoPadrao(t, a.pool, dono, func(q *db.Queries, projeto uuid.UUID) error {
+			_, err := q.UpdateStatusPage(ctx, db.UpdateStatusPageParams{ProjectID: projeto, ID: p.ID, Slug: novoSlug, Title: p.Title, Published: true})
 			return err
 		})
 		if err != nil {

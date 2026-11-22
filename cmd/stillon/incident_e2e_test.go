@@ -16,7 +16,6 @@ import (
 	"github.com/BipoXDXD/stillon/internal/clock"
 	"github.com/BipoXDXD/stillon/internal/config"
 	"github.com/BipoXDXD/stillon/internal/crypto"
-	"github.com/BipoXDXD/stillon/internal/storage"
 	"github.com/BipoXDXD/stillon/internal/storage/db"
 	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 )
@@ -54,16 +53,16 @@ func TestIncidentFlowsFromProbeToAuditedNotification(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = storage.InUserTx(ctx, pool, dono, func(q *db.Queries) error {
+	err = testdb.NoProjetoPadrao(t, pool, dono, func(q *db.Queries, projeto uuid.UUID) error {
 		if err := q.InsertTarget(ctx, db.InsertTargetParams{
-			ID: alvo, UserID: dono, Name: "interno", URL: "http://127.0.0.1:1/",
+			ID: alvo, UserID: dono, ProjectID: projeto, Name: "interno", URL: "http://127.0.0.1:1/",
 			Method: "GET", IntervalSec: 60, TimeoutMS: 1000, ExpectedStatus: 200,
 			Enabled: true, NextRunAt: agora.Add(-time.Minute), CreatedAt: agora,
 		}); err != nil {
 			return err
 		}
 		return q.InsertChannel(ctx, db.InsertChannelParams{
-			ID: canal, UserID: dono, ProjectID: testdb.ProjetoPadrao(t, dono), Kind: "discord", ConfigEnc: sealed, VerifiedAt: &agora, CreatedAt: agora,
+			ID: canal, UserID: dono, ProjectID: projeto, Kind: "discord", ConfigEnc: sealed, VerifiedAt: &agora, CreatedAt: agora,
 		})
 	})
 	if err != nil {
@@ -155,9 +154,7 @@ func devolverAFila(t *testing.T, pool *pgxpool.Pool, dono, alvo uuid.UUID) {
 		t.Fatal(err)
 	}
 	defer tx.Rollback(ctx)
-	if _, err := tx.Exec(ctx, `SELECT set_config('app.user_id', $1, true)`, dono.String()); err != nil {
-		t.Fatal(err)
-	}
+	testdb.EscopoDoProjetoPadrao(t, tx, dono)
 	if _, err := tx.Exec(ctx, `UPDATE targets SET next_run_at = now() - interval '1 minute' WHERE id = $1`, alvo); err != nil {
 		t.Fatal(err)
 	}
@@ -193,9 +190,7 @@ func escopoDoDono(t *testing.T, pool *pgxpool.Pool, dono uuid.UUID, sql string, 
 		t.Fatal(err)
 	}
 	defer tx.Rollback(ctx)
-	if _, err := tx.Exec(ctx, `SELECT set_config('app.user_id', $1, true)`, dono.String()); err != nil {
-		t.Fatal(err)
-	}
+	testdb.EscopoDoProjetoPadrao(t, tx, dono)
 	if err := tx.QueryRow(ctx, sql, args...).Scan(dst...); err != nil {
 		t.Fatal(err)
 	}

@@ -271,9 +271,7 @@ func (a ambiente) contarComoDono(t *testing.T, sql string) int64 {
 	ctx := context.Background()
 	var n int64
 	err := pgx.BeginFunc(ctx, a.pool, func(tx pgx.Tx) error {
-		if _, err := tx.Exec(ctx, `SELECT set_config('app.user_id', $1, true)`, a.dono.String()); err != nil {
-			return err
-		}
+		testdb.EscopoDoProjetoPadrao(t, tx, a.dono)
 		return tx.QueryRow(ctx, sql, a.dono).Scan(&n)
 	})
 	if err != nil {
@@ -287,9 +285,7 @@ func (a ambiente) auditorias(t *testing.T, id uuid.UUID) int64 {
 	ctx := context.Background()
 	var n int64
 	err := pgx.BeginFunc(ctx, a.pool, func(tx pgx.Tx) error {
-		if _, err := tx.Exec(ctx, `SELECT set_config('app.user_id', $1, true)`, a.dono.String()); err != nil {
-			return err
-		}
+		testdb.EscopoDoProjetoPadrao(t, tx, a.dono)
 		return tx.QueryRow(ctx, `SELECT count(*) FROM audit_log WHERE user_id = $1 AND action = $2 AND entity_id = $3`,
 			a.dono, heartbeat.AuditEventsCleared, id).Scan(&n)
 	})

@@ -33,8 +33,8 @@ func TestReconcileForgetsSeriesOfDeletedTargets(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	err := storage.InUserTx(ctx, b.pool, b.dono, func(q *db.Queries) error {
-		_, err := q.DeleteTarget(ctx, db.DeleteTargetParams{ProjectID: testdb.ProjetoDoAlvo(t, apagado), ID: apagado})
+	err := testdb.NoProjetoPadrao(t, b.pool, b.dono, func(q *db.Queries, projeto uuid.UUID) error {
+		_, err := q.DeleteTarget(ctx, db.DeleteTargetParams{ProjectID: projeto, ID: apagado})
 		return err
 	})
 	if err != nil {
@@ -81,9 +81,9 @@ func TestReconcileReportsTheHeartbeatEventLogSize(t *testing.T) {
 	id := uuid.Must(uuid.NewV7())
 	token, hash := heartbeat.NewPingToken()
 	periodo := int32(3600)
-	err := storage.InUserTx(ctx, b.pool, b.dono, func(q *db.Queries) error {
+	err := testdb.NoProjetoPadrao(t, b.pool, b.dono, func(q *db.Queries, projeto uuid.UUID) error {
 		return q.InsertHeartbeat(ctx, db.InsertHeartbeatParams{
-			ID: id, UserID: b.dono, ProjectID: testdb.ProjetoPadrao(t, b.dono), Name: "backup", PingTokenHash: hash, PeriodSec: &periodo, GraceSec: 300,
+			ID: id, UserID: b.dono, ProjectID: projeto, Name: "backup", PingTokenHash: hash, PeriodSec: &periodo, GraceSec: 300,
 			Enabled: true, CreatedAt: b.clk.Now(), DeadlineAt: b.clk.Now().Add(time.Hour),
 		})
 	})
@@ -124,8 +124,8 @@ func TestReconcileKeepsGoingWhenTheHeartbeatEventCountFails(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = storage.InUserTx(ctx, b.pool, b.dono, func(q *db.Queries) error {
-		_, err := q.DeleteTarget(ctx, db.DeleteTargetParams{ProjectID: testdb.ProjetoDoAlvo(t, apagado), ID: apagado})
+	err = testdb.NoProjetoPadrao(t, b.pool, b.dono, func(q *db.Queries, projeto uuid.UUID) error {
+		_, err := q.DeleteTarget(ctx, db.DeleteTargetParams{ProjectID: projeto, ID: apagado})
 		return err
 	})
 	if err != nil {
@@ -166,9 +166,9 @@ func TestReconcileReportsTheExactHeartbeatEventLogSizeAboveTheJitThreshold(t *te
 	id := uuid.Must(uuid.NewV7())
 	_, hash := heartbeat.NewPingToken()
 	periodo := int32(3600)
-	err := storage.InUserTx(ctx, b.pool, b.dono, func(q *db.Queries) error {
+	err := testdb.NoProjetoPadrao(t, b.pool, b.dono, func(q *db.Queries, projeto uuid.UUID) error {
 		return q.InsertHeartbeat(ctx, db.InsertHeartbeatParams{
-			ID: id, UserID: b.dono, ProjectID: testdb.ProjetoPadrao(t, b.dono), Name: "backup", PingTokenHash: hash, PeriodSec: &periodo, GraceSec: 300,
+			ID: id, UserID: b.dono, ProjectID: projeto, Name: "backup", PingTokenHash: hash, PeriodSec: &periodo, GraceSec: 300,
 			Enabled: true, CreatedAt: b.clk.Now(), DeadlineAt: b.clk.Now().Add(time.Hour),
 		})
 	})

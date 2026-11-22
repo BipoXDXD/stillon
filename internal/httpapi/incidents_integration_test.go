@@ -126,11 +126,11 @@ func TestIncidentListRejectsBadQueries(t *testing.T) {
 // ?target_id= é aditivo: combina com status, e o alvo de outro
 // usuário dá 200 com a lista vazia, não 404.
 //
-// Guarda dupla na lista vazia do alvo alheio: o t.user_id = $1 de
-// ListIncidents e a RLS de targets e incidents (history.List roda em
-// storage.InUserTx). Sabotar só uma deixa este teste verde; tirar o filtro E
-// trocar o InUserTx pelo InProberTx faz os incidentes do outro usuário
-// aparecerem.
+// Guarda dupla na lista vazia do alvo alheio: o t.project_id de
+// ListIncidents e a RLS do projeto em targets e incidents (history.List roda
+// em storage.InProjectTx). Sabotar só uma deixa este teste verde; tirar o
+// filtro E trocar o InProjectTx pelo InProberTx faz os incidentes do outro
+// usuário aparecerem.
 func TestIncidentListFiltersByTarget(t *testing.T) {
 	a := newAPI(t)
 	tok := tokenDe(t, a, a.userID)

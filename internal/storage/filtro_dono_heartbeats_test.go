@@ -26,7 +26,7 @@ func heartbeatDe(t *testing.T, q *db.Queries, projeto, hb uuid.UUID) db.Heartbea
 	return h
 }
 
-func TestGetHeartbeatFiltersOwnerWithoutRLS(t *testing.T) {
+func TestGetHeartbeatFiltersProjectWithoutRLS(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
 	a := novoUsuario(t, pool)
@@ -41,7 +41,7 @@ func TestGetHeartbeatFiltersOwnerWithoutRLS(t *testing.T) {
 	}
 }
 
-func TestGetHeartbeatViewFiltersOwnerWithoutRLS(t *testing.T) {
+func TestGetHeartbeatViewFiltersProjectWithoutRLS(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
 	a := novoUsuario(t, pool)
@@ -60,7 +60,7 @@ func TestGetHeartbeatViewFiltersOwnerWithoutRLS(t *testing.T) {
 	}
 }
 
-func TestGetHeartbeatForUpdateFiltersOwnerWithoutRLS(t *testing.T) {
+func TestGetHeartbeatForUpdateFiltersProjectWithoutRLS(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
 	a := novoUsuario(t, pool)
@@ -90,7 +90,7 @@ func atualizacaoDoHeartbeat(h db.Heartbeat, projeto uuid.UUID, nome string) db.U
 	}
 }
 
-func TestUpdateHeartbeatFiltersOwnerWithoutRLS(t *testing.T) {
+func TestUpdateHeartbeatFiltersProjectWithoutRLS(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
 	a := novoUsuario(t, pool)
@@ -113,7 +113,7 @@ func TestUpdateHeartbeatFiltersOwnerWithoutRLS(t *testing.T) {
 	}
 }
 
-func TestSetHeartbeatPingHashFiltersOwnerWithoutRLS(t *testing.T) {
+func TestSetHeartbeatPingHashFiltersProjectWithoutRLS(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
 	a := novoUsuario(t, pool)
@@ -136,7 +136,7 @@ func TestSetHeartbeatPingHashFiltersOwnerWithoutRLS(t *testing.T) {
 	}
 }
 
-func TestDeleteHeartbeatFiltersOwnerWithoutRLS(t *testing.T) {
+func TestDeleteHeartbeatFiltersProjectWithoutRLS(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
 	a := novoUsuario(t, pool)
@@ -161,7 +161,7 @@ func TestDeleteHeartbeatFiltersOwnerWithoutRLS(t *testing.T) {
 	}
 }
 
-func TestListHeartbeatEventsFiltersOwnerWithoutRLS(t *testing.T) {
+func TestListHeartbeatEventsFiltersProjectWithoutRLS(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
 	a := novoUsuario(t, pool)
@@ -199,7 +199,7 @@ func incidentesDoHeartbeat(t *testing.T, q *db.Queries, projeto, hb uuid.UUID) [
 	return inc
 }
 
-func TestListHeartbeatIncidentsFiltersOwnerWithoutRLS(t *testing.T) {
+func TestListHeartbeatIncidentsFiltersProjectWithoutRLS(t *testing.T) {
 	pool := testdb.New(t)
 	a := novoUsuario(t, pool)
 	pa, pb := testdb.ProjetoPadrao(t, a), testdb.NovoProjeto(t, a, "B")
@@ -215,7 +215,7 @@ func TestListHeartbeatIncidentsFiltersOwnerWithoutRLS(t *testing.T) {
 	}
 }
 
-func TestAckHeartbeatIncidentFiltersOwnerWithoutRLS(t *testing.T) {
+func TestAckHeartbeatIncidentFiltersProjectWithoutRLS(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
 	a := novoUsuario(t, pool)
@@ -253,7 +253,7 @@ func tagsDoHeartbeat(t *testing.T, q *db.Queries, projeto, hb uuid.UUID) []strin
 	return tags
 }
 
-func TestListHeartbeatTagsFiltersOwnerWithoutRLS(t *testing.T) {
+func TestListHeartbeatTagsFiltersProjectWithoutRLS(t *testing.T) {
 	pool := testdb.New(t)
 	a := novoUsuario(t, pool)
 	pa, pb := testdb.ProjetoPadrao(t, a), testdb.NovoProjeto(t, a, "B")
@@ -269,7 +269,7 @@ func TestListHeartbeatTagsFiltersOwnerWithoutRLS(t *testing.T) {
 	}
 }
 
-func TestDeleteHeartbeatTagsFiltersOwnerWithoutRLS(t *testing.T) {
+func TestDeleteHeartbeatTagsFiltersProjectWithoutRLS(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
 	a := novoUsuario(t, pool)
@@ -292,7 +292,7 @@ func TestDeleteHeartbeatTagsFiltersOwnerWithoutRLS(t *testing.T) {
 	}
 }
 
-func TestInsertHeartbeatTagsFiltersOwnerWithoutRLS(t *testing.T) {
+func TestInsertHeartbeatTagsFiltersProjectWithoutRLS(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
 	a := novoUsuario(t, pool)
@@ -315,7 +315,7 @@ func TestInsertHeartbeatTagsFiltersOwnerWithoutRLS(t *testing.T) {
 	}
 }
 
-func TestListHeartbeatsFiltersOwnerWithoutRLS(t *testing.T) {
+func TestListHeartbeatsFiltersProjectWithoutRLS(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
 	a := novoUsuario(t, pool)
@@ -339,7 +339,7 @@ func TestListHeartbeatsFiltersOwnerWithoutRLS(t *testing.T) {
 	}
 }
 
-func TestListProjectHeartbeatTagsFiltersOwnerWithoutRLS(t *testing.T) {
+func TestListProjectHeartbeatTagsFiltersProjectWithoutRLS(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
 	a := novoUsuario(t, pool)

@@ -12,8 +12,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/BipoXDXD/stillon/internal/storage"
 	"github.com/BipoXDXD/stillon/internal/storage/db"
+	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 )
 
 // Ações sobre uma tarefa que já existe: duplicar e limpar o log.
@@ -32,7 +32,7 @@ func contarHeartbeatsDe(t *testing.T, a *api, userID uuid.UUID) int64 {
 	t.Helper()
 	ctx := context.Background()
 	var n int64
-	err := storage.InUserTx(ctx, a.pool, userID, func(q *db.Queries) error {
+	err := testdb.NoProjetoPadrao(t, a.pool, userID, func(q *db.Queries, _ uuid.UUID) error {
 		var err error
 		n, err = q.CountHeartbeats(ctx, userID)
 		return err

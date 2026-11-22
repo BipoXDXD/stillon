@@ -48,7 +48,7 @@ func semearLegado(t *testing.T, pool *pgxpool.Pool, nome string) legado {
 		pagina:     novoID(),
 		slug:       "pagina-" + nome,
 	}
-	alvo := novoAlvo(t, pool, l.dono, agora)
+	alvo := novoAlvoDoBinarioAnterior(t, pool, l.dono, agora)
 	novoCheck(t, pool, alvo, agora)
 	novoCheck(t, pool, alvo, agora.Add(time.Minute))
 	expira := agora.Add(time.Hour)
@@ -255,9 +255,12 @@ func rodarBackfill(t *testing.T, pool *pgxpool.Pool) {
 func TestBackfillIsIdempotent(t *testing.T) {
 	pool := testdb.New(t)
 	admin := testdb.Admin(t)
+	// O alvo órfão (sem projeto) é dado legado: depois da troca das políticas
+	// por pertença ao projeto, o escopo de usuário já não grava alvo, então ele
+	// entra pelo superusuário, como estaria no banco.
 	for range 2 {
 		dono := novoUsuario(t, pool)
-		novoAlvo(t, pool, dono, agora)
+		novoAlvoDoBinarioAnterior(t, admin, dono, agora)
 	}
 
 	rodarBackfill(t, pool)

@@ -12,7 +12,6 @@ import (
 
 	"github.com/BipoXDXD/stillon/internal/config"
 	"github.com/BipoXDXD/stillon/internal/heartbeat"
-	"github.com/BipoXDXD/stillon/internal/storage"
 	"github.com/BipoXDXD/stillon/internal/storage/db"
 	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 )
@@ -36,9 +35,9 @@ func heartbeatVencido(t *testing.T, pool *pgxpool.Pool) (uuid.UUID, string) {
 	token, hash := heartbeat.NewPingToken()
 	periodo := int32(3600)
 	agora := time.Now()
-	err := storage.InUserTx(ctx, pool, dono, func(q *db.Queries) error {
+	err := testdb.NoProjetoPadrao(t, pool, dono, func(q *db.Queries, projeto uuid.UUID) error {
 		return q.InsertHeartbeat(ctx, db.InsertHeartbeatParams{
-			ID: id, UserID: dono, ProjectID: testdb.ProjetoPadrao(t, dono), Name: "backup", PingTokenHash: hash, PeriodSec: &periodo, GraceSec: 300,
+			ID: id, UserID: dono, ProjectID: projeto, Name: "backup", PingTokenHash: hash, PeriodSec: &periodo, GraceSec: 300,
 			Enabled: true, CreatedAt: agora, DeadlineAt: agora.Add(-time.Hour),
 		})
 	})

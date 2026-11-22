@@ -2,6 +2,7 @@ package pgstore_test
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -96,6 +97,98 @@ func TestEnsureDefaultKeepsExistingDefault(t *testing.T) {
 	}
 	if n := contar(t, `SELECT count(*) FROM projects WHERE titular_id = $1`, u); n != 1 {
 		t.Errorf("projetos = %d, queria 1", n)
+	}
+}
+
+// ligarGatilhosDeEscrita faz todo INSERT em projects e project_members falhar
+// com "escrita no caminho quente". O cleanup é registrado antes de criar, para
+// um teste que pare no meio não deixar gatilho para trás.
+func ligarGatilhosDeEscrita(t *testing.T) {
+	t.Helper()
+	ctx := context.Background()
+	admin := testdb.Admin(t)
+	t.Cleanup(func() {
+		for _, sql := range []string{
+			`DROP TRIGGER IF EXISTS teste_sem_escrita ON projects`,
+			`DROP TRIGGER IF EXISTS teste_sem_escrita ON project_members`,
+			`DROP FUNCTION IF EXISTS teste_recusa_escrita()`,
+		} {
+			if _, err := admin.Exec(ctx, sql); err != nil {
+				t.Errorf("remover gatilho de teste: %v", err)
+			}
+		}
+	})
+	for _, sql := range []string{
+		`CREATE FUNCTION teste_recusa_escrita() RETURNS trigger LANGUAGE plpgsql AS $$
+		 BEGIN RAISE EXCEPTION 'escrita no caminho quente'; END $$`,
+		`CREATE TRIGGER teste_sem_escrita BEFORE INSERT ON projects
+		 FOR EACH ROW EXECUTE FUNCTION teste_recusa_escrita()`,
+		`CREATE TRIGGER teste_sem_escrita BEFORE INSERT ON project_members
+		 FOR EACH ROW EXECUTE FUNCTION teste_recusa_escrita()`,
+	} {
+		if _, err := admin.Exec(ctx, sql); err != nil {
+			t.Fatalf("criar gatilho de teste: %v", err)
+		}
+	}
+}
+
+// Com o Projeto padrão já criado, EnsureDefault só lê: os gatilhos recusam
+// qualquer INSERT e a chamada ainda devolve o escopo. O usuário sem projeto,
+// com os mesmos gatilhos, dá erro: o caminho lento continua escrevendo.
+func TestEnsureDefaultSkipsWritesWhenProjectExists(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+	u := novoUsuario(t, pool)
+	semProjeto := novoUsuario(t, pool)
+	existente := testdb.ProjetoPadrao(t, u)
+	ligarGatilhosDeEscrita(t)
+	st := pgstore.New(pool)
+
+	sc, err := st.EnsureDefault(ctx, u, time.Now())
+	if err != nil {
+		t.Fatalf("EnsureDefault com o padrão existente: %v", err)
+	}
+	quer := tenancy.ProjectScope{ProjectID: existente, UserID: u, Role: tenancy.RoleOwner}
+	if sc != quer {
+		t.Errorf("escopo = %+v, queria %+v", sc, quer)
+	}
+
+	if _, err := st.EnsureDefault(ctx, semProjeto, time.Now()); err == nil ||
+		!strings.Contains(err.Error(), "escrita no caminho quente") {
+		t.Errorf("EnsureDefault sem projeto = %v, queria o erro do gatilho", err)
+	}
+}
+
+// Sem projeto e sem gatilhos, a primeira chamada cria o padrão com owner e a
+// segunda devolve o mesmo id.
+func TestEnsureDefaultStillCreatesOnFirstCall(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+	u := novoUsuario(t, pool)
+	st := pgstore.New(pool)
+
+	primeiro, err := st.EnsureDefault(ctx, u, time.Now())
+	if err != nil {
+		t.Fatalf("primeira chamada: %v", err)
+	}
+	if primeiro.Role != tenancy.RoleOwner || primeiro.UserID != u || primeiro.ProjectID == uuid.Nil {
+		t.Errorf("escopo = %+v, queria owner de um projeto novo", primeiro)
+	}
+	if n := contar(t, `SELECT count(*) FROM projects WHERE id = $1 AND titular_id = $2 AND is_default`,
+		primeiro.ProjectID, u); n != 1 {
+		t.Errorf("projeto padrão gravado = %d, queria 1", n)
+	}
+	if n := contar(t, `SELECT count(*) FROM project_members WHERE project_id = $1 AND user_id = $2 AND role = 'owner'`,
+		primeiro.ProjectID, u); n != 1 {
+		t.Errorf("vínculo owner = %d, queria 1", n)
+	}
+
+	segundo, err := st.EnsureDefault(ctx, u, time.Now())
+	if err != nil {
+		t.Fatalf("segunda chamada: %v", err)
+	}
+	if segundo.ProjectID != primeiro.ProjectID {
+		t.Errorf("segunda chamada = %s, queria o mesmo %s", segundo.ProjectID, primeiro.ProjectID)
 	}
 }
 

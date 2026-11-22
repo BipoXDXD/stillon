@@ -152,6 +152,28 @@ func TestRoutesRecusaConfigSemPrazo(t *testing.T) {
 	}
 }
 
+// Sem resolvedor de projeto, nenhuma rota de recurso teria escopo: a montagem
+// recusa os Deps em vez de subir uma API que falharia a cada requisição.
+func TestRoutesRecusaDepsSemProjects(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	clk := clock.NewFake(time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC))
+	cfg := configSemBanco(time.Second)
+	defer func() {
+		motivo, _ := recover().(string)
+		if !strings.Contains(motivo, "Projects") || !strings.Contains(motivo, "tenancy.NewService") {
+			t.Fatalf("Routes sem Projects: panic %q, queria um que mande passar o tenancy.NewService", motivo)
+		}
+	}()
+	httpapi.Routes(ctx, cfg, httpapi.Deps{
+		Channels:    notify.NewChannelService(nil, nil, clk, nil, nil, cfg.PublicBaseURL),
+		StatusPages: statuspage.NewService(nil, clk),
+		Projects:    nil,
+		Clock:       clk,
+		LimitesIP:   middleware.NovosOrcamentosEmMemoria(ctx, clk),
+	})
+}
+
 // bancoMudo aceita a conexão TCP e nunca responde: o pgx fica esperando a
 // resposta do startup até o contexto vencer. É o banco preso, sem Docker.
 func bancoMudo(t *testing.T) *pgxpool.Pool {

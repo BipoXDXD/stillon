@@ -316,3 +316,52 @@ func TestViewerGetsForbiddenOnEveryMutatingProjectRoute(t *testing.T) {
 	}
 	conferirLeiturasDoDonoIguais(t, antes, lerTudoDoDono(t, a, dono, r, leituras))
 }
+
+// O reenvio do viewer não chega ao envio: dá 403 forbidden, o token pendente e
+// o prazo dele ficam como estavam, e nenhum e-mail novo sai. Um reenvio que
+// mandasse o link antes de conferir a permissão gastaria a cota de e-mail do
+// dono e invalidaria o link que ele já tem.
+func TestViewerResendLeavesPendingTokenUntouched(t *testing.T) {
+	a := newAPI(t)
+	dono := tokenDe(t, a, a.userID)
+	projeto := testdb.ProjetoPadrao(t, a.userID)
+	noProjeto := "/api/v1/projects/" + projeto.String() + "/channels"
+	status, corpo := lerCru(t, a, http.MethodPost, noProjeto, dono,
+		map[string]string{"kind": "email", "email": "pessoa@exemplo.com"})
+	if status != http.StatusCreated {
+		t.Fatalf("POST %s do dono deu %d, queria 201: %s", noProjeto, status, corpo)
+	}
+	canal, _ := decodificar(t, corpo)["id"].(string)
+	if n := linksEnviados(a); n != 1 {
+		t.Fatalf("a criação mandou %d links, queria 1", n)
+	}
+	pendente := func() (hash []byte, vence time.Time) {
+		t.Helper()
+		if err := testdb.Admin(t).QueryRow(context.Background(),
+			`SELECT verify_token_hash, verify_expires_at FROM notif_channels WHERE id = $1`, canal).Scan(&hash, &vence); err != nil {
+			t.Fatal(err)
+		}
+		return hash, vence
+	}
+	hashAntes, venceAntes := pendente()
+
+	idDoViewer := outroUsuario(t, a)
+	testdb.Membro(t, projeto, idDoViewer, "viewer")
+	status, corpo = lerCru(t, a, http.MethodPost, noProjeto+"/"+canal+"/verify/resend", tokenDe(t, a, idDoViewer), nil)
+	if erro, _ := decodificar(t, corpo)["error"].(map[string]any); status != http.StatusForbidden || erro["code"] != "forbidden" {
+		t.Fatalf("reenvio do viewer deu %d, queria 403 forbidden: %s", status, corpo)
+	}
+	hashDepois, venceDepois := pendente()
+	if !slices.Equal(hashAntes, hashDepois) || !venceAntes.Equal(venceDepois) {
+		t.Errorf("o reenvio do viewer mexeu no token pendente: hash %x → %x, prazo %v → %v", hashAntes, hashDepois, venceAntes, venceDepois)
+	}
+	if n := linksEnviados(a); n != 1 {
+		t.Errorf("depois do reenvio do viewer, %d links enviados; queria 1", n)
+	}
+}
+
+func linksEnviados(a *api) int {
+	a.email.mu.Lock()
+	defer a.email.mu.Unlock()
+	return len(a.email.links)
+}

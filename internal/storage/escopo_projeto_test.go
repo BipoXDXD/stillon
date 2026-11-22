@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/BipoXDXD/stillon/internal/storage"
 	"github.com/BipoXDXD/stillon/internal/storage/db"
@@ -175,11 +176,12 @@ func TestInProjectTxRejectsNilIDs(t *testing.T) {
 
 // No molde de TestScopeSurvivesConnectionReuse: app.project_id é SET LOCAL e
 // não pode vazar para a próxima transação na mesma conexão do pool. Se
-// vazasse, um InUserTx seguinte veria só um projeto do usuário.
+// vazasse, a consulta sem escopo seguinte veria o alvo do projeto A (pela
+// targets_do_projeto). A transação seguinte, no projeto B, vê só o alvo de B.
 func TestProjectScopeSurvivesConnectionReuse(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
-	u, a, _, _, _ := doisProjetos(t, pool)
+	u, a, b, _, _ := doisProjetos(t, pool)
 
 	conn, err := pool.Acquire(ctx)
 	if err != nil {
@@ -213,17 +215,53 @@ func TestProjectScopeSurvivesConnectionReuse(t *testing.T) {
 		t.Errorf("sem escopo viu %d alvos", n)
 	}
 
-	err = storage.InUserTx(ctx, conn, u, func(q *db.Queries) error {
+	err = storage.InProjectTx(ctx, conn, u, b, func(q *db.Queries, _ tenancy.ProjectScope) error {
 		total, err := q.CountTargets(ctx, u)
 		if err != nil {
 			return err
 		}
-		if total != 2 {
-			t.Errorf("InUserTx depois de InProjectTx na mesma conexão viu %d alvos, queria 2", total)
+		if total != 1 {
+			t.Errorf("InProjectTx no projeto B depois do A na mesma conexão viu %d alvos, queria 1", total)
 		}
 		return nil
 	})
 	if err != nil {
-		t.Fatalf("InUserTx numa conexão reusada falhou: %v", err)
+		t.Fatalf("InProjectTx numa conexão reusada falhou: %v", err)
+	}
+}
+
+// InProjectPgxTx é o caminho de InProjectTx com o pgx.Tx cru, para o SQL que
+// não tem query gerada: liga app.user_id e app.project_id depois de conferir a
+// pertença. Sem pertença, o mesmo erro de InProjectTx e fn não roda.
+func TestInProjectPgxTxScopesProjectAfterMembership(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+	u, a, _, _, _ := doisProjetos(t, pool)
+
+	var usuario, projeto string
+	var visto tenancy.ProjectScope
+	err := storage.InProjectPgxTx(ctx, pool, u, a, func(tx pgx.Tx, sc tenancy.ProjectScope) error {
+		visto = sc
+		return tx.QueryRow(ctx, `SELECT coalesce(current_setting('app.user_id', true), ''),
+		                                coalesce(current_setting('app.project_id', true), '')`).Scan(&usuario, &projeto)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if usuario != u.String() || projeto != a.String() {
+		t.Errorf("GUCs dentro de fn = (%q, %q), queria (%q, %q)", usuario, projeto, u, a)
+	}
+	if visto != (tenancy.ProjectScope{ProjectID: a, UserID: u, Role: tenancy.RoleOwner}) {
+		t.Errorf("escopo entregue = %+v, queria owner de %s", visto, a)
+	}
+
+	estranho := novoUsuario(t, pool)
+	rodou := false
+	err = storage.InProjectPgxTx(ctx, pool, estranho, a, func(pgx.Tx, tenancy.ProjectScope) error {
+		rodou = true
+		return nil
+	})
+	if !errors.Is(err, tenancy.ErrProjectNotFound) || rodou {
+		t.Errorf("sem pertença: err = %v, fn rodou = %v; queria tenancy.ErrProjectNotFound sem rodar fn", err, rodou)
 	}
 }

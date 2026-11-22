@@ -17,6 +17,7 @@ import (
 	"github.com/BipoXDXD/stillon/internal/notify"
 	"github.com/BipoXDXD/stillon/internal/storage"
 	"github.com/BipoXDXD/stillon/internal/storage/db"
+	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 )
 
 // Pausar e retomar canal pela API: PATCH /channels/{id} com
@@ -227,9 +228,9 @@ func TestPausedChannelDropsThroughTheRoute(t *testing.T) {
 
 	agora := a.clk.Now()
 	alvo, incidente := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
-	if err := storage.InUserTx(ctx, a.pool, a.userID, func(q *db.Queries) error {
+	if err := testdb.NoProjetoPadrao(t, a.pool, a.userID, func(q *db.Queries, projeto uuid.UUID) error {
 		return q.InsertTarget(ctx, db.InsertTargetParams{
-			ID: alvo, UserID: a.userID, Name: "API", URL: "https://exemplo.com", Method: "GET",
+			ID: alvo, UserID: a.userID, ProjectID: projeto, Name: "API", URL: "https://exemplo.com", Method: "GET",
 			IntervalSec: 60, TimeoutMS: 5000, ExpectedStatus: 200, Enabled: true, NextRunAt: agora, CreatedAt: agora,
 		})
 	}); err != nil {
@@ -261,9 +262,7 @@ func TestPausedChannelDropsThroughTheRoute(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer tx.Rollback(ctx)
-		if _, err := tx.Exec(ctx, `SELECT set_config('app.user_id', $1, true)`, a.userID.String()); err != nil {
-			t.Fatal(err)
-		}
+		testdb.EscopoDoProjetoPadrao(t, tx, a.userID)
 		if err := tx.QueryRow(ctx, `SELECT status FROM notifications WHERE id = $1`, id).Scan(&s); err != nil {
 			t.Fatal(err)
 		}

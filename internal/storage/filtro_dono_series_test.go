@@ -16,7 +16,7 @@ import (
 // rollups consolidados e as horas cruas ainda não consolidadas. As duas
 // queries recebem o id do alvo e filtram o projeto pelo JOIN com targets.
 
-func TestListRollupsFiltersOwnerWithoutRLS(t *testing.T) {
+func TestListRollupsFiltersProjectWithoutRLS(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
 	// A e B são dois projetos do MESMO usuário: só o filtro por projeto os
@@ -50,7 +50,7 @@ func TestListRollupsFiltersOwnerWithoutRLS(t *testing.T) {
 	}
 }
 
-func TestListRawHoursOfTargetFiltersOwnerWithoutRLS(t *testing.T) {
+func TestListRawHoursOfTargetFiltersProjectWithoutRLS(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
 	// A e B são dois projetos do MESMO usuário: só o filtro por projeto os
@@ -85,7 +85,7 @@ func TestListRawHoursOfTargetFiltersOwnerWithoutRLS(t *testing.T) {
 
 // A marca d'água do resumo é a do projeto: sem o filtro, o rollup de A
 // adiantaria a de B, e B pularia as próprias horas ainda não consolidadas.
-func TestLatestProjectRollupBucketFiltersOwnerWithoutRLS(t *testing.T) {
+func TestLatestProjectRollupBucketFiltersProjectWithoutRLS(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
 	// A e B são dois projetos do MESMO usuário: só o filtro por projeto os

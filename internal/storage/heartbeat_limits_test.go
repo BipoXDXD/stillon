@@ -38,6 +38,9 @@ type linhaDeHeartbeat struct {
 	prazo     time.Time
 }
 
+// inserirLinha grava no projeto do escopo de tx (projetoDoDono), ou, sem
+// projeto no escopo, sem a coluna project_id: é o banco parado antes da 00040,
+// no escopo de usuário do binário de então.
 func inserirLinha(ctx context.Context, tx pgx.Tx, dono uuid.UUID, l linhaDeHeartbeat) (uuid.UUID, error) {
 	id := novoID()
 	var fuso *string
@@ -45,11 +48,23 @@ func inserirLinha(ctx context.Context, tx pgx.Tx, dono uuid.UUID, l linhaDeHeart
 		utc := "UTC"
 		fuso = &utc
 	}
+	var projeto *uuid.UUID
+	if err := tx.QueryRow(ctx, `SELECT NULLIF(current_setting('app.project_id', true), '')::uuid`).Scan(&projeto); err != nil {
+		return id, err
+	}
+	if projeto == nil {
+		_, err := tx.Exec(ctx, `INSERT INTO heartbeats
+			(id, user_id, name, ping_token_hash, period_sec, cron_expr, timezone, grace_sec,
+			 description, created_at, deadline_at)
+			VALUES ($1, $2, 'h', $3, $4, $5, $6, $7, $8, $9, $10)`,
+			id, dono, hashDe(id.String()), l.periodo, l.cron, fuso, l.grace, l.descricao, agora, l.prazo)
+		return id, err
+	}
 	_, err := tx.Exec(ctx, `INSERT INTO heartbeats
-		(id, user_id, name, ping_token_hash, period_sec, cron_expr, timezone, grace_sec,
+		(id, user_id, project_id, name, ping_token_hash, period_sec, cron_expr, timezone, grace_sec,
 		 description, created_at, deadline_at)
-		VALUES ($1, $2, 'h', $3, $4, $5, $6, $7, $8, $9, $10)`,
-		id, dono, hashDe(id.String()), l.periodo, l.cron, fuso, l.grace, l.descricao, agora, l.prazo)
+		VALUES ($1, $2, $3, 'h', $4, $5, $6, $7, $8, $9, $10, $11)`,
+		id, dono, *projeto, hashDe(id.String()), l.periodo, l.cron, fuso, l.grace, l.descricao, agora, l.prazo)
 	return id, err
 }
 
@@ -78,7 +93,7 @@ func TestHeartbeatLimitsChecksAcceptTheNewEdges(t *testing.T) {
 	for _, c := range casos {
 		t.Run(c.nome, func(t *testing.T) {
 			c.linha.prazo = agora
-			err := emEscopo(t, pool, "app.user_id", dono.String(), func(tx pgx.Tx) error {
+			err := emEscopo(t, pool, projetoDoDono, dono.String(), func(tx pgx.Tx) error {
 				_, err := inserirLinha(ctx, tx, dono, c.linha)
 				return err
 			})
@@ -113,7 +128,7 @@ func TestHeartbeatLimitsDownConvertsAndRestoresTheOldChecks(t *testing.T) {
 	// Prazo já próximo (no passado): reduzir o período não pode adiá-lo.
 	prazoPerto := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
 	var idLonga, idCron, idNormal, idPerto, idToleraLonga uuid.UUID
-	err = emEscopo(t, pool, "app.user_id", dono.String(), func(tx pgx.Tx) error {
+	err = emEscopo(t, pool, projetoDoDono, dono.String(), func(tx pgx.Tx) error {
 		var err error
 		if idLonga, err = inserirLinha(ctx, tx, dono, linhaDeHeartbeat{periodo: &longo, grace: tetoNovo,
 			descricao: strings.Repeat("é", descricaoNovaMax), prazo: daquiAUmAno}); err != nil {

@@ -6,11 +6,8 @@
 -- contam os alvos de quem chama dentro do projeto atual (a RLS restritiva
 -- corta os de outros projetos); o teto por titular vem no PR 2b.
 
--- user_id é quem criou o alvo; project_id, o projeto em que ele vive. O
--- serviço sempre manda project_id. Ele aceita nulo só para o caminho antigo
--- (InUserTx e os testes de outros pacotes), em que o gatilho
--- preencher_project_id_padrao põe o Projeto padrão; no escopo de
--- projeto o gatilho não preenche, e a RLS recusa o nulo (42501).
+-- user_id é quem criou o alvo; project_id, o projeto em que ele vive,
+-- obrigatório: todo chamador grava no escopo de projeto.
 -- name: InsertTarget :exec
 INSERT INTO targets (id, user_id, name, url, method, interval_sec, timeout_ms,
                      expected_status, headers_enc, degraded_threshold_ms, enabled,
@@ -20,7 +17,7 @@ VALUES (sqlc.arg(id), sqlc.arg(user_id), sqlc.arg(name), sqlc.arg(url), sqlc.arg
         sqlc.arg(interval_sec), sqlc.arg(timeout_ms), sqlc.arg(expected_status),
         sqlc.arg(headers_enc), sqlc.arg(degraded_threshold_ms), sqlc.arg(enabled),
         sqlc.arg(next_run_at), sqlc.arg(created_at), sqlc.arg(tls_warn), sqlc.arg(content_mode),
-        sqlc.arg(content_value), sqlc.arg(content_json_pointer), sqlc.narg(project_id)::uuid);
+        sqlc.arg(content_value), sqlc.arg(content_json_pointer), sqlc.arg(project_id)::uuid);
 
 -- name: GetTarget :one
 SELECT id, user_id, name, url, method, interval_sec, timeout_ms,
@@ -77,7 +74,7 @@ UPDATE target_health
 -- A validade do certificado (spec §7.2), lida e apagada pelo projeto. Como em
 -- ResetTargetHealth, o EXISTS filtra pelo projeto além da RLS de target_tls. Só o
 -- sondador grava a linha (prober.sql).
--- name: GetTargetTLSOfOwner :one
+-- name: GetTargetTLSOfProject :one
 SELECT tt.not_after, tt.observed_at
   FROM target_tls tt
  WHERE tt.target_id = sqlc.arg(target_id)
@@ -86,14 +83,14 @@ SELECT tt.not_after, tt.observed_at
 
 -- As validades de todos os alvos do projeto numa consulta só: a lista não lê
 -- uma por alvo.
--- name: ListTargetTLSOfOwner :many
+-- name: ListTargetTLSOfProject :many
 SELECT tt.target_id, tt.not_after, tt.observed_at
   FROM target_tls tt
  WHERE EXISTS (SELECT 1 FROM targets t
                 WHERE t.id = tt.target_id AND t.project_id = sqlc.arg(project_id)::uuid);
 
 -- Outro host é outro certificado: a leitura do anterior não vale para ele.
--- name: DeleteTargetTLSOfOwner :exec
+-- name: DeleteTargetTLSOfProject :exec
 DELETE FROM target_tls tt
  WHERE tt.target_id = sqlc.arg(target_id)
    AND EXISTS (SELECT 1 FROM targets t

@@ -10,7 +10,6 @@ import (
 
 	"github.com/BipoXDXD/stillon/internal/account"
 	"github.com/BipoXDXD/stillon/internal/clock"
-	"github.com/BipoXDXD/stillon/internal/storage"
 	"github.com/BipoXDXD/stillon/internal/storage/db"
 	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 )
@@ -104,21 +103,26 @@ func TestCreatedUserTargetLandsInDefaultProject(t *testing.T) {
 		t.Fatalf("ler o Projeto padrão: %v", err)
 	}
 
+	// O InsertTarget exige project_id; o INSERT cru, no escopo só do usuário
+	// (o do InUserTx), é o caminho antigo que o gatilho ainda cobre.
 	alvo := uuid.New()
 	agora := time.Date(2026, 11, 22, 9, 30, 0, 0, time.UTC)
-	var got db.Target
-	err = storage.InUserTx(ctx, pool, id, func(q *db.Queries) error {
-		if err := q.InsertTarget(ctx, db.InsertTargetParams{
-			ID: alvo, UserID: id, Name: "alvo", URL: "https://exemplo.com", Method: "GET",
-			IntervalSec: 300, TimeoutMS: 1000, ExpectedStatus: 200, Enabled: true,
-			NextRunAt: agora, CreatedAt: agora,
-		}); err != nil {
-			return err
-		}
-		var err error
-		got, err = q.GetTarget(ctx, db.GetTargetParams{ProjectID: padrao, ID: alvo})
-		return err
-	})
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, `SELECT set_config('app.user_id', $1, true)`, id.String()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO targets (id, user_id, name, url, method, interval_sec, timeout_ms,
+		                     expected_status, enabled, next_run_at, created_at)
+		VALUES ($1, $2, 'alvo', 'https://exemplo.com', 'GET', 300, 1000, 200, true, $3, $3)`,
+		alvo, id, agora); err != nil {
+		t.Fatalf("gravar o alvo sem project_id: %v", err)
+	}
+	got, err := db.New(tx).GetTarget(ctx, db.GetTargetParams{ProjectID: padrao, ID: alvo})
 	if err != nil {
 		t.Fatal(err)
 	}

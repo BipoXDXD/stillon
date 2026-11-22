@@ -107,7 +107,10 @@ func (b *bancadaPublica) alvo(t *testing.T, enabled bool, headers []byte) uuid.U
 func (b *bancadaPublica) inserirAlvo(t *testing.T, id uuid.UUID, enabled bool, headers []byte) {
 	t.Helper()
 	p := db.InsertTargetParams{ID: id, UserID: b.owner, Name: "alvo público", URL: "http://127.0.0.1:1", Method: "GET", IntervalSec: 60, TimeoutMS: 1000, ExpectedStatus: 200, Enabled: enabled, HeadersEnc: headers, NextRunAt: b.clk.Now(), CreatedAt: b.clk.Now()}
-	if err := storage.InUserTx(t.Context(), b.pool, b.owner, func(q *db.Queries) error { return q.InsertTarget(t.Context(), p) }); err != nil {
+	if err := testdb.NoProjetoPadrao(t, b.pool, b.owner, func(q *db.Queries, projeto uuid.UUID) error {
+		p.ProjectID = projeto
+		return q.InsertTarget(t.Context(), p)
+	}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -115,9 +118,9 @@ func (b *bancadaPublica) inserirAlvo(t *testing.T, id uuid.UUID, enabled bool, h
 func (b *bancadaPublica) checks(t *testing.T, id uuid.UUID) []db.ListChecksRow {
 	t.Helper()
 	var rows []db.ListChecksRow
-	err := storage.InUserTx(t.Context(), b.pool, b.owner, func(q *db.Queries) error {
+	err := testdb.NoProjetoPadrao(t, b.pool, b.owner, func(q *db.Queries, projeto uuid.UUID) error {
 		var err error
-		rows, err = q.ListChecks(t.Context(), db.ListChecksParams{ProjectID: testdb.ProjetoDoAlvo(t, id), TargetID: id, FromAt: b.clk.Now().Add(-time.Hour), ToAt: b.clk.Now().Add(time.Hour)})
+		rows, err = q.ListChecks(t.Context(), db.ListChecksParams{ProjectID: projeto, TargetID: id, FromAt: b.clk.Now().Add(-time.Hour), ToAt: b.clk.Now().Add(time.Hour)})
 		return err
 	})
 	if err != nil {
@@ -187,8 +190,8 @@ func (b *bancadaPublica) incidente(t *testing.T, id uuid.UUID) {
 
 func (b *bancadaPublica) apagar(t *testing.T, id uuid.UUID) {
 	t.Helper()
-	err := storage.InUserTx(t.Context(), b.pool, b.owner, func(q *db.Queries) error {
-		n, err := q.DeleteTarget(t.Context(), db.DeleteTargetParams{ProjectID: testdb.ProjetoDoAlvo(t, id), ID: id})
+	err := testdb.NoProjetoPadrao(t, b.pool, b.owner, func(q *db.Queries, projeto uuid.UUID) error {
+		n, err := q.DeleteTarget(t.Context(), db.DeleteTargetParams{ProjectID: projeto, ID: id})
 		if err == nil && n != 1 {
 			return fmt.Errorf("DeleteTarget removeu %d linhas", n)
 		}

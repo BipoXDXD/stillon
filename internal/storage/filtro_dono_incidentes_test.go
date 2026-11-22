@@ -26,7 +26,7 @@ func ackDoIncidente(t *testing.T, conn *pgx.Conn, incidente uuid.UUID) *time.Tim
 	return ack
 }
 
-func TestAckIncidentFiltersOwnerWithoutRLS(t *testing.T) {
+func TestAckIncidentFiltersProjectWithoutRLS(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
 	a := novoUsuario(t, pool)
@@ -57,7 +57,7 @@ func TestAckIncidentFiltersOwnerWithoutRLS(t *testing.T) {
 // comentário da query promete lista vazia, e sem RLS só o project_id do WHERE
 // cumpre. O segundo alvo de A, com incidente próprio, prova que o filtro por
 // alvo também age: sem ele, A leria os dois incidentes.
-func TestListIncidentsByTargetFiltersOwnerWithoutRLS(t *testing.T) {
+func TestListIncidentsByTargetFiltersProjectWithoutRLS(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
 	a := novoUsuario(t, pool)

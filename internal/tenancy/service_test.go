@@ -2,6 +2,7 @@ package tenancy_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -45,5 +46,32 @@ func TestServiceDefaultScopeUsesClock(t *testing.T) {
 	}
 	if sc != repo.escopo {
 		t.Errorf("escopo = %+v, queria %+v", sc, repo.escopo)
+	}
+}
+
+// repoQueFalha reprova o teste se o Service chegar ao repositório.
+type repoQueFalha struct{ t *testing.T }
+
+func (r repoQueFalha) Membership(context.Context, uuid.UUID, uuid.UUID) (tenancy.ProjectScope, error) {
+	r.t.Error("Membership chamado com projeto nulo")
+	return tenancy.ProjectScope{}, nil
+}
+
+func (r repoQueFalha) EnsureDefault(context.Context, uuid.UUID, time.Time) (tenancy.ProjectScope, error) {
+	r.t.Error("EnsureDefault chamado")
+	return tenancy.ProjectScope{}, nil
+}
+
+func (r repoQueFalha) ListForUser(context.Context, uuid.UUID) ([]tenancy.ProjectSummary, error) {
+	r.t.Error("ListForUser chamado")
+	return nil, nil
+}
+
+func TestScopeRefusesNilProjectWithoutRepository(t *testing.T) {
+	svc := tenancy.NewService(repoQueFalha{t: t}, clock.NewFake(time.Now()))
+
+	_, err := svc.Scope(context.Background(), uuid.New(), uuid.Nil)
+	if !errors.Is(err, tenancy.ErrProjectNotFound) {
+		t.Errorf("err = %v, queria ErrProjectNotFound", err)
 	}
 }

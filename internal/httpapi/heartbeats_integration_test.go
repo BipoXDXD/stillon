@@ -22,7 +22,6 @@ import (
 	"github.com/BipoXDXD/stillon/internal/heartbeat"
 	"github.com/BipoXDXD/stillon/internal/notify"
 	"github.com/BipoXDXD/stillon/internal/prober"
-	"github.com/BipoXDXD/stillon/internal/storage"
 	"github.com/BipoXDXD/stillon/internal/storage/db"
 	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 )
@@ -107,9 +106,7 @@ func TestCreateStoresOnlyTheTokenHash(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer tx.Rollback(ctx)
-	if _, err := tx.Exec(ctx, `SELECT set_config('app.user_id', $1, true)`, a.userID.String()); err != nil {
-		t.Fatal(err)
-	}
+	testdb.EscopoDoProjetoPadrao(t, tx, a.userID)
 	if err := tx.QueryRow(ctx, `SELECT ping_token_hash, h::text FROM heartbeats h`).Scan(&hash, &linha); err != nil {
 		t.Fatal(err)
 	}
@@ -1375,11 +1372,11 @@ func encherHeartbeats(t *testing.T, a *api, n int64) {
 	t.Helper()
 	ctx := context.Background()
 	periodo := int32(3600)
-	err := storage.InUserTx(ctx, a.pool, a.userID, func(q *db.Queries) error {
+	err := testdb.NoProjetoPadrao(t, a.pool, a.userID, func(q *db.Queries, projeto uuid.UUID) error {
 		for range n {
 			_, hash := heartbeat.NewPingToken()
 			if err := q.InsertHeartbeat(ctx, db.InsertHeartbeatParams{
-				ID: uuid.Must(uuid.NewV7()), UserID: a.userID, ProjectID: testdb.ProjetoPadrao(t, a.userID), Name: "h", PingTokenHash: hash, PeriodSec: &periodo,
+				ID: uuid.Must(uuid.NewV7()), UserID: a.userID, ProjectID: projeto, Name: "h", PingTokenHash: hash, PeriodSec: &periodo,
 				GraceSec: 300, Enabled: true, CreatedAt: a.clk.Now(), DeadlineAt: a.clk.Now().Add(time.Hour),
 			}); err != nil {
 				return err

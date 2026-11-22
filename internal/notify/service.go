@@ -23,8 +23,9 @@ import (
 
 const (
 	// MaxChannels é o limite de canais do usuário (ver cabe e Create para
-	// onde ele é contado; o teto por titular vem no PR 2b). Canal é destino
-	// de envio: sem teto, cada canal novo seria mais um alvo de mensagem.
+	// onde ele é contado). A regra da spec (§Cotas e abuso) conta os canais do
+	// titular em todos os projetos dele. Canal é destino de envio: sem teto,
+	// cada canal novo seria mais um alvo de mensagem.
 	MaxChannels = 10
 	// VerifyTTL é a validade do link de verificação (spec §5.8).
 	VerifyTTL = 24 * time.Hour
@@ -104,11 +105,12 @@ type ChannelInput struct {
 // que confere a pertença e liga a RLS para aquele projeto: as queries filtram
 // por project_id E a política filtra de novo. A permissão vale pelo papel lido
 // NA transação (o escopo que InProjectTx entrega), nunca pelo que quem chamou
-// trouxe. A cota (trava e contagem) continua por user_id: a pré-conferência
-// (cabe, sob InUserTx) conta os canais do usuário em todos os projetos, e a
-// definitiva, com a trava, roda dentro de InProjectTx e conta só os do projeto
-// atual; o teto por titular vem no PR 2b. A verificação por link
-// (CheckToken, ConfirmToken) não sabe nada de projeto.
+// trouxe. A cota (trava e contagem) continua por user_id, e as duas
+// conferências rodam sob InProjectTx: a pré-conferência (cabe), antes do
+// envio, e a definitiva, com a trava, na gravação. Com um projeto por usuário,
+// contar por user_id dá o mesmo que a regra da spec (§Cotas e abuso): os canais do
+// titular em todos os projetos dele. A verificação por link (CheckToken,
+// ConfirmToken) não sabe nada de projeto.
 type ChannelService struct {
 	pool    *pgxpool.Pool
 	box     *crypto.Box
@@ -151,7 +153,7 @@ func (s *ChannelService) Create(ctx context.Context, scope tenancy.ProjectScope,
 	if err := s.exigir(ctx, scope, tenancy.PermManageChannels); err != nil {
 		return Channel{}, err
 	}
-	if err := s.cabe(ctx, scope.UserID, false); err != nil {
+	if err := s.cabe(ctx, scope); err != nil {
 		return Channel{}, err
 	}
 
@@ -246,13 +248,14 @@ func (s *ChannelService) exigir(ctx context.Context, scope tenancy.ProjectScope,
 	})
 }
 
-// cabe é a pré-conferência do limite, antes do envio. Continua sob InUserTx,
-// em que a contagem vê os canais do usuário em todos os projetos; a
-// conferência definitiva (cabeNa dentro de InProjectTx, em Create) só vê o
-// projeto atual. O teto por titular vem no PR 2b.
-func (s *ChannelService) cabe(ctx context.Context, userID uuid.UUID, travar bool) error {
-	return storage.InUserTx(ctx, s.pool, userID, func(q *db.Queries) error {
-		return s.cabeNa(ctx, q, userID, travar)
+// cabe é a pré-conferência do limite, antes do envio, sem trava. Roda sob
+// InProjectTx, como a conferência definitiva (cabeNa com a trava, em Create):
+// InUserTx num recurso de projeto devolveria vazio em silêncio quando as
+// permissivas forem por projeto. Com um projeto por usuário as duas contam o
+// mesmo que a regra da spec (§Cotas e abuso), que conta os canais do titular.
+func (s *ChannelService) cabe(ctx context.Context, scope tenancy.ProjectScope) error {
+	return storage.InProjectTx(ctx, s.pool, scope.UserID, scope.ProjectID, func(q *db.Queries, atual tenancy.ProjectScope) error {
+		return s.cabeNa(ctx, q, atual.UserID, false)
 	})
 }
 

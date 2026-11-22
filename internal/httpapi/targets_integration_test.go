@@ -833,15 +833,11 @@ func TestTargetLimitIs409(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer tx.Rollback(ctx)
-	// Como na produção, a conta já tem o Projeto padrão: o gatilho põe nele
-	// os alvos gravados aqui, e o escopo do POST os conta.
-	testdb.ProjetoPadrao(t, a.userID)
-	if _, err := tx.Exec(ctx, `SELECT set_config('app.user_id', $1, true)`, a.userID.String()); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := tx.Exec(ctx, `INSERT INTO targets (id, user_id, name, url, method, interval_sec, timeout_ms, expected_status, next_run_at)
-		SELECT gen_random_uuid(), $1, 'alvo ' || i, 'https://exemplo.com/' || i, 'GET', 60, 10000, 200, now()
-		  FROM generate_series(1, $2::int) i`, a.userID, targets.MaxTargetsPerUser); err != nil {
+	// Os alvos entram no Projeto padrão do dono, onde o POST os conta.
+	projeto := testdb.EscopoDoProjetoPadrao(t, tx, a.userID)
+	if _, err := tx.Exec(ctx, `INSERT INTO targets (id, user_id, project_id, name, url, method, interval_sec, timeout_ms, expected_status, next_run_at)
+		SELECT gen_random_uuid(), $1, $3, 'alvo ' || i, 'https://exemplo.com/' || i, 'GET', 60, 10000, 200, now()
+		  FROM generate_series(1, $2::int) i`, a.userID, targets.MaxTargetsPerUser, projeto); err != nil {
 		t.Fatal(err)
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -854,9 +850,10 @@ func TestTargetLimitIs409(t *testing.T) {
 		t.Errorf("status %d, queria 409 target_limit_reached", resp.StatusCode)
 	}
 	// O 409 não basta: a recusa não pode ter gravado o 101º. A contagem roda
-	// no escopo do dono, como a inserção acima: targets tem RLS.
+	// no Projeto padrão do dono, onde o INSERT acima gravou os alvos (com
+	// project_id explícito): targets tem RLS.
 	var n int64
-	err = storage.InUserTx(ctx, a.pool, a.userID, func(q *db.Queries) error {
+	err = testdb.NoProjetoPadrao(t, a.pool, a.userID, func(q *db.Queries, _ uuid.UUID) error {
 		var err error
 		n, err = q.CountTargets(ctx, a.userID)
 		return err
@@ -890,13 +887,11 @@ func TestContentRuleHostCapIs409(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer tx.Rollback(ctx)
-	if _, err := tx.Exec(ctx, `SELECT set_config('app.user_id', $1, true)`, a.userID.String()); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := tx.Exec(ctx, `INSERT INTO targets (id, user_id, name, url, method, interval_sec, timeout_ms, expected_status,
+	projeto := testdb.EscopoDoProjetoPadrao(t, tx, a.userID)
+	if _, err := tx.Exec(ctx, `INSERT INTO targets (id, user_id, project_id, name, url, method, interval_sec, timeout_ms, expected_status,
 		                                        next_run_at, content_mode, content_value)
-		SELECT gen_random_uuid(), $1, 'regra ' || i, 'https://example.com/' || i, 'GET', 60, 10000, 200, now(), 'contains', 'ok'
-		  FROM generate_series(1, 5) i`, a.userID); err != nil {
+		SELECT gen_random_uuid(), $1, $2, 'regra ' || i, 'https://example.com/' || i, 'GET', 60, 10000, 200, now(), 'contains', 'ok'
+		  FROM generate_series(1, 5) i`, a.userID, projeto); err != nil {
 		t.Fatal(err)
 	}
 	if err := tx.Commit(ctx); err != nil {
