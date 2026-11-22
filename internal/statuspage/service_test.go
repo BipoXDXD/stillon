@@ -13,7 +13,6 @@ import (
 
 	"github.com/BipoXDXD/stillon/internal/clock"
 	"github.com/BipoXDXD/stillon/internal/statuspage"
-	"github.com/BipoXDXD/stillon/internal/storage"
 	"github.com/BipoXDXD/stillon/internal/storage/db"
 	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 )
@@ -52,9 +51,9 @@ func (a ambiente) alvo(t *testing.T, dono uuid.UUID, nome string) uuid.UUID {
 	ctx := context.Background()
 	id := uuid.Must(uuid.NewV7())
 	testdb.ProjetoPadrao(t, dono)
-	err := storage.InUserTx(ctx, a.pool, dono, func(q *db.Queries) error {
+	err := testdb.NoProjetoPadrao(t, a.pool, dono, func(q *db.Queries, projeto uuid.UUID) error {
 		return q.InsertTarget(ctx, db.InsertTargetParams{
-			ID: id, UserID: dono, Name: nome, URL: "https://interno.exemplo.com/health", Method: "GET",
+			ID: id, UserID: dono, ProjectID: &projeto, Name: nome, URL: "https://interno.exemplo.com/health", Method: "GET",
 			IntervalSec: 60, TimeoutMS: 5000, ExpectedStatus: 200, Enabled: true, NextRunAt: a.clk.Now(), CreatedAt: a.clk.Now(),
 		})
 	})
@@ -375,8 +374,8 @@ func TestDeletedTargetLeavesThePage(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	err := storage.InUserTx(ctx, a.pool, dono, func(q *db.Queries) error {
-		_, err := q.DeleteTarget(ctx, db.DeleteTargetParams{ProjectID: testdb.ProjetoDoAlvo(t, api), ID: api})
+	err := testdb.NoProjetoPadrao(t, a.pool, dono, func(q *db.Queries, projeto uuid.UUID) error {
+		_, err := q.DeleteTarget(ctx, db.DeleteTargetParams{ProjectID: projeto, ID: api})
 		return err
 	})
 	if err != nil {

@@ -5,6 +5,11 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/BipoXDXD/stillon/internal/storage"
+	"github.com/BipoXDXD/stillon/internal/storage/db"
+	"github.com/BipoXDXD/stillon/internal/tenancy"
 )
 
 // ProjetoPadrao devolve o Projeto padrão do usuário, criando-o com o vínculo
@@ -40,6 +45,28 @@ func ProjetoPadrao(t *testing.T, userID uuid.UUID) uuid.UUID {
 		t.Fatalf("vincular o titular ao Projeto padrão: %v", err)
 	}
 	return projeto
+}
+
+// NoProjetoPadrao garante o Projeto padrão de userID e roda fn em
+// storage.InProjectTx nele; projeto vai para os Insert* que pedem project_id.
+//
+// As sementes de recurso dos testes passam por aqui, e não por
+// storage.InUserTx: com as políticas por pertença ao projeto, o escopo de
+// usuário não vê nem grava recurso nenhum.
+func NoProjetoPadrao(t *testing.T, pool *pgxpool.Pool, userID uuid.UUID,
+	fn func(q *db.Queries, projeto uuid.UUID) error) error {
+	t.Helper()
+	return noProjetoPadrao(t, pool, userID, fn)
+}
+
+// noProjetoPadrao aceita qualquer storage.Beginner para o teste do helper
+// guardar a transação e ler o app.project_id nela.
+func noProjetoPadrao(t *testing.T, b storage.Beginner, userID uuid.UUID,
+	fn func(q *db.Queries, projeto uuid.UUID) error) error {
+	t.Helper()
+	projeto := ProjetoPadrao(t, userID)
+	return storage.InProjectTx(context.Background(), b, userID, projeto,
+		func(q *db.Queries, _ tenancy.ProjectScope) error { return fn(q, projeto) })
 }
 
 // NovoProjeto cria um projeto que não é o padrão, com titular como owner, e

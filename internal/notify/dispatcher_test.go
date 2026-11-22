@@ -124,9 +124,9 @@ func novaBancada(t *testing.T, mexer func(*db.InsertChannelParams)) *bancada {
 	if mexer != nil {
 		mexer(&canal)
 	}
-	err = storage.InUserTx(ctx, pool, b.dono, func(q *db.Queries) error {
+	err = testdb.NoProjetoPadrao(t, pool, b.dono, func(q *db.Queries, projeto uuid.UUID) error {
 		if err := q.InsertTarget(ctx, db.InsertTargetParams{
-			ID: alvo, UserID: b.dono, Name: "API", URL: "https://exemplo.com", Method: "GET",
+			ID: alvo, UserID: b.dono, ProjectID: &projeto, Name: "API", URL: "https://exemplo.com", Method: "GET",
 			IntervalSec: 60, TimeoutMS: 5000, ExpectedStatus: 200, Enabled: true, NextRunAt: agora, CreatedAt: agora,
 		}); err != nil {
 			return err
@@ -608,9 +608,9 @@ func (b *bancada) apagao(t *testing.T, n int) []uuid.UUID {
 	for i := range n {
 		alvo, incidente, id := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
 		agora := b.clk.Now()
-		err := storage.InUserTx(ctx, b.pool, b.dono, func(q *db.Queries) error {
+		err := testdb.NoProjetoPadrao(t, b.pool, b.dono, func(q *db.Queries, projeto uuid.UUID) error {
 			return q.InsertTarget(ctx, db.InsertTargetParams{
-				ID: alvo, UserID: b.dono, Name: fmt.Sprintf("alvo-%d", i), URL: "https://exemplo.com", Method: "GET",
+				ID: alvo, UserID: b.dono, ProjectID: &projeto, Name: fmt.Sprintf("alvo-%d", i), URL: "https://exemplo.com", Method: "GET",
 				IntervalSec: 60, TimeoutMS: 5000, ExpectedStatus: 200, Enabled: true, NextRunAt: agora, CreatedAt: agora,
 			})
 		})
@@ -726,9 +726,9 @@ func TestDifferentChannelsSendInParallel(t *testing.T) {
 		t.Fatal(err)
 	}
 	agora := b.clk.Now()
-	err = storage.InUserTx(ctx, b.pool, b.dono, func(q *db.Queries) error {
+	err = testdb.NoProjetoPadrao(t, b.pool, b.dono, func(q *db.Queries, projeto uuid.UUID) error {
 		return q.InsertChannel(ctx, db.InsertChannelParams{
-			ID: outro, UserID: b.dono, ProjectID: testdb.ProjetoPadrao(t, b.dono), Kind: string(KindDiscord), ConfigEnc: sealed, VerifiedAt: &agora, CreatedAt: agora,
+			ID: outro, UserID: b.dono, ProjectID: projeto, Kind: string(KindDiscord), ConfigEnc: sealed, VerifiedAt: &agora, CreatedAt: agora,
 		})
 	})
 	if err != nil {

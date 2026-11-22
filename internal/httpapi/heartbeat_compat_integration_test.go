@@ -12,7 +12,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/BipoXDXD/stillon/internal/storage"
 	"github.com/BipoXDXD/stillon/internal/storage/db"
 	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 )
@@ -72,9 +71,9 @@ func linhaDoHeartbeat(t *testing.T, a *api, id uuid.UUID) db.Heartbeat {
 	t.Helper()
 	ctx := context.Background()
 	var h db.Heartbeat
-	err := storage.InUserTx(ctx, a.pool, a.userID, func(q *db.Queries) error {
+	err := testdb.NoProjetoPadrao(t, a.pool, a.userID, func(q *db.Queries, projeto uuid.UUID) error {
 		var err error
-		h, err = q.GetHeartbeatForUpdate(ctx, db.GetHeartbeatForUpdateParams{ProjectID: testdb.ProjetoPadrao(t, a.userID), ID: id})
+		h, err = q.GetHeartbeatForUpdate(ctx, db.GetHeartbeatForUpdateParams{ProjectID: projeto, ID: id})
 		return err
 	})
 	if err != nil {

@@ -316,9 +316,9 @@ func TestResendWithUnreadableDestinationIsInternalError(t *testing.T) {
 	agora := a.clk.Now()
 	expira := agora.Add(notify.VerifyTTL)
 	id := uuid.Must(uuid.NewV7())
-	err := storage.InUserTx(ctx, a.pool, a.userID, func(q *db.Queries) error {
+	err := testdb.NoProjetoPadrao(t, a.pool, a.userID, func(q *db.Queries, projeto uuid.UUID) error {
 		return q.InsertChannel(ctx, db.InsertChannelParams{
-			ID: id, UserID: a.userID, ProjectID: testdb.ProjetoPadrao(t, a.userID), Kind: string(notify.KindEmail), ConfigEnc: []byte("destino-ilegivel"),
+			ID: id, UserID: a.userID, ProjectID: projeto, Kind: string(notify.KindEmail), ConfigEnc: []byte("destino-ilegivel"),
 			VerifyTokenHash: []byte("hash-antigo"), VerifyExpiresAt: &expira, CreatedAt: agora,
 		})
 	})
@@ -348,8 +348,7 @@ func TestChannelLimitIs409(t *testing.T) {
 	a := newAPI(t)
 	ctx := context.Background()
 	agora := a.clk.Now()
-	projeto := testdb.ProjetoPadrao(t, a.userID)
-	err := storage.InUserTx(ctx, a.pool, a.userID, func(q *db.Queries) error {
+	err := testdb.NoProjetoPadrao(t, a.pool, a.userID, func(q *db.Queries, projeto uuid.UUID) error {
 		for range notify.MaxChannels {
 			if err := q.InsertChannel(ctx, db.InsertChannelParams{
 				ID: uuid.Must(uuid.NewV7()), UserID: a.userID, ProjectID: projeto, Kind: "discord", ConfigEnc: []byte{1},

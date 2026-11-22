@@ -40,8 +40,8 @@ func (a ambiente) encherAte(t *testing.T, dono uuid.UUID, n int) {
 // O 100º entra; o 101º é ErrLimitReached; o teto é por usuário.
 //
 // Duas barreiras fazem a contagem ser por usuário: o WHERE user_id de
-// CountTargets e a RLS da InUserTx. Sabotar só uma deixa o teste verde; só
-// sabotar as duas juntas o quebra.
+// CountTargets e a RLS do projeto (a contagem roda em storage.InProjectTx).
+// Sabotar só uma deixa o teste verde; só sabotar as duas juntas o quebra.
 func TestCreateStopsAtTheLimit(t *testing.T) {
 	a := novoAmbiente(t)
 	ctx := context.Background()

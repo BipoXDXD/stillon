@@ -13,7 +13,6 @@ import (
 	"github.com/BipoXDXD/stillon/internal/config"
 	"github.com/BipoXDXD/stillon/internal/crypto"
 	"github.com/BipoXDXD/stillon/internal/notify"
-	"github.com/BipoXDXD/stillon/internal/storage"
 	"github.com/BipoXDXD/stillon/internal/storage/db"
 	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 )
@@ -44,9 +43,9 @@ func TestRunRefusesAMasterKeyThatOpensNoChannel(t *testing.T) {
 				t.Fatal(err)
 			}
 			agora := time.Now()
-			err = storage.InUserTx(ctx, pool, dono, func(q *db.Queries) error {
+			err = testdb.NoProjetoPadrao(t, pool, dono, func(q *db.Queries, projeto uuid.UUID) error {
 				return q.InsertChannel(ctx, db.InsertChannelParams{
-					ID: canal, UserID: dono, ProjectID: testdb.ProjetoPadrao(t, dono), Kind: string(notify.KindDiscord), ConfigEnc: sealed,
+					ID: canal, UserID: dono, ProjectID: projeto, Kind: string(notify.KindDiscord), ConfigEnc: sealed,
 					VerifiedAt: &agora, CreatedAt: agora,
 				})
 			})

@@ -13,7 +13,6 @@ import (
 
 	"github.com/BipoXDXD/stillon/internal/clock"
 	"github.com/BipoXDXD/stillon/internal/heartbeat"
-	"github.com/BipoXDXD/stillon/internal/storage"
 	"github.com/BipoXDXD/stillon/internal/storage/db"
 	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 )
@@ -43,9 +42,9 @@ func (a ambiente) novoHeartbeat(t *testing.T) (uuid.UUID, string) {
 	id := uuid.Must(uuid.NewV7())
 	token, hash := heartbeat.NewPingToken()
 	periodo := int32(3600)
-	err := storage.InUserTx(ctx, a.pool, a.dono, func(q *db.Queries) error {
+	err := testdb.NoProjetoPadrao(t, a.pool, a.dono, func(q *db.Queries, projeto uuid.UUID) error {
 		return q.InsertHeartbeat(ctx, db.InsertHeartbeatParams{
-			ID: id, UserID: a.dono, ProjectID: testdb.ProjetoPadrao(t, a.dono), Name: "backup", PingTokenHash: hash, PeriodSec: &periodo,
+			ID: id, UserID: a.dono, ProjectID: projeto, Name: "backup", PingTokenHash: hash, PeriodSec: &periodo,
 			GraceSec: 300, Enabled: true, CreatedAt: agora, DeadlineAt: agora.Add(time.Hour),
 		})
 	})
@@ -59,9 +58,9 @@ func (a ambiente) linha(t *testing.T, id uuid.UUID) db.Heartbeat {
 	t.Helper()
 	ctx := context.Background()
 	var h db.Heartbeat
-	err := storage.InUserTx(ctx, a.pool, a.dono, func(q *db.Queries) error {
+	err := testdb.NoProjetoPadrao(t, a.pool, a.dono, func(q *db.Queries, projeto uuid.UUID) error {
 		var err error
-		h, err = q.GetHeartbeat(ctx, db.GetHeartbeatParams{ProjectID: testdb.ProjetoPadrao(t, a.dono), ID: id})
+		h, err = q.GetHeartbeat(ctx, db.GetHeartbeatParams{ProjectID: projeto, ID: id})
 		return err
 	})
 	if err != nil {
@@ -74,9 +73,9 @@ func (a ambiente) eventos(t *testing.T, id uuid.UUID) []db.HeartbeatEvent {
 	t.Helper()
 	ctx := context.Background()
 	var ev []db.HeartbeatEvent
-	err := storage.InUserTx(ctx, a.pool, a.dono, func(q *db.Queries) error {
+	err := testdb.NoProjetoPadrao(t, a.pool, a.dono, func(q *db.Queries, projeto uuid.UUID) error {
 		var err error
-		ev, err = q.ListHeartbeatEvents(ctx, db.ListHeartbeatEventsParams{ProjectID: testdb.ProjetoPadrao(t, a.dono), HeartbeatID: id, MaxRows: 5000})
+		ev, err = q.ListHeartbeatEvents(ctx, db.ListHeartbeatEventsParams{ProjectID: projeto, HeartbeatID: id, MaxRows: 5000})
 		return err
 	})
 	if err != nil {
@@ -361,7 +360,7 @@ func TestEventsStayUnderTheCap(t *testing.T) {
 	a := novoAmbiente(t)
 	ctx := context.Background()
 	id, token := a.novoHeartbeat(t)
-	err := storage.InUserTx(ctx, a.pool, a.dono, func(q *db.Queries) error {
+	err := testdb.NoProjetoPadrao(t, a.pool, a.dono, func(q *db.Queries, _ uuid.UUID) error {
 		for range heartbeat.MaxEventsPerHeartbeat {
 			err := q.InsertHeartbeatEvent(ctx, db.InsertHeartbeatEventParams{
 				ID: uuid.Must(uuid.NewV7()), HeartbeatID: id, At: agora, Kind: "start", Source: "ping",
@@ -403,7 +402,7 @@ func TestEventCapIsPerHeartbeat(t *testing.T) {
 			ID: uuid.Must(uuid.NewV7()), HeartbeatID: id, At: agora, Kind: "start", Source: "ping",
 		})
 	}
-	err := storage.InUserTx(ctx, a.pool, a.dono, func(q *db.Queries) error {
+	err := testdb.NoProjetoPadrao(t, a.pool, a.dono, func(q *db.Queries, _ uuid.UUID) error {
 		if err := inserir(q, vizinho); err != nil {
 			return err
 		}
@@ -500,7 +499,7 @@ func TestLogSharesTheEventCap(t *testing.T) {
 	a := novoAmbiente(t)
 	ctx := context.Background()
 	id, token := a.novoHeartbeat(t)
-	err := storage.InUserTx(ctx, a.pool, a.dono, func(q *db.Queries) error {
+	err := testdb.NoProjetoPadrao(t, a.pool, a.dono, func(q *db.Queries, _ uuid.UUID) error {
 		for range heartbeat.MaxEventsPerHeartbeat {
 			err := q.InsertHeartbeatEvent(ctx, db.InsertHeartbeatEventParams{
 				ID: uuid.Must(uuid.NewV7()), HeartbeatID: id, At: agora, Kind: "start", Source: "ping",

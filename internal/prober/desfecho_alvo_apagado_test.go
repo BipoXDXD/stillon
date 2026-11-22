@@ -6,10 +6,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/BipoXDXD/stillon/internal/incident"
-	"github.com/BipoXDXD/stillon/internal/storage"
 	"github.com/BipoXDXD/stillon/internal/storage/db"
 	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 )
@@ -35,8 +35,8 @@ func TestDesfechoComAlvoApagadoNoMeioDoCiclo(t *testing.T) {
 			b.m.observe(alvo, Result{Status: StatusUp, StatusCode: 200})
 
 			ctx := context.Background()
-			err := storage.InUserTx(ctx, b.pool, b.dono, func(q *db.Queries) error {
-				_, err := q.DeleteTarget(ctx, db.DeleteTargetParams{ProjectID: testdb.ProjetoDoAlvo(t, alvo), ID: alvo})
+			err := testdb.NoProjetoPadrao(t, b.pool, b.dono, func(q *db.Queries, projeto uuid.UUID) error {
+				_, err := q.DeleteTarget(ctx, db.DeleteTargetParams{ProjectID: projeto, ID: alvo})
 				return err
 			})
 			if err != nil {

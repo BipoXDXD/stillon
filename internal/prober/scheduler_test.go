@@ -102,7 +102,10 @@ func (b *bancada) alvo(t *testing.T, url string, mexer func(*db.InsertTargetPara
 	if mexer != nil {
 		mexer(&p)
 	}
-	if err := storage.InUserTx(ctx, b.pool, b.dono, func(q *db.Queries) error { return q.InsertTarget(ctx, p) }); err != nil {
+	if err := testdb.NoProjetoPadrao(t, b.pool, b.dono, func(q *db.Queries, projeto uuid.UUID) error {
+		p.ProjectID = &projeto
+		return q.InsertTarget(ctx, p)
+	}); err != nil {
 		t.Fatal(err)
 	}
 	return id
@@ -112,10 +115,10 @@ func (b *bancada) checks(t *testing.T, alvo uuid.UUID) []db.ListChecksRow {
 	t.Helper()
 	ctx := context.Background()
 	var rows []db.ListChecksRow
-	err := storage.InUserTx(ctx, b.pool, b.dono, func(q *db.Queries) error {
+	err := testdb.NoProjetoPadrao(t, b.pool, b.dono, func(q *db.Queries, projeto uuid.UUID) error {
 		var err error
 		rows, err = q.ListChecks(ctx, db.ListChecksParams{
-			ProjectID: testdb.ProjetoDoAlvo(t, alvo), TargetID: alvo, FromAt: b.clk.Now().Add(-time.Hour), ToAt: b.clk.Now().Add(time.Hour),
+			ProjectID: projeto, TargetID: alvo, FromAt: b.clk.Now().Add(-time.Hour), ToAt: b.clk.Now().Add(time.Hour),
 		})
 		return err
 	})
@@ -129,8 +132,8 @@ func (b *bancada) proximaExecucao(t *testing.T, alvo uuid.UUID) time.Time {
 	t.Helper()
 	ctx := context.Background()
 	var next time.Time
-	err := storage.InUserTx(ctx, b.pool, b.dono, func(q *db.Queries) error {
-		row, err := q.GetTarget(ctx, db.GetTargetParams{ProjectID: testdb.ProjetoDoAlvo(t, alvo), ID: alvo})
+	err := testdb.NoProjetoPadrao(t, b.pool, b.dono, func(q *db.Queries, projeto uuid.UUID) error {
+		row, err := q.GetTarget(ctx, db.GetTargetParams{ProjectID: projeto, ID: alvo})
 		next = row.NextRunAt
 		return err
 	})
@@ -491,8 +494,8 @@ func TestVanishedTargetIsDiscardedQuietly(t *testing.T) {
 	esperar(t, chegou, "a sonda chegar ao servidor")
 
 	ctx := context.Background()
-	err := storage.InUserTx(ctx, b.pool, b.dono, func(q *db.Queries) error {
-		_, err := q.DeleteTarget(ctx, db.DeleteTargetParams{ProjectID: testdb.ProjetoDoAlvo(t, alvo), ID: alvo})
+	err := testdb.NoProjetoPadrao(t, b.pool, b.dono, func(q *db.Queries, projeto uuid.UUID) error {
+		_, err := q.DeleteTarget(ctx, db.DeleteTargetParams{ProjectID: projeto, ID: alvo})
 		return err
 	})
 	if err != nil {

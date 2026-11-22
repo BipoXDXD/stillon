@@ -16,7 +16,6 @@ import (
 	"github.com/BipoXDXD/stillon/internal/apierr"
 	"github.com/BipoXDXD/stillon/internal/heartbeat"
 	"github.com/BipoXDXD/stillon/internal/httpapi"
-	"github.com/BipoXDXD/stillon/internal/storage"
 	"github.com/BipoXDXD/stillon/internal/storage/db"
 	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 )
@@ -31,9 +30,9 @@ func novoHeartbeat(t *testing.T, a *api) (uuid.UUID, string) {
 	id := uuid.Must(uuid.NewV7())
 	token, hash := heartbeat.NewPingToken()
 	periodo := int32(3600)
-	err := storage.InUserTx(ctx, a.pool, a.userID, func(q *db.Queries) error {
+	err := testdb.NoProjetoPadrao(t, a.pool, a.userID, func(q *db.Queries, projeto uuid.UUID) error {
 		return q.InsertHeartbeat(ctx, db.InsertHeartbeatParams{
-			ID: id, UserID: a.userID, ProjectID: testdb.ProjetoPadrao(t, a.userID), Name: "backup noturno", PingTokenHash: hash, PeriodSec: &periodo,
+			ID: id, UserID: a.userID, ProjectID: projeto, Name: "backup noturno", PingTokenHash: hash, PeriodSec: &periodo,
 			GraceSec: 300, Enabled: true, CreatedAt: a.clk.Now(), DeadlineAt: a.clk.Now().Add(time.Hour),
 		})
 	})
@@ -71,9 +70,9 @@ func eventosDoHeartbeat(t *testing.T, a *api, id uuid.UUID) []db.HeartbeatEvent 
 	t.Helper()
 	ctx := context.Background()
 	var ev []db.HeartbeatEvent
-	err := storage.InUserTx(ctx, a.pool, a.userID, func(q *db.Queries) error {
+	err := testdb.NoProjetoPadrao(t, a.pool, a.userID, func(q *db.Queries, projeto uuid.UUID) error {
 		var err error
-		ev, err = q.ListHeartbeatEvents(ctx, db.ListHeartbeatEventsParams{ProjectID: testdb.ProjetoPadrao(t, a.userID), HeartbeatID: id, MaxRows: 100})
+		ev, err = q.ListHeartbeatEvents(ctx, db.ListHeartbeatEventsParams{ProjectID: projeto, HeartbeatID: id, MaxRows: 100})
 		return err
 	})
 	if err != nil {
@@ -232,8 +231,8 @@ func TestPingUnknownAndRevokedTokensAnswerTheSame(t *testing.T) {
 	ctx := context.Background()
 	id, revogado := novoHeartbeat(t, a)
 	_, novoHash := heartbeat.NewPingToken()
-	err := storage.InUserTx(ctx, a.pool, a.userID, func(q *db.Queries) error {
-		return q.SetHeartbeatPingHash(ctx, db.SetHeartbeatPingHashParams{ProjectID: testdb.ProjetoPadrao(t, a.userID), ID: id, PingTokenHash: novoHash})
+	err := testdb.NoProjetoPadrao(t, a.pool, a.userID, func(q *db.Queries, projeto uuid.UUID) error {
+		return q.SetHeartbeatPingHash(ctx, db.SetHeartbeatPingHashParams{ProjectID: projeto, ID: id, PingTokenHash: novoHash})
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -429,9 +428,9 @@ func prazoDe(t *testing.T, a *api, id uuid.UUID) time.Time {
 	t.Helper()
 	ctx := context.Background()
 	var h db.Heartbeat
-	err := storage.InUserTx(ctx, a.pool, a.userID, func(q *db.Queries) error {
+	err := testdb.NoProjetoPadrao(t, a.pool, a.userID, func(q *db.Queries, projeto uuid.UUID) error {
 		var err error
-		h, err = q.GetHeartbeat(ctx, db.GetHeartbeatParams{ProjectID: testdb.ProjetoPadrao(t, a.userID), ID: id})
+		h, err = q.GetHeartbeat(ctx, db.GetHeartbeatParams{ProjectID: projeto, ID: id})
 		return err
 	})
 	if err != nil {

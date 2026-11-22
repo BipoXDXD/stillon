@@ -12,7 +12,6 @@ import (
 
 	"github.com/BipoXDXD/stillon/internal/clock"
 	"github.com/BipoXDXD/stillon/internal/crypto"
-	"github.com/BipoXDXD/stillon/internal/storage"
 	"github.com/BipoXDXD/stillon/internal/storage/db"
 	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 )
@@ -476,9 +475,9 @@ func TestResendRefusesAnUnverifiedDiscordChannel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = storage.InUserTx(ctx, b.svc.pool, b.dono, func(q *db.Queries) error {
+	err = testdb.NoProjetoPadrao(t, b.svc.pool, b.dono, func(q *db.Queries, projeto uuid.UUID) error {
 		return q.InsertChannel(ctx, db.InsertChannelParams{
-			ID: id, UserID: b.dono, ProjectID: testdb.ProjetoPadrao(t, b.dono), Kind: string(KindDiscord), ConfigEnc: sealed, CreatedAt: b.clk.Now(),
+			ID: id, UserID: b.dono, ProjectID: projeto, Kind: string(KindDiscord), ConfigEnc: sealed, CreatedAt: b.clk.Now(),
 		})
 	})
 	if err != nil {

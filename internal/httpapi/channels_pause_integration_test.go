@@ -17,6 +17,7 @@ import (
 	"github.com/BipoXDXD/stillon/internal/notify"
 	"github.com/BipoXDXD/stillon/internal/storage"
 	"github.com/BipoXDXD/stillon/internal/storage/db"
+	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 )
 
 // Pausar e retomar canal pela API: PATCH /channels/{id} com
@@ -227,9 +228,9 @@ func TestPausedChannelDropsThroughTheRoute(t *testing.T) {
 
 	agora := a.clk.Now()
 	alvo, incidente := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
-	if err := storage.InUserTx(ctx, a.pool, a.userID, func(q *db.Queries) error {
+	if err := testdb.NoProjetoPadrao(t, a.pool, a.userID, func(q *db.Queries, projeto uuid.UUID) error {
 		return q.InsertTarget(ctx, db.InsertTargetParams{
-			ID: alvo, UserID: a.userID, Name: "API", URL: "https://exemplo.com", Method: "GET",
+			ID: alvo, UserID: a.userID, ProjectID: &projeto, Name: "API", URL: "https://exemplo.com", Method: "GET",
 			IntervalSec: 60, TimeoutMS: 5000, ExpectedStatus: 200, Enabled: true, NextRunAt: agora, CreatedAt: agora,
 		})
 	}); err != nil {

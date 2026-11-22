@@ -14,6 +14,7 @@ import (
 	"github.com/BipoXDXD/stillon/internal/storage"
 	"github.com/BipoXDXD/stillon/internal/storage/db"
 	"github.com/BipoXDXD/stillon/internal/storage/testdb"
+	"github.com/BipoXDXD/stillon/internal/tenancy"
 )
 
 type bancadaLembretes struct {
@@ -40,8 +41,7 @@ func novaBancadaLembretes(t *testing.T) *bancadaLembretes {
 	alvo := uuid.Must(uuid.NewV7())
 	agora := clk.Now()
 	b.inicio = agora
-	projeto := testdb.ProjetoPadrao(t, b.dono)
-	err := storage.InUserTx(ctx, pool, b.dono, func(q *db.Queries) error {
+	err := testdb.NoProjetoPadrao(t, pool, b.dono, func(q *db.Queries, projeto uuid.UUID) error {
 		return q.InsertTarget(ctx, db.InsertTargetParams{
 			ID: alvo, UserID: b.dono, ProjectID: &projeto, Name: "API", URL: "https://exemplo.com", Method: "GET",
 			IntervalSec: 60, TimeoutMS: 5000, ExpectedStatus: 200, Enabled: true, NextRunAt: agora, CreatedAt: agora,
@@ -91,7 +91,10 @@ func (b *bancadaLembretes) canalSemAbertura(t *testing.T, kind Kind, mexer func(
 	if mexer != nil {
 		mexer(&p)
 	}
-	if err := storage.InUserTx(ctx, b.pool, b.dono, func(q *db.Queries) error { return q.InsertChannel(ctx, p) }); err != nil {
+	// No escopo do projeto do canal, que mexer pode trocar por outro do dono.
+	if err := storage.InProjectTx(ctx, b.pool, b.dono, p.ProjectID, func(q *db.Queries, _ tenancy.ProjectScope) error {
+		return q.InsertChannel(ctx, p)
+	}); err != nil {
 		t.Fatal(err)
 	}
 	return p.ID
@@ -100,8 +103,8 @@ func (b *bancadaLembretes) canalSemAbertura(t *testing.T, kind Kind, mexer func(
 func (b *bancadaLembretes) pausar(t *testing.T, canal uuid.UUID, pausado bool) {
 	t.Helper()
 	ctx := context.Background()
-	err := storage.InUserTx(ctx, b.pool, b.dono, func(q *db.Queries) error {
-		_, err := q.SetChannelEnabled(ctx, db.SetChannelEnabledParams{ProjectID: testdb.ProjetoPadrao(t, b.dono), ID: canal, Enabled: !pausado})
+	err := testdb.NoProjetoPadrao(t, b.pool, b.dono, func(q *db.Queries, projeto uuid.UUID) error {
+		_, err := q.SetChannelEnabled(ctx, db.SetChannelEnabledParams{ProjectID: projeto, ID: canal, Enabled: !pausado})
 		return err
 	})
 	if err != nil {
@@ -243,8 +246,8 @@ func TestRemindersSkipAcknowledgedIncident(t *testing.T) {
 	b := novaBancadaLembretes(t)
 	discord := b.canal(t, KindDiscord, nil)
 	ctx := context.Background()
-	err := storage.InUserTx(ctx, b.pool, b.dono, func(q *db.Queries) error {
-		_, err := q.AckIncident(ctx, db.AckIncidentParams{ProjectID: testdb.ProjetoPadrao(t, b.dono), ID: b.incidente, Now: b.clk.Now()})
+	err := testdb.NoProjetoPadrao(t, b.pool, b.dono, func(q *db.Queries, projeto uuid.UUID) error {
+		_, err := q.AckIncident(ctx, db.AckIncidentParams{ProjectID: projeto, ID: b.incidente, Now: b.clk.Now()})
 		return err
 	})
 	if err != nil {

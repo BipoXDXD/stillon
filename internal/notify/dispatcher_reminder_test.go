@@ -32,8 +32,8 @@ func (b *bancada) lembrar(t *testing.T, seq int32) uuid.UUID {
 func (b *bancada) reconhecer(t *testing.T) {
 	t.Helper()
 	ctx := context.Background()
-	err := storage.InUserTx(ctx, b.pool, b.dono, func(q *db.Queries) error {
-		_, err := q.AckIncident(ctx, db.AckIncidentParams{ProjectID: testdb.ProjetoPadrao(t, b.dono), ID: b.incidente, Now: b.clk.Now()})
+	err := testdb.NoProjetoPadrao(t, b.pool, b.dono, func(q *db.Queries, projeto uuid.UUID) error {
+		_, err := q.AckIncident(ctx, db.AckIncidentParams{ProjectID: projeto, ID: b.incidente, Now: b.clk.Now()})
 		return err
 	})
 	if err != nil {

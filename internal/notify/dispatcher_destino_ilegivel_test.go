@@ -106,9 +106,9 @@ func (b *bancada) novoCanalVerificado(t *testing.T) uuid.UUID {
 		t.Fatal(err)
 	}
 	agora := b.clk.Now()
-	err = storage.InUserTx(ctx, b.pool, b.dono, func(q *db.Queries) error {
+	err = testdb.NoProjetoPadrao(t, b.pool, b.dono, func(q *db.Queries, projeto uuid.UUID) error {
 		return q.InsertChannel(ctx, db.InsertChannelParams{
-			ID: id, UserID: b.dono, ProjectID: testdb.ProjetoPadrao(t, b.dono), Kind: string(KindDiscord), ConfigEnc: sealed, VerifiedAt: &agora, CreatedAt: agora,
+			ID: id, UserID: b.dono, ProjectID: projeto, Kind: string(KindDiscord), ConfigEnc: sealed, VerifiedAt: &agora, CreatedAt: agora,
 		})
 	})
 	if err != nil {

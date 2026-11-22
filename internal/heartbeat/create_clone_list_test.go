@@ -12,8 +12,8 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/BipoXDXD/stillon/internal/heartbeat"
-	"github.com/BipoXDXD/stillon/internal/storage"
 	"github.com/BipoXDXD/stillon/internal/storage/db"
+	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 )
 
 // outroDono grava um segundo usuário, dono de nada.
@@ -32,7 +32,7 @@ func (a ambiente) contarHeartbeats(t *testing.T, dono uuid.UUID) int64 {
 	t.Helper()
 	ctx := context.Background()
 	var n int64
-	err := storage.InUserTx(ctx, a.pool, dono, func(q *db.Queries) error {
+	err := testdb.NoProjetoPadrao(t, a.pool, dono, func(q *db.Queries, _ uuid.UUID) error {
 		var err error
 		n, err = q.CountHeartbeats(ctx, dono)
 		return err

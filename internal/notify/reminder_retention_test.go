@@ -92,8 +92,8 @@ func entregarAbertura(t *testing.T, b *bancada) {
 func pausarCanalDaBancada(t *testing.T, b *bancada, pausado bool) {
 	t.Helper()
 	ctx := context.Background()
-	err := storage.InUserTx(ctx, b.pool, b.dono, func(q *db.Queries) error {
-		_, err := q.SetChannelEnabled(ctx, db.SetChannelEnabledParams{ProjectID: testdb.ProjetoPadrao(t, b.dono), ID: b.canalID, Enabled: !pausado})
+	err := testdb.NoProjetoPadrao(t, b.pool, b.dono, func(q *db.Queries, projeto uuid.UUID) error {
+		_, err := q.SetChannelEnabled(ctx, db.SetChannelEnabledParams{ProjectID: projeto, ID: b.canalID, Enabled: !pausado})
 		return err
 	})
 	if err != nil {
@@ -270,9 +270,9 @@ func novoCanalDaBancada(t *testing.T, b *bancada) uuid.UUID {
 	t.Helper()
 	ctx := context.Background()
 	agora, id := b.clk.Now(), uuid.Must(uuid.NewV7())
-	err := storage.InUserTx(ctx, b.pool, b.dono, func(q *db.Queries) error {
+	err := testdb.NoProjetoPadrao(t, b.pool, b.dono, func(q *db.Queries, projeto uuid.UUID) error {
 		return q.InsertChannel(ctx, db.InsertChannelParams{
-			ID: id, UserID: b.dono, ProjectID: testdb.ProjetoPadrao(t, b.dono), Kind: string(KindDiscord), ConfigEnc: []byte{1}, VerifiedAt: &agora, CreatedAt: agora,
+			ID: id, UserID: b.dono, ProjectID: projeto, Kind: string(KindDiscord), ConfigEnc: []byte{1}, VerifiedAt: &agora, CreatedAt: agora,
 		})
 	})
 	if err != nil {
@@ -285,9 +285,9 @@ func novoIncidenteDaBancada(t *testing.T, b *bancada) uuid.UUID {
 	t.Helper()
 	ctx := context.Background()
 	agora, alvo, id := b.clk.Now(), uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
-	err := storage.InUserTx(ctx, b.pool, b.dono, func(q *db.Queries) error {
+	err := testdb.NoProjetoPadrao(t, b.pool, b.dono, func(q *db.Queries, projeto uuid.UUID) error {
 		return q.InsertTarget(ctx, db.InsertTargetParams{
-			ID: alvo, UserID: b.dono, Name: "Outra", URL: "https://exemplo.com/outra", Method: "GET",
+			ID: alvo, UserID: b.dono, ProjectID: &projeto, Name: "Outra", URL: "https://exemplo.com/outra", Method: "GET",
 			IntervalSec: 60, TimeoutMS: 5000, ExpectedStatus: 200, Enabled: true, NextRunAt: agora, CreatedAt: agora,
 		})
 	})

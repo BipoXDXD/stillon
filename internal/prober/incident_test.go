@@ -14,7 +14,6 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/BipoXDXD/stillon/internal/incident"
-	"github.com/BipoXDXD/stillon/internal/storage"
 	"github.com/BipoXDXD/stillon/internal/storage/db"
 	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 )
@@ -45,7 +44,7 @@ func (b *bancada) canal(t *testing.T, verificado, habilitado bool) uuid.UUID {
 	if verificado {
 		p.VerifiedAt = &agora
 	}
-	err := storage.InUserTx(ctx, b.pool, b.dono, func(q *db.Queries) error { return q.InsertChannel(ctx, p) })
+	err := testdb.NoProjetoPadrao(t, b.pool, b.dono, func(q *db.Queries, _ uuid.UUID) error { return q.InsertChannel(ctx, p) })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,9 +81,9 @@ func (b *bancada) incidentes(t *testing.T) []db.ListIncidentsRow {
 	t.Helper()
 	ctx := context.Background()
 	var rows []db.ListIncidentsRow
-	err := storage.InUserTx(ctx, b.pool, b.dono, func(q *db.Queries) error {
+	err := testdb.NoProjetoPadrao(t, b.pool, b.dono, func(q *db.Queries, projeto uuid.UUID) error {
 		var err error
-		rows, err = q.ListIncidents(ctx, db.ListIncidentsParams{ProjectID: testdb.ProjetoPadrao(t, b.dono), MaxRows: 100})
+		rows, err = q.ListIncidents(ctx, db.ListIncidentsParams{ProjectID: projeto, MaxRows: 100})
 		return err
 	})
 	if err != nil {
