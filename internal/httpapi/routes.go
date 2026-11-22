@@ -289,6 +289,10 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	mux.Handle("POST /api/v1/status-pages", recursoLegado(sp.Create))
 	mux.Handle("PATCH /api/v1/status-pages/{id}", recursoLegado(sp.Update))
 
+	mux.Handle("GET /api/v1/projects/{projectID}/status-pages", noProjeto(sp.List))
+	mux.Handle("POST /api/v1/projects/{projectID}/status-pages", noProjeto(sp.Create))
+	mux.Handle("PATCH /api/v1/projects/{projectID}/status-pages/{id}", noProjeto(sp.Update))
+
 	// Spec §13: /healthz é raso (o processo responde); /readyz verifica o
 	// banco.
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {

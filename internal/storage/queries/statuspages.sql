@@ -1,28 +1,33 @@
--- Status page (spec §10): as do dono rodam sob InUserTx e filtram por
--- user_id; as públicas, sob InPublicTx (somente leitura, escopo do slug).
+-- Status page (spec §10): as do dono rodam sob InProjectTx e filtram por
+-- project_id; as públicas, sob InPublicTx (somente leitura, escopo do slug).
 
 -- name: GetStatusPage :one
-SELECT id, user_id, slug, title, published, created_at, project_id FROM status_pages WHERE user_id = $1;
+SELECT id, user_id, slug, title, published, created_at, project_id FROM status_pages
+ WHERE project_id = sqlc.arg(project_id)::uuid;
 
 -- A trava do PATCH: sem ela, dois PATCH simultâneos leem a mesma versão, e
 -- o segundo regrava os campos que o primeiro mudou.
 -- name: LockStatusPage :one
-SELECT id FROM status_pages WHERE user_id = $1 FOR UPDATE;
+SELECT id FROM status_pages WHERE project_id = sqlc.arg(project_id)::uuid FOR UPDATE;
 
+-- user_id é quem criou a página; project_id, o projeto em que ela vive, e
+-- sempre vem: no escopo de projeto o gatilho preencher_project_id_padrao não
+-- preenche, e a RLS recusaria o nulo.
 -- name: InsertStatusPage :exec
-INSERT INTO status_pages (id, user_id, slug, title, published, created_at)
-VALUES ($1, $2, $3, $4, $5, $6);
+INSERT INTO status_pages (id, user_id, slug, title, published, created_at, project_id)
+VALUES (sqlc.arg(id), sqlc.arg(user_id), sqlc.arg(slug), sqlc.arg(title), sqlc.arg(published),
+        sqlc.arg(created_at), sqlc.arg(project_id)::uuid);
 
 -- name: UpdateStatusPage :execrows
-UPDATE status_pages SET slug = $3, title = $4, published = $5
- WHERE user_id = $1 AND id = $2;
+UPDATE status_pages SET slug = sqlc.arg(slug), title = sqlc.arg(title), published = sqlc.arg(published)
+ WHERE project_id = sqlc.arg(project_id)::uuid AND id = sqlc.arg(id);
 
 -- Os itens são trocados inteiros a cada escrita: apagar e reinserir, na
 -- mesma transação.
 -- name: DeleteStatusPageItems :exec
 DELETE FROM status_page_items i
  USING status_pages p
- WHERE p.id = i.status_page_id AND p.user_id = sqlc.arg(user_id) AND p.id = sqlc.arg(page_id);
+ WHERE p.id = i.status_page_id AND p.project_id = sqlc.arg(project_id)::uuid AND p.id = sqlc.arg(page_id);
 
 -- name: InsertStatusPageItem :exec
 INSERT INTO status_page_items (status_page_id, target_id, display_name, position)
@@ -32,18 +37,18 @@ VALUES ($1, $2, $3, $4);
 SELECT i.target_id, i.display_name, i.position
   FROM status_page_items i
   JOIN status_pages p ON p.id = i.status_page_id
- WHERE p.user_id = sqlc.arg(user_id) AND p.id = sqlc.arg(page_id)
+ WHERE p.project_id = sqlc.arg(project_id)::uuid AND p.id = sqlc.arg(page_id)
  ORDER BY i.position;
 
--- Os alvos do dono entre os ids pedidos: a validação dos itens diz qual id
--- não é dele.
+-- Os alvos do projeto entre os ids pedidos: a validação dos itens diz qual id
+-- não é dele (de outro projeto, mesmo do mesmo usuário, também não é).
 -- name: OwnTargetIDs :many
 -- FOR KEY SHARE segura os alvos até o fim da transação que grava os itens:
 -- sem ela, um alvo apagado entre esta conferência e o INSERT do item faz a FK
 -- recusar (23503), e o pedido vira 500 em vez de erro do item. Uma remoção que
 -- começa depois espera esta transação; uma já em curso termina antes da
 -- conferência, e o alvo sai do resultado.
-SELECT id FROM targets WHERE user_id = sqlc.arg(user_id) AND id = ANY(sqlc.arg(ids)::uuid[])
+SELECT id FROM targets WHERE project_id = sqlc.arg(project_id)::uuid AND id = ANY(sqlc.arg(ids)::uuid[])
 FOR KEY SHARE;
 
 -- Públicas. Nenhuma devolve URL, headers, user_id nem status code: a

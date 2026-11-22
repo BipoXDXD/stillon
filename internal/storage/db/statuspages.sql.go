@@ -15,18 +15,18 @@ import (
 const deleteStatusPageItems = `-- name: DeleteStatusPageItems :exec
 DELETE FROM status_page_items i
  USING status_pages p
- WHERE p.id = i.status_page_id AND p.user_id = $1 AND p.id = $2
+ WHERE p.id = i.status_page_id AND p.project_id = $1::uuid AND p.id = $2
 `
 
 type DeleteStatusPageItemsParams struct {
-	UserID uuid.UUID
-	PageID uuid.UUID
+	ProjectID uuid.UUID
+	PageID    uuid.UUID
 }
 
 // Os itens são trocados inteiros a cada escrita: apagar e reinserir, na
 // mesma transação.
 func (q *Queries) DeleteStatusPageItems(ctx context.Context, arg DeleteStatusPageItemsParams) error {
-	_, err := q.db.Exec(ctx, deleteStatusPageItems, arg.UserID, arg.PageID)
+	_, err := q.db.Exec(ctx, deleteStatusPageItems, arg.ProjectID, arg.PageID)
 	return err
 }
 
@@ -55,13 +55,14 @@ func (q *Queries) GetPublicPage(ctx context.Context, slug string) (GetPublicPage
 
 const getStatusPage = `-- name: GetStatusPage :one
 
-SELECT id, user_id, slug, title, published, created_at, project_id FROM status_pages WHERE user_id = $1
+SELECT id, user_id, slug, title, published, created_at, project_id FROM status_pages
+ WHERE project_id = $1::uuid
 `
 
-// Status page (spec §10): as do dono rodam sob InUserTx e filtram por
-// user_id; as públicas, sob InPublicTx (somente leitura, escopo do slug).
-func (q *Queries) GetStatusPage(ctx context.Context, userID uuid.UUID) (StatusPage, error) {
-	row := q.db.QueryRow(ctx, getStatusPage, userID)
+// Status page (spec §10): as do dono rodam sob InProjectTx e filtram por
+// project_id; as públicas, sob InPublicTx (somente leitura, escopo do slug).
+func (q *Queries) GetStatusPage(ctx context.Context, projectID uuid.UUID) (StatusPage, error) {
+	row := q.db.QueryRow(ctx, getStatusPage, projectID)
 	var i StatusPage
 	err := row.Scan(
 		&i.ID,
@@ -76,8 +77,9 @@ func (q *Queries) GetStatusPage(ctx context.Context, userID uuid.UUID) (StatusPa
 }
 
 const insertStatusPage = `-- name: InsertStatusPage :exec
-INSERT INTO status_pages (id, user_id, slug, title, published, created_at)
-VALUES ($1, $2, $3, $4, $5, $6)
+INSERT INTO status_pages (id, user_id, slug, title, published, created_at, project_id)
+VALUES ($1, $2, $3, $4, $5,
+        $6, $7::uuid)
 `
 
 type InsertStatusPageParams struct {
@@ -87,8 +89,12 @@ type InsertStatusPageParams struct {
 	Title     string
 	Published bool
 	CreatedAt time.Time
+	ProjectID uuid.UUID
 }
 
+// user_id é quem criou a página; project_id, o projeto em que ela vive, e
+// sempre vem: no escopo de projeto o gatilho preencher_project_id_padrao não
+// preenche, e a RLS recusaria o nulo.
 func (q *Queries) InsertStatusPage(ctx context.Context, arg InsertStatusPageParams) error {
 	_, err := q.db.Exec(ctx, insertStatusPage,
 		arg.ID,
@@ -97,6 +103,7 @@ func (q *Queries) InsertStatusPage(ctx context.Context, arg InsertStatusPagePara
 		arg.Title,
 		arg.Published,
 		arg.CreatedAt,
+		arg.ProjectID,
 	)
 	return err
 }
@@ -382,13 +389,13 @@ const listStatusPageItems = `-- name: ListStatusPageItems :many
 SELECT i.target_id, i.display_name, i.position
   FROM status_page_items i
   JOIN status_pages p ON p.id = i.status_page_id
- WHERE p.user_id = $1 AND p.id = $2
+ WHERE p.project_id = $1::uuid AND p.id = $2
  ORDER BY i.position
 `
 
 type ListStatusPageItemsParams struct {
-	UserID uuid.UUID
-	PageID uuid.UUID
+	ProjectID uuid.UUID
+	PageID    uuid.UUID
 }
 
 type ListStatusPageItemsRow struct {
@@ -398,7 +405,7 @@ type ListStatusPageItemsRow struct {
 }
 
 func (q *Queries) ListStatusPageItems(ctx context.Context, arg ListStatusPageItemsParams) ([]ListStatusPageItemsRow, error) {
-	rows, err := q.db.Query(ctx, listStatusPageItems, arg.UserID, arg.PageID)
+	rows, err := q.db.Query(ctx, listStatusPageItems, arg.ProjectID, arg.PageID)
 	if err != nil {
 		return nil, err
 	}
@@ -418,37 +425,37 @@ func (q *Queries) ListStatusPageItems(ctx context.Context, arg ListStatusPageIte
 }
 
 const lockStatusPage = `-- name: LockStatusPage :one
-SELECT id FROM status_pages WHERE user_id = $1 FOR UPDATE
+SELECT id FROM status_pages WHERE project_id = $1::uuid FOR UPDATE
 `
 
 // A trava do PATCH: sem ela, dois PATCH simultâneos leem a mesma versão, e
 // o segundo regrava os campos que o primeiro mudou.
-func (q *Queries) LockStatusPage(ctx context.Context, userID uuid.UUID) (uuid.UUID, error) {
-	row := q.db.QueryRow(ctx, lockStatusPage, userID)
+func (q *Queries) LockStatusPage(ctx context.Context, projectID uuid.UUID) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, lockStatusPage, projectID)
 	var id uuid.UUID
 	err := row.Scan(&id)
 	return id, err
 }
 
 const ownTargetIDs = `-- name: OwnTargetIDs :many
-SELECT id FROM targets WHERE user_id = $1 AND id = ANY($2::uuid[])
+SELECT id FROM targets WHERE project_id = $1::uuid AND id = ANY($2::uuid[])
 FOR KEY SHARE
 `
 
 type OwnTargetIDsParams struct {
-	UserID uuid.UUID
-	Ids    []uuid.UUID
+	ProjectID uuid.UUID
+	Ids       []uuid.UUID
 }
 
-// Os alvos do dono entre os ids pedidos: a validação dos itens diz qual id
-// não é dele.
+// Os alvos do projeto entre os ids pedidos: a validação dos itens diz qual id
+// não é dele (de outro projeto, mesmo do mesmo usuário, também não é).
 // FOR KEY SHARE segura os alvos até o fim da transação que grava os itens:
 // sem ela, um alvo apagado entre esta conferência e o INSERT do item faz a FK
 // recusar (23503), e o pedido vira 500 em vez de erro do item. Uma remoção que
 // começa depois espera esta transação; uma já em curso termina antes da
 // conferência, e o alvo sai do resultado.
 func (q *Queries) OwnTargetIDs(ctx context.Context, arg OwnTargetIDsParams) ([]uuid.UUID, error) {
-	rows, err := q.db.Query(ctx, ownTargetIDs, arg.UserID, arg.Ids)
+	rows, err := q.db.Query(ctx, ownTargetIDs, arg.ProjectID, arg.Ids)
 	if err != nil {
 		return nil, err
 	}
@@ -468,25 +475,25 @@ func (q *Queries) OwnTargetIDs(ctx context.Context, arg OwnTargetIDsParams) ([]u
 }
 
 const updateStatusPage = `-- name: UpdateStatusPage :execrows
-UPDATE status_pages SET slug = $3, title = $4, published = $5
- WHERE user_id = $1 AND id = $2
+UPDATE status_pages SET slug = $1, title = $2, published = $3
+ WHERE project_id = $4::uuid AND id = $5
 `
 
 type UpdateStatusPageParams struct {
-	UserID    uuid.UUID
-	ID        uuid.UUID
 	Slug      string
 	Title     string
 	Published bool
+	ProjectID uuid.UUID
+	ID        uuid.UUID
 }
 
 func (q *Queries) UpdateStatusPage(ctx context.Context, arg UpdateStatusPageParams) (int64, error) {
 	result, err := q.db.Exec(ctx, updateStatusPage,
-		arg.UserID,
-		arg.ID,
 		arg.Slug,
 		arg.Title,
 		arg.Published,
+		arg.ProjectID,
+		arg.ID,
 	)
 	if err != nil {
 		return 0, err

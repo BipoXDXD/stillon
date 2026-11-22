@@ -5,9 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
-
 	"github.com/BipoXDXD/stillon/internal/statuspage"
+	"github.com/BipoXDXD/stillon/internal/tenancy"
 )
 
 // Um alvo apagado enquanto o POST ou o PATCH grava os itens vira erro do
@@ -16,19 +15,19 @@ import (
 func TestTargetDeletedWhileSavingItemsIsAnItemError(t *testing.T) {
 	casos := []struct {
 		nome   string
-		gravar func(a ambiente, dono uuid.UUID, itens []statuspage.Item) error
+		gravar func(a ambiente, sc tenancy.ProjectScope, itens []statuspage.Item) error
 	}{
-		{"POST", func(a ambiente, dono uuid.UUID, itens []statuspage.Item) error {
-			_, err := a.svc.Create(context.Background(), dono, statuspage.Input{Slug: "empresa", Title: "Empresa", Items: itens})
+		{"POST", func(a ambiente, sc tenancy.ProjectScope, itens []statuspage.Item) error {
+			_, err := a.svc.Create(context.Background(), sc, statuspage.Input{Slug: "empresa", Title: "Empresa", Items: itens})
 			return err
 		}},
-		{"PATCH", func(a ambiente, dono uuid.UUID, itens []statuspage.Item) error {
+		{"PATCH", func(a ambiente, sc tenancy.ProjectScope, itens []statuspage.Item) error {
 			ctx := context.Background()
-			p, err := a.svc.Create(ctx, dono, statuspage.Input{Slug: "empresa", Title: "Empresa"})
+			p, err := a.svc.Create(ctx, sc, statuspage.Input{Slug: "empresa", Title: "Empresa"})
 			if err != nil {
 				return err
 			}
-			_, err = a.svc.Update(ctx, dono, p.ID, statuspage.Patch{Items: &itens})
+			_, err = a.svc.Update(ctx, sc, p.ID, statuspage.Patch{Items: &itens})
 			return err
 		}},
 	}
@@ -38,6 +37,7 @@ func TestTargetDeletedWhileSavingItemsIsAnItemError(t *testing.T) {
 			ctx := context.Background()
 			dono := a.usuario(t)
 			alvo := a.alvo(t, dono, "Site")
+			sc := a.escopo(t, dono)
 
 			// Outra transação apaga o alvo e segura o commit.
 			outra, err := a.pool.Begin(ctx)
@@ -57,7 +57,7 @@ func TestTargetDeletedWhileSavingItemsIsAnItemError(t *testing.T) {
 			}
 
 			fim := make(chan error, 1)
-			go func() { fim <- c.gravar(a, dono, []statuspage.Item{{TargetID: alvo, DisplayName: "Site"}}) }()
+			go func() { fim <- c.gravar(a, sc, []statuspage.Item{{TargetID: alvo, DisplayName: "Site"}}) }()
 			esperarBloqueioPor(t, a, pidOutra)
 			if err := outra.Commit(ctx); err != nil {
 				t.Fatal(err)
@@ -103,7 +103,8 @@ func TestPatchWhileTheTargetIsDeletedDoesNotDeadlock(t *testing.T) {
 	dono := a.usuario(t)
 	alvo := a.alvo(t, dono, "Site")
 	itens := []statuspage.Item{{TargetID: alvo, DisplayName: "Site"}}
-	p, err := a.svc.Create(ctx, dono, statuspage.Input{Slug: "empresa", Title: "Empresa", Items: itens})
+	sc := a.escopo(t, dono)
+	p, err := a.svc.Create(ctx, sc, statuspage.Input{Slug: "empresa", Title: "Empresa", Items: itens})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,7 +128,7 @@ func TestPatchWhileTheTargetIsDeletedDoesNotDeadlock(t *testing.T) {
 
 	fim := make(chan error, 1)
 	go func() {
-		_, err := a.svc.Update(ctx, dono, p.ID, statuspage.Patch{Items: &itens})
+		_, err := a.svc.Update(ctx, sc, p.ID, statuspage.Patch{Items: &itens})
 		fim <- err
 	}()
 	esperarBloqueioPor(t, a, pidOutra)

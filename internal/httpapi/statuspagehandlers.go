@@ -10,6 +10,7 @@ import (
 
 	"github.com/BipoXDXD/stillon/internal/apierr"
 	"github.com/BipoXDXD/stillon/internal/statuspage"
+	"github.com/BipoXDXD/stillon/internal/tenancy"
 )
 
 // StatusPageHandlers servem o cadastro do dono (spec §9). A API é no
@@ -75,12 +76,12 @@ func paraItens(in []statusPageItemJSON) []statuspage.Item {
 }
 
 func (h *StatusPageHandlers) List(w http.ResponseWriter, r *http.Request) {
-	userID, ok := usuario(w, r)
+	sc, ok := escopo(w, r)
 	if !ok {
 		return
 	}
 	items := []statusPageResponse{}
-	p, err := h.svc.Get(r.Context(), userID)
+	p, err := h.svc.Get(r.Context(), sc)
 	switch {
 	case errors.Is(err, statuspage.ErrNotFound):
 	case h.falhou(w, r, "buscar status page", err):
@@ -92,7 +93,7 @@ func (h *StatusPageHandlers) List(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *StatusPageHandlers) Create(w http.ResponseWriter, r *http.Request) {
-	userID, ok := usuario(w, r)
+	sc, ok := escopo(w, r)
 	if !ok {
 		return
 	}
@@ -100,7 +101,7 @@ func (h *StatusPageHandlers) Create(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	p, err := h.svc.Create(r.Context(), userID, statuspage.Input{
+	p, err := h.svc.Create(r.Context(), sc, statuspage.Input{
 		Slug: req.Slug, Title: req.Title, Published: req.Published, Items: paraItens(req.Items),
 	})
 	if h.falhou(w, r, "criar status page", err) {
@@ -110,7 +111,7 @@ func (h *StatusPageHandlers) Create(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *StatusPageHandlers) Update(w http.ResponseWriter, r *http.Request) {
-	userID, id, ok := donoEID(w, r)
+	sc, id, ok := escopoEID(w, r)
 	if !ok {
 		return
 	}
@@ -129,7 +130,7 @@ func (h *StatusPageHandlers) Update(w http.ResponseWriter, r *http.Request) {
 		itens := paraItens(req.Items.Value)
 		patch.Items = &itens
 	}
-	p, err := h.svc.Update(r.Context(), userID, id, patch)
+	p, err := h.svc.Update(r.Context(), sc, id, patch)
 	if h.falhou(w, r, "atualizar status page", err) {
 		return
 	}
@@ -138,6 +139,8 @@ func (h *StatusPageHandlers) Update(w http.ResponseWriter, r *http.Request) {
 
 // falhou traduz o erro do domínio. Os campos de validação são vocabulário
 // fechado; "items[3].display_name" leva só a posição, nunca o conteúdo.
+// Projeto sem pertença (ErrProjectNotFound, da transação) é o mesmo 404 de
+// página inexistente; papel sem a permissão é 403.
 func (h *StatusPageHandlers) falhou(w http.ResponseWriter, r *http.Request, op string, err error) bool {
 	if err == nil {
 		return false
@@ -150,8 +153,10 @@ func (h *StatusPageHandlers) falhou(w http.ResponseWriter, r *http.Request, op s
 			campos = append(campos, apierr.FieldError{Field: f.Field, Reason: f.Reason})
 		}
 		apierr.WriteValidation(w, r, campos)
-	case errors.Is(err, statuspage.ErrNotFound):
+	case errors.Is(err, statuspage.ErrNotFound), errors.Is(err, tenancy.ErrProjectNotFound):
 		apierr.WriteError(w, r, apierr.CodeNotFound)
+	case errors.Is(err, tenancy.ErrForbidden):
+		apierr.WriteError(w, r, apierr.CodeForbidden)
 	case errors.Is(err, statuspage.ErrExists):
 		apierr.WriteError(w, r, apierr.CodeStatusPageExists)
 	case errors.Is(err, statuspage.ErrSlugTaken):

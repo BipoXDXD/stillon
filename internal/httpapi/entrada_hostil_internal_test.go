@@ -92,7 +92,7 @@ func TestIDMalformadoE404EmTodaRotaComID(t *testing.T) {
 		"DELETE /channels/{id}":                             noProjetoPadrao(canais.Delete),
 		"PATCH /channels/{id}":                              noProjetoPadrao(canais.SetEnabled),
 		"POST /channels/{id}/verify/resend":                 noProjetoPadrao(canais.Resend),
-		"PATCH /status-pages/{id}":                          paginas.Update,
+		"PATCH /status-pages/{id}":                          noProjetoPadrao(paginas.Update),
 	}
 	// "\x00" é o %00 depois de o roteador decodificar o caminho.
 	ids := []string{"nao-e-uuid", "", "\x00", "a\x00b", "' OR 1=1--", strings.Repeat("a", 4096)}
@@ -214,11 +214,11 @@ func TestCorpoHostilE400NaFronteira(t *testing.T) {
 		{"canal: webhook longo", noProjetoPadrao(canais.Create), `{"kind":"discord","url":"` + webhook + strings.Repeat("a", 600) + `"}`, "url", "invalid"},
 		{"canal: e-mail com NUL", noProjetoPadrao(canais.Create), `{"kind":"email","email":"a\u0000@exemplo.com"}`, "email", "invalid"},
 		{"canal: e-mail longo", noProjetoPadrao(canais.Create), `{"kind":"email","email":"` + strings.Repeat("a", 250) + `@exemplo.com"}`, "email", "invalid"},
-		{"página: slug com NUL", paginas.Create, `{"slug":"em\u0000presa","title":"T"}`, "slug", "invalid"},
-		{"página: título com NUL", paginas.Create, `{"slug":"empresa","title":"a\u0000b"}`, "title", "invalid"},
-		{"página: título longo", paginas.Create, `{"slug":"empresa","title":"` + strings.Repeat("a", 101) + `"}`, "title", "too_long"},
-		{"página: nome com NUL", paginas.Create, item(`a\u0000b`), "items[0].display_name", "invalid"},
-		{"página: itens demais", paginas.Create, `{"slug":"empresa","title":"T","items":[` + strings.Join(vinteEUm, ",") + `]}`, "items", "out_of_range"},
+		{"página: slug com NUL", noProjetoPadrao(paginas.Create), `{"slug":"em\u0000presa","title":"T"}`, "slug", "invalid"},
+		{"página: título com NUL", noProjetoPadrao(paginas.Create), `{"slug":"empresa","title":"a\u0000b"}`, "title", "invalid"},
+		{"página: título longo", noProjetoPadrao(paginas.Create), `{"slug":"empresa","title":"` + strings.Repeat("a", 101) + `"}`, "title", "too_long"},
+		{"página: nome com NUL", noProjetoPadrao(paginas.Create), item(`a\u0000b`), "items[0].display_name", "invalid"},
+		{"página: itens demais", noProjetoPadrao(paginas.Create), `{"slug":"empresa","title":"T","items":[` + strings.Join(vinteEUm, ",") + `]}`, "items", "out_of_range"},
 		{"heartbeat: fuso com NUL", noProjetoPadrao(batidas.Create), cron + `"UTC\u0000"}}`, "timezone", "invalid"},
 		{"heartbeat: fuso longo", noProjetoPadrao(batidas.Create), cron + `"` + strings.Repeat("a", 65) + `"}}`, "timezone", "invalid"},
 		{"alvo: URL com NUL", noProjetoPadrao(alvos.Create), `{"name":"a","url":"https://exemplo.com/\u0000"}`, "url", "invalid"},
