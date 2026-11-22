@@ -90,8 +90,15 @@ func TestViewerReadsButCannotChangeTargets(t *testing.T) {
 	}
 	comoViewer := escopoNo(projeto, v, tenancy.RoleViewer)
 
-	if _, err := a.svc.List(ctx, comoViewer, nil, 10); err != nil {
+	// O viewer lê (PermRead), mas a política permissiva ainda é por dono:
+	// hoje ele não vê o alvo que o titular criou.
+	// TODO(PR 2b): passa a ver os alvos do titular quando as permissivas forem por projeto
+	vistos, err := a.svc.List(ctx, comoViewer, nil, 10)
+	if err != nil {
 		t.Errorf("List como viewer: %v, queria sem erro", err)
+	}
+	if len(vistos) != 0 {
+		t.Errorf("List como viewer trouxe %d alvos, queria 0 enquanto a permissiva for por dono", len(vistos))
 	}
 	if _, err := a.svc.Create(ctx, comoViewer, entrada()); !errors.Is(err, tenancy.ErrForbidden) {
 		t.Errorf("Create como viewer: erro %v, queria ErrForbidden", err)

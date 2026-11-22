@@ -275,7 +275,7 @@ func TestNilProjectIDIsIndistinguishableFromMissing(t *testing.T) {
 
 // O viewer do projeto do dono lê, mas não escreve: toda gêmea de escrita dá
 // 403 forbidden, e nada do dono muda. As gêmeas de leitura de coleção dão
-// 200. As de leitura por {id} dão 200 ou 404: enquanto a política permissiva
+// 200. As de leitura por {id} dão 404 hoje: enquanto a política permissiva
 // for user_id = app.user_id (portão do PR 2b), o viewer não enxerga as linhas
 // que o dono criou, e o 404 é o mesmo de um id que não existe. Nunca 403: o
 // viewer tem PermRead.
@@ -293,11 +293,13 @@ func TestViewerGetsForbiddenOnEveryMutatingProjectRoute(t *testing.T) {
 	for _, rota := range leituras {
 		esperarVagaNoLimite(a)
 		status, corpo := lerCru(t, a, http.MethodGet, r.caminho(t, rota, r.projeto), viewer, nil)
-		switch {
-		case status == http.StatusOK:
-		case status == http.StatusNotFound && strings.Contains(rota, "{id}"):
-		default:
-			t.Errorf("%s do viewer deu %d, queria 200 (ou 404, se for por {id}): %s", rota, status, corpo)
+		quer := http.StatusOK
+		if strings.Contains(rota, "{id}") {
+			// TODO(PR 2b): 200 quando as permissivas forem por projeto
+			quer = http.StatusNotFound
+		}
+		if status != quer {
+			t.Errorf("%s do viewer deu %d, queria %d: %s", rota, status, quer, corpo)
 		}
 	}
 	for _, rota := range ordemComDeleteNoFim(escritas) {
