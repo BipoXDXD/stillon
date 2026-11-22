@@ -2,7 +2,6 @@ package account_test
 
 import (
 	"context"
-	"encoding/binary"
 	"errors"
 	"testing"
 	"time"
@@ -79,20 +78,8 @@ func eventos(t *testing.T, pool *pgxpool.Pool, user uuid.UUID, acao string) int 
 // a abertura de um login com 2FA é exercitada nos testes de auth/httpapi.
 func familiaPreexistente(t *testing.T, c cenario, user uuid.UUID) uuid.UUID {
 	t.Helper()
-	familia, err := uuid.NewV7()
-	if err != nil {
-		t.Fatal(err)
-	}
-	var ms [8]byte
-	binary.BigEndian.PutUint64(ms[:], uint64(c.clk.Now().UnixMilli()))
-	copy(familia[:6], ms[2:])
-	if _, err := testdb.Admin(t).Exec(context.Background(),
-		`INSERT INTO sessions (id, user_id, family_id, token_hash, expires_at, ip_hash)
-		 VALUES ($1, $2, $1, $3, $4, $5)`, familia, user,
-		crypto.HashToken(uuid.NewString()), c.clk.Now().Add(auth.RefreshTTL), crypto.HashIP(ipKey, "203.0.113.9")); err != nil {
-		t.Fatal(err)
-	}
-	return familia
+	return testdb.FamiliaSintetica(t, user, c.clk.Now(), c.clk.Now().Add(auth.RefreshTTL),
+		crypto.HashToken(uuid.NewString()), crypto.HashIP(ipKey, "203.0.113.9"))
 }
 
 // Com o 2FA ligado (e uma troca pendente), o reset-2fa desliga tudo numa

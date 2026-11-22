@@ -3,7 +3,6 @@ package auth_test
 import (
 	"bytes"
 	"context"
-	"encoding/binary"
 	"errors"
 	"sync"
 	"testing"
@@ -41,20 +40,8 @@ func codigoEm(t *testing.T, segredo string, em time.Time) string {
 // testes de emissão e de login passam pelo Manager e pelos handlers reais.
 func familiaViva(t *testing.T, pool *pgxpool.Pool, userID uuid.UUID, em time.Time) uuid.UUID {
 	t.Helper()
-	familia, err := uuid.NewV7()
-	if err != nil {
-		t.Fatal(err)
-	}
-	var ms [8]byte
-	binary.BigEndian.PutUint64(ms[:], uint64(em.UnixMilli()))
-	copy(familia[:6], ms[2:])
-	if _, err := testdb.Admin(t).Exec(context.Background(),
-		`INSERT INTO sessions (id, user_id, family_id, token_hash, expires_at, ip_hash)
-		 VALUES ($1, $2, $1, $3, $4, $5)`, familia, userID,
-		crypto.HashToken(uuid.NewString()), em.Add(auth.RefreshTTL), crypto.HashIP(ipKey, meta.IP)); err != nil {
-		t.Fatal(err)
-	}
-	return familia
+	return testdb.FamiliaSintetica(t, userID, em, em.Add(auth.RefreshTTL),
+		crypto.HashToken(uuid.NewString()), crypto.HashIP(ipKey, meta.IP))
 }
 
 // rotacaoAtual é o rotation da troca pendente do usuário,
