@@ -90,6 +90,10 @@ type Scheduler struct {
 	// depoisDeLerValidade existe para o teste de sondas concorrentes do mesmo
 	// alvo: roda entre ler a validade guardada e decidir se a substitui.
 	depoisDeLerValidade func()
+
+	// avisos grava os avisos de abertura e fechamento; é sempre enfileirar,
+	// e só o teste da guarda do banco o troca.
+	avisos enfileirador
 }
 
 // avisoListaDaHospedagemVazia é a mensagem estável do aviso de boot, para
@@ -121,6 +125,7 @@ func newScheduler(pool *pgxpool.Pool, box *crypto.Box, clk clock.Clock, m *Metri
 		detector: incident.Default, transicao: make(chan struct{}, 1),
 		sondas: sondas, abortar: abortar,
 		tickTimeout: tickTimeout, reconcileTimeout: reconcileTimeout,
+		avisos: enfileirar,
 	}
 }
 
@@ -617,12 +622,12 @@ func (s *Scheduler) avaliar(ctx context.Context, q *db.Queries, a db.ClaimDueTar
 		}); err != nil {
 			return acao, emOrdem, fmt.Errorf("abrir incidente: %w", err)
 		}
-		return acao, emOrdem, avisarAbertura(ctx, q, id, em)
+		return acao, emOrdem, avisarAbertura(ctx, q, s.avisos, id, em)
 	case incident.ActionClose:
 		if _, err := q.ResolveIncident(ctx, db.ResolveIncidentParams{ID: aberto.ID, ResolvedAt: estado.StreakSince}); err != nil {
 			return acao, emOrdem, fmt.Errorf("resolver incidente: %w", err)
 		}
-		return acao, emOrdem, avisarFechamento(ctx, q, aberto.ID, em)
+		return acao, emOrdem, avisarFechamento(ctx, q, s.avisos, aberto.ID, em)
 	}
 	return acao, emOrdem, nil
 }

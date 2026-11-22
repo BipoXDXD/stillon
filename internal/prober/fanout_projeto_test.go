@@ -222,3 +222,43 @@ func conferirSemProjeto(t *testing.T, tabela string, id uuid.UUID) {
 		t.Fatalf("%s %s tem project_id %s; queria NULL", tabela, id, *projeto)
 	}
 }
+
+// A guarda do banco (notifications_canal_do_projeto) descarta a notificação
+// num canal fora do projeto do recurso sem abortar: o enfileiramento roda na
+// transação do check, e abortar desfaria o check e o incidente e pararia o
+// monitor. O enfileirador de teste grava direto em cB, o erro que o fan-out
+// não comete mais.
+func TestGuardaNaoDesfazOCheckNemOIncidente(t *testing.T) {
+	b := novaBancada(t, nil, MaxInFlight)
+	u := b.dono
+	projetoA := testdb.ProjetoPadrao(t, u)
+	cB := canalNoProjeto(t, testdb.NovoProjeto(t, u, "B"), u)
+	a := alvoNoProjeto(t, projetoA, u)
+	// Contado: sem a troca, o fan-out real não acharia canal em A e o teste
+	// passaria sem gravar nada em cB.
+	var gravadas int
+	b.s.avisos = func(ctx context.Context, q *db.Queries, incidente uuid.UUID, evento string, em time.Time) error {
+		gravadas++
+		return q.EnqueueNotification(ctx, db.EnqueueNotificationParams{
+			ID: uuid.Must(uuid.NewV7()), IncidentID: incidente, ChannelID: cB, Event: evento, Now: em,
+		})
+	}
+
+	abrirAlvoAlheio(t, b, a) // confere, por fora da RLS, o incidente aberto
+
+	if gravadas != 1 {
+		t.Fatalf("o enfileirador de teste rodou %d vezes, queria 1 (a abertura em cB)", gravadas)
+	}
+
+	var checks int
+	if err := testdb.Admin(t).QueryRow(context.Background(),
+		`SELECT count(*) FROM checks WHERE target_id = $1`, a.ID).Scan(&checks); err != nil {
+		t.Fatal(err)
+	}
+	if checks != 3 {
+		t.Errorf("checks = %d, queria 3 (a guarda não desfaz a transação do check)", checks)
+	}
+	if ns := notificacoes(t); len(ns) != 0 {
+		t.Errorf("notifications = %d, queria 0 (%v no canal de B)", len(ns), ns)
+	}
+}

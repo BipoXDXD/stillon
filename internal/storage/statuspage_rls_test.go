@@ -83,9 +83,12 @@ func TestPublicScopeSeesOnlyThePublishedPageTargets(t *testing.T) {
 	// Uma linha de cada tabela por alvo, dentro e fora da página: sem elas, o
 	// 0 das tabelas que o público não pode ver seria verdade por acidente.
 	canal := novoCanal(t, pool, a, nil, time.Time{})
+	// O aviso de cada alvo vai a um canal do dono dele: a guarda do banco
+	// (notifications_canal_do_projeto) descarta o de B num canal de A.
+	canalDoDono := map[uuid.UUID]uuid.UUID{naPagina: canal, foraDaPagina: canal, alvoB: novoCanal(t, pool, b, nil, time.Time{})}
 	for _, alvo := range []uuid.UUID{naPagina, foraDaPagina, alvoB} {
 		novoCheck(t, pool, alvo, agora)
-		novaNotificacao(t, pool, novoIncidente(t, pool, alvo), canal)
+		novaNotificacao(t, pool, novoIncidente(t, pool, alvo), canalDoDono[alvo])
 		if err := storage.InProberTx(ctx, pool, func(q *db.Queries) error { return q.EnsureTargetHealth(ctx, alvo) }); err != nil {
 			t.Fatal(err)
 		}
