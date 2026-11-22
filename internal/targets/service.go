@@ -412,8 +412,8 @@ func (f fields) comoTarget(id uuid.UUID, enabled, tlsWarn bool, criadoEm time.Ti
 // insertTargetParams são as colunas do INSERT do alvo: os campos já validados,
 // os headers cifrados e o que o cadastro decide à parte. O alvo nasce vencido:
 // a próxima sonda e a criação são o mesmo instante. Nasce no projeto do
-// escopo, e user_id guarda quem o criou. project_id nunca vai nulo daqui:
-// nulo, no escopo de projeto, é recusado pela RLS (ver InsertTarget).
+// escopo, e user_id guarda quem o criou. project_id é uuid.UUID: um escopo
+// sem projeto daria uuid.Nil, que a FK para projects(id) recusa.
 func (f fields) insertTargetParams(sc tenancy.ProjectScope, id uuid.UUID, sealed []byte, enabled, tlsWarn bool, now time.Time) db.InsertTargetParams {
 	modo, valor, ponteiro := colunasDaRegra(f.ContentRule)
 	return db.InsertTargetParams{

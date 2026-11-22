@@ -46,7 +46,10 @@ func (s *Store) Membership(ctx context.Context, userID, projectID uuid.UUID) (te
 // EnsureDefault devolve o escopo no Projeto padrão de userID, criando-o se
 // preciso. As rotas antigas chamam isto a cada requisição, então o caminho
 // rápido só lê: achou o padrão, o escopo sai de Membership, que aplica as
-// regras de suspensão. Sem padrão, o caminho lento cria o projeto e o vínculo
+// regras de suspensão. Um padrão sem owner não se repara aqui (Membership o
+// recusaria), mas isso é inalcançável: o padrão nasce com o owner na mesma
+// transação, e o app não tem UPDATE nem DELETE em projects e
+// project_members. Sem padrão, o caminho lento cria o projeto e o vínculo
 // de owner na mesma transação (o banco não garante que todo projeto tenha
 // owner). O índice único parcial faz a chamada concorrente não criar outro: o
 // ON CONFLICT espera a primeira transação e, em READ COMMITTED, o SELECT

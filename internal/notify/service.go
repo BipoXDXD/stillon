@@ -23,8 +23,9 @@ import (
 
 const (
 	// MaxChannels é o limite de canais do usuário (ver cabe e Create para
-	// onde ele é contado; o teto por titular vem no PR 2b). Canal é destino
-	// de envio: sem teto, cada canal novo seria mais um alvo de mensagem.
+	// onde ele é contado). A regra da spec (§Cotas e abuso) conta os canais do
+	// titular em todos os projetos dele. Canal é destino de envio: sem teto,
+	// cada canal novo seria mais um alvo de mensagem.
 	MaxChannels = 10
 	// VerifyTTL é a validade do link de verificação (spec §5.8).
 	VerifyTTL = 24 * time.Hour
@@ -106,11 +107,10 @@ type ChannelInput struct {
 // NA transação (o escopo que InProjectTx entrega), nunca pelo que quem chamou
 // trouxe. A cota (trava e contagem) continua por user_id, e as duas
 // conferências rodam sob InProjectTx: a pré-conferência (cabe), antes do
-// envio, e a definitiva, com a trava, na gravação. Com um projeto por usuário
-// (a criação de projetos vem no PR 2b.3), as duas contam o mesmo; a Task 23
-// faz as duas contarem os canais do titular em todos os projetos dele. A
-// verificação por link
-// (CheckToken, ConfirmToken) não sabe nada de projeto.
+// envio, e a definitiva, com a trava, na gravação. Com um projeto por usuário,
+// contar por user_id dá o mesmo que a regra da spec (§Cotas e abuso): os canais do
+// titular em todos os projetos dele. A verificação por link (CheckToken,
+// ConfirmToken) não sabe nada de projeto.
 type ChannelService struct {
 	pool    *pgxpool.Pool
 	box     *crypto.Box
@@ -252,7 +252,7 @@ func (s *ChannelService) exigir(ctx context.Context, scope tenancy.ProjectScope,
 // InProjectTx, como a conferência definitiva (cabeNa com a trava, em Create):
 // InUserTx num recurso de projeto devolveria vazio em silêncio quando as
 // permissivas forem por projeto. Com um projeto por usuário as duas contam o
-// mesmo; a Task 23 faz as duas contarem o titular.
+// mesmo que a regra da spec (§Cotas e abuso), que conta os canais do titular.
 func (s *ChannelService) cabe(ctx context.Context, scope tenancy.ProjectScope) error {
 	return storage.InProjectTx(ctx, s.pool, scope.UserID, scope.ProjectID, func(q *db.Queries, atual tenancy.ProjectScope) error {
 		return s.cabeNa(ctx, q, atual.UserID, false)

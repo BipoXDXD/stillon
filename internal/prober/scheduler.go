@@ -91,8 +91,9 @@ type Scheduler struct {
 	// alvo: roda entre ler a validade guardada e decidir se a substitui.
 	depoisDeLerValidade func()
 
-	// avisos grava os avisos de abertura e fechamento; é sempre enfileirar,
-	// e só o teste da guarda do banco o troca.
+	// avisos grava os avisos de abertura e fechamento dos incidentes de alvo;
+	// é sempre enfileirar, e só o teste da guarda do banco o troca. O
+	// heartbeat não passa por aqui: chama enfileirar direto.
 	avisos enfileirador
 }
 

@@ -169,7 +169,7 @@ func TestOwnerCannotWriteTheirOwnTargetTLS(t *testing.T) {
 // cada barreira vale sozinha, como nas tags. Aqui, o filtro sozinho: sob o
 // escopo de A, a política deixa A ver a própria validade, e só o WHERE barra
 // o pedido feito no projeto B, que também é de A.
-func TestTargetTLSOwnerQueriesFilterByTheOwner(t *testing.T) {
+func TestTargetTLSProjectQueriesFilterByTheProject(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
 	// O projeto B é do próprio A: só o filtro por projeto o separa do alvo.

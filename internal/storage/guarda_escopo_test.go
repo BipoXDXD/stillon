@@ -45,6 +45,16 @@ var chamadoresDeInUserTx = map[string]string{
 	"internal/storage/scope.go":         "definição",
 }
 
+// chamadoresDeInProjectPgxTx são os .go de produção que podem usar
+// storage.InProjectPgxTx, o pgx.Tx cru com o escopo de projeto ligado. Fora da
+// definição e do InProjectTx (scope.go), só a semente de teste (testdb): SQL
+// cru em código de produção fugiria das queries geradas, que a revisão e os
+// testes de query cobrem.
+var chamadoresDeInProjectPgxTx = map[string]string{
+	"internal/storage/scope.go":          "definição e InProjectTx",
+	"internal/storage/testdb/projeto.go": "sementes de teste no escopo de projeto",
+}
+
 // diretoriosForaDaVarredura nunca têm código de produção do módulo, e alguns
 // (.claude/, .git/) guardam worktrees de outras sessões que este teste não
 // pode ler.
@@ -56,12 +66,12 @@ var diretoriosForaDaVarredura = map[string]bool{
 type usoDeEscopo struct {
 	arquivo string // relativo à raiz do módulo, com "/"
 	linha   int
-	oque    string // ScopeToProject, ScopeToUser, InUserTx ou "app.project_id"
+	oque    string // ScopeToProject, ScopeToUser, InUserTx, InProjectPgxTx ou "app.project_id"
 }
 
 // usosDeEscopo varre os .go de produção sob raiz (sem _test.go, sem o código
 // gerado de internal/storage/db e sem diretórios ocultos) e devolve cada
-// identificador ScopeToProject, ScopeToUser ou InUserTx e cada literal de string com
+// identificador ScopeToProject, ScopeToUser, InUserTx ou InProjectPgxTx e cada literal de string com
 // app.project_id. Lê a árvore sintática: comentário que cita o nome não conta.
 func usosDeEscopo(t *testing.T, raiz string) []usoDeEscopo {
 	t.Helper()
@@ -93,7 +103,8 @@ func usosDeEscopo(t *testing.T, raiz string) []usoDeEscopo {
 		ast.Inspect(arq, func(n ast.Node) bool {
 			switch no := n.(type) {
 			case *ast.Ident:
-				if no.Name == "ScopeToProject" || no.Name == "ScopeToUser" || no.Name == "InUserTx" {
+				if no.Name == "ScopeToProject" || no.Name == "ScopeToUser" || no.Name == "InUserTx" ||
+					no.Name == "InProjectPgxTx" {
 					usos = append(usos, usoDeEscopo{rel, fset.Position(no.Pos()).Line, no.Name})
 				}
 			case *ast.BasicLit:
@@ -181,6 +192,32 @@ func TestInUserTxOnlyInPersonalContexts(t *testing.T) {
 	// Sem achar nem a definição em scope.go, a varredura não olhou nada.
 	if vistos == 0 {
 		t.Errorf("a varredura de %s não achou nenhum InUserTx; ela deixou de enxergar o código", raiz)
+	}
+}
+
+// O pgx.Tx cru com o escopo de projeto fica na lista fechada: um chamador novo
+// em produção escreveria SQL fora das queries geradas, sem a revisão delas.
+func TestInProjectPgxTxOnlyInKnownCallers(t *testing.T) {
+	raiz, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	vistos := 0
+	for _, u := range usosDeEscopo(t, raiz) {
+		if u.oque != "InProjectPgxTx" {
+			continue
+		}
+		vistos++
+		if _, ok := chamadoresDeInProjectPgxTx[u.arquivo]; !ok {
+			t.Errorf("%s:%d usa InProjectPgxTx fora da lista conhecida (%s). Use storage.InProjectTx "+
+				"com as queries geradas; se o SQL cru for mesmo necessário, acrescente o arquivo a "+
+				"chamadoresDeInProjectPgxTx com o motivo.",
+				u.arquivo, u.linha, strings.Join(slices.Sorted(maps.Keys(chamadoresDeInProjectPgxTx)), ", "))
+		}
+	}
+	// Sem achar nem a definição em scope.go, a varredura não olhou nada.
+	if vistos == 0 {
+		t.Errorf("a varredura de %s não achou nenhum InProjectPgxTx; ela deixou de enxergar o código", raiz)
 	}
 }
 

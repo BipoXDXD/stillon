@@ -850,8 +850,8 @@ func TestTargetLimitIs409(t *testing.T) {
 		t.Errorf("status %d, queria 409 target_limit_reached", resp.StatusCode)
 	}
 	// O 409 não basta: a recusa não pode ter gravado o 101º. A contagem roda
-	// no Projeto padrão do dono, onde o gatilho pôs os alvos acima: targets
-	// tem RLS.
+	// no Projeto padrão do dono, onde o INSERT acima gravou os alvos (com
+	// project_id explícito): targets tem RLS.
 	var n int64
 	err = testdb.NoProjetoPadrao(t, a.pool, a.userID, func(q *db.Queries, _ uuid.UUID) error {
 		var err error

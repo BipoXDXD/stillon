@@ -154,7 +154,7 @@ func politicasDe(t *testing.T, pool *pgxpool.Pool, tabela string) string {
 }
 
 // contarNaParticao conta os checks consultando a partição pelo nome, sob o
-// escopo de usuario (guc: projetoDoDono no banco migrado até o fim, app.user_id
+// escopo de usuário (guc: projetoDoDono no banco migrado até o fim, app.user_id
 // no parado antes dos projetos): o caminho que a política da mãe não cobre.
 func contarNaParticao(t *testing.T, pool *pgxpool.Pool, guc string, usuario uuid.UUID, particao string) int {
 	t.Helper()

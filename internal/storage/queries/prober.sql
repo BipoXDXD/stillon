@@ -8,9 +8,9 @@
 -- SKIP LOCKED faz um segundo sondador pegar OUTROS alvos em vez de esperar
 -- pelos que o primeiro travou (TestSkipLockedDoesNotWaitForAnotherProber).
 --
--- user_id volta só por compatibilidade (o fan-out agora sai pelo projeto do
--- incidente, em ListDeliverableChannelsForIncident) e vira project_id no
--- PR 5; interval_sec, porque a histerese recomeça
+-- user_id volta só por compatibilidade: o fan-out sai pelo projeto do
+-- incidente (ListDeliverableChannelsForIncident), não pelo dono do alvo;
+-- interval_sec, porque a histerese recomeça
 -- depois de uma lacuna longa entre checks; as três colunas da regra de
 -- conteúdo, porque a sonda julga o corpo pela regra que reivindicou, e a
 -- cerca da gravação compara com ela.
