@@ -110,6 +110,7 @@ func TestEveryResourceRouteRejectsRevokedFamily(t *testing.T) {
 		{"GET /api/v1/me", "/api/v1/me", nil},
 		{"GET /api/v1/sessions", "/api/v1/sessions", nil},
 		{"DELETE /api/v1/sessions/{id}", "/api/v1/sessions/" + familiaDe(t, dono, a).String(), nil},
+		{"GET /api/v1/projects", "/api/v1/projects", nil},
 		{"GET /api/v1/targets", "/api/v1/targets", nil},
 		{"POST /api/v1/targets", "/api/v1/targets", alvoValido},
 		{"GET /api/v1/targets/summary", "/api/v1/targets/summary", nil},

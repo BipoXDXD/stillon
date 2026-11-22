@@ -120,6 +120,7 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	ch := NewChannelHandlers(d.Channels)
 	sp := NewStatusPageHandlers(d.StatusPages, cfg.PublicBaseURL)
 	ah := NewAccountHandlers(d.Accounts, proxiesDe(cfg), secureCookie, provas)
+	ph := NewProjectHandlers(d.Projects)
 	authn := middleware.Authn(cfg.JWTSecret, d.Clock)
 
 	mux := http.NewServeMux()
@@ -219,6 +220,9 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	mux.Handle("GET /api/v1/me", protegida(ah.Me))
 	mux.Handle("GET /api/v1/sessions", protegida(ah.ListSessions))
 	mux.Handle("DELETE /api/v1/sessions/{id}", protegida(ah.RevokeSession))
+	// A lista de projetos é da conta, como /me: protegida, sem projeto no
+	// contexto, e não garante o Projeto padrão.
+	mux.Handle("GET /api/v1/projects", protegida(ph.List))
 
 	mux.Handle("GET /api/v1/targets", recursoLegado(th.List))
 	mux.Handle("POST /api/v1/targets", recursoLegado(th.Create))
