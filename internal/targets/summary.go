@@ -12,6 +12,7 @@ import (
 	"github.com/BipoXDXD/stillon/internal/storage"
 	"github.com/BipoXDXD/stillon/internal/storage/db"
 	"github.com/BipoXDXD/stillon/internal/targetstate"
+	"github.com/BipoXDXD/stillon/internal/tenancy"
 )
 
 // SparkHours é a janela do spark: as 24 horas cheias anteriores à hora
@@ -48,24 +49,24 @@ type SparkHour struct {
 type contagem struct{ total, ok int64 }
 
 // Summary monta o dashboard numa chamada só, em cinco
-// consultas na mesma transação do dono:
+// consultas na mesma transação do projeto (PermRead):
 //
 //  1. os alvos, com o último check e o incidente aberto;
-//  2. a marca d'água dos rollups do dono, que dá o corte;
+//  2. a marca d'água dos rollups do projeto, que dá o corte;
 //  3. os rollups horários de [H−24h, corte);
 //  4. os checks brutos de [corte, H), agregados por hora com a fórmula dos
 //     rollups, e os da hora corrente [H, H+1h), só contados;
-//  5. as tags do dono.
+//  5. as tags do projeto.
 //
 // O filtro corre aqui, e não no SQL, porque o estado é calculado aqui
-// (targetstate); o teto de alvos por usuário limita o trabalho.
+// (targetstate); o teto de alvos limita o trabalho.
 //
 // Ler só os rollups deixaria a última hora fechada de fora por até 15 min e o
 // uptime cego à queda em curso; ler só os brutos custa ~390 ms com 100 alvos
 // (medido na spec). O corte é um valor fixo lido antes das consultas 3 e 4:
 // uma consolidação que comite entre elas não conta hora nenhuma duas vezes.
 // A regra do corte mora em rollupcut, a mesma da página pública.
-func (s *Service) Summary(ctx context.Context, userID uuid.UUID, filtro SummaryFilter) ([]Summary, error) {
+func (s *Service) Summary(ctx context.Context, scope tenancy.ProjectScope, filtro SummaryFilter) ([]Summary, error) {
 	agora := s.clk.Now()
 	h := agora.UTC().Truncate(time.Hour)
 	janela, err := rollupcut.NovaJanela(h.Add(-SparkHours*time.Hour), h.Add(time.Hour), agora)
@@ -74,33 +75,37 @@ func (s *Service) Summary(ctx context.Context, userID uuid.UUID, filtro SummaryF
 	}
 
 	var out []Summary
-	err = storage.InUserTx(ctx, s.pool, userID, func(q *db.Queries) error {
-		alvos, err := q.ListTargetSummaries(ctx, userID)
+	err = storage.InProjectTx(ctx, s.pool, scope.UserID, scope.ProjectID, func(q *db.Queries, atual tenancy.ProjectScope) error {
+		if err := atual.Require(tenancy.PermRead); err != nil {
+			return err
+		}
+		projeto := atual.ProjectID
+		alvos, err := q.ListTargetSummaries(ctx, projeto)
 		if err != nil {
 			return fmt.Errorf("listar alvos do resumo: %w", err)
 		}
-		marca, err := q.LatestUserRollupBucket(ctx, db.LatestUserRollupBucketParams{Before: janela.Hora(), UserID: userID})
+		marca, err := q.LatestProjectRollupBucket(ctx, db.LatestProjectRollupBucketParams{Before: janela.Hora(), ProjectID: projeto})
 		if err != nil {
 			return fmt.Errorf("marca d'água dos rollups: %w", err)
 		}
 		corte := janela.Corte(marca)
 
-		rollups, err := q.ListSummaryRollups(ctx, db.ListSummaryRollupsParams{UserID: userID, FromAt: janela.Desde(), ToAt: corte})
+		rollups, err := q.ListSummaryRollups(ctx, db.ListSummaryRollupsParams{ProjectID: projeto, FromAt: janela.Desde(), ToAt: corte})
 		if err != nil {
 			return fmt.Errorf("rollups do resumo: %w", err)
 		}
-		brutos, err := q.ListRawHours(ctx, db.ListRawHoursParams{UserID: userID, FromAt: corte, ToAt: janela.Hora()})
+		brutos, err := q.ListRawHours(ctx, db.ListRawHoursParams{ProjectID: projeto, FromAt: corte, ToAt: janela.Hora()})
 		if err != nil {
 			return fmt.Errorf("checks do resumo: %w", err)
 		}
-		correntes, err := q.ListSummaryCurrentHour(ctx, db.ListSummaryCurrentHourParams{UserID: userID, FromAt: janela.Hora(), ToAt: janela.Ate()})
+		correntes, err := q.ListSummaryCurrentHour(ctx, db.ListSummaryCurrentHourParams{ProjectID: projeto, FromAt: janela.Hora(), ToAt: janela.Ate()})
 		if err != nil {
 			return fmt.Errorf("hora corrente do resumo: %w", err)
 		}
 		horas := sparkPorAlvo(rollups, brutos)
 		corrente := contagemPorAlvo(correntes)
 
-		tags, err := tagsDoDono(ctx, q, userID)
+		tags, err := tagsDoProjeto(ctx, q, projeto)
 		if err != nil {
 			return err
 		}

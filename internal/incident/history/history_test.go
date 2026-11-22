@@ -45,9 +45,10 @@ func (b *bancada) alvo(t *testing.T, dono uuid.UUID, nome string) uuid.UUID {
 	t.Helper()
 	ctx := context.Background()
 	id := uuid.Must(uuid.NewV7())
+	projeto := testdb.ProjetoPadrao(t, dono)
 	err := storage.InUserTx(ctx, b.pool, dono, func(q *db.Queries) error {
 		return q.InsertTarget(ctx, db.InsertTargetParams{
-			ID: id, UserID: dono, Name: nome, URL: "https://exemplo.com", Method: "GET",
+			ID: id, UserID: dono, ProjectID: &projeto, Name: nome, URL: "https://exemplo.com", Method: "GET",
 			IntervalSec: 60, TimeoutMS: 5000, ExpectedStatus: 200, Enabled: true, NextRunAt: agora, CreatedAt: agora,
 		})
 	})
@@ -103,7 +104,7 @@ func TestListFiltersAndOrdersNewestFirst(t *testing.T) {
 		"abertos":    {history.Filter{Open: &abertos}, []uuid.UUID{aberto}},
 		"resolvidos": {history.Filter{Open: &fechados}, []uuid.UUID{velho}},
 	} {
-		got, err := b.svc.List(ctx, dono, c.f)
+		got, err := b.svc.List(ctx, history.EscopoDe(t, b.pool, dono), c.f)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -112,7 +113,7 @@ func TestListFiltersAndOrdersNewestFirst(t *testing.T) {
 		}
 	}
 
-	got, _ := b.svc.List(ctx, dono, history.Filter{})
+	got, _ := b.svc.List(ctx, history.EscopoDe(t, b.pool, dono), history.Filter{})
 	if got[0].TargetName != "API" || got[0].ResolvedAt != nil || got[1].ResolvedAt == nil || got[1].Cause != "dns" {
 		t.Errorf("itens = %+v", got)
 	}
@@ -128,12 +129,12 @@ func TestListPaginatesByCursor(t *testing.T) {
 		todos = append(todos, b.incidente(t, alvo, true))
 	}
 
-	pagina, err := b.svc.List(ctx, dono, history.Filter{Limit: 2})
+	pagina, err := b.svc.List(ctx, history.EscopoDe(t, b.pool, dono), history.Filter{Limit: 2})
 	if err != nil || len(pagina) != 2 || pagina[0].ID != todos[2] {
 		t.Fatalf("primeira página = %v, %v", ids(pagina), err)
 	}
 	cursor := pagina[1].ID
-	resto, err := b.svc.List(ctx, dono, history.Filter{Limit: 2, Before: &cursor})
+	resto, err := b.svc.List(ctx, history.EscopoDe(t, b.pool, dono), history.Filter{Limit: 2, Before: &cursor})
 	if err != nil || len(resto) != 1 || resto[0].ID != todos[0] {
 		t.Errorf("segunda página = %v, %v", ids(resto), err)
 	}
@@ -145,23 +146,23 @@ func TestAckIsIdempotentAndScopedToTheOwner(t *testing.T) {
 	dono, intruso := b.usuario(t), b.usuario(t)
 	inc := b.incidente(t, b.alvo(t, dono, "API"), false)
 
-	if _, err := b.svc.Ack(ctx, intruso, inc); !errors.Is(err, history.ErrNotFound) {
+	if _, err := b.svc.Ack(ctx, history.EscopoDe(t, b.pool, intruso), inc); !errors.Is(err, history.ErrNotFound) {
 		t.Errorf("ack pelo intruso deu %v, queria ErrNotFound", err)
 	}
-	if got, _ := b.svc.List(ctx, intruso, history.Filter{}); len(got) != 0 {
+	if got, _ := b.svc.List(ctx, history.EscopoDe(t, b.pool, intruso), history.Filter{}); len(got) != 0 {
 		t.Errorf("o intruso listou %d incidentes", len(got))
 	}
 
-	primeiro, err := b.svc.Ack(ctx, dono, inc)
+	primeiro, err := b.svc.Ack(ctx, history.EscopoDe(t, b.pool, dono), inc)
 	if err != nil || primeiro.AckAt == nil || !primeiro.AckAt.Equal(agora) {
 		t.Fatalf("primeiro ack = %+v, %v", primeiro, err)
 	}
 	b.clk.Advance(time.Hour)
-	segundo, err := b.svc.Ack(ctx, dono, inc)
+	segundo, err := b.svc.Ack(ctx, history.EscopoDe(t, b.pool, dono), inc)
 	if err != nil || !segundo.AckAt.Equal(agora) {
 		t.Errorf("segundo ack = %v, %v; queria o instante do primeiro", segundo.AckAt, err)
 	}
-	if _, err := b.svc.Ack(ctx, dono, uuid.Must(uuid.NewV7())); !errors.Is(err, history.ErrNotFound) {
+	if _, err := b.svc.Ack(ctx, history.EscopoDe(t, b.pool, dono), uuid.Must(uuid.NewV7())); !errors.Is(err, history.ErrNotFound) {
 		t.Errorf("ack de id inexistente deu %v", err)
 	}
 }
@@ -169,8 +170,8 @@ func TestAckIsIdempotentAndScopedToTheOwner(t *testing.T) {
 // target_id restringe a um alvo; o de outro usuário dá lista vazia, e não os
 // incidentes dele.
 //
-// Guarda dupla na lista vazia do alvo alheio: o t.user_id = $1 de
-// ListIncidents e a RLS de targets e incidents (List roda em InUserTx).
+// Guarda dupla na lista vazia do alvo alheio: o t.project_id de
+// ListIncidents e a RLS de targets e incidents (List roda em InProjectTx).
 // Sabotar só uma deixa este teste verde; sabotar as duas o quebra.
 func TestListFiltersByTarget(t *testing.T) {
 	b := novaBancada(t)
@@ -182,18 +183,18 @@ func TestListFiltersByTarget(t *testing.T) {
 	b.incidente(t, site, true)
 	b.incidente(t, alheio, true)
 
-	got, err := b.svc.List(ctx, dono, history.Filter{TargetID: &api})
+	got, err := b.svc.List(ctx, history.EscopoDe(t, b.pool, dono), history.Filter{TargetID: &api})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if g := ids(got); len(g) != 1 || g[0] != daAPI {
 		t.Errorf("filtro por alvo = %v, queria só %v", g, daAPI)
 	}
-	got, err = b.svc.List(ctx, dono, history.Filter{TargetID: &alheio})
+	got, err = b.svc.List(ctx, history.EscopoDe(t, b.pool, dono), history.Filter{TargetID: &alheio})
 	if err != nil || len(got) != 0 {
 		t.Errorf("alvo alheio = %v, %v; queria lista vazia", ids(got), err)
 	}
-	if todos, err := b.svc.List(ctx, dono, history.Filter{}); err != nil || len(todos) != 2 {
+	if todos, err := b.svc.List(ctx, history.EscopoDe(t, b.pool, dono), history.Filter{}); err != nil || len(todos) != 2 {
 		t.Errorf("sem filtro: %d incidentes, %v; queria 2", len(todos), err)
 	}
 }
@@ -215,14 +216,14 @@ func TestListAndAckReturnEveryFieldOfTheIncident(t *testing.T) {
 	}
 
 	b.clk.Advance(time.Hour)
-	reconhecido, err := b.svc.Ack(ctx, dono, inc)
+	reconhecido, err := b.svc.Ack(ctx, history.EscopoDe(t, b.pool, dono), inc)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !mesmoIncidente(reconhecido, quer) {
 		t.Errorf("Ack = %+v, queria %+v", reconhecido, quer)
 	}
-	lista, err := b.svc.List(ctx, dono, history.Filter{})
+	lista, err := b.svc.List(ctx, history.EscopoDe(t, b.pool, dono), history.Filter{})
 	if err != nil {
 		t.Fatal(err)
 	}

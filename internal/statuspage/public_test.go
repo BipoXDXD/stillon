@@ -65,7 +65,7 @@ func incidenteResolvido(t *testing.T, adm *pgxpool.Pool, alvo uuid.UUID, inicio,
 
 func (a ambiente) publicar(t *testing.T, dono uuid.UUID, slug string, publicada bool, itens ...statuspage.Item) statuspage.Page {
 	t.Helper()
-	p, err := a.svc.Create(context.Background(), dono, statuspage.Input{Slug: slug, Title: "Status", Published: publicada, Items: itens})
+	p, err := a.svc.Create(context.Background(), a.escopo(t, dono), statuspage.Input{Slug: slug, Title: "Status", Published: publicada, Items: itens})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -335,11 +335,12 @@ func TestDeletedTargetLeavesThePublicPage(t *testing.T) {
 	adm := admin(t)
 	ctx := context.Background()
 	dono := a.usuario(t)
+	testdb.ProjetoPadrao(t, dono)
 	api, site := a.alvo(t, dono, "api"), a.alvo(t, dono, "site")
 	a.publicar(t, dono, "empresa", true, statuspage.Item{TargetID: api, DisplayName: "API"}, statuspage.Item{TargetID: site, DisplayName: "Site"})
 	incidenteResolvido(t, adm, api, a.clk.Now().Add(-2*time.Hour), a.clk.Now().Add(-time.Hour))
 	err := storage.InUserTx(ctx, a.pool, dono, func(q *db.Queries) error {
-		_, err := q.DeleteTarget(ctx, db.DeleteTargetParams{UserID: dono, ID: api})
+		_, err := q.DeleteTarget(ctx, db.DeleteTargetParams{ProjectID: testdb.ProjetoDoAlvo(t, api), ID: api})
 		return err
 	})
 	if err != nil {
@@ -364,7 +365,7 @@ func TestPublicViewIsCachedForThirtySeconds(t *testing.T) {
 		t.Fatalf("rascunho = %v", err)
 	}
 	sim := true
-	if _, err := a.svc.Update(ctx, dono, p.ID, statuspage.Patch{Published: &sim}); err != nil {
+	if _, err := a.svc.Update(ctx, a.escopo(t, dono), p.ID, statuspage.Patch{Published: &sim}); err != nil {
 		t.Fatal(err)
 	}
 	v, err := a.svc.Public(ctx, "empresa")
@@ -374,7 +375,7 @@ func TestPublicViewIsCachedForThirtySeconds(t *testing.T) {
 
 	// Outro processo muda o título, sem passar por este serviço.
 	err = storage.InUserTx(ctx, a.pool, dono, func(q *db.Queries) error {
-		_, err := q.UpdateStatusPage(ctx, db.UpdateStatusPageParams{UserID: dono, ID: p.ID, Slug: "empresa", Title: "Título novo", Published: true})
+		_, err := q.UpdateStatusPage(ctx, db.UpdateStatusPageParams{ProjectID: testdb.ProjetoPadrao(t, dono), ID: p.ID, Slug: "empresa", Title: "Título novo", Published: true})
 		return err
 	})
 	if err != nil {
@@ -397,7 +398,7 @@ func TestOwnerChangesInvalidateTheCache(t *testing.T) {
 	a := novoAmbiente(t)
 	ctx := context.Background()
 	donoA, donoB := a.usuario(t), a.usuario(t)
-	pa, err := a.svc.Create(ctx, donoA, statuspage.Input{Slug: "acme", Title: "Página de A", Published: true})
+	pa, err := a.svc.Create(ctx, a.escopo(t, donoA), statuspage.Input{Slug: "acme", Title: "Página de A", Published: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -406,14 +407,14 @@ func TestOwnerChangesInvalidateTheCache(t *testing.T) {
 	}
 
 	novo := "acme2"
-	if _, err := a.svc.Update(ctx, donoA, pa.ID, statuspage.Patch{Slug: &novo}); err != nil {
+	if _, err := a.svc.Update(ctx, a.escopo(t, donoA), pa.ID, statuspage.Patch{Slug: &novo}); err != nil {
 		t.Fatal(err)
 	}
 	// O endereço abandonado deixa de mostrar A na hora.
 	if _, err := a.svc.Public(ctx, "acme"); !errors.Is(err, statuspage.ErrNotFound) {
 		t.Errorf("/p/acme depois do rename = %v; queria ErrNotFound na hora", err)
 	}
-	if _, err := a.svc.Create(ctx, donoB, statuspage.Input{Slug: "acme", Title: "Página de B", Published: true}); err != nil {
+	if _, err := a.svc.Create(ctx, a.escopo(t, donoB), statuspage.Input{Slug: "acme", Title: "Página de B", Published: true}); err != nil {
 		t.Fatal(err)
 	}
 	if v, err := a.svc.Public(ctx, "acme"); err != nil || v.Title != "Página de B" {
@@ -425,7 +426,7 @@ func TestOwnerChangesInvalidateTheCache(t *testing.T) {
 		t.Fatalf("/p/acme2 = %q, %v", v.Title, err)
 	}
 	nao := false
-	if _, err := a.svc.Update(ctx, donoA, pa.ID, statuspage.Patch{Published: &nao}); err != nil {
+	if _, err := a.svc.Update(ctx, a.escopo(t, donoA), pa.ID, statuspage.Patch{Published: &nao}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := a.svc.Public(ctx, "acme2"); !errors.Is(err, statuspage.ErrNotFound) {
@@ -443,7 +444,7 @@ func TestTakingASlugFreedElsewhereInvalidatesTheCache(t *testing.T) {
 	liberarEmOutraInstancia := func(dono uuid.UUID, p statuspage.Page, novoSlug string) {
 		t.Helper()
 		err := storage.InUserTx(ctx, a.pool, dono, func(q *db.Queries) error {
-			_, err := q.UpdateStatusPage(ctx, db.UpdateStatusPageParams{UserID: dono, ID: p.ID, Slug: novoSlug, Title: p.Title, Published: true})
+			_, err := q.UpdateStatusPage(ctx, db.UpdateStatusPageParams{ProjectID: testdb.ProjetoPadrao(t, dono), ID: p.ID, Slug: novoSlug, Title: p.Title, Published: true})
 			return err
 		})
 		if err != nil {
@@ -451,7 +452,7 @@ func TestTakingASlugFreedElsewhereInvalidatesTheCache(t *testing.T) {
 		}
 	}
 
-	pa, err := a.svc.Create(ctx, donoA, statuspage.Input{Slug: "acme", Title: "Página de A", Published: true})
+	pa, err := a.svc.Create(ctx, a.escopo(t, donoA), statuspage.Input{Slug: "acme", Title: "Página de A", Published: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -459,19 +460,19 @@ func TestTakingASlugFreedElsewhereInvalidatesTheCache(t *testing.T) {
 		t.Fatal(err)
 	}
 	liberarEmOutraInstancia(donoA, pa, "acme-velha")
-	if _, err := a.svc.Create(ctx, donoB, statuspage.Input{Slug: "acme", Title: "Página de B", Published: true}); err != nil {
+	if _, err := a.svc.Create(ctx, a.escopo(t, donoB), statuspage.Input{Slug: "acme", Title: "Página de B", Published: true}); err != nil {
 		t.Fatal(err)
 	}
 	if v, err := a.svc.Public(ctx, "acme"); err != nil || v.Title != "Página de B" {
 		t.Errorf("Create no slug liberado: /p/acme = %q, %v; queria B na hora", v.Title, err)
 	}
 
-	pb, err := a.svc.Get(ctx, donoB)
+	pb, err := a.svc.Get(ctx, a.escopo(t, donoB))
 	if err != nil {
 		t.Fatal(err)
 	}
 	liberarEmOutraInstancia(donoB, pb, "acme-b")
-	pc, err := a.svc.Create(ctx, donoC, statuspage.Input{Slug: "zeta", Title: "Página de C", Published: true})
+	pc, err := a.svc.Create(ctx, a.escopo(t, donoC), statuspage.Input{Slug: "zeta", Title: "Página de C", Published: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -479,7 +480,7 @@ func TestTakingASlugFreedElsewhereInvalidatesTheCache(t *testing.T) {
 		t.Fatal(err) // ainda B, no cache desta instância
 	}
 	tomado := "acme"
-	if _, err := a.svc.Update(ctx, donoC, pc.ID, statuspage.Patch{Slug: &tomado}); err != nil {
+	if _, err := a.svc.Update(ctx, a.escopo(t, donoC), pc.ID, statuspage.Patch{Slug: &tomado}); err != nil {
 		t.Fatal(err)
 	}
 	if v, err := a.svc.Public(ctx, "acme"); err != nil || v.Title != "Página de C" {

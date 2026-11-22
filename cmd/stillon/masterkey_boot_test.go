@@ -46,7 +46,7 @@ func TestRunRefusesAMasterKeyThatOpensNoChannel(t *testing.T) {
 			agora := time.Now()
 			err = storage.InUserTx(ctx, pool, dono, func(q *db.Queries) error {
 				return q.InsertChannel(ctx, db.InsertChannelParams{
-					ID: canal, UserID: dono, Kind: string(notify.KindDiscord), ConfigEnc: sealed,
+					ID: canal, UserID: dono, ProjectID: testdb.ProjetoPadrao(t, dono), Kind: string(notify.KindDiscord), ConfigEnc: sealed,
 					VerifiedAt: &agora, CreatedAt: agora,
 				})
 			})

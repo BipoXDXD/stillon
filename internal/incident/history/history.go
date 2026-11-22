@@ -1,6 +1,10 @@
-// Package history é o histórico de incidentes do dono (GET /incidents e o
+// Package history é o histórico de incidentes do projeto (GET /incidents e o
 // reconhecimento). Mora fora de internal/incident para que o detector
 // continue puro, sem banco (spec §3.2).
+//
+// Cada operação recebe o escopo de projeto e roda sob storage.InProjectTx. A
+// permissão é conferida pelo papel lido NA transação (o escopo que
+// InProjectTx entrega), nunca pelo que quem chamou trouxe.
 package history
 
 import (
@@ -16,6 +20,7 @@ import (
 	"github.com/BipoXDXD/stillon/internal/clock"
 	"github.com/BipoXDXD/stillon/internal/storage"
 	"github.com/BipoXDXD/stillon/internal/storage/db"
+	"github.com/BipoXDXD/stillon/internal/tenancy"
 )
 
 var ErrNotFound = errors.New("incidente não encontrado")
@@ -32,8 +37,8 @@ type Incident struct {
 
 // Filter: Open nil lista tudo; true só abertos; false só resolvidos. Before
 // é o cursor, o último id da página anterior. TargetID restringe a um alvo
-// (a tela de detalhe do alvo); o de outro usuário dá lista vazia,
-// não erro: o filtro não confirma a existência de alvo alheio.
+// (a tela de detalhe do alvo); o de outro projeto dá lista vazia, não erro:
+// o filtro não confirma a existência de alvo alheio.
 type Filter struct {
 	Open     *bool
 	Before   *uuid.UUID
@@ -55,14 +60,18 @@ func NewService(pool *pgxpool.Pool, clk clock.Clock) *Service {
 	return &Service{pool: pool, clk: clk}
 }
 
-func (s *Service) List(ctx context.Context, userID uuid.UUID, f Filter) ([]Incident, error) {
+// List exige PermRead.
+func (s *Service) List(ctx context.Context, scope tenancy.ProjectScope, f Filter) ([]Incident, error) {
 	if f.Limit < 1 || f.Limit > MaxPageSize {
 		f.Limit = DefaultPageSize
 	}
 	var out []Incident
-	err := storage.InUserTx(ctx, s.pool, userID, func(q *db.Queries) error {
+	err := storage.InProjectTx(ctx, s.pool, scope.UserID, scope.ProjectID, func(q *db.Queries, atual tenancy.ProjectScope) error {
+		if err := atual.Require(tenancy.PermRead); err != nil {
+			return err
+		}
 		rows, err := q.ListIncidents(ctx, db.ListIncidentsParams{
-			UserID: userID, Open: f.Open, Before: f.Before, TargetID: f.TargetID, MaxRows: f.Limit,
+			ProjectID: atual.ProjectID, Open: f.Open, Before: f.Before, TargetID: f.TargetID, MaxRows: f.Limit,
 		})
 		if err != nil {
 			return fmt.Errorf("listar incidentes: %w", err)
@@ -76,12 +85,16 @@ func (s *Service) List(ctx context.Context, userID uuid.UUID, f Filter) ([]Incid
 	return out, err
 }
 
-// Ack reconhece o incidente. É idempotente: o segundo ack devolve o
-// instante do primeiro. Incidente de outro usuário é ErrNotFound (spec §5.5).
-func (s *Service) Ack(ctx context.Context, userID, id uuid.UUID) (Incident, error) {
+// Ack reconhece o incidente e exige PermEditMonitors. É idempotente: o
+// segundo ack devolve o instante do primeiro. Incidente de outro projeto é
+// ErrNotFound (spec §5.5).
+func (s *Service) Ack(ctx context.Context, scope tenancy.ProjectScope, id uuid.UUID) (Incident, error) {
 	var out Incident
-	err := storage.InUserTx(ctx, s.pool, userID, func(q *db.Queries) error {
-		r, err := q.AckIncident(ctx, db.AckIncidentParams{UserID: userID, ID: id, Now: s.clk.Now()})
+	err := storage.InProjectTx(ctx, s.pool, scope.UserID, scope.ProjectID, func(q *db.Queries, atual tenancy.ProjectScope) error {
+		if err := atual.Require(tenancy.PermEditMonitors); err != nil {
+			return err
+		}
+		r, err := q.AckIncident(ctx, db.AckIncidentParams{ProjectID: atual.ProjectID, ID: id, Now: s.clk.Now()})
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrNotFound
 		}

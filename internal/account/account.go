@@ -26,6 +26,7 @@ import (
 	"github.com/BipoXDXD/stillon/internal/crypto"
 	"github.com/BipoXDXD/stillon/internal/storage"
 	"github.com/BipoXDXD/stillon/internal/storage/db"
+	"github.com/BipoXDXD/stillon/internal/tenancy"
 )
 
 var (
@@ -53,9 +54,6 @@ var (
 type PolicyError struct{ Reason string }
 
 func (e PolicyError) Error() string { return "senha fora da política: " + e.Reason }
-
-// nomeProjetoPadrao é o nome do projeto que todo usuário recebe ao nascer.
-const nomeProjetoPadrao = "Projeto padrão"
 
 // maxEmailLen é o limite prático de um endereço (RFC 5321 §4.5.3.1.3 e a
 // errata 1690: 254 no caminho).
@@ -372,7 +370,7 @@ func criarProjetoPadrao(ctx context.Context, q *db.Queries, userID uuid.UUID, no
 		return fmt.Errorf("gerar id do projeto: %w", err)
 	}
 	if err := q.EnsureDefaultProject(ctx, db.EnsureDefaultProjectParams{
-		ID: novo, Name: nomeProjetoPadrao, TitularID: userID, Now: now,
+		ID: novo, Name: tenancy.DefaultProjectName, TitularID: userID, Now: now,
 	}); err != nil {
 		return fmt.Errorf("criar Projeto padrão: %w", err)
 	}

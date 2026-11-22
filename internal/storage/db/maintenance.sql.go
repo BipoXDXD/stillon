@@ -242,7 +242,7 @@ const listRollups = `-- name: ListRollups :many
 SELECT r.bucket, r.total, r.ok, r.p50, r.p95, r.p99, r.max
   FROM check_rollup_1h r
   JOIN targets t ON t.id = r.target_id
- WHERE t.user_id = $1
+ WHERE t.project_id = $1::uuid
    AND r.target_id = $2
    AND r.bucket >= $3
    AND r.bucket < $4
@@ -250,10 +250,10 @@ SELECT r.bucket, r.total, r.ok, r.p50, r.p95, r.p99, r.max
 `
 
 type ListRollupsParams struct {
-	UserID   uuid.UUID
-	TargetID uuid.UUID
-	FromAt   time.Time
-	ToAt     time.Time
+	ProjectID uuid.UUID
+	TargetID  uuid.UUID
+	FromAt    time.Time
+	ToAt      time.Time
 }
 
 type ListRollupsRow struct {
@@ -267,10 +267,10 @@ type ListRollupsRow struct {
 }
 
 // GET /targets/{id}/checks acima de 48h lê daqui. Roda sob
-// InUserTx e filtra por user_id, como ListChecks.
+// InProjectTx e filtra por project_id, como ListChecks.
 func (q *Queries) ListRollups(ctx context.Context, arg ListRollupsParams) ([]ListRollupsRow, error) {
 	rows, err := q.db.Query(ctx, listRollups,
-		arg.UserID,
+		arg.ProjectID,
 		arg.TargetID,
 		arg.FromAt,
 		arg.ToAt,

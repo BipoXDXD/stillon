@@ -18,11 +18,13 @@ import (
 	"github.com/BipoXDXD/stillon/internal/crypto"
 	"github.com/BipoXDXD/stillon/internal/storage"
 	"github.com/BipoXDXD/stillon/internal/storage/db"
+	"github.com/BipoXDXD/stillon/internal/tenancy"
 )
 
 const (
-	// MaxChannels é o limite de canais por usuário. Canal é destino de
-	// envio: sem teto, cada canal novo seria mais um alvo de mensagem.
+	// MaxChannels é o limite de canais do usuário (ver cabe e Create para
+	// onde ele é contado; o teto por titular vem no PR 2b). Canal é destino
+	// de envio: sem teto, cada canal novo seria mais um alvo de mensagem.
 	MaxChannels = 10
 	// VerifyTTL é a validade do link de verificação (spec §5.8).
 	VerifyTTL = 24 * time.Hour
@@ -97,7 +99,16 @@ type ChannelInput struct {
 	Email string // e-mail
 }
 
-// ChannelService é o cadastro de canais (spec §8, §5.8).
+// ChannelService é o cadastro de canais (spec §8, §5.8). Todo método do dono
+// recebe o escopo de projeto logo depois de ctx e roda sob storage.InProjectTx,
+// que confere a pertença e liga a RLS para aquele projeto: as queries filtram
+// por project_id E a política filtra de novo. A permissão vale pelo papel lido
+// NA transação (o escopo que InProjectTx entrega), nunca pelo que quem chamou
+// trouxe. A cota (trava e contagem) continua por user_id: a pré-conferência
+// (cabe, sob InUserTx) conta os canais do usuário em todos os projetos, e a
+// definitiva, com a trava, roda dentro de InProjectTx e conta só os do projeto
+// atual; o teto por titular vem no PR 2b. A verificação por link
+// (CheckToken, ConfirmToken) não sabe nada de projeto.
 type ChannelService struct {
 	pool    *pgxpool.Pool
 	box     *crypto.Box
@@ -123,19 +134,24 @@ func NewChannelService(pool *pgxpool.Pool, box *crypto.Box, clk clock.Clock, dis
 	}
 }
 
-// Create verifica o destino ANTES de gravar: a mensagem de teste do Discord
-// ou o e-mail com o link. Se o envio falha, nada é gravado, e o cliente
-// recebe ErrDeliveryFailed.
+// Create (PermManageChannels) verifica o destino ANTES de gravar: a mensagem
+// de teste do Discord ou o e-mail com o link. Se o envio falha, nada é
+// gravado, e o cliente recebe ErrDeliveryFailed. O canal nasce no projeto do
+// escopo, com user_id = quem criou.
 //
-// O limite é conferido duas vezes. Antes do envio, para não mandar mensagem
-// a um canal que não será gravado; na gravação, com o usuário travado, para
-// que duas criações simultâneas não passem as duas.
-func (s *ChannelService) Create(ctx context.Context, userID uuid.UUID, in ChannelInput) (Channel, error) {
+// A permissão e o limite são conferidos antes do envio, para não mandar
+// mensagem a um canal que não será gravado, e de novo na gravação: a
+// permissão pelo papel daquela transação, o limite com o usuário travado,
+// para que duas criações simultâneas não passem as duas.
+func (s *ChannelService) Create(ctx context.Context, scope tenancy.ProjectScope, in ChannelInput) (Channel, error) {
 	dest, err := s.validar(in)
 	if err != nil {
 		return Channel{}, err
 	}
-	if err := s.cabe(ctx, userID, false); err != nil {
+	if err := s.exigir(ctx, scope, tenancy.PermManageChannels); err != nil {
+		return Channel{}, err
+	}
+	if err := s.cabe(ctx, scope.UserID, false); err != nil {
 		return Channel{}, err
 	}
 
@@ -148,7 +164,7 @@ func (s *ChannelService) Create(ctx context.Context, userID uuid.UUID, in Channe
 		return Channel{}, err
 	}
 	now := s.clk.Now()
-	p := db.InsertChannelParams{ID: id, UserID: userID, Kind: string(in.Kind), ConfigEnc: sealed, CreatedAt: now}
+	p := db.InsertChannelParams{ID: id, Kind: string(in.Kind), ConfigEnc: sealed, CreatedAt: now}
 	out := Channel{ID: id, Kind: in.Kind, Hint: hint(in.Kind, crypto.Secret(dest)), Enabled: true, CreatedAt: now}
 
 	envio, cancel := context.WithTimeout(ctx, sendTimeout)
@@ -175,10 +191,14 @@ func (s *ChannelService) Create(ctx context.Context, userID uuid.UUID, in Channe
 		out.Status = StatusPending
 	}
 
-	err = storage.InUserTx(ctx, s.pool, userID, func(q *db.Queries) error {
-		if err := s.cabeNa(ctx, q, userID, true); err != nil {
+	err = storage.InProjectTx(ctx, s.pool, scope.UserID, scope.ProjectID, func(q *db.Queries, atual tenancy.ProjectScope) error {
+		if err := atual.Require(tenancy.PermManageChannels); err != nil {
 			return err
 		}
+		if err := s.cabeNa(ctx, q, atual.UserID, true); err != nil {
+			return err
+		}
+		p.UserID, p.ProjectID = atual.UserID, atual.ProjectID
 		return q.InsertChannel(ctx, p)
 	})
 	if err != nil {
@@ -217,6 +237,19 @@ func (s *ChannelService) validar(in ChannelInput) (string, error) {
 	}
 }
 
+// exigir confere, numa transação que não grava nada, a pertença e a
+// permissão do papel lido no banco. Serve aos caminhos que mandam mensagem
+// para fora antes de gravar: a recusa tem de vir antes do envio.
+func (s *ChannelService) exigir(ctx context.Context, scope tenancy.ProjectScope, perm tenancy.Permission) error {
+	return storage.InProjectTx(ctx, s.pool, scope.UserID, scope.ProjectID, func(_ *db.Queries, atual tenancy.ProjectScope) error {
+		return atual.Require(perm)
+	})
+}
+
+// cabe é a pré-conferência do limite, antes do envio. Continua sob InUserTx,
+// em que a contagem vê os canais do usuário em todos os projetos; a
+// conferência definitiva (cabeNa dentro de InProjectTx, em Create) só vê o
+// projeto atual. O teto por titular vem no PR 2b.
 func (s *ChannelService) cabe(ctx context.Context, userID uuid.UUID, travar bool) error {
 	return storage.InUserTx(ctx, s.pool, userID, func(q *db.Queries) error {
 		return s.cabeNa(ctx, q, userID, travar)
@@ -242,13 +275,16 @@ func (s *ChannelService) cabeNa(ctx context.Context, q *db.Queries, userID uuid.
 	return nil
 }
 
-// List devolve os canais do usuário. Uma linha que não decifra (chave
-// trocada, linha adulterada) sai sem hint, em vez de derrubar a lista
+// List (PermRead) devolve os canais do projeto. Uma linha que não decifra
+// (chave trocada, linha adulterada) sai sem hint, em vez de derrubar a lista
 // inteira.
-func (s *ChannelService) List(ctx context.Context, userID uuid.UUID) ([]Channel, error) {
+func (s *ChannelService) List(ctx context.Context, scope tenancy.ProjectScope) ([]Channel, error) {
 	var out []Channel
-	err := storage.InUserTx(ctx, s.pool, userID, func(q *db.Queries) error {
-		rows, err := q.ListChannels(ctx, userID)
+	err := storage.InProjectTx(ctx, s.pool, scope.UserID, scope.ProjectID, func(q *db.Queries, atual tenancy.ProjectScope) error {
+		if err := atual.Require(tenancy.PermRead); err != nil {
+			return err
+		}
+		rows, err := q.ListChannels(ctx, atual.ProjectID)
 		if err != nil {
 			return fmt.Errorf("listar canais: %w", err)
 		}
@@ -294,9 +330,13 @@ func falhandoDepoisDoSucesso(falha, sucesso *time.Time) bool {
 	return falha != nil && (sucesso == nil || falha.After(*sucesso))
 }
 
-func (s *ChannelService) Delete(ctx context.Context, userID, id uuid.UUID) error {
-	return storage.InUserTx(ctx, s.pool, userID, func(q *db.Queries) error {
-		n, err := q.DeleteChannel(ctx, db.DeleteChannelParams{UserID: userID, ID: id})
+// Delete (PermManageChannels) apaga o canal do projeto.
+func (s *ChannelService) Delete(ctx context.Context, scope tenancy.ProjectScope, id uuid.UUID) error {
+	return storage.InProjectTx(ctx, s.pool, scope.UserID, scope.ProjectID, func(q *db.Queries, atual tenancy.ProjectScope) error {
+		if err := atual.Require(tenancy.PermManageChannels); err != nil {
+			return err
+		}
+		n, err := q.DeleteChannel(ctx, db.DeleteChannelParams{ProjectID: atual.ProjectID, ID: id})
 		if err != nil {
 			return fmt.Errorf("apagar canal: %w", err)
 		}
@@ -307,26 +347,29 @@ func (s *ChannelService) Delete(ctx context.Context, userID, id uuid.UUID) error
 	})
 }
 
-// SetEnabled pausa (false) ou retoma (true) o canal e o
-// devolve no formato da listagem. Canal alheio ou inexistente é ErrNotFound:
-// a RLS e o user_id na WHERE o escondem. Mudar para o valor que já está não é
-// erro.
+// SetEnabled (PermManageChannels) pausa (false) ou retoma (true) o canal e o
+// devolve no formato da listagem. Canal de outro projeto ou inexistente é
+// ErrNotFound: a RLS e o project_id na WHERE o escondem. Mudar para o valor que
+// já está não é erro.
 //
 // Pausado, o canal não recebe nada: o despacho cancela o aviso na hora do
 // envio (semEnvio), e retomar não reenvia o que passou. Guardar os avisos
 // exigiria outro estado na fila e renderia uma enxurrada de alertas velhos ao
 // retomar.
-func (s *ChannelService) SetEnabled(ctx context.Context, userID, id uuid.UUID, enabled bool) (Channel, error) {
+func (s *ChannelService) SetEnabled(ctx context.Context, scope tenancy.ProjectScope, id uuid.UUID, enabled bool) (Channel, error) {
 	var out Channel
-	err := storage.InUserTx(ctx, s.pool, userID, func(q *db.Queries) error {
-		n, err := q.SetChannelEnabled(ctx, db.SetChannelEnabledParams{UserID: userID, ID: id, Enabled: enabled})
+	err := storage.InProjectTx(ctx, s.pool, scope.UserID, scope.ProjectID, func(q *db.Queries, atual tenancy.ProjectScope) error {
+		if err := atual.Require(tenancy.PermManageChannels); err != nil {
+			return err
+		}
+		n, err := q.SetChannelEnabled(ctx, db.SetChannelEnabledParams{ProjectID: atual.ProjectID, ID: id, Enabled: enabled})
 		if err != nil {
 			return fmt.Errorf("pausar canal: %w", err)
 		}
 		if n == 0 {
 			return ErrNotFound
 		}
-		r, err := q.GetChannelView(ctx, db.GetChannelViewParams{UserID: userID, ID: id})
+		r, err := q.GetChannelView(ctx, db.GetChannelViewParams{ProjectID: atual.ProjectID, ID: id})
 		if err != nil {
 			return fmt.Errorf("ler canal: %w", err)
 		}
@@ -336,14 +379,18 @@ func (s *ChannelService) SetEnabled(ctx context.Context, userID, id uuid.UUID, e
 	return out, err
 }
 
-// ResendVerification manda um link novo a um e-mail pendente (vencido ou
-// não) e invalida o anterior. Envia antes de trocar o token: se o envio
-// falha, o link antigo continua valendo.
-func (s *ChannelService) ResendVerification(ctx context.Context, userID, id uuid.UUID) error {
+// ResendVerification (PermManageChannels) manda um link novo a um e-mail
+// pendente (vencido ou não) e invalida o anterior. Envia antes de trocar o
+// token: se o envio falha, o link antigo continua valendo. A permissão é
+// conferida na leitura, antes do envio, e de novo na troca do token.
+func (s *ChannelService) ResendVerification(ctx context.Context, scope tenancy.ProjectScope, id uuid.UUID) error {
 	var row db.NotifChannel
-	err := storage.InUserTx(ctx, s.pool, userID, func(q *db.Queries) error {
+	err := storage.InProjectTx(ctx, s.pool, scope.UserID, scope.ProjectID, func(q *db.Queries, atual tenancy.ProjectScope) error {
+		if err := atual.Require(tenancy.PermManageChannels); err != nil {
+			return err
+		}
 		var err error
-		row, err = q.GetChannel(ctx, db.GetChannelParams{UserID: userID, ID: id})
+		row, err = q.GetChannel(ctx, db.GetChannelParams{ProjectID: atual.ProjectID, ID: id})
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrNotFound
 		}
@@ -372,9 +419,12 @@ func (s *ChannelService) ResendVerification(ctx context.Context, userID, id uuid
 		slog.Warn("e-mail de verificação falhou", "motivo", motivo(err))
 		return ErrDeliveryFailed
 	}
-	return storage.InUserTx(ctx, s.pool, userID, func(q *db.Queries) error {
+	return storage.InProjectTx(ctx, s.pool, scope.UserID, scope.ProjectID, func(q *db.Queries, atual tenancy.ProjectScope) error {
+		if err := atual.Require(tenancy.PermManageChannels); err != nil {
+			return err
+		}
 		n, err := q.RenewVerification(ctx, db.RenewVerificationParams{
-			UserID: userID, ID: id, TokenHash: hash, ExpiresAt: s.clk.Now().Add(VerifyTTL),
+			ProjectID: atual.ProjectID, ID: id, TokenHash: hash, ExpiresAt: s.clk.Now().Add(VerifyTTL),
 		})
 		if err != nil {
 			return fmt.Errorf("renovar token: %w", err)

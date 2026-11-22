@@ -29,6 +29,8 @@ import (
 	"github.com/BipoXDXD/stillon/internal/statuspage"
 	"github.com/BipoXDXD/stillon/internal/storage"
 	"github.com/BipoXDXD/stillon/internal/targets"
+	"github.com/BipoXDXD/stillon/internal/tenancy"
+	"github.com/BipoXDXD/stillon/internal/tenancy/pgstore"
 )
 
 // totpIssuer é o nome que aparece no app autenticador do usuário.
@@ -230,6 +232,7 @@ func run(ctx context.Context, cfg *config.Config) error {
 			StatusPages: statuspage.NewService(pool, clk),
 			Pings:       heartbeat.NewPingService(pool, clk),
 			Heartbeats:  heartbeat.NewService(pool, clk),
+			Projects:    tenancy.NewService(pgstore.New(pool), clk),
 			Clock:       clk,
 			LimitesIP:   storage.NewOrcamentosPorIP(pool, clk),
 			Ready:       pool.Ping,

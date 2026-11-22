@@ -33,6 +33,7 @@ func TestAllRoleConsolidatesAndServesThePublicPage(t *testing.T) {
 	}
 	agora := time.Now()
 	hora := agora.UTC().Truncate(time.Hour).Add(-2 * time.Hour)
+	projeto := testdb.ProjetoPadrao(t, dono)
 	err := storage.InUserTx(ctx, pool, dono, func(q *db.Queries) error {
 		if err := q.InsertTarget(ctx, db.InsertTargetParams{
 			ID: alvo, UserID: dono, Name: "nome-interno", URL: "http://127.0.0.1:1/",
@@ -42,7 +43,7 @@ func TestAllRoleConsolidatesAndServesThePublicPage(t *testing.T) {
 			return err
 		}
 		if err := q.InsertStatusPage(ctx, db.InsertStatusPageParams{
-			ID: pagina, UserID: dono, Slug: "empresa-e2e", Title: "Status E2E", Published: true, CreatedAt: agora,
+			ID: pagina, UserID: dono, ProjectID: projeto, Slug: "empresa-e2e", Title: "Status E2E", Published: true, CreatedAt: agora,
 		}); err != nil {
 			return err
 		}

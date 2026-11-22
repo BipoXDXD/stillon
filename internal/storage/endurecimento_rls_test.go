@@ -44,6 +44,7 @@ func TestDonoSoAlteraOAckDoIncidente(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
 	dono := novoUsuario(t, pool)
+	projeto := testdb.ProjetoPadrao(t, dono)
 	alvo, outroAlvo := novoAlvo(t, pool, dono, agora), novoAlvo(t, pool, dono, agora)
 	hb := novoHeartbeat(t, pool, dono, "hb")
 	incidente := incidenteDoSondador(t, pool, alvo)
@@ -80,7 +81,7 @@ func TestDonoSoAlteraOAckDoIncidente(t *testing.T) {
 	}
 
 	err := storage.InUserTx(ctx, pool, dono, func(q *db.Queries) error {
-		_, err := q.AckIncident(ctx, db.AckIncidentParams{Now: agora, UserID: dono, ID: incidente})
+		_, err := q.AckIncident(ctx, db.AckIncidentParams{Now: agora, ProjectID: projeto, ID: incidente})
 		return err
 	})
 	if err != nil {
@@ -119,6 +120,7 @@ func TestDonoNaoEscreveHistereseNemRollup(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
 	dono := novoUsuario(t, pool)
+	testdb.ProjetoPadrao(t, dono)
 	alvo, semLinhas := novoAlvo(t, pool, dono, agora), novoAlvo(t, pool, dono, agora)
 	if _, err := testdb.Admin(t).Exec(ctx,
 		`INSERT INTO target_health (target_id, consecutive_failures, streak_since, last_checked_at)
@@ -185,7 +187,7 @@ func TestDonoNaoEscreveHistereseNemRollup(t *testing.T) {
 
 	// O zerar da edição de alvo (ResetTargetHealth) continua passando.
 	err := storage.InUserTx(ctx, pool, dono, func(q *db.Queries) error {
-		return q.ResetTargetHealth(ctx, db.ResetTargetHealthParams{UserID: dono, TargetID: alvo})
+		return q.ResetTargetHealth(ctx, db.ResetTargetHealthParams{ProjectID: testdb.ProjetoDoAlvo(t, alvo), TargetID: alvo})
 	})
 	if err != nil {
 		t.Fatalf("o dono zerando a histerese: %v", err)
@@ -345,10 +347,13 @@ func TestPoliticasDeUpdateDasTabelasComDono(t *testing.T) {
 		"heartbeats.heartbeats_owner:*",
 		"heartbeats.heartbeats_ping_update:w",
 		"heartbeats.heartbeats_prober_update:w",
+		"heartbeats.heartbeats_so_projeto_do_escopo:*",
 		"notif_channels.notif_channels_owner:*",
+		"notif_channels.notif_channels_so_projeto_do_escopo:*",
 		"notif_channels.notif_channels_verify_update:w",
 		"targets.targets_owner:*",
 		"targets.targets_prober_update:w",
+		"targets.targets_so_projeto_do_escopo:*",
 	}
 	if strings.Join(politicas, "\n") != strings.Join(esperadas, "\n") {
 		t.Errorf("políticas de UPDATE:\n%s\nqueria:\n%s", strings.Join(politicas, "\n"), strings.Join(esperadas, "\n"))

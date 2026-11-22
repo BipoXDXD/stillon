@@ -85,6 +85,7 @@ func TestOlderBinaryIgnoresHeartbeatRows(t *testing.T) {
 	dono := novoUsuario(t, pool)
 	canal := novoCanal(t, pool, dono, nil, time.Time{})
 
+	projeto := testdb.ProjetoPadrao(t, dono)
 	alvo := novoAlvo(t, pool, dono, agora.Add(-time.Hour))
 	incidenteAlvo := novoIncidente(t, pool, alvo)
 	notifAlvo := novaNotificacao(t, pool, incidenteAlvo, canal)
@@ -109,11 +110,11 @@ func TestOlderBinaryIgnoresHeartbeatRows(t *testing.T) {
 		t.Fatalf("ClaimDueTargets: %v", err)
 	}
 	err = storage.InUserTx(ctx, pool, dono, func(q *db.Queries) error {
-		l, err := q.ListTargets(ctx, db.ListTargetsParams{UserID: dono, MaxRows: 10})
+		l, err := q.ListTargets(ctx, db.ListTargetsParams{ProjectID: projeto, MaxRows: 10})
 		if err != nil {
 			return err
 		}
-		s, err := q.ListTargetSummaries(ctx, dono)
+		s, err := q.ListTargetSummaries(ctx, projeto)
 		if err != nil {
 			return err
 		}

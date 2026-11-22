@@ -18,6 +18,7 @@ import (
 	"github.com/BipoXDXD/stillon/internal/notify"
 	"github.com/BipoXDXD/stillon/internal/storage"
 	"github.com/BipoXDXD/stillon/internal/storage/db"
+	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 )
 
 type discordFalso struct {
@@ -317,7 +318,7 @@ func TestResendWithUnreadableDestinationIsInternalError(t *testing.T) {
 	id := uuid.Must(uuid.NewV7())
 	err := storage.InUserTx(ctx, a.pool, a.userID, func(q *db.Queries) error {
 		return q.InsertChannel(ctx, db.InsertChannelParams{
-			ID: id, UserID: a.userID, Kind: string(notify.KindEmail), ConfigEnc: []byte("destino-ilegivel"),
+			ID: id, UserID: a.userID, ProjectID: testdb.ProjetoPadrao(t, a.userID), Kind: string(notify.KindEmail), ConfigEnc: []byte("destino-ilegivel"),
 			VerifyTokenHash: []byte("hash-antigo"), VerifyExpiresAt: &expira, CreatedAt: agora,
 		})
 	})
@@ -347,10 +348,11 @@ func TestChannelLimitIs409(t *testing.T) {
 	a := newAPI(t)
 	ctx := context.Background()
 	agora := a.clk.Now()
+	projeto := testdb.ProjetoPadrao(t, a.userID)
 	err := storage.InUserTx(ctx, a.pool, a.userID, func(q *db.Queries) error {
 		for range notify.MaxChannels {
 			if err := q.InsertChannel(ctx, db.InsertChannelParams{
-				ID: uuid.Must(uuid.NewV7()), UserID: a.userID, Kind: "discord", ConfigEnc: []byte{1},
+				ID: uuid.Must(uuid.NewV7()), UserID: a.userID, ProjectID: projeto, Kind: "discord", ConfigEnc: []byte{1},
 				VerifiedAt: &agora, CreatedAt: agora,
 			}); err != nil {
 				return err

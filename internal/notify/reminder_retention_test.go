@@ -11,6 +11,7 @@ import (
 	"github.com/BipoXDXD/stillon/internal/incident"
 	"github.com/BipoXDXD/stillon/internal/storage"
 	"github.com/BipoXDXD/stillon/internal/storage/db"
+	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 )
 
 // A retomada promete um lembrete, o vencido, sem prazo para voltar
@@ -92,7 +93,7 @@ func pausarCanalDaBancada(t *testing.T, b *bancada, pausado bool) {
 	t.Helper()
 	ctx := context.Background()
 	err := storage.InUserTx(ctx, b.pool, b.dono, func(q *db.Queries) error {
-		_, err := q.SetChannelEnabled(ctx, db.SetChannelEnabledParams{UserID: b.dono, ID: b.canalID, Enabled: !pausado})
+		_, err := q.SetChannelEnabled(ctx, db.SetChannelEnabledParams{ProjectID: testdb.ProjetoPadrao(t, b.dono), ID: b.canalID, Enabled: !pausado})
 		return err
 	})
 	if err != nil {
@@ -271,7 +272,7 @@ func novoCanalDaBancada(t *testing.T, b *bancada) uuid.UUID {
 	agora, id := b.clk.Now(), uuid.Must(uuid.NewV7())
 	err := storage.InUserTx(ctx, b.pool, b.dono, func(q *db.Queries) error {
 		return q.InsertChannel(ctx, db.InsertChannelParams{
-			ID: id, UserID: b.dono, Kind: string(KindDiscord), ConfigEnc: []byte{1}, VerifiedAt: &agora, CreatedAt: agora,
+			ID: id, UserID: b.dono, ProjectID: testdb.ProjetoPadrao(t, b.dono), Kind: string(KindDiscord), ConfigEnc: []byte{1}, VerifiedAt: &agora, CreatedAt: agora,
 		})
 	})
 	if err != nil {

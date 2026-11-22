@@ -87,6 +87,7 @@ func TestEveryResourceRouteRejectsRevokedFamily(t *testing.T) {
 		t.Fatalf("preparar página: %d", resp.StatusCode)
 	}
 	hb, ping := criarHB(t, a, dono, corpoDePeriodo)
+	noProjeto := "/api/v1/projects/" + testdb.ProjetoPadrao(t, a.userID).String()
 	if status, _, corpo := pingar(t, a, "/ping/"+ping, nil); status != http.StatusOK {
 		t.Fatalf("preparar evento: %d %s", status, corpo)
 	}
@@ -109,6 +110,7 @@ func TestEveryResourceRouteRejectsRevokedFamily(t *testing.T) {
 		{"GET /api/v1/me", "/api/v1/me", nil},
 		{"GET /api/v1/sessions", "/api/v1/sessions", nil},
 		{"DELETE /api/v1/sessions/{id}", "/api/v1/sessions/" + familiaDe(t, dono, a).String(), nil},
+		{"GET /api/v1/projects", "/api/v1/projects", nil},
 		{"GET /api/v1/targets", "/api/v1/targets", nil},
 		{"POST /api/v1/targets", "/api/v1/targets", alvoValido},
 		{"GET /api/v1/targets/summary", "/api/v1/targets/summary", nil},
@@ -116,16 +118,33 @@ func TestEveryResourceRouteRejectsRevokedFamily(t *testing.T) {
 		{"PATCH /api/v1/targets/{id}", "/api/v1/targets/" + alvo, map[string]string{"name": "alterado sem sessão"}},
 		{"DELETE /api/v1/targets/{id}", "/api/v1/targets/" + alvo, nil},
 		{"GET /api/v1/targets/{id}/checks", "/api/v1/targets/" + alvo + "/checks", nil},
+		{"GET /api/v1/projects/{projectID}/targets", noProjeto + "/targets", nil},
+		{"POST /api/v1/projects/{projectID}/targets", noProjeto + "/targets", alvoValido},
+		{"GET /api/v1/projects/{projectID}/targets/summary", noProjeto + "/targets/summary", nil},
+		{"GET /api/v1/projects/{projectID}/targets/{id}", noProjeto + "/targets/" + alvo, nil},
+		{"PATCH /api/v1/projects/{projectID}/targets/{id}", noProjeto + "/targets/" + alvo, map[string]string{"name": "alterado sem sessão"}},
+		{"DELETE /api/v1/projects/{projectID}/targets/{id}", noProjeto + "/targets/" + alvo, nil},
+		{"GET /api/v1/projects/{projectID}/targets/{id}/checks", noProjeto + "/targets/" + alvo + "/checks", nil},
 		{"GET /api/v1/incidents", "/api/v1/incidents", nil},
 		{"POST /api/v1/incidents/{id}/ack", "/api/v1/incidents/" + incidentes[0] + "/ack", nil},
+		{"GET /api/v1/projects/{projectID}/incidents", noProjeto + "/incidents", nil},
+		{"POST /api/v1/projects/{projectID}/incidents/{id}/ack", noProjeto + "/incidents/" + incidentes[0] + "/ack", nil},
 		{"GET /api/v1/channels", "/api/v1/channels", nil},
 		{"POST /api/v1/channels", "/api/v1/channels", map[string]string{"kind": "email", "email": "outro@exemplo.com"}},
 		{"PATCH /api/v1/channels/{id}", "/api/v1/channels/" + canal.ID, map[string]bool{"enabled": false}},
 		{"POST /api/v1/channels/{id}/verify/resend", "/api/v1/channels/" + canal.ID + "/verify/resend", nil},
 		{"DELETE /api/v1/channels/{id}", "/api/v1/channels/" + canal.ID, nil},
+		{"GET /api/v1/projects/{projectID}/channels", noProjeto + "/channels", nil},
+		{"POST /api/v1/projects/{projectID}/channels", noProjeto + "/channels", map[string]string{"kind": "email", "email": "outro@exemplo.com"}},
+		{"PATCH /api/v1/projects/{projectID}/channels/{id}", noProjeto + "/channels/" + canal.ID, map[string]bool{"enabled": false}},
+		{"POST /api/v1/projects/{projectID}/channels/{id}/verify/resend", noProjeto + "/channels/" + canal.ID + "/verify/resend", nil},
+		{"DELETE /api/v1/projects/{projectID}/channels/{id}", noProjeto + "/channels/" + canal.ID, nil},
 		{"GET /api/v1/status-pages", "/api/v1/status-pages", nil},
 		{"POST /api/v1/status-pages", "/api/v1/status-pages", map[string]string{"slug": "nova-pagina", "title": "Nova"}},
 		{"PATCH /api/v1/status-pages/{id}", "/api/v1/status-pages/" + pagina.ID, map[string]bool{"published": true}},
+		{"GET /api/v1/projects/{projectID}/status-pages", noProjeto + "/status-pages", nil},
+		{"POST /api/v1/projects/{projectID}/status-pages", noProjeto + "/status-pages", map[string]string{"slug": "nova-pagina", "title": "Nova"}},
+		{"PATCH /api/v1/projects/{projectID}/status-pages/{id}", noProjeto + "/status-pages/" + pagina.ID, map[string]bool{"published": true}},
 		{"GET /api/v1/heartbeats", "/api/v1/heartbeats", nil},
 		{"POST /api/v1/heartbeats", "/api/v1/heartbeats", corpoDePeriodo},
 		{"GET /api/v1/heartbeats/{id}", "/api/v1/heartbeats/" + hb, nil},
@@ -139,6 +158,19 @@ func TestEveryResourceRouteRejectsRevokedFamily(t *testing.T) {
 		{"POST /api/v1/heartbeats/{id}/events/clear", "/api/v1/heartbeats/" + hb + "/events/clear", nil},
 		{"GET /api/v1/heartbeats/{id}/incidents", "/api/v1/heartbeats/" + hb + "/incidents", nil},
 		{"POST /api/v1/heartbeats/{id}/incidents/{incident_id}/ack", "/api/v1/heartbeats/" + hb + "/incidents/" + uuid.NewString() + "/ack", nil},
+		{"GET /api/v1/projects/{projectID}/heartbeats", noProjeto + "/heartbeats", nil},
+		{"POST /api/v1/projects/{projectID}/heartbeats", noProjeto + "/heartbeats", corpoDePeriodo},
+		{"GET /api/v1/projects/{projectID}/heartbeats/{id}", noProjeto + "/heartbeats/" + hb, nil},
+		{"PATCH /api/v1/projects/{projectID}/heartbeats/{id}", noProjeto + "/heartbeats/" + hb, map[string]string{"name": "outro"}},
+		{"DELETE /api/v1/projects/{projectID}/heartbeats/{id}", noProjeto + "/heartbeats/" + hb, nil},
+		{"POST /api/v1/projects/{projectID}/heartbeats/{id}/token/rotate", noProjeto + "/heartbeats/" + hb + "/token/rotate", nil},
+		{"POST /api/v1/projects/{projectID}/heartbeats/{id}/clone", noProjeto + "/heartbeats/" + hb + "/clone", nil},
+		{"POST /api/v1/projects/{projectID}/heartbeats/{id}/ping-now", noProjeto + "/heartbeats/" + hb + "/ping-now", nil},
+		{"GET /api/v1/projects/{projectID}/heartbeats/cron-preview", noProjeto + "/heartbeats/cron-preview?expr=0+3+*+*+*&timezone=UTC", nil},
+		{"GET /api/v1/projects/{projectID}/heartbeats/{id}/events", noProjeto + "/heartbeats/" + hb + "/events", nil},
+		{"POST /api/v1/projects/{projectID}/heartbeats/{id}/events/clear", noProjeto + "/heartbeats/" + hb + "/events/clear", nil},
+		{"GET /api/v1/projects/{projectID}/heartbeats/{id}/incidents", noProjeto + "/heartbeats/" + hb + "/incidents", nil},
+		{"POST /api/v1/projects/{projectID}/heartbeats/{id}/incidents/{incident_id}/ack", noProjeto + "/heartbeats/" + hb + "/incidents/" + uuid.NewString() + "/ack", nil},
 	}
 	// A matriz não pode deixar uma rota de recurso nova sem a prova de
 	// revogação. A enumeração existente também verifica registros novos.

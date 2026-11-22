@@ -19,6 +19,7 @@ import (
 	"github.com/BipoXDXD/stillon/internal/notify"
 	"github.com/BipoXDXD/stillon/internal/statuspage"
 	"github.com/BipoXDXD/stillon/internal/targets"
+	"github.com/BipoXDXD/stillon/internal/tenancy"
 	"github.com/BipoXDXD/stillon/internal/webui"
 )
 
@@ -57,7 +58,12 @@ type Deps struct {
 	Pings *heartbeat.PingService
 	// Heartbeats é o cadastro do dono.
 	Heartbeats *heartbeat.Service
-	Clock      clock.Clock
+	// Projects resolve o projeto de cada rota de recurso: o do {projectID},
+	// com a pertença conferida, ou o Projeto padrão nas rotas antigas.
+	// Obrigatório; os testes sem banco passam um tenancy.Service sobre um
+	// repositório falso.
+	Projects *tenancy.Service
+	Clock    clock.Clock
 	// LimitesIP guarda os baldes por IP do login e do /totp/verify. Em
 	// produção é o Postgres (storage.OrcamentosPorIP), para que réplicas
 	// dividam o orçamento de cada origem; os testes sem banco passam
@@ -88,6 +94,10 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	if d.LimitesIP == nil {
 		panic("httpapi: Deps sem LimitesIP; passe storage.NewOrcamentosPorIP (ou, sem banco, middleware.NovosOrcamentosEmMemoria)")
 	}
+	// Sem resolvedor, nenhuma rota de recurso teria escopo: defeito de montagem.
+	if d.Projects == nil {
+		panic("httpapi: Deps sem Projects; passe tenancy.NewService(pgstore.New(pool), clk)")
+	}
 	secureCookie := config.EhHTTPS(cfg.PublicBaseURL)
 	// O teto de Argon2id simultâneos é do processo, e quem o
 	// paga é a API: o config.Load sempre o preenche; um Config montado à mão
@@ -110,6 +120,7 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	ch := NewChannelHandlers(d.Channels)
 	sp := NewStatusPageHandlers(d.StatusPages, cfg.PublicBaseURL)
 	ah := NewAccountHandlers(d.Accounts, proxiesDe(cfg), secureCookie, provas)
+	ph := NewProjectHandlers(d.Projects)
 	authn := middleware.Authn(cfg.JWTSecret, d.Clock)
 
 	mux := http.NewServeMux()
@@ -194,50 +205,99 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	// mutação que já passou pela guarda pode concluir; não há cancelamento
 	// retroativo em voo. O limite continua antes da consulta de sessão.
 	protegida := func(fn http.HandlerFunc) http.Handler { return authn(porUsuario(viva(fn))) }
+	// As rotas de recurso agem num projeto. As antigas, sem {projectID} no
+	// caminho, agem no Projeto padrão do usuário (criado na primeira chamada).
+	// O projeto vem depois da sessão viva: token de sessão revogada não cria
+	// projeto. /me e /sessions são da conta, não de um projeto, e ficam em
+	// protegida. As rotas /api/v1/projects/{projectID}/... são as gêmeas: a
+	// mesma cadeia, com o projeto lido do caminho (ProjetoDoCaminho) no lugar
+	// do padrão, e os mesmos handlers, que leem o escopo por escopo().
+	padrao := middleware.ProjetoPadrao(d.Projects)
+	recursoLegado := func(fn http.HandlerFunc) http.Handler { return authn(porUsuario(viva(padrao(fn)))) }
+	doCaminho := middleware.ProjetoDoCaminho(d.Projects)
+	noProjeto := func(fn http.HandlerFunc) http.Handler { return authn(porUsuario(viva(doCaminho(fn)))) }
 
 	mux.Handle("GET /api/v1/me", protegida(ah.Me))
 	mux.Handle("GET /api/v1/sessions", protegida(ah.ListSessions))
 	mux.Handle("DELETE /api/v1/sessions/{id}", protegida(ah.RevokeSession))
+	// A lista de projetos é da conta, como /me: protegida, sem projeto no
+	// contexto, e não garante o Projeto padrão.
+	mux.Handle("GET /api/v1/projects", protegida(ph.List))
 
-	mux.Handle("GET /api/v1/targets", protegida(th.List))
-	mux.Handle("POST /api/v1/targets", protegida(th.Create))
+	mux.Handle("GET /api/v1/targets", recursoLegado(th.List))
+	mux.Handle("POST /api/v1/targets", recursoLegado(th.Create))
 	// O literal é mais específico que {id} e ganha no ServeMux, sem conflito.
-	mux.Handle("GET /api/v1/targets/summary", protegida(th.Summary))
-	mux.Handle("GET /api/v1/targets/{id}", protegida(th.Get))
-	mux.Handle("PATCH /api/v1/targets/{id}", protegida(th.Update))
-	mux.Handle("DELETE /api/v1/targets/{id}", protegida(th.Delete))
-	mux.Handle("GET /api/v1/targets/{id}/checks", protegida(th.Checks))
+	mux.Handle("GET /api/v1/targets/summary", recursoLegado(th.Summary))
+	mux.Handle("GET /api/v1/targets/{id}", recursoLegado(th.Get))
+	mux.Handle("PATCH /api/v1/targets/{id}", recursoLegado(th.Update))
+	mux.Handle("DELETE /api/v1/targets/{id}", recursoLegado(th.Delete))
+	mux.Handle("GET /api/v1/targets/{id}/checks", recursoLegado(th.Checks))
 
-	mux.Handle("GET /api/v1/incidents", protegida(ih.List))
-	mux.Handle("POST /api/v1/incidents/{id}/ack", protegida(ih.Ack))
+	mux.Handle("GET /api/v1/projects/{projectID}/targets", noProjeto(th.List))
+	mux.Handle("POST /api/v1/projects/{projectID}/targets", noProjeto(th.Create))
+	mux.Handle("GET /api/v1/projects/{projectID}/targets/summary", noProjeto(th.Summary))
+	mux.Handle("GET /api/v1/projects/{projectID}/targets/{id}", noProjeto(th.Get))
+	mux.Handle("PATCH /api/v1/projects/{projectID}/targets/{id}", noProjeto(th.Update))
+	mux.Handle("DELETE /api/v1/projects/{projectID}/targets/{id}", noProjeto(th.Delete))
+	mux.Handle("GET /api/v1/projects/{projectID}/targets/{id}/checks", noProjeto(th.Checks))
 
-	mux.Handle("GET /api/v1/heartbeats", protegida(hb.List))
-	mux.Handle("POST /api/v1/heartbeats", protegida(hb.Create))
-	mux.Handle("GET /api/v1/heartbeats/cron-preview", protegida(hb.CronPreview))
-	mux.Handle("GET /api/v1/heartbeats/{id}", protegida(hb.Get))
-	mux.Handle("PATCH /api/v1/heartbeats/{id}", protegida(hb.Update))
-	mux.Handle("DELETE /api/v1/heartbeats/{id}", protegida(hb.Delete))
-	mux.Handle("POST /api/v1/heartbeats/{id}/token/rotate", protegida(hb.RotateToken))
-	mux.Handle("POST /api/v1/heartbeats/{id}/clone", protegida(hb.Clone))
-	mux.Handle("POST /api/v1/heartbeats/{id}/ping-now", protegida(hb.PingNow))
-	mux.Handle("GET /api/v1/heartbeats/{id}/events", protegida(hb.Events))
-	mux.Handle("POST /api/v1/heartbeats/{id}/events/clear", protegida(hb.ClearEvents))
-	mux.Handle("GET /api/v1/heartbeats/{id}/incidents", protegida(hb.Incidents))
-	mux.Handle("POST /api/v1/heartbeats/{id}/incidents/{incident_id}/ack", protegida(hb.AckIncident))
+	mux.Handle("GET /api/v1/incidents", recursoLegado(ih.List))
+	mux.Handle("POST /api/v1/incidents/{id}/ack", recursoLegado(ih.Ack))
+	mux.Handle("GET /api/v1/projects/{projectID}/incidents", noProjeto(ih.List))
+	mux.Handle("POST /api/v1/projects/{projectID}/incidents/{id}/ack", noProjeto(ih.Ack))
+
+	mux.Handle("GET /api/v1/heartbeats", recursoLegado(hb.List))
+	mux.Handle("POST /api/v1/heartbeats", recursoLegado(hb.Create))
+	mux.Handle("GET /api/v1/heartbeats/cron-preview", recursoLegado(hb.CronPreview))
+	mux.Handle("GET /api/v1/heartbeats/{id}", recursoLegado(hb.Get))
+	mux.Handle("PATCH /api/v1/heartbeats/{id}", recursoLegado(hb.Update))
+	mux.Handle("DELETE /api/v1/heartbeats/{id}", recursoLegado(hb.Delete))
+	mux.Handle("POST /api/v1/heartbeats/{id}/token/rotate", recursoLegado(hb.RotateToken))
+	mux.Handle("POST /api/v1/heartbeats/{id}/clone", recursoLegado(hb.Clone))
+	mux.Handle("POST /api/v1/heartbeats/{id}/ping-now", recursoLegado(hb.PingNow))
+	mux.Handle("GET /api/v1/heartbeats/{id}/events", recursoLegado(hb.Events))
+	mux.Handle("POST /api/v1/heartbeats/{id}/events/clear", recursoLegado(hb.ClearEvents))
+	mux.Handle("GET /api/v1/heartbeats/{id}/incidents", recursoLegado(hb.Incidents))
+	mux.Handle("POST /api/v1/heartbeats/{id}/incidents/{incident_id}/ack", recursoLegado(hb.AckIncident))
+
+	mux.Handle("GET /api/v1/projects/{projectID}/heartbeats", noProjeto(hb.List))
+	mux.Handle("POST /api/v1/projects/{projectID}/heartbeats", noProjeto(hb.Create))
+	mux.Handle("GET /api/v1/projects/{projectID}/heartbeats/cron-preview", noProjeto(hb.CronPreview))
+	mux.Handle("GET /api/v1/projects/{projectID}/heartbeats/{id}", noProjeto(hb.Get))
+	mux.Handle("PATCH /api/v1/projects/{projectID}/heartbeats/{id}", noProjeto(hb.Update))
+	mux.Handle("DELETE /api/v1/projects/{projectID}/heartbeats/{id}", noProjeto(hb.Delete))
+	mux.Handle("POST /api/v1/projects/{projectID}/heartbeats/{id}/token/rotate", noProjeto(hb.RotateToken))
+	mux.Handle("POST /api/v1/projects/{projectID}/heartbeats/{id}/clone", noProjeto(hb.Clone))
+	mux.Handle("POST /api/v1/projects/{projectID}/heartbeats/{id}/ping-now", noProjeto(hb.PingNow))
+	mux.Handle("GET /api/v1/projects/{projectID}/heartbeats/{id}/events", noProjeto(hb.Events))
+	mux.Handle("POST /api/v1/projects/{projectID}/heartbeats/{id}/events/clear", noProjeto(hb.ClearEvents))
+	mux.Handle("GET /api/v1/projects/{projectID}/heartbeats/{id}/incidents", noProjeto(hb.Incidents))
+	mux.Handle("POST /api/v1/projects/{projectID}/heartbeats/{id}/incidents/{incident_id}/ack", noProjeto(hb.AckIncident))
 
 	porEnvio := middleware.RateLimitUserEvery(ctx, d.Clock, envioACada, envioBurst)
-	comEnvio := func(fn http.HandlerFunc) http.Handler { return authn(porUsuario(porEnvio(viva(fn)))) }
-	mux.Handle("GET /api/v1/channels", protegida(ch.List))
-	mux.Handle("POST /api/v1/channels", comEnvio(ch.Create))
-	mux.Handle("DELETE /api/v1/channels/{id}", protegida(ch.Delete))
+	comEnvioLegado := func(fn http.HandlerFunc) http.Handler { return authn(porUsuario(porEnvio(viva(padrao(fn))))) }
+	mux.Handle("GET /api/v1/channels", recursoLegado(ch.List))
+	mux.Handle("POST /api/v1/channels", comEnvioLegado(ch.Create))
+	mux.Handle("DELETE /api/v1/channels/{id}", recursoLegado(ch.Delete))
 	// Pausar e retomar não manda mensagem para fora: fica no
 	// limitador comum, e não no balde de envio.
-	mux.Handle("PATCH /api/v1/channels/{id}", protegida(ch.SetEnabled))
-	mux.Handle("POST /api/v1/channels/{id}/verify/resend", comEnvio(ch.Resend))
+	mux.Handle("PATCH /api/v1/channels/{id}", recursoLegado(ch.SetEnabled))
+	mux.Handle("POST /api/v1/channels/{id}/verify/resend", comEnvioLegado(ch.Resend))
 
-	mux.Handle("GET /api/v1/status-pages", protegida(sp.List))
-	mux.Handle("POST /api/v1/status-pages", protegida(sp.Create))
-	mux.Handle("PATCH /api/v1/status-pages/{id}", protegida(sp.Update))
+	comEnvioNoProjeto := func(fn http.HandlerFunc) http.Handler { return authn(porUsuario(porEnvio(viva(doCaminho(fn))))) }
+	mux.Handle("GET /api/v1/projects/{projectID}/channels", noProjeto(ch.List))
+	mux.Handle("POST /api/v1/projects/{projectID}/channels", comEnvioNoProjeto(ch.Create))
+	mux.Handle("DELETE /api/v1/projects/{projectID}/channels/{id}", noProjeto(ch.Delete))
+	mux.Handle("PATCH /api/v1/projects/{projectID}/channels/{id}", noProjeto(ch.SetEnabled))
+	mux.Handle("POST /api/v1/projects/{projectID}/channels/{id}/verify/resend", comEnvioNoProjeto(ch.Resend))
+
+	mux.Handle("GET /api/v1/status-pages", recursoLegado(sp.List))
+	mux.Handle("POST /api/v1/status-pages", recursoLegado(sp.Create))
+	mux.Handle("PATCH /api/v1/status-pages/{id}", recursoLegado(sp.Update))
+
+	mux.Handle("GET /api/v1/projects/{projectID}/status-pages", noProjeto(sp.List))
+	mux.Handle("POST /api/v1/projects/{projectID}/status-pages", noProjeto(sp.Create))
+	mux.Handle("PATCH /api/v1/projects/{projectID}/status-pages/{id}", noProjeto(sp.Update))
 
 	// Spec §13: /healthz é raso (o processo responde); /readyz verifica o
 	// banco.

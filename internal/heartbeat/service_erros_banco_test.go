@@ -28,7 +28,7 @@ func TestClearEventsSemAuditoriaNaoApagaOsEventos(t *testing.T) {
 	ctx := context.Background()
 
 	a.executar(t, gatilhoRecusarEscrita("BEFORE INSERT ON audit_log FOR EACH ROW"))
-	err := svc.ClearEvents(ctx, a.dono, id)
+	err := svc.ClearEvents(ctx, a.escopo(t), id)
 	if err == nil || !strings.Contains(err.Error(), "auditar heartbeat.events_cleared") {
 		t.Fatalf("ClearEvents = %v; queria erro da auditoria", err)
 	}
@@ -40,7 +40,7 @@ func TestClearEventsSemAuditoriaNaoApagaOsEventos(t *testing.T) {
 	}
 
 	a.executar(t, `DROP TRIGGER recusar_escrita ON audit_log; DROP FUNCTION recusar_escrita();`)
-	if err := svc.ClearEvents(ctx, a.dono, id); err != nil {
+	if err := svc.ClearEvents(ctx, a.escopo(t), id); err != nil {
 		t.Fatalf("ClearEvents sem o gatilho: %v", err)
 	}
 	if n := len(a.eventos(t, id)); n != 0 {
@@ -76,7 +76,7 @@ func TestUpdateComTagsRecusadasNaoGravaNada(t *testing.T) {
 			a := novoAmbiente(t)
 			svc := heartbeat.NewService(a.pool, a.clk)
 			ctx := context.Background()
-			h, _, err := svc.Create(ctx, a.dono, heartbeat.Input{
+			h, _, err := svc.Create(ctx, a.escopo(t), heartbeat.Input{
 				Name: "backup", Tags: []string{"noite"}, Schedule: hora, Grace: tolerancia, Enabled: true,
 			})
 			if err != nil {
@@ -86,7 +86,7 @@ func TestUpdateComTagsRecusadasNaoGravaNada(t *testing.T) {
 
 			a.executar(t, c.criar)
 			novo := "backup novo"
-			_, err = svc.Update(ctx, a.dono, h.ID, heartbeat.Patch{Name: &novo, SetTags: true, Tags: []string{"dia"}})
+			_, err = svc.Update(ctx, a.escopo(t), h.ID, heartbeat.Patch{Name: &novo, SetTags: true, Tags: []string{"dia"}})
 			if err == nil || !strings.Contains(err.Error(), c.erroCom) {
 				t.Fatalf("Update = %v; queria erro com %q", err, c.erroCom)
 			}
@@ -109,7 +109,7 @@ func TestDeleteRecusadoDeixaOHeartbeat(t *testing.T) {
 	antes := a.linha(t, id)
 
 	a.executar(t, gatilhoRecusarEscrita("BEFORE DELETE ON heartbeats FOR EACH ROW"))
-	err := svc.Delete(context.Background(), a.dono, id)
+	err := svc.Delete(context.Background(), a.escopo(t), id)
 	if err == nil || errors.Is(err, heartbeat.ErrNotFound) || !strings.Contains(err.Error(), "apagar heartbeat") {
 		t.Fatalf("Delete = %v; queria erro ao apagar", err)
 	}
@@ -131,7 +131,7 @@ func TestEventsEIncidentsDevolvemOErroDaLeitura(t *testing.T) {
 		a.pingar(t, token, heartbeat.SignalSuccess)
 		a.executar(t, politicaRecusarLeitura("heartbeat_events", "ListHeartbeatEvents"))
 
-		out, err := svc.Events(context.Background(), a.dono, id, nil, 50)
+		out, err := svc.Events(context.Background(), a.escopo(t), id, nil, 50)
 		if err == nil || errors.Is(err, heartbeat.ErrNotFound) || !strings.Contains(err.Error(), "listar eventos") {
 			t.Fatalf("Events = %v; queria erro ao listar", err)
 		}
@@ -152,7 +152,7 @@ func TestEventsEIncidentsDevolvemOErroDaLeitura(t *testing.T) {
 		}
 		a.executar(t, politicaRecusarLeitura("incidents", "ListHeartbeatIncidents"))
 
-		out, err := svc.Incidents(context.Background(), a.dono, id, nil, nil, 50)
+		out, err := svc.Incidents(context.Background(), a.escopo(t), id, nil, nil, 50)
 		if err == nil || errors.Is(err, heartbeat.ErrNotFound) || !strings.Contains(err.Error(), "listar incidentes") {
 			t.Fatalf("Incidents = %v; queria erro ao listar", err)
 		}
@@ -195,7 +195,7 @@ func TestCreateComPassoRecusadoNaoGravaNada(t *testing.T) {
 			a.novoHeartbeat(t)
 			a.executar(t, c.criar)
 
-			_, token, err := svc.Create(context.Background(), a.dono, heartbeat.Input{
+			_, token, err := svc.Create(context.Background(), a.escopo(t), heartbeat.Input{
 				Name: "novo", Tags: []string{"noite"}, Schedule: hora, Grace: tolerancia, Enabled: true,
 			})
 			if err == nil || token != "" || !strings.Contains(err.Error(), c.erroCom) {
@@ -237,7 +237,7 @@ func TestCreateSemATravaNaoGravaNada(t *testing.T) {
 	defer cancelar()
 	fim := make(chan resultado, 1)
 	go func() {
-		_, token, err := svc.Create(ctx, a.dono, heartbeat.Input{Name: "novo", Schedule: hora, Grace: tolerancia, Enabled: true})
+		_, token, err := svc.Create(ctx, a.escopo(t), heartbeat.Input{Name: "novo", Schedule: hora, Grace: tolerancia, Enabled: true})
 		fim <- resultado{token, err}
 	}()
 	if !testdb.EsperarBloqueados(t, a.pool, 1, fim) {
@@ -301,7 +301,7 @@ func (a ambiente) auditorias(t *testing.T, id uuid.UUID) int64 {
 
 func (a ambiente) tags(t *testing.T, id uuid.UUID) []string {
 	t.Helper()
-	h, err := heartbeat.NewService(a.pool, a.clk).Get(context.Background(), a.dono, id)
+	h, err := heartbeat.NewService(a.pool, a.clk).Get(context.Background(), a.escopo(t), id)
 	if err != nil {
 		t.Fatal(err)
 	}

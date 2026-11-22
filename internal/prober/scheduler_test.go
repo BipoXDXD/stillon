@@ -33,6 +33,7 @@ import (
 	"github.com/BipoXDXD/stillon/internal/storage/db"
 	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 	"github.com/BipoXDXD/stillon/internal/targets"
+	"github.com/BipoXDXD/stillon/internal/tenancy"
 )
 
 const esperaMaxima = 5 * time.Second
@@ -66,6 +67,8 @@ func novaBancada(t *testing.T, client *http.Client, vagas int32) *bancada {
 		dono, dono.String()+"@exemplo.com"); err != nil {
 		t.Fatal(err)
 	}
+	// Com o Projeto padrão, o gatilho põe nele os alvos que a bancada cria.
+	testdb.ProjetoPadrao(t, dono)
 
 	reg := prometheus.NewRegistry()
 	m := NewMetrics(reg)
@@ -79,6 +82,12 @@ func novaBancada(t *testing.T, client *http.Client, vagas int32) *bancada {
 	// as sondas terminam antes de o banco ser restaurado.
 	t.Cleanup(func() { s.Stop(esperaMaxima) })
 	return &bancada{s: s, pool: pool, clk: clk, box: box, m: m, reg: reg, dono: dono}
+}
+
+// escopo é o do dono, owner do Projeto padrão, para chamar o serviço de alvos.
+func (b *bancada) escopo(t *testing.T) tenancy.ProjectScope {
+	t.Helper()
+	return tenancy.ProjectScope{ProjectID: testdb.ProjetoPadrao(t, b.dono), UserID: b.dono, Role: tenancy.RoleOwner}
 }
 
 func (b *bancada) alvo(t *testing.T, url string, mexer func(*db.InsertTargetParams)) uuid.UUID {
@@ -106,7 +115,7 @@ func (b *bancada) checks(t *testing.T, alvo uuid.UUID) []db.ListChecksRow {
 	err := storage.InUserTx(ctx, b.pool, b.dono, func(q *db.Queries) error {
 		var err error
 		rows, err = q.ListChecks(ctx, db.ListChecksParams{
-			UserID: b.dono, TargetID: alvo, FromAt: b.clk.Now().Add(-time.Hour), ToAt: b.clk.Now().Add(time.Hour),
+			ProjectID: testdb.ProjetoDoAlvo(t, alvo), TargetID: alvo, FromAt: b.clk.Now().Add(-time.Hour), ToAt: b.clk.Now().Add(time.Hour),
 		})
 		return err
 	})
@@ -121,7 +130,7 @@ func (b *bancada) proximaExecucao(t *testing.T, alvo uuid.UUID) time.Time {
 	ctx := context.Background()
 	var next time.Time
 	err := storage.InUserTx(ctx, b.pool, b.dono, func(q *db.Queries) error {
-		row, err := q.GetTarget(ctx, db.GetTargetParams{UserID: b.dono, ID: alvo})
+		row, err := q.GetTarget(ctx, db.GetTargetParams{ProjectID: testdb.ProjetoDoAlvo(t, alvo), ID: alvo})
 		next = row.NextRunAt
 		return err
 	})
@@ -483,7 +492,7 @@ func TestVanishedTargetIsDiscardedQuietly(t *testing.T) {
 
 	ctx := context.Background()
 	err := storage.InUserTx(ctx, b.pool, b.dono, func(q *db.Queries) error {
-		_, err := q.DeleteTarget(ctx, db.DeleteTargetParams{UserID: b.dono, ID: alvo})
+		_, err := q.DeleteTarget(ctx, db.DeleteTargetParams{ProjectID: testdb.ProjetoDoAlvo(t, alvo), ID: alvo})
 		return err
 	})
 	if err != nil {

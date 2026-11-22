@@ -20,9 +20,10 @@ func novaPagina(t *testing.T, pool *pgxpool.Pool, dono uuid.UUID, slug string, p
 	t.Helper()
 	ctx := context.Background()
 	id := novoID()
+	projeto := testdb.ProjetoPadrao(t, dono)
 	err := storage.InUserTx(ctx, pool, dono, func(q *db.Queries) error {
 		if err := q.InsertStatusPage(ctx, db.InsertStatusPageParams{
-			ID: id, UserID: dono, Slug: slug, Title: "Status", Published: publicada, CreatedAt: agora,
+			ID: id, UserID: dono, ProjectID: projeto, Slug: slug, Title: "Status", Published: publicada, CreatedAt: agora,
 		}); err != nil {
 			return err
 		}
@@ -190,7 +191,7 @@ func TestStatusPageConstraints(t *testing.T) {
 	inserir := func(dono uuid.UUID, slug string) error {
 		return storage.InUserTx(ctx, pool, dono, func(q *db.Queries) error {
 			return q.InsertStatusPage(ctx, db.InsertStatusPageParams{
-				ID: novoID(), UserID: dono, Slug: slug, Title: "x", CreatedAt: agora,
+				ID: novoID(), UserID: dono, ProjectID: testdb.ProjetoPadrao(t, dono), Slug: slug, Title: "x", CreatedAt: agora,
 			})
 		})
 	}

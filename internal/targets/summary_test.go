@@ -43,7 +43,7 @@ func (a ambiente) gravarRollup(t *testing.T, alvo uuid.UUID, hora time.Time, tot
 
 func (a ambiente) alvo(t *testing.T, dono uuid.UUID) uuid.UUID {
 	t.Helper()
-	alvo, err := a.svc.Create(context.Background(), dono, entrada())
+	alvo, err := a.svc.Create(context.Background(), targets.EscopoDe(t, a.pool, dono), entrada())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,7 +52,7 @@ func (a ambiente) alvo(t *testing.T, dono uuid.UUID) uuid.UUID {
 
 func resumoDe(t *testing.T, a ambiente, dono uuid.UUID) map[uuid.UUID]targets.Summary {
 	t.Helper()
-	itens, err := a.svc.Summary(context.Background(), dono, targets.SummaryFilter{})
+	itens, err := a.svc.Summary(context.Background(), targets.EscopoDe(t, a.pool, dono), targets.SummaryFilter{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -243,7 +243,7 @@ func TestSummaryNullables(t *testing.T) {
 	dono := a.usuario(t)
 	vazio := a.alvo(t, dono)
 	desligado := a.alvo(t, dono)
-	if _, err := a.svc.Update(context.Background(), dono, desligado, targets.Patch{Enabled: ptr(false)}); err != nil {
+	if _, err := a.svc.Update(context.Background(), targets.EscopoDe(t, a.pool, dono), desligado, targets.Patch{Enabled: ptr(false)}); err != nil {
 		t.Fatal(err)
 	}
 	a.gravarCheck(t, desligado, a.clk.Now().Add(-time.Second), "up", 55)
@@ -292,11 +292,11 @@ func TestSummaryOrderIsTheListOrder(t *testing.T) {
 	for range 3 {
 		criados = append(criados, a.alvo(t, dono))
 	}
-	itens, err := a.svc.Summary(context.Background(), dono, targets.SummaryFilter{})
+	itens, err := a.svc.Summary(context.Background(), targets.EscopoDe(t, a.pool, dono), targets.SummaryFilter{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	lista, err := a.svc.List(context.Background(), dono, nil, targets.MaxPageSize)
+	lista, err := a.svc.List(context.Background(), targets.EscopoDe(t, a.pool, dono), nil, targets.MaxPageSize)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -376,7 +376,7 @@ func TestSummaryBucketsAreUTCHoursInAnyTimeZone(t *testing.T) {
 	defer kolkata.Close()
 
 	svc := targets.NewService(kolkata, caixa(t), a.clk)
-	itens, err := svc.Summary(context.Background(), dono, targets.SummaryFilter{})
+	itens, err := svc.Summary(context.Background(), targets.EscopoDe(t, a.pool, dono), targets.SummaryFilter{})
 	if err != nil {
 		t.Fatal(err)
 	}

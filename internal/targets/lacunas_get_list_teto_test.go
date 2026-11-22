@@ -26,7 +26,7 @@ func TestListLimiteForaDaFaixaVoltaAoPadrao(t *testing.T) {
 		{101, 50},
 	}
 	for _, c := range casos {
-		lista, err := a.svc.List(context.Background(), dono, nil, c.pedido)
+		lista, err := a.svc.List(context.Background(), targets.EscopoDe(t, a.pool, dono), nil, c.pedido)
 		if err != nil {
 			t.Fatalf("List com limite %d: %v", c.pedido, err)
 		}
@@ -42,16 +42,16 @@ func TestListDoIntrusoNaoTrazAlvosDoDono(t *testing.T) {
 	a := novoAmbiente(t)
 	ctx := context.Background()
 	dono, intruso := a.usuario(t), a.usuario(t)
-	primeiro, err := a.svc.Create(ctx, dono, entrada())
+	primeiro, err := a.svc.Create(ctx, targets.EscopoDe(t, a.pool, dono), entrada())
 	if err != nil {
 		t.Fatal(err)
 	}
-	segundo, err := a.svc.Create(ctx, dono, entrada())
+	segundo, err := a.svc.Create(ctx, targets.EscopoDe(t, a.pool, dono), entrada())
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	lista, err := a.svc.List(ctx, intruso, nil, 10)
+	lista, err := a.svc.List(ctx, targets.EscopoDe(t, a.pool, intruso), nil, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,7 +59,7 @@ func TestListDoIntrusoNaoTrazAlvosDoDono(t *testing.T) {
 		t.Errorf("List do intruso = %v, queria lista vazia", lista)
 	}
 	cursor := segundo.ID
-	lista, err = a.svc.List(ctx, intruso, &cursor, 10)
+	lista, err = a.svc.List(ctx, targets.EscopoDe(t, a.pool, intruso), &cursor, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +67,7 @@ func TestListDoIntrusoNaoTrazAlvosDoDono(t *testing.T) {
 		t.Errorf("List do intruso com cursor devolveu %d alvos, queria 0", len(lista))
 	}
 
-	doDono, err := a.svc.List(ctx, dono, nil, 10)
+	doDono, err := a.svc.List(ctx, targets.EscopoDe(t, a.pool, dono), nil, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,19 +85,19 @@ func TestPatchPondoRegraRespeitaOTetoConfiguradoNaBorda(t *testing.T) {
 	dono := a.usuario(t)
 	svc := targets.NewService(a.pool, caixa(t), a.clk, targets.ComTetoDeRegrasPorHost(2))
 	a.encherComRegra(t, dono, "https://example.com", 1, true)
-	x, err := svc.Create(ctx, dono, semRegra("https://example.com/x"))
+	x, err := svc.Create(ctx, targets.EscopoDe(t, a.pool, dono), semRegra("https://example.com/x"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	y, err := svc.Create(ctx, dono, semRegra("https://example.com/y"))
+	y, err := svc.Create(ctx, targets.EscopoDe(t, a.pool, dono), semRegra("https://example.com/y"))
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if _, err := svc.Update(ctx, dono, x.ID, targets.Patch{SetContentRule: true, ContentRule: regraOK()}); err != nil {
+	if _, err := svc.Update(ctx, targets.EscopoDe(t, a.pool, dono), x.ID, targets.Patch{SetContentRule: true, ContentRule: regraOK()}); err != nil {
 		t.Fatalf("a 2ª regra no host com teto 2 foi recusada: %v", err)
 	}
-	if _, err := svc.Update(ctx, dono, y.ID, targets.Patch{SetContentRule: true, ContentRule: regraOK()}); !errors.Is(err, targets.ErrContentHostLimit) {
+	if _, err := svc.Update(ctx, targets.EscopoDe(t, a.pool, dono), y.ID, targets.Patch{SetContentRule: true, ContentRule: regraOK()}); !errors.Is(err, targets.ErrContentHostLimit) {
 		t.Fatalf("a 3ª regra no host com teto 2 deu %v, queria ErrContentHostLimit", err)
 	}
 	if n := a.regrasDoDono(t, dono); n != 2 {

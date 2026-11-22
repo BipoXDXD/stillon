@@ -12,6 +12,7 @@ import (
 	"github.com/BipoXDXD/stillon/internal/heartbeat"
 	"github.com/BipoXDXD/stillon/internal/storage"
 	"github.com/BipoXDXD/stillon/internal/storage/db"
+	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 )
 
 // Dois POST no último lugar se encontram entre contar e inserir: sem a trava,
@@ -21,11 +22,12 @@ func TestHeartbeatLimitHoldsUnderConcurrency(t *testing.T) {
 	a := novoAmbiente(t)
 	ctx := context.Background()
 	periodo := int32(3600)
+	projeto := testdb.ProjetoPadrao(t, a.dono)
 	err := storage.InUserTx(ctx, a.pool, a.dono, func(q *db.Queries) error {
 		for range heartbeat.MaxPerUser - 1 {
 			_, hash := heartbeat.NewPingToken()
 			if err := q.InsertHeartbeat(ctx, db.InsertHeartbeatParams{
-				ID: uuid.Must(uuid.NewV7()), UserID: a.dono, Name: "h", PingTokenHash: hash, PeriodSec: &periodo,
+				ID: uuid.Must(uuid.NewV7()), UserID: a.dono, ProjectID: projeto, Name: "h", PingTokenHash: hash, PeriodSec: &periodo,
 				GraceSec: 300, Enabled: true, CreatedAt: agora, DeadlineAt: agora.Add(time.Hour),
 			}); err != nil {
 				return err
@@ -50,11 +52,12 @@ func TestHeartbeatLimitHoldsUnderConcurrency(t *testing.T) {
 		}
 	})
 
+	sc := a.escopo(t)
 	erros := make([]error, 2)
 	var wg sync.WaitGroup
 	for i := range erros {
 		wg.Go(func() {
-			_, _, erros[i] = svc.Create(ctx, a.dono, heartbeat.Input{Name: "h", Schedule: hora, Grace: tolerancia, Enabled: true})
+			_, _, erros[i] = svc.Create(ctx, sc, heartbeat.Input{Name: "h", Schedule: hora, Grace: tolerancia, Enabled: true})
 		})
 	}
 	wg.Wait()
@@ -80,11 +83,12 @@ func TestCloneLimitHoldsUnderConcurrency(t *testing.T) {
 	ctx := context.Background()
 	original, _ := a.novoHeartbeat(t)
 	periodo := int32(3600)
+	projeto := testdb.ProjetoPadrao(t, a.dono)
 	err := storage.InUserTx(ctx, a.pool, a.dono, func(q *db.Queries) error {
 		for range heartbeat.MaxPerUser - 2 {
 			_, hash := heartbeat.NewPingToken()
 			if err := q.InsertHeartbeat(ctx, db.InsertHeartbeatParams{
-				ID: uuid.Must(uuid.NewV7()), UserID: a.dono, Name: "h", PingTokenHash: hash, PeriodSec: &periodo,
+				ID: uuid.Must(uuid.NewV7()), UserID: a.dono, ProjectID: projeto, Name: "h", PingTokenHash: hash, PeriodSec: &periodo,
 				GraceSec: 300, Enabled: true, CreatedAt: agora, DeadlineAt: agora.Add(time.Hour),
 			}); err != nil {
 				return err
@@ -109,11 +113,12 @@ func TestCloneLimitHoldsUnderConcurrency(t *testing.T) {
 		}
 	})
 
+	sc := a.escopo(t)
 	erros := make([]error, 2)
 	var wg sync.WaitGroup
 	for i := range erros {
 		wg.Go(func() {
-			_, _, erros[i] = svc.Clone(ctx, a.dono, original)
+			_, _, erros[i] = svc.Clone(ctx, sc, original)
 		})
 	}
 	wg.Wait()
@@ -153,7 +158,7 @@ func TestCreateLeavesNothingWhenTheResponseFails(t *testing.T) {
 	defer cancelar()
 	svc.SetDepoisDeGravar(cancelar)
 
-	_, token, err := svc.Create(ctx, a.dono, heartbeat.Input{Name: "h", Schedule: hora, Grace: tolerancia, Enabled: true})
+	_, token, err := svc.Create(ctx, a.escopo(t), heartbeat.Input{Name: "h", Schedule: hora, Grace: tolerancia, Enabled: true})
 	if err == nil || token != "" {
 		t.Fatalf("Create = %q, %v; queria erro sem token", token, err)
 	}
@@ -182,7 +187,7 @@ func TestRotateKeepsTheOldTokenWhenTheResponseFails(t *testing.T) {
 	defer cancelar()
 	svc.SetDepoisDeGravar(cancelar)
 
-	_, novo, err := svc.RotateToken(ctx, a.dono, id)
+	_, novo, err := svc.RotateToken(ctx, a.escopo(t), id)
 	if err == nil || novo != "" {
 		t.Fatalf("RotateToken = %q, %v; queria erro sem token", novo, err)
 	}

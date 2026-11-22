@@ -63,10 +63,10 @@ SELECT count(*) FROM incidents WHERE resolved_at IS NULL;
 -- name: ExistingTargetIDs :many
 SELECT id FROM targets WHERE id = ANY(sqlc.arg(ids)::uuid[]);
 
--- Histórico (API): rodam sob InUserTx e filtram por user_id, como as de
--- targets.sql. open NULL lista tudo; true só abertos; false só resolvidos.
--- target_id NULL lista todos os alvos; um id de alvo alheio não casa com
--- nada e devolve a lista vazia.
+-- Histórico (API): rodam sob InProjectTx e filtram pelo project_id do alvo,
+-- como as de targets.sql. open NULL lista tudo; true só abertos; false só resolvidos.
+-- target_id NULL lista todos os alvos; um id de alvo de outro projeto não
+-- casa com nada e devolve a lista vazia.
 -- O id é UUIDv7, gerado quando o incidente abre: ordenar por ele é ordenar
 -- pela abertura, e o cursor é o último id da página anterior.
 -- O JOIN deixa de fora os incidentes de heartbeat, que têm rotas próprias: o
@@ -76,7 +76,7 @@ SELECT id FROM targets WHERE id = ANY(sqlc.arg(ids)::uuid[]);
 SELECT i.id, t.id AS target_id, t.name AS target_name, i.started_at, i.resolved_at, i.cause, i.ack_at
   FROM incidents i
   JOIN targets t ON t.id = i.target_id
- WHERE t.user_id = sqlc.arg(user_id)
+ WHERE t.project_id = sqlc.arg(project_id)::uuid
    AND (sqlc.narg(open)::bool IS NULL OR (i.resolved_at IS NULL) = sqlc.narg(open)::bool)
    AND (sqlc.narg(before)::uuid IS NULL OR i.id < sqlc.narg(before)::uuid)
    AND (sqlc.narg(target_id)::uuid IS NULL OR i.target_id = sqlc.narg(target_id)::uuid)
@@ -88,5 +88,5 @@ SELECT i.id, t.id AS target_id, t.name AS target_name, i.started_at, i.resolved_
 UPDATE incidents i
    SET ack_at = COALESCE(i.ack_at, sqlc.arg(now)::timestamptz)
   FROM targets t
- WHERE t.id = i.target_id AND t.user_id = sqlc.arg(user_id) AND i.id = sqlc.arg(id)
+ WHERE t.id = i.target_id AND t.project_id = sqlc.arg(project_id)::uuid AND i.id = sqlc.arg(id)
 RETURNING i.id, t.id AS target_id, t.name AS target_name, i.started_at, i.resolved_at, i.cause, i.ack_at;

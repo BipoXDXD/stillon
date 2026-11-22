@@ -17,6 +17,7 @@ import (
 	"github.com/BipoXDXD/stillon/internal/heartbeat"
 	"github.com/BipoXDXD/stillon/internal/storage"
 	"github.com/BipoXDXD/stillon/internal/storage/db"
+	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 )
 
 // Apagar um alvo PARADO não passa pelo sondador. A série
@@ -33,7 +34,7 @@ func TestReconcileForgetsSeriesOfDeletedTargets(t *testing.T) {
 
 	ctx := context.Background()
 	err := storage.InUserTx(ctx, b.pool, b.dono, func(q *db.Queries) error {
-		_, err := q.DeleteTarget(ctx, db.DeleteTargetParams{UserID: b.dono, ID: apagado})
+		_, err := q.DeleteTarget(ctx, db.DeleteTargetParams{ProjectID: testdb.ProjetoDoAlvo(t, apagado), ID: apagado})
 		return err
 	})
 	if err != nil {
@@ -82,7 +83,7 @@ func TestReconcileReportsTheHeartbeatEventLogSize(t *testing.T) {
 	periodo := int32(3600)
 	err := storage.InUserTx(ctx, b.pool, b.dono, func(q *db.Queries) error {
 		return q.InsertHeartbeat(ctx, db.InsertHeartbeatParams{
-			ID: id, UserID: b.dono, Name: "backup", PingTokenHash: hash, PeriodSec: &periodo, GraceSec: 300,
+			ID: id, UserID: b.dono, ProjectID: testdb.ProjetoPadrao(t, b.dono), Name: "backup", PingTokenHash: hash, PeriodSec: &periodo, GraceSec: 300,
 			Enabled: true, CreatedAt: b.clk.Now(), DeadlineAt: b.clk.Now().Add(time.Hour),
 		})
 	})
@@ -124,7 +125,7 @@ func TestReconcileKeepsGoingWhenTheHeartbeatEventCountFails(t *testing.T) {
 		t.Fatal(err)
 	}
 	err = storage.InUserTx(ctx, b.pool, b.dono, func(q *db.Queries) error {
-		_, err := q.DeleteTarget(ctx, db.DeleteTargetParams{UserID: b.dono, ID: apagado})
+		_, err := q.DeleteTarget(ctx, db.DeleteTargetParams{ProjectID: testdb.ProjetoDoAlvo(t, apagado), ID: apagado})
 		return err
 	})
 	if err != nil {
@@ -167,7 +168,7 @@ func TestReconcileReportsTheExactHeartbeatEventLogSizeAboveTheJitThreshold(t *te
 	periodo := int32(3600)
 	err := storage.InUserTx(ctx, b.pool, b.dono, func(q *db.Queries) error {
 		return q.InsertHeartbeat(ctx, db.InsertHeartbeatParams{
-			ID: id, UserID: b.dono, Name: "backup", PingTokenHash: hash, PeriodSec: &periodo, GraceSec: 300,
+			ID: id, UserID: b.dono, ProjectID: testdb.ProjetoPadrao(t, b.dono), Name: "backup", PingTokenHash: hash, PeriodSec: &periodo, GraceSec: 300,
 			Enabled: true, CreatedAt: b.clk.Now(), DeadlineAt: b.clk.Now().Add(time.Hour),
 		})
 	})

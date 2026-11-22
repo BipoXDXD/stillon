@@ -214,11 +214,12 @@ func TestListRawHoursIsOrderedByTargetThenBucket(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
 	dono := novoUsuario(t, pool)
+	projeto := testdb.ProjetoPadrao(t, dono)
 	conn := conexaoSemRLS(t)
 	alvos, instantes := novosAlvosComChecksEmTresInstantes(t, pool, dono)
 
 	linhas, err := db.New(conn).ListRawHours(ctx, db.ListRawHoursParams{
-		UserID: dono, FromAt: instantes[0].Add(-time.Hour), ToAt: instantes[2].Add(time.Hour),
+		ProjectID: projeto, FromAt: instantes[0].Add(-time.Hour), ToAt: instantes[2].Add(time.Hour),
 	})
 	if err != nil {
 		t.Fatal(err)

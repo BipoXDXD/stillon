@@ -36,7 +36,7 @@ func TestListHonraOLimiteNaFaixaEVoltaAoPadraoForaDela(t *testing.T) {
 	}{
 		{1, 1}, {7, 7}, {100, 100}, {101, 50}, {0, 50}, {-1, 50},
 	} {
-		got, err := b.svc.List(ctx, dono, history.Filter{Limit: c.limite})
+		got, err := b.svc.List(ctx, history.EscopoDe(t, b.pool, dono), history.Filter{Limit: c.limite})
 		if err != nil {
 			t.Fatalf("List(limite %d): %v", c.limite, err)
 		}

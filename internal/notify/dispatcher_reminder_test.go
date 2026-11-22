@@ -10,6 +10,7 @@ import (
 	"github.com/BipoXDXD/stillon/internal/incident"
 	"github.com/BipoXDXD/stillon/internal/storage"
 	"github.com/BipoXDXD/stillon/internal/storage/db"
+	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 )
 
 func (b *bancada) lembrar(t *testing.T, seq int32) uuid.UUID {
@@ -32,7 +33,7 @@ func (b *bancada) reconhecer(t *testing.T) {
 	t.Helper()
 	ctx := context.Background()
 	err := storage.InUserTx(ctx, b.pool, b.dono, func(q *db.Queries) error {
-		_, err := q.AckIncident(ctx, db.AckIncidentParams{UserID: b.dono, ID: b.incidente, Now: b.clk.Now()})
+		_, err := q.AckIncident(ctx, db.AckIncidentParams{ProjectID: testdb.ProjetoPadrao(t, b.dono), ID: b.incidente, Now: b.clk.Now()})
 		return err
 	})
 	if err != nil {

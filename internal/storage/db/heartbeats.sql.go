@@ -16,14 +16,14 @@ const ackHeartbeatIncident = `-- name: AckHeartbeatIncident :one
 UPDATE incidents i
    SET ack_at = COALESCE(i.ack_at, $1::timestamptz)
   FROM heartbeats h
- WHERE h.id = i.heartbeat_id AND h.user_id = $2
+ WHERE h.id = i.heartbeat_id AND h.project_id = $2::uuid
    AND h.id = $3 AND i.id = $4
 RETURNING i.id, h.id AS heartbeat_id, h.name AS heartbeat_name, i.started_at, i.resolved_at, i.cause, i.ack_at
 `
 
 type AckHeartbeatIncidentParams struct {
 	Now         time.Time
-	UserID      uuid.UUID
+	ProjectID   uuid.UUID
 	HeartbeatID uuid.UUID
 	ID          uuid.UUID
 }
@@ -42,7 +42,7 @@ type AckHeartbeatIncidentRow struct {
 func (q *Queries) AckHeartbeatIncident(ctx context.Context, arg AckHeartbeatIncidentParams) (AckHeartbeatIncidentRow, error) {
 	row := q.db.QueryRow(ctx, ackHeartbeatIncident,
 		arg.Now,
-		arg.UserID,
+		arg.ProjectID,
 		arg.HeartbeatID,
 		arg.ID,
 	)
@@ -203,16 +203,16 @@ func (q *Queries) CountHeartbeats(ctx context.Context, userID uuid.UUID) (int64,
 }
 
 const deleteHeartbeat = `-- name: DeleteHeartbeat :execrows
-DELETE FROM heartbeats WHERE user_id = $1 AND id = $2
+DELETE FROM heartbeats WHERE project_id = $1::uuid AND id = $2
 `
 
 type DeleteHeartbeatParams struct {
-	UserID uuid.UUID
-	ID     uuid.UUID
+	ProjectID uuid.UUID
+	ID        uuid.UUID
 }
 
 func (q *Queries) DeleteHeartbeat(ctx context.Context, arg DeleteHeartbeatParams) (int64, error) {
-	result, err := q.db.Exec(ctx, deleteHeartbeat, arg.UserID, arg.ID)
+	result, err := q.db.Exec(ctx, deleteHeartbeat, arg.ProjectID, arg.ID)
 	if err != nil {
 		return 0, err
 	}
@@ -222,17 +222,17 @@ func (q *Queries) DeleteHeartbeat(ctx context.Context, arg DeleteHeartbeatParams
 const deleteHeartbeatEvents = `-- name: DeleteHeartbeatEvents :execrows
 DELETE FROM heartbeat_events e
  USING heartbeats h
- WHERE h.id = e.heartbeat_id AND h.user_id = $1 AND e.heartbeat_id = $2
+ WHERE h.id = e.heartbeat_id AND h.project_id = $1::uuid AND e.heartbeat_id = $2
 `
 
 type DeleteHeartbeatEventsParams struct {
-	UserID      uuid.UUID
+	ProjectID   uuid.UUID
 	HeartbeatID uuid.UUID
 }
 
 // Limpar o log: só os eventos; last_*, prazo e incidentes ficam.
 func (q *Queries) DeleteHeartbeatEvents(ctx context.Context, arg DeleteHeartbeatEventsParams) (int64, error) {
-	result, err := q.db.Exec(ctx, deleteHeartbeatEvents, arg.UserID, arg.HeartbeatID)
+	result, err := q.db.Exec(ctx, deleteHeartbeatEvents, arg.ProjectID, arg.HeartbeatID)
 	if err != nil {
 		return 0, err
 	}
@@ -242,16 +242,16 @@ func (q *Queries) DeleteHeartbeatEvents(ctx context.Context, arg DeleteHeartbeat
 const deleteHeartbeatTags = `-- name: DeleteHeartbeatTags :exec
 DELETE FROM heartbeat_tags ht
  USING heartbeats h
- WHERE h.id = ht.heartbeat_id AND h.user_id = $1 AND ht.heartbeat_id = $2
+ WHERE h.id = ht.heartbeat_id AND h.project_id = $1::uuid AND ht.heartbeat_id = $2
 `
 
 type DeleteHeartbeatTagsParams struct {
-	UserID      uuid.UUID
+	ProjectID   uuid.UUID
 	HeartbeatID uuid.UUID
 }
 
 func (q *Queries) DeleteHeartbeatTags(ctx context.Context, arg DeleteHeartbeatTagsParams) error {
-	_, err := q.db.Exec(ctx, deleteHeartbeatTags, arg.UserID, arg.HeartbeatID)
+	_, err := q.db.Exec(ctx, deleteHeartbeatTags, arg.ProjectID, arg.HeartbeatID)
 	return err
 }
 
@@ -261,16 +261,16 @@ SELECT id, user_id, name, ping_token_hash, period_sec, cron_expr, timezone,
        last_success_at, last_start_at, last_signal, failing_since,
        last_incident_at, resumed_at, last_runtime_ms, description, last_run_id,
        ping_resumes, project_id
-  FROM heartbeats WHERE user_id = $1 AND id = $2
+  FROM heartbeats WHERE project_id = $1::uuid AND id = $2
 `
 
 type GetHeartbeatParams struct {
-	UserID uuid.UUID
-	ID     uuid.UUID
+	ProjectID uuid.UUID
+	ID        uuid.UUID
 }
 
 func (q *Queries) GetHeartbeat(ctx context.Context, arg GetHeartbeatParams) (Heartbeat, error) {
-	row := q.db.QueryRow(ctx, getHeartbeat, arg.UserID, arg.ID)
+	row := q.db.QueryRow(ctx, getHeartbeat, arg.ProjectID, arg.ID)
 	var i Heartbeat
 	err := row.Scan(
 		&i.ID,
@@ -306,18 +306,18 @@ SELECT id, user_id, name, ping_token_hash, period_sec, cron_expr, timezone,
        last_success_at, last_start_at, last_signal, failing_since,
        last_incident_at, resumed_at, last_runtime_ms, description, last_run_id,
        ping_resumes, project_id
-  FROM heartbeats WHERE user_id = $1 AND id = $2 FOR UPDATE
+  FROM heartbeats WHERE project_id = $1::uuid AND id = $2 FOR UPDATE
 `
 
 type GetHeartbeatForUpdateParams struct {
-	UserID uuid.UUID
-	ID     uuid.UUID
+	ProjectID uuid.UUID
+	ID        uuid.UUID
 }
 
 // FOR UPDATE: o PATCH lê a linha e recalcula o prazo, e um ping no meio se
 // perderia sem a trava.
 func (q *Queries) GetHeartbeatForUpdate(ctx context.Context, arg GetHeartbeatForUpdateParams) (Heartbeat, error) {
-	row := q.db.QueryRow(ctx, getHeartbeatForUpdate, arg.UserID, arg.ID)
+	row := q.db.QueryRow(ctx, getHeartbeatForUpdate, arg.ProjectID, arg.ID)
 	var i Heartbeat
 	err := row.Scan(
 		&i.ID,
@@ -351,12 +351,12 @@ const getHeartbeatView = `-- name: GetHeartbeatView :one
 SELECT h.id, h.user_id, h.name, h.ping_token_hash, h.period_sec, h.cron_expr, h.timezone, h.grace_sec, h.enabled, h.created_at, h.deadline_at, h.last_ping_at, h.last_success_at, h.last_start_at, h.last_signal, h.failing_since, h.last_incident_at, h.resumed_at, h.last_runtime_ms, h.description, h.last_run_id, h.ping_resumes, h.project_id, x.id AS open_incident_id
   FROM heartbeats h
   LEFT JOIN incidents x ON x.heartbeat_id = h.id AND x.resolved_at IS NULL
- WHERE h.user_id = $1 AND h.id = $2
+ WHERE h.project_id = $1::uuid AND h.id = $2
 `
 
 type GetHeartbeatViewParams struct {
-	UserID uuid.UUID
-	ID     uuid.UUID
+	ProjectID uuid.UUID
+	ID        uuid.UUID
 }
 
 type GetHeartbeatViewRow struct {
@@ -366,7 +366,7 @@ type GetHeartbeatViewRow struct {
 
 // O índice único parcial garante no máximo um incidente aberto.
 func (q *Queries) GetHeartbeatView(ctx context.Context, arg GetHeartbeatViewParams) (GetHeartbeatViewRow, error) {
-	row := q.db.QueryRow(ctx, getHeartbeatView, arg.UserID, arg.ID)
+	row := q.db.QueryRow(ctx, getHeartbeatView, arg.ProjectID, arg.ID)
 	var i GetHeartbeatViewRow
 	err := row.Scan(
 		&i.Heartbeat.ID,
@@ -422,8 +422,12 @@ func (q *Queries) GetRunStartAt(ctx context.Context, arg GetRunStartAtParams) (t
 const insertHeartbeat = `-- name: InsertHeartbeat :exec
 
 INSERT INTO heartbeats (id, user_id, name, ping_token_hash, period_sec, cron_expr, timezone,
-                        grace_sec, enabled, created_at, deadline_at, description, ping_resumes)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+                        grace_sec, enabled, created_at, deadline_at, description, ping_resumes,
+                        project_id)
+VALUES ($1, $2, $3, $4,
+        $5, $6, $7, $8,
+        $9, $10, $11, $12,
+        $13, $14::uuid)
 `
 
 type InsertHeartbeatParams struct {
@@ -440,11 +444,15 @@ type InsertHeartbeatParams struct {
 	DeadlineAt    time.Time
 	Description   string
 	PingResumes   bool
+	ProjectID     uuid.UUID
 }
 
 // Heartbeats (docs/superpowers/specs/2026-11-05-heartbeats-design.md). As do
-// dono rodam sob InUserTx e filtram por user_id; as do ping, sob InPingTx; as
-// do avaliador, sob InProberTx.
+// dono rodam sob InProjectTx e filtram por project_id (as cotas, por user_id);
+// as do ping, sob InPingTx; as do avaliador, sob InProberTx.
+// user_id é quem criou o heartbeat; project_id, o projeto em que ele vive, e
+// sempre vem: no escopo de projeto o gatilho preencher_project_id_padrao não
+// preenche, e a RLS recusaria o nulo.
 func (q *Queries) InsertHeartbeat(ctx context.Context, arg InsertHeartbeatParams) error {
 	_, err := q.db.Exec(ctx, insertHeartbeat,
 		arg.ID,
@@ -460,6 +468,7 @@ func (q *Queries) InsertHeartbeat(ctx context.Context, arg InsertHeartbeatParams
 		arg.DeadlineAt,
 		arg.Description,
 		arg.PingResumes,
+		arg.ProjectID,
 	)
 	return err
 }
@@ -498,17 +507,17 @@ const insertHeartbeatTags = `-- name: InsertHeartbeatTags :exec
 INSERT INTO heartbeat_tags (heartbeat_id, tag)
 SELECT h.id, unnest($1::text[])
   FROM heartbeats h
- WHERE h.user_id = $2 AND h.id = $3
+ WHERE h.project_id = $2::uuid AND h.id = $3
 `
 
 type InsertHeartbeatTagsParams struct {
 	Tags        []string
-	UserID      uuid.UUID
+	ProjectID   uuid.UUID
 	HeartbeatID uuid.UUID
 }
 
 func (q *Queries) InsertHeartbeatTags(ctx context.Context, arg InsertHeartbeatTagsParams) error {
-	_, err := q.db.Exec(ctx, insertHeartbeatTags, arg.Tags, arg.UserID, arg.HeartbeatID)
+	_, err := q.db.Exec(ctx, insertHeartbeatTags, arg.Tags, arg.ProjectID, arg.HeartbeatID)
 	return err
 }
 
@@ -516,7 +525,7 @@ const listHeartbeatEvents = `-- name: ListHeartbeatEvents :many
 SELECT e.id, e.heartbeat_id, e.at, e.kind, e.runtime_ms, e.exit_code, e.run_id, e.source
   FROM heartbeat_events e
   JOIN heartbeats h ON h.id = e.heartbeat_id
- WHERE h.user_id = $1
+ WHERE h.project_id = $1::uuid
    AND e.heartbeat_id = $2
    AND ($3::uuid IS NULL OR e.id < $3::uuid)
  ORDER BY e.id DESC
@@ -524,17 +533,17 @@ SELECT e.id, e.heartbeat_id, e.at, e.kind, e.runtime_ms, e.exit_code, e.run_id, 
 `
 
 type ListHeartbeatEventsParams struct {
-	UserID      uuid.UUID
+	ProjectID   uuid.UUID
 	HeartbeatID uuid.UUID
 	Before      *uuid.UUID
 	MaxRows     int32
 }
 
-// O log do dono, do mais novo ao mais velho. O id é UUIDv7, e o cursor é o
+// O log do projeto, do mais novo ao mais velho. O id é UUIDv7, e o cursor é o
 // último id da página anterior.
 func (q *Queries) ListHeartbeatEvents(ctx context.Context, arg ListHeartbeatEventsParams) ([]HeartbeatEvent, error) {
 	rows, err := q.db.Query(ctx, listHeartbeatEvents,
-		arg.UserID,
+		arg.ProjectID,
 		arg.HeartbeatID,
 		arg.Before,
 		arg.MaxRows,
@@ -570,7 +579,7 @@ const listHeartbeatIncidents = `-- name: ListHeartbeatIncidents :many
 SELECT i.id, h.id AS heartbeat_id, h.name AS heartbeat_name, i.started_at, i.resolved_at, i.cause, i.ack_at
   FROM incidents i
   JOIN heartbeats h ON h.id = i.heartbeat_id
- WHERE h.user_id = $1
+ WHERE h.project_id = $1::uuid
    AND h.id = $2
    AND ($3::bool IS NULL OR (i.resolved_at IS NULL) = $3::bool)
    AND ($4::uuid IS NULL OR i.id < $4::uuid)
@@ -579,7 +588,7 @@ SELECT i.id, h.id AS heartbeat_id, h.name AS heartbeat_name, i.started_at, i.res
 `
 
 type ListHeartbeatIncidentsParams struct {
-	UserID      uuid.UUID
+	ProjectID   uuid.UUID
 	HeartbeatID uuid.UUID
 	Open        *bool
 	Before      *uuid.UUID
@@ -599,7 +608,7 @@ type ListHeartbeatIncidentsRow struct {
 // open NULL lista tudo; true só abertos; false só resolvidos.
 func (q *Queries) ListHeartbeatIncidents(ctx context.Context, arg ListHeartbeatIncidentsParams) ([]ListHeartbeatIncidentsRow, error) {
 	rows, err := q.db.Query(ctx, listHeartbeatIncidents,
-		arg.UserID,
+		arg.ProjectID,
 		arg.HeartbeatID,
 		arg.Open,
 		arg.Before,
@@ -635,19 +644,19 @@ const listHeartbeatTags = `-- name: ListHeartbeatTags :many
 SELECT ht.tag
   FROM heartbeat_tags ht
   JOIN heartbeats h ON h.id = ht.heartbeat_id
- WHERE h.user_id = $1 AND ht.heartbeat_id = $2
+ WHERE h.project_id = $1::uuid AND ht.heartbeat_id = $2
  ORDER BY ht.tag
 `
 
 type ListHeartbeatTagsParams struct {
-	UserID      uuid.UUID
+	ProjectID   uuid.UUID
 	HeartbeatID uuid.UUID
 }
 
-// Tags. As leituras saem ordenadas pela tag, e a do dono serve
+// Tags. As leituras saem ordenadas pela tag, e a do projeto serve
 // a lista sem uma consulta por heartbeat, como as de targets.sql.
 func (q *Queries) ListHeartbeatTags(ctx context.Context, arg ListHeartbeatTagsParams) ([]string, error) {
-	rows, err := q.db.Query(ctx, listHeartbeatTags, arg.UserID, arg.HeartbeatID)
+	rows, err := q.db.Query(ctx, listHeartbeatTags, arg.ProjectID, arg.HeartbeatID)
 	if err != nil {
 		return nil, err
 	}
@@ -670,16 +679,16 @@ const listHeartbeats = `-- name: ListHeartbeats :many
 SELECT h.id, h.user_id, h.name, h.ping_token_hash, h.period_sec, h.cron_expr, h.timezone, h.grace_sec, h.enabled, h.created_at, h.deadline_at, h.last_ping_at, h.last_success_at, h.last_start_at, h.last_signal, h.failing_since, h.last_incident_at, h.resumed_at, h.last_runtime_ms, h.description, h.last_run_id, h.ping_resumes, h.project_id, x.id AS open_incident_id
   FROM heartbeats h
   LEFT JOIN incidents x ON x.heartbeat_id = h.id AND x.resolved_at IS NULL
- WHERE h.user_id = $1
+ WHERE h.project_id = $1::uuid
    AND ($2::uuid IS NULL OR h.id < $2::uuid)
  ORDER BY h.id DESC
  LIMIT $3::int
 `
 
 type ListHeartbeatsParams struct {
-	UserID  uuid.UUID
-	Before  *uuid.UUID
-	MaxRows int32
+	ProjectID uuid.UUID
+	Before    *uuid.UUID
+	MaxRows   int32
 }
 
 type ListHeartbeatsRow struct {
@@ -689,7 +698,7 @@ type ListHeartbeatsRow struct {
 
 // Paginação por cursor: o id é UUIDv7, e o cursor é o último id da página.
 func (q *Queries) ListHeartbeats(ctx context.Context, arg ListHeartbeatsParams) ([]ListHeartbeatsRow, error) {
-	rows, err := q.db.Query(ctx, listHeartbeats, arg.UserID, arg.Before, arg.MaxRows)
+	rows, err := q.db.Query(ctx, listHeartbeats, arg.ProjectID, arg.Before, arg.MaxRows)
 	if err != nil {
 		return nil, err
 	}
@@ -733,16 +742,16 @@ func (q *Queries) ListHeartbeats(ctx context.Context, arg ListHeartbeatsParams) 
 	return items, nil
 }
 
-const listUserHeartbeatTags = `-- name: ListUserHeartbeatTags :many
+const listProjectHeartbeatTags = `-- name: ListProjectHeartbeatTags :many
 SELECT ht.heartbeat_id, ht.tag
   FROM heartbeat_tags ht
   JOIN heartbeats h ON h.id = ht.heartbeat_id
- WHERE h.user_id = $1
+ WHERE h.project_id = $1::uuid
  ORDER BY ht.heartbeat_id, ht.tag
 `
 
-func (q *Queries) ListUserHeartbeatTags(ctx context.Context, userID uuid.UUID) ([]HeartbeatTag, error) {
-	rows, err := q.db.Query(ctx, listUserHeartbeatTags, userID)
+func (q *Queries) ListProjectHeartbeatTags(ctx context.Context, projectID uuid.UUID) ([]HeartbeatTag, error) {
+	rows, err := q.db.Query(ctx, listProjectHeartbeatTags, projectID)
 	if err != nil {
 		return nil, err
 	}
@@ -810,9 +819,13 @@ const lockUserHeartbeats = `-- name: LockUserHeartbeats :exec
 SELECT pg_advisory_xact_lock(hashtextextended('stillon.heartbeats:' || $1::uuid::text, 0))
 `
 
-// API do dono: as de cima e estas rodam sob InUserTx e filtram por user_id,
-// como as de targets.sql.
-// O teto por usuário: contar e inserir sob esta trava, como LockUserTargets.
+// API do dono: as de cima e estas rodam sob InProjectTx e filtram por
+// project_id, como as de targets.sql. As exceções, por user_id, são as cotas
+// (LockUserHeartbeats, CountHeartbeats).
+// O teto de heartbeats: contar e inserir sob esta trava, como LockUserTargets.
+// Até o PR 2b ele vale para o usuário dentro do projeto atual (a RLS
+// restritiva de InProjectTx corta os de outros projetos); o teto por titular
+// vem no PR 2b.
 func (q *Queries) LockUserHeartbeats(ctx context.Context, userID uuid.UUID) error {
 	_, err := q.db.Exec(ctx, lockUserHeartbeats, userID)
 	return err
@@ -916,18 +929,19 @@ func (q *Queries) SaveHeartbeatPing(ctx context.Context, arg SaveHeartbeatPingPa
 }
 
 const setHeartbeatPingHash = `-- name: SetHeartbeatPingHash :exec
-UPDATE heartbeats SET ping_token_hash = $3 WHERE user_id = $1 AND id = $2
+UPDATE heartbeats SET ping_token_hash = $1
+ WHERE project_id = $2::uuid AND id = $3
 `
 
 type SetHeartbeatPingHashParams struct {
-	UserID        uuid.UUID
-	ID            uuid.UUID
 	PingTokenHash []byte
+	ProjectID     uuid.UUID
+	ID            uuid.UUID
 }
 
 // Revogar é isto: o hash antigo deixa de casar com qualquer linha.
 func (q *Queries) SetHeartbeatPingHash(ctx context.Context, arg SetHeartbeatPingHashParams) error {
-	_, err := q.db.Exec(ctx, setHeartbeatPingHash, arg.UserID, arg.ID, arg.PingTokenHash)
+	_, err := q.db.Exec(ctx, setHeartbeatPingHash, arg.PingTokenHash, arg.ProjectID, arg.ID)
 	return err
 }
 
@@ -974,7 +988,7 @@ UPDATE heartbeats
        deadline_at = $8, failing_since = $9,
        resumed_at = $10, last_start_at = $11,
        ping_resumes = $12
- WHERE user_id = $13 AND id = $14
+ WHERE project_id = $13::uuid AND id = $14
 `
 
 type UpdateHeartbeatParams struct {
@@ -990,7 +1004,7 @@ type UpdateHeartbeatParams struct {
 	ResumedAt    *time.Time
 	LastStartAt  *time.Time
 	PingResumes  bool
-	UserID       uuid.UUID
+	ProjectID    uuid.UUID
 	ID           uuid.UUID
 }
 
@@ -1008,7 +1022,7 @@ func (q *Queries) UpdateHeartbeat(ctx context.Context, arg UpdateHeartbeatParams
 		arg.ResumedAt,
 		arg.LastStartAt,
 		arg.PingResumes,
-		arg.UserID,
+		arg.ProjectID,
 		arg.ID,
 	)
 	return err

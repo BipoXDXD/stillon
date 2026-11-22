@@ -21,6 +21,8 @@ func TestRLSIsolatesTargetsEvenWithTheWrongFilter(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
 	a, b := novoUsuario(t, pool), novoUsuario(t, pool)
+	testdb.ProjetoPadrao(t, a)
+	pb := testdb.ProjetoPadrao(t, b)
 	novoAlvo(t, pool, a, agora)
 	alvoB := novoAlvo(t, pool, b, agora)
 
@@ -29,14 +31,14 @@ func TestRLSIsolatesTargetsEvenWithTheWrongFilter(t *testing.T) {
 	}
 
 	err := storage.InUserTx(ctx, pool, a, func(q *db.Queries) error {
-		daB, err := q.ListTargets(ctx, db.ListTargetsParams{UserID: b, MaxRows: 10})
+		daB, err := q.ListTargets(ctx, db.ListTargetsParams{ProjectID: pb, MaxRows: 10})
 		if err != nil {
 			return err
 		}
 		if len(daB) != 0 {
 			t.Errorf("sob o escopo de A, listar os alvos de B devolveu %d", len(daB))
 		}
-		_, err = q.GetTarget(ctx, db.GetTargetParams{UserID: b, ID: alvoB})
+		_, err = q.GetTarget(ctx, db.GetTargetParams{ProjectID: testdb.ProjetoDoAlvo(t, alvoB), ID: alvoB})
 		if !errors.Is(err, pgx.ErrNoRows) {
 			t.Errorf("sob o escopo de A, buscar o alvo de B deu %v, queria ErrNoRows", err)
 		}
@@ -68,6 +70,7 @@ func TestScopeSurvivesConnectionReuse(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
 	dono := novoUsuario(t, pool)
+	projeto := testdb.ProjetoPadrao(t, dono)
 	novoAlvo(t, pool, dono, agora.Add(-time.Minute))
 
 	conn, err := pool.Acquire(ctx)
@@ -77,7 +80,7 @@ func TestScopeSurvivesConnectionReuse(t *testing.T) {
 	defer conn.Release()
 
 	err = storage.InUserTx(ctx, conn, dono, func(q *db.Queries) error {
-		_, err := q.ListTargets(ctx, db.ListTargetsParams{UserID: dono, MaxRows: 10})
+		_, err := q.ListTargets(ctx, db.ListTargetsParams{ProjectID: projeto, MaxRows: 10})
 		return err
 	})
 	if err != nil {
@@ -268,6 +271,8 @@ func TestChecksAreVisibleOnlyThroughTheirTarget(t *testing.T) {
 		t.Fatal(err)
 	}
 	a, b := novoUsuario(t, pool), novoUsuario(t, pool)
+	testdb.ProjetoPadrao(t, b)
+	testdb.ProjetoPadrao(t, a)
 	alvoA, alvoB := novoAlvo(t, pool, a, agora), novoAlvo(t, pool, b, agora)
 	novoCheck(t, pool, alvoA, agora)
 	novoCheck(t, pool, alvoB, agora)
@@ -277,7 +282,7 @@ func TestChecksAreVisibleOnlyThroughTheirTarget(t *testing.T) {
 	}
 	err := storage.InUserTx(ctx, pool, a, func(q *db.Queries) error {
 		rows, err := q.ListChecks(ctx, db.ListChecksParams{
-			UserID: b, TargetID: alvoB, FromAt: agora.Add(-time.Hour), ToAt: agora.Add(time.Hour),
+			ProjectID: testdb.ProjetoDoAlvo(t, alvoB), TargetID: alvoB, FromAt: agora.Add(-time.Hour), ToAt: agora.Add(time.Hour),
 		})
 		if err != nil {
 			return err

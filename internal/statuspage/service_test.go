@@ -43,11 +43,15 @@ func (a ambiente) usuario(t *testing.T) uuid.UUID {
 	return id
 }
 
-// alvo cria um alvo do dono, com URL que não pode vazar para a página.
+// alvo cria um alvo do dono, com URL que não pode vazar para a página. Ele
+// nasce no Projeto padrão (o gatilho preencher_project_id_padrao o acha), que
+// é criado antes se ainda não existir: sem projeto, o alvo ficaria fora do
+// escopo de projeto da página.
 func (a ambiente) alvo(t *testing.T, dono uuid.UUID, nome string) uuid.UUID {
 	t.Helper()
 	ctx := context.Background()
 	id := uuid.Must(uuid.NewV7())
+	testdb.ProjetoPadrao(t, dono)
 	err := storage.InUserTx(ctx, a.pool, dono, func(q *db.Queries) error {
 		return q.InsertTarget(ctx, db.InsertTargetParams{
 			ID: id, UserID: dono, Name: nome, URL: "https://interno.exemplo.com/health", Method: "GET",
@@ -74,14 +78,14 @@ func TestCreateKeepsTheOrderAndGetReadsItBack(t *testing.T) {
 	dono := a.usuario(t)
 	api, site := a.alvo(t, dono, "api"), a.alvo(t, dono, "site")
 
-	criada, err := a.svc.Create(ctx, dono, statuspage.Input{
+	criada, err := a.svc.Create(ctx, a.escopo(t, dono), statuspage.Input{
 		Slug: "minha-empresa", Title: "  Status da Empresa  ", Published: true,
 		Items: []statuspage.Item{{TargetID: site, DisplayName: " Site "}, {TargetID: api, DisplayName: "API"}},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	lida, err := a.svc.Get(ctx, dono)
+	lida, err := a.svc.Get(ctx, a.escopo(t, dono))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,7 +100,7 @@ func TestCreateKeepsTheOrderAndGetReadsItBack(t *testing.T) {
 
 func TestGetWithoutPageIsNotFound(t *testing.T) {
 	a := novoAmbiente(t)
-	if _, err := a.svc.Get(context.Background(), a.usuario(t)); !errors.Is(err, statuspage.ErrNotFound) {
+	if _, err := a.svc.Get(context.Background(), a.escopo(t, a.usuario(t))); !errors.Is(err, statuspage.ErrNotFound) {
 		t.Errorf("Get sem página = %v, queria ErrNotFound", err)
 	}
 }
@@ -106,21 +110,21 @@ func TestOnePagePerUserAndSlugsAreUnique(t *testing.T) {
 	a := novoAmbiente(t)
 	ctx := context.Background()
 	dono, outro := a.usuario(t), a.usuario(t)
-	if _, err := a.svc.Create(ctx, dono, statuspage.Input{Slug: "empresa", Title: "Status"}); err != nil {
+	if _, err := a.svc.Create(ctx, a.escopo(t, dono), statuspage.Input{Slug: "empresa", Title: "Status"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := a.svc.Create(ctx, dono, statuspage.Input{Slug: "empresa-2", Title: "Outra"}); !errors.Is(err, statuspage.ErrExists) {
+	if _, err := a.svc.Create(ctx, a.escopo(t, dono), statuspage.Input{Slug: "empresa-2", Title: "Outra"}); !errors.Is(err, statuspage.ErrExists) {
 		t.Errorf("segunda página do mesmo dono = %v, queria ErrExists", err)
 	}
-	if _, err := a.svc.Create(ctx, outro, statuspage.Input{Slug: "empresa", Title: "Minha"}); !errors.Is(err, statuspage.ErrSlugTaken) {
+	if _, err := a.svc.Create(ctx, a.escopo(t, outro), statuspage.Input{Slug: "empresa", Title: "Minha"}); !errors.Is(err, statuspage.ErrSlugTaken) {
 		t.Errorf("slug de outro dono = %v, queria ErrSlugTaken", err)
 	}
-	pOutro, err := a.svc.Create(ctx, outro, statuspage.Input{Slug: "outra", Title: "Minha"})
+	pOutro, err := a.svc.Create(ctx, a.escopo(t, outro), statuspage.Input{Slug: "outra", Title: "Minha"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	tomado := "empresa"
-	if _, err := a.svc.Update(ctx, outro, pOutro.ID, statuspage.Patch{Slug: &tomado}); !errors.Is(err, statuspage.ErrSlugTaken) {
+	if _, err := a.svc.Update(ctx, a.escopo(t, outro), pOutro.ID, statuspage.Patch{Slug: &tomado}); !errors.Is(err, statuspage.ErrSlugTaken) {
 		t.Errorf("PATCH para o slug de outro dono = %v, queria ErrSlugTaken", err)
 	}
 }
@@ -163,12 +167,12 @@ func TestValidationNamesEveryField(t *testing.T) {
 			Items: []statuspage.Item{{TargetID: alvo, DisplayName: "a"}, {TargetID: uuid.Must(uuid.NewV7()), DisplayName: "b"}}},
 			statuspage.FieldError{Field: "items[1].target_id", Reason: "invalid"}},
 	} {
-		_, err := a.svc.Create(ctx, dono, c.in)
+		_, err := a.svc.Create(ctx, a.escopo(t, dono), c.in)
 		if f := campos(err); len(f) != 1 || f[0] != c.quer {
 			t.Errorf("%s: %v (%+v), queria %+v", nome, err, f, c.quer)
 		}
 	}
-	if _, err := a.svc.Get(ctx, dono); !errors.Is(err, statuspage.ErrNotFound) {
+	if _, err := a.svc.Get(ctx, a.escopo(t, dono)); !errors.Is(err, statuspage.ErrNotFound) {
 		t.Errorf("uma entrada inválida deixou página gravada: %v", err)
 	}
 }
@@ -183,7 +187,7 @@ func TestComposedEmojiIsAcceptedInTitleAndNames(t *testing.T) {
 	const titulo = "Status \U0001F469\U0000200D\U0001F4BB"
 	const nome = "API \U00002764\U0000FE0F\U0000200D\U0001F525"
 
-	p, err := a.svc.Create(ctx, dono, statuspage.Input{
+	p, err := a.svc.Create(ctx, a.escopo(t, dono), statuspage.Input{
 		Slug: "empresa", Title: titulo, Items: []statuspage.Item{{TargetID: alvo, DisplayName: nome}},
 	})
 	if err != nil {
@@ -202,13 +206,13 @@ func TestAnotherUsersTargetIsRefused(t *testing.T) {
 	dono, outro := a.usuario(t), a.usuario(t)
 	alheio := a.alvo(t, outro, "do outro")
 
-	_, err := a.svc.Create(ctx, dono, statuspage.Input{
+	_, err := a.svc.Create(ctx, a.escopo(t, dono), statuspage.Input{
 		Slug: "empresa", Title: "T", Items: []statuspage.Item{{TargetID: alheio, DisplayName: "roubado"}},
 	})
 	if f := campos(err); len(f) != 1 || f[0] != (statuspage.FieldError{Field: "items[0].target_id", Reason: "invalid"}) {
 		t.Fatalf("alvo alheio = %v, queria items[0].target_id/invalid", err)
 	}
-	if _, err := a.svc.Get(ctx, dono); !errors.Is(err, statuspage.ErrNotFound) {
+	if _, err := a.svc.Get(ctx, a.escopo(t, dono)); !errors.Is(err, statuspage.ErrNotFound) {
 		t.Errorf("a recusa deixou a página gravada: %v", err)
 	}
 }
@@ -218,7 +222,7 @@ func TestUpdateChangesOnlyWhatCameAndReplacesItemsWhole(t *testing.T) {
 	ctx := context.Background()
 	dono := a.usuario(t)
 	api, site, db1 := a.alvo(t, dono, "api"), a.alvo(t, dono, "site"), a.alvo(t, dono, "db")
-	p, err := a.svc.Create(ctx, dono, statuspage.Input{
+	p, err := a.svc.Create(ctx, a.escopo(t, dono), statuspage.Input{
 		Slug: "empresa", Title: "Status", Items: []statuspage.Item{{TargetID: api, DisplayName: "API"}, {TargetID: site, DisplayName: "Site"}},
 	})
 	if err != nil {
@@ -226,7 +230,7 @@ func TestUpdateChangesOnlyWhatCameAndReplacesItemsWhole(t *testing.T) {
 	}
 
 	titulo, publicada := "Novo título", true
-	p, err = a.svc.Update(ctx, dono, p.ID, statuspage.Patch{Title: &titulo, Published: &publicada})
+	p, err = a.svc.Update(ctx, a.escopo(t, dono), p.ID, statuspage.Patch{Title: &titulo, Published: &publicada})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -235,7 +239,7 @@ func TestUpdateChangesOnlyWhatCameAndReplacesItemsWhole(t *testing.T) {
 	}
 
 	novos := []statuspage.Item{{TargetID: db1, DisplayName: "Banco"}, {TargetID: api, DisplayName: "API"}}
-	p, err = a.svc.Update(ctx, dono, p.ID, statuspage.Patch{Items: &novos})
+	p, err = a.svc.Update(ctx, a.escopo(t, dono), p.ID, statuspage.Patch{Items: &novos})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -244,12 +248,12 @@ func TestUpdateChangesOnlyWhatCameAndReplacesItemsWhole(t *testing.T) {
 	}
 
 	vazia := []statuspage.Item{}
-	if p, err = a.svc.Update(ctx, dono, p.ID, statuspage.Patch{Items: &vazia}); err != nil || len(p.Items) != 0 {
+	if p, err = a.svc.Update(ctx, a.escopo(t, dono), p.ID, statuspage.Patch{Items: &vazia}); err != nil || len(p.Items) != 0 {
 		t.Errorf("PATCH com items vazio = %+v, %v; queria sem itens", p.Items, err)
 	}
 
 	ruim := "Empresa"
-	if _, err := a.svc.Update(ctx, dono, p.ID, statuspage.Patch{Slug: &ruim}); campos(err) == nil {
+	if _, err := a.svc.Update(ctx, a.escopo(t, dono), p.ID, statuspage.Patch{Slug: &ruim}); campos(err) == nil {
 		t.Errorf("PATCH com slug inválido = %v, queria ValidationError", err)
 	}
 }
@@ -262,7 +266,7 @@ func TestUpdateEachFieldAloneKeepsTheOthers(t *testing.T) {
 	dono := a.usuario(t)
 	api := a.alvo(t, dono, "api")
 	itens := []statuspage.Item{{TargetID: api, DisplayName: "API"}}
-	p, err := a.svc.Create(ctx, dono, statuspage.Input{Slug: "empresa", Title: "Status", Published: true, Items: itens})
+	p, err := a.svc.Create(ctx, a.escopo(t, dono), statuspage.Input{Slug: "empresa", Title: "Status", Published: true, Items: itens})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -279,7 +283,7 @@ func TestUpdateEachFieldAloneKeepsTheOthers(t *testing.T) {
 		{"publicação", statuspage.Patch{Published: &despublicada}, statuspage.Page{Slug: "empresa-2", Title: "Outro", Published: false, Items: itens}},
 	}
 	for _, c := range casos {
-		got, err := a.svc.Update(ctx, dono, p.ID, c.patch)
+		got, err := a.svc.Update(ctx, a.escopo(t, dono), p.ID, c.patch)
 		if err != nil {
 			t.Fatalf("%s: %v", c.nome, err)
 		}
@@ -298,11 +302,11 @@ func TestUpdateRefusedLeavesThePageUntouched(t *testing.T) {
 	dono, outro := a.usuario(t), a.usuario(t)
 	api, alheio := a.alvo(t, dono, "api"), a.alvo(t, outro, "do outro")
 	itens := []statuspage.Item{{TargetID: api, DisplayName: "API"}}
-	p, err := a.svc.Create(ctx, dono, statuspage.Input{Slug: "empresa", Title: "Status", Items: itens})
+	p, err := a.svc.Create(ctx, a.escopo(t, dono), statuspage.Input{Slug: "empresa", Title: "Status", Items: itens})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := a.svc.Create(ctx, outro, statuspage.Input{Slug: "ocupado", Title: "Do outro"}); err != nil {
+	if _, err := a.svc.Create(ctx, a.escopo(t, outro), statuspage.Input{Slug: "ocupado", Title: "Do outro"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -322,10 +326,10 @@ func TestUpdateRefusedLeavesThePageUntouched(t *testing.T) {
 		{"slug tomado", statuspage.Patch{Title: &titulo, Slug: &ocupado}, func(err error) bool { return errors.Is(err, statuspage.ErrSlugTaken) }},
 	}
 	for _, c := range casos {
-		if _, err := a.svc.Update(ctx, dono, p.ID, c.patch); !c.erro(err) {
+		if _, err := a.svc.Update(ctx, a.escopo(t, dono), p.ID, c.patch); !c.erro(err) {
 			t.Errorf("PATCH com %s = %v", c.nome, err)
 		}
-		got, err := a.svc.Get(ctx, dono)
+		got, err := a.svc.Get(ctx, a.escopo(t, dono))
 		if err != nil || got.Slug != "empresa" || got.Title != "Status" || !slices.Equal(got.Items, itens) {
 			t.Errorf("PATCH recusado com %s mexeu na página: %+v, %v", c.nome, got, err)
 		}
@@ -336,24 +340,24 @@ func TestUpdateOfAnotherIDIsNotFound(t *testing.T) {
 	a := novoAmbiente(t)
 	ctx := context.Background()
 	dono, outro := a.usuario(t), a.usuario(t)
-	if _, err := a.svc.Create(ctx, dono, statuspage.Input{Slug: "empresa", Title: "T"}); err != nil {
+	if _, err := a.svc.Create(ctx, a.escopo(t, dono), statuspage.Input{Slug: "empresa", Title: "T"}); err != nil {
 		t.Fatal(err)
 	}
-	pOutro, err := a.svc.Create(ctx, outro, statuspage.Input{Slug: "outra", Title: "T"})
+	pOutro, err := a.svc.Create(ctx, a.escopo(t, outro), statuspage.Input{Slug: "outra", Title: "T"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	titulo := "invadido"
 	for _, id := range []uuid.UUID{pOutro.ID, uuid.Must(uuid.NewV7())} {
-		if _, err := a.svc.Update(ctx, dono, id, statuspage.Patch{Title: &titulo}); !errors.Is(err, statuspage.ErrNotFound) {
+		if _, err := a.svc.Update(ctx, a.escopo(t, dono), id, statuspage.Patch{Title: &titulo}); !errors.Is(err, statuspage.ErrNotFound) {
 			t.Errorf("PATCH na página %s = %v, queria ErrNotFound", id, err)
 		}
 	}
-	if p, _ := a.svc.Get(ctx, outro); p.Title != "T" {
+	if p, _ := a.svc.Get(ctx, a.escopo(t, outro)); p.Title != "T" {
 		t.Errorf("a página do outro mudou: %+v", p)
 	}
 	semPagina := a.usuario(t)
-	if _, err := a.svc.Update(ctx, semPagina, pOutro.ID, statuspage.Patch{Title: &titulo}); !errors.Is(err, statuspage.ErrNotFound) {
+	if _, err := a.svc.Update(ctx, a.escopo(t, semPagina), pOutro.ID, statuspage.Patch{Title: &titulo}); !errors.Is(err, statuspage.ErrNotFound) {
 		t.Errorf("PATCH de quem não tem página = %v, queria ErrNotFound", err)
 	}
 }
@@ -364,20 +368,21 @@ func TestDeletedTargetLeavesThePage(t *testing.T) {
 	a := novoAmbiente(t)
 	ctx := context.Background()
 	dono := a.usuario(t)
+	testdb.ProjetoPadrao(t, dono)
 	api, site := a.alvo(t, dono, "api"), a.alvo(t, dono, "site")
-	if _, err := a.svc.Create(ctx, dono, statuspage.Input{
+	if _, err := a.svc.Create(ctx, a.escopo(t, dono), statuspage.Input{
 		Slug: "empresa", Title: "T", Items: []statuspage.Item{{TargetID: api, DisplayName: "API"}, {TargetID: site, DisplayName: "Site"}},
 	}); err != nil {
 		t.Fatal(err)
 	}
 	err := storage.InUserTx(ctx, a.pool, dono, func(q *db.Queries) error {
-		_, err := q.DeleteTarget(ctx, db.DeleteTargetParams{UserID: dono, ID: api})
+		_, err := q.DeleteTarget(ctx, db.DeleteTargetParams{ProjectID: testdb.ProjetoDoAlvo(t, api), ID: api})
 		return err
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	p, err := a.svc.Get(ctx, dono)
+	p, err := a.svc.Get(ctx, a.escopo(t, dono))
 	if err != nil || len(p.Items) != 1 || p.Items[0].TargetID != site {
 		t.Errorf("depois de apagar o alvo: %+v, %v; queria só o Site", p.Items, err)
 	}
@@ -391,7 +396,8 @@ func TestConcurrentPatchesDoNotLoseFields(t *testing.T) {
 	a := novoAmbiente(t)
 	ctx := context.Background()
 	dono := a.usuario(t)
-	p, err := a.svc.Create(ctx, dono, statuspage.Input{Slug: "empresa", Title: "Velho"})
+	sc := a.escopo(t, dono)
+	p, err := a.svc.Create(ctx, sc, statuspage.Input{Slug: "empresa", Title: "Velho"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -414,7 +420,7 @@ func TestConcurrentPatchesDoNotLoseFields(t *testing.T) {
 	fim := make(chan error, 1)
 	sim := true
 	go func() {
-		_, err := a.svc.Update(ctx, dono, p.ID, statuspage.Patch{Published: &sim})
+		_, err := a.svc.Update(ctx, sc, p.ID, statuspage.Patch{Published: &sim})
 		fim <- err
 	}()
 	// O PATCH está esperando pela trava da outra transação.
@@ -439,7 +445,7 @@ func TestConcurrentPatchesDoNotLoseFields(t *testing.T) {
 	if err := <-fim; err != nil {
 		t.Fatal(err)
 	}
-	if got, err := a.svc.Get(ctx, dono); err != nil || got.Title != "Novo" || !got.Published {
+	if got, err := a.svc.Get(ctx, a.escopo(t, dono)); err != nil || got.Title != "Novo" || !got.Published {
 		t.Errorf("página = %+v, %v; queria o título da outra transação E published", got, err)
 	}
 }

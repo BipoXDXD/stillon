@@ -17,10 +17,13 @@ import (
 	"github.com/BipoXDXD/stillon/internal/rotulo"
 	"github.com/BipoXDXD/stillon/internal/storage"
 	"github.com/BipoXDXD/stillon/internal/storage/db"
+	"github.com/BipoXDXD/stillon/internal/tenancy"
 )
 
 const (
-	// MaxPerUser é o teto de heartbeats por usuário, o mesmo de alvos.
+	// MaxPerUser é o teto de heartbeats, o mesmo de alvos. Até o PR 2b ele
+	// vale para o usuário dentro do projeto atual (a contagem roda sob
+	// InProjectTx); o teto por titular vem no PR 2b.
 	MaxPerUser int64 = 100
 
 	// PreviewRuns é quantos disparos a prévia do cron mostra.
@@ -111,7 +114,14 @@ type Incident struct {
 	AckAt         *time.Time
 }
 
-// Service é o cadastro de heartbeats do dono.
+// Service é o cadastro de heartbeats do projeto. Todo método com banco recebe
+// o escopo de projeto logo depois de ctx e roda sob storage.InProjectTx, que
+// confere a pertença e liga a RLS para aquele projeto: as queries filtram por
+// project_id E a política filtra de novo. A permissão vale pelo papel lido NA
+// transação (o escopo que InProjectTx entrega), nunca pelo que quem chamou
+// trouxe. As cotas (trava e contagem) continuam por user_id e, sob
+// InProjectTx, valem para o usuário dentro do projeto atual; o teto por
+// titular vem no PR 2b.
 type Service struct {
 	pool *pgxpool.Pool
 	clk  clock.Clock
@@ -171,8 +181,10 @@ func (s *Service) CronPreview(expr, timezone string) ([]time.Time, error) {
 	return sch.NextRuns(s.clk.Now(), PreviewRuns), nil
 }
 
-// Create grava o heartbeat e devolve o token, que só existe neste retorno.
-func (s *Service) Create(ctx context.Context, userID uuid.UUID, in Input) (Heartbeat, string, error) {
+// Create grava o heartbeat (PermEditMonitors) e devolve o token, que só existe
+// neste retorno. O heartbeat nasce no projeto do escopo, com user_id = quem
+// criou.
+func (s *Service) Create(ctx context.Context, scope tenancy.ProjectScope, in Input) (Heartbeat, string, error) {
 	nome, err := ValidateName(in.Name)
 	if err != nil {
 		return Heartbeat{}, "", err
@@ -195,16 +207,20 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, in Input) (Heart
 	token, hash := NewPingToken()
 	now := s.clk.Now()
 	params := db.InsertHeartbeatParams{
-		ID: id, UserID: userID, Name: nome, Description: descricao, PingTokenHash: hash, GraceSec: seconds(in.Grace),
+		ID: id, Name: nome, Description: descricao, PingTokenHash: hash, GraceSec: seconds(in.Grace),
 		Enabled: in.Enabled, CreatedAt: now, DeadlineAt: FirstDeadline(in.Schedule, in.Grace, now),
 		PingResumes: in.PingResumes,
 	}
 	params.PeriodSec, params.CronExpr, params.Timezone = scheduleColumns(in.Schedule)
 
 	var out Heartbeat
-	err = storage.InUserTx(ctx, s.pool, userID, func(q *db.Queries) error {
+	err = storage.InProjectTx(ctx, s.pool, scope.UserID, scope.ProjectID, func(q *db.Queries, atual tenancy.ProjectScope) error {
+		if err := atual.Require(tenancy.PermEditMonitors); err != nil {
+			return err
+		}
+		params.UserID, params.ProjectID = atual.UserID, atual.ProjectID
 		var err error
-		out, err = s.inserir(ctx, q, userID, params, tags)
+		out, err = s.inserir(ctx, q, atual, params, tags)
 		return err
 	})
 	if err != nil {
@@ -213,13 +229,15 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, in Input) (Heart
 	return out, token, nil
 }
 
-// inserir grava o heartbeat dentro do limite por usuário. A trava vem antes da
-// contagem: sem ela, dois pedidos simultâneos contariam 99 e gravariam 101.
-func (s *Service) inserir(ctx context.Context, q *db.Queries, userID uuid.UUID, params db.InsertHeartbeatParams, tags []string) (Heartbeat, error) {
-	if err := q.LockUserHeartbeats(ctx, userID); err != nil {
+// inserir grava o heartbeat dentro do limite do usuário do escopo, contado só
+// no projeto atual até o PR 2b (teto por titular). A
+// trava vem antes da contagem: sem ela, dois pedidos simultâneos contariam 99
+// e gravariam 101.
+func (s *Service) inserir(ctx context.Context, q *db.Queries, sc tenancy.ProjectScope, params db.InsertHeartbeatParams, tags []string) (Heartbeat, error) {
+	if err := q.LockUserHeartbeats(ctx, sc.UserID); err != nil {
 		return Heartbeat{}, fmt.Errorf("travar heartbeats do usuário: %w", err)
 	}
-	n, err := q.CountHeartbeats(ctx, userID)
+	n, err := q.CountHeartbeats(ctx, sc.UserID)
 	if err != nil {
 		return Heartbeat{}, fmt.Errorf("contar heartbeats: %w", err)
 	}
@@ -232,10 +250,10 @@ func (s *Service) inserir(ctx context.Context, q *db.Queries, userID uuid.UUID, 
 	if err := q.InsertHeartbeat(ctx, params); err != nil {
 		return Heartbeat{}, err
 	}
-	if err := q.InsertHeartbeatTags(ctx, db.InsertHeartbeatTagsParams{Tags: tags, UserID: userID, HeartbeatID: params.ID}); err != nil {
+	if err := q.InsertHeartbeatTags(ctx, db.InsertHeartbeatTagsParams{Tags: tags, ProjectID: sc.ProjectID, HeartbeatID: params.ID}); err != nil {
 		return Heartbeat{}, fmt.Errorf("gravar tags do heartbeat: %w", err)
 	}
-	return s.responseOf(ctx, q, userID, params.ID)
+	return s.responseOf(ctx, q, sc.ProjectID, params.ID)
 }
 
 // CloneSuffix marca o nome da cópia.
@@ -244,28 +262,32 @@ const CloneSuffix = " (cópia)"
 // Clone grava uma tarefa nova com a configuração do original (nome com o
 // sufixo, descrição, tags, agendamento, tolerância e enabled) e devolve o token
 // novo, que só existe neste retorno. Não copia token, eventos, last_*, falha,
-// incidentes nem a retomada: a cópia nasce como uma criação, e conta no limite.
-func (s *Service) Clone(ctx context.Context, userID, id uuid.UUID) (Heartbeat, string, error) {
+// incidentes nem a retomada: a cópia nasce como uma criação (PermEditMonitors),
+// no projeto do escopo e com user_id = quem duplicou, e conta no limite.
+func (s *Service) Clone(ctx context.Context, scope tenancy.ProjectScope, id uuid.UUID) (Heartbeat, string, error) {
 	novoID, err := uuid.NewV7()
 	if err != nil {
 		return Heartbeat{}, "", fmt.Errorf("gerar id de heartbeat: %w", err)
 	}
 	token, hash := NewPingToken()
 	var out Heartbeat
-	err = storage.InUserTx(ctx, s.pool, userID, func(q *db.Queries) error {
-		original, err := q.GetHeartbeat(ctx, db.GetHeartbeatParams{UserID: userID, ID: id})
+	err = storage.InProjectTx(ctx, s.pool, scope.UserID, scope.ProjectID, func(q *db.Queries, atual tenancy.ProjectScope) error {
+		if err := atual.Require(tenancy.PermEditMonitors); err != nil {
+			return err
+		}
+		original, err := q.GetHeartbeat(ctx, db.GetHeartbeatParams{ProjectID: atual.ProjectID, ID: id})
 		if err != nil {
 			return notFound(err)
 		}
-		params, err := s.cloneParams(original, novoID, hash)
+		params, err := s.cloneParams(atual, original, novoID, hash)
 		if err != nil {
 			return err
 		}
-		tags, err := q.ListHeartbeatTags(ctx, db.ListHeartbeatTagsParams{UserID: userID, HeartbeatID: id})
+		tags, err := q.ListHeartbeatTags(ctx, db.ListHeartbeatTagsParams{ProjectID: atual.ProjectID, HeartbeatID: id})
 		if err != nil {
 			return fmt.Errorf("ler tags do heartbeat: %w", err)
 		}
-		out, err = s.inserir(ctx, q, userID, params, tags)
+		out, err = s.inserir(ctx, q, atual, params, tags)
 		return err
 	})
 	if err != nil {
@@ -274,7 +296,8 @@ func (s *Service) Clone(ctx context.Context, userID, id uuid.UUID) (Heartbeat, s
 	return out, token, nil
 }
 
-func (s *Service) cloneParams(original db.Heartbeat, id uuid.UUID, hash []byte) (db.InsertHeartbeatParams, error) {
+// cloneParams monta a cópia no projeto do escopo, com user_id = quem duplicou.
+func (s *Service) cloneParams(sc tenancy.ProjectScope, original db.Heartbeat, id uuid.UUID, hash []byte) (db.InsertHeartbeatParams, error) {
 	sch, err := ScheduleFromRow(original.PeriodSec, original.CronExpr, original.Timezone)
 	if err != nil {
 		return db.InsertHeartbeatParams{}, fmt.Errorf("agendamento do heartbeat %s: %w", original.ID, err)
@@ -287,7 +310,7 @@ func (s *Service) cloneParams(original db.Heartbeat, id uuid.UUID, hash []byte) 
 	grace := time.Duration(original.GraceSec) * time.Second
 	now := s.clk.Now()
 	params := db.InsertHeartbeatParams{
-		ID: id, UserID: original.UserID, Name: cloneName(original.Name), Description: original.Description,
+		ID: id, UserID: sc.UserID, ProjectID: sc.ProjectID, Name: cloneName(original.Name), Description: original.Description,
 		PingTokenHash: hash, GraceSec: original.GraceSec, Enabled: original.Enabled, CreatedAt: now,
 		DeadlineAt: FirstDeadline(sch, grace, now), PingResumes: original.PingResumes,
 	}
@@ -324,15 +347,15 @@ func normalizeTags(cruas []string) ([]string, error) {
 // responseOf monta o que volta dentro da transação que gravou. Na criação e na
 // rotação, o token só existe no retorno: uma leitura que falhasse depois do
 // commit perderia um token que já valeria (ou que já teria revogado o anterior).
-func (s *Service) responseOf(ctx context.Context, q *db.Queries, userID, id uuid.UUID) (Heartbeat, error) {
+func (s *Service) responseOf(ctx context.Context, q *db.Queries, projectID, id uuid.UUID) (Heartbeat, error) {
 	if s.depoisDeGravar != nil {
 		s.depoisDeGravar()
 	}
-	return s.view(ctx, q, userID, id)
+	return s.view(ctx, q, projectID, id)
 }
 
-func (s *Service) view(ctx context.Context, q *db.Queries, userID, id uuid.UUID) (Heartbeat, error) {
-	r, err := q.GetHeartbeatView(ctx, db.GetHeartbeatViewParams{UserID: userID, ID: id})
+func (s *Service) view(ctx context.Context, q *db.Queries, projectID, id uuid.UUID) (Heartbeat, error) {
+	r, err := q.GetHeartbeatView(ctx, db.GetHeartbeatViewParams{ProjectID: projectID, ID: id})
 	if err != nil {
 		return Heartbeat{}, notFound(err)
 	}
@@ -340,7 +363,7 @@ func (s *Service) view(ctx context.Context, q *db.Queries, userID, id uuid.UUID)
 	if err != nil {
 		return Heartbeat{}, err
 	}
-	out.Tags, err = q.ListHeartbeatTags(ctx, db.ListHeartbeatTagsParams{UserID: userID, HeartbeatID: id})
+	out.Tags, err = q.ListHeartbeatTags(ctx, db.ListHeartbeatTagsParams{ProjectID: projectID, HeartbeatID: id})
 	if err != nil {
 		return Heartbeat{}, fmt.Errorf("ler tags do heartbeat: %w", err)
 	}
@@ -350,26 +373,35 @@ func (s *Service) view(ctx context.Context, q *db.Queries, userID, id uuid.UUID)
 	return out, nil
 }
 
-func (s *Service) Get(ctx context.Context, userID, id uuid.UUID) (Heartbeat, error) {
+// Get lê um heartbeat do projeto (PermRead). O de outro projeto é ErrNotFound.
+func (s *Service) Get(ctx context.Context, scope tenancy.ProjectScope, id uuid.UUID) (Heartbeat, error) {
 	var out Heartbeat
-	err := storage.InUserTx(ctx, s.pool, userID, func(q *db.Queries) error {
+	err := storage.InProjectTx(ctx, s.pool, scope.UserID, scope.ProjectID, func(q *db.Queries, atual tenancy.ProjectScope) error {
+		if err := atual.Require(tenancy.PermRead); err != nil {
+			return err
+		}
 		var err error
-		out, err = s.view(ctx, q, userID, id)
+		out, err = s.view(ctx, q, atual.ProjectID, id)
 		return err
 	})
 	return out, err
 }
 
-func (s *Service) List(ctx context.Context, userID uuid.UUID, before *uuid.UUID, limit int32) ([]Heartbeat, error) {
+// List é uma página dos heartbeats do projeto (PermRead), do mais novo para o
+// mais antigo.
+func (s *Service) List(ctx context.Context, scope tenancy.ProjectScope, before *uuid.UUID, limit int32) ([]Heartbeat, error) {
 	var out []Heartbeat
-	err := storage.InUserTx(ctx, s.pool, userID, func(q *db.Queries) error {
-		rows, err := q.ListHeartbeats(ctx, db.ListHeartbeatsParams{UserID: userID, Before: before, MaxRows: pageSize(limit)})
+	err := storage.InProjectTx(ctx, s.pool, scope.UserID, scope.ProjectID, func(q *db.Queries, atual tenancy.ProjectScope) error {
+		if err := atual.Require(tenancy.PermRead); err != nil {
+			return err
+		}
+		rows, err := q.ListHeartbeats(ctx, db.ListHeartbeatsParams{ProjectID: atual.ProjectID, Before: before, MaxRows: pageSize(limit)})
 		if err != nil {
 			return fmt.Errorf("listar heartbeats: %w", err)
 		}
-		tags, err := q.ListUserHeartbeatTags(ctx, userID)
+		tags, err := q.ListProjectHeartbeatTags(ctx, atual.ProjectID)
 		if err != nil {
-			return fmt.Errorf("ler tags do dono: %w", err)
+			return fmt.Errorf("ler tags do projeto: %w", err)
 		}
 		porHeartbeat := make(map[uuid.UUID][]string, len(rows))
 		for _, t := range tags {
@@ -396,7 +428,8 @@ func (s *Service) List(ctx context.Context, userID uuid.UUID, before *uuid.UUID,
 // prazo, a partir de agora: reenviar o que já está gravado não adia nada.
 // Retomar também recalcula, zera a falha e registra a retomada. Quem
 // fecha incidente é o avaliador, e prazo novo sozinho não fecha (§5 da spec).
-func (s *Service) Update(ctx context.Context, userID, id uuid.UUID, p Patch) (Heartbeat, error) {
+// Exige PermEditMonitors.
+func (s *Service) Update(ctx context.Context, scope tenancy.ProjectScope, id uuid.UUID, p Patch) (Heartbeat, error) {
 	if p.Name != nil {
 		nome, err := ValidateName(*p.Name)
 		if err != nil {
@@ -423,8 +456,11 @@ func (s *Service) Update(ctx context.Context, userID, id uuid.UUID, p Patch) (He
 		}
 		p.Tags = tags
 	}
-	err := storage.InUserTx(ctx, s.pool, userID, func(q *db.Queries) error {
-		h, err := q.GetHeartbeatForUpdate(ctx, db.GetHeartbeatForUpdateParams{UserID: userID, ID: id})
+	err := storage.InProjectTx(ctx, s.pool, scope.UserID, scope.ProjectID, func(q *db.Queries, atual tenancy.ProjectScope) error {
+		if err := atual.Require(tenancy.PermEditMonitors); err != nil {
+			return err
+		}
+		h, err := q.GetHeartbeatForUpdate(ctx, db.GetHeartbeatForUpdateParams{ProjectID: atual.ProjectID, ID: id})
 		if err != nil {
 			return notFound(err)
 		}
@@ -432,25 +468,26 @@ func (s *Service) Update(ctx context.Context, userID, id uuid.UUID, p Patch) (He
 		if err != nil {
 			return err
 		}
+		params.ProjectID = atual.ProjectID
 		if err := q.UpdateHeartbeat(ctx, params); err != nil {
 			return err
 		}
 		if !p.SetTags {
 			return nil
 		}
-		return replaceTags(ctx, q, userID, id, p.Tags)
+		return replaceTags(ctx, q, atual.ProjectID, id, p.Tags)
 	})
 	if err != nil {
 		return Heartbeat{}, err
 	}
-	return s.Get(ctx, userID, id)
+	return s.Get(ctx, scope, id)
 }
 
-func replaceTags(ctx context.Context, q *db.Queries, userID, id uuid.UUID, tags []string) error {
-	if err := q.DeleteHeartbeatTags(ctx, db.DeleteHeartbeatTagsParams{UserID: userID, HeartbeatID: id}); err != nil {
+func replaceTags(ctx context.Context, q *db.Queries, projectID, id uuid.UUID, tags []string) error {
+	if err := q.DeleteHeartbeatTags(ctx, db.DeleteHeartbeatTagsParams{ProjectID: projectID, HeartbeatID: id}); err != nil {
 		return fmt.Errorf("apagar tags do heartbeat: %w", err)
 	}
-	if err := q.InsertHeartbeatTags(ctx, db.InsertHeartbeatTagsParams{Tags: tags, UserID: userID, HeartbeatID: id}); err != nil {
+	if err := q.InsertHeartbeatTags(ctx, db.InsertHeartbeatTagsParams{Tags: tags, ProjectID: projectID, HeartbeatID: id}); err != nil {
 		return fmt.Errorf("gravar tags do heartbeat: %w", err)
 	}
 	return nil
@@ -469,7 +506,7 @@ func (s *Service) updateParams(h db.Heartbeat, p Patch) (db.UpdateHeartbeatParam
 	}
 	grace := time.Duration(h.GraceSec) * time.Second
 	out := db.UpdateHeartbeatParams{
-		UserID: h.UserID, ID: h.ID, Name: h.Name, Description: h.Description, Enabled: h.Enabled,
+		ID: h.ID, Name: h.Name, Description: h.Description, Enabled: h.Enabled,
 		DeadlineAt: h.DeadlineAt, FailingSince: h.FailingSince, ResumedAt: h.ResumedAt,
 		LastStartAt: h.LastStartAt, PingResumes: h.PingResumes,
 	}
@@ -510,9 +547,13 @@ func (s *Service) updateParams(h db.Heartbeat, p Patch) (db.UpdateHeartbeatParam
 	return out, nil
 }
 
-func (s *Service) Delete(ctx context.Context, userID, id uuid.UUID) error {
-	return storage.InUserTx(ctx, s.pool, userID, func(q *db.Queries) error {
-		n, err := q.DeleteHeartbeat(ctx, db.DeleteHeartbeatParams{UserID: userID, ID: id})
+// Delete apaga o heartbeat do projeto (PermEditMonitors).
+func (s *Service) Delete(ctx context.Context, scope tenancy.ProjectScope, id uuid.UUID) error {
+	return storage.InProjectTx(ctx, s.pool, scope.UserID, scope.ProjectID, func(q *db.Queries, atual tenancy.ProjectScope) error {
+		if err := atual.Require(tenancy.PermEditMonitors); err != nil {
+			return err
+		}
+		n, err := q.DeleteHeartbeat(ctx, db.DeleteHeartbeatParams{ProjectID: atual.ProjectID, ID: id})
 		if err != nil {
 			return fmt.Errorf("apagar heartbeat: %w", err)
 		}
@@ -533,22 +574,26 @@ const (
 // audit_log, na mesma transação: não existe log apagado sem auditoria. Só os
 // eventos saem; last_*, prazo e incidentes ficam (spec §7.2). O log já vazio
 // também é auditado, porque o pedido aconteceu. Agendamento desconhecido não
-// impede: nada aqui regrava o agendamento nem recalcula o prazo.
-func (s *Service) ClearEvents(ctx context.Context, userID, id uuid.UUID) error {
+// impede: nada aqui regrava o agendamento nem recalcula o prazo. Exige
+// PermEditMonitors, e a auditoria leva quem pediu.
+func (s *Service) ClearEvents(ctx context.Context, scope tenancy.ProjectScope, id uuid.UUID) error {
 	auditID, err := uuid.NewV7()
 	if err != nil {
 		return fmt.Errorf("gerar id de auditoria: %w", err)
 	}
 	entity := auditEntity
-	return storage.InUserTx(ctx, s.pool, userID, func(q *db.Queries) error {
-		if err := exists(ctx, q, userID, id); err != nil {
+	return storage.InProjectTx(ctx, s.pool, scope.UserID, scope.ProjectID, func(q *db.Queries, atual tenancy.ProjectScope) error {
+		if err := atual.Require(tenancy.PermEditMonitors); err != nil {
 			return err
 		}
-		if _, err := q.DeleteHeartbeatEvents(ctx, db.DeleteHeartbeatEventsParams{UserID: userID, HeartbeatID: id}); err != nil {
+		if err := exists(ctx, q, atual.ProjectID, id); err != nil {
+			return err
+		}
+		if _, err := q.DeleteHeartbeatEvents(ctx, db.DeleteHeartbeatEventsParams{ProjectID: atual.ProjectID, HeartbeatID: id}); err != nil {
 			return fmt.Errorf("apagar eventos: %w", err)
 		}
 		if err := q.InsertAuditEntry(ctx, db.InsertAuditEntryParams{
-			ID: auditID, UserID: &userID, Action: AuditEventsCleared, Entity: &entity, EntityID: &id, At: s.clk.Now(),
+			ID: auditID, UserID: &atual.UserID, Action: AuditEventsCleared, Entity: &entity, EntityID: &id, At: s.clk.Now(),
 		}); err != nil {
 			return fmt.Errorf("auditar %s: %w", AuditEventsCleared, err)
 		}
@@ -557,19 +602,22 @@ func (s *Service) ClearEvents(ctx context.Context, userID, id uuid.UUID) error {
 }
 
 // RotateToken revoga o token atual trocando o hash, e devolve o novo, que só
-// existe neste retorno.
-func (s *Service) RotateToken(ctx context.Context, userID, id uuid.UUID) (Heartbeat, string, error) {
+// existe neste retorno. Exige PermEditMonitors.
+func (s *Service) RotateToken(ctx context.Context, scope tenancy.ProjectScope, id uuid.UUID) (Heartbeat, string, error) {
 	token, hash := NewPingToken()
 	var out Heartbeat
-	err := storage.InUserTx(ctx, s.pool, userID, func(q *db.Queries) error {
-		if _, err := q.GetHeartbeatForUpdate(ctx, db.GetHeartbeatForUpdateParams{UserID: userID, ID: id}); err != nil {
+	err := storage.InProjectTx(ctx, s.pool, scope.UserID, scope.ProjectID, func(q *db.Queries, atual tenancy.ProjectScope) error {
+		if err := atual.Require(tenancy.PermEditMonitors); err != nil {
+			return err
+		}
+		if _, err := q.GetHeartbeatForUpdate(ctx, db.GetHeartbeatForUpdateParams{ProjectID: atual.ProjectID, ID: id}); err != nil {
 			return notFound(err)
 		}
-		if err := q.SetHeartbeatPingHash(ctx, db.SetHeartbeatPingHashParams{UserID: userID, ID: id, PingTokenHash: hash}); err != nil {
+		if err := q.SetHeartbeatPingHash(ctx, db.SetHeartbeatPingHashParams{ProjectID: atual.ProjectID, ID: id, PingTokenHash: hash}); err != nil {
 			return fmt.Errorf("trocar o token: %w", err)
 		}
 		var err error
-		out, err = s.responseOf(ctx, q, userID, id)
+		out, err = s.responseOf(ctx, q, atual.ProjectID, id)
 		return err
 	})
 	if err != nil {
@@ -582,19 +630,23 @@ func (s *Service) RotateToken(ctx context.Context, userID, id uuid.UUID) (Heartb
 // mesmo caminho do ping (janela de repetição e retomada inclusas), marcado com
 // a origem panel para não se confundir com a tarefa. Pelo mesmo
 // motivo, não encerra a execução aberta: o início e a duração são da tarefa.
-func (s *Service) PingNow(ctx context.Context, userID, id uuid.UUID) (Heartbeat, error) {
+// Exige PermEditMonitors.
+func (s *Service) PingNow(ctx context.Context, scope tenancy.ProjectScope, id uuid.UUID) (Heartbeat, error) {
 	var out Heartbeat
-	err := storage.InUserTx(ctx, s.pool, userID, func(q *db.Queries) error {
+	err := storage.InProjectTx(ctx, s.pool, scope.UserID, scope.ProjectID, func(q *db.Queries, atual tenancy.ProjectScope) error {
+		if err := atual.Require(tenancy.PermEditMonitors); err != nil {
+			return err
+		}
 		// A trava serializa com o ping: sem ela, um ping concorrente leria a
 		// linha antiga e um dos dois se perderia, como no PATCH.
-		h, err := q.GetHeartbeatForUpdate(ctx, db.GetHeartbeatForUpdateParams{UserID: userID, ID: id})
+		h, err := q.GetHeartbeatForUpdate(ctx, db.GetHeartbeatForUpdateParams{ProjectID: atual.ProjectID, ID: id})
 		if err != nil {
 			return notFound(err)
 		}
 		if err := registrarSinal(ctx, q, h, sinalRecebido{sig: SignalSuccess, source: SourcePanel}, s.clk.Now()); err != nil {
 			return err
 		}
-		out, err = s.view(ctx, q, userID, id)
+		out, err = s.view(ctx, q, atual.ProjectID, id)
 		return err
 	})
 	if err != nil {
@@ -603,16 +655,19 @@ func (s *Service) PingNow(ctx context.Context, userID, id uuid.UUID) (Heartbeat,
 	return out, nil
 }
 
-// Events é o log do heartbeat, do mais novo ao mais velho.
-func (s *Service) Events(ctx context.Context, userID, id uuid.UUID, before *uuid.UUID, limit int32) ([]db.HeartbeatEvent, error) {
+// Events é o log do heartbeat, do mais novo ao mais velho (PermRead).
+func (s *Service) Events(ctx context.Context, scope tenancy.ProjectScope, id uuid.UUID, before *uuid.UUID, limit int32) ([]db.HeartbeatEvent, error) {
 	var out []db.HeartbeatEvent
-	err := storage.InUserTx(ctx, s.pool, userID, func(q *db.Queries) error {
-		if err := exists(ctx, q, userID, id); err != nil {
+	err := storage.InProjectTx(ctx, s.pool, scope.UserID, scope.ProjectID, func(q *db.Queries, atual tenancy.ProjectScope) error {
+		if err := atual.Require(tenancy.PermRead); err != nil {
+			return err
+		}
+		if err := exists(ctx, q, atual.ProjectID, id); err != nil {
 			return err
 		}
 		var err error
 		out, err = q.ListHeartbeatEvents(ctx, db.ListHeartbeatEventsParams{
-			UserID: userID, HeartbeatID: id, Before: before, MaxRows: pageSize(limit),
+			ProjectID: atual.ProjectID, HeartbeatID: id, Before: before, MaxRows: pageSize(limit),
 		})
 		if err != nil {
 			return fmt.Errorf("listar eventos: %w", err)
@@ -622,15 +677,18 @@ func (s *Service) Events(ctx context.Context, userID, id uuid.UUID, before *uuid
 	return out, err
 }
 
-// Incidents é o histórico do heartbeat. open nil lista tudo.
-func (s *Service) Incidents(ctx context.Context, userID, id uuid.UUID, open *bool, before *uuid.UUID, limit int32) ([]Incident, error) {
+// Incidents é o histórico do heartbeat (PermRead). open nil lista tudo.
+func (s *Service) Incidents(ctx context.Context, scope tenancy.ProjectScope, id uuid.UUID, open *bool, before *uuid.UUID, limit int32) ([]Incident, error) {
 	var out []Incident
-	err := storage.InUserTx(ctx, s.pool, userID, func(q *db.Queries) error {
-		if err := exists(ctx, q, userID, id); err != nil {
+	err := storage.InProjectTx(ctx, s.pool, scope.UserID, scope.ProjectID, func(q *db.Queries, atual tenancy.ProjectScope) error {
+		if err := atual.Require(tenancy.PermRead); err != nil {
+			return err
+		}
+		if err := exists(ctx, q, atual.ProjectID, id); err != nil {
 			return err
 		}
 		rows, err := q.ListHeartbeatIncidents(ctx, db.ListHeartbeatIncidentsParams{
-			UserID: userID, HeartbeatID: id, Open: open, Before: before, MaxRows: pageSize(limit),
+			ProjectID: atual.ProjectID, HeartbeatID: id, Open: open, Before: before, MaxRows: pageSize(limit),
 		})
 		if err != nil {
 			return fmt.Errorf("listar incidentes: %w", err)
@@ -645,12 +703,15 @@ func (s *Service) Incidents(ctx context.Context, userID, id uuid.UUID, open *boo
 }
 
 // Ack reconhece o incidente. Idempotente: o segundo ack devolve o instante do
-// primeiro, e reconhecer interrompe só os lembretes.
-func (s *Service) Ack(ctx context.Context, userID, id, incidentID uuid.UUID) (Incident, error) {
+// primeiro, e reconhecer interrompe só os lembretes. Exige PermEditMonitors.
+func (s *Service) Ack(ctx context.Context, scope tenancy.ProjectScope, id, incidentID uuid.UUID) (Incident, error) {
 	var out Incident
-	err := storage.InUserTx(ctx, s.pool, userID, func(q *db.Queries) error {
+	err := storage.InProjectTx(ctx, s.pool, scope.UserID, scope.ProjectID, func(q *db.Queries, atual tenancy.ProjectScope) error {
+		if err := atual.Require(tenancy.PermEditMonitors); err != nil {
+			return err
+		}
 		r, err := q.AckHeartbeatIncident(ctx, db.AckHeartbeatIncidentParams{
-			UserID: userID, HeartbeatID: id, ID: incidentID, Now: s.clk.Now(),
+			ProjectID: atual.ProjectID, HeartbeatID: id, ID: incidentID, Now: s.clk.Now(),
 		})
 		if err != nil {
 			return notFound(err)
@@ -661,8 +722,8 @@ func (s *Service) Ack(ctx context.Context, userID, id, incidentID uuid.UUID) (In
 	return out, err
 }
 
-func exists(ctx context.Context, q *db.Queries, userID, id uuid.UUID) error {
-	if _, err := q.GetHeartbeat(ctx, db.GetHeartbeatParams{UserID: userID, ID: id}); err != nil {
+func exists(ctx context.Context, q *db.Queries, projectID, id uuid.UUID) error {
+	if _, err := q.GetHeartbeat(ctx, db.GetHeartbeatParams{ProjectID: projectID, ID: id}); err != nil {
 		return notFound(err)
 	}
 	return nil

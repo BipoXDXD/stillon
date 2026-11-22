@@ -13,16 +13,23 @@ import (
 	"github.com/BipoXDXD/stillon/internal/clock"
 	"github.com/BipoXDXD/stillon/internal/storage"
 	"github.com/BipoXDXD/stillon/internal/storage/db"
+	"github.com/BipoXDXD/stillon/internal/tenancy"
 )
 
-// Nomes que o Postgres dá aos UNIQUE da migration 00006.
+// Nomes que o Postgres dá aos UNIQUE da migration 00006, mais o índice único
+// por projeto da 00040.
 const (
-	constraintUser = "status_pages_user_id_key"
-	constraintSlug = "status_pages_slug_key"
+	constraintUser    = "status_pages_user_id_key"
+	constraintSlug    = "status_pages_slug_key"
+	constraintProjeto = "status_pages_project_key"
 )
 
-// Service é o cadastro do dono. Toda operação exige userID e roda sob
-// storage.InUserTx (spec §5.5).
+// Service é o cadastro da página. Todo método do dono recebe o escopo de
+// projeto logo depois de ctx e roda sob storage.InProjectTx, que confere a
+// pertença e liga a RLS para aquele projeto: as queries filtram por project_id
+// E a política filtra de novo. A permissão vale pelo papel lido NA transação
+// (o escopo que InProjectTx entrega), nunca pelo que quem chamou trouxe. A
+// página pública (public.go) não sabe nada de projeto.
 type Service struct {
 	pool *pgxpool.Pool
 	clk  clock.Clock
@@ -39,21 +46,27 @@ func NewService(pool *pgxpool.Pool, clk clock.Clock) *Service {
 	return &Service{pool: pool, clk: clk}
 }
 
-// Get devolve a página do usuário, ou ErrNotFound se ele ainda não criou.
-func (s *Service) Get(ctx context.Context, userID uuid.UUID) (Page, error) {
+// Get (PermRead) devolve a página do projeto, ou ErrNotFound se ainda não
+// foi criada.
+func (s *Service) Get(ctx context.Context, scope tenancy.ProjectScope) (Page, error) {
 	var p Page
-	err := storage.InUserTx(ctx, s.pool, userID, func(q *db.Queries) error {
+	err := storage.InProjectTx(ctx, s.pool, scope.UserID, scope.ProjectID, func(q *db.Queries, atual tenancy.ProjectScope) error {
+		if err := atual.Require(tenancy.PermRead); err != nil {
+			return err
+		}
 		var err error
-		p, err = ler(ctx, q, userID)
+		p, err = ler(ctx, q, atual.ProjectID)
 		return err
 	})
 	return p, err
 }
 
-// Create cria a página. A segunda do mesmo usuário é ErrExists, e o slug de
-// outro é ErrSlugTaken: os dois vêm do UNIQUE do banco, e não de uma
-// consulta antes, então valem também sob concorrência.
-func (s *Service) Create(ctx context.Context, userID uuid.UUID, in Input) (Page, error) {
+// Create (PermManageStatusPage) cria a página no projeto do escopo, com
+// user_id = quem criou. A segunda do mesmo projeto é ErrExists, e também a
+// segunda do mesmo usuário enquanto o UNIQUE de user_id existir (até o
+// contract); o slug de outro é ErrSlugTaken. Os três vêm do UNIQUE do banco,
+// e não de uma consulta antes, então valem também sob concorrência.
+func (s *Service) Create(ctx context.Context, scope tenancy.ProjectScope, in Input) (Page, error) {
 	if verr := validate(&in); verr != nil {
 		return Page{}, verr
 	}
@@ -62,16 +75,20 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, in Input) (Page,
 		return Page{}, err
 	}
 	var p Page
-	err = storage.InUserTx(ctx, s.pool, userID, func(q *db.Queries) error {
+	err = storage.InProjectTx(ctx, s.pool, scope.UserID, scope.ProjectID, func(q *db.Queries, atual tenancy.ProjectScope) error {
+		if err := atual.Require(tenancy.PermManageStatusPage); err != nil {
+			return err
+		}
 		if err := q.InsertStatusPage(ctx, db.InsertStatusPageParams{
-			ID: id, UserID: userID, Slug: in.Slug, Title: in.Title, Published: in.Published, CreatedAt: s.clk.Now(),
+			ID: id, UserID: atual.UserID, ProjectID: atual.ProjectID,
+			Slug: in.Slug, Title: in.Title, Published: in.Published, CreatedAt: s.clk.Now(),
 		}); err != nil {
 			return traduzir(err)
 		}
-		if err := gravarItens(ctx, q, userID, id, in.Items); err != nil {
+		if err := gravarItens(ctx, q, atual.ProjectID, id, in.Items); err != nil {
 			return err
 		}
-		p, err = ler(ctx, q, userID)
+		p, err = ler(ctx, q, atual.ProjectID)
 		return err
 	})
 	if err == nil {
@@ -80,25 +97,28 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, in Input) (Page,
 	return p, err
 }
 
-// Update aplica o patch à página id do usuário. A validação roda sobre o
-// resultado, como se fosse um cadastro novo.
-func (s *Service) Update(ctx context.Context, userID, id uuid.UUID, patch Patch) (Page, error) {
+// Update (PermManageStatusPage) aplica o patch à página id do projeto. A
+// validação roda sobre o resultado, como se fosse um cadastro novo.
+func (s *Service) Update(ctx context.Context, scope tenancy.ProjectScope, id uuid.UUID, patch Patch) (Page, error) {
 	var p Page
 	var slugAntigo string
-	err := storage.InUserTx(ctx, s.pool, userID, func(q *db.Queries) error {
-		atual, err := lerTravada(ctx, q, userID, id)
+	err := storage.InProjectTx(ctx, s.pool, scope.UserID, scope.ProjectID, func(q *db.Queries, atual tenancy.ProjectScope) error {
+		if err := atual.Require(tenancy.PermManageStatusPage); err != nil {
+			return err
+		}
+		antes, err := lerTravada(ctx, q, atual.ProjectID, id)
 		if err != nil {
 			return err
 		}
-		slugAntigo = atual.Slug
-		in := aplicarPatch(atual, patch)
+		slugAntigo = antes.Slug
+		in := aplicarPatch(antes, patch)
 		if verr := validate(&in); verr != nil {
 			return verr
 		}
-		if err := regravar(ctx, q, userID, id, in, patch.Items); err != nil {
+		if err := regravar(ctx, q, atual.ProjectID, id, in, patch.Items); err != nil {
 			return err
 		}
-		p, err = ler(ctx, q, userID)
+		p, err = ler(ctx, q, atual.ProjectID)
 		return err
 	})
 	if err == nil {
@@ -111,16 +131,16 @@ func (s *Service) Update(ctx context.Context, userID, id uuid.UUID, patch Patch)
 	return p, err
 }
 
-// lerTravada trava a página do usuário antes de ler, para que dois PATCH ao
+// lerTravada trava a página do projeto antes de ler, para que dois PATCH ao
 // mesmo tempo não se sobreponham, e recusa a que não tem o id pedido.
-func lerTravada(ctx context.Context, q *db.Queries, userID, id uuid.UUID) (Page, error) {
-	if _, err := q.LockStatusPage(ctx, userID); err != nil {
+func lerTravada(ctx context.Context, q *db.Queries, projectID, id uuid.UUID) (Page, error) {
+	if _, err := q.LockStatusPage(ctx, projectID); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Page{}, ErrNotFound
 		}
 		return Page{}, fmt.Errorf("travar status page: %w", err)
 	}
-	atual, err := ler(ctx, q, userID)
+	atual, err := ler(ctx, q, projectID)
 	if err != nil {
 		return Page{}, err
 	}
@@ -152,9 +172,9 @@ func aplicarPatch(atual Page, patch Patch) Input {
 // regravar grava o cadastro já validado. A lista de itens só é trocada
 // quando o patch a trouxe (novosItens não nulo): sem ela, os itens atuais
 // ficam como estão. novosItens é o mesmo slice já validado em in.Items.
-func regravar(ctx context.Context, q *db.Queries, userID, id uuid.UUID, in Input, novosItens *[]Item) error {
+func regravar(ctx context.Context, q *db.Queries, projectID, id uuid.UUID, in Input, novosItens *[]Item) error {
 	if _, err := q.UpdateStatusPage(ctx, db.UpdateStatusPageParams{
-		UserID: userID, ID: id, Slug: in.Slug, Title: in.Title, Published: in.Published,
+		ProjectID: projectID, ID: id, Slug: in.Slug, Title: in.Title, Published: in.Published,
 	}); err != nil {
 		return traduzir(err)
 	}
@@ -164,28 +184,29 @@ func regravar(ctx context.Context, q *db.Queries, userID, id uuid.UUID, in Input
 	// Os alvos são travados antes de apagar os itens antigos: é a ordem do
 	// DELETE de um alvo (o alvo, depois os itens no cascade). Na ordem
 	// inversa, um PATCH e a remoção de um alvo da lista se esperam (40P01).
-	if err := conferirPosse(ctx, q, userID, in.Items); err != nil {
+	if err := conferirPosse(ctx, q, projectID, in.Items); err != nil {
 		return err
 	}
-	if err := q.DeleteStatusPageItems(ctx, db.DeleteStatusPageItemsParams{UserID: userID, PageID: id}); err != nil {
+	if err := q.DeleteStatusPageItems(ctx, db.DeleteStatusPageItemsParams{ProjectID: projectID, PageID: id}); err != nil {
 		return fmt.Errorf("apagar itens: %w", err)
 	}
 	return inserirItens(ctx, q, id, in.Items)
 }
 
 // gravarItens confere a posse dos alvos e grava os itens na ordem dada.
-func gravarItens(ctx context.Context, q *db.Queries, userID, pageID uuid.UUID, items []Item) error {
-	if err := conferirPosse(ctx, q, userID, items); err != nil {
+func gravarItens(ctx context.Context, q *db.Queries, projectID, pageID uuid.UUID, items []Item) error {
+	if err := conferirPosse(ctx, q, projectID, items); err != nil {
 		return err
 	}
 	return inserirItens(ctx, q, pageID, items)
 }
 
-// conferirPosse confere que cada alvo é do dono e o trava até o fim da
-// transação (OwnTargetIDs). A RLS dos itens também recusa alvo alheio (WITH
-// CHECK da migration 00006); esta checagem existe para dizer QUAL item está
-// errado, em vez de um erro de política.
-func conferirPosse(ctx context.Context, q *db.Queries, userID uuid.UUID, items []Item) error {
+// conferirPosse confere que cada alvo é do projeto e o trava até o fim da
+// transação (OwnTargetIDs). Alvo de outro projeto, mesmo do mesmo usuário, é
+// recusado. A RLS dos itens também recusa alvo alheio (WITH CHECK da
+// migration 00006); esta checagem existe para dizer QUAL item está errado, em
+// vez de um erro de política.
+func conferirPosse(ctx context.Context, q *db.Queries, projectID uuid.UUID, items []Item) error {
 	if len(items) == 0 {
 		return nil
 	}
@@ -193,7 +214,7 @@ func conferirPosse(ctx context.Context, q *db.Queries, userID uuid.UUID, items [
 	for i, it := range items {
 		ids[i] = it.TargetID
 	}
-	meus, err := q.OwnTargetIDs(ctx, db.OwnTargetIDsParams{UserID: userID, Ids: ids})
+	meus, err := q.OwnTargetIDs(ctx, db.OwnTargetIDsParams{ProjectID: projectID, Ids: ids})
 	if err != nil {
 		return fmt.Errorf("conferir alvos: %w", err)
 	}
@@ -224,15 +245,15 @@ func inserirItens(ctx context.Context, q *db.Queries, pageID uuid.UUID, items []
 	return nil
 }
 
-func ler(ctx context.Context, q *db.Queries, userID uuid.UUID) (Page, error) {
-	row, err := q.GetStatusPage(ctx, userID)
+func ler(ctx context.Context, q *db.Queries, projectID uuid.UUID) (Page, error) {
+	row, err := q.GetStatusPage(ctx, projectID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Page{}, ErrNotFound
 	}
 	if err != nil {
 		return Page{}, fmt.Errorf("buscar status page: %w", err)
 	}
-	itens, err := q.ListStatusPageItems(ctx, db.ListStatusPageItemsParams{UserID: userID, PageID: row.ID})
+	itens, err := q.ListStatusPageItems(ctx, db.ListStatusPageItemsParams{ProjectID: projectID, PageID: row.ID})
 	if err != nil {
 		return Page{}, fmt.Errorf("listar itens: %w", err)
 	}
@@ -246,13 +267,16 @@ func ler(ctx context.Context, q *db.Queries, userID uuid.UUID) (Page, error) {
 	return p, nil
 }
 
-// traduzir separa as duas violações de UNIQUE de status_pages. O resto sai
-// como erro interno.
+// traduzir separa as violações de UNIQUE de status_pages. Página repetida é
+// ErrExists pelo UNIQUE de user_id OU pelo de project_id: com os dois violados
+// ao mesmo tempo, o Postgres pode reportar qualquer um, e o de projeto sozinho
+// é o caso de um segundo membro que ainda não tem página. O resto sai como
+// erro interno.
 func traduzir(err error) error {
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 		switch pgErr.ConstraintName {
-		case constraintUser:
+		case constraintUser, constraintProjeto:
 			return ErrExists
 		case constraintSlug:
 			return ErrSlugTaken

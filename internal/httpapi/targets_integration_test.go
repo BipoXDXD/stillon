@@ -833,6 +833,9 @@ func TestTargetLimitIs409(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer tx.Rollback(ctx)
+	// Como na produção, a conta já tem o Projeto padrão: o gatilho põe nele
+	// os alvos gravados aqui, e o escopo do POST os conta.
+	testdb.ProjetoPadrao(t, a.userID)
 	if _, err := tx.Exec(ctx, `SELECT set_config('app.user_id', $1, true)`, a.userID.String()); err != nil {
 		t.Fatal(err)
 	}

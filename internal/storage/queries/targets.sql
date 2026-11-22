@@ -1,20 +1,33 @@
--- Toda query daqui filtra por user_id E roda sob a RLS de InUserTx. As duas
--- barreiras são independentes de propósito (spec §5.5): um WHERE esquecido
--- é pego pela política, e uma política desligada é pega pelo WHERE.
+-- Toda query de posse daqui filtra por project_id E roda sob a RLS de
+-- InProjectTx. As duas barreiras são independentes de propósito (spec §5.5):
+-- um WHERE esquecido é pego pela política, e uma política desligada é pega
+-- pelo WHERE. As exceções, por user_id, são as cotas no fim do arquivo
+-- (LockUserTargets, CountTargets, ListContentRuleTargetURLs): até o PR 2b,
+-- contam os alvos de quem chama dentro do projeto atual (a RLS restritiva
+-- corta os de outros projetos); o teto por titular vem no PR 2b.
 
+-- user_id é quem criou o alvo; project_id, o projeto em que ele vive. O
+-- serviço sempre manda project_id. Ele aceita nulo só para o caminho antigo
+-- (InUserTx e os testes de outros pacotes), em que o gatilho
+-- preencher_project_id_padrao põe o Projeto padrão; no escopo de
+-- projeto o gatilho não preenche, e a RLS recusa o nulo (42501).
 -- name: InsertTarget :exec
 INSERT INTO targets (id, user_id, name, url, method, interval_sec, timeout_ms,
                      expected_status, headers_enc, degraded_threshold_ms, enabled,
                      next_run_at, created_at, tls_warn, content_mode, content_value,
-                     content_json_pointer)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17);
+                     content_json_pointer, project_id)
+VALUES (sqlc.arg(id), sqlc.arg(user_id), sqlc.arg(name), sqlc.arg(url), sqlc.arg(method),
+        sqlc.arg(interval_sec), sqlc.arg(timeout_ms), sqlc.arg(expected_status),
+        sqlc.arg(headers_enc), sqlc.arg(degraded_threshold_ms), sqlc.arg(enabled),
+        sqlc.arg(next_run_at), sqlc.arg(created_at), sqlc.arg(tls_warn), sqlc.arg(content_mode),
+        sqlc.arg(content_value), sqlc.arg(content_json_pointer), sqlc.narg(project_id)::uuid);
 
 -- name: GetTarget :one
 SELECT id, user_id, name, url, method, interval_sec, timeout_ms,
        expected_status, headers_enc, degraded_threshold_ms, enabled, next_run_at,
        created_at, tls_warn, content_mode, content_value, content_json_pointer,
        project_id
-  FROM targets WHERE user_id = $1 AND id = $2;
+  FROM targets WHERE project_id = sqlc.arg(project_id)::uuid AND id = sqlc.arg(id);
 
 -- FOR UPDATE, e não FOR NO KEY UPDATE: a gravação do sondador
 -- (LockTargetProbeSpec, FOR KEY SHARE) precisa esperar o PATCH inteiro para
@@ -24,7 +37,7 @@ SELECT id, user_id, name, url, method, interval_sec, timeout_ms,
        expected_status, headers_enc, degraded_threshold_ms, enabled, next_run_at,
        created_at, tls_warn, content_mode, content_value, content_json_pointer,
        project_id
-  FROM targets WHERE user_id = $1 AND id = $2 FOR UPDATE;
+  FROM targets WHERE project_id = sqlc.arg(project_id)::uuid AND id = sqlc.arg(id) FOR UPDATE;
 
 -- Paginação por cursor (spec §9.1): o id é UUIDv7, ordenável por tempo, e o
 -- cursor é o último id da página anterior.
@@ -34,72 +47,75 @@ SELECT id, user_id, name, url, method, interval_sec, timeout_ms,
        created_at, tls_warn, content_mode, content_value, content_json_pointer,
        project_id
   FROM targets
- WHERE user_id = sqlc.arg(user_id)
+ WHERE project_id = sqlc.arg(project_id)::uuid
    AND (sqlc.narg(before)::uuid IS NULL OR id < sqlc.narg(before)::uuid)
  ORDER BY id DESC
  LIMIT sqlc.arg(max_rows)::int;
 
 -- name: UpdateTarget :exec
 UPDATE targets
-   SET name = $3, url = $4, method = $5, interval_sec = $6, timeout_ms = $7,
-       expected_status = $8, headers_enc = $9, degraded_threshold_ms = $10,
-       enabled = $11, next_run_at = $12, tls_warn = $13,
-       content_mode = $14, content_value = $15, content_json_pointer = $16
- WHERE user_id = $1 AND id = $2;
+   SET name = sqlc.arg(name), url = sqlc.arg(url), method = sqlc.arg(method),
+       interval_sec = sqlc.arg(interval_sec), timeout_ms = sqlc.arg(timeout_ms),
+       expected_status = sqlc.arg(expected_status), headers_enc = sqlc.arg(headers_enc),
+       degraded_threshold_ms = sqlc.arg(degraded_threshold_ms), enabled = sqlc.arg(enabled),
+       next_run_at = sqlc.arg(next_run_at), tls_warn = sqlc.arg(tls_warn),
+       content_mode = sqlc.arg(content_mode), content_value = sqlc.arg(content_value),
+       content_json_pointer = sqlc.arg(content_json_pointer)
+ WHERE project_id = sqlc.arg(project_id)::uuid AND id = sqlc.arg(id);
 
 -- Trocar a URL, o método ou a regra de conteúdo zera a
 -- histerese (a linha volta a "sem dados"). last_checked_at fica: é a guarda
--- de check fora de ordem do detector. O EXISTS filtra pelo dono, como o resto
+-- de check fora de ordem do detector. O EXISTS filtra pelo projeto, como o resto
 -- deste arquivo, além da RLS de target_health.
 -- name: ResetTargetHealth :exec
 UPDATE target_health
    SET consecutive_failures = 0, consecutive_successes = 0, streak_since = NULL
  WHERE target_id = sqlc.arg(target_id)
    AND EXISTS (SELECT 1 FROM targets t
-                WHERE t.id = target_health.target_id AND t.user_id = sqlc.arg(user_id));
+                WHERE t.id = target_health.target_id AND t.project_id = sqlc.arg(project_id)::uuid);
 
--- A validade do certificado (spec §7.2), lida e apagada pelo dono. Como em
--- ResetTargetHealth, o EXISTS filtra pelo dono além da RLS de target_tls. Só o
+-- A validade do certificado (spec §7.2), lida e apagada pelo projeto. Como em
+-- ResetTargetHealth, o EXISTS filtra pelo projeto além da RLS de target_tls. Só o
 -- sondador grava a linha (prober.sql).
 -- name: GetTargetTLSOfOwner :one
 SELECT tt.not_after, tt.observed_at
   FROM target_tls tt
  WHERE tt.target_id = sqlc.arg(target_id)
    AND EXISTS (SELECT 1 FROM targets t
-                WHERE t.id = tt.target_id AND t.user_id = sqlc.arg(user_id));
+                WHERE t.id = tt.target_id AND t.project_id = sqlc.arg(project_id)::uuid);
 
--- As validades de todos os alvos do dono numa consulta só: a lista não lê
+-- As validades de todos os alvos do projeto numa consulta só: a lista não lê
 -- uma por alvo.
 -- name: ListTargetTLSOfOwner :many
 SELECT tt.target_id, tt.not_after, tt.observed_at
   FROM target_tls tt
  WHERE EXISTS (SELECT 1 FROM targets t
-                WHERE t.id = tt.target_id AND t.user_id = sqlc.arg(user_id));
+                WHERE t.id = tt.target_id AND t.project_id = sqlc.arg(project_id)::uuid);
 
 -- Outro host é outro certificado: a leitura do anterior não vale para ele.
 -- name: DeleteTargetTLSOfOwner :exec
 DELETE FROM target_tls tt
  WHERE tt.target_id = sqlc.arg(target_id)
    AND EXISTS (SELECT 1 FROM targets t
-                WHERE t.id = tt.target_id AND t.user_id = sqlc.arg(user_id));
+                WHERE t.id = tt.target_id AND t.project_id = sqlc.arg(project_id)::uuid);
 
 -- name: DeleteTarget :execrows
-DELETE FROM targets WHERE user_id = $1 AND id = $2;
+DELETE FROM targets WHERE project_id = sqlc.arg(project_id)::uuid AND id = sqlc.arg(id);
 
 -- name: ListChecks :many
 SELECT c.checked_at, c.status, c.latency_ms, c.status_code, c.error_kind
   FROM checks c
   JOIN targets t ON t.id = c.target_id
- WHERE t.user_id = sqlc.arg(user_id)
+ WHERE t.project_id = sqlc.arg(project_id)::uuid
    AND c.target_id = sqlc.arg(target_id)
    AND c.checked_at >= sqlc.arg(from_at)
    AND c.checked_at < sqlc.arg(to_at)
  ORDER BY c.checked_at;
 
--- GET /targets/summary. Todas rodam sob InUserTx E filtram por
--- user_id, como as de cima.
+-- GET /targets/summary. Todas rodam sob InProjectTx E filtram por
+-- project_id, como as de cima.
 
--- Os alvos do dono na ordem de GET /targets, com o último check e o incidente
+-- Os alvos do projeto na ordem de GET /targets, com o último check e o incidente
 -- aberto (o índice único parcial garante no máximo um). Alvo sem check volta
 -- com last_status '' e last_checked_at na época Unix, como ListPublicItems: o
 -- sqlc não enxerga a nulidade de um LEFT JOIN LATERAL.
@@ -115,35 +131,35 @@ SELECT t.id, t.name, t.enabled, t.interval_sec,
         WHERE c.target_id = t.id
         ORDER BY c.checked_at DESC LIMIT 1) lc ON true
   LEFT JOIN incidents x ON x.target_id = t.id AND x.resolved_at IS NULL
- WHERE t.user_id = sqlc.arg(user_id)
+ WHERE t.project_id = sqlc.arg(project_id)::uuid
  ORDER BY t.id DESC;
 
--- A marca d'água DO DONO: a hora mais recente já consolidada entre os alvos
--- dele. max(bucket) da tabela inteira não serve: sob a RLS, um dono sem
+-- A marca d'água DO PROJETO: a hora mais recente já consolidada entre os
+-- alvos dele. max(bucket) da tabela inteira não serve: sob a RLS, um projeto sem
 -- rollups recentes faria o Postgres varrer o índice de bucket da instância
 -- inteira, testando a política linha a linha. Só conta rollup ANTES de before
 -- (a hora corrente): um gravado no futuro por relógio adiantado esconderia as
 -- horas ainda não consolidadas (a mesma guarda de
 -- LatestRollupBucketBefore). Sem rollup, a época Unix.
--- name: LatestUserRollupBucket :one
+-- name: LatestProjectRollupBucket :one
 SELECT coalesce(max(r.bucket), 'epoch'::timestamptz)::timestamptz
   FROM targets t
   CROSS JOIN LATERAL (
        SELECT bucket FROM check_rollup_1h
         WHERE target_id = t.id AND bucket < sqlc.arg(before)::timestamptz
         ORDER BY bucket DESC LIMIT 1) r
- WHERE t.user_id = sqlc.arg(user_id);
+ WHERE t.project_id = sqlc.arg(project_id)::uuid;
 
 -- name: ListSummaryRollups :many
 SELECT r.target_id, r.bucket, r.total, r.ok, r.p50
   FROM check_rollup_1h r
   JOIN targets t ON t.id = r.target_id
- WHERE t.user_id = sqlc.arg(user_id)
+ WHERE t.project_id = sqlc.arg(project_id)::uuid
    AND r.bucket >= sqlc.arg(from_at)::timestamptz
    AND r.bucket < sqlc.arg(to_at)::timestamptz;
 
 -- As horas cheias ainda não consolidadas, com a MESMA fórmula de
--- ConsolidateRollups. Serve o resumo (todos os alvos do dono, target_id nulo)
+-- ConsolidateRollups. Serve o resumo (todos os alvos do projeto, target_id nulo)
 -- e a série longa de um alvo (GET /targets/{id}/checks acima de 48 h). As
 -- latências saem 0 numa hora sem sucesso (o sqlc não enxerga a nulidade do
 -- percentil); quem lê usa ok = 0 para saber que não há latência, a mesma
@@ -162,7 +178,7 @@ SELECT c.target_id,
        coalesce(max(c.latency_ms) FILTER (WHERE c.status <> 'down'), 0)::int AS max
   FROM checks c
   JOIN targets t ON t.id = c.target_id
- WHERE t.user_id = sqlc.arg(user_id)
+ WHERE t.project_id = sqlc.arg(project_id)::uuid
    AND (sqlc.narg(target_id)::uuid IS NULL OR c.target_id = sqlc.narg(target_id)::uuid)
    AND c.checked_at >= sqlc.arg(from_at)::timestamptz
    AND c.checked_at < sqlc.arg(to_at)::timestamptz
@@ -175,47 +191,49 @@ SELECT c.target_id,
 SELECT c.target_id, count(*)::int AS total, (count(*) FILTER (WHERE c.status <> 'down'))::int AS ok
   FROM checks c
   JOIN targets t ON t.id = c.target_id
- WHERE t.user_id = sqlc.arg(user_id)
+ WHERE t.project_id = sqlc.arg(project_id)::uuid
    AND c.checked_at >= sqlc.arg(from_at)::timestamptz
    AND c.checked_at < sqlc.arg(to_at)::timestamptz
  GROUP BY 1;
 
 -- Tags (spec do painel denso). As duas leituras saem ordenadas pela tag, e a
--- do dono serve a lista e o resumo sem uma consulta por alvo.
+-- do projeto serve a lista e o resumo sem uma consulta por alvo.
 -- name: ListTargetTags :many
 SELECT tt.tag
   FROM target_tags tt
   JOIN targets t ON t.id = tt.target_id
- WHERE t.user_id = sqlc.arg(user_id) AND tt.target_id = sqlc.arg(target_id)
+ WHERE t.project_id = sqlc.arg(project_id)::uuid AND tt.target_id = sqlc.arg(target_id)
  ORDER BY tt.tag;
 
--- name: ListUserTargetTags :many
+-- name: ListProjectTargetTags :many
 SELECT tt.target_id, tt.tag
   FROM target_tags tt
   JOIN targets t ON t.id = tt.target_id
- WHERE t.user_id = sqlc.arg(user_id)
+ WHERE t.project_id = sqlc.arg(project_id)::uuid
  ORDER BY tt.target_id, tt.tag;
 
 -- name: DeleteTargetTags :exec
 DELETE FROM target_tags tt
  USING targets t
- WHERE t.id = tt.target_id AND t.user_id = sqlc.arg(user_id) AND tt.target_id = sqlc.arg(target_id);
+ WHERE t.id = tt.target_id AND t.project_id = sqlc.arg(project_id)::uuid AND tt.target_id = sqlc.arg(target_id);
 
 -- name: InsertTargetTags :exec
 INSERT INTO target_tags (target_id, tag)
 SELECT t.id, unnest(sqlc.arg(tags)::text[])
   FROM targets t
- WHERE t.user_id = sqlc.arg(user_id) AND t.id = sqlc.arg(target_id);
+ WHERE t.project_id = sqlc.arg(project_id)::uuid AND t.id = sqlc.arg(target_id);
 
--- O teto de alvos por usuário: contar e inserir sob esta trava.
--- Sem ela, dois POST simultâneos passariam os dois pela contagem.
+-- O teto de alvos: contar e inserir sob esta trava. Até o PR 2b ele vale
+-- para o usuário dentro do projeto atual (CountTargets roda sob a RLS
+-- restritiva de InProjectTx); o teto por titular vem no PR 2b. Sem a trava,
+-- dois POST simultâneos passariam os dois pela contagem.
 -- name: LockUserTargets :exec
 SELECT pg_advisory_xact_lock(hashtextextended('stillon.targets:' || sqlc.arg(user_id)::uuid::text, 0));
 
 -- name: CountTargets :one
 SELECT count(*) FROM targets WHERE user_id = $1;
 
--- O teto de regras por host: as URLs dos alvos do dono com regra,
--- lidas sob LockUserTargets. A chave do host sai em Go (IDNA).
+-- O teto de regras por host: as URLs dos alvos com regra de quem chama,
+-- dentro do projeto atual até o PR 2b, lidas sob LockUserTargets. A chave do host sai em Go (IDNA).
 -- name: ListContentRuleTargetURLs :many
 SELECT id, url FROM targets WHERE user_id = $1 AND content_mode IS NOT NULL;

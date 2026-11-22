@@ -106,7 +106,7 @@ func novaBancadaCanais(t *testing.T, comEmail bool) *bancadaCanais {
 
 func (b *bancadaCanais) listar(t *testing.T, userID uuid.UUID) []Channel {
 	t.Helper()
-	cs, err := b.svc.List(context.Background(), userID)
+	cs, err := b.svc.List(context.Background(), b.escopo(t, userID))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,7 +115,7 @@ func (b *bancadaCanais) listar(t *testing.T, userID uuid.UUID) []Channel {
 
 func TestCreateDiscordSendsTheTestAndSavesVerified(t *testing.T) {
 	b := novaBancadaCanais(t, true)
-	c, err := b.svc.Create(context.Background(), b.dono, ChannelInput{Kind: KindDiscord, URL: " " + webhookValido + " "})
+	c, err := b.svc.Create(context.Background(), b.escopo(t, b.dono), ChannelInput{Kind: KindDiscord, URL: " " + webhookValido + " "})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,7 +141,7 @@ func TestFailedDeliverySavesNothing(t *testing.T) {
 		{Kind: KindDiscord, URL: webhookValido},
 		{Kind: KindEmail, Email: "pessoa@exemplo.com"},
 	} {
-		if _, err := b.svc.Create(context.Background(), b.dono, in); !errors.Is(err, ErrDeliveryFailed) {
+		if _, err := b.svc.Create(context.Background(), b.escopo(t, b.dono), in); !errors.Is(err, ErrDeliveryFailed) {
 			t.Errorf("%s com envio falho deu %v, queria ErrDeliveryFailed", in.Kind, err)
 		}
 	}
@@ -163,7 +163,7 @@ func TestInvalidInputIsRejectedBeforeAnySend(t *testing.T) {
 		{ChannelInput{Kind: KindEmail}, "email", ReasonRequired},
 		{ChannelInput{Kind: KindEmail, Email: "Fulano <p@x.com>"}, "email", ReasonInvalid},
 	} {
-		_, err := b.svc.Create(context.Background(), b.dono, c.in)
+		_, err := b.svc.Create(context.Background(), b.escopo(t, b.dono), c.in)
 		var verr *ValidationError
 		if !errors.As(err, &verr) || verr.Field != c.campo || verr.Reason != c.motivo {
 			t.Errorf("Create(%+v) = %v, queria %s/%s", c.in, err, c.campo, c.motivo)
@@ -176,7 +176,7 @@ func TestInvalidInputIsRejectedBeforeAnySend(t *testing.T) {
 
 func TestEmailIsUnavailableWithoutResend(t *testing.T) {
 	b := novaBancadaCanais(t, false)
-	_, err := b.svc.Create(context.Background(), b.dono, ChannelInput{Kind: KindEmail, Email: "p@x.com"})
+	_, err := b.svc.Create(context.Background(), b.escopo(t, b.dono), ChannelInput{Kind: KindEmail, Email: "p@x.com"})
 	var verr *ValidationError
 	if !errors.As(err, &verr) || verr.Field != "kind" || verr.Reason != ReasonUnavailable {
 		t.Errorf("e-mail sem Resend deu %v, queria kind/unavailable", err)
@@ -186,7 +186,7 @@ func TestEmailIsUnavailableWithoutResend(t *testing.T) {
 func TestEmailVerificationFlow(t *testing.T) {
 	b := novaBancadaCanais(t, true)
 	ctx := context.Background()
-	c, err := b.svc.Create(ctx, b.dono, ChannelInput{Kind: KindEmail, Email: "pessoa@Exemplo.com"})
+	c, err := b.svc.Create(ctx, b.escopo(t, b.dono), ChannelInput{Kind: KindEmail, Email: "pessoa@Exemplo.com"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -220,7 +220,7 @@ func TestEmailVerificationFlow(t *testing.T) {
 func TestExpiredTokenNeitherChecksNorConfirms(t *testing.T) {
 	b := novaBancadaCanais(t, true)
 	ctx := context.Background()
-	if _, err := b.svc.Create(ctx, b.dono, ChannelInput{Kind: KindEmail, Email: "p@x.com"}); err != nil {
+	if _, err := b.svc.Create(ctx, b.escopo(t, b.dono), ChannelInput{Kind: KindEmail, Email: "p@x.com"}); err != nil {
 		t.Fatal(err)
 	}
 	token := b.email.ultimoToken(t)
@@ -254,14 +254,14 @@ func TestMalformedTokenIsInvalid(t *testing.T) {
 func TestResendReplacesTheToken(t *testing.T) {
 	b := novaBancadaCanais(t, true)
 	ctx := context.Background()
-	c, err := b.svc.Create(ctx, b.dono, ChannelInput{Kind: KindEmail, Email: "p@x.com"})
+	c, err := b.svc.Create(ctx, b.escopo(t, b.dono), ChannelInput{Kind: KindEmail, Email: "p@x.com"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	antigo := b.email.ultimoToken(t)
 	b.clk.Advance(VerifyTTL + time.Hour)
 
-	if err := b.svc.ResendVerification(ctx, b.dono, c.ID); err != nil {
+	if err := b.svc.ResendVerification(ctx, b.escopo(t, b.dono), c.ID); err != nil {
 		t.Fatal(err)
 	}
 	novo := b.email.ultimoToken(t)
@@ -279,11 +279,11 @@ func TestResendReplacesTheToken(t *testing.T) {
 func TestResendRefusesWhatIsNotPending(t *testing.T) {
 	b := novaBancadaCanais(t, true)
 	ctx := context.Background()
-	discord, err := b.svc.Create(ctx, b.dono, ChannelInput{Kind: KindDiscord, URL: webhookValido})
+	discord, err := b.svc.Create(ctx, b.escopo(t, b.dono), ChannelInput{Kind: KindDiscord, URL: webhookValido})
 	if err != nil {
 		t.Fatal(err)
 	}
-	email, err := b.svc.Create(ctx, b.dono, ChannelInput{Kind: KindEmail, Email: "p@x.com"})
+	email, err := b.svc.Create(ctx, b.escopo(t, b.dono), ChannelInput{Kind: KindEmail, Email: "p@x.com"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -292,11 +292,11 @@ func TestResendRefusesWhatIsNotPending(t *testing.T) {
 	}
 
 	for nome, id := range map[string]uuid.UUID{"discord": discord.ID, "e-mail verificado": email.ID} {
-		if err := b.svc.ResendVerification(ctx, b.dono, id); !errors.Is(err, ErrNotPending) {
+		if err := b.svc.ResendVerification(ctx, b.escopo(t, b.dono), id); !errors.Is(err, ErrNotPending) {
 			t.Errorf("reenviar %s deu %v, queria ErrNotPending", nome, err)
 		}
 	}
-	if err := b.svc.ResendVerification(ctx, b.outro, email.ID); !errors.Is(err, ErrNotFound) {
+	if err := b.svc.ResendVerification(ctx, b.escopo(t, b.outro), email.ID); !errors.Is(err, ErrNotFound) {
 		t.Errorf("reenviar canal de outro usuário deu %v, queria ErrNotFound", err)
 	}
 }
@@ -307,11 +307,11 @@ func TestResendRefusesWhatIsNotPending(t *testing.T) {
 func TestChannelLimitIsCheckedBeforeSending(t *testing.T) {
 	b := novaBancadaCanais(t, true)
 	for range MaxChannels {
-		if _, err := b.svc.Create(context.Background(), b.dono, ChannelInput{Kind: KindDiscord, URL: webhookValido}); err != nil {
+		if _, err := b.svc.Create(context.Background(), b.escopo(t, b.dono), ChannelInput{Kind: KindDiscord, URL: webhookValido}); err != nil {
 			t.Fatal(err)
 		}
 	}
-	_, err := b.svc.Create(context.Background(), b.dono, ChannelInput{Kind: KindDiscord, URL: webhookValido})
+	_, err := b.svc.Create(context.Background(), b.escopo(t, b.dono), ChannelInput{Kind: KindDiscord, URL: webhookValido})
 	if !errors.Is(err, ErrLimitReached) {
 		t.Fatalf("canal %d deu %v, queria ErrLimitReached", MaxChannels+1, err)
 	}
@@ -329,7 +329,7 @@ func TestConcurrentCreatesDoNotPassTheChannelLimit(t *testing.T) {
 	b := novaBancadaCanais(t, true)
 	ctx := context.Background()
 	for range MaxChannels - 1 {
-		if _, err := b.svc.Create(ctx, b.dono, ChannelInput{Kind: KindDiscord, URL: webhookValido}); err != nil {
+		if _, err := b.svc.Create(ctx, b.escopo(t, b.dono), ChannelInput{Kind: KindDiscord, URL: webhookValido}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -350,12 +350,13 @@ func TestConcurrentCreatesDoNotPassTheChannelLimit(t *testing.T) {
 	}
 
 	erros := make([]error, 2)
+	sc := b.escopo(t, b.dono)
 	var wg sync.WaitGroup
 	for i := range erros {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, erros[i] = b.svc.Create(ctx, b.dono, ChannelInput{Kind: KindDiscord, URL: webhookValido})
+			_, erros[i] = b.svc.Create(ctx, sc, ChannelInput{Kind: KindDiscord, URL: webhookValido})
 		}()
 	}
 	wg.Wait()
@@ -379,17 +380,17 @@ func TestConcurrentCreatesDoNotPassTheChannelLimit(t *testing.T) {
 func TestAnotherUsersChannelIsInvisible(t *testing.T) {
 	b := novaBancadaCanais(t, true)
 	ctx := context.Background()
-	c, err := b.svc.Create(ctx, b.dono, ChannelInput{Kind: KindDiscord, URL: webhookValido})
+	c, err := b.svc.Create(ctx, b.escopo(t, b.dono), ChannelInput{Kind: KindDiscord, URL: webhookValido})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if cs := b.listar(t, b.outro); len(cs) != 0 {
 		t.Errorf("o outro usuário listou %d canais", len(cs))
 	}
-	if err := b.svc.Delete(ctx, b.outro, c.ID); !errors.Is(err, ErrNotFound) {
+	if err := b.svc.Delete(ctx, b.escopo(t, b.outro), c.ID); !errors.Is(err, ErrNotFound) {
 		t.Errorf("apagar canal alheio deu %v", err)
 	}
-	if err := b.svc.Delete(ctx, b.dono, c.ID); err != nil {
+	if err := b.svc.Delete(ctx, b.escopo(t, b.dono), c.ID); err != nil {
 		t.Errorf("o dono apagando o próprio canal deu %v", err)
 	}
 	if cs := b.listar(t, b.dono); len(cs) != 0 {
@@ -400,7 +401,7 @@ func TestAnotherUsersChannelIsInvisible(t *testing.T) {
 func TestUnreadableChannelDoesNotBreakTheList(t *testing.T) {
 	b := novaBancadaCanais(t, true)
 	ctx := context.Background()
-	c, err := b.svc.Create(ctx, b.dono, ChannelInput{Kind: KindDiscord, URL: webhookValido})
+	c, err := b.svc.Create(ctx, b.escopo(t, b.dono), ChannelInput{Kind: KindDiscord, URL: webhookValido})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -477,14 +478,14 @@ func TestResendRefusesAnUnverifiedDiscordChannel(t *testing.T) {
 	}
 	err = storage.InUserTx(ctx, b.svc.pool, b.dono, func(q *db.Queries) error {
 		return q.InsertChannel(ctx, db.InsertChannelParams{
-			ID: id, UserID: b.dono, Kind: string(KindDiscord), ConfigEnc: sealed, CreatedAt: b.clk.Now(),
+			ID: id, UserID: b.dono, ProjectID: testdb.ProjetoPadrao(t, b.dono), Kind: string(KindDiscord), ConfigEnc: sealed, CreatedAt: b.clk.Now(),
 		})
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if err := b.svc.ResendVerification(ctx, b.dono, id); !errors.Is(err, ErrNotPending) {
+	if err := b.svc.ResendVerification(ctx, b.escopo(t, b.dono), id); !errors.Is(err, ErrNotPending) {
 		t.Errorf("erro = %v, queria ErrNotPending", err)
 	}
 	if len(b.email.enderecos) != 0 {

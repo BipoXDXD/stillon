@@ -101,14 +101,14 @@ func TestChannelsAreIsolatedAndProberOnlyReads(t *testing.T) {
 
 	err = storage.InProberTx(ctx, pool, func(q *db.Queries) error {
 		return q.InsertChannel(ctx, db.InsertChannelParams{
-			ID: novoID(), UserID: a, Kind: "discord", ConfigEnc: []byte{1}, VerifiedAt: &agora, CreatedAt: agora,
+			ID: novoID(), UserID: a, ProjectID: testdb.ProjetoPadrao(t, a), Kind: "discord", ConfigEnc: []byte{1}, VerifiedAt: &agora, CreatedAt: agora,
 		})
 	})
 	if codigoPG(err) != "42501" {
 		t.Errorf("o sondador criando canal deu %v, queria 42501", err)
 	}
 	err = storage.InProberTx(ctx, pool, func(q *db.Queries) error {
-		n, err := q.DeleteChannel(ctx, db.DeleteChannelParams{UserID: a, ID: canalA})
+		n, err := q.DeleteChannel(ctx, db.DeleteChannelParams{ProjectID: testdb.ProjetoPadrao(t, a), ID: canalA})
 		if n != 0 {
 			t.Errorf("o sondador apagou %d canais", n)
 		}
@@ -217,7 +217,7 @@ func TestConfirmChannelIsIdempotentAndRespectsExpiry(t *testing.T) {
 
 	var verificadoEm time.Time
 	err := storage.InUserTx(ctx, pool, dono, func(q *db.Queries) error {
-		c, err := q.GetChannel(ctx, db.GetChannelParams{UserID: dono, ID: canal})
+		c, err := q.GetChannel(ctx, db.GetChannelParams{ProjectID: testdb.ProjetoPadrao(t, dono), ID: canal})
 		if err == nil && c.VerifiedAt != nil {
 			verificadoEm = *c.VerifiedAt
 		}

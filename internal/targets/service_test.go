@@ -45,6 +45,9 @@ func (a ambiente) usuario(t *testing.T) uuid.UUID {
 		id, id.String()+"@exemplo.com"); err != nil {
 		t.Fatal(err)
 	}
+	// Como na produção, a conta já nasce com o Projeto padrão: os alvos que o
+	// teste grava por SQL caem nele pelo gatilho, e o escopo os enxerga.
+	testdb.ProjetoPadrao(t, id)
 	return id
 }
 
@@ -61,7 +64,7 @@ func TestCreateAppliesDefaultsAndHidesHeaderValues(t *testing.T) {
 	a := novoAmbiente(t)
 	dono := a.usuario(t)
 
-	alvo, err := a.svc.Create(context.Background(), dono, entrada())
+	alvo, err := a.svc.Create(context.Background(), targets.EscopoDe(t, a.pool, dono), entrada())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,7 +95,7 @@ func TestCreateRejectsInvalidInput(t *testing.T) {
 	a := novoAmbiente(t)
 	in := entrada()
 	in.URL = "http://127.0.0.1/"
-	_, err := a.svc.Create(context.Background(), a.usuario(t), in)
+	_, err := a.svc.Create(context.Background(), targets.EscopoDe(t, a.pool, a.usuario(t)), in)
 	var verr *targets.ValidationError
 	if !errors.As(err, &verr) {
 		t.Fatalf("erro = %v, queria *ValidationError", err)
@@ -106,7 +109,7 @@ func TestCreateRefusesASharpSURLWithoutWritingARow(t *testing.T) {
 	in := entrada()
 	in.URL = "https://STRAẞE.de/"
 
-	_, err := a.svc.Create(context.Background(), dono, in)
+	_, err := a.svc.Create(context.Background(), targets.EscopoDe(t, a.pool, dono), in)
 
 	var verr *targets.ValidationError
 	if !errors.As(err, &verr) || len(verr.Fields) != 1 || verr.Fields[0].Field != "url" || verr.Fields[0].Reason != targets.ReasonInvalid {
@@ -125,26 +128,26 @@ func TestAnotherUsersTargetIsNotFound(t *testing.T) {
 	a := novoAmbiente(t)
 	ctx := context.Background()
 	dono, intruso := a.usuario(t), a.usuario(t)
-	alvo, err := a.svc.Create(ctx, dono, entrada())
+	alvo, err := a.svc.Create(ctx, targets.EscopoDe(t, a.pool, dono), entrada())
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	novoNome := "roubado"
-	if _, err := a.svc.Get(ctx, intruso, alvo.ID); !errors.Is(err, targets.ErrNotFound) {
+	if _, err := a.svc.Get(ctx, targets.EscopoDe(t, a.pool, intruso), alvo.ID); !errors.Is(err, targets.ErrNotFound) {
 		t.Errorf("Get do intruso = %v, queria ErrNotFound", err)
 	}
-	if _, err := a.svc.Update(ctx, intruso, alvo.ID, targets.Patch{Name: &novoNome}); !errors.Is(err, targets.ErrNotFound) {
+	if _, err := a.svc.Update(ctx, targets.EscopoDe(t, a.pool, intruso), alvo.ID, targets.Patch{Name: &novoNome}); !errors.Is(err, targets.ErrNotFound) {
 		t.Errorf("Update do intruso = %v, queria ErrNotFound", err)
 	}
-	if err := a.svc.Delete(ctx, intruso, alvo.ID); !errors.Is(err, targets.ErrNotFound) {
+	if err := a.svc.Delete(ctx, targets.EscopoDe(t, a.pool, intruso), alvo.ID); !errors.Is(err, targets.ErrNotFound) {
 		t.Errorf("Delete do intruso = %v, queria ErrNotFound", err)
 	}
-	if _, err := a.svc.Checks(ctx, intruso, alvo.ID, a.clk.Now().Add(-time.Hour), a.clk.Now()); !errors.Is(err, targets.ErrNotFound) {
+	if _, err := a.svc.Checks(ctx, targets.EscopoDe(t, a.pool, intruso), alvo.ID, a.clk.Now().Add(-time.Hour), a.clk.Now()); !errors.Is(err, targets.ErrNotFound) {
 		t.Errorf("Checks do intruso = %v, queria ErrNotFound", err)
 	}
 
-	intacto, err := a.svc.Get(ctx, dono, alvo.ID)
+	intacto, err := a.svc.Get(ctx, targets.EscopoDe(t, a.pool, dono), alvo.ID)
 	if err != nil || intacto.Name != "API" {
 		t.Errorf("o alvo do dono mudou: %+v, %v", intacto, err)
 	}
@@ -155,7 +158,7 @@ func TestUpdateReschedulesOnlyWhenTheProbeChanges(t *testing.T) {
 	a := novoAmbiente(t)
 	ctx := context.Background()
 	dono := a.usuario(t)
-	alvo, err := a.svc.Create(ctx, dono, entrada())
+	alvo, err := a.svc.Create(ctx, targets.EscopoDe(t, a.pool, dono), entrada())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -171,7 +174,7 @@ func TestUpdateReschedulesOnlyWhenTheProbeChanges(t *testing.T) {
 
 	a.clk.Advance(time.Hour)
 	nome := "Outro nome"
-	if _, err := a.svc.Update(ctx, dono, alvo.ID, targets.Patch{Name: &nome}); err != nil {
+	if _, err := a.svc.Update(ctx, targets.EscopoDe(t, a.pool, dono), alvo.ID, targets.Patch{Name: &nome}); err != nil {
 		t.Fatal(err)
 	}
 	if !proximo().Equal(criadoEm) {
@@ -179,7 +182,7 @@ func TestUpdateReschedulesOnlyWhenTheProbeChanges(t *testing.T) {
 	}
 
 	url := "https://api.exemplo.com/v2/health"
-	if _, err := a.svc.Update(ctx, dono, alvo.ID, targets.Patch{URL: &url}); err != nil {
+	if _, err := a.svc.Update(ctx, targets.EscopoDe(t, a.pool, dono), alvo.ID, targets.Patch{URL: &url}); err != nil {
 		t.Fatal(err)
 	}
 	if !proximo().Equal(a.clk.Now()) {
@@ -196,13 +199,13 @@ func TestUpdateValidatesTheResultingTarget(t *testing.T) {
 	in := entrada()
 	in.TimeoutMS = 29000
 	in.IntervalSec = 60
-	alvo, err := a.svc.Create(ctx, dono, in)
+	alvo, err := a.svc.Create(ctx, targets.EscopoDe(t, a.pool, dono), in)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	trinta := int32(30)
-	_, err = a.svc.Update(ctx, dono, alvo.ID, targets.Patch{IntervalSec: &trinta})
+	_, err = a.svc.Update(ctx, targets.EscopoDe(t, a.pool, dono), alvo.ID, targets.Patch{IntervalSec: &trinta})
 	var verr *targets.ValidationError
 	if !errors.As(err, &verr) || verr.Fields[0].Field != "timeout_ms" {
 		t.Errorf("erro = %v, queria ValidationError em timeout_ms", err)
@@ -213,12 +216,12 @@ func TestUpdateCanClearThresholdAndHeaders(t *testing.T) {
 	a := novoAmbiente(t)
 	ctx := context.Background()
 	dono := a.usuario(t)
-	alvo, err := a.svc.Create(ctx, dono, entrada())
+	alvo, err := a.svc.Create(ctx, targets.EscopoDe(t, a.pool, dono), entrada())
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	got, err := a.svc.Update(ctx, dono, alvo.ID, targets.Patch{
+	got, err := a.svc.Update(ctx, targets.EscopoDe(t, a.pool, dono), alvo.ID, targets.Patch{
 		SetDegradedThreshold: true, DegradedThresholdMS: nil,
 		SetHeaders: true, Headers: nil,
 	})
@@ -248,13 +251,13 @@ func TestUpdateKeepsStoredHeaders(t *testing.T) {
 	a := novoAmbiente(t)
 	ctx := context.Background()
 	dono := a.usuario(t)
-	alvo, err := a.svc.Create(ctx, dono, entrada())
+	alvo, err := a.svc.Create(ctx, targets.EscopoDe(t, a.pool, dono), entrada())
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	nome := "Outro nome"
-	got, err := a.svc.Update(ctx, dono, alvo.ID, targets.Patch{Name: &nome})
+	got, err := a.svc.Update(ctx, targets.EscopoDe(t, a.pool, dono), alvo.ID, targets.Patch{Name: &nome})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -281,7 +284,7 @@ func TestListPaginatesByCursorNewestFirst(t *testing.T) {
 	dono := a.usuario(t)
 	var criados []uuid.UUID
 	for range 5 {
-		alvo, err := a.svc.Create(ctx, dono, entrada())
+		alvo, err := a.svc.Create(ctx, targets.EscopoDe(t, a.pool, dono), entrada())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -291,7 +294,7 @@ func TestListPaginatesByCursorNewestFirst(t *testing.T) {
 	var vistos []uuid.UUID
 	var cursor *uuid.UUID
 	for {
-		pagina, err := a.svc.List(ctx, dono, cursor, 2)
+		pagina, err := a.svc.List(ctx, targets.EscopoDe(t, a.pool, dono), cursor, 2)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -321,7 +324,7 @@ func TestChecksWindowPicksTheResolution(t *testing.T) {
 	a := novoAmbiente(t)
 	ctx := context.Background()
 	dono := a.usuario(t)
-	alvo, err := a.svc.Create(ctx, dono, entrada())
+	alvo, err := a.svc.Create(ctx, targets.EscopoDe(t, a.pool, dono), entrada())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -335,12 +338,12 @@ func TestChecksWindowPicksTheResolution(t *testing.T) {
 		{targets.MaxChecksWindow + time.Second, targets.Resolution1h},
 		{targets.MaxRollupWindow, targets.Resolution1h},
 	} {
-		s, err := a.svc.Checks(ctx, dono, alvo.ID, fim.Add(-c.janela), fim)
+		s, err := a.svc.Checks(ctx, targets.EscopoDe(t, a.pool, dono), alvo.ID, fim.Add(-c.janela), fim)
 		if err != nil || s.Resolution != c.quer {
 			t.Errorf("janela %v deu %q/%v, queria %q", c.janela, s.Resolution, err, c.quer)
 		}
 	}
-	_, err = a.svc.Checks(ctx, dono, alvo.ID, fim.Add(-targets.MaxRollupWindow-time.Second), fim)
+	_, err = a.svc.Checks(ctx, targets.EscopoDe(t, a.pool, dono), alvo.ID, fim.Add(-targets.MaxRollupWindow-time.Second), fim)
 	var verr *targets.ValidationError
 	if !errors.As(err, &verr) || verr.Fields[0] != (targets.FieldError{Field: "from", Reason: targets.ReasonOutOfRange}) {
 		t.Errorf("janela acima do teto deu %v, queria from/out_of_range", err)
@@ -353,11 +356,11 @@ func TestChecksReadsHourlyRollupsAboveTheRawWindow(t *testing.T) {
 	a := novoAmbiente(t)
 	ctx := context.Background()
 	dono := a.usuario(t)
-	alvo, err := a.svc.Create(ctx, dono, entrada())
+	alvo, err := a.svc.Create(ctx, targets.EscopoDe(t, a.pool, dono), entrada())
 	if err != nil {
 		t.Fatal(err)
 	}
-	outro, err := a.svc.Create(ctx, dono, entrada())
+	outro, err := a.svc.Create(ctx, targets.EscopoDe(t, a.pool, dono), entrada())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -380,7 +383,7 @@ func TestChecksReadsHourlyRollupsAboveTheRawWindow(t *testing.T) {
 		}
 	}
 
-	s, err := a.svc.Checks(ctx, dono, alvo.ID, inicio.Add(30*time.Minute), fim)
+	s, err := a.svc.Checks(ctx, targets.EscopoDe(t, a.pool, dono), alvo.ID, inicio.Add(30*time.Minute), fim)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -397,7 +400,7 @@ func TestChecksReadsHourlyRollupsAboveTheRawWindow(t *testing.T) {
 
 	// Outro usuário não enxerga a série, nem vazia: é 404.
 	intruso := a.usuario(t)
-	if _, err := a.svc.Checks(ctx, intruso, alvo.ID, inicio, fim); !errors.Is(err, targets.ErrNotFound) {
+	if _, err := a.svc.Checks(ctx, targets.EscopoDe(t, a.pool, intruso), alvo.ID, inicio, fim); !errors.Is(err, targets.ErrNotFound) {
 		t.Errorf("série horária do intruso = %v, queria ErrNotFound", err)
 	}
 }
@@ -426,12 +429,12 @@ func TestUpdateToAnotherOriginDropsTheHeaders(t *testing.T) {
 	ctx := context.Background()
 	dono := a.usuario(t)
 
-	alvo, err := a.svc.Create(ctx, dono, entrada())
+	alvo, err := a.svc.Create(ctx, targets.EscopoDe(t, a.pool, dono), entrada())
 	if err != nil {
 		t.Fatal(err)
 	}
 	caminho := "https://api.exemplo.com:443/v2/health"
-	got, err := a.svc.Update(ctx, dono, alvo.ID, targets.Patch{URL: &caminho})
+	got, err := a.svc.Update(ctx, targets.EscopoDe(t, a.pool, dono), alvo.ID, targets.Patch{URL: &caminho})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -441,11 +444,11 @@ func TestUpdateToAnotherOriginDropsTheHeaders(t *testing.T) {
 
 	for _, outra := range []string{"https://atacante.example/", "https://api.exemplo.com:8443/", "http://api.exemplo.com/v2/health"} {
 		t.Run(outra, func(t *testing.T) {
-			alvo, err := a.svc.Create(ctx, dono, entrada())
+			alvo, err := a.svc.Create(ctx, targets.EscopoDe(t, a.pool, dono), entrada())
 			if err != nil {
 				t.Fatal(err)
 			}
-			got, err := a.svc.Update(ctx, dono, alvo.ID, targets.Patch{URL: &outra})
+			got, err := a.svc.Update(ctx, targets.EscopoDe(t, a.pool, dono), alvo.ID, targets.Patch{URL: &outra})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -460,12 +463,12 @@ func TestUpdateToAnotherOriginDropsTheHeaders(t *testing.T) {
 
 	// Com headers no mesmo PATCH, valem os que vieram: o dono que troca de
 	// domínio redigita os dele.
-	alvo, err = a.svc.Create(ctx, dono, entrada())
+	alvo, err = a.svc.Create(ctx, targets.EscopoDe(t, a.pool, dono), entrada())
 	if err != nil {
 		t.Fatal(err)
 	}
 	outra := "https://novo.exemplo.com/"
-	got, err = a.svc.Update(ctx, dono, alvo.ID, targets.Patch{
+	got, err = a.svc.Update(ctx, targets.EscopoDe(t, a.pool, dono), alvo.ID, targets.Patch{
 		URL: &outra, SetHeaders: true, Headers: map[string]string{"X-Api-Key": "chave-nova"},
 	})
 	if err != nil {
@@ -526,7 +529,7 @@ func TestUpdateOfURLOrMethodResetsTheHysteresis(t *testing.T) {
 	a := novoAmbiente(t)
 	ctx := context.Background()
 	dono := a.usuario(t)
-	alvo, err := a.svc.Create(ctx, dono, entrada())
+	alvo, err := a.svc.Create(ctx, targets.EscopoDe(t, a.pool, dono), entrada())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -536,7 +539,7 @@ func TestUpdateOfURLOrMethodResetsTheHysteresis(t *testing.T) {
 	nome, intervalo, status := "Outro nome", int32(120), int32(204)
 	for _, p := range []targets.Patch{{Name: &nome}, {IntervalSec: &intervalo}, {ExpectedStatus: &status}} {
 		a.saude(t, alvo.ID, desde, ultimo)
-		if _, err := a.svc.Update(ctx, dono, alvo.ID, p); err != nil {
+		if _, err := a.svc.Update(ctx, targets.EscopoDe(t, a.pool, dono), alvo.ID, p); err != nil {
 			t.Fatal(err)
 		}
 		if h := a.lerSaude(t, alvo.ID); h.falhas != 2 || h.desde == nil {
@@ -547,7 +550,7 @@ func TestUpdateOfURLOrMethodResetsTheHysteresis(t *testing.T) {
 	url, metodo := "https://api.exemplo.com/v2/health", "HEAD"
 	for nomeDoCaso, p := range map[string]targets.Patch{"url": {URL: &url}, "método": {Method: &metodo}} {
 		a.saude(t, alvo.ID, desde, ultimo)
-		if _, err := a.svc.Update(ctx, dono, alvo.ID, p); err != nil {
+		if _, err := a.svc.Update(ctx, targets.EscopoDe(t, a.pool, dono), alvo.ID, p); err != nil {
 			t.Fatal(err)
 		}
 		h := a.lerSaude(t, alvo.ID)
@@ -568,11 +571,11 @@ func TestUpdateOfURLKeepsTheOpenIncidentAndOtherTargets(t *testing.T) {
 	a := novoAmbiente(t)
 	ctx := context.Background()
 	dono := a.usuario(t)
-	alvo, err := a.svc.Create(ctx, dono, entrada())
+	alvo, err := a.svc.Create(ctx, targets.EscopoDe(t, a.pool, dono), entrada())
 	if err != nil {
 		t.Fatal(err)
 	}
-	vizinho, err := a.svc.Create(ctx, dono, entrada())
+	vizinho, err := a.svc.Create(ctx, targets.EscopoDe(t, a.pool, dono), entrada())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -586,7 +589,7 @@ func TestUpdateOfURLKeepsTheOpenIncidentAndOtherTargets(t *testing.T) {
 	}
 
 	url := "https://novo.exemplo.com/"
-	if _, err := a.svc.Update(ctx, dono, alvo.ID, targets.Patch{URL: &url}); err != nil {
+	if _, err := a.svc.Update(ctx, targets.EscopoDe(t, a.pool, dono), alvo.ID, targets.Patch{URL: &url}); err != nil {
 		t.Fatal(err)
 	}
 	var aberto bool
@@ -605,7 +608,7 @@ func TestUpdateOfURLKeepsTheOpenIncidentAndOtherTargets(t *testing.T) {
 // domínio depende da tabela do IDNA.
 func (a ambiente) alvoGravadoComSharpS(t *testing.T, dono uuid.UUID, url string) targets.Target {
 	t.Helper()
-	alvo, err := a.svc.Create(context.Background(), dono, entrada())
+	alvo, err := a.svc.Create(context.Background(), targets.EscopoDe(t, a.pool, dono), entrada())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -635,7 +638,7 @@ func TestUpdateOfAStoredSharpSTargetLeavesTheURLAlone(t *testing.T) {
 			dono := a.usuario(t)
 			alvo := a.alvoGravadoComSharpS(t, dono, gravada)
 
-			got, err := a.svc.Update(ctx, dono, alvo.ID, caso.patch)
+			got, err := a.svc.Update(ctx, targets.EscopoDe(t, a.pool, dono), alvo.ID, caso.patch)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -652,7 +655,7 @@ func TestUpdateOfAStoredSharpSTargetLeavesTheURLAlone(t *testing.T) {
 		a := novoAmbiente(t)
 		dono := a.usuario(t)
 		alvo := a.alvoGravadoComSharpS(t, dono, gravada)
-		got, err := a.svc.Update(context.Background(), dono, alvo.ID, targets.Patch{Enabled: &pausado})
+		got, err := a.svc.Update(context.Background(), targets.EscopoDe(t, a.pool, dono), alvo.ID, targets.Patch{Enabled: &pausado})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -677,7 +680,7 @@ func TestEditingAStoredSharpSURLDropsTheHeaders(t *testing.T) {
 			dono := a.usuario(t)
 			alvo := a.alvoGravadoComSharpS(t, dono, caso.gravada)
 
-			got, err := a.svc.Update(context.Background(), dono, alvo.ID, targets.Patch{URL: &caso.nova})
+			got, err := a.svc.Update(context.Background(), targets.EscopoDe(t, a.pool, dono), alvo.ID, targets.Patch{URL: &caso.nova})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -695,7 +698,7 @@ func TestEditingAStoredSharpSURLDropsTheHeaders(t *testing.T) {
 		dono := a.usuario(t)
 		alvo := a.alvoGravadoComSharpS(t, dono, "https://STRAẞE.de/saude")
 		nova := "https://straße.de/saude"
-		got, err := a.svc.Update(context.Background(), dono, alvo.ID, targets.Patch{
+		got, err := a.svc.Update(context.Background(), targets.EscopoDe(t, a.pool, dono), alvo.ID, targets.Patch{
 			URL: &nova, SetHeaders: true, Headers: map[string]string{"X-Nova": "redigitado"},
 		})
 		if err != nil {
@@ -726,7 +729,7 @@ func TestUpdateCannotWriteASharpSURL(t *testing.T) {
 			dono := a.usuario(t)
 			alvo := a.alvoGravadoComSharpS(t, dono, caso.gravada)
 
-			_, err := a.svc.Update(context.Background(), dono, alvo.ID, targets.Patch{URL: caso.nova})
+			_, err := a.svc.Update(context.Background(), targets.EscopoDe(t, a.pool, dono), alvo.ID, targets.Patch{URL: caso.nova})
 			var verr *targets.ValidationError
 			if !errors.As(err, &verr) || verr.Fields[0].Field != "url" || verr.Fields[0].Reason != targets.ReasonInvalid {
 				t.Fatalf("erro = %v, queria ValidationError em url", err)
@@ -768,7 +771,7 @@ func TestPatchToAnotherHostForgetsTheCertificate(t *testing.T) {
 	a := novoAmbiente(t)
 	ctx := context.Background()
 	dono := a.usuario(t)
-	alvo, err := a.svc.Create(ctx, dono, entrada())
+	alvo, err := a.svc.Create(ctx, targets.EscopoDe(t, a.pool, dono), entrada())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -777,7 +780,7 @@ func TestPatchToAnotherHostForgetsTheCertificate(t *testing.T) {
 	a.gravarValidade(t, alvo.ID, notAfter, observedAt)
 
 	caminho := "https://api.exemplo.com/v2/health"
-	got, err := a.svc.Update(ctx, dono, alvo.ID, targets.Patch{URL: &caminho})
+	got, err := a.svc.Update(ctx, targets.EscopoDe(t, a.pool, dono), alvo.ID, targets.Patch{URL: &caminho})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -791,14 +794,14 @@ func TestPatchToAnotherHostForgetsTheCertificate(t *testing.T) {
 	// Outro host com o PATCH recusado: nada muda, nem a validade.
 	outro := "https://outro.exemplo.com/health"
 	timeoutInvalido := int32(0)
-	if _, err := a.svc.Update(ctx, dono, alvo.ID, targets.Patch{URL: &outro, TimeoutMS: &timeoutInvalido}); err == nil {
+	if _, err := a.svc.Update(ctx, targets.EscopoDe(t, a.pool, dono), alvo.ID, targets.Patch{URL: &outro, TimeoutMS: &timeoutInvalido}); err == nil {
 		t.Fatal("PATCH com timeout_ms 0 passou")
 	}
 	if !a.temValidade(t, alvo.ID) {
 		t.Error("o PATCH recusado apagou a validade")
 	}
 
-	got, err = a.svc.Update(ctx, dono, alvo.ID, targets.Patch{URL: &outro})
+	got, err = a.svc.Update(ctx, targets.EscopoDe(t, a.pool, dono), alvo.ID, targets.Patch{URL: &outro})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -844,21 +847,21 @@ func TestContentRuleRoundTrip(t *testing.T) {
 	dono := a.usuario(t)
 	in := entrada()
 	in.ContentRule = regraDeStatus()
-	criado, err := a.svc.Create(ctx, dono, in)
+	criado, err := a.svc.Create(ctx, targets.EscopoDe(t, a.pool, dono), in)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !mesmaRegraDeTeste(criado.ContentRule, regraDeStatus()) {
 		t.Errorf("Create devolveu a regra %+v, queria %+v", criado.ContentRule, regraDeStatus())
 	}
-	lido, err := a.svc.Get(ctx, dono, criado.ID)
+	lido, err := a.svc.Get(ctx, targets.EscopoDe(t, a.pool, dono), criado.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !mesmaRegraDeTeste(lido.ContentRule, regraDeStatus()) {
 		t.Errorf("Get devolveu a regra %+v, queria %+v", lido.ContentRule, regraDeStatus())
 	}
-	lista, err := a.svc.List(ctx, dono, nil, 0)
+	lista, err := a.svc.List(ctx, targets.EscopoDe(t, a.pool, dono), nil, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -867,28 +870,28 @@ func TestContentRuleRoundTrip(t *testing.T) {
 	}
 
 	nome := "Outro nome"
-	mantido, err := a.svc.Update(ctx, dono, criado.ID, targets.Patch{Name: &nome})
+	mantido, err := a.svc.Update(ctx, targets.EscopoDe(t, a.pool, dono), criado.ID, targets.Patch{Name: &nome})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !mesmaRegraDeTeste(mantido.ContentRule, regraDeStatus()) {
 		t.Errorf("Update sem SetContentRule devolveu a regra %+v, queria %+v", mantido.ContentRule, regraDeStatus())
 	}
-	if lido, err = a.svc.Get(ctx, dono, criado.ID); err != nil {
+	if lido, err = a.svc.Get(ctx, targets.EscopoDe(t, a.pool, dono), criado.ID); err != nil {
 		t.Fatal(err)
 	}
 	if !mesmaRegraDeTeste(lido.ContentRule, regraDeStatus()) {
 		t.Errorf("depois de um PATCH sem SetContentRule a regra gravada é %+v, queria %+v", lido.ContentRule, regraDeStatus())
 	}
 
-	limpo, err := a.svc.Update(ctx, dono, criado.ID, targets.Patch{SetContentRule: true})
+	limpo, err := a.svc.Update(ctx, targets.EscopoDe(t, a.pool, dono), criado.ID, targets.Patch{SetContentRule: true})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if limpo.ContentRule != nil {
 		t.Errorf("Update com SetContentRule e nil devolveu a regra %+v", limpo.ContentRule)
 	}
-	if lido, err = a.svc.Get(ctx, dono, criado.ID); err != nil {
+	if lido, err = a.svc.Get(ctx, targets.EscopoDe(t, a.pool, dono), criado.ID); err != nil {
 		t.Fatal(err)
 	}
 	if lido.ContentRule != nil {
@@ -904,17 +907,17 @@ func TestPatchToHeadWithRuleIsRefused(t *testing.T) {
 	dono := a.usuario(t)
 	in := entrada()
 	in.ContentRule = regraDeStatus()
-	alvo, err := a.svc.Create(ctx, dono, in)
+	alvo, err := a.svc.Create(ctx, targets.EscopoDe(t, a.pool, dono), in)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	head := "HEAD"
-	_, err = a.svc.Update(ctx, dono, alvo.ID, targets.Patch{Method: &head})
+	_, err = a.svc.Update(ctx, targets.EscopoDe(t, a.pool, dono), alvo.ID, targets.Patch{Method: &head})
 	if !temErroDeCampo(err, "content_rule", targets.ReasonForbidden) {
 		t.Errorf("erro = %v, queria ValidationError content_rule forbidden", err)
 	}
-	relido, err := a.svc.Get(ctx, dono, alvo.ID)
+	relido, err := a.svc.Get(ctx, targets.EscopoDe(t, a.pool, dono), alvo.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -931,12 +934,12 @@ func TestPatchAddingAcceptEncodingWithRuleIsRefused(t *testing.T) {
 	dono := a.usuario(t)
 	in := entrada()
 	in.ContentRule = regraDeStatus()
-	alvo, err := a.svc.Create(ctx, dono, in)
+	alvo, err := a.svc.Create(ctx, targets.EscopoDe(t, a.pool, dono), in)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	_, err = a.svc.Update(ctx, dono, alvo.ID, targets.Patch{
+	_, err = a.svc.Update(ctx, targets.EscopoDe(t, a.pool, dono), alvo.ID, targets.Patch{
 		SetHeaders: true, Headers: map[string]string{"Accept-Encoding": "br"},
 	})
 	if !temErroDeCampo(err, "content_rule", targets.ReasonForbidden) {
@@ -955,12 +958,12 @@ func TestPatchAddingRangeWithRuleIsRefused(t *testing.T) {
 	dono := a.usuario(t)
 	in := entrada()
 	in.ContentRule = regraDeStatus()
-	alvo, err := a.svc.Create(ctx, dono, in)
+	alvo, err := a.svc.Create(ctx, targets.EscopoDe(t, a.pool, dono), in)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	_, err = a.svc.Update(ctx, dono, alvo.ID, targets.Patch{
+	_, err = a.svc.Update(ctx, targets.EscopoDe(t, a.pool, dono), alvo.ID, targets.Patch{
 		SetHeaders: true, Headers: map[string]string{"Range": "bytes=0-1023"},
 	})
 	if !temErroDeCampo(err, "content_rule", targets.ReasonForbidden) {
@@ -979,7 +982,7 @@ func TestRuleChangeResetsHealthAndProbesNow(t *testing.T) {
 	dono := a.usuario(t)
 	in := entrada()
 	in.ContentRule = regraDeStatus()
-	alvo, err := a.svc.Create(ctx, dono, in)
+	alvo, err := a.svc.Create(ctx, targets.EscopoDe(t, a.pool, dono), in)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -991,7 +994,7 @@ func TestRuleChangeResetsHealthAndProbesNow(t *testing.T) {
 	}
 
 	outra := &targets.ContentRule{Mode: targets.ContentJSONEquals, Value: `"pronto"`, JSONPointer: "/status"}
-	if _, err := a.svc.Update(ctx, dono, alvo.ID, targets.Patch{SetContentRule: true, ContentRule: outra}); err != nil {
+	if _, err := a.svc.Update(ctx, targets.EscopoDe(t, a.pool, dono), alvo.ID, targets.Patch{SetContentRule: true, ContentRule: outra}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1024,7 +1027,7 @@ func TestSameRuleOrOtherFieldKeepsTheHysteresis(t *testing.T) {
 			dono := a.usuario(t)
 			in := entrada()
 			in.ContentRule = regraDeStatus()
-			alvo, err := a.svc.Create(ctx, dono, in)
+			alvo, err := a.svc.Create(ctx, targets.EscopoDe(t, a.pool, dono), in)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1036,7 +1039,7 @@ func TestSameRuleOrOtherFieldKeepsTheHysteresis(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			if _, err := a.svc.Update(ctx, dono, alvo.ID, p); err != nil {
+			if _, err := a.svc.Update(ctx, targets.EscopoDe(t, a.pool, dono), alvo.ID, p); err != nil {
 				t.Fatal(err)
 			}
 

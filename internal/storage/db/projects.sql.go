@@ -67,3 +67,50 @@ func (q *Queries) GetDefaultProjectID(ctx context.Context, titularID uuid.UUID) 
 	err := row.Scan(&id)
 	return id, err
 }
+
+const listMyProjects = `-- name: ListMyProjects :many
+SELECT p.id, p.name, p.is_default, m.role, p.created_at
+  FROM project_members m
+  JOIN projects p ON p.id = m.project_id
+  JOIN users t ON t.id = p.titular_id
+ WHERE m.user_id = $1 AND t.suspended_at IS NULL
+ ORDER BY p.is_default DESC, p.id
+`
+
+type ListMyProjectsRow struct {
+	ID        uuid.UUID
+	Name      string
+	IsDefault bool
+	Role      string
+	CreatedAt time.Time
+}
+
+// Os projetos de que user_id é membro, com o papel dele, sem os de titular
+// suspenso (os membros perdem o acesso enquanto durar a suspensão). O padrão
+// vem primeiro. Roda no escopo do usuário: project_members_own_select já
+// restringe aos vínculos dele, e o filtro por user_id deixa isso explícito.
+func (q *Queries) ListMyProjects(ctx context.Context, userID uuid.UUID) ([]ListMyProjectsRow, error) {
+	rows, err := q.db.Query(ctx, listMyProjects, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListMyProjectsRow
+	for rows.Next() {
+		var i ListMyProjectsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.IsDefault,
+			&i.Role,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}

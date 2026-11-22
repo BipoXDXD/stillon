@@ -1,5 +1,7 @@
--- Canais (spec §8, §5.8). As desta seção rodam sob InUserTx e filtram por
--- user_id; as duas do fim rodam sob InVerifyTx.
+-- Canais (spec §8, §5.8). As do dono rodam sob InProjectTx e filtram por
+-- project_id; as exceções, por user_id, são a cota do usuário (LockUser,
+-- CountChannels). FindChannelByVerification e ConfirmChannel rodam sob
+-- InVerifyTx.
 
 -- Serializa as criações de canal do mesmo usuário, para que o limite de
 -- canais valha também contra duas requisições simultâneas. users não tem
@@ -10,18 +12,26 @@ SELECT id FROM users WHERE id = $1 FOR UPDATE;
 -- name: CountChannels :one
 SELECT count(*) FROM notif_channels WHERE user_id = $1;
 
+-- user_id é quem criou o canal; project_id, o projeto em que ele vive, e
+-- sempre vem: no escopo de projeto o gatilho preencher_project_id_padrao não
+-- preenche, e a RLS recusaria o nulo.
 -- name: InsertChannel :exec
 INSERT INTO notif_channels (id, user_id, kind, config_enc, verified_at,
-                            verify_token_hash, verify_expires_at, enabled, created_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, true, $8);
+                            verify_token_hash, verify_expires_at, enabled, created_at,
+                            project_id)
+VALUES (sqlc.arg(id), sqlc.arg(user_id), sqlc.arg(kind), sqlc.arg(config_enc),
+        sqlc.narg(verified_at), sqlc.narg(verify_token_hash), sqlc.narg(verify_expires_at),
+        true, sqlc.arg(created_at), sqlc.arg(project_id)::uuid);
 
--- Sem paginação: o limite por usuário é pequeno (notify.MaxChannels).
+-- Sem paginação: a listagem traz os canais de quem chama no projeto atual,
+-- que nunca passam do limite pequeno do usuário (notify.MaxChannels); o teto
+-- por titular vem no PR 2b.
 -- name: ListChannels :many
 SELECT c.id, c.kind, c.config_enc, c.verified_at, c.verify_expires_at, c.enabled, c.created_at,
        h.last_success_at, h.last_failure_at, h.last_error
   FROM notif_channels c
   LEFT JOIN channel_health h ON h.channel_id = c.id
- WHERE c.user_id = $1
+ WHERE c.project_id = sqlc.arg(project_id)::uuid
  ORDER BY c.id DESC;
 
 -- Um canal no formato da listagem (ListChannels), para a resposta do PATCH
@@ -31,28 +41,28 @@ SELECT c.id, c.kind, c.config_enc, c.verified_at, c.verify_expires_at, c.enabled
        h.last_success_at, h.last_failure_at, h.last_error
   FROM notif_channels c
   LEFT JOIN channel_health h ON h.channel_id = c.id
- WHERE c.user_id = $1 AND c.id = $2;
+ WHERE c.project_id = sqlc.arg(project_id)::uuid AND c.id = sqlc.arg(id);
 
 -- Pausar e retomar. O despacho lê enabled na hora do envio
 -- (semEnvio): pausado, o aviso é cancelado, e retomar não o reenvia. Gravar o
 -- valor que já está afeta a linha do mesmo jeito: a rota é idempotente.
 -- name: SetChannelEnabled :execrows
 UPDATE notif_channels SET enabled = sqlc.arg(enabled)
- WHERE user_id = sqlc.arg(user_id) AND id = sqlc.arg(id);
+ WHERE project_id = sqlc.arg(project_id)::uuid AND id = sqlc.arg(id);
 
 -- name: GetChannel :one
 SELECT id, user_id, kind, config_enc, verified_at, verify_token_hash,
        verify_expires_at, enabled, created_at, project_id
-  FROM notif_channels WHERE user_id = $1 AND id = $2;
+  FROM notif_channels WHERE project_id = sqlc.arg(project_id)::uuid AND id = sqlc.arg(id);
 
 -- name: DeleteChannel :execrows
-DELETE FROM notif_channels WHERE user_id = $1 AND id = $2;
+DELETE FROM notif_channels WHERE project_id = sqlc.arg(project_id)::uuid AND id = sqlc.arg(id);
 
 -- Reenvio: troca o token. O antigo deixa de casar com qualquer linha.
 -- name: RenewVerification :execrows
 UPDATE notif_channels
    SET verify_token_hash = sqlc.arg(token_hash), verify_expires_at = sqlc.arg(expires_at)::timestamptz
- WHERE user_id = sqlc.arg(user_id) AND id = sqlc.arg(id)
+ WHERE project_id = sqlc.arg(project_id)::uuid AND id = sqlc.arg(id)
    AND kind = 'email' AND verified_at IS NULL;
 
 -- name: FindChannelByVerification :one

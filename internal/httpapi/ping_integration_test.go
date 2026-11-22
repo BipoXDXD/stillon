@@ -18,6 +18,7 @@ import (
 	"github.com/BipoXDXD/stillon/internal/httpapi"
 	"github.com/BipoXDXD/stillon/internal/storage"
 	"github.com/BipoXDXD/stillon/internal/storage/db"
+	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 )
 
 // pingPorTokenRajada é a rajada do balde por token, em pinghandlers.go.
@@ -32,7 +33,7 @@ func novoHeartbeat(t *testing.T, a *api) (uuid.UUID, string) {
 	periodo := int32(3600)
 	err := storage.InUserTx(ctx, a.pool, a.userID, func(q *db.Queries) error {
 		return q.InsertHeartbeat(ctx, db.InsertHeartbeatParams{
-			ID: id, UserID: a.userID, Name: "backup noturno", PingTokenHash: hash, PeriodSec: &periodo,
+			ID: id, UserID: a.userID, ProjectID: testdb.ProjetoPadrao(t, a.userID), Name: "backup noturno", PingTokenHash: hash, PeriodSec: &periodo,
 			GraceSec: 300, Enabled: true, CreatedAt: a.clk.Now(), DeadlineAt: a.clk.Now().Add(time.Hour),
 		})
 	})
@@ -72,7 +73,7 @@ func eventosDoHeartbeat(t *testing.T, a *api, id uuid.UUID) []db.HeartbeatEvent 
 	var ev []db.HeartbeatEvent
 	err := storage.InUserTx(ctx, a.pool, a.userID, func(q *db.Queries) error {
 		var err error
-		ev, err = q.ListHeartbeatEvents(ctx, db.ListHeartbeatEventsParams{UserID: a.userID, HeartbeatID: id, MaxRows: 100})
+		ev, err = q.ListHeartbeatEvents(ctx, db.ListHeartbeatEventsParams{ProjectID: testdb.ProjetoPadrao(t, a.userID), HeartbeatID: id, MaxRows: 100})
 		return err
 	})
 	if err != nil {
@@ -232,7 +233,7 @@ func TestPingUnknownAndRevokedTokensAnswerTheSame(t *testing.T) {
 	id, revogado := novoHeartbeat(t, a)
 	_, novoHash := heartbeat.NewPingToken()
 	err := storage.InUserTx(ctx, a.pool, a.userID, func(q *db.Queries) error {
-		return q.SetHeartbeatPingHash(ctx, db.SetHeartbeatPingHashParams{UserID: a.userID, ID: id, PingTokenHash: novoHash})
+		return q.SetHeartbeatPingHash(ctx, db.SetHeartbeatPingHashParams{ProjectID: testdb.ProjetoPadrao(t, a.userID), ID: id, PingTokenHash: novoHash})
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -430,7 +431,7 @@ func prazoDe(t *testing.T, a *api, id uuid.UUID) time.Time {
 	var h db.Heartbeat
 	err := storage.InUserTx(ctx, a.pool, a.userID, func(q *db.Queries) error {
 		var err error
-		h, err = q.GetHeartbeat(ctx, db.GetHeartbeatParams{UserID: a.userID, ID: id})
+		h, err = q.GetHeartbeat(ctx, db.GetHeartbeatParams{ProjectID: testdb.ProjetoPadrao(t, a.userID), ID: id})
 		return err
 	})
 	if err != nil {

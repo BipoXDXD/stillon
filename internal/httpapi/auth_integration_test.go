@@ -31,6 +31,8 @@ import (
 	"github.com/BipoXDXD/stillon/internal/storage"
 	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 	"github.com/BipoXDXD/stillon/internal/targets"
+	"github.com/BipoXDXD/stillon/internal/tenancy"
+	"github.com/BipoXDXD/stillon/internal/tenancy/pgstore"
 )
 
 const (
@@ -163,6 +165,7 @@ func newAPICom(t *testing.T, ajustar func(*config.Config), ajustarDeps func(*htt
 		StatusPages: statuspage.NewService(pool, clk),
 		Pings:       heartbeat.NewPingService(pool, clk),
 		Heartbeats:  heartbeat.NewService(pool, clk),
+		Projects:    tenancy.NewService(pgstore.New(pool), clk),
 		Clock:       clk, Ready: pool.Ping,
 		LimitesIP: storage.NewOrcamentosPorIP(pool, clk),
 	}

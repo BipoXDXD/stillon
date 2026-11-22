@@ -8,6 +8,7 @@ import (
 
 	"github.com/BipoXDXD/stillon/internal/apierr"
 	"github.com/BipoXDXD/stillon/internal/notify"
+	"github.com/BipoXDXD/stillon/internal/tenancy"
 )
 
 type ChannelHandlers struct {
@@ -53,11 +54,11 @@ func toChannelResponse(c notify.Channel) channelResponse {
 }
 
 func (h *ChannelHandlers) List(w http.ResponseWriter, r *http.Request) {
-	userID, ok := usuario(w, r)
+	sc, ok := escopo(w, r)
 	if !ok {
 		return
 	}
-	cs, err := h.svc.List(r.Context(), userID)
+	cs, err := h.svc.List(r.Context(), sc)
 	if h.falhou(w, r, "listar canais", err) {
 		return
 	}
@@ -69,7 +70,7 @@ func (h *ChannelHandlers) List(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *ChannelHandlers) Create(w http.ResponseWriter, r *http.Request) {
-	userID, ok := usuario(w, r)
+	sc, ok := escopo(w, r)
 	if !ok {
 		return
 	}
@@ -77,7 +78,7 @@ func (h *ChannelHandlers) Create(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	c, err := h.svc.Create(r.Context(), userID, notify.ChannelInput{
+	c, err := h.svc.Create(r.Context(), sc, notify.ChannelInput{
 		Kind: notify.Kind(req.Kind), URL: req.URL, Email: req.Email,
 	})
 	if h.falhou(w, r, "criar canal", err) {
@@ -87,11 +88,11 @@ func (h *ChannelHandlers) Create(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *ChannelHandlers) Delete(w http.ResponseWriter, r *http.Request) {
-	userID, id, ok := donoEID(w, r)
+	sc, id, ok := escopoEID(w, r)
 	if !ok {
 		return
 	}
-	if h.falhou(w, r, "apagar canal", h.svc.Delete(r.Context(), userID, id)) {
+	if h.falhou(w, r, "apagar canal", h.svc.Delete(r.Context(), sc, id)) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -105,7 +106,7 @@ func (h *ChannelHandlers) Delete(w http.ResponseWriter, r *http.Request) {
 // fechado). Sem enabled é required; enabled que não é booleano, null inclusive,
 // é invalid. Um null aceito viraria false e pausaria o canal por engano.
 func (h *ChannelHandlers) SetEnabled(w http.ResponseWriter, r *http.Request) {
-	userID, id, ok := donoEID(w, r)
+	sc, id, ok := escopoEID(w, r)
 	if !ok {
 		return
 	}
@@ -124,7 +125,7 @@ func (h *ChannelHandlers) SetEnabled(w http.ResponseWriter, r *http.Request) {
 		campoInvalido(w, r, "enabled", notify.ReasonInvalid)
 		return
 	}
-	c, err := h.svc.SetEnabled(r.Context(), userID, id, *enabled)
+	c, err := h.svc.SetEnabled(r.Context(), sc, id, *enabled)
 	if h.falhou(w, r, "pausar canal", err) {
 		return
 	}
@@ -132,16 +133,19 @@ func (h *ChannelHandlers) SetEnabled(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *ChannelHandlers) Resend(w http.ResponseWriter, r *http.Request) {
-	userID, id, ok := donoEID(w, r)
+	sc, id, ok := escopoEID(w, r)
 	if !ok {
 		return
 	}
-	if h.falhou(w, r, "reenviar verificação", h.svc.ResendVerification(r.Context(), userID, id)) {
+	if h.falhou(w, r, "reenviar verificação", h.svc.ResendVerification(r.Context(), sc, id)) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// falhou traduz o erro do serviço. Projeto sem pertença (ErrProjectNotFound,
+// da transação) é o mesmo 404 de canal inexistente; papel sem a permissão é
+// 403.
 func (h *ChannelHandlers) falhou(w http.ResponseWriter, r *http.Request, op string, err error) bool {
 	if err == nil {
 		return false
@@ -150,8 +154,10 @@ func (h *ChannelHandlers) falhou(w http.ResponseWriter, r *http.Request, op stri
 	switch {
 	case errors.As(err, &verr):
 		campoInvalido(w, r, verr.Field, verr.Reason)
-	case errors.Is(err, notify.ErrNotFound):
+	case errors.Is(err, notify.ErrNotFound), errors.Is(err, tenancy.ErrProjectNotFound):
 		apierr.WriteError(w, r, apierr.CodeNotFound)
+	case errors.Is(err, tenancy.ErrForbidden):
+		apierr.WriteError(w, r, apierr.CodeForbidden)
 	case errors.Is(err, notify.ErrLimitReached):
 		apierr.WriteError(w, r, apierr.CodeChannelLimit)
 	case errors.Is(err, notify.ErrNotPending):

@@ -1,6 +1,7 @@
 // Package targets é o domínio dos alvos de monitoramento: validação, segredo
-// dos headers e o CRUD. Toda operação exige userID (spec §5.5) e passa pela
-// RLS de storage.InUserTx.
+// dos headers e o CRUD. Toda operação recebe o escopo de projeto
+// (tenancy.ProjectScope) e roda sob storage.InProjectTx, que confere a
+// pertença e liga a RLS daquele projeto (spec §5.5).
 package targets
 
 import (
@@ -125,8 +126,9 @@ const (
 	DefaultPageSize int32 = 50
 	MaxPageSize     int32 = 100
 
-	// MaxTargetsPerUser é o teto de alvos por usuário: o
-	// mesmo número de MaxPageSize, então uma página de GET /targets sempre
+	// MaxTargetsPerUser é o teto de alvos. Até o PR 2b ele vale para o
+	// usuário dentro do projeto atual (a contagem roda sob InProjectTx); o
+	// teto por titular vem no PR 2b. É o mesmo número de MaxPageSize, então uma página de GET /targets sempre
 	// cabe todos, e o custo de GET /targets/summary, que não pagina, tem teto
 	// (~33 ms e ~180 KB com 100 alvos, medidos na spec).
 	MaxTargetsPerUser = int64(MaxPageSize)

@@ -47,16 +47,16 @@ func (q *Queries) CountChannels(ctx context.Context, userID uuid.UUID) (int64, e
 }
 
 const deleteChannel = `-- name: DeleteChannel :execrows
-DELETE FROM notif_channels WHERE user_id = $1 AND id = $2
+DELETE FROM notif_channels WHERE project_id = $1::uuid AND id = $2
 `
 
 type DeleteChannelParams struct {
-	UserID uuid.UUID
-	ID     uuid.UUID
+	ProjectID uuid.UUID
+	ID        uuid.UUID
 }
 
 func (q *Queries) DeleteChannel(ctx context.Context, arg DeleteChannelParams) (int64, error) {
-	result, err := q.db.Exec(ctx, deleteChannel, arg.UserID, arg.ID)
+	result, err := q.db.Exec(ctx, deleteChannel, arg.ProjectID, arg.ID)
 	if err != nil {
 		return 0, err
 	}
@@ -84,16 +84,16 @@ func (q *Queries) FindChannelByVerification(ctx context.Context, tokenHash []byt
 const getChannel = `-- name: GetChannel :one
 SELECT id, user_id, kind, config_enc, verified_at, verify_token_hash,
        verify_expires_at, enabled, created_at, project_id
-  FROM notif_channels WHERE user_id = $1 AND id = $2
+  FROM notif_channels WHERE project_id = $1::uuid AND id = $2
 `
 
 type GetChannelParams struct {
-	UserID uuid.UUID
-	ID     uuid.UUID
+	ProjectID uuid.UUID
+	ID        uuid.UUID
 }
 
 func (q *Queries) GetChannel(ctx context.Context, arg GetChannelParams) (NotifChannel, error) {
-	row := q.db.QueryRow(ctx, getChannel, arg.UserID, arg.ID)
+	row := q.db.QueryRow(ctx, getChannel, arg.ProjectID, arg.ID)
 	var i NotifChannel
 	err := row.Scan(
 		&i.ID,
@@ -115,12 +115,12 @@ SELECT c.id, c.kind, c.config_enc, c.verified_at, c.verify_expires_at, c.enabled
        h.last_success_at, h.last_failure_at, h.last_error
   FROM notif_channels c
   LEFT JOIN channel_health h ON h.channel_id = c.id
- WHERE c.user_id = $1 AND c.id = $2
+ WHERE c.project_id = $1::uuid AND c.id = $2
 `
 
 type GetChannelViewParams struct {
-	UserID uuid.UUID
-	ID     uuid.UUID
+	ProjectID uuid.UUID
+	ID        uuid.UUID
 }
 
 type GetChannelViewRow struct {
@@ -139,7 +139,7 @@ type GetChannelViewRow struct {
 // Um canal no formato da listagem (ListChannels), para a resposta do PATCH
 // /channels/{id}.
 func (q *Queries) GetChannelView(ctx context.Context, arg GetChannelViewParams) (GetChannelViewRow, error) {
-	row := q.db.QueryRow(ctx, getChannelView, arg.UserID, arg.ID)
+	row := q.db.QueryRow(ctx, getChannelView, arg.ProjectID, arg.ID)
 	var i GetChannelViewRow
 	err := row.Scan(
 		&i.ID,
@@ -158,8 +158,11 @@ func (q *Queries) GetChannelView(ctx context.Context, arg GetChannelViewParams) 
 
 const insertChannel = `-- name: InsertChannel :exec
 INSERT INTO notif_channels (id, user_id, kind, config_enc, verified_at,
-                            verify_token_hash, verify_expires_at, enabled, created_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, true, $8)
+                            verify_token_hash, verify_expires_at, enabled, created_at,
+                            project_id)
+VALUES ($1, $2, $3, $4,
+        $5, $6, $7,
+        true, $8, $9::uuid)
 `
 
 type InsertChannelParams struct {
@@ -171,8 +174,12 @@ type InsertChannelParams struct {
 	VerifyTokenHash []byte
 	VerifyExpiresAt *time.Time
 	CreatedAt       time.Time
+	ProjectID       uuid.UUID
 }
 
+// user_id é quem criou o canal; project_id, o projeto em que ele vive, e
+// sempre vem: no escopo de projeto o gatilho preencher_project_id_padrao não
+// preenche, e a RLS recusaria o nulo.
 func (q *Queries) InsertChannel(ctx context.Context, arg InsertChannelParams) error {
 	_, err := q.db.Exec(ctx, insertChannel,
 		arg.ID,
@@ -183,6 +190,7 @@ func (q *Queries) InsertChannel(ctx context.Context, arg InsertChannelParams) er
 		arg.VerifyTokenHash,
 		arg.VerifyExpiresAt,
 		arg.CreatedAt,
+		arg.ProjectID,
 	)
 	return err
 }
@@ -223,7 +231,7 @@ SELECT c.id, c.kind, c.config_enc, c.verified_at, c.verify_expires_at, c.enabled
        h.last_success_at, h.last_failure_at, h.last_error
   FROM notif_channels c
   LEFT JOIN channel_health h ON h.channel_id = c.id
- WHERE c.user_id = $1
+ WHERE c.project_id = $1::uuid
  ORDER BY c.id DESC
 `
 
@@ -240,9 +248,11 @@ type ListChannelsRow struct {
 	LastError       *string
 }
 
-// Sem paginação: o limite por usuário é pequeno (notify.MaxChannels).
-func (q *Queries) ListChannels(ctx context.Context, userID uuid.UUID) ([]ListChannelsRow, error) {
-	rows, err := q.db.Query(ctx, listChannels, userID)
+// Sem paginação: a listagem traz os canais de quem chama no projeto atual,
+// que nunca passam do limite pequeno do usuário (notify.MaxChannels); o teto
+// por titular vem no PR 2b.
+func (q *Queries) ListChannels(ctx context.Context, projectID uuid.UUID) ([]ListChannelsRow, error) {
+	rows, err := q.db.Query(ctx, listChannels, projectID)
 	if err != nil {
 		return nil, err
 	}
@@ -277,8 +287,10 @@ const lockUser = `-- name: LockUser :exec
 SELECT id FROM users WHERE id = $1 FOR UPDATE
 `
 
-// Canais (spec §8, §5.8). As desta seção rodam sob InUserTx e filtram por
-// user_id; as duas do fim rodam sob InVerifyTx.
+// Canais (spec §8, §5.8). As do dono rodam sob InProjectTx e filtram por
+// project_id; as exceções, por user_id, são a cota do usuário (LockUser,
+// CountChannels). FindChannelByVerification e ConfirmChannel rodam sob
+// InVerifyTx.
 // Serializa as criações de canal do mesmo usuário, para que o limite de
 // canais valha também contra duas requisições simultâneas. users não tem
 // RLS.
@@ -290,14 +302,14 @@ func (q *Queries) LockUser(ctx context.Context, id uuid.UUID) error {
 const renewVerification = `-- name: RenewVerification :execrows
 UPDATE notif_channels
    SET verify_token_hash = $1, verify_expires_at = $2::timestamptz
- WHERE user_id = $3 AND id = $4
+ WHERE project_id = $3::uuid AND id = $4
    AND kind = 'email' AND verified_at IS NULL
 `
 
 type RenewVerificationParams struct {
 	TokenHash []byte
 	ExpiresAt time.Time
-	UserID    uuid.UUID
+	ProjectID uuid.UUID
 	ID        uuid.UUID
 }
 
@@ -306,7 +318,7 @@ func (q *Queries) RenewVerification(ctx context.Context, arg RenewVerificationPa
 	result, err := q.db.Exec(ctx, renewVerification,
 		arg.TokenHash,
 		arg.ExpiresAt,
-		arg.UserID,
+		arg.ProjectID,
 		arg.ID,
 	)
 	if err != nil {
@@ -317,20 +329,20 @@ func (q *Queries) RenewVerification(ctx context.Context, arg RenewVerificationPa
 
 const setChannelEnabled = `-- name: SetChannelEnabled :execrows
 UPDATE notif_channels SET enabled = $1
- WHERE user_id = $2 AND id = $3
+ WHERE project_id = $2::uuid AND id = $3
 `
 
 type SetChannelEnabledParams struct {
-	Enabled bool
-	UserID  uuid.UUID
-	ID      uuid.UUID
+	Enabled   bool
+	ProjectID uuid.UUID
+	ID        uuid.UUID
 }
 
 // Pausar e retomar. O despacho lê enabled na hora do envio
 // (semEnvio): pausado, o aviso é cancelado, e retomar não o reenvia. Gravar o
 // valor que já está afeta a linha do mesmo jeito: a rota é idempotente.
 func (q *Queries) SetChannelEnabled(ctx context.Context, arg SetChannelEnabledParams) (int64, error) {
-	result, err := q.db.Exec(ctx, setChannelEnabled, arg.Enabled, arg.UserID, arg.ID)
+	result, err := q.db.Exec(ctx, setChannelEnabled, arg.Enabled, arg.ProjectID, arg.ID)
 	if err != nil {
 		return 0, err
 	}

@@ -24,6 +24,7 @@ import (
 	"github.com/BipoXDXD/stillon/internal/prober"
 	"github.com/BipoXDXD/stillon/internal/storage"
 	"github.com/BipoXDXD/stillon/internal/storage/db"
+	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 )
 
 var corpoDePeriodo = map[string]any{
@@ -1378,7 +1379,7 @@ func encherHeartbeats(t *testing.T, a *api, n int64) {
 		for range n {
 			_, hash := heartbeat.NewPingToken()
 			if err := q.InsertHeartbeat(ctx, db.InsertHeartbeatParams{
-				ID: uuid.Must(uuid.NewV7()), UserID: a.userID, Name: "h", PingTokenHash: hash, PeriodSec: &periodo,
+				ID: uuid.Must(uuid.NewV7()), UserID: a.userID, ProjectID: testdb.ProjetoPadrao(t, a.userID), Name: "h", PingTokenHash: hash, PeriodSec: &periodo,
 				GraceSec: 300, Enabled: true, CreatedAt: a.clk.Now(), DeadlineAt: a.clk.Now().Add(time.Hour),
 			}); err != nil {
 				return err

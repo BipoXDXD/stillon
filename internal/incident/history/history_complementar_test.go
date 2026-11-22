@@ -21,14 +21,14 @@ func TestListPreservesDatabaseErrorAndRecoversComplementar(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	got, err := b.svc.List(ctx, dono, history.Filter{})
+	got, err := b.svc.List(ctx, history.EscopoDe(t, b.pool, dono), history.Filter{})
 	assertRelationErrorComplementar(t, err, "listar incidentes: ")
 	if len(got) != 0 {
 		t.Fatalf("List devolveu incidentes apesar da falha do banco: %+v", got)
 	}
 
 	restaurar()
-	got, err = b.svc.List(ctx, dono, history.Filter{})
+	got, err = b.svc.List(ctx, history.EscopoDe(t, b.pool, dono), history.Filter{})
 	if err != nil || len(got) != 1 {
 		t.Fatalf("List não se recuperou após restaurar schema: %d incidentes, erro=%v", len(got), err)
 	}
@@ -46,7 +46,7 @@ func TestAckPreservesDatabaseErrorAndRecoversComplementar(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	got, err := b.svc.Ack(ctx, dono, inc)
+	got, err := b.svc.Ack(ctx, history.EscopoDe(t, b.pool, dono), inc)
 	if errors.Is(err, history.ErrNotFound) {
 		t.Fatalf("Ack confundiu falha do banco com incidente inexistente: %v", err)
 	}
@@ -56,15 +56,15 @@ func TestAckPreservesDatabaseErrorAndRecoversComplementar(t *testing.T) {
 	}
 
 	restaurar()
-	items, err := b.svc.List(ctx, dono, history.Filter{})
+	items, err := b.svc.List(ctx, history.EscopoDe(t, b.pool, dono), history.Filter{})
 	if err != nil || len(items) != 1 || items[0].ID != inc || items[0].AckAt != nil {
 		t.Fatalf("Ack com falha alterou o incidente: itens=%+v, erro=%v", items, err)
 	}
-	got, err = b.svc.Ack(ctx, dono, inc)
+	got, err = b.svc.Ack(ctx, history.EscopoDe(t, b.pool, dono), inc)
 	if err != nil || got.ID != inc || got.AckAt == nil || !got.AckAt.Equal(agora) {
 		t.Fatalf("Ack não se recuperou após restaurar schema: incidente=%+v, erro=%v", got, err)
 	}
-	items, err = b.svc.List(ctx, dono, history.Filter{})
+	items, err = b.svc.List(ctx, history.EscopoDe(t, b.pool, dono), history.Filter{})
 	if err != nil || len(items) != 1 || items[0].AckAt == nil || !items[0].AckAt.Equal(agora) {
 		t.Fatalf("reconhecimento recuperado não foi persistido: itens=%+v, erro=%v", items, err)
 	}

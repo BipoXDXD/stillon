@@ -10,6 +10,7 @@ import (
 
 	"github.com/BipoXDXD/stillon/internal/clock"
 	"github.com/BipoXDXD/stillon/internal/storage/testdb"
+	"github.com/BipoXDXD/stillon/internal/tenancy"
 )
 
 // O dono despublica enquanto uma projeção está no ar. A projeção leu a página
@@ -25,7 +26,9 @@ func TestUnpublishDuringAProjectionIsNotUndoneByTheCache(t *testing.T) {
 		dono, dono.String()+"@exemplo.com"); err != nil {
 		t.Fatal(err)
 	}
-	p, err := svc.Create(ctx, dono, Input{Slug: "empresa", Title: "Status", Published: true})
+	// O papel vale pelo lido no banco: o do escopo montado à mão não conta.
+	escopo := tenancy.ProjectScope{ProjectID: testdb.ProjetoPadrao(t, dono), UserID: dono, Role: tenancy.RoleOwner}
+	p, err := svc.Create(ctx, escopo, Input{Slug: "empresa", Title: "Status", Published: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -33,7 +36,7 @@ func TestUnpublishDuringAProjectionIsNotUndoneByTheCache(t *testing.T) {
 	nao := false
 	svc.depoisDeProjetar = func(string) {
 		svc.depoisDeProjetar = nil // uma vez só
-		if _, err := svc.Update(ctx, dono, p.ID, Patch{Published: &nao}); err != nil {
+		if _, err := svc.Update(ctx, escopo, p.ID, Patch{Published: &nao}); err != nil {
 			t.Error(err)
 		}
 	}

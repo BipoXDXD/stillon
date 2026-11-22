@@ -2,12 +2,14 @@ package storage_test
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/BipoXDXD/stillon/internal/storage"
@@ -64,17 +66,12 @@ var insercoesAntigas = []insercaoAntiga{
 }
 
 // inserirComSQLAntigo grava uma linha com o INSERT antigo no escopo do dono
-// (o InUserTx) e, se projetoDoEscopo vier, também com app.project_id ligado.
-func inserirComSQLAntigo(t *testing.T, pool *pgxpool.Pool, ins insercaoAntiga, dono uuid.UUID, projetoDoEscopo *uuid.UUID) uuid.UUID {
+// (o InUserTx).
+func inserirComSQLAntigo(t *testing.T, pool *pgxpool.Pool, ins insercaoAntiga, dono uuid.UUID) uuid.UUID {
 	t.Helper()
 	ctx := context.Background()
 	id := novoID()
 	err := emEscopo(t, pool, "app.user_id", dono.String(), func(tx pgx.Tx) error {
-		if projetoDoEscopo != nil {
-			if _, err := tx.Exec(ctx, `SELECT set_config('app.project_id', $1, true)`, projetoDoEscopo.String()); err != nil {
-				return err
-			}
-		}
 		_, err := tx.Exec(ctx, ins.sql, ins.args(id, dono)...)
 		return err
 	})
@@ -116,7 +113,7 @@ func TestOlderBinaryInsertsLandInDefaultProject(t *testing.T) {
 		t.Run(ins.tabela, func(t *testing.T) {
 			dono := novoUsuario(t, pool)
 			projeto := testdb.ProjetoPadrao(t, dono)
-			id := inserirComSQLAntigo(t, pool, ins, dono, nil)
+			id := inserirComSQLAntigo(t, pool, ins, dono)
 			if got := projectIDDe(t, ins.tabela, id); got == nil || *got != projeto {
 				t.Errorf("%s: project_id = %v, queria o padrão %s", ins.tabela, got, projeto)
 			}
@@ -131,7 +128,7 @@ func TestInsertWithoutDefaultProjectKeepsNullProjectID(t *testing.T) {
 	for _, ins := range insercoesAntigas {
 		t.Run(ins.tabela, func(t *testing.T) {
 			dono := novoUsuario(t, pool)
-			id := inserirComSQLAntigo(t, pool, ins, dono, nil)
+			id := inserirComSQLAntigo(t, pool, ins, dono)
 			if got := projectIDDe(t, ins.tabela, id); got != nil {
 				t.Errorf("%s: project_id = %s, queria NULL", ins.tabela, *got)
 			}
@@ -140,16 +137,26 @@ func TestInsertWithoutDefaultProjectKeepsNullProjectID(t *testing.T) {
 }
 
 // No escopo de projeto o gatilho não preenche: código novo que esquece o
-// project_id tem de falhar alto, não cair no Projeto padrão.
+// project_id tem de falhar alto, não cair no Projeto padrão. Desde a política
+// restritiva por projeto (rls_restrita_por_projeto), "falhar alto" é o 42501
+// dela: a linha fica com project_id NULL, que não é o projeto do escopo. O
+// escopo é o do próprio Projeto padrão, então um gatilho que preenchesse
+// faria o INSERT passar.
 func TestFillTriggerSkipsProjectScope(t *testing.T) {
 	pool := testdb.New(t)
+	ctx := context.Background()
 	for _, ins := range insercoesAntigas {
 		t.Run(ins.tabela, func(t *testing.T) {
 			dono := novoUsuario(t, pool)
 			projeto := testdb.ProjetoPadrao(t, dono)
-			id := inserirComSQLAntigo(t, pool, ins, dono, &projeto)
-			if got := projectIDDe(t, ins.tabela, id); got != nil {
-				t.Errorf("%s: project_id = %s no escopo de projeto, queria NULL", ins.tabela, *got)
+			err := emEscopoDeProjeto(t, pool, dono, projeto, func(tx pgx.Tx) error {
+				_, err := tx.Exec(ctx, ins.sql, ins.args(novoID(), dono)...)
+				return err
+			})
+			var pgErr *pgconn.PgError
+			politica := ins.tabela + "_so_projeto_do_escopo"
+			if !errors.As(err, &pgErr) || pgErr.Code != "42501" || !strings.Contains(pgErr.Message, politica) {
+				t.Errorf("%s: INSERT sem project_id no escopo de projeto: %v; queria 42501 da política %s", ins.tabela, err, politica)
 			}
 		})
 	}
@@ -193,7 +200,7 @@ func TestProjectIDIsImmutableOnceSet(t *testing.T) {
 	t.Run("NULL para o padrão passa", func(t *testing.T) {
 		for _, ins := range insercoesAntigas {
 			semProjeto := novoUsuario(t, pool)
-			id := inserirComSQLAntigo(t, pool, ins, semProjeto, nil)
+			id := inserirComSQLAntigo(t, pool, ins, semProjeto)
 			padrao := testdb.ProjetoPadrao(t, semProjeto)
 			comEscopo(t, pool, "app.user_id", semProjeto.String(), func(tx pgx.Tx) {
 				tag, err := tx.Exec(ctx, `UPDATE `+ins.tabela+` SET project_id = $1 WHERE id = $2`, padrao, id)
@@ -246,7 +253,7 @@ func TestGetTargetReturnsProjectID(t *testing.T) {
 	var row db.Target
 	err := storage.InUserTx(ctx, pool, dono, func(q *db.Queries) error {
 		var err error
-		row, err = q.GetTarget(ctx, db.GetTargetParams{UserID: dono, ID: alvo})
+		row, err = q.GetTarget(ctx, db.GetTargetParams{ProjectID: testdb.ProjetoDoAlvo(t, alvo), ID: alvo})
 		return err
 	})
 	if err != nil {

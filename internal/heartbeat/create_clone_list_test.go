@@ -77,7 +77,7 @@ func TestCreateRejectsInvalidInputAndWritesNothing(t *testing.T) {
 		t.Run(c.nome, func(t *testing.T) {
 			in := valido
 			c.mudar(&in)
-			got, token, err := svc.Create(t.Context(), a.dono, in)
+			got, token, err := svc.Create(t.Context(), a.escopo(t), in)
 			var ve *heartbeat.ValidationError
 			if !errors.As(err, &ve) || ve.Field != c.campo || ve.Reason != c.motivo {
 				t.Fatalf("Create = (%v, %v); queria %s %s", got.ID, err, c.campo, c.motivo)
@@ -103,7 +103,7 @@ func TestCloneCopiesTheConfigurationAndStartsFresh(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	original, tokenOriginal, err := svc.Create(ctx, a.dono, heartbeat.Input{
+	original, tokenOriginal, err := svc.Create(ctx, a.escopo(t), heartbeat.Input{
 		Name: "backup", Description: "dump noturno", Tags: []string{"banco", "noite"},
 		Schedule: cron, Grace: 10 * time.Minute, Enabled: false, PingResumes: true,
 	})
@@ -118,7 +118,7 @@ func TestCloneCopiesTheConfigurationAndStartsFresh(t *testing.T) {
 	// 13:00 UTC = 10:00 em São Paulo; o próximo disparo é 03:00 de amanhã
 	// (06:00 UTC), mais os 10 min de tolerância.
 	a.clk.Advance(time.Hour)
-	copia, tokenCopia, err := svc.Clone(ctx, a.dono, original.ID)
+	copia, tokenCopia, err := svc.Clone(ctx, a.escopo(t), original.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,7 +126,7 @@ func TestCloneCopiesTheConfigurationAndStartsFresh(t *testing.T) {
 		t.Fatalf("token da cópia %q; queria um novo, diferente do original", tokenCopia)
 	}
 
-	lida, err := svc.Get(ctx, a.dono, copia.ID)
+	lida, err := svc.Get(ctx, a.escopo(t), copia.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -163,7 +163,7 @@ func TestCloneOfAnotherUsersHeartbeatIsNotFoundAndWritesNothing(t *testing.T) {
 	alheio := a.outroDono(t)
 	id, _ := a.novoHeartbeat(t)
 
-	_, token, err := svc.Clone(t.Context(), alheio, id)
+	_, token, err := svc.Clone(t.Context(), a.escopoDe(t, alheio), id)
 	if !errors.Is(err, heartbeat.ErrNotFound) || token != "" {
 		t.Fatalf("Clone alheio = (%q, %v); queria ErrNotFound sem token", token, err)
 	}
@@ -185,7 +185,7 @@ func TestListShowsOnlyTheOwnersHeartbeatsWithTheirOwnTags(t *testing.T) {
 	alheio := a.outroDono(t)
 	criar := func(dono uuid.UUID, nome string, tags []string) uuid.UUID {
 		t.Helper()
-		h, _, err := svc.Create(ctx, dono, heartbeat.Input{Name: nome, Tags: tags, Schedule: hora, Grace: tolerancia, Enabled: true})
+		h, _, err := svc.Create(ctx, a.escopoDe(t, dono), heartbeat.Input{Name: nome, Tags: tags, Schedule: hora, Grace: tolerancia, Enabled: true})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -196,7 +196,7 @@ func TestListShowsOnlyTheOwnersHeartbeatsWithTheirOwnTags(t *testing.T) {
 	comFila := criar(a.dono, "fila", []string{"fila", "noite"})
 	criar(alheio, "do outro", []string{"segredo"})
 
-	lista, err := svc.List(ctx, a.dono, nil, 0)
+	lista, err := svc.List(ctx, a.escopo(t), nil, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -227,7 +227,7 @@ func TestListPagesByCursorAndLimit(t *testing.T) {
 	ctx := t.Context()
 	var ids []uuid.UUID
 	for _, nome := range []string{"um", "dois", "três"} {
-		h, _, err := svc.Create(ctx, a.dono, heartbeat.Input{Name: nome, Schedule: hora, Grace: tolerancia, Enabled: true})
+		h, _, err := svc.Create(ctx, a.escopo(t), heartbeat.Input{Name: nome, Schedule: hora, Grace: tolerancia, Enabled: true})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -241,14 +241,14 @@ func TestListPagesByCursorAndLimit(t *testing.T) {
 		return out
 	}
 
-	primeira, err := svc.List(ctx, a.dono, nil, 2)
+	primeira, err := svc.List(ctx, a.escopo(t), nil, 2)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got := nomes(primeira); !slices.Equal(got, []string{"três", "dois"}) {
 		t.Errorf("primeira página %v, queria [três dois]", got)
 	}
-	segunda, err := svc.List(ctx, a.dono, &ids[1], 2)
+	segunda, err := svc.List(ctx, a.escopo(t), &ids[1], 2)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -264,14 +264,14 @@ func TestGetWithoutTagsAndOfAnotherUser(t *testing.T) {
 	svc := heartbeat.NewService(a.pool, a.clk)
 	id, _ := a.novoHeartbeat(t)
 
-	h, err := svc.Get(t.Context(), a.dono, id)
+	h, err := svc.Get(t.Context(), a.escopo(t), id)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if h.Tags == nil || len(h.Tags) != 0 {
 		t.Errorf("tags %#v, queria lista vazia não nil", h.Tags)
 	}
-	if _, err := svc.Get(t.Context(), a.outroDono(t), id); !errors.Is(err, heartbeat.ErrNotFound) {
+	if _, err := svc.Get(t.Context(), a.escopoDe(t, a.outroDono(t)), id); !errors.Is(err, heartbeat.ErrNotFound) {
 		t.Errorf("Get alheio = %v; queria ErrNotFound", err)
 	}
 }

@@ -15,12 +15,12 @@ import (
 func TestSetEnabledPausesAndResumes(t *testing.T) {
 	b := novaBancadaCanais(t, true)
 	ctx := context.Background()
-	c, err := b.svc.Create(ctx, b.dono, ChannelInput{Kind: KindDiscord, URL: webhookValido})
+	c, err := b.svc.Create(ctx, b.escopo(t, b.dono), ChannelInput{Kind: KindDiscord, URL: webhookValido})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	pausado, err := b.svc.SetEnabled(ctx, b.dono, c.ID, false)
+	pausado, err := b.svc.SetEnabled(ctx, b.escopo(t, b.dono), c.ID, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -32,12 +32,12 @@ func TestSetEnabledPausesAndResumes(t *testing.T) {
 	}
 
 	// Pausar o que já está pausado não é erro nem muda nada (idempotente).
-	deNovo, err := b.svc.SetEnabled(ctx, b.dono, c.ID, false)
+	deNovo, err := b.svc.SetEnabled(ctx, b.escopo(t, b.dono), c.ID, false)
 	if err != nil || deNovo.Enabled {
 		t.Errorf("pausar de novo = %+v, %v", deNovo, err)
 	}
 
-	retomado, err := b.svc.SetEnabled(ctx, b.dono, c.ID, true)
+	retomado, err := b.svc.SetEnabled(ctx, b.escopo(t, b.dono), c.ID, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,20 +54,20 @@ func TestSetEnabledPausesAndResumes(t *testing.T) {
 func TestSetEnabledOnAnotherUsersChannelIsNotFound(t *testing.T) {
 	b := novaBancadaCanais(t, true)
 	ctx := context.Background()
-	c, err := b.svc.Create(ctx, b.dono, ChannelInput{Kind: KindDiscord, URL: webhookValido})
+	c, err := b.svc.Create(ctx, b.escopo(t, b.dono), ChannelInput{Kind: KindDiscord, URL: webhookValido})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := b.svc.SetEnabled(ctx, b.outro, c.ID, false); !errors.Is(err, ErrNotFound) {
+	if _, err := b.svc.SetEnabled(ctx, b.escopo(t, b.outro), c.ID, false); !errors.Is(err, ErrNotFound) {
 		t.Errorf("pausar canal alheio deu %v, queria ErrNotFound", err)
 	}
-	if _, err := b.svc.SetEnabled(ctx, b.dono, uuid.Must(uuid.NewV7()), false); !errors.Is(err, ErrNotFound) {
+	if _, err := b.svc.SetEnabled(ctx, b.escopo(t, b.dono), uuid.Must(uuid.NewV7()), false); !errors.Is(err, ErrNotFound) {
 		t.Errorf("pausar canal inexistente deu %v, queria ErrNotFound", err)
 	}
 	if cs := b.listar(t, b.dono); len(cs) != 1 || !cs[0].Enabled {
 		t.Fatalf("a tentativa do outro usuário mexeu no canal: %+v", cs)
 	}
-	if _, err := b.svc.SetEnabled(ctx, b.dono, c.ID, false); err != nil {
+	if _, err := b.svc.SetEnabled(ctx, b.escopo(t, b.dono), c.ID, false); err != nil {
 		t.Errorf("o dono pausando o próprio canal deu %v", err)
 	}
 }
@@ -80,7 +80,7 @@ func TestPausedChannelDropsAndResumedChannelSends(t *testing.T) {
 	ctx := context.Background()
 
 	abertura := b.enfileirar(t, incident.EventOpened)
-	if _, err := svc.SetEnabled(ctx, b.dono, b.canalID, false); err != nil {
+	if _, err := svc.SetEnabled(ctx, escopoPadrao(t, b.pool, b.dono), b.canalID, false); err != nil {
 		t.Fatal(err)
 	}
 	b.despachar(t, 1)
@@ -88,7 +88,7 @@ func TestPausedChannelDropsAndResumedChannelSends(t *testing.T) {
 		t.Fatalf("canal pausado: %d envios, status %s", b.canal.quantos(), b.estado(t, abertura).Status)
 	}
 
-	if _, err := svc.SetEnabled(ctx, b.dono, b.canalID, true); err != nil {
+	if _, err := svc.SetEnabled(ctx, escopoPadrao(t, b.pool, b.dono), b.canalID, true); err != nil {
 		t.Fatal(err)
 	}
 	fechamento := b.enfileirar(t, incident.EventResolved)

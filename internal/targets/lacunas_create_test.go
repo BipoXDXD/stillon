@@ -31,11 +31,11 @@ func TestCreateGravaCadaCampoInformadoEDevolveOMesmoQueOGetLe(t *testing.T) {
 		ContentRule: &targets.ContentRule{Mode: targets.ContentContains, Value: "tudo certo"},
 	}
 
-	criado, err := a.svc.Create(ctx, dono, in)
+	criado, err := a.svc.Create(ctx, targets.EscopoDe(t, a.pool, dono), in)
 	if err != nil {
 		t.Fatal(err)
 	}
-	lido, err := a.svc.Get(ctx, dono, criado.ID)
+	lido, err := a.svc.Get(ctx, targets.EscopoDe(t, a.pool, dono), criado.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,11 +86,11 @@ func TestCreateSemLimiarTagsNemRegraNasceSemEles(t *testing.T) {
 	ctx := context.Background()
 	dono := a.usuario(t)
 
-	criado, err := a.svc.Create(ctx, dono, targets.Input{Name: "Simples", URL: "https://simples.exemplo.com/", Enabled: true})
+	criado, err := a.svc.Create(ctx, targets.EscopoDe(t, a.pool, dono), targets.Input{Name: "Simples", URL: "https://simples.exemplo.com/", Enabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	lido, err := a.svc.Get(ctx, dono, criado.ID)
+	lido, err := a.svc.Get(ctx, targets.EscopoDe(t, a.pool, dono), criado.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,7 +121,7 @@ func TestCreateChamaODepoisDeContarUmaVezPorChamadaQueChegaAContar(t *testing.T)
 	conta := func(nome string, in targets.Input, queria int) {
 		t.Helper()
 		chamadas = 0
-		_, _ = a.svc.Create(ctx, dono, in)
+		_, _ = a.svc.Create(ctx, targets.EscopoDe(t, a.pool, dono), in)
 		if chamadas != queria {
 			t.Errorf("%s: depoisDeContar rodou %d vez(es), queria %d", nome, chamadas, queria)
 		}
@@ -144,7 +144,7 @@ func TestCreateDevolveOErroDoTetoSemEmbrulho(t *testing.T) {
 	dono := a.usuario(t)
 	a.encherAte(t, dono, int(targets.MaxTargetsPerUser))
 
-	_, err := a.svc.Create(context.Background(), dono, entrada())
+	_, err := a.svc.Create(context.Background(), targets.EscopoDe(t, a.pool, dono), entrada())
 
 	if err != targets.ErrLimitReached {
 		t.Fatalf("erro = %v, queria o próprio ErrLimitReached sem embrulho", err)
@@ -160,7 +160,7 @@ func TestCreateComOsDoisTetosEstouradosDevolveOTetoDoUsuario(t *testing.T) {
 	a.encherComRegra(t, dono, "https://example.com", targets.DefaultContentRulesPerHost, true)
 	a.encherAte(t, dono, int(targets.MaxTargetsPerUser)-targets.DefaultContentRulesPerHost)
 
-	_, err := a.svc.Create(context.Background(), dono, comRegra("https://example.com/nova"))
+	_, err := a.svc.Create(context.Background(), targets.EscopoDe(t, a.pool, dono), comRegra("https://example.com/nova"))
 
 	if err != targets.ErrLimitReached {
 		t.Fatalf("erro = %v, queria ErrLimitReached (teto do usuário tem precedência sobre o do host)", err)
@@ -175,7 +175,7 @@ func TestCreateEmbrulhaFalhaDeGravacaoEPreservaACausa(t *testing.T) {
 	ctx, cancelar := context.WithCancel(context.Background())
 	cancelar()
 
-	_, err := a.svc.Create(ctx, dono, entrada())
+	_, err := a.svc.Create(ctx, targets.EscopoDe(t, a.pool, dono), entrada())
 
 	if err == nil || !errors.Is(err, context.Canceled) {
 		t.Fatalf("erro = %v, queria algo que embrulhe context.Canceled", err)

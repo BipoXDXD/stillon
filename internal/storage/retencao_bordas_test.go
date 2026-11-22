@@ -281,6 +281,7 @@ func TestRetentionDeadFamilyProofsLivenessEdgeIsExclusiveAtNow(t *testing.T) {
 func TestConsolidationWindowIncludesFromAndExcludesTo(t *testing.T) {
 	pool := testdb.New(t)
 	dono := novoUsuario(t, pool)
+	testdb.ProjetoPadrao(t, dono)
 	alvo := novoAlvo(t, pool, dono, agora)
 	de, ate := hora(10, 0), hora(11, 0)
 	if err := storage.EnsureChecksPartitions(context.Background(), pool, de); err != nil {

@@ -121,7 +121,7 @@ func TestLogRunMigrationDownRemovesLogsAndColumns(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer pool.Close()
-	hb := novoHeartbeat(t, pool, novoUsuario(t, pool), "descida")
+	hb := novoHeartbeatNoBancoVazio(t, pool, novoUsuario(t, pool), "descida")
 	rid := novoID()
 	const inserir = `INSERT INTO heartbeat_events (id, heartbeat_id, at, kind, run_id, source) VALUES ($1, $2, $3, $4, $5, $6)`
 	comoSondador(t, pool, inserir, novoID(), hb, agora, "start", rid, "ping")

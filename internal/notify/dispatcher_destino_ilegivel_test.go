@@ -11,6 +11,7 @@ import (
 	"github.com/BipoXDXD/stillon/internal/incident"
 	"github.com/BipoXDXD/stillon/internal/storage"
 	"github.com/BipoXDXD/stillon/internal/storage/db"
+	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 )
 
 // Um destino que não abre (linha corrompida, ou canal selado com outra chave
@@ -81,7 +82,7 @@ func TestUnreadableDestinationFailsAloneAndTheOtherChannelStillSends(t *testing.
 func (b *bancada) canalPorID(t *testing.T, id uuid.UUID) Channel {
 	t.Helper()
 	svc := NewChannelService(b.pool, b.box, b.clk, nil, nil, "https://stillon.example")
-	cs, err := svc.List(context.Background(), b.dono)
+	cs, err := svc.List(context.Background(), escopoPadrao(t, b.pool, b.dono))
 	if err != nil {
 		t.Fatalf("List = %v", err)
 	}
@@ -107,7 +108,7 @@ func (b *bancada) novoCanalVerificado(t *testing.T) uuid.UUID {
 	agora := b.clk.Now()
 	err = storage.InUserTx(ctx, b.pool, b.dono, func(q *db.Queries) error {
 		return q.InsertChannel(ctx, db.InsertChannelParams{
-			ID: id, UserID: b.dono, Kind: string(KindDiscord), ConfigEnc: sealed, VerifiedAt: &agora, CreatedAt: agora,
+			ID: id, UserID: b.dono, ProjectID: testdb.ProjetoPadrao(t, b.dono), Kind: string(KindDiscord), ConfigEnc: sealed, VerifiedAt: &agora, CreatedAt: agora,
 		})
 	})
 	if err != nil {

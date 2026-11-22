@@ -12,12 +12,14 @@ import (
 	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 )
 
-// Espelho de filtro_dono_test.go para status_pages e status_page_items.
+// Espelho de filtro_dono_test.go para status_pages e status_page_items:
+// superusuário, sem RLS, e só o project_id do WHERE separa A de B. A e B são
+// dois projetos do MESMO usuário: o filtro por dono os deixaria passar.
 
-// itensDaPagina lê os alvos da página como o dono, sem RLS.
-func itensDaPagina(t *testing.T, q *db.Queries, dono, pagina uuid.UUID) []uuid.UUID {
+// itensDaPagina lê os alvos da página no projeto dado, sem RLS.
+func itensDaPagina(t *testing.T, q *db.Queries, projeto, pagina uuid.UUID) []uuid.UUID {
 	t.Helper()
-	itens, err := q.ListStatusPageItems(context.Background(), db.ListStatusPageItemsParams{UserID: dono, PageID: pagina})
+	itens, err := q.ListStatusPageItems(context.Background(), db.ListStatusPageItemsParams{ProjectID: projeto, PageID: pagina})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -30,23 +32,28 @@ func itensDaPagina(t *testing.T, q *db.Queries, dono, pagina uuid.UUID) []uuid.U
 
 // mesmaPagina compara campo a campo, com CreatedAt por Equal: a documentação de
 // time desaconselha == entre instantes, que também compara Location e relógio
-// monotônico.
+// monotônico. ProjectID é ponteiro (a coluna ainda aceita nulo): compara o
+// valor, não o endereço.
 func mesmaPagina(x, y db.StatusPage) bool {
 	criadasJuntas := x.CreatedAt.Equal(y.CreatedAt)
+	mesmoProjeto := (x.ProjectID == nil) == (y.ProjectID == nil) &&
+		(x.ProjectID == nil || *x.ProjectID == *y.ProjectID)
 	x.CreatedAt, y.CreatedAt = time.Time{}, time.Time{}
-	return criadasJuntas && x == y
+	x.ProjectID, y.ProjectID = nil, nil
+	return criadasJuntas && mesmoProjeto && x == y
 }
 
 func TestUpdateStatusPageFiltersOwnerWithoutRLS(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
-	a, b := novoUsuario(t, pool), novoUsuario(t, pool)
+	a := novoUsuario(t, pool)
+	pa, pb := testdb.ProjetoPadrao(t, a), testdb.NovoProjeto(t, a, "B")
 	paginaA := novaPagina(t, pool, a, "pagina-a", true)
 	q := queriesSemRLS(t)
-	atualizar := func(dono uuid.UUID, slug string) int64 {
+	atualizar := func(projeto uuid.UUID, slug string) int64 {
 		t.Helper()
 		n, err := q.UpdateStatusPage(ctx, db.UpdateStatusPageParams{
-			UserID: dono, ID: paginaA, Slug: slug, Title: "Outro", Published: false,
+			ProjectID: projeto, ID: paginaA, Slug: slug, Title: "Outro", Published: false,
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -55,7 +62,7 @@ func TestUpdateStatusPageFiltersOwnerWithoutRLS(t *testing.T) {
 	}
 	paginaDeA := func() db.StatusPage {
 		t.Helper()
-		p, err := q.GetStatusPage(ctx, a)
+		p, err := q.GetStatusPage(ctx, pa)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -63,13 +70,13 @@ func TestUpdateStatusPageFiltersOwnerWithoutRLS(t *testing.T) {
 	}
 	original := paginaDeA()
 
-	if n := atualizar(b, "de-b"); n != 0 {
+	if n := atualizar(pb, "de-b"); n != 0 {
 		t.Errorf("B alterou %d páginas de A sem RLS, queria 0", n)
 	}
 	if p := paginaDeA(); !mesmaPagina(p, original) {
 		t.Errorf("depois do UPDATE de B sem RLS, a página de A ficou %+v, queria %+v", p, original)
 	}
-	n := atualizar(a, "nova-a")
+	n := atualizar(pa, "nova-a")
 	if p := paginaDeA(); n != 1 || p.Slug != "nova-a" || p.Title != "Outro" || p.Published {
 		t.Errorf("A alterou a própria página: %d linhas, %+v; queria 1 com nova-a, Outro e não publicada", n, p)
 	}
@@ -77,15 +84,16 @@ func TestUpdateStatusPageFiltersOwnerWithoutRLS(t *testing.T) {
 
 func TestListStatusPageItemsFiltersOwnerWithoutRLS(t *testing.T) {
 	pool := testdb.New(t)
-	a, b := novoUsuario(t, pool), novoUsuario(t, pool)
+	a := novoUsuario(t, pool)
+	pa, pb := testdb.ProjetoPadrao(t, a), testdb.NovoProjeto(t, a, "B")
 	alvoA := novoAlvo(t, pool, a, agora)
 	paginaA := novaPagina(t, pool, a, "pagina-a", true, alvoA)
 	q := queriesSemRLS(t)
 
-	if itens := itensDaPagina(t, q, b, paginaA); len(itens) != 0 {
+	if itens := itensDaPagina(t, q, pb, paginaA); len(itens) != 0 {
 		t.Errorf("B leu os itens %v da página de A sem RLS", itens)
 	}
-	if itens := itensDaPagina(t, q, a, paginaA); !slices.Equal(itens, []uuid.UUID{alvoA}) {
+	if itens := itensDaPagina(t, q, pa, paginaA); !slices.Equal(itens, []uuid.UUID{alvoA}) {
 		t.Errorf("A leu %v, queria só %s", itens, alvoA)
 	}
 }
@@ -93,21 +101,22 @@ func TestListStatusPageItemsFiltersOwnerWithoutRLS(t *testing.T) {
 func TestDeleteStatusPageItemsFiltersOwnerWithoutRLS(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
-	a, b := novoUsuario(t, pool), novoUsuario(t, pool)
+	a := novoUsuario(t, pool)
+	pa, pb := testdb.ProjetoPadrao(t, a), testdb.NovoProjeto(t, a, "B")
 	alvoA := novoAlvo(t, pool, a, agora)
 	paginaA := novaPagina(t, pool, a, "pagina-a", true, alvoA)
 	q := queriesSemRLS(t)
 
-	if err := q.DeleteStatusPageItems(ctx, db.DeleteStatusPageItemsParams{UserID: b, PageID: paginaA}); err != nil {
+	if err := q.DeleteStatusPageItems(ctx, db.DeleteStatusPageItemsParams{ProjectID: pb, PageID: paginaA}); err != nil {
 		t.Fatal(err)
 	}
-	if itens := itensDaPagina(t, q, a, paginaA); !slices.Equal(itens, []uuid.UUID{alvoA}) {
+	if itens := itensDaPagina(t, q, pa, paginaA); !slices.Equal(itens, []uuid.UUID{alvoA}) {
 		t.Errorf("depois do DELETE de B sem RLS, a página de A ficou com %v", itens)
 	}
-	if err := q.DeleteStatusPageItems(ctx, db.DeleteStatusPageItemsParams{UserID: a, PageID: paginaA}); err != nil {
+	if err := q.DeleteStatusPageItems(ctx, db.DeleteStatusPageItemsParams{ProjectID: pa, PageID: paginaA}); err != nil {
 		t.Fatal(err)
 	}
-	if itens := itensDaPagina(t, q, a, paginaA); len(itens) != 0 {
+	if itens := itensDaPagina(t, q, pa, paginaA); len(itens) != 0 {
 		t.Errorf("A apagou os próprios itens e sobrou %v", itens)
 	}
 }
@@ -115,18 +124,19 @@ func TestDeleteStatusPageItemsFiltersOwnerWithoutRLS(t *testing.T) {
 func TestOwnTargetIDsFiltersOwnerWithoutRLS(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
-	a, b := novoUsuario(t, pool), novoUsuario(t, pool)
+	a := novoUsuario(t, pool)
+	pa, pb := testdb.ProjetoPadrao(t, a), testdb.NovoProjeto(t, a, "B")
 	alvoA := novoAlvo(t, pool, a, agora)
 	q := queriesSemRLS(t)
 
-	deB, err := q.OwnTargetIDs(ctx, db.OwnTargetIDsParams{UserID: b, Ids: []uuid.UUID{alvoA}})
+	deB, err := q.OwnTargetIDs(ctx, db.OwnTargetIDsParams{ProjectID: pb, Ids: []uuid.UUID{alvoA}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(deB) != 0 {
 		t.Errorf("B tomou o alvo de A como seu sem RLS: %v", deB)
 	}
-	deA, err := q.OwnTargetIDs(ctx, db.OwnTargetIDsParams{UserID: a, Ids: []uuid.UUID{alvoA}})
+	deA, err := q.OwnTargetIDs(ctx, db.OwnTargetIDsParams{ProjectID: pa, Ids: []uuid.UUID{alvoA}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,13 +148,14 @@ func TestOwnTargetIDsFiltersOwnerWithoutRLS(t *testing.T) {
 func TestGetStatusPageFiltersOwnerWithoutRLS(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
-	a, b := novoUsuario(t, pool), novoUsuario(t, pool)
+	a := novoUsuario(t, pool)
+	pa, pb := testdb.ProjetoPadrao(t, a), testdb.NovoProjeto(t, a, "B")
 	paginaA := novaPagina(t, pool, a, "pagina-a", true)
 	q := queriesSemRLS(t)
 
-	_, err := q.GetStatusPage(ctx, b)
+	_, err := q.GetStatusPage(ctx, pb)
 	exigirNenhumaLinha(t, err, "GetStatusPage")
-	p, err := q.GetStatusPage(ctx, a)
+	p, err := q.GetStatusPage(ctx, pa)
 	if err != nil {
 		t.Fatalf("A lendo a própria página: %v", err)
 	}
@@ -156,13 +167,14 @@ func TestGetStatusPageFiltersOwnerWithoutRLS(t *testing.T) {
 func TestLockStatusPageFiltersOwnerWithoutRLS(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
-	a, b := novoUsuario(t, pool), novoUsuario(t, pool)
+	a := novoUsuario(t, pool)
+	pa, pb := testdb.ProjetoPadrao(t, a), testdb.NovoProjeto(t, a, "B")
 	paginaA := novaPagina(t, pool, a, "pagina-a", true)
 	q := queriesSemRLS(t)
 
-	_, err := q.LockStatusPage(ctx, b)
+	_, err := q.LockStatusPage(ctx, pb)
 	exigirNenhumaLinha(t, err, "LockStatusPage")
-	id, err := q.LockStatusPage(ctx, a)
+	id, err := q.LockStatusPage(ctx, pa)
 	if err != nil {
 		t.Fatalf("A travando a própria página: %v", err)
 	}

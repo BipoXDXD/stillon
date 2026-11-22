@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -14,11 +15,31 @@ import (
 	"github.com/BipoXDXD/stillon/internal/auth"
 	"github.com/BipoXDXD/stillon/internal/clock"
 	"github.com/BipoXDXD/stillon/internal/httpapi/middleware"
+	"github.com/BipoXDXD/stillon/internal/tenancy"
 )
 
+// resolvedorFixo põe qualquer usuário como owner de um projeto qualquer, sem
+// banco: os testes daqui param antes do serviço.
+type resolvedorFixo struct{}
+
+func (resolvedorFixo) Scope(_ context.Context, userID, projectID uuid.UUID) (tenancy.ProjectScope, error) {
+	return tenancy.ProjectScope{ProjectID: projectID, UserID: userID, Role: tenancy.RoleOwner}, nil
+}
+
+func (resolvedorFixo) DefaultScope(_ context.Context, userID uuid.UUID) (tenancy.ProjectScope, error) {
+	return tenancy.ProjectScope{ProjectID: uuid.New(), UserID: userID, Role: tenancy.RoleOwner}, nil
+}
+
+// noProjetoPadrao põe h atrás de middleware.ProjetoPadrao, como nas rotas
+// antigas de alvos: o handler lê o escopo do contexto, e o 401 sem usuário
+// vem do middleware.
+func noProjetoPadrao(h http.HandlerFunc) http.HandlerFunc {
+	return middleware.ProjetoPadrao(resolvedorFixo{})(h).ServeHTTP
+}
+
 // rotaComDonoEId é um handler que começa com "usuário do token, depois {id}
-// da rota". Os handlers de heartbeat entram como controle: já usavam donoEID
-// antes da mudança de lugar.
+// da rota". Todos leem o escopo de projeto, e entram atrás de
+// noProjetoPadrao, como na rota.
 type rotaComDonoEId struct {
 	nome    string
 	handler http.HandlerFunc
@@ -28,17 +49,17 @@ func rotasComDonoEId() []rotaComDonoEId {
 	alvos, incidentes, canais := &TargetHandlers{}, &IncidentHandlers{}, &ChannelHandlers{}
 	paginas, batidas := &StatusPageHandlers{}, &HeartbeatHandlers{}
 	return []rotaComDonoEId{
-		{"GET /targets/{id}", alvos.Get},
-		{"PATCH /targets/{id}", alvos.Update},
-		{"DELETE /targets/{id}", alvos.Delete},
-		{"GET /targets/{id}/checks", alvos.Checks},
-		{"POST /incidents/{id}/ack", incidentes.Ack},
-		{"DELETE /channels/{id}", canais.Delete},
-		{"PATCH /channels/{id}/enabled", canais.SetEnabled},
-		{"POST /channels/{id}/resend", canais.Resend},
-		{"PATCH /status-pages/{id}", paginas.Update},
-		{"GET /heartbeats/{id}", batidas.Get},
-		{"PATCH /heartbeats/{id}", batidas.Update},
+		{"GET /targets/{id}", noProjetoPadrao(alvos.Get)},
+		{"PATCH /targets/{id}", noProjetoPadrao(alvos.Update)},
+		{"DELETE /targets/{id}", noProjetoPadrao(alvos.Delete)},
+		{"GET /targets/{id}/checks", noProjetoPadrao(alvos.Checks)},
+		{"POST /incidents/{id}/ack", noProjetoPadrao(incidentes.Ack)},
+		{"DELETE /channels/{id}", noProjetoPadrao(canais.Delete)},
+		{"PATCH /channels/{id}/enabled", noProjetoPadrao(canais.SetEnabled)},
+		{"POST /channels/{id}/resend", noProjetoPadrao(canais.Resend)},
+		{"PATCH /status-pages/{id}", noProjetoPadrao(paginas.Update)},
+		{"GET /heartbeats/{id}", noProjetoPadrao(batidas.Get)},
+		{"PATCH /heartbeats/{id}", noProjetoPadrao(batidas.Update)},
 	}
 }
 
@@ -126,7 +147,7 @@ func TestAckDeHeartbeatComIncidenteMalformadoDa404(t *testing.T) {
 	req.SetPathValue("id", uuid.NewString())
 	req.SetPathValue("incident_id", "x")
 
-	rec := comUsuario(t, (&HeartbeatHandlers{}).AckIncident, req)
+	rec := comUsuario(t, noProjetoPadrao((&HeartbeatHandlers{}).AckIncident), req)
 
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, queria 404: %s", rec.Code, rec.Body)

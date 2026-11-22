@@ -126,12 +126,12 @@ DELETE FROM session_family_proofs
      LIMIT sqlc.arg(batch)::int);
 
 -- GET /targets/{id}/checks acima de 48h lê daqui. Roda sob
--- InUserTx e filtra por user_id, como ListChecks.
+-- InProjectTx e filtra por project_id, como ListChecks.
 -- name: ListRollups :many
 SELECT r.bucket, r.total, r.ok, r.p50, r.p95, r.p99, r.max
   FROM check_rollup_1h r
   JOIN targets t ON t.id = r.target_id
- WHERE t.user_id = sqlc.arg(user_id)
+ WHERE t.project_id = sqlc.arg(project_id)::uuid
    AND r.target_id = sqlc.arg(target_id)
    AND r.bucket >= sqlc.arg(from_at)
    AND r.bucket < sqlc.arg(to_at)

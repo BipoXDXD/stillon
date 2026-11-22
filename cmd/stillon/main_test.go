@@ -39,6 +39,7 @@ func TestProberRoleProbesWithTheProductionClient(t *testing.T) {
 	if _, err := pool.Exec(ctx, `INSERT INTO users (id, email, password_hash) VALUES ($1, 'e2e@exemplo.com', 'x')`, dono); err != nil {
 		t.Fatal(err)
 	}
+	testdb.ProjetoPadrao(t, dono)
 	alvo := uuid.Must(uuid.NewV7())
 	agora := time.Now()
 	err := storage.InUserTx(ctx, pool, dono, func(q *db.Queries) error {
@@ -75,7 +76,7 @@ func TestProberRoleProbesWithTheProductionClient(t *testing.T) {
 		err := storage.InUserTx(ctx, pool, dono, func(q *db.Queries) error {
 			var err error
 			rows, err = q.ListChecks(ctx, db.ListChecksParams{
-				UserID: dono, TargetID: alvo, FromAt: agora.Add(-time.Hour), ToAt: time.Now().Add(time.Hour),
+				ProjectID: testdb.ProjetoDoAlvo(t, alvo), TargetID: alvo, FromAt: agora.Add(-time.Hour), ToAt: time.Now().Add(time.Hour),
 			})
 			return err
 		})

@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/BipoXDXD/stillon/internal/storage/db"
+	"github.com/BipoXDXD/stillon/internal/tenancy"
 )
 
 // Beginner é o mínimo que uma transação com escopo precisa. *pgxpool.Pool e
@@ -21,9 +22,10 @@ type Beginner interface {
 }
 
 var (
-	ErrNoUser  = errors.New("transação de usuário sem usuário")
-	ErrNoToken = errors.New("transação sem hash de token")
-	ErrNoSlug  = errors.New("transação pública sem slug")
+	ErrNoUser    = errors.New("transação de usuário sem usuário")
+	ErrNoProject = errors.New("transação de projeto sem projeto")
+	ErrNoToken   = errors.New("transação sem hash de token")
+	ErrNoSlug    = errors.New("transação pública sem slug")
 )
 
 // InUserTx roda fn numa transação em que a RLS só enxerga as linhas de userID.
@@ -39,6 +41,55 @@ func InUserTx(ctx context.Context, b Beginner, userID uuid.UUID, fn func(*db.Que
 		return ErrNoUser
 	}
 	return inTx(ctx, b, `SELECT set_config('app.user_id', $1, true)`, userID.String(), fn)
+}
+
+// InProjectTx roda fn no escopo do projeto projectID, agindo como userID. Na
+// MESMA transação, liga app.user_id, confere a pertença (membro com a conta
+// ativa, titular com a conta ativa) e só então liga app.project_id: é o ÚNICO
+// lugar do código que liga app.project_id, e nunca antes da conferência.
+//
+// Sem pertença, o erro é tenancy.ErrProjectNotFound, o mesmo de um projeto
+// inexistente, para a API não revelar que o projeto existe; fn não roda. fn
+// recebe o escopo lido aqui: a permissão vale pelo papel desta transação,
+// nunca pelo de quem chamou.
+func InProjectTx(ctx context.Context, b Beginner, userID, projectID uuid.UUID,
+	fn func(*db.Queries, tenancy.ProjectScope) error) error {
+	if userID == uuid.Nil {
+		return ErrNoUser
+	}
+	if projectID == uuid.Nil {
+		return ErrNoProject
+	}
+	tx, err := b.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("abrir transação: %w", err)
+	}
+	defer tx.Rollback(ctx) // no-op depois de Commit
+
+	q := db.New(tx)
+	if err := q.ScopeToUser(ctx, userID); err != nil {
+		return fmt.Errorf("definir escopo da RLS: %w", err)
+	}
+	texto, err := q.ActiveMembershipRole(ctx, db.ActiveMembershipRoleParams{ProjectID: projectID, UserID: userID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return tenancy.ErrProjectNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("conferir a pertença ao projeto: %w", err)
+	}
+	papel, err := tenancy.ParseRole(texto)
+	if err != nil {
+		// O CHECK da tabela só aceita papéis conhecidos: chegar aqui é
+		// defeito, não pedido inválido.
+		return fmt.Errorf("papel gravado em project_members: %w", err)
+	}
+	if err := q.ScopeToProject(ctx, projectID); err != nil {
+		return fmt.Errorf("definir escopo do projeto: %w", err)
+	}
+	if err := fn(q, tenancy.ProjectScope{ProjectID: projectID, UserID: userID, Role: papel}); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 // InProberTx roda fn com o escopo do sondador: lê e reagenda alvos de todos

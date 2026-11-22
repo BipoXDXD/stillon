@@ -39,11 +39,12 @@ func gravarCanais(t *testing.T, pool *pgxpool.Pool, selos ...func(uuid.UUID) []b
 		t.Fatal(err)
 	}
 	agora := time.Date(2026, 11, 12, 12, 0, 0, 0, time.UTC)
+	projeto := testdb.ProjetoPadrao(t, dono)
 	err := storage.InUserTx(ctx, pool, dono, func(q *db.Queries) error {
 		for i, selar := range selos {
 			id := uuid.Must(uuid.NewV7())
 			if err := q.InsertChannel(ctx, db.InsertChannelParams{
-				ID: id, UserID: dono, Kind: string(KindDiscord), ConfigEnc: selar(id),
+				ID: id, UserID: dono, ProjectID: projeto, Kind: string(KindDiscord), ConfigEnc: selar(id),
 				VerifiedAt: &agora, CreatedAt: agora.Add(time.Duration(i) * time.Minute),
 			}); err != nil {
 				return err

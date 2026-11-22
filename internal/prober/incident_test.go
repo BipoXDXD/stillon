@@ -16,6 +16,7 @@ import (
 	"github.com/BipoXDXD/stillon/internal/incident"
 	"github.com/BipoXDXD/stillon/internal/storage"
 	"github.com/BipoXDXD/stillon/internal/storage/db"
+	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 )
 
 // rodada sonda os alvos vencidos, espera as sondas gravarem e avança o
@@ -40,7 +41,7 @@ func (b *bancada) canal(t *testing.T, verificado, habilitado bool) uuid.UUID {
 	ctx := context.Background()
 	id := uuid.Must(uuid.NewV7())
 	agora := b.clk.Now()
-	p := db.InsertChannelParams{ID: id, UserID: b.dono, Kind: "discord", ConfigEnc: []byte{1}, CreatedAt: agora}
+	p := db.InsertChannelParams{ID: id, UserID: b.dono, ProjectID: testdb.ProjetoPadrao(t, b.dono), Kind: "discord", ConfigEnc: []byte{1}, CreatedAt: agora}
 	if verificado {
 		p.VerifiedAt = &agora
 	}
@@ -83,7 +84,7 @@ func (b *bancada) incidentes(t *testing.T) []db.ListIncidentsRow {
 	var rows []db.ListIncidentsRow
 	err := storage.InUserTx(ctx, b.pool, b.dono, func(q *db.Queries) error {
 		var err error
-		rows, err = q.ListIncidents(ctx, db.ListIncidentsParams{UserID: b.dono, MaxRows: 100})
+		rows, err = q.ListIncidents(ctx, db.ListIncidentsParams{ProjectID: testdb.ProjetoPadrao(t, b.dono), MaxRows: 100})
 		return err
 	})
 	if err != nil {

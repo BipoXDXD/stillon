@@ -169,9 +169,10 @@ func TestTagsDoAlvoSaoSoDoDono(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
 	dono := novoUsuario(t, pool)
+	testdb.ProjetoPadrao(t, dono)
 	alvo := novoAlvo(t, pool, dono, agora)
 	err := storage.InUserTx(ctx, pool, dono, func(q *db.Queries) error {
-		return q.InsertTargetTags(ctx, db.InsertTargetTagsParams{Tags: []string{"prod"}, UserID: dono, TargetID: alvo})
+		return q.InsertTargetTags(ctx, db.InsertTargetTagsParams{Tags: []string{"prod"}, ProjectID: testdb.ProjetoDoAlvo(t, alvo), TargetID: alvo})
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -207,6 +208,7 @@ func TestCaminhosLegitimosDeEscritaContinuam(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
 	dono := novoUsuario(t, pool)
+	projeto := testdb.ProjetoPadrao(t, dono)
 	alvo := novoAlvo(t, pool, dono, agora)
 	checkDoSondador(t, pool, alvo)
 	incidente := incidenteDoSondador(t, pool, alvo)
@@ -214,11 +216,11 @@ func TestCaminhosLegitimosDeEscritaContinuam(t *testing.T) {
 	incidenteHB := novoIncidenteDeHeartbeat(t, pool, hb)
 
 	err := storage.InUserTx(ctx, pool, dono, func(q *db.Queries) error {
-		if _, err := q.AckIncident(ctx, db.AckIncidentParams{Now: agora, UserID: dono, ID: incidente}); err != nil {
+		if _, err := q.AckIncident(ctx, db.AckIncidentParams{Now: agora, ProjectID: projeto, ID: incidente}); err != nil {
 			return err
 		}
 		_, err := q.AckHeartbeatIncident(ctx, db.AckHeartbeatIncidentParams{
-			Now: agora, UserID: dono, HeartbeatID: hb, ID: incidenteHB,
+			Now: agora, ProjectID: projeto, HeartbeatID: hb, ID: incidenteHB,
 		})
 		return err
 	})

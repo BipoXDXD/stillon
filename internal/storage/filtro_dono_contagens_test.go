@@ -94,15 +94,18 @@ func heartbeatsDe(t *testing.T, pool *pgxpool.Pool, dono uuid.UUID, prefixo stri
 func TestDeleteTargetTLSOfOwnerFiltersOwnerWithoutRLS(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
-	a, b := novoUsuario(t, pool), novoUsuario(t, pool)
+	// A e B são dois projetos do MESMO usuário: só o filtro por projeto os
+	// separa (o por dono deixaria passar).
+	a := novoUsuario(t, pool)
+	pa, pb := testdb.ProjetoPadrao(t, a), testdb.NovoProjeto(t, a, "B")
 	alvoA := novoAlvo(t, pool, a, agora)
 	novaValidadeTLS(t, pool, alvoA)
 	q := queriesSemRLS(t)
 
-	if err := q.DeleteTargetTLSOfOwner(ctx, db.DeleteTargetTLSOfOwnerParams{UserID: b, TargetID: alvoA}); err != nil {
+	if err := q.DeleteTargetTLSOfOwner(ctx, db.DeleteTargetTLSOfOwnerParams{ProjectID: pb, TargetID: alvoA}); err != nil {
 		t.Fatalf("B removendo a validade de A: %v", err)
 	}
-	v, err := q.GetTargetTLSOfOwner(ctx, db.GetTargetTLSOfOwnerParams{UserID: a, TargetID: alvoA})
+	v, err := q.GetTargetTLSOfOwner(ctx, db.GetTargetTLSOfOwnerParams{ProjectID: pa, TargetID: alvoA})
 	if err != nil {
 		t.Fatalf("a validade de A sumiu depois do DELETE em nome de B: %v", err)
 	}
@@ -111,9 +114,9 @@ func TestDeleteTargetTLSOfOwnerFiltersOwnerWithoutRLS(t *testing.T) {
 	}
 
 	// Controle: em nome do dono, o mesmo DELETE remove a linha.
-	if err := q.DeleteTargetTLSOfOwner(ctx, db.DeleteTargetTLSOfOwnerParams{UserID: a, TargetID: alvoA}); err != nil {
+	if err := q.DeleteTargetTLSOfOwner(ctx, db.DeleteTargetTLSOfOwnerParams{ProjectID: pa, TargetID: alvoA}); err != nil {
 		t.Fatalf("A removendo a própria validade: %v", err)
 	}
-	_, err = q.GetTargetTLSOfOwner(ctx, db.GetTargetTLSOfOwnerParams{UserID: a, TargetID: alvoA})
+	_, err = q.GetTargetTLSOfOwner(ctx, db.GetTargetTLSOfOwnerParams{ProjectID: pa, TargetID: alvoA})
 	exigirNenhumaLinha(t, err, "GetTargetTLSOfOwner depois do DELETE do dono")
 }

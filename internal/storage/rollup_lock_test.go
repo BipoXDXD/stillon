@@ -16,6 +16,7 @@ import (
 func TestConsolidationSkipsTheRoundWhileAnotherHoldsTheLock(t *testing.T) {
 	pool := testdb.New(t)
 	dono := novoUsuario(t, pool)
+	testdb.ProjetoPadrao(t, dono)
 	alvo := novoAlvo(t, pool, dono, agora)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

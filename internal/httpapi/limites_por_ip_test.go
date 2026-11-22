@@ -18,6 +18,7 @@ import (
 	"github.com/BipoXDXD/stillon/internal/httpapi/middleware"
 	"github.com/BipoXDXD/stillon/internal/notify"
 	"github.com/BipoXDXD/stillon/internal/statuspage"
+	"github.com/BipoXDXD/stillon/internal/tenancy"
 )
 
 // Endereços de documentação (RFC 5737): nenhum existe de verdade.
@@ -96,6 +97,7 @@ func novaBancada(t *testing.T, ajustar func(*config.Config)) *bancada {
 	deps := httpapi.Deps{
 		Channels:    notify.NewChannelService(nil, nil, clk, nil, nil, cfg.PublicBaseURL),
 		StatusPages: statuspage.NewService(nil, clk),
+		Projects:    tenancy.NewService(repoFalso{}, clk),
 		Clock:       clk,
 		LimitesIP:   middleware.NovosOrcamentosEmMemoria(ctx, clk),
 	}
