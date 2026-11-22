@@ -177,13 +177,20 @@ func conferirProjetoPadrao(t *testing.T, pool *pgxpool.Pool, l legado) {
 }
 
 // O backfill põe cada usuário legado no próprio Projeto padrão, com tudo o
-// que ele tem, e marca quem existia como operador de e-mail verificado. Não
-// toca nos tokens de ping, nos links de verificação nem no slug.
+// que ele tem, e marca só o dono atual (o usuário mais antigo) como operador
+// de e-mail verificado. Não toca nos tokens de ping, nos links de
+// verificação nem no slug.
 func TestDefaultProjectBackfillOnLegacyData(t *testing.T) {
 	ctx := context.Background()
 	versao := versaoDaMigration(t, sufixoProjetoPadrao)
 	pool, admin, dsn := bancoNaVersao(t, versaoDaMigration(t, "totp_bloqueio_progressivo"))
 	usuarios := []legado{semearLegado(t, pool, "a"), semearLegado(t, pool, "b")}
+	// b fica mais antigo que a, embora tenha o id maior: o operador sai do
+	// created_at, e o id só desempata.
+	if _, err := admin.Exec(ctx, `UPDATE users SET created_at = $2 WHERE id = $1`, usuarios[1].dono, agora.Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	operadorEsperado := usuarios[1].dono
 	antes := contagensDeRecursos(t, admin)
 
 	if err := storage.MigrateUpTo(ctx, dsn, versao); err != nil {
@@ -214,8 +221,9 @@ func TestDefaultProjectBackfillOnLegacyData(t *testing.T) {
 			`SELECT is_operator, email_verified_at IS NOT NULL FROM users WHERE id = $1`, l.dono).Scan(&operador, &verificado); err != nil {
 			t.Fatal(err)
 		}
-		if !operador || !verificado {
-			t.Errorf("%s: is_operator=%v e-mail verificado=%v; queria os dois true", l.dono, operador, verificado)
+		if querOperador := l.dono == operadorEsperado; operador != querOperador || verificado != querOperador {
+			t.Errorf("%s: is_operator=%v e-mail verificado=%v; queria os dois %v (só o mais antigo vira operador)",
+				l.dono, operador, verificado, querOperador)
 		}
 	}
 	if depois := contagensDeRecursos(t, admin); !mapasIguais(antes, depois) {
@@ -320,5 +328,45 @@ func TestProjectMigrationsDownKeepResources(t *testing.T) {
 	}
 	if n := contar(t, admin, `SELECT count(*) FROM targets WHERE project_id IS NULL`); n != 0 {
 		t.Errorf("depois de subir de novo: %d alvo(s) sem projeto, queria 0", n)
+	}
+}
+
+// A 00042 chama a função dentro de um escopo: ao voltar, o app.user_id de
+// quem chamou tem de estar como estava.
+func TestBackfillKeepsCallerScope(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+	quemChama := novoUsuario(t, pool)
+	novoUsuario(t, pool)
+
+	err := emEscopo(t, pool, "app.user_id", quemChama.String(), func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `SELECT backfill_projetos_padrao()`); err != nil {
+			return err
+		}
+		var escopo string
+		if err := tx.QueryRow(ctx, `SELECT current_setting('app.user_id', true)`).Scan(&escopo); err != nil {
+			return err
+		}
+		if escopo != quemChama.String() {
+			t.Errorf("app.user_id depois do backfill = %q, queria %q", escopo, quemChama)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+// As funções da 00041 não ficam abertas a PUBLIC: só o dono (o papel da
+// aplicação) as executa.
+func TestProjectBackfillFunctionsNotExecutableByPublic(t *testing.T) {
+	pool := testdb.New(t)
+	n := contar(t, pool, `
+		SELECT count(*)
+		  FROM pg_proc p, aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a
+		 WHERE p.proname IN ('backfill_projetos_padrao', 'gerar_uuid_v7')
+		   AND a.grantee = 0 AND a.privilege_type = 'EXECUTE'`)
+	if n != 0 {
+		t.Errorf("%d função(ões) da 00041 executáveis por PUBLIC, queria 0", n)
 	}
 }

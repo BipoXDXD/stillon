@@ -14,6 +14,7 @@ LANGUAGE sql VOLATILE SET search_path = pg_catalog, pg_temp AS $$
         'hex')::uuid
 $$;
 -- +goose StatementEnd
+REVOKE EXECUTE ON FUNCTION gerar_uuid_v7() FROM PUBLIC;
 
 -- Roda com o papel da aplicação, sob FORCE RLS: sem escopo, os UPDATEs não
 -- enxergariam linha nenhuma e a migration "passaria" sem preencher nada.
@@ -28,6 +29,8 @@ LANGUAGE plpgsql SET search_path = public, pg_temp AS $$
 DECLARE
     u       uuid;
     projeto uuid;
+    -- A 00042 chama a função dentro de um escopo: ele volta como estava.
+    escopo  text := coalesce(current_setting('app.user_id', true), '');
 BEGIN
     FOR u IN SELECT id FROM users ORDER BY id LOOP
         PERFORM set_config('app.user_id', u::text, true);
@@ -43,18 +46,20 @@ BEGIN
         UPDATE notif_channels SET project_id = projeto WHERE user_id = u AND project_id IS NULL;
         UPDATE status_pages   SET project_id = projeto WHERE user_id = u AND project_id IS NULL;
     END LOOP;
-    PERFORM set_config('app.user_id', '', true);
+    PERFORM set_config('app.user_id', escopo, true);
 END
 $$;
 -- +goose StatementEnd
+REVOKE EXECUTE ON FUNCTION backfill_projetos_padrao() FROM PUBLIC;
 
 SELECT backfill_projetos_padrao();
 
 -- Uma vez só, e fora da função: até aqui só o CLI criava usuário, e ele
--- recusa o segundo (account.ErrUserExists). Quem existe agora é o operador,
--- e o e-mail dele é confiável. Rerodar a função depois do cadastro público
--- não pode promover ninguém.
-UPDATE users SET is_operator = true, email_verified_at = COALESCE(email_verified_at, now());
+-- recusa o segundo (account.ErrUserExists). O dono atual é o usuário mais
+-- antigo (desempate por id): ele vira o operador, e o e-mail dele é
+-- confiável. Rerodar a função depois do cadastro público não promove ninguém.
+UPDATE users SET is_operator = true, email_verified_at = COALESCE(email_verified_at, now())
+ WHERE id = (SELECT id FROM users ORDER BY created_at, id LIMIT 1);
 
 -- +goose Down
 SET LOCAL lock_timeout = '5s';
