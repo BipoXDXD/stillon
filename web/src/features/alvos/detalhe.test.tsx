@@ -52,7 +52,7 @@ describe('detalhe', () => {
     }
     await r.cliente.refetchQueries()
     expect(await screen.findByText(/Mediana 100 ms/)).toBeInTheDocument()
-    const consultas = () => r.falsa.corpos('GET /targets/:id/checks')
+    const consultas = () => r.falsa.corpos('GET /projects/:projectId/targets/:id/checks')
     expect(consultas()).toContainEqual({ window: '1h' })
     await r.usuario.click(screen.getByRole('radio', { name: '6 h' }))
     await waitFor(() => expect(consultas()).toContainEqual({ window: '6h' }))
@@ -80,11 +80,11 @@ describe('detalhe', () => {
     r.falsa.estado.incidentes = [incidente({ started_at: new Date(Date.now() - 2 * 3_600_000).toISOString() })]
     await r.cliente.refetchQueries()
     servidor.use(
-      http.get('*/api/v1/targets/summary', () =>
+      http.get('*/api/v1/projects/:projectId/targets/summary', () =>
         HttpResponse.json({ error: { code: 'internal', message: 'falhou' }, trace_id: 't' }, { status: 500 }),
       ),
     )
-    await r.cliente.resetQueries({ queryKey: ['targets', 'summary'], exact: true })
+    await r.cliente.resetQueries({ queryKey: ['projeto', PROJETO_PADRAO, 'targets', 'summary'], exact: true })
     const secao = await screen.findByRole('region', { name: 'Incidentes recentes' })
     expect(await within(secao).findByText(/há 2 h 0 min/)).toBeInTheDocument()
   })
@@ -96,11 +96,11 @@ describe('detalhe', () => {
     r.falsa.estado.alvos = [alvo()]
     await r.cliente.refetchQueries()
     servidor.use(
-      http.get('*/api/v1/targets/summary', () =>
+      http.get('*/api/v1/projects/:projectId/targets/summary', () =>
         HttpResponse.json({ error: { code: 'internal', message: 'falhou' }, trace_id: 't' }, { status: 500 }),
       ),
     )
-    await r.cliente.resetQueries({ queryKey: ['targets', 'summary'], exact: true })
+    await r.cliente.resetQueries({ queryKey: ['projeto', PROJETO_PADRAO, 'targets', 'summary'], exact: true })
     const indicador = (await screen.findByText('Último check')).parentElement
     await waitFor(() => expect(indicador).toHaveTextContent('Indisponível'))
     expect(indicador).not.toHaveTextContent('nunca')
@@ -126,7 +126,7 @@ describe('detalhe', () => {
     expect(linha).toBeEmptyDOMElement()
     const p = portao()
     servidor.use(
-      http.get('*/api/v1/targets/:id/checks', async () => {
+      http.get('*/api/v1/projects/:projectId/targets/:id/checks', async () => {
         await p.aberto
         return undefined
       }),
@@ -152,7 +152,7 @@ describe('detalhe', () => {
     expect(within(dialogo).getByText(/Não há como desfazer/)).toBeInTheDocument()
     await r.usuario.click(within(dialogo).getByRole('button', { name: 'Apagar alvo' }))
     await waitFor(() => expect(r.router.state.location.pathname).toBe(`/projects/${PROJETO_PADRAO}/`))
-    expect(r.falsa.chamadas('DELETE /targets/:id')).toBe(1)
+    expect(r.falsa.chamadas('DELETE /projects/:projectId/targets/:id')).toBe(1)
   })
 
   it('Cancelar e Esc não apagam', async () => {
@@ -166,14 +166,14 @@ describe('detalhe', () => {
     await fechado()
     // Uma volta à API depois: um DELETE disparado no fechar já teria chegado.
     await r.cliente.refetchQueries()
-    expect(r.falsa.chamadas('DELETE /targets/:id')).toBe(0)
+    expect(r.falsa.chamadas('DELETE /projects/:projectId/targets/:id')).toBe(0)
 
     await r.usuario.click(await screen.findByRole('button', { name: 'Apagar' }))
     await screen.findByRole('alertdialog')
     await r.usuario.keyboard('{Escape}')
     await fechado()
     await r.cliente.refetchQueries()
-    expect(r.falsa.chamadas('DELETE /targets/:id')).toBe(0)
+    expect(r.falsa.chamadas('DELETE /projects/:projectId/targets/:id')).toBe(0)
     expect(r.router.state.location.pathname).toBe(`/projects/${PROJETO_PADRAO}/targets/alvo-1`)
   })
 
@@ -204,7 +204,7 @@ describe('detalhe', () => {
     await r.cliente.refetchQueries()
     const p = portao()
     servidor.use(
-      http.delete('*/api/v1/targets/:id', async () => {
+      http.delete('*/api/v1/projects/:projectId/targets/:id', async () => {
         await p.aberto
         return new HttpResponse(null, { status: 204 })
       }),
@@ -225,13 +225,13 @@ describe('detalhe', () => {
     await r.cliente.refetchQueries()
     await r.usuario.click(await screen.findByRole('button', { name: 'Apagar' }))
     const dialogo = await screen.findByRole('alertdialog')
-    const getsDoAlvo = r.falsa.chamadas('GET /targets/:id')
-    const getsDeIncidentes = r.falsa.chamadas('GET /incidents')
+    const getsDoAlvo = r.falsa.chamadas('GET /projects/:projectId/targets/:id')
+    const getsDeIncidentes = r.falsa.chamadas('GET /projects/:projectId/incidents')
     await r.usuario.click(within(dialogo).getByRole('button', { name: 'Apagar alvo' }))
     await waitFor(() => expect(r.router.state.location.pathname).toBe(`/projects/${PROJETO_PADRAO}/`))
-    await waitFor(() => expect(r.falsa.chamadas('GET /incidents')).toBeGreaterThan(getsDeIncidentes))
-    expect(r.falsa.chamadas('GET /targets/:id')).toBe(getsDoAlvo)
-    expect(r.cliente.getQueryCache().findAll({ queryKey: ['targets', 'alvo-1'] })).toHaveLength(0)
+    await waitFor(() => expect(r.falsa.chamadas('GET /projects/:projectId/incidents')).toBeGreaterThan(getsDeIncidentes))
+    expect(r.falsa.chamadas('GET /projects/:projectId/targets/:id')).toBe(getsDoAlvo)
+    expect(r.cliente.getQueryCache().findAll({ queryKey: ['projeto', PROJETO_PADRAO, 'targets', 'alvo-1'] })).toHaveLength(0)
   })
 
   it('Pausar e Retomar mandam um PATCH por ação mesmo com dois cliques no mesmo render', async () => {
@@ -246,7 +246,7 @@ describe('detalhe', () => {
       })
     }
     await screen.findByRole('button', { name: 'Pausar' })
-    expect(r.falsa.estado.corpos.get('PATCH /targets/:id')).toEqual([{ enabled: false }, { enabled: true }])
+    expect(r.falsa.estado.corpos.get('PATCH /projects/:projectId/targets/:id')).toEqual([{ enabled: false }, { enabled: true }])
   })
 
   // D17: um poll de fundo que falha não apaga a lista de incidentes do alvo.
@@ -257,8 +257,8 @@ describe('detalhe', () => {
     await r.cliente.refetchQueries()
     const secao = await screen.findByRole('region', { name: 'Incidentes recentes' })
     await waitFor(() => expect(within(secao).getAllByRole('listitem')).toHaveLength(1))
-    r.falsa.estado.forcar.set('GET /incidents', { status: 500, code: 'internal_error' })
-    await r.cliente.refetchQueries({ queryKey: ['incidents'] })
+    r.falsa.estado.forcar.set('GET /projects/:projectId/incidents', { status: 500, code: 'internal_error' })
+    await r.cliente.refetchQueries({ queryKey: ['projeto', PROJETO_PADRAO, 'incidents'] })
     expect(await within(secao).findByText(/Não foi possível atualizar agora/)).toBeInTheDocument()
     expect(within(secao).getAllByRole('listitem')).toHaveLength(1)
   })
@@ -276,7 +276,7 @@ describe('detalhe', () => {
     expect(bloco).toHaveAttribute('aria-busy', 'false')
     const p = portao()
     servidor.use(
-      http.get('*/api/v1/targets/:id/checks', async () => {
+      http.get('*/api/v1/projects/:projectId/targets/:id/checks', async () => {
         await p.aberto
         return HttpResponse.json({
           resolution: '1h',
@@ -320,7 +320,7 @@ describe('detalhe', () => {
     const r = await renderizarPainel('/targets/alvo-1')
     r.falsa.estado.alvos = [alvo({ id: 'alvo-1', name: 'Site A' }), alvo({ id: 'alvo-2', name: 'Site B' })]
     await r.cliente.refetchQueries()
-    r.falsa.estado.forcar.set('PATCH /targets/:id', { status: 500, code: 'internal_error' })
+    r.falsa.estado.forcar.set('PATCH /projects/:projectId/targets/:id', { status: 500, code: 'internal_error' })
     await r.usuario.click(await screen.findByRole('button', { name: 'Pausar' }))
     expect(await screen.findByRole('alert')).toBeInTheDocument()
     await r.router.navigate('/targets/alvo-2')
@@ -356,7 +356,7 @@ describe('detalhe', () => {
     const r = await renderizarPainel('/targets/alvo-1')
     r.falsa.estado.alvos = [alvo()]
     await r.cliente.refetchQueries()
-    expect(await screen.findByRole('link', { name: 'Voltar ao painel' })).toHaveAttribute('href', '/')
+    expect(await screen.findByRole('link', { name: 'Voltar ao painel' })).toHaveAttribute('href', '/projects/proj-padrao/')
   })
 
   // Bloco 2, item 3: Anterior/Próximo na lista que veio do painel (filtros e
@@ -372,9 +372,9 @@ describe('detalhe', () => {
     ]
     await r.cliente.refetchQueries()
     const nav = await screen.findByRole('navigation', { name: 'Lista de monitores' })
-    expect(await within(nav).findByRole('link', { name: 'Anterior: Alfa' })).toHaveAttribute('href', '/targets/alvo-0?ordem=nome')
-    expect(within(nav).getByRole('link', { name: 'Próximo: Banco' })).toHaveAttribute('href', '/targets/alvo-2?ordem=nome')
-    expect(within(nav).getByRole('link', { name: 'Voltar ao painel' })).toHaveAttribute('href', '/?ordem=nome')
+    expect(await within(nav).findByRole('link', { name: 'Anterior: Alfa' })).toHaveAttribute('href', '/projects/proj-padrao/targets/alvo-0?ordem=nome')
+    expect(within(nav).getByRole('link', { name: 'Próximo: Banco' })).toHaveAttribute('href', '/projects/proj-padrao/targets/alvo-2?ordem=nome')
+    expect(within(nav).getByRole('link', { name: 'Voltar ao painel' })).toHaveAttribute('href', '/projects/proj-padrao/?ordem=nome')
   })
 
   // Um alvo que o filtro da URL esconde não tem vizinho na lista: só a volta.
@@ -386,7 +386,7 @@ describe('detalhe', () => {
     const nav = await screen.findByRole('navigation', { name: 'Lista de monitores' })
     // Controle positivo: a lista da URL chegou à volta, e as consultas
     // responderam; só então a ausência dos vizinhos prova alguma coisa.
-    expect(within(nav).getByRole('link', { name: 'Voltar ao painel' })).toHaveAttribute('href', '/?busca=banco')
+    expect(within(nav).getByRole('link', { name: 'Voltar ao painel' })).toHaveAttribute('href', '/projects/proj-padrao/?busca=banco')
     await waitFor(() => expect(r.cliente.isFetching()).toBe(0))
     expect(within(nav).getAllByRole('link')).toHaveLength(1)
   })
@@ -401,7 +401,7 @@ describe('detalhe', () => {
     r.falsa.estado.resumo = [itemDoResumo({ id: 'alvo-1', name: 'API' }), itemDoResumo({ id: 'alvo-2', name: 'Banco', state: 'down' })]
     await r.cliente.refetchQueries()
     const nav = await screen.findByRole('navigation', { name: 'Lista de monitores' })
-    expect(within(nav).getByRole('link', { name: 'Voltar ao painel' })).toHaveAttribute('href', '/?estado=down')
+    expect(within(nav).getByRole('link', { name: 'Voltar ao painel' })).toHaveAttribute('href', '/projects/proj-padrao/?estado=down')
     await waitFor(() => expect(r.falsa.estado.consultasDoResumo).toContain('state=down'))
     await waitFor(() => expect(r.cliente.isFetching()).toBe(0))
     expect(within(nav).getAllByRole('link')).toHaveLength(1)
@@ -418,8 +418,8 @@ describe('detalhe', () => {
     ]
     await r.cliente.refetchQueries()
     const nav = await screen.findByRole('navigation', { name: 'Lista de monitores' })
-    expect(await within(nav).findByRole('link', { name: 'Anterior: Alfa' })).toHaveAttribute('href', '/targets/alvo-0?estado=down&ordem=nome')
-    expect(within(nav).getByRole('link', { name: 'Próximo: Banco' })).toHaveAttribute('href', '/targets/alvo-2?estado=down&ordem=nome')
+    expect(await within(nav).findByRole('link', { name: 'Anterior: Alfa' })).toHaveAttribute('href', '/projects/proj-padrao/targets/alvo-0?estado=down&ordem=nome')
+    expect(within(nav).getByRole('link', { name: 'Próximo: Banco' })).toHaveAttribute('href', '/projects/proj-padrao/targets/alvo-2?estado=down&ordem=nome')
   })
 
   // Sabotagem: voltar ao setParams({ janela }), que apaga a lista da URL.
@@ -440,7 +440,7 @@ describe('detalhe', () => {
     r.falsa.estado.alvos = [alvo()]
     r.falsa.estado.resumo = [itemDoResumo({ uptime_24h: 0.99999, last_checked_at: new Date(2026, 8, 24, 11, 59).toISOString() })]
     servidor.use(
-      http.get('*/api/v1/targets/:id/checks', ({ request }) => {
+      http.get('*/api/v1/projects/:projectId/targets/:id/checks', ({ request }) => {
         if (new URL(request.url).searchParams.get('window') === '30d') {
           return HttpResponse.json({
             resolution: '1h',
@@ -488,7 +488,7 @@ describe('detalhe', () => {
     r.falsa.estado.alvos = [alvo()]
     const p = portao()
     servidor.use(
-      http.get('*/api/v1/targets/:id', async ({ params }) => {
+      http.get('*/api/v1/projects/:projectId/targets/:id', async ({ params }) => {
         if (params.id === 'alvo-1') await p.aberto
         return undefined
       }),
@@ -511,8 +511,8 @@ describe('detalhe', () => {
       const r = await renderizarPainel(rota)
       r.falsa.estado.alvos = [alvo()]
       r.falsa.estado.resumo = [itemDoResumo()]
-      r.cliente.setQueryData(['targets', 'summary'], { items: [ItemDoResumo.parse(itemDoResumo())] })
-      await r.cliente.refetchQueries({ queryKey: ['targets', 'alvo-1'], exact: true })
+      r.cliente.setQueryData(['projeto', PROJETO_PADRAO, 'targets', 'summary'], { items: [ItemDoResumo.parse(itemDoResumo())] })
+      await r.cliente.refetchQueries({ queryKey: ['projeto', PROJETO_PADRAO, 'targets', 'alvo-1'], exact: true })
       await screen.findByRole('region', { name: 'No ar' }, { timeout: 3000 })
       await waitFor(() => expect(screen.queryByText('Carregando os indicadores…')).not.toBeInTheDocument())
       await screen.findByText(/^Mediana.*nesta janela/, {}, { timeout: 3000 })
@@ -521,7 +521,7 @@ describe('detalhe', () => {
 
     function falharJanela(janela: string) {
       servidor.use(
-        http.get('*/api/v1/targets/:id/checks', ({ request }) =>
+        http.get('*/api/v1/projects/:projectId/targets/:id/checks', ({ request }) =>
           new URL(request.url).searchParams.get('window') === janela ? erroDaSerie() : undefined,
         ),
       )
@@ -535,7 +535,7 @@ describe('detalhe', () => {
     ])('falhou $nome: o gráfico mostra o erro sem botão próprio', async ({ rota, janela }) => {
       const r = await detalheCarregado(rota)
       falharJanela(janela)
-      await r.cliente.resetQueries({ queryKey: ['targets', 'alvo-1', 'checks', janela], exact: true })
+      await r.cliente.resetQueries({ queryKey: ['projeto', PROJETO_PADRAO, 'targets', 'alvo-1', 'checks', janela], exact: true })
       const aviso = await screen.findByRole('region', { name: AVISO }, { timeout: 3000 })
       const latencia = screen.getByRole('region', { name: 'Latência' })
       expect(await within(latencia).findByRole('alert')).toBeInTheDocument()
@@ -546,7 +546,7 @@ describe('detalhe', () => {
     it('falhou só a de 30 dias, com o gráfico em 24 h: um botão, no aviso', async () => {
       const r = await detalheCarregado('/targets/alvo-1')
       falharJanela('30d')
-      await r.cliente.resetQueries({ queryKey: ['targets', 'alvo-1', 'checks', '30d'], exact: true })
+      await r.cliente.resetQueries({ queryKey: ['projeto', PROJETO_PADRAO, 'targets', 'alvo-1', 'checks', '30d'], exact: true })
       const aviso = await screen.findByRole('region', { name: AVISO }, { timeout: 3000 })
       expect(within(screen.getByRole('region', { name: 'Latência' })).queryByRole('alert')).not.toBeInTheDocument()
       expect(botoes()).toHaveLength(1)
@@ -556,7 +556,7 @@ describe('detalhe', () => {
     it('poll da 24 h falhou com dados na tela: a nota do gráfico fica sem botão', async () => {
       const r = await detalheCarregado('/targets/alvo-1')
       falharJanela('24h')
-      await r.cliente.refetchQueries({ queryKey: ['targets', 'alvo-1', 'checks', '24h'], exact: true })
+      await r.cliente.refetchQueries({ queryKey: ['projeto', PROJETO_PADRAO, 'targets', 'alvo-1', 'checks', '24h'], exact: true })
       await screen.findByRole('region', { name: AVISO }, { timeout: 3000 })
       expect(await within(screen.getByRole('region', { name: 'Latência' })).findByText(/Mostrando os dados de/)).toBeInTheDocument()
       expect(botoes()).toHaveLength(1)
@@ -566,7 +566,7 @@ describe('detalhe', () => {
     it('falhou a de 7 dias: sem aviso no topo, o botão fica no gráfico', async () => {
       const r = await detalheCarregado('/targets/alvo-1?janela=7d')
       falharJanela('7d')
-      await r.cliente.resetQueries({ queryKey: ['targets', 'alvo-1', 'checks', '7d'], exact: true })
+      await r.cliente.resetQueries({ queryKey: ['projeto', PROJETO_PADRAO, 'targets', 'alvo-1', 'checks', '7d'], exact: true })
       const latencia = screen.getByRole('region', { name: 'Latência' })
       expect(await within(latencia).findByRole('alert')).toBeInTheDocument()
       expect(screen.queryByRole('region', { name: AVISO })).not.toBeInTheDocument()
@@ -584,9 +584,9 @@ describe('detalhe', () => {
     it('o resumo falhou de vez: aviso neutro no lugar da faixa, anunciado, com o botão na coluna do texto', async () => {
       const r = await renderizarPainel('/targets/alvo-1')
       r.falsa.estado.alvos = [alvo()]
-      await r.cliente.refetchQueries({ queryKey: ['targets', 'alvo-1'], exact: true })
-      r.falsa.estado.forcar.set('GET /targets/summary', erro500)
-      await r.cliente.resetQueries({ queryKey: ['targets', 'summary'], exact: true })
+      await r.cliente.refetchQueries({ queryKey: ['projeto', PROJETO_PADRAO, 'targets', 'alvo-1'], exact: true })
+      r.falsa.estado.forcar.set('GET /projects/:projectId/targets/summary', erro500)
+      await r.cliente.resetQueries({ queryKey: ['projeto', PROJETO_PADRAO, 'targets', 'summary'], exact: true })
       const aviso = await screen.findByRole('region', { name: 'Não foi possível saber o estado deste alvo.' })
       expect(aviso).toHaveClass('bg-sem-dados-100')
       expect(aviso).not.toHaveClass('flex-wrap')
@@ -606,9 +606,9 @@ describe('detalhe', () => {
       r.falsa.estado.resumo = [itemDoResumo()]
       await r.cliente.refetchQueries()
       await screen.findByRole('region', { name: 'No ar' })
-      const hora = horaMinuto(new Date(r.cliente.getQueryState(['targets', 'summary'])?.dataUpdatedAt ?? 0).toISOString())
-      r.falsa.estado.forcar.set('GET /targets/summary', erro500)
-      await r.cliente.refetchQueries({ queryKey: ['targets', 'summary'], exact: true })
+      const hora = horaMinuto(new Date(r.cliente.getQueryState(['projeto', PROJETO_PADRAO, 'targets', 'summary'])?.dataUpdatedAt ?? 0).toISOString())
+      r.falsa.estado.forcar.set('GET /projects/:projectId/targets/summary', erro500)
+      await r.cliente.refetchQueries({ queryKey: ['projeto', PROJETO_PADRAO, 'targets', 'summary'], exact: true })
       const texto = `Não foi possível atualizar; mostrando dados de ${hora}.`
       expect(await screen.findByRole('region', { name: texto })).toBeInTheDocument()
       expect(screen.getByRole('region', { name: 'No ar' })).toBeInTheDocument()
@@ -617,15 +617,15 @@ describe('detalhe', () => {
     it('carregando o resumo: esqueleto da faixa, e um único aviso de carregando para o leitor de tela', async () => {
       const r = await renderizarPainel('/targets/alvo-1')
       r.falsa.estado.alvos = [alvo()]
-      await r.cliente.refetchQueries({ queryKey: ['targets', 'alvo-1'], exact: true })
+      await r.cliente.refetchQueries({ queryKey: ['projeto', PROJETO_PADRAO, 'targets', 'alvo-1'], exact: true })
       const p = portao()
       servidor.use(
-        http.get('*/api/v1/targets/summary', async () => {
+        http.get('*/api/v1/projects/:projectId/targets/summary', async () => {
           await p.aberto
           return undefined
         }),
       )
-      const leitura = r.cliente.resetQueries({ queryKey: ['targets', 'summary'], exact: true })
+      const leitura = r.cliente.resetQueries({ queryKey: ['projeto', PROJETO_PADRAO, 'targets', 'summary'], exact: true })
       await waitFor(() => expect(screen.getByTestId('esqueleto-da-faixa')).toBeInTheDocument())
       expect(screen.getAllByText('Carregando os indicadores…')).toHaveLength(1)
       expect(valor('No ar em 24 h')).toHaveTextContent('')
@@ -642,23 +642,23 @@ describe('detalhe', () => {
     // consultas da lista das que falharam, ou refazer sempre as três.
     const SERIE = 'Não foi possível atualizar todos os indicadores.'
     it.each([
-      { nome: 'o resumo', pedido: 'resumo', chave: ['targets', 'summary'], aviso: 'Não foi possível saber o estado deste alvo.', rotulo: 'No ar em 24 h' },
-      { nome: 'a série de 24 h', pedido: '24h', chave: ['targets', 'alvo-1', 'checks', '24h'], aviso: SERIE, rotulo: 'Latência mediana (24 h)' },
-      { nome: 'a série de 30 dias', pedido: '30d', chave: ['targets', 'alvo-1', 'checks', '30d'], aviso: SERIE, rotulo: 'No ar em 30 dias' },
+      { nome: 'o resumo', pedido: 'resumo', chave: ['projeto', PROJETO_PADRAO, 'targets', 'summary'], aviso: 'Não foi possível saber o estado deste alvo.', rotulo: 'No ar em 24 h' },
+      { nome: 'a série de 24 h', pedido: '24h', chave: ['projeto', PROJETO_PADRAO, 'targets', 'alvo-1', 'checks', '24h'], aviso: SERIE, rotulo: 'Latência mediana (24 h)' },
+      { nome: 'a série de 30 dias', pedido: '30d', chave: ['projeto', PROJETO_PADRAO, 'targets', 'alvo-1', 'checks', '30d'], aviso: SERIE, rotulo: 'No ar em 30 dias' },
     ] as const)('só $nome falhou: o cartão diz Indisponível, um aviso só, e o botão refaz só ela', async ({ pedido, chave, aviso: textoDoAviso, rotulo }) => {
       let falhar = true
       const r = await renderizarPainel('/targets/alvo-1')
       r.falsa.estado.alvos = [alvo()]
       r.falsa.estado.resumo = [itemDoResumo()]
       // O resumo já em cache: nenhuma busca dele corre junto com a montagem.
-      r.cliente.setQueryData(['targets', 'summary'], { items: [ItemDoResumo.parse(itemDoResumo())] })
-      await r.cliente.refetchQueries({ queryKey: ['targets', 'alvo-1'], exact: true })
+      r.cliente.setQueryData(['projeto', PROJETO_PADRAO, 'targets', 'summary'], { items: [ItemDoResumo.parse(itemDoResumo())] })
+      await r.cliente.refetchQueries({ queryKey: ['projeto', PROJETO_PADRAO, 'targets', 'alvo-1'], exact: true })
       await screen.findByRole('region', { name: 'No ar' }, { timeout: 3000 })
       // As duas séries já responderam: nenhuma busca delas fica em voo.
       await waitFor(() => expect(screen.queryByText('Carregando os indicadores…')).not.toBeInTheDocument())
       const ehAConsulta = (url: URL) => (pedido === 'resumo' ? url.pathname.endsWith('/targets/summary') : url.searchParams.get('window') === pedido)
       servidor.use(
-        http.get('*/api/v1/targets/*', ({ request }) => {
+        http.get('*/api/v1/projects/:projectId/targets/*', ({ request }) => {
           if (!falhar || !ehAConsulta(new URL(request.url))) return undefined
           return HttpResponse.json({ error: { code: 'internal', message: 'falhou' }, trace_id: 't' }, { status: 500 })
         }),
@@ -674,8 +674,8 @@ describe('detalhe', () => {
         expect(valor(rotuloDoCartao)?.parentElement).toHaveClass('min-h-32', 'sm:min-h-28')
       }
       expect(within(regiao).getAllByRole('button')).toHaveLength(1)
-      const dasSeries = (janela: string) => r.falsa.corpos('GET /targets/:id/checks').filter((c) => c.window === janela).length
-      const pedidos = () => ({ resumo: r.falsa.chamadas('GET /targets/summary'), '24h': dasSeries('24h'), '30d': dasSeries('30d') })
+      const dasSeries = (janela: string) => r.falsa.corpos('GET /projects/:projectId/targets/:id/checks').filter((c) => c.window === janela).length
+      const pedidos = () => ({ resumo: r.falsa.chamadas('GET /projects/:projectId/targets/summary'), '24h': dasSeries('24h'), '30d': dasSeries('30d') })
       const antes = pedidos()
       falhar = false
       await r.usuario.click(within(regiao).getByRole('button', { name: 'Tentar de novo' }))
@@ -747,7 +747,7 @@ describe('detalhe', () => {
       const feito = await within(faixa).findByText(/lembretes parados desde/)
       await waitFor(() => expect(feito).toHaveFocus())
       expect(within(faixa).queryByRole('button', { name: 'Reconhecer' })).not.toBeInTheDocument()
-      expect(r.falsa.chamadas('POST /incidents/:id/ack')).toBe(1)
+      expect(r.falsa.chamadas('POST /projects/:projectId/incidents/:id/ack')).toBe(1)
     })
 
     // RUI, texto sobre fundo colorido: o secundário da faixa (a ajuda do
@@ -835,7 +835,7 @@ describe('detalhe', () => {
         fireEvent.click(botao)
       })
       await waitFor(() => expect(screen.queryByRole('button', { name: 'Reconhecer' })).not.toBeInTheDocument())
-      expect(r.falsa.chamadas('POST /incidents/:id/ack')).toBe(1)
+      expect(r.falsa.chamadas('POST /projects/:projectId/incidents/:id/ack')).toBe(1)
     })
 
     it('um ack que falha mostra o erro e mantém o Reconhecer', async () => {
@@ -844,7 +844,7 @@ describe('detalhe', () => {
       r.falsa.estado.resumo = [itemDoResumo({ state: 'down', open_incident_id: 'inc-1' })]
       r.falsa.estado.incidentes = [incidente()]
       await r.cliente.refetchQueries()
-      r.falsa.estado.forcar.set('POST /incidents/:id/ack', { status: 503, code: 'unavailable' })
+      r.falsa.estado.forcar.set('POST /projects/:projectId/incidents/:id/ack', { status: 503, code: 'unavailable' })
       await r.usuario.click(await screen.findByRole('button', { name: 'Reconhecer' }))
       expect(await screen.findByRole('alert')).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Reconhecer' })).toBeInTheDocument()
@@ -862,7 +862,7 @@ describe('detalhe', () => {
       let soltar!: () => void
       const segurado = new Promise<void>((ok) => (soltar = ok))
       servidor.use(
-        http.post('*/api/v1/incidents/:id/ack', async () => {
+        http.post('*/api/v1/projects/:projectId/incidents/:id/ack', async () => {
           await segurado
         }),
       )
@@ -884,11 +884,11 @@ describe('detalhe', () => {
       r.falsa.estado.resumo = [itemDoResumo({ state: 'down', open_incident_id: 'inc-1' })]
       r.falsa.estado.incidentes = [incidente()]
       await r.cliente.refetchQueries()
-      r.falsa.estado.forcar.set('POST /incidents/:id/ack', { status: 503, code: 'unavailable' })
-      const antes = r.falsa.chamadas('GET /incidents')
+      r.falsa.estado.forcar.set('POST /projects/:projectId/incidents/:id/ack', { status: 503, code: 'unavailable' })
+      const antes = r.falsa.chamadas('GET /projects/:projectId/incidents')
       await r.usuario.click(await screen.findByRole('button', { name: 'Reconhecer' }))
       await screen.findByRole('alert')
-      await waitFor(() => expect(r.falsa.chamadas('GET /incidents')).toBeGreaterThan(antes))
+      await waitFor(() => expect(r.falsa.chamadas('GET /projects/:projectId/incidents')).toBeGreaterThan(antes))
     })
   })
 })
@@ -915,7 +915,7 @@ describe('o alvo sumiu', () => {
     await r.usuario.click(screen.getByRole('button', { name: 'Pausar' }))
     expect((await screen.findAllByText(TEXTO))[0]).toBeInTheDocument()
     await waitFor(() => expect(r.router.state.location.pathname).toBe(`/projects/${PROJETO_PADRAO}/`))
-    expect(r.cliente.getQueryCache().findAll({ queryKey: ['targets', 'alvo-1'] })).toHaveLength(0)
+    expect(r.cliente.getQueryCache().findAll({ queryKey: ['projeto', PROJETO_PADRAO, 'targets', 'alvo-1'] })).toHaveLength(0)
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 
@@ -932,7 +932,7 @@ describe('o alvo sumiu', () => {
   it('o poll que volta 404 explica e volta à lista, sem "dados velhos"', async () => {
     const r = await aberto()
     r.falsa.estado.alvos = []
-    await r.cliente.refetchQueries({ queryKey: ['targets', 'alvo-1'], exact: true })
+    await r.cliente.refetchQueries({ queryKey: ['projeto', PROJETO_PADRAO, 'targets', 'alvo-1'], exact: true })
     expect((await screen.findAllByText(TEXTO))[0]).toBeInTheDocument()
     await waitFor(() => expect(r.router.state.location.pathname).toBe(`/projects/${PROJETO_PADRAO}/`))
     expect(screen.queryByText(/Não foi possível atualizar agora/)).not.toBeInTheDocument()

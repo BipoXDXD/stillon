@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { usarApiFalsa } from './ambiente'
-import { ERROS_DO_SERVIDOR, TOTP_OK } from './api-falsa'
+import { ERROS_DO_SERVIDOR, PROJETO_PADRAO, TOTP_OK } from './api-falsa'
 import { alvo, canal, heartbeat, incidente, itemDoResumo, pagina } from './fixtures'
 
 // A API falsa é o contrato dos testes de tela: quando ela diverge do servidor,
@@ -17,7 +17,11 @@ function apiLogada() {
   return falsa
 }
 
-function pedir(metodo: string, caminho: string, corpo?: unknown) {
+// Os recursos moram no projeto: os caminhos dos testes são os do padrão.
+const DO_PROJETO = /^\/(targets|heartbeats|incidents|channels|status-pages)\b/
+
+function pedir(metodo: string, caminhoDoRecurso: string, corpo?: unknown) {
+  const caminho = DO_PROJETO.test(caminhoDoRecurso) ? `/projects/${PROJETO_PADRAO}${caminhoDoRecurso}` : caminhoDoRecurso
   const headers = new Headers({ 'X-Requested-With': 'stillon', Authorization: `Bearer ${TOKEN}` })
   if (corpo === undefined) return fetch(new URL(`/api/v1${caminho}`, location.origin), { method: metodo, headers })
   headers.set('Content-Type', 'application/json')
@@ -537,11 +541,11 @@ describe('tabela de erros (errorTable do servidor)', () => {
 
   it('forcar só aceita o par que o servidor emite', () => {
     const falsa = apiLogada()
-    falsa.estado.forcar.set('GET /targets', { status: 503, code: 'unavailable' })
+    falsa.estado.forcar.set('GET /projects/:projectId/targets', { status: 503, code: 'unavailable' })
     // @ts-expect-error o servidor dá unavailable com 503, nunca com 502
-    falsa.estado.forcar.set('GET /targets', { status: 502, code: 'unavailable' })
+    falsa.estado.forcar.set('GET /projects/:projectId/targets', { status: 502, code: 'unavailable' })
     // @ts-expect-error o código é internal_error
-    falsa.estado.forcar.set('GET /targets', { status: 500, code: 'internal' })
+    falsa.estado.forcar.set('GET /projects/:projectId/targets', { status: 500, code: 'internal' })
     expect(falsa.estado.forcar.size).toBe(1)
   })
 })

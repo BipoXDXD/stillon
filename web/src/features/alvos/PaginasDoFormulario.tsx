@@ -1,19 +1,19 @@
 import { useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { useNavigate, useParams } from 'react-router'
-import { useApi } from '@/app/contexto'
-import { useRotaDoProjeto } from '@/app/projeto'
+import { useApiDoProjeto, useRotaDoProjeto } from '@/app/projeto'
 import { EstadoDaConsulta } from '@/components/EstadoDaConsulta'
 import { Titulo } from '@/components/Titulo'
 import { useAvisar } from '@/components/ui/avisos'
 import { Confirmar } from '@/components/ui/dialogo'
-import { chaves, useAlvo } from '@/lib/api/consultas'
+import { useAlvo, useChavesDoProjeto } from '@/lib/api/consultas'
 import type { Alvo } from '@/lib/api/schemas'
 import { FormularioAlvo } from './FormularioAlvo'
 import { apagaOsHeaders, paraAlteracao, paraCriacao, valoresDe, valoresPadrao } from './esquema'
 
 export function PaginaNovoAlvo() {
-  const api = useApi()
+  const api = useApiDoProjeto()
+  const chave = useChavesDoProjeto()
   const qc = useQueryClient()
   const navegar = useNavigate()
   const noProjeto = useRotaDoProjeto()
@@ -26,7 +26,7 @@ export function PaginaNovoAlvo() {
         rotuloDoBotao="Cadastrar"
         aoEnviar={async (v) => {
           const a = await api.criarAlvo(paraCriacao(v))
-          await qc.invalidateQueries({ queryKey: chaves.todosOsAlvos })
+          await qc.invalidateQueries({ queryKey: chave.todosOsAlvos })
           avisar('Alvo cadastrado.')
           navegar(noProjeto(`/targets/${a.id}`))
         }}
@@ -53,7 +53,8 @@ export function PaginaEditarAlvo() {
 // reenviar, com o valor antigo do formulário, um campo que o usuário nem
 // tocou (e que outra pessoa mudou nesse meio-tempo).
 function EdicaoDoAlvo({ alvo }: { alvo: Alvo }) {
-  const api = useApi()
+  const api = useApiDoProjeto()
+  const chave = useChavesDoProjeto()
   const qc = useQueryClient()
   const navegar = useNavigate()
   const noProjeto = useRotaDoProjeto()
@@ -77,7 +78,7 @@ function EdicaoDoAlvo({ alvo }: { alvo: Alvo }) {
           const mudancas = paraAlteracao(iniciais, v)
           if (apagaOsHeaders(alvo.header_names, iniciais.url, mudancas) && !(await perguntar())) return
           if (Object.keys(mudancas).length) await api.alterarAlvo(alvo.id, mudancas)
-          await qc.invalidateQueries({ queryKey: chaves.todosOsAlvos })
+          await qc.invalidateQueries({ queryKey: chave.todosOsAlvos })
           avisar('Alvo salvo.')
           navegar(noProjeto(`/targets/${alvo.id}`))
         }}

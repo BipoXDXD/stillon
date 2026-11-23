@@ -128,10 +128,10 @@ type Pedir = {
 type Get = <T>(rota: string, esquema: z.ZodType<T>, cancelamento?: AbortSignal) => Promise<T>
 
 // Os métodos dos recursos de um projeto (alvos, incidentes, heartbeats,
-// canais e páginas), com o prefixo do caminho: '' na raiz (o projeto padrão,
-// até a Task 30) e /projects/{id} no projeto. A conta (me, sessões, senha e
+// canais e páginas), todos sob /projects/{id}. A conta (me, sessões, senha e
 // 2FA) fica fora: não é de projeto.
-function recursos(get: Get, pedir: Pedir, prefixo: string) {
+function criarApiDoProjeto(get: Get, pedir: Pedir, projeto: string) {
+  const prefixo = caminho`/projects/${projeto}`
   return {
     resumo: (filtro: FiltroDoResumo = { tags: [], estados: [] }, sinal?: AbortSignal) =>
       get(prefixo + `/targets/summary${consultaDoResumo(filtro)}`, Resumo, sinal),
@@ -198,10 +198,6 @@ function recursos(get: Get, pedir: Pedir, prefixo: string) {
     alterarPagina: (id: string, e: Partial<EntradaPagina>) =>
       pedir({ metodo: 'PATCH', caminho: prefixo + caminho`/status-pages/${id}`, corpo: e }, PaginaDeStatus),
   }
-}
-
-function criarApiDoProjeto(get: Get, pedir: Pedir, id: string) {
-  return recursos(get, pedir, caminho`/projects/${id}`)
 }
 
 export type ApiDoProjeto = ReturnType<typeof criarApiDoProjeto>
@@ -297,9 +293,6 @@ export function criarApi(sessao: Sessao, buscar: Buscar, o: OpcoesDaApi = {}) {
     projetos: (sinal?: AbortSignal) => get('/projects', ListaDeProjetos, sinal),
     criarProjeto: (e: EntradaProjeto) => pedir({ metodo: 'POST', caminho: '/projects', corpo: e }, Projeto),
     doProjeto: (id: string): ApiDoProjeto => criarApiDoProjeto(get, pedir, id),
-    // Os recursos na raiz são os do projeto padrão; saem daqui na Task 30.
-    ...recursos(get, pedir, ''),
-
 
     sessoes: (sinal?: AbortSignal) => get('/sessions', ListaDeSessoes, sinal),
     encerrarSessao: (id: string) => pedir({ metodo: 'DELETE', caminho: caminho`/sessions/${id}` }, null),

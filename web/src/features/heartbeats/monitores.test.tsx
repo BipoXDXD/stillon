@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest'
 import { heartbeat, itemDoResumo } from '@/test/fixtures'
 import { renderizarPainel } from '@/test/renderizar'
 import { servidor } from '@/test/setup'
+import { PROJETO_PADRAO } from '@/test/api-falsa'
 
 const tabela = () => screen.findByRole('table', { name: /^Monitores/ })
 const nomesNaTabela = async () =>
@@ -29,7 +30,7 @@ describe('heartbeats na tabela de monitores', () => {
     await screen.findByRole('heading', { level: 2, name: 'Uma tarefa pede atenção.' })
     expect(await nomesNaTabela()).toEqual(['Backup', 'API'])
     const linha = within(await tabela()).getByRole('row', { name: /Backup/ })
-    expect(within(linha).getByRole('link', { name: 'Backup' })).toHaveAttribute('href', '/heartbeats/h1')
+    expect(within(linha).getByRole('link', { name: 'Backup' })).toHaveAttribute('href', '/projects/proj-padrao/heartbeats/h1')
     expect(within(linha).getAllByRole('cell')[0]).toHaveTextContent('Atrasado')
     expect(linha).not.toHaveTextContent('Fora do ar')
   })
@@ -133,13 +134,13 @@ describe('heartbeats na tabela de monitores', () => {
   it('consulta de heartbeats falhou: nada de "Tudo no ar.", com aviso e Tentar de novo', async () => {
     const r = await renderizarPainel('/')
     r.falsa.estado.resumo = [itemDoResumo({ id: 'a', name: 'API' })]
-    r.falsa.estado.forcar.set('GET /heartbeats', { status: 500, code: 'internal_error' })
+    r.falsa.estado.forcar.set('GET /projects/:projectId/heartbeats', { status: 500, code: 'internal_error' })
     await r.cliente.resetQueries()
     await screen.findByRole('heading', { level: 2, name: 'Não foi possível conferir as tarefas.' })
     expect(screen.queryByRole('heading', { level: 2, name: 'Tudo no ar.' })).not.toBeInTheDocument()
     expect(await nomesNaTabela()).toEqual(['API'])
 
-    r.falsa.estado.forcar.delete('GET /heartbeats')
+    r.falsa.estado.forcar.delete('GET /projects/:projectId/heartbeats')
     r.falsa.estado.heartbeats = [heartbeat({ id: 'h1', name: 'Backup', state: 'late' })]
     await r.usuario.click(screen.getByRole('button', { name: 'Tentar de novo' }))
     await screen.findByRole('heading', { level: 2, name: 'Uma tarefa pede atenção.' })
@@ -157,14 +158,14 @@ describe('heartbeats na tabela de monitores', () => {
       soltar = resolve
     })
     servidor.use(
-      http.get('*/api/v1/heartbeats', async () => {
+      http.get('*/api/v1/projects/:projectId/heartbeats', async () => {
         await resposta
         return HttpResponse.json({ items: [heartbeat({ state: 'late' })] })
       }),
     )
-    r.cliente.removeQueries({ queryKey: ['heartbeats'] })
+    r.cliente.removeQueries({ queryKey: ['projeto', PROJETO_PADRAO, 'heartbeats'] })
     await r.router.navigate('/')
-    await waitFor(() => expect(r.cliente.getQueryData(['targets', 'summary'])).toBeDefined())
+    await waitFor(() => expect(r.cliente.getQueryData(['projeto', PROJETO_PADRAO, 'targets', 'summary'])).toBeDefined())
     expect(screen.queryByRole('heading', { level: 2 })).not.toBeInTheDocument()
     soltar()
     await screen.findByRole('heading', { level: 2, name: 'Uma tarefa pede atenção.' })
@@ -173,8 +174,8 @@ describe('heartbeats na tabela de monitores', () => {
   it('um poll que falha mantém a tarefa atrasada na tabela e na manchete', async () => {
     const r = await painelCom({ heartbeats: [{ id: 'h1', name: 'Backup', state: 'late' }] })
     await screen.findByRole('heading', { level: 2, name: 'Uma tarefa pede atenção.' })
-    r.falsa.estado.forcar.set('GET /heartbeats', { status: 500, code: 'internal_error' })
-    await r.cliente.refetchQueries({ queryKey: ['heartbeats'] })
+    r.falsa.estado.forcar.set('GET /projects/:projectId/heartbeats', { status: 500, code: 'internal_error' })
+    await r.cliente.refetchQueries({ queryKey: ['projeto', PROJETO_PADRAO, 'heartbeats'] })
     await screen.findByText(/Não foi possível conferir as tarefas agora/)
     expect(screen.getByRole('heading', { level: 2, name: 'Uma tarefa pede atenção.' })).toBeInTheDocument()
     expect(await nomesNaTabela()).toEqual(['Backup'])
@@ -187,15 +188,15 @@ describe('heartbeats na tabela de monitores', () => {
   it('com exatamente 100 tarefas, mostra as 100 e ignora o next_cursor', async () => {
     const r = await painelCom({ heartbeats: Array.from({ length: 100 }, (_, i) => ({ id: `h-${i + 1}`, name: `Tarefa ${i + 1}` })) })
     await waitFor(async () => expect(await nomesNaTabela()).toHaveLength(100))
-    expect(r.cliente.getQueryData<{ next_cursor?: string }>(['heartbeats'])?.next_cursor).toBe('h-100')
-    const consultas = r.falsa.estado.corpos.get('GET /heartbeats') ?? []
+    expect(r.cliente.getQueryData<{ next_cursor?: string }>(['projeto', PROJETO_PADRAO, 'heartbeats'])?.next_cursor).toBe('h-100')
+    const consultas = r.falsa.estado.corpos.get('GET /projects/:projectId/heartbeats') ?? []
     expect(consultas.length).toBeGreaterThan(0)
     for (const consulta of consultas) expect(consulta).toEqual({ limit: '100' })
   })
 
   it('só heartbeats e a consulta falhando: nada de parágrafo vazio', async () => {
     const r = await renderizarPainel('/')
-    r.falsa.estado.forcar.set('GET /heartbeats', { status: 500, code: 'internal_error' })
+    r.falsa.estado.forcar.set('GET /projects/:projectId/heartbeats', { status: 500, code: 'internal_error' })
     await r.cliente.resetQueries()
     const titulo = await screen.findByRole('heading', { level: 2, name: 'Não foi possível conferir as tarefas.' })
     expect(titulo.closest('div')?.parentElement?.querySelector('p.text-suave')).toBeNull()
@@ -254,8 +255,8 @@ describe('detalhe do heartbeat', () => {
     await r.cliente.refetchQueries()
     await r.router.navigate('/heartbeats/h2?ordem=nome')
     const nav = await screen.findByRole('navigation', { name: 'Lista de monitores' })
-    expect(await within(nav).findByRole('link', { name: 'Anterior: Alfa' })).toHaveAttribute('href', '/heartbeats/h1?ordem=nome')
-    expect(within(nav).getByRole('link', { name: 'Próximo: Cópia' })).toHaveAttribute('href', '/heartbeats/h3?ordem=nome')
+    expect(await within(nav).findByRole('link', { name: 'Anterior: Alfa' })).toHaveAttribute('href', '/projects/proj-padrao/heartbeats/h1?ordem=nome')
+    expect(within(nav).getByRole('link', { name: 'Próximo: Cópia' })).toHaveAttribute('href', '/projects/proj-padrao/heartbeats/h3?ordem=nome')
   })
 
   it('heartbeat que não existe mostra o erro da rota, sem quebrar', async () => {

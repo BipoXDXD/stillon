@@ -170,6 +170,9 @@ function novosRecursos() {
     incidentesDeHeartbeat: [] as Entrada<typeof IncidenteDeHeartbeat>[],
     canais: [] as Entrada<typeof Canal>[],
     paginas: [] as Entrada<typeof PaginaDeStatus>[],
+    // Quanto as respostas das rotas deste projeto demoram: a resposta de um
+    // projeto que chega depois da troca para outro.
+    atrasoMs: 0,
   }
 }
 
@@ -216,8 +219,8 @@ export function criarApiFalsa() {
     desafioValido: false,
     chamadas: new Map<string, number>(),
     corpos: new Map<string, Json[]>(),
-    // Os recursos do projeto padrão: as rotas da raiz e as de
-    // /projects/{padrão} leem e gravam aqui (as da raiz saem na Task 30).
+    // Os recursos do projeto padrão: as rotas de /projects/{padrão} leem e
+    // gravam aqui.
     ...novosRecursos(),
     sessoes: [] as Entrada<typeof Sessao>[],
     // Respostas forçadas por rota ("POST /targets" → 409 etc.).
@@ -414,8 +417,7 @@ export function criarApiFalsa() {
     })
   }
 
-  // As rotas dos recursos, com o prefixo do caminho: '' na raiz (o projeto
-  // padrão, até a Task 30) e /projects/:projectId no projeto. Projeto que não
+  // As rotas dos recursos, sob o prefixo /projects/:projectId. Projeto que não
   // existe (ou de que o usuário não é membro) é 404, como no servidor.
   function rotasDosRecursos(
     prefixo: string,
@@ -426,9 +428,11 @@ export function criarApiFalsa() {
       caminho: string,
       fn: (a: Contexto & { r: RecursosFalsos }) => Response | Promise<Response>,
     ) =>
-      rota(metodo, prefixo + caminho, (a) => {
+      rota(metodo, prefixo + caminho, async (a) => {
         const r = recursosDe(a.params)
-        return r ? fn({ ...a, r }) : erro(404, 'not_found')
+        if (!r) return erro(404, 'not_found')
+        if (r.atrasoMs > 0) await delay(r.atrasoMs)
+        return fn({ ...a, r })
       })
     return [
       // O filtro do servidor (targets.SummaryFilter): tags em E, estados em OU.
@@ -797,7 +801,6 @@ export function criarApiFalsa() {
       HttpResponse.json({ id: 'u1', email: EMAIL, totp_enabled: st.totpLigado, created_at: '2026-09-01T10:00:00Z' }),
     ),
 
-    ...rotasDosRecursos('', () => st),
     ...rotasDosRecursos('/projects/:projectId', (params) => st.projetos.find((p) => p.projeto.id === params.projectId)?.recursos),
 
     rota('get', '/projects', () => HttpResponse.json({ items: st.projetos.map((p) => p.projeto) })),

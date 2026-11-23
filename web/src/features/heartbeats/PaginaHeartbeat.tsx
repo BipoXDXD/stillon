@@ -1,7 +1,7 @@
 import { useQueryClient } from '@tanstack/react-query'
 import { useEffect, useEffectEvent, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router'
-import { useApi } from '@/app/contexto'
+import { useApiDoProjeto, useRotaDoProjeto } from '@/app/projeto'
 import { EstadoDaConsulta } from '@/components/EstadoDaConsulta'
 import { ListaDeTags } from '@/components/ListaDeTags'
 import { SeloDeEstado } from '@/components/SeloDeEstado'
@@ -11,7 +11,7 @@ import { Botao } from '@/components/ui/botao'
 import { ErroDoFormulario } from '@/components/ui/campo'
 import { estiloDeCartao } from '@/components/ui/cartao'
 import { Confirmar } from '@/components/ui/dialogo'
-import { chaves, useEventosDoHeartbeat, useHeartbeat } from '@/lib/api/consultas'
+import { useChavesDoProjeto, useEventosDoHeartbeat, useHeartbeat } from '@/lib/api/consultas'
 import { naoEncontrado } from '@/lib/api/http'
 import { mensagemDe, textoDaCausa } from '@/lib/api/mensagens'
 import type { Heartbeat } from '@/lib/api/schemas'
@@ -36,9 +36,11 @@ type Confirmacao = 'pausar' | 'apagar' | 'rotacionar' | 'limpar'
 type UrlNova = { url: string; copia: string | null }
 
 function DetalheDoHeartbeat({ id }: { id: string }) {
-  const api = useApi()
+  const api = useApiDoProjeto()
+  const chave = useChavesDoProjeto()
   const qc = useQueryClient()
   const navegar = useNavigate()
+  const noProjeto = useRotaDoProjeto()
   const avisar = useAvisar()
   const consulta = useHeartbeat(id)
   // A mesma chave do log: o botão de limpar some quando ele está vazio.
@@ -53,16 +55,16 @@ function DetalheDoHeartbeat({ id }: { id: string }) {
   // Vai à cópia depois de fechar: com a URL na tela, o diálogo segura a navegação.
   const [copiaGuardada, setCopiaGuardada] = useState<string | null>(null)
   useEffect(() => {
-    if (copiaGuardada !== null) void navegar(`/heartbeats/${copiaGuardada}`)
-  }, [copiaGuardada, navegar])
+    if (copiaGuardada !== null) void navegar(noProjeto(`/heartbeats/${copiaGuardada}`))
+  }, [copiaGuardada, navegar, noProjeto])
 
   // Sai primeiro e só então mexe no cache: com a tela montada, invalidar
   // refaria o GET e o 404 piscaria (o mesmo cuidado do detalhe do alvo).
   async function sair(aviso: string) {
     avisar(aviso)
-    await navegar('/', { flushSync: true })
-    qc.removeQueries({ queryKey: chaves.heartbeat(id) })
-    void qc.invalidateQueries({ queryKey: chaves.heartbeats })
+    await navegar(noProjeto('/'), { flushSync: true })
+    qc.removeQueries({ queryKey: chave.heartbeat(id) })
+    void qc.invalidateQueries({ queryKey: chave.heartbeats })
   }
 
   const sumiu = () => sair('O heartbeat já tinha sido apagado, talvez em outra aba.')
@@ -103,7 +105,7 @@ function DetalheDoHeartbeat({ id }: { id: string }) {
   const alternar = (ativo: boolean) =>
     executar(async () => {
       await api.alterarHeartbeat(id, { enabled: ativo })
-      await qc.invalidateQueries({ queryKey: chaves.heartbeats })
+      await qc.invalidateQueries({ queryKey: chave.heartbeats })
       avisar(ativo ? 'Heartbeat retomado.' : 'Heartbeat pausado.')
     }, 'pausar')
 
@@ -123,13 +125,13 @@ function DetalheDoHeartbeat({ id }: { id: string }) {
     executar(async () => {
       const { id: copia, ping_url: url } = await api.duplicarHeartbeat(id)
       setUrlNova({ url, copia })
-      await qc.invalidateQueries({ queryKey: chaves.heartbeats })
+      await qc.invalidateQueries({ queryKey: chave.heartbeats })
     }, null)
 
   const limpar = () =>
     executar(async () => {
       await api.limparEventosDoHeartbeat(id)
-      await qc.invalidateQueries({ queryKey: chaves.eventosDoHeartbeat(id) })
+      await qc.invalidateQueries({ queryKey: chave.eventosDoHeartbeat(id) })
       avisar('Eventos apagados.')
     }, 'limpar')
 
@@ -150,10 +152,10 @@ function DetalheDoHeartbeat({ id }: { id: string }) {
   const sinalizar = () =>
     executar(async () => {
       const atualizado = await api.sinalizarAgora(id)
-      qc.setQueryData(chaves.heartbeat(id), atualizado)
-      void qc.invalidateQueries({ queryKey: chaves.heartbeats, exact: true })
+      qc.setQueryData(chave.heartbeat(id), atualizado)
+      void qc.invalidateQueries({ queryKey: chave.heartbeats, exact: true })
       // Sem exact: o detalhe, o log e os incidentes.
-      void qc.invalidateQueries({ queryKey: chaves.heartbeat(id) })
+      void qc.invalidateQueries({ queryKey: chave.heartbeat(id) })
       avisar('Sinal de sucesso enviado.')
     }, null)
 
@@ -179,7 +181,7 @@ function DetalheDoHeartbeat({ id }: { id: string }) {
                 {comoEditavel(hb) !== null && (
                   <>
                     <Botao tipo="secundario" asChild>
-                      <Link to={`/heartbeats/${id}/edit`}>Editar</Link>
+                      <Link to={noProjeto(`/heartbeats/${id}/edit`)}>Editar</Link>
                     </Botao>
                     <Botao tipo="secundario" aria-disabled={ocupado || undefined} onClick={() => void duplicar()}>
                       Duplicar

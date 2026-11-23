@@ -14,6 +14,7 @@ import { ATRASO_DO_SINAL_MS, useAposUmTempo } from '@/lib/atraso'
 import { cn } from '@/lib/utils'
 import { BotaoDeTema } from './BotaoDeTema'
 import { useSessao } from './contexto'
+import { NoProjeto, useProjetoDaMoldura, useRotaDoProjeto } from './projeto'
 import { aoApontarPreCarregar, carregarConfiguracoes, carregarDetalhe, preCarregarEmOcioso } from './rotas-sob-demanda'
 
 // As cinco abas, com os mesmos nomes no topo (desktop) e na barra inferior
@@ -21,14 +22,24 @@ import { aoApontarPreCarregar, carregarConfiguracoes, carregarDetalhe, preCarreg
 // `secoes`: os caminhos (e o que vem abaixo deles) em que a aba é a atual,
 // além do próprio `para`. O detalhe, o cadastro e a edição de alvo e de
 // heartbeat saem do Painel; a raiz "/" não entra como prefixo, ou o Painel valeria em tudo.
-type Aba = { para: string; texto: string; Icone: LucideIcon; secoes: string[]; contador?: boolean; preCarga?: () => Promise<unknown> }
+// `para` é relativo ao projeto da moldura, menos na aba da conta (`daConta`),
+// que fica fora de qualquer projeto.
+type Aba = {
+  para: `/${string}`
+  texto: string
+  Icone: LucideIcon
+  secoes: string[]
+  contador?: boolean
+  daConta?: boolean
+  preCarga?: () => Promise<unknown>
+}
 
 const ABAS: Aba[] = [
   { para: '/', texto: 'Painel', Icone: LayoutDashboard, secoes: ['/targets', '/heartbeats'] },
   { para: '/incidents', texto: 'Incidentes', Icone: TriangleAlert, secoes: ['/incidents'], contador: true },
   { para: '/channels', texto: 'Canais', Icone: Bell, secoes: ['/channels'] },
   { para: '/status-pages', texto: 'Status', Icone: ShieldCheck, secoes: ['/status-pages'] },
-  { para: '/settings', texto: 'Conta', Icone: Settings, secoes: ['/settings'], preCarga: carregarConfiguracoes },
+  { para: '/settings', texto: 'Conta', Icone: Settings, secoes: ['/settings'], daConta: true, preCarga: carregarConfiguracoes },
 ]
 
 const ESPERA_ANTES_DE_ANUNCIAR_MS = 1000
@@ -104,13 +115,34 @@ function SinalDeCargaDeRota() {
 // casos: a ordem do Tab e o nome da região não mudam com a largura. O item
 // atual usa a primária 100 e o peso 600, e o aria-current diz o mesmo ao
 // leitor de tela.
+//
+// As abas apontam para o projeto da moldura (o da URL, ou o que a raiz
+// escolheria nas telas da conta) e o contador é o dele. Sem projeto (a lista
+// ainda vem, ou o da URL não é da pessoa), as abas apontam para os caminhos
+// de antes, que redirecionam, e não há contador: nenhuma consulta de recurso
+// sai para um projeto que não é dela.
 function NavegacaoPrincipal() {
+  const projeto = useProjetoDaMoldura()
+  if (!projeto) return <Abas rota={(para) => para} contador={null} />
+  return (
+    <NoProjeto projeto={projeto}>
+      <AbasDoProjeto />
+    </NoProjeto>
+  )
+}
+
+function AbasDoProjeto() {
+  const noProjeto = useRotaDoProjeto()
+  const abertos = useAbertos(useTarefasQuePedemAtencao().length)
+  const contador = abertos && abertos !== '0' ? abertos : null
+  return <Abas rota={noProjeto} contador={contador} />
+}
+
+function Abas({ rota, contador }: { rota: (para: `/${string}`) => string; contador: string | null }) {
   const { pathname } = useLocation()
   // O destino da navegação em voo: o clique marca o item na hora, enquanto o
   // aria-current segue dizendo em que tela a pessoa ainda está.
   const destino = useNavigation().location?.pathname ?? pathname
-  const abertos = useAbertos(useTarefasQuePedemAtencao().length)
-  const contador = abertos && abertos !== '0' ? abertos : null
   return (
     <nav
       aria-label="Principal"
@@ -123,7 +155,7 @@ function NavegacaoPrincipal() {
           return (
             <li key={aba.para}>
               <Link
-                to={aba.para}
+                to={aba.daConta ? aba.para : rota(aba.para)}
                 {...(aba.preCarga && aoApontarPreCarregar(aba.preCarga))}
                 aria-current={atual ? 'page' : undefined}
                 aria-label={

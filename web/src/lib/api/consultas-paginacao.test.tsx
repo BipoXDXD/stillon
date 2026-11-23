@@ -2,9 +2,16 @@ import { act, renderHook, waitFor } from '@testing-library/react'
 import type { ReactNode } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import { criarClienteDeConsultas, ProvedorDoPainel } from '@/app/contexto'
+import { NoProjeto } from '@/app/projeto'
 import { novaSessao } from '@/test/ambiente'
+import { projeto } from '@/test/fixtures'
 import { chaves, useAlvos, useEventosDoHeartbeat, useIncidentes, useIncidentesDoHeartbeat } from './consultas'
 import type { Buscar } from './http'
+import { Projeto } from './schemas'
+
+// Os hooks de recurso leem o projeto atual: aqui, o p1.
+const P1 = Projeto.parse(projeto({ id: 'p1' }))
+const doP1 = chaves.doProjeto('p1')
 
 // Monta os hooks sobre a Api de verdade (criarApi), com um buscar que só grava
 // a URL pedida e devolve uma página vazia.
@@ -19,7 +26,7 @@ function montar(buscar?: Buscar) {
   })
   const envolver = ({ children }: { children: ReactNode }) => (
     <ProvedorDoPainel sessao={sessao} api={api} cliente={cliente}>
-      {children}
+      <NoProjeto projeto={P1}>{children}</NoProjeto>
     </ProvedorDoPainel>
   )
   return { urls, envolver, cliente }
@@ -32,21 +39,21 @@ describe('a primeira página das listas paginadas', () => {
     const { urls, envolver } = montar()
     renderHook(() => useIncidentes('open'), { wrapper: envolver })
     await waitFor(() => expect(urls).toHaveLength(1))
-    expect(urls[0]).toBe('/api/v1/incidents?status=open')
+    expect(urls[0]).toBe('/api/v1/projects/p1/incidents?status=open')
   })
 
   it('useEventosDoHeartbeat pede sem cursor', async () => {
     const { urls, envolver } = montar()
     renderHook(() => useEventosDoHeartbeat('h1'), { wrapper: envolver })
     await waitFor(() => expect(urls).toHaveLength(1))
-    expect(urls[0]).toBe('/api/v1/heartbeats/h1/events?limit=20')
+    expect(urls[0]).toBe('/api/v1/projects/p1/heartbeats/h1/events?limit=20')
   })
 
   it('useIncidentesDoHeartbeat pede sem cursor', async () => {
     const { urls, envolver } = montar()
     renderHook(() => useIncidentesDoHeartbeat('h1'), { wrapper: envolver })
     await waitFor(() => expect(urls).toHaveLength(1))
-    expect(urls[0]).toBe('/api/v1/heartbeats/h1/incidents?limit=20')
+    expect(urls[0]).toBe('/api/v1/projects/p1/heartbeats/h1/incidents?limit=20')
   })
 })
 
@@ -55,8 +62,8 @@ type ConsultaObservada = { data: unknown; error: Error | null; pedir: () => Prom
 it.each([
   {
     nome: 'lista simples',
-    chave: chaves.alvos,
-    url: '/api/v1/targets?limit=100',
+    chave: doP1.alvos,
+    url: '/api/v1/projects/p1/targets?limit=100',
     useConsulta(): ConsultaObservada {
       const consulta = useAlvos()
       return { data: consulta.data, error: consulta.error, pedir: consulta.refetch }
@@ -64,8 +71,8 @@ it.each([
   },
   {
     nome: 'próxima página com cursor',
-    chave: chaves.eventosDoHeartbeat('h1'),
-    url: '/api/v1/heartbeats/h1/events?cursor=p2&limit=20',
+    chave: doP1.eventosDoHeartbeat('h1'),
+    url: '/api/v1/projects/p1/heartbeats/h1/events?cursor=p2&limit=20',
     useConsulta(): ConsultaObservada {
       const consulta = useEventosDoHeartbeat('h1')
       return { data: consulta.data, error: consulta.error, pedir: consulta.fetchNextPage }

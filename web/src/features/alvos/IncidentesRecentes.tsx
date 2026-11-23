@@ -1,4 +1,5 @@
 import { Link } from 'react-router'
+import { useRotaDoProjeto } from '@/app/projeto'
 import { EstadoDaConsulta } from '@/components/EstadoDaConsulta'
 import { periodoDoIncidente, SeloDoIncidente } from '@/components/SeloDoIncidente'
 import type { useIncidentes } from '@/lib/api/consultas'
@@ -8,6 +9,7 @@ import { textoDaCausa } from '@/lib/api/mensagens'
 // por incidente, com o selo da situação, a causa e o período. Pela
 // EstadoDaConsulta: um poll de fundo que falha mantém a lista.
 export function IncidentesRecentes({ consulta, agora }: { consulta: ReturnType<typeof useIncidentes>; agora: Date }) {
+  const noProjeto = useRotaDoProjeto()
   return (
     <section className="space-y-3" aria-labelledby="titulo-incidentes">
       <h2 id="titulo-incidentes" className="text-xl">
@@ -31,7 +33,7 @@ export function IncidentesRecentes({ consulta, agora }: { consulta: ReturnType<t
           )
         }}
       </EstadoDaConsulta>
-      <Link to="/incidents" className="alvo-de-toque text-sm font-semibold text-primaria underline underline-offset-4">
+      <Link to={noProjeto('/incidents')} className="alvo-de-toque text-sm font-semibold text-primaria underline underline-offset-4">
         Todos os incidentes
       </Link>
     </section>

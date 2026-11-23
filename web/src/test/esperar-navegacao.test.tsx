@@ -132,7 +132,7 @@ it('espera o destino idle após o POST e limpa observadores com eventos reais', 
       await r!.usuario.click(screen.getByRole('button', { name: 'Cadastrar' }))
       await post.aberto
       await concluirTurno()
-      expect(r!.falsa.chamadas('POST /targets')).toBe(1)
+      expect(r!.falsa.chamadas('POST /projects/:projectId/targets')).toBe(1)
       expect(router.state.location.pathname).toBe(`/projects/${PROJETO_PADRAO}/targets/new`)
       expect(router.state.navigation.state).toBe('idle')
       expect(esperaA.estado()).toBe('pendente')
@@ -158,7 +158,7 @@ it('espera o destino idle após o POST e limpa observadores com eventos reais', 
       expect(router.state.navigation.state).toBe('idle')
     })
     expect(await screen.findByRole('heading', { name: 'Site' })).toBeInTheDocument()
-    expect(r.falsa.corpos('POST /targets')).toEqual([{
+    expect(r.falsa.corpos('POST /projects/:projectId/targets')).toEqual([{
       name: 'Site', url: 'https://exemplo.com', method: 'GET', interval_sec: 60,
       timeout_ms: 10000, expected_status: 200, enabled: true,
     }])

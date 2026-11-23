@@ -1,9 +1,9 @@
 import { useRef } from 'react'
-import { useApi } from '@/app/contexto'
+import { useApiDoProjeto } from '@/app/projeto'
 import { periodoDoIncidente, SeloDoIncidente, situacaoDoIncidente } from '@/components/SeloDoIncidente'
 import { BotaoQueSome } from '@/components/ui/botao'
 import { useReconhecer } from '@/features/incidentes/reconhecer'
-import { chaves, useIncidentesDoHeartbeat } from '@/lib/api/consultas'
+import { useChavesDoProjeto, useIncidentesDoHeartbeat } from '@/lib/api/consultas'
 import { textoDaCausa } from '@/lib/api/mensagens'
 import type { IncidenteDeHeartbeat } from '@/lib/api/schemas'
 import { dataHora } from '@/lib/format'
@@ -23,13 +23,14 @@ export function IncidentesDoHeartbeat({
   aoErrar: (mensagem: string | null) => void
   aoSumir: () => void
 }) {
-  const api = useApi()
+  const api = useApiDoProjeto()
+  const chave = useChavesDoProjeto()
   const consulta = useIncidentesDoHeartbeat(id)
   const titulo = useRef<HTMLHeadingElement>(null)
 
   const { reconhecendo, reconhecer } = useReconhecer({
     enviar: (incidente) => api.reconhecerDoHeartbeat(id, incidente),
-    consulta: chaves.incidentesDoHeartbeat(id),
+    consulta: chave.incidentesDoHeartbeat(id),
     aoNaoEncontrar: aoSumir,
     aoErrar,
   })

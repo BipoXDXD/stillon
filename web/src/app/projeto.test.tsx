@@ -4,14 +4,11 @@ import { PROJETO_PADRAO, type ApiFalsa } from '@/test/api-falsa'
 import { renderizarPainel } from '@/test/renderizar'
 import { CHAVE_DO_ULTIMO_PROJETO } from './escolher-projeto'
 
-// Os prefixos das rotas de recurso, nas duas formas (a da raiz sai na Task 30).
-const RECURSOS = /^[A-Z]+ (\/projects\/:projectId)?\/(targets|heartbeats|incidents|channels|status-pages)\b/
-// As consultas da moldura (o contador de abertos e as tarefas que pedem
-// atenção): o Layout as faz na raiz, em qualquer tela, até a Task 30.
-const DA_MOLDURA = new Set(['GET /incidents', 'GET /heartbeats'])
+// Os prefixos das rotas de recurso (todas moram no projeto).
+const RECURSOS = /^[A-Z]+ \/projects\/:projectId\/(targets|heartbeats|incidents|channels|status-pages)\b/
 
 function pedidosDeRecurso(falsa: ApiFalsa): string[] {
-  return [...falsa.estado.chamadas.keys()].filter((k) => RECURSOS.test(k) && !DA_MOLDURA.has(k))
+  return [...falsa.estado.chamadas.keys()].filter((k) => RECURSOS.test(k))
 }
 
 const comProjetoB = (falsa: ApiFalsa) => {

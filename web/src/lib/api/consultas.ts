@@ -1,6 +1,7 @@
 import { keepPreviousData, onlineManager, useInfiniteQuery, useQuery } from '@tanstack/react-query'
 import { useSyncExternalStore } from 'react'
 import { useApi } from '@/app/contexto'
+import { useApiDoProjeto, useProjeto } from '@/app/projeto'
 import type { FiltroDoResumo } from './cliente'
 import type { Incidente, ItemDoResumo, ListaDeIncidentes } from './schemas'
 
@@ -9,30 +10,13 @@ const MS_DA_PREVIA = 60_000
 // As chaves e os intervalos de atualização (spec §11.4).
 export const chaves = {
   me: ['me'] as const,
-  previaDoCron: (expr: string, timezone: string) => ['previa-do-cron', expr, timezone] as const,
-  // Prefixos: invalidar um deles alcança tudo que está abaixo.
-  todosOsAlvos: ['targets'] as const,
-  todosOsIncidentes: ['incidents'] as const,
-  resumo: ['targets', 'summary'] as const,
-  // Abaixo da chave do resumo: quem invalida o resumo invalida as duas.
-  resumoFiltrado: (f: FiltroDoResumo) => ['targets', 'summary', f.tags, f.estados] as const,
-  alvos: ['targets', 'list'] as const,
-  alvo: (id: string) => ['targets', id] as const,
-  serie: (id: string, janela: string) => ['targets', id, 'checks', janela] as const,
-  // O limite entra na chave: páginas de tamanhos diferentes não dividem o cache.
-  incidentes: (filtro: string, alvo?: string, limite?: number) => ['incidents', filtro, alvo ?? '', limite ?? 0] as const,
-  heartbeats: ['heartbeats'] as const,
-  heartbeat: (id: string) => ['heartbeats', id] as const,
-  eventosDoHeartbeat: (id: string) => ['heartbeats', id, 'events'] as const,
-  incidentesDoHeartbeat: (id: string) => ['heartbeats', id, 'incidents'] as const,
-  canais: ['channels'] as const,
-  paginas: ['status-pages'] as const,
   sessoes: ['sessions'] as const,
   // A lista de projetos é da conta, e fica fora de qualquer projeto.
   projetos: ['projects'] as const,
   // As chaves de recurso de um projeto, todas sob ['projeto', id]: o cache de
   // um projeto nunca serve outro, e invalidar `todas` alcança o projeto
-  // inteiro. As de recurso acima, na raiz, saem na Task 30.
+  // inteiro. Dentro dele, os prefixos: invalidar um deles alcança tudo que
+  // está abaixo (o resumo filtrado fica abaixo do resumo).
   doProjeto: (id: string) => {
     const p = ['projeto', id] as const
     return {
@@ -78,6 +62,16 @@ export function useSemRede(): boolean {
   return useSyncExternalStore(onlineManager.subscribe, estaSemRede)
 }
 
+// As chaves do projeto atual, para quem invalida depois de uma mutação.
+export function useChavesDoProjeto() {
+  return chaves.doProjeto(useProjeto().id)
+}
+
+// A API e as chaves do projeto atual: toda consulta de recurso sai por aqui.
+function useDoProjeto() {
+  return { api: useApiDoProjeto(), chave: useChavesDoProjeto() }
+}
+
 export function useProjetos() {
   const api = useApi()
   return useQuery({ queryKey: chaves.projetos, queryFn: ({ signal }) => api.projetos(signal) })
@@ -89,9 +83,9 @@ export function useMe() {
 }
 
 export function useResumo() {
-  const api = useApi()
+  const { api, chave } = useDoProjeto()
   return useQuery({
-    queryKey: chaves.resumo,
+    queryKey: chave.resumo,
     queryFn: ({ signal }) => api.resumo(undefined, signal),
     refetchInterval: INTERVALO_DO_RESUMO_MS,
   })
@@ -101,9 +95,9 @@ export function useResumo() {
 // a manchete, as contagens e a lista de tags falam do conjunto inteiro. Até a
 // resposta chegar, fica o que estava na tela (spec do painel denso, Estados).
 export function useResumoFiltrado(filtro: FiltroDoResumo, ativo: boolean, naTela: { items: ItemDoResumo[] }) {
-  const api = useApi()
+  const { api, chave } = useDoProjeto()
   return useQuery({
-    queryKey: chaves.resumoFiltrado(filtro),
+    queryKey: chave.resumoFiltrado(filtro),
     queryFn: ({ signal }) => api.resumo(filtro, signal),
     refetchInterval: INTERVALO_DO_RESUMO_MS,
     enabled: ativo,
@@ -112,23 +106,23 @@ export function useResumoFiltrado(filtro: FiltroDoResumo, ativo: boolean, naTela
 }
 
 export function useAlvos() {
-  const api = useApi()
-  return useQuery({ queryKey: chaves.alvos, queryFn: ({ signal }) => api.alvos(signal) })
+  const { api, chave } = useDoProjeto()
+  return useQuery({ queryKey: chave.alvos, queryFn: ({ signal }) => api.alvos(signal) })
 }
 
 export function useAlvo(id: string) {
-  const api = useApi()
+  const { api, chave } = useDoProjeto()
   return useQuery({
-    queryKey: chaves.alvo(id),
+    queryKey: chave.alvo(id),
     queryFn: ({ signal }) => api.alvo(id, signal),
     refetchInterval: INTERVALO_DO_ALVO_MS,
   })
 }
 
 export function useSerie(id: string, janela: string) {
-  const api = useApi()
+  const { api, chave } = useDoProjeto()
   return useQuery({
-    queryKey: chaves.serie(id, janela),
+    queryKey: chave.serie(id, janela),
     queryFn: ({ signal }) => api.serie(id, janela, signal),
     refetchInterval: INTERVALO_DA_SERIE_MS,
     placeholderData: keepPreviousData,
@@ -136,9 +130,9 @@ export function useSerie(id: string, janela: string) {
 }
 
 export function useIncidentes(filtro: 'open' | 'resolved' | 'all', alvo?: string, limite?: number) {
-  const api = useApi()
+  const { api, chave } = useDoProjeto()
   return useInfiniteQuery({
-    queryKey: chaves.incidentes(filtro, alvo, limite),
+    queryKey: chave.incidentes(filtro, alvo, limite),
     queryFn: ({ pageParam, signal }) =>
       api.incidentes(
         {
@@ -166,16 +160,16 @@ function pollSoComUmaPagina(q: { state: { data?: { pages: unknown[] } } }): numb
 // Os incidentes abertos: uma página de até 100, o teto da rota. Uma consulta
 // só, dividida pelo contador da navegação, pelos
 // cartões do painel e pelo resumo da tela de incidentes: cada um lê o que
-// precisa pelo select. A chave fica sob ['incidents'], e o reconhecer, que
-// invalida ['incidents'], atualiza todos.
+// precisa pelo select. A chave fica sob os incidentes do projeto, e o
+// reconhecer, que invalida esse prefixo, atualiza todos.
 const LIMITE_DOS_ABERTOS = 100
 
 export type Abertos = { itens: Incidente[]; completa: boolean }
 
 function useConsultaDosAbertos<T>(select: (d: ListaDeIncidentes) => T) {
-  const api = useApi()
+  const { api, chave } = useDoProjeto()
   return useQuery({
-    queryKey: [...chaves.incidentes('open', undefined, LIMITE_DOS_ABERTOS), 'abertos'],
+    queryKey: [...chave.incidentes('open', undefined, LIMITE_DOS_ABERTOS), 'abertos'],
     queryFn: ({ signal }) => api.incidentes({ status: 'open', limit: LIMITE_DOS_ABERTOS }, signal),
     refetchInterval: INTERVALO_DOS_INCIDENTES_MS,
     select,
@@ -213,9 +207,9 @@ export function useIncidentesAbertos() {
 const LIMITE_DOS_RESOLVIDOS = 20
 
 export function useResolvidosRecentes(ativa: boolean) {
-  const api = useApi()
+  const { api, chave } = useDoProjeto()
   return useQuery({
-    queryKey: [...chaves.incidentes('resolved', undefined, LIMITE_DOS_RESOLVIDOS), 'ultimo'],
+    queryKey: [...chave.incidentes('resolved', undefined, LIMITE_DOS_RESOLVIDOS), 'ultimo'],
     queryFn: ({ signal }) => api.incidentes({ status: 'resolved', limit: LIMITE_DOS_RESOLVIDOS }, signal),
     enabled: ativa,
     refetchInterval: INTERVALO_DOS_RESOLVIDOS_MS,
@@ -224,18 +218,18 @@ export function useResolvidosRecentes(ativa: boolean) {
 
 // No ritmo do resumo: a manchete fala dos dois (spec da tela, A manchete).
 export function useHeartbeats() {
-  const api = useApi()
+  const { api, chave } = useDoProjeto()
   return useQuery({
-    queryKey: chaves.heartbeats,
+    queryKey: chave.heartbeats,
     queryFn: ({ signal }) => api.heartbeats(signal),
     refetchInterval: INTERVALO_DO_RESUMO_MS,
   })
 }
 
 export function useHeartbeat(id: string) {
-  const api = useApi()
+  const { api, chave } = useDoProjeto()
   return useQuery({
-    queryKey: chaves.heartbeat(id),
+    queryKey: chave.heartbeat(id),
     queryFn: ({ signal }) => api.heartbeat(id, signal),
     refetchInterval: INTERVALO_DO_RESUMO_MS,
   })
@@ -244,9 +238,9 @@ export function useHeartbeat(id: string) {
 // Sem retry: 400 é a resposta para quem ainda está digitando. A expressão não
 // muda de resposta na escala de um minuto, e o cache poupa o vaivém do campo.
 export function usePreviaDoCron(expr: string, timezone: string) {
-  const api = useApi()
+  const { api, chave } = useDoProjeto()
   return useQuery({
-    queryKey: chaves.previaDoCron(expr, timezone),
+    queryKey: chave.previaDoCron(expr, timezone),
     queryFn: ({ signal }) => api.previaDoCron(expr, timezone, signal),
     enabled: expr !== '' && timezone !== '',
     retry: false,
@@ -255,9 +249,9 @@ export function usePreviaDoCron(expr: string, timezone: string) {
 }
 
 export function useEventosDoHeartbeat(id: string) {
-  const api = useApi()
+  const { api, chave } = useDoProjeto()
   return useInfiniteQuery({
-    queryKey: chaves.eventosDoHeartbeat(id),
+    queryKey: chave.eventosDoHeartbeat(id),
     queryFn: ({ pageParam, signal }) => api.eventosDoHeartbeat(id, pageParam, signal),
     initialPageParam: PRIMEIRA_PAGINA,
     getNextPageParam: (ultima) => ultima.next_cursor,
@@ -266,9 +260,9 @@ export function useEventosDoHeartbeat(id: string) {
 }
 
 export function useIncidentesDoHeartbeat(id: string) {
-  const api = useApi()
+  const { api, chave } = useDoProjeto()
   return useInfiniteQuery({
-    queryKey: chaves.incidentesDoHeartbeat(id),
+    queryKey: chave.incidentesDoHeartbeat(id),
     queryFn: ({ pageParam, signal }) => api.incidentesDoHeartbeat(id, pageParam, signal),
     initialPageParam: PRIMEIRA_PAGINA,
     getNextPageParam: (ultima) => ultima.next_cursor,
@@ -277,17 +271,17 @@ export function useIncidentesDoHeartbeat(id: string) {
 }
 
 export function useCanais() {
-  const api = useApi()
+  const { api, chave } = useDoProjeto()
   return useQuery({
-    queryKey: chaves.canais,
+    queryKey: chave.canais,
     queryFn: ({ signal }) => api.canais(signal),
     refetchInterval: INTERVALO_DOS_CANAIS_MS,
   })
 }
 
 export function usePaginas() {
-  const api = useApi()
-  return useQuery({ queryKey: chaves.paginas, queryFn: ({ signal }) => api.paginas(signal) })
+  const { api, chave } = useDoProjeto()
+  return useQuery({ queryKey: chave.paginas, queryFn: ({ signal }) => api.paginas(signal) })
 }
 
 export function useSessoes() {

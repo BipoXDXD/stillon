@@ -7,7 +7,7 @@ import { renderizarPainel } from '@/test/renderizar'
 import '@/features/alvos/PaginaDetalhe'
 import '@/test/aquecer-estilos'
 
-const PATCH = 'PATCH /targets/:id'
+const PATCH = 'PATCH /projects/:projectId/targets/:id'
 
 async function montarEdicao() {
   const r = await renderizarPainel('/targets/alvo-1/edit')
@@ -158,7 +158,7 @@ describe('formulário de alvo: regra de conteúdo em "Avançado"', () => {
     await r.usuario.type(screen.getByLabelText('Ponteiro JSON'), '/status')
     await r.usuario.click(screen.getByRole('button', { name: 'Cadastrar' }))
     await waitFor(() =>
-      expect(r.falsa.corpos('POST /targets')[0]).toMatchObject({
+      expect(r.falsa.corpos('POST /projects/:projectId/targets')[0]).toMatchObject({
         content_rule: { mode: 'json_equals', value: 'up', json_pointer: '/status' },
       }),
     )
@@ -176,9 +176,9 @@ describe('formulário de alvo: regra de conteúdo em "Avançado"', () => {
     expect(seletor).toHaveAccessibleDescription(TEXTO_DO_HEAD)
     expect(screen.queryByLabelText(DEVE_APARECER)).not.toBeInTheDocument()
     await r.usuario.click(screen.getByRole('button', { name: 'Cadastrar' }))
-    await waitFor(() => expect(r.falsa.corpos('POST /targets')).toHaveLength(1))
-    expect(r.falsa.corpos('POST /targets')[0]).toMatchObject({ method: 'HEAD' })
-    expect(r.falsa.corpos('POST /targets')[0]).not.toHaveProperty('content_rule')
+    await waitFor(() => expect(r.falsa.corpos('POST /projects/:projectId/targets')).toHaveLength(1))
+    expect(r.falsa.corpos('POST /projects/:projectId/targets')[0]).toMatchObject({ method: 'HEAD' })
+    expect(r.falsa.corpos('POST /projects/:projectId/targets')[0]).not.toHaveProperty('content_rule')
   })
 
   // I1 da revisão. Sabotagem: desligar a regra no onChange do método → a
@@ -195,7 +195,7 @@ describe('formulário de alvo: regra de conteúdo em "Avançado"', () => {
     expect(screen.getByLabelText(DEVE_APARECER)).toHaveValue('ok')
     await r.usuario.click(screen.getByRole('button', { name: 'Cadastrar' }))
     await waitFor(() =>
-      expect(r.falsa.corpos('POST /targets')[0]).toMatchObject({
+      expect(r.falsa.corpos('POST /projects/:projectId/targets')[0]).toMatchObject({
         method: 'GET', content_rule: { mode: 'contains', value: 'ok' },
       }),
     )
@@ -234,7 +234,7 @@ describe('formulário de alvo: regra de conteúdo em "Avançado"', () => {
     expect(seletor).toHaveAccessibleDescription(expect.stringContaining(TEXTO_DO_ACCEPT))
     expect(screen.getByLabelText('Nome do header 1')).toHaveValue('accept-encoding')
     expect(screen.getByLabelText(DEVE_APARECER)).toHaveValue('ok')
-    expect(r.falsa.corpos('POST /targets')).toEqual([])
+    expect(r.falsa.corpos('POST /projects/:projectId/targets')).toEqual([])
   })
 
   it.each(['range', 'RANGE'])('com o header %s, o envio acusa o seletor e abre "Avançado"', async (nome) => {
@@ -254,7 +254,7 @@ describe('formulário de alvo: regra de conteúdo em "Avançado"', () => {
     expect(seletor).toHaveAttribute('aria-invalid', 'true')
     expect(seletor).toHaveAccessibleDescription(expect.stringContaining(TEXTO_DO_RANGE))
     expect(screen.getByLabelText('Nome do header 1')).toHaveValue(nome)
-    expect(r.falsa.corpos('POST /targets')).toEqual([])
+    expect(r.falsa.corpos('POST /projects/:projectId/targets')).toEqual([])
   })
 
   it('na edição, um Range guardado acusa o seletor e abre "Avançado" antes do PATCH', async () => {
@@ -391,7 +391,7 @@ describe('formulário de alvo: regra de conteúdo em "Avançado"', () => {
     await r.usuario.type(screen.getByLabelText(DEVE_APARECER), 'ok')
     await r.usuario.click(screen.getByText('Avançado'))
     expect(avancado()).not.toHaveAttribute('open')
-    r.falsa.estado.forcar.set('POST /targets', { status: 409, code: 'content_rule_host_limit_reached' })
+    r.falsa.estado.forcar.set('POST /projects/:projectId/targets', { status: 409, code: 'content_rule_host_limit_reached' })
     await r.usuario.click(screen.getByRole('button', { name: 'Cadastrar' }))
     await conferirTetoNoValor()
   })

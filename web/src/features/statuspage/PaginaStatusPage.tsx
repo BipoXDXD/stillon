@@ -5,7 +5,7 @@ import { useFieldArray, useForm, useWatch, type FieldPath } from 'react-hook-for
 import { ArrowDown, ArrowUp } from 'lucide-react'
 import { Link } from 'react-router'
 import { z } from 'zod'
-import { useApi } from '@/app/contexto'
+import { useApiDoProjeto, useRotaDoProjeto } from '@/app/projeto'
 import { EstadoDaConsulta } from '@/components/EstadoDaConsulta'
 import { Titulo } from '@/components/Titulo'
 import { useAvisar } from '@/components/ui/avisos'
@@ -13,7 +13,7 @@ import { Botao, BotaoQueSome } from '@/components/ui/botao'
 import { estiloDeCartao } from '@/components/ui/cartao'
 import { useCopiar } from '@/components/ui/copiar'
 import { CaixaDeMarcar, Campo, Entrada, ErroDoFormulario, Selecao } from '@/components/ui/campo'
-import { chaves, useAlvos, usePaginas, useResumo } from '@/lib/api/consultas'
+import { useAlvos, useChavesDoProjeto, usePaginas, useResumo } from '@/lib/api/consultas'
 import { errosDosCampos, type ErroDoCampo } from '@/lib/api/erros-de-campo'
 import { ApiError, type ErroDeCampo, naoEncontrado } from '@/lib/api/http'
 import { mensagemDe, mensagemDoCampo } from '@/lib/api/mensagens'
@@ -77,7 +77,9 @@ export function sugerirSlug(titulo: string): string {
 }
 
 function Formulario({ pagina, alvos }: { pagina: PaginaDeStatus | null; alvos: Alvo[] }) {
-  const api = useApi()
+  const noProjeto = useRotaDoProjeto()
+  const api = useApiDoProjeto()
+  const chave = useChavesDoProjeto()
   const qc = useQueryClient()
   const avisar = useAvisar()
   const resumo = useResumo()
@@ -120,7 +122,7 @@ function Formulario({ pagina, alvos }: { pagina: PaginaDeStatus | null; alvos: A
     try {
       if (pagina) await api.alterarPagina(pagina.id, v)
       else await api.criarPagina(v)
-      await qc.invalidateQueries({ queryKey: chaves.paginas })
+      await qc.invalidateQueries({ queryKey: chave.paginas })
       avisar('Status page salva. A página pública muda em até 30 segundos.')
     } catch (err) {
       if (err instanceof ApiError && err.code === 'slug_taken') {
@@ -129,12 +131,12 @@ function Formulario({ pagina, alvos }: { pagina: PaginaDeStatus | null; alvos: A
         // A página sumiu entre carregar e salvar. Como no 409 abaixo, o
         // aviso vai pelo toast: a recarga remonta o formulário.
         avisar('A status page já tinha sido apagada, talvez em outra aba.')
-        await qc.invalidateQueries({ queryKey: chaves.paginas })
+        await qc.invalidateQueries({ queryKey: chave.paginas })
       } else if (err instanceof ApiError && err.code === 'status_page_exists') {
         // Corrida entre abas: a recarga troca a `key` do formulário e o
         // remonta, então o aviso sai pelo toast, que sobrevive à troca.
         avisar('Já existe uma status page; recarregamos a que está salva.')
-        await qc.invalidateQueries({ queryKey: chaves.paginas })
+        await qc.invalidateQueries({ queryKey: chave.paginas })
       } else if (err instanceof ApiError && err.fields.length) {
         // Esta tela não move o foco, ao contrário do alvo e do heartbeat.
         for (const { campo, mensagem } of errosDosCampos(err, campoDoErro)) {
@@ -186,7 +188,7 @@ function Formulario({ pagina, alvos }: { pagina: PaginaDeStatus | null; alvos: A
             {/* Na volta da nova aba, o alvo novo chega e o link some: o foco
                 vai ao seletor, que nasce no mesmo commit. */}
             <BotaoQueSome tipo="secundario" tamanho="pequeno" asChild reserva={seletorDeAlvo}>
-              <Link to="/targets/new" target="_blank" rel="noopener">
+              <Link to={noProjeto('/targets/new')} target="_blank" rel="noopener">
                 Cadastrar primeiro alvo (abre em nova aba)
               </Link>
             </BotaoQueSome>
