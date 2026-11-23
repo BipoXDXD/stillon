@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"net/mail"
 
+	"github.com/google/uuid"
+
 	"github.com/BipoXDXD/stillon/internal/crypto"
 	"github.com/BipoXDXD/stillon/internal/prober/safedial"
 )
@@ -48,6 +50,14 @@ func (r *Resend) SendVerification(ctx context.Context, dest crypto.Secret, link 
 		"Para confirmar, abra o link abaixo em até 24 horas:\n" + link + "\n\n" +
 		"Se não foi você, ignore esta mensagem: sem a confirmação, nenhum alerta é enviado.\n"
 	return r.post(ctx, dest, "[StillOn] Confirme este endereço", corpo, "")
+}
+
+// SendAccount manda um e-mail de conta (confirmação, redefinição de senha)
+// pelo remetente desta instância: a fiação monta uma instância própria com o
+// remetente de conta. A Idempotency-Key é nova a cada chamada: cada envio
+// leva um token novo, e a chave só protege a própria requisição.
+func (r *Resend) SendAccount(ctx context.Context, to crypto.Secret, subject, body string) error {
+	return r.post(ctx, to, subject, body, "account/"+uuid.NewString())
 }
 
 // SendTOTPLocked avisa o dono que o segundo fator foi bloqueado por códigos
