@@ -15,6 +15,7 @@ import { cn } from '@/lib/utils'
 import { BotaoDeTema } from './BotaoDeTema'
 import { useSessao } from './contexto'
 import { NoProjeto, useProjetoDaMoldura, useRotaDoProjeto } from './projeto'
+import { SeletorDeProjeto } from './SeletorDeProjeto'
 import { aoApontarPreCarregar, carregarConfiguracoes, carregarDetalhe, preCarregarEmOcioso } from './rotas-sob-demanda'
 
 // As cinco abas, com os mesmos nomes no topo (desktop) e na barra inferior
@@ -66,10 +67,18 @@ export function Layout() {
       <AvisoDeContexto />
       <AvisoDeRede />
       <header className="border-b border-borda bg-superficie">
-        <div className="mx-auto flex min-h-16 max-w-6xl items-center gap-4 px-4 sm:px-6 lg:gap-8">
+        {/* O seletor de projeto, um só nos dois tamanhos: no desktop, entre
+            a Marca e as abas, entre filetes (StillOn, o projeto, a seção
+            dele); no celular, numa linha própria abaixo do cabeçalho, na
+            largura toda (order-last + w-full na quebra do flex-wrap). A
+            altura de 64 px da linha vem do grupo da direita. */}
+        <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-x-4 px-4 sm:px-6 lg:flex-nowrap lg:gap-x-8">
           <Marca />
+          <div className="order-last -mx-4 flex w-full border-t border-borda px-1 sm:-mx-6 sm:px-3 lg:order-none lg:mx-0 lg:w-auto lg:min-w-0 lg:border-t-0 lg:border-x lg:px-4">
+            <SeletorDeProjeto />
+          </div>
           <NavegacaoPrincipal />
-          <div className="ml-auto flex min-w-0 items-center gap-2">
+          <div className="ml-auto flex min-h-16 min-w-0 items-center gap-2">
             {/* O e-mail some no celular; a conta está na aba Conta. */}
             {me.data && <span className="hidden max-w-64 truncate text-meta text-apagado lg:inline">{me.data.email}</span>}
             <BotaoDeTema />

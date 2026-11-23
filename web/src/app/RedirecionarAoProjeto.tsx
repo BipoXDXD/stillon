@@ -1,8 +1,8 @@
 import { Navigate, useLocation, useNavigation } from 'react-router'
 import { EstadoDaConsulta } from '@/components/EstadoDaConsulta'
+import { SemProjetos } from '@/features/projetos/SemProjetos'
 import { useProjetos } from '@/lib/api/consultas'
 import { escolherProjeto, lerProjetoLembrado } from './escolher-projeto'
-import { NaoEncontrada } from './NaoEncontrada'
 
 // O mesmo caminho, a mesma search e o mesmo hash, dentro do projeto. replace:
 // o endereço antigo não fica no histórico, e o Voltar não cai nele de novo.
@@ -34,8 +34,9 @@ function Redirecionar({ lembrado }: { lembrado: () => string | null }) {
   return (
     <EstadoDaConsulta consulta={projetos}>
       {({ items }) => {
+        // Sem projeto nenhum, não há para onde ir: o estado vazio, que cria.
         const projeto = escolherProjeto(items, lembrado())
-        return projeto ? <NoProjeto id={projeto.id} /> : <NaoEncontrada />
+        return projeto ? <NoProjeto id={projeto.id} /> : <SemProjetos />
       }}
     </EstadoDaConsulta>
   )

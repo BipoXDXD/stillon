@@ -9,7 +9,9 @@ export function NaoEncontrada() {
   const painel = projeto ? `/projects/${encodeURIComponent(projeto.id)}/` : '/'
   return (
     <div className="space-y-4">
-      <Titulo aba="Página não encontrada">Página não encontrada</Titulo>
+      <Titulo aba="Página não encontrada" semProjeto>
+        Página não encontrada
+      </Titulo>
       <Link to={painel} className="alvo-de-toque text-realce underline">
         Voltar ao painel
       </Link>

@@ -373,6 +373,44 @@ describe('erros que só o servidor sabe dar', () => {
   })
 })
 
+// tenancy.Service.List, ParseProjectName e ProjectLimit no servidor.
+describe('projetos (projecthandlers do servidor)', () => {
+  // Sabotagem: a lista na ordem de inserção → proj-9 vem primeiro.
+  it('a lista traz o padrão primeiro, depois por id', async () => {
+    const falsa = apiLogada()
+    const nove = falsa.criarProjeto('Nove')
+    nove.projeto.id = 'proj-9'
+    falsa.estado.projetos = [nove, ...falsa.estado.projetos.filter((p) => p !== nove)]
+    falsa.criarProjeto('Três')
+    const resposta = await pedir('GET', '/projects')
+    const { items } = (await resposta.json()) as { items: { id: string }[] }
+    expect(items.map((p) => p.id)).toEqual([PROJETO_PADRAO, 'proj-3', 'proj-9'])
+  })
+
+  it.each([
+    ['vazio', '  ', 'required'],
+    ['101 runas', 'ç'.repeat(101), 'too_long'],
+    ['espaço de largura zero', 'a​b', 'invalid'],
+  ])('nome %s é 400 no campo name', async (_, name, reason) => {
+    apiLogada()
+    const resposta = await pedir('POST', '/projects', { name })
+    expect(resposta.status).toBe(400)
+    expect(await resposta.json()).toMatchObject({ error: { code: 'validation_failed', fields: [{ field: 'name', reason }] } })
+  })
+
+  // Sabotagem: contar todos os projetos da lista, não só os do titular → o
+  // projeto em que ele é só membro esgota a cota.
+  it('o teto conta os projetos de que o usuário é titular', async () => {
+    const falsa = apiLogada()
+    falsa.estado.limiteDeProjetos = 2
+    falsa.criarProjeto('Alheio').projeto.role = 'member'
+    expect((await pedir('POST', '/projects', { name: 'Segundo' })).status).toBe(201)
+    const resposta = await pedir('POST', '/projects', { name: 'Terceiro' })
+    expect(resposta.status).toBe(409)
+    expect(await resposta.json()).toMatchObject({ error: { code: 'project_limit_reached' } })
+  })
+})
+
 // Como optional.go e recusouNulo no servidor: em campo obrigatório, null é 400,
 // antes de procurar o recurso e sem gravar nada.
 describe('PATCH com null em campo obrigatório', () => {

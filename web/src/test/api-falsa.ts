@@ -96,6 +96,10 @@ const MAX_LETRAS_DA_TAG = 24
 const TAG_VALIDA = /^[\p{L}\p{Nd}_-]+$/u
 const ESTADOS_DO_FILTRO = ['up', 'degraded', 'down', 'unknown', 'paused']
 const MAX_NOME_DO_HEARTBEAT = 100
+// tenancy.MaxProjectNameRunes e o que rotulo.TemInvisivel recusa (controle e
+// formato).
+const MAX_NOME_DO_PROJETO = 100
+const INVISIVEL = /[\p{Cc}\p{Cf}]/u
 const SUFIXO_DA_COPIA = ' (cópia)'
 
 // Os DTOs de entrada do servidor (decodeJSON recusa o que não estiver aqui).
@@ -225,9 +229,12 @@ export function criarApiFalsa() {
     sessoes: [] as Entrada<typeof Sessao>[],
     // Respostas forçadas por rota ("POST /targets" → 409 etc.).
     forcar: new Map<string, ErroForcado>(),
-    // Os projetos de que o usuário é membro, o padrão primeiro, cada um com
-    // os recursos dele. Os do padrão são o próprio st.
+    // Os projetos de que o usuário é membro, cada um com os recursos dele.
+    // Os do padrão são o próprio st. O GET ordena como o servidor.
     projetos: [] as ProjetoFalso[],
+    // tenancy.ProjectLimit(false): quantos projetos o usuário pode ter como
+    // titular (owner).
+    limiteDeProjetos: 3,
   }
   st.projetos.push({
     projeto: { id: PROJETO_PADRAO, name: 'Padrão', is_default: true, role: 'owner', created_at: '2026-09-01T10:00:00Z' },
@@ -803,10 +810,28 @@ export function criarApiFalsa() {
 
     ...rotasDosRecursos('/projects/:projectId', (params) => st.projetos.find((p) => p.projeto.id === params.projectId)?.recursos),
 
-    rota('get', '/projects', () => HttpResponse.json({ items: st.projetos.map((p) => p.projeto) })),
+    // tenancy.Service.List: o padrão primeiro, depois por id.
+    rota('get', '/projects', () =>
+      HttpResponse.json({
+        items: st.projetos
+          .map((p) => p.projeto)
+          .toSorted((a, b) => Number(b.is_default) - Number(a.is_default) || a.id.localeCompare(b.id)),
+      }),
+    ),
+    // ProjectHandlers.Create: o nome como tenancy.ParseProjectName (o
+    // invisível aqui é só controle e formato, sem a exceção do ZWJ entre
+    // visíveis de rotulo.TemInvisivel) e o teto contado pelo titular.
     rota('post', '/projects', estrita(['name'], ({ corpo }) => {
       const nome = typeof corpo.name === 'string' ? corpo.name.trim() : ''
-      if (nome === '') return erro(400, 'validation_failed', [{ field: 'name', reason: 'required' }])
+      const motivo =
+        nome === '' ? 'required' : [...nome].length > MAX_NOME_DO_PROJETO ? 'too_long' : INVISIVEL.test(nome) ? 'invalid' : null
+      if (motivo) return erro(400, 'validation_failed', [{ field: 'name', reason: motivo }])
+      if (st.projetos.filter((p) => p.projeto.role === 'owner').length >= st.limiteDeProjetos) {
+        // O project_limit_reached (409) chega ao internal/apierr/errors.go
+        // deste ramo com o merge do 2b.3: aí ele entra em ERROS_DO_SERVIDOR
+        // (o teste de contrato compara as duas tabelas) e isto vira erro(...).
+        return responderErro({ status: 409, code: 'project_limit_reached' })
+      }
       return HttpResponse.json(criarProjeto(nome).projeto, { status: 201 })
     })),
 
