@@ -28,7 +28,9 @@ const variantes = cva(
       tamanho: {
         normal: 'px-4 text-sm',
         pequeno: 'px-3 text-meta',
-        icone: 'size-11 p-0',
+        // shrink-0: numa linha flex cheia (o cabeçalho a 1280 px, com o
+        // seletor de projeto), o botão de ícone encolhia abaixo dos 44 px.
+        icone: 'size-11 shrink-0 p-0',
       } satisfies Record<TamanhoDeBotao, string>,
     },
     defaultVariants: { tipo: 'primario', tamanho: 'normal' },

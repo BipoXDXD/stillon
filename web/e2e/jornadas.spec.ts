@@ -170,13 +170,22 @@ test('alvo: editar pelo painel, ver o incidente aberto na aba Incidentes e recon
     const nomeNovo = `${nome} editado`
     const cabecalhos = await entrarPelaApi(request, credenciais.email, credenciais.senha)
     const id = await criarAlvo(request, cabecalhos, nome)
+    const projetos = (await (await request.get('/api/v1/projects', { headers: cabecalhos })).json()) as {
+      items: { id: string; is_default: boolean; role: string }[]
+    }
+    const padrao = projetos.items.find((p) => p.is_default && p.role === 'owner')?.id
+    expect(padrao, 'o Projeto padrão').toBeDefined()
     await request.post('/api/v1/auth/logout', { headers: MUTACAO })
 
     // 1. Editar: o formulário abre com o que está gravado; o F5 prova que o
-    //    detalhe vem do servidor.
+    //    detalhe vem do servidor. O link de antes dos projetos leva ao
+    //    detalhe no Projeto padrão, onde a rota legada da API criou o alvo.
     await entrarPeloPainel(page, credenciais.email, credenciais.senha)
+    //    A cadência dá um GET por segundo: o redirecionamento pede a lista de
+    //    projetos antes, e o detalhe chega depois dos 10 s padrão do expect.
     await page.goto(`/targets/${id}`)
-    await expect(page.getByRole('heading', { name: nome })).toBeVisible()
+    await expect(page.getByRole('heading', { name: nome })).toBeVisible({ timeout: 30_000 })
+    await expect(page).toHaveURL(new RegExp(`/projects/${padrao}/targets/${id}$`))
     await page.getByRole('link', { name: 'Editar' }).click()
     await expect(page.getByLabel('Nome', { exact: true })).toHaveValue(nome)
     await page.getByLabel('Nome', { exact: true }).fill(nomeNovo)
