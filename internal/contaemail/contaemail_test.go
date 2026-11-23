@@ -49,13 +49,14 @@ type tetoFalso struct {
 	mu       sync.Mutex
 	reservas int
 	libera   bool
+	erro     error
 }
 
 func (t *tetoFalso) Reservar(context.Context) (bool, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.reservas++
-	return t.libera, nil
+	return t.libera, t.erro
 }
 
 func (t *tetoFalso) total() int {
@@ -75,12 +76,16 @@ type orcamentosFalsos struct {
 	mu     sync.Mutex
 	gastos []gasto
 	libera bool
+	erro   error
 }
 
 func (o *orcamentosFalsos) Gastar(_ context.Context, balde string, chave []byte, aCada time.Duration, rajada int) (time.Duration, bool, error) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	o.gastos = append(o.gastos, gasto{balde, bytes.Clone(chave), aCada, rajada})
+	if o.erro != nil {
+		return 0, false, o.erro
+	}
 	if !o.libera {
 		return time.Minute, false, nil
 	}
@@ -335,5 +340,70 @@ func TestChaveDoBaldeIgnoraCaixa(t *testing.T) {
 		if g.balde != "conta_destino" || g.aCada != 20*time.Minute || g.rajada != 3 || !bytes.Equal(g.chave, quer) {
 			t.Errorf("gasto = {%s %x %v %d}, queria {conta_destino HMAC 20m 3}", g.balde, g.chave, g.aCada, g.rajada)
 		}
+	}
+}
+
+// transporteParado segura cada envio até o ctx dele acabar, como um provedor
+// que não responde.
+type transporteParado struct{ comecou chan struct{} }
+
+func (t *transporteParado) SendAccount(ctx context.Context, _ crypto.Secret, _, _ string) error {
+	t.comecou <- struct{}{}
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+// O encerramento inteiro (envio em curso mais dreno) cabe no orçamento do
+// dreno, contado do cancelamento: um envio parado não ganha os 15 s dele.
+func TestEncerramentoCabeNoPrazoDoDreno(t *testing.T) {
+	transporte := &transporteParado{comecou: make(chan struct{}, 4)}
+	e := contaemail.New(transporte, &tetoFalso{libera: true}, &orcamentosFalsos{libera: true},
+		chaveDeTeste, slog.New(slog.NewTextHandler(&logTravado{}, nil)))
+	const orcamento = 200 * time.Millisecond
+	contaemail.EncurtarPrazoDreno(e, orcamento)
+	ctx, cancel := context.WithCancel(context.Background())
+	feito := make(chan struct{})
+	go func() { e.Rodar(ctx); close(feito) }()
+
+	enfileirar(t, e, "pessoa@exemplo.com")
+	enfileirar(t, e, "outra@exemplo.com") // fica para o dreno
+	select {
+	case <-transporte.comecou:
+	case <-time.After(5 * time.Second):
+		t.Fatal("o envio não começou")
+	}
+	inicio := time.Now()
+	cancel()
+
+	select {
+	case <-feito:
+		if d := time.Since(inicio); d > orcamento+time.Second {
+			t.Errorf("Rodar levou %v depois do cancel, queria até %v", d, orcamento)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatalf("Rodar não voltou em 3 s com orçamento de %v: o envio em curso estourou o dreno", orcamento)
+	}
+}
+
+func TestVerificacaoComBaldeOuTetoComErroDevolveOErro(t *testing.T) {
+	boom := errors.New("banco fora do ar")
+	casos := map[string]func(*cenario){
+		"Gastar":   func(c *cenario) { c.orcamentos.erro = boom },
+		"Reservar": func(c *cenario) { c.teto.erro = boom },
+	}
+	for nome, quebrar := range casos {
+		t.Run(nome, func(t *testing.T) {
+			c := novoCenario(true, true)
+			quebrar(c)
+			m := novoTransporte()
+			v := contaemail.NovaVerificacaoComTeto(c.enviador, m)
+
+			if err := v.SendVerification(context.Background(), crypto.Secret("p@x.com"), "https://v.dev/l"); !errors.Is(err, boom) {
+				t.Errorf("SendVerification = %v, queria o erro de %s", err, nome)
+			}
+			if n := m.total(); n != 0 {
+				t.Errorf("o transporte recebeu %d envios, queria 0", n)
+			}
+		})
 	}
 }

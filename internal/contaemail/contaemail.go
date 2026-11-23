@@ -59,6 +59,9 @@ type Enviador struct {
 	chave      []byte
 	log        *slog.Logger
 	fila       chan mensagem
+	// prazoDreno é o orçamento do encerramento inteiro, contado do
+	// cancelamento de ctx. Campo só para o teste o encurtar.
+	prazoDreno time.Duration
 }
 
 // New monta o enviador. chave é a do HMAC (IP_HASH_KEY): o endereço não
@@ -66,7 +69,7 @@ type Enviador struct {
 func New(t Transporte, teto Teto, o Orcamentos, chave []byte, log *slog.Logger) *Enviador {
 	return &Enviador{
 		transporte: t, teto: teto, orcamentos: o, chave: chave, log: log,
-		fila: make(chan mensagem, capacidadeFila),
+		fila: make(chan mensagem, capacidadeFila), prazoDreno: prazoDreno,
 	}
 }
 
@@ -81,24 +84,27 @@ func (e *Enviador) SendAccountEmail(_ context.Context, to, subject, body string)
 	return nil
 }
 
-// Rodar consome a fila até ctx encerrar. Depois, drena o que restou por até
-// prazoDreno e volta. Cada envio tem prazo próprio de prazoEnvio, descolado
-// do cancelamento de ctx: um envio já começado termina.
+// Rodar consome a fila até ctx encerrar e então drena o que restou. O
+// encerramento inteiro (o envio em curso mais o dreno) cabe em prazoDreno,
+// contado do cancelamento de ctx: os envios usam um contexto que não morre
+// com ctx, mas que vence prazoDreno depois dele. Cada envio tem ainda o
+// prazo próprio de prazoEnvio.
 func (e *Enviador) Rodar(ctx context.Context) {
-	base := context.WithoutCancel(ctx)
+	limite, cancelar := context.WithCancel(context.WithoutCancel(ctx))
+	defer cancelar()
+	pararTimer := context.AfterFunc(ctx, func() { time.AfterFunc(e.prazoDreno, cancelar) })
+	defer pararTimer()
 	for ctx.Err() == nil {
 		select {
 		case m := <-e.fila:
-			e.entregar(base, m)
+			e.entregar(limite, m)
 		case <-ctx.Done():
 		}
 	}
-	dreno, cancel := context.WithTimeout(base, prazoDreno)
-	defer cancel()
-	for dreno.Err() == nil {
+	for limite.Err() == nil {
 		select {
 		case m := <-e.fila:
-			e.entregar(dreno, m)
+			e.entregar(limite, m)
 		default:
 			return
 		}
