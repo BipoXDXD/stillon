@@ -19,8 +19,9 @@ import (
 // O acordo entre projectResponse e o schema de projeto do painel, no molde de
 // channels_contrato_internal_test.go: o JSON real, de toProjectResponse e
 // apierr.WriteJSON, tem de continuar igual a testdata/contrato-projetos.json.
-// Mudou o DTO de propósito? Regrave com STILLON_REGRAVAR_CONTRATO=1 e rode o
-// vitest do painel.
+// Mudou o DTO de propósito? Regrave com STILLON_REGRAVAR_CONTRATO=1. O painel
+// ainda não lê este arquivo: o teste dele que o consome chega no 2b.4 (Task
+// 28), e só a partir daí regravar pede rodar também o vitest do painel.
 const arquivoDoContratoProjetos = "contrato-projetos.json"
 
 func TestProjectResponseKeepsThePanelContract(t *testing.T) {
@@ -37,7 +38,7 @@ func TestProjectResponseKeepsThePanelContract(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !bytes.Equal(gerado, gravado) {
-		t.Errorf("a resposta de projeto mudou; se foi de propósito, regrave com %s=1, confira o git diff de %s e rode o vitest do painel",
+		t.Errorf("a resposta de projeto mudou; se foi de propósito, regrave com %s=1, confira o git diff de %s (o vitest do painel passa a ler o arquivo no 2b.4)",
 			regravarContrato, caminho)
 	}
 }
