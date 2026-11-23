@@ -9,6 +9,8 @@ import { Marca } from '@/components/Marca'
 import { Titulo } from '@/components/Titulo'
 import { Botao } from '@/components/ui/botao'
 import { Campo, Entrada, ErroDoFormulario } from '@/components/ui/campo'
+import { LinkTerciario } from '@/features/conta/comum'
+import { useConfigDoCadastro } from '@/lib/api/consultas'
 import { ApiError } from '@/lib/api/http'
 import { mensagemDe } from '@/lib/api/mensagens'
 import type { Motivo } from '@/lib/api/sessao'
@@ -73,6 +75,10 @@ export function PaginaLogin() {
   const [desafio, setDesafio] = useState<string | null>(null)
   const [recuperacao, setRecuperacao] = useState(false)
   const [erro, setErro] = useState<string | null>(null)
+  // Os links do cadastro só com a config dizendo enabled: é o único sinal
+  // público de que o servidor manda e-mail. Desligado, carregando ou com a
+  // config falhando, o login fica como era.
+  const cadastroLigado = useConfigDoCadastro().data?.enabled === true
   const destino = destinoSeguro(params.get('next'))
   const textoDoMotivo = textoDoMotivoEm(local.state)
 
@@ -191,6 +197,11 @@ export function PaginaLogin() {
                   />
                 )}
               </Campo>
+              {cadastroLigado && (
+                <p className="text-sm">
+                  <LinkTerciario para="/forgot-password">Esqueci a senha</LinkTerciario>
+                </p>
+              )}
               <Botao type="submit" className="w-full" disabled={senha.formState.isSubmitting}>
                 Entrar
               </Botao>
@@ -228,6 +239,11 @@ export function PaginaLogin() {
             </form>
           )}
         </div>
+        {cadastroLigado && (
+          <p className="text-center text-sm text-suave">
+            Ainda não tem conta? <LinkTerciario para="/signup">Criar conta</LinkTerciario>
+          </p>
+        )}
       </main>
     </>
   )

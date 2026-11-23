@@ -1,6 +1,7 @@
 import { act, screen, waitFor } from '@testing-library/react'
 import { http, HttpResponse } from 'msw'
 import { afterEach, describe, expect, it } from 'vitest'
+import { chaves } from '@/lib/api/consultas'
 import { RECUPERACAO_OK, TOTP_OK } from '@/test/api-falsa'
 import { novaSessao } from '@/test/ambiente'
 import { servidor } from '@/test/setup'
@@ -342,7 +343,11 @@ describe('sair', () => {
     await usuario.click(screen.getByRole('button', { name: 'Sair' }))
     await screen.findByRole('heading', { name: 'Entrar no StillOn' })
     expect(router.state.location.pathname).toBe('/login')
-    await waitFor(() => expect(cliente.getQueryCache().getAll()).toEqual([]))
+    // Só a config pública do cadastro, que o login busca de novo (os links
+    // de criar conta e de esqueci a senha); nada da sessão que acabou.
+    await waitFor(() =>
+      expect(cliente.getQueryCache().getAll().map((q) => q.queryKey)).toEqual([chaves.configDoCadastro]),
+    )
   })
 
   // M5: com o logout em voo, Sair fica ocupado, e o segundo clique não
@@ -464,5 +469,55 @@ describe('a tela de entrada no sistema visual', () => {
     }
     expect(screen.getByRole('button', { name: 'Entrar' })).toHaveClass('min-h-11')
     expect(screen.queryByText('Monitor de disponibilidade')).not.toBeInTheDocument()
+  })
+})
+
+// Proposta da T11, §9 (posição escolhida pelo dono): "Esqueci a senha" logo
+// abaixo do campo Senha, e "Ainda não tem conta? Criar conta" abaixo do
+// cartão. Os dois só com o cadastro ligado: é o único sinal público de que o
+// servidor manda e-mail.
+describe('links do cadastro', () => {
+  // Sabotagem prevista: trocar as posições (os dois abaixo do cartão).
+  it('mostra criar conta e esqueci a senha com o cadastro ligado', async () => {
+    await renderizarPainel('/login', { logado: false })
+    const esqueci = await screen.findByRole('link', { name: 'Esqueci a senha' })
+    expect(esqueci).toHaveAttribute('href', '/forgot-password')
+    const criar = screen.getByRole('link', { name: 'Criar conta' })
+    expect(criar).toHaveAttribute('href', '/signup')
+    expect(criar.parentElement).toHaveTextContent('Ainda não tem conta? Criar conta')
+
+    const senha = screen.getByLabelText('Senha')
+    const entrar = screen.getByRole('button', { name: 'Entrar' })
+    const segue = (a: Node, b: Node) => Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING)
+    // Entre o campo Senha e o Entrar, dentro do formulário.
+    expect(segue(senha, esqueci)).toBe(true)
+    expect(segue(esqueci, entrar)).toBe(true)
+    expect(entrar.closest('form')).toContainElement(esqueci)
+    // Fora do cartão: depois do formulário, e não dentro dele.
+    expect(entrar.closest('form')).not.toContainElement(criar)
+    expect(segue(entrar, criar)).toBe(true)
+  })
+
+  // Duas sabotagens previstas: ignorar o enabled (o desligado mostra) e
+  // trocar "=== true" por "!== false" (a config que falhou mostra).
+  it('esconde os links com o cadastro desligado ou com a config falhando', async () => {
+    for (const caso of ['desligado', 'falhando'] as const) {
+      // A carga começa numa tela que não lê a config: o login a busca já com
+      // a resposta do caso.
+      const { falsa, router, cliente, tela } = await renderizarPainel('/confirm-email', { logado: false })
+      await screen.findByRole('heading', { name: 'Link inválido ou vencido' })
+      if (caso === 'desligado') falsa.estado.cadastro.habilitado = false
+      else falsa.estado.forcar.set('GET /auth/signup-config', { status: 500, code: 'internal_error' })
+      cliente.clear()
+      await act(() => router.navigate('/login'))
+      await screen.findByRole('heading', { name: 'Entrar no StillOn' })
+      await waitFor(() =>
+        expect(cliente.getQueryState(chaves.configDoCadastro)?.status).toBe(caso === 'desligado' ? 'success' : 'error'),
+      )
+      expect({ caso, esqueci: screen.queryByRole('link', { name: 'Esqueci a senha' }) }).toEqual({ caso, esqueci: null })
+      expect({ caso, criar: screen.queryByRole('link', { name: 'Criar conta' }) }).toEqual({ caso, criar: null })
+      expect(screen.queryByText('Ainda não tem conta?', { exact: false })).not.toBeInTheDocument()
+      tela.unmount()
+    }
   })
 })

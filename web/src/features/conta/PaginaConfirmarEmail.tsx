@@ -1,9 +1,11 @@
+import { useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router'
 import { useApi } from '@/app/contexto'
 import { Titulo } from '@/components/Titulo'
 import { Botao } from '@/components/ui/botao'
 import { ErroDoFormulario } from '@/components/ui/campo'
+import { chaves } from '@/lib/api/consultas'
 import { ApiError } from '@/lib/api/http'
 import { mensagemDe } from '@/lib/api/mensagens'
 import { MolduraPublica, TextoDeApoio, useTokenDoFragmento } from './comum'
@@ -16,6 +18,7 @@ type Estado = { fase: 'confirmando' } | { fase: 'confirmado' } | { fase: 'invali
 export function PaginaConfirmarEmail() {
   const token = useTokenDoFragmento()
   const api = useApi()
+  const cliente = useQueryClient()
   const [estado, setEstado] = useState<Estado>(token ? { fase: 'confirmando' } : { fase: 'invalido' })
 
   const confirmar = useCallback(
@@ -23,6 +26,9 @@ export function PaginaConfirmarEmail() {
       setEstado({ fase: 'confirmando' })
       try {
         await api.confirmarEmail(t)
+        // O /me tem staleTime Infinity: sem isto, o painel aberto seguiria
+        // com o aviso de e-mail não confirmado.
+        void cliente.invalidateQueries({ queryKey: chaves.me })
         setEstado({ fase: 'confirmado' })
       } catch (e) {
         setEstado(
@@ -32,7 +38,7 @@ export function PaginaConfirmarEmail() {
         )
       }
     },
-    [api],
+    [api, cliente],
   )
 
   // Uma vez por carga: o token é de uso único, e o StrictMode roda o efeito
