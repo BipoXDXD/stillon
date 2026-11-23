@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   EMAIL,
   LIMITE_DE_PROVAS,
+  PROJETO_PADRAO,
   RECUPERACAO_OK,
   rotacao,
   SEGREDO_NOVO,
@@ -10,7 +11,7 @@ import {
   TOTP_NOVO,
   TOTP_OK,
 } from '@/test/api-falsa'
-import { canal } from '@/test/fixtures'
+import { alvo, canal } from '@/test/fixtures'
 import { buscarDoTeste, novaSessao, usarApiFalsa } from '@/test/ambiente'
 import { servidor } from '@/test/setup'
 import { ApiError, type Buscar } from './http'
@@ -893,5 +894,65 @@ describe('o id hostil vai codificado em toda rota com id', () => {
     const { api } = novaSessao({ buscar })
     await chamar(api).catch(() => undefined)
     expect(pedidos).toEqual([esperada])
+  })
+})
+
+// Os recursos moram no projeto (spec do PR 2b): o id do projeto entra no
+// caminho codificado como segmento, como o id do recurso.
+describe('recursos vão para o projeto', () => {
+  function capturar() {
+    const pedidos: { rota: string; init: RequestInit }[] = []
+    const buscar = (entrada: string, init: RequestInit) => {
+      pedidos.push({ rota: `${init.method ?? 'GET'} ${entrada}`, init })
+      return Promise.resolve(Response.json({}))
+    }
+    return { pedidos, ...novaSessao({ buscar }) }
+  }
+
+  // Sabotagem: doProjeto sem o prefixo /projects/{id} → a rota sai na raiz.
+  it('o recurso do projeto vai para /projects/{id}, com o id codificado', async () => {
+    const { pedidos, api } = capturar()
+    await api.doProjeto('p/1').alvo('a').catch(() => undefined)
+    expect(pedidos.map((p) => p.rota)).toEqual(['GET /api/v1/projects/p%2F1/targets/a'])
+  })
+
+  it('a lista de projetos vem de /projects', async () => {
+    const { pedidos, api } = capturar()
+    await api.projetos().catch(() => undefined)
+    expect(pedidos.map((p) => p.rota)).toEqual(['GET /api/v1/projects'])
+  })
+
+  it('criarProjeto manda X-Requested-With e o corpo {name}', async () => {
+    const { pedidos, api } = capturar()
+    await api.criarProjeto({ name: 'Loja' }).catch(() => undefined)
+    expect(pedidos.map((p) => p.rota)).toEqual(['POST /api/v1/projects'])
+    const init = pedidos[0]!.init
+    expect(new Headers(init.headers).get('X-Requested-With')).toBe('stillon')
+    expect(JSON.parse(String(init.body))).toEqual({ name: 'Loja' })
+  })
+
+  it('o projeto da API falsa responde com os recursos dele, não com os do padrão', async () => {
+    const { falsa, api } = await logado()
+    const outro = falsa.criarProjeto('Loja')
+    outro.recursos.alvos.push(alvo({ id: 'alvo-da-loja' }))
+    falsa.estado.alvos.push(alvo({ id: 'alvo-do-padrao' }))
+    expect((await api.doProjeto(outro.projeto.id).alvos()).items.map((a) => a.id)).toEqual(['alvo-da-loja'])
+    expect((await api.alvos()).items.map((a) => a.id)).toEqual(['alvo-do-padrao'])
+    expect((await api.doProjeto(PROJETO_PADRAO).alvos()).items.map((a) => a.id)).toEqual(['alvo-do-padrao'])
+  })
+
+  it('a API falsa lista e cria projetos, o padrão primeiro', async () => {
+    const { api } = await logado()
+    const criado = await api.criarProjeto({ name: 'Loja' })
+    expect(criado).toMatchObject({ name: 'Loja', is_default: false, role: 'owner' })
+    expect((await api.projetos()).items.map((p) => [p.id, p.is_default])).toEqual([
+      [PROJETO_PADRAO, true],
+      [criado.id, false],
+    ])
+  })
+
+  it('projeto que não existe é 404 na API falsa', async () => {
+    const { api } = await logado()
+    await expect(api.doProjeto('nao-existe').alvos()).rejects.toMatchObject({ code: 'not_found' })
   })
 })

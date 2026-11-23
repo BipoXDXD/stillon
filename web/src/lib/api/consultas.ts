@@ -28,6 +28,33 @@ export const chaves = {
   canais: ['channels'] as const,
   paginas: ['status-pages'] as const,
   sessoes: ['sessions'] as const,
+  // A lista de projetos é da conta, e fica fora de qualquer projeto.
+  projetos: ['projects'] as const,
+  // As chaves de recurso de um projeto, todas sob ['projeto', id]: o cache de
+  // um projeto nunca serve outro, e invalidar `todas` alcança o projeto
+  // inteiro. As de recurso acima, na raiz, saem na Task 30.
+  doProjeto: (id: string) => {
+    const p = ['projeto', id] as const
+    return {
+      todas: p,
+      previaDoCron: (expr: string, timezone: string) => [...p, 'previa-do-cron', expr, timezone] as const,
+      todosOsAlvos: [...p, 'targets'] as const,
+      todosOsIncidentes: [...p, 'incidents'] as const,
+      resumo: [...p, 'targets', 'summary'] as const,
+      resumoFiltrado: (f: FiltroDoResumo) => [...p, 'targets', 'summary', f.tags, f.estados] as const,
+      alvos: [...p, 'targets', 'list'] as const,
+      alvo: (alvo: string) => [...p, 'targets', alvo] as const,
+      serie: (alvo: string, janela: string) => [...p, 'targets', alvo, 'checks', janela] as const,
+      incidentes: (filtro: string, alvo?: string, limite?: number) =>
+        [...p, 'incidents', filtro, alvo ?? '', limite ?? 0] as const,
+      heartbeats: [...p, 'heartbeats'] as const,
+      heartbeat: (hb: string) => [...p, 'heartbeats', hb] as const,
+      eventosDoHeartbeat: (hb: string) => [...p, 'heartbeats', hb, 'events'] as const,
+      incidentesDoHeartbeat: (hb: string) => [...p, 'heartbeats', hb, 'incidents'] as const,
+      canais: [...p, 'channels'] as const,
+      paginas: [...p, 'status-pages'] as const,
+    }
+  },
 }
 
 // Os intervalos do poll. O resumo é o mais curto: é
@@ -49,6 +76,11 @@ const estaSemRede = () => !onlineManager.isOnline()
 // nasce, e quem só olha a consulta acha que o que está na tela é atual.
 export function useSemRede(): boolean {
   return useSyncExternalStore(onlineManager.subscribe, estaSemRede)
+}
+
+export function useProjetos() {
+  const api = useApi()
+  return useQuery({ queryKey: chaves.projetos, queryFn: ({ signal }) => api.projetos(signal) })
 }
 
 export function useMe() {
