@@ -4494,6 +4494,43 @@ escolhe o ID. (O backup pela chave só entrega o dump **cifrado**: sem a sua cha
    compare no painel dela com a produção (usuários, alvos, canais). Se algo foi mexido, restaure
    esse backup na produção ("A VPS morreu", item 4), perdendo o que veio depois dele.
 
+### Cadastro público: Turnstile e remetente de conta
+
+O cadastro público fica desligado até o app ter o par do Turnstile e o e-mail configurados
+(`SignupEnabled`). Este roteiro guarda as chaves e liga a configuração no recurso do app no
+Coolify. Um passo por vez; só siga depois do **Confira**.
+
+1. **Bitwarden.** Na pasta "StillOn", crie a entrada **"StillOn / Turnstile"**, ainda vazia.
+   **Por quê:** as chaves vão do painel da Cloudflare direto para ela, sem passar pelo chat nem
+   por arquivo. **Confira:** a entrada aparece na pasta.
+2. **Cloudflare.** No painel, abra **Turnstile → Add widget**: nome `StillOn`, hostname
+   `stillon.tech`, modo **Managed**. Copie a **site key** e o **secret key** e cole cada uma num
+   campo da entrada do passo 1. **Por quê:** o hostname faz a Cloudflare recusar token gerado em
+   outro site. **Confira:** a entrada tem os dois valores, e o widget aparece na lista do
+   Turnstile.
+3. **Resend.** Em **Domains → Add domain**, adicione o domínio do remetente de conta (sugestão:
+   `conta.stillon.tech`). Crie cada registro que a Resend mostrar na Hostinger, na área **DNS
+   records** do domínio (não em **Nameservers**: lá dá "invalid nameserver structure").
+   **Por quê:** o remetente de conta separado não mistura a reputação dos avisos com a dos
+   e-mails de cadastro. **Confira:** os registros aparecem na lista de DNS records da Hostinger.
+4. **Resend.** Clique em **Verify** no domínio novo e espere. **Confira:** o domínio fica
+   **Verified** (de minutos a algumas horas).
+5. **Coolify.** No recurso do app, em **Environment Variables**, cadastre
+   `TURNSTILE_SITE_KEY` e `TURNSTILE_SECRET_KEY` colando do Bitwarden, e
+   `ACCOUNT_EMAIL_FROM` como `StillOn <conta@conta.stillon.tech>`. **Por quê:** com só uma das
+   chaves do Turnstile, ou com o remetente sem o Resend, o app recusa subir. **Confira:** as três
+   aparecem na lista, com o secret mascarado.
+6. **Ativação.** Siga a seção "Ativação em produção" do
+   [plano do cadastro público](../superpowers/plans/2026-11-23-pr3-cadastro-publico.md)
+   (`deploy/coolify/app.json` e o Passo 7). Ela espera os termos de uso publicados, salvo decisão
+   contrária do dono.
+
+**Confira:** no seu computador, `curl -s https://stillon.tech/api/v1/auth/signup-config` mostra
+`"enabled":true`.
+
+Para trocar o secret do Turnstile: em **Turnstile → widget → Rotate secret key** na Cloudflare,
+cole o novo no Bitwarden e no Coolify e publique de novo.
+
 ### Minutos de Actions
 
 Enquanto o repositório era privado, o CI gastava a cota gratuita (2.000 min/mês na conta

@@ -75,6 +75,11 @@ para `.env`, restrinja a leitura com `chmod 600 .env` e preencha no editor local
 - `RESEND_API_KEY`: a chave do Resend guardada no Bitwarden.
 - `EMAIL_FROM`: um remetente de domínio verificado no Resend, no formato
   `StillOn <alertas@seu-dominio>`.
+- `ACCOUNT_EMAIL_FROM` (opcional): o remetente dos e-mails de conta (confirmação e
+  redefinição de senha). Vazio, vale o `EMAIL_FROM`.
+- `TURNSTILE_SITE_KEY` e `TURNSTILE_SECRET_KEY`: o par do Turnstile da Cloudflare, que liga o
+  cadastro público junto com o e-mail. No Compose local, vazias, valem as chaves de teste
+  públicas da Cloudflare; as de produção ficam no Bitwarden e no Coolify.
 
 As duas variáveis devem estar preenchidas juntas. O `.env` não vai para o Git nem
 para a imagem Docker. Aplique a configuração ao serviço local:

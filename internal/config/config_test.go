@@ -609,3 +609,127 @@ func TestLoadRejectsAZeroBitTrustedProxy(t *testing.T) {
 		}
 	}
 }
+
+// O par do Turnstile anda junto, como o do Resend: com só uma das duas, é
+// quase sempre esquecimento, e o boot recusa.
+func TestTurnstileExigeOPar(t *testing.T) {
+	for nome, par := range map[string][2]string{
+		"só a site key": {"1x00000000000000000000AA", ""},
+		"só o secret":   {"", "1x0000000000000000000000000000000AA"},
+	} {
+		t.Run(nome, func(t *testing.T) {
+			env := validEnv()
+			env["TURNSTILE_SITE_KEY"], env["TURNSTILE_SECRET_KEY"] = par[0], par[1]
+			_, err := Load(getenvFrom(env))
+			if err == nil || !strings.Contains(err.Error(), "TURNSTILE_SITE_KEY e TURNSTILE_SECRET_KEY") {
+				t.Fatalf("aceito (err = %v)", err)
+			}
+		})
+	}
+}
+
+func TestSignupEnabled(t *testing.T) {
+	casos := []struct {
+		nome          string
+		turnstile     bool
+		email, ligado bool
+	}{
+		{"par do Turnstile e e-mail", true, true, true},
+		{"par do Turnstile sem e-mail", true, false, false},
+		{"e-mail sem o par do Turnstile", false, true, false},
+	}
+	for _, c := range casos {
+		t.Run(c.nome, func(t *testing.T) {
+			env := validEnv()
+			if c.turnstile {
+				env["TURNSTILE_SITE_KEY"] = "1x00000000000000000000AA"
+				env["TURNSTILE_SECRET_KEY"] = "1x0000000000000000000000000000000AA"
+			}
+			if c.email {
+				env["RESEND_API_KEY"], env["EMAIL_FROM"] = "re_123", "alertas@stillon.example"
+			}
+			cfg, err := Load(getenvFrom(env))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.SignupEnabled() != c.ligado {
+				t.Errorf("SignupEnabled = %v, queria %v", cfg.SignupEnabled(), c.ligado)
+			}
+		})
+	}
+}
+
+func TestRemetenteDeContaCaiNoEmailFrom(t *testing.T) {
+	env := validEnv()
+	env["RESEND_API_KEY"], env["EMAIL_FROM"] = "re_123", "StillOn <alertas@stillon.example>"
+	cfg, err := Load(getenvFrom(env))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.RemetenteDeConta(); got != "StillOn <alertas@stillon.example>" {
+		t.Errorf("sem ACCOUNT_EMAIL_FROM: RemetenteDeConta = %q, queria o EMAIL_FROM", got)
+	}
+
+	env["ACCOUNT_EMAIL_FROM"] = "StillOn <conta@conta.stillon.example>"
+	cfg, err = Load(getenvFrom(env))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.RemetenteDeConta(); got != "StillOn <conta@conta.stillon.example>" {
+		t.Errorf("com ACCOUNT_EMAIL_FROM: RemetenteDeConta = %q, queria o ACCOUNT_EMAIL_FROM", got)
+	}
+}
+
+func TestAccountEmailFromSemResendFalha(t *testing.T) {
+	casos := []struct {
+		nome, chave, from, conta string
+	}{
+		{"sem o Resend", "", "", "conta@conta.stillon.example"},
+		{"remetente inválido", "re_123", "alertas@stillon.example", "não é e-mail"},
+	}
+	for _, c := range casos {
+		t.Run(c.nome, func(t *testing.T) {
+			env := validEnv()
+			env["RESEND_API_KEY"], env["EMAIL_FROM"], env["ACCOUNT_EMAIL_FROM"] = c.chave, c.from, c.conta
+			_, err := Load(getenvFrom(env))
+			if err == nil || !strings.Contains(err.Error(), "ACCOUNT_EMAIL_FROM") {
+				t.Fatalf("aceito (err = %v)", err)
+			}
+		})
+	}
+}
+
+func TestHostDoTurnstileSoEmProducao(t *testing.T) {
+	casos := map[string]string{
+		"https://stillon.example":      "stillon.example",
+		"https://stillon.example:8443": "stillon.example",
+		"http://203.0.113.9:8080":      "203.0.113.9",
+		"http://localhost:8080":        "",
+		"http://127.0.0.1:18080":       "",
+	}
+	for base, want := range casos {
+		env := validEnv()
+		env["PUBLIC_BASE_URL"] = base
+		cfg, err := Load(getenvFrom(env))
+		if err != nil {
+			t.Fatalf("%s: %v", base, err)
+		}
+		if got := cfg.HostDoTurnstile(); got != want {
+			t.Errorf("%s: HostDoTurnstile = %q, queria %q", base, got, want)
+		}
+	}
+}
+
+func TestLogValueRedactsTheTurnstileSecret(t *testing.T) {
+	env := validEnv()
+	env["TURNSTILE_SITE_KEY"], env["TURNSTILE_SECRET_KEY"] = "site-publica", "secret-do-turnstile"
+	cfg, err := Load(getenvFrom(env))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	slog.New(slog.NewJSONHandler(&buf, nil)).Info("cfg", "cfg", cfg)
+	if strings.Contains(buf.String(), "secret-do-turnstile") {
+		t.Errorf("o log vazou o secret do Turnstile: %s", buf.String())
+	}
+}
