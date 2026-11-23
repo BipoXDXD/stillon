@@ -828,10 +828,7 @@ export function criarApiFalsa() {
         nome === '' ? 'required' : [...nome].length > MAX_NOME_DO_PROJETO ? 'too_long' : INVISIVEL.test(nome) ? 'invalid' : null
       if (motivo) return erro(400, 'validation_failed', [{ field: 'name', reason: motivo }])
       if (st.projetos.filter((p) => p.projeto.role === 'owner').length >= st.limiteDeProjetos) {
-        // O project_limit_reached (409) chega ao internal/apierr/errors.go
-        // deste ramo com o merge do 2b.3: aí ele entra em ERROS_DO_SERVIDOR
-        // (o teste de contrato compara as duas tabelas) e isto vira erro(...).
-        return responderErro({ status: 409, code: 'project_limit_reached' })
+        return erro(409, 'project_limit_reached')
       }
       return HttpResponse.json(criarProjeto(nome).projeto, { status: 201 })
     })),
