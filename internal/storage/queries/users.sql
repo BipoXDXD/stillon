@@ -11,6 +11,23 @@ SELECT id FROM users WHERE email = $1;
 -- name: InsertUser :exec
 INSERT INTO users (id, email, password_hash, created_at) VALUES ($1, $2, $3, $4);
 
+-- O cadastro público (PR 3). E-mail repetido (citext: a caixa não importa) não
+-- grava nada e não devolve linha (pgx.ErrNoRows), sem erro de UNIQUE que
+-- abortaria a transação do cadastro.
+-- name: InsertSignupUser :one
+INSERT INTO users (id, email, password_hash, created_at) VALUES ($1, $2, $3, $4)
+ON CONFLICT (email) DO NOTHING
+RETURNING id;
+
+-- A confirmação do e-mail (pelo link ou pela redefinição de senha). O
+-- COALESCE guarda o primeiro instante: confirmar de novo não o move.
+-- name: MarkEmailVerified :exec
+UPDATE users SET email_verified_at = COALESCE(email_verified_at, sqlc.arg(now)::timestamptz) WHERE id = sqlc.arg(id);
+
+-- A trava de criação de recursos de conta não confirmada.
+-- name: UserEmailVerified :one
+SELECT (email_verified_at IS NOT NULL)::bool AS verified FROM users WHERE id = sqlc.arg(id);
+
 -- O usuário criado pelo CLI é o operador: sem as cotas do plano grátis, e com
 -- o e-mail dado por verificado (foi o operador quem o digitou no servidor).
 -- name: MarkUserOperator :exec
@@ -49,8 +66,9 @@ VALUES ($1, $2, $3, $4, $5, $6, $7);
 
 -- GET /me. totp_enabled é o segundo fator CONFIRMADO: um cadastro iniciado e
 -- abandonado não conta (o mesmo critério de auth.TOTP.IsEnabled).
+-- email_verified_at é nulo na conta do cadastro público ainda não confirmada.
 -- name: GetAccount :one
-SELECT id, email, (totp_confirmed_at IS NOT NULL)::bool AS totp_enabled, created_at
+SELECT id, email, (totp_confirmed_at IS NOT NULL)::bool AS totp_enabled, created_at, email_verified_at
   FROM users WHERE id = $1;
 
 -- A troca de senha pela API é um compare-and-swap: só grava se o hash ainda
