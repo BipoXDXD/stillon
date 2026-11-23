@@ -20,29 +20,28 @@ import (
 	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 )
 
-// emailEnviado é uma chamada ao carteiro falso.
-type emailEnviado struct{ para, assunto, corpo string }
+// emailDeRecuperacao é uma chamada ao carteiro falso.
+type emailDeRecuperacao struct{ para, assunto, corpo string }
 
 // carteiro é o AccountMailer dos testes: guarda o que mandaram enviar.
 type carteiro struct {
 	mu       sync.Mutex
-	enviados []emailEnviado
+	enviados []emailDeRecuperacao
 }
 
 func (c *carteiro) SendAccountEmail(_ context.Context, to, subject, body string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.enviados = append(c.enviados, emailEnviado{to, subject, body})
+	c.enviados = append(c.enviados, emailDeRecuperacao{to, subject, body})
 	return nil
 }
 
-func (c *carteiro) todos() []emailEnviado {
+func (c *carteiro) todos() []emailDeRecuperacao {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return append([]emailEnviado(nil), c.enviados...)
+	return append([]emailDeRecuperacao(nil), c.enviados...)
 }
 
-var linksDeTeste = account.Links{Base: "https://stillon.test"}
 
 const senhaRedefinida = "a-senha-redefinida-pelo-link"
 
@@ -53,8 +52,8 @@ func novaRecuperacao(pool *pgxpool.Pool, clk clock.Clock) (*account.Recuperacao,
 	return r, m
 }
 
-// tokenDoEmail tira o token do link de redefinição no corpo do e-mail.
-func tokenDoEmail(t *testing.T, e emailEnviado) string {
+// tokenDoEmailDeRecuperacao tira o token do link de redefinição no corpo do e-mail.
+func tokenDoEmailDeRecuperacao(t *testing.T, e emailDeRecuperacao) string {
 	t.Helper()
 	prefixo := linksDeTeste.RedefinirSenha("")
 	for linha := range strings.SplitSeq(e.corpo, "\n") {
@@ -77,7 +76,7 @@ func pedirToken(t *testing.T, r *account.Recuperacao, m *carteiro, email string)
 	if len(enviados) != antes+1 {
 		t.Fatalf("%d e-mails novos, queria 1", len(enviados)-antes)
 	}
-	return tokenDoEmail(t, enviados[len(enviados)-1])
+	return tokenDoEmailDeRecuperacao(t, enviados[len(enviados)-1])
 }
 
 // tokensDeRedefinicao lê, por fora da RLS, o vencimento dos tokens de
@@ -161,7 +160,7 @@ func abrirSessao(t *testing.T, pool *pgxpool.Pool, clk clock.Clock, user uuid.UU
 	return s.FamilyID
 }
 
-func emailConfirmado(t *testing.T, pool *pgxpool.Pool, user uuid.UUID) bool {
+func emailConfirmadoNoBanco(t *testing.T, pool *pgxpool.Pool, user uuid.UUID) bool {
 	t.Helper()
 	var ok bool
 	if err := pool.QueryRow(context.Background(),
@@ -276,7 +275,7 @@ func TestRedefinirTomaContaPreCriadaEDerrubaSessoes(t *testing.T) {
 		`INSERT INTO users (id, email, password_hash) VALUES ($1, 'vitima@exemplo.com', $2)`, conta, hash); err != nil {
 		t.Fatal(err)
 	}
-	if emailConfirmado(t, pool, conta) {
+	if emailConfirmadoNoBanco(t, pool, conta) {
 		t.Fatal("o cenário precisa da conta não confirmada")
 	}
 	doAtacante := abrirSessao(t, pool, clk, conta)
@@ -287,7 +286,7 @@ func TestRedefinirTomaContaPreCriadaEDerrubaSessoes(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if !emailConfirmado(t, pool, conta) {
+	if !emailConfirmadoNoBanco(t, pool, conta) {
 		t.Error("a redefinição não confirmou o e-mail, e ela prova a posse da caixa")
 	}
 	if familiaViva(t, doAtacante) {
